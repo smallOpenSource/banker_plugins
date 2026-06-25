@@ -1,5 +1,5 @@
 {
-  "name": "banker",
+  "name": "banker-plugins",
   "owner": {
     "name": "smallOpenSource",
     "url": "https://github.com/smallOpenSource"
@@ -10,9 +10,9 @@
   },
   "plugins": [
     {
-      "name": "banker-plugins",
+      "name": "banker",
       "source": ".",
-      "description": "QA, audit, docs, and architecture skills + commands for Claude Code"
+      "description": "QA, audit, docs, and architecture skills + commands for Claude Code (installs as /banker:*)"
     }
   ]
 }

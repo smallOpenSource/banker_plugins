@@ -1,7 +1,7 @@
 {
-  "name": "banker-plugins",
+  "name": "banker",
   "version": "0.1.0",
-  "description": "Claude Code plugin bundle: QA, audit, docs, and architecture skills with slash commands",
+  "description": "Claude Code plugin: QA/audit/docs/architecture skills + commands, a /banker:setup installer for OS dependencies (playwright, etc.), and wiki compaction.",
   "author": {
     "name": "smallOpenSource",
     "url": "https://github.com/smallOpenSource"
