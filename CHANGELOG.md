@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed — README + license
+- README 전면 재구성: hero(태그라인 + npm·MIT 배지 + 내비) · 빠른 시작(2스텝) · "왜 banker인가" · 요구사항 섹션 추가(스킬 표 보존).
+- 루트 `LICENSE`(MIT) 파일 추가 + `package.json` `files[]`에 포함(MIT 배지가 실제 라이선스를 가리키도록).
+
 ## [0.1.0] - 2026-06-25
 
 ### Added — npm distribution + Codex CLI support
