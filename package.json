@@ -1,7 +1,7 @@
 {
-  "name": "banker-plugins",
+  "name": "@kaydash9999/banker-plugins",
   "version": "0.1.0",
-  "description": "banker — Claude Code + Codex CLI plugin (QA, audit, docs, architecture, wiki skills). Install via Claude Code marketplace, or `npm i -g banker-plugins` then `banker setup`.",
+  "description": "banker — Claude Code + Codex CLI plugin (QA, audit, docs, architecture, wiki skills). Install via Claude Code marketplace, or `npm i -g @kaydash9999/banker-plugins` then `banker setup`.",
   "bin": {
     "banker": "bin/banker.js"
   },
@@ -11,6 +11,8 @@
   },
   "files": [
     "skills",
+    "!skills/ultra-init-workspace",
+    "!skills/ultra-init-workspace/**",
     "commands",
     ".claude-plugin",
     "codex",
@@ -20,6 +22,9 @@
   ],
   "engines": {
     "node": ">=16.7.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "claude-code",
@@ -32,7 +37,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/smallOpenSource/banker_plugins.git"
+    "url": "git+https://github.com/smallOpenSource/banker_plugins.git"
   },
   "homepage": "https://github.com/smallOpenSource/banker_plugins#readme",
   "license": "MIT",
