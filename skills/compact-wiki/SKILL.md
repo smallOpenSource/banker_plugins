@@ -1,11 +1,6 @@
 ---
 name: compact-wiki
-description: >
-  append-wiki 로 쌓인 프로젝트 wiki(.omc/wiki)를 정리·압축한다. 중복 페이지를
-  병합하고, 과거·최신 자료가 공존하면 최신으로 supersede 하며, 관련 페이지를
-  통합한다. "compact-wiki" / "위키 정리/압축" / "wiki 중복 제거" / "위키 병합" /
-  "오래된 위키 갱신" 요청 시 사용. ★최우선 불변식 = 지식 무손실: 스냅샷→병합→
-  검증→삭제 순서로, 어떤 고유 사실도 잃지 않는다. append-wiki 의 자매 스킬.
+description: ".omc/wiki 페이지를 무손실(스냅샷→병합→검증→삭제 순)로 중복 제거·supersede·병합 정리 — 'compact-wiki'/'위키 정리·압축'/'wiki 중복 제거'/'위키 병합' 시 사용."
 ---
 
 # compact-wiki — wiki 정리·압축 (무손실)

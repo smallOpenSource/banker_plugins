@@ -1,13 +1,7 @@
 ---
 name: humanizer
 version: 2.8.0
-description: |
-  Remove signs of AI-generated writing from text. Use when editing or reviewing
-  text to make it sound more natural and human-written. Based on Wikipedia's
-  comprehensive "Signs of AI writing" guide. Detects and fixes patterns including:
-  inflated symbolism, promotional language, superficial -ing analyses, vague
-  attributions, em dash overuse, rule of three, AI vocabulary words, passive
-  voice, negative parallelisms, and filler phrases.
+description: "AI가 쓴 듯한 영문 글(em-dash 남발·rule-of-three·홍보성 표현·수동태 등)을 제거해 사람이 쓴 자연스러운 문체로 윤문 — 'humanizer'/'remove AI writing'/'sound more human'/'natural' 시 사용."
 license: MIT
 compatibility: claude-code opencode
 allowed-tools:

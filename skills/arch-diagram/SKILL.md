@@ -1,6 +1,6 @@
 ---
 name: arch-diagram
-description: "시스템 아키텍처/계층 구성도를 PlantUML(소스+PNG 렌더)과 python-pptx(편집가능 PPTX, 네이티브 도형)로 산출하는 워크플로우. 산출물은 output/architecture/(설정 가능). PlantUML jar(tools/plantuml-epl-*.jar)+graphviz로 렌더·문법검사하고, python-pptx로 네이티브 도형(rectangle/실린더/큐브/클라우드)+화살촉 커넥터+CJK 폰트 빌드. soffice 미설치 환경에선 pptx를 재오픈 구조검증(슬라이드/커넥터/화살촉/경계)으로 검증하고 픽셀렌더는 Unknown 명시. 토폴로지는 코드 실측(config·yml·라우팅 코드 file:LINE), 외부 인프라는 미검증 표기. 넘겨짚기 금지·verify-before-claim·커밋은 stage→git diff --cached 검토→commit. '아키텍처 다이어그램' / 'plantuml' / 'pptx 다이어그램' / '구성도' / '시스템 계층도' / '아키텍처 그림' 시 사용."
+description: "시스템 아키텍처·계층 구성도를 PlantUML(소스+PNG)과 편집 가능 PPTX(python-pptx 네이티브 도형)로 산출 — '아키텍처 다이어그램'/'plantuml'/'pptx 다이어그램'/'구성도' 시 사용."
 ---
 
 # arch-diagram — PlantUML + PPTX 아키텍처 다이어그램 산출

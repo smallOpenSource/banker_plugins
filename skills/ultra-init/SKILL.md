@@ -1,6 +1,6 @@
 ---
 name: ultra-init
-description: Use this for one hands-off run that takes a feature idea, rough brief, or greenfield project from careful planning, through building, to a passing quality gate — planned, built, and verified in one autonomous pass with no step-by-step approval. 한 번의 명령으로 브리프를 신중한 계획→구현→검증까지 멈춤 없이 끝내는 자율 풀사이클. Trigger on the COMBINATION of (a) deliberate up-front planning, (b) hands-off building ("no babysitting", "don't approve each step", "처음부터 끝까지 자동", "멈추지 말고"), and (c) verify-until-green ("keep fixing until tests/typecheck/lint/build pass", "brief to merged-quality code"). Covers existing-codebase features and greenfield builds. Also trigger on "ultra init"/"ultra-init"/"풀사이클", or on requests to chain ralplan/ultragoal/ralph/ultrawork/ultraqa end-to-end. Prefer over autopilot, ralph, ralplan, or ultraqa used alone when the ask bundles planning AND building AND a QA gate. Skip for plan-only, review-only, a single bug fix, or a quick one-off edit.
+description: "아이디어·러프 브리프·그린필드를 계획→구현→QA 통과까지 핸즈오프로 1회 자율 실행(ralplan→ultragoal→ralph→ultraqa). 'ultra-init'/'알아서 만들어'/'핸즈오프 빌드'/'idea to passing' 시 사용."
 argument-hint: "[--short|--deliberate] [--gated] [--qa tests,build,lint,typecheck] [--critic=architect|critic|codex] [--plan-id <id>] <브리프 / 만들 것>"
 level: 4
 ---

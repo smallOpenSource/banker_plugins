@@ -1,6 +1,6 @@
 ---
 name: rfp-author
-description: "특정 소프트웨어 프로젝트를 외부 IT 기업에 외주(요건 발의형 기본 — 동일재구현이 아니라 요건만 발의)하기 위한 제안요청서(RFP)를 하이브리드 골격(한국 공공/금융 제안요청서 + 국제 SW외주 + AI/LLM 특수요건)으로 저작. 검증된 reference(요구사항 15유형·7항목 작성표·평가 80/20, 금융규제 전자금융감독규정14의2/FSI CSP/위탁규정 2021-9, NIST AI 600-1 12위험, 국제 계약 IP/검수/마일스톤)와 채울 수 있는 rfp-skeleton 템플릿을 bundle. 도구 오케스트레이션(deep-dive→과업추출 / ralplan→구조합의 / team·writer→섹션작성 / verify→검수 / scripts/md2docx.py→산출물)으로 진행. 반증된 주장(±10점 분야별 가감·구법 제20조③·인터페이스 prefix 오기) 금지, currency(2020 소프트웨어 진흥법) 준수, 기밀값 누출 금지, IP default 주의, 미검증 항목 〈OPEN〉 정직 표기. verify-before-claim. 'rfp' / '제안요청서' / 'RFP 작성' / '외주 RFP' / '제안서' 시 사용."
+description: "소프트웨어 외주 제안요청서(RFP)를 한국 공공/금융 + 국제 SW외주 + AI/LLM 골격으로 저작(검증 reference·채울 템플릿 번들) — 'rfp'/'제안요청서'/'RFP 작성'/'외주 RFP' 시 사용."
 ---
 
 # rfp-author — 외주 제안요청서(RFP) 저작 (요건 발의형 기본)

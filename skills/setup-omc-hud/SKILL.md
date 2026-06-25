@@ -1,10 +1,6 @@
 ---
 name: setup-omc-hud
-description: >
-  omc_hud(Claude Code 상태표시줄 커스터마이저, github.com/smallOpenSource/omc_hud)를
-  설치한다. OS(mac/linux/windows)를 감지해 알맞은 apply 스크립트를 내려받아 적용하고
-  임시 파일을 정리한다. ★/banker:setup 가 호출하거나 사용자가 "omc_hud 설치"/"setup-omc-hud"
-  를 명시할 때만 사용(자동 트리거 아님).
+description: "omc_hud(Claude Code 상태표시줄)를 OS(mac/linux/windows)별 apply 스크립트로 내려받아 적용. 'setup-omc-hud'/'omc_hud 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-omc-hud — omc_hud 상태표시줄 설치 (OS별)

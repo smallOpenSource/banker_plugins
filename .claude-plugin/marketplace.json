@@ -5,14 +5,14 @@
     "url": "https://github.com/smallOpenSource"
   },
   "metadata": {
-    "description": "Banking PoC plugin marketplace: QA, audit, docs, and architecture tooling for Claude Code",
+    "description": "Claude Code skills + commands — QA, audit, docs, architecture, dependency setup, and wiki; the banker plugin marketplace.",
     "version": "0.1.0"
   },
   "plugins": [
     {
       "name": "banker",
       "source": ".",
-      "description": "QA, audit, docs, and architecture skills + commands for Claude Code (installs as /banker:*)"
+      "description": "QA, audit, docs, architecture, setup, and wiki skills + commands; installs as /banker:* (run /banker:setup for OS deps)."
     }
   ]
 }

@@ -1,11 +1,6 @@
 ---
 name: ready-compact
-description: >
-  컨텍스트 compaction(요약) 직전 준비 스킬. 진행 중인 작업의 '지금 상태와 다음 한 수'를
-  내구적으로 저장하고, compaction 이후 붙여넣으면 끊김 없이 이어갈 수 있는 resume 프롬프트를
-  생성한다. "ready-compact", "compact 준비", "이어서 하게 준비해", "이어갈 프롬프트" 요청 시
-  사용. 메모리/플랜/깃이 이미 담는 영속 사실은 링크만 하고, compaction이 잃기 쉬운 휘발성
-  맥락(다음 단계·미결 결정·검증 명령·함정)만 응축한다. 답변·설명은 한글(기술 토큰은 영문).
+description: "컨텍스트 compaction 직전 진행 상태를 저장하고, 이후 붙여넣어 끊김 없이 이어갈 resume 프롬프트를 생성 — 'ready-compact'/'compact 준비'/'이어서 하게 준비'/'이어갈 프롬프트' 시 사용."
 ---
 
 # ready-compact — compaction 전 상태 저장 + resume 프롬프트

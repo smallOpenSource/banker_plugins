@@ -1,13 +1,6 @@
 ---
 name: audit-web-page
-description: >
-  가동 중인 웹 페이지를 playwright(번들 chromium·Xvfb)로 라이브 점검한다. 버튼/내비
-  동작·DOM 바인딩·콘솔 에러·그리고 ★Phaser/WebGL 캔버스 비주얼(렌더·글로우·애니메이션)을
-  실제 브라우저에서 검증하고, 스크린샷을 직접 읽어 육안 판정한다. "audit-web-page",
-  "라이브 웹 검증", "playwright로 페이지 점검", "화면 실제로 동작하는지 확인", "캔버스/WebGL
-  렌더 확인" 류 요청에 사용. 검증된 playwright 구성(브라우저 경로·가상디스플레이·
-  swiftshader·HTTPS 무시)을 제공한다. headless e2e PASS ≠ 픽셀 완성이므로 시각 판정은
-  스크린샷 Read로 직접 한다.
+description: "가동 중 웹페이지를 playwright로 라이브 점검(버튼·DOM·콘솔 에러 + WebGL/Canvas 비주얼을 스크린샷 육안 판정) — 'audit-web-page'/'라이브 웹 검증'/'playwright로 페이지 점검'/'캔버스·WebGL 렌더 확인' 시 사용."
 ---
 
 # audit-web-page — 라이브 웹 페이지 점검 (playwright)

@@ -1,6 +1,6 @@
 ---
 name: game-qa
-description: Use when the user wants YOU to directly play-and-QA Godot HTML5 web games in a real browser yourself — to find objective defects that headless CI and the "CLICK to start" label structurally miss (rendering/HUD/glyph-tofu, broken assets, input registration, tap/click-to-start failures, soft-locks, console errors) by autonomously driving each game with Playwright + software-GL Chromium. Triggers include "네가 직접 플레이해봐", "게임 직접 qa/테스트", "in-browser 플레이테스트", "game-qa", running an objective pass before an on-device 손맛 playtest, or verifying a game fix end-to-end (re-export → in-browser). NOT for subjective 손맛/feel/audio/difficulty — that is the owner on real hardware; this skill is the OBJECTIVE layer only.
+description: "Godot HTML5 웹게임을 실제 브라우저에서 직접 플레이하며 렌더·입력·시작 실패 등 객관 결함을 QA(playwright) — 'game-qa'/'게임 직접 qa'/'네가 직접 플레이해봐'/'in-browser 플레이테스트' 시 사용."
 ---
 
 # game-qa: 에이전트가 직접 브라우저에서 게임을 플레이·QA

@@ -1,11 +1,6 @@
 ---
 name: setup-playwright
-description: >
-  Playwright(브라우저 + headless 실행 환경)를 설치한다 — 특히 Playwright를 공식 지원하지
-  않는 RHEL8/Rocky8 등이거나 root 권한·conda 가 없는 환경을 위해 OS·권한·도구를 감지해
-  tarball·user systemd·python venv·xvfb-run 등 대체 경로로 설치한다. ★주로 /banker:setup 가
-  호출하거나 사용자가 "playwright 설치"/"setup-playwright" 를 명시할 때만 사용(자동 트리거 아님).
-  banker 플러그인의 ultra-ui-qa·audit-web-page·game-qa 의 브라우저 의존성을 해결.
+description: "Playwright + headless 브라우저를 OS·권한·conda 감지 후 설치 — RHEL8/Rocky8 비공식·non-root·no-conda venv·xvfb 폴백 지원. 'setup-playwright'/'playwright 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-playwright — Playwright + headless 브라우저 설치 (OS·권한 적응형)

@@ -1,6 +1,6 @@
 ---
 name: lineage
-description: 현재 세션 대화를 KakaoTalk 스타일 단일 HTML 파일로 export. 답변은 1줄 요약 + 클릭 펼침. 사용자 메시지는 노란 우측 버블, 상세는 토글로 접힌다.
+description: "현재 세션 대화를 카카오톡 스타일 단일 HTML 파일로 export(답변=1줄 요약+클릭 펼침) — 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
 version: 1.0.0
 schema_version: 1

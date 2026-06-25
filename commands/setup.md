@@ -1,5 +1,5 @@
 ---
-description: banker 플러그인 구성요소·의존성 설치 (multi-select). playwright·omc-hud·insane-search·stitch-proxy 중 골라 설치.
+description: "banker 플러그인 구성요소·OS 의존성을 multi-select로 골라 설치하는 오케스트레이터(playwright·omc-hud·insane-search·stitch-proxy)."
 argument-hint: "[설치할 컴포넌트명 — 비우면 multi-select 표시]"
 ---
 
