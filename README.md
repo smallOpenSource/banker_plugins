@@ -40,7 +40,7 @@ playwright(브라우저 QA)·omc_hud·insane-search·stitch MCP 등은 OS 의존
 마켓플레이스 대신 **npm**으로 설치할 수 있고, **Codex CLI**에도 스킬을 설치할 수 있습니다:
 
 ```bash
-npm i -g banker-plugins
+npm i -g @kaydash9999/banker-plugins
 banker setup            # Claude Code + Codex 둘 다 (대상 플래그 없으면 둘 다)
 banker setup --claude   # Claude Code만 (마켓플레이스 등록 → /banker:*)
 banker setup --codex    # Codex CLI만 (~/.codex/skills/banker-*, ~/.codex/prompts/banker-*)

@@ -1,9 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.0] - 2026-06-25
 
 ### Added — npm distribution + Codex CLI support
-- npm global install: `npm i -g banker-plugins` ships a `banker` CLI (`bin/banker.js`, no runtime deps).
+- npm global install: `npm i -g @kaydash9999/banker-plugins` ships a `banker` CLI (`bin/banker.js`, no runtime deps).
 - `banker setup [--claude] [--codex] [--scope user|project] [--dry-run]`, `banker doctor`, `banker uninstall`.
 - **Codex CLI support**: `banker setup --codex` installs the 17 tool-agnostic skills into `~/.codex/skills/banker-<name>/` (subtree copy) and commands into `~/.codex/prompts/banker-<name>.md` (`/banker-<name>`), per `codex/manifest.json`. It never writes the omx-generated `~/.codex/AGENTS.md` (relies on `~/.codex/skills/` auto-discovery).
 - `codex/manifest.json` (per-surface `claude-only | both` target + supporting files) and `codex/transform-matrix.md`.
