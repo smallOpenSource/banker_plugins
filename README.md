@@ -35,6 +35,24 @@ playwright(브라우저 QA)·omc_hud·insane-search·stitch MCP 등은 OS 의존
 `multi-select` 로 필요한 항목을 골라 설치합니다(각 항목이 OS를 감지해 알맞은 절차·폴백 적용). 개별 실행도 가능:
 `/banker:setup-playwright` · `/banker:setup-omc-hud` · `/banker:setup-insane-search` · `/banker:setup-stitch-proxy`.
 
+## npm 전역 설치 + Codex CLI (대안)
+
+마켓플레이스 대신 **npm**으로 설치할 수 있고, **Codex CLI**에도 스킬을 설치할 수 있습니다:
+
+```bash
+npm i -g banker-plugins
+banker setup            # Claude Code + Codex 둘 다 (대상 플래그 없으면 둘 다)
+banker setup --claude   # Claude Code만 (마켓플레이스 등록 → /banker:*)
+banker setup --codex    # Codex CLI만 (~/.codex/skills/banker-*, ~/.codex/prompts/banker-*)
+banker doctor           # 설치 상태 점검
+banker uninstall        # 제거
+```
+
+- `--scope project` 로 프로젝트-로컬(`./.codex`)에 설치, `--dry-run` 으로 미리보기.
+- **non-root 전용**(전역 sudo 설치 시 root 소유 파일 방지). **postinstall 없음** — `banker setup` 을 직접 실행.
+- Codex에는 **도구-무관 스킬 17개만** 설치됩니다(`codex/manifest.json`). OMC/`claude`-결합 스킬(all-in-one·ultra-init·omc-reference·setup-omc-hud/insane-search/stitch-proxy·`/banker:front-qa`)은 Claude Code 전용.
+- Codex 스킬 → `~/.codex/skills/banker-<name>/` (17개). **현재 커맨드(`front-qa`·`setup`)는 둘 다 Claude 전용**이라 Codex prompts는 0개입니다 — 향후 도구-무관 커맨드가 생기면 `~/.codex/prompts/banker-<name>.md`(`/banker-<name>`)로 설치됩니다. `~/.codex/AGENTS.md`는 건드리지 않습니다(omx가 재생성하므로).
+
 ## 업데이트 / 제거
 
 ```bash

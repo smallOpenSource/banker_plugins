@@ -1,0 +1,14 @@
+# belt-and-suspenders (package.json `files` is the allowlist)
+.omc/
+.remember/
+.git/
+node_modules/
+*.log
+**/__pycache__/
+*.pyc
+# runtime output dir (not a skill; no SKILL.md) — keep out of the npm tarball too
+skills/ultra-init-workspace/
+.gitignore
+.npmignore
+.banker-credentials
+.git-credentials
