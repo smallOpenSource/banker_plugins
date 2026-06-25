@@ -1,6 +1,6 @@
 ---
 name: pdf-vision-extract
-description: Convert visual-heavy PDFs (UI mockups, design specs, diagrams) to high-DPI per-page PNGs so Claude can read them as pure vision inputs without layout distortion. Use when a PDF contains UI screens, charts, or any content where layout fidelity matters more than raw text.
+description: "비주얼 위주 PDF(UI 목업·디자인 스펙·다이어그램)를 고해상도 per-page PNG로 변환해 레이아웃 손실 없이 비전 입력으로 읽기 — 'pdf-vision-extract'/'PDF를 이미지로'/'디자인 PDF 추출' 시 사용."
 ---
 
 # pdf-vision-extract

@@ -1,9 +1,6 @@
 ---
 name: setup-stitch-proxy
-description: >
-  Stitch(Google 디자인 생성)용 MCP 프록시를 Claude Code 에 등록한다. API key 발급 →
-  실행 스크립트 작성 → claude mcp add 로 연결. ★/banker:setup 가 호출하거나 사용자가
-  "stitch 설치"/"setup-stitch-proxy" 를 명시할 때만 사용. API key 필요(시크릿 미커밋).
+description: "Stitch(Google 디자인 생성) MCP 프록시를 API key + claude mcp add 로 Claude Code에 등록(시크릿 미커밋). 'setup-stitch-proxy'/'stitch 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-stitch-proxy — Stitch MCP 프록시 등록

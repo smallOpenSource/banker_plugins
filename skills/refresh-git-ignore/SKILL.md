@@ -1,6 +1,6 @@
 ---
 name: refresh-git-ignore
-description: "현재 repo의 .gitignore 를 비파괴·반복가능하게 갱신. 미추적 파일을 분류해 '진짜 런타임/빌드 아티팩트'(lock/cache/dump/대용량)만 ignore 규칙에 추가하고, 이미 추적 중인 서브트리와 의도적 tracked 파일(예: 추적 중인 .env·인증서)은 절대 건드리지 않는다(git rm --cached 금지=비파괴). 주석처리된 폐기 blanket 규칙은 정책변경이라 사용자 명시 없이 부활 금지. git check-ignore 로 아티팩트 매치 + 의도적-tracked not-ignored 안전가드 검증. tracked 여부는 'git ls-files <dir>'로 판정(미커밋 콘텐츠 vs 아티팩트 구분). 커밋/푸시는 사용자 'push' 명시 시만. 'refresh-git-ignore' / '.gitignore 갱신·정리' / 'git status 잡음 줄여' / 'gitignore 업데이트' 시 사용."
+description: "현재 repo의 .gitignore를 비파괴·반복가능하게 갱신(런타임/빌드 아티팩트만 추가, 추적 중 파일 보호) — 'refresh-git-ignore'/'.gitignore 갱신·정리'/'git status 잡음 줄여' 시 사용."
 ---
 
 # refresh-git-ignore — .gitignore 안전 갱신

@@ -1,5 +1,5 @@
 ---
-description: 프론트엔드 스펙(note 파일) 기반 구현+엄격 parity QA 워크플로 (ralplan→ralph→loop)
+description: "스펙(note 파일) 기반 프론트엔드 구현 + 레퍼런스 구현 대비 엄격 parity QA 워크플로(ralplan→ralph→loop)."
 argument-hint: "[스펙/note 파일 경로 — 생략 시 docs/note.txt]"
 ---
 

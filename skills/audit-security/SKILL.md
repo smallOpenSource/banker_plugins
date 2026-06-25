@@ -1,6 +1,6 @@
 ---
 name: audit-security
-description: "프로젝트 전체(backend/frontend/service 등 서브앱)의 보안 취약점(CVE·의존성 / SAST / 시크릿)을 코드·빌드 무변경(읽기전용)·no-root user-space 도구로 진단. SCA(osv-scanner/trivy/grype/npm audit/pip-audit) + SAST(semgrep CE security ruleset) + Secrets(gitleaks/detect-secrets)를 멀티툴 교차검증(consensus=고신뢰·단일툴=needs-review)하고 → 리포트. 시크릿은 git-tracked vs gitignored 트리아지로 심각도 판정, 값은 절대 리포트 비노출(RuleID+file:LINE만). 의존성 bump·secret rotate·재빌드는 사용자 게이트(미실행). 알려진·수용된 이슈(의도적 CORS·인지된 PAT 등)는 재경보 금지. local-DB 우선 + 온라인 교차검증. verify-before-claim. 'audit-security' / '보안 진단' / 'CVE 스캔' / '취약점 감사' / 'SCA·SAST·secret 스캔' / 'dependency CVE 찾기' 시 사용."
+description: "의존성 CVE(SCA)·SAST·시크릿을 멀티툴 교차검증으로 read-only·no-root 보안 진단 — 'audit-security'/'보안 진단'/'CVE 스캔'/'SCA·SAST·secret 스캔' 시 사용."
 ---
 
 # audit-security — CVE / SAST / Secrets read-only 보안 진단 (no-root)

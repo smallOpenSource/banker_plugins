@@ -1,9 +1,6 @@
 ---
 name: setup-insane-search
-description: >
-  insane-search(차단/봇방어 사이트 우회 검색·페치 플러그인)를 별도 마켓플레이스
-  (github.com/fivetaku/gptaku_plugins)에서 설치한다. ★/banker:setup 가 호출하거나
-  사용자가 "insane-search 설치"/"setup-insane-search" 를 명시할 때만 사용. OS 무관.
+description: "insane-search(차단·봇방어 사이트 우회 검색·페치) 플러그인을 fivetaku/gptaku_plugins 마켓플레이스에서 설치(OS 무관). 'setup-insane-search'/'insane-search 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-insane-search — insane-search 플러그인 설치

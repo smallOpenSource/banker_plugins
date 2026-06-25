@@ -1,6 +1,6 @@
 ---
 name: audit-mock
-description: "프로젝트 전체(backend/frontend/service 등)에서 하드코딩·mock/stub·열거형(enum/taxonomy)을 코드·빌드 무변경(읽기전용)으로 검출하는 정적 안티패턴 감사. 핵심은 '실 데이터소스(DB 쿼리·API fetch·LLM 호출) 없이 하드코딩된 값을 return하는 데이터경로'(stub) 적발. 격리 toolchain(semgrep/PMD/ruff/jscpd/ast-grep MCP)으로 1회 스캔 + 멀티에이전트 데이터경로 정밀감사 → 리포트. 자격증명 스캔 제외. 넘겨짚기 금지·verify-before-claim. 'audit-mock' / '하드코딩 검출' / 'mock·stub 감사' / '열거형 검사' / 'SQL 없이 하드코딩 반환 찾기' 시 사용."
+description: "하드코딩·mock/stub·열거형을 read-only 정적 감사로 검출(DB/fetch/LLM 없이 하드코딩 값을 반환하는 stub 적발) — 'audit-mock'/'하드코딩 검출'/'mock·stub 감사'/'SQL 없이 하드코딩 반환' 시 사용."
 ---
 
 # audit-mock — 하드코딩 / mock·stub / 열거형 read-only 정적 감사

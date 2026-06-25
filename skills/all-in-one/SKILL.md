@@ -1,15 +1,6 @@
 ---
 name: all-in-one
-description: >-
-  하나의 작업을 계획→구현→검증 끝까지 자동으로 흘려보내는 오케스트레이션 스킬.
-  (1) /oh-my-claudecode:ralplan --deliberate 로 Planner→Architect→Critic 합의 계획을
-  수립하고, (2) /oh-my-claudecode:ralph 로 PRD 기반 구현·아키텍트 승인·deslop·회귀까지
-  돌린 뒤, (3) playwright로 실제 구동 중인 앱을 라이브 검증한다. "/all-in-one",
-  "올인원", "계획부터 검증까지", "ralplan하고 ralph로 구현하고 playwright로 검사",
-  "처음부터 끝까지 알아서" 류의 end-to-end 위임 요청에 사용. /all-in-one 호출 자체가
-  실행 승인(execution opt-in)이라 계획 단계가 pending에서 멈추지 않고 구현으로 이어진다.
-  GLOBAL — playwright 환경·커밋 규약을 하드코딩하지 않고 repo에서 발견한다. 단순 계획만
-  원하면 /ralplan, 구현만 원하면 /ralph 를 직접 쓸 것.
+description: "한 작업을 ralplan 합의 계획 → ralph 구현 → playwright 라이브 검증까지 끊김 없이 자동으로 흘리는 end-to-end 오케스트레이터 — '/all-in-one'/'올인원'/'계획부터 검증까지'/'처음부터 끝까지 알아서' 시 사용."
 ---
 
 # all-in-one — 계획→구현→검증 end-to-end 오케스트레이터
