@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "note": "Per-surface target manifest for banker multi-tool distribution. Enumerate skills by SKILL.md presence (excludes ultra-init-workspace). target=both -> install to Claude Code AND Codex; claude-only -> Claude Code only. The Codex generator (codex/generate) reads this.",
+  "surfaces": [
+    { "name": "append_wiki",          "type": "skill",   "target": "both",        "reason": "knowledge capture; tool-agnostic workflow", "supportingFiles": [], "caveat": "uses wiki_* MCP (OMC/OMX) at runtime; copies fine, needs a wiki MCP present" },
+    { "name": "arch-diagram",         "type": "skill",   "target": "both",        "reason": "PlantUML+pptx diagramming; tool-agnostic", "supportingFiles": ["build_pptx_template.py"] },
+    { "name": "audit-mock",           "type": "skill",   "target": "both",        "reason": "static anti-pattern audit; tool-agnostic", "supportingFiles": [] },
+    { "name": "audit-security",       "type": "skill",   "target": "both",        "reason": "SCA/SAST/secrets methodology; tool-agnostic", "supportingFiles": [] },
+    { "name": "audit-web-page",       "type": "skill",   "target": "both",        "reason": "playwright live page audit; tool-agnostic", "supportingFiles": ["harness.py"], "caveat": "needs playwright (setup-playwright)" },
+    { "name": "compact-wiki",         "type": "skill",   "target": "both",        "reason": "wiki dedup/merge; tool-agnostic workflow", "supportingFiles": [], "caveat": "uses wiki_* MCP at runtime" },
+    { "name": "game-qa",              "type": "skill",   "target": "both",        "reason": "Godot HTML5 in-browser QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
+    { "name": "humanizer",            "type": "skill",   "target": "both",        "reason": "AI-writing cleanup; tool-agnostic (vendored MIT)", "supportingFiles": ["LICENSE", "README.md", "AGENTS.md"] },
+    { "name": "lineage",              "type": "skill",   "target": "both",        "reason": "session->HTML export; tool-agnostic", "supportingFiles": ["lineage.py"] },
+    { "name": "make-notion-guide",    "type": "skill",   "target": "both",        "reason": "API guide authoring; tool-agnostic", "supportingFiles": [] },
+    { "name": "nothing-design",       "type": "skill",   "target": "both",        "reason": "UI design system; tool-agnostic", "supportingFiles": ["references/components.md", "references/platform-mapping.md", "references/tokens.md"] },
+    { "name": "pdf-vision-extract",   "type": "skill",   "target": "both",        "reason": "PDF->PNG for vision; tool-agnostic", "supportingFiles": [] },
+    { "name": "ready-compact",        "type": "skill",   "target": "both",        "reason": "pre-compaction state save; tool-agnostic", "supportingFiles": [] },
+    { "name": "refresh-git-ignore",   "type": "skill",   "target": "both",        "reason": ".gitignore refresh; tool-agnostic", "supportingFiles": [] },
+    { "name": "rfp-author",           "type": "skill",   "target": "both",        "reason": "RFP authoring framework; tool-agnostic", "supportingFiles": ["references/compliance-and-ai-llm.md", "references/korean-rfp-framework.md", "references/research-provenance.md", "references/this-project-scope.md", "references/vendor-rfp-structure.md", "templates/rfp-skeleton.md", "scripts/md2docx.py"] },
+    { "name": "setup-playwright",     "type": "skill",   "target": "both",        "reason": "playwright/browser install; tool-agnostic (genericize /banker:setup trigger ref for Codex)", "supportingFiles": [] },
+    { "name": "ultra-ui-qa",          "type": "skill",   "target": "both",        "reason": "UI vs SoT QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
+
+    { "name": "all-in-one",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan->ralph->playwright (Claude/OMC-specific)", "supportingFiles": [] },
+    { "name": "ultra-init",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan/ultragoal/ralph/ultraqa (Claude/OMC-specific)", "supportingFiles": [] },
+    { "name": "omc-reference",        "type": "skill",   "target": "claude-only", "reason": "OMC-internal agent/tool/skill registry reference", "supportingFiles": [] },
+    { "name": "setup-omc-hud",        "type": "skill",   "target": "claude-only", "reason": "installs omc_hud (Claude Code statusline)", "supportingFiles": [] },
+    { "name": "setup-insane-search",  "type": "skill",   "target": "claude-only", "reason": "shells `claude plugin` to install a Claude Code plugin", "supportingFiles": [] },
+    { "name": "setup-stitch-proxy",   "type": "skill",   "target": "claude-only", "reason": "shells `claude mcp add` (Claude Code MCP registration)", "supportingFiles": [] },
+
+    { "name": "front-qa",             "type": "command", "target": "claude-only", "reason": "ralplan->ralph->loop OMC pipeline command", "supportingFiles": [] },
+    { "name": "setup",                "type": "command", "target": "claude-only", "reason": "/banker:setup orchestrator (Claude-side multi-select installer)", "supportingFiles": [] }
+  ]
+}

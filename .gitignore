@@ -18,3 +18,6 @@ skills/ultra-init-workspace/
 # --- OS cruft ---
 .DS_Store
 Thumbs.db
+
+# Codex project-scope install (banker setup --codex --scope project)
+.codex/
