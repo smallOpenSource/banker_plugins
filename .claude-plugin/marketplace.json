@@ -1,0 +1,18 @@
+{
+  "name": "banker",
+  "owner": {
+    "name": "smallOpenSource",
+    "url": "https://github.com/smallOpenSource"
+  },
+  "metadata": {
+    "description": "Banking PoC plugin marketplace: QA, audit, docs, and architecture tooling for Claude Code",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "banker-plugins",
+      "source": ".",
+      "description": "QA, audit, docs, and architecture skills + commands for Claude Code"
+    }
+  ]
+}

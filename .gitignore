@@ -1,0 +1,20 @@
+# --- OMC / session runtime state (machine-specific, do not publish) ---
+.omc/
+.remember/
+
+# --- Python caches ---
+__pycache__/
+*.py[cod]
+
+# --- Logs & runtime artifacts ---
+*.log
+# ultra-init-workspace = runtime output dir (no SKILL.md), not a publishable skill
+skills/ultra-init-workspace/
+
+# --- Local git credential store (token-scoped auth option) ---
+.banker-credentials
+.git-credentials
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
