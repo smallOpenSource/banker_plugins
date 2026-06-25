@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.1] - 2026-06-26
 
 ### Changed — README + license
 - README 전면 재구성: hero(태그라인 + npm·MIT 배지 + 내비) · 빠른 시작(2스텝) · "왜 banker인가" · 요구사항 섹션 추가(스킬 표 보존).
