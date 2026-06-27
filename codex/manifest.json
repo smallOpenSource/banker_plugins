@@ -20,7 +20,8 @@
     { "name": "setup-playwright",     "type": "skill",   "target": "both",        "reason": "playwright/browser install; tool-agnostic (genericize /banker:setup trigger ref for Codex)", "supportingFiles": [] },
     { "name": "ultra-ui-qa",          "type": "skill",   "target": "both",        "reason": "UI vs SoT QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
 
-    { "name": "all-in-one",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan->ralph->playwright (Claude/OMC-specific)", "supportingFiles": [] },
+    { "name": "all-in-one",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan->ralph->ultraqa (Claude/OMC-specific)", "supportingFiles": [] },
+    { "name": "compact-copy",         "type": "skill",   "target": "claude-only", "reason": "manipulates Claude Code /copy + response.md artifact (Claude-specific)", "caveat": "depends on Claude Code /copy builtin + /tmp/claude-<uid>/response.md internal path; may change across Claude Code versions", "supportingFiles": [] },
     { "name": "ultra-init",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan/ultragoal/ralph/ultraqa (Claude/OMC-specific)", "supportingFiles": [] },
     { "name": "omc-reference",        "type": "skill",   "target": "claude-only", "reason": "OMC-internal agent/tool/skill registry reference", "supportingFiles": [] },
     { "name": "setup-omc-hud",        "type": "skill",   "target": "claude-only", "reason": "installs omc_hud (Claude Code statusline)", "supportingFiles": [] },

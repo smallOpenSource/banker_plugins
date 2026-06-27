@@ -7,7 +7,7 @@
 
 **[빠른 시작](#빠른-시작)** · [왜 banker인가](#왜-banker인가) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [라이선스](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키 작업을 위한 **스킬 23개**와 OS 의존성 설치기를 묶은 Claude Code 플러그인입니다. 설치하면 모든 스킬·커맨드가 **`/banker:<이름>`** 네임스페이스로 노출됩니다. 이 repo 자체가 **Claude Code 마켓플레이스**(`.claude-plugin/marketplace.json`)이자 **플러그인**(`.claude-plugin/plugin.json`, name `banker`)입니다.
+banker는 QA·보안 감사·문서·아키텍처·위키 작업을 위한 **스킬 24개**와 OS 의존성 설치기를 묶은 Claude Code 플러그인입니다. 설치하면 모든 스킬·커맨드가 **`/banker:<이름>`** 네임스페이스로 노출됩니다. 이 repo 자체가 **Claude Code 마켓플레이스**(`.claude-plugin/marketplace.json`)이자 **플러그인**(`.claude-plugin/plugin.json`, name `banker`)입니다.
 
 > npm 패키지(`@kaydash9999/banker-plugins`)와 GitHub repo(`smallOpenSource/banker_plugins`)는 같은 메인테이너가 관리합니다.
 
@@ -28,7 +28,7 @@ claude plugin install banker@banker-plugins
 
 ## 왜 banker인가?
 
-- **스킬 23개를 한 벌로** — QA·감사·문서·아키텍처·위키를 매번 새로 만들지 않고 바로 씁니다.
+- **스킬 24개를 한 벌로** — QA·감사·문서·아키텍처·위키를 매번 새로 만들지 않고 바로 씁니다.
 - **설치 즉시 `/banker:*`** — 마켓플레이스 한 줄, 또는 npm 전역 설치 한 줄.
 - **Claude Code + Codex 양립** — 도구-무관 스킬 17개는 Codex CLI에도 그대로 설치됩니다.
 - **OS 의존성까지** — `/banker:setup` 이 playwright·omc_hud 등을 OS에 맞춰 설치·폴백합니다.
@@ -73,6 +73,7 @@ claude plugin install banker@banker-plugins
 | `all-in-one` | 계획→구현→검증 end-to-end 오케스트레이터 |
 | `ultra-init` | 아이디어→빌드→테스트 원샷 자동 실행 |
 | `ready-compact` | 컨텍스트 compaction 직전 상태 저장/이어가기 |
+| `compact-copy` | resume 프롬프트만 추출 → 클립보드/파일(compaction 이어가기) |
 | `refresh-git-ignore` | `.gitignore` 비파괴·반복가능 갱신 |
 | `omc-reference` | OMC 에이전트/툴/스킬 레퍼런스 |
 
@@ -100,7 +101,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트-로컬(`./.codex`)에 설치, `--dry-run` 으로 미리보기.
 - **non-root 전용**(전역 sudo 설치 시 root 소유 파일 방지). **postinstall 없음** — `banker setup` 을 직접 실행합니다.
-- Codex에는 **도구-무관 스킬 17개만** 설치됩니다(`codex/manifest.json`). OMC/`claude`-결합 스킬(all-in-one·ultra-init·omc-reference·setup-omc-hud/insane-search/stitch-proxy·`/banker:front-qa`)은 Claude Code 전용입니다.
+- Codex에는 **도구-무관 스킬 17개만** 설치됩니다(`codex/manifest.json`). OMC/`claude`-결합 스킬(all-in-one·ultra-init·omc-reference·setup-omc-hud/insane-search/stitch-proxy·`/banker:front-qa`)과 Claude Code 내장 `/copy` 에 의존하는 `compact-copy` 는 Claude Code 전용입니다.
 - Codex 스킬 → `~/.codex/skills/banker-<name>/` (17개). 현재 커맨드(`front-qa`·`setup`)는 둘 다 Claude 전용이라 Codex prompts는 0개입니다 — 향후 도구-무관 커맨드가 생기면 `~/.codex/prompts/banker-<name>.md`(`/banker-<name>`)로 설치됩니다. `~/.codex/AGENTS.md`는 건드리지 않습니다(omx가 재생성하므로).
 
 ## 요구사항

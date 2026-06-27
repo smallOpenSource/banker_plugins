@@ -1,97 +1,228 @@
 ---
 name: all-in-one
-description: "한 작업을 ralplan 합의 계획 → ralph 구현 → playwright 라이브 검증까지 끊김 없이 자동으로 흘리는 end-to-end 오케스트레이터 — '/all-in-one'/'올인원'/'계획부터 검증까지'/'처음부터 끝까지 알아서' 시 사용."
+description: >-
+  One-command composite pipeline that chains consensus planning → persistent
+  verified implementation → an independent test gate by running
+  /ralplan --deliberate, then /ralph --critic=critic on the resulting plan,
+  then /ultraqa --tests as a final acceptance gate. Use this whenever the user
+  says "all-in-one" / "all in one", or wants a substantial coding task taken
+  end-to-end from plan → implementation → passing tests in a single command —
+  especially when they want maximum front-loaded rigor (a consensus plan, a
+  critic-verified build, and an independent QA gate) instead of running ralplan,
+  ralph, and ultraqa by hand. Prefer this over invoking the three sub-skills
+  manually. NOT for one-line fixes (use ralph or an executor) or vague
+  idea-to-product expansion (use autopilot).
+argument-hint: "[--short] [--checkpoint] [--critic=critic|architect|codex] [--qa=tests|build|lint|typecheck] [--no-deslop] <task description>"
+level: 4
 ---
 
-# all-in-one — 계획→구현→검증 end-to-end 오케스트레이터
+# /all-in-one — Plan → Implement → QA, one command
 
-> **한 줄**: `/all-in-one <작업>` = `/ralplan --deliberate`(합의 계획) → `/ralph`(PRD 구현+승인+deslop+회귀)
-> → **playwright 라이브 검증** 을, 단계 사이의 핸드오프와 실패 루프까지 포함해 끊김 없이 연결한다.
+[ALL-IN-ONE ACTIVATED — SEQUENTIAL 3-STAGE PIPELINE]
 
-## 언제
+## Purpose
 
-- 사용자가 `/all-in-one <작업 설명>` 으로 호출.
-- "계획 세우고 구현하고 검증까지 알아서", "ralplan부터 playwright까지" 류 end-to-end 위임.
+Run one substantial coding task through three independent quality gates in a
+fixed order, each delegated to an existing OMC skill:
 
-## 언제 쓰지 말 것
+```
+Stage 1  /ralplan --deliberate     consensus plan (Planner → Architect → Critic)
+   │     → .omc/plans/ plan, "pending approval"
+   ▼
+Stage 2  /ralph --critic=critic    PRD-driven persistent build, critic-verified
+   │     → implementation + deslop + regression, then ralph self-cancels
+   ▼
+Stage 3  /ultraqa --tests          independent test-cycling acceptance gate
+         → PASS, or honest STOPPED-with-diagnosis
+```
 
-- 계획만 원함 → `/oh-my-claudecode:ralplan` 직접.
-- 구현만 원함(계획 이미 있음) → `/oh-my-claudecode:ralph` 직접.
-- 일회성 사소한 수정 → 직접 처리(이 무거운 3단 루프 불필요).
-- playwright로 검증할 수 없는 작업(런타임/UI 없음) → 3단계를 빌드/테스트 검증으로 대체하고 그렇게 보고.
+This skill is a **thin sequential orchestrator**. It does not implement, plan,
+or test directly, and it does **not** create its own persistence loop or state
+file — every loop, retry, and verification belongs to the sub-skill it
+delegates to. Its only job is to invoke the three skills in order, bridge their
+handoffs, gate each stage on the previous one's success, and report honestly.
 
-## 실행 승인 (중요)
+## Why three stages (and not just ralph)
 
-`/all-in-one` 호출 자체가 **이번 턴의 명시적 실행 승인**이다. 따라서 1단계 ralplan이 합의(APPROVE)에
-도달하면 `pending approval`에서 멈추지 말고 **그대로 2단계 ralph로 진입**한다. 계획과 구현 사이에 사용자
-확인을 끼우고 싶을 때만 `--confirm` 을 쓴다.
+The three stages exist because they defend against three *distinct* failure
+modes, and each stage's reviewer is independent of the previous stage's author
+(the core anti-self-approval principle):
 
-## 인자
+1. **Building the wrong or under-thought thing** → Stage 1's consensus +
+   pre-mortem + expanded test plan catch this before any code is written.
+2. **A partial or unverified build declared "done"** → Stage 2's PRD
+   story-by-story persistence + critic verification catch this.
+3. **Integration / regression breakage slipping past the builder's own checks**
+   → Stage 3's fresh, test-focused, fix-cycling loop catches this.
 
-- `/all-in-one <작업 설명>` — 작업 설명이 1단계 ralplan으로 들어간다. 비어 있으면 사용법만 출력하고 정지.
-- `--confirm` — 계획 승인 직후 진행/수정/중단을 한 번 묻고 멈출 수 있게 함(기본: 자동 연결).
-- `--no-deslop` — ralph의 deslop 패스를 건너뜀(ralph로 그대로 전달).
+**On the apparent redundancy of Stage 3:** ralph (Stage 2) already runs its own
+Step-7 critic verification and Step-7.6 regression re-run on the changed-file
+set. ultraqa (Stage 3) is still worth running because it is *independent* (fresh
+agents, not the ones that built it), *test-suite-focused*, and *actively fixes*
+in a cycle. If ralph's regression already ran the full suite green, ultraqa
+usually confirms in cycle 1 (cheap); its value rises when the suite is broad,
+when changes touched many files, or when integration/flaky issues hide behind
+unit-level checks. Keeping it explicit gives a clean, separate PASS signal.
 
-## 워크플로우
+## When to use
 
-### 0. 파싱 + 컨텍스트 발견
-- 인자에서 작업 설명과 플래그를 분리. 설명이 없으면 `/all-in-one <작업 설명>` 사용법만 출력하고 정지.
-- repo 규약을 **발견**한다(하드코딩 금지): `CLAUDE.md`·`AGENTS.md`·auto-memory·`scripts/`·기존
-  e2e/playwright 스펙·`package.json` 테스트 스크립트. 여기서 **검증 환경**(base URL·테스트 계정·headless
-  display·tls 옵션)과 **커밋/브랜치 규약**을 읽어 둔다. 이후 단계에서 이 발견값을 쓴다.
+- A substantial, mostly-specified coding task you want carried from plan →
+  verified implementation → green test gate in one step, with the most
+  front-loaded rigor OMC offers.
+- You have been running `ralplan → ralph → ultraqa` by hand and want it as one
+  command.
+- The task is moderately under-specified — that's fine: Stage 1's consensus
+  planning absorbs scoping, so all-in-one tolerates vaguer input than raw ralph.
 
-### 1. 계획 — `/ralplan --deliberate`
-- `Skill("oh-my-claudecode:ralplan")` 를 `--deliberate <작업 설명>` 인자로 호출.
-- Planner→Architect→Critic 합의 루프가 `APPROVE`까지 돈다(deliberate: pre-mortem 3 + 확장 테스트 계획 포함).
-- 산출: **테스트 가능한 acceptance criteria를 가진 승인 계획**. 이 AC가 2단계 PRD와 3단계 playwright
-  시나리오의 공통 출처가 된다.
-- `--confirm` 이면 여기서 AskUserQuestion으로 진행/수정/중단을 한 번 확인. 아니면 곧장 2단계로.
+## When NOT to use
 
-### 2. 구현 — `/ralph`
-- 승인된 계획을 ralph에 넘긴다: `Skill("oh-my-claudecode:ralph")`, 인자는 **승인 계획 요약 + "PRD를 이
-  계획의 acceptance criteria로 refine하라"** (`--no-deslop` 받았으면 함께 전달).
-- ralph가 PRD를 계획 AC로 구체화 → 스토리별 구현·검증 → Step-7 아키텍트 APPROVE → 7.5 deslop →
-  7.6 회귀 → Step-8 `/oh-my-claudecode:cancel` 까지 자체 완주.
-- ralph의 회귀(7.6)는 보통 unit/build/lint다. **라이브 playwright 검증은 3단계에서 별도로** 한다(사용자 명시).
+- **One-line fix or tiny change** → use `/ralph` or delegate to an executor;
+  three heavy multi-agent loops is overkill.
+- **Pure exploration / brainstorming** → use `/oh-my-claudecode:plan` or the
+  brainstorming skill; nothing should be implemented yet.
+- **A 2-3 line product idea needing requirements expansion** → use
+  `/autopilot` (it expands the idea first) or `/deep-interview`.
+- **Frontend spec / reference-parity work** → use the specialized `/front-qa`.
 
-### 3. 검증 — playwright 라이브
-- 0단계에서 발견한 검증 환경으로 **실제 구동 중인 앱**을 검사한다. 계획 AC를 playwright 시나리오로 옮긴다.
-- **실제 모델 + 대표 입력으로 재현**한다(편의 모델·빈약 픽스처로 결론 내지 말 것).
-- 변경이 화면에 닿았는지 헷갈리면 **fresh-context(서비스워커 없는) 프로브**로 "서버가 고쳐졌나 vs 사용자
-  캐시"를 가른다.
-- 판정: AC별로 PASS/FAIL을 **증거(셀렉터 단언·콘솔·스크린샷·네트워크)** 와 함께 보고.
-- **FAIL이면** 그 결함을 픽스 패스(필요 시 ralph/executor)로 돌리고 재검증 — 유한 횟수 루프 후에도 막히면
-  정직하게 보고한다.
-- 검증용 throwaway 스펙·`test-results/`·`playwright-report/` 는 **커밋 전에 제거**. 테스트 계정은 새로
-  만들지 말고 기존 프로브를 재사용, 만든 대화는 정리.
+## Flags
 
-### 4. 마무리 보고 + 정리
-- 무엇을 계획/구현/검증했는지 + 증거를 압축 보고.
-- repo 커밋/브랜치 규약대로 마감(0단계 발견값). 규약이 명확하거나 사용자가 요청한 경우에만 커밋/push.
-  변경 로그가 있으면 1행 추가.
-- 활성 모드 정리: ralph가 Step-8에서 cancel을 돌리지만, 끝에 활성 OMC 모드가 남아 있지 않은지 확인.
+| Flag | Effect | Default |
+|---|---|---|
+| `--short` | Stage 1 runs ralplan **without** `--deliberate` (skips pre-mortem + expanded test plan) for lower-risk work | off → deliberate |
+| `--checkpoint` | Insert an `AskUserQuestion` approval gate between Stage 1 (plan) and Stage 2 (implement) | off → auto-proceed |
+| `--critic=critic\|architect\|codex` | Reviewer passed to ralph's verification | `critic` |
+| `--qa=tests\|build\|lint\|typecheck` | Goal passed to ultraqa in Stage 3 | `tests` |
+| `--no-deslop` | Passed through to ralph (skip the post-review deslop pass) | off |
 
-## 핵심 핸드오프 (이 스킬의 본질)
-- **계획 AC → ralph PRD 스토리 → playwright 시나리오**가 같은 acceptance criteria를 관통해야 한다. 세
-  단계가 서로 다른 걸 검증하면 all-in-one이 아니라 분리된 세 작업이 된다.
-- 각 단계의 실패 루프를 살려 둔다: 1단계 합의 루프 · 2단계 스토리 루프 · 3단계 fix→reverify 루프.
+Everything before the flags / after them that isn't a recognized flag is the
+`<task description>`.
 
-## 하드 제약
-- **검증 신뢰**: headless e2e PASS ≠ 시각/UX 완료. 픽셀·레이아웃·감성은 사용자 실기기 확인 몫임을 보고에
-  명시. 단 fresh-context 프로브는 "서버 진실"엔 신뢰 가능.
-- **비밀값 금지**: `.env*`·키·DSN·계정 비번은 READ만, 출력·커밋 절대 금지. 검증 env는 발견하되 값은 인용하지 않음.
-- **범위 고정**: 작업 설명의 범위만. 3단계가 새 결함을 발견해도 원래 AC 밖이면 별도 follow-up으로 보고(스코프 크리프 금지).
-- `/tmp` 하네스·빌드 산출물·throwaway 스펙은 커밋 대상 아님.
+## Execution
 
-## 완료 체크리스트
-- [ ] 1단계 ralplan이 APPROVE 도달(합의 계획 + 테스트 가능 AC)
-- [ ] 2단계 ralph 완주(스토리 전부 passes · 아키텍트 APPROVE · deslop · 회귀 green · cancel)
-- [ ] 3단계 playwright 라이브 검증을 실제 모델+대표 입력으로 수행, AC별 증거 확보
-- [ ] throwaway 스펙·test-results·playwright-report 제거, 테스트 계정/대화 정리
-- [ ] 시각/UX는 사용자 실기기 확인 몫임을 보고에 명시
-- [ ] 활성 OMC 모드 없음
+### Stage 1 — Plan: `/ralplan`
 
-## 프로젝트 오버라이드
-특정 repo가 고정 검증 환경/커밋 규약을 가지면 project-level `.claude/skills/all-in-one/SKILL.md` 로 이 global
-버전을 덮어쓸 수 있다(예: repo별 변경 로그 위치 + 커밋/브랜치 규약 + base URL·e2e 프로브·headless display 등
-검증 env 를 프로젝트 값으로 고정).
+Invoke `Skill(oh-my-claudecode:ralplan)` with args `--deliberate <task description>`
+(omit `--deliberate` if `--short` was passed). Do **not** pass `--interactive` —
+all-in-one supplies its own checkpoint via `--checkpoint`.
+
+ralplan runs the Planner → Architect → Critic consensus loop and, on Critic
+approval, writes the final plan to `.omc/plans/` and marks it `pending approval`,
+then **stops**.
+
+> **This "stop" is the end of the PLANNING stage, not the end of all-in-one.**
+> The user invoking `/all-in-one` is their standing, explicit opt-in to execute
+> the whole chain in this turn — which satisfies ralplan's planning/execution
+> boundary. Capture the plan file path and proceed to Stage 2.
+
+- **If `--checkpoint`:** before proceeding, use `AskUserQuestion` to present the
+  plan and offer *Approve & implement / Request changes / Stop*. Only continue
+  on approval.
+- **If consensus is NOT reached** (ralplan hits its 5-iteration cap with no
+  `APPROVE`): do not auto-proceed. Surface the best plan and ask the user how to
+  proceed. Never build on an unapproved plan.
+
+### Stage 2 — Implement: `/ralph`
+
+Precondition: a consensus plan exists and is approved (auto via the invocation,
+or via `--checkpoint`).
+
+Invoke `Skill(oh-my-claudecode:ralph)` with args
+`--critic=<critic flag> <plan-path + brief task restatement>` (add `--no-deslop`
+if passed). Hand ralph the **plan file path from Stage 1** as the task
+definition and tell it the plan is already Planner/Architect/Critic-validated —
+its job is to turn the plan's stages into PRD stories and implement + verify
+them, not to re-plan. (This mirrors how autopilot consumes a ralplan plan and
+skips its own planning phase.)
+
+ralph runs its full loop on its own: PRD refinement → implement per story →
+verify acceptance criteria → Step-7 critic verification → Step-7.5 deslop →
+Step-7.6 regression → Step-8 `/oh-my-claudecode:cancel`.
+
+> ralph's Step-8 cancel clears **ralph/ultrawork** session state — it ends the
+> IMPLEMENTATION stage, not all-in-one. all-in-one is not a registered OMC mode,
+> so the cancel does not affect it. Let ralph fully finish (reviewer APPROVE +
+> deslop + regression + cancel) **before** Stage 3 — ralph and ultraqa share
+> mutually-exclusive session state, so they must not overlap.
+
+- **If ralph reports a fundamental blocker** (same issue across 3+ iterations,
+  missing credentials, unclear requirement, external dependency down): stop and
+  report. Do **not** run Stage 3 on a broken or partial build and call it done.
+
+### Stage 3 — QA gate: `/ultraqa`
+
+Precondition: Stage 2's ralph has completed and self-cancelled (no session-state
+overlap).
+
+Invoke `Skill(oh-my-claudecode:ultraqa)` with args `--<qa goal>` (default
+`--tests`). ultraqa cycles run-QA → architect-diagnose → executor-fix → repeat
+(max 5; early-exit if the same failure appears 3×).
+
+Report the real outcome:
+- **Goal met** → "ALL-IN-ONE COMPLETE" with the cycle count.
+- **Max cycles / same failure 3×** → "STOPPED" with ultraqa's diagnosis. Do
+  **not** claim success if the gate did not reach goal-met.
+
+## Orchestrator rules
+
+- Stages run strictly in order; each stage's success gate must pass before the
+  next begins. No skipping, no reordering, no running two stages' loops at once.
+- Emit one clear progress line at each stage boundary so the user always knows
+  where the pipeline is (`[all-in-one] Stage 1/3 — planning…`, etc.).
+- Do not add a competing persistence loop or all-in-one-specific state file; the
+  sub-skills own all looping and state.
+- Treat a sub-skill's internal "stop"/"cancel" as the end of *that stage*, never
+  as the end of the pipeline (see the Stage 1 and Stage 2 notes above).
+
+## Final report
+
+When the pipeline ends (complete or stopped), give a concise honest summary:
+
+- **Plan**: consensus reached? plan path. Any alternatives rejected and why
+  (1 line).
+- **Implementation**: stories/stages completed, files changed, the ralph critic
+  verdict.
+- **QA**: ultraqa goal, PASS after N cycles or STOPPED-with-diagnosis.
+- **Unmet / scope-limited / deferred**: state plainly — never paper over a gate
+  that did not pass.
+
+## Examples
+
+**Good** — `"all-in-one add idempotency keys to POST /api/v1/payments so retried
+requests don't double-charge; keys stored in payment_requests, 24h TTL"`
+Specific subsystem, concrete behavior, and a storage hint. Stage 1 plans the
+schema + flow with a pre-mortem, Stage 2 implements story-by-story with critic
+sign-off, Stage 3 runs the test suite as an independent gate. Good fit.
+
+**Good** — `"/all-in-one --short --qa=typecheck refactor user_context to drop the
+unused Session import and split the god-object into mixins"`
+Lower-risk refactor → `--short` skips the heavy pre-mortem; the final gate is a
+typecheck rather than the full suite.
+
+**Bad** — `"all-in-one fix the typo in the README header"`
+A one-line change does not need three multi-agent loops. Edit it directly or use
+ralph.
+
+**Bad** — `"all-in-one build me something cool for productivity"`
+A vague idea with no concrete target — use `/autopilot` or `/deep-interview`
+first to expand it into a spec.
+
+## Stop conditions
+
+- Stage 1 cannot reach consensus → surface best plan, ask the user (don't build).
+- Stage 2 ralph hits a fundamental blocker → stop and report (don't run QA).
+- Stage 3 ultraqa exhausts cycles / repeats a failure 3× → report the diagnosis
+  honestly (don't claim success).
+- User says "stop" / "cancel" / "abort" at any point → run
+  `/oh-my-claudecode:cancel` and stop.
+
+## Final checklist
+
+- [ ] Stage 1 produced a consensus plan in `.omc/plans/` (or stopped honestly on
+      no-consensus / checkpoint rejection)
+- [ ] Stage 2 received the plan path, completed all PRD stories, passed critic
+      verification, and self-cancelled before Stage 3
+- [ ] Stages did not overlap (ralph fully ended before ultraqa began)
+- [ ] Stage 3 ran the chosen QA goal and reached goal-met (or reported STOPPED
+      with diagnosis)
+- [ ] Final report states plan/implementation/QA outcomes and any unmet items
+      plainly

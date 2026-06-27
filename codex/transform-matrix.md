@@ -17,7 +17,7 @@ The generator (`banker setup --codex`) applies the rules below for `target: both
 - `--scope user` (default) → `~/.codex/…`. `--scope project` → `./.codex/…`.
 
 ## Excluded (claude-only) — never generated for Codex
-Skills: all-in-one, ultra-init, omc-reference, setup-omc-hud, setup-insane-search, setup-stitch-proxy.
+Skills: all-in-one, compact-copy, ultra-init, omc-reference, setup-omc-hud, setup-insane-search, setup-stitch-proxy.
 Commands: front-qa, setup. (Reasons in `manifest.json`.)
 
 ## Caveats (documented; not blockers)
