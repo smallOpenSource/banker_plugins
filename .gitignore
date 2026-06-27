@@ -21,3 +21,9 @@ Thumbs.db
 
 # Codex project-scope install (banker setup --codex --scope project)
 .codex/
+
+# local-only npm publish helper (do not commit/publish)
+scripts/publish_npm.sh
+
+# build-knowledge wiki (local-only; lives at build_plugin/wiki_docs) — never commit/publish
+wiki_docs/
