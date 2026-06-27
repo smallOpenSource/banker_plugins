@@ -40,7 +40,7 @@ try {
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
   ok(copies === 17, `codex dry-run plans 17 skill copies (got ${copies})`);
-  const excluded = ['all-in-one', 'omc-reference', 'ultra-init', 'setup-omc-hud', 'setup-insane-search', 'setup-stitch-proxy'];
+  const excluded = ['all-in-one', 'compact-copy', 'omc-reference', 'ultra-init', 'setup-omc-hud', 'setup-insane-search', 'setup-stitch-proxy'];
   ok(!excluded.some((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run excludes claude-only skills');
   ok(codexOut.includes('AGENTS.md is NOT modified'), 'codex states AGENTS.md untouched');
 
