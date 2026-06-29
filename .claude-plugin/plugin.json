@@ -1,6 +1,6 @@
 {
   "name": "banker",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Claude Code plugin: QA/audit/docs/architecture skills + commands, a /banker:setup installer for OS dependencies (playwright, etc.), and wiki compaction.",
   "author": {
     "name": "smallOpenSource",
