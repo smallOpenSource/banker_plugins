@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.3] - 2026-06-29
+
+### Security
+- `lineage` 스킬 문서의 `LINEAGE_REDACT_EXTRA` / `--redact-extra` 예시에서 실제 프로젝트 비밀 키워드 예시를 중립 플레이스홀더(`acme-corp,db-pass`)로 교체 — npm tarball·GitHub 노출 제거. 기능·내장 정규식 패턴은 불변.
+
 ## [0.1.2] - 2026-06-28
 
 ### Added

@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Claude Code skills + commands — QA, audit, docs, architecture, dependency setup, and wiki; the banker plugin marketplace.",
-    "version": "0.1.2"
+    "version": "0.1.3"
   },
   "plugins": [
     {
