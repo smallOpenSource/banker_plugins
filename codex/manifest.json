@@ -18,14 +18,15 @@
     { "name": "refresh-git-ignore",   "type": "skill",   "target": "both",        "reason": ".gitignore refresh; tool-agnostic", "supportingFiles": [] },
     { "name": "rfp-author",           "type": "skill",   "target": "both",        "reason": "RFP authoring framework; tool-agnostic", "supportingFiles": ["references/compliance-and-ai-llm.md", "references/korean-rfp-framework.md", "references/research-provenance.md", "references/this-project-scope.md", "references/vendor-rfp-structure.md", "templates/rfp-skeleton.md", "scripts/md2docx.py"] },
     { "name": "setup-playwright",     "type": "skill",   "target": "both",        "reason": "playwright/browser install; tool-agnostic (genericize /banker:setup trigger ref for Codex)", "supportingFiles": [] },
+    { "name": "setup-insane-search",  "type": "skill",   "target": "both",        "reason": "installs the insane-search plugin; Claude via `claude plugin`, Codex via `codex plugin add insane-research-codex@gptaku-codex`", "supportingFiles": [] },
     { "name": "ultra-ui-qa",          "type": "skill",   "target": "both",        "reason": "UI vs SoT QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
 
     { "name": "all-in-one",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan->ralph->ultraqa (Claude/OMC-specific)", "supportingFiles": [] },
     { "name": "compact-copy",         "type": "skill",   "target": "claude-only", "reason": "manipulates Claude Code /copy + response.md artifact (Claude-specific)", "caveat": "depends on Claude Code /copy builtin + /tmp/claude-<uid>/response.md internal path; may change across Claude Code versions", "supportingFiles": [] },
     { "name": "ultra-init",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan/ultragoal/ralph/ultraqa (Claude/OMC-specific)", "supportingFiles": [] },
     { "name": "omc-reference",        "type": "skill",   "target": "claude-only", "reason": "OMC-internal agent/tool/skill registry reference", "supportingFiles": [] },
+    { "name": "setup-omc",            "type": "skill",   "target": "claude-only", "reason": "installs/refreshes oh-my-claudecode (OMC) that all-in-one/ultra-init/front-qa depend on; Codex users run `omx setup`", "supportingFiles": [] },
     { "name": "setup-omc-hud",        "type": "skill",   "target": "claude-only", "reason": "installs omc_hud (Claude Code statusline)", "supportingFiles": [] },
-    { "name": "setup-insane-search",  "type": "skill",   "target": "claude-only", "reason": "shells `claude plugin` to install a Claude Code plugin", "supportingFiles": [] },
     { "name": "setup-stitch-proxy",   "type": "skill",   "target": "claude-only", "reason": "shells `claude mcp add` (Claude Code MCP registration)", "supportingFiles": [] },
 
     { "name": "front-qa",             "type": "command", "target": "claude-only", "reason": "ralplan->ralph->loop OMC pipeline command", "supportingFiles": [] },

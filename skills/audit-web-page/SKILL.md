@@ -10,6 +10,12 @@ description: "가동 중 웹페이지를 playwright로 라이브 점검(버튼·
 스크린샷으로 캡처해 **직접 Read로 육안 판정**한다. unit/build 게이트로 대체 불가능한
 "진짜 화면이 동작/렌더하는가"를 확증하는 마지막 검증 레인.
 
+## 0. 전제조건: playwright (없으면 설치부터)
+
+이 스킬은 playwright 브라우저가 있어야 동작한다. **진행 전 설치 여부를 먼저 확인**하고, 없으면 **설치부터 안내**한다(추정·임의 재설치 금지):
+- 확인: `ls "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" 2>/dev/null | grep -qi chromium && echo ok`
+- 미설치면 먼저 `setup-playwright` 스킬로 설치(Claude Code: `/banker:setup` → setup-playwright / Codex: `banker-setup-playwright`). 설치·검증 후 이 스킬을 이어서 진행한다.
+
 ## 언제
 
 - 사용자가 `audit-web-page` 또는 "라이브로 점검/검증", "playwright로 화면 확인" 요청.

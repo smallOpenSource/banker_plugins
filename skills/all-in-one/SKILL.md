@@ -20,6 +20,12 @@ level: 4
 
 [ALL-IN-ONE ACTIVATED — SEQUENTIAL 3-STAGE PIPELINE]
 
+## 0. Prerequisite: OMC (install first if missing)
+
+This skill orchestrates OMC's `ralplan` → `ralph` → `ultraqa`. **Check the dependency before running**; if it is missing, **guide installation first** rather than failing mid-pipeline:
+- Check: `command -v omc` and whether `/oh-my-claudecode:*` skills are available.
+- If missing: install via `/banker:setup` → oh-my-claudecode (or the `setup-omc` skill / `omc update`), then resume. On Codex the equivalent is OMX (`omx setup`).
+
 ## Purpose
 
 Run one substantial coding task through three independent quality gates in a

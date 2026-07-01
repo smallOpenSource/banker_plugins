@@ -8,6 +8,12 @@ argument-hint: "[스펙/note 파일 경로 — 생략 시 docs/note.txt]"
 `$1`(없으면 `docs/note.txt`)의 요구사항을 React 프론트엔드(`$FRONTEND_DIR`, 예: `apps/web`)에 구현하고,
 **레퍼런스 구현(reference implementation — 예: 이전 Streamlit/타 빌드)과 엄격 비교 + 스펙 지시 정확 준수**를 검증한다. 모든 항목 해결까지 진행.
 
+## 0. 전제조건: OMC (없으면 설치부터)
+
+이 커맨드는 `/ralplan`·`/ralph` 등 oh-my-claudecode(OMC)에 의존한다. **진행 전 먼저 확인**하고, 없으면 **설치부터 안내**한다:
+- 확인: `command -v omc` + `/oh-my-claudecode:*` 사용 가능 여부.
+- 미설치면 `/banker:setup` → oh-my-claudecode(또는 `setup-omc` 스킬 / `omc update`)로 먼저 구성한 뒤 이어서 진행.
+
 ## 절차 (CLAUDE.md: 계획 없는 즉시실행 금지)
 
 1. **스펙 정독**: 대상 파일을 읽어 요구사항을 항목화. 코드베이스 정찰(병렬 explore/general-purpose 에이전트로
