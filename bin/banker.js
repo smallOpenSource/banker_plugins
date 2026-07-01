@@ -81,6 +81,48 @@ function copyFile(src, dest, dryRun) {
   fs.copyFileSync(src, dest);
 }
 
+// Remove every prior `banker-*` skill dir and prompt file so a re-run is a clean
+// reinstall — a skill dropped from the manifest (or renamed) never lingers as a stale duplicate.
+function sweepCodexArtifacts(base, dryRun) {
+  let removed = 0;
+  for (const sub of ['skills', 'prompts']) {
+    const dir = path.join(base, sub);
+    let entries = [];
+    try { entries = fs.readdirSync(dir).filter(d => d.startsWith('banker-')); } catch { /* dir absent */ }
+    for (const e of entries) {
+      const p = path.join(dir, e);
+      if (dryRun) { log(`  [dry-run] sweep ${p}`); continue; }
+      fs.rmSync(p, { recursive: true, force: true });
+      removed++;
+    }
+  }
+  return removed;
+}
+
+// Read a SKILL.md frontmatter `name:` (used by doctor to verify the Codex dir==name rule).
+function readSkillName(skillMd) {
+  let src;
+  try { src = fs.readFileSync(skillMd, 'utf8'); } catch { return null; }
+  const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return null;
+  const m = fm[1].match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);
+  return m ? m[1] : null;
+}
+
+// Codex discovers skills by directory and expects the SKILL.md frontmatter `name:` to equal the
+// directory name. Our Codex dir is `banker-<name>` (prefixed to avoid colliding with omx/system
+// skills), so rewrite ONLY the first `name:` line inside the YAML frontmatter to match.
+function setCodexSkillName(skillMd, newName, dryRun) {
+  if (dryRun) { log(`  [dry-run] set frontmatter name: ${newName}`); return; }
+  let src;
+  try { src = fs.readFileSync(skillMd, 'utf8'); } catch { return; }
+  const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return;                                   // no frontmatter — leave untouched
+  let block = fm[1];
+  block = /^name:.*$/m.test(block) ? block.replace(/^name:.*$/m, `name: ${newName}`) : `name: ${newName}\n${block}`;
+  fs.writeFileSync(skillMd, src.slice(0, fm.index) + `---\n${block}\n---` + src.slice(fm.index + fm[0].length));
+}
+
 /* ---------- Claude Code target ---------- */
 function setupClaude(dryRun) {
   log('• Claude Code:');
@@ -95,6 +137,7 @@ function setupClaude(dryRun) {
     catch (e) { warn(`  step failed (may already be applied): ${bin} ${args.join(' ')}`); }
   }
   log('  → skills/commands available as /banker:* (reload-plugins or restart to apply).');
+  log('  → for all-in-one / ultra-init / front-qa, install OMC too: run /banker:setup and pick oh-my-claudecode (or `omc update`).');
   return true;
 }
 
@@ -105,10 +148,15 @@ function setupCodex(dryRun, scope) {
   const base = codexBase(scope);
   const skillsDir = path.join(base, 'skills');
   const promptsDir = path.join(base, 'prompts');
+  // Clean reinstall: remove any prior banker-* first so an update never leaves a stale duplicate.
+  const swept = sweepCodexArtifacts(base, dryRun);
+  if (swept) log(`  swept ${swept} prior banker-* artifact(s) before reinstall.`);
   let nSkill = 0, nCmd = 0;
   for (const s of eligible(m)) {
     if (s.type === 'skill') {
-      copyDir(path.join(PKG_ROOT, 'skills', s.name), path.join(skillsDir, `banker-${s.name}`), dryRun);
+      const dest = path.join(skillsDir, `banker-${s.name}`);
+      copyDir(path.join(PKG_ROOT, 'skills', s.name), dest, dryRun);
+      setCodexSkillName(path.join(dest, 'SKILL.md'), `banker-${s.name}`, dryRun); // dir==name (Codex discovery)
       nSkill++;
     } else if (s.type === 'command') {
       copyFile(path.join(PKG_ROOT, 'commands', `${s.name}.md`), path.join(promptsDir, `banker-${s.name}.md`), dryRun);
@@ -116,6 +164,7 @@ function setupCodex(dryRun, scope) {
     }
   }
   log(`  → ${nSkill} skills -> ${path.join(base, 'skills', 'banker-*')}, ${nCmd} prompts -> ${path.join(base, 'prompts', 'banker-*.md')}`);
+  log('  → skills are invoked as `banker-<name>` (frontmatter name rewritten to match the dir).');
   log('  → ~/.codex/AGENTS.md is NOT modified (omx regenerates it); skills auto-discovered from ~/.codex/skills/.');
   return true;
 }
@@ -133,8 +182,20 @@ function doctor() {
   try { installed = fs.readdirSync(sdir).filter(d => d.startsWith('banker-')); } catch {}
   log(`  codex CLI: ${have('codex') ? 'found' : 'NOT found'}`);
   log(`  installed banker skills in ~/.codex/skills: ${installed.length}`);
+  // Codex only discovers a skill when its dir name equals the SKILL.md `name:` — flag any mismatch.
+  const mismatched = installed
+    .map(d => ({ d, name: readSkillName(path.join(sdir, d, 'SKILL.md')) }))
+    .filter(x => x.name && x.name !== x.d);
+  if (mismatched.length) {
+    log(`  ⚠ dir/name mismatch (Codex will NOT list these) — reinstall with this version:`);
+    for (const x of mismatched) log(`      ${x.d}/  has  name: ${x.name}`);
+  }
+  if (have('codex') && installed.length === 0) log('  ⚠ codex found but 0 banker skills installed — run: banker setup --codex');
   const m = readManifest();
-  log(`  manifest: ${eligible(m).length} codex-eligible surfaces (of ${m.surfaces.length}).`);
+  const nSkills = eligible(m).filter(s => s.type === 'skill').length;
+  log(`  manifest: ${eligible(m).length} codex-eligible surfaces (${nSkills} skills) of ${m.surfaces.length}.`);
+  log('Dependencies: all-in-one / ultra-init / front-qa need OMC (Claude) or OMX (Codex); browser skills need playwright.');
+  log('  → install via /banker:setup (Claude) or the setup-* skills; skills also guide you if a dependency is missing.');
 }
 
 /* ---------- uninstall ---------- */

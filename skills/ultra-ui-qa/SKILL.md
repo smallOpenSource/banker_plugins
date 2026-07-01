@@ -8,6 +8,11 @@ description: "웹 UI를 playwright로 실제 렌더해 디자인 SoT(PDF/스펙)
 웹 앱 프론트엔드를 **실제 브라우저로 렌더링**(playwright)해 디자인 SoT(PDF/스펙)와 1:1 대조하고,
 사용자/임원이 볼 필요 없는 **내부개념 텍스트 누출**을 잡아 debug 토글로 게이트하는 UI QA 워크플로우.
 
+## 0. 전제조건: playwright (없으면 설치부터)
+이 스킬은 playwright 브라우저가 있어야 동작한다. **진행 전 설치 여부를 먼저 확인**하고, 없으면 **설치부터 안내**한다(추정·임의 재설치 금지):
+- 확인: `ls "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" 2>/dev/null | grep -qi chromium && echo ok`
+- 미설치면 먼저 `setup-playwright` 스킬로 설치(Claude Code: `/banker:setup` → setup-playwright / Codex: `banker-setup-playwright`). 설치·검증 후 이 스킬을 이어서 진행한다.
+
 ## When to use
 - "ultra ui qa", "UI 대조", "디자인 PDF와 대조", "내부개념/어색한 내용 점검", "표 title·차트 크기 비교"
 - 화면/버튼/기능이 SoT(PDF + spec)대로 구현됐는지 **렌더만이 아니라 데이터·소스까지** 엄격 검사할 때

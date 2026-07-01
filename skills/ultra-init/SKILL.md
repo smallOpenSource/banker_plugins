@@ -44,7 +44,7 @@ Several bundled skills are loop/persistence engines. To prevent competing loops,
 ### Phase 0 — Preflight (준비)
 - Resolve the brief from the skill arguments. If it is empty, ask once for the brief, then proceed.
 - Parse flags: planning depth (`--deliberate` = default, `--short` = lighter ralplan), `--gated`, `--qa <dims>`, `--critic=...`, `--plan-id <id>`.
-- Confirm the `omc` CLI is available (needed for ultragoal). If it is missing, run ultragoal in **degraded mode**: skip the durable ledger and instead write the approved plan to `plan.md` + rely on ralph's session-scoped `prd.json`. Say so explicitly when degrading.
+- **OMC prerequisite**: this skill orchestrates OMC's `ralplan`/`ralph`/`ultraqa`, so it needs the `omc` CLI. Check `command -v omc`; if missing, **guide installation first** via `/banker:setup` → oh-my-claudecode (or the `setup-omc` skill / `omc update`), then resume once it is available. Only if the user declines to install, run ultragoal in **degraded mode**: skip the durable ledger, write the approved plan to `plan.md`, and rely on ralph's session-scoped `prd.json` (say so explicitly).
 
 ### Phase 1 — PLAN: ralplan --deliberate (합의 계획)
 - Invoke `Skill("oh-my-claudecode:ralplan")` with `--deliberate <brief>` in **non-interactive** mode (so it produces the consensus-approved plan, marks it `pending approval`, and **stops without launching team/ralph itself** — ultra-init controls the hand-off).
