@@ -23,5 +23,5 @@ Commands: front-qa, setup. (Reasons in `manifest.json`.)
 
 ## Caveats (documented; not blockers)
 - `append_wiki`, `compact-wiki` — use `wiki_*` MCP at runtime → copy fine, need a wiki MCP available in Codex.
-- `audit-web-page`, `game-qa`, `ultra-ui-qa` — need playwright (install via `setup-playwright`).
+- `audit-web-page`, `play-qa`, `ultra-ui-qa` — need playwright (install via `setup-playwright`).
 - `setup-playwright` — genericize the `/banker:setup` trigger phrasing for the Codex copy.

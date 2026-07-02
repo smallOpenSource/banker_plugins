@@ -8,7 +8,7 @@
     { "name": "audit-security",       "type": "skill",   "target": "both",        "reason": "SCA/SAST/secrets methodology; tool-agnostic", "supportingFiles": [] },
     { "name": "audit-web-page",       "type": "skill",   "target": "both",        "reason": "playwright live page audit; tool-agnostic", "supportingFiles": ["harness.py"], "caveat": "needs playwright (setup-playwright)" },
     { "name": "compact-wiki",         "type": "skill",   "target": "both",        "reason": "wiki dedup/merge; tool-agnostic workflow", "supportingFiles": [], "caveat": "uses wiki_* MCP at runtime" },
-    { "name": "game-qa",              "type": "skill",   "target": "both",        "reason": "Godot HTML5 in-browser QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
+    { "name": "play-qa",              "type": "skill",   "target": "both",        "reason": "Godot HTML5 in-browser QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
     { "name": "humanizer",            "type": "skill",   "target": "both",        "reason": "AI-writing cleanup; tool-agnostic (vendored MIT)", "supportingFiles": ["LICENSE", "README.md", "AGENTS.md"] },
     { "name": "lineage",              "type": "skill",   "target": "both",        "reason": "session->HTML export; tool-agnostic", "supportingFiles": ["lineage.py"] },
     { "name": "make-notion-guide",    "type": "skill",   "target": "both",        "reason": "API guide authoring; tool-agnostic", "supportingFiles": [] },
