@@ -59,12 +59,18 @@ try {
   const staleDir = path.join(home2, '.codex', 'skills', 'banker-STALE');
   fs.mkdirSync(staleDir, { recursive: true });
   fs.writeFileSync(path.join(staleDir, 'SKILL.md'), '---\nname: banker-STALE\n---\n');
+  // rename-case guard: seed the OLD name (game-qa -> play-qa) and assert update sweeps it out
+  const renamedAwayDir = path.join(home2, '.codex', 'skills', 'banker-game-qa');
+  fs.mkdirSync(renamedAwayDir, { recursive: true });
+  fs.writeFileSync(path.join(renamedAwayDir, 'SKILL.md'), '---\nname: banker-game-qa\n---\n');
   const env2 = { ...process.env, HOME: home2, USERPROFILE: home2 };
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
   ok(installed.length === 18, `real codex install has 18 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
+  ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
+  ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
   const readName = (md) => {
     const m = fs.readFileSync(md, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/);
     const nm = m && m[1].match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);

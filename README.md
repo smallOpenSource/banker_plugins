@@ -49,7 +49,7 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 | `audit-security` | 보안 취약점(CVE·SAST·시크릿) 진단 (read-only) |
 | `audit-mock` | 하드코딩·mock/stub·열거형 정적 검출 (read-only) |
 | `audit-web-page` | 라이브 웹 페이지 점검 (playwright·WebGL 캔버스) |
-| `game-qa` | 웹 게임(Godot HTML5) 직접 플레이 QA |
+| `play-qa` | Godot HTML5까지 포함한 웹 환경 직접 플레이 QA |
 | `ultra-ui-qa` | UI를 기준(디자인 PDF/스펙)과 1:1 대조 QA |
 
 ### 스킬: 문서 · 디자인 · 위키
@@ -112,7 +112,7 @@ banker uninstall        # 제거
 - 또는 Node.js ≥ 16.7 (npm 전역 설치 경로): `banker` CLI 제공.
 - 일부 스킬은 별도 의존성이 필요하며 `/banker:setup` 으로 설치합니다. 의존성이 없으면 각 스킬이 실행 전에 설치부터 안내합니다.
   - `all-in-one`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC). Codex에서는 OMX.
-  - `audit-web-page`, `game-qa`, `ultra-ui-qa`: playwright.
+  - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright.
 
 ## 업데이트 / 제거
 
@@ -144,7 +144,7 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 코드로 포함(재배포)하는 서드파티는 `humanizer` 뿐입니다. 아래는 스킬이 **런타임에 의존하거나 연동**하는 외부 요소로, banker 가 재배포하지 않으며 각 라이선스·상표는 소유자에게 있습니다.
 
 **의존 라이브러리·도구 (사용 시 별도 설치, 라이선스는 각 프로젝트 소유)**
-- Python: python-pptx(MIT, `arch-diagram`), python-docx(MIT, `rfp-author`), Playwright(Apache-2.0, `audit-web-page`·`game-qa`·`ultra-ui-qa`), detect-secrets(Apache-2.0, `lineage` 시크릿 스캔).
+- Python: python-pptx(MIT, `arch-diagram`), python-docx(MIT, `rfp-author`), Playwright(Apache-2.0, `audit-web-page`·`play-qa`·`ultra-ui-qa`), detect-secrets(Apache-2.0, `lineage` 시크릿 스캔).
 - 브라우저·렌더링: Chromium(BSD-3-Clause), SwiftShader(Apache-2.0), Xvfb·X.Org(MIT). `setup-playwright` 및 브라우저 QA 스킬이 사용.
 - 문서·다이어그램: PlantUML(GPL 계열·다중 라이선스, `arch-diagram`), Poppler(GPL, `pdftoppm`), ImageMagick(ImageMagick License, `pdf-vision-extract`).
 
@@ -152,4 +152,4 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 - 프레임워크: oh-my-claudecode(OMC, **MIT**)·oh-my-codex(OMX, **MIT**), by [Yeachan-Heo](https://github.com/Yeachan-Heo). `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` 가 사용.
 - 플러그인: insane-search(**MIT**, © fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)). `setup-insane-search` 가 설치.
 - 서비스·디자인(독점·상표): Notion(`make-notion-guide`), Google Stitch(`setup-stitch-proxy`), Nothing 디자인 언어(`nothing-design`).
-- QA 대상 엔진(예시): Godot(MIT), Phaser(MIT) 등(`game-qa`).
+- QA 대상 엔진(예시): Godot(MIT), Phaser(MIT) 등(`play-qa`).

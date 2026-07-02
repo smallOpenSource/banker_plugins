@@ -13,7 +13,7 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
 1. **선택 받기**: `$ARGUMENTS` 에 컴포넌트명이 명시돼 있으면 그것만 실행(질문 생략).
    비어 있으면 아래 5개를 `AskUserQuestion`(**multiSelect: true**)으로 제시한다:
    - **setup-omc** — oh-my-claudecode(OMC) 설치/갱신. `all-in-one`·`ultra-init`·`/banker:front-qa` 의존성(Codex는 OMX).
-   - **setup-playwright** — Playwright + 브라우저 + headless 디스플레이(Xvfb). RHEL8/Rocky8 등 비공식 지원·non-root·no-conda 폴백 포함. (`ultra-ui-qa`·`audit-web-page`·`game-qa` 의존성)
+   - **setup-playwright** — Playwright + 브라우저 + headless 디스플레이(Xvfb). RHEL8/Rocky8 등 비공식 지원·non-root·no-conda 폴백 포함. (`ultra-ui-qa`·`audit-web-page`·`play-qa` 의존성)
    - **setup-omc-hud** — omc_hud 상태표시줄 설치(OS별).
    - **setup-insane-search** — insane-search 플러그인(차단 사이트 우회) 설치(Claude/Codex 양쪽 경로).
    - **setup-stitch-proxy** — Stitch(디자인 생성) MCP 프록시 등록(API key 필요).

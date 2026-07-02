@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.0] - 2026-07-02
+
+### Changed
+- **`game-qa` → `play-qa` 개명**: 웹 게임 전용 표기에서 Godot HTML5까지 포함한 웹 환경 직접 플레이 QA로 범위를 넓히고 스킬명을 `play-qa` 로 바꿨다. 스킬 디렉터리·프론트매터 `name:`·트리거·`codex/manifest.json`·README·문서 참조를 일괄 갱신했다. Codex에는 `banker-play-qa` 로 설치되며, 업데이트 시 옛 `banker-game-qa` 는 `banker setup --codex` 의 `banker-*` sweep 으로 자동 제거된다(`scripts/smoke-test.js` 에 회귀 단언 추가). `/banker:game-qa` 는 더 이상 해석되지 않으므로 minor 버전을 올린다.
+
 ## [0.2.0] - 2026-07-01
 
 ### Fixed
