@@ -1,9 +1,11 @@
 name: harness-setup-ci
 
-# Per-OS "존재 vs 동작" verification for the 0.5.0 harness-setup skills.
+# Per-OS "존재 vs 동작" verification for the 0.5.0 harness-setup skills, plus the 0.6.0 obsidizer surface.
 # Runs each skill's canonical install + verify on real runners and asserts the tool actually RUNS.
 # Honest scope: harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
 # testable on hosted runners; those steps are partial/tolerated and labeled as such.
+# obsidizer has no per-OS install, so it gets no OS-toolchain job — it is covered by the structural
+# job (42 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
 
 on:
   push:
@@ -11,7 +13,10 @@ on:
     paths:
       - 'skills/setup-*/**'
       - 'skills/harness-factory/**'
+      - 'skills/obsidizer/**'
+      - 'hooks/**'
       - 'codex/manifest.json'
+      - 'package.json'
       - 'scripts/smoke-test.js'
       - '.github/workflows/harness-setup-ci.yml'
   workflow_dispatch:
@@ -35,6 +40,21 @@ jobs:
           node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==42||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
       - name: smoke-test (dir==name, dry-run, real codex install)
         run: node scripts/smoke-test.js
+      - name: obsidizer unit suites (canonicalizer + hook)
+        run: |
+          set -e
+          node --test skills/obsidizer/obsidize.test.mjs
+          node --test hooks/obsidize-hook.test.mjs
+      - name: hook files ship via npm (files[] includes "hooks")
+        run: |
+          set -e
+          out=$(npm pack --dry-run 2>&1)
+          for f in hooks/hooks.json hooks/obsidize-hook.mjs hooks/run.cjs; do
+            echo "$out" | grep -q "$f" || { echo "MISSING $f in the npm tarball — package.json files[] must include \"hooks\""; exit 1; }
+          done
+          echo "npm tarball ships all 3 hook files"
+          # The hook is Claude-only: it must NOT be a Codex-installed surface.
+          node -e "const m=require('./codex/manifest.json');const o=m.surfaces.find(x=>x.name==='obsidizer');if(!o){console.error('obsidizer missing from manifest');process.exit(1)}if(JSON.stringify(o.supportingFiles||[]).includes('hook')){console.error('hook files must not be Codex supportingFiles');process.exit(1)}console.log('obsidizer manifest entry OK; hooks correctly excluded from Codex')"
 
   rocky8:
     name: rocky8 clean-room (EL8 glibc 2.28)
@@ -262,3 +282,29 @@ jobs:
             echo "$out" | grep -q "$s" || { echo "MISSING $s in claude plugin details"; exit 1; }
           done
           echo "claude plugin details lists all 9 new skills (no auth)"
+      - name: Codex discovers banker-obsidizer (dir==name, no API key)
+        shell: bash
+        run: |
+          set -e
+          SK=$(node -p "require('path').join(require('os').homedir(),'.codex','skills')")
+          test -f "$SK/banker-obsidizer/SKILL.md" || { echo "MISSING banker-obsidizer in $SK"; exit 1; }
+          test -f "$SK/banker-obsidizer/obsidize.mjs" || { echo "MISSING supportingFile obsidize.mjs"; exit 1; }
+          # The hook is Claude-only; Codex has no MCP tool hooks, so it must not be installed there.
+          test -e "$SK/banker-obsidizer/hooks.json" && { echo "hook leaked into the Codex install"; exit 1; } || true
+          echo "on-disk: banker-obsidizer + obsidize.mjs present; no hook leaked (dir==name contract satisfied)"
+          if codex debug prompt-input "x" >/tmp/ci-obz.out 2>/tmp/ci-obz.err; then
+            grep -q banker-obsidizer /tmp/ci-obz.out || { echo "codex live render missing banker-obsidizer"; exit 1; }
+            echo "codex debug prompt-input live-exposed banker-obsidizer"
+          else
+            echo "NOTE: codex debug prompt-input needs a provider config on this runner; the on-disk contract is already asserted above."
+            head -3 /tmp/ci-obz.err || true
+          fi
+      - name: Claude discovers obsidizer + its hook (no auth)
+        shell: bash
+        run: |
+          set -e
+          out=$(claude --plugin-dir "$PWD" plugin details banker 2>&1) || { echo "claude plugin details failed:"; echo "$out" | head -12; exit 1; }
+          echo "$out" | grep -q obsidizer || { echo "MISSING obsidizer in claude plugin details"; echo "$out" | head -20; exit 1; }
+          echo "claude plugin details lists obsidizer (no auth)"
+          # banker's first plugin-declared hook: surface whether Claude reports it in the inventory.
+          echo "$out" | grep -iE 'hook' || echo "NOTE: plugin details printed no Hooks line; hooks/hooks.json auto-discovery is asserted structurally instead."
