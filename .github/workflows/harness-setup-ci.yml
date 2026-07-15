@@ -16,6 +16,11 @@ on:
       - '.github/workflows/harness-setup-ci.yml'
   workflow_dispatch:
 
+# A newer run on the same ref cancels the previous one (incl. jobs stuck queued on scarce runners).
+concurrency:
+  group: harness-setup-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
     name: structural (packaging · 41 skills · dir==name)
@@ -213,7 +218,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest, macos-13]
+        # macOS Intel (macos-13) intentionally omitted: this job tests runtime skill DISCOVERY
+        # (SKILL.md file copy + CLI enumeration), which is architecture-agnostic, so macos-latest
+        # (Apple Silicon) substitutes for it. GitHub Intel runners are also being retired/scarce.
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
