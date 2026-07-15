@@ -1,0 +1,17 @@
+{
+  "description": "banker obsidizer: canonicalize an OMC wiki page right after it is written, but only when the vault is armed via `obsidizer --enable`. Inert otherwise.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^mcp__.*wiki_(ingest|add)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT\"/hooks/run.cjs \"$CLAUDE_PLUGIN_ROOT\"/hooks/obsidize-hook.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

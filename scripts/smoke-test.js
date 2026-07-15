@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (41 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (42 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,13 +39,15 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 41, `codex dry-run plans 41 skill copies (got ${copies})`);
+  ok(copies === 42, `codex dry-run plans 42 skill copies (got ${copies})`);
   const nowBoth = ['all-in-one', 'compact-copy', 'omc-reference', 'ultra-init', 'setup-omc', 'setup-omc-hud', 'setup-stitch'];
   ok(nowBoth.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes former claude-only skills (now target both)');
   const newSkills = ['curation', 'deep-init', 'deep-research', 'ralph-qa', 'smart-compact', 'visual-ralph'];
   ok(newSkills.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the 6 new 0.4.0 skills (target both)');
   const newSkills05 = ['setup-node', 'setup-python', 'setup-java', 'setup-lsp', 'setup-tmux', 'setup-pwsh', 'setup-mcp', 'setup-sandbox', 'harness-factory'];
   ok(newSkills05.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the 9 new 0.5.0 harness-setup skills (target both)');
+  const newSkills06 = ['obsidizer'];
+  ok(newSkills06.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
   ok(cmdCopies === 2, `codex dry-run plans 2 command prompts (got ${cmdCopies})`);
@@ -79,7 +81,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 41, `real codex install has 41 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 42, `real codex install has 42 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -88,6 +90,34 @@ try {
   ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
   ok(newSkills.every((n) => installed.includes(`banker-${n}`)), 'new 0.4.0 skills installed as banker-*');
   ok(newSkills05.every((n) => installed.includes(`banker-${n}`)), 'new 0.5.0 harness-setup skills installed as banker-*');
+  ok(newSkills06.every((n) => installed.includes(`banker-${n}`)), 'new 0.6.0 obsidizer skill installed as banker-*');
+  ok(installed.includes('banker-obsidizer'), 'obsidizer installed as banker-obsidizer');
+
+  // 7) hook packaging + static safety checks (0.6.0 obsidizer: banker's first plugin-declared hook)
+  const hookFiles = ['hooks.json', 'obsidize-hook.mjs', 'run.cjs'];
+  for (const f of hookFiles) {
+    ok(fs.existsSync(path.join(root, 'hooks', f)), `hooks/${f} exists in the repo`);
+  }
+  const pkgRoot = process.platform === 'win32'
+    ? path.join(prefix, 'node_modules', '@kaydash9999', 'banker-plugins')
+    : path.join(prefix, 'lib', 'node_modules', '@kaydash9999', 'banker-plugins');
+  for (const f of hookFiles) {
+    ok(fs.existsSync(path.join(pkgRoot, 'hooks', f)), `hooks/${f} is npm-packaged (present in the globally-installed tarball)`);
+  }
+  const hooksJson = JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8'));
+  const declaredTimeouts = [];
+  (function collectTimeouts(node) {
+    if (Array.isArray(node)) { node.forEach(collectTimeouts); return; }
+    if (node && typeof node === 'object') {
+      if (typeof node.timeout === 'number') declaredTimeouts.push(node.timeout);
+      Object.values(node).forEach(collectTimeouts);
+    }
+  })(hooksJson.hooks);
+  ok(declaredTimeouts.length > 0 && declaredTimeouts.every((t) => t <= 5), `hooks.json declares an explicit timeout <=5s (got [${declaredTimeouts.join(', ')}])`);
+  const hookScript = fs.readFileSync(path.join(root, 'hooks', 'obsidize-hook.mjs'), 'utf8');
+  ok(!hookScript.includes('additionalContext'), 'obsidize-hook.mjs never injects LLM context (no additionalContext, per the SKILL.md refusal)');
+  ok(!hookScript.includes('.wiki-lock'), 'obsidize-hook.mjs has zero coupling to OMC internal .wiki-lock');
+
   const prompts = fs.readdirSync(path.join(home2, '.codex', 'prompts')).filter((d) => d.startsWith('banker-'));
   ok(prompts.length === 2, `real codex install has 2 banker-* command prompts (got ${prompts.length})`);
   const readName = (md) => {
