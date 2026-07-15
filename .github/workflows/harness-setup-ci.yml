@@ -79,13 +79,15 @@ jobs:
         run: |
           set -e
           . "$HOME/.nvm/nvm.sh"
+          export PATH="$HOME/.local/bin:$PATH"
           npm install -g @vtsls/language-server vscode-langservers-extracted bash-language-server >/dev/null
-          (vtsls --version 2>/dev/null || vtsls --help | head -1)
+          vtsls --version
           bash-language-server --version
-          ~/.local/bin/pipx install basedpyright >/dev/null 2>&1 || python3.11 -m pipx install basedpyright >/dev/null
-          ~/.local/bin/pipx install ruff >/dev/null 2>&1 || python3.11 -m pipx install ruff >/dev/null
-          ~/.local/bin/basedpyright-langserver --version || basedpyright-langserver --version
-          ~/.local/bin/ruff --version || ruff --version
+          python3.11 -m pipx install basedpyright >/dev/null 2>&1 || ~/.local/bin/pipx install basedpyright >/dev/null
+          python3.11 -m pipx install ruff >/dev/null 2>&1 || ~/.local/bin/pipx install ruff >/dev/null
+          basedpyright --version                              # CLI supports --version; the langserver binary is a stdio server
+          command -v basedpyright-langserver && echo "basedpyright-langserver present"
+          ruff --version
 
   linux-ubuntu:
     name: ubuntu (apt-pipx path + LSP servers)
@@ -106,13 +108,15 @@ jobs:
       - name: setup-lsp servers (npm + pipx)
         run: |
           set -e
+          export PATH="$HOME/.local/bin:$PATH"
           npm install -g @vtsls/language-server bash-language-server >/dev/null
-          (vtsls --version 2>/dev/null || vtsls --help | head -1)
+          vtsls --version
           bash-language-server --version
           pipx install basedpyright >/dev/null
           pipx install ruff >/dev/null
-          ~/.local/bin/basedpyright-langserver --version
-          ~/.local/bin/ruff --version
+          basedpyright --version
+          command -v basedpyright-langserver && echo "basedpyright-langserver present"
+          ruff --version
       - name: setup-tmux (apt)
         run: |
           set -e
@@ -152,8 +156,10 @@ jobs:
       - name: setup-lsp servers (pipx)
         run: |
           set -e
+          export PATH="$HOME/.local/bin:$PATH"
           pipx install basedpyright >/dev/null
-          "$HOME/.local/bin/basedpyright-langserver" --version
+          basedpyright --version
+          command -v basedpyright-langserver && echo "basedpyright-langserver present"
 
   windows:
     name: windows (pwsh $PROFILE UTF-8 + node/python)
