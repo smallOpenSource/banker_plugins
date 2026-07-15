@@ -23,16 +23,16 @@ concurrency:
 
 jobs:
   smoke:
-    name: structural (packaging · 41 skills · dir==name)
+    name: structural (packaging · 42 skills · dir==name)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: manifest count == 41 both / 0 claude-only
+      - name: manifest count == 42 both / 0 claude-only
         run: |
-          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==41||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
+          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==42||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
       - name: smoke-test (dir==name, dry-run, real codex install)
         run: node scripts/smoke-test.js
 

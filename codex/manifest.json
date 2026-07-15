@@ -48,6 +48,8 @@
     { "name": "setup-sandbox",        "type": "skill",   "target": "both",        "reason": "agent sandbox per-OS (bubblewrap+userns / AppContainer / Seatbelt) + rust/cargo + git safe.directory; Codex sandbox_mode", "supportingFiles": [] },
     { "name": "harness-factory",      "type": "skill",   "target": "both",        "reason": "installs+configures+guides the revfactory/harness team-architecture factory plugin (Claude harness@harness-marketplace, Codex SaehwanPark/meta-harness); Apache-2.0 referenced not redistributed", "supportingFiles": [] },
 
+    { "name": "obsidizer",            "type": "skill",   "target": "both",        "reason": "AI-wiki -> Obsidian graph normalize/interlink; LLM semantic edits + zero-input deterministic canonicalizer, runtime-agnostic; in-place durable", "supportingFiles": ["obsidize.mjs"], "caveat": "OMC-managed trees: 9-field frontmatter envelope + reserved files + no-rename + bare [[slug]] links only (extractWikiLinks slugifies piped/heading forms -> broken-ref); aliases written in generic vaults only; Canvas sidecars and body-inline :: are durable in-place; uses wiki_lint read-only. --enable is Claude-only (Codex has no MCP tool hooks) and is an honest no-op on Codex." },
+
     { "name": "front-qa",             "type": "command", "target": "both",        "reason": "ralplan->ralph frontend-QA pipeline; Claude=OMC, Codex=OMX", "supportingFiles": [] },
     { "name": "setup",                "type": "command", "target": "both",        "reason": "installer orchestrator; Claude AskUserQuestion multi-select, Codex prompt-based selection", "supportingFiles": [] }
   ]

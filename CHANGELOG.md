@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0] - 2026-07-15
+
+### Added
+- **신규 스킬 `obsidizer`** (`target: both`): AI가 생성한 마크다운 위키를 의미 보존한 채 Obsidian 지식그래프로 정규화·상호링크·백링크한다. in-place 정규화(별도 export 트리 없음)·절대 rename 금지·LLM 의미론적 편집 + 제로-입력 결정적 캐노니컬라이저(`obsidize.mjs`) 2계층 엔진·OMC 트리에서는 bare-form(`[[slug]]`)만 허용하는 위키링크(`extractWikiLinks`가 피이프/헤딩 형태를 통째로 슬러그화해 `links[]`를 깨뜨림)·generic vault 한정 `aliases`(OMC 트리는 READ 시점 silent strip + 유일한 소비처인 피이프 링크가 금지라 destructive 실패 모드로 거부). `--enable`/`--disable`은 banker 최초의 **플러그인 선언 hook**(`hooks/hooks.json`)으로 Claude에서만 구조적으로 동작(위키 쓰기 후 원자적 쓰기 + read-back CAS로 동시쓰기를 skip)하고 Codex(MCP tool hook 없음)에서는 정직한 no-op이다. **hook은 banker가 활성화되어 있으면 항상 등록**되어 위키 쓰기(`wiki_ingest`/`wiki_add`)마다 실행되므로, `--enable`을 켜지 않은 사용자도 쓰기당 약 30ms의 node 프로세스 기동 비용을 치른다(플래그 확인 자체가 그 프로세스 내부에서 일어나기 때문); `--enable` 이전에는 아무 파일도 쓰지 않는 순수 no-op이다.
+- **Deferred to 0.7.0 (품질 이유, 효율 이유 아님):** Canvas-MOC sidecar 생성 · inline Dataview `::` 생성 · MOC 허브 페이지 생성. 셋 다 in-place durable 은 이미 코드로 검증됐지만(좌표 결정성·필드 날조 방지·링크 인플레 방지 기준이 아직 없어) **생성만** 보류한다 — 호환성은 v1에서 이미 무료로 확보돼 있다.
+
+### Changed
+- Codex 설치 스킬 수 **41 → 42**(+커맨드 2 유지, claude-only=0). `codex/manifest.json`·`README.md`·`codex/transform-matrix.md`·`scripts/smoke-test.js`·`.github/workflows/harness-setup-ci.yml`을 동기화했다.
+- `package.json` `files[]`에 `hooks`를 추가해 `hooks/hooks.json`·`hooks/obsidize-hook.mjs`·`hooks/run.cjs`가 npm 패키지에 포함되도록 했다(`npm pack --dry-run`으로 확인).
+
 ## [0.5.0] - 2026-07-15
 
 ### Added
