@@ -1,6 +1,19 @@
-# --- OMC / session runtime state (machine-specific, do not publish) ---
+# --- OMC / OMX / session runtime state (machine-specific, do not publish) ---
+# .omc/ also covers obsidizer's runtime artifacts: .omc/wiki/.obsidizer (the --enable flag),
+# .obsidizer-hook.log, .obsidizer-state.json, and any .omc/wiki.bak-<ts> snapshot.
 .omc/
+.omx/
 .remember/
+
+# --- Agent-harness local config ---
+# settings.local.json is per-machine. A project-shared .claude/settings.json is deliberately NOT
+# ignored — never widen this to .claude/, or a shared config would be silently dropped one day.
+# (.claude-plugin/ is the published plugin manifest and stays tracked.)
+.claude/settings.local.json
+
+# --- npm build artifacts (`npm pack` drops the tarball in the repo root) ---
+node_modules/
+*.tgz
 
 # --- Python caches ---
 __pycache__/
@@ -27,3 +40,6 @@ scripts/publish_npm.sh
 
 # build-knowledge wiki (local-only; lives at build_plugin/wiki_docs) — never commit/publish
 wiki_docs/
+
+USER_RESOURCES/
+
