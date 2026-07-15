@@ -1,5 +1,5 @@
 ---
-description: "banker 플러그인 구성요소·의존성을 multi-select로 골라 설치하는 오케스트레이터(oh-my-claudecode·playwright·omc-hud·insane-search·stitch-proxy)."
+description: "(banker) 구성요소·의존성을 multi-select로 골라 설치하는 오케스트레이터(oh-my-claudecode·playwright·omc-hud·insane-search·stitch·docs-setup)."
 argument-hint: "[설치할 컴포넌트명 — 비우면 multi-select 표시]"
 ---
 
@@ -11,24 +11,26 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
 ## 절차
 
 1. **선택 받기**: `$ARGUMENTS` 에 컴포넌트명이 명시돼 있으면 그것만 실행(질문 생략).
-   비어 있으면 아래 5개를 `AskUserQuestion`(**multiSelect: true**)으로 제시한다:
+   비어 있으면 아래 5개를 `AskUserQuestion`(**multiSelect: true**)으로 제시한다(**Codex 런타임엔 AskUserQuestion 이 없으므로 목록을 제시하고 설치할 항목을 사용자에게 물어 받는다**):
    - **setup-omc** — oh-my-claudecode(OMC) 설치/갱신. `all-in-one`·`ultra-init`·`/banker:front-qa` 의존성(Codex는 OMX).
    - **setup-playwright** — Playwright + 브라우저 + headless 디스플레이(Xvfb). RHEL8/Rocky8 등 비공식 지원·non-root·no-conda 폴백 포함. (`ultra-ui-qa`·`audit-web-page`·`play-qa` 의존성)
    - **setup-omc-hud** — omc_hud 상태표시줄 설치(OS별).
    - **setup-insane-search** — insane-search 플러그인(차단 사이트 우회) 설치(Claude/Codex 양쪽 경로).
-   - **setup-stitch-proxy** — Stitch(디자인 생성) MCP 프록시 등록(API key 필요).
+   - **setup-stitch** — Stitch(디자인 생성) MCP 프록시 등록(RockyLinux8 proxy-script, API key 필요).
+   - **docs-setup** — arch-diagram·pdf-vision-extract 의존성(python-pptx·pymupdf·plantuml) 설치(python path 질문 또는 자동 감지).
 
-2. **실행**: 선택된 각 항목의 스킬을 `Skill` 도구로 호출한다(미선택은 건드리지 않음):
+2. **실행**: 선택된 각 항목의 스킬을 호출한다(미선택은 건드리지 않음). Claude Code는 `Skill("banker:<name>")`, **Codex 런타임에선 설치된 `banker-<name>` 스킬을 적용**한다:
    - setup-omc → `Skill("banker:setup-omc")`
    - setup-playwright → `Skill("banker:setup-playwright")`
    - setup-omc-hud → `Skill("banker:setup-omc-hud")`
    - setup-insane-search → `Skill("banker:setup-insane-search")`
-   - setup-stitch-proxy → `Skill("banker:setup-stitch-proxy")`
+   - setup-stitch → `Skill("banker:setup-stitch")`
+   - docs-setup → `Skill("banker:docs-setup")`
    각 스킬이 OS를 감지해 알맞은 절차로 설치하고 끝에 검증한다. 한 항목이 실패해도 정직히 보고하고 다음 항목 진행.
 
 3. **마무리 보고(한글)**: 설치된 항목·검증 결과·**재시작/reload 필요 여부**.
-   - 플러그인 설치(insane-search)는 `/reload-plugins` 또는 재시작 후 반영.
-   - MCP 추가(stitch)는 세션 갱신 후 `claude mcp list` 로 연결 확인.
+   - 플러그인 설치(insane-search)는 `/reload-plugins`(Claude) 또는 재시작 후 반영(Codex는 재시작).
+   - MCP 추가(stitch)는 세션 갱신 후 연결 확인 — Claude `claude mcp list`, Codex `codex mcp list`.
 
 ## 원칙
 - 각 설치는 **비파괴·멱등**(이미 설치면 skip).

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.0] - 2026-07-15
+
+### Added
+- **신규 스킬 6종** (전부 `target: both`, 런타임 인식 본문 — Claude=OMC / Codex=OMX):
+  - `curation`: 의사결정을 {선택지·권고안·권고 근거·확신수준(0.00~1.00)·확신수준 근거} 형식으로 큐레이션. `--perf` 는 결과물 품질·완성도를 노력/토큰/시간 효율보다 우선하는 채택 기준을 추가. 외부 의존 0(양 런타임 동일 동작).
+  - `deep-init`: 코드베이스 전체에 계층형 `AGENTS.md` 문서 생성/갱신(부모 역참조·`<!-- MANUAL -->` 보존·계층 검증). OMC `deepinit` 이식으로 banker `ultra-init`(자율 풀사이클 빌드)과는 별개. 서브에이전트 Claude=OMC explore/architect/writer, Codex=OMX worker/explore, 부재 시 직접 수행.
+  - `visual-ralph`: 레퍼런스(생성/정적/라이브 URL) 기준 프론트 UI를 Visual Verdict(≥90)+픽셀 diff로 측정 빌드하고 재사용 디자인 시스템을 남긴다. OMX `visual-ralph` 이식. Claude=`ralph`+`visual-verdict`+Stitch(`setup-stitch-proxy`)/ccg imagegen, Codex=`$ralph`+`$imagegen`.
+  - `deep-research`: 다중 소스 팬아웃 → 적대적 다표결 검증(2/3 반증 시 폐기) → 확신순 인용 합성. 번들 워크플로를 prose 로 재저작(구조적 병렬 fan-out 충실도 하락을 명시). Claude=번들 워크플로/`WebSearch`, Codex=OMX `autoresearch`.
+  - `ralph-qa`: 작업 결과를 **다른 LLM·별도 세션**으로 `ralplan --deliberate`+`ralph --critic=critic` 로직으로 독립 검증/개선 반복(anti-self-approval). Claude=`omc ask codex`/`ccg`, Codex=OMX `$ask`(Claude/Gemini). 검증 모델은 파라미터화(`--model`·`--effort`; 예시 `gpt-5.6-sol` 은 하드코딩하지 않음).
+  - `smart-compact`: 컨텍스트 사용률이 임계(기본 50%)를 넘으면 `append-wiki`→`ready-compact`→`compact-copy` 를 자동 실행하고 `/copy`·`/compact`·paste 를 유저에게 핸드오프하는 게이트. Claude statusLine `context_window.used_percentage` 로 감지(hook은 context% 미노출·슬래시명령 호출 불가 → TUI 3단은 유저 실행), 기존 statusLine 을 감싸는 compose-safe 설치. `--cancel` 해제.
+
+### Changed
+- **Codex 이식 확대(claude-only → both)**: 이전 OMC/Claude 결합 표면(스킬 `all-in-one`·`ultra-init`·`omc-reference`·`compact-copy`·`setup-omc-hud`·`setup-stitch-proxy` + 커맨드 `front-qa`·`setup`)을 **런타임 인식 본문**으로 재작성해 `target: both` 로 승격했다(`setup-omc` 는 기존부터 dual). Codex에선 OMC 대신 oh-my-codex(OMX)의 동명 스킬(ralplan/ralph/ultraqa/hud 등)·`codex mcp`·내장 `/copy` 를 사용한다. `codex/manifest.json` 의 claude-only=0.
+- **`omc-reference` dualize**: 본문에 실측 OMX(oh-my-codex 0.18.16) 카탈로그(Agent Prompts·Skills Registry·Interfaces + OMC↔OMX 대응)를 병기해 Codex에서도 정확한 레퍼런스가 되도록 격상(기존 disclaimer-only → dual).
+- Codex 설치 스킬 수 **25 → 32**(+커맨드 2 유지). `README.md`·`codex/transform-matrix.md` 를 동기화하고, `scripts/smoke-test.js` 에 `copies===32` + 신규 6스킬 존재 + `deep-interview` 부재(이미 OMC·OMX 네이티브라 미번들) 회귀 단언을 추가했다.
+- **스킬 설명(description) 정규화**: 전 스킬 + 2 커맨드의 `description` 을 `(banker)` 접두로 통일하고 em/en dash 등 AI slop 표현을 제거·간결화했다(트리거 키워드는 보존). Codex `codex debug prompt-input` 로 banker-* 가 "Available skills" 에 노출됨을 실측 확인.
+- **setup 스킬 정비**: `setup-stitch-proxy` → `setup-stitch` 개명(RockyLinux8 `~/bin/stitch-proxy.sh` proxy-script 절차 그대로) + **`docs-setup` 신규**(arch-diagram·pdf-vision-extract 의존성 python-pptx·pymupdf·plantuml 설치, python-env 감지/선택·venv 우선). Codex 스킬 **31→32**, `/banker:setup` 오케스트레이터·`smoke-test` rename-guard 에 반영.
+
 ## [0.3.0] - 2026-07-02
 
 ### Changed

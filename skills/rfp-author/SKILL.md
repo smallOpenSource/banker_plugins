@@ -1,6 +1,6 @@
 ---
 name: rfp-author
-description: "소프트웨어 외주 제안요청서(RFP)를 한국 공공/금융 + 국제 SW외주 + AI/LLM 골격으로 저작(검증 reference·채울 템플릿 번들) — 'rfp'/'제안요청서'/'RFP 작성'/'외주 RFP' 시 사용."
+description: "(banker) 소프트웨어 외주 제안요청서(RFP)를 한국 공공/금융+국제+AI/LLM 골격으로 저작. 'rfp'/'제안요청서'/'RFP 작성'/'외주 RFP' 시 사용."
 ---
 
 # rfp-author — 외주 제안요청서(RFP) 저작 (요건 발의형 기본)

@@ -1,6 +1,6 @@
 ---
 name: lineage
-description: "현재 세션 대화를 카카오톡 스타일 단일 HTML 파일로 export(답변=1줄 요약+클릭 펼침) — 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
+description: "(banker) 현재 세션 대화를 카카오톡 스타일 단일 HTML로 export(답변=1줄 요약+클릭 펼침). 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
 version: 1.0.0
 schema_version: 1

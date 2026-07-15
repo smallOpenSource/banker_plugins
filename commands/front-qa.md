@@ -1,5 +1,5 @@
 ---
-description: "스펙(note 파일) 기반 프론트엔드 구현 + 레퍼런스 구현 대비 엄격 parity QA 워크플로(ralplan→ralph→loop)."
+description: "(banker) 스펙(note 파일) 기반 프론트엔드 구현 + 레퍼런스 대비 엄격 parity QA 워크플로(ralplan→ralph→loop)."
 argument-hint: "[스펙/note 파일 경로 — 생략 시 docs/note.txt]"
 ---
 
@@ -13,6 +13,7 @@ argument-hint: "[스펙/note 파일 경로 — 생략 시 docs/note.txt]"
 이 커맨드는 `/ralplan`·`/ralph` 등 oh-my-claudecode(OMC)에 의존한다. **진행 전 먼저 확인**하고, 없으면 **설치부터 안내**한다:
 - 확인: `command -v omc` + `/oh-my-claudecode:*` 사용 가능 여부.
 - 미설치면 `/banker:setup` → oh-my-claudecode(또는 `setup-omc` 스킬 / `omc update`)로 먼저 구성한 뒤 이어서 진행.
+- **런타임 매핑:** 아래 절차의 `/ralplan`·`/ralph`는 Claude Code에선 OMC 스킬, **Codex에선 oh-my-codex(OMX)의 동명 스킬**이다(Codex는 OMC 대신 OMX 전제). 각 런타임에서 사용 가능한 형태로 호출한다.
 
 ## 절차 (CLAUDE.md: 계획 없는 즉시실행 금지)
 

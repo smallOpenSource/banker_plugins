@@ -21,15 +21,24 @@
     { "name": "setup-insane-search",  "type": "skill",   "target": "both",        "reason": "installs the insane-search plugin; Claude via `claude plugin`, Codex via `codex plugin add insane-research-codex@gptaku-codex`", "supportingFiles": [] },
     { "name": "ultra-ui-qa",          "type": "skill",   "target": "both",        "reason": "UI vs SoT QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
 
-    { "name": "all-in-one",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan->ralph->ultraqa (Claude/OMC-specific)", "supportingFiles": [] },
-    { "name": "compact-copy",         "type": "skill",   "target": "claude-only", "reason": "manipulates Claude Code /copy + response.md artifact (Claude-specific)", "caveat": "depends on Claude Code /copy builtin + /tmp/claude-<uid>/response.md internal path; may change across Claude Code versions", "supportingFiles": [] },
-    { "name": "ultra-init",           "type": "skill",   "target": "claude-only", "reason": "orchestrates OMC ralplan/ultragoal/ralph/ultraqa (Claude/OMC-specific)", "supportingFiles": [] },
-    { "name": "omc-reference",        "type": "skill",   "target": "claude-only", "reason": "OMC-internal agent/tool/skill registry reference", "supportingFiles": [] },
-    { "name": "setup-omc",            "type": "skill",   "target": "claude-only", "reason": "installs/refreshes oh-my-claudecode (OMC) that all-in-one/ultra-init/front-qa depend on; Codex users run `omx setup`", "supportingFiles": [] },
-    { "name": "setup-omc-hud",        "type": "skill",   "target": "claude-only", "reason": "installs omc_hud (Claude Code statusline)", "supportingFiles": [] },
-    { "name": "setup-stitch-proxy",   "type": "skill",   "target": "claude-only", "reason": "shells `claude mcp add` (Claude Code MCP registration)", "supportingFiles": [] },
+    { "name": "all-in-one",           "type": "skill",   "target": "both",        "reason": "orchestrates ralplan->ralph->ultraqa; Claude=OMC, Codex=OMX (same-named skills); body runtime-aware", "supportingFiles": [] },
+    { "name": "compact-copy",         "type": "skill",   "target": "both",        "reason": "shapes final message for /copy (built into BOTH Claude Code and Codex); response path is per-runtime; ready-compact(both) seeds the prompt", "supportingFiles": [] },
+    { "name": "ultra-init",           "type": "skill",   "target": "both",        "reason": "orchestrates ralplan/ultragoal/ralph/ultraqa; Claude=OMC, Codex=OMX; body runtime-aware", "supportingFiles": [] },
+    { "name": "omc-reference",        "type": "skill",   "target": "both",        "reason": "OMC/OMX agent/tool/skill registry reference; runtime-aware (Codex counterpart is OMX)", "supportingFiles": [] },
+    { "name": "setup-omc",            "type": "skill",   "target": "both",        "reason": "installs OMC (Claude) or OMX (Codex `omx setup`); body already dual-runtime", "supportingFiles": [] },
+    { "name": "setup-omc-hud",        "type": "skill",   "target": "both",        "reason": "installs omc_hud (Claude statusLine); Codex uses OMX `hud`; runtime-aware", "supportingFiles": [] },
+    { "name": "setup-stitch",         "type": "skill",   "target": "both",        "reason": "registers the Stitch MCP proxy (RockyLinux8 ~/bin/stitch-proxy.sh); Claude `claude mcp add`, Codex `codex mcp add`", "supportingFiles": [] },
 
-    { "name": "front-qa",             "type": "command", "target": "claude-only", "reason": "ralplan->ralph->loop OMC pipeline command", "supportingFiles": [] },
-    { "name": "setup",                "type": "command", "target": "claude-only", "reason": "/banker:setup orchestrator (Claude-side multi-select installer)", "supportingFiles": [] }
+    { "name": "docs-setup",           "type": "skill",   "target": "both",        "reason": "installs arch-diagram/pdf-vision-extract deps (python-pptx, pymupdf, plantuml); python-env detect/select; runtime-agnostic installer", "supportingFiles": [] },
+
+    { "name": "curation",             "type": "skill",   "target": "both",        "reason": "decision-framing behavior (options/rec/confidence + --perf); no runtime deps; identical in both", "supportingFiles": [] },
+    { "name": "deep-init",            "type": "skill",   "target": "both",        "reason": "hierarchical AGENTS.md generation (port of OMC deepinit); runtime-agnostic fs+doc; subagents Claude=OMC/Codex=OMX", "supportingFiles": [] },
+    { "name": "deep-research",        "type": "skill",   "target": "both",        "reason": "fan-out + adversarial-verify web research (re-authored from bundled workflow); Claude WebSearch/Workflow, Codex OMX autoresearch; runtime-aware", "supportingFiles": [] },
+    { "name": "ralph-qa",             "type": "skill",   "target": "both",        "reason": "cross-LLM independent verify loop (ralplan+critic logic via other LLM); Claude `omc ask codex`/ccg, Codex OMX `$ask`; runtime-aware", "supportingFiles": [] },
+    { "name": "smart-compact",        "type": "skill",   "target": "both",        "reason": "context-threshold compaction-hygiene gate (statusLine detect + hook bridge + assistant chain + TUI handoff); runtime-aware", "supportingFiles": [] },
+    { "name": "visual-ralph",         "type": "skill",   "target": "both",        "reason": "measured visual build loop (port of OMX visual-ralph); Claude ralph+visual-verdict+Stitch imagegen, Codex $ralph+$imagegen; runtime-aware", "supportingFiles": [] },
+
+    { "name": "front-qa",             "type": "command", "target": "both",        "reason": "ralplan->ralph frontend-QA pipeline; Claude=OMC, Codex=OMX", "supportingFiles": [] },
+    { "name": "setup",                "type": "command", "target": "both",        "reason": "installer orchestrator; Claude AskUserQuestion multi-select, Codex prompt-based selection", "supportingFiles": [] }
   ]
 }

@@ -1,11 +1,6 @@
 ---
 name: compact-copy
-description: >
-  /ready-compact 가 만든 resume 프롬프트에서 코드펜스 안 본문만 뽑아 compaction 이후 붙여넣을
-  "프롬프트-only" 로 만든다. 추출 본문을 /tmp/claude-<uid>/response.md 에 덮어쓰고, 스킬의 최종
-  메시지를 그 프롬프트 본문만으로 출력해 이어지는 /copy 한 번이면 클립보드에도 프롬프트-only 가
-  담긴다. "compact-copy", "프롬프트만 복사", "resume 프롬프트만" 요청 시 사용. /ready-compact
-  직후(권장) 또는 /copy 직후 실행. 답변·설명은 한글.
+description: "(banker) /ready-compact resume 프롬프트에서 코드펜스 본문만 뽑아 최종 메시지를 '프롬프트-only'로 출력(response.md 기록 → /copy로 클립보드에 담김). 'compact-copy'/'프롬프트만 복사'/'resume 프롬프트만' 시 사용."
 ---
 
 # compact-copy — resume 프롬프트만 추출 복사
@@ -25,6 +20,7 @@ description: >
 ## 환경 / 전제
 - response.md 경로는 **`id -u` 로 동적 계산**한다: `/tmp/claude-$(id -u)/response.md`.
   **사용자마다 uid 가 다르므로 경로에 uid 숫자를 하드코딩하지 말 것**(항상 `id -u` 로 계산).
+- **런타임 (Claude Code / Codex):** `/copy` 는 **양 런타임에 내장**이다. 이 스킬의 핵심 불변식 — 최종 메시지를 외곽 펜스·전후 설명 없이 **프롬프트 본문만**으로 만들어 `/copy` 가 프롬프트-only 를 담게 하는 것 — 은 양 런타임 공통이다. 파일 기록(`/tmp/claude-<uid>/response.md`)은 **Claude Code 규약**이므로, **Codex에선 그 경로를 가정하지 말고 `/copy` 클립보드 결과에 의존**한다(Codex가 자체 output 파일 규약을 두면 그때 감지해 사용). resume 프롬프트 생성은 `ready-compact`(both)가 담당한다.
 - 클립보드 CLI(xclip·xsel·wl-copy·pbcopy 등)는 없을 수 있다. 시스템 클립보드는 Claude Code
   내장 **`/copy`** 로만 확실히 닿는다. → 이 스킬은 클립보드를 직접 쓰려 하지 않고, **최종
   메시지를 프롬프트 본문만으로 만들어** 그 `/copy` 가 프롬프트-only 를 담게 한다.

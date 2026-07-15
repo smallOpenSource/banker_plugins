@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (17 eligible, excluded absent, AGENTS.md
+ * targets -> assert planned actions match the manifest (32 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,9 +39,14 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 18, `codex dry-run plans 18 skill copies (got ${copies})`);
-  const excluded = ['all-in-one', 'compact-copy', 'omc-reference', 'ultra-init', 'setup-omc', 'setup-omc-hud', 'setup-stitch-proxy'];
-  ok(!excluded.some((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run excludes claude-only skills');
+  ok(copies === 32, `codex dry-run plans 32 skill copies (got ${copies})`);
+  const nowBoth = ['all-in-one', 'compact-copy', 'omc-reference', 'ultra-init', 'setup-omc', 'setup-omc-hud', 'setup-stitch'];
+  ok(nowBoth.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes former claude-only skills (now target both)');
+  const newSkills = ['curation', 'deep-init', 'deep-research', 'ralph-qa', 'smart-compact', 'visual-ralph'];
+  ok(newSkills.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the 6 new 0.4.0 skills (target both)');
+  ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
+  const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
+  ok(cmdCopies === 2, `codex dry-run plans 2 command prompts (got ${cmdCopies})`);
   ok(codexOut.includes('copy skills/setup-insane-search '), 'codex dry-run includes setup-insane-search (target both)');
   ok(codexOut.includes('AGENTS.md is NOT modified'), 'codex states AGENTS.md untouched');
 
@@ -63,14 +68,24 @@ try {
   const renamedAwayDir = path.join(home2, '.codex', 'skills', 'banker-game-qa');
   fs.mkdirSync(renamedAwayDir, { recursive: true });
   fs.writeFileSync(path.join(renamedAwayDir, 'SKILL.md'), '---\nname: banker-game-qa\n---\n');
+  // rename-case guard 2: setup-stitch-proxy -> setup-stitch
+  const renamedStitchDir = path.join(home2, '.codex', 'skills', 'banker-setup-stitch-proxy');
+  fs.mkdirSync(renamedStitchDir, { recursive: true });
+  fs.writeFileSync(path.join(renamedStitchDir, 'SKILL.md'), '---\nname: banker-setup-stitch-proxy\n---\n');
   const env2 = { ...process.env, HOME: home2, USERPROFILE: home2 };
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 18, `real codex install has 18 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 32, `real codex install has 32 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
+  ok(!fs.existsSync(renamedStitchDir), 'renamed-away banker-setup-stitch-proxy swept (replaced by setup-stitch)');
+  ok(installed.includes('banker-setup-stitch'), 'renamed skill installed as banker-setup-stitch');
+  ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
+  ok(newSkills.every((n) => installed.includes(`banker-${n}`)), 'new 0.4.0 skills installed as banker-*');
+  const prompts = fs.readdirSync(path.join(home2, '.codex', 'prompts')).filter((d) => d.startsWith('banker-'));
+  ok(prompts.length === 2, `real codex install has 2 banker-* command prompts (got ${prompts.length})`);
   const readName = (md) => {
     const m = fs.readFileSync(md, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/);
     const nm = m && m[1].match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);

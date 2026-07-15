@@ -1,11 +1,13 @@
 ---
 name: setup-omc-hud
-description: "omc_hud(Claude Code 상태표시줄)를 OS(mac/linux/windows)별 apply 스크립트로 내려받아 적용. 'setup-omc-hud'/'omc_hud 설치' 또는 /banker:setup 시 사용."
+description: "(banker) omc_hud(Claude Code 상태표시줄)를 OS별 apply 스크립트로 적용(Codex는 OMX hud). 'setup-omc-hud'/'omc_hud 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-omc-hud — omc_hud 상태표시줄 설치 (OS별)
 
 `smallOpenSource/omc_hud` 의 apply 스크립트를 OS에 맞게 내려받아 적용한다. `wget` 없으면 `curl`로 폴백. 답변은 한글.
+
+**런타임:** omc_hud 는 Claude Code 상태표시줄(`~/.claude/settings.json` statusLine) 대상이다. **Codex 런타임에선 oh-my-codex(OMX)가 자체 `hud` 스킬/구성을 제공**하므로, Codex에선 이 스킬 대신 OMX 의 `hud` 를 사용한다.
 
 ## 0. 감지
 ```bash

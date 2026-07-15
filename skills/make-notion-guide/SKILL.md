@@ -1,6 +1,6 @@
 ---
 name: make-notion-guide
-description: "프로젝트의 실제 API/인터페이스를 노션 체크박스 토글 양식의 개발자 호출 가이드 문서로 작성 — 'make-notion-guide'/'노션 가이드'/'API 호출 문서를 노션 양식' 시 사용."
+description: "(banker) 실제 API/인터페이스를 노션 토글 양식의 개발자 호출 가이드로 작성. 'make-notion-guide'/'노션 가이드'/'API 호출 문서를 노션 양식' 시 사용."
 ---
 
 # Make-Notion-Guide: 노션 양식 개발자 가이드 작성

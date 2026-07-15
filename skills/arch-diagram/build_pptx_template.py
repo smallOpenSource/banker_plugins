@@ -84,5 +84,7 @@ for a, b in EDGES:  # parent.right-center -> child.left-center (좌->우)
     ax, ay, aw, ah = rects[a]; bx, by, bw, bh = rects[b]
     arrow(ax + aw, ay + ah / 2, bx, by + bh / 2)
 
+import os
+os.makedirs(os.path.dirname(OUT) or '.', exist_ok=True)
 prs.save(OUT)
 print('saved', OUT)
