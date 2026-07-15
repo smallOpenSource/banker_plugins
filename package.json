@@ -18,6 +18,7 @@
     "codex",
     "hooks",
     "bin",
+    "!**/*.test.mjs",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"

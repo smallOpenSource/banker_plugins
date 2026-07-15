@@ -46,8 +46,7 @@ try {
   ok(newSkills.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the 6 new 0.4.0 skills (target both)');
   const newSkills05 = ['setup-node', 'setup-python', 'setup-java', 'setup-lsp', 'setup-tmux', 'setup-pwsh', 'setup-mcp', 'setup-sandbox', 'harness-factory'];
   ok(newSkills05.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the 9 new 0.5.0 harness-setup skills (target both)');
-  const newSkills06 = ['obsidizer'];
-  ok(newSkills06.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
+  ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
   ok(cmdCopies === 2, `codex dry-run plans 2 command prompts (got ${cmdCopies})`);
@@ -90,7 +89,6 @@ try {
   ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
   ok(newSkills.every((n) => installed.includes(`banker-${n}`)), 'new 0.4.0 skills installed as banker-*');
   ok(newSkills05.every((n) => installed.includes(`banker-${n}`)), 'new 0.5.0 harness-setup skills installed as banker-*');
-  ok(newSkills06.every((n) => installed.includes(`banker-${n}`)), 'new 0.6.0 obsidizer skill installed as banker-*');
   ok(installed.includes('banker-obsidizer'), 'obsidizer installed as banker-obsidizer');
 
   // 7) hook packaging + static safety checks (0.6.0 obsidizer: banker's first plugin-declared hook)
@@ -103,6 +101,12 @@ try {
     : path.join(prefix, 'lib', 'node_modules', '@kaydash9999', 'banker-plugins');
   for (const f of hookFiles) {
     ok(fs.existsSync(path.join(pkgRoot, 'hooks', f)), `hooks/${f} is npm-packaged (present in the globally-installed tarball)`);
+  }
+  // Tests are repo-only. obsidize.test.mjs sits INSIDE skills/obsidizer/, so shipping it
+  // lets a runtime scanning the skill dir surface a test double as skill content.
+  for (const f of [path.join('skills', 'obsidizer', 'obsidize.test.mjs'), path.join('hooks', 'obsidize-hook.test.mjs')]) {
+    ok(fs.existsSync(path.join(root, f)), `${f} exists in the repo (CI runs the suites from here, not the tarball)`);
+    ok(!fs.existsSync(path.join(pkgRoot, f)), `${f} is NOT npm-packaged (files[] negation holds)`);
   }
   const hooksJson = JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8'));
   const declaredTimeouts = [];
