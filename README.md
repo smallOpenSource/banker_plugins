@@ -7,7 +7,7 @@
 
 [빠른 시작](#빠른-시작) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA, 보안 감사, 문서, 아키텍처, 위키 작업을 위한 스킬 32개와 의존성 설치 스킬을 묶은 Claude Code 플러그인입니다. 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다. 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
+banker는 QA, 보안 감사, 문서, 아키텍처, 위키 작업을 위한 스킬 41개와 의존성·개발환경(OS별) 설치 스킬을 묶은 Claude Code 플러그인입니다. 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다. 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
 > npm 패키지(`@kaydash9999/banker-plugins`)와 GitHub 저장소(`smallOpenSource/banker_plugins`)는 같은 메인테이너가 관리합니다.
 
@@ -83,11 +83,27 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
 
+### 스킬: 개발환경 setup (OS별 · 런타임별)
+
+USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Codex)로 구성하는 얇은 실행 유닛. `/banker:setup` 오케스트레이터가 의존 순서(런타임 먼저)로 조합한다.
+
+| 스킬 | 설명 |
+|---|---|
+| `setup-node` | nvm + Node 22 (winget/nvm-windows) |
+| `setup-python` | Python 3.11 + pipx + uv (PEP668) |
+| `setup-java` | JDK 21 + JAVA_HOME (Debian=Adoptium Temurin) |
+| `setup-lsp` | 언어별 LSP(vtsls·basedpyright·bash·jdtls·spring) + lsp-mcp 브리지 (node·python·java 의존) |
+| `setup-tmux` | tmux(Rocky8 3.6a 소스빌드) / psmux(Windows) |
+| `setup-pwsh` | Windows PowerShell 7 환경(비-Windows no-op) |
+| `setup-mcp` | 공통 MCP 서버(context7·seq-thinking·filesystem·git·fetch) |
+| `setup-sandbox` | OS별 샌드박스(bubblewrap+userns / Seatbelt) + rust + git safe.directory |
+
 ### 스킬: 설치 (`/banker:setup` 가 호출)
 
 | 스킬 | 설명 |
 |---|---|
 | `setup-omc` | oh-my-claudecode(OMC) 설치·갱신 (Codex는 OMX) |
+| `harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
 | `setup-playwright` | Playwright + headless 브라우저 (RHEL8/Rocky8·non-root·no-conda 폴백) |
 | `setup-omc-hud` | omc_hud 상태표시줄 (OS별) |
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
@@ -109,7 +125,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 32개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). 디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
+- Codex에는 스킬 41개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). 디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다 — Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
 - `~/.codex/AGENTS.md` 는 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존).
 
@@ -154,9 +170,11 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 - Python: python-pptx(MIT, `arch-diagram`), python-docx(MIT, `rfp-author`), Playwright(Apache-2.0, `audit-web-page`·`play-qa`·`ultra-ui-qa`), detect-secrets(Apache-2.0, `lineage` 시크릿 스캔).
 - 브라우저·렌더링: Chromium(BSD-3-Clause), SwiftShader(Apache-2.0), Xvfb·X.Org(MIT). `setup-playwright` 및 브라우저 QA 스킬이 사용.
 - 문서·다이어그램: PlantUML(GPL 계열·다중 라이선스, `arch-diagram`), Poppler(GPL, `pdftoppm`), ImageMagick(ImageMagick License, `pdf-vision-extract`).
+- 개발환경·LSP: Node.js·nvm(MIT), uv(Apache-2.0/MIT), OpenJDK·Temurin(GPL+CE), jdtls(EPL-2.0), basedpyright(MIT)·vtsls·bash-language-server(MIT)·vscode-langservers-extracted, lsp-mcp([CesarPetrescu/lsp-mcp](https://github.com/CesarPetrescu/lsp-mcp)), tmux(ISC)·psmux, bubblewrap(LGPL-2.0), rustup. `setup-node`·`setup-python`·`setup-java`·`setup-lsp`·`setup-tmux`·`setup-sandbox` 가 설치.
 
 **연동·참조 (외부 프레임워크·서비스·브랜드)**
 - 프레임워크: oh-my-claudecode(OMC, **MIT**)·oh-my-codex(OMX, **MIT**), by [Yeachan-Heo](https://github.com/Yeachan-Heo). `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` 가 사용.
 - 플러그인: insane-search(**MIT**, © fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)). `setup-insane-search` 가 설치.
+- 팀 아키텍처 팩토리: revfactory/harness(**Apache-2.0**, © Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness))·Codex 포트 SaehwanPark/meta-harness(**Apache-2.0**). `harness-factory` 가 설치(banker 는 재배포하지 않고 설치·구성만 안내).
 - 서비스·디자인(독점·상표): Notion(`make-notion-guide`), Google Stitch(`setup-stitch`), Nothing 디자인 언어(`nothing-design`).
 - QA 대상 엔진(예시): Godot(MIT), Phaser(MIT) 등(`play-qa`).
