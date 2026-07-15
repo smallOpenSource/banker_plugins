@@ -203,8 +203,9 @@ PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"   #
 
 **존재 ≠ 동작** - 각 서버가 실제 응답하는지까지 확인:
 ```bash
-basedpyright-langserver --version
-vtsls --version 2>/dev/null || vtsls --help | head -1
+basedpyright --version                               # CLI 로 버전 확인(langserver 는 stdio 서버라 --version 없음)
+command -v basedpyright-langserver >/dev/null && echo "✓ basedpyright-langserver"
+vtsls --version
 bash-language-server --version
 ruff --version
 jdtls --version 2>/dev/null || which jdtls           # Windows: jdtls.bat

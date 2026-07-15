@@ -52,8 +52,9 @@ try {
   ok(codexOut.includes('copy skills/setup-insane-search '), 'codex dry-run includes setup-insane-search (target both)');
   ok(codexOut.includes('AGENTS.md is NOT modified'), 'codex states AGENTS.md untouched');
 
-  // 4) claude dry-run
-  const claudeOut = run(binPath, ['setup', '--claude', '--dry-run'], { cwd: home, env });
+  // 4) claude dry-run (capture stdout+stderr; tolerate absent claude, e.g. CI runners)
+  const claudeRes = cp.spawnSync(binPath, ['setup', '--claude', '--dry-run'], { cwd: home, env, encoding: 'utf8' });
+  const claudeOut = `${claudeRes.stdout || ''}${claudeRes.stderr || ''}`;
   ok(/marketplace add/.test(claudeOut) && /plugin install banker@banker-plugins/.test(claudeOut) || /claude CLI not found/.test(claudeOut),
      'claude dry-run prints register commands (or notes missing claude)');
 
