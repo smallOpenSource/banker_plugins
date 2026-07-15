@@ -9,12 +9,15 @@
  *
  * Write discipline (PM-7), inherited by both entry points (bare run and the
  * --enable hook): an unchanged page is never written at all; a changed one is
- * re-read immediately before writing and SKIPPED if it moved under us (CAS),
- * then written temp-file + rename. A torn read makes a page vanish from OMC's
- * index.md; a lost update silently eats a concurrent wiki_ingest merge.
+ * staged to a temp file, re-read and SKIPPED if it moved under us (CAS), then
+ * published by rename. A torn read makes a page vanish from OMC's index.md; a
+ * lost update silently eats a concurrent wiki_ingest merge. The rename kills
+ * the torn read outright; the CAS only narrows the lost-update window to that
+ * one syscall — a residual race remains, and is accepted (see writeIfUnchanged).
  *
  * Usage: node obsidize.mjs <path> [--profile=auto|omc|generic] [--dry-run] [--json]
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,12 +25,21 @@ import { fileURLToPath } from 'node:url';
 const RESERVED_FILES = new Set(['index.md', 'log.md', 'environment.md']);
 const FM_KEYS = ['title', 'tags', 'created', 'updated', 'sources', 'links', 'category', 'confidence', 'schemaVersion'];
 const SCHEMA_VERSION = 1;
+// Bounds GROWTH, not the footer: how many slugs obsidizer may ADD to one. It never costs a
+// footer a link it already carries — see renderFooter.
 const FOOTER_CAP = 12;
 const FOOTER_PREFIX = '관련: ';
 const FOOTER_SEP = ' · ';
 // mergePage appends `\n\n---\n\n## Update (<ts>)\n\n...`; everything from here on is preserve-only.
 const UPDATE_BOUNDARY = /\n\n---\n\n## Update \(/;
 const TMP_SUFFIX = '.obsidizer.tmp';
+// Any `[[...]]`, matching OMC's extractWikiLinks regex (ingest.ts:132-139) exactly.
+const WIKILINK = /\[\[([^\]]+)\]\]/g;
+// D8's positive whitelist, as a form test rather than "whatever names a file on disk".
+// titleToSlug can only ever emit this shape, so it costs an OMC tree nothing.
+const BARE_SLUG = /^[a-z0-9][a-z0-9-]*$/;
+// Opt-out marker. Obsidian renders `%%...%%` as a comment, so it is invisible in the vault.
+const IGNORE_MARKER = '%%obsidizer:ignore%%';
 
 /**
  * Slug-ish normalizer for the alias divergence test. Deliberately WITHOUT
@@ -87,7 +99,7 @@ export function parseFrontmatter(raw) {
   const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return null;
   const { map, order } = parseSimpleYaml(match[1]);
-  return { yaml: match[1], lines: match[1].split('\n'), map, order, body: match[2] };
+  return { lines: match[1].split('\n'), map, order, body: match[2] };
 }
 
 /** The 9 OMC keys, parsed. Returns null unless every key is present — we never fabricate one. */
@@ -172,14 +184,73 @@ function isFooterLine(line) {
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
+ * Obsidian's link target: everything before the first `#` (heading/block anchor) or `|`
+ * (display text). `[[a#S]]` and `[[a|A]]` carry the same graph edge as `[[a]]`.
+ */
+const linkTarget = (inner) => inner.split(/[#|]/)[0].trim();
+
+/**
+ * Body wikilinks that resolve to a page on disk, as `<basename>.md`.
+ *
+ * Read liberally, write strictly: every form Obsidian resolves is recognized here, so no
+ * edge is missed; renderFooter still emits bare form only. Fenced code is skipped —
+ * Obsidian renders `[[x]]` inside a fence literally and puts no edge in the graph, so
+ * absorbing it would mint an edge the vault does not have. Inner text that resolves to
+ * nothing on disk is dropped rather than slugified into a phantom (PM-4).
+ */
+function extractBodyLinks(body, basenames) {
+  const found = new Set();
+  walkOutsideFences(body, (line, inFence) => {
+    if (inFence) return;
+    for (const [, inner] of line.matchAll(WIKILINK)) {
+      const file = `${linkTarget(inner)}.md`;
+      if (basenames.has(file)) found.add(file);
+    }
+  });
+  return found;
+}
+
+/** The link targets the head's current footer already carries; empty when it has no footer. */
+function existingFooterSlugs(head) {
+  const lines = head.split('\n');
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  const last = lines.length ? lines[lines.length - 1] : '';
+  if (!isFooterLine(last)) return new Set();
+  return new Set([...last.matchAll(WIKILINK)].map(([, inner]) => linkTarget(inner)));
+}
+
+/**
  * Render the Related footer from the resolvable subset of links[] — bare [[slug]]
  * form only (D8: OMC's extractWikiLinks slugifies any inner text, so a piped or
  * heading form mints a phantom slug into links[]).
+ *
+ * BARE_SLUG makes D8 a test of the form itself rather than "whatever happens to name a
+ * file on disk". Nothing an OMC tree can hold is rejected by it (titleToSlug emits only
+ * this shape), and an entry it does reject keeps its OMC edge in links[] rather than being
+ * emitted in a form that mints a phantom on next ingest. Precisely: OMC's graph keeps that
+ * edge, Obsidian's loses it — `links: ["Weird Name.md"]` is a quoted YAML string, not a
+ * `[[…]]` Obsidian reads as an edge. Two graphs, and only one of them survives here.
+ *
+ * `present` (what the footer already shows) is kept whole however far past FOOTER_CAP it
+ * runs; the cap only limits what gets ADDED to it. Truncating instead would delete a
+ * resolvable bare [[link]] out of the body — a third way for a link to leave the footer,
+ * which "never delete a resolvable bare-form link" has no room for (its only two exceptions
+ * are a broken ref and the D8 rejection above, and both are enumerated). The two rules never
+ * actually compete: only a hand-written footer arrives over the cap, obsidizer's never does.
+ *
+ * Idempotent either way: run 2 reads run 1's output as `present`, which leaves no room
+ * under the cap, so it adds nothing and re-renders that same sorted set.
  */
-function renderFooter(links, basenames) {
-  const slugs = [...new Set(links.filter((l) => basenames.has(l)).map((l) => l.replace(/\.md$/, '')))]
-    .sort(byCodeUnit)
-    .slice(0, FOOTER_CAP);
+function renderFooter(links, basenames, present = new Set()) {
+  const resolvable = [...new Set(
+    links.filter((l) => basenames.has(l))
+      .map((l) => l.replace(/\.md$/, ''))
+      .filter((slug) => BARE_SLUG.test(slug)),
+  )].sort(byCodeUnit);
+  const kept = resolvable.filter((slug) => present.has(slug));
+  const room = Math.max(0, FOOTER_CAP - kept.length);
+  const added = resolvable.filter((slug) => !present.has(slug)).slice(0, room);
+  const slugs = [...kept, ...added].sort(byCodeUnit);
   return slugs.length ? FOOTER_PREFIX + slugs.map((s) => `[[${s}]]`).join(FOOTER_SEP) : null;
 }
 
@@ -285,8 +356,17 @@ export function canonicalizeText(raw, { profile, model, alias = null, now = null
     const omc = parseOmcFrontmatter(fm.map);
     if (!omc) return { text: source, changed: source !== String(raw), skipped: 'not-9-key' };
     omc.tags = normalizeTags(omc.tags);
-    omc.links = [...new Set(omc.links)].sort(byCodeUnit);
-    const body = canonicalizeBody(fm.body, renderFooter(omc.links, basenames));
+    // Absorb the body's resolvable wikilinks into links[] BEFORE the footer is rebuilt.
+    // The footer is rendered from links[] alone, so without this a footer link that never
+    // entered links[] — a hand-added one; OMC-written footers always satisfy
+    // links[] ⊇ footer because OMC derives links[] via extractWikiLinks(content) — would
+    // be silently dropped and the graph edge lost. Same monotonic shape as OMC's own
+    // mergePage (`[...existing, ...extractWikiLinks(new)]`): links[] only ever grows, so
+    // this stays idempotent (run 2 finds them present ⇒ no-op) and invents nothing — the
+    // edge is already in the body, and only resolvable targets are absorbed.
+    omc.links = [...new Set([...omc.links, ...extractBodyLinks(fm.body, basenames)])].sort(byCodeUnit);
+    const footer = renderFooter(omc.links, basenames, existingFooterSlugs(splitUpdate(fm.body).head));
+    const body = canonicalizeBody(fm.body, footer);
     out = `---\n${serializeFrontmatter(omc)}\n---\n${body}`;
     if (now && out !== source) {
       omc.updated = now;
@@ -304,51 +384,86 @@ export function canonicalizeText(raw, { profile, model, alias = null, now = null
   return { text: out, changed: out !== String(raw), skipped: null };
 }
 
+/** Split off the head: everything from a `## Update (<ts>)` heading on is preserve-only. */
+function splitUpdate(body) {
+  const m = body.match(UPDATE_BOUNDARY);
+  return m ? { head: body.slice(0, m.index), tail: body.slice(m.index) } : { head: body, tail: '' };
+}
+
 /** Head region is canonicalized; a `## Update (<ts>)` section is copied through byte for byte. */
 function canonicalizeBody(body, footer) {
-  const m = body.match(UPDATE_BOUNDARY);
-  const head = m ? body.slice(0, m.index) : body;
-  const tail = m ? body.slice(m.index) : '';
+  const { head, tail } = splitUpdate(body);
   let out = collapseBlankLines(head);
   if (footer !== null) out = applyFooter(out, footer);
   return `${out}${tail}`.replace(/\s+$/, '') + '\n';
 }
 
-/** temp file + rename — never a partial in-place write (PM-7). */
-function writeAtomic(file, text) {
-  const tmp = file + TMP_SUFFIX;
-  try {
-    fs.writeFileSync(tmp, text, 'utf8');
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* nothing to clean up */ }
-    throw err;
-  }
+/** Remove a temp file. A no-op once it has been renamed into place. */
+function discardTemp(tmp) {
+  try { fs.unlinkSync(tmp); } catch { /* renamed away, or never created */ }
 }
 
 /**
- * Read-back CAS, then atomic write (PM-7). `baseline` is the exact bytes the
- * canonical text was computed from; if the file no longer matches, another writer
- * (a concurrent wiki_ingest merging a `## Update` section) touched it since we
- * read it, so writing would silently clobber that merge. Skip instead — the next
- * run converges the page to identical bytes (one canonicalizer, one fixed point).
+ * Write `text` into a fresh temp file beside `file` and fsync it; the caller renames it
+ * into place. Never a partial in-place write (PM-7).
  *
- * Deliberately no dependency on OMC's .wiki-lock: borrowing another plugin's
- * internal lock breaks the day it is renamed (§6.2 / ADR-c). CAS + atomic write
- * is the zero-coupling equivalent.
+ * Mirrors the shape of OMC's atomicWriteFileSync (atomic-write.ts:166-206) — the bar the
+ * plan holds obsidizer's own writes to — reimplemented rather than borrowed (§6.2):
+ * randomUUID so two concurrent obsidizer processes can never collide on one temp path,
+ * `wx` so the open fails instead of truncating a temp file somebody else created, fsync
+ * so a rename cannot publish a short write (NFS).
+ */
+function writeTemp(file, text) {
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}${TMP_SUFFIX}.${crypto.randomUUID()}`);
+  // A failed `wx` open either found somebody else's file or created nothing, so there is
+  // deliberately no cleanup on this line — only past it do we own `tmp`.
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, text, 'utf8');
+    fs.fsyncSync(fd);
+  } catch (err) {
+    fs.closeSync(fd);
+    discardTemp(tmp);
+    throw err;
+  }
+  fs.closeSync(fd);
+  return tmp;
+}
+
+/**
+ * Stage the write, then read-back CAS, then rename (PM-7). `baseline` is the exact bytes
+ * the canonical text was computed from; if the file no longer matches, another writer
+ * (a concurrent wiki_ingest merging a `## Update` section) touched it since we read it,
+ * so writing would silently clobber that merge. Skip instead — the next run converges the
+ * page to identical bytes (one canonicalizer, one fixed point).
+ *
+ * The temp file is written BEFORE the CAS re-read on purpose: it moves the whole staging
+ * write out of the race window, leaving a single `rename` syscall between the check and
+ * the publish.
+ *
+ * That window is narrowed, NOT closed. A writer landing between the re-read and the
+ * rename is still clobbered. The residue is accepted rather than solved: closing it needs
+ * a lock the other writer honors, and depending on OMC's internal `.wiki-lock` is refused
+ * (§6.2 / ADR-c) — borrowing another plugin's private file breaks silently the day it is
+ * renamed. So this is a real reduction, not an elimination; do not read it as one.
  *
  * Returns false when the write was skipped.
  */
 function writeIfUnchanged(file, baseline, text) {
-  let current;
+  const tmp = writeTemp(file, text);
   try {
-    current = fs.readFileSync(file, 'utf8');
-  } catch {
-    return false; // deleted mid-run; nothing of ours to preserve
+    let current;
+    try {
+      current = fs.readFileSync(file, 'utf8');
+    } catch {
+      return false; // deleted mid-run; nothing of ours to preserve
+    }
+    if (current !== baseline) return false;
+    fs.renameSync(tmp, file);
+    return true;
+  } finally {
+    discardTemp(tmp); // a no-op once the rename above consumed it
   }
-  if (current !== baseline) return false;
-  writeAtomic(file, text);
-  return true;
 }
 
 export function run(target, { profile = 'auto', dryRun = false, now = null } = {}) {
@@ -371,6 +486,13 @@ export function run(target, { profile = 'auto', dryRun = false, now = null } = {
       continue;
     }
     report.scanned += 1;
+    // Opt-out: the marker anywhere in the file means hands off — no canonicalize, no
+    // write. The page still counts in the vault model (its slug resolves links, its H1
+    // still gates an alias elsewhere): "do not modify" is not "does not exist".
+    if (page.raw.includes(IGNORE_MARKER)) {
+      report.skipped.push({ file, reason: 'ignored' });
+      continue;
+    }
     const alias = aliases.get(file) || null;
     const res = canonicalizeText(page.raw, { profile: resolved, model, alias, now: stamp });
     if (res.skipped) {

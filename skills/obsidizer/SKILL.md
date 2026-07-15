@@ -86,9 +86,9 @@ banker의 **첫 플러그인 선언 hook**(`hooks/hooks.json`)이 OMC 위키 쓰
 | T1 | H1==title 단일화, 헤딩레벨 스킵 금지, 빈줄 정규화 | 적용 | 대체로(멱등) | canonicalizer |
 | T2 | `tags` 정규화(선행 `#` 제거·dedup·결정적 순서, Unicode 과잉 제거 금지) | 적용 | YES | canonicalizer |
 | T3 | 본문 `[[slug]]` 보강 — 기존 슬러그만, ghost node 금지. **OMC 프로파일: bare form만** | 적용 | YES | LLM(의미) |
-| T4 | `links[]` 상호성 — 누락된 진짜 역방향 백링크 추가 → de-orphan | 적용 | YES | LLM 결정·canonicalizer 기록 |
+| T4 | `links[]` 상호성 — 누락된 진짜 역방향 백링크 추가 → de-orphan. 본문의 해소 가능한 링크는 canonicalizer가 기계적으로 흡수(monotonic — 늘기만 하고 삭제 없음) | 적용 | YES | LLM 결정·canonicalizer 기록 |
 | T5 | 페이지 내 섹션 dedup — 바이트 동일 중복 블록만 축약, 고유 사실 전량 보존 | 적용 | YES(재-ingest 전까지) | LLM(의미) |
-| T6 | Related 푸터 — 큐레이션된 `links[]`의 해소 가능한 부분집합, 정렬·dedup·cap, bare form | 적용 | YES | canonicalizer |
+| T6 | Related 푸터(OMC 프로파일 한정) — 본문의 해소 가능한 링크를 `links[]`에 흡수(T4)한 **뒤**, 그 해소 가능한 부분집합을 정렬·dedup·bare form으로 렌더. cap은 **추가분만** 제한(기존 푸터 링크는 캡 초과여도 유지 — 아래 안전 울타리) | 적용 | YES | canonicalizer |
 | T7 | rename | **안 함** | n/a | — |
 | T8 | `aliases` | 일반 vault만 적용(아래 별칭 정책) · OMC 트리 거부 | 일반 YES · OMC NO(destructive) | canonicalizer |
 | T9 | inline `Key:: Value` 생성 | 0.7.0 보류(생성만); v1은 보존만 | YES(이미 durable) | — |
@@ -156,18 +156,51 @@ vault에서도 문서 안에 출처가 없는 값이라 쓰면 **날조**가 된
 - **기본 = dry-run.** `--apply` 전까지 아무것도 쓰지 않는다. 미리보기 없는 자동 변형은 금지(위
   한계 섹션에서 hook 경로를 거부하는 이유이기도 하다).
 - **`--apply` 전 필수 스냅샷**: `cp -r <vault> <vault>.bak-<ts>` (compact-wiki와 동일 선례).
-- **모든 쓰기는 원자적**: temp 파일 + `rename`, 절대 in-place bare write가 아니다. hook은 쓰기
-  직전 **read-back CAS**(재읽어 바뀌었으면 skip)까지 더한다. OMC의 `.wiki-lock`엔 **일체 의존하지
-  않는다**(남의 플러그인 내부 파일에 기대는 건 별개 위험).
-- **링크는 삭제하지 않는다**: 깨지지 않은 링크는 절대 지우지 않는다(broken-ref 제거는 일반 vault
-  한정, 항상 미리보기 동반).
+- **모든 쓰기는 원자적**: 유니크 temp(`randomUUID`) + `wx`(배타 생성) + `fsync` + `rename`. 절대
+  in-place bare write가 아니다 — OMC 자신의 `atomicWriteFileSync`와 같은 형태를, 빌려 쓰지 않고
+  독립 구현한다. **read-back CAS는 hook이 아니라 캐노니컬라이저에 있고, 두 진입점(bare 실행·armed
+  hook)이 함께 상속**한다: temp를 먼저 다 쓰고 → 재읽어 바뀌었으면 skip → `rename`.
+  **`rename`은 torn read를 확실히 없앤다. CAS는 lost update의 창을 `rename` 한 번으로 줄일 뿐
+  없애지 못한다** — 그 창에 낀 writer는 여전히 덮인다. 이 잔여 race는 **해결이 아니라 수용**이다:
+  닫으려면 상대가 지켜주는 lock이 필요한데 OMC의 내부 `.wiki-lock`에 기대는 건 거부한다(남의
+  플러그인 내부 파일은 이름이 바뀌는 날 조용히 깨진다). 없앴다고 읽지 말 것.
+- **해소 가능한 bare-form 링크는 삭제하지 않는다**(두 예외가 아래 (1)·(2)이고, 제목이 그 둘을 이미
+  배제하도록 좁혀 쓴 것이다): 푸터를 다시 그리기 **전에** 본문의 해소 가능한(on-disk)
+  위키링크를 `links[]`에 **합집합으로 흡수**한다(`[[a|A]]`·`[[a#S]]`도 대상 `a`로 흡수. 코드펜스
+  안은 제외 — Obsidian이 엣지로 치지 않으므로 흡수하면 없는 엣지를 만드는 셈이다). 푸터는 `links[]`
+  만 보고 렌더링되므로, 이 흡수가 없으면 `links[]`에 없던 **수기 푸터 링크**가 조용히 사라진다
+  (OMC가 쓴 푸터는 `links[]` ⊇ 푸터가 항상 성립해 안 걸리고, 사람이 더한 링크만 걸린다).
+  `links[]` 항목은 어느 경로에서도 지우지 않으며(정렬·dedup만), 본문 중간 링크도 손대지 않는다.
+  다시 그리는 건 푸터 줄 하나뿐이고(OMC 프로파일 한정 — 일반 vault에선 푸터를 렌더링조차 하지
+  않으므로 있는 그대로 둔다), 거기서 링크가 빠지는 경우는 둘 — (1) 대상 파일이 없는 **broken-ref**,
+  (2) OMC 프로파일에서 **bare slug가 아닌 형태**(D8: `[[Weird Name]]`은 OMC `extractWikiLinks`가
+  `weird-name.md`로 슬러그화해 phantom을 만든다).
+  (1)은 "해소 가능한 링크 삭제"에 해당하지 않는다 — 가리키는 파일이 없으니 없앨 엣지 자체가 없고,
+  broken-ref 0은 검증 목표다. `links[]`에 같은 대상의 올바른 슬러그가 있으면 그게 대신 렌더돼
+  결과적으로 **수리**가 된다(측정 확인: 깨진 `[[…-automation-ceiling]]` → 실재하는
+  `[[…-automation-ceil]]`). 없으면 그냥 빠진다. 캐노니컬라이저가 하는 일이라 **OMC 트리에서도**
+  일어나며, bare 실행은 `--apply` 게이트 뒤에 있지만 **무장된 hook 경로엔 미리보기가 없다**.
+  (2)에서 살아남는 건 **OMC 그래프 하나뿐이다** — `links: ["Weird Name.md"]`는 따옴표 친 YAML
+  문자열일 뿐 Obsidian이 엣지로 읽는 `[[…]]`가 아니다. 즉 **OMC 엣지(`links[]`)는 남고 Obsidian
+  엣지는 사라진다**(본문 중간에 같은 링크가 또 있으면 거긴 손대지 않으므로 그쪽 Obsidian 엣지는
+  유지된다). OMC가 만드는 파일명은 전부 bare slug라 (2)의 대상은 사람이 non-slug 파일명을 직접 넣은
+  경우뿐이다.
+  **`FOOTER_CAP`(12)은 세 번째 경우가 아니다** — 캡은 obsidizer가 푸터에 **새로 더하는 양**만
+  제한하고, 이미 푸터에 있는 해소 가능한 링크는 캡을 넘겨도 전부 유지한다(수기 푸터 15개 → 15개
+  그대로). 그래서 `links[]`는 20인데 푸터엔 12만 보이는 상태가 정상이다: `links[]`는 OMC 그래프의
+  durable 전량이고 푸터는 그 위에 얹은 **표현**이며, 캡은 표현 예산이지 엣지 예산이 아니다.
 - **본문은 재작성하지 않는다**: 추가·포맷만 하고 산문을 고쳐쓰지 않는다.
 - **rename 없음**: 절대적. 예쁜 표시 이름이 필요해도 하지 않는다.
 - **reserved 파일은 in-place 편집하지 않는다**: `index.md`/`log.md`/`environment.md`.
 - **OMC 프로파일은 9-key envelope에 갇힌다**: 그 외 프론트매터 키는 절대 추가하지 않는다(body
   `::`와 `.canvas`는 이 울타리 밖 — durable하므로 허용).
 - **일반 프로파일은 사용자 콘텐츠를 덮지 않는다**: 기존 `aliases` 보존, 프론트매터 키 순서 보존,
-  없는 프론트매터 블록을 새로 만들지 않음, `%%obsidizer:ignore%%` 마킹 노트는 건너뜀.
+  없는 프론트매터 블록을 새로 만들지 않음.
+- **`%%obsidizer:ignore%%` 옵트아웃**: 파일 어디든 이 마커가 있으면 **프로파일 무관** 그 페이지를
+  통째로 건너뛴다 — 읽기-수정-쓰기를 아예 하지 않고 리포트에 `ignored`로 집계한다. 건너뛴 페이지도
+  vault 모델에는 그대로 남는다(슬러그가 링크를 해소하고, H1이 다른 노트의 별칭 조건을 계속
+  게이팅한다) — "고치지 마라"는 "없는 셈 쳐라"가 아니다. Obsidian은 `%%…%%`를 주석으로 렌더링하므로
+  마커는 화면에 보이지 않는다.
 - **사실을 날조하지 않는다**: 존재하지 않는 슬러그로 링크하지 않고, 별칭은 H1에서만 파생하며,
   `cssclasses`·Excalidraw·Canvas·MOC를 절대 지어내지 않는다 — OPEN 항목은 보존-전용/미적용 +
   Unknown 보고로 degrade.

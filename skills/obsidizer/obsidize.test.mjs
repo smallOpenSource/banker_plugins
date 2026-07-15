@@ -3,7 +3,7 @@
  * Unit tests for the obsidize canonicalizer. Run: `node --test skills/obsidizer/`
  * Zero deps: node:test + node:assert only.
  */
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,8 +40,12 @@ const omcPage = (o = {}) => [
 /** Frontmatter key order as it appears in the emitted text. */
 const keyOrder = (text) => parseFrontmatter(text).order;
 
+const vaults = [];
+after(() => { for (const dir of vaults) fs.rmSync(dir, { recursive: true, force: true }); });
+
 function makeVault(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'obz-'));
+  vaults.push(dir);
   for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
   return dir;
 }
@@ -113,11 +117,144 @@ test('Related footer: an existing footer is normalized in place, not duplicated'
   assert.ok(text.endsWith('관련: [[a]] · [[b]]\n'));
 });
 
+// The five tests above all feed `footer ⊆ links[]`, which is the only shape OMC itself can
+// produce (it derives links[] via extractWikiLinks(content)). Every test below starts from
+// the shape OMC cannot produce and a human can: a footer link that never entered links[].
+
+test('Related footer: a footer link absent from links[] survives, and is absorbed into links[]', () => {
+  const model = { basenames: new Set(['a.md', 'b.md', 'c.md']) };
+  const raw = omcPage({ links: ['b.md'], body: 'Body text.\n\n관련: [[b]] · [[c]]' });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  assert.ok(text.endsWith('관련: [[b]] · [[c]]\n'),
+    `c.md is on disk, so [[c]] is not broken and must not be deleted: ${JSON.stringify(text.slice(-40))}`);
+  assert.deepEqual(parseOmcFrontmatter(parseFrontmatter(text).map).links, ['b.md', 'c.md'],
+    'the edge is absorbed into links[] — the durable half of the graph');
+
+  const second = canonicalizeText(text, { profile: 'omc', model });
+  assert.equal(second.text, text, 'run 2 finds the absorbed link already present — still a fixed point');
+  assert.equal(second.changed, false);
+});
+
+test('Related footer: an unresolvable footer link is dropped, never absorbed as a phantom', () => {
+  const model = { basenames: new Set(['a.md']) };
+  const raw = omcPage({ links: ['a.md'], body: 'Body text.\n\n관련: [[a]] · [[ghost]]' });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  assert.ok(text.endsWith('관련: [[a]]\n'));
+  assert.deepEqual(parseOmcFrontmatter(parseFrontmatter(text).map).links, ['a.md'],
+    'ghost.md is not on disk — absorbing it would mint the broken ref PM-4 is about');
+});
+
+// --- FOOTER_CAP: a growth bound, never a deletion ----------------------------
+
+/** n on-disk pages named so that code-unit order is readable: p-01 … p-20. */
+const capVault = (n) => {
+  const slugs = Array.from({ length: n }, (_, i) => `p-${String(i + 1).padStart(2, '0')}`);
+  return { slugs, model: { basenames: new Set(slugs.map((s) => `${s}.md`)) } };
+};
+const footerOf = (text) => text.match(/^관련: .*$/m)[0];
+const footerSlugsOf = (text) => [...footerOf(text).matchAll(/\[\[([^\]]+)\]\]/g)].map(([, s]) => s);
+
+test('FOOTER_CAP: a hand-written footer over the cap keeps every link — the cap never deletes', () => {
+  const { slugs, model } = capVault(15);
+  const raw = omcPage({ links: [], body: `Body text.\n\n관련: ${slugs.map((s) => `[[${s}]]`).join(' · ')}` });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  assert.deepEqual(footerSlugsOf(text), slugs,
+    'all 15 are on-disk bare slugs, so not one is broken or phantom-minting — the cap is no licence to drop them');
+  assert.deepEqual(parseOmcFrontmatter(parseFrontmatter(text).map).links, slugs.map((s) => `${s}.md`).sort(),
+    'and the union still absorbs every one of them into links[]');
+
+  const second = canonicalizeText(text, { profile: 'omc', model });
+  assert.equal(second.text, text, 'run 2 reads the 15 as already present, adds nothing, re-renders the same bytes');
+  assert.equal(second.changed, false);
+});
+
+test('FOOTER_CAP: the cap still bounds what obsidizer adds to a footer on its own', () => {
+  const { slugs, model } = capVault(20);
+  const raw = omcPage({ links: slugs.map((s) => `${s}.md`), body: 'Body text.' });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  assert.deepEqual(footerSlugsOf(text), slugs.slice(0, 12),
+    'nothing was in the footer to keep, so the cap bounds the render at 12 — deterministically, in code-unit order');
+  assert.equal(parseOmcFrontmatter(parseFrontmatter(text).map).links.length, 20,
+    'links[] still carries all 20 — the cap is a budget for the rendered footer, not for the graph');
+  assert.equal(canonicalizeText(text, { profile: 'omc', model }).text, text, 'still a fixed point');
+});
+
+test('FOOTER_CAP: a footer under the cap is topped up only to the cap, and keeps what it had', () => {
+  const { slugs, model } = capVault(20);
+  const had = ['p-19', 'p-20']; // last in code-unit order: a truncating cap would never have picked them
+  const raw = omcPage({ links: slugs.map((s) => `${s}.md`), body: `Body text.\n\n관련: ${had.map((s) => `[[${s}]]`).join(' · ')}` });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  const rendered = footerSlugsOf(text);
+  assert.equal(rendered.length, 12, 'kept 2 + added 10 = the cap');
+  assert.ok(had.every((s) => rendered.includes(s)), `the two it already had survive: ${rendered.join(',')}`);
+  assert.deepEqual(rendered, [...slugs.slice(0, 10), ...had], 'sorted as one set, so the output is order-independent');
+  assert.equal(canonicalizeText(text, { profile: 'omc', model }).text, text, 'still a fixed point');
+});
+
+test('FOOTER_CAP: keeping an over-cap footer never resurrects a broken or non-bare link', () => {
+  // The cap stops being a deletion path; the other two must NOT stop being ones.
+  const { slugs, model } = capVault(15);
+  model.basenames.add('Weird Name.md');
+  const body = `Body text.\n\n관련: ${slugs.map((s) => `[[${s}]]`).join(' · ')} · [[ghost]] · [[Weird Name]]`;
+  const { text } = canonicalizeText(omcPage({ links: [], body }), { profile: 'omc', model });
+
+  assert.deepEqual(footerSlugsOf(text), slugs, 'the 15 resolvable bare slugs, and only those');
+  assert.ok(!text.includes('[[ghost]]'), 'a broken ref is still dropped, over the cap or not');
+  assert.ok(!text.includes('[[Weird Name]]'), 'a non-bare slug is still not emitted (D8)');
+});
+
+test('links[]: resolvable body links are absorbed; fenced ones are not', () => {
+  const model = { basenames: new Set(['a.md', 'b.md']) };
+  const raw = omcPage({ links: [], body: 'Prose mentioning [[a]].\n\n```md\n[[b]]\n```' });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  assert.deepEqual(parseOmcFrontmatter(parseFrontmatter(text).map).links, ['a.md'],
+    'Obsidian renders a fenced [[b]] literally and puts no edge in the graph');
+});
+
+test('links[]: a piped or heading body link is absorbed by its target, and re-emitted bare', () => {
+  const model = { basenames: new Set(['a.md', 'b.md']) };
+  const raw = omcPage({ links: [], body: 'See [[a|Alpha]] and [[b#Section]].' });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  assert.deepEqual(parseOmcFrontmatter(parseFrontmatter(text).map).links, ['a.md', 'b.md'],
+    'both point at a real page — the edge is real even though the form is one we never emit');
+  assert.ok(text.endsWith('관련: [[a]] · [[b]]\n'), 'read liberally, write strictly (D8)');
+});
+
+test('D8 whitelist: a links[] slug that is not bare form is never emitted as [[…]]', () => {
+  // Unreachable through OMC — titleToSlug cannot emit any of these — which is the whole
+  // point of a positive whitelist: it is closed against forms nobody has enumerated.
+  const model = { basenames: new Set(['a.md', 'Weird Name.md', 'b|piped.md', '-lead.md']) };
+  const raw = omcPage({ links: ['a.md', 'Weird Name.md', 'b|piped.md', '-lead.md'] });
+  const { text } = canonicalizeText(raw, { profile: 'omc', model });
+
+  assert.ok(text.endsWith('관련: [[a]]\n'), `only the bare slug is emitted: ${JSON.stringify(text.slice(-40))}`);
+  assert.ok(!/\[\[[^\]]*[|#\s]/.test(text), 'no emitted wikilink can be slugified into a phantom');
+  assert.deepEqual(parseOmcFrontmatter(parseFrontmatter(text).map).links,
+    ['-lead.md', 'Weird Name.md', 'a.md', 'b|piped.md'],
+    'the whitelist gates emission, not the graph — their edges stay in links[]');
+});
+
 test('generic profile: existing keys and order preserved verbatim', () => {
   const raw = ['---', 'zeta: 1', "title: 'single quoted'", 'alpha: [x, y]', '---', '', '# H', '', 'Body.', ''].join('\n');
   const { text } = canonicalizeText(raw, { profile: 'generic', model: emptyModel });
   assert.deepEqual(keyOrder(text), ['zeta', 'title', 'alpha']);
   assert.ok(text.includes("title: 'single quoted'"), 'generic frontmatter is passed through byte for byte');
+});
+
+test('generic profile: the footer is left exactly as written — it is never re-rendered', () => {
+  // links[] is an OMC key, so there is nothing to render a footer FROM here. Leaving the
+  // line alone is what makes "broken-ref removal" an OMC-profile event only.
+  const raw = ['---', 'title: t', '---', '', '# H', '', 'Body.', '', '관련: [[zzz]] · [[aaa]] · [[ghost]]', ''].join('\n');
+  const { text, changed } = canonicalizeText(raw, { profile: 'generic', model: { basenames: new Set(['aaa.md', 'zzz.md']) } });
+  assert.equal(changed, false);
+  assert.ok(text.endsWith('관련: [[zzz]] · [[aaa]] · [[ghost]]\n'), 'not sorted, not de-ghosted, not touched');
 });
 
 test('generic profile: no frontmatter block is created where none existed', () => {
@@ -281,6 +418,39 @@ test('reserved files are never edited in the OMC profile', () => {
   assert.equal(report.skipped.filter((s) => s.reason === 'reserved').length, 3);
 });
 
+// --- opt-out -----------------------------------------------------------------
+
+test('%%obsidizer:ignore%%: a marked page is skipped entirely, siblings still canonicalized', () => {
+  const dir = makeVault({
+    'index.md': '# I\n',
+    'log.md': '# L\n',
+    'p-one.md': omcPage({ tags: ['#x'], body: 'Body.\n\n%%obsidizer:ignore%%' }),
+    'q-two.md': omcPage({ title: 'Q Two', tags: ['#y'] }),
+  });
+  const before = fs.readFileSync(path.join(dir, 'p-one.md'), 'utf8');
+
+  const report = run(dir, { now: NOW });
+
+  assert.equal(fs.readFileSync(path.join(dir, 'p-one.md'), 'utf8'), before,
+    'not one byte written — even the #-prefixed tag it would normally normalize is left alone');
+  assert.deepEqual(report.skipped.filter((s) => s.reason === 'ignored').map((s) => s.file), ['p-one.md']);
+  assert.deepEqual(report.changed, ['q-two.md'], 'the opt-out is per page, not per vault');
+});
+
+test('%%obsidizer:ignore%%: honored in the generic profile too — where aliases get written', () => {
+  const dir = makeVault({
+    'a-really-different-slug.md': `${genericNote('Some Completely Other Title')}\n%%obsidizer:ignore%%\n`,
+  });
+  const file = path.join(dir, 'a-really-different-slug.md');
+  const before = fs.readFileSync(file, 'utf8');
+
+  const report = run(dir, { now: NOW });
+
+  assert.equal(report.profile, 'generic');
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'no alias is written into a page that opted out');
+  assert.deepEqual(report.skipped.map((s) => s.reason), ['ignored']);
+});
+
 // --- timestamps / determinism ------------------------------------------------
 
 test('created is never modified; updated is bumped only when content actually changed', () => {
@@ -378,6 +548,41 @@ test('atomicity: the write path is temp+rename (new inode) and leaves no .tmp be
   run(dir, { now: NOW });
   assert.notEqual(fs.statSync(file).ino, inoBefore, 'rename swaps the inode — an in-place write would keep it');
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.obsidizer.tmp')), [], 'no .tmp survives a successful run');
+});
+
+test('write path: a unique wx temp per WRITE, fsynced, staged before the CAS re-read', (t) => {
+  const dir = makeVault({ 'index.md': '# I\n', 'log.md': '# L\n', 'p-one.md': omcPage({ tags: ['#x'] }) });
+  const file = path.join(dir, 'p-one.md');
+  const trace = [];
+  const real = { open: fs.openSync, read: fs.readFileSync, fsync: fs.fsyncSync, rename: fs.renameSync };
+  t.mock.method(fs, 'openSync', (p, flags, ...rest) => {
+    if (String(p).includes('.obsidizer.tmp')) trace.push(['open', String(p), flags]);
+    return real.open.call(fs, p, flags, ...rest);
+  });
+  t.mock.method(fs, 'fsyncSync', (fd) => { trace.push(['fsync', '']); return real.fsync.call(fs, fd); });
+  t.mock.method(fs, 'renameSync', (from, to) => { trace.push(['rename', String(from)]); return real.rename.call(fs, from, to); });
+  t.mock.method(fs, 'readFileSync', (p, ...rest) => {
+    if (String(p) === file) trace.push(['read', String(p)]);
+    return real.read.call(fs, p, ...rest);
+  });
+
+  // Two writes to ONE page — the collision the fixed shared temp name actually caused.
+  // Two different pages would never collide, so staging them proves nothing.
+  run(dir, { profile: 'omc', now: NOW });
+  fs.writeFileSync(file, omcPage({ tags: ['#x'] })); // re-dirty the same page
+  run(dir, { profile: 'omc', now: NOW });
+
+  const temps = trace.filter(([op]) => op === 'open');
+  assert.equal(temps.length, 2, 'the same page was staged twice');
+  assert.ok(temps.every(([, , flags]) => flags === 'wx'),
+    `exclusive create only — a plain open truncates a temp somebody else made (got ${JSON.stringify(temps.map((e) => e[2]))})`);
+  assert.equal(new Set(temps.map(([, p]) => p)).size, 2,
+    'two writes to ONE page must not share a temp path — a fixed name is exactly what two concurrent obsidizer processes collide on');
+
+  // The whole discipline for one write, in order: read the CAS baseline, stage the temp,
+  // fsync it, re-read to check nobody moved under us, publish by rename.
+  assert.deepEqual(trace.map(([op]) => op).slice(0, 5), ['read', 'open', 'fsync', 'read', 'rename'],
+    'the temp is fully staged and fsynced before the CAS re-read, leaving only the rename inside the race window');
 });
 
 test('single-file target canonicalizes only that page', () => {
