@@ -207,3 +207,50 @@ jobs:
           git clone --depth 1 https://github.com/SaehwanPark/meta-harness /tmp/meta-harness
           test -f /tmp/meta-harness/scripts/install_harness.py && echo "installer present"
           python3 /tmp/meta-harness/scripts/install_harness.py --help >/dev/null 2>&1 && echo "installer --help OK" || echo "installer help not exposed (non-fatal; repo layout may differ)"
+
+  app-runtime:
+    name: runtime discovery ${{ matrix.os }} (Claude Code + Codex CLI)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-13]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install Codex CLI + Claude Code (npm, no login required)
+        shell: bash
+        run: |
+          npm i -g @openai/codex @anthropic-ai/claude-code
+          codex --version
+          claude --version
+      - name: Codex CLI discovers the 9 new banker skills (no API key)
+        shell: bash
+        run: |
+          set -e
+          node bin/banker.js setup --codex --scope user
+          SK=$(node -p "require('path').join(require('os').homedir(),'.codex','skills')")
+          for s in setup-node setup-python setup-java setup-lsp setup-tmux setup-pwsh setup-mcp setup-sandbox harness-factory; do
+            test -f "$SK/banker-$s/SKILL.md" || { echo "MISSING banker-$s in $SK"; exit 1; }
+          done
+          echo "on-disk: 9 new banker-* skills present (Codex dir==name discovery contract satisfied)"
+          if codex debug prompt-input "x" >/tmp/ci.out 2>/tmp/ci.err; then
+            n=$(grep -oE 'banker-[a-z0-9-]+' /tmp/ci.out | sort -u | wc -l | tr -d ' ')
+            grep -q banker-harness-factory /tmp/ci.out || { echo "codex live render missing new skills"; exit 1; }
+            echo "codex debug prompt-input live-exposed $n banker-* skills (incl. new 0.5.0)"
+          else
+            echo "NOTE: codex debug prompt-input needs a provider config on this runner; on-disk contract already asserted above."
+            head -3 /tmp/ci.err || true
+          fi
+      - name: Claude Code discovers the 9 new banker skills (no auth)
+        shell: bash
+        run: |
+          set -e
+          out=$(claude --plugin-dir "$PWD" plugin details banker 2>&1) || { echo "claude plugin details failed:"; echo "$out" | head -12; exit 1; }
+          echo "$out" | grep -E 'Skills \(|Component inventory' | head -2
+          for s in setup-node setup-python setup-java setup-lsp setup-tmux setup-pwsh setup-mcp setup-sandbox harness-factory; do
+            echo "$out" | grep -q "$s" || { echo "MISSING $s in claude plugin details"; exit 1; }
+          done
+          echo "claude plugin details lists all 9 new skills (no auth)"
