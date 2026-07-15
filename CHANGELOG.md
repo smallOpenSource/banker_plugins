@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.0] - 2026-07-15
+
+### Added
+- **신규 스킬 9종** (전부 `target: both`, 런타임 인식 — Claude=OMC / Codex=OMX): 개발환경 "harness" 구성요소를 OS별·런타임별로 개별 설치/구성하는 스킬 계층. USER_RESOURCES의 과거버전 가이드(5-OS Claude Code + 6-OS Codex/Azure)에서 공통 유용요소를 추출하고 2026 현행 방식으로 현행화했다.
+  - `setup-node`: nvm + Node 22 (winget/nvm-windows) per-OS. npx 기반 MCP·CLI의 전제.
+  - `setup-python`: Python 3.11 + pipx + uv per-OS (dnf module/deadsnakes/winget/brew, PEP668). `docs-setup`가 이 런타임을 소비.
+  - `setup-java`: JDK 21 + JAVA_HOME per-OS (Debian은 Adoptium Temurin 전용). `setup-lsp`의 jdtls가 요구.
+  - `setup-lsp`: 언어별 LSP(vtsls·basedpyright·bash·jdtls·spring) + lsp-mcp 브리지. Claude=LSP MCP 도구, Codex=`config.toml [mcp_servers.lsp_bridge]`. `--lang` 선택.
+  - `setup-tmux`: tmux per-OS (Rocky8 `3.6a` 소스빌드·apt/brew·Windows psmux). OMC team·worktree / OMX `$team`·HUD 전제.
+  - `setup-pwsh`: Windows PowerShell 7 환경(`$PROFILE` UTF-8·Terminal·Git). Claude=`CLAUDE_CODE_GIT_BASH_PATH`, Codex=네이티브 셸. 비-Windows는 no-op 안내.
+  - `setup-mcp`: 공통 MCP 서버(context7·sequential-thinking·filesystem·git·fetch). Claude=`claude mcp add`, Codex=`config.toml [mcp_servers.*]` (timeout 300).
+  - `setup-sandbox`: OS별 샌드박스(bubblewrap+userns / AppContainer / Seatbelt) + rust/cargo + git `safe.directory`. Codex=`sandbox_mode`.
+  - `harness-factory`: revfactory/harness(팀 아키텍처 팩토리) 플러그인 설치+구성+사용안내. Claude=`harness@harness-marketplace`(+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 를 settings.json에 영속), Codex=`SaehwanPark/meta-harness`. 설치를 넘어 모드/6패턴 선택·비용가드(~7× 토큰)·experimental 리스크 고지까지 담되, harness references는 이식하지 않고 설치된 플러그인 참조(Apache-2.0 연동/참조, banker 재배포 아님).
+
+### Changed
+- Codex 설치 스킬 수 **32 → 41**(+커맨드 2 유지, claude-only=0). **2계층 아키텍처**: 얇은 setup-* 실행 유닛 + `banker:setup`/`harness-factory` 오케스트레이터가 조합·의존성 관리(setup-lsp→node/python/java, setup-mcp→node/python, docs-setup→python).
+- `commands/setup.md` 오케스트레이터에 신규 9 스킬(계층·의존성)을 추가하고, `README.md`·`codex/transform-matrix.md`를 동기화했다. `scripts/smoke-test.js`에 `copies===41` + 신규 9 존재 회귀 단언을 추가했다.
+- **서드파티 명시(연동/참조, 재배포 아님)**: revfactory/harness·SaehwanPark/meta-harness(Apache-2.0), jdtls(EPL), tmux(ISC), psmux, basedpyright·vtsls·bash-language-server·lsp-mcp 등 각 프로젝트 라이선스 소유.
+- **per-OS CI**: `.github/workflows/`에 GitHub-hosted 러너(ubuntu/windows/macos + Rocky8 컨테이너) 기반 설치·동작 검증 워크플로를 추가했다(설치가 실제 실행되는 도구를 만드는지 "존재 vs 동작" 검증).
+
 ## [0.4.0] - 2026-07-15
 
 ### Added

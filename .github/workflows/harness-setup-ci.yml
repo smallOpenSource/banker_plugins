@@ -1,0 +1,203 @@
+name: harness-setup-ci
+
+# Per-OS "존재 vs 동작" verification for the 0.5.0 harness-setup skills.
+# Runs each skill's canonical install + verify on real runners and asserts the tool actually RUNS.
+# Honest scope: harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
+# testable on hosted runners; those steps are partial/tolerated and labeled as such.
+
+on:
+  push:
+    branches: ['feat/**']
+    paths:
+      - 'skills/setup-*/**'
+      - 'skills/harness-factory/**'
+      - 'codex/manifest.json'
+      - 'scripts/smoke-test.js'
+      - '.github/workflows/harness-setup-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: structural (packaging · 41 skills · dir==name)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: manifest count == 41 both / 0 claude-only
+        run: |
+          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==41||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
+      - name: smoke-test (dir==name, dry-run, real codex install)
+        run: node scripts/smoke-test.js
+
+  rocky8:
+    name: rocky8 clean-room (EL8 glibc 2.28)
+    runs-on: ubuntu-latest
+    container: rockylinux:8
+    steps:
+      - name: base tools (git for checkout, build deps)
+        run: dnf -y install git tar gzip which findutils gcc gcc-c++ make xz >/dev/null
+      - uses: actions/checkout@v4
+      - name: setup-node (nvm + Node LTS)
+        run: |
+          set -e
+          export NVM_DIR="$HOME/.nvm"; mkdir -p "$NVM_DIR"
+          curl -fsSL -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+          . "$NVM_DIR/nvm.sh"
+          nvm install --lts
+          node -v && npm -v
+          node -e 'process.exit(parseInt(process.version.slice(1))>=18?0:1)'
+      - name: setup-python (3.11 + pipx + uv + tomllib)
+        run: |
+          set -e
+          dnf -y module enable python311 >/dev/null 2>&1 || true
+          dnf -y install python3.11 python3.11-pip >/dev/null
+          python3.11 --version
+          python3.11 -m pip install --user pipx >/dev/null
+          ~/.local/bin/pipx --version || python3.11 -m pipx --version
+          curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+          "$HOME/.local/bin/uv" --version
+          # the skills' tomllib fix depends on a 3.11 interpreter being resolvable:
+          python3.11 -c "import tomllib; print('tomllib OK on py3.11 (skills validate config.toml with this)')"
+      - name: setup-java (JDK 21)
+        run: |
+          set -e
+          dnf -y install java-21-openjdk-devel >/dev/null
+          java -version
+          java -version 2>&1 | grep -qE '"(2[1-9]|[3-9][0-9])' && echo "JDK 21+ OK"
+      - name: setup-sandbox (bubblewrap + socat present)
+        run: |
+          set -e
+          dnf -y install epel-release >/dev/null 2>&1 || true
+          dnf -y install bubblewrap socat >/dev/null
+          bwrap --version
+          command -v socat && echo "socat OK"
+          # privileged sysctl write is not permitted in an unprivileged CI container - read-only report:
+          sysctl user.max_user_namespaces 2>/dev/null || echo "(sysctl write not testable in CI container - expected)"
+      - name: setup-lsp servers (npm + pipx language servers)
+        run: |
+          set -e
+          . "$HOME/.nvm/nvm.sh"
+          npm install -g @vtsls/language-server vscode-langservers-extracted bash-language-server >/dev/null
+          (vtsls --version 2>/dev/null || vtsls --help | head -1)
+          bash-language-server --version
+          ~/.local/bin/pipx install basedpyright >/dev/null 2>&1 || python3.11 -m pipx install basedpyright >/dev/null
+          ~/.local/bin/pipx install ruff >/dev/null 2>&1 || python3.11 -m pipx install ruff >/dev/null
+          ~/.local/bin/basedpyright-langserver --version || basedpyright-langserver --version
+          ~/.local/bin/ruff --version || ruff --version
+
+  linux-ubuntu:
+    name: ubuntu (apt-pipx path + LSP servers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: setup-python (apt pipx is primary on Debian/Ubuntu)
+        run: |
+          set -e
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y pipx >/dev/null
+          pipx --version
+          curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+          "$HOME/.local/bin/uv" --version
+      - name: setup-lsp servers (npm + pipx)
+        run: |
+          set -e
+          npm install -g @vtsls/language-server bash-language-server >/dev/null
+          (vtsls --version 2>/dev/null || vtsls --help | head -1)
+          bash-language-server --version
+          pipx install basedpyright >/dev/null
+          pipx install ruff >/dev/null
+          ~/.local/bin/basedpyright-langserver --version
+          ~/.local/bin/ruff --version
+      - name: setup-tmux (apt)
+        run: |
+          set -e
+          sudo apt-get install -y tmux >/dev/null
+          tmux -V
+          tmux new-session -d -s _ci && tmux kill-session -t _ci && echo "tmux spawn OK"
+      - name: setup-sandbox (bubblewrap)
+        run: |
+          set -e
+          sudo apt-get install -y bubblewrap socat >/dev/null
+          bwrap --version
+          bwrap --unshare-user --ro-bind / / true && echo "bwrap userns OK" || echo "userns restricted (runner policy)"
+
+  macos:
+    name: macos (brew python/java/tmux)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup-python (brew python@3.11 + pipx + uv)
+        run: |
+          set -e
+          brew install python@3.11 pipx >/dev/null
+          "$(brew --prefix python@3.11)/bin/python3.11" --version
+          pipx --version
+          curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+          "$HOME/.local/bin/uv" --version
+      - name: setup-java (brew openjdk@21)
+        run: |
+          set -e
+          brew install openjdk@21 >/dev/null
+          "$(brew --prefix openjdk@21)/bin/java" -version
+      - name: setup-tmux (brew)
+        run: |
+          set -e
+          brew install tmux >/dev/null
+          tmux -V
+      - name: setup-lsp servers (pipx)
+        run: |
+          set -e
+          pipx install basedpyright >/dev/null
+          "$HOME/.local/bin/basedpyright-langserver" --version
+
+  windows:
+    name: windows (pwsh $PROFILE UTF-8 + node/python)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: detect + profile UTF-8 no-BOM write (setup-pwsh logic)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "OS env: $env:OS"
+          if ($env:OS -ne 'Windows_NT') { throw 'Windows detection ($env:OS) failed on a Windows runner' }
+          $PSVersionTable.PSVersion
+          # write a marker to a temp profile path using the skill's mandated UTF-8-no-BOM method
+          $tmp = Join-Path $env:RUNNER_TEMP 'profile_test.ps1'
+          $content = "# BANKER_PWSH_BEGIN`n`$env:PATH = `"`$HOME\.local\bin;`$env:PATH`"`n# BANKER_PWSH_END`n"
+          [System.IO.File]::WriteAllText($tmp, $content, (New-Object System.Text.UTF8Encoding($false)))
+          $bytes = [System.IO.File]::ReadAllBytes($tmp)
+          if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { throw 'BOM present - WriteAllText path wrong' }
+          Write-Host 'profile written UTF-8 no-BOM OK'
+      - name: node + python present (runner-provisioned)
+        shell: pwsh
+        run: |
+          node -v
+          python --version
+
+  harness-factory:
+    name: harness-factory (Codex meta-harness partial + slug guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: skill hardcodes the correct install slug (not the KO/JA/quickstart bugs)
+        run: |
+          set -e
+          grep -q 'harness@harness-marketplace' skills/harness-factory/SKILL.md && echo "correct slug present"
+          grep -q 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' skills/harness-factory/SKILL.md && echo "experimental flag documented"
+          # must NOT present the buggy variants as the install command
+          ! grep -qE '^\s*/plugin install harness-marketplace\s*$' skills/harness-factory/SKILL.md && echo "no bare KO/JA bug variant as command"
+      - name: Codex port (SaehwanPark/meta-harness installer runs)
+        run: |
+          set -e
+          git clone --depth 1 https://github.com/SaehwanPark/meta-harness /tmp/meta-harness
+          test -f /tmp/meta-harness/scripts/install_harness.py && echo "installer present"
+          python3 /tmp/meta-harness/scripts/install_harness.py --help >/dev/null 2>&1 && echo "installer --help OK" || echo "installer help not exposed (non-fatal; repo layout may differ)"

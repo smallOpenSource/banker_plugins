@@ -38,6 +38,16 @@
     { "name": "smart-compact",        "type": "skill",   "target": "both",        "reason": "context-threshold compaction-hygiene gate (statusLine detect + hook bridge + assistant chain + TUI handoff); runtime-aware", "supportingFiles": [] },
     { "name": "visual-ralph",         "type": "skill",   "target": "both",        "reason": "measured visual build loop (port of OMX visual-ralph); Claude ralph+visual-verdict+Stitch imagegen, Codex $ralph+$imagegen; runtime-aware", "supportingFiles": [] },
 
+    { "name": "setup-node",           "type": "skill",   "target": "both",        "reason": "installs nvm+Node22 (or winget/nvm-windows) per-OS; prerequisite for npx MCP servers + Codex/OMX tooling; runtime-agnostic installer", "supportingFiles": [] },
+    { "name": "setup-python",         "type": "skill",   "target": "both",        "reason": "installs Python 3.11 + pipx + uv per-OS (dnf module/deadsnakes/winget/brew, PEP668); runtime foundation; docs-setup consumes it", "supportingFiles": [] },
+    { "name": "setup-java",           "type": "skill",   "target": "both",        "reason": "installs JDK 21 + JAVA_HOME per-OS (dnf/apt-Adoptium/winget/brew); required by jdtls in setup-lsp", "supportingFiles": [] },
+    { "name": "setup-lsp",            "type": "skill",   "target": "both",        "reason": "installs per-language LSP servers (vtsls/basedpyright/bash/jdtls/spring) + lsp-mcp bridge; Claude=LSP MCP tools, Codex=config.toml [mcp_servers.lsp_bridge]; needs setup-node/python/java", "supportingFiles": [] },
+    { "name": "setup-tmux",           "type": "skill",   "target": "both",        "reason": "installs tmux per-OS (Rocky8 3.6a source-build, apt/brew, Windows psmux); OMC team/worktree + OMX $team/HUD require it", "supportingFiles": [] },
+    { "name": "setup-pwsh",           "type": "skill",   "target": "both",        "reason": "Windows PowerShell 7 env (Terminal/Git/$PROFILE UTF-8); Claude CLAUDE_CODE_GIT_BASH_PATH, Codex native shell; no-op off-Windows", "supportingFiles": [] },
+    { "name": "setup-mcp",            "type": "skill",   "target": "both",        "reason": "installs common standalone MCP servers (context7/seq-thinking/filesystem/git/fetch); Claude `claude mcp add`, Codex config.toml [mcp_servers.*]; needs setup-node/python", "supportingFiles": [] },
+    { "name": "setup-sandbox",        "type": "skill",   "target": "both",        "reason": "agent sandbox per-OS (bubblewrap+userns / AppContainer / Seatbelt) + rust/cargo + git safe.directory; Codex sandbox_mode", "supportingFiles": [] },
+    { "name": "harness-factory",      "type": "skill",   "target": "both",        "reason": "installs+configures+guides the revfactory/harness team-architecture factory plugin (Claude harness@harness-marketplace, Codex SaehwanPark/meta-harness); Apache-2.0 referenced not redistributed", "supportingFiles": [] },
+
     { "name": "front-qa",             "type": "command", "target": "both",        "reason": "ralplan->ralph frontend-QA pipeline; Claude=OMC, Codex=OMX", "supportingFiles": [] },
     { "name": "setup",                "type": "command", "target": "both",        "reason": "installer orchestrator; Claude AskUserQuestion multi-select, Codex prompt-based selection", "supportingFiles": [] }
   ]
