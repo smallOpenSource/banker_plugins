@@ -1,6 +1,6 @@
 ---
 name: ready-compact
-description: "컨텍스트 compaction 직전 진행 상태를 저장하고, 이후 붙여넣어 끊김 없이 이어갈 resume 프롬프트를 생성 — 'ready-compact'/'compact 준비'/'이어서 하게 준비'/'이어갈 프롬프트' 시 사용."
+description: "(banker) 컨텍스트 compaction 직전 진행 상태를 저장하고 이어갈 resume 프롬프트를 생성. 'ready-compact'/'compact 준비'/'이어서 하게 준비'/'이어갈 프롬프트' 시 사용."
 ---
 
 # ready-compact — compaction 전 상태 저장 + resume 프롬프트

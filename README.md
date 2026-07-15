@@ -7,7 +7,7 @@
 
 [빠른 시작](#빠른-시작) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA, 보안 감사, 문서, 아키텍처, 위키 작업을 위한 스킬 25개와 의존성 설치 스킬을 묶은 Claude Code 플러그인입니다. 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다. 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
+banker는 QA, 보안 감사, 문서, 아키텍처, 위키 작업을 위한 스킬 32개와 의존성 설치 스킬을 묶은 Claude Code 플러그인입니다. 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다. 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
 > npm 패키지(`@kaydash9999/banker-plugins`)와 GitHub 저장소(`smallOpenSource/banker_plugins`)는 같은 메인테이너가 관리합니다.
 
@@ -51,6 +51,7 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 | `audit-web-page` | 라이브 웹 페이지 점검 (playwright·WebGL 캔버스) |
 | `play-qa` | Godot HTML5까지 포함한 웹 환경 직접 플레이 QA |
 | `ultra-ui-qa` | UI를 기준(디자인 PDF/스펙)과 1:1 대조 QA |
+| `visual-ralph` | 레퍼런스(생성/정적/URL) 기준 프론트 UI를 Visual Verdict(≥90)로 측정 빌드 |
 
 ### 스킬: 문서 · 디자인 · 위키
 
@@ -65,6 +66,7 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 | `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export |
 | `append_wiki` | 프로젝트 위키 문서 추가/보강 |
 | `compact-wiki` | 위키 중복 제거·supersede·병합 (무손실) |
+| `deep-init` | 코드베이스 전체에 계층형 AGENTS.md 문서 생성/갱신 |
 
 ### 스킬: 워크플로 · 유틸
 
@@ -75,7 +77,11 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 | `ready-compact` | 컨텍스트 compaction 직전 상태 저장/이어가기 |
 | `compact-copy` | resume 프롬프트만 추출해 클립보드/파일로(compaction 이어가기) |
 | `refresh-git-ignore` | `.gitignore` 비파괴·반복가능 갱신 |
-| `omc-reference` | OMC 에이전트/툴/스킬 레퍼런스 |
+| `omc-reference` | OMC/OMX 에이전트·툴·스킬 레퍼런스(양 런타임 병기) |
+| `curation` | 의사결정을 선택지·권고·확신수준으로 큐레이션(--perf=품질 우선) |
+| `ralph-qa` | 작업 결과를 다른 LLM·별도 세션으로 독립 교차검증 반복 |
+| `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
+| `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
 
 ### 스킬: 설치 (`/banker:setup` 가 호출)
 
@@ -85,7 +91,8 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 | `setup-playwright` | Playwright + headless 브라우저 (RHEL8/Rocky8·non-root·no-conda 폴백) |
 | `setup-omc-hud` | omc_hud 상태표시줄 (OS별) |
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
-| `setup-stitch-proxy` | Stitch 디자인 MCP 프록시 등록 |
+| `setup-stitch` | Stitch 디자인 MCP 프록시 등록(RockyLinux8 proxy) |
+| `docs-setup` | arch-diagram·pdf-vision-extract 의존성(pptx·pymupdf·plantuml) 설치 |
 
 ## 설치 상세 (npm · Codex)
 
@@ -102,8 +109,8 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 도구에 무관한 스킬 18개가 설치됩니다(`codex/manifest.json`). 스킬은 `~/.codex/skills/banker-<name>/` 에 놓이고, 디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
-- OMC나 `claude` 에 결합된 스킬(all-in-one, ultra-init, omc-reference, setup-omc, setup-omc-hud, setup-stitch-proxy)과 Claude Code 내장 `/copy` 에 의존하는 compact-copy, 그리고 `/banker:front-qa`·`/banker:setup` 커맨드는 Claude Code 전용입니다.
+- Codex에는 스킬 32개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). 디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
+- OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다 — Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
 - `~/.codex/AGENTS.md` 는 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존).
 
 ## 요구사항
@@ -151,5 +158,5 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 **연동·참조 (외부 프레임워크·서비스·브랜드)**
 - 프레임워크: oh-my-claudecode(OMC, **MIT**)·oh-my-codex(OMX, **MIT**), by [Yeachan-Heo](https://github.com/Yeachan-Heo). `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` 가 사용.
 - 플러그인: insane-search(**MIT**, © fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)). `setup-insane-search` 가 설치.
-- 서비스·디자인(독점·상표): Notion(`make-notion-guide`), Google Stitch(`setup-stitch-proxy`), Nothing 디자인 언어(`nothing-design`).
+- 서비스·디자인(독점·상표): Notion(`make-notion-guide`), Google Stitch(`setup-stitch`), Nothing 디자인 언어(`nothing-design`).
 - QA 대상 엔진(예시): Godot(MIT), Phaser(MIT) 등(`play-qa`).

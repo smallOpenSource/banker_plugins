@@ -1,17 +1,6 @@
 ---
 name: all-in-one
-description: >-
-  One-command composite pipeline that chains consensus planning → persistent
-  verified implementation → an independent test gate by running
-  /ralplan --deliberate, then /ralph --critic=critic on the resulting plan,
-  then /ultraqa --tests as a final acceptance gate. Use this whenever the user
-  says "all-in-one" / "all in one", or wants a substantial coding task taken
-  end-to-end from plan → implementation → passing tests in a single command —
-  especially when they want maximum front-loaded rigor (a consensus plan, a
-  critic-verified build, and an independent QA gate) instead of running ralplan,
-  ralph, and ultraqa by hand. Prefer this over invoking the three sub-skills
-  manually. NOT for one-line fixes (use ralph or an executor) or vague
-  idea-to-product expansion (use autopilot).
+description: "(banker) 한 명령으로 합의 계획→검증 구현→독립 테스트 게이트를 연쇄(ralplan→ralph→ultraqa). 코딩 작업을 계획부터 통과까지 최대 rigor로 한 번에. 'all-in-one'/'all in one' 시 사용(한 줄 수정은 ralph, 아이디어 확장은 autopilot)."
 argument-hint: "[--short] [--checkpoint] [--critic=critic|architect|codex] [--qa=tests|build|lint|typecheck] [--no-deslop] <task description>"
 level: 4
 ---
@@ -25,6 +14,8 @@ level: 4
 This skill orchestrates OMC's `ralplan` → `ralph` → `ultraqa`. **Check the dependency before running**; if it is missing, **guide installation first** rather than failing mid-pipeline:
 - Check: `command -v omc` and whether `/oh-my-claudecode:*` skills are available.
 - If missing: install via `/banker:setup` → oh-my-claudecode (or the `setup-omc` skill / `omc update`), then resume. On Codex the equivalent is OMX (`omx setup`).
+
+**런타임 매핑 (Claude Code ↔ Codex).** 이 스킬이 부르는 `ralplan`·`ralph`·`ultraqa`는 Claude Code에선 OMC 스킬이고 **Codex에선 oh-my-codex(OMX)가 제공하는 동명 스킬**이다. 아래 Execution의 `Skill("oh-my-claudecode:<name>")` 표기는 Claude Code 기준 — **Codex 런타임에선 OMC 대신 OMX의 해당 스킬(`ralplan`/`ralph`/`ultraqa`)을 적용**한다.
 
 ## Purpose
 

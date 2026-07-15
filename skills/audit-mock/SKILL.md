@@ -1,6 +1,6 @@
 ---
 name: audit-mock
-description: "하드코딩·mock/stub·열거형을 read-only 정적 감사로 검출(DB/fetch/LLM 없이 하드코딩 값을 반환하는 stub 적발) — 'audit-mock'/'하드코딩 검출'/'mock·stub 감사'/'SQL 없이 하드코딩 반환' 시 사용."
+description: "(banker) 하드코딩·mock/stub·열거형을 read-only 정적 감사로 검출. 'audit-mock'/'하드코딩 검출'/'mock·stub 감사'/'SQL 없이 하드코딩 반환' 시 사용."
 ---
 
 # audit-mock — 하드코딩 / mock·stub / 열거형 read-only 정적 감사

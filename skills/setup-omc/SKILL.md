@@ -1,6 +1,6 @@
 ---
 name: setup-omc
-description: "all-in-one·ultra-init·front-qa 가 의존하는 oh-my-claudecode(OMC)를 설치/갱신. Codex는 oh-my-codex(OMX). 'setup-omc'/'OMC 설치'/'oh-my-claudecode 설치' 또는 /banker:setup 시 사용."
+description: "(banker) all-in-one·ultra-init·front-qa 가 의존하는 oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). 'setup-omc'/'OMC 설치'/'oh-my-claudecode 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-omc: oh-my-claudecode(OMC) 설치/갱신

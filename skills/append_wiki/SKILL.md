@@ -1,6 +1,6 @@
 ---
 name: append_wiki
-description: "새로 배운 비자명 지식(아키텍처·결정·디버깅·패턴·환경)을 .omc/wiki에 구조화 적재·병합 — 'append_wiki'/'위키 기록'/'wiki에 정리'/'알게 된 내용 기록' 시 사용."
+description: "(banker) 새로 배운 비자명 지식을 .omc/wiki에 구조화 적재·병합. 'append_wiki'/'위키 기록'/'wiki에 정리'/'알게 된 내용 기록' 시 사용."
 ---
 
 # append_wiki — 작업 지식을 wiki에 적재

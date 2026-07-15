@@ -1,9 +1,9 @@
 ---
-name: setup-stitch-proxy
-description: "Stitch(Google 디자인 생성) MCP 프록시를 API key + claude mcp add 로 Claude Code에 등록(시크릿 미커밋). 'setup-stitch-proxy'/'stitch 설치' 또는 /banker:setup 시 사용."
+name: setup-stitch
+description: "(banker) Stitch(Google 디자인 생성) MCP 프록시를 claude mcp add(Codex는 codex mcp add)로 등록(시크릿 미커밋). 'setup-stitch'/'stitch 설치'/'stitch mcp' 또는 /banker:setup 시 사용."
 ---
 
-# setup-stitch-proxy — Stitch MCP 프록시 등록
+# setup-stitch — Stitch MCP 프록시 등록
 
 Stitch(withgoogle) 디자인 생성 MCP 를 프록시로 Claude Code 에 붙인다. Node(npx) 필요.
 **★시크릿(API key)은 사용자만 입력·환경변수로 — 채팅/로그/커밋에 절대 노출 금지.** 답변은 한글.
@@ -28,6 +28,13 @@ claude mcp add stitch -- ~/bin/stitch-proxy.sh
 claude mcp list                                  # stitch: … - ✔ Connected 기대
 ```
 키를 평문 파일에 두기 싫으면 `STITCH_API_KEY` 를 `~/.bashrc`(비커밋) 등에 export 하고 스크립트는 참조만.
+
+**Codex CLI:** 같은 프록시 스크립트를 Codex에도 붙인다 — `claude mcp` 대신 `codex mcp` 를 쓴다.
+```bash
+codex mcp remove stitch 2>/dev/null
+codex mcp add stitch -- ~/bin/stitch-proxy.sh
+codex mcp list                                   # stitch 연결 확인
+```
 
 ## 2. windows
 `~/bin` 셸 스크립트 대신 **WSL2** 권장(위 절차 그대로). native 면 `.cmd` 래퍼에 `set STITCH_API_KEY=…` 후

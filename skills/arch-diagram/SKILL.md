@@ -1,6 +1,6 @@
 ---
 name: arch-diagram
-description: "시스템 아키텍처·계층 구성도를 PlantUML(소스+PNG)과 편집 가능 PPTX(python-pptx 네이티브 도형)로 산출 — '아키텍처 다이어그램'/'plantuml'/'pptx 다이어그램'/'구성도' 시 사용."
+description: "(banker) 시스템 아키텍처 구성도를 PlantUML과 편집 가능 PPTX로 산출. '아키텍처 다이어그램'/'plantuml'/'pptx 다이어그램'/'구성도' 시 사용."
 ---
 
 # arch-diagram — PlantUML + PPTX 아키텍처 다이어그램 산출

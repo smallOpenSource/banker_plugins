@@ -1,6 +1,6 @@
 ---
 name: ultra-init
-description: "아이디어·러프 브리프·그린필드를 계획→구현→QA 통과까지 핸즈오프로 1회 자율 실행(ralplan→ultragoal→ralph→ultraqa). 'ultra-init'/'알아서 만들어'/'핸즈오프 빌드'/'idea to passing' 시 사용."
+description: "(banker) 아이디어·러프 브리프·그린필드를 계획→구현→QA 통과까지 핸즈오프 1회 자율 실행(ralplan→ultragoal→ralph→ultraqa). 'ultra-init'/'알아서 만들어'/'핸즈오프 빌드'/'idea to passing' 시 사용."
 argument-hint: "[--short|--deliberate] [--gated] [--qa tests,build,lint,typecheck] [--critic=architect|critic|codex] [--plan-id <id>] <브리프 / 만들 것>"
 level: 4
 ---
@@ -45,6 +45,7 @@ Several bundled skills are loop/persistence engines. To prevent competing loops,
 - Resolve the brief from the skill arguments. If it is empty, ask once for the brief, then proceed.
 - Parse flags: planning depth (`--deliberate` = default, `--short` = lighter ralplan), `--gated`, `--qa <dims>`, `--critic=...`, `--plan-id <id>`.
 - **OMC prerequisite**: this skill orchestrates OMC's `ralplan`/`ralph`/`ultraqa`, so it needs the `omc` CLI. Check `command -v omc`; if missing, **guide installation first** via `/banker:setup` → oh-my-claudecode (or the `setup-omc` skill / `omc update`), then resume once it is available. Only if the user declines to install, run ultragoal in **degraded mode**: skip the durable ledger, write the approved plan to `plan.md`, and rely on ralph's session-scoped `prd.json` (say so explicitly).
+- **런타임 매핑 (Claude Code ↔ Codex).** `ralplan`·`ralph`·`ultraqa`·`ultragoal`·`cancel` 은 Claude Code에선 OMC, **Codex에선 oh-my-codex(OMX)가 제공하는 동명 스킬**이다(Codex는 `omx setup` 전제). 아래 Phase들의 `Skill("oh-my-claudecode:<name>")` 표기는 Claude Code 기준 — **Codex 런타임에선 OMX의 해당 스킬을 적용**한다. `omc ultragoal` CLI(Phase 2)는 Codex에선 OMX의 대응 명령을 쓰거나(정확한 플래그는 감지, 임의 가정 금지), 위 degraded 모드(`plan.md` + ralph `prd.json`)로 대체한다.
 
 ### Phase 1 — PLAN: ralplan --deliberate (합의 계획)
 - Invoke `Skill("oh-my-claudecode:ralplan")` with `--deliberate <brief>` in **non-interactive** mode (so it produces the consensus-approved plan, marks it `pending approval`, and **stops without launching team/ralph itself** — ultra-init controls the hand-off).
