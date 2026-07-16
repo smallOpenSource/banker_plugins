@@ -40,6 +40,8 @@ jobs:
           node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==48||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
       - name: smoke-test (dir==name, dry-run, real codex install)
         run: node scripts/smoke-test.js
+      - name: version sync (SoT drift guard — plugin.json == package.json == marketplace.json)
+        run: node scripts/sync-version.js --check
       - name: obsidizer unit suites (canonicalizer + hook)
         run: |
           set -e
@@ -308,3 +310,28 @@ jobs:
           echo "claude plugin details lists obsidizer (no auth)"
           # banker's first plugin-declared hook: surface whether Claude reports it in the inventory.
           echo "$out" | grep -iE 'hook' || echo "NOTE: plugin details printed no Hooks line; hooks/hooks.json auto-discovery is asserted structurally instead."
+      - name: Codex CLI discovers the 6 new 0.7.0 banker skills (no API key)
+        shell: bash
+        run: |
+          set -e
+          SK=$(node -p "require('path').join(require('os').homedir(),'.codex','skills')")
+          for s in ultra-interview interval-report summary-wiki update-banker refresh-readme cleansing-memory; do
+            test -f "$SK/banker-$s/SKILL.md" || { echo "MISSING banker-$s in $SK"; exit 1; }
+          done
+          echo "on-disk: 6 new 0.7.0 banker-* skills present (Codex dir==name discovery contract satisfied)"
+          if codex debug prompt-input "x" >/tmp/ci-07.out 2>/tmp/ci-07.err; then
+            grep -q banker-cleansing-memory /tmp/ci-07.out || { echo "codex live render missing new 0.7.0 skills"; exit 1; }
+            echo "codex debug prompt-input live-exposed the new 0.7.0 banker-* skills"
+          else
+            echo "NOTE: codex debug prompt-input needs a provider config on this runner; the on-disk contract is already asserted above."
+            head -3 /tmp/ci-07.err || true
+          fi
+      - name: Claude Code discovers the 6 new 0.7.0 banker skills (no auth)
+        shell: bash
+        run: |
+          set -e
+          out=$(claude --plugin-dir "$PWD" plugin details banker 2>&1) || { echo "claude plugin details failed:"; echo "$out" | head -12; exit 1; }
+          for s in ultra-interview interval-report summary-wiki update-banker refresh-readme cleansing-memory; do
+            echo "$out" | grep -q "$s" || { echo "MISSING $s in claude plugin details"; exit 1; }
+          done
+          echo "claude plugin details lists all 6 new 0.7.0 skills (no auth)"
