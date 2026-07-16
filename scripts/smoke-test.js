@@ -40,12 +40,6 @@ try {
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
   ok(copies === 48, `codex dry-run plans 48 skill copies (got ${copies})`);
-  const nowBoth = ['all-in-one', 'compact-copy', 'omc-reference', 'ultra-init', 'setup-omc', 'setup-omc-hud', 'setup-stitch'];
-  ok(nowBoth.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes former claude-only skills (now target both)');
-  const newSkills = ['curation', 'deep-init', 'deep-research', 'ralph-qa', 'smart-compact', 'visual-ralph'];
-  ok(newSkills.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the 6 new 0.4.0 skills (target both)');
-  const newSkills05 = ['setup-node', 'setup-python', 'setup-java', 'setup-lsp', 'setup-tmux', 'setup-pwsh', 'setup-mcp', 'setup-sandbox', 'harness-factory'];
-  ok(newSkills05.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes the 9 new 0.5.0 harness-setup skills (target both)');
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -71,14 +65,24 @@ try {
   // covers the reverse direction (a skill on disk but absent from the manifest ships to Claude and
   // never to Codex, a silent claude-only skill), which nothing else checked. Keep this assertion
   // instead of appending another per-release hardcoded name array.
-  const mfSkills = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
-    .surfaces.filter((s) => s.type === 'skill').map((s) => s.name).sort();
+  const mfSkillSurfaces = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
+    .surfaces.filter((s) => s.type === 'skill');
+  const mfSkills = mfSkillSurfaces.map((s) => s.name).sort();
   const diskSkills = fs.readdirSync(path.join(root, 'skills'))
     .filter((d) => fs.existsSync(path.join(root, 'skills', d, 'SKILL.md'))).sort();
   const manifestOnly = mfSkills.filter((n) => !diskSkills.includes(n));
   const diskOnly = diskSkills.filter((n) => !mfSkills.includes(n));
   ok(manifestOnly.length === 0 && diskOnly.length === 0,
      `manifest == skills/ (manifest-only: [${manifestOnly.join(', ')}]; disk-only: [${diskOnly.join(', ')}])`);
+  // Every manifest skill must be target:both. A claude-only skill would still pass the set-equality
+  // and copies===48 checks (it lives in the manifest and on disk, and the dry-run counts only the
+  // 48 both-skills), so nothing above catches a silent claude-only. This replaces the former
+  // per-release hardcoded skill-name arrays: they regression-guarded named skills, this guards the
+  // universal property (all both) with no per-release edit. Trade-off: a count-preserving name
+  // substitution (drop one both-skill, add another) is no longer caught here; set-equality still
+  // catches the realistic deletion/duplication cases.
+  const claudeOnly = mfSkillSurfaces.filter((s) => s.target !== 'both').map((s) => s.name);
+  ok(claudeOnly.length === 0, `every manifest skill is target:both (silent claude-only: [${claudeOnly.join(', ')}])`);
 
   // 6) REAL codex install into a fresh temp HOME: assert dir==name (Codex discovery) + stale sweep
   const home2 = path.join(tmp, 'home2');
@@ -104,8 +108,6 @@ try {
   ok(!fs.existsSync(renamedStitchDir), 'renamed-away banker-setup-stitch-proxy swept (replaced by setup-stitch)');
   ok(installed.includes('banker-setup-stitch'), 'renamed skill installed as banker-setup-stitch');
   ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
-  ok(newSkills.every((n) => installed.includes(`banker-${n}`)), 'new 0.4.0 skills installed as banker-*');
-  ok(newSkills05.every((n) => installed.includes(`banker-${n}`)), 'new 0.5.0 harness-setup skills installed as banker-*');
   ok(installed.includes('banker-obsidizer'), 'obsidizer installed as banker-obsidizer');
 
   // 7) hook packaging + static safety checks (0.6.0 obsidizer: banker's first plugin-declared hook)
