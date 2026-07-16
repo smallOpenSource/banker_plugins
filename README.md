@@ -7,7 +7,9 @@
 
 [빠른 시작](#빠른-시작) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA, 보안 감사, 문서, 아키텍처, 위키 작업을 위한 스킬 48개와 의존성·개발환경(OS별) 설치 스킬을 묶은 Claude Code 플러그인입니다. 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다. 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
+banker는 QA·보안 감사·문서·아키텍처·위키 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 48개 + 커맨드 2개**(총 50개 구성요소)를 묶은 Claude Code 플러그인입니다.\
+설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
+이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
 > npm 패키지(`@kaydash9999/banker-plugins`)와 GitHub 저장소(`smallOpenSource/banker_plugins`)는 같은 메인테이너가 관리합니다.
 
@@ -69,7 +71,9 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 | `obsidizer` | AI 위키를 의미보존 Obsidian 그래프로 정규화·상호링크·백링크 |
 | `deep-init` | 코드베이스 전체에 계층형 AGENTS.md 문서 생성/갱신 |
 
-> `obsidizer` 는 banker 최초의 플러그인 선언 hook(`hooks/hooks.json`)을 함께 설치합니다. banker가 활성화되어 있으면 이 hook은 **항상 등록**되어 위키 쓰기(`wiki_ingest`/`wiki_add`)마다 실행되고, `obsidizer --enable` 을 켜지 않은 사용자도 쓰기당 약 30ms의 node 프로세스 기동 비용을 치릅니다(플래그 확인 자체가 그 프로세스 안에서 일어나기 때문). `--enable` 전에는 아무것도 쓰지 않는 순수 no-op입니다.
+> `obsidizer` 는 banker 최초의 플러그인 선언 hook(`hooks/hooks.json`)을 함께 설치합니다.\
+> banker가 활성화되어 있으면 이 hook은 **항상 등록**되어 위키 쓰기(`wiki_ingest`/`wiki_add`)마다 node 프로세스를 띄웁니다(플래그 확인이 그 안에서 일어나므로 `--enable` 전에도 쓰기당 약 30ms).\
+> `--enable` 전에는 아무것도 쓰지 않는 순수 no-op입니다.
 
 ### 스킬: 워크플로 · 유틸
 
@@ -94,7 +98,8 @@ playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성�
 
 ### 스킬: 개발환경 setup (OS별 · 런타임별)
 
-USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Codex)로 구성하는 얇은 실행 유닛. `/banker:setup` 오케스트레이터가 의존 순서(런타임 먼저)로 조합한다.
+USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Codex)로 구성하는 얇은 실행 유닛.\
+`/banker:setup` 오케스트레이터가 의존 순서(런타임 먼저)로 조합한다.
 
 | 스킬 | 설명 |
 |---|---|
@@ -121,7 +126,8 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 
 ## 설치 상세 (npm · Codex)
 
-마켓플레이스 대신 npm으로 전역 설치할 수 있고, Codex CLI에도 스킬을 설치할 수 있습니다. Codex 설치는 npm 전역 설치가 선행되어야 합니다.
+마켓플레이스 대신 npm으로 전역 설치할 수 있고, Codex CLI에도 스킬을 설치할 수 있습니다.\
+Codex 설치는 npm 전역 설치가 선행되어야 합니다.
 
 ```bash
 npm i -g @kaydash9999/banker-plugins
@@ -134,8 +140,10 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 48개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). 디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
-- OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다 — Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
+- Codex에는 스킬 48개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+  디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
+- OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
+- Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
 - `~/.codex/AGENTS.md` 는 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존).
 
 ## 요구사항
@@ -171,19 +179,47 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://github.com/smallOpenSource).
 
 **번들된 코드 (이 패키지가 재배포)**
-- `skills/humanizer`: [blader/humanizer](https://github.com/blader/humanizer) 기반, **MIT License**(© 2025 Siqi Chen). 원본 라이선스 고지는 `skills/humanizer/LICENSE` 에 포함. 패턴 목록은 Wikipedia [*Signs of AI writing*](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)(WikiProject AI Cleanup, **CC BY-SA**)에 기반합니다.
+- `skills/humanizer`: [blader/humanizer](https://github.com/blader/humanizer) 기반, **MIT License**(© 2025 Siqi Chen).\
+  원본 라이선스 고지는 `skills/humanizer/LICENSE` 에 포함.\
+  패턴 목록은 Wikipedia [*Signs of AI writing*](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)(WikiProject AI Cleanup, **CC BY-SA**)에 기반합니다.
 
-코드로 포함(재배포)하는 서드파티는 `humanizer` 뿐입니다. 아래는 스킬이 **런타임에 의존하거나 연동**하는 외부 요소로, banker 가 재배포하지 않으며 각 라이선스·상표는 소유자에게 있습니다.
+코드로 포함(재배포)하는 서드파티는 `humanizer` 뿐입니다.\
+아래는 스킬이 **런타임에 의존하거나 연동**하는 외부 요소로, banker 가 재배포하지 않으며 각 라이선스·상표는 소유자에게 있습니다.
 
 **의존 라이브러리·도구 (사용 시 별도 설치, 라이선스는 각 프로젝트 소유)**
-- Python: python-pptx(MIT, `arch-diagram`), python-docx(MIT, `rfp-author`), Playwright(Apache-2.0, `audit-web-page`·`play-qa`·`ultra-ui-qa`), detect-secrets(Apache-2.0, `lineage` 시크릿 스캔).
-- 브라우저·렌더링: Chromium(BSD-3-Clause), SwiftShader(Apache-2.0), Xvfb·X.Org(MIT). `setup-playwright` 및 브라우저 QA 스킬이 사용.
-- 문서·다이어그램: PlantUML(GPL 계열·다중 라이선스, `arch-diagram`), Poppler(GPL, `pdftoppm`), ImageMagick(ImageMagick License, `pdf-vision-extract`).
-- 개발환경·LSP: Node.js·nvm(MIT), uv(Apache-2.0/MIT), OpenJDK·Temurin(GPL+CE), jdtls(EPL-2.0), basedpyright(MIT)·vtsls·bash-language-server(MIT)·vscode-langservers-extracted, lsp-mcp([CesarPetrescu/lsp-mcp](https://github.com/CesarPetrescu/lsp-mcp)), tmux(ISC)·psmux, bubblewrap(LGPL-2.0), rustup. `setup-node`·`setup-python`·`setup-java`·`setup-lsp`·`setup-tmux`·`setup-sandbox` 가 설치.
 
-**연동·참조 (외부 프레임워크·서비스·브랜드)**
-- 프레임워크: oh-my-claudecode(OMC, **MIT**)·oh-my-codex(OMX, **MIT**), by [Yeachan-Heo](https://github.com/Yeachan-Heo). `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` 가 사용.
-- 플러그인: insane-search(**MIT**, © fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)). `setup-insane-search` 가 설치.
-- 팀 아키텍처 팩토리: revfactory/harness(**Apache-2.0**, © Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness))·Codex 포트 SaehwanPark/meta-harness(**Apache-2.0**). `harness-factory` 가 설치(banker 는 재배포하지 않고 설치·구성만 안내).
-- 서비스·디자인(독점·상표): Notion(`make-notion-guide`), Google Stitch(`setup-stitch`), Nothing 디자인 언어(`nothing-design`).
-- QA 대상 엔진(예시): Godot(MIT), Phaser(MIT) 등(`play-qa`).
+| 분류 | 도구 | 라이선스 | 사용 스킬 |
+|---|---|---|---|
+| Python | python-pptx | MIT | `arch-diagram` |
+| Python | python-docx | MIT | `rfp-author` |
+| Python | Playwright | Apache-2.0 | `audit-web-page`·`play-qa`·`ultra-ui-qa` |
+| Python | detect-secrets | Apache-2.0 | `lineage`(시크릿 스캔) |
+| 브라우저·렌더링 | Chromium | BSD-3-Clause | `setup-playwright`·브라우저 QA |
+| 브라우저·렌더링 | SwiftShader | Apache-2.0 | `setup-playwright`·브라우저 QA |
+| 브라우저·렌더링 | Xvfb·X.Org | MIT | `setup-playwright`·브라우저 QA |
+| 문서·다이어그램 | PlantUML | GPL 계열·다중 라이선스 | `arch-diagram` |
+| 문서·다이어그램 | Poppler(`pdftoppm`) | GPL | `pdf-vision-extract` |
+| 문서·다이어그램 | ImageMagick | ImageMagick License | `pdf-vision-extract` |
+| 개발환경·LSP | Node.js·nvm | MIT | `setup-node` |
+| 개발환경·LSP | uv | Apache-2.0/MIT | `setup-python` |
+| 개발환경·LSP | OpenJDK·Temurin | GPL+CE | `setup-java` |
+| 개발환경·LSP | jdtls | EPL-2.0 | `setup-lsp` |
+| 개발환경·LSP | basedpyright·bash-language-server | MIT | `setup-lsp` |
+| 개발환경·LSP | vtsls·vscode-langservers-extracted | 각 프로젝트 | `setup-lsp` |
+| 개발환경·LSP | lsp-mcp([CesarPetrescu/lsp-mcp](https://github.com/CesarPetrescu/lsp-mcp)) | 각 프로젝트 | `setup-lsp` |
+| 개발환경·LSP | tmux | ISC | `setup-tmux` |
+| 개발환경·LSP | psmux | 각 프로젝트 | `setup-tmux` |
+| 개발환경·LSP | bubblewrap | LGPL-2.0 | `setup-sandbox` |
+| 개발환경·LSP | rustup | 각 프로젝트 | `setup-sandbox` |
+
+**연동·참조 (외부 프레임워크·서비스·브랜드, banker 는 재배포하지 않음)**
+
+| 분류 | 항목 | 라이선스 | 사용/설치 스킬 |
+|---|---|---|---|
+| 프레임워크 | oh-my-claudecode(OMC)·oh-my-codex(OMX), by [Yeachan-Heo](https://github.com/Yeachan-Heo) | MIT | `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` |
+| 플러그인 | insane-search (© fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)) | MIT | `setup-insane-search` |
+| 팀 아키텍처 팩토리 | revfactory/harness (© Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness)) · Codex 포트 SaehwanPark/meta-harness | Apache-2.0 | `harness-factory`(설치·구성만 안내) |
+| 서비스(독점·상표) | Notion | 독점 | `make-notion-guide` |
+| 서비스(독점·상표) | Google Stitch | 독점 | `setup-stitch` |
+| 디자인(상표) | Nothing 디자인 언어 | 상표 | `nothing-design` |
+| QA 엔진(예시) | Godot·Phaser 등 | MIT | `play-qa` |
