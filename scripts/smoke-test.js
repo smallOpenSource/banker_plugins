@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (42 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (48 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 42, `codex dry-run plans 42 skill copies (got ${copies})`);
+  ok(copies === 48, `codex dry-run plans 48 skill copies (got ${copies})`);
   const nowBoth = ['all-in-one', 'compact-copy', 'omc-reference', 'ultra-init', 'setup-omc', 'setup-omc-hud', 'setup-stitch'];
   ok(nowBoth.every((n) => codexOut.includes(`copy skills/${n} `)), 'codex dry-run includes former claude-only skills (now target both)');
   const newSkills = ['curation', 'deep-init', 'deep-research', 'ralph-qa', 'smart-compact', 'visual-ralph'];
@@ -63,6 +63,23 @@ try {
   ok(!fs.existsSync(path.join(home, '.codex')), 'dry-run wrote nothing (no HOME/.codex)');
   ok(!fs.existsSync(path.join(process.cwd(), '.codex')) || process.cwd() === home, 'dry-run created no .codex in repo cwd');
 
+  // 5.5) manifest and skills/ must name the SAME SET. This runs BEFORE the real install below:
+  // a manifest entry with no matching directory makes that install throw ENOENT mid-copy, which
+  // surfaces as an opaque "HARNESS ERROR: Command failed" and skips every later assertion.
+  // Counting alone cannot catch it. The dry-run counter walks the manifest, not the filesystem, so
+  // any N manifest lines satisfy it whether or not the directories exist. Naming the set also
+  // covers the reverse direction (a skill on disk but absent from the manifest ships to Claude and
+  // never to Codex, a silent claude-only skill), which nothing else checked. Keep this assertion
+  // instead of appending another per-release hardcoded name array.
+  const mfSkills = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
+    .surfaces.filter((s) => s.type === 'skill').map((s) => s.name).sort();
+  const diskSkills = fs.readdirSync(path.join(root, 'skills'))
+    .filter((d) => fs.existsSync(path.join(root, 'skills', d, 'SKILL.md'))).sort();
+  const manifestOnly = mfSkills.filter((n) => !diskSkills.includes(n));
+  const diskOnly = diskSkills.filter((n) => !mfSkills.includes(n));
+  ok(manifestOnly.length === 0 && diskOnly.length === 0,
+     `manifest == skills/ (manifest-only: [${manifestOnly.join(', ')}]; disk-only: [${diskOnly.join(', ')}])`);
+
   // 6) REAL codex install into a fresh temp HOME: assert dir==name (Codex discovery) + stale sweep
   const home2 = path.join(tmp, 'home2');
   const staleDir = path.join(home2, '.codex', 'skills', 'banker-STALE');
@@ -80,7 +97,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 42, `real codex install has 42 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 48, `real codex install has 48 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
