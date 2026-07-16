@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0] - 2026-07-16
+
+### Added
+- **신규 스킬 6종** (전부 `target: both`). 배포용이므로 "이 저장소에서 재보니 무동작"류 판정은 설계 근거로 쓰지 않았다. 각 스킬의 사실 주장은 게시 전 적대적 검증에 걸었고, 거기서 반증된 것(검증되지 않은 표준 번호·법령 API 엔드포인트·트래커 이슈 인용·출처 없는 수치)은 그럴듯해도 넣지 않았다. 검증이 실제로 적출한 것들: `update-banker` 가 sweep 대상을 절반만 적은 것(스킬만 적고 command 프롬프트를 빠뜨림), `refresh-readme` 의 드리프트 예시가 디렉터리 카운트(49)를 스킬 수(48)로 오기한 것, `codex/transform-matrix.md` 가 DISPUTED 항목을 확정으로 서술한 것. 셋 다 게시 전에 고쳤다.
+  - `ultra-interview`: 리서치를 선행해 공개 정보(공식 문서·규정·법령·시행세칙·기록)가 답할 수 있는 것은 사람에게 묻지 않고, 모호성 3% 이하까지 인터뷰한다. **모호도를 이산 체크리스트(미해결/전체)로 계측**하는 것이 설계 요점이다. 스칼라 자기채점 위에서는 3%가 표현되지 않는다(자기신뢰도 응답이 라운드넘버 소수에 뭉치고, 가중치 합이 1인 공식에서는 전 축 0.95여도 모호도가 정확히 0.05라 통과하려면 어딘가에 완벽을 선언해야 한다). 이산 계측은 셈이라 부풀릴 수 없다. Evidence/Inference/Preference 3분류로 Preference 만 질문한다. OMC/OMX 네이티브 `deep-interview` 를 번들하거나 대체하지 않으며, **자체 루브릭을 소유**한다(OMC 3차원 대 OMX 5차원이라 네이티브 채점을 물려받으면 같은 임계값이 런타임마다 다른 뜻이 된다).
+  - `interval-report`: 장기 수행의 중간 보고를 `docs/intermission.md` 로 갱신한다. 측정 범위는 **마지막 사용자 지시로 시작된 현재 수행분**이고 시작 시각은 그 시점이다. **시작 시각을 파일에 영속하고 절대 재스탬프하지 않는다**. compaction/resume 후 now 로 다시 찍으면 elapsed 가 0으로 붕괴해 리포트가 가장 필요한 순간에 가장 낙관 편향된다. 시각은 `date` 로 실측한다(두 런타임 모두 컨텍스트에 시:분이 없다). ultragoal 이 있으면 읽고 없어도 동작하며 상태를 복제하지 않는다. compaction 트리거는 `smart-compact` 소관으로 남긴다.
+  - `summary-wiki`: 위키를 `docs/` 하위 단일 파일로 개조식 요약해 **사용자가 아는 지식과 위키에 쌓인 내용의 차이를 식별**하게 한다(sync 검토). **`wiki_list` 를 쓰지 않고 파일을 직접 열거**하는 것이 핵심이다. `wiki_list` 는 구조적으로 stale 한 인덱스를 읽어 페이지를 조용히 누락하며(실측: 직접 열거 17 대 `wiki_list` 16), 그 누락은 성공을 보고하면서 이 스킬의 목적을 정확히 배반한다. 위키에는 쓰지 않는다(`compact-wiki` 는 제자리 파괴적 변형이라 별개). `개조식` 은 어문규범에 명명된 문체가 아니므로 "관행 준수"로 서술한다.
+  - `update-banker`: 설치된 banker 를 최신 배포본으로 갱신한다. **축은 OS 가 아니라 채널**이다(banker 는 dependencies 0 에 복사 설치라 OS 분기가 거의 없고, Claude 플러그인·npm 전역 CLI·Codex 스킬 3채널이 서로 다른 메커니즘으로 독립 드리프트한다). **npm 을 먼저 올리고 검증한 뒤에만 `banker setup --codex`** 를 돌린다. setup 은 복사 전에 모든 `banker-*` 를 쓸어내므로 구버전 CLI 로 실행하면 그 구버전 매니페스트 수만큼만 복원된다. 판정은 exit code 가 아니라 채널별 프로브 재실행으로 한다.
+  - `refresh-readme`: 코드가 바뀌어 README 가 작성 시점에 머무는 것을 조치한다. README 산문 주장을 매니페스트·`skills/`·`package.json` 과 대조하는 삼각검증이 신규 능력이다. 펜스·인라인 코드·URL·`--flag` 를 인지한다(POSIX end-of-options ` -- ` 는 산문 이중하이픈과 문자적으로 동일해 일괄 치환은 그 자체로 결함이며, 실제로 문서화된 MCP 설치 명령을 깨뜨린다). AI 문체 마커는 `humanizer` 에 위임하고 재서술하지 않는다.
+  - `cleansing-memory`: 메모리 파일을 문서화된 threshold 내로 정리한다(중복 최신본화, 무손실 압축, append 대 replace 판별). **문서화된 하드 게이트는 `MEMORY.md` 의 200줄 OR 25KB 하나뿐이고 `CLAUDE.md` 에는 문서화된 크기 한도가 없다**. 바이트 캡을 제시하는 것은 날조다. Codex 의 `project_doc_max_bytes`(32768) 는 프로젝트 스코프 `AGENTS.md` 에만 걸리고 전역 파일에는 적용되지 않으며, raw 바이트를 자른 뒤 lossy UTF-8 디코드를 하므로 정확히 N바이트로 자르면 한글 경계 문자가 손상된다. auto-memory topic 파일이 시작 시 로드되지 않는다는 문서화된 성질이 append→replace 최적화의 근거다. 코드베이스 유도분 트림은 Claude 의 `/doctor` 에 위임한다.
+
+### Changed
+- Codex 설치 스킬 수 **42 → 48**(+커맨드 2 유지, claude-only=0). `codex/manifest.json`·`README.md`·`codex/transform-matrix.md`·`scripts/smoke-test.js`·`.github/workflows/harness-setup-ci.yml` 을 동기화했다.
+- **`scripts/smoke-test.js` 에 집합 동등성 단언을 추가**했다(실설치 실행 **앞**). `codex/manifest.json` 의 skill 이름 집합과 `skills/` 디스크 집합이 같은지 검사하고 불일치를 `manifest-only` / `disk-only` 로 **이름을 찍어** 보고한다. 기수 단언만으로는 이 결함을 잡을 수 없다. dry-run 카운터는 파일시스템이 아니라 매니페스트를 순회하므로, 디렉터리가 없어도 매니페스트 줄 수만 맞으면 통과하고 실설치는 복사 중 ENOENT 로 죽어 `HARNESS ERROR` 라는 환경 문제처럼 보이는 메시지만 남긴다. 이 단언은 지금까지 아무 장치도 없던 반대 방향(디스크에 있으나 매니페스트에 없어 Claude 에만 실리고 Codex 로는 영영 가지 않는 조용한 claude-only 스킬)도 함께 닫는다. 릴리스마다 하드코딩 이름 배열을 덧붙이던 방식을 이 단언 하나로 대체한다.
+
 ## [0.6.0] - 2026-07-15
 
 ### Added
