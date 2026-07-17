@@ -9,10 +9,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { configDir, readConfig, writeConfig, isEnabled, endpoint } from './telemetry-config.mjs';
+import {
+  configDir, readConfig, writeConfig, isEnabled, endpoint,
+  noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
+  UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL,
+} from './telemetry-config.mjs';
 
 // 테스트가 만지는 env 만 스냅샷/복원한다.
-const ENV_KEYS = ['XDG_CONFIG_HOME', 'APPDATA', 'BANKER_NO_TELEMETRY', 'BANKER_TELEMETRY_ENDPOINT'];
+const ENV_KEYS = ['XDG_CONFIG_HOME', 'APPDATA', 'BANKER_NO_TELEMETRY', 'BANKER_TELEMETRY_ENDPOINT', 'BANKER_NO_UPDATE_CHECK'];
 let savedEnv;
 let tmpDir;
 
@@ -24,6 +28,7 @@ beforeEach(() => {
   process.env.XDG_CONFIG_HOME = tmpDir;
   delete process.env.BANKER_NO_TELEMETRY;
   delete process.env.BANKER_TELEMETRY_ENDPOINT;
+  delete process.env.BANKER_NO_UPDATE_CHECK;
 });
 
 afterEach(() => {
@@ -96,4 +101,100 @@ test('resolver: XDG_CONFIG_HOME 미설정 시 홈 기반 fallback', () => {
   } else {
     assert.strictEqual(configDir(), path.join(os.homedir(), '.config', 'banker'));
   }
+});
+
+// ---- 업데이트-체크 확장 (UA-1) ----
+
+test('신규 export 상수: throttle=24h · npm URL · 캐시 경로 basename', () => {
+  assert.strictEqual(UPDATE_THROTTLE_MS, 24 * 60 * 60 * 1000);
+  assert.strictEqual(NPM_LATEST_URL, 'https://registry.npmjs.org/@kaydash9999/banker-plugins/latest');
+  assert.ok(UPDATE_CHECK_PATH.endsWith('update-check.json'));
+});
+
+test('noUpdateCheck: env falsey(빈문자열/0/false)·unset 면 false, 그 외 값이면 true', () => {
+  for (const v of ['', '0', 'false']) {
+    process.env.BANKER_NO_UPDATE_CHECK = v;
+    assert.strictEqual(noUpdateCheck(), false, 'value=' + JSON.stringify(v));
+  }
+  delete process.env.BANKER_NO_UPDATE_CHECK;
+  assert.strictEqual(noUpdateCheck(), false);
+  for (const v of ['1', 'true', 'yes']) {
+    process.env.BANKER_NO_UPDATE_CHECK = v;
+    assert.strictEqual(noUpdateCheck(), true, 'value=' + JSON.stringify(v));
+  }
+});
+
+test('noUpdateCheck: config.updateCheck===false 면 true, ===true 면 false', () => {
+  writeConfig({ updateCheck: false });
+  assert.strictEqual(noUpdateCheck(), true);
+  writeConfig({ updateCheck: true });
+  assert.strictEqual(noUpdateCheck(), false);
+});
+
+test('countingActive: default-on 이라 엔드포인트만 있고 telemetry 미설정이어도 true', () => {
+  assert.strictEqual(countingActive(), false); // 엔드포인트 없음
+  writeConfig({ endpoint: 'https://example.test/collect' });
+  assert.strictEqual(countingActive(), true); // telemetry 미설정이어도 default-on
+});
+
+test('countingActive: telemetry===false 면 false, ===true 면 true (엔드포인트 있음)', () => {
+  writeConfig({ endpoint: 'https://example.test/collect', telemetry: false });
+  assert.strictEqual(countingActive(), false);
+  writeConfig({ endpoint: 'https://example.test/collect', telemetry: true });
+  assert.strictEqual(countingActive(), true);
+});
+
+test('countingActive: BANKER_NO_TELEMETRY opt-out 이면 false, falsey 면 true', () => {
+  writeConfig({ endpoint: 'https://example.test/collect' });
+  process.env.BANKER_NO_TELEMETRY = '1';
+  assert.strictEqual(countingActive(), false);
+  for (const v of ['', '0', 'false']) {
+    process.env.BANKER_NO_TELEMETRY = v;
+    assert.strictEqual(countingActive(), true, 'value=' + JSON.stringify(v));
+  }
+});
+
+test('installedVersion: 실제 plugin.json 은 문자열 · 경로조작 malformed/비문자열/없음 → null', () => {
+  assert.strictEqual(typeof installedVersion(), 'string');
+  const bad = path.join(tmpDir, 'bad-plugin.json');
+  fs.writeFileSync(bad, '{ not valid json ');
+  assert.strictEqual(installedVersion(bad), null);
+  const noVer = path.join(tmpDir, 'no-version.json');
+  fs.writeFileSync(noVer, JSON.stringify({ version: 123 }));
+  assert.strictEqual(installedVersion(noVer), null);
+  assert.strictEqual(installedVersion(path.join(tmpDir, 'nope.json')), null);
+});
+
+test('compareVersions: 정상 비교와 malformed → null', () => {
+  assert.ok(compareVersions('1.2.3', '1.2.4') < 0);
+  assert.ok(compareVersions('2.0.0', '1.9.9') > 0);
+  assert.strictEqual(compareVersions('1.2.3', '1.2.3'), 0);
+  assert.strictEqual(compareVersions('1.2', '1.2.3'), null);
+  assert.strictEqual(compareVersions('a.b.c', '1.2.3'), null);
+  assert.strictEqual(compareVersions('1.2.3-rc', '1.2.3'), null);
+  assert.strictEqual(compareVersions('1.2.3', '1.2.3-rc'), null);
+});
+
+test('writeUpdateCache: read-modify-write 병합으로 형제 필드 보존', () => {
+  const cachePath = path.join(configDir(), 'update-check.json');
+  assert.strictEqual(writeUpdateCache({ latest: '1.0.0', checkedAt: 111 }), true);
+  assert.strictEqual(writeUpdateCache({ notified: '1.0.0' }), true);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(cachePath, 'utf8')),
+    { latest: '1.0.0', checkedAt: 111, notified: '1.0.0' },
+  );
+  // 기존 필드 덮어쓰기 시에도 나머지 형제 필드는 미소실
+  assert.strictEqual(writeUpdateCache({ latest: '2.0.0' }), true);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(cachePath, 'utf8')),
+    { latest: '2.0.0', checkedAt: 111, notified: '1.0.0' },
+  );
+});
+
+test('writeUpdateCache: 기존 캐시가 malformed 여도 던지지 않고 patch 로 재작성', () => {
+  const cachePath = path.join(configDir(), 'update-check.json');
+  fs.mkdirSync(configDir(), { recursive: true });
+  fs.writeFileSync(cachePath, '{ broken ');
+  assert.strictEqual(writeUpdateCache({ latest: '9.9.9' }), true);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(cachePath, 'utf8')), { latest: '9.9.9' });
 });

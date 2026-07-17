@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /*
- * banker 텔레메트리 count 훅 (UserPromptExpansion) - 사용자가 직접 호출한 /banker:<name>
- * 커맨드를 로컬 usage-log 에 `<name>\t<hour>` 한 줄로 기록한다.
+ * banker 텔레메트리 count 훅 (PostToolUse, matcher: Skill) - 모델이 자동 호출한
+ * banker:<name> 스킬을 로컬 usage-log 에 `<name>\t<hour>` 한 줄로 기록한다.
  *
- * fail-closed 규약(각 항목은 telemetry-count.test.mjs 가 검증한다):
+ * fail-closed 규약(각 항목은 telemetry-count-skill.test.mjs 가 검증한다):
  *  - countingActive() 가 아니면 로컬 쓰기조차 하지 않는다. 파일도 만들지 않는다.
- *  - 어떤 오류도 삼키고 항상 exit 0. 세션/프롬프트를 절대 막지 않는다.
+ *  - 어떤 오류도 삼키고 항상 exit 0. 세션/툴호출을 절대 막지 않는다.
  *  - PII/식별자를 다루지 않는다. 로그 한 줄 = 이름 문자열 + TAB + hour(0-23) 뿐이다.
  *
- * payload 필드 확정(US-4 라이브 스모크테스트): UserPromptExpansion stdin payload 는
- * `command_name`(예: "banker:setup-lsp")과 `command_source`("plugin")를 담는다. 사용자가
- * /banker:* 를 직접 호출한 경우만 이 이벤트가 발화하고, 모델이 자동 호출하는 스킬은
- * PostToolUse(Skill) 쪽(telemetry-count-skill.mjs)이 담당한다 - 두 경로는 disjoint 로 실측
- * 확정되어 dedup 이 불요하다. 더 이상 방어적 다중필드 추출이 필요 없다.
+ * payload 필드 확정(US-4 라이브 스모크테스트): PostToolUse(Skill) stdin payload 는
+ * `tool_input.skill`(예: "banker:compact-copy")을 담는다. 보조 소스로
+ * `tool_response.commandName` 도 시도한다. 사용자가 /banker:* 를 직접 호출한 경우는
+ * UserPromptExpansion 쪽(telemetry-count.mjs)이 담당한다 - 두 경로는 disjoint 로 실측
+ * 확정되어 dedup 이 불요하다.
  *
  * 체크인(usage-log 집계 후 서버 전송)은 이 훅의 책임이 아니다. 트리거는 SessionStart
  * update-notify 가 throttle 경과 시 별도로 연다 - 이 훅은 append 만 하고 flush/checkin 을
  * spawn 하지 않는다.
  *
- * 배선: hooks.json 의 UserPromptExpansion(matcher banker:.*)에 등록되어 사용자 직접 /banker:* 호출 시 발화한다.
+ * 배선: hooks.json 의 PostToolUse(matcher Skill)에 등록되어 모델 자동 스킬 호출 시 발화한다.
  */
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 
@@ -38,12 +38,14 @@ function readStdin() {
   });
 }
 
-// UserPromptExpansion payload 에서 사용자가 직접 호출한 banker:<name> 이름을 추출한다.
-// command_source 가 'plugin' 이고 command_name 이 banker:<name> 형식일 때만 반환, 그 외 null.
+// PostToolUse(Skill) payload 에서 모델이 자동 호출한 banker:<name> 스킬 이름을 추출한다.
+// 주 소스는 tool_input.skill, 없거나 미매치면 보조로 tool_response.commandName 을 시도한다.
 function extractName(payload) {
-  if (payload?.command_source !== 'plugin') return null;
-  const name = payload?.command_name;
-  return (typeof name === 'string' && NAME_RE.test(name)) ? name : null;
+  const candidates = [payload?.tool_input?.skill, payload?.tool_response?.commandName];
+  for (const c of candidates) {
+    if (typeof c === 'string' && NAME_RE.test(c)) return c;
+  }
+  return null;
 }
 
 // 파일의 개행 개수 = 줄 수(각 append 가 끝에 개행을 붙이므로). 없거나 읽기 실패면 0.

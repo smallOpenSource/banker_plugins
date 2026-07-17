@@ -1,5 +1,5 @@
 {
-  "description": "banker obsidizer: canonicalize an OMC wiki page right after it is written, but only when the vault is armed via `obsidizer --enable`. Inert otherwise.",
+  "description": "banker hooks: obsidizer wiki canonicalization (PostToolUse, inert until `obsidizer --enable`) + anonymous usage counting (PostToolUse Skill / UserPromptExpansion, count-default-on, opt-out BANKER_NO_TELEMETRY, no-op without endpoint) + update-check notification (SessionStart, opt-out BANKER_NO_UPDATE_CHECK).",
   "hooks": {
     "PostToolUse": [
       {
@@ -8,6 +8,40 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PLUGIN_ROOT\"/hooks/run.cjs \"$CLAUDE_PLUGIN_ROOT\"/hooks/obsidize-hook.mjs",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT\"/hooks/run.cjs \"$CLAUDE_PLUGIN_ROOT\"/hooks/telemetry-count-skill.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "matcher": "banker:.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT\"/hooks/run.cjs \"$CLAUDE_PLUGIN_ROOT\"/hooks/telemetry-count.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT\"/hooks/run.cjs \"$CLAUDE_PLUGIN_ROOT\"/hooks/update-notify.mjs",
             "timeout": 5
           }
         ]

@@ -248,8 +248,9 @@ async function maybeFirstRunPrompts(a) {
   const tc = await loadTelemetry();
   const cfg = tc.readConfig();
   const askStar = cfg.promptedStarV1 !== true;
-  const askTelemetry = a.claude && cfg.promptedTelemetryV1 !== true; // telemetry only when --claude is involved
-  if (!askStar && !askTelemetry) return;                            // already asked before - never re-prompt
+  // count-default-on: 카운팅은 opt-in 질문이 아니라 투명 고지(차단 프롬프트 아님). --claude 관여 시에만 1회 출력.
+  const showTelemetryNotice = a.claude && cfg.promptedTelemetryV2 !== true;
+  if (!askStar && !showTelemetryNotice) return;                     // already shown before - never re-show
 
   const readline = require('readline');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -264,15 +265,10 @@ async function maybeFirstRunPrompts(a) {
       }
       next.promptedStarV1 = true;
     }
-    if (askTelemetry) {
-      log('익명 사용량 수집(anonymous telemetry) 안내:');
-      log('  수집: 스킬 호출 횟수 + 플러그인 버전 + OS 종류');
-      log('  미수집: 개인정보 · 코드 · 식별자');
-      log('  자세히는 PRIVACY.md 를 참고하세요.');
-      const ans = (await ask('익명 사용량 수집에 동의하시겠어요? [y/N] ')).trim().toLowerCase();
-      next.telemetry = (ans === 'y' || ans === 'yes');
-      next.promptedTelemetryV1 = true;
-      log(`텔레메트리: ${next.telemetry ? 'on (동의)' : 'off (미동의)'} 로 저장했습니다.`);
+    if (showTelemetryNotice) {
+      log('banker 는 익명 사용량 카운트를 기본 수집합니다(스킬별 호출수·버전·OS·식별자 없음).');
+      log('끄려면 BANKER_NO_TELEMETRY=1 또는 `banker telemetry off`. 자세히: PRIVACY.md');
+      next.promptedTelemetryV2 = true;
     }
   } finally {
     rl.close();
@@ -280,24 +276,28 @@ async function maybeFirstRunPrompts(a) {
   tc.writeConfig(next);
 }
 
-/* ---------- telemetry subcommand (US-7) ---------- */
+/* ---------- telemetry subcommand (US-08, count-default-on) ---------- */
 const TELEMETRY_USAGE = `Usage: banker telemetry <on|off|status>
-  on      익명 사용량 수집에 동의 (config telemetry=true)
-  off     동의를 해제 (config telemetry=false)
-  status  동의 / 엔드포인트 / 환경변수 / 실효 상태를 출력`;
+  on      카운팅 opt-out 을 해제 (기본값인 켜짐으로 복귀)
+  off     카운팅을 끔 (config.telemetry=false 로 opt-out)
+  status  카운팅 / 업데이트-체크의 opt-out · 엔드포인트 · 캐시 상태를 정직하게 출력`;
 
 async function telemetryCmd(sub) {
   const tc = await loadTelemetry();
   if (sub === 'on' || sub === 'off') {
-    const want = sub === 'on';
-    if (!tc.writeConfig({ ...tc.readConfig(), telemetry: want })) {
+    const cfg = tc.readConfig();
+    if (sub === 'off') cfg.telemetry = false;                        // opt-out 저장
+    else delete cfg.telemetry;                                       // opt-out 해제: 기본-on 으로 복귀
+    if (!tc.writeConfig(cfg)) {
       warn('banker: 설정을 저장하지 못했습니다 (config 쓰기 실패).');
       process.exitCode = 1;
       return;
     }
-    log(`텔레메트리 동의를 ${want ? '켰습니다 (on)' : '껐습니다 (off)'}.`);
-    if (want && !tc.endpoint()) {
-      log('참고: 엔드포인트가 설정되어 있지 않아 지금은 아무것도 전송하지 않습니다.');
+    if (sub === 'off') {
+      log('카운팅을 껐습니다 (off). config.telemetry=false 로 opt-out 을 저장했습니다.');
+    } else {
+      log('카운팅 opt-out 을 해제했습니다 (on). 기본값(켜짐)으로 복귀합니다.');
+      if (!tc.endpoint()) log('참고: 엔드포인트가 설정되어 있지 않아 지금은 아무것도 전송하지 않습니다.');
     }
     return;
   }
@@ -305,13 +305,26 @@ async function telemetryCmd(sub) {
     const cfg = tc.readConfig();
     const v = process.env.BANKER_NO_TELEMETRY;
     const envOptOut = !(v === undefined || v === '' || v === '0' || v === 'false');
-    log('banker 텔레메트리 상태:');
-    log(`  동의(consent): ${cfg.telemetry === true ? 'on' : 'off'}`);
+    const cfgOptOut = cfg.telemetry === false;
+    log('banker 상태:');
+    log('[카운팅] 익명 사용량 카운팅 (기본값: 켜짐 · count-default-on)');
     log(`  엔드포인트 설정: ${tc.endpoint() != null ? '설정됨' : '미설정'}`);
-    log(`  환경변수 BANKER_NO_TELEMETRY opt-out: ${envOptOut ? '적용됨' : '미적용'}`);
-    log(`  실효 상태(effective): ${tc.isEnabled() ? 'enabled' : 'disabled'}`);
-    log('  참고: 동의(on) + 엔드포인트 설정 + 환경변수 opt-out 아님, 세 조건이 모두 참이어야 실제로 전송됩니다.');
-    log('  즉 동의(on)여도 엔드포인트가 미설정이면 아무것도 전송하지 않습니다.');
+    log(`  opt-out(BANKER_NO_TELEMETRY): ${envOptOut ? '적용됨' : '미적용'}`);
+    log(`  opt-out(config.telemetry=false): ${cfgOptOut ? '적용됨' : '미적용'}`);
+    log(`  실효 상태(effective): ${tc.countingActive() ? 'enabled' : 'disabled'}`);
+    log('  참고: 엔드포인트가 설정되어 있고 opt-out 이 아닐 때(env·config 둘 다 아님)만 실제로 전송됩니다.');
+
+    let cache = {};
+    try { cache = JSON.parse(fs.readFileSync(tc.UPDATE_CHECK_PATH, 'utf8')); } catch { /* 캐시 없음/malformed */ }
+    const installed = tc.installedVersion();
+    const cmp = (cache.latest && installed) ? tc.compareVersions(cache.latest, installed) : null;
+    log('[업데이트 체크] 새 버전 알림 (기본값: 켜짐)');
+    log(`  opt-out(BANKER_NO_UPDATE_CHECK/config.updateCheck=false): ${tc.noUpdateCheck() ? '적용됨' : '미적용'}`);
+    log(`  마지막 체크: ${cache.checkedAt ? new Date(cache.checkedAt).toISOString() : '없음'}`);
+    log(`  캐시된 최신 버전: ${cache.latest || '없음'} / 설치된 버전: ${installed || '알 수 없음'}`);
+    log(cmp === null ? '  비교 불가 (캐시 없음 또는 malformed)'
+      : cmp > 0 ? `  업데이트 있음 (${installed} → ${cache.latest})`
+      : '  최신 버전 사용 중');
     return;
   }
   log(TELEMETRY_USAGE);                                              // 알 수 없는 하위명령: 사용법 출력
@@ -330,7 +343,7 @@ Notes:
   - setup/uninstall with no target flag applies to BOTH tools.
   - --claude registers the marketplace + installs banker@banker-plugins (skills as /banker:*).
   - --codex copies codex-eligible skills -> ~/.codex/skills/banker-* and commands -> ~/.codex/prompts/banker-*.md.
-  - telemetry on|off toggles anonymous usage consent (config only); status prints the effective state. See PRIVACY.md.
+  - telemetry on|off toggles anonymous usage counting opt-out (default-on; config only); status prints counting + update-check state. See PRIVACY.md.
   - Never runs as root. --dry-run prints planned actions without writing.`;
 
 async function main() {
