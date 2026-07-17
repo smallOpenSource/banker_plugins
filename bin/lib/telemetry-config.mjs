@@ -29,6 +29,11 @@ export const LAST_FLUSH_PATH = path.join(configDir(), 'last-flush');
 // 초과 시 오래된 줄부터 잘라내 24h 윈도우를 근사한다.
 export const LOG_MAX_LINES = 5000;
 
+// 개인화 알림용 로컬 "써 본 스킬" 집합 경로 + 상한. 이 파일은 절대 전송하지 않는다(로컬 전용).
+// update-checkin 페이로드는 usage-log 집계만 담고 이 집합은 건드리지 않는다. update-notify 만 읽는다.
+export const USED_SKILLS_PATH = path.join(configDir(), 'used-skills.json');
+export const USED_SKILLS_MAX = 300;
+
 // update-check 캐시 파일({latest,checkedAt,notified})의 절대경로. USAGE_LOG_PATH 와 동일하게
 // import 시점 resolver 결과를 캡처한다(단명 hook 프로세스용). writeUpdateCache 는 테스트 격리를 위해
 // configDir() 를 매 호출 재계산하므로 이 상수에 의존하지 않는다.
@@ -37,6 +42,11 @@ export const UPDATE_CHECK_PATH = path.join(configDir(), 'update-check.json');
 export const UPDATE_THROTTLE_MS = 24 * 60 * 60 * 1000;
 // 최신 버전 조회용 공개 npm 레지스트리 URL. 본문 .version 을 직접 반환한다(실측 확정).
 export const NPM_LATEST_URL = 'https://registry.npmjs.org/@kaydash9999/banker-plugins/latest';
+// 버전별 "바뀐 스킬 목록" 매니페스트(공개 GitHub raw JSON: {"x.y.z": ["banker:skill", ...]}). update-fetch/
+// update-checkin 이 best-effort GET 해 changedSkills 를 캐시에 채우고, update-notify 가 로컬 "써 본 스킬"과
+// 교차해 개인화 알림을 만든다. GET 뿐이라 페이로드/식별자 전송이 없고, 실패해도 무해하다(일반 알림으로 폴백).
+// 테스트는 BANKER_SKILL_CHANGES_URL 로 loopback mock 을 주입해 실제 네트워크를 때리지 않는다.
+export const SKILL_CHANGES_URL = 'https://raw.githubusercontent.com/smallOpenSource/banker_plugins/main/skill-changes.json';
 
 // config.json 을 읽어 객체로 반환. 파일 없음·malformed JSON·권한 오류 등 어떤 예외에도 던지지 않고 {} 반환.
 export function readConfig() {
@@ -194,5 +204,68 @@ export function writeUpdateCache(patch) {
     return true;
   } catch {
     return false;
+  }
+}
+
+// ---- 개인화 알림용 로컬 "써 본 스킬" 집합 (전송하지 않음) ----
+// 이 집합은 절대 서버로 보내지 않는다: update-checkin 페이로드는 usage-log 집계(counts)만 담는다.
+// update-notify 가 로컬에서 읽어, 새 버전에서 바뀐 스킬 중 "사용자가 써 본 것"만 골라 알림에 이름을 넣는다.
+
+// 로컬 "써 본 스킬" 배열을 반환. 없음·malformed·비배열 → []. 문자열 원소만 남긴다. 어떤 오류에도 [].
+export function readUsedSkills() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(path.join(configDir(), 'used-skills.json'), 'utf8'));
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string' && x) : [];
+  } catch {
+    return [];
+  }
+}
+
+// name 을 로컬 집합에 union 한다(개인화 알림용, 전송 안 함). 이미 있으면 파일을 쓰지 않는다(핫패스 절약).
+// 상한(USED_SKILLS_MAX) 도달 시 새 이름은 무시한다(오래된 것 보존; 개인화는 근사여도 무방). configDir() 를
+// 매 호출 재계산(테스트 격리) + temp→rename 원자적 기록. 모든 오류를 삼켜 신규 기록 시 true, 그 외 false.
+export function recordUsedSkill(name) {
+  try {
+    if (typeof name !== 'string' || !name) return false;
+    const set = readUsedSkills();
+    if (set.includes(name)) return false;            // 이미 기록됨 - 쓰지 않는다.
+    if (set.length >= USED_SKILLS_MAX) return false;  // 상한 - 무시.
+    set.push(name);
+    const dir = configDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, 'used-skills.json');
+    const tmp = path.join(dir, `used-skills.json.${process.pid}.tmp`);
+    fs.writeFileSync(tmp, JSON.stringify(set));
+    fs.renameSync(tmp, target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 순수 함수: 버전->바뀐 스킬 배열 map 에서 installed < v <= latest 인 버전들의 스킬을 합쳐 중복 제거해 반환.
+// map 비객체·installed/latest 비문자열 → []. malformed 버전 키(compareVersions null)·비배열 값은 건너뛴다.
+// 어떤 입력에도 throw 하지 않는다. 개인화가 "설치~최신 사이에 바뀐 스킬"을 계산하는 데 쓴다.
+export function changedSkillsBetween(map, installed, latest) {
+  try {
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
+    if (typeof installed !== 'string' || typeof latest !== 'string') return [];
+    const seen = new Set();
+    const out = [];
+    for (const v of Object.keys(map)) {
+      const gt = compareVersions(v, installed);
+      const le = compareVersions(v, latest);
+      if (gt === null || le === null) continue;   // malformed 버전 키 무시.
+      if (gt > 0 && le <= 0) {
+        const skills = map[v];
+        if (!Array.isArray(skills)) continue;
+        for (const s of skills) {
+          if (typeof s === 'string' && s && !seen.has(s)) { seen.add(s); out.push(s); }
+        }
+      }
+    }
+    return out;
+  } catch {
+    return [];
   }
 }

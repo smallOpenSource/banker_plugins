@@ -27,6 +27,7 @@ function mkTmp() {
 
 const bankerDir = (tmp) => join(tmp, 'banker');
 const usageLog = (tmp) => join(bankerDir(tmp), 'usage-log');
+const usedSkills = (tmp) => join(bankerDir(tmp), 'used-skills.json'); // 개인화용 로컬 집합(전송 안 함).
 
 // countingActive() 가 true 가 되는 최소 상태(엔드포인트 설정 + opt-out 아님)로 만든다.
 function enable(tmp, { endpoint = 'http://127.0.0.1:1/collect' } = {}) {
@@ -52,6 +53,7 @@ test('opt-out(BANKER_NO_TELEMETRY=1)이면 무동작: 로그 파일조차 만들
   const res = runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' }, { BANKER_NO_TELEMETRY: '1' });
   assert.equal(res.status, 0);
   assert.ok(!existsSync(usageLog(tmp)), 'opt-out 훅은 로컬 쓰기조차 하지 않는다');
+  assert.ok(!existsSync(usedSkills(tmp)), 'opt-out(countingActive false)이면 used-skills 도 미기록');
 });
 
 test('malformed stdin 이면 exit 0 (쓰기 없음)', () => {
@@ -71,6 +73,24 @@ test('활성 + command_name/command_source=plugin 이면 usage-log 에 `name\\th
   const [name, hourStr] = line.trim().split('\t');
   assert.equal(name, 'banker:foo');
   assert.ok(/^\d+$/.test(hourStr), `hour 필드가 숫자가 아님: ${JSON.stringify(hourStr)}`);
+});
+
+test('활성 + banker 커맨드면 used-skills.json 에 이름 union 기록(개인화용·전송 안 함·중복 무증가)', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' });
+  runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' }); // 같은 이름 두 번.
+  runCount(tmp, { command_name: 'banker:bar', command_source: 'plugin' });
+  const set = JSON.parse(readFileSync(usedSkills(tmp), 'utf8'));
+  assert.ok(Array.isArray(set));
+  assert.deepEqual([...set].sort(), ['banker:bar', 'banker:foo'], 'union(중복 없이 두 이름)');
+});
+
+test('banker 필터 미매치면 used-skills 도 미기록', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  runCount(tmp, { command_name: 'other:foo', command_source: 'plugin' });
+  assert.ok(!existsSync(usedSkills(tmp)), 'banker: 접두 아니면 used-skills 미기록');
 });
 
 test('banker 필터: command_name 이 banker: 접두가 아니면 무동작', () => {

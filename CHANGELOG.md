@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0] - 2026-07-18
+
+### Added
+- **개인화 업데이트 알림**: 새 버전이 나왔을 때, 그 버전에서 바뀐 스킬 중 이 설치에서 실제로 써 본 스킬이 있으면 알림에 그 스킬 이름을 넣어 보여준다("자주 쓰는 스킬이 이번 업데이트에서 바뀌었습니다: ..."). 교집합이 없으면 기존 일반 알림으로 폴백한다.
+  - **로컬 "써 본 스킬" 집합**: 카운팅 훅(PostToolUse Skill / UserPromptExpansion)이 스킬 이름을 config 폴더의 `used-skills.json` 에 union 으로 모은다. 이 집합은 절대 전송하지 않는다 — 체크인 페이로드는 여전히 `{version, os, counts}` 뿐이다. 상한(300)·중복 무기록·원자적 기록.
+  - **바뀐 스킬 목록(공개 GitHub raw)**: 버전별 바뀐 스킬을 담은 `skill-changes.json` 을 저장소에서 GET 으로 조회한다(카운팅 활성 경로의 update-checkin 이 best-effort; 개인화 표시가 카운팅에 게이트되므로 카운팅 opt-out 경로의 update-fetch 는 조회하지 않는다). 무페이로드 GET 이라 식별자 전송이 없고, 실패하면 일반 알림으로 폴백한다. 릴리스마다 `scripts/gen-skill-changes.js`(git diff 기반·배포 제외)로 채운다.
+  - 두 opt-out(`BANKER_NO_UPDATE_CHECK`·`BANKER_NO_TELEMETRY`) 중 어느 쪽을 켜도 개인화는 동작하지 않는다. Codex CLI는 네트워크 차단으로 배제된다.
+  - `PRIVACY.md` 에 개인화 항목을 추가했다(로컬 집합 미전송·매니페스트 GET 수신자=GitHub).
+
+### Fixed
+- `PRIVACY.md`·CHANGELOG 의 "0.8.0 아직 게시 안 됨" 상태 문구를 실제(게시됨)에 맞게 정정했다. EU ePrivacy opt-in 전환 여부는 열린 검토 항목으로 표기를 유지한다.
+
 ## [0.8.0] - 2026-07-17
 
 ### Added
@@ -13,7 +25,7 @@
   - `PRIVACY.md` 를 이 설계에 맞게 재작성했다: 알림/카운팅을 분리 기술하고 각각의 수신자를 이름으로 명시했다(알림=npm, 카운팅=유지보수자). 익명성이 페이로드의 속성이지 시스템 전체의 속성은 아니라는 점(카운팅 서버는 소스 IP를 수신하되 기록하지 않도록 설계)을 정직하게 밝혔다. EU ePrivacy Art.5(3)·Planet49 판례는 표준 관행 근거와 반대 근거를 양면으로 제시했고, 미국 CCPA·한국 PIPA는 이 익명 체크인에 재적용하지 않는다는 점(실무 판단 기준인 IP 지속 보유·프로파일링·판매에 해당하지 않음)을 명기했다.
 
 ### Notes
-- **정직 명시**: 이 릴리스는 아직 게시(publish)되지 않았다. 실제 공개는 EU ePrivacy 대상 opt-in 전환 여부를 포함한 별도 법률 검토를 통과한 뒤 진행한다.
+- **정직 명시**: 이 릴리스는 npm·GitHub·마켓플레이스에 게시되었다. 초안 당시 계획했던 "EU ePrivacy opt-in 전환 검토 통과 후 게시" 게이트는 게시 결정으로 우회되었고, EU ePrivacy opt-in 전환 여부는 `PRIVACY.md` 의 열린 검토 항목으로 남아 있다.
 
 ## [0.7.1] - 2026-07-16
 
