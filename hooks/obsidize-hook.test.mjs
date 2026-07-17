@@ -276,14 +276,46 @@ test('run.cjs: a missing target exits 0 rather than blocking the tool', () => {
   assert.equal(res.status, 0);
 });
 
-test('hooks.json: shape, single PostToolUse entry, explicit short timeout', () => {
+// obsidizer PostToolUse 항목을 matcher 또는 command 문자열로 찾는다.
+// hooks.json 이 이제 Skill 카운트 같은 형제 PostToolUse 항목도 함께 배선하므로,
+// 배열 인덱스나 PostToolUse 전체 길이에 의존하면 안 된다.
+const OBSIDIZER_MATCHER = '^mcp__.*wiki_(ingest|add)$';
+function findObsidizerEntries(config) {
+  return config.hooks.PostToolUse.filter((entry) =>
+    entry.matcher === OBSIDIZER_MATCHER ||
+    entry.hooks.some((h) => typeof h.command === 'string' && h.command.includes('obsidize-hook.mjs')));
+}
+
+// 신규 훅 배선(Skill 카운트 / UserPromptExpansion 카운트 / SessionStart 알림)의 공통 계약:
+// run.cjs 를 경유하고 명시적인 짧은 timeout 을 가져야 한다.
+// Claude Code 기본값인 600초로 떨어지는 경우가 없는지 여기서 회귀 보호한다.
+function assertRunCjsCommand(entry, label) {
+  assert.equal(entry.hooks.length, 1, `${label}: exactly one command`);
+  const [command] = entry.hooks;
+  assert.equal(command.type, 'command', `${label}: command type`);
+  assert.ok(command.command.includes('/hooks/run.cjs'), `${label}: routes through run.cjs`);
+  assert.ok(command.command.includes('$CLAUDE_PLUGIN_ROOT'), `${label}: plugin-root relative`);
+  assert.ok(Number.isInteger(command.timeout) && command.timeout >= 3 && command.timeout <= 5,
+    `${label}: explicit integer timeout in [3,5] (got ${command.timeout})`);
+}
+
+test('hooks.json: top-level shape, obsidizer entry found by contract (not index), explicit short timeout', () => {
   const config = JSON.parse(readFileSync(join(HERE, 'hooks.json'), 'utf8'));
 
   assert.deepEqual(Object.keys(config).sort(), ['description', 'hooks'], 'top-level keys are exactly description + hooks');
-  assert.deepEqual(Object.keys(config.hooks), ['PostToolUse'], 'declares only PostToolUse');
-  assert.equal(config.hooks.PostToolUse.length, 1);
+  assert.ok(Array.isArray(config.hooks.PostToolUse), 'PostToolUse must exist as an array');
+  // hooks.json 은 이제 UserPromptExpansion(텔레메트리 카운트) · SessionStart(update-notify) 도
+  // 형제 키로 함께 배선한다. 그 항목들은 아래 테스트에서 따로 검증하므로, 여기서는
+  // PostToolUse 가 top-level hooks 의 유일한 키일 것을 더 이상 요구하지 않는다.
 
-  const [command] = config.hooks.PostToolUse[0].hooks;
+  const obsidizerEntries = findObsidizerEntries(config);
+  assert.equal(obsidizerEntries.length, 1,
+    'exactly one obsidizer entry in PostToolUse (catches it going missing or being duplicated)');
+  const [obsidizerEntry] = obsidizerEntries;
+  assert.equal(obsidizerEntry.matcher, OBSIDIZER_MATCHER, 'obsidizer matcher unchanged');
+  assert.equal(obsidizerEntry.hooks.length, 1, 'exactly one command under the obsidizer matcher');
+
+  const [command] = obsidizerEntry.hooks;
   assert.equal(command.type, 'command');
   assert.ok(command.command.includes('/hooks/run.cjs'), 'routes through the node-discovery wrapper');
   assert.ok(command.command.endsWith('/hooks/obsidize-hook.mjs'), 'dispatches to the hook script');
@@ -291,9 +323,27 @@ test('hooks.json: shape, single PostToolUse entry, explicit short timeout', () =
   assert.ok(command.timeout >= 3 && command.timeout <= 5, `explicit 3-5s timeout, never the 600s default (got ${command.timeout})`);
 });
 
+test('hooks.json: Skill / UserPromptExpansion / SessionStart entries route through run.cjs with a bounded timeout', () => {
+  const config = JSON.parse(readFileSync(join(HERE, 'hooks.json'), 'utf8'));
+
+  const skillEntries = config.hooks.PostToolUse.filter((entry) => entry.matcher === 'Skill');
+  assert.equal(skillEntries.length, 1, 'exactly one Skill-matcher PostToolUse entry (the skill-count hook)');
+  assertRunCjsCommand(skillEntries[0], 'PostToolUse Skill counter');
+
+  assert.ok(Array.isArray(config.hooks.UserPromptExpansion), 'UserPromptExpansion must exist as an array');
+  assert.equal(config.hooks.UserPromptExpansion.length, 1, 'exactly one UserPromptExpansion entry');
+  assertRunCjsCommand(config.hooks.UserPromptExpansion[0], 'UserPromptExpansion counter');
+
+  assert.ok(Array.isArray(config.hooks.SessionStart), 'SessionStart must exist as an array');
+  assert.equal(config.hooks.SessionStart.length, 1, 'exactly one SessionStart entry');
+  assertRunCjsCommand(config.hooks.SessionStart[0], 'SessionStart update-notify');
+});
+
 test('hooks.json matcher: fires on wiki writes, tolerates prefix variants, ignores deletes', () => {
   const config = JSON.parse(readFileSync(join(HERE, 'hooks.json'), 'utf8'));
-  const matcher = new RegExp(config.hooks.PostToolUse[0].matcher);
+  const obsidizerEntries = findObsidizerEntries(config);
+  assert.equal(obsidizerEntries.length, 1, 'exactly one obsidizer entry to test the matcher against');
+  const matcher = new RegExp(obsidizerEntries[0].matcher);
 
   // Plugin-installed form and the plain-MCP-server form: the prefix differs by wiring, so
   // the matcher must not hard-code one.

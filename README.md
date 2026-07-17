@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm downloads](https://img.shields.io/npm/dm/@kaydash9999/banker-plugins)](https://www.npmjs.com/package/@kaydash9999/banker-plugins) [![GitHub stars](https://img.shields.io/github/stars/smallOpenSource/banker_plugins)](https://github.com/smallOpenSource/banker_plugins)
 
-[빠른 시작](#빠른-시작) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [라이선스 / 서드파티](#라이선스--서드파티)
+[빠른 시작](#빠른-시작) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 banker는 QA·보안 감사·문서·아키텍처·위키 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 48개 + 커맨드 2개**(총 50개 구성요소)를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
@@ -174,6 +174,24 @@ banker uninstall                        # 제거
 ```
 
 Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛 버전이 중복으로 남지 않습니다.
+
+## 업데이트 확인 및 사용량 카운팅
+
+banker는 기본값(default-on)으로 두 가지를 합니다.\
+새 버전이 나오면 세션 시작 시 알려주는 **업데이트 알림**과, 유지보수자가 사용량을 파악하는 **익명 사용량 카운팅**입니다.\
+이 때문에 `SessionStart`(알림 확인)·`PostToolUse`(모델이 자동 호출한 스킬 집계)·`UserPromptExpansion`(사용자가 직접 입력한 `/banker:*` 집계) 훅이 항상 등록되어 있고, 트리거될 때마다 짧게 node 프로세스를 하나씩 띄웁니다(수십 ms 수준).
+
+끄기:
+
+```bash
+export BANKER_NO_UPDATE_CHECK=1   # 업데이트 알림만 끄기
+export BANKER_NO_TELEMETRY=1      # 사용량 카운팅만 끄기
+```
+
+카운팅은 `banker telemetry off` 로도 끌 수 있고, 엔드포인트가 설정되어 있지 않으면 애초에 아무 것도 전송하지 않습니다(현재 기본 상태).\
+Codex CLI는 샌드박스가 네트워크를 차단하므로 알림·카운팅 둘 다 동작하지 않습니다.
+
+무엇을 수집하고 누가 수신하는지는 [PRIVACY.md](PRIVACY.md)에 정리했습니다.
 
 ## 라이선스 / 서드파티
 

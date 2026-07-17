@@ -1,0 +1,95 @@
+#!/usr/bin/env node
+/*
+ * banker 텔레메트리 count 훅 (PostToolUse, matcher: Skill) - 모델이 자동 호출한
+ * banker:<name> 스킬을 로컬 usage-log 에 `<name>\t<hour>` 한 줄로 기록한다.
+ *
+ * fail-closed 규약(각 항목은 telemetry-count-skill.test.mjs 가 검증한다):
+ *  - countingActive() 가 아니면 로컬 쓰기조차 하지 않는다. 파일도 만들지 않는다.
+ *  - 어떤 오류도 삼키고 항상 exit 0. 세션/툴호출을 절대 막지 않는다.
+ *  - PII/식별자를 다루지 않는다. 로그 한 줄 = 이름 문자열 + TAB + hour(0-23) 뿐이다.
+ *
+ * payload 필드 확정(US-4 라이브 스모크테스트): PostToolUse(Skill) stdin payload 는
+ * `tool_input.skill`(예: "banker:compact-copy")을 담는다. 보조 소스로
+ * `tool_response.commandName` 도 시도한다. 사용자가 /banker:* 를 직접 호출한 경우는
+ * UserPromptExpansion 쪽(telemetry-count.mjs)이 담당한다 - 두 경로는 disjoint 로 실측
+ * 확정되어 dedup 이 불요하다.
+ *
+ * 체크인(usage-log 집계 후 서버 전송)은 이 훅의 책임이 아니다. 트리거는 SessionStart
+ * update-notify 가 throttle 경과 시 별도로 연다 - 이 훅은 append 만 하고 flush/checkin 을
+ * spawn 하지 않는다.
+ *
+ * 배선: hooks.json 의 PostToolUse(matcher Skill)에 등록되어 모델 자동 스킬 호출 시 발화한다.
+ */
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+
+import { configDir, countingActive, USAGE_LOG_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
+
+// banker:<name> 전체 일치 - 이름 문자열 자체를 검증한다(TAB/개행 등 이질 문자가 섞여
+// usage-log 의 `name\thour` 형식을 깨는 것을 막는다). i 플래그는 매칭만 관대하게(실제 이름은 소문자).
+const NAME_RE = /^banker:[a-z0-9_-]+$/i;
+
+function readStdin() {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolvePromise(data));
+    process.stdin.on('error', rejectPromise);
+  });
+}
+
+// PostToolUse(Skill) payload 에서 모델이 자동 호출한 banker:<name> 스킬 이름을 추출한다.
+// 주 소스는 tool_input.skill, 없거나 미매치면 보조로 tool_response.commandName 을 시도한다.
+function extractName(payload) {
+  const candidates = [payload?.tool_input?.skill, payload?.tool_response?.commandName];
+  for (const c of candidates) {
+    if (typeof c === 'string' && NAME_RE.test(c)) return c;
+  }
+  return null;
+}
+
+// 파일의 개행 개수 = 줄 수(각 append 가 끝에 개행을 붙이므로). 없거나 읽기 실패면 0.
+function lineCount(path) {
+  try {
+    const raw = readFileSync(path, 'utf8');
+    return (raw.match(/\n/g) || []).length;
+  } catch {
+    return 0;
+  }
+}
+
+// usage-log 에 `<name>\t<hour>` 한 줄을 append 한다(hour = 로컬 시각 0-23). 상한 도달 시
+// 스킵(best-effort; 체크인이 비우면 재개). flush/checkin 은 여기서 spawn 하지 않는다
+// (트리거는 SessionStart update-notify 소관).
+function record(name) {
+  try { mkdirSync(configDir(), { recursive: true }); } catch { /* best-effort */ }
+  try {
+    if (lineCount(USAGE_LOG_PATH) < LOG_MAX_LINES) {
+      const hour = new Date().getHours();
+      appendFileSync(USAGE_LOG_PATH, `${name}\t${hour}\n`);
+    }
+  } catch { /* best-effort */ }
+}
+
+async function main() {
+  let raw;
+  try {
+    raw = await readStdin();
+  } catch {
+    return; // stdin 읽기 실패 - 무동작.
+  }
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return; // malformed stdin - 무동작.
+  }
+  if (!countingActive()) return; // 카운팅 비활성 - 로컬 쓰기조차 하지 않는다.
+  const name = extractName(payload);
+  if (!name) return; // banker:<name> 아님 - 무동작.
+  record(name);
+}
+
+main()
+  .catch(() => {}) // 어떤 예외도 세션을 막지 않는다.
+  .finally(() => process.exit(0));

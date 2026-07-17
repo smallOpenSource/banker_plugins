@@ -1,33 +1,32 @@
 #!/usr/bin/env node
 /*
- * banker 텔레메트리 count 훅 - UserPromptExpansion 이벤트마다 banker 커맨드/스킬 이름을
- * 로컬 usage-log 에 한 줄 기록하고, 24h 마다 flush 훅을 한 번 기동한다.
+ * banker 텔레메트리 count 훅 (UserPromptExpansion) - 사용자가 직접 호출한 /banker:<name>
+ * 커맨드를 로컬 usage-log 에 `<name>\t<hour>` 한 줄로 기록한다.
  *
  * fail-closed 규약(각 항목은 telemetry-count.test.mjs 가 검증한다):
- *  - 동의(isEnabled)가 아니면 로컬 쓰기조차 하지 않는다. 파일도 만들지 않는다.
+ *  - countingActive() 가 아니면 로컬 쓰기조차 하지 않는다. 파일도 만들지 않는다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션/프롬프트를 절대 막지 않는다.
- *  - PII/식별자를 다루지 않는다. 로그 한 줄 = banker:<name> 문자열 하나뿐.
+ *  - PII/식별자를 다루지 않는다. 로그 한 줄 = 이름 문자열 + TAB + hour(0-23) 뿐이다.
  *
- * payload 필드 미검증 - 배선(US-3b) 전 라이브 스모크테스트로 확정 필요.
- *   UserPromptExpansion stdin payload 에서 커맨드 이름이 어느 키에 들어오는지는 공식 문서에
- *   미기재라 미검증이다. 그래서 이름 추출은 방어적으로: 이름을 담을 법한 필드들을 순서대로
- *   시도하고, 마지막엔 원시 stdin 문자열 전체를 스캔한다. 실제 필드가 확정되면 이 목록을 좁힌다.
+ * payload 필드 확정(US-4 라이브 스모크테스트): UserPromptExpansion stdin payload 는
+ * `command_name`(예: "banker:setup-lsp")과 `command_source`("plugin")를 담는다. 사용자가
+ * /banker:* 를 직접 호출한 경우만 이 이벤트가 발화하고, 모델이 자동 호출하는 스킬은
+ * PostToolUse(Skill) 쪽(telemetry-count-skill.mjs)이 담당한다 - 두 경로는 disjoint 로 실측
+ * 확정되어 dedup 이 불요하다. 더 이상 방어적 다중필드 추출이 필요 없다.
  *
- * 옵션 B: 이 훅은 hooks.json 에 배선되지 않는다(스탠드얼론 .mjs). 테스트가 직접 spawn 한다.
+ * 체크인(usage-log 집계 후 서버 전송)은 이 훅의 책임이 아니다. 트리거는 SessionStart
+ * update-notify 가 throttle 경과 시 별도로 연다 - 이 훅은 append 만 하고 flush/checkin 을
+ * spawn 하지 않는다.
+ *
+ * 배선: hooks.json 의 UserPromptExpansion(matcher banker:.*)에 등록되어 사용자 직접 /banker:* 호출 시 발화한다.
  */
-import { spawn } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 
-import { configDir, isEnabled, USAGE_LOG_PATH, LAST_FLUSH_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
+import { configDir, countingActive, USAGE_LOG_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FLUSH = join(HERE, 'telemetry-flush.mjs');
-const FLUSH_LOCK = LAST_FLUSH_PATH + '.lock';
-const DAY_MS = 24 * 60 * 60 * 1000;
-// banker:<name> - 슬래시 커맨드/스킬의 정규화된 이름. i 플래그는 매칭만 관대하게(실제 이름은 소문자).
-const NAME_RE = /\bbanker:[a-z0-9_-]+/i;
+// banker:<name> 전체 일치 - 이름 문자열 자체를 검증한다(TAB/개행 등 이질 문자가 섞여
+// usage-log 의 `name\thour` 형식을 깨는 것을 막는다). i 플래그는 매칭만 관대하게(실제 이름은 소문자).
+const NAME_RE = /^banker:[a-z0-9_-]+$/i;
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -39,23 +38,12 @@ function readStdin() {
   });
 }
 
-// payload 필드 미검증(파일 상단 주석 참조): 이름을 담을 법한 필드를 순서대로 시도하고,
-// 못 찾으면 원시 stdin 문자열 전체에서 banker:<name> 를 스캔한다. 아무데도 없으면 null.
-function extractName(payload, raw) {
-  const candidates = [
-    payload?.command,
-    payload?.prompt,
-    payload?.user_prompt,
-    payload?.tool_input?.command,
-    payload?.tool_input?.prompt,
-    raw,
-  ];
-  for (const c of candidates) {
-    if (typeof c !== 'string') continue;
-    const m = c.match(NAME_RE);
-    if (m) return m[0];
-  }
-  return null;
+// UserPromptExpansion payload 에서 사용자가 직접 호출한 banker:<name> 이름을 추출한다.
+// command_source 가 'plugin' 이고 command_name 이 banker:<name> 형식일 때만 반환, 그 외 null.
+function extractName(payload) {
+  if (payload?.command_source !== 'plugin') return null;
+  const name = payload?.command_name;
+  return (typeof name === 'string' && NAME_RE.test(name)) ? name : null;
 }
 
 // 파일의 개행 개수 = 줄 수(각 append 가 끝에 개행을 붙이므로). 없거나 읽기 실패면 0.
@@ -68,51 +56,15 @@ function lineCount(path) {
   }
 }
 
-// LAST_FLUSH_PATH 가 없거나 24h 초과면 flush 가 필요. best-effort(읽기 실패는 "필요"로 처리).
-function flushDue() {
-  try {
-    return (Date.now() - statSync(LAST_FLUSH_PATH).mtimeMs) >= DAY_MS;
-  } catch {
-    return true;
-  }
-}
-
-// herd 방지(해석 B): 여러 count 훅이 동시에 flushDue 를 보고 몰려 spawn 하는 것을 막는다.
-// mkdir 락으로 검사-후-기록을 직렬화하고, 락 안에서 flushDue 를 재확인(경합 중 이미 갱신됐으면
-// false)한 뒤 LAST_FLUSH_PATH 에 현재 타임스탬프를 원자적으로 기록해 다음 24h 윈도우를 연다.
-// 승자만 true 를 받아 flush 를 spawn 한다.
-function claimFlush() {
-  try {
-    // 크래시로 남은 stale 락(정상 보유 시간은 microsecond)이 flush 를 영구 wedge 하지 않도록,
-    // 24h 넘은 락은 stale 로 보고 회수한다.
-    if ((Date.now() - statSync(FLUSH_LOCK).mtimeMs) >= DAY_MS) rmSync(FLUSH_LOCK, { recursive: true, force: true });
-  } catch {
-    // 락 없음/읽기 실패 - 아래 생성 시도로 진행.
-  }
-  try {
-    mkdirSync(FLUSH_LOCK); // 원자적: 이미 존재하면 throw -> 다른 훅이 claim 중.
-  } catch {
-    return false;
-  }
-  try {
-    if (!flushDue()) return false; // 락 안 재확인: 경합 사이 누군가 이미 flush 를 열었다.
-    writeFileSync(LAST_FLUSH_PATH, new Date().toISOString());
-    return true;
-  } finally {
-    try { rmSync(FLUSH_LOCK, { recursive: true, force: true }); } catch { /* best-effort */ }
-  }
-}
-
+// usage-log 에 `<name>\t<hour>` 한 줄을 append 한다(hour = 로컬 시각 0-23). 상한 도달 시
+// 스킵(best-effort; 체크인이 비우면 재개). flush/checkin 은 여기서 spawn 하지 않는다
+// (트리거는 SessionStart update-notify 소관).
 function record(name) {
   try { mkdirSync(configDir(), { recursive: true }); } catch { /* best-effort */ }
-  // 상한 도달 시 append 스킵(best-effort; flush 가 비우면 재개). 로그를 24h 윈도우로 상한.
   try {
-    if (lineCount(USAGE_LOG_PATH) < LOG_MAX_LINES) appendFileSync(USAGE_LOG_PATH, name + '\n');
-  } catch { /* best-effort */ }
-  // flush 기동: 24h 초과 시 herd 방지 claim 을 이긴 훅만 detached spawn.
-  try {
-    if (flushDue() && claimFlush()) {
-      spawn(process.execPath, [FLUSH], { detached: true, stdio: 'ignore' }).unref();
+    if (lineCount(USAGE_LOG_PATH) < LOG_MAX_LINES) {
+      const hour = new Date().getHours();
+      appendFileSync(USAGE_LOG_PATH, `${name}\t${hour}\n`);
     }
   } catch { /* best-effort */ }
 }
@@ -130,9 +82,9 @@ async function main() {
   } catch {
     return; // malformed stdin - 무동작.
   }
-  if (!isEnabled()) return; // 미동의 - 로컬 쓰기조차 하지 않는다.
-  const name = extractName(payload, raw);
-  if (!name) return; // banker:<name> 없음 - 무동작.
+  if (!countingActive()) return; // 카운팅 비활성 - 로컬 쓰기조차 하지 않는다.
+  const name = extractName(payload);
+  if (!name) return; // banker:<name> 아님 - 무동작.
   record(name);
 }
 
