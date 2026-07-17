@@ -12,7 +12,7 @@ import path from 'node:path';
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
-  UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL,
+  UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
 } from './telemetry-config.mjs';
 
 // 테스트가 만지는 env 만 스냅샷/복원한다.
@@ -62,14 +62,19 @@ test('BANKER_NO_TELEMETRY 가 falsey(빈문자열/0/false) 면 opt-out 아님', 
   }
 });
 
-test('엔드포인트 미설정이면 false', () => {
-  writeConfig({ telemetry: true });
-  assert.strictEqual(endpoint(), null);
+test('endpoint 미설정 시 내장 기본(DEFAULT_ENDPOINT) 반환, isEnabled 는 telemetry 미설정이라 false', () => {
+  // env·config 둘 다 미설정 → 내장 기본 엔드포인트를 반환한다(count-default-on).
+  assert.strictEqual(endpoint(), DEFAULT_ENDPOINT);
+  // isEnabled 는 여전히 telemetry===true 를 요구하므로 telemetry 미설정이면 false 를 유지한다.
   assert.strictEqual(isEnabled(), false);
 });
 
-test('endpoint 는 env 가 config 보다 우선', () => {
+test('endpoint 우선순위: env > config > DEFAULT_ENDPOINT', () => {
+  // config.endpoint 는 내장 기본을 override 한다.
   writeConfig({ telemetry: true, endpoint: 'https://config.test/c' });
+  assert.strictEqual(endpoint(), 'https://config.test/c');
+  assert.strictEqual(isEnabled(), true);
+  // env 는 config 보다 우선한다.
   process.env.BANKER_TELEMETRY_ENDPOINT = 'https://env.test/c';
   assert.strictEqual(endpoint(), 'https://env.test/c');
   assert.strictEqual(isEnabled(), true);
@@ -131,10 +136,10 @@ test('noUpdateCheck: config.updateCheck===false 면 true, ===true 면 false', ()
   assert.strictEqual(noUpdateCheck(), false);
 });
 
-test('countingActive: default-on 이라 엔드포인트만 있고 telemetry 미설정이어도 true', () => {
-  assert.strictEqual(countingActive(), false); // 엔드포인트 없음
+test('countingActive: default-on 이라 env·config 미설정+미opt-out 이면 내장 기본 엔드포인트로 true', () => {
+  assert.strictEqual(countingActive(), true); // 미설정이어도 DEFAULT_ENDPOINT 내장 → default-on
   writeConfig({ endpoint: 'https://example.test/collect' });
-  assert.strictEqual(countingActive(), true); // telemetry 미설정이어도 default-on
+  assert.strictEqual(countingActive(), true); // config 엔드포인트여도(telemetry 미설정) 여전히 활성
 });
 
 test('countingActive: telemetry===false 면 false, ===true 면 true (엔드포인트 있음)', () => {

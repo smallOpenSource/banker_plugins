@@ -7,7 +7,8 @@
 - `banker setup` 최초 실행 시 GitHub 저장소 별(star)을 요청하는 프롬프트를 추가했다(양 런타임 공통·홍보 목적·카운팅 opt-out 여부와 무관).
 - **업데이트-체크 서비스**: 이전 초안(opt-in 익명 텔레메트리 클라이언트, 기본값 미수집)은 동의자가 거의 없어 사용량 가시성이라는 목표를 달성하지 못한다고 판단해 두 기능으로 재구성(피벗)했다.
   - **업데이트 알림**: 공개 npm 레지스트리(`registry.npmjs.org/@kaydash9999/banker-plugins/latest`)를 조회해 세션 시작 시 새 버전이 있으면 알린다. 조회 요청의 수신자는 npm(GitHub/Microsoft)이고, banker 유지보수자는 이 조회를 받지 않는다. 기본값 켜짐, `BANKER_NO_UPDATE_CHECK` 환경변수 또는 `config.updateCheck=false` 로 끌 수 있다.
-  - **사용량 카운팅(count-default-on)**: 하루 1회 스킬/커맨드별 호출 수를 시간대(hour-of-day)별로 버킷화해 플러그인 버전·OS 종류와 함께 유지보수자가 운영하는 외부 엔드포인트로 익명 체크인한다. 집계는 사용자가 직접 입력한 `/banker:*` 커맨드와 모델이 자동 호출한 스킬 양쪽을 서로 다른 두 훅으로 겹침 없이 포착한다. 기본값 켜짐, `BANKER_NO_TELEMETRY` 환경변수·`config.telemetry=false`·`banker telemetry off` 로 끌 수 있고, 엔드포인트가 설정되어 있지 않으면 아무 것도 전송하지 않는다(현재 기본 상태).
+  - **사용량 카운팅(count-default-on)**: 하루 1회 스킬/커맨드별 호출 수를 시간대(hour-of-day)별로 버킷화해 플러그인 버전·OS 종류와 함께 유지보수자가 운영하는 외부 엔드포인트로 익명 체크인한다. 집계는 사용자가 직접 입력한 `/banker:*` 커맨드와 모델이 자동 호출한 스킬 양쪽을 서로 다른 두 훅으로 겹침 없이 포착한다. 기본값 켜짐, `BANKER_NO_TELEMETRY` 환경변수·`config.telemetry=false`·`banker telemetry off` 로 끌 수 있다.
+  - **기본 카운팅 엔드포인트 내장**: 배포에 기본 엔드포인트(`banker.banker-plugins.workers.dev`, 유지보수자의 Cloudflare Worker)를 박아 `endpoint()` 가 env·config 미설정이어도 이를 반환한다. 그 결과 `countingActive()` 가 실제로 default-on 이 되어 opt-out 하지 않은 모든 설치에서 카운팅이 활성이다(이전엔 엔드포인트 미설정이라 사실상 유지보수자 셸만 잡혔다). 자가호스팅/override 는 `BANKER_TELEMETRY_ENDPOINT` 환경변수로 한다.
   - 두 기능 모두 Claude Code 전용이다. Codex CLI는 샌드박스가 네트워크 접근을 차단하므로 알림·카운팅 둘 다 배제된다.
   - `PRIVACY.md` 를 이 설계에 맞게 재작성했다: 알림/카운팅을 분리 기술하고 각각의 수신자를 이름으로 명시했다(알림=npm, 카운팅=유지보수자). 익명성이 페이로드의 속성이지 시스템 전체의 속성은 아니라는 점(카운팅 서버는 소스 IP를 수신하되 기록하지 않도록 설계)을 정직하게 밝혔다. EU ePrivacy Art.5(3)·Planet49 판례는 표준 관행 근거와 반대 근거를 양면으로 제시했고, 미국 CCPA·한국 PIPA는 이 익명 체크인에 재적용하지 않는다는 점(실무 판단 기준인 IP 지속 보유·프로파일링·판매에 해당하지 않음)을 명기했다.
 

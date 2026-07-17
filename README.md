@@ -188,7 +188,8 @@ export BANKER_NO_UPDATE_CHECK=1   # 업데이트 알림만 끄기
 export BANKER_NO_TELEMETRY=1      # 사용량 카운팅만 끄기
 ```
 
-카운팅은 `banker telemetry off` 로도 끌 수 있고, 엔드포인트가 설정되어 있지 않으면 애초에 아무 것도 전송하지 않습니다(현재 기본 상태).\
+카운팅은 `banker telemetry off` 로도 끌 수 있습니다.\
+플러그인은 기본 카운팅 엔드포인트(`banker.banker-plugins.workers.dev`)를 내장하므로 count-default-on 이라 설치 즉시 활성이며, `BANKER_TELEMETRY_ENDPOINT` 환경변수로 자가호스팅/override 할 수 있습니다.\
 Codex CLI는 샌드박스가 네트워크를 차단하므로 알림·카운팅 둘 다 동작하지 않습니다.
 
 무엇을 수집하고 누가 수신하는지는 [PRIVACY.md](PRIVACY.md)에 정리했습니다.

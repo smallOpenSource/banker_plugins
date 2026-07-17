@@ -77,13 +77,16 @@ test('미활성(telemetry=false)이면 무동작: 로그를 truncate 하지 않�
   assert.ok(!existsSync(updateCheck(tmp)), '미활성이면 캐시 미생성(요청 없음)');
 });
 
-test('엔드포인트 미설정이면 무동작', () => {
+test('opt-out(BANKER_NO_TELEMETRY=1)이면 무동작: 로그 미변경·전송 없음', () => {
   const tmp = mkTmp();
-  writeConfig(tmp, { telemetry: true }); // endpoint 없음.
+  // 내장 기본 엔드포인트로 기본이 활성이므로 inactive 는 opt-out 으로 만든다(엔드포인트는 있어도 무동작).
+  writeConfig(tmp, { telemetry: true, endpoint: 'http://127.0.0.1:1/collect' });
   writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
-  const res = spawnSync(process.execPath, [CHECKIN_HOOK], { encoding: 'utf8', env: checkinEnv(tmp) });
+  const env = checkinEnv(tmp);
+  env.BANKER_NO_TELEMETRY = '1';
+  const res = spawnSync(process.execPath, [CHECKIN_HOOK], { encoding: 'utf8', env });
   assert.equal(res.status, 0);
-  assert.equal(readFileSync(usageLog(tmp), 'utf8'), 'banker:foo\t9\n', '엔드포인트 없으면 로그 그대로');
+  assert.equal(readFileSync(usageLog(tmp), 'utf8'), 'banker:foo\t9\n', 'opt-out 이면 로그 그대로');
   assert.ok(!existsSync(lastFlush(tmp)));
   assert.ok(!existsSync(updateCheck(tmp)));
 });

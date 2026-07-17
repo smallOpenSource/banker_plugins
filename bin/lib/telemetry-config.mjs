@@ -61,13 +61,22 @@ export function writeConfig(obj) {
   }
 }
 
-// 설정된 엔드포인트 문자열 또는 null. env(BANKER_TELEMETRY_ENDPOINT) 가 config.endpoint 보다 우선.
+// 배포에 내장하는 기본 카운팅 엔드포인트(유지보수자가 운영하는 Cloudflare Worker). 이 상수를 내장해서
+// count-default-on 이 모든 설치에서 활성이다: endpoint() 가 (거의) 항상 값을 반환하므로 countingActive()
+// 가 기본 켜짐이 되고, opt-out(BANKER_NO_TELEMETRY / banker telemetry off / config.telemetry=false)으로만
+// 끈다. 자가호스팅/override 는 BANKER_TELEMETRY_ENDPOINT env 로 한다.
+export const DEFAULT_ENDPOINT = 'https://banker.banker-plugins.workers.dev/';
+
+// 카운팅 엔드포인트 문자열. 우선순위: env(BANKER_TELEMETRY_ENDPOINT) > config.endpoint > DEFAULT_ENDPOINT.
+// 기본 엔드포인트를 내장하므로 env·config 미설정이어도 DEFAULT_ENDPOINT 를 반환한다(= count-default-on 이
+// 모든 설치에서 활성, opt-out 으로만 끔). env 빈문자열('')은 falsy 라 여전히 config/DEFAULT 로 흐른다.
+// 예외가 난 경우에만 null 을 반환한다(에러 시 보수적으로 전송 안 함).
 export function endpoint() {
   try {
     const env = process.env.BANKER_TELEMETRY_ENDPOINT;
     if (env) return env;
     const ep = readConfig().endpoint;
-    return (typeof ep === 'string' && ep) ? ep : null;
+    return (typeof ep === 'string' && ep) ? ep : DEFAULT_ENDPOINT;
   } catch {
     return null;
   }
