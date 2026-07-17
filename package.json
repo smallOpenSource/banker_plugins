@@ -1,6 +1,6 @@
 {
   "name": "@kaydash9999/banker-plugins",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "banker — Claude Code + Codex CLI plugin (QA, audit, docs, architecture, wiki skills). Install via Claude Code marketplace, or `npm i -g @kaydash9999/banker-plugins` then `banker setup`.",
   "bin": {
     "banker": "bin/banker.js"
@@ -21,7 +21,8 @@
     "!**/*.test.mjs",
     "LICENSE",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "PRIVACY.md"
   ],
   "engines": {
     "node": ">=16.7.0"
