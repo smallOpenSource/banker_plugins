@@ -220,9 +220,10 @@ test('chooseFetcher: countingActive+endpoint 면 update-checkin.mjs (이 파일 
   });
 });
 
-test('chooseFetcher: 엔드포인트 없으면 update-fetch.mjs(npm GET 폴백)', () => {
+test('chooseFetcher: default-on 이라 env·config 미설정이어도 내장 기본 엔드포인트로 update-checkin.mjs', () => {
   withConfig(null, {}, () => {
-    assert.ok(chooseFetcher().endsWith('update-fetch.mjs'));
+    // 내장 기본 엔드포인트로 countingActive 가 기본 true → 체크인이 알림 조회를 겸한다.
+    assert.ok(chooseFetcher().endsWith('update-checkin.mjs'));
   });
 });
 

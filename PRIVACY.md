@@ -27,7 +27,8 @@ update-notifier·Homebrew 등 다른 CLI 도구가 쓰는 것과 같은 방식�
 ## 사용량 카운팅
 
 하루 1회, 유지보수자가 운영하는 외부 엔드포인트(banker 패키지 밖에서 별도로 운영되는 serverless)로 익명 체크인을 전송합니다.\
-엔드포인트가 설정되어 있지 않으면 아무 것도 전송하지 않으며, 이것이 현재 기본 상태입니다.
+플러그인은 기본 카운팅 엔드포인트(`banker.banker-plugins.workers.dev`)를 내장하므로, count-default-on 이라 설치 즉시 활성입니다.\
+`BANKER_TELEMETRY_ENDPOINT` 환경변수로 자가호스팅 엔드포인트를 지정하거나 override 할 수 있습니다.
 
 ### 수집 항목
 

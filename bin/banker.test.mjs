@@ -36,13 +36,13 @@ const writeUpdateCacheFixture = (dir, obj) => {
   fs.writeFileSync(updateCachePath(dir), JSON.stringify(obj));
 };
 
-test('telemetry status 기본값: 카운팅 disabled(엔드포인트 미설정) · opt-out 미적용 · 업데이트체크 캐시 없음', () => withXdg((dir) => {
+test('telemetry status 기본값: 카운팅 enabled(내장 기본 엔드포인트) · opt-out 미적용 · 업데이트체크 캐시 없음', () => withXdg((dir) => {
   const { out, code } = run(['telemetry', 'status'], dir);
   assert.strictEqual(code, 0);
-  assert.match(out, /엔드포인트 설정: 미설정/);
+  assert.match(out, /엔드포인트 설정: 설정됨/);
   assert.match(out, /opt-out\(BANKER_NO_TELEMETRY\): 미적용/);
   assert.match(out, /opt-out\(config\.telemetry=false\): 미적용/);
-  assert.match(out, /실효 상태\(effective\): disabled/);
+  assert.match(out, /실효 상태\(effective\): enabled/);
   assert.match(out, /opt-out\(BANKER_NO_UPDATE_CHECK\/config\.updateCheck=false\): 미적용/);
   assert.match(out, /마지막 체크: 없음/);
   assert.match(out, /캐시된 최신 버전: 없음/);
@@ -70,12 +70,12 @@ test('status: 업데이트-체크 캐시 반영 (마지막 체크 시각 · 캐�
   assert.match(out, /업데이트 있음/);
 }));
 
-test('telemetry on (기본 상태) -> opt-out 해제 확인 + 엔드포인트 미설정 안내', () => withXdg((dir) => {
+test('telemetry on (기본 상태) -> opt-out 해제 확인 (내장 기본 엔드포인트라 미설정 안내 없음)', () => withXdg((dir) => {
   const { out, code } = run(['telemetry', 'on'], dir);
   assert.strictEqual(code, 0);
   assert.strictEqual(readCfg(dir).telemetry, undefined);
   assert.match(out, /해제했습니다 \(on\)/);
-  assert.match(out, /엔드포인트가 설정되어 있지 않아/);
+  assert.ok(!/엔드포인트가 설정되어 있지 않아/.test(out), '내장 기본 엔드포인트가 있으므로 미설정 안내는 출력하지 않는다');
 }));
 
 test('telemetry off -> config telemetry:false (opt-out)', () => withXdg((dir) => {

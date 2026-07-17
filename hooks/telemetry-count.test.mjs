@@ -34,10 +34,11 @@ function enable(tmp, { endpoint = 'http://127.0.0.1:1/collect' } = {}) {
   writeFileSync(join(bankerDir(tmp), 'config.json'), JSON.stringify({ telemetry: true, endpoint }));
 }
 
-function runCount(tmp, input) {
+function runCount(tmp, input, overrides = {}) {
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
+  Object.assign(env, overrides); // 마지막에 적용해 opt-out(BANKER_NO_TELEMETRY) 주입 가능.
   return spawnSync(process.execPath, [COUNT_HOOK], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf8',
@@ -45,11 +46,12 @@ function runCount(tmp, input) {
   });
 }
 
-test('countingActive 미활성(엔드포인트 미설정)이면 무동작: 로그 파일조차 만들지 않는다', () => {
-  const tmp = mkTmp(); // config 없음 -> countingActive false.
-  const res = runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' });
+test('opt-out(BANKER_NO_TELEMETRY=1)이면 무동작: 로그 파일조차 만들지 않는다', () => {
+  const tmp = mkTmp();
+  enable(tmp); // 엔드포인트 설정으로 활성 조건이지만 opt-out 이 우선해 countingActive false.
+  const res = runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' }, { BANKER_NO_TELEMETRY: '1' });
   assert.equal(res.status, 0);
-  assert.ok(!existsSync(usageLog(tmp)), '미활성 훅은 로컬 쓰기조차 하지 않는다');
+  assert.ok(!existsSync(usageLog(tmp)), 'opt-out 훅은 로컬 쓰기조차 하지 않는다');
 });
 
 test('malformed stdin 이면 exit 0 (쓰기 없음)', () => {
