@@ -44,6 +44,9 @@ function checkinEnv(tmp) {
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
   delete env.BANKER_NO_UPDATE_CHECK;
+  // 변경-스킬 매니페스트 조회가 실제 GitHub 를 때리지 않도록 기본은 비-loopback http(가드에 즉시 막혀 no-op·
+  // changedSkills 생략). 개인화 경로를 검증하는 테스트는 이 값을 loopback mock 으로 덮어쓴다.
+  env.BANKER_SKILL_CHANGES_URL = 'http://192.0.2.1/skill-changes.json';
   return env;
 }
 
@@ -192,6 +195,36 @@ test('응답 {latest} 수신 시 update-check 캐시에 latest 기록(알림 겸
     assert.equal(typeof cache.checkedAt, 'number', 'checkedAt 타임스탬프 기록');
   } finally {
     server.close();
+  }
+});
+
+test('개인화: 응답 {latest} + 매니페스트 조회 성공 시 changedSkills 를 캐시에 저장', async () => {
+  const post = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => { res.writeHead(200); res.end(JSON.stringify({ latest: '99.0.0' })); });
+  });
+  const changes = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ '99.0.0': ['banker:foo'], '0.0.1': ['banker:old'] }));
+  });
+  try {
+    await new Promise((r) => post.listen(0, '127.0.0.1', r));
+    await new Promise((r) => changes.listen(0, '127.0.0.1', r));
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${post.address().port}/collect` });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const env = checkinEnv(tmp);
+    env.BANKER_SKILL_CHANGES_URL = `http://127.0.0.1:${changes.address().port}/skill-changes.json`;
+    await new Promise((resolvePromise) => {
+      const child = spawn(process.execPath, [CHECKIN_HOOK], { env, stdio: 'ignore' });
+      child.on('close', () => resolvePromise());
+    });
+    const cache = JSON.parse(readFileSync(updateCheck(tmp), 'utf8'));
+    assert.equal(cache.latest, '99.0.0');
+    assert.deepEqual(cache.changedSkills, ['banker:foo'], '99.0.0(>설치,<=latest) 만; 0.0.1 제외');
+  } finally {
+    post.close();
+    changes.close();
   }
 });
 

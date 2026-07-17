@@ -12,7 +12,9 @@ import path from 'node:path';
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
+  readUsedSkills, recordUsedSkill, changedSkillsBetween,
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
+  SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX,
 } from './telemetry-config.mjs';
 
 // 테스트가 만지는 env 만 스냅샷/복원한다.
@@ -202,4 +204,66 @@ test('writeUpdateCache: 기존 캐시가 malformed 여도 던지지 않고 patch
   fs.writeFileSync(cachePath, '{ broken ');
   assert.strictEqual(writeUpdateCache({ latest: '9.9.9' }), true);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(cachePath, 'utf8')), { latest: '9.9.9' });
+});
+
+// ---- 개인화 알림 확장 (used-skills 집합 + changedSkillsBetween) ----
+
+test('신규 export: SKILL_CHANGES_URL(GitHub raw) · USED_SKILLS_PATH · USED_SKILLS_MAX', () => {
+  assert.strictEqual(SKILL_CHANGES_URL, 'https://raw.githubusercontent.com/smallOpenSource/banker_plugins/main/skill-changes.json');
+  assert.ok(USED_SKILLS_PATH.endsWith('used-skills.json'));
+  assert.ok(Number.isInteger(USED_SKILLS_MAX) && USED_SKILLS_MAX > 0);
+});
+
+test('readUsedSkills: 없음·malformed·비배열 → [] · 문자열 원소만 남긴다', () => {
+  assert.deepStrictEqual(readUsedSkills(), []); // 파일 없음.
+  fs.mkdirSync(configDir(), { recursive: true });
+  const p = path.join(configDir(), 'used-skills.json');
+  fs.writeFileSync(p, '{ not json');
+  assert.deepStrictEqual(readUsedSkills(), []); // malformed.
+  fs.writeFileSync(p, JSON.stringify({ a: 1 }));
+  assert.deepStrictEqual(readUsedSkills(), []); // 비배열 객체.
+  fs.writeFileSync(p, JSON.stringify(['banker:foo', 123, '', 'banker:bar']));
+  assert.deepStrictEqual(readUsedSkills(), ['banker:foo', 'banker:bar']); // 문자열 원소만.
+});
+
+test('recordUsedSkill: union(중복 무기록)·비문자열 방어 + 왕복', () => {
+  assert.strictEqual(recordUsedSkill('banker:foo'), true);
+  assert.deepStrictEqual(readUsedSkills(), ['banker:foo']);
+  assert.strictEqual(recordUsedSkill('banker:foo'), false, '이미 있으면 false(무기록)');
+  assert.strictEqual(recordUsedSkill('banker:bar'), true);
+  assert.deepStrictEqual(readUsedSkills(), ['banker:foo', 'banker:bar']);
+  for (const bad of ['', null, undefined, 123, {}]) {
+    assert.strictEqual(recordUsedSkill(bad), false, 'value=' + JSON.stringify(bad));
+  }
+  assert.deepStrictEqual(readUsedSkills(), ['banker:foo', 'banker:bar'], '방어 입력은 집합 불변');
+});
+
+test('recordUsedSkill: 상한(USED_SKILLS_MAX) 도달 시 새 이름 무시', () => {
+  const full = Array.from({ length: USED_SKILLS_MAX }, (_, i) => `banker:s${i}`);
+  fs.mkdirSync(configDir(), { recursive: true });
+  fs.writeFileSync(path.join(configDir(), 'used-skills.json'), JSON.stringify(full));
+  assert.strictEqual(recordUsedSkill('banker:overflow'), false, '상한이면 false');
+  assert.strictEqual(readUsedSkills().length, USED_SKILLS_MAX, '집합 크기 불변');
+  assert.ok(!readUsedSkills().includes('banker:overflow'));
+});
+
+test('changedSkillsBetween: installed<v<=latest 합집합·중복제거·순서 + 방어', () => {
+  const map = {
+    '0.8.0': ['banker:a'],               // <= installed → 제외
+    '0.9.0': ['banker:b', 'banker:c'],
+    '0.10.0': ['banker:c', 'banker:d'],  // banker:c 중복 → 한 번만
+    '0.11.0': ['banker:e'],              // > latest → 제외
+  };
+  assert.deepStrictEqual(
+    changedSkillsBetween(map, '0.8.0', '0.10.0'),
+    ['banker:b', 'banker:c', 'banker:d'],
+  );
+  assert.deepStrictEqual(changedSkillsBetween(map, '0.10.0', '0.10.0'), [], '경계: installed==latest → 빈');
+  // 방어: map 비객체/배열·비문자열 버전 → [].
+  assert.deepStrictEqual(changedSkillsBetween(null, '0.8.0', '0.9.0'), []);
+  assert.deepStrictEqual(changedSkillsBetween(['x'], '0.8.0', '0.9.0'), []);
+  assert.deepStrictEqual(changedSkillsBetween(map, 0.8, '0.9.0'), []);
+  // malformed 버전 키·비배열 값은 건너뛴다(throw 없음).
+  const messy = { 'x.y.z': ['banker:z'], '0.9.0': 'notarray', '0.9.1': ['banker:ok', 42] };
+  assert.deepStrictEqual(changedSkillsBetween(messy, '0.8.0', '0.9.5'), ['banker:ok']);
 });

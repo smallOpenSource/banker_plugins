@@ -22,7 +22,7 @@
  */
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 
-import { configDir, countingActive, USAGE_LOG_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
+import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
 
 // banker:<name> 전체 일치 - 이름 문자열 자체를 검증한다(TAB/개행 등 이질 문자가 섞여
 // usage-log 의 `name\thour` 형식을 깨는 것을 막는다). i 플래그는 매칭만 관대하게(실제 이름은 소문자).
@@ -87,7 +87,8 @@ async function main() {
   if (!countingActive()) return; // 카운팅 비활성 - 로컬 쓰기조차 하지 않는다.
   const name = extractName(payload);
   if (!name) return; // banker:<name> 아님 - 무동작.
-  record(name);
+  record(name);            // 서버 카운팅용 usage-log append (스킬별 x 시간대 버킷).
+  recordUsedSkill(name);   // 개인화 알림용 로컬 집합 union (전송 안 함; update-notify 만 로컬에서 읽는다).
 }
 
 main()

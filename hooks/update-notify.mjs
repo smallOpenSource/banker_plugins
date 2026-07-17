@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import {
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS,
   noUpdateCheck, countingActive, endpoint,
-  installedVersion, compareVersions, writeUpdateCache,
+  installedVersion, compareVersions, writeUpdateCache, readUsedSkills,
 } from '../bin/lib/telemetry-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -48,17 +48,44 @@ function readCache() {
   }
 }
 
+// 캐시의 changedSkills(새 버전에서 바뀐 스킬)와 로컬 "써 본 스킬"의 교집합을 반환한다(순서=changedSkills 기준).
+// changedSkills 없음/비배열·써 본 스킬 없음이면 [](일반 알림으로 폴백). 로컬 파일만 읽고 네트워크는 없다.
+// 개인화는 사용량 카운팅에 기반하므로 countingActive() 가 아니면(BANKER_NO_TELEMETRY 등) 이미 쌓인 로컬
+// 집합이 있어도 표시하지 않는다 — 기록과 표시가 같은 텔레메트리 게이트를 따른다(PRIVACY.md 정합).
+function personalizedSkills(cached) {
+  if (!countingActive()) return []; // 텔레메트리 opt-out - 개인화 표시 안 함(일반 알림으로 폴백).
+  const changed = Array.isArray(cached?.changedSkills) ? cached.changedSkills : [];
+  if (!changed.length) return [];
+  const used = new Set(readUsedSkills());
+  return changed.filter((s) => typeof s === 'string' && used.has(s));
+}
+
+// 고지 문구를 만든다. 개인화 교집합이 있으면 바뀐 스킬 이름을 넣고(최대 5개 + "외 N개"), 없으면 일반 문구
+// (기존 동작). banker: 접두는 떼서 짧게. 이모지/em-dash 없음(사용자 가시 채널).
+function buildMessage(latest, installed, cached) {
+  const head = `banker ${latest} 사용 가능 (현재 ${installed}).`;
+  const tail = `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
+  const hits = personalizedSkills(cached);
+  if (hits.length) {
+    const names = hits.slice(0, 5).map((s) => s.replace(/^banker:/, '')).join(', ');
+    const more = hits.length > 5 ? ` 외 ${hits.length - 5}개` : '';
+    return `${head} 자주 쓰는 스킬이 이번 업데이트에서 바뀌었습니다: ${names}${more}. ${tail}`;
+  }
+  return `${head} ${tail}`;
+}
+
 // 캐시 latest 가 설치 버전보다 엄격히 크고 그 버전을 아직 고지하지 않았으면 systemMessage 로 1회 고지.
 // compareVersions null(미확정·malformed)·구버전·동일 → 무고지. 고지 후 notified 를 기록해 재고지를 막는다.
+// 고지 문구는 buildMessage 가 만든다(로컬 changedSkills∩써본스킬이 있으면 개인화, 없으면 일반).
 function maybeNotify(cached) {
   if (!cached) return;
   const installed = installedVersion();
   const cmp = compareVersions(cached.latest, installed);
   if (cmp === null || cmp <= 0) return;          // 미확정/구/동일 → 무고지
   if (cached.notified === cached.latest) return;  // 이미 고지한 버전 → dedupe
-  const msg = `banker ${cached.latest} 사용 가능 (현재 ${installed}). 업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
+  const msg = buildMessage(cached.latest, installed, cached);
   process.stdout.write(JSON.stringify({ systemMessage: msg }));
-  writeUpdateCache({ notified: cached.latest }); // 형제 필드(latest/checkedAt) 보존하며 notified 만 병합.
+  writeUpdateCache({ notified: cached.latest }); // 형제 필드(latest/checkedAt/changedSkills) 보존하며 notified 만 병합.
 }
 
 // checkedAt 기준 throttle 경과 여부. 캐시 없음·checkedAt 미기록/비수치 → 경과로 본다(첫 조회 유도).

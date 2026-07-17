@@ -47,6 +47,12 @@ function writeConfig(tmp, obj) {
   writeFileSync(configPath(tmp), JSON.stringify(obj));
 }
 
+const usedSkillsPath = (tmp) => join(bankerDir(tmp), 'used-skills.json');
+function writeUsedSkills(tmp, arr) {
+  mkdirSync(bankerDir(tmp), { recursive: true });
+  writeFileSync(usedSkillsPath(tmp), JSON.stringify(arr));
+}
+
 const readCache = (tmp) => JSON.parse(readFileSync(cachePath(tmp), 'utf8'));
 
 // 훅을 자식으로 spawn. XDG 격리 + BANKER_* 정리 후 overrides 적용(마지막에 이겨 opt-out 주입 가능).
@@ -186,6 +192,64 @@ test('malformed stdin payload 여도 캐시 기반 고지는 정상(파싱 실�
   assert.equal(res.status, 0);
   const out = JSON.parse(res.stdout.trim());
   assert.match(out.systemMessage, /99\.0\.0/);
+});
+
+// ---- 개인화 알림 (changedSkills ∩ 써본스킬) ----
+
+test('개인화: changedSkills ∩ 써본스킬 이 있으면 그 스킬명을 알림에 넣는다', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:foo', 'banker:zeta'] });
+  writeUsedSkills(tmp, ['banker:foo', 'banker:other']); // 교집합 = banker:foo
+  const res = runNotify(tmp);
+  assert.equal(res.status, 0);
+  const out = JSON.parse(res.stdout.trim());
+  assert.match(out.systemMessage, /banker 99\.0\.0 사용 가능/);
+  assert.match(out.systemMessage, /자주 쓰는 스킬이 이번 업데이트에서 바뀌었습니다: /);
+  assert.match(out.systemMessage, /foo/, '교집합 스킬명(banker: 접두 제거) 포함');
+  assert.ok(!/zeta/.test(out.systemMessage), '안 써본 zeta 는 제외');
+  assert.ok(!/—/.test(out.systemMessage), 'em-dash 없음');
+  assert.ok(!/\p{Extended_Pictographic}/u.test(out.systemMessage), '이모지 없음');
+  assert.equal(readCache(tmp).notified, '99.0.0', '개인화 알림도 notified 기록(재고지 방지)');
+});
+
+test('개인화 없음: changedSkills 있어도 써본스킬 파일 없으면 일반 알림', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:foo'] });
+  const res = runNotify(tmp); // used-skills 파일 없음.
+  const out = JSON.parse(res.stdout.trim());
+  assert.match(out.systemMessage, /banker 99\.0\.0 사용 가능/);
+  assert.ok(!/자주 쓰는 스킬/.test(out.systemMessage), '교집합 없으면 개인화 문구 없음(일반 알림)');
+});
+
+test('개인화 없음: changedSkills 와 써본스킬이 겹치지 않으면 일반 알림', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:foo'] });
+  writeUsedSkills(tmp, ['banker:other']);
+  const res = runNotify(tmp);
+  const out = JSON.parse(res.stdout.trim());
+  assert.match(out.systemMessage, /banker 99\.0\.0 사용 가능/);
+  assert.ok(!/자주 쓰는 스킬/.test(out.systemMessage), '공집합이면 개인화 문구 없음');
+});
+
+test('개인화: 교집합이 5개 초과면 5개 + "외 N개"', () => {
+  const tmp = mkTmp();
+  const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((x) => `banker:${x}`);
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: many });
+  writeUsedSkills(tmp, many);
+  const res = runNotify(tmp);
+  const out = JSON.parse(res.stdout.trim());
+  assert.match(out.systemMessage, /외 2개/, '7개 중 5개 표시 + 외 2개');
+});
+
+test('개인화 게이트: BANKER_NO_TELEMETRY 면 써본스킬·changedSkills 있어도 일반 알림(표시도 카운팅 게이트)', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:foo'] });
+  writeUsedSkills(tmp, ['banker:foo']); // 교집합은 있지만 텔레메트리 opt-out.
+  const res = runNotify(tmp, { env: { BANKER_NO_TELEMETRY: '1' } });
+  assert.equal(res.status, 0);
+  const out = JSON.parse(res.stdout.trim());
+  assert.match(out.systemMessage, /banker 99\.0\.0 사용 가능/, '업데이트 알림 자체는 표시(noUpdateCheck 아님)');
+  assert.ok(!/자주 쓰는 스킬/.test(out.systemMessage), '텔레메트리 opt-out 이면 개인화 표시 안 함(countingActive 게이트)');
 });
 
 // ---- fetcher 선택 (in-process 순수 함수 단위테스트) ----

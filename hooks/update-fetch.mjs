@@ -98,6 +98,9 @@ async function main() {
   const latest = await fetchLatestVersion(url);
   if (!latest) return; // 조회 실패·거부·malformed - 캐시 미기록.
 
+  // 개인화 매니페스트는 여기서 조회하지 않는다: update-fetch 는 카운팅 opt-out(countingActive false) 경로의
+  // fetcher 이고, 개인화 표시도 countingActive() 로 게이트되므로 이 경로에선 표시될 일이 없다. 매니페스트
+  // 조회는 카운팅 활성 경로의 update-checkin 만 수행한다(중복·죽은 조회 제거).
   const cachedLatest = typeof cache.latest === 'string' ? cache.latest : null;
   if (cachedLatest !== latest) {
     writeUpdateCache({ latest, checkedAt: Date.now(), notified: null }); // 신버전 - notified 재무장.

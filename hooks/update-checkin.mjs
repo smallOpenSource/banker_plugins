@@ -23,8 +23,10 @@ import {
   endpoint,
   USAGE_LOG_PATH,
   LAST_FLUSH_PATH,
+  SKILL_CHANGES_URL,
   installedVersion,
   writeUpdateCache,
+  changedSkillsBetween,
 } from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
@@ -111,6 +113,51 @@ function extractLatest(responseBody) {
   }
 }
 
+// 변경-스킬 매니페스트(공개 GitHub raw JSON: {"x.y.z": ["banker:skill", ...]})를 GET 해 객체로 반환한다.
+// update-fetch 의 동일 함수와 self-contained 로 나란히 둔다(훅별 자기완결 관례·isLoopback 도 이미 각자 보유).
+// post() 와 동일한 안전 가드: 비-https 는 loopback 만 허용·3xx no-op·자체 timeout·malformed→null. 어떤
+// 실패에도 reject 하지 않고 null 로 resolve 한다(개인화는 best-effort). 비배열 객체만 반환.
+function fetchSkillChangesMap(url) {
+  return new Promise((resolvePromise) => {
+    let done = false;
+    const finish = (result) => { if (!done) { done = true; resolvePromise(result); } };
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return finish(null);
+    }
+    if (parsed.protocol === 'http:') {
+      if (!isLoopback(parsed.hostname)) return finish(null);
+    } else if (parsed.protocol !== 'https:') {
+      return finish(null);
+    }
+    const transport = parsed.protocol === 'http:' ? http : https;
+    try {
+      const req = transport.request(parsed, { method: 'GET' }, (res) => {
+        const status = res.statusCode || 0;
+        if (status >= 300 && status < 400) { res.resume(); return finish(null); } // 리다이렉트 미추적.
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          try {
+            const obj = JSON.parse(data);
+            finish((obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : null);
+          } catch {
+            finish(null);
+          }
+        });
+        res.on('error', () => finish(null));
+      });
+      req.on('error', () => finish(null));
+      req.setTimeout(NET_TIMEOUT_MS, () => req.destroy());
+      req.end(); // GET - 요청 본문 없음.
+    } catch {
+      finish(null);
+    }
+  });
+}
+
 async function main() {
   if (!countingActive()) return; // 미활성 - 무동작(로그 미변경).
   const url = endpoint();
@@ -134,7 +181,12 @@ async function main() {
   // count-default-on 은 이 훅만·npm 배포는 update-fetch 만 써 같은 캐시를 겹쳐 쓰지 않는다.
   const latest = extractLatest(responseBody);
   if (latest) {
-    try { writeUpdateCache({ latest, checkedAt: Date.now() }); } catch { /* best-effort */ }
+    // 개인화용: 변경-스킬 매니페스트를 best-effort GET(실패 시 changedSkills 생략, 기존 값 보존).
+    const changesUrl = process.env.BANKER_SKILL_CHANGES_URL || SKILL_CHANGES_URL; // 테스트 주입용 override.
+    const map = await fetchSkillChangesMap(changesUrl);
+    const patch = { latest, checkedAt: Date.now() };
+    if (map) patch.changedSkills = changedSkillsBetween(map, installedVersion(), latest);
+    try { writeUpdateCache(patch); } catch { /* best-effort */ }
   }
 
   // 전송 시도 후(성공/실패 무관) 로그를 비워 24h 윈도우로 상한(배치 유실 허용).
