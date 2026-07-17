@@ -110,8 +110,10 @@ try {
   ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
   ok(installed.includes('banker-obsidizer'), 'obsidizer installed as banker-obsidizer');
 
-  // 7) hook packaging + static safety checks (0.6.0 obsidizer: banker's first plugin-declared hook)
-  const hookFiles = ['hooks.json', 'obsidize-hook.mjs', 'run.cjs'];
+  // 7) hook packaging + static safety checks (0.6.0 obsidizer: banker's first plugin-declared hook).
+  // telemetry-count/flush.mjs (0.8.0) are standalone hook scripts: option B keeps them OUT of
+  // hooks.json (inert), but files[] still ships them, so assert both are packaged like the rest.
+  const hookFiles = ['hooks.json', 'obsidize-hook.mjs', 'run.cjs', 'telemetry-count.mjs', 'telemetry-flush.mjs'];
   for (const f of hookFiles) {
     ok(fs.existsSync(path.join(root, 'hooks', f)), `hooks/${f} exists in the repo`);
   }
@@ -121,9 +123,12 @@ try {
   for (const f of hookFiles) {
     ok(fs.existsSync(path.join(pkgRoot, 'hooks', f)), `hooks/${f} is npm-packaged (present in the globally-installed tarball)`);
   }
+  // PRIVACY.md (0.8.0) is the telemetry privacy notice; files[] must ship it beside LICENSE/README/CHANGELOG.
+  ok(fs.existsSync(path.join(pkgRoot, 'PRIVACY.md')), 'PRIVACY.md is npm-packaged (files[] ships it alongside LICENSE/README/CHANGELOG)');
   // Tests are repo-only. obsidize.test.mjs sits INSIDE skills/obsidizer/, so shipping it
   // lets a runtime scanning the skill dir surface a test double as skill content.
-  for (const f of [path.join('skills', 'obsidizer', 'obsidize.test.mjs'), path.join('hooks', 'obsidize-hook.test.mjs')]) {
+  for (const f of [path.join('skills', 'obsidizer', 'obsidize.test.mjs'), path.join('hooks', 'obsidize-hook.test.mjs'),
+    path.join('hooks', 'telemetry-count.test.mjs'), path.join('hooks', 'telemetry-flush.test.mjs')]) {
     ok(fs.existsSync(path.join(root, f)), `${f} exists in the repo (CI runs the suites from here, not the tarball)`);
     ok(!fs.existsSync(path.join(pkgRoot, f)), `${f} is NOT npm-packaged (files[] negation holds)`);
   }
@@ -137,6 +142,16 @@ try {
     }
   })(hooksJson.hooks);
   ok(declaredTimeouts.length > 0 && declaredTimeouts.every((t) => t <= 5), `hooks.json declares an explicit timeout <=5s (got [${declaredTimeouts.join(', ')}])`);
+  // Every PostToolUse *command* node must carry an EXPLICIT timeout in [3,5]. The tree-walking
+  // collector above only pushes timeouts it finds, so a command node that OMITS `timeout` is
+  // silently skipped and would still pass. Enumerate the command nodes directly and fail if any
+  // lacks a numeric `timeout` in range (currently the single obsidizer node, timeout 5).
+  const ptuCommands = ((hooksJson.hooks && hooksJson.hooks.PostToolUse) || [])
+    .flatMap((g) => (g && Array.isArray(g.hooks) ? g.hooks : []))
+    .filter((h) => h && h.type === 'command');
+  const ptuBadTimeout = ptuCommands.filter((h) => typeof h.timeout !== 'number' || h.timeout < 3 || h.timeout > 5);
+  ok(ptuCommands.length > 0 && ptuBadTimeout.length === 0,
+     `every PostToolUse command node has an explicit timeout in [3,5] (nodes: ${ptuCommands.length}, offending: ${ptuBadTimeout.length})`);
   const hookScript = fs.readFileSync(path.join(root, 'hooks', 'obsidize-hook.mjs'), 'utf8');
   ok(!hookScript.includes('additionalContext'), 'obsidize-hook.mjs never injects LLM context (no additionalContext, per the SKILL.md refusal)');
   ok(!hookScript.includes('.wiki-lock'), 'obsidize-hook.mjs has zero coupling to OMC internal .wiki-lock');

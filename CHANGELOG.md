@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.0] - 2026-07-17
+
+### Added
+- README 에 npm 월간 다운로드 배지와 GitHub stars 배지를 추가했다.
+- `banker setup` 최초 실행 시 GitHub 저장소 별(star)을 요청하는 프롬프트를 추가했다(양 런타임 공통·홍보 목적·텔레메트리 동의 여부와 무관).
+- **익명 사용량 텔레메트리 클라이언트 코드** + `banker telemetry on|off|status` 서브커맨드 + `PRIVACY.md`: opt-in(기본값 No)·Claude Code 전용·지속 식별자 없음(UUID 등 미생성)·수집 엔드포인트 설정형·기본 inert.
+
+### Notes
+- **정직 명시(중요)**: 텔레메트리는 코드로만 존재하며 `hooks.json` 에 배선되어 있지 않다(inert). 따라서 현재 릴리스는 아무 것도 수집·전송하지 않는다. 실제 수집·게시는 이벤트 payload 의 라이브 검증과 아직 완료되지 않은 법률 검토(미국 CCPA·한국 PIPA) 이후로 보류한다.
+
 ## [0.7.1] - 2026-07-16
 
 ### Changed

@@ -4,6 +4,7 @@
 
 [![npm](https://img.shields.io/npm/v/@kaydash9999/banker-plugins)](https://www.npmjs.com/package/@kaydash9999/banker-plugins)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![npm downloads](https://img.shields.io/npm/dm/@kaydash9999/banker-plugins)](https://www.npmjs.com/package/@kaydash9999/banker-plugins) [![GitHub stars](https://img.shields.io/github/stars/smallOpenSource/banker_plugins)](https://github.com/smallOpenSource/banker_plugins)
 
 [빠른 시작](#빠른-시작) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [라이선스 / 서드파티](#라이선스--서드파티)
 
