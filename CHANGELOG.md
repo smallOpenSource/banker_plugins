@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.0] - 2026-07-18
+
+### Changed
+- **GitHub 별 프롬프트가 Y 입력 시 실제로 별을 단다**(oh-my-codex 방식과 동일). 이전에는 URL 안내만 했으나, 이제 `gh` CLI 인증으로 `gh api -X PUT /user/starred/smallOpenSource/banker_plugins` 를 호출해 자동으로 별을 누른다. `gh` 미설치·미인증·API 실패 시에는 이유를 알리고 URL 안내로 폴백한다(setup 을 절대 막지 않음·자체 timeout·오류삼킴). `starRepo` 를 `require.main` 가드 뒤로 export 해 주입 spawn 으로 단위테스트(gh 없음·성공·실패)를 커버했다. 실환경 검증: 실제 exported `starRepo()` 호출로 저장소가 404→204(별 눌림) 전이 확인.
+
 ## [0.9.0] - 2026-07-18
 
 ### Added

@@ -19,12 +19,33 @@ const PLUGIN_JSON = path.join(PKG_ROOT, '.claude-plugin', 'plugin.json');
 const MARKETPLACE = 'banker-plugins';
 const PLUGIN_NAME = 'banker';
 const REPO_URL = 'https://github.com/smallOpenSource/banker_plugins';
+const REPO_SLUG = REPO_URL.replace(/^https:\/\/github\.com\//, ''); // smallOpenSource/banker_plugins (star API 대상)
 
 function version() {
   try { return require(path.join(PKG_ROOT, 'package.json')).version; } catch { return '0.0.0'; }
 }
 function log(...a) { console.log(...a); }
 function warn(...a) { console.error(...a); }
+
+// GitHub 저장소에 별을 단다 (gh CLI 인증 사용). star 는 repo 쓰기 권한이 필요 없어 인증된 어느 계정으로도
+// 가능하다. gh 미설치/미인증/실패는 {ok:false, reason} 로 반환해 호출부가 URL 안내로 폴백하게 한다.
+// spawn 은 테스트 주입용(기본 cp.spawnSync). 자체 timeout·오류삼킴으로 setup 을 절대 막지 않는다.
+function starRepo(spawn = cp.spawnSync) {
+  try {
+    const v = spawn('gh', ['--version'], { stdio: 'ignore', timeout: 3000, windowsHide: true });
+    if (v.error || v.status !== 0) return { ok: false, reason: 'gh CLI 없음' };
+    const r = spawn('gh', ['api', '-X', 'PUT', `/user/starred/${REPO_SLUG}`],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, windowsHide: true });
+    if (r.error) return { ok: false, reason: r.error.message };
+    if (r.status !== 0) {
+      const msg = (`${r.stderr || r.stdout || ''}`).trim().split('\n')[0] || `gh exited ${r.status}`;
+      return { ok: false, reason: msg };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: (e && e.message) || String(e) };
+  }
+}
 
 function parseArgs(argv) {
   const a = { cmd: null, sub: null, claude: false, codex: false, scope: 'user', scopeExplicit: false, dryRun: false, help: false, version: false };
@@ -260,8 +281,14 @@ async function maybeFirstRunPrompts(a) {
     if (askStar) {
       const ans = (await ask('banker가 유용했다면 GitHub 별(star)을 눌러 주세요. [Y/n] ')).trim().toLowerCase();
       if (ans === '' || ans === 'y' || ans === 'yes') {
-        log('감사합니다. 아래 주소에서 직접 별을 눌러 주세요 (자동으로 누르지 않고 안내만 합니다):');
-        log(`  ${REPO_URL}`);
+        log('GitHub 별을 누르는 중...'); // gh 네트워크가 느리면 최대 10초 블로킹이라 진행 표시.
+        const star = starRepo(); // gh CLI 로 실제 별을 단다(인증 필요).
+        if (star.ok) {
+          log('감사합니다. GitHub 별을 눌렀습니다.');
+        } else {
+          log(`자동으로 누르지 못했습니다(${star.reason}). 아래에서 직접 눌러 주세요:`);
+          log(`  ${REPO_URL}`);
+        }
       }
       next.promptedStarV1 = true;
     }
@@ -369,4 +396,9 @@ async function main() {
     return;
   }
 }
-main().catch((e) => { warn('banker:', e && e.message ? e.message : e); process.exitCode = 1; });
+// CLI 로 직접 실행될 때만 main 을 돌린다. 테스트가 require 로 import 하면 main 은 안 돌고 starRepo 만 노출.
+if (require.main === module) {
+  main().catch((e) => { warn('banker:', e && e.message ? e.message : e); process.exitCode = 1; });
+}
+
+module.exports = { starRepo };
