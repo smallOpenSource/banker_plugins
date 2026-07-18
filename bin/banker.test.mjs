@@ -15,6 +15,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// banker.js 는 require.main 가드가 있어 import 해도 main 이 안 돌고 starRepo 만 노출한다(주입 spawn 으로 단위테스트).
+const { starRepo } = createRequire(import.meta.url)('./banker.js');
 
 const BANKER = fileURLToPath(new URL('./banker.js', import.meta.url));
 
@@ -131,3 +135,47 @@ test('비TTY setup --codex --scope project --dry-run: config 미기록', () => w
 test('help 에 telemetry 서브커맨드가 문서화됨', () => withXdg((dir) => {
   assert.match(run(['help'], dir).out, /banker telemetry <on\|off\|status>/);
 }));
+
+// ---- starRepo (Y = 실제 GitHub star; gh CLI 인증 사용) ----
+
+test('starRepo: gh 미설치면 {ok:false} + PUT 시도 안 함', () => {
+  const seen = [];
+  const spawn = (_cmd, args) => { seen.push(args.join(' ')); return { error: new Error('ENOENT'), status: null }; };
+  const r = starRepo(spawn);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /gh CLI 없음/);
+  assert.strictEqual(seen.length, 1, 'gh --version 만 시도(star PUT 없음)');
+  assert.match(seen[0], /--version/);
+});
+
+test('starRepo: gh 있고 PUT 성공이면 {ok:true} + 올바른 star 엔드포인트', () => {
+  const seen = [];
+  const spawn = (_cmd, args) => { seen.push(args); return { status: 0 }; };
+  const r = starRepo(spawn);
+  assert.strictEqual(r.ok, true);
+  const put = seen.find((a) => a.includes('PUT'));
+  assert.ok(put, 'PUT 요청이 있었다');
+  assert.ok(put.join(' ').includes('/user/starred/smallOpenSource/banker_plugins'), 'star API 경로 정확');
+});
+
+test('starRepo: PUT 실패(status!=0)면 {ok:false, reason=stderr 첫 줄}', () => {
+  const spawn = (_cmd, args) => (args.includes('--version') ? { status: 0 } : { status: 1, stderr: 'gh: HTTP 401: Bad credentials\n(더 있음)' });
+  const r = starRepo(spawn);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /401|Bad credentials/);
+  assert.ok(!/\n/.test(r.reason), 'reason 은 첫 줄만');
+});
+
+test('starRepo: PUT 단계 error(타임아웃 등)면 {ok:false, reason=error.message}', () => {
+  const spawn = (_cmd, args) => (args.includes('--version') ? { status: 0 } : { error: new Error('ETIMEDOUT') });
+  const r = starRepo(spawn);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /ETIMEDOUT/);
+});
+
+test('starRepo: PUT non-zero 인데 stderr 없으면 reason=`gh exited N`', () => {
+  const spawn = (_cmd, args) => (args.includes('--version') ? { status: 0 } : { status: 7, stderr: '', stdout: '' });
+  const r = starRepo(spawn);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /gh exited 7/);
+});
