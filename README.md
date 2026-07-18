@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm downloads](https://img.shields.io/npm/dm/@kaydash9999/banker-plugins)](https://www.npmjs.com/package/@kaydash9999/banker-plugins) [![GitHub stars](https://img.shields.io/github/stars/smallOpenSource/banker_plugins)](https://github.com/smallOpenSource/banker_plugins)
 
-[빠른 시작](#빠른-시작) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
+[빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 banker는 QA·보안 감사·문서·아키텍처·위키 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 48개 + 커맨드 2개**(총 50개 구성요소)를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
@@ -35,6 +35,24 @@ banker setup --codex
 스킬을 `banker-audit-security` 처럼 `banker-<name>` 으로 호출합니다.
 
 playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성이 필요한 스킬은 실행 전에 설치부터 안내합니다(Claude Code는 `/banker:setup`).
+
+## 워크플로 사용 예시
+
+무엇부터 써야 할지 막막할 때, 상황별로 골라 쓰는 대표 워크플로입니다.\
+Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합니다.
+
+| 워크플로 | 언제 쓰나 | 하는 일 |
+|---|---|---|
+| `ultra-interview` | 처음 프로젝트 아이디어를 구체화할 때 | 최신 정보를 반영한 소크라테스식 인터뷰 |
+| `ultra-init` | 프로젝트 기획이 충분히 구체적일 때 | 데모를 구현 |
+| `curation` | 질문에 답하기 어렵거나 의사결정이 어려울 때 | 합리적 선택지 제공 (`--perf` 옵션 = 품질 우선) |
+| `all-in-one` | 요건이 명확한 단계에서 | 계획 → 구현 → 검증 |
+| `ralph-qa` | 검증이 충분하지 않을 때 | 다중 Agent 논의 |
+| `smart-compact` | 컨텍스트 임계 초과로 맥락 단절이 걱정될 때 | 맥락을 더 잘 이어서 진행 |
+| `refresh-readme` | 프로젝트 배포 전 | README 최신화 |
+| `summary-wiki` | Agent가 아는 정보를 확인하고 싶을 때 | 요약 리포트 |
+| `cleansing-memory` | 프로젝트가 장기화될 때 | 메모리 최적화 |
+| `ready-compact` | 컨텍스트를 compact 하거나 새 세션을 대비할 때 | 이어갈 프롬프트를 준비 |
 
 ## 구성
 
@@ -198,6 +216,16 @@ export BANKER_NO_TELEMETRY=1      # 사용량 카운팅만 끄기
 Codex CLI는 샌드박스가 네트워크를 차단하므로 알림·카운팅 둘 다 동작하지 않습니다.
 
 무엇을 수집하고 누가 수신하는지는 [PRIVACY.md](PRIVACY.md)에 정리했습니다.
+
+### 공개 대시보드 · 엔드포인트
+
+카운팅 워커(`banker.banker-plugins.workers.dev`)는 다음 공개 엔드포인트를 제공합니다.
+
+| URL | 내용 |
+|---|---|
+| <https://banker.banker-plugins.workers.dev/> | 사용량 대시보드 (npm 다운로드 지표 + 스킬 사용 집계 차트) |
+| <https://banker.banker-plugins.workers.dev/stats> | 집계 데이터 JSON |
+| <https://banker.banker-plugins.workers.dev/health> | 헬스 체크 (`ok`) |
 
 ## 라이선스 / 서드파티
 
