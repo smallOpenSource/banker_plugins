@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm downloads](https://img.shields.io/npm/dm/@kaydash9999/banker-plugins)](https://www.npmjs.com/package/@kaydash9999/banker-plugins) [![GitHub stars](https://img.shields.io/github/stars/smallOpenSource/banker_plugins)](https://github.com/smallOpenSource/banker_plugins)
 
-[빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
+[빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 banker는 QA·보안 감사·문서·아키텍처·위키 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 48개 + 커맨드 2개**(총 50개 구성요소)를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
@@ -164,6 +164,43 @@ banker uninstall        # 제거
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
 - `~/.codex/AGENTS.md` 는 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존).
+
+## 설정 변경 지점 (Claude Code · Codex)
+
+이 플러그인이 두 런타임의 설정·설치 상태를 건드리는 지점을 한눈에 정리했습니다.\
+아래 파일 패치는 모두 기존 키를 병합·래핑·백업만 하며 덮어쓰지 않습니다.
+
+**설치·제거 — `banker` CLI (결정론적)**
+
+| 런타임 | 대상 | 동작 |
+|---|---|---|
+| Claude Code | 플러그인 레지스트리 | `claude plugin marketplace add` + 설치 → `/banker:*` (`settings.json` 직접수정 없음) |
+| Codex CLI | `~/.codex/skills/banker-*/`, `~/.codex/prompts/banker-*.md` | 기존 `banker-*` 정리 후 복사(멱등). `AGENTS.md`·`config.toml` 미변경 |
+
+**플러그인 자체 훅 — `hooks/hooks.json` (설치 시 Claude Code에서 자동 발화)**
+
+사용자 `settings.json` 을 고치는 게 아니라 플러그인이 자기 훅을 선언한 것입니다.
+
+| 이벤트 | 훅 | 역할 |
+|---|---|---|
+| PostToolUse | `obsidize-hook` · `telemetry-count-skill` | 위키 정규화 · 스킬 사용 카운트 |
+| UserPromptExpansion | `telemetry-count` | `/banker:*` 직접호출 카운트 |
+| SessionStart | `update-notify` | 업데이트 알림 |
+
+**setup 스킬이 사용자 설정 파일을 패치 (해당 스킬 실행 시)**
+
+| 스킬 | Claude Code (`~/.claude/settings.json` 등) | Codex CLI (`~/.codex/config.toml` 등) |
+|---|---|---|
+| `setup-sandbox` | `sandbox` 객체 | `sandbox_mode` · `[sandbox_workspace_write]` |
+| `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
+| `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
+| `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
+| `setup-omc-hud` | `statusLine` | — (Codex는 OMX `hud`) |
+| `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
+| `harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
+| `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
+
+`obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다.
 
 ## 요구사항
 
