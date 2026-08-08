@@ -16,12 +16,17 @@ banker는 QA·보안 감사·문서·아키텍처·위키 작업과 의존성·�
 
 ## 빠른 시작
 
-**Claude Code:** 마켓플레이스로 설치
+**Claude Code:** 실행 중인 세션에서 `/plugin` 으로 설치 (권장)
 
-```bash
-claude plugin marketplace add smallOpenSource/banker_plugins
-claude plugin install banker@banker-plugins
+Claude Code 세션 안에서 입력합니다.
+
 ```
+/plugin marketplace add smallOpenSource/banker_plugins
+/plugin install banker@banker-plugins
+```
+
+설치 후 `Plugin is now active.` 면 바로 쓸 수 있고, `Run /reload-plugins to activate.` 가 뜨면 `/reload-plugins` 를 실행합니다.\
+터미널 셸을 선호하면 `claude plugin marketplace add smallOpenSource/banker_plugins` 후 `claude plugin install banker@banker-plugins` 로도 됩니다(다음 실행 또는 `/reload-plugins` 후 적용).
 
 스킬과 커맨드를 `/banker:audit-security` 처럼 `/banker:` 로 호출합니다.
 

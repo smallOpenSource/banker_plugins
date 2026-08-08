@@ -34,7 +34,7 @@
     { "name": "curation",             "type": "skill",   "target": "both",        "reason": "decision-framing behavior (options/rec/confidence + --perf); no runtime deps; identical in both", "supportingFiles": [] },
     { "name": "deep-init",            "type": "skill",   "target": "both",        "reason": "hierarchical AGENTS.md generation (port of OMC deepinit); runtime-agnostic fs+doc; subagents Claude=OMC/Codex=OMX", "supportingFiles": [] },
     { "name": "deep-research",        "type": "skill",   "target": "both",        "reason": "fan-out + adversarial-verify web research (re-authored from bundled workflow); Claude WebSearch/Workflow, Codex OMX autoresearch; runtime-aware", "supportingFiles": [] },
-    { "name": "ralph-qa",             "type": "skill",   "target": "both",        "reason": "cross-LLM independent verify loop (ralplan+critic logic via other LLM); Claude `omc ask codex`/ccg, Codex OMX `$ask`; runtime-aware", "supportingFiles": [] },
+    { "name": "ralph-qa",             "type": "skill",   "target": "both",        "reason": "cross-LLM independent verify loop (ralplan+critic logic): prefers Codex CLI, else other model via curl, else self-spawned multi-agent consensus; runtime-aware", "supportingFiles": [] },
     { "name": "smart-compact",        "type": "skill",   "target": "both",        "reason": "context-threshold compaction-hygiene gate (statusLine detect + hook bridge + assistant chain + TUI handoff); runtime-aware", "supportingFiles": [] },
     { "name": "visual-ralph",         "type": "skill",   "target": "both",        "reason": "measured visual build loop (port of OMX visual-ralph); Claude ralph+visual-verdict+Stitch imagegen, Codex $ralph+$imagegen; runtime-aware", "supportingFiles": [] },
 
