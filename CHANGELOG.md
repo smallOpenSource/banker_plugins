@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.0] - 2026-08-08
+
+### Changed
+- **`ralph-qa` 교차검증 경로를 3단 우선순위로 재설계.** 방금 만든 결과를 다른 모델로 독립 검증할 때(자기승인 방지), 이제 ① 다른-LLM CLI(**Codex CLI 우선**; 저자가 Codex면 Claude/Gemini) → ② 다른 모델 직접 `curl`(크리덴셜이 있고 저자와 다른 계열일 때, 엔드포인트·키·모델을 env 로 파라미터화) → ③ 자체 다중 에이전트 합의(기본 3개·렌즈 분담·정족수, 최후 수단) 순으로 사용 가능한 첫 경로를 택한다. 이전엔 다른-LLM 경로 실패 시 같은-런타임 critic 하나로 곧장 후퇴했으나, 그 앞에 진짜 다른 모델(`curl`) 경로를 끼워 독립성을 실질적으로 강화했다. `--agents=N` 플래그를 추가했다.
+- **README 빠른 시작의 Claude Code 설치를 인앱 `/plugin` 우선으로.** 실행 중인 세션에서 `/plugin marketplace add …` + `/plugin install …@…` 로 설치하는 흐름을 앞세우고(설치 후 필요 시 `/reload-plugins` 안내), 터미널 셸 `claude plugin …` 은 대안으로 병기했다.
+
+### Added
+- README 에 **설정 변경 지점(Claude Code · Codex)** 섹션을 추가했다. 설치·제거 CLI, 플러그인 자체 훅(`hooks.json`), setup 스킬별 설정 패치(`config.toml`·`settings.json`) 지점을 표로 정리했다.
+
 ## [0.10.0] - 2026-07-18
 
 ### Changed
