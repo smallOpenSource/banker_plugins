@@ -1,25 +1,18 @@
 ---
 name: ralph-qa
-description: "(banker) 작업 결과를 별도 세션·다른 LLM으로 ralplan+critic 로직으로 독립 검증/개선 반복(자기승인 방지). 'ralph-qa'/'교차검증'/'다른 LLM으로 검증'/'독립 QA' 시 사용."
+description: "(banker) 작업 결과를 다른 LLM으로 독립 검증/개선 반복(자기승인 방지): Codex CLI 우선 → 없으면 GPT 등 다른 모델을 curl 로 직접 → 그것도 없으면 다중 에이전트 합의. 'ralph-qa'/'교차검증'/'다른 LLM으로 검증'/'독립 QA' 시 사용."
 ---
 
 # ralph-qa — 교차-LLM 독립 검증 루프
 
-방금 만든 작업 결과를 **같은 모델·같은 세션이 자기채점**하는 대신, **다른 LLM + 다른 세션**에
-넘겨 `ralplan --deliberate`(설계 optimal 검토)와 `ralph --critic=critic`(수용 기준 검증) 로직을
-적용하고, 지적을 반영해 **APPROVE까지 반복**한다. 핵심 가치는 **독립성**(anti-self-approval):
-저자와 검증자가 다른 모델이라야 편향·맹점이 드러난다.
+방금 만든 작업 결과를 **같은 모델·같은 세션이 자기채점**하는 대신, **다른 모델**에 넘겨
+`ralplan --deliberate`(설계 optimal 검토)와 `ralph --critic=critic`(수용 기준 검증) 로직을 적용하고,
+지적을 반영해 **APPROVE까지 반복**한다. 핵심 가치는 **독립성**(anti-self-approval): 저자와 검증자가
+다른 모델이라야 편향·맹점이 드러난다.
 
-**런타임 매핑 (다른-LLM 경로).**
-- **Claude Code(OMC)**: `omc ask codex --agent-prompt critic "..."`(= ralph의 `--critic=codex` 경로),
-  또는 `/ccg`(Codex+Gemini+Claude 합의 레인), 또는 `omc ask gemini`. 검증자 = **Codex/Gemini**.
-- **Codex(OMX)**: OMX `$ask`(구 `ask-claude`/`ask-gemini` 통합 진입점) 로 **Claude/Gemini** 에게 검증 위임.
-- 저자 런타임과 **다른** 모델을 고르는 게 목적 — 대응 경로가 없으면 최소한 **다른 세션·다른 에이전트
-  프롬프트**로라도 독립성을 확보한다(완전 독립엔 미달임을 명시).
-
-**모델·effort.** `--model <id>` 로 검증 LLM을 지정(예: 강한 추론 모델). effort 지원 모델은
-`--effort xhigh` 전달. ⚠️ 사용자가 예로 든 `gpt-5.6-sol` 은 **미인식 모델 ID** — 리터럴로 박지 말고
-**설치 환경에서 사용 가능한 다른-LLM으로 파라미터화**하라(기본은 위 매핑의 기본 경로).
+**검증자 우선순위 (한 줄 요약).** ① 다른-LLM CLI(**Codex CLI 우선**) → ② 다른 모델 직접 호출(`curl`,
+크리덴셜 있을 때) → ③ 다중 에이전트 합의(최후). 위에서부터 **사용 가능한 첫 경로**를 쓴다 — 진짜 다른
+모델이 닿으면 그걸 쓰고, 다중 에이전트 합의는 다른-LLM 경로가 전무할 때만.
 
 ## 언제 쓰나
 - 방금 완성한 구현/설계/문서를 **배포·확정 전** 독립 검증하고 싶을 때.
@@ -28,7 +21,7 @@ description: "(banker) 작업 결과를 별도 세션·다른 LLM으로 ralplan+
 
 ## 쓰지 않을 때
 - 사소한 변경(교차-LLM 왕복 비용이 이득을 초과).
-- 다른 LLM 프로바이더 auth가 없고 대체 독립 경로도 없을 때(→ 최소 같은-런타임 `critic` 에이전트로 폴백).
+- 어떤 독립 경로도 없을 때는 폴백(③ 다중 에이전트)이 있으나, 그마저 과하면 그냥 `critic` 한 번.
 
 ## 워크플로
 
@@ -36,35 +29,69 @@ description: "(banker) 작업 결과를 별도 세션·다른 LLM으로 ralplan+
 검증 대상 = {작업 결과 요약 + **수용 기준(acceptance criteria)** + 변경 파일 목록 + 관련 코드}.
 기준이 없으면 원 작업에서 도출(vague "잘 됐나?" 금지 — 검증 가능한 기준으로).
 
-### 2. 다른 LLM·다른 세션으로 위임 (독립성)
-위 런타임 매핑 경로로 **두 렌즈**를 함께 요청(`--lens` 로 선택, 기본 both):
-- **ralplan --deliberate 렌즈**: 이 접근이 **optimal** 한가? 더 단순·빠르·유지보수 좋은 대안이 있나?
-  프리모템 3시나리오, 원칙 위반 여부.
-- **ralph --critic=critic 렌즈**: **수용 기준 하나하나**를 신선한 증거로 검증. 변경 파일뿐 아니라
-  **관련 코드(호출자·피호출자·공유 타입·인접 모듈)** 까지 검토.
+### 2. 검증자 선택 — 다른-LLM 우선, 다중 에이전트 합의는 최후 (독립성)
+목적은 **저자 모델과 다른 모델**로 검증하는 것. 아래 우선순위로 **사용 가능한 첫 경로**를 택한다:
+
+1. **다른-LLM CLI — Codex CLI 우선.** `command -v codex` 로 사용 가능하면 Codex 에 위임한다.
+   - Claude Code(OMC) 저자: `omc ask codex --agent-prompt critic "..."`(= ralph 의 `--critic=codex` 경로),
+     또는 `/ccg`(Codex+Gemini+Claude 합의 레인).
+   - 저자가 **이미 Codex** 면 Codex 는 "다른 모델"이 아니므로 건너뛰고 Claude/Gemini(OMX `$ask`)를 ①로 삼는다.
+
+2. **다른 모델 직접 호출 via `curl` (Codex CLI 가 없을 때).** 저자와 **다른** 모델(예: GPT)의
+   OpenAI 호환 엔드포인트+API 키가 환경/설정에 있으면 `curl` 로 직접 그 모델을 검증자로 쓴다 —
+   CLI 래퍼 없이도 진짜 다른 모델이라 독립성이 산다.
+   - 엔드포인트·키·모델 ID 는 **환경에서 읽어 파라미터화**한다(하드코딩 금지). 예:
+     `"${OPENAI_BASE_URL:?}"`·`"${OPENAI_API_KEY:?}"`·`"${RALPH_QA_MODEL:?}"`, 또는 Codex 설정
+     `~/.codex/config.toml` 의 provider(`[model_providers.*]` 의 `base_url`·`env_key`).
+   - 호출 예(모델·엔드포인트는 환경값; 프롬프트에 수용 기준 + 두 렌즈를 담아 판정을 JSON 으로 받는다):
+     ```bash
+     curl -sS "${OPENAI_BASE_URL:?}/chat/completions" \
+       -H "Authorization: Bearer ${OPENAI_API_KEY:?}" -H 'Content-Type: application/json' \
+       -d "$(jq -n --arg m "${RALPH_QA_MODEL:?}" --arg p "$PROMPT" \
+             '{model:$m, messages:[{role:"user", content:$p}]}')"
+     ```
+     (`jq` 로 페이로드를 안전 구성 — 없으면 동등한 JSON 이스케이프로 대체.)
+   - ⚠️ 저자와 **같은 모델 계열이면 독립성이 없으므로 이 경로를 쓰지 않는다**(예: 저자=Codex(GPT)
+     에서 GPT-curl 금지 — 그땐 Claude/Gemini 로).
+
+3. **자체 다중 에이전트 합의 루프 (다른-LLM 경로가 전무할 때, 최후).** 독립 에이전트 **N개(기본 3)** 를
+   서로 다른 렌즈로 띄워 **정족수 합의**로 판정한다:
+   - 렌즈: ① ralplan 최적성(더 단순·빠른 대안?) ② critic 수용기준(기준 하나하나 신선한 증거로)
+     ③ 적대적 반증(REJECT 를 적극 시도).
+   - 판정: **과반 APPROVE** 여야 통과. 확인된 블로커가 **1건이라도** 있으면 ITERATE.
+   - 같은 베이스 모델이라 **완전 독립은 아님**(다양성+정족수로 근사) — 단일 자기채점보다 훨씬 강하지만
+     ①·② 가 가능하면 반드시 그쪽을 먼저 쓴다.
+
+경로 ①·② 는 **두 렌즈**(ralplan 최적성 + critic 수용기준)를 함께 요청한다(`--lens` 로 선택, 기본 both).
+경로 ③ 은 렌즈를 에이전트로 분담한다.
 
 ### 3. 판정 수신 → 반영
-외부 LLM의 판정(`APPROVE` / `ITERATE` / `REJECT`)과 구체 이슈를 받는다. `APPROVE` 아니면:
-원 런타임에서 이슈 수정 → **같은 외부 LLM으로 재검증**(2단계 반복).
+검증자(경로 ①~③)의 판정(`APPROVE` / `ITERATE` / `REJECT`)과 구체 이슈를 받는다. `APPROVE` 아니면:
+원 런타임에서 이슈 수정 → **같은 검증 경로로 재검증**(2단계 반복).
 
 ### 4. 종료
-- `APPROVE` → 검증 통과 보고(검증자 모델·판정 근거 명시).
+- `APPROVE`(경로 ③ 은 과반) → 검증 통과 보고(**검증 경로·검증자 모델·판정 근거** 명시).
 - 같은 이슈가 **3회+ 재발** → 근본 블로커로 보고(무한루프 금지).
-- auth/프로바이더 장애 → 정직히 보고하고 폴백 경로 안내(같은-런타임 critic).
+- 다른-LLM auth/프로바이더 장애 → 정직히 보고하고 **경로 ③(다중 에이전트)** 으로 폴백.
 
 ## 플래그
 | 플래그 | 효과 | 기본 |
 |---|---|---|
-| `--model <id>` | 검증 LLM 모델 지정 | 런타임 매핑 기본 경로 |
+| `--model <id>` | 검증 LLM 모델 지정(경로 ①·②) | 환경/매핑 기본 |
 | `--effort xhigh` | effort 지원 모델에 전달 | 미지정 |
 | `--lens=critic\|plan\|both` | 적용 렌즈 | both |
+| `--agents=N` | 폴백(경로 ③) 에이전트 수 | 3 |
 | `--max=N` | 최대 반복 | 5 |
 
 ## 함정
-- **자기채점 금지가 본질** — 저자 모델·세션으로 검증하면 독립성이 사라진다. 반드시 **다른 LLM**.
-- **auth env**: 비대화형 셸은 `~/.bashrc` 미로드로 프로바이더 토큰이 없으면 `401`(스킬 문제 아님).
-  `source ~/.bashrc` 후 교차-LLM 호출. 토큰 자체가 없으면 폴백 경로로.
-- **모델명 하드코딩 금지** — 예시 모델(`gpt-5.6-sol` 등)을 리터럴로 박지 말고 파라미터화.
+- **자기채점 금지가 본질** — 저자 모델·세션으로 검증하면 독립성이 사라진다. 반드시 **다른 모델**을 먼저 찾고,
+  없을 때만 경로 ③(다중 에이전트)으로 근사한다.
+- **경로 탐지 순서** — `command -v codex`(①) → 다른-모델 크리덴셜 유무(②, env/`config.toml` provider) →
+  둘 다 없으면 ③. "다중 에이전트"를 다른-LLM 이 있는데도 먼저 쓰지 말 것.
+- **curl 경로 auth** — 비대화형 셸은 `~/.bashrc` 미로드로 키가 없으면 `401`(스킬 문제 아님).
+  `source ~/.bashrc` 후 호출. 엔드포인트/키/모델은 **환경값**으로만(하드코딩·커밋 금지).
+- **같은 모델 계열 금지(②)** — 저자와 같은 모델을 curl 로 불러오면 독립성이 없다. 계열이 다를 때만.
+- **모델명 하드코딩 금지** — 예시 모델 ID 를 리터럴로 박지 말고 파라미터화.
 - **수용 기준 없이 검증 금지** — "잘 됐나?"가 아니라 검증 가능한 기준 대비 판정.
 
-ARGUMENTS: [--model <id>] [--effort xhigh] [--lens=critic|plan|both] [--max=N] [검증 대상/기준]
+ARGUMENTS: [--model <id>] [--effort xhigh] [--lens=critic|plan|both] [--agents=N] [--max=N] [검증 대상/기준]
