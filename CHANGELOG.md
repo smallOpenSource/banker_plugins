@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.12.0] - 2026-08-09
+
+### Added
+- **모션 그래픽 스킬 쌍(무료 · hyperframes)을 추가했다.**\
+  `motion-graphic-setup` 은 Node≥22 와 ffmpeg 를 OS별로 확보한 뒤 `npx hyperframes` 로 도구를 준비한다.\
+  `motion-graphic-make` 는 렌더 파이프라인을 소유하지 않는 얇은 래퍼로, 10초 내외 내레이션 없는 모션 그래픽 제작을 hyperframes 의 `/motion-graphics` 워크플로에 위임한다.
+- **3D 인트로 스킬 쌍(유료 · Azure Sora-2 + gpt-image-2)을 추가했다.**\
+  `3d-intro-setup` 은 Node/ffmpeg 확보와 Azure 크레덴셜 저장, 무과금 프리플라이트까지만 담당해 과금 없이 연결을 검증한다.\
+  `3d-intro-build` 는 gpt-image-2 스틸과 Sora-2 forward-chaining 영상으로 스크롤-스크럽 3D 인트로 사이트를 제작한다.
+- **scroll-world 스크럽 엔진(MIT)을 `3d-intro-build/references` 에 번들로 포함했다.**\
+  스크롤에 맞춰 3D 씬을 재생하는 이 엔진(`scrub-engine.js`·`index-template.html`)은 [oso95/scroll-world](https://github.com/oso95/scroll-world) 에서 그대로 벤더링했고, 원본 MIT 고지(`LICENSE`·`NOTICE.md`)를 함께 넣었다.
+- **ffmpeg · hyperframes · Azure 는 사용자가 직접 공급하는 런타임 의존성이며 banker 가 번들하지 않는다.**\
+  hyperframes 는 `npx` 로 설치(Apache-2.0)하고, ffmpeg 는 OS 패키지로 확보하며, Azure(OpenAI · Sora-2 · gpt-image-2 · FLUX.2-pro)는 사용자 크레덴셜로 호출한다(과금은 사용자 부담).
+- **A4 세로 PPTX 스킬 쌍 `vertical-pptx` · `vertical-pptx-setup` 을 추가했다.**\
+  `vertical-pptx` 는 A4 세로(210×297mm) 규격 PPTX 를 생성·점검·수리하고, 16:9 덱을 A4 세로로 변환한다(인쇄용 세로형 슬라이드).\
+  `vertical-pptx-setup` 은 빌더 의존성(pptxgenjs·python-pptx)과 시각 검증용 LibreOffice 를 OS·권한 감지 후 설치한다(root 없으면 홈 프리픽스로 추출).
+
+### Changed
+- **🔴 `lineage` 세션 export 스킬을 전면 개편했다(2.0.0 · BREAKING).**\
+  실측(6세션·62MB·4,645레코드) 대조에서 산출물의 2/3가 대화가 아니었고 일부는 하네스 주입이 사용자 발언으로 오표시됐다 — 이를 바로잡되 진짜 사용자 발언은 한 건도 잃지 않도록 다시 만들었다.\
+  래퍼 없는 하네스 주입(스킬 본문·compaction 요약·에이전트 보고·이미지 노트)을 **위치가 아니라 형태로** 걸러 내고(위치 기반이 지우던 사용자 정정·인용 질문은 보존), 서브에이전트·동료 보고는 별도 회색 버블로 분리한다(발신자명 표시·idle 알림 폐기).\
+  Claude 본문을 **무의존 마크다운으로 렌더**한다(헤딩·리스트·표·코드펜스·인용·강조·링크; `html.escape` **후에만** 변환하고 코드/링크를 먼저 도려내 마크업/서식 주입을 차단, 링크는 `https?://` 만).\
+  연속된 assistant 레코드를 `--hide-tool-only` 앞에서 병합해 그동안 한 번도 표시되지 않던 `🔧 도구 N건` 을 살리고, 요약을 head+tail 로 뽑아 "무엇을 시작했다"가 아니라 결론을 담게 했다(요약기 버전을 캐시 키에 넣어 알고리즘 변경 시 자동 무효화).\
+  여러 세션을 레코드 단위 시간순 한 줄기로 합치는 `--all-sessions` 를 추가했다.\
+  단축키를 한글 IME·`Ctrl`/`Cmd`/`Alt` 안전하게 고치고(`e.code` 우선이라 브라우저 기본 동작을 가로채지 않음), 날짜·세션전환·compaction 을 형태가 다른 알약으로 구분(대비 개선·헤더가 스크롤에 따라 갱신), 범례를 우하단 `?` 오버레이로 옮겼다(배경 클릭으로만 닫힘·`aria-modal`).\
+  `self_verify` 가 렌더러 출력의 모든 태그를 HTMLParser 스택으로 검사(void 요소 14종 인지)해 개수는 맞지만 어긋난 마크업까지 배포 전에 잡는다.\
+  경로 인코딩을 바로잡았다: cwd 의 모든 비영숫자를 `-` 로 매핑(`_` 포함·Windows 경로 포함) — 이전엔 `/` 만 치환해 밑줄이 든 경로에서 자동탐색이 실패했다. 비-UTF8 세션 파일 하나가 전체 export 를 실패시키던 문제도 그 파일만 건너뛰게 고쳤다.\
+  **BREAKING — 기본값 반전 3건**: 첫 로드 **접힘**(펼치려면 `--open`), 마크다운 렌더 **기본 ON**(끄려면 `--no-markdown`), 하네스 노이즈 필터 **기본 ON**(남기려면 `--keep-trivia`). 400자 초과 사용자 메시지도 접힌다. 1.x 동작을 원하면 `--open --no-markdown --keep-trivia`.\
+  표준 라이브러리만 쓰는 `test_lineage.py`(회귀 143 단언·외부 의존 0)를 추가해 `scripts/smoke-test.js` 가 인터프리터 ≥3.7 을 자동 탐지해 CI 에서 돌리고(EL8 기본 python3=3.6 은 skip), npm 패키지에서는 제외한다.
+
 ## [0.11.0] - 2026-08-08
 
 ### Changed

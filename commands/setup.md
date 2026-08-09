@@ -35,6 +35,8 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    **의존성 라이브러리**
    - **setup-playwright** — Playwright + 브라우저 + Xvfb(RHEL8/Rocky8 폴백). (`ultra-ui-qa`·`audit-web-page`·`play-qa` 의존성)
    - **docs-setup** — arch-diagram·pdf-vision-extract 의존성(python-pptx·pymupdf·plantuml). (의존: python)
+   - **motion-graphic-setup** — hyperframes(무료 모션 그래픽 CLI) 전제조건(Node≥22 + ffmpeg → `npx hyperframes`). (`motion-graphic-make` 의존성)
+   - **3d-intro-setup** — Azure Sora-2/gpt-image-2 3D 인트로용 크레덴셜·의존성(Node/ffmpeg) + 무과금 프리플라이트. (`3d-intro-build` 의존성)
 
 2. **실행**: 선택된 각 항목을 호출한다(미선택은 건드리지 않음). Claude Code는 `Skill("banker:<name>")`, **Codex 런타임에선 설치된 `banker-<name>` 스킬을 적용**한다(예: `Skill("banker:setup-node")`).
    - **의존 순서 강제**: 뒤 계층을 고르면 전제 스킬을 먼저 실행한다 — `setup-lsp` 전에 setup-node·setup-python·setup-java; `setup-mcp` 전에 setup-node·setup-python; `docs-setup` 전에 setup-python. 이미 설치돼 있으면 각 스킬이 감지해 skip(멱등).

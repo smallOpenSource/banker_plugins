@@ -1,5 +1,15 @@
 {
   "0.11.0": [
     "banker:ralph-qa"
+  ],
+  "0.12.0": [
+    "banker:3d-intro-build",
+    "banker:3d-intro-setup",
+    "banker:lineage",
+    "banker:motion-graphic-make",
+    "banker:motion-graphic-setup",
+    "banker:refresh-readme",
+    "banker:vertical-pptx",
+    "banker:vertical-pptx-setup"
   ]
 }

@@ -26,8 +26,17 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 
 7. **검증** — 유닛·스모크가 초록인지 확인한다.
    ```bash
-   node --test hooks/*.test.mjs bin/lib/*.test.mjs bin/*.test.mjs
+   # skills/*/*.test.mjs 는 스킬 안 테스트를 포함시킨다(빠져 있으면 obsidizer·vertical-pptx 가 릴리스 절차에서 안 돈다).
+   # 셸 글롭이라 매치가 0 이면 리터럴이 그대로 넘어가 에러가 난다. 스킬 테스트가 하나도 없어지면 이 항목을 지운다.
+   node --test hooks/*.test.mjs bin/lib/*.test.mjs bin/*.test.mjs skills/*/*.test.mjs
    node scripts/smoke-test.js
+
+   # vertical-pptx 의 빌더 의존 테스트는 기본이 skip 이다. 릴리스 때는 skip 을 실패로 바꿔 강제한다.
+   # 의존성은 저장소 밖(스크래치패드)에만 깐다. package.json 은 건드리지 않는다.
+   #   npm i --no-save --no-audit --no-fund pptxgenjs@4
+   #   python -m pip install --target <스크래치패드>/pylibs python-pptx fonttools
+   NODE_PATH=<스크래치패드>/node_modules PYTHONPATH=<스크래치패드>/pylibs A4P_PYTHON=<python3.9+ 경로> \
+     A4P_REQUIRE_BUILDERS=1 node --test skills/vertical-pptx/a4p.test.mjs
    ```
 
 8. **커밋** — 위 변경(`plugin.json` · `package.json` · `skill-changes.json` · `marketplace.json` · `CHANGELOG.md` · 코드)을 **한 릴리스 커밋**으로 묶는다.

@@ -8,7 +8,7 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 48개 + 커맨드 2개**(총 50개 구성요소)를 묶은 Claude Code 플러그인입니다.\
+banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 54개 + 커맨드 2개**(총 56개 구성요소)를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
@@ -84,6 +84,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | 스킬 | 설명 |
 |---|---|
 | `arch-diagram` | 시스템 아키텍처 구성도 (PlantUML + 편집가능 PPTX) |
+| `vertical-pptx` | A4 세로(210x297mm) 규격 PPTX 생성·점검·수리, 16:9 덱의 A4 세로 변환 |
 | `make-notion-guide` | API 호출 가이드를 노션 양식 문서로 작성 |
 | `pdf-vision-extract` | 비주얼 PDF를 고해상도 PNG로 변환(비전 입력) |
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
@@ -120,6 +121,13 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `refresh-readme` | 코드와 어긋난 README 를 현재 상태에 맞게 갱신(드리프트 해소) |
 | `cleansing-memory` | 메모리 파일을 문서화된 threshold 내로 정리(중복 최신본화·무손실 압축) |
 
+### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
+
+| 스킬 | 설명 |
+|---|---|
+| `motion-graphic-make` | 10초 내외 내레이션 없는 무료 모션 그래픽 제작 (hyperframes 위임) |
+| `3d-intro-build` | 스크롤-스크럽 3D 인트로 사이트 제작 (Azure gpt-image-2 스틸 + Sora-2 영상, 유료) |
+
 ### 스킬: 개발환경 setup (OS별 · 런타임별)
 
 USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Codex)로 구성하는 얇은 실행 유닛.\
@@ -147,6 +155,9 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
 | `setup-stitch` | Stitch 디자인 MCP 프록시 등록(RockyLinux8 proxy) |
 | `docs-setup` | arch-diagram·pdf-vision-extract 의존성(pptx·pymupdf·plantuml) 설치 |
+| `vertical-pptx-setup` | vertical-pptx 의존성(pptxgenjs·python-pptx) + 시각 검증용 LibreOffice (OS·권한 적응형) |
+| `motion-graphic-setup` | hyperframes(무료 모션 그래픽 CLI) 전제조건 설치 (Node≥22 + ffmpeg) |
+| `3d-intro-setup` | 3D 인트로용 Azure 크레덴셜·의존성 설치 + 무과금 프리플라이트 (Node/ffmpeg) |
 
 ## 설치 상세 (npm · Codex)
 
@@ -164,7 +175,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 48개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 54개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
@@ -204,6 +215,8 @@ banker uninstall        # 제거
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
+| `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
+| `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
 
 `obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다.
 
@@ -277,15 +290,18 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 - `skills/humanizer`: [blader/humanizer](https://github.com/blader/humanizer) 기반, **MIT License**(© 2025 Siqi Chen).\
   원본 라이선스 고지는 `skills/humanizer/LICENSE` 에 포함.\
   패턴 목록은 Wikipedia [*Signs of AI writing*](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)(WikiProject AI Cleanup, **CC BY-SA**)에 기반합니다.
+- `skills/3d-intro-build/references`: [oso95/scroll-world](https://github.com/oso95/scroll-world) 의 스크럽 엔진(`scrub-engine.js`·`index-template.html`)을 그대로 벤더링, **MIT License**(© 2026 cyw).\
+  원본 라이선스 고지는 `skills/3d-intro-build/references/LICENSE` 와 `NOTICE.md` 에 포함.
 
-코드로 포함(재배포)하는 서드파티는 `humanizer` 뿐입니다.\
+코드로 포함(재배포)하는 서드파티는 `humanizer` 와 `scroll-world`(`3d-intro-build`) 둘입니다.\
 아래는 스킬이 **런타임에 의존하거나 연동**하는 외부 요소로, banker 가 재배포하지 않으며 각 라이선스·상표는 소유자에게 있습니다.
 
 **의존 라이브러리·도구 (사용 시 별도 설치, 라이선스는 각 프로젝트 소유)**
 
 | 분류 | 도구 | 라이선스 | 사용 스킬 |
 |---|---|---|---|
-| Python | python-pptx | MIT | `arch-diagram` |
+| Python | python-pptx | MIT | `arch-diagram` · `vertical-pptx` |
+| Node | pptxgenjs | MIT | `vertical-pptx` |
 | Python | python-docx | MIT | `rfp-author` |
 | Python | Playwright | Apache-2.0 | `audit-web-page`·`play-qa`·`ultra-ui-qa` |
 | Python | detect-secrets | Apache-2.0 | `lineage`(시크릿 스캔) |
@@ -306,6 +322,8 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 | 개발환경·LSP | psmux | 각 프로젝트 | `setup-tmux` |
 | 개발환경·LSP | bubblewrap | LGPL-2.0 | `setup-sandbox` |
 | 개발환경·LSP | rustup | 각 프로젝트 | `setup-sandbox` |
+| 미디어·영상 | hyperframes (HeyGen) | Apache-2.0 | `motion-graphic-setup`·`motion-graphic-make` |
+| 미디어·영상 | ffmpeg | LGPL-2.1+/GPL | `motion-graphic-setup`·`motion-graphic-make`·`3d-intro-setup`·`3d-intro-build` |
 
 **연동·참조 (외부 프레임워크·서비스·브랜드, banker 는 재배포하지 않음)**
 
@@ -318,3 +336,4 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 | 서비스(독점·상표) | Google Stitch | 독점 | `setup-stitch` |
 | 디자인(상표) | Nothing 디자인 언어 | 상표 | `nothing-design` |
 | QA 엔진(예시) | Godot·Phaser 등 | MIT | `play-qa` |
+| 서비스(독점·상표) | Microsoft Azure OpenAI (Sora-2·gpt-image-2·FLUX.2-pro) | 독점 | `3d-intro-setup`·`3d-intro-build` |
