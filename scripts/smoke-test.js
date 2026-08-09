@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (48 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (54 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 48, `codex dry-run plans 48 skill copies (got ${copies})`);
+  ok(copies === 54, `codex dry-run plans 54 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -75,8 +75,8 @@ try {
   ok(manifestOnly.length === 0 && diskOnly.length === 0,
      `manifest == skills/ (manifest-only: [${manifestOnly.join(', ')}]; disk-only: [${diskOnly.join(', ')}])`);
   // Every manifest skill must be target:both. A claude-only skill would still pass the set-equality
-  // and copies===48 checks (it lives in the manifest and on disk, and the dry-run counts only the
-  // 48 both-skills), so nothing above catches a silent claude-only. This replaces the former
+  // and copies===52 checks (it lives in the manifest and on disk, and the dry-run counts only the
+  // 52 both-skills), so nothing above catches a silent claude-only. This replaces the former
   // per-release hardcoded skill-name arrays: they regression-guarded named skills, this guards the
   // universal property (all both) with no per-release edit. Trade-off: a count-preserving name
   // substitution (drop one both-skill, add another) is no longer caught here; set-equality still
@@ -101,7 +101,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 48, `real codex install has 48 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 54, `real codex install has 54 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -109,6 +109,35 @@ try {
   ok(installed.includes('banker-setup-stitch'), 'renamed skill installed as banker-setup-stitch');
   ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
   ok(installed.includes('banker-obsidizer'), 'obsidizer installed as banker-obsidizer');
+  ok(installed.includes('banker-motion-graphic-setup'), 'new motion-graphic-setup installed as banker-motion-graphic-setup');
+  ok(installed.includes('banker-motion-graphic-make'), 'new motion-graphic-make installed as banker-motion-graphic-make');
+  ok(installed.includes('banker-3d-intro-setup'), 'new 3d-intro-setup installed as banker-3d-intro-setup');
+  ok(installed.includes('banker-3d-intro-build'), 'new 3d-intro-build installed as banker-3d-intro-build');
+  // 3d-intro-setup ships a byte-identical copy of the build skill's Azure adapter (scripts/sync-adapter.js
+  // guards this in CI/prepublish; assert it here too so a drifted mirror fails the smoke suite).
+  const adapterBuild = fs.readFileSync(path.join(root, 'skills', '3d-intro-build', 'references', 'azure-adapter.mjs'));
+  const adapterSetup = fs.readFileSync(path.join(root, 'skills', '3d-intro-setup', 'references', 'azure-adapter.mjs'));
+  ok(adapterBuild.equals(adapterSetup), 'azure-adapter.mjs is byte-identical across 3d-intro-build and 3d-intro-setup');
+
+  // 6.5) lineage.py Python regression tests. GATE ON INTERPRETER >=3.7, not mere presence:
+  // EL8/Rocky8's default `python3` is 3.6.8, which lineage.py sys.exit(2)s at import, so a
+  // presence check would FALSE-FAIL the per-OS matrix. Probe candidates, run under the first
+  // >=3.7, and SKIP (not fail) with an explicit log if none exists ("too old" == "absent").
+  const pyCandidates = ['python3', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'python3.7'];
+  let py = null;
+  for (const cand of pyCandidates) {
+    const r = cp.spawnSync(cand, ['-c', 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)'], { encoding: 'utf8' });
+    if (!r.error && r.status === 0) { py = cand; break; }
+  }
+  if (py) {
+    const pyRes = cp.spawnSync(py, ['-B', '-m', 'unittest', 'test_lineage'],
+      { cwd: path.join(root, 'skills', 'lineage'), encoding: 'utf8',
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
+    ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${tail})`);
+  } else {
+    console.log('SKIP: no python>=3.7 found — lineage.py suite not run (EL8 default python3=3.6 exits at import)');
+  }
 
   // 7) hook packaging + static safety checks (0.6.0 obsidizer: banker's first plugin-declared hook).
   // 0.8.0 replaced the opt-in telemetry-flush.mjs client with an update-check + count-default-on
@@ -134,7 +163,12 @@ try {
   for (const f of [path.join('skills', 'obsidizer', 'obsidize.test.mjs'), path.join('hooks', 'obsidize-hook.test.mjs'),
     path.join('hooks', 'telemetry-count.test.mjs'), path.join('hooks', 'telemetry-count-skill.test.mjs'),
     path.join('hooks', 'update-fetch.test.mjs'), path.join('hooks', 'update-notify.test.mjs'),
-    path.join('hooks', 'update-checkin.test.mjs')]) {
+    path.join('hooks', 'update-checkin.test.mjs'),
+    path.join('skills', '3d-intro-build', 'references', 'azure-adapter.test.mjs'),
+    // lineage.py is Python; its test is test_lineage.py (not *.test.mjs). files[] excludes
+    // it via `!**/test_*.py`. pkgRoot IS the installed tarball Codex copies from, so this one
+    // assertion covers BOTH runtimes: a leaked test would ship to Claude and Codex alike.
+    path.join('skills', 'lineage', 'test_lineage.py')]) {
     ok(fs.existsSync(path.join(root, f)), `${f} exists in the repo (CI runs the suites from here, not the tarball)`);
     ok(!fs.existsSync(path.join(pkgRoot, f)), `${f} is NOT npm-packaged (files[] negation holds)`);
   }

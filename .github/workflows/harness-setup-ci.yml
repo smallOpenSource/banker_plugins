@@ -5,7 +5,7 @@ name: harness-setup-ci
 # Honest scope: harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
 # testable on hosted runners; those steps are partial/tolerated and labeled as such.
 # obsidizer has no per-OS install, so it gets no OS-toolchain job — it is covered by the structural
-# job (48 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
+# job (54 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
 
 on:
   push:
@@ -14,6 +14,10 @@ on:
       - 'skills/setup-*/**'
       - 'skills/harness-factory/**'
       - 'skills/obsidizer/**'
+      # 스킬 디렉터리는 개별 지정한다. 일반 'skills/**' 로 넓히면 마크다운 한 줄 수정마다
+      # 잡 매트릭스 전체(rocky8 컨테이너·windows·macOS 포함)가 돌아 솔로 유지비가 커진다.
+      - 'skills/vertical-pptx/**'
+      - 'skills/vertical-pptx-setup/**'
       - 'hooks/**'
       - 'codex/manifest.json'
       - 'package.json'
@@ -28,16 +32,16 @@ concurrency:
 
 jobs:
   smoke:
-    name: structural (packaging · 48 skills · dir==name)
+    name: structural (packaging · 54 skills · dir==name)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: manifest count == 48 both / 0 claude-only
+      - name: manifest count == 54 both / 0 claude-only
         run: |
-          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==48||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
+          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==54||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
       - name: smoke-test (dir==name, dry-run, real codex install)
         run: node scripts/smoke-test.js
       - name: version sync (SoT drift guard — plugin.json == package.json == marketplace.json)
@@ -47,6 +51,7 @@ jobs:
           set -e
           node --test skills/obsidizer/obsidize.test.mjs
           node --test hooks/obsidize-hook.test.mjs
+          node --test skills/vertical-pptx/a4p.test.mjs
       - name: hook files ship via npm (files[] includes "hooks")
         run: |
           set -e

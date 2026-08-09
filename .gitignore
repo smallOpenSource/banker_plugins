@@ -28,6 +28,12 @@ skills/ultra-init-workspace/
 .banker-credentials
 .git-credentials
 
+# --- Local secret/credential env files (never commit; end-users supply their own) ---
+.env
+.env.local
+.env.*.local
+.secrets/
+
 # --- OS cruft ---
 .DS_Store
 Thumbs.db

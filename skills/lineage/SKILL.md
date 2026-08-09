@@ -1,8 +1,8 @@
 ---
 name: lineage
-description: "(banker) 현재 세션 대화를 카카오톡 스타일 단일 HTML로 export(답변=1줄 요약+클릭 펼침). 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
+description: "(banker) 현재 세션(들) 대화를 카카오톡 스타일 단일 HTML로 export. Claude 답변=1줄 요약+클릭 펼침(마크다운 렌더), 하네스 노이즈 자동 필터, 다중 세션 병합. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 1.0.0
+version: 2.0.0
 schema_version: 1
 ---
 
@@ -10,175 +10,168 @@ schema_version: 1
 
 ## Purpose
 
-Claude Code 세션의 `.jsonl` 기록을 단일 HTML 1 파일로 변환한다. 외부 자원 0 (인라인 CSS+JS), 사용자 메시지는 카카오 노란 버블 (우측), Claude 답변은 1줄 요약 + `<details>` 토글 펼침 (좌측 흰 버블). Secret 자동 redaction + turn uuid 캐시로 결정론 확보.
+Claude Code 세션의 `.jsonl` 기록을 단일 HTML 1 파일로 변환한다. 외부 자원 0 (인라인 CSS+JS).
+사용자 메시지는 카카오 노란 버블(우측), Claude 답변은 1줄 요약 + `<details>` 토글 펼침(좌측 흰 버블),
+서브에이전트·동료 보고는 별도 회색 버블(좌측).
+Claude 본문은 **마크다운으로 렌더**(헤딩·리스트·표·코드·인용·강조·링크)되고, 하네스가 주입한
+노이즈(스킬 본문·compaction 요약·조작 명령·에코 교환)는 **기본으로 걸러진다**.
+Secret 자동 redaction + turn uuid·요약기버전 캐시로 결정론 확보.
+
+> **🔴 2.0.0 BREAKING — 기본 동작이 바뀌었습니다.**
+> - **기본 접힘**: 첫 로드 시 Claude 버블이 접힌 상태. 요약이 곧 목차. 펼치려면 `--open`.
+> - **마크다운 렌더 기본 ON**: 원문 그대로 보려면 `--no-markdown`.
+> - **하네스 노이즈 필터 기본 ON**: 조작 명령·주입 본문·에코 교환·하네스 오류를 남기려면 `--keep-trivia`.
+> 1.x 사용자가 이전 동작을 원하면 `--open --no-markdown --keep-trivia` 를 함께 준다.
 
 ## When to Use
 
-- 세션 작업 회고/공유 — Slack/Email/Wiki 에 보낼 채팅 형태 산출물 필요
-- 회의 후 작업 흐름 정리 — Claude 답변은 1줄 요약이라 빠르게 훑어볼 수 있음
-- 사용자가 "세션을 카카오톡 형태로", "대화를 단일 HTML로", "/lineage" 명시
+- 세션 작업 회고/공유 — Slack/Email/Wiki 에 보낼 채팅 형태 산출물 필요.
+- 회의 후 작업 흐름 정리 — Claude 답변은 1줄 요약이라 접힌 채로 빠르게 훑는다.
+- 여러 세션에 걸친 작업을 한 줄기로 — `--all-sessions`.
+- 사용자가 "세션을 카카오톡 형태로", "대화를 단일 HTML로", "/lineage" 명시.
 
 ## Invocation
 
 ```bash
-/lineage                                # 자동: 가장 최근 jsonl → 읽히는 채팅(권장 동작 기본 적용)
+/lineage                                # 자동: 최근 jsonl → 접힌 채팅(권장 기본)
+/lineage --open                         # 처음부터 전부 펼침 (기본은 접힘)
+/lineage --all-sessions                 # 프로젝트 폴더의 모든 세션을 시간순 한 줄기로
 /lineage --last 50                      # 최근 50 turn
 /lineage --turns "10-50"                # turn 10..50 (1-indexed)
-/lineage --from 2026-05-23 --to 2026-05-24
+/lineage --from 2026-08-01 --to 2026-08-09
 /lineage --output session-chat.html     # 출력 경로 (실제: session-chat_YYMMDD+HHMM.html)
 /lineage --session ~/.claude/projects/-foo/abc.jsonl
 echo "..." | /lineage --from-transcript -   # stdin paste
+/lineage --no-markdown                  # 마크다운 렌더 끄고 원문 표시 (기본 ON)
+/lineage --keep-trivia                  # 조작 명령·주입 본문·에코도 남김 (기본 필터 ON)
+/lineage --keep-tool-only               # 도구 전용 turn 도 남김 (기본 ON=제거)
 /lineage --redact-extra "acme-corp,db-pass"
-/lineage --redact-mode mask              # abcd**** 부분 마스킹
-/lineage --unsafe-schema                 # 미지 schema 강제 진행
-/lineage --rebuild-summaries             # 캐시 무시하고 재요약
-/lineage --purge-cache                   # 캐시 전부 삭제 후 종료
-/lineage --skip-reviewer                 # 품질 게이트 끔 (경고)
-/lineage --keep-tool-only                # (opt-out) 도구 전용 turn 도 남김 — 원본 동작
-/lineage --collapse                      # (opt-out) Claude 버블 접힌 상태로 출력
-/lineage --title "My Session"            # 헤더 타이틀 (기본: Session Lineage)
+/lineage --redact-mode mask             # abcd**** 부분 마스킹
+/lineage --rebuild-summaries            # 캐시 무시하고 재요약
+/lineage --purge-cache                  # 캐시 전부 삭제 후 종료
+/lineage --skip-reviewer                # 품질 게이트 끔 (경고)
+/lineage --title "My Session"           # 헤더 타이틀 (기본: Session Lineage)
 ```
 
 ### 권장 동작이 기본값 (no flags = 읽히는 채팅)
 
-- **`--hide-tool-only` 기본 ON** — prose 없이 `🔧 도구 N건` 마커만 있는 turn 제거. tool-heavy 세션이 "비어 보이는" 문제를 기본 차단. 원본 보려면 `--keep-tool-only`.
-- **`--open` 기본 ON** — Claude 버블을 `<details open>`로 펼쳐 클릭 없이 본문 표시. 접으려면 `--collapse`.
-- **`--title` 기본값 `Session Lineage`** (이전 `Claude Code Session`).
-- **`LINEAGE_REDACT_EXTRA` 환경변수** — 프로젝트 비밀 키워드를 매번 `--redact-extra`로 치지 않도록 기본 주입(쉼표구분). CLI `--redact-extra`와 병합. 예: `export LINEAGE_REDACT_EXTRA="acme-corp,db-pass"`.
+- **접힘 기본** — 요약 줄이 목차가 된다. 붙여넣은 긴 사용자 메시지(`400자` 초과)도 접힌다.
+- **마크다운 기본** — Claude 본문의 표·코드·리스트가 실제로 렌더된다.
+- **노이즈 필터 기본** — 스킬 본문·compaction·조작 명령·에코 교환 제거.
+- **도구 전용 turn 제거 기본** — prose 없이 도구만 있는 turn 제거(단, 병합 후 `🔧 도구 N건`은 표시).
+- **`LINEAGE_REDACT_EXTRA` 환경변수** — 프로젝트 비밀 키워드를 매번 치지 않도록 기본 주입(쉼표구분). CLI `--redact-extra`와 병합.
 
-> 즉 대부분의 경우 옵션 없이 `/lineage`만 호출하면 된다. 비밀 키워드만 셸 프로필에 `LINEAGE_REDACT_EXTRA`로 한 번 등록해 두면 추가 옵션이 거의 필요 없다.
+> 대부분 옵션 없이 `/lineage` 만 호출하면 된다. 비밀 키워드만 셸 프로필에 한 번 등록해 둔다.
 
-## Workflow (5 단계)
+## Workflow
 
-### 1. Read jsonl (입력 소스 결정 — 3 단계 fallback)
+### 1. Read jsonl (입력 소스 결정)
 
 ```
-auto-discover (~/.claude/projects/<encoded-cwd>/*.jsonl most-recent mtime)
+--all-sessions          → 프로젝트 폴더의 모든 *.jsonl (레코드단위 시간순 병합)
+  또는 단일 세션:
+auto-discover (~/.claude/projects/<encoded-cwd>/*.jsonl most-recent)
   → --session FILE 명시
   → --from-transcript - stdin paste
-  → 모두 실패 시 exit 2 + 3 옵션 안내
+  → 모두 실패 시 exit 2 + 옵션 안내
 ```
 
-Schema-tolerant 파서: 미지 record type 만나면 stderr WARN + 다음 line. `v1`/`v2` 같은 schema marker 발견 시 `--unsafe-schema` 명시 없으면 exit 2.
+경로 인코딩: cwd 의 **모든 비영숫자 문자**(`/` `_` `.` `:` `\` 등)를 `-` 로 바꾼다
+(Claude Code 의 실제 project-dir 명명과 일치 — `_` 도 `-` 로). 비-ASCII cwd(한글 등)는
+자동탐색이 빗나갈 수 있으니 `--session` 을 쓴다.
 
-### 2. Filter + Summarize
+Schema-tolerant 파서: 미지 record type → stderr WARN + 다음 line. `v1`/`v2` 같은 schema marker
+발견 시 `--unsafe-schema` 명시 없으면 exit 2. UTF-8 디코드 실패 파일은 그 파일만 건너뛴다(전체 실패 X).
 
-필터 규칙:
-- `isSidechain=true` 또는 `teamName`/`agentName` 있는 line → skip (sub-agent / worker)
-- `type=user` 의 텍스트가 `<system-reminder>`/`<teammate-message>`/`<command-name>` 으로 시작 → skip
-- `content.type=tool_result` → skip (raw 출력 노이즈)
-- `content.type=tool_use` → 카운트만 누적 (`Bash×3, Read×2` 인디케이터)
-- 미지 `content.type` → WARN + skip
-- prose(text) 없이 tool_use 만 있는 assistant turn → **기본 제거**(range/last 필터보다 먼저 적용). `--keep-tool-only` 로 남길 수 있음
+### 2. Classify + Merge + Filter (파이프라인 순서 고정)
 
-요약 생성 (한 turn 당 한 줄):
-- 캐시 hit (`~/.cache/lineage/<schema_version>/<sid>/<turn_uuid>.txt`) → 그대로
-- miss → naive heuristic (첫 문장 또는 80자) + 캐시에 0600 쓰기
-- **품질 가이드**: 동사 시작 / 30-120자 / 핵심 수치 / 이모지 1개 허용
+`parse → classify → merge_assistant_runs → drop_echo_exchanges → hide-tool-only → range/last`
 
-### 3. Redact (다층)
+**레코드 분류** — 위치가 아니라 **형태**로 판정(사용자 정정·인용 질문을 지우지 않기 위해):
+- 래퍼 블록(`<system-reminder>` 등) → 항상 제거. 남은 게 있으면 태그를 **인용한 진짜 메시지**로 보존.
+- Stop hook feedback / `[Request interrupted` → 항상 폐기(`--keep-trivia` 로도 안 살림).
+- 스킬 본문(`Base directory for this skill:`) / 워크플로 본문 / 하네스 오류 → 폐기(`--keep-trivia` 시 보존).
+- 이미지 노트(`[Image: original …]`) → `🖼 이미지 첨부` 로 치환(첨부 사실 보존).
+- compaction 요약 → 구분선(pill)으로 표시.
+- `<agent-message>`/`<teammate-message>` → **회색 에이전트 버블**(발신자명 표시, idle JSON은 폐기).
+- 조작 명령(`/copy` 등 이름 기반; 플러그인 명령 `ns:name` 은 항상 보존) → 폐기(`--keep-trivia` 시 보존).
+- 에코 교환(짧은 질문 + 도구 없는 토큰 답변) → 구조로 폐기(`--keep-trivia` 시 보존).
 
-1차: `detect-secrets>=1.5` (pip 설치 시). 미설치 → 내장 fallback + stderr WARN.
+**턴 병합**: Claude 한 응답이 본문+tool_use 레코드로 쪼개져 기록되므로, `--hide-tool-only` **전에**
+연속 assistant 레코드를 병합(도구 합산·첫 레코드 타임스탬프). 그래야 `🔧 도구 N건`이 표시된다.
 
-내장 7-pattern:
-- `AKIA[0-9A-Z]{16}`, `ASIA[0-9A-Z]{16}` (AWS IAM key)
-- `gh[posru]_[A-Za-z0-9]{36}` (GitHub PAT)
-- `xox[bpars]-...` (Slack token)
-- `eyJ...\..\..` (JWT)
-- `-----BEGIN [A-Z ]+PRIVATE KEY-----...END...` (private key block)
-- `(?i)(?:password|암호|비번|패스워드)\s*[:=]\s*['"]...['"]` (한글/영문 평문)
+### 3. Summarize (한 turn 당 한 줄)
 
-보조: Shannon entropy ≥ 4.5 인 32+ 자리 base64-like 문자열 → `[REDACTED:entropy]`.
+- 캐시 hit(`~/.cache/lineage/<schema>/<sid>/<uuid>-<digest>.txt`) → 그대로. digest 는 본문+요약기버전
+  해시라 **요약기를 고치면 자동 무효화**된다.
+- miss → head+tail 추출(도입이 순수 의도문이면 결론절을 끝에서 읽어 승격) + 0600 캐시 쓰기.
+- 요약 저장은 항상 **redact 적용 후**(평문 secret 이 디스크에 남지 않음).
 
-확장: `--redact-extra "k1,k2"` 사용자 keyword substring match.
+### 4. Redact (다층)
 
-부분 마스킹: `--redact-mode mask` 시 `abcd****wxyz` (8자+ 한정).
+1차 `detect-secrets>=1.5`(pip 설치 시), 미설치 → 내장 fallback + WARN.
+내장: AWS IAM(AKIA/ASIA)·GitHub PAT·Slack·JWT·private key·한/영 평문 password·Shannon entropy≥4.5.
+확장 `--redact-extra "k1,k2"`. 부분 마스킹 `--redact-mode mask`.
 
-### 4. Render
+### 5. Render
 
-**HTML 템플릿** (lineage.py 내 인라인) — KakaoTalk 톤 CSS 변수:
+- 사용자=노란 우측 버블(400자 초과면 접힘), Claude=흰 좌측(요약+`<details>` 상세), 에이전트=회색 좌측.
+- Claude/에이전트/긴 사용자 상세는 **마크다운 렌더**(외부 라이브러리 0): 헤딩·불릿·번호·표·코드펜스·
+  인용·굵게·기울임·취소선·인라인코드·링크(`https?://` 만). `html.escape` **후에만** 변환하므로 어떤
+  입력도 마크업을 주입할 수 없다. (중첩 리스트는 평탄화, 각주 미지원.)
+- 날짜/세션전환/compaction 은 **형태가 다른 알약**으로 구분. 헤더 우측은 스크롤에 따라 현재 날짜/세션 갱신.
+- 단축키: `A` 전체펼침 · `Z` 전체접기 · `J/K` 다음/이전 내 메시지 · `T/B` 맨위/맨아래 · `?` 도움말 · `Esc` 닫기.
+  (Ctrl/Cmd/Alt·한글 IME 안전 — `e.code` 우선이라 브라우저 기본 동작을 가로채지 않음.)
+- 우하단 `?` 버튼으로 범례/단축키 오버레이(배경 클릭으로만 닫힘).
 
-```css
-:root {
-  --bg:       #abc1d1;   /* 채팅 배경 (청회색) */
-  --me:       #fee500;   /* 사용자 버블 (카카오 노랑) */
-  --me-text:  #3c1e1e;
-  --bot:      #ffffff;   /* Claude 버블 (흰색) */
-  --bot-text: #222222;
-  --meta:     #516680;   /* 시간 스탬프 */
-  --header:   #3b5e7a;   /* 상단 헤더 */
-}
-```
+**출력 파일명**: 기본 `work/lineage-{session-name}.html`(`customTitle` 슬러그, 없으면 sid 앞 8자;
+`--all-sessions` 는 `all-sessions`). basename 끝에 `_YYMMDD+HHMM` 자동 부착(이미 있으면 그대로 — idempotent).
 
-4 placeholder 를 `str.replace()` 로 치환:
-- `{{TITLE}}` → `--title` 인자 (HTML escape 적용)
-- `{{HEADER_TITLE}}` → 동일
-- `{{DATE_RANGE}}` → 첫/마지막 turn 의 날짜 범위
-- `{{TURNS}}` → user/bot row HTML 결합
+### 6. Verify (self-test)
 
-사용자 메시지 = 노란 우측 버블 (`<div class="row me">`), Claude 메시지 = 흰 좌측 + `<details><summary>요약</summary><div class="detail">상세</div></details>`. 날짜 변경 시 `<div class="day">━━ YYYY-MM-DD ━━</div>` 삽입.
+`self_verify()` 가 출력 HTML 에 대해:
+1. `HTMLParser().feed()` 예외 없음.
+2. 나열된 모든 태그(details/div/p/ul/ol/li/table/… /strong/em/del/a/summary/h3-6) 열림==닫힘.
+3. **HTMLParser 스택으로 오배치 검출**(void 요소 14종 제외) — `<strong>a<em>b</strong>c</em>` 같은
+   개수는 맞지만 어긋난 마크업을 잡는다(브라우저가 조용히 복구해 증상을 감추므로 소스에서 검증).
+4. 실제 태그 속성에 이벤트 핸들러(`on*`) 없음 · 외부 stylesheet/script 없음 · placeholder 미치환 없음.
 
-**출력 파일명 규칙**:
-- **기본 (no `--output`)**: `work/lineage-{session-name}.html` — session-name 은 jsonl 의 `customTitle` 레코드에서 추출 (slug 화: 영숫자·한글·`-`·`.`만 유지, 최대 40자). 없으면 session_id 앞 8자.
-- **사용자 지정 (`--output PATH`)**: PATH 그대로 사용.
-- **타임스탬프 suffix (양쪽 공통)**: basename 끝(확장자 직전) 에 `_YYMMDD+HHMM` 자동 부착. 예시:
-  - default + customTitle "init" → `work/lineage-init_260523+1846.html`
-  - `--output work/report.html` → `work/report_260523+1846.html`
-- 이미 같은 패턴이 붙어있으면(`_\d{6}\+\d{4}$`) 추가 안 함 (idempotent).
-
-### 5. Verify (self-test)
-
-`lineage.py` 의 `self_verify()` 가 출력 HTML 에 대해:
-1. `HTMLParser().feed(...)` 예외 없음
-2. `<details>` 열림 == 닫힘, `<div>` 열림 == 닫힘
-3. `<link rel="stylesheet"` 부재 (외부 자원 0)
-4. `<script src=` 부재
-5. 알려진 template placeholder (`{{TITLE}}` 등 4개) 미치환 없음
-
-WARN 발견 시 stderr 로 보고, 출력은 그대로 작성 (인간 검토 가능).
+WARN 발견 시 stderr 보고, 출력은 그대로 작성(인간 검토 가능).
 
 ## Reviewer Quality Gate (Critic agent 분리 호출)
 
-자동 호출 X — `lineage.py` 가 5 sample JSON 을 출력 (`work/.<output>.reviewer-input.json`), 사용자 또는 후속 turn 에서:
+자동 호출 X — `lineage.py` 가 5 sample JSON(`work/.<output>.reviewer-input.json`)을 출력.
+새 요약기(head+tail)를 쓰되 입출력 계약은 그대로:
 
-```
-Skill("oh-my-claudecode:critic")
-```
-
-**Critic 호출 input contract** (JSON array):
-```json
-[
-  {"idx": 0, "original_detail": "원문 text 일부 (≤500자)", "generated_summary": "1줄 요약"},
-  ...
-]
-```
-
-**Critic 출력 contract** (JSON array):
-```json
-[
-  {"idx": 0, "recoverable": true,  "reason": "summary 가 detail 의 동사+산출물을 보존"},
-  {"idx": 1, "recoverable": false, "reason": "summary 가 동사로 시작 안 함, 핵심 수치 누락"},
-  ...
-]
-```
-
-**판정**: 5/5 `recoverable=true` → PASS. 미달 → ITERATE (필요 시 `--rebuild-summaries` + Summarization 가이드 재학습).
-
-**Timeout**: 60s. Critic 출력이 JSON parse 실패 → stderr WARN + exit 2 (혹은 `--skip-reviewer` 면 warn 후 진행).
-
-**`--skip-reviewer`**: 빠른 export 가 필요할 때만. quality gate 미통과 명시 (stderr `WARN: quality gate not enforced`).
-
-**`--reviewer-output FILE` (게이트 실효화)**: 이 옵션이 주어지면 lineage.py 가 critic 응답 JSON 파일을 폴링 (`--reviewer-timeout`, 기본 60s) 후 자동 파싱·판정한다.
-- PASS (모든 `recoverable=true`) → exit 0 + `[lineage] PASS: quality gate N/N`
-- FAIL (1건 이상 `recoverable=false`) → exit 2 + 각 sample 의 reason 출력
-- Timeout (파일 부재) → exit 2 + `reviewer-output not found within Ns`
-- Parse 실패 (잘못된 JSON) → exit 2 + 파서 에러
-
-이로써 "generator ≠ verifier" 회로 분리가 명목상이 아닌 실제 차단 게이트로 동작한다.
+**Critic input** (JSON array): `[{"idx":0,"original_detail":"…","generated_summary":"…"}, …]`
+**Critic output** (JSON array): `[{"idx":0,"recoverable":true,"reason":"…"}, …]`
+**판정**: 5/5 `recoverable=true` → PASS. `--reviewer-output FILE` 주면 lineage.py 가 폴링·판정
+(`--reviewer-timeout` 기본 60s; FAIL/Timeout/parse실패 → exit 2). `--skip-reviewer` 로 끔.
 
 ## Cache & Secret Hygiene
 
-**v2 부터 캐시에 저장되는 텍스트는 redact() 적용 후의 redacted summary 만이다.** 캐시 파일 자체에 평문 secret 이 남지 않음 — 0600 권한은 defence-in-depth 이고 redaction 이 primary safeguard. 캐시 schema 가 v1 → v2 로 bump 되었으므로 `~/.cache/lineage/1/` 디렉토리는 자동으로 무효화 (참조 안 됨). 수동 삭제 권장: `--purge-cache` 또는 `rm -rf ~/.cache/lineage/1`.
+캐시에 저장되는 텍스트는 redact() 적용 후의 redacted summary 만이다(평문 secret 미저장).
+캐시키에 요약기 버전이 포함돼 알고리즘 변경 시 자동 무효화. 스키마 bump 시 옛 디렉토리는 참조 안 됨 —
+`--purge-cache` 로 정리 권장.
+
+## Testing
+
+`skills/lineage/test_lineage.py`(표준 unittest, 외부 의존 0). 실행:
+
+```bash
+python3 -m unittest test_lineage        # (Python 3.7+; EL8 기본 3.6은 python3.11/3.12 사용)
+```
+
+`scripts/smoke-test.js` 가 CI에서 인터프리터 ≥3.7 을 탐지해 자동 실행(≥3.7 부재 시 skip).
+테스트 파일은 npm 패키지에서 제외된다(`files[]` `!**/test_*.py`).
+
+### 브라우저 수동 체크리스트 (JS/CSS — 자동 검증 밖)
+
+산출 HTML 을 브라우저로 열어 확인:
+- 첫 로드 시 접혀 있는가 / `--open` 시 펼쳐지는가.
+- `A`/`Z`/`J`/`K`/`T`/`B`/`?`/`Esc` 동작, 한글 IME 켠 상태에서도 죽지 않는가, `Ctrl+A`/`Ctrl+Z` 가로채지 않는가.
+- 날짜/세션/compaction 알약이 형태로 구분되고 대비가 충분한가, 헤더 우측이 스크롤에 따라 갱신되는가.
+- `?` 오버레이가 배경 클릭으로만 닫히고 포커스가 되돌아오는가, 가로 넘침 없는가.
 
 ## Installation
 
@@ -187,36 +180,35 @@ mkdir -p ~/.claude/skills/lineage
 cp /path/to/lineage/SKILL.md   ~/.claude/skills/lineage/
 cp /path/to/lineage/lineage.py ~/.claude/skills/lineage/
 chmod +x ~/.claude/skills/lineage/lineage.py
-
-# (선택) 강한 redaction
-pip install 'detect-secrets>=1.5'
-
-# 호출
+pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 /lineage
 ```
 
 ## Tool / Subagent 의존성
 
-- `lineage.py` (Python 3.7+) — script 자체. Claude 호출 없이 결정론 영역 처리.
-- `Skill("oh-my-claudecode:critic")` — reviewer 분리 호출 (사용자 또는 후속 turn 트리거).
-- `detect-secrets>=1.5` (pip, 선택) — 1차 redaction. 미설치 → 자동 fallback.
-- 자동 호출 금지: `lineage.py` 가 다른 OMC 스킬을 직접 invoke 하지 않음 (회로 분리).
+- `lineage.py` (Python 3.7+) — 결정론 본체. Claude 호출 없음.
+- `Skill("oh-my-claudecode:critic")` — reviewer 분리 호출(사용자/후속 turn 트리거).
+- `detect-secrets>=1.5` (pip, 선택) — 1차 redaction. 미설치 → fallback.
+- 자동 호출 금지: `lineage.py` 가 다른 스킬을 직접 invoke 하지 않음(회로 분리).
 
 ## 한계
 
-- jsonl 포맷 변경에 취약 — Claude Code 업데이트 시 schema-tolerant 가 흡수하나, 새 record type 이 본문 데이터를 담으면 누락 가능
-- 요약은 heuristic (첫 문장 80자) 으로 시작 — 의미상 더 나은 요약은 사용자가 캐시 파일을 직접 편집하면 다음 호출부터 반영됨
-- detect-secrets 가 없으면 internal 한국어 secret 패턴 누락 가능 — `--redact-extra` 로 보완
-- 500+ turn 출력은 브라우저 렌더 느림 — `--last N` 권장
-- 비 Claude Code 환경 (web claude.ai / Desktop / API) 은 `--from-transcript -` stdin 모드로만 동작
+- 자동탐색은 Claude Code 의 `~/.claude/projects/` 레이아웃을 가정 — 다른 런타임/비-ASCII cwd 는
+  `--session` / `--from-transcript` 로 쓴다.
+- 요약은 추출식(head+tail) — 말미 정리 문장을 결론 대신 고르는 경우가 있다(의미 판단 필요).
+- 마크다운의 **중첩 리스트는 평탄화**되고 각주는 미지원.
+- 사용자가 질문에 래퍼 블록(`<task-notification>…`)을 **인용**하면 문장은 남고 그 블록만 사라진다.
+- 에코/의도문 판정 문턱은 단일 코퍼스 튜닝값 — 과삭제는 stderr 의 유형별 카운트로 가시화된다.
+- 500+ turn 출력은 브라우저 렌더가 느릴 수 있음 — `--last N` 권장.
 
 ## File Layout
 
 ```
 ~/.claude/skills/lineage/
 ├── SKILL.md          (이 파일)
-└── lineage.py        (실행 본체, Python 3.7+)
+├── lineage.py        (실행 본체, Python 3.7+)
+└── test_lineage.py   (회귀 테스트, repo 전용 · npm 미포함)
 
 ~/.cache/lineage/
-└── <schema_version>/<session_id>/<turn_uuid>.txt    (0700/0600)
+└── <schema_version>/<session_id>/<turn_uuid>-<digest>.txt   (0700/0600)
 ```

@@ -127,9 +127,9 @@ node -e "const m=require('./codex/manifest.json');console.log(m.surfaces.filter(
 node -e "const p=require('./package.json');console.log(p.version, JSON.stringify(p.dependencies||{}))"
 ```
 
-**앞의 두 줄이 갈리면 그 차이가 사실이다.** 이 저장소에서 실제로 갈린다: 디렉터리는 49 인데 `SKILL.md` 보유는 48 이다.
+**앞의 두 줄이 갈리면 그 차이가 사실이다.** 이 저장소에서 실제로 갈린다: 디렉터리는 55 인데 `SKILL.md` 보유는 54 이다.
 `skills/ultra-init-workspace/` 는 런타임 산출물 디렉터리라 `SKILL.md` 가 없고, 그래서 배포 매니페스트에도 없고 `package.json` `files[]` 도 negation 으로 뺀다.
-즉 "디렉터리를 세면 스킬 수" 라는 그럴듯한 가정이 **여기서 1 을 더 센다.** 세 곳(매니페스트·`files[]`·테스트의 `SKILL.md` 필터)이 이미 48 을 말하는데 디렉터리 카운트만 49 라면, 틀린 쪽은 카운트다.
+즉 "디렉터리를 세면 스킬 수" 라는 그럴듯한 가정이 **여기서 1 을 더 센다.** 세 곳(매니페스트·`files[]`·테스트의 `SKILL.md` 필터)이 이미 54 를 말하는데 디렉터리 카운트만 55 라면, 틀린 쪽은 카운트다.
 
 **README 는 어떤 경우에도 사실이 아니다. 그리고 사실을 세는 명령도 틀릴 수 있다. 세 소스가 같은 값을 말할 때만 통과다.**
 
@@ -139,7 +139,7 @@ node -e "const p=require('./package.json');console.log(p.version, JSON.stringify
 
 | README 주장 | 위치 | 코드 사실 | 근거 | 판정 |
 |---|---|---|---|---|
-| "스킬 42개" | 10행·131행 | 48 | `ls -d skills/*/SKILL.md` = 48, 매니페스트 skill 표면 = 48 (디렉터리 카운트는 49 라 셋 중 혼자 다르다) | 드리프트: 2곳 다 고침 |
+| "스킬 42개" | 10행·131행 | 53 | `ls -d skills/*/SKILL.md` = 54, 매니페스트 skill 표면 = 54 (디렉터리 카운트는 55 라 셋 중 혼자 다르다) | 드리프트: 2곳 다 고침 |
 | "`--fast` 지원" | 60행 | 없음 | 파서에 해당 플래그 없음 | 드리프트: 문장 삭제 |
 | "Node 18+ 필요" | 20행 | `engines.node: ">=18"` | package.json | 통과 |
 
