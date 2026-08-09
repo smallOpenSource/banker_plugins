@@ -1,6 +1,9 @@
 # RELEASING — banker 릴리스 절차 (유지보수자 전용)
 
 banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
+
+> **용어 정의 — "채널"은 호스팅 위치가 아니라 릴리스마다 따로 갱신해야 하는 지점이다.** 실제 배포처는 **GitHub·npm 2곳**뿐이고, Claude 마켓플레이스는 업로드할 별도 레지스트리가 없다(GitHub 저장소 안의 `.claude-plugin/marketplace.json` 을 Claude Code 가 읽는다). 그런데도 독립 항목으로 세는 이유는, `npm publish` 와 `git push` 를 둘 다 해도 `marketplace.json` 의 `metadata.version` 을 안 올리면 **코드만 새것이고 마켓플레이스 메타는 옛 버전으로 남는** 별개 실패가 나기 때문이다.
+
 버전의 단일 출처(single source of truth)는 `.claude-plugin/plugin.json` 의 `version` 이다.
 
 이 문서는 릴리스마다 밟는 순서다.
