@@ -1,0 +1,657 @@
+<title>lineage 스킬 변경 요청</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --surface:#ffffff; --surface-2:#eef2f6; --code-bg:#f1f5f8;
+    --ink:#14202c; --ink-2:#48596b; --ink-3:#7a8b9c;
+    --rule:#dbe2ea; --rule-2:#c6d1dc;
+    --accent:#0e6b6b;
+    --bad:#b02a1f; --bad-soft:#fbeae8;
+    --warn:#8a5800; --warn-soft:#fbf1de;
+    --ok:#1b6b3f; --ok-soft:#e6f2ea;
+    --mono:"Cascadia Mono",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Malgun Gothic","맑은 고딕",
+           "Apple SD Gothic Neo",sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0f1519; --surface:#161e26; --surface-2:#1d262f; --code-bg:#111820;
+      --ink:#e4ecf3; --ink-2:#a8b8c6; --ink-3:#75879a;
+      --rule:#28333d; --rule-2:#36444f; --accent:#3fa8a0;
+      --bad:#e88a80; --bad-soft:#331b18;
+      --warn:#d8a24a; --warn-soft:#332616;
+      --ok:#68c091; --ok-soft:#16301f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f1519; --surface:#161e26; --surface-2:#1d262f; --code-bg:#111820;
+    --ink:#e4ecf3; --ink-2:#a8b8c6; --ink-3:#75879a;
+    --rule:#28333d; --rule-2:#36444f; --accent:#3fa8a0;
+    --bad:#e88a80; --bad-soft:#331b18;
+    --warn:#d8a24a; --warn-soft:#332616;
+    --ok:#68c091; --ok-soft:#16301f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+       font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:980px;margin:0 auto;padding:56px 24px 96px;
+        display:flex;flex-direction:column;gap:44px}
+  code,kbd,.mono{font-family:var(--mono);font-size:.88em}
+  code{background:var(--surface-2);padding:1px 5px;border-radius:3px;word-break:break-all}
+  pre{margin:0;background:var(--code-bg);border:1px solid var(--rule);
+      border-left:3px solid var(--accent);padding:11px 14px;overflow-x:auto;
+      font-family:var(--mono);font-size:12.5px;line-height:1.55;color:var(--ink-2);
+      white-space:pre}
+  pre b{color:var(--ink);font-weight:700}
+  pre i{color:var(--ink-3);font-style:normal}
+  a{color:var(--accent)}
+  a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  header{display:flex;flex-direction:column;gap:14px;
+         border-bottom:2px solid var(--ink);padding-bottom:22px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;
+           text-transform:uppercase;color:var(--accent);font-weight:700}
+  h1{margin:0;font-size:31px;line-height:1.2;letter-spacing:-.02em;
+     text-wrap:balance;font-weight:700}
+  .lede{margin:0;max-width:72ch;color:var(--ink-2);font-size:16px}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+         gap:1px;background:var(--rule);border:1px solid var(--rule);margin-top:6px}
+  .facts div{background:var(--surface);padding:11px 14px}
+  .facts dt{font-size:11px;letter-spacing:.06em;color:var(--ink-3);
+            text-transform:uppercase;font-family:var(--mono)}
+  .facts dd{margin:3px 0 0;font-family:var(--mono);font-size:15px;font-weight:700;
+            font-variant-numeric:tabular-nums}
+
+  section{display:flex;flex-direction:column;gap:18px}
+  h2{margin:0;font-size:21px;letter-spacing:-.01em;font-weight:700;
+     padding-bottom:8px;border-bottom:1px solid var(--rule-2);
+     display:flex;align-items:baseline;gap:11px;text-wrap:balance}
+  h2 .n{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:700}
+  h3{margin:0;font-size:16px;font-weight:700;letter-spacing:-.005em}
+  p{margin:0;max-width:74ch}
+  .note{color:var(--ink-2);font-size:14px;max-width:74ch}
+
+  .items{display:flex;flex-direction:column;border:1px solid var(--rule);
+         background:var(--surface)}
+  .item{padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+  .item + .item{border-top:1px solid var(--rule)}
+  .head{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .id{font-family:var(--mono);font-size:12px;font-weight:700;color:#fff;
+      background:var(--accent);padding:2px 7px;border-radius:3px;letter-spacing:.03em}
+  .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;
+       letter-spacing:.03em;border:1px solid currentColor}
+  .t-bug{background:var(--bad-soft);color:var(--bad)}
+  .t-feat{background:var(--ok-soft);color:var(--ok)}
+  .item h3{flex:1 1 260px}
+  .item dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 14px;
+           align-items:baseline}
+  .item dt{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+           letter-spacing:.05em;white-space:nowrap;padding-top:2px}
+  .item dd{margin:0;max-width:70ch}
+  .evi{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);
+       background:var(--surface-2);padding:7px 11px;border-left:3px solid var(--ink-3);
+       overflow-x:auto;white-space:pre-wrap;font-variant-numeric:tabular-nums}
+
+  .tw{overflow-x:auto;border:1px solid var(--rule);background:var(--surface)}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{text-align:left;padding:8px 13px;border-bottom:1px solid var(--rule);
+        vertical-align:top}
+  th{background:var(--surface-2);font-size:11.5px;letter-spacing:.06em;
+     text-transform:uppercase;color:var(--ink-2);font-family:var(--mono);white-space:nowrap}
+  tbody tr:last-child td{border-bottom:0}
+  td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+  td.now{font-weight:700}
+
+  .rules{display:flex;flex-direction:column;border:1px solid var(--bad);
+         background:var(--surface)}
+  .rule{padding:16px 20px;display:flex;flex-direction:column;gap:6px}
+  .rule + .rule{border-top:1px solid var(--rule)}
+  .rule b{color:var(--bad)}
+  .rule .why{color:var(--ink-2);font-size:14px;max-width:72ch}
+
+  ul{margin:0;padding-left:19px;display:flex;flex-direction:column;gap:5px;max-width:74ch}
+  li::marker{color:var(--accent)}
+  footer{border-top:1px solid var(--rule-2);padding-top:20px;color:var(--ink-3);
+         font-size:13px;display:flex;flex-direction:column;gap:6px}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">banker plugin · skills/lineage · 변경 요청</div>
+  <h1>lineage 스킬 — 세션 export 결함 수정 및 기능 추가</h1>
+  <p class="lede">
+    실사용 중 산출물의 <strong>3분의 2가 대화가 아니었고</strong>, 일부는 사용자가 쓴 글로
+    잘못 표시되고 있었습니다. 원인 규명·수정·검증을 마쳤습니다. 이 문서 하나로 구현이
+    가능하도록 판별 규칙과 함수 계약을 본문에 담았습니다.
+  </p>
+  <dl class="facts">
+    <div><dt>대상</dt><dd>lineage.py<br>SKILL.md</dd></div>
+    <div><dt>코드 규모</dt><dd>724 → 2,021줄</dd></div>
+    <div><dt>결함</dt><dd>15건</dd></div>
+    <div><dt>기능</dt><dd>4건</dd></div>
+    <div><dt>검증</dt><dd>103항목</dd></div>
+    <div><dt>실측 기반</dt><dd>6세션 62 MB<br>4,645 레코드</dd></div>
+  </dl>
+</header>
+
+<section>
+  <h2><span class="n">배경</span> 왜 고쳐야 했나</h2>
+  <p>
+    export 된 말풍선을 원본 <code>.jsonl</code> 레코드와 1:1로 대조했습니다.
+    사용자 말풍선으로 표시된 것 중 실제 사용자가 쓴 것은 3분의 1이 채 되지 않았습니다.
+  </p>
+  <div class="tw"><table>
+    <thead><tr><th>사용자 말풍선으로 렌더되던 것</th><th>건수</th><th>분량</th><th>실제 정체</th></tr></thead>
+    <tbody>
+      <tr><td>사용자가 직접 쓴 메시지</td><td class="num">52</td><td class="num">30 KB</td><td>정상</td></tr>
+      <tr><td>하네스가 주입한 skill 본문</td><td class="num">23</td><td class="num">118 KB</td><td>스킬 매뉴얼 전문</td></tr>
+      <tr><td>서브에이전트·동료 메시지</td><td class="num">69</td><td class="num">243 KB</td><td>기계 보고서</td></tr>
+      <tr><td>compaction 요약</td><td class="num">5</td><td class="num">76 KB</td><td>대화 요약본</td></tr>
+      <tr><td>세션 조작 명령</td><td class="num">25</td><td class="num">3 KB</td><td>작업과 무관</td></tr>
+      <tr><td>훅 주입 · 중단 표시 · 작업 알림 XML</td><td class="num">5</td><td class="num">19 KB</td><td>모델에게 주는 지시</td></tr>
+      <tr><td>이미지 첨부</td><td class="num">2</td><td class="num">—</td><td>좌표 안내문으로 치환돼 있었음</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">
+    이미지 항목이 특히 문제였습니다. 사용자가 이미지를 붙였는데 화면에는
+    <code>[Image: original 3000x480, displayed at 2000x320. Multiply coordinates by 1.50…]</code>
+    라는 <em>모델에게 주는 안내문</em>이 사용자 발언으로 표시됐습니다.
+    첨부 사실은 사라지고 엉뚱한 문장이 그 자리를 차지한 것입니다.
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">A</span> 레코드 분류</h2>
+
+  <div class="items">
+    <div class="item">
+      <div class="head"><span class="id">A-1</span><span class="tag t-bug">결함</span>
+        <h3>래퍼 없이 들어오는 하네스 주입을 전혀 걸러내지 못함</h3></div>
+      <dl>
+        <dt>원인</dt><dd>기존 필터는 <code>&lt;system-reminder&gt;</code> 류 <strong>래퍼 태그가 있는 레코드만</strong> 처리. skill 본문·compaction·에이전트 보고는 <code>type=user</code>로 들어오지만 태그가 없음.</dd>
+        <dt>조치</dt><dd>첫머리 형태로 판별. 아래가 전부이며, 순서도 이대로여야 함.</dd>
+      </dl>
+<pre>_NOISE_TAGS = ("system-reminder", "local-command-caveat", "local-command-stdout",
+               "local-command-stderr", "teammate-message", "command-message",
+               "command-args", "command-name", "task-notification")
+_NOISE_BLOCK_RE = re.compile(r"&lt;(%s)\b[^&gt;]*&gt;.*?&lt;/\1&gt;" % "|".join(_NOISE_TAGS), re.S)
+_NOISE_CLOSE_RE = re.compile(r"&lt;/(%s)&gt;" % "|".join(_NOISE_TAGS))   <i># 중첩 시 남는 고아 닫는태그</i>
+
+_SKILL_BODY_RE    = re.compile(r"^\s*Base directory for this skill:")
+_WORKFLOW_BODY_RE = re.compile(r'^\s*Run the "[^"\n]+" workflow\.')
+_COMPACTION_RE    = re.compile(r"^\s*This session is being continued from a previous conversation")
+_HOOK_FEEDBACK_RE = re.compile(r"^\s*Stop hook feedback:")
+_INTERRUPT_RE     = re.compile(r"^\s*\[Request interrupted")
+_IMAGE_NOTE_RE    = re.compile(r"^\s*\[Image:\s*original\s+\d+x\d+")
+_SYS_ERROR_RE     = re.compile(r"^\s*(?:Login expired|Please run /login|API Error)")
+
+<b>role == "user" 일 때의 판정 순서</b>
+  1. _HOOK_FEEDBACK_RE / _INTERRUPT_RE      → 폐기 <i>(항상. --keep-trivia 로도 안 살림)</i>
+  2. _SKILL_BODY_RE / _WORKFLOW_BODY_RE     → 폐기 <i>(drop_trivia 일 때만)</i>
+  3. _IMAGE_NOTE_RE                          → "🖼 이미지 첨부" 로 치환
+  4. _COMPACTION_RE                          → role="mark", 구분선 한 줄
+  5. split_agent_message()                   → role="agent" (A-2)
+  6. clean_user_text()                       → 빈 문자열이면 폐기</pre>
+      <div class="evi">사용자 말풍선 153 → 66 (단일 세션) · export 1,169 KB → 763 KB</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">A-2</span><span class="tag t-bug">결함</span>
+        <h3>에이전트 보고가 사용자 발언으로 표시됨</h3></div>
+      <dl>
+        <dt>조치</dt><dd>제3의 말풍선 종류 <code>.row.bot.agent</code> 신설, <code>from=</code>의 발신자명 표시. 아바타 없이 들여쓰고 요약 1줄 고정 — 32건 전부 바로 다음 응답이 판정을 다시 말하므로 <strong>답변의 각주로 격하</strong>.</dd>
+      </dl>
+<pre>_AGENT_WRAP_RE = re.compile(r"&lt;(agent-message|teammate-message)\b([^&gt;]*)&gt;(.*?)&lt;/\1&gt;", re.S)
+_AGENT_FROM_RE = re.compile(r'(?:from|teammate_id)="([^"]+)"')
+_PEER_LEAD_RE  = re.compile(r"^\s*Another Claude session sent a message:\s*")
+
+def split_agent_message(text):
+    <i># <b>부분 문자열 검사 금지.</b> 첫머리 구조 일치여야 한다 — 사용자가 태그를
+    # '언급만' 해도 에이전트로 뒤바뀌고, 인용한 래퍼 내용이 사용자 문장을 대체한다.</i>
+    m = _AGENT_WRAP_RE.match(_PEER_LEAD_RE.sub("", text.lstrip()))
+    if not m: return None, None
+    who = _AGENT_FROM_RE.search(m.group(2) or "")
+    <i># 하네스 안내문은 닫는 태그 <b>뒤</b>에 붙으므로 내부 텍스트만 취하면 자동 제외된다.
+    # 미리 잘라내면 그 문구를 인용한 보고서가 닫는 태그까지 함께 잘린다.</i>
+    body = m.group(3).strip()
+    if body.startswith('{"type"'): return (who.group(1) if who else "agent"), ""  <i># idle 알림 → 폐기</i>
+    return (who.group(1) if who else "agent"), body</pre>
+      <div class="evi">기계 알림(idle JSON) 39건 폐기 · 실제 보고 31건만 표시</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">A-3</span><span class="tag t-bug">결함</span>
+        <h3>슬래시 명령 판정이 사용자 글을 지움 — 양방향</h3></div>
+      <dl>
+        <dt>증상 1</dt><dd><strong>첫머리 위치</strong>로 명령을 판정하면, <code>&lt;system-reminder&gt;</code> 뒤에 태그를 인용한 진짜 질문이 <code>/copy</code> 한 줄로 증발.</dd>
+        <dt>증상 2</dt><dd>주입 본문을 <strong>“명령 레코드 다음”</strong>이라는 위치로 잡으면, 명령이 아무것도 주입하지 않았을 때 사용자가 이어서 쓴 <strong>정정·취소 메시지가 지워짐</strong>. 하필 기록의 의미를 뒤집는 문장.</dd>
+        <dt>조치</dt><dd>명령은 <strong>잔여가 비었는가</strong>로, 주입 본문은 <strong>형태</strong>(<code>_WORKFLOW_BODY_RE</code>)로 판정.</dd>
+      </dl>
+<pre>def clean_user_text(text, drop_harness=True):
+    out = _NOISE_CLOSE_RE.sub("", _NOISE_BLOCK_RE.sub("", text)).strip()
+
+    mb = re.match(r"^/([\w-]+)\s*$", out)          <i># 래퍼 없이 맨 명령만 온 레코드</i>
+    if mb and drop_harness and mb.group(1) in _HARNESS_CMDS: return ""
+
+    if out:
+        <i># 무언가 살아남았다 = 태그를 <b>인용</b>한 메시지다. 그대로 둔다.
+        # 실측: 진짜 명령 레코드는 141바이트짜리 순수 래퍼였다.</i>
+        return "" if _NOISE_OPEN_RE.match(out) else out
+
+    m = re.search(r"&lt;command-name&gt;([\s\S]*?)&lt;/command-name&gt;", text)
+    if not m: return ""
+    name = m.group(1).strip()
+    if drop_harness and ":" not in name and name.lstrip("/") in _HARNESS_CMDS: return ""
+    a = re.search(r"&lt;command-args&gt;([\s\S]*?)&lt;/command-args&gt;", text)
+    return (name + (" " + a.group(1).strip() if a and a.group(1).strip() else "")).strip()</pre>
+      <div class="evi">위치 규칙의 순이득은 62MB 전체에서 레코드 1건 · 제거 후 출력 완전 동일(사용자 말풍선 52 → 52, 추가 0 / 삭제 0)</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">A-4</span><span class="tag t-feat">기능</span>
+        <h3>작업과 무관한 것 걷어내기 <span class="mono">--keep-trivia</span></h3></div>
+      <dl>
+        <dt>요구</dt><dd>“<code>1이라고 말해</code> 라는것이라거나 effort 지정 처럼 전체 진행 내용과 전혀 무관한 것들은 제외.”</dd>
+        <dt>설계</dt><dd><strong>명령 이름</strong>으로 판정. “인자가 없으면 노이즈”는 오답 — <code>/banker:append_wiki</code>는 인자가 없어도 실제 작업. 에코 교환은 키워드가 아니라 <strong>구조</strong>로 판정.</dd>
+      </dl>
+<pre>_HARNESS_CMDS = {
+    "agents","bug","clear","compact","config","context","copy","cost","doctor",
+    "effort","exit","export","help","hooks","ide","install-github-app","login",
+    "logout","mcp","memory","migrate-installer","model","output-style",
+    "permissions","privacy-settings","quit","release-notes","resume","status",
+    "statusline","terminal-setup","todos","upgrade","usage","vim",
+}
+<i># 일부러 제외: /add-dir 는 읽을 수 있는 디렉터리를 바꾸고, /init 은 CLAUDE.md 를 만든다.
+# 플러그인 명령(/ns:name)은 절대 조작 명령이 아니다 — 이름에 ':' 가 있으면 무조건 보존.</i>
+
+ECHO_ASK, ECHO_REPLY = 40, 5
+
+def drop_echo_exchanges(turns):
+    <i># 아무 일도 하지 않은 교환은 <b>구조</b>로 잡는다: 짧은 질문 + 도구 0건의 토큰 답변.
+    # 문턱 5의 근거 — 62MB 안에서 도구 없는 40자 이하 답변은 "1"(1자)과
+    # "Login expired…"(33자) 둘뿐이었고, 한국어 확인("네, 맞습니다." 8자)은 살려야 한다.
+    # <b>답을 지우면 질문도 함께 사라진다.</b></i>
+    drop = set()
+    for i, t in enumerate(turns):
+        if t["role"] != "user" or len(t["text"]) &gt; ECHO_ASK: continue
+        n = turns[i+1] if i+1 &lt; len(turns) else None
+        if (n and n["role"] == "assistant" and not n["tools"]
+                and len(n["text"].strip()) &lt;= ECHO_REPLY
+                and n.get("session") == t.get("session")):   <i># --all-sessions 가드</i>
+            drop |= {i, i+1}
+    return [t for i, t in enumerate(turns) if i not in drop]</pre>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">B</span> 턴 병합과 요약</h2>
+  <div class="items">
+    <div class="item">
+      <div class="head"><span class="id">B-1</span><span class="tag t-bug">결함</span>
+        <h3><span class="mono">🔧 도구 N건</span> 표시가 한 번도 렌더된 적 없음</h3></div>
+      <dl>
+        <dt>원인</dt><dd>Claude Code는 한 응답을 <strong>본문 레코드 + tool_use 레코드</strong>로 쪼개 기록. 도구 레코드는 본문이 없어 <code>--hide-tool-only</code>에 전부 걸려 사라지고, 한 응답이 수십 개 말풍선으로 흩어짐.</dd>
+      </dl>
+<pre>def merge_assistant_runs(turns):
+    <i># 반드시 --hide-tool-only <b>앞에서</b> 수행.
+    # 순수 함수 — 입력을 변형하지 않아야 두 번 호출해도 도구가 중복 집계되지 않는다.
+    # 병합 턴은 <b>첫 레코드의 타임스탬프</b>를 갖는다(시작한 자리에 놓는다).</i>
+    merged = []
+    for t in turns:
+        p = merged[-1] if merged else None
+        if (p and t["role"] == "assistant" and p["role"] == "assistant"
+                and t.get("session") == p.get("session")):        <i># 세션 가드</i>
+            if t["text"]:
+                p["text"] = (p["text"] + "\n\n" + t["text"]).strip()  <i># 빈 줄로 이어야 문단이 산다</i>
+                p["parts"].append(t["text"])                          <i># 요약이 쓸 레코드 경계</i>
+            for k, v in t["tools"].items(): p["tools"][k] = p["tools"].get(k, 0) + v
+            continue
+        merged.append(dict(t, tools=dict(t["tools"]), parts=list(t["parts"])))
+    return merged</pre>
+      <div class="evi">Claude 말풍선 479 → 112 · 도구 표시 0건 → 1,293건</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">B-2</span><span class="tag t-bug">결함</span>
+        <h3>요약이 “무엇을 시작했다”만 말하고 결과가 사라짐</h3></div>
+      <dl>
+        <dt>원인</dt><dd>긴 턴의 첫 문장만 뽑음. 실행 구간의 결론은 끝에 있음.</dd>
+      </dl>
+<pre>SHORT_DETAIL = 160          <i># 이 아래는 본문이 곧 요약 → 접지 않는다</i>
+SINGLE_SPLIT_MIN = SHORT_DETAIL
+<i># 두 값을 다르게 두면 <b>접혀서 안 보이는데 요약은 머리만 있는</b> 사각지대가 생긴다.</i>
+_INTENT_ONLY_RE = re.compile(r"^.{0,30}(?:하겠습니다|합니다|해보겠습니다|확인합니다|봅니다)\.?$")
+
+def summarize_turn(turn):
+    parts = [p for p in turn.get("parts") or [] if p.strip()]
+    if len(parts) &lt; 2:
+        if len(turn["text"]) &lt; SINGLE_SPLIT_MIN: return naive_summary(turn["text"])
+        parts = [b for b in re.split(r"\n\s*\n", turn["text"]) if b.strip()] or parts
+        if len(parts) &lt; 2: return naive_summary(turn["text"])
+    head = naive_summary(parts[0])
+    <i># 도입이 순수 의도문이면 결론에 자리를 통째로 내준다</i>
+    if _INTENT_ONLY_RE.match(head):
+        only = naive_summary(_tail_block(parts), from_end=True)
+        if only and only != "(empty turn)": return _cut(only, 120)
+    <i># <b>결론 절은 마지막 블록을 끝에서부터 읽는다.</b> 앞에서 읽으면 결론이 아니라
+    # '두 번째 도입'이 나온다 — 접히는 턴의 46%가 마지막 블록 400자 초과였다.</i>
+    tail = naive_summary(_tail_block(parts), from_end=True)
+    if not tail or tail == head: return _cut(head, 120)       <i># 자르기 전 값끼리 비교할 것</i>
+    head = _cut(head, 58)
+    return head + " … " + _cut(tail, 120 - len(head) - 3)
+
+def _tail_block(blocks):
+    <i># 표·헤딩·코드펜스·15자 미만은 건너뛴다 — 결론 자리에 "| a | b |" 가 오지 않게.</i>
+    for b in reversed(blocks):
+        s = b.strip()
+        if len(s) &lt; 15 or s.startswith(("|", "```")) or re.match(r"^#{1,6}\s", s): continue
+        return b
+    return blocks[-1]
+
+<i># 문장 경계. 종결부호 뒤에 <b>공백 또는 끝</b>이 와야 하고, <b>앞이 숫자면 제외</b>한다.
+# 이 두 가드가 "Spring Framework 5.3", "2024. 08. 31.", "EOS.xlsx" 를 지킨다.
+# 부정 룩비하인드는 분리 지점 기준이므로 <b>폭 2</b> 여야 한다. (?&lt;![0-9]) 로 쓰면
+# 종결부호 자신을 검사하게 되어 가드가 전혀 걸리지 않는다.</i>
+_SENT_SPLIT = re.compile(r"(?&lt;=[.!?…])(?&lt;![0-9][.!?…])(?=\s|$)\s*|\n+")</pre>
+      <div class="evi">요약 중앙값 48자 → 100자 · 30자 미만 40% → 1% · 결론 포함 0% → 99%</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">B-3</span><span class="tag t-bug">결함</span>
+        <h3>요약 캐시가 요약기 변경을 감지하지 못함</h3></div>
+      <dl>
+        <dt>증상</dt><dd>알고리즘을 고쳤는데 같은 본문은 <strong>옛 요약을 계속 반환</strong> — 한 실행에 두 알고리즘의 결과가 섞임.</dd>
+      </dl>
+<pre>digest = sha256((turn["text"] + "\x00s" + str(SUMMARIZER_VERSION)).encode()).hexdigest()[:8]
+path   = cache_dir(turn.get("session") or session_id) / f"{turn['uuid']}-{digest}.txt"
+<i># 요약기를 고치면 SUMMARIZER_VERSION 을 올린다.
+# 반대로 <b>턴 집합만 바뀌는 변경(필터 추가 등)에는 올릴 필요가 없다</b> — 턴이 빠지면
+# 인접 응답이 재병합되어 본문 자체가 달라지고 내용 해시가 이미 그것을 잡는다.</i></pre>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">C</span> 마크다운 렌더 (신규)</h2>
+  <div class="items">
+    <div class="item">
+      <div class="head"><span class="id">C-1</span><span class="tag t-feat">기능</span>
+        <h3>본문 마크다운 렌더 <span class="mono">--no-markdown</span></h3></div>
+      <dl>
+        <dt>범위</dt><dd>헤딩·불릿·번호·표·코드펜스·인용·구분선·굵게·기울임·취소선·인라인코드·링크. 외부 라이브러리 0. 중첩 리스트·각주는 미지원.</dd>
+        <dt>안전</dt><dd><strong><code>html.escape</code> 이후에만</strong> 변환하므로 어떤 입력도 마크업을 주입할 수 없음. 링크는 <code>https?://</code> 로 앵커된 것만 <code>&lt;a&gt;</code>가 됨.</dd>
+      </dl>
+      <div class="evi">주입 벡터 25종 차단 확인 · 실제 세션 본문 620건 전수 렌더, 태그 불균형 0</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">C-2</span><span class="tag t-bug">결함</span>
+        <h3>강조 태그가 말풍선을 탈출해 이후 페이지 전체를 굵게 만듦</h3></div>
+      <dl>
+        <dt>원인</dt><dd>링크를 먼저 치환한 뒤 <strong>그 결과 위로</strong> 강조 규칙을 다시 돌림. URL에 <code>**</code>가 있으면 닫는 태그가 방금 만든 <code>href</code> 안으로 들어가 열린 채 남고, 브라우저가 그 뒤 모든 말풍선에 굵게를 복원.</dd>
+      </dl>
+<pre><i># 코드 스팬과 링크를 <b>한 번에 먼저 도려낸 뒤</b> 강조를 남은 평문에만 적용한다.
+# <b>어떤 단계도 앞 단계가 내놓은 마크업 위로 다시 돌지 않는다.</b></i>
+_MD_CARVE = re.compile(r"`(?P&lt;code&gt;[^`\n]+)`"
+                       r"|\[(?P&lt;label&gt;[^\]\n]+)\]\((?P&lt;url&gt;https?://[^\s)]+)\)")
+_MD_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?&lt;=\S)\*\*", re.S)
+_MD_DEL  = re.compile(r"~~(?=\S)([^&lt;]+?)(?&lt;=\S)~~")        <i># [^&lt;] : BOLD 뒤에 도므로</i>
+_MD_ITAL = re.compile(r"(?&lt;![*\w])\*(?=\S)([^*&lt;\n]+?)(?&lt;=\S)\*(?![*\w])")
+
+<b>블록 처리에서 반드시 지킬 것</b>
+  · 펜스 길이를 포착할 것 — ```` 로 연 블록을 ``` 가 닫으면 뒤 내용이 통째로 삼켜진다.
+      _MD_FENCE = r"^\s*(`{3,})(\S*)\s*$"  → 닫기는 len(group(1)) 이상일 때만
+  · 표 판정은 <b>다음 줄</b>의 |---| 까지 봐야 한다. 그렇지 않으면 산문 바로 아래 표가
+    문단 누적기에 삼켜져 원시 파이프로 렌더된다.
+  · 인용 재귀에 <b>깊이 상한</b>을 둘 것 — '&gt;' 1000개면 스택이 터져 파일이 아예 안 나온다.
+  · 문단 누적기는 <b>한 줄도 못 담으면 강제로 한 줄을 소비</b>할 것. 블록으로 판정되는데
+    어떤 분기도 처리하지 않으면 인덱스가 전진하지 않아 <b>무한 루프</b>가 된다.</pre>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">C-3</span><span class="tag t-bug">결함</span>
+        <h3>마크다운을 켜면서 정렬 공백이 뭉개짐</h3></div>
+      <dl>
+        <dt>증상</dt><dd><code>수 신 : ○○부(…)&nbsp;&nbsp;&nbsp;&nbsp;발 신 : 솔루션Cell</code> 같은 칸 맞춘 머리글과 붙여넣은 셸 들여쓰기가 한 칸으로 붕괴.</dd>
+        <dt>조치</dt><dd><code>white-space:pre-wrap</code>을 말풍선이 아니라 <code>p·li·blockquote</code>에. 문단 줄은 <code>&lt;br&gt;</code>로 잇기 때문에 줄바꿈이 새로 생기지 않음.</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">D</span> 다중 세션 병합 (신규)</h2>
+  <div class="items">
+    <div class="item">
+      <div class="head"><span class="id">D-1</span><span class="tag t-feat">기능</span>
+        <h3>폴더의 모든 세션을 시간순 한 줄기로 <span class="mono">--all-sessions</span></h3></div>
+      <dl>
+        <dt>설계</dt><dd><strong>레코드 단위 시간순</strong> 정렬 + 세션 전환 자리에 구분선. 세션 단위로 묶어 순서만 매기면 큰 세션 도중 잠깐 열린 짧은 세션이 전부 뒤로 밀려 <strong>실제 선후관계가 뒤집힘</strong>.</dd>
+      </dl>
+<pre>starts = {p: session_start(p) for p in files}          <i># 파일당 1회만 스캔</i>
+for t in part:
+    t["session"], t["session_name"] = p.stem, name
+    t["session_ts"] = starts[p] or "9999"
+fill_missing_ts(part)     <i># 타임스탬프 없는 레코드는 직전 값을 물려받는다</i>
+all_turns.sort(key=lambda t: t.get("ts") or t.get("session_ts") or "9999")
+<i># 안정 정렬이라 같은 시각에서는 파일 안 순서가 유지된다.
+# ""로 키를 주면 타임스탬프 없는 세션이 통째로 맨 앞으로 쏠린다.
+# merge_assistant_runs / drop_echo_exchanges 는 <b>같은 세션일 때만</b> 동작해야 한다.</i></pre>
+      <div class="evi">6세션 4,645 레코드 · 세션 전환 16회(겹침 14분) — 시간순이 이야기를 깨지 않음을 사전 실측 후 채택</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">D-2</span><span class="tag t-bug">결함</span>
+        <h3>Windows에서 세션 자동 탐색이 한 번도 동작한 적 없음</h3></div>
+      <dl>
+        <dt>원인</dt><dd>경로 인코딩이 <code>/</code>만 치환. 드라이브 문자와 역슬래시가 그대로 남아 <code>C:\proj\docs</code> → <code>C--proj-docs</code> 변환이 되지 않음. <code>--session</code>을 명시해 써 왔기에 드러나지 않았음.</dd>
+        <dt>조치</dt><dd><code>re.sub(r"[\\/:.]", "-", cwd)</code> — 실패 시 <code>[\\/:]</code> 로 한 번 더.</dd>
+      </dl>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">D-3</span><span class="tag t-bug">결함</span>
+        <h3>세션 파일 하나에 비-UTF8 바이트가 있으면 전체가 실패</h3></div>
+      <dl>
+        <dt>원인</dt><dd><code>UnicodeDecodeError</code>는 <code>ValueError</code>인데 <code>except OSError</code>만 잡음. 6개 세션이 전부 날아가고 <strong>파일이 아예 생성되지 않음</strong>.</dd>
+        <dt>조치</dt><dd>파일을 여는 모든 지점에서 <code>except (OSError, UnicodeDecodeError)</code> — 한 파일의 문제는 그 파일만 건너뛰게.</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">E</span> 화면과 조작</h2>
+  <div class="items">
+    <div class="item">
+      <div class="head"><span class="id">E-1</span><span class="tag t-feat">기능</span>
+        <h3>첫 로드는 접힌 상태 <span class="mono">--open</span></h3></div>
+      <dl>
+        <dt>요구</dt><dd>“첫 로드시 기본적으로는 접혀있어야한다.” 요약이 곧 목차가 됨.</dd>
+        <dt>주의</dt><dd>접기를 <strong>답변에만 걸면 안 됨</strong>. 붙여넣은 <code>[RESUME]</code> 블록과 치환 지시 묶음 탓에 접힌 페이지의 67%가 사용자 말풍선이 되고, 그중 10개가 페이지의 55%를 차지해 색인이 묻힘. <code>USER_FOLD = 400</code>자 초과 사용자 메시지도 접음.</dd>
+        <dt>중복</dt><dd>펼친 상태에서는 요약 줄을 감출 것 — 안 그러면 같은 문장이 두 번 보임. 규칙을 화자 한쪽(<code>.bot</code>)에만 걸면 반대쪽에 “접기” 라벨이 그대로 붙어 나옴.</dd>
+      </dl>
+      <div class="evi">페이지 36화면 → 15.6화면 · 사용자 비중 67% → 23%</div>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">E-2</span><span class="tag t-bug">결함</span>
+        <h3>단축키가 브라우저 기본 동작을 가로채고, 한글 IME에서는 아예 죽음</h3></div>
+<pre>document.addEventListener('keydown', function(e){
+  <i>// Ctrl+A(전체 선택)·Ctrl+Z(실행 취소)를 가로채면 안 된다</i>
+  if(e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  var t = e.target;
+  if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+  <i>// <b>e.code 우선.</b> 한글 IME 가 켜져 있으면 e.key 가 'ㅁ'·'ㅋ' 으로 와서
+  // 키 기반 핸들러는 <b>조용히 죽는다</b>.</i>
+  var c = e.code || '', k = (e.key||'').toLowerCase();
+  <i>// 도움말이 열려 있는 동안에는 Escape 만 동작할 것 — 아니면 뒤 페이지가 스크롤·접힘 반응</i>
+  if(help.classList.contains('on')){ if(e.key==='Escape'){ setHelp(false); e.preventDefault(); } return; }
+  if(c==='KeyA'||k==='a') all(true);
+  else if(c==='KeyZ'||k==='z') all(false);
+  else if(c==='KeyJ'||k==='j') step(1);        <i>// 다음 내 메시지</i>
+  else if(c==='KeyK'||k==='k') step(-1);
+  else if(c==='KeyT'||k==='t') scrollTo(0,0);  <i>// 20만 px 문서에서 부드러운 스크롤은 수 초 걸린다</i>
+  else if(e.key==='?'||(c==='Slash'&&e.shiftKey)) setHelp(true);   <i>// 맨 '/' 는 브라우저 몫</i>
+  else if(c==='KeyB'||k==='b') scrollTo(0,document.body.scrollHeight);
+  else return;
+  e.preventDefault();
+});
+<i>// J/K 의 기준점은 화면 중앙이 아니라 <b>상단 앵커</b>(= 헤더 높이, 런타임 측정).
+// scrollIntoView 는 상단을 맞추므로 중앙을 기준으로 삼으면 긴 말풍선이
+// <b>자기 자신을 다시 선택</b>해 아무 일도 일어나지 않는다.
+// 하이라이트는 <b>이전 요소에서 반드시 제거</b>할 것 — 안 그러면 아래로 쌓인다.</i></pre>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">E-3</span><span class="tag t-bug">결함</span>
+        <h3>길잡이가 페이지에서 가장 안 보이는 글자</h3></div>
+      <dl>
+        <dt>증상</dt><dd>날짜 구분선 대비 <strong>1.86:1</strong>(WCAG AA 기준 4.5:1). 36화면 문서의 유일한 위치 표시인데 읽기 어렵고, 날짜와 compaction 중단이 <strong>같은 <code>━━</code></strong>로 그려져 서로를 흉내 냄.</dd>
+        <dt>조치</dt><dd>날짜=고대비 알약(9.8:1), 세션 전환=흰 알약, compaction=점선으로 <strong>형태를 분리</strong>. 헤더 우측이 스크롤에 따라 현재 세션·날짜를 갱신(compaction 표시는 위치가 아니므로 헤더에서 제외).</dd>
+      </dl>
+    </div>
+
+    <div class="item">
+      <div class="head"><span class="id">E-4</span><span class="tag t-bug">결함</span>
+        <h3>범례 배지가 본문을 영구적으로 가림</h3></div>
+      <dl>
+        <dt>조치</dt><dd>하단 중앙 고정 배지 → 우하단 <code>?</code> 버튼 + 오버레이. 오버레이는 <strong>배경 클릭으로만</strong> 닫을 것(카드 안을 클릭해도 닫히면 표를 복사할 수 없음). <code>aria-modal</code>을 쓰면 포커스를 대화상자 안으로 옮기고 닫을 때 되돌릴 것.</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">F</span> 자체 검증</h2>
+  <div class="items">
+    <div class="item">
+      <div class="head"><span class="id">F-1</span><span class="tag t-bug">결함</span>
+        <h3><code>self_verify</code>가 렌더러가 만든 태그를 하나도 검사하지 않음</h3></div>
+      <dl>
+        <dt>증상</dt><dd><code>&lt;details&gt;</code>·<code>&lt;div&gt;</code>만 세고 있어 마크다운이 만든 불균형이 그대로 통과. C-2의 탈출 태그가 배포 전에 걸리지 않은 이유.</dd>
+      </dl>
+<pre><i># 검사 전에 script·style 본문을 제거할 것 — 인라인 스크립트의 top&lt;a-8 이
+# &lt;a&gt; 태그로 세어져 오탐이 난다.</i>
+markup = re.sub(r"&lt;script\b[\s\S]*?&lt;/script&gt;|&lt;style\b[\s\S]*?&lt;/style&gt;", "", html_text)
+
+for tag in ("details","div","p","ul","ol","li","table","thead","tbody","tr","th","td",
+            "blockquote","pre","code","strong","em","del","a","h3","h4","h5","h6"):
+    <i># 개수 비교 …그리고</i>
+
+<i># <b>개수만으로는 부족하다.</b> &lt;strong&gt;a&lt;em&gt;b&lt;/strong&gt;c&lt;/em&gt; 은 개수가 맞지만
+# 어긋나 있고, 브라우저의 복구 동작이 서식을 <b>뒤 블록으로 흘린다</b>.
+# HTMLParser 로 스택을 쌓아 닫는 태그가 스택 top 과 다르면 오류로 볼 것.</i></pre>
+      <div class="evi">도입 직후 재빌드에서 즉시 실제 불균형 1건 검출 — 이 검사가 없었다면 그대로 배포됨</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">플래그</span> 새 옵션과 기본값 변경</h2>
+  <div class="tw"><table>
+    <thead><tr><th>플래그</th><th>기본</th><th>동작</th></tr></thead>
+    <tbody>
+      <tr><td class="num">--all-sessions</td><td class="num">off</td><td>폴더의 모든 세션을 시간순 병합 (신규)</td></tr>
+      <tr><td class="num">--no-markdown</td><td class="num">off</td><td>마크다운 렌더 끄고 원문 표시 (신규 · 렌더가 기본 ON)</td></tr>
+      <tr><td class="num">--keep-trivia</td><td class="num">off</td><td>조작 명령·주입 본문·에코 교환·하네스 오류도 남김 (신규 · 필터가 기본 ON)</td></tr>
+      <tr><td class="num">--open</td><td class="num">옵트인</td><td class="now">처음부터 전부 펼침 — 기본값 반전</td></tr>
+      <tr><td class="num">--collapse</td><td class="num now">기본</td><td class="now">접힌 채 시작 — 기본값 반전</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">
+    <code>--keep-trivia</code>가 <strong>되살리는 것</strong>: 조작 명령, 주입 본문, 에코 교환, 하네스 오류.
+    <strong>되살리지 않는 것</strong>(대화가 아니라 전송 계층이므로 항상 제거):
+    래퍼 블록, <code>Stop hook feedback:</code>, <code>[Request interrupted</code>, agent 래퍼, compaction.
+    <code>--help</code> 문구가 실제 기본값과 반대로 적혀 있던 문제도 함께 정정했습니다.
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">불변식</span> 재구현할 때 다시 깨지기 쉬운 것</h2>
+  <p class="note">
+    아래는 구현 중 <strong>실제로 두 번 이상 반대 방향으로 잘못 짰던</strong> 지점입니다.
+    리팩터링 시 가장 먼저 되돌아가는 자리라 따로 적습니다.
+  </p>
+  <div class="rules">
+    <div class="rule">
+      <b>1 · 위치가 아니라 형태로 판정할 것 — 단, 명령 레코드 자체는 반대</b>
+      <div class="why">
+        주입 본문을 “명령 다음 레코드”로 잡으면 사용자의 정정·취소가 지워집니다.
+        반대로 명령 레코드는 <em>래퍼를 걷어낸 잔여가 비었는가</em>로 봐야 합니다 —
+        첫머리 위치로 판정하면 태그를 인용한 진짜 질문이 <code>/copy</code> 한 줄로 증발합니다.
+      </div>
+    </div>
+    <div class="rule">
+      <b>2 · 사용자 글을 지우는 규칙을 추가할 땐 삭제 대조를 함께 낼 것</b>
+      <div class="why">
+        무엇이 몇 건 사라졌고 전부 노이즈였는지 표로 확인해야 합니다.
+        “아마 노이즈일 것”으로 지우면 되돌릴 수 없습니다.
+      </div>
+    </div>
+    <div class="rule">
+      <b>3 · 어떤 변환 단계도 앞 단계가 내놓은 마크업 위로 다시 돌지 말 것</b>
+      <div class="why">
+        정규식을 순차 적용하면 앞서 만든 <code>href</code>·<code>&lt;/strong&gt;</code>를 다음 규칙이 다시 건드립니다.
+      </div>
+    </div>
+    <div class="rule">
+      <b>4 · 문단 누적기는 한 줄도 못 담으면 강제로 한 줄을 소비할 것</b>
+      <div class="why">
+        “블록”으로 판정되는데 어떤 분기도 처리하지 않으면 인덱스가 전진하지 않아 무한 루프가 됩니다.
+      </div>
+    </div>
+    <div class="rule">
+      <b>5 · 요약기를 고치면 캐시 버전을 올릴 것</b>
+      <div class="why">
+        본문 해시만으로는 알고리즘 변경을 감지하지 못해 한 실행에 두 알고리즘의 요약이 섞입니다.
+      </div>
+    </div>
+    <div class="rule">
+      <b>6 · 검증은 PDF·화면이 아니라 산출물의 소스에서 할 것</b>
+      <div class="why">
+        태그 균형·중첩은 눈으로 보이지 않고, 브라우저는 깨진 마크업을 조용히 복구해 증상을 감춥니다.
+        <code>self_verify</code>가 렌더러 출력 전체를 덮어야 합니다.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">검증</span> 어떻게 확인했나</h2>
+  <ul>
+    <li><strong>회귀 103항목 · 5스위트</strong> — 분류·요약 / 마크다운 / 주입·펜스·인용 / trivia 필터 / 세션 가드·기본값</li>
+    <li>실제 세션 본문 <strong>620건 전수</strong> 마크다운 렌더 — 태그 불균형 0</li>
+    <li>주입 벡터 <strong>25종</strong> 차단 확인 — 모든 <code>href</code>가 <code>http(s)://</code>, 이벤트 핸들러 속성 0</li>
+    <li>브라우저 실측 — 단축키 12항목, 대비, 가로 넘침, 포커스 이동</li>
+    <li>독립 검토 <strong>4라운드</strong>(누적 지적 46건) + <strong>3렌즈 합의 루프</strong>(내용 손실 / 흐름 / 코드 회귀)</li>
+  </ul>
+  <p class="note">
+    검증 방식 자체가 한 번 바뀌었습니다. 초기에는 문자열만 대조해 “일치”라고 판정했는데
+    표·이미지의 기하를 재지 않아 실제 차이를 놓쳤습니다. 이후로는
+    <strong>소스 → 렌더 → 브라우저 실측</strong> 세 단계를 모두 거칩니다.
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">한계</span> 고치지 않은 것</h2>
+  <ul>
+    <li><strong>요약이 실질 결론 대신 말미 정리 문장을 고르는 경우가 있음.</strong>
+      <code>_tail_block</code>의 최소 길이를 올리면 “검증 통과했습니다.” 같은 정당한 짧은 결론이
+      밀려나 더 나빠집니다. 추출식 요약기로 “어느 문단이 결론인가”를 가리려면 의미 판단이 필요합니다.</li>
+    <li><strong>중첩 리스트는 평평해집니다</strong> — 들여쓴 하위 항목이 형제 <code>&lt;li&gt;</code>가 됩니다.</li>
+    <li><strong>인용된 래퍼 블록은 본문에서 지워집니다.</strong> 사용자가 질문에
+      <code>&lt;task-notification&gt;…&lt;/task-notification&gt;</code>을 붙여넣으면 문장은 남고 그 블록만 사라집니다.</li>
+    <li><strong>판단이 필요한 것</strong> — <code>/banker:append_wiki</code>·<code>/banker:ready-compact</code>
+      반복 호출이 색인 행의 13%를 차지합니다. 한 줄로 묶자는 제안이 있었으나
+      <em>사용자가 직접 친 명령이고 실제 작업을 했으므로</em> 결함이 아니라 취향 문제로 두었습니다.</li>
+  </ul>
+</section>
+
+<footer>
+  <div>모든 수치는 실제 세션 6개 · 62 MB · 4,645 레코드에 대한 실측입니다.</div>
+  <div>본문의 코드는 판별 규칙과 함수 계약이며, 주변 배선은 기존 구조를 따릅니다.</div>
+</footer>
+
+</div>
