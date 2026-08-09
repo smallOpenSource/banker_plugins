@@ -1,6 +1,6 @@
 # banker-plugins
 
-> Claude Code와 Codex CLI를 위한 QA·감사·문서·아키텍처·위키 스킬 모음.
+> Claude Code와 Codex CLI를 위한 QA·감사·문서·아키텍처·위키·미디어 스킬 모음.
 
 [![npm](https://img.shields.io/npm/v/@kaydash9999/banker-plugins)](https://www.npmjs.com/package/@kaydash9999/banker-plugins)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -90,7 +90,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
 | `rfp-author` | 외주 제안요청서(RFP) 저작 (범용 프레임워크) |
 | `humanizer` | AI 글 흔적 제거(자연스러운 문체로 윤문) |
-| `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export |
+| `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export (마크다운 렌더·하네스 노이즈 필터·다중 세션 병합) |
 | `append_wiki` | 프로젝트 위키 문서 추가/보강 |
 | `compact-wiki` | 위키 중복 제거·supersede·병합 (무손실) |
 | `obsidizer` | AI 위키를 의미보존 Obsidian 그래프로 정규화·상호링크·백링크 |
@@ -227,6 +227,7 @@ banker uninstall        # 제거
 - 일부 스킬은 별도 의존성이 필요하며 `/banker:setup` 으로 설치합니다. 의존성이 없으면 각 스킬이 실행 전에 설치부터 안내합니다.
   - `all-in-one`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC). Codex에서는 OMX.
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright.
+  - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
 
