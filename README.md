@@ -52,7 +52,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `ultra-init` | 프로젝트 기획이 충분히 구체적일 때 | 데모를 구현 |
 | `curation` | 질문에 답하기 어렵거나 의사결정이 어려울 때 | 합리적 선택지 제공 (`--perf` 옵션 = 품질 우선) |
 | `all-in-one` | 요건이 명확한 단계에서 | 계획 → 구현 → 검증 |
-| `ralph-qa` | 검증이 충분하지 않을 때 | 다중 Agent 논의 |
+| `ralph-qa` | 검증이 충분하지 않을 때 | 다중 Agent 백본 + 유효한 외부 LLM 좌석 |
 | `smart-compact` | 컨텍스트 임계 초과로 맥락 단절이 걱정될 때 | 맥락을 더 잘 이어서 진행 |
 | `refresh-readme` | 프로젝트 배포 전 | README 최신화 |
 | `summary-wiki` | Agent가 아는 정보를 확인하고 싶을 때 | 요약 리포트 |
@@ -111,7 +111,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `refresh-git-ignore` | `.gitignore` 비파괴·반복가능 갱신 |
 | `omc-reference` | OMC/OMX 에이전트·툴·스킬 레퍼런스(양 런타임 병기) |
 | `curation` | 의사결정을 선택지·권고·확신수준으로 큐레이션(--perf=품질 우선) |
-| `ralph-qa` | 작업 결과를 다른 LLM·별도 세션으로 독립 교차검증 반복 |
+| `ralph-qa` | 다중 Agent 백본이 항상 돌고, 실제로 유효한 외부 LLM 만 좌석으로 합류해 독립 검증 반복 |
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
 | `ultra-interview` | 리서치 선행으로 사람 질문 최소화, 모호성 3% 이하까지 인터뷰 |
