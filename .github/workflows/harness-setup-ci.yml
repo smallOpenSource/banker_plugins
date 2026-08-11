@@ -46,13 +46,20 @@ jobs:
         run: node scripts/smoke-test.js
       - name: version sync (SoT drift guard — plugin.json == package.json == marketplace.json)
         run: node scripts/sync-version.js --check
-      - name: obsidizer unit suites (canonicalizer + hook)
+      - name: unit suites (every *.test.mjs — enumerated by find, not by hand)
         run: |
           set -e
-          node --test skills/obsidizer/obsidize.test.mjs
-          node --test hooks/obsidize-hook.test.mjs
-          node --test skills/vertical-pptx/a4p.test.mjs
-          node --test skills/ralph-qa/references/verifier-probe.test.mjs
+          # 손으로 나열하면 드리프트한다. 이 자리에 4개만 적혀 있어서 8개가 CI 밖이었다
+          # (bin/ 2 · hooks/telemetry-* 2 · hooks/update-* 3 · azure-adapter 1).
+          # 셸 글롭(skills/*/*.test.mjs)도 답이 아니다 — 한 단계만 훑어 skills/*/references/
+          # 하위를 놓친다. RELEASING.md 의 검증 명령이 같은 이유로 같은 형태를 쓴다.
+          files=$(find . -name '*.test.mjs' -not -path '*/node_modules/*')
+          # find 가 빈 결과를 내면 node --test 가 자체 탐색으로 넘어가 조용히 초록이 된다.
+          [ -n "$files" ] || { echo "no *.test.mjs found — the find pattern broke"; exit 1; }
+          echo "$files"
+          node --test $files
+          # 로컬 실측(node 20.20.2, 이 잡과 같은 메이저): 241 tests / 235 pass / 0 fail / 6 skip.
+          # skip 6 은 vertical-pptx tier-2 로, 빌더(pptxgenjs·python-pptx)가 없으면 정상 skip 이다.
       - name: hook files ship via npm (files[] includes "hooks")
         run: |
           set -e
