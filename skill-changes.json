@@ -11,5 +11,8 @@
     "banker:refresh-readme",
     "banker:vertical-pptx",
     "banker:vertical-pptx-setup"
+  ],
+  "0.13.0": [
+    "banker:ralph-qa"
   ]
 }

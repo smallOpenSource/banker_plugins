@@ -29,9 +29,11 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 
 7. **검증** — 유닛·스모크가 초록인지 확인한다.
    ```bash
-   # skills/*/*.test.mjs 는 스킬 안 테스트를 포함시킨다(빠져 있으면 obsidizer·vertical-pptx 가 릴리스 절차에서 안 돈다).
-   # 셸 글롭이라 매치가 0 이면 리터럴이 그대로 넘어가 에러가 난다. 스킬 테스트가 하나도 없어지면 이 항목을 지운다.
-   node --test hooks/*.test.mjs bin/lib/*.test.mjs bin/*.test.mjs skills/*/*.test.mjs
+   # 셸 글롭이 아니라 find 로 전량을 넘긴다. 글롭(`skills/*/*.test.mjs`)은 한 단계만 훑어서
+   # `skills/*/references/` 안의 테스트를 놓친다 — 0.12.0 까지 azure-adapter.test.mjs 가,
+   # 0.13.0 에서는 verifier-probe.test.mjs 가 그 구멍에 빠졌다(로컬 전량 241 vs 글롭 201).
+   # 매치가 0 이면 리터럴이 그대로 넘어가 에러가 나는 문제도 find 형태에는 없다.
+   node --test $(find . -name '*.test.mjs' -not -path '*/node_modules/*')
    node scripts/smoke-test.js
 
    # vertical-pptx 의 빌더 의존 테스트는 기본이 skip 이다. 릴리스 때는 skip 을 실패로 바꿔 강제한다.

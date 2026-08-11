@@ -27,7 +27,7 @@ The generator (`banker setup --codex`) applies the rules below for `target: both
 - `visual-ralph` → OMX `$ralph`·`$imagegen`(+`omx imagegen continuation`)·Visual Verdict; Claude은 `ralph`+`visual-verdict`+Stitch/ccg imagegen.
 - `deep-init` → 서브에이전트 Claude=OMC explore/architect/writer, Codex=OMX worker/explore(부재 시 직접 수행). 순수 fs+doc.
 - `deep-research` → Claude 번들 워크플로/`WebSearch`, Codex OMX `autoresearch`/`best-practice-research`.
-- `ralph-qa` → 다른-LLM: Claude `omc ask codex`/`ccg`, Codex OMX `$ask`(Claude/Gemini).
+- `ralph-qa` → 백본은 런타임 서브에이전트(Claude=Agent/Task `model: opus`, Codex=OMX 서브에이전트)로 양쪽 동일. 외부 좌석만 런타임별로 갈린다: Claude=`codex exec`/`omc ask codex`, Codex=`omx $ask claude`(Codex 런타임에서 `codex exec` 는 자기 자신이라 부적격).
 - `smart-compact` → Claude statusLine `context_window.used_percentage`+hook; Codex 신호 미확인 시 휴리스틱 폴백. TUI 3단(`/copy`·`/compact`·paste)은 유저.
 - `curation` → 런타임 무관(외부 의존 0, 양쪽 동일).
 
@@ -36,7 +36,7 @@ The generator (`banker setup --codex`) applies the rules below for `target: both
 - `audit-web-page`, `play-qa`, `ultra-ui-qa` — need playwright (install via `setup-playwright`).
 - `setup-playwright` — genericize the `/banker:setup` trigger phrasing for the Codex copy.
 - `visual-ralph` — needs an imagegen path (Stitch via `setup-stitch`, or `/ccg`/Gemini) + a frontend repo; static/live-URL reference works without imagegen.
-- `ralph-qa` — needs a *different* LLM provider auth (`omc ask codex` / OMX `$ask`); falls back to same-runtime `critic` if unavailable.
+- `ralph-qa` — runs with no external dependency: the multi-agent backbone always runs, and external LLM seats join only when a 0-token probe observes them valid. Their absence is a coverage fact (model axis uncovered), not a degraded mode. A same-runtime `critic` is never substituted for an external seat — on Codex that would be GPT approving GPT, i.e. self-approval.
 - `deep-research` — needs web search/fetch (Claude WebSearch/WebFetch or bundled workflow; Codex OMX autoresearch).
 - `smart-compact` — Claude statusLine exposes context%; Codex signal unconfirmed → heuristic fallback; `/copy`·`/compact`·paste stay user-driven (TUI).
 - `obsidizer` — OMC-managed trees respect the 9-field frontmatter whitelist + reserved files + no-rename + bare `[[slug]]` links only; `aliases` are written in generic vaults only; Canvas sidecars and body-inline `::` are durable in-place; no `wiki_*` write dependency, `wiki_lint` read-only for verification. `--enable` is Claude-only (plugin-declared PostToolUse hook); Codex has no MCP tool hooks → honest no-op.

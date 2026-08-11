@@ -52,6 +52,7 @@ jobs:
           node --test skills/obsidizer/obsidize.test.mjs
           node --test hooks/obsidize-hook.test.mjs
           node --test skills/vertical-pptx/a4p.test.mjs
+          node --test skills/ralph-qa/references/verifier-probe.test.mjs
       - name: hook files ship via npm (files[] includes "hooks")
         run: |
           set -e
