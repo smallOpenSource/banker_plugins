@@ -10,9 +10,12 @@ argument-hint: "[스펙/note 파일 경로 — 생략 시 docs/note.txt]"
 
 ## 0. 전제조건: OMC (없으면 설치부터)
 
-이 커맨드는 `/ralplan`·`/ralph` 등 oh-my-claudecode(OMC)에 의존한다. **진행 전 먼저 확인**하고, 없으면 **설치부터 안내**한다:
-- 확인: `command -v omc` + `/oh-my-claudecode:*` 사용 가능 여부.
-- 미설치면 `/banker:setup` → oh-my-claudecode(또는 `setup-omc` 스킬 / `omc update`)로 먼저 구성한 뒤 이어서 진행.
+이 커맨드는 `/ralplan`·`/ralph` 등 oh-my-claudecode(OMC)에 의존한다. **진행 전 먼저 확인**하고, 없거나 낡았으면 **설치·갱신부터 안내**한다:
+- 확인(Claude Code): `/oh-my-claudecode:*` 사용 가능 여부 + `omc` CLI 가 `ralph verify` 를 갖췄는지. OMC 5 의 `ralph` 는 첫 반복에 `omc ralph verify` 를 실행하고 없으면 멈춘다. 플러그인보다 낡은 4.x CLI 는 이 명령이 없는데도 `--help` 를 주면 전체 도움말을 찍고 종료 코드 0 을 내므로 **출력 문구로 판정**한다(`--help` 없이 부르면 Claude 실행으로 넘어가니 반드시 붙인다). Codex 는 `omx --version` 으로 OMX 를 확인한다:
+  ```bash
+  omc ralph verify --help 2>&1 | grep -q 'Usage: omc ralph verify' && echo "omc ok" || echo "omc CLI 없음 또는 낡음"
+  ```
+- 실패하면 `/banker:setup` → oh-my-claudecode(또는 `setup-omc` 스킬 / `npm install -g oh-my-claude-sisyphus@latest`)로 먼저 구성한 뒤 이어서 진행. 점검을 통과하기 전에는 절차 1을 시작하지 않는다.
 - **런타임 매핑:** 아래 절차의 `/ralplan`·`/ralph`는 Claude Code에선 OMC 스킬, **Codex에선 oh-my-codex(OMX)의 동명 스킬**이다(Codex는 OMC 대신 OMX 전제). 각 런타임에서 사용 가능한 형태로 호출한다.
 
 ## 절차 (CLAUDE.md: 계획 없는 즉시실행 금지)
