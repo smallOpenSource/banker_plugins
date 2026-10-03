@@ -8,7 +8,7 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 54개 + 커맨드 2개**(총 56개 구성요소)를 묶은 Claude Code 플러그인입니다.\
+banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 57개 + 커맨드 2개**(총 59개 구성요소)를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
@@ -50,14 +50,16 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 |---|---|---|
 | `ultra-interview` | 처음 프로젝트 아이디어를 구체화할 때 | 최신 정보를 반영한 소크라테스식 인터뷰 |
 | `ultra-init` | 프로젝트 기획이 충분히 구체적일 때 | 데모를 구현 |
-| `curation` | 질문에 답하기 어렵거나 의사결정이 어려울 때 | 합리적 선택지 제공 (`--perf` 옵션 = 품질 우선) |
+| `curation` | 질문에 답하기 어렵거나 의사결정이 어려울 때 | 합리적 선택지 제공 (`--perf` = 품질 우선, `--deep` = 확신 0.80 초과까지 추가 조사) |
 | `all-in-one` | 요건이 명확한 단계에서 | 계획 → 구현 → 검증 |
 | `ralph-qa` | 검증이 충분하지 않을 때 | 다중 Agent 백본 + 유효한 외부 LLM 좌석 |
 | `smart-compact` | 컨텍스트 임계 초과로 맥락 단절이 걱정될 때 | 맥락을 더 잘 이어서 진행 |
 | `refresh-readme` | 프로젝트 배포 전 | README 최신화 |
 | `summary-wiki` | Agent가 아는 정보를 확인하고 싶을 때 | 요약 리포트 |
 | `cleansing-memory` | 프로젝트가 장기화될 때 | 메모리 최적화 |
-| `ready-compact` | 컨텍스트를 compact 하거나 새 세션을 대비할 때 | 이어갈 프롬프트를 준비 |
+| `ready-compact` | 컨텍스트를 compact 하거나 새 세션을 대비할 때 | 이어갈 프롬프트만 출력(`/copy` 한 번이면 복사), `--hand-off` = 새 세션에서 이어가기 |
+| `graceful_pause` | 작업 도중 방향을 바꾸거나 끼어들고 싶을 때 | 지금 단계만 끝내고 멈춘 뒤 지시를 기다림 (작업 중 미리 입력해 둬도 됨) |
+| `tone-compact` | 답변을 짧은 한글 개조식으로 받고 싶을 때 | 문체 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
 
 ## 구성
 
@@ -106,11 +108,11 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 |---|---|
 | `all-in-one` | 계획→구현→검증 end-to-end 오케스트레이터 |
 | `ultra-init` | 아이디어→빌드→테스트 원샷 자동 실행 |
-| `ready-compact` | 컨텍스트 compaction 직전 상태 저장/이어가기 |
-| `compact-copy` | resume 프롬프트만 추출해 클립보드/파일로(compaction 이어가기) |
+| `ready-compact` | 이어가기 상태 저장 + resume 프롬프트만 출력(`--hand-off` = 새 세션용 자급식 노트·프롬프트) |
+| `compact-copy` | 설명·코드펜스가 섞인 resume 프롬프트 출력에서 본문만 추출(지금의 ready-compact 는 처음부터 프롬프트만 출력) |
 | `refresh-git-ignore` | `.gitignore` 비파괴·반복가능 갱신 |
 | `omc-reference` | OMC/OMX 에이전트·툴·스킬 레퍼런스(양 런타임 병기) |
-| `curation` | 의사결정을 선택지·권고·확신수준으로 큐레이션(--perf=품질 우선) |
+| `curation` | 의사결정을 선택지·권고·확신수준으로 큐레이션(--perf=품질 우선, --deep=확신 0.80 이하는 추가 조사·검토 후 제시) |
 | `ralph-qa` | 다중 Agent 백본이 항상 돌고, 실제로 유효한 외부 LLM 만 좌석으로 합류해 독립 검증 반복 |
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
@@ -120,6 +122,9 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `update-banker` | 설치된 banker 를 3채널(Claude·npm·Codex) 순서 게이트로 최신화 |
 | `refresh-readme` | 코드와 어긋난 README 를 현재 상태에 맞게 갱신(드리프트 해소) |
 | `cleansing-memory` | 메모리 파일을 문서화된 threshold 내로 정리(중복 최신본화·무손실 압축) |
+| `payload-mon` | 상태표시줄 ctx 옆에 요청 payload 추정치(32MB 한도 대비, 8MB부터) 표시 켜기·끄기 |
+| `tone-compact` | 답변과 새 문서를 ASD-STE100 기반 한글 개조식(표·목록·원어 발음 표기·장식 기호 금지)으로 쓰는 문체 규칙 켜기·끄기(on 기본, 끌 때까지 유지) |
+| `graceful_pause` | 진행 중인 작업을 지금 단계까지만 마무리하고 멈춘 뒤 중간 지시를 받음(cancel 과 달리 모드 상태·계획 보존) |
 
 ### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
 
@@ -175,11 +180,16 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 54개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 57개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
+- `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
+  32MB 요청 한도는 Claude Code 의 것이라 Codex 자신의 요청 크기는 재지 않습니다.
 - Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
-- `~/.codex/AGENTS.md` 는 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존).
+- OMC 5 는 `ultraqa` 를 삭제했습니다. 그래서 Claude Code 의 `all-in-one`·`ultra-init` QA 게이트는 `verify` 순환으로 돌고, Codex 는 OMX `ultraqa` 를 그대로 씁니다.
+- 설치기는 `~/.codex/AGENTS.md` 를 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존). \
+  예외는 사용자가 켠 `tone-compact` 하나입니다. 그 파일 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개를 넣고, `off` 로 뺍니다. \
+  `omx setup --merge-agents` 와 기본 `omx setup` 은 이 블록을 남깁니다. `--force` 나 team 모드를 끈 `omx setup` 처럼 AGENTS.md 를 새로 만들면 사라지므로, 그 뒤 `on` 을 다시 실행합니다.
 
 ## 설정 변경 지점 (Claude Code · Codex)
 
@@ -215,6 +225,8 @@ banker uninstall        # 제거
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
+| `payload-mon` | `hud/omc-hud-custom.mjs` 에 표시 블록 1개 삽입(`.payload-mon.bak` 백업·멱등·`node --check` 검증) + 래퍼 옆 `hud/payload-mon/` 에 모듈 사본 (`off` 로 원복) | — (Codex에서 실행해도 Claude Code HUD 만 다룸) |
+| `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
 
@@ -225,8 +237,9 @@ banker uninstall        # 제거
 - Claude Code (마켓플레이스 경로): 스킬이 `/banker:*` 로 동작.
 - 또는 Node.js ≥ 16.7 (npm 전역 설치 경로): `banker` CLI 제공.
 - 일부 스킬은 별도 의존성이 필요하며 `/banker:setup` 으로 설치합니다. 의존성이 없으면 각 스킬이 실행 전에 설치부터 안내합니다.
-  - `all-in-one`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC). Codex에서는 OMX.
+  - `all-in-one`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX.
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright.
+  - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
@@ -248,6 +261,14 @@ banker uninstall                        # 제거
 ```
 
 Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛 버전이 중복으로 남지 않습니다.
+
+> `payload-mon` 을 켰다면 제거 전에 `/banker:payload-mon off`(Codex는 `banker-payload-mon` 에 `off`)를 실행하세요.\
+> 표시 블록과 모듈 사본은 플러그인 밖(`~/.claude/hud/`)에 있어서, 플러그인을 지워도 남아 계속 표시됩니다.\
+> 이미 지웠다면 HUD를 재설치하거나, `omc-hud-custom.mjs` 에서 `// >>> payload-mon >>>` 부터 `// <<< payload-mon <<<` 까지 지우면 됩니다.
+
+> `tone-compact` 를 켰다면 제거 전에 런타임마다 `off` 를 실행하세요(Claude Code `/banker:tone-compact off`, Codex `banker-tone-compact` 에 `off`).\
+> 규칙 파일과 블록은 플러그인 밖(`~/.claude/rules/`, `~/.codex/AGENTS.md`)에 있어서, 플러그인을 지워도 남아 계속 적용됩니다.\
+> 이미 지웠다면 `~/.claude/rules/banker-tone-compact.md` 를 지우고, AGENTS.md 에서 `<!-- banker:tone-compact:start -->` 부터 `<!-- banker:tone-compact:end -->` 까지와 그 바깥의 `USER:OMX:POLICY` 표시 두 줄을 지우면 됩니다.
 
 ## 업데이트 확인 및 사용량 카운팅
 
