@@ -39,7 +39,7 @@ description: "(banker) 소프트웨어 외주 제안요청서(RFP)를 한국 공
 ## 워크플로우 (도구 오케스트레이션)
 RFP 저작은 **저작 lane과 검수 lane을 분리**(자기승인 금지). 권장 순서:
 
-1. **과업내용 추출** — 현 코드/spec → 요구사항. `deep-dive`(또는 agent `feature-dev:code-explorer`)로 화면·API·데이터·외부연계를 SFR/INR/DAR로 도출 → `references/this-project-scope.md` 채움(file:LINE 동반). 디자인은 PDF/이미지 추출 도구로 `<DesignRef(page-section)>` 형태 인용키 추출.
+1. **과업내용 추출** — 현 코드/spec → 요구사항. `research`(OMC 5 에서 삭제된 `deep-dive` 의 대체) 또는 agent `feature-dev:code-explorer` 로 화면·API·데이터·외부연계를 SFR/INR/DAR로 도출 → `references/this-project-scope.md` 채움(file:LINE 동반). 디자인은 PDF/이미지 추출 도구로 `<DesignRef(page-section)>` 형태 인용키 추출.
 2. **구조·범위·배점 합의** — `ralplan --deliberate`로 RFP 구조·15유형 범위·평가 정성/정량 배점을 Planner→Architect→Critic 합의(Planner는 SoT word-for-word 인용 의무). broad/risky 결정만.
 3. **섹션 병렬 작성** — 5+ 섹션이면 `team`(워커별 절 담당), 소규모는 agent `oh-my-claudecode:writer`. 각 절은 `templates/rfp-skeleton.md`를 채우고 `references/`를 인용.
 4. **미검증 보강** — OPEN 항목(특히 망분리/PIPA/보안성심의/secure-coding)은 `autoresearch`/`deep-research` 또는 agent `document-specialist`로 **추가 리서치 후** SER에 반영. 미보강 시 〈OPEN〉 유지.
@@ -48,7 +48,7 @@ RFP 저작은 **저작 lane과 검수 lane을 분리**(자기승인 금지). 권
 
 | 작업 | 권장 도구 |
 |---|---|
-| 과업내용 추출(코드→요구) | `deep-dive` / `feature-dev:code-explorer` / PDF·이미지 추출 도구 |
+| 과업내용 추출(코드→요구) | `research`(구 `deep-dive`) / `feature-dev:code-explorer` / PDF·이미지 추출 도구 |
 | 구조·배점 합의 | `ralplan --deliberate` |
 | 섹션 병렬 저작 | `team` / `oh-my-claudecode:writer` |
 | OPEN 추가 리서치 | `autoresearch` / `deep-research` / `document-specialist` |
