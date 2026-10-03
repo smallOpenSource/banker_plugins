@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (54 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (57 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 54, `codex dry-run plans 54 skill copies (got ${copies})`);
+  ok(copies === 57, `codex dry-run plans 57 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -101,7 +101,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 54, `real codex install has 54 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 57, `real codex install has 57 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -118,6 +118,21 @@ try {
   const adapterBuild = fs.readFileSync(path.join(root, 'skills', '3d-intro-build', 'references', 'azure-adapter.mjs'));
   const adapterSetup = fs.readFileSync(path.join(root, 'skills', '3d-intro-setup', 'references', 'azure-adapter.mjs'));
   ok(adapterBuild.equals(adapterSetup), 'azure-adapter.mjs is byte-identical across 3d-intro-build and 3d-intro-setup');
+  // payload-mon runs on its two scripts: payload-mon.mjs patches the HUD wrapper and copies payload-size.mjs
+  // beside it, so a Codex copy missing either one can neither turn the segment on nor compute it.
+  ok(installed.includes('banker-payload-mon'), 'new payload-mon installed as banker-payload-mon');
+  const pmScripts = ['payload-mon.mjs', 'payload-size.mjs'];
+  ok(pmScripts.every((f) => fs.existsSync(path.join(instDir, 'banker-payload-mon', 'scripts', f))),
+     `banker-payload-mon carries scripts/${pmScripts.join(' + scripts/')} into the Codex install`);
+  // tone-compact's script reads its rules from the SKILL.md beside it (../SKILL.md), so the Codex copy needs
+  // both, and the rule markers must survive the frontmatter `name:` rewrite.
+  ok(installed.includes('banker-tone-compact'), 'new tone-compact installed as banker-tone-compact');
+  const tcDir = path.join(instDir, 'banker-tone-compact');
+  ok(fs.existsSync(path.join(tcDir, 'scripts', 'tone-compact.mjs')), 'banker-tone-compact carries scripts/tone-compact.mjs into the Codex install');
+  const tcSkill = fs.readFileSync(path.join(tcDir, 'SKILL.md'), 'utf8');
+  ok(/^---\nname: banker-tone-compact\n/.test(tcSkill) && tcSkill.includes('<!-- tone-compact:rules:start -->') && tcSkill.includes('<!-- tone-compact:rules:end -->'),
+     'Codex copy of tone-compact keeps its rule markers after the name rewrite');
+  ok(installed.includes('banker-graceful_pause'), 'new graceful_pause installed as banker-graceful_pause');
 
   // 6.5) lineage.py Python regression tests. GATE ON INTERPRETER >=3.7, not mere presence:
   // EL8/Rocky8's default `python3` is 3.6.8, which lineage.py sys.exit(2)s at import, so a
@@ -165,6 +180,9 @@ try {
     path.join('hooks', 'update-fetch.test.mjs'), path.join('hooks', 'update-notify.test.mjs'),
     path.join('hooks', 'update-checkin.test.mjs'),
     path.join('skills', '3d-intro-build', 'references', 'azure-adapter.test.mjs'),
+    path.join('skills', 'payload-mon', 'scripts', 'payload-mon.test.mjs'),
+    path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
+    path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
     // lineage.py is Python; its test is test_lineage.py (not *.test.mjs). files[] excludes
     // it via `!**/test_*.py`. pkgRoot IS the installed tarball Codex copies from, so this one
     // assertion covers BOTH runtimes: a leaked test would ship to Claude and Codex alike.

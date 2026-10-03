@@ -14,5 +14,21 @@
   ],
   "0.13.0": [
     "banker:ralph-qa"
+  ],
+  "0.14.0": [
+    "banker:all-in-one",
+    "banker:compact-copy",
+    "banker:curation",
+    "banker:graceful_pause",
+    "banker:omc-reference",
+    "banker:payload-mon",
+    "banker:ready-compact",
+    "banker:refresh-readme",
+    "banker:rfp-author",
+    "banker:setup-omc",
+    "banker:setup-omc-hud",
+    "banker:smart-compact",
+    "banker:tone-compact",
+    "banker:ultra-init"
   ]
 }
