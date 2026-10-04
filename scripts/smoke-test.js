@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (57 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (56 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 57, `codex dry-run plans 57 skill copies (got ${copies})`);
+  ok(copies === 56, `codex dry-run plans 56 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -106,11 +106,15 @@ try {
   const renamedStitchDir = path.join(home2, '.codex', 'skills', 'banker-setup-stitch-proxy');
   fs.mkdirSync(renamedStitchDir, { recursive: true });
   fs.writeFileSync(path.join(renamedStitchDir, 'SKILL.md'), '---\nname: banker-setup-stitch-proxy\n---\n');
+  // removal guard: graceful_pause left the plugin (replaced by the /graceful-pause function-hooks command)
+  const removedPauseDir = path.join(home2, '.codex', 'skills', 'banker-graceful_pause');
+  fs.mkdirSync(removedPauseDir, { recursive: true });
+  fs.writeFileSync(path.join(removedPauseDir, 'SKILL.md'), '---\nname: banker-graceful_pause\n---\n');
   const env2 = { ...process.env, HOME: home2, USERPROFILE: home2 };
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 57, `real codex install has 57 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 56, `real codex install has 56 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -141,7 +145,8 @@ try {
   const tcSkill = fs.readFileSync(path.join(tcDir, 'SKILL.md'), 'utf8');
   ok(/^---\nname: banker-tone-compact\n/.test(tcSkill) && tcSkill.includes('<!-- tone-compact:rules:start -->') && tcSkill.includes('<!-- tone-compact:rules:end -->'),
      'Codex copy of tone-compact keeps its rule markers after the name rewrite');
-  ok(installed.includes('banker-graceful_pause'), 'new graceful_pause installed as banker-graceful_pause');
+  ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
+     'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud step 3 runs scripts/claude-update-last.mjs from the skill's own folder; every copy of that
   // folder ships it, Codex's included (there the skill points at OMX's hud, so the script sits unused).
   ok(fs.existsSync(path.join(instDir, 'banker-setup-omc-hud', 'scripts', 'claude-update-last.mjs')),
@@ -174,7 +179,7 @@ try {
   // update-checkin.mjs are standalone scripts update-notify.mjs spawns detached (never declared in
   // hooks.json), but files[] still ships them, so assert all are packaged like the rest.
   const hookFiles = ['hooks.json', 'obsidize-hook.mjs', 'run.cjs', 'telemetry-count.mjs', 'telemetry-count-skill.mjs',
-    'update-fetch.mjs', 'update-notify.mjs', 'update-checkin.mjs'];
+    'update-fetch.mjs', 'update-notify.mjs', 'update-checkin.mjs', 'register.mjs', 'graceful-pause.mjs'];
   for (const f of hookFiles) {
     ok(fs.existsSync(path.join(root, 'hooks', f)), `hooks/${f} exists in the repo`);
   }
@@ -197,6 +202,7 @@ try {
     path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
     path.join('skills', 'setup-omc-hud', 'scripts', 'claude-update-last.test.mjs'),
+    path.join('hooks', 'graceful-pause.test.mjs'), path.join('hooks', 'graceful-pause.engine.test.ts'),
     // lineage.py is Python; its test is test_lineage.py (not *.test.mjs). files[] excludes
     // it via `!**/test_*.py`. pkgRoot IS the installed tarball Codex copies from, so this one
     // assertion covers BOTH runtimes: a leaked test would ship to Claude and Codex alike.

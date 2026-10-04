@@ -10,6 +10,9 @@
 # ignored — never widen this to .claude/, or a shared config would be silently dropped one day.
 # (.claude-plugin/ is the published plugin manifest and stays tracked.)
 .claude/settings.local.json
+# Claude Code lays its API type files into .claude-plugin/types/ whenever it loads this folder as a
+# --plugin-dir (function hooks); they are the engine's, per build, and never sources.
+.claude-plugin/types/
 
 # --- npm build artifacts (`npm pack` drops the tarball in the repo root) ---
 node_modules/

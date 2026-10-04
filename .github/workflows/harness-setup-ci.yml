@@ -5,7 +5,7 @@ name: harness-setup-ci
 # Honest scope: harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
 # testable on hosted runners; those steps are partial/tolerated and labeled as such.
 # obsidizer has no per-OS install, so it gets no OS-toolchain job — it is covered by the structural
-# job (57 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
+# job (56 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
 
 on:
   push:
@@ -32,16 +32,16 @@ concurrency:
 
 jobs:
   smoke:
-    name: structural (packaging · 57 skills · dir==name)
+    name: structural (packaging · 56 skills · dir==name)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: manifest count == 57 both / 0 claude-only
+      - name: manifest count == 56 both / 0 claude-only
         run: |
-          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==57||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
+          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==56||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
       - name: smoke-test (dir==name, dry-run, real codex install)
         run: node scripts/smoke-test.js
       - name: version sync (SoT drift guard — plugin.json == package.json == marketplace.json)
@@ -58,7 +58,7 @@ jobs:
           [ -n "$files" ] || { echo "no *.test.mjs found — the find pattern broke"; exit 1; }
           echo "$files"
           node --test $files
-          # 로컬 실측(node 20.20.2, 이 잡과 같은 메이저): 391 tests / 385 pass / 0 fail / 6 skip.
+          # 로컬 실측(node 20.20.2, 이 잡과 같은 메이저): 415 tests / 409 pass / 0 fail / 6 skip.
           # skip 6 은 vertical-pptx tier-2 로, 빌더(pptxgenjs·python-pptx)가 없으면 정상 skip 이다.
       - name: hook files ship via npm (files[] includes "hooks")
         run: |
