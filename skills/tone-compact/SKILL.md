@@ -1,6 +1,6 @@
 ---
 name: tone-compact
-description: "(banker) 답변과 새 문서를 ASD-STE100 기반 한글 개조식(표, 목록, 원어 발음 표기, 장식 기호 금지)으로 간결하게 쓰는 문체 규칙을 켜고 끔. 인자가 없으면 on, off 할 때까지 모든 세션에 유지. 'tone-compact'/'간결체 켜'/'개조식으로 답해'/'문체 규칙 켜/꺼' 시 사용."
+description: "답변과 새 문서를 ASD-STE100 기반 한글 개조식(표, 목록, 원어 발음 표기, 장식 기호 금지)으로 간결하게 쓰는 문체 규칙을 켜고 끔. 인자가 없으면 on, off 할 때까지 모든 세션에 유지. 'tone-compact'/'간결체 켜'/'개조식으로 답해'/'문체 규칙 켜/꺼' 시 사용."
 argument-hint: "on | off | status"
 ---
 

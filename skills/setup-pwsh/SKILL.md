@@ -1,6 +1,6 @@
 ---
 name: setup-pwsh
-description: "(banker) Windows PowerShell 7 + Git + $PROFILE(UTF-8 무BOM) 환경을 winget 으로 설치·검증(비-Windows 는 감지 후 no-op). 'setup-pwsh'/'PowerShell 설치'/'pwsh 환경 설정' 또는 /banker:setup 시 사용."
+description: "Windows PowerShell 7 + Git + $PROFILE(UTF-8 무BOM) 환경을 winget 으로 설치·검증(비-Windows 는 감지 후 no-op). 'setup-pwsh'/'PowerShell 설치'/'pwsh 환경 설정' 또는 /banker:setup 시 사용."
 ---
 
 # setup-pwsh: Windows PowerShell 7 환경 설치

@@ -1,6 +1,6 @@
 ---
 name: payload-mon
-description: "(banker) OMC HUD 상태표시줄에 현재 세션의 API 요청 payload 추정치(32MB 한도 대비)를 ctx 옆에 표시하는 기능을 켜고 끔(8MB부터 표시). 'payload-mon'/'payload 모니터 켜/꺼'/'상태표시줄 payload 표시'/'요청 크기 경고'/'32MB 한도 경고'/'payload 표시가 안 보여' 시 사용."
+description: "OMC HUD 상태표시줄에 현재 세션의 API 요청 payload 추정치(32MB 한도 대비)를 ctx 옆에 표시하는 기능을 켜고 끔(8MB부터 표시). 'payload-mon'/'payload 모니터 켜/꺼'/'상태표시줄 payload 표시'/'요청 크기 경고'/'32MB 한도 경고'/'payload 표시가 안 보여' 시 사용."
 argument-hint: "on | off | status"
 ---
 

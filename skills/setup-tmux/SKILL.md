@@ -1,6 +1,6 @@
 ---
 name: setup-tmux
-description: "(banker) OMC team·worktree 세션과 Codex OMX $team·HUD 가 요구하는 tmux(Windows는 psmux)를 OS 감지 후 설치·소스빌드(Rocky8 3.6a). 'setup-tmux'/'tmux 설치'/'psmux 설치' 또는 /banker:setup 시 사용."
+description: "OMC team·worktree 세션과 Codex OMX $team·HUD 가 요구하는 tmux(Windows는 psmux)를 OS 감지 후 설치·소스빌드(Rocky8 3.6a). 'setup-tmux'/'tmux 설치'/'psmux 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-tmux: tmux(Windows는 psmux) 설치

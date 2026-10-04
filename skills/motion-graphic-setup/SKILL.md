@@ -1,6 +1,6 @@
 ---
 name: motion-graphic-setup
-description: "(banker) 모션 그래픽 제작 도구 hyperframes 설치 전제조건 확보: Node>=22 + ffmpeg(OS 패키지 우선, project-local ffmpeg-static 폴백) 후 npx hyperframes init/skills update/doctor. 'motion-graphic-setup'/'모션 그래픽 설치'/'hyperframes 설치' 또는 /banker:setup 시 사용."
+description: "모션 그래픽 제작 도구 hyperframes 설치 전제조건 확보: Node>=22 + ffmpeg(OS 패키지 우선, project-local ffmpeg-static 폴백) 후 npx hyperframes init/skills update/doctor. 'motion-graphic-setup'/'모션 그래픽 설치'/'hyperframes 설치' 또는 /banker:setup 시 사용."
 ---
 
 # motion-graphic-setup — hyperframes(모션 그래픽 CLI) 설치

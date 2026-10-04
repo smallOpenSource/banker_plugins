@@ -1,6 +1,6 @@
 ---
 name: lineage
-description: "(banker) 현재 세션(들) 대화를 카카오톡 스타일 단일 HTML로 export. Claude 답변=1줄 요약+클릭 펼침(마크다운 렌더), 하네스 노이즈 자동 필터, 다중 세션 병합. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
+description: "현재 세션(들) 대화를 카카오톡 스타일 단일 HTML로 export. Claude 답변=1줄 요약+클릭 펼침(마크다운 렌더), 하네스 노이즈 자동 필터, 다중 세션 병합. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
 version: 2.0.0
 schema_version: 1

@@ -1,6 +1,6 @@
 ---
 name: cleansing-memory
-description: "(banker) 에이전트 메모리 파일(MEMORY.md·CLAUDE.md·AGENTS.md)을 문서화된 threshold 안으로 정리: 중복 최신본화, 무손실 간결화, append→replace 판별. 'cleansing-memory'/'메모리 정리'/'MEMORY.md 정리'/'CLAUDE.md 압축'/'AGENTS.md 용량' 시 사용."
+description: "에이전트 메모리 파일(MEMORY.md·CLAUDE.md·AGENTS.md)을 문서화된 threshold 안으로 정리: 중복 최신본화, 무손실 간결화, append→replace 판별. 'cleansing-memory'/'메모리 정리'/'MEMORY.md 정리'/'CLAUDE.md 압축'/'AGENTS.md 용량' 시 사용."
 ---
 
 # cleansing-memory: 메모리 파일 정리 (중복 최신본화·무손실 압축·replace 판별)

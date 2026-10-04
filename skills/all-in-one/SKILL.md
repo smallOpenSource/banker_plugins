@@ -1,6 +1,6 @@
 ---
 name: all-in-one
-description: "(banker) 한 명령으로 합의 계획→검증 구현→독립 QA 게이트를 연쇄(ralplan→ralph→QA 게이트: Claude Code는 verify 순환, Codex는 ultraqa). 코딩 작업을 계획부터 통과까지 최대 rigor로 한 번에. 'all-in-one'/'all in one' 시 사용(한 줄 수정은 ralph, 아이디어 확장은 autopilot)."
+description: "한 명령으로 합의 계획→검증 구현→독립 QA 게이트를 연쇄(ralplan→ralph→QA 게이트: Claude Code는 verify 순환, Codex는 ultraqa). 코딩 작업을 계획부터 통과까지 최대 rigor로 한 번에. 'all-in-one'/'all in one' 시 사용(한 줄 수정은 ralph, 아이디어 확장은 autopilot)."
 argument-hint: "[--short] [--checkpoint] [--critic=critic|architect|codex] [--qa=tests|build|lint|typecheck] [--no-deslop] <task description>"
 level: 4
 ---
