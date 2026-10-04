@@ -34,6 +34,13 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
    # 0.13.0 에서는 verifier-probe.test.mjs 가 그 구멍에 빠졌다(로컬 전량 241 vs 글롭 201).
    # 매치가 0 이면 리터럴이 그대로 넘어가 에러가 나는 문제도 find 형태에는 없다.
    node --test $(find . -name '*.test.mjs' -not -path '*/node_modules/*')
+   # function hooks 의 *.test.ts 는 엔진 자체 키트(claude plugin test)에서 돈다. 키트가 플러그인
+   # 폴더에 타입 파일을 쓸 수 있어 사본에서 돌린다. 사본에는 git 이 추적하거나 추적할 파일만 담아
+   # 무시된 파일(.env.*.local, .remember/)이 저장소 밖으로 나가지 않게 한다. 마지막 줄은 키트의
+   # 종료 코드를 그대로 남긴다.
+   S=$(mktemp -d)
+   git ls-files -z --cached --others --exclude-standard | tar --null -T - -cf - | tar -xf - -C "$S"
+   claude plugin test "$S"; rc=$?; rm -rf "$S"; test $rc -eq 0
    node scripts/smoke-test.js
 
    # vertical-pptx 의 빌더 의존 테스트는 기본이 skip 이다. 릴리스 때는 skip 을 실패로 바꿔 강제한다.

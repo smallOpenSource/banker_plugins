@@ -1,5 +1,6 @@
 {
-  "description": "banker hooks: obsidizer wiki canonicalization (PostToolUse, inert until `obsidizer --enable`) + anonymous usage counting (PostToolUse Skill / UserPromptExpansion, count-default-on, opt-out BANKER_NO_TELEMETRY, no-op without endpoint) + update-check notification (SessionStart, opt-out BANKER_NO_UPDATE_CHECK).",
+  "description": "banker hooks: obsidizer wiki canonicalization (PostToolUse, inert until `obsidizer --enable`) + anonymous usage counting (PostToolUse Skill / UserPromptExpansion, count-default-on, opt-out BANKER_NO_TELEMETRY, no-op without endpoint) + update-check notification (SessionStart, opt-out BANKER_NO_UPDATE_CHECK). modules: function hooks (Claude Code 2.1.289+) serving /graceful-pause, which runs at once even mid-turn.",
+  "modules": ["./register.mjs"],
   "hooks": {
     "PostToolUse": [
       {
