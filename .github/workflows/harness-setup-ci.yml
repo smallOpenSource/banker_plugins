@@ -58,7 +58,7 @@ jobs:
           [ -n "$files" ] || { echo "no *.test.mjs found — the find pattern broke"; exit 1; }
           echo "$files"
           node --test $files
-          # 로컬 실측(node 20.20.2, 이 잡과 같은 메이저): 351 tests / 345 pass / 0 fail / 6 skip.
+          # 로컬 실측(node 20.20.2, 이 잡과 같은 메이저): 391 tests / 385 pass / 0 fail / 6 skip.
           # skip 6 은 vertical-pptx tier-2 로, 빌더(pptxgenjs·python-pptx)가 없으면 정상 skip 이다.
       - name: hook files ship via npm (files[] includes "hooks")
         run: |
