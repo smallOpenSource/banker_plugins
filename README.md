@@ -156,7 +156,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `setup-omc` | oh-my-claudecode(OMC) 설치·갱신 (Codex는 OMX) |
 | `harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
 | `setup-playwright` | Playwright + headless 브라우저 (RHEL8/Rocky8·non-root·no-conda 폴백) |
-| `setup-omc-hud` | omc_hud 상태표시줄 (OS별) |
+| `setup-omc-hud` | omc_hud 상태표시줄 (OS별). Claude 갱신 안내는 줄 맨 끝 |
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
 | `setup-stitch` | Stitch 디자인 MCP 프록시 등록(RockyLinux8 proxy) |
 | `docs-setup` | arch-diagram·pdf-vision-extract 의존성(pptx·pymupdf·plantuml) 설치 |
@@ -221,7 +221,7 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine` | — (Codex는 OMX `hud`) |
+| `setup-omc-hud` | `statusLine` + `hud/omc-hud-custom.mjs` 에 Claude 갱신 안내를 줄 맨 끝으로 옮기는 블록 1개(`.claude-update-last.bak` 백업·멱등·`node --check` 검증, `off` 로 원복) | — (Codex는 OMX `hud`) |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
@@ -265,6 +265,9 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 > `payload-mon` 을 켰다면 제거 전에 `/banker:payload-mon off`(Codex는 `banker-payload-mon` 에 `off`)를 실행하세요.\
 > 표시 블록과 모듈 사본은 플러그인 밖(`~/.claude/hud/`)에 있어서, 플러그인을 지워도 남아 계속 표시됩니다.\
 > 이미 지웠다면 HUD를 재설치하거나, `omc-hud-custom.mjs` 에서 `// >>> payload-mon >>>` 부터 `// <<< payload-mon <<<` 까지 지우면 됩니다.
+
+> `setup-omc-hud` 가 넣은 Claude 갱신 안내 블록도 플러그인 밖(`~/.claude/hud/omc-hud-custom.mjs`)에 남습니다. 원래 순서로 되돌리려면 제거 전에 `/banker:setup-omc-hud off` 를 실행하세요.\
+> 이미 지웠다면 HUD를 재설치하거나, `// >>> claude-update-last >>>` 부터 `// <<< claude-update-last <<<` 까지 지우면 됩니다. 블록을 남겨 두어도 상태표시줄은 깨지지 않습니다.
 
 > `tone-compact` 를 켰다면 제거 전에 런타임마다 `off` 를 실행하세요(Claude Code `/banker:tone-compact off`, Codex `banker-tone-compact` 에 `off`).\
 > 규칙 파일과 블록은 플러그인 밖(`~/.claude/rules/`, `~/.codex/AGENTS.md`)에 있어서, 플러그인을 지워도 남아 계속 적용됩니다.\

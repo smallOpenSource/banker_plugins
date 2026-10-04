@@ -133,6 +133,10 @@ try {
   ok(/^---\nname: banker-tone-compact\n/.test(tcSkill) && tcSkill.includes('<!-- tone-compact:rules:start -->') && tcSkill.includes('<!-- tone-compact:rules:end -->'),
      'Codex copy of tone-compact keeps its rule markers after the name rewrite');
   ok(installed.includes('banker-graceful_pause'), 'new graceful_pause installed as banker-graceful_pause');
+  // setup-omc-hud step 3 runs scripts/claude-update-last.mjs from the skill's own folder; every copy of that
+  // folder ships it, Codex's included (there the skill points at OMX's hud, so the script sits unused).
+  ok(fs.existsSync(path.join(instDir, 'banker-setup-omc-hud', 'scripts', 'claude-update-last.mjs')),
+     'banker-setup-omc-hud carries scripts/claude-update-last.mjs into the Codex install');
 
   // 6.5) lineage.py Python regression tests. GATE ON INTERPRETER >=3.7, not mere presence:
   // EL8/Rocky8's default `python3` is 3.6.8, which lineage.py sys.exit(2)s at import, so a
@@ -183,6 +187,7 @@ try {
     path.join('skills', 'payload-mon', 'scripts', 'payload-mon.test.mjs'),
     path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
+    path.join('skills', 'setup-omc-hud', 'scripts', 'claude-update-last.test.mjs'),
     // lineage.py is Python; its test is test_lineage.py (not *.test.mjs). files[] excludes
     // it via `!**/test_*.py`. pkgRoot IS the installed tarball Codex copies from, so this one
     // assertion covers BOTH runtimes: a leaked test would ship to Claude and Codex alike.
