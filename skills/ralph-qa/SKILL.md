@@ -1,6 +1,6 @@
 ---
 name: ralph-qa
-description: "(banker) 작업 결과를 자기채점하지 않게 독립 검증/개선 반복: 다중 에이전트 백본이 가장 강한 가용 모델로 항상 돌고, 실제로 유효한 외부 LLM(Codex CLI·Gemini CLI·GPT/Gemini API)만 추가 좌석으로 합류한다. 'ralph-qa'/'교차검증'/'다른 LLM으로 검증'/'독립 QA' 시 사용."
+description: "작업 결과를 자기채점하지 않게 독립 검증/개선 반복: 다중 에이전트 백본이 가장 강한 가용 모델로 항상 돌고, 실제로 유효한 외부 LLM(Codex CLI·Gemini CLI·GPT/Gemini API)만 추가 좌석으로 합류한다. 'ralph-qa'/'교차검증'/'다른 LLM으로 검증'/'독립 QA' 시 사용."
 ---
 
 # ralph-qa — 독립 검증 루프 (백본 + 좌석)

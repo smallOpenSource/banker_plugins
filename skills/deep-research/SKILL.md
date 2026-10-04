@@ -1,6 +1,6 @@
 ---
 name: deep-research
-description: "(banker) 다중 소스 웹 리서치를 팬아웃해 주장을 적대적으로 팩트체크하고 확신순 인용 리포트로 합성. 'deep-research'/'딥리서치'/'심층 조사'/'출처 검증 리서치' 시 사용."
+description: "다중 소스 웹 리서치를 팬아웃해 주장을 적대적으로 팩트체크하고 확신순 인용 리포트로 합성. 'deep-research'/'딥리서치'/'심층 조사'/'출처 검증 리서치' 시 사용."
 ---
 
 # deep-research — 팬아웃 + 적대적 검증 리서치

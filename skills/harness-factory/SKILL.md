@@ -1,6 +1,6 @@
 ---
 name: harness-factory
-description: "(banker) revfactory/harness(팀 아키텍처 팩토리) 플러그인 설치·구성·사용안내. Claude=harness@harness-marketplace, Codex=meta-harness. 'harness-factory'/'하네스 팩토리'/'에이전트팀 생성' 또는 /banker:setup 시 사용."
+description: "revfactory/harness(팀 아키텍처 팩토리) 플러그인 설치·구성·사용안내. Claude=harness@harness-marketplace, Codex=meta-harness. 'harness-factory'/'하네스 팩토리'/'에이전트팀 생성' 또는 /banker:setup 시 사용."
 ---
 
 # harness-factory: revfactory/harness 팀 아키텍처 팩토리 설치·구성

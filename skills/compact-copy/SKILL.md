@@ -1,6 +1,6 @@
 ---
 name: compact-copy
-description: "(banker) 코드펜스로 감싼 resume 프롬프트(이전 형식 ready-compact 출력 등)에서 본문만 뽑아 최종 메시지를 '프롬프트-only'로 출력(response.md 기록 → /copy로 클립보드에 담김). 지금의 ready-compact 는 처음부터 프롬프트만 출력하므로 보통은 필요 없음. 'compact-copy'/'프롬프트만 복사'/'resume 프롬프트만' 시 사용."
+description: "코드펜스로 감싼 resume 프롬프트(이전 형식 ready-compact 출력 등)에서 본문만 뽑아 최종 메시지를 '프롬프트-only'로 출력(response.md 기록 → /copy로 클립보드에 담김). 지금의 ready-compact 는 처음부터 프롬프트만 출력하므로 보통은 필요 없음. 'compact-copy'/'프롬프트만 복사'/'resume 프롬프트만' 시 사용."
 ---
 
 # compact-copy — resume 프롬프트만 추출 복사

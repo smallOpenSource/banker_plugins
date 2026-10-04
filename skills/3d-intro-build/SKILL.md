@@ -1,6 +1,6 @@
 ---
 name: 3d-intro-build
-description: "(banker) 브랜드 인트로용 스크롤-스크럽 3D fly-through 사이트를 Azure(gpt-image-2 스틸 + Sora-2 forward-chaining)로 제작: 인터뷰 → 비용 승인 게이트 → 스틸 → fly-through → 로컬 프리뷰. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
+description: "브랜드 인트로용 스크롤-스크럽 3D fly-through 사이트를 Azure(gpt-image-2 스틸 + Sora-2 forward-chaining)로 제작: 인터뷰 → 비용 승인 게이트 → 스틸 → fly-through → 로컬 프리뷰. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
 ---
 
 # 3d-intro-build — 스크롤-스크럽 3D 인트로 제작 (Azure 파이프라인)

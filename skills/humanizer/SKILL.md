@@ -1,7 +1,7 @@
 ---
 name: humanizer
 version: 2.8.0
-description: "(banker) AI가 쓴 듯한 영문 글의 흔적을 제거해 자연스러운 문체로 윤문. 'humanizer'/'remove AI writing'/'sound more human'/'natural' 시 사용."
+description: "AI가 쓴 듯한 영문 글의 흔적을 제거해 자연스러운 문체로 윤문. 'humanizer'/'remove AI writing'/'sound more human'/'natural' 시 사용."
 license: MIT
 compatibility: claude-code opencode
 allowed-tools:

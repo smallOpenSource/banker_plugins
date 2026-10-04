@@ -1,6 +1,6 @@
 ---
 name: setup-playwright
-description: "(banker) Playwright + headless 브라우저를 OS·권한·conda 감지 후 설치(RHEL8/Rocky8·non-root·no-conda·xvfb 폴백). 'setup-playwright'/'playwright 설치' 또는 /banker:setup 시 사용."
+description: "Playwright + headless 브라우저를 OS·권한·conda 감지 후 설치(RHEL8/Rocky8·non-root·no-conda·xvfb 폴백). 'setup-playwright'/'playwright 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-playwright — Playwright + headless 브라우저 설치 (OS·권한 적응형)

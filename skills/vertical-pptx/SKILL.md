@@ -1,6 +1,6 @@
 ---
 name: vertical-pptx
-description: "(banker) A4 세로(210x297mm) 규격 PPTX 생성·점검·수리와 16:9 덱의 A4 세로 변환. 'A4 세로 pptx'/'세로형 슬라이드'/'인쇄용 pptx'/'vertical-pptx' 시 사용."
+description: "A4 세로(210x297mm) 규격 PPTX 생성·점검·수리와 16:9 덱의 A4 세로 변환. 'A4 세로 pptx'/'세로형 슬라이드'/'인쇄용 pptx'/'vertical-pptx' 시 사용."
 ---
 
 # vertical-pptx - A4 세로(210x297mm) 규격 PPTX

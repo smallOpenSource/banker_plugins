@@ -1,6 +1,6 @@
 ---
 name: setup-sandbox
-description: "(banker) 에이전트 샌드박스 공통 기반(Linux bubblewrap+socat+sysctl userns, macOS Seatbelt, Windows AppContainer)을 OS 감지 후 설치(+rust/cargo·git safe.directory 폴드인). 'setup-sandbox'/'샌드박스 설치'/'bubblewrap 설치' 또는 /banker:setup 시 사용."
+description: "에이전트 샌드박스 공통 기반(Linux bubblewrap+socat+sysctl userns, macOS Seatbelt, Windows AppContainer)을 OS 감지 후 설치(+rust/cargo·git safe.directory 폴드인). 'setup-sandbox'/'샌드박스 설치'/'bubblewrap 설치' 또는 /banker:setup 시 사용."
 ---
 
 # setup-sandbox: 에이전트 샌드박스 설치

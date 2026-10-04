@@ -1,6 +1,6 @@
 ---
 name: vertical-pptx-setup
-description: "(banker) vertical-pptx 의존성(pptxgenjs·python-pptx)과 시각 검증용 LibreOffice 를 OS·권한 감지 후 설치(root 없으면 홈 프리픽스 추출). 'vertical-pptx-setup'/'LibreOffice 설치'/'pptx 렌더 검증 준비' 또는 /banker:setup 시 사용."
+description: "vertical-pptx 의존성(pptxgenjs·python-pptx)과 시각 검증용 LibreOffice 를 OS·권한 감지 후 설치(root 없으면 홈 프리픽스 추출). 'vertical-pptx-setup'/'LibreOffice 설치'/'pptx 렌더 검증 준비' 또는 /banker:setup 시 사용."
 ---
 
 # vertical-pptx-setup — vertical-pptx 실행·검증 환경 설치

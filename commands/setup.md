@@ -1,5 +1,5 @@
 ---
-description: "(banker) 구성요소·의존성을 multi-select로 골라 설치하는 오케스트레이터(런타임 node·python·java, LSP, tmux, MCP, sandbox, OMC, harness-factory, playwright 등)."
+description: "구성요소·의존성을 multi-select로 골라 설치하는 오케스트레이터(런타임 node·python·java, LSP, tmux, MCP, sandbox, OMC, harness-factory, playwright 등)."
 argument-hint: "[설치할 컴포넌트명 — 비우면 multi-select 표시]"
 ---
 

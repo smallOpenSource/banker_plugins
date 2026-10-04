@@ -83,6 +83,15 @@ try {
   // catches the realistic deletion/duplication cases.
   const claudeOnly = mfSkillSurfaces.filter((s) => s.target !== 'both').map((s) => s.name);
   ok(claudeOnly.length === 0, `every manifest skill is target:both (silent claude-only: [${claudeOnly.join(', ')}])`);
+  // Claude Code's typeahead already puts "(banker)" before a plugin skill's description, and the
+  // Codex copy is named banker-<name>, so a description that starts with the tag shows it twice.
+  const descFiles = [
+    ...diskSkills.map((d) => path.join(root, 'skills', d, 'SKILL.md')),
+    ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join(root, 'commands', f)),
+  ];
+  const tagged = descFiles.filter((f) => /^description:\s*"?\(banker\)/m.test(fs.readFileSync(f, 'utf8').split(/\n---/)[0]))
+    .map((f) => path.relative(root, f));
+  ok(tagged.length === 0, `no skill or command description starts with "(banker)" (tagged: [${tagged.join(', ')}])`);
 
   // 6) REAL codex install into a fresh temp HOME: assert dir==name (Codex discovery) + stale sweep
   const home2 = path.join(tmp, 'home2');

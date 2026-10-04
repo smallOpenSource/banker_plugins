@@ -1,6 +1,6 @@
 ---
 name: omc-reference
-description: "(banker) OMC/OMX 에이전트·툴·팀·커밋·스킬 레지스트리 레퍼런스(양 런타임 병기). 에이전트 위임·OMC/OMX 툴·팀·커밋·스킬 사용 시 자동 로드."
+description: "OMC/OMX 에이전트·툴·팀·커밋·스킬 레지스트리 레퍼런스(양 런타임 병기). 에이전트 위임·OMC/OMX 툴·팀·커밋·스킬 사용 시 자동 로드."
 user-invocable: false
 ---
 

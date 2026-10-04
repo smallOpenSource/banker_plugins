@@ -1,6 +1,6 @@
 ---
 name: smart-compact
-description: "(banker) 컨텍스트 임계(기본 50%) 초과 시 append-wiki→ready-compact 자동 실행(마지막 메시지가 resume 프롬프트뿐) + /copy·/compact·paste 유저 핸드오프 게이트. 'smart-compact' 활성화 / '--cancel' 해제."
+description: "컨텍스트 임계(기본 50%) 초과 시 append-wiki→ready-compact 자동 실행(마지막 메시지가 resume 프롬프트뿐) + /copy·/compact·paste 유저 핸드오프 게이트. 'smart-compact' 활성화 / '--cancel' 해제."
 ---
 
 # smart-compact — 컨텍스트 위생 자동 게이트
