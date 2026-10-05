@@ -1,6 +1,6 @@
 ---
 name: setup-insane-search
-description: "insane-search(차단·봇방어 사이트 우회 검색·페치) 플러그인 설치(Claude=gptaku_plugins, Codex=gptaku-codex). 'setup-insane-search'/'insane-search 설치' 또는 /banker:setup 시 사용."
+description: "차단이나 봇 방어가 있는 사이트도 우회해 검색하고 가져오는 플러그인을 설치. Claude Code 는 `gptaku-plugins` 의 `insane-search`, Codex 는 `gptaku-codex` 의 `insane-research-codex`. 'setup-insane-search'/'insane-search 설치' 또는 `/banker:setup` 시 사용."
 ---
 
 # setup-insane-search: insane-search 플러그인 설치

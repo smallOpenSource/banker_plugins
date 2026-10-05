@@ -1,6 +1,6 @@
 ---
 name: docs-setup
-description: "arch-diagram·pdf-vision-extract 의존성(python-pptx·pymupdf·plantuml)을 python 환경 감지/선택 후 설치. 'docs-setup'/'문서 툴 설치'/'pptx·pymupdf·plantuml 설치' 또는 /banker:setup 시 사용."
+description: "`arch-diagram` 과 `pdf-vision-extract` 의 의존성(python-pptx, pymupdf, plantuml)을 설치. Python 환경을 감지하거나 고른 뒤 그 환경에 설치. 'docs-setup'/'문서 툴 설치'/'pptx 설치'/'pymupdf 설치'/'plantuml 설치' 또는 `/banker:setup` 시 사용."
 ---
 
 # docs-setup — 문서 생성 툴 설치 (python-pptx·pymupdf·plantuml)

@@ -1,6 +1,6 @@
 ---
 name: setup-omc-hud
-description: "omc_hud(Claude Code 상태표시줄)를 OS별 apply 스크립트로 적용하고 Claude 갱신 안내를 줄 맨 끝으로 옮김(Codex는 OMX hud). 'setup-omc-hud'/'omc_hud 설치'/'Claude 갱신 안내 위치' 또는 /banker:setup 시 사용."
+description: "Claude Code 의 상태표시줄 omc_hud 를 OS별 적용 스크립트로 설치하고, Claude Code 갱신 안내를 줄 맨 끝으로 옮김. Codex 는 OMX 의 `hud` 스킬을 씀. 'setup-omc-hud'/'omc_hud 설치'/'Claude 갱신 안내 위치' 또는 `/banker:setup` 시 사용."
 argument-hint: "[off|status]"
 ---
 

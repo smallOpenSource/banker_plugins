@@ -1,6 +1,6 @@
 ---
 name: visual-ralph
-description: "프론트엔드 UI를 레퍼런스(생성/정적/라이브 URL) 기준으로 측정 빌드: ralph 구현→Visual Verdict(≥90)+픽셀 diff 반복→재사용 디자인 시스템. 'visual-ralph'/'비주얼 랄프'/'UI 클론'/'레퍼런스대로 구현' 시 사용."
+description: "프론트엔드 UI 를 레퍼런스(생성 이미지, 정적 이미지, 라이브 URL)에 맞춰 측정하며 구현. `ralph` 가 구현하고 Visual Verdict 점수가 90 이상이 될 때까지 픽셀 비교와 수정을 반복한 뒤, 재사용 디자인 시스템으로 정리. 'visual-ralph'/'비주얼 랄프'/'UI 클론'/'레퍼런스대로 구현' 시 사용."
 ---
 
 # visual-ralph — 측정 기반 비주얼 빌드 루프

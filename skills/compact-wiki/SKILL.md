@@ -1,6 +1,6 @@
 ---
 name: compact-wiki
-description: ".omc/wiki 페이지를 무손실로 중복 제거·supersede·병합 정리. 'compact-wiki'/'위키 정리·압축'/'wiki 중복 제거'/'위키 병합' 시 사용."
+description: "`.omc/wiki` 페이지를 무손실로 정리. 중복은 지우고, 낡은 내용은 새 내용으로 대체하고, 겹치는 페이지는 병합. 'compact-wiki'/'위키 정리'/'위키 압축'/'wiki 중복 제거'/'위키 병합' 시 사용."
 ---
 
 # compact-wiki — wiki 정리·압축 (무손실)

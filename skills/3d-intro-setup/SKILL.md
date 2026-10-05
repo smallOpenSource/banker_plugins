@@ -1,6 +1,6 @@
 ---
 name: 3d-intro-setup
-description: "Azure Sora-2/gpt-image-2 3D 인트로 제작용 크레덴셜·의존성 설치: Node≥18·ffmpeg 확보 + apikey/엔드포인트/배포명 직접입력 또는 콘솔 샘플 코드 붙여넣기로 크레덴셜 저장 + 무과금 프리플라이트(listVideos·images badreq)로 검증. 'setup-3d-intro'/'3d-intro-setup'/'3D 인트로 설정'/'Azure Sora 크레덴셜' 또는 /banker:setup 시 사용."
+description: "`3d-intro-build` 에 필요한 Node 18 이상과 ffmpeg 를 갖추고 Azure 크레덴셜을 저장함. 크레덴셜은 직접 입력하거나 Azure 콘솔의 샘플 코드를 붙여 넣어 받고, 무과금 프리플라이트로 확인. 'setup-3d-intro'/'3d-intro-setup'/'3D 인트로 설정'/'Azure Sora 크레덴셜' 또는 `/banker:setup` 시 사용."
 ---
 
 # 3d-intro-setup — Azure Sora-2 / gpt-image-2 3D 인트로 제작 전제조건 설치

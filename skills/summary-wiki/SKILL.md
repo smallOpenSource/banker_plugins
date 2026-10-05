@@ -1,6 +1,6 @@
 ---
 name: summary-wiki
-description: "지금까지 쌓인 위키 페이지 전량을 docs/ 아래 단일 파일로 개조식 요약. 사용자가 아는 지식과 위키에 쌓인 내용의 차이를 식별하는 sync 검토용. 읽기 전용이며 stale 한 wiki_list 대신 파일을 직접 열거한다. 'summary-wiki'/'위키 요약'/'위키 지식 동기화'/'위키 digest' 시 사용."
+description: "지금까지 쌓인 위키 페이지 전부를 `docs/` 아래 단일 파일로 개조식 요약. 사용자가 아는 지식과 위키 내용의 차이를 찾는 동기화 검토용. 읽기 전용이며, 낡은 목록을 줄 수 있는 `wiki_list` 대신 파일을 직접 열거함. 'summary-wiki'/'위키 요약'/'위키 지식 동기화'/'위키 digest' 시 사용."
 ---
 
 # summary-wiki: 위키 전량을 docs/ 단일 파일로 개조식 요약 (sync 검토용)
