@@ -1,6 +1,6 @@
 ---
 name: nothing-design
-description: "Nothing 브랜드 스타일(미니멀·도트매트릭스·모노크롬) UI 디자인 적용. 'Nothing style'/'Nothing design'/'/nothing-design' 시 사용(일반 UI 작업 자동 트리거 금지)."
+description: "Nothing 브랜드 스타일(미니멀, 도트 매트릭스, 모노크롬)을 UI 디자인에 적용. 'Nothing style'/'Nothing design'/'/nothing-design' 시 사용. 일반 UI 작업에서는 자동 실행 금지."
 version: 3.0.0
 allowed-tools: [Read, Write, Edit, Glob, Grep]
 ---

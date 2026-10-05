@@ -1,6 +1,6 @@
 ---
 name: refresh-git-ignore
-description: "repo의 .gitignore를 비파괴·반복가능하게 갱신(런타임/빌드 아티팩트만 추가, 추적 파일 보호). 'refresh-git-ignore'/'.gitignore 갱신·정리'/'git status 잡음 줄여' 시 사용."
+description: "저장소의 `.gitignore` 를 갱신. 기존 항목은 지우지 않고, 여러 번 실행해도 결과가 같음. 런타임과 빌드 아티팩트만 추가하고 추적 중인 파일은 보호. 'refresh-git-ignore'/'.gitignore 갱신'/'.gitignore 정리'/'git status 잡음 줄여' 시 사용."
 ---
 
 # refresh-git-ignore — .gitignore 안전 갱신

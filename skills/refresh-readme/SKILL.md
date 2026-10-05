@@ -1,6 +1,6 @@
 ---
 name: refresh-readme
-description: "코드가 움직인 뒤 뒤처진 README 를 현재 프로젝트에 맞게 갱신. 산문 주장을 매니페스트·소스 트리·패키지 매니페스트와 대조해 드리프트를 잡고, 코드펜스·URL·플래그를 보호하며 간결하게 고쳐 쓴다. 'refresh-readme'/'README 갱신·최신화'/'README 가 코드와 안 맞아'/'README 드리프트' 시 사용."
+description: "코드가 바뀐 뒤 뒤처진 README 를 현재 프로젝트에 맞게 갱신. 산문 주장을 매니페스트, 소스 트리, 패키지 매니페스트와 대조해 드리프트를 찾고, 코드펜스와 URL, 플래그는 지키며 간결하게 고쳐 씀. 'refresh-readme'/'README 갱신'/'README 최신화'/'README 가 코드와 안 맞아'/'README 드리프트' 시 사용."
 ---
 
 # refresh-readme: README 드리프트 해소 (코드와 문서 정합)

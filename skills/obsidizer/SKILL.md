@@ -1,6 +1,6 @@
 ---
 name: obsidizer
-description: "AI 생성 마크다운 위키를 의미 보존한 채 Obsidian 지식그래프로 정규화·상호링크·백링크. '--enable'/'--disable' 로 이후 위키 생성 자동 정규화 켜기/끄기(Claude 한정). 'obsidizer'/'옵시디언화'/'obsidian 최적화'/'위키 그래프 정리' 시 사용."
+description: "AI 가 만든 마크다운 위키를, 의미를 보존한 채 Obsidian 지식 그래프로 정규화하며, 링크와 백링크를 연결. `--enable`, `--disable` 로 위키를 만들 때마다 자동 정규화할지 켜고 끔(Claude Code 만). 'obsidizer'/'옵시디언화'/'obsidian 최적화'/'위키 그래프 정리' 시 사용."
 ---
 
 # obsidizer — AI 위키를 Obsidian 지식그래프로 정규화

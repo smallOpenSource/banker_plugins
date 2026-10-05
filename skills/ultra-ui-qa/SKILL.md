@@ -1,6 +1,6 @@
 ---
 name: ultra-ui-qa
-description: "웹 UI를 playwright로 렌더해 디자인 SoT(PDF/스펙)와 1:1 대조 + 내부개념 텍스트 누출 점검(HTTP 200만으로 PASS 금지). 'ultra ui qa'/'UI 대조'/'디자인 PDF와 대조'/'어색한 내용 점검' 시 사용."
+description: "웹 UI 를 Playwright 로 렌더해 디자인 원본(PDF 나 스펙)과 1:1 로 대조하고, 내부 개념 텍스트가 화면에 새는지 점검. HTTP 200 만으로는 통과시키지 않음. 'ultra ui qa'/'UI 대조'/'디자인 PDF와 대조'/'어색한 내용 점검' 시 사용."
 ---
 
 # ultra-ui-qa — 라이브 UI ↔ SoT 엄격 대조 + 내부개념 누출 점검

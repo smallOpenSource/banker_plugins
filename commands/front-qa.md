@@ -1,6 +1,6 @@
 ---
-description: "스펙(note 파일) 기반 프론트엔드 구현 + 레퍼런스 대비 엄격 parity QA 워크플로(ralplan→ralph→loop)."
-argument-hint: "[스펙/note 파일 경로 — 생략 시 docs/note.txt]"
+description: "스펙 파일(기본 `docs/note.txt`)을 바탕으로 프론트엔드를 구현하고, 레퍼런스 구현과 같은지 엄격하게 QA 하는 워크플로(`ralplan`, `ralph`, `/loop`)."
+argument-hint: "[스펙 파일 경로. 생략하면 docs/note.txt]"
 ---
 
 # /front-qa — 스펙 기반 프론트엔드 구현 + 엄격 QA

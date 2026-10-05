@@ -1,6 +1,6 @@
 ---
 name: motion-graphic-make
-description: "10초 내외 내레이션 없는 무료 모션 그래픽(킨네틱 타이포·통계·차트·로고·하단자막·지도)을 hyperframes motion-graphics 워크플로에 위임 제작 — 렌더링 로직은 소유하지 않는 얇은 래퍼. 'motion-graphic-make'/'모션 그래픽 만들어줘'/'모션 그래픽 제작'/'motion graphics' 시 사용."
+description: "10초 안팎의 내레이션 없는 모션 그래픽(키네틱 타이포, 차트, 로고, 지도 등)을 hyperframes 워크플로로 유료 API 없이 만듦. 렌더링은 hyperframes 가 하고 이 스킬은 얇은 래퍼. 'motion-graphic-make'/'모션 그래픽 만들어줘'/'모션 그래픽 제작'/'motion graphics' 시 사용."
 ---
 
 # motion-graphic-make — 무료 모션 그래픽 제작 (hyperframes 위임)

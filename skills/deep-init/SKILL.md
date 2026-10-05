@@ -1,6 +1,6 @@
 ---
 name: deep-init
-description: "코드베이스 전체에 계층형 AGENTS.md 문서를 생성·갱신(부모 역참조·MANUAL 섹션 보존). 'deep-init'/'deepinit'/'AGENTS.md 생성'/'코드베이스 문서화' 시 사용."
+description: "코드베이스 전체에 계층형 `AGENTS.md` 문서를 만들거나 갱신. 상위 문서 참조와 `MANUAL` 섹션은 보존. 'deep-init'/'deepinit'/'AGENTS.md 생성'/'코드베이스 문서화' 시 사용."
 ---
 
 # deep-init — 계층형 AGENTS.md 초기화

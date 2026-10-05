@@ -1,6 +1,6 @@
 ---
 name: setup-java
-description: "JDK 21 + JAVA_HOME 설치(alternatives로 java·javac 비대칭 방지, Debian은 Adoptium 전용). jdtls 등 Java LSP 전제. 'setup-java'/'JDK 설치'/'Java 21 설치' 또는 /banker:setup 시 사용."
+description: "JDK 21 을 설치하고 `JAVA_HOME` 을 설정. `alternatives` 로 `java` 와 `javac` 의 버전 비대칭을 막고, Debian 은 Adoptium 만 씀. jdtls 같은 Java LSP 의 전제. 'setup-java'/'JDK 설치'/'Java 21 설치' 또는 `/banker:setup` 시 사용."
 ---
 
 # setup-java: JDK 21 + JAVA_HOME 설치

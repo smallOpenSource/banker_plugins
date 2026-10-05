@@ -1,6 +1,6 @@
 ---
 name: interval-report
-description: "장기 수행의 중간 보고를 docs/intermission.md 로 만들고 계획된 작업이 끝날 때까지 갱신. 시작 시각은 date 로 실측해 파일에 영속하고, ETA 는 단일 숫자 대신 범위+확신 라벨로 낸다. 'interval-report'/'중간 보고'/'진행 상황 보고'/'intermission' 시 사용."
+description: "오래 걸리는 작업의 중간 보고를 `docs/intermission.md` 로 만들고 계획한 작업이 끝날 때까지 갱신. 시작 시각은 `date` 로 재서 파일에 남기고, ETA 는 단일 숫자 대신 범위와 확신 라벨로 냄. 'interval-report'/'중간 보고'/'진행 상황 보고'/'intermission' 시 사용."
 ---
 
 # interval-report: 장기 수행 중간 보고 (docs/intermission.md)

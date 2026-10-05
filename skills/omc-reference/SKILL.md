@@ -1,6 +1,6 @@
 ---
 name: omc-reference
-description: "OMC/OMX 에이전트·툴·팀·커밋·스킬 레지스트리 레퍼런스(양 런타임 병기). 에이전트 위임·OMC/OMX 툴·팀·커밋·스킬 사용 시 자동 로드."
+description: "OMC 와 OMX 의 에이전트, 도구, 팀, 커밋, 스킬 레지스트리를 함께 정리한 참고 자료. 에이전트에게 맡기거나, 팀을 꾸리거나, 커밋하거나, OMC 나 OMX 의 도구와 스킬을 쓸 때 자동 로드."
 user-invocable: false
 ---
 

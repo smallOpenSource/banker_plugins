@@ -92,6 +92,44 @@ try {
   const tagged = descFiles.filter((f) => /^description:\s*"?\(banker\)/m.test(fs.readFileSync(f, 'utf8').split(/\n---/)[0]))
     .map((f) => path.relative(root, f));
   ok(tagged.length === 0, `no skill or command description starts with "(banker)" (tagged: [${tagged.join(', ')}])`);
+  // Descriptions follow tone-compact (the user's request). A regex can hold its mechanical rules: no
+  // decorative symbol, look-alike, emoji or exclamation mark; no translationese, inflected forms included;
+  // no sentence over 25 words; one line each, as a description is read in one line (so its vertical-list
+  // rule cannot apply). Code spans keep their original text and are not checked. What a regex cannot judge
+  // (meaning kept, terms, triggers) stays with review. /graceful-pause's description lives in
+  // hooks/graceful-pause.mjs, as function-hooks commands have no frontmatter.
+  const descs = descFiles.map((f) => {
+    const fm = fs.readFileSync(f, 'utf8').split(/\r?\n---/)[0];
+    const m = /^description:[ \t]*(.*?)\r?$/m.exec(fm);
+    let text = m ? m[1].trim() : '';
+    if (/^"(.*)"$/.test(text)) text = text.slice(1, -1);
+    // a value continued on an indented next line, quoted or not, is not one line either
+    const unclosed = /^"/.test(m ? m[1].trim() : '') && !/"$/.test(m ? m[1].trim() : '');
+    return { file: path.relative(root, f), text, multi: unclosed || /^description:.*\r?\n[ \t]+\S/m.test(fm) };
+  });
+  const pauseSrc = fs.readFileSync(path.join(root, 'hooks', 'graceful-pause.mjs'), 'utf8');
+  descs.push({ file: 'hooks/graceful-pause.mjs', text: (/^  description: '([^']*)',$/m.exec(pauseSrc) || [, ''])[1] });
+  const SYMBOLS = /[→⇒·…※★✓✗●■—–―‒‥!！‼⁉ㆍ•‧∙⋅・･⋯⸺⸻]|[\u{1F000}-\u{1FAFF}\u{2190}-\u{21FF}\u{25A0}-\u{25FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]|\p{Extended_Pictographic}/u;
+  // the double passive is written attached (되어지다), so a spaced 되어 지원 is ordinary prose
+  const TRANSLATIONESE = /에\s?대(해|한|하여)|[을를]\s?통(해|한|하여)|것이\s?가능|(되어|보여|쓰여|잊혀|불려|놓여|짜여)[지진졌짐져질집]/;
+  const toneBreaks = descs.flatMap(({ file, text, multi }) => {
+    const why = [];
+    const prose = text.replace(/`[^`]*`/g, '');
+    if (!text || multi || /^[>|]/.test(text)) why.push('no one-line description found');
+    if (SYMBOLS.test(prose)) why.push('decorative symbol, look-alike, emoji or "!"');
+    if (TRANSLATIONESE.test(prose)) why.push('translationese');
+    const longest = Math.max(...text.split(/(?<=\.)\s+/).map((s) => s.split(/\s+/).filter(Boolean).length));
+    if (longest > 25) why.push(`a ${longest}-word sentence`);
+    return why.map((w) => `${file}: ${w}`);
+  });
+  // argument-hint shows on the same typeahead line as the description: no decorative symbol there either
+  const hintBreaks = descFiles.flatMap((f) => {
+    const h = /^argument-hint:[ \t]*(.*?)\r?$/m.exec(fs.readFileSync(f, 'utf8').split(/\r?\n---/)[0]);
+    return h && SYMBOLS.test(h[1].replace(/`[^`]*`/g, '')) ? [`${path.relative(root, f)}: argument-hint symbol`] : [];
+  });
+  const breaks = [...toneBreaks, ...hintBreaks];
+  ok(breaks.length === 0,
+     `descriptions pass the mechanical tone checks: symbols, translationese, sentence length, one line; argument-hint symbols (${descs.length} checked${breaks.length ? '; ' + breaks.join('; ') : ''})`);
 
   // 6) REAL codex install into a fresh temp HOME: assert dir==name (Codex discovery) + stale sweep
   const home2 = path.join(tmp, 'home2');
