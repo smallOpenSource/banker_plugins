@@ -28,6 +28,7 @@ The generator (`banker setup --codex`) applies the rules below for `target: both
 - `deep-init` → 서브에이전트 Claude=OMC explore/architect/writer, Codex=OMX worker/explore(부재 시 직접 수행). 순수 fs+doc.
 - `deep-research` → Claude 번들 워크플로/`WebSearch`, Codex OMX `autoresearch`/`best-practice-research`.
 - `ralph-qa` → 백본은 런타임 서브에이전트(Claude=Agent/Task `model: opus`, Codex=OMX 서브에이전트)로 양쪽 동일. 외부 좌석만 런타임별로 갈린다: Claude=`codex exec`/`omc ask codex`, Codex=`omx $ask claude`(Codex 런타임에서 `codex exec` 는 자기 자신이라 부적격).
+- `lineage` → 기본 흐름의 검토자는 세션 모델이다(Claude=Agent 의 `Plan` 을 `model` 없이, Codex=`spawn_agent` 를 역할 없이, 저자 대화를 넘기지 않고). 띄울 수 없으면 세션이 파트를 직접 검토한다. Codex 검토자에게는 파일 읽기 도구가 없어 파트 파일을 읽는 셸 명령만 쓰게 한다. `workspace-write` 샌드박스에서는 `~/.cache` 에 쓸 수 없어 이번 실행의 검토 결정을 캐시에 쓰지 못한다(WARN). 앞선 실행이 남긴 결정은 읽는다. 읽는 기록은 Claude Code 형식뿐이라 Codex 에서는 Claude Code 기록을 내보낼 때만 쓴다. `--rulebase` 는 모델 호출 없이 양쪽 같다.
 - `smart-compact` → Claude statusLine `context_window.used_percentage`+hook; Codex 신호 미확인 시 휴리스틱 폴백. TUI 3단(`/copy`·`/compact`·paste)은 유저.
 - `curation` → 런타임 무관(외부 의존 0, 양쪽 동일).
 
