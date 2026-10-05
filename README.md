@@ -8,7 +8,7 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 56개 + 커맨드 2개**(총 58개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause` 를 묶은 Claude Code 플러그인입니다.\
+banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 57개 + 커맨드 2개**(총 59개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause` 를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
@@ -165,6 +165,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `vertical-pptx-setup` | vertical-pptx 의존성(pptxgenjs·python-pptx) + 시각 검증용 LibreOffice (OS·권한 적응형) |
 | `motion-graphic-setup` | hyperframes(무료 모션 그래픽 CLI) 전제조건 설치 (Node≥22 + ffmpeg) |
 | `3d-intro-setup` | 3D 인트로용 Azure 크레덴셜·의존성 설치 + 무과금 프리플라이트 (Node/ffmpeg) |
+| `setup-bypass-permissions` | Claude Code 기본 권한 모드를 `bypassPermissions` 로 바꿔 모든 세션에서 도구 실행 확인을 끔. 사용자가 직접 입력해야 실행(모델은 호출 불가), 위험 경고와 확인 뒤 적용, `off` 로 원복. `/banker:setup` 에서는 기본 미선택 |
 
 ## 설치 상세 (npm · Codex)
 
@@ -182,7 +183,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 56개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 57개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
@@ -231,6 +232,7 @@ banker uninstall        # 제거
 | `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
+| `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | Codex 에서 실행해도 같은 머신의 Claude Code 설정을 바꿈 (Codex 승인 정책은 미변경) |
 
 `obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다.
 
@@ -271,6 +273,10 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 
 > `setup-omc-hud` 가 넣은 Claude 갱신 안내 블록도 플러그인 밖(`~/.claude/hud/omc-hud-custom.mjs`)에 남습니다. 원래 순서로 되돌리려면 제거 전에 `/banker:setup-omc-hud off` 를 실행하세요.\
 > 이미 지웠다면 HUD를 재설치하거나, `// >>> claude-update-last >>>` 부터 `// <<< claude-update-last <<<` 까지 지우면 됩니다. 블록을 남겨 두어도 상태표시줄은 깨지지 않습니다.
+
+> `setup-bypass-permissions` 로 바꾼 권한 모드는 `settings.json` 에 남아, 플러그인을 지워도 모든 세션에서 확인 없이 도구가 실행됩니다. 제거 전에 `/banker:setup-bypass-permissions off` 를 실행하세요.\
+> 이미 지웠다면 설정 폴더(`$CLAUDE_CONFIG_DIR`, 없으면 `~/.claude`)의 `settings.json` 에서 `permissions.defaultMode` 를 지우거나 원래 값으로 되돌리면 됩니다. 옆의 `settings.json.bypass-permissions.bak` 과 `settings.json.bypass-permissions.json` 도 지우세요. 백업에는 설정의 비밀 값이 들어 있을 수 있습니다.\
+> root 계정에서 이 모드 때문에 Claude Code 가 시작되지 않으면 `claude --permission-mode default` 로 시작한 뒤 `off` 를 실행하세요.
 
 > `tone-compact` 를 켰다면 제거 전에 런타임마다 `off` 를 실행하세요(Claude Code `/banker:tone-compact off`, Codex `banker-tone-compact` 에 `off`).\
 > 규칙 파일과 블록은 플러그인 밖(`~/.claude/rules/`, `~/.codex/AGENTS.md`)에 있어서, 플러그인을 지워도 남아 계속 적용됩니다.\
