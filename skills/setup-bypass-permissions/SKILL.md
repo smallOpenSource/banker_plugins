@@ -114,9 +114,10 @@ Codex 에서는 설치된 `banker-setup-bypass-permissions` 폴더다.
   - `default` 모드는 실행 전에 묻고, `auto` 모드는 분류기가 판단한다.
   - `Bash(node *)` 같은 허용 규칙이 있거나 이미 `bypassPermissions` 인 세션에서는 확인 없이 실행될 수 있다.
   - `--yes` 는 확인을 받았다는 표시일 뿐이다.
-- root 계정에서는 Claude Code 가 이 모드로 시작하지 않는다. `IS_SANDBOX=1` 이거나 Claude Code 의 bubblewrap 샌드박스 안이면 예외다. 스크립트와 python 폴백은 그래서 root 에서 켜기를 거부한다. 다른 방법으로 켜서 시작이 막히면 `claude --permission-mode default` 로 시작한 뒤 `off` 를 실행한다.
+- root 계정에서는 Claude Code 가 이 모드로 시작하지 않는다. `IS_SANDBOX` 가 정확히 `1` 이거나 `CLAUDE_CODE_BUBBLEWRAP` 가 참 값(`1`, `true`, `yes`, `on`)이면 예외다. 스크립트와 python 폴백은 같은 조건으로 root 에서 켜기를 거부한다. 다른 방법으로 켜서 시작이 막히면 `claude --permission-mode default` 로 시작한 뒤 `off` 를 실행한다.
 - 스크립트가 읽지 못하는 관리 정책이 있다. Windows 레지스트리, macOS 프로필, 서버가 관리하는 설정이다. 켰는데도 세션이 확인을 묻는다면 조직 정책이 모드를 내린 것일 수 있다.
 - 프로젝트 설정의 `disableBypassPermissionsMode` 도 그 프로젝트에서 이 모드를 막는다.
 - Claude Code 는 사용자 계정으로 관리 정책을 읽는다. 그래서 정책 파일은 모든 계정이 읽을 수 있어야 적용된다. 이 계정이 읽지 못하는 정책이 있으면 이 스킬은 켜기를 거부한다.
 - 프로젝트 설정의 `env` 는 `IS_SANDBOX` 와 테스트용 변수(`BANKER_BYPASS_TEST` 등)도 정할 수 있다. 그러면 스크립트가 root 계정이나 관리 정책을 보지 못한 채 켰다고 보고할 수 있다. 관리 정책은 Claude Code 가 실행 중에도 강제하므로, 새 세션의 `/status` 로 실제 모드를 확인한다.
 - 설정 파일이 올바른 JSON 객체가 아니면 고치지 않고 거부한다. 직접 고친 뒤 다시 실행한다. 비어 있는 파일은 설정 없음으로 읽는다.
+- 설정 파일이 단일 파일 바인드 마운트라 바꿔치기(rename)가 막히면 제자리에 쓴다. 이 쓰기는 원자적이지 않아, 도중에 실패하면 설정 파일이 잘린 채 남을 수 있다. 원본은 `.bypass-permissions.bak` 에 있다.

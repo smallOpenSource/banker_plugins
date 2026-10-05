@@ -12,7 +12,7 @@
   모델은 이 스킬을 부를 수 없다(Claude Code 는 `disable-model-invocation`, Codex 는 `agents/openai.yaml` 의 `allow_implicit_invocation: false`). 사용자가 직접 입력해야 실행되고, 켜기 전에 위험 경고를 보여 준 뒤 명시적인 확인을 받는다. 무응답, 시간 초과, 다른 에이전트나 도구가 전한 동의는 확인으로 보지 않는다.\
   `off` 는 켜기 전 값으로 되돌리고, 켜기 전에 없던 `skipDangerousModePermissionPrompt` 도 지운다. `status` 는 현재 값과 켜기를 막는 요인을 보여 준다.\
   적용은 노드 스크립트(`scripts/bypass-permissions.mjs`)가 한다. 다른 키와 BOM, 파일 모드, 링크를 그대로 둔 채 파일을 통째로 교체하고, 켜기 전 내용을 이 계정만 읽는 `.bypass-permissions.bak` 에 남긴다. `node` 를 쓸 수 없으면 OS 별 폴백(`scripts/fallback/` 의 python3, PowerShell 스크립트)을 쓴다. 이 계정이 파일에 쓸 수 없거나 도구 실행이 막히면, 사용자가 Claude Code 밖에서 실행할 명령을 준다. 도구 실행이 막혔을 때는 다른 도구나 경로로 다시 시도하지 않는다.\
-  관리 정책(`managed-settings.json` 과 `managed-settings.d`)이 막거나 이 계정이 그 정책을 읽을 수 없을 때, 설정 파일 자체의 `disableBypassPermissionsMode`, root 계정(`IS_SANDBOX=1` 이나 Claude Code 의 bubblewrap 샌드박스 밖), Claude Code 설정 폴더가 없는 머신에서는 켜지 않는다.\
+  관리 정책(`managed-settings.json` 과 `managed-settings.d`)이 막거나 이 계정이 그 정책을 읽을 수 없을 때, 설정 파일 자체의 `disableBypassPermissionsMode`, root 계정(`IS_SANDBOX=1` 도, 참 값의 `CLAUDE_CODE_BUBBLEWRAP` 도 없을 때. Claude Code 2.1.289 와 같은 조건), Claude Code 설정 폴더가 없는 머신에서는 켜지 않는다.\
   `/banker:setup` 목록에서는 따로 묻는 주의 항목이고 기본으로 선택되지 않는다. 고르면 사용자에게 명령을 직접 입력하라고 안내한다. 폴백 스크립트는 테스트가 직접 실행한다(python 3.6, pwsh 7. Windows PowerShell 5.1 은 CI 의 windows 잡에서만 확인).
 
 ### Removed

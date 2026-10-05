@@ -152,8 +152,10 @@ def save(path, data, raw):
 
 
 def check_on(path, data):
-    # Claude Code lets root use the mode inside a sandbox it recognises: IS_SANDBOX=1, or its bubblewrap one.
-    sandboxed = os.environ.get("IS_SANDBOX") == "1" or bool(os.environ.get("CLAUDE_CODE_BUBBLEWRAP"))
+    # Claude Code lets root use the mode inside a sandbox it recognises: IS_SANDBOX exactly "1", or
+    # CLAUDE_CODE_BUBBLEWRAP set to a true value (2.1.289 reads 1, true, yes, on; 0 or false is not one).
+    bubblewrap = os.environ.get("CLAUDE_CODE_BUBBLEWRAP", "").strip().lower() in ("1", "true", "yes", "on")
+    sandboxed = os.environ.get("IS_SANDBOX") == "1" or bubblewrap
     if hasattr(os, "geteuid") and os.geteuid() == 0 and not sandboxed:
         raise Refused("Claude Code will not start in bypassPermissions as root; IS_SANDBOX=1 marks a real sandbox")
     blocked = policy_block()

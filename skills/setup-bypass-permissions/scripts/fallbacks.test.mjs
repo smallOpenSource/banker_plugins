@@ -339,6 +339,9 @@ test('python: on refuses under root unless IS_SANDBOX=1 says this is a sandbox',
   spawnSync(python, [PY, 'off'], { encoding: 'utf8', env: env(c) });
   const bwrap = spawnSync('unshare', ['-r', python, PY, 'on', '--yes'], { encoding: 'utf8', env: env(c, { CLAUDE_CODE_BUBBLEWRAP: '1' }) });
   assert.equal(bwrap.status, 0, 'Claude Code counts its bubblewrap sandbox too: ' + bwrap.stdout + bwrap.stderr);
+  spawnSync(python, [PY, 'off'], { encoding: 'utf8', env: env(c) });
+  const zero = spawnSync('unshare', ['-r', python, PY, 'on', '--yes'], { encoding: 'utf8', env: env(c, { CLAUDE_CODE_BUBBLEWRAP: '0' }) });
+  assert.equal(zero.status, 1, 'CLAUDE_CODE_BUBBLEWRAP=0 is no sandbox to Claude Code: ' + zero.stdout + zero.stderr);
 });
 
 // Controls with no case of their own so far: link chains, hard links, a bind-mounted file, NaN.
