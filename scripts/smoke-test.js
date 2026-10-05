@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (56 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (57 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 56, `codex dry-run plans 56 skill copies (got ${copies})`);
+  ok(copies === 57, `codex dry-run plans 57 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -118,7 +118,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 56, `real codex install has 56 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 57, `real codex install has 57 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -157,6 +157,17 @@ try {
   // folder ships it, Codex's included (there the skill points at OMX's hud, so the script sits unused).
   ok(fs.existsSync(path.join(instDir, 'banker-setup-omc-hud', 'scripts', 'claude-update-last.mjs')),
      'banker-setup-omc-hud carries scripts/claude-update-last.mjs into the Codex install');
+  // setup-bypass-permissions runs its scripts from its own folder, and must never start on the model's
+  // say-so: Claude Code reads disable-model-invocation from SKILL.md, Codex reads agents/openai.yaml.
+  const bpDir = path.join(instDir, 'banker-setup-bypass-permissions');
+  ok(['bypass-permissions.mjs', path.join('fallback', 'bypass-permissions.py'), path.join('fallback', 'bypass-permissions.ps1')]
+       .every((f) => fs.existsSync(path.join(bpDir, 'scripts', f))),
+     'banker-setup-bypass-permissions carries its script and both shell fallbacks into the Codex install');
+  ok(/^policy:\n  allow_implicit_invocation: false$/m.test(fs.readFileSync(path.join(bpDir, 'agents', 'openai.yaml'), 'utf8')),
+     'the Codex copy of setup-bypass-permissions forbids implicit invocation (agents/openai.yaml)');
+  const bpFm = fs.readFileSync(path.join(root, 'skills', 'setup-bypass-permissions', 'SKILL.md'), 'utf8').split(/\n---/)[0];
+  ok(/^disable-model-invocation: true$/m.test(bpFm),
+     'setup-bypass-permissions/SKILL.md sets disable-model-invocation: the model cannot start it');
 
   // 6.5) lineage.py Python regression tests. GATE ON INTERPRETER >=3.7, not mere presence:
   // EL8/Rocky8's default `python3` is 3.6.8, which lineage.py sys.exit(2)s at import, so a
@@ -208,6 +219,8 @@ try {
     path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
     path.join('skills', 'setup-omc-hud', 'scripts', 'claude-update-last.test.mjs'),
+    path.join('skills', 'setup-bypass-permissions', 'scripts', 'bypass-permissions.test.mjs'),
+    path.join('skills', 'setup-bypass-permissions', 'scripts', 'fallbacks.test.mjs'),
     path.join('hooks', 'graceful-pause.test.mjs'), path.join('hooks', 'graceful-pause.engine.test.ts'),
     // lineage.py is Python; its test is test_lineage.py (not *.test.mjs). files[] excludes
     // it via `!**/test_*.py`. pkgRoot IS the installed tarball Codex copies from, so this one

@@ -1,0 +1,4 @@
+# Codex reads this beside SKILL.md. The skill turns off every tool confirmation in Claude Code, so Codex
+# may not pick it on its own: the person calls $banker-setup-bypass-permissions by name.
+policy:
+  allow_implicit_invocation: false

@@ -8,6 +8,13 @@
   마지막 답변 도중에 입력해 메모가 읽히지 않은 채 턴이 끝나면 무효 메모를 덧붙여 다음 지시를 가로채지 않게 한다. 쉬는 중이면 진행 중인 작업이 없다고 답한다. 백그라운드 작업이나 예약 실행(`/loop`, ScheduleWakeup)이 남아 있으면, 그 결과가 다음 단계를 시작하지 않도록 메모를 사용자 메시지로 따로 보내 정지 보고를 받는다. 같은 턴에 다시 입력해도 메모는 한 번만 들어간다. `/clear` 하면 진행 중이던 턴의 기록을 비운다.\
   실행 중인 도구 호출을 끊지는 않으며, 바로 끊으려면 지금처럼 Esc 를 쓴다.
 
+- **`setup-bypass-permissions` 스킬을 추가했다.** Claude Code 전역 `settings.json` 의 `permissions.defaultMode` 를 `bypassPermissions` 로 바꿔, 모든 세션에서 도구 실행 확인을 끈다.\
+  모델은 이 스킬을 부를 수 없다(Claude Code 는 `disable-model-invocation`, Codex 는 `agents/openai.yaml` 의 `allow_implicit_invocation: false`). 사용자가 직접 입력해야 실행되고, 켜기 전에 위험 경고를 보여 준 뒤 명시적인 확인을 받는다. 무응답, 시간 초과, 다른 에이전트나 도구가 전한 동의는 확인으로 보지 않는다.\
+  `off` 는 켜기 전 값으로 되돌리고, 켜기 전에 없던 `skipDangerousModePermissionPrompt` 도 지운다. `status` 는 현재 값과 켜기를 막는 요인을 보여 준다.\
+  적용은 노드 스크립트(`scripts/bypass-permissions.mjs`)가 한다. 다른 키와 BOM, 파일 모드, 링크를 그대로 둔 채 파일을 통째로 교체하고, 켜기 전 내용을 이 계정만 읽는 `.bypass-permissions.bak` 에 남긴다. `node` 를 쓸 수 없으면 OS 별 폴백(`scripts/fallback/` 의 python3, PowerShell 스크립트)을 쓴다. 이 계정이 파일에 쓸 수 없거나 도구 실행이 막히면, 사용자가 Claude Code 밖에서 실행할 명령을 준다. 도구 실행이 막혔을 때는 다른 도구나 경로로 다시 시도하지 않는다.\
+  관리 정책(`managed-settings.json` 과 `managed-settings.d`)이 막거나 이 계정이 그 정책을 읽을 수 없을 때, 설정 파일 자체의 `disableBypassPermissionsMode`, root 계정(`IS_SANDBOX=1` 이나 Claude Code 의 bubblewrap 샌드박스 밖), Claude Code 설정 폴더가 없는 머신에서는 켜지 않는다.\
+  `/banker:setup` 목록에서는 따로 묻는 주의 항목이고 기본으로 선택되지 않는다. 고르면 사용자에게 명령을 직접 입력하라고 안내한다. 폴백 스크립트는 테스트가 직접 실행한다(python 3.6, pwsh 7. Windows PowerShell 5.1 은 CI 의 windows 잡에서만 확인).
+
 ### Removed
 - **`graceful_pause` 스킬을 뺐다.** 스킬과 플러그인 명령은 작업 중에 입력하면 턴이 끝날 때까지 대기열에 머물러, 정작 필요한 순간에 동작하지 않았다. 같은 이름의 스킬이 있으면 엔진이 즉시 명령 등록을 거부하므로 새 명령 이름은 `/graceful-pause`(하이픈)다.\
   플러그인을 업데이트하면 옛 스킬이 사라지고, Codex 는 `banker setup --codex` 때 `banker-graceful_pause` 가 정리된다. Codex 에는 즉시 명령 장치가 없어 대응 기능이 없다.
