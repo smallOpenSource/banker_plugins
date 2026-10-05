@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.15.0] - 2026-10-06
 
 ### Added
 - **`/graceful-pause` 명령을 추가했다.** Claude Code 2.1.289 이상에서 function hooks(`hooks/register.mjs`)로 등록하는 즉시 명령이라, 작업 중에 입력해도 턴이 끝나기를 기다리지 않고 바로 실행된다. 그보다 오래된 엔진에서는 등록하지 않고 한 줄로 알린다.\
