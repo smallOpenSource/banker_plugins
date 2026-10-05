@@ -95,7 +95,8 @@ try {
   // Descriptions follow tone-compact (the user's request). A regex can hold its mechanical rules: no
   // decorative symbol, look-alike, emoji or exclamation mark; no translationese, inflected forms included;
   // no sentence over 25 words; one line each, as a description is read in one line (so its vertical-list
-  // rule cannot apply). Code spans keep their original text and are not checked. What a regex cannot judge
+  // rule cannot apply). Code spans keep their original text: the symbol and translationese checks skip them,
+  // while the 25-word count still counts their words. What a regex cannot judge
   // (meaning kept, terms, triggers) stays with review. /graceful-pause's description lives in
   // hooks/graceful-pause.mjs, as function-hooks commands have no frontmatter.
   const descs = descFiles.map((f) => {
