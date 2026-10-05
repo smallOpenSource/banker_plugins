@@ -1,0 +1,9 @@
+# ralph-qa gemini seat: an admin-tier policy (gemini --admin-policy) that denies every tool. The
+# payload comes on stdin, so the seat needs no tool, and a read tool would also read the folders
+# the settings add to the workspace. The admin tier outranks the user's policies, settings
+# `tools.allowed`, trusted MCP servers and the approval mode (gemini-cli 0.62.0).
+# gemini-seat.mjs check refuses to start the seat when the rules below are changed.
+[[rule]]
+toolName = "*"
+decision = "deny"
+priority = 100
