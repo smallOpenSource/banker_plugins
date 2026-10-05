@@ -156,7 +156,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | 스킬 | 설명 |
 |---|---|
 | `setup-omc` | oh-my-claudecode(OMC) 설치·갱신 (Codex는 OMX) |
-| `harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
+| `setup-harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
 | `setup-playwright` | Playwright + headless 브라우저 (RHEL8/Rocky8·non-root·no-conda 폴백) |
 | `setup-omc-hud` | omc_hud 상태표시줄 (OS별). Claude 갱신 안내는 줄 맨 끝 |
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
@@ -225,7 +225,7 @@ banker uninstall        # 제거
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
 | `setup-omc-hud` | `statusLine` + `hud/omc-hud-custom.mjs` 에 Claude 갱신 안내를 줄 맨 끝으로 옮기는 블록 1개(`.claude-update-last.bak` 백업·멱등·`node --check` 검증, `off` 로 원복) | — (Codex는 OMX `hud`) |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
-| `harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
+| `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
 | `payload-mon` | `hud/omc-hud-custom.mjs` 에 표시 블록 1개 삽입(`.payload-mon.bak` 백업·멱등·`node --check` 검증) + 래퍼 옆 `hud/payload-mon/` 에 모듈 사본 (`off` 로 원복) | — (Codex에서 실행해도 Claude Code HUD 만 다룸) |
 | `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
@@ -359,7 +359,7 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 |---|---|---|---|
 | 프레임워크 | oh-my-claudecode(OMC)·oh-my-codex(OMX), by [Yeachan-Heo](https://github.com/Yeachan-Heo) | MIT | `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` |
 | 플러그인 | insane-search (© fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)) | MIT | `setup-insane-search` |
-| 팀 아키텍처 팩토리 | revfactory/harness (© Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness)) · Codex 포트 SaehwanPark/meta-harness | Apache-2.0 | `harness-factory`(설치·구성만 안내) |
+| 팀 아키텍처 팩토리 | revfactory/harness (© Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness)) · Codex 포트 SaehwanPark/meta-harness | Apache-2.0 | `setup-harness-factory`(설치·구성만 안내) |
 | 서비스(독점·상표) | Notion | 독점 | `make-notion-guide` |
 | 서비스(독점·상표) | Google Stitch | 독점 | `setup-stitch` |
 | 디자인(상표) | Nothing 디자인 언어 | 상표 | `nothing-design` |
