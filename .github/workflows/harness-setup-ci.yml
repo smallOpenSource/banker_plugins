@@ -2,7 +2,7 @@ name: harness-setup-ci
 
 # Per-OS "존재 vs 동작" verification for the 0.5.0 harness-setup skills, plus the 0.6.0 obsidizer surface.
 # Runs each skill's canonical install + verify on real runners and asserts the tool actually RUNS.
-# Honest scope: harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
+# Honest scope: setup-harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
 # testable on hosted runners; those steps are partial/tolerated and labeled as such.
 # obsidizer has no per-OS install, so it gets no OS-toolchain job — it is covered by the structural
 # job (56 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
@@ -12,7 +12,6 @@ on:
     branches: ['feat/**']
     paths:
       - 'skills/setup-*/**'
-      - 'skills/harness-factory/**'
       - 'skills/obsidizer/**'
       # 스킬 디렉터리는 개별 지정한다. 일반 'skills/**' 로 넓히면 마크다운 한 줄 수정마다
       # 잡 매트릭스 전체(rocky8 컨테이너·windows·macOS 포함)가 돌아 솔로 유지비가 커진다.
@@ -226,8 +225,8 @@ jobs:
           node -v
           python --version
 
-  harness-factory:
-    name: harness-factory (Codex meta-harness partial + slug guard)
+  setup-harness-factory:
+    name: setup-harness-factory (Codex meta-harness partial + slug guard)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -237,10 +236,10 @@ jobs:
       - name: skill hardcodes the correct install slug (not the KO/JA/quickstart bugs)
         run: |
           set -e
-          grep -q 'harness@harness-marketplace' skills/harness-factory/SKILL.md && echo "correct slug present"
-          grep -q 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' skills/harness-factory/SKILL.md && echo "experimental flag documented"
+          grep -q 'harness@harness-marketplace' skills/setup-harness-factory/SKILL.md && echo "correct slug present"
+          grep -q 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' skills/setup-harness-factory/SKILL.md && echo "experimental flag documented"
           # must NOT present the buggy variants as the install command
-          ! grep -qE '^\s*/plugin install harness-marketplace\s*$' skills/harness-factory/SKILL.md && echo "no bare KO/JA bug variant as command"
+          ! grep -qE '^\s*/plugin install harness-marketplace\s*$' skills/setup-harness-factory/SKILL.md && echo "no bare KO/JA bug variant as command"
       - name: Codex port (SaehwanPark/meta-harness installer runs)
         run: |
           set -e
@@ -275,13 +274,13 @@ jobs:
           set -e
           node bin/banker.js setup --codex --scope user
           SK=$(node -p "require('path').join(require('os').homedir(),'.codex','skills')")
-          for s in setup-node setup-python setup-java setup-lsp setup-tmux setup-pwsh setup-mcp setup-sandbox harness-factory; do
+          for s in setup-node setup-python setup-java setup-lsp setup-tmux setup-pwsh setup-mcp setup-sandbox setup-harness-factory; do
             test -f "$SK/banker-$s/SKILL.md" || { echo "MISSING banker-$s in $SK"; exit 1; }
           done
           echo "on-disk: 9 new banker-* skills present (Codex dir==name discovery contract satisfied)"
           if codex debug prompt-input "x" >/tmp/ci.out 2>/tmp/ci.err; then
             n=$(grep -oE 'banker-[a-z0-9-]+' /tmp/ci.out | sort -u | wc -l | tr -d ' ')
-            grep -q banker-harness-factory /tmp/ci.out || { echo "codex live render missing new skills"; exit 1; }
+            grep -q banker-setup-harness-factory /tmp/ci.out || { echo "codex live render missing new skills"; exit 1; }
             echo "codex debug prompt-input live-exposed $n banker-* skills (incl. new 0.5.0)"
           else
             echo "NOTE: codex debug prompt-input needs a provider config on this runner; on-disk contract already asserted above."
@@ -293,7 +292,7 @@ jobs:
           set -e
           out=$(claude --plugin-dir "$PWD" plugin details banker 2>&1) || { echo "claude plugin details failed:"; echo "$out" | head -12; exit 1; }
           echo "$out" | grep -E 'Skills \(|Component inventory' | head -2
-          for s in setup-node setup-python setup-java setup-lsp setup-tmux setup-pwsh setup-mcp setup-sandbox harness-factory; do
+          for s in setup-node setup-python setup-java setup-lsp setup-tmux setup-pwsh setup-mcp setup-sandbox setup-harness-factory; do
             echo "$out" | grep -q "$s" || { echo "MISSING $s in claude plugin details"; exit 1; }
           done
           echo "claude plugin details lists all 9 new skills (no auth)"

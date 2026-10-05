@@ -1,5 +1,5 @@
 ---
-description: "구성요소·의존성을 multi-select로 골라 설치하는 오케스트레이터(런타임 node·python·java, LSP, tmux, MCP, sandbox, OMC, harness-factory, playwright 등)."
+description: "구성요소·의존성을 multi-select로 골라 설치하는 오케스트레이터(런타임 node·python·java, LSP, tmux, MCP, sandbox, OMC, setup-harness-factory, playwright 등)."
 argument-hint: "[설치할 컴포넌트명 — 비우면 multi-select 표시]"
 ---
 
@@ -27,7 +27,7 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
 
    **프레임워크·플러그인**
    - **setup-omc** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). `all-in-one`·`ultra-init`·`/banker:front-qa` 의존성.
-   - **harness-factory** — revfactory/harness(팀 아키텍처 팩토리) 설치+구성+안내(Codex=meta-harness).
+   - **setup-harness-factory** — revfactory/harness(팀 아키텍처 팩토리) 설치+구성+안내(Codex=meta-harness).
    - **setup-insane-search** — insane-search 플러그인(차단 사이트 우회, Claude/Codex 양쪽).
    - **setup-omc-hud** — omc_hud 상태표시줄(OS별).
    - **setup-stitch** — Stitch(디자인 생성) MCP 프록시 등록(RockyLinux8 proxy-script, API key 필요).

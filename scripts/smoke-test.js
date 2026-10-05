@@ -106,6 +106,10 @@ try {
   const renamedStitchDir = path.join(home2, '.codex', 'skills', 'banker-setup-stitch-proxy');
   fs.mkdirSync(renamedStitchDir, { recursive: true });
   fs.writeFileSync(path.join(renamedStitchDir, 'SKILL.md'), '---\nname: banker-setup-stitch-proxy\n---\n');
+  // rename-case guard 3: harness-factory -> setup-harness-factory
+  const renamedFactoryDir = path.join(home2, '.codex', 'skills', 'banker-harness-factory');
+  fs.mkdirSync(renamedFactoryDir, { recursive: true });
+  fs.writeFileSync(path.join(renamedFactoryDir, 'SKILL.md'), '---\nname: banker-harness-factory\n---\n');
   // removal guard: graceful_pause left the plugin (replaced by the /graceful-pause function-hooks command)
   const removedPauseDir = path.join(home2, '.codex', 'skills', 'banker-graceful_pause');
   fs.mkdirSync(removedPauseDir, { recursive: true });
@@ -120,6 +124,8 @@ try {
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
   ok(!fs.existsSync(renamedStitchDir), 'renamed-away banker-setup-stitch-proxy swept (replaced by setup-stitch)');
   ok(installed.includes('banker-setup-stitch'), 'renamed skill installed as banker-setup-stitch');
+  ok(!fs.existsSync(renamedFactoryDir), 'renamed-away banker-harness-factory swept (replaced by setup-harness-factory)');
+  ok(installed.includes('banker-setup-harness-factory'), 'renamed skill installed as banker-setup-harness-factory');
   ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
   ok(installed.includes('banker-obsidizer'), 'obsidizer installed as banker-obsidizer');
   ok(installed.includes('banker-motion-graphic-setup'), 'new motion-graphic-setup installed as banker-motion-graphic-setup');

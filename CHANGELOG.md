@@ -16,6 +16,8 @@
 - **스킬과 명령 설명 앞의 `(banker)` 를 뺐다.** Claude Code 자동완성은 플러그인 스킬 설명 앞에 플러그인 이름을 스스로 붙여서, `/banker:curation  (banker) (banker) 의사결정을...` 처럼 두 번 보였다. Codex 사본은 이름이 `banker-<이름>` 이라 표시가 따로 필요 없다. smoke 가 설명이 `(banker)` 로 시작하지 않는지 확인한다.
 
 ### Changed
+- **`harness-factory` 스킬 이름을 `setup-harness-factory` 로 바꿨다.** 다른 설치 스킬(`setup-*`)과 이름을 맞췄다. 호출은 `/banker:setup-harness-factory`, Codex 는 `banker-setup-harness-factory` 다.\
+  플러그인을 업데이트하면 옛 이름은 사라진다. Codex 는 `banker setup --codex` 때 `banker-harness-factory` 를 정리하고 새 이름으로 설치한다. `/banker:setup` 목록의 항목 이름도 바뀌었다.
 - **`setup-omc-hud` 가 Claude Code 갱신 안내를 상태표시줄 맨 끝으로 옮긴다.** 새 Claude Code 가 나오면 OMC 5.6.1 HUD 는 `[Claude#2.1.288] -> 2.1.289 claude update` 를 띄우는데, omc_hud 래퍼는 이 안내를 구판에서는 버리고 최신판에서는 경로 앞 줄 중간에 흐리게 둔다.\
   적용 단계 끝에 `scripts/claude-update-last.mjs on` 을 실행해, 래퍼가 세그먼트를 합치기 직전 줄(`let result = colored.join(SEP);`) 앞에 블록 1개를 넣는다. 블록은 안내를 원래 자리에서 빼 OMC 표시 뒤 맨 끝에 흐리게 붙이고, 안내가 없으면 아무것도 하지 않는다. OMC 가 2번째 줄에 따로 띄우는 `[!] claude <버전> - paste: ! claude update` 는 그대로 남는다. OMC `safeMode` 를 꺼 공백이 U+00A0 으로 바뀐 안내도 찾는다.\
   payload-mon 과 같은 규칙을 따른다. 바꾸기 전 내용은 `.claude-update-last.bak` 에 남기고, `node --check` 를 통과하지 못하는 결과는 쓰지 않으며, 개수나 순서가 맞지 않는 표시와 낯선 래퍼는 거부하고, `off` 는 블록만 빼서 바이트 그대로 되돌린다. payload-mon 블록과는 서로 건드리지 않는다.
