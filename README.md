@@ -95,7 +95,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
 | `rfp-author` | 외주 제안요청서(RFP) 저작 (범용 프레임워크) |
 | `humanizer` | AI 글 흔적 제거(자연스러운 문체로 윤문) |
-| `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export (마크다운 렌더·하네스 노이즈 필터·다중 세션 병합) |
+| `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export. 세션 모델이 턴마다 1줄 요약을 쓰고 남길 턴을 고름(`--rulebase` 는 규칙만), 마크다운 렌더, 다중 세션 병합 |
 | `append_wiki` | 프로젝트 위키 문서 추가/보강 |
 | `compact-wiki` | 위키 중복 제거·supersede·병합 (무손실) |
 | `obsidizer` | AI 위키를 의미보존 Obsidian 그래프로 정규화·상호링크·백링크 |

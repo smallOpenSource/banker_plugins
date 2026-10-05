@@ -12,7 +12,7 @@
     { "name": "compact-wiki",         "type": "skill",   "target": "both",        "reason": "wiki dedup/merge; tool-agnostic workflow", "supportingFiles": [], "caveat": "uses wiki_* MCP at runtime" },
     { "name": "play-qa",              "type": "skill",   "target": "both",        "reason": "Godot HTML5 in-browser QA; tool-agnostic", "supportingFiles": [], "caveat": "needs playwright (setup-playwright)" },
     { "name": "humanizer",            "type": "skill",   "target": "both",        "reason": "AI-writing cleanup; tool-agnostic (vendored MIT)", "supportingFiles": ["LICENSE", "README.md", "AGENTS.md"] },
-    { "name": "lineage",              "type": "skill",   "target": "both",        "reason": "session->HTML export; tool-agnostic", "supportingFiles": ["lineage.py"] },
+    { "name": "lineage",              "type": "skill",   "target": "both",        "reason": "session->HTML export; the default flow has session-model reviewers (Claude=Plan without a model, Codex=spawn_agent without a role) judge noise and write one-line summaries from a redacted review pack; --rulebase is the rules-only one-pass run; reads Claude Code transcripts only", "supportingFiles": ["lineage.py"] },
     { "name": "make-notion-guide",    "type": "skill",   "target": "both",        "reason": "API guide authoring; tool-agnostic", "supportingFiles": [] },
     { "name": "nothing-design",       "type": "skill",   "target": "both",        "reason": "UI design system; tool-agnostic", "supportingFiles": ["references/components.md", "references/platform-mapping.md", "references/tokens.md"] },
     { "name": "pdf-vision-extract",   "type": "skill",   "target": "both",        "reason": "PDF->PNG for vision; tool-agnostic", "supportingFiles": [] },
