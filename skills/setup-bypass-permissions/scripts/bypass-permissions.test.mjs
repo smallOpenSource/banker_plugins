@@ -359,6 +359,11 @@ test("on refuses under root outside a sandbox, where Claude Code would then refu
   assert.equal(turnOn({ ...c, uid: 0, sandbox: "1" }).ok, true, "a sandbox that says so is fine");
   turnOff(c);
   assert.equal(turnOn({ ...c, uid: 0, sandbox: undefined, bubblewrap: "1" }).ok, true, "Claude Code's bubblewrap sandbox counts too");
+  turnOff(c);
+  for (const bubblewrap of ["0", "false", "", " "]) {
+    assert.equal(turnOn({ ...c, uid: 0, sandbox: undefined, bubblewrap }).ok, false, `CLAUDE_CODE_BUBBLEWRAP=${JSON.stringify(bubblewrap)} is no sandbox to Claude Code`);
+  }
+  assert.equal(turnOn({ ...c, uid: 0, sandbox: "true" }).ok, false, 'IS_SANDBOX must be exactly "1"');
   assert.match(status({ ...c, uid: 0, sandbox: undefined }).message, /root/);
 });
 

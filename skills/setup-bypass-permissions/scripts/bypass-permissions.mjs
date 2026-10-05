@@ -21,7 +21,8 @@
  * alone: settings can hold secrets.
  * $BANKER_BYPASS_POLICY_FILES and $BANKER_BYPASS_POLICY_DIRS replace the policy paths in this skill's tests,
  * and only with BANKER_BYPASS_TEST=1. The settings path has no override: a repository's .claude/settings.json
- * `env` can set any variable except CLAUDE_CONFIG_DIR and HOME, so only those two may decide where it is.
+ * `env` can set most variables (Claude Code ignores a list there that holds CLAUDE_CONFIG_DIR and HOME), so
+ * only those two may decide where it is.
  * That `env` can still set BANKER_BYPASS_TEST and IS_SANDBOX, hiding the policy or the root account from
  * this script; Claude Code then still enforces the policy itself, so the worst is a report of `on` that
  * the next session's /status does not bear out.
@@ -161,10 +162,14 @@ function policyBlock(o) {
   return "";
 }
 
+// An environment flag as Claude Code reads it: 1, true, yes or on, any case.
+const truthy = (v) => ["1", "true", "yes", "on"].includes(String(v ?? "").trim().toLowerCase());
+
 // Why Claude Code would not run in the mode here, or "".
 function modeBlock(o, data) {
-  // Claude Code lets root use the mode inside a sandbox it recognises: IS_SANDBOX=1, or its bubblewrap one.
-  if (o.uid === 0 && o.sandbox !== "1" && !o.bubblewrap) {
+  // Claude Code lets root use the mode inside a sandbox it recognises: IS_SANDBOX exactly "1", or
+  // CLAUDE_CODE_BUBBLEWRAP set to a true value (2.1.289 reads 1, true, yes, on; 0 or false is not one).
+  if (o.uid === 0 && o.sandbox !== "1" && !truthy(o.bubblewrap)) {
     return "root 계정에서는 Claude Code 가 bypassPermissions 로 시작하지 않습니다. 격리된 샌드박스라면 IS_SANDBOX=1 을 설정한 Claude Code 에서 다시 실행하세요";
   }
   const blocked = policyBlock(o);
