@@ -61,7 +61,7 @@ export const PATTERNS = [
   // curl's -u flag with a user and password pair, glued to it or not; a uid:gid (docker), a
   // host:/path (rsync), a date format (date -u +%H:%M) or an id substitution ($(id -u):$(id -g))
   // is no credential. A user:group of names is not told apart: that would let admin:admin through.
-  ["curl-user", /(?<!\S)(?:-u\s*|--user(?:\s+|=))(?!\d{1,10}:\d{1,10}\b(?![:@]))(?!["']?\+%|\))[^\s:=]{1,256}:(?!\/)\S{3,256}/],
+  ["curl-user", /(?<!\S)(?:-u\s*|--user(?:\s+|=))(?!["']?\d{1,10}:\d{1,10}(?![\w:@]))(?!["']?\+%|\))[^\s:=]{1,256}:(?!\/)\S{3,256}/],
   ["assigned-hex", /(?:key|auth|token|secret)[\w-]{0,64}["']?\s*[:=]\s*["']?[0-9a-f]{32,65536}(?![0-9a-z])/i],
 ];
 
