@@ -230,9 +230,10 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
 
 
 # A character of curl's user before the colon: no space, : or =, and a quote, backtick or ( only
-# where no flag follows. A match starts at a - after a space, a quote, a backtick or a (, so no
-# user runs past the place where the next match may start: a long run stays linear.
-_CU_USER = r"(?:[^\s:=\"'`(]|[\"'`(](?!-))"
+# where no flag follows (-u, -Xu or --user, as either branch below starts). A match starts only
+# there, so no user runs past the place where the next match may start: a long run stays linear,
+# and a user joined to a variable by a - ("$USER"-bot) is read whole.
+_CU_USER = r"(?:[^\s:=\"'`(]|[\"'`(](?!-(?:u|[A-Za-z0-9]{1,6}u[\s\"']|-user[\s=\"'])))"
 # The quotes that may open the value, bare or escaped (\" and \\\" in a quoted command, '\'' and
 # '"'"' from bash and shlex.quote, ^" in cmd, `" in PowerShell, $' in bash): up to six in a row.
 _CU_LEAD = r"(?:[\\^`$]{0,7}[\"']){0,6}"

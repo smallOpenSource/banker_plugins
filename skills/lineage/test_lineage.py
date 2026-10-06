@@ -1841,6 +1841,20 @@ class TestLlmReviewHardening(_ReviewCase):
                       c + " -u 'admin'" + '"":' + pw + '"" https://x', c + ' -u "admin"' + "'':" + pw + "'' https://x"):
             self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
 
+    def test_curl_user_hides_users_joined_to_a_reference_by_a_dash(self):
+        # 3.0.0 hid these: a user that joins a variable, a command substitution or a quoted part
+        # with a -, and a user that starts with a - after quotes, alone or in JSON and bash -c
+        import shlex
+        pw = "Hunter22" + "pw"
+        c = "cu" + "rl"
+        for cmd in (c + ' -u "${ENV}"-deployer:' + pw + " https://x", c + ' -u "$USER"-bot:' + pw + " https://x",
+                    c + ' -u "$(whoami)"-ci:' + pw + " https://x", c + " -u `hostname`-agent:" + pw + " https://x",
+                    c + " -u '$USER'-bot:" + pw + " https://x", c + " -u '-admin:" + pw + "' https://x",
+                    c + " -u" + chr(9) + '"-admin:' + pw + '" https://x'):
+            for shape in (cmd, json.dumps(cmd), "bash -c " + shlex.quote(cmd),
+                          "sh -c " + shlex.quote("bash -c " + shlex.quote(cmd))):
+                self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
+
     def test_curl_user_keeps_ids_references_and_dates(self):
         for keep in ("docker run -u $UID:$GID img", 'docker run -u "$USER:$PASS" img', "set -u %USER%:%PASS% x",
                      'docker run -u "${UID}:${GID}" img', "docker run -u $(id -un):$(id -gn) img",
@@ -1859,7 +1873,8 @@ class TestLlmReviewHardening(_ReviewCase):
         pieces = ("(-u", "`-u", "'-u", "(-u(", "`-u`", "-u${a:(", " -u ${a:", " -u $(", "'-uo'b", " -4u ",
                   " -u):$(", "(-u$(a", "'-u", '"-u", "', " -u %a%:", " -u 1:1", "(-u a`",
                   " -u " + bs + '"', '"-u' + bs + '"', " -u ^" + '"', " -u $'", " -u " + bs * 3 + "'", '"-u""', " -u a" + bs + '"',
-                  " -ua$" + '"', "'-u'" + bs + "''", " -u '" + '"' + "'" + '"', '"-u"a', " -u " + bs * 8 + '"', "`-u`a")
+                  " -ua$" + '"', "'-u'" + bs + "''", " -u '" + '"' + "'" + '"', '"-u"a', " -u " + bs * 8 + '"', "`-u`a",
+                  '"-a', ' -u "-a', '"-a"-u', "(-xu ", '"--user"')
         for piece in pieces:
             start = time.monotonic()
             pat.sub("[R]", piece * 40000)
