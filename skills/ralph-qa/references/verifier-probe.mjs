@@ -706,7 +706,8 @@ function geminiStatsNotes(settings) {
 // docker or podman container, or sandbox-exec on macOS when the value is true. The admin policy
 // file does not reach a container, so every tool opens (0.62.0). The seat command turns it off
 // with GEMINI_SANDBOX=false; this says so when it is on. gemini reads "0" and "false" as off, the
-// env lower-cased and trimmed, the setting as written ("FALSE" there is on).
+// env lower-cased and trimmed, the setting as written: "FALSE" there is no off value but a sandbox
+// command gemini does not know, and it stops (Invalid sandbox command). The seat's env goes first.
 function geminiSandboxNotes(settings, env) {
   const off = (v) => v === "0" || v === "false";
   const fromEnv = String(env.GEMINI_SANDBOX ?? "").trim().toLowerCase();

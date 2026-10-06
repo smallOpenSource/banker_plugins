@@ -1689,6 +1689,21 @@ class TestLlmReviewHardening(_ReviewCase):
             self.assertEqual(f.read(), "older user file")
         self.assertTrue(os.path.exists(kept + ".1"), "the verdict went to the first free name")
 
+    def test_a_used_list_with_one_verdict_like_entry_among_other_data_is_kept(self):
+        # a verdict to read only needs one entry with an idx; one to write over must be all verdict
+        self._write(self._records())
+        _quiet(self._emit)
+        self._gate_first()
+        kept = os.path.join(self.d, "verdict.json.used")
+        mine = json.dumps([{"idx": 7, "note": "mine"}, "keep me"])
+        with open(kept, "w", encoding="utf-8") as f:
+            f.write(mine)
+        rc, err = self._gate_apply(self._verdict(True), "p.html")
+        self.assertEqual(rc, 0, err)
+        with open(kept, encoding="utf-8") as f:
+            self.assertEqual(f.read(), mine)
+        self.assertTrue(os.path.exists(kept + ".1"), "the verdict went to the first free name")
+
     def test_a_verdict_must_answer_each_sample_of_this_run(self):
         recs = []
         for k in range(3):
@@ -1777,6 +1792,48 @@ class TestLlmReviewHardening(_ReviewCase):
                      "sudo -u postgres psql", "ping6 -u ::1", "rsync -avu host:/srv/app .", "link -out:Program.exe a.obj",
                      "Authorization, Basic authentication and tokens are covered below"):
             self.assertEqual(L.review_redact(keep)[0], keep)
+
+    def test_curl_user_hides_quoted_templated_and_odd_users(self):
+        # 3.0.0 hid each of these; a user may be a template, quoted apart from the password,
+        # start with + or %, or sit in inline code or parentheses
+        pw = "Hunter22" + "pw"
+        c = "cu" + "rl"                         # assembled, so a secret scanner reading this file sees no command
+        key = "sk" + "_test_" + "Q8z" * 8
+        for shape in (c + ' -u "${API_USER}:' + pw + '" https://x', c + " -u ${API_USER}:" + pw + " https://x",
+                      c + " -u %API_USER%:" + pw + " https://x", c + " -u %40admin:" + pw + " https://x",
+                      c + " -u {svc}:" + pw + " https://x", c + " -u '{user}:" + pw + "' https://x",
+                      c + " -u +bot:" + pw + " https://x", c + " -u +15551234567:" + pw + " https://x",
+                      c + ' -u "admin":"' + pw + '" https://x', c + " -u 'admin':'" + pw + "' https://x",
+                      c + ' --user "admin":"' + pw + '" https://x', c + " --user='admin':'" + pw + "' https://x",
+                      c + ' -u "admin:' + pw + '" https://x', c + " -u '':" + pw + " https://x",
+                      c + " -4u admin:" + pw + " https://x", c + " -u 1000:1000-" + pw + " https://x",
+                      c + " -u $(whoami):" + pw + " https://x", c + " -u `whoami`:" + pw + " https://x",
+                      c + " -u $(id -u):" + pw + " https://x", c + " -u o'brien:" + pw + " https://x",
+                      "pass `-u admin:" + pw + "` to it", "(-u admin:" + pw + ")",
+                      c + ' -u "${USER}:${PASS:-' + pw + '}" https://x', c + ' -u "${CREDS:-admin:' + pw + '}" https://x',
+                      c + ' -u "${USER:-admin}:' + pw + '" https://x',
+                      '["' + c + '", "-u", "${API_USER}:' + pw + '", url]', '["' + c + '", "-4u", "admin:' + pw + '", url]'):
+            self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
+        for shape in (c + " -u '" + key + ":' https://x", "use `-u " + key + ":` here"):
+            self.assertNotIn("Q8zQ8z", L.review_redact(shape)[0], shape)
+
+    def test_curl_user_keeps_ids_references_and_dates(self):
+        for keep in ("docker run -u $UID:$GID img", 'docker run -u "$USER:$PASS" img', "set -u %USER%:%PASS% x",
+                     'docker run -u "${UID}:${GID}" img', "docker run -u $(id -un):$(id -gn) img",
+                     "(docker run -u 1000:1000)", "use `-u 1000:1000` here", '["docker", "run", "-u", "1000:1000", "img"]',
+                     'subprocess.run(["date", "-u", "+%H:%M:%S"])', "date -u '+%Y-%m-%dT%H:%M:%SZ'",
+                     'mktemp -u "${TMPDIR:-/tmp}/x.XXXX")'):
+            self.assertEqual(L.review_redact(keep)[0], keep)
+
+    def test_curl_user_takes_linear_time_on_runs_of_its_pieces(self):
+        import time
+        pat = dict(L.REVIEW_SECRET_PATTERNS)["CurlUser"]
+        pieces = ("(-u", "`-u", "'-u", "(-u(", "`-u`", "-u${a:(", " -u ${a:", " -u $(", "'-uo'b", " -4u ",
+                  " -u):$(", "(-u$(a", "'-u", '"-u", "', " -u %a%:", " -u 1:1", "(-u a`")
+        for piece in pieces:
+            start = time.monotonic()
+            pat.sub("[R]", piece * 40000)
+            self.assertLess(time.monotonic() - start, 2, repr(piece))
 
     def test_a_quote_of_the_parts_turns_is_not_read_as_decisions(self):
         answer = [{"id": "a%d" % k, "keep": True, "summary": "요약 %d" % k} for k in range(2)]
@@ -1890,6 +1947,27 @@ class TestLlmReviewGateReruns(_ReviewCase):
     _gate_first = TestLlmReviewHardening._gate_first
     _samples = TestLlmReviewHardening._samples
 
+    def test_a_written_list_with_no_idx_sends_the_session_back_to_the_critic(self):
+        # step 8: a critic answer with no verdict entry, written as it came; writing that list
+        # again fails the same way, so the session is told to have the samples judged again
+        self._write(self._records())
+        _quiet(self._emit)
+        self._gate_first()
+        path = os.path.join(self.d, "verdict.json")
+        for body in ("[]", '[{"recoverable": true}]'):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(body)
+            rc, err = self._gate_apply(path)
+            self.assertEqual(rc, 2)
+            self.assertIn("no entry names idx", err)
+            self.assertIn("judge the samples again", err)
+            self.assertNotIn("write it again as a bare JSON array", err)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("Here is my verdict: [")
+        rc, err = self._gate_apply(path)
+        self.assertEqual(rc, 2)
+        self.assertIn("write it again as a bare JSON array", err, "step 7: a broken file is written again")
+
     def test_an_output_given_at_apply_keeps_the_packs_stamp(self):
         # a critic takes minutes: the gate's two runs fall in different minutes, and an --output
         # given at apply would take each run's own stamp, leaving the page from before the gate
@@ -1947,7 +2025,8 @@ class TestLlmReviewGateReruns(_ReviewCase):
         start = time.monotonic()
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", out])
         self.assertEqual(rc, 2)
-        self.assertLess(time.monotonic() - start, 1, "no wait for a critic that cannot have run yet")
+        # well under the 60 s the reviewed flow once waited; detect-secrets, when installed, takes its time
+        self.assertLess(time.monotonic() - start, 30, "no wait for a critic that cannot have run yet")
         self.assertIn("next:", err)
         self.assertIn("no verdict at", err)
         self._verdict(False)
@@ -1990,6 +2069,20 @@ class TestLlmReviewGateReruns(_ReviewCase):
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
         self.assertLess(time.monotonic() - start, 5)
+
+    def test_a_decisions_file_over_the_size_cap_is_not_read(self):
+        # a good answer padded past the cap: only the size check refuses it
+        self._write(self._records())
+        _quiet(self._emit)
+        dec = os.path.join(self.d, "dec-big.json")
+        body = json.dumps([{"id": "a1", "keep": True, "summary": "큰 파일"}])
+        with open(dec, "w", encoding="utf-8") as f:
+            f.write(body + " " * (L.DECISIONS_MAX + 1 - len(body.encode("utf-8"))))
+        self.assertEqual(os.path.getsize(dec), 1_000_001)
+        rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"),
+                                  "--skip-reviewer", "--decisions", dec])
+        self.assertEqual(rc, 2)
+        self.assertIn("larger than 1000000 bytes", err)
 
     def test_a_deeply_nested_verdict_is_refused_without_a_traceback(self):
         self._write(self._records())

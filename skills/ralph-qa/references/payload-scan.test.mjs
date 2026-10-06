@@ -111,15 +111,19 @@ test("curl credentials and a Dockerfile ENV with a space are caught, look-alike 
   }
 });
 
-test("curl's user flag is caught in a continued line and with an odd user, a date format or an id substitution is not", () => {
+test("curl's user flag is caught in a continued line and with an odd user, a date format, an id substitution and a whole uid:gid are not", () => {
   // root:root (docker) stays caught: telling a user:group from a user:password would let admin:admin through.
   const cu = "cu" + "rl -u ";
   for (const line of ["curl -u +admin:" + "Hunter22pw x", "curl -u $(whoami):" + "Hunter22pw x", "  -u admin:" + "Hunter22pw \\",
-    "curl -u admin:" + "admin x", cu + '"1000:' + '1000pw" x', cu + '"1000' + ':1000:pw1" x']) {
+    "curl -u admin:" + "admin x", cu + '"1000:' + '1000pw" x', cu + '"1000' + ':1000:pw1" x',
+    // digits before a password are no uid:gid unless the digits are the whole value
+    cu + '"4242:' + '2024!Winter" x', cu + '"1000:' + '1000-s3cretpw" x', "cu" + 'rl --user="12:' + '345$tok3nvalue" x',
+    "cu" + 'rl -u"55:' + '66#abcdef" x', cu + "1000:" + "1000-s3cretpw x"]) {
     assert.ok(scan(line).count > 0, `not caught: ${line}`);
   }
   for (const line of ["docker run -u $(id -u):$(id -g) img", 'docker run -u "$(id -u):$(id -g)" img', "date -u +%H:%M:%S",
-    "date -u '+%H:%M:%S'", 'docker run -u "1000:1000" img', "user: -u '0:0'"]) {
+    "date -u '+%H:%M:%S'", 'docker run -u "1000:1000" img', "user: -u '0:0'", "(docker run -u 1000:1000)",
+    "docker run -u '1000:1000'; echo", "docker run -u 1000:1000|tee x"]) {
     assert.equal(scan(line).count, 0, `caught: ${line}`);
   }
 });
@@ -154,6 +158,11 @@ test("a line of millions of base64 characters is scanned, not crashed: every rep
     assert.equal(JSON.parse(r.stdout).count, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+  // a nested repeat overflows too: a key marker before 3.5 million words (some 7 million characters)
+  for (const head of ["-----BEGIN ", "-----END "]) {
+    const line = head + "A ".repeat(3_500_000);
+    assert.doesNotThrow(() => scan(line), head);
   }
 });
 

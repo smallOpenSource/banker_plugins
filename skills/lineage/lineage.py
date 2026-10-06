@@ -229,10 +229,17 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
     return out, counts
 
 
-# curl's user before the colon. Its first character is no ) % + (date -u +%H:%M, $(id -u)),
-# quote or {; the rest holds no quote or { either, so a run of quotes stays linear.
-_CU_HEAD = r"[^\s:=)%+\"'{]"
-_CU_REST = r"[^\s:=\"'{]"
+# A character of curl's user before the colon: no space, : or =, a quote only inside a word
+# (o'brien) and a backtick or ( only where no flag follows. A match may start after a space, a
+# quote, a backtick or a (, and no user runs past such a place, so a long run stays linear.
+_CU_USER = r"(?:[^\s:=\"'`(]|[`(](?!-)|(?<=\w)[\"'](?=\w))"
+# Values read as a whole token that hold no user and password: a uid:gid (docker), a date format
+# (date -u +%H:%M), two references ($UID:$GID, ${UID}:${GID}, %USER%:%PASS%, $(id -u):$(id -g),
+# whose inner `-u)` is a match of its own) and a path with a colon-free default
+# (mktemp -u "${TMPDIR:-/tmp}/x"). A literal password, or a default holding a colon, is hidden.
+_CU_REF = r"(?:\$\{?\w+\}?|%\w+%|\$\([^\s()]*(?:\s+[^\s()]+)*\))"
+_CU_SKIP = (r"(?!\+%|(?:\d+:\d+|(?:" + _CU_REF + r"|[^\s:=\"'`(]*\)):" + _CU_REF + r")(?![^\s\"'`;|&)])"
+            r"|\$\{\w+:[^\s}\"'`(:]*\}[^\s:]*(?!\S))")
 
 # Extra patterns for text a reviewer model reads (part files) and nothing else: the page
 # and --rulebase keep the patterns above, so their output stays as it was.
@@ -255,16 +262,17 @@ REVIEW_SECRET_PATTERNS = [
         r"|[\"']\s*,\s*(?:[\"']value[\"']\s*:\s*)?(?=[\"'])"
         r"|\s+(?=[\"']))"
         r"\s*[\"']?basic\s+[A-Za-z0-9+/]{8,}={0,2}")),
-    # curl's -u and --user flags, alone or last in a bundle (-su), with a user and password after
-    # a space, an = or nothing, quoted or not, or as two items of an argument list. An empty user
-    # with a token, and a long key as the user with no password, count too. The separators share
-    # no character with the user name, so a long run of them stays linear. A uid:gid (docker), a
-    # host:/path (rsync), a date format and an id substitution are left.
+    # curl's -u and --user flags, alone or last in a bundle (-su, -4u), with a user and password
+    # after a space, an = or nothing, quoted together or apart ("user":"pw") or not, in inline
+    # code or parentheses, or as two items of an argument list. An empty user with a token, and a
+    # long key as the user with no password, count too. The separators share no character with
+    # the user name, so a long run of them stays linear. The values _CU_SKIP names and a
+    # host:/path (rsync) are left.
     ("CurlUser", re.compile(
-        r"(?<![^\s\"'])(?:-u\s*|-[A-Za-z]{1,6}u\s+|--user(?:\s+|=))[\"']?(?!\d+:\d+\b(?![:@]))"
-        r"(?:(?:" + _CU_HEAD + _CU_REST + r"*)?:(?!/)\S{3,}|" + _CU_HEAD + _CU_REST + r"{15,}:(?=[\s\"']|$))"
-        r"|([\"'])(?:-[A-Za-z]{0,6}u|--user)\1\s*,\s*([\"'])(?!\d+:\d+\2)"
-        r"(?:(?:" + _CU_HEAD + _CU_REST + r"*)?:[^\s\"']{3,}|" + _CU_HEAD + _CU_REST + r"{15,}:)\2")),
+        r"(?<![^\s\"'`(])(?:-u\s*|-[A-Za-z0-9]{1,6}u\s+|--user(?:\s+|=))[\"']?" + _CU_SKIP
+        + r"(?:" + _CU_USER + r"*[\"']?:(?!/)\S{3,}|" + _CU_USER + r"{15,}:(?=[\s\"'`).,;]|$))"
+        r"|([\"'])(?:-[A-Za-z0-9]{0,6}u|--user)\1\s*,\s*([\"'])" + _CU_SKIP
+        + r"(?:" + _CU_USER + r"*:[^\s\"']{3,}|" + _CU_USER + r"{15,}:)\2")),
 ]
 
 
@@ -1922,7 +1930,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--reviewer-output",
                     help="path to Critic response JSON; enforces the quality gate")
     ap.add_argument("--reviewer-timeout", type=int, default=None,
-                    help="seconds to wait for reviewer-output (default 60)")
+                    help="seconds to wait for reviewer-output (default 60 with --rulebase; "
+                         "the reviewed flow waits only when this is given)")
     ap.add_argument("--title", default="Session Lineage", help="HTML title")
     _add_review_args(ap)
     # Readability defaults are ON. Opt-out flags restore raw/older behavior.
@@ -2280,24 +2289,41 @@ def _refuse_non_verdict(rop):
     p = pathlib.Path(rop) if rop else None
     if p is None or not p.exists() or _is_verdict_file(p):
         return
-    print(f"[lineage] ERROR: {rop} is not a verdict list; if the session wrote it, write it "
-          "again as a bare JSON array of {idx, id, key, recoverable, reason}, else give a "
-          "--reviewer-output that does not exist yet", file=sys.stderr)
+    if _json_list(p):   # step 8: written again, the same answer fails the same way
+        why = ("it is a JSON array where no entry names idx; if the session wrote the critic's "
+               "answer, have the critic judge the samples again (a failed gate run)")
+    else:
+        why = ("if the session wrote it, write it again as a bare JSON array of "
+               "{idx, id, key, recoverable, reason}")
+    print(f"[lineage] ERROR: {rop} is not a verdict list; {why}, else give a --reviewer-output "
+          "that does not exist yet", file=sys.stderr)
     raise SystemExit(2)
 
 
-def _is_verdict_file(p):
+def _json_list(p):
+    """True when `p` is a file holding a JSON array, whatever its entries."""
+    try:
+        return p.is_file() and isinstance(json.loads(p.read_text(encoding="utf-8")), list)
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+        return False
+
+
+def _is_verdict_file(p, every=False):
     """True when `p` is a file holding a critic's verdict: a JSON list with at least one
     object that names an `idx`. A list of anything else (a user's data file) is not one; a
     verdict with an entry short of its idx is one, and the coverage check says what it
-    misses."""
+    misses. With `every`, each entry must be such an object: only that file may be written
+    over, so a user's list holding one such object among other data stays."""
     if not p.is_file():
         return False
     try:
         got = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError, UnicodeDecodeError, RecursionError):
         return False
-    return isinstance(got, list) and any(isinstance(v, dict) and "idx" in v for v in got)
+    if not isinstance(got, list):
+        return False
+    named = [isinstance(v, dict) and "idx" in v for v in got]
+    return bool(named) and all(named) if every else any(named)
 
 
 def _write_gate_samples(bots, out, summaries, session_id, args):
@@ -2378,7 +2404,7 @@ def _set_aside(rop):
         return
     dest = rop.with_name(rop.name + ".used")
     k = 0
-    while dest.exists() and not _is_verdict_file(dest):
+    while dest.exists() and not _is_verdict_file(dest, every=True):
         k += 1
         dest = rop.with_name(f"{rop.name}.used.{k}")
     try:
