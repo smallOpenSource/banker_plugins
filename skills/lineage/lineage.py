@@ -296,16 +296,36 @@ REVIEW_SECRET_PATTERNS = [
 ]
 
 
+def _reviewer_patterns(text):
+    """`text` with what the reviewer patterns find replaced whole by [REDACTED:<name>], and the
+    count by name."""
+    counts = {}
+    for name, pat in REVIEW_SECRET_PATTERNS:
+        text, k = pat.subn(f"[REDACTED:{name}]", text)
+        if k:
+            counts[name] = k
+    return text, counts
+
+
 def review_redact(text, extra=None):
     """Text as a reviewer model reads it: the reviewer-only patterns first, while the keys
     are whole (the entropy rule would otherwise cut a key and leave the rest), then fully
     redacted (never masked, whatever --redact-mode says). Returns (text, count)."""
-    n = 0
-    for name, pat in REVIEW_SECRET_PATTERNS:
-        text, k = pat.subn(f"[REDACTED:{name}]", text)
-        n += k
-    red, found = redact(text, extra=extra, mode="full")
-    return red, n + sum(found.values())
+    pre, counts = _reviewer_patterns(text)
+    red, found = redact(pre, extra=extra, mode="full")
+    return red, sum(counts.values()) + sum(found.values())
+
+
+def page_redact(text, extra=None, mode="full"):
+    """Text as every page shows it (3.0.2): the reviewer patterns first, while keys are whole,
+    each hit replaced whole whatever --redact-mode says (a mask keeps 4+4 characters, most of
+    a short password); then the page's redaction with this run's mode and keywords. Returns
+    (text, count_by_kind); a second pass over its output finds nothing."""
+    pre, counts = _reviewer_patterns(text)
+    red, found = redact(pre, extra=extra, mode=mode)
+    for k, v in found.items():
+        counts[k] = counts.get(k, 0) + v
+    return red, counts
 
 
 # ---------------------------------------------------------------- Discovery
@@ -1064,7 +1084,7 @@ def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
     open_attr = " open" if open_details else ""
 
     def _red(text):
-        r, c = redact(text, extra=redact_extra, mode=redact_mode)
+        r, c = page_redact(text, extra=redact_extra, mode=redact_mode)
         for k, v in c.items():
             redact_counts[k] = redact_counts.get(k, 0) + v
         return r
@@ -1074,7 +1094,7 @@ def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
         # session-transition divider (--all-sessions)
         if all_sessions and t.get("session") != last_session:
             last_session = t.get("session")
-            name = html.escape(t.get("session_name") or last_session or "session")
+            name = html.escape(_red(t.get("session_name") or last_session or "session"))
             rows.append('<div class="day" data-mark="%s">'
                         '<span class="pill pill-session">%s</span></div>'
                         % (name, name))
@@ -1124,13 +1144,14 @@ def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
 
         tools_html = ""
         if t.get("tools"):
-            ts_list = ", ".join(f"{k}×{v}" for k, v in sorted(t["tools"].items()))
+            ts_list = ", ".join(f"{_hide_keywords(k, redact_extra)}×{v}"
+                                for k, v in sorted(t["tools"].items()))
             total = sum(t["tools"].values())
             tools_html = ('<div class="tools">🔧 도구 %d건: %s</div>'
                           % (total, html.escape(ts_list)))
 
         if role == "agent":
-            who = html.escape(t.get("agent_from") or "agent")
+            who = html.escape(_red(t.get("agent_from") or "agent"))
             avatar = "🤝"
             from_line = '<div class="from">%s</div>' % who
             row_cls = "row bot agent"
@@ -1148,6 +1169,21 @@ def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
             % (row_cls, " agent" if role == "agent" else "", avatar,
                open_attr, esc_sum, from_line, detail_body, tools_html, time_hm))
     return rows, redact_counts, cache_hits, cache_total
+
+
+_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def _residual_secrets(rows_html):
+    """What the reviewer patterns still find in a page's text (tags dropped, entities decoded),
+    by pattern name: a field the page forgot to redact."""
+    text = html.unescape(_TAG_RE.sub(" ", rows_html))
+    left = {}
+    for name, pat in REVIEW_SECRET_PATTERNS:
+        n = len(pat.findall(text))
+        if n:
+            left[name] = n
+    return left
 
 
 # ---------------------------------------------------------------- Self-verify (F-1)
@@ -2196,6 +2232,11 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
         markdown=markdown, all_sessions=all_sessions, summaries=summaries)
     for k, v in (prior_redactions or {}).items():
         redact_counts[k] = redact_counts.get(k, 0) + v
+    left = _residual_secrets("\n".join(rows))
+    if left:
+        print("[lineage] WARN: the page still holds secret-like text ("
+              + ", ".join(f"{k}={v}" for k, v in sorted(left.items()))
+              + "); a lineage bug: check the page before sharing it", file=sys.stderr)
 
     date_range = ""
     dated = [t for t in turns if t.get("ts")]
