@@ -1,7 +1,8 @@
 // Tests for payload-scan.mjs. Run from the repo root: node --test skills/ralph-qa/references/payload-scan.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,6 +111,51 @@ test("curl credentials and a Dockerfile ENV with a space are caught, look-alike 
   }
 });
 
+test("curl's user flag is caught in a continued line and with an odd user, a date format or an id substitution is not", () => {
+  // root:root (docker) stays caught: telling a user:group from a user:password would let admin:admin through.
+  for (const line of ["curl -u +admin:" + "Hunter22pw x", "curl -u $(whoami):" + "Hunter22pw x", "  -u admin:" + "Hunter22pw \\",
+    "curl -u admin:" + "admin x"]) {
+    assert.ok(scan(line).count > 0, `not caught: ${line}`);
+  }
+  for (const line of ["docker run -u $(id -u):$(id -g) img", 'docker run -u "$(id -u):$(id -g)" img', "date -u +%H:%M:%S",
+    "date -u '+%H:%M:%S'"]) {
+    assert.equal(scan(line).count, 0, `caught: ${line}`);
+  }
+});
+
+test("a Docker secret file path and a module hash are public values, the same keys and shapes otherwise are not", () => {
+  const key = "PASS" + "WORD_FILE";
+  for (const line of ["ENV DB_" + key + " /run/secrets/db_password", "POSTGRES_" + key + "=/run/secrets/postgres_password",
+    "  - MYSQL_ROOT_" + key + "=/run/secrets/mysql_root", "DB_" + key + ": /run/secrets/db", '"POSTGRES_' + key + '": "/run/secrets/pg"']) {
+    assert.equal(scan(line).count, 0, `caught: ${line}`);
+  }
+  const hash = createHash("sha256").update("module").digest("base64"); // 43 characters and one =
+  for (const line of [`github.com/x/y v1.2.3 h1:${hash}`, `github.com/x/y v1.2.3/go.mod h1:${hash}`, `    "h1:${hash}",`]) {
+    assert.equal(scan(line).count, 0, `caught: ${line}`);
+  }
+  const other = createHash("sha512").update("module").digest("base64").slice(0, 50);
+  for (const line of ["ENV DB_PASS" + "WORD /S3cr3t!x9", "DB_" + key + "=hunter22xyz", `h1:${other}`, `h1:${hash.slice(0, 43)}`,
+    `xh1:${hash}`, "tok" + `en: "h1:${hash}"`]) {
+    assert.ok(scan(line).count > 0, `not caught: ${line}`);
+  }
+  // Only the kinds that read a value after a key name skip the path: a key's own format still shows in it.
+  assert.deepEqual(scan("API_" + key + "=/run/secrets/" + FAKES["aws-access-key"]).hits.map((h) => h.kind), ["aws-access-key"]);
+});
+
+test("a line of millions of base64 characters is scanned, not crashed: every repeat is bounded", () => {
+  assert.deepEqual(readFileSync(SCAN, "utf8").match(/\{\d+,\}/g) ?? [], [], "an open repeat overflows V8's regex stack on a line of some 6 million characters");
+  const dir = mkdtempSync(join(tmpdir(), "payload-scan-big-"));
+  try {
+    const big = join(dir, "big.md");
+    writeFileSync(big, "data:image/png;base64," + "iVBORw0KGgo".repeat(640000) + "\n");
+    const r = spawnSync(process.execPath, [SCAN, big], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).count, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a lockfile's integrity hash is a public checksum, not a secret", () => {
   for (const sri of ['"integrity": "sha512-' + RANDOMISH + RANDOMISH.slice(0, 40) + '=="', "integrity sha384-" + RANDOMISH, "sha256-" + RANDOMISH]) {
     assert.equal(scan(sri).count, 0, sri);
@@ -135,6 +181,9 @@ test("a private key is reported with the line of its END marker, or null when it
   const pgp = ["-----BEGIN " + "PGP PRIVATE KEY BLOCK-----", "", RANDOMISH, "abc12", "=ab12", "-----END " + "PGP PRIVATE KEY BLOCK-----"];
   assert.deepEqual(scan(pgp.join("\n")).hits.find((h) => h.kind === "private-key"), { line: 1, kind: "private-key", end: 6 },
     "a PGP block is masked whole: its short last lines and checksum are no pattern of their own");
+  const oneLine = ["intro", FAKES["private-key"] + " " + RANDOMISH + " -----END " + "RSA PRIVATE KEY-----"].join("\n");
+  assert.deepEqual(scan(oneLine).hits.find((h) => h.kind === "private-key"), { line: 2, kind: "private-key", end: 2 },
+    "a key that opens and closes on one line ends on that line");
 });
 
 test("each private key closes at the first END marker after it, in time linear in the lines", () => {
@@ -151,14 +200,30 @@ test("each private key closes at the first END marker after it, in time linear i
 });
 
 test("long lines take linear time, so a big generated file cannot stall the check", () => {
-  const lines = ["secret".repeat(8000), "postgres://" + x(48000), "password".repeat(6000), "pwd".repeat(16000), "a.".repeat(24000),
-    // a key name over and over with its separator: each lookahead stops after 256 characters
-    "token=a|".repeat(40000), "pwd:".repeat(20000), "token=".repeat(20000), "--token=".repeat(30000),
-    "credential=".repeat(16000), "secret_key:abc_def_ghi|".repeat(5000), "token:".repeat(16000), "DB_PASS=".repeat(20000),
-    " -u" + "=".repeat(60000), " --user" + "=".repeat(60000), " -u " + "a:".repeat(30000), "ENV " + "PASS".repeat(15000) + " x"];
-  const start = Date.now();
-  scan(lines.join("\n"));
-  assert.ok(Date.now() - start < 3000, `took ${Date.now() - start} ms`);
+  // A key name over and over with its separator: each lookahead stops after 256 characters. The
+  // time of the whole text against a quarter of it: about 4 when linear, about 16 when quadratic,
+  // whatever the load on the machine, as both are timed alike, in turn, at their best of three.
+  const SHAPES = [["", "secret", 8000], ["postgres://", "a", 48000], ["", "password", 6000], ["", "pwd", 16000], ["", "a.", 24000],
+    ["", "token=a|", 40000], ["", "pwd:", 20000], ["", "token=", 20000], ["", "--token=", 30000], ["", "credential=", 16000],
+    ["", "secret_key:abc_def_ghi|", 5000], ["", "token:", 16000], ["", "DB_PASS=", 20000],
+    [" -u", "=", 60000], [" --user", "=", 60000], [" -u ", "a:", 30000], ["ENV ", "PASS", 15000, " x"]];
+  const text = (share) => SHAPES.map(([pre, unit, n, post = ""]) => pre + unit.repeat(Math.round(n * share)) + post).join("\n");
+  const ms = (t) => {
+    const start = process.hrtime.bigint();
+    scan(t);
+    return Number(process.hrtime.bigint() - start) / 1e6;
+  };
+  const quarter = text(0.25);
+  const full = text(1);
+  ms(quarter); // warm up
+  const q = [];
+  const f = [];
+  for (let i = 0; i < 3; i += 1) {
+    q.push(ms(quarter));
+    f.push(ms(full));
+  }
+  const ratio = Math.min(...f) / Math.min(...q);
+  assert.ok(ratio < 8, `4x the text took ${ratio.toFixed(1)}x the time`);
 });
 
 test("this test file is clean to the scanner itself: its fakes are assembled at run time", () => {

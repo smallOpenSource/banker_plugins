@@ -2,8 +2,9 @@
 /**
  * verifier-probe: which external CLI seats ralph-qa can seat, and with which model,
  * worked out from this machine alone. It sends no HTTP request and no prompt itself. The
- * only child processes are `codex --version`, `codex debug models --bundled` and
- * `opencode --version`, the last with opencode's model-list refresh turned off.
+ * only child processes are `codex --version` and `codex debug models --bundled`; it starts no
+ * gemini and no opencode (opencode 1.3.10 empties its cache folder, the models.dev copy the probe
+ * reads too, on any start that finds the folder's version file missing or old).
  *
  *   node verifier-probe.mjs --runtime=claude|codex [--codex[=<model>]] [--gemini[=<model>]] [--opencode[=<provider/model>]]
  *
@@ -187,21 +188,20 @@ export const DECISION_REASONS = [
 
 export const CLI_DEFAULT = "@cli-default";
 
-// opencode refreshes its models.dev list on every start, `--version` included, unless told not to.
-const OPENCODE_QUIET = { OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_AUTOUPDATE: "1" };
-
 const firstLine = (res) => (res?.status === 0 ? String(res.stdout).trim().split("\n")[0] || null : null);
 const absent = (cli) => ({ cli, present: false, decision: "unseated", reason: "cli-absent" });
 const adopt = (seat, model, reason) => ({ ...seat, decision: "adopt", model, reason });
 const withNotes = (seat, notes) => (notes.length ? { ...seat, notes: [...new Set([...(seat.notes ?? []), ...notes])] } : seat);
 
-// TOML keys: bare, "basic" or 'literal', dotted with optional spaces (`a."b.c" . d`).
+// TOML keys: bare, "basic" or 'literal', dotted with optional spaces (`a."b.c" . d`). TOML ends a
+// line only at \n or \r\n, so `.` runs over U+2028 and U+2029 too (the s flag): without it a
+// comment holding one hid a header or a key that codex reads.
 const KEY_SEG = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)`;
 const KEY_PATH = String.raw`${KEY_SEG}(?:\s*\.\s*${KEY_SEG})*`;
-const HEADER_RE = new RegExp(String.raw`^\s*\[(\[?)\s*(${KEY_PATH})\s*\]\]?\s*(?:#.*)?$`);
-const ASSIGN_RE = new RegExp(String.raw`^\s*(${KEY_PATH})\s*=\s*(.*)$`);
-const SEG_RE = /"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_-]+)/g;
-const STRING_VALUE = /^(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(?:#.*)?$/;
+const HEADER_RE = new RegExp(String.raw`^\s*\[(\[?)\s*(${KEY_PATH})\s*\]\]?\s*(?:#.*)?$`, "s");
+const ASSIGN_RE = new RegExp(String.raw`^\s*(${KEY_PATH})\s*=\s*(.*)$`, "s");
+const SEG_RE = /"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_-]+)/gs;
+const STRING_VALUE = /^(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(?:#.*)?$/s;
 
 // A dotted key's segments, quotes taken off (escapes kept as written).
 const keyPath = (text) => [...text.matchAll(SEG_RE)].map((m) => m[1] ?? m[2] ?? m[3]);
@@ -209,7 +209,7 @@ const keyPath = (text) => [...text.matchAll(SEG_RE)].map((m) => m[1] ?? m[2] ?? 
 // The walk's state: where it is (open string, nesting depth, table, array being gathered) and
 // what it found so far.
 const tomlState = () => ({ values: {}, arrays: {}, mcpServers: new Set(), mcpUnread: false, modelKeys: false,
-  open: null, depth: 0, table: [], roots: new Set(), array: null });
+  open: null, depth: 0, table: [], roots: new Set(), array: null, unplaced: false });
 
 // The index just past the one-line string that opens at `i` (the line's end when it never closes).
 function stringEnd(text, i) {
@@ -279,8 +279,9 @@ function noteMcp(state, full) {
 // True when a key path ends in `model`, or its inline-table value sets one.
 const setsModel = (full, value) => full[full.length - 1] === "model" || (value.startsWith("{") && /[{,]\s*model\s*=/.test(value));
 
-// The strings of a top-level array, gathered line by line until it closes; comments aside.
-const ARRAY_ITEM = /"((?:[^"\\]|\\.)*)"|'([^']*)'|#.*/g;
+// The strings of a top-level array, gathered line by line until it closes; comments aside. The
+// gathered text spans lines, so a comment ends at the line's end, U+2028 and U+2029 inside it.
+const ARRAY_ITEM = /"((?:[^"\\]|\\.)*)"|'([^']*)'|#[^\r\n]*/gs;
 function gatherArray(state, text) {
   if (!state.array) return;
   state.array.text += text + "\n";
@@ -312,7 +313,9 @@ function enterTable(state, header) {
 }
 
 // One line of readToml into `state`: walked inside a multi-line string, array or inline table
-// (a `model =` there still counts), else a table header or a `key = value`.
+// (a `model =` there still counts), else a table header or a `key = value`. Any other line but
+// a comment or a blank one is a line the probe could not place (a key it cannot spell, such as a
+// non-ASCII bare key), and the read is not whole.
 function tomlLine(state, line) {
   if (state.open || state.depth > 0) {
     if (!state.open && /(?:^|[{,])\s*model\s*=/.test(line)) state.modelKeys = true;
@@ -323,7 +326,8 @@ function tomlLine(state, line) {
   const header = HEADER_RE.exec(line);
   if (header) return enterTable(state, header);
   const assign = ASSIGN_RE.exec(line);
-  if (assign) assignment(state, keyPath(assign[1]), assign[2]);
+  if (assign) return assignment(state, keyPath(assign[1]), assign[2]);
+  if (!/^\s*(?:#|$)/.test(line)) state.unplaced = true;
 }
 
 // The servers each [mcp_servers] header in the text names when the lines after it are walked
@@ -356,9 +360,9 @@ const rawMcpNames = (lines) => lines.filter((l) => !/^\s*#/.test(l))
 // the first segment of every key and table (`roots`), the MCP server names wherever they are
 // defined (table headers, under [mcp_servers], dotted keys), whether servers were written in a
 // form it does not list or that the text names beyond what it listed (`mcpUnread`), whether any
-// table sets a model (`modelKeys`) and whether a multi-line string, array or inline table was
-// left open, and the strings of each top-level array (`arrays`). Enough for those keys; not a
-// TOML parser.
+// table sets a model (`modelKeys`), whether a multi-line string, array or inline table was left
+// open or a line could not be placed (`broken`), and the strings of each top-level array
+// (`arrays`). Enough for those keys; not a TOML parser.
 export function readToml(text) {
   const state = tomlState();
   const lines = String(text ?? "").split(/\r?\n/);
@@ -371,7 +375,7 @@ export function readToml(text) {
     mcpServers: [...state.mcpServers],
     mcpUnread: state.mcpUnread || unlisted.length > 0,
     modelKeys: state.modelKeys,
-    broken: state.open !== null || state.depth > 0,
+    broken: state.open !== null || state.depth > 0 || state.unplaced,
   };
 }
 
@@ -509,7 +513,7 @@ function mcpBlockedSeat(seat, conf, notes) {
   if (!bad && !conf.mcpUnread && !conf.broken) return null;
   if (bad) notes.push(`${bad} MCP server name(s) hold characters \`-c mcp_servers.<name>.enabled=false\` cannot address: rename them to letters, digits, _ and -`);
   if (conf.mcpUnread) notes.push("the probe could not list every MCP server the codex config defines (one inline mcp_servers table, or a name its walk did not place): write each server as its own [mcp_servers.<name>] table");
-  if (conf.broken) notes.push("the probe could not read the codex config to its end (a multi-line string, array or inline table left open), so its list of MCP servers may be short");
+  if (conf.broken) notes.push("the probe could not read the codex config to its end (a multi-line string, array or inline table left open, or a line it could not place), so its list of MCP servers may be short");
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -519,12 +523,14 @@ function mcpBlockedSeat(seat, conf, notes) {
 const SEAT_KEYS = ["notify", "otel", "mcp_servers", "web_search", "tools", "analytics", "features", "hooks",
   "sandbox_mode", "sandbox_workspace_write", "approval_policy"];
 
-// The unseated seat when the managed file sets one of those keys; null otherwise.
+// The unseated seat when the managed file sets one of those keys, or could not be read to its
+// end (a line read short may set one); null otherwise.
 function managedBlockedSeat(seat, world, notes) {
   if (world.platform === "win32") return null;
-  const keys = readToml(world.readFile(CODEX_MANAGED)).roots.filter((k) => SEAT_KEYS.includes(k));
-  if (!keys.length) return null;
-  notes.push(`${CODEX_MANAGED} sets ${keys.join(", ")}, which codex applies over the seat's -c flags: the seat cannot hold its guards`);
+  const read = readToml(world.readFile(CODEX_MANAGED));
+  const keys = read.roots.filter((k) => SEAT_KEYS.includes(k));
+  if (!keys.length && !read.broken) return null;
+  notes.push(`${CODEX_MANAGED} ${keys.length ? `sets ${keys.join(", ")}` : "could not be read to its end"}, which codex applies over the seat's -c flags: the seat cannot hold its guards`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -696,18 +702,20 @@ function geminiStatsNotes(settings) {
   return set === false ? [] : ["gemini sends usage statistics (metadata, not the payload) to play.googleapis.com; set privacy.usageStatisticsEnabled to false in its settings to stop it"];
 }
 
-// gemini runs the hooks its settings define in every session, this seat too; no flag turns them off.
 // gemini's own sandbox (tools.sandbox, or GEMINI_SANDBOX, which wins) restarts gemini inside it: a
 // docker or podman container, or sandbox-exec on macOS when the value is true. The admin policy
 // file does not reach a container, so every tool opens (0.62.0). The seat command turns it off
-// with GEMINI_SANDBOX=false; this says so when it is on.
+// with GEMINI_SANDBOX=false; this says so when it is on. gemini reads "0" and "false" as off, the
+// env lower-cased and trimmed, the setting as written ("FALSE" there is on).
 function geminiSandboxNotes(settings, env) {
+  const off = (v) => v === "0" || v === "false";
   const fromEnv = String(env.GEMINI_SANDBOX ?? "").trim().toLowerCase();
   const set = settings.map((r) => r.value?.tools?.sandbox).find((v) => v !== undefined);
-  const on = fromEnv ? !["0", "false"].includes(fromEnv) : Boolean(set && (typeof set !== "object" || set.enabled));
+  const on = fromEnv ? !off(fromEnv) : Boolean(set && !off(set) && (typeof set !== "object" || set.enabled));
   return on ? ["gemini's own sandbox is on (tools.sandbox or GEMINI_SANDBOX): the seat command turns it off with GEMINI_SANDBOX=false, as the admin policy does not reach its container"] : [];
 }
 
+// gemini runs the hooks its settings define in every session, this seat too; no flag turns them off.
 function geminiHookNotes(settings) {
   const off = settings.some((r) => r.value?.hooksConfig?.enabled === false);
   const hooks = settings.some((r) => Object.keys(r.value?.hooks ?? {}).length > 0);
@@ -817,13 +825,12 @@ function opencodeDecision(seat, { configured, unsure, closed, catalog }) {
 function opencodeSeat(flag, { world, authorFamilies }) {
   if (!world.which("opencode")) return absent("opencode");
   const notes = [];
-  const version = firstLine(world.run("opencode", ["--version"], OPENCODE_QUIET));
   const cfg = opencodeConfig(world);
   const { configured: raw, models } = opencodeModels(cfg);
   const usable = safeOnly(models, "opencode config", notes);
   const configured = vetConfigured(usable.includes(raw) ? raw : null, authorFamilies, notes);
   const sorted = sortModels(usable, authorFamilies);
-  const seat = { cli: "opencode", present: true, version, configured, candidates: sorted.independent, unclassified: sorted.unclassified };
+  const seat = { cli: "opencode", present: true, configured, candidates: sorted.independent, unclassified: sorted.unclassified };
   notes.push(...cfg.unreadable.map((f) => `config not readable: ${f}`));
   if (world.env.OPENCODE_CONFIG_CONTENT) notes.push("$OPENCODE_CONFIG_CONTENT is not read: the seat command replaces it with its own reviewer agent");
   const catalog = catalogProviders(world);
