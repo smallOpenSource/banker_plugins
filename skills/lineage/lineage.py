@@ -41,6 +41,8 @@ PREVIEW_TAIL = 700
 SUMMARY_MAX = 120           # a reviewer's summary is cut to this, after redaction
 LLM_CACHE_VERSION = 1       # bump to drop every cached reviewer decision
 REVIEWER_TIMEOUT = 60       # --reviewer-timeout default, seconds
+DECISIONS_MAX = 1_000_000   # bytes in one decisions file (a 40-turn part answers in some 20 KB)
+DECISIONS_TRIES = 200       # places a wrapped answer's list may start, tried at most
 
 # ---------------------------------------------------------------- Noise / classify
 # NOTE: JSONL records carry RAW `<...>` tags. Every regex below uses raw `<`/`>`
@@ -227,6 +229,11 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
     return out, counts
 
 
+# curl's user before the colon. Its first character is no ) % + (date -u +%H:%M, $(id -u)),
+# quote or {; the rest holds no quote or { either, so a run of quotes stays linear.
+_CU_HEAD = r"[^\s:=)%+\"'{]"
+_CU_REST = r"[^\s:=\"'{]"
+
 # Extra patterns for text a reviewer model reads (part files) and nothing else: the page
 # and --rulebase keep the patterns above, so their output stays as it was.
 REVIEW_SECRET_PATTERNS = [
@@ -240,11 +247,24 @@ REVIEW_SECRET_PATTERNS = [
     # the password runs to the last @ before the host: it may hold an @ of its own
     ("UrlCredential", re.compile(r"(?i)[a-z][a-z0-9+.-]{0,30}://[^\s:@/]*:[^\s/]{3,}@")),
     ("Bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}")),
-    ("BasicAuth", re.compile(r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?basic\s+[A-Za-z0-9+/]{8,}={0,2}")),
-    # curl's -u and --user flags with a user and password pair after a space, an = or nothing;
-    # the separators share no character with the user name, so a long run of them stays linear.
-    # A uid:gid (docker) and a host:/path (rsync) are left.
-    ("CurlUser", re.compile(r"(?<!\S)(?:-u\s*|--user(?:\s+|=))(?!\d+:\d+\b(?![:@]))[^\s:=]+:(?!/)\S{3,}")),
+    # Authorization then `:`, `=`, `=>` or headers["Authorization"] =, a call's ("Authorization",
+    # "...") and a HAR name/value pair, or a space before a quote (nginx, Apache)
+    ("BasicAuth", re.compile(
+        r"(?i)\bauthorization"
+        r"(?:[\"']?\]?\s*(?:=>|[:=])"
+        r"|[\"']\s*,\s*(?:[\"']value[\"']\s*:\s*)?(?=[\"'])"
+        r"|\s+(?=[\"']))"
+        r"\s*[\"']?basic\s+[A-Za-z0-9+/]{8,}={0,2}")),
+    # curl's -u and --user flags, alone or last in a bundle (-su), with a user and password after
+    # a space, an = or nothing, quoted or not, or as two items of an argument list. An empty user
+    # with a token, and a long key as the user with no password, count too. The separators share
+    # no character with the user name, so a long run of them stays linear. A uid:gid (docker), a
+    # host:/path (rsync), a date format and an id substitution are left.
+    ("CurlUser", re.compile(
+        r"(?<![^\s\"'])(?:-u\s*|-[A-Za-z]{1,6}u\s+|--user(?:\s+|=))[\"']?(?!\d+:\d+\b(?![:@]))"
+        r"(?:(?:" + _CU_HEAD + _CU_REST + r"*)?:(?!/)\S{3,}|" + _CU_HEAD + _CU_REST + r"{15,}:(?=[\s\"']|$))"
+        r"|([\"'])(?:-[A-Za-z]{0,6}u|--user)\1\s*,\s*([\"'])(?!\d+:\d+\2)"
+        r"(?:(?:" + _CU_HEAD + _CU_REST + r"*)?:[^\s\"']{3,}|" + _CU_HEAD + _CU_REST + r"{15,}:)\2")),
 ]
 
 
@@ -1416,12 +1436,14 @@ def _decisions_name(part_path):
 
 def _clear_parts(pack_path):
     """Remove the part and decisions files an earlier --emit-review left beside the
-    pack: that run's decisions must not be applied to this one. Returns the files it
-    could not remove."""
+    pack, and an earlier gate's samples: that run's decisions must not be applied to this
+    one, and its samples would stop this pack's rerun. Returns the files it could not
+    remove."""
     prefix = pack_path.stem + ".part-"
+    samples = f"{pack_path.stem}.reviewer-input.json"
     try:
         olds = [p for p in pack_path.parent.iterdir()
-                if p.name.startswith(prefix) and p.name.endswith(".json")]
+                if (p.name.startswith(prefix) and p.name.endswith(".json")) or p.name == samples]
     except OSError:
         return []
     failed = []
@@ -1490,7 +1512,13 @@ def _report_emit(pack_path, items, paths, groups):
 
 
 def emit_review(turns, drops, window, session_id, output, args):
-    """Write the pack and one part file per reviewer; print them and the next step."""
+    """Write the pack and one part file per reviewer; print them and the next step. A
+    --reviewer-output that holds something other than a verdict list stops it here, before
+    any reviewer runs: the gate would refuse it only after them."""
+    rop = pathlib.Path(args.reviewer_output) if args.reviewer_output and not args.skip_reviewer else None
+    if rop is not None and rop.exists() and not _is_verdict_file(rop):
+        _bad(f"{rop} is there and is not a verdict list; give a --reviewer-output that does not exist yet")
+        return 2
     pack_path = pathlib.Path(args.emit_review)
     counts, pairs = {}, []
     for n, (i, tid) in enumerate(zip(window, _final_ids(turns, window)), 1):
@@ -1584,8 +1612,12 @@ def _decisions_text(text):
         pass
     lists, empty = [], False
     decoder = json.JSONDecoder()
-    # only where a list of objects or an empty list can start: a run of `[` is tried once
-    for m in re.finditer(r"\[(?=\s*[{\]])", text):
+    # only where a list of objects or an empty list can start: a run of `[` is tried once,
+    # and only so many starts (each failed try parses up to the nesting limit)
+    for k, m in enumerate(re.finditer(r"\[(?=\s*[{\]])", text)):
+        if k == DECISIONS_TRIES:
+            raise ValueError(f"more than {DECISIONS_TRIES} places a list may start; "
+                             "write the bare JSON array")
         try:
             got, _ = decoder.raw_decode(text, m.start())
         except (ValueError, RecursionError):
@@ -1618,6 +1650,8 @@ def _load_decisions(files):
     merged = {}
     for f in files:
         try:
+            if f.stat().st_size > DECISIONS_MAX:
+                raise ValueError(f"larger than {DECISIONS_MAX} bytes")
             items = _decisions_text(f.read_text(encoding="utf-8"))
         except (OSError, ValueError, UnicodeDecodeError, RecursionError) as e:
             return _bad(f"cannot read decisions {f}: {e}")
@@ -1719,13 +1753,15 @@ def _review_result(pack, merged, args):
     rules'. A keep flag outranks a reviewer's `false`; the cache still gets what was said."""
     turns, summaries, writes, prior = [], {}, [], {}
     stats = {"restored": 0, "dropped": 0, "reviewer": 0, "rule": 0, "ignored": 0,
-             "hidden": 0, "flag-kept": 0}
+             "hidden": 0, "flag-kept": 0, "user-dropped": []}
     for x in pack["turns"]:
         d = merged.get(x["id"], {})
         llm_keep = _first(d.get("keep"), x["llm"].get("keep"))
         held = llm_keep is False and _kept_by_flag(pack, x)
         stats["flag-kept"] += held
         keep = bool(_first(None if held else llm_keep, x["rule"]["keep"]))
+        if not keep and x["role"] == "user" and x["rule"]["keep"] and not x.get("meta"):
+            stats["user-dropped"].append(x["id"])  # typed by the user: the rules keep these
         llm_summary = _reviewer_summary(x, d, args, stats)
         if x["id"] in merged:                    # reviewed, even if left to the rules
             writes.append((x["id"], x.get("session") or pack.get("source"), x["text"],
@@ -1799,9 +1835,19 @@ def apply_review(args):
     if merged is None:
         return 2
     _check_pack(pack, merged, args)
+    left = pack_path.with_name(f"{pack_path.stem}.reviewer-input.json")
+    if left.exists() and not (args.reviewer_output or args.skip_reviewer):
+        _bad(f"{left} was left by a gated run; give its --reviewer-output again, or --skip-reviewer")
+        return 2
     turns, summaries, writes, stats, prior = _review_result(pack, merged, args)
     if args.output is None:
         args.output = pack.get("output") or "work/lineage-review.html"
+    else:                                         # the pack's stamp: one page across the gate's runs
+        args.output = _with_pack_stamp(args.output, pack.get("output"))
+    if stats["user-dropped"]:
+        ids = stats["user-dropped"]
+        print(f"[lineage] WARN: reviewers dropped {len(ids)} typed user turn(s): {', '.join(ids[:10])}"
+              f"{' ...' if len(ids) > 10 else ''}; tell the user", file=sys.stderr)
     if stats["hidden"]:
         prior["reviewer-summary"] = stats["hidden"]
     try:
@@ -2137,6 +2183,16 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
     return 0
 
 
+def _with_pack_stamp(output, pack_output):
+    """`output` with the `_YYMMDD+HHMM` stamp of the pack's own output, so the gate's runs
+    minutes apart write one page; as given when it has a stamp or the pack's output has none."""
+    stamp = re.search(r"_\d{6}\+\d{4}$", pathlib.Path(str(pack_output or "")).stem)
+    out = pathlib.Path(output)
+    if stamp and not re.search(r"_\d{6}\+\d{4}$", out.stem):
+        return str(out.with_name(f"{out.stem}{stamp.group(0)}{out.suffix}"))
+    return output
+
+
 def _with_timestamp_suffix(path_str):
     """Append `_YYMMDD+HHMM` before the extension (idempotent)."""
     import datetime as _dt
@@ -2213,15 +2269,17 @@ def _refuse_non_verdict(rop):
 
 
 def _is_verdict_file(p):
-    """True when `p` is a file holding a critic's verdict: a non-empty JSON list of objects
-    that each name an `idx`. A list of anything else (a user's data file) is not one."""
+    """True when `p` is a file holding a critic's verdict: a JSON list with at least one
+    object that names an `idx`. A list of anything else (a user's data file) is not one; a
+    verdict with an entry short of its idx is one, and the coverage check says what it
+    misses."""
     if not p.is_file():
         return False
     try:
         got = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError, UnicodeDecodeError, RecursionError):
         return False
-    return isinstance(got, list) and bool(got) and all(isinstance(v, dict) and "idx" in v for v in got)
+    return isinstance(got, list) and any(isinstance(v, dict) and "idx" in v for v in got)
 
 
 def _write_gate_samples(bots, out, summaries, session_id, args):
@@ -2251,6 +2309,8 @@ def _write_gate_samples(bots, out, summaries, session_id, args):
         print("[lineage] next: invoke Skill('oh-my-claudecode:critic') with "
               "the JSON above; expected [{idx, recoverable, reason}, ...] "
               "(PASS = 5/5 recoverable)", file=sys.stderr, flush=True)
+    elif pathlib.Path(args.reviewer_output).exists():
+        print(f"[lineage] reading the verdict at {args.reviewer_output}", file=sys.stderr, flush=True)
     else:
         print(f"[lineage] next: have a critic agent judge the JSON above and write its "
               f"[{{idx, id, key, recoverable, reason}}, ...] to {args.reviewer_output} "
@@ -2259,21 +2319,25 @@ def _write_gate_samples(bots, out, summaries, session_id, args):
 
 
 def _read_verdict(rop, timeout, set_aside):
-    """The critic's verdict list from `rop`, waited for up to `timeout` seconds. With
-    `set_aside` a verdict list is renamed once read, so a rerun waits for a fresh one
-    instead of reusing it; anything else stays where it is. Exits 2 when it is missing,
-    unreadable or not a non-empty list."""
+    """The critic's verdict list from `rop`, waited for up to `timeout` seconds (None: not
+    waited for, the next run reads it). With `set_aside` a verdict list is renamed once read,
+    so a rerun waits for a fresh one instead of reusing it; anything else stays where it is.
+    Exits 2 when it is missing, unreadable or not a non-empty list."""
     import time as _time
-    deadline = _time.time() + max(1, timeout)
+    deadline = _time.time() + (0 if timeout is None else max(1, timeout))
     while not rop.exists() and _time.time() < deadline:
         _time.sleep(1)
     if not rop.exists():
-        print(f"[lineage] ERROR: reviewer-output not found within "
-              f"{timeout}s: {rop}", file=sys.stderr)
+        if timeout is None:
+            print(f"[lineage] ERROR: no verdict at {rop} yet; have a critic judge the samples, "
+                  "write its answer there and run this again", file=sys.stderr)
+        else:
+            print(f"[lineage] ERROR: reviewer-output not found within "
+                  f"{timeout}s: {rop}", file=sys.stderr)
         raise SystemExit(2)
     try:
         verdict = json.loads(rop.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, RecursionError) as e:
         print(f"[lineage] ERROR: reviewer-output parse failed: {e}",
               file=sys.stderr)
         raise SystemExit(2)
@@ -2384,7 +2448,10 @@ def _run_reviewer_gate(turns, out, session_id, args, summaries=None):
         return
     samples = _write_gate_samples(bots, out, summaries, session_id, args)
     if args.reviewer_output:
-        timeout = REVIEWER_TIMEOUT if args.reviewer_timeout is None else args.reviewer_timeout
+        if reviewed and args.reviewer_timeout is None:
+            timeout = None      # the run after the critic reads the verdict; this one does not wait
+        else:
+            timeout = REVIEWER_TIMEOUT if args.reviewer_timeout is None else args.reviewer_timeout
         _enforce_gate(pathlib.Path(args.reviewer_output), timeout, samples, reviewed)
 
 
