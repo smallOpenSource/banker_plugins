@@ -293,6 +293,42 @@ test("an escaped quote or a quote run inside a multi-line string does not close 
   assert.deepEqual(readToml('a = """x""""\n[mcp_servers.after]\ncommand = "y"\n').mcpServers, ["after"]);
   assert.deepEqual(readToml("a = '''x'''''\n[mcp_servers.lit]\ncommand = 'y'\n").mcpServers, ["lit"]);
   assert.deepEqual(readToml('a = """\nline \\\n  """\n[mcp_servers.cont]\ncommand = "y"\n').mcpServers, ["cont"], "a line-ending backslash");
+  const inline = readToml('x = { a = """q"""" }\n[mcp_servers.after]\ncommand = "y"\n');
+  assert.deepEqual([inline.mcpServers, inline.broken], [["after"], false], "a quote run closing a string inside an inline table");
+});
+
+test("U+2028 and U+2029 in a codex config do not hide a header, a key or an array item", () => {
+  // TOML ends a line only at \n or \r\n; a JS `.` also stops at these two, so a comment that holds
+  // one hid the line from the probe, while codex reads it.
+  for (const sep of ["\u2028", "\u2029"]) {
+    assert.deepEqual(readToml(`[mcp_servers.writer] # note${sep}more\ncommand = "node"\n`).mcpServers, ["writer"], "a header");
+    assert.deepEqual(readToml(`mcp_servers.writer.command = "node" # note${sep}more\n`).mcpServers, ["writer"], "a dotted key");
+    assert.deepEqual(readToml(`[mcp_servers]\nwriter = { command = "node" } # x${sep}y\n`).mcpServers, ["writer"], "a key under [mcp_servers]");
+    assert.equal(readToml(`model = "gpt-5.5" # pinned${sep}by ops\n`).values.model, "gpt-5.5");
+    assert.deepEqual(readToml(`modes = ["live"] # ${sep}"disabled"\n`).arrays.modes, ["live"], "a comment is no item");
+    const s = one({ codex: null }, world({ ...CODEX, files: { "/home/u/.codex/config.toml": 'model = "gpt-5.5"\n',
+      "/etc/codex/managed_config.toml": `notify = ["/usr/local/bin/n"] # ${sep}x\n` } }));
+    assert.equal(s.reason, "cli-call-failed", "the managed file still sets notify");
+  }
+  assert.deepEqual(readToml('modes = [\n  "a", # one\n  "b",\n]\n').arrays.modes, ["a", "b"], "a comment ends at its line, not past the next items");
+});
+
+test("a line the probe cannot place keeps the config from being read as whole", () => {
+  for (const text of ['[mcp_servers.작성기]\ncommand = "x"\n', 'mcp_servers.작성기.command = "x"\n', 'model = "gpt-5.5"\nwhat is this\n']) {
+    assert.equal(readToml(text).broken, true, text);
+  }
+  const real = ['﻿model = "gpt-5.5"', 'model_reasoning_effort = "high"\r', "", "# a comment", "\t[profiles.fast]", '\tmodel = "o3"',
+    "[[skills.config]]", 'path = "/x"', 'notes = """', "line [not a header]", '"""', "[mcp_servers.docs]", 'command = "npx"',
+    "args = [", '  "-y", # flag', '  "pkg",', "]", 'env = { A = "1", B = "2" }', "[tui]", 'theme = { name = "x",', "  dark = true }"].join("\n");
+  const read = readToml(real);
+  assert.deepEqual([read.broken, read.mcpServers], [false, ["docs"]]);
+  const s = one({ codex: null }, codexWith('model = "gpt-5.6-sol"\n[mcp_servers.작성기]\ncommand = "x"\n'));
+  assert.equal(s.reason, "cli-call-failed");
+  assert.ok(s.notes.some((n) => n.includes("a line it could not place")), s.notes.join("; "));
+  const managed = one({ codex: null }, world({ ...CODEX, files: { "/home/u/.codex/config.toml": 'model = "gpt-5.5"\n',
+    "/etc/codex/managed_config.toml": "[notify.작성기]\n" } }));
+  assert.equal(managed.reason, "cli-call-failed", "a managed file read short may set a key the seat turns off");
+  assert.ok(managed.notes.some((n) => n.includes("could not be read to its end")), managed.notes.join("; "));
 });
 
 test("a [mcp_servers] block the walk reads as text still counts in the cross-check", () => {
@@ -312,7 +348,8 @@ test("codex is not seated when its requirements file could undo a seat guard, an
     '[mcp_servers.mgd]\nidentity = { command = "x" }\n', 'allowed_sandbox_modes = ["workspace-write"]\n',
     'allowed_web_search_modes = ["live"]\n', 'allowed_approval_policies = ["on-request"]\n', "allow_managed_hooks_only = true\n",
     'default_permissions = "dev"\n', "something_new = 1\n", 'allowed_web_search_modes = [\n  # "disabled" is not allowed\n  "cached",\n]\n',
-    'allowed_sandbox_modes = "read-only"\n', 'allowed_sandbox_modes = [\n  "read-only",\n']) {
+    'allowed_sandbox_modes = "read-only"\n', 'allowed_sandbox_modes = [\n  "read-only",\n', 'enforce_residency = """\nus\n',
+    'allowed_web_search_modes = ["live"] # \u2028"disabled"\n']) {
     const s = seatWith(req);
     assert.equal(s.reason, "cli-call-failed", req);
     assert.ok(s.notes.some((n) => n.includes("requirements.toml")), req);
@@ -547,7 +584,9 @@ test("gemini's own sandbox is noted when its settings or GEMINI_SANDBOX turn it 
   for (const on of ["docker", true, { enabled: true, command: "podman" }]) {
     assert.ok(noted(one({ gemini: null }, gemini(user(on)))), JSON.stringify(on));
   }
-  for (const off of [false, { enabled: false }]) assert.ok(!noted(one({ gemini: null }, gemini(user(off)))), JSON.stringify(off));
+  // gemini 0.62.0 reads the strings "false" and "0" in the setting as off, and compares as written: "FALSE" is on.
+  for (const off of [false, { enabled: false }, "false", "0"]) assert.ok(!noted(one({ gemini: null }, gemini(user(off)))), JSON.stringify(off));
+  assert.ok(noted(one({ gemini: null }, gemini(user("FALSE")))), "FALSE");
   assert.ok(!noted(one({ gemini: null }, gemini())), "no setting");
   assert.ok(!noted(one({ gemini: null }, gemini(user("docker"), { GEMINI_SANDBOX: "false" }))), "the env wins over the setting");
   assert.ok(noted(one({ gemini: null }, gemini({}, { GEMINI_SANDBOX: "1" }))));
@@ -565,19 +604,20 @@ test("unreadable gemini settings are reported and nothing is adopted on a guess"
 const opencode = (config, extra = {}) =>
   world({
     bins: { opencode: "/usr/bin/opencode" },
-    runs: { "opencode --version": { status: 0, stdout: "1.3.10\n" } },
     files: { "/home/u/.config/opencode/opencode.json": typeof config === "string" ? config : JSON.stringify(config), ...(extra.files ?? {}) },
     env: extra.env ?? {},
   });
 
-test("opencode is started only with its model-list refresh turned off", () => {
-  const w = opencode({ model: "local/qwen3" });
-  one({ opencode: null }, w);
-  const version = w.calls.find((c) => c.cmd === "opencode --version");
-  assert.equal(version.env.OPENCODE_DISABLE_MODELS_FETCH, "1");
-});
-
 const MODELS_DEV = { "/home/u/.cache/opencode/models.json": JSON.stringify({ openai: {}, google: {}, anthropic: {} }) };
+
+test("the probe starts no opencode: any start empties a models.dev copy an older opencode left", () => {
+  // opencode 1.3.10 clears its cache folder (models.json too) when the folder's version file is
+  // missing or old, and with the refresh off it does not fetch the list again.
+  const cfg = { model: "ollama-qwen/qwen3-coder:30b", enabled_providers: ["ollama-qwen"], provider: { "ollama-qwen": { models: { "qwen3-coder:30b": {} } } } };
+  const w = opencode(cfg, { files: MODELS_DEV });
+  assert.equal(one({ opencode: null }, w).reason, "single-candidate");
+  assert.deepEqual(w.calls.filter((c) => c.cmd.startsWith("opencode")), []);
+});
 
 test("opencode adopts its one configured model only when nothing else can be run", () => {
   const cfg = { model: "ollama-qwen/qwen3-coder:30b", enabled_providers: ["ollama-qwen"], provider: { "ollama-qwen": { models: { "qwen3-coder:30b": {} } } } };

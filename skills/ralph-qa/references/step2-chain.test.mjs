@@ -3,7 +3,7 @@
 // Run from the repo root: node --test skills/ralph-qa/references/step2-chain.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -169,6 +169,26 @@ test("a staged ignored file, a non-ASCII path with a space and a CRLF list all g
   assert.equal(r.status, 0, r.stderr);
   assert.ok(sent(r, "forced.log"), r.prompt);
   assert.ok(sent(r, "한글 폴더/새 파일.txt"), "the path reaches the reviewer unescaped:\n" + r.prompt);
+});
+
+test("a change git sees only by its content (same size, as old as the index) still goes out", { skip: SKIP }, (t) => {
+  // git trusts an entry's size and time unless the entry is as new as the index file it read: a
+  // copy of the index stamped now would turn such a racily clean entry into a clean one.
+  const ctx = repo(t);
+  const then = new Date(Date.now() - 100000);
+  utimesSync(join(ctx.repo, "a.txt"), then, then);
+  git(ctx, "add", "a.txt");
+  utimesSync(join(ctx.repo, ".git", "index"), then, then);
+  put(ctx, "a.txt", "two\n");
+  utimesSync(join(ctx.repo, "a.txt"), then, then);
+  assert.match(git(ctx, "diff", "--name-only", "HEAD"), /a\.txt/, "the repo's own index sees the change");
+  const r = step2(ctx);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(sent(r, "a.txt"), r.prompt);
+  put(ctx, "n.txt", "new\n"); // a listed new file: add -N writes the copy, which must keep the entry suspect
+  const listed = step2(ctx, { list: "n.txt\n" });
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.ok(sent(listed, "a.txt") && sent(listed, "n.txt"), listed.prompt);
 });
 
 test("a nested repo without a commit stays out and does not break the chain", { skip: SKIP }, (t) => {

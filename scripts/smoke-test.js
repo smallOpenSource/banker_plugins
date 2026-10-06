@@ -379,12 +379,14 @@ try {
   // External seats sit only on a flag, and working out their model sends nothing anywhere: the
   // probe reads local config and the CLI's bundled list. A network call in the probe source, or an
   // automatic seat in the doc, is the regression this guards.
-  // opencode fetches models.dev on every start, `--version` included, unless told not to.
+  // opencode empties its cache folder (the models.dev copy the probe reads) on a start that finds
+  // the folder's version file missing or old, so the probe starts no opencode at all.
   ok(/외부 좌석은 플래그를 줄 때만 앉는다/.test(rqSkill)
      && /프로브는 HTTP 요청도 프롬프트도 보내지 않는다/.test(rqSkill)
      && !/\bfetch\(|node:https?['"]|\bcurl\b|urllib/.test(probeSrc)
-     && /OPENCODE_DISABLE_MODELS_FETCH: "1"/.test(probeSrc),
-     'S21: external seats need a flag, the probe source has no network path, and opencode is started with its model-list refresh off');
+     && !/run\("opencode"/.test(probeSrc) && /gemini 와 opencode 는 띄우지 않는다/.test(rqSkill)
+     && /좌석 명령과 정리 명령은 `OPENCODE_DISABLE_MODELS_FETCH=1` 과 `OPENCODE_DISABLE_AUTOUPDATE=1` 로 띄우고/.test(rqSkill),
+     'S21: external seats need a flag, the probe source has no network path, the probe starts no opencode, and the seat starts it with its model-list refresh off');
   // The API-credential seats were removed on request; neither the doc nor the probe may keep them.
   ok(!/external:api|gemini-api|OPENAI_API_KEY|RALPH_QA_NO_DEFAULT_ENDPOINT|--external=/.test(rqSkill)
      && !/OPENAI_API_KEY|GEMINI_API_KEY|RALPH_QA_NO_DEFAULT_ENDPOINT/.test(probeSrc),
@@ -480,7 +482,8 @@ try {
      && /원문 부분\(diff, 기준 파일, 판정에 필요한 관련 코드 범위, 게이트 원문 출력\)과 닫는 표지는 재지정으로 붙인다/.test(rqSkill)
      && /exit 0 이고 출력 JSON 의 `count` 가 0 일 때만 0건으로 읽고/.test(rqSkill)
      && /^i=\$\(git -C '<저장소>' rev-parse --git-path index\) && case \$i in \/\*\|\?:\*\) ;; \*\) i='<저장소>'\/\$i ;; esac && rm -f "\$d\/idx" &&$/m.test(seatCode)
-     && /^  \{ if \[ -f "\$i" \]; then cp "\$i" "\$d\/idx"; elif git -C '<저장소>' rev-parse -q --verify HEAD > \/dev\/null; then echo "ralph-qa: 커밋이 있는데 인덱스 파일이 없다: \$i" >&2; false; fi; \} &&$/m.test(seatCode)
+     && /사본은 실제 인덱스의 수정 시각을 그대로 둔다\(bash 는 `cp -p`, PowerShell 의 `Copy-Item` 은 그대로 둔다\)/.test(rqSkill)
+     && /^  \{ if \[ -f "\$i" \]; then cp -p "\$i" "\$d\/idx"; elif git -C '<저장소>' rev-parse -q --verify HEAD > \/dev\/null; then echo "ralph-qa: 커밋이 있는데 인덱스 파일이 없다: \$i" >&2; false; fi; \} &&$/m.test(seatCode)
      && !/--path-format/.test(seatCode) && /인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다/.test(rqSkill)
      && /커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다/.test(rqSkill) && !/경로를 잘못 얻어도 사본 없이 말없이 진행하지 않는다/.test(rqSkill)
      && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)

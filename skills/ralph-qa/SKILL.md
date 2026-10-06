@@ -54,7 +54,7 @@ description: "작업 결과를 자기 채점하지 않도록 독립 검증과 �
 ## 외부 모델 결정
 
 결정은 `references/verifier-probe.mjs` 가 한다. **프로브는 HTTP 요청도 프롬프트도 보내지 않는다.** 로컬 설정 파일과 CLI 의 내장 목록만 읽으며, 판정 근거는 그 출력이다.
-띄우는 자식 프로세스는 `codex --version`, `codex debug models --bundled`, `opencode --version`(models.dev 목록 갱신을 끈 env) 셋이다. gemini 는 띄우지 않는다. codex 0.144.5 와 opencode 1.3.10 에서 strace 로 외부 접속 0건을 확인했다.
+띄우는 자식 프로세스는 `codex --version`, `codex debug models --bundled` 둘이다. gemini 와 opencode 는 띄우지 않는다. opencode 1.3.10 은 캐시 폴더의 version 파일이 없거나 낡았으면 시작할 때 그 폴더를 비워, 프로브가 읽는 models.dev 사본까지 지운다. codex 0.144.5 에서 strace 로 외부 접속 0건을 확인했다.
 
 ```bash
 node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --runtime=<claude|codex> [--codex[=<model>]] [--gemini[=<model>]] [--opencode[=<provider/model>]]
@@ -119,6 +119,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - 원문 부분(diff, 기준 파일, 판정에 필요한 관련 코드 범위, 게이트 원문 출력)과 닫는 표지는 재지정으로 붙인다. 셸은 재지정하는 본문을 해석하지 않고, 모델이 긴 원문을 다시 적다가 바꿀 일도 없다.
    - 관련 코드 범위는 바뀐 줄 둘레 3줄 밖에 있는데 판정에 필요한 함수 본문이나 호출부다. 필요한 만큼만 아래 사슬의 `cat '<기준 파일>'` 앞에 `sed -n '<시작>,<끝>p' '<파일>' >> "$d/prompt.md" &&` 로 붙인다. diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다.
    - diff 는 실제 인덱스의 사본(`GIT_INDEX_FILE`)으로 만들어 새 파일도 담는다. `git diff HEAD` 는 추적하지 않는 새 파일을 빼서, 파일을 읽는 도구가 없는 외부 좌석(gemini, opencode, 셸을 끈 codex)은 새 코드를 보지 못한 채 판정한다. 사본에 변경에 속한 새 파일만 `add -N` 으로 올린 뒤 diff 한다.
+   - 사본은 실제 인덱스의 수정 시각을 그대로 둔다(bash 는 `cp -p`, PowerShell 의 `Copy-Item` 은 그대로 둔다). git 은 인덱스 파일만큼 새로운 항목만 내용으로 다시 확인한다. 그래서 시각이 새로워진 사본에서는 인덱스와 같은 초에 크기가 같게 바뀐 파일이 diff 에서 빠진다.
    - 사본이라 스테이징(`git add -f` 한 파일 포함)과 sparse checkout 상태가 그대로 남는다. 새로 만든 인덱스를 쓰면 sparse checkout 의 원뿔 밖 파일 전문이 삭제로 실린다. 저장소의 실제 인덱스는 바뀌지 않는다.
    - 인덱스 경로는 `rev-parse --git-path index` 로 얻고(셸의 `GIT_INDEX_FILE` 도 따른다), 상대 경로면 앞에 `<저장소>/` 를 붙인다. `--path-format` 은 쓰지 않는다. git 2.31 미만은 이 옵션을 모르는 채 글자 그대로 찍고 성공으로 끝난다.
    - 인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다. 커밋이 있으면 사슬이 멈춘다. 커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다.
@@ -166,7 +167,7 @@ git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standar
 # <기준>: 커밋하지 않은 작업이면 HEAD, 이미 커밋한 작업이면 작업 전 커밋, 커밋이 없는 저장소면 빈 트리
 # 실제 인덱스의 사본이라 스테이징도 담고 저장소 인덱스는 그대로다. 인덱스 파일이 없으면 커밋 없는 저장소만 이어 간다
 i=$(git -C '<저장소>' rev-parse --git-path index) && case $i in /*|?:*) ;; *) i='<저장소>'/$i ;; esac && rm -f "$d/idx" &&
-  { if [ -f "$i" ]; then cp "$i" "$d/idx"; elif git -C '<저장소>' rev-parse -q --verify HEAD > /dev/null; then echo "ralph-qa: 커밋이 있는데 인덱스 파일이 없다: $i" >&2; false; fi; } &&
+  { if [ -f "$i" ]; then cp -p "$i" "$d/idx"; elif git -C '<저장소>' rev-parse -q --verify HEAD > /dev/null; then echo "ralph-qa: 커밋이 있는데 인덱스 파일이 없다: $i" >&2; false; fi; } &&
   GIT_INDEX_FILE="$d/idx" git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --pathspec-from-file="$d/new-files.txt" &&
   GIT_INDEX_FILE="$d/idx" git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard > "$d/unsent.txt" &&
   { ! GIT_INDEX_FILE="$d/idx" git -C '<저장소>' diff --quiet '<기준>' || { echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; }; } &&
@@ -429,7 +430,7 @@ Codex 에서 역할을 지정했다면 백본 줄에 `type=<역할> · model=<�
 
 - **`codex login status` 와 `~/.codex/auth.json` 을 유효성 근거로 쓰지 마라.** 둘 다 거짓 음성이다 — `Not logged in` 을 exit 0 으로 답하면서 codex 가 정상 동작하는 경우가 있다(인증이 ChatGPT 로그인이 아니라 프로바이더 env 키에서 올 때).
 - **`codex exec` 왕복을 프로브로 쓰지 마라.** 실측 25,478 토큰이다. 프로브가 검증보다 비싸면 도구가 아니다. 모델 목록은 `codex debug models --bundled`(로컬)로 읽고, 옵션 없는 `codex debug models` 는 프로바이더에 접속할 수 있어 쓰지 않는다.
-- **opencode 를 갱신 차단 env 없이 띄우지 마라.** opencode 1.3.10 은 `--version` 을 포함한 모든 시작에서 models.dev 목록을 받아 온다. 프로브, 좌석 명령, 정리 명령 모두 `OPENCODE_DISABLE_MODELS_FETCH=1` 과 `OPENCODE_DISABLE_AUTOUPDATE=1` 로 띄우고, `opencode models` 는 쓰지 않는다.
+- **opencode 를 갱신 차단 env 없이 띄우지 마라.** opencode 1.3.10 은 `--version` 을 포함한 모든 시작에서 models.dev 목록을 받아 온다. 좌석 명령과 정리 명령은 `OPENCODE_DISABLE_MODELS_FETCH=1` 과 `OPENCODE_DISABLE_AUTOUPDATE=1` 로 띄우고, `opencode models` 는 쓰지 않는다. 프로브는 opencode 를 띄우지 않는다.
 - **opencode 의 자동 압축을 켜 두지 마라.** 페이로드가 문맥을 넘치면 1.3.10 은 압축 에이전트로 페이로드 전문을 다시 보내고, 사용자 설정이 그 에이전트의 모델(`agent.compaction.model`)을 다른 프로바이더로 정했으면 그쪽으로 간다(모의 재현). 좌석 명령은 `agent.compaction.disable` 로 끈다. 넘치면 답이 비어 `ERROR` 다. 큰 페이로드는 나눠 보낸다(판정은 3단계의 분할 규칙).
 - **gemini 좌석 기록을 남겨 두지 마라.** 0.62.0 은 헤드리스 실행마다 페이로드 전문을 `~/.gemini/tmp/<id>/chats/` 에 남긴다. 반복마다 `gemini-seat.mjs clean` 과 `sweep` 을 돌린다(외부 좌석 전송 6단계).
 - **gemini 좌석의 `TMPDIR` 을 그대로 두지 마라.** 0.62.0 은 API 오류 때 요청 전문을 `os.tmpdir()/gemini-client-error-*.json` 으로 umask 권한으로 쓴다. 기본 `/tmp` 면 다른 계정이 읽을 수 있다. 좌석 명령은 `TMPDIR="$o" TEMP="$o" TMP="$o"` 를 준다(Windows 의 node 는 `TEMP` 와 `TMP` 만 읽는다).
