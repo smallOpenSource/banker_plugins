@@ -789,7 +789,7 @@ class TestLlmReview(_ReviewCase):
         self._write(self._records())
         rc, pack = self._emit()
         self.assertEqual(rc, 0)
-        self.assertEqual(pack["schema"], "lineage-review/1")
+        self.assertEqual(pack["schema"], "lineage-review/2")
         ids = [t["id"] for t in pack["turns"]]
         self.assertEqual(ids, ["u1", "a1", "u2", "a2", "u3", "a3"])
         by = {t["id"]: t for t in pack["turns"]}
@@ -2344,6 +2344,54 @@ class TestPageRedaction(_ReviewCase):
         self.assertNotIn("Hunt", raw)
         self.assertNotIn("admin:", raw)
         self.assertNotIn("****", raw, "a model reads the samples: nothing is masked")
+
+    def test_the_pack_holds_no_reviewer_pattern_secret(self):
+        self._write(self._secret_records())
+        rc, pack = _quiet(self._emit)[0]
+        self.assertEqual(rc, 0)
+        raw = json.dumps(pack, ensure_ascii=False)
+        self.assertNotIn("Hunter22", raw)
+        self.assertNotIn("Xy7pQ2mZ9k", raw)
+
+    def test_the_decision_cache_keys_on_the_3_0_1_text(self):
+        self._write(self._secret_records())
+        pack = _quiet(self._emit)[0][1]
+        x = [t for t in pack["turns"] if t["id"] == "a1"][0]
+        raw = self._secret_records()[1]["message"]["content"][0]["text"]
+        context = L._decision_context(x["rule"].get("why"), pack)
+        want = hashlib.sha256((L.redact(raw)[0] + "\x00llm" + "1" + "\x00" + context).encode()).hexdigest()[:12]
+        self.assertEqual(x.get("llm_key"), want)
+
+    def test_a_decision_made_once_is_reused_on_the_next_emit(self):
+        self._write(self._secret_records())
+        _quiet(self._emit)
+        rc, _ = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": "배포를 마쳤다"}])[0]
+        self.assertEqual(rc, 0)
+        pack = _quiet(self._emit)[0][1]
+        x = [t for t in pack["turns"] if t["id"] == "a1"][0]
+        self.assertTrue(x["llm"].get("cached"))
+        self.assertEqual(x["llm"].get("summary"), "배포를 마쳤다")
+
+    def test_a_3_0_1_pack_is_refused_with_a_hint(self):
+        self._write(self._secret_records())
+        pack = _quiet(self._emit)[0][1]
+        pack["schema"] = "lineage-review/1"
+        with open(self.pack, "w", encoding="utf-8") as f:
+            json.dump(pack, f, ensure_ascii=False)
+        (rc, _page), err = _quiet(self._apply)
+        self.assertEqual(rc, 2)
+        self.assertIn("--emit-review", err)
+
+    def test_a_title_holding_a_key_names_the_file_by_session_id(self):
+        import types
+        ant = "sk-" + "ant-api03-" + "b" * 24
+        jf = os.path.join(self.d, "t.jsonl")
+        with open(jf, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "custom-title", "customTitle": "keys " + ant}) + "\n")
+        args = types.SimpleNamespace(output=None, all_sessions=False)
+        out, err = _quiet(L.default_output, args, jf, "0123456789abcdef")
+        self.assertEqual(out, "work/lineage-01234567.html")
+        self.assertNotIn("ant-api03", err)
 
 
 class TestRulebaseMatches2x(unittest.TestCase):

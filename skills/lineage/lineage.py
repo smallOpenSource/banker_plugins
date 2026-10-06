@@ -33,7 +33,7 @@ ECHO_ASK = 40               # echo-exchange: user question length ceiling (A-4)
 ECHO_REPLY = 5              # echo-exchange: assistant reply length ceiling (A-4)
 _BLOCKQUOTE_MAX_DEPTH = 32  # blockquote recursion cap (C-2)
 CACHE_BASE = pathlib.Path.home() / ".cache" / "lineage"
-REVIEW_SCHEMA = "lineage-review/1"       # --emit-review pack, read back by --apply-review
+REVIEW_SCHEMA = "lineage-review/2"       # --emit-review pack, read back by --apply-review; 2: llm_key, pages redacted (3.0.2)
 REVIEW_PART_SCHEMA = "lineage-review-part/1"
 REVIEW_PART = 40            # turns per part file: one reviewer's share
 PREVIEW_HEAD = 1500         # a long turn's preview: head + tail, where conclusions sit
@@ -1341,18 +1341,23 @@ def _decision_context(why, keeps):
                      str(keeps.get("keep_tool_only") is True)])
 
 
-def _llm_cache_path(turn_id, session, redacted_text, context):
-    digest = hashlib.sha256((redacted_text + "\x00llm" + str(LLM_CACHE_VERSION)
-                             + "\x00" + context).encode()).hexdigest()[:12]
-    return cache_dir(_safe_name(session)) / f"{_safe_name(turn_id)}-{digest}-llm.json"
+def _llm_digest(redacted_text, context):
+    """The decision cache key: the text with the page's patterns only (as 3.0.1 keyed it, so
+    no turn is reviewed again for 3.0.2), the cache version and what the decision rests on."""
+    return hashlib.sha256((redacted_text + "\x00llm" + str(LLM_CACHE_VERSION)
+                           + "\x00" + context).encode()).hexdigest()[:12]
 
 
-def read_llm_cache(turn_id, session, redacted_text, context):
+def _llm_cache_path(turn_id, session, digest):
+    return cache_dir(_safe_name(session)) / f"{_safe_name(turn_id)}-{_safe_name(digest)}-llm.json"
+
+
+def read_llm_cache(turn_id, session, digest):
     """A reviewer's earlier {keep, summary} for this exact (redacted) text under the same
     rule call and keep flags (`context`), or None when no reviewer saw it so. Both values
     null: the reviewer left the turn to the rules."""
     try:
-        path = _llm_cache_path(turn_id, session, redacted_text, context)
+        path = _llm_cache_path(turn_id, session, digest)
     except OSError as e:                          # no cache folder (a read-only HOME, say)
         _warn_once("_no_llm_cache", f"reviewer decision cache unavailable ({e}); "
                    "every turn is reviewed")
@@ -1369,9 +1374,9 @@ def read_llm_cache(turn_id, session, redacted_text, context):
     return {"keep": keep, "summary": summary}
 
 
-def write_llm_cache(turn_id, session, redacted_text, context, keep, summary):
+def write_llm_cache(turn_id, session, digest, keep, summary):
     try:
-        _write_private(_llm_cache_path(turn_id, session, redacted_text, context),
+        _write_private(_llm_cache_path(turn_id, session, digest),
                        json.dumps({"keep": keep, "summary": summary}, ensure_ascii=False))
     except OSError as e:
         _warn_once("_no_llm_cache_write", f"reviewer decisions not cached ({e}); the next "
@@ -1462,18 +1467,22 @@ def _review_view(t, red, args):
 
 
 def _pack_turn(n, t, tid, why, session_id, args, counts):
-    """One turn of the pack under its final id `tid` (redacted text, the rules' decision,
-    the reviewer's slot), and the reviewer's view of it."""
-    red, found = redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)
+    """One turn of the pack under its final id `tid` (the text as the page shows it, the rules'
+    decision, the reviewer's slot), and the reviewer's view of it. The cached decision keys on
+    the text with the page's patterns only (`llm_key`), as 3.0.1 did."""
+    red, found = page_redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)
     for k, v in found.items():
         counts[k] = counts.get(k, 0) + v
+    hit = any(name in found for name, _ in REVIEW_SECRET_PATTERNS)
+    key_text = redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)[0] if hit else red
     preview, clipped = _preview(review_redact(t["text"], args.redact_extra)[0])
     session = t.get("session") or session_id
     context = _decision_context(why, _keeps(args))
-    cached = None if args.rebuild_summaries else read_llm_cache(tid, session, red, context)
+    llm_key = _llm_digest(key_text, context)
+    cached = None if args.rebuild_summaries else read_llm_cache(tid, session, llm_key)
     view = _review_view(t, red, args)
     turn = {"id": tid, "n": n, "role": t["role"], "ts": t.get("ts") or "",
-            "tools": dict(t.get("tools") or {}), "text": red,
+            "tools": dict(t.get("tools") or {}), "text": red, "llm_key": llm_key,
             "redactions": _public_counts(found), "preview": preview, "clipped": clipped,
             "rule": {"keep": why is None, "why": why,
                      "summary": _rule_summary(t, red, args),
@@ -1483,7 +1492,7 @@ def _pack_turn(n, t, tid, why, session_id, args, counts):
         turn["meta"] = True
     for k in ("session", "session_name", "agent_from"):
         if t.get(k):
-            turn[k] = t[k]
+            turn[k] = t[k] if k == "session" else page_redact(t[k], args.redact_extra, args.redact_mode)[0]
     return turn, view
 
 
@@ -1627,7 +1636,7 @@ def emit_review(turns, drops, window, session_id, output, args):
 def _is_pack_turn(x):
     return (isinstance(x, dict) and isinstance(x.get("id"), str)
             and x.get("role") in ("user", "assistant", "agent", "mark")
-            and isinstance(x.get("text"), str)
+            and isinstance(x.get("text"), str) and isinstance(x.get("llm_key"), str)
             and isinstance(x.get("rule"), dict) and isinstance(x["rule"].get("keep"), bool)
             and _is_summary(x["rule"].get("summary"))
             and isinstance(x.get("llm"), dict) and _is_keep(x["llm"].get("keep"))
@@ -1640,7 +1649,8 @@ def _load_pack(path):
     except (OSError, ValueError, UnicodeDecodeError) as e:
         return _bad(f"cannot read review pack {path}: {e}")
     if not isinstance(pack, dict) or pack.get("schema") != REVIEW_SCHEMA:
-        return _bad(f"{path} is not a {REVIEW_SCHEMA} pack")
+        return _bad(f"{path} is not a {REVIEW_SCHEMA} pack (made by another lineage version? "
+                    "run --emit-review again)")
     if not isinstance(pack.get("turns"), list) or not all(map(_is_pack_turn, pack["turns"])):
         return _bad(f"{path}: malformed turns")
     return pack
@@ -1842,8 +1852,8 @@ def _review_result(pack, merged, args):
             typed.append(x["id"])               # typed by the user: the rules keep these
         llm_summary = _reviewer_summary(x, d, args, stats)
         if x["id"] in merged:                    # reviewed, even if left to the rules
-            writes.append((x["id"], x.get("session") or pack.get("source"), x["text"],
-                           _decision_context(x["rule"].get("why"), pack), llm_keep, llm_summary))
+            writes.append((x["id"], x.get("session") or pack.get("source"), x["llm_key"],
+                           llm_keep, llm_summary))
         stats["restored"] += keep and not x["rule"]["keep"]
         stats["dropped"] += x["rule"]["keep"] and not keep
         if keep:
@@ -2223,10 +2233,15 @@ def select_range(turns, args):
 
 
 def default_output(args, jsonl_path, session_id):
-    """work/lineage-<session name or id>.html, or args.output when given."""
+    """work/lineage-<session name or id>.html, or args.output when given. A name that holds a
+    secret-like string gives way to the session id."""
     if args.output is not None:
         return args.output
     session_name = discover_session_name(jsonl_path) if jsonl_path else None
+    if session_name and page_redact(session_name)[0] != session_name:
+        print(f"[lineage] session name: {page_redact(session_name)[0]} "
+              "(holds a secret-like string; the file is named by the session id)", file=sys.stderr)
+        session_name = None
     slug = ("all-sessions" if args.all_sessions
             else (session_name or session_id[:8]))
     if session_name:
