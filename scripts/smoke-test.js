@@ -244,7 +244,7 @@ try {
      && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.1$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
-     && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
+     && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && /공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
      && /기본값이 콜론 없는 경로\(`\/`, `~`, `\.` 로 시작\)인 변수/.test(linSkill) && /기본값이 경로가 아닌 변수\(`\$\{UID:-1000\}:\$\{GID:-1000\}`, `\$\{API_KEY:-…\}`\)는 가린다/.test(linSkill)
      && /`ls -lu a:bcd`/.test(linSkill) && !/`ls -lu a:b`/.test(linSkill),
      'lineage: the gate rerun keeps its paths and page, the critic has a stated rule, a refused list counts as a failure, re-reviews stop at two, and dropped user turns are named');
