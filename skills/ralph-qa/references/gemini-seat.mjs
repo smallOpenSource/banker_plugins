@@ -16,12 +16,15 @@
  * clean: gemini 0.62.0 records every headless session, payload and answer, under
  * <home>/.gemini/tmp/<id>/chats, kept 30 days by default, and no setting stops it. The folders
  * whose `.project_root` names the seat folder go: tmp/<id> and history/<id>, and the same under
- * <home>/.cache/.gemini, where gemini keeps them in its macOS sandbox. projects.json keeps the
- * seat folder's path and nothing else. <home> is $GEMINI_CLI_HOME when set, as gemini reads it.
- * The seat folder may be gone already (a run cut short): clean matches its path as written, and
- * sweep finds every <base>/ralph-qa.<id>/gemini record whose folder is gone. A run still going
- * keeps its folder, so sweep leaves its records. On Windows the paths are compared by their
- * long names (TEMP may be spelt with an 8.3 short one).
+ * <home>/.cache/.gemini, where gemini keeps them in its macOS sandbox. A seat still running
+ * when its run cleaned up writes its session again into a folder without `.project_root`;
+ * projects.json, which maps the seat folder's path to that folder's name, then ties it to the
+ * seat, and its entry (a path, no payload) stays. <home> is $GEMINI_CLI_HOME when set, as gemini
+ * reads it. The seat folder may be gone already (a run cut short): clean matches its path as
+ * written and as resolved through the nearest folder that still exists, and sweep finds every
+ * <base>/ralph-qa.<id>/gemini record whose folder is gone. A run still going keeps its folder, so
+ * sweep leaves its records. On Windows the paths are compared by their long names (TEMP may be
+ * spelt with an 8.3 short one).
  * Exit 2 on a usage error, or for check, a seat folder that does not exist.
  */
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
@@ -44,13 +47,18 @@ export function policyIntact(text) {
 }
 
 // realpath as the OS gives it: on Windows that spells an 8.3 short name (C:\Users\RUNNER~1) long,
-// as a home folder is. A path that does not exist stays as written.
+// as a home folder is. A path that does not exist is resolved through its nearest folder that
+// does, so a seat folder that is gone still matches what gemini recorded under a link above it.
 const OS_REALPATH = process.platform === "win32" ? realpathSync.native : realpathSync;
 const realWith = (realpath) => (p) => {
-  try {
-    return realpath(p);
-  } catch {
-    return resolve(p);
+  const rest = [];
+  for (let dir = resolve(p); ; dir = dirname(dir)) {
+    try {
+      return join(realpath(dir), ...rest);
+    } catch {
+      if (dirname(dir) === dir) return resolve(p);
+      rest.unshift(basename(dir));
+    }
   }
 };
 const real = realWith(OS_REALPATH);
@@ -85,23 +93,47 @@ const listDir = (dir) => {
   }
 };
 
-// The folder a session folder's .project_root names, or null for a link, a file or no marker.
+// The folder a session folder's .project_root names; null for a link or a file, undefined for a
+// folder without the marker.
 function projectRoot(dir) {
   try {
     if (!lstatSync(dir).isDirectory()) return null;
-    return readFileSync(join(dir, ".project_root"), "utf8").trim();
   } catch {
     return null;
+  }
+  try {
+    return readFileSync(join(dir, ".project_root"), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+}
+
+// <g>/projects.json, gemini's map from a project folder to its folder name under tmp/ and
+// history/, read the other way round: folder name to project folder.
+function registered(g) {
+  try {
+    const { projects } = JSON.parse(readFileSync(join(g, "projects.json"), "utf8"));
+    if (!projects || typeof projects !== "object" || Array.isArray(projects)) return new Map();
+    return new Map(Object.entries(projects).filter(([, name]) => typeof name === "string").map(([owner, name]) => [name, owner]));
+  } catch {
+    return new Map();
   }
 }
 
 // Each folder gemini keeps under tmp/ or history/, here and under .cache/.gemini, with the
-// folder its .project_root names.
+// folder its .project_root names. A folder without the marker (a seat that wrote its session
+// again after its run cleaned up) gets the project projects.json gives its name. Only folders
+// read from tmp/ and history/ are looked up, so no name there reaches another folder.
 function projectFolders(env) {
   const home = geminiHome(env);
-  const bases = [join(home, ".gemini"), join(home, ".cache", ".gemini")].flatMap((g) => [join(g, "tmp"), join(g, "history")]);
-  return bases.flatMap((base) => listDir(base).map((name) => join(base, name)))
-    .map((dir) => ({ dir, owner: projectRoot(dir) })).filter((p) => p.owner);
+  return [join(home, ".gemini"), join(home, ".cache", ".gemini")].flatMap((g) => {
+    const names = registered(g);
+    return ["tmp", "history"].flatMap((kind) => listDir(join(g, kind)).map((name) => {
+      const dir = join(g, kind, name);
+      const root = projectRoot(dir);
+      return { dir, owner: root === undefined ? names.get(name) : root };
+    }));
+  }).filter((p) => p.owner);
 }
 
 // The folders gemini keeps for sessions run in `seat`, matched by the path as written and as

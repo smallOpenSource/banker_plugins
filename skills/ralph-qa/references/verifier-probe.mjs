@@ -697,9 +697,10 @@ function geminiStatsNotes(settings) {
 }
 
 // gemini runs the hooks its settings define in every session, this seat too; no flag turns them off.
-// gemini's own sandbox (tools.sandbox, or GEMINI_SANDBOX, which wins) restarts gemini in a docker or
-// podman container that the admin policy file does not reach, so every tool opens (0.62.0). The
-// seat command turns it off with GEMINI_SANDBOX=false; this says so when it is on.
+// gemini's own sandbox (tools.sandbox, or GEMINI_SANDBOX, which wins) restarts gemini inside it: a
+// docker or podman container, or sandbox-exec on macOS when the value is true. The admin policy
+// file does not reach a container, so every tool opens (0.62.0). The seat command turns it off
+// with GEMINI_SANDBOX=false; this says so when it is on.
 function geminiSandboxNotes(settings, env) {
   const fromEnv = String(env.GEMINI_SANDBOX ?? "").trim().toLowerCase();
   const set = settings.map((r) => r.value?.tools?.sandbox).find((v) => v !== undefined);
