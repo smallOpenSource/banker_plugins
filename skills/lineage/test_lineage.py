@@ -1831,7 +1831,14 @@ class TestLlmReviewHardening(_ReviewCase):
                       c + " -u $'admin:" + pw + "' https://x", c + " -u ^" + q + "admin:" + pw + "^" + q + " https://x",
                       c + ".exe -u `" + q + "admin:" + pw + "`" + q + " https://x",
                       c + ' -u "$USER"' + "':" + pw + "' https://x", c + " -u 'admin'" + '":' + pw + '" https://x',
-                      c + " -u +%40admin:" + pw + " https://x"):
+                      c + " -u +%40admin:" + pw + " https://x",
+                      # bash's '\'' inside single quotes (set -x prints it), Python's shlex.quote, a user
+                      # joined to a variable, JSON wrapped three times, CSV and YAML doubled quotes
+                      "bash -c '" + c + " -s -u '" + bs + "''admin:" + pw + "'" + bs + "'' https://x'",
+                      "sh -c '" + c + " -s -u '" + q + "'" + q + "'admin:" + pw + "'" + q + "'" + q + "' https://x'",
+                      c + ' -s -u "$USER"@corp.com:' + pw + " https://x",
+                      c + " -u " + bs * 7 + q + "admin:" + pw + bs * 7 + q + " https://x",
+                      c + " -u 'admin'" + '"":' + pw + '"" https://x', c + ' -u "admin"' + "'':" + pw + "'' https://x"):
             self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
 
     def test_curl_user_keeps_ids_references_and_dates(self):
@@ -1841,7 +1848,8 @@ class TestLlmReviewHardening(_ReviewCase):
                      'subprocess.run(["date", "-u", "+%H:%M:%S"])', "date -u '+%Y-%m-%dT%H:%M:%SZ'",
                      'mktemp -u "${TMPDIR:-/tmp}/x.XXXX")', 'ssh host "docker run -u ' + chr(92) + '"1000:1000' + chr(92) + '" img"',
                      'ssh host "docker run -u ' + chr(92) + '"$UID:$GID' + chr(92) + '" img"', "date -u +%-H:%M:%S",
-                     'cmd /c "docker run -u ^"1000:1000^" img"'):
+                     'cmd /c "docker run -u ^"1000:1000^" img"', "bash -c 'docker run -u '" + chr(92) + "''1000:1000'" + chr(92) + "'' img'",
+                     "bash -c 'docker run -u $(id -u):$(id -g) img'", 'date -u +"%H:%M:%S"'):
             self.assertEqual(L.review_redact(keep)[0], keep)
 
     def test_curl_user_takes_linear_time_on_runs_of_its_pieces(self):
@@ -1850,7 +1858,8 @@ class TestLlmReviewHardening(_ReviewCase):
         bs = chr(92)
         pieces = ("(-u", "`-u", "'-u", "(-u(", "`-u`", "-u${a:(", " -u ${a:", " -u $(", "'-uo'b", " -4u ",
                   " -u):$(", "(-u$(a", "'-u", '"-u", "', " -u %a%:", " -u 1:1", "(-u a`",
-                  " -u " + bs + '"', '"-u' + bs + '"', " -u ^" + '"', " -u $'", " -u " + bs * 3 + "'", '"-u""', " -u a" + bs + '"')
+                  " -u " + bs + '"', '"-u' + bs + '"', " -u ^" + '"', " -u $'", " -u " + bs * 3 + "'", '"-u""', " -u a" + bs + '"',
+                  " -ua$" + '"', "'-u'" + bs + "''", " -u '" + '"' + "'" + '"', '"-u"a', " -u " + bs * 8 + '"', "`-u`a")
         for piece in pieces:
             start = time.monotonic()
             pat.sub("[R]", piece * 40000)
