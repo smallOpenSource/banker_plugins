@@ -27,7 +27,7 @@ if sys.version_info < (3, 7):
     sys.exit(2)
 
 SCHEMA_VERSION = 2          # cache dir schema (v2: redacted summaries only)
-SUMMARIZER_VERSION = 2      # bump when summarize_turn logic changes (B-3 cache key)
+SUMMARIZER_VERSION = 3      # bump when summarize_turn logic changes (B-3 cache key); 3: cut from redacted text
 USER_FOLD = 400             # collapse user messages longer than this (E-1)
 ECHO_ASK = 40               # echo-exchange: user question length ceiling (A-4)
 ECHO_REPLY = 5              # echo-exchange: assistant reply length ceiling (A-4)
@@ -601,9 +601,15 @@ SHORT_DETAIL = 160
 SINGLE_SPLIT_MIN = SHORT_DETAIL
 
 
+_OPEN_MARKER_RE = re.compile(r"\[REDACTED[^\]]*$")
+
+
 def _cut(s, n):
     s = s.strip()
-    return s if len(s) <= n else s[:max(1, n - 1)].rstrip() + "…"
+    if len(s) <= n:
+        return s
+    head = _OPEN_MARKER_RE.sub("", s[:max(1, n - 1)])   # a marker cut in two goes whole
+    return head.rstrip() + "…"
 
 
 def naive_summary(text: str) -> str:
@@ -675,11 +681,19 @@ def cache_dir(session_id: str):
     return d
 
 
+def _page_clean_turn(t, extra, mode):
+    """`t` with its text and parts as a page shows them, so a summary cut from it cannot cut a
+    secret in two and keep the half no pattern recognises."""
+    def clean(s):
+        return page_redact(s, extra, mode)[0]
+    return dict(t, text=clean(t["text"]), parts=[clean(p) for p in t.get("parts") or []])
+
+
 def read_or_summarize(turn: dict, session_id: str, rebuild: bool = False,
                       redact_extra=None, redact_mode: str = "full"):
     """Return (summary, cache_hit). Cache key includes the content hash AND the
     summarizer version (B-3), so changing the summarizer invalidates old entries.
-    Cached text is always redacted (secret hygiene).
+    Cached text is always redacted (secret hygiene). It is cut from the redacted text (3.0.2).
     """
     digest = hashlib.sha256(
         (turn["text"] + "\x00s" + str(SUMMARIZER_VERSION)).encode()
@@ -695,8 +709,7 @@ def read_or_summarize(turn: dict, session_id: str, rebuild: bool = False,
             return p.read_text(encoding="utf-8").strip(), True
         except (OSError, UnicodeDecodeError):
             pass
-    raw_summary = summarize_turn(turn)
-    redacted, _ = redact(raw_summary, extra=redact_extra, mode=redact_mode)
+    redacted = summarize_turn(_page_clean_turn(turn, redact_extra, redact_mode))
     if p is not None:
         try:
             fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -1420,7 +1433,7 @@ def _rule_summary(t, red, args):
     The summary cache is keyed on the text alone, so a cached one may predate a
     --redact-extra keyword or carry another --redact-mode."""
     if t["role"] in ("assistant", "agent"):
-        return redact(summarize_turn(t), extra=args.redact_extra, mode=args.redact_mode)[0]
+        return summarize_turn(_page_clean_turn(t, args.redact_extra, args.redact_mode))
     if t["role"] == "user" and len(red) > USER_FOLD:
         return user_fold_summary(red)
     return None

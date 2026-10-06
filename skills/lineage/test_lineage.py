@@ -2305,6 +2305,32 @@ class TestPageRedaction(_ReviewCase):
         if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets scans a temp file per call
             self.assertLess(took, 30)
 
+    def test_a_summary_never_keeps_part_of_a_secret(self):
+        c = "cu" + "rl"
+        head = "배포 스크립트를 점검했고 환경 변수와 인증서 경로를 확인했습니다."
+        for k in range(0, 90, 3):
+            tail = "마지막으로 " + "가" * k + " " + c + " -u admin:" + self.PW + " 로 응답을 받았습니다."
+            t = _turn("assistant", head + "\n\n" + tail, uuid="a%d" % k, parts=[head, tail])
+            summary, _ = L.read_or_summarize(t, "s", rebuild=True)
+            self.assertNotIn("Hunt", summary, k)
+            self.assertNotIn("admi", summary, k)
+
+    def test_a_cut_never_splits_a_marker(self):
+        import re
+        s = "가" * 50 + " [REDACTED:CurlUser] 끝까지 이어지는 문장"
+        for n in range(40, 80):
+            cut = L._cut(s, n)
+            self.assertIsNone(re.search(r"\[REDACTED[^\]]*$", cut.rstrip("…")), (n, cut))
+
+    def test_a_summary_cached_by_3_0_1_is_not_reused(self):
+        text = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
+        self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst(text, "a1")])
+        old = hashlib.sha256((text + "\x00s" + "2").encode()).hexdigest()[:8]
+        (L.cache_dir("s") / ("a1-%s.txt" % old)).write_text("…가가가암호: Xy7p… 추가로", encoding="utf-8")
+        rc, page, err = self._rulebase_page()
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Xy7p", page)
+
 
 class TestRulebaseMatches2x(unittest.TestCase):
     def test_rulebase_output_is_byte_for_byte_the_2x_output(self):
