@@ -2184,8 +2184,25 @@ class TestPatternsForPages(_ReviewCase):
         self.assertNotIn("한글비번", L.review_redact("비밀번호: 한글비번1234")[0])
 
     def test_password_bare_skips_markers_and_masks(self):
-        for done in ('암호: ****h12"', "password: [REDACTED]", "pwd=[REDACTED:entropy]"):
+        for done in ('암호: ****h12"', "password: [REDACTED]", "pwd=[REDACTED:entropy]",
+                     "**password: ab****cd**", "(pwd=********)", "password=abcd****wxyz"):
             self.assertEqual(L.review_redact(done)[0], done, done)
+
+    def test_password_bare_hides_a_value_that_is_more_than_a_mask(self):
+        pw = self.PW
+        for shape in ("Password=" + pw + ";Server=db;Key=****", "user=bob,password=" + pw + ",card=****4242",
+                      "Password=****;Server=db;Key=" + pw, "DB_PASSWORD=" + "Hunter" + "****" + "22pw",
+                      "password=" + pw + "****"):
+            self.assertNotIn("Hunter", L.review_redact(shape)[0], shape)
+
+    def test_password_bare_takes_linear_time_on_runs_of_its_pieces(self):
+        import time
+        pat = dict(L.REVIEW_SECRET_PATTERNS)["PasswordBare"]
+        for piece in ("Password=****;", "pwd=ab****;", "password:****,", "암호=****&", "password=*****",
+                      "password=||||||", "pwd=", "암호=", "password:e.x,", "password ", "$password=abcdef", "비밀 번호:"):
+            start = time.monotonic()
+            pat.sub("[R]", piece * 40000 + "****")
+            self.assertLess(time.monotonic() - start, 2, repr(piece))
 
     def test_extra_keywords_leave_marker_names_whole(self):
         red, counts = L.redact("[REDACTED:CurlUser] 와 user 와 [REDACTED]", extra="user,redacted")
@@ -2352,6 +2369,20 @@ class TestPageRedaction(_ReviewCase):
         raw = json.dumps(pack, ensure_ascii=False)
         self.assertNotIn("Hunter22", raw)
         self.assertNotIn("Xy7pQ2mZ9k", raw)
+
+    def test_a_part_file_holds_no_decision_cache_key(self):
+        self._write(self._secret_records())
+        rc, pack = _quiet(self._emit)[0]
+        self.assertEqual(rc, 0)
+        self.assertTrue(all(t.get("llm_key") for t in pack["turns"]), "the pack keeps the key")
+        parts = [p for p in os.listdir(self.d) if p.startswith("review.part-") and not p.endswith(".decisions.json")]
+        self.assertTrue(parts)
+        for name in parts:
+            with open(os.path.join(self.d, name), encoding="utf-8") as f:
+                turns = json.load(f)["turns"]
+            self.assertTrue(turns)
+            for t in turns:
+                self.assertNotIn("llm_key", t, "a hash of text that only the page patterns redacted")
 
     def test_the_decision_cache_keys_on_the_3_0_1_text(self):
         self._write(self._secret_records())

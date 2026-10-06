@@ -254,9 +254,11 @@ _CU_SKIP = (r"(?!" + _CU_LEAD + r"(?:\+[\"']?%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" 
 
 # Extra patterns for text a reviewer model reads (part files) and nothing else: the page
 # and --rulebase keep the patterns above, so their output stays as it was.
-# A value a redaction already replaced: a marker ([REDACTED...]) or a mask (abcd****wxyz). The
-# reviewer patterns leave it, so a second pass over redacted text changes nothing.
-_NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"]*\*{4})"
+# A value a redaction already replaced: a marker ([REDACTED...]) or a value that is only a mask
+# (abcd****wxyz: up to 4 characters, a run of *, up to 4 characters, then the value ends). The
+# reviewer patterns leave it, so a second pass over redacted text changes nothing. The check reads
+# those few characters, not the rest of the token, so a long run of keywords stays linear.
+_NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"*]{0,4}\*{4,}[^\s'\"*]{0,4}(?![^\s'\"`|*)]))"
 
 REVIEW_SECRET_PATTERNS = [
     ("AnthropicKey", re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}")),
@@ -1558,7 +1560,7 @@ def _sheet(k, of, part_path, group, args):
     turns = []
     for x, view in group:
         y = {key: v for key, v in x.items()
-             if key not in ("text", "session", "session_name", "agent_from", "redactions")}
+             if key not in ("text", "session", "session_name", "agent_from", "redactions", "llm_key")}
         y["rule"] = {k: v for k, v in x["rule"].items() if k != "review_summary"}
         y["rule"]["summary"] = view["summary"]
         y["tools"] = {_hide_keywords(name, args.redact_extra): n for name, n in x["tools"].items()}
