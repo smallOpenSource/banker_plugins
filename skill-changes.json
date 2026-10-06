@@ -89,5 +89,9 @@
     "banker:vertical-pptx",
     "banker:vertical-pptx-setup",
     "banker:visual-ralph"
+  ],
+  "0.15.1": [
+    "banker:lineage",
+    "banker:ralph-qa"
   ]
 }
