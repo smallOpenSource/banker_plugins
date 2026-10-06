@@ -160,6 +160,102 @@ test("the command line still prints the policy when node keeps the symlink it wa
   assert.ok(out.stdout.trim().endsWith("gemini-read-only.toml"), "not an empty exit 0, which would open the tools");
 });
 
+// A seat still running when its run cleaned up writes its session again, into a folder with no
+// .project_root: only projects.json, gemini's map from project folder to folder name, ties it to the seat.
+const unmarked = (home, kind, name) => {
+  const p = join(home, ".gemini", kind, name);
+  mkdirSync(join(p, "chats"), { recursive: true });
+  writeFileSync(join(p, "chats", "session-1.jsonl"), '{"payload": "REVIEW-MARKER"}\n');
+  return p;
+};
+const projectsJson = (home, projects) => {
+  mkdirSync(join(home, ".gemini"), { recursive: true });
+  writeFileSync(join(home, ".gemini", "projects.json"), typeof projects === "string" ? projects : JSON.stringify({ projects }));
+};
+
+test("clean and sweep find a session folder gemini wrote again without its .project_root, through projects.json", (t) => {
+  const dir = scratch(t);
+  const home = join(dir, "gh");
+  const base = join(dir, "base");
+  const seat = join(base, "ralph-qa.aaaaaa", "gemini");
+  const gone = join(base, "ralph-qa.bbbbbb", "gemini");
+  const live = join(base, "ralph-qa.cccccc", "gemini");
+  for (const d of [seat, live, join(dir, "work")]) mkdirSync(d, { recursive: true });
+  projectsJson(home, { [seat]: "gemini", [gone]: "gemini-1", [live]: "gemini-2", [join(dir, "work")]: "work" });
+  const mine = [unmarked(home, "tmp", "gemini"), unmarked(home, "history", "gemini")];
+  const left = unmarked(home, "tmp", "gemini-1");
+  const running = unmarked(home, "tmp", "gemini-2");
+  const users = unmarked(home, "tmp", "work");
+  const env = { GEMINI_CLI_HOME: home };
+  const cleaned = run(SEAT, ["clean", seat], env);
+  assert.equal(cleaned.status, 0, cleaned.stderr);
+  assert.deepEqual(JSON.parse(cleaned.stdout).removed.sort(), [...mine].sort());
+  const swept = run(SEAT, ["sweep", base], env);
+  assert.equal(swept.status, 0, swept.stderr);
+  assert.deepEqual(JSON.parse(swept.stdout).removed, [left], "only the gone seat's unmarked records");
+  assert.ok(existsSync(running) && existsSync(users), "a running seat's records and the user's own stay");
+});
+
+test("projects.json leads clean only to a real folder under tmp/ or history/ that no marker gives to another project", (t) => {
+  const dir = scratch(t);
+  const home = join(dir, "gh");
+  const seat = join(dir, "d", "gemini");
+  mkdirSync(seat, { recursive: true });
+  mkdirSync(join(dir, "keep"));
+  const env = { GEMINI_CLI_HOME: home };
+  const marked = unmarked(home, "tmp", "marked");
+  writeFileSync(join(marked, ".project_root"), join(dir, "other"));
+  const bare = unmarked(home, "tmp", "gemini");
+  if (process.platform !== "win32") symlinkSync(join(dir, "keep"), join(home, ".gemini", "tmp", "link"));
+  // One seat, spelt several ways, each pointing at a name that must not reach outside tmp/ or history/.
+  projectsJson(home, { [seat]: "../../keep", [seat + "/"]: "..", [join(seat, ".")]: ".", [join(seat, "..", "gemini")]: "",
+    [join(seat, "x", "..")]: "a/b", [seat + "//"]: 42, [join(dir, "d", ".", "gemini")]: "marked", [join(dir, "d", "x", "..", "gemini")]: "link" });
+  const out = run(SEAT, ["clean", seat], env);
+  assert.equal(out.status, 0, out.stderr);
+  assert.deepEqual(JSON.parse(out.stdout).removed, [], "no name leads out, a marker wins, a link is left alone");
+  assert.ok(existsSync(join(dir, "keep")) && existsSync(marked) && existsSync(bare));
+  for (const broken of ["{", "[]", '{"projects": []}', '{"projects": null}', '{"projects": "gemini"}']) {
+    projectsJson(home, broken);
+    const r = run(SEAT, ["clean", seat], env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).removed, [], `projects.json ${broken}`);
+  }
+  assert.ok(existsSync(bare), "without a readable projects.json an unmarked folder has no owner");
+});
+
+test("sweep leaves the records of gone folders that are not a ralph-qa seat folder", (t) => {
+  const dir = scratch(t);
+  const home = join(dir, "gh");
+  const base = join(dir, "base");
+  mkdirSync(base);
+  const project = (name, owner) => {
+    const p = join(home, ".gemini", "tmp", name);
+    mkdirSync(join(p, "chats"), { recursive: true });
+    writeFileSync(join(p, ".project_root"), owner);
+    return p;
+  };
+  const kept = [project("work2", join(base, "work2", "gemini")), project("oc", join(base, "ralph-qa.eeeeee", "opencode")),
+    project("out", join(base, "ralph-qa-out.ffffff", "gemini"))];
+  const out = run(SEAT, ["sweep", base], { GEMINI_CLI_HOME: home });
+  assert.equal(out.status, 0, out.stderr);
+  assert.deepEqual(JSON.parse(out.stdout).removed, []);
+  assert.ok(kept.every((p) => existsSync(p)));
+});
+
+test("clean finds a gone seat folder's records when a link sits above it", { skip: process.platform === "win32" && "symlinks need privileges" }, (t) => {
+  // macOS: $TMPDIR is under /var, a link to /private/var, and gemini records the resolved folder.
+  const dir = scratch(t);
+  const home = join(dir, "gh");
+  mkdirSync(join(dir, "realbase"));
+  symlinkSync(join(dir, "realbase"), join(dir, "linkbase"));
+  const p = join(home, ".gemini", "tmp", "gemini");
+  mkdirSync(join(p, "chats"), { recursive: true });
+  writeFileSync(join(p, ".project_root"), join(dir, "realbase", "ralph-qa.aaaaaa", "gemini"));
+  const out = run(SEAT, ["clean", join(dir, "linkbase", "ralph-qa.aaaaaa", "gemini")], { GEMINI_CLI_HOME: home });
+  assert.equal(out.status, 0, out.stderr);
+  assert.deepEqual(JSON.parse(out.stdout).removed, [p]);
+});
+
 test("usage errors, and a missing seat folder for check, exit 2", (t) => {
   const dir = scratch(t);
   assert.equal(run(SEAT, []).status, 2);
