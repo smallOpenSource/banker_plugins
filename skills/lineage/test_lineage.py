@@ -2302,6 +2302,37 @@ class TestPageRedaction(_ReviewCase):
                          {"CurlUser": 1})
         self.assertEqual(L._residual_secrets("<div>[REDACTED:CurlUser] &amp; ok</div>"), {})
 
+    def test_a_second_pass_leaves_page_pattern_markers_after_curl_and_in_urls(self):
+        c = "cu" + "rl"
+        pat = "gh" + "p_" + "aB3dE5fG7h" * 3 + "aB3dE5"
+        for text in (c + " -u " + pat + " https://x", c + " --user=AKIA" "IOSFODNN7EXAMPLE https://x",
+                     c + " -u x" + pat + " https://x", json.dumps([c, "-u", pat, "https://x"], separators=(",", ":")),
+                     "git remote add origin https://" + pat + "@github.com/o/r.git"):
+            for mode in ("full", "mask"):
+                once = L.page_redact(text, None, mode)[0]
+                self.assertNotIn(pat[4:], once)
+                self.assertEqual(L.page_redact(once, None, mode), (once, {}), (mode, text))
+
+    def test_a_token_only_remote_url_raises_no_residual_warn(self):
+        c = "cu" + "rl"
+        pat = "gh" + "p_" + "aB3dE5fG7h" * 3 + "aB3dE5"
+        self._write([_rec("user", "원격 주소를 바꿔 주세요", uuid="u1"),
+                     self._asst("git remote set-url origin https://" + pat + "@github.com/o/r.git 로 바꾸고 "
+                                + c + " -u " + pat + " https://api.github.com 으로 확인했습니다.", "a1")])
+        rc, page, err = self._rulebase_page()
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(pat[4:], page)
+        self.assertNotIn("still holds", err)
+
+    def test_the_residual_warn_asks_to_check_the_page(self):
+        self._write([_rec("user", "접속 정보를 정리해 주세요", uuid="u1"),
+                     self._asst("접속 정보입니다.\n\n- **Password**: " + self.PW + "\n- 호스트: db", "a1")])
+        rc, page, err = self._rulebase_page()
+        self.assertEqual(rc, 0, err)
+        self.assertRegex(err, r"still holds secret-like text \([^)]*PasswordBare=\d")
+        self.assertIn("check the page before sharing it", err)
+        self.assertNotIn("a lineage bug", err)
+
     def test_a_long_page_of_secrets_renders_in_linear_time_and_leaves_none(self):
         import importlib.util
         import time

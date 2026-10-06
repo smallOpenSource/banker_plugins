@@ -259,6 +259,9 @@ _CU_SKIP = (r"(?!" + _CU_LEAD + r"(?:\+[\"']?%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" 
 # reviewer patterns leave it, so a second pass over redacted text changes nothing. The check reads
 # those few characters, not the rest of the token, so a long run of keywords stays linear.
 _NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"*]{0,4}\*{4,}[^\s'\"*]{0,4}(?![^\s'\"`|*)]))"
+# After a colon: not the colon of a marker an earlier pass left ([REDACTED:GitHubPAT]), which
+# splits no user from a password.
+_NOT_MARKED = r"(?<!\[REDACTED:)"
 
 REVIEW_SECRET_PATTERNS = [
     ("AnthropicKey", re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}")),
@@ -271,8 +274,10 @@ REVIEW_SECRET_PATTERNS = [
     ("PasswordBare", re.compile(
         r"(?i)(?<!\$)(?:password|passwd|passcode|pwd|암호|비번|비밀\s?번호|패스워드)\s*[:=]\s*"
         r"(?![/~$])" + _NOT_REDACTED + r"(?=[^\s'\"]{6})[^\s'\"]*[^\s'\"`|*)]")),
-    # the password runs to the last @ before the host: it may hold an @ of its own
-    ("UrlCredential", re.compile(r"(?i)[a-z][a-z0-9+.-]{0,30}://[^\s:@/]*:[^\s/]{3,}@")),
+    # the password runs to the last @ before the host: it may hold an @ of its own. A marker is
+    # no user or password, so a second pass leaves a token-only URL (https://[REDACTED:...]@host).
+    ("UrlCredential", re.compile(r"(?i)[a-z][a-z0-9+.-]{0,30}://[^\s:@/]*:" + _NOT_MARKED
+                                 + r"(?!\[REDACTED)[^\s/]{3,}@")),
     ("Bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}")),
     # Authorization then `:`, `=`, `=>` or headers["Authorization"] =, a call's ("Authorization",
     # "...") and a HAR name/value pair, or a space before a quote (nginx, Apache)
@@ -289,12 +294,14 @@ REVIEW_SECRET_PATTERNS = [
     # empty user with a token, and a
     # long key as the user with no password, count too. The separators share no character with
     # the user name, so a long run of them stays linear. The values _CU_SKIP names and a
-    # host:/path (rsync) are left.
+    # host:/path (rsync) are left, and so is a marker an earlier pass left (-u [REDACTED:JWT]).
     ("CurlUser", re.compile(
         r"(?<![^\s\"'`(])(?:-u\s*|-[A-Za-z0-9]{1,6}u\s+|--user(?:\s+|=))" + _CU_SKIP + _CU_LEAD
-        + r"(?:" + _CU_USER + r"*:(?!/)\S{3,}|" + _CU_USER + r"{15,}:(?=[\s\"'`).,;\\]|$))"
+        + r"(?:" + _CU_USER + r"*:" + _NOT_MARKED + r"(?!/|\[REDACTED)\S{3,}|" + _CU_USER + r"{15,}:" + _NOT_MARKED
+        + r"(?=[\s\"'`).,;\\]|$))"
         r"|(\\{0,7}[\"'])(?:-[A-Za-z0-9]{0,6}u|--user)\1\s*,\s*(\\{0,7}[\"'])" + _CU_SKIP
-        + r"(?:" + _CU_USER + r"*:(?!/)[^\s\"']{3,}|" + _CU_USER + r"{15,}:)\2")),
+        + r"(?:" + _CU_USER + r"*:" + _NOT_MARKED + r"(?!/|\[REDACTED)[^\s\"']{3,}|" + _CU_USER + r"{15,}:"
+        + _NOT_MARKED + r")\2")),
 ]
 
 
@@ -2266,7 +2273,8 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
     if left:
         print("[lineage] WARN: the page still holds secret-like text ("
               + ", ".join(f"{k}={v}" for k, v in sorted(left.items()))
-              + "); a lineage bug: check the page before sharing it", file=sys.stderr)
+              + "); check the page before sharing it, or add the value to --redact-extra and run again",
+              file=sys.stderr)
 
     date_range = ""
     dated = [t for t in turns if t.get("ts")]

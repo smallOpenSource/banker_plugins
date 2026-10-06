@@ -73,6 +73,7 @@ echo "..." | /lineage --from-transcript -   # stdin paste
 ## 실행 절차
 
 `--rulebase`, `--purge-cache`, `--help` 가 있으면 아래 1~5 대신 `lineage.py` 를 사용자 인자 그대로 한 번 실행하고 끝낸다(모델 호출 없음).
+`--rulebase` 실행이 `still holds secret-like text` WARN 을 내면 5단계처럼 사용자에게 알린다.
 그 밖에는 이 순서를 따른다. `<스킬 폴더>` 는 이 SKILL.md 가 있는 폴더의 절대경로다.
 Python 은 3.7 이상을 쓴다(EL8 기본 `python3` 는 3.6 이라 `python3.11` 등).
 
@@ -123,6 +124,7 @@ Python 은 3.7 이상을 쓴다(EL8 기본 `python3` 는 3.6 이라 `python3.11`
 5. **마무리** — 출력 HTML 경로를 알린다.
    - 렌더가 성공하면 스크립트가 묶음, 파트 파일, 결정 파일, 게이트 샘플을 지운다. redact 된 세션 본문이 들어 있기 때문이다. 실패(exit 2)면 남겨 둔다.
    - 렌더가 `reviewers dropped N typed user turn(s)` WARN 을 내면, 검토자가 뺀 사용자 입력 턴의 수와 id 를 사용자에게 알린다. 검토자가 기록 속 주입 문장을 따랐을 수 있다.
+   - 렌더가 `the page still holds secret-like text (<패턴>=N)` WARN 을 내면, 패턴 이름과 수를 사용자에게 알리고 공유하기 전에 페이지를 확인하라고 말한다. 검토자 패턴이 렌더된 페이지 글에서 다시 찾은 값이다(예: 마크다운으로 꾸민 `**Password**: 값`). 그 값을 `--redact-extra` 에 넣어 다시 만들 수 있다.
    - 품질 게이트는 1단계나 4단계에 `--reviewer-output <판정 파일>` 을 줄 때만 돈다. 검토자가 이미 모든 턴을 봤으므로 기본 흐름은 샘플을 쓰지 않는다.
    - 판정 파일에는 아직 없는 경로를 준다. 그 자리에 판정 목록이 아닌 것(사용자 파일, 폴더, 판정 모양이 아닌 JSON)이 있으면 스크립트는 샘플을 쓰기 전에 exit 2 로 멈추고 그 파일을 건드리지 않는다. 1단계에 준 경로도 검토자를 띄우기 전에 exit 2 로 멈춘다.
    - 4단계에서 판정 경로를 주었으면 다시 실행할 때도 같은 `--reviewer-output` 을 준다(묶음에는 1단계 경로만 남는다). 게이트 샘플이 남아 있는데 판정 경로도 `--skip-reviewer` 도 없으면 exit 2(`left by a gated run`)다. 판정을 읽지 않고 지나가지 않게 하기 위해서다.
@@ -324,7 +326,7 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 - 규칙 요약은 가린 본문에서 자른다(요약기 버전 3). 0.15.1 까지 만든 요약 캐시는 쓰지 않는다. 그 캐시에는 평문 조각이 남아 있을 수 있어 `--purge-cache` 로 지운다.
 - 규칙 요약 캐시는 본문만으로 키를 잡는다. `--redact-mode` 나 `--redact-extra` 를 바꿔 다시 돌린 `--rulebase` 는 앞선 실행의 요약을 쓸 수 있다(2.x 동작 그대로). 기본 흐름의 묶음은 요약을 매번 새로 만든다. 묶음 형식은 `lineage-review/2` 라 0.15.1 이 만든 묶음은 `--emit-review` 부터 다시 한다.
 - 검토자는 긴 턴의 앞뒤만 본다(`clipped: true`). 가운데에만 있는 결론은 놓칠 수 있다.
-- 검토자 패턴은 흔한 모양만 가린다. `/` 가 든 URL 비밀번호와 키 이름이 100자를 넘는 16진 키는 가리지 못한다(값이 길고 무작위면 엔트로피 규칙이 가릴 수 있다). curl `-u` 패턴은 값 전체가 `docker -u 1000:1000` 같은 uid:gid, `rsync -u host:/path`, `date -u +%H:%M` 같은 날짜 형식(`+%` 뒤에 글자가 오면 나머지는 보지 않는다), 양쪽 모두 변수인 꼴(`$UID:$GID`, `${UID}:${GID}`, `%USER%:%PASS%`, `$(id -u):$(id -g)`), 기본값이 콜론 없는 경로(`/`, `~`, `.` 로 시작)인 변수(`mktemp -u "${TMPDIR:-/tmp}/x"`)일 때만 둔다. 이스케이프한 따옴표 안에서도 같다. 다른 명령의 `-u 이름:값`(`-u root:root`, `ps -u postgres:postgres`, `rsync -avu host:dir/`, `ls -lu a:bcd`), 기본값이 경로가 아닌 변수(`${UID:-1000}:${GID:-1000}`, `${API_KEY:-…}`)는 가린다. 숫자만으로 된 이름과 비밀번호, `/` 로 시작하는 비밀번호, `$` 로 시작해 변수처럼 보이는 비밀번호(`$USER:$ecret`), `-U` 와 `--proxy-user`, 붙여 쓴 묶음(`-suUSER:PW`), `-u=USER:PW`, 공백이 든 비밀번호의 둘째 낱말부터, 인자 목록에서 다른 종류의 따옴표가 든 비밀번호(`'-u', "USER:P'W"`), 사용자 안에서 따옴표 뒤에 `-eu`, `--user` 같은 플래그 꼴과 따옴표가 오는 꼴(`"$USER"-eu":PW"`), requests 의 `auth=(...)`, value 가 name 보다 앞에 온 HAR 은 가리지 못한다. 백틱 명령 치환(`` `id -u`:`id -g` ``)과 `\$(id -u):\$(id -g)` 는 가운데 일부가 가려진다(3.0.0 과 같다). 값이 `/`, `~`, `$` 로 시작하는 password 값(`$PWD:/workspace`, `OLDPWD=/home/...`, `password=$DB_PASSWORD`), 이미 가린 표식, 값 전체가 마스크 꼴(`abcd****wxyz`, `****`)인 값은 두고, `PGPASSWORD=`, `MYSQL_PWD=` 의 값은 가린다. `password=os.environ[...]`, `암호: AES-256-GCM` 처럼 코드나 이름인 값과 `sk-` 로 시작하는 긴 세션 이름은 지나치게 가린다. Basic 인증 패턴은 `HTTP_AUTHORIZATION` 처럼 앞에 `_` 가 붙은 이름, 구분자 없는 `Authorization Basic …`, 백틱이나 대괄호(`["Basic …"]`) 안의 값을 가리지 못한다.
+- 검토자 패턴은 흔한 모양만 가린다. `/` 가 든 URL 비밀번호와 키 이름이 100자를 넘는 16진 키는 가리지 못한다(값이 길고 무작위면 엔트로피 규칙이 가릴 수 있다). curl `-u` 패턴은 값 전체가 `docker -u 1000:1000` 같은 uid:gid, `rsync -u host:/path`, `date -u +%H:%M` 같은 날짜 형식(`+%` 뒤에 글자가 오면 나머지는 보지 않는다), 양쪽 모두 변수인 꼴(`$UID:$GID`, `${UID}:${GID}`, `%USER%:%PASS%`, `$(id -u):$(id -g)`), 기본값이 콜론 없는 경로(`/`, `~`, `.` 로 시작)인 변수(`mktemp -u "${TMPDIR:-/tmp}/x"`), 앞선 가림이 남긴 표식(`-u [REDACTED:JWT]`)일 때만 둔다. 이스케이프한 따옴표 안에서도 같다. 다른 명령의 `-u 이름:값`(`-u root:root`, `ps -u postgres:postgres`, `rsync -avu host:dir/`, `ls -lu a:bcd`), 기본값이 경로가 아닌 변수(`${UID:-1000}:${GID:-1000}`, `${API_KEY:-…}`)는 가린다. 숫자만으로 된 이름과 비밀번호, `/` 로 시작하는 비밀번호, `$` 로 시작해 변수처럼 보이는 비밀번호(`$USER:$ecret`), `-U` 와 `--proxy-user`, 붙여 쓴 묶음(`-suUSER:PW`), `-u=USER:PW`, 공백이 든 비밀번호의 둘째 낱말부터, 인자 목록에서 다른 종류의 따옴표가 든 비밀번호(`'-u', "USER:P'W"`), 사용자 안에서 따옴표 뒤에 `-eu`, `--user` 같은 플래그 꼴과 따옴표가 오는 꼴(`"$USER"-eu":PW"`), requests 의 `auth=(...)`, value 가 name 보다 앞에 온 HAR 은 가리지 못한다. 백틱 명령 치환(`` `id -u`:`id -g` ``)과 `\$(id -u):\$(id -g)` 는 가운데 일부가 가려진다(3.0.0 과 같다). 값이 `/`, `~`, `$` 로 시작하는 password 값(`$PWD:/workspace`, `OLDPWD=/home/...`, `password=$DB_PASSWORD`), 이미 가린 표식, 값 전체가 마스크 꼴(`abcd****wxyz`, `****`)인 값은 두고, `PGPASSWORD=`, `MYSQL_PWD=` 의 값은 가린다. `password=os.environ[...]`, `암호: AES-256-GCM` 처럼 코드나 이름인 값과 `sk-` 로 시작하는 긴 세션 이름은 지나치게 가린다. Basic 인증 패턴은 `HTTP_AUTHORIZATION` 처럼 앞에 `_` 가 붙은 이름, 구분자 없는 `Authorization Basic …`, 백틱이나 대괄호(`["Basic …"]`) 안의 값을 가리지 못한다.
 - 페이지 패턴 가운데 JWT 와 개인 키 패턴은 같은 머리(`eyJ`, `-----BEGIN`)가 긴 줄에 되풀이되면 시간이 줄 길이의 제곱으로 는다(2.x 동작 그대로). 기본 흐름은 턴마다 여러 번 가리므로 그만큼 더 걸린다.
 - 마크다운의 **중첩 리스트는 평탄화**되고 각주는 미지원.
 - 사용자가 질문에 래퍼 블록(`<task-notification>…`)을 **인용**하면 문장은 남고 그 블록만 사라진다.
