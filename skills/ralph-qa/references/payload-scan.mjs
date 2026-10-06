@@ -29,7 +29,9 @@ const PASSWORD_KEY = String.raw`(?:${PASS_WORD}|비밀번호|패스워드)[\w-]{
 // An unquoted value that is not code: none of the characters an expression or a reference
 // holds, and at least one symbol (an identifier has none).
 const BARE = String.raw`[^\s;,"'().\[\]{}$<>]`;
-const PRIVATE_KEY = String.raw`(?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----`;
+// at most 8 words before PRIVATE KEY (RSA, EC, OPENSSH, ENCRYPTED, PGP): an open nested repeat
+// overflows V8's regex stack on a key marker before millions of words
+const PRIVATE_KEY = String.raw`(?:[A-Z0-9]{1,32} ){0,8}PRIVATE KEY(?: BLOCK)?-----`;
 
 export const PATTERNS = [
   ["aws-access-key", /(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])/],
@@ -58,10 +60,11 @@ export const PATTERNS = [
   // a Dockerfile's legacy `ENV KEY value` form, the value alone after the space
   ["dockerfile-env-password", new RegExp(String.raw`^[+\- ]?\s*ENV\s+[\w.-]{0,64}${PASS_WORD}[\w.-]{0,64}\s+["']?(?![-$<{%])[^\s"',;()\[\]{}=]{6,256}["']?\s*(?:#.*)?$`, "i")],
   ["flag-secret", /--(?:password|passwd|pass|token|api-key|apikey|secret|client-secret)(?:=|\s+)(?![-$])[^\s"']{6,256}/i],
-  // curl's -u flag with a user and password pair, glued to it or not; a uid:gid (docker), a
-  // host:/path (rsync), a date format (date -u +%H:%M) or an id substitution ($(id -u):$(id -g))
-  // is no credential. A user:group of names is not told apart: that would let admin:admin through.
-  ["curl-user", /(?<!\S)(?:-u\s*|--user(?:\s+|=))(?!["']?\d{1,10}:\d{1,10}(?![\w:@]))(?!["']?\+%|\))[^\s:=]{1,256}:(?!\/)\S{3,256}/],
+  // curl's -u flag with a user and password pair, glued to it or not; a uid:gid (docker) that is
+  // the whole value, quoted or not, a host:/path (rsync), a date format (date -u +%H:%M) or an id
+  // substitution ($(id -u):$(id -g)) is no credential. A user:group of names is not told apart:
+  // that would let admin:admin through.
+  ["curl-user", /(?<!\S)(?:-u\s*|--user(?:\s+|=))(?!(["']?)\d{1,10}:\d{1,10}\1(?=["'`\s;|&)]|$))(?!["']?\+%|\))[^\s:=]{1,256}:(?!\/)\S{3,256}/],
   ["assigned-hex", /(?:key|auth|token|secret)[\w-]{0,64}["']?\s*[:=]\s*["']?[0-9a-f]{32,65536}(?![0-9a-z])/i],
 ];
 

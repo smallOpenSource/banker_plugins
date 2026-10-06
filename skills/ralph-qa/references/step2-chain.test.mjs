@@ -202,3 +202,37 @@ test("a nested repo without a commit stays out and does not break the chain", { 
   assert.ok(sent(r, "a.txt") && !r.prompt.includes("vendor/"), r.prompt);
   assert.deepEqual(r.unsent, ["vendor/lib/"]);
 });
+
+test("a folder line or a dot in the list stops the chain and says why, since it would add every new file under it", { skip: SKIP }, (t) => {
+  for (const list of ["newfeat/f.mjs\nscratch\n", ".\n"]) {
+    const ctx = repo(t);
+    put(ctx, "a.txt", "two\n");
+    put(ctx, "newfeat/f.mjs", "export const f = 1;\n");
+    put(ctx, "scratch/conn.json", "{}\n");
+    put(ctx, "scratch/deep/notes.txt", "n\n");
+    const r = step2(ctx, { list });
+    assert.notEqual(r.status, 0, JSON.stringify(list));
+    assert.match(r.stderr, /목록의 폴더 줄이 그 아래 새 파일을 모두 올린다/);
+    assert.ok(!r.prompt.includes("scratch/") && !r.prompt.includes("</review-data"), r.prompt);
+  }
+});
+
+test("a textconv or an external diff driver in the repo's config does not change what goes out", { skip: SKIP }, (t) => {
+  // git-crypt and the like decode files for git diff: the raw bytes go out, as the index holds them
+  const ctx = repo(t);
+  put(ctx, ".gitattributes", "*.enc diff=dec\n");
+  put(ctx, "s.enc", "plain-1\n");
+  git(ctx, "add", ".");
+  git(ctx, "commit", "-qm", "enc");
+  git(ctx, "config", "diff.dec.textconv", "sed s/plain/DECODED/");
+  put(ctx, "s.enc", "plain-2\n");
+  let r = step2(ctx);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.prompt.includes("+plain-2") && !r.prompt.includes("DECODED"), r.prompt);
+  const driver = join(ctx.dir, "ext.sh");
+  writeFileSync(driver, "#!/bin/sh\necho EXTERNAL-DRIVER-RAN\n", { mode: 0o755 });
+  git(ctx, "config", "diff.external", driver);
+  r = step2(ctx);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.prompt.includes("+plain-2") && !r.prompt.includes("EXTERNAL-DRIVER-RAN"), r.prompt);
+});

@@ -235,13 +235,15 @@ try {
      && /`recoverable` 은 `generated_summary` 가 `original_detail` 의 결론\(무엇을 했고 무엇이 나왔는지\)을 틀린 사실 없이 담으면 true/.test(linSkill)
      && /`\[REDACTED:\.\.\.\]` 자리는 흠으로 보지 않는다/.test(linSkill)
      && /그런 역할이 없으면 critic 을 띄울 수 없는 경우다/.test(linSkill)
-     && /맨 배열인데 거부되면/.test(linSkill) && /2번부터 다시 하고 6번의 횟수에 센다/.test(linSkill)
+     && /맨 배열인데 `idx` 가 든 객체가 하나도 없으면\(빈 배열 포함\) exit 2\(`no entry names idx`\)다/.test(linSkill) && /2번부터 다시 하고 6번의 횟수에 센다/.test(linSkill)
      && /`idx` 가 든 객체가 하나라도 있는 JSON 배열/.test(linSkill)
      && /같은 파트를 두 번 다시 검토해도 턴이 빠지거나 배열이 없으면 더 띄우지 않는다/.test(linSkill) && /그 파트의 결정 파일을 쓰지 않는다/.test(linSkill)
      && /`reviewers dropped N typed user turn\(s\)`/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.1$/m.test(linSkill),
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.1$/m.test(linSkill)
+     && /따로 감싼 `"USER":"PW"`, `\$\{API_USER\}` 같은 변수 사용자, 인라인 코드나 괄호 안/.test(linSkill)
+     && /`ls -lu a:bcd`/.test(linSkill) && !/`ls -lu a:b`/.test(linSkill),
      'lineage: the gate rerun keeps its paths and page, the critic has a stated rule, a refused list counts as a failure, re-reviews stop at two, and dropped user turns are named');
   const bpFm = fs.readFileSync(path.join(root, 'skills', 'setup-bypass-permissions', 'SKILL.md'), 'utf8').split(/\n---/)[0];
   ok(/^disable-model-invocation: true$/m.test(bpFm),
@@ -505,8 +507,11 @@ try {
      && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)
      && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\/new-files\.txt" &&$/m.test(seatCode)
      && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard > "\$d\/unsent\.txt" &&$/m.test(seatCode)
-     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' diff --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false diff '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.txt" > "\$d\/added\.txt" &&$/m.test(seatCode)
+     && /^  \{ \[ "\$\(grep -c \. "\$d\/added\.txt"\)" -le "\$\(grep -c \. "\$d\/new-files\.txt"\)" \] \|\| \{ echo 'ralph-qa: 목록의 폴더 줄이 그 아래 새 파일을 모두 올린다' >&2; false; \}; \} &&$/m.test(seatCode)
+     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' diff --no-ext-diff --no-textconv --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" "\$d\/added\.txt" &&$/m.test(seatCode)
+     && !/'<저장소>'(?: -c \S+)* diff (?!--no-ext-diff --no-textconv )/.test(seatCode)
      && !/read-tree/.test(seatCode) && !/git -C '<저장소>' diff HEAD/.test(seatCode) && !/add -N \.(?=[\s`]|$)/m.test(rqSkill)
      && /이미 커밋한 작업이면 작업 전 커밋, 커밋이 없는 저장소면 빈 트리\(`git -C '<저장소>' hash-object -t tree \/dev\/null`\)다/.test(rqSkill) && !/`git hash-object -t tree/.test(rqSkill)
      && /grep -c 'review-data id="<id>"' "\$d\/prompt\.md"/.test(seatCode)
@@ -519,10 +524,17 @@ try {
      && /그중 변경에 속한 파일만 파일 도구로 `\$d\/new-files\.txt` 에 저장소 루트 기준 경로로 한 줄에 하나씩 쓴다\(없으면 빈 파일\)/.test(rqSkill)
      && /보내지 않은 새 파일은 `\$d\/unsent\.txt` 에 남는다\. 그 수를 `외부 전송\(선언\)` 줄에 적는다/.test(rqSkill)
      && /`--pathspec-from-file` 은 git 2\.25 이상이 필요하다/.test(rqSkill)
+     && /한 줄에 파일 하나다\. 폴더 줄이나 `\.` 은 그 아래 새 파일을 모두 올린다/.test(rqSkill)
+     && /`목록의 폴더 줄이 그 아래 새 파일을 모두 올린다`: 그 폴더 줄 대신 보낼 파일을 한 줄에 하나씩 적고/.test(rqSkill)
+     && /빈 줄의 `empty string is not a valid pathspec`, 하위 저장소 줄의 `does not have a commit checked out`/.test(rqSkill)
+     && /무시되는 파일\(`ignored by`\)은 목록에서 빼고, 검토 대상이면 원문 부분으로 붙인다/.test(rqSkill) && /git 2\.25 미만\(`unknown option`\): 다시 해도 풀리지 않는다/.test(rqSkill)
+     && /저장소 설정의 textconv 와 외부 diff 드라이버는 끈다\(`--no-ext-diff --no-textconv`\)/.test(rqSkill)
      && /2 가 찍히지 않으면 보내지 않고 stderr 의 사유를 본다/.test(rqSkill)
      && /`커밋이 있는데 인덱스 파일이 없다`: 다시 해도 풀리지 않는다\. 사용자에게 알리고 외부 좌석은 `cli-call-failed` 로 적는다/.test(rqSkill)
      && /`보낼 diff 가 없다`: 검토 대상이 무시되는 폴더\(`\.omc\/plans\/` 등\)나 저장소 밖에 있으면 새 `\$d` 에서 그 파일을 원문 부분으로 붙인다/.test(rqSkill)
-     && /512 KiB\(524288 바이트\)를 넘으면 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다/.test(rqSkill)
+     && /512 KiB\(524288 바이트\)를 넘으면 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다\. 사용자가 보내지 않기로 하면 `model-declined` 다/.test(rqSkill)
+     && /아래와 3단계의 `cli-call-failed` 는 그 좌석이 아직 판정을 내지 않았을 때다\. 첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다/.test(rqSkill)
+     && /첫 판정 뒤의 반복에서 페이로드를 만들지 못하거나 사용자가 보내지 않기로 하면 그 좌석은 `ERROR` 다/.test(rqSkill)
      && /페이로드의 예: 커밋이 있는데 인덱스 파일이 없음, 보낼 diff 도 붙일 대상도 없음, 물을 수 없는 실행에서 512 KiB 초과/.test(rqSkill)
      && /관련 코드 범위는 바뀐 줄 둘레 3줄 밖에 있는데 판정에 필요한 함수 본문이나 호출부다/.test(rqSkill)
      && /`sed -n '<시작>,<끝>p' '<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
@@ -530,7 +542,7 @@ try {
      'S23-a: only the new files the author lists go out (the rest stay in unsent.txt), stops name their reason, a payload over 512 KiB is asked about, related code goes as ranges');
   // opencode: -f truncates at 50 KB, an unknown --agent falls back to the default agent, and only a
   // per-run agent defined in CONFIG_CONTENT with the deny-all permission survives user config.
-  ok(/^\( cd "\$d\/opencode" &&/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md"/.test(ocCmd) && !/ -f /.test(ocCmd)
+  ok(/^\( cd "\$d\/opencode" &&/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md"/.test(ocCmd) && !/opencode run[^\n]* -f /.test(ocCmd)
      && /A='ralph-qa-review-<id>'/.test(seatCode) && /P='\{"\*":"deny"\}'/.test(seatCode)
      && /OPENCODE_PERMISSION="\$P"/.test(ocCmd)
      && /OPENCODE_CONFIG_CONTENT="\{\\"share\\":\\"disabled\\",\\"agent\\":\{\\"compaction\\":\{\\"disable\\":true\},\\"\$A\\":\{[^}]*\\"permission\\":\$P\}\}\}"/.test(ocCmd)
@@ -554,11 +566,11 @@ try {
   const gmPolicy = /[^\t\r\n\x20-\x7e]/.test(gmPolicyText) ? ['not ASCII'] : gmPolicyText
     .split(/\r?\n/).map((l) => l.replace(/#.*/, '').replace(/^[ \t]+|[ \t\r]+$/g, '')).filter(Boolean);
   const cleanAt = seatCode.search(/^node "\$R\/gemini-seat\.mjs" clean "\$d\/gemini"$/m);
-  const findAt = seatCode.search(/^find "\$\(dirname "\$d"\)" -maxdepth 1 -type d \\\( -name 'ralph-qa\.\?\?\?\?\?\?' -o -name 'ralph-qa-out\.\?\?\?\?\?\?' \\\) -mmin \+1440 -exec rm -rf \{\} \+$/m);
+  const findAt = seatCode.search(/^find "\$\(dirname "\$d"\)" -maxdepth 1 -type d \\\( -name 'ralph-qa\.\?\?\?\?\?\?' -o -name 'ralph-qa-out\.\?\?\?\?\?\?' \\\) -mmin \+1440 -exec test -f '\{\}\/\.ralph-qa' \\; -exec rm -rf \{\} \+$/m);
   const sweepAt = seatCode.search(/^node "\$R\/gemini-seat\.mjs" sweep "\$\(dirname "\$d"\)"$/m);
   const rmAt = seatCode.search(/^rm -rf "\$d" "\$o"$/m);
   ok(/^\( cd "\$d\/gemini" && pol=\$\(node "\$R\/gemini-seat\.mjs" check "\$d\/gemini"\) && \[ -n "\$pol" \] && \[ -f "\$pol" \] &&\n  unset GEMINI_CLI_IDE_WORKSPACE_PATH &&/.test(gmCmd)
-     && /TMPDIR="\$o" TEMP="\$o" TMP="\$o" GEMINI_SANDBOX=false GEMINI_TELEMETRY_LOG_PROMPTS=false gemini --skip-trust --approval-mode default --admin-policy "\$pol"/.test(gmCmd)
+     && /TMPDIR="\$o" TEMP="\$o" TMP="\$o" GEMINI_SANDBOX=false GEMINI_TELEMETRY_LOG_PROMPTS=false <상한> gemini --skip-trust --approval-mode default --admin-policy "\$pol"/.test(gmCmd)
      && /--allowed-mcp-server-names ralph-qa-none -e none/.test(gmCmd)
      && /-p "첨부한 검토 지시를 따르라" < prompt\.md > "\$o\/out-gemini\.md" 2> "\$o\/err-gemini\.txt" \)/.test(gmCmd)
      && cleanAt >= 0 && findAt > cleanAt && sweepAt > findAt && rmAt > sweepAt
@@ -575,8 +587,9 @@ try {
      && /`\[IO\.Path\]::IsPathRooted\(\$i\)` 가 거짓이면 `\$i = Join-Path '<저장소>' \$i` 로 바꾼다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"` 로 실제 인덱스를 복사한다\./.test(psStep2)
      && /`git -C '<저장소>' rev-parse -q --verify HEAD > \$null` 의 `\$LASTEXITCODE` 가 0 이면\(커밋이 있으면\) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 를 두고 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\\new-files\.txt"`/.test(psStep2)
-     && /`git -C '<저장소>' -c core\.quotePath=false diff --output="\$d\\diff\.txt" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 를 두고, 먼저 `@\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.txt"\)\.Count` 가 목록의 빈 줄 아닌 줄 수 `@\(Get-Content -LiteralPath "\$d\\new-files\.txt" -Encoding utf8 \| Where-Object \{ \$_ \}\)\.Count` 보다 크면 `목록의 폴더 줄이 그 아래 새 파일을 모두 올린다` 를 찍고 멈춘다\./.test(psStep2)
+     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\\new-files\.txt"`/.test(psStep2)
+     && /`git -C '<저장소>' diff --no-ext-diff --no-textconv --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --output="\$d\\diff\.txt" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
      && /`diff --quiet` 는 1 일 때만 계속하고\(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다\), 나머지는 0 이 아니면 멈춘다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.txt"` 로 치운다/.test(psStep2)
      && !/read-tree|--path-format|if \(Test-Path \$i\)|add -N \./.test(psStep2)
@@ -589,11 +602,17 @@ try {
   ok(/Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다/.test(rqSkill)
      && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 좌석 프로세스 트리 전체가 멈춘다/.test(rqSkill)
      && /셸에서 프로세스 그룹을 죽여서는 좌석 서브셸이 멈추지 않는다/.test(rqSkill) && /Codex 는 그 exec 세션이 끝날 때까지 기다린다/.test(rqSkill)
+     && /`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `timeout -k 10 600` 을, 없으면\(macOS 기본\) `perl -e 'alarm shift; exec @ARGV' 600` 을 넣는다/.test(rqSkill)
+     && /^\( cd "\$d\/codex" && <상한> codex exec /m.test(seatCode) && / <상한> gemini --skip-trust /.test(gmCmd) && /^  <상한> opencode run /m.test(ocCmd)
+     && /하위 에이전트로 돌면 좌석이 모두 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다/.test(rqSkill)
+     && /PowerShell 에는 `<상한>` 에 넣을 명령이 없다/.test(rqSkill)
      && /^6\. 좌석 작업이 모두 끝났거나 멈춘 것을 확인한 뒤에 정리한다/m.test(rqSkill)
      && /`\.project_root` 없이 다시 만든 기록 폴더는 `projects\.json` 의 좌석 경로로 찾는다/.test(rqSkill)
      && /제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa\.<영숫자>\/opencode` 인데 그 폴더가 없는 세션/.test(rqSkill)
      && /`\$d = Join-Path \$env:TEMP \('ralph-qa\.' \+ \[guid\]::NewGuid\(\)\.ToString\('N'\)\)`/.test(rqSkill)
-     && /\$_\.Name -match '\^ralph-qa\(-out\)\?\\\.\[A-Za-z0-9\]\+\$' -and \$_\.LastWriteTime -lt \(Get-Date\)\.AddDays\(-1\)/.test(psGemini)
+     && /\$_\.Name -match '\^ralph-qa\(-out\)\?\\\.\[A-Za-z0-9\]\+\$' -and -not \(\$_\.Attributes -band \[IO\.FileAttributes\]::ReparsePoint\) -and \$_\.LastWriteTime -lt \(Get-Date\)\.AddDays\(-1\) -and \(Test-Path -LiteralPath \(Join-Path \$_\.FullName '\.ralph-qa'\) -PathType Leaf\)/.test(psGemini)
+     && /^  : > "\$d\/\.ralph-qa" && : > "\$o\/\.ralph-qa" && ! git -C "\$d" rev-parse/m.test(seatCode)
+     && /`New-Item -ItemType File -Path \(Join-Path \$d '\.ralph-qa'\), \(Join-Path \$o '\.ralph-qa'\)`/.test(rqSkill)
      && /stderr 에 `Policy file error` 가 있으면 정책을 읽지 못해 도구가 열렸을 수 있으므로 그 좌석은 `ERROR` 다\./.test(rqSkill)
      && !/\(세션 중단, 로그아웃 때/.test(rqSkill) && !/시간 제한을 600000 ms 로 준다/.test(rqSkill),
      'S23-f: a seat past its time limit is stopped or waited for before the cleanup, which also finds the records a late seat wrote and the copies a cut-short run left');
@@ -608,7 +627,7 @@ try {
      && /자체 샌드박스 안에서 다시 뜬다\(docker, podman 컨테이너\. macOS 에서 값이 `true` 면 `sandbox-exec`\)\. 컨테이너 안에는 정책 파일이 없어/.test(rqSkill)
      && !/docker 나 podman 컨테이너 안에서 다시 뜬다/.test(rqSkill)
      && /\| `decision: unseated` \+ `reason` \| 앉을 수 없음 \| 사유와 `notes` 를 좌석 줄에 적는다 \|/.test(rqSkill)
-     && /^입력 = 새 파일을 포함한 diff 원문\(외부 좌석 전송 2단계의 diff 와 같다\)/m.test(rqSkill) && !/입력 = `git diff` 원문/.test(rqSkill)
+     && /^입력 = 새 파일을 포함한 diff 원문\(외부 좌석 전송 2단계의 diff 와 같다\. 외부 좌석이 없는 실행도 그 1단계 폴더와 2단계의 git 명령으로 만든다\)/m.test(rqSkill) && !/입력 = `git diff` 원문/.test(rqSkill)
      && /`apply_patch`\(읽기 전용 샌드박스가 `patch rejected` 로 막는다\)/.test(rqSkill) && !/읽기 전용이라 `aborted`/.test(rqSkill)
      && /Windows 는 Git Bash 에서 `~\/\.cache`\(아래 `case` 문\), PowerShell 에서 사용자 `TEMP`/.test(rqSkill)
      && /`\(Select-String -SimpleMatch -Pattern 'review-data id="<id>"' -LiteralPath "\$d\\prompt\.md"\)\.Count`/.test(rqSkill)
