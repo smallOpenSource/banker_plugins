@@ -233,13 +233,16 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
 # (o'brien) and a backtick or ( only where no flag follows. A match may start after a space, a
 # quote, a backtick or a (, and no user runs past such a place, so a long run stays linear.
 _CU_USER = r"(?:[^\s:=\"'`(]|[`(](?!-)|(?<=\w)[\"'](?=\w))"
+# A quote around the user or the password, bare or escaped (\" and \\\" in a quoted command, ^" in
+# cmd, `" in PowerShell, $' in bash), at most two in a row ('admin'":pw).
+_CU_Q = r"(?:[\\^`$]{0,3}[\"'])"
 # Values read as a whole token that hold no user and password: a uid:gid (docker), a date format
 # (date -u +%H:%M), two references ($UID:$GID, ${UID}:${GID}, %USER%:%PASS%, $(id -u):$(id -g),
-# whose inner `-u)` is a match of its own) and a path with a colon-free default
-# (mktemp -u "${TMPDIR:-/tmp}/x"). A literal password, or a default holding a colon, is hidden.
+# whose inner `-u)` is a match of its own) and a path default (mktemp -u "${TMPDIR:-/tmp}/x").
+# A literal password, or a default that is no path or holds a colon, is hidden.
 _CU_REF = r"(?:\$\{?\w+\}?|%\w+%|\$\([^\s()]*(?:\s+[^\s()]+)*\))"
-_CU_SKIP = (r"(?!\+%|(?:\d+:\d+|(?:" + _CU_REF + r"|[^\s:=\"'`(]*\)):" + _CU_REF + r")(?![^\s\"'`;|&)])"
-            r"|\$\{\w+:[^\s}\"'`(:]*\}[^\s:]*(?!\S))")
+_CU_SKIP = (r"(?!\+%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" + _CU_REF + r"|[^\s:=\"'`(]*\)):" + _CU_REF + r")"
+            r"(?![^\s\"'`;|&)\\^])|\$\{\w+:[-=?+]?[/~.][^\s}\"'`(:]*\}[^\s:]*(?!\S))")
 
 # Extra patterns for text a reviewer model reads (part files) and nothing else: the page
 # and --rulebase keep the patterns above, so their output stays as it was.
@@ -263,14 +266,14 @@ REVIEW_SECRET_PATTERNS = [
         r"|\s+(?=[\"']))"
         r"\s*[\"']?basic\s+[A-Za-z0-9+/]{8,}={0,2}")),
     # curl's -u and --user flags, alone or last in a bundle (-su, -4u), with a user and password
-    # after a space, an = or nothing, quoted together or apart ("user":"pw") or not, in inline
-    # code or parentheses, or as two items of an argument list. An empty user with a token, and a
+    # after a space, an = or nothing, quoted together or apart ("user":"pw"), with quotes bare or
+    # escaped (_CU_Q) or none, in inline code or parentheses, or as two items of an argument list. An empty user with a token, and a
     # long key as the user with no password, count too. The separators share no character with
     # the user name, so a long run of them stays linear. The values _CU_SKIP names and a
     # host:/path (rsync) are left.
     ("CurlUser", re.compile(
-        r"(?<![^\s\"'`(])(?:-u\s*|-[A-Za-z0-9]{1,6}u\s+|--user(?:\s+|=))[\"']?" + _CU_SKIP
-        + r"(?:" + _CU_USER + r"*[\"']?:(?!/)\S{3,}|" + _CU_USER + r"{15,}:(?=[\s\"'`).,;]|$))"
+        r"(?<![^\s\"'`(])(?:-u\s*|-[A-Za-z0-9]{1,6}u\s+|--user(?:\s+|=))" + _CU_Q + r"{0,2}" + _CU_SKIP
+        + r"(?:" + _CU_USER + r"*" + _CU_Q + r"{0,2}:(?!/)\S{3,}|" + _CU_USER + r"{15,}:(?=[\s\"'`).,;\\]|$))"
         r"|([\"'])(?:-[A-Za-z0-9]{0,6}u|--user)\1\s*,\s*([\"'])" + _CU_SKIP
         + r"(?:" + _CU_USER + r"*:[^\s\"']{3,}|" + _CU_USER + r"{15,}:)\2")),
 ]

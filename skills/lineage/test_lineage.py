@@ -1814,22 +1814,43 @@ class TestLlmReviewHardening(_ReviewCase):
                       c + ' -u "${USER:-admin}:' + pw + '" https://x',
                       '["' + c + '", "-u", "${API_USER}:' + pw + '", url]', '["' + c + '", "-4u", "admin:' + pw + '", url]'):
             self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
-        for shape in (c + " -u '" + key + ":' https://x", "use `-u " + key + ":` here"):
+        for shape in (c + " -u '" + key + ":' https://x", "use `-u " + key + ":` here", c + ' -u "${API_KEY:-' + key + '}" https://x'):
             self.assertNotIn("Q8zQ8z", L.review_redact(shape)[0], shape)
+
+    def test_curl_user_hides_escaped_and_doubled_quotes(self):
+        # 3.0.0 hid these: a command inside a quoted string (ssh, compose, package.json), ANSI-C,
+        # cmd and PowerShell quoting, and quotes that change between the user and the password
+        pw = "Hunter22" + "pw"
+        c = "cu" + "rl"
+        q = '"'
+        bs = chr(92)
+        for shape in ("ssh host " + q + c + " -u " + bs + q + "admin:" + pw + bs + q + " http://localhost:9200" + q,
+                      '["CMD-SHELL", "' + c + ' -s -u ' + bs + q + "elastic:" + pw + bs + q + ' http://localhost:9200"]',
+                      '{"scripts": {"x": "' + c + ' -u ' + bs + q + "admin:" + pw + bs + q + ' https://x"}}',
+                      c + " -u " + bs * 3 + q + "admin:" + pw + bs * 3 + q + " https://x",
+                      c + " -u $'admin:" + pw + "' https://x", c + " -u ^" + q + "admin:" + pw + "^" + q + " https://x",
+                      c + ".exe -u `" + q + "admin:" + pw + "`" + q + " https://x",
+                      c + ' -u "$USER"' + "':" + pw + "' https://x", c + " -u 'admin'" + '":' + pw + '" https://x',
+                      c + " -u +%40admin:" + pw + " https://x"):
+            self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
 
     def test_curl_user_keeps_ids_references_and_dates(self):
         for keep in ("docker run -u $UID:$GID img", 'docker run -u "$USER:$PASS" img', "set -u %USER%:%PASS% x",
                      'docker run -u "${UID}:${GID}" img', "docker run -u $(id -un):$(id -gn) img",
                      "(docker run -u 1000:1000)", "use `-u 1000:1000` here", '["docker", "run", "-u", "1000:1000", "img"]',
                      'subprocess.run(["date", "-u", "+%H:%M:%S"])', "date -u '+%Y-%m-%dT%H:%M:%SZ'",
-                     'mktemp -u "${TMPDIR:-/tmp}/x.XXXX")'):
+                     'mktemp -u "${TMPDIR:-/tmp}/x.XXXX")', 'ssh host "docker run -u ' + chr(92) + '"1000:1000' + chr(92) + '" img"',
+                     'ssh host "docker run -u ' + chr(92) + '"$UID:$GID' + chr(92) + '" img"', "date -u +%-H:%M:%S",
+                     'cmd /c "docker run -u ^"1000:1000^" img"'):
             self.assertEqual(L.review_redact(keep)[0], keep)
 
     def test_curl_user_takes_linear_time_on_runs_of_its_pieces(self):
         import time
         pat = dict(L.REVIEW_SECRET_PATTERNS)["CurlUser"]
+        bs = chr(92)
         pieces = ("(-u", "`-u", "'-u", "(-u(", "`-u`", "-u${a:(", " -u ${a:", " -u $(", "'-uo'b", " -4u ",
-                  " -u):$(", "(-u$(a", "'-u", '"-u", "', " -u %a%:", " -u 1:1", "(-u a`")
+                  " -u):$(", "(-u$(a", "'-u", '"-u", "', " -u %a%:", " -u 1:1", "(-u a`",
+                  " -u " + bs + '"', '"-u' + bs + '"', " -u ^" + '"', " -u $'", " -u " + bs * 3 + "'", '"-u""', " -u a" + bs + '"')
         for piece in pieces:
             start = time.monotonic()
             pat.sub("[R]", piece * 40000)
