@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.0.1
+version: 3.0.2
 schema_version: 1
 ---
 
@@ -52,7 +52,7 @@ echo "..." | /lineage --from-transcript -   # stdin paste
 /lineage --keep-trivia                  # 조작 명령·주입 본문·에코도 남김 (기본 필터 ON). 검토자도 턴을 빼지 못함
 /lineage --keep-tool-only               # 도구 전용 turn 도 남김 (기본 ON=제거). 검토자도 그 턴을 빼지 못함
 /lineage --redact-extra "acme-corp,db-pass"
-/lineage --redact-mode mask             # abcd**** 부분 마스킹
+/lineage --redact-mode mask             # abcd**** 부분 마스킹(검토자 패턴이 찾은 값은 전부 가림)
 /lineage --rebuild-summaries            # 캐시 무시하고 재요약 (기본 흐름은 검토 결정 캐시도 무시해 모든 턴을 다시 검토)
 /lineage --purge-cache                  # 캐시 전부 삭제 후 종료
 /lineage --skip-reviewer                # 품질 게이트 끔 (경고)
@@ -219,7 +219,7 @@ Schema-tolerant 파서: 미지 record type → stderr WARN + 다음 line. `v1`/`
 
 1차 `detect-secrets>=1.5`(pip 설치 시), 미설치 → 내장 fallback + WARN.
 내장: AWS IAM(AKIA/ASIA)·GitHub PAT·Slack·JWT·private key·한/영 평문 password·Shannon entropy≥4.5.
-확장 `--redact-extra "k1,k2"`. 부분 마스킹 `--redact-mode mask`.
+확장 `--redact-extra "k1,k2"`. 부분 마스킹 `--redact-mode mask`(페이지 패턴만. 검토자 패턴이 찾은 값은 늘 전부 가린다).
 
 ### 5. Render
 
@@ -259,14 +259,14 @@ WARN 발견 시 stderr 보고, 출력은 그대로 작성(인간 검토 가능).
 
 기본 흐름에서는 `--reviewer-output` 을 줄 때만 `--apply-review` 가 샘플을 쓴다(묶음 옆 `work/.lineage-review.reviewer-input.json`). 샘플마다 `id`(묶음의 턴 id)와 `key`(턴 id, 앞뒤 본문, 요약에서 만든 12자 지문)가 더 붙는다. `original_detail` 은 검토자가 본 앞뒤 본문(파트 파일의 `preview`), `generated_summary` 는 검토자 요약, 없으면 가린 본문에서 만든 규칙 요약(파트 파일의 `rule.summary`)이다. 둘 다 파트 파일과 같은 기준으로 가린다.
 기본 흐름의 판정은 샘플마다 하나씩이고, 판정마다 그 샘플의 `id` 와 `key` 를 그대로 담는다. 빠진 샘플, 샘플에 없는 `idx`, 같은 `idx` 의 반복, 다른 `id` 나 `key`(다른 턴이나 결정을 고치기 전 샘플에 대한 답)가 있으면 exit 2 다. 그때 판정에 든 `recoverable: false` 항목의 이유를 함께 찍는다. `--rulebase` 의 critic 계약은 2.x 그대로다.
-같은 턴이면 다시 실행해도 같은 턴을 샘플로 뽑는다. 결정을 고치면 그 샘플의 내용과 `key` 가 바뀐다. 읽은 판정 파일은 `<이름>.used` 로 옮겨, 다음 실행이 옛 판정을 다시 읽지 않는다. 샘플이 바뀌면 그 전에 있던 판정 파일(앞선 `--rulebase` 게이트가 남긴 것 등)을 읽지 않고 옮긴다. 판정 경로에 판정 목록(`idx` 가 든 객체가 하나라도 있는 JSON 배열)이 아닌 파일이나 폴더가 있으면 샘플을 쓰기 전에 exit 2 로 멈추고 옮기지 않는다. `<이름>.used` 에 판정이 아닌 파일이 있으면 덮지 않고, 비어 있거나 앞선 판정이 든 `<이름>.used.1` 같은 이름으로 옮긴다. 샘플을 쓰지 못하면 판정을 기다리지 않고 exit 2 다. PASS 면 샘플을 지운다. `--rulebase` 는 2.x 그대로다(무작위 샘플, 페이지 redaction, 판정 파일을 옮기지 않음).
+같은 턴이면 다시 실행해도 같은 턴을 샘플로 뽑는다. 결정을 고치면 그 샘플의 내용과 `key` 가 바뀐다. 읽은 판정 파일은 `<이름>.used` 로 옮겨, 다음 실행이 옛 판정을 다시 읽지 않는다. 샘플이 바뀌면 그 전에 있던 판정 파일(앞선 `--rulebase` 게이트가 남긴 것 등)을 읽지 않고 옮긴다. 판정 경로에 판정 목록(`idx` 가 든 객체가 하나라도 있는 JSON 배열)이 아닌 파일이나 폴더가 있으면 샘플을 쓰기 전에 exit 2 로 멈추고 옮기지 않는다. `<이름>.used` 에 판정이 아닌 파일이 있으면 덮지 않고, 비어 있거나 앞선 판정이 든 `<이름>.used.1` 같은 이름으로 옮긴다. 샘플을 쓰지 못하면 판정을 기다리지 않고 exit 2 다. PASS 면 샘플을 지운다. `--rulebase` 는 2.x 처럼 무작위 샘플을 쓰고 판정 파일을 옮기지 않는다. 샘플은 critic 모델이 읽으므로 검토자 패턴까지 값 전체를 가린 뒤 500자로 자른다.
 
 ## Cache & Secret Hygiene
 
 캐시에 저장되는 텍스트는 redact() 적용 후의 redacted summary 만이다(평문 secret 미저장).
 검토자 결정 캐시(`<uuid>-<digest>-llm.json`)도 redact 하고 자른 요약만 담는다. digest 는 redact 된 본문, 그 턴의 규칙 결정, keep 플래그의 해시다. 본문이 바뀌면 다시 검토한다. `keep: null` 은 그 실행의 규칙을 따른다는 뜻이라, 규칙 결정이나 keep 플래그가 다른 실행(`--keep-trivia` 실행과 기본 실행, `--all-sessions` 실행과 단일 세션 실행)에서도 다시 검토한다.
 검토 묶음과 파트 파일은 redact 된 본문만 담고 0600 으로 쓴다(임시 파일은 mkstemp). 렌더가 성공하면 스크립트가 지운다(실행 절차 5).
-검토자가 읽는 파트 파일은 `--redact-mode mask` 여도 가린 자리에 값의 일부를 남기지 않는다. 페이지에는 없는 패턴(Anthropic, OpenAI, Google 키, 따옴표 없는 password·비밀번호, 16진 키, URL 안 자격 증명, Bearer 토큰, Basic 인증 헤더(따옴표 친 키, 첨자 대입, `=>`, 헤더 설정 호출과 HAR 의 name/value, nginx 처럼 공백 뒤 따옴표 포함), curl `-u` 의 사용자와 비밀번호(붙여 쓴 `-uUSER:PW`, `-su`, `-4u` 같은 묶음, 따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표(`\"USER:PW\"`, 여러 겹 JSON), bash 의 `'\''` 와 `shlex.quote` 의 `'"'"'`, cmd 의 `^"`, PowerShell 의 `` `" ``, bash 의 `$'…'`, `${API_USER}` 같은 변수 사용자와 변수에 이은 사용자(`"$USER"@corp.com`, `"${ENV}"-deployer`), 인라인 코드나 괄호 안, 인자 목록, 빈 사용자나 빈 비밀번호 포함))도 파트 파일에서는 가린다. URL 의 비밀번호는 호스트 앞 마지막 `@` 까지 가린다. 이 패턴은 엔트로피 규칙보다 먼저 적용해 키를 통째로 가린다. 페이지는 이 패턴을 쓰지 않으므로 `--rulebase` 출력은 2.x 그대로다.
+검토자가 읽는 파트 파일은 `--redact-mode mask` 여도 가린 자리에 값의 일부를 남기지 않는다. 페이지에는 없는 패턴(Anthropic, OpenAI, Google 키, 따옴표 없는 password·비밀번호, 16진 키, URL 안 자격 증명, Bearer 토큰, Basic 인증 헤더(따옴표 친 키, 첨자 대입, `=>`, 헤더 설정 호출과 HAR 의 name/value, nginx 처럼 공백 뒤 따옴표 포함), curl `-u` 의 사용자와 비밀번호(붙여 쓴 `-uUSER:PW`, `-su`, `-4u` 같은 묶음, 따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표(`\"USER:PW\"`, 여러 겹 JSON), bash 의 `'\''` 와 `shlex.quote` 의 `'"'"'`, cmd 의 `^"`, PowerShell 의 `` `" ``, bash 의 `$'…'`, `${API_USER}` 같은 변수 사용자와 변수에 이은 사용자(`"$USER"@corp.com`, `"${ENV}"-deployer`), 인라인 코드나 괄호 안, 인자 목록, 빈 사용자나 빈 비밀번호 포함))도 파트 파일에서는 가린다. URL 의 비밀번호는 호스트 앞 마지막 `@` 까지 가린다. 이 패턴은 엔트로피 규칙보다 먼저 적용해 키를 통째로 가린다. 3.0.2 부터 검토자 패턴은 모든 페이지(기본 흐름과 `--rulebase`)에도 건다. 페이지에서도 검토자 패턴이 찾은 값은 `--redact-mode mask` 여도 전부 가리고, 페이지 패턴만 mask 를 따른다. 본문, 요약, 접힌 요약, 에이전트 이름, 세션 이름, 기본 흐름 묶음에 걸고, 도구 이름은 `--redact-extra` 키워드를 가린다. 렌더 뒤 페이지 글에 검토자 패턴을 다시 돌려 남은 것이 있으면 WARN 을 낸다. `--rulebase` 출력은 비밀이 없는 턴에서 2.x 와 같다. 비밀을 가린 턴은 2.x 와 다를 수 있다.
 파트 파일의 규칙 요약은 가린 본문에서 만든다. 요약을 자른 자리에 비밀이 걸쳐도 조각이 남지 않는다.
 `--redact-extra` 키워드 목록은 묶음과 파트 파일에 쓰지 않고, 가린 수만 `custom` 으로 센다. 파트 파일의 본문, 요약, 에이전트 이름, 도구 이름에서는 키워드를 가린다. 묶음은 에이전트 이름, 도구 이름, 세션 제목, 출력 경로를 페이지처럼 그대로 둔다. 기록 파일 이름(세션 id)도 캐시 위치를 정하는 값이라 그대로 둔다(0600, 렌더 성공 뒤 삭제).
 결정 파일은 세션이 파일 도구로 써서 umask 권한으로 생긴다. `--apply-review` 가 읽을 때 0600 으로 바꾼다.
@@ -321,10 +321,10 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 - 기본 흐름은 파트(40턴 이하, 고르게 나눔)마다 검토 에이전트 1개가 돈다. 이 저장소 실측은 40턴 파트 하나에 약 11만 토큰과 7분이었다. 긴 세션은 `--last N` 으로 범위를 줄이거나 `--rulebase` 를 쓴다.
 - Claude Code 검토자(`Plan`)는 Write·Edit 가 도구로 막혀 있지만 Bash 는 있다. 셸로 쓰지 않는 것은 지시로 선다. banker 는 에이전트 정의를 배포하지 않아(모든 표면이 두 런타임 대상) 도구를 더 막을 수 없다.
 - Codex 의 `workspace-write` 샌드박스에서는 `~/.cache` 에 쓸 수 없어 이번 실행의 검토 결정을 캐시에 쓰지 못한다(WARN 한 번). 앞선 실행이 남긴 결정은 읽으므로, 그 결정이 없는 턴만 다시 검토한다.
-- 페이지의 규칙 요약은 문장을 자른 뒤 가린다. 자른 자리에 걸친 비밀은 조각이 페이지에 남을 수 있다(2.x 동작 그대로). 검토자와 게이트의 critic 이 읽는 규칙 요약은 가린 본문에서 만든다.
-- 규칙 요약 캐시는 본문만으로 키를 잡는다. `--redact-mode` 나 `--redact-extra` 를 바꿔 다시 돌린 `--rulebase` 는 앞선 실행의 요약을 쓸 수 있다(2.x 동작 그대로). 기본 흐름의 묶음은 요약을 매번 새로 만든다.
+- 규칙 요약은 가린 본문에서 자른다(요약기 버전 3). 0.15.1 까지 만든 요약 캐시는 쓰지 않는다. 그 캐시에는 평문 조각이 남아 있을 수 있어 `--purge-cache` 로 지운다.
+- 규칙 요약 캐시는 본문만으로 키를 잡는다. `--redact-mode` 나 `--redact-extra` 를 바꿔 다시 돌린 `--rulebase` 는 앞선 실행의 요약을 쓸 수 있다(2.x 동작 그대로). 기본 흐름의 묶음은 요약을 매번 새로 만든다. 묶음 형식은 `lineage-review/2` 라 0.15.1 이 만든 묶음은 `--emit-review` 부터 다시 한다.
 - 검토자는 긴 턴의 앞뒤만 본다(`clipped: true`). 가운데에만 있는 결론은 놓칠 수 있다.
-- 검토자 패턴은 흔한 모양만 가린다. `/` 가 든 URL 비밀번호와 키 이름이 100자를 넘는 16진 키는 가리지 못한다(값이 길고 무작위면 엔트로피 규칙이 가릴 수 있다). curl `-u` 패턴은 값 전체가 `docker -u 1000:1000` 같은 uid:gid, `rsync -u host:/path`, `date -u +%H:%M` 같은 날짜 형식(`+%` 뒤에 글자가 오면 나머지는 보지 않는다), 양쪽 모두 변수인 꼴(`$UID:$GID`, `${UID}:${GID}`, `%USER%:%PASS%`, `$(id -u):$(id -g)`), 기본값이 콜론 없는 경로(`/`, `~`, `.` 로 시작)인 변수(`mktemp -u "${TMPDIR:-/tmp}/x"`)일 때만 둔다. 이스케이프한 따옴표 안에서도 같다. 다른 명령의 `-u 이름:값`(`-u root:root`, `ps -u postgres:postgres`, `rsync -avu host:dir/`, `ls -lu a:bcd`), 기본값이 경로가 아닌 변수(`${UID:-1000}:${GID:-1000}`, `${API_KEY:-…}`)는 가린다. 숫자만으로 된 이름과 비밀번호, `/` 로 시작하는 비밀번호, `$` 로 시작해 변수처럼 보이는 비밀번호(`$USER:$ecret`), `-U` 와 `--proxy-user`, 붙여 쓴 묶음(`-suUSER:PW`), `-u=USER:PW`, 공백이 든 비밀번호의 둘째 낱말부터, 인자 목록에서 다른 종류의 따옴표가 든 비밀번호(`'-u', "USER:P'W"`), 사용자 안에서 따옴표 뒤에 `-eu`, `--user` 같은 플래그 꼴과 따옴표가 오는 꼴(`"$USER"-eu":PW"`), requests 의 `auth=(...)`, value 가 name 보다 앞에 온 HAR 은 가리지 못한다. 백틱 명령 치환(`` `id -u`:`id -g` ``)과 `\$(id -u):\$(id -g)` 는 가운데 일부가 가려진다(3.0.0 과 같다). 공백 없는 인자 목록(`["docker","run","-u","1000:1000","img"]`)과 인자 목록 안의 `host:/path`(`"-avu", "host:/srv"`)는 남길 꼴이어도 플래그 뒤를 가린다(비밀이 새지는 않는다). Basic 인증 패턴은 `HTTP_AUTHORIZATION` 처럼 앞에 `_` 가 붙은 이름, 구분자 없는 `Authorization Basic …`, 백틱이나 대괄호(`["Basic …"]`) 안의 값을 가리지 못한다.
+- 검토자 패턴은 흔한 모양만 가린다. `/` 가 든 URL 비밀번호와 키 이름이 100자를 넘는 16진 키는 가리지 못한다(값이 길고 무작위면 엔트로피 규칙이 가릴 수 있다). curl `-u` 패턴은 값 전체가 `docker -u 1000:1000` 같은 uid:gid, `rsync -u host:/path`, `date -u +%H:%M` 같은 날짜 형식(`+%` 뒤에 글자가 오면 나머지는 보지 않는다), 양쪽 모두 변수인 꼴(`$UID:$GID`, `${UID}:${GID}`, `%USER%:%PASS%`, `$(id -u):$(id -g)`), 기본값이 콜론 없는 경로(`/`, `~`, `.` 로 시작)인 변수(`mktemp -u "${TMPDIR:-/tmp}/x"`)일 때만 둔다. 이스케이프한 따옴표 안에서도 같다. 다른 명령의 `-u 이름:값`(`-u root:root`, `ps -u postgres:postgres`, `rsync -avu host:dir/`, `ls -lu a:bcd`), 기본값이 경로가 아닌 변수(`${UID:-1000}:${GID:-1000}`, `${API_KEY:-…}`)는 가린다. 숫자만으로 된 이름과 비밀번호, `/` 로 시작하는 비밀번호, `$` 로 시작해 변수처럼 보이는 비밀번호(`$USER:$ecret`), `-U` 와 `--proxy-user`, 붙여 쓴 묶음(`-suUSER:PW`), `-u=USER:PW`, 공백이 든 비밀번호의 둘째 낱말부터, 인자 목록에서 다른 종류의 따옴표가 든 비밀번호(`'-u', "USER:P'W"`), 사용자 안에서 따옴표 뒤에 `-eu`, `--user` 같은 플래그 꼴과 따옴표가 오는 꼴(`"$USER"-eu":PW"`), requests 의 `auth=(...)`, value 가 name 보다 앞에 온 HAR 은 가리지 못한다. 백틱 명령 치환(`` `id -u`:`id -g` ``)과 `\$(id -u):\$(id -g)` 는 가운데 일부가 가려진다(3.0.0 과 같다). 값이 `/`, `~`, `$` 로 시작하는 password 값(`$PWD:/workspace`, `OLDPWD=/home/...`, `password=$DB_PASSWORD`)과 이미 가린 표식은 두고, `PGPASSWORD=`, `MYSQL_PWD=` 의 값은 가린다. `password=os.environ[...]`, `암호: AES-256-GCM` 처럼 코드나 이름인 값과 `sk-` 로 시작하는 긴 세션 이름은 지나치게 가린다. Basic 인증 패턴은 `HTTP_AUTHORIZATION` 처럼 앞에 `_` 가 붙은 이름, 구분자 없는 `Authorization Basic …`, 백틱이나 대괄호(`["Basic …"]`) 안의 값을 가리지 못한다.
 - 페이지 패턴 가운데 JWT 와 개인 키 패턴은 같은 머리(`eyJ`, `-----BEGIN`)가 긴 줄에 되풀이되면 시간이 줄 길이의 제곱으로 는다(2.x 동작 그대로). 기본 흐름은 턴마다 여러 번 가리므로 그만큼 더 걸린다.
 - 마크다운의 **중첩 리스트는 평탄화**되고 각주는 미지원.
 - 사용자가 질문에 래퍼 블록(`<task-notification>…`)을 **인용**하면 문장은 남고 그 블록만 사라진다.
