@@ -223,10 +223,26 @@ try {
      'lineage hands the gate critic its samples inline, with no tools, on either runtime');
   // The gate runs in two foreground passes (no line to wait for in a background run), its critic is
   // a session-model subagent the session never stands in for, and either kind of failure counts to two.
-  ok(/4단계에 `--reviewer-timeout 1` 을 더해 실행한다/.test(linSkill) && /Claude Code: `Plan` 을 Agent 도구의 `model` 없이 띄운다\(검토자와 같은 이유/.test(linSkill)
+  ok(/판정이 없으면 기다리지 않고 exit 2/.test(linSkill) && !/4단계에 `--reviewer-timeout 1` 을 더해 실행한다/.test(linSkill)
+     && /Claude Code: `Plan` 을 Agent 도구의 `model` 없이 띄운다\(검토자와 같은 이유/.test(linSkill)
      && /critic 을 띄울 수 없으면 세션이 스스로 판정하지 않는다/.test(linSkill) && /FAIL 과 5번의 exit 2 가 합쳐 두 번 이어지면 멈춘다/.test(linSkill)
      && /샘플의 `idx`, `id`, `key` 를 그대로 담는다/.test(linSkill) && !/백그라운드로 실행한다/.test(linSkill) && !/`oh-my-claudecode:critic` 에이전트\(스킬이 아니다\)/.test(linSkill),
      'lineage runs its gate in two foreground passes with a session-model critic it never plays itself, and stops after two failures of either kind');
+  // The gate's second run carries the first run's paths and page name, the critic judges by a
+  // stated rule, an answer that is a list yet refused counts as a failure, and reviewers stop.
+  ok(/1단계에서 정한 이름 끝 시각/.test(linSkill) && /4단계를 1번과 같은 인자로 다시 실행한다/.test(linSkill)
+     && /`left by a gated run`/.test(linSkill) && /1단계에 준 경로도 검토자를 띄우기 전에 exit 2 로 멈춘다/.test(linSkill)
+     && /`recoverable` 은 `generated_summary` 가 `original_detail` 의 결론\(무엇을 했고 무엇이 나왔는지\)을 틀린 사실 없이 담으면 true/.test(linSkill)
+     && /`\[REDACTED:\.\.\.\]` 자리는 흠으로 보지 않는다/.test(linSkill)
+     && /그런 역할이 없으면 critic 을 띄울 수 없는 경우다/.test(linSkill)
+     && /맨 배열인데 거부되면/.test(linSkill) && /2번부터 다시 하고 6번의 횟수에 센다/.test(linSkill)
+     && /`idx` 가 든 객체가 하나라도 있는 JSON 배열/.test(linSkill)
+     && /같은 파트를 두 번 다시 검토해도 턴이 빠지거나 배열이 없으면 더 띄우지 않는다/.test(linSkill) && /그 파트의 결정 파일을 쓰지 않는다/.test(linSkill)
+     && /`reviewers dropped N typed user turn\(s\)`/.test(linSkill)
+     && /1,000,000 바이트/.test(linSkill)
+     && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.1$/m.test(linSkill),
+     'lineage: the gate rerun keeps its paths and page, the critic has a stated rule, a refused list counts as a failure, re-reviews stop at two, and dropped user turns are named');
   const bpFm = fs.readFileSync(path.join(root, 'skills', 'setup-bypass-permissions', 'SKILL.md'), 'utf8').split(/\n---/)[0];
   ok(/^disable-model-invocation: true$/m.test(bpFm),
      'setup-bypass-permissions/SKILL.md sets disable-model-invocation: the model cannot start it');
