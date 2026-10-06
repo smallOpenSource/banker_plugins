@@ -1,5 +1,6 @@
-// Tests for steps 1 and 6 of SKILL.md's "외부 좌석 전송": the folders step 1 makes and the day rule
-// of step 6 that removes the folders a cut-short run left, taken from the skill as written.
+// Tests for steps 1, 5 and 6 of SKILL.md's "외부 좌석 전송": the folders step 1 makes, the time limit
+// of step 5 and the day rule of step 6 that removes the folders a cut-short run left, taken from
+// the skill as written.
 // Run from the repo root: node --test skills/ralph-qa/references/seat-folders.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
@@ -14,6 +15,8 @@ const BLOCK = ((SKILL.split("## 외부 좌석 전송")[1] || "").match(/```bash\
 const STEP1 = (BLOCK.match(/^case "\$\(uname -s\)"[\s\S]*?echo "d=\$d o=\$o"$/m) || [])[0] || "";
 const DAY_RULE = (BLOCK.match(/^find "\$\(dirname "\$d"\)" .*$/m) || [])[0] || "";
 const PS_RULE = (SKILL.match(/하루 규칙 `(Get-ChildItem [^`]+)`/) || [])[1] || "";
+// The limit for a system without timeout (macOS), written in the block's comment.
+const PERL_LIMIT = (BLOCK.match(/^#\s+(perl -e '.*' 600)$/m) || [])[1] || "";
 
 const works = (cmd, arg = "--version") => spawnSync(cmd, [arg], { encoding: "utf8" }).status === 0;
 const SKIP = process.platform === "win32" ? "Git Bash path handling is not checked on Windows" : !works("bash") ? "no bash" : false;
@@ -68,8 +71,9 @@ function left(b, target) {
   assert.ok(existsSync(join(target, "prompt.md")), "the folder a link points to stays");
 }
 
-test("the skill still holds step 1 and both day rules these tests run", () => {
+test("the skill still holds step 1, the perl limit and both day rules these tests run", () => {
   assert.ok(STEP1, "no step 1 in the bash block");
+  assert.ok(PERL_LIMIT, "no perl limit in the bash block");
   assert.ok(DAY_RULE, "no day rule in the bash block");
   assert.ok(PS_RULE, "no PowerShell day rule");
 });
@@ -101,4 +105,29 @@ test("the PowerShell day rule removes only marked folders past a day, never a us
     { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   left(b, target);
+});
+
+// The seat CLIs start their work in a child process (codex's and gemini's npm entry points), so a
+// limit that ends only the process it started leaves the work running past the cleanup.
+test("both limits end the seat and the child it started", { skip: SKIP }, async (t) => {
+  const limits = [["timeout", "timeout -k 1 1"], ["perl", PERL_LIMIT.replace(/ 600$/, " 1").replace("sleep 10", "sleep 1")]];
+  for (const [name, limit] of limits) {
+    if (!works(name, name === "perl" ? "-v" : "--version")) continue;
+    const dir = scratch(t);
+    const pid = join(dir, "child.pid");
+    // as in the seat command, a shell waits for the limit and reads its exit status
+    const r = spawnSync("bash", ["-c", `( ${limit} sh -c 'sleep 30 & echo $! > "${pid}"; wait' ); exit $?`], { encoding: "utf8", timeout: 60000 });
+    assert.ok([124, 137].includes(r.status), `${name}: exit ${r.status} ${r.stderr}`);
+    const child = Number(readFileSync(pid, "utf8"));
+    let alive = true;
+    for (let k = 0; k < 50 && alive; k += 1) {
+      try {
+        process.kill(child, 0);
+        await new Promise((done) => setTimeout(done, 100));
+      } catch {
+        alive = false;
+      }
+    }
+    assert.equal(alive, false, `${name}: the child ${child} outlived the limit`);
+  }
 });

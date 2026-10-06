@@ -57,13 +57,13 @@ function repo(t, { commit = true } = {}) {
 
 // Runs the chain with the placeholders filled, as a session would after writing the short part
 // (here only the opening marker) and new-files.txt with its file tool.
-function step2(ctx, { base = "HEAD", list = "", env = {} } = {}) {
+function step2(ctx, { base = "HEAD", list = "", env = {}, prelude = "" } = {}) {
   writeFileSync(join(ctx.d, "prompt.md"), '<review-data id="t1">\n');
   writeFileSync(join(ctx.d, "new-files.txt"), list);
   writeFileSync(join(ctx.dir, "base.md"), "the base file\n");
   const script = CHAIN.replaceAll("<저장소>", ctx.repo).replaceAll("<기준 파일>", join(ctx.dir, "base.md"))
     .replaceAll("<기준>", base).replaceAll("<id>", "t1");
-  const r = spawnSync("bash", ["-c", `d='${ctx.d}'\n${script}`], { encoding: "utf8", env: { ...ctx.env, ...env } });
+  const r = spawnSync("bash", ["-c", `${prelude}\nd='${ctx.d}'\n${script}`], { encoding: "utf8", env: { ...ctx.env, ...env } });
   const unsent = join(ctx.d, "unsent.txt");
   return {
     status: r.status, stderr: r.stderr, counted: r.stdout.trim().split("\n").pop(),
@@ -212,7 +212,8 @@ test("a folder line or a dot in the list stops the chain and says why, since it 
     put(ctx, "scratch/deep/notes.txt", "n\n");
     const r = step2(ctx, { list });
     assert.notEqual(r.status, 0, JSON.stringify(list));
-    assert.match(r.stderr, /목록의 폴더 줄이 그 아래 새 파일을 모두 올린다/);
+    assert.match(r.stderr, /목록에 없는 새 파일이 올라간다/);
+    assert.match(r.stderr, /scratch\/conn\.json/, "the stop names the file that would go out");
     assert.ok(!r.prompt.includes("scratch/") && !r.prompt.includes("</review-data"), r.prompt);
   }
 });
@@ -235,4 +236,63 @@ test("a textconv or an external diff driver in the repo's config does not change
   r = step2(ctx);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(r.prompt.includes("+plain-2") && !r.prompt.includes("EXTERNAL-DRIVER-RAN"), r.prompt);
+});
+
+test("a list where a file and its folder overlap, or a line repeats beside a folder, still stops", { skip: SKIP }, (t) => {
+  for (const list of ["scratch/conn.json\nscratch\n", "newfeat/f.mjs\nnewfeat/f.mjs\nscratch\n"]) {
+    const ctx = repo(t);
+    put(ctx, "a.txt", "two\n");
+    put(ctx, "newfeat/f.mjs", "export const f = 1;\n");
+    put(ctx, "scratch/conn.json", "{}\n");
+    put(ctx, "scratch/secret.env", "K=v\n");
+    const r = step2(ctx, { list });
+    assert.notEqual(r.status, 0, JSON.stringify(list));
+    assert.match(r.stderr, /scratch\/secret\.env/);
+    assert.ok(!r.prompt.includes("secret.env") && !r.prompt.includes("</review-data"), r.prompt);
+  }
+  const ctx = repo(t);
+  put(ctx, "newfeat/f.mjs", "export const f = 1;\n");
+  const r = step2(ctx, { list: "newfeat/f.mjs\nnewfeat/f.mjs\n" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(sent(r, "newfeat/f.mjs"), "a repeated line alone adds nothing more");
+});
+
+test("the chain counts with the system grep, not a session function that skips non-UTF-8 files", { skip: SKIP }, (t) => {
+  // Claude Code's Bash tool defines grep as a function (an embedded ugrep with -I) that prints no
+  // count for a file holding bytes that are not UTF-8
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  writeFileSync(join(ctx.repo, "euc.txt"), Buffer.from([0x61, 0x0a]));
+  git(ctx, "add", "euc.txt");
+  git(ctx, "commit", "-qm", "euc");
+  writeFileSync(join(ctx.repo, "euc.txt"), Buffer.from([0xb0, 0xa1, 0x0a]));
+  const r = step2(ctx, { prelude: "grep() { return 1; }" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.counted, "2");
+});
+
+test("the user's color and submodule diff settings change nothing that goes out", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  const lib = join(ctx.repo, "vendor", "lib");
+  mkdirSync(lib, { recursive: true });
+  const sub = (...args) => {
+    const r = spawnSync("git", ["-C", lib, ...args], { encoding: "utf8", env: ctx.env });
+    assert.equal(r.status, 0, r.stderr);
+  };
+  sub("init", "-q");
+  writeFileSync(join(lib, "x.txt"), "one\n");
+  sub("add", "x.txt");
+  sub("commit", "-qm", "x");
+  git(ctx, "add", "vendor/lib");
+  git(ctx, "commit", "-qm", "lib");
+  writeFileSync(join(lib, "x.txt"), "NESTED-CONTENT\n");
+  sub("commit", "-qam", "y");
+  git(ctx, "config", "color.ui", "always");
+  git(ctx, "config", "diff.submodule", "diff");
+  put(ctx, "a.txt", "two\n");
+  const r = step2(ctx);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(sent(r, "a.txt"), r.prompt);
+  assert.ok(!r.prompt.includes("\u001b"), "no color codes before the lines the scanner anchors on");
+  assert.ok(!r.prompt.includes("NESTED-CONTENT") && r.prompt.includes("Subproject commit"), r.prompt);
 });

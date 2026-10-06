@@ -57,7 +57,7 @@ jobs:
           [ -n "$files" ] || { echo "no *.test.mjs found — the find pattern broke"; exit 1; }
           echo "$files"
           node --test $files
-          # 로컬 실측(node 20.20.2, 이 잡과 같은 메이저, pwsh 7 이 PATH 에 있을 때): 632 tests / 626 pass / 0 fail / 6 skip.
+          # 로컬 실측(node 20.20.2, 이 잡과 같은 메이저, pwsh 7 이 PATH 에 있을 때): 636 tests / 630 pass / 0 fail / 6 skip.
           # skip 6 은 vertical-pptx tier-2 로, 빌더(pptxgenjs·python-pptx)가 없으면 정상 skip 이다.
           # pwsh 가 없으면 setup-bypass-permissions 의 PowerShell 폴백 34건이, user namespace 가 막혀
           # `unshare -r` 이 안 되면 root 거부와 단일 파일 바인드 마운트 2건이 더 skip 된다.
