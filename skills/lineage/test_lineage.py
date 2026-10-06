@@ -2331,6 +2331,20 @@ class TestPageRedaction(_ReviewCase):
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Xy7p", page)
 
+    def test_rulebase_gate_samples_hide_reviewer_hits_whole_before_the_cut(self):
+        c = "cu" + "rl"
+        text = "가" * 480 + " " + c + " -u admin:" + self.PW + " 로 확인했습니다."
+        self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst(text, "a1")])
+        out = os.path.join(self.d, "g.html")
+        rc, err = _quiet(L.main, ["--session", self.jf, "--output", out, "--rulebase", "--redact-mode", "mask"])
+        self.assertEqual(rc, 0, err)
+        name = [p for p in os.listdir(self.d) if p.startswith(".g_") and p.endswith("reviewer-input.json")][0]
+        with open(os.path.join(self.d, name), encoding="utf-8") as f:
+            raw = f.read()
+        self.assertNotIn("Hunt", raw)
+        self.assertNotIn("admin:", raw)
+        self.assertNotIn("****", raw, "a model reads the samples: nothing is masked")
+
 
 class TestRulebaseMatches2x(unittest.TestCase):
     def test_rulebase_output_is_byte_for_byte_the_2x_output(self):

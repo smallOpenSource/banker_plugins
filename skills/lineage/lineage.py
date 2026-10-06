@@ -2306,7 +2306,8 @@ def _with_timestamp_suffix(path_str):
 
 def _gate_samples(bots, summaries, session_id, args):
     """Up to 5 bot turns as the gate's critic reads them. --rulebase keeps the 2.x shape
-    (random turns, page redaction). With reviewer summaries (the default flow) the pick is
+    (random turns); a model reads the samples, so every value is hidden whole before the cut,
+    as in part files (3.0.2). With reviewer summaries (the default flow) the pick is
     seeded by the turns, so a rerun on the same turns samples the same ones, and a sample
     names its turn and shows the head and tail the reviewer saw, fully redacted."""
     import random
@@ -2315,8 +2316,8 @@ def _gate_samples(bots, summaries, session_id, args):
         for i, t in enumerate(random.sample(bots, min(5, len(bots)))):
             s, _ = _page_summary(t, summaries, session_id, False,
                                  args.redact_extra, args.redact_mode)
-            red_s, _ = redact(s, extra=args.redact_extra, mode=args.redact_mode)
-            red_d, _ = redact(t["text"][:500], extra=args.redact_extra, mode=args.redact_mode)
+            red_s = review_redact(_MASKED.sub("[REDACTED]", s), args.redact_extra)[0]
+            red_d = review_redact(t["text"], args.redact_extra)[0][:500]
             out.append({"idx": i, "original_detail": red_d, "generated_summary": red_s})
         return out
     seed = hashlib.sha256("\x00".join(t["uuid"] for t in bots).encode()).hexdigest()
