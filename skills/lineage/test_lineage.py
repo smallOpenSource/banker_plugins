@@ -1228,14 +1228,14 @@ class TestLlmReviewHardening(_ReviewCase):
         with open(self.pack, encoding="utf-8") as f:
             self.assertIn("AKIA****", f.read(), "the page keeps --redact-mode mask")
 
-    def test_the_page_keeps_the_2x_patterns(self):
+    def test_the_rulebase_page_hides_reviewer_only_keys(self):
         ant = "sk-" + "ant-api03-" + "b" * 24
         self._write([_rec("user", "키 확인", uuid="u1"), self._asst("키는 %s 입니다." % ant, "a1")])
         out = os.path.join(self.d, "r.html")
         _quiet(L.main, ["--session", self.jf, "--output", out, "--skip-reviewer", "--rulebase"])
         name = [p for p in os.listdir(self.d) if p.startswith("r_")][0]
         with open(os.path.join(self.d, name), encoding="utf-8") as f:
-            self.assertIn(ant, f.read(), "--rulebase output is unchanged; the extra patterns are reviewer-only")
+            self.assertNotIn(ant, f.read(), "3.0.2: every page runs the reviewer patterns")
 
     def test_decisions_wrapped_in_a_code_fence_are_read(self):
         self._write(self._records())
@@ -2208,6 +2208,102 @@ class TestPatternsForPages(_ReviewCase):
                      json.dumps(json.dumps(cmd, separators=(",", ":"))),
                      json.dumps({"command": cmd}, separators=(",", ":"))):
             self.assertNotIn("Hunter22", L.review_redact(text)[0], text)
+
+
+class TestPageRedaction(_ReviewCase):
+    """3.0.2: every page (the default flow and --rulebase) hides what the reviewer patterns
+    find, whole; the page's own patterns keep --redact-mode."""
+    PW = "Hunter22" + "pw"
+
+    def _secret_records(self):
+        c = "cu" + "rl"
+        return [_rec("user", "배포 때 " + c + " -u admin:" + self.PW + " https://x 를 썼어요", uuid="u1"),
+                self._asst("확인했습니다.\n\n" + c + " -u deploy:" + self.PW + " 로 배포가 끝났습니다. 암호: Xy7pQ2mZ9k", "a1")]
+
+    def _rulebase_page(self, extra=()):
+        out = os.path.join(self.d, "r.html")
+        rc, err = _quiet(L.main, ["--session", self.jf, "--output", out, "--skip-reviewer", "--rulebase"] + list(extra))
+        name = [p for p in os.listdir(self.d) if p.startswith("r_") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, name), encoding="utf-8") as f:
+            return rc, f.read(), err
+
+    def test_page_redact_runs_the_reviewer_patterns_then_the_page(self):
+        c = "cu" + "rl"
+        red, counts = L.page_redact(c + " -u admin:" + self.PW + " 키 AKIA" "IOSFODNN7EXAMPLE", None, "mask")
+        self.assertNotIn("Hunter22", red)
+        self.assertIn("[REDACTED:CurlUser]", red)
+        self.assertIn("AKIA****MPLE", red)
+        self.assertEqual(counts, {"CurlUser": 1, "AKIA": 1})
+
+    def test_a_second_pass_changes_nothing(self):
+        c = "cu" + "rl"
+        text = (c + " -u admin:" + self.PW + " 와 암호: Xy7pQ2mZ9k, password: \"abcdefgh12\", "
+                "키 AKIA" "IOSFODNN7EXAMPLE, " + "Bear" + "er " + "Q8zQ8z" * 4)
+        for mode in ("full", "mask"):
+            once = L.page_redact(text, "acme", mode)[0]
+            self.assertEqual(L.page_redact(once, "acme", mode), (once, {}), mode)
+
+    def test_both_pages_hide_reviewer_pattern_secrets(self):
+        self._write(self._secret_records())
+        rc, page, err = self._rulebase_page()
+        self.assertEqual(rc, 0, err)
+        _quiet(self._emit)
+        rc2, page2 = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": None}])[0]
+        self.assertEqual(rc2, 0)
+        for p in (page, page2):
+            self.assertNotIn("Hunter22", p)
+            self.assertNotIn("Xy7pQ2mZ9k", p)
+            self.assertIn("[REDACTED:CurlUser]", p)
+
+    def test_mask_mode_masks_page_patterns_and_hides_reviewer_hits_whole(self):
+        c = "cu" + "rl"
+        self._write([_rec("user", "점검", uuid="u1"),
+                     self._asst(c + " -u admin:" + self.PW + " 와 키 AKIA" "IOSFODNN7EXAMPLE 를 썼습니다.", "a1")])
+        rc, page, err = self._rulebase_page(["--redact-mode", "mask"])
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Hunt", page)
+        self.assertNotIn("admin:", page)
+        self.assertIn("[REDACTED:CurlUser]", page)
+        self.assertIn("AKIA****MPLE", page)
+        self.assertNotIn("[REDACTED:CurlUser]]", page)
+
+    def test_agent_session_and_tool_names_are_redacted_on_the_page(self):
+        ant = "sk-" + "ant-api03-" + "b" * 24
+        t1 = _turn("user", "안녕하세요", session="s1")
+        t1["session_name"] = "keys-" + ant
+        t2 = _turn("agent", "결과를 정리했습니다.", uuid="g1", session="s1", tools={"deploy-acme": 2})
+        t2["agent_from"] = "runner " + ant
+        rows, counts, _, _ = L.render_rows([t1, t2], "s1", "acme", "full", False, all_sessions=True)
+        page = "\n".join(rows)
+        self.assertNotIn("ant-api03", page)
+        self.assertNotIn("acme", page)
+        self.assertGreaterEqual(counts.get("AnthropicKey", 0), 2)
+
+    def test_the_residual_check_names_what_a_page_still_holds(self):
+        c = "cu" + "rl"
+        self.assertEqual(L._residual_secrets("<div>" + c + " -u admin:" + self.PW + "</div><p>ok</p>"),
+                         {"CurlUser": 1})
+        self.assertEqual(L._residual_secrets("<div>[REDACTED:CurlUser] &amp; ok</div>"), {})
+
+    def test_a_long_page_of_secrets_renders_in_linear_time_and_leaves_none(self):
+        import importlib.util
+        import time
+        c = "cu" + "rl"
+        recs = []
+        for k in range(150):
+            ts = "2026-08-09T%02d:%02d:00Z" % (10 + k // 60, k % 60)
+            recs.append(_rec("user", "단계 %d 를 실행해 주세요" % k, ts=ts, uuid="u%d" % k))
+            recs.append(self._asst("실행했습니다.\n\n%s -u svc%d:%s https://x 로 확인했습니다." % (c, k, self.PW),
+                                   "a%d" % k, ts=ts.replace(":00Z", ":30Z")))
+        self._write(recs)
+        start = time.monotonic()
+        rc, page, err = self._rulebase_page()
+        took = time.monotonic() - start
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Hunter22", page)
+        self.assertNotIn("still holds", err)
+        if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets scans a temp file per call
+            self.assertLess(took, 30)
 
 
 class TestRulebaseMatches2x(unittest.TestCase):
