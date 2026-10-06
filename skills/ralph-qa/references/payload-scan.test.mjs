@@ -113,12 +113,13 @@ test("curl credentials and a Dockerfile ENV with a space are caught, look-alike 
 
 test("curl's user flag is caught in a continued line and with an odd user, a date format or an id substitution is not", () => {
   // root:root (docker) stays caught: telling a user:group from a user:password would let admin:admin through.
+  const cu = "cu" + "rl -u ";
   for (const line of ["curl -u +admin:" + "Hunter22pw x", "curl -u $(whoami):" + "Hunter22pw x", "  -u admin:" + "Hunter22pw \\",
-    "curl -u admin:" + "admin x"]) {
+    "curl -u admin:" + "admin x", cu + '"1000:' + '1000pw" x', cu + '"1000' + ':1000:pw1" x']) {
     assert.ok(scan(line).count > 0, `not caught: ${line}`);
   }
   for (const line of ["docker run -u $(id -u):$(id -g) img", 'docker run -u "$(id -u):$(id -g)" img', "date -u +%H:%M:%S",
-    "date -u '+%H:%M:%S'"]) {
+    "date -u '+%H:%M:%S'", 'docker run -u "1000:1000" img', "user: -u '0:0'"]) {
     assert.equal(scan(line).count, 0, `caught: ${line}`);
   }
 });

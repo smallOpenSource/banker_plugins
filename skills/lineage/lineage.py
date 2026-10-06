@@ -1748,12 +1748,13 @@ def _kept_by_flag(pack, x):
 
 
 def _review_result(pack, merged, args):
-    """(turns to render, their summaries, cache writes, counts, prior redactions) from the
-    pack and the decisions: a reviewer's value first, then the pack's cached one, then the
-    rules'. A keep flag outranks a reviewer's `false`; the cache still gets what was said."""
-    turns, summaries, writes, prior = [], {}, [], {}
+    """(turns to render, their summaries, cache writes, counts, prior redactions, the ids of
+    turns the user typed that the reviewers dropped) from the pack and the decisions: a
+    reviewer's value first, then the pack's cached one, then the rules'. A keep flag outranks
+    a reviewer's `false`; the cache still gets what was said."""
+    turns, summaries, writes, prior, typed = [], {}, [], {}, []
     stats = {"restored": 0, "dropped": 0, "reviewer": 0, "rule": 0, "ignored": 0,
-             "hidden": 0, "flag-kept": 0, "user-dropped": []}
+             "hidden": 0, "flag-kept": 0}
     for x in pack["turns"]:
         d = merged.get(x["id"], {})
         llm_keep = _first(d.get("keep"), x["llm"].get("keep"))
@@ -1761,7 +1762,7 @@ def _review_result(pack, merged, args):
         stats["flag-kept"] += held
         keep = bool(_first(None if held else llm_keep, x["rule"]["keep"]))
         if not keep and x["role"] == "user" and x["rule"]["keep"] and not x.get("meta"):
-            stats["user-dropped"].append(x["id"])  # typed by the user: the rules keep these
+            typed.append(x["id"])               # typed by the user: the rules keep these
         llm_summary = _reviewer_summary(x, d, args, stats)
         if x["id"] in merged:                    # reviewed, even if left to the rules
             writes.append((x["id"], x.get("session") or pack.get("source"), x["text"],
@@ -1770,7 +1771,7 @@ def _review_result(pack, merged, args):
         stats["dropped"] += x["rule"]["keep"] and not keep
         if keep:
             _show(x, llm_summary, turns, summaries, stats, prior)
-    return turns, summaries, writes, stats, prior
+    return turns, summaries, writes, stats, prior, typed
 
 
 def _gate_from_pack(args, pack):
@@ -1824,6 +1825,40 @@ def _remove_review_files(pack_path, pack):
               file=sys.stderr)
 
 
+def _samples_left_unread(pack_path, args):
+    """True, with the reason, when a gated run left its samples beside the pack and this run
+    gives neither a verdict path nor --skip-reviewer: it would pass over that run's verdict."""
+    left = pack_path.with_name(f"{pack_path.stem}.reviewer-input.json")
+    if left.exists() and not (args.reviewer_output or args.skip_reviewer):
+        _bad(f"{left} was left by a gated run; give its --reviewer-output again, or --skip-reviewer")
+        return True
+    return False
+
+
+def _review_output(args, pack):
+    """The page path: the pack's when this run gives none, else the given one with the pack's
+    stamp, so the gate's runs write one page."""
+    if args.output is None:
+        return pack.get("output") or "work/lineage-review.html"
+    return _with_pack_stamp(args.output, pack.get("output"))
+
+
+def _report_review(stats, turns, pack, typed):
+    """What the render took from the reviewers, and the turns typed by the user they dropped."""
+    print(f"[lineage] review applied: shown={len(turns)}/{len(pack['turns'])} "
+          f"restored={stats['restored']} dropped={stats['dropped']} "
+          f"summaries reviewer={stats['reviewer']} rule={stats['rule']}", file=sys.stderr)
+    if stats["ignored"]:
+        print(f"[lineage] note: {stats['ignored']} summaries for turns the page shows "
+              "in full were ignored", file=sys.stderr)
+    if stats["flag-kept"]:
+        print(f"[lineage] note: {stats['flag-kept']} turn(s) a reviewer marked keep: false "
+              "stay, as --keep-trivia or --keep-tool-only asked", file=sys.stderr)
+    if typed:
+        print(f"[lineage] WARN: reviewers dropped {len(typed)} typed user turn(s): {', '.join(typed[:10])}"
+              f"{' ...' if len(typed) > 10 else ''}; tell the user", file=sys.stderr)
+
+
 def apply_review(args):
     """Render from a review pack and its decisions; cache the reviewers' values and, after
     a good render, remove the review files."""
@@ -1835,19 +1870,10 @@ def apply_review(args):
     if merged is None:
         return 2
     _check_pack(pack, merged, args)
-    left = pack_path.with_name(f"{pack_path.stem}.reviewer-input.json")
-    if left.exists() and not (args.reviewer_output or args.skip_reviewer):
-        _bad(f"{left} was left by a gated run; give its --reviewer-output again, or --skip-reviewer")
+    if _samples_left_unread(pack_path, args):
         return 2
-    turns, summaries, writes, stats, prior = _review_result(pack, merged, args)
-    if args.output is None:
-        args.output = pack.get("output") or "work/lineage-review.html"
-    else:                                         # the pack's stamp: one page across the gate's runs
-        args.output = _with_pack_stamp(args.output, pack.get("output"))
-    if stats["user-dropped"]:
-        ids = stats["user-dropped"]
-        print(f"[lineage] WARN: reviewers dropped {len(ids)} typed user turn(s): {', '.join(ids[:10])}"
-              f"{' ...' if len(ids) > 10 else ''}; tell the user", file=sys.stderr)
+    turns, summaries, writes, stats, prior, typed = _review_result(pack, merged, args)
+    args.output = _review_output(args, pack)
     if stats["hidden"]:
         prior["reviewer-summary"] = stats["hidden"]
     try:
@@ -1863,15 +1889,7 @@ def apply_review(args):
         for w in writes:
             write_llm_cache(*w)
         _remove_review_files(pack_path, pack)
-    print(f"[lineage] review applied: shown={len(turns)}/{len(pack['turns'])} "
-          f"restored={stats['restored']} dropped={stats['dropped']} "
-          f"summaries reviewer={stats['reviewer']} rule={stats['rule']}", file=sys.stderr)
-    if stats["ignored"]:
-        print(f"[lineage] note: {stats['ignored']} summaries for turns the page shows "
-              "in full were ignored", file=sys.stderr)
-    if stats["flag-kept"]:
-        print(f"[lineage] note: {stats['flag-kept']} turn(s) a reviewer marked keep: false "
-              "stay, as --keep-trivia or --keep-tool-only asked", file=sys.stderr)
+    _report_review(stats, turns, pack, typed)
     return rc
 
 
