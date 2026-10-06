@@ -221,22 +221,27 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
 
     if extra:
         for kw in [k.strip() for k in extra.split(",") if k.strip()]:
-            pat = re.compile(re.escape(kw), re.IGNORECASE)
-            n = len(pat.findall(out))
-            if n:
-                counts[f"custom:{kw}"] = n
-                out = pat.sub("[REDACTED]", out)
+            # a marker an earlier pass left stays whole: a keyword inside its name is no secret
+            pat = re.compile(r"\[REDACTED(?::[^\]\s]*)?\]|" + re.escape(kw), re.IGNORECASE)
+            hits = []
+            out = pat.sub(lambda m: m.group(0) if m.group(0).upper().startswith("[REDACTED")
+                          else hits.append(1) or "[REDACTED]", out)
+            if hits:
+                counts[f"custom:{kw}"] = len(hits)
     return out, counts
 
 
 # A character of curl's user before the colon: no space, : or =, and a quote, backtick or ( only
-# where no flag follows (-u, -Xu or --user, as either branch below starts). A match starts only
+# where no flag follows (-u, -Xu or --user, as either branch below starts) and no comma and quote
+# follow (the end of an item in an argument list written without spaces). A match starts only
 # there, so no user runs past the place where the next match may start: a long run stays linear,
 # and a user joined to a variable by a - ("$USER"-bot) is read whole.
-_CU_USER = r"(?:[^\s:=\"'`(]|[\"'`(](?!-(?:u|[A-Za-z0-9]{1,6}u[\s\"']|-user[\s=\"'])))"
+_CU_USER = (r"(?:[^\s:=\"'`(]|[\"'`(](?!-(?:u|[A-Za-z0-9]{1,6}u[\s\"']|-user[\s=\"'])"
+            r"|,\\{0,7}[\"']))")
 # The quotes that may open the value, bare or escaped (\" and \\\" in a quoted command, '\'' and
-# '"'"' from bash and shlex.quote, ^" in cmd, `" in PowerShell, $' in bash): up to six in a row.
-_CU_LEAD = r"(?:[\\^`$]{0,7}[\"']){0,6}"
+# '"'"' from bash and shlex.quote, ^" in cmd, `" in PowerShell, $' in bash): up to six in a row,
+# none that closes an item of an argument list.
+_CU_LEAD = r"(?:[\\^`$]{0,7}[\"'](?!,\\{0,7}[\"'])){0,6}"
 # Values read as a whole token, past the quotes that open them, that hold no user and password: a
 # uid:gid (docker), a date format (date -u +%H:%M), two references ($UID:$GID, ${UID}:${GID},
 # %USER%:%PASS%, $(id -u):$(id -g), whose inner `-u)` is a match of its own) and a path default
@@ -249,14 +254,21 @@ _CU_SKIP = (r"(?!" + _CU_LEAD + r"(?:\+[\"']?%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" 
 
 # Extra patterns for text a reviewer model reads (part files) and nothing else: the page
 # and --rulebase keep the patterns above, so their output stays as it was.
+# A value a redaction already replaced: a marker ([REDACTED...]) or a mask (abcd****wxyz). The
+# reviewer patterns leave it, so a second pass over redacted text changes nothing.
+_NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"]*\*{4})"
+
 REVIEW_SECRET_PATTERNS = [
     ("AnthropicKey", re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}")),
     ("OpenAIKey", re.compile(r"(?<![A-Za-z0-9-])sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}")),
     ("GoogleKey", re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{35}")),
     # bounded repeats: a long run of `key` or `a.` would otherwise take quadratic time
     ("HexKey", re.compile(r"(?i)(?:key|token|secret)[\w-]{0,100}\s*[:=]\s*['\"]?[0-9a-f]{32,}")),
+    # a value, not a path, a variable or a redaction ($PWD is a variable, PGPASSWORD a name);
+    # markdown, a table cell or a bracket that closes after the value stays outside the match
     ("PasswordBare", re.compile(
-        r"(?i)(?:password|passwd|passcode|pwd|암호|비번|비밀\s?번호|패스워드)\s*[:=]\s*[^\s'\"]{6,}")),
+        r"(?i)(?<!\$)(?:password|passwd|passcode|pwd|암호|비번|비밀\s?번호|패스워드)\s*[:=]\s*"
+        r"(?![/~$])" + _NOT_REDACTED + r"(?=[^\s'\"]{6})[^\s'\"]*[^\s'\"`|*)]")),
     # the password runs to the last @ before the host: it may hold an @ of its own
     ("UrlCredential", re.compile(r"(?i)[a-z][a-z0-9+.-]{0,30}://[^\s:@/]*:[^\s/]{3,}@")),
     ("Bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}")),
@@ -271,15 +283,16 @@ REVIEW_SECRET_PATTERNS = [
     # curl's -u and --user flags, alone or last in a bundle (-su, -4u), with a user and password
     # after a space, an = or nothing, quoted together or apart ("user":"pw"), with quotes bare,
     # escaped or nested (_CU_LEAD) or none, in inline code or parentheses, or as two items of an
-    # argument list. An empty user with a token, and a
+    # argument list (quotes bare or escaped, with or without spaces; a host:/path is left). An
+    # empty user with a token, and a
     # long key as the user with no password, count too. The separators share no character with
     # the user name, so a long run of them stays linear. The values _CU_SKIP names and a
     # host:/path (rsync) are left.
     ("CurlUser", re.compile(
         r"(?<![^\s\"'`(])(?:-u\s*|-[A-Za-z0-9]{1,6}u\s+|--user(?:\s+|=))" + _CU_SKIP + _CU_LEAD
         + r"(?:" + _CU_USER + r"*:(?!/)\S{3,}|" + _CU_USER + r"{15,}:(?=[\s\"'`).,;\\]|$))"
-        r"|([\"'])(?:-[A-Za-z0-9]{0,6}u|--user)\1\s*,\s*([\"'])" + _CU_SKIP
-        + r"(?:" + _CU_USER + r"*:[^\s\"']{3,}|" + _CU_USER + r"{15,}:)\2")),
+        r"|(\\{0,7}[\"'])(?:-[A-Za-z0-9]{0,6}u|--user)\1\s*,\s*(\\{0,7}[\"'])" + _CU_SKIP
+        + r"(?:" + _CU_USER + r"*:(?!/)[^\s\"']{3,}|" + _CU_USER + r"{15,}:)\2")),
 ]
 
 

@@ -1874,7 +1874,9 @@ class TestLlmReviewHardening(_ReviewCase):
                   " -u):$(", "(-u$(a", "'-u", '"-u", "', " -u %a%:", " -u 1:1", "(-u a`",
                   " -u " + bs + '"', '"-u' + bs + '"', " -u ^" + '"', " -u $'", " -u " + bs * 3 + "'", '"-u""', " -u a" + bs + '"',
                   " -ua$" + '"', "'-u'" + bs + "''", " -u '" + '"' + "'" + '"', '"-u"a', " -u " + bs * 8 + '"', "`-u`a",
-                  '"-a', ' -u "-a', '"-a"-u', "(-xu ", '"--user"')
+                  '"-a', ' -u "-a', '"-a"-u', "(-xu ", '"--user"',
+                  '"-xu","a', '"--user","a', "'-xu','a", "'--user','a", '"-u","', '","-u',
+                  bs + '"-u' + bs + '",' + bs + '"')
         for piece in pieces:
             start = time.monotonic()
             pat.sub("[R]", piece * 40000)
@@ -2158,6 +2160,54 @@ class TestLlmReviewGateReruns(_ReviewCase):
         (rc, _text), err = _quiet(self._apply, [{"id": "u1", "keep": False}, {"id": "m1", "keep": False}])
         self.assertEqual(rc, 0)
         self.assertIn("reviewers dropped 1 typed user turn(s): u1", err)
+
+
+class TestPatternsForPages(_ReviewCase):
+    """3.0.2: the reviewer patterns redact pages too, so what they hide by mistake shows to
+    people; a second pass over redacted text must change nothing."""
+    PW = "Hunter22" + "pw"
+
+    def test_password_bare_leaves_paths_variables_and_markdown(self):
+        pw = self.PW
+        for keep in ("docker run --rm -v $PWD:/workspace img", "export OLDPWD=/home/user",
+                     "password=$DB_PASSWORD ./run", "PWD=~/src make", "password: ******"):
+            self.assertEqual(L.review_redact(keep)[0], keep, keep)
+        self.assertEqual(L.review_redact("**password: " + pw + "**")[0], "**[REDACTED:PasswordBare]**")
+        self.assertEqual(L.review_redact("`PGPASSWORD=" + pw + "`")[0], "`PG[REDACTED:PasswordBare]`")
+        self.assertEqual(L.review_redact("(passwd=" + pw + ")")[0], "([REDACTED:PasswordBare])")
+
+    def test_password_bare_still_hides_env_style_names(self):
+        pw = self.PW
+        for shape in ("PGPASSWORD=" + pw + " psql -h db", "MYSQL_PWD=" + pw, "DB_PASSWORD=" + pw,
+                      "SPRING_DATASOURCE_PASSWORD=" + pw, "password: " + pw, "| 암호: " + pw + " |"):
+            self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
+        self.assertNotIn("한글비번", L.review_redact("비밀번호: 한글비번1234")[0])
+
+    def test_password_bare_skips_markers_and_masks(self):
+        for done in ('암호: ****h12"', "password: [REDACTED]", "pwd=[REDACTED:entropy]"):
+            self.assertEqual(L.review_redact(done)[0], done, done)
+
+    def test_extra_keywords_leave_marker_names_whole(self):
+        red, counts = L.redact("[REDACTED:CurlUser] 와 user 와 [REDACTED]", extra="user,redacted")
+        self.assertEqual(red, "[REDACTED:CurlUser] 와 [REDACTED] 와 [REDACTED]")
+        self.assertEqual(counts, {"custom:user": 1})
+
+    def test_curl_user_keeps_compact_argument_lists(self):
+        for cmd in (["docker", "run", "-u", "1000:1000", "img"], ["date", "-u", "+%H:%M:%S"],
+                    ["sort", "-u", "-o", "out.txt", "a:b"], ["docker", "exec", "-u", "root", "c", "sh", "-c", "a:b"],
+                    ["ps", "-u", "1000", "-o", "pid:10"], ["rsync", "-avu", "host:/srv/app", "."],
+                    ["mktemp", "-u", "${TMPDIR:-/tmp}/x"]):
+            for text in (json.dumps(cmd, separators=(",", ":")), json.dumps({"command": cmd}, separators=(",", ":")),
+                         json.dumps(cmd), repr(cmd), repr(cmd).replace(" ", "")):
+                self.assertEqual(L.review_redact(text)[0], text, text)
+
+    def test_curl_user_hides_compact_and_escaped_argument_lists(self):
+        c = "cu" + "rl"
+        cmd = [c, "-s", "-u", "admin:" + self.PW, "https://x"]
+        for text in (json.dumps(cmd, separators=(",", ":")), json.dumps(cmd), repr(cmd), repr(cmd).replace(" ", ""),
+                     json.dumps(json.dumps(cmd, separators=(",", ":"))),
+                     json.dumps({"command": cmd}, separators=(",", ":"))):
+            self.assertNotIn("Hunter22", L.review_redact(text)[0], text)
 
 
 class TestRulebaseMatches2x(unittest.TestCase):
