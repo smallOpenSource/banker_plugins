@@ -248,6 +248,8 @@ try {
      && /검토자 패턴은 모든 페이지\(기본 흐름과 `--rulebase`\)에도 건다/.test(linSkill) && /비밀을 가린 턴은 2\.x 와 다를 수 있다/.test(linSkill)
      && /규칙 요약은 가린 본문에서 자른다/.test(linSkill) && /값이 `\/`, `~`, `\$` 로 시작하는 password 값/.test(linSkill)
      && !/페이지는 이 패턴을 쓰지 않으므로/.test(linSkill)
+     && /`the page still holds secret-like text \(<패턴>=N\)` WARN 을 내면, 패턴 이름과 수를 사용자에게 알리고 공유하기 전에 페이지를 확인하라고 말한다/.test(linSkill)
+     && /`--rulebase` 실행이 `still holds secret-like text` WARN 을 내면 5단계처럼 사용자에게 알린다/.test(linSkill)
      && /기본값이 콜론 없는 경로\(`\/`, `~`, `\.` 로 시작\)인 변수/.test(linSkill) && /기본값이 경로가 아닌 변수\(`\$\{UID:-1000\}:\$\{GID:-1000\}`, `\$\{API_KEY:-…\}`\)는 가린다/.test(linSkill)
      && /`ls -lu a:bcd`/.test(linSkill) && !/`ls -lu a:b`/.test(linSkill),
      'lineage: the gate rerun keeps its paths and page, the critic has a stated rule, a refused list counts as a failure, re-reviews stop at two, and dropped user turns are named');
