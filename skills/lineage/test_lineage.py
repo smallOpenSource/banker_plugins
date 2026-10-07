@@ -1077,6 +1077,33 @@ class TestLlmReviewSources(_ReviewCase):
         self.assertEqual(rc, 0)
         self.assertEqual(text.count("같은 질문입니다"), 1, "only the decided twin is dropped")
 
+    def test_stdin_turn_ids_give_no_hash_of_the_text(self):
+        text = "password=" + "Hunter22" + "pw"
+        recs = [_rec("user", text, ts="2026-08-09T10:00:00Z"),
+                self._asst("확인했습니다.", "x1", ts="2026-08-09T10:00:01Z")]
+        old = sys.stdin
+        sys.stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in recs))
+        try:
+            rc = _quiet(L.main, ["--from-transcript", "-", "--emit-review", self.pack])[0]
+        finally:
+            sys.stdin = old
+        self.assertEqual(rc, 0)
+        with open(self.pack, encoding="utf-8") as f:
+            ids = [x["id"] for x in json.load(f)["turns"]]
+        self.assertNotIn(hashlib.sha256(text.encode()).hexdigest()[:16], ids, "a reader could test guesses on it")
+        key = pathlib.Path(self.cache) / "stdin-id.key"
+        self.assertTrue(key.exists())
+        if os.name == "posix":
+            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+
+    def test_a_stdin_id_key_lasts_one_run_when_the_cache_folder_cannot_be_made(self):
+        blocker = os.path.join(self.d, "not-a-folder")
+        open(blocker, "w").close()
+        L.CACHE_BASE = pathlib.Path(blocker) / "lineage"
+        first, second = L._stdin_id_key(), L._stdin_id_key()
+        self.assertEqual(len(first), 32)
+        self.assertNotEqual(first, second, "nothing stored: each run has a key of its own")
+
     def test_all_sessions_keeps_each_turns_session_for_the_dividers(self):
         a = os.path.join(self.d, "aaaa1111.jsonl")
         b = os.path.join(self.d, "bbbb2222.jsonl")
@@ -2185,15 +2212,32 @@ class TestPatternsForPages(_ReviewCase):
 
     def test_password_bare_skips_markers_and_masks(self):
         for done in ('암호: ****h12"', "password: [REDACTED]", "pwd=[REDACTED:entropy]",
-                     "**password: ab****cd**", "(pwd=********)", "password=abcd****wxyz"):
+                     "**password: ab****cd**", "(pwd=********)", "password=abcd****wxyz", "password=********",
+                     "password=****1234**"):
             self.assertEqual(L.review_redact(done)[0], done, done)
 
     def test_password_bare_hides_a_value_that_is_more_than_a_mask(self):
         pw = self.PW
         for shape in ("Password=" + pw + ";Server=db;Key=****", "user=bob,password=" + pw + ",card=****4242",
                       "Password=****;Server=db;Key=" + pw, "DB_PASSWORD=" + "Hunter" + "****" + "22pw",
-                      "password=" + pw + "****"):
+                      "password=" + pw + "****", "Server=db;User Id=sa;Password=********;ApiKey=" + pw,
+                      "user=bob&password=********&token=" + pw, "password=*****" + pw, "password=****)" + pw,
+                      "password=****|" + pw):
             self.assertNotIn("Hunter", L.review_redact(shape)[0], shape)
+
+    def test_a_password_after_a_key_shaped_user_is_hidden(self):
+        c = "cu" + "rl"
+        pw = self.PW
+        for key in ("sk-" + "proj-" + "a1B2c3D4e5F6g7H8i9J0k1", "sk-" + "ant-api03-" + "b" * 24, "AI" + "za" + "c" * 35):
+            for text in (c + " -u " + key + ":" + pw + " https://x", c + " --user=" + key + ":" + pw + " https://x",
+                         c + " -u '" + key + ":" + pw + "' https://x", "https://" + key + ":" + pw + "@host.io/a",
+                         json.dumps([c, "-u", key + ":" + pw, "https://x"], separators=(",", ":"))):
+                for red in (L.review_redact(text)[0], L.page_redact(text, None, "mask")[0]):
+                    self.assertNotIn("Hunter22", red, text)
+        for text in ("postgresql://sk-analytics-readonly-user:" + pw + "@10.0.0.5:5432/dw",
+                     c + " -u sk-batch-operator-service:" + pw + " https://api.internal/v1/jobs"):
+            for red in (L.review_redact(text)[0], L.page_redact(text, None, "full")[0]):
+                self.assertNotIn("Hunter22", red, text)
 
     def test_password_bare_takes_linear_time_on_runs_of_its_pieces(self):
         import time
@@ -2331,6 +2375,7 @@ class TestPageRedaction(_ReviewCase):
         self.assertEqual(rc, 0, err)
         self.assertRegex(err, r"still holds secret-like text \([^)]*PasswordBare=\d")
         self.assertIn("check the page before sharing it", err)
+        self.assertIn("--rebuild-summaries", err)
         self.assertNotIn("a lineage bug", err)
 
     def test_a_long_page_of_secrets_renders_in_linear_time_and_leaves_none(self):
