@@ -93,5 +93,8 @@
   "0.15.1": [
     "banker:lineage",
     "banker:ralph-qa"
+  ],
+  "0.15.2": [
+    "banker:lineage"
   ]
 }

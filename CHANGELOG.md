@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.2] - 2026-10-07
+
+### Fixed
+- **lineage 3.0.2: 모든 페이지가 검토자 패턴으로 비밀을 가린다.** 0.15.1 까지 HTML 페이지(기본 흐름과 `--rulebase`)는 페이지 패턴만 써서, 파트 파일에서 가린 `curl -u 사용자:비밀번호`, `암호: 값`, Anthropic, OpenAI, Google 키 같은 값이 페이지에 그대로 남았다.\
+  이제 페이지의 본문, 요약, 접힌 요약, 에이전트 이름, 세션 이름과 `--rulebase` 게이트 샘플, 기본 흐름 묶음이 검토자 패턴을 먼저 지난다. 검토자 패턴이 찾은 값은 `--redact-mode mask` 여도 전부 가린다. 규칙 요약은 가린 본문에서 잘라, 자른 자리에 비밀 조각이 남지 않는다. 페이지의 도구 이름에서도 `--redact-extra` 키워드를 가리고, 세션 제목에 키 모양(Anthropic, OpenAI 키 같은 것)이 있으면 출력 파일 이름을 세션 id 로 짓는다.\
+  렌더 뒤 페이지를 다시 훑어 남은 것이 있으면 `the page still holds secret-like text` WARN 을 내고, 스킬은 이 WARN 을 사용자에게 알린다(마크다운으로 꾸민 `**Password**: 값` 처럼 패턴이 놓친 값). 그 값을 `LINEAGE_REDACT_EXTRA` 에 넣어 다시 만들면 가려진다(`--rulebase` 는 `--rebuild-summaries` 도 준다).\
+  `--rulebase` 출력은 검토자 패턴에 걸리지 않는 턴에서 2.x 와 같다. 요약기 버전을 올려 0.15.1 까지 만든 요약 캐시는 쓰지 않는다. 묶음 형식이 바뀌어 0.15.1 이 만든 묶음은 `--emit-review` 부터 다시 한다. 검토자 결정 캐시는 그대로 쓴다.
+- **lineage 검토자 패턴이 흔한 글을 덜 가린다.** `$PWD:/workspace`, `OLDPWD=/home/...`, `password=$DB_PASSWORD` 처럼 값이 경로나 변수인 꼴, 값 뒤의 마크다운 `**`, 표의 `|`, 닫는 백틱과 괄호, 공백 없는 JSON 인자 목록(`["docker","run","-u","1000:1000"]`), 인자 목록 안의 `host:/path` 를 가리지 않는다. 이미 가린 표식(`-u [REDACTED:JWT]`, `https://[REDACTED:GitHubPAT]@github.com`)과 값 전체가 마스크 꼴(`abcd****wxyz`)인 password 값도 다시 가리지 않는다.\
+  `PGPASSWORD=`, `MYSQL_PWD=` 같은 환경 변수의 비밀번호는 그대로 가린다. 0.15.1 이 놓치던 두 겹 JSON 안의 `--user` 인자 목록도 가린다. `--redact-extra` 키워드가 가림 표식 이름을 깨지 않는다.
+- **lineage 가 stdin 기록의 턴 id 로 비밀번호를 맞혀 볼 길을 두지 않는다.** `--from-transcript -` 로 넣은 기록의 턴 id 는 원문의 솔트 없는 해시라, 파트 파일을 읽는 모델이 id 로 약한 비밀번호를 맞혀 볼 수 있었다(3.0.0 부터).\
+  이제 캐시 폴더의 무작위 키(`stdin-id.key`, 0600)로 HMAC 한다. stdin 으로 넣은 기록의 캐시는 한 번 다시 만들어진다.
+
 ## [0.15.1] - 2026-10-06
 
 ### Fixed
