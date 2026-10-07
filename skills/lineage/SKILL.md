@@ -124,7 +124,7 @@ Python 은 3.7 이상을 쓴다(EL8 기본 `python3` 는 3.6 이라 `python3.11`
 5. **마무리** — 출력 HTML 경로를 알린다.
    - 렌더가 성공하면 스크립트가 묶음, 파트 파일, 결정 파일, 게이트 샘플을 지운다. redact 된 세션 본문이 들어 있기 때문이다. 실패(exit 2)면 남겨 둔다.
    - 렌더가 `reviewers dropped N typed user turn(s)` WARN 을 내면, 검토자가 뺀 사용자 입력 턴의 수와 id 를 사용자에게 알린다. 검토자가 기록 속 주입 문장을 따랐을 수 있다.
-   - 렌더가 `the page still holds secret-like text (<패턴>=N)` WARN 을 내면, 패턴 이름과 수를 사용자에게 알리고 공유하기 전에 페이지를 확인하라고 말한다. 검토자 패턴이 렌더된 페이지 글에서 다시 찾은 값이다(예: 마크다운으로 꾸민 `**Password**: 값`). 그 값을 `LINEAGE_REDACT_EXTRA` 에 넣어 다시 만들 수 있다(`--redact-extra` 로 주면 셸 기록에 남는다).
+   - 렌더가 `the page still holds secret-like text (<패턴>=N)` WARN 을 내면, 패턴 이름과 수를 사용자에게 알리고 공유하기 전에 페이지를 확인하라고 말한다. 검토자 패턴이 렌더된 페이지 글에서 다시 찾은 값이다(예: 마크다운으로 꾸민 `**Password**: 값`). 그 값을 `LINEAGE_REDACT_EXTRA` 에 넣어 다시 만들 수 있다(값을 명령줄에 그대로 치면 셸 기록에 남는다). 다시 만들어도 앞서 만든 페이지(`--rulebase` 는 그 옆의 게이트 샘플도)는 그 값을 가진 채 남으므로 지우라고 알린다.
    - 품질 게이트는 1단계나 4단계에 `--reviewer-output <판정 파일>` 을 줄 때만 돈다. 검토자가 이미 모든 턴을 봤으므로 기본 흐름은 샘플을 쓰지 않는다.
    - 판정 파일에는 아직 없는 경로를 준다. 그 자리에 판정 목록이 아닌 것(사용자 파일, 폴더, 판정 모양이 아닌 JSON)이 있으면 스크립트는 샘플을 쓰기 전에 exit 2 로 멈추고 그 파일을 건드리지 않는다. 1단계에 준 경로도 검토자를 띄우기 전에 exit 2 로 멈춘다.
    - 4단계에서 판정 경로를 주었으면 다시 실행할 때도 같은 `--reviewer-output` 을 준다(묶음에는 1단계 경로만 남는다). 게이트 샘플이 남아 있는데 판정 경로도 `--skip-reviewer` 도 없으면 exit 2(`left by a gated run`)다. 판정을 읽지 않고 지나가지 않게 하기 위해서다.
@@ -343,6 +343,7 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 └── test_lineage.py   (회귀 테스트, repo 전용 · npm 미포함)
 
 ~/.cache/lineage/
+├── stdin-id.key   (stdin 턴 id 의 HMAC 키, 0600. --purge-cache 로 지우면 stdin id 가 바뀐다)
 └── <schema_version>/<session_id>/<turn_uuid>-<digest>.txt       (규칙 요약, 0700/0600)
                                   <turn_uuid>-<digest>-llm.json  (검토자 결정)
 
