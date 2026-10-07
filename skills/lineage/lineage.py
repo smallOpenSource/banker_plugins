@@ -11,6 +11,7 @@ Auto-discovery assumes Claude Code's ~/.claude/projects/<encoded-cwd>/ layout.
 """
 import argparse
 import hashlib
+import hmac
 import html
 import json
 import math
@@ -255,13 +256,16 @@ _CU_SKIP = (r"(?!" + _CU_LEAD + r"(?:\+[\"']?%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" 
 # Extra patterns for text a reviewer model reads (part files) and nothing else: the page
 # and --rulebase keep the patterns above, so their output stays as it was.
 # A value a redaction already replaced: a marker ([REDACTED...]) or a value that is only a mask
-# (abcd****wxyz: up to 4 characters, a run of *, up to 4 characters, then the value ends). The
+# (abcd****wxyz: up to 4 characters, a whole run of *, up to 4 characters, then the value ends; a
+# closing `, |, * or ) may stand between, as in **password: ****h12**). The
 # reviewer patterns leave it, so a second pass over redacted text changes nothing. The check reads
 # those few characters, not the rest of the token, so a long run of keywords stays linear.
-_NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"*]{0,4}\*{4,}[^\s'\"*]{0,4}(?![^\s'\"`|*)]))"
+_NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"*]{0,4}\*{4,}(?!\*)[^\s'\"*]{0,4}(?=[`|*)]*(?:[\s'\"]|$)))"
 # After a colon: not the colon of a marker an earlier pass left ([REDACTED:GitHubPAT]), which
-# splits no user from a password.
+# splits no user from a password. A whole marker is one piece of a user: a key an earlier pattern
+# of this pass hid ([REDACTED:OpenAIKey]:pw) still has its password hidden.
 _NOT_MARKED = r"(?<!\[REDACTED:)"
+_MARKER_UNIT = r"\[REDACTED:\w+\]"
 
 REVIEW_SECRET_PATTERNS = [
     ("AnthropicKey", re.compile(r"(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}")),
@@ -276,7 +280,7 @@ REVIEW_SECRET_PATTERNS = [
         r"(?![/~$])" + _NOT_REDACTED + r"(?=[^\s'\"]{6})[^\s'\"]*[^\s'\"`|*)]")),
     # the password runs to the last @ before the host: it may hold an @ of its own. A marker is
     # no user or password, so a second pass leaves a token-only URL (https://[REDACTED:...]@host).
-    ("UrlCredential", re.compile(r"(?i)[a-z][a-z0-9+.-]{0,30}://[^\s:@/]*:" + _NOT_MARKED
+    ("UrlCredential", re.compile(r"(?i)[a-z][a-z0-9+.-]{0,30}://(?:" + _MARKER_UNIT + r"|[^\s:@/])*:" + _NOT_MARKED
                                  + r"(?!\[REDACTED)[^\s/]{3,}@")),
     ("Bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}")),
     # Authorization then `:`, `=`, `=>` or headers["Authorization"] =, a call's ("Authorization",
@@ -297,10 +301,12 @@ REVIEW_SECRET_PATTERNS = [
     # host:/path (rsync) are left, and so is a marker an earlier pass left (-u [REDACTED:JWT]).
     ("CurlUser", re.compile(
         r"(?<![^\s\"'`(])(?:-u\s*|-[A-Za-z0-9]{1,6}u\s+|--user(?:\s+|=))" + _CU_SKIP + _CU_LEAD
-        + r"(?:" + _CU_USER + r"*:" + _NOT_MARKED + r"(?!/|\[REDACTED)\S{3,}|" + _CU_USER + r"{15,}:" + _NOT_MARKED
+        + r"(?:(?:" + _MARKER_UNIT + r"|" + _CU_USER + r")*:" + _NOT_MARKED + r"(?!/|\[REDACTED)\S{3,}|" + _CU_USER
+        + r"{15,}:" + _NOT_MARKED
         + r"(?=[\s\"'`).,;\\]|$))"
         r"|(\\{0,7}[\"'])(?:-[A-Za-z0-9]{0,6}u|--user)\1\s*,\s*(\\{0,7}[\"'])" + _CU_SKIP
-        + r"(?:" + _CU_USER + r"*:" + _NOT_MARKED + r"(?!/|\[REDACTED)[^\s\"']{3,}|" + _CU_USER + r"{15,}:"
+        + r"(?:(?:" + _MARKER_UNIT + r"|" + _CU_USER + r")*:" + _NOT_MARKED + r"(?!/|\[REDACTED)[^\s\"']{3,}|"
+        + _CU_USER + r"{15,}:"
         + _NOT_MARKED + r")\2")),
 ]
 
@@ -679,6 +685,35 @@ def summarize_turn(turn):
 
 
 # ---------------------------------------------------------------- Summary cache
+def _stdin_id_key():
+    """The key that turns a pasted turn's text into its id: random, kept 0600 in the cache folder,
+    so ids (and the caches keyed on them) stay the same on this machine. Part files carry the id
+    to a model that never sees the key, so an id gives no way to test a guessed password. With no
+    cache folder to keep it in, the key lasts one run."""
+    path = CACHE_BASE / "stdin-id.key"
+    try:
+        key = path.read_bytes()
+        if len(key) == 32:
+            return key
+    except OSError:
+        pass
+    key = os.urandom(32)
+    tmp = path.with_name("%s.%d" % (path.name, os.getpid()))
+    try:
+        CACHE_BASE.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(CACHE_BASE), 0o700)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(key)
+        os.replace(str(tmp), str(path))           # whole or not at all
+    except OSError:
+        try:
+            os.unlink(str(tmp))
+        except OSError:
+            pass
+    return key
+
+
 def cache_dir(session_id: str):
     d = CACHE_BASE / str(SCHEMA_VERSION) / (session_id or "default")
     d.mkdir(parents=True, exist_ok=True)
@@ -2172,10 +2207,11 @@ def main(argv=None) -> int:
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else 2
 
-    # stdin → derive per-turn uuid from content hash so cache works
+    # stdin → derive per-turn uuid from the content so the caches work (keyed: see _stdin_id_key)
     if args.from_transcript == "-":
+        key = _stdin_id_key()
         for t in turns:
-            t["uuid"] = hashlib.sha256(str(t["text"]).encode()).hexdigest()[:16]
+            t["uuid"] = hmac.new(key, str(t["text"]).encode(), hashlib.sha256).hexdigest()[:16]
 
     # ---- Pipeline order (R6): classify → merge → echo → hide-tool-only → range ----
     turns = classify_turns(turns, drop_trivia=args.drop_trivia)
@@ -2273,7 +2309,8 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
     if left:
         print("[lineage] WARN: the page still holds secret-like text ("
               + ", ".join(f"{k}={v}" for k, v in sorted(left.items()))
-              + "); check the page before sharing it, or add the value to --redact-extra and run again",
+              + "); check the page before sharing it, or run again with the value in LINEAGE_REDACT_EXTRA"
+              " (with --rulebase, add --rebuild-summaries)",
               file=sys.stderr)
 
     date_range = ""

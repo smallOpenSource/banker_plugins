@@ -250,6 +250,8 @@ try {
      && !/페이지는 이 패턴을 쓰지 않으므로/.test(linSkill)
      && /`the page still holds secret-like text \(<패턴>=N\)` WARN 을 내면, 패턴 이름과 수를 사용자에게 알리고 공유하기 전에 페이지를 확인하라고 말한다/.test(linSkill)
      && /`--rulebase` 실행이 `still holds secret-like text` WARN 을 내면 5단계처럼 사용자에게 알린다/.test(linSkill)
+     && /다시 만들 때는 그 값을 `LINEAGE_REDACT_EXTRA` 에 넣고 `--rebuild-summaries` 를 준다/.test(linSkill)
+     && /무작위 키\(`stdin-id\.key`, 0600\)로 HMAC 한 값이다/.test(linSkill)
      && /기본값이 콜론 없는 경로\(`\/`, `~`, `\.` 로 시작\)인 변수/.test(linSkill) && /기본값이 경로가 아닌 변수\(`\$\{UID:-1000\}:\$\{GID:-1000\}`, `\$\{API_KEY:-…\}`\)는 가린다/.test(linSkill)
      && /`ls -lu a:bcd`/.test(linSkill) && !/`ls -lu a:b`/.test(linSkill),
      'lineage: the gate rerun keeps its paths and page, the critic has a stated rule, a refused list counts as a failure, re-reviews stop at two, and dropped user turns are named');
