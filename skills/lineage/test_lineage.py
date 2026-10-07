@@ -1096,6 +1096,25 @@ class TestLlmReviewSources(_ReviewCase):
         if os.name == "posix":
             self.assertEqual(key.stat().st_mode & 0o777, 0o600)
 
+    def test_the_stdin_id_key_is_written_in_binary_mode(self):
+        seen = []
+        real_open, had, old = os.open, hasattr(os, "O_BINARY"), getattr(os, "O_BINARY", None)
+        os.O_BINARY = 0x8000                      # the Windows value; posix has no text mode
+
+        def spy(path, flag, mode=0o777):
+            seen.append(flag)
+            return real_open(path, flag & ~0x8000, mode)
+        os.open = spy
+        try:
+            L._stdin_id_key()
+        finally:
+            os.open = real_open
+            if had:
+                os.O_BINARY = old
+            else:
+                del os.O_BINARY
+        self.assertTrue(seen and all(f & 0x8000 for f in seen), "in text mode Windows writes a 0x0A as two bytes")
+
     def test_a_stdin_id_key_lasts_one_run_when_the_cache_folder_cannot_be_made(self):
         blocker = os.path.join(self.d, "not-a-folder")
         open(blocker, "w").close()
@@ -2213,7 +2232,7 @@ class TestPatternsForPages(_ReviewCase):
     def test_password_bare_skips_markers_and_masks(self):
         for done in ('암호: ****h12"', "password: [REDACTED]", "pwd=[REDACTED:entropy]",
                      "**password: ab****cd**", "(pwd=********)", "password=abcd****wxyz", "password=********",
-                     "password=****1234**"):
+                     "password=****1234**", "`DB_PASSWORD=abcd****wxyz`.", "(password: abcd****wxyz)."):
             self.assertEqual(L.review_redact(done)[0], done, done)
 
     def test_password_bare_hides_a_value_that_is_more_than_a_mask(self):
@@ -2222,7 +2241,7 @@ class TestPatternsForPages(_ReviewCase):
                       "Password=****;Server=db;Key=" + pw, "DB_PASSWORD=" + "Hunter" + "****" + "22pw",
                       "password=" + pw + "****", "Server=db;User Id=sa;Password=********;ApiKey=" + pw,
                       "user=bob&password=********&token=" + pw, "password=*****" + pw, "password=****)" + pw,
-                      "password=****|" + pw):
+                      "password=****|" + pw, "password=****." + pw, "password=****`;" + pw):
             self.assertNotIn("Hunter", L.review_redact(shape)[0], shape)
 
     def test_a_password_after_a_key_shaped_user_is_hidden(self):

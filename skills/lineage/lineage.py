@@ -257,10 +257,11 @@ _CU_SKIP = (r"(?!" + _CU_LEAD + r"(?:\+[\"']?%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" 
 # and --rulebase keep the patterns above, so their output stays as it was.
 # A value a redaction already replaced: a marker ([REDACTED...]) or a value that is only a mask
 # (abcd****wxyz: up to 4 characters, a whole run of *, up to 4 characters, then the value ends; a
-# closing `, |, * or ) may stand between, as in **password: ****h12**). The
+# closing `, |, * or ) and then . , ; : ! ? may stand between, as in **password: ****h12** or
+# `DB_PASSWORD=****`.). The
 # reviewer patterns leave it, so a second pass over redacted text changes nothing. The check reads
 # those few characters, not the rest of the token, so a long run of keywords stays linear.
-_NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"*]{0,4}\*{4,}(?!\*)[^\s'\"*]{0,4}(?=[`|*)]*(?:[\s'\"]|$)))"
+_NOT_REDACTED = r"(?!\[REDACTED|[^\s'\"*]{0,4}\*{4,}(?!\*)[^\s'\"*]{0,4}(?=[`|*)]*[.,;:!?]*(?:[\s'\"]|$)))"
 # After a colon: not the colon of a marker an earlier pass left ([REDACTED:GitHubPAT]), which
 # splits no user from a password. A whole marker is one piece of a user: a key an earlier pattern
 # of this pass hid ([REDACTED:OpenAIKey]:pw) still has its password hidden.
@@ -702,7 +703,7 @@ def _stdin_id_key():
     try:
         CACHE_BASE.mkdir(parents=True, exist_ok=True)
         os.chmod(str(CACHE_BASE), 0o700)
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(key)
         os.replace(str(tmp), str(path))           # whole or not at all

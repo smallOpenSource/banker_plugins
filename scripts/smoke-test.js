@@ -252,6 +252,9 @@ try {
      && /`--rulebase` 실행이 `still holds secret-like text` WARN 을 내면 5단계처럼 사용자에게 알린다/.test(linSkill)
      && /다시 만들 때는 그 값을 `LINEAGE_REDACT_EXTRA` 에 넣고 `--rebuild-summaries` 를 준다/.test(linSkill)
      && /무작위 키\(`stdin-id\.key`, 0600\)로 HMAC 한 값이다/.test(linSkill)
+     && /앞서 만든 페이지\(`--rulebase` 는 그 옆의 게이트 샘플도\)는 그 값을 가진 채 남으므로 지우라고 알린다/.test(linSkill)
+     && /stdin-id\.key +\(stdin 턴 id 의 HMAC 키, 0600/.test(linSkill)
+     && !/`--redact-extra` 로 주면 셸 기록에 남는다/.test(linSkill)
      && /기본값이 콜론 없는 경로\(`\/`, `~`, `\.` 로 시작\)인 변수/.test(linSkill) && /기본값이 경로가 아닌 변수\(`\$\{UID:-1000\}:\$\{GID:-1000\}`, `\$\{API_KEY:-…\}`\)는 가린다/.test(linSkill)
      && /`ls -lu a:bcd`/.test(linSkill) && !/`ls -lu a:b`/.test(linSkill),
      'lineage: the gate rerun keeps its paths and page, the critic has a stated rule, a refused list counts as a failure, re-reviews stop at two, and dropped user turns are named');
