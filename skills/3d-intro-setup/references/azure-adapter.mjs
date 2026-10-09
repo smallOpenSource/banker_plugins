@@ -110,19 +110,20 @@ export function parseEnvFile(text) {
   const env = {};
   for (const line of String(text || '').split(/\r?\n/)) {
     if (line.trimStart().startsWith('#')) continue;
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/);
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=([^\n]*)$/);
     if (m) env[m[1]] = envValue(m[2]);
   }
   return env;
 }
 
-// `raw` is everything after `=`, so the whitespace before a leading # is still there.
+// `raw` is everything after `=`, so the whitespace before a leading # is still there. A stray
+// trailing \r (a \r\r\n line end) is whitespace too.
 function envValue(raw) {
   const v = raw.trim();
   const q = v[0];
   const end = q === '"' || q === "'" ? v.indexOf(q, 1) : -1;
   if (end > 0) return v.slice(1, end);
-  return raw.replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
+  return raw.trimEnd().replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 }
 
 /**
