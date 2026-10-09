@@ -228,6 +228,28 @@ test('video: createVideo -> pollVideo(terminal) -> downloadVideo', async () => {
   assert.equal(bytes.toString(), 'MP4-BYTES');
 });
 
+test('pollVideo: a 4xx other than 408/429 stops at once with its status; an answer it cannot use is not polled to maxTicks', async () => {
+  for (const [status, fetches] of [[404, 1], [400, 1], [401, 2]]) {
+    const calls = installFetch(() => mockJson({ error: { code: 'NotFound', message: 'gone' } }, status));
+    await assert.rejects(
+      () => A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-x', intervalMs: 1, maxTicks: 50, sleep: async () => {} }),
+      (e) => e.status === status,
+    );
+    assert.equal(calls.length, fetches, `HTTP ${status} is not polled again (401 tries both auth styles once)`);
+  }
+});
+
+test('pollVideo: 408, 429 and 5xx keep polling, paced by the injected sleep; an error body is not taken as status', async () => {
+  const answers = [mockJson({ error: { code: 'TooMany' } }, 429), mockJson({}, 503), mockJson({}, 408), mockJson({ id: 'vid-x', status: 'completed' })];
+  installFetch((url, opts, i) => answers[i]);
+  const slept = [];
+  const ticks = [];
+  const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-x', intervalMs: 1500, maxTicks: 50, sleep: async (ms) => { slept.push(ms); }, onTick: (s) => ticks.push(s) });
+  assert.equal(st.status, 'completed');
+  assert.deepEqual(slept, [1500, 1500, 1500]);
+  assert.deepEqual(ticks.slice(0, 3), [null, null, null], 'no status seen until the first 2xx');
+});
+
 // =====================================================================
 // azFetch auth fallback
 // =====================================================================
@@ -333,6 +355,30 @@ test('resolveFfmpeg: throws an actionable error when nothing is found', async ()
 // =====================================================================
 // creds round-trip (cross-platform path.join) + probeDims + redact
 // =====================================================================
+
+test('parseEnvFile: a " # comment" after an unquoted value is dropped; quotes and a bare # keep the text', () => {
+  const env = A.parseEnvFile([
+    'WAN_1_ENDPOINT=https://ws.example.com     # origin only',
+    'VIDEO_PROVIDER_ORDER=wan,sora  # fallback',
+    'QUOTED="a # b" # note',
+    "SINGLE='c#d'",
+    'BARE=e#f',
+    'WAN_MODEL=   # optional, left empty',
+    'HASHY=#x',
+    'STRAY_CR=kept # note\r\r',
+    '# FULL=a comment line',
+    'LAST_CR=z\r',
+  ].join('\n'));
+  assert.deepEqual(env, { WAN_1_ENDPOINT: 'https://ws.example.com', VIDEO_PROVIDER_ORDER: 'wan,sora', QUOTED: 'a # b', SINGLE: 'c#d', BARE: 'e#f', WAN_MODEL: '', HASHY: '#x', STRAY_CR: 'kept', LAST_CR: 'z' });
+});
+
+test('persistCreds: a value the parser would cut at " #" or strip of quotes reads back unchanged', () => {
+  const dir = mkTmp('az-persist-quote-');
+  const target = path.join(dir, '.env.3d-intro.local');
+  const values = { NOTE_PATH: 'C:\\Program Files\\ff #2\\ffmpeg.exe', QUOTED_LOOK: '"x"', TRAILING_QUOTE: 'abc"', SPACED: ' padded ', LEAD: ' lead', TRAIL: 'trail ', PLAIN: 'https://r.example.com' };
+  A.persistCreds(values, { target });
+  assert.deepEqual(A.parseEnvFile(fs.readFileSync(target, 'utf8')), values);
+});
 
 test('persistCreds + resolveCreds round-trip (cross-platform path.join; 0600 where supported)', () => {
   const dir = mkTmp('adapter-creds-');
