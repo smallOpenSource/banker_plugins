@@ -121,6 +121,7 @@ function ensureVersion() {
   if (have.includes(TARGET_VERSION)) { ok(`${TARGET_VERSION} 설치되어 있음`); return true; }
   if (MODE === "check") { bad(`${TARGET_VERSION} 미설치 (설치된 버전: ${have.join(", ") || "없음"})`); return false; }
   if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${MARKET}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
+  if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${MARKET}`); return false; }
 
   // git 과 tar 에 의존한다. Windows 10+ / macOS / 대부분의 Linux 배포판에는 둘 다 있지만,
   // 최소 설치 컨테이너나 tar 없는 환경에서는 없을 수 있다. 여기서 못 찾으면 아래에서
@@ -321,12 +322,13 @@ function transform(src) {
     const expr = out.slice(e.start + out.slice(e.start).indexOf("import"), e.end + 1);
     out = `${out.slice(0, e.start)}await __omcRaceImport(${expr})${out.slice(e.end + 1)}`;
   }
-  // 헬퍼는 "첫 사용 지점의 줄 시작" 앞에 넣는다. 상단 import 블록 뒤에 넣으려던
-  // 첫 시도는 여러 줄 `import {` ... `} from` 한가운데를 뚫어 파일을 깨뜨렸다.
-  // 첫 사용 지점은 정의상 모든 import 문보다 뒤이므로 그 사고가 불가능하다.
-  const at = out.indexOf("await __omcRaceImport");
-  if (at === -1) return null;
-  const ls = out.lastIndexOf("\n", at) + 1;
+  // 헬퍼는 모듈 맨 앞(셔뱅 줄이 있으면 그 다음)에 넣는다. "첫 사용 지점의 줄 시작" 앞에 넣던
+  // 예전 방식은 그 지점이 최상위 `try { }` 같은 블록 안이면 헬퍼도 그 블록에 갇혀, 다른 블록의
+  // 자리에서 ReferenceError 가 났다(OMC 5.6.x project-memory-session.mjs. 훅의 catch 가 삼켜
+  // 기능이 조용히 꺼졌다). 정적 import 는 끌어올려지므로 그 앞에 두어도 되고, 여러 줄
+  // `import {` ... `} from` 한가운데를 뚫을 일도 없다.
+  if (!out.includes("await __omcRaceImport")) return null;
+  const ls = out.startsWith("#!") ? out.indexOf("\n") + 1 : 0;
   return out.slice(0, ls) + HELPER + out.slice(ls);
 }
 
@@ -427,6 +429,9 @@ function patchHooksJson(root) {
 // 이미 받은 태그로 재설치·검증이 가능하다.
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
+  // 마켓플레이스 폴더가 제 git 저장소가 아니면 git 이 위쪽 저장소(예: dotfiles 로 관리하는
+  // ~/.claude)를 찾아 그 origin 을 바꾼다. 제 .git 이 있을 때만 고정하고 되돌린다.
+  if (!existsSync(join(MARKET, ".git"))) return "no-git";
   let url;
   try { url = git(["remote", "get-url", "origin"]); } catch { return "no-remote"; }
 
@@ -546,6 +551,7 @@ const pin = pinMarketplace();
   "not-pinned": () => ok("고정된 적 없음"),
   needs: () => {},
   "no-marketplace": () => bad("마켓플레이스 디렉터리 없음 — 고정 불필요"),
+  "no-git": () => bad("마켓플레이스 폴더가 git 저장소가 아님 — 고정하지 않음"),
   "no-remote": () => ok("origin remote 없음 — 이미 fetch 불가"),
 }[pin] || (() => {}))();
 

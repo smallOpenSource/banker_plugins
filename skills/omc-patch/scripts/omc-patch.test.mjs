@@ -138,3 +138,45 @@ test("negative control: a version folder that is not active stays untouched by a
   assert.match(chk.out, /결과: 모두 적용된 상태입니다\./);
   assert.match(chk.out, /참고: 비활성 버전 5\.3\.0/);
 });
+
+test("hooks with more than one top-level block keep every import working after apply", { skip: !HAS_GIT && "git not found" }, () => {
+  // OMC 5.6.x project-memory-session.mjs has this shape: each top-level `await import(...)` sits in its own `try { }`.
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const p = join(f.cache, "5.6.1", "scripts", "stopper.mjs");
+  writeFileSync(p, [
+    "let a;",
+    "try {",
+    "  const m = await import(\"./lib.mjs\");",
+    "  a = m.x;",
+    "} catch (e) { console.log(\"first failed: \" + e.message); }",
+    "let b;",
+    "try {",
+    "  const m = await import(\"node:path\");",
+    "  b = m.join;",
+    "} catch (e) { console.log(\"second failed: \" + e.message); }",
+    "console.log(\"stopper:\" + typeof a + \",\" + typeof b);",
+    "",
+  ].join("\n"));
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(read(p), /__omcRaceImport\(import\("node:path"\)\)/, "both sites are wrapped");
+  const e = spawnSync(process.execPath, [p], { encoding: "utf8" });
+  assert.equal(e.status, 0, e.stderr);
+  assert.equal(e.stdout.trim(), "stopper:function,function");
+});
+
+test("a marketplace folder without its own .git is not pinned, and an enclosing repo keeps its origin", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }], { git: false });
+  mkdirSync(f.market, { recursive: true });
+  const claude = join(f.home, ".claude");
+  const dotfiles = "https://example.invalid/dotfiles.git";
+  for (const a of [["init", "-q"], ["remote", "add", "origin", dotfiles]]) {
+    const g = spawnSync("git", a, { cwd: claude, encoding: "utf8" });
+    assert.equal(g.status, 0, g.stderr);
+  }
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(origin(claude), dotfiles, "the ~/.claude repo origin is untouched");
+  assert.equal(existsSync(join(claude, "omc-local-patches", "PINNED")), false);
+  assert.match(r.out, /git 저장소가 아님/);
+});

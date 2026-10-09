@@ -33,7 +33,7 @@ OMC(oh-my-claudecode)가 새 버전으로 자동 업데이트되면 로컬 훅 �
 - 판정은 출력 문구로 한다. 종료 코드 0 만으로 완료라고 보고하지 않는다.
 - 캐시에는 정션이나 심볼릭 링크로 이어진 버전 폴더가 있을 수 있다(예: 옛 버전 폴더가 새 버전을 가리킴). 이때 한 번의 변경이 두 버전 폴더에 함께 보인다. 정상이다.
 - 도구는 `os.homedir()/.claude` 를 쓴다. `CLAUDE_CONFIG_DIR` 로 설정 폴더를 옮겼다면 이 도구는 그 폴더를 보지 않는다.
-- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//***@` 로 가린다. 그 URL 은 `PINNED` 에도 평문으로 남으니 사용자에게 알린다.
+- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//***@` 로 가린다. 출력을 그대로 보고하라는 단계에서도 이 가림은 지킨다. 그 URL 은 `PINNED` 에도 평문으로 남으니 사용자에게 알린다.
 
 ## 절차
 
@@ -81,7 +81,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --no-update
    bash:
    ```bash
    R=$(node -e 'const j=require(require("path").join(require("os").homedir(),".claude/plugins/installed_plugins.json"));console.log(j.plugins["oh-my-claudecode@omc"][0].installPath)')
-   for b in "$R"/scripts/*.omcbak; do f="${b%.omcbak}"; node --check "$f"; rc=$?; echo "$(basename "$f") syntax=$rc"; done
+   for b in "$R"/scripts/*.omcbak; do [ -e "$b" ] || continue; f="${b%.omcbak}"; node --check "$f"; rc=$?; echo "$(basename "$f") syntax=$rc"; done
    ```
 
    PowerShell:
