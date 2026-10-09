@@ -1,6 +1,6 @@
 ---
 name: 3d-intro-build
-description: "(banker) 브랜드 인트로용 스크롤-스크럽 3D fly-through 사이트를 Azure gpt-image 스틸 + WAN 키 풀 영상(소진 시 Sora-2 폴백) forward-chaining 으로 제작: 인터뷰 → 비용 승인 게이트 → 스틸 → fly-through → 로컬 프리뷰. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
+description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이는 브랜드 인트로 사이트를 만듦. Azure 의 gpt-image 배포로 스틸을 만들고, 영상은 WAN 모델을 API 키 풀로 돌려 만들며 키가 모두 소진되면 Sora-2 로 넘어감. 인터뷰 뒤에 비용 승인 게이트에서 사용자가 승인해야만 유료 생성을 시작하고, 스틸, 영상, 로컬 프리뷰 순서로 진행. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
 ---
 
 # 3d-intro-build — 스크롤-스크럽 3D 인트로 제작 (Azure 이미지 + WAN/Sora 영상)

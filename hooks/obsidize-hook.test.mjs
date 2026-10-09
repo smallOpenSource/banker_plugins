@@ -302,7 +302,8 @@ function assertRunCjsCommand(entry, label) {
 test('hooks.json: top-level shape, obsidizer entry found by contract (not index), explicit short timeout', () => {
   const config = JSON.parse(readFileSync(join(HERE, 'hooks.json'), 'utf8'));
 
-  assert.deepEqual(Object.keys(config).sort(), ['description', 'hooks'], 'top-level keys are exactly description + hooks');
+  assert.deepEqual(Object.keys(config).sort(), ['description', 'hooks', 'modules'], 'top-level keys are exactly description + hooks + modules');
+  assert.deepEqual(config.modules, ['./register.mjs'], 'one function-hooks module, the register entry');
   assert.ok(Array.isArray(config.hooks.PostToolUse), 'PostToolUse must exist as an array');
   // hooks.json 은 이제 UserPromptExpansion(텔레메트리 카운트) · SessionStart(update-notify) 도
   // 형제 키로 함께 배선한다. 그 항목들은 아래 테스트에서 따로 검증하므로, 여기서는

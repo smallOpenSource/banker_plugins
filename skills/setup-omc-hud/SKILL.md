@@ -1,6 +1,7 @@
 ---
 name: setup-omc-hud
-description: "(banker) omc_hud(Claude Code 상태표시줄)를 OS별 apply 스크립트로 적용(Codex는 OMX hud). 'setup-omc-hud'/'omc_hud 설치' 또는 /banker:setup 시 사용."
+description: "Claude Code 의 상태표시줄 omc_hud 를 OS별 적용 스크립트로 설치하고, Claude Code 갱신 안내를 줄 맨 끝으로 옮김. Codex 는 OMX 의 `hud` 스킬을 씀. 'setup-omc-hud'/'omc_hud 설치'/'Claude 갱신 안내 위치' 또는 `/banker:setup` 시 사용."
+argument-hint: "[off|status]"
 ---
 
 # setup-omc-hud — omc_hud 상태표시줄 설치 (OS별)
@@ -8,6 +9,8 @@ description: "(banker) omc_hud(Claude Code 상태표시줄)를 OS별 apply 스�
 `smallOpenSource/omc_hud` 의 apply 스크립트를 OS에 맞게 내려받아 적용한다. `wget` 없으면 `curl`로 폴백. 답변은 한글.
 
 **런타임:** omc_hud 는 Claude Code 상태표시줄(`~/.claude/settings.json` statusLine) 대상이다. **Codex 런타임에선 oh-my-codex(OMX)가 자체 `hud` 스킬/구성을 제공**하므로, Codex에선 이 스킬 대신 OMX 의 `hud` 를 사용한다.
+
+**인자가 `off` 또는 `status` 일 때:** 0~3단계를 건너뛰고 3단계의 Claude 갱신 안내 스크립트만 그 인자로 실행해 결과를 보고한다(`off` 는 안내를 래퍼가 정한 자리로 되돌림, `status` 는 상태만 확인).
 
 ## 0. 감지
 ```bash
@@ -52,8 +55,19 @@ git 없으면 GitHub "Download ZIP" → 해제 → 동봉 적용 스크립트 �
 - **payload-mon 복구**: 0단계에서 `payload-mon=on` 이었다면, 적용 스크립트가 래퍼를 덮어써 payload 표시 블록이 빠진 상태다.
   payload-mon 스킬(Claude Code `/banker:payload-mon`, Codex `banker-payload-mon`)을 `on` 으로 실행해 다시 켜고, 그 결과를 함께 보고한다.
   `payload-mon=off` 였다면 아무것도 하지 않는다(사용자가 켠 적 없는 기능을 켜지 않는다).
+- **Claude 갱신 안내 위치**: payload-mon 처리 뒤에 이 스킬의 스크립트를 `on` 으로 실행한다. 재적용을 건너뛴 경우에도 실행하고, Windows 도 같은 명령이다.
+  ```bash
+  node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" on
+  ```
+  새 Claude Code 가 나오면 OMC 가 띄우는 `[Claude#2.1.288] -> 2.1.289 claude update` 를 상태표시줄 1번째 줄 맨 끝(OMC 표시 뒤)으로 옮긴다. 2번째 줄의 `[!] claude 2.1.289 - paste: ! claude update` 안내는 그대로 둔다.
+  출력을 그대로 보고한다. 종료 코드 1(거부)이면 래퍼는 바뀌지 않았으니 이유만 보고하고, 2(예기치 못한 오류로 중간에 멈춤)면 `status` 결과를 함께 보고한다.
+  되돌리기는 `off`, 상태 확인은 `status`.
 
 ## 함정
 - `curl` 다운로드는 **대문자 `-O`**(원격 파일명 유지). 소문자 `-o`는 출력명 지정이라 다름.
 - raw URL 의 `refs/heads/main` 브랜치명이 바뀌면 404 → 저장소 확인.
 - `.mjs` 적용은 Node 필요(`node -v`).
+- `claude-update-last` 를 `off` 로 꺼 두었어도 이 스킬을 다시 실행하면 3단계에서 다시 켜진다. 래퍼가 정한 자리를 원하면 끝난 뒤 `off`.
+- 블록은 OMC 의 안내 문구(`[Claude#X] -> Y claude update`)로 안내를 찾는다. OMC 가 문구를 바꾸면 안내는 래퍼가 정한 자리에 남고, 상태표시줄은 깨지지 않는다.
+- 블록은 래퍼가 세그먼트를 합치는 줄에서 `segs`·`colored` 를 읽는다. 래퍼 구조가 바뀌어 그 줄에서 이 이름이 보이지 않으면 `on` 은 성공해도 효과가 없다(상태표시줄은 그대로). 새 Claude Code 가 나왔을 때 안내가 맨 끝에 오는지로 확인한다.
+- 이 블록은 플러그인 밖(`~/.claude/hud/`)에 남는다. 플러그인을 지우기 전에 `off` 를 실행한다.

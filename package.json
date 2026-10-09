@@ -1,6 +1,6 @@
 {
   "name": "@kaydash9999/banker-plugins",
-  "version": "0.14.0",
+  "version": "0.15.2",
   "description": "banker — Claude Code + Codex CLI plugin (QA, audit, docs, architecture, wiki skills). Install via Claude Code marketplace, or `npm i -g @kaydash9999/banker-plugins` then `banker setup`.",
   "bin": {
     "banker": "bin/banker.js"
@@ -15,10 +15,13 @@
     "!skills/ultra-init-workspace/**",
     "commands",
     ".claude-plugin",
+    "!.claude-plugin/types",
+    "!.claude-plugin/types/**",
     "codex",
     "hooks",
     "bin",
     "!**/*.test.mjs",
+    "!**/*.test.ts",
     "!**/test_*.py",
     "!**/__pycache__",
     "!**/__pycache__/**",

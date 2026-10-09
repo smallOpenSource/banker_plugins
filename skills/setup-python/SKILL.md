@@ -1,6 +1,6 @@
 ---
 name: setup-python
-description: "(banker) Python 3.11+ 런타임 + pipx·uv 설치(OS별 PEP668·RHEL8 3.6 회피). 라이브러리(pptx·pymupdf)는 docs-setup 담당, 본 스킬은 런타임만. 'setup-python'/'Python 설치'/'pipx·uv 설치' 또는 /banker:setup 시 사용."
+description: "Python 3.11 이상과 pipx, uv 를 설치. OS별 PEP 668 제약과 RHEL8 의 기본 3.6 을 피해 감. 라이브러리(python-pptx, pymupdf)는 `docs-setup` 이 맡고 이 스킬은 런타임만 설치. 'setup-python'/'Python 설치'/'pipx 설치'/'uv 설치' 또는 `/banker:setup` 시 사용."
 ---
 
 # setup-python: Python 3.11+ 런타임 + pipx·uv 설치

@@ -1,6 +1,6 @@
 ---
 name: setup-mcp
-description: "(banker) context7·sequential-thinking·filesystem·git·fetch(+선택 tavily) 범용 MCP 서버를 Claude Code(claude mcp add)·Codex(codex mcp add+config.toml)에 배선(serena·lsp_bridge 제외). 'setup-mcp'/'MCP 서버 설치'/'context7·sequential-thinking 설치' 또는 /banker:setup 시 사용."
+description: "범용 MCP 서버(context7, sequential-thinking, filesystem, git, fetch, 선택 사항인 tavily)를 Claude Code(`claude mcp add`)와 Codex(`codex mcp add`, `config.toml`)에 등록. serena 와 `lsp_bridge` 는 제외. 'setup-mcp'/'MCP 서버 설치'/'context7 설치'/'sequential-thinking 설치' 또는 `/banker:setup` 시 사용."
 ---
 
 # setup-mcp: 범용 MCP 서버 설치

@@ -1,6 +1,6 @@
 ---
 name: setup-lsp
-description: "(banker) 언어별 LSP 서버(vtsls·basedpyright·bash·jdtls·spring)와 lsp-mcp 브리지 설치·연동. 'setup-lsp'/'LSP 설치'/'언어 서버' 또는 /banker:setup 시 사용."
+description: "언어별 LSP 서버(vtsls, basedpyright, bash, jdtls, spring)와 lsp-mcp 브리지를 설치하고 연동. 'setup-lsp'/'LSP 설치'/'언어 서버' 또는 `/banker:setup` 시 사용."
 ---
 
 # setup-lsp: 언어별 LSP 서버 + lsp-mcp 브리지

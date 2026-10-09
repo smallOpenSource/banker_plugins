@@ -1,6 +1,6 @@
 ---
 name: audit-web-page
-description: "(banker) 가동 중 웹페이지를 playwright로 라이브 점검(버튼·DOM·콘솔 + WebGL/Canvas 스크린샷 판정). 'audit-web-page'/'라이브 웹 검증'/'playwright로 페이지 점검'/'캔버스·WebGL 렌더 확인' 시 사용."
+description: "가동 중인 웹 페이지를 Playwright 로 열어 버튼, DOM, 콘솔을 라이브 점검하고, WebGL 과 Canvas 는 스크린샷으로 판정. 'audit-web-page'/'라이브 웹 검증'/'playwright로 페이지 점검'/'캔버스 렌더 확인'/'WebGL 렌더 확인' 시 사용."
 ---
 
 # audit-web-page — 라이브 웹 페이지 점검 (playwright)
