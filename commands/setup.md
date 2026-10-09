@@ -38,7 +38,7 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    - **setup-playwright** — Playwright + 브라우저 + Xvfb(RHEL8/Rocky8 폴백). (`ultra-ui-qa`·`audit-web-page`·`play-qa` 의존성)
    - **docs-setup** — arch-diagram·pdf-vision-extract 의존성(python-pptx·pymupdf·plantuml). (의존: python)
    - **motion-graphic-setup** — hyperframes(무료 모션 그래픽 CLI) 전제조건(Node≥22 + ffmpeg → `npx hyperframes`). (`motion-graphic-make` 의존성)
-   - **3d-intro-setup** — Azure Sora-2/gpt-image-2 3D 인트로용 크레덴셜·의존성(Node/ffmpeg) + 무과금 프리플라이트. (`3d-intro-build` 의존성)
+   - **3d-intro-setup** — 3D 인트로용 크레덴셜(Azure gpt-image·Sora-2, 선택 WAN 영상 키 풀)·의존성(Node/ffmpeg) + 무과금 프리플라이트. (`3d-intro-build` 의존성)
 
    **권한 (주의, 기본 미선택)**
    - **setup-bypass-permissions** — Claude Code 의 기본 권한 모드를 `bypassPermissions` 로 바꿔 모든 세션에서 도구 실행 확인을 끔.

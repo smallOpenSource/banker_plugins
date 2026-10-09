@@ -133,7 +133,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | 스킬 | 설명 |
 |---|---|
 | `motion-graphic-make` | 10초 내외 내레이션 없는 무료 모션 그래픽 제작 (hyperframes 위임) |
-| `3d-intro-build` | 스크롤-스크럽 3D 인트로 사이트 제작 (Azure gpt-image-2 스틸 + Sora-2 영상, 유료) |
+| `3d-intro-build` | 스크롤-스크럽 3D 인트로 사이트 제작 (Azure gpt-image 스틸 + WAN 키 풀 영상, 소진 시 Sora-2 폴백, 유료) |
 
 ### 스킬: 개발환경 setup (OS별 · 런타임별)
 
@@ -164,7 +164,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `docs-setup` | arch-diagram·pdf-vision-extract 의존성(pptx·pymupdf·plantuml) 설치 |
 | `vertical-pptx-setup` | vertical-pptx 의존성(pptxgenjs·python-pptx) + 시각 검증용 LibreOffice (OS·권한 적응형) |
 | `motion-graphic-setup` | hyperframes(무료 모션 그래픽 CLI) 전제조건 설치 (Node≥22 + ffmpeg) |
-| `3d-intro-setup` | 3D 인트로용 Azure 크레덴셜·의존성 설치 + 무과금 프리플라이트 (Node/ffmpeg) |
+| `3d-intro-setup` | 3D 인트로용 Azure·WAN 크레덴셜·의존성 설치 + 무과금 프리플라이트 (Node/ffmpeg) |
 | `setup-bypass-permissions` | Claude Code 기본 권한 모드를 `bypassPermissions` 로 바꿔 모든 세션에서 도구 실행 확인을 끔. 사용자가 직접 입력해야 실행(모델은 호출 불가), 위험 경고와 확인 뒤 적용, `off` 로 원복. `/banker:setup` 에서는 기본 미선택 |
 
 ## 설치 상세 (npm · Codex)
@@ -371,3 +371,4 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 | 디자인(상표) | Nothing 디자인 언어 | 상표 | `nothing-design` |
 | QA 엔진(예시) | Godot·Phaser 등 | MIT | `play-qa` |
 | 서비스(독점·상표) | Microsoft Azure OpenAI (Sora-2·gpt-image-2·FLUX.2-pro) | 독점 | `3d-intro-setup`·`3d-intro-build` |
+| 서비스(독점·상표) | Alibaba Cloud Model Studio (WAN 영상 모델) | 독점 | `3d-intro-setup`·`3d-intro-build` |
