@@ -363,15 +363,16 @@ test('parseEnvFile: a " # comment" after an unquoted value is dropped; quotes an
     'QUOTED="a # b" # note',
     "SINGLE='c#d'",
     'BARE=e#f',
+    'WAN_MODEL=   # optional, left empty',
     '# FULL=a comment line',
   ].join('\n'));
-  assert.deepEqual(env, { WAN_1_ENDPOINT: 'https://ws.example.com', VIDEO_PROVIDER_ORDER: 'wan,sora', QUOTED: 'a # b', SINGLE: 'c#d', BARE: 'e#f' });
+  assert.deepEqual(env, { WAN_1_ENDPOINT: 'https://ws.example.com', VIDEO_PROVIDER_ORDER: 'wan,sora', QUOTED: 'a # b', SINGLE: 'c#d', BARE: 'e#f', WAN_MODEL: '' });
 });
 
 test('persistCreds: a value the parser would cut at " #" or strip of quotes reads back unchanged', () => {
   const dir = mkTmp('az-persist-quote-');
   const target = path.join(dir, '.env.3d-intro.local');
-  const values = { NOTE_PATH: 'C:\\Program Files\\ff #2\\ffmpeg.exe', QUOTED_LOOK: '"x"', PLAIN: 'https://r.example.com' };
+  const values = { NOTE_PATH: 'C:\\Program Files\\ff #2\\ffmpeg.exe', QUOTED_LOOK: '"x"', TRAILING_QUOTE: 'abc"', SPACED: ' padded ', PLAIN: 'https://r.example.com' };
   A.persistCreds(values, { target });
   assert.deepEqual(A.parseEnvFile(fs.readFileSync(target, 'utf8')), values);
 });

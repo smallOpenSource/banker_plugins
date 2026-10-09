@@ -103,24 +103,26 @@ export function parseConsoleSample(text) {
 
 /**
  * Parse a KEY=VALUE .env body into a plain object, skipping comment lines. A quoted value keeps
- * everything inside its quotes; an unquoted value ends at a " # comment" (whitespace, then #),
- * the way dotenv reads it, so a note after a value never becomes part of an endpoint or a key.
+ * everything inside its quotes. In an unquoted value, a # that follows whitespace starts a comment
+ * (also right after `=`), so a note after a value never becomes part of an endpoint or a key.
  */
 export function parseEnvFile(text) {
   const env = {};
   for (const line of String(text || '').split(/\r?\n/)) {
     if (line.trimStart().startsWith('#')) continue;
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/);
     if (m) env[m[1]] = envValue(m[2]);
   }
   return env;
 }
 
+// `raw` is everything after `=`, so the whitespace before a leading # is still there.
 function envValue(raw) {
-  const q = raw[0];
-  const end = q === '"' || q === "'" ? raw.indexOf(q, 1) : -1;
-  if (end > 0) return raw.slice(1, end);
-  return raw.replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '');
+  const v = raw.trim();
+  const q = v[0];
+  const end = q === '"' || q === "'" ? v.indexOf(q, 1) : -1;
+  if (end > 0) return v.slice(1, end);
+  return raw.replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 }
 
 /**
@@ -155,9 +157,9 @@ export function persistCreds(creds, { target } = {}) {
   return target;
 }
 
-// Quote a value that parseEnvFile would otherwise cut at " #" or strip of its quotes.
+// Quote a value that parseEnvFile would otherwise cut at " #", trim, or strip of its quotes.
 function envLiteral(v) {
-  if (!/\s#|^["']/.test(v)) return v;
+  if (!/\s#|^["'\s]|["'\s]$/.test(v)) return v;
   return v.includes('"') ? `'${v}'` : `"${v}"`;
 }
 

@@ -114,8 +114,8 @@ function codeKind(code) {
 // ---------------------------------------------------------------------------
 
 // Endpoints are origins: a pasted console URL with a path would otherwise 404 every call. A value
-// new URL() rejects (an inline "# comment" the env parser kept, a bare host, a key pasted into the
-// wrong field) gives null. The raw value is never echoed, because it may be a key.
+// new URL() rejects (a bare host, a value with spaces, a key pasted into the wrong field) gives
+// null. The raw value is never echoed, because it may be a key.
 function originOf(url) {
   try {
     const u = new URL(String(url).trim());

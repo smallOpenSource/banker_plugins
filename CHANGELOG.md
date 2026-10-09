@@ -14,7 +14,7 @@
 
 ### Changed
 - **`generateImage` 가 HTTP 429 에 `Retry-After` 만큼 기다렸다가 같은 경로로 다시 시도한다(기본 3회).** 전에는 429 에도 classic 경로로 넘어가 같은 한도에 다시 걸렸다. `azFetch` 결과에 `retryAfterMs` 를 더했다.
-- **`parseEnvFile` 이 따옴표 없는 값 끝의 ` # 주석` 을 지운다(dotenv 와 같은 규칙).** 전에는 주석이 값에 붙어 endpoint, 키, 모델, `VIDEO_PROVIDER_ORDER` 가 깨졌다. 따옴표 안은 그대로 두고, `persistCreds` 는 그렇게 읽힐 값을 따옴표로 감싸 쓴다.
+- **`parseEnvFile` 이 따옴표 없는 값에서 공백 뒤의 `#` 부터를 주석으로 지운다(`=` 바로 뒤도 같음).** 전에는 주석이 값에 붙어 endpoint, 키, 모델, `VIDEO_PROVIDER_ORDER` 가 깨졌다. 공백 없이 붙은 `#` 와 따옴표 안은 그대로 두고, `persistCreds` 는 그렇게 바뀔 값(공백 뒤 `#`, 앞뒤 공백이나 따옴표)을 따옴표로 감싸 써서 그대로 돌아오게 한다.
 - **`pollVideo` 가 408, 429 를 뺀 4xx 에서 바로 멈춘다(오류에 `status`, `code`).** 전에는 사라진 job 도 `maxTicks` 까지 폴링했다. 폴링 사이에 주입한 `sleep` 을 쓰고, 오류 응답의 본문은 상태로 쓰지 않는다.
 - `scripts/sync-adapter.js` 가 `azure-adapter.mjs` 와 `video-pool.mjs` 두 파일을 setup 스킬로 미러링하고 검사한다.
 
