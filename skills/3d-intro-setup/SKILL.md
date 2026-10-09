@@ -1,13 +1,15 @@
 ---
 name: 3d-intro-setup
-description: "(banker) Azure Sora-2/gpt-image-2 3D 인트로 제작용 크레덴셜·의존성 설치: Node≥18·ffmpeg 확보 + apikey/엔드포인트/배포명 직접입력 또는 콘솔 샘플 코드 붙여넣기로 크레덴셜 저장 + 무과금 프리플라이트(listVideos·images badreq)로 검증. 'setup-3d-intro'/'3d-intro-setup'/'3D 인트로 설정'/'Azure Sora 크레덴셜' 또는 /banker:setup 시 사용."
+description: "(banker) 3D 인트로 제작용 크레덴셜·의존성 설치(Azure gpt-image·Sora-2 + 선택 WAN 영상 키 풀): Node≥18·ffmpeg 확보 + apikey/엔드포인트/배포명 직접입력 또는 콘솔 샘플 코드 붙여넣기로 크레덴셜 저장 + 무과금 프리플라이트(listVideos·images badreq·WAN task GET)로 검증. 'setup-3d-intro'/'3d-intro-setup'/'3D 인트로 설정'/'Azure Sora 크레덴셜' 또는 /banker:setup 시 사용."
 ---
 
 # 3d-intro-setup — Azure Sora-2 / gpt-image-2 3D 인트로 제작 전제조건 설치
 
 Azure Sora-2(영상 생성)·gpt-image-2(이미지 생성) 기반 3D 인트로 제작의 실행 전제조건을 설치·검증한다.
 실제 인트로 제작(이미지·영상 생성, 과금 발생)은 `3d-intro-build` 스킬이 담당하고, 이 스킬은 Node/ffmpeg 확보와 크레덴셜 저장, **무과금** 연결 확인까지만 담당한다.
-모든 Azure 호출은 이 스킬 디렉터리의 `references/azure-adapter.mjs`(수정 금지, `3d-intro-build`와 byte-identical 공유 사본)를 통해서만 수행한다.
+모든 Azure 호출은 이 스킬 디렉터리의 `references/azure-adapter.mjs`, WAN(Alibaba Model Studio) 호출은 `references/video-pool.mjs` 를 통해서만 수행한다.
+두 파일 모두 수정 금지이며 `3d-intro-build` 와 byte-identical 공유 사본이다.
+영상은 WAN 키 풀이 먼저 쓰이고, 풀의 키가 모두 소진되면 Sora-2 로 폴백한다. WAN 은 선택 항목이라 없으면 Sora 만 쓴다.
 **OS·arch·기존 설치/크레덴셜 여부를 먼저 감지**해 알맞은 경로를 고른다.
 설치는 **멱등**(이미 있으면 skip·검증만). 답변은 한글(기술 토큰 영문).
 
@@ -29,6 +31,7 @@ if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { (ffmpeg -version)[0] } e
 ```bash
 SKILL_DIR="<이 SKILL.md 가 위치한 디렉터리의 절대경로>"   # 예: .../skills/3d-intro-setup
 ADAPTER="$SKILL_DIR/references/azure-adapter.mjs"
+POOL="$SKILL_DIR/references/video-pool.mjs"
 ```
 **이미 확보 확인**: `node -v` 가 18 이상이고 `ffmpeg` 가 있으면 §1~§2 는 건너뛴다.
 크레덴셜도 이미 완전하면(§3 첫 단계) 프롬프트 없이 §4 프리플라이트로 직행한다.
@@ -86,14 +89,16 @@ node -e "
 exit 0(완전한 크레덴셜 발견)이면 아래 입력 단계를 건너뛰고 **§4 프리플라이트로 직행**(검증만, 재프롬프트 금지).
 프리플라이트가 401/403 으로 실패할 때만 아래로 돌아와 재입력(로테이션)한다.
 
-### 리소스는 최대 3개(Sora·Image·FLUX)
-Sora(영상)와 gpt-image-2(이미지)는 **보통 서로 다른 Azure 리소스**(엔드포인트·키가 다를 수 있음) — 두 세트를 각각 받는다.
+### 리소스 구성(Sora·Image 필수, WAN 풀·FLUX 선택)
+Sora(영상)와 gpt-image(이미지)는 **보통 서로 다른 Azure 리소스**(엔드포인트·키가 다를 수 있음) — 두 세트를 각각 받는다.
+WAN 영상 풀(§3-WAN)은 선택이지만, 있으면 영상이 WAN 으로 먼저 만들어진다.
 FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 건너뛴다(§3-FLUX 참조).
 
 ### 모드 (a) — 직접 입력
 사용자에게 리소스별로 순서대로 질문한다: endpoint(예: `https://<resource>.openai.azure.com` 또는 `https://<resource>.cognitiveservices.azure.com`), API key, 배포명(deployment).
 - **Sora**: endpoint + key (+ 배포명, 기본 `sora-2` — 콘솔에서 다른 이름으로 배포했으면 그 이름).
-- **Image(gpt-image-2)**: endpoint + key + 배포명(예: `gpt-image-2`, 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
+- **Image(gpt-image 계열)**: endpoint + key + 배포명(예: `gpt-image-2`, `gpt-image-2.5-sunburst`. 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
+  AI Foundry 리소스(`https://<resource>.services.ai.azure.com`)도 그대로 쓴다. 콘솔이 `.../models` 를 붙여 보여줘도 저장은 origin 까지만 한다(이미지 경로는 `/openai/v1/images/...` 이고 `/models/images/...` 는 404).
 
 ### 모드 (b) — 콘솔 샘플 코드 붙여넣기
 Azure AI Foundry/AI Hub 콘솔의 "Sample code"/"View code" 패널이 주는 curl 또는 Python 스니펫을 리소스별로 통째로 붙여넣게 한다.
@@ -118,17 +123,21 @@ node -e "
 AZURE_SORA_ENDPOINT / AZURE_SORA_API_KEY / AZURE_SORA_DEPLOYMENT(기본 sora-2) / AZURE_SORA_API_VERSION(기본 preview)
 AZURE_IMAGE_OPENAI_ENDPOINT / AZURE_IMAGE_API_KEY / AZURE_GPT_IMAGE_DEPLOYMENT / AZURE_GPT_IMAGE_API_VERSION(기본 preview)
 ```
+`persistCreds` 는 파일 전체를 새로 쓴다. 이미 저장된 값(WAN 풀 등)을 잃지 않도록 기존 값에 덮어 합친다.
 ```bash
 node -e "
 (async () => {
-  const { persistCreds } = await import('$ADAPTER');
+  const { persistCreds, resolveCreds } = await import('$ADAPTER');
   const path = require('path');
   const target = path.join(process.cwd(), '.env.3d-intro.local');   // 프로젝트 전용(기본, 권장)
-  const written = persistCreds({
+  const prev = resolveCreds({ projectDir: process.cwd() });
+  const keep = prev._source === target ? prev : {};                 // 같은 파일일 때만 기존 값 유지
+  const written = persistCreds({ ...keep,
     AZURE_SORA_ENDPOINT: '<입력값>', AZURE_SORA_API_KEY: '<입력값>',
     AZURE_SORA_DEPLOYMENT: '<입력값 또는 sora-2>', AZURE_SORA_API_VERSION: '<입력값 또는 preview>',
     AZURE_IMAGE_OPENAI_ENDPOINT: '<입력값>', AZURE_IMAGE_API_KEY: '<입력값>',
     AZURE_GPT_IMAGE_DEPLOYMENT: '<입력값>', AZURE_GPT_IMAGE_API_VERSION: '<입력값 또는 preview>',
+    // WAN 풀(선택): 키 수만큼 WAN_<n>_ENDPOINT / WAN_<n>_API_KEY, 필요하면 WAN_MODEL
   }, { target });
   console.log('저장:', written);
 })();
@@ -140,14 +149,29 @@ node -e "
 grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null || echo '.env.3d-intro.local' >> .gitignore
 ```
 
+### WAN 영상 풀 (선택, 권장)
+Alibaba Cloud Model Studio 의 WAN 영상 모델(기본 `wan3.0-video-prime`)을 여러 API 키로 돌린다. 키(workspace)마다 할당량이 따로라 키가 많을수록 오래 쓴다.
+키마다 아래 두 줄을 번호를 붙여 저장한다. 번호 개수 제한은 없다.
+```
+WAN_1_ENDPOINT=https://ws-<workspace-id>.<region>.maas.aliyuncs.com     # origin 만 (경로 제외)
+WAN_1_API_KEY=sk-ws-...
+WAN_2_ENDPOINT=...
+WAN_2_API_KEY=...
+WAN_MODEL=wan3.0-video-prime          # 선택. 키 하나만 다르면 WAN_<n>_MODEL
+```
+- 콘솔 샘플(curl)을 붙여넣으면 `parseConsoleSample()` 로 endpoint 를 뽑을 수 있다. 키는 샘플에 실제 값(`Bearer sk-ws-...`)이 있을 때만 뽑히고, `$DASHSCOPE_API_KEY` 같은 변수면 따로 입력받는다. JSON 본문의 `"model"` 은 뽑히지 않으니 `WAN_MODEL` 로 따로 넣는다.
+- 엔드포인트, 키, 모델의 리전이 같아야 한다. 다르면 `401 InvalidApiKey` 가 난다.
+- 선택 설정(모두 기본값이 있음): `VIDEO_PROVIDER_ORDER`(기본 `wan,sora`), `WAN_RESOLUTION`(기본은 출력 크기에서 계산), `WAN_PROMPT_EXTEND`(기본 `false`), `WAN_MAX_CONCURRENT`(기본 5), `WAN_EXHAUSTED_TTL_HOURS`(기본 24).
+- 소진·쿨다운 기록은 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남는다. 키나 모델을 바꾸면 지문이 바뀌어 기록이 새로 시작된다.
+
 ### FLUX.2-pro (opt-in)
 필요할 때만: endpoint 하나 추가(`AZURE_IMAGE_SERVICES_ENDPOINT`) — 같은 리소스에 배포된 경우가 많아 키는 기본적으로 `AZURE_IMAGE_API_KEY` 를 재사용하고, 다른 리소스면 별도 key 를 물어본다.
 FLUX 는 이 스킬의 §4 프리플라이트 대상이 아니다(무과금으로 확인할 별도 엔드포인트가 없음).
 저장만 하고 실제 연결 확인은 생략한다(graceful skip) — 첫 실제 사용 시점(3d-intro-build)으로 미룬다.
 
 ## 4. 프리플라이트 (무과금)
-**여기서는 어떤 유료 생성도 실행하지 않는다** — gpt-image-2 이미지 생성, Sora-2 영상 생성 어느 쪽도 호출하지 않는다.
-아래 두 호출만 수행한다: (1) Sora `listVideos` GET(목록 조회는 무료) (2) Image 는 `azFetch` 로 **body `{model:<배포명>}` (프롬프트 누락) POST** — 배포로 라우팅된 뒤 프롬프트 누락으로 생성 전 `400 missing_required_parameter` 로 거부되므로 과금 0이고, 엔드포인트·인증에 더해 **배포명까지** 무료로 검증된다. (빈 `{}` 는 model 이 없어 `404 DeploymentNotFound` 로 갈려 배포명을 확인하지 못한다.)
+**여기서는 어떤 유료 생성도 실행하지 않는다** — 이미지 생성, Sora-2·WAN 영상 생성 어느 쪽도 호출하지 않는다.
+아래 세 가지만 수행한다: (1) Sora `listVideos` GET(목록 조회는 무료) (2) Image 는 `azFetch` 로 **body `{model:<배포명>}` (프롬프트 누락) POST** — 배포로 라우팅된 뒤 프롬프트 누락으로 생성 전 `400 missing_required_parameter` 로 거부되므로 과금 0이고, 엔드포인트·인증에 더해 **배포명까지** 무료로 검증된다. (빈 `{}` 는 model 이 없어 `404 DeploymentNotFound` 로 갈려 배포명을 확인하지 못한다.) (3) WAN 은 키마다 존재하지 않는 task 를 GET(`probeWanPool`) — 맞는 키는 200(`task_status: UNKNOWN`), 틀린 키는 `401 InvalidApiKey` 다(2026-10-09 실측).
 ```bash
 node -e "
 (async () => {
@@ -160,18 +184,24 @@ node -e "
   const imgUrl = c.AZURE_IMAGE_OPENAI_ENDPOINT + '/openai/v1/images/generations?api-version=' + imgv;
   const img = await azFetch(imgUrl, { key: c.AZURE_IMAGE_API_KEY, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: c.AZURE_GPT_IMAGE_DEPLOYMENT }) });
   console.log('images.badreq ->', img.status, '(' + img.authStyle + ')');
-  const pass = sora.status === 200 && img.status === 400;
+  const { probeWanPool } = await import('$POOL');
+  const wan = await probeWanPool({ creds: c });
+  for (const w of wan) console.log('wan.probe', w.label, w.host, w.model, '->', w.status, w.code || '', '| key', w.key);
+  if (!wan.length) console.log('wan.probe -> WAN 항목 없음 (영상은 Sora 만 사용)');
+  const pass = sora.status === 200 && img.status === 400 && wan.every((w) => w.authOk);
   console.log(pass ? 'PREFLIGHT PASS -- \$0 과금' : 'PREFLIGHT FAIL');
   console.log('source:', c._source, '| Sora key', redact(c.AZURE_SORA_API_KEY), '| Image key', redact(c.AZURE_IMAGE_API_KEY));
   process.exit(pass ? 0 : 1);
 })();
 "
 ```
-**판정 기준(둘 다 충족해야 PASS)**:
+**판정 기준(모두 충족해야 PASS)**:
 | 체크 | 기대 | 의미 |
 |---|---|---|
 | `sora.listVideos` | HTTP 200 | Sora 엔드포인트 살아있음 + 키 인증됨 |
 | `images.badreq` | HTTP 400 (`missing_required_parameter`) | Image 엔드포인트 살아있음 + 키 인증됨 + **배포명 라우팅됨**(프롬프트 누락이라 생성 전 거부) |
+| `wan.probe` (항목마다) | HTTP 200 | WAN workspace 엔드포인트 + 키 인증됨. 남은 할당량은 이 방법으로 알 수 없다 |
+| `wan.probe` 가 401 `InvalidApiKey` | - | 키가 틀렸거나 엔드포인트와 리전이 다름 — 그 `WAN_<n>` 을 재입력 |
 | `images.badreq` 가 404 (`DeploymentNotFound`) | - | 엔드포인트·인증은 OK 지만 **배포명이 틀림** — §3 에서 `AZURE_GPT_IMAGE_DEPLOYMENT` 를 콘솔의 실제 배포명으로 재확인 |
 | 둘 중 하나라도 401/403 | - | 인증 실패 — `azFetch` 가 `api-key`→`Bearer` 두 헤더 스타일을 이미 자동 재시도하므로, 그래도 401/403 이면 헤더 스타일이 아니라 키·엔드포인트 자체가 틀린 것(§3 재입력) |
 | `images.badreq` 가 200 | - | 있을 수 없음(프롬프트 없이 생성이 성공할 리 없다) — 어댑터·API 버전 불일치 의심, 정직히 보고 |
@@ -183,13 +213,15 @@ node -v                      # 18 이상 기대
 command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffmpeg 없음 -- resolveFfmpeg() 폴백 확인(§2)"
 # 위 §4 프리플라이트를 재실행해 PASS 문자열 + 두 status 코드를 그대로 증거로 남긴다
 ```
-4-field 보고: 변경(Node/ffmpeg 확보 방식 · 크레덴셜 저장 경로 — 파일 내용 아님) / Evidence(§0 감지 출력 · §4 두 status 코드) / 검증(`listVideos`=200 **AND** `images.badreq`=400 모두 충족해야 PASS) / Unknown(FLUX 미검증 · 배포명이 실제 존재하는지는 이 무과금 프리플라이트로 확인 불가하며 첫 실제 생성 시점에만 드러남 · 관리자 권한 제약으로 ffmpeg 시스템 설치 불가 등, 가짜 성공 금지).
+4-field 보고: 변경(Node/ffmpeg 확보 방식 · 크레덴셜 저장 경로 — 파일 내용 아님) / Evidence(§0 감지 출력 · §4 status 코드 전부) / 검증(`listVideos`=200 **AND** `images.badreq`=400 **AND** WAN 항목 전부 200 이어야 PASS) / Unknown(FLUX 미검증 · WAN 키별 남은 할당량(조회 API 없음 — 소진은 첫 생성에서 드러나고 풀이 자동으로 다음 키·Sora 로 넘어감) · 배포명이 실제 존재하는지는 이 무과금 프리플라이트로 확인 불가하며 첫 실제 생성 시점에만 드러남 · 관리자 권한 제약으로 ffmpeg 시스템 설치 불가 등, 가짜 성공 금지).
 크레덴셜은 어떤 필드도 원문으로 보고하지 않고 항상 `redact()` 출력만 남긴다.
 
 ## 함정
 - **키·엔드포인트가 진짜 다른 이유**: Sora 와 gpt-image-2 는 같은 Azure OpenAI 리소스에 함께 배포될 수도, 완전히 별도 리소스일 수도 있다 — 하나로 퉁치지 말고 두 세트를 각각 확인한다.
 - **`azFetch` 는 이미 이중 인증을 시도한다**: `api-key` 헤더로 먼저 시도하고 401/403 이면 자동으로 `Authorization: Bearer` 로 재시도한다 — 그래도 실패하면 헤더 스타일 문제가 아니라 키·엔드포인트 자체가 틀린 것이다.
 - **콘솔 샘플 붙여넣기의 스크롤백 잔존**: 터미널 히스토리·세션 로그에 원문 키가 남을 수 있다(플러그인 통제 밖) — 공유 터미널이거나 로깅되는 환경이면 붙여넣기 후 Azure 콘솔에서 키 로테이션을 권한다.
+- **WAN 키 검증은 GET task 로만**: 존재하지 않는 task 조회는 과금이 없고 키 유효성(200 vs 401)을 가른다. 생성 요청(POST)은 과금될 수 있으니 점검용으로 쓰지 않는다.
+- **이미지 배포 429**: 낮은 티어(S0) 이미지 배포는 연속 호출에 `429 RateLimitReached` 를 낸다. 프리플라이트를 짧은 간격으로 반복하지 않는다.
 - **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백.
 - **ffmpeg 바이너리 미번들 원칙**: 위 폴백은 사용자 프로젝트 `node_modules` 한정 — banker 플러그인 배포물에는 절대 포함하지 않는다.
 - **프리플라이트는 배포명 실존까지는 증명 못 한다**: `images.badreq` 400 은 "리소스가 살아있고 키가 맞다"는 뜻이지 `AZURE_GPT_IMAGE_DEPLOYMENT` 로 지정한 배포가 실제 존재·활성 상태인지는 증명하지 않는다 — 무과금으로는 확인할 방법이 없어 첫 실제 생성(3d-intro-build)에서만 드러난다.

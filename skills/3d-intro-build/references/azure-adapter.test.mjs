@@ -148,6 +148,47 @@ test('generateImage: v1 failure falls back to the classic deployments path', asy
   assert.ok(noteMsg && noteMsg.includes('classic'), 'onNote reported the fallback');
 });
 
+test('generateImage: HTTP 429 waits Retry-After and retries v1 instead of falling back to classic', async () => {
+  const b64 = Buffer.from('png-after-429').toString('base64');
+  const calls = installFetch((url, opts, i) => {
+    if (i < 2) {
+      const r = mockJson({ error: { code: 'RateLimitReached' } }, 429);
+      r.headers = { get: (k) => (String(k).toLowerCase() === 'retry-after' ? '0' : String(k).toLowerCase() === 'content-type' ? 'application/json' : null) };
+      return r;
+    }
+    return mockJson({ data: [{ b64_json: b64 }] });
+  });
+  const notes = [];
+  const buf = await A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p', onNote: (m) => notes.push(m) });
+  assert.equal(buf.toString(), 'png-after-429');
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every((c) => c.url.includes('/openai/v1/images/generations')), 'never left the v1 path');
+  assert.equal(notes.filter((m) => /HTTP 429/.test(m)).length, 2);
+});
+
+test('generateImage: 429 that outlasts the retries is reported, not masked by the classic path', async () => {
+  const calls = installFetch(() => {
+    const r = mockJson({ error: { code: 'RateLimitReached' } }, 429);
+    r.headers = { get: (k) => (String(k).toLowerCase() === 'retry-after' ? '0' : String(k).toLowerCase() === 'content-type' ? 'application/json' : null) };
+    return r;
+  });
+  await assert.rejects(() => A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p', retry429: 1 }), /HTTP 429/);
+  assert.equal(calls.length, 2);
+});
+
+test('generateImage: a lost connection on v1 is not retried on the classic path (it may have billed)', async () => {
+  const calls = installFetch(() => { throw new TypeError('fetch failed'); });
+  await assert.rejects(() => A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p' }), /HTTP 0/);
+  assert.equal(calls.length, 1);
+});
+
+test('createVideo: failures carry status and errno for the caller\'s billing decision', async () => {
+  installFetch(() => { const e = new TypeError('fetch failed'); e.cause = Object.assign(new Error('x'), { code: 'ECONNRESET' }); throw e; });
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 0 && e.errno === 'ECONNRESET');
+  installFetch(() => mockJson({ error: { code: 'too_many' } }, 429));
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 429);
+});
+
 test('editImage: multipart edit decodes b64_json into a PNG Buffer', async () => {
   const png = Buffer.from('EDITED-PNG');
   const calls = installFetch(() => mockJson({ data: [{ b64_json: png.toString('base64') }] }));
