@@ -40,7 +40,8 @@ if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = cre
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다 → 같은 `3d-intro-setup` 으로 보낸다.
 - 둘 다 통과해야 다음 단계로 간다.
 - 영상 provider 상태를 무료로 확인해 둔다.
-  `poolSummary({ creds })` 는 WAN 키별 상태(`ok`·`cooldown`·`exhausted`·`invalid`)를 키 원문 없이 돌려준다.
+  `poolSummary({ creds })` 는 WAN 키별 상태(`ok`·`cooldown`·`exhausted`·`invalid`·`malformed`)를 키 원문 없이 돌려준다.
+  `malformed` 는 endpoint 가 http(s) URL 이 아니거나 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
   WAN 항목(`WAN_<n>_ENDPOINT`·`WAN_<n>_API_KEY`)이 하나도 없으면 영상은 처음부터 Sora 로 만든다.
 
 ---
@@ -193,13 +194,13 @@ r = await generateClip({ creds, prompt: legi, size: ORIENTATION, seconds, firstF
 - **같은 leg 를 두 번 과금하지 않는다** — 다른 키로 다시 제출하는 것은 첫 제출이 task 를 만들지 않은 게 확실할 때뿐이다(서버가 거절, 요청을 보내기 전 연결 실패, task 가 키 할당량이나 알려진 일시 오류로 FAILED/CANCELED).
   코드가 없거나 처음 보는 코드로 FAILED/CANCELED 된 task 는 입력 탓이거나 과금됐을 수 있어 다시 내지 않고 `kind: 'failed'` 로 멈춘다.
 - **폴백** — 쓸 수 있는 WAN 키가 없으면 그 leg 부터 Sora 로 만든다. 체인 도중에 provider 가 바뀌면 화풍이 달라질 수 있으니, leg 마다 `r.provider` 를 기록하고 바뀐 지점을 사용자에게 알린다.
-  WAN 항목의 endpoint 나 모델이 형식에 맞지 않으면(값 끝의 `# 주석`, 공백 등) 그 항목만 건너뛴다(`skip` 이벤트). 모든 항목이 그렇다면 Sora 로 넘기지 않고 `invalid_request` 로 멈춘다.
+  WAN 항목의 endpoint 나 모델이 형식에 맞지 않으면(URL 이 아닌 endpoint, 공백이 든 모델, 모델 칸에 붙인 키 등) 그 항목만 건너뛴다(`skip` 이벤트). 모든 항목이 그렇다면 Sora 로 넘기지 않고 `invalid_request` 로 멈춘다.
 - **멈추는 경우(재제출·폴백 안 함)** — 아래 오류에서 같은 leg 를 `generateClip` 으로 다시 부르지 않는다.
 
   | 오류 | 뜻 | 다음 행동 |
   |---|---|---|
   | `ContentRejectedError` | 검열(`DataInspectionFailed` 등) | 프롬프트나 프레임을 고쳐 다시 부름 |
-  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`(모델명 오타·미활성), 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume | 설정을 고침(보낸 요청 없음) |
+  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`(모델명 오타·미활성), 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume | 설정을 고침(task 는 생기지 않음) |
   | `kind: 'timeout'` / `'download'` | task 는 있음(과금됐을 수 있음) | `resumeClip({ creds, provider: err.provider, label: err.label, taskId: err.taskId, seconds: err.seconds })` |
   | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음(`'failed'` 는 처음 보는 이유로 끝난 task, `'task_lost'` 는 폴링이 4xx 나 UNKNOWN 으로 끝난 task) | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함 |
   | `kind: 'unreachable'` | Sora 연결 거부(아무것도 보내지 않음) | 네트워크를 확인한 뒤 다시 부름 |

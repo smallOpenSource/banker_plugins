@@ -101,15 +101,26 @@ export function parseConsoleSample(text) {
   return out;
 }
 
-/** Parse a KEY=VALUE .env body into a plain object (strips surrounding quotes, skips comments). */
+/**
+ * Parse a KEY=VALUE .env body into a plain object, skipping comment lines. A quoted value keeps
+ * everything inside its quotes; an unquoted value ends at a " # comment" (whitespace, then #),
+ * the way dotenv reads it, so a note after a value never becomes part of an endpoint or a key.
+ */
 export function parseEnvFile(text) {
   const env = {};
   for (const line of String(text || '').split(/\r?\n/)) {
     if (line.trimStart().startsWith('#')) continue;
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    if (m) env[m[1]] = envValue(m[2]);
   }
   return env;
+}
+
+function envValue(raw) {
+  const q = raw[0];
+  const end = q === '"' || q === "'" ? raw.indexOf(q, 1) : -1;
+  if (end > 0) return raw.slice(1, end);
+  return raw.replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '');
 }
 
 /**
@@ -135,13 +146,19 @@ export function persistCreds(creds, { target } = {}) {
   const lines = [];
   for (const [k, v] of Object.entries(creds || {})) {
     if (k.startsWith('_') || v == null) continue;
-    lines.push(`${k}=${String(v)}`);
+    lines.push(`${k}=${envLiteral(String(v))}`);
   }
   const body = lines.length ? `${lines.join('\n')}\n` : '';
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, body, { mode: 0o600 });
   try { fs.chmodSync(target, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
   return target;
+}
+
+// Quote a value that parseEnvFile would otherwise cut at " #" or strip of its quotes.
+function envLiteral(v) {
+  if (!/\s#|^["']/.test(v)) return v;
+  return v.includes('"') ? `'${v}'` : `"${v}"`;
 }
 
 /** Redact a secret to `abcd…wxyz(len)`; short (<=8) secrets are fully masked; falsy -> "(missing)". */

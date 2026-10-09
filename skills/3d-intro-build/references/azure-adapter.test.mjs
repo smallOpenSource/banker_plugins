@@ -356,6 +356,26 @@ test('resolveFfmpeg: throws an actionable error when nothing is found', async ()
 // creds round-trip (cross-platform path.join) + probeDims + redact
 // =====================================================================
 
+test('parseEnvFile: a " # comment" after an unquoted value is dropped; quotes and a bare # keep the text', () => {
+  const env = A.parseEnvFile([
+    'WAN_1_ENDPOINT=https://ws.example.com     # origin only',
+    'VIDEO_PROVIDER_ORDER=wan,sora  # fallback',
+    'QUOTED="a # b" # note',
+    "SINGLE='c#d'",
+    'BARE=e#f',
+    '# FULL=a comment line',
+  ].join('\n'));
+  assert.deepEqual(env, { WAN_1_ENDPOINT: 'https://ws.example.com', VIDEO_PROVIDER_ORDER: 'wan,sora', QUOTED: 'a # b', SINGLE: 'c#d', BARE: 'e#f' });
+});
+
+test('persistCreds: a value the parser would cut at " #" or strip of quotes reads back unchanged', () => {
+  const dir = mkTmp('az-persist-quote-');
+  const target = path.join(dir, '.env.3d-intro.local');
+  const values = { NOTE_PATH: 'C:\\Program Files\\ff #2\\ffmpeg.exe', QUOTED_LOOK: '"x"', PLAIN: 'https://r.example.com' };
+  A.persistCreds(values, { target });
+  assert.deepEqual(A.parseEnvFile(fs.readFileSync(target, 'utf8')), values);
+});
+
 test('persistCreds + resolveCreds round-trip (cross-platform path.join; 0600 where supported)', () => {
   const dir = mkTmp('adapter-creds-');
   const projectDir = path.join(dir, 'proj');
