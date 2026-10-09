@@ -153,14 +153,17 @@ grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null ||
 Alibaba Cloud Model Studio 의 WAN 영상 모델(기본 `wan3.0-video-prime`)을 여러 API 키로 돌린다. 키(workspace)마다 할당량이 따로라 키가 많을수록 오래 쓴다.
 키마다 아래 두 줄을 번호를 붙여 저장한다. 번호 개수 제한은 없다.
 ```
-WAN_1_ENDPOINT=https://ws-<workspace-id>.<region>.maas.aliyuncs.com     # origin 만 (경로 제외)
+# endpoint 는 origin 만 (경로 제외)
+WAN_1_ENDPOINT=https://ws-<workspace-id>.<region>.maas.aliyuncs.com
 WAN_1_API_KEY=sk-ws-...
 WAN_2_ENDPOINT=...
 WAN_2_API_KEY=...
-WAN_MODEL=wan3.0-video-prime          # 선택. 키 하나만 다르면 WAN_<n>_MODEL
+# 선택. 키 하나만 모델이 다르면 WAN_<n>_MODEL
+WAN_MODEL=wan3.0-video-prime
 ```
 - 콘솔 샘플(curl)을 붙여넣으면 `parseConsoleSample()` 로 endpoint 를 뽑을 수 있다. 키는 샘플에 실제 값(`Bearer sk-ws-...`)이 있을 때만 뽑히고, `$DASHSCOPE_API_KEY` 같은 변수면 따로 입력받는다. JSON 본문의 `"model"` 은 뽑히지 않으니 `WAN_MODEL` 로 따로 넣는다.
 - 엔드포인트, 키, 모델의 리전이 같아야 한다. 다르면 `401 InvalidApiKey` 가 난다.
+- 주석은 줄 맨 앞의 `#` 로만 쓴다. 값 뒤에 붙인 `# 주석` 은 값에 그대로 들어가 그 항목이 형식 오류로 건너뛰어진다. 모든 WAN 항목이 이렇게 잘못되면 build 는 Sora 로 넘어가지 않고 멈춘다.
 - 선택 설정(모두 기본값이 있음): `VIDEO_PROVIDER_ORDER`(기본 `wan,sora`), `WAN_RESOLUTION`(기본은 출력 크기에서 계산), `WAN_PROMPT_EXTEND`(기본 `false`), `WAN_MAX_CONCURRENT`(기본 5), `WAN_EXHAUSTED_TTL_HOURS`(기본 24).
 - 소진·쿨다운 기록은 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남는다. 키나 모델을 바꾸면 지문이 바뀌어 기록이 새로 시작된다.
 
@@ -202,6 +205,7 @@ node -e "
 | `images.badreq` | HTTP 400 (`missing_required_parameter`) | Image 엔드포인트 살아있음 + 키 인증됨 + **배포명 라우팅됨**(프롬프트 누락이라 생성 전 거부) |
 | `wan.probe` (항목마다) | HTTP 200 | WAN workspace 엔드포인트 + 키 인증됨. 남은 할당량은 이 방법으로 알 수 없다 |
 | `wan.probe` 가 401 `InvalidApiKey` | - | 키가 틀렸거나 엔드포인트와 리전이 다름 — 그 `WAN_<n>` 을 재입력 |
+| `wan.probe` 가 `BadEndpoint` / `BadModel` | - | 값이 URL 이나 모델 id 형식이 아님(값 끝의 `# 주석`, 공백 등). 원래 값 대신 `(invalid endpoint)`, `(invalid model)` 로 표시된다 — 그 줄을 고침 |
 | `images.badreq` 가 404 (`DeploymentNotFound`) | - | 엔드포인트·인증은 OK 지만 **배포명이 틀림** — §3 에서 `AZURE_GPT_IMAGE_DEPLOYMENT` 를 콘솔의 실제 배포명으로 재확인 |
 | 둘 중 하나라도 401/403 | - | 인증 실패 — `azFetch` 가 `api-key`→`Bearer` 두 헤더 스타일을 이미 자동 재시도하므로, 그래도 401/403 이면 헤더 스타일이 아니라 키·엔드포인트 자체가 틀린 것(§3 재입력) |
 | `images.badreq` 가 200 | - | 있을 수 없음(프롬프트 없이 생성이 성공할 리 없다) — 어댑터·API 버전 불일치 의심, 정직히 보고 |

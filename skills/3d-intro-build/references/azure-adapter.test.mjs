@@ -228,6 +228,28 @@ test('video: createVideo -> pollVideo(terminal) -> downloadVideo', async () => {
   assert.equal(bytes.toString(), 'MP4-BYTES');
 });
 
+test('pollVideo: a 4xx other than 408/429 stops at once with its status; an answer it cannot use is not polled to maxTicks', async () => {
+  for (const [status, fetches] of [[404, 1], [400, 1], [401, 2]]) {
+    const calls = installFetch(() => mockJson({ error: { code: 'NotFound', message: 'gone' } }, status));
+    await assert.rejects(
+      () => A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-x', intervalMs: 1, maxTicks: 50, sleep: async () => {} }),
+      (e) => e.status === status,
+    );
+    assert.equal(calls.length, fetches, `HTTP ${status} is not polled again (401 tries both auth styles once)`);
+  }
+});
+
+test('pollVideo: 408, 429 and 5xx keep polling, paced by the injected sleep; an error body is not taken as status', async () => {
+  const answers = [mockJson({ error: { code: 'TooMany' } }, 429), mockJson({}, 503), mockJson({}, 408), mockJson({ id: 'vid-x', status: 'completed' })];
+  installFetch((url, opts, i) => answers[i]);
+  const slept = [];
+  const ticks = [];
+  const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-x', intervalMs: 1500, maxTicks: 50, sleep: async (ms) => { slept.push(ms); }, onTick: (s) => ticks.push(s) });
+  assert.equal(st.status, 'completed');
+  assert.deepEqual(slept, [1500, 1500, 1500]);
+  assert.deepEqual(ticks.slice(0, 3), [null, null, null], 'no status seen until the first 2xx');
+});
+
 // =====================================================================
 // azFetch auth fallback
 // =====================================================================
