@@ -248,6 +248,7 @@ banker uninstall        # 제거
   - `all-in-one`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX.
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright.
   - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
+  - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).
   - `/graceful-pause`: Claude Code 2.1.289 이상(function hooks). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알리며, Codex 에는 이 명령이 없습니다.
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
@@ -288,7 +289,7 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 
 > `omc-patch` 를 적용했다면 제거 전에 `/banker:omc-patch revert`(Codex는 `banker-omc-patch` 에 `revert`)를 실행하세요.\
 > 훅 패치와 마켓플레이스 고정은 플러그인 밖(`~/.claude/plugins/`)에 있어서, 플러그인을 지워도 남고 OMC 도 계속 자동 업데이트되지 않습니다.\
-> 이미 지웠다면 `~/.claude/plugins/marketplaces/omc` 의 origin 에서 `omc-pinned://` 를 뗀 주소로 `git remote set-url origin <주소>` 를 실행하고, 활성 버전 폴더의 `*.omcbak` 을 원래 이름으로 되돌린 뒤 `~/.claude/omc-local-patches/PINNED` 를 지우면 됩니다.
+> 이미 지웠다면 `~/.claude/plugins/marketplaces/omc` 의 origin 에서 `omc-pinned://` 를 뗀 주소로 `git remote set-url origin <주소>` 를 실행하고, 활성 버전 폴더의 `scripts/*.mjs.omcbak` 과 `hooks/hooks.json.omcbak` 을 원래 이름으로 되돌린 뒤 `~/.claude/omc-local-patches/PINNED` 를 지우면 됩니다.
 
 ## 업데이트 확인 및 사용량 카운팅
 

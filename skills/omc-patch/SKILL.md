@@ -26,13 +26,14 @@ OMC(oh-my-claudecode)가 새 버전으로 자동 업데이트되면 로컬 훅 �
 ## 규칙
 
 - 이 작업은 사용자 설정 폴더(`~/.claude`)의 플러그인 캐시를 고치는 설정 변경이다. 서브에이전트에 맡기지 않고 메인 세션에서 직접 실행하고 직접 검증한다.
-- 적용은 `--no-update` 로만 실행한다. 인자 없는 apply 는 활성 OMC 를 도구의 `TARGET_VERSION`(5.3.0)으로 내리므로, 사용자가 5.3.0 고정을 명시했을 때만 쓴다.
+- 적용은 `--no-update` 로만 실행한다. 인자 없는 apply 는 쓰지 않는다. 활성 OMC 를 도구의 `TARGET_VERSION`(5.3.0)으로 내리고, `revert` 로도 버전이 돌아오지 않는다.
 - 도구가 출력하는 `인자 없이 다시 실행하십시오.` 문구는 따르지 않는다. 이 스킬에서는 항상 `--no-update` 를 붙인다.
 - 패치 규칙은 OMC 훅 코드의 모양에 맞춰져 있다. 처음 보는 OMC 버전이면 반드시 `check` 를 먼저 실행한다.
 - `실패 N건` 이 1건 이상이면 멈추고 출력을 그대로 보고한다. 문법 오류가 난 파일은 도구가 원본으로 자동 롤백한다.
 - 판정은 출력 문구로 한다. 종료 코드 0 만으로 완료라고 보고하지 않는다.
 - 캐시에는 정션이나 심볼릭 링크로 이어진 버전 폴더가 있을 수 있다(예: 옛 버전 폴더가 새 버전을 가리킴). 이때 한 번의 변경이 두 버전 폴더에 함께 보인다. 정상이다.
 - 도구는 `os.homedir()/.claude` 를 쓴다. `CLAUDE_CONFIG_DIR` 로 설정 폴더를 옮겼다면 이 도구는 그 폴더를 보지 않는다.
+- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//***@` 로 가린다. 그 URL 은 `PINNED` 에도 평문으로 남으니 사용자에게 알린다.
 
 ## 절차
 
@@ -45,6 +46,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 ```
 
 - `활성 버전: X (installed_plugins.json)` 줄로 실제 활성 버전을 확인한다.
+- 그 줄이 `(추정: ...)` 로 끝나면 도구가 `installed_plugins.json` 에서 활성 버전을 찾지 못한 것이다. 적용하지 않고 출력을 그대로 보고하고 끝낸다. 추정한 폴더를 패치하면 실제 활성 버전은 그대로 남는데 `check` 는 적용된 것으로 보일 수 있다.
 - `패치 필요 N건` 은 설치된 모든 버전 폴더를 합친 수다. 판정은 맨 아래 `결과:` 줄로 한다.
 - `결과: 모두 적용된 상태입니다.` 이면 4단계 검증으로 건너뛴다.
 - `참고: 비활성 버전 ...` 은 지금 쓰지 않는 버전이라 판정에 들어가지 않는다.
@@ -79,7 +81,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --no-update
    bash:
    ```bash
    R=$(node -e 'const j=require(require("path").join(require("os").homedir(),".claude/plugins/installed_plugins.json"));console.log(j.plugins["oh-my-claudecode@omc"][0].installPath)')
-   for b in "$R"/scripts/*.omcbak; do f="${b%.omcbak}"; node --check "$f"; echo "$(basename "$f") syntax=$?"; done
+   for b in "$R"/scripts/*.omcbak; do f="${b%.omcbak}"; node --check "$f"; rc=$?; echo "$(basename "$f") syntax=$rc"; done
    ```
 
    PowerShell:
@@ -88,18 +90,21 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --no-update
    Get-ChildItem "$r\scripts\*.omcbak" | % { $f = $_.FullName -replace '\.omcbak$',''; node --check $f; "{0} syntax={1}" -f (Split-Path $f -Leaf), $LASTEXITCODE }
    ```
 
-3. 패치된 훅 하나를 플러그인의 `scripts/run.cjs` 로 실제 실행한다. 환경변수 문법만 셸마다 다르다.
+3. 패치된 훅 하나를 플러그인의 `scripts/run.cjs` 로 실제 실행한다. 명령마다 새 셸일 수 있으니 경로를 다시 구한다.
+   `OMC_NOTIFY=0` 은 이 시험 실행이 사용자의 알림 채널로 `session-idle` 알림을 보내지 않게 한다.
 
    bash:
    ```bash
-   export CLAUDE_PLUGIN_ROOT="$R"
-   echo '{"session_id":"smoke-test","cwd":"/nonexistent","hook_event_name":"Stop"}' | node "$R/scripts/run.cjs" "$R/scripts/persistent-mode.mjs"; echo "exit=$?"
+   R=$(node -e 'const j=require(require("path").join(require("os").homedir(),".claude/plugins/installed_plugins.json"));console.log(j.plugins["oh-my-claudecode@omc"][0].installPath)')
+   echo '{"session_id":"smoke-test","cwd":"/nonexistent","hook_event_name":"Stop"}' | CLAUDE_PLUGIN_ROOT="$R" OMC_NOTIFY=0 node "$R/scripts/run.cjs" "$R/scripts/persistent-mode.mjs"; echo "exit=$?"
    ```
 
    PowerShell:
    ```powershell
-   $env:CLAUDE_PLUGIN_ROOT = $r
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $env:CLAUDE_PLUGIN_ROOT = $r; $env:OMC_NOTIFY = '0'
    '{"session_id":"smoke-test","cwd":"C:\\nonexistent","hook_event_name":"Stop"}' | node "$r\scripts\run.cjs" "$r\scripts\persistent-mode.mjs"; "exit=$LASTEXITCODE"
+   Remove-Item Env:CLAUDE_PLUGIN_ROOT, Env:OMC_NOTIFY
    ```
 
    `{"continue":true,...}` 형태의 출력과 종료 코드 0 이면 정상. 훅 이름이 없으면 `*.omcbak` 와 짝인 다른 훅으로 바꾼다.
@@ -131,8 +136,8 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --revert
 
 ## 함정
 
-- 도구의 `TARGET_VERSION`(5.3.0)은 소스에 고정돼 있다. 인자 없는 apply 만 이 값을 쓴다.
+- 도구의 `TARGET_VERSION`(5.3.0)은 소스에 고정돼 있다. 인자 없는 apply 만 이 값을 쓰고, 이 스킬은 그 apply 를 쓰지 않는다.
 - OMC 가 훅 코드 구조를 바꾸면 패치 대상이 0건으로 나오거나 변환이 실패할 수 있다. 이때 `실패 N건` 과 `변환 실패` 를 그대로 보고한다.
 - 고정을 풀지 않고 OMC 를 올리려면 먼저 `revert` 한다. 그렇지 않으면 마켓플레이스 fetch 가 계속 실패한다.
-- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 지워도 다음 실행에서 다시 만들어진다.
+- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다. `revert` 는 origin 값에서 원래 URL 을 되찾는다.
 - 도구의 주석과 출력 문구는 한글이다.
