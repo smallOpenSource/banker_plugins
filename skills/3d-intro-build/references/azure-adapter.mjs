@@ -101,15 +101,29 @@ export function parseConsoleSample(text) {
   return out;
 }
 
-/** Parse a KEY=VALUE .env body into a plain object (strips surrounding quotes, skips comments). */
+/**
+ * Parse a KEY=VALUE .env body into a plain object, skipping comment lines. A quoted value keeps
+ * everything inside its quotes. In an unquoted value, a # that follows whitespace starts a comment
+ * (also right after `=`), so a note after a value never becomes part of an endpoint or a key.
+ */
 export function parseEnvFile(text) {
   const env = {};
   for (const line of String(text || '').split(/\r?\n/)) {
     if (line.trimStart().startsWith('#')) continue;
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=([^\n]*)$/);
+    if (m) env[m[1]] = envValue(m[2]);
   }
   return env;
+}
+
+// `raw` is everything after `=`, so the whitespace before a leading # is still there. A stray
+// trailing \r (a \r\r\n line end) is whitespace too.
+function envValue(raw) {
+  const v = raw.trim();
+  const q = v[0];
+  const end = q === '"' || q === "'" ? v.indexOf(q, 1) : -1;
+  if (end > 0) return v.slice(1, end);
+  return raw.trimEnd().replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 }
 
 /**
@@ -135,13 +149,19 @@ export function persistCreds(creds, { target } = {}) {
   const lines = [];
   for (const [k, v] of Object.entries(creds || {})) {
     if (k.startsWith('_') || v == null) continue;
-    lines.push(`${k}=${String(v)}`);
+    lines.push(`${k}=${envLiteral(String(v))}`);
   }
   const body = lines.length ? `${lines.join('\n')}\n` : '';
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, body, { mode: 0o600 });
   try { fs.chmodSync(target, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
   return target;
+}
+
+// Quote a value that parseEnvFile would otherwise cut at " #", trim, or strip of its quotes.
+function envLiteral(v) {
+  if (!/\s#|^["'\s]|["'\s]$/.test(v)) return v;
+  return v.includes('"') ? `'${v}'` : `"${v}"`;
 }
 
 /** Redact a secret to `abcd…wxyz(len)`; short (<=8) secrets are fully masked; falsy -> "(missing)". */
@@ -310,24 +330,37 @@ export async function createVideo({
   return r.body;
 }
 
+const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180 };
+const POLL_RETRY_4XX = new Set([408, 429]);
+const withoutUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+
 /**
  * Poll a Sora job until a terminal status (or maxTicks). Polls first, then sleeps, so a job
- * that is already terminal returns without waiting. `onTick(status, i)` is optional.
+ * that is already terminal returns without waiting. `onTick(status, i)` is optional; `sleep`
+ * replaces the wait between polls. 408, 429, 5xx and network errors keep polling. Any other
+ * 4xx throws at once with `err.status` and `err.code`: a job the server no longer knows, or a
+ * key it refuses, never turns terminal.
  * @returns the last status object seen.
  */
-export async function pollVideo({
-  endpoint, key, id, onTick, apiVersion = 'preview', intervalMs = 5000, maxTicks = 180,
-} = {}) {
-  const url = `${endpoint}/openai/v1/videos/${id}?api-version=${apiVersion}`;
+export async function pollVideo(opts = {}) {
+  const o = { ...POLL_DEFAULTS, sleep, ...withoutUndefined(opts) };
+  const url = `${o.endpoint}/openai/v1/videos/${o.id}?api-version=${o.apiVersion}`;
   let st = null;
-  for (let i = 0; i < maxTicks; i++) {
-    const r = await azFetch(url, { key, method: 'GET' });
-    st = r.body || st;
-    if (typeof onTick === 'function') onTick(st, i);
+  for (let i = 0; i < o.maxTicks; i++) {
+    const r = await azFetch(url, { key: o.key, method: 'GET' });
+    throwIfRefused(r, o.id);
+    if (r.ok) st = r.body || st;
+    if (typeof o.onTick === 'function') o.onTick(st, i);
     if (st && TERMINAL_STATUS.has(st.status)) break;
-    await sleep(intervalMs);
+    await o.sleep(o.intervalMs);
   }
   return st;
+}
+
+function throwIfRefused(r, id) {
+  if (r.status < 400 || r.status >= 500 || POLL_RETRY_4XX.has(r.status)) return;
+  const code = r.body?.error?.code || null;
+  throw Object.assign(new Error(`pollVideo: job ${id} answered HTTP ${r.status}${code ? ` ${code}` : ''}`), { status: r.status, code });
 }
 
 /** Download finished video bytes. Returns an mp4 Buffer; throws on non-200 / empty body. */

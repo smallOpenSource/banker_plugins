@@ -574,3 +574,191 @@ test('round-3: Sora 2xx without id is ambiguous; resume reports the real length;
   await run({ creds: cr, statePath: tmpState(), maxRateWaitMs: null, onEvent: (e) => events.push(e) }).catch(() => {});
   assert.ok(events.some((e) => e.type === 'wait' && e.ms === 1000), 'null maxRateWaitMs fell back to the default and waited');
 });
+
+// ---------------------------------------------------------------------------
+// Review fixes: Sora resume, malformed entries, FAILED tasks, keys in output
+
+test('resumeClip: a Sora job the server no longer knows ends at once as task_lost, not after a 30-minute poll', async () => {
+  let polls = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith(`${SORA}/openai/v1/videos/gone-job?`)) { polls++; return json(404, { error: { code: 'NotFound', message: 'not found' } }); }
+    throw new Error(`unrouted fetch ${url}`);
+  };
+  await assert.rejects(
+    () => P.resumeClip({ creds: creds(), statePath: tmpState(), provider: 'sora', taskId: 'gone-job', pollIntervalMs: 1, pollTimeoutMs: 50, sleep: async () => {} }),
+    (e) => e.kind === 'task_lost' && e.provider === 'sora' && e.taskId === 'gone-job' && e.status === 404,
+  );
+  assert.equal(polls, 1);
+});
+
+test('resumeClip: a Sora resume without Sora creds stops before sending anything', async () => {
+  const calls = installFetch();
+  await assert.rejects(
+    () => P.resumeClip({ creds: creds({ AZURE_SORA_API_KEY: undefined }), statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', pollIntervalMs: 1, pollTimeoutMs: 50, sleep: async () => {} }),
+    (e) => e.kind === 'invalid_request' && e.provider === 'sora',
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('loadWanPool: an inline "# comment" left in an endpoint or a model marks that entry bad', () => {
+  const pool = P.loadWanPool({
+    WAN_1_ENDPOINT: `${WAN(1)}     # origin only`, WAN_1_API_KEY: 'k1',
+    WAN_2_ENDPOINT: WAN(2), WAN_2_API_KEY: 'k2', WAN_2_MODEL: 'wan3.0-video-prime          # optional',
+    WAN_3_ENDPOINT: `${WAN(3)}#console`, WAN_3_API_KEY: 'k3',
+  });
+  assert.deepEqual(pool.map((e) => [e.label, !!e.badEndpoint, !!e.badModel]), [['WAN_1', true, false], ['WAN_2', false, true], ['WAN_3', false, false]]);
+  assert.equal(pool[2].endpoint, WAN(3), 'a fragment is not part of the origin');
+});
+
+test('generateClip: when every configured WAN entry is malformed it stops with invalid_request instead of paying for Sora', async () => {
+  const calls = installFetch();
+  const cr = creds({ WAN_1_ENDPOINT: `${WAN(1)}   # note`, WAN_2_ENDPOINT: 'ws-unit2.example.com', WAN_3_MODEL: 'wan3.0 # x' });
+  const events = [];
+  await assert.rejects(
+    () => run({ creds: cr, statePath: tmpState(), onEvent: (e) => events.push(e) }),
+    (e) => e.kind === 'invalid_request' && e.provider === 'wan' && /WAN_1/.test(e.message) && /WAN_3/.test(e.message),
+  );
+  assert.equal(calls.length, 0, 'neither WAN nor Sora was called');
+  assert.equal(events.filter((e) => e.type === 'skip' && e.provider === 'wan' && e.label).length, 3);
+});
+
+test('generateClip: a FAILED or CANCELED task without a recognized code stops with its taskId instead of resubmitting', async () => {
+  for (const output of [{ task_status: 'FAILED', code: 'SomeNewError', message: 'x' }, { task_status: 'FAILED' }, { task_status: 'CANCELED' }]) {
+    const calls = installFetch({ wanTask: (id) => json(200, { output: { task_id: id, ...output } }) });
+    await assert.rejects(
+      () => run({ creds: creds(), statePath: tmpState() }),
+      (e) => e.kind === 'failed' && e.provider === 'wan' && e.taskId === 'task-1-1' && e.label === 'WAN_1',
+    );
+    assert.equal(creates(calls).length, 1, `${output.task_status} ${output.code || '(no code)'} is not resubmitted`);
+    assert.ok(!calls.some((c) => c.url.startsWith(SORA)), 'and not handed to Sora');
+  }
+});
+
+test('generateClip: a FAILED task with a known transient code moves on; a moderation code stops', async () => {
+  let calls = installFetch({ wanTask: (id) => (id.startsWith('task-1-') ? json(200, { output: { task_id: id, task_status: 'FAILED', code: 'InternalError.Timeout', message: 'x' } }) : null) });
+  assert.equal((await run({ creds: creds(), statePath: tmpState() })).label, 'WAN_2');
+  assert.deepEqual(createdOn(calls), [1, 2]);
+  calls = installFetch({ wanTask: (id) => json(200, { output: { task_id: id, task_status: 'FAILED', code: 'DataInspectionFailed', message: 'x' } }) });
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e instanceof P.ContentRejectedError);
+  assert.equal(creates(calls).length, 1);
+});
+
+test('poolSummary / probeWanPool: a malformed endpoint is never echoed, since it may hold a pasted key', async () => {
+  const cr = creds({ WAN_1_ENDPOINT: 'sk-ws-PASTEDKEYabcdef123456' });
+  installFetch();
+  const out = JSON.stringify([P.poolSummary({ creds: cr, statePath: tmpState() }), await P.probeWanPool({ creds: cr })]);
+  assert.ok(!out.includes('PASTEDKEY'), out);
+  assert.match(out, /\(invalid endpoint\)/);
+});
+
+test('generateClip: a fetch error that quotes the Authorization header never carries the key out', async () => {
+  const key = creds().WAN_1_API_KEY;
+  installFetch({ wanCreate: () => { throw new TypeError(`Headers.append: "Bearer ${key}\u0000" is an invalid header value.`); } });
+  const statePath = tmpState();
+  const err = await run({ creds: creds(), statePath }).then(() => null, (e) => e);
+  assert.ok(err, 'the leg stops');
+  assert.ok(!`${err.message} ${JSON.stringify(err)}`.includes(key), err.message);
+  assert.ok(!(fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf8') : '').includes(key));
+});
+
+test('poolSummary / probeWanPool: a malformed model is not echoed either', async () => {
+  const cr = creds({ WAN_2_MODEL: 'sk-ws-PASTEDMODELKEY # x' });
+  installFetch();
+  const out = JSON.stringify([P.poolSummary({ creds: cr, statePath: tmpState() }), await P.probeWanPool({ creds: cr })]);
+  assert.ok(!out.includes('PASTEDMODELKEY'), out);
+  assert.match(out, /\(invalid model\)/);
+});
+
+test('resumeClip: a WAN entry whose endpoint is malformed stops before sending anything', async () => {
+  const calls = installFetch();
+  await assert.rejects(
+    () => P.resumeClip({ creds: creds({ WAN_1_ENDPOINT: `${WAN(1)}  # note` }), statePath: tmpState(), provider: 'wan', label: 'WAN_1', taskId: 'task-1-1', pollIntervalMs: 0, sleep: async () => {} }),
+    (e) => e.kind === 'invalid_request' && e.label === 'WAN_1',
+  );
+  assert.equal(calls.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Review round 2: malformed Sora endpoint, keys in the model field, Step 0 status, guards
+
+test('resumeClip: a Sora resume with a missing or malformed endpoint stops before sending anything', async () => {
+  for (const endpoint of [undefined, `${SORA}   # prod`, 'sora-unit.example.com']) {
+    const calls = installFetch();
+    await assert.rejects(
+      () => P.resumeClip({ creds: creds({ AZURE_SORA_ENDPOINT: endpoint }), statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', pollIntervalMs: 1, pollTimeoutMs: 50, sleep: async () => {} }),
+      (e) => e.kind === 'invalid_request' && e.provider === 'sora',
+    );
+    assert.equal(calls.length, 0, String(endpoint));
+  }
+});
+
+test('loadWanPool / poolSummary / probeWanPool: a key pasted into the model field is malformed and never echoed', async () => {
+  const cr = creds({ WAN_2_MODEL: 'sk-ws-PASTEDINMODEL12345' });
+  assert.equal(P.loadWanPool(cr)[1].badModel, true);
+  installFetch();
+  const probe = await P.probeWanPool({ creds: cr });
+  assert.deepEqual([probe[1].code, probe[1].authOk], ['BadModel', false]);
+  const out = JSON.stringify([P.poolSummary({ creds: cr, statePath: tmpState() }), probe]);
+  assert.ok(!out.includes('PASTEDINMODEL'), out);
+});
+
+test('poolSummary: a malformed entry is reported as malformed, so the free Step 0 check catches it', () => {
+  const s = P.poolSummary({ creds: creds({ WAN_1_ENDPOINT: 'ws-unit1.example.com', WAN_2_MODEL: 'wan3.0 video' }), statePath: tmpState() });
+  assert.deepEqual(s.map((e) => [e.label, e.status, e.reason ?? null]), [['WAN_1', 'malformed', 'endpoint'], ['WAN_2', 'malformed', 'model'], ['WAN_3', 'ok', null]]);
+});
+
+test('resumeClip: a WAN entry with a malformed model still resumes, without echoing the model', async () => {
+  installFetch();
+  const r = await P.resumeClip({ creds: creds({ WAN_1_MODEL: 'sk-ws-SECRETMODEL x' }), statePath: tmpState(), provider: 'wan', label: 'WAN_1', taskId: 'task-1-7', pollIntervalMs: 0, sleep: async () => {} });
+  assert.equal(r.provider, 'wan');
+  assert.ok(!JSON.stringify({ ...r, mp4: null }).includes('SECRETMODEL'));
+});
+
+test('wanCreateTask: a request the fetch refuses to build carries its error name, never its text', async () => {
+  const key = creds().WAN_1_API_KEY;
+  globalThis.fetch = async () => { throw new TypeError(`Headers.append: "Bearer ${key}\u0000" is an invalid header value.`); };
+  const c = await P.wanCreateTask({ entry: P.loadWanPool(creds())[0], prompt: 'x' });
+  assert.equal(c.status, 0);
+  assert.ok(!JSON.stringify(c).includes(key));
+  installFetch({ wanCreate: () => { throw new TypeError(`Headers.append: "Bearer ${key}\u0000" is an invalid header value.`); } });
+  const err = await run({ creds: creds(), statePath: tmpState() }).then(() => null, (e) => e);
+  assert.match(err.message, /TypeError/, 'the reader learns what kind of failure stopped the leg');
+});
+
+test('generateClip: an entry with a malformed model is skipped while the others serve', async () => {
+  const calls = installFetch();
+  const events = [];
+  const r = await run({ creds: creds({ WAN_1_MODEL: 'wan3.0 video' }), statePath: tmpState(), onEvent: (e) => events.push(e) });
+  assert.equal(r.label, 'WAN_2');
+  assert.deepEqual(createdOn(calls), [2]);
+  assert.ok(events.some((e) => e.type === 'skip' && e.label === 'WAN_1'));
+});
+
+test('generateClip: a key stays in flight while its task polls, so a leg started meanwhile waits for it', async () => {
+  let polls = 0;
+  let aPolling;
+  const started = new Promise((r) => { aPolling = r; });
+  const calls = installFetch({ wanTask: (id) => { if (++polls === 1) aPolling(); return polls < 4 ? json(200, { output: { task_id: id, task_status: 'RUNNING' } }) : null; } });
+  const cr = creds({ WAN_2_ENDPOINT: undefined, WAN_3_ENDPOINT: undefined, WAN_MAX_CONCURRENT: '1' });
+  const statePath = tmpState();
+  const sleep = () => new Promise((r) => setImmediate(r));
+  const events = [];
+  const a = run({ creds: cr, statePath, sleep, maxRateWaitMs: 0, pollTimeoutMs: 1000, pollIntervalMs: 1 });
+  await started;
+  const b = run({ creds: cr, statePath, sleep, maxRateWaitMs: 0, pollTimeoutMs: 1000, pollIntervalMs: 1, onEvent: (e) => events.push(e) });
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.deepEqual([ra.provider, rb.provider], ['wan', 'wan']);
+  assert.ok(events.some((e) => e.type === 'wait' && /in-flight/.test(e.reason)), 'the second leg waited while the first one polled');
+  assert.equal(creates(calls).length, 2);
+});
+
+test('resumeClip: a Sora resume waits with the injected sleep between polls', async () => {
+  installFetch();
+  const routed = globalThis.fetch;
+  let polls = 0;
+  globalThis.fetch = async (url, opts) => (String(url).startsWith(`${SORA}/openai/v1/videos/sora-job-1?`) && ++polls === 1 ? json(200, { id: 'sora-job-1', status: 'in_progress' }) : routed(url, opts));
+  const slept = [];
+  const r = await P.resumeClip({ creds: creds(), statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', seconds: 8, pollIntervalMs: 2_000, sleep: async (ms) => { slept.push(ms); } });
+  assert.equal(r.provider, 'sora');
+  assert.deepEqual(slept, [2_000]);
+});
