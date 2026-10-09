@@ -10,7 +10,7 @@
   2026-10-09 실측: `wan3.0-video-prime` 480P 2초 클립 1개를 첫 프레임 data URI 로 만들어 97초에 받았고, 클립 첫 프레임과 입력 프레임의 SSIM 은 0.92 였다. WAN 은 첫+끝 프레임(`first_frame`·`last_frame`)도 받아 two-image 커넥터를 만들 수 있다(끝 프레임 경로는 UNVALIDATED).
 - **`3d-intro-setup` 이 WAN 풀을 저장하고 무과금으로 검증한다.** 키마다 존재하지 않는 task 를 GET 해 200(유효)과 `401 InvalidApiKey`(무효)를 가른다. 남은 할당량은 조회 API 가 없어 확인하지 못한다. 형식이 잘못된 항목은 원래 값 대신 `BadEndpoint`, `BadModel` 로 보고한다.
 - **`omc-patch` 스킬을 추가했다.** OMC 가 자동 업데이트되면 사라지는 로컬 훅 패치(훅 스크립트 최상위 `await import(...)` 의 10초 제한, `hooks.json` 의 `PostToolUse` 훅 제거)를 활성 버전에 다시 적용하고, OMC 마켓플레이스 `origin` 을 `omc-pinned://<원래 URL>` 로 바꿔 자동 업데이트를 막는다.\
-  진단(`check`), 사용자 확인, `--no-update` 적용, 검증, 되돌리기(`revert`) 순서로 진행한다. 도구 `scripts/omc-patch.mjs` 는 정본과 바이트가 같은 사본이고 Node 18 이상과 `git` 이 필요하다. Codex 에서 실행해도 Claude Code 의 OMC 캐시만 다룬다.
+  진단(`check`), 사용자 확인, `--no-update` 적용, 검증, 되돌리기(`revert`) 순서로 진행한다. 도구 `scripts/omc-patch.mjs` 는 정본에 두 가지 수정(헬퍼를 모듈 맨 앞에 둠, 마켓플레이스 폴더에 제 `.git` 이 있을 때만 고정)을 더한 사본이고, Node 18 이상과 `git` 이 필요하다. 첫 수정 전에는 최상위 `try { }` 블록이 둘 이상인 훅(OMC 5.6.x `project-memory-session.mjs`)에서 두 번째 import 가 조용히 실패했다. Codex 에서 실행해도 Claude Code 의 OMC 캐시만 다룬다.
 
 ### Changed
 - **`generateImage` 가 HTTP 429 에 `Retry-After` 만큼 기다렸다가 같은 경로로 다시 시도한다(기본 3회).** 전에는 429 에도 classic 경로로 넘어가 같은 한도에 다시 걸렸다. `azFetch` 결과에 `retryAfterMs` 를 더했다.
