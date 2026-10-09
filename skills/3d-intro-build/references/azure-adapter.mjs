@@ -156,10 +156,23 @@ export function redact(s) {
 // HTTP
 // ---------------------------------------------------------------------------
 
+// Retry-After / retry-after-ms response header -> milliseconds (null when absent or unparsable).
+function retryAfterMsOf(headers) {
+  const ms = Number(headers.get('retry-after-ms'));
+  if (headers.get('retry-after-ms') && Number.isFinite(ms)) return Math.max(0, ms);
+  const h = headers.get('retry-after');
+  if (!h) return null;
+  const sec = Number(h);
+  if (Number.isFinite(sec)) return Math.max(0, sec * 1000);
+  const at = Date.parse(h);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
 /**
  * Fetch an Azure URL trying the `api-key` header first and, on 401/403, retrying with
  * `Authorization: Bearer`. Never throws on HTTP status; a network error yields {status:0}.
- * @returns {Promise<{status:number, ok:boolean, ct:string, body:any, authStyle:string|null, error?:Error}>}
+ * `retryAfterMs` carries the server's Retry-After hint (null when absent).
+ * @returns {Promise<{status:number, ok:boolean, ct:string, body:any, authStyle:string|null, retryAfterMs:number|null, error?:Error}>}
  */
 export async function azFetch(url, { key, binary = false, headers = {}, method = 'GET', body } = {}) {
   const styles = key ? [{ 'api-key': key }, { Authorization: `Bearer ${key}` }] : [{}];
@@ -179,7 +192,7 @@ export async function azFetch(url, { key, binary = false, headers = {}, method =
     if (binary) parsed = Buffer.from(await r.arrayBuffer());
     else if (ct.includes('json')) parsed = await r.json().catch(() => null);
     else parsed = await r.text().catch(() => null);
-    last = { status: r.status, ok: r.ok, ct, body: parsed, authStyle: Object.keys(auth)[0] || null };
+    last = { status: r.status, ok: r.ok, ct, body: parsed, authStyle: Object.keys(auth)[0] || null, retryAfterMs: retryAfterMsOf(r.headers) };
     if (r.status !== 401 && r.status !== 403) return last; // accepted (or a non-auth error)
     // else: this auth style was rejected — fall through and try the next
   }
@@ -190,26 +203,40 @@ export async function azFetch(url, { key, binary = false, headers = {}, method =
 // Images
 // ---------------------------------------------------------------------------
 
+// POST JSON, retrying HTTP 429 up to `retries` times. Waits the server's Retry-After when given,
+// else 10s, 20s, 40s…; either way at most 60s per wait. Low-tier (S0) image deployments hit this.
+async function postJsonWith429Retry(url, { key, body, retries, onNote }) {
+  for (let i = 0; ; i++) {
+    const r = await azFetch(url, { key, method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (r.status !== 429 || i >= retries) return r;
+    const ms = Math.min(60000, r.retryAfterMs ?? 10000 * 2 ** i);
+    if (typeof onNote === 'function') onNote(`HTTP 429; retry ${i + 1}/${retries} in ${ms} ms`);
+    await sleep(ms);
+  }
+}
+
 /**
  * Generate a still via the v1 images path; on failure fall back to the classic
  * `deployments/<dep>` path @2025-04-01-preview (discrete size). Returns a PNG Buffer.
- * `onNote(msg)` (optional) is invoked when the classic fallback is taken.
+ * HTTP 429 is retried on the same path first (`retry429` times) — the classic path shares the
+ * deployment's rate limit, so falling back on 429 would only fail again.
+ * `onNote(msg)` (optional) is invoked on 429 waits and when the classic fallback is taken.
  */
 export async function generateImage({
   endpoint, key, deployment, apiVersion = 'preview',
-  prompt, size = '720x1280', quality = 'low', n = 1, onNote,
+  prompt, size = '720x1280', quality = 'low', n = 1, onNote, retry429 = 3,
 } = {}) {
   const genBody = { model: deployment, prompt, size, quality, n };
-  let r = await azFetch(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, {
-    key, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(genBody),
+  let r = await postJsonWith429Retry(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, {
+    key, body: JSON.stringify(genBody), retries: retry429, onNote,
   });
   let note = 'v1';
-  if (!(r.ok && r.body?.data?.[0]?.b64_json)) {
+  // no classic retry on 429 (shared limit) or on a lost connection (the v1 call may have billed)
+  if (!(r.ok && r.body?.data?.[0]?.b64_json) && r.status !== 429 && r.status !== 0) {
     note = 'classic-fallback(2025-04-01-preview)';
     if (typeof onNote === 'function') onNote(`generateImage: v1 path failed (HTTP ${r.status}); trying ${note}`);
-    r = await azFetch(`${endpoint}/openai/deployments/${deployment}/images/generations?api-version=2025-04-01-preview`, {
-      key, method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...genBody, size: classicSize(size) }),
+    r = await postJsonWith429Retry(`${endpoint}/openai/deployments/${deployment}/images/generations?api-version=2025-04-01-preview`, {
+      key, body: JSON.stringify({ ...genBody, size: classicSize(size) }), retries: retry429, onNote,
     });
   }
   const b64 = r.body?.data?.[0]?.b64_json;
@@ -273,7 +300,13 @@ export async function createVideo({
     fd.append('input_reference', new Blob([inputReferencePng], { type: 'image/png' }), 'input_reference.png');
   }
   const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body: fd });
-  if (!(r.ok && r.body?.id)) throw new Error(`createVideo failed: HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && r.body?.id)) {
+    // status 0 = network error; errno tells a refused connection (nothing sent) from a lost one
+    const err = new Error(`createVideo failed: HTTP ${r.status} ${truncate(r.body)}`);
+    err.status = r.status;
+    err.errno = r.error?.cause?.code || r.error?.code || null;
+    throw err;
+  }
   return r.body;
 }
 
