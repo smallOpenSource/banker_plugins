@@ -8,7 +8,7 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 57개 + 커맨드 2개**(총 59개 구성요소)를 묶은 Claude Code 플러그인입니다.\
+banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 57개 + 커맨드 2개**(총 59개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause` 를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
@@ -52,13 +52,13 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `ultra-init` | 프로젝트 기획이 충분히 구체적일 때 | 데모를 구현 |
 | `curation` | 질문에 답하기 어렵거나 의사결정이 어려울 때 | 합리적 선택지 제공 (`--perf` = 품질 우선, `--deep` = 확신 0.80 초과까지 추가 조사) |
 | `all-in-one` | 요건이 명확한 단계에서 | 계획 → 구현 → 검증 |
-| `ralph-qa` | 검증이 충분하지 않을 때 | 다중 Agent 백본 + 유효한 외부 LLM 좌석 |
+| `ralph-qa` | 검증이 충분하지 않을 때 | 세션 모델로 띄운 독립 검토 에이전트 3개 이상의 합의 루프 (+ 플래그로 고른 CLI 좌석) |
 | `smart-compact` | 컨텍스트 임계 초과로 맥락 단절이 걱정될 때 | 맥락을 더 잘 이어서 진행 |
 | `refresh-readme` | 프로젝트 배포 전 | README 최신화 |
 | `summary-wiki` | Agent가 아는 정보를 확인하고 싶을 때 | 요약 리포트 |
 | `cleansing-memory` | 프로젝트가 장기화될 때 | 메모리 최적화 |
 | `ready-compact` | 컨텍스트를 compact 하거나 새 세션을 대비할 때 | 이어갈 프롬프트만 출력(`/copy` 한 번이면 복사), `--hand-off` = 새 세션에서 이어가기 |
-| `graceful_pause` | 작업 도중 방향을 바꾸거나 끼어들고 싶을 때 | 지금 단계만 끝내고 멈춘 뒤 지시를 기다림 (작업 중 미리 입력해 둬도 됨) |
+| `/graceful-pause` | 작업 도중 방향을 바꾸거나 끼어들고 싶을 때 | 작업 중에 입력해도 바로 전달. 실행 중인 도구 호출이 끝나면 그 단계까지만 마무리하고 멈춘 뒤 지시를 기다림 (Claude Code) |
 | `tone-compact` | 답변을 짧은 한글 개조식으로 받고 싶을 때 | 문체 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
 
 ## 구성
@@ -69,6 +69,9 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 |---|---|
 | `/banker:front-qa` | 스펙(note) 기반 프론트엔드 구현 + parity QA |
 | `/banker:setup` | 구성요소·의존성 설치 오케스트레이터 (multi-select) |
+| `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, function hooks. Codex 미지원) |
+
+`/graceful-pause` 는 `commands/` 가 아니라 function hooks(`hooks/register.mjs`)로 등록되는 명령이라 구성요소 수에 넣지 않습니다.
 
 ### 스킬: QA · 감사
 
@@ -92,7 +95,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
 | `rfp-author` | 외주 제안요청서(RFP) 저작 (범용 프레임워크) |
 | `humanizer` | AI 글 흔적 제거(자연스러운 문체로 윤문) |
-| `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export (마크다운 렌더·하네스 노이즈 필터·다중 세션 병합) |
+| `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export. 세션 모델이 턴마다 1줄 요약을 쓰고 남길 턴을 고름(`--rulebase` 는 규칙만), 마크다운 렌더, 다중 세션 병합 |
 | `append_wiki` | 프로젝트 위키 문서 추가/보강 |
 | `compact-wiki` | 위키 중복 제거·supersede·병합 (무손실) |
 | `obsidizer` | AI 위키를 의미보존 Obsidian 그래프로 정규화·상호링크·백링크 |
@@ -113,7 +116,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `refresh-git-ignore` | `.gitignore` 비파괴·반복가능 갱신 |
 | `omc-reference` | OMC/OMX 에이전트·툴·스킬 레퍼런스(양 런타임 병기) |
 | `curation` | 의사결정을 선택지·권고·확신수준으로 큐레이션(--perf=품질 우선, --deep=확신 0.80 이하는 추가 조사·검토 후 제시) |
-| `ralph-qa` | 다중 Agent 백본이 항상 돌고, 실제로 유효한 외부 LLM 만 좌석으로 합류해 독립 검증 반복 |
+| `ralph-qa` | 세션 모델로 띄운 독립 검토 에이전트 3개 이상이 합의할 때까지 검증 반복. `--codex`·`--gemini`·`--opencode` 를 주면 그 CLI 에서 가장 뛰어난 모델이 좌석으로 합류 |
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
 | `ultra-interview` | 리서치 선행으로 사람 질문 최소화, 모호성 3% 이하까지 인터뷰 |
@@ -124,7 +127,6 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `cleansing-memory` | 메모리 파일을 문서화된 threshold 내로 정리(중복 최신본화·무손실 압축) |
 | `payload-mon` | 상태표시줄 ctx 옆에 요청 payload 추정치(32MB 한도 대비, 8MB부터) 표시 켜기·끄기 |
 | `tone-compact` | 답변과 새 문서를 ASD-STE100 기반 한글 개조식(표·목록·원어 발음 표기·장식 기호 금지)으로 쓰는 문체 규칙 켜기·끄기(on 기본, 끌 때까지 유지) |
-| `graceful_pause` | 진행 중인 작업을 지금 단계까지만 마무리하고 멈춘 뒤 중간 지시를 받음(cancel 과 달리 모드 상태·계획 보존) |
 
 ### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
 
@@ -154,15 +156,16 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | 스킬 | 설명 |
 |---|---|
 | `setup-omc` | oh-my-claudecode(OMC) 설치·갱신 (Codex는 OMX) |
-| `harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
+| `setup-harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
 | `setup-playwright` | Playwright + headless 브라우저 (RHEL8/Rocky8·non-root·no-conda 폴백) |
-| `setup-omc-hud` | omc_hud 상태표시줄 (OS별) |
+| `setup-omc-hud` | omc_hud 상태표시줄 (OS별). Claude 갱신 안내는 줄 맨 끝 |
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
 | `setup-stitch` | Stitch 디자인 MCP 프록시 등록(RockyLinux8 proxy) |
 | `docs-setup` | arch-diagram·pdf-vision-extract 의존성(pptx·pymupdf·plantuml) 설치 |
 | `vertical-pptx-setup` | vertical-pptx 의존성(pptxgenjs·python-pptx) + 시각 검증용 LibreOffice (OS·권한 적응형) |
 | `motion-graphic-setup` | hyperframes(무료 모션 그래픽 CLI) 전제조건 설치 (Node≥22 + ffmpeg) |
 | `3d-intro-setup` | 3D 인트로용 Azure·WAN 크레덴셜·의존성 설치 + 무과금 프리플라이트 (Node/ffmpeg) |
+| `setup-bypass-permissions` | Claude Code 기본 권한 모드를 `bypassPermissions` 로 바꿔 모든 세션에서 도구 실행 확인을 끔. 사용자가 직접 입력해야 실행(모델은 호출 불가), 위험 경고와 확인 뒤 적용, `off` 로 원복. `/banker:setup` 에서는 기본 미선택 |
 
 ## 설치 상세 (npm · Codex)
 
@@ -221,14 +224,15 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine` | — (Codex는 OMX `hud`) |
+| `setup-omc-hud` | `statusLine` + `hud/omc-hud-custom.mjs` 에 Claude 갱신 안내를 줄 맨 끝으로 옮기는 블록 1개(`.claude-update-last.bak` 백업·멱등·`node --check` 검증, `off` 로 원복) | — (Codex는 OMX `hud`) |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
-| `harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
+| `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
 | `payload-mon` | `hud/omc-hud-custom.mjs` 에 표시 블록 1개 삽입(`.payload-mon.bak` 백업·멱등·`node --check` 검증) + 래퍼 옆 `hud/payload-mon/` 에 모듈 사본 (`off` 로 원복) | — (Codex에서 실행해도 Claude Code HUD 만 다룸) |
 | `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
+| `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | Codex 에서 실행해도 같은 머신의 Claude Code 설정을 바꿈 (Codex 승인 정책은 미변경) |
 
 `obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다.
 
@@ -240,6 +244,7 @@ banker uninstall        # 제거
   - `all-in-one`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX.
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright.
   - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
+  - `/graceful-pause`: Claude Code 2.1.289 이상(function hooks). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알리며, Codex 에는 이 명령이 없습니다.
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
@@ -265,6 +270,13 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 > `payload-mon` 을 켰다면 제거 전에 `/banker:payload-mon off`(Codex는 `banker-payload-mon` 에 `off`)를 실행하세요.\
 > 표시 블록과 모듈 사본은 플러그인 밖(`~/.claude/hud/`)에 있어서, 플러그인을 지워도 남아 계속 표시됩니다.\
 > 이미 지웠다면 HUD를 재설치하거나, `omc-hud-custom.mjs` 에서 `// >>> payload-mon >>>` 부터 `// <<< payload-mon <<<` 까지 지우면 됩니다.
+
+> `setup-omc-hud` 가 넣은 Claude 갱신 안내 블록도 플러그인 밖(`~/.claude/hud/omc-hud-custom.mjs`)에 남습니다. 원래 순서로 되돌리려면 제거 전에 `/banker:setup-omc-hud off` 를 실행하세요.\
+> 이미 지웠다면 HUD를 재설치하거나, `// >>> claude-update-last >>>` 부터 `// <<< claude-update-last <<<` 까지 지우면 됩니다. 블록을 남겨 두어도 상태표시줄은 깨지지 않습니다.
+
+> `setup-bypass-permissions` 로 바꾼 권한 모드는 `settings.json` 에 남아, 플러그인을 지워도 모든 세션에서 확인 없이 도구가 실행됩니다. 제거 전에 `/banker:setup-bypass-permissions off` 를 실행하세요.\
+> 이미 지웠다면 설정 폴더(`$CLAUDE_CONFIG_DIR`, 없으면 `~/.claude`)의 `settings.json` 에서 `permissions.defaultMode` 를 지우거나 원래 값으로 되돌리면 됩니다. 옆의 `settings.json.bypass-permissions.bak` 과 `settings.json.bypass-permissions.json` 도 지우세요. 백업에는 설정의 비밀 값이 들어 있을 수 있습니다.\
+> root 계정에서 이 모드 때문에 Claude Code 가 시작되지 않으면 `claude --permission-mode default` 로 시작한 뒤 `off` 를 실행하세요.
 
 > `tone-compact` 를 켰다면 제거 전에 런타임마다 `off` 를 실행하세요(Claude Code `/banker:tone-compact off`, Codex `banker-tone-compact` 에 `off`).\
 > 규칙 파일과 블록은 플러그인 밖(`~/.claude/rules/`, `~/.codex/AGENTS.md`)에 있어서, 플러그인을 지워도 남아 계속 적용됩니다.\
@@ -353,7 +365,7 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 |---|---|---|---|
 | 프레임워크 | oh-my-claudecode(OMC)·oh-my-codex(OMX), by [Yeachan-Heo](https://github.com/Yeachan-Heo) | MIT | `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` |
 | 플러그인 | insane-search (© fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)) | MIT | `setup-insane-search` |
-| 팀 아키텍처 팩토리 | revfactory/harness (© Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness)) · Codex 포트 SaehwanPark/meta-harness | Apache-2.0 | `harness-factory`(설치·구성만 안내) |
+| 팀 아키텍처 팩토리 | revfactory/harness (© Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness)) · Codex 포트 SaehwanPark/meta-harness | Apache-2.0 | `setup-harness-factory`(설치·구성만 안내) |
 | 서비스(독점·상표) | Notion | 독점 | `make-notion-guide` |
 | 서비스(독점·상표) | Google Stitch | 독점 | `setup-stitch` |
 | 디자인(상표) | Nothing 디자인 언어 | 상표 | `nothing-design` |

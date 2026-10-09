@@ -1,9 +1,9 @@
 ---
-name: harness-factory
-description: "(banker) revfactory/harness(팀 아키텍처 팩토리) 플러그인 설치·구성·사용안내. Claude=harness@harness-marketplace, Codex=meta-harness. 'harness-factory'/'하네스 팩토리'/'에이전트팀 생성' 또는 /banker:setup 시 사용."
+name: setup-harness-factory
+description: "도메인 한 줄로 전문 에이전트 팀을 만들어 주는 `revfactory/harness` 플러그인을 설치하고 구성한 뒤 사용법을 안내. Claude Code 는 `harness@harness-marketplace`, Codex 는 `meta-harness`. 'setup-harness-factory'/'harness-factory'/'하네스 팩토리'/'에이전트팀 생성' 또는 `/banker:setup` 시 사용."
 ---
 
-# harness-factory: revfactory/harness 팀 아키텍처 팩토리 설치·구성
+# setup-harness-factory: revfactory/harness 팀 아키텍처 팩토리 설치·구성
 
 `harness`는 도메인을 한 줄로 받아 `.claude/agents/`+`.claude/skills/`(전문 에이전트팀 + 그 에이전트가 쓸
 스킬)를 생성하는 **메타 스킬**이다. 이 플러그인의 본체는 설치물이 아니라 **방법론**이다. 따라서 이

@@ -1,6 +1,6 @@
 ---
 name: setup-node
-description: "(banker) nvm + Node 22(LTS) 런타임 설치(Windows는 winget 또는 nvm-windows). Claude Code npm 설치·Codex/OMX·npx 기반 MCP 서버 전제. 'setup-node'/'Node 설치'/'nvm 설치' 또는 /banker:setup 시 사용."
+description: "nvm 과 Node 22(LTS)를 설치(Windows 는 winget 이나 nvm-windows). Claude Code 의 npm 설치, Codex 와 OMX, npx 로 도는 MCP 서버의 전제. 'setup-node'/'Node 설치'/'nvm 설치' 또는 `/banker:setup` 시 사용."
 ---
 
 # setup-node: nvm + Node 22(LTS) 런타임 설치

@@ -1,6 +1,6 @@
 ---
 name: setup-stitch
-description: "(banker) Stitch(Google 디자인 생성) MCP 프록시를 claude mcp add(Codex는 codex mcp add)로 등록(시크릿 미커밋). 'setup-stitch'/'stitch 설치'/'stitch mcp' 또는 /banker:setup 시 사용."
+description: "Google 의 디자인 생성 서비스인 Stitch 의 MCP 프록시를 `claude mcp add`(Codex 는 `codex mcp add`)로 등록. 시크릿은 커밋하지 않음. 'setup-stitch'/'stitch 설치'/'stitch mcp' 또는 `/banker:setup` 시 사용."
 ---
 
 # setup-stitch — Stitch MCP 프록시 등록

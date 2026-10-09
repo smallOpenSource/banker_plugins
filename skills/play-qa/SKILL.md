@@ -1,6 +1,6 @@
 ---
 name: play-qa
-description: "(banker) Godot HTML5 웹게임을 실제 브라우저에서 직접 플레이하며 렌더·입력·시작 결함을 QA(playwright). 'play-qa'/'게임 직접 qa'/'네가 직접 플레이해봐'/'in-browser 플레이테스트' 시 사용."
+description: "Godot 로 만든 HTML5 웹 게임을 실제 브라우저에서 Playwright 로 직접 플레이하며 렌더, 입력, 시작 결함을 찾음. 'play-qa'/'게임 직접 qa'/'네가 직접 플레이해봐'/'in-browser 플레이테스트' 시 사용."
 ---
 
 # play-qa: 에이전트가 직접 브라우저에서 게임을 플레이·QA

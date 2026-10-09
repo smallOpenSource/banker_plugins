@@ -1,6 +1,6 @@
 ---
 name: update-banker
-description: "(banker) 설치된 banker 를 최신 배포본으로 갱신. Claude 플러그인·npm 전역 CLI·Codex 3채널이 독립 드리프트하므로 npm 우선 게이트 후 채널별 갱신·3-프로브 검증. 'update-banker'/'banker 업데이트'/'banker 최신화'/'banker 드리프트' 시 사용."
+description: "설치된 banker 를 최신 배포본으로 갱신. 세 채널(Claude Code 플러그인, npm 전역 CLI, Codex)은 따로 드리프트함. npm 전역 CLI 를 먼저 올려 최신 버전과 같을 때만 나머지 채널을 갱신하고, 채널마다 검증. 'update-banker'/'banker 업데이트'/'banker 최신화'/'banker 드리프트' 시 사용."
 ---
 
 # update-banker: 설치된 banker 3채널 갱신 (Claude 플러그인·npm 전역 CLI·Codex)

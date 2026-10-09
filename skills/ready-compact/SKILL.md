@@ -1,6 +1,6 @@
 ---
 name: ready-compact
-description: "(banker) 진행 상태를 저장하고 이어갈 resume 프롬프트만 출력(설명 없이 프롬프트 본문만이라 /copy 한 번이면 복사). 기본은 같은 세션의 /compact 뒤, --hand-off 는 새 세션에서 처음부터 이어가기. 'ready-compact'/'compact 준비'/'이어서 하게 준비'/'이어갈 프롬프트'/'새 세션으로 넘겨'/'핸드오프' 시 사용."
+description: "진행 상태를 저장하고 이어갈 resume 프롬프트만 출력. 설명 없이 본문만이라 `/copy` 한 번으로 복사됨. 기본은 같은 세션에서 `/compact` 한 뒤 이어가기, `--hand-off` 는 새 세션에서 처음부터 이어가기. 'ready-compact'/'compact 준비'/'이어서 하게 준비'/'이어갈 프롬프트'/'새 세션으로 넘겨'/'핸드오프' 시 사용."
 argument-hint: "[--hand-off] [토픽 힌트]"
 ---
 

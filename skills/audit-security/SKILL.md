@@ -1,6 +1,6 @@
 ---
 name: audit-security
-description: "(banker) 의존성 CVE(SCA)·SAST·시크릿을 멀티툴 교차검증으로 read-only 보안 진단. 'audit-security'/'보안 진단'/'CVE 스캔'/'SCA·SAST·secret 스캔' 시 사용."
+description: "의존성 CVE(SCA), 코드 정적 분석(SAST), 시크릿 노출을 여러 도구로 교차 검증해 보안을 진단. 코드는 읽기만 함. 'audit-security'/'보안 진단'/'CVE 스캔'/'SCA 스캔'/'SAST 스캔'/'secret 스캔' 시 사용."
 ---
 
 # audit-security — CVE / SAST / Secrets read-only 보안 진단 (no-root)

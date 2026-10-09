@@ -1,6 +1,6 @@
 ---
 name: ultra-init
-description: "(banker) 아이디어·러프 브리프·그린필드를 계획→구현→QA 통과까지 핸즈오프 1회 자율 실행(ralplan→ralph→QA 게이트: Claude Code는 verify 순환, Codex는 ultraqa). 'ultra-init'/'알아서 만들어'/'핸즈오프 빌드'/'idea to passing' 시 사용."
+description: "아이디어나 대략적인 요구, 새 프로젝트를 한 번의 지시로 받아 계획, 구현, QA 통과까지 자율 실행. `ralplan`, `ralph`, 독립 QA 게이트(Claude Code 는 `verify` 순환, Codex 는 `ultraqa`)를 차례로 씀. 'ultra-init'/'알아서 만들어'/'핸즈오프 빌드'/'idea to passing' 시 사용."
 argument-hint: "[--short|--deliberate] [--gated] [--qa tests,build,lint,typecheck] [--critic=architect|critic|codex] <브리프 / 만들 것>"
 level: 4
 ---
