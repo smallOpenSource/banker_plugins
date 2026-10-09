@@ -758,7 +758,7 @@ test('resumeClip: a Sora resume waits with the injected sleep between polls', as
   let polls = 0;
   globalThis.fetch = async (url, opts) => (String(url).startsWith(`${SORA}/openai/v1/videos/sora-job-1?`) && ++polls === 1 ? json(200, { id: 'sora-job-1', status: 'in_progress' }) : routed(url, opts));
   const slept = [];
-  const r = await P.resumeClip({ creds: creds(), statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', seconds: 8, pollIntervalMs: 60_000, sleep: async (ms) => { slept.push(ms); } });
+  const r = await P.resumeClip({ creds: creds(), statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', seconds: 8, pollIntervalMs: 2_000, sleep: async (ms) => { slept.push(ms); } });
   assert.equal(r.provider, 'sora');
-  assert.deepEqual(slept, [60_000]);
+  assert.deepEqual(slept, [2_000]);
 });
