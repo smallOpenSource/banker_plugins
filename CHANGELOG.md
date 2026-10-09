@@ -5,8 +5,8 @@
 ### Added
 - **`3d-intro-build` 의 영상을 WAN 키 풀로 만들고, 풀이 소진되면 Sora-2 로 폴백한다.** 새 공유 모듈 `references/video-pool.mjs` 의 `generateClip` 이 모든 leg 의 진입점이다.\
   WAN(Alibaba Cloud Model Studio, 기본 `wan3.0-video-prime`)은 `WAN_<n>_ENDPOINT`·`WAN_<n>_API_KEY` 를 개수 제한 없이 받아, 가장 오래전에 쓴 키부터 고른다. 할당량 소진(`AllocationQuota.*`·`Arrearage` 등)과 모델 권한 없음은 그 키를 24시간 쉬게 한다. 요청 속도 429 는 `Retry-After` 만큼 쉬게 할 뿐 퇴출하지 않고, `Throttling.AllocationQuota` 만 연속 3회면 1시간 쉬게 한다. `InvalidApiKey` 키는 제외한다. 상태는 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남는다.\
-  같은 leg 는 두 번 과금하지 않는다. 다른 키로 다시 내는 것은 첫 제출이 task 를 만들지 않은 게 확실할 때뿐이다(서버의 거절, 요청을 보내기 전 연결 실패, 키 할당량이나 알려진 일시 오류로 FAILED 나 CANCELED 된 task). 처음 보는 코드나 코드 없이 끝난 task 는 입력 탓이거나 과금됐을 수 있어 다시 내지 않고 `taskId` 를 담아 멈춘다. 폴링 시간 초과와 다운로드 실패도 `taskId` 를 담아 멈추고, 제출 중 연결이 끊기면 task 가 생겼는지 콘솔에서 확인하라며 멈춘다. 끝나지 않은 task 는 `resumeClip` 으로 새 제출 없이 마저 받는다. Sora job 이 사라졌거나(4xx) Sora 크레덴셜이 없으면 `resumeClip` 은 폴링하지 않고 바로 멈춘다.\
-  검열(`DataInspectionFailed`)과 `ModelNotFound` 같은 설정 오류는 다른 키나 Sora 로 넘기지 않는다. endpoint 나 모델이 형식에 맞지 않는 WAN 항목(값 끝의 `# 주석` 등)은 건너뛰고, 모든 항목이 그렇다면 Sora 로 넘기지 않고 멈춘다. 형식이 잘못된 값과 네트워크 오류 문구는 출력과 오류 메시지에 싣지 않는다(키가 들어 있을 수 있음).\
+  같은 leg 는 두 번 과금하지 않는다. 다른 키로 다시 내는 것은 첫 제출이 task 를 만들지 않은 게 확실할 때뿐이다(서버의 거절, 요청을 보내기 전 연결 실패, 키 할당량이나 알려진 일시 오류로 FAILED 나 CANCELED 된 task). 처음 보는 코드나 코드 없이 끝난 task 는 입력 탓이거나 과금됐을 수 있어 다시 내지 않고 `taskId` 를 담아 멈춘다. 폴링 시간 초과와 다운로드 실패도 `taskId` 를 담아 멈추고, 제출 중 연결이 끊기면 task 가 생겼는지 콘솔에서 확인하라며 멈춘다. 끝나지 않은 task 는 `resumeClip` 으로 새 제출 없이 마저 받는다. Sora job 이 사라졌으면(4xx) `resumeClip` 은 첫 폴링에서 멈추고, Sora 크레덴셜이 없거나 endpoint 가 URL 이 아니면 보내기 전에 멈춘다.\
+  검열(`DataInspectionFailed`)과 `ModelNotFound` 같은 설정 오류는 다른 키나 Sora 로 넘기지 않는다. endpoint 나 모델이 형식에 맞지 않는 WAN 항목(URL 이 아닌 endpoint, 공백이 든 모델, 모델 칸에 붙인 키 등)은 건너뛰고, 모든 항목이 그렇다면 Sora 로 넘기지 않고 멈춘다. `poolSummary` 는 그 항목을 `malformed` 로 보고해, 유료 스틸을 만들기 전의 무료 점검에서 잡힌다. 형식이 잘못된 값과 네트워크 오류 문구는 출력과 오류 메시지에 싣지 않는다(키가 들어 있을 수 있음).\
   2026-10-09 실측: `wan3.0-video-prime` 480P 2초 클립 1개를 첫 프레임 data URI 로 만들어 97초에 받았고, 클립 첫 프레임과 입력 프레임의 SSIM 은 0.92 였다. WAN 은 첫+끝 프레임(`first_frame`·`last_frame`)도 받아 two-image 커넥터를 만들 수 있다(끝 프레임 경로는 UNVALIDATED).
 - **`3d-intro-setup` 이 WAN 풀을 저장하고 무과금으로 검증한다.** 키마다 존재하지 않는 task 를 GET 해 200(유효)과 `401 InvalidApiKey`(무효)를 가른다. 남은 할당량은 조회 API 가 없어 확인하지 못한다. 형식이 잘못된 항목은 원래 값 대신 `BadEndpoint`, `BadModel` 로 보고한다.
 - **`omc-patch` 스킬을 추가했다.** OMC 가 자동 업데이트되면 사라지는 로컬 훅 패치(훅 스크립트 최상위 `await import(...)` 의 10초 제한, `hooks.json` 의 `PostToolUse` 훅 제거)를 활성 버전에 다시 적용하고, OMC 마켓플레이스 `origin` 을 `omc-pinned://<원래 URL>` 로 바꿔 자동 업데이트를 막는다.\
@@ -14,6 +14,7 @@
 
 ### Changed
 - **`generateImage` 가 HTTP 429 에 `Retry-After` 만큼 기다렸다가 같은 경로로 다시 시도한다(기본 3회).** 전에는 429 에도 classic 경로로 넘어가 같은 한도에 다시 걸렸다. `azFetch` 결과에 `retryAfterMs` 를 더했다.
+- **`parseEnvFile` 이 따옴표 없는 값 끝의 ` # 주석` 을 지운다(dotenv 와 같은 규칙).** 전에는 주석이 값에 붙어 endpoint, 키, 모델, `VIDEO_PROVIDER_ORDER` 가 깨졌다. 따옴표 안은 그대로 두고, `persistCreds` 는 그렇게 읽힐 값을 따옴표로 감싸 쓴다.
 - **`pollVideo` 가 408, 429 를 뺀 4xx 에서 바로 멈춘다(오류에 `status`, `code`).** 전에는 사라진 job 도 `maxTicks` 까지 폴링했다. 폴링 사이에 주입한 `sleep` 을 쓰고, 오류 응답의 본문은 상태로 쓰지 않는다.
 - `scripts/sync-adapter.js` 가 `azure-adapter.mjs` 와 `video-pool.mjs` 두 파일을 setup 스킬로 미러링하고 검사한다.
 

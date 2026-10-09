@@ -123,11 +123,16 @@ function originOf(url) {
   } catch { return null; }
 }
 const fingerprint = (endpoint, key, model) => crypto.createHash('sha256').update(`${endpoint}\n${key}\n${model}`).digest('hex').slice(0, 16);
-// A model id is one token (wan3.0-video-prime). A space or an inline "# comment" fails every call.
+// A model id is one token (wan3.0-video-prime). A space fails every call, and an sk- value is a
+// key pasted into the wrong field, so neither counts as a model.
 const MODEL_RE = /^[A-Za-z0-9][\w.-]*$/;
+const isModelId = (model) => MODEL_RE.test(model) && !/^sk-/i.test(model);
 const hostOf = (endpoint) => (endpoint ? new URL(endpoint).host : '(invalid endpoint)');
+const shownModel = (e) => (e.badModel ? '(invalid model)' : e.model);
 // What a report may show about an entry: no raw value of a field that failed validation.
-const shownEntry = (e) => ({ label: e.label, host: hostOf(e.endpoint), model: e.badModel ? '(invalid model)' : e.model });
+const shownEntry = (e) => ({ label: e.label, host: hostOf(e.endpoint), model: shownModel(e) });
+// The field that makes an entry unusable, or null.
+const malformedField = (e) => (e.badEndpoint ? 'endpoint' : e.badModel ? 'model' : null);
 
 /**
  * Build the WAN pool from creds: every WAN_<n>_ENDPOINT with a matching WAN_<n>_API_KEY, by n.
@@ -150,7 +155,7 @@ function poolEntry(creds, id) {
   const model = String(creds[`WAN_${id}_MODEL`] || creds.WAN_MODEL || WAN_DEFAULT_MODEL).trim();
   return {
     n: Number(id), label: `WAN_${id}`, endpoint, key, model, fp: fingerprint(endpoint, key, model),
-    badEndpoint: !endpoint, badModel: !MODEL_RE.test(model),
+    badEndpoint: !endpoint, badModel: !isModelId(model),
   };
 }
 
@@ -216,7 +221,8 @@ export function poolSummary({ creds = {}, statePath = defaultStatePath(), now = 
   const state = loadPoolState(statePath);
   return loadWanPool(creds).map((e) => {
     const st = state.entries[e.fp];
-    return { ...shownEntry(e), okCount: st?.okCount || 0, ...entryStatus(st, now) };
+    const field = malformedField(e);
+    return { ...shownEntry(e), okCount: st?.okCount || 0, ...(field ? { status: 'malformed', reason: field } : entryStatus(st, now)) };
   });
 }
 
@@ -288,7 +294,7 @@ const errnoOf = (e) => (e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.
 // header value, Authorization included), so only the error code travels on, never the text.
 function networkFailure(e) {
   const errno = errnoOf(e);
-  return { status: 0, ok: false, body: null, code: null, message: errno || 'network error', retryAfterMs: null, preSend: PRE_SEND_ERRORS.has(errno), errno };
+  return { status: 0, ok: false, body: null, code: null, message: errno || e?.name || 'network error', retryAfterMs: null, preSend: PRE_SEND_ERRORS.has(errno), errno };
 }
 
 async function parsedBody(r) {
@@ -408,7 +414,8 @@ export async function probeWanPool({ creds = {} } = {}) {
 
 async function probeEntry(e) {
   const base = { ...shownEntry(e), key: redact(e.key) };
-  if (e.badEndpoint || e.badModel) return { ...base, status: 0, code: e.badEndpoint ? 'BadEndpoint' : 'BadModel', authOk: false };
+  const field = malformedField(e);
+  if (field) return { ...base, status: 0, code: field === 'endpoint' ? 'BadEndpoint' : 'BadModel', authOk: false };
   const r = await wanFetch(`${e.endpoint}${WAN_TASK_PATH}${PROBE_TASK_ID}`, { key: e.key });
   return { ...base, status: r.status, code: r.code, authOk: r.status === 200 };
 }
@@ -527,7 +534,7 @@ async function succeededClip(ctx, e, taskId, p, seconds) {
     throw stopError('download', `${err.message} for WAN task ${taskId} (${e.label}); resume with resumeClip within 24 h`, { provider: 'wan', taskId, label: e.label, videoUrl, seconds });
   }
   ctx.emit({ type: 'done', provider: 'wan', label: e.label, taskId });
-  return { mp4, provider: 'wan', label: e.label, model: e.model, seconds: seconds ?? p.usage?.duration ?? null, taskId, usage: p.usage };
+  return { mp4, provider: 'wan', label: e.label, model: shownModel(e), seconds: seconds ?? p.usage?.duration ?? null, taskId, usage: p.usage };
 }
 
 async function runWan(ctx) {
@@ -555,13 +562,12 @@ async function runWan(ctx) {
 // entry is malformed the leg stops: a config error must not turn into a paid Sora clip.
 function usablePool(ctx) {
   const all = loadWanPool(ctx.creds);
-  const bad = all.filter((e) => e.badEndpoint || e.badModel);
-  const what = (e) => (e.badEndpoint ? 'endpoint' : 'model');
-  for (const b of bad) ctx.emit({ type: 'skip', provider: 'wan', label: b.label, reason: `${what(b)} is malformed (an inline "# comment" stays in the value)` });
+  const bad = all.filter(malformedField);
+  for (const b of bad) ctx.emit({ type: 'skip', provider: 'wan', label: b.label, reason: `${malformedField(b)} is malformed (not an http(s) URL / not one model id)` });
   if (all.length && bad.length === all.length) {
-    throw stopError('invalid_request', `every WAN entry is malformed (${bad.map((b) => `${b.label} ${what(b)}`).join(', ')}); fix the env file — nothing was sent, and Sora was not used`, { provider: 'wan' });
+    throw stopError('invalid_request', `every WAN entry is malformed (${bad.map((b) => `${b.label} ${malformedField(b)}`).join(', ')}); fix the env file — nothing was sent, and Sora was not used`, { provider: 'wan' });
   }
-  const pool = all.filter((e) => !e.badEndpoint && !e.badModel);
+  const pool = all.filter((e) => !malformedField(e));
   if (!pool.length) ctx.emit({ type: 'skip', provider: 'wan', reason: 'no usable WAN_<n>_ENDPOINT + WAN_<n>_API_KEY entries' });
   return pool;
 }
@@ -600,7 +606,7 @@ async function attemptOnKey(ctx, e, parameters, attempt) {
 // server, and a second key would bill the same leg twice.
 function assertSubmitSettled(e, c) {
   if (c.status === 0 && !c.preSend) {
-    throw stopError('submit_unknown', `WAN submit to ${e.label} lost its connection (${c.errno || 'network error'}); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label });
+    throw stopError('submit_unknown', `WAN submit to ${e.label} lost its connection (${c.message || 'network error'}); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label });
   }
   if (!c.taskId && (c.ok || (c.status >= 500 && !c.code))) {
     // a 2xx without task_id or a bare gateway 5xx: the backend may have accepted the task
@@ -756,8 +762,8 @@ export async function resumeClip(opts = {}) {
   if (!o.creds || !o.taskId) throw new Error('resumeClip: creds and taskId required');
   const ctx = makeCtx(o);
   if (o.provider !== 'sora') return resumeWan(ctx, o);
-  if (!o.creds.AZURE_SORA_ENDPOINT || !o.creds.AZURE_SORA_API_KEY) {
-    throw stopError('invalid_request', 'resumeClip: AZURE_SORA_ENDPOINT and AZURE_SORA_API_KEY are required to resume a Sora job (run 3d-intro-setup); nothing was sent', { provider: 'sora', taskId: o.taskId });
+  if (!originOf(o.creds.AZURE_SORA_ENDPOINT) || !o.creds.AZURE_SORA_API_KEY) {
+    throw stopError('invalid_request', 'resumeClip: resuming a Sora job needs AZURE_SORA_ENDPOINT as an http(s) URL and AZURE_SORA_API_KEY (run 3d-intro-setup); nothing was sent', { provider: 'sora', taskId: o.taskId });
   }
   return finishSoraJob(ctx, o.taskId, o.seconds == null ? null : snapSoraSeconds(o.seconds));
 }
@@ -766,7 +772,7 @@ async function resumeWan(ctx, o) {
   const e = loadWanPool(o.creds).find((x) => x.label === o.label);
   if (!e) throw new Error(`resumeClip: ${o.label} is not in the WAN pool (was the key removed?)`);
   if (e.badEndpoint) {
-    throw stopError('invalid_request', `resumeClip: ${o.label} endpoint is malformed (an inline "# comment" stays in the value); fix the env file — nothing was sent`, { provider: 'wan', label: o.label, taskId: o.taskId });
+    throw stopError('invalid_request', `resumeClip: ${o.label} endpoint is not an http(s) URL; fix the env file — nothing was sent`, { provider: 'wan', label: o.label, taskId: o.taskId });
   }
   const out = await finishWanTask(ctx, e, o.taskId, { duration: Math.round(Number(o.seconds) || 0) || null });
   if (out.clip) return out.clip;
