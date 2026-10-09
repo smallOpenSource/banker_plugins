@@ -310,24 +310,37 @@ export async function createVideo({
   return r.body;
 }
 
+const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180 };
+const POLL_RETRY_4XX = new Set([408, 429]);
+const withoutUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+
 /**
  * Poll a Sora job until a terminal status (or maxTicks). Polls first, then sleeps, so a job
- * that is already terminal returns without waiting. `onTick(status, i)` is optional.
+ * that is already terminal returns without waiting. `onTick(status, i)` is optional; `sleep`
+ * replaces the wait between polls. 408, 429, 5xx and network errors keep polling. Any other
+ * 4xx throws at once with `err.status` and `err.code`: a job the server no longer knows, or a
+ * key it refuses, never turns terminal.
  * @returns the last status object seen.
  */
-export async function pollVideo({
-  endpoint, key, id, onTick, apiVersion = 'preview', intervalMs = 5000, maxTicks = 180,
-} = {}) {
-  const url = `${endpoint}/openai/v1/videos/${id}?api-version=${apiVersion}`;
+export async function pollVideo(opts = {}) {
+  const o = { ...POLL_DEFAULTS, sleep, ...withoutUndefined(opts) };
+  const url = `${o.endpoint}/openai/v1/videos/${o.id}?api-version=${o.apiVersion}`;
   let st = null;
-  for (let i = 0; i < maxTicks; i++) {
-    const r = await azFetch(url, { key, method: 'GET' });
-    st = r.body || st;
-    if (typeof onTick === 'function') onTick(st, i);
+  for (let i = 0; i < o.maxTicks; i++) {
+    const r = await azFetch(url, { key: o.key, method: 'GET' });
+    throwIfRefused(r, o.id);
+    if (r.ok) st = r.body || st;
+    if (typeof o.onTick === 'function') o.onTick(st, i);
     if (st && TERMINAL_STATUS.has(st.status)) break;
-    await sleep(intervalMs);
+    await o.sleep(o.intervalMs);
   }
   return st;
+}
+
+function throwIfRefused(r, id) {
+  if (r.status < 400 || r.status >= 500 || POLL_RETRY_4XX.has(r.status)) return;
+  const code = r.body?.error?.code || null;
+  throw Object.assign(new Error(`pollVideo: job ${id} answered HTTP ${r.status}${code ? ` ${code}` : ''}`), { status: r.status, code });
 }
 
 /** Download finished video bytes. Returns an mp4 Buffer; throws on non-200 / empty body. */

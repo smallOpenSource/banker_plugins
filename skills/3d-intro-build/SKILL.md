@@ -190,16 +190,18 @@ r = await generateClip({ creds, prompt: legi, size: ORIENTATION, seconds, firstF
   할당량 소진(`AllocationQuota.*`·`Arrearage`·`BudgetLimitExceeded` 등)과 모델 권한 없음(`*AccessDenied`)은 그 키를 24시간 쉬게 하고 다음 키로 다시 제출한다.
   요청 속도 429(`Throttling.RateQuota` 등)는 `Retry-After` 만큼 그 키만 쉬게 할 뿐 퇴출하지 않는다. `Throttling.AllocationQuota` 만 연속 3회면 1시간 쉬게 한다. `InvalidApiKey` 키는 키를 바꿀 때까지 제외한다.
   상태는 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남아 다음 실행에도 이어진다. 상태 파일을 못 써도 클립은 그대로 돌려준다.
-- **같은 leg 를 두 번 과금하지 않는다** — 다른 키로 다시 제출하는 것은 첫 제출이 task 를 만들지 않은 게 확실할 때뿐이다(서버가 거절, task 가 FAILED/CANCELED, 요청을 보내기 전 연결 실패).
+- **같은 leg 를 두 번 과금하지 않는다** — 다른 키로 다시 제출하는 것은 첫 제출이 task 를 만들지 않은 게 확실할 때뿐이다(서버가 거절, 요청을 보내기 전 연결 실패, task 가 키 할당량이나 알려진 일시 오류로 FAILED/CANCELED).
+  코드가 없거나 처음 보는 코드로 FAILED/CANCELED 된 task 는 입력 탓이거나 과금됐을 수 있어 다시 내지 않고 `kind: 'failed'` 로 멈춘다.
 - **폴백** — 쓸 수 있는 WAN 키가 없으면 그 leg 부터 Sora 로 만든다. 체인 도중에 provider 가 바뀌면 화풍이 달라질 수 있으니, leg 마다 `r.provider` 를 기록하고 바뀐 지점을 사용자에게 알린다.
+  WAN 항목의 endpoint 나 모델이 형식에 맞지 않으면(값 끝의 `# 주석`, 공백 등) 그 항목만 건너뛴다(`skip` 이벤트). 모든 항목이 그렇다면 Sora 로 넘기지 않고 `invalid_request` 로 멈춘다.
 - **멈추는 경우(재제출·폴백 안 함)** — 아래 오류에서 같은 leg 를 `generateClip` 으로 다시 부르지 않는다.
 
   | 오류 | 뜻 | 다음 행동 |
   |---|---|---|
   | `ContentRejectedError` | 검열(`DataInspectionFailed` 등) | 프롬프트나 프레임을 고쳐 다시 부름 |
-  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`(모델명 오타·미활성) | 설정을 고침 |
+  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`(모델명 오타·미활성), 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume | 설정을 고침(보낸 요청 없음) |
   | `kind: 'timeout'` / `'download'` | task 는 있음(과금됐을 수 있음) | `resumeClip({ creds, provider: err.provider, label: err.label, taskId: err.taskId, seconds: err.seconds })` |
-  | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음 | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함 |
+  | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음(`'failed'` 는 처음 보는 이유로 끝난 task, `'task_lost'` 는 폴링이 4xx 나 UNKNOWN 으로 끝난 task) | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함 |
   | `kind: 'unreachable'` | Sora 연결 거부(아무것도 보내지 않음) | 네트워크를 확인한 뒤 다시 부름 |
   | `kind` 가 없는 오류 | 예상하지 못한 실패 | 원인을 확인하기 전에는 다시 부르지 않음 |
 

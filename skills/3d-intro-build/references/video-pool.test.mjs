@@ -574,3 +574,106 @@ test('round-3: Sora 2xx without id is ambiguous; resume reports the real length;
   await run({ creds: cr, statePath: tmpState(), maxRateWaitMs: null, onEvent: (e) => events.push(e) }).catch(() => {});
   assert.ok(events.some((e) => e.type === 'wait' && e.ms === 1000), 'null maxRateWaitMs fell back to the default and waited');
 });
+
+// ---------------------------------------------------------------------------
+// Review fixes: Sora resume, malformed entries, FAILED tasks, keys in output
+
+test('resumeClip: a Sora job the server no longer knows ends at once as task_lost, not after a 30-minute poll', async () => {
+  let polls = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith(`${SORA}/openai/v1/videos/gone-job?`)) { polls++; return json(404, { error: { code: 'NotFound', message: 'not found' } }); }
+    throw new Error(`unrouted fetch ${url}`);
+  };
+  await assert.rejects(
+    () => P.resumeClip({ creds: creds(), statePath: tmpState(), provider: 'sora', taskId: 'gone-job', pollIntervalMs: 1, pollTimeoutMs: 50, sleep: async () => {} }),
+    (e) => e.kind === 'task_lost' && e.provider === 'sora' && e.taskId === 'gone-job' && e.status === 404,
+  );
+  assert.equal(polls, 1);
+});
+
+test('resumeClip: a Sora resume without Sora creds stops before sending anything', async () => {
+  const calls = installFetch();
+  await assert.rejects(
+    () => P.resumeClip({ creds: creds({ AZURE_SORA_API_KEY: undefined }), statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', pollIntervalMs: 1, pollTimeoutMs: 50, sleep: async () => {} }),
+    (e) => e.kind === 'invalid_request' && e.provider === 'sora',
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('loadWanPool: an inline "# comment" left in an endpoint or a model marks that entry bad', () => {
+  const pool = P.loadWanPool({
+    WAN_1_ENDPOINT: `${WAN(1)}     # origin only`, WAN_1_API_KEY: 'k1',
+    WAN_2_ENDPOINT: WAN(2), WAN_2_API_KEY: 'k2', WAN_2_MODEL: 'wan3.0-video-prime          # optional',
+    WAN_3_ENDPOINT: `${WAN(3)}#console`, WAN_3_API_KEY: 'k3',
+  });
+  assert.deepEqual(pool.map((e) => [e.label, !!e.badEndpoint, !!e.badModel]), [['WAN_1', true, false], ['WAN_2', false, true], ['WAN_3', false, false]]);
+  assert.equal(pool[2].endpoint, WAN(3), 'a fragment is not part of the origin');
+});
+
+test('generateClip: when every configured WAN entry is malformed it stops with invalid_request instead of paying for Sora', async () => {
+  const calls = installFetch();
+  const cr = creds({ WAN_1_ENDPOINT: `${WAN(1)}   # note`, WAN_2_ENDPOINT: 'ws-unit2.example.com', WAN_3_MODEL: 'wan3.0 # x' });
+  const events = [];
+  await assert.rejects(
+    () => run({ creds: cr, statePath: tmpState(), onEvent: (e) => events.push(e) }),
+    (e) => e.kind === 'invalid_request' && e.provider === 'wan' && /WAN_1/.test(e.message) && /WAN_3/.test(e.message),
+  );
+  assert.equal(calls.length, 0, 'neither WAN nor Sora was called');
+  assert.equal(events.filter((e) => e.type === 'skip' && e.provider === 'wan' && e.label).length, 3);
+});
+
+test('generateClip: a FAILED or CANCELED task without a recognized code stops with its taskId instead of resubmitting', async () => {
+  for (const output of [{ task_status: 'FAILED', code: 'SomeNewError', message: 'x' }, { task_status: 'FAILED' }, { task_status: 'CANCELED' }]) {
+    const calls = installFetch({ wanTask: (id) => json(200, { output: { task_id: id, ...output } }) });
+    await assert.rejects(
+      () => run({ creds: creds(), statePath: tmpState() }),
+      (e) => e.kind === 'failed' && e.provider === 'wan' && e.taskId === 'task-1-1' && e.label === 'WAN_1',
+    );
+    assert.equal(creates(calls).length, 1, `${output.task_status} ${output.code || '(no code)'} is not resubmitted`);
+    assert.ok(!calls.some((c) => c.url.startsWith(SORA)), 'and not handed to Sora');
+  }
+});
+
+test('generateClip: a FAILED task with a known transient code moves on; a moderation code stops', async () => {
+  let calls = installFetch({ wanTask: (id) => (id.startsWith('task-1-') ? json(200, { output: { task_id: id, task_status: 'FAILED', code: 'InternalError.Timeout', message: 'x' } }) : null) });
+  assert.equal((await run({ creds: creds(), statePath: tmpState() })).label, 'WAN_2');
+  assert.deepEqual(createdOn(calls), [1, 2]);
+  calls = installFetch({ wanTask: (id) => json(200, { output: { task_id: id, task_status: 'FAILED', code: 'DataInspectionFailed', message: 'x' } }) });
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e instanceof P.ContentRejectedError);
+  assert.equal(creates(calls).length, 1);
+});
+
+test('poolSummary / probeWanPool: a malformed endpoint is never echoed, since it may hold a pasted key', async () => {
+  const cr = creds({ WAN_1_ENDPOINT: 'sk-ws-PASTEDKEYabcdef123456' });
+  installFetch();
+  const out = JSON.stringify([P.poolSummary({ creds: cr, statePath: tmpState() }), await P.probeWanPool({ creds: cr })]);
+  assert.ok(!out.includes('PASTEDKEY'), out);
+  assert.match(out, /\(invalid endpoint\)/);
+});
+
+test('generateClip: a fetch error that quotes the Authorization header never carries the key out', async () => {
+  const key = creds().WAN_1_API_KEY;
+  installFetch({ wanCreate: () => { throw new TypeError(`Headers.append: "Bearer ${key}\u0000" is an invalid header value.`); } });
+  const statePath = tmpState();
+  const err = await run({ creds: creds(), statePath }).then(() => null, (e) => e);
+  assert.ok(err, 'the leg stops');
+  assert.ok(!`${err.message} ${JSON.stringify(err)}`.includes(key), err.message);
+  assert.ok(!(fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf8') : '').includes(key));
+});
+
+test('poolSummary / probeWanPool: a malformed model is not echoed either', async () => {
+  const cr = creds({ WAN_2_MODEL: 'sk-ws-PASTEDMODELKEY # x' });
+  installFetch();
+  const out = JSON.stringify([P.poolSummary({ creds: cr, statePath: tmpState() }), await P.probeWanPool({ creds: cr })]);
+  assert.ok(!out.includes('PASTEDMODELKEY'), out);
+  assert.match(out, /\(invalid model\)/);
+});
+
+test('resumeClip: a WAN entry whose endpoint is malformed stops before sending anything', async () => {
+  const calls = installFetch();
+  await assert.rejects(
+    () => P.resumeClip({ creds: creds({ WAN_1_ENDPOINT: `${WAN(1)}  # note` }), statePath: tmpState(), provider: 'wan', label: 'WAN_1', taskId: 'task-1-1', pollIntervalMs: 0, sleep: async () => {} }),
+    (e) => e.kind === 'invalid_request' && e.label === 'WAN_1',
+  );
+  assert.equal(calls.length, 0);
+});

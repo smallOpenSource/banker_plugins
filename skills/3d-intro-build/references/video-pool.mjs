@@ -19,9 +19,10 @@
  *   VIDEO_PROVIDER_ORDER                 comma list of wan,sora (default wan,sora)
  *
  * Billing rule: a leg is submitted to a second key ONLY when the first submission provably did
- * not start a task (the server rejected it, the task ended FAILED/CANCELED, or the connection
- * failed before the request was sent). Every other outcome throws with the taskId so the caller
- * can resume (resumeClip) instead of paying twice.
+ * not start a task (the server rejected it, the connection failed before the request was sent, or
+ * the task ended FAILED/CANCELED with a known key, capacity or transient code). Every other outcome
+ * throws, with the taskId when a task exists, so the caller can resume (resumeClip) instead of
+ * paying twice. A config error (every WAN entry malformed, ModelNotFound) never falls back to Sora.
  *
  * Pool state lives in ~/.config/banker/3d-intro/video-pool-state.json (0600). It holds
  * FINGERPRINTS (sha256 of endpoint+key+model), never a key, so a rotated key or a changed model
@@ -85,51 +86,72 @@ const PRE_SEND_ERRORS = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOS
  * @returns {'unusable'|'denied'|'exhausted'|'quota'|'rate'|'transient'|'content'|'invalid_request'}
  */
 export function classifyWanError({ status, code } = {}) {
-  if (code === 'InvalidApiKey') return 'unusable';
-  if (code === 'ModelNotFound' || (code && /^InvalidParameter/.test(code))) return 'invalid_request';
-  if (code && DENIED_CODES.has(code)) return 'denied';
-  if (code && (EXHAUSTED_CODES.has(code) || /^AllocationQuota/.test(code))) return 'exhausted';
-  if (code === 'Throttling.AllocationQuota') return 'quota';
-  if (code && RATE_CODES.has(code)) return 'rate';
-  if (code && CONTENT_CODES.has(code)) return 'content';
-  if (code && TRANSIENT_CODES.has(code)) return 'transient';
+  const kind = codeKind(code);
+  if (kind) return kind;
   if (status === 401) return 'unusable';
   if (status === 403) return 'denied';
   if (status === 429) return 'rate';
-  if (!status || status >= 500) return 'transient';
-  return 'invalid_request';
+  return !status || status >= 500 ? 'transient' : 'invalid_request';
+}
+
+const CODE_KIND = new Map([
+  ['InvalidApiKey', 'unusable'], ['ModelNotFound', 'invalid_request'], ['Throttling.AllocationQuota', 'quota'],
+  ...[...DENIED_CODES].map((c) => [c, 'denied']), ...[...EXHAUSTED_CODES].map((c) => [c, 'exhausted']),
+  ...[...RATE_CODES].map((c) => [c, 'rate']), ...[...CONTENT_CODES].map((c) => [c, 'content']),
+  ...[...TRANSIENT_CODES].map((c) => [c, 'transient']),
+]);
+
+// The pool action a documented code calls for, or null for a code the pool does not know.
+function codeKind(code) {
+  if (!code) return null;
+  if (CODE_KIND.has(code)) return CODE_KIND.get(code);
+  if (/^InvalidParameter/.test(code)) return 'invalid_request';
+  return /^AllocationQuota/.test(code) ? 'exhausted' : null;
 }
 
 // ---------------------------------------------------------------------------
 // Pool entries + persisted state
 // ---------------------------------------------------------------------------
 
-// Endpoints are origins: a pasted console URL with a path would otherwise 404 every call.
+// Endpoints are origins: a pasted console URL with a path would otherwise 404 every call. A value
+// new URL() rejects (an inline "# comment" the env parser kept, a bare host, a key pasted into the
+// wrong field) gives null. The raw value is never echoed, because it may be a key.
 function originOf(url) {
-  try { const u = new URL(String(url).trim()); return `${u.protocol}//${u.host}`; } catch { return String(url || '').trim().replace(/\/+$/, ''); }
+  try {
+    const u = new URL(String(url).trim());
+    return /^https?:$/.test(u.protocol) && u.host ? `${u.protocol}//${u.host}` : null;
+  } catch { return null; }
 }
 const fingerprint = (endpoint, key, model) => crypto.createHash('sha256').update(`${endpoint}\n${key}\n${model}`).digest('hex').slice(0, 16);
-const hostOf = (url) => { try { return new URL(url).host; } catch { return String(url || ''); } };
+// A model id is one token (wan3.0-video-prime). A space or an inline "# comment" fails every call.
+const MODEL_RE = /^[A-Za-z0-9][\w.-]*$/;
+const hostOf = (endpoint) => (endpoint ? new URL(endpoint).host : '(invalid endpoint)');
+// What a report may show about an entry: no raw value of a field that failed validation.
+const shownEntry = (e) => ({ label: e.label, host: hostOf(e.endpoint), model: e.badModel ? '(invalid model)' : e.model });
 
 /**
  * Build the WAN pool from creds: every WAN_<n>_ENDPOINT with a matching WAN_<n>_API_KEY, by n.
- * An endpoint without an http(s) scheme is kept with `badEndpoint: true` so the preflight can
- * report it; generateClip skips it.
+ * An entry whose endpoint is not an http(s) URL (`badEndpoint`) or whose model is not one model id
+ * (`badModel`) is kept so the preflight can report it; generateClip skips it.
  */
 export function loadWanPool(creds = {}) {
   const pool = [];
   for (const k of Object.keys(creds)) {
     const m = k.match(/^WAN_(\d+)_ENDPOINT$/);
-    if (!m) continue;
-    const id = m[1]; // keep the literal digits so WAN_01_* never pairs with WAN_1_*
-    const endpoint = originOf(creds[k]);
-    const key = creds[`WAN_${id}_API_KEY`];
-    if (!creds[k] || !key) continue;
-    const model = creds[`WAN_${id}_MODEL`] || creds.WAN_MODEL || WAN_DEFAULT_MODEL;
-    const badEndpoint = !/^https?:\/\/[^/]/i.test(endpoint);
-    pool.push({ n: Number(id), label: `WAN_${id}`, endpoint, key, model, fp: fingerprint(endpoint, key, model), badEndpoint });
+    if (m && creds[k] && creds[`WAN_${m[1]}_API_KEY`]) pool.push(poolEntry(creds, m[1]));
   }
   return pool.sort((a, b) => a.n - b.n || a.label.localeCompare(b.label));
+}
+
+// id keeps the literal digits so WAN_01_* never pairs with WAN_1_*
+function poolEntry(creds, id) {
+  const endpoint = originOf(creds[`WAN_${id}_ENDPOINT`]);
+  const key = creds[`WAN_${id}_API_KEY`];
+  const model = String(creds[`WAN_${id}_MODEL`] || creds.WAN_MODEL || WAN_DEFAULT_MODEL).trim();
+  return {
+    n: Number(id), label: `WAN_${id}`, endpoint, key, model, fp: fingerprint(endpoint, key, model),
+    badEndpoint: !endpoint, badModel: !MODEL_RE.test(model),
+  };
 }
 
 export function defaultStatePath() {
@@ -189,12 +211,12 @@ function entryStatus(st, t) {
   return { status: 'ok' };
 }
 
-/** Per-entry availability for reporting. Never includes a key. */
+/** Per-entry availability for reporting. Never includes a key, nor a malformed endpoint or model. */
 export function poolSummary({ creds = {}, statePath = defaultStatePath(), now = Date.now() } = {}) {
   const state = loadPoolState(statePath);
   return loadWanPool(creds).map((e) => {
     const st = state.entries[e.fp];
-    return { label: e.label, host: hostOf(e.endpoint), model: e.model, okCount: st?.okCount || 0, ...entryStatus(st, now) };
+    return { ...shownEntry(e), okCount: st?.okCount || 0, ...entryStatus(st, now) };
   });
 }
 
@@ -235,29 +257,45 @@ function parseRetryAfter(h) {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
 }
 
-async function wanFetch(url, { key, method = 'GET', body, binary = false, timeoutMs = API_TIMEOUT_MS } = {}) {
-  const headers = {};
-  if (key) headers.Authorization = `Bearer ${key}`;
-  if (body !== undefined) { headers['Content-Type'] = 'application/json'; headers['X-DashScope-Async'] = 'enable'; }
+const WAN_FETCH_DEFAULTS = { method: 'GET', binary: false, timeoutMs: API_TIMEOUT_MS };
+
+async function wanFetch(url, opts = {}) {
+  const o = { ...WAN_FETCH_DEFAULTS, ...defined(opts) };
   let r;
   try {
     r = await globalThis.fetch(url, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
+      method: o.method, headers: wanHeaders(o), body: o.body === undefined ? undefined : JSON.stringify(o.body), signal: AbortSignal.timeout(o.timeoutMs),
     });
   } catch (e) {
-    // AbortSignal.timeout rejects with a DOMException whose numeric code means nothing to a reader
-    const errno = e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.code || e?.code || null;
-    return { status: 0, ok: false, body: null, code: null, message: e.message, retryAfterMs: null, preSend: PRE_SEND_ERRORS.has(errno), errno };
+    return networkFailure(e);
   }
   const retryAfterMs = parseRetryAfter(r.headers.get('retry-after'));
-  if (binary) {
-    const buf = Buffer.from(await r.arrayBuffer());
-    return { status: r.status, ok: r.ok, body: buf, code: null, message: null, retryAfterMs };
-  }
+  if (o.binary) return { status: r.status, ok: r.ok, body: Buffer.from(await r.arrayBuffer()), code: null, message: null, retryAfterMs };
+  return { status: r.status, ok: r.ok, ...(await parsedBody(r)), retryAfterMs };
+}
+
+function wanHeaders({ key, body }) {
+  const headers = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  if (body !== undefined) Object.assign(headers, { 'Content-Type': 'application/json', 'X-DashScope-Async': 'enable' });
+  return headers;
+}
+
+// AbortSignal.timeout rejects with a DOMException whose numeric code means nothing to a reader
+const errnoOf = (e) => (e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.code || e?.code || null);
+
+// A fetch that threw. Its message can quote a request header in full (undici names an invalid
+// header value, Authorization included), so only the error code travels on, never the text.
+function networkFailure(e) {
+  const errno = errnoOf(e);
+  return { status: 0, ok: false, body: null, code: null, message: errno || 'network error', retryAfterMs: null, preSend: PRE_SEND_ERRORS.has(errno), errno };
+}
+
+async function parsedBody(r) {
   const text = await r.text().catch(() => '');
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
-  return { status: r.status, ok: r.ok, body: parsed, code: parsed?.code || null, message: parsed?.message || null, retryAfterMs };
+  return { body: parsed, code: parsed?.code || null, message: parsed?.message || null };
 }
 
 // PNG color type 4/6 or a tRNS chunk means transparency; WAN rejects PNGs with an alpha channel.
@@ -364,15 +402,15 @@ export async function downloadWanVideo(url, { sleep = realSleep, tries = 3 } = {
  */
 export async function probeWanPool({ creds = {} } = {}) {
   const results = [];
-  for (const e of loadWanPool(creds)) {
-    if (e.badEndpoint) {
-      results.push({ label: e.label, host: e.endpoint, model: e.model, key: redact(e.key), status: 0, code: 'BadEndpoint', authOk: false });
-      continue;
-    }
-    const r = await wanFetch(`${e.endpoint}${WAN_TASK_PATH}${PROBE_TASK_ID}`, { key: e.key });
-    results.push({ label: e.label, host: hostOf(e.endpoint), model: e.model, key: redact(e.key), status: r.status, code: r.code, authOk: r.status === 200 });
-  }
+  for (const e of loadWanPool(creds)) results.push(await probeEntry(e));
   return results;
+}
+
+async function probeEntry(e) {
+  const base = { ...shownEntry(e), key: redact(e.key) };
+  if (e.badEndpoint || e.badModel) return { ...base, status: 0, code: e.badEndpoint ? 'BadEndpoint' : 'BadModel', authOk: false };
+  const r = await wanFetch(`${e.endpoint}${WAN_TASK_PATH}${PROBE_TASK_ID}`, { key: e.key });
+  return { ...base, status: r.status, code: r.code, authOk: r.status === 200 };
 }
 
 // ---------------------------------------------------------------------------
@@ -444,99 +482,142 @@ function recordSuccess(file, entry, t, taskId, emit) {
 }
 
 // Poll an accepted WAN task to a downloaded clip. Throws stopError for every outcome where the
-// task may have billed; returns {fail} only when the task provably ended without output.
+// task may have billed; returns {fail} only when the task ended without output for a known reason.
 async function finishWanTask(ctx, e, taskId, parameters) {
-  const { emit, sleep, now, statePath } = ctx;
-  const seconds = parameters.duration;
   const p = await wanPollTask({
-    entry: e, taskId, intervalMs: ctx.pollIntervalMs, timeoutMs: ctx.pollTimeoutMs, sleep,
-    onTick: (s, i) => emit({ type: 'poll', provider: 'wan', label: e.label, taskId, status: s, tick: i }),
+    entry: e, taskId, intervalMs: ctx.pollIntervalMs, timeoutMs: ctx.pollTimeoutMs, sleep: ctx.sleep,
+    onTick: (s, i) => ctx.emit({ type: 'poll', provider: 'wan', label: e.label, taskId, status: s, tick: i }),
   });
-  if (p.state === 'FAILED' || p.state === 'CANCELED') {
-    return { fail: { code: p.output.code || p.state, status: 500, message: p.output.message } };
-  }
+  if (p.state === 'SUCCEEDED') return { clip: await succeededClip(ctx, e, taskId, p, parameters.duration) };
+  if (p.state === 'FAILED' || p.state === 'CANCELED') return { fail: failedTask(e, taskId, p) };
+  throw lostTask(ctx, e, taskId, p, parameters.duration);
+}
+
+// A FAILED or CANCELED task is resubmitted only when its code says why nothing came out: a key or
+// capacity problem, or a known transient server error. An unknown or missing code may be the
+// input's fault, or a failure that billed, so the leg stops with the taskId instead of trying every key.
+function failedTask(e, taskId, p) {
+  const code = p.output.code || null;
+  if (codeKind(code)) return { code, status: null, message: p.output.message };
+  throw stopError('failed', `WAN task ${taskId} (${e.label}) ended ${p.state}${code ? ` (${code})` : ''} for a reason the pool does not know: ${p.output.message || 'no message'}; check the task in the Model Studio console before generating the leg again`, { provider: 'wan', taskId, label: e.label, code: code || p.state });
+}
+
+// The poll could not tell how the task ended: keep the taskId so nothing is submitted twice.
+function lostTask(ctx, e, taskId, p, seconds) {
   if (p.state === 'TIMEOUT') {
-    throw stopError('timeout', `WAN task ${taskId} (${e.label}) still running after ${ctx.pollTimeoutMs} ms; resume with resumeClip`, { provider: 'wan', taskId, label: e.label, seconds });
+    return stopError('timeout', `WAN task ${taskId} (${e.label}) still running after ${ctx.pollTimeoutMs} ms; resume with resumeClip`, { provider: 'wan', taskId, label: e.label, seconds });
   }
   if (p.state === 'HTTP') {
-    if (p.status === 401) applyFailure(statePath, e, 'unusable', { code: p.output.code, status: p.status }, now(), ctx.creds, emit);
-    throw stopError('task_lost', `WAN poll for task ${taskId} (${e.label}) failed: HTTP ${p.status} ${p.output.code || ''}; check the Model Studio console before resubmitting`, { provider: 'wan', taskId, label: e.label, status: p.status, code: p.output.code });
+    if (p.status === 401) applyFailure(ctx.statePath, e, 'unusable', { code: p.output.code, status: p.status }, ctx.now(), ctx.creds, ctx.emit);
+    return stopError('task_lost', `WAN poll for task ${taskId} (${e.label}) failed: HTTP ${p.status} ${p.output.code || ''}; check the Model Studio console before resubmitting`, { provider: 'wan', taskId, label: e.label, status: p.status, code: p.output.code });
   }
-  if (p.state === 'UNKNOWN') {
-    throw stopError('task_lost', `WAN task ${taskId} (${e.label}) reports UNKNOWN (expired or not found); check the console before resubmitting`, { provider: 'wan', taskId, label: e.label });
-  }
-  // SUCCEEDED: the clip is paid for from here on — record it before touching the network again
-  recordSuccess(statePath, e, now(), taskId, emit);
+  return stopError('task_lost', `WAN task ${taskId} (${e.label}) reports UNKNOWN (expired or not found); check the console before resubmitting`, { provider: 'wan', taskId, label: e.label });
+}
+
+// SUCCEEDED: the clip is paid for from here on — record it before touching the network again
+async function succeededClip(ctx, e, taskId, p, seconds) {
+  recordSuccess(ctx.statePath, e, ctx.now(), taskId, ctx.emit);
   const videoUrl = p.output.video_url;
   if (!videoUrl) throw stopError('no_video', `WAN task ${taskId} (${e.label}) succeeded without a video_url`, { provider: 'wan', taskId, label: e.label });
   let mp4;
   try {
-    mp4 = await downloadWanVideo(videoUrl, { sleep });
+    mp4 = await downloadWanVideo(videoUrl, { sleep: ctx.sleep });
   } catch (err) {
     // videoUrl is a signed URL: kept as a property for recovery (valid 24 h), never in the message
     throw stopError('download', `${err.message} for WAN task ${taskId} (${e.label}); resume with resumeClip within 24 h`, { provider: 'wan', taskId, label: e.label, videoUrl, seconds });
   }
-  emit({ type: 'done', provider: 'wan', label: e.label, taskId });
-  return { clip: { mp4, provider: 'wan', label: e.label, model: e.model, seconds: seconds ?? p.usage?.duration ?? null, taskId, usage: p.usage } };
+  ctx.emit({ type: 'done', provider: 'wan', label: e.label, taskId });
+  return { mp4, provider: 'wan', label: e.label, model: e.model, seconds: seconds ?? p.usage?.duration ?? null, taskId, usage: p.usage };
 }
 
 async function runWan(ctx) {
-  const { creds, prompt, firstFramePng, lastFramePng, size, seconds, emit, sleep, now, statePath } = ctx;
-  const all = loadWanPool(creds);
-  for (const b of all.filter((x) => x.badEndpoint)) emit({ type: 'skip', provider: 'wan', label: b.label, reason: 'endpoint is not an http(s) URL' });
-  const pool = all.filter((x) => !x.badEndpoint);
-  if (!pool.length) { emit({ type: 'skip', provider: 'wan', reason: 'no usable WAN_<n>_ENDPOINT + WAN_<n>_API_KEY entries' }); return null; }
-  const limit = Math.max(1, Math.floor(Number(creds.WAN_MAX_CONCURRENT) || 5));
-  const parameters = wanParams({ size, seconds, hasFrame: !!firstFramePng, creds, overrides: ctx.wanOverrides });
+  const pool = usablePool(ctx);
+  if (!pool.length) return null;
+  const limit = Math.max(1, Math.floor(Number(ctx.creds.WAN_MAX_CONCURRENT) || 5));
+  const parameters = wanParams({ size: ctx.size, seconds: ctx.seconds, hasFrame: !!ctx.firstFramePng, creds: ctx.creds, overrides: ctx.wanOverrides });
   const maxAttempts = pool.length * (QUOTA_STRIKES_TO_EXHAUST + 1) + 2;
   let attempts = 0;
   while (attempts < maxAttempts) {
-    const pick = pickEntry(pool, loadPoolState(statePath), now(), limit);
+    const pick = pickEntry(pool, loadPoolState(ctx.statePath), ctx.now(), limit);
     if (!pick.entry) {
-      if (pick.busy || (pick.waitMs != null && pick.waitMs <= ctx.maxRateWaitMs)) {
-        emit({ type: 'wait', provider: 'wan', ms: pick.waitMs, reason: pick.busy ? 'every usable key is at its in-flight limit' : 'every usable key is cooling down' });
-        await sleep(pick.waitMs);
-        continue;
-      }
-      emit({ type: 'pool-unavailable', provider: 'wan', summary: poolSummary({ creds, statePath, now: now() }) });
-      return null;
+      if (await waitForKey(ctx, pick)) continue;
+      return poolUnavailable(ctx);
     }
     attempts++;
-    const e = pick.entry;
-    updateEntry(statePath, e, (st) => ({ ...st, lastUsedAt: now() }), emit);
-    inflight.set(e.fp, (inflight.get(e.fp) || 0) + 1);
-    let fail;
-    try {
-      emit({ type: 'submit', provider: 'wan', label: e.label, model: e.model, attempt: attempts });
-      const c = await wanCreateTask({ entry: e, prompt, firstFramePng, lastFramePng, parameters });
-      if (c.status === 0 && !c.preSend) {
-        // the request may have reached the server: a resubmit elsewhere could bill the leg twice
-        throw stopError('submit_unknown', `WAN submit to ${e.label} lost its connection (${c.errno || c.message}); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label });
-      }
-      if (!c.taskId && (c.ok || (c.status >= 500 && !c.code))) {
-        // a 2xx without task_id or a bare gateway 5xx: the backend may have accepted the task
-        throw stopError('submit_unknown', `WAN submit to ${e.label} got an ambiguous answer (HTTP ${c.status}, no task_id); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label, status: c.status });
-      }
-      if (c.taskId) {
-        const out = await finishWanTask(ctx, e, c.taskId, parameters);
-        if (out.clip) return out.clip;
-        fail = out.fail;
-      } else {
-        fail = { code: c.code, status: c.status, retryAfterMs: c.retryAfterMs, message: c.message };
-      }
-    } finally {
-      inflight.set(e.fp, Math.max(0, (inflight.get(e.fp) || 1) - 1));
-    }
-    const kind = classifyWanError(fail);
-    emit({ type: 'fail', provider: 'wan', label: e.label, kind, code: fail.code, status: fail.status });
-    if (kind === 'content') throw new ContentRejectedError('wan', fail.code, fail.message);
-    if (kind === 'invalid_request') {
-      throw stopError('invalid_request', `WAN rejected the request (${fail.code || `HTTP ${fail.status}`}): ${fail.message || ''}`, { provider: 'wan', code: fail.code, label: e.label });
-    }
-    applyFailure(statePath, e, kind, fail, now(), creds, emit);
+    const out = await attemptOnKey(ctx, pick.entry, parameters, attempts);
+    if (out.clip) return out.clip;
+    recordFailure(ctx, pick.entry, out.fail);
   }
-  emit({ type: 'pool-unavailable', provider: 'wan', reason: `gave up after ${attempts} attempts`, summary: poolSummary({ creds, statePath, now: now() }) });
+  return poolUnavailable(ctx, `gave up after ${attempts} attempts`);
+}
+
+// The usable part of the WAN pool. Malformed entries are skipped with an event. When every configured
+// entry is malformed the leg stops: a config error must not turn into a paid Sora clip.
+function usablePool(ctx) {
+  const all = loadWanPool(ctx.creds);
+  const bad = all.filter((e) => e.badEndpoint || e.badModel);
+  const what = (e) => (e.badEndpoint ? 'endpoint' : 'model');
+  for (const b of bad) ctx.emit({ type: 'skip', provider: 'wan', label: b.label, reason: `${what(b)} is malformed (an inline "# comment" stays in the value)` });
+  if (all.length && bad.length === all.length) {
+    throw stopError('invalid_request', `every WAN entry is malformed (${bad.map((b) => `${b.label} ${what(b)}`).join(', ')}); fix the env file — nothing was sent, and Sora was not used`, { provider: 'wan' });
+  }
+  const pool = all.filter((e) => !e.badEndpoint && !e.badModel);
+  if (!pool.length) ctx.emit({ type: 'skip', provider: 'wan', reason: 'no usable WAN_<n>_ENDPOINT + WAN_<n>_API_KEY entries' });
+  return pool;
+}
+
+// Wait when a key frees up soon: an in-flight slot always, a cooldown only within maxRateWaitMs.
+async function waitForKey(ctx, pick) {
+  if (!pick.busy && (pick.waitMs == null || pick.waitMs > ctx.maxRateWaitMs)) return false;
+  ctx.emit({ type: 'wait', provider: 'wan', ms: pick.waitMs, reason: pick.busy ? 'every usable key is at its in-flight limit' : 'every usable key is cooling down' });
+  await ctx.sleep(pick.waitMs);
+  return true;
+}
+
+function poolUnavailable(ctx, reason) {
+  const summary = poolSummary({ creds: ctx.creds, statePath: ctx.statePath, now: ctx.now() });
+  ctx.emit(reason ? { type: 'pool-unavailable', provider: 'wan', reason, summary } : { type: 'pool-unavailable', provider: 'wan', summary });
   return null;
+}
+
+// One paid submission on one key. Returns {clip} or {fail} (the task provably produced nothing);
+// throws when resubmitting could bill the leg twice.
+async function attemptOnKey(ctx, e, parameters, attempt) {
+  updateEntry(ctx.statePath, e, (st) => ({ ...st, lastUsedAt: ctx.now() }), ctx.emit);
+  inflight.set(e.fp, (inflight.get(e.fp) || 0) + 1);
+  try {
+    ctx.emit({ type: 'submit', provider: 'wan', label: e.label, model: e.model, attempt });
+    const c = await wanCreateTask({ entry: e, prompt: ctx.prompt, firstFramePng: ctx.firstFramePng, lastFramePng: ctx.lastFramePng, parameters });
+    assertSubmitSettled(e, c);
+    if (c.taskId) return await finishWanTask(ctx, e, c.taskId, parameters);
+    return { fail: { code: c.code, status: c.status, retryAfterMs: c.retryAfterMs, message: c.message } };
+  } finally {
+    inflight.set(e.fp, Math.max(0, (inflight.get(e.fp) || 1) - 1));
+  }
+}
+
+// A submission whose fate is unknown must not go to another key: the request may have reached the
+// server, and a second key would bill the same leg twice.
+function assertSubmitSettled(e, c) {
+  if (c.status === 0 && !c.preSend) {
+    throw stopError('submit_unknown', `WAN submit to ${e.label} lost its connection (${c.errno || 'network error'}); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label });
+  }
+  if (!c.taskId && (c.ok || (c.status >= 500 && !c.code))) {
+    // a 2xx without task_id or a bare gateway 5xx: the backend may have accepted the task
+    throw stopError('submit_unknown', `WAN submit to ${e.label} got an ambiguous answer (HTTP ${c.status}, no task_id); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label, status: c.status });
+  }
+}
+
+// A provable non-start: moderation and request errors end the leg; key problems are recorded so
+// the next pick avoids that key.
+function recordFailure(ctx, e, fail) {
+  const kind = classifyWanError(fail);
+  ctx.emit({ type: 'fail', provider: 'wan', label: e.label, kind, code: fail.code, status: fail.status });
+  if (kind === 'content') throw new ContentRejectedError('wan', fail.code, fail.message);
+  if (kind === 'invalid_request') {
+    throw stopError('invalid_request', `WAN rejected the request (${fail.code || `HTTP ${fail.status}`}): ${fail.message || ''}`, { provider: 'wan', code: fail.code, label: e.label });
+  }
+  applyFailure(ctx.statePath, e, kind, fail, ctx.now(), ctx.creds, ctx.emit);
 }
 
 function soraConn(creds) {
@@ -548,29 +629,45 @@ function soraConn(creds) {
 
 // Poll an accepted Sora job to a downloaded clip; same stop rules as finishWanTask.
 async function finishSoraJob(ctx, jobId, secs) {
-  const { emit } = ctx;
-  const { endpoint, key, apiVersion, model } = soraConn(ctx.creds);
-  const interval = Math.max(0, ctx.pollIntervalMs);
-  const st = await pollVideo({
-    endpoint, key, id: jobId, apiVersion, intervalMs: interval, maxTicks: Math.max(1, Math.ceil(ctx.pollTimeoutMs / Math.max(1, interval))),
-    onTick: (s, i) => emit({ type: 'poll', provider: 'sora', taskId: jobId, status: s?.status, tick: i }),
-  });
-  if (st && SORA_FAILED.has(st.status)) {
-    const code = st.error?.code || st.status;
-    if (/moderation|content_policy|safety/i.test(`${code} ${st.error?.message || ''}`)) throw new ContentRejectedError('sora', code, st.error?.message);
-    throw stopError('failed', `Sora job ${jobId} ended ${st.status}: ${JSON.stringify(st.error || '')}`, { provider: 'sora', taskId: jobId, code });
-  }
+  const conn = soraConn(ctx.creds);
+  const st = await pollSoraJob(ctx, conn, jobId);
+  if (st && SORA_FAILED.has(st.status)) throw soraFailure(st, jobId);
   if (!st || !SORA_DONE.has(st.status)) {
     throw stopError('timeout', `Sora job ${jobId} still ${st?.status ?? 'unknown'} after ${ctx.pollTimeoutMs} ms; resume with resumeClip`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', seconds: secs });
   }
-  let mp4;
+  const mp4 = await downloadSoraClip(conn, jobId, secs);
+  ctx.emit({ type: 'done', provider: 'sora', label: 'AZURE_SORA', taskId: jobId });
+  return { mp4, provider: 'sora', label: 'AZURE_SORA', model: conn.model, seconds: secs, taskId: jobId, usage: null };
+}
+
+// pollVideo throws on a 4xx other than 408/429 (the job is gone, or the key is refused): such a job
+// never turns terminal, so the leg ends at once as task_lost instead of polling to the deadline.
+async function pollSoraJob(ctx, conn, jobId) {
+  const interval = Math.max(0, ctx.pollIntervalMs);
   try {
-    mp4 = await downloadVideo({ endpoint, key, id: jobId, apiVersion });
+    return await pollVideo({
+      endpoint: conn.endpoint, key: conn.key, id: jobId, apiVersion: conn.apiVersion, sleep: ctx.sleep,
+      intervalMs: interval, maxTicks: Math.max(1, Math.ceil(ctx.pollTimeoutMs / Math.max(1, interval))),
+      onTick: (s, i) => ctx.emit({ type: 'poll', provider: 'sora', taskId: jobId, status: s?.status, tick: i }),
+    });
+  } catch (e) {
+    if (!e.status) throw e;
+    throw stopError('task_lost', `Sora poll for job ${jobId} failed: HTTP ${e.status}${e.code ? ` ${e.code}` : ''}; check the job in Azure before resubmitting`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', status: e.status, code: e.code });
+  }
+}
+
+function soraFailure(st, jobId) {
+  const code = st.error?.code || st.status;
+  if (/moderation|content_policy|safety/i.test(`${code} ${st.error?.message || ''}`)) return new ContentRejectedError('sora', code, st.error?.message);
+  return stopError('failed', `Sora job ${jobId} ended ${st.status}: ${JSON.stringify(st.error || '')}`, { provider: 'sora', taskId: jobId, code });
+}
+
+async function downloadSoraClip(conn, jobId, secs) {
+  try {
+    return await downloadVideo({ endpoint: conn.endpoint, key: conn.key, id: jobId, apiVersion: conn.apiVersion });
   } catch (err) {
     throw stopError('download', `${err.message} for Sora job ${jobId}; resume with resumeClip`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', seconds: secs });
   }
-  emit({ type: 'done', provider: 'sora', label: 'AZURE_SORA', taskId: jobId });
-  return { mp4, provider: 'sora', label: 'AZURE_SORA', model, seconds: secs, taskId: jobId, usage: null };
 }
 
 async function runSora(ctx) {
@@ -619,9 +716,10 @@ const DEFAULTS = { size: '720x1280', seconds: 5, pollIntervalMs: 15_000, pollTim
  *
  * Throws (never resubmitting the leg) when retrying could pay twice or cannot help:
  *   ContentRejectedError                moderation — change the prompt/frame
- *   kind 'invalid_request'              malformed request or ModelNotFound (a config error)
+ *   kind 'invalid_request'              malformed request, ModelNotFound or every WAN entry malformed (config)
  *   kind 'timeout' | 'download'         the task exists — call resumeClip({ ..., provider, label, taskId })
  *   kind 'submit_unknown' | 'task_lost' | 'no_video' | 'failed'  outcome unknown — check the console
+ *                                       ('failed': the task ended for a reason the pool does not know)
  *   kind 'unreachable'                  Sora host refused the connection (nothing was sent)
  * @returns {Promise<{mp4:Buffer, provider:'wan'|'sora', label:string, model:string, seconds:number, taskId:string, usage:object|null}>}
  */
@@ -655,13 +753,22 @@ export async function resumeClip(opts = {}) {
   // no default seconds here: an unknown length is reported from the task's usage, not invented
   const { seconds: _unused, ...defaults } = DEFAULTS;
   const o = { ...defaults, statePath: defaultStatePath(), sleep: realSleep, now: Date.now, ...defined(opts) };
-  const { creds, provider, label, taskId } = o;
-  if (!creds || !taskId) throw new Error('resumeClip: creds and taskId required');
+  if (!o.creds || !o.taskId) throw new Error('resumeClip: creds and taskId required');
   const ctx = makeCtx(o);
-  if (provider === 'sora') return finishSoraJob(ctx, taskId, o.seconds == null ? null : snapSoraSeconds(o.seconds));
-  const e = loadWanPool(creds).find((x) => x.label === label);
-  if (!e) throw new Error(`resumeClip: ${label} is not in the WAN pool (was the key removed?)`);
-  const out = await finishWanTask(ctx, e, taskId, { duration: Math.round(Number(o.seconds) || 0) || null });
+  if (o.provider !== 'sora') return resumeWan(ctx, o);
+  if (!o.creds.AZURE_SORA_ENDPOINT || !o.creds.AZURE_SORA_API_KEY) {
+    throw stopError('invalid_request', 'resumeClip: AZURE_SORA_ENDPOINT and AZURE_SORA_API_KEY are required to resume a Sora job (run 3d-intro-setup); nothing was sent', { provider: 'sora', taskId: o.taskId });
+  }
+  return finishSoraJob(ctx, o.taskId, o.seconds == null ? null : snapSoraSeconds(o.seconds));
+}
+
+async function resumeWan(ctx, o) {
+  const e = loadWanPool(o.creds).find((x) => x.label === o.label);
+  if (!e) throw new Error(`resumeClip: ${o.label} is not in the WAN pool (was the key removed?)`);
+  if (e.badEndpoint) {
+    throw stopError('invalid_request', `resumeClip: ${o.label} endpoint is malformed (an inline "# comment" stays in the value); fix the env file — nothing was sent`, { provider: 'wan', label: o.label, taskId: o.taskId });
+  }
+  const out = await finishWanTask(ctx, e, o.taskId, { duration: Math.round(Number(o.seconds) || 0) || null });
   if (out.clip) return out.clip;
-  throw stopError('failed', `WAN task ${taskId} (${label}) ended ${out.fail.code}: ${out.fail.message || ''}; it produced no clip — generate the leg again`, { provider: 'wan', taskId, label, code: out.fail.code });
+  throw stopError('failed', `WAN task ${o.taskId} (${o.label}) ended ${out.fail.code}: ${out.fail.message || ''}; it produced no clip — generate the leg again`, { provider: 'wan', taskId: o.taskId, label: o.label, code: out.fail.code });
 }
