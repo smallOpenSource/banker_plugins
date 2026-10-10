@@ -5,7 +5,7 @@ name: harness-setup-ci
 # Honest scope: setup-harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
 # testable on hosted runners; those steps are partial/tolerated and labeled as such.
 # obsidizer has no per-OS install, so it gets no OS-toolchain job — it is covered by the structural
-# job (58 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
+# job (60 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
 
 on:
   push:
@@ -31,16 +31,16 @@ concurrency:
 
 jobs:
   smoke:
-    name: structural (packaging · 58 skills · dir==name)
+    name: structural (packaging · 60 skills · dir==name)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: manifest count == 58 both / 0 claude-only
+      - name: manifest count == 60 both / 0 claude-only
         run: |
-          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==58||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
+          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==60||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
       - name: smoke-test (dir==name, dry-run, real codex install)
         run: node scripts/smoke-test.js
       - name: version sync (SoT drift guard — plugin.json == package.json == marketplace.json)
