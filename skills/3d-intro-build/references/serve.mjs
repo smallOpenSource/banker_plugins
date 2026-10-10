@@ -18,7 +18,8 @@
  *              with a CSP under that same policy: a plain server hides CSP errors.
  *     --state  state file (default: <dir>.server.json beside the folder, never inside it)
  *     --stop   ends the server the state file records, only when it answers with that PID
- *   A start while the recorded server still answers only reports its address. A request whose
+ *   A start while the recorded server still answers with the same settings only reports its
+ *   address; with other settings (--csp, PREVIEW_HOST) it exits 1: --stop first. A request whose
  *   Host is a DNS name other than localhost is refused (DNS rebinding).
  *   On listen it writes the state file and prints  PREVIEW http://localhost:<port>/
  *   PREVIEW_HOST=0.0.0.0 binds every interface (on-device phone checks) and prints a warning.
@@ -34,9 +35,9 @@ import {
   resolveInside, send, sendFile, siblingState, stopServer, urlFor, writeState,
 } from './preview-lib.mjs';
 
-function handler(dir, headers) {
+function handler(dir, headers, host) {
   return (req, res) => {
-    if (!hostAllowed(req.headers.host)) return send(res, 403, 'host not allowed', headers);
+    if (!hostAllowed(req.headers.host, [host])) return send(res, 403, 'host not allowed', headers);
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '405', headers);
     const urlPath = decodePath(req.url);
     if (urlPath === null) return send(res, 400, '400', headers);
@@ -55,7 +56,7 @@ export async function startServe(dir, { port, host = process.env.PREVIEW_HOST ||
   const root = path.resolve(dir);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`serve: not a directory: ${root}`);
   const policy = cspFrom(csp);
-  const server = http.createServer(handler(root, policy ? { 'Content-Security-Policy': policy } : {}));
+  const server = http.createServer(handler(root, policy ? { 'Content-Security-Policy': policy } : {}, host));
   const bound = await listen(server, { host, port });
   const url = urlFor(host, bound);
   const file = stateFile ? path.resolve(stateFile) : siblingState(root);
@@ -86,12 +87,26 @@ async function stopMain(o, dir) {
   process.exit(['stopped', 'not-running', 'no-state'].includes(r.reason) ? 0 : 1);
 }
 
+// A server already running for this folder: the same settings only report its address; other
+// settings (CSP, host) never pass for it, so a check meant to run under a CSP cannot run without one.
+async function reportRunning(recorded, o) {
+  if (!(await isRunning(recorded))) return false;
+  const st = readState(recorded);
+  const host = process.env.PREVIEW_HOST || LOOPBACK;
+  if ((st.csp || null) === cspFrom(o.csp) && (st.host || LOOPBACK) === host) {
+    console.log(`PREVIEW ${st.url} (already running, pid ${st.pid})`);
+    return true;
+  }
+  console.error(`serve: a server for this folder is running with different settings (csp: ${st.csp ? 'on' : 'off'}, host: ${st.host}); `
+    + 'stop it with --stop and start again');
+  process.exit(1);
+}
+
 async function main() {
   const o = parseArgs(process.argv.slice(2));
   const dir = path.resolve(o.dir || process.cwd());
   if (o.stop) return stopMain(o, dir);
-  const recorded = o.state ? path.resolve(o.state) : siblingState(dir);
-  if (await isRunning(recorded)) return console.log(`PREVIEW ${readState(recorded).url} (already running, pid ${readState(recorded).pid})`);
+  if (await reportRunning(o.state ? path.resolve(o.state) : siblingState(dir), o)) return;
   const s = await startServe(dir, { port: o.port || undefined, csp: o.csp || undefined, stateFile: o.state || undefined });
   const warn = hostWarning(s.host);
   if (warn) console.warn(warn);

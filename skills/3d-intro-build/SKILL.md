@@ -253,9 +253,10 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 ```bash
 node references/assemble.mjs <projectDir>                    # <projectDir>/site 에 페이지를 만들고 styleHash 를 알린다
 node references/serve.mjs <projectDir>/site                  # PREVIEW http://localhost:<port>/ (백그라운드)
-node references/serve.mjs <projectDir>/site --csp strict     # 사이트에 CSP 가 있으면: 그 정책 문자열이나 strict
 node references/serve.mjs --stop <projectDir>/site           # 끝나면 종료
 ```
+
+- 사이트에 CSP 가 있으면 처음부터 `--csp "<운영 정책>"`(정책을 모르면 `--csp strict`)을 붙여 띄운다. 같은 폴더에 설정이 다른 서버가 떠 있으면 시작이 실패한다(exit 1). 그때는 `--stop` 뒤 다시 띄운다. 같은 설정이면 떠 있는 서버의 주소만 알려 준다.
 
 - 페이지에는 인라인 script, style 이 없다. 설정은 `intro.js`, 테마는 `theme.css`, 엔진 CSS 는 `scrub-engine.css` 다.
   엔진은 여전히 `<style>` 하나를 주입하려 한다. CSP 가 있는 사이트는 조립이 알려 준 `styleHash` 를 `style-src` 에 더하면 콘솔 오류가 남지 않는다(더하지 않아도 같은 규칙이 `scrub-engine.css` 로 적용된다).

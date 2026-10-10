@@ -405,7 +405,9 @@ function listedFiles(dir) {
 
 function page(dir, res) {
   let html;
-  try { html = renderPage(readInput(dir), readDecisions(dir), { dir }); } catch (e) { return send(res, 500, `${INPUT} 을 읽지 못했습니다: ${e.message}`); }
+  try { html = renderPage(readInput(dir), readDecisions(dir), { dir }); } catch (e) {
+    return send(res, 500, String(e.message).startsWith('curate:') ? e.message : `${INPUT} 을 읽지 못했습니다: ${e.message}`);
+  }
   res.writeHead(200, { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(html);
 }
@@ -425,9 +427,9 @@ function route(dir, req, res, urlPath) {
   serveListed(dir, req, res, urlPath);
 }
 
-function handler(dir) {
+function handler(dir, host) {
   return (req, res) => {
-    if (!hostAllowed(req.headers.host)) return send(res, 403, 'host not allowed');
+    if (!hostAllowed(req.headers.host, [host])) return send(res, 403, 'host not allowed');
     const urlPath = decodePath(req.url);
     if (urlPath === null) return send(res, 400, '400');
     route(dir, req, res, urlPath);
@@ -438,7 +440,7 @@ function handler(dir) {
 export async function startCurate(dir, { port, host = process.env.PREVIEW_HOST || LOOPBACK } = {}) {
   const root = path.resolve(dir);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`curate: not a directory: ${root}`);
-  const server = http.createServer(handler(root));
+  const server = http.createServer(handler(root, host));
   const bound = await listen(server, { host, port });
   const url = urlFor(host, bound);
   const stateFile = path.join(root, STATE);
@@ -465,7 +467,12 @@ function parseArgs(argv) {
 
 async function serveMain(dir, o) {
   const recorded = path.join(dir, STATE);
-  if (await isRunning(recorded)) return console.log(`CURATE ${readState(recorded).url} (already running, pid ${readState(recorded).pid})`);
+  if (await isRunning(recorded)) {
+    const st = readState(recorded);
+    if ((st.host || LOOPBACK) === (process.env.PREVIEW_HOST || LOOPBACK)) return console.log(`CURATE ${st.url} (already running, pid ${st.pid})`);
+    console.error(`curate: a review server for this folder is running with different settings (host: ${st.host}); stop it with --stop and start again`);
+    return process.exit(1);
+  }
   const s = await startCurate(dir, { port: Number(o.port) || undefined });
   const warn = hostWarning(s.host);
   if (warn) console.warn(warn);
