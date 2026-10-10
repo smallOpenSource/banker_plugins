@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (59 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (60 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 59, `codex dry-run plans 59 skill copies (got ${copies})`);
+  ok(copies === 60, `codex dry-run plans 60 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -157,7 +157,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 59, `real codex install has 59 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 60, `real codex install has 60 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -199,6 +199,7 @@ try {
   // remains runs its box tool from the skill's own folder (scripts/boxes.mjs), so the Codex copy needs it too.
   ok(installed.includes('banker-remains'), 'new remains installed as banker-remains');
   ok(fs.existsSync(path.join(instDir, 'banker-remains', 'scripts', 'boxes.mjs')), 'banker-remains carries scripts/boxes.mjs into the Codex install');
+  ok(installed.includes('banker-trouble-shooting'), 'new trouble-shooting installed as banker-trouble-shooting');
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud step 3 runs scripts/claude-update-last.mjs from the skill's own folder; every copy of that
