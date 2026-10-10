@@ -74,7 +74,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `/banker:front-qa` | 스펙(note) 기반 프론트엔드 구현 + parity QA |
 | `/banker:setup` | 구성요소·의존성 설치 오케스트레이터 (multi-select) |
 | `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, mod. Codex 미지원) |
-| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 단계는 Claude 의 작업 목록, 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상) (mod. Codex 미지원) |
+| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 단계는 Claude 의 작업 목록, 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 미지원) |
 
 `/graceful-pause` 와 `/progress` 는 Claude Code 의 mod(Claude Mods, 얼리 액세스 이름 function hooks, `hooks/register.mjs`)로 등록되는 명령이라 구성요소 수에 넣지 않습니다. `commands/progress.md` 도 넣지 않습니다. 이 파일은 mod 가 없는 Claude Code 에서 `/progress` 를 받아 "mod 를 지원하지않는 claude code 버전입니다" 만 보여 주는 대체 명령이고, mod 가 있으면 mod 가 대신 처리합니다.
 
@@ -258,7 +258,7 @@ banker uninstall        # 제거
   - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).
   - `remains`: 테스트박스를 쓰려면 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 와 시험에 필요한 런타임(예: Node)이 있어야 하고, SSH 키로 암호 없이 접속돼야 합니다.
   - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알리며, Codex 에는 이 명령이 없습니다.
-  - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 에는 이 명령이 없습니다.
+  - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 에는 이 명령이 없습니다.
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
