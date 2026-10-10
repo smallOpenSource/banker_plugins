@@ -1,7 +1,7 @@
 // Tests for gemini-seat.mjs. Run from the repo root: node --test skills/ralph-qa/references/gemini-seat.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +10,10 @@ import { POLICY, policyIntact, sessionFolders, staleSessionFolders, strayEnvFile
 
 const SEAT = fileURLToPath(new URL("./gemini-seat.mjs", import.meta.url));
 
+// The resolved path, as the seat code answers: on macOS the temp folder is under /var, a link to
+// /private/var, and on Windows the native call also spells an 8.3 short name (RUNNER~1) long.
 function scratch(t) {
-  const dir = mkdtempSync(join(tmpdir(), "gemini-seat-"));
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "gemini-seat-")));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -58,7 +60,20 @@ test("a .env above the seat folder stops the seat unless it sits in the home", (
   writeFileSync(join(dir, "base", ".env"), "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9\n");
   writeFileSync(join(dir, "base", ".gemini", ".env"), "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9\n");
   writeFileSync(join(home, ".env"), "MY_OWN=1\n");
-  const env = { GEMINI_CLI_HOME: home };
+  // The account's home gets a folder of its own. On Windows the temp folder sits inside the real
+  // one, where every .env counts as the account's own. Kept apart from GEMINI_CLI_HOME, it leaves
+  // GEMINI_CLI_HOME as the only reason home/.env is not a stray one.
+  const account = join(dir, "account");
+  mkdirSync(account);
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  Object.assign(process.env, { HOME: account, USERPROFILE: account });
+  const env = { GEMINI_CLI_HOME: home, HOME: account, USERPROFILE: account };
   const above = strayEnvFiles(seat, { env });
   assert.ok(above.includes(join(dir, "base", ".env")) && above.includes(join(dir, "base", ".gemini", ".env")), above.join(", "));
   assert.ok(!strayEnvFiles(inHome, { env }).includes(join(home, ".env")), "the account's own .env is not a stray one");
@@ -141,13 +156,16 @@ test("clean finds a seat folder's records after the folder is gone, and sweep fi
 test("on Windows the seat folder and the homes are compared by their long names", () => {
   // TEMP may be spelt with a short 8.3 name (C:\Users\RUNNER~1) while the home is the long one:
   // native realpath spells both alike, so the account's own .env is not taken for a stray one.
-  const long = "/users/runneradmin";
-  const realpath = (p) => p.replace("/users/RUNNER~1", long);
-  const seat = "/users/RUNNER~1/appdata/local/temp/ralph-qa.x/gemini";
-  const exists = (f) => realpath(f) === `${long}/.env`; // one folder, two spellings
+  // The paths start at this host's root (C:\ on Windows): the seat code resolves them by its rules.
+  const root = parse(tmpdir()).root;
+  const short = join(root, "users", "RUNNER~1");
+  const long = join(root, "users", "runneradmin");
+  const realpath = (p) => p.replace(short, long);
+  const seat = join(short, "appdata", "local", "temp", "ralph-qa.x", "gemini");
+  const exists = (f) => realpath(f) === join(long, ".env"); // one folder, two spellings
   const env = { GEMINI_CLI_HOME: long };
   assert.deepEqual(strayEnvFiles(seat, { env, platform: "win32", exists, realpath }), []);
-  assert.deepEqual(strayEnvFiles(seat, { env, platform: "win32", exists, realpath: (p) => p }), ["/users/RUNNER~1/.env"],
+  assert.deepEqual(strayEnvFiles(seat, { env, platform: "win32", exists, realpath: (p) => p }), [join(short, ".env")],
     "without the long names the same file is outside the home");
 });
 
