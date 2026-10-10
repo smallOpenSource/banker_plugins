@@ -220,10 +220,12 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
 
 // sha256 of a file, read in chunks so a render of any size never sits whole in memory (one read
 // stops at 2 GiB), once per version of the file: the key holds its size and mtime, so a regenerated
-// take is hashed anew. Rejects for a file that cannot be read.
+// take is hashed anew. Rejects for a file that cannot be read, and for anything but a regular file
+// (a link to /dev/zero or a FIFO would be read forever and the page would never come).
 const hashes = new Map();
 export async function hashFile(fp) {
   const st = fs.statSync(fp);
+  if (!st.isFile()) throw new Error('일반 파일 아님');
   const key = `${fp}:${st.mtimeMs}:${st.size}`;
   if (!hashes.has(key)) {
     const done = new Promise((resolve, reject) => {

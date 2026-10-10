@@ -73,6 +73,15 @@ test('a take is hashed in chunks, hashed anew once its file changes, and a folde
   await assert.rejects(hashFile(path.join(dir, 'missing.mp4')), { code: 'ENOENT' });
 });
 
+test('a take that is not a regular file fails its hash at once instead of reading forever', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows', timeout: 10_000 }, async () => {
+  const dir = project();
+  fs.symlinkSync('/dev/zero', path.join(dir, 'clips/zero.mp4'));
+  const input = readInput(dir);
+  input.scenes[1].takes.push({ file: 'clips/zero.mp4', take: 2 });
+  const html = await renderPage(input, readDecisions(dir), { dir });
+  assert.match(html, /해시 실패\(일반 파일 아님\)/);
+});
+
 test('a clip plays as a muted loop, and a flight shows its first and last frames', async () => {
   const dir = project();
   const html = await renderPage(readInput(dir), readDecisions(dir), { dir });
