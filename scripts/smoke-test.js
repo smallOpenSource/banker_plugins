@@ -181,6 +181,12 @@ try {
   const poolBuild = fs.readFileSync(path.join(root, 'skills', '3d-intro-build', 'references', 'video-pool.mjs'));
   const poolSetup = fs.readFileSync(path.join(root, 'skills', '3d-intro-setup', 'references', 'video-pool.mjs'));
   ok(poolBuild.equals(poolSetup), 'video-pool.mjs is byte-identical across 3d-intro-build and 3d-intro-setup');
+  // motion-graphic-make ships the build skill's local servers and review page (same sync script).
+  for (const f of ['preview-lib.mjs', 'serve.mjs', 'curate.mjs']) {
+    const a = fs.readFileSync(path.join(root, 'skills', '3d-intro-build', 'references', f));
+    const b = fs.readFileSync(path.join(root, 'skills', 'motion-graphic-make', 'references', f));
+    ok(a.equals(b), `${f} is byte-identical across 3d-intro-build and motion-graphic-make`);
+  }
   // payload-mon runs on its two scripts: payload-mon.mjs patches the HUD wrapper and copies payload-size.mjs
   // beside it, so a Codex copy missing either one can neither turn the segment on nor compute it.
   ok(installed.includes('banker-payload-mon'), 'new payload-mon installed as banker-payload-mon');
@@ -322,6 +328,8 @@ try {
     path.join('hooks', 'update-checkin.test.mjs'),
     path.join('skills', '3d-intro-build', 'references', 'azure-adapter.test.mjs'),
     path.join('skills', '3d-intro-build', 'references', 'video-pool.test.mjs'),
+    ...['preview-lib', 'curate', 'assemble', 'step-nav', 'verify-intro', 'intro-e2e']
+      .map((n) => path.join('skills', '3d-intro-build', 'references', `${n}.test.mjs`)),
     path.join('skills', 'payload-mon', 'scripts', 'payload-mon.test.mjs'),
     path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),

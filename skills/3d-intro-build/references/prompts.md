@@ -19,7 +19,7 @@ Higgsfield·Monid 같은 외부 CLI 플래그는 쓰지 않는다 — 크기·�
 
 - **`SUBJECT`** — 대상 비즈니스/제품 + 한 줄 소개.
 - **`BRAND`** — 화면에 표시할 브랜드명.
-- **`SCENES[]` (순서 있는 씬 목록)** — 각 씬마다 `id`, `label`, `subject`(디오라마에 뭐가 있는지), `eyebrow`, `title`, `body`(1문장), `tags[]`(0~3). 마지막 씬 = 히어로 제품 + CTA.
+- **`SCENES[]` (순서 있는 씬 목록)** — 권장 5~7개. 이야기는 문제 제기, 해법, 결론 순서이고 장면 하나에 뜻 하나다(7절). 각 씬마다 `id`, `label`, `subject`(장면에 뭐가 있는지), `eyebrow`, `title`, `body`, `tags[]`(0~3). 마지막 씬 = 결론(히어로 제품) + CTA. CTA 는 이 장면에만 둔다.
 - **`ORIENTATION`** — `720x1280`(세로) 또는 `1280x720`(가로). 스틸과 영상 크기가 이 값으로 통일된다. 세로는 모바일/스토리, 가로는 데스크톱/랜딩에 맞는다.
 - **`BUDGET`** — 상한 USD. 씬 수 × (이미지 1장 + 영상 클립)로 추정하며, 어떤 유료 호출보다 먼저 승인 게이트에서 총액을 제시한다.
 
@@ -31,6 +31,10 @@ Higgsfield·Monid 같은 외부 CLI 플래그는 쓰지 않는다 — 크기·�
 - `CAMERA_FEEL` — fly-through(디오라마를 내려다보다 안으로 급강하) | walkthrough(한 번에 쭉 전진) | locked-iso(고정 아이소메트릭 활공). 느낌으로 제시하고 트레이드오프 한 줄씩 곁들인다.
 - `MOBILE` — yes/no. yes 면 세로 9:16 렌더를 별도로 만들어 `clipMobile`/`stillMobile` 로 배선한다(대략 2배 비용, 승인 게이트에 반영).
 - `STILLS_SOURCE` — 기본 `gpt-image-2`(`generateImage`). 씬 간 코히전을 더 강하게 원하면 `FLUX.2-pro`(`generateImageFlux`) 옵트인.
+- `CLIP_MODE` — `chain`(기본, 검증된 경로) 또는 `holdFlight`(장면마다 정지 클립, 장면 사이 첫과 끝 프레임을 지정한 비행 클립. WAN 필요, 이 스킬에서 미검증).
+- `SITE` — 단독 인트로 페이지 또는 기존 사이트 위에 붙임. 붙이면 그 사이트의 CSP, 본문 시작 선택자, 고정 헤더 선택자, 지원 언어를 받는다.
+- `STEP_NAV` — yes 면 휠 1칸, 키, 스와이프가 정확히 한 장면을 이동한다. 스크롤 동작을 가로채므로 사이트 성격을 보고 고른다.
+- `PANEL` — `glass` 면 흐린 유리 문구 패널. 밝은 장면이 많으면 대비 기준(4.5)을 지키도록 투명도를 낮춘다.
 
 ---
 
@@ -106,7 +110,7 @@ in, the roof and upper structure gently lift and open away to reveal the warm in
 여닫을 건물이 없는 씬(들판·광장·도로)이면 지붕 절을 "the camera flies low across [the scene] toward [focal point]." 로 바꾼다.
 
 **Leg i (i ≥ 1) — 체이닝된 프레임에서 다음 씬으로:**
-`input_reference = colorMatch(extractLastFrame(clip[i-1]))` (직전 클립의 마지막 프레임을 톤 정합 1차 처리한 것).
+`firstFramePng = extractLastFrame(clip[i-1])` (직전 클립의 **raw** 마지막 프레임. 톤 정합을 걸면 연속성이 나빠진다: 실측 raw SSIM ~0.59, histeq 0.46).
 
 ```
 Single continuous cinematic camera move, no cuts. Continue the same continuous camera flight
@@ -142,12 +146,15 @@ tilt. It only travels straight and level, the world sliding past beneath the sam
 
 ---
 
-## 5. 두-이미지 커넥터 프롬프트 (옵트인 · **UNVALIDATED**)
+## 5. 비행 클립과 두-이미지 커넥터 프롬프트 (선택, **이 스킬에서 미검증**)
 
-`detectTwoImageSupport()` 가 참일 때만, 그리고 사용자가 명시적으로 선택할 때만 쓴다.
-두 씬 사이에 **진짜 커넥터**(첫 프레임 → 마지막 프레임 보간)를 만들어 aerial hop 을 넣는다.
-`createVideoTwoImage({ firstPng: dive_i 마지막 프레임, lastPng: dive_{i+1} 첫 프레임 })`.
-스모크로 검증되지 않은 경로다 — **어떤 실패에도 forward-chaining 으로 폴백**한다.
+장면 사이를 첫 프레임과 끝 프레임을 모두 지정한 클립으로 잇는다. 두 경로가 있다.
+
+- **holdFlight 의 비행 클립(WAN)** — `generateClip({ firstFramePng: 장면 i 스틸, lastFramePng: 장면 i+1 스틸, seconds: 5, order: ['wan'] })`.
+  장면마다 정지 클립(`stillToClip`, 무료)을 두므로 비행 클립의 첫과 끝 프레임이 앞뒤 장면과 맞는다. Sora 는 끝 프레임을 받지 못하므로 쓰지 않는다(`order: ['wan']`).
+- **Azure 두-이미지 커넥터** — `detectTwoImageSupport()` 가 참일 때만 `createVideoTwoImage({ firstPng: dive_i 마지막 프레임, lastPng: dive_{i+1} 첫 프레임 })`. 실패하면 forward-chaining 으로 폴백한다.
+
+두 경로 모두 유료 스모크로 확인하지 않았다. 첫 클립을 검토 페이지에서 먼저 확인받고 나머지를 만든다.
 
 ```
 Single continuous cinematic camera move, no cuts. The camera smoothly pulls up and back out of
@@ -157,7 +164,8 @@ seamless flowing aerial transition. [STYLE tail + PALETTE]. Smooth graceful slow
 no captions.
 ```
 
-히어로-제품 피날레로 들어가는 마지막 커넥터: "…glides forward and the world dissolves toward a single giant [PRODUCT] floating in soft [BG] space, arriving in front of it."
+히어로-제품 피날레로 들어가는 마지막 커넥터: "...glides forward and the world dissolves toward a single giant [PRODUCT] floating in soft [BG] space, arriving in front of it."
+포토리얼이나 건물 장면이면 "pulls up and back out" 을 장면에 맞는 이동(문, 유리, 외벽을 따라가는 이동)으로 바꾼다.
 
 ---
 
@@ -165,7 +173,22 @@ no captions.
 
 - `eyebrow` — 2~4단어, 대문자 느낌(가치 제안 라벨).
 - `title` — 3~6단어, 그 비트의 헤드라인. 첫 씬 = 사이트 히어로 라인, 마지막 = 페이오프 + CTA 를 얹는다.
-- `body` — 한 문장, 방문자 입장에서 평이하게.
+- `body` — 방문자 입장에서 평이하게. 유리 패널(`panel: "glass"`)이면 한 줄에 항목 하나로 세 줄을 줄바꿈(`\n`)으로 나누고, 줄마다 375px 화면에서 한 줄에 들어가는 길이(영문 약 36자, 한글 약 18자)로 쓴다.
 - `tags` — 0~3개 짧은 증거 칩(예: "Fresh-cooked", "30-min delivery").
 
 이 값들은 `assemble.mjs` 가 읽는 `intro.json` 의 각 섹션에 그대로 들어가고, `mountScrollWorld` 가 화면 카피로 렌더한다.
+
+패널 안 순서는 번호(`01 / 07`), 라벨(`eyebrow`), 제목, 본문, 태그(2개 권장)다. 결론 장면만 CTA 버튼 2개를 더한다.
+
+---
+
+## 7. 장면 표현과 흔한 지적
+
+검토에서 자주 나오는 지적이다. 스틸 프롬프트를 쓸 때 미리 피하고, 지적이 나오면 그 장면이나 클립만 다시 만든다.
+
+- 장면 하나에 뜻 하나. 한 장면에 두 메시지를 넣지 않는다.
+- 행위 주체가 화면에서 드러나야 한다. 무엇이 문제를 일으키고 무엇이 막는지, 누가 쓰는지 보이게 한다.
+- 의도하지 않은 만화식 은유(예: 보호를 뜻하는 반투명 돔)는 유치해 보인다. 브랜드 톤이 장난스럽지 않으면 실제 사물과 공간으로 표현한다.
+- 일이 일어나는 자리가 맞아야 한다. 예: 막는 장면은 이미 뚫린 안쪽이 아니라 바깥 경계에서 막는 모습으로.
+- 화면 속 글자는 깨지기 쉽다. 프롬프트 끝의 "No text, no captions." 를 지키고, 글자가 깨진 결과는 재생성한다.
+- 사물이 엉뚱한 위치에 뜨거나, 강조색이 유리나 다른 물체로 번지면 그 결과만 재생성한다.
