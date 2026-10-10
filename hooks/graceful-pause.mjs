@@ -32,7 +32,7 @@
 export const COMMAND = 'graceful-pause';
 export const MIN_ENGINE = [2, 1, 289];
 
-const SPEC = {
+export const SPEC = {
   name: COMMAND,
   description: '지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림. 작업 중에 입력해도 바로 전달',
   argumentHint: '[멈춘 뒤 다룰 지시나 메모]',
@@ -79,25 +79,6 @@ export function atLeast(version, min = MIN_ENGINE) {
 
 const userRow = (text) => ({ message: { type: 'user', content: [{ type: 'text', text }] } });
 
-async function registerIfSupported($) {
-  let version = null;
-  try {
-    const v = await $.session.version();
-    version = v?.base || v?.version || null;
-  } catch {
-    /* an engine without the call is older than the command needs */
-  }
-  if (!atLeast(version)) {
-    $.ui.log(`banker: /${COMMAND} 는 Claude Code ${MIN_ENGINE.join('.')} 이상에서만 켭니다 (이 엔진: ${version || '버전 미상'})`);
-    return;
-  }
-  try {
-    await $.command.register(SPEC);
-  } catch (err) {
-    $.ui.log(`banker: /${COMMAND} 를 등록하지 못했습니다 (${String(err?.message ?? err)})`);
-  }
-}
-
 // Appends the note to the running turn; the answer the command shows. The note counts
 // as sent before the call returns: a model request starting meanwhile reads the stored
 // row, and a second /graceful-pause meanwhile must not append another.
@@ -127,7 +108,7 @@ function queueReport($, state, memo) {
   state.queued = true;
   const failed = (why) => {
     state.queued = false;
-    $.ui.log(`banker: /${COMMAND} 정지 보고 요청을 보내지 못했습니다 (${why})`);
+    $.ui.log(`/${COMMAND} 정지 보고 요청을 보내지 못했습니다 (${why})`);
   };
   $.clock.after(1, () => {
     $.prompt.submit({ text: pauseNote(memo), asUser: true }).then(
@@ -140,49 +121,25 @@ function queueReport($, state, memo) {
 
 // At the main turn's end: a note no later request read is voided unless background
 // work will wake the session (the turn it starts reads the note then).
-async function settlePending($, state) {
-  const { pending } = state;
-  state.pending = null;
-  if (!pending || pending.read || state.background > 0) return;
-  try {
-    await $.session.append(userRow(VOID));
-  } catch {
-    /* nothing more to do: the log line below still tells the person */
-  }
-  $.ui.log('banker: /graceful-pause 요청이 작업 끝에 도착해 적용되지 않았습니다.');
-}
-
 // Nothing in flight: the state a fresh session, or one after /clear, starts from.
 const fresh = () => ({ main: null, step: -1, pending: null, background: 0, queued: false });
 const listed = (v) => (Array.isArray(v) ? v.length : 0);
 const backgroundCount = (e) => listed(e.background_tasks) + listed(e.session_crons);
 
+// The main turn in flight and its latest model request; subagent loops raise no turn.start and
+// end with an agentId. `queued`: a report prompt not started yet. One per loaded module.
+const state = fresh();
+
+// The command and the events only this feature hooks. register.mjs hooks the events every banker
+// feature shares (the engine takes one hook per event from the module) and calls the functions
+// below for them; it also registers this feature's command (SPEC) from 2.1.289 on.
 export function registerGracefulPause(on) {
-  // The main turn in flight and its latest model request; subagent loops raise no
-  // turn.start and end with an agentId. `queued`: a report prompt not started yet.
-  const state = fresh();
-  watchSession(on, state);
-  watchTurns(on, state);
+  Object.assign(state, fresh());
 
   on('command.run', { command: COMMAND }, async ($, e) => {
     if (state.main) return deliver($, state, e.args);
     if (state.background > 0) return queueReport($, state, e.args);
     return { text: IDLE };
-  });
-}
-
-// The command's registration, a fresh state after /clear, and the background count the
-// stop events report.
-function watchSession(on, state) {
-  on('session.start', async ($, e, next) => {
-    await registerIfSupported($);
-    return next(e);
-  });
-
-  // `/clear` ends the conversation and raises no session.start for the next one.
-  on('session.end', async ($, e, next) => {
-    Object.assign(state, fresh());
-    return next(e);
   });
 
   on('classic.Stop', async ($, e, next) => {
@@ -194,17 +151,9 @@ function watchSession(on, state) {
     state.background = backgroundCount(e);
     return next(e);
   });
-}
 
-// The main turn in flight and the model requests it makes. turn.step wraps every
-// request's stream, subagents' too: in the engine's kit that cost 25 to 45 µs a chunk,
-// well under 1% of a request.
-function watchTurns(on, state) {
-  on('turn.start', async ($, e, next) => {
-    Object.assign(state, { main: e.turnId, step: -1, queued: false });
-    return next(e);
-  });
-
+  // turn.step wraps every model request's stream, subagents' too: in the engine's kit that
+  // cost 25 to 45 µs a chunk, well under 1% of a request.
   on('turn.step', async function* ($, e, next) {
     if (e.turnId === state.main) {
       state.step = e.index;
@@ -212,11 +161,24 @@ function watchTurns(on, state) {
     }
     return yield* next(e);
   });
+}
 
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId || e.turnId !== state.main) return next(e);
-    state.main = null;
-    await settlePending($, state);
-    return next(e);
-  });
+// session.end: `/clear` ends the conversation and raises no session.start for the next one.
+export function pauseReset() {
+  Object.assign(state, fresh());
+}
+
+export function pauseTurnStarted(e) {
+  Object.assign(state, { main: e.turnId, step: -1, queued: false });
+}
+
+// The main turn's end. A request it never read (it came in after the last model request, and no
+// background work will report) is voided: what to append and log, which register.mjs does; or null.
+export function pauseTurnCompleted(e) {
+  if (e.agentId || e.turnId !== state.main) return null;
+  state.main = null;
+  const { pending } = state;
+  state.pending = null;
+  if (!pending || pending.read || state.background > 0) return null;
+  return { row: userRow(VOID), log: '/graceful-pause 요청이 작업 끝에 도착해 적용되지 않았습니다.' };
 }

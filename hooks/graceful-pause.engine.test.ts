@@ -20,7 +20,8 @@ test('on 2.1.289 it registers /graceful-pause to run mid-turn, answers it while 
   on('turn.complete', () => ({ text: 'engine' }))
 
   expect(await $.session.start(START)).toEqual({ cwd: '/work' })
-  expect(registered).toEqual([expect.objectContaining({ name: 'graceful-pause', immediate: true })])
+  // The module also serves /progress (hooks/progress.engine.test.ts); this file reads its own command.
+  expect(registered.filter((r) => r.name === 'graceful-pause')).toEqual([expect.objectContaining({ name: 'graceful-pause', immediate: true })])
 
   const idle = await $.command.run({ command: 'graceful-pause', args: '메모' })
   expect(idle.text).toMatch(/진행 중인 작업이 없/)
@@ -47,7 +48,7 @@ test('an engine older than 2.1.289 gets no command and one log line', async ($, 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 
   expect(await $.session.start(START)).toEqual({ cwd: '/work' })
-  expect(registered).toEqual([])
+  expect(registered.filter((r: any) => r.name === 'graceful-pause')).toEqual([])
   expect(logged.length).toBe(1)
   expect(logged[0]).toContain('2.1.289')
 })
@@ -63,8 +64,9 @@ test('a name the engine refuses is logged, and the session still starts', async 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 
   expect(await $.session.start(START)).toEqual({ cwd: '/work' })
-  expect(logged.length).toBe(1)
-  expect(logged[0]).toContain('/graceful-pause')
+  // The refusal reaches /progress too (its own line, hooks/progress.engine.test.ts); this one is /graceful-pause's.
+  const mine = logged.filter((line) => line.includes('/graceful-pause'))
+  expect(mine.length).toBe(1)
 })
 
 const SHELL = { id: 'b1', type: 'shell', status: 'running', description: 'npm test' }

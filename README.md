@@ -8,7 +8,7 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 60개 + 커맨드 2개**(총 62개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause` 를 묶은 Claude Code 플러그인입니다.\
+banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 60개 + 커맨드 2개**(총 62개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause`, `/progress` 를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
@@ -59,6 +59,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `cleansing-memory` | 프로젝트가 장기화될 때 | 메모리 최적화 |
 | `ready-compact` | 컨텍스트를 compact 하거나 새 세션을 대비할 때 | 이어갈 프롬프트만 출력(`/copy` 한 번이면 복사), `--hand-off` = 새 세션에서 이어가기 |
 | `/graceful-pause` | 작업 도중 방향을 바꾸거나 끼어들고 싶을 때 | 작업 중에 입력해도 바로 전달. 실행 중인 도구 호출이 끝나면 그 단계까지만 마무리하고 멈춘 뒤 지시를 기다림 (Claude Code) |
+| `/progress` | 지금 작업이 어디까지 왔는지 보고 싶을 때 | 진행 단계 목록 패널을 켜고 끔. 단계를 누르면 설명, 화살표를 누르면 그 단계의 도구 호출이 펼쳐짐 (Claude Code) |
 | `tone-compact` | 답변을 짧은 한글 개조식으로 받고 싶을 때 | 문체 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
 | `omc-patch` | OMC 자동 업데이트 뒤 훅이 느려지거나 훅 프로세스가 쌓일 때 | 사라진 훅 패치를 다시 적용하고 OMC 자동 업데이트를 고정 |
 | `remains` | 작업 뒤에 남은 버그, 하자, 미검증 항목을 한눈에 보고 싶을 때 | 남은 항목을 표로 정리하고, 등록한 테스트박스에서 시험까지 돌림 |
@@ -72,9 +73,10 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 |---|---|
 | `/banker:front-qa` | 스펙(note) 기반 프론트엔드 구현 + parity QA |
 | `/banker:setup` | 구성요소·의존성 설치 오케스트레이터 (multi-select) |
-| `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, function hooks. Codex 미지원) |
+| `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, mod. Codex 미지원) |
+| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 단계는 Claude 의 작업 목록, 없으면 이 세션의 요청이고, 하위 목록은 그 단계의 도구 호출 한 단계까지. 작업 중에도 바로 실행됨 (mod. Codex 미지원) |
 
-`/graceful-pause` 는 `commands/` 가 아니라 function hooks(`hooks/register.mjs`)로 등록되는 명령이라 구성요소 수에 넣지 않습니다.
+`/graceful-pause` 와 `/progress` 는 `commands/` 가 아니라 Claude Code 의 mod(Claude Mods, 얼리 액세스 이름 function hooks, `hooks/register.mjs`)로 등록되는 명령이라 구성요소 수에 넣지 않습니다. `commands/progress.md` 는 mod 가 없는 Claude Code 에서 `/progress` 를 받아 "mod 를 지원하지않는 claude code 버전입니다" 만 보여 주는 대체 명령이고, mod 가 있으면 mod 가 대신 처리합니다.
 
 ### 스킬: QA · 감사
 
@@ -255,7 +257,8 @@ banker uninstall        # 제거
   - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
   - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).
   - `remains`: 테스트박스를 쓰려면 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 와 시험에 필요한 런타임(예: Node)이 있어야 하고, SSH 키로 암호 없이 접속돼야 합니다.
-  - `/graceful-pause`: Claude Code 2.1.289 이상(function hooks). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알리며, Codex 에는 이 명령이 없습니다.
+  - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알리며, Codex 에는 이 명령이 없습니다.
+  - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 에는 이 명령이 없습니다.
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
