@@ -25,6 +25,10 @@
  * The server answers only the takes and frames the input lists (never other files of the folder),
  * only to a Host that is localhost or an IP address, and takes verdicts only as JSON from its own
  * page; a page drawn before a newer verdict (one recorded in chat) gets 409 instead of overwriting it.
+ * A start while the recorded server runs only reports its address; with another PREVIEW_HOST or a
+ * --port other than the one it listens on or its own start asked for, it exits 1: --stop first.
+ * Each take's sha256 is read in chunks (any size) from the server start on, and again once the file
+ * changes.
  *
  * Runtime: Node >=18 builtins only. No shell, cross-platform.
  */
@@ -34,8 +38,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  LOOPBACK, answersPid, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, readState, resolveInside,
-  send, sendFile, stopServer, urlFor, writeState,
+  LOOPBACK, answersPid, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, portMatches, readState,
+  resolveInside, send, sendFile, stopServer, urlFor, writeState,
 } from './preview-lib.mjs';
 
 const INPUT = 'curate-input.json';
@@ -214,12 +218,35 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
 
 // ---- the page -----------------------------------------------------------------
 
+// sha256 of a file, read in chunks so a render of any size never sits whole in memory (one read
+// stops at 2 GiB), once per version of the file: the key holds its size and mtime, so a regenerated
+// take is hashed anew. Rejects for a file that cannot be read.
 const hashes = new Map();
-function sha256(fp) {
+export async function hashFile(fp) {
   const st = fs.statSync(fp);
   const key = `${fp}:${st.mtimeMs}:${st.size}`;
-  if (!hashes.has(key)) hashes.set(key, crypto.createHash('sha256').update(fs.readFileSync(fp)).digest('hex'));
+  if (!hashes.has(key)) {
+    const done = new Promise((resolve, reject) => {
+      const h = crypto.createHash('sha256');
+      fs.createReadStream(fp).on('error', reject).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex')));
+    });
+    done.catch(() => hashes.delete(key));
+    hashes.set(key, done);
+  }
   return hashes.get(key);
+}
+
+// What a card shows for a take's file: its sha256, or why there is none.
+async function hashText(dir, file) {
+  const fp = inside(dir, file) ? path.join(dir, file) : null;
+  if (!fp || !fs.existsSync(fp)) return '파일 없음';
+  try { return await hashFile(fp); } catch (e) { return `해시 실패(${e.code || e.message})`; }
+}
+
+// The hash text of every listed take by file, read together before the page is drawn.
+async function takeHashes(input, dir) {
+  const files = [...new Set(input.scenes.flatMap((s) => s.takes.map((t) => t.file)))];
+  return new Map(await Promise.all(files.map(async (f) => [f, await hashText(dir, f)])));
 }
 
 function media(t, dir) {
@@ -236,32 +263,26 @@ function frameRow(label, file, dir) {
   return `<dt>${label}</dt><dd>${thumb}<code>${escHtml(file)}</code></dd>`;
 }
 
-function hashOf(fp) {
-  if (!fp || !fs.existsSync(fp)) return '파일 없음';
-  try { return sha256(fp); } catch (e) { return `해시 실패(${e.code || e.message})`; }
-}
-
-function fileFacts(t, dir) {
-  const hash = hashOf(inside(dir, t.file) ? path.join(dir, t.file) : null);
+function fileFacts(t, hash) {
   return `<dt>파일</dt><dd><code>${escHtml(t.file ?? '')}</code></dd><dt>sha256</dt><dd><code class="hash">${escHtml(hash)}</code></dd>`;
 }
 
-function facts(t, dir, promptLabel) {
+function facts(t, ctx) {
   const row = (label, v) => (v === undefined || v === null || v === '' ? '' : `<dt>${label}</dt><dd>${escHtml(v)}</dd>`);
   return '<dl>'
-    + (t.prompt ? `<dt>${promptLabel}</dt><dd class="prompt">${escHtml(t.prompt)}</dd>` : '')
+    + (t.prompt ? `<dt>${ctx.promptLabel}</dt><dd class="prompt">${escHtml(t.prompt)}</dd>` : '')
     + row('제외 프롬프트', t.negativePrompt) + row('모델', t.model) + row('크기', t.size)
     + row('길이', t.seconds != null ? `${t.seconds}초` : null)
-    + frameRow('첫 프레임', t.firstFrame, dir) + frameRow('끝 프레임', t.lastFrame, dir)
+    + frameRow('첫 프레임', t.firstFrame, ctx.dir) + frameRow('끝 프레임', t.lastFrame, ctx.dir)
     + row('생성 시각', t.createdAt) + row('비용', t.costUsd != null ? money(t.costUsd) : null)
-    + fileFacts(t, dir) + '</dl>';
+    + fileFacts(t, ctx.hashes.get(t.file)) + '</dl>';
 }
 
-function card(t, dir, promptLabel, e) {
+function card(t, ctx, e) {
   const cls = ['card', e.chosen === t.file ? 'selected' : '', e.rejected.includes(t.file) ? 'rejected' : ''].filter(Boolean).join(' ');
   return `<article class="${cls}" data-file="${escAttr(t.file ?? '')}">
-      <div class="media">${media(t, dir)}</div>
-      <div class="meta"><strong>테이크 ${escHtml(t.take)}</strong>${facts(t, dir, promptLabel)}
+      <div class="media">${media(t, ctx.dir)}</div>
+      <div class="meta"><strong>테이크 ${escHtml(t.take)}</strong>${facts(t, ctx)}
         <div class="actions"><button type="button" data-act="choose">이 테이크로 승인</button>
         <button type="button" data-act="reject">탈락</button></div></div>
     </article>`;
@@ -272,7 +293,7 @@ const CHIPS = { approve: '승인', regenerate: '재생성 요청', pending: '대
 function sceneBlock(s, i, ctx) {
   const found = ctx.entries.get(s.id) || { verdict: 'pending', rejected: [] };
   const e = { ...found, verdict: CHIPS[found.verdict] ? found.verdict : 'pending' };
-  const cards = s.takes.map((t) => card(t, ctx.dir, ctx.promptLabel, e)).join('\n      ') || '<p class="empty">테이크가 없습니다.</p>';
+  const cards = s.takes.map((t) => card(t, ctx, e)).join('\n      ') || '<p class="empty">테이크가 없습니다.</p>';
   return `<section class="scene" data-scene-id="${escAttr(s.id)}">
     <div class="scene-head"><h2>${i + 1}. ${escHtml(s.label)}</h2><span class="chip ${e.verdict}" data-chip>${CHIPS[e.verdict] || '대기'}</span></div>
     <div class="takes">
@@ -291,11 +312,12 @@ function summary(input, entries) {
   return `<strong>${escHtml(stage)}</strong> <span>승인 ${approved} / ${input.scenes.length}</span> <span>누적 비용 ${money(spent)}${budget}</span>`;
 }
 
-export function renderPage(input, decisions, { dir }) {
+/** The review page for `input`. Resolves once every listed take is hashed. */
+export async function renderPage(input, decisions, { dir }) {
   const stage = decisions[input.stage] || { scenes: [] };
   const entries = new Map(stage.scenes.map((e) => [e.id, { ...e, rejected: e.rejected || [] }]));
   const promptLabel = input.promptLabel || (INSTRUCTION_STAGES.has(input.stage) ? '구성 지시문' : '프롬프트');
-  const ctx = { dir, promptLabel, entries };
+  const ctx = { dir, promptLabel, entries, hashes: await takeHashes(input, dir) };
   const body = input.scenes.map((s, i) => sceneBlock(s, i, ctx)).join('\n') || '<p class="empty">curate-input.json 에 장면이 없습니다.</p>';
   return `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -403,9 +425,9 @@ function listedFiles(dir) {
   return files;
 }
 
-function page(dir, res) {
+async function page(dir, res) {
   let html;
-  try { html = renderPage(readInput(dir), readDecisions(dir), { dir }); } catch (e) {
+  try { html = await renderPage(readInput(dir), readDecisions(dir), { dir }); } catch (e) {
     return send(res, 500, String(e.message).startsWith('curate:') ? e.message : `${INPUT} 을 읽지 못했습니다: ${e.message}`);
   }
   res.writeHead(200, { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' });
@@ -423,7 +445,7 @@ function route(dir, req, res, urlPath) {
   if (req.method === 'POST' && urlPath === '/decide') return void decide(dir, req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '405');
   if (answersPid(urlPath, res)) return;
-  if (urlPath === '/' || urlPath === '/index.html') return page(dir, res);
+  if (urlPath === '/' || urlPath === '/index.html') return void page(dir, res);
   serveListed(dir, req, res, urlPath);
 }
 
@@ -444,9 +466,15 @@ export async function startCurate(dir, { port, host = process.env.PREVIEW_HOST |
   const bound = await listen(server, { host, port });
   const url = urlFor(host, bound);
   const stateFile = path.join(root, STATE);
-  writeState(stateFile, { pid: process.pid, port: bound, host, url, dir: root, startedAt: new Date().toISOString() });
+  writeState(stateFile, { pid: process.pid, port: bound, requestedPort: port || null, host, url, dir: root, startedAt: new Date().toISOString() });
+  warmHashes(root);
   const close = () => new Promise((resolve) => { forgetSelf(stateFile); server.close(() => resolve()); });
   return { server, port: bound, host, url, stateFile, close };
+}
+
+// Starts hashing the listed takes, so the first view of the page does not wait for a large render.
+function warmHashes(dir) {
+  try { void takeHashes(readInput(dir), dir); } catch { /* the page reports an input it cannot read */ }
 }
 
 // ---- CLI ------------------------------------------------------------------------
@@ -465,12 +493,17 @@ function parseArgs(argv) {
   return o;
 }
 
+// A review server already running for this folder answers a start with the same host and port;
+// other settings exit 1, so a page meant for one address is not reviewed on another.
 async function serveMain(dir, o) {
   const recorded = path.join(dir, STATE);
   if (await isRunning(recorded)) {
     const st = readState(recorded);
-    if ((st.host || LOOPBACK) === (process.env.PREVIEW_HOST || LOOPBACK)) return console.log(`CURATE ${st.url} (already running, pid ${st.pid})`);
-    console.error(`curate: a review server for this folder is running with different settings (host: ${st.host}); stop it with --stop and start again`);
+    if ((st.host || LOOPBACK) === (process.env.PREVIEW_HOST || LOOPBACK) && portMatches(st, Number(o.port))) {
+      return console.log(`CURATE ${st.url} (already running, pid ${st.pid})`);
+    }
+    console.error(`curate: a review server for this folder is running with different settings (host: ${st.host}, port: ${st.port}); `
+      + 'stop it with --stop and start again');
     return process.exit(1);
   }
   const s = await startCurate(dir, { port: Number(o.port) || undefined });

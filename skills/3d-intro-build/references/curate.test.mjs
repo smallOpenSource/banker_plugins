@@ -1,16 +1,21 @@
 // Tests for curate.mjs, the review page of the 3d-intro-build and motion-graphic-make skills.
 // Run from the repo root: node --test skills/3d-intro-build/references/curate.test.mjs
 import { strict as assert } from 'node:assert';
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import {
-  archiveRejected, readDecisions, readInput, recordDecision, renderPage, startCurate,
+  archiveRejected, hashFile, readDecisions, readInput, recordDecision, renderPage, startCurate,
 } from './curate.mjs';
+import { readState, stopServer } from './preview-lib.mjs';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const NOW = new Date('2026-10-10T03:00:00Z');
 const made = [];
 process.on('exit', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
@@ -44,9 +49,9 @@ const post = (port, body, headers = { 'Content-Type': 'application/json' }) =>
   fetch(`http://127.0.0.1:${port}/decide`, { method: 'POST', headers, body: JSON.stringify(body) });
 const sha = (dir, f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, f))).digest('hex');
 
-test('every take shows its prompt, exclusions, model, size, time, cost, path and sha256', () => {
+test('every take shows its prompt, exclusions, model, size, time, cost, path and sha256', async () => {
   const dir = project();
-  const html = renderPage(readInput(dir), readDecisions(dir), { dir });
+  const html = await renderPage(readInput(dir), readDecisions(dir), { dir });
   for (const text of ['A &lt;b&gt;bold&lt;/b&gt; city', 'text, logos', 'gpt-image-2', '1280x720', '2026-10-10T01:00:00Z',
     '$0.04', 'stills/s1-t1.png', sha(dir, 'stills/s1-t1.png'), '테이크 2']) {
     assert.ok(html.includes(text), `missing ${text}`);
@@ -54,28 +59,42 @@ test('every take shows its prompt, exclusions, model, size, time, cost, path and
   assert.doesNotMatch(html, /<b>bold<\/b>/, 'a prompt is text, never markup');
 });
 
-test('a clip plays as a muted loop, and a flight shows its first and last frames', () => {
+test('a take is hashed in chunks, hashed anew once its file changes, and a folder in its place fails', async () => {
   const dir = project();
-  const html = renderPage(readInput(dir), readDecisions(dir), { dir });
+  const clip = path.join(dir, 'clips/flight-2.mp4');
+  fs.writeFileSync(clip, crypto.randomBytes(300 * 1024 + 7));
+  assert.equal(await hashFile(clip), sha(dir, 'clips/flight-2.mp4'), 'a file of several read chunks');
+  fs.appendFileSync(clip, 'a regenerated take');
+  const input = readInput(dir);
+  input.scenes[0].takes.push({ file: 'stills', take: 3 });
+  const html = await renderPage(input, readDecisions(dir), { dir });
+  assert.ok(html.includes(sha(dir, 'clips/flight-2.mp4')), 'the changed file shows its new hash');
+  assert.match(html, /해시 실패\(/, 'a folder listed as a take');
+  await assert.rejects(hashFile(path.join(dir, 'missing.mp4')), { code: 'ENOENT' });
+});
+
+test('a clip plays as a muted loop, and a flight shows its first and last frames', async () => {
+  const dir = project();
+  const html = await renderPage(readInput(dir), readDecisions(dir), { dir });
   assert.match(html, /<video [^>]*src="\/clips\/flight-2\.mp4"[^>]*muted[^>]*loop/);
   assert.match(html, /첫 프레임[\s\S]*stills\/s2\.png[\s\S]*끝 프레임[\s\S]*stills\/s3\.png/);
   assert.match(html, /5초/);
 });
 
-test('the top line gives the stage, approved scenes of all, and spend against the budget', () => {
+test('the top line gives the stage, approved scenes of all, and spend against the budget', async () => {
   const dir = project({ spentUsd: 3.5 });
   recordDecision(dir, { scene: '1', verdict: 'approve', take: '2' }, NOW);
-  const html = renderPage(readInput(dir), readDecisions(dir), { dir });
+  const html = await renderPage(readInput(dir), readDecisions(dir), { dir });
   assert.match(html, /스틸 검토/);
   assert.match(html, /승인 1 \/ 2/);
   assert.match(html, /누적 비용 \$3\.5 \/ 승인 예산 \$12/);
   const summed = project();
-  assert.match(renderPage(readInput(summed), readDecisions(summed), { dir: summed }), /누적 비용 \$0\.58/, 'without spentUsd the takes are summed');
+  assert.match(await renderPage(readInput(summed), readDecisions(summed), { dir: summed }), /누적 비용 \$0\.58/, 'without spentUsd the takes are summed');
 });
 
-test('a motion-graphics stage labels the prompt as the composition instructions', () => {
+test('a motion-graphics stage labels the prompt as the composition instructions', async () => {
   const dir = project({ stage: 'snapshots' });
-  const html = renderPage(readInput(dir), readDecisions(dir), { dir });
+  const html = await renderPage(readInput(dir), readDecisions(dir), { dir });
   assert.match(html, /스냅숏 검토/);
   assert.match(html, /구성 지시문/);
 });
@@ -88,10 +107,10 @@ test('the old curate input with variants is read as takes', () => {
   assert.deepEqual(input.scenes[0].takes.map((t) => [t.file, t.take]), [['stills/s2.png', 1]]);
 });
 
-test('a take outside the project folder is shown as refused and never served', () => {
+test('a take outside the project folder is shown as refused and never served', async () => {
   const dir = project();
   fs.writeFileSync(path.join(dir, 'curate-input.json'), JSON.stringify({ scenes: [{ id: 'a', takes: [{ file: '../../etc/passwd' }] }] }));
-  const html = renderPage(readInput(dir), readDecisions(dir), { dir });
+  const html = await renderPage(readInput(dir), readDecisions(dir), { dir });
   assert.match(html, /프로젝트 폴더 밖/);
   assert.doesNotMatch(html, /src="\/\.\.\//);
 });
@@ -155,6 +174,40 @@ test('the page server records its PID beside the review files', async (t) => {
   assert.match(page, /테이크 1/);
   const img = await fetch(`http://127.0.0.1:${s.port}/stills/s2.png`);
   assert.equal(await img.text(), 'png stills/s2.png');
+});
+
+// Runs curate.mjs to its exit: { code, out } with stdout and stderr together.
+const runCurate = (args) => new Promise((resolve) => {
+  const c = spawn(process.execPath, [path.join(HERE, 'curate.mjs'), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  c.stdout.on('data', (d) => { out += d; });
+  c.stderr.on('data', (d) => { out += d; });
+  c.on('exit', (code) => resolve({ code, out }));
+});
+
+test('a second review server start reports the running one, and another port is refused', async (t) => {
+  const dir = project();
+  const busy = net.createServer().listen(0, '127.0.0.1');
+  await new Promise((resolve) => busy.once('listening', resolve));
+  t.after(() => busy.close());
+  const asked = busy.address().port;
+  const child = spawn(process.execPath, [path.join(HERE, 'curate.mjs'), dir, '--port', String(asked)], { stdio: 'ignore' });
+  t.after(() => { try { process.kill(child.pid); } catch { /* gone */ } });
+  const stateFile = path.join(dir, 'curate.server.json');
+  for (let i = 0; i < 100 && !fs.existsSync(stateFile); i++) await new Promise((r) => setTimeout(r, 50));
+  const first = readState(stateFile);
+  assert.deepEqual([first.requestedPort === asked, first.port !== asked], [true, true], 'busy, so the system gave another');
+  for (const args of [[dir], [dir, '--port', String(asked)], [dir, '--port', String(first.port)]]) {
+    const r = await runCurate(args);
+    assert.deepEqual([r.code, /already running/.test(r.out)], [0, true], args.join(' '));
+  }
+  const other = [1, 2, 3].map((k) => first.port + k).find((p) => p !== asked);
+  const refused = await runCurate([dir, '--port', String(other)]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.out, new RegExp(`different settings[\\s\\S]*port: ${first.port}[\\s\\S]*--stop`));
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  assert.equal((await stopServer(stateFile, { timeoutMs: 5000 })).reason, 'stopped');
+  await exited;
 });
 
 test('only the takes and frames the input lists are served, never the keys beside them', async (t) => {

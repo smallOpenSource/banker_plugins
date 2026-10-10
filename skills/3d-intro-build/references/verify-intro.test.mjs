@@ -7,9 +7,9 @@ import {
   VIEWPORTS, colorAlpha, contrastRatio, insideViewport, intersects, judge, parseArgs, parseColor, parseViewport, relLuminance, worstContrast,
 } from './verify-intro.mjs';
 
-test('the default screens are the ones the guide lists, touch where a phone is', () => {
+test('the default screens are the ones the guide lists and a phone on its side, touch where a phone is', () => {
   assert.deepEqual(VIEWPORTS.map((v) => `${v.width}x${v.height}${v.touch ? ' touch' : ''}`),
-    ['1280x800', '1920x1080', '860x900', '390x844 touch', '375x667 touch']);
+    ['1280x800', '1920x1080', '860x900', '390x844 touch', '375x667 touch', '844x390 touch']);
 });
 
 test('a screen size on the command line may mark touch and reduced motion', () => {
@@ -86,4 +86,11 @@ test('a scene fails on overflow, overlap, a panel off screen or under the header
   assert.deepEqual(judge({ ...ok, overlaps: ['.isn-hint'], hOverflow: true }, { minContrast: 4.5 }),
     ['overlaps .isn-hint', 'horizontal overflow']);
   assert.deepEqual(judge({ ...ok, inViewport: false, belowHeader: false }, { minContrast: 4.5 }), ['panel outside the screen', 'panel under the header']);
+  assert.deepEqual(judge({ ...ok, contrast: [{ el: 'cta', line: 1, min: 1.1 }] }, { minContrast: 4.5 }), ['contrast cta line 1: 1.1']);
+});
+
+test('a scene fails when its clip is there but never shows; no clip, the first scene and reduced motion do not', () => {
+  const ok = { inViewport: true, belowHeader: true, overlaps: [], hOverflow: false, contrast: [] };
+  assert.deepEqual(judge({ ...ok, clip: 'not shown' }, { minContrast: 4.5 }), ['clip not shown']);
+  for (const clip of ['shown', 'none', 'poster', 'off', undefined]) assert.deepEqual(judge({ ...ok, clip }, { minContrast: 4.5 }), [], String(clip));
 });

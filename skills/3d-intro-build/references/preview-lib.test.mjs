@@ -11,7 +11,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  PID_ROUTE, STRICT_CSP, askHost, cspFrom, decodePath, hostAllowed, hostWarning, readState, resolveInside, stopServer, urlFor,
+  PID_ROUTE, STRICT_CSP, askHost, cspFrom, decodePath, hostAllowed, hostWarning, portMatches, readState, resolveInside, stopServer,
+  urlFor,
 } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
 
@@ -62,6 +63,16 @@ test('a request is answered only for a Host that names this machine by address o
   for (const bad of ['evil.example:8080', 'localhost.evil.example', '', undefined]) assert.equal(hostAllowed(bad), false, String(bad));
   assert.equal(hostAllowed('devbox:8080', ['devbox']), true, 'the name the server was bound to');
   assert.equal(hostAllowed('devbox:8080'), false);
+});
+
+test('a running server answers a start asking no port, its port, or the port its own start asked for', () => {
+  const st = { port: 5000, requestedPort: 8080 };
+  assert.equal(portMatches(st, undefined), true);
+  assert.equal(portMatches(st, Number.NaN), true, 'a --port that is not a number asks nothing');
+  assert.equal(portMatches(st, 5000), true);
+  assert.equal(portMatches(st, 8080), true, 'asked before, busy then, so the system gave 5000');
+  assert.equal(portMatches(st, 8081), false);
+  assert.equal(portMatches({ port: 5000 }, 8080), false, 'a record without requestedPort');
 });
 
 test('a stop asks the address the server was bound to, a wildcard at loopback; IPv6 sits in brackets', () => {
@@ -134,6 +145,42 @@ test('a second start finds the recorded server running and only reports its addr
 
 // Ends a spawned server even when an assertion fails first, so the test run never hangs on it.
 const reap = (t, child) => t.after(() => { try { process.kill(child.pid); } catch { /* gone */ } });
+
+// Runs serve.mjs to its exit: { code, out } with stdout and stderr together.
+const runServe = (args) => new Promise((resolve) => {
+  const c = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  c.stdout.on('data', (d) => { out += d; });
+  c.stderr.on('data', (d) => { out += d; });
+  c.on('exit', (code) => resolve({ code, out }));
+});
+
+test('a start asking another port than the running server is refused; the port its start asked for is not', async (t) => {
+  const dir = site();
+  const busy = net.createServer().listen(0, '127.0.0.1');
+  await new Promise((resolve) => busy.once('listening', resolve));
+  t.after(() => busy.close());
+  const asked = busy.address().port;
+  const child = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), dir, '--port', String(asked)], { stdio: 'ignore' });
+  reap(t, child);
+  const stateFile = path.join(path.dirname(dir), 'site.server.json');
+  for (let i = 0; i < 100 && !fs.existsSync(stateFile); i++) await new Promise((r) => setTimeout(r, 50));
+  const first = readState(stateFile);
+  assert.notEqual(first.port, asked, 'the asked port was busy, so the system gave another');
+  assert.equal(first.requestedPort, asked);
+  for (const port of [asked, first.port]) {
+    const r = await runServe([dir, '--port', String(port)]);
+    assert.deepEqual([r.code, /already running/.test(r.out)], [0, true], `--port ${port}`);
+  }
+  const other = [1, 2, 3].map((k) => first.port + k).find((p) => p !== asked);
+  const refused = await runServe([dir, '--port', String(other)]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.out, new RegExp(`different settings[\\s\\S]*port: ${first.port}[\\s\\S]*--stop`));
+  assert.equal(readState(stateFile).pid, first.pid, 'the record still names the first server');
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  assert.equal((await stopServer(stateFile, { timeoutMs: 5000 })).reason, 'stopped');
+  await exited;
+});
 
 test('stop ends only the recorded server, waits for its port to close and removes the state file', async (t) => {
   const dir = site();

@@ -19,8 +19,9 @@
  *     --state  state file (default: <dir>.server.json beside the folder, never inside it)
  *     --stop   ends the server the state file records, only when it answers with that PID
  *   A start while the recorded server still answers with the same settings only reports its
- *   address; with other settings (--csp, PREVIEW_HOST) it exits 1: --stop first. A request whose
- *   Host is a DNS name other than localhost is refused (DNS rebinding).
+ *   address; with other settings (--csp, PREVIEW_HOST, a --port other than the one it listens on
+ *   or its own start asked for) it exits 1: --stop first. A request whose Host is a DNS name other
+ *   than localhost is refused (DNS rebinding).
  *   On listen it writes the state file and prints  PREVIEW http://localhost:<port>/
  *   PREVIEW_HOST=0.0.0.0 binds every interface (on-device phone checks) and prints a warning.
  *
@@ -31,7 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  LOOPBACK, answersPid, cspFrom, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, readState,
+  LOOPBACK, answersPid, cspFrom, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, portMatches, readState,
   resolveInside, send, sendFile, siblingState, stopServer, urlFor, writeState,
 } from './preview-lib.mjs';
 
@@ -60,7 +61,9 @@ export async function startServe(dir, { port, host = process.env.PREVIEW_HOST ||
   const bound = await listen(server, { host, port });
   const url = urlFor(host, bound);
   const file = stateFile ? path.resolve(stateFile) : siblingState(root);
-  writeState(file, { pid: process.pid, port: bound, host, url, dir: root, csp: policy, startedAt: new Date().toISOString() });
+  writeState(file, {
+    pid: process.pid, port: bound, requestedPort: port || null, host, url, dir: root, csp: policy, startedAt: new Date().toISOString(),
+  });
   const close = () => new Promise((resolve) => { forgetSelf(file); server.close(() => resolve()); });
   return { server, port: bound, host, url, stateFile: file, close };
 }
@@ -87,18 +90,22 @@ async function stopMain(o, dir) {
   process.exit(['stopped', 'not-running', 'no-state'].includes(r.reason) ? 0 : 1);
 }
 
+// Whether the recorded server answers this start: the same CSP and host, and the port asked for.
+const sameSettings = (st, o) => (st.csp || null) === cspFrom(o.csp)
+  && (st.host || LOOPBACK) === (process.env.PREVIEW_HOST || LOOPBACK) && portMatches(st, o.port);
+
 // A server already running for this folder: the same settings only report its address; other
-// settings (CSP, host) never pass for it, so a check meant to run under a CSP cannot run without one.
+// settings (CSP, host, port) never pass for it, so a check meant to run under a CSP cannot run
+// without one, and a page meant for one port is not checked on another.
 async function reportRunning(recorded, o) {
   if (!(await isRunning(recorded))) return false;
   const st = readState(recorded);
-  const host = process.env.PREVIEW_HOST || LOOPBACK;
-  if ((st.csp || null) === cspFrom(o.csp) && (st.host || LOOPBACK) === host) {
+  if (sameSettings(st, o)) {
     console.log(`PREVIEW ${st.url} (already running, pid ${st.pid})`);
     return true;
   }
-  console.error(`serve: a server for this folder is running with different settings (csp: ${st.csp ? 'on' : 'off'}, host: ${st.host}); `
-    + 'stop it with --stop and start again');
+  console.error(`serve: a server for this folder is running with different settings (csp: ${st.csp ? 'on' : 'off'}, `
+    + `host: ${st.host}, port: ${st.port}); stop it with --stop and start again`);
   process.exit(1);
 }
 

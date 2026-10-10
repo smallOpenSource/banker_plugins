@@ -127,6 +127,12 @@ export function askHost(host) {
   if (!host || host === '0.0.0.0') return LOOPBACK;
   return host === '::' ? '::1' : host;
 }
+/**
+ * Whether the server a state file records answers a start that asks for `port`: one that asks no
+ * port, the port it listens on, or the port its own start asked for (busy then, so it got another).
+ */
+export const portMatches = (st, port) => !port || st.port === port || st.requestedPort === port;
+
 // The state file of a server for `dir`: beside the folder, so a deployed folder never carries it.
 export const siblingState = (dir) => path.join(path.dirname(dir), `${path.basename(dir)}.server.json`);
 

@@ -5,8 +5,9 @@
  * browser context (a reused one serves old CSS from its cache after a rebuild).
  *
  * Per screen and scene: whether the copy panel is inside the screen and below the header, whether
- * it overlaps a hint, the skip link, the main button or the route dots, horizontal overflow, and
- * the contrast of each text line against the worst pixel behind it, measured with the text hidden.
+ * it overlaps a hint, the skip link, the main button or the route dots, horizontal overflow, the
+ * contrast of each text line (CTA button labels included) against the worst pixel behind it,
+ * measured with the text hidden, and from the second scene on, whether a clip that is there shows.
  * Per screen: console errors (a CSP refusal shows here). With step navigation (step-nav.js):
  * a wheel notch plus an inertia tail from the scene before the last stops at the last scene, and
  * from the last scene each input kind reaches the body top and one up input returns.
@@ -14,7 +15,7 @@
  * Usage:
  *   node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5]
  *        [--viewports 1280x800,390x844t] [--no-input] [--no-contrast]
- *     --viewports  a trailing t marks a touch screen, r reduced motion (default: the five below)
+ *     --viewports  a trailing t marks a touch screen, r reduced motion (default: the six below)
  *     --header     the site's fixed header (default: the engine's .sw-topbar)
  *   Exit 0 when nothing failed, 1 otherwise; the report (JSON) goes to --out or stdout.
  *
@@ -29,10 +30,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const VIEWPORTS = [
   { width: 1280, height: 800 }, { width: 1920, height: 1080 }, { width: 860, height: 900 },
-  { width: 390, height: 844, touch: true }, { width: 375, height: 667, touch: true },
+  { width: 390, height: 844, touch: true }, { width: 375, height: 667, touch: true }, { width: 844, height: 390, touch: true },
 ];
 // What a copy panel must not cover.
 const COVERS = ['.isn-hint', '.sw-hint', '.isn-skip', '.isn-main', '.sw-route'];
+// The text of a panel measured for contrast: its parts, and the label of each CTA button (against
+// the button, or what shows behind a ghost one).
+const TEXT_PARTS = [['num', '.sw-copy__num'], ['eyebrow', '.sw-copy__eyebrow'], ['title', '.sw-copy__title'],
+  ['body', '.sw-copy__body'], ['cta', '.sw-copy__cta .sw-btn']];
 
 // ---- measuring logic (tested without a browser) ----------------------------
 
@@ -99,6 +104,7 @@ export function judge(s, { minContrast }) {
     if (c.min === null) out.push(`contrast ${c.el} line ${c.line}: not measured (${c.why})`);
     else if (!(c.min >= minContrast)) out.push(`contrast ${c.el} line ${c.line}: ${c.min}`);
   }
+  if (s.clip === 'not shown') out.push('clip not shown');
   return out;
 }
 
@@ -143,14 +149,25 @@ async function settle(page) {
   }
 }
 
-// Whether a scene in view shows its clip (has-clip) rather than only its poster still; waits up to
-// 3 s. Not a failure: under reduced motion the engine loads no clips. Reported per scene.
-async function clipPainted(page) {
+/**
+ * Whether the scene in view shows its clip. 'shown': the engine marks a scene has-clip once a real
+ * frame of it painted. From the second scene on (5 s): 'not shown' when a video is there but painted
+ * nothing (a codec the browser cannot decode, a broken file), a failure; 'none' when there is no
+ * video (a scene without a clip; one that failed to load shows in the console). Not judged (3 s, as
+ * a settle): the first scene keeps its still until the first move ('poster'), and under reduced
+ * motion the engine loads no clips ('off').
+ */
+async function clipState(page, i, reduce) {
+  const judged = i > 0 && !reduce;
   try {
     await page.waitForFunction(() => [...document.querySelectorAll('.sw-scene.has-clip')]
-      .some((e) => Number(getComputedStyle(e).opacity) > 0.5), null, { timeout: 3000 });
-    return true;
-  } catch { return false; }
+      .some((e) => Number(getComputedStyle(e).opacity) > 0.5), null, { timeout: judged ? 5000 : 3000 });
+    return 'shown';
+  } catch {
+    if (!judged) return reduce ? 'off' : 'poster';
+    return page.evaluate(() => ([...document.querySelectorAll('.sw-scene')]
+      .some((e) => Number(getComputedStyle(e).opacity) > 0.5 && e.querySelector('video')) ? 'not shown' : 'none'));
+  }
 }
 
 async function goToScene(page, i) {
@@ -189,15 +206,11 @@ function geometry(raw) {
   };
 }
 
-// In the page: the line boxes of each text part of panel `i`, then the text hidden (CSSOM, which a
-// CSP allows). Returns [{ el, line, color, rect }] in viewport pixels.
-function hideTextLines(i) {
-  const parts = { num: '.sw-copy__num', eyebrow: '.sw-copy__eyebrow', title: '.sw-copy__title', body: '.sw-copy__body' };
-  const panel = document.querySelectorAll('.sw-copy')[i];
-  const out = [];
-  for (const [el, sel] of Object.entries(parts)) {
-    const node = panel.querySelector(sel);
-    if (!node) continue;
+// In the page: the line boxes of each text part of panel `i` (lines numbered per part, across the
+// buttons of the CTA), then the text hidden (CSSOM, which a CSP allows). Returns
+// [{ el, line, color, rect }] in viewport pixels.
+function hideTextLines({ i, parts }) {
+  const lineBoxes = (node) => {
     const range = document.createRange();
     range.selectNodeContents(node);
     const lines = new Map();
@@ -207,16 +220,23 @@ function hideTextLines(i) {
       const u = lines.get(k);
       lines.set(k, u ? { left: Math.min(u.left, r.left), right: Math.max(u.right, r.right), top: u.top, bottom: Math.max(u.bottom, r.bottom) } : { left: r.left, right: r.right, top: r.top, bottom: r.bottom });
     }
-    [...lines.values()].forEach((r, n) => out.push({ el, line: n + 1, color: getComputedStyle(node).color,
-      rect: { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top } }));
-    node.style.setProperty('color', 'transparent', 'important');
-    node.style.setProperty('text-shadow', 'none', 'important');
+    return [...lines.values()].map((r) => ({ x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top }));
+  };
+  const panel = document.querySelectorAll('.sw-copy')[i];
+  const out = [];
+  for (const [el, sel] of parts) {
+    let n = 0;
+    for (const node of panel.querySelectorAll(sel)) {
+      for (const rect of lineBoxes(node)) out.push({ el, line: ++n, color: getComputedStyle(node).color, rect });
+      node.style.setProperty('color', 'transparent', 'important');
+      node.style.setProperty('text-shadow', 'none', 'important');
+    }
   }
   return out;
 }
 
-function showText(i) {
-  for (const node of document.querySelectorAll('.sw-copy')[i].querySelectorAll('.sw-copy__num, .sw-copy__eyebrow, .sw-copy__title, .sw-copy__body')) {
+function showText({ i, parts }) {
+  for (const node of document.querySelectorAll('.sw-copy')[i].querySelectorAll(parts.map(([, sel]) => sel).join(', '))) {
     node.style.removeProperty('color');
     node.style.removeProperty('text-shadow');
   }
@@ -242,10 +262,10 @@ async function pixels(context, png) {
 
 async function lineContrast(page, i, panel) {
   const clip = { x: Math.max(0, Math.floor(panel.x)), y: Math.max(0, Math.floor(panel.y)), width: Math.ceil(panel.width), height: Math.ceil(panel.height) };
-  const lines = await page.evaluate(hideTextLines, i);
+  const lines = await page.evaluate(hideTextLines, { i, parts: TEXT_PARTS });
   await page.waitForTimeout(80);
   const png = await page.screenshot({ type: 'png', clip });
-  await page.evaluate(showText, i);
+  await page.evaluate(showText, { i, parts: TEXT_PARTS });
   const img = await pixels(page.context(), png);
   return lines.map((l) => {
     const x = Math.max(0, Math.floor(l.rect.x - clip.x));
@@ -260,10 +280,10 @@ async function lineContrast(page, i, panel) {
 
 async function measureScene(page, i, o) {
   await goToScene(page, i);
-  const painted = await clipPainted(page);
+  const clip = await clipState(page, i, o.reduce);
   const g = geometry(await page.evaluate(rawGeometry, { i, header: o.header, covers: COVERS }));
   const contrast = o.contrast && g.opacity > 0.5 ? await lineContrast(page, i, g.panel) : [];
-  const scene = { scene: i + 1, clipPainted: painted, ...g, contrast };
+  const scene = { scene: i + 1, clip, ...g, contrast };
   return { ...scene, failures: g.opacity > 0.5 ? judge(scene, o) : ['panel not visible at its stop'] };
 }
 
@@ -363,7 +383,7 @@ async function measureViewport(browser, url, vp, o) {
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForSelector('.sw-copy');
   const scenes = [];
-  for (let i = 0, n = await page.locator('.sw-copy').count(); i < n; i++) scenes.push(await measureScene(page, i, o));
+  for (let i = 0, n = await page.locator('.sw-copy').count(); i < n; i++) scenes.push(await measureScene(page, i, { ...o, reduce: Boolean(vp.reduce) }));
   const input = o.input ? await checkInput(page, vp) : null;
   await context.close();
   const failures = scenes.reduce((a, s) => a + s.failures.length, 0) + consoleErrors.length + inputFailures(input).length;

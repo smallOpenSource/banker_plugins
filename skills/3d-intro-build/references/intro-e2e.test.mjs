@@ -78,12 +78,17 @@ test('the assembled intro passes every measure under a strict CSP that allows th
   const policy = STRICT_CSP.replace("style-src 'self'", `style-src 'self' ${built.styleHash}`);
   const server = await startServe(built.outDir, { csp: policy });
   t.after(() => server.close());
-  const report = await verifyIntro(server.url, { viewports: [{ width: 1280, height: 800 }, { width: 390, height: 844, touch: true }, { width: 1280, height: 800, reduce: true }] });
+  const report = await verifyIntro(server.url, { viewports: [
+    { width: 1280, height: 800 }, { width: 390, height: 844, touch: true }, { width: 375, height: 667, touch: true },
+    { width: 844, height: 390, touch: true }, { width: 1280, height: 800, reduce: true }] });
   fs.writeFileSync(path.join(os.tmpdir(), 'intro-e2e-report.json'), JSON.stringify(report, null, 2));
   for (const v of report.viewports) {
     assert.deepEqual(v.consoleErrors, [], `${v.viewport}: console`);
     for (const s of v.scenes) assert.deepEqual(s.failures, [], `${v.viewport} scene ${s.scene}`);
     assert.deepEqual(v.inputFailures, [], `${v.viewport}: input`);
+    assert.ok(v.scenes.at(-1).contrast.some((c) => c.el === 'cta'), `${v.viewport}: the CTA label is measured`);
+    const clips = v.scenes.slice(1).map((s) => s.clip);
+    assert.ok(clips.every((c) => c === (/reduced/.test(v.viewport) ? 'off' : 'shown')), `${v.viewport}: clips ${clips}`);
   }
   assert.equal(report.failures, 0);
 });
