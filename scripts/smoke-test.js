@@ -110,6 +110,8 @@ try {
   });
   const pauseSrc = fs.readFileSync(path.join(root, 'hooks', 'graceful-pause.mjs'), 'utf8');
   descs.push({ file: 'hooks/graceful-pause.mjs', text: (/^  description: '([^']*)',$/m.exec(pauseSrc) || [, ''])[1] });
+  const progressSrc = fs.readFileSync(path.join(root, 'hooks', 'progress.mjs'), 'utf8');
+  descs.push({ file: 'hooks/progress.mjs', text: (/^export const SPEC = \{ [^\n]*?description: '([^']*)'/m.exec(progressSrc) || [, ''])[1] });
   const SYMBOLS = /[→⇒·…※★✓✗●■—–―‒‥!！‼⁉ㆍ•‧∙⋅・･⋯⸺⸻]|[\u{1F000}-\u{1FAFF}\u{2190}-\u{21FF}\u{25A0}-\u{25FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]|\p{Extended_Pictographic}/u;
   // the double passive is written attached (되어지다), so a spaced 되어 지원 is ordinary prose
   const TRANSLATIONESE = /에\s?대(해|한|하여)|[을를]\s?통(해|한|하여)|것이\s?가능|(되어|보여|쓰여|잊혀|불려|놓여|짜여)[지진졌짐져질집]/;
@@ -299,7 +301,8 @@ try {
   // update-checkin.mjs are standalone scripts update-notify.mjs spawns detached (never declared in
   // hooks.json), but files[] still ships them, so assert all are packaged like the rest.
   const hookFiles = ['hooks.json', 'obsidize-hook.mjs', 'run.cjs', 'telemetry-count.mjs', 'telemetry-count-skill.mjs',
-    'update-fetch.mjs', 'update-notify.mjs', 'update-checkin.mjs', 'register.mjs', 'graceful-pause.mjs'];
+    'update-fetch.mjs', 'update-notify.mjs', 'update-checkin.mjs', 'register.mjs', 'graceful-pause.mjs', 'progress.mjs',
+    'progress-fallback.mjs'];
   for (const f of hookFiles) {
     ok(fs.existsSync(path.join(root, 'hooks', f)), `hooks/${f} exists in the repo`);
   }
@@ -328,6 +331,7 @@ try {
     path.join('skills', 'setup-bypass-permissions', 'scripts', 'bypass-permissions.test.mjs'),
     path.join('skills', 'setup-bypass-permissions', 'scripts', 'fallbacks.test.mjs'),
     path.join('hooks', 'graceful-pause.test.mjs'), path.join('hooks', 'graceful-pause.engine.test.ts'),
+    path.join('hooks', 'progress.test.mjs'), path.join('hooks', 'progress.engine.test.ts'), path.join('hooks', 'register.test.mjs'),
     // lineage.py is Python; its test is test_lineage.py (not *.test.mjs). files[] excludes
     // it via `!**/test_*.py`. pkgRoot IS the installed tarball Codex copies from, so this one
     // assertion covers BOTH runtimes: a leaked test would ship to Claude and Codex alike.
