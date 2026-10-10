@@ -332,8 +332,11 @@ test('hooks.json: Skill / UserPromptExpansion / SessionStart entries route throu
   assertRunCjsCommand(skillEntries[0], 'PostToolUse Skill counter');
 
   assert.ok(Array.isArray(config.hooks.UserPromptExpansion), 'UserPromptExpansion must exist as an array');
-  assert.equal(config.hooks.UserPromptExpansion.length, 1, 'exactly one UserPromptExpansion entry');
-  assertRunCjsCommand(config.hooks.UserPromptExpansion[0], 'UserPromptExpansion counter');
+  const expansions = config.hooks.UserPromptExpansion;
+  const scripts = expansions.map((entry) => entry.hooks.map((h) => h.command.split('/').pop()).join());
+  assert.deepEqual(scripts.sort(), ['progress-fallback.mjs', 'telemetry-count.mjs'],
+    'the command counter and the /progress answer for engines without mods, one entry each');
+  for (const entry of expansions) assertRunCjsCommand(entry, `UserPromptExpansion ${entry.matcher}`);
 
   assert.ok(Array.isArray(config.hooks.SessionStart), 'SessionStart must exist as an array');
   assert.equal(config.hooks.SessionStart.length, 1, 'exactly one SessionStart entry');
