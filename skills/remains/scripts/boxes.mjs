@@ -130,9 +130,9 @@ export function runScript(b, prefix, command) {
 
 // Windows sessions start in the profile folder, which only the account can write, so the run uses relative
 // names there and spaces in the profile path do not matter. Ending a run finds the processes whose command
-// line holds the run's unique name and ends each one's tree.
+// line runs this box's run.cmd (another box's longer name does not match) and ends each one's tree.
 function winSteps(b, name) {
-  const stop = `$ProgressPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${name}*' -and $_.ProcessId -ne $PID } | ForEach-Object { taskkill /F /T /PID $_.ProcessId | Out-Null }; `
+  const stop = `$ProgressPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${name}\\run.cmd*' -and $_.ProcessId -ne $PID } | ForEach-Object { taskkill /F /T /PID $_.ProcessId | Out-Null }; `
     + `Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${name}', '${name}.tar', '${name}.cmd'; if (Test-Path '${name}') { exit 1 } else { exit 0 }`;
   return {
     upload: `${b.ssh}:`,
@@ -153,7 +153,9 @@ function posixSteps(b, name, dir) {
     upload: `${b.ssh}:${dir}/`,
     run: viaSh(`D=${dir}; cd "$D" && tar -xf ${name}.tar && rm -f ${name}.tar && mv ${name}.sh run.sh && ${go}`),
     cleanup: viaSh(`rm -rf ${dir} && [ ! -e ${dir} ]`),
-    abort: viaSh(`D=${dir}; P=$(cat "$D/pid" 2>/dev/null); if [ -n "$P" ]; then ${tree}; w "$P"; kill -s TERM $L 2>/dev/null; `
+    // The recorded id is used only while it is still this run's sh: the file may be the run account's, and ids get reused.
+    abort: viaSh(`D=${dir}; P=$(cat "$D/pid" 2>/dev/null); case "$P" in ''|*[!0-9]*) P=;; esac; `
+      + `if [ -n "$P" ] && ps -o args= -p "$P" 2>/dev/null | grep -qF "$D/run.sh"; then ${tree}; w "$P"; kill -s TERM $L 2>/dev/null; `
       + `sleep 1; kill -s KILL $L 2>/dev/null; fi; rm -rf "$D" && [ ! -e "$D" ]`),
   };
 }
@@ -295,8 +297,9 @@ async function runAll(boxes, a, { exec, out, ctl }, repo) {
   const work = join(tmpdir(), id);
   mkdirSync(work);
   try {
-    // Committed bytes, whatever this machine's core.autocrlf: Git for Windows would turn LF into CRLF.
-    git(repo, ["-c", "core.autocrlf=false", "archive", "--format=tar", "--prefix=repo/", "-o", join(work, `${id}.tar`), sha]);
+    // Committed bytes, whatever this machine's line-end settings: on Windows core.autocrlf=true, and core.eol=native
+    // under `* text=auto`, would both turn LF into CRLF for every box.
+    git(repo, ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "archive", "--format=tar", "--prefix=repo/", "-o", join(work, `${id}.tar`), sha]);
     const plan = { id, tar: join(work, `${id}.tar`), prefix: "repo", scriptDir: work, commandFor, timeoutMs: a.timeoutMin * 60000, ctl };
     const results = await Promise.all(boxes.map((b) => runOnBox(b, plan, exec)));
     const logDir = a.out || join(tmpdir(), "banker-remains-logs", id);

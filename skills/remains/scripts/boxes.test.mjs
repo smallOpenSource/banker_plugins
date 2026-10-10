@@ -213,6 +213,7 @@ test("a run that loses the connection is unreachable and ends what it started on
   assert.deepEqual(f.steps(), ["prepare", "upload", "run", "abort"]);
   const abort = f.calls[3].args.at(-1);
   assert.ok(abort.includes('P=$(cat "$D/pid" 2>/dev/null)') && abort.includes("kill -s KILL $L"));
+  assert.ok(abort.includes('ps -o args= -p "$P" 2>/dev/null | grep -qF "$D/run.sh"'), "only a pid that is still this run is ended");
 });
 
 test("a run that times out ends the process tree on the box before removing its folder", async () => {
@@ -273,7 +274,8 @@ test("ending a Windows run kills the process trees whose command line holds the 
   const abort = remoteSteps(WIN, "banker-remains-ab12-windows").abort;
   const script = Buffer.from(abort.split(" ").at(-1), "base64").toString("utf16le");
   assert.ok(abort.startsWith("powershell -NoProfile -NonInteractive -EncodedCommand "));
-  assert.ok(script.includes("-like '*banker-remains-ab12-windows*'") && script.includes("taskkill /F /T /PID"));
+  assert.ok(script.includes("-like '*banker-remains-ab12-windows\\run.cmd*'"), "a name that is another's prefix does not match");
+  assert.ok(script.includes("taskkill /F /T /PID"));
   assert.ok(script.includes("if (Test-Path 'banker-remains-ab12-windows') { exit 1 }"));
 });
 
@@ -341,8 +343,11 @@ test("run sends a committed tree to every box and writes each box's log", { skip
 
 test("run with --ref worktree sends changes not yet committed, as committed bytes", { skip: !HAS_GIT && "git not found" }, async () => {
   const repo = gitRepo();
-  // Git for Windows sets core.autocrlf=true; an archive made with it would carry CRLF to every box.
-  spawnSync("git", ["config", "core.autocrlf", "true"], { cwd: repo });
+  // Git for Windows sets core.autocrlf=true, and core.eol=native means CRLF there under `* text=auto`:
+  // an archive made with either would carry CRLF to every box.
+  writeFileSync(join(repo, ".gitattributes"), "* text=auto\n");
+  for (const a of [["add", ".gitattributes"], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "attrs"],
+    ["config", "core.autocrlf", "true"], ["config", "core.eol", "crlf"]]) spawnSync("git", a, { cwd: repo });
   writeFileSync(join(repo, "notes.md"), "changed\n");
   writeFileSync(join(repo, "new.txt"), "untracked\n");
   let sent = null;
@@ -369,6 +374,8 @@ test("run exits 1 when tests fail, time out or do not run at all", { skip: !HAS_
   assert.equal((await runMain(["--node-test"], { exec: slow.exec })).code, 1);
   const none = await runMain(["--node-test"], { exec: fakeExec({ run: { status: 0, stdout: "# tests 0\n# pass 0\n# fail 0\n", stderr: "" } }).exec });
   assert.deepEqual([none.code, none.report.boxes[0].noTests], [1, true], "zero tests is not a pass");
+  const dirty = await runMain(["--node-test"], { exec: fakeExec({ end: 1 }).exec });
+  assert.deepEqual([dirty.code, dirty.report.boxes[0].cleaned], [1, false], "a box left unclean is not a pass");
 });
 
 test("the first stop signal ends the ssh and scp in flight without leaving, and the handlers come off afterwards", () => {
