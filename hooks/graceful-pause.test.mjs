@@ -11,22 +11,15 @@ import { register } from './register.mjs';
 // async generators, and `next` hands them the stream beneath. Like the engine, it
 // refuses a `$.prompt.submit` made inside a command.run dispatch (the submission would
 // wait on the turn that dispatch holds), and its clock runs a timer only on `tick()`.
-function engine({ version = '2.1.289', refuseName, denyAppend, failAppends = 0, appendGate, failSubmit, dropSubmit } = {}) {
-  const hooks = [];
-  const on = (event, matcher, hook) => {
-    if (typeof matcher === 'function') [hook, matcher] = [matcher, undefined];
-    hooks.push({ event, matcher, hook });
-    return { catch: () => {} };
-  };
-  const timers = [];
-  let commandRuns = 0;
-  let appendCalls = 0;
-  const seen = { registered: [], appended: [], submitted: [], toasts: [], logs: [], appendCalls: () => appendCalls };
-  const $ = {
+// The command and session calls the stand-in answers; `ctx` holds what they record and count.
+function sessionCalls({ version = '2.1.289', refuseName, denyAppend, failAppends = 0, appendGate }, ctx) {
+  const { seen, n } = ctx;
+  return {
     command: {
       register: async (spec) => {
         if (spec.name === refuseName) throw new Error(`$.command.register: "/${spec.name}" refused: it is taken`);
-        seen.registered.push(spec);
+        // The module's other command, /progress, has its own tests (progress.test.mjs).
+        if (spec.name === 'graceful-pause') seen.registered.push(spec);
         return { command: spec.name };
       },
     },
@@ -36,17 +29,24 @@ function engine({ version = '2.1.289', refuseName, denyAppend, failAppends = 0, 
         return { version, base: version };
       },
       append: async (args) => {
-        appendCalls += 1;
-        if (appendCalls <= failAppends) throw new Error('organization policy');
+        n.appendCalls += 1;
+        if (n.appendCalls <= failAppends) throw new Error('organization policy');
         if (denyAppend) return { deny: denyAppend };
         if (appendGate) await appendGate;
         seen.appended.push(args);
         return { message: args.message, uuid: `row-${seen.appended.length}` };
       },
     },
+  };
+}
+
+// The prompt, clock and ui calls the stand-in answers.
+function promptCalls({ failSubmit, dropSubmit }, ctx) {
+  const { seen, n, timers } = ctx;
+  return {
     prompt: {
       submit: async (args) => {
-        if (commandRuns > 0) {
+        if (n.commandRuns > 0) {
           throw new Error('prompt.submit: called from a command.run hook, it would wait on the turn this hook is holding (host check)');
         }
         if (failSubmit) throw new Error(failSubmit);
@@ -65,17 +65,23 @@ function engine({ version = '2.1.289', refuseName, denyAppend, failAppends = 0, 
     ui: {
       toast: (text) => void seen.toasts.push(text),
       log: (text) => void seen.logs.push(text),
+      invalidate: () => {},
     },
   };
+}
+
+// A streaming event's `next` is a stream whose return value is the result; drain it to that value.
+async function drain(stream) {
+  for (;;) {
+    const r = await stream.next();
+    if (r.done) return r.value;
+  }
+}
+
+// Raises an event through the module's hooks as the engine does.
+function raiser(hooks, $, n) {
   const matches = (matcher, e) => !matcher || Object.entries(matcher).every(([k, v]) => e[k] === v);
-  // A streaming event's `next` is a stream whose return value is the result; drain it to that value.
-  const drain = async (stream) => {
-    for (;;) {
-      const r = await stream.next();
-      if (r.done) return r.value;
-    }
-  };
-  const raise = (event, e, bottom = e) => {
+  return (event, e, bottom = e) => {
     const chain = hooks.filter((h) => h.event === event && matches(h.matcher, e));
     if (event === 'turn.step') {
       const stream = (i, input) =>
@@ -84,16 +90,29 @@ function engine({ version = '2.1.289', refuseName, denyAppend, failAppends = 0, 
     }
     const step = (i, input) => (i < chain.length ? Promise.resolve(chain[i].hook($, input, (next) => step(i + 1, next))) : Promise.resolve(bottom));
     if (event !== 'command.run') return step(0, e);
-    commandRuns += 1;
-    return step(0, e).finally(() => void (commandRuns -= 1));
+    n.commandRuns += 1;
+    return step(0, e).finally(() => void (n.commandRuns -= 1));
   };
+}
+
+function engine(opts = {}) {
+  const hooks = [];
+  const on = (event, matcher, hook) => {
+    if (typeof matcher === 'function') [hook, matcher] = [matcher, undefined];
+    hooks.push({ event, matcher, hook });
+    return { catch: () => {} };
+  };
+  const n = { commandRuns: 0, appendCalls: 0 };
+  const seen = { registered: [], appended: [], submitted: [], toasts: [], logs: [], appendCalls: () => n.appendCalls };
+  const ctx = { seen, n, timers: [] };
+  const $ = { ...sessionCalls(opts, ctx), ...promptCalls(opts, ctx) };
   // Runs the timers set so far, as the engine's clock does once they are due.
   const tick = async () => {
-    for (const timer of timers.splice(0)) if (!timer.cancelled) timer.fn();
+    for (const timer of ctx.timers.splice(0)) if (!timer.cancelled) timer.fn();
     await new Promise((resolve) => setImmediate(resolve));
   };
   register(on, {});
-  return { raise, seen, tick };
+  return { raise: raiser(hooks, $, n), seen, tick };
 }
 
 const START = { cwd: '/work', surface: 'terminal', isInteractive: true };
@@ -133,7 +152,7 @@ test('an engine older than 2.1.289, or one that will not say, gets no command an
     const eng = await started({ version });
     assert.deepEqual(eng.seen.registered, [], String(version));
     assert.equal(eng.seen.logs.length, 1, String(version));
-    assert.match(eng.seen.logs[0], /2\.1\.289/);
+    assert.match(eng.seen.logs[0], /^\/graceful-pause .*2\.1\.289/, 'the engine puts the plugin\'s name before the line');
   }
   const dev = await started({ version: '2.1.290-dev.20261001.t101500.sha1a2b3c4' });
   assert.equal(dev.seen.registered.length, 1, 'a development build of a later release counts');
@@ -201,6 +220,7 @@ test('a note the turn never read (sent during its last answer) is voided when th
   assert.equal(eng.seen.appended.length, 2);
   assert.match(noteText(eng.seen.appended[1]), /적용되지 않았다/);
   assert.equal(eng.seen.logs.length, 1);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause /);
 });
 
 test('a note read by a later model request stays as it is', async () => {
@@ -288,7 +308,7 @@ test('a report prompt a hook drops is logged, and the command can send it again'
   await run(eng);
   await eng.tick();
   assert.equal(eng.seen.logs.length, 1);
-  assert.match(eng.seen.logs[0], /refused by a policy hook/);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause .*refused by a policy hook/);
   assert.doesNotMatch((await run(eng)).text, /이미/, 'not stuck on "already sent"');
 });
 
@@ -312,7 +332,7 @@ test('a prompt the engine would not take is logged', async () => {
   await run(eng);
   await eng.tick();
   assert.equal(eng.seen.logs.length, 1);
-  assert.match(eng.seen.logs[0], /session is closing/);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause .*session is closing/);
 });
 
 test('a subagent stop reports the background count too', async () => {
@@ -393,5 +413,5 @@ test('a name the engine refuses is logged once and the session still starts', as
   assert.deepEqual(await eng.raise('session.start', START, { cwd: '/work' }), { cwd: '/work' });
   assert.deepEqual(eng.seen.registered, []);
   assert.equal(eng.seen.logs.length, 1);
-  assert.match(eng.seen.logs[0], /\/graceful-pause/);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause /);
 });

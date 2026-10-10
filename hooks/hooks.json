@@ -1,5 +1,5 @@
 {
-  "description": "banker hooks: obsidizer wiki canonicalization (PostToolUse, inert until `obsidizer --enable`) + anonymous usage counting (PostToolUse Skill / UserPromptExpansion, count-default-on, opt-out BANKER_NO_TELEMETRY, no-op without endpoint) + update-check notification (SessionStart, opt-out BANKER_NO_UPDATE_CHECK). modules: function hooks (Claude Code 2.1.289+) serving /graceful-pause, which runs at once even mid-turn.",
+  "description": "banker hooks: obsidizer wiki canonicalization (PostToolUse, inert until `obsidizer --enable`) + anonymous usage counting (PostToolUse Skill / UserPromptExpansion, count-default-on, opt-out BANKER_NO_TELEMETRY, no-op without endpoint) + update-check notification (SessionStart, opt-out BANKER_NO_UPDATE_CHECK). modules: Claude Mods (function hooks) serving /graceful-pause (Claude Code 2.1.289+), which runs at once even mid-turn, and /progress, a pane of the session's progress; without mods, /progress expands commands/progress.md and a UserPromptExpansion hook answers it with one message.",
   "modules": ["./register.mjs"],
   "hooks": {
     "PostToolUse": [
@@ -25,6 +25,16 @@
       }
     ],
     "UserPromptExpansion": [
+      {
+        "matcher": "^banker:progress$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT\"/hooks/run.cjs \"$CLAUDE_PLUGIN_ROOT\"/hooks/progress-fallback.mjs",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "banker:.*",
         "hooks": [
