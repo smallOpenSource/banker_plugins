@@ -53,12 +53,13 @@ test('an engine older than 2.1.289 gets /progress but not /graceful-pause, and o
   await eng.start();
   assert.deepEqual(eng.seen.registered, ['progress']);
   assert.equal(eng.seen.logs.length, 1);
-  assert.match(eng.seen.logs[0], /\/graceful-pause .*2\.1\.289/);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause .*2\.1\.289/, 'the engine puts the plugin\'s name before the line');
 });
 
 test('a command the engine refuses is logged, and the other still registers', async () => {
   const eng = engine({ refuse: 'progress' });
   await eng.start();
   assert.deepEqual(eng.seen.registered, ['graceful-pause']);
-  assert.match(eng.seen.logs.join('\n'), /\/progress 를 등록하지 못했습니다/);
+  assert.equal(eng.seen.logs.length, 1);
+  assert.match(eng.seen.logs[0], /^\/progress 를 등록하지 못했습니다 \(taken\)$/);
 });

@@ -152,7 +152,7 @@ test('an engine older than 2.1.289, or one that will not say, gets no command an
     const eng = await started({ version });
     assert.deepEqual(eng.seen.registered, [], String(version));
     assert.equal(eng.seen.logs.length, 1, String(version));
-    assert.match(eng.seen.logs[0], /2\.1\.289/);
+    assert.match(eng.seen.logs[0], /^\/graceful-pause .*2\.1\.289/, 'the engine puts the plugin\'s name before the line');
   }
   const dev = await started({ version: '2.1.290-dev.20261001.t101500.sha1a2b3c4' });
   assert.equal(dev.seen.registered.length, 1, 'a development build of a later release counts');
@@ -220,6 +220,7 @@ test('a note the turn never read (sent during its last answer) is voided when th
   assert.equal(eng.seen.appended.length, 2);
   assert.match(noteText(eng.seen.appended[1]), /적용되지 않았다/);
   assert.equal(eng.seen.logs.length, 1);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause /);
 });
 
 test('a note read by a later model request stays as it is', async () => {
@@ -307,7 +308,7 @@ test('a report prompt a hook drops is logged, and the command can send it again'
   await run(eng);
   await eng.tick();
   assert.equal(eng.seen.logs.length, 1);
-  assert.match(eng.seen.logs[0], /refused by a policy hook/);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause .*refused by a policy hook/);
   assert.doesNotMatch((await run(eng)).text, /이미/, 'not stuck on "already sent"');
 });
 
@@ -331,7 +332,7 @@ test('a prompt the engine would not take is logged', async () => {
   await run(eng);
   await eng.tick();
   assert.equal(eng.seen.logs.length, 1);
-  assert.match(eng.seen.logs[0], /session is closing/);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause .*session is closing/);
 });
 
 test('a subagent stop reports the background count too', async () => {
@@ -412,5 +413,5 @@ test('a name the engine refuses is logged once and the session still starts', as
   assert.deepEqual(await eng.raise('session.start', START, { cwd: '/work' }), { cwd: '/work' });
   assert.deepEqual(eng.seen.registered, []);
   assert.equal(eng.seen.logs.length, 1);
-  assert.match(eng.seen.logs[0], /\/graceful-pause/);
+  assert.match(eng.seen.logs[0], /^\/graceful-pause /);
 });

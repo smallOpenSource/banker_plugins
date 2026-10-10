@@ -119,8 +119,6 @@ function queueReport($, state, memo) {
   return { text: QUEUED };
 }
 
-// At the main turn's end: a note no later request read is voided unless background
-// work will wake the session (the turn it starts reads the note then).
 // Nothing in flight: the state a fresh session, or one after /clear, starts from.
 const fresh = () => ({ main: null, step: -1, pending: null, background: 0, queued: false });
 const listed = (v) => (Array.isArray(v) ? v.length : 0);
