@@ -90,12 +90,16 @@ export function worstContrast(textRgb, px, width, rect, alpha = 1) {
   return worst;
 }
 
-/** The contrast of a button's text on its own fill, or null when the fill is not solid (it shows the page behind). */
+/**
+ * The contrast of a button's text on its own fill: { ratio }. { ratio: null, why } for a colour it
+ * cannot read, or a fill that is not solid (the page shows through): not measured, never passed.
+ */
 export function fillContrast(color, background) {
   const fg = parseColor(color);
   const bg = parseColor(background);
-  if (!fg || !bg || colorAlpha(background) < 1) return null;
-  return Number(pixelContrast(fg, colorAlpha(color), bg).toFixed(2));
+  if (!fg || !bg) return { ratio: null, why: `colour ${fg ? background : color}` };
+  if (colorAlpha(background) < 1) return { ratio: null, why: `fill not solid: ${background}` };
+  return { ratio: Number(pixelContrast(fg, colorAlpha(color), bg).toFixed(2)) };
 }
 
 export const intersects = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -252,12 +256,16 @@ function showText({ i, parts }) {
   }
 }
 
-// The top-bar CTA (manifest `cta`): its text on its own fill, [{ sel, ratio }] where the fill is solid.
+// The top-bar CTA (manifest `cta`) when shown: its text on its own fill, [{ sel, ratio, why? }].
 async function topCtaContrast(page) {
   const found = await page.evaluate(() => [...document.querySelectorAll('.sw-topcta')].filter((e) => e.getClientRects().length > 0)
     .map((e) => ({ color: getComputedStyle(e).color, background: getComputedStyle(e).backgroundColor })));
-  return found.map((c) => ({ sel: '.sw-topcta', ratio: fillContrast(c.color, c.background) })).filter((c) => c.ratio !== null);
+  return found.map((c) => ({ sel: '.sw-topcta', ...fillContrast(c.color, c.background) }));
 }
+
+// Every top-bar CTA below the contrast floor or not measured, as `contrast <sel>: <what>`.
+const buttonFailures = (buttons, minContrast) => buttons.filter((b) => !(b.ratio >= minContrast))
+  .map((b) => `contrast ${b.sel}: ${b.ratio === null ? `not measured (${b.why})` : b.ratio}`);
 
 // Decodes a PNG in a blank page of the same context (no CSP there) into RGBA pixels.
 async function pixels(context, png) {
@@ -404,10 +412,10 @@ async function measureViewport(browser, url, vp, o) {
   const input = o.input ? await checkInput(page, vp) : null;
   const buttons = o.contrast ? await topCtaContrast(page) : [];
   await context.close();
-  const buttonFailures = buttons.filter((b) => !(b.ratio >= o.minContrast)).map((b) => `contrast ${b.sel}: ${b.ratio}`);
-  const failures = scenes.reduce((a, s) => a + s.failures.length, 0) + consoleErrors.length + inputFailures(input).length + buttonFailures.length;
+  const buttonMisses = buttonFailures(buttons, o.minContrast);
+  const failures = scenes.reduce((a, s) => a + s.failures.length, 0) + consoleErrors.length + inputFailures(input).length + buttonMisses.length;
   return { viewport: `${vp.width}x${vp.height}${vp.touch ? ' touch' : ''}${vp.reduce ? ' reduced-motion' : ''}`, scenes, input, inputFailures: inputFailures(input),
-    buttons, buttonFailures, consoleErrors, failures };
+    buttons, buttonFailures: buttonMisses, consoleErrors, failures };
 }
 
 /** Measures `url` at every viewport. Resolves to { url, viewports: [...], failures }. */

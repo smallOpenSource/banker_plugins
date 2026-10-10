@@ -82,7 +82,83 @@ test('a take that is not a regular file fails its hash at once instead of readin
   assert.match(html, /해시 실패\(일반 파일 아님\)/);
 });
 
-test('a take is read only up to the size it had when its hash began, so an endless file still ends', { skip: process.platform !== 'linux' && 'needs /proc', timeout: 10_000 }, async () => {
+// Replaces fs.promises.open (which hashFile calls) for one test: `wrap` gets each opened FileHandle.
+function wrapOpen(t, wrap) {
+  const real = fs.promises.open;
+  fs.promises.open = async (...args) => wrap(await real(...args));
+  t.after(() => { fs.promises.open = real; });
+  return real;
+}
+
+test('a take that grows while it is hashed is read only up to the size it had', async (t) => {
+  const dir = project();
+  const clip = path.join(dir, 'clips/flight-2.mp4');
+  fs.writeFileSync(clip, Buffer.alloc(200 * 1024, 1));
+  const before = sha(dir, 'clips/flight-2.mp4');
+  wrapOpen(t, (fh) => {
+    const stat = fh.stat.bind(fh);
+    fh.stat = async (...a) => {
+      const st = await stat(...a);
+      fs.appendFileSync(clip, Buffer.alloc(100 * 1024, 2));
+      return st;
+    };
+    return fh;
+  });
+  assert.equal(await hashFile(clip), before);
+});
+
+test('a read that fails partway is not kept: the next view reads the take again', async (t) => {
+  const dir = project();
+  const clip = path.join(dir, 'clips/flight-2.mp4');
+  fs.writeFileSync(clip, crypto.randomBytes(300 * 1024));
+  let fail = true;
+  const real = wrapOpen(t, (fh) => {
+    const stream = fh.createReadStream.bind(fh);
+    fh.createReadStream = (opts) => {
+      const s = stream(opts);
+      if (fail) {
+        fail = false;
+        process.nextTick(() => s.destroy(Object.assign(new Error('read failed'), { code: 'EIO' })));
+      }
+      return s;
+    };
+    return fh;
+  });
+  await assert.rejects(hashFile(clip), { code: 'EIO' });
+  fs.promises.open = real;
+  assert.equal(await hashFile(clip), sha(dir, 'clips/flight-2.mp4'));
+});
+
+test('a view that waits for another view\'s hash of the same take holds no file while it waits', async (t) => {
+  const dir = project();
+  const clip = path.join(dir, 'clips/flight-2.mp4');
+  fs.writeFileSync(clip, crypto.randomBytes(64 * 1024));
+  const n = { opened: 0, closed: 0, reading: false };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  wrapOpen(t, (fh) => {
+    const first = ++n.opened === 1;
+    const close = fh.close.bind(fh);
+    fh.close = async () => { n.closed++; return close(); };
+    const stream = fh.createReadStream.bind(fh);
+    fh.createReadStream = (opts) => {
+      const s = stream(opts);
+      if (first) { s.pause(); n.reading = true; gate.then(() => s.resume()); }
+      return s;
+    };
+    return fh;
+  });
+  const until = async (cond) => { for (let i = 0; i < 300 && !cond(); i++) await new Promise((r) => setTimeout(r, 10)); };
+  const views = [hashFile(clip)];
+  await until(() => n.reading);
+  for (let k = 0; k < 5; k++) views.push(hashFile(clip));
+  await until(() => n.opened === 6 && n.closed === 5);
+  assert.equal(n.opened - n.closed, 1, 'only the view that reads holds its file');
+  release();
+  assert.ok((await Promise.all(views)).every((h) => h === sha(dir, 'clips/flight-2.mp4')));
+});
+
+test('a take is read only up to the size it had when its hash began, so an endless file still ends', { skip: !fs.existsSync('/proc/self/pagemap') && 'needs /proc/self/pagemap', timeout: 10_000 }, async () => {
   const dir = project();
   fs.symlinkSync('/proc/self/pagemap', path.join(dir, 'clips/endless.mp4'));
   assert.equal(await hashFile(path.join(dir, 'clips/endless.mp4')), crypto.createHash('sha256').digest('hex'), 'size 0 when it began');

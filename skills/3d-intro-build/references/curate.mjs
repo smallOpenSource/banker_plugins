@@ -221,26 +221,31 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
 // sha256 of a file, read in chunks so a render of any size never sits whole in memory (one read
 // stops at 2 GiB), and only up to the size it had when the read began, so a file that grows or
 // never ends (/proc) is still read once. Once per version of the file: the key holds its inode,
-// size, mtime and ctime, so a regenerated take is hashed anew. Rejects for a file that cannot be
-// read, and for anything but a regular file (a link to /dev/zero, a FIFO).
+// size, mtime and ctime, so a regenerated take is hashed anew; a view that finds the read already
+// going closes its own file and waits for that one. Rejects for a file that cannot be read, and for
+// anything but a regular file (a link to /dev/zero, a FIFO; opened without blocking in case the
+// path turns into one after the first check).
 const hashes = new Map();
 const notRegular = () => new Error('일반 파일 아님');
+const READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
 export async function hashFile(fp) {
   if (!(await fs.promises.stat(fp)).isFile()) throw notRegular();
-  const fh = await fs.promises.open(fp, 'r');
+  const fh = await fs.promises.open(fp, READ_FLAGS);
+  let done;
   try {
     const st = await fh.stat();
     if (!st.isFile()) throw notRegular();
     const key = `${fp}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-    if (!hashes.has(key)) {
-      const done = sha256Of(fh, st.size);
-      done.catch(() => hashes.delete(key));
-      hashes.set(key, done);
-    }
-    return await hashes.get(key);
+    done = hashes.get(key);
+    if (done) return done;
+    done = sha256Of(fh, st.size);
+    done.catch(() => hashes.delete(key));
+    hashes.set(key, done);
+    await done.catch(() => {});
   } finally {
     await fh.close();
   }
+  return done;
 }
 
 // sha256 of the first `size` bytes of an open file.
@@ -260,8 +265,8 @@ async function hashText(dir, file) {
   try { return await hashFile(fp); } catch (e) { return `해시 실패(${e.code || e.message})`; }
 }
 
-// The hash text of every listed take by file, four files at a time (a long list must not run out
-// of file handles), before the page is drawn.
+// The hash text of every listed take by file, four files at a time per call (a long list must not
+// run out of file handles), before the page is drawn.
 async function takeHashes(input, dir) {
   const files = [...new Set(input.scenes.flatMap((s) => s.takes.map((t) => t.file)))];
   const out = new Map();

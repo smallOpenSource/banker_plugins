@@ -95,11 +95,12 @@ test('a panel is measured for every text part and each CTA button label', () => 
   assert.equal(Object.fromEntries(TEXT_PARTS).cta, '.sw-copy__cta .sw-btn');
 });
 
-test('a button outside the panels is measured against its own solid fill, not a translucent one', () => {
-  assert.equal(fillContrast('rgb(255, 255, 255)', 'rgb(241, 245, 249)'), 1.1, 'white on a light pill');
-  assert.ok(fillContrast('rgb(11, 18, 32)', 'rgb(241, 245, 249)') > 15);
-  assert.equal(fillContrast('rgb(255, 255, 255)', 'rgba(11, 18, 32, 0.6)'), null);
-  assert.equal(fillContrast('rgb(255, 255, 255)', 'rgba(0, 0, 0, 0)'), null);
+test('a button outside the panels is measured against its own solid fill; any other fill is not measured, never passed', () => {
+  assert.deepEqual(fillContrast('rgb(255, 255, 255)', 'rgb(241, 245, 249)'), { ratio: 1.1 }, 'white on a light pill');
+  assert.ok(fillContrast('rgb(11, 18, 32)', 'rgb(241, 245, 249)').ratio > 15);
+  assert.deepEqual(fillContrast('rgb(255, 255, 255)', 'rgba(11, 18, 32, 0.6)'), { ratio: null, why: 'fill not solid: rgba(11, 18, 32, 0.6)' });
+  assert.deepEqual(fillContrast('rgb(255, 255, 255)', 'rgba(0, 0, 0, 0)'), { ratio: null, why: 'fill not solid: rgba(0, 0, 0, 0)' });
+  assert.deepEqual(fillContrast('oklch(0.98 0.01 250)', 'rgb(11, 18, 32)'), { ratio: null, why: 'colour oklch(0.98 0.01 250)' });
 });
 
 test('a scene fails when its clip is there but never shows; no clip, the first scene and reduced motion do not', () => {
