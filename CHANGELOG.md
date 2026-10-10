@@ -12,6 +12,9 @@
 - **`omc-patch` 스킬을 추가했다.** OMC 가 자동 업데이트되면 사라지는 로컬 훅 패치(훅 스크립트 최상위 `await import(...)` 의 10초 제한, `hooks.json` 의 `PostToolUse` 훅 제거)를 활성 버전에 다시 적용하고, OMC 마켓플레이스 `origin` 을 `omc-pinned://<원래 URL>` 로 바꿔 자동 업데이트를 막는다.\
   진단(`check`), 사용자 확인, `--no-update` 적용, 검증, 되돌리기(`revert`) 순서로 진행한다. 도구 `scripts/omc-patch.mjs` 는 정본에 두 가지 수정(헬퍼를 모듈 맨 앞에 둠, 마켓플레이스 폴더에 제 `.git` 이 있을 때만 고정)을 더한 사본이고, Node 18 이상과 `git` 이 필요하다. 첫 수정 전에는 최상위 `try { }` 블록이 둘 이상인 훅(OMC 5.6.x `project-memory-session.mjs`)에서 두 번째 import 가 조용히 실패했다. Codex 에서 실행해도 Claude Code 의 OMC 캐시만 다룬다.
 
+### Fixed
+- **`ralph-qa` 시험이 Windows, macOS 에서도 통과한다(시험만 바꿈).** 전에는 Windows 에서 40건, macOS 에서 2건이 실패했다. Windows 에서는 `verifier-probe` 시험의 가짜 세계가 파일과 폴더를 `\` 와 `/` 어느 쪽으로 찾아도 같게 본다(probe 는 실행 OS 의 규칙으로 경로를 붙인다). `gemini-seat` 시험은 임시 폴더의 실제 경로를 쓰고(macOS 의 `/var` 는 `/private/var` 링크), `.env` 시험 동안 계정 홈을 따로 만든 폴더로 둔다(Windows 의 임시 폴더는 계정 홈 안). 긴 이름 시험의 가짜 경로는 임시 폴더가 있는 드라이브의 뿌리에서 시작한다.
+
 ### Changed
 - **`generateImage` 가 HTTP 429 에 `Retry-After` 만큼 기다렸다가 같은 경로로 다시 시도한다(기본 3회).** 전에는 429 에도 classic 경로로 넘어가 같은 한도에 다시 걸렸다. `azFetch` 결과에 `retryAfterMs` 를 더했다.
 - **`parseEnvFile` 이 따옴표 없는 값에서 공백 뒤의 `#` 부터를 주석으로 지운다(`=` 바로 뒤도 같음).** 전에는 주석이 값에 붙어 endpoint, 키, 모델, `VIDEO_PROVIDER_ORDER` 가 깨졌다. 공백 없이 붙은 `#` 와 따옴표 안은 그대로 두고, `persistCreds` 는 그렇게 바뀔 값(공백 뒤 `#`, 앞뒤 공백이나 따옴표)을 따옴표로 감싸 써서 그대로 돌아오게 한다.
