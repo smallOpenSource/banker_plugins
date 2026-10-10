@@ -463,6 +463,21 @@ export async function extractLastFrame(mp4, out, { ffmpeg } = {}) {
   return out;
 }
 
+/**
+ * A still as a short clip: the hold of the hold-and-flight mode. The PNG repeats for `seconds`,
+ * encoded as the scrub engine wants (H.264 yuv420p, a keyframe every 8 frames, faststart, no
+ * audio). No generation call, so no cost. Every frame is the still, so a flight whose first or last
+ * frame is this still meets the hold exactly. `size` ('720x1280') scales; even sizes only. Returns out.
+ */
+export async function stillToClip(png, out, { ffmpeg, seconds = 1, fps = 24, size } = {}) {
+  const bin = ffmpeg || await resolveFfmpeg();
+  const vf = `${size ? `scale=${String(size).replace('x', ':')},` : ''}format=yuv420p`;
+  const r = runFf(bin, ['-y', '-loop', '1', '-i', png, '-t', String(seconds), '-r', String(fps), '-vf', vf,
+    '-c:v', 'libx264', '-crf', '20', '-g', '8', '-movflags', '+faststart', '-an', out]);
+  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`stillToClip failed: ${tail(r.stderr)}`);
+  return out;
+}
+
 /** Extract the FIRST frame of an mp4 to a PNG. Returns out. */
 export async function extractFirstFrame(mp4, out, { ffmpeg } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
@@ -547,15 +562,19 @@ const VIDEO_USD_PER_SEC = 0.10;
 const IMAGE_USD_EACH = 0.02;
 
 /**
- * Rough budget for an intro of `nScenes` scenes. Video billed at $0.10/sec/clip; one image gen
- * per scene (two per scene in two-image mode). Returns per-category USD sub-costs and the total.
+ * Rough budget for an intro of `nScenes` scenes. Video billed at $0.10/sec/clip (the Sora rate:
+ * WAN rates cannot be read through an API); one image gen per scene (two per scene in two-image
+ * mode). mode 'chain' (default) makes one clip of `seconds` per scene; 'holdFlight' makes one
+ * flight of `flightSeconds` between each pair of scenes, the holds being encoded stills (free).
+ * Returns per-category USD sub-costs and the total.
  * @returns {{images:number, videos:number, usd:number}}
  */
-export function estimateCost({ nScenes, seconds = 4, twoImage = false } = {}) {
+export function estimateCost({ nScenes, seconds = 4, twoImage = false, mode = 'chain', flightSeconds = 5 } = {}) {
   const n = Number(nScenes) || 0;
   const imageCount = twoImage ? n * 2 : n;
   const images = round2(imageCount * IMAGE_USD_EACH);
-  const videos = round2(n * seconds * VIDEO_USD_PER_SEC);
+  const clipSeconds = mode === 'holdFlight' ? Math.max(0, n - 1) * flightSeconds : n * seconds;
+  const videos = round2(clipSeconds * VIDEO_USD_PER_SEC);
   const usd = round2(images + videos);
   return { images, videos, usd };
 }

@@ -276,6 +276,12 @@ test('estimateCost: $0.10/sec video + per-scene image gen', () => {
   assert.deepEqual(A.estimateCost({ nScenes: 0 }), { images: 0, videos: 0, usd: 0 });
 });
 
+test('estimateCost: hold-and-flight bills only the flights between scenes; the holds are encoded stills', () => {
+  assert.deepEqual(A.estimateCost({ nScenes: 7, mode: 'holdFlight' }), { images: 0.14, videos: 3, usd: 3.14 });
+  assert.deepEqual(A.estimateCost({ nScenes: 7, mode: 'holdFlight', flightSeconds: 4 }), { images: 0.14, videos: 2.4, usd: 2.54 });
+  assert.deepEqual(A.estimateCost({ nScenes: 1, mode: 'holdFlight' }), { images: 0.02, videos: 0, usd: 0.02 });
+});
+
 // =====================================================================
 // ffmpeg helpers: ARG ARRAY (not a shell string), flags
 // =====================================================================
@@ -293,6 +299,25 @@ test('colorMatch: builds an ffmpeg arg ARRAY (never a shell string) with the exp
   assert.ok(args.includes('-i') && args.includes('/in/src.png'), 'discrete -i <src>');
   assert.ok(args.includes('/out/matched.png'), 'discrete output argv entry');
   assert.match(args[args.indexOf('-vf') + 1], /histeq/, 'uses histeq histogram normalization');
+});
+
+test('stillToClip: repeats the still for the hold, encoded as the engine wants, as an arg ARRAY', async () => {
+  const seen = [];
+  cp.spawnSync = (bin, args) => { seen.push({ bin, args }); return { status: 0, stdout: '', stderr: '' }; };
+  const out = await A.stillToClip('/in/s1.png', '/out/hold-1.mp4', { ffmpeg: '/fake/ffmpeg', size: '720x1280' });
+  assert.equal(out, '/out/hold-1.mp4');
+  const { bin, args } = seen[0];
+  assert.equal(bin, '/fake/ffmpeg');
+  assert.ok(Array.isArray(args));
+  const after = (flag) => args[args.indexOf(flag) + 1];
+  assert.deepEqual([after('-loop'), after('-i'), after('-t'), after('-r')], ['1', '/in/s1.png', '1', '24']);
+  assert.equal(after('-vf'), 'scale=720:1280,format=yuv420p');
+  assert.deepEqual([after('-c:v'), after('-crf'), after('-g'), after('-movflags')], ['libx264', '20', '8', '+faststart']);
+  assert.ok(args.includes('-an') && args.at(-1) === '/out/hold-1.mp4');
+  await A.stillToClip('/in/s1.png', '/out/h.mp4', { ffmpeg: '/fake/ffmpeg', seconds: 2 });
+  assert.deepEqual([seen[1].args[seen[1].args.indexOf('-t') + 1], seen[1].args[seen[1].args.indexOf('-vf') + 1]], ['2', 'format=yuv420p']);
+  cp.spawnSync = () => ({ status: 1, stdout: '', stderr: 'Unknown encoder libx264' });
+  await assert.rejects(A.stillToClip('/in/s1.png', path.join(os.tmpdir(), 'never-written.mp4'), { ffmpeg: '/fake/ffmpeg' }), /stillToClip failed: Unknown encoder/);
 });
 
 test('concatClips: builds an arg ARRAY with one -i per clip, a concat filter, and -map', async () => {
