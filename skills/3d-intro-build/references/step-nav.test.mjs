@@ -148,11 +148,25 @@ test('Space stays with a focused button or link; arrows and page keys still move
   assert.equal(key('ArrowDown', el('BODY'), { ctrlKey: true }), null);
 });
 
-test('zoom, sideways and tiny wheels are left to the browser', () => {
-  assert.equal(wheelIgnored({ deltaY: 40, ctrlKey: true }, DEFAULTS), true);
-  assert.equal(wheelIgnored({ deltaY: 5, deltaX: 40 }, DEFAULTS), true);
-  assert.equal(wheelIgnored({ deltaY: 1 }, DEFAULTS), true);
-  assert.equal(wheelIgnored({ deltaY: 40 }, DEFAULTS), false);
+test('zoom and sideways wheels stay with the browser; a tiny wheel is held but moves nothing', () => {
+  assert.equal(wheelIgnored({ deltaY: 40, ctrlKey: true }), true);
+  assert.equal(wheelIgnored({ deltaY: 5, deltaX: 40 }), true);
+  assert.equal(wheelIgnored({ deltaY: 1 }), false, 'held, or an inertia tail nudges the page off its stop');
+  assert.equal(createWheelGesture(DEFAULTS).feed({ deltaY: 1 }, 0), 'ignore', 'and it starts no gesture');
+  assert.equal(wheelIgnored({ deltaY: 40 }), false);
+});
+
+test('a move can be cancelled: it forgets its target and queue, and takes the next input from where the page stands', () => {
+  const { n, moves } = nav();
+  n.input('down');
+  n.input('down');
+  n.cancel();
+  assert.deepEqual([n.state().moving, n.state().queued], [false, null]);
+  moves[0].done();
+  assert.equal(moves.length, 1, 'the cancelled move\'s end starts nothing');
+  n.sync(2500);
+  n.input('up');
+  assert.deepEqual([moves[1].from, moves[1].to], [2500, 2000]);
 });
 
 test('the scroll length matches the engine: dives and the connectors that exist, plus one screen', () => {

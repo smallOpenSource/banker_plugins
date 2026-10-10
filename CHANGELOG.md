@@ -42,7 +42,7 @@
 - **`parseEnvFile` 이 따옴표 없는 값에서 공백 뒤의 `#` 부터를 주석으로 지운다(`=` 바로 뒤도 같음).** 전에는 주석이 값에 붙어 endpoint, 키, 모델, `VIDEO_PROVIDER_ORDER` 가 깨졌다. 공백 없이 붙은 `#` 와 따옴표 안은 그대로 두고, `persistCreds` 는 그렇게 바뀔 값(공백 뒤 `#`, 앞뒤 공백이나 따옴표)을 따옴표로 감싸 써서 그대로 돌아오게 한다.
 - **`pollVideo` 가 408, 429 를 뺀 4xx 에서 바로 멈춘다(오류에 `status`, `code`).** 전에는 사라진 job 도 `maxTicks` 까지 폴링했다. 폴링 사이에 주입한 `sleep` 을 쓰고, 오류 응답의 본문은 상태로 쓰지 않는다.
 - `scripts/sync-adapter.js` 가 `azure-adapter.mjs` 와 `video-pool.mjs` 두 파일을 setup 스킬로 미러링하고 검사한다.
-- **`serve.mjs`, `curate.mjs` 의 서버 규칙.** 포트는 시스템이 주는 빈 번호를 쓴다(전에는 고정 후보 8개). 상태 파일(PID, 포트, 폴더)은 `serve.mjs` 가 서빙 폴더 밖에, `curate.mjs` 가 프로젝트 폴더에 둔다(내주지 않음). `--stop` 은 바인드한 주소에서 그 포트가 기록된 PID 로 답할 때만 끄고 포트가 닫혔는지 확인한다. 기록된 서버가 살아 있으면 새로 띄우지 않고 그 주소를 알린다. `serve.mjs --csp` 는 운영과 같은 CSP 헤더를 붙인다. `PREVIEW_HOST=0.0.0.0` 은 경고를 낸다.
+- **`serve.mjs`, `curate.mjs` 의 서버 규칙.** 포트는 시스템이 주는 빈 번호를 쓴다(전에는 고정 후보 8개). 상태 파일(PID, 포트, 폴더)은 `serve.mjs` 가 서빙 폴더 밖에, `curate.mjs` 가 프로젝트 폴더에 둔다(내주지 않음). `--stop` 은 바인드한 주소에서 그 포트가 기록된 PID 로 답할 때만 끄고 포트가 닫혔는지 확인한다. 기록된 서버가 같은 설정으로 살아 있으면 그 주소만 알리고, 설정(`--csp`, `PREVIEW_HOST`)이 다르면 exit 1 로 `--stop` 뒤 다시 띄우라고 알린다(CSP 없는 서버로 검증하는 일을 막음). `serve.mjs --csp` 는 운영과 같은 CSP 헤더를 붙인다. `PREVIEW_HOST=0.0.0.0` 은 경고를 낸다.
 - `curate.mjs` 의 출력이 `selection.json` 에서 단계별 `decisions.json` 으로 바뀌었다. 입력의 `variants` 는 `takes` 로 읽는다.
 - `scripts/sync-adapter.js` 가 `preview-lib.mjs`, `serve.mjs`, `curate.mjs` 를 `motion-graphic-make` 로도 미러링하고 검사한다.
 

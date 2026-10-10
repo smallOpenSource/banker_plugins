@@ -78,10 +78,12 @@
     return Math.min(o.durMaxMs, o.durBaseMs + (Math.abs(distance) / vh) * o.durPerVhMs);
   }
 
-  /** Zoom (ctrl+wheel, pinch), sideways and tiny wheels stay with the browser. */
-  function wheelIgnored(e, o) {
-    const mag = Math.abs(e.deltaY || 0);
-    return Boolean(e.ctrlKey) || mag < o.minWheel || Math.abs(e.deltaX || 0) > mag;
+  /**
+   * Zoom (ctrl+wheel, pinch) and sideways wheels stay with the browser. A tiny wheel is held by the
+   * intro but starts no gesture (an inertia tail would otherwise nudge the page off its stop).
+   */
+  function wheelIgnored(e) {
+    return Boolean(e.ctrlKey) || Math.abs(e.deltaX || 0) > Math.abs(e.deltaY || 0);
   }
 
   /** Splits a wheel stream into gestures: feed(event, ms) is 'new', 'same' or 'ignore'. */
@@ -105,8 +107,8 @@
     }
     return {
       feed: function (e, t) {
-        if (wheelIgnored(e, o)) return 'ignore';
-        const mag = Math.abs(e.deltaY);
+        const mag = Math.abs(e.deltaY || 0);
+        if (wheelIgnored(e) || mag < o.minWheel) return 'ignore';
         const dir = Math.sign(e.deltaY);
         if (!st || dir !== st.dir || t - st.last > o.gestureGapMs) return reset(dir, mag, t);
         st.last = t;
@@ -131,6 +133,15 @@
     return best;
   };
 
+  // The stop an input asks for from position `pos`: a dot's scene, the next stop below for down, the
+  // next above for up; -1 when there is none.
+  function targetOf(stops, pos, input) {
+    if (typeof input === 'object') return Math.max(0, Math.min(stops.length - 1, input.to));
+    if (input === 'down') return stops.findIndex(function (v) { return v > pos + 1; });
+    for (let i = stops.length - 1; i >= 0; i--) if (stops[i] < pos - 1) return i;
+    return -1;
+  }
+
   /**
    * Moves between stops. input('down' | 'up' | { to }) while idle starts a move from where the page
    * stands (sync(y)); during a move it replaces the queued input. move(fromY, toY, done) animates;
@@ -142,14 +153,8 @@
     let target = -1;
     let queued = null;
     let guardUntil = -Infinity;
+    let generation = 0;
     const list = function () { return opt.stops(); };
-    function resolve(input) {
-      const stops = list();
-      if (typeof input === 'object') return Math.max(0, Math.min(stops.length - 1, input.to));
-      if (input === 'down') return stops.findIndex(function (v) { return v > pos + 1; });
-      for (let i = stops.length - 1; i >= 0; i--) if (stops[i] < pos - 1) return i;
-      return -1;
-    }
     function arrive(from, to) {
       index = to;
       pos = list()[to];
@@ -161,12 +166,13 @@
       if (next) go(next);
     }
     function go(input) {
-      const to = resolve(input);
+      const to = targetOf(list(), pos, input);
       if (to < 0 || Math.abs(list()[to] - pos) <= 1) return;
       if (input === 'down' && index === opt.lastScene && opt.now() < guardUntil) return;
       const from = index;
+      const gen = generation;
       target = to;
-      opt.move(pos, list()[to], function () { arrive(from, to); });
+      opt.move(pos, list()[to], function () { if (gen === generation) arrive(from, to); });
     }
     return {
       input: function (input) {
@@ -178,6 +184,12 @@
         if (target !== -1) return;
         pos = y;
         index = nearest(list(), y);
+      },
+      // Drops the move in flight and the queued input; the move's end, when it comes, starts nothing.
+      cancel: function () {
+        generation++;
+        target = -1;
+        queued = null;
       },
       state: function () {
         const n = list().length;
@@ -214,13 +226,19 @@
     try { window.scrollTo({ top: y, behavior: 'instant' }); } catch (e) { window.scrollTo(0, y); }
   }
 
+  // The running animation; a newer one, or stopAnimation(), ends it between frames.
+  let animation = 0;
+  function stopAnimation() { animation++; }
+
   function animate(from, to, duration, done) {
+    const mine = ++animation;
     if (duration <= 0) {
       jump(to);
       return done();
     }
     const t0 = performance.now();
     (function frame(t) {
+      if (mine !== animation) return;
       const p = Math.min(1, (t - t0) / duration);
       jump(from + (to - from) * ease(p));
       if (p < 1) requestAnimationFrame(frame);
@@ -353,7 +371,8 @@
   function endElement(ctx) {
     if (!ctx.o.end) return null;
     const e = document.querySelector(ctx.o.end);
-    if (!e && !ctx.warned) {
+    // A body drawn after this script is a supported layout: warn only once the page has loaded.
+    if (!e && !ctx.warned && document.readyState === 'complete') {
       ctx.warned = true;
       console.warn('IntroStepNav: no element matches ' + ctx.o.end + '; the page scrolls on past the last scene until it exists');
     }
@@ -389,7 +408,7 @@
   function listenWheel(ctx) {
     const gesture = createWheelGesture(ctx.o);
     window.addEventListener('wheel', function (e) {
-      if (wheelIgnored(e, ctx.o)) return;
+      if (wheelIgnored(e)) return;
       const dir = e.deltaY > 0 ? 'down' : 'up';
       if (!ctx.ours(window.scrollY, dir)) return;
       e.preventDefault();
@@ -426,6 +445,8 @@
   // The skip link jumps at once (no animation to wait through) and hands the focus to the body; on a
   // standalone page it goes to the last scene.
   function skip(ctx) {
+    ctx.nav.cancel();
+    stopAnimation();
     const top = ctx.endTop();
     jump(top == null ? ctx.stops()[ctx.lastScene] : top);
     ctx.nav.sync(window.scrollY);

@@ -60,6 +60,8 @@ test('only a host other than loopback carries a warning', () => {
 test('a request is answered only for a Host that names this machine by address or as localhost', () => {
   for (const ok of ['localhost:8080', '127.0.0.1:9', '192.168.0.7:3000', '[::1]:9', 'localhost']) assert.equal(hostAllowed(ok), true, ok);
   for (const bad of ['evil.example:8080', 'localhost.evil.example', '', undefined]) assert.equal(hostAllowed(bad), false, String(bad));
+  assert.equal(hostAllowed('devbox:8080', ['devbox']), true, 'the name the server was bound to');
+  assert.equal(hostAllowed('devbox:8080'), false);
 });
 
 test('a stop asks the address the server was bound to, a wildcard at loopback; IPv6 sits in brackets', () => {
@@ -104,10 +106,11 @@ test('the server sends the CSP header, ranges for video, and refuses escapes', a
   assert.equal(await raw(s.port, '/', { Host: `localhost:${s.port}` }), 200);
 });
 
-test('a second start finds the recorded server running and only reports its address', async () => {
+test('a second start finds the recorded server running and only reports its address', async (t) => {
   const dir = site();
   const script = path.join(HERE, 'serve.mjs');
   const child = spawn(process.execPath, [script, dir], { stdio: 'ignore' });
+  reap(t, child);
   const stateFile = path.join(path.dirname(dir), 'site.server.json');
   for (let i = 0; i < 100 && !fs.existsSync(stateFile); i++) await new Promise((r) => setTimeout(r, 50));
   const first = readState(stateFile);
@@ -118,14 +121,24 @@ test('a second start finds the recorded server running and only reports its addr
   assert.equal(code, 0);
   assert.match(out, /already running/);
   assert.equal(readState(stateFile).pid, first.pid, 'the record still names the first server');
+  const strict = spawn(process.execPath, [script, dir, '--csp', 'strict'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  strict.stderr.on('data', (c) => { err += c; });
+  assert.equal(await new Promise((resolve) => strict.on('exit', resolve)), 1, 'other settings never pass for the running ones');
+  assert.match(err, /different settings[\s\S]*--stop/);
+  assert.equal(readState(stateFile).pid, first.pid);
   const exited = new Promise((resolve) => child.on('exit', resolve));
   assert.equal((await stopServer(stateFile, { timeoutMs: 5000 })).reason, 'stopped');
   await exited;
 });
 
-test('stop ends only the recorded server, waits for its port to close and removes the state file', async () => {
+// Ends a spawned server even when an assertion fails first, so the test run never hangs on it.
+const reap = (t, child) => t.after(() => { try { process.kill(child.pid); } catch { /* gone */ } });
+
+test('stop ends only the recorded server, waits for its port to close and removes the state file', async (t) => {
   const dir = site();
   const child = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), dir], { stdio: 'ignore' });
+  reap(t, child);
   const stateFile = path.join(path.dirname(dir), 'site.server.json');
   for (let i = 0; i < 100 && !fs.existsSync(stateFile); i++) await new Promise((r) => setTimeout(r, 50));
   const { port, pid } = readState(stateFile);

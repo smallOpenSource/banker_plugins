@@ -44,14 +44,14 @@ export function hostWarning(host) {
   return `주의: ${host} 에 바인드합니다. 같은 네트워크의 기기가 아직 공개하지 않은 산출물을 볼 수 있습니다. 끝나면 --stop 으로 닫으세요.`;
 }
 
-// True for a Host header naming this machine as localhost or by an IP address; a DNS name rebound
-// to this machine fails, which is what a rebinding attack needs.
-export function hostAllowed(hostHeader) {
+// True for a Host header naming this machine as localhost, by an IP address, or by a name the server
+// was bound to (`names`); any other DNS name fails, which is what a rebinding attack needs.
+export function hostAllowed(hostHeader, names = []) {
   const h = String(hostHeader || '').trim().toLowerCase();
   if (!h) return false;
   if (h.startsWith('[')) return /^\[[0-9a-f:.]+\](:\d+)?$/.test(h);
   const name = h.split(':')[0];
-  return name === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(name);
+  return name === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(name) || names.map((n) => String(n).toLowerCase()).includes(name);
 }
 
 // The request path without its query, or null when its escapes are broken.
@@ -149,7 +149,7 @@ const NONE = Symbol('none');
 // The PID the server on `port` says it has; NONE when nothing listens; null for another program.
 function askPid(port, timeoutMs, host) {
   return new Promise((resolve) => {
-    const req = http.get({ host: askHost(host), port, path: PID_ROUTE, timeout: timeoutMs }, (res) => {
+    const req = http.get({ host: askHost(host), port, path: PID_ROUTE, timeout: timeoutMs, headers: { Host: 'localhost' } }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => { try { resolve(JSON.parse(body).pid ?? null); } catch { resolve(null); } });
