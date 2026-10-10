@@ -1,0 +1,23 @@
+/* Fixes for the vendored scroll-world engine (scrub-engine.js), applied by the page so the engine
+   file stays as shipped. The engine's own rules sit in `@layer sw`, so these unlayered rules win.
+   assemble.mjs links this file on every page. */
+
+/* The engine writes an inline transform on each copy block every frame (a small parallax), which
+   replaces the stylesheet's translateY(-50%), so the block hangs below the middle. The separate
+   `translate` property composes with that transform and keeps the block centred. At 860px and
+   below the engine anchors the block to the bottom instead, so the fix stops there. */
+@media (min-width: 861px) {
+  .sw-copy { translate: 0 -50%; }
+}
+
+/* At 860px and below the engine anchors the copy to the bottom across the screen, under its own
+   route dots (6px from the right edge, up to 40px wide on a touch screen), so the dots sit on the
+   text. A 52px right margin keeps the copy clear of them. */
+@media (max-width: 860px) {
+  .sw-copy { right: 52px; }
+}
+
+/* The engine sets overflow-x:hidden on html and body, which makes them scroll containers and breaks
+   position:sticky headers of a site the intro sits on. `clip` hides the overflow without that.
+   A browser without `clip` drops this line and keeps the engine's `hidden`. */
+html, body { overflow-x: clip; }

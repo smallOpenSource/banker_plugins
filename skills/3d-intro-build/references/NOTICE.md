@@ -28,5 +28,6 @@ scroll-world 의 씬/아트디렉션 **구조**(스타일 서문을 씬마다 �
 
 ## 이 스킬의 자작 파일 (서드파티 아님)
 
-`azure-adapter.mjs`, `serve.mjs`, `assemble.mjs`, `prompts.md`, `SKILL.md` 는 이 스킬의 창작물이다.
+`azure-adapter.mjs`, `video-pool.mjs`, `preview-lib.mjs`, `serve.mjs`, `curate.mjs`, `assemble.mjs`, `intro-fixes.css`, `panel-glass.css`, `step-nav.js`, `step-nav.css`, `verify-intro.mjs`, `verify.md`, `prompts.md`, `SKILL.md` 는 이 스킬의 창작물이다.
 이 중 재사용에 해당하는 것은 위에 밝힌 `prompts.md` 의 **구조 각색**뿐이다.
+`intro-fixes.css`, `panel-glass.css`, `step-nav.js` 는 벤더링한 엔진을 고치지 않고 페이지 쪽에서 덧씌우는 파일이다. `assemble.mjs` 가 만드는 `scrub-engine.css` 는 엔진 파일 안의 CSS 를 글자 그대로 옮긴 것이라 엔진과 같은 MIT 고지를 따른다.
