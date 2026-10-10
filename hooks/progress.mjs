@@ -47,7 +47,8 @@ const tally = () => ({ calls: [], count: 0, failed: 0 });
 // The calls made while the task list has no task in progress.
 const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', ...tally() });
 
-export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0 });
+// `rev` counts the task changes (TaskCreate, TaskUpdate) taken in, to tell a stale TaskList or TaskGet.
+export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0 });
 
 // One line of plain text, cut to `n` characters. Control characters go too: a pasted escape
 // sequence is not text to show.
@@ -85,10 +86,11 @@ function listItems(s) {
 }
 
 // A list whose every item is completed is over, as in Claude Code (TodoWrite drops it at once, the
-// Tasks list soon after). It stays on the pane until the next prompt, which is a step again.
+// Tasks list soon after). It stays on the pane until the next prompt, which is a step again. An
+// emptied list takes the calls made outside it along.
 function dropFinished(s) {
   const items = listItems(s);
-  if (!items.length || items.some((t) => t.status !== 'completed')) return;
+  if (items.some((t) => t.status !== 'completed')) return;
   s.todos = null;
   s.tasks = new Map();
   s.loose = looseStep();
@@ -139,8 +141,10 @@ export function endCall(call, r, now) {
   if (!call.ok) for (const step of call.steps) step.failed += 1;
 }
 
-// When an item started and ended, as far as this module saw. A reopened item runs on from its start.
+// When an item started and ended, as far as this module saw. A reopened item runs on from its start;
+// one back to waiting has no time until it starts again.
 function stamp(t, status, now) {
+  if (status === 'pending') t.startedAt = undefined;
   if (status === 'in_progress') t.startedAt ??= now;
   t.endedAt = status === 'completed' && Number.isFinite(t.startedAt) ? (t.endedAt ?? now) : null;
   t.status = status;
@@ -201,9 +205,9 @@ function updateTask(s, e, r, now) {
 
 // TaskList names the whole list, in its order: a task it leaves out is gone. A list whose every task
 // is completed is over, and only brings up to date the tasks still on the pane.
-function listTasks(s, _e, r, now) {
+function listTasks(s, _e, r, now, since) {
   const listed = r?.result?.tasks;
-  if (!Array.isArray(listed)) return;
+  if (since !== s.rev || !Array.isArray(listed)) return;
   const over = listed.every((t) => t.status === 'completed');
   const before = s.tasks;
   s.tasks = new Map();
@@ -215,7 +219,8 @@ function listTasks(s, _e, r, now) {
 }
 
 // TaskGet reads one task: one it cannot find is gone, and a completed one off the pane stays off.
-function getTask(s, e, r, now) {
+function getTask(s, e, r, now, since) {
+  if (since !== s.rev) return;
   const t = r?.result?.task;
   if (t === null) s.tasks.delete(String(e.taskId));
   if (!t || (t.status === 'completed' && !s.tasks.has(String(t.id)))) return;
@@ -233,9 +238,15 @@ const TASK_NOTES = {
 // A refused or failed call changes nothing: the task list stays as Claude Code holds it. A TaskUpdate
 // that changed nothing (an id it cannot find, a TaskCompleted hook that blocks) answers
 // `success: false` without isError.
-export function noteTaskTool(s, e, r, now) {
-  if (r?.deny || r?.isError || r?.result?.success === false) return;
-  TASK_NOTES[e.tool]?.(s, e, r, now);
+// TaskList and TaskGet run beside other calls: one that read the list before a change landed (`since`,
+// the count when it started, is behind) is stale and changes nothing.
+const refused = (r) => Boolean(r?.deny || r?.isError || r?.result?.success === false);
+const CHANGES = new Set(['TaskCreate', 'TaskUpdate']);
+
+export function noteTaskTool(s, e, r, now, since) {
+  if (refused(r)) return;
+  TASK_NOTES[e.tool]?.(s, e, r, now, since ?? s.rev);
+  if (CHANGES.has(e.tool)) s.rev += 1;
 }
 
 // ── what the pane shows ──────────────────────────────────────────────────────
@@ -361,16 +372,19 @@ function commandFailed(_$, _e, next) {
 // The command, which register.mjs registers at session.start with the module's others.
 export const SPEC = { name: COMMAND, description: '진행 상황 패널을 켜고 끔(목록, 설명, 하위 목록 펼치기)', argumentHint: '[show | on | off]', immediate: true };
 
-// A call that throws is recorded as failed, so its row does not stay running.
+// A call that throws is recorded as failed, so its row does not stay running. A call goes to the
+// list it started under: one that ends after /clear leaves the new conversation's list alone.
 async function watchCall($, e, next) {
-  const call = startCall(ref.s, e, Date.now());
+  const s = ref.s;
+  const since = s.rev;
+  const call = startCall(s, e, Date.now());
   let r = { isError: true };
   try {
     r = await next(e);
     return r;
   } finally {
     endCall(call, r, Date.now());
-    if (TASK_TOOLS.has(e.tool)) noteTaskTool(ref.s, e, r, Date.now());
+    if (TASK_TOOLS.has(e.tool)) noteTaskTool(s, e, r, Date.now(), since);
     $.ui.invalidate('ui.render');
   }
 }

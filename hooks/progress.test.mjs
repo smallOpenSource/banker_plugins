@@ -101,6 +101,12 @@ const rowOf = (tree, key) => walk(tree).find((n) => n.props?.key === `row-${key}
 // The row whose own button carries this label.
 const rowLabeled = (tree, label) => walk(tree).find((n) => String(n.props?.key).startsWith('row-')
   && (n.props.children ?? []).some((c) => c?.type === 'Button' && c.props.label === label));
+// A tool call still running: `end(answer)` lets it finish and resolves to what the hooks return.
+const later = (eng, e) => {
+  let finish;
+  const done = eng.raise('tool.call', e, () => new Promise((resolve) => { finish = resolve; }));
+  return { end: (answer) => { finish(answer); return done; } };
+};
 // What TaskCreate and TaskUpdate answer, as Claude Code 2.1.296 does.
 const created = (id, subject) => ({ result: { task: { id, subject } }, text: `Task #${id} created successfully: ${subject}` });
 const updated = (taskId, statusChange) => ({ result: { success: true, taskId, updatedFields: statusChange ? ['status'] : [], statusChange } });
@@ -460,6 +466,63 @@ test('a finished list does not come back from TaskList, TaskGet or TaskUpdate on
   await eng.tool({ tool: 'TaskGet', taskId: '1' }, { result: { task: { ...done, description: '구조', blocks: [] } } });
   await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'completed' }, updated('1'));
   assert.deepEqual(labels(await eng.draw()), ['만들어 줘', '다음 요청']);
+});
+
+test('a TaskList or TaskGet that read the list before an update landed does not undo it', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '만들어 줘' });
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'in_progress' }, updated('1', { from: 'pending', to: 'in_progress' }));
+  const stale = { id: '1', subject: '설계', status: 'in_progress', blockedBy: [] };
+  const listing = later(eng, { tool: 'TaskList' });
+  const reading = later(eng, { tool: 'TaskGet', taskId: '1' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'completed' }, updated('1', { from: 'in_progress', to: 'completed' }));
+  await listing.end({ result: { tasks: [stale] } });
+  await reading.end({ result: { task: { ...stale, description: '구조', blocks: [] } } });
+  assert.match(textOf(rowOf(await eng.draw(), 'k-1')), /완료/);
+  await eng.raise('turn.start', { turnId: 't2', text: '다음 요청' });
+  assert.deepEqual(labels(await eng.draw()), ['만들어 줘', '다음 요청']);
+});
+
+test('a TaskList that read the list before another agent created a task does not drop that task', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const listing = later(eng, { tool: 'TaskList', agentId: 'a1' });
+  await eng.tool({ tool: 'TaskCreate', subject: '구현' }, created('2', '구현'));
+  await listing.end({ result: { tasks: [{ id: '1', subject: '설계', status: 'pending', blockedBy: [] }] } });
+  assert.deepEqual(labels(await eng.draw()), ['설계', '구현']);
+});
+
+test('a task call that ends after /clear leaves the new conversation\'s list alone', async () => {
+  const eng = engine();
+  const listing = later(eng, { tool: 'TaskList' });
+  await eng.raise('session.end', { reason: 'clear' });
+  await listing.end({ result: { tasks: [{ id: '1', subject: '옛 작업', status: 'pending', blockedBy: [] }] } });
+  assert.deepEqual(labels(await eng.draw()), ['진행 중인 작업 없음']);
+});
+
+test('a list emptied before the next prompt takes the calls made outside it along', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '만들어 줘' });
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  await eng.tool({ tool: 'Bash', command: 'make' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'deleted' }, updated('1', { from: 'pending', to: 'deleted' }));
+  await eng.raise('turn.start', { turnId: 't2', text: '다시' });
+  await eng.tool({ tool: 'TaskCreate', subject: '새 작업' }, created('2', '새 작업'));
+  assert.deepEqual(labels(await eng.draw()), ['새 작업']);
+});
+
+test('a task back to waiting shows no time, and its time starts again when it does', () => {
+  const s = freshState();
+  const said = (now) => { s.selected = 'k-1'; return describe(s, now); };
+  const update = (status, now) => noteTaskTool(s, { tool: 'TaskUpdate', taskId: '1', status }, updated('1', { from: '', to: status }), now);
+  noteTaskTool(s, { tool: 'TaskCreate', subject: '설계' }, created('1', '설계'), 0);
+  update('in_progress', 1_000);
+  update('pending', 5_000);
+  assert.match(said(600_000), /^설계\. 대기, 도구 호출 0회\.$/);
+  update('in_progress', 700_000);
+  update('completed', 730_000);
+  assert.match(said(900_000), /완료, 30초,/);
 });
 
 test('TodoWrite lists become steps, and an item keeps its calls while its text stays', async () => {
