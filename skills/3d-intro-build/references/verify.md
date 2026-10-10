@@ -4,6 +4,8 @@
 
 ## 1. 측정 (verify-intro.mjs)
 
+Node 용 playwright 패키지와 Chromium 이 필요하다(`npm i -g playwright && npx playwright install chromium`, 또는 프로젝트에 `npm i -D playwright`).
+
 ```bash
 node references/verify-intro.mjs http://localhost:<port>/ --out verify.json
 node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800r --out verify-reduced.json   # 움직임 줄이기
@@ -27,14 +29,14 @@ node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800r 
 
 | 항목 | 기준 |
 |---|---|
-| 장면의 뜻 | 장면 하나에 뜻 하나. 이야기가 문제 제기, 해법, 결론 순서로 읽힘 |
-| 행위 주체 | 누가 무엇을 하는지(예: 공격하는 쪽과 막는 쪽) 화면에서 드러남 |
+| 장면의 뜻 | 장면 하나에 뜻 하나. 이야기가 인터뷰에서 정한 순서로 읽힘(예: 문제 제기, 해법, 결론) |
+| 행위 주체 | 누가 무엇을 하는지 화면에서 드러남(예: 문제를 일으키는 쪽과 푸는 쪽, 제품을 쓰는 사람) |
 | 표현 | 브랜드 톤에 맞음. 의도하지 않은 만화식 은유가 없음 |
 | 화면 속 글자 | 깨진 글자, 뜻 없는 글자가 없음. 있으면 그 스틸이나 클립만 재생성 |
 | 사물 | 사물이 엉뚱한 위치에 뜨거나 이상하게 움직이지 않음. 색이 다른 물체로 번지지 않음 |
 | 이음매 | chain 은 경미한 톤 drift 까지 허용. holdFlight 는 비행 클립의 첫과 끝 프레임이 장면과 맞음 |
 | 첫 이동 | 첫 장면에서 처음 움직일 때 영상이 바로 나옴(클립 미리 받기) |
-| 문구 | 본문은 한 줄에 항목 하나, 375px 화면에서 줄이 넘치지 않음. 결론 장면에만 CTA |
+| 문구 | 375px 화면에서 본문이 넘치지 않음. 유리 패널이면 본문은 한 줄에 항목 하나(권장 세 줄). CTA 는 마지막 장면에만 |
 | 가로 휴대폰 | 지원 대상이면 844x390 같은 크기에서 마지막 장면 버튼이 잘리지 않음 |
 
 ## 3. 판정

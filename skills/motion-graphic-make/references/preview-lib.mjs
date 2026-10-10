@@ -3,7 +3,10 @@
  * byte-identical into motion-graphic-make by scripts/sync-adapter.js).
  *
  * - A port the system picks (a preferred one first when asked), bound to loopback by default.
- * - A state file recording { pid, port, host, url, dir } beside what is served, never inside it.
+ * - A state file recording { pid, port, host, url, dir }: serve.mjs keeps it beside the folder it
+ *   serves, curate.mjs in the project folder, which it does not serve (it serves listed takes only).
+ * - Requests whose Host is a name other than localhost are refused, so a DNS name rebound to this
+ *   machine cannot read what is served.
  * - A stop that ends only the process answering on that port with the recorded PID, then waits
  *   for the port to close. Nothing is matched by command line (no pkill -f).
  * - An optional Content-Security-Policy header, so a page is checked under the policy it ships with.
@@ -39,6 +42,16 @@ export const cspFrom = (value) => (value ? (value === 'strict' ? STRICT_CSP : St
 export function hostWarning(host) {
   if (!host || [LOOPBACK, 'localhost', '::1'].includes(host)) return null;
   return `주의: ${host} 에 바인드합니다. 같은 네트워크의 기기가 아직 공개하지 않은 산출물을 볼 수 있습니다. 끝나면 --stop 으로 닫으세요.`;
+}
+
+// True for a Host header naming this machine as localhost or by an IP address; a DNS name rebound
+// to this machine fails, which is what a rebinding attack needs.
+export function hostAllowed(hostHeader) {
+  const h = String(hostHeader || '').trim().toLowerCase();
+  if (!h) return false;
+  if (h.startsWith('[')) return /^\[[0-9a-f:.]+\](:\d+)?$/.test(h);
+  const name = h.split(':')[0];
+  return name === 'localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(name);
 }
 
 // The request path without its query, or null when its escapes are broken.
@@ -102,7 +115,18 @@ export function listen(server, { host = LOOPBACK, port } = {}) {
   return attempt(port).catch((e) => (e.code === 'EADDRINUSE' ? attempt(0) : Promise.reject(e)));
 }
 
-export const urlFor = (host, port) => `http://${host === LOOPBACK || host === '0.0.0.0' ? 'localhost' : host}:${port}/`;
+// The address a person opens: localhost for loopback and the wildcard, IPv6 in brackets.
+export function urlFor(host, port) {
+  if (!host || host === LOOPBACK || host === '0.0.0.0') return `http://localhost:${port}/`;
+  if (host === '::' || host === '::1') return `http://[::1]:${port}/`;
+  return host.includes(':') ? `http://[${host}]:${port}/` : `http://${host}:${port}/`;
+}
+
+// Where a stop asks a server for its PID: the address it was bound to, a wildcard at loopback.
+export function askHost(host) {
+  if (!host || host === '0.0.0.0') return LOOPBACK;
+  return host === '::' ? '::1' : host;
+}
 // The state file of a server for `dir`: beside the folder, so a deployed folder never carries it.
 export const siblingState = (dir) => path.join(path.dirname(dir), `${path.basename(dir)}.server.json`);
 
@@ -123,9 +147,9 @@ export function forgetSelf(file) {
 
 const NONE = Symbol('none');
 // The PID the server on `port` says it has; NONE when nothing listens; null for another program.
-function askPid(port, timeoutMs) {
+function askPid(port, timeoutMs, host) {
   return new Promise((resolve) => {
-    const req = http.get({ host: LOOPBACK, port, path: PID_ROUTE, timeout: timeoutMs }, (res) => {
+    const req = http.get({ host: askHost(host), port, path: PID_ROUTE, timeout: timeoutMs }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => { try { resolve(JSON.parse(body).pid ?? null); } catch { resolve(null); } });
@@ -135,17 +159,23 @@ function askPid(port, timeoutMs) {
   });
 }
 
-const portOpen = (port) => new Promise((resolve) => {
-  const s = net.connect({ host: LOOPBACK, port }, () => { s.destroy(); resolve(true); });
+const portOpen = (port, host) => new Promise((resolve) => {
+  const s = net.connect({ host: askHost(host), port }, () => { s.destroy(); resolve(true); });
   s.on('error', () => resolve(false));
 });
 
-async function waitClosed(port, timeoutMs) {
+async function waitClosed(port, timeoutMs, host) {
   for (const until = Date.now() + timeoutMs; Date.now() < until;) {
-    if (!(await portOpen(port))) return true;
+    if (!(await portOpen(port, host))) return true;
     await new Promise((r) => setTimeout(r, 100));
   }
-  return !(await portOpen(port));
+  return !(await portOpen(port, host));
+}
+
+/** True when the server a state file records still answers on its port with its PID. */
+export async function isRunning(stateFile) {
+  const st = readState(stateFile);
+  return Boolean(st && st.port) && (await askPid(st.port, 1500, st.host)) === st.pid;
 }
 
 function signal(pid, sig) {
@@ -157,17 +187,17 @@ function signal(pid, sig) {
 export async function stopServer(stateFile, { timeoutMs = 3000 } = {}) {
   const st = readState(stateFile);
   if (!st || !st.port) return { stopped: false, reason: 'no-state' };
-  const who = await askPid(st.port, Math.min(timeoutMs, 1500));
+  const who = await askPid(st.port, Math.min(timeoutMs, 1500), st.host);
   if (who === NONE) {
     removeState(stateFile);
     return { stopped: false, reason: 'not-running' };
   }
   if (who !== st.pid) return { stopped: false, reason: 'other-process' };
   signal(st.pid, 'SIGTERM');
-  let closed = await waitClosed(st.port, timeoutMs);
+  let closed = await waitClosed(st.port, timeoutMs, st.host);
   if (!closed) {
     signal(st.pid, 'SIGKILL');
-    closed = await waitClosed(st.port, timeoutMs);
+    closed = await waitClosed(st.port, timeoutMs, st.host);
   }
   if (closed) removeState(stateFile);
   return closed ? { stopped: true, reason: 'stopped' } : { stopped: false, reason: 'still-open' };

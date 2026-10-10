@@ -3,6 +3,7 @@
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -11,10 +12,13 @@ import {
 } from './curate.mjs';
 
 const NOW = new Date('2026-10-10T03:00:00Z');
+const made = [];
+process.on('exit', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
 
 // A project folder with two scenes: scene 1 has two still takes, scene 2 one clip take (a flight).
 function project(extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-'));
+  made.push(dir);
   fs.mkdirSync(path.join(dir, 'stills'));
   fs.mkdirSync(path.join(dir, 'clips'));
   for (const f of ['stills/s1-t1.png', 'stills/s1-t2.png', 'stills/s2.png', 'stills/s3.png']) fs.writeFileSync(path.join(dir, f), `png ${f}`);
@@ -36,6 +40,8 @@ function project(extra = {}) {
   return dir;
 }
 
+const post = (port, body, headers = { 'Content-Type': 'application/json' }) =>
+  fetch(`http://127.0.0.1:${port}/decide`, { method: 'POST', headers, body: JSON.stringify(body) });
 const sha = (dir, f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, f))).digest('hex');
 
 test('every take shows its prompt, exclusions, model, size, time, cost, path and sha256', () => {
@@ -98,14 +104,15 @@ test('verdicts from the page are stored per stage with who gave them', async (t)
     { id: 's1', chosen: 'stills/s1-t2.png', note: '', rejected: ['stills/s1-t1.png'] },
     { id: 's2', chosen: 'clips/flight-2.mp4', note: '벽 쪽으로 더 낮게' },
   ];
-  const r = await fetch(`http://127.0.0.1:${s.port}/decide`, { method: 'POST', body: JSON.stringify({ scenes }) });
+  const r = await post(s.port, { scenes });
   assert.equal(r.status, 200);
   const d = readDecisions(dir).stills.scenes;
   assert.deepEqual(d.map((x) => [x.id, x.verdict, x.chosen, x.by]), [
     ['s1', 'approve', 'stills/s1-t2.png', 'page'], ['s2', 'regenerate', 'clips/flight-2.mp4', 'page']]);
   assert.deepEqual(d[0].rejected, ['stills/s1-t1.png']);
   assert.equal(d[1].note, '벽 쪽으로 더 낮게');
-  const bad = await fetch(`http://127.0.0.1:${s.port}/decide`, { method: 'POST', body: JSON.stringify({ scenes: [{ id: 's1', chosen: '../x.png' }] }) });
+  const basedOn = readDecisions(dir).stills.updatedAt;
+  const bad = await post(s.port, { basedOn, scenes: [{ id: 's1', chosen: '../x.png' }] });
   assert.equal(bad.status, 400, 'a chosen file must be one of the takes');
 });
 
@@ -148,4 +155,57 @@ test('the page server records its PID beside the review files', async (t) => {
   assert.match(page, /테이크 1/);
   const img = await fetch(`http://127.0.0.1:${s.port}/stills/s2.png`);
   assert.equal(await img.text(), 'png stills/s2.png');
+});
+
+test('only the takes and frames the input lists are served, never the keys beside them', async (t) => {
+  const dir = project();
+  fs.writeFileSync(path.join(dir, '.env.3d-intro.local'), 'AZURE_API_KEY=secret');
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const get = (p) => fetch(`http://127.0.0.1:${s.port}${p}`).then((r) => r.status);
+  for (const p of ['/.env.3d-intro.local', '/curate-input.json', '/decisions.json', '/curate.server.json']) assert.equal(await get(p), 404, p);
+  assert.equal(await get('/stills/s1-t1.png'), 200);
+  assert.equal(await get('/stills/s3.png'), 200, 'a flight frame the input lists');
+  const rebound = await new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: s.port, path: '/', headers: { Host: 'evil.example' } }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject);
+  });
+  assert.equal(rebound, 403, 'a rebound DNS name is refused');
+});
+
+test('a verdict must come as JSON from the page itself, and a stale page cannot overwrite a newer one', async (t) => {
+  const dir = project();
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const scenes = [{ id: 's1', chosen: 'stills/s1-t1.png' }];
+  assert.equal((await post(s.port, { scenes }, { 'Content-Type': 'text/plain' })).status, 415);
+  assert.equal((await post(s.port, { scenes }, { 'Content-Type': 'application/json', Origin: 'http://evil.example' })).status, 403);
+  const page = await (await fetch(`http://127.0.0.1:${s.port}/`)).text();
+  const basedOn = /data-based-on="([^"]*)"/.exec(page)[1];
+  recordDecision(dir, { scene: '2', verdict: 'approve', take: '1' }, NOW);
+  const stale = await post(s.port, { basedOn, scenes });
+  assert.equal(stale.status, 409);
+  assert.equal(readDecisions(dir).stills.scenes.find((x) => x.id === 's2').verdict, 'approve', 'the chat verdict survives');
+  const fresh = await post(s.port, { basedOn: readDecisions(dir).stills.updatedAt, scenes, origin: 'x' },
+    { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${s.port}` });
+  assert.equal(fresh.status, 200);
+});
+
+test('a decisions file that does not parse stops the work instead of being replaced', () => {
+  const dir = project();
+  fs.writeFileSync(path.join(dir, 'decisions.json'), '{ broken');
+  assert.throws(() => readDecisions(dir), /decisions\.json/);
+  assert.throws(() => recordDecision(dir, { scene: '1', verdict: 'approve', take: '1' }, NOW), /decisions\.json/);
+  assert.equal(fs.readFileSync(path.join(dir, 'decisions.json'), 'utf8'), '{ broken');
+});
+
+test('an archived take lands inside the dated folder whatever the spelling of its path', () => {
+  const dir = project();
+  const input = JSON.parse(fs.readFileSync(path.join(dir, 'curate-input.json'), 'utf8'));
+  const odd = `../${path.basename(dir)}/stills/s1-t1.png`;
+  input.scenes[0].takes[0].file = odd;
+  fs.writeFileSync(path.join(dir, 'curate-input.json'), JSON.stringify(input));
+  recordDecision(dir, { scene: '1', verdict: 'reject', take: '1' }, NOW);
+  const [move] = archiveRejected(dir, { now: NOW });
+  assert.match(move.to, /^rejected-\d{8}\/stills\/s1-t1\.png$/);
+  assert.ok(fs.existsSync(path.join(dir, ...move.to.split('/'))));
 });

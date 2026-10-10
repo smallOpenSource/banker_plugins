@@ -18,6 +18,8 @@
  *              with a CSP under that same policy: a plain server hides CSP errors.
  *     --state  state file (default: <dir>.server.json beside the folder, never inside it)
  *     --stop   ends the server the state file records, only when it answers with that PID
+ *   A start while the recorded server still answers only reports its address. A request whose
+ *   Host is a DNS name other than localhost is refused (DNS rebinding).
  *   On listen it writes the state file and prints  PREVIEW http://localhost:<port>/
  *   PREVIEW_HOST=0.0.0.0 binds every interface (on-device phone checks) and prints a warning.
  *
@@ -28,12 +30,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  LOOPBACK, answersPid, cspFrom, decodePath, forgetSelf, hostWarning, listen, resolveInside,
-  send, sendFile, siblingState, stopServer, urlFor, writeState,
+  LOOPBACK, answersPid, cspFrom, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, readState,
+  resolveInside, send, sendFile, siblingState, stopServer, urlFor, writeState,
 } from './preview-lib.mjs';
 
 function handler(dir, headers) {
   return (req, res) => {
+    if (!hostAllowed(req.headers.host)) return send(res, 403, 'host not allowed', headers);
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '405', headers);
     const urlPath = decodePath(req.url);
     if (urlPath === null) return send(res, 400, '400', headers);
@@ -87,6 +90,8 @@ async function main() {
   const o = parseArgs(process.argv.slice(2));
   const dir = path.resolve(o.dir || process.cwd());
   if (o.stop) return stopMain(o, dir);
+  const recorded = o.state ? path.resolve(o.state) : siblingState(dir);
+  if (await isRunning(recorded)) return console.log(`PREVIEW ${readState(recorded).url} (already running, pid ${readState(recorded).pid})`);
   const s = await startServe(dir, { port: o.port || undefined, csp: o.csp || undefined, stateFile: o.state || undefined });
   const warn = hostWarning(s.host);
   if (warn) console.warn(warn);

@@ -11,19 +11,21 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  PID_ROUTE, STRICT_CSP, cspFrom, decodePath, hostWarning, readState, resolveInside, stopServer,
+  PID_ROUTE, STRICT_CSP, askHost, cspFrom, decodePath, hostAllowed, hostWarning, readState, resolveInside, stopServer, urlFor,
 } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'preview-lib-'));
+const made = [];
+process.on('exit', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+const tmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-lib-')); made.push(d); return d; };
 const portOpen = (port) => new Promise((resolve) => {
   const s = net.connect({ host: '127.0.0.1', port }, () => { s.destroy(); resolve(true); });
   s.on('error', () => resolve(false));
 });
 // A request sent as written: fetch() would fold `..` segments before they reach the server.
-const raw = (port, p) => new Promise((resolve, reject) => {
-  http.get({ host: '127.0.0.1', port, path: p }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject);
+const raw = (port, p, headers = {}) => new Promise((resolve, reject) => {
+  http.get({ host: '127.0.0.1', port, path: p, headers }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject);
 });
 const site = () => {
   const dir = path.join(tmp(), 'site');
@@ -55,6 +57,20 @@ test('only a host other than loopback carries a warning', () => {
   assert.match(hostWarning('0.0.0.0'), /0\.0\.0\.0/);
 });
 
+test('a request is answered only for a Host that names this machine by address or as localhost', () => {
+  for (const ok of ['localhost:8080', '127.0.0.1:9', '192.168.0.7:3000', '[::1]:9', 'localhost']) assert.equal(hostAllowed(ok), true, ok);
+  for (const bad of ['evil.example:8080', 'localhost.evil.example', '', undefined]) assert.equal(hostAllowed(bad), false, String(bad));
+});
+
+test('a stop asks the address the server was bound to, a wildcard at loopback; IPv6 sits in brackets', () => {
+  assert.equal(askHost('0.0.0.0'), '127.0.0.1');
+  assert.equal(askHost('::'), '::1');
+  assert.equal(askHost('192.168.0.7'), '192.168.0.7');
+  assert.equal(askHost(undefined), '127.0.0.1');
+  assert.equal(urlFor('::1', 9000), 'http://[::1]:9000/');
+  assert.equal(urlFor('192.168.0.7', 9000), 'http://192.168.0.7:9000/');
+});
+
 test('the server takes a port the system gives, records it with its PID, and answers who it is', async (t) => {
   const dir = site();
   const s = await startServe(dir, {});
@@ -84,6 +100,27 @@ test('the server sends the CSP header, ranges for video, and refuses escapes', a
   assert.equal(await raw(s.port, '/%2e%2e/%2e%2e/x'), 403);
   assert.equal(await raw(s.port, '/%E0%A4%A'), 400);
   assert.equal(await raw(s.port, '/missing.png'), 404);
+  assert.equal(await raw(s.port, '/', { Host: 'evil.example' }), 403, 'a rebound DNS name is refused');
+  assert.equal(await raw(s.port, '/', { Host: `localhost:${s.port}` }), 200);
+});
+
+test('a second start finds the recorded server running and only reports its address', async () => {
+  const dir = site();
+  const script = path.join(HERE, 'serve.mjs');
+  const child = spawn(process.execPath, [script, dir], { stdio: 'ignore' });
+  const stateFile = path.join(path.dirname(dir), 'site.server.json');
+  for (let i = 0; i < 100 && !fs.existsSync(stateFile); i++) await new Promise((r) => setTimeout(r, 50));
+  const first = readState(stateFile);
+  const again = spawn(process.execPath, [script, dir], { stdio: ['ignore', 'pipe', 'ignore'] });
+  let out = '';
+  again.stdout.on('data', (c) => { out += c; });
+  const code = await new Promise((resolve) => again.on('exit', resolve));
+  assert.equal(code, 0);
+  assert.match(out, /already running/);
+  assert.equal(readState(stateFile).pid, first.pid, 'the record still names the first server');
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  assert.equal((await stopServer(stateFile, { timeoutMs: 5000 })).reason, 'stopped');
+  await exited;
 });
 
 test('stop ends only the recorded server, waits for its port to close and removes the state file', async () => {

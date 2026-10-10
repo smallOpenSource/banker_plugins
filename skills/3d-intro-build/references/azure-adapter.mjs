@@ -471,6 +471,7 @@ export async function extractLastFrame(mp4, out, { ffmpeg } = {}) {
  */
 export async function stillToClip(png, out, { ffmpeg, seconds = 1, fps = 24, size } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
+  fs.rmSync(out, { force: true }); // a file from an earlier run must not pass for this one
   const vf = `${size ? `scale=${String(size).replace('x', ':')},` : ''}format=yuv420p`;
   const r = runFf(bin, ['-y', '-loop', '1', '-i', png, '-t', String(seconds), '-r', String(fps), '-vf', vf,
     '-c:v', 'libx264', '-crf', '20', '-g', '8', '-movflags', '+faststart', '-an', out]);

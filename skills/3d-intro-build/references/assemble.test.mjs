@@ -11,8 +11,12 @@ import { assemble, engineCss } from './assemble.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+const made = [];
+process.on('exit', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+
 function project(manifest = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'assemble-'));
+  made.push(dir);
   for (const f of ['s1.png', 's2.png', 'hold-1.mp4', 'hold-2.mp4', 'flight-1.mp4']) fs.writeFileSync(path.join(dir, f), f);
   const base = {
     brand: { name: 'Acme' }, theme: { bg: '#0B1220', ink: '#F1F5F9', accent: '#38BDF8' },
@@ -43,13 +47,21 @@ test('the page carries no inline script or style, so a strict CSP runs it', () =
   assert.match(read(dir, 'theme.css'), /--sw-bg:\s*#0B1220;/);
 });
 
-test('the engine CSS file is what the engine injects, and the CSP hash for that injection is reported', () => {
+test('the engine CSS file carries what the engine injects, and the CSP hash is of that injection', () => {
   const dir = project();
   const r = assemble({ projectDir: dir });
+  const injected = engineCss(fs.readFileSync(path.join(HERE, 'scrub-engine.js'), 'utf8'));
   const css = read(dir, 'scrub-engine.css');
-  assert.equal(css, engineCss(fs.readFileSync(path.join(HERE, 'scrub-engine.js'), 'utf8')));
-  assert.ok(css.startsWith('@layer sw {\n') && css.endsWith('\n}') && css.includes('.sw-copy{'));
-  assert.equal(r.styleHash, `'sha256-${crypto.createHash('sha256').update(css).digest('base64')}'`);
+  assert.ok(injected.startsWith('@layer sw {\n') && injected.endsWith('\n}') && injected.includes('.sw-copy{'));
+  assert.ok(css.endsWith(injected), 'the rules are the injected text, unchanged');
+  assert.match(css, /^\/\* scroll-world[^]*MIT[^]*scrub-engine\.LICENSE\.txt[^]*\*\/\n/, 'a notice heads the copied rules');
+  assert.equal(r.styleHash, `'sha256-${crypto.createHash('sha256').update(injected).digest('base64')}'`);
+  assert.equal(read(dir, 'scrub-engine.LICENSE.txt'), fs.readFileSync(path.join(HERE, 'LICENSE'), 'utf8'), 'the MIT notice ships with the engine');
+});
+
+test('an engine checked out with CRLF line ends gives the same injected text and hash', () => {
+  const source = fs.readFileSync(path.join(HERE, 'scrub-engine.js'), 'utf8');
+  assert.equal(engineCss(source.replace(/\n/g, '\r\n')), engineCss(source), 'a template literal turns CRLF into LF');
 });
 
 test('the engine and the template stay as shipped', () => {

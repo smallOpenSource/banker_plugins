@@ -62,7 +62,7 @@ if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = cre
   `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)를 키 원문 없이 돌려준다.
   `malformed` 는 endpoint 가 http(s) URL 이 아니거나 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
   WAN 항목(`WAN_<n>_ENDPOINT`, `WAN_<n>_API_KEY`)이 하나도 없으면 영상은 처음부터 Sora 로 만든다. 이때 정지와 비행 모드(Step 4B)는 쓸 수 없다.
-- 독립 검증(Step 6)에는 Playwright 와 Chromium 이 필요하다. 없으면 `setup-playwright` 를 안내해 둔다.
+- 독립 검증(Step 6)에는 Node 용 playwright 패키지와 Chromium 이 필요하다. `npx playwright install chromium`(`setup-playwright`)은 브라우저만 받으므로, 패키지도 `npm i -g playwright` 나 프로젝트의 `npm i -D playwright` 로 설치해 둔다.
 
 ---
 
@@ -72,7 +72,7 @@ if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = cre
 
 - **SUBJECT** - 대상 비즈니스/제품 + 한 줄 소개.
 - **BRAND** - 화면에 표시할 브랜드명.
-- **SCENES[] (순서 있는 씬 목록)** - 권장 5~7개. 이야기 순서는 문제 제기, 해법, 결론이고 CTA 는 결론 장면에만 둔다. 각 씬의 `id`, `label`, `subject`, `eyebrow`, `title`, `body`, `tags[]`.
+- **SCENES[] (순서 있는 씬 목록)** - 권장 5~7개. 이야기 순서는 여기서 정한다(예: 문제 제기, 해법, 결론. 식당이나 여행지라면 도착, 경험, 초대처럼 브랜드에 맞게). CTA 는 마지막 장면에만 둔다. 각 씬의 `id`, `label`, `subject`, `eyebrow`, `title`, `body`, `tags[]`.
 - **ORIENTATION** - `720x1280`(세로) 또는 `1280x720`(가로). 스틸과 영상 크기가 이 값으로 통일된다.
 - **BUDGET** - 상한 USD.
 - **CLIP_MODE** - `chain`(기본) 또는 `holdFlight`(선택, WAN 필요). 차이는 Step 4 에 있다.
@@ -102,7 +102,9 @@ if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = cre
 ```js
 import { estimateCost, detectTwoImageSupport } from './references/azure-adapter.mjs';
 const twoImage = wantConnectors && await detectTwoImageSupport({ endpoint, key }); // 무료 GET probe
-const cost = estimateCost({ nScenes, seconds, twoImage, mode: CLIP_MODE === 'holdFlight' ? 'holdFlight' : 'chain' });
+const cost = CLIP_MODE === 'holdFlight'
+  ? estimateCost({ nScenes, mode: 'holdFlight', flightSeconds: 5 })   // 비행 클립 길이(초)
+  : estimateCost({ nScenes, seconds, twoImage });
 ```
 
 - 사용자에게 `cost.images` / `cost.videos` / `cost.usd` 와 BUDGET 대비를 보여준다.
@@ -162,7 +164,7 @@ node references/curate.mjs --stop <projectDir>   # 끝나면 종료
   node references/curate.mjs --record <projectDir> --scene 3 --verdict reject --take 2
   ```
 
-- `regenerate` 인 장면만 다시 만든다. 메모를 스타일 서문 뒤 subject 에 반영하고, 새 테이크를 `curate-input.json` 에 더한 뒤 페이지를 다시 보여 준다.
+- `regenerate` 인 장면만 다시 만든다. 메모를 스타일 서문 뒤 subject 에 반영하고, 새 테이크를 `curate-input.json` 에 더한다. 그 장면은 `--record --scene <n> --verdict pending` 으로 판정을 되돌린 뒤 페이지를 다시 보여 준다(되돌리지 않으면 예전 메모가 남아 다시 재생성으로 저장될 수 있다).
 - 탈락한 테이크는 지우지 않고 날짜 폴더로 옮긴다: `node references/curate.mjs --archive <projectDir>`(`rejected-YYYYMMDD/`).
 - **모든 장면이 `approve` 일 때만** Step 4 로 간다. 각 장면의 영상 씨앗은 그 장면의 `chosen` 이다. 승인되지 않은 테이크에는 영상비를 쓰지 않는다.
 
@@ -245,7 +247,7 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 | 매니페스트 항목 | 쓰임 |
 |---|---|
 | `lang` | `<html lang>` |
-| `panel: "glass"` | 흐린 유리 문구 패널 |
+| `panel: "glass"` | 흐린 유리 문구 패널. 기본값(알파 .36, 흰 글자)은 어두운 장면용이다. 밝은 장면(기본 화풍 clay diorama 등)은 `--intro-panel-alpha` 를 .6 이상으로 올리고 Step 6 대비로 확인한다 |
 | `stepNav: { "end": "#main" }` | 장면 단위 이동. `end` 는 기존 사이트의 본문 시작(단독 페이지면 생략). 나머지 옵션은 `step-nav.js` 머리말 |
 
 ```bash
@@ -257,10 +259,10 @@ node references/serve.mjs --stop <projectDir>/site           # 끝나면 종료
 
 - 페이지에는 인라인 script, style 이 없다. 설정은 `intro.js`, 테마는 `theme.css`, 엔진 CSS 는 `scrub-engine.css` 다.
   엔진은 여전히 `<style>` 하나를 주입하려 한다. CSP 가 있는 사이트는 조립이 알려 준 `styleHash` 를 `style-src` 에 더하면 콘솔 오류가 남지 않는다(더하지 않아도 같은 규칙이 `scrub-engine.css` 로 적용된다).
-- 엔진은 클립을 `fetch` 로 받아 `blob:` 으로 재생한다. CSP 에 `media-src 'self' blob:` 이 필요하다.
+- 엔진은 클립을 `fetch` 로 받아 `blob:` 으로 재생한다. CSP 에 `connect-src 'self'`(클립을 다른 출처에서 받으면 그 출처)와 `media-src 'self' blob:` 이 필요하다.
 - `intro-fixes.css` 는 항상 붙는다. 엔진의 인라인 transform 이 덮는 패널 세로 가운데 맞춤(`translate`), 860px 이하에서 장면 점과 겹치지 않는 오른쪽 여백, 고정 헤더를 깨는 `overflow-x: hidden` 대신 `clip` 을 담는다.
 - 기존 사이트에 붙이는 미리보기는 반드시 운영과 같은 CSP 헤더로 서빙한다. 일반 정적 서버에서는 CSP 오류가 보이지 않는다.
-- 상태 파일(`<site>.server.json`)은 서빙 폴더 밖에 생긴다. 종료는 `--stop` 으로 한다. 명령줄 패턴으로 `pkill -f` 하지 않는다.
+- 상태 파일은 `serve.mjs` 가 서빙 폴더 밖(`<site>.server.json`)에, `curate.mjs` 가 프로젝트 폴더(`curate.server.json`)에 둔다. 검토 서버는 입력에 적힌 테이크와 프레임만 내주므로 이 파일과 `.env` 키 파일은 내려가지 않는다. 두 서버 모두 Host 가 localhost 나 IP 주소가 아니면 거절한다(DNS 재바인딩 방지). 종료는 `--stop` 으로 한다. 명령줄 패턴으로 `pkill -f` 하지 않는다. 이미 떠 있는 서버를 다시 띄우면 그 주소만 알려 준다.
 - 휴대폰 실기기로 볼 때만 `PREVIEW_HOST=0.0.0.0` 을 쓴다. 같은 네트워크에 미공개 산출물이 보인다는 경고가 나온다.
 - 프로젝트 관례상 **claude.ai 아티팩트를 만들지 않는다** - 로컬 페이지를 포트로 서빙해 사용자가 브라우저로 확인한다.
 - 사용자 검토를 받는다. 지적이 있으면 카피, 매니페스트, 해당 클립만 고치고 다시 조립한다.
@@ -289,7 +291,7 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 
 - 백업을 먼저 한다. 백업은 프로젝트의 `backup/` 아래에 둔다. `/tmp` 는 쓰지 않는다.
 - `site/` 의 파일을 사이트의 정적 폴더로 옮긴다. `#world` 를 본문 위에 두고, `stepNav.end` 는 본문 시작 요소를 가리킨다.
-- 사이트 CSP 에 `media-src 'self' blob:` 과 `styleHash` 를 더한다. 인라인을 허용하지 않아도 된다.
+- 사이트 CSP 에 `connect-src 'self'`, `media-src 'self' blob:`, `style-src` 의 `styleHash` 를 더한다. 인라인을 허용하지 않아도 된다. `scrub-engine.LICENSE.txt`(엔진의 MIT 고지)도 함께 옮긴다.
 - 배포 뒤 운영 주소에 `verify-intro.mjs` 를 다시 돌려 결과를 대조해 보고한다.
 
 ---
@@ -314,7 +316,7 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 
 ## 흔한 함정
 
-- 엄격한 CSP: 엔진이 `<style>` 을 주입하고 `blob:` 영상을 재생한다. 조립 결과와 `styleHash`, `media-src 'self' blob:` 로 해결한다.
+- 엄격한 CSP: 엔진이 `<style>` 을 주입하고 클립을 `fetch` 해 `blob:` 으로 재생한다. 조립 결과와 `styleHash`, `connect-src 'self'`, `media-src 'self' blob:` 로 해결한다. 해시는 줄바꿈을 LF 로 맞춰 계산하므로 Windows 의 CRLF 체크아웃에서도 같다.
 - 로컬 검증은 운영과 같은 CSP 헤더를 붙인 서버로 한다.
 - 재빌드 뒤 브라우저 자동화는 새 컨텍스트로 한다.
 - 엔진의 `html,body{overflow-x:hidden}` 이 고정 헤더를 깬다. `intro-fixes.css` 가 `clip` 으로 바꾼다.

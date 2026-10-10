@@ -23,6 +23,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -51,17 +52,33 @@ export function parseColor(s) {
   return null;
 }
 
-/** The lowest contrast between the text colour and any pixel of `rect` in an RGBA image `width` wide. */
-export function worstContrast(textRgb, px, width, rect) {
-  const lt = relLuminance(textRgb);
+/** The alpha of a computed colour (1 when it has none): rgba(), rgb( / a), color(srgb / a), % or 0..1. */
+export function colorAlpha(s) {
+  const t = String(s).trim();
+  const m = /\/\s*([\d.]+%?)\s*\)$/.exec(t) || (/^rgba\(/.test(t) ? /,\s*([\d.]+%?)\s*\)$/.exec(t) : null);
+  if (!m) return 1;
+  return m[1].endsWith('%') ? Number(m[1].slice(0, -1)) / 100 : Number(m[1]);
+}
+
+// The contrast of text (alpha over the pixel, as it is drawn) against one background pixel.
+function pixelContrast(textRgb, alpha, bg) {
+  const fg = alpha >= 1 ? textRgb : textRgb.map((c, k) => alpha * c + (1 - alpha) * bg[k]);
+  return contrastRatio(relLuminance(fg), relLuminance(bg));
+}
+
+/**
+ * The lowest contrast between the text colour (with its alpha) and any pixel of `rect` in an RGBA
+ * image `width` wide. NaN when the rect holds no pixel, so it never passes as a contrast.
+ */
+export function worstContrast(textRgb, px, width, rect, alpha = 1) {
   const seen = new Map();
-  let worst = Infinity;
+  let worst = NaN;
   for (let y = rect.y; y < rect.y + rect.height; y++) {
     for (let x = rect.x; x < rect.x + rect.width; x++) {
       const i = (y * width + x) * 4;
       const key = (px[i] << 16) | (px[i + 1] << 8) | px[i + 2];
-      if (!seen.has(key)) seen.set(key, contrastRatio(lt, relLuminance([px[i], px[i + 1], px[i + 2]])));
-      worst = Math.min(worst, seen.get(key));
+      if (!seen.has(key)) seen.set(key, pixelContrast(textRgb, alpha, [px[i], px[i + 1], px[i + 2]]));
+      worst = Number.isNaN(worst) ? seen.get(key) : Math.min(worst, seen.get(key));
     }
   }
   return worst;
@@ -79,21 +96,34 @@ export function judge(s, { minContrast }) {
   for (const sel of s.overlaps) out.push(`overlaps ${sel}`);
   if (s.hOverflow) out.push('horizontal overflow');
   for (const c of s.contrast) {
-    if (c.min === null) out.push(`contrast ${c.el} line ${c.line}: colour not measured (${c.color})`);
-    else if (c.min < minContrast) out.push(`contrast ${c.el} line ${c.line}: ${c.min}`);
+    if (c.min === null) out.push(`contrast ${c.el} line ${c.line}: not measured (${c.why})`);
+    else if (!(c.min >= minContrast)) out.push(`contrast ${c.el} line ${c.line}: ${c.min}`);
   }
   return out;
 }
 
 // ---- browser side ------------------------------------------------------------
 
+// The playwright package resolved from `base` (a folder), or null.
+function resolveFrom(base) {
+  try { return createRequire(path.join(base, 'noop.js')).resolve('playwright'); } catch { return null; }
+}
+
+/**
+ * The playwright package: beside this script, in the project (the current folder), or in the global
+ * npm root. `npx playwright install chromium` alone fetches the browser, not this package.
+ */
 export async function loadPlaywright() {
   try { return await import('playwright'); } catch { /* not beside this script */ }
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const r = spawnSync(npm, ['root', '-g'], { encoding: 'utf8', shell: process.platform === 'win32' });
-  const entry = path.join(String(r.stdout || '').trim(), 'playwright', 'index.mjs');
-  if (fs.existsSync(entry)) return import(pathToFileURL(entry).href);
-  throw new Error('verify-intro: Playwright not found. Install it with the setup-playwright skill (npx playwright install chromium).');
+  const globalRoot = String(spawnSync(npm, ['root', '-g'], { encoding: 'utf8', shell: process.platform === 'win32' }).stdout || '').trim();
+  const entry = resolveFrom(process.cwd()) || (globalRoot && resolveFrom(globalRoot));
+  if (entry) {
+    const mod = await import(pathToFileURL(entry).href);
+    return mod.chromium ? mod : mod.default;
+  }
+  throw new Error('verify-intro: the playwright package was not found. Install it and its browser: '
+    + '`npm i -g playwright && npx playwright install chromium` (or `npm i -D playwright` in the project).');
 }
 
 const navInfo = (page) => page.evaluate(() => {
@@ -111,6 +141,16 @@ async function settle(page) {
     }));
     if (still) return;
   }
+}
+
+// Whether a scene in view shows its clip (has-clip) rather than only its poster still; waits up to
+// 3 s. Not a failure: under reduced motion the engine loads no clips. Reported per scene.
+async function clipPainted(page) {
+  try {
+    await page.waitForFunction(() => [...document.querySelectorAll('.sw-scene.has-clip')]
+      .some((e) => Number(getComputedStyle(e).opacity) > 0.5), null, { timeout: 3000 });
+    return true;
+  } catch { return false; }
 }
 
 async function goToScene(page, i) {
@@ -210,18 +250,20 @@ async function lineContrast(page, i, panel) {
   return lines.map((l) => {
     const x = Math.max(0, Math.floor(l.rect.x - clip.x));
     const y = Math.max(0, Math.floor(l.rect.y - clip.y));
-    const rect = { x, y, width: Math.max(1, Math.min(img.width - x, Math.ceil(l.rect.width))), height: Math.max(1, Math.min(img.height - y, Math.ceil(l.rect.height))) };
+    const rect = { x, y, width: Math.min(img.width - x, Math.ceil(l.rect.width)), height: Math.min(img.height - y, Math.ceil(l.rect.height)) };
     const rgb = parseColor(l.color);
-    if (!rgb) return { el: l.el, line: l.line, min: null, color: l.color };
-    return { el: l.el, line: l.line, min: Number(worstContrast(rgb, img.data, img.width, rect).toFixed(2)) };
+    if (!rgb) return { el: l.el, line: l.line, min: null, why: `colour ${l.color}` };
+    if (rect.width < 1 || rect.height < 1) return { el: l.el, line: l.line, min: null, why: 'line outside the panel' };
+    return { el: l.el, line: l.line, min: Number(worstContrast(rgb, img.data, img.width, rect, colorAlpha(l.color)).toFixed(2)) };
   });
 }
 
 async function measureScene(page, i, o) {
   await goToScene(page, i);
+  const painted = await clipPainted(page);
   const g = geometry(await page.evaluate(rawGeometry, { i, header: o.header, covers: COVERS }));
   const contrast = o.contrast && g.opacity > 0.5 ? await lineContrast(page, i, g.panel) : [];
-  const scene = { scene: i + 1, ...g, contrast };
+  const scene = { scene: i + 1, clipPainted: painted, ...g, contrast };
   return { ...scene, failures: g.opacity > 0.5 ? judge(scene, o) : ['panel not visible at its stop'] };
 }
 
@@ -348,24 +390,28 @@ export function parseViewport(v) {
   return { width: Number(m[1]), height: Number(m[2]), touch: m[3].includes('t'), reduce: m[3].includes('r') };
 }
 
-function parseArgs(argv) {
+const FLAGS = { '--out': 'out', '--header': 'header', '--min-contrast': 'minContrast', '--viewports': 'viewports' };
+const SWITCHES = { '--no-input': ['input', false], '--no-contrast': ['contrast', false] };
+
+/** The command line: a URL, --flag value or --flag=value, and the two switches. */
+export function parseArgs(argv) {
   const o = { url: null, out: null, header: '.sw-topbar', minContrast: 4.5, viewports: VIEWPORTS, input: true, contrast: true };
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--out') o.out = argv[++i];
-    else if (a === '--header') o.header = argv[++i];
-    else if (a === '--min-contrast') o.minContrast = Number(argv[++i]);
-    else if (a === '--viewports') o.viewports = argv[++i].split(',').map(parseViewport);
-    else if (a === '--no-input') o.input = false;
-    else if (a === '--no-contrast') o.contrast = false;
-    else o.url = a;
+    const [flag, inline] = argv[i].includes('=') ? [argv[i].slice(0, argv[i].indexOf('=')), argv[i].slice(argv[i].indexOf('=') + 1)] : [argv[i], null];
+    if (SWITCHES[flag]) o[SWITCHES[flag][0]] = SWITCHES[flag][1];
+    else if (FLAGS[flag]) o[FLAGS[flag]] = inline !== null ? inline : argv[++i];
+    else if (flag.startsWith('--')) throw new Error(`verify-intro: unknown option ${flag}`);
+    else o.url = argv[i];
   }
+  o.minContrast = Number(o.minContrast);
+  if (typeof o.viewports === 'string') o.viewports = o.viewports.split(',').map(parseViewport);
   return o;
 }
 
 const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
-  const o = parseArgs(process.argv.slice(2));
+  let o;
+  try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
   if (!o.url) {
     console.error('usage: node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5] [--viewports 1280x800,390x844t] [--no-input] [--no-contrast]');
     process.exit(2);
