@@ -54,17 +54,18 @@ test("check prints the policy path for a seat folder, and refuses a changed or m
 test("a .env above the seat folder stops the seat unless it sits in the home", (t) => {
   const dir = scratch(t);
   const home = join(dir, "home");
+  // The account's home gets a folder of its own. On Windows the temp folder sits inside the real
+  // one, where every .env counts as the account's own. Kept apart from GEMINI_CLI_HOME, each of
+  // the two homes is checked on its own below.
+  const account = join(dir, "account");
   const seat = join(dir, "base", "ralph-qa.x", "gemini");
   const inHome = join(home, ".cache", "ralph-qa.y", "gemini");
-  for (const d of [seat, inHome, join(dir, "base", ".gemini")]) mkdirSync(d, { recursive: true });
+  const inAccount = join(account, ".cache", "ralph-qa.z", "gemini");
+  for (const d of [seat, inHome, inAccount, join(dir, "base", ".gemini")]) mkdirSync(d, { recursive: true });
   writeFileSync(join(dir, "base", ".env"), "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9\n");
   writeFileSync(join(dir, "base", ".gemini", ".env"), "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9\n");
   writeFileSync(join(home, ".env"), "MY_OWN=1\n");
-  // The account's home gets a folder of its own. On Windows the temp folder sits inside the real
-  // one, where every .env counts as the account's own. Kept apart from GEMINI_CLI_HOME, it leaves
-  // GEMINI_CLI_HOME as the only reason home/.env is not a stray one.
-  const account = join(dir, "account");
-  mkdirSync(account);
+  writeFileSync(join(account, ".env"), "MY_OWN=1\n");
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   t.after(() => {
     for (const [k, v] of Object.entries(saved)) {
@@ -76,7 +77,9 @@ test("a .env above the seat folder stops the seat unless it sits in the home", (
   const env = { GEMINI_CLI_HOME: home, HOME: account, USERPROFILE: account };
   const above = strayEnvFiles(seat, { env });
   assert.ok(above.includes(join(dir, "base", ".env")) && above.includes(join(dir, "base", ".gemini", ".env")), above.join(", "));
-  assert.ok(!strayEnvFiles(inHome, { env }).includes(join(home, ".env")), "the account's own .env is not a stray one");
+  assert.ok(!strayEnvFiles(inHome, { env }).includes(join(home, ".env")), "GEMINI_CLI_HOME's own .env is not a stray one");
+  assert.ok(!strayEnvFiles(inAccount, { env }).includes(join(account, ".env")),
+    "nor is the account home's .env while GEMINI_CLI_HOME is elsewhere");
   const refused = run(SEAT, ["check", seat], env);
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /gemini would read .*\.env/);
