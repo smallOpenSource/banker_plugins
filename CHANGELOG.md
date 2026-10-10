@@ -18,10 +18,23 @@
   단계는 Claude 가 쓰는 작업 목록(TaskCreate, TaskUpdate 나 TodoWrite)이다. 이 모듈이 보기 전에 만든 작업(`--continue`, `--resume`)도 TaskList, TaskGet 결과와 TaskUpdate 로 채운다. 항목이 모두 완료된 목록은 다음 요청이 올 때까지 보이고, 그 뒤로는 다시 요청이 단계다. 하위 에이전트의 TodoWrite 는 그 에이전트의 목록이라 넣지 않는다. 작업 목록이 없으면 이 세션의 요청 하나하나가 단계이고, 실행 중인 요청이 진행 중인 단계다. 아직 요청이 없으면 "진행 중인 작업 없음" 단계 하나를 보인다.\
   단계를 누르면 목록 아래에 간결한 설명(요청이나 작업 내용, 상태, 걸린 시간, 도구 호출 수)이 나온다. 작업의 걸린 시간은 진행 중이 된 때부터 잰다. 화살표를 누르면 그 단계가 진행 중일 때 한 도구 호출(하위 에이전트와 백그라운드 에이전트 것 포함)이 한 단계 깊이로 펼쳐지거나 접히고, 최근 30개까지 보인다. 요청이 끝난 뒤에 백그라운드 에이전트가 한 호출은 마지막 단계 아래에 붙는다. 하위 항목을 눌러도 설명이 나온다. 단계는 50개까지 두고 넘치면 오래된 요청이나 끝난 작업부터 뺀다. 단계마다 도구 호출은 최근 200개를 두고, 호출 수는 전부 센다. 단계 이름과 설명의 제어 문자는 지운다(2.1.288 이하는 붙여넣은 이스케이프 문자가 아래 줄을 덮어 그린다).\
   mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 `/progress` 가 `commands/progress.md` 로 가고, UserPromptExpansion 훅(`hooks/progress-fallback.mjs`)이 모델을 부르지 않고 "mod 를 지원하지않는 claude code 버전입니다" 만 보인다. 2.1.286 과 2.1.296 에서 패널, 토글, 마우스 누름을 확인했다. Codex 에는 이 명령이 없다.
+- **`3d-intro-build` 가 유료 단계마다 검토 페이지로 판정을 받는다.** `curate.mjs` 가 스틸과 클립 단계를 다루고, 산출물마다 카드 하나에 프롬프트 전문, 제외 프롬프트, 모델, 크기나 길이, 첫과 끝 프레임, 생성 시각, 비용, 경로, sha256 을 함께 보인다. 같은 장면의 테이크는 가로로 비교하고, 맨 위에 승인 수와 누적 비용, 승인 예산이 보인다.\
+  판정은 페이지에서 저장하거나 대화로 받아(`--record`) 단계별 `decisions.json` 에 남긴다. 탈락한 테이크는 `--archive` 로 `rejected-YYYYMMDD/` 에 옮긴다. 모든 장면이 승인돼야 영상 단계로 간다.
+- **`3d-intro-build` 의 결과 페이지에 인라인 script, style 이 없어 엄격한 CSP 에서 돈다.** 설정은 `intro.js`, 테마는 `theme.css`, 엔진 CSS 는 엔진 파일에서 글자 그대로 뽑은 `scrub-engine.css` 다. 엔진이 여전히 주입하는 `<style>` 하나의 CSP 해시(`styleHash`)를 조립이 알려 준다. 그 해시를 `style-src` 에 더하면 콘솔 오류가 없고, 더하지 않아도 같은 규칙이 적용된다. 실제 Chromium 에서 두 경우를 확인했다. 엔진과 템플릿 파일은 그대로다.
+- **장면 단위 이동과 흐린 유리 패널(선택).** `stepNav` 를 켜면 휠 제스처 하나, 방향키, PageDown, Space, 30px 넘는 스와이프가 정확히 한 장면을 이동한다. 이동 중 입력은 최신 하나만 남겼다가 실행한다.\
+  마지막 장면 다음은 본문 맨 위이고, 위 입력 한 번으로 돌아온다. 마지막 장면의 아래 입력 보호(`lastGuardMs`, 250ms)는 출처 프로젝트에서도 검증 중인 값이다. 메인화면 버튼은 마지막 클립이 끝까지 재생된 뒤 보이며, 움직임 줄이기 설정에서도 보인다. 건너뛰기 링크(애니메이션 없이 바로 이동, 포커스 이동), 마우스와 터치 안내, 클립 미리 받기(휴대폰과 Save-Data 에서는 처음 3개만)와 같은 주소 요청 합치기를 함께 한다. 본문 요소는 입력 때마다 찾으므로 스크립트 뒤에 그려지는 본문도 되고, 없으면 마지막 장면 뒤 스크롤을 가로채지 않는다. `panel: "glass"` 는 흐린 유리 패널이다. 기본값은 어두운 장면용이고, 본문 대비 4.5 는 독립 검증에서 잰다.
+- **정지와 비행 모드(선택, 이 스킬에서 미검증).** 장면마다 스틸을 1초 영상으로 인코딩한 정지 클립(`stillToClip`, 무료)을 두고, 장면 사이를 WAN 의 첫, 끝 프레임 지정 비행 클립으로 잇는다(`order: ['wan']`, Sora 폴백 없음). `estimateCost` 의 `mode: 'holdFlight'` 는 비행 클립만 센다. WAN 첫, 끝 프레임 경로는 유료 스모크로 확인하지 않았다.
+- **실제 브라우저 측정 `verify-intro.mjs`(독립 검증용).** 화면 크기마다 새 컨텍스트에서 장면별 패널 위치, 헤더, 안내와 장면 점 겹침, 가로 넘침, 콘솔 오류, 글자를 숨긴 줄 단위 최저 대비를 잰다. 장면 단위 이동이면 휠과 관성, 키, 스와이프, 메인화면 버튼, 건너뛰기 링크도 잰다. 검증 목록은 `verify.md` 다. Node 용 playwright 패키지와 Chromium 이 필요하다(`npx playwright install chromium` 은 브라우저만 받는다).
+- **`motion-graphic-make` 에 단계 관문.** 계획 승인, 스냅숏 검토 페이지(구성 지시문과 함께), 렌더 승인과 검토, 사이트 배치(선택), 독립 검증, 정리 순서다. 렌더링은 계속 hyperframes 가 한다. 검토 페이지와 서버는 `3d-intro-build` 와 같은 파일이다.
 
 ### Fixed
 - `/graceful-pause` 의 로그 줄이 플러그인 이름을 두 번 붙이지 않는다. 엔진이 플러그인 이름을 붙이는데 문구에도 `banker: ` 가 있어 `banker: banker: ...` 로 보였다.
 - **`ralph-qa` 시험이 Windows, macOS 에서도 통과한다(시험만 바꿈).** 전에는 Windows 에서 40건, macOS 에서 2건이 실패했다. Windows 에서는 `verifier-probe` 시험의 가짜 세계가 파일과 폴더를 `\` 와 `/` 어느 쪽으로 찾아도 같게 본다(probe 는 실행 OS 의 규칙으로 경로를 붙인다). `gemini-seat` 시험은 임시 폴더의 실제 경로를 쓰고(macOS 의 `/var` 는 `/private/var` 링크), `.env` 시험 동안 계정 홈을 따로 만든 폴더로 두고(Windows 의 임시 폴더는 계정 홈 안) 두 홈(GEMINI_CLI_HOME, 계정 홈)의 `.env` 를 각각 확인한다. 긴 이름 시험의 가짜 경로는 임시 폴더가 있는 드라이브의 뿌리에서 시작한다.
+- **스크럽 엔진의 화면 결함을 페이지 쪽에서 고친다(`intro-fixes.css`, 모든 인트로).** 엔진이 문구 블록에 매 프레임 인라인 transform 을 넣어 CSS 의 세로 가운데 맞춤이 사라졌다. `translate` 로 다시 가운데에 둔다. 860px 이하에서는 엔진의 장면 점이 문구 위에 겹쳤다. 오른쪽 여백을 둔다. 고정 헤더를 깨는 `overflow-x: hidden` 은 `clip` 으로 바꾼다.
+- **검토 서버가 프로젝트 폴더의 모든 파일을 내주던 문제를 고쳤다(보안).** 전에는 setup 이 키를 저장하는 `.env.3d-intro.local` 도 내려받을 수 있었다. 이제 `curate-input.json` 에 적힌 테이크와 프레임만 내준다. 두 서버 모두 Host 가 localhost 나 IP 주소가 아니면 거절해 DNS 재바인딩을 막고, 판정은 같은 출처의 JSON 요청만 받는다. 페이지를 연 뒤 대화로 기록된 판정은 그 페이지가 덮어쓰지 못한다(409).
+- 미리보기 서버가 잘못된 퍼센트 인코딩 URL 하나에 죽던 문제를 고쳤다(이제 400). 서빙 폴더 안에 `port.txt` 를 쓰지 않는다.
+- 조립이 엔진 파일과 함께 scroll-world 의 MIT 고지(`scrub-engine.LICENSE.txt`)를 사이트 폴더에 둔다. CSP 해시는 줄바꿈을 LF 로 맞춰 계산해 Windows 의 CRLF 체크아웃에서도 엔진이 주입하는 스타일과 같다.
+- `3d-intro-build` 의 `prompts.md` 가 다음 leg 의 시드를 톤 정합한 프레임이라고 적고 있었다. SKILL 과 실측대로 raw 마지막 프레임으로 고쳤다.
 
 ### Changed
 - **mod 모듈 `hooks/register.mjs` 가 기능들이 함께 쓰는 이벤트를 한 번씩만 건다.** 엔진은 matcher 없는 이벤트를 모듈 전체에서 한 번만 받는다. 그래서 `session.start`, `session.end`, `turn.start`, `turn.complete` 는 `register.mjs` 가 걸고 `/graceful-pause` 와 `/progress` 의 함수를 부르며, 두 명령의 등록도 `register.mjs` 가 한다. `/graceful-pause` 의 동작은 바뀌지 않았다.
@@ -29,6 +42,9 @@
 - **`parseEnvFile` 이 따옴표 없는 값에서 공백 뒤의 `#` 부터를 주석으로 지운다(`=` 바로 뒤도 같음).** 전에는 주석이 값에 붙어 endpoint, 키, 모델, `VIDEO_PROVIDER_ORDER` 가 깨졌다. 공백 없이 붙은 `#` 와 따옴표 안은 그대로 두고, `persistCreds` 는 그렇게 바뀔 값(공백 뒤 `#`, 앞뒤 공백이나 따옴표)을 따옴표로 감싸 써서 그대로 돌아오게 한다.
 - **`pollVideo` 가 408, 429 를 뺀 4xx 에서 바로 멈춘다(오류에 `status`, `code`).** 전에는 사라진 job 도 `maxTicks` 까지 폴링했다. 폴링 사이에 주입한 `sleep` 을 쓰고, 오류 응답의 본문은 상태로 쓰지 않는다.
 - `scripts/sync-adapter.js` 가 `azure-adapter.mjs` 와 `video-pool.mjs` 두 파일을 setup 스킬로 미러링하고 검사한다.
+- **`serve.mjs`, `curate.mjs` 의 서버 규칙.** 포트는 시스템이 주는 빈 번호를 쓴다(전에는 고정 후보 8개). 상태 파일(PID, 포트, 폴더)은 `serve.mjs` 가 서빙 폴더 밖에, `curate.mjs` 가 프로젝트 폴더에 둔다(내주지 않음). `--stop` 은 바인드한 주소에서 그 포트가 기록된 PID 로 답할 때만 끄고 포트가 닫혔는지 확인한다. 기록된 서버가 같은 설정으로 살아 있으면 그 주소만 알리고, 설정(`--csp`, `PREVIEW_HOST`)이 다르면 exit 1 로 `--stop` 뒤 다시 띄우라고 알린다(CSP 없는 서버로 검증하는 일을 막음). `serve.mjs --csp` 는 운영과 같은 CSP 헤더를 붙인다. `PREVIEW_HOST=0.0.0.0` 은 경고를 낸다.
+- `curate.mjs` 의 출력이 `selection.json` 에서 단계별 `decisions.json` 으로 바뀌었다. 입력의 `variants` 는 `takes` 로 읽는다.
+- `scripts/sync-adapter.js` 가 `preview-lib.mjs`, `serve.mjs`, `curate.mjs` 를 `motion-graphic-make` 로도 미러링하고 검사한다.
 
 ## [0.15.2] - 2026-10-07
 

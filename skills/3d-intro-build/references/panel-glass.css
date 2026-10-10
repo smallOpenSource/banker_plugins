@@ -1,0 +1,51 @@
+/* Frosted-glass copy panel for the scroll-world intro (opt-in: intro.json "panel": "glass").
+   Dark glass under light text, readable over bright and busy scenes.
+
+   Contrast rule: the body lines keep a contrast of at least 4.5 against the brightest real pixel
+   behind them (verify-intro.mjs measures it with the text hidden). When a bright scene falls below,
+   raise --intro-panel-alpha or deepen the shade; a lighter panel fails first on the body lines.
+   The colours below are a starting point: take --intro-panel-rgb from the brand's darkest colour. */
+
+.sw-root {
+  --intro-panel-rgb: 11, 18, 32;
+  --intro-panel-alpha: .36;
+  --intro-title: #fff;
+  --intro-body: #F1F5F9;
+  --intro-num: #E2E8F0;
+  --intro-text-shadow: 0 1px 2px rgba(var(--intro-panel-rgb), .9), 0 0 6px rgba(var(--intro-panel-rgb), .75),
+    0 0 16px rgba(var(--intro-panel-rgb), .6);
+}
+
+.sw-copy {
+  box-sizing: border-box;
+  width: min(44vw, 500px);
+  padding: clamp(18px, 2.2vw, 28px);
+  background: rgba(var(--intro-panel-rgb), var(--intro-panel-alpha));
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  backdrop-filter: blur(10px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 18px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .24);
+}
+
+.sw-copy__num { color: var(--intro-num); text-shadow: var(--intro-text-shadow); }
+.sw-copy__eyebrow { color: color-mix(in srgb, var(--sw-accent) 30%, #fff); text-shadow: var(--intro-text-shadow); }
+.sw-copy__title { color: var(--intro-title); text-shadow: var(--intro-text-shadow); }
+/* One item per line: write the body with line breaks, each short enough for one line at 375px
+   (about 36 Latin characters). */
+.sw-copy__body { color: var(--intro-body); text-shadow: var(--intro-text-shadow); white-space: pre-line; max-width: none; }
+
+/* A light shade behind the panel, from the left on wide screens. */
+.sw-copylayer::before {
+  background: linear-gradient(90deg, rgba(var(--intro-panel-rgb), .14) 0%, rgba(var(--intro-panel-rgb), .1) 40%,
+    rgba(var(--intro-panel-rgb), .04) 68%, transparent 100%);
+}
+
+/* At 860px and below the engine puts the panel at the bottom with side margins; the shade rises
+   from the bottom instead. */
+@media (max-width: 860px) {
+  .sw-copy { width: auto; }
+  .sw-copylayer::before {
+    background: linear-gradient(0deg, rgba(var(--intro-panel-rgb), .28) 0%, rgba(var(--intro-panel-rgb), .14) 45%, transparent 75%);
+  }
+}

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 /*
- * Adapter sync guard. Single source of truth = the BUILD copies of the shared 3d-intro modules.
- * Mirrors each one, byte-identical, to the SETUP skill so both skills ship the same code.
- *   canonical: skills/3d-intro-build/references/<file>
- *   mirror:    skills/3d-intro-setup/references/<file>
- *   files:     azure-adapter.mjs (Azure image + Sora), video-pool.mjs (WAN key pool -> Sora fallback)
+ * Shared-module sync guard. Single source of truth = the BUILD copies in
+ * skills/3d-intro-build/references/. Each listed file is mirrored, byte-identical, into the other
+ * skill that ships it, because banker skills are installed (Claude and Codex) as separate folders.
+ *   azure-adapter.mjs, video-pool.mjs     -> 3d-intro-setup      (Azure image + Sora, WAN key pool)
+ *   preview-lib.mjs, serve.mjs, curate.mjs -> motion-graphic-make (local servers, review page)
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
  *   node scripts/sync-adapter.js --check  # exit 1 if any pair differs (used in CI/prepublish)
@@ -14,13 +14,16 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const FILES = ['azure-adapter.mjs', 'video-pool.mjs'];
+const MIRRORS = [
+  { skill: '3d-intro-setup', files: ['azure-adapter.mjs', 'video-pool.mjs'] },
+  { skill: 'motion-graphic-make', files: ['preview-lib.mjs', 'serve.mjs', 'curate.mjs'] },
+];
 const check = process.argv.includes('--check');
 
 let failed = false;
-for (const file of FILES) {
+for (const { skill, file } of MIRRORS.flatMap((m) => m.files.map((f) => ({ skill: m.skill, file: f })))) {
   const canonicalPath = path.join(root, 'skills', '3d-intro-build', 'references', file);
-  const mirrorPath = path.join(root, 'skills', '3d-intro-setup', 'references', file);
+  const mirrorPath = path.join(root, 'skills', skill, 'references', file);
 
   if (!fs.existsSync(canonicalPath)) {
     console.error(`ADAPTER SOURCE MISSING: ${path.relative(root, canonicalPath)} (source of truth).`);
@@ -34,7 +37,7 @@ for (const file of FILES) {
 
   if (check) {
     if (inSync) {
-      console.log(`${file} in sync`);
+      console.log(`${file} in sync (${skill})`);
     } else {
       console.error(`ADAPTER MISMATCH: ${path.relative(root, mirrorPath)} != ${path.relative(root, canonicalPath)} (source of truth).`);
       console.error('Fix: node scripts/sync-adapter.js');
@@ -44,7 +47,7 @@ for (const file of FILES) {
   }
 
   if (inSync) {
-    console.log(`${file} already in sync`);
+    console.log(`${file} already in sync (${skill})`);
     continue;
   }
   fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
