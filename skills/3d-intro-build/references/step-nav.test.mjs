@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { DEFAULTS, createNavigator, createWheelGesture, moveDuration, stopPositions } = require('./step-nav.js');
+const { DEFAULTS, belongsToIntro, createNavigator, createWheelGesture, keyInput, moveDuration, stopPositions, totalWeight, wheelIgnored } = require('./step-nav.js');
 
 const CONFIG = { diveScroll: 1.3, connScroll: 0.9, sections: [{}, {}, {}], connectors: ['c1.mp4', null] };
 
@@ -106,4 +106,55 @@ test('sync places the navigator at the nearest stop with a 1 px tolerance', () =
   n.sync(2499.2);
   assert.equal(n.state().index, 3);
   assert.equal(n.state().atBody, true);
+});
+
+test('a move starts from where the page stands, so a stop just above the body is never a dead end', () => {
+  const { n, moves } = nav();
+  n.sync(2470);
+  n.input('down');
+  assert.deepEqual([moves[0].from, moves[0].to], [2470, 2500], '30 px above the body top, down reaches it');
+  const up = nav();
+  up.n.sync(2470);
+  up.n.input('up');
+  assert.deepEqual([up.moves[0].from, up.moves[0].to], [2470, 2000]);
+  const mid = nav();
+  mid.n.sync(1500);
+  mid.n.input('down');
+  assert.equal(mid.moves[0].to, 2000, 'between stops, down goes to the next one below');
+});
+
+test('the intro takes an input only above the body top, or an up input at it; without a body it never traps', () => {
+  assert.equal(belongsToIntro(4000, 'down', 4800, 5200), true);
+  assert.equal(belongsToIntro(4800, 'down', 4800, 5200), true, 'from the last scene down goes to the body');
+  assert.equal(belongsToIntro(5200, 'down', 4800, 5200), false, 'the body scrolls as usual');
+  assert.equal(belongsToIntro(5200, 'up', 4800, 5200), true, 'one up input returns to the last scene');
+  assert.equal(belongsToIntro(6000, 'up', 4800, 5200), false);
+  assert.equal(belongsToIntro(4800, 'down', 4800, null), false, 'no body element: past the last scene the page scrolls on');
+  assert.equal(belongsToIntro(4800, 'up', 4800, null), true);
+  assert.equal(belongsToIntro(100, 'down', 4800, null), true);
+});
+
+test('Space stays with a focused button or link; arrows and page keys still move; fields keep every key', () => {
+  const el = (tagName, role = null) => ({ tagName, getAttribute: (k) => (k === 'role' ? role : null) });
+  const key = (k, target, extra = {}) => keyInput({ key: k, target, ...extra });
+  assert.equal(key(' ', el('BODY')), 'down');
+  assert.equal(key(' ', el('BODY'), { shiftKey: true }), 'up');
+  assert.equal(key(' ', el('BUTTON')), null);
+  assert.equal(key(' ', el('DIV', 'button')), null);
+  assert.equal(key('ArrowDown', el('BUTTON')), 'down');
+  assert.equal(key('ArrowDown', el('INPUT')), null);
+  assert.equal(key('ArrowDown', el('DIV', 'listbox')), null);
+  assert.equal(key('PageUp', el('BODY')), 'up');
+  assert.equal(key('ArrowDown', el('BODY'), { ctrlKey: true }), null);
+});
+
+test('zoom, sideways and tiny wheels are left to the browser', () => {
+  assert.equal(wheelIgnored({ deltaY: 40, ctrlKey: true }, DEFAULTS), true);
+  assert.equal(wheelIgnored({ deltaY: 5, deltaX: 40 }, DEFAULTS), true);
+  assert.equal(wheelIgnored({ deltaY: 1 }, DEFAULTS), true);
+  assert.equal(wheelIgnored({ deltaY: 40 }, DEFAULTS), false);
+});
+
+test('the scroll length matches the engine: dives and the connectors that exist, plus one screen', () => {
+  assert.equal(totalWeight(CONFIG), 1.3 + 0.9 + 1.3 + 1.3);
 });

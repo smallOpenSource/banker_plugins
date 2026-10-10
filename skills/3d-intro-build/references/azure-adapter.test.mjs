@@ -318,6 +318,11 @@ test('stillToClip: repeats the still for the hold, encoded as the engine wants, 
   assert.deepEqual([seen[1].args[seen[1].args.indexOf('-t') + 1], seen[1].args[seen[1].args.indexOf('-vf') + 1]], ['2', 'format=yuv420p']);
   cp.spawnSync = () => ({ status: 1, stdout: '', stderr: 'Unknown encoder libx264' });
   await assert.rejects(A.stillToClip('/in/s1.png', path.join(os.tmpdir(), 'never-written.mp4'), { ffmpeg: '/fake/ffmpeg' }), /stillToClip failed: Unknown encoder/);
+  const old = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hold-')), 'hold-1.mp4');
+  fs.writeFileSync(old, 'a hold from an earlier run');
+  await assert.rejects(A.stillToClip('/in/s1.png', old, { ffmpeg: '/fake/ffmpeg' }), /stillToClip failed/, 'an earlier file never passes for a failed run');
+  assert.equal(fs.existsSync(old), false);
+  fs.rmSync(path.dirname(old), { recursive: true, force: true });
 });
 
 test('concatClips: builds an arg ARRAY with one -i per clip, a concat filter, and -map', async () => {

@@ -4,7 +4,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
-  VIEWPORTS, contrastRatio, insideViewport, intersects, judge, parseColor, parseViewport, relLuminance, worstContrast,
+  VIEWPORTS, colorAlpha, contrastRatio, insideViewport, intersects, judge, parseArgs, parseColor, parseViewport, relLuminance, worstContrast,
 } from './verify-intro.mjs';
 
 test('the default screens are the ones the guide lists, touch where a phone is', () => {
@@ -33,8 +33,28 @@ test('a colour reads in the forms a browser reports, and an unknown form is not 
   assert.deepEqual(parseColor('rgb(1 2 3 / 0.5)'), [1, 2, 3]);
   assert.equal(parseColor('oklch(0.7 0.1 200)'), null);
   const ok = { inViewport: true, belowHeader: true, overlaps: [], hOverflow: false };
-  assert.deepEqual(judge({ ...ok, contrast: [{ el: 'eyebrow', line: 1, min: null, color: 'oklch(0.7 0.1 200)' }] }, { minContrast: 4.5 }),
-    ['contrast eyebrow line 1: colour not measured (oklch(0.7 0.1 200))']);
+  assert.deepEqual(judge({ ...ok, contrast: [{ el: 'eyebrow', line: 1, min: null, why: 'colour oklch(0.7 0.1 200)' }] }, { minContrast: 4.5 }),
+    ['contrast eyebrow line 1: not measured (colour oklch(0.7 0.1 200))']);
+  assert.deepEqual(judge({ ...ok, contrast: [{ el: 'body', line: 4, min: NaN }] }, { minContrast: 4.5 }),
+    ['contrast body line 4: NaN'], 'a contrast that is not a number never passes');
+});
+
+test('a translucent text colour is measured blended over each pixel behind it', () => {
+  assert.equal(colorAlpha('rgba(1, 2, 3, 0.5)'), 0.5);
+  assert.equal(colorAlpha('rgb(1 2 3 / 50%)'), 0.5);
+  assert.equal(colorAlpha('color(srgb 1 1 1 / 0.25)'), 0.25);
+  assert.equal(colorAlpha('rgb(1, 2, 3)'), 1);
+  const black = new Uint8ClampedArray([0, 0, 0, 255]);
+  const rect = { x: 0, y: 0, width: 1, height: 1 };
+  assert.equal(Math.round(worstContrast([255, 255, 255], black, 1, rect)), 21);
+  const half = worstContrast([255, 255, 255], black, 1, rect, 0.5);
+  assert.ok(half > 5 && half < 5.5, `white at half opacity on black reads as mid grey: ${half}`);
+});
+
+test('the command line takes --flag value and --flag=value, and refuses an unknown flag', () => {
+  const o = parseArgs(['http://x/', '--out=r.json', '--header', '.site-header', '--min-contrast=4.5', '--viewports=1280x800,390x844t']);
+  assert.deepEqual([o.url, o.out, o.header, o.minContrast, o.viewports.length], ['http://x/', 'r.json', '.site-header', 4.5, 2]);
+  assert.throws(() => parseArgs(['http://x/', '--outt', 'r.json']), /unknown option --outt/);
 });
 
 test('a line is judged by its worst pixel behind it, light or dark text alike', () => {

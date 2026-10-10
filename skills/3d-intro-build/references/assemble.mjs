@@ -8,6 +8,7 @@
  *     index.html            (head of index-template.html; no inline script or style)
  *     scrub-engine.js       (copied verbatim from references/)
  *     scrub-engine.css      (the CSS the engine injects, taken from scrub-engine.js unchanged)
+ *     scrub-engine.LICENSE.txt (scroll-world's MIT notice, which ships with the engine files)
  *     theme.css             (the template's --sw-* tokens, set from the manifest theme)
  *     intro-fixes.css       (centring and overflow fixes for the engine, every page)
  *     intro.js              (the mountScrollWorld config and call)
@@ -152,8 +153,13 @@ function buildConfig(manifest, projectDir, outDir) {
 
 const PANELS = { glass: 'panel-glass.css' };
 
-/** The CSS the engine injects into <head>, exactly: the `css` template literal wrapped in @layer sw. */
-export function engineCss(engineSource) {
+/**
+ * The CSS the engine injects into <head>, exactly: the `css` template literal wrapped in @layer sw.
+ * A template literal turns CRLF and CR into LF, so a checkout with CRLF line ends (git on Windows)
+ * is read the same way and gives the same hash.
+ */
+export function engineCss(rawSource) {
+  const engineSource = String(rawSource).replace(/\r\n?/g, '\n');
   const open = engineSource.indexOf('const css = `');
   const close = open === -1 ? -1 : engineSource.indexOf('`;', open + 13);
   if (close === -1) throw new Error('assemble: scrub-engine.js no longer holds `const css = `...``');
@@ -223,11 +229,16 @@ ${lines.map((l) => `  ${l}`).join('\n')}
 const escHtml = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const escAttr = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// Heads the copied engine rules: they are scroll-world's (MIT), whose notice ships beside them.
+const ENGINE_NOTICE = '/* scroll-world (https://github.com/oso95/scroll-world), MIT License, (c) 2026 cyw.\n'
+  + '   The rules scrub-engine.js injects, copied unchanged. Notice: scrub-engine.LICENSE.txt */\n';
+
 function writeStatic(out, manifest, template) {
   const engineSource = fs.readFileSync(path.join(HERE, 'scrub-engine.js'), 'utf8');
   fs.copyFileSync(path.join(HERE, 'scrub-engine.js'), path.join(out, 'scrub-engine.js'));
+  fs.copyFileSync(path.join(HERE, 'LICENSE'), path.join(out, 'scrub-engine.LICENSE.txt'));
   const css = engineCss(engineSource);
-  fs.writeFileSync(path.join(out, 'scrub-engine.css'), css);
+  fs.writeFileSync(path.join(out, 'scrub-engine.css'), ENGINE_NOTICE + css);
   const style = /<style>([\s\S]*?)<\/style>/.exec(template);
   fs.writeFileSync(path.join(out, 'theme.css'), themeCss(style ? style[1] : '', manifest.theme));
   const copies = ['intro-fixes.css', manifest.panel ? PANELS[manifest.panel] : null,

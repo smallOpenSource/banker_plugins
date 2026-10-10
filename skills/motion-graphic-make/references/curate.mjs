@@ -22,6 +22,9 @@
  *                   [--take <n|file>] [--note "..."]  record a verdict given in chat
  *   node curate.mjs --archive [projectDir]           move rejected takes to rejected-YYYYMMDD/
  *   PREVIEW_HOST=0.0.0.0 binds every interface and prints a warning.
+ * The server answers only the takes and frames the input lists (never other files of the folder),
+ * only to a Host that is localhost or an IP address, and takes verdicts only as JSON from its own
+ * page; a page drawn before a newer verdict (one recorded in chat) gets 409 instead of overwriting it.
  *
  * Runtime: Node >=18 builtins only. No shell, cross-platform.
  */
@@ -31,8 +34,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  LOOPBACK, answersPid, decodePath, forgetSelf, hostWarning, listen, resolveInside, send, sendFile, stopServer,
-  urlFor, writeState,
+  LOOPBACK, answersPid, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, readState, resolveInside,
+  send, sendFile, stopServer, urlFor, writeState,
 } from './preview-lib.mjs';
 
 const INPUT = 'curate-input.json';
@@ -62,13 +65,26 @@ export function readInput(dir) {
   return { ...raw, stage: raw.stage || 'stills', scenes };
 }
 
+// No file yet is an empty record; a file that does not parse stops the work, so that a hand edit gone
+// wrong is not replaced with the other stages' verdicts lost.
 export function readDecisions(dir) {
-  try { return JSON.parse(fs.readFileSync(path.join(dir, DECISIONS), 'utf8')); } catch { return {}; }
+  let text;
+  try { text = fs.readFileSync(path.join(dir, DECISIONS), 'utf8'); } catch (e) {
+    if (e.code === 'ENOENT') return {};
+    throw e;
+  }
+  try { return JSON.parse(text); } catch (e) {
+    throw new Error(`curate: ${DECISIONS} 을 읽지 못했습니다(${e.message}). 고치거나 지운 뒤 다시 하세요`);
+  }
 }
 
-function writeDecisions(dir, all) {
-  fs.writeFileSync(path.join(dir, DECISIONS), JSON.stringify(all, null, 2) + '\n');
+// Written whole or not at all: a crash mid-write leaves the previous file.
+function writeJson(file, value) {
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify(value, null, 2) + '\n');
+  fs.renameSync(`${file}.tmp`, file);
 }
+
+const writeDecisions = (dir, all) => writeJson(path.join(dir, DECISIONS), all);
 
 // The verdict a scene's choice and note add up to: a note asks for a new take.
 const verdictOf = (e) => (e.note ? 'regenerate' : e.chosen ? 'approve' : 'pending');
@@ -136,20 +152,26 @@ export function recordDecision(dir, { scene, verdict, take, note }, now = new Da
   return e;
 }
 
-// Verdicts the page sends: one chosen take per scene, a note, and rejected takes.
+const stale = () => Object.assign(new Error('curate: 페이지를 연 뒤 판정이 바뀌었습니다. 새로 고친 뒤 다시 저장하세요'), { status: 409 });
+
+// One scene's verdict as the page sends it: the chosen take, a note, the rejected takes.
+function pageEntry(stage, scene, p, now) {
+  const files = new Set(scene.takes.map((t) => t.file));
+  if (p.chosen && !files.has(p.chosen)) throw new Error(`curate: ${scene.id} 의 선택이 테이크가 아닙니다`);
+  const rejected = (Array.isArray(p.rejected) ? p.rejected : []).filter((f) => files.has(f));
+  const e = entryFor(stage, scene.id);
+  Object.assign(e, { chosen: p.chosen || undefined, note: String(p.note ?? '').trim() || undefined, rejected });
+  return Object.assign(e, { verdict: verdictOf(e), by: 'page', at: now.toISOString() });
+}
+
+// Verdicts the page sends. `basedOn` is the record the page was drawn from; a verdict recorded since
+// (in chat) is not overwritten.
 function applyPageDecisions(dir, payload, now = new Date()) {
   const input = readInput(dir);
   const all = readDecisions(dir);
   const stage = stageOf(all, input.stage);
-  for (const p of Array.isArray(payload.scenes) ? payload.scenes : []) {
-    const scene = findScene(input, p.id);
-    const files = new Set(scene.takes.map((t) => t.file));
-    const rejected = (Array.isArray(p.rejected) ? p.rejected : []).filter((f) => files.has(f));
-    if (p.chosen && !files.has(p.chosen)) throw new Error(`curate: ${scene.id} 의 선택이 테이크가 아닙니다`);
-    const e = entryFor(stage, scene.id);
-    Object.assign(e, { chosen: p.chosen || undefined, note: String(p.note ?? '').trim() || undefined, rejected });
-    Object.assign(e, { verdict: verdictOf(e), by: 'page', at: now.toISOString() });
-  }
+  if ((payload.basedOn || '') !== (stage.updatedAt || '')) throw stale();
+  for (const p of Array.isArray(payload.scenes) ? payload.scenes : []) pageEntry(stage, findScene(input, p.id), p, now);
   stage.updatedAt = now.toISOString();
   writeDecisions(dir, all);
   return stage;
@@ -157,12 +179,14 @@ function applyPageDecisions(dir, payload, now = new Date()) {
 
 const dated = (now) => `rejected-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
 
+// Moves a take into `folder`, keeping its place relative to the project however its path is spelled.
 function moveInto(dir, file, folder) {
-  const to = `${folder}/${file.split(/[\\/]/).join('/')}`;
-  const dest = path.join(dir, ...to.split('/'));
+  const src = path.normalize(path.join(dir, file));
+  const rel = path.relative(dir, src);
+  const dest = path.join(dir, folder, rel);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.renameSync(path.join(dir, ...file.split(/[\\/]/)), dest);
-  return { file, to };
+  fs.renameSync(src, dest);
+  return { file, to: [folder, ...rel.split(path.sep)].join('/') };
 }
 
 /** Moves the current stage's rejected takes into rejected-YYYYMMDD/ and drops them from the input. */
@@ -183,7 +207,7 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
   for (const s of raw.scenes || []) {
     for (const key of ['takes', 'variants']) if (Array.isArray(s[key])) s[key] = s[key].filter((t) => !gone.has(t.file));
   }
-  fs.writeFileSync(path.join(dir, INPUT), JSON.stringify(raw, null, 2) + '\n');
+  writeJson(path.join(dir, INPUT), raw);
   writeDecisions(dir, all);
   return moves;
 }
@@ -212,9 +236,13 @@ function frameRow(label, file, dir) {
   return `<dt>${label}</dt><dd>${thumb}<code>${escHtml(file)}</code></dd>`;
 }
 
+function hashOf(fp) {
+  if (!fp || !fs.existsSync(fp)) return '파일 없음';
+  try { return sha256(fp); } catch (e) { return `해시 실패(${e.code || e.message})`; }
+}
+
 function fileFacts(t, dir) {
-  const fp = inside(dir, t.file) ? path.join(dir, t.file) : null;
-  const hash = fp && fs.existsSync(fp) ? sha256(fp) : '파일 없음';
+  const hash = hashOf(inside(dir, t.file) ? path.join(dir, t.file) : null);
   return `<dt>파일</dt><dd><code>${escHtml(t.file ?? '')}</code></dd><dt>sha256</dt><dd><code class="hash">${escHtml(hash)}</code></dd>`;
 }
 
@@ -242,7 +270,8 @@ function card(t, dir, promptLabel, e) {
 const CHIPS = { approve: '승인', regenerate: '재생성 요청', pending: '대기' };
 
 function sceneBlock(s, i, ctx) {
-  const e = ctx.entries.get(s.id) || { verdict: 'pending', rejected: [] };
+  const found = ctx.entries.get(s.id) || { verdict: 'pending', rejected: [] };
+  const e = { ...found, verdict: CHIPS[found.verdict] ? found.verdict : 'pending' };
   const cards = s.takes.map((t) => card(t, ctx.dir, ctx.promptLabel, e)).join('\n      ') || '<p class="empty">테이크가 없습니다.</p>';
   return `<section class="scene" data-scene-id="${escAttr(s.id)}">
     <div class="scene-head"><h2>${i + 1}. ${escHtml(s.label)}</h2><span class="chip ${e.verdict}" data-chip>${CHIPS[e.verdict] || '대기'}</span></div>
@@ -274,7 +303,7 @@ export function renderPage(input, decisions, { dir }) {
 <style>${PAGE_CSS}</style></head>
 <body><header class="bar"><div class="bar-in"><div class="sum">${summary(input, entries)}</div>
 <button id="save" class="btn">판정 저장</button></div></header>
-<main id="app">${body}</main>
+<main id="app" data-based-on="${escAttr(stage.updatedAt || '')}">${body}</main>
 <div id="done" class="done" hidden><div class="done-card">판정을 저장했습니다. 에이전트로 돌아가세요.</div></div>
 <script>${PAGE_JS}</script></body></html>
 `;
@@ -324,12 +353,13 @@ document.getElementById('app').addEventListener('click', (e) => {
 });
 document.getElementById('app').addEventListener('input', (e) => { const s = e.target.closest('.scene'); if (s) chip(s); });
 document.getElementById('save').addEventListener('click', async () => {
+  const basedOn = document.getElementById('app').dataset.basedOn;
   const scenes = [...document.querySelectorAll('.scene')].map((s) => ({ id: s.dataset.sceneId,
     chosen: s.querySelector('.card.selected')?.dataset.file || '', note: s.querySelector('[data-note]').value,
     rejected: [...s.querySelectorAll('.card.rejected')].map((c) => c.dataset.file) }));
   const btn = document.getElementById('save'); btn.disabled = true;
   try {
-    const r = await fetch('/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scenes }) });
+    const r = await fetch('/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ basedOn, scenes }) });
     if (!r.ok) throw new Error(await r.text());
     document.getElementById('done').hidden = false;
   } catch (err) { btn.disabled = false; alert('저장하지 못했습니다: ' + (err && err.message ? err.message : err)); }
@@ -346,14 +376,31 @@ function readBody(req, limit = 1_000_000) {
   });
 }
 
+// Verdicts come only from the page itself: JSON (a cross-site form or text/plain post is refused,
+// and JSON across sites needs a preflight this server never grants) from its own origin.
 async function decide(dir, req, res) {
+  if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return send(res, 415, 'JSON only');
+  const origin = req.headers.origin;
+  if (origin && origin !== `http://${req.headers.host}`) return send(res, 403, 'verdicts from another origin are refused');
   try {
     const stage = applyPageDecisions(dir, JSON.parse(await readBody(req)));
     res.writeHead(200, { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ ok: true, written: DECISIONS, scenes: stage.scenes.length }));
   } catch (e) {
-    send(res, 400, String(e.message || e));
+    send(res, e.status || 400, String(e.message || e));
   }
+}
+
+// The files the page may serve: the takes and frames the input lists, inside the project. Nothing
+// else in the folder (keys in .env files, the review records) is reachable.
+function listedFiles(dir) {
+  let input;
+  try { input = readInput(dir); } catch { return new Set(); }
+  const files = new Set();
+  for (const t of input.scenes.flatMap((s) => s.takes)) {
+    for (const f of [t.file, t.firstFrame, t.lastFrame]) if (inside(dir, f)) files.add(path.normalize(path.join(dir, f)));
+  }
+  return files;
 }
 
 function page(dir, res) {
@@ -363,17 +410,27 @@ function page(dir, res) {
   res.end(html);
 }
 
+function serveListed(dir, req, res, urlPath) {
+  const fp = resolveInside(dir, urlPath);
+  if (!fp) return send(res, 403, '403');
+  if (!listedFiles(dir).has(fp)) return send(res, 404, '404');
+  sendFile(req, res, fp);
+}
+
+function route(dir, req, res, urlPath) {
+  if (req.method === 'POST' && urlPath === '/decide') return void decide(dir, req, res);
+  if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '405');
+  if (answersPid(urlPath, res)) return;
+  if (urlPath === '/' || urlPath === '/index.html') return page(dir, res);
+  serveListed(dir, req, res, urlPath);
+}
+
 function handler(dir) {
   return (req, res) => {
+    if (!hostAllowed(req.headers.host)) return send(res, 403, 'host not allowed');
     const urlPath = decodePath(req.url);
     if (urlPath === null) return send(res, 400, '400');
-    if (req.method === 'POST' && urlPath === '/decide') return void decide(dir, req, res);
-    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '405');
-    if (answersPid(urlPath, res)) return;
-    if (urlPath === '/' || urlPath === '/index.html') return page(dir, res);
-    const fp = resolveInside(dir, urlPath);
-    if (!fp) return send(res, 403, '403');
-    sendFile(req, res, fp);
+    route(dir, req, res, urlPath);
   };
 }
 
@@ -407,6 +464,8 @@ function parseArgs(argv) {
 }
 
 async function serveMain(dir, o) {
+  const recorded = path.join(dir, STATE);
+  if (await isRunning(recorded)) return console.log(`CURATE ${readState(recorded).url} (already running, pid ${readState(recorded).pid})`);
   const s = await startCurate(dir, { port: Number(o.port) || undefined });
   const warn = hostWarning(s.host);
   if (warn) console.warn(warn);

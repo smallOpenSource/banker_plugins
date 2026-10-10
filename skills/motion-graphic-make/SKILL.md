@@ -15,7 +15,7 @@ description: "10초 안팎의 내레이션 없는 모션 그래픽(키네틱 타
 **진행 전 가용성을 먼저 확인**하고, 문제가 있으면 **설치부터 안내**한다(추정, 임의 재설치 금지):
 - 확인: `npx hyperframes doctor`
 - 실패/미설치면 먼저 `motion-graphic-setup` 스킬로 설치(Claude Code: `/banker:setup` 에서 motion-graphic-setup / Codex: `banker-motion-graphic-setup`). 설치, 검증 후 이 스킬을 이어서 진행한다.
-- 독립 검증에서 배치한 페이지를 잴 때는 Playwright 가 필요하다(`setup-playwright`).
+- 독립 검증에서 배치한 페이지를 잴 때는 Node 용 playwright 패키지와 Chromium 이 필요하다(`npm i -g playwright && npx playwright install chromium`).
 
 ## hyperframes 란 (요약)
 hyperframes 는 HTML/CSS + 시크(seek) 가능한 애니메이션(GSAP, CSS, Lottie, Three.js 등)을 결정론적 MP4/투명 오버레이 비디오로 렌더링하는 오픈소스 프레임워크다.
@@ -82,7 +82,7 @@ hyperframes 는 HTML/CSS + 시크(seek) 가능한 애니메이션(GSAP, CSS, Lot
    페이지는 프롬프트 칸을 "구성 지시문" 으로 보인다. 판정은 페이지의 "판정 저장" 이나 대화(`--record`)로 받아 `decisions.json` 에 남긴다.
    재생성 요청이 있는 장면만 hyperframes 로 고치고 다시 올린다. 전부 승인돼야 렌더로 간다.
 4. **render** - **명시적 렌더 승인 이후에만** 실행한다. 불투명 결과는 MP4, 오버레이가 필요하면 투명 webm/mov 로 렌더한다.
-   렌더 파일을 `"stage": "render"` 로 검토 페이지에 올려(무음 반복 재생, `seconds` 에 실제 길이) 판정받는다.
+   렌더 파일을 `"stage": "render"` 로 검토 페이지에 올려(무음 반복 재생, `seconds` 에 실제 길이) 판정받는다. 투명 `.mov`(ProRes)는 Chrome, Firefox 가 재생하지 못하므로 검토용 webm 이나 mp4 미리보기를 함께 만들어 그 파일을 올린다.
 5. **배치 (선택)** - 사이트에 넣을 때만 한다. 영상을 사이트의 자리에 넣고 조립 미리보기를 띄워 검토받는다.
 
    ```bash

@@ -60,11 +60,12 @@ function manifest() {
   };
 }
 
-// The intro on top of a page body, as a site would place it.
+// The intro on top of a page body, as a site would place it. The body comes after the scripts, so
+// it does not exist yet when step-nav attaches (a body a framework draws later is the same case).
 function addBody(siteDir) {
   const index = path.join(siteDir, 'index.html');
   const paras = Array.from({ length: 40 }, (_, i) => `<p>Body paragraph ${i + 1}.</p>`).join('\n');
-  fs.writeFileSync(index, fs.readFileSync(index, 'utf8').replace('<div id="world"></div>', `<div id="world"></div>\n<main id="main"><h1>Main content</h1>\n${paras}\n</main>`));
+  fs.writeFileSync(index, fs.readFileSync(index, 'utf8').replace('</body>', `<main id="main"><h1>Main content</h1>\n${paras}\n</main>\n</body>`));
 }
 
 test('the assembled intro passes every measure under a strict CSP that allows the engine style by hash', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 600_000 }, async (t) => {
