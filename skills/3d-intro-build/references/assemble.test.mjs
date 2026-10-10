@@ -77,6 +77,9 @@ test('the engine fixes always ship; the glass panel and scene steps only when as
   assemble({ projectDir: plain });
   assert.match(read(plain, 'intro-fixes.css'), /translate:\s*0 -50%/);
   assert.match(read(plain, 'intro-fixes.css'), /overflow-x:\s*clip/);
+  assert.match(read(plain, 'intro-fixes.css'), /max-width: 860px\)\s*\{\s*\.sw-copy \{[^}]*bottom: calc\(96px \+ 2vh/, 'clear of the hint on a phone');
+  assert.match(read(plain, 'intro-fixes.css'), /\(max-height: 500px\) and \(orientation: landscape\)[\s\S]*grid-template-areas/, 'two columns on a short landscape screen');
+  assert.match(read(plain, 'intro-fixes.css'), /\.sw-btn--primary, \.sw-topcta \{ color: var\(--sw-bg\); \}/, 'button text readable in a dark theme');
   assert.ok(!fs.existsSync(path.join(plain, 'site', 'panel-glass.css')));
   assert.ok(!fs.existsSync(path.join(plain, 'site', 'step-nav.js')));
   assert.doesNotMatch(read(plain, 'intro.js'), /IntroStepNav/);
@@ -86,6 +89,8 @@ test('the engine fixes always ship; the glass panel and scene steps only when as
   const html = read(full, 'index.html');
   assert.match(html, /<html lang="ko">/);
   assert.match(html, /href="panel-glass\.css"[\s\S]*href="step-nav\.css"/);
+  assert.match(read(full, 'panel-glass.css'), /\.sw-copy \.sw-btn--ghost \{ color: var\(--intro-title\)/, 'a ghost button reads on the glass');
+  assert.match(read(full, 'panel-glass.css'), /@media \(max-width: 860px\), \(max-height: 500px\) and \(orientation: landscape\)/);
   assert.match(html, /<script src="scrub-engine\.js"><\/script>\s*<script src="step-nav\.js"><\/script>\s*<script src="intro\.js"><\/script>/);
   const intro = read(full, 'intro.js');
   assert.match(intro, /IntroStepNav\.prefetch\(config, nav\)/);

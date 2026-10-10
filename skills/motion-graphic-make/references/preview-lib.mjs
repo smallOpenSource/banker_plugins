@@ -3,8 +3,9 @@
  * byte-identical into motion-graphic-make by scripts/sync-adapter.js).
  *
  * - A port the system picks (a preferred one first when asked), bound to loopback by default.
- * - A state file recording { pid, port, host, url, dir }: serve.mjs keeps it beside the folder it
- *   serves, curate.mjs in the project folder, which it does not serve (it serves listed takes only).
+ * - A state file recording { pid, port, requestedPort, host, url, dir }: serve.mjs keeps it beside
+ *   the folder it serves, curate.mjs in the project folder, which it does not serve (it serves
+ *   listed takes only).
  * - Requests whose Host is a name other than localhost are refused, so a DNS name rebound to this
  *   machine cannot read what is served.
  * - A stop that ends only the process answering on that port with the recorded PID, then waits

@@ -35,6 +35,10 @@
    (about 36 Latin characters). */
 .sw-copy__body { color: var(--intro-body); text-shadow: var(--intro-text-shadow); white-space: pre-line; max-width: none; }
 
+/* A secondary (ghost) button has no fill, so its label sits on the dark glass: it takes the panel's
+   light text, whatever the theme's ink. */
+.sw-copy .sw-btn--ghost { color: var(--intro-title); border-color: rgba(255, 255, 255, .45); }
+
 /* A light shade behind the panel, from the left on wide screens. */
 .sw-copylayer::before {
   background: linear-gradient(90deg, rgba(var(--intro-panel-rgb), .14) 0%, rgba(var(--intro-panel-rgb), .1) 40%,

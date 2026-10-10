@@ -4,7 +4,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
-  VIEWPORTS, colorAlpha, contrastRatio, insideViewport, intersects, judge, parseArgs, parseColor, parseViewport, relLuminance, worstContrast,
+  TEXT_PARTS, VIEWPORTS, colorAlpha, contrastRatio, fillContrast, insideViewport, intersects, judge, parseArgs, parseColor, parseViewport,
+  relLuminance, worstContrast,
 } from './verify-intro.mjs';
 
 test('the default screens are the ones the guide lists and a phone on its side, touch where a phone is', () => {
@@ -87,6 +88,18 @@ test('a scene fails on overflow, overlap, a panel off screen or under the header
     ['overlaps .isn-hint', 'horizontal overflow']);
   assert.deepEqual(judge({ ...ok, inViewport: false, belowHeader: false }, { minContrast: 4.5 }), ['panel outside the screen', 'panel under the header']);
   assert.deepEqual(judge({ ...ok, contrast: [{ el: 'cta', line: 1, min: 1.1 }] }, { minContrast: 4.5 }), ['contrast cta line 1: 1.1']);
+});
+
+test('a panel is measured for every text part and each CTA button label', () => {
+  assert.deepEqual(TEXT_PARTS.map(([el]) => el), ['num', 'eyebrow', 'title', 'body', 'cta']);
+  assert.equal(Object.fromEntries(TEXT_PARTS).cta, '.sw-copy__cta .sw-btn');
+});
+
+test('a button outside the panels is measured against its own solid fill, not a translucent one', () => {
+  assert.equal(fillContrast('rgb(255, 255, 255)', 'rgb(241, 245, 249)'), 1.1, 'white on a light pill');
+  assert.ok(fillContrast('rgb(11, 18, 32)', 'rgb(241, 245, 249)') > 15);
+  assert.equal(fillContrast('rgb(255, 255, 255)', 'rgba(11, 18, 32, 0.6)'), null);
+  assert.equal(fillContrast('rgb(255, 255, 255)', 'rgba(0, 0, 0, 0)'), null);
 });
 
 test('a scene fails when its clip is there but never shows; no clip, the first scene and reduced motion do not', () => {

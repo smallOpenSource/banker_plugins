@@ -8,7 +8,8 @@
  * it overlaps a hint, the skip link, the main button or the route dots, horizontal overflow, the
  * contrast of each text line (CTA button labels included) against the worst pixel behind it,
  * measured with the text hidden, and from the second scene on, whether a clip that is there shows.
- * Per screen: console errors (a CSP refusal shows here). With step navigation (step-nav.js):
+ * Per screen: console errors (a CSP refusal shows here) and the top-bar CTA's text on its own
+ * solid fill. With step navigation (step-nav.js):
  * a wheel notch plus an inertia tail from the scene before the last stops at the last scene, and
  * from the last scene each input kind reaches the body top and one up input returns.
  *
@@ -36,7 +37,7 @@ export const VIEWPORTS = [
 const COVERS = ['.isn-hint', '.sw-hint', '.isn-skip', '.isn-main', '.sw-route'];
 // The text of a panel measured for contrast: its parts, and the label of each CTA button (against
 // the button, or what shows behind a ghost one).
-const TEXT_PARTS = [['num', '.sw-copy__num'], ['eyebrow', '.sw-copy__eyebrow'], ['title', '.sw-copy__title'],
+export const TEXT_PARTS = [['num', '.sw-copy__num'], ['eyebrow', '.sw-copy__eyebrow'], ['title', '.sw-copy__title'],
   ['body', '.sw-copy__body'], ['cta', '.sw-copy__cta .sw-btn']];
 
 // ---- measuring logic (tested without a browser) ----------------------------
@@ -87,6 +88,14 @@ export function worstContrast(textRgb, px, width, rect, alpha = 1) {
     }
   }
   return worst;
+}
+
+/** The contrast of a button's text on its own fill, or null when the fill is not solid (it shows the page behind). */
+export function fillContrast(color, background) {
+  const fg = parseColor(color);
+  const bg = parseColor(background);
+  if (!fg || !bg || colorAlpha(background) < 1) return null;
+  return Number(pixelContrast(fg, colorAlpha(color), bg).toFixed(2));
 }
 
 export const intersects = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -228,6 +237,8 @@ function hideTextLines({ i, parts }) {
     let n = 0;
     for (const node of panel.querySelectorAll(sel)) {
       for (const rect of lineBoxes(node)) out.push({ el, line: ++n, color: getComputedStyle(node).color, rect });
+      // No transition: a site's `a { transition: color }` would leave the label half drawn.
+      node.style.setProperty('transition', 'none', 'important');
       node.style.setProperty('color', 'transparent', 'important');
       node.style.setProperty('text-shadow', 'none', 'important');
     }
@@ -237,9 +248,15 @@ function hideTextLines({ i, parts }) {
 
 function showText({ i, parts }) {
   for (const node of document.querySelectorAll('.sw-copy')[i].querySelectorAll(parts.map(([, sel]) => sel).join(', '))) {
-    node.style.removeProperty('color');
-    node.style.removeProperty('text-shadow');
+    for (const prop of ['color', 'text-shadow', 'transition']) node.style.removeProperty(prop);
   }
+}
+
+// The top-bar CTA (manifest `cta`): its text on its own fill, [{ sel, ratio }] where the fill is solid.
+async function topCtaContrast(page) {
+  const found = await page.evaluate(() => [...document.querySelectorAll('.sw-topcta')].filter((e) => e.getClientRects().length > 0)
+    .map((e) => ({ color: getComputedStyle(e).color, background: getComputedStyle(e).backgroundColor })));
+  return found.map((c) => ({ sel: '.sw-topcta', ratio: fillContrast(c.color, c.background) })).filter((c) => c.ratio !== null);
 }
 
 // Decodes a PNG in a blank page of the same context (no CSP there) into RGBA pixels.
@@ -385,9 +402,12 @@ async function measureViewport(browser, url, vp, o) {
   const scenes = [];
   for (let i = 0, n = await page.locator('.sw-copy').count(); i < n; i++) scenes.push(await measureScene(page, i, { ...o, reduce: Boolean(vp.reduce) }));
   const input = o.input ? await checkInput(page, vp) : null;
+  const buttons = o.contrast ? await topCtaContrast(page) : [];
   await context.close();
-  const failures = scenes.reduce((a, s) => a + s.failures.length, 0) + consoleErrors.length + inputFailures(input).length;
-  return { viewport: `${vp.width}x${vp.height}${vp.touch ? ' touch' : ''}${vp.reduce ? ' reduced-motion' : ''}`, scenes, input, inputFailures: inputFailures(input), consoleErrors, failures };
+  const buttonFailures = buttons.filter((b) => !(b.ratio >= o.minContrast)).map((b) => `contrast ${b.sel}: ${b.ratio}`);
+  const failures = scenes.reduce((a, s) => a + s.failures.length, 0) + consoleErrors.length + inputFailures(input).length + buttonFailures.length;
+  return { viewport: `${vp.width}x${vp.height}${vp.touch ? ' touch' : ''}${vp.reduce ? ' reduced-motion' : ''}`, scenes, input, inputFailures: inputFailures(input),
+    buttons, buttonFailures, consoleErrors, failures };
 }
 
 /** Measures `url` at every viewport. Resolves to { url, viewports: [...], failures }. */

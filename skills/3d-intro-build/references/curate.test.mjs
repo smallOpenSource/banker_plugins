@@ -82,6 +82,47 @@ test('a take that is not a regular file fails its hash at once instead of readin
   assert.match(html, /해시 실패\(일반 파일 아님\)/);
 });
 
+test('a take is read only up to the size it had when its hash began, so an endless file still ends', { skip: process.platform !== 'linux' && 'needs /proc', timeout: 10_000 }, async () => {
+  const dir = project();
+  fs.symlinkSync('/proc/self/pagemap', path.join(dir, 'clips/endless.mp4'));
+  assert.equal(await hashFile(path.join(dir, 'clips/endless.mp4')), crypto.createHash('sha256').digest('hex'), 'size 0 when it began');
+});
+
+test('a take that could not be read shows the failure and is read again on the next view', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'file modes do not stop this user' }, async () => {
+  const dir = project();
+  const still = path.join(dir, 'stills/s1-t1.png');
+  fs.chmodSync(still, 0o000);
+  try {
+    assert.match(await renderPage(readInput(dir), readDecisions(dir), { dir }), /해시 실패\(EACCES\)/);
+  } finally {
+    fs.chmodSync(still, 0o644);
+  }
+  assert.ok((await renderPage(readInput(dir), readDecisions(dir), { dir })).includes(sha(dir, 'stills/s1-t1.png')));
+});
+
+test('takes are hashed a few at a time, so a long list does not run out of file handles', async (t) => {
+  const dir = project();
+  const input = readInput(dir);
+  for (let k = 0; k < 40; k++) {
+    fs.writeFileSync(path.join(dir, `stills/x${k}.png`), `png ${k}`);
+    input.scenes[0].takes.push({ file: `stills/x${k}.png`, take: k + 3 });
+  }
+  const real = fs.promises.open;
+  let open = 0;
+  let peak = 0;
+  fs.promises.open = async (...args) => {
+    const fh = await real(...args);
+    peak = Math.max(peak, ++open);
+    const close = fh.close.bind(fh);
+    fh.close = async () => { open--; return close(); };
+    return fh;
+  };
+  t.after(() => { fs.promises.open = real; });
+  const html = await renderPage(input, readDecisions(dir), { dir });
+  assert.ok(html.includes(sha(dir, 'stills/x39.png')));
+  assert.ok(peak >= 1 && peak <= 4, `at most 4 files open at once, saw ${peak}`);
+});
+
 test('a clip plays as a muted loop, and a flight shows its first and last frames', async () => {
   const dir = project();
   const html = await renderPage(readInput(dir), readDecisions(dir), { dir });
@@ -172,6 +213,15 @@ test('rejected takes move to a dated folder and leave the review', () => {
   const s1 = readDecisions(dir).stills.scenes.find((x) => x.id === 's1');
   assert.deepEqual([s1.rejected, s1.archived], [[], moves]);
   assert.deepEqual(archiveRejected(dir, { now: NOW }), [], 'a second run moves nothing');
+});
+
+test('the review server hashes the listed takes as it starts', async (t) => {
+  const dir = project();
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const warmed = await s.warmed;
+  assert.equal(warmed.get('stills/s1-t1.png'), sha(dir, 'stills/s1-t1.png'));
+  assert.equal(warmed.get('clips/flight-2.mp4'), sha(dir, 'clips/flight-2.mp4'));
 });
 
 test('the page server records its PID beside the review files', async (t) => {

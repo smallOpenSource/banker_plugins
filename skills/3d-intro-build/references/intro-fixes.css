@@ -15,34 +15,37 @@
    text. A 52px right margin keeps the copy clear of them.
    The engine's bottom margin (12dvh, 80px on a 667px phone) leaves the copy on the hint and the
    main button, which reach 88px up from the bottom. The copy keeps 96px clear, plus the 2vh the
-   parallax moves it down. The vh line is the fallback for a browser without dvh. */
+   parallax moves it down; that is above the engine's margin at every height. */
 @media (max-width: 860px) {
-  .sw-copy { right: 52px; bottom: calc(max(clamp(56px, 12vh, 110px), 96px + 2vh) + env(safe-area-inset-bottom)); }
-  .sw-copy { bottom: calc(max(clamp(56px, 12dvh, 110px), 96px + 2vh) + env(safe-area-inset-bottom)); }
+  .sw-copy { right: 52px; bottom: calc(96px + 2vh + env(safe-area-inset-bottom)); }
 }
 
 /* A short landscape screen (a phone on its side, a short window) has no room for the copy in one
    column: it ran under the header and, with a CTA, off the top. The copy sits above the hint and
-   the main button in two columns, the number, label, title and tags on the left, the body and the
-   CTA on the right, with smaller type. The child selector outweighs the glass panel's width. */
+   the main button (up to 88px) in two columns, the label, title and tags on the left, the
+   body and the CTA on the right, with smaller type and without the scene number (the route dots
+   show it). The child selector outweighs the glass panel's width. The insets keep the copy off a
+   phone's notch (the page uses viewport-fit=cover). */
 @media (max-height: 500px) and (orientation: landscape) {
   .sw-copylayer > .sw-copy {
-    top: auto; bottom: calc(96px + 2vh + env(safe-area-inset-bottom)); translate: none;
-    right: clamp(52px, 8vw, 120px); width: auto; max-width: 760px;
-    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); grid-template-rows: auto auto 1fr auto;
-    grid-template-areas: "num body" "eyebrow body" "title body" "tags cta"; column-gap: clamp(16px, 3vw, 32px);
-    align-items: start;
+    top: auto; bottom: calc(90px + 2vh + env(safe-area-inset-bottom)); translate: none;
+    left: max(clamp(18px, 5vw, 64px), calc(env(safe-area-inset-left) + 8px));
+    right: max(clamp(52px, 8vw, 120px), calc(env(safe-area-inset-right) + 44px)); width: auto; max-width: 760px;
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); grid-template-rows: auto 1fr auto;
+    grid-template-areas: "eyebrow body" "title body" "tags cta"; column-gap: clamp(16px, 3vw, 32px); align-items: start;
   }
-  .sw-copy__num { grid-area: num; }
-  .sw-copy__eyebrow { grid-area: eyebrow; margin-top: 8px; }
-  .sw-copy__title { grid-area: title; margin-top: 6px; font-size: clamp(1.3rem, 6.5vh, 2rem); }
-  .sw-copy__body { grid-area: body; margin-top: 0; max-width: none; font-size: clamp(.86rem, 4.2vh, 1rem); line-height: 1.5; }
+  .sw-copy__num { display: none; }
+  .sw-copy__eyebrow { grid-area: eyebrow; margin-top: 0; }
+  .sw-copy__title { grid-area: title; margin-top: 6px; font-size: clamp(1.2rem, 6vh, 2rem); }
+  .sw-copy__body { grid-area: body; margin-top: 0; max-width: none; font-size: clamp(.84rem, 4vh, 1rem); line-height: 1.45; }
   .sw-copy__tags { grid-area: tags; margin-top: 10px; }
   .sw-copy__cta { grid-area: cta; margin-top: 10px; }
-  /* The shade rises from the bottom, as in the engine's phone layout. No room for the dot labels. */
+  /* The shade rises from the bottom and reaches the top of the copy, which sits higher than in the
+     engine's phone layout. No room for the dot labels. */
   .sw-copylayer::before {
-    width: 100%; height: 60%; top: auto; bottom: 0;
-    background: linear-gradient(0deg, var(--sw-bg) 8%, color-mix(in srgb, var(--sw-bg) 70%, transparent) 46%, transparent 100%);
+    width: 100%; height: 85%; top: auto; bottom: 0;
+    background: linear-gradient(0deg, var(--sw-bg) 0%, color-mix(in srgb, var(--sw-bg) 88%, transparent) 40%,
+      color-mix(in srgb, var(--sw-bg) 55%, transparent) 70%, transparent 100%);
   }
   .sw-route__label { display: none; }
 }

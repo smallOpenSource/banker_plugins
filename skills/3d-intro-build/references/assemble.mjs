@@ -10,7 +10,7 @@
  *     scrub-engine.css      (the CSS the engine injects, taken from scrub-engine.js unchanged)
  *     scrub-engine.LICENSE.txt (scroll-world's MIT notice, which ships with the engine files)
  *     theme.css             (the template's --sw-* tokens, set from the manifest theme)
- *     intro-fixes.css       (centring and overflow fixes for the engine, every page)
+ *     intro-fixes.css       (layout, button text and overflow fixes for the engine, every page)
  *     intro.js              (the mountScrollWorld config and call)
  *     panel-glass.css       (only with "panel": "glass")
  *     step-nav.js/.css      (only with "stepNav": scene-by-scene navigation)

@@ -47,17 +47,34 @@ async function makeMedia(dir) {
   }
 }
 
-function manifest() {
+const DARK = { bg: '#0B1220', ink: '#F1F5F9', inkSoft: '#CBD5E1', accent: '#38BDF8' };
+const LIGHT = { bg: '#F5EDE0', ink: '#241d2b', inkSoft: '#6a6072', accent: '#9B7EBD' };
+
+// A top-bar CTA, and the last scene's primary and secondary (ghost) buttons.
+function manifest(theme = DARK) {
   const body = (i) => ['First point of the scene', 'Second point, short', 'Third point to close'].map((t) => `${t} ${i}`).join('\n');
+  const cta = { primary: { label: 'Start', href: '#main' }, secondary: { label: 'Learn more', href: '#main' } };
   return {
-    lang: 'en', brand: { name: 'Acme' }, panel: 'glass', stepNav: { end: '#main' },
-    theme: { bg: '#0B1220', ink: '#F1F5F9', inkSoft: '#CBD5E1', accent: '#38BDF8' },
-    diveScroll: 0.6, connScroll: 1.4,
+    lang: 'en', brand: { name: 'Acme' }, cta: { label: 'Order now', href: '#main' }, panel: 'glass', stepNav: { end: '#main' },
+    theme, diveScroll: 0.6, connScroll: 1.4,
     sections: SCENES.map((_, i) => ({ id: `s${i + 1}`, label: `Scene ${i + 1}`, still: `s${i + 1}.png`, clip: `hold-${i + 1}.mp4`,
-      eyebrow: 'Label', title: `Title ${i + 1}`, body: body(i + 1), tags: ['One', 'Two'],
-      ...(i === SCENES.length - 1 ? { cta: { primary: { label: 'Start', href: '#main' } } } : {}) })),
+      eyebrow: 'Label', title: `Title ${i + 1}`, body: body(i + 1), tags: ['One', 'Two'], ...(i === SCENES.length - 1 ? { cta } : {}) })),
     connectors: ['flight-1.mp4', 'flight-2.mp4'],
   };
+}
+
+// Builds the e2e page for `theme` in a fresh folder, served under a strict CSP that allows the
+// engine style by its hash. Resolves to the server.
+async function servedIntro(t, theme) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intro-e2e-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  await makeMedia(dir);
+  fs.writeFileSync(path.join(dir, 'intro.json'), JSON.stringify(manifest(theme)));
+  const built = assemble({ projectDir: dir });
+  addBody(built.outDir);
+  const server = await startServe(built.outDir, { csp: STRICT_CSP.replace("style-src 'self'", `style-src 'self' ${built.styleHash}`) });
+  t.after(() => server.close());
+  return server;
 }
 
 // The intro on top of a page body, as a site would place it. The body comes after the scripts, so
@@ -69,15 +86,7 @@ function addBody(siteDir) {
 }
 
 test('the assembled intro passes every measure under a strict CSP that allows the engine style by hash', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 600_000 }, async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intro-e2e-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  await makeMedia(dir);
-  fs.writeFileSync(path.join(dir, 'intro.json'), JSON.stringify(manifest()));
-  const built = assemble({ projectDir: dir });
-  addBody(built.outDir);
-  const policy = STRICT_CSP.replace("style-src 'self'", `style-src 'self' ${built.styleHash}`);
-  const server = await startServe(built.outDir, { csp: policy });
-  t.after(() => server.close());
+  const server = await servedIntro(t, DARK);
   const report = await verifyIntro(server.url, { viewports: [
     { width: 1280, height: 800 }, { width: 390, height: 844, touch: true }, { width: 375, height: 667, touch: true },
     { width: 844, height: 390, touch: true }, { width: 1280, height: 800, reduce: true }] });
@@ -86,9 +95,22 @@ test('the assembled intro passes every measure under a strict CSP that allows th
     assert.deepEqual(v.consoleErrors, [], `${v.viewport}: console`);
     for (const s of v.scenes) assert.deepEqual(s.failures, [], `${v.viewport} scene ${s.scene}`);
     assert.deepEqual(v.inputFailures, [], `${v.viewport}: input`);
-    assert.ok(v.scenes.at(-1).contrast.some((c) => c.el === 'cta'), `${v.viewport}: the CTA label is measured`);
+    assert.equal(v.scenes.at(-1).contrast.filter((c) => c.el === 'cta').length, 2, `${v.viewport}: both CTA labels are measured`);
+    assert.deepEqual(v.buttons.map((b) => b.sel), ['.sw-topcta'], `${v.viewport}: the top-bar CTA is measured`);
     const clips = v.scenes.slice(1).map((s) => s.clip);
     assert.ok(clips.every((c) => c === (/reduced/.test(v.viewport) ? 'off' : 'shown')), `${v.viewport}: clips ${clips}`);
+  }
+  assert.equal(report.failures, 0);
+});
+
+test('a light theme reads too: the CTA buttons on the glass panel and the top-bar CTA', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+  const server = await servedIntro(t, LIGHT);
+  const report = await verifyIntro(server.url, { viewports: [{ width: 1280, height: 800 }, { width: 844, height: 390, touch: true }], input: false });
+  for (const v of report.viewports) {
+    assert.deepEqual(v.consoleErrors, [], `${v.viewport}: console`);
+    for (const s of v.scenes) assert.deepEqual(s.failures, [], `${v.viewport} scene ${s.scene}`);
+    assert.equal(v.scenes.at(-1).contrast.filter((c) => c.el === 'cta').length, 2, `${v.viewport}: both CTA labels are measured`);
+    assert.deepEqual([v.buttons.length, v.buttonFailures], [1, []], `${v.viewport}: the top-bar CTA`);
   }
   assert.equal(report.failures, 0);
 });

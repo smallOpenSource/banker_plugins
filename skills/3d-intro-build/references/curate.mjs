@@ -219,23 +219,38 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
 // ---- the page -----------------------------------------------------------------
 
 // sha256 of a file, read in chunks so a render of any size never sits whole in memory (one read
-// stops at 2 GiB), once per version of the file: the key holds its size and mtime, so a regenerated
-// take is hashed anew. Rejects for a file that cannot be read, and for anything but a regular file
-// (a link to /dev/zero or a FIFO would be read forever and the page would never come).
+// stops at 2 GiB), and only up to the size it had when the read began, so a file that grows or
+// never ends (/proc) is still read once. Once per version of the file: the key holds its inode,
+// size, mtime and ctime, so a regenerated take is hashed anew. Rejects for a file that cannot be
+// read, and for anything but a regular file (a link to /dev/zero, a FIFO).
 const hashes = new Map();
+const notRegular = () => new Error('일반 파일 아님');
 export async function hashFile(fp) {
-  const st = fs.statSync(fp);
-  if (!st.isFile()) throw new Error('일반 파일 아님');
-  const key = `${fp}:${st.mtimeMs}:${st.size}`;
-  if (!hashes.has(key)) {
-    const done = new Promise((resolve, reject) => {
-      const h = crypto.createHash('sha256');
-      fs.createReadStream(fp).on('error', reject).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex')));
-    });
-    done.catch(() => hashes.delete(key));
-    hashes.set(key, done);
+  if (!(await fs.promises.stat(fp)).isFile()) throw notRegular();
+  const fh = await fs.promises.open(fp, 'r');
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) throw notRegular();
+    const key = `${fp}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+    if (!hashes.has(key)) {
+      const done = sha256Of(fh, st.size);
+      done.catch(() => hashes.delete(key));
+      hashes.set(key, done);
+    }
+    return await hashes.get(key);
+  } finally {
+    await fh.close();
   }
-  return hashes.get(key);
+}
+
+// sha256 of the first `size` bytes of an open file.
+function sha256Of(fh, size) {
+  const h = crypto.createHash('sha256');
+  if (size === 0) return Promise.resolve(h.digest('hex'));
+  return new Promise((resolve, reject) => {
+    fh.createReadStream({ start: 0, end: size - 1, autoClose: false })
+      .on('error', reject).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex')));
+  });
 }
 
 // What a card shows for a take's file: its sha256, or why there is none.
@@ -245,10 +260,20 @@ async function hashText(dir, file) {
   try { return await hashFile(fp); } catch (e) { return `해시 실패(${e.code || e.message})`; }
 }
 
-// The hash text of every listed take by file, read together before the page is drawn.
+// The hash text of every listed take by file, four files at a time (a long list must not run out
+// of file handles), before the page is drawn.
 async function takeHashes(input, dir) {
   const files = [...new Set(input.scenes.flatMap((s) => s.takes.map((t) => t.file)))];
-  return new Map(await Promise.all(files.map(async (f) => [f, await hashText(dir, f)])));
+  const out = new Map();
+  let next = 0;
+  const worker = async () => {
+    while (next < files.length) {
+      const f = files[next++];
+      out.set(f, await hashText(dir, f));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, files.length) }, worker));
+  return out;
 }
 
 function media(t, dir) {
@@ -460,7 +485,10 @@ function handler(dir, host) {
   };
 }
 
-/** Serves the review page for `dir` until close(). Resolves to { server, port, url, stateFile, close }. */
+/**
+ * Serves the review page for `dir` until close(). Resolves to { server, port, host, url, stateFile,
+ * close, warmed }; `warmed` resolves to the hash texts of the listed takes by file.
+ */
 export async function startCurate(dir, { port, host = process.env.PREVIEW_HOST || LOOPBACK } = {}) {
   const root = path.resolve(dir);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`curate: not a directory: ${root}`);
@@ -469,14 +497,15 @@ export async function startCurate(dir, { port, host = process.env.PREVIEW_HOST |
   const url = urlFor(host, bound);
   const stateFile = path.join(root, STATE);
   writeState(stateFile, { pid: process.pid, port: bound, requestedPort: port || null, host, url, dir: root, startedAt: new Date().toISOString() });
-  warmHashes(root);
+  const warmed = warmHashes(root);
   const close = () => new Promise((resolve) => { forgetSelf(stateFile); server.close(() => resolve()); });
-  return { server, port: bound, host, url, stateFile, close };
+  return { server, port: bound, host, url, stateFile, close, warmed };
 }
 
 // Starts hashing the listed takes, so the first view of the page does not wait for a large render.
+// An input that cannot be read hashes nothing here; the page reports it.
 function warmHashes(dir) {
-  try { void takeHashes(readInput(dir), dir); } catch { /* the page reports an input it cannot read */ }
+  try { return takeHashes(readInput(dir), dir).catch(() => new Map()); } catch { return Promise.resolve(new Map()); }
 }
 
 // ---- CLI ------------------------------------------------------------------------
