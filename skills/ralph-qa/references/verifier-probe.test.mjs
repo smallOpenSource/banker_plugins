@@ -35,10 +35,18 @@ const CATALOG = JSON.stringify({
   ],
 });
 
+// The probe joins paths by the host's rules, so on Windows this machine's /home/u comes back as
+// \home\u: there files and folders are looked up with either separator. Elsewhere the lookup stays
+// exact, so a probe that joins with the wrong separator still fails.
+const slashed = process.platform === "win32" ? (p) => String(p).replace(/\\/g, "/") : String;
+const bySlashed = (map) => Object.fromEntries(Object.entries(map).map(([k, v]) => [slashed(k), v]));
+
 // A machine for the probe: binaries on PATH, files, environment and command outputs. Every
 // command run is recorded with the extra environment it was given.
 function world({ bins = {}, files = {}, dirs = {}, env = {}, runs = {}, platform = "linux" } = {}) {
   const calls = [];
+  const fileAt = bySlashed(files);
+  const dirAt = bySlashed(dirs);
   return {
     home: "/home/u",
     cwd: "/work/repo",
@@ -46,8 +54,8 @@ function world({ bins = {}, files = {}, dirs = {}, env = {}, runs = {}, platform
     env,
     calls,
     which: (name) => bins[name] ?? null,
-    readFile: (path) => (path in files ? files[path] : null),
-    listDir: (path) => dirs[path] ?? [],
+    readFile: (path) => (slashed(path) in fileAt ? fileAt[slashed(path)] : null),
+    listDir: (path) => dirAt[slashed(path)] ?? [],
     run: (cmd, args, extraEnv = {}) => {
       calls.push({ cmd: [cmd, ...args].join(" "), env: extraEnv });
       return runs[[cmd, ...args].join(" ")] ?? { status: 127, stdout: "" };
@@ -598,7 +606,7 @@ test("unreadable gemini settings are reported and nothing is adopted on a guess"
   const s = one({ gemini: null }, gemini({ "/home/u/.gemini/settings.json": "{ not json" }));
   assert.equal(s.decision, "ask");
   assert.equal(s.reason, "config-not-understood");
-  assert.ok(s.notes.some((n) => n.includes("/home/u/.gemini/settings.json")));
+  assert.ok(s.notes.some((n) => slashed(n).includes("/home/u/.gemini/settings.json")));
 });
 
 const opencode = (config, extra = {}) =>
