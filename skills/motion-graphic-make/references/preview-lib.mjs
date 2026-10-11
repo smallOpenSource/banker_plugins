@@ -81,15 +81,23 @@ export const READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0)
 function openRegular(fp) {
   let fd;
   try { fd = fs.openSync(fp, READ_FLAGS); } catch (e) { return { status: ['ENOENT', 'ENOTDIR', 'EISDIR'].includes(e.code) ? 404 : 403 }; }
-  const st = fs.fstatSync(fd);
-  if (st.isFile()) return { fd, size: st.size };
+  let st = null;
+  try { st = fs.fstatSync(fd); } catch { /* a status the system cannot give (EIO on a network drive) */ }
+  if (st && st.isFile()) return { fd, size: st.size };
   fs.closeSync(fd);
-  return { status: 404 };
+  return { status: st ? 404 : 403 };
 }
 
-// Sends an open file, or the part `start`..`end` of it, and closes it, also when the browser drops
-// the download midway (a pipe would keep the file open).
-const stream = (res, fp, opts) => pipeline(fs.createReadStream(fp, opts), res, () => {});
+// Sends the bytes `start`..`end` of an open file (what the headers declared, even if the file grows
+// meanwhile) and closes it, also when the browser drops the download midway (a pipe would keep the
+// file open). Nothing to send closes the file and ends the response.
+function stream(res, fp, { fd, start, end }) {
+  if (end < start) {
+    fs.closeSync(fd);
+    return void res.end();
+  }
+  pipeline(fs.createReadStream(fp, { fd, start, end }), res, () => {});
+}
 
 // A file, with byte ranges for video (smoother scrubbing). Never cached: a rebuilt page is fresh.
 // The file is opened before any header goes out, so one that cannot be read gets 403 instead of
@@ -102,7 +110,7 @@ export function sendFile(req, res, fp, headers = {}) {
   const range = type.startsWith('video/') ? /bytes=(\d+)-(\d*)/.exec(req.headers.range || '') : null;
   if (range) return sendRange(res, fp, f, range, base, headers);
   res.writeHead(200, { ...base, 'Content-Length': f.size });
-  stream(res, fp, { fd: f.fd });
+  stream(res, fp, { fd: f.fd, start: 0, end: f.size - 1 });
 }
 
 function sendRange(res, fp, f, range, base, headers) {
@@ -169,12 +177,15 @@ export function readState(file) {
 
 export const removeState = (file) => fs.rmSync(file, { force: true });
 
-// Removes the state file when the process recorded there is this one. A file that cannot be removed
-// (a folder made read-only) stays; the next start finds it stale. Closing goes on either way.
+// Removes a state file if it can. One that cannot be removed (a folder made read-only) stays; the
+// next start finds it stale. Stopping and closing go on either way.
+function dropState(file) {
+  try { removeState(file); } catch { /* left behind */ }
+}
+
+// Removes the state file when the process recorded there is this one.
 export function forgetSelf(file) {
-  try {
-    if (readState(file)?.pid === process.pid) removeState(file);
-  } catch { /* left behind */ }
+  if (readState(file)?.pid === process.pid) dropState(file);
 }
 
 const NONE = Symbol('none');
@@ -226,12 +237,12 @@ export async function stopServer(stateFile, { timeoutMs = 3000 } = {}) {
   if (!validPid(st.pid)) return { stopped: false, reason: 'invalid-state' };
   const who = await askPid(st.port, Math.min(timeoutMs, 1500), st.host);
   if (who === NONE) {
-    removeState(stateFile);
+    dropState(stateFile);
     return { stopped: false, reason: 'not-running' };
   }
   if (who !== st.pid) return { stopped: false, reason: 'other-process' };
   if (!(await terminate(st, timeoutMs))) return { stopped: false, reason: 'still-open' };
-  removeState(stateFile);
+  dropState(stateFile);
   return { stopped: true, reason: 'stopped' };
 }
 

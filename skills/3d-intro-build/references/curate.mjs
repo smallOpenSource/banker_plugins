@@ -59,12 +59,13 @@ const money = (n) => `$${Number(Number(n).toFixed(3))}`;
 const inside = (dir, file) => typeof file === 'string' && file !== '' && resolveInside(dir, '/' + file) !== null;
 const MEDIA = /\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i;
 
-// Whether a path leads inside `dir` once its links resolve (a file not there yet goes by its path).
-function realInside(dir, fp) {
+// Where a path's links lead: null when they stay in the project and end at an image or a video (a
+// file not there yet goes by its path), else why not.
+function linkRefusal(dir, fp) {
   let real;
-  try { real = fs.realpathSync(fp); } catch { return true; }
-  const root = fs.realpathSync(dir);
-  return real === root || real.startsWith(root + path.sep);
+  try { real = fs.realpathSync(fp); } catch { return null; }
+  if (!real.startsWith(fs.realpathSync(dir) + path.sep)) return '링크가 프로젝트 폴더 밖을 가리켜 보이지 않습니다.';
+  return MEDIA.test(real) ? null : '링크가 이미지나 영상이 아닌 파일을 가리켜 보이지 않습니다.';
 }
 
 // Why a listed file is neither shown nor served nor hashed, or null when it may be: it must be an
@@ -73,7 +74,7 @@ function realInside(dir, fp) {
 function refusal(dir, file) {
   if (!inside(dir, file)) return '파일 경로가 프로젝트 폴더 밖이라 보이지 않습니다.';
   if (!MEDIA.test(file)) return '이미지나 영상 파일이 아니라 보이지 않습니다.';
-  return realInside(dir, path.join(dir, file)) ? null : '링크가 프로젝트 폴더 밖을 가리켜 보이지 않습니다.';
+  return linkRefusal(dir, path.join(dir, file));
 }
 
 // ---- input and decisions ----------------------------------------------------
@@ -220,7 +221,7 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
   const stage = stageOf(all, input.stage);
   const moves = [];
   for (const e of stage.scenes) {
-    const moved = e.rejected.filter((f) => inside(dir, f) && fs.existsSync(path.join(dir, f))).map((f) => moveInto(dir, f, dated(now)));
+    const moved = e.rejected.filter((f) => !refusal(dir, f) && fs.existsSync(path.join(dir, f))).map((f) => moveInto(dir, f, dated(now)));
     e.archived = [...(e.archived || []), ...moved];
     e.rejected = e.rejected.filter((f) => !moved.some((m) => m.file === f));
     moves.push(...moved);
@@ -453,10 +454,11 @@ function readBody(req, limit = 1_000_000) {
 // Verdicts come only from the page itself: JSON (a cross-site form or text/plain post is refused,
 // and JSON across sites needs a preflight this server never grants) from its own origin.
 // What a failure tells the page: a curate: message as it is; anything else only by its code (a system
-// message names absolute paths), with the whole of it on the server's stderr.
+// message names absolute paths), with the whole of it on the server's stderr, escaped (a request
+// body's control characters must not reach the terminal).
 function failureText(e, what) {
   if (String(e.message).startsWith('curate:')) return e.message;
-  console.error(`curate: ${what}: ${e.message || e}`);
+  console.error(`curate: ${what}: ${JSON.stringify(String(e.message || e))}`);
   return `${what}(${e.code || e.name || 'error'})`;
 }
 
@@ -474,13 +476,14 @@ async function decide(dir, req, res) {
 }
 
 // The files the page may serve: the images and videos the input lists as takes and frames, inside
-// the project. Nothing else in the folder (keys in .env files, the review records) is reachable.
+// the project by their paths. Nothing else in the folder (keys in .env files, the review records) is
+// reachable; where a requested file's links lead is checked for that file alone (serveListed).
 function listedFiles(dir) {
   let input;
   try { input = readInput(dir); } catch { return new Set(); }
   const files = new Set();
   for (const t of input.scenes.flatMap((s) => s.takes)) {
-    for (const f of [t.file, t.firstFrame, t.lastFrame]) if (!refusal(dir, f)) files.add(path.normalize(path.join(dir, f)));
+    for (const f of [t.file, t.firstFrame, t.lastFrame]) if (inside(dir, f) && MEDIA.test(f)) files.add(path.normalize(path.join(dir, f)));
   }
   return files;
 }
@@ -497,7 +500,7 @@ async function page(dir, res) {
 function serveListed(dir, req, res, urlPath) {
   const fp = resolveInside(dir, urlPath);
   if (!fp) return send(res, 403, '403');
-  if (!listedFiles(dir).has(fp)) return send(res, 404, '404');
+  if (!listedFiles(dir).has(fp) || linkRefusal(dir, fp)) return send(res, 404, '404');
   sendFile(req, res, fp);
 }
 

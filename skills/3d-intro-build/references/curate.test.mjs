@@ -92,9 +92,13 @@ test('a listed file that is not an image or a video, or that links out of the pr
   made.push(outside);
   fs.writeFileSync(path.join(outside, 'leak.png'), 'from outside');
   const links = process.platform !== 'win32';
-  if (links) fs.symlinkSync(path.join(outside, 'leak.png'), path.join(dir, 'stills', 'link.png'));
+  if (links) {
+    fs.symlinkSync(path.join(outside, 'leak.png'), path.join(dir, 'stills', 'link.png'));
+    fs.symlinkSync(path.join(dir, '.env.3d-intro.local'), path.join(dir, 'stills', 'inner.png'));
+  }
   const input = JSON.parse(fs.readFileSync(path.join(dir, 'curate-input.json'), 'utf8'));
-  input.scenes[0].takes.push({ file: '.env.3d-intro.local', take: 3 }, ...(links ? [{ file: 'stills/link.png', take: 4 }] : []));
+  input.scenes[0].takes.push({ file: '.env.3d-intro.local', take: 3 },
+    ...(links ? [{ file: 'stills/link.png', take: 4 }, { file: 'stills/inner.png', take: 5 }] : []));
   fs.writeFileSync(path.join(dir, 'curate-input.json'), JSON.stringify(input));
   const s = await startCurate(dir, {});
   t.after(() => s.close());
@@ -105,7 +109,9 @@ test('a listed file that is not an image or a video, or that links out of the pr
   assert.ok(!html.includes(crypto.createHash('sha256').update('AZURE_API_KEY=secret').digest('hex')), 'the key file is not hashed');
   if (links) {
     assert.equal((await get('/stills/link.png')).status, 404);
+    assert.equal((await get('/stills/inner.png')).status, 404, 'a .png name linked to the key file inside');
     assert.match(html, /링크가 프로젝트 폴더 밖을 가리켜/);
+    assert.match(html, /링크가 이미지나 영상이 아닌 파일을 가리켜/);
     assert.ok(!html.includes(crypto.createHash('sha256').update('from outside').digest('hex')));
   }
   assert.equal((await get('/stills/s1-t1.png')).status, 200, 'a listed image inside is still served');
@@ -121,6 +127,34 @@ test('an error page says what failed without the absolute path of the folder', a
   assert.equal(r.status, 500);
   assert.match(body, /curate-input\.json 을 읽지 못했습니다\(ENOENT\)/);
   assert.ok(!body.includes(dir), body);
+});
+
+test('a request body with control characters reaches the server log escaped', async (t) => {
+  const dir = project();
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const logged = [];
+  const real = console.error;
+  console.error = (...args) => logged.push(args.join(' '));
+  t.after(() => { console.error = real; });
+  const r = await fetch(`http://127.0.0.1:${s.port}/decide`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"x":\u001b[2J}' });
+  console.error = real;
+  assert.equal(r.status, 400);
+  assert.ok(logged.length > 0 && logged.every((l) => !l.includes('\u001b')), JSON.stringify(logged));
+});
+
+test('archiving moves no file that a folder link leads out of the project', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, () => {
+  const dir = project();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-out-'));
+  made.push(outside);
+  fs.writeFileSync(path.join(outside, 'shared.png'), 'png shared');
+  fs.symlinkSync(outside, path.join(dir, 'linked'), 'dir');
+  const input = JSON.parse(fs.readFileSync(path.join(dir, 'curate-input.json'), 'utf8'));
+  input.scenes[0].takes.push({ file: 'linked/shared.png', take: 3 });
+  fs.writeFileSync(path.join(dir, 'curate-input.json'), JSON.stringify(input));
+  recordDecision(dir, { scene: '1', verdict: 'reject', take: '3' }, NOW);
+  assert.deepEqual(archiveRejected(dir, { now: NOW }).map((m) => m.file), []);
+  assert.equal(fs.readFileSync(path.join(outside, 'shared.png'), 'utf8'), 'png shared', 'the shared original stays');
 });
 
 test('a verdict that cannot be saved says so without the absolute path of the folder', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'file modes do not stop this user' }, async (t) => {
@@ -140,10 +174,14 @@ test('a verdict that cannot be saved says so without the absolute path of the fo
   assert.ok(!body.includes(dir), body);
 });
 
-// Replaces fs.promises.open (which hashFile calls) for one test: `wrap` gets each opened FileHandle.
-function wrapOpen(t, wrap) {
+// Replaces fs.promises.open (which hashFile calls) for one test: `wrap` gets each FileHandle opened
+// under `dir`, so work an earlier test left running (a review server's warm-up hashing) is untouched.
+function wrapOpen(t, dir, wrap) {
   const real = fs.promises.open;
-  fs.promises.open = async (...args) => wrap(await real(...args));
+  fs.promises.open = async (...args) => {
+    const fh = await real(...args);
+    return String(args[0]).startsWith(dir + path.sep) ? wrap(fh) : fh;
+  };
   t.after(() => { fs.promises.open = real; });
   return real;
 }
@@ -153,7 +191,7 @@ test('a take that grows while it is hashed is read only up to the size it had', 
   const clip = path.join(dir, 'clips/flight-2.mp4');
   fs.writeFileSync(clip, Buffer.alloc(200 * 1024, 1));
   const before = sha(dir, 'clips/flight-2.mp4');
-  wrapOpen(t, (fh) => {
+  wrapOpen(t, dir, (fh) => {
     const stat = fh.stat.bind(fh);
     fh.stat = async (...a) => {
       const st = await stat(...a);
@@ -170,7 +208,7 @@ test('a read that fails partway is not kept: the next view reads the take again'
   const clip = path.join(dir, 'clips/flight-2.mp4');
   fs.writeFileSync(clip, crypto.randomBytes(300 * 1024));
   let fail = true;
-  const real = wrapOpen(t, (fh) => {
+  const real = wrapOpen(t, dir, (fh) => {
     const stream = fh.createReadStream.bind(fh);
     fh.createReadStream = (opts) => {
       const s = stream(opts);
@@ -194,7 +232,7 @@ test('a view that waits for another view\'s hash of the same take holds no file 
   const n = { opened: 0, closed: 0, reading: false };
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
-  wrapOpen(t, (fh) => {
+  wrapOpen(t, dir, (fh) => {
     const first = ++n.opened === 1;
     const close = fh.close.bind(fh);
     fh.close = async () => { n.closed++; return close(); };
@@ -241,17 +279,14 @@ test('takes are hashed a few at a time, so a long list does not run out of file 
     fs.writeFileSync(path.join(dir, `stills/x${k}.png`), `png ${k}`);
     input.scenes[0].takes.push({ file: `stills/x${k}.png`, take: k + 3 });
   }
-  const real = fs.promises.open;
   let open = 0;
   let peak = 0;
-  fs.promises.open = async (...args) => {
-    const fh = await real(...args);
+  wrapOpen(t, dir, (fh) => {
     peak = Math.max(peak, ++open);
     const close = fh.close.bind(fh);
     fh.close = async () => { open--; return close(); };
     return fh;
-  };
-  t.after(() => { fs.promises.open = real; });
+  });
   const html = await renderPage(input, readDecisions(dir), { dir });
   assert.ok(html.includes(sha(dir, 'stills/x39.png')));
   assert.ok(peak >= 1 && peak <= 4, `at most 4 files open at once, saw ${peak}`);

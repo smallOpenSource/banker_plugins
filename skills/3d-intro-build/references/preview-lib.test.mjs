@@ -2,7 +2,7 @@
 // motion-graphic-make skills. Run from the repo root:
 //   node --test skills/3d-intro-build/references/preview-lib.test.mjs
 import { strict as assert } from 'node:assert';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -24,9 +24,12 @@ const portOpen = (port) => new Promise((resolve) => {
   const s = net.connect({ host: '127.0.0.1', port }, () => { s.destroy(); resolve(true); });
   s.on('error', () => resolve(false));
 });
-// A request sent as written: fetch() would fold `..` segments before they reach the server.
+// A request sent as written: fetch() would fold `..` segments before they reach the server. A server
+// that never answers is a result, not a hang.
 const raw = (port, p, headers = {}) => new Promise((resolve, reject) => {
-  http.get({ host: '127.0.0.1', port, path: p, headers }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject);
+  const req = http.get({ host: '127.0.0.1', port, path: p, headers, timeout: 5000 }, (res) => { res.resume(); resolve(res.statusCode); });
+  req.on('timeout', () => { req.destroy(); resolve('no answer in 5 s'); });
+  req.on('error', reject);
 });
 const site = () => {
   const dir = path.join(tmp(), 'site');
@@ -211,6 +214,88 @@ test('a download the browser drops midway closes its file', { skip: process.plat
   for (let k = 0; k < 20; k++) await drop(k % 2 ? { Range: 'bytes=0-' } : {});
   await new Promise((r) => setTimeout(r, 300));
   assert.ok(open() - before <= 2, `open files grew by ${open() - before} after 20 dropped downloads`);
+});
+
+// Replaces fs.fstatSync (which sendFile calls on the file it opened) for one test: `wrap` gets the
+// real call.
+function wrapFstat(t, wrap) {
+  const real = fs.fstatSync;
+  fs.fstatSync = (fd, ...rest) => wrap(() => real(fd, ...rest));
+  t.after(() => { fs.fstatSync = real; });
+}
+
+test('a file whose status cannot be read once it is open gets 403, and the server keeps serving', async (t) => {
+  const dir = site();
+  const s = await startServe(dir, {});
+  t.after(() => s.close());
+  let fail = true;
+  wrapFstat(t, (stat) => {
+    if (!fail) return stat();
+    fail = false;
+    throw Object.assign(new Error('i/o error'), { code: 'EIO' });
+  });
+  assert.equal(await raw(s.port, '/assets/a.mp4'), 403);
+  assert.equal(await raw(s.port, '/'), 200);
+});
+
+test('a file that grows while it is sent goes out at the size it had', async (t) => {
+  const dir = site();
+  const clip = path.join(dir, 'assets', 'a.mp4');
+  const s = await startServe(dir, {});
+  t.after(() => s.close());
+  wrapFstat(t, (stat) => {
+    const st = stat();
+    fs.appendFileSync(clip, Buffer.alloc(256 * 1024, 1));
+    return st;
+  });
+  // Every byte on the connection: fetch would stop at Content-Length and hide what runs past it.
+  const wire = await new Promise((resolve, reject) => {
+    const chunks = [];
+    const sock = net.connect({ host: '127.0.0.1', port: s.port }, () => {
+      sock.write(`GET /assets/a.mp4 HTTP/1.1\r\nHost: localhost:${s.port}\r\nConnection: close\r\n\r\n`);
+    });
+    sock.on('data', (c) => chunks.push(c));
+    sock.on('end', () => resolve(Buffer.concat(chunks)));
+    sock.on('error', reject);
+  });
+  const split = wire.indexOf('\r\n\r\n');
+  assert.match(wire.subarray(0, split).toString(), /content-length: 1000/i);
+  assert.equal(wire.length - split - 4, 1000, 'nothing past the declared length');
+});
+
+test('a path that is a FIFO is refused at once instead of stopping the server', { skip: (process.platform === 'win32' || spawnSync('mkfifo', ['--help']).error) && 'needs mkfifo', timeout: 20_000 }, async (t) => {
+  const dir = site();
+  assert.equal(spawnSync('mkfifo', [path.join(dir, 'assets', 'pipe.mp4')]).status, 0);
+  const state = path.join(tmp(), 'fifo.server.json');
+  const child = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), dir, '--state', state], { stdio: 'ignore' });
+  reap(t, child);
+  for (let i = 0; i < 100 && !fs.existsSync(state); i++) await new Promise((r) => setTimeout(r, 50));
+  const { port } = readState(state);
+  const status = await new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/assets/pipe.mp4', timeout: 3000 }, (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('timeout', () => { req.destroy(); resolve('no answer in 3 s'); });
+    req.on('error', () => resolve('error'));
+  });
+  assert.equal(status, 404);
+});
+
+test('stop reports a stopped server even when its state file cannot be removed', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'file modes do not stop this user' }, async (t) => {
+  const dir = site();
+  const parent = tmp();
+  const state = path.join(parent, 'ro.server.json');
+  const child = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), dir, '--state', state], { stdio: 'ignore' });
+  reap(t, child);
+  for (let i = 0; i < 100 && !fs.existsSync(state); i++) await new Promise((r) => setTimeout(r, 50));
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  fs.chmodSync(parent, 0o555);
+  let r;
+  try {
+    r = await stopServer(state, { timeoutMs: 5000 });
+  } finally {
+    fs.chmodSync(parent, 0o755);
+  }
+  assert.equal(r.reason, 'stopped');
+  await exited;
 });
 
 test('closing a server goes on when its state file cannot be removed', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'file modes do not stop this user' }, async () => {
