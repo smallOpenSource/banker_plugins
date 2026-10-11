@@ -397,7 +397,7 @@ function useHome(home) {
   return path.join(home, '.config', 'banker', '3d-intro', 'env');
 }
 
-test('resolveFfmpeg: the program comes from the shell or the home key file, never from a project key file or a relative PATH entry', async () => {
+test('resolveFfmpeg: the program comes from the shell, the settings file or the home key file, never from a project key file or a relative PATH entry', async () => {
   const root = mkTmp('ff-trust-');
   const homeFile = useHome(path.join(root, 'home'));
   const proj = path.join(root, 'project');
@@ -412,7 +412,29 @@ test('resolveFfmpeg: the program comes from the shell or the home key file, neve
   const mine = path.join(root, 'my-ffmpeg');
   fs.writeFileSync(mine, '');
   fs.writeFileSync(homeFile, `FFMPEG_PATH=${mine}\n`);
-  assert.equal(await A.resolveFfmpeg(), mine, 'the home key file is this machine\'s own setting');
+  assert.equal(await A.resolveFfmpeg(), mine, 'a path an earlier setup left in the home key file still counts');
+  const set = path.join(root, 'set-ffmpeg');
+  fs.writeFileSync(set, '');
+  fs.writeFileSync(A.homeSettingsPath(), `FFMPEG_PATH=${set}\n`);
+  assert.equal(await A.resolveFfmpeg(), set, 'the settings file comes before the key file');
+});
+
+test('resolveFfmpeg: a settings or key file it cannot read names nothing; a usable shell value is taken without reading them', async () => {
+  const root = mkTmp('ff-unread-');
+  useHome(path.join(root, 'home'));
+  fs.mkdirSync(A.homeSettingsPath());
+  fs.mkdirSync(A.homeCredsPath());
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  const onPath = path.join(bin, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  fs.writeFileSync(onPath, '');
+  delete process.env.FFMPEG_PATH;
+  process.env.PATH = bin;
+  assert.equal(await A.resolveFfmpeg(), onPath, 'the unreadable files are passed over');
+  const mine = path.join(root, 'mine');
+  fs.writeFileSync(mine, '');
+  process.env.FFMPEG_PATH = mine;
+  assert.equal(await A.resolveFfmpeg(), mine);
 });
 
 test('resolveCreds: a program path in a project key file is left out and reported; the home key file keeps it', () => {
@@ -441,7 +463,8 @@ test('resolveFfmpeg: a relative FFMPEG_PATH, from the shell or the home file, is
   await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'shell value');
   delete process.env.FFMPEG_PATH;
   fs.writeFileSync(homeFile, `FFMPEG_PATH=${path.join('bin', 'ffmpeg')}\n`);
-  await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'home file value');
+  fs.writeFileSync(A.homeSettingsPath(), `FFMPEG_PATH=${path.join('bin', 'ffmpeg')}\n`);
+  await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'settings and key file values');
 });
 
 test('persistCreds: a value or name with a line break is refused and nothing is written, so a sample cannot add lines', () => {
@@ -710,8 +733,8 @@ test('3d-intro-setup: keys are written by the person into a private file, never 
   assert.match(doc, /umask 077/, 'the key file is created private');
   assert.match(doc, /Model Studio[^\n]*(교체|재발급)/, 'WAN keys get rotation advice too');
   assert.doesNotMatch(doc, /key 를 물어본다/, 'the FLUX key is not asked for in chat either');
-  assert.ok(doc.includes("grep -qE '^[[:space:]]*[A-Z0-9_]+_API_KEY[[:space:]]*=[[:space:]]*[^[:space:]#]' ~/.config/banker/3d-intro/env 2>/dev/null || (umask 077 && touch .env.3d-intro.local)"),
-    'an empty project key file is not created over a home key file that holds keys');
+  assert.ok(doc.includes('[ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local)'),
+    'an empty project key file is not created over a home key file');
 });
 
 test('3d-intro-build: the program path is not copied from the key file into FFMPEG_PATH', () => {
@@ -722,21 +745,36 @@ test('3d-intro-build: the program path is not copied from the key file into FFMP
   assert.doesNotMatch(setup, /npm install --no-save ffmpeg-static/, 'the fallback is not installed by npm inside the project');
 });
 
-test('3d-intro-setup: an ffmpeg found only through the shell is saved to the home settings, never to the project key file', () => {
+// setup §2 run in a project folder of its own, with a home folder of its own.
+function runSetupFfmpeg(projectEnv, env) {
   const root = mkTmp('setup-ff-');
   const home = path.join(root, 'home');
   const proj = path.join(root, 'project');
   fs.mkdirSync(home);
   fs.mkdirSync(proj);
-  const fake = path.join(root, 'ffmpeg-bin');
-  fs.writeFileSync(fake, '');
-  fs.writeFileSync(path.join(proj, '.env.3d-intro.local'), 'AZURE_SORA_API_KEY=placeholder-k\n');
+  fs.writeFileSync(path.join(proj, '.env.3d-intro.local'), projectEnv);
   const r = orig.spawnSync(process.execPath, ['-e', setupScript('## 2. ffmpeg 확보')],
-    { cwd: proj, env: { ...process.env, HOME: home, USERPROFILE: home, FFMPEG_PATH: fake }, encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
-  const homeFile = path.join(home, '.config', 'banker', '3d-intro', 'env');
-  assert.equal(fs.existsSync(homeFile) && A.parseEnvFile(fs.readFileSync(homeFile, 'utf8')).FFMPEG_PATH, fake);
-  assert.equal(fs.readFileSync(path.join(proj, '.env.3d-intro.local'), 'utf8'), 'AZURE_SORA_API_KEY=placeholder-k\n', 'the project key file is untouched');
+    { cwd: proj, env: { ...process.env, HOME: home, USERPROFILE: home, ...env }, encoding: 'utf8' });
+  const conf = path.join(home, '.config', 'banker', '3d-intro');
+  return { r, root, proj, settings: path.join(conf, 'settings.env'), keyFile: path.join(conf, 'env') };
+}
+
+test('3d-intro-setup: an ffmpeg found only through the shell is saved to the settings file, never to a key file', () => {
+  const fake = path.join(mkTmp('setup-ff-bin-'), 'ffmpeg-bin');
+  fs.writeFileSync(fake, '');
+  const s = runSetupFfmpeg('AZURE_SORA_API_KEY=placeholder-k\n', { FFMPEG_PATH: fake });
+  assert.equal(s.r.status, 0, s.r.stderr);
+  assert.equal(fs.existsSync(s.settings) && A.parseEnvFile(fs.readFileSync(s.settings, 'utf8')).FFMPEG_PATH, fake);
+  assert.equal(fs.existsSync(s.keyFile), false, 'no home key file appears, so the key-file step is not misled');
+  assert.equal(fs.readFileSync(path.join(s.proj, '.env.3d-intro.local'), 'utf8'), 'AZURE_SORA_API_KEY=placeholder-k\n', 'the project key file is untouched');
+});
+
+test('3d-intro-setup: a path left in the project key file is named even when no ffmpeg is found', () => {
+  const s = runSetupFfmpeg('FFMPEG_PATH=/old/project/ffmpeg\n', { FFMPEG_PATH: '', PATH: path.join(mkTmp('setup-ff-path-'), 'empty') });
+  assert.equal(s.r.status, 1, s.r.stderr);
+  assert.match(s.r.stdout, /프로젝트 키 파일에서 쓰지 않는 값: FFMPEG_PATH/);
+  assert.match(s.r.stdout, /ffmpeg 미확보/);
+  assert.ok(!s.r.stdout.includes('/old/project/ffmpeg'), 'the value itself is not shown');
 });
 
 // The JavaScript of the first `node -e "..."` command after `heading` in the setup skill, with the

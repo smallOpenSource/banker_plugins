@@ -134,13 +134,33 @@ function envValue(raw) {
   return raw.trimEnd().replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 }
 
-/** The home key file, `~/.config/banker/3d-intro/env`: fallback keys and this machine's own settings. */
+/** The home key file, `~/.config/banker/3d-intro/env`: the keys when no project key file is used. */
 export function homeCredsPath() {
   return path.join(os.homedir(), '.config', 'banker', '3d-intro', 'env');
 }
 
-// Settings that name a program to run. Only the home key file or the shell sets them: a project's
-// .env.3d-intro.local can come with a repository, and must not choose what runs on this machine.
+/**
+ * This machine's settings file, `~/.config/banker/3d-intro/settings.env` (FFMPEG_PATH). It holds no
+ * key, so it can exist without making the home key file look set up.
+ */
+export function homeSettingsPath() {
+  return path.join(os.homedir(), '.config', 'banker', '3d-intro', 'settings.env');
+}
+
+/** The settings file as a KEY=VALUE map; {} when it is missing or cannot be read. */
+export function readSettings() {
+  return readEnvQuietly(homeSettingsPath);
+}
+
+// A KEY=VALUE file named by fileOf(); {} when there is none or it cannot be read (no home folder, no
+// permission, a folder in its place).
+function readEnvQuietly(fileOf) {
+  try { return parseEnvFile(fs.readFileSync(fileOf(), 'utf8')); } catch { return {}; }
+}
+
+// Settings that name a program to run. Only the shell or this machine's own files set them (the
+// settings file, or the home key file from an earlier setup): a project's .env.3d-intro.local can come
+// with a repository, and must not choose what runs on this machine.
 const MACHINE_ONLY = ['FFMPEG_PATH'];
 
 /**
@@ -519,7 +539,8 @@ export async function createVideoTwoImage({
 
 /**
  * Locate an ffmpeg binary without ever invoking a shell:
- *   1) $FFMPEG_PATH from the shell, else FFMPEG_PATH in the home key file (if it exists)
+ *   1) $FFMPEG_PATH from the shell, else FFMPEG_PATH in the settings file, else one an earlier setup
+ *      left in the home key file; absolute paths only
  *   2) the absolute $PATH entries (split on path.delimiter), for ffmpeg / ffmpeg.exe
  *   3) the optional ffmpeg-static package (dynamic import — may be absent)
  * A project's .env.3d-intro.local never names the program, and "." or another relative PATH entry is
@@ -532,8 +553,13 @@ export async function resolveFfmpeg() {
   return found;
 }
 
-// Absolute only: a relative value would be looked up in the current folder, the project.
-const namedFfmpeg = () => [process.env.FFMPEG_PATH, resolveCreds().FFMPEG_PATH].find((p) => p && path.isAbsolute(p) && fs.existsSync(p)) || null;
+// The ffmpeg this machine names. Absolute only: a relative value would be looked up in the current
+// folder, the project. The files are read only when the shell names nothing usable.
+function namedFfmpeg() {
+  const usable = (p) => !!p && path.isAbsolute(p) && fs.existsSync(p);
+  if (usable(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
+  return [readSettings(), readEnvQuietly(homeCredsPath)].map((s) => s.FFMPEG_PATH).find(usable) || null;
+}
 
 function ffmpegOnPath() {
   const names = process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'];
