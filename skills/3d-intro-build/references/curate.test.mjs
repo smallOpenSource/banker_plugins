@@ -65,21 +65,79 @@ test('a take is hashed in chunks, hashed anew once its file changes, and a folde
   fs.writeFileSync(clip, crypto.randomBytes(300 * 1024 + 7));
   assert.equal(await hashFile(clip), sha(dir, 'clips/flight-2.mp4'), 'a file of several read chunks');
   fs.appendFileSync(clip, 'a regenerated take');
+  fs.mkdirSync(path.join(dir, 'stills', 'folder.png'));
   const input = readInput(dir);
-  input.scenes[0].takes.push({ file: 'stills', take: 3 });
+  input.scenes[0].takes.push({ file: 'stills/folder.png', take: 3 });
   const html = await renderPage(input, readDecisions(dir), { dir });
   assert.ok(html.includes(sha(dir, 'clips/flight-2.mp4')), 'the changed file shows its new hash');
-  assert.match(html, /해시 실패\(/, 'a folder listed as a take');
+  assert.match(html, /해시 실패\(일반 파일 아님\)/, 'a folder listed as a take');
   await assert.rejects(hashFile(path.join(dir, 'missing.mp4')), { code: 'ENOENT' });
 });
 
-test('a take that is not a regular file fails its hash at once instead of reading forever', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows', timeout: 10_000 }, async () => {
+test('a device is never read for a hash, and a take linked to one is refused before that', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows', timeout: 10_000 }, async () => {
+  await assert.rejects(hashFile('/dev/zero'), /일반 파일 아님/);
   const dir = project();
   fs.symlinkSync('/dev/zero', path.join(dir, 'clips/zero.mp4'));
   const input = readInput(dir);
   input.scenes[1].takes.push({ file: 'clips/zero.mp4', take: 2 });
   const html = await renderPage(input, readDecisions(dir), { dir });
-  assert.match(html, /해시 실패\(일반 파일 아님\)/);
+  assert.match(html, /링크가 프로젝트 폴더 밖을 가리켜/);
+  assert.doesNotMatch(html, /src="\/clips\/zero\.mp4"/);
+});
+
+test('a listed file that is not an image or a video, or that links out of the project, is neither shown nor served', async (t) => {
+  const dir = project();
+  fs.writeFileSync(path.join(dir, '.env.3d-intro.local'), 'AZURE_API_KEY=secret');
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-out-'));
+  made.push(outside);
+  fs.writeFileSync(path.join(outside, 'leak.png'), 'from outside');
+  const links = process.platform !== 'win32';
+  if (links) fs.symlinkSync(path.join(outside, 'leak.png'), path.join(dir, 'stills', 'link.png'));
+  const input = JSON.parse(fs.readFileSync(path.join(dir, 'curate-input.json'), 'utf8'));
+  input.scenes[0].takes.push({ file: '.env.3d-intro.local', take: 3 }, ...(links ? [{ file: 'stills/link.png', take: 4 }] : []));
+  fs.writeFileSync(path.join(dir, 'curate-input.json'), JSON.stringify(input));
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const get = (p) => fetch(`http://127.0.0.1:${s.port}${p}`);
+  const html = await (await get('/')).text();
+  assert.equal((await get('/.env.3d-intro.local')).status, 404);
+  assert.match(html, /이미지나 영상 파일이 아니라/);
+  assert.ok(!html.includes(crypto.createHash('sha256').update('AZURE_API_KEY=secret').digest('hex')), 'the key file is not hashed');
+  if (links) {
+    assert.equal((await get('/stills/link.png')).status, 404);
+    assert.match(html, /링크가 프로젝트 폴더 밖을 가리켜/);
+    assert.ok(!html.includes(crypto.createHash('sha256').update('from outside').digest('hex')));
+  }
+  assert.equal((await get('/stills/s1-t1.png')).status, 200, 'a listed image inside is still served');
+});
+
+test('an error page says what failed without the absolute path of the folder', async (t) => {
+  const dir = project();
+  fs.rmSync(path.join(dir, 'curate-input.json'));
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const r = await fetch(`http://127.0.0.1:${s.port}/`);
+  const body = await r.text();
+  assert.equal(r.status, 500);
+  assert.match(body, /curate-input\.json 을 읽지 못했습니다\(ENOENT\)/);
+  assert.ok(!body.includes(dir), body);
+});
+
+test('a verdict that cannot be saved says so without the absolute path of the folder', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'file modes do not stop this user' }, async (t) => {
+  const dir = project();
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  fs.chmodSync(dir, 0o555);
+  let r;
+  try {
+    r = await post(s.port, { scenes: [{ id: 's1', chosen: 'stills/s1-t1.png' }] });
+  } finally {
+    fs.chmodSync(dir, 0o755);
+  }
+  const body = await r.text();
+  assert.equal(r.status, 400);
+  assert.match(body, /판정을 저장하지 못했습니다\(EACCES\)/);
+  assert.ok(!body.includes(dir), body);
 });
 
 // Replaces fs.promises.open (which hashFile calls) for one test: `wrap` gets each opened FileHandle.

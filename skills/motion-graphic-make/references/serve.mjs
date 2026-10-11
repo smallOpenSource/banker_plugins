@@ -19,9 +19,9 @@
  *     --state  state file (default: <dir>.server.json beside the folder, never inside it)
  *     --stop   ends the server the state file records, only when it answers with that PID
  *   A start while the recorded server still answers with the same settings only reports its
- *   address; with other settings (--csp, PREVIEW_HOST, a --port other than the one it listens on
- *   or its own start asked for) it exits 1: --stop first. A request whose Host is a DNS name other
- *   than localhost is refused (DNS rebinding).
+ *   address; with other settings (another folder sharing the --state file, --csp, PREVIEW_HOST, a
+ *   --port other than the one it listens on or its own start asked for) it exits 1: --stop first.
+ *   A request whose Host is a DNS name other than localhost is refused (DNS rebinding).
  *   On listen it writes the state file and prints  PREVIEW http://localhost:<port>/
  *   PREVIEW_HOST=0.0.0.0 binds every interface (on-device phone checks) and prints a warning.
  *
@@ -90,22 +90,23 @@ async function stopMain(o, dir) {
   process.exit(['stopped', 'not-running', 'no-state'].includes(r.reason) ? 0 : 1);
 }
 
-// Whether the recorded server answers this start: the same CSP and host, and the port asked for.
-const sameSettings = (st, o) => (st.csp || null) === cspFrom(o.csp)
+// Whether the recorded server answers this start: this folder, the same CSP and host, and the port
+// asked for. A state file shared through --state can record another folder's server.
+const sameSettings = (st, o, dir) => path.resolve(String(st.dir || '')) === dir && (st.csp || null) === cspFrom(o.csp)
   && (st.host || LOOPBACK) === (process.env.PREVIEW_HOST || LOOPBACK) && portMatches(st, o.port);
 
-// A server already running for this folder: the same settings only report its address; other
-// settings (CSP, host, port) never pass for it, so a check meant to run under a CSP cannot run
-// without one, and a page meant for one port is not checked on another.
-async function reportRunning(recorded, o) {
+// A server already running for this state file: the same settings only report its address; other
+// settings (folder, CSP, host, port) never pass for it, so a check meant to run under a CSP cannot
+// run without one, and a page meant for one folder or port is not checked on another.
+async function reportRunning(recorded, o, dir) {
   if (!(await isRunning(recorded))) return false;
   const st = readState(recorded);
-  if (sameSettings(st, o)) {
+  if (sameSettings(st, o, dir)) {
     console.log(`PREVIEW ${st.url} (already running, pid ${st.pid})`);
     return true;
   }
-  console.error(`serve: a server for this folder is running with different settings (csp: ${st.csp ? 'on' : 'off'}, `
-    + `host: ${st.host}, port: ${st.port}); stop it with --stop and start again`);
+  console.error(`serve: the state file records a server running with different settings (folder: ${st.dir}, `
+    + `csp: ${st.csp ? 'on' : 'off'}, host: ${st.host}, port: ${st.port}); stop it with --stop and start again`);
   process.exit(1);
 }
 
@@ -113,7 +114,7 @@ async function main() {
   const o = parseArgs(process.argv.slice(2));
   const dir = path.resolve(o.dir || process.cwd());
   if (o.stop) return stopMain(o, dir);
-  if (await reportRunning(o.state ? path.resolve(o.state) : siblingState(dir), o)) return;
+  if (await reportRunning(o.state ? path.resolve(o.state) : siblingState(dir), o, dir)) return;
   const s = await startServe(dir, { port: o.port || undefined, csp: o.csp || undefined, stateFile: o.state || undefined });
   const warn = hostWarning(s.host);
   if (warn) console.warn(warn);

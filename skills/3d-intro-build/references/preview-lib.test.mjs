@@ -182,6 +182,74 @@ test('a start asking another port than the running server is refused; the port i
   await exited;
 });
 
+test('a file the server cannot read gets 403 and the server keeps serving; a folder is 404', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'file modes do not stop this user' }, async (t) => {
+  const dir = site();
+  const clip = path.join(dir, 'assets', 'a.mp4');
+  fs.chmodSync(clip, 0o000);
+  t.after(() => fs.chmodSync(clip, 0o644));
+  const s = await startServe(dir, {});
+  t.after(() => s.close());
+  assert.equal(await raw(s.port, '/assets/a.mp4'), 403);
+  assert.equal(await raw(s.port, '/assets/a.mp4', { Range: 'bytes=0-9' }), 403);
+  assert.equal(await raw(s.port, '/assets'), 404);
+  assert.equal(await raw(s.port, '/'), 200, 'the server is still up');
+});
+
+test('a download the browser drops midway closes its file', { skip: process.platform === 'win32' && 'counts open files under /proc or /dev/fd' }, async (t) => {
+  const dir = site();
+  fs.writeFileSync(path.join(dir, 'assets', 'big.mp4'), Buffer.alloc(4 * 1024 * 1024, 7));
+  const s = await startServe(dir, {});
+  t.after(() => s.close());
+  const open = () => fs.readdirSync(process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd').length;
+  const drop = (headers) => new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: s.port, path: '/assets/big.mp4', headers }, (res) => {
+      res.once('data', () => { req.destroy(); resolve(); });
+    });
+    req.on('error', () => resolve());
+  });
+  const before = open();
+  for (let k = 0; k < 20; k++) await drop(k % 2 ? { Range: 'bytes=0-' } : {});
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(open() - before <= 2, `open files grew by ${open() - before} after 20 dropped downloads`);
+});
+
+test('closing a server goes on when its state file cannot be removed', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'file modes do not stop this user' }, async () => {
+  const dir = site();
+  const s = await startServe(dir, {});
+  const parent = path.dirname(dir);
+  fs.chmodSync(parent, 0o555);
+  try {
+    await s.close();
+  } finally {
+    fs.chmodSync(parent, 0o755);
+  }
+  assert.equal(await portOpen(s.port), false);
+  assert.equal(fs.existsSync(s.stateFile), true, 'left behind; the next start finds it stale');
+});
+
+test('stop refuses a state file whose PID is not a positive process id, and leaves the file', async () => {
+  for (const pid of [-1, 0, 1, '123', 1.5]) {
+    const f = path.join(tmp(), 'bad.server.json');
+    fs.writeFileSync(f, JSON.stringify({ pid, port: 1 }));
+    assert.deepEqual(await stopServer(f), { stopped: false, reason: 'invalid-state' }, String(pid));
+    assert.equal(fs.existsSync(f), true);
+  }
+});
+
+test('a start for another folder that shares the state file is refused, not taken for its server', async (t) => {
+  const [a, b] = [site(), site()];
+  const state = path.join(tmp(), 'shared.server.json');
+  const child = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), a, '--state', state], { stdio: 'ignore' });
+  reap(t, child);
+  for (let i = 0; i < 100 && !fs.existsSync(state); i++) await new Promise((r) => setTimeout(r, 50));
+  const r = await runServe([b, '--state', state]);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /different settings[\s\S]*folder[\s\S]*--stop/);
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  assert.equal((await stopServer(state, { timeoutMs: 5000 })).reason, 'stopped');
+  await exited;
+});
+
 test('stop ends only the recorded server, waits for its port to close and removes the state file', async (t) => {
   const dir = site();
   const child = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), dir], { stdio: 'ignore' });

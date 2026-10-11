@@ -8,8 +8,10 @@
  *   listed takes only).
  * - Requests whose Host is a name other than localhost are refused, so a DNS name rebound to this
  *   machine cannot read what is served.
- * - A stop that ends only the process answering on that port with the recorded PID, then waits
- *   for the port to close. Nothing is matched by command line (no pkill -f).
+ * - A stop that ends only the process answering on that port with the recorded PID (a whole number
+ *   above 1), then waits for the port to close. Nothing is matched by command line (no pkill -f).
+ * - Files open before any header goes out, so one that cannot be read gets 403 and the server
+ *   stays up, and a download the browser drops closes its file.
  * - An optional Content-Security-Policy header, so a page is checked under the policy it ships with.
  *
  * Runtime: Node >=18 builtins only (node:fs / node:http / node:net / node:path). No shell.
@@ -18,6 +20,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
+import { pipeline } from 'node:stream';
 
 export const LOOPBACK = '127.0.0.1';
 // Answers { pid } so a stop can tell this server from another process on the same port.
@@ -71,28 +74,47 @@ export function send(res, status, body, headers = {}) {
   res.end(String(body));
 }
 
+// Read flags that never wait: a path that has turned into a FIFO opens at once and is then refused.
+export const READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
+
+// An open regular file: { fd, size }, or { status } when there is none (404) or it cannot be read (403).
+function openRegular(fp) {
+  let fd;
+  try { fd = fs.openSync(fp, READ_FLAGS); } catch (e) { return { status: ['ENOENT', 'ENOTDIR', 'EISDIR'].includes(e.code) ? 404 : 403 }; }
+  const st = fs.fstatSync(fd);
+  if (st.isFile()) return { fd, size: st.size };
+  fs.closeSync(fd);
+  return { status: 404 };
+}
+
+// Sends an open file, or the part `start`..`end` of it, and closes it, also when the browser drops
+// the download midway (a pipe would keep the file open).
+const stream = (res, fp, opts) => pipeline(fs.createReadStream(fp, opts), res, () => {});
+
 // A file, with byte ranges for video (smoother scrubbing). Never cached: a rebuilt page is fresh.
+// The file is opened before any header goes out, so one that cannot be read gets 403 instead of
+// ending the server.
 export function sendFile(req, res, fp, headers = {}) {
-  let st = null;
-  try { st = fs.statSync(fp); } catch { /* missing */ }
-  if (!st || st.isDirectory()) return send(res, 404, '404', headers);
+  const f = openRegular(fp);
+  if (f.status) return send(res, f.status, String(f.status), headers);
   const type = MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream';
   const base = { ...headers, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };
   const range = type.startsWith('video/') ? /bytes=(\d+)-(\d*)/.exec(req.headers.range || '') : null;
-  if (range) return sendRange(res, fp, st.size, range, base, headers);
-  res.writeHead(200, { ...base, 'Content-Length': st.size });
-  fs.createReadStream(fp).pipe(res);
+  if (range) return sendRange(res, fp, f, range, base, headers);
+  res.writeHead(200, { ...base, 'Content-Length': f.size });
+  stream(res, fp, { fd: f.fd });
 }
 
-function sendRange(res, fp, size, range, base, headers) {
+function sendRange(res, fp, f, range, base, headers) {
   const start = Number(range[1]);
-  const end = Math.min(range[2] ? Number(range[2]) : size - 1, size - 1);
-  if (start >= size || start > end) {
-    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${size}` });
+  const end = Math.min(range[2] ? Number(range[2]) : f.size - 1, f.size - 1);
+  if (start >= f.size || start > end) {
+    fs.closeSync(f.fd);
+    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${f.size}` });
     return void res.end();
   }
-  res.writeHead(206, { ...base, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
-  fs.createReadStream(fp, { start, end }).pipe(res);
+  res.writeHead(206, { ...base, 'Content-Range': `bytes ${start}-${end}/${f.size}`, 'Content-Length': end - start + 1 });
+  stream(res, fp, { fd: f.fd, start, end });
 }
 
 // True when the request was the PID question, which this answers.
@@ -147,9 +169,12 @@ export function readState(file) {
 
 export const removeState = (file) => fs.rmSync(file, { force: true });
 
-// Removes the state file when the process recorded there is this one.
+// Removes the state file when the process recorded there is this one. A file that cannot be removed
+// (a folder made read-only) stays; the next start finds it stale. Closing goes on either way.
 export function forgetSelf(file) {
-  if (readState(file)?.pid === process.pid) removeState(file);
+  try {
+    if (readState(file)?.pid === process.pid) removeState(file);
+  } catch { /* left behind */ }
 }
 
 const NONE = Symbol('none');
@@ -179,33 +204,42 @@ async function waitClosed(port, timeoutMs, host) {
   return !(await portOpen(port, host));
 }
 
+// A PID a state file may name: a whole number above 1 (never a process group, never init).
+const validPid = (pid) => Number.isInteger(pid) && pid > 1;
+
 /** True when the server a state file records still answers on its port with its PID. */
 export async function isRunning(stateFile) {
   const st = readState(stateFile);
-  return Boolean(st && st.port) && (await askPid(st.port, 1500, st.host)) === st.pid;
+  return Boolean(st && st.port) && validPid(st.pid) && (await askPid(st.port, 1500, st.host)) === st.pid;
 }
 
 function signal(pid, sig) {
   try { process.kill(pid, sig); } catch { /* already gone */ }
 }
 
-// Stops the server a state file records. Result reasons: stopped, no-state, not-running (the
-// stale record is removed), other-process (left alone), still-open.
+// Stops the server a state file records. Result reasons: stopped, no-state, invalid-state (a PID
+// that is no process id; the file is left for a person to look at), not-running (the stale record
+// is removed), other-process (left alone), still-open.
 export async function stopServer(stateFile, { timeoutMs = 3000 } = {}) {
   const st = readState(stateFile);
   if (!st || !st.port) return { stopped: false, reason: 'no-state' };
+  if (!validPid(st.pid)) return { stopped: false, reason: 'invalid-state' };
   const who = await askPid(st.port, Math.min(timeoutMs, 1500), st.host);
   if (who === NONE) {
     removeState(stateFile);
     return { stopped: false, reason: 'not-running' };
   }
   if (who !== st.pid) return { stopped: false, reason: 'other-process' };
+  if (!(await terminate(st, timeoutMs))) return { stopped: false, reason: 'still-open' };
+  removeState(stateFile);
+  return { stopped: true, reason: 'stopped' };
+}
+
+// Ends a server that answered with its PID: SIGTERM, then SIGKILL while its port stays open. True
+// once the port is closed.
+async function terminate(st, timeoutMs) {
   signal(st.pid, 'SIGTERM');
-  let closed = await waitClosed(st.port, timeoutMs, st.host);
-  if (!closed) {
-    signal(st.pid, 'SIGKILL');
-    closed = await waitClosed(st.port, timeoutMs, st.host);
-  }
-  if (closed) removeState(stateFile);
-  return closed ? { stopped: true, reason: 'stopped' } : { stopped: false, reason: 'still-open' };
+  if (await waitClosed(st.port, timeoutMs, st.host)) return true;
+  signal(st.pid, 'SIGKILL');
+  return waitClosed(st.port, timeoutMs, st.host);
 }

@@ -22,9 +22,10 @@
  *                   [--take <n|file>] [--note "..."]  record a verdict given in chat
  *   node curate.mjs --archive [projectDir]           move rejected takes to rejected-YYYYMMDD/
  *   PREVIEW_HOST=0.0.0.0 binds every interface and prints a warning.
- * The server answers only the takes and frames the input lists (never other files of the folder),
- * only to a Host that is localhost or an IP address, and takes verdicts only as JSON from its own
- * page; a page drawn before a newer verdict (one recorded in chat) gets 409 instead of overwriting it.
+ * The server answers only the images and videos the input lists as takes and frames, inside the
+ * project by path and by link (never other files of the folder), only to a Host that is localhost
+ * or an IP address, and takes verdicts only as JSON from its own page; a page drawn before a newer
+ * verdict (one recorded in chat) gets 409 instead of overwriting it. Errors name no absolute path.
  * A start while the recorded server runs only reports its address; with another PREVIEW_HOST or a
  * --port other than the one it listens on or its own start asked for, it exits 1: --stop first.
  * Each take's sha256 is read in chunks (any size) from the server start on, and again once the file
@@ -38,8 +39,8 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  LOOPBACK, answersPid, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, portMatches, readState,
-  resolveInside, send, sendFile, stopServer, urlFor, writeState,
+  LOOPBACK, READ_FLAGS, answersPid, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, portMatches,
+  readState, resolveInside, send, sendFile, stopServer, urlFor, writeState,
 } from './preview-lib.mjs';
 
 const INPUT = 'curate-input.json';
@@ -56,6 +57,24 @@ const escAttr = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<':
 const fileUrl = (file) => '/' + String(file).replace(/^[.][/\\]/, '').split(/[\\/]/).map(encodeURIComponent).join('/');
 const money = (n) => `$${Number(Number(n).toFixed(3))}`;
 const inside = (dir, file) => typeof file === 'string' && file !== '' && resolveInside(dir, '/' + file) !== null;
+const MEDIA = /\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i;
+
+// Whether a path leads inside `dir` once its links resolve (a file not there yet goes by its path).
+function realInside(dir, fp) {
+  let real;
+  try { real = fs.realpathSync(fp); } catch { return true; }
+  const root = fs.realpathSync(dir);
+  return real === root || real.startsWith(root + path.sep);
+}
+
+// Why a listed file is neither shown nor served nor hashed, or null when it may be: it must be an
+// image or a video inside the project, by its path and by where its links lead, so a key file or
+// a record listed by mistake never leaves the folder.
+function refusal(dir, file) {
+  if (!inside(dir, file)) return '파일 경로가 프로젝트 폴더 밖이라 보이지 않습니다.';
+  if (!MEDIA.test(file)) return '이미지나 영상 파일이 아니라 보이지 않습니다.';
+  return realInside(dir, path.join(dir, file)) ? null : '링크가 프로젝트 폴더 밖을 가리켜 보이지 않습니다.';
+}
 
 // ---- input and decisions ----------------------------------------------------
 
@@ -227,7 +246,6 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
 // path turns into one after the first check).
 const hashes = new Map();
 const notRegular = () => new Error('일반 파일 아님');
-const READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
 export async function hashFile(fp) {
   if (!(await fs.promises.stat(fp)).isFile()) throw notRegular();
   const fh = await fs.promises.open(fp, READ_FLAGS);
@@ -260,8 +278,9 @@ function sha256Of(fh, size) {
 
 // What a card shows for a take's file: its sha256, or why there is none.
 async function hashText(dir, file) {
-  const fp = inside(dir, file) ? path.join(dir, file) : null;
-  if (!fp || !fs.existsSync(fp)) return '파일 없음';
+  if (refusal(dir, file)) return '보이지 않음';
+  const fp = path.join(dir, file);
+  if (!fs.existsSync(fp)) return '파일 없음';
   try { return await hashFile(fp); } catch (e) { return `해시 실패(${e.code || e.message})`; }
 }
 
@@ -282,7 +301,8 @@ async function takeHashes(input, dir) {
 }
 
 function media(t, dir) {
-  if (!inside(dir, t.file)) return '<p class="refused">파일 경로가 프로젝트 폴더 밖이라 보이지 않습니다.</p>';
+  const no = refusal(dir, t.file);
+  if (no) return `<p class="refused">${no}</p>`;
   const src = escAttr(fileUrl(t.file));
   return VIDEO.test(t.file)
     ? `<video src="${src}" muted loop autoplay playsinline preload="metadata"></video>`
@@ -291,7 +311,7 @@ function media(t, dir) {
 
 function frameRow(label, file, dir) {
   if (!file) return '';
-  const thumb = inside(dir, file) ? `<img class="thumb" src="${escAttr(fileUrl(file))}" alt="">` : '';
+  const thumb = refusal(dir, file) ? '' : `<img class="thumb" src="${escAttr(fileUrl(file))}" alt="">`;
   return `<dt>${label}</dt><dd>${thumb}<code>${escHtml(file)}</code></dd>`;
 }
 
@@ -432,6 +452,14 @@ function readBody(req, limit = 1_000_000) {
 
 // Verdicts come only from the page itself: JSON (a cross-site form or text/plain post is refused,
 // and JSON across sites needs a preflight this server never grants) from its own origin.
+// What a failure tells the page: a curate: message as it is; anything else only by its code (a system
+// message names absolute paths), with the whole of it on the server's stderr.
+function failureText(e, what) {
+  if (String(e.message).startsWith('curate:')) return e.message;
+  console.error(`curate: ${what}: ${e.message || e}`);
+  return `${what}(${e.code || e.name || 'error'})`;
+}
+
 async function decide(dir, req, res) {
   if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return send(res, 415, 'JSON only');
   const origin = req.headers.origin;
@@ -441,18 +469,18 @@ async function decide(dir, req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ ok: true, written: DECISIONS, scenes: stage.scenes.length }));
   } catch (e) {
-    send(res, e.status || 400, String(e.message || e));
+    send(res, e.status || 400, failureText(e, '판정을 저장하지 못했습니다'));
   }
 }
 
-// The files the page may serve: the takes and frames the input lists, inside the project. Nothing
-// else in the folder (keys in .env files, the review records) is reachable.
+// The files the page may serve: the images and videos the input lists as takes and frames, inside
+// the project. Nothing else in the folder (keys in .env files, the review records) is reachable.
 function listedFiles(dir) {
   let input;
   try { input = readInput(dir); } catch { return new Set(); }
   const files = new Set();
   for (const t of input.scenes.flatMap((s) => s.takes)) {
-    for (const f of [t.file, t.firstFrame, t.lastFrame]) if (inside(dir, f)) files.add(path.normalize(path.join(dir, f)));
+    for (const f of [t.file, t.firstFrame, t.lastFrame]) if (!refusal(dir, f)) files.add(path.normalize(path.join(dir, f)));
   }
   return files;
 }
@@ -460,7 +488,7 @@ function listedFiles(dir) {
 async function page(dir, res) {
   let html;
   try { html = await renderPage(readInput(dir), readDecisions(dir), { dir }); } catch (e) {
-    return send(res, 500, String(e.message).startsWith('curate:') ? e.message : `${INPUT} 을 읽지 못했습니다: ${e.message}`);
+    return send(res, 500, failureText(e, `${INPUT} 을 읽지 못했습니다`));
   }
   res.writeHead(200, { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(html);
