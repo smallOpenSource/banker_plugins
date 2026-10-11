@@ -16,7 +16,8 @@ import {
   registerGracefulPause,
 } from './graceful-pause.mjs';
 import {
-  SPEC as PROGRESS_SPEC, progressReset, progressTurnCompleted, progressTurnStarted, registerProgress,
+  SPEC as PROGRESS_SPEC, progressPlanRead, progressPlanTarget, progressReset, progressTurnCompleted, progressTurnStarted,
+  registerProgress,
 } from './progress.mjs';
 
 async function engineVersion($) {
@@ -43,6 +44,20 @@ async function registerCommands($) {
   if (atLeast(version, MIN_ENGINE)) await registerOne($, PAUSE_SPEC);
   else $.ui.log(`/${PAUSE} 는 Claude Code ${MIN_ENGINE.join('.')} 이상에서만 켭니다 (이 엔진: ${version || '버전 미상'})`);
   await registerOne($, PROGRESS_SPEC);
+}
+
+// /progress's plan file, read again at a turn's start and end: a ralph PRD or a plan's checkboxes
+// change without a call this module sees. A read that fails keeps the plan as it was.
+async function rereadPlan($) {
+  const target = progressPlanTarget();
+  if (!target) return;
+  let text = null;
+  try {
+    text = await $.fs.read(target.path);
+  } catch {
+    /* missing or refused: the pane keeps the plan it read last */
+  }
+  progressPlanRead(target, text);
 }
 
 // A /graceful-pause request that came after its turn's last model request: a note voids it.
@@ -75,6 +90,7 @@ export const register = (on) => {
   on('turn.start', async ($, e, next) => {
     pauseTurnStarted(e);
     progressTurnStarted(e);
+    await rereadPlan($);
     $.ui.invalidate('ui.render');
     return next(e);
   });
@@ -83,6 +99,7 @@ export const register = (on) => {
     const late = pauseTurnCompleted(e);
     if (late) await voidLateRequest($, late);
     progressTurnCompleted(e);
+    await rereadPlan($);
     $.ui.invalidate('ui.render');
     return next(e);
   });
