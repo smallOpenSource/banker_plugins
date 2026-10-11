@@ -50,11 +50,12 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 ```js
 import { resolveCreds, resolveFfmpeg } from './references/azure-adapter.mjs';
 const creds = resolveCreds({ projectDir });     // _source === null 이면 미설정
-// setup 이 ffmpeg 경로를 creds 에 FFMPEG_PATH 로 영속했으면 이 프로세스 env 에 적용(다른 세션/no-PATH 대비)
-if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = creds.FFMPEG_PATH;
+// ffmpeg 경로는 resolveFfmpeg 가 셸의 FFMPEG_PATH 나 홈 설정에서만 찾는다. 프로젝트 키 파일의 값은 쓰지 않는다.
+if (creds._ignored) console.log('프로젝트 키 파일에서 쓰지 않는 값:', JSON.stringify(creds._ignored));
 ```
 
 - `creds._source` 가 `null` 이면 크리덴셜이 없다. `3d-intro-setup` 으로 보낸다.
+- `creds._ignored` 가 있으면 프로젝트 키 파일의 `FFMPEG_PATH` 를 쓰지 않은 것이다. 저장소와 함께 온 파일이 실행할 프로그램을 정하지 못하게 막은 것이다. 그 경로가 필요하면 `3d-intro-setup` §2 로 홈 설정에 남긴다.
   Claude Code: `/banker:setup` 에서 3d-intro-setup / Codex: `banker-3d-intro-setup`.
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다. 같은 `3d-intro-setup` 으로 보낸다.
 - 둘 다 통과해야 다음 단계로 간다.

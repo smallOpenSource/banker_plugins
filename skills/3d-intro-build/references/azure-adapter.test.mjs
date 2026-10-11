@@ -24,14 +24,18 @@ const orig = {
   spawnSync: cp.spawnSync,
   PATH: process.env.PATH,
   FFMPEG_PATH: process.env.FFMPEG_PATH,
+  HOME: process.env.HOME,
+  USERPROFILE: process.env.USERPROFILE,
+  cwd: process.cwd(),
   platform: Object.getOwnPropertyDescriptor(process, 'platform'),
 };
 const tmps = [];
+const restoreEnv = (name) => { if (orig[name] === undefined) delete process.env[name]; else process.env[name] = orig[name]; };
 afterEach(() => {
   globalThis.fetch = orig.fetch;
   cp.spawnSync = orig.spawnSync;
-  if (orig.PATH === undefined) delete process.env.PATH; else process.env.PATH = orig.PATH;
-  if (orig.FFMPEG_PATH === undefined) delete process.env.FFMPEG_PATH; else process.env.FFMPEG_PATH = orig.FFMPEG_PATH;
+  for (const name of ['PATH', 'FFMPEG_PATH', 'HOME', 'USERPROFILE']) restoreEnv(name);
+  process.chdir(orig.cwd);
   Object.defineProperty(process, 'platform', orig.platform);
   while (tmps.length) fs.rmSync(tmps.pop(), { recursive: true, force: true });
 });
@@ -361,6 +365,7 @@ test('resolveFfmpeg: scans $PATH entries for the ffmpeg binary (no shell)', asyn
   fs.writeFileSync(fake, '');
   delete process.env.FFMPEG_PATH;
   process.env.PATH = ['/no/such/dir', binDir].join(path.delimiter);
+  useHome(path.join(dir, 'home'));
   assert.equal(await A.resolveFfmpeg(), fake);
 });
 
@@ -372,14 +377,62 @@ test('resolveFfmpeg: finds ffmpeg.exe on Windows (platform mocked)', async () =>
   fs.writeFileSync(exe, '');
   delete process.env.FFMPEG_PATH;
   process.env.PATH = binDir;
+  useHome(path.join(dir, 'home'));
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
   assert.equal(await A.resolveFfmpeg(), exe, 'resolves the .exe name on win32');
 });
 
 test('resolveFfmpeg: throws an actionable error when nothing is found', async () => {
   delete process.env.FFMPEG_PATH;
+  useHome(path.join(mkTmp('adapter-home-'), 'home'));
   process.env.PATH = path.join(mkTmp('adapter-ff-'), 'empty');
   await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found; run motion-graphic-setup or 3d-intro-setup/);
+});
+
+// A home folder of its own for this test (os.homedir() reads HOME, or USERPROFILE on Windows).
+function useHome(home) {
+  fs.mkdirSync(path.join(home, '.config', 'banker', '3d-intro'), { recursive: true });
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  return path.join(home, '.config', 'banker', '3d-intro', 'env');
+}
+
+test('resolveFfmpeg: the program comes from the shell or the home key file, never from a project key file or a relative PATH entry', async () => {
+  const root = mkTmp('ff-trust-');
+  const homeFile = useHome(path.join(root, 'home'));
+  const proj = path.join(root, 'project');
+  fs.mkdirSync(proj);
+  const planted = path.join(proj, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  fs.writeFileSync(planted, '');
+  fs.writeFileSync(path.join(proj, '.env.3d-intro.local'), `FFMPEG_PATH=${planted}\n`);
+  delete process.env.FFMPEG_PATH;
+  process.env.PATH = ['.', 'bin', path.join(root, 'empty')].join(path.delimiter);
+  process.chdir(proj);
+  await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'a file that came with the project picks nothing');
+  const mine = path.join(root, 'my-ffmpeg');
+  fs.writeFileSync(mine, '');
+  fs.writeFileSync(homeFile, `FFMPEG_PATH=${mine}\n`);
+  assert.equal(await A.resolveFfmpeg(), mine, 'the home key file is this machine\'s own setting');
+});
+
+test('resolveCreds: a program path in a project key file is left out and reported; the home key file keeps it', () => {
+  const root = mkTmp('creds-ff-');
+  const homeFile = useHome(path.join(root, 'home'));
+  const proj = path.join(root, 'project');
+  fs.mkdirSync(proj);
+  fs.writeFileSync(path.join(proj, '.env.3d-intro.local'), 'AZURE_SORA_API_KEY=placeholder-k\nFFMPEG_PATH=./tools/run.sh\n');
+  const c = A.resolveCreds({ projectDir: proj });
+  assert.deepEqual([c.AZURE_SORA_API_KEY, c.FFMPEG_PATH, c._ignored], ['placeholder-k', undefined, { FFMPEG_PATH: './tools/run.sh' }]);
+  fs.rmSync(path.join(proj, '.env.3d-intro.local'));
+  fs.writeFileSync(homeFile, 'FFMPEG_PATH=/opt/ffmpeg/bin/ffmpeg\n');
+  assert.equal(A.resolveCreds({ projectDir: proj }).FFMPEG_PATH, '/opt/ffmpeg/bin/ffmpeg');
+  assert.equal(A.homeCredsPath(), homeFile);
+});
+
+test('persistCreds: a key folder it creates is private', { skip: process.platform === 'win32' && 'POSIX modes' }, () => {
+  const dir = path.join(mkTmp('persist-dir-'), 'a', 'b');
+  A.persistCreds({ X: '1' }, { target: path.join(dir, 'env') });
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
 });
 
 // =====================================================================
@@ -631,8 +684,30 @@ test('3d-intro-setup: keys are written by the person into a private file, never 
   assert.match(doc, /umask 077/, 'the key file is created private');
   assert.match(doc, /Model Studio[^\n]*(교체|재발급)/, 'WAN keys get rotation advice too');
   assert.doesNotMatch(doc, /key 를 물어본다/, 'the FLUX key is not asked for in chat either');
-  assert.match(doc, /\[ -e ~\/\.config\/banker\/3d-intro\/env \] \|\| \(umask 077 && touch \.env\.3d-intro\.local\)/,
-    'an empty project key file is not created over a home key file');
+  assert.ok(doc.includes("grep -qE '^[A-Z0-9_]+_API_KEY=.' ~/.config/banker/3d-intro/env 2>/dev/null || (umask 077 && touch .env.3d-intro.local)"),
+    'an empty project key file is not created over a home key file that holds keys');
+});
+
+test('3d-intro-build: the program path is not copied from the key file into FFMPEG_PATH', () => {
+  const doc = fs.readFileSync(path.join(HERE, '..', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(doc, /process\.env\.FFMPEG_PATH\s*=\s*creds\.FFMPEG_PATH/);
+});
+
+test('3d-intro-setup: an ffmpeg found only through the shell is saved to the home settings, never to the project key file', () => {
+  const root = mkTmp('setup-ff-');
+  const home = path.join(root, 'home');
+  const proj = path.join(root, 'project');
+  fs.mkdirSync(home);
+  fs.mkdirSync(proj);
+  const fake = path.join(root, 'ffmpeg-bin');
+  fs.writeFileSync(fake, '');
+  fs.writeFileSync(path.join(proj, '.env.3d-intro.local'), 'AZURE_SORA_API_KEY=placeholder-k\n');
+  const r = orig.spawnSync(process.execPath, ['-e', setupScript('## 2. ffmpeg 확보')],
+    { cwd: proj, env: { ...process.env, HOME: home, USERPROFILE: home, FFMPEG_PATH: fake }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const homeFile = path.join(home, '.config', 'banker', '3d-intro', 'env');
+  assert.equal(fs.existsSync(homeFile) && A.parseEnvFile(fs.readFileSync(homeFile, 'utf8')).FFMPEG_PATH, fake);
+  assert.equal(fs.readFileSync(path.join(proj, '.env.3d-intro.local'), 'utf8'), 'AZURE_SORA_API_KEY=placeholder-k\n', 'the project key file is untouched');
 });
 
 // The JavaScript of the first `node -e "..."` command after `heading` in the setup skill, with the

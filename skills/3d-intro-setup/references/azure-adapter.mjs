@@ -134,18 +134,35 @@ function envValue(raw) {
   return raw.trimEnd().replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 }
 
+/** The home key file, `~/.config/banker/3d-intro/env`: fallback keys and this machine's own settings. */
+export function homeCredsPath() {
+  return path.join(os.homedir(), '.config', 'banker', '3d-intro', 'env');
+}
+
+// Settings that name a program to run. Only the home key file or the shell sets them: a project's
+// .env.3d-intro.local can come with a repository, and must not choose what runs on this machine.
+const MACHINE_ONLY = ['FFMPEG_PATH'];
+
 /**
  * Load creds from `.env.3d-intro.local` in projectDir, else `~/.config/banker/3d-intro/env`.
- * Returns the parsed KEY=VALUE map plus `_source` (the file used, or null if none found).
+ * Returns the parsed KEY=VALUE map plus `_source` (the file used, or null if none found). From a
+ * project file, FFMPEG_PATH is left out and returned under `_ignored` so the caller can say why.
  */
 export function resolveCreds({ projectDir } = {}) {
+  const home = homeCredsPath();
   const candidates = [];
   if (projectDir) candidates.push(path.join(projectDir, '.env.3d-intro.local'));
-  candidates.push(path.join(os.homedir(), '.config', 'banker', '3d-intro', 'env'));
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return { ...parseEnvFile(fs.readFileSync(p, 'utf8')), _source: p };
-  }
-  return { _source: null };
+  candidates.push(home);
+  const p = candidates.find((c) => fs.existsSync(c));
+  if (!p) return { _source: null };
+  const creds = { ...parseEnvFile(fs.readFileSync(p, 'utf8')), _source: p };
+  return p === home ? creds : withoutMachineOnly(creds);
+}
+
+function withoutMachineOnly(creds) {
+  const ignored = Object.fromEntries(MACHINE_ONLY.filter((k) => creds[k] != null).map((k) => [k, creds[k]]));
+  for (const k of MACHINE_ONLY) delete creds[k];
+  return Object.keys(ignored).length ? { ...creds, _ignored: ignored } : creds;
 }
 
 /**
@@ -160,7 +177,7 @@ export function persistCreds(creds, { target } = {}) {
     lines.push(`${k}=${envLiteral(String(v))}`);
   }
   const body = lines.length ? `${lines.join('\n')}\n` : '';
-  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
   fs.writeFileSync(target, body, { mode: 0o600 });
   try { fs.chmodSync(target, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
   return target;
@@ -497,30 +514,36 @@ export async function createVideoTwoImage({
 
 /**
  * Locate an ffmpeg binary without ever invoking a shell:
- *   1) $FFMPEG_PATH (if it exists)
- *   2) scan $PATH entries (split on path.delimiter) for ffmpeg / ffmpeg.exe
+ *   1) $FFMPEG_PATH from the shell, else FFMPEG_PATH in the home key file (if it exists)
+ *   2) the absolute $PATH entries (split on path.delimiter), for ffmpeg / ffmpeg.exe
  *   3) the optional ffmpeg-static package (dynamic import — may be absent)
+ * A project's .env.3d-intro.local never names the program, and "." or another relative PATH entry is
+ * skipped: either would let the files of a project, a cloned repository say, choose what runs.
  * Throws an actionable error if none is found.
  */
 export async function resolveFfmpeg() {
-  const fromEnv = process.env.FFMPEG_PATH;
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  const found = namedFfmpeg() || ffmpegOnPath() || await staticFfmpeg();
+  if (!found) throw new Error('ffmpeg not found; run motion-graphic-setup or 3d-intro-setup');
+  return found;
+}
 
+const namedFfmpeg = () => [process.env.FFMPEG_PATH, resolveCreds().FFMPEG_PATH].find((p) => p && fs.existsSync(p)) || null;
+
+function ffmpegOnPath() {
   const names = process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'];
-  for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-    for (const name of names) {
-      const candidate = path.join(dir, name);
-      if (fs.existsSync(candidate)) return candidate;
-    }
+  for (const dir of (process.env.PATH || '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
+    const hit = names.map((name) => path.join(dir, name)).find((c) => fs.existsSync(c));
+    if (hit) return hit;
   }
+  return null;
+}
 
+async function staticFfmpeg() {
   try {
     const mod = await import('ffmpeg-static');
     const p = mod?.default || mod;
-    if (typeof p === 'string' && fs.existsSync(p)) return p;
-  } catch { /* ffmpeg-static not installed — fall through to the error */ }
-
-  throw new Error('ffmpeg not found; run motion-graphic-setup or 3d-intro-setup');
+    return typeof p === 'string' && fs.existsSync(p) ? p : null;
+  } catch { return null; /* ffmpeg-static not installed */ }
 }
 
 // Run ffmpeg with an ARGUMENT ARRAY (never a shell string). Returns {code, stdout, stderr, args}.
