@@ -94,9 +94,12 @@ export function parseConsoleSample(text) {
     if (m) out.deployment = m[1];
   }
 
-  // key: Authorization: Bearer <k> | api-key: <k> (curl header) | api_key="<k>" (python/JS SDK).
-  m = s.match(/Authorization["']?\s*[:=]\s*["']?\s*Bearer\s+([A-Za-z0-9._-]+)/i);
-  if (!m) m = s.match(/api[-_]?key["']?\s*[:=]\s*["']?\s*([A-Za-z0-9._-]+)/i);
+  // key: Authorization: Bearer <k> | api-key: <k> (curl header) | api_key="<k>", "api-key": "<k>",
+  // apiKey: '<k>' (python/JS SDK). An SDK value counts only in quotes: api_key=subscription_key or
+  // apiKey: process.env.X names a variable, and taking that name for the key would replace a real one.
+  m = s.match(/Authorization["']?\s*[:=]\s*["']?\s*Bearer\s+([A-Za-z0-9._-]+)/i)
+    || s.match(/api-key\s*:\s*([A-Za-z0-9._-]+)/i)
+    || s.match(/api[-_]?key["']?\s*[:=]\s*["']([A-Za-z0-9._-]+)["']/i);
   if (m) out.apiKey = m[1];
 
   return out;
@@ -181,8 +184,27 @@ export function redact(s) {
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 const SECRET_HEADERS = new Set(['authorization', 'api-key', 'proxy-authorization', 'cookie']);
 const MAX_HOPS = 5;
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+const isLoopback = (u) => LOOPBACK.has(u.hostname);
 const refused = (code, message) => Object.assign(new TypeError(`fetch failed: ${message}`), { cause: { code } });
-const withoutSecrets = (headers = {}) => Object.fromEntries(Object.entries(headers).filter(([k]) => !SECRET_HEADERS.has(k.toLowerCase())));
+const isSecret = (name) => SECRET_HEADERS.has(name.toLowerCase());
+const withoutSecrets = (headers) => Object.fromEntries(Object.entries(headers).filter(([k]) => !isSecret(k)));
+// Every form fetch takes (an object, [name, value] pairs, Headers) as one plain object, so a key is
+// found in any of them. Pairs would otherwise read as headers named "0", "1".
+const plainHeaders = (h) => (Array.isArray(h) || h instanceof Headers ? Object.fromEntries(new Headers(h)) : { ...h });
+
+/** Whether a key may go to this URL: over https, or over http only to this machine (a local mock or proxy). */
+export const safeForKey = (u) => u.protocol === 'https:' || (u.protocol === 'http:' && isLoopback(u));
+
+// Where a redirect goes. The request was sent already, so a Location that is not a URL, or one that
+// leaves https, ends it with a code that does not read as "nothing sent". http stays allowed only
+// from this machine to this machine; from elsewhere it would reach a service here or on the network.
+function redirectTarget(location, from) {
+  let next;
+  try { next = new URL(location, from); } catch { throw refused('EBADREDIRECT', 'the redirect location is not a URL'); }
+  if (next.protocol === 'https:' || (next.protocol === 'http:' && isLoopback(next) && isLoopback(from))) return next;
+  throw refused('EINSECUREREDIRECT', 'a redirect away from https is not followed');
+}
 
 // The request for the next hop of a redirect. A 303, and a 301 or 302 after a POST, turn into a GET
 // without a body, as browsers do. A hop to another origin never carries a key: a request with a
@@ -198,19 +220,22 @@ function nextHop(req, status, crossOrigin) {
 /**
  * fetch that follows redirects by hand (at most 5): within one origin as fetch would; to another
  * origin without the key headers, and never with a body (fetch itself forwards a custom `api-key`
- * header and re-sends the body on 307 and 308). Throws as fetch does on a network error.
+ * header and re-sends the body on 307 and 308). A key goes only where safeForKey allows: an http
+ * URL with one is refused before anything is sent (cause.code EINSECURE), and no redirect leaves
+ * https. Throws as fetch does on a network error.
  */
 export async function fetchGuarded(url, init = {}) {
-  let target = url;
-  let req = { ...init, redirect: 'manual' };
+  let target = new URL(String(url));
+  let req = { ...init, headers: plainHeaders(init.headers), redirect: 'manual' };
+  if (!safeForKey(target) && Object.keys(req.headers).some(isSecret)) throw refused('EINSECURE', 'a key is sent only over https');
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
-    const r = await globalThis.fetch(target, req);
+    const r = await globalThis.fetch(target.href, req);
     const location = REDIRECT_STATUS.has(r.status) ? r.headers.get('location') : null;
     if (!location) return r;
-    const next = new URL(location, String(target));
-    req = nextHop(req, r.status, next.origin !== new URL(String(target)).origin);
     try { await r.body?.cancel(); } catch { /* the redirect body is not needed */ }
-    target = next.toString();
+    const next = redirectTarget(location, target);
+    req = nextHop(req, r.status, next.origin !== target.origin);
+    target = next;
   }
   throw refused('ETOOMANYREDIRECTS', 'too many redirects');
 }

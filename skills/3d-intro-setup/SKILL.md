@@ -118,16 +118,16 @@ grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null ||
 - **Image(gpt-image 계열)**: endpoint + 배포명(예: `gpt-image-2`, `gpt-image-2.5-sunburst`. 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
   AI Foundry 리소스(`https://<resource>.services.ai.azure.com`)도 그대로 쓴다. 콘솔이 `.../models` 를 붙여 보여줘도 저장은 origin 까지만 한다(이미지 경로는 `/openai/v1/images/...` 이고 `/models/images/...` 는 404).
 
-비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일 전체를 새로 쓰되 기존 값, 사람이 적은 키 포함, 은 그대로 둔다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다:
+비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일 전체를 새로 쓰되 기존 값, 사람이 적은 키 포함, 은 그대로 둔다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다.
+쓰는 곳은 `resolveCreds` 가 이미 읽는 키 파일(홈 fallback 포함)이고, 없을 때만 프로젝트 파일이다. 홈 파일을 쓰는 사람에게 프로젝트 파일을 새로 만들면 그 파일이 먼저 읽혀 홈의 키가 가려진다:
 ```bash
 node -e "
 (async () => {
   const { persistCreds, resolveCreds } = await import('$ADAPTER');
   const path = require('path');
-  const target = path.join(process.cwd(), '.env.3d-intro.local');   // 홈 fallback 이면 그 경로
   const prev = resolveCreds({ projectDir: process.cwd() });
-  const keep = prev._source === target ? prev : {};                 // 같은 파일일 때만 기존 값 유지
-  const written = persistCreds({ ...keep,
+  const target = prev._source || path.join(process.cwd(), '.env.3d-intro.local');
+  const written = persistCreds({ ...prev,
     AZURE_SORA_ENDPOINT: '<입력값>', AZURE_SORA_DEPLOYMENT: '<입력값 또는 sora-2>', AZURE_SORA_API_VERSION: '<입력값 또는 preview>',
     AZURE_IMAGE_OPENAI_ENDPOINT: '<입력값>', AZURE_GPT_IMAGE_DEPLOYMENT: '<입력값>', AZURE_GPT_IMAGE_API_VERSION: '<입력값 또는 preview>',
   }, { target });
@@ -158,16 +158,20 @@ node -e "
   const names = kind === 'sora' ? { endpoint: 'AZURE_SORA_ENDPOINT', apiKey: 'AZURE_SORA_API_KEY', deployment: 'AZURE_SORA_DEPLOYMENT', apiVersion: 'AZURE_SORA_API_VERSION' }
     : kind === 'image' ? { endpoint: 'AZURE_IMAGE_OPENAI_ENDPOINT', apiKey: 'AZURE_IMAGE_API_KEY', deployment: 'AZURE_GPT_IMAGE_DEPLOYMENT', apiVersion: 'AZURE_GPT_IMAGE_API_VERSION' }
     : { endpoint: 'WAN_' + kind.slice(4) + '_ENDPOINT', apiKey: 'WAN_' + kind.slice(4) + '_API_KEY' };
-  const target = path.join(process.cwd(), '.env.3d-intro.local');
   const prev = resolveCreds({ projectDir: process.cwd() });
+  const target = prev._source || path.join(process.cwd(), '.env.3d-intro.local');
   const add = Object.fromEntries(Object.entries(names).filter(([f]) => p[f]).map(([f, name]) => [name, p[f]]));
-  persistCreds({ ...(prev._source === target ? prev : {}), ...add }, { target });
-  console.log(JSON.stringify({ endpoint: p.endpoint, deployment: p.deployment, apiVersion: p.apiVersion, apiKey: redact(p.apiKey) }));
+  const old = prev[names.apiKey];
+  persistCreds({ ...prev, ...add }, { target });
+  const replaced = old && add[names.apiKey] && old !== add[names.apiKey] ? redact(old) : null;
+  console.log(JSON.stringify({ file: target, endpoint: p.endpoint, deployment: p.deployment, apiVersion: p.apiVersion, apiKey: redact(p.apiKey), replaced }));
 })();
 " "$HOME/.config/banker/3d-intro/sample.txt" sora
 rm -f "$HOME/.config/banker/3d-intro/sample.txt"
 ```
-파싱 결과(엔드포인트, 배포명, apiVersion, 길이만 보이는 key)를 사람에게 보여 주고 확인받는다.
+파싱 결과(저장한 파일, 엔드포인트, 배포명, apiVersion, 길이만 보이는 key)를 사람에게 보여 주고 확인받는다.
+`replaced` 에 길이가 보이면 파일에 있던 다른 키를 이 샘플의 키로 바꾼 것이다. 교체(로테이션)가 아니었다면 사람이 키 파일의 키 줄을 다시 적는다.
+샘플의 SDK 코드에서 키는 따옴표 안의 값만 읽는다. `api_key=subscription_key` 처럼 변수 이름이면 키로 보지 않아 기존 키를 덮지 않는다.
 필드가 `null` 이면(정규식 미매치, 또는 URL 이 아닌 endpoint) 그 필드만 모드 (a) 로 보완한다. 키가 샘플에 변수(`$AZURE_API_KEY` 등)로만 있으면 키 파일에 사람이 직접 적는다.
 
 ### WAN 영상 풀 (선택, 권장)
@@ -190,7 +194,7 @@ WAN_MODEL=wan3.0-video-prime
 - 소진·쿨다운 기록은 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남는다. 키나 모델을 바꾸면 지문이 바뀌어 기록이 새로 시작된다.
 
 ### FLUX.2-pro (opt-in)
-필요할 때만: endpoint 하나 추가(`AZURE_IMAGE_SERVICES_ENDPOINT`) — 같은 리소스에 배포된 경우가 많아 키는 기본적으로 `AZURE_IMAGE_API_KEY` 를 재사용하고, 다른 리소스면 별도 key 를 물어본다.
+필요할 때만: endpoint 하나 추가(`AZURE_IMAGE_SERVICES_ENDPOINT`) — 같은 리소스에 배포된 경우가 많아 키는 기본적으로 `AZURE_IMAGE_API_KEY` 를 재사용한다. 다른 리소스면 그 키를 `AZURE_IMAGE_SERVICES_API_KEY=` 줄로 사람이 키 파일에 직접 적는다(채팅으로 받지 않는다).
 FLUX 는 이 스킬의 §4 프리플라이트 대상이 아니다(무과금으로 확인할 별도 엔드포인트가 없음).
 저장만 하고 실제 연결 확인은 생략한다(graceful skip) — 첫 실제 사용 시점(3d-intro-build)으로 미룬다.
 
@@ -203,12 +207,13 @@ node -e "
   const { resolveCreds, listVideos, azFetch, redact } = await import('$ADAPTER');
   const c = resolveCreds({ projectDir: process.cwd() });
   if (!c._source) { console.log('크레덴셜 없음 -- §3 먼저 실행'); process.exit(2); }
+  const how = (r) => (r.error ? r.error.cause?.code || r.error.name : r.authStyle);   // status 0 이면 이유
   const sora = await listVideos({ endpoint: c.AZURE_SORA_ENDPOINT, key: c.AZURE_SORA_API_KEY, apiVersion: c.AZURE_SORA_API_VERSION || 'preview' });
-  console.log('sora.listVideos ->', sora.status, '(' + sora.authStyle + ')');
+  console.log('sora.listVideos ->', sora.status, '(' + how(sora) + ')');
   const imgv = c.AZURE_GPT_IMAGE_API_VERSION || 'preview';
   const imgUrl = c.AZURE_IMAGE_OPENAI_ENDPOINT + '/openai/v1/images/generations?api-version=' + imgv;
   const img = await azFetch(imgUrl, { key: c.AZURE_IMAGE_API_KEY, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: c.AZURE_GPT_IMAGE_DEPLOYMENT }) });
-  console.log('images.badreq ->', img.status, '(' + img.authStyle + ')');
+  console.log('images.badreq ->', img.status, '(' + how(img) + ')');
   const { probeWanPool } = await import('$POOL');
   const wan = await probeWanPool({ creds: c });
   for (const w of wan) console.log('wan.probe', w.label, w.host, w.model, '->', w.status, w.code || '', '| key', w.key);
@@ -232,6 +237,7 @@ node -e "
 | 둘 중 하나라도 401/403 | - | 인증 실패 — `azFetch` 가 `api-key`→`Bearer` 두 헤더 스타일을 이미 자동 재시도하므로, 그래도 401/403 이면 헤더 스타일이 아니라 키·엔드포인트 자체가 틀린 것(§3 재입력) |
 | `images.badreq` 가 200 | - | 있을 수 없음(프롬프트 없이 생성이 성공할 리 없다) — 어댑터·API 버전 불일치 의심, 정직히 보고 |
 | status 0 | - | 네트워크 오류(엔드포인트 오타·오프라인) |
+| status 0 (`EINSECURE`) | - | endpoint 가 `http://` 다. 키를 평문으로 보내지 않으려고 보내기 전에 막았다 — `https://` 로 고침(이 기기의 localhost 만 http 허용) |
 
 ## 5. 검증 (보고 의무)
 ```bash

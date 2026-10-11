@@ -791,8 +791,48 @@ test('loadWanPool / downloadWanVideo: a key goes only over https (loopback excep
   globalThis.fetch = async () => { fetched++; return new Response(MP4, { status: 200 }); };
   await assert.rejects(P.downloadWanVideo('http://oss.example.com/v.mp4'), /https/);
   assert.equal(fetched, 0, 'nothing fetched');
-  await assert.rejects(P.resumeClip({ creds: creds({ AZURE_SORA_ENDPOINT: 'http://sora-unit.example.com' }), provider: 'sora', taskId: 'sora-job-1' }), { kind: 'invalid_request' });
+  const resume = { creds: creds({ AZURE_SORA_ENDPOINT: 'http://sora-unit.example.com' }), statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', pollIntervalMs: 1, pollTimeoutMs: 5, sleep: async () => {} };
+  await assert.rejects(P.resumeClip(resume), (e) => e.kind === 'invalid_request' && /https URL/.test(e.message));
   assert.equal(fetched, 0, 'no Sora request over http either');
+});
+
+test('generateClip: a Sora endpoint over http stops the leg before the key is sent', async () => {
+  const calls = installFetch();
+  const cr = creds({ VIDEO_PROVIDER_ORDER: 'sora', AZURE_SORA_ENDPOINT: 'http://sora-unit.example.com' });
+  await assert.rejects(() => run({ creds: cr, statePath: tmpState() }), (e) => e.kind === 'invalid_request' && e.provider === 'sora' && /https URL/.test(e.message));
+  assert.equal(calls.length, 0);
+});
+
+test('generateClip: a submit answered by a redirect whose Location is not a URL is not resubmitted to another key', async () => {
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? new Response('', { status: 302, headers: { location: 'http://[' } }) : null) });
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1');
+  assert.equal(creates(calls).length, 1);
+});
+
+test('downloadWanVideo: a redirect away from https is not followed', async () => {
+  const seen = [];
+  globalThis.fetch = async (url) => {
+    seen.push(String(url));
+    return String(url).startsWith('https://') ? new Response('', { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data/' } }) : new Response(MP4, { status: 200 });
+  };
+  await assert.rejects(P.downloadWanVideo('https://oss.example.com/v.mp4', { sleep: async () => {} }), /download failed/);
+  assert.ok(seen.every((u) => u.startsWith('https://')), seen.join(' '));
+});
+
+test('savePoolState: a write that fails leaves no temp file behind', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'video-pool-test-'));
+  tmps.push(d);
+  const real = fs.writeFileSync;
+  fs.writeFileSync = (target, ...rest) => {
+    if (typeof target === 'number') throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+    return real(target, ...rest);
+  };
+  try {
+    assert.throws(() => P.savePoolState({ version: 1, entries: {} }, path.join(d, 'state.json')), { code: 'ENOSPC' });
+  } finally {
+    fs.writeFileSync = real;
+  }
+  assert.deepEqual(fs.readdirSync(d), []);
 });
 
 test('generateClip: a server Retry-After is held between 1 s and 10 min', async () => {
