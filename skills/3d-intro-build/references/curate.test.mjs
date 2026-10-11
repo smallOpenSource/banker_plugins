@@ -137,10 +137,10 @@ test('a request body with control characters reaches the server log escaped', as
   const real = console.error;
   console.error = (...args) => logged.push(args.join(' '));
   t.after(() => { console.error = real; });
-  const r = await fetch(`http://127.0.0.1:${s.port}/decide`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"x":\u001b[2J}' });
+  const r = await fetch(`http://127.0.0.1:${s.port}/decide`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"x":\u001b[2J \u007f\u009b2J\u0085\u202e}' });
   console.error = real;
   assert.equal(r.status, 400);
-  assert.ok(logged.length > 0 && logged.every((l) => !l.includes('\u001b')), JSON.stringify(logged));
+  assert.ok(logged.length > 0 && logged.every((l) => !/[\u001b\u007f\u009b\u0085\u202e]/.test(l)), JSON.stringify(logged));
 });
 
 test('archiving moves no file that a folder link leads out of the project', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, () => {

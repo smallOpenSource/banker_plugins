@@ -453,12 +453,17 @@ function readBody(req, limit = 1_000_000) {
 
 // Verdicts come only from the page itself: JSON (a cross-site form or text/plain post is refused,
 // and JSON across sites needs a preflight this server never grants) from its own origin.
+// Text for the server's terminal: every control character escaped, C0 by JSON and the rest (DEL, C1,
+// bidirectional marks) by hand, so a request body cannot drive the terminal.
+const logSafe = (text) => JSON.stringify(String(text))
+  .replace(/[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+
 // What a failure tells the page: a curate: message as it is; anything else only by its code (a system
 // message names absolute paths), with the whole of it on the server's stderr, escaped (a request
 // body's control characters must not reach the terminal).
 function failureText(e, what) {
   if (String(e.message).startsWith('curate:')) return e.message;
-  console.error(`curate: ${what}: ${JSON.stringify(String(e.message || e))}`);
+  console.error(`curate: ${what}: ${logSafe(e.message || e)}`);
   return `${what}(${e.code || e.name || 'error'})`;
 }
 

@@ -268,7 +268,8 @@ test('a path that is a FIFO is refused at once instead of stopping the server', 
   assert.equal(spawnSync('mkfifo', [path.join(dir, 'assets', 'pipe.mp4')]).status, 0);
   const state = path.join(tmp(), 'fifo.server.json');
   const child = spawn(process.execPath, [path.join(HERE, 'serve.mjs'), dir, '--state', state], { stdio: 'ignore' });
-  reap(t, child);
+  // SIGKILL: a server stuck opening the FIFO cannot run its SIGTERM handler.
+  t.after(() => { try { process.kill(child.pid, 'SIGKILL'); } catch { /* gone */ } });
   for (let i = 0; i < 100 && !fs.existsSync(state); i++) await new Promise((r) => setTimeout(r, 50));
   const { port } = readState(state);
   const status = await new Promise((resolve) => {
