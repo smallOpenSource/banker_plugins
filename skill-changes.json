@@ -96,5 +96,14 @@
   ],
   "0.15.2": [
     "banker:lineage"
+  ],
+  "0.16.0": [
+    "banker:3d-intro-build",
+    "banker:3d-intro-setup",
+    "banker:motion-graphic-make",
+    "banker:omc-patch",
+    "banker:ralph-qa",
+    "banker:remains",
+    "banker:trouble-shooting"
   ]
 }

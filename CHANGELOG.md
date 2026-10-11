@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.16.0] - 2026-10-11
 
 ### Added
 - **`3d-intro-build` 의 영상을 WAN 키 풀로 만들고, 풀이 소진되면 Sora-2 로 폴백한다.** 새 공유 모듈 `references/video-pool.mjs` 의 `generateClip` 이 모든 leg 의 진입점이다.\
