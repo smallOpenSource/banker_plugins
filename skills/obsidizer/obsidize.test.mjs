@@ -525,7 +525,8 @@ test('CAS: a page that changed since it was read is skipped, and the competing m
 test('no-op: an already-canonical page is never written and keeps its updated', (t) => {
   const dir = makeVault({ 'index.md': '# I\n', 'log.md': '# L\n', 'p-one.md': omcPage() });
   const file = path.join(dir, 'p-one.md');
-  const before = fs.statSync(file);
+  // bigint: an NTFS file id passes 2^53, where two ids a few apart read as one Number
+  const before = fs.statSync(file, { bigint: true });
   const writeSpy = t.mock.method(fs, 'writeFileSync');
   const renameSpy = t.mock.method(fs, 'renameSync');
 
@@ -535,7 +536,7 @@ test('no-op: an already-canonical page is never written and keeps its updated', 
   assert.deepEqual(report.changed, []);
   assert.equal(writeSpy.mock.calls.length, 0, 'no temp file written');
   assert.equal(renameSpy.mock.calls.length, 0, 'no rename');
-  const after = fs.statSync(file);
+  const after = fs.statSync(file, { bigint: true });
   assert.equal(after.ino, before.ino);
   assert.equal(after.mtimeMs, before.mtimeMs, 'mtime untouched — the file was not opened for writing');
   assert.equal(parseOmcFrontmatter(parseFrontmatter(fs.readFileSync(file, 'utf8')).map).updated, TS, 'updated is not bumped');
@@ -544,9 +545,9 @@ test('no-op: an already-canonical page is never written and keeps its updated', 
 test('atomicity: the write path is temp+rename (new inode) and leaves no .tmp behind', () => {
   const dir = makeVault({ 'index.md': '# I\n', 'log.md': '# L\n', 'p-one.md': omcPage({ tags: ['#x'] }) });
   const file = path.join(dir, 'p-one.md');
-  const inoBefore = fs.statSync(file).ino;
+  const inoBefore = fs.statSync(file, { bigint: true }).ino; // bigint: see the no-op test above
   run(dir, { now: NOW });
-  assert.notEqual(fs.statSync(file).ino, inoBefore, 'rename swaps the inode — an in-place write would keep it');
+  assert.notEqual(fs.statSync(file, { bigint: true }).ino, inoBefore, 'rename swaps the inode — an in-place write would keep it');
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.obsidizer.tmp')), [], 'no .tmp survives a successful run');
 });
 
