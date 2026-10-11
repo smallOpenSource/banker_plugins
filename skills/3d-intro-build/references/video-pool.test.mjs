@@ -870,4 +870,3 @@ test('generateClip: a WAN request is not sent with its key or prompt to another 
   await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1');
   assert.equal(creates(calls)[0].opts.redirect, 'manual');
 });
-
