@@ -11,7 +11,7 @@ import cp from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as A from './azure-adapter.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -447,11 +447,256 @@ test('probeDims: reads PNG IHDR width/height (no ffprobe)', () => {
   assert.throws(() => A.probeDims(Buffer.from('not a png at all')), /not a PNG/);
 });
 
-test('redact: masks the middle + appends length; short secrets fully masked', () => {
-  assert.equal(A.redact('abcdefghijklmnop'), 'abcd…mnop(16)');
+test('redact: shows only the length, no character of the secret (an sk-ws- key would give its tail away)', () => {
+  assert.equal(A.redact('abcdefghijklmnop'), '…(16)');
+  assert.equal(A.redact('sk-ws-0123456789abcdef'), '…(22)');
   assert.equal(A.redact('short'), '…(5)');
   assert.equal(A.redact(''), '(missing)');
   assert.equal(A.redact(null), '(missing)');
+});
+
+test('parseConsoleSample: an endpoint field that is not a URL comes back null, never as its raw text', () => {
+  const p = A.parseConsoleSample('client = AzureOpenAI(azure_endpoint="sk-pasted-in-the-wrong-field-0123", api_key="PLACEHOLDER")');
+  assert.equal(p.endpoint, null);
+  assert.ok(!JSON.stringify(p).includes('sk-pasted'), 'the pasted value is not echoed back');
+});
+
+// A fetch stub that answers by URL: [status, location] for a redirect, else 200 with `body`.
+function routeFetch(routes) {
+  const calls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), opts });
+    const hit = routes[String(url)];
+    if (!hit) throw new Error(`unrouted ${url}`);
+    return hit.location ? new Response('', { status: hit.status, headers: { location: hit.location } }) : new Response(hit.body ?? 'ok', { status: 200 });
+  };
+  return calls;
+}
+
+test('fetchGuarded: a redirect to another origin never carries the key, and a request with a body is not sent there', async () => {
+  const calls = routeFetch({
+    'https://api.example.com/content': { status: 302, location: 'https://blob.example.net/v.mp4?sig=1' },
+    'https://blob.example.net/v.mp4?sig=1': { body: 'video' },
+    'https://api.example.com/create': { status: 307, location: 'https://elsewhere.example.org/collect' },
+    'https://api.example.com/same': { status: 307, location: '/moved' },
+    'https://api.example.com/moved': { body: 'done' },
+  });
+  const r = await A.fetchGuarded('https://api.example.com/content', { headers: { 'api-key': 'k', Authorization: 'Bearer k', Accept: 'video/mp4' } });
+  assert.equal(await r.text(), 'video');
+  assert.equal(calls[0].opts.redirect, 'manual');
+  assert.deepEqual(Object.keys(calls[1].opts.headers), ['Accept'], 'the other origin gets no key');
+  await assert.rejects(A.fetchGuarded('https://api.example.com/create', { method: 'POST', headers: { 'api-key': 'k' }, body: '{"prompt":"p"}' }),
+    (e) => e.cause?.code === 'ECROSSREDIRECT');
+  assert.ok(!calls.some((c) => c.url.startsWith('https://elsewhere.example.org')), 'the prompt never left for the other origin');
+  const s = await A.fetchGuarded('https://api.example.com/same', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' });
+  assert.equal(await s.text(), 'done');
+  assert.deepEqual([calls.at(-1).opts.headers['api-key'], calls.at(-1).opts.body], ['k', 'b'], 'the same origin keeps both');
+});
+
+test('azFetch: Azure requests go through the guarded fetch (manual redirects)', async () => {
+  const calls = routeFetch({ 'https://res.example.com/x': { body: '{}' } });
+  await A.azFetch('https://res.example.com/x', { key: 'k' });
+  assert.equal(calls[0].opts.redirect, 'manual');
+});
+
+test('fetchGuarded: a key is not sent over http, except to this machine; a request without a key may go', async () => {
+  const calls = routeFetch({ 'http://localhost:9/x': { body: 'local' }, 'http://plain.example.com/open': { body: 'open' } });
+  for (const headers of [{ 'api-key': 'k' }, [['Authorization', 'Bearer k']], new Headers({ 'api-key': 'k' })]) {
+    await assert.rejects(A.fetchGuarded('http://plain.example.com/x', { headers }), (e) => e.cause?.code === 'EINSECURE');
+  }
+  assert.equal(calls.length, 0, 'nothing left this machine');
+  assert.equal(await (await A.fetchGuarded('http://localhost:9/x', { headers: { 'api-key': 'k' } })).text(), 'local');
+  assert.equal(await (await A.fetchGuarded('http://plain.example.com/open')).text(), 'open');
+});
+
+test('azFetch: an http endpoint gets no key; the result says why, and nothing is sent', async () => {
+  const calls = routeFetch({});
+  const r = await A.azFetch('http://res.example.com/openai/v1/videos?api-version=preview', { key: 'k' });
+  assert.deepEqual([r.status, r.error?.cause?.code, calls.length], [0, 'EINSECURE', 0]);
+});
+
+test('fetchGuarded: a redirect away from https, or a Location that is not a URL, ends the request', async () => {
+  const calls = routeFetch({
+    'https://oss.example.com/v.mp4': { status: 302, location: 'http://169.254.169.254/latest/meta-data/' },
+    'https://api.example.com/to-local': { status: 302, location: 'http://127.0.0.1:8080/admin' },
+    'https://api.example.com/bad': { status: 302, location: 'http://[' },
+    'http://127.0.0.1:8080/a': { status: 307, location: '/b' },
+    'http://127.0.0.1:8080/b': { body: 'local' },
+  });
+  await assert.rejects(A.fetchGuarded('https://oss.example.com/v.mp4'), (e) => e.cause?.code === 'EINSECUREREDIRECT');
+  await assert.rejects(A.fetchGuarded('https://api.example.com/to-local'), (e) => e.cause?.code === 'EINSECUREREDIRECT');
+  await assert.rejects(A.fetchGuarded('https://api.example.com/bad'), (e) => e.cause?.code === 'EBADREDIRECT');
+  assert.ok(!calls.some((c) => c.url.includes('169.254') || c.url.includes('/admin')), 'neither address was fetched');
+  const r = await A.fetchGuarded('http://127.0.0.1:8080/a', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' });
+  assert.equal(await r.text(), 'local', 'a local mock may redirect within this machine');
+});
+
+test('fetchGuarded: http is followed only while the request stays on this machine over http', async () => {
+  const calls = routeFetch({
+    'https://api.example.com/via-local': { status: 302, location: 'https://localhost/b' },
+    'https://localhost/b': { status: 302, location: 'http://localhost:8080/c' },
+    'http://localhost:8080/c': { body: 'local service' },
+  });
+  await assert.rejects(A.fetchGuarded('https://api.example.com/via-local'), (e) => e.cause?.code === 'EINSECUREREDIRECT');
+  assert.ok(!calls.some((c) => c.url.startsWith('http://localhost:8080')), 'the local http service was not reached');
+});
+
+test('fetchGuarded: a request with a body is never followed to another origin, not even as a GET', async () => {
+  for (const status of [301, 302, 303, 307]) {
+    const calls = routeFetch({ 'https://api.example.com/submit': { status, location: 'https://elsewhere.example.org/x' }, 'https://elsewhere.example.org/x': { body: 'other' } });
+    await assert.rejects(A.fetchGuarded('https://api.example.com/submit', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' }),
+      (e) => e.cause?.code === 'ECROSSREDIRECT', String(status));
+    assert.equal(calls.length, 1, `${status}: the other origin's answer can never be read as this key's answer`);
+  }
+  const calls = routeFetch({
+    'https://api.example.com/submit': { status: 303, location: '/status' },
+    'https://api.example.com/status': { status: 302, location: 'https://elsewhere.example.org/x' },
+    'https://elsewhere.example.org/x': { body: 'other' },
+  });
+  await assert.rejects(A.fetchGuarded('https://api.example.com/submit', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' }),
+    (e) => e.cause?.code === 'EBODYREDIRECT', 'nor turned into a GET within its origin first');
+  assert.equal(calls.length, 1);
+});
+
+test('azFetch helpers: a request refused before sending says why in the error', async () => {
+  const calls = routeFetch({});
+  await assert.rejects(A.generateImage({ endpoint: 'http://img.example.com', key: 'k', deployment: 'd', prompt: 'p' }), /HTTP 0 \(EINSECURE\)/);
+  await assert.rejects(A.downloadVideo({ endpoint: 'http://sora.example.com', key: 'k', id: 'v' }), /HTTP 0 \(EINSECURE\)/);
+  await assert.rejects(A.createVideo({ endpoint: 'http://sora.example.com', key: 'k', prompt: 'p' }), (e) => /\(EINSECURE\)/.test(e.message) && e.errno === 'EINSECURE');
+  assert.equal(calls.length, 0);
+});
+
+test('fetchGuarded: the key is found in every header form fetch takes, and the other headers go on', async () => {
+  for (const headers of [[['api-key', 'secret-1'], ['Accept', 'video/mp4']], new Headers({ 'api-key': 'secret-1', Accept: 'video/mp4' })]) {
+    const calls = routeFetch({
+      'https://api.example.com/content': { status: 302, location: 'https://blob.example.net/v.mp4' },
+      'https://blob.example.net/v.mp4': { body: 'video' },
+    });
+    assert.equal(await (await A.fetchGuarded('https://api.example.com/content', { headers })).text(), 'video');
+    const sent = new Headers(calls[1].opts.headers);
+    assert.equal(sent.get('accept'), 'video/mp4');
+    assert.ok(![...sent].some(([k, v]) => `${k}${v}`.includes('secret-1')), 'the other origin gets no key');
+  }
+});
+
+test('fetchGuarded: a request with a body follows only a 307 or 308 within its origin, sent again as it was', async () => {
+  for (const status of [307, 308]) {
+    const calls = routeFetch({ 'https://api.example.com/a': { status, location: '/b' }, 'https://api.example.com/b': { body: 'ok' } });
+    await A.fetchGuarded('https://api.example.com/a', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' });
+    assert.deepEqual([calls[1].opts.method, calls[1].opts.body, calls[1].opts.headers['api-key']], ['POST', 'b', 'k'], String(status));
+  }
+  for (const status of [301, 302, 303]) {
+    const calls = routeFetch({ 'https://api.example.com/a': { status, location: '/b' }, 'https://api.example.com/b': { body: 'ok' } });
+    await assert.rejects(A.fetchGuarded('https://api.example.com/a', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' }),
+      (e) => e.cause?.code === 'EBODYREDIRECT', String(status));
+    assert.equal(calls.length, 1, `${status}: a GET's answer is never read as the POST's`);
+  }
+});
+
+test('fetchGuarded: a request without a body follows any redirect; 303, and 301 or 302 after a POST, go on as a GET', async () => {
+  for (const [status, method, want] of [[303, 'GET', 'GET'], [302, 'GET', 'GET'], [301, 'GET', 'GET'], [307, 'GET', 'GET'], [302, 'POST', 'GET'], [303, 'POST', 'GET'], [308, 'POST', 'POST']]) {
+    const calls = routeFetch({ 'https://api.example.com/a': { status, location: '/b' }, 'https://api.example.com/b': { body: 'ok' } });
+    await A.fetchGuarded('https://api.example.com/a', { method, headers: { 'api-key': 'k' } });
+    assert.equal(calls[1].opts.method, want, `${status} after ${method}`);
+  }
+});
+
+test('fetchGuarded: at most 5 redirects are followed', async () => {
+  const chain = (n) => Object.fromEntries([...Array(n).keys()].map((i) => [`https://api.example.com/${i}`, { status: 302, location: `/${i + 1}` }])
+    .concat([[`https://api.example.com/${n}`, { body: 'end' }]]));
+  let calls = routeFetch(chain(5));
+  assert.equal(await (await A.fetchGuarded('https://api.example.com/0')).text(), 'end');
+  assert.equal(calls.length, 6);
+  calls = routeFetch(chain(6));
+  await assert.rejects(A.fetchGuarded('https://api.example.com/0'), (e) => e.cause?.code === 'ETOOMANYREDIRECTS');
+  assert.equal(calls.length, 6, 'the sixth redirect is not followed');
+});
+
+test('parseConsoleSample: an SDK key argument counts only when quoted; a variable name is never taken for the key', () => {
+  for (const sample of [
+    'client = AzureOpenAI(azure_endpoint=endpoint, api_key=subscription_key, api_version="2025-04-01-preview")',
+    'client = AzureOpenAI(api_key=os.getenv("AZURE_OPENAI_API_KEY"))',
+    'const client = new AzureOpenAI({ apiKey: process.env.AZURE_OPENAI_API_KEY });',
+    'headers = {"api-key": os.environ["AZURE_OPENAI_API_KEY"]}',
+    'curl -H "api-key: $AZURE_API_KEY" https://r.example.com/x',
+  ]) assert.equal(A.parseConsoleSample(sample).apiKey, null, sample);
+  for (const sample of ['api_key="PLACEHOLDER-1"', "apiKey: 'PLACEHOLDER-1'", 'headers = {"api-key": "PLACEHOLDER-1"}', 'curl -H "api-key: PLACEHOLDER-1"']) {
+    assert.equal(A.parseConsoleSample(sample).apiKey, 'PLACEHOLDER-1', sample);
+  }
+});
+
+test('3d-intro-setup: keys are written by the person into a private file, never into a command the agent runs', () => {
+  const doc = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(doc, /API_KEY: '<입력값>'/, 'no key placeholder inside a node -e command');
+  assert.match(doc, /umask 077/, 'the key file is created private');
+  assert.match(doc, /Model Studio[^\n]*(교체|재발급)/, 'WAN keys get rotation advice too');
+  assert.doesNotMatch(doc, /key 를 물어본다/, 'the FLUX key is not asked for in chat either');
+  assert.match(doc, /\[ -e ~\/\.config\/banker\/3d-intro\/env \] \|\| \(umask 077 && touch \.env\.3d-intro\.local\)/,
+    'an empty project key file is not created over a home key file');
+});
+
+// The JavaScript of the first `node -e "..."` command after `heading` in the setup skill, with the
+// modules filled in where the shell puts $ADAPTER and $POOL.
+function setupScript(heading) {
+  const doc = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
+  const body = doc.slice(doc.indexOf(heading)).match(/node -e "\r?\n([\s\S]*?)\r?\n"/)[1];
+  return body.replaceAll('$ADAPTER', pathToFileURL(path.join(HERE, 'azure-adapter.mjs')).href)
+    .replaceAll('$POOL', pathToFileURL(path.join(HERE, 'video-pool.mjs')).href);
+}
+
+// A project folder without a key file, and a home folder whose fallback key file holds a key the person wrote.
+function setupFolders() {
+  const root = mkTmp('setup-doc-');
+  const home = path.join(root, 'home');
+  const homeFile = path.join(home, '.config', 'banker', '3d-intro', 'env');
+  fs.mkdirSync(path.dirname(homeFile), { recursive: true });
+  fs.mkdirSync(path.join(root, 'project'));
+  fs.writeFileSync(homeFile, 'AZURE_SORA_ENDPOINT=https://sora.example.com\nAZURE_SORA_API_KEY=placeholder-human-key-0001\n');
+  const run = (heading, args) => orig.spawnSync(process.execPath, ['-e', setupScript(heading), ...args],
+    { cwd: path.join(root, 'project'), env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  return { root, homeFile, projectFile: path.join(root, 'project', '.env.3d-intro.local'), run };
+}
+
+test('3d-intro-setup: modes (a) and (b) write into the key file already in use, so a home key file is never hidden', () => {
+  const f = setupFolders();
+  const sample = path.join(f.root, 'sample.txt');
+  const keyOf = () => A.parseEnvFile(fs.readFileSync(f.homeFile, 'utf8')).AZURE_SORA_API_KEY;
+  fs.writeFileSync(sample, 'client = AzureOpenAI(azure_endpoint="https://sora.example.com", api_key=subscription_key)');
+  let r = f.run('### 모드 (b)', [sample, 'sora']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.existsSync(f.projectFile), false, 'no new project file hides the home one');
+  assert.equal(keyOf(), 'placeholder-human-key-0001', 'a variable name in the sample never replaces the key');
+  fs.writeFileSync(sample, 'curl https://sora.example.com/openai/v1/videos -H "api-key: placeholder-sample-key-02"');
+  r = f.run('### 모드 (b)', [sample, 'sora']);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual([out.apiKey, out.replaced], [A.redact('placeholder-sample-key-02'), A.redact('placeholder-human-key-0001')], 'a replaced key is shown by length');
+  assert.ok(!r.stdout.includes('placeholder-'), 'no key text on screen');
+  assert.equal(keyOf(), 'placeholder-sample-key-02');
+  r = f.run('### 모드 (a)', []);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.existsSync(f.projectFile), false);
+  assert.equal(keyOf(), 'placeholder-sample-key-02', 'mode (a) keeps the key it never sees');
+});
+
+test('3d-intro-setup: a sample for another endpoint without its own key is not saved, so the old key never meets the new host', () => {
+  const f = setupFolders();
+  const sample = path.join(f.root, 'sample.txt');
+  const before = fs.readFileSync(f.homeFile, 'utf8');
+  fs.writeFileSync(sample, 'client = AzureOpenAI(azure_endpoint="https://other.example.net", api_key=subscription_key)');
+  const r = f.run('### 모드 (b)', [sample, 'sora']);
+  assert.equal(r.status, 3, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).endpointChanged, { from: 'https://sora.example.com', to: 'https://other.example.net' });
+  assert.equal(fs.readFileSync(f.homeFile, 'utf8'), before, 'nothing written');
+});
+
+test('3d-intro-setup: the free preflight says why a request was not sent, and sends nothing for a bad endpoint', () => {
+  const f = setupFolders();
+  fs.writeFileSync(f.projectFile, 'AZURE_SORA_ENDPOINT=not-a-url\nAZURE_SORA_API_KEY=placeholder-k1\nAZURE_IMAGE_OPENAI_ENDPOINT=http://img.invalid\nAZURE_IMAGE_API_KEY=placeholder-k2\n');
+  const r = f.run('## 4. 프리플라이트', []);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stdout, /sora\.listVideos -> 0 \(ERR_INVALID_URL\)/);
+  assert.match(r.stdout, /images\.badreq -> 0 \(EINSECURE\)/);
+  assert.ok(!r.stdout.includes('placeholder-'), 'keys only by length');
 });
 
 // keep HERE referenced (documents the co-located adapter under test)

@@ -37,7 +37,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
-import { createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact } from './azure-adapter.mjs';
+import { createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey } from './azure-adapter.mjs';
 
 export const WAN_DEFAULT_MODEL = 'wan3.0-video-prime';
 const WAN_CREATE_PATH = '/api/v1/services/aigc/video-generation/video-synthesis';
@@ -50,6 +50,8 @@ const PROBE_TASK_ID = '00000000-0000-0000-0000-000000000000';
 
 const RATE_BASE_MS = 30_000;
 const RATE_MAX_MS = 10 * 60_000;
+// A server Retry-After is held to this range: 0 would retry at once, a huge value rest a key for years.
+const RETRY_MIN_MS = 1000;
 const QUOTA_STRIKES_TO_EXHAUST = 3;
 const QUOTA_STRIKE_TTL_MS = 3_600_000;
 const TRANSIENT_BASE_MS = 15_000;
@@ -72,7 +74,9 @@ const TRANSIENT_CODES = new Set([
   'InternalError', 'InternalError.Timeout', 'ServiceUnavailable', 'ModelUnavailable', 'Throttling.ServiceOverloaded',
 ]);
 // Errors that mean the request never left this machine, so resubmitting elsewhere cannot double-bill.
-const PRE_SEND_ERRORS = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'ERR_INVALID_URL']);
+// EINSECURE is fetchGuarded refusing a key over http before sending. Its redirect codes are not here:
+// a redirect answers a request that was sent.
+const PRE_SEND_ERRORS = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'ERR_INVALID_URL', 'EINSECURE']);
 
 /**
  * Map a WAN failure to a pool action.
@@ -115,11 +119,13 @@ function codeKind(code) {
 
 // Endpoints are origins: a pasted console URL with a path would otherwise 404 every call. A value
 // new URL() rejects (a bare host, a value with spaces, a key pasted into the wrong field) gives
-// null. The raw value is never echoed, because it may be a key.
+// null. The raw value is never echoed, because it may be a key. The key goes only over https: an
+// http:// endpoint (one typo) would send it in the clear, so it counts as malformed too, except on
+// this machine (a local mock or proxy). safeForKey is the same rule fetchGuarded enforces.
 function originOf(url) {
   try {
     const u = new URL(String(url).trim());
-    return /^https?:$/.test(u.protocol) && u.host ? `${u.protocol}//${u.host}` : null;
+    return safeForKey(u) && u.host ? `${u.protocol}//${u.host}` : null;
   } catch { return null; }
 }
 const fingerprint = (endpoint, key, model) => crypto.createHash('sha256').update(`${endpoint}\n${key}\n${model}`).digest('hex').slice(0, 16);
@@ -136,8 +142,8 @@ const malformedField = (e) => (e.badEndpoint ? 'endpoint' : e.badModel ? 'model'
 
 /**
  * Build the WAN pool from creds: every WAN_<n>_ENDPOINT with a matching WAN_<n>_API_KEY, by n.
- * An entry whose endpoint is not an http(s) URL (`badEndpoint`) or whose model is not one model id
- * (`badModel`) is kept so the preflight can report it; generateClip skips it.
+ * An entry whose endpoint is not an https URL (`badEndpoint`; http only to this machine) or whose
+ * model is not one model id (`badModel`) is kept so the preflight can report it; generateClip skips it.
  */
 export function loadWanPool(creds = {}) {
   const pool = [];
@@ -171,11 +177,20 @@ export function loadPoolState(file = defaultStatePath()) {
   return { version: 1, entries: {} };
 }
 
+// Written through a fresh random name opened exclusively ('wx'), so a link someone planted at a
+// guessable name is never followed; the folder is private when this creates it. A failed write or
+// rename removes the temp file.
 export function savePoolState(state, file = defaultStatePath()) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  try {
+    try { fs.writeFileSync(fd, `${JSON.stringify(state, null, 2)}\n`); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
   try { fs.chmodSync(file, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
   return file;
 }
@@ -258,9 +273,9 @@ function pickEntry(pool, state, t, limit) {
 function parseRetryAfter(h) {
   if (!h) return null;
   const sec = Number(h);
-  if (Number.isFinite(sec)) return Math.max(0, sec * 1000);
   const at = Date.parse(h);
-  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+  const ms = Number.isFinite(sec) ? sec * 1000 : Number.isFinite(at) ? at - Date.now() : null;
+  return ms === null ? null : Math.min(RATE_MAX_MS, Math.max(RETRY_MIN_MS, ms));
 }
 
 const WAN_FETCH_DEFAULTS = { method: 'GET', binary: false, timeoutMs: API_TIMEOUT_MS };
@@ -269,7 +284,7 @@ async function wanFetch(url, opts = {}) {
   const o = { ...WAN_FETCH_DEFAULTS, ...defined(opts) };
   let r;
   try {
-    r = await globalThis.fetch(url, {
+    r = await fetchGuarded(url, {
       method: o.method, headers: wanHeaders(o), body: o.body === undefined ? undefined : JSON.stringify(o.body), signal: AbortSignal.timeout(o.timeoutMs),
     });
   } catch (e) {
@@ -391,7 +406,13 @@ export async function wanPollTask({ entry, taskId, intervalMs = 15_000, timeoutM
 }
 
 /** Download a finished WAN video (signed URL, no auth header). Returns an mp4 Buffer. */
+// The video URL comes from the provider's answer: only https is fetched.
+function httpsOnly(url) {
+  if (!/^https:\/\//i.test(String(url))) throw new Error('WAN video download refused: the video_url is not https');
+}
+
 export async function downloadWanVideo(url, { sleep = realSleep, tries = 3 } = {}) {
+  httpsOnly(url);
   let last;
   for (let i = 0; i < tries; i++) {
     last = await wanFetch(url, { binary: true, timeoutMs: DOWNLOAD_TIMEOUT_MS });
@@ -436,9 +457,12 @@ export class ContentRejectedError extends Error {
 
 // An error that must NOT be retried by resubmitting the leg: the task may exist and bill.
 // kind: timeout | submit_unknown | download | no_video | task_lost. Carries taskId/label when known.
-function stopError(kind, message, props = {}) {
+// A stop the caller can act on. `props` are plain properties (they show in logs); `hidden` ones (a
+// signed download URL) read as err.<name> but stay out of JSON.stringify and console.error.
+function stopError(kind, message, props = {}, hidden = {}) {
   const err = new Error(message);
   Object.assign(err, { kind, ...props });
+  for (const [k, v] of Object.entries(hidden)) Object.defineProperty(err, k, { value: v, enumerable: false });
   return err;
 }
 
@@ -530,8 +554,8 @@ async function succeededClip(ctx, e, taskId, p, seconds) {
   try {
     mp4 = await downloadWanVideo(videoUrl, { sleep: ctx.sleep });
   } catch (err) {
-    // videoUrl is a signed URL: kept as a property for recovery (valid 24 h), never in the message
-    throw stopError('download', `${err.message} for WAN task ${taskId} (${e.label}); resume with resumeClip within 24 h`, { provider: 'wan', taskId, label: e.label, videoUrl, seconds });
+    // videoUrl is a signed URL (valid 24 h): readable as err.videoUrl for recovery, never in the message or a log
+    throw stopError('download', `${err.message} for WAN task ${taskId} (${e.label}); resume with resumeClip within 24 h`, { provider: 'wan', taskId, label: e.label, seconds }, { videoUrl });
   }
   ctx.emit({ type: 'done', provider: 'wan', label: e.label, taskId });
   return { mp4, provider: 'wan', label: e.label, model: shownModel(e), seconds: seconds ?? p.usage?.duration ?? null, taskId, usage: p.usage };
@@ -563,7 +587,7 @@ async function runWan(ctx) {
 function usablePool(ctx) {
   const all = loadWanPool(ctx.creds);
   const bad = all.filter(malformedField);
-  for (const b of bad) ctx.emit({ type: 'skip', provider: 'wan', label: b.label, reason: `${malformedField(b)} is malformed (not an http(s) URL / not one model id)` });
+  for (const b of bad) ctx.emit({ type: 'skip', provider: 'wan', label: b.label, reason: `${malformedField(b)} is malformed (not an https URL / not one model id)` });
   if (all.length && bad.length === all.length) {
     throw stopError('invalid_request', `every WAN entry is malformed (${bad.map((b) => `${b.label} ${malformedField(b)}`).join(', ')}); fix the env file — nothing was sent, and Sora was not used`, { provider: 'wan' });
   }
@@ -722,7 +746,8 @@ const DEFAULTS = { size: '720x1280', seconds: 5, pollIntervalMs: 15_000, pollTim
  *
  * Throws (never resubmitting the leg) when retrying could pay twice or cannot help:
  *   ContentRejectedError                moderation — change the prompt/frame
- *   kind 'invalid_request'              malformed request, ModelNotFound or every WAN entry malformed (config)
+ *   kind 'invalid_request'              malformed request, ModelNotFound, every WAN entry malformed or a
+ *                                       Sora endpoint that is not https (config)
  *   kind 'timeout' | 'download'         the task exists — call resumeClip({ ..., provider, label, taskId })
  *   kind 'submit_unknown' | 'task_lost' | 'no_video' | 'failed'  outcome unknown — check the console
  *                                       ('failed': the task ended for a reason the pool does not know)
@@ -741,13 +766,25 @@ export async function generateClip(opts = {}) {
       const r = await runWan(ctx);
       if (r) return r;
     } else if (p === 'sora') {
-      if (!o.creds.AZURE_SORA_ENDPOINT || !o.creds.AZURE_SORA_API_KEY) { ctx.emit({ type: 'skip', provider: 'sora', reason: 'AZURE_SORA_ENDPOINT/API_KEY missing' }); continue; }
+      if (!soraReady(ctx)) continue;
       tried.push('sora');
       ctx.emit({ type: 'fallback', provider: 'sora', from: tried.slice(0, -1) });
       return runSora(ctx);
     }
   }
   throw new Error(`generateClip: no video provider available (tried: ${tried.join(', ') || 'none'})`);
+}
+
+// Whether Sora can take the leg. Not set up: skipped with an event. An endpoint that is set but not
+// https (http only to this machine) stops the leg before the key is sent in the clear.
+function soraReady(ctx) {
+  const { AZURE_SORA_ENDPOINT: endpoint, AZURE_SORA_API_KEY: key } = ctx.creds;
+  if (!endpoint || !key) {
+    ctx.emit({ type: 'skip', provider: 'sora', reason: 'AZURE_SORA_ENDPOINT/API_KEY missing' });
+    return false;
+  }
+  if (!originOf(endpoint)) throw stopError('invalid_request', 'AZURE_SORA_ENDPOINT is not an https URL; fix the env file — nothing was sent', { provider: 'sora' });
+  return true;
 }
 
 /**
@@ -763,7 +800,7 @@ export async function resumeClip(opts = {}) {
   const ctx = makeCtx(o);
   if (o.provider !== 'sora') return resumeWan(ctx, o);
   if (!originOf(o.creds.AZURE_SORA_ENDPOINT) || !o.creds.AZURE_SORA_API_KEY) {
-    throw stopError('invalid_request', 'resumeClip: resuming a Sora job needs AZURE_SORA_ENDPOINT as an http(s) URL and AZURE_SORA_API_KEY (run 3d-intro-setup); nothing was sent', { provider: 'sora', taskId: o.taskId });
+    throw stopError('invalid_request', 'resumeClip: resuming a Sora job needs AZURE_SORA_ENDPOINT as an https URL and AZURE_SORA_API_KEY (run 3d-intro-setup); nothing was sent', { provider: 'sora', taskId: o.taskId });
   }
   return finishSoraJob(ctx, o.taskId, o.seconds == null ? null : snapSoraSeconds(o.seconds));
 }
@@ -772,7 +809,7 @@ async function resumeWan(ctx, o) {
   const e = loadWanPool(o.creds).find((x) => x.label === o.label);
   if (!e) throw new Error(`resumeClip: ${o.label} is not in the WAN pool (was the key removed?)`);
   if (e.badEndpoint) {
-    throw stopError('invalid_request', `resumeClip: ${o.label} endpoint is not an http(s) URL; fix the env file — nothing was sent`, { provider: 'wan', label: o.label, taskId: o.taskId });
+    throw stopError('invalid_request', `resumeClip: ${o.label} endpoint is not an https URL; fix the env file — nothing was sent`, { provider: 'wan', label: o.label, taskId: o.taskId });
   }
   const out = await finishWanTask(ctx, e, o.taskId, { duration: Math.round(Number(o.seconds) || 0) || null });
   if (out.clip) return out.clip;

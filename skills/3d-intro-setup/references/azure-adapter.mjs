@@ -36,8 +36,9 @@ function originOf(url) {
     const u = new URL(raw);
     return `${u.protocol}//${u.host}`;
   } catch {
-    const m = raw.match(/^(https?:\/\/[^/]+)/i);
-    return m ? m[1] : raw.replace(/\/+$/, '');
+    // Not a URL: null, never the raw text, which may be a key pasted into the endpoint field.
+    const m = raw.match(/^(https?:\/\/[^/\s]+)/i);
+    return m ? m[1] : null;
   }
 }
 
@@ -49,6 +50,10 @@ function truncate(x, n = 300) {
   if (!s) return '';
   return s.length > n ? `${s.slice(0, n)}…(+${s.length - n})` : s;
 }
+
+// Why an azFetch result has no HTTP answer, for error messages: " (EINSECURE)" and the like. The
+// error's code or name only, never its text: fetch can quote a header value, a key included.
+const why = (r) => (r.error ? ` (${r.error.cause?.code || r.error.code || r.error.name})` : '');
 
 // Last n chars of ffmpeg stderr (the useful part) for error messages.
 const tail = (s, n = 400) => { const str = String(s || ''); return str.length > n ? str.slice(-n) : str; };
@@ -93,9 +98,12 @@ export function parseConsoleSample(text) {
     if (m) out.deployment = m[1];
   }
 
-  // key: Authorization: Bearer <k> | api-key: <k> (curl header) | api_key="<k>" (python/JS SDK).
-  m = s.match(/Authorization["']?\s*[:=]\s*["']?\s*Bearer\s+([A-Za-z0-9._-]+)/i);
-  if (!m) m = s.match(/api[-_]?key["']?\s*[:=]\s*["']?\s*([A-Za-z0-9._-]+)/i);
+  // key: Authorization: Bearer <k> | api-key: <k> (curl header) | api_key="<k>", "api-key": "<k>",
+  // apiKey: '<k>' (python/JS SDK). An SDK value counts only in quotes: api_key=subscription_key or
+  // apiKey: process.env.X names a variable, and taking that name for the key would replace a real one.
+  m = s.match(/Authorization["']?\s*[:=]\s*["']?\s*Bearer\s+([A-Za-z0-9._-]+)/i)
+    || s.match(/api-key\s*:\s*([A-Za-z0-9._-]+)/i)
+    || s.match(/api[-_]?key["']?\s*[:=]\s*["']([A-Za-z0-9._-]+)["']/i);
   if (m) out.apiKey = m[1];
 
   return out;
@@ -164,17 +172,83 @@ function envLiteral(v) {
   return v.includes('"') ? `'${v}'` : `"${v}"`;
 }
 
-/** Redact a secret to `abcd…wxyz(len)`; short (<=8) secrets are fully masked; falsy -> "(missing)". */
+/**
+ * Redact a secret to its length only, `…(len)`: no character of it, since keys share fixed
+ * prefixes (`sk-ws-`) and a shown tail narrows them down. Falsy -> "(missing)".
+ */
 export function redact(s) {
   if (!s) return '(missing)';
-  const str = String(s);
-  if (str.length <= 8) return `…(${str.length})`;
-  return `${str.slice(0, 4)}…${str.slice(-4)}(${str.length})`;
+  return `…(${String(s).length})`;
 }
 
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
+
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+const SECRET_HEADERS = new Set(['authorization', 'api-key', 'proxy-authorization', 'cookie']);
+const MAX_HOPS = 5;
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+const localHttp = (u) => u.protocol === 'http:' && LOOPBACK.has(u.hostname);
+const refused = (code, message) => Object.assign(new TypeError(`fetch failed: ${message}`), { cause: { code } });
+const isSecret = (name) => SECRET_HEADERS.has(name.toLowerCase());
+const withoutSecrets = (headers) => Object.fromEntries(Object.entries(headers).filter(([k]) => !isSecret(k)));
+// Every form fetch takes (an object, [name, value] pairs, Headers) as one plain object, so a key is
+// found in any of them. Pairs would otherwise read as headers named "0", "1".
+const plainHeaders = (h) => (Array.isArray(h) || h instanceof Headers ? Object.fromEntries(new Headers(h)) : { ...h });
+
+/** Whether a key may go to this URL: over https, or over http only to this machine (a local mock or proxy). */
+export const safeForKey = (u) => u.protocol === 'https:' || localHttp(u);
+
+// Where a redirect goes. The request was sent already, so a Location that is not a URL, or one that
+// leaves https, ends it with a code that does not read as "nothing sent". http stays allowed only
+// while the request is on this machine over http (a local mock); from anywhere else, an https
+// localhost included, it would reach a service here or on the network.
+function redirectTarget(location, from) {
+  let next;
+  try { next = new URL(location, from); } catch { throw refused('EBADREDIRECT', 'the redirect location is not a URL'); }
+  if (next.protocol === 'https:' || (localHttp(next) && localHttp(from))) return next;
+  throw refused('EINSECUREREDIRECT', 'a redirect away from https is not followed');
+}
+
+// The request for the next hop of a redirect. A request with a body (a prompt, a frame, a paid submit)
+// follows only a 307 or 308 within its origin, which send it again as it was. A 301, 302 or 303 would
+// make it a GET, and another origin is another server: either way the next answer does not answer this
+// request, and its 401 or 429 would read as this key's (a key retired, a submit sent again elsewhere).
+// Without a body, a 303, and a 301 or 302 after a POST, go on as a GET, as browsers do, and a hop to
+// another origin goes without the secret headers.
+function nextHop(req, status, crossOrigin) {
+  if (req.body != null && (crossOrigin || status < 307)) {
+    throw refused(crossOrigin ? 'ECROSSREDIRECT' : 'EBODYREDIRECT', 'a request with a body follows only a 307 or 308 within its origin');
+  }
+  const toGet = status === 303 || ((status === 301 || status === 302) && req.method === 'POST');
+  const next = toGet ? { ...req, method: 'GET', body: undefined } : req;
+  return crossOrigin ? { ...next, headers: withoutSecrets(next.headers) } : next;
+}
+
+/**
+ * fetch that follows redirects by hand (at most 5): a request without a body as fetch would, but to
+ * another origin without the key headers; a request with a body only by a 307 or 308 within its
+ * origin (fetch itself forwards a custom `api-key` header and re-sends the body on 307 and 308 to
+ * any origin, and turns a POST into a GET on 301 to 303). A key goes only where safeForKey allows: an http
+ * URL with one is refused before anything is sent (cause.code EINSECURE), and no redirect leaves
+ * https. Throws as fetch does on a network error.
+ */
+export async function fetchGuarded(url, init = {}) {
+  let target = new URL(String(url));
+  let req = { ...init, headers: plainHeaders(init.headers), redirect: 'manual' };
+  if (!safeForKey(target) && Object.keys(req.headers).some(isSecret)) throw refused('EINSECURE', 'a key is sent only over https');
+  for (let hop = 0; hop <= MAX_HOPS; hop++) {
+    const r = await globalThis.fetch(target.href, req);
+    const location = REDIRECT_STATUS.has(r.status) ? r.headers.get('location') : null;
+    if (!location) return r;
+    try { await r.body?.cancel(); } catch { /* the redirect body is not needed */ }
+    const next = redirectTarget(location, target);
+    req = nextHop(req, r.status, next.origin !== target.origin);
+    target = next;
+  }
+  throw refused('ETOOMANYREDIRECTS', 'too many redirects');
+}
 
 // Retry-After / retry-after-ms response header -> milliseconds (null when absent or unparsable).
 function retryAfterMsOf(headers) {
@@ -202,7 +276,7 @@ export async function azFetch(url, { key, binary = false, headers = {}, method =
     if (body !== undefined) opts.body = body;
     let r;
     try {
-      r = await globalThis.fetch(url, opts);
+      r = await fetchGuarded(url, opts);
     } catch (e) {
       last = { status: 0, ok: false, ct: '', body: null, authStyle: null, error: e };
       break; // network error is not an auth problem — do not retry other styles
@@ -260,7 +334,7 @@ export async function generateImage({
     });
   }
   const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`generateImage failed (${note}): HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && b64)) throw new Error(`generateImage failed (${note}): HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -278,7 +352,7 @@ export async function editImage({
     key, method: 'POST', body: fd,
   });
   const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`editImage failed: HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && b64)) throw new Error(`editImage failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -289,7 +363,7 @@ export async function generateImageFlux({ endpoint, key, prompt, width, height, 
     body: JSON.stringify({ prompt, width, height }),
   });
   const b64 = r.body?.data?.[0]?.b64_json || r.body?.b64_json || r.body?.image;
-  if (!(r.ok && b64)) throw new Error(`generateImageFlux failed: HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && b64)) throw new Error(`generateImageFlux failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -322,7 +396,7 @@ export async function createVideo({
   const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body: fd });
   if (!(r.ok && r.body?.id)) {
     // status 0 = network error; errno tells a refused connection (nothing sent) from a lost one
-    const err = new Error(`createVideo failed: HTTP ${r.status} ${truncate(r.body)}`);
+    const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
     err.status = r.status;
     err.errno = r.error?.cause?.code || r.error?.code || null;
     throw err;
@@ -368,7 +442,7 @@ export async function downloadVideo({ endpoint, key, id, apiVersion = 'preview' 
   const r = await azFetch(`${endpoint}/openai/v1/videos/${id}/content?api-version=${apiVersion}`, {
     key, method: 'GET', binary: true,
   });
-  if (!(r.status === 200 && r.body?.length)) throw new Error(`downloadVideo failed: HTTP ${r.status}`);
+  if (!(r.status === 200 && r.body?.length)) throw new Error(`downloadVideo failed: HTTP ${r.status}${why(r)}`);
   return r.body;
 }
 
@@ -413,7 +487,7 @@ export async function createVideoTwoImage({
     key, method: 'POST', body: fd,
   });
   const id = r.body?.id || r.body?.job_id;
-  if (!(r.ok && id)) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && id)) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return r.body;
 }
 

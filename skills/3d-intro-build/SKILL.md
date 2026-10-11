@@ -60,7 +60,9 @@ if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = cre
 - 둘 다 통과해야 다음 단계로 간다.
 - 영상 provider 상태를 무료로 확인해 둔다.
   `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)를 키 원문 없이 돌려준다.
-  `malformed` 는 endpoint 가 http(s) URL 이 아니거나 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
+  쉬는 키를 바로 다시 쓰려면 `resetPoolState({ creds, labels: ['WAN_2'] })` 로 그 키의 기록을 지운다(`labels` 를 빼면 전체). 서버의 `Retry-After` 는 1초에서 10분 사이로만 받는다.
+  `malformed` 는 endpoint 가 https URL 이 아니거나(http 는 이 기기의 localhost 만 허용) 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
+  Azure 호출도 같다. 키는 https 로만 보내고, `http://` endpoint 는 보내기 전에 막는다(Sora 영상 단계는 `invalid_request`, 이미지 생성 같은 그 밖의 호출은 `HTTP 0 (EINSECURE)` 오류).
   WAN 항목(`WAN_<n>_ENDPOINT`, `WAN_<n>_API_KEY`)이 하나도 없으면 영상은 처음부터 Sora 로 만든다. 이때 정지와 비행 모드(Step 4B)는 쓸 수 없다.
 - 독립 검증(Step 6)에는 Node 용 playwright 패키지와 Chromium 이 필요하다. `npx playwright install chromium`(`setup-playwright`)은 브라우저만 받으므로, 패키지도 `npm i -g playwright` 나 프로젝트의 `npm i -D playwright` 로 설치해 둔다.
 
@@ -134,6 +136,7 @@ const png = await generateImage({ endpoint, key, deployment, prompt, size: ORIEN
   `generateImage` 는 서버의 `Retry-After` 만큼 기다렸다가 같은 경로로 다시 시도한다(기본 3회, `retry429`). 그래도 실패하면 씬 사이에 간격을 두고 다시 부른다.
 - **변형(권장)** - 씬마다 테이크를 2개 만들면 사용자가 비교해 고를 수 있다. 스틸 비용이 대략 씬당 2배이니 Step 2 추정에 미리 넣는다.
 - **FLUX 옵트인** - 씬 간 톤, 질감 일관성을 더 원하면 `generateImageFlux({ width, height })`(ORIENTATION 을 나눠 전달).
+  `endpoint` 는 `AZURE_IMAGE_SERVICES_ENDPOINT`, `key` 는 `AZURE_IMAGE_SERVICES_API_KEY` 이고 이 줄이 없으면 `AZURE_IMAGE_API_KEY` 다.
   FLUX 크리덴셜을 요청했는데 미수집이면 조용히 실패하지 말고 `gpt-image-2` 로 **정직하게 폴백**한다("FLUX 미수집, gpt-image-2 로 진행").
 - **N3 주의(씨앗 스틸 크기)** - `generateImage` 의 classic 폴백이 뜨면 반환 크기가 `1024x1536`(2:3)라 `720x1280` 이 아니다.
   체인 씨앗이 되는 스틸은 `probeDims` 로 확인해 ORIENTATION 과 다르면 영상 전에 리사이즈(ffmpeg `scale`)하거나 재생성한다.
