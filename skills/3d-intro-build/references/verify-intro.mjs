@@ -15,17 +15,19 @@
  *
  * Usage:
  *   node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5]
- *        [--viewports 1280x800,390x844t] [--no-input] [--no-contrast]
+ *        [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project]
  *     --viewports  a trailing t marks a touch screen, r reduced motion (default: the six below)
  *     --header     the site's fixed header (default: the engine's .sw-topbar)
+ *     --playwright-from-project  also look in the current folder's node_modules, first (your own project only)
  *   Exit 0 when nothing failed, 1 otherwise; the report (JSON) goes to --out or stdout.
  *
  * Needs Playwright with Chromium (setup-playwright skill: npx playwright install chromium), found
- * from this folder or from the global npm root.
+ * beside this script or in the global npm root, and in the project only when asked.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -128,21 +130,31 @@ function resolveFrom(base) {
   try { return createRequire(path.join(base, 'noop.js')).resolve('playwright'); } catch { return null; }
 }
 
+// npm's global root. npm runs from the home folder: run from the project, cmd.exe on Windows would
+// take an npm.cmd from that folder first, and a relative PATH entry would do the same anywhere.
+function globalRoot() {
+  const win = process.platform === 'win32';
+  const r = spawnSync(win ? 'npm.cmd' : 'npm', ['root', '-g'], { encoding: 'utf8', shell: win, cwd: os.homedir() });
+  return String(r.stdout || '').trim();
+}
+
 /**
- * The playwright package: beside this script, in the project (the current folder), or in the global
- * npm root. `npx playwright install chromium` alone fetches the browser, not this package.
+ * The playwright package: beside this script, else in the global npm root. The project's own
+ * node_modules (the current folder) is read only with `fromProject` (--playwright-from-project), and
+ * then first: a repository can ship a node_modules of its own, and loading it runs its code.
+ * `npx playwright install chromium` alone fetches the browser, not this package.
  */
-export async function loadPlaywright() {
+export async function loadPlaywright({ fromProject = false } = {}) {
   try { return await import('playwright'); } catch { /* not beside this script */ }
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const globalRoot = String(spawnSync(npm, ['root', '-g'], { encoding: 'utf8', shell: process.platform === 'win32' }).stdout || '').trim();
-  const entry = resolveFrom(process.cwd()) || (globalRoot && resolveFrom(globalRoot));
+  const fromHere = fromProject ? resolveFrom(process.cwd()) : null;
+  const root = fromHere ? null : globalRoot();
+  const entry = fromHere || (root && resolveFrom(root));
   if (entry) {
     const mod = await import(pathToFileURL(entry).href);
     return mod.chromium ? mod : mod.default;
   }
   throw new Error('verify-intro: the playwright package was not found. Install it and its browser: '
-    + '`npm i -g playwright && npx playwright install chromium` (or `npm i -D playwright` in the project).');
+    + '`npm i -g playwright && npx playwright install chromium`, or for your own project `npm i -D playwright` and --playwright-from-project.');
 }
 
 const navInfo = (page) => page.evaluate(() => {
@@ -419,8 +431,8 @@ async function measureViewport(browser, url, vp, o) {
 }
 
 /** Measures `url` at every viewport. Resolves to { url, viewports: [...], failures }. */
-export async function verifyIntro(url, { viewports = VIEWPORTS, header = '.sw-topbar', minContrast = 4.5, input = true, contrast = true } = {}) {
-  const { chromium } = await loadPlaywright();
+export async function verifyIntro(url, { viewports = VIEWPORTS, header = '.sw-topbar', minContrast = 4.5, input = true, contrast = true, playwrightFromProject = false } = {}) {
+  const { chromium } = await loadPlaywright({ fromProject: playwrightFromProject });
   const browser = await chromium.launch();
   try {
     const results = [];
@@ -439,11 +451,11 @@ export function parseViewport(v) {
 }
 
 const FLAGS = { '--out': 'out', '--header': 'header', '--min-contrast': 'minContrast', '--viewports': 'viewports' };
-const SWITCHES = { '--no-input': ['input', false], '--no-contrast': ['contrast', false] };
+const SWITCHES = { '--no-input': ['input', false], '--no-contrast': ['contrast', false], '--playwright-from-project': ['playwrightFromProject', true] };
 
-/** The command line: a URL, --flag value or --flag=value, and the two switches. */
+/** The command line: a URL, --flag value or --flag=value, and the switches. */
 export function parseArgs(argv) {
-  const o = { url: null, out: null, header: '.sw-topbar', minContrast: 4.5, viewports: VIEWPORTS, input: true, contrast: true };
+  const o = { url: null, out: null, header: '.sw-topbar', minContrast: 4.5, viewports: VIEWPORTS, input: true, contrast: true, playwrightFromProject: false };
   for (let i = 0; i < argv.length; i++) {
     const [flag, inline] = argv[i].includes('=') ? [argv[i].slice(0, argv[i].indexOf('=')), argv[i].slice(argv[i].indexOf('=') + 1)] : [argv[i], null];
     if (SWITCHES[flag]) o[SWITCHES[flag][0]] = SWITCHES[flag][1];
@@ -461,7 +473,7 @@ if (invokedDirectly) {
   let o;
   try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
   if (!o.url) {
-    console.error('usage: node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5] [--viewports 1280x800,390x844t] [--no-input] [--no-contrast]');
+    console.error('usage: node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5] [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project]');
     process.exit(2);
   }
   verifyIntro(o.url, o).then((r) => {

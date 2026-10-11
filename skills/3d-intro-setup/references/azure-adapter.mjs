@@ -82,7 +82,7 @@ export function parseConsoleSample(text) {
   const out = { endpoint: null, deployment: null, apiKey: null, apiVersion: null };
 
   // endpoint: an explicit kwarg (python/JS SDK) wins; else the origin of the first URL (curl).
-  let m = s.match(/(?:azure_endpoint|azure_openai_endpoint|base_url|endpoint)\s*[=:]\s*["']([^"']+)["']/i);
+  let m = s.match(/(?:azure_endpoint|azure_openai_endpoint|base_url|endpoint)\s*[=:]\s*["']([^"'\r\n]+)["']/i);
   if (m) out.endpoint = originOf(m[1]);
   else { m = s.match(/https?:\/\/[^\s"'`)]+/); if (m) out.endpoint = originOf(m[0]); }
 
@@ -94,7 +94,7 @@ export function parseConsoleSample(text) {
   m = s.match(/\/deployments\/([^/?"'\s]+)/i);
   if (m) out.deployment = decodeURIComponent(m[1]);
   else {
-    m = s.match(/(?:azure_deployment|deployment_name|deployment|model)\s*[=:]\s*["']([^"']+)["']/i);
+    m = s.match(/(?:azure_deployment|deployment_name|deployment|model)\s*[=:]\s*["']([^"'\r\n]+)["']/i);
     if (m) out.deployment = m[1];
   }
 
@@ -134,36 +134,78 @@ function envValue(raw) {
   return raw.trimEnd().replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 }
 
+/** The home key file, `~/.config/banker/3d-intro/env`: the keys when no project key file is used. */
+export function homeCredsPath() {
+  return path.join(os.homedir(), '.config', 'banker', '3d-intro', 'env');
+}
+
+/**
+ * This machine's settings file, `~/.config/banker/3d-intro/settings.env` (FFMPEG_PATH). It holds no
+ * key, so it can exist without making the home key file look set up.
+ */
+export function homeSettingsPath() {
+  return path.join(os.homedir(), '.config', 'banker', '3d-intro', 'settings.env');
+}
+
+/** The settings file as a KEY=VALUE map; {} when it is missing or cannot be read. */
+export function readSettings() {
+  return readEnvQuietly(homeSettingsPath);
+}
+
+// A KEY=VALUE file named by fileOf(); {} when there is none or it cannot be read (no home folder, no
+// permission, a folder in its place).
+function readEnvQuietly(fileOf) {
+  try { return parseEnvFile(fs.readFileSync(fileOf(), 'utf8')); } catch { return {}; }
+}
+
+// Settings that name a program to run. Only the shell or this machine's own files set them (the
+// settings file, or the home key file from an earlier setup): a project's .env.3d-intro.local can come
+// with a repository, and must not choose what runs on this machine.
+const MACHINE_ONLY = ['FFMPEG_PATH'];
+
 /**
  * Load creds from `.env.3d-intro.local` in projectDir, else `~/.config/banker/3d-intro/env`.
- * Returns the parsed KEY=VALUE map plus `_source` (the file used, or null if none found).
+ * Returns the parsed KEY=VALUE map plus `_source` (the file used, or null if none found). From a
+ * project file, FFMPEG_PATH is left out and returned under `_ignored` so the caller can say why.
  */
 export function resolveCreds({ projectDir } = {}) {
+  const home = homeCredsPath();
   const candidates = [];
   if (projectDir) candidates.push(path.join(projectDir, '.env.3d-intro.local'));
-  candidates.push(path.join(os.homedir(), '.config', 'banker', '3d-intro', 'env'));
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return { ...parseEnvFile(fs.readFileSync(p, 'utf8')), _source: p };
-  }
-  return { _source: null };
+  candidates.push(home);
+  const p = candidates.find((c) => fs.existsSync(c));
+  if (!p) return { _source: null };
+  const creds = { ...parseEnvFile(fs.readFileSync(p, 'utf8')), _source: p };
+  return p === home ? creds : withoutMachineOnly(creds);
+}
+
+function withoutMachineOnly(creds) {
+  const ignored = Object.fromEntries(MACHINE_ONLY.filter((k) => creds[k] != null).map((k) => [k, creds[k]]));
+  for (const k of MACHINE_ONLY) delete creds[k];
+  return Object.keys(ignored).length ? { ...creds, _ignored: ignored } : creds;
 }
 
 /**
  * Persist creds to a KEY=VALUE env file, chmod 0600 where supported. Keys starting with `_`
- * and null/undefined values are skipped. Returns the written path.
+ * and null/undefined values are skipped. Returns the written path. A name that is not a variable
+ * name, or a value with a line break, throws before anything is written: either would add lines of
+ * its own (a FFMPEG_PATH, a second endpoint) to the file.
  */
 export function persistCreds(creds, { target } = {}) {
   if (!target) throw new Error('persistCreds: target path required');
-  const lines = [];
-  for (const [k, v] of Object.entries(creds || {})) {
-    if (k.startsWith('_') || v == null) continue;
-    lines.push(`${k}=${envLiteral(String(v))}`);
-  }
+  const lines = Object.entries(creds || {}).filter(([k, v]) => !k.startsWith('_') && v != null).map(([k, v]) => envLine(k, String(v)));
   const body = lines.length ? `${lines.join('\n')}\n` : '';
-  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
   fs.writeFileSync(target, body, { mode: 0o600 });
   try { fs.chmodSync(target, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
   return target;
+}
+
+// One KEY=VALUE line for persistCreds, refusing a name or value that would make lines of its own.
+function envLine(k, v) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`persistCreds: ${JSON.stringify(k)} is not a variable name; nothing was written`);
+  if (/[\r\n]/.test(v)) throw new Error(`persistCreds: ${k} contains a line break; nothing was written`);
+  return `${k}=${envLiteral(v)}`;
 }
 
 // Quote a value that parseEnvFile would otherwise cut at " #", trim, or strip of its quotes.
@@ -497,30 +539,43 @@ export async function createVideoTwoImage({
 
 /**
  * Locate an ffmpeg binary without ever invoking a shell:
- *   1) $FFMPEG_PATH (if it exists)
- *   2) scan $PATH entries (split on path.delimiter) for ffmpeg / ffmpeg.exe
+ *   1) $FFMPEG_PATH from the shell, else FFMPEG_PATH in the settings file, else one an earlier setup
+ *      left in the home key file; absolute paths only
+ *   2) the absolute $PATH entries (split on path.delimiter), for ffmpeg / ffmpeg.exe
  *   3) the optional ffmpeg-static package (dynamic import — may be absent)
+ * A project's .env.3d-intro.local never names the program, and "." or another relative PATH entry is
+ * skipped: either would let the files of a project, a cloned repository say, choose what runs.
  * Throws an actionable error if none is found.
  */
 export async function resolveFfmpeg() {
-  const fromEnv = process.env.FFMPEG_PATH;
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  const found = namedFfmpeg() || ffmpegOnPath() || await staticFfmpeg();
+  if (!found) throw new Error('ffmpeg not found; run motion-graphic-setup or 3d-intro-setup');
+  return found;
+}
 
+// The ffmpeg this machine names. Absolute only: a relative value would be looked up in the current
+// folder, the project. The files are read only when the shell names nothing usable.
+function namedFfmpeg() {
+  const usable = (p) => !!p && path.isAbsolute(p) && fs.existsSync(p);
+  if (usable(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
+  return [readSettings(), readEnvQuietly(homeCredsPath)].map((s) => s.FFMPEG_PATH).find(usable) || null;
+}
+
+function ffmpegOnPath() {
   const names = process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'];
-  for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-    for (const name of names) {
-      const candidate = path.join(dir, name);
-      if (fs.existsSync(candidate)) return candidate;
-    }
+  for (const dir of (process.env.PATH || '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
+    const hit = names.map((name) => path.join(dir, name)).find((c) => fs.existsSync(c));
+    if (hit) return hit;
   }
+  return null;
+}
 
+async function staticFfmpeg() {
   try {
     const mod = await import('ffmpeg-static');
     const p = mod?.default || mod;
-    if (typeof p === 'string' && fs.existsSync(p)) return p;
-  } catch { /* ffmpeg-static not installed — fall through to the error */ }
-
-  throw new Error('ffmpeg not found; run motion-graphic-setup or 3d-intro-setup');
+    return typeof p === 'string' && fs.existsSync(p) ? p : null;
+  } catch { return null; /* ffmpeg-static not installed */ }
 }
 
 // Run ffmpeg with an ARGUMENT ARRAY (never a shell string). Returns {code, stdout, stderr, args}.

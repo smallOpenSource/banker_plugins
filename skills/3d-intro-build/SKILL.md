@@ -50,11 +50,12 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 ```js
 import { resolveCreds, resolveFfmpeg } from './references/azure-adapter.mjs';
 const creds = resolveCreds({ projectDir });     // _source === null 이면 미설정
-// setup 이 ffmpeg 경로를 creds 에 FFMPEG_PATH 로 영속했으면 이 프로세스 env 에 적용(다른 세션/no-PATH 대비)
-if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = creds.FFMPEG_PATH;
+// ffmpeg 경로는 resolveFfmpeg 가 셸의 FFMPEG_PATH 와 홈의 설정 파일, 키 파일에서만 찾는다. 프로젝트 키 파일의 값은 쓰지 않는다.
+if (creds._ignored) console.log('프로젝트 키 파일에서 쓰지 않는 값:', Object.keys(creds._ignored).join(', '));   // 값은 출력하지 않는다
 ```
 
 - `creds._source` 가 `null` 이면 크리덴셜이 없다. `3d-intro-setup` 으로 보낸다.
+- `creds._ignored` 가 있으면 프로젝트 키 파일의 `FFMPEG_PATH` 를 쓰지 않은 것이다. 저장소와 함께 온 파일이 실행할 프로그램을 정하지 못하게 막은 것이다. 값은 출력하지 않으니 사람이 파일을 열어 확인하고, 그 경로가 필요하면 `3d-intro-setup` §2 로 홈 설정 파일에 남긴다.
   Claude Code: `/banker:setup` 에서 3d-intro-setup / Codex: `banker-3d-intro-setup`.
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다. 같은 `3d-intro-setup` 으로 보낸다.
 - 둘 다 통과해야 다음 단계로 간다.
@@ -64,7 +65,7 @@ if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = cre
   `malformed` 는 endpoint 가 https URL 이 아니거나(http 는 이 기기의 localhost 만 허용) 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
   Azure 호출도 같다. 키는 https 로만 보내고, `http://` endpoint 는 보내기 전에 막는다(Sora 영상 단계는 `invalid_request`, 이미지 생성 같은 그 밖의 호출은 `HTTP 0 (EINSECURE)` 오류).
   WAN 항목(`WAN_<n>_ENDPOINT`, `WAN_<n>_API_KEY`)이 하나도 없으면 영상은 처음부터 Sora 로 만든다. 이때 정지와 비행 모드(Step 4B)는 쓸 수 없다.
-- 독립 검증(Step 6)에는 Node 용 playwright 패키지와 Chromium 이 필요하다. `npx playwright install chromium`(`setup-playwright`)은 브라우저만 받으므로, 패키지도 `npm i -g playwright` 나 프로젝트의 `npm i -D playwright` 로 설치해 둔다.
+- 독립 검증(Step 6)에는 Node 용 playwright 패키지와 Chromium 이 필요하다. `npx playwright install chromium`(`setup-playwright`)은 브라우저만 받으므로, 패키지도 `npm i -g playwright` 로 설치해 둔다. 사용자가 자기 프로젝트에 `npm i -D playwright` 로 설치했다고 확인해 준 때만 Step 6 에 `--playwright-from-project` 를 준다. 프로젝트에 `node_modules/playwright` 가 있다는 이유만으로는 주지 않는다. 이 옵션이 없으면 프로젝트의 `node_modules` 는 읽지 않는다(저장소가 함께 가져온 코드가 실행되지 않게).
 
 ---
 
