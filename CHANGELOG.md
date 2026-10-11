@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **`/progress` 패널에 계획이 보인다.** Claude Code 2.1.296 은 Claude 5 모델에 작업 목록 도구(TaskCreate, TaskUpdate, TodoWrite)를 주지 않아, 패널은 요청 단위 단계만 보였다.\
+  이제 세션이 쓰거나 읽은 마지막 계획 파일의 단계를 맨 위에 보인다. 읽는 파일은 `.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json` 이다. PRD 의 `passes`, goals 의 `status`, 계획의 체크박스가 있으면 완료와 진행 중을 표시한다. 파일은 그 파일을 고친 도구 호출이 끝날 때와 턴의 시작과 끝에 다시 읽는다. 세션이 만지지 않은 파일은 보이지 않는다.
+- 슬래시 명령의 단계 제목이 `<command-message>` 태그 원문이 아니라 `/명령 인자` 로 보인다. 그 밖의 하네스 태그(`<system-reminder>` 등)도 제목과 설명에서 지운다.
+- 백그라운드 작업이 끝났다는 알림(`<task-notification>`)이 단계를 새로 만들지 않는다. 직전 요청의 단계 아래에 "백그라운드 작업 끝남" 한 줄로 붙는다.
+- 긴 제목은 패널 폭에 맞춰 자른다(한글은 2칸). 상태 글자가 다음 줄로 넘어가지 않는다.
+
 ## [0.16.2] - 2026-10-11
 
 ### Security

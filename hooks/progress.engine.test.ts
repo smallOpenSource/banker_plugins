@@ -11,10 +11,11 @@ const PANE = 'banker-progress'
 // whether it is shown; false is a tab behind another plugin's pane), the opens it was asked for and
 // the lines logged. As in Claude Code 2.1.296, an open resolves to nothing and raises a pane only
 // with `focus`. `refuse` names a command it will not register; `panesDeny` refuses the pane list.
-type Below = { tool?: (e: any) => any; refuse?: string; panesDeny?: string }
+// `files` holds what `$.fs.read` finds; a path it does not hold is refused, as a missing file is.
+type Below = { tool?: (e: any) => any; refuse?: string; panesDeny?: string; files?: Map<string, string> }
 const answer = (e: any): any => (e.tool === 'Bash' ? { result: {}, text: 'exit 1', isError: true } : { result: {}, text: 'ok' })
 
-function beneath(on: any, { tool = answer, refuse, panesDeny }: Below = {}) {
+function beneath(on: any, { tool = answer, refuse, panesDeny, files = new Map() }: Below = {}) {
   const registered: { name: string; immediate?: true; argumentHint?: string }[] = []
   const open = new Map<string, boolean>()
   const opens: any[] = []
@@ -43,6 +44,7 @@ function beneath(on: any, { tool = answer, refuse, panesDeny }: Below = {}) {
   on('turn.start', (_: unknown, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: 'engine' }))
   on('tool.call', (_: unknown, e: any) => tool(e))
+  on('fs.read', (_: unknown, e: any) => (files.has(e.path) ? { value: files.get(e.path) } : { deny: `ENOENT: ${e.path}` }))
   return { registered, open, opens, logged }
 }
 
@@ -156,5 +158,48 @@ test('a finished task list leaves the pane when the next prompt starts', async (
   await $.turn.start({ text: '다음 요청', turnId: 't2' })
   expect(await ui.find({ key: 'k-1' })).toBeUndefined()
   expect((await ui.find({ key: 'row-t-t2' }))?.text).toContain('진행 중')
+  await ui.unmount()
+})
+
+test('a slash command reads as itself, and a background notice goes on with the last prompt\'s step', async ($, on) => {
+  beneath(on)
+  await $.session.start(START)
+  const ui = await mountPane($)
+  await $.turn.start({ text: '<command-message>banker:remains</command-message>\n<command-name>/banker:remains</command-name>\n<command-args>--all</command-args>', turnId: 't1' })
+  expect((await ui.find({ key: 't-t1' }))?.text).toBe('/banker:remains --all')
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: '', durationMs: 1, isAborted: false })
+  await $.turn.start({ text: '<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<summary>Agent "검토" completed</summary>\n</task-notification>', turnId: 't2' })
+  expect((await ui.find({ key: 'row-t-t1' }))?.text).toContain('진행 중')
+  await ui.press({ key: 'arrow-t-t1' })
+  expect((await ui.find({ key: 'c-1' }))?.text).toBe('백그라운드 작업 끝남: Agent "검토" completed')
+  await $.turn.complete({ turnId: 't2', reason: 'answer', answer: '', durationMs: 1, isAborted: false })
+  expect((await ui.find({ key: 'row-t-t1' }))?.text).toContain('완료')
+  await ui.unmount()
+})
+
+test('a plan file the session writes shows above the steps, read again as a turn starts', async ($, on) => {
+  const plan = '/work/.omc/plans/deploy.md'
+  const files = new Map([[plan, '# 배포 계획\n\n## 작업 순서\n\n1. 설계\n2. 구현\n']])
+  beneath(on, { files })
+  await $.session.start(START)
+  const ui = await mountPane($)
+  await $.turn.start({ text: '계획을 세워 줘', turnId: 't1' })
+  await $.tool.call({ tool: 'Write', file_path: plan, content: '' })
+  expect((await ui.find({ key: 'plan' }))?.text).toBe('계획: 배포 계획')
+  expect((await ui.find({ key: 'row-plan' }))?.text).toContain('2단계')
+  expect((await ui.find({ key: 'p-1' }))?.text).toBe('구현')
+  await ui.press({ key: 'p-1' })
+  expect((await ui.find({ key: 'about' }))?.text).toBe('구현.')
+
+  files.set(plan, '# 배포 계획\n- [x] 설계\n- [ ] 구현\n')
+  await $.turn.complete({ turnId: 't1', reason: 'answer', answer: '', durationMs: 1, isAborted: false })
+  expect((await ui.find({ key: 'row-plan' }))?.text).toContain('1/2 완료')
+  expect((await ui.find({ key: 'row-p-0' }))?.text).toContain('완료')
+
+  await ui.press({ key: 'arrow-plan' })
+  expect(await ui.find({ key: 'p-0' })).toBeUndefined()
+  files.delete(plan)
+  await $.turn.start({ text: '다음', turnId: 't2' })
+  expect((await ui.find({ key: 'row-plan' }))?.text).toContain('1/2 완료')
   await ui.unmount()
 })

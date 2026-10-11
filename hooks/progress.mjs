@@ -9,12 +9,20 @@
  * a call shows a short description under the list; a press on a step's arrow folds or unfolds its
  * calls.
  *
+ * Claude 5 models get no task list tool in Claude Code 2.1.296 (only older models, a background
+ * job, or CLAUDE_CODE_ENABLE_TODO_TOOLS do), so there prompts are the steps. Above them the pane
+ * shows the plan file the session touched last (progress-plan.mjs reads it), as steps of its own.
+ * A prompt's harness tags leave its title, and a background task's notice goes on with the last
+ * prompt's step instead of becoming one.
+ *
  * `/progress` and `/progress show` toggle the pane, `on` and `off` set it. The command is
  * registered `immediate`, so it answers while a turn runs. An engine without mods never loads
  * this file: commands/progress.md and hooks/progress-fallback.mjs answer there instead.
  */
 
 const COMMAND = 'progress';
+import { cells, clip, fit, isPlanPath, parsePlan, readPrompt } from './progress-plan.mjs';
+
 const PANE = 'banker-progress';
 const TITLE = '진행 상황';
 const USAGE = '사용법: /progress [show | on | off]. show(기본)는 패널을 켜고 끄며, on 과 off 는 그대로 켜거나 끕니다.';
@@ -22,6 +30,9 @@ const HINT = '단계나 하위 항목을 누르면 설명이 여기에 나옵니
 const MAX_STEPS = 50;
 const MAX_KEPT_CALLS = 200;
 const MAX_SHOWN_CALLS = 30;
+const MAX_SHOWN_PLAN = 20;
+// The calls whose file, when it is a plan file, becomes the plan the pane shows.
+const PLAN_TOUCH = new Set(['Write', 'Edit', 'MultiEdit', 'Read', 'NotebookEdit']);
 // The id of the step made for work already under way when the module loaded mid-turn.
 const AT_HAND = 'now';
 // Bookkeeping calls: they become steps, not calls under a step.
@@ -48,15 +59,10 @@ const tally = () => ({ calls: [], count: 0, failed: 0 });
 const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', ...tally() });
 
 // `rev` counts the task changes (TaskCreate, TaskUpdate) taken in, to tell a stale TaskList or TaskGet.
-export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0 });
+// `plan` is the plan file last read (`planPath` the one to read), `planShut` whether its steps are folded.
+export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
+  plan: null, planPath: null, planShut: false });
 
-// One line of plain text, cut to `n` characters. Control characters go too: a pasted escape
-// sequence is not text to show.
-const clip = (text, n) => {
-  const s = String(text ?? '').replace(/\p{Cc}+/gu, ' ').replace(/\s+/g, ' ').trim();
-  const chars = [...s];
-  return chars.length > n ? `${chars.slice(0, n - 1).join('')}…` : s;
-};
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
   const all = Math.max(0, Math.round(ms / 1000));
@@ -73,11 +79,27 @@ export function callLabel(e) {
 // ── what the module learns from the session ──────────────────────────────────
 
 // A prompt as a step. A prompt whose end never came is done where the next one starts.
-function addTurn(s, e, now) {
+function addTurn(s, turnId, text, now, title) {
   for (const t of s.turns) if (t.status === 'running') Object.assign(t, { status: 'done', endedAt: now });
-  s.turns.push({ key: `t-${e.turnId}`, id: e.turnId, title: clip(e.text, 60) || '(이어서 진행)', text: String(e.text ?? ''),
+  s.turns.push({ key: `t-${turnId}`, id: turnId, title: title ?? (clip(text, 60) || '(이어서 진행)'), text,
     startedAt: now, endedAt: null, status: 'running', ...tally() });
   if (s.turns.length > MAX_STEPS) s.turns.shift();
+}
+
+// A row under a step that is no tool call: it counts as none.
+function note(s, step, label, now) {
+  step.calls.push({ key: `c-${++s.seq}`, tool: '', label: clip(label, 60), detail: '', isNote: true,
+    startedAt: now, endedAt: now, ok: true, steps: [step] });
+  if (step.calls.length > MAX_KEPT_CALLS) step.calls.shift();
+}
+
+// A background task's end opens a turn of its own: it goes on with the last prompt's step, under
+// which a row says so, and the list stays as it is. Before any prompt it is a step of its own.
+function noticeTurn(s, e, said, now) {
+  if (!s.turns.length) addTurn(s, e.turnId, '', now, '백그라운드 작업 알림');
+  const t = s.turns.at(-1);
+  Object.assign(t, { id: e.turnId, status: 'running', endedAt: null });
+  if (said.text) note(s, t, `백그라운드 작업 끝남: ${said.text}`, now);
 }
 
 // The task list's items, which are the steps while there are any: TodoWrite's, else the Tasks list's.
@@ -97,8 +119,10 @@ function dropFinished(s) {
 }
 
 export function startTurn(s, e, now) {
+  const said = readPrompt(e.text);
+  if (said.kind === 'notice') return noticeTurn(s, e, said, now);
   dropFinished(s);
-  addTurn(s, e, now);
+  addTurn(s, e.turnId, said.text, now);
 }
 
 // A main turn's end; a subagent's (it carries an agentId) ends no step. A turn the module never
@@ -118,7 +142,7 @@ function owners(s, now) {
   const items = listItems(s);
   const task = [...items].reverse().find((t) => t.status === 'in_progress');
   const first = task ?? (items.length ? s.loose : null);
-  if (!s.turns.length) addTurn(s, { turnId: AT_HAND, text: '지금 하는 작업' }, now);
+  if (!s.turns.length) addTurn(s, AT_HAND, '지금 하는 작업', now);
   return first ? [first, s.turns.at(-1)] : [s.turns.at(-1)];
 }
 
@@ -249,6 +273,21 @@ export function noteTaskTool(s, e, r, now, since) {
   if (CHANGES.has(e.tool)) s.rev += 1;
 }
 
+// The plan file a call touched, when it is one and the call went through.
+export function planTouched(s, e, call) {
+  const path = e.file_path ?? e.notebook_path;
+  if (!call?.ok || !PLAN_TOUCH.has(e.tool) || !isPlanPath(path)) return null;
+  s.planPath = path;
+  return path;
+}
+
+// What a read of the plan file found; `null` (it failed, or it is no plan) keeps the plan as it was.
+export function takePlan(s, path, text) {
+  if (path !== s.planPath || typeof text !== 'string') return;
+  const plan = parsePlan(path, text);
+  if (plan) s.plan = { path, title: plan.title, steps: plan.steps.map((st, i) => ({ ...st, key: `p-${i}`, planStep: true })) };
+}
+
 // ── what the pane shows ──────────────────────────────────────────────────────
 
 // Nothing seen yet: one step that says so, with no state word beside it.
@@ -285,32 +324,64 @@ function stepWords(step, now) {
 }
 
 function callWords(call, now) {
+  if (call.isNote) return `${call.label}.`;
   const state = call.ok === null ? '실행 중' : call.ok ? '성공' : '실패';
   const who = call.isAgent ? '하위 에이전트의 ' : '';
   return `${who}${call.tool}${call.detail ? `: ${call.detail}` : ''}. ${state}, ${seconds((call.endedAt ?? now) - call.startedAt)}.`;
 }
 
-// What the person pressed last, while it is still on the pane: a step, or a call under one.
+const planDone = (plan) => plan.steps.filter((st) => st.status === 'completed').length;
+const planHasStates = (plan) => plan.steps.some((st) => st.status);
+
+function planWords(plan) {
+  const where = `계획 파일: ${plan.path.split(/[\\/]/).filter(Boolean).slice(-3).join('/')}`;
+  if (!plan.steps.length) return `${where}. 단계를 찾지 못했습니다.`;
+  const done = planHasStates(plan) ? `, 완료 ${planDone(plan)}개` : '';
+  return `${where}. 단계 ${plan.steps.length}개${done}.`;
+}
+
+function planStepWords(st) {
+  const what = st.text.replace(/[.!?。]+$/, '');
+  return st.status ? `${what}. ${STATUS[st.status] ?? st.status}.` : `${what}.`;
+}
+
+// What the person pressed last, while it is still on the pane: the plan or one of its steps, a
+// step, or a call under one.
 function pressed(s) {
+  if (s.plan && s.selected === 'plan') return { key: 'plan', isPlan: true };
+  const plan = s.plan?.steps.find((st) => st.key === s.selected);
+  if (plan) return plan;
   const all = steps(s);
   return all.find((x) => x.key === s.selected) ?? all.flatMap((x) => x.calls).find((c) => c.key === s.selected);
+}
+
+function itemWords(s, item, now) {
+  if (item.isPlan) return planWords(s.plan);
+  if (item.planStep) return planStepWords(item);
+  return item.tool !== undefined ? callWords(item, now) : stepWords(item, now);
 }
 
 // The description under the list: the pressed step's or call's, or how to get one.
 export function describe(s, now) {
   const item = pressed(s);
-  if (item) return item.tool ? callWords(item, now) : stepWords(item, now);
+  if (item) return itemWords(s, item, now);
   const all = steps(s);
   return all.length === 1 && all[0].key === 'idle' ? stepWords(IDLE, now) : HINT;
 }
 
+// A label cut so that it, the cells before it and the words after it fit on one row of the pane.
+const room = (label, act, before, after) => fit(label, (act.cols ?? Infinity) - before - (after ? cells(after) + 1 : 0));
+
 function callRows(ui, step, act) {
   const { Box, Text, Button } = ui;
   const shown = step.calls.slice(-MAX_SHOWN_CALLS);
-  const rows = shown.map((c) => Box({ key: `row-${c.key}`, flexDirection: 'row', columnGap: 1, paddingLeft: 4, children: [
-    Button({ key: c.key, label: c.label, plain: true, dimColor: c.ok !== false, onPress: () => act.select(c.key) }),
-    Text({ children: [c.ok === null ? '실행 중' : c.ok ? '' : '실패'], dimColor: true }),
-  ] }));
+  const rows = shown.map((c) => {
+    const state = c.ok === null ? '실행 중' : c.ok ? '' : '실패';
+    return Box({ key: `row-${c.key}`, flexDirection: 'row', columnGap: 1, paddingLeft: 4, children: [
+      Button({ key: c.key, label: room(c.label, act, 4, state), plain: true, dimColor: c.ok !== false, onPress: () => act.select(c.key) }),
+      Text({ children: [state], dimColor: true }),
+    ] });
+  });
   const hidden = step.calls.length - shown.length;
   return hidden ? [Box({ paddingLeft: 4, children: [Text({ children: [`앞의 ${hidden}개는 줄였습니다`], dimColor: true })] }), ...rows] : rows;
 }
@@ -322,17 +393,52 @@ function stepRow(ui, s, step, act) {
     ? Button({ key: `arrow-${step.key}`, label: isOpen ? '▾' : '▸', plain: true, onPress: () => act.fold(step.key) })
     : Text({ children: [' '] });
   const running = step.status === 'running' || step.status === 'in_progress';
+  const state = STATUS[step.status] ?? step.status ?? '';
   return Box({ key: `row-${step.key}`, flexDirection: 'row', columnGap: 1, children: [
     arrow,
-    Button({ key: step.key, label: step.title, plain: true, onPress: () => act.select(step.key) }),
-    Text({ children: [STATUS[step.status] ?? step.status ?? ''], dimColor: !running, bold: running }),
+    Button({ key: step.key, label: room(step.title, act, 2, state), plain: true, onPress: () => act.select(step.key) }),
+    Text({ children: [state], dimColor: !running, bold: running }),
   ] });
 }
 
-// The pane's tree. `ui` is the surface's element table; `act` holds what a press does.
+function planHead(ui, s, act) {
+  const { Box, Text, Button } = ui;
+  const { plan } = s;
+  const count = !plan.steps.length ? '단계 없음' : planHasStates(plan) ? `${planDone(plan)}/${plan.steps.length} 완료` : `${plan.steps.length}단계`;
+  const arrow = plan.steps.length
+    ? Button({ key: 'arrow-plan', label: s.planShut ? '▸' : '▾', plain: true, onPress: () => act.foldPlan() })
+    : Text({ children: [' '] });
+  return Box({ key: 'row-plan', flexDirection: 'row', columnGap: 1, children: [
+    arrow,
+    Button({ key: 'plan', label: room(`계획: ${plan.title}`, act, 2, count), plain: true, bold: true, onPress: () => act.select('plan') }),
+    Text({ children: [count], dimColor: true }),
+  ] });
+}
+
+// The plan's rows: its title, then its first steps unless folded, then a line for the plan's rest.
+function planRows(ui, s, act) {
+  const { Box, Text, Button } = ui;
+  if (!s.plan) return [];
+  const rows = [planHead(ui, s, act)];
+  if (s.planShut) return [...rows, Box({ key: 'plan-gap', marginBottom: 1 })];
+  for (const st of s.plan.steps.slice(0, MAX_SHOWN_PLAN)) {
+    const running = st.status === 'in_progress';
+    const state = STATUS[st.status] ?? st.status ?? '';
+    rows.push(Box({ key: `row-${st.key}`, flexDirection: 'row', columnGap: 1, paddingLeft: 2, children: [
+      Button({ key: st.key, label: room(st.title, act, 2, state), plain: true, onPress: () => act.select(st.key) }),
+      Text({ children: [state], dimColor: !running, bold: running }),
+    ] }));
+  }
+  const rest = s.plan.steps.length - MAX_SHOWN_PLAN;
+  if (rest > 0) rows.push(Box({ key: 'plan-more', paddingLeft: 2, children: [Text({ children: [`외 ${rest}개`], dimColor: true })] }));
+  return [...rows, Box({ key: 'plan-gap', marginBottom: 1 })];
+}
+
+// The pane's tree. `ui` is the surface's element table; `act` holds what a press does and `cols`,
+// the cells across the pane's body (Infinity where the engine gives none).
 export function draw(ui, s, now, act) {
   const { Box, Text } = ui;
-  const rows = [];
+  const rows = planRows(ui, s, act);
   for (const step of steps(s)) {
     rows.push(stepRow(ui, s, step, act));
     if (s.open.has(step.key)) rows.push(...callRows(ui, step, act));
@@ -385,7 +491,18 @@ async function watchCall($, e, next) {
   } finally {
     endCall(call, r, Date.now());
     if (TASK_TOOLS.has(e.tool)) noteTaskTool(s, e, r, Date.now(), since);
+    const plan = planTouched(s, e, call);
+    if (plan) takePlan(s, plan, await readText($, plan));
     $.ui.invalidate('ui.render');
+  }
+}
+
+// A file's text, or null where it cannot be read (missing, over the engine's 4 MiB, refused).
+async function readText($, path) {
+  try {
+    return await $.fs.read(path);
+  } catch {
+    return null;
   }
 }
 
@@ -405,9 +522,12 @@ export function registerProgress(on) {
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e);
     const redraw = () => $.ui.invalidate('ui.render');
+    const cols = Number.isFinite(e.props?.bodyColumns) ? e.props.bodyColumns : Infinity;
     const act = {
+      cols,
       select: (key) => { ref.s.selected = ref.s.selected === key ? null : key; redraw(); },
       fold: (key) => { if (!ref.s.open.delete(key)) ref.s.open.add(key); redraw(); },
+      foldPlan: () => { ref.s.planShut = !ref.s.planShut; redraw(); },
     };
     return draw($.ui.resolve(e), ref.s, Date.now(), act);
   });
@@ -424,4 +544,13 @@ export function progressTurnStarted(e) {
 
 export function progressTurnCompleted(e) {
   endTurn(ref.s, e, Date.now());
+}
+
+// The plan file to read again as a turn starts and ends (register.mjs reads it), or null.
+export function progressPlanPath() {
+  return ref.s.planPath;
+}
+
+export function progressPlanRead(path, text) {
+  takePlan(ref.s, path, text);
 }
