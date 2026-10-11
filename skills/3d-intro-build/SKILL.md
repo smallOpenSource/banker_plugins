@@ -60,6 +60,7 @@ if (creds.FFMPEG_PATH && !process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = cre
 - 둘 다 통과해야 다음 단계로 간다.
 - 영상 provider 상태를 무료로 확인해 둔다.
   `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)를 키 원문 없이 돌려준다.
+  쉬는 키를 바로 다시 쓰려면 `resetPoolState({ creds, labels: ['WAN_2'] })` 로 그 키의 기록을 지운다(`labels` 를 빼면 전체). 서버의 `Retry-After` 는 1초에서 10분 사이로만 받는다.
   `malformed` 는 endpoint 가 http(s) URL 이 아니거나 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
   WAN 항목(`WAN_<n>_ENDPOINT`, `WAN_<n>_API_KEY`)이 하나도 없으면 영상은 처음부터 Sora 로 만든다. 이때 정지와 비행 모드(Step 4B)는 쓸 수 없다.
 - 독립 검증(Step 6)에는 Node 용 playwright 패키지와 Chromium 이 필요하다. `npx playwright install chromium`(`setup-playwright`)은 브라우저만 받으므로, 패키지도 `npm i -g playwright` 나 프로젝트의 `npm i -D playwright` 로 설치해 둔다.

@@ -1,6 +1,6 @@
 ---
 name: 3d-intro-setup
-description: "`3d-intro-build` 에 필요한 Node 18 이상과 ffmpeg 를 갖추고 Azure 크레덴셜과 선택 항목인 WAN API 키 풀을 저장함. 크레덴셜은 직접 입력하거나 콘솔의 샘플 코드를 붙여 넣어 받고, 무과금 프리플라이트로 확인. 'setup-3d-intro'/'3d-intro-setup'/'3D 인트로 설정'/'Azure Sora 크레덴셜' 또는 `/banker:setup` 시 사용."
+description: "`3d-intro-build` 에 필요한 Node 18 이상과 ffmpeg 를 갖추고 Azure 크레덴셜과 선택 항목인 WAN API 키 풀을 저장함. 엔드포인트와 배포명은 대화로 받고, 키는 사람이 비공개 키 파일에 직접 적거나 콘솔 샘플 파일에서 화면에 내지 않고 합쳐(채팅과 명령줄에 키를 싣지 않음), 무과금 프리플라이트로 확인. 'setup-3d-intro'/'3d-intro-setup'/'3D 인트로 설정'/'Azure Sora 크레덴셜' 또는 `/banker:setup` 시 사용."
 ---
 
 # 3d-intro-setup — Azure Sora-2 / gpt-image-2 3D 인트로 제작 전제조건 설치
@@ -94,64 +94,85 @@ Sora(영상)와 gpt-image(이미지)는 **보통 서로 다른 Azure 리소스**
 WAN 영상 풀(§3-WAN)은 선택이지만, 있으면 영상이 WAN 으로 먼저 만들어진다.
 FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 건너뛴다(§3-FLUX 참조).
 
+### 키는 사람이 파일에 적는다
+**API key 는 채팅으로 받지 않고, 에이전트가 실행하는 명령에도 넣지 않는다.** `node -e "..."` 인자는 `ps` 출력과 대화 기록에 그대로 남는다.
+키는 사람이 아래 비공개 키 파일에 편집기로 직접 적거나(모드 a), 콘솔 샘플을 파일로 저장해 에이전트가 화면에 내지 않고 합친다(모드 b).
+엔드포인트, 배포명, API 버전은 비밀이 아니라 대화로 받아도 된다.
+
+키 파일은 먼저 비공개로 만든다(이미 있으면 그대로 둔다). `echo >>` 로 새 파일을 만들면 0644 로 남는다.
+```bash
+(umask 077 && touch .env.3d-intro.local) && ls -l .env.3d-intro.local   # -rw------- 기대
+```
+여러 프로젝트에서 재사용하려면 프로젝트 파일 대신 홈 폴더 fallback 을 쓴다. `resolveCreds` 가 project-local 다음으로 찾는 경로다.
+```bash
+mkdir -p ~/.config/banker/3d-intro && chmod 700 ~/.config/banker/3d-intro && (umask 077 && touch ~/.config/banker/3d-intro/env)
+```
+그 프로젝트의 `.gitignore` 에 무시 규칙이 있는지 확인하고 없으면 추가한다(이 저장소는 `.env.*.local` 로 이미 커버된다):
+```bash
+grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null || echo '.env.3d-intro.local' >> .gitignore
+```
+
 ### 모드 (a) — 직접 입력
-사용자에게 리소스별로 순서대로 질문한다: endpoint(예: `https://<resource>.openai.azure.com` 또는 `https://<resource>.cognitiveservices.azure.com`), API key, 배포명(deployment).
-- **Sora**: endpoint + key (+ 배포명, 기본 `sora-2` — 콘솔에서 다른 이름으로 배포했으면 그 이름).
-- **Image(gpt-image 계열)**: endpoint + key + 배포명(예: `gpt-image-2`, `gpt-image-2.5-sunburst`. 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
+엔드포인트와 배포명을 리소스별로 대화로 묻는다: endpoint(예: `https://<resource>.openai.azure.com` 또는 `https://<resource>.cognitiveservices.azure.com`), 배포명(deployment).
+- **Sora**: endpoint (+ 배포명, 기본 `sora-2` — 콘솔에서 다른 이름으로 배포했으면 그 이름).
+- **Image(gpt-image 계열)**: endpoint + 배포명(예: `gpt-image-2`, `gpt-image-2.5-sunburst`. 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
   AI Foundry 리소스(`https://<resource>.services.ai.azure.com`)도 그대로 쓴다. 콘솔이 `.../models` 를 붙여 보여줘도 저장은 origin 까지만 한다(이미지 경로는 `/openai/v1/images/...` 이고 `/models/images/...` 는 404).
 
-### 모드 (b) — 콘솔 샘플 코드 붙여넣기
-Azure AI Foundry/AI Hub 콘솔의 "Sample code"/"View code" 패널이 주는 curl 또는 Python 스니펫을 리소스별로 통째로 붙여넣게 한다.
-붙여넣은 원문은 세션 스크래치 임시 파일에 저장 → `parseConsoleSample()` 로 파싱 → **파싱 직후 임시 파일 즉시 삭제**(원문에 raw key 가 그대로 들어있다).
-```bash
-node -e "
-(async () => {
-  const fs = require('fs');
-  const { parseConsoleSample, redact } = await import('$ADAPTER');
-  const text = fs.readFileSync(process.argv[1], 'utf8');
-  const p = parseConsoleSample(text);
-  console.log(JSON.stringify({ endpoint: p.endpoint, deployment: p.deployment, apiVersion: p.apiVersion, apiKey: redact(p.apiKey) }));
-})();
-" "<붙여넣은 샘플을 저장한 임시 파일 절대경로로 치환>"
-```
-파싱 결과(엔드포인트·배포명·apiVersion·redact 된 key)를 사용자에게 보여주고 확인받은 뒤 저장 단계로 넘어간다.
-필드가 `null` 로 나오면(정규식 미매치) 모드(a) 직접 입력으로 그 필드만 보완한다.
-
-### 저장
-아래 필드로 합쳐 `persistCreds()` 로 저장한다(0600 자동 적용, 원문 재출력 안 함):
-```
-AZURE_SORA_ENDPOINT / AZURE_SORA_API_KEY / AZURE_SORA_DEPLOYMENT(기본 sora-2) / AZURE_SORA_API_VERSION(기본 preview)
-AZURE_IMAGE_OPENAI_ENDPOINT / AZURE_IMAGE_API_KEY / AZURE_GPT_IMAGE_DEPLOYMENT / AZURE_GPT_IMAGE_API_VERSION(기본 preview)
-```
-`persistCreds` 는 파일 전체를 새로 쓴다. 이미 저장된 값(WAN 풀 등)을 잃지 않도록 기존 값에 덮어 합친다.
+비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일 전체를 새로 쓰되 기존 값, 사람이 적은 키 포함, 은 그대로 둔다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다:
 ```bash
 node -e "
 (async () => {
   const { persistCreds, resolveCreds } = await import('$ADAPTER');
   const path = require('path');
-  const target = path.join(process.cwd(), '.env.3d-intro.local');   // 프로젝트 전용(기본, 권장)
+  const target = path.join(process.cwd(), '.env.3d-intro.local');   // 홈 fallback 이면 그 경로
   const prev = resolveCreds({ projectDir: process.cwd() });
   const keep = prev._source === target ? prev : {};                 // 같은 파일일 때만 기존 값 유지
   const written = persistCreds({ ...keep,
-    AZURE_SORA_ENDPOINT: '<입력값>', AZURE_SORA_API_KEY: '<입력값>',
-    AZURE_SORA_DEPLOYMENT: '<입력값 또는 sora-2>', AZURE_SORA_API_VERSION: '<입력값 또는 preview>',
-    AZURE_IMAGE_OPENAI_ENDPOINT: '<입력값>', AZURE_IMAGE_API_KEY: '<입력값>',
-    AZURE_GPT_IMAGE_DEPLOYMENT: '<입력값>', AZURE_GPT_IMAGE_API_VERSION: '<입력값 또는 preview>',
-    // WAN 풀(선택): 키 수만큼 WAN_<n>_ENDPOINT / WAN_<n>_API_KEY, 필요하면 WAN_MODEL
+    AZURE_SORA_ENDPOINT: '<입력값>', AZURE_SORA_DEPLOYMENT: '<입력값 또는 sora-2>', AZURE_SORA_API_VERSION: '<입력값 또는 preview>',
+    AZURE_IMAGE_OPENAI_ENDPOINT: '<입력값>', AZURE_GPT_IMAGE_DEPLOYMENT: '<입력값>', AZURE_GPT_IMAGE_API_VERSION: '<입력값 또는 preview>',
   }, { target });
   console.log('저장:', written);
 })();
 "
 ```
-여러 프로젝트에서 재사용하려면 대신 홈 폴더 fallback 에 저장한다 — `target` 을 `path.join(os.homedir(),'.config','banker','3d-intro','env')` 로 바꾼다(`resolveCreds` 가 project-local 다음으로 자동 탐색하는 바로 그 경로).
-저장 후 대상 프로젝트의 `.gitignore` 에 무시 규칙이 있는지 확인하고 없으면 추가한다(이 저장소는 `.env.*.local` 로 이미 커버되지만, 다른 프로젝트에서 이 스킬을 쓸 때는 별도 확인이 필요하다):
-```bash
-grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null || echo '.env.3d-intro.local' >> .gitignore
+그다음 사람에게 키 파일을 편집기로 열어 키 줄을 직접 적어 달라고 한다(값은 대화에 붙이지 않는다):
 ```
+AZURE_SORA_API_KEY=<Sora 리소스 키>
+AZURE_IMAGE_API_KEY=<Image 리소스 키>
+```
+적었다고 하면 위 "이미 있으면" 확인을 다시 돌린다. 키는 길이로만 표시된다.
+
+### 모드 (b) — 콘솔 샘플 파일
+Azure AI Foundry/AI Hub 콘솔의 "Sample code"/"View code" 패널이 주는 curl 또는 Python 스니펫에는 원문 키가 들어 있다. 사람이 이것을 **채팅에 붙이지 않고** 비공개 파일에 저장한다:
+```bash
+mkdir -p ~/.config/banker/3d-intro && (umask 077 && touch ~/.config/banker/3d-intro/sample.txt)   # 사람이 이 파일에 샘플을 붙여 저장
+```
+에이전트는 그 파일을 읽어 키를 화면에 내지 않고 키 파일에 바로 합친 뒤 샘플 파일을 지운다. 리소스마다 마지막 인자를 `sora`, `image`, `wan:<n>` 중 하나로 준다:
+```bash
+node -e "
+(async () => {
+  const fs = require('fs'), path = require('path');
+  const { parseConsoleSample, persistCreds, resolveCreds, redact } = await import('$ADAPTER');
+  const [file, kind] = process.argv.slice(1);
+  const p = parseConsoleSample(fs.readFileSync(file, 'utf8'));
+  const names = kind === 'sora' ? { endpoint: 'AZURE_SORA_ENDPOINT', apiKey: 'AZURE_SORA_API_KEY', deployment: 'AZURE_SORA_DEPLOYMENT', apiVersion: 'AZURE_SORA_API_VERSION' }
+    : kind === 'image' ? { endpoint: 'AZURE_IMAGE_OPENAI_ENDPOINT', apiKey: 'AZURE_IMAGE_API_KEY', deployment: 'AZURE_GPT_IMAGE_DEPLOYMENT', apiVersion: 'AZURE_GPT_IMAGE_API_VERSION' }
+    : { endpoint: 'WAN_' + kind.slice(4) + '_ENDPOINT', apiKey: 'WAN_' + kind.slice(4) + '_API_KEY' };
+  const target = path.join(process.cwd(), '.env.3d-intro.local');
+  const prev = resolveCreds({ projectDir: process.cwd() });
+  const add = Object.fromEntries(Object.entries(names).filter(([f]) => p[f]).map(([f, name]) => [name, p[f]]));
+  persistCreds({ ...(prev._source === target ? prev : {}), ...add }, { target });
+  console.log(JSON.stringify({ endpoint: p.endpoint, deployment: p.deployment, apiVersion: p.apiVersion, apiKey: redact(p.apiKey) }));
+})();
+" "$HOME/.config/banker/3d-intro/sample.txt" sora
+rm -f "$HOME/.config/banker/3d-intro/sample.txt"
+```
+파싱 결과(엔드포인트, 배포명, apiVersion, 길이만 보이는 key)를 사람에게 보여 주고 확인받는다.
+필드가 `null` 이면(정규식 미매치, 또는 URL 이 아닌 endpoint) 그 필드만 모드 (a) 로 보완한다. 키가 샘플에 변수(`$AZURE_API_KEY` 등)로만 있으면 키 파일에 사람이 직접 적는다.
 
 ### WAN 영상 풀 (선택, 권장)
 Alibaba Cloud Model Studio 의 WAN 영상 모델(기본 `wan3.0-video-prime`)을 여러 API 키로 돌린다. 키(workspace)마다 할당량이 따로라 키가 많을수록 오래 쓴다.
-키마다 아래 두 줄을 번호를 붙여 저장한다. 번호 개수 제한은 없다.
+키마다 아래 두 줄을 번호를 붙여, 위 비공개 키 파일에 사람이 직접 적는다(콘솔 샘플 파일이 있으면 모드 (b) 를 `wan:<n>` 으로 돌린다). 번호 개수 제한은 없다.
 ```
 # endpoint 는 origin 만 (경로 제외)
 WAN_1_ENDPOINT=https://ws-<workspace-id>.<region>.maas.aliyuncs.com
@@ -161,10 +182,10 @@ WAN_2_API_KEY=...
 # 선택. 키 하나만 모델이 다르면 WAN_<n>_MODEL
 WAN_MODEL=wan3.0-video-prime
 ```
-- 콘솔 샘플(curl)을 붙여넣으면 `parseConsoleSample()` 로 endpoint 를 뽑을 수 있다. 키는 샘플에 실제 값(`Bearer sk-ws-...`)이 있을 때만 뽑히고, `$DASHSCOPE_API_KEY` 같은 변수면 따로 입력받는다. JSON 본문의 `"model"` 은 뽑히지 않으니 `WAN_MODEL` 로 따로 넣는다.
+- 콘솔 샘플(curl)은 모드 (b) 로 파일에서 읽는다. 키는 샘플에 실제 값(`Bearer sk-ws-...`)이 있을 때만 뽑히고, `$DASHSCOPE_API_KEY` 같은 변수면 사람이 키 파일에 직접 적는다. JSON 본문의 `"model"` 은 뽑히지 않으니 `WAN_MODEL` 로 따로 넣는다.
 - 엔드포인트, 키, 모델의 리전이 같아야 한다. 다르면 `401 InvalidApiKey` 가 난다.
 - 값 뒤의 주석은 `#` 앞에 공백이 있어야 주석으로 읽힌다(`값  # 메모`). 공백 없이 붙은 `#` 는 값의 일부다. 값에 ` #` 이 들어가야 하면 따옴표로 감싼다.
-- endpoint 가 http(s) URL 이 아니거나 모델이 한 id 가 아닌 항목은 build 가 건너뛴다. 모든 WAN 항목이 그렇다면 build 는 Sora 로 넘어가지 않고 멈춘다.
+- endpoint 가 https URL 이 아니거나(`http://` 는 키가 평문으로 가므로 막는다. 이 기기의 localhost 만 예외) 모델이 한 id 가 아닌 항목은 build 가 건너뛴다. 모든 WAN 항목이 그렇다면 build 는 Sora 로 넘어가지 않고 멈춘다.
 - 선택 설정(모두 기본값이 있음): `VIDEO_PROVIDER_ORDER`(기본 `wan,sora`), `WAN_RESOLUTION`(기본은 출력 크기에서 계산), `WAN_PROMPT_EXTEND`(기본 `false`), `WAN_MAX_CONCURRENT`(기본 5), `WAN_EXHAUSTED_TTL_HOURS`(기본 24).
 - 소진·쿨다운 기록은 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남는다. 키나 모델을 바꾸면 지문이 바뀌어 기록이 새로 시작된다.
 
@@ -219,12 +240,13 @@ command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffm
 # 위 §4 프리플라이트를 재실행해 PASS 문자열 + 두 status 코드를 그대로 증거로 남긴다
 ```
 4-field 보고: 변경(Node/ffmpeg 확보 방식 · 크레덴셜 저장 경로 — 파일 내용 아님) / Evidence(§0 감지 출력 · §4 status 코드 전부) / 검증(`listVideos`=200 **AND** `images.badreq`=400 **AND** WAN 항목 전부 200 이어야 PASS) / Unknown(FLUX 미검증 · WAN 키별 남은 할당량(조회 API 없음 — 소진은 첫 생성에서 드러나고 풀이 자동으로 다음 키·Sora 로 넘어감) · 배포명이 실제 존재하는지는 이 무과금 프리플라이트로 확인 불가하며 첫 실제 생성 시점에만 드러남 · 관리자 권한 제약으로 ffmpeg 시스템 설치 불가 등, 가짜 성공 금지).
-크레덴셜은 어떤 필드도 원문으로 보고하지 않고 항상 `redact()` 출력만 남긴다.
+크레덴셜은 어떤 필드도 원문으로 보고하지 않고 항상 `redact()` 출력(길이만)만 남긴다.
 
 ## 함정
 - **키·엔드포인트가 진짜 다른 이유**: Sora 와 gpt-image-2 는 같은 Azure OpenAI 리소스에 함께 배포될 수도, 완전히 별도 리소스일 수도 있다 — 하나로 퉁치지 말고 두 세트를 각각 확인한다.
 - **`azFetch` 는 이미 이중 인증을 시도한다**: `api-key` 헤더로 먼저 시도하고 401/403 이면 자동으로 `Authorization: Bearer` 로 재시도한다 — 그래도 실패하면 헤더 스타일 문제가 아니라 키·엔드포인트 자체가 틀린 것이다.
-- **콘솔 샘플 붙여넣기의 스크롤백 잔존**: 터미널 히스토리·세션 로그에 원문 키가 남을 수 있다(플러그인 통제 밖) — 공유 터미널이거나 로깅되는 환경이면 붙여넣기 후 Azure 콘솔에서 키 로테이션을 권한다.
+- **키가 드러났으면 교체한다**: 키가 대화, 터미널 기록, 출력에 한 번이라도 드러났으면(예: 샘플을 채팅에 붙임) 그 키를 바꾼다. Azure 는 리소스의 Keys and Endpoint 에서 Regenerate 로 교체한다.
+  WAN 키는 Model Studio 콘솔의 API Key 관리에서 그 키를 지우고 새로 만들어 교체한다.
 - **WAN 키 검증은 GET task 로만**: 존재하지 않는 task 조회는 과금이 없고 키 유효성(200 vs 401)을 가른다. 생성 요청(POST)은 과금될 수 있으니 점검용으로 쓰지 않는다.
 - **이미지 배포 429**: 낮은 티어(S0) 이미지 배포는 연속 호출에 `429 RateLimitReached` 를 낸다. 프리플라이트를 짧은 간격으로 반복하지 않는다.
 - **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백.

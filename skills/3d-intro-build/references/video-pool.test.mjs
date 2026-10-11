@@ -11,6 +11,7 @@ import cp from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import util from 'node:util';
 import * as P from './video-pool.mjs';
 
 const WAN = (n) => `https://ws-unit${n}.example.com`;
@@ -423,6 +424,8 @@ test('generateClip: a failed download after SUCCEEDED keeps the taskId and signe
     assert.equal(e.label, 'WAN_1');
     assert.equal(e.videoUrl, 'https://oss.example.com/task-1-1.mp4');
     assert.ok(!e.message.includes('oss.example.com'), 'signed URL stays out of the message');
+    assert.ok(!JSON.stringify(e).includes('oss.example.com'), 'nor in a JSON log of the error');
+    assert.ok(!util.inspect(e).includes('oss.example.com'), 'nor in console.error(e)');
     return true;
   });
   assert.equal(creates(realFetch).length, 1);
@@ -762,3 +765,59 @@ test('resumeClip: a Sora resume waits with the injected sleep between polls', as
   assert.equal(r.provider, 'sora');
   assert.deepEqual(slept, [2_000]);
 });
+
+test('savePoolState: never writes through a link planted at a guessable name, and keeps its folder private', { skip: process.platform === 'win32' && 'POSIX modes and links' }, () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'video-pool-test-'));
+  tmps.push(d);
+  const fresh = path.join(d, 'fresh', 'state.json');
+  P.savePoolState({ version: 1, entries: {} }, fresh);
+  assert.equal(fs.statSync(path.dirname(fresh)).mode & 0o777, 0o700);
+  const shared = path.join(d, 'shared');
+  fs.mkdirSync(shared);
+  const victim = path.join(d, 'victim.txt');
+  fs.writeFileSync(victim, 'untouched');
+  const file = path.join(shared, 'state.json');
+  fs.symlinkSync(victim, `${file}.${process.pid}.tmp`);
+  P.savePoolState({ version: 1, entries: { a: { label: 'WAN_1' } } }, file);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).entries.a.label, 'WAN_1');
+  assert.deepEqual(fs.readdirSync(shared).filter((f) => f.endsWith('.tmp') && !f.includes(String(process.pid))), [], 'no temp file left');
+});
+
+test('loadWanPool / downloadWanVideo: a key goes only over https (loopback excepted), and a video only comes over https', async () => {
+  const cr = creds({ WAN_1_ENDPOINT: 'http://ws-unit1.example.com', WAN_2_ENDPOINT: 'http://127.0.0.1:8080', WAN_3_ENDPOINT: 'http://localhost:9' });
+  assert.deepEqual(P.loadWanPool(cr).map((e) => e.badEndpoint), [true, false, false]);
+  let fetched = 0;
+  globalThis.fetch = async () => { fetched++; return new Response(MP4, { status: 200 }); };
+  await assert.rejects(P.downloadWanVideo('http://oss.example.com/v.mp4'), /https/);
+  assert.equal(fetched, 0, 'nothing fetched');
+  await assert.rejects(P.resumeClip({ creds: creds({ AZURE_SORA_ENDPOINT: 'http://sora-unit.example.com' }), provider: 'sora', taskId: 'sora-job-1' }), { kind: 'invalid_request' });
+  assert.equal(fetched, 0, 'no Sora request over http either');
+});
+
+test('generateClip: a server Retry-After is held between 1 s and 10 min', async () => {
+  for (const [ra, check] of [['999999999', (ms) => ms <= 10 * 60_000], ['0', (ms) => ms >= 1000]]) {
+    installFetch({ wanCreate: (n) => (n === 1 ? json(429, { code: 'Throttling.RateQuota' }, { 'retry-after': ra }) : null) });
+    const statePath = tmpState();
+    const c = clock();
+    const cr = creds({ WAN_2_ENDPOINT: undefined, WAN_3_ENDPOINT: undefined, AZURE_SORA_ENDPOINT: undefined });
+    const events = [];
+    await assert.rejects(() => run({ creds: cr, statePath, clock: c, maxRateWaitMs: 60_000, onEvent: (e) => events.push(e) }), /no video provider/);
+    const s = P.poolSummary({ creds: cr, statePath, now: c.now() })[0];
+    const waits = events.filter((e) => e.type === 'wait').map((e) => e.ms);
+    if (ra === '0') assert.ok(waits.length > 0 && waits.every(check), `Retry-After 0 waits at least 1 s: ${waits}`);
+    else assert.ok(s.status === 'cooldown' && check(s.until - c.now()), `Retry-After ${ra} rests the key at most 10 min: ${s.until - c.now()}`);
+  }
+});
+
+test('generateClip: a WAN request is not sent with its key or prompt to another origin on a redirect', async () => {
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? new Response('', { status: 307, headers: { location: 'https://elsewhere.example.org/collect' } }) : null) });
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).startsWith('https://elsewhere.example.org/')) throw new Error('the request reached the other origin');
+    return routed(url, opts);
+  };
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1');
+  assert.equal(creates(calls)[0].opts.redirect, 'manual');
+});
+

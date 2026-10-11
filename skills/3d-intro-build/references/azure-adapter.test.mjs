@@ -447,11 +447,63 @@ test('probeDims: reads PNG IHDR width/height (no ffprobe)', () => {
   assert.throws(() => A.probeDims(Buffer.from('not a png at all')), /not a PNG/);
 });
 
-test('redact: masks the middle + appends length; short secrets fully masked', () => {
-  assert.equal(A.redact('abcdefghijklmnop'), 'abcd…mnop(16)');
+test('redact: shows only the length, no character of the secret (an sk-ws- key would give its tail away)', () => {
+  assert.equal(A.redact('abcdefghijklmnop'), '…(16)');
+  assert.equal(A.redact('sk-ws-0123456789abcdef'), '…(22)');
   assert.equal(A.redact('short'), '…(5)');
   assert.equal(A.redact(''), '(missing)');
   assert.equal(A.redact(null), '(missing)');
+});
+
+test('parseConsoleSample: an endpoint field that is not a URL comes back null, never as its raw text', () => {
+  const p = A.parseConsoleSample('client = AzureOpenAI(azure_endpoint="sk-pasted-in-the-wrong-field-0123", api_key="PLACEHOLDER")');
+  assert.equal(p.endpoint, null);
+  assert.ok(!JSON.stringify(p).includes('sk-pasted'), 'the pasted value is not echoed back');
+});
+
+// A fetch stub that answers by URL: [status, location] for a redirect, else 200 with `body`.
+function routeFetch(routes) {
+  const calls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), opts });
+    const hit = routes[String(url)];
+    if (!hit) throw new Error(`unrouted ${url}`);
+    return hit.location ? new Response('', { status: hit.status, headers: { location: hit.location } }) : new Response(hit.body ?? 'ok', { status: 200 });
+  };
+  return calls;
+}
+
+test('fetchGuarded: a redirect to another origin never carries the key, and a request with a body is not sent there', async () => {
+  const calls = routeFetch({
+    'https://api.example.com/content': { status: 302, location: 'https://blob.example.net/v.mp4?sig=1' },
+    'https://blob.example.net/v.mp4?sig=1': { body: 'video' },
+    'https://api.example.com/create': { status: 307, location: 'https://elsewhere.example.org/collect' },
+    'https://api.example.com/same': { status: 307, location: '/moved' },
+    'https://api.example.com/moved': { body: 'done' },
+  });
+  const r = await A.fetchGuarded('https://api.example.com/content', { headers: { 'api-key': 'k', Authorization: 'Bearer k', Accept: 'video/mp4' } });
+  assert.equal(await r.text(), 'video');
+  assert.equal(calls[0].opts.redirect, 'manual');
+  assert.deepEqual(Object.keys(calls[1].opts.headers), ['Accept'], 'the other origin gets no key');
+  await assert.rejects(A.fetchGuarded('https://api.example.com/create', { method: 'POST', headers: { 'api-key': 'k' }, body: '{"prompt":"p"}' }),
+    (e) => e.cause?.code === 'ECROSSREDIRECT');
+  assert.ok(!calls.some((c) => c.url.startsWith('https://elsewhere.example.org')), 'the prompt never left for the other origin');
+  const s = await A.fetchGuarded('https://api.example.com/same', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' });
+  assert.equal(await s.text(), 'done');
+  assert.deepEqual([calls.at(-1).opts.headers['api-key'], calls.at(-1).opts.body], ['k', 'b'], 'the same origin keeps both');
+});
+
+test('azFetch: Azure requests go through the guarded fetch (manual redirects)', async () => {
+  const calls = routeFetch({ 'https://res.example.com/x': { body: '{}' } });
+  await A.azFetch('https://res.example.com/x', { key: 'k' });
+  assert.equal(calls[0].opts.redirect, 'manual');
+});
+
+test('3d-intro-setup: keys are written by the person into a private file, never into a command the agent runs', () => {
+  const doc = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(doc, /API_KEY: '<입력값>'/, 'no key placeholder inside a node -e command');
+  assert.match(doc, /umask 077/, 'the key file is created private');
+  assert.match(doc, /Model Studio[^\n]*(교체|재발급)/, 'WAN keys get rotation advice too');
 });
 
 // keep HERE referenced (documents the co-located adapter under test)

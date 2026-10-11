@@ -36,8 +36,9 @@ function originOf(url) {
     const u = new URL(raw);
     return `${u.protocol}//${u.host}`;
   } catch {
-    const m = raw.match(/^(https?:\/\/[^/]+)/i);
-    return m ? m[1] : raw.replace(/\/+$/, '');
+    // Not a URL: null, never the raw text, which may be a key pasted into the endpoint field.
+    const m = raw.match(/^(https?:\/\/[^/\s]+)/i);
+    return m ? m[1] : null;
   }
 }
 
@@ -164,17 +165,55 @@ function envLiteral(v) {
   return v.includes('"') ? `'${v}'` : `"${v}"`;
 }
 
-/** Redact a secret to `abcd…wxyz(len)`; short (<=8) secrets are fully masked; falsy -> "(missing)". */
+/**
+ * Redact a secret to its length only, `…(len)`: no character of it, since keys share fixed
+ * prefixes (`sk-ws-`) and a shown tail narrows them down. Falsy -> "(missing)".
+ */
 export function redact(s) {
   if (!s) return '(missing)';
-  const str = String(s);
-  if (str.length <= 8) return `…(${str.length})`;
-  return `${str.slice(0, 4)}…${str.slice(-4)}(${str.length})`;
+  return `…(${String(s).length})`;
 }
 
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
+
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+const SECRET_HEADERS = new Set(['authorization', 'api-key', 'proxy-authorization', 'cookie']);
+const MAX_HOPS = 5;
+const refused = (code, message) => Object.assign(new TypeError(`fetch failed: ${message}`), { cause: { code } });
+const withoutSecrets = (headers = {}) => Object.fromEntries(Object.entries(headers).filter(([k]) => !SECRET_HEADERS.has(k.toLowerCase())));
+
+// The request for the next hop of a redirect. A 303, and a 301 or 302 after a POST, turn into a GET
+// without a body, as browsers do. A hop to another origin never carries a key: a request with a
+// body (a prompt, a frame) is refused there, and a plain GET goes on without the secret headers.
+function nextHop(req, status, crossOrigin) {
+  const toGet = status === 303 || ((status === 301 || status === 302) && req.method === 'POST');
+  const next = toGet ? { ...req, method: 'GET', body: undefined } : req;
+  if (!crossOrigin) return next;
+  if (next.body !== undefined) throw refused('ECROSSREDIRECT', 'a request with a body is not sent to another origin');
+  return { ...next, headers: withoutSecrets(next.headers) };
+}
+
+/**
+ * fetch that follows redirects by hand (at most 5): within one origin as fetch would; to another
+ * origin without the key headers, and never with a body (fetch itself forwards a custom `api-key`
+ * header and re-sends the body on 307 and 308). Throws as fetch does on a network error.
+ */
+export async function fetchGuarded(url, init = {}) {
+  let target = url;
+  let req = { ...init, redirect: 'manual' };
+  for (let hop = 0; hop <= MAX_HOPS; hop++) {
+    const r = await globalThis.fetch(target, req);
+    const location = REDIRECT_STATUS.has(r.status) ? r.headers.get('location') : null;
+    if (!location) return r;
+    const next = new URL(location, String(target));
+    req = nextHop(req, r.status, next.origin !== new URL(String(target)).origin);
+    try { await r.body?.cancel(); } catch { /* the redirect body is not needed */ }
+    target = next.toString();
+  }
+  throw refused('ETOOMANYREDIRECTS', 'too many redirects');
+}
 
 // Retry-After / retry-after-ms response header -> milliseconds (null when absent or unparsable).
 function retryAfterMsOf(headers) {
@@ -202,7 +241,7 @@ export async function azFetch(url, { key, binary = false, headers = {}, method =
     if (body !== undefined) opts.body = body;
     let r;
     try {
-      r = await globalThis.fetch(url, opts);
+      r = await fetchGuarded(url, opts);
     } catch (e) {
       last = { status: 0, ok: false, ct: '', body: null, authStyle: null, error: e };
       break; // network error is not an auth problem — do not retry other styles
