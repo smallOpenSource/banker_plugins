@@ -35,15 +35,19 @@
    (about 36 Latin characters). */
 .sw-copy__body { color: var(--intro-body); text-shadow: var(--intro-text-shadow); white-space: pre-line; max-width: none; }
 
+/* A secondary (ghost) button has no fill, so its label sits on the dark glass: it takes the panel's
+   light text, whatever the theme's ink. */
+.sw-copy .sw-btn--ghost { color: var(--intro-title); border-color: rgba(255, 255, 255, .45); }
+
 /* A light shade behind the panel, from the left on wide screens. */
 .sw-copylayer::before {
   background: linear-gradient(90deg, rgba(var(--intro-panel-rgb), .14) 0%, rgba(var(--intro-panel-rgb), .1) 40%,
     rgba(var(--intro-panel-rgb), .04) 68%, transparent 100%);
 }
 
-/* At 860px and below the engine puts the panel at the bottom with side margins; the shade rises
-   from the bottom instead. */
-@media (max-width: 860px) {
+/* At 860px and below the engine puts the panel at the bottom with side margins, and intro-fixes.css
+   does the same on a short landscape screen; the shade rises from the bottom instead. */
+@media (max-width: 860px), (max-height: 500px) and (orientation: landscape) {
   .sw-copy { width: auto; }
   .sw-copylayer::before {
     background: linear-gradient(0deg, rgba(var(--intro-panel-rgb), .28) 0%, rgba(var(--intro-panel-rgb), .14) 45%, transparent 75%);

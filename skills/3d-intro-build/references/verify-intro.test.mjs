@@ -4,12 +4,13 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
-  VIEWPORTS, colorAlpha, contrastRatio, insideViewport, intersects, judge, parseArgs, parseColor, parseViewport, relLuminance, worstContrast,
+  TEXT_PARTS, VIEWPORTS, colorAlpha, contrastRatio, fillContrast, insideViewport, intersects, judge, parseArgs, parseColor, parseViewport,
+  relLuminance, worstContrast,
 } from './verify-intro.mjs';
 
-test('the default screens are the ones the guide lists, touch where a phone is', () => {
+test('the default screens are the ones the guide lists and a phone on its side, touch where a phone is', () => {
   assert.deepEqual(VIEWPORTS.map((v) => `${v.width}x${v.height}${v.touch ? ' touch' : ''}`),
-    ['1280x800', '1920x1080', '860x900', '390x844 touch', '375x667 touch']);
+    ['1280x800', '1920x1080', '860x900', '390x844 touch', '375x667 touch', '844x390 touch']);
 });
 
 test('a screen size on the command line may mark touch and reduced motion', () => {
@@ -86,4 +87,24 @@ test('a scene fails on overflow, overlap, a panel off screen or under the header
   assert.deepEqual(judge({ ...ok, overlaps: ['.isn-hint'], hOverflow: true }, { minContrast: 4.5 }),
     ['overlaps .isn-hint', 'horizontal overflow']);
   assert.deepEqual(judge({ ...ok, inViewport: false, belowHeader: false }, { minContrast: 4.5 }), ['panel outside the screen', 'panel under the header']);
+  assert.deepEqual(judge({ ...ok, contrast: [{ el: 'cta', line: 1, min: 1.1 }] }, { minContrast: 4.5 }), ['contrast cta line 1: 1.1']);
+});
+
+test('a panel is measured for every text part and each CTA button label', () => {
+  assert.deepEqual(TEXT_PARTS.map(([el]) => el), ['num', 'eyebrow', 'title', 'body', 'cta']);
+  assert.equal(Object.fromEntries(TEXT_PARTS).cta, '.sw-copy__cta .sw-btn');
+});
+
+test('a button outside the panels is measured against its own solid fill; any other fill is not measured, never passed', () => {
+  assert.deepEqual(fillContrast('rgb(255, 255, 255)', 'rgb(241, 245, 249)'), { ratio: 1.1 }, 'white on a light pill');
+  assert.ok(fillContrast('rgb(11, 18, 32)', 'rgb(241, 245, 249)').ratio > 15);
+  assert.deepEqual(fillContrast('rgb(255, 255, 255)', 'rgba(11, 18, 32, 0.6)'), { ratio: null, why: 'fill not solid: rgba(11, 18, 32, 0.6)' });
+  assert.deepEqual(fillContrast('rgb(255, 255, 255)', 'rgba(0, 0, 0, 0)'), { ratio: null, why: 'fill not solid: rgba(0, 0, 0, 0)' });
+  assert.deepEqual(fillContrast('oklch(0.98 0.01 250)', 'rgb(11, 18, 32)'), { ratio: null, why: 'colour oklch(0.98 0.01 250)' });
+});
+
+test('a scene fails when its clip is there but never shows; no clip, the first scene and reduced motion do not', () => {
+  const ok = { inViewport: true, belowHeader: true, overlaps: [], hOverflow: false, contrast: [] };
+  assert.deepEqual(judge({ ...ok, clip: 'not shown' }, { minContrast: 4.5 }), ['clip not shown']);
+  for (const clip of ['shown', 'none', 'poster', 'off', undefined]) assert.deepEqual(judge({ ...ok, clip }, { minContrast: 4.5 }), [], String(clip));
 });
