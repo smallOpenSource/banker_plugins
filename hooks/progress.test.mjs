@@ -47,8 +47,9 @@ function raiser(hooks, $) {
 // keeps the open panes, and raises events through the module's hooks the way the engine does. As
 // in Claude Code 2.1.296, `$.ui.open` resolves to nothing, a new pane is shown, and a pane behind
 // another plugin's pane rises only with `focus`. `files` holds what `$.fs.read` finds: a path it
-// does not hold rejects, as a missing file does.
-function engine({ files = new Map() } = {}) {
+// does not hold rejects, as a missing file does. A read of a path in `held` waits for `release`.
+function engine({ files = new Map(), held = new Set() } = {}) {
+  const waiting = new Map();
   const hooks = [];
   // Like the engine, one module may hook an event once per matcher (no matcher counts as one),
   // and each registration takes one `.catch` handler.
@@ -68,6 +69,7 @@ function engine({ files = new Map() } = {}) {
     fs: {
       read: async (path) => {
         seen.reads.push(path);
+        if (held.has(path)) await new Promise((resolve) => waiting.set(path, resolve));
         if (!files.has(path)) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
         return files.get(path);
       },
@@ -91,7 +93,13 @@ function engine({ files = new Map() } = {}) {
   // Another plugin opens a pane in front: this plugin's panes become tabs behind it.
   const cover = () => { for (const p of open.values()) p.isShown = false; };
   const caught = (event) => hooks.find((h) => h.event === event)?.caught;
-  return { $, seen, open, files, raise, tool, draw, cover, caught };
+  // Lets a held read go on, and waits for the hooks that awaited it.
+  const release = async (path) => {
+    held.delete(path);
+    waiting.get(path)?.();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  return { $, seen, open, files, raise, tool, draw, cover, caught, release };
 }
 
 const walk = (node, out = []) => {
@@ -783,7 +791,120 @@ test('a title cut to the pane\'s width leaves room for its state, a Korean chara
   assert.ok(planned.endsWith('…') && cells(planned) <= 40 - 2 - 1 - cells('대기'), planned);
   const call = labels(tree).find((l) => l.startsWith('Write'));
   assert.ok(cells(call) <= 40 - 4, call);
+  const callRow = rowLabeled(tree, call);
+  assert.equal(callRow.props.children.length, 1, 'a call that went through has no empty state beside it to take a gap');
   assert.equal(labels(await eng.draw()).find((l) => l.startsWith('나')), `${'나'.repeat(30)} 끝`, 'no width, no cut beyond 60 characters');
+});
+
+test('a file that is no plan leaves the plan, and the plan\'s file is still read again', async () => {
+  const other = '/w/.omc/prd.json';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [other, '{"notes":[]}']]) });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  await eng.tool({ tool: 'Read', file_path: other });
+  await eng.tool({ tool: 'Read', file_path: '/w/.omc/plans/gone.md' });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획']);
+  eng.files.set(PLAN, '# 배포 계획\n- [x] 설계\n- [ ] 구현\n');
+  await eng.raise('turn.start', { turnId: 't1', text: '다음' });
+  assert.match(textOf(rowOf(await eng.draw(), 'plan')), /1\/2 완료/);
+});
+
+test('a read that a newer plan touch overtook changes nothing', async () => {
+  const b = '/w/.omc/plans/b.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [b, '# 새 계획\n- [ ] x\n']]), held: new Set([PLAN]) });
+  const first = eng.tool({ tool: 'Write', file_path: PLAN });
+  await new Promise((resolve) => setImmediate(resolve));
+  await eng.tool({ tool: 'Write', file_path: b });
+  await eng.release(PLAN);
+  await first;
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 새 계획']);
+});
+
+test('a plan file whose items are not what a plan holds never breaks the hooks or leaves a step running', async () => {
+  const prd = '/w/.omc/prd.json';
+  const eng = engine({ files: new Map([[prd, JSON.stringify({ userStories: [null, { id: 'US-9', title: { a: 1 } }] })]]) });
+  await eng.raise('turn.start', { turnId: 't1', text: '진행' });
+  await eng.tool({ tool: 'Edit', file_path: prd });
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  const tree = await eng.draw();
+  assert.deepEqual(labels(tree).slice(1, 3), ['계획: prd.json', 'US-9']);
+  assert.match(textOf(rowOf(tree, 't-t1')), /완료/);
+});
+
+test('a notice keeps the prompt\'s own end and time, and a failed task says so', async (t) => {
+  let clock = 0;
+  t.mock.method(Date, 'now', () => clock);
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '검토해 줘' });
+  clock = 30_000;
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  clock = 600_000;
+  await eng.raise('turn.start', { turnId: 't2', text: '<task-notification>\n<status>failed</status>\n<summary>Agent "검토" failed: 시간 초과로 멈춤</summary>\n</task-notification>' });
+  let tree = await eng.draw();
+  assert.match(textOf(rowOf(tree, 't-t1')), /진행 중/);
+  clock = 635_000;
+  await eng.raise('turn.complete', { turnId: 't2', reason: 'aborted' });
+  tree = await eng.draw();
+  button(tree, '검토해 줘').props.onPress({});
+  button(tree, '▸').props.onPress({});
+  tree = await eng.draw();
+  assert.match(textOf(about(tree)), /완료, 30초, 도구 호출 0회\.$/, 'the prompt\'s own end and time stay');
+  const row = labels(tree).find((l) => l.startsWith('백그라운드 작업 실패'));
+  assert.ok(row, labels(tree).join(' | '));
+  assert.match(textOf(rowLabeled(tree, row)), /실패/);
+  button(tree, row).props.onPress({});
+  assert.equal(textOf(about(await eng.draw())), '백그라운드 작업 실패: Agent "검토" failed: 시간 초과로 멈춤.');
+});
+
+test('a notice that starts before the prompt\'s turn ends leaves no step running once both end', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.raise('turn.start', { turnId: 't2', text: '<task-notification><status>completed</status><summary>끝</summary></task-notification>' });
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  assert.match(textOf(rowOf(await eng.draw(), 't-t1')), /진행 중/, 'the notice still runs');
+  await eng.raise('turn.complete', { turnId: 't2', reason: 'answer' });
+  assert.match(textOf(rowOf(await eng.draw(), 't-t1')), /완료/);
+});
+
+test('a teammate\'s message joins the step, another session\'s is a step of its own', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '팀으로 해' });
+  await eng.raise('turn.start', { turnId: 't2', text: '<teammate-message teammate_id="r1">\n리뷰 끝\n</teammate-message>' });
+  await eng.raise('turn.start', { turnId: 't3', text: '<cross-session-message from="w">\n테스트 돌려 줘\n</cross-session-message>' });
+  let tree = await eng.draw();
+  assert.deepEqual(labels(tree), ['▸', '팀으로 해', '[다른 세션] 테스트 돌려 줘']);
+  button(tree, '▸').props.onPress({});
+  tree = await eng.draw();
+  assert.ok(labels(tree).includes('팀원 메시지: 리뷰 끝'));
+});
+
+test('a reviewer agent reading a plan does not make it the plan, an agent writing one does', async () => {
+  const b = '/w/.omc/plans/b.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [b, '# 다른 계획\n- [ ] x\n']]) });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  await eng.tool({ tool: 'Read', file_path: b, agentId: 'a1' });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획']);
+  await eng.tool({ tool: 'Write', file_path: b, agentId: 'a1' });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 다른 계획']);
+});
+
+test('a pressed plan step is let go when another plan file takes its place', async () => {
+  const b = '/w/.omc/plans/b.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [b, '# 다른 계획\n- [ ] 엉뚱한 단계\n- [ ] y\n']]) });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  button(await eng.draw(), '구현').props.onPress({});
+  await eng.tool({ tool: 'Write', file_path: b });
+  assert.equal(textOf(about(await eng.draw())), '단계나 하위 항목을 누르면 설명이 여기에 나옵니다.');
+});
+
+test('the plan\'s title is drawn bold, and a long plan counts the steps past the first 50', async () => {
+  const md = `# 긴 계획\n${Array.from({ length: 120 }, (_, i) => `- [${i < 50 ? 'x' : ' '}] 단계 ${i + 1}`).join('\n')}\n`;
+  const eng = engine({ files: new Map([[PLAN, md]]) });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  const tree = await eng.draw();
+  const head = button(tree, '계획: 긴 계획');
+  assert.ok(walk(head).some((n) => n.type === 'Text' && n.props.bold === true), 'a bold Text inside the Button');
+  assert.match(textOf(rowOf(tree, 'plan')), /50\/120 완료/);
+  assert.match(textOf(tree), /외 100개/);
 });
 
 test('register.mjs wires /progress beside /graceful-pause', async () => {
