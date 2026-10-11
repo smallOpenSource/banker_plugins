@@ -819,6 +819,14 @@ test('generateClip: a submit redirected to another origin stops; that origin\'s 
   assert.equal(P.poolSummary({ creds: creds(), statePath })[0].status, 'ok', 'WAN_1 is not retired for another server\'s answer');
 });
 
+test('generateClip: a submit redirected within its origin by a 303 stops; the GET\'s 429 is never taken for the submit\'s answer', async () => {
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? new Response('', { status: 303, headers: { location: '/throttled' } }) : null) });
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => (String(url).endsWith('/throttled') ? json(429, { code: 'Throttling.RateQuota' }) : routed(url, opts));
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1');
+  assert.equal(creates(calls).length, 1, 'not resubmitted on WAN_2');
+});
+
 test('downloadWanVideo: a redirect away from https is not followed', async () => {
   const seen = [];
   globalThis.fetch = async (url) => {

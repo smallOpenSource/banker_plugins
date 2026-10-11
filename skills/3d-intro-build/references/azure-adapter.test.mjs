@@ -548,6 +548,14 @@ test('fetchGuarded: a request with a body is never followed to another origin, n
       (e) => e.cause?.code === 'ECROSSREDIRECT', String(status));
     assert.equal(calls.length, 1, `${status}: the other origin's answer can never be read as this key's answer`);
   }
+  const calls = routeFetch({
+    'https://api.example.com/submit': { status: 303, location: '/status' },
+    'https://api.example.com/status': { status: 302, location: 'https://elsewhere.example.org/x' },
+    'https://elsewhere.example.org/x': { body: 'other' },
+  });
+  await assert.rejects(A.fetchGuarded('https://api.example.com/submit', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' }),
+    (e) => e.cause?.code === 'EBODYREDIRECT', 'nor turned into a GET within its origin first');
+  assert.equal(calls.length, 1);
 });
 
 test('azFetch helpers: a request refused before sending says why in the error', async () => {
@@ -571,11 +579,25 @@ test('fetchGuarded: the key is found in every header form fetch takes, and the o
   }
 });
 
-test('fetchGuarded: 303, and 301 or 302 after a POST, go on as a GET without the body; 307 and 308 keep both', async () => {
-  for (const [status, method, want] of [[303, 'POST', 'GET'], [302, 'POST', 'GET'], [301, 'POST', 'GET'], [302, 'GET', 'GET'], [307, 'POST', 'POST'], [308, 'POST', 'POST']]) {
+test('fetchGuarded: a request with a body follows only a 307 or 308 within its origin, sent again as it was', async () => {
+  for (const status of [307, 308]) {
     const calls = routeFetch({ 'https://api.example.com/a': { status, location: '/b' }, 'https://api.example.com/b': { body: 'ok' } });
-    await A.fetchGuarded('https://api.example.com/a', { method, headers: { 'api-key': 'k' }, body: method === 'POST' ? 'b' : undefined });
-    assert.deepEqual([calls[1].opts.method, calls[1].opts.body], [want, want === 'POST' ? 'b' : undefined], `${status} after ${method}`);
+    await A.fetchGuarded('https://api.example.com/a', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' });
+    assert.deepEqual([calls[1].opts.method, calls[1].opts.body, calls[1].opts.headers['api-key']], ['POST', 'b', 'k'], String(status));
+  }
+  for (const status of [301, 302, 303]) {
+    const calls = routeFetch({ 'https://api.example.com/a': { status, location: '/b' }, 'https://api.example.com/b': { body: 'ok' } });
+    await assert.rejects(A.fetchGuarded('https://api.example.com/a', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' }),
+      (e) => e.cause?.code === 'EBODYREDIRECT', String(status));
+    assert.equal(calls.length, 1, `${status}: a GET's answer is never read as the POST's`);
+  }
+});
+
+test('fetchGuarded: a request without a body follows any redirect; 303, and 301 or 302 after a POST, go on as a GET', async () => {
+  for (const [status, method, want] of [[303, 'GET', 'GET'], [302, 'GET', 'GET'], [301, 'GET', 'GET'], [307, 'GET', 'GET'], [302, 'POST', 'GET'], [303, 'POST', 'GET'], [308, 'POST', 'POST']]) {
+    const calls = routeFetch({ 'https://api.example.com/a': { status, location: '/b' }, 'https://api.example.com/b': { body: 'ok' } });
+    await A.fetchGuarded('https://api.example.com/a', { method, headers: { 'api-key': 'k' } });
+    assert.equal(calls[1].opts.method, want, `${status} after ${method}`);
   }
 });
 

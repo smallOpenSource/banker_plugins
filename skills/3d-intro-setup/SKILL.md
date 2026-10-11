@@ -103,7 +103,7 @@ FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 �
 홈 키 파일(아래 fallback)이 이미 있으면 프로젝트 파일을 만들지 않는다. 빈 프로젝트 파일이 먼저 읽혀 홈의 키가 가려진다.
 ```bash
 [ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local)
-ls -l .env.3d-intro.local ~/.config/banker/3d-intro/env 2>/dev/null   # -rw------- 기대
+ls -l .env.3d-intro.local ~/.config/banker/3d-intro/env 2>/dev/null || true   # 있는 파일이 -rw------- 면 된다
 ```
 여러 프로젝트에서 재사용하려면 프로젝트 파일 대신 홈 폴더 fallback 을 쓴다. `resolveCreds` 가 project-local 다음으로 찾는 경로다.
 ```bash
@@ -178,7 +178,7 @@ rm -f "$HOME/.config/banker/3d-intro/sample.txt"
 ```
 파싱 결과(저장한 파일, 엔드포인트, 배포명, apiVersion, 길이만 보이는 key)를 사람에게 보여 주고 확인받는다.
 `replaced` 에 길이가 보이면 파일에 있던 다른 키를 이 샘플의 키로 바꾼 것이다. 교체(로테이션)가 아니었다면 사람이 키 파일의 키 줄을 다시 적는다.
-exit 3 과 `endpointChanged` 가 보이면 샘플의 endpoint 가 키 파일의 것과 다른데 샘플에 키가 없다는 뜻이다. 기존 키가 새 host 로 가지 않도록 아무것도 저장하지 않았다. 다른 리소스로 바꾸는 것이면 사람이 키 파일의 endpoint 와 키 줄을 함께 고친다.
+출력에 `endpointChanged` 가 있으면(node 는 exit 3, 블록은 다음 `rm -f` 때문에 0) 샘플의 endpoint 가 키 파일의 것과 다른데 샘플에 키가 없다는 뜻이다. 기존 키가 새 host 로 가지 않도록 아무것도 저장하지 않았다. 다른 리소스로 바꾸는 것이면 사람이 키 파일의 endpoint 와 키 줄을 함께 고친다.
 샘플의 SDK 코드에서 키는 따옴표 안의 값만 읽는다. `api_key=subscription_key` 처럼 변수 이름이면 키로 보지 않아 기존 키를 덮지 않는다.
 필드가 `null` 이면(정규식 미매치, 또는 URL 이 아닌 endpoint) 그 필드만 모드 (a) 로 보완한다. 키가 샘플에 변수(`$AZURE_API_KEY` 등)로만 있으면 키 파일에 사람이 직접 적는다.
 

@@ -211,21 +211,26 @@ function redirectTarget(location, from) {
   throw refused('EINSECUREREDIRECT', 'a redirect away from https is not followed');
 }
 
-// The request for the next hop of a redirect. A 303, and a 301 or 302 after a POST, turn into a GET
-// without a body, as browsers do. A request with a body (a prompt, a frame, a paid submit) is never
-// followed to another origin, not even as that GET: whatever answers there does not answer this
-// request, and its 401 or 429 would read as this key's. A plain GET goes on without the secret headers.
+// The request for the next hop of a redirect. A request with a body (a prompt, a frame, a paid submit)
+// follows only a 307 or 308 within its origin, which send it again as it was. A 301, 302 or 303 would
+// make it a GET, and another origin is another server: either way the next answer does not answer this
+// request, and its 401 or 429 would read as this key's (a key retired, a submit sent again elsewhere).
+// Without a body, a 303, and a 301 or 302 after a POST, go on as a GET, as browsers do, and a hop to
+// another origin goes without the secret headers.
 function nextHop(req, status, crossOrigin) {
-  if (crossOrigin && req.body != null) throw refused('ECROSSREDIRECT', 'a request with a body is not followed to another origin');
+  if (req.body != null && (crossOrigin || status < 307)) {
+    throw refused(crossOrigin ? 'ECROSSREDIRECT' : 'EBODYREDIRECT', 'a request with a body follows only a 307 or 308 within its origin');
+  }
   const toGet = status === 303 || ((status === 301 || status === 302) && req.method === 'POST');
   const next = toGet ? { ...req, method: 'GET', body: undefined } : req;
   return crossOrigin ? { ...next, headers: withoutSecrets(next.headers) } : next;
 }
 
 /**
- * fetch that follows redirects by hand (at most 5): within one origin as fetch would; to another
- * origin without the key headers, and never with a body (fetch itself forwards a custom `api-key`
- * header and re-sends the body on 307 and 308). A key goes only where safeForKey allows: an http
+ * fetch that follows redirects by hand (at most 5): a request without a body as fetch would, but to
+ * another origin without the key headers; a request with a body only by a 307 or 308 within its
+ * origin (fetch itself forwards a custom `api-key` header and re-sends the body on 307 and 308 to
+ * any origin, and turns a POST into a GET on 301 to 303). A key goes only where safeForKey allows: an http
  * URL with one is refused before anything is sent (cause.code EINSECURE), and no redirect leaves
  * https. Throws as fetch does on a network error.
  */
