@@ -100,8 +100,10 @@ FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 �
 엔드포인트, 배포명, API 버전은 비밀이 아니라 대화로 받아도 된다.
 
 키 파일은 먼저 비공개로 만든다(이미 있으면 그대로 둔다). `echo >>` 로 새 파일을 만들면 0644 로 남는다.
+홈 키 파일(아래 fallback)이 이미 있으면 프로젝트 파일을 만들지 않는다. 빈 프로젝트 파일이 먼저 읽혀 홈의 키가 가려진다.
 ```bash
-(umask 077 && touch .env.3d-intro.local) && ls -l .env.3d-intro.local   # -rw------- 기대
+[ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local)
+ls -l .env.3d-intro.local ~/.config/banker/3d-intro/env 2>/dev/null   # -rw------- 기대
 ```
 여러 프로젝트에서 재사용하려면 프로젝트 파일 대신 홈 폴더 fallback 을 쓴다. `resolveCreds` 가 project-local 다음으로 찾는 경로다.
 ```bash
@@ -161,6 +163,11 @@ node -e "
   const prev = resolveCreds({ projectDir: process.cwd() });
   const target = prev._source || path.join(process.cwd(), '.env.3d-intro.local');
   const add = Object.fromEntries(Object.entries(names).filter(([f]) => p[f]).map(([f, name]) => [name, p[f]]));
+  const was = (() => { try { return new URL(prev[names.endpoint]).origin; } catch { return null; } })();
+  if (p.endpoint && was && p.endpoint !== was && add[names.apiKey] === undefined) {   // 다른 리소스인데 키가 없음
+    console.log(JSON.stringify({ file: target, endpointChanged: { from: was, to: p.endpoint } }));
+    process.exit(3);
+  }
   const old = prev[names.apiKey];
   persistCreds({ ...prev, ...add }, { target });
   const replaced = old && add[names.apiKey] && old !== add[names.apiKey] ? redact(old) : null;
@@ -171,6 +178,7 @@ rm -f "$HOME/.config/banker/3d-intro/sample.txt"
 ```
 파싱 결과(저장한 파일, 엔드포인트, 배포명, apiVersion, 길이만 보이는 key)를 사람에게 보여 주고 확인받는다.
 `replaced` 에 길이가 보이면 파일에 있던 다른 키를 이 샘플의 키로 바꾼 것이다. 교체(로테이션)가 아니었다면 사람이 키 파일의 키 줄을 다시 적는다.
+exit 3 과 `endpointChanged` 가 보이면 샘플의 endpoint 가 키 파일의 것과 다른데 샘플에 키가 없다는 뜻이다. 기존 키가 새 host 로 가지 않도록 아무것도 저장하지 않았다. 다른 리소스로 바꾸는 것이면 사람이 키 파일의 endpoint 와 키 줄을 함께 고친다.
 샘플의 SDK 코드에서 키는 따옴표 안의 값만 읽는다. `api_key=subscription_key` 처럼 변수 이름이면 키로 보지 않아 기존 키를 덮지 않는다.
 필드가 `null` 이면(정규식 미매치, 또는 URL 이 아닌 endpoint) 그 필드만 모드 (a) 로 보완한다. 키가 샘플에 변수(`$AZURE_API_KEY` 등)로만 있으면 키 파일에 사람이 직접 적는다.
 
@@ -207,7 +215,7 @@ node -e "
   const { resolveCreds, listVideos, azFetch, redact } = await import('$ADAPTER');
   const c = resolveCreds({ projectDir: process.cwd() });
   if (!c._source) { console.log('크레덴셜 없음 -- §3 먼저 실행'); process.exit(2); }
-  const how = (r) => (r.error ? r.error.cause?.code || r.error.name : r.authStyle);   // status 0 이면 이유
+  const how = (r) => (r.error ? r.error.cause?.code || r.error.code || r.error.name : r.authStyle);   // status 0 이면 이유
   const sora = await listVideos({ endpoint: c.AZURE_SORA_ENDPOINT, key: c.AZURE_SORA_API_KEY, apiVersion: c.AZURE_SORA_API_VERSION || 'preview' });
   console.log('sora.listVideos ->', sora.status, '(' + how(sora) + ')');
   const imgv = c.AZURE_GPT_IMAGE_API_VERSION || 'preview';

@@ -51,6 +51,10 @@ function truncate(x, n = 300) {
   return s.length > n ? `${s.slice(0, n)}…(+${s.length - n})` : s;
 }
 
+// Why an azFetch result has no HTTP answer, for error messages: " (EINSECURE)" and the like. The
+// error's code or name only, never its text: fetch can quote a header value, a key included.
+const why = (r) => (r.error ? ` (${r.error.cause?.code || r.error.code || r.error.name})` : '');
+
 // Last n chars of ffmpeg stderr (the useful part) for error messages.
 const tail = (s, n = 400) => { const str = String(s || ''); return str.length > n ? str.slice(-n) : str; };
 
@@ -185,7 +189,7 @@ const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 const SECRET_HEADERS = new Set(['authorization', 'api-key', 'proxy-authorization', 'cookie']);
 const MAX_HOPS = 5;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
-const isLoopback = (u) => LOOPBACK.has(u.hostname);
+const localHttp = (u) => u.protocol === 'http:' && LOOPBACK.has(u.hostname);
 const refused = (code, message) => Object.assign(new TypeError(`fetch failed: ${message}`), { cause: { code } });
 const isSecret = (name) => SECRET_HEADERS.has(name.toLowerCase());
 const withoutSecrets = (headers) => Object.fromEntries(Object.entries(headers).filter(([k]) => !isSecret(k)));
@@ -194,27 +198,28 @@ const withoutSecrets = (headers) => Object.fromEntries(Object.entries(headers).f
 const plainHeaders = (h) => (Array.isArray(h) || h instanceof Headers ? Object.fromEntries(new Headers(h)) : { ...h });
 
 /** Whether a key may go to this URL: over https, or over http only to this machine (a local mock or proxy). */
-export const safeForKey = (u) => u.protocol === 'https:' || (u.protocol === 'http:' && isLoopback(u));
+export const safeForKey = (u) => u.protocol === 'https:' || localHttp(u);
 
 // Where a redirect goes. The request was sent already, so a Location that is not a URL, or one that
 // leaves https, ends it with a code that does not read as "nothing sent". http stays allowed only
-// from this machine to this machine; from elsewhere it would reach a service here or on the network.
+// while the request is on this machine over http (a local mock); from anywhere else, an https
+// localhost included, it would reach a service here or on the network.
 function redirectTarget(location, from) {
   let next;
   try { next = new URL(location, from); } catch { throw refused('EBADREDIRECT', 'the redirect location is not a URL'); }
-  if (next.protocol === 'https:' || (next.protocol === 'http:' && isLoopback(next) && isLoopback(from))) return next;
+  if (next.protocol === 'https:' || (localHttp(next) && localHttp(from))) return next;
   throw refused('EINSECUREREDIRECT', 'a redirect away from https is not followed');
 }
 
 // The request for the next hop of a redirect. A 303, and a 301 or 302 after a POST, turn into a GET
-// without a body, as browsers do. A hop to another origin never carries a key: a request with a
-// body (a prompt, a frame) is refused there, and a plain GET goes on without the secret headers.
+// without a body, as browsers do. A request with a body (a prompt, a frame, a paid submit) is never
+// followed to another origin, not even as that GET: whatever answers there does not answer this
+// request, and its 401 or 429 would read as this key's. A plain GET goes on without the secret headers.
 function nextHop(req, status, crossOrigin) {
+  if (crossOrigin && req.body != null) throw refused('ECROSSREDIRECT', 'a request with a body is not followed to another origin');
   const toGet = status === 303 || ((status === 301 || status === 302) && req.method === 'POST');
   const next = toGet ? { ...req, method: 'GET', body: undefined } : req;
-  if (!crossOrigin) return next;
-  if (next.body !== undefined) throw refused('ECROSSREDIRECT', 'a request with a body is not sent to another origin');
-  return { ...next, headers: withoutSecrets(next.headers) };
+  return crossOrigin ? { ...next, headers: withoutSecrets(next.headers) } : next;
 }
 
 /**
@@ -324,7 +329,7 @@ export async function generateImage({
     });
   }
   const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`generateImage failed (${note}): HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && b64)) throw new Error(`generateImage failed (${note}): HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -342,7 +347,7 @@ export async function editImage({
     key, method: 'POST', body: fd,
   });
   const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`editImage failed: HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && b64)) throw new Error(`editImage failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -353,7 +358,7 @@ export async function generateImageFlux({ endpoint, key, prompt, width, height, 
     body: JSON.stringify({ prompt, width, height }),
   });
   const b64 = r.body?.data?.[0]?.b64_json || r.body?.b64_json || r.body?.image;
-  if (!(r.ok && b64)) throw new Error(`generateImageFlux failed: HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && b64)) throw new Error(`generateImageFlux failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -386,7 +391,7 @@ export async function createVideo({
   const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body: fd });
   if (!(r.ok && r.body?.id)) {
     // status 0 = network error; errno tells a refused connection (nothing sent) from a lost one
-    const err = new Error(`createVideo failed: HTTP ${r.status} ${truncate(r.body)}`);
+    const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
     err.status = r.status;
     err.errno = r.error?.cause?.code || r.error?.code || null;
     throw err;
@@ -432,7 +437,7 @@ export async function downloadVideo({ endpoint, key, id, apiVersion = 'preview' 
   const r = await azFetch(`${endpoint}/openai/v1/videos/${id}/content?api-version=${apiVersion}`, {
     key, method: 'GET', binary: true,
   });
-  if (!(r.status === 200 && r.body?.length)) throw new Error(`downloadVideo failed: HTTP ${r.status}`);
+  if (!(r.status === 200 && r.body?.length)) throw new Error(`downloadVideo failed: HTTP ${r.status}${why(r)}`);
   return r.body;
 }
 
@@ -477,7 +482,7 @@ export async function createVideoTwoImage({
     key, method: 'POST', body: fd,
   });
   const id = r.body?.id || r.body?.job_id;
-  if (!(r.ok && id)) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status} ${truncate(r.body)}`);
+  if (!(r.ok && id)) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return r.body;
 }
 

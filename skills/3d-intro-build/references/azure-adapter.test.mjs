@@ -531,6 +531,33 @@ test('fetchGuarded: a redirect away from https, or a Location that is not a URL,
   assert.equal(await r.text(), 'local', 'a local mock may redirect within this machine');
 });
 
+test('fetchGuarded: http is followed only while the request stays on this machine over http', async () => {
+  const calls = routeFetch({
+    'https://api.example.com/via-local': { status: 302, location: 'https://localhost/b' },
+    'https://localhost/b': { status: 302, location: 'http://localhost:8080/c' },
+    'http://localhost:8080/c': { body: 'local service' },
+  });
+  await assert.rejects(A.fetchGuarded('https://api.example.com/via-local'), (e) => e.cause?.code === 'EINSECUREREDIRECT');
+  assert.ok(!calls.some((c) => c.url.startsWith('http://localhost:8080')), 'the local http service was not reached');
+});
+
+test('fetchGuarded: a request with a body is never followed to another origin, not even as a GET', async () => {
+  for (const status of [301, 302, 303, 307]) {
+    const calls = routeFetch({ 'https://api.example.com/submit': { status, location: 'https://elsewhere.example.org/x' }, 'https://elsewhere.example.org/x': { body: 'other' } });
+    await assert.rejects(A.fetchGuarded('https://api.example.com/submit', { method: 'POST', headers: { 'api-key': 'k' }, body: 'b' }),
+      (e) => e.cause?.code === 'ECROSSREDIRECT', String(status));
+    assert.equal(calls.length, 1, `${status}: the other origin's answer can never be read as this key's answer`);
+  }
+});
+
+test('azFetch helpers: a request refused before sending says why in the error', async () => {
+  const calls = routeFetch({});
+  await assert.rejects(A.generateImage({ endpoint: 'http://img.example.com', key: 'k', deployment: 'd', prompt: 'p' }), /HTTP 0 \(EINSECURE\)/);
+  await assert.rejects(A.downloadVideo({ endpoint: 'http://sora.example.com', key: 'k', id: 'v' }), /HTTP 0 \(EINSECURE\)/);
+  await assert.rejects(A.createVideo({ endpoint: 'http://sora.example.com', key: 'k', prompt: 'p' }), (e) => /\(EINSECURE\)/.test(e.message) && e.errno === 'EINSECURE');
+  assert.equal(calls.length, 0);
+});
+
 test('fetchGuarded: the key is found in every header form fetch takes, and the other headers go on', async () => {
   for (const headers of [[['api-key', 'secret-1'], ['Accept', 'video/mp4']], new Headers({ 'api-key': 'secret-1', Accept: 'video/mp4' })]) {
     const calls = routeFetch({
@@ -582,14 +609,17 @@ test('3d-intro-setup: keys are written by the person into a private file, never 
   assert.match(doc, /umask 077/, 'the key file is created private');
   assert.match(doc, /Model Studio[^\n]*(교체|재발급)/, 'WAN keys get rotation advice too');
   assert.doesNotMatch(doc, /key 를 물어본다/, 'the FLUX key is not asked for in chat either');
+  assert.match(doc, /\[ -e ~\/\.config\/banker\/3d-intro\/env \] \|\| \(umask 077 && touch \.env\.3d-intro\.local\)/,
+    'an empty project key file is not created over a home key file');
 });
 
 // The JavaScript of the first `node -e "..."` command after `heading` in the setup skill, with the
-// adapter filled in where the shell puts $ADAPTER.
+// modules filled in where the shell puts $ADAPTER and $POOL.
 function setupScript(heading) {
   const doc = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
   const body = doc.slice(doc.indexOf(heading)).match(/node -e "\r?\n([\s\S]*?)\r?\n"/)[1];
-  return body.replaceAll('$ADAPTER', pathToFileURL(path.join(HERE, 'azure-adapter.mjs')).href);
+  return body.replaceAll('$ADAPTER', pathToFileURL(path.join(HERE, 'azure-adapter.mjs')).href)
+    .replaceAll('$POOL', pathToFileURL(path.join(HERE, 'video-pool.mjs')).href);
 }
 
 // A project folder without a key file, and a home folder whose fallback key file holds a key the person wrote.
@@ -624,6 +654,27 @@ test('3d-intro-setup: modes (a) and (b) write into the key file already in use, 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(fs.existsSync(f.projectFile), false);
   assert.equal(keyOf(), 'placeholder-sample-key-02', 'mode (a) keeps the key it never sees');
+});
+
+test('3d-intro-setup: a sample for another endpoint without its own key is not saved, so the old key never meets the new host', () => {
+  const f = setupFolders();
+  const sample = path.join(f.root, 'sample.txt');
+  const before = fs.readFileSync(f.homeFile, 'utf8');
+  fs.writeFileSync(sample, 'client = AzureOpenAI(azure_endpoint="https://other.example.net", api_key=subscription_key)');
+  const r = f.run('### 모드 (b)', [sample, 'sora']);
+  assert.equal(r.status, 3, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).endpointChanged, { from: 'https://sora.example.com', to: 'https://other.example.net' });
+  assert.equal(fs.readFileSync(f.homeFile, 'utf8'), before, 'nothing written');
+});
+
+test('3d-intro-setup: the free preflight says why a request was not sent, and sends nothing for a bad endpoint', () => {
+  const f = setupFolders();
+  fs.writeFileSync(f.projectFile, 'AZURE_SORA_ENDPOINT=not-a-url\nAZURE_SORA_API_KEY=placeholder-k1\nAZURE_IMAGE_OPENAI_ENDPOINT=http://img.invalid\nAZURE_IMAGE_API_KEY=placeholder-k2\n');
+  const r = f.run('## 4. 프리플라이트', []);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stdout, /sora\.listVideos -> 0 \(ERR_INVALID_URL\)/);
+  assert.match(r.stdout, /images\.badreq -> 0 \(EINSECURE\)/);
+  assert.ok(!r.stdout.includes('placeholder-'), 'keys only by length');
 });
 
 // keep HERE referenced (documents the co-located adapter under test)

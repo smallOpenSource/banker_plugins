@@ -525,7 +525,7 @@ test('generateClip: a bare gateway 5xx or a 2xx without task_id on submit is amb
   assert.deepEqual(createdOn(calls), [1, 2]);
 });
 
-test('loadWanPool / probeWanPool / generateClip: an endpoint without http(s) is skipped and reported, not fatal', async () => {
+test('loadWanPool / probeWanPool / generateClip: an endpoint without a scheme is skipped and reported, not fatal', async () => {
   const cr = creds({ WAN_1_ENDPOINT: 'ws-unit1.example.com' });
   assert.equal(P.loadWanPool(cr)[0].badEndpoint, true);
   installFetch();
@@ -807,6 +807,16 @@ test('generateClip: a submit answered by a redirect whose Location is not a URL 
   const calls = installFetch({ wanCreate: (n) => (n === 1 ? new Response('', { status: 302, headers: { location: 'http://[' } }) : null) });
   await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1');
   assert.equal(creates(calls).length, 1);
+});
+
+test('generateClip: a submit redirected to another origin stops; that origin\'s 401 is never taken for the key\'s answer', async () => {
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? new Response('', { status: 302, headers: { location: 'https://elsewhere.example.org/x' } }) : null) });
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => (String(url).startsWith('https://elsewhere.example.org/') ? json(401, { code: 'InvalidApiKey' }) : routed(url, opts));
+  const statePath = tmpState();
+  await assert.rejects(() => run({ creds: creds(), statePath }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1');
+  assert.equal(creates(calls).length, 1, 'not resubmitted on WAN_2');
+  assert.equal(P.poolSummary({ creds: creds(), statePath })[0].status, 'ok', 'WAN_1 is not retired for another server\'s answer');
 });
 
 test('downloadWanVideo: a redirect away from https is not followed', async () => {
