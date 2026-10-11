@@ -82,7 +82,7 @@ export function parseConsoleSample(text) {
   const out = { endpoint: null, deployment: null, apiKey: null, apiVersion: null };
 
   // endpoint: an explicit kwarg (python/JS SDK) wins; else the origin of the first URL (curl).
-  let m = s.match(/(?:azure_endpoint|azure_openai_endpoint|base_url|endpoint)\s*[=:]\s*["']([^"']+)["']/i);
+  let m = s.match(/(?:azure_endpoint|azure_openai_endpoint|base_url|endpoint)\s*[=:]\s*["']([^"'\r\n]+)["']/i);
   if (m) out.endpoint = originOf(m[1]);
   else { m = s.match(/https?:\/\/[^\s"'`)]+/); if (m) out.endpoint = originOf(m[0]); }
 
@@ -94,7 +94,7 @@ export function parseConsoleSample(text) {
   m = s.match(/\/deployments\/([^/?"'\s]+)/i);
   if (m) out.deployment = decodeURIComponent(m[1]);
   else {
-    m = s.match(/(?:azure_deployment|deployment_name|deployment|model)\s*[=:]\s*["']([^"']+)["']/i);
+    m = s.match(/(?:azure_deployment|deployment_name|deployment|model)\s*[=:]\s*["']([^"'\r\n]+)["']/i);
     if (m) out.deployment = m[1];
   }
 
@@ -167,20 +167,25 @@ function withoutMachineOnly(creds) {
 
 /**
  * Persist creds to a KEY=VALUE env file, chmod 0600 where supported. Keys starting with `_`
- * and null/undefined values are skipped. Returns the written path.
+ * and null/undefined values are skipped. Returns the written path. A name that is not a variable
+ * name, or a value with a line break, throws before anything is written: either would add lines of
+ * its own (a FFMPEG_PATH, a second endpoint) to the file.
  */
 export function persistCreds(creds, { target } = {}) {
   if (!target) throw new Error('persistCreds: target path required');
-  const lines = [];
-  for (const [k, v] of Object.entries(creds || {})) {
-    if (k.startsWith('_') || v == null) continue;
-    lines.push(`${k}=${envLiteral(String(v))}`);
-  }
+  const lines = Object.entries(creds || {}).filter(([k, v]) => !k.startsWith('_') && v != null).map(([k, v]) => envLine(k, String(v)));
   const body = lines.length ? `${lines.join('\n')}\n` : '';
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
   fs.writeFileSync(target, body, { mode: 0o600 });
   try { fs.chmodSync(target, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
   return target;
+}
+
+// One KEY=VALUE line for persistCreds, refusing a name or value that would make lines of its own.
+function envLine(k, v) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`persistCreds: ${JSON.stringify(k)} is not a variable name; nothing was written`);
+  if (/[\r\n]/.test(v)) throw new Error(`persistCreds: ${k} contains a line break; nothing was written`);
+  return `${k}=${envLiteral(v)}`;
 }
 
 // Quote a value that parseEnvFile would otherwise cut at " #", trim, or strip of its quotes.
@@ -527,7 +532,8 @@ export async function resolveFfmpeg() {
   return found;
 }
 
-const namedFfmpeg = () => [process.env.FFMPEG_PATH, resolveCreds().FFMPEG_PATH].find((p) => p && fs.existsSync(p)) || null;
+// Absolute only: a relative value would be looked up in the current folder, the project.
+const namedFfmpeg = () => [process.env.FFMPEG_PATH, resolveCreds().FFMPEG_PATH].find((p) => p && path.isAbsolute(p) && fs.existsSync(p)) || null;
 
 function ffmpegOnPath() {
   const names = process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'];

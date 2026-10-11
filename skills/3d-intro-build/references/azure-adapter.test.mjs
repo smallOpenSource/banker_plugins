@@ -429,6 +429,32 @@ test('resolveCreds: a program path in a project key file is left out and reporte
   assert.equal(A.homeCredsPath(), homeFile);
 });
 
+test('resolveFfmpeg: a relative FFMPEG_PATH, from the shell or the home file, is not resolved against the current folder', async () => {
+  const root = mkTmp('ff-rel-');
+  const homeFile = useHome(path.join(root, 'home'));
+  const proj = path.join(root, 'project');
+  fs.mkdirSync(path.join(proj, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'bin', 'ffmpeg'), '');
+  process.env.PATH = path.join(root, 'empty');
+  process.chdir(proj);
+  process.env.FFMPEG_PATH = path.join('bin', 'ffmpeg');
+  await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'shell value');
+  delete process.env.FFMPEG_PATH;
+  fs.writeFileSync(homeFile, `FFMPEG_PATH=${path.join('bin', 'ffmpeg')}\n`);
+  await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'home file value');
+});
+
+test('persistCreds: a value or name with a line break is refused and nothing is written, so a sample cannot add lines', () => {
+  const target = path.join(mkTmp('persist-nl-'), 'env');
+  fs.writeFileSync(target, 'AZURE_SORA_ENDPOINT=https://sora.example.com\n');
+  for (const creds of [{ AZURE_SORA_DEPLOYMENT: 'sora-2\nFFMPEG_PATH=/usr/bin/true' }, { AZURE_SORA_DEPLOYMENT: 'a\rb' }, { 'X\nFFMPEG_PATH': '1' }]) {
+    assert.throws(() => A.persistCreds(creds, { target }), /line break|not a variable name/);
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'AZURE_SORA_ENDPOINT=https://sora.example.com\n');
+  const p = A.parseConsoleSample('client = AzureOpenAI(azure_endpoint="https://r.example.com", model="sora-2\nFFMPEG_PATH=/usr/bin/true")');
+  assert.ok(!/[\r\n]/.test(JSON.stringify(Object.values(p))) && !String(p.deployment).includes('FFMPEG_PATH'), JSON.stringify(p));
+});
+
 test('persistCreds: a key folder it creates is private', { skip: process.platform === 'win32' && 'POSIX modes' }, () => {
   const dir = path.join(mkTmp('persist-dir-'), 'a', 'b');
   A.persistCreds({ X: '1' }, { target: path.join(dir, 'env') });
@@ -684,13 +710,16 @@ test('3d-intro-setup: keys are written by the person into a private file, never 
   assert.match(doc, /umask 077/, 'the key file is created private');
   assert.match(doc, /Model Studio[^\n]*(교체|재발급)/, 'WAN keys get rotation advice too');
   assert.doesNotMatch(doc, /key 를 물어본다/, 'the FLUX key is not asked for in chat either');
-  assert.ok(doc.includes("grep -qE '^[A-Z0-9_]+_API_KEY=.' ~/.config/banker/3d-intro/env 2>/dev/null || (umask 077 && touch .env.3d-intro.local)"),
+  assert.ok(doc.includes("grep -qE '^[[:space:]]*[A-Z0-9_]+_API_KEY[[:space:]]*=[[:space:]]*[^[:space:]#]' ~/.config/banker/3d-intro/env 2>/dev/null || (umask 077 && touch .env.3d-intro.local)"),
     'an empty project key file is not created over a home key file that holds keys');
 });
 
 test('3d-intro-build: the program path is not copied from the key file into FFMPEG_PATH', () => {
   const doc = fs.readFileSync(path.join(HERE, '..', 'SKILL.md'), 'utf8');
   assert.doesNotMatch(doc, /process\.env\.FFMPEG_PATH\s*=\s*creds\.FFMPEG_PATH/);
+  const setup = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
+  for (const d of [doc, setup]) assert.doesNotMatch(d, /JSON\.stringify\(\w+\._ignored\)/, 'a value that came with a repository is not echoed, only its name');
+  assert.doesNotMatch(setup, /npm install --no-save ffmpeg-static/, 'the fallback is not installed by npm inside the project');
 });
 
 test('3d-intro-setup: an ffmpeg found only through the shell is saved to the home settings, never to the project key file', () => {

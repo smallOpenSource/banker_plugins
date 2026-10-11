@@ -4,7 +4,7 @@
 
 ## 1. 측정 (verify-intro.mjs)
 
-Node 용 playwright 패키지와 Chromium 이 필요하다(`npm i -g playwright && npx playwright install chromium`, 또는 프로젝트에 `npm i -D playwright`).
+Node 용 playwright 패키지와 Chromium 이 필요하다(`npm i -g playwright && npx playwright install chromium`). 자기 프로젝트에 `npm i -D playwright` 로 설치했다면 `--playwright-from-project` 를 준다. 이 옵션이 없으면 프로젝트의 `node_modules` 는 읽지 않는다.
 
 ```bash
 node references/verify-intro.mjs http://localhost:<port>/ --out verify.json

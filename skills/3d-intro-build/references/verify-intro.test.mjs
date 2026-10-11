@@ -2,10 +2,13 @@
 // in intro-e2e.test.mjs (INTRO_E2E=1). Run from the repo root:
 //   node --test skills/3d-intro-build/references/verify-intro.test.mjs
 import { strict as assert } from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import {
-  TEXT_PARTS, VIEWPORTS, colorAlpha, contrastRatio, fillContrast, insideViewport, intersects, judge, parseArgs, parseColor, parseViewport,
-  relLuminance, worstContrast,
+  TEXT_PARTS, VIEWPORTS, colorAlpha, contrastRatio, fillContrast, insideViewport, intersects, judge, loadPlaywright, parseArgs, parseColor,
+  parseViewport, relLuminance, worstContrast,
 } from './verify-intro.mjs';
 
 test('the default screens are the ones the guide lists and a phone on its side, touch where a phone is', () => {
@@ -107,4 +110,39 @@ test('a scene fails when its clip is there but never shows; no clip, the first s
   const ok = { inViewport: true, belowHeader: true, overlaps: [], hOverflow: false, contrast: [] };
   assert.deepEqual(judge({ ...ok, clip: 'not shown' }, { minContrast: 4.5 }), ['clip not shown']);
   for (const clip of ['shown', 'none', 'poster', 'off', undefined]) assert.deepEqual(judge({ ...ok, clip }, { minContrast: 4.5 }), [], String(clip));
+});
+
+test('--playwright-from-project is a switch, off unless given', () => {
+  assert.equal(parseArgs(['http://x/']).playwrightFromProject, false);
+  assert.equal(parseArgs(['http://x/', '--playwright-from-project']).playwrightFromProject, true);
+});
+
+// A project folder holding its own playwright package and an npm that leaves a mark when it runs.
+function plantedProject() {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'vi-proj-'));
+  const pw = path.join(proj, 'node_modules', 'playwright');
+  fs.mkdirSync(pw, { recursive: true });
+  fs.writeFileSync(path.join(pw, 'package.json'), '{"name":"playwright","main":"index.js"}');
+  fs.writeFileSync(path.join(pw, 'index.js'), "module.exports = { chromium: 'from-project' };");
+  fs.writeFileSync(path.join(proj, 'npm'), '#!/bin/sh\ntouch "$(dirname "$0")/planted-npm-ran"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(proj, 'npm.cmd'), '@echo off\r\necho x> "%~dp0planted-npm-ran"\r\n');
+  return proj;
+}
+
+test('playwright comes from the project only when asked, and npm never runs from the project folder', async () => {
+  const proj = plantedProject();
+  const cwd = process.cwd();
+  const PATH = process.env.PATH;
+  process.chdir(proj);
+  process.env.PATH = ['.', PATH].join(path.delimiter);
+  try {
+    const unasked = await loadPlaywright().then((m) => m.chromium, () => null);
+    assert.notEqual(unasked, 'from-project', 'the project package is not loaded unless asked');
+    assert.equal(fs.existsSync(path.join(proj, 'planted-npm-ran')), false, 'npm did not run from the project folder');
+    assert.equal((await loadPlaywright({ fromProject: true })).chromium, 'from-project');
+  } finally {
+    process.chdir(cwd);
+    process.env.PATH = PATH;
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
 });

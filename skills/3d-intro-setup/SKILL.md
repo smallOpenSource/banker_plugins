@@ -43,17 +43,18 @@ OS별 상세 설치 절차(Ubuntu NodeSource·RHEL8/Rocky8 dnf 모듈·Windows w
 
 ## 2. ffmpeg 확보
 어댑터의 프레임 추출·컬러 매치·크로스페이드·이어붙이기(`extractLastFrame`·`colorMatch`·`crossfade`·`concatClips`, forward-chaining 이음새 처리)가 `ffmpeg` 바이너리를 요구한다.
-설치 절차는 `motion-graphic-setup` §2 와 완전히 동일하므로 반복하지 않고 요약만 남긴다(전체 함정·오프라인 폴백은 그 스킬 참조):
+설치 절차는 `motion-graphic-setup` §2 와 같으므로 반복하지 않고 요약만 남긴다(전체 함정은 그 스킬 참조. 마지막 폴백의 설치 위치만 다르다):
 - macOS: `brew install ffmpeg`
 - Ubuntu/Debian: `sudo apt-get install -y ffmpeg`
 - RHEL8/Rocky8: BaseOS/AppStream 미포함(라이선스) → RPM Fusion 후 `dnf install -y ffmpeg`
 - Windows: `winget install --id Gyan.FFmpeg -e`
-- 전부 막히면(권한/오프라인) project-local 폴백: `npm install --no-save ffmpeg-static`
+- 전부 막히면(권한/오프라인) 홈 폴더의 전용 폴더에 `ffmpeg-static` 을 받는다. 프로젝트 안에서 npm 을 돌리면 그 프로젝트의 `.npmrc` 와 스크립트가 끼어든다:
+  `(cd ~ && npm install --prefix ~/.config/banker/3d-intro/tools ffmpeg-static)` 후 `export FFMPEG_PATH="$(cd ~ && node -p "require(require('path').resolve('.config/banker/3d-intro/tools/node_modules/ffmpeg-static'))")"`
 
-**★ banker 플러그인 자체(스킬 파일·npm 패키지 배포물)에는 ffmpeg 바이너리를 절대 번들하지 않는다** — 위 설치는 전부 사용자 프로젝트/시스템에만 적용된다(motion-graphic-setup과 동일 원칙).
+**★ banker 플러그인 자체(스킬 파일·npm 패키지 배포물)에는 ffmpeg 바이너리를 절대 번들하지 않는다** — 위 설치는 전부 사용자 시스템(홈 폴더 포함)에만 적용된다(motion-graphic-setup과 동일 원칙).
 
 검증은 `ffmpeg -version` 대신 **어댑터가 실제 쓰는 해석 로직**(`resolveFfmpeg`: 셸의 `$FFMPEG_PATH` → 홈 설정 `~/.config/banker/3d-intro/env` 의 `FFMPEG_PATH` → `PATH` 의 절대 경로 항목 → `ffmpeg-static` 순)으로 한다 — 이게 통과해야 3d-intro-build 가 실제로 ffmpeg 를 찾는다.
-셸의 `FFMPEG_PATH`(export)로만 찾았으면 셸 세션 한정이라, 그 경로를 **홈 설정에 `FFMPEG_PATH=` 로 영속**해 다른 세션의 3d-intro-build 도 찾게 한다. 시스템 `ffmpeg` 가 `PATH` 에 있으면 영속은 필요 없다.
+셸의 `FFMPEG_PATH`(export, 절대 경로만 받는다)로만 찾았으면 셸 세션 한정이라, 그 경로를 **홈 설정에 `FFMPEG_PATH=` 로 영속**해 다른 세션의 3d-intro-build 도 찾게 한다. 시스템 `ffmpeg` 가 `PATH` 에 있으면 영속은 필요 없다.
 실행할 프로그램의 경로는 프로젝트 키 파일(`.env.3d-intro.local`)에 두지 않고, 거기 적힌 값은 읽지 않는다. 그 파일은 저장소와 함께 올 수 있어, 남이 만든 저장소가 이 기기에서 실행할 프로그램을 정하게 되기 때문이다.
 ```bash
 node -e "
@@ -64,11 +65,11 @@ node -e "
   const home = resolveCreds();   // 홈 설정만
   if (ff === process.env.FFMPEG_PATH && home.FFMPEG_PATH !== ff) { persistCreds({ ...home, FFMPEG_PATH: ff }, { target: homeCredsPath() }); console.log('FFMPEG_PATH 영속 ->', homeCredsPath()); }
   const proj = resolveCreds({ projectDir: process.cwd() });
-  if (proj._ignored) console.log('프로젝트 키 파일에서 쓰지 않는 값:', JSON.stringify(proj._ignored));
+  if (proj._ignored) console.log('프로젝트 키 파일에서 쓰지 않는 값:', Object.keys(proj._ignored).join(', '));   // 값은 출력하지 않는다
 })();
 "
 ```
-`프로젝트 키 파일에서 쓰지 않는 값` 이 보이면 예전 판이 그 파일에 남긴 ffmpeg 경로다. 사람이 그 경로가 맞는지 확인하고, 맞으면 셸에서 `export FFMPEG_PATH=<그 경로>` 한 뒤 이 명령을 다시 돌려 홈 설정에 남긴다.
+`프로젝트 키 파일에서 쓰지 않는 값` 이 보이면 예전 판이 그 파일에 남긴 ffmpeg 경로다. 값은 출력하지 않으니 사람이 파일을 열어 그 경로가 맞는지 확인하고, 맞으면 셸에서 `export FFMPEG_PATH=<그 경로>` 한 뒤 이 명령을 다시 돌려 홈 설정에 남긴다.
 
 ## 3. 크레덴셜 입력
 **★시크릿(API key)은 사용자만 입력 — 채팅 로그·커밋·리포트에 원문 노출 금지, 항상 `redact()` 결과만 표기한다.**
@@ -106,7 +107,7 @@ FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 �
 키 파일은 먼저 비공개로 만든다(이미 있으면 그대로 둔다). `echo >>` 로 새 파일을 만들면 0644 로 남는다.
 홈 키 파일(아래 fallback)에 키가 이미 있으면 프로젝트 파일을 만들지 않는다. 빈 프로젝트 파일이 먼저 읽혀 홈의 키가 가려진다. 홈 파일에 §2 의 ffmpeg 경로만 있으면 프로젝트 파일을 만든다.
 ```bash
-grep -qE '^[A-Z0-9_]+_API_KEY=.' ~/.config/banker/3d-intro/env 2>/dev/null || (umask 077 && touch .env.3d-intro.local)
+grep -qE '^[[:space:]]*[A-Z0-9_]+_API_KEY[[:space:]]*=[[:space:]]*[^[:space:]#]' ~/.config/banker/3d-intro/env 2>/dev/null || (umask 077 && touch .env.3d-intro.local)
 ls -l .env.3d-intro.local ~/.config/banker/3d-intro/env 2>/dev/null || true   # 있는 파일이 -rw------- 면 된다
 ```
 여러 프로젝트에서 재사용하려면 프로젝트 파일 대신 홈 폴더 fallback 을 쓴다. `resolveCreds` 가 project-local 다음으로 찾는 경로다.
