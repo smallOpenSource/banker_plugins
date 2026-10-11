@@ -105,5 +105,9 @@
     "banker:ralph-qa",
     "banker:remains",
     "banker:trouble-shooting"
+  ],
+  "0.16.1": [
+    "banker:3d-intro-build",
+    "banker:3d-intro-setup"
   ]
 }
