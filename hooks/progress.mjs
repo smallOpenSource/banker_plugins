@@ -21,7 +21,7 @@
  * this file: commands/progress.md and hooks/progress-fallback.mjs answer there instead.
  */
 
-import { cells, clip, fit, isPlanPath, parsePlan, readPrompt } from './progress-plan.mjs';
+import { cells, clip, fit, isPlanPath, parsePlan, pick, readPrompt } from './progress-plan.mjs';
 
 const COMMAND = 'progress';
 const PANE = 'banker-progress';
@@ -67,10 +67,11 @@ const tally = () => ({ calls: [], count: 0, failed: 0 });
 const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', ...tally() });
 
 // `rev` counts the task changes (TaskCreate, TaskUpdate) taken in, to tell a stale TaskList or TaskGet.
-// `plan` is the plan last read from `planPath`, `planShut` whether its steps are folded, and `touch`
-// counts the calls that touched a plan file, to tell a read a newer touch overtook.
+// `plan` is the plan last read from `planPath`, `planShut` whether its steps are folded. `touch` counts
+// the calls that touched a plan file and `taken` is the touch the plan came from, to tell a read that
+// a newer one overtook.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
-  plan: null, planPath: null, planShut: false, touch: 0 });
+  plan: null, planPath: null, planShut: false, touch: 0, taken: 0 });
 
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
@@ -113,7 +114,7 @@ function note(s, step, label, ok, now) {
 // prompt's step, under which a row says so, and the list stays as it is. Before any prompt it is a
 // step of its own.
 function noticeTurn(s, e, said, now) {
-  const word = NOTICE[said.status] ?? '백그라운드 작업 알림';
+  const word = pick(NOTICE, said.status) ?? '백그라운드 작업 알림';
   if (!s.turns.length) addTurn(s, e.turnId, '', now, said.status === 'message' ? word : '백그라운드 작업 알림');
   const t = s.turns.at(-1);
   if (t.id !== e.turnId) t.notices.add(e.turnId);
@@ -314,15 +315,29 @@ function parsed(path, text) {
   }
 }
 
-// What a read of a plan file found. A read for the newest touch (`touch`) makes its file the plan,
-// and a read again (no `touch`) of the plan's own file brings it up to date. A file that cannot be
-// read or is no plan leaves the plan as it was; so does a read that a newer touch overtook.
-export function takePlan(s, path, text, touch) {
-  const again = path === s.planPath;
-  if (touch === undefined ? !again : touch !== s.touch) return;
+// Whether a read may change the plan: a read for a touch newer than the one the plan came from, or a
+// read again of the plan's own file (begun when `since` touches were counted) that no touch taken
+// in the meantime overtook.
+function current(s, path, { touch, since }) {
+  if (touch !== undefined) return touch > s.taken;
+  return path === s.planPath && s.taken <= since;
+}
+
+const isPlanKey = (key) => key === 'plan' || /^p-\d+$/.test(key ?? '');
+
+// Whether what was read stays off the pane: no plan, or a file with no steps in place of a plan that
+// has some (a review written beside it).
+const keepsOff = (s, path, plan) => !plan || (path !== s.planPath && !plan.total && Boolean(s.plan?.total));
+
+// What a read of a plan file found (`read` is `{ touch }` for a touch's read, `{ since }` for a read
+// again). A file that cannot be read or is no plan leaves the plan as it was.
+export function takePlan(s, path, text, read = {}) {
+  if (!current(s, path, read)) return;
   const plan = parsed(path, text);
-  if (!plan) return;
-  if (!again && (s.selected === 'plan' || /^p-\d+$/.test(s.selected ?? ''))) s.selected = null;
+  if (keepsOff(s, path, plan)) return;
+  const moving = path !== s.planPath;
+  if (read.touch !== undefined) s.taken = read.touch;
+  if (moving && isPlanKey(s.selected)) s.selected = null;
   s.planPath = path;
   s.plan = { ...plan, path, steps: plan.steps.map((st, i) => ({ ...st, key: `p-${i}`, planStep: true })) };
 }
@@ -373,7 +388,7 @@ function callWords(call, now) {
 
 function planWords(plan) {
   const where = `계획 파일: ${clip(plan.path.split(/[\\/]/).filter(Boolean).slice(-3).join('/'), 120)}`;
-  const cut = plan.cut ? ' 파일 앞 256KiB 만 읽었습니다.' : '';
+  const cut = plan.cut ? ' 파일이 길어 앞부분만 읽었습니다.' : '';
   if (!plan.total) return `${where}. 단계를 찾지 못했습니다.${cut}`;
   const done = plan.hasStates ? `, 완료 ${plan.done}개` : '';
   return `${where}. 단계 ${plan.total}개${done}.${cut}`;
@@ -539,7 +554,7 @@ async function watchCall($, e, next) {
     endCall(call, r, Date.now());
     if (TASK_TOOLS.has(e.tool)) noteTaskTool(s, e, r, Date.now(), since);
     const touched = planTouched(s, e, call);
-    if (touched) takePlan(s, touched.path, await readText($, touched.path), touched.touch);
+    if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch });
     $.ui.invalidate('ui.render');
   }
 }
@@ -593,11 +608,12 @@ export function progressTurnCompleted(e) {
   endTurn(ref.s, e, Date.now());
 }
 
-// The plan file to read again as a turn starts and ends (register.mjs reads it), or null.
-export function progressPlanPath() {
-  return ref.s.planPath;
+// The plan file to read again as a turn starts and ends (register.mjs reads it), with the touches
+// counted when the read begins; null without a plan.
+export function progressPlanTarget() {
+  return ref.s.planPath ? { path: ref.s.planPath, since: ref.s.touch } : null;
 }
 
-export function progressPlanRead(path, text) {
-  takePlan(ref.s, path, text);
+export function progressPlanRead(target, text) {
+  takePlan(ref.s, target.path, text, { since: target.since });
 }

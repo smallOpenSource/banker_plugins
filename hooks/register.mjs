@@ -16,7 +16,7 @@ import {
   registerGracefulPause,
 } from './graceful-pause.mjs';
 import {
-  SPEC as PROGRESS_SPEC, progressPlanPath, progressPlanRead, progressReset, progressTurnCompleted, progressTurnStarted,
+  SPEC as PROGRESS_SPEC, progressPlanRead, progressPlanTarget, progressReset, progressTurnCompleted, progressTurnStarted,
   registerProgress,
 } from './progress.mjs';
 
@@ -49,15 +49,15 @@ async function registerCommands($) {
 // /progress's plan file, read again at a turn's start and end: a ralph PRD or a plan's checkboxes
 // change without a call this module sees. A read that fails keeps the plan as it was.
 async function rereadPlan($) {
-  const path = progressPlanPath();
-  if (!path) return;
+  const target = progressPlanTarget();
+  if (!target) return;
   let text = null;
   try {
-    text = await $.fs.read(path);
+    text = await $.fs.read(target.path);
   } catch {
     /* missing or refused: the pane keeps the plan it read last */
   }
-  progressPlanRead(path, text);
+  progressPlanRead(target, text);
 }
 
 // A /graceful-pause request that came after its turn's last model request: a note voids it.

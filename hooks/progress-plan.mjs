@@ -9,8 +9,9 @@
  * ahead.
  *
  * Every mod shares the engine's one hooks worker, and a plan may come from a cloned repository, so
- * no step here takes more than linear time: a plan is read to its first 256 KiB and each line to its
- * first 1 KiB, tags are found with indexOf, and no pattern backtracks over a line.
+ * no step here takes more than linear time: a markdown plan is read to its first 256 Ki characters
+ * and each line to its first 1 Ki, a JSON plan's fields and a prompt's text are cut before they are
+ * cleaned, tags are found with indexOf, and no pattern backtracks over a line.
  */
 
 // ── text on the pane ─────────────────────────────────────────────────────────
@@ -39,9 +40,9 @@ export function fit(text, n) {
 }
 
 // One line of plain text, cut to `n` characters. Control characters and lone surrogates go too: the
-// engine refuses a drawing that holds either.
+// engine refuses a drawing that holds either. A long text is cut first, so cleaning it stays cheap.
 export const clip = (text, n) => {
-  const raw = String(text ?? '');
+  const raw = String(text ?? '').slice(0, n * 4 + 1024);
   const s = (raw.toWellFormed?.() ?? raw).replace(/\p{Cc}+/gu, ' ').replace(/\s+/g, ' ').trim();
   const chars = [];
   for (const c of s) {
@@ -53,7 +54,7 @@ export const clip = (text, n) => {
 
 // ── a prompt's text ──────────────────────────────────────────────────────────
 
-// Past this a prompt has nothing more for a title or a description.
+// Past this a prompt, its tags taken out, has nothing more for a title or a description.
 const PROMPT_CAP = 65536;
 
 // Tags the harness wraps around what it adds to a prompt: they go with what they hold.
@@ -102,7 +103,7 @@ function message(text, m) {
 // What a turn's text says: a notice (a background task's end, with its summary and status, or a
 // teammate's message), or a prompt, a slash command as `/name args` and a shell command as `! command`.
 export function readPrompt(raw) {
-  const text = String(raw ?? '').slice(0, PROMPT_CAP);
+  const text = String(raw ?? '');
   if (/^\s*<task-notification>/.test(text)) {
     return { kind: 'notice', text: clip(inner(text, 'summary'), 200), status: inner(text, 'status') };
   }
@@ -111,7 +112,7 @@ export function readPrompt(raw) {
   const command = inner(text, 'command-name');
   const shell = inner(text, 'bash-input');
   const lead = command ? `${command} ${inner(text, 'command-args')}` : shell ? `! ${shell}` : '';
-  return { kind: 'prompt', text: `${lead} ${strip(text)}`.replace(/\s+/g, ' ').trim() };
+  return { kind: 'prompt', text: `${lead} ${strip(text)}`.slice(0, PROMPT_CAP).replace(/\s+/g, ' ').trim() };
 }
 
 // ── which files are plans ────────────────────────────────────────────────────
@@ -123,13 +124,14 @@ const PLAN_PATHS = [
   /\/\.omc\/(?:state\/(?:[^/]+\/)*)?prd\.json$/,
   /\/\.omc\/ultragoal\/goals\.json$/,
 ];
-// Plan folders keep a plan's review rounds (ralplan's critic and architect) and OMC's open questions
-// beside it: those are no plan.
-const NOT_A_PLAN = /critic|architect|review|verdict|feedback|open-questions/i;
+// Plan folders keep a plan's review rounds beside it (ralplan's `<plan>-critic-r2.md`,
+// `architect-review-r1.md`) and OMC's open questions: a name that ends so is no plan.
+const NOT_A_PLAN = [/(?:^|[-_])(?:critic|architect|review|verdict|feedback)(?:-r\d+)?\.md$/i, /^open-questions\.md$/i];
 
 export const isPlanPath = (path) => {
   const p = String(path ?? '').replaceAll('\\', '/');
-  return PLAN_PATHS.some((re) => re.test(p)) && !NOT_A_PLAN.test(p.split('/').at(-1));
+  const name = p.split('/').at(-1);
+  return PLAN_PATHS.some((re) => re.test(p)) && !NOT_A_PLAN.some((re) => re.test(name));
 };
 
 // ── a plan file ──────────────────────────────────────────────────────────────
@@ -146,6 +148,8 @@ const step = (title, text, status) => ({
 });
 
 const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
+// A map's own entry: a key like `constructor` finds nothing.
+export const pick = (map, key) => (Object.hasOwn(map, key) ? map[key] : undefined);
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 // ultragoal's states, and the ones like them; one it does not know shows no state.
 const GOAL_STATUS = { complete: 'completed', completed: 'completed', in_progress: 'in_progress', active: 'in_progress',
@@ -155,7 +159,7 @@ const storyStep = (st) => {
   const id = str(st.id);
   return { title: str(st.title) || id, text: [id, str(st.description)].filter(Boolean).join(': '), status: st.passes === true ? 'completed' : 'pending' };
 };
-const goalStep = (g) => ({ title: str(g.title) || str(g.id), text: str(g.objective), status: GOAL_STATUS[str(g.status)] ?? null });
+const goalStep = (g) => ({ title: str(g.title) || str(g.id), text: str(g.objective), status: pick(GOAL_STATUS, str(g.status)) ?? null });
 
 // A ralph PRD (`stories` or `userStories`, done where they pass) or ultragoal's goals; items that
 // are not objects are passed over.
@@ -173,13 +177,21 @@ function jsonPlan(path, text) {
   return null;
 }
 
-// The plan's lines as a reader sees them: a fenced code block's lines (``` or ~~~, to the fence that
-// closes it or the end) are blank, so they are no heading or item.
+// The fence a line opens or closes (``` or ~~~), or ''. A run of backticks with a backtick after it
+// opens inline code, not a fence (CommonMark).
+function fenceMark(line) {
+  const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+  if (!m) return '';
+  return m[1][0] === '`' && line.slice(m[0].length).includes('`') ? '' : m[1];
+}
+
+// The plan's lines as a reader sees them: a fenced code block's lines (to the fence that closes it,
+// or the end) are blank, so they are no heading or item.
 function proseLines(text) {
   let fence = '';
   return text.slice(0, PLAN_CAP).split(/\r?\n/).map((raw) => {
     const line = raw.slice(0, LINE_CAP);
-    const mark = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1] ?? '';
+    const mark = fenceMark(line);
     if (!fence) {
       fence = mark;
       return mark ? '' : line;
@@ -266,22 +278,24 @@ function boxSteps(lines, heads) {
 
 const STEPS_SECTION = /단계|(?:작업|집행|실행|구현|진행)\s*(?:순서|흐름|계획)|\bsteps?\b|implementation|phases?|\btasks?\b|milestones?|로드맵|road ?map/i;
 
-function numbered(lines, h) {
+// The numbered items of a section, up to `stop`.
+function numbered(lines, h, stop) {
   const out = [];
-  for (let i = h.i + 1; i < h.end; i++) {
+  for (let i = h.i + 1; i < stop; i++) {
     const m = /^\d+[.)][ \t]+([^\r\n]*)/.exec(lines[i]);
     if (m) out.push({ title: m[1], text: m[1], status: null });
   }
   return out;
 }
 
-// Rule 4: the first section named for the steps: its sub-headings, else its numbered items.
+// Rule 4: the first section named for the steps: its own numbered items (those before its first
+// sub-heading), else its sub-headings.
 function sectionSteps(lines, heads) {
   for (const h of heads) {
     if (h.level === 1 || STEP_HEAD.test(h.text) || !STEPS_SECTION.test(h.text)) continue;
-    if (h.subs.length) return h.subs.map((x) => ({ title: x.text, text: x.text, status: boxStatus(lines, x) }));
-    const items = numbered(lines, h);
+    const items = numbered(lines, h, h.subs[0]?.i ?? h.end);
     if (items.length) return items;
+    if (h.subs.length) return h.subs.map((x) => ({ title: x.text, text: x.text, status: boxStatus(lines, x) }));
   }
   return [];
 }

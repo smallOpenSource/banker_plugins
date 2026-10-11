@@ -67,11 +67,14 @@ function engine({ files = new Map(), held = new Set() } = {}) {
     command: { register: async (spec) => { seen.registered.push(spec); return { command: spec.name }; } },
     session: { version: async () => ({ version: '2.1.296', base: '2.1.296' }) },
     fs: {
+      // A read takes the file as it is when the read starts; a held one (the first read of a path in
+      // `held`) delivers it only once released.
       read: async (path) => {
         seen.reads.push(path);
-        if (held.has(path)) await new Promise((resolve) => waiting.set(path, resolve));
-        if (!files.has(path)) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
-        return files.get(path);
+        const [had, text] = [files.has(path), files.get(path)];
+        if (held.delete(path)) await new Promise((resolve) => waiting.set(path, resolve));
+        if (!had) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+        return text;
       },
     },
     ui: {
@@ -99,7 +102,7 @@ function engine({ files = new Map(), held = new Set() } = {}) {
     waiting.get(path)?.();
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { $, seen, open, files, raise, tool, draw, cover, caught, release };
+  return { $, seen, open, files, held, raise, tool, draw, cover, caught, release };
 }
 
 const walk = (node, out = []) => {
@@ -905,6 +908,47 @@ test('the plan\'s title is drawn bold, and a long plan counts the steps past the
   assert.ok(walk(head).some((n) => n.type === 'Text' && n.props.bold === true), 'a bold Text inside the Button');
   assert.match(textOf(rowOf(tree, 'plan')), /50\/120 완료/);
   assert.match(textOf(tree), /외 100개/);
+});
+
+test('a plan whose read lands after a file that is no plan still becomes the plan', async () => {
+  const other = '/w/.omc/prd.json';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [other, '{"notes":[]}']]), held: new Set([PLAN]) });
+  const first = eng.tool({ tool: 'Read', file_path: PLAN });
+  await new Promise((resolve) => setImmediate(resolve));
+  await eng.tool({ tool: 'Read', file_path: other });
+  await eng.release(PLAN);
+  await first;
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획']);
+});
+
+test('a read again that lands after a newer write of the plan does not undo it', async () => {
+  const eng = engine({ files: new Map([[PLAN, '# 배포 계획\n- [ ] 설계\n- [ ] 구현\n']]) });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  eng.held.add(PLAN);
+  const ending = eng.raise('turn.complete', { turnId: 't0', reason: 'answer' });
+  await new Promise((resolve) => setImmediate(resolve));
+  eng.files.set(PLAN, '# 배포 계획\n- [x] 설계\n- [x] 구현\n');
+  await eng.tool({ tool: 'Edit', file_path: PLAN, agentId: 'a1' });
+  assert.match(textOf(rowOf(await eng.draw(), 'plan')), /2\/2 완료/);
+  await eng.release(PLAN);
+  await ending;
+  assert.match(textOf(rowOf(await eng.draw(), 'plan')), /2\/2 완료/, 'the read of the old text that landed late changed nothing');
+});
+
+test('a file with no steps does not take the place of a plan with steps', async () => {
+  const seat = '/w/.omc/plans/seat-backbone-1.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [seat, '# 검토 결과\n의견만 있음\n']]) });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  await eng.tool({ tool: 'Write', file_path: seat, agentId: 'a1' });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획']);
+});
+
+test('a notice whose status is named like an object\'s own property gets the plain word', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.raise('turn.start', { turnId: 't2', text: '<task-notification><status>constructor</status><summary>끝</summary></task-notification>' });
+  button(await eng.draw(), '▸').props.onPress({});
+  assert.ok(labels(await eng.draw()).includes('백그라운드 작업 알림: 끝'));
 });
 
 test('register.mjs wires /progress beside /graceful-pause', async () => {

@@ -204,3 +204,35 @@ test('hostile plans and prompts parse in bounded time', () => {
   fast('16k unclosed command names', () => readPrompt(`x${'<command-name>'.repeat(16000)}`));
   fast('a 1 MiB prompt', () => readPrompt('가'.repeat(1 << 20)));
 });
+
+test('a steps section\'s own numbered items come before the sub-headings after them', () => {
+  const md = '# 계획\n## 구현 순서\n1. 설계\n2. 구현\n3. 검증\n### 참고\n내용\n';
+  assert.deepEqual(steps(parsePlan('/w/.omc/plans/a.md', md)), [['설계', null], ['구현', null], ['검증', null]]);
+});
+
+test('only a name that ends as a review round is no plan', () => {
+  for (const p of ['/w/.omc/plans/architecture-migration.md', '/w/.omc/plans/2026-10-01-code-review-bot.md', '/w/.omc/plans/feedback-form.md',
+    '/w/.omc/plans/open-questions-answered.md']) assert.ok(isPlanPath(p), p);
+  for (const p of ['/w/.omc/plans/review-r2.md', '/w/.omc/plans/x_critic.md', '/w/.omc/plans/x-feedback.md']) assert.ok(!isPlanPath(p), p);
+});
+
+test('a line that opens with inline code is no fence', () => {
+  const md = '# 계획\n- [ ] 하나\n```bash``` 로 감싼다\n- [ ] 둘\n- [ ] 셋\n';
+  assert.deepEqual(steps(parsePlan('/w/.omc/plans/a.md', md)).map(([t]) => t), ['하나', '둘', '셋']);
+});
+
+test('a status named like an object\'s own property is no state', () => {
+  const goals = JSON.stringify({ goals: ['constructor', '__proto__', 'toString', 'hasOwnProperty'].map((status, i) => ({ title: `g${i}`, status })) });
+  assert.deepEqual(steps(parsePlan('/w/.omc/ultragoal/goals.json', goals)), [['g0', null], ['g1', null], ['g2', null], ['g3', null]]);
+});
+
+test('a long reminder before the request still leaves the title', () => {
+  assert.equal(readPrompt(`<system-reminder>${'x'.repeat(70000)}</system-reminder>README 를 고쳐 줘`).text, 'README 를 고쳐 줘');
+});
+
+test('huge fields in a JSON plan and huge prompts are cut before they are cleaned', () => {
+  fast('a 4 MiB title', () => parsePlan('/w/.omc/prd.json', JSON.stringify({ title: 'a '.repeat(2 << 20), stories: [{ title: 'x', description: 'b '.repeat(1 << 20) }] })), 300);
+  fast('a 4 MiB prompt of unclosed tags', () => readPrompt('<command-args>'.repeat(300000)));
+  fast('a 4 MiB prompt', () => readPrompt(`${'가 '.repeat(2 << 20)}끝`));
+  assert.equal(clip(`${'가'.repeat(5000)}`, 3), '가가…');
+});
