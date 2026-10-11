@@ -109,5 +109,9 @@
   "0.16.1": [
     "banker:3d-intro-build",
     "banker:3d-intro-setup"
+  ],
+  "0.16.2": [
+    "banker:3d-intro-build",
+    "banker:3d-intro-setup"
   ]
 }

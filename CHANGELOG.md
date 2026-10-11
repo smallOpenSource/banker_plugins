@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.2] - 2026-10-11
+
+### Security
+- **3d-intro 가 프로젝트 폴더에 든 파일로 실행할 프로그램을 정하지 않는다.** 0.16.1 까지는 남이 만든 저장소에서 3d-intro-build 를 돌리면, 그 저장소가 커밋해 둔 파일이 실행될 수 있었다.\
+  프로젝트 키 파일(`.env.3d-intro.local`)의 `FFMPEG_PATH` 를 ffmpeg 로 실행했다. 이제 그 값은 읽지 않고 이름만 알린다. 독립 검증(`verify-intro.mjs`)은 프로젝트의 `node_modules/playwright` 를 먼저 불러왔다. 이제 `--playwright-from-project` 를 줄 때만 읽는다. Windows 에서는 `npm root -g` 를 프로젝트 폴더에서 돌려 그 폴더의 `npm.cmd` 가 먼저 실행될 수 있었다. 이제 홈 폴더에서 돌린다.
+- ffmpeg 는 셸의 `FFMPEG_PATH`, 홈 설정 파일 `~/.config/banker/3d-intro/settings.env`, 예전 판이 홈 키 파일에 남긴 값, `PATH` 의 절대 경로 항목, `ffmpeg-static` 순으로 찾는다. 경로는 절대 경로만 받고, `PATH` 의 `.` 같은 상대 항목은 건너뛴다. 설정 파일에는 키를 두지 않는다.
+- 키 파일에 줄바꿈이 든 값이나 변수 이름이 아닌 키를 쓰지 않는다. 0.16.1 까지는 콘솔 샘플의 여러 줄 값이 홈 키 파일에 `FFMPEG_PATH` 나 두 번째 endpoint 줄을 심을 수 있었다.
+- `3d-intro-setup` 의 `ffmpeg-static` 폴백은 프로젝트가 아니라 홈의 전용 폴더(`~/.config/banker/3d-intro/tools`)에 설치한다. 프로젝트의 `.npmrc` 와 스크립트가 끼어들지 않는다. 새로 만드는 설정 폴더는 0700 이다.
+
+### Notes
+- 예전 판이 프로젝트 키 파일에만 ffmpeg 경로를 남겼고 `PATH` 에 ffmpeg 가 없다면, 3d-intro-build 가 "ffmpeg not found" 로 멈춘다. 셸에서 `export FFMPEG_PATH=<절대 경로>` 한 뒤 `3d-intro-setup` §2 를 한 번 다시 돌리면 홈 설정 파일에 남는다.
+- 프로젝트에만 playwright 를 설치했다면 독립 검증에 `--playwright-from-project` 를 준다.
+
 ## [0.16.1] - 2026-10-11
 
 ### Security
