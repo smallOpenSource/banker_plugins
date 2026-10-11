@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.16.3] - 2026-10-12
 
 ### Fixed
 - **`/progress` 패널에 계획이 보인다.** Claude Code 2.1.296 은 Claude 5 모델에 작업 목록 도구(TaskCreate, TaskUpdate, TodoWrite)를 주지 않아, 패널은 요청 단위 단계만 보였다.\
