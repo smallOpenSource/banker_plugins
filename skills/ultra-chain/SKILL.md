@@ -296,10 +296,11 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
      - 시각이나 소요 시간을 찍는 러너는 그 줄을 뺀다. 예: vitest 는 `Start at`, `Duration` 줄을 `grep -Ev` 로 거른다
      - 빌드와 린트도 성공 때 조용한 꼴을 쓴다. 예: `vite build --logLevel error`(파일 크기 줄이 나오지 않는다)
      - 이 머신이 Windows 면 POSIX 꼴(`grep`)이 돌지 않는다. PowerShell 의 `Select-String -NotMatch` 같은 같은 뜻의 꼴을 쓴다
-   - ralph 를 부른 직후 `state_read` 로 ralph 상태를 읽고, 이 세션의 `prd.json`(`.omc/state/sessions/<id>/prd.json`, `OMC_STATE_DIR` 이 있으면 그 아래)이 있는지 본다. OMC 는 Skill 호출이 끝날 때 훅으로 둘을 만든다. 검토자 플래그는 그 턴의 프롬프트에서 읽으므로 Skill 인자의 `--critic=critic` 은 놓칠 수 있다.
-     - 상태는 있는데 `critic_mode` 가 `critic` 이 아니면, 읽은 상태에 `critic_mode: "critic"` 만 바꿔 `state_write` 로 다시 쓴다.
-     - 상태가 없으면 OMC 의 `RalphLoopState` 칸 그대로 쓴다: `active: true`, `iteration: 1`, `max_iterations`(ralph 기본 10), `started_at`(지금 ISO 시각), `prompt`(ralph 에 넘긴 인자), `session_id`, `project_path`(저장소 루트), `prd_mode: true`, `critic_mode: "critic"`. OMC 판이 바뀌었으면 그 판의 `src/hooks/ralph/loop.ts` 의 `RalphLoopState` 를 따른다.
-     - `prd.json` 이 없으면 ralph 의 `SKILL.md` 가 정한 꼴(`userStories` 의 `id`, `title`, `description`, `acceptanceCriteria`, `priority`, `passes`)로 계획의 단계를 이야기로 나눠 파일 도구로 쓴다.
+   - ralph 를 부른 직후 `state_read` 로 ralph 상태를 읽고, 이 세션의 `prd.json`(`.omc/state/sessions/<id>/prd.json`, `OMC_STATE_DIR` 이 있으면 그 아래)이 있는지 본다. OMC 5.7.1 에서 둘을 만드는 것은 프롬프트의 `ralph` 키워드 훅뿐이다. 소스에는 Skill 호출 뒤에 만드는 경로가 있지만 배포된 훅은 그것을 부르지 않는다. 그래서 Skill 로만 불렀으면 둘 다 없을 수 있고, Skill 인자의 `--critic=critic` 은 읽히지 않는다.
+     - `state_write` 는 상태 파일을 통째로 바꾼다. 고칠 때는 읽은 상태의 칸을 모두 두고 한 칸만 바꿔 통째로 쓴다. `session_id` 는 도구 인자와 `state` 안에 둘 다 넣는다. 본문의 `session_id` 가 다르면 Stop 훅이 루프를 잇지 않는다.
+     - 상태가 있는데 `critic_mode` 가 `critic` 이 아니면 그 칸만 `critic` 으로 바꿔 쓴다. 5.7.1 의 Stop 훅은 이 칸을 읽지 않으니 기록용이다. 실제 검토자는 아래 3 에서 ralph 보고로 확인한다.
+     - 상태가 없으면 OMC 의 `RalphLoopState` 칸으로 쓴다: `active: true`, `iteration: 1`, `max_iterations: 10`, `started_at`(지금 ISO 시각), `prompt`(ralph 에 넘긴 인자를 500자 안으로), `session_id`, `project_path`(저장소 루트), `prd_mode: true`, `critic_mode: "critic"`. OMC 판이 바뀌었으면 그 판의 `src/hooks/ralph/loop.ts` 를 따른다.
+     - `prd.json` 이 없으면 OMC 의 `PRD` 꼴(`src/hooks/ralph/prd.ts`)로 쓴다. 최상위 `project`(저장소 이름), `branchName`(지금 브랜치), `description`(작업 요약), `userStories` 는 빠지면 OMC 가 PRD 전체를 무효로 읽는다. 이야기마다 `id`, `title`, `description`, `acceptanceCriteria`(배열), `priority`(수), `passes: false` 를 넣는다. 위에서 정한 피드백 명령은 `feedbackCommands`, 품질 등급은 `repoQualityClass` 로 같은 파일에 넣는다. 빠지면 `omc ralph verify` 가 package.json 의 스크립트로 대신 돈다.
      - OMC 의 내부 모듈(`dist/` 아래)을 불러 PRD 나 상태를 만들지 않는다. 판이 다른 내부 API 를 부르게 된다. 이 확인과 고친 것을 `build` 의 `note` 에 적는다.
 3. ralph 가 끝까지 가게 둔다(검토자 승인, deslop, 회귀 확인, `/oh-my-claudecode:cancel`). ralph 의 cancel 은 구현 단계의 끝이지 연쇄의 끝이 아니다. ralph 가 아직 도는 동안 6단계를 시작하지 않는다. 끝나면 `.omc/state/sessions/<id>/prd.json`(`OMC_STATE_DIR` 이 있으면 그 아래)을 `<run>/05-prd.json` 으로 복사한다. ralph 의 반복 한도는 ralph 자신의 것이다. ralph 보고에서 실제로 승인한 검토자가 critic 인지 확인해 기록한다. Skill 경로로 켠 ralph 는 검토자 설정이 architect 로 남을 수 있다.
 4. Codex: `$ralph` 를 따른다. 2의 입력을 같이 넘기고, 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라고 적는다. 연쇄 전체의 목표(goal)를 완료로 바꾸지 말라고도 적는다. 이어서 critic 루프를 돈다.
@@ -370,7 +371,7 @@ ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 연쇄가 이 �
    - 입력: 보기마다 목업 PNG 와 실제 PNG, 그 보기의 수용 기준
    - 출력: 보기마다 JSON 한 줄. `{"name", "score": 0~100, "verdict": "pass|revise|fail", "differences": [...]}`
    - 판정은 점수로 한다. 90점 이상이 통과다. `verdict` 와 점수가 어긋나면 점수를 따른다. 다만 아래의 잘림 때문에 낸 `revise` 는 점수와 관계없이 `revise` 다.
-   - 판정자 지시에 "잘려서 보이지 않는 수용 기준이 있으면 점수와 관계없이 `revise` 로 하고 `differences` 에 무엇이 잘렸는지 적는다" 를 넣는다. 그런 보기는 `--full` 로 한 번 다시 찍어 다시 판정받는다. 그래도 잘리면 `visual` 에 `verdict: "unverified"` 로 적고 `checklist` 에 넣는다. 보이지 않는 것을 통과로 적지 않는다. 이 경우는 아래 4의 결함 순환에 넣지 않는다.
+   - 판정자 지시에 "잘려서 보이지 않는 수용 기준이 있으면 점수와 관계없이 `revise` 로 하고 `differences` 에 무엇이 잘렸는지 적는다" 를 넣는다. 그런 보기는 `--full` 로 한 번 다시 찍어 다시 판정받는다. 이미 `--full` 로 찍었으면 다시 찍지 않는다. 그래도 잘리면 `visual` 에 `verdict: "unverified"` 로 적고 `checklist` 에 넣는다. 보이지 않는 것을 통과로 적지 않는다. 잘림만으로 낸 `revise` 는 아래 4의 결함 순환에 넣지 않고, 보이는 부분에 결함이 따로 있으면 그 몫은 4로 보낸다.
    - `visual` 에 기록한다: `mock` 은 `visual/mock-<view>.png`, `actual` 은 `visual/actual-<view>.png`.
 4. 90점 미만이면(위의 잘림 경우는 빼고) 연쇄가 차이를 나눈다.
    - 결함: 고친 뒤 `qa` 에 `started` 를 다시 기록하고 6단계의 1부터 4를 바뀐 부분에 대해 다시 한다(새 `<k>`). 6단계의 ralph-qa 실행은 끝났으니 새 실행을 열고, 앞 판정 기록과 바뀐 부분을 입력에 넣는다. `APPROVE` 면 `qa` 에 `done` 을 기록하고 7단계로 돌아와 다시 찍고 다시 판정한다. 압축되더라도 `show` 의 `current` 가 `qa` 라 끝나지 않은 재검증이 보인다. 이 순환은 3회까지다.
