@@ -7,8 +7,9 @@
  *   node omc-patch.mjs --revert     패치·고정 되돌리기
  *   node omc-patch.mjs --no-update  버전은 그대로 두고 패치만
  *   node omc-patch.mjs --root <플러그인 폴더> [--check | --revert]
- *                                   그 폴더의 hooks/hooks.json 과 scripts/ 만 다룬다(번들 사본용).
+ *                                   그 폴더의 hooks/hooks.json 과 scripts/ 만 다룬다(번들 사본, 활성 캐시 폴더 하나).
  *                                   installed_plugins.json, 마켓플레이스 origin, 판은 건드리지 않는다.
+ *                                   이름표(.claude-plugin/plugin.json, package.json)가 OMC 가 아니면 멈춘다.
  *   node omc-patch.mjs --scan <파일>...
  *                                   헬퍼 선언의 블록 깊이와 래핑 자리를 JSON 으로 낸다(읽기 전용).
  *
@@ -16,14 +17,14 @@
  * 읽는다. 캐시에 TARGET_VERSION 이 있다고 그것을 활성으로 보지 않는다(--no-update 는 활성 버전을 패치).
  * OMC_PATCH_INSTALLED=<json 경로> 로 읽을 파일을 바꿀 수 있다(시험용, --check 와 함께).
  *
- * OS: Windows / macOS / Linux 공통. 런처는 apply.cmd(Windows), apply.sh(그 외).
- * 배경과 근거는 같은 폴더의 README.md.
+ * OS: Windows / macOS / Linux 공통. 런처(apply.cmd, apply.sh)와 배경 문서(README.md)는
+ * 킷 배포 폴더에만 있다. 이 파일만 옮겨 쓰는 곳(예: 스킬 폴더)에는 없다.
  */
 import {
   readFileSync, writeFileSync, writeSync, existsSync, copyFileSync, readdirSync,
-  unlinkSync, mkdirSync, rmSync, symlinkSync,
+  unlinkSync, mkdirSync, rmSync, symlinkSync, lstatSync, realpathSync,
 } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, sep as PATH_SEP } from "node:path";
 import { homedir, hostname } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -47,7 +48,8 @@ const argv = new Set(args);
 const MODE = argv.has("--revert") ? "revert" : argv.has("--check") ? "check" : "apply";
 const NO_UPDATE = argv.has("--no-update");
 // --root <플러그인 폴더>: 이 PC 의 설치 상태와 상관없이 그 폴더 하나만 고친다. 번들 사본처럼
-// 판 폴더도 installed_plugins.json 도 없는 트리에 쓴다. 값이 없거나 다음 플래그면 멈춘다.
+// 판 폴더도 installed_plugins.json 도 없는 트리나, 활성 캐시 폴더 하나만 고칠 때 쓴다.
+// 값이 없거나 다음 플래그면 멈춘다.
 const ROOT_AT = args.indexOf("--root");
 const ROOT_ARG = ROOT_AT >= 0 ? args[ROOT_AT + 1] : null;
 const ROOT = ROOT_ARG && !ROOT_ARG.startsWith("--") ? resolve(ROOT_ARG) : null;
@@ -113,15 +115,24 @@ const installedVersions = () =>
 // installPath 마지막 구간 → 옛 규칙(TARGET 이 캐시에 있으면 TARGET, 아니면 최신) 순으로 본다.
 function activeVersion() {
   const versions = installedVersions();
-  try {
-    const e = JSON.parse(readFileSync(INSTALLED, "utf8")).plugins?.[PLUGIN_KEY]?.[0];
-    if (e) {
-      if (typeof e.version === "string" && /^\d+\.\d+\.\d+$/.test(e.version) && versions.includes(e.version)) return { v: e.version, src: "installed_plugins.json" };
-      const last = typeof e.installPath === "string" ? e.installPath.split(/[\\/]+/).filter(Boolean).pop() : null;
-      if (last && versions.includes(last)) return { v: last, src: "installed_plugins.json installPath" };
-    }
-  } catch { /* 읽기·파싱 실패는 옛 규칙으로 */ }
+  const found = entryVersion(installedEntry(), versions);
+  if (found) return found;
   return { v: versions.includes(TARGET_VERSION) ? TARGET_VERSION : versions[0] || TARGET_VERSION, src: "추정: installed_plugins.json 에서 확인 못 함" };
+}
+
+// installed_plugins.json 의 omc 항목. 읽기·파싱 실패는 null(옛 규칙으로).
+function installedEntry() {
+  try { return JSON.parse(readFileSync(INSTALLED, "utf8")).plugins?.[PLUGIN_KEY]?.[0] || null; }
+  catch { return null; }
+}
+
+// 항목의 version 필드, 없으면 installPath 마지막 구간. 캐시에 있는 판이어야 한다.
+function entryVersion(e, versions) {
+  if (!e) return null;
+  if (typeof e.version === "string" && /^\d+\.\d+\.\d+$/.test(e.version) && versions.includes(e.version)) return { v: e.version, src: "installed_plugins.json" };
+  const last = typeof e.installPath === "string" ? e.installPath.split(/[\\/]+/).filter(Boolean).pop() : null;
+  if (last && versions.includes(last)) return { v: last, src: "installed_plugins.json installPath" };
+  return null;
 }
 
 function git(args, cwd = MARKET) {
@@ -133,6 +144,19 @@ function ensureVersion() {
   const have = installedVersions();
   if (have.includes(TARGET_VERSION)) { ok(`${TARGET_VERSION} 설치되어 있음`); return true; }
   if (MODE === "check") { bad(`${TARGET_VERSION} 미설치 (설치된 버전: ${have.join(", ") || "없음"})`); return false; }
+  if (!canInstallTarget()) return false;
+
+  log(`  ${TARGET_VERSION} 설치 중...`);
+  const sha = targetSha();
+  if (sha === null) return false;
+  const dest = join(CACHE, TARGET_VERSION);
+  unpackTarget(dest);
+  linkNodeModules(dest, have);
+  return switchActive(sha, have);
+}
+
+// 마켓플레이스가 제 git 저장소이고 git 과 tar 가 있어야 TARGET_VERSION 을 꺼낼 수 있다.
+function canInstallTarget() {
   if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${MARKET}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
   if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${MARKET}`); return false; }
 
@@ -143,23 +167,28 @@ function ensureVersion() {
     try { execFileSync(cmd, ["--version"], { stdio: "ignore" }); }
     catch { bad(`${cmd} 를 찾을 수 없습니다 (${why} 필요). 설치한 뒤 다시 실행하거나, --no-update 로 패치만 적용하십시오.`); return false; }
   }
+  return true;
+}
 
-  log(`  ${TARGET_VERSION} 설치 중...`);
+// 태그 v<TARGET_VERSION> 의 커밋. 못 찾으면 null.
+function targetSha() {
   try { git(["fetch", "--tags", "--quiet", "origin"]); } catch { /* 오프라인이어도 로컬 태그가 있으면 진행 */ }
-  let sha;
-  try { sha = git(["rev-parse", `v${TARGET_VERSION}^{}`]); }
-  catch { bad(`태그 v${TARGET_VERSION} 를 마켓플레이스에서 찾을 수 없음`); return false; }
+  try { return git(["rev-parse", `v${TARGET_VERSION}^{}`]); }
+  catch { bad(`태그 v${TARGET_VERSION} 를 마켓플레이스에서 찾을 수 없음`); return null; }
+}
 
-  const dest = join(CACHE, TARGET_VERSION);
+// git archive | tar 로 소스를 편다. 저장소에 dist/ 가 포함되어 빌드는 불필요하다.
+function unpackTarget(dest) {
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
-  // git archive | tar 로 소스를 편다. 저장소에 dist/ 가 포함되어 빌드는 불필요하다.
   execFileSync("git", ["-C", MARKET, "archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")], { stdio: "ignore" });
   execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { stdio: "ignore" });
   unlinkSync(join(dest, "_src.tar"));
+}
 
-  // node_modules 는 복사하지 않고 직전 버전 것을 링크한다. Windows 는 junction
-  // (관리자 권한 불필요), POSIX 는 type 인자가 무시되고 디렉터리 symlink 가 된다.
+// node_modules 는 복사하지 않고 직전 버전 것을 링크한다. Windows 는 junction
+// (관리자 권한 불필요), POSIX 는 type 인자가 무시되고 디렉터리 symlink 가 된다.
+function linkNodeModules(dest, have) {
   const prev = have.find((v) => v !== TARGET_VERSION);
   const nm = join(dest, "node_modules");
   if (!existsSync(nm) && prev && existsSync(join(CACHE, prev, "node_modules"))) {
@@ -168,8 +197,10 @@ function ensureVersion() {
   } else if (!existsSync(nm)) {
     bad(`node_modules 없음. ${dest} 에서 \`npm install --omit=dev\` 를 실행하십시오`);
   }
+}
 
-  // 활성 버전 전환
+// 활성 버전 전환
+function switchActive(sha, have) {
   const j = JSON.parse(readFileSync(INSTALLED, "utf8"));
   const e = j.plugins?.[PLUGIN_KEY]?.[0];
   if (!e) { bad(`installed_plugins.json 에 ${PLUGIN_KEY} 항목이 없음 — 수동 확인 필요`); return false; }
@@ -210,109 +241,159 @@ const REGEX_PREV_KW = new Set(["return", "typeof", "instanceof", "in", "of", "ne
 // probe(i, fnStack) 를 주면 코드 글자(문자열·주석·정규식·중괄호가 아닌 자리)마다 부른다.
 // --scan 이 같은 토크나이저로 헬퍼 선언의 깊이를 재는 데 쓴다. 패치 경로는 probe 없이 부른다.
 function scanTopLevelAwaitImports(src, probe) {
-  const n = src.length;
-  const fnStack = [];
-  const hits = [];
-  let i = 0, prev = "", prevIdx = -1;
-
-  const wordEndingAt = (j) => {
-    let e = j;
-    while (j >= 0 && ID_CH.test(src[j])) j--;
-    return src.slice(j + 1, e + 1);
-  };
-  const backSkip = (j) => {
-    for (;;) {
-      while (j >= 0 && /\s/.test(src[j])) j--;
-      if (j >= 1 && src[j] === "/" && src[j - 1] === "*") {           // */ 로 끝나는 주석
-        const s = src.lastIndexOf("/*", j - 1);
-        if (s < 0) return -1;
-        j = s - 1; continue;
-      }
-      return j;
-    }
-  };
-  const skipString = (q) => {
-    i++;
-    while (i < n) {
-      const c = src[i];
-      if (c === "\\") { i += 2; continue; }
-      if (c === q) { i++; return; }
-      if (q === "`" && c === "$" && src[i + 1] === "{") {
-        i += 2;
-        let d = 1;
-        while (i < n && d > 0) {
-          const k = src[i];
-          if (k === "\\") { i += 2; continue; }
-          if (k === "'" || k === '"' || k === "`") { skipString(k); continue; }
-          if (k === "{") d++;
-          else if (k === "}") d--;
-          i++;
-        }
-        continue;
-      }
-      i++;
-    }
-  };
-  // 이 중괄호가 «함수 몸통» 을 여는가
-  const isFunctionBrace = (at) => {
-    let j = backSkip(at - 1);
-    if (j < 0) return false;
-    if (src[j] === ">" && src[j - 1] === "=") return true;             // () => {
-    if (src[j] !== ")") return false;                                  // class/객체/블록
-    let d = 0;
-    for (; j >= 0; j--) {                                              // 짝 맞는 ( 찾기
-      if (src[j] === ")") d++;
-      else if (src[j] === "(") { if (--d === 0) break; }
-    }
-    if (j < 0) return false;
-    const k = backSkip(j - 1);
-    if (k < 0 || !ID_CH.test(src[k])) return false;
-    return !BLOCK_KW.has(wordEndingAt(k));                             // if/for/while/catch… 은 블록
-  };
-
-  while (i < n) {
-    const c = src[i];
-    if (c === "/" && src[i + 1] === "/") { while (i < n && src[i] !== "\n") i++; continue; }
-    if (c === "/" && src[i + 1] === "*") { const e = src.indexOf("*/", i + 2); i = e < 0 ? n : e + 2; continue; }
-    if (c === "'" || c === '"' || c === "`") { skipString(c); prev = c; continue; }
-    if (/\s/.test(c)) { i++; continue; }
-    if (c === "/") {
-      const asRegex = prev === "" || REGEX_PREV_CH.has(prev)
-        || (prevIdx >= 0 && ID_CH.test(prev) && REGEX_PREV_KW.has(wordEndingAt(prevIdx)));
-      if (asRegex) {
-        i++;
-        let inClass = false;
-        while (i < n) {
-          const k = src[i];
-          if (k === "\\") { i += 2; continue; }
-          if (k === "[") inClass = true;
-          else if (k === "]") inClass = false;
-          else if (k === "/" && !inClass) { i++; break; }
-          else if (k === "\n") break;
-          i++;
-        }
-        while (i < n && ID_CH.test(src[i])) i++;                       // 플래그
-        prev = "/"; prevIdx = i - 1; continue;
-      }
-    }
-    if (c === "{") { fnStack.push(isFunctionBrace(i)); i++; prev = "{"; prevIdx = i - 1; continue; }
-    if (c === "}") { fnStack.pop(); i++; prev = "}"; prevIdx = i - 1; continue; }
-    if (c === "a" && !(i > 0 && ID_CH.test(src[i - 1])) && /^await\s+import\s*\(/.test(src.slice(i, i + 40))) {
-      if (!fnStack.some(Boolean)) hits.push(i);
-    }
-    if (probe) probe(i, fnStack);
-    prev = c; prevIdx = i; i++;
+  const s = { src, n: src.length, i: 0, prev: "", prevIdx: -1, fnStack: [], hits: [] };
+  while (s.i < s.n) {
+    if (!skipNonCode(s)) stepCode(s, probe);
   }
-  return hits;
+  return s.hits;
+}
+
+// 아래 함수들은 토크나이저 상태 s 를 함께 쓴다. src 와 n(길이), i(지금 자리), prev 와
+// prevIdx(직전 코드 글자와 그 자리), fnStack(열린 중괄호마다 함수 몸통이면 true), hits.
+const wordEndingAt = (src, j) => {
+  const e = j;
+  while (j >= 0 && ID_CH.test(src[j])) j--;
+  return src.slice(j + 1, e + 1);
+};
+
+// j 에서 거꾸로 공백과 /* */ 주석을 건너뛴 자리. 주석의 시작이 없으면 -1.
+function backSkip(src, j) {
+  for (;;) {
+    while (j >= 0 && /\s/.test(src[j])) j--;
+    if (!(j >= 1 && src[j] === "/" && src[j - 1] === "*")) return j;  // */ 로 끝나는 주석이 아님
+    const s = src.lastIndexOf("/*", j - 1);
+    if (s < 0) return -1;
+    j = s - 1;
+  }
+}
+
+// 주석, 문자열, 공백, 정규식이면 건너뛰고 true. 코드 글자면 그대로 두고 false.
+function skipNonCode(s) {
+  const c = s.src[s.i];
+  if (skipComment(s)) return true;
+  if (c === "'" || c === '"' || c === "`") { skipString(s, c); s.prev = c; return true; }
+  if (/\s/.test(c)) { s.i++; return true; }
+  if (c === "/" && startsRegex(s)) { skipRegex(s); return true; }
+  return false;
+}
+
+function skipComment(s) {
+  const { src, n } = s;
+  if (src[s.i] !== "/") return false;
+  if (src[s.i + 1] === "/") {
+    while (s.i < n && src[s.i] !== "\n") s.i++;
+    return true;
+  }
+  if (src[s.i + 1] !== "*") return false;
+  const e = src.indexOf("*/", s.i + 2);
+  s.i = e < 0 ? n : e + 2;
+  return true;
+}
+
+// s.i 는 여는 따옴표. 닫는 따옴표 다음으로 옮긴다. 템플릿의 ${ } 는 skipTemplateExpr 가 맡는다.
+function skipString(s, q) {
+  const { src, n } = s;
+  s.i++;
+  while (s.i < n) {
+    const c = src[s.i];
+    if (c === "\\") { s.i += 2; continue; }
+    if (c === q) { s.i++; return; }
+    if (q === "`" && c === "$" && src[s.i + 1] === "{") { skipTemplateExpr(s); continue; }
+    s.i++;
+  }
+}
+
+// s.i 는 ${ 의 $. 짝 맞는 } 다음으로 옮긴다. 그 안의 문자열은 다시 skipString 으로 건너뛴다.
+function skipTemplateExpr(s) {
+  const { src, n } = s;
+  s.i += 2;
+  let d = 1;
+  while (s.i < n && d > 0) {
+    const k = src[s.i];
+    if (k === "\\") { s.i += 2; continue; }
+    if (k === "'" || k === '"' || k === "`") { skipString(s, k); continue; }
+    if (k === "{") d++;
+    else if (k === "}") d--;
+    s.i++;
+  }
+}
+
+// 여기의 / 가 나눗셈이 아니라 정규식을 여는가. 직전 코드 글자나 직전 낱말로 정한다.
+function startsRegex(s) {
+  const { src, prev, prevIdx } = s;
+  return prev === "" || REGEX_PREV_CH.has(prev)
+    || (prevIdx >= 0 && ID_CH.test(prev) && REGEX_PREV_KW.has(wordEndingAt(src, prevIdx)));
+}
+
+// s.i 는 정규식을 여는 /. 닫는 / 와 플래그 다음으로 옮긴다. 줄이 끝나면 거기서 멈춘다.
+function skipRegex(s) {
+  const { src, n } = s;
+  s.i++;
+  let inClass = false;
+  while (s.i < n) {
+    const k = src[s.i];
+    if (k === "\\") { s.i += 2; continue; }
+    if (k === "[") inClass = true;
+    else if (k === "]") inClass = false;
+    else if (k === "/" && !inClass) { s.i++; break; }
+    else if (k === "\n") break;
+    s.i++;
+  }
+  skipWord(s);                                                       // 플래그
+  s.prev = "/"; s.prevIdx = s.i - 1;
+}
+
+function skipWord(s) {
+  while (s.i < s.n && ID_CH.test(s.src[s.i])) s.i++;
+}
+
+// 코드 글자 하나. 중괄호면 함수 스택을 바꾸고, 함수 밖의 `await import(` 면 hits 에 넣는다.
+function stepCode(s, probe) {
+  const { src } = s;
+  const c = src[s.i];
+  if (c === "{" || c === "}") {
+    if (c === "{") s.fnStack.push(isFunctionBrace(src, s.i));
+    else s.fnStack.pop();
+    s.i++; s.prev = c; s.prevIdx = s.i - 1;
+    return;
+  }
+  if (c === "a" && isAwaitImportAt(src, s.i) && !s.fnStack.some(Boolean)) s.hits.push(s.i);
+  if (probe) probe(s.i, s.fnStack);
+  s.prev = c; s.prevIdx = s.i; s.i++;
+}
+
+const isAwaitImportAt = (src, i) => !(i > 0 && ID_CH.test(src[i - 1])) && /^await\s+import\s*\(/.test(src.slice(i, i + 40));
+
+// 이 중괄호가 «함수 몸통» 을 여는가
+function isFunctionBrace(src, at) {
+  let j = backSkip(src, at - 1);
+  if (j < 0) return false;
+  if (src[j] === ">" && src[j - 1] === "=") return true;             // () => {
+  if (src[j] !== ")") return false;                                  // class/객체/블록
+  j = openParenOf(src, j);                                           // 짝 맞는 ( 찾기
+  if (j < 0) return false;
+  const k = backSkip(src, j - 1);
+  if (k < 0 || !ID_CH.test(src[k])) return false;
+  return !BLOCK_KW.has(wordEndingAt(src, k));                        // if/for/while/catch… 은 블록
+}
+
+// j 의 ) 와 짝인 ( 의 자리. 없으면 -1.
+function openParenOf(src, j) {
+  let d = 0;
+  for (; j >= 0; j--) {
+    if (src[j] === ")") d++;
+    else if (src[j] === "(" && --d === 0) return j;
+  }
+  return -1;
 }
 
 // 자리별 상태. 이미 손으로 Promise.race 를 두른 자리는 건드리지 않는다(4.15.7 에 그런 것이 둘 있다).
-// 이미 감싼 파일이라도 헬퍼 선언이 블록 안이면(옛 판의 자리) «패치됨» 이 아니라 «misplaced» 다.
+// 이미 감싼 파일이라도 헬퍼가 쓰일 수 없는 자리면(옛 판의 자리) «패치됨» 이 아니라 «misplaced» 다.
 // 그 상태를 «패치됨» 으로 넘기면 --check 가 결함 트리에 «모두 적용» 을 낸다(2026-10-12 실측).
 function siteInfo(src) {
   if (src.includes("__omcRaceImport")) {
-    const decl = scanFacts(src).helperDecls.find((d) => d.depth !== 0);
-    return decl ? { state: "misplaced", sites: [], decl } : { state: "patched", sites: [] };
+    const why = helperDefect(scanFacts(src));
+    return why ? { state: "misplaced", sites: [], why } : { state: "patched", sites: [] };
   }
   const all = scanTopLevelAwaitImports(src);
   if (!all.length) return { state: "n/a", sites: [] };
@@ -321,20 +402,24 @@ function siteInfo(src) {
   return { state: "needs", sites: open };
 }
 
+// 헬퍼가 쓰일 수 없는 자리면 그 이유를, 제자리면 null 을 낸다.
+//   - 선언이 블록 안(깊이 1 이상): 다른 블록의 자리에서 ReferenceError(옛 킷이 남긴 자리)
+//   - 선언을 못 찾음: 이름만으로는 «패치됨» 이라 할 근거가 없다. 앞쪽 글을 토크나이저가 잘못
+//     읽어 선언이 문자열 안으로 보였을 수도 있다
+//   - 최상위 사용이 선언보다 앞 줄: 그 줄이 먼저 돌아 TDZ 의 ReferenceError
+function helperDefect({ helperDecls, wrapped }) {
+  const inBlock = helperDecls.find((d) => d.depth !== 0);
+  if (inBlock) return `헬퍼 선언 :${inBlock.line} 이 블록 안, 깊이 ${inBlock.depth}`;
+  if (!helperDecls.length) return "헬퍼 선언을 찾지 못함";
+  const first = wrapped.find((w) => !w.inFunction);
+  if (first && first.line < helperDecls[0].line) return `헬퍼 선언 :${helperDecls[0].line} 이 첫 사용 :${first.line} 보다 뒤`;
+  return null;
+}
+
 function transform(src) {
   const info = siteInfo(src);
   if (info.state !== "needs") return null;
-  const edits = [];
-  for (const start of info.sites) {
-    const open = src.indexOf("(", src.indexOf("import", start));
-    let depth = 0, end = -1;
-    for (let i = open; i < src.length; i++) {
-      const c = src[i];
-      if (c === "(") depth++;
-      else if (c === ")" && --depth === 0) { end = i; break; }
-    }
-    if (end !== -1) edits.push({ start, end });
-  }
+  const edits = importSpans(src, info.sites);
   if (!edits.length) return null;
   let out = src;
   for (const e of edits.reverse()) {
@@ -349,6 +434,27 @@ function transform(src) {
   if (!out.includes("await __omcRaceImport")) return null;
   const ls = out.startsWith("#!") ? out.indexOf("\n") + 1 : 0;
   return out.slice(0, ls) + HELPER + out.slice(ls);
+}
+
+// 감쌀 자리마다 `await` 에서 import( 의 짝 맞는 ) 까지.
+function importSpans(src, sites) {
+  const edits = [];
+  for (const start of sites) {
+    const end = closingParenOf(src, src.indexOf("(", src.indexOf("import", start)));
+    if (end !== -1) edits.push({ start, end });
+  }
+  return edits;
+}
+
+// open 의 ( 와 짝인 ) 의 자리. 없으면 -1.
+function closingParenOf(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return -1;
 }
 
 // ── 읽기 전용 진단 (--scan) ──────────────────────────────────────────────────
@@ -387,8 +493,7 @@ const looksHandPatched = (src) =>
   !src.includes("__omcRaceImport") && /Promise\.race\s*\(\s*\[?[\s\S]{0,120}?\bimport\s*\(/.test(src);
 
 function patchHooks(root) {
-  let done = 0, skip = 0, fail = 0, need = 0, misplaced = 0;
-  const foreign = [];
+  const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, foreign: [], orphan: [] };
   // revert 는 scripts/ 전체를 훑는다. hooks.json 기반 목록은 두 번 새는데, 실측으로
   // 4.15.7 이 둘 다 겪었다 — PostToolUse 를 지우면 그 스크립트가 목록에서 빠지고(그래서
   // .omcbak 이 있어도 안 돌아온다), 손으로 고친 파일은 .omcbak 조차 없어 아예 안 보인다.
@@ -397,64 +502,104 @@ function patchHooks(root) {
     : hookNames(root);
   for (const n of names) {
     const f = join(root, "scripts", `${n}.mjs`);
-    const bak = `${f}.omcbak`;
     if (!existsSync(f)) continue;
-
-    if (MODE === "revert") {
-      if (existsSync(bak)) { copyFileSync(bak, f); unlinkSync(bak); log(`  되돌림  ${n}`); done++; continue; }
-      // 백업이 없는데 이미 감싸여 있다면 «이 도구가 아닌 손» 이 고친 것이다. 되돌릴 원본이
-      // 디스크에 없으니 조용히 넘기지 않고 이름을 댄다(실측: 4.15.7 의 두 파일이 그랬다).
-      // 주의: 손 패치는 `await import(` 를 `await Promise.race([import(` 로 «바꿔치기» 하므로
-      // await import 패턴 자체가 사라진다. siteInfo 로는 잡히지 않아 원문에서 직접 찾는다.
-      if (looksHandPatched(readFileSync(f, "utf8"))) foreign.push(n);
-      continue;
-    }
-    const info = siteInfo(readFileSync(f, "utf8"));
-    // 헬퍼 자리 결함은 check 와 apply 모두 이름을 댄다. 이미 감싼 파일이라 transform 으로는
-    // 고칠 수 없으므로 apply 도 건드리지 않고, 되돌린 뒤 다시 적용하라고 안내한다(MISPLACED_HINT).
-    if (info.state === "misplaced") {
-      bad(`헬퍼 자리 결함: ${n} (헬퍼 선언 :${info.decl.line} 이 블록 안, 깊이 ${info.decl.depth})`);
-      misplaced++; continue;
-    }
-    if (info.state !== "needs") { skip++; continue; }
-    if (MODE === "check") { bad(`패치 필요: ${n}`); need++; continue; }
-
-    const out = transform(readFileSync(f, "utf8"));
-    if (!out) { bad(`변환 실패: ${n}`); fail++; continue; }
-    if (!existsSync(bak)) copyFileSync(f, bak);
-    writeFileSync(f, out, "utf8");
-    const err = syntaxError(f);
-    if (err) { copyFileSync(bak, f); bad(`문법오류로 롤백: ${n}\n      ${err}`); fail++; continue; }
-    done++;
+    if (MODE === "revert") revertScript(root, n, f, r);
+    else checkOrPatchScript(root, n, f, r);
   }
-  return { done, skip, fail, need, misplaced, foreign };
+  return r;
+}
+
+function revertScript(root, n, f, r) {
+  const bak = `${f}.omcbak`;
+  if (existsSync(bak)) {
+    const why = unsafeWrite(root, f, bak);
+    if (why) { bad(`되돌리지 않음: ${n} (${why})`); r.fail++; return; }
+    copyFileSync(bak, f); unlinkSync(bak); log(`  되돌림  ${n}`); r.done++; return;
+  }
+  // 백업이 없는데 이미 감싸여 있으면 되돌릴 원본이 디스크에 없다. 조용히 넘기지 않고 이름을 댄다.
+  //   - 우리 헬퍼가 있으면: 이 도구나 옛 킷이 고쳤는데 백업이 사라진 파일(복사해 온 폴더 등)
+  //   - 손 패치: `await import(` 를 `await Promise.race([import(` 로 «바꿔치기» 해서 await import
+  //     패턴 자체가 사라진다. siteInfo 로는 잡히지 않아 원문에서 직접 찾는다(실측: 4.15.7 의 두 파일)
+  const src = readFileSync(f, "utf8");
+  if (src.includes("__omcRaceImport")) r.orphan.push(n);
+  else if (looksHandPatched(src)) r.foreign.push(n);
+}
+
+function checkOrPatchScript(root, n, f, r) {
+  const info = siteInfo(readFileSync(f, "utf8"));
+  // 헬퍼 자리 결함은 check 와 apply 모두 이름을 댄다. 이미 감싼 파일이라 transform 으로는
+  // 고칠 수 없으므로 apply 도 건드리지 않고, 되돌린 뒤 다시 적용하라고 안내한다(misplacedHint).
+  if (info.state === "misplaced") { bad(`헬퍼 자리 결함: ${n} (${info.why})`); r.misplaced++; return; }
+  if (info.state !== "needs") { r.skip++; return; }
+  if (MODE === "check") { bad(`패치 필요: ${n}`); r.need++; return; }
+
+  const bak = `${f}.omcbak`;
+  const why = unsafeWrite(root, f, bak);
+  if (why) { bad(`쓰지 않음: ${n} (${why})`); r.fail++; return; }
+  const out = transform(readFileSync(f, "utf8"));
+  if (!out) { bad(`변환 실패: ${n}`); r.fail++; return; }
+  if (!existsSync(bak)) copyFileSync(f, bak);
+  writeFileSync(f, out, "utf8");
+  const err = syntaxError(f);
+  if (err) { copyFileSync(bak, f); bad(`문법오류로 롤백: ${n}\n      ${err}`); r.fail++; return; }
+  r.done++;
+}
+
+// 쓰기 전에 본다. 쓸 파일이 (링크를 따라가서) 플러그인 폴더 밖이거나 백업 자리가 링크면 그 이유를,
+// 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, copyFileSync 가 링크가 가리키는 곳에 쓴다.
+function unsafeWrite(root, file, bak) {
+  if (isLink(bak)) return "백업 자리가 링크";
+  if (!insideRoot(root, file)) return "파일이 플러그인 폴더 밖에 있음";
+  return null;
+}
+
+const isLink = (p) => {
+  try { return lstatSync(p).isSymbolicLink(); } catch { return false; }
+};
+
+// 실제 경로로 p 가 root 안인가. 버전 폴더 자체가 링크(옛 판이 새 판을 가리킴)여도 root 를 같이
+// 풀므로 맞다. Windows 는 경로의 대소문자를 구분하지 않아 소문자로 비교한다.
+function insideRoot(root, p) {
+  const fold = (x) => (process.platform === "win32" ? x.toLowerCase() : x);
+  try { return fold(realpathSync(p)).startsWith(fold(realpathSync(root)) + PATH_SEP); }
+  catch { return false; }
 }
 
 // ── 3. PostToolUse 훅 제거 ───────────────────────────────────────────────────
 function patchHooksJson(root) {
   const hj = join(root, "hooks", "hooks.json");
-  const bak = `${hj}.omcbak`;
   if (!existsSync(hj)) return "no-file";
-  if (MODE === "revert") {
-    if (existsSync(bak)) { copyFileSync(bak, hj); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
-    // 이 도구가 만든 백업이 없어도, 손으로 만든 백업이 남아 있을 수 있다(실측: 4.15.7 의
-    // hooks.json.bak-20260906-postoolremove). PostToolUse 를 담고 있는 유효한 JSON 이
-    // 딱 하나면 그것이 제거 직전 상태다 — 무엇을 썼는지 밝히고 되돌린다.
-    const dir = join(root, "hooks");
-    const cands = readdirSync(dir)
-      .filter((f) => f.startsWith("hooks.json.") && f !== "hooks.json.omcbak")
-      .filter((f) => {
-        try { return !!JSON.parse(readFileSync(join(dir, f), "utf8"))?.hooks?.PostToolUse; }
-        catch { return false; }
-      });
-    if (cands.length === 1) {
-      copyFileSync(join(dir, cands[0]), hj);
-      log(`  되돌림  hooks.json  (수동 백업 사용: ${cands[0]})`);
-      return "reverted";
-    }
-    if (cands.length > 1) { bad(`hooks.json 수동 백업이 여러 개라 자동 복구하지 않음: ${cands.join(", ")}`); return "ambiguous"; }
-    return "no-backup";
+  if (MODE !== "check") {
+    const why = unsafeWrite(root, hj, `${hj}.omcbak`);
+    if (why) { bad(`hooks.json 을 건드리지 않음 (${why})`); return "unsafe"; }
   }
+  return MODE === "revert" ? revertHooksJson(hj) : removePostToolUse(hj);
+}
+
+function revertHooksJson(hj) {
+  const bak = `${hj}.omcbak`;
+  if (existsSync(bak)) { copyFileSync(bak, hj); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
+  // 이 도구가 만든 백업이 없어도, 손으로 만든 백업이 남아 있을 수 있다(실측: 4.15.7 의
+  // hooks.json.bak-20260906-postoolremove). PostToolUse 를 담고 있는 유효한 JSON 이
+  // 딱 하나면 그것이 제거 직전 상태다 — 무엇을 썼는지 밝히고 되돌린다.
+  const dir = dirname(hj);
+  const cands = readdirSync(dir)
+    .filter((f) => f.startsWith("hooks.json.") && f !== "hooks.json.omcbak")
+    .filter((f) => {
+      try { return !!JSON.parse(readFileSync(join(dir, f), "utf8"))?.hooks?.PostToolUse; }
+      catch { return false; }
+    });
+  if (cands.length === 1) {
+    copyFileSync(join(dir, cands[0]), hj);
+    log(`  되돌림  hooks.json  (수동 백업 사용: ${cands[0]})`);
+    return "reverted";
+  }
+  if (cands.length > 1) { bad(`hooks.json 수동 백업이 여러 개라 자동 복구하지 않음: ${cands.join(", ")}`); return "ambiguous"; }
+  return "no-backup";
+}
+
+function removePostToolUse(hj) {
+  const bak = `${hj}.omcbak`;
   const j = JSON.parse(readFileSync(hj, "utf8"));
   if (!j.hooks?.PostToolUse) return "already";
   const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
@@ -482,26 +627,7 @@ function pinMarketplace() {
   let url;
   try { url = git(["remote", "get-url", "origin"]); } catch { return "no-remote"; }
 
-  if (MODE === "revert") {
-    // 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 파일이 아니라
-    // 거기서 복원한다. PINNED 는 배포 폴더에 같이 딸려 오므로 다른 PC 의 값일 수 있고,
-    // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 그 사실이 눈에 띄지도 않는다.
-    const PIN_PREFIX = "omc-pinned://";
-    let restored = null;
-    if (url.startsWith(PIN_PREFIX)) restored = url.slice(PIN_PREFIX.length);
-    if (existsSync(PINFILE)) {
-      let saved = {};
-      try { saved = JSON.parse(readFileSync(PINFILE, "utf8")); } catch { /* 깨졌으면 무시 */ }
-      if (saved.host && saved.host !== hostname()) {
-        bad(`PINNED 는 다른 기기(${saved.host})의 기록입니다 — 그 값은 쓰지 않고 현재 origin 에서 복원합니다.`);
-      }
-      if (!restored && saved.originUrl) restored = saved.originUrl;
-      unlinkSync(PINFILE);
-    }
-    if (!restored) return "not-pinned";
-    try { git(["remote", "set-url", "origin", restored]); } catch { /* noop */ }
-    return "unpinned";
-  }
+  if (MODE === "revert") return unpinMarketplace(url);
   if (url.startsWith("omc-pinned://")) return "already";
   if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${url})`); return "needs"; }
 
@@ -511,6 +637,45 @@ function pinMarketplace() {
   writeFileSync(PINFILE, JSON.stringify({ originUrl: url, pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", "utf8");
   git(["remote", "set-url", "origin", `omc-pinned://${url}`]);
   return "pinned";
+}
+
+// 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 파일이 아니라
+// 거기서 복원한다. PINNED 는 배포 폴더에 같이 딸려 오므로 다른 PC 의 값일 수 있고,
+// PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 그 사실이 눈에 띄지도 않는다.
+function unpinMarketplace(url) {
+  const PIN_PREFIX = "omc-pinned://";
+  let restored = null;
+  if (url.startsWith(PIN_PREFIX)) restored = url.slice(PIN_PREFIX.length);
+  if (existsSync(PINFILE)) {
+    const saved = takeSavedOrigin();
+    if (!restored && saved) restored = saved;
+  }
+  if (!restored) return "not-pinned";
+  try { git(["remote", "set-url", "origin", restored]); } catch { /* noop */ }
+  return "unpinned";
+}
+
+// PINNED 를 읽고 지운다. 다른 기기의 기록이면 알린다. 원래 URL 이 없으면 null.
+function takeSavedOrigin() {
+  let saved = {};
+  try { saved = JSON.parse(readFileSync(PINFILE, "utf8")); } catch { /* 깨졌으면 무시 */ }
+  if (saved.host && saved.host !== hostname()) {
+    bad(`PINNED 는 다른 기기(${saved.host})의 기록입니다 — 그 값은 쓰지 않고 현재 origin 에서 복원합니다.`);
+  }
+  unlinkSync(PINFILE);
+  return saved.originUrl || null;
+}
+
+// --root 폴더의 이름표. .claude-plugin/plugin.json 이나 package.json 의 name 이 OMC 가 아니면 그 설명을,
+// 아니면 null. 둘 다 없거나 읽을 수 없으면 확인할 길이 없어 null 이다(번들 사본에는 없을 수 있다).
+const OMC_NAMES = [[".claude-plugin/plugin.json", "oh-my-claudecode"], ["package.json", "oh-my-claude-sisyphus"]];
+function otherPluginName(root) {
+  for (const [rel, want] of OMC_NAMES) {
+    let name;
+    try { name = JSON.parse(readFileSync(join(root, rel), "utf8")).name; } catch { continue; }
+    if (name !== want) return `${rel} 의 name 이 ${JSON.stringify(name) ?? "없음"}`;
+  }
+  return null;
 }
 
 // ── --scan: 사실만 내고 끝낸다 ───────────────────────────────────────────────
@@ -535,22 +700,25 @@ log(ROOT
 log(`플랫폼: ${process.platform}  node ${process.version}`);
 log();
 
-// 헬퍼 자리 결함은 이 판의 apply 로 고칠 수 없다(이미 감싼 파일). 원본으로 되돌린 뒤 다시 적용한다.
-const MISPLACED_HINT = ROOT
-  ? "--revert --root 로 되돌린 뒤 같은 --root 로 다시 적용하십시오."
-  : "--revert 로 되돌린 뒤 다시 적용하십시오.";
-
 // targets 는 «고칠 플러그인 폴더» 의 이름표 목록이다. 기본은 캐시의 판 번호이고, --root 는
 // 그 폴더 경로 하나다. rootOf 가 이름표를 폴더로 바꾼다.
 let active, targets;
 const rootOf = (v) => (ROOT ? v : join(CACHE, v));
+// 헬퍼 자리 결함은 이 판의 apply 로 고칠 수 없다(이미 감싼 파일). 원본으로 되돌린 뒤 다시 적용한다.
+// 되돌리기는 그 폴더 하나만 한다. 인자 없는 --revert 는 설치된 모든 판을 되돌리고 고정까지 푼다.
+// active 는 아래에서 정해지므로 쓰는 자리에서 부른다.
+const misplacedHint = () => (ROOT
+  ? "--revert --root 로 되돌린 뒤 같은 --root 로 다시 적용하십시오."
+  : `--revert --root "${join(CACHE, active)}" 로 활성 폴더만 되돌린 뒤 다시 적용하십시오.`);
 if (ROOT) {
-  // 판 폴더도 installed_plugins.json 도 없는 트리(번들 사본)를 고친다. 판 바꾸기([1/4])와
-  // 마켓플레이스 고정([4/4])은 하지 않는다 — 그 둘은 이 PC 의 설정이고 이 폴더의 것이 아니다.
+  // 그 폴더 하나만 고친다(판 폴더도 installed_plugins.json 도 없는 번들 사본, 또는 활성 캐시 폴더).
+  // 판 바꾸기([1/4])와 마켓플레이스 고정([4/4])은 하지 않는다 — 그 둘은 이 PC 의 설정이고 이 폴더의 것이 아니다.
   if (!existsSync(join(ROOT, "hooks", "hooks.json")) || !existsSync(join(ROOT, "scripts"))) {
     bad(`플러그인 폴더가 아님 (hooks/hooks.json 과 scripts/ 가 있어야 함): ${ROOT}`);
     process.exit(1);
   }
+  const other = otherPluginName(ROOT);
+  if (other) { bad(`OMC 플러그인 폴더가 아님 (${other}): ${ROOT}`); process.exit(1); }
   log("[1/4] 버전");
   log("  건너뜀 (--root 는 판을 바꾸지 않음)");
   active = ROOT;
@@ -560,7 +728,7 @@ if (ROOT) {
 
   log("[1/4] 버전");
   if (NO_UPDATE) log("  건너뜀 (--no-update)");
-  else if (MODE === "revert") log("  건너뜀 (revert 는 버전을 되돌리지 않음 — README 의 롤백 절차 참고)");
+  else if (MODE === "revert") log("  건너뜀 (revert 는 버전을 되돌리지 않음 — 킷 배포 폴더 README 의 롤백 절차 참고)");
   else if (!ensureVersion() && MODE !== "check") { bad("버전 확보 실패 — 중단"); process.exit(1); }
 
   const versions = installedVersions();
@@ -586,6 +754,7 @@ const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0 };
 const needBy = {};
 const misplacedBy = {};
 const foreignBy = {};
+const orphanBy = {};
 for (const v of targets) {
   const root = rootOf(v);
   if (!existsSync(root)) continue;
@@ -595,16 +764,19 @@ for (const v of targets) {
   misplacedBy[v] = x.misplaced;
   for (const k of ["done", "skip", "fail", "need", "misplaced"]) r[k] += x[k];
   if (x.foreign?.length) foreignBy[v] = x.foreign;
+  if (x.orphan?.length) orphanBy[v] = x.orphan;
 }
-log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `되돌림 ${r.done}건` : `패치 ${r.done}건 / 실패 ${r.fail}건`}${r.misplaced ? ` / 헬퍼 자리 결함 ${r.misplaced}건` : ""} / 대상 아님 ${r.skip}건`);
-// 이 도구가 만들지 않은 수정은 되돌릴 원본이 디스크에 없다. 조용히 넘기면 «완전히
+log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `되돌림 ${r.done}건${r.fail ? ` / 실패 ${r.fail}건` : ""}` : `패치 ${r.done}건 / 실패 ${r.fail}건`}${r.misplaced ? ` / 헬퍼 자리 결함 ${r.misplaced}건` : ""} / 대상 아님 ${r.skip}건`);
+// 백업이 없어 되돌리지 못한 파일은 되돌릴 원본이 디스크에 없다. 조용히 넘기면 «완전히
 // 되돌렸다» 는 잘못된 인상을 준다 — 무엇이 남았고 어떻게 되찾는지 정확히 말한다.
-for (const [v, list] of Object.entries(foreignBy)) {
-  bad(`${v}: 이 도구가 만들지 않은 수정이 남아 있습니다 — ${list.join(", ")}`);
+function reportNoBackup(v, list, what) {
+  bad(`${v}: ${what} — ${list.join(", ")}`);
   log(`      백업(.omcbak)이 없어 되돌릴 원본이 디스크에 없습니다. 원본이 필요하면:`);
   if (ROOT) log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`);
   else log(`      git -C "${MARKET}" archive v${v} scripts/<이름>.mjs | tar -x -C "${join(CACHE, v)}"`);
 }
+for (const [v, list] of Object.entries(foreignBy)) reportNoBackup(v, list, "이 도구가 만들지 않은 수정이 남아 있습니다");
+for (const [v, list] of Object.entries(orphanBy)) reportNoBackup(v, list, "패치는 있는데 백업이 없어 되돌리지 못했습니다");
 
 log();
 log("[3/4] PostToolUse 훅 제거");
@@ -620,6 +792,7 @@ for (const v of targets) {
   else if (hj === "reverted" || hj === "ambiguous") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
   else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
+  else if (hj === "unsafe") r.fail++;
 }
 
 log();
@@ -661,8 +834,9 @@ if (MODE === "check") {
   const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && pin !== "needs" && misplacedActive === 0;
   const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
   log(clean ? "결과: 모두 적용된 상태입니다."
-    : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${MISPLACED_HINT}`
+    : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${misplacedHint()}`
     : ROOT ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 같은 --root 로 다시 실행하십시오."
+    : NO_UPDATE ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 --no-update 로 다시 실행하십시오."
     : "결과: 적용되지 않은 항목이 있습니다. 인자 없이 다시 실행하십시오.");
   if (others.length) {
     log(`    참고: 비활성 버전 ${others.join(", ")} 에 미적용분이 있습니다.`);
@@ -672,7 +846,7 @@ if (MODE === "check") {
   log("되돌리기 완료. Claude Code 를 재시작해야 반영됩니다.");
 } else {
   log(`완료. 실패 ${r.fail}건.`);
-  if (r.misplaced) log(`[!] 헬퍼 자리 결함 ${r.misplaced}건은 고치지 않았습니다. ${MISPLACED_HINT}`);
+  if (r.misplaced) log(`[!] 헬퍼 자리 결함 ${r.misplaced}건은 고치지 않았습니다. ${misplacedHint()}`);
   log("    훅 스크립트 패치는 즉시 적용됩니다 (훅이 호출될 때마다 파일을 새로 읽습니다).");
   log("[!] PostToolUse 훅 제거는 hooks.json 변경이라 각 세션이 다시 시작될 때부터 적용됩니다.");
 }
