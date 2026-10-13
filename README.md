@@ -59,7 +59,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `cleansing-memory` | 프로젝트가 장기화될 때 | 메모리 최적화 |
 | `ready-compact` | 컨텍스트를 compact 하거나 새 세션을 대비할 때 | 이어갈 프롬프트만 출력(`/copy` 한 번이면 복사), `--hand-off` = 새 세션에서 이어가기 |
 | `/graceful-pause` | 작업 도중 방향을 바꾸거나 끼어들고 싶을 때 | 작업 중에 입력해도 바로 전달. 실행 중인 도구 호출이 끝나면 그 단계까지만 마무리하고 멈춘 뒤 지시를 기다림 (Claude Code) |
-| `/progress` | 지금 작업이 어디까지 왔는지 보고 싶을 때 | 진행 상황 패널을 켜고 끔. 세션이 쓰거나 읽은 계획 파일의 단계가 위에, 요청과 그 도구 호출이 아래에 보임. 단계를 누르면 설명, 화살표를 누르면 펼쳐짐 (Claude Code) |
+| `/progress` | 지금 작업이 어디까지 왔는지 보고 싶을 때 | 진행 상황 패널을 켜고 끔. 세션이 쓰거나 읽은 계획 파일 전체가 위에 접고 펴는 목록으로, 할 일 목록(없으면 요청)과 그 도구 호출이 아래에 보임. 화살표나 제목을 누르면 펼쳐짐 (Claude Code) |
 | `tone-compact` | 답변을 짧은 한글 개조식으로 받고 싶을 때 | 문체 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
 | `omc-patch` | OMC 자동 업데이트 뒤 훅이 느려지거나 훅 프로세스가 쌓일 때, project-memory 가 안 될 때 | 사라진 훅 패치를 다시 적용하고 OMC 자동 업데이트를 고정 |
 | `remains` | 작업 뒤에 남은 버그, 하자, 미검증 항목을 한눈에 보고 싶을 때 | 남은 항목을 표로 정리하고, 등록한 테스트박스에서 시험까지 돌림 |
@@ -75,9 +75,9 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `/banker:front-qa` | 스펙(note) 기반 프론트엔드 구현 + parity QA |
 | `/banker:setup` | 구성요소·의존성 설치 오케스트레이터 (multi-select) |
 | `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, mod. Codex 미지원) |
-| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 맨 위는 이 세션이 쓰거나 읽은 마지막 계획 파일(`.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json`)의 단계. 그 아래 단계는 Claude 의 작업 목록, 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 미지원) |
+| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 맨 위는 이 세션이 쓰거나 읽은 마지막 계획 파일(`.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json`) 전체. Notion 토글 목록처럼 제목이 그 아래 내용을, 목록 항목이 하위 항목을, 표와 코드 블록이 행과 줄을 품고, 처음에는 큰 제목만 접힌 채 보임. 체크박스는 완료와 대기, 제목은 그 아래 체크 수(`2/5`). 그 아래 단계는 할 일 목록(Claude 의 작업 목록이나 `mcp__banker__todo`), 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 미지원) |
 
-Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(TaskCreate, TodoWrite)를 주지 않습니다. 그래서 `/progress` 의 단계는 보통 요청 단위이고, 계획은 계획 파일로 보입니다. 작업 목록을 쓰려면 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` 을 설정합니다.
+Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(TaskCreate, TodoWrite)를 주지 않습니다. 그래서 `/progress` 를 켜면 모델에게 할 일 도구 `mcp__banker__todo` 를 줍니다(다음 요청부터). 모델이 여러 단계 작업을 시작할 때 할 일 목록을 보내면 그 목록이 단계가 됩니다. 한 단계로 끝나는 일에는 쓰지 않으므로 그때는 요청이 단계입니다. 내장 작업 목록 도구가 있는 세션(옛 모델, `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`)에는 이 도구를 더하지 않습니다. 도구는 `/progress off` 뒤에도 세션이 끝날 때까지 남고, 그동안 부르면 패널이 꺼져 있다고 답합니다.
 
 `/graceful-pause` 와 `/progress` 는 Claude Code 의 mod(Claude Mods, 얼리 액세스 이름 function hooks, `hooks/register.mjs`)로 등록되는 명령이라 구성요소 수에 넣지 않습니다. `commands/progress.md` 도 넣지 않습니다. 이 파일은 mod 가 없는 Claude Code 에서 `/progress` 를 받아 "mod 를 지원하지않는 claude code 버전입니다" 만 보여 주는 대체 명령이고, mod 가 있으면 mod 가 대신 처리합니다.
 
