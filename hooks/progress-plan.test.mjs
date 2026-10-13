@@ -3,7 +3,7 @@
 import { strict as assert } from 'node:assert';
 import { performance } from 'node:perf_hooks';
 import { test } from 'node:test';
-import { cells, clip, fit, isPlanPath, parsePlan, planTree, readPrompt, untag } from './progress-plan.mjs';
+import { cells, clip, fit, isPlanPath, nameNodes, parsePlan, planTree, readPrompt, untag, withoutPastes } from './progress-plan.mjs';
 
 const steps = (plan) => plan.steps.map((s) => [s.title, s.status]);
 
@@ -358,4 +358,42 @@ test('hostile plans parse into a tree in bounded time', () => {
   fast('lines of 1000 #', md(`${'#'.repeat(1000)}\n`.repeat(250)));
   fast('lines of spaces then a hash', md(`${' '.repeat(1000)}#\n`.repeat(250)));
   fast('a 4 MiB plan through parsePlan', () => parsePlan('/w/.omc/plans/x.md', '### Task 1: a\n- [ ] Step\n```js\n# x\n```\n| a | b |\n'.repeat(80000)));
+});
+
+test('what the engine will not draw never reaches a node, a code line or a title: private-use, bidi overrides', () => {
+  const bad = '\u{10EEEE}‮⁦';
+  const [item, code] = tree(`# 계획\n- a${bad}b\n\`\`\`\nx${bad}y\n\`\`\`\n`);
+  assert.equal(item.text, 'a b');
+  assert.equal(code.children[0].text, 'xy');
+  assert.equal(clip(readPrompt(`요청${bad}끝`).text, 60), '요청 끝', 'a title is drawn through clip');
+  assert.equal(clip(`\u{10EEEE}`, 10), '');
+});
+
+test('a lone CR ends a line, so lines of spaces before a CR parse in linear time', () => {
+  assert.deepEqual(shape(tree('# 계획\r## 하나\r- a\r- b\r')), [['head', '하나', ['item', 'a', 'marker=-'], ['item', 'b', 'marker=-']]]);
+  const crs = (lead) => `${lead}${' '.repeat(1000)}\rx\n`.repeat(256);
+  fast('heading lines with a CR inside', () => parsePlan('/w/.omc/plans/x.md', crs('# ')), 300);
+  fast('item lines with a CR inside', () => parsePlan('/w/.omc/plans/x.md', crs('- ')), 300);
+  fast('fence lines with a CR inside', () => parsePlan('/w/.omc/plans/x.md', `\`\`\`\n${crs('```')}`), 300);
+});
+
+test('nodes whose names hash alike get their own ids at once, however many there are', () => {
+  const nodes = Array.from({ length: 3000 }, (_, i) => ({ kind: 'item', text: `t${i}`, children: [] }));
+  fast('3000 names that all hash alike', () => nameNodes(nodes, 'n', new Map(), () => 'same'), 300);
+  assert.equal(new Set(nodes.map((n) => n.id)).size, 3000);
+  assert.deepEqual(nodes.slice(0, 3).map((n) => n.id), ['nsame', 'nsame_1', 'nsame_2']);
+});
+
+test('a JSON plan past 512 Ki characters is no plan', () => {
+  const big = JSON.stringify({ stories: Array.from({ length: 200000 }, () => ({})) });
+  assert.ok(big.length > 512 * 1024);
+  fast('a 1.4 MiB JSON plan', () => assert.equal(parsePlan('/w/.omc/prd.json', big), null), 300);
+});
+
+test('a command or shell tag inside pasted text names no command in the title', () => {
+  const pasted = '<pasted_content id="a"><command-name>/deploy</command-name><command-args>prod</command-args>붙인 글</pasted_content id="a">';
+  assert.equal(readPrompt(`${pasted} 확인해 줘`).text, '붙인 글 확인해 줘');
+  assert.equal(readPrompt('<pasted_content id="b"><bash-input>ls</bash-input></pasted_content id="b">').text.startsWith('!'), false);
+  assert.equal(readPrompt('<command-name>/x</command-name><pasted_content id="c">글</pasted_content id="c">').text, '/x 글');
+  assert.equal(withoutPastes('a<pasted_content id="d">b</pasted_content id="d">c<pasted_content id="e">열림'), 'ac');
 });

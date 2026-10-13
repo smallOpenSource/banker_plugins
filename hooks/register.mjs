@@ -47,10 +47,16 @@ async function registerCommands($) {
 }
 
 // /progress's plan file, read again at a turn's start and end: a ralph PRD or a plan's checkboxes
-// change without a call this module sees. A read that fails keeps the plan as it was.
+// change without a call this module sees. A read that fails keeps the plan as it was, and a path that
+// now leads to no plain file (a pipe would hold the read) is not read.
 async function rereadPlan($) {
   const target = progressPlanTarget();
   if (!target) return;
+  try {
+    if ((await $.fs.stat(target.path)).kind !== 'file') return;
+  } catch {
+    /* an engine without stat, or nothing there: the read below tells */
+  }
   let text = null;
   try {
     text = await $.fs.read(target.path);

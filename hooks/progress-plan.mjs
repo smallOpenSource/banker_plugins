@@ -14,8 +14,11 @@
  *
  * Every mod shares the engine's one hooks worker, and a plan may come from a cloned repository, so
  * no step here takes more than linear time: a markdown plan is read to its first 256 Ki characters
- * and each line to its first 1 Ki, a JSON plan's fields and a prompt's text are cut before they are
- * cleaned, tags are found with indexOf, and no pattern backtracks over a line.
+ * and each line to its first 1 Ki (a lone CR ends a line too, so no line holds one), a JSON plan to
+ * 512 Ki characters, a JSON plan's fields and a prompt's text are cut before they are cleaned, tags
+ * are found with indexOf, node names are told apart by a count, and no pattern backtracks over a line.
+ * What the engine will not draw (control characters, lone surrogates, private-use characters such as
+ * its own U+10EEEE, bidirectional overrides) never reaches the pane.
  */
 
 // ── text on the pane ─────────────────────────────────────────────────────────
@@ -43,11 +46,16 @@ export function fit(text, n) {
   return `${out}…`;
 }
 
-// One line of plain text, cut to `n` characters. Control characters and lone surrogates go too: the
-// engine refuses a drawing that holds either. A long text is cut first, so cleaning it stays cheap.
+// Characters the engine refuses in a drawing, or that would turn the text drawn after them around:
+// control characters, private-use ones (the engine keeps U+10EEEE for itself), bidirectional overrides.
+// Lone surrogates go by toWellFormed.
+export const UNDRAWABLE = /[\p{Cc}\p{Co}\u202A-\u202E\u2066-\u2069]/gu;
+
+// One line of plain text, cut to `n` characters, with what the engine cannot draw gone: it refuses a
+// whole drawing that holds any. A long text is cut first, so cleaning it stays cheap.
 export const clip = (text, n) => {
   const raw = String(text ?? '').slice(0, n * 4 + 1024);
-  const s = (raw.toWellFormed?.() ?? raw).replace(/\p{Cc}+/gu, ' ').replace(/\s+/g, ' ').trim();
+  const s = (raw.toWellFormed?.() ?? raw).replace(UNDRAWABLE, ' ').replace(/\s+/g, ' ').trim();
   const chars = [];
   for (const c of s) {
     chars.push(c);
@@ -123,6 +131,26 @@ export function untag(text, name) {
   return out + text.slice(at);
 }
 
+// The next closing tag named `name` from `from` on, or null.
+function nextClosing(text, name, from) {
+  let tag = nextTag(text, name, from);
+  while (tag && text[tag.start + 1] !== '/') tag = nextTag(text, name, tag.end);
+  return tag;
+}
+
+// The text with each pasted block, its tags and what it holds, taken out (an unclosed one to the end):
+// where the harness's own tags are looked for, so a tag that was pasted names no command.
+export function withoutPastes(text) {
+  let out = '';
+  let at = 0;
+  for (let tag = nextTag(text, PASTED, 0); tag; tag = nextTag(text, PASTED, at)) {
+    out += text.slice(at, tag.start);
+    const close = text[tag.start + 1] === '/' ? tag : nextClosing(text, PASTED, tag.end);
+    at = close ? close.end : text.length;
+  }
+  return out + text.slice(at);
+}
+
 // Another session's message is a prompt from there; a teammate's joins the work at hand.
 function message(text, m) {
   const rest = text.slice(m[0].length);
@@ -141,8 +169,9 @@ export function readPrompt(raw) {
   }
   const wrapped = WRAPPER.exec(text);
   if (wrapped) return message(text, wrapped);
-  const command = inner(text, 'command-name');
-  const shell = inner(text, 'bash-input');
+  const outside = withoutPastes(text);
+  const command = inner(outside, 'command-name');
+  const shell = inner(outside, 'bash-input');
   const lead = command ? `${command} ${inner(text, 'command-args')}` : shell ? `! ${shell}` : '';
   return { kind: 'prompt', text: `${lead} ${strip(untag(text, PASTED))}`.slice(0, PROMPT_CAP).replace(/\s+/g, ' ').trim() };
 }
@@ -169,6 +198,11 @@ export const isPlanPath = (path) => {
 // ── a plan file ──────────────────────────────────────────────────────────────
 
 const PLAN_CAP = 256 * 1024;
+// Past this a JSON file is no plan: a PRD or a goals file is far smaller, and each item costs a step.
+const JSON_CAP = 512 * 1024;
+// CRLF, CR alone or LF: no line keeps a CR, so a pattern that runs to a line's end cannot stop short
+// of it and backtrack.
+const LINE_END = /\r\n?|\n/;
 const LINE_CAP = 1024;
 const MAX_PLAN_STEPS = 50;
 const BOM = /^\uFEFF/;
@@ -196,6 +230,7 @@ const goalStep = (g) => ({ title: str(g.title) || str(g.id), text: str(g.objecti
 // A ralph PRD (`stories` or `userStories`, done where they pass) or ultragoal's goals; items that
 // are not objects are passed over.
 function jsonPlan(path, text) {
+  if (text.length > JSON_CAP) return null;
   let d;
   try {
     d = JSON.parse(text);
@@ -226,7 +261,7 @@ function fenceMark(line) {
 // or the end) are blank, so they are no heading or item.
 function proseLines(text) {
   let fence = '';
-  return text.slice(0, PLAN_CAP).split(/\r?\n/).map((raw) => {
+  return text.slice(0, PLAN_CAP).split(LINE_END).map((raw) => {
     const line = raw.slice(0, LINE_CAP);
     const mark = fenceMark(line);
     if (!fence) {
@@ -383,7 +418,7 @@ function headWords(raw) {
 // A code line as written: its leading spaces kept, tabs as two spaces, control characters gone.
 function codeText(line) {
   const raw = line.slice(0, CODE_CAP * 2).replace(/\t/g, '  ');
-  const s = (raw.toWellFormed?.() ?? raw).replace(/\p{Cc}/gu, '');
+  const s = (raw.toWellFormed?.() ?? raw).replace(UNDRAWABLE, '');
   return [...s].slice(0, CODE_CAP).join('') || ' ';
 }
 
@@ -580,17 +615,19 @@ function hash(s) {
 // Each node's id comes from its parent's, its kind and its first words, and how many before it under
 // the same parent share those: the same section keeps its id (and so stays open) when the plan is
 // written again around it. A name taken already gets a mark until it is not.
-function nameNodes(nodes, parent, used) {
+// Two places whose names hash alike (a plan can be written so) are told apart by how many came before:
+// `<id>_1`, `<id>_2`. A hashed name holds no `_`, so the marked ones meet no other.
+export function nameNodes(nodes, parent, taken, h = hash) {
   const seen = new Map();
   for (const n of nodes) {
     const base = `${n.kind}:${n.text.slice(0, 40)}`;
     const nth = (seen.get(base) ?? 0) + 1;
     seen.set(base, nth);
-    let id = `n${hash(`${parent}/${base}#${nth}`)}`;
-    while (used.has(id)) id += '_';
-    used.add(id);
-    n.id = id;
-    nameNodes(n.children, id, used);
+    const id = `n${h(`${parent}/${base}#${nth}`)}`;
+    const before = taken.get(id) ?? 0;
+    taken.set(id, before + 1);
+    n.id = before ? `${id}_${before}` : id;
+    nameNodes(n.children, n.id, taken, h);
   }
 }
 
@@ -600,13 +637,13 @@ function nameNodes(nodes, parent, used) {
 // level-1 heading with nothing before it is the plan's title, not a node.
 export function planTree(text) {
   const st = treeState();
-  const lines = String(text).replace(BOM, '').slice(0, PLAN_CAP).split(/\r?\n/);
+  const lines = String(text).replace(BOM, '').slice(0, PLAN_CAP).split(LINE_END);
   if (lines.at(-1) === '') lines.pop();
   lines.forEach((raw, i) => treeLine(st, raw, i));
   if (st.code) finishCode(st);
   finishTable(st);
   settle(st.root);
-  nameNodes(st.root, 'n', new Set());
+  nameNodes(st.root, 'n', new Map());
   return { nodes: st.root, cut: st.cut };
 }
 
@@ -643,7 +680,7 @@ function jsonTree(items, make) {
   const budget = { left: MAX_NODES };
   const nodes = [];
   for (const it of items) if (budget.left-- > 0) nodes.push(make(it, budget));
-  nameNodes(nodes, 'n', new Set());
+  nameNodes(nodes, 'n', new Map());
   return { nodes, cut: budget.left < 0 };
 }
 

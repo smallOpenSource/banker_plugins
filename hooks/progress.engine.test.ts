@@ -45,6 +45,8 @@ function beneath(on: any, { tool = answer, refuse, panesDeny, files = new Map() 
   on('turn.complete', () => ({ text: 'engine' }))
   on('tool.call', (_: unknown, e: any) => tool(e))
   on('fs.read', (_: unknown, e: any) => (files.has(e.path) ? { value: files.get(e.path) } : { deny: `ENOENT: ${e.path}` }))
+  on('fs.stat', (_: unknown, e: any) => (files.has(e.path)
+    ? { value: { kind: 'file', size: files.get(e.path)!.length, mtimeMs: 0, isLink: false } } : { deny: `ENOENT: ${e.path}` }))
   return { registered, open, opens, logged }
 }
 

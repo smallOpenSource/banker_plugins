@@ -56,7 +56,12 @@ const toolStandIn = (listed, seen) => ({
 
 // A read takes the file as it is when the read starts; a held one (the first read of a path in
 // `held`) delivers it only once released.
-const fsStandIn = (files, held, waiting, seen) => ({
+const fsStandIn = (files, held, waiting, seen, kinds) => ({
+  stat: async (path) => {
+    seen.stats.push(path);
+    if (!files.has(path)) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+    return { kind: kinds.get(path) ?? 'file', size: String(files.get(path)).length, mtimeMs: 0, isLink: false };
+  },
   read: async (path) => {
     seen.reads.push(path);
     const [had, text] = [files.has(path), files.get(path)];
@@ -72,7 +77,7 @@ const fsStandIn = (files, held, waiting, seen) => ({
 // another plugin's pane rises only with `focus`. `files` holds what `$.fs.read` finds: a path it
 // does not hold rejects, as a missing file does. A read of a path in `held` waits for `release`.
 // `tools` names the tools the model has besides the ones a plugin registers.
-function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 'Write'] } = {}) {
+function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 'Write'], kinds = new Map() } = {}) {
   const listed = new Set(tools);
   const waiting = new Map();
   const hooks = [];
@@ -87,12 +92,12 @@ function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 
     return { catch: (handler) => { reg.caught = handler; } };
   };
   const open = new Map();
-  const seen = { registered: [], opened: [], closed: [], invalidated: 0, logs: [], reads: [], tools: [] };
+  const seen = { registered: [], opened: [], closed: [], invalidated: 0, logs: [], reads: [], stats: [], tools: [] };
   const $ = {
     command: { register: async (spec) => { seen.registered.push(spec); return { command: spec.name }; } },
     tool: toolStandIn(listed, seen),
     session: { version: async () => ({ version: '2.1.296', base: '2.1.296' }) },
-    fs: fsStandIn(files, held, waiting, seen),
+    fs: fsStandIn(files, held, waiting, seen, kinds),
     ui: {
       panes: async () => [...open].map(([id, p]) => ({ id, title: id, isShown: p.isShown, isFocused: false, isPlaced: true })),
       open: async (p) => { seen.opened.push(p); open.set(p.id, { isShown: !open.has(p.id) || open.get(p.id).isShown || p.focus === true }); },
@@ -1056,6 +1061,7 @@ test('an engine without the tool list still opens the pane', async () => {
 
 test('the to-do tool\'s list becomes the steps and calls go under the item in progress; it is no call of its own', async () => {
   const eng = engine();
+  await eng.raise('command.run', { command: 'progress', args: 'on' });
   await eng.raise('turn.start', { turnId: 't1', text: '여러 단계 작업' });
   const todos = [{ content: '설계', status: 'completed' }, { content: '구현', status: 'in_progress', activeForm: '구현하는 중' }, { content: '검증', status: 'pending' }];
   const answer = await eng.raise('tool.call', { tool: TODO_TOOL, todos });
@@ -1093,6 +1099,48 @@ test('the to-do tool is listed up front rather than behind ToolSearch, and its h
   assert.equal(other.isDeferred, true, 'another tool keeps its place');
   const bad = { tool: TODO_TOOL, get todos() { throw new Error('boom'); } };
   assert.deepEqual(await eng.raise('tool.call', bad), { deny: '진행 상황 패널이 할 일 목록을 받지 못했습니다.' });
+});
+
+test('with the pane closed the to-do tool keeps the list and says it need not be sent; a subagent hears its list is not shown', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '작업' });
+  const closed = await eng.raise('tool.call', { tool: TODO_TOOL, todos: [{ content: '하나', status: 'in_progress' }] });
+  assert.match(closed.result, /꺼져 있습니다.*부르지 않아도 됩니다/);
+  await eng.raise('command.run', { command: 'progress', args: 'on' });
+  assert.deepEqual(labels(await eng.draw()), ['하나'], 'the list kept while closed shows once the pane opens');
+  const sub = await eng.raise('tool.call', { tool: TODO_TOOL, todos: [{ content: '하위', status: 'in_progress' }], agentId: 'a1' });
+  assert.match(sub.result, /하위 에이전트의 할 일 목록은 진행 상황 패널에 보이지 않습니다/);
+  assert.deepEqual(labels(await eng.draw()), ['하나']);
+  const spec = eng.seen.tools[0];
+  assert.equal(spec.inputSchema.additionalProperties, false);
+  assert.equal(spec.inputSchema.properties.todos.items.additionalProperties, false);
+});
+
+test('a long plan stops drawing rows at 40,000 characters, so the steps and the description below still get room', async () => {
+  const md = `# 긴 계획\n${Array.from({ length: 60 }, (_, i) => `- [ ] ${`${i}가`.repeat(450)}`).join('\n')}\n`;
+  const eng = engine({ files: new Map([[PLAN, md]]) });
+  await eng.raise('turn.start', { turnId: 't1', text: '긴 계획' });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  const tree = await eng.draw();
+  const shown = walk(tree).filter((n) => /^row-n/.test(String(n.props?.key))).length;
+  assert.ok(shown > 0 && shown < 60, `${shown} rows`);
+  assert.match(textOf(tree), new RegExp(`외 ${60 - shown}줄`));
+  assert.ok(labels(tree).includes('긴 계획'), 'the prompt is still drawn');
+});
+
+test('a plan path that leads to no plain file is not read; an engine without stat still reads', async () => {
+  const pipe = '/w/.omc/plans/pipe.md';
+  const eng = engine({ files: new Map([[pipe, '# 파이프\n- a\n']]), kinds: new Map([[pipe, 'other']]) });
+  await eng.tool({ tool: 'Write', file_path: pipe });
+  assert.ok(!eng.seen.reads.includes(pipe));
+  assert.ok(!labels(await eng.draw()).some((l) => l.startsWith('계획')));
+  const old = engine({ files: new Map([[PLAN, PLAN_MD]]) });
+  delete old.$.fs.stat;
+  await old.tool({ tool: 'Write', file_path: PLAN });
+  assert.deepEqual(labels(await old.draw()).slice(1, 2), ['계획: 배포 계획']);
+  old.files.set(PLAN, '# 배포 계획\n- [x] 설계\n');
+  await old.raise('turn.start', { turnId: 't1', text: '다음' });
+  assert.match(textOf(rowOf(await old.draw(), 'plan')), /1\/1 완료/, 'the read again at a turn works without stat too');
 });
 
 test('a notice whose status is named like an object\'s own property gets the plain word', async () => {

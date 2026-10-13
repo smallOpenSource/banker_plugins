@@ -33,8 +33,11 @@ const HINT = '단계나 하위 항목을 누르면 설명이 여기에 나옵니
 const MAX_STEPS = 50;
 const MAX_KEPT_CALLS = 200;
 const MAX_SHOWN_CALLS = 30;
-// Rows of the plan's tree shown at most; one line past them says how many more there are.
+// Rows of the plan's tree shown at most, and the characters they hold: the engine draws 100,000
+// characters a drawing and blanks the rest, so a long plan must leave room for the steps and the
+// description below it. One line past them says how many more rows there are.
 const MAX_TREE_ROWS = 300;
+const MAX_TREE_TEXT = 40000;
 // The calls whose file, when it is a plan file, becomes the plan the pane shows.
 const PLAN_TOUCH = new Set(['Write', 'Edit', 'MultiEdit', 'Read', 'NotebookEdit']);
 // The id of the step made for work already under way when the module loaded mid-turn.
@@ -50,8 +53,9 @@ const TODO_SPEC = {
   description: '진행 상황 패널(/progress)이 켜져 있고, 사람이 이 패널로 지금 하는 일과 남은 일을 본다. '
     + '다음 경우에는 일을 시작하기 전에 이 도구로 할 일 목록 전체를 보낸다: 3단계 이상인 작업, 파일 여러 개를 '
     + '만들거나 고치는 작업, 사용자가 여러 가지를 한꺼번에 시킨 경우. 항목을 시작할 때 in_progress 로, 끝나면 '
-    + '바로 completed 로 바꿔 목록 전체를 다시 보낸다. in_progress 는 하나만 둔다. 한 단계로 끝나는 일, '
-    + '질문에 답하기, 대화에는 쓰지 않는다.',
+    + '바로 completed 로 바꿔 목록 전체를 다시 보낸다. 상태가 바뀔 때만 보내고 같은 목록을 다시 보내지 않는다. '
+    + 'in_progress 는 하나만 둔다. 한 단계로 끝나는 일, 질문에 답하기, 대화에는 쓰지 않는다. '
+    + '패널이 꺼져 있다고 답하면 다시 부르지 않는다.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -66,10 +70,12 @@ const TODO_SPEC = {
             activeForm: { type: 'string', description: '진행 중일 때 보일 문구(선택)' },
           },
           required: ['content', 'status'],
+          additionalProperties: false,
         },
       },
     },
     required: ['todos'],
+    additionalProperties: false,
   },
 };
 // Bookkeeping calls: they become steps, not calls under a step.
@@ -347,13 +353,16 @@ export function readTodos(todos) {
   return out;
 }
 
-// What the to-do tool answers. The list goes to the pane as TodoWrite's would; a subagent's list is its
-// own, as with TodoWrite, and leaves the session's as it is. A list that is not one is refused, so
-// the model reads why.
-export function answerTodo(s, e, now) {
+// What the to-do tool answers, in words that say what happened. The list goes to the pane as
+// TodoWrite's would, kept while the pane is closed too, so it shows when the pane opens again; the
+// model is told it need not send more meanwhile. A subagent's list is its own, as with TodoWrite, and
+// leaves the session's as it is. A list that is not one is refused, so the model reads why.
+export function answerTodo(s, e, now, paneOpen = true) {
   const todos = readTodos(e.todos);
   if (typeof todos === 'string') return { deny: todos };
-  if (!e.agentId) writeTodos(s, { todos }, now);
+  if (e.agentId) return { result: '하위 에이전트의 할 일 목록은 진행 상황 패널에 보이지 않습니다. 이 도구를 부르지 않아도 됩니다.' };
+  writeTodos(s, { todos }, now);
+  if (!paneOpen) return { result: '진행 상황 패널이 꺼져 있습니다. 목록은 받아 두었고, 패널이 다시 켜질 때까지 이 도구를 부르지 않아도 됩니다.' };
   const going = todos.filter((t) => t.status === 'in_progress').length;
   return { result: `진행 상황 패널에 할 일 ${todos.length}개를 보였습니다(진행 중 ${going}개).` };
 }
@@ -562,14 +571,16 @@ function nodeRow(ui, s, n, depth, act) {
   ] });
 }
 
-// The plan's nodes as rows, what a folded node holds left out: the first MAX_TREE_ROWS rows, and how
-// many more would show.
+// The plan's nodes as rows, what a folded node holds left out: rows while they stay within
+// MAX_TREE_ROWS and MAX_TREE_TEXT characters, then how many more would show.
 function treeRows(ui, s, act) {
   const rows = [];
   let more = 0;
+  let used = 0;
   const visit = (nodes, depth) => {
     for (const n of nodes) {
-      if (rows.length < MAX_TREE_ROWS) rows.push(nodeRow(ui, s, n, depth, act));
+      used += n.text.length + (n.marker?.length ?? 0);
+      if (!more && rows.length < MAX_TREE_ROWS && used <= MAX_TREE_TEXT) rows.push(nodeRow(ui, s, n, depth, act));
       else more += 1;
       if (n.children.length && s.planOpen.has(n.id)) visit(n.children, depth + 1);
     }
@@ -670,8 +681,14 @@ async function watchCall($, e, next) {
   }
 }
 
-// A file's text, or null where it cannot be read (missing, over the engine's 4 MiB, refused).
+// A file's text, or null where it cannot be read (missing, over the engine's 4 MiB, refused) or is no
+// plain file: a plan path that leads to a pipe or a device would hold the read, and the hooks worker.
 async function readText($, path) {
+  try {
+    if ((await $.fs.stat(path)).kind !== 'file') return null;
+  } catch {
+    /* an engine without stat, or nothing there: the read below tells */
+  }
   try {
     return await $.fs.read(path);
   } catch {
@@ -695,7 +712,8 @@ export function registerProgress(on) {
   // The to-do tool: this hook answers it, and its schema is listed up front rather than behind
   // ToolSearch, so the model sees it without asking.
   on('tool.call', { tool: TODO_TOOL }, async ($, e) => {
-    const answer = answerTodo(ref.s, e, Date.now());
+    const open = (await $.ui.panes()).some((p) => p.id === PANE);
+    const answer = answerTodo(ref.s, e, Date.now(), open);
     $.ui.invalidate('ui.render');
     return answer;
   }).catch(() => ({ deny: '진행 상황 패널이 할 일 목록을 받지 못했습니다.' }));
