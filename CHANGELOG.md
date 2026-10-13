@@ -7,6 +7,8 @@
   banker 0.16.x 의 도구는 새로 패치할 때 헬퍼를 맨 앞에 넣었지만, 옛 킷이 남긴 이 결함은 진단하지 못하고 `결과: 모두 적용된 상태입니다.` 를 냈다. 이제 `--check` 가 `헬퍼 자리 결함 N건` 을 알리고, 적용은 그 파일을 건드리지 않은 채 되돌린 뒤 다시 적용하라고 안내한다. 스킬은 활성 폴더만 `--revert --root` 로 되돌린 뒤 다시 패치한다. 백업이 없어 되돌릴 수 없거나 다시 해도 같으면 반복하지 않고 멈춰 보고한다.
 - 3d-intro-build 와 motion-graphic-make 의 미리보기 서버가 `.md`, `.txt`, `.log`, `.jsonl` 을 글(`text/plain`)로 보낸다. 지금까지는 `application/octet-stream` 이라 브라우저가 열지 않고 내려받았다. ultra-chain 보고서의 산출물 링크(조사 보고, 계획, 시험 로그)가 같은 서버를 쓴다.
 - 요청 제목에 붙여넣기 태그(`<pasted_content id="…">`)가 원문으로 보이던 것. 태그만 지우고 붙여넣은 글은 남긴다.
+- 링크 경로로 부르면 아무것도 하지 않고 종료 코드 0 으로 끝나던 스크립트 9개. 3d-intro-build 의 `serve.mjs`, `curate.mjs`, `verify-intro.mjs`, `assemble.mjs` 와 그 사본(motion-graphic-make, ultra-chain), vertical-pptx 의 `verify_a4p.mjs`, obsidizer 의 `obsidize.mjs` 다.\
+  Node 는 `import.meta.url` 쪽 링크만 풀어, 부른 경로를 그대로 비교하면 직접 실행이 아니라고 판단했다. 이제 두 경로를 모두 실제 경로로 바꿔 비교한다.
 
 ### Added
 - **`ultra-chain` 스킬을 추가했다.** 자료 조사, 모호성 제거, 합의 계획, 목업 승인, 구현, OS 시험과 합의 검증, 시각 검토, 과정 시각화, 결과 공유의 9단계를 한 명령으로 잇는다. 단계마다 기존 스킬(deep-research, ultra-interview, ralplan, ralph, ralph-qa, remains 의 박스 도구)을 부른다.\

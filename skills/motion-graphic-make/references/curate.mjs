@@ -601,7 +601,15 @@ async function main() {
   return serveMain(dir, o);
 }
 
-const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (invokedDirectly) {
+// Node resolves links for import.meta.url but not for process.argv[1], so both go through realpath:
+// compared as given, a run through a linked folder would exit 0 without doing anything.
+const invokedDirectly = () => {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (invokedDirectly()) {
   main().catch((e) => { console.error(String(e?.message || e)); process.exit(1); });
 }

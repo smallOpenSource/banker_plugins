@@ -542,9 +542,17 @@ function main(argv) {
   return 0;
 }
 
+// Node resolves links for import.meta.url but not for process.argv[1], so both go through realpath:
+// compared as given, a run through a linked folder would exit 0 without doing anything.
 // fileURLToPath, not URL.pathname: the latter yields "/C:/..." on Windows and never matches argv[1].
-const invoked = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-if (invoked) {
+const invoked = () => {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+if (invoked()) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (err) {

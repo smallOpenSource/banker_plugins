@@ -1807,3 +1807,25 @@ test('E1b the same substitution that leaves layout() fixed leaves both builders 
   // And the builders still agree with layout(), which is the tier-1 statement of the same rule.
   assert.deepEqual(a.slides.map((slide) => slide.map((s) => [s.box.x, s.box.y, s.box.cx, s.box.cy])), coordsOf(B.layout(substituted)));
 });
+
+// Node resolves links for import.meta.url but not for process.argv[1]; comparing the two as given made
+// a run through a linked folder exit 0 without checking anything. The link is a folder junction on
+// Windows, where a file symlink needs admin rights; elsewhere 'junction' is ignored.
+test('verify_a4p answers the same through a linked folder as through its own path', (t) => {
+  const link = tmp('linked');
+  try {
+    fs.symlinkSync(HERE, link, 'junction');
+  } catch {
+    t.skip('links cannot be made here');
+    return;
+  }
+  try {
+    for (const dir of [HERE, link]) {
+      const r = spawnSync(process.execPath, [path.join(dir, 'verify_a4p.mjs')], { encoding: 'utf8', timeout: 30000 });
+      assert.equal(r.status, 3, `${dir}: status ${r.status}, stderr ${JSON.stringify(r.stderr)}`);
+      assert.match(r.stderr, /^usage: verify_a4p\.mjs /m, dir);
+    }
+  } finally {
+    fs.unlinkSync(link);
+  }
+});
