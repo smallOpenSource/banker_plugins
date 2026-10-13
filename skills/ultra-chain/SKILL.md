@@ -296,7 +296,8 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
      - 시각이나 소요 시간을 찍는 러너는 그 줄을 뺀다. 예: vitest 는 `Start at`, `Duration` 줄을 `grep -Ev` 로 거른다
      - 빌드와 린트도 성공 때 조용한 꼴을 쓴다. 예: `vite build --logLevel error`(파일 크기 줄이 나오지 않는다)
      - 이 머신이 Windows 면 POSIX 꼴(`grep`)이 돌지 않는다. PowerShell 의 `Select-String -NotMatch` 같은 같은 뜻의 꼴을 쓴다
-   - ralph 를 부른 직후 `state_read` 로 ralph 상태를 읽고, 이 세션의 `prd.json`(`.omc/state/sessions/<id>/prd.json`, `OMC_STATE_DIR` 이 있으면 그 아래)이 있는지 본다. OMC 5.7.1 에서 둘을 만드는 것은 프롬프트의 `ralph` 키워드 훅뿐이다. 소스에는 Skill 호출 뒤에 만드는 경로가 있지만 배포된 훅은 그것을 부르지 않는다. 그래서 Skill 로만 불렀으면 둘 다 없을 수 있고, Skill 인자의 `--critic=critic` 은 읽히지 않는다.
+   - ralph 를 부른 직후 `state_read` 로 ralph 상태를 읽고, 이 세션의 `prd.json`(`.omc/state/sessions/<id>/prd.json`, `OMC_STATE_DIR` 이 있으면 그 아래)이 있는지 본다. OMC 5.7.1 에서 ralph 상태를 만드는 것은 프롬프트의 `ralph` 키워드 훅뿐이고, 그 훅은 상태만 만든다. `prd.json` 을 만드는 배포된 훅은 없으니 `prd.json` 은 늘 이 연쇄가 쓴다. Skill 로만 불렀으면 상태도 없을 수 있다. `--critic=critic` 은 훅에는 읽히지 않는다(ralph 스킬 본문은 읽는다).
+     - 지금 세션 id 는 `.omc/state/sessions/*/session-started.json` 가운데 `cwd` 가 이 저장소이고 `started_at` 이 가장 늦은 파일의 `session_id` 다. 같은 저장소에 세션이 둘 이상 떠 있어 가리기 어려우면 사용자에게 묻는다.
      - `state_write` 는 상태 파일을 통째로 바꾼다. 고칠 때는 읽은 상태의 칸을 모두 두고 한 칸만 바꿔 통째로 쓴다. `session_id` 는 도구 인자와 `state` 안에 둘 다 넣는다. 본문의 `session_id` 가 다르면 Stop 훅이 루프를 잇지 않는다.
      - 상태가 있는데 `critic_mode` 가 `critic` 이 아니면 그 칸만 `critic` 으로 바꿔 쓴다. 5.7.1 의 Stop 훅은 이 칸을 읽지 않으니 기록용이다. 실제 검토자는 아래 3 에서 ralph 보고로 확인한다.
      - 상태가 없으면 OMC 의 `RalphLoopState` 칸으로 쓴다: `active: true`, `iteration: 1`, `max_iterations: 10`, `started_at`(지금 ISO 시각), `prompt`(ralph 에 넘긴 인자를 500자 안으로), `session_id`, `project_path`(저장소 루트), `prd_mode: true`, `critic_mode: "critic"`. OMC 판이 바뀌었으면 그 판의 `src/hooks/ralph/loop.ts` 를 따른다.
@@ -371,9 +372,9 @@ ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 연쇄가 이 �
    - 입력: 보기마다 목업 PNG 와 실제 PNG, 그 보기의 수용 기준
    - 출력: 보기마다 JSON 한 줄. `{"name", "score": 0~100, "verdict": "pass|revise|fail", "differences": [...]}`
    - 판정은 점수로 한다. 90점 이상이 통과다. `verdict` 와 점수가 어긋나면 점수를 따른다. 다만 아래의 잘림 때문에 낸 `revise` 는 점수와 관계없이 `revise` 다.
-   - 판정자 지시에 "잘려서 보이지 않는 수용 기준이 있으면 점수와 관계없이 `revise` 로 하고 `differences` 에 무엇이 잘렸는지 적는다" 를 넣는다. 그런 보기는 `--full` 로 한 번 다시 찍어 다시 판정받는다. 이미 `--full` 로 찍었으면 다시 찍지 않는다. 그래도 잘리면 `visual` 에 `verdict: "unverified"` 로 적고 `checklist` 에 넣는다. 보이지 않는 것을 통과로 적지 않는다. 잘림만으로 낸 `revise` 는 아래 4의 결함 순환에 넣지 않고, 보이는 부분에 결함이 따로 있으면 그 몫은 4로 보낸다.
+   - 판정자 지시에 "잘려서 보이지 않는 수용 기준이 있으면 점수와 관계없이 `revise` 로 하고 `differences` 에 무엇이 잘렸는지 적는다" 를 넣는다. 그런 보기는 `--full` 로 한 번 다시 찍어 다시 판정받는다. 이미 `--full` 로 찍었으면 다시 찍지 않고 바로 아래처럼 미검증으로 적는다. 다시 찍어도 잘리면 `visual` 에 `verdict: "unverified"` 로 적고 `checklist` 에 넣는다. 보이지 않는 것을 통과로 적지 않는다. 잘림만으로 낸 `revise` 는 아래 4의 결함 순환에 넣지 않고, 보이는 부분에 결함이 따로 있으면 그 몫은 4로 보낸다.
    - `visual` 에 기록한다: `mock` 은 `visual/mock-<view>.png`, `actual` 은 `visual/actual-<view>.png`.
-4. 90점 미만이면(위의 잘림 경우는 빼고) 연쇄가 차이를 나눈다.
+4. 90점 미만이면(잘림만으로 낸 경우는 빼고) 연쇄가 차이를 나눈다.
    - 결함: 고친 뒤 `qa` 에 `started` 를 다시 기록하고 6단계의 1부터 4를 바뀐 부분에 대해 다시 한다(새 `<k>`). 6단계의 ralph-qa 실행은 끝났으니 새 실행을 열고, 앞 판정 기록과 바뀐 부분을 입력에 넣는다. `APPROVE` 면 `qa` 에 `done` 을 기록하고 7단계로 돌아와 다시 찍고 다시 판정한다. 압축되더라도 `show` 의 `current` 가 `qa` 라 끝나지 않은 재검증이 보인다. 이 순환은 3회까지다.
    - 의도한 차이(목업 뒤에 합의한 변경): `intended: true` 로 적고 `checklist` 에 "의도한 차이 확인" 을 넣는다. `intended` 는 연쇄가 정한다.
    - 3회 뒤에도 남으면 `checklist` 에 넣고 다음 단계로 간다. 통과로 적지 않는다.
