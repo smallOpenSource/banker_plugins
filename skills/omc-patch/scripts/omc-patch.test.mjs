@@ -2,7 +2,7 @@
 // No network and no real home: every run uses a fake HOME in a temp dir.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,15 +55,30 @@ function fakeHome(versions, { git = true } = {}) {
 }
 
 function run(home, args) {
-  const r = spawnSync(process.execPath, [TOOL, ...args], {
-    encoding: "utf8",
-    env: { ...process.env, HOME: home, USERPROFILE: home },
-  });
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  // a shell may set this to point the tool at another installed_plugins.json; no test may write there
+  delete env.OMC_PATCH_INSTALLED;
+  const r = spawnSync(process.execPath, [TOOL, ...args], { encoding: "utf8", env });
   return { code: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
 }
 const origin = (market) => spawnSync("git", ["remote", "get-url", "origin"], { cwd: market, encoding: "utf8" }).stdout.trim();
 const read = (p) => readFileSync(p, "utf8");
 const omcbaks = (dir) => readdirSync(dir).filter((f) => f.endsWith(".omcbak"));
+// A home with nothing in it, and a plugin folder outside any home, as --root takes them.
+function bareHome() {
+  const home = join(root, `bare${seq++}`);
+  mkdirSync(home, { recursive: true });
+  return home;
+}
+function bundle() {
+  const plug = join(root, `bundle${seq++}`);
+  mkdirSync(join(plug, "hooks"), { recursive: true });
+  mkdirSync(join(plug, "scripts"), { recursive: true });
+  writeFileSync(join(plug, "hooks", "hooks.json"), HOOKS_JSON);
+  for (const n of ["foo", "stopper"]) writeFileSync(join(plug, "scripts", `${n}.mjs`), SCRIPT(n));
+  writeFileSync(join(plug, "scripts", "lib.mjs"), LIB);
+  return plug;
+}
 
 test("check reports the active version from installed_plugins.json, not the TARGET folder", () => {
   const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }], { git: false });
@@ -72,6 +87,8 @@ test("check reports the active version from installed_plugins.json, not the TARG
   assert.match(r.out, /활성 버전: 5\.6\.1 \(installed_plugins\.json\)/);
   assert.doesNotMatch(r.out, /활성 버전: 5\.3\.0/);
   assert.match(r.out, /적용되지 않은 항목/);
+  // it names the arguments it was given, not the bare apply that would switch the version
+  assert.match(r.out, /--check 없이 --no-update 로 다시 실행하십시오/);
   // check scans every installed version, so the count includes the idle folder: 2 files x 2 versions
   assert.match(r.out, /패치 필요 4건/);
   assert.match(r.out, /PostToolUse 남아있음: foo/);
@@ -194,7 +211,8 @@ test("an old kit's helper stuck in a block: check names it, apply leaves it, --r
   assert.match(spawnSync(process.execPath, [p], { encoding: "utf8" }).stdout, /second failed: __omcRaceImport is not defined/);
   const chk = run(f.home, ["--check", "--no-update"]);
   assert.match(chk.out, /헬퍼 자리 결함: stopper \(헬퍼 선언 :3 이 블록 안, 깊이 1\)/);
-  assert.match(chk.out, /결과: 헬퍼 자리 결함 1건이 있습니다\. --revert 로 되돌린 뒤 다시 적용하십시오\./);
+  // the hint reverts the active folder only: a bare --revert would undo every version and the pin
+  assert.match(chk.out, /결과: 헬퍼 자리 결함 1건이 있습니다\. --revert --root "[^"]*5\.7\.0" 로 활성 폴더만 되돌린 뒤 다시 적용하십시오\./);
   const apply = run(f.home, ["--no-update"]);
   assert.match(apply.out, /\[!\] 헬퍼 자리 결함 1건은 고치지 않았습니다\./);
   assert.equal(read(p), MISPLACED, "apply cannot fix an already wrapped file");
@@ -288,7 +306,225 @@ test("--revert --root leaves the other version folders and the pin alone; a defe
   for (const n of ["foo", "stopper"]) assert.match(read(join(idle, "scripts", `${n}.mjs`)), /__omcRaceImport/, "the idle version stays patched");
   assert.equal(origin(f.market), pinned);
   assert.doesNotMatch(rev.out, /되돌림 +stopper/, "no backup, so nothing to restore");
+  assert.match(rev.out, /패치는 있는데 백업이 없어 되돌리지 못했습니다 — stopper/, "the revert names what it could not restore");
   assert.equal(read(stopper), nested);
   assert.match(run(f.home, ["--check", "--no-update"]).out, /헬퍼 자리 결함: stopper \(헬퍼 선언 :\d+ 이 블록 안, 깊이 2\)/);
   assert.deepEqual(JSON.parse(run(f.home, ["--scan", stopper]).out)[0].helperDecls.map((d) => d.depth), [2]);
+});
+
+// The helper is in the file but cannot work: its declaration is missing, or it comes after the first
+// top-level use, which then runs first and dies in the TDZ. Neither may pass as patched.
+test("a helper with no declaration, or declared after its first top-level use, is a defect", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.7.0", active: true }]);
+  const p = join(f.cache, "5.7.0", "scripts", "stopper.mjs");
+  const late = [
+    "const { x } = await __omcRaceImport(import(\"./lib.mjs\"));",
+    "const __omcRaceImport = (q) => q;",
+    "console.log(\"stopper:\" + typeof x);",
+    "",
+  ].join("\n");
+  writeFileSync(p, late);
+  assert.match(spawnSync(process.execPath, [p], { encoding: "utf8" }).stderr, /ReferenceError/, "the fixture really dies in the TDZ");
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /헬퍼 자리 결함: stopper \(헬퍼 선언 :2 이 첫 사용 :1 보다 뒤\)/);
+  writeFileSync(p, late.replace("const __omcRaceImport = (q) => q;\n", ""));
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /헬퍼 자리 결함: stopper \(헬퍼 선언을 찾지 못함\)/);
+  // the order is by position, so a declaration later on the same line is caught too
+  writeFileSync(p, late.replace(";\nconst __omcRaceImport", "; const __omcRaceImport"));
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /헬퍼 자리 결함: stopper \(헬퍼 선언 :1 이 첫 사용 :1 보다 뒤\)/);
+  // a function declaration is hoisted: used before it, it still works, so it is no defect
+  writeFileSync(p, late.replace("const __omcRaceImport = (q) => q;", "function __omcRaceImport(q) { return q; }"));
+  assert.equal(spawnSync(process.execPath, [p], { encoding: "utf8" }).stdout.trim(), "stopper:function");
+  assert.doesNotMatch(run(f.home, ["--check", "--no-update"]).out, /헬퍼 자리 결함: stopper/);
+});
+
+test("--root stops at a folder whose name tag is not OMC; plugin.json decides when it has a name", () => {
+  const home = bareHome();
+  const plug = bundle();
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: "some-other-plugin" }));
+  const other = run(home, ["--root", plug]);
+  assert.equal(other.code, 1, other.out);
+  assert.match(other.out, /OMC 플러그인 폴더가 아님 \(package\.json 의 name 이 "some-other-plugin"\)/);
+  assert.deepEqual(omcbaks(join(plug, "scripts")), [], "nothing was written");
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: "x".repeat(1000) }));
+  assert.ok(run(home, ["--root", plug]).out.split("\n").every((l) => l.length < 400), "a long name is cut");
+  // an OMC plugin.json settles it, whatever package.json says (the npm name may change one day)
+  mkdirSync(join(plug, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(plug, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "oh-my-claudecode" }));
+  const r = run(home, ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /패치 2건 \/ 실패 0건/);
+});
+
+// A link inside the plugin folder must not carry a write outside it: a hook file that is a link to a
+// file elsewhere, or a backup slot that is a link (a dangling one would make copyFileSync create its target).
+test("apply does not write through a link that leaves the plugin folder", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "foo.mjs"), SCRIPT("foo"));
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  try {
+    symlinkSync(join(outside, "foo.mjs"), join(plug, "scripts", "foo.mjs"));
+    symlinkSync(join(outside, "planted.mjs"), join(plug, "scripts", "stopper.mjs.omcbak"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /쓰지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.match(r.out, /쓰지 않음: stopper \(백업 자리가 링크\)/);
+  assert.equal(read(join(outside, "foo.mjs")), SCRIPT("foo"), "the file outside is untouched");
+  assert.equal(existsSync(join(outside, "planted.mjs")), false, "the dangling link did not create its target");
+  assert.equal(read(join(plug, "scripts", "stopper.mjs")), SCRIPT("stopper"));
+});
+
+test("a hook with CRLF line ends is patched, runs, and reverts to the same bytes", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.7.0", active: true }]);
+  const p = join(f.cache, "5.7.0", "scripts", "stopper.mjs");
+  const crlf = TWO_BLOCKS.replace(/\n/g, "\r\n");
+  writeFileSync(p, crlf);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  const e = spawnSync(process.execPath, [p], { encoding: "utf8" });
+  assert.equal(e.status, 0, e.stderr);
+  assert.equal(e.stdout.trim(), "stopper:function,function");
+  assert.deepEqual(JSON.parse(run(f.home, ["--scan", p]).out)[0].helperDecls.map((d) => d.depth), [0]);
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 모두 적용된 상태입니다\./);
+  assert.equal(run(f.home, ["--revert"]).code, 0);
+  assert.equal(read(p), crlf, "byte for byte");
+});
+
+// A version folder can be a link to another (a cache clean-up leaves old ones pointing at the newest; a
+// junction on Windows). Here the active version is the link.
+test("a version folder that links to another is patched through the link and reverts", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.7.0" }, { v: "5.7.1", active: true }]);
+  const real = join(f.cache, "5.7.0");
+  const linked = join(f.cache, "5.7.1");
+  rmSync(linked, { recursive: true, force: true });
+  try {
+    symlinkSync(real, linked, "junction");
+  } catch {
+    t.skip("links cannot be made here");
+    return;
+  }
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /패치 2건 \/ 실패 0건/);
+  assert.match(read(join(real, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/, "written in the folder the link points to");
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 모두 적용된 상태입니다\./);
+  assert.equal(run(f.home, ["--revert"]).code, 0);
+  for (const n of ["foo", "stopper"]) assert.equal(read(join(real, "scripts", `${n}.mjs`)), SCRIPT(n));
+});
+
+// A guard against a false refusal: an odd-case --root is the same folder on Windows. realpathSync keeps the
+// case it is given, so this does not prove the lower-casing in insideRoot by itself.
+test("on Windows a --root given in other letter case is the same folder", { skip: process.platform !== "win32" && "Windows only" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  const other = plug === plug.toUpperCase() ? plug.toLowerCase() : plug.toUpperCase();
+  const r = run(home, ["--root", other]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /패치 2건 \/ 실패 0건/);
+});
+
+// The bare apply (no --no-update) path: the tool unpacks its TARGET_VERSION from the marketplace tag,
+// links node_modules to the previous version, switches installed_plugins.json and patches the new folder.
+test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to it and patches it", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  // a local path that does not exist, so the tool's git fetch fails at once without the network
+  const nowhere = join(root, `no-remote${seq++}.git`);
+  assert.equal(spawnSync("git", ["remote", "set-url", "origin", nowhere], { cwd: f.market }).status, 0);
+  const target = /const TARGET_VERSION = "([\d.]+)"/.exec(read(TOOL))[1];
+  mkdirSync(join(f.market, "hooks"), { recursive: true });
+  mkdirSync(join(f.market, "scripts"), { recursive: true });
+  writeFileSync(join(f.market, "hooks", "hooks.json"), HOOKS_JSON);
+  for (const n of ["foo", "stopper"]) writeFileSync(join(f.market, "scripts", `${n}.mjs`), SCRIPT(n));
+  writeFileSync(join(f.market, "scripts", "lib.mjs"), LIB);
+  mkdirSync(join(f.cache, "5.6.1", "node_modules"), { recursive: true });
+  const id = ["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
+  for (const a of [["add", "-A"], [...id, "commit", "-qm", "v"], [...id, "tag", `v${target}`]]) {
+    const g = spawnSync("git", a, { cwd: f.market, encoding: "utf8" });
+    assert.equal(g.status, 0, g.stderr);
+  }
+  const r = run(f.home, []);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, new RegExp(`5\\.6\\.1 → ${target.replace(/\./g, "\\.")} \\(sha [0-9a-f]{12}\\)`));
+  const entry = JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0];
+  assert.equal(entry.version, target);
+  assert.ok(entry.installPath.endsWith(target), entry.installPath);
+  assert.ok(existsSync(join(f.plugins, "installed_plugins.json.omcbak")), "the previous installed_plugins.json is kept");
+  assert.ok(existsSync(join(f.cache, target, "node_modules")), "node_modules points at the previous version");
+  assert.match(read(join(f.cache, target, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/, "the new active version is patched");
+  assert.equal(origin(f.market), `omc-pinned://${nowhere}`);
+});
+
+test("--revert takes the origin from the pinned URL and names a PINNED written on another machine", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
+  const saved = JSON.parse(read(pinfile));
+  writeFileSync(pinfile, JSON.stringify({ ...saved, host: "another-machine", originUrl: "https://example.invalid/other.git" }));
+  const r = run(f.home, ["--revert"]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /PINNED 는 다른 기기\(another-machine\)의 기록입니다/);
+  assert.equal(origin(f.market), ORIGIN, "the pinned origin wins over the other machine's record");
+  assert.equal(existsSync(pinfile), false);
+});
+
+// The revert side of the link guard: a backup slot that is a link and a hooks.json that is a link out of the
+// plugin folder are left alone, and the run does not end with "되돌리기 완료".
+test("--revert does not write through a link that leaves the plugin folder, and says it did not finish", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "planted.mjs"), "planted\n");
+  writeFileSync(join(outside, "hooks.json"), HOOKS_JSON);
+  const bak = join(plug, "scripts", "foo.mjs.omcbak");
+  const hj = join(plug, "hooks", "hooks.json");
+  rmSync(bak);
+  rmSync(hj);
+  try {
+    symlinkSync(join(outside, "planted.mjs"), bak);
+    symlinkSync(join(outside, "hooks.json"), hj);
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /되돌리지 않음: foo \(백업 자리가 링크\)/);
+  assert.match(r.out, /hooks\.json 을 건드리지 않음 \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 실패 2건/);
+  assert.doesNotMatch(r.out, /되돌리기 완료/);
+  assert.equal(read(join(outside, "planted.mjs")), "planted\n");
+  assert.equal(read(join(outside, "hooks.json")), HOOKS_JSON);
+  assert.match(read(join(plug, "scripts", "foo.mjs")), /__omcRaceImport/, "foo stays patched");
+  assert.equal(read(join(plug, "scripts", "stopper.mjs")), SCRIPT("stopper"), "the other hook is restored");
+});
+
+// A hand-made hooks.json backup can stand in when the tool's own is gone, but not one planted as a link:
+// a file outside the folder with a PostToolUse key (a settings.json) would become hooks.json.
+test("--revert does not take a manual hooks.json backup that is a link", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  rmSync(join(plug, "hooks", "hooks.json.omcbak"));
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "settings.json"), JSON.stringify({ hooks: { PostToolUse: [] }, planted: true }));
+  try {
+    symlinkSync(join(outside, "settings.json"), join(plug, "hooks", "hooks.json.stolen"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const before = read(join(plug, "hooks", "hooks.json"));
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(read(join(plug, "hooks", "hooks.json")), before, "the linked candidate was not used");
+  assert.match(r.out, /되돌릴 백업 없음/);
 });
