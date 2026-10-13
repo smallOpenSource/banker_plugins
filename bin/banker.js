@@ -161,7 +161,7 @@ function setupClaude(dryRun) {
     catch (e) { warn(`  step failed (may already be applied): ${bin} ${args.join(' ')}`); }
   }
   log('  → skills/commands available as /banker:* (reload-plugins or restart to apply).');
-  log('  → for all-in-one / ultra-init / front-qa, install OMC too: run /banker:setup and pick oh-my-claudecode (or `omc update`).');
+  log('  → for all-in-one / ultra-chain / ultra-init / front-qa, install OMC too: run /banker:setup and pick oh-my-claudecode (or `omc update`).');
   return true;
 }
 
@@ -218,7 +218,7 @@ function doctor() {
   const m = readManifest();
   const nSkills = eligible(m).filter(s => s.type === 'skill').length;
   log(`  manifest: ${eligible(m).length} codex-eligible surfaces (${nSkills} skills) of ${m.surfaces.length}.`);
-  log('Dependencies: all-in-one / ultra-init / front-qa need OMC (Claude) or OMX (Codex); browser skills need playwright.');
+  log('Dependencies: all-in-one / ultra-chain / ultra-init / front-qa need OMC (Claude) or OMX (Codex); browser skills need playwright.');
   log('  → install via /banker:setup (Claude) or the setup-* skills; skills also guide you if a dependency is missing.');
 }
 
