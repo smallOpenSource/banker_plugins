@@ -1143,6 +1143,39 @@ test('a plan path that leads to no plain file is not read; an engine without sta
   assert.match(textOf(rowOf(await old.draw(), 'plan')), /1\/1 완료/, 'the read again at a turn works without stat too');
 });
 
+test('a plan the session itself writes takes the place of one with steps; an agent\'s or a read note does not', async () => {
+  const notes = '/w/.omc/plans/notes.md';
+  const read = '/w/.omc/plans/read.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [notes, '# 메모 계획\n결정만 적음\n'], [read, '# 읽은 글\n의견\n']]) });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  await eng.tool({ tool: 'Read', file_path: read });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획'], 'a note the session only read does not push the plan away');
+  await eng.tool({ tool: 'Write', file_path: notes });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 메모 계획'], 'one it wrote does');
+});
+
+test('a plan cut short says so at the end of its rows and in its description', async () => {
+  const long = `# 긴 파일\n${'- 줄\n'.repeat(70000)}`;
+  const many = `# 많은 항목\n${Array.from({ length: 3100 }, (_, i) => `- 항목 ${i}`).join('\n')}\n`;
+  for (const [md, words] of [[long, /파일이 길어 앞부분만 읽었습니다/], [many, /항목이 많아 앞부분만 보입니다/]]) {
+    const eng = engine({ files: new Map([[PLAN, md]]) });
+    await eng.tool({ tool: 'Write', file_path: PLAN });
+    let tree = await eng.draw();
+    assert.match(textOf(walk(tree).find((n) => n.props?.key === 'plan-cut')), /계획이 길어 앞부분만 보입니다/);
+    button(tree, labels(tree)[1]).props.onPress({});
+    tree = await eng.draw();
+    assert.match(textOf(about(tree)), words);
+  }
+});
+
+test('a registration the engine refuses is said in one line, and the pane still opens', async () => {
+  const eng = engine();
+  eng.$.tool.register = async () => { throw new Error('a user MCP server holds the name'); };
+  assert.deepEqual(await eng.raise('command.run', { command: 'progress', args: 'on' }), {});
+  assert.equal(eng.seen.opened.length, 1);
+  assert.deepEqual(eng.seen.logs, ['할 일 도구를 등록하지 못했습니다(a user MCP server holds the name). 진행 상황 패널은 요청을 단계로 보입니다.']);
+});
+
 test('a notice whose status is named like an object\'s own property gets the plain word', async () => {
   const eng = engine();
   await eng.raise('turn.start', { turnId: 't1', text: '하나' });

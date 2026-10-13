@@ -234,3 +234,18 @@ test('opening the pane offers the to-do tool, listed up front, and the list it g
   expect(refused.deny ?? refused.text).toMatch(/배열/)
   await ui.unmount()
 })
+
+test('a plan longer than the pane draws shows its first 300 rows and says how many more', async ($, on) => {
+  const plan = '/work/.omc/plans/long.md'
+  const files = new Map([[plan, `# 긴 계획\n${Array.from({ length: 320 }, (_, i) => `- [ ] 단계 ${i + 1}`).join('\n')}\n`]])
+  beneath(on, { files })
+  await $.session.start(START)
+  const ui = await mountPane($)
+  await $.turn.start({ text: '긴 계획', turnId: 't1' })
+  await $.tool.call({ tool: 'Write', file_path: plan, content: '' })
+  expect(await ui.find({ type: 'Text', text: /^단계 300$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^단계 301$/ })).toBeUndefined()
+  expect((await ui.find({ key: 'plan-more' }))?.text).toBe('외 20줄')
+  expect((await ui.find({ key: 'row-t-t1' }))?.text).toContain('긴 계획')
+  await ui.unmount()
+})

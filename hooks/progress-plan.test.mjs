@@ -324,7 +324,11 @@ test('control characters and lone surrogates never reach a node, and a code line
   const [item, code] = tree('# 계획\n- a\u0007b \ud800\n```\n\u001b[31m    red\t!\n```\n');
   assert.equal(item.text, 'a b �');
   assert.equal(code.children[0].text, '[31m    red  !');
-  assert.ok(!/\p{Cc}/u.test(JSON.stringify(tree('\u0000\u0001\n- \u0002\n| \u0003 |\n```\n\u0004\n```\n').map((n) => n.text))));
+  const texts = [];
+  const each = (nodes) => nodes.forEach((n) => { texts.push(n.text); each(n.children); });
+  each(tree('\u0000\u0001\n- \u0002\n| \u0003 |\n```\n\u0004\n```\n'));
+  assert.ok(texts.length >= 4, texts.join('|'));
+  for (const t of texts) assert.ok(!/[\p{Cc}\p{Co}]/u.test(t), JSON.stringify(t));
 });
 
 test('a ralph PRD and ultragoal goals are trees too: a story holds its description, criteria and notes', () => {
@@ -396,4 +400,36 @@ test('a command or shell tag inside pasted text names no command in the title', 
   assert.equal(readPrompt('<pasted_content id="b"><bash-input>ls</bash-input></pasted_content id="b">').text.startsWith('!'), false);
   assert.equal(readPrompt('<command-name>/x</command-name><pasted_content id="c">글</pasted_content id="c">').text, '/x 글');
   assert.equal(withoutPastes('a<pasted_content id="d">b</pasted_content id="d">c<pasted_content id="e">열림'), 'ac');
+});
+
+test('a checkbox item that holds checkboxes shows its own state, not their count', () => {
+  assert.deepEqual(shape(tree('- [ ] 부모\n  - [x] 자식\n  - [ ] 자식2\n')),
+    [['item', '부모', 'status=pending', ['item', '자식', 'status=completed'], ['item', '자식2', 'status=pending']]]);
+});
+
+test('a JSON plan of exactly as many nodes as the tree takes is not cut; one more is', () => {
+  const stories = (n) => JSON.stringify({ stories: Array.from({ length: n }, (_, i) => ({ title: `s${i}` })) });
+  assert.equal(parsePlan('/w/.omc/prd.json', stories(3000)).treeCut, false);
+  assert.equal(parsePlan('/w/.omc/prd.json', stories(3001)).treeCut, true);
+});
+
+test('a table or a code block keeps its id as rows and lines are added', () => {
+  const before = tree('# p\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\nx\n```\n');
+  const after = tree('# p\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\n```js\nx\ny\n```\n');
+  assert.deepEqual(after.map((n) => n.id), before.map((n) => n.id));
+  assert.equal(after[0].text, '표: a | b (2행)');
+});
+
+test('a first line --- with no closing line near is a rule, not front matter', () => {
+  assert.deepEqual(shape(tree('---\n# 제목\n- a\n- b\n')), [['item', 'a', 'marker=-'], ['item', 'b', 'marker=-']], 'the rule is no content, so the H1 is still the title');
+  assert.deepEqual(shape(tree(`---\n${'x\n'.repeat(70)}---\n- a\n`)).at(-1), ['item', 'a', 'marker=-'], 'a close past 60 lines opens nothing');
+});
+
+test('past the node cap no line joins the last node, and code lines left out mark the tree cut', () => {
+  const md = `${Array.from({ length: 3000 }, (_, i) => `- 항목 ${i}`).join('\n')}\n- 잘린 항목\n이어지는 줄\n`;
+  const t = planTree(md);
+  assert.equal(t.nodes.at(-1).text, '항목 2999');
+  assert.equal(t.cut, true);
+  const code = planTree(`${Array.from({ length: 2999 }, (_, i) => `- ${i}`).join('\n')}\n\`\`\`\na\nb\n\`\`\`\n`);
+  assert.equal(code.cut, true);
 });

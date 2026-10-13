@@ -369,11 +369,12 @@ export function answerTodo(s, e, now, paneOpen = true) {
 
 // The plan file a call touched, with the touch's count, when it is one and the call went through:
 // a write by anyone, a read by the session itself (an agent reviewing a plan does not make it the plan).
+// `own` is a write by the session itself.
 export function planTouched(s, e, call) {
   const path = e.file_path ?? e.notebook_path;
   if (!call?.ok || !PLAN_TOUCH.has(e.tool) || !isPlanPath(path) || (e.tool === 'Read' && e.agentId)) return null;
   s.touch += 1;
-  return { path, touch: s.touch };
+  return { path, touch: s.touch, own: !e.agentId && e.tool !== 'Read' };
 }
 
 function parsed(path, text) {
@@ -393,8 +394,9 @@ function current(s, path, { touch, since }) {
 }
 
 // Whether what was read stays off the pane: no plan, or a file with no steps in place of a plan that
-// has some (a review written beside it).
-const keepsOff = (s, path, plan) => !plan || (path !== s.planPath && !plan.total && Boolean(s.plan?.total));
+// has some, unless the session wrote it itself (an agent's review written beside a plan, or a note the
+// session only read, does not push the plan away; a plan the session writes is the plan, steps or not).
+const keepsOff = (s, path, plan, read) => !plan || (path !== s.planPath && !plan.total && Boolean(s.plan?.total) && !read.own);
 
 // The ids in a tree, to keep the unfolded ones that are still there when a plan is read again.
 function treeIds(nodes, out = new Set()) {
@@ -411,7 +413,7 @@ function treeIds(nodes, out = new Set()) {
 export function takePlan(s, path, text, read = {}) {
   if (!current(s, path, read)) return;
   const plan = parsed(path, text);
-  if (keepsOff(s, path, plan)) return;
+  if (keepsOff(s, path, plan, read)) return;
   const moving = path !== s.planPath;
   if (read.touch !== undefined) s.taken = read.touch;
   if (moving && s.selected === 'plan') s.selected = null;
@@ -598,6 +600,7 @@ function planRows(ui, s, act) {
     const tree = treeRows(ui, s, act);
     rows.push(...tree.rows);
     if (tree.more) rows.push(Box({ key: 'plan-more', paddingLeft: 2, children: [Text({ children: [`외 ${tree.more}줄`], dimColor: true })] }));
+    if (s.plan.cut || s.plan.treeCut) rows.push(Box({ key: 'plan-cut', paddingLeft: 2, children: [Text({ children: ['계획이 길어 앞부분만 보입니다'], dimColor: true })] }));
   }
   return [...rows, Box({ key: 'plan-gap', marginBottom: 1 })];
 }
@@ -625,14 +628,20 @@ async function showPane($, pane) {
 }
 
 // Offers the model the to-do tool where it has no task list tool of Claude Code's and the tool is not
-// there yet. An engine without tool.list or tool.register still opens the pane.
+// there yet. An engine without a tool list offers nothing; a registration the engine refuses (`--bare`,
+// a user MCP server of the same name) is said in one line, and the pane goes on with prompts as steps.
 async function offerTodo($) {
+  let tools;
   try {
-    const tools = await $.tool.list();
-    if (tools.some((t) => LIST_TOOLS.has(t.name) || t.name === TODO_TOOL)) return;
-    await $.tool.register(TODO_SPEC);
+    tools = await $.tool.list();
   } catch {
-    /* the pane goes on with prompts as its steps */
+    return;
+  }
+  if (tools.some((t) => LIST_TOOLS.has(t.name) || t.name === TODO_TOOL)) return;
+  try {
+    await $.tool.register(TODO_SPEC);
+  } catch (e) {
+    $.ui.log(`할 일 도구를 등록하지 못했습니다(${clip(e?.message ?? e, 120)}). 진행 상황 패널은 요청을 단계로 보입니다.`);
   }
 }
 
@@ -676,7 +685,7 @@ async function watchCall($, e, next) {
     endCall(call, r, Date.now());
     if (TASK_TOOLS.has(e.tool)) noteTaskTool(s, e, r, Date.now(), since);
     const touched = planTouched(s, e, call);
-    if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch });
+    if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch, own: touched.own });
     $.ui.invalidate('ui.render');
   }
 }

@@ -391,6 +391,9 @@ const MAX_DEPTH = 12;
 const TEXT_CAP = 1000;
 const CODE_CAP = 200;
 const MAX_CODE_LINES = 200;
+// A first line `---` opens YAML front matter only when a closing line comes within this many lines;
+// else it is a rule, and the plan below it is no front matter.
+const FRONT_LINES = 60;
 
 const ITEM_LINE = /^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+([^\r\n]*)$/;
 const BOX_MARK = /^\[([ xX])\][ \t]+/;
@@ -431,6 +434,7 @@ const sectionOf = (st) => st.heads.at(-1)?.node.children ?? st.root;
 function attach(st, node, indent) {
   if (st.count >= MAX_NODES) {
     st.cut = true;
+    st.open = null;
     return false;
   }
   st.count += 1;
@@ -497,7 +501,8 @@ function tableLine(st, line) {
   st.open = null;
   st.titled = true;
   if (!st.table) {
-    const node = treeNode('table', { head: prose(cellsOf(line)), rows: 0 });
+    const head = prose(cellsOf(line));
+    const node = treeNode('table', { head, name: head, rows: 0 });
     st.table = attach(st, node, indentWidth(/^[ \t]*/.exec(line)[0])) ? node : { rows: 0, children: [], skip: true };
     return;
   }
@@ -524,7 +529,8 @@ function fenceOpen(st, line) {
   if (!m || (m[2][0] === '`' && m[3].includes('`'))) return false;
   st.open = null;
   st.titled = true;
-  const node = treeNode('code', { info: prose(m[3].trim().split(/[ \t]/)[0] ?? ''), lines: 0 });
+  const info = prose(m[3].trim().split(/[ \t]/)[0] ?? '');
+  const node = treeNode('code', { info, name: info, lines: 0 });
   st.code = { node, mark: m[2], kept: attach(st, node, indentWidth(m[1])) };
   return true;
 }
@@ -537,6 +543,7 @@ function codeLine(st, line) {
     return;
   }
   code.node.lines += 1;
+  if (code.kept && st.count >= MAX_NODES) st.cut = true;
   if (!code.kept || code.node.children.length >= MAX_CODE_LINES || st.count >= MAX_NODES) return;
   st.count += 1;
   code.node.children.push(treeNode('code-line', { text: codeText(line) }));
@@ -553,9 +560,8 @@ function finishCode(st) {
 // A YAML front matter block at the top, and HTML comments, are no part of the plan as it reads.
 function skipped(st, line, i) {
   const t = line.trim();
-  if (i === 0 && t === '---') return (st.front = true);
   if (st.front) {
-    if (t === '---' || t === '...') st.front = false;
+    if (i > 0 && (t === '---' || t === '...')) st.front = false;
     return true;
   }
   if (st.comment) {
@@ -612,15 +618,16 @@ function hash(s) {
   return (h >>> 0).toString(36);
 }
 
-// Each node's id comes from its parent's, its kind and its first words, and how many before it under
+// Each node's id comes from its parent's, its kind and its first words (a table's header, a code
+// block's language: not their counts, which grow as they are written), and how many before it under
 // the same parent share those: the same section keeps its id (and so stays open) when the plan is
-// written again around it. A name taken already gets a mark until it is not.
+// written again around it.
 // Two places whose names hash alike (a plan can be written so) are told apart by how many came before:
 // `<id>_1`, `<id>_2`. A hashed name holds no `_`, so the marked ones meet no other.
 export function nameNodes(nodes, parent, taken, h = hash) {
   const seen = new Map();
   for (const n of nodes) {
-    const base = `${n.kind}:${n.text.slice(0, 40)}`;
+    const base = `${n.kind}:${String(n.name ?? n.text).slice(0, 40)}`;
     const nth = (seen.get(base) ?? 0) + 1;
     seen.set(base, nth);
     const id = `n${h(`${parent}/${base}#${nth}`)}`;
@@ -639,6 +646,8 @@ export function planTree(text) {
   const st = treeState();
   const lines = String(text).replace(BOM, '').slice(0, PLAN_CAP).split(LINE_END);
   if (lines.at(-1) === '') lines.pop();
+  const isEnd = (l) => l.trim() === '---' || l.trim() === '...';
+  st.front = lines[0]?.trim() === '---' && lines.slice(1, FRONT_LINES).some(isEnd);
   lines.forEach((raw, i) => treeLine(st, raw, i));
   if (st.code) finishCode(st);
   finishTable(st);
