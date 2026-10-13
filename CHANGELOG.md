@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.17.0] - 2026-10-14
 
 ### Fixed
 - **`omc-patch` 가 옛 킷이 남긴 헬퍼 자리 결함을 찾아 고친다.** 이 스킬 밖에서 쓰던 이전 판의 패치 도구(옛 킷)는 시간 제한 헬퍼(`__omcRaceImport`)를 첫 사용 지점 앞에 넣었다. 그 자리가 최상위 `try { }` 안이면 다른 블록의 import 가 ReferenceError 로 실패하고, 훅의 `catch` 가 그 오류를 삼켜 project-memory 같은 훅이 조용히 꺼졌다.\

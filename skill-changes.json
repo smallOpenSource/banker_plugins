@@ -113,5 +113,13 @@
   "0.16.2": [
     "banker:3d-intro-build",
     "banker:3d-intro-setup"
+  ],
+  "0.17.0": [
+    "banker:3d-intro-build",
+    "banker:motion-graphic-make",
+    "banker:obsidizer",
+    "banker:omc-patch",
+    "banker:ultra-chain",
+    "banker:vertical-pptx"
   ]
 }
