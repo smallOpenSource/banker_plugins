@@ -177,7 +177,7 @@ test('a slash command reads as itself, and a background notice goes on with the 
   await ui.unmount()
 })
 
-test('a plan file the session writes shows above the steps, read again as a turn starts', async ($, on) => {
+test('a plan file the session writes shows above the steps as a tree that folds, read again as a turn starts', async ($, on) => {
   const plan = '/work/.omc/plans/deploy.md'
   const files = new Map([[plan, '# 배포 계획\n\n## 작업 순서\n\n1. 설계\n2. 구현\n']])
   beneath(on, { files })
@@ -187,19 +187,48 @@ test('a plan file the session writes shows above the steps, read again as a turn
   await $.tool.call({ tool: 'Write', file_path: plan, content: '' })
   expect((await ui.find({ key: 'plan' }))?.text).toBe('계획: 배포 계획')
   expect((await ui.find({ key: 'row-plan' }))?.text).toContain('2단계')
-  expect((await ui.find({ key: 'p-1' }))?.text).toBe('구현')
-  await ui.press({ key: 'p-1' })
-  expect((await ui.find({ key: 'about' }))?.text).toBe('구현.')
+  expect(await ui.find({ type: 'Text', text: /^설계$/ })).toBeUndefined()
+  const section = await ui.find({ type: 'Button', text: '작업 순서' })
+  await ui.press({ key: section!.key! })
+  expect(await ui.find({ type: 'Text', text: /^설계$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^1\.$/ })).toBeDefined()
 
-  files.set(plan, '# 배포 계획\n- [x] 설계\n- [ ] 구현\n')
+  files.set(plan, '# 배포 계획\n## 작업 순서\n- [x] 설계\n- [ ] 구현\n')
   await $.turn.complete({ turnId: 't1', reason: 'answer', answer: '', durationMs: 1, isAborted: false })
   expect((await ui.find({ key: 'row-plan' }))?.text).toContain('1/2 완료')
-  expect((await ui.find({ key: 'row-p-0' }))?.text).toContain('완료')
+  const rows = (await ui.findAll({ type: 'Box', text: /설계/ })).filter((b) => String(b.key).startsWith('row-n'))
+  expect(rows[0]?.text).toContain('완료')
 
   await ui.press({ key: 'arrow-plan' })
-  expect(await ui.find({ key: 'p-0' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^설계$/ })).toBeUndefined()
   files.delete(plan)
   await $.turn.start({ text: '다음', turnId: 't2' })
   expect((await ui.find({ key: 'row-plan' }))?.text).toContain('1/2 완료')
+  await ui.unmount()
+})
+
+test('opening the pane offers the to-do tool, listed up front, and the list it gets becomes the steps', async ($, on) => {
+  const offered: any[] = []
+  on('tool.list', () => ({ value: [{ name: 'Bash', description: 'shell', mcp: false }] }))
+  on('tool.register', (_: unknown, e: any) => {
+    offered.push(e)
+    return { value: { tool: `mcp__banker__${e.name}` } }
+  })
+  on('tool.describe', (_: unknown, e: any) => ({ description: e.description, isDeferred: true }))
+  beneath(on)
+  await $.session.start(START)
+  await $.command.run({ command: 'progress', args: 'on' })
+  expect(offered).toEqual([expect.objectContaining({ name: 'todo', inputSchema: expect.objectContaining({ required: ['todos'] }) })])
+  const described = await $.tool.describe({ tool: 'mcp__banker__todo', description: 'd', isDeferred: true, provider: { plugin: 'banker', tier: 'user' } } as any)
+  expect(described.isDeferred).toBe(false)
+
+  const ui = await mountPane($)
+  await $.turn.start({ text: '여러 단계 작업', turnId: 't1' })
+  const answer: any = await $.tool.call({ tool: 'mcp__banker__todo', todos: [{ content: '설계', status: 'completed' }, { content: '구현', status: 'in_progress' }] } as any)
+  expect(answer.result).toBe('진행 상황 패널에 할 일 2개를 보였습니다(진행 중 1개).')
+  expect(await ui.find({ type: 'Button', text: '설계' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: '여러 단계 작업' })).toBeUndefined()
+  const refused: any = await $.tool.call({ tool: 'mcp__banker__todo', todos: 'x' } as any)
+  expect(refused.deny ?? refused.text).toMatch(/배열/)
   await ui.unmount()
 })

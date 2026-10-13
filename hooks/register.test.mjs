@@ -36,8 +36,8 @@ test('every event is hooked once in the module, as the engine requires', () => {
   assert.deepEqual([...hooks.keys()].sort(), [
     'classic.Stop null', 'classic.SubagentStop null', 'command.run {"command":"banker:progress"}',
     'command.run {"command":"graceful-pause"}', 'command.run {"command":"progress"}', 'session.end null',
-    'session.start null', 'tool.call null', 'turn.complete null', 'turn.start null', 'turn.step null',
-    'ui.render {"component":"Pane"}',
+    'session.start null', 'tool.call null', 'tool.call {"tool":"mcp__banker__todo"}', 'tool.describe {"tool":"mcp__banker__todo"}',
+    'turn.complete null', 'turn.start null', 'turn.step null', 'ui.render {"component":"Pane"}',
   ]);
 });
 

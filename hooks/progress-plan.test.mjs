@@ -3,7 +3,7 @@
 import { strict as assert } from 'node:assert';
 import { performance } from 'node:perf_hooks';
 import { test } from 'node:test';
-import { cells, clip, fit, isPlanPath, parsePlan, readPrompt } from './progress-plan.mjs';
+import { cells, clip, fit, isPlanPath, parsePlan, planTree, readPrompt, untag } from './progress-plan.mjs';
 
 const steps = (plan) => plan.steps.map((s) => [s.title, s.status]);
 
@@ -235,4 +235,127 @@ test('huge fields in a JSON plan and huge prompts are cut before they are cleane
   fast('a 4 MiB prompt of unclosed tags', () => readPrompt('<command-args>'.repeat(300000)));
   fast('a 4 MiB prompt', () => readPrompt(`${'가 '.repeat(2 << 20)}끝`));
   assert.equal(clip(`${'가'.repeat(5000)}`, 3), '가가…');
+});
+
+// ── the plan as a tree ───────────────────────────────────────────────────────
+
+// A tree as nested arrays: kind and text, then marker, status and count where a node has them, then
+// its children.
+const shape = (nodes) => nodes.map((n) => [n.kind, n.text, ...['marker', 'status', 'count'].filter((k) => n[k]).map((k) => `${k}=${n[k]}`), ...shape(n.children)]);
+const tree = (md) => planTree(md).nodes;
+const depthOf = (nodes) => (nodes.length ? 1 + Math.max(...nodes.map((n) => depthOf(n.children))) : 0);
+
+test('a pasted block reads as what was pasted, its tags gone with their ids', () => {
+  assert.equal(readPrompt('<pasted_content id="e6a9">\n[HANDOFF] banker 0.16.3 게시 이후\n</pasted_content id="e6a9">').text, '[HANDOFF] banker 0.16.3 게시 이후');
+  assert.equal(readPrompt('고쳐 줘. <pasted_content id="a1">계획: x</pasted_content id="a1"> 이렇게 나와').text, '고쳐 줘. 계획: x 이렇게 나와');
+  assert.equal(readPrompt('<pasted_content>그대로</pasted_content>').text, '그대로', 'a tag without an id goes too');
+  assert.equal(readPrompt('<pasted_content id="b">하나</pasted_content id="b"><pasted_content id="c">둘</pasted_content id="c">').text, '하나 둘');
+  assert.equal(untag(`<pasted_content ${'x'.repeat(100)}>`, 'pasted_content').trim(), `<pasted_content ${'x'.repeat(100)}>`, 'a > past 64 characters closes no tag');
+  assert.equal(untag('pasted_content 라는 낱말과 <pasted_contents>', 'pasted_content'), 'pasted_content 라는 낱말과 <pasted_contents>');
+  fast('64k unclosed pasted tags', () => readPrompt('<pasted_content id="x"'.repeat(64000)));
+  fast('64k pasted tags', () => readPrompt('<pasted_content id="x">가</pasted_content id="x">'.repeat(64000)));
+});
+
+test('a markdown plan is a tree: a heading holds what follows it, a list item its nested items', () => {
+  const md = '# 계획\n\n상태: 진행\n\n## A\n\n- 하나\n  - 하나의 하위\n- 둘\n\n### A1\n\n1. 첫째\n2) 둘째\n\n## B\n\n문단 첫 줄\n이어지는 줄\n\n> 인용\n';
+  assert.deepEqual(shape(tree(md)), [
+    ['text', '상태: 진행'],
+    ['head', 'A', ['item', '하나', 'marker=-', ['item', '하나의 하위', 'marker=-']], ['item', '둘', 'marker=-'],
+      ['head', 'A1', ['item', '첫째', 'marker=1.'], ['item', '둘째', 'marker=2)']]],
+    ['head', 'B', ['text', '문단 첫 줄 이어지는 줄'], ['text', '인용']],
+  ]);
+  assert.deepEqual(shape(tree('- 항목\n이어짐\n\n  들여쓴 문단\n문단')), [['item', '항목 이어짐', 'marker=-', ['text', '들여쓴 문단 문단']]],
+    'a line right after a line goes on with it; after a blank line an indented one goes under the item');
+});
+
+test('checkboxes carry their state, and a node over checkboxes counts how many are done', () => {
+  const md = '# 계획\n## 1단계\n- [x] a\n- [ ] b\n## 2단계\n1. 설계\n   - [x] c\n   - [X] d\n';
+  assert.deepEqual(shape(tree(md)), [
+    ['head', '1단계', 'count=1/2', ['item', 'a', 'status=completed'], ['item', 'b', 'status=pending']],
+    ['head', '2단계', 'count=2/2', ['item', '설계', 'marker=1.', 'count=2/2', ['item', 'c', 'status=completed'], ['item', 'd', 'status=completed']]],
+  ]);
+});
+
+test('a table is one node with a row per data row, and a code block one with a line per line', () => {
+  const md = '# 계획\n| 단계 | 할 일 |\n|---|:-:|\n| 1 | 설계 |\n| 2 | `구현` |\n\n```bash\n  npm test\n\tx\n```\n~~~\nunclosed\n';
+  assert.deepEqual(shape(tree(md)), [
+    ['table', '표: 단계 | 할 일 (2행)', ['row', '1 | 설계'], ['row', '2 | 구현']],
+    ['code', '코드 bash (2줄)', ['code-line', '  npm test'], ['code-line', '  x']],
+    ['code', '코드 (1줄)', ['code-line', 'unclosed']],
+  ]);
+  assert.deepEqual(shape(tree('```bash``` 로 감싼다\n')), [['text', 'bash 로 감싼다']], 'a fence with a backtick after it is inline code');
+  assert.deepEqual(shape(tree('- 단계\n  ```\n  # 주석\n  ```\n')), [['item', '단계', 'marker=-', ['code', '코드 (1줄)', ['code-line', '  # 주석']]]]);
+});
+
+test('a level-1 title with nothing before it is no node; front matter and comments are no part of the tree', () => {
+  const md = '---\ntitle: x\n---\n<!-- 메모\n여러 줄 -->\n# 제목\n본문\n<!-- 한 줄 -->\n***\n## 다음\n';
+  assert.deepEqual(shape(tree(md)), [['text', '본문'], ['head', '다음']]);
+  assert.deepEqual(shape(tree('들머리\n# 제목\n')), [['text', '들머리'], ['head', '제목']], 'a title after other text is a heading of its own');
+  assert.deepEqual(shape(tree('# 제목 ##\n## 둘 #\n### 셋#\n')), [['head', '둘', ['head', '셋#']]], 'a closing run of # goes after a space only');
+  assert.deepEqual(shape(tree('﻿# 제목\r\n- a\r\n')), [['item', 'a', 'marker=-']]);
+});
+
+test('a node keeps its id when the plan is written again around it, and same-named siblings get ids of their own', () => {
+  const ids = (nodes) => Object.fromEntries(nodes.flatMap((n) => [[`${n.kind}:${n.text}`, n.id], ...Object.entries(ids(n.children))]));
+  const before = ids(tree('# p\n## A\n- x\n## B\n- y\n'));
+  const after = ids(tree('# p\n## 새 구역\n- z\n## A\n- x\n- [x] 새 항목\n## B\n- y\n'));
+  for (const k of ['head:A', 'item:x', 'head:B', 'item:y']) assert.equal(after[k], before[k], k);
+  const twins = tree('# p\n## A\n## A\n');
+  assert.notEqual(twins[0].id, twins[1].id);
+  const all = [];
+  const collect = (nodes) => nodes.forEach((n) => { all.push(n.id); collect(n.children); });
+  collect(tree(Array.from({ length: 500 }, () => '## 같음\n- 같음').join('\n')));
+  assert.equal(new Set(all).size, all.length, 'every id is its own');
+});
+
+test('the tree stops at 3000 nodes, 12 list levels and 200 lines a code block, and says it was cut', () => {
+  const many = planTree(Array.from({ length: 3100 }, (_, i) => `- 항목 ${i}`).join('\n'));
+  assert.equal(many.nodes.length, 3000);
+  assert.equal(many.cut, true);
+  assert.equal(planTree('- a\n').cut, false);
+  assert.equal(depthOf(tree(Array.from({ length: 30 }, (_, i) => `${'  '.repeat(i)}- 깊이 ${i}`).join('\n'))), 12);
+  const code = tree(`\`\`\`\n${Array.from({ length: 250 }, (_, i) => `줄 ${i}`).join('\n')}\n\`\`\`\n`)[0];
+  assert.equal(code.text, '코드 (250줄)');
+  assert.equal(code.children.length, 201);
+  assert.equal(code.children.at(-1).text, '외 50줄');
+});
+
+test('control characters and lone surrogates never reach a node, and a code line keeps its indent', () => {
+  const [item, code] = tree('# 계획\n- a\u0007b \ud800\n```\n\u001b[31m    red\t!\n```\n');
+  assert.equal(item.text, 'a b �');
+  assert.equal(code.children[0].text, '[31m    red  !');
+  assert.ok(!/\p{Cc}/u.test(JSON.stringify(tree('\u0000\u0001\n- \u0002\n| \u0003 |\n```\n\u0004\n```\n').map((n) => n.text))));
+});
+
+test('a ralph PRD and ultragoal goals are trees too: a story holds its description, criteria and notes', () => {
+  const prd = parsePlan('/w/.omc/prd.json', JSON.stringify({ project: 'todo-lite', description: '목록 JSON', userStories: [
+    { id: 'US-1', title: '시험', description: 'd', acceptanceCriteria: ['a', 7, 'b'], passes: true, notes: 'n' }, { id: 'US-2', title: '구현', passes: false }] }));
+  assert.equal(prd.title, 'todo-lite: 목록 JSON');
+  assert.deepEqual(shape(prd.tree), [
+    ['story', 'US-1 시험', 'status=completed', ['text', 'd'],
+      ['group', '수용 기준 (3)', ['item', 'a', 'marker=-'], ['item', '7', 'marker=-'], ['item', 'b', 'marker=-']], ['text', '메모: n']],
+    ['story', 'US-2 구현', 'status=pending'],
+  ]);
+  const goals = parsePlan('/w/.omc/ultragoal/goals.json', JSON.stringify({ goals: [
+    { id: 'g1', title: '목표', objective: 'o', status: 'complete', evidence: 'e' }, { id: 'g2', objective: 'x', status: 'failed', failureReason: 'f' }] }));
+  assert.deepEqual(shape(goals.tree), [
+    ['story', '목표', 'status=completed', ['text', 'o'], ['text', '근거: e']],
+    ['story', 'g2', 'status=failed', ['text', 'x'], ['text', '실패 이유: f']],
+  ]);
+  const big = parsePlan('/w/.omc/prd.json', JSON.stringify({ stories: Array.from({ length: 1000 }, (_, i) => ({ title: `s${i}`, acceptanceCriteria: ['a', 'b', 'c'] })) }));
+  assert.equal(big.treeCut, true);
+  assert.equal(big.total, 1000, 'the steps still count them all');
+});
+
+test('hostile plans parse into a tree in bounded time', () => {
+  const md = (body) => () => planTree(body);
+  fast('100k nested items', md(Array.from({ length: 100000 }, (_, i) => `${' '.repeat(i % 1000)}- x`).join('\n')));
+  fast('250 lines of table rule bars', md(Array.from({ length: 250 }, () => `${'|-'.repeat(500)}x`).join('\n')));
+  fast('lines of rule dashes', md(Array.from({ length: 250 }, () => `${'- '.repeat(500)}x`).join('\n')));
+  fast('a paragraph of 128k lines', md('a\n'.repeat(128000)));
+  fast('64k unclosed comments', md('<!--\n'.repeat(64000)));
+  fast('64k fences', md('```\n'.repeat(64000)));
+  fast('lines of 1000 #', md(`${'#'.repeat(1000)}\n`.repeat(250)));
+  fast('lines of spaces then a hash', md(`${' '.repeat(1000)}#\n`.repeat(250)));
+  fast('a 4 MiB plan through parsePlan', () => parsePlan('/w/.omc/plans/x.md', '### Task 1: a\n- [ ] Step\n```js\n# x\n```\n| a | b |\n'.repeat(80000)));
 });

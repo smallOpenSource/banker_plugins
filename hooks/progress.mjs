@@ -10,8 +10,10 @@
  * calls.
  *
  * Claude 5 models get no task list tool in Claude Code 2.1.296 (only older models, a background
- * job, or CLAUDE_CODE_ENABLE_TODO_TOOLS do), so there prompts are the steps. Above them the pane
- * shows the plan file the session touched last (progress-plan.mjs reads it), as steps of its own.
+ * job, or CLAUDE_CODE_ENABLE_TODO_TOOLS do). Opening the pane offers the model one of its own
+ * (`mcp__banker__todo`, TodoWrite's shape) where it has none, and the list it sends is the steps.
+ * Above them the pane shows the plan file the session touched last (progress-plan.mjs reads it):
+ * the whole plan as a tree that folds like a toggle list, its sections folded at first.
  * A prompt's harness tags leave its title, and a background task's notice (or a teammate's message)
  * goes on with the last prompt's step instead of becoming one: the step runs again while it does,
  * and keeps its own end and time.
@@ -31,13 +33,47 @@ const HINT = '단계나 하위 항목을 누르면 설명이 여기에 나옵니
 const MAX_STEPS = 50;
 const MAX_KEPT_CALLS = 200;
 const MAX_SHOWN_CALLS = 30;
-const MAX_SHOWN_PLAN = 20;
+// Rows of the plan's tree shown at most; one line past them says how many more there are.
+const MAX_TREE_ROWS = 300;
 // The calls whose file, when it is a plan file, becomes the plan the pane shows.
 const PLAN_TOUCH = new Set(['Write', 'Edit', 'MultiEdit', 'Read', 'NotebookEdit']);
 // The id of the step made for work already under way when the module loaded mid-turn.
 const AT_HAND = 'now';
+// The pane's own to-do tool. The model calls it as `mcp__<plugin>__todo`; it sends the whole list
+// each time, as TodoWrite does. Claude Code's own list tools, where the model has one, take its place.
+const TODO = 'todo';
+export const TODO_TOOL = `mcp__banker__${TODO}`;
+const LIST_TOOLS = new Set(['TodoWrite', 'TaskCreate']);
+const TODO_STATUS = new Set(['pending', 'in_progress', 'completed']);
+const TODO_SPEC = {
+  name: TODO,
+  description: '진행 상황 패널(/progress)이 켜져 있고, 사람이 이 패널로 지금 하는 일과 남은 일을 본다. '
+    + '다음 경우에는 일을 시작하기 전에 이 도구로 할 일 목록 전체를 보낸다: 3단계 이상인 작업, 파일 여러 개를 '
+    + '만들거나 고치는 작업, 사용자가 여러 가지를 한꺼번에 시킨 경우. 항목을 시작할 때 in_progress 로, 끝나면 '
+    + '바로 completed 로 바꿔 목록 전체를 다시 보낸다. in_progress 는 하나만 둔다. 한 단계로 끝나는 일, '
+    + '질문에 답하기, 대화에는 쓰지 않는다.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      todos: {
+        type: 'array',
+        description: '할 일 목록 전체, 하는 순서대로',
+        items: {
+          type: 'object',
+          properties: {
+            content: { type: 'string', description: '할 일 한 줄' },
+            status: { type: 'string', enum: [...TODO_STATUS] },
+            activeForm: { type: 'string', description: '진행 중일 때 보일 문구(선택)' },
+          },
+          required: ['content', 'status'],
+        },
+      },
+    },
+    required: ['todos'],
+  },
+};
 // Bookkeeping calls: they become steps, not calls under a step.
-const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TodoWrite']);
+const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TodoWrite', TODO_TOOL]);
 const STATUS = {
   running: '진행 중', in_progress: '진행 중', pending: '대기', done: '완료', completed: '완료',
   stopped: '중단됨', refused: '거절됨', failed: '오류로 끝남',
@@ -67,11 +103,11 @@ const tally = () => ({ calls: [], count: 0, failed: 0 });
 const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', ...tally() });
 
 // `rev` counts the task changes (TaskCreate, TaskUpdate) taken in, to tell a stale TaskList or TaskGet.
-// `plan` is the plan last read from `planPath`, `planShut` whether its steps are folded. `touch` counts
-// the calls that touched a plan file and `taken` is the touch the plan came from, to tell a read that
-// a newer one overtook.
+// `plan` is the plan last read from `planPath`, `planShut` whether the whole plan is folded and
+// `planOpen` the ids of its nodes unfolded. `touch` counts the calls that touched a plan file and
+// `taken` is the touch the plan came from, to tell a read that a newer one overtook.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
-  plan: null, planPath: null, planShut: false, touch: 0, taken: 0 });
+  plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0 });
 
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
@@ -298,6 +334,30 @@ export function noteTaskTool(s, e, r, now, since) {
   if (CHANGES.has(e.tool)) s.rev += 1;
 }
 
+// The list a to-do call sent, each item's words cleaned, or what is wrong with it.
+export function readTodos(todos) {
+  if (!Array.isArray(todos)) return 'todos 는 할 일의 배열이어야 합니다.';
+  if (todos.length > MAX_STEPS) return `할 일은 ${MAX_STEPS}개까지 보낼 수 있습니다.`;
+  const out = [];
+  for (const t of todos) {
+    const content = typeof t?.content === 'string' ? clip(t.content, 200) : '';
+    if (!content || !TODO_STATUS.has(t.status)) return '항목마다 content(할 일)와 status(pending, in_progress, completed 중 하나)가 있어야 합니다.';
+    out.push({ content, status: t.status, activeForm: typeof t.activeForm === 'string' ? clip(t.activeForm, 80) : undefined });
+  }
+  return out;
+}
+
+// What the to-do tool answers. The list goes to the pane as TodoWrite's would; a subagent's list is its
+// own, as with TodoWrite, and leaves the session's as it is. A list that is not one is refused, so
+// the model reads why.
+export function answerTodo(s, e, now) {
+  const todos = readTodos(e.todos);
+  if (typeof todos === 'string') return { deny: todos };
+  if (!e.agentId) writeTodos(s, { todos }, now);
+  const going = todos.filter((t) => t.status === 'in_progress').length;
+  return { result: `진행 상황 패널에 할 일 ${todos.length}개를 보였습니다(진행 중 ${going}개).` };
+}
+
 // The plan file a call touched, with the touch's count, when it is one and the call went through:
 // a write by anyone, a read by the session itself (an agent reviewing a plan does not make it the plan).
 export function planTouched(s, e, call) {
@@ -323,23 +383,33 @@ function current(s, path, { touch, since }) {
   return path === s.planPath && s.taken <= since;
 }
 
-const isPlanKey = (key) => key === 'plan' || /^p-\d+$/.test(key ?? '');
-
 // Whether what was read stays off the pane: no plan, or a file with no steps in place of a plan that
 // has some (a review written beside it).
 const keepsOff = (s, path, plan) => !plan || (path !== s.planPath && !plan.total && Boolean(s.plan?.total));
 
+// The ids in a tree, to keep the unfolded ones that are still there when a plan is read again.
+function treeIds(nodes, out = new Set()) {
+  for (const n of nodes) {
+    out.add(n.id);
+    treeIds(n.children, out);
+  }
+  return out;
+}
+
 // What a read of a plan file found (`read` is `{ touch }` for a touch's read, `{ since }` for a read
-// again). A file that cannot be read or is no plan leaves the plan as it was.
+// again). A file that cannot be read or is no plan leaves the plan as it was. Another plan starts
+// folded; the same plan read again keeps the nodes unfolded that it still holds.
 export function takePlan(s, path, text, read = {}) {
   if (!current(s, path, read)) return;
   const plan = parsed(path, text);
   if (keepsOff(s, path, plan)) return;
   const moving = path !== s.planPath;
   if (read.touch !== undefined) s.taken = read.touch;
-  if (moving && isPlanKey(s.selected)) s.selected = null;
+  if (moving && s.selected === 'plan') s.selected = null;
+  const ids = treeIds(plan.tree);
+  s.planOpen = moving ? new Set() : new Set([...s.planOpen].filter((id) => ids.has(id)));
   s.planPath = path;
-  s.plan = { ...plan, path, steps: plan.steps.map((st, i) => ({ ...st, key: `p-${i}`, planStep: true })) };
+  s.plan = { ...plan, path };
 }
 
 // ── what the pane shows ──────────────────────────────────────────────────────
@@ -388,30 +458,23 @@ function callWords(call, now) {
 
 function planWords(plan) {
   const where = `계획 파일: ${clip(plan.path.split(/[\\/]/).filter(Boolean).slice(-3).join('/'), 120)}`;
-  const cut = plan.cut ? ' 파일이 길어 앞부분만 읽었습니다.' : '';
-  if (!plan.total) return `${where}. 단계를 찾지 못했습니다.${cut}`;
   const done = plan.hasStates ? `, 완료 ${plan.done}개` : '';
-  return `${where}. 단계 ${plan.total}개${done}.${cut}`;
+  const count = plan.total ? ` 단계 ${plan.total}개${done}.` : '';
+  const cut = plan.cut ? ' 파일이 길어 앞부분만 읽었습니다.' : '';
+  const many = plan.treeCut ? ' 항목이 많아 앞부분만 보입니다.' : '';
+  return `${where}.${count}${cut}${many}`;
 }
 
-function planStepWords(st) {
-  const what = st.text.replace(/[.!?。]+$/, '');
-  return st.status ? `${what}. ${PLAN_STATUS[st.status]}.` : `${what}.`;
-}
-
-// What the person pressed last, while it is still on the pane: the plan or one of its steps, a
-// step, or a call under one.
+// What the person pressed last, while it is still on the pane: the plan, a step, or a call under one.
+// A plan's sections fold where they are pressed, and say nothing more below.
 function pressed(s) {
   if (s.plan && s.selected === 'plan') return { key: 'plan', isPlan: true };
-  const plan = s.plan?.steps.find((st) => st.key === s.selected);
-  if (plan) return plan;
   const all = steps(s);
   return all.find((x) => x.key === s.selected) ?? all.flatMap((x) => x.calls).find((c) => c.key === s.selected);
 }
 
 function itemWords(s, item, now) {
   if (item.isPlan) return planWords(s.plan);
-  if (item.planStep) return planStepWords(item);
   return item.tool !== undefined ? callWords(item, now) : stepWords(item, now);
 }
 
@@ -460,39 +523,71 @@ function stepRow(ui, s, step, act) {
   ] });
 }
 
-// The plan's row: its title in bold (a Button draws its Text children in place of its label) and
-// how far along it is.
+// The plan's row: its title in bold (a Button draws its Text children in place of its label) and,
+// where its steps say, how far along it is.
 function planHead(ui, s, act) {
   const { Box, Text, Button } = ui;
   const { plan } = s;
-  const count = !plan.total ? '단계 없음' : plan.hasStates ? `${plan.done}/${plan.total} 완료` : `${plan.total}단계`;
-  const arrow = plan.steps.length
+  const count = !plan.total ? '' : plan.hasStates ? `${plan.done}/${plan.total} 완료` : `${plan.total}단계`;
+  const arrow = plan.tree.length
     ? Button({ key: 'arrow-plan', label: s.planShut ? '▸' : '▾', plain: true, onPress: () => act.foldPlan() })
     : Text({ children: [' '] });
   const label = room(`계획: ${plan.title}`, act, 2, count);
   return Box({ key: 'row-plan', flexDirection: 'row', columnGap: 1, children: [
     arrow,
     Button({ key: 'plan', label, plain: true, onPress: () => act.select('plan'), children: [Text({ bold: true, children: [label] })] }),
-    Text({ children: [count], dimColor: true }),
+    ...(count ? [Text({ children: [count], dimColor: true })] : []),
   ] });
 }
 
-// The plan's rows: its title, then its first steps unless folded, then a line for the plan's rest.
-function planRows(ui, s, act) {
+// A node's state on the pane: its checkbox's word, or how many of the checkboxes under it are done.
+const nodeState = (n) => n.count ?? PLAN_STATUS[n.status] ?? '';
+const NODE_STYLE = { head: { bold: true }, story: { bold: true }, 'code-line': { dimColor: true } };
+// A part of a row that keeps its width while the words beside it wrap.
+const fixed = (ui, children) => ui.Box({ flexShrink: 0, children });
+
+// A node's row: an arrow where it holds nodes, its number or dash, its words (wrapping on the pane's
+// width; a press on them folds it too) and its state.
+function nodeRow(ui, s, n, depth, act) {
   const { Box, Text, Button } = ui;
+  const holds = n.children.length > 0;
+  const fold = () => act.foldNode(n.id);
+  const words = Text({ children: [n.text], wrap: 'wrap', ...(pick(NODE_STYLE, n.kind) ?? {}) });
+  const state = nodeState(n);
+  return Box({ key: `row-${n.id}`, flexDirection: 'row', columnGap: 1, paddingLeft: depth * 2, children: [
+    holds ? Button({ key: `arrow-${n.id}`, label: s.planOpen.has(n.id) ? '▾' : '▸', plain: true, onPress: fold }) : Text({ children: [' '] }),
+    ...(n.marker ? [fixed(ui, [Text({ children: [n.marker] })])] : []),
+    holds ? Button({ key: n.id, label: n.text, plain: true, onPress: fold, children: [words] }) : words,
+    ...(state ? [fixed(ui, stateWord(ui, state, n.status === 'in_progress'))] : []),
+  ] });
+}
+
+// The plan's nodes as rows, what a folded node holds left out: the first MAX_TREE_ROWS rows, and how
+// many more would show.
+function treeRows(ui, s, act) {
+  const rows = [];
+  let more = 0;
+  const visit = (nodes, depth) => {
+    for (const n of nodes) {
+      if (rows.length < MAX_TREE_ROWS) rows.push(nodeRow(ui, s, n, depth, act));
+      else more += 1;
+      if (n.children.length && s.planOpen.has(n.id)) visit(n.children, depth + 1);
+    }
+  };
+  visit(s.plan.tree, 1);
+  return { rows, more };
+}
+
+// The plan's rows: its title, then its tree unless folded, then a line for the rows past the first 300.
+function planRows(ui, s, act) {
+  const { Box, Text } = ui;
   if (!s.plan) return [];
   const rows = [planHead(ui, s, act)];
-  if (s.planShut) return [...rows, Box({ key: 'plan-gap', marginBottom: 1 })];
-  const shown = s.plan.steps.slice(0, MAX_SHOWN_PLAN);
-  for (const st of shown) {
-    const state = PLAN_STATUS[st.status] ?? '';
-    rows.push(Box({ key: `row-${st.key}`, flexDirection: 'row', columnGap: 1, paddingLeft: 2, children: [
-      Button({ key: st.key, label: room(st.title, act, 2, state), plain: true, onPress: () => act.select(st.key) }),
-      ...stateWord(ui, state, st.status === 'in_progress'),
-    ] }));
+  if (!s.planShut) {
+    const tree = treeRows(ui, s, act);
+    rows.push(...tree.rows);
+    if (tree.more) rows.push(Box({ key: 'plan-more', paddingLeft: 2, children: [Text({ children: [`외 ${tree.more}줄`], dimColor: true })] }));
   }
-  const rest = s.plan.total - shown.length;
-  if (rest > 0) rows.push(Box({ key: 'plan-more', paddingLeft: 2, children: [Text({ children: [`외 ${rest}개`], dimColor: true })] }));
   return [...rows, Box({ key: 'plan-gap', marginBottom: 1 })];
 }
 
@@ -518,14 +613,30 @@ async function showPane($, pane) {
   else if (!pane.isShown) await $.ui.open({ id: PANE, title: TITLE, focus: true });
 }
 
+// Offers the model the to-do tool where it has no task list tool of Claude Code's and the tool is not
+// there yet. An engine without tool.list or tool.register still opens the pane.
+async function offerTodo($) {
+  try {
+    const tools = await $.tool.list();
+    if (tools.some((t) => LIST_TOOLS.has(t.name) || t.name === TODO_TOOL)) return;
+    await $.tool.register(TODO_SPEC);
+  } catch {
+    /* the pane goes on with prompts as its steps */
+  }
+}
+
 // `show` (the default) toggles what the person sees; `on` and `off` set the pane whatever it was.
+// Opening it offers the to-do tool, from the next prompt on.
 export async function runProgress($, args) {
   const want = String(args ?? '').trim().toLowerCase() || 'show';
   if (!['show', 'on', 'off'].includes(want)) return { text: USAGE };
   const pane = (await $.ui.panes()).find((p) => p.id === PANE);
   if (want === 'off' || (want === 'show' && pane?.isShown)) {
     if (pane) await $.ui.close({ id: PANE });
-  } else await showPane($, pane);
+    return {};
+  }
+  await showPane($, pane);
+  await offerTodo($);
   return {};
 }
 
@@ -581,6 +692,14 @@ export function registerProgress(on) {
   on('command.run', { command: 'banker:progress' }, async ($, e) => runProgress($, e.args)).catch(commandFailed);
   // Every tool call passes here: a fault in this hook leaves the call as if the hook were absent.
   on('tool.call', async ($, e, next) => watchCall($, e, next)).catch(() => undefined);
+  // The to-do tool: this hook answers it, and its schema is listed up front rather than behind
+  // ToolSearch, so the model sees it without asking.
+  on('tool.call', { tool: TODO_TOOL }, async ($, e) => {
+    const answer = answerTodo(ref.s, e, Date.now());
+    $.ui.invalidate('ui.render');
+    return answer;
+  }).catch(() => ({ deny: '진행 상황 패널이 할 일 목록을 받지 못했습니다.' }));
+  on('tool.describe', { tool: TODO_TOOL }, async (_$, e, next) => ({ ...(await next(e)), isDeferred: false })).catch(() => undefined);
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e);
     const redraw = () => $.ui.invalidate('ui.render');
@@ -590,6 +709,7 @@ export function registerProgress(on) {
       select: (key) => { ref.s.selected = ref.s.selected === key ? null : key; redraw(); },
       fold: (key) => { if (!ref.s.open.delete(key)) ref.s.open.add(key); redraw(); },
       foldPlan: () => { ref.s.planShut = !ref.s.planShut; redraw(); },
+      foldNode: (id) => { if (!ref.s.planOpen.delete(id)) ref.s.planOpen.add(id); redraw(); },
     };
     return draw($.ui.resolve(e), ref.s, Date.now(), act);
   });
