@@ -248,8 +248,6 @@ function scanTopLevelAwaitImports(src, probe) {
   return s.hits;
 }
 
-// 아래 함수들은 토크나이저 상태 s 를 함께 쓴다. src 와 n(길이), i(지금 자리), prev 와
-// prevIdx(직전 코드 글자와 그 자리), fnStack(열린 중괄호마다 함수 몸통이면 true), hits.
 const wordEndingAt = (src, j) => {
   const e = j;
   while (j >= 0 && ID_CH.test(src[j])) j--;
@@ -266,6 +264,9 @@ function backSkip(src, j) {
     j = s - 1;
   }
 }
+
+// 아래 함수들은 토크나이저 상태 s 를 함께 쓴다. src 와 n(길이), i(지금 자리), prev 와
+// prevIdx(직전 코드 글자와 그 자리), fnStack(열린 중괄호마다 함수 몸통이면 true), hits.
 
 // 주석, 문자열, 공백, 정규식이면 건너뛰고 true. 코드 글자면 그대로 두고 false.
 function skipNonCode(s) {
@@ -406,13 +407,15 @@ function siteInfo(src) {
 //   - 선언이 블록 안(깊이 1 이상): 다른 블록의 자리에서 ReferenceError(옛 킷이 남긴 자리)
 //   - 선언을 못 찾음: 이름만으로는 «패치됨» 이라 할 근거가 없다. 앞쪽 글을 토크나이저가 잘못
 //     읽어 선언이 문자열 안으로 보였을 수도 있다
-//   - 최상위 사용이 선언보다 앞 줄: 그 줄이 먼저 돌아 TDZ 의 ReferenceError
+//   - 최상위 사용이 선언보다 앞: 그 자리가 먼저 돌아 const, let 은 TDZ 의 ReferenceError, var 는
+//     undefined 호출. function 선언은 끌어올려져 앞에서 불러도 된다. 순서는 줄이 아니라 글자 자리로 본다
 function helperDefect({ helperDecls, wrapped }) {
   const inBlock = helperDecls.find((d) => d.depth !== 0);
   if (inBlock) return `헬퍼 선언 :${inBlock.line} 이 블록 안, 깊이 ${inBlock.depth}`;
   if (!helperDecls.length) return "헬퍼 선언을 찾지 못함";
+  const decl = helperDecls[0];
   const first = wrapped.find((w) => !w.inFunction);
-  if (first && first.line < helperDecls[0].line) return `헬퍼 선언 :${helperDecls[0].line} 이 첫 사용 :${first.line} 보다 뒤`;
+  if (first && first.at < decl.at && decl.kind !== "function") return `헬퍼 선언 :${decl.line} 이 첫 사용 :${first.line} 보다 뒤`;
   return null;
 }
 
@@ -473,11 +476,19 @@ function scanFacts(src) {
     if (ch !== "c" && ch !== "l" && ch !== "v" && ch !== "f" && ch !== "a") return;
     if (i > 0 && ID_CH.test(src[i - 1])) return;
     const head = src.slice(i, i + 48);
-    if (/^(?:const|let|var|function)\s+__omcRaceImport\b/.test(head)) helperDecls.push({ line: lineOf(i), depth: fnStack.length });
-    else if (/^await\s+__omcRaceImport\s*\(/.test(head)) wrapped.push({ line: lineOf(i), inFunction: fnStack.some(Boolean) });
+    const decl = /^(const|let|var|function)\s+__omcRaceImport\b/.exec(head);
+    if (decl) helperDecls.push({ line: lineOf(i), depth: fnStack.length, at: i, kind: decl[1] });
+    else if (/^await\s+__omcRaceImport\s*\(/.test(head)) wrapped.push({ line: lineOf(i), inFunction: fnStack.some(Boolean), at: i });
   }).map(lineOf);
   return { helperDecls, wrapped, unwrapped };
 }
+
+// --scan 이 내는 칸. at 과 kind 는 판정용이라 내보내지 않는다(출력 형식은 그대로 둔다).
+const publicFacts = ({ helperDecls, wrapped, unwrapped }) => ({
+  helperDecls: helperDecls.map(({ line, depth }) => ({ line, depth })),
+  wrapped: wrapped.map(({ line, inFunction }) => ({ line, inFunction })),
+  unwrapped,
+});
 
 function syntaxError(file) {
   try { execFileSync(process.execPath, ["--check", file], { stdio: ["ignore", "ignore", "pipe"] }); return null; }
@@ -512,7 +523,7 @@ function patchHooks(root) {
 function revertScript(root, n, f, r) {
   const bak = `${f}.omcbak`;
   if (existsSync(bak)) {
-    const why = unsafeWrite(root, f, bak);
+    const why = whyNotWrite(root, f, bak);
     if (why) { bad(`되돌리지 않음: ${n} (${why})`); r.fail++; return; }
     copyFileSync(bak, f); unlinkSync(bak); log(`  되돌림  ${n}`); r.done++; return;
   }
@@ -534,7 +545,7 @@ function checkOrPatchScript(root, n, f, r) {
   if (MODE === "check") { bad(`패치 필요: ${n}`); r.need++; return; }
 
   const bak = `${f}.omcbak`;
-  const why = unsafeWrite(root, f, bak);
+  const why = whyNotWrite(root, f, bak);
   if (why) { bad(`쓰지 않음: ${n} (${why})`); r.fail++; return; }
   const out = transform(readFileSync(f, "utf8"));
   if (!out) { bad(`변환 실패: ${n}`); r.fail++; return; }
@@ -547,7 +558,7 @@ function checkOrPatchScript(root, n, f, r) {
 
 // 쓰기 전에 본다. 쓸 파일이 (링크를 따라가서) 플러그인 폴더 밖이거나 백업 자리가 링크면 그 이유를,
 // 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, copyFileSync 가 링크가 가리키는 곳에 쓴다.
-function unsafeWrite(root, file, bak) {
+function whyNotWrite(root, file, bak) {
   if (isLink(bak)) return "백업 자리가 링크";
   if (!insideRoot(root, file)) return "파일이 플러그인 폴더 밖에 있음";
   return null;
@@ -570,13 +581,13 @@ function patchHooksJson(root) {
   const hj = join(root, "hooks", "hooks.json");
   if (!existsSync(hj)) return "no-file";
   if (MODE !== "check") {
-    const why = unsafeWrite(root, hj, `${hj}.omcbak`);
+    const why = whyNotWrite(root, hj, `${hj}.omcbak`);
     if (why) { bad(`hooks.json 을 건드리지 않음 (${why})`); return "unsafe"; }
   }
-  return MODE === "revert" ? revertHooksJson(hj) : removePostToolUse(hj);
+  return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj);
 }
 
-function revertHooksJson(hj) {
+function revertHooksJson(root, hj) {
   const bak = `${hj}.omcbak`;
   if (existsSync(bak)) { copyFileSync(bak, hj); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
   // 이 도구가 만든 백업이 없어도, 손으로 만든 백업이 남아 있을 수 있다(실측: 4.15.7 의
@@ -585,6 +596,8 @@ function revertHooksJson(hj) {
   const dir = dirname(hj);
   const cands = readdirSync(dir)
     .filter((f) => f.startsWith("hooks.json.") && f !== "hooks.json.omcbak")
+    // 링크로 심은 후보는 쓰지 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
+    .filter((f) => !isLink(join(dir, f)) && insideRoot(root, join(dir, f)))
     .filter((f) => {
       try { return !!JSON.parse(readFileSync(join(dir, f), "utf8"))?.hooks?.PostToolUse; }
       catch { return false; }
@@ -666,14 +679,18 @@ function takeSavedOrigin() {
   return saved.originUrl || null;
 }
 
-// --root 폴더의 이름표. .claude-plugin/plugin.json 이나 package.json 의 name 이 OMC 가 아니면 그 설명을,
-// 아니면 null. 둘 다 없거나 읽을 수 없으면 확인할 길이 없어 null 이다(번들 사본에는 없을 수 있다).
+// --root 폴더의 이름표. .claude-plugin/plugin.json 의 name 이 있으면 그것으로, 없으면 package.json 의 name
+// 으로 정한다. OMC 가 아니면 그 설명을, 아니면 null. 둘 다 없거나 읽을 수 없으면 확인할 길이 없어 null 이다
+// (번들 사본에는 없을 수 있다). 다른 폴더를 잘못 준 실수를 막는 확인이다. 폴더 밖 쓰기를 막는 것은 whyNotWrite.
 const OMC_NAMES = [[".claude-plugin/plugin.json", "oh-my-claudecode"], ["package.json", "oh-my-claude-sisyphus"]];
 function otherPluginName(root) {
   for (const [rel, want] of OMC_NAMES) {
     let name;
     try { name = JSON.parse(readFileSync(join(root, rel), "utf8")).name; } catch { continue; }
-    if (name !== want) return `${rel} 의 name 이 ${JSON.stringify(name) ?? "없음"}`;
+    if (name === undefined) continue;
+    if (name === want) return null;
+    const shown = JSON.stringify(name);
+    return `${rel} 의 name 이 ${shown.length > 80 ? `${shown.slice(0, 80)}...` : shown}`;
   }
   return null;
 }
@@ -685,7 +702,7 @@ if (SCAN_AT >= 0) {
   const files = args.slice(SCAN_AT + 1);
   if (!files.length) { console.error("--scan 뒤에 파일 경로가 필요합니다."); process.exit(1); }
   const out = files.map((file) => {
-    try { return { file, ...scanFacts(readFileSync(file, "utf8")) }; }
+    try { return { file, ...publicFacts(scanFacts(readFileSync(file, "utf8"))) }; }
     catch (e) { return { file, error: String(e.code || e.message) }; }
   });
   writeSync(1, JSON.stringify(out) + "\n");
@@ -843,7 +860,9 @@ if (MODE === "check") {
     log("          지금 쓰이지 않는 버전이라 판정에 넣지 않았습니다. 그 버전으로 되돌릴 계획이면 함께 적용하십시오.");
   }
 } else if (MODE === "revert") {
-  log("되돌리기 완료. Claude Code 를 재시작해야 반영됩니다.");
+  log(r.fail
+    ? `되돌리기를 끝내지 못했습니다. 실패 ${r.fail}건. 위의 [!] 줄을 확인하십시오.`
+    : "되돌리기 완료. Claude Code 를 재시작해야 반영됩니다.");
 } else {
   log(`완료. 실패 ${r.fail}건.`);
   if (r.misplaced) log(`[!] 헬퍼 자리 결함 ${r.misplaced}건은 고치지 않았습니다. ${misplacedHint()}`);
