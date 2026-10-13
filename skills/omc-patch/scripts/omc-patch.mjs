@@ -2,27 +2,33 @@
 /**
  * OMC 패치 — 버전 고정 + 훅 결함 수정 + 자동 업데이트 차단.
  *
- *   node omc-patch.mjs              업데이트(5.3.0) + 패치 + 고정
+ *   node omc-patch.mjs              업데이트(5.7.0) + 패치 + 고정
  *   node omc-patch.mjs --check      진단만 (아무것도 바꾸지 않음)
  *   node omc-patch.mjs --revert     패치·고정 되돌리기
  *   node omc-patch.mjs --no-update  버전은 그대로 두고 패치만
+ *   node omc-patch.mjs --root <플러그인 폴더> [--check | --revert]
+ *                                   그 폴더의 hooks/hooks.json 과 scripts/ 만 다룬다(번들 사본용).
+ *                                   installed_plugins.json, 마켓플레이스 origin, 판은 건드리지 않는다.
+ *   node omc-patch.mjs --scan <파일>...
+ *                                   헬퍼 선언의 블록 깊이와 래핑 자리를 JSON 으로 낸다(읽기 전용).
  *
  * 활성 버전은 installed_plugins.json 의 oh-my-claudecode@omc 항목(version, installPath)에서
- * 읽는다. 캐시에 5.3.0 이 있다고 5.3.0 을 활성으로 보지 않는다(--no-update 는 활성 버전을 패치).
+ * 읽는다. 캐시에 TARGET_VERSION 이 있다고 그것을 활성으로 보지 않는다(--no-update 는 활성 버전을 패치).
  * OMC_PATCH_INSTALLED=<json 경로> 로 읽을 파일을 바꿀 수 있다(시험용, --check 와 함께).
  *
  * OS: Windows / macOS / Linux 공통. 런처는 apply.cmd(Windows), apply.sh(그 외).
  * 배경과 근거는 같은 폴더의 README.md.
  */
 import {
-  readFileSync, writeFileSync, existsSync, copyFileSync, readdirSync,
+  readFileSync, writeFileSync, writeSync, existsSync, copyFileSync, readdirSync,
   unlinkSync, mkdirSync, rmSync, symlinkSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { homedir, hostname } from "node:os";
 import { execFileSync } from "node:child_process";
 
-const TARGET_VERSION = "5.3.0";
+// 인자 없는 apply 가 맞춰 놓는 판. banker 의 omc-patch 스킬은 늘 --no-update 로 돌려 이 값으로 판을 바꾸지 않는다.
+const TARGET_VERSION = "5.7.0";
 // 3초는 좁았다. 이 예산은 «정상이지만 느린» 로드까지 잘라내는데, 파일 스캔이 8.2배 느려진
 // 이 PC 가 정확히 그 조건이다(실측: 4초 지연에서 session-end 가 조용히 건너뛰어졌다).
 // 대안이 «무한 정지» 인 자리에만 걸리므로 넉넉히 잡는다.
@@ -36,9 +42,16 @@ const MARKETPLACE = "omc";
 const PLUGIN_KEY = "oh-my-claudecode@omc";
 const REPO_URL = "https://github.com/Yeachan-Heo/oh-my-claudecode.git";
 
-const argv = new Set(process.argv.slice(2));
+const args = process.argv.slice(2);
+const argv = new Set(args);
 const MODE = argv.has("--revert") ? "revert" : argv.has("--check") ? "check" : "apply";
 const NO_UPDATE = argv.has("--no-update");
+// --root <플러그인 폴더>: 이 PC 의 설치 상태와 상관없이 그 폴더 하나만 고친다. 번들 사본처럼
+// 판 폴더도 installed_plugins.json 도 없는 트리에 쓴다. 값이 없거나 다음 플래그면 멈춘다.
+const ROOT_AT = args.indexOf("--root");
+const ROOT_ARG = ROOT_AT >= 0 ? args[ROOT_AT + 1] : null;
+const ROOT = ROOT_ARG && !ROOT_ARG.startsWith("--") ? resolve(ROOT_ARG) : null;
+const SCAN_AT = args.indexOf("--scan");
 
 const CFG = join(homedir(), ".claude");
 const PLUGINS = join(CFG, "plugins");
@@ -194,7 +207,9 @@ const REGEX_PREV_CH = new Set("(,=:[!&|?{};+-*%~^".split(""));
 const REGEX_PREV_KW = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete",
   "void", "case", "do", "else", "yield", "await"]);
 
-function scanTopLevelAwaitImports(src) {
+// probe(i, fnStack) 를 주면 코드 글자(문자열·주석·정규식·중괄호가 아닌 자리)마다 부른다.
+// --scan 이 같은 토크나이저로 헬퍼 선언의 깊이를 재는 데 쓴다. 패치 경로는 probe 없이 부른다.
+function scanTopLevelAwaitImports(src, probe) {
   const n = src.length;
   const fnStack = [];
   const hits = [];
@@ -285,22 +300,26 @@ function scanTopLevelAwaitImports(src) {
     if (c === "a" && !(i > 0 && ID_CH.test(src[i - 1])) && /^await\s+import\s*\(/.test(src.slice(i, i + 40))) {
       if (!fnStack.some(Boolean)) hits.push(i);
     }
+    if (probe) probe(i, fnStack);
     prev = c; prevIdx = i; i++;
   }
   return hits;
 }
 
 // 자리별 상태. 이미 손으로 Promise.race 를 두른 자리는 건드리지 않는다(4.15.7 에 그런 것이 둘 있다).
+// 이미 감싼 파일이라도 헬퍼 선언이 블록 안이면(옛 판의 자리) «패치됨» 이 아니라 «misplaced» 다.
+// 그 상태를 «패치됨» 으로 넘기면 --check 가 결함 트리에 «모두 적용» 을 낸다(2026-10-12 실측).
 function siteInfo(src) {
-  if (src.includes("__omcRaceImport")) return { state: "patched", sites: [] };
+  if (src.includes("__omcRaceImport")) {
+    const decl = scanFacts(src).helperDecls.find((d) => d.depth !== 0);
+    return decl ? { state: "misplaced", sites: [], decl } : { state: "patched", sites: [] };
+  }
   const all = scanTopLevelAwaitImports(src);
   if (!all.length) return { state: "n/a", sites: [] };
   const open = all.filter((p) => !/Promise\.race/.test(src.slice(Math.max(0, p - 300), p)));
   if (!open.length) return { state: "guarded", sites: [] };
   return { state: "needs", sites: open };
 }
-
-const needsPatch = (src) => siteInfo(src).state;
 
 function transform(src) {
   const info = siteInfo(src);
@@ -332,6 +351,28 @@ function transform(src) {
   return out.slice(0, ls) + HELPER + out.slice(ls);
 }
 
+// ── 읽기 전용 진단 (--scan) ──────────────────────────────────────────────────
+// 패치가 «제자리» 에 앉았는지를 위 토크나이저 하나로 잰다. 시험이 토크나이저를 따로 가지면
+// 패치가 고르는 자리와 시험이 재는 자리가 서로 다른 규칙을 따르게 된다.
+//   helperDecls  헬퍼 선언마다 { line, depth }. depth 는 둘러싼 중괄호 수(함수 몸통과 블록).
+//                0 이어야 최상위 문장이다. 블록 안 const 는 블록 범위라 다른 블록의 자리에서
+//                ReferenceError 가 나고, 훅의 catch 가 그것을 삼킨다(옛 자리 결함).
+//   wrapped      `await __omcRaceImport(` 자리마다 { line, inFunction }. 패치는 최상위 자리만 감싼다.
+//   unwrapped    아직 감싸지지 않은 최상위 `await import(` 의 줄.
+function scanFacts(src) {
+  const lineOf = (at) => src.slice(0, at).split("\n").length;
+  const helperDecls = [], wrapped = [];
+  const unwrapped = scanTopLevelAwaitImports(src, (i, fnStack) => {
+    const ch = src[i];
+    if (ch !== "c" && ch !== "l" && ch !== "v" && ch !== "f" && ch !== "a") return;
+    if (i > 0 && ID_CH.test(src[i - 1])) return;
+    const head = src.slice(i, i + 48);
+    if (/^(?:const|let|var|function)\s+__omcRaceImport\b/.test(head)) helperDecls.push({ line: lineOf(i), depth: fnStack.length });
+    else if (/^await\s+__omcRaceImport\s*\(/.test(head)) wrapped.push({ line: lineOf(i), inFunction: fnStack.some(Boolean) });
+  }).map(lineOf);
+  return { helperDecls, wrapped, unwrapped };
+}
+
 function syntaxError(file) {
   try { execFileSync(process.execPath, ["--check", file], { stdio: ["ignore", "ignore", "pipe"] }); return null; }
   catch (e) {
@@ -346,7 +387,7 @@ const looksHandPatched = (src) =>
   !src.includes("__omcRaceImport") && /Promise\.race\s*\(\s*\[?[\s\S]{0,120}?\bimport\s*\(/.test(src);
 
 function patchHooks(root) {
-  let done = 0, skip = 0, fail = 0, need = 0;
+  let done = 0, skip = 0, fail = 0, need = 0, misplaced = 0;
   const foreign = [];
   // revert 는 scripts/ 전체를 훑는다. hooks.json 기반 목록은 두 번 새는데, 실측으로
   // 4.15.7 이 둘 다 겪었다 — PostToolUse 를 지우면 그 스크립트가 목록에서 빠지고(그래서
@@ -368,8 +409,14 @@ function patchHooks(root) {
       if (looksHandPatched(readFileSync(f, "utf8"))) foreign.push(n);
       continue;
     }
-    const st = needsPatch(readFileSync(f, "utf8"));
-    if (st !== "needs") { skip++; continue; }
+    const info = siteInfo(readFileSync(f, "utf8"));
+    // 헬퍼 자리 결함은 check 와 apply 모두 이름을 댄다. 이미 감싼 파일이라 transform 으로는
+    // 고칠 수 없으므로 apply 도 건드리지 않고, 되돌린 뒤 다시 적용하라고 안내한다(MISPLACED_HINT).
+    if (info.state === "misplaced") {
+      bad(`헬퍼 자리 결함: ${n} (헬퍼 선언 :${info.decl.line} 이 블록 안, 깊이 ${info.decl.depth})`);
+      misplaced++; continue;
+    }
+    if (info.state !== "needs") { skip++; continue; }
     if (MODE === "check") { bad(`패치 필요: ${n}`); need++; continue; }
 
     const out = transform(readFileSync(f, "utf8"));
@@ -380,7 +427,7 @@ function patchHooks(root) {
     if (err) { copyFileSync(bak, f); bad(`문법오류로 롤백: ${n}\n      ${err}`); fail++; continue; }
     done++;
   }
-  return { done, skip, fail, need, foreign };
+  return { done, skip, fail, need, misplaced, foreign };
 }
 
 // ── 3. PostToolUse 훅 제거 ───────────────────────────────────────────────────
@@ -466,61 +513,104 @@ function pinMarketplace() {
   return "pinned";
 }
 
+// ── --scan: 사실만 내고 끝낸다 ───────────────────────────────────────────────
+// 아래 main 보다 먼저 끝나야 한다. 이 모드는 installed_plugins.json 도 플러그인 캐시도 읽지 않는다.
+// 결과는 입력 순서대로 JSON 배열 한 줄이다. 동기 쓰기로 내보내야 process.exit 가 잘라먹지 않는다.
+if (SCAN_AT >= 0) {
+  const files = args.slice(SCAN_AT + 1);
+  if (!files.length) { console.error("--scan 뒤에 파일 경로가 필요합니다."); process.exit(1); }
+  const out = files.map((file) => {
+    try { return { file, ...scanFacts(readFileSync(file, "utf8")) }; }
+    catch (e) { return { file, error: String(e.code || e.message) }; }
+  });
+  writeSync(1, JSON.stringify(out) + "\n");
+  process.exit(out.some((x) => x.error) ? 1 : 0);
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
-log(`OMC 패치  (대상 ${TARGET_VERSION})  모드: ${MODE}${NO_UPDATE ? " --no-update" : ""}`);
+if (ROOT_AT >= 0 && !ROOT) { bad("--root 뒤에 플러그인 폴더 경로가 필요합니다."); process.exit(1); }
+log(ROOT
+  ? `OMC 패치  (대상 폴더 ${ROOT})  모드: ${MODE}`
+  : `OMC 패치  (대상 ${TARGET_VERSION})  모드: ${MODE}${NO_UPDATE ? " --no-update" : ""}`);
 log(`플랫폼: ${process.platform}  node ${process.version}`);
 log();
 
-if (!existsSync(INSTALLED)) { bad(`Claude Code 플러그인 설정을 찾을 수 없음: ${INSTALLED}`); process.exit(1); }
+// 헬퍼 자리 결함은 이 판의 apply 로 고칠 수 없다(이미 감싼 파일). 원본으로 되돌린 뒤 다시 적용한다.
+const MISPLACED_HINT = ROOT
+  ? "--revert --root 로 되돌린 뒤 같은 --root 로 다시 적용하십시오."
+  : "--revert 로 되돌린 뒤 다시 적용하십시오.";
 
-log("[1/4] 버전");
-if (NO_UPDATE) log("  건너뜀 (--no-update)");
-else if (MODE === "revert") log("  건너뜀 (revert 는 버전을 되돌리지 않음 — README 의 롤백 절차 참고)");
-else if (!ensureVersion() && MODE !== "check") { bad("버전 확보 실패 — 중단"); process.exit(1); }
-
-const versions = installedVersions();
-// [1/4] 뒤에 계산해야 일반 apply 가 TARGET_VERSION 으로 전환한 결과가 반영된다.
-const { v: active, src: activeSrc } = activeVersion();
-if (MODE !== "revert" && (MODE === "check" || NO_UPDATE)) {
-  log(`  활성 버전: ${active} (${activeSrc})`);
-  if (active !== TARGET_VERSION) {
-    log(`  활성 버전이 대상(${TARGET_VERSION})과 다름 — 기본 apply 는 ${TARGET_VERSION} 로 전환하고, --no-update 는 활성 버전(${active})을 그 자리에서 패치함`);
+// targets 는 «고칠 플러그인 폴더» 의 이름표 목록이다. 기본은 캐시의 판 번호이고, --root 는
+// 그 폴더 경로 하나다. rootOf 가 이름표를 폴더로 바꾼다.
+let active, targets;
+const rootOf = (v) => (ROOT ? v : join(CACHE, v));
+if (ROOT) {
+  // 판 폴더도 installed_plugins.json 도 없는 트리(번들 사본)를 고친다. 판 바꾸기([1/4])와
+  // 마켓플레이스 고정([4/4])은 하지 않는다 — 그 둘은 이 PC 의 설정이고 이 폴더의 것이 아니다.
+  if (!existsSync(join(ROOT, "hooks", "hooks.json")) || !existsSync(join(ROOT, "scripts"))) {
+    bad(`플러그인 폴더가 아님 (hooks/hooks.json 과 scripts/ 가 있어야 함): ${ROOT}`);
+    process.exit(1);
   }
+  log("[1/4] 버전");
+  log("  건너뜀 (--root 는 판을 바꾸지 않음)");
+  active = ROOT;
+  targets = [ROOT];
+} else {
+  if (!existsSync(INSTALLED)) { bad(`Claude Code 플러그인 설정을 찾을 수 없음: ${INSTALLED}`); process.exit(1); }
+
+  log("[1/4] 버전");
+  if (NO_UPDATE) log("  건너뜀 (--no-update)");
+  else if (MODE === "revert") log("  건너뜀 (revert 는 버전을 되돌리지 않음 — README 의 롤백 절차 참고)");
+  else if (!ensureVersion() && MODE !== "check") { bad("버전 확보 실패 — 중단"); process.exit(1); }
+
+  const versions = installedVersions();
+  // [1/4] 뒤에 계산해야 일반 apply 가 TARGET_VERSION 으로 전환한 결과가 반영된다.
+  const { v, src: activeSrc } = activeVersion();
+  active = v;
+  if (MODE !== "revert" && (MODE === "check" || NO_UPDATE)) {
+    log(`  활성 버전: ${active} (${activeSrc})`);
+    if (active !== TARGET_VERSION) {
+      log(`  활성 버전이 대상(${TARGET_VERSION})과 다름 — 기본 apply 는 ${TARGET_VERSION} 로 전환하고, --no-update 는 활성 버전(${active})을 그 자리에서 패치함`);
+    }
+  }
+  // apply 는 활성 버전만 손댄다. revert 와 check 는 설치된 모든 버전을 훑는다 —
+  // 여러 버전이 나란히 있을 때 이전 버전에 수정이 남으면, 롤백했을 때 예상과 다른
+  // 상태가 된다(실제로 4.15.7 의 hooks.json 수정이 그렇게 남았다).
+  targets = MODE === "apply" ? [active] : (versions.length ? versions : [active]);
+  if (!existsSync(join(CACHE, active))) { bad(`설치 경로 없음: ${join(CACHE, active)}`); process.exit(1); }
 }
-// apply 는 활성 버전만 손댄다. revert 와 check 는 설치된 모든 버전을 훑는다 —
-// 여러 버전이 나란히 있을 때 이전 버전에 수정이 남으면, 롤백했을 때 예상과 다른
-// 상태가 된다(실제로 4.15.7 의 hooks.json 수정이 그렇게 남았다).
-const targets = MODE === "apply" ? [active] : (versions.length ? versions : [active]);
-if (!existsSync(join(CACHE, active))) { bad(`설치 경로 없음: ${join(CACHE, active)}`); process.exit(1); }
 
 log();
-log(`[2/4] 훅 패치${MODE === "apply" ? `  (${active})` : `  (대상 ${targets.length}개 버전)`}`);
-const r = { done: 0, skip: 0, fail: 0, need: 0 };
+log(`[2/4] 훅 패치${MODE === "apply" || ROOT ? `  (${active})` : `  (대상 ${targets.length}개 버전)`}`);
+const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0 };
 const needBy = {};
+const misplacedBy = {};
 const foreignBy = {};
 for (const v of targets) {
-  const root = join(CACHE, v);
+  const root = rootOf(v);
   if (!existsSync(root)) continue;
   if (targets.length > 1) log(`  — ${v}`);
   const x = patchHooks(root);
   needBy[v] = x.need;
-  for (const k of ["done", "skip", "fail", "need"]) r[k] += x[k];
+  misplacedBy[v] = x.misplaced;
+  for (const k of ["done", "skip", "fail", "need", "misplaced"]) r[k] += x[k];
   if (x.foreign?.length) foreignBy[v] = x.foreign;
 }
-log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `되돌림 ${r.done}건` : `패치 ${r.done}건 / 실패 ${r.fail}건`} / 대상 아님 ${r.skip}건`);
+log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `되돌림 ${r.done}건` : `패치 ${r.done}건 / 실패 ${r.fail}건`}${r.misplaced ? ` / 헬퍼 자리 결함 ${r.misplaced}건` : ""} / 대상 아님 ${r.skip}건`);
 // 이 도구가 만들지 않은 수정은 되돌릴 원본이 디스크에 없다. 조용히 넘기면 «완전히
 // 되돌렸다» 는 잘못된 인상을 준다 — 무엇이 남았고 어떻게 되찾는지 정확히 말한다.
 for (const [v, list] of Object.entries(foreignBy)) {
   bad(`${v}: 이 도구가 만들지 않은 수정이 남아 있습니다 — ${list.join(", ")}`);
   log(`      백업(.omcbak)이 없어 되돌릴 원본이 디스크에 없습니다. 원본이 필요하면:`);
-  log(`      git -C "${MARKET}" archive v${v} scripts/<이름>.mjs | tar -x -C "${join(CACHE, v)}"`);
+  if (ROOT) log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`);
+  else log(`      git -C "${MARKET}" archive v${v} scripts/<이름>.mjs | tar -x -C "${join(CACHE, v)}"`);
 }
 
 log();
 log("[3/4] PostToolUse 훅 제거");
 const hjNeedBy = {};
 for (const v of targets) {
-  const root = join(CACHE, v);
+  const root = rootOf(v);
   if (!existsSync(root)) continue;
   const hj = patchHooksJson(root);
   const tag = targets.length > 1 ? `${v}: ` : "";
@@ -534,35 +624,46 @@ for (const v of targets) {
 
 log();
 log("[4/4] 자동 업데이트 차단");
-// Claude Code 는 세션 시작 후 최대 10분 지연으로 마켓플레이스를 자동 fetch 한다.
-// 공식 차단 수단은 두 가지뿐이고 각각 한계가 있어, 현재 상태를 같이 보여준다.
-//   - DISABLE_AUTOUPDATER=1 : 확실하지만 전역(다른 마켓플레이스도 멈춤)
-//   - /plugin UI 의 마켓플레이스별 토글 : omc 만 끄지만 UI 상태라 파일로 확인 불가
-try {
-  const st = JSON.parse(readFileSync(join(CFG, "settings.json"), "utf8"));
-  const off = st?.env?.DISABLE_AUTOUPDATER;
-  log(`  DISABLE_AUTOUPDATER: ${off ? `${off} (전역 차단 중)` : "미설정 (다른 마켓플레이스는 계속 자동 업데이트)"}`);
-} catch { /* settings.json 이 없거나 읽을 수 없으면 표시만 생략 */ }
-const pin = pinMarketplace();
-({
-  pinned: () => ok("마켓플레이스 고정 (origin fetch 차단)"),
-  already: () => ok("이미 고정됨"),
-  unpinned: () => ok("고정 해제 (origin 복구)"),
-  "not-pinned": () => ok("고정된 적 없음"),
-  needs: () => {},
-  "no-marketplace": () => bad("마켓플레이스 디렉터리 없음 — 고정 불필요"),
-  "no-git": () => bad("마켓플레이스 폴더가 git 저장소가 아님 — 고정하지 않음"),
-  "no-remote": () => ok("origin remote 없음 — 이미 fetch 불가"),
-}[pin] || (() => {}))();
+let pin = "skipped";
+if (ROOT) {
+  log("  건너뜀 (--root 는 마켓플레이스와 settings.json 을 건드리지 않음)");
+} else {
+  // Claude Code 는 세션 시작 후 최대 10분 지연으로 마켓플레이스를 자동 fetch 한다.
+  // 공식 차단 수단은 두 가지뿐이고 각각 한계가 있어, 현재 상태를 같이 보여준다.
+  //   - DISABLE_AUTOUPDATER=1 : 확실하지만 전역(다른 마켓플레이스도 멈춤)
+  //   - /plugin UI 의 마켓플레이스별 토글 : omc 만 끄지만 UI 상태라 파일로 확인 불가
+  try {
+    const st = JSON.parse(readFileSync(join(CFG, "settings.json"), "utf8"));
+    const off = st?.env?.DISABLE_AUTOUPDATER;
+    log(`  DISABLE_AUTOUPDATER: ${off ? `${off} (전역 차단 중)` : "미설정 (다른 마켓플레이스는 계속 자동 업데이트)"}`);
+  } catch { /* settings.json 이 없거나 읽을 수 없으면 표시만 생략 */ }
+  pin = pinMarketplace();
+  ({
+    pinned: () => ok("마켓플레이스 고정 (origin fetch 차단)"),
+    already: () => ok("이미 고정됨"),
+    unpinned: () => ok("고정 해제 (origin 복구)"),
+    "not-pinned": () => ok("고정된 적 없음"),
+    needs: () => {},
+    "no-marketplace": () => bad("마켓플레이스 디렉터리 없음 — 고정 불필요"),
+    "no-git": () => bad("마켓플레이스 폴더가 git 저장소가 아님 — 고정하지 않음"),
+    "no-remote": () => ok("origin remote 없음 — 이미 fetch 불가"),
+  }[pin] || (() => {}))();
+}
 
 log();
 if (MODE === "check") {
   // 판정은 «활성 버전» 기준이다. apply 는 활성 버전만 손대므로, 판정만 모든 버전을 보면
   // 캐시에 옛 버전이 남아 있는 한 apply 를 몇 번 돌려도 영원히 «미적용» 으로 나온다
   // (3-OS 에서 동일하게 재현). 비활성 버전은 정보로만 알린다.
-  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && pin !== "needs";
-  const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v]));
-  log(clean ? "결과: 모두 적용된 상태입니다." : "결과: 적용되지 않은 항목이 있습니다. 인자 없이 다시 실행하십시오.");
+  // 헬퍼 자리 결함이 하나라도 있으면 «모두 적용» 이 아니다. 다시 적용만으로는 안 고쳐지므로
+  // 그 안내를 먼저 낸다(되돌린 뒤 적용하면 «패치 필요» 항목도 함께 처리된다).
+  const misplacedActive = misplacedBy[active] || 0;
+  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && pin !== "needs" && misplacedActive === 0;
+  const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
+  log(clean ? "결과: 모두 적용된 상태입니다."
+    : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${MISPLACED_HINT}`
+    : ROOT ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 같은 --root 로 다시 실행하십시오."
+    : "결과: 적용되지 않은 항목이 있습니다. 인자 없이 다시 실행하십시오.");
   if (others.length) {
     log(`    참고: 비활성 버전 ${others.join(", ")} 에 미적용분이 있습니다.`);
     log("          지금 쓰이지 않는 버전이라 판정에 넣지 않았습니다. 그 버전으로 되돌릴 계획이면 함께 적용하십시오.");
@@ -571,6 +672,7 @@ if (MODE === "check") {
   log("되돌리기 완료. Claude Code 를 재시작해야 반영됩니다.");
 } else {
   log(`완료. 실패 ${r.fail}건.`);
+  if (r.misplaced) log(`[!] 헬퍼 자리 결함 ${r.misplaced}건은 고치지 않았습니다. ${MISPLACED_HINT}`);
   log("    훅 스크립트 패치는 즉시 적용됩니다 (훅이 호출될 때마다 파일을 새로 읽습니다).");
   log("[!] PostToolUse 훅 제거는 hooks.json 변경이라 각 세션이 다시 시작될 때부터 적용됩니다.");
 }
