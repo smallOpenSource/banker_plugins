@@ -428,11 +428,16 @@ export function markUnverified(tests, names, why) {
 // saying it needs no words of the model's own.
 const PROGRESS_WORD = { started: "시작", done: "끝", failed: "실패", skipped: "건너뜀", stopped: "멈춤", note: "기록" };
 
+// A stage it does not know keeps its own name; a verdict on an end that is not a plain note keeps the
+// end's word before it; the line stays one line.
 export function progressLine(e) {
   const i = STAGES.findIndex((s) => s.id === e.stage);
-  const what = e.verdict ? `${e.verdict.by} ${e.verdict.result}` : PROGRESS_WORD[e.status];
+  const where = i >= 0 ? `${i}/${STAGES.length - 1} ${STAGES[i].label}` : `?/${STAGES.length - 1} ${e.stage}`;
+  const word = PROGRESS_WORD[e.status] ?? String(e.status);
+  const verdict = e.verdict ? `${e.verdict.by} ${e.verdict.result}` : "";
+  const what = !verdict ? word : e.status === "note" ? verdict : `${word}, ${verdict}`;
   const round = Number.isInteger(e.round) ? ` ${e.round}회차` : "";
-  return `[ultra-chain] ${i}/${STAGES.length - 1} ${STAGES[i].label}: ${what}${round}`;
+  return `[ultra-chain] ${where}: ${what}${round}`.replace(/\s+/g, " ");
 }
 
 const withProgress = (e) => ({ ...e, progress: progressLine(e) });

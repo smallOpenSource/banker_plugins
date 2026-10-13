@@ -339,6 +339,7 @@ test("a cut-off last line loses only itself; unknown keys named like Object memb
   const out = sink();
   assert.equal(main(["boxes", dir, "--file", file, "--round", "9"], out, sink()), 0);
   assert.match(JSON.parse(out.text).summary, /보내지 않은 새 파일 2개/);
+  assert.equal(JSON.parse(out.text).progress, "[ultra-chain] 6/9 OS 시험과 합의 검증: 기록 9회차");
 });
 
 test("a record command hands back the progress line to say and to add to the resume memo", () => {
@@ -350,4 +351,9 @@ test("a record command hands back the progress line to say and to add to the res
   assert.equal(main(["event", dir, "--stage", "research", "--status", "started"], out, { write() {} }), 0);
   assert.equal(JSON.parse(out.text).progress, "[ultra-chain] 1/9 자료 조사: 시작");
   assert.ok(!readFileSync(join(dir, "events.jsonl"), "utf8").includes("progress"), "the ledger keeps no copy of it");
+});
+
+test("the progress line stays one line and names the stage it cannot place, and a failed verdict keeps its word", () => {
+  assert.equal(progressLine({ stage: "nope", status: "done" }), "[ultra-chain] ?/9 nope: 끝");
+  assert.equal(progressLine({ stage: "qa", status: "failed", verdict: { by: "ralph\nqa", result: "REJECT" } }), "[ultra-chain] 6/9 OS 시험과 합의 검증: 실패, ralph qa REJECT");
 });

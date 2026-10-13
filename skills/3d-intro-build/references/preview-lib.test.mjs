@@ -371,7 +371,14 @@ test('stop leaves a port alone when another process answers there, and clears a 
   assert.deepEqual(await stopServer(path.join(tmp(), 'none.json')), { stopped: false, reason: 'no-state' });
 });
 
-test('notes and logs a report links to are text, so the browser shows them rather than downloading them', () => {
+test('notes and logs a report links to are text, so the browser shows them rather than downloading them', async (t) => {
   for (const ext of ['.md', '.txt', '.log', '.jsonl']) assert.equal(MIME[ext], 'text/plain;charset=utf-8', ext);
   assert.equal(MIME['.html'], 'text/html;charset=utf-8');
+  const dir = site();
+  fs.writeFileSync(path.join(dir, 'plan.md'), '# 계획\n<b>그대로</b>\n');
+  const s = await startServe(dir, {});
+  t.after(() => s.close());
+  const res = await fetch(`http://127.0.0.1:${s.port}/plan.md`);
+  assert.equal(res.headers.get('content-type'), 'text/plain;charset=utf-8');
+  assert.equal(await res.text(), '# 계획\n<b>그대로</b>\n');
 });
