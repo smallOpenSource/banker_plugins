@@ -4,7 +4,7 @@
  *
  * TWO TIERS, and the difference is deliberate.
  *
- *   Tier 1 (standing).  U1..U16. node:test + node:assert + node stdlib, nothing else. CI installs
+ *   Tier 1 (standing).  U1..U19. node:test + node:assert + node stdlib, nothing else. CI installs
  *     neither pptxgenjs nor python-pptx, so anything that needs a builder cannot be a regression
  *     gate. Everything here calls layout()/mdToDeck() out of build_a4p.js and the verifier's
  *     exported functions directly, against fixtures this file builds byte by byte.
@@ -27,7 +27,8 @@
  *   with an advance table chosen so every expected width is exact rather than approximately right.
  *
  * No file is ever written inside the repo: everything transient lands in one mkdtemp under
- * os.tmpdir() and is removed in after().
+ * os.tmpdir() and is removed in after(). The one exception is U19's folder link, which sits in a
+ * mkdtemp of its own and is removed by U19 itself, so the recursive delete never meets it.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1806,4 +1807,30 @@ test('E1b the same substitution that leaves layout() fixed leaves both builders 
 
   // And the builders still agree with layout(), which is the tier-1 statement of the same rule.
   assert.deepEqual(a.slides.map((slide) => slide.map((s) => [s.box.x, s.box.y, s.box.cx, s.box.cy])), coordsOf(B.layout(substituted)));
+});
+
+// Node resolves links for import.meta.url but not for process.argv[1]; comparing the two as given made
+// a run through a linked folder exit 0 without checking anything. The link is a folder junction on
+// Windows, where a file symlink needs admin rights; elsewhere 'junction' is ignored. It sits in a
+// folder of its own, outside TMP, and is removed on its own: no recursive delete ever meets it.
+test('U19 verify_a4p answers the same through a linked folder as through its own path', (t) => {
+  const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'a4p-link-'));
+  const link = path.join(linkDir, 'linked');
+  try {
+    fs.symlinkSync(HERE, link, 'junction');
+  } catch {
+    fs.rmdirSync(linkDir);
+    t.skip('links cannot be made here');
+    return;
+  }
+  try {
+    for (const dir of [HERE, link]) {
+      const r = spawnSync(process.execPath, [path.join(dir, 'verify_a4p.mjs')], { encoding: 'utf8', timeout: 30000 });
+      assert.equal(r.status, 3, `${dir}: status ${r.status}, stderr ${JSON.stringify(r.stderr)}`);
+      assert.match(r.stderr, /^usage: verify_a4p\.mjs /m, dir);
+    }
+  } finally {
+    fs.unlinkSync(link);
+    fs.rmdirSync(linkDir);
+  }
 });

@@ -5,9 +5,11 @@
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   norm, detectProfile, parseFrontmatter, serializeFrontmatter, parseOmcFrontmatter,
@@ -604,4 +606,31 @@ test('serializeFrontmatter emits exactly the 9 keys in OMC order', () => {
   const yaml = serializeFrontmatter(fm);
   assert.deepEqual(yaml.split('\n').map((l) => l.slice(0, l.indexOf(':'))), FM_KEYS);
   assert.ok(yaml.includes('tags: ["a", "b"]'), 'FLOW arrays, double-quoted — OMC parseYamlArray reads flow form only');
+});
+
+// Node resolves links for import.meta.url but not for process.argv[1]; comparing the two as given made
+// a run through a linked folder exit 0 without doing anything. The link is a folder junction on
+// Windows, where a file symlink needs admin rights; elsewhere 'junction' is ignored. It sits in a
+// folder of its own, not one of the vaults, and is removed on its own: no recursive delete meets it.
+test('obsidize answers the same through a linked folder as through its own path', (t) => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obz-link-'));
+  const link = path.join(linkDir, 'linked');
+  try {
+    fs.symlinkSync(here, link, 'junction');
+  } catch {
+    fs.rmdirSync(linkDir);
+    t.skip('links cannot be made here');
+    return;
+  }
+  try {
+    for (const d of [here, link]) {
+      const r = spawnSync(process.execPath, [path.join(d, 'obsidize.mjs')], { encoding: 'utf8', timeout: 30000 });
+      assert.equal(r.status, 2, `${d}: status ${r.status}, stderr ${JSON.stringify(r.stderr)}`);
+      assert.match(r.stderr, /^usage: obsidize\.mjs /m, d);
+    }
+  } finally {
+    fs.unlinkSync(link);
+    fs.rmdirSync(linkDir);
+  }
 });
