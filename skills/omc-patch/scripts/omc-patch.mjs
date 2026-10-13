@@ -9,7 +9,8 @@
  *   node omc-patch.mjs --root <플러그인 폴더> [--check | --revert]
  *                                   그 폴더의 hooks/hooks.json 과 scripts/ 만 다룬다(번들 사본, 활성 캐시 폴더 하나).
  *                                   installed_plugins.json, 마켓플레이스 origin, 판은 건드리지 않는다.
- *                                   이름표(.claude-plugin/plugin.json, package.json)가 OMC 가 아니면 멈춘다.
+ *                                   이름표(.claude-plugin/plugin.json 의 name, 없으면 package.json 의 name)가
+ *                                   OMC 가 아니면 멈춘다.
  *   node omc-patch.mjs --scan <파일>...
  *                                   헬퍼 선언의 블록 깊이와 래핑 자리를 JSON 으로 낸다(읽기 전용).
  *
