@@ -4,7 +4,7 @@
  *
  * TWO TIERS, and the difference is deliberate.
  *
- *   Tier 1 (standing).  U1..U16. node:test + node:assert + node stdlib, nothing else. CI installs
+ *   Tier 1 (standing).  U1..U19. node:test + node:assert + node stdlib, nothing else. CI installs
  *     neither pptxgenjs nor python-pptx, so anything that needs a builder cannot be a regression
  *     gate. Everything here calls layout()/mdToDeck() out of build_a4p.js and the verifier's
  *     exported functions directly, against fixtures this file builds byte by byte.
@@ -1810,12 +1810,15 @@ test('E1b the same substitution that leaves layout() fixed leaves both builders 
 
 // Node resolves links for import.meta.url but not for process.argv[1]; comparing the two as given made
 // a run through a linked folder exit 0 without checking anything. The link is a folder junction on
-// Windows, where a file symlink needs admin rights; elsewhere 'junction' is ignored.
-test('verify_a4p answers the same through a linked folder as through its own path', (t) => {
-  const link = tmp('linked');
+// Windows, where a file symlink needs admin rights; elsewhere 'junction' is ignored. It sits in a
+// folder of its own, outside TMP, and is removed on its own: no recursive delete ever meets it.
+test('U19 verify_a4p answers the same through a linked folder as through its own path', (t) => {
+  const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'a4p-link-'));
+  const link = path.join(linkDir, 'linked');
   try {
     fs.symlinkSync(HERE, link, 'junction');
   } catch {
+    fs.rmdirSync(linkDir);
     t.skip('links cannot be made here');
     return;
   }
@@ -1827,5 +1830,6 @@ test('verify_a4p answers the same through a linked folder as through its own pat
     }
   } finally {
     fs.unlinkSync(link);
+    fs.rmdirSync(linkDir);
   }
 });

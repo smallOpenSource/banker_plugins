@@ -610,15 +610,16 @@ test('serializeFrontmatter emits exactly the 9 keys in OMC order', () => {
 
 // Node resolves links for import.meta.url but not for process.argv[1]; comparing the two as given made
 // a run through a linked folder exit 0 without doing anything. The link is a folder junction on
-// Windows, where a file symlink needs admin rights; elsewhere 'junction' is ignored.
+// Windows, where a file symlink needs admin rights; elsewhere 'junction' is ignored. It sits in a
+// folder of its own, not one of the vaults, and is removed on its own: no recursive delete meets it.
 test('obsidize answers the same through a linked folder as through its own path', (t) => {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'obz-link-'));
-  vaults.push(dir);
-  const link = path.join(dir, 'linked');
+  const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obz-link-'));
+  const link = path.join(linkDir, 'linked');
   try {
     fs.symlinkSync(here, link, 'junction');
   } catch {
+    fs.rmdirSync(linkDir);
     t.skip('links cannot be made here');
     return;
   }
@@ -630,5 +631,6 @@ test('obsidize answers the same through a linked folder as through its own path'
     }
   } finally {
     fs.unlinkSync(link);
+    fs.rmdirSync(linkDir);
   }
 });
