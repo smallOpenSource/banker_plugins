@@ -27,7 +27,8 @@
  *   with an advance table chosen so every expected width is exact rather than approximately right.
  *
  * No file is ever written inside the repo: everything transient lands in one mkdtemp under
- * os.tmpdir() and is removed in after().
+ * os.tmpdir() and is removed in after(). The one exception is U19's folder link, which sits in a
+ * mkdtemp of its own and is removed by U19 itself, so the recursive delete never meets it.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
