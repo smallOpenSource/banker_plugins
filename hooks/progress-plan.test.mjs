@@ -199,7 +199,7 @@ test('hostile plans and prompts parse in bounded time', () => {
   fast('50k step headings', md(Array.from({ length: 50000 }, (_, i) => `## Step ${i}`).join('\n')));
   const block = '### Task 1: a\n- [ ] Step\n```js\n# x\n```\n';
   fast('a 4 MiB plan', md(block.repeat(Math.ceil((4 << 20) / block.length))));
-  fast('100k stories', () => parsePlan('/w/.omc/prd.json', JSON.stringify({ stories: Array.from({ length: 100000 }, (_, i) => ({ title: `s${i}` })) })));
+  fast('25k stories, under the JSON cap', () => assert.equal(parsePlan('/w/.omc/prd.json', JSON.stringify({ stories: Array.from({ length: 25000 }, (_, i) => ({ title: `s${i}` })) })).total, 25000));
   fast('16k unclosed reminders', () => readPrompt('<system-reminder>'.repeat(16000)));
   fast('16k unclosed command names', () => readPrompt(`x${'<command-name>'.repeat(16000)}`));
   fast('a 1 MiB prompt', () => readPrompt('가'.repeat(1 << 20)));
@@ -231,7 +231,8 @@ test('a long reminder before the request still leaves the title', () => {
 });
 
 test('huge fields in a JSON plan and huge prompts are cut before they are cleaned', () => {
-  fast('a 4 MiB title', () => parsePlan('/w/.omc/prd.json', JSON.stringify({ title: 'a '.repeat(2 << 20), stories: [{ title: 'x', description: 'b '.repeat(1 << 20) }] })), 300);
+  fast('a 4 MiB title, past the JSON cap', () => assert.equal(parsePlan('/w/.omc/prd.json', JSON.stringify({ title: 'a '.repeat(2 << 20), stories: [{ title: 'x' }] })), null), 300);
+  fast('a 200 Ki title and description, under the cap', () => assert.equal(parsePlan('/w/.omc/prd.json', JSON.stringify({ title: 'a '.repeat(100000), stories: [{ title: 'x', description: 'b '.repeat(100000) }] })).total, 1), 300);
   fast('a 4 MiB prompt of unclosed tags', () => readPrompt('<command-args>'.repeat(300000)));
   fast('a 4 MiB prompt', () => readPrompt(`${'가 '.repeat(2 << 20)}끝`));
   assert.equal(clip(`${'가'.repeat(5000)}`, 3), '가가…');

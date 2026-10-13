@@ -47,8 +47,9 @@ export function fit(text, n) {
 }
 
 // Characters the engine refuses in a drawing, or that would turn the text drawn after them around:
-// control characters, private-use ones (the engine keeps U+10EEEE for itself), bidirectional overrides.
-// Lone surrogates go by toWellFormed.
+// control characters, private-use ones (the engine keeps U+10EEEE for itself; icon fonts' glyphs go
+// too), bidirectional overrides. Lone surrogates go by toWellFormed. For replace only: a global
+// pattern keeps lastIndex between test() calls.
 export const UNDRAWABLE = /[\p{Cc}\p{Co}\u202A-\u202E\u2066-\u2069]/gu;
 
 // One line of plain text, cut to `n` characters, with what the engine cannot draw gone: it refuses a

@@ -1176,6 +1176,21 @@ test('a registration the engine refuses is said in one line, and the pane still 
   assert.deepEqual(eng.seen.logs, ['할 일 도구를 등록하지 못했습니다(a user MCP server holds the name). 진행 상황 패널은 요청을 단계로 보입니다.']);
 });
 
+test('a plan read again at a turn is not read once its path leads to no plain file; the to-do tool takes the list when the pane list fails', async () => {
+  const kinds = new Map();
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD]]), kinds });
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  kinds.set(PLAN, 'other');
+  eng.files.set(PLAN, '# 바뀐 계획\n- [x] a\n');
+  const reads = eng.seen.reads.length;
+  await eng.raise('turn.start', { turnId: 't1', text: '다음' });
+  assert.equal(eng.seen.reads.length, reads, 'no read of a pipe');
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획']);
+  eng.$.ui.panes = async () => { throw new Error('pane list refused'); };
+  const answer = await eng.raise('tool.call', { tool: TODO_TOOL, todos: [{ content: '하나', status: 'in_progress' }] });
+  assert.match(answer.result, /할 일 1개를 보였습니다/);
+});
+
 test('a notice whose status is named like an object\'s own property gets the plain word', async () => {
   const eng = engine();
   await eng.raise('turn.start', { turnId: 't1', text: '하나' });

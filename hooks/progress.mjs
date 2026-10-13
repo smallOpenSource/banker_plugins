@@ -721,7 +721,12 @@ export function registerProgress(on) {
   // The to-do tool: this hook answers it, and its schema is listed up front rather than behind
   // ToolSearch, so the model sees it without asking.
   on('tool.call', { tool: TODO_TOOL }, async ($, e) => {
-    const open = (await $.ui.panes()).some((p) => p.id === PANE);
+    let open = true;
+    try {
+      open = (await $.ui.panes()).some((p) => p.id === PANE);
+    } catch {
+      /* the pane list failed: take the list as for an open pane rather than refuse it */
+    }
     const answer = answerTodo(ref.s, e, Date.now(), open);
     $.ui.invalidate('ui.render');
     return answer;
