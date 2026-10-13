@@ -204,6 +204,7 @@ try {
   // omc-patch runs its tool from the skill's own folder (scripts/omc-patch.mjs), so the Codex copy needs it too.
   ok(installed.includes('banker-omc-patch'), 'new omc-patch installed as banker-omc-patch');
   ok(fs.existsSync(path.join(instDir, 'banker-omc-patch', 'scripts', 'omc-patch.mjs')), 'banker-omc-patch carries scripts/omc-patch.mjs into the Codex install');
+  ok(fs.existsSync(path.join(instDir, 'banker-omc-patch', 'scripts', 'probe-pm.mjs')), 'banker-omc-patch carries scripts/probe-pm.mjs into the Codex install');
   // remains runs its box tool from the skill's own folder (scripts/boxes.mjs), so the Codex copy needs it too.
   ok(installed.includes('banker-remains'), 'new remains installed as banker-remains');
   ok(fs.existsSync(path.join(instDir, 'banker-remains', 'scripts', 'boxes.mjs')), 'banker-remains carries scripts/boxes.mjs into the Codex install');
@@ -334,6 +335,7 @@ try {
     path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
+    path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),
     path.join('skills', 'setup-omc-hud', 'scripts', 'claude-update-last.test.mjs'),
     path.join('skills', 'setup-bypass-permissions', 'scripts', 'bypass-permissions.test.mjs'),
