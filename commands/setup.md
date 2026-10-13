@@ -28,14 +28,14 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    - **setup-sandbox** — OS별 샌드박스(bubblewrap+userns / AppContainer / Seatbelt) + rust + git safe.directory.
 
    **프레임워크·플러그인**
-   - **setup-omc** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). `all-in-one`·`ultra-init`·`/banker:front-qa` 의존성.
+   - **setup-omc** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa` 의존성.
    - **setup-harness-factory** — revfactory/harness(팀 아키텍처 팩토리) 설치+구성+안내(Codex=meta-harness).
    - **setup-insane-search** — insane-search 플러그인(차단 사이트 우회, Claude/Codex 양쪽).
    - **setup-omc-hud** — omc_hud 상태표시줄(OS별).
    - **setup-stitch** — Stitch(디자인 생성) MCP 프록시 등록(RockyLinux8 proxy-script, API key 필요).
 
    **의존성 라이브러리**
-   - **setup-playwright** — Playwright + 브라우저 + Xvfb(RHEL8/Rocky8 폴백). (`ultra-ui-qa`·`audit-web-page`·`play-qa` 의존성)
+   - **setup-playwright** — Playwright + 브라우저 + Xvfb(RHEL8/Rocky8 폴백). (`ultra-ui-qa`·`audit-web-page`·`play-qa`·`ultra-chain` 의존성)
    - **docs-setup** — arch-diagram·pdf-vision-extract 의존성(python-pptx·pymupdf·plantuml). (의존: python)
    - **motion-graphic-setup** — hyperframes(무료 모션 그래픽 CLI) 전제조건(Node≥22 + ffmpeg → `npx hyperframes`). (`motion-graphic-make` 의존성)
    - **3d-intro-setup** — 3D 인트로용 크레덴셜(Azure gpt-image·Sora-2, 선택 WAN 영상 키 풀)·의존성(Node/ffmpeg) + 무과금 프리플라이트. (`3d-intro-build` 의존성)

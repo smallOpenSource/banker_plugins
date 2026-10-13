@@ -8,7 +8,7 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 60개 + 커맨드 2개**(총 62개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause`, `/progress` 를 묶은 Claude Code 플러그인입니다.\
+banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 61개 + 커맨드 2개**(총 63개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause`, `/progress` 를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
@@ -64,6 +64,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `omc-patch` | OMC 자동 업데이트 뒤 훅이 느려지거나 훅 프로세스가 쌓일 때, project-memory 가 안 될 때 | 사라진 훅 패치를 다시 적용하고 OMC 자동 업데이트를 고정 |
 | `remains` | 작업 뒤에 남은 버그, 하자, 미검증 항목을 한눈에 보고 싶을 때 | 남은 항목을 표로 정리하고, 등록한 테스트박스에서 시험까지 돌림 |
 | `trouble-shooting` | 문제가 생겨 원인과 해결방법을 정리해야 할 때 | 현상, 문제점, 원인, 해결방법, 조치계획을 표로 간결히 보고(`--no-plan` 은 해결방법까지) |
+| `ultra-chain` | 조사부터 결과 공유까지 한 번에, 여러 OS 에서 돌아야 하는 기능을 만들 때 | 조사 → 인터뷰 → 검토자 3명 이상의 합의 계획 → 목업 승인 → 구현 → OS 박스 시험과 합의 검증 → 시각 검토 → 과정 보고서 |
 
 ## 구성
 
@@ -137,6 +138,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `omc-patch` | OMC 자동 업데이트 뒤 사라진 훅 패치를 재적용하고 OMC 마켓플레이스 자동 업데이트를 고정(진단·확인·적용·검증·되돌리기). 옛 킷이 블록 안에 넣은 헬퍼(project-memory 꺼짐)를 찾아 고치고, project-memory 훅이 실제로 일하는지 임시 폴더에서 확인 |
 | `remains` | 남은 버그, 하자, 미검증 항목을 찾아 표로 보여 줌. 테스트박스(`~/.config/banker/test-boxes.json`)가 등록돼 있으면 각 OS 에서 시험을 돌려 확인(읽기와 시험만, 고치지 않음) |
 | `trouble-shooting` | 문제를 조사해 현상, 문제점, 원인, 해결방법, 조치계획을 표 하나로 간결히 보고(문제마다 한 행, `--no-plan` 은 해결방법까지, 고치지 않고 보고만) |
+| `ultra-chain` | 자료 조사, 모호성 제거, 검토자 3명 이상의 합의 계획, 목업 승인, 비판 검증 구현, 실제 OS 테스트박스 시험과 합의 검증, 시각 검토, 과정 시각화, 결과 공유를 한 명령으로 잇는 9단계 연쇄. 사람이 볼 곳은 인터뷰의 취향 질문과 목업 승인으로 줄임. 실행 기록과 단일 HTML 보고서를 남기고, push 나 외부 게시는 요청할 때만 |
 
 ### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
 
@@ -193,9 +195,9 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 60개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 61개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
-- OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
+- OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
   32MB 요청 한도는 Claude Code 의 것이라 Codex 자신의 요청 크기는 재지 않습니다.
 - `omc-patch` 도 Codex에서 실행하면 같은 머신의 Claude Code OMC 플러그인 캐시(`~/.claude/plugins/`)만 다룹니다. Codex 의 OMX 는 건드리지 않습니다.
@@ -254,11 +256,12 @@ banker uninstall        # 제거
 - Claude Code (마켓플레이스 경로): 스킬이 `/banker:*` 로 동작.
 - 또는 Node.js ≥ 16.7 (npm 전역 설치 경로): `banker` CLI 제공.
 - 일부 스킬은 별도 의존성이 필요하며 `/banker:setup` 으로 설치합니다. 의존성이 없으면 각 스킬이 실행 전에 설치부터 안내합니다.
-  - `all-in-one`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX.
+  - `all-in-one`, `ultra-chain`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX.
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright. `3d-intro-build` 의 독립 검증(`verify-intro.mjs`)도 Node 용 playwright 패키지와 Chromium 을 씁니다(`npm i -g playwright && npx playwright install chromium`).
   - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
   - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).
   - `remains`: 테스트박스를 쓰려면 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 와 시험에 필요한 런타임(예: Node)이 있어야 하고, SSH 키로 암호 없이 접속돼야 합니다.
+  - `ultra-chain`: 위 OMC(Codex 는 OMX), 웹 조사 수단, 시각 검토의 캡처에는 Node 용 playwright 패키지와 Chromium, OS 시험에는 `remains` 와 같은 테스트박스 조건.
   - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알리며, Codex 에는 이 명령이 없습니다.
   - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 에는 이 명령이 없습니다.
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
@@ -386,7 +389,7 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 
 | 분류 | 항목 | 라이선스 | 사용/설치 스킬 |
 |---|---|---|---|
-| 프레임워크 | oh-my-claudecode(OMC)·oh-my-codex(OMX), by [Yeachan-Heo](https://github.com/Yeachan-Heo) | MIT | `all-in-one`·`ultra-init`·`/banker:front-qa`·`setup-omc` |
+| 프레임워크 | oh-my-claudecode(OMC)·oh-my-codex(OMX), by [Yeachan-Heo](https://github.com/Yeachan-Heo) | MIT | `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa`·`setup-omc` |
 | 플러그인 | insane-search (© fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)) | MIT | `setup-insane-search` |
 | 팀 아키텍처 팩토리 | revfactory/harness (© Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness)) · Codex 포트 SaehwanPark/meta-harness | Apache-2.0 | `setup-harness-factory`(설치·구성만 안내) |
 | 서비스(독점·상표) | Notion | 독점 | `make-notion-guide` |

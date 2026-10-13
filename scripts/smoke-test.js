@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (60 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (61 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 60, `codex dry-run plans 60 skill copies (got ${copies})`);
+  ok(copies === 61, `codex dry-run plans 61 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -159,7 +159,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 60, `real codex install has 60 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 61, `real codex install has 61 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -187,6 +187,12 @@ try {
     const b = fs.readFileSync(path.join(root, 'skills', 'motion-graphic-make', 'references', f));
     ok(a.equals(b), `${f} is byte-identical across 3d-intro-build and motion-graphic-make`);
   }
+  // ultra-chain serves its mock and report with the same preview server (same sync script).
+  for (const f of ['preview-lib.mjs', 'serve.mjs']) {
+    const a = fs.readFileSync(path.join(root, 'skills', '3d-intro-build', 'references', f));
+    const b = fs.readFileSync(path.join(root, 'skills', 'ultra-chain', 'references', f));
+    ok(a.equals(b), `${f} is byte-identical across 3d-intro-build and ultra-chain`);
+  }
   // payload-mon runs on its two scripts: payload-mon.mjs patches the HUD wrapper and copies payload-size.mjs
   // beside it, so a Codex copy missing either one can neither turn the segment on nor compute it.
   ok(installed.includes('banker-payload-mon'), 'new payload-mon installed as banker-payload-mon');
@@ -209,6 +215,11 @@ try {
   ok(installed.includes('banker-remains'), 'new remains installed as banker-remains');
   ok(fs.existsSync(path.join(instDir, 'banker-remains', 'scripts', 'boxes.mjs')), 'banker-remains carries scripts/boxes.mjs into the Codex install');
   ok(installed.includes('banker-trouble-shooting'), 'new trouble-shooting installed as banker-trouble-shooting');
+  // ultra-chain runs its ledger, report, capture and preview server from the skill's own folder, so the Codex copy needs them.
+  ok(installed.includes('banker-ultra-chain'), 'new ultra-chain installed as banker-ultra-chain');
+  const ucFiles = ['chain-ledger.mjs', 'chain-report.mjs', 'capture.mjs', 'serve.mjs', 'preview-lib.mjs'];
+  ok(ucFiles.every((f) => fs.existsSync(path.join(instDir, 'banker-ultra-chain', 'references', f))),
+     `banker-ultra-chain carries references/${ucFiles.join(' + references/')} into the Codex install`);
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud step 3 runs scripts/claude-update-last.mjs from the skill's own folder; every copy of that
@@ -337,6 +348,9 @@ try {
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),
+    path.join('skills', 'ultra-chain', 'references', 'chain-ledger.test.mjs'),
+    path.join('skills', 'ultra-chain', 'references', 'chain-report.test.mjs'),
+    path.join('skills', 'ultra-chain', 'references', 'capture.test.mjs'),
     path.join('skills', 'setup-omc-hud', 'scripts', 'claude-update-last.test.mjs'),
     path.join('skills', 'setup-bypass-permissions', 'scripts', 'bypass-permissions.test.mjs'),
     path.join('skills', 'setup-bypass-permissions', 'scripts', 'fallbacks.test.mjs'),

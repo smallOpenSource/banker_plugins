@@ -6,6 +6,7 @@
  * skill that ships it, because banker skills are installed (Claude and Codex) as separate folders.
  *   azure-adapter.mjs, video-pool.mjs     -> 3d-intro-setup      (Azure image + Sora, WAN key pool)
  *   preview-lib.mjs, serve.mjs, curate.mjs -> motion-graphic-make (local servers, review page)
+ *   preview-lib.mjs, serve.mjs             -> ultra-chain         (local server for the mock and the report)
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
  *   node scripts/sync-adapter.js --check  # exit 1 if any pair differs (used in CI/prepublish)
@@ -17,6 +18,7 @@ const root = path.resolve(__dirname, '..');
 const MIRRORS = [
   { skill: '3d-intro-setup', files: ['azure-adapter.mjs', 'video-pool.mjs'] },
   { skill: 'motion-graphic-make', files: ['preview-lib.mjs', 'serve.mjs', 'curate.mjs'] },
+  { skill: 'ultra-chain', files: ['preview-lib.mjs', 'serve.mjs'] },
 ];
 const check = process.argv.includes('--check');
 

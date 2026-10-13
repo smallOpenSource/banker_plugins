@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+/*
+ * Local preview server for an assembled intro (index.html + scrub-engine.js + assets/), so the
+ * scroll-scrubbed page is checked in a real browser. The project convention is a self-contained
+ * local page on an unused port, never a claude.ai artifact. Shared by 3d-intro-build and
+ * motion-graphic-make (scripts/sync-adapter.js keeps the copies identical).
+ *
+ * Why a server at all: the engine loads each clip with fetch() into a Blob, which file:// cannot
+ * serve, and video plays smoother with byte ranges (206).
+ *
+ * Usage:
+ *   node serve.mjs [dir] [--port N] [--csp strict|"<policy>"] [--state file]
+ *   node serve.mjs --stop [dir] [--state file]
+ *     dir      folder to serve (default: the current one)
+ *     --port   preferred port; when busy or absent the system picks a free one
+ *     --csp    sends Content-Security-Policy on every response: `strict` (no inline script or
+ *              style; blob: media) or the production policy as written. Check a page for a site
+ *              with a CSP under that same policy: a plain server hides CSP errors.
+ *     --state  state file (default: <dir>.server.json beside the folder, never inside it)
+ *     --stop   ends the server the state file records, only when it answers with that PID
+ *   A start while the recorded server still answers with the same settings only reports its
+ *   address; with other settings (another folder sharing the --state file, --csp, PREVIEW_HOST, a
+ *   --port other than the one it listens on or its own start asked for) it exits 1: --stop first.
+ *   A request whose Host is a DNS name other than localhost is refused (DNS rebinding).
+ *   On listen it writes the state file and prints  PREVIEW http://localhost:<port>/
+ *   PREVIEW_HOST=0.0.0.0 binds every interface (on-device phone checks) and prints a warning.
+ *
+ * Runtime: Node >=18 builtins only. No shell, cross-platform.
+ */
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  LOOPBACK, answersPid, cspFrom, decodePath, forgetSelf, hostAllowed, hostWarning, isRunning, listen, portMatches, readState,
+  resolveInside, send, sendFile, siblingState, stopServer, urlFor, writeState,
+} from './preview-lib.mjs';
+
+function handler(dir, headers, host) {
+  return (req, res) => {
+    if (!hostAllowed(req.headers.host, [host])) return send(res, 403, 'host not allowed', headers);
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, '405', headers);
+    const urlPath = decodePath(req.url);
+    if (urlPath === null) return send(res, 400, '400', headers);
+    if (answersPid(urlPath, res)) return;
+    const fp = resolveInside(dir, urlPath === '/' ? '/index.html' : urlPath);
+    if (!fp) return send(res, 403, '403', headers);
+    sendFile(req, res, fp, headers);
+  };
+}
+
+/**
+ * Serves `dir` until close(). Resolves to { server, port, host, url, stateFile, close }.
+ * @param {{ port?: number, host?: string, csp?: string, stateFile?: string }} opts
+ */
+export async function startServe(dir, { port, host = process.env.PREVIEW_HOST || LOOPBACK, csp, stateFile } = {}) {
+  const root = path.resolve(dir);
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`serve: not a directory: ${root}`);
+  const policy = cspFrom(csp);
+  const server = http.createServer(handler(root, policy ? { 'Content-Security-Policy': policy } : {}, host));
+  const bound = await listen(server, { host, port });
+  const url = urlFor(host, bound);
+  const file = stateFile ? path.resolve(stateFile) : siblingState(root);
+  writeState(file, {
+    pid: process.pid, port: bound, requestedPort: port || null, host, url, dir: root, csp: policy, startedAt: new Date().toISOString(),
+  });
+  const close = () => new Promise((resolve) => { forgetSelf(file); server.close(() => resolve()); });
+  return { server, port: bound, host, url, stateFile: file, close };
+}
+
+function parseArgs(argv) {
+  const o = { dir: null, port: null, csp: null, state: null, stop: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    const [key, inline] = a.includes('=') ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a, null];
+    const value = () => (inline !== null ? inline : argv[++i]);
+    if (key === '--port') o.port = Number(value());
+    else if (key === '--csp') o.csp = value();
+    else if (key === '--state') o.state = value();
+    else if (key === '--stop') o.stop = true;
+    else if (!a.startsWith('--')) o.dir = a;
+  }
+  return o;
+}
+
+// Nothing left running is a success; a port held by another program, or one that stays open, is not.
+async function stopMain(o, dir) {
+  const r = await stopServer(o.state ? path.resolve(o.state) : siblingState(dir));
+  console.log(`STOP ${r.reason}`);
+  process.exit(['stopped', 'not-running', 'no-state'].includes(r.reason) ? 0 : 1);
+}
+
+// Whether the recorded server answers this start: this folder, the same CSP and host, and the port
+// asked for. A state file shared through --state can record another folder's server.
+const sameSettings = (st, o, dir) => path.resolve(String(st.dir || '')) === dir && (st.csp || null) === cspFrom(o.csp)
+  && (st.host || LOOPBACK) === (process.env.PREVIEW_HOST || LOOPBACK) && portMatches(st, o.port);
+
+// A server already running for this state file: the same settings only report its address; other
+// settings (folder, CSP, host, port) never pass for it, so a check meant to run under a CSP cannot
+// run without one, and a page meant for one folder or port is not checked on another.
+async function reportRunning(recorded, o, dir) {
+  if (!(await isRunning(recorded))) return false;
+  const st = readState(recorded);
+  if (sameSettings(st, o, dir)) {
+    console.log(`PREVIEW ${st.url} (already running, pid ${st.pid})`);
+    return true;
+  }
+  console.error(`serve: the state file records a server running with different settings (folder: ${st.dir}, `
+    + `csp: ${st.csp ? 'on' : 'off'}, host: ${st.host}, port: ${st.port}); stop it with --stop and start again`);
+  process.exit(1);
+}
+
+async function main() {
+  const o = parseArgs(process.argv.slice(2));
+  const dir = path.resolve(o.dir || process.cwd());
+  if (o.stop) return stopMain(o, dir);
+  if (await reportRunning(o.state ? path.resolve(o.state) : siblingState(dir), o, dir)) return;
+  const s = await startServe(dir, { port: o.port || undefined, csp: o.csp || undefined, stateFile: o.state || undefined });
+  const warn = hostWarning(s.host);
+  if (warn) console.warn(warn);
+  console.log(`PREVIEW ${s.url}`);
+  console.log(`serving ${dir}${o.csp ? '  (with Content-Security-Policy)' : ''}  state: ${s.stateFile}`);
+  const quit = () => { forgetSelf(s.stateFile); s.server.close(); process.exit(0); };
+  process.on('SIGINT', quit);
+  process.on('SIGTERM', quit);
+}
+
+const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  main().catch((e) => { console.error(String(e?.message || e)); process.exit(1); });
+}
