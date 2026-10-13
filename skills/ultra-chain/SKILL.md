@@ -113,6 +113,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 2단계 | 취향 질문(P 항목)과 가정 훑기 | 보수적 가정으로 두고 `checklist` 에 넣음. 보수적인 쪽이 없는 핵심 P 가 남으면 멈춤 |
 | 3단계 | 외부 좌석 모델 고르기(ralph-qa 가 물을 때, 한 번만) | ralph-qa 의 fallback 으로 앉음 |
 | 3단계, 6단계 | 외부 좌석에 보낼 페이로드가 512 KiB 를 넘을 때 ralph-qa 가 묻는 확인 | 보내지 않음(ralph-qa 규칙) |
+| 3단계 | 검토가 드러낸 명세 공백(명세에 없어 새로 정해야 하는 동작) | 보수적 가정으로 정하고 `checklist` 에 넣음 |
 | 3단계 | 합의 실패 뒤 어떻게 할지 | 멈춰 보고 |
 | 4단계 끝 | 목업과 수용 기준 승인. 연쇄 중간의 유일한 승인 지점 | 묻지 않음. 자동 승인으로 기록하고 `checklist` 에 넣음 |
 | 9단계 | 외부 공유. 최종 보고 마지막 줄의 선택지에서 사용자가 고를 때만 | 로컬만 |
@@ -143,14 +144,14 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
 |---|---|
 | `--stage` | 단계 이름(인자 절) 또는 `preflight` |
 | `--status` | `started`, `done`, `failed`, `skipped`, `stopped`, `note`(회차와 중간 기록). `failed`, `skipped`, `stopped` 는 `reason` 이 있어야 한다 |
-| `artifacts` | `{label, path}`. `path` 는 실행 폴더 기준 상대 경로 |
+| `artifacts` | `{label, path}`. `path` 는 실행 폴더 안 실제 파일의 상대 경로. 폴더는 넣지 않는다 |
 | `verdict` | `by`, `result` 는 필수. `result` 는 `APPROVE`, `ITERATE`, `REJECT`, `INCONCLUSIVE`, `PASS`, `FAIL`, `STOPPED` 중 하나 |
 | `verdict.seats` | `{id, lens, model, verdict}`. 좌석 `verdict` 는 `APPROVE`, `ITERATE`, `REJECT`, `ERROR` |
 | `verdict.blockers` | `<좌석 id>: <내용>` 꼴의 글. 이어 하기에서 누가 낸 반대인지 되찾기 위해서다 |
-| `round` | 회차 기록과 그 회차의 판정 기록은 같은 번호를 쓴다(6단계는 `<k>`) |
+| `round` | 회차 기록과 그 회차의 판정 기록은 같은 번호를 쓴다(6단계는 `<k>`). ralph-qa 와 critic 의 회차에만 쓴다 |
 | `tests` | `{where, os, status, tests, pass, fail, skipped, note, log}`. `status` 는 `pass`, `fail`, `unverified` |
 | `visual` | `{name, mock, actual, score, verdict, intended, note}`. `verdict` 는 `pass`, `revise`, `fail`, `unverified`. `mock`, `actual` 은 `visual/` 아래 PNG 경로 |
-| `checklist` | `{item, why, ref}`. 사람이 볼 것 |
+| `checklist` | `{item, why, ref}`. 사람이 볼 것. `ref` 는 실행 폴더 안 실제 파일의 상대 경로만 쓴다. 절이나 줄 같은 설명은 `why` 에 쓴다 |
 
 - 판정 낱말 옮기기
   - ralph-qa 의 `APPROVE(3축)`, `ITERATE(한도 소진)` 같은 종결어는 괄호 앞 낱말만 `result` 에 쓰고, 종결어 전체와 판정 줄은 `verdict.note` 에 쓴다.
@@ -159,7 +160,8 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
   - 판정 에이전트의 `differences` 는 500자 안으로 줄여 `note` 에 쓴다.
 - 모르는 칸이나 틀린 값은 거부되고 종료 코드가 2 다. 메시지대로 고쳐 다시 기록한다.
 - 기록과 별도로, ralph-qa 의 보고 전문은 파일로 남긴다(3단계 `03-ralph-qa.md`, 6단계 `qa/ralph-qa-r<k>.md`). 압축 뒤에도 선언 블록을 옮길 수 있게 하기 위해서다.
-- 단계가 바뀔 때마다 진행 줄 하나를 낸다. 예: `[ultra-chain] 3/9 합의 계획: ralph-qa 2회차`.
+- 보고서는 없는 파일과 폴더를 링크하지 않고 글로 보인다. 그래도 링크가 되도록 실제 파일만 적는다.
+- 기록 명령(`event`, `boxes`)은 출력 JSON 의 `progress` 에 진행 줄을 준다(예: `[ultra-chain] 3/9 합의 계획: ralph-qa ITERATE 2회차`). 기록할 때마다 그 줄을 그대로 대화에 한 줄로 내고, 이어 하기 메모에도 덧붙인다. 진행 줄과 메모를 따로 지어 쓰지 않는다.
 
 ## 0. 사전 점검
 
@@ -169,22 +171,23 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
    - `.omc/` 나 `.omx/` 가 git 에 무시되지 않으면 사용자에게 알린다. 나중에 커밋할 때 상태 파일이 섞일 수 있다. 로컬 제외 파일에 넣을지는 사용자가 정한다.
    - 커밋하지 않은 변경이 있으면 진행할지 묻는다(`--auto` 는 멈춤). 진행하면 지금 트리를 기준선으로 쓴다. `git stash create` 로 지금 트리의 커밋을 만들어 `<base>` 로 기록한다(작업 트리와 stash 목록은 바뀌지 않는다). 깨끗한 트리이거나 출력이 비면(기존 변경이 추적하지 않는 새 파일뿐) `<base>` 는 `HEAD` 의 커밋이다. 이렇게 해야 검토 diff 에 사용자의 기존 변경이 실리지 않는다.
    - 기본 브랜치면 작업 브랜치를 만들지 묻는다(`--auto` 는 그대로 진행).
-4. 의존성
-   - Claude Code: `omc ralph verify --help 2>&1 | grep -q 'Usage: omc ralph verify' && echo "omc ok"`. 판정은 출력 문구로 한다. 실패하면 멈추고 알린다. `setup-omc` 로 맞출지 묻고, 승인할 때만 그 스킬을 따른다. 묻지 않고 설치나 갱신(`omc update`, `npm install -g`)을 하지 않는다(`--auto` 는 멈춤). 플러그인 판과 CLI 판을 둘 다 기록한다.
+4. 실행 폴더를 만들고(`init`) `task.md` 를 쓴 뒤 바로 `preflight` 시작을 기록한다. 이어서 실행 폴더 경로, 해석한 플래그, 지금 단계를 이어 하기 메모(런타임 대응 표)에 덧붙인다. 사용자의 다른 메모는 고치지 않는다. 브랜치를 정한 뒤라 `run.json` 의 브랜치가 맞다. 아래 점검이 사전 점검의 걸린 시간에 들어가고, 점검 중에 멈춰도 기록이 남는다.
+5. 의존성
+   - Claude Code: `omc ralph verify --help 2>&1 | grep -q 'Usage: omc ralph verify' && echo "omc ok"`. 판정은 출력 문구로 한다. 실패하면 멈추고 알린다. `setup-omc` 로 맞출지 묻고, 승인할 때만 그 스킬을 따른다. 묻지 않고 설치나 갱신(`omc update`, `npm install -g`)을 하지 않는다(`--auto` 는 멈춤).
+   - 판 두 개를 기록한다. 플러그인 판은 `~/.claude/plugins/installed_plugins.json`(`CLAUDE_CONFIG_DIR` 가 있으면 그 폴더의 `plugins/installed_plugins.json`)에서 `oh-my-claudecode@` 로 시작하는 항목의 `version` 이다. CLI 판은 `omc --version` 이다. 둘이 다르면 `checklist` 에 넣는다. 하위 스킬이 기대한 대로 돌지 않아도 OMC 의 내부 모듈(`dist/` 아래)을 직접 불러 쓰지 않는다. 판이 다른 내부 API 를 부르게 된다.
    - Codex: `omx --version`.
    - `<boxes>` 와 `<scan>` 이 있는지 본다. banker 스킬은 함께 설치되므로 없으면 banker 설치가 깨진 것이다.
    - 프로젝트 의존성: 시험에 필요한 의존성이 이 머신에 설치돼 있는지 본다(예: `package.json` 의 의존성이 있는데 `node_modules` 가 없음). 없으면 설치 명령을 보이고 사용자에게 묻는다. 승인하면 그 명령을 돌리고, 묻지 않고 설치하지는 않는다(`--auto` 는 멈춤).
-5. 테스트박스(`--boxes=none` 이면 건너뛰고 기록)
+6. 테스트박스(`--boxes=none` 이면 건너뛰고 기록)
    - `node "<boxes>" list` 로 등록을 본다. 등록 파일은 `~/.config/banker/test-boxes.json` 이다(형식은 `remains` 스킬). 없으면 알리고, 사용자가 등록을 원하면 그 형식으로 내용을 보여 확인받은 뒤 사용자가 만든다.
    - `node "<boxes>" probe` 로 접속과 `node`, `git`, `tar` 를 본다. 6단계에 쓸 박스는 접속된 박스다. `--boxes=<이름,...>` 이면 그중 그 이름만 쓴다.
    - 접속되지 않는 박스의 OS 는 미검증으로 예약한다.
    - 접속된 박스가 0대면 6단계의 박스 시험을 하지 않는다. `--box` 없이 돌리면 등록된 모든 박스로 가기 때문이다. 이 머신 밖의 대상 OS 는 모두 미검증으로 예약한다.
-6. 브라우저: `node "<S>/references/capture.mjs" --check`. 종료 코드 0 이면 있다. 3 이면 stderr 의 문구로 원인(패키지 없음, Chromium 실행 실패)을 나눠 사용자에게 알린다. 묻지는 않는다. 설치는 사용자가 고른다: `npm i -g playwright && npx playwright install chromium`. `setup-playwright` 만으로는 브라우저만 받고 Node 용 패키지가 전역에 없을 수 있다. 없으면 7단계는 기계 대조만 하고 시각 판정을 미검증으로 남긴다.
-7. 요청이 한 줄 수정처럼 작으면 그렇게 말하고 계속할지 묻는다(`--auto` 는 진행).
-8. 실행 폴더를 만들고(`init`) `task.md` 를 쓴다. 바로 이어서 실행 폴더 경로, 해석한 플래그, 지금 단계를 이어 하기 메모(런타임 대응 표)에 덧붙인다. 단계가 바뀔 때마다 한 줄씩 더 덧붙인다. 사용자의 다른 메모는 고치지 않는다.
-9. `preflight` 의 시작과 끝을 기록한다. 끝 기록의 `summary` 에는 해석한 플래그 전부, 런타임, OMC 또는 OMX 판, `<base>`, 박스별 접속 결과, Playwright 유무, 제외 파일 결과를 적는다.
+7. 브라우저: `node "<S>/references/capture.mjs" --check`. 종료 코드 0 이면 있다. 3 이면 stderr 의 문구로 원인(패키지 없음, Chromium 실행 실패)을 나눠 사용자에게 알린다. 묻지는 않는다. 설치는 사용자가 고른다: `npm i -g playwright && npx playwright install chromium`. `setup-playwright` 만으로는 브라우저만 받고 Node 용 패키지가 전역에 없을 수 있다. 없으면 7단계는 기계 대조만 하고 시각 판정을 미검증으로 남긴다.
+8. 요청이 한 줄 수정처럼 작으면 그렇게 말하고 계속할지 묻는다(`--auto` 는 진행).
+9. `preflight` 끝을 기록한다. `summary` 에는 해석한 플래그 전부, 런타임, OMC 판(플러그인과 CLI) 또는 OMX 판, `<base>`, 박스별 접속 결과, Playwright 유무, 제외 파일 결과를 적는다. 5~8 에서 멈추면 `stopped` 와 `reason` 을 기록한다.
 
-`init` 전에 멈추면 기록할 곳이 없으니 대화로만 보고한다.
+4 전에 멈추면 기록할 곳이 없으니 대화로만 보고한다.
 
 ## 1. 자료 조사
 
@@ -218,8 +221,14 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
      - 시험 출력 꼴. node:test 면 TAP(`--test-reporter=tap`)로 내게 한다. 박스 결과가 시험 수를 셀 수 있다
      - 4단계 목업의 보기 목록과 형태, 수용 기준과 단계의 대응
      - 7단계 기계 대조를 위해 실제 출력을 `<run>/actual/` 에 쓰는 방법(임시 데이터 폴더나 임시 HOME 에서)
+   - 뒤 단계의 계약. Planner 와 검토자가 파일 시스템을 뒤져 찾지 않게 요약을 함께 넘긴다
+     - 4단계 파일 규칙: 보기 하나에 `<run>/mock/<view>.html` 하나(외부 자원 없음), 보기와 수용 기준을 잇는 `mock/index.html`, 기대 출력은 `mock/expected/`(CLI 는 케이스마다 `<케이스>.stdout`, `.stderr`, `.code`. 웹은 상태별 DOM 사실 JSON)
+     - 7단계: 실제 출력은 `<run>/actual/` 에 기대 출력과 같은 이름으로 만들어 바이트로 대조한다. CLI 와 라이브러리는 실제 출력을 목업과 같은 HTML 틀에 담아 찍는다
+     - 6단계 박스 실행기(`<boxes>`): git 이 추적하는 파일만 보낸다(새 파일은 6단계에서 스테이징). `--node-test` 는 그 커밋의 `*.test.mjs` 전부를 `node --test --test-reporter=tap` 으로 돌리고, 그 밖은 `--cmd "<명령>"` 이다. 박스는 의존성을 설치하지 않는다. Windows 박스의 명령은 `.cmd` 안에서 돈다. 결과는 박스마다 접속 여부, 종료 코드, TAP 수, 로그 경로다
+     - 더 볼 것이 있으면 이 `SKILL.md` 의 해당 절과 `<boxes>` 파일만 읽게 경로를 준다
 2. ralplan 은 계획을 승인 대기로 두고 멈춘다. 이것은 계획 단계의 끝이지 연쇄의 끝이 아니다. 사용자가 이 스킬을 부른 것이 실행까지 가겠다는 명시적 선택이다.
    - Codex 의 OMX `ralplan` 은 합의 기록(`ralplan_consensus_gate`)이 완료인지 확인한다. OMX 가 권하는 후속 스킬 대신 이 연쇄를 잇는다.
+   - 합의 결과는 `round` 없이 `note` 하나로 기록한다. `verdict.by` 는 `ralplan`, `verdict.note` 에 합의까지 걸린 회차와 Architect, Critic 의 판정을 적는다. `round` 는 4의 ralph-qa 회차가 쓴다.
 3. 합의된 계획을 `<run>/03-plan.md` 로 복사한다.
    - Claude Code: 1 에서 지정한 경로, 또는 ralplan 이 보고한 계획 경로다. 둘 다 없으면 이 단계가 시작된 뒤 `.omc/plans/` 에 쓰였고 `pending approval` 표지가 있는 파일을 고른다. 검토 문서(이름이 `-critic.md`, `-architect.md`, `-review.md` 로 끝남)와 `open-questions.md` 는 고르지 않는다. 원본 경로는 `summary` 에 적는다.
    - Codex: 이번에 쓰인 `.omx/plans/prd-*.md` 와 `test-spec-*.md` 를 차례로 붙이고, 원본 경로를 맨 위에 적는다.
@@ -230,6 +239,7 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
    - ralph-qa 가 외부 모델을 물으면 여기서 한 번만 고르게 하고, 고른 모델을 기록한다. 6단계에는 `--gemini=<그 모델>` 처럼 값을 박아 넘긴다.
    - 회차마다 `note` 로 기록한다: `round`, `verdict.by`(`ralph-qa`), `verdict.result`, `verdict.seats`, `verdict.blockers`, `verdict.note`(종결어와 판정 줄).
    - `ITERATE` 면 지적대로 `03-plan.md` 를 고치고 같은 실행에서 다시 판정받는다. 고친 계획이 ralplan 의 합의와 크게 달라졌으면 그 사실을 기록한다.
+   - 검토가 명세 공백을 드러내면(명세에 없어 새로 정해야 하는 동작) 사용자에게 묻는다(`--auto` 는 보수적 가정으로 정하고 `checklist` 에 넣는다). 답을 `02-spec.md` 에 새 항목과 새 수용 기준 번호로 덧붙이고, `interview` 에 `note` 로 "명세 개정: 항목 <번호>, <AC 번호>" 를 기록한다. 이후 단계는 개정된 명세로 판정한다.
    - 끝나면 보고 전문을 `<run>/03-ralph-qa.md` 로 저장하고 `artifacts` 에 넣는다.
 5. 게이트: ralph-qa 판정이 `APPROVE`. ralplan 이 5회 안에 합의하지 못하거나 ralph-qa 가 `INCONCLUSIVE` 나 한도 소진으로 끝나면 멈춘다. 가장 나은 안과 남은 지적을 보이고 어떻게 할지 묻는다(`--auto` 는 `stopped` 로 기록하고 보고).
 
@@ -287,6 +297,7 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
      - 시각이나 소요 시간을 찍는 러너는 그 줄을 뺀다. 예: vitest 는 `Start at`, `Duration` 줄을 `grep -Ev` 로 거른다
      - 빌드와 린트도 성공 때 조용한 꼴을 쓴다. 예: `vite build --logLevel error`(파일 크기 줄이 나오지 않는다)
      - 이 머신이 Windows 면 POSIX 꼴(`grep`)이 돌지 않는다. PowerShell 의 `Select-String -NotMatch` 같은 같은 뜻의 꼴을 쓴다
+   - ralph 를 부른 직후, 이 세션의 `prd.json`(`.omc/state/sessions/<id>/prd.json`, `OMC_STATE_DIR` 이 있으면 그 아래)과 ralph 상태(`state_read` 의 `ralph`)가 생겼는지 본다. 없으면 ralph 의 `SKILL.md` 가 정한 PRD 꼴대로 이야기를 파일 도구로 `prd.json` 에 쓰고, `state_write` 로 ralph 상태(`critic: "critic"`, `prd_path`)를 쓴다. OMC 의 내부 모듈(`dist/` 아래)을 불러 PRD 를 만들지 않는다. 이 일을 `build` 의 `note` 에 적는다.
 3. ralph 가 끝까지 가게 둔다(검토자 승인, deslop, 회귀 확인, `/oh-my-claudecode:cancel`). ralph 의 cancel 은 구현 단계의 끝이지 연쇄의 끝이 아니다. ralph 가 아직 도는 동안 6단계를 시작하지 않는다. 끝나면 `.omc/state/sessions/<id>/prd.json`(`OMC_STATE_DIR` 이 있으면 그 아래)을 `<run>/05-prd.json` 으로 복사한다. ralph 의 반복 한도는 ralph 자신의 것이다. ralph 보고에서 실제로 승인한 검토자가 critic 인지 확인해 기록한다. Skill 경로로 켠 ralph 는 검토자 설정이 architect 로 남을 수 있다.
 4. Codex: `$ralph` 를 따른다. 2의 입력을 같이 넘기고, 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라고 적는다. 연쇄 전체의 목표(goal)를 완료로 바꾸지 말라고도 적는다. 이어서 critic 루프를 돈다.
    - 런타임 대응 절의 방법으로 critic 을 띄운다. 역할 `critic` 의 고정 모델이 세션 모델과 같으면 그 역할을 쓰고, 아니면 런타임 대응 절의 역할 규칙을 따른다. 지시 앞머리에 파일 쓰기 금지를 적는다.
@@ -339,12 +350,14 @@ ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 연쇄가 이 �
    - 임시 데이터 폴더나 임시 HOME 에서 만든다. 사용자의 실제 데이터에 쓰지 않는다.
    - 색을 끈다(`NO_COLOR=1`). 종료 코드도 대조 대상이다.
    - `mock/expected/` 와 대조한다. JSON 은 파싱해 깊게 비교하고, 텍스트는 바이트로 비교한다(줄 끝 포함). `.ignore.json` 에 적힌 칸은 뺀다.
-   - 결과를 `tests` 에 `where: "compare:<이름>"` 으로 기록한다.
+   - 결과를 보기마다 `tests` 하나로 `where: "compare:<보기>"` 에 기록한다. `tests` 는 그 보기에서 대조한 파일 수, `pass` 는 같은 파일 수, `fail` 은 다른 파일 수다. `log` 는 파일마다 `same <이름>` 이나 `DIFF <이름>` 한 줄을 남긴 대조 출력(`visual/compare-r<k>.txt`)이다. 로그만 보고도 수를 다시 셀 수 있어야 한다.
 2. 캡처: 목업 보기와 실제 결과를 같은 크기로 찍는다. CLI 와 라이브러리는 실제 출력을 escape 해 목업과 같은 HTML 틀에 담아 `<run>/actual/<view>.html` 로 만든 뒤 찍는다. 앱 서버가 필요하면 시험 데이터와 임시 HOME 으로(실제 `.env`, 실제 DB 없이) 오래 도는 명령으로 띄우고, 캡처가 끝나면 그 작업을 멈춘다.
 
    ```bash
-   node "<S>/references/capture.mjs" --out "<run>/visual" --viewport 1280x800 mock-<view>="<run>/mock/<view>.html" actual-<view>="<실제 URL 또는 파일>"
+   node "<S>/references/capture.mjs" --out "<run>/visual" --viewport 1280x800 --full mock-<view>="<run>/mock/<view>.html" actual-<view>="<실제 URL 또는 파일>"
    ```
+
+   - `--full` 은 창 높이가 아니라 페이지 전체를 찍는다. CLI 출력, 문서, 창보다 긴 보기는 늘 `--full` 로 찍는다. 화면 크기가 판정 대상인 웹 보기만 `--full` 없이 찍는다. 목업과 실제는 같은 옵션으로 찍는다. 옵션은 `capture.mjs --help` 로 본다.
 
    - 종료 코드 3 은 Playwright 나 브라우저가 없다는 뜻이다. 기계 대조만 남기고, 보기마다 `visual` 에 `verdict: "unverified"` 와 사유를 적는다.
    - 프로젝트 자신의 Playwright 를 쓰려면 `--playwright-from-project` 를 준다. 그 프로젝트의 코드를 실행하므로 사용자 저장소일 때만 쓴다.
@@ -354,6 +367,7 @@ ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 연쇄가 이 �
    - 입력: 보기마다 목업 PNG 와 실제 PNG, 그 보기의 수용 기준
    - 출력: 보기마다 JSON 한 줄. `{"name", "score": 0~100, "verdict": "pass|revise|fail", "differences": [...]}`
    - 판정은 점수로 한다. 90점 이상이 통과다. `verdict` 와 점수가 어긋나면 점수를 따른다.
+   - 판정자 지시에 "잘려서 보이지 않는 수용 기준이 있으면 점수와 관계없이 `revise` 로 하고 `differences` 에 무엇이 잘렸는지 적는다" 를 넣는다. 그런 보기는 `--full` 로 다시 찍어 다시 판정받는다. 보이지 않는 것을 통과로 적지 않는다.
    - `visual` 에 기록한다: `mock` 은 `visual/mock-<view>.png`, `actual` 은 `visual/actual-<view>.png`.
 4. 90점 미만이면 연쇄가 차이를 나눈다.
    - 결함: 고친 뒤 `qa` 에 `started` 를 다시 기록하고 6단계의 1부터 4를 바뀐 부분에 대해 다시 한다(새 `<k>`). 6단계의 ralph-qa 실행은 끝났으니 새 실행을 열고, 앞 판정 기록과 바뀐 부분을 입력에 넣는다. `APPROVE` 면 `qa` 에 `done` 을 기록하고 7단계로 돌아와 다시 찍고 다시 판정한다. 압축되더라도 `show` 의 `current` 가 `qa` 라 끝나지 않은 재검증이 보인다. 이 순환은 3회까지다.

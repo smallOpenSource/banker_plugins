@@ -7,7 +7,7 @@
 //   node chain-report.mjs <run> [--out <file name>]
 //
 // Exit codes: 0 written, 1 the ledger could not be read or the page not written, 2 usage.
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { STAGES, readEvents, readRun, runPath, summarize } from "./chain-ledger.mjs";
@@ -26,10 +26,10 @@ export function href(p) {
   return rel ? `./${rel.split("/").map(encodeURIComponent).join("/")}` : null;
 }
 
-const link = (p, text) => {
-  const h = href(p);
-  return h ? `<a href="${esc(h)}">${esc(text ?? p)}</a>` : esc(text ?? p ?? "");
-};
+// A link only to a file the run folder holds (`ctx.exists`); a folder, a missing file or a note such as
+// "02-spec.md AC-10" stays words, so no link on the page is dead.
+const linkable = (p, ctx) => Boolean(href(p)) && ctx.exists(runPath(p));
+const link = (p, text, ctx) => (linkable(p, ctx) ? `<a href="${esc(href(p))}">${esc(text ?? p)}</a>` : esc(text ?? p ?? ""));
 
 export function duration(ms) {
   if (ms === null || ms === undefined) return "";
@@ -59,6 +59,13 @@ const td = (html, cls) => `<td${cls ? ` class="${cls}"` : ""}>${html}</td>`;
 
 // ── sections ─────────────────────────────────────────────────────────────────
 
+// task.md's first line is the argument line as given and the rest the task: with no flags the two say the
+// same, so the second is left out.
+export function taskText(task) {
+  const lines = String(task).split(/\r?\n/);
+  return lines.length > 1 && lines[1].trim() && lines[1].trim() === lines[0].trim() ? [lines[0], ...lines.slice(2)].join("\n") : String(task);
+}
+
 function renderHeader(run, task, sum, generatedAt) {
   const total = sum.stages.reduce((a, s) => a + (s.ms ?? 0), 0);
   const current = sum.current ? `${esc(LABEL[sum.current])} 단계` : "모든 단계 끝";
@@ -68,7 +75,7 @@ function renderHeader(run, task, sum, generatedAt) {
     ["기준 커밋", esc((run.baseCommit ?? "").slice(0, 12))], ["브랜치", esc(run.branch ?? "")], ["보고서 생성", esc(when(generatedAt))],
   ];
   const dl = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("");
-  const ask = task ? `<pre class="task">${esc(task)}</pre>` : '<p class="none">task.md 없음</p>';
+  const ask = task ? `<pre class="task">${esc(taskText(task))}</pre>` : '<p class="none">task.md 없음</p>';
   return `<header><h1>ultra-chain 과정</h1><dl class="facts">${dl}</dl><h2>요청</h2>${ask}</header>`;
 }
 
@@ -96,10 +103,10 @@ function renderVerdicts(events) {
   return `<section><h2>검토 판정</h2>${list.length ? list.map(renderVerdict).join("\n") : '<p class="none">없음</p>'}</section>`;
 }
 
-function renderTests(events) {
+function renderTests(events, ctx) {
   const rows = events.flatMap((e) => (e.tests ?? []).map((t) => [td(esc(`${LABEL[e.stage]}${e.round ? ` ${e.round}회차` : ""}`)),
     td(esc(t.where)), td(esc(t.os ?? "")), td(badge(t.status)), td(esc([t.pass, t.fail, t.skipped].map((n) => n ?? "-").join(" / "))),
-    td(esc(t.note ?? ""), "wrap"), td(t.log ? link(t.log, "로그") : "")]));
+    td(esc(t.note ?? ""), "wrap"), td(t.log && linkable(t.log, ctx) ? link(t.log, "로그", ctx) : "")]));
   return `<section><h2>시험 (이 머신과 OS 박스)</h2>${table(["단계", "위치", "OS", "결과", "통과 / 실패 / 건너뜀", "비고", "로그"], rows)}</section>`;
 }
 
@@ -110,18 +117,18 @@ function latestVisual(events) {
   return [...byName.values()];
 }
 
-function renderShot(p, caption) {
+function renderShot(p, caption, ctx) {
   const h = href(p);
-  if (!h) return `<figure class="shot empty"><figcaption>${esc(caption)}: 없음</figcaption></figure>`;
+  if (!h || !ctx.exists(runPath(p))) return `<figure class="shot empty"><figcaption>${esc(caption)}: 없음</figcaption></figure>`;
   return `<figure class="shot"><a href="${esc(h)}"><img src="${esc(h)}" alt="${esc(caption)}" loading="lazy"></a><figcaption>${esc(caption)}</figcaption></figure>`;
 }
 
-function renderVisual(events) {
+function renderVisual(events, ctx) {
   const cards = latestVisual(events).map((v) => {
     const score = v.score === undefined ? "" : ` ${v.score}점`;
     const intended = v.intended ? ' <span class="s s-note">의도한 차이</span>' : "";
     return `<article class="card"><h3>${esc(v.name)}${esc(score)} ${v.verdict ? badge(v.verdict) : ""}${intended}</h3>`
-      + `<div class="pair">${renderShot(v.mock, "목업")}${renderShot(v.actual, "실제")}</div>${v.note ? `<p>${esc(v.note)}</p>` : ""}</article>`;
+      + `<div class="pair">${renderShot(v.mock, "목업", ctx)}${renderShot(v.actual, "실제", ctx)}</div>${v.note ? `<p>${esc(v.note)}</p>` : ""}</article>`;
   });
   return `<section><h2>시각 검토</h2>${cards.length ? cards.join("\n") : '<p class="none">없음</p>'}</section>`;
 }
@@ -145,15 +152,19 @@ export function checklistItems(events) {
   });
 }
 
-function renderChecklist(events) {
-  const items = checklistItems(events).map((c) => `<li><b>${esc(c.item)}</b>${c.why ? ` <span class="why">${esc(c.why)}</span>` : ""}${c.ref ? ` ${link(c.ref, "근거")}` : ""}</li>`);
+// An item's ref: a link where it names a file of the run folder, else its own words.
+const refOf = (ref, ctx) => (linkable(ref, ctx) ? link(ref, "근거", ctx) : `<span class="why">근거: ${esc(ref)}</span>`);
+
+function renderChecklist(events, ctx) {
+  const items = checklistItems(events).map((c) => `<li><b>${esc(c.item)}</b>${c.why ? ` <span class="why">${esc(c.why)}</span>` : ""}${c.ref ? ` ${refOf(c.ref, ctx)}` : ""}</li>`);
   return `<section class="check"><h2>사람이 볼 것 (${items.length})</h2>${items.length ? `<ol>${items.join("")}</ol>` : '<p class="none">없음</p>'}</section>`;
 }
 
-function renderArtifacts(events) {
+function renderArtifacts(events, ctx) {
   const seen = new Map();
   for (const e of events) for (const a of e.artifacts ?? []) if (!seen.has(a.path)) seen.set(a.path, { ...a, stage: e.stage });
-  const rows = [...seen.values()].map((a) => [td(esc(LABEL[a.stage])), td(link(a.path, a.label ?? a.path))]);
+  const missing = (a) => (linkable(a.path, ctx) ? "" : ` <span class="why">(파일 아님: ${esc(a.path)})</span>`);
+  const rows = [...seen.values()].map((a) => [td(esc(LABEL[a.stage])), td(`${link(a.path, a.label ?? a.path, ctx)}${missing(a)}`)]);
   return `<section><h2>산출물</h2>${table(["단계", "파일"], rows)}</section>`;
 }
 
@@ -184,11 +195,13 @@ figcaption{color:var(--mute);font-size:12px}.none{color:var(--mute)}.why{color:v
 // No script, plugin, form or base change may run in the page, whatever a ledger line holds.
 const CSP = "script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
-// The whole page. generatedAt is the time printed as "보고서 생성".
-export function renderReport({ run, task, events, bad = [], generatedAt = new Date().toISOString() }) {
+// The whole page. generatedAt is the time printed as "보고서 생성". exists(rel) says whether the run folder
+// holds that file; without it every path in the folder counts as one.
+export function renderReport({ run, task, events, bad = [], generatedAt = new Date().toISOString(), exists = () => true }) {
   const sum = summarize(events);
-  const body = [renderHeader(run, task, sum, generatedAt), renderChecklist(events), renderTimeline(sum.stages), renderVerdicts(events),
-    renderTests(events), renderVisual(events), renderArtifacts(events), renderLog(events, bad)].join("\n");
+  const ctx = { exists };
+  const body = [renderHeader(run, task, sum, generatedAt), renderChecklist(events, ctx), renderTimeline(sum.stages), renderVerdicts(events),
+    renderTests(events, ctx), renderVisual(events, ctx), renderArtifacts(events, ctx), renderLog(events, bad)].join("\n");
   return `<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`
     + `<meta http-equiv="Content-Security-Policy" content="${CSP}">`
     + `<title>ultra-chain ${esc(run.id)}</title><style>${CSS}</style></head><body><main>\n${body}\n</main></body></html>\n`;
@@ -203,7 +216,14 @@ export function writeReport(dir, out = "index.html") {
   const taskFile = join(dir, "task.md");
   const task = existsSync(taskFile) ? readFileSync(taskFile, "utf8").slice(0, 8000) : null;
   const file = join(dir, out);
-  writeFileSync(file, renderReport({ run, task, events, bad }));
+  const exists = (rel) => {
+    try {
+      return statSync(join(dir, rel)).isFile();
+    } catch {
+      return false;
+    }
+  };
+  writeFileSync(file, renderReport({ run, task, events, bad, exists }));
   return file;
 }
 

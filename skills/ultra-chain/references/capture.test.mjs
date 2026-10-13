@@ -113,3 +113,13 @@ test("URLs are loopback-only unless --allow-remote; network paths, bad URLs and 
   assert.equal(await main(["--out", join(tmp, "r"), "--allow-remote", "app=https://example.com/"], sink(), sink(), fake.load), 0);
   assert.equal(await main(["--out", join(tmp, "r2"), "app=https://example.com/"], sink(), sink(), fake.load), 2);
 });
+
+test("--help prints the usage, --full among it, and exits 0 without loading a browser", async () => {
+  const out = sink();
+  let loaded = false;
+  assert.equal(await main(["--help"], out, sink(), async () => { loaded = true; }), 0);
+  assert.match(out.text, /^usage:/);
+  assert.match(out.text, /--full .*CLI 출력/);
+  assert.equal(loaded, false);
+  assert.equal(await main(["-h"], sink(), sink()), 0);
+});

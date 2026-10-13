@@ -13,10 +13,13 @@
 - `omc-patch` 도구의 `--root <플러그인 폴더>` 와 `--scan <파일>...`. `--root` 는 그 폴더 하나만 진단, 적용, 되돌리기 하고 버전과 마켓플레이스 고정은 건드리지 않는다. `--scan` 은 헬퍼 선언의 블록 깊이와 감싼 자리를 JSON 으로 내고 파일을 바꾸지 않는다.
 - `omc-patch` 검증의 `scripts/probe-pm.mjs`. OMC 의 project-memory 훅을 임시 폴더의 스크래치 프로젝트(홈, 설정 폴더, 상태 폴더 포함)에서 돌려 `project-memory.json` 이 실제로 생기는지 본다. 결함이 있어도 훅은 종료 코드 0 과 `{"continue":true}` 를 내기 때문이다. 이 세션의 `CLAUDE_*`, `OMC_*`, `GIT_*` 변수는 넘기지 않는다.
 
+- 3d-intro-build 와 motion-graphic-make 의 미리보기 서버가 `.md`, `.txt`, `.log`, `.jsonl` 을 글(`text/plain`)로 보낸다. 지금까지는 `application/octet-stream` 이라 브라우저가 열지 않고 내려받았다. ultra-chain 보고서의 산출물 링크(조사 보고, 계획, 시험 로그)가 같은 서버를 쓴다.
+
 ### Changed
 - `omc-patch` 도구의 `TARGET_VERSION` 이 5.3.0 에서 5.7.0 으로 바뀌었다. 인자 없는 apply 만 이 값을 쓰고, 스킬은 적용과 진단에 늘 `--no-update` 를 붙여 쓰지 않는다.
 
 ### Notes
+- ultra-chain 은 작은 Node CLI 저장소에서 9단계 전 과정을 실제로 돌려 본 뒤 고쳤다. 고친 것: 3단계 계획 작성자에게 목업, 대조, 박스 실행기 계약을 함께 넘김. 5단계에서 ralph 가 PRD 와 상태를 만들지 않았으면 문서 꼴대로 쓰고 OMC 내부 모듈을 쓰지 않음. 7단계 캡처를 `--full` 로 찍고 잘린 수용 기준은 통과로 적지 않음(`capture.mjs --help` 추가). 3단계 명세 공백의 개정 규칙, ralplan 기록 꼴, 사전 점검 시간, 플러그인 판 확인, 대조 단위, 기록 명령의 진행 줄(`progress`), 보고서가 실제 파일만 링크하고 같은 요청 줄을 한 번만 보임.
 - OMC 5.7.1 사본에서 재현했다. 옛 방식으로 패치하면 헬퍼 자리 결함 5건이 생기고 project-memory 확인이 RED 였다. 활성 폴더를 되돌리고 다시 패치하자 결함 0건, 헬퍼 깊이 모두 0, 확인 GREEN 이었다.
 
 ## [0.16.3] - 2026-10-12

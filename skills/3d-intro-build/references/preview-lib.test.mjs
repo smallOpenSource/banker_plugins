@@ -11,7 +11,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  PID_ROUTE, STRICT_CSP, askHost, cspFrom, decodePath, hostAllowed, hostWarning, portMatches, readState, resolveInside, stopServer,
+  MIME, PID_ROUTE, STRICT_CSP, askHost, cspFrom, decodePath, hostAllowed, hostWarning, portMatches, readState, resolveInside, stopServer,
   urlFor,
 } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
@@ -369,4 +369,9 @@ test('stop leaves a port alone when another process answers there, and clears a 
   assert.deepEqual([r2.stopped, r2.reason], [false, 'not-running']);
   assert.equal(fs.existsSync(stale), false);
   assert.deepEqual(await stopServer(path.join(tmp(), 'none.json')), { stopped: false, reason: 'no-state' });
+});
+
+test('notes and logs a report links to are text, so the browser shows them rather than downloading them', () => {
+  for (const ext of ['.md', '.txt', '.log', '.jsonl']) assert.equal(MIME[ext], 'text/plain;charset=utf-8', ext);
+  assert.equal(MIME['.html'], 'text/html;charset=utf-8');
 });

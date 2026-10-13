@@ -6,8 +6,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  RUN_FOLDERS, STAGE_IDS, UsageError, appendEvent, boxesToTests, checkEvent, decodeText, initRun, main, markUnverified, readEvents, runId, runPath,
-  summarize,
+  RUN_FOLDERS, STAGE_IDS, UsageError, appendEvent, boxesToTests, checkEvent, decodeText, initRun, main, markUnverified, progressLine, readEvents,
+  runId, runPath, summarize,
 } from "./chain-ledger.mjs";
 
 const tmp = mkdtempSync(join(tmpdir(), "chain-ledger-test-"));
@@ -339,4 +339,15 @@ test("a cut-off last line loses only itself; unknown keys named like Object memb
   const out = sink();
   assert.equal(main(["boxes", dir, "--file", file, "--round", "9"], out, sink()), 0);
   assert.match(JSON.parse(out.text).summary, /보내지 않은 새 파일 2개/);
+});
+
+test("a record command hands back the progress line to say and to add to the resume memo", () => {
+  assert.equal(progressLine({ stage: "preflight", status: "started" }), "[ultra-chain] 0/9 사전 점검: 시작");
+  assert.equal(progressLine({ stage: "plan", status: "note", round: 2, verdict: { by: "ralph-qa", result: "ITERATE" } }), "[ultra-chain] 3/9 합의 계획: ralph-qa ITERATE 2회차");
+  assert.equal(progressLine({ stage: "share", status: "done" }), "[ultra-chain] 9/9 결과 공유: 끝");
+  const { dir } = initRun({ base: "runs", cwd: fresh("progress"), rand: "pppp" });
+  const out = { text: "", write(s) { this.text += s; } };
+  assert.equal(main(["event", dir, "--stage", "research", "--status", "started"], out, { write() {} }), 0);
+  assert.equal(JSON.parse(out.text).progress, "[ultra-chain] 1/9 자료 조사: 시작");
+  assert.ok(!readFileSync(join(dir, "events.jsonl"), "utf8").includes("progress"), "the ledger keeps no copy of it");
 });

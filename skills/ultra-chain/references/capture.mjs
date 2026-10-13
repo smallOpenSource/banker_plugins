@@ -10,6 +10,7 @@
 //   node capture.mjs --out <folder> [--viewport 1280x800] [--full] [--wait <ms>] [--playwright-from-project]
 //                    [--allow-remote] <name>=<file or URL>...
 //   node capture.mjs --check [--playwright-from-project]     Playwright and Chromium start, nothing captured
+//   node capture.mjs --help
 //
 // Prints one JSON line: [{ name, target, png, ok, error? }] (with --check: { playwright: true, browser: true }).
 // Exit 0 all written, 1 a target failed, 2 usage, 3 Playwright or its browser is missing.
@@ -51,6 +52,20 @@ const FLAGS = {
 };
 
 const SWITCHES = { "--full": "full", "--check": "check", "--playwright-from-project": "fromProject", "--allow-remote": "allowRemote" };
+
+export const USAGE = `usage:
+  node capture.mjs --out <folder> [--viewport 1280x800] [--full] [--wait <ms>] [--playwright-from-project]
+                   [--allow-remote] <name>=<file or URL>...
+  node capture.mjs --check [--playwright-from-project]
+  --out       PNG 를 쓸 폴더. <name>.png 로 쓴다
+  --viewport  창의 폭x높이(픽셀). 기본 1280x800
+  --full      창 높이가 아니라 페이지 전체를 찍는다. CLI 출력, 문서, 창보다 긴 보기는 이것으로 찍는다
+  --wait      불러온 뒤 기다릴 ms. 기본 300
+  --check     Playwright 와 Chromium 이 뜨는지만 본다
+  --playwright-from-project  프로젝트의 node_modules 에서 Playwright 를 읽는다(그 프로젝트 코드가 돈다)
+  --allow-remote  loopback 이 아닌 URL 도 찍는다
+exit: 0 모두 씀, 1 대상 하나라도 실패, 2 사용법, 3 Playwright 나 브라우저 없음
+`;
 
 function readArgs(argv) {
   const o = { out: null, viewport: { width: 1280, height: 800 }, full: false, wait: 300, fromProject: false, check: false, allowRemote: false, targets: [] };
@@ -181,7 +196,13 @@ async function check(o, load) {
   return { playwright: true, browser: true };
 }
 
+const askedHelp = (argv) => argv.includes("--help") || argv.includes("-h");
+
 export async function main(argv, out = process.stdout, err = process.stderr, load = loadPlaywright) {
+  if (askedHelp(argv)) {
+    out.write(USAGE);
+    return 0;
+  }
   try {
     const o = parseArgs(argv);
     if (o.check) {

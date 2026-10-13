@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { STAGES, appendEvent, initRun } from "./chain-ledger.mjs";
-import { checklistItems, duration, esc, href, main, renderReport, writeReport } from "./chain-report.mjs";
+import { checklistItems, duration, esc, href, main, renderReport, taskText, writeReport } from "./chain-report.mjs";
 
 const tmp = mkdtempSync(join(tmpdir(), "chain-report-test-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -113,4 +113,29 @@ test("checklist items without a ref stay apart when their reasons differ, and me
     { item: "목업 없음", why: "home" }, { item: "목업 없음", why: "settings" }, { item: "목업 없음", why: "home" }, { item: "목업 없음" }] };
   assert.deepEqual(checklistItems([ev]).map((c) => c.why), ["home", "settings"]);
   assert.equal(checklistItems([{ ...ev, checklist: [{ item: "x" }, { item: "x" }] }]).length, 1);
+});
+
+test("the page links only files the run folder holds; a folder, a missing file or a note stays words", () => {
+  const { dir } = initRun({ base: "runs", cwd: fresh(), rand: "bbbb" });
+  writeFileSync(join(dir, "02-spec.md"), "# spec\n");
+  mkdirSync(join(dir, "mock", "expected"), { recursive: true });
+  appendEvent(dir, { stage: "plan", status: "done", artifacts: [{ label: "명세", path: "02-spec.md" }, { label: "기대 출력", path: "mock/expected" }],
+    checklist: [{ item: "AC-10 해석", ref: "02-spec.md AC-10" }, { item: "명세 확인", ref: "02-spec.md" }] });
+  appendEvent(dir, { stage: "qa", status: "note", tests: [{ where: "local", os: "linux", status: "pass", log: "qa/gone.txt" }] });
+  appendEvent(dir, { stage: "visual", status: "note", visual: [{ name: "home", mock: "visual/none.png", actual: "visual/none2.png", score: 95, verdict: "pass" }] });
+  const html = readFileSync(writeReport(dir), "utf8");
+  assert.match(html, /<a href="\.\/02-spec\.md">근거<\/a>/);
+  assert.match(html, /근거: 02-spec\.md AC-10/);
+  assert.doesNotMatch(html, /href="\.\/02-spec\.md%20AC-10"/);
+  assert.doesNotMatch(html, /href="\.\/mock\/expected"/);
+  assert.match(html, /기대 출력 <span class="why">\(파일 아님: mock\/expected\)<\/span>/);
+  assert.doesNotMatch(html, /qa\/gone\.txt/, "a missing log gets no link");
+  assert.match(html, /목업: 없음/);
+});
+
+test("task.md's argument line and its task are shown once when they say the same", () => {
+  assert.equal(taskText("list 에 --json\nlist 에 --json\n더 할 말"), "list 에 --json\n더 할 말");
+  assert.equal(taskText("--auto list 에 --json\nlist 에 --json"), "--auto list 에 --json\nlist 에 --json");
+  assert.equal(taskText("한 줄"), "한 줄");
+  assert.match(renderReport({ run: RUN, task: "같은 줄\n같은 줄", events: [] }), /<pre class="task">같은 줄<\/pre>/);
 });

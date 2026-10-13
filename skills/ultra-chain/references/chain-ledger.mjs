@@ -423,9 +423,23 @@ export function markUnverified(tests, names, why) {
     ? { ...t, status: "unverified", note: [why, t.note].filter(Boolean).join("; ").slice(0, 500) } : t));
 }
 
+// The line the chain says as a stage starts, ends or records a round, and adds to its resume memo:
+// `[ultra-chain] 3/9 합의 계획: ralph-qa ITERATE 2회차`. A record command hands it back as `progress`, so
+// saying it needs no words of the model's own.
+const PROGRESS_WORD = { started: "시작", done: "끝", failed: "실패", skipped: "건너뜀", stopped: "멈춤", note: "기록" };
+
+export function progressLine(e) {
+  const i = STAGES.findIndex((s) => s.id === e.stage);
+  const what = e.verdict ? `${e.verdict.by} ${e.verdict.result}` : PROGRESS_WORD[e.status];
+  const round = Number.isInteger(e.round) ? ` ${e.round}회차` : "";
+  return `[ultra-chain] ${i}/${STAGES.length - 1} ${STAGES[i].label}: ${what}${round}`;
+}
+
+const withProgress = (e) => ({ ...e, progress: progressLine(e) });
+
 const COMMANDS = {
   init: (o) => initRun({ base: o.base, runtime: o.runtime ?? null, exclude: Boolean(o.exclude) }),
-  event: (o) => appendEvent(runDir(o), eventFrom(o)),
+  event: (o) => withProgress(appendEvent(runDir(o), eventFrom(o))),
   boxes: (o) => {
     const dir = runDir(o);
     if (!o.file) throw new UsageError("--file <boxes.mjs run 출력 JSON> 이 필요합니다");
@@ -434,7 +448,7 @@ const COMMANDS = {
     const count = (s) => tests.filter((t) => t.status === s).length;
     const untracked = Number.isInteger(report.untracked) ? `, 보내지 않은 새 파일 ${report.untracked}개` : "";
     const summary = `박스 ${tests.length}대: 통과 ${count("pass")}, 실패 ${count("fail")}, 미검증 ${count("unverified")}${untracked}`;
-    return appendEvent(dir, { stage: o.stage ?? "qa", status: "note", summary, tests, ...(o.round ? { round: Number(o.round) } : {}) });
+    return withProgress(appendEvent(dir, { stage: o.stage ?? "qa", status: "note", summary, tests, ...(o.round ? { round: Number(o.round) } : {}) }));
   },
   // show is the first command of a resume, so it also re-makes the stage folders an older run may lack.
   show: (o) => {

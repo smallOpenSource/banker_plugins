@@ -38,6 +38,8 @@ export const MIME = {
   '.mjs': 'text/javascript;charset=utf-8', '.json': 'application/json;charset=utf-8', '.png': 'image/png',
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.woff2': 'font/woff2',
+  // Notes and logs a report links to open as text in the browser instead of downloading.
+  '.md': 'text/plain;charset=utf-8', '.txt': 'text/plain;charset=utf-8', '.log': 'text/plain;charset=utf-8', '.jsonl': 'text/plain;charset=utf-8',
 };
 
 // `strict` is the policy above; any other text is a policy as written; nothing means no header.
