@@ -2,7 +2,10 @@
 // No network and no real home: every run uses a fake HOME in a temp dir.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +16,7 @@ const root = mkdtempSync(join(tmpdir(), "omc-patch-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
 const HAS_GIT = spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0;
+const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const ORIGIN = "https://example.invalid/omc.git";
 
 // Git run by these tests, and the tool they start, reads neither the developer's global or system config nor a
@@ -979,4 +983,52 @@ test("a script name with a tag character or a word joiner prints them as ?", { s
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /백업이 없어 되돌리지 못했습니다 \S t\?\?$/m);
   assert.ok(![0xe0041, 0x2060].some((c) => r.out.includes(String.fromCodePoint(c))), r.out);
+});
+
+// Writing in place used to change every name of a hard-linked hook, the one outside the plugin folder too.
+test("apply writes through a temp file and a rename: a hook hard-linked to a file outside leaves that file as it was", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  const outer = join(outside, "foo.mjs");
+  writeFileSync(outer, SCRIPT("foo"));
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  try {
+    linkSync(outer, join(plug, "scripts", "foo.mjs"));
+  } catch (e) {
+    t.skip(`no hard links here: ${e.code}`);
+    return;
+  }
+  const r = run(home, ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(read(join(plug, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/);
+  assert.equal(read(outer), SCRIPT("foo"), "the file outside the plugin folder is untouched");
+  assert.deepEqual(readdirSync(join(plug, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
+});
+
+test("a patched hook keeps its file mode", { skip: process.platform === "win32" && "POSIX modes" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  chmodSync(foo, 0o640);
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  assert.equal(statSync(foo).mode & 0o777, 0o640);
+});
+
+// A folder the tool cannot write used to stop it with an exception and a stack trace.
+test("a hook the tool cannot write is named and counted; the file stays as it was and no temp file is left", { skip: process.platform === "win32" ? "POSIX modes" : asRoot && "root ignores modes" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  const scripts = join(plug, "scripts");
+  chmodSync(scripts, 0o555);
+  try {
+    const r = run(home, ["--root", plug]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /쓰지 못함: foo \(EACCES\)/);
+    assert.equal(read(join(scripts, "foo.mjs")), SCRIPT("foo"));
+    assert.deepEqual(readdirSync(scripts).filter((x) => x.includes(".omc-tmp-") || x.endsWith(".omcbak")), []);
+  } finally {
+    chmodSync(scripts, 0o755);
+  }
 });

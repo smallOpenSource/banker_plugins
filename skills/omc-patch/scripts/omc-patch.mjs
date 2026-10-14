@@ -24,8 +24,9 @@
 import {
   readFileSync, writeFileSync, writeSync, existsSync, copyFileSync, readdirSync,
   unlinkSync, mkdirSync, rmSync, symlinkSync, lstatSync, realpathSync,
+  chmodSync, renameSync, statSync, constants as FS_CONST,
 } from "node:fs";
-import { join, dirname, resolve, sep as PATH_SEP, delimiter as PATH_LIST_SEP } from "node:path";
+import { join, dirname, basename, resolve, sep as PATH_SEP, delimiter as PATH_LIST_SEP } from "node:path";
 import { homedir, hostname } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -221,16 +222,60 @@ function switchActive(sha, have) {
   const j = JSON.parse(readFileSync(INSTALLED, "utf8"));
   const e = j.plugins?.[PLUGIN_KEY]?.[0];
   if (!e) { bad(`installed_plugins.json 에 ${PLUGIN_KEY} 항목이 없음 — 수동 확인 필요`); return false; }
-  if (!existsSync(`${INSTALLED}.omcbak`)) copyFileSync(INSTALLED, `${INSTALLED}.omcbak`);
+  backup(INSTALLED, `${INSTALLED}.omcbak`);
   const sep = e.installPath.includes("//") ? "//" : e.installPath.includes("\\") ? "\\" : "/";
   e.installPath = e.installPath.split(sep).slice(0, -1).concat(TARGET_VERSION).join(sep);
   e.version = TARGET_VERSION;
   e.gitCommitSha = sha;
   e.lastUpdated = new Date().toISOString();
-  writeFileSync(INSTALLED, JSON.stringify(j, null, 2) + "\n", "utf8");
+  writeAtomic(INSTALLED, JSON.stringify(j, null, 2) + "\n");
   ok(`${have[0] || "없음"} → ${TARGET_VERSION} (sha ${sha.slice(0, 12)})`);
   return true;
 }
+
+// ── 쓰기 ─────────────────────────────────────────────────────────────────────
+// 같은 폴더의 새 임시 파일(있으면 실패하는 열기)에 쓴 뒤 rename 으로 바꾼다. 확인과 쓰기 사이에 그 자리가 바뀌어도
+// 링크 너머에 쓰지 않고, 하드 링크로 이어진 다른 이름(폴더 밖 파일)의 내용은 그대로 둔다. 쓸 파일이 링크면 실제
+// 경로에서 바꿔 링크를 남긴다. 권한은 mode 를 주면 그 값, 아니면 원래 파일의 것(없으면 0644)이다.
+function writeAtomic(file, data, mode) {
+  const real = realOr(file);
+  const tmp = join(dirname(real), `.${basename(real)}.omc-tmp-${process.pid}`);
+  rmSync(tmp, { force: true });
+  try {
+    writeFileSync(tmp, data, { flag: "wx" });
+    chmodSync(tmp, mode ?? modeOf(real));
+    renameRetry(tmp, real);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+// 파일의 권한 비트. 읽을 수 없으면 0644.
+function modeOf(p) {
+  try { return statSync(p).mode & 0o777; } catch { return 0o644; }
+}
+
+// Windows 에서 다른 프로세스가 연 파일은 rename 이 잠시 거부된다(EPERM, EBUSY, EACCES). 100ms 간격으로 5번까지 다시 한다.
+const RENAME_PAUSE = new Int32Array(new SharedArrayBuffer(4));
+function renameRetry(from, to) {
+  for (let i = 0; ; i++) {
+    try { renameSync(from, to); return; }
+    catch (e) {
+      if (i >= 5 || !["EPERM", "EBUSY", "EACCES"].includes(e.code)) throw e;
+      Atomics.wait(RENAME_PAUSE, 0, 0, 100);
+    }
+  }
+}
+
+// 백업을 만든다. 이미 있으면 처음 백업을 지킨다. 있으면 실패하는 복사라 확인과 복사 사이에 틈이 없다.
+function backup(file, bak) {
+  try { copyFileSync(file, bak, FS_CONST.COPYFILE_EXCL); }
+  catch (e) { if (e.code !== "EEXIST") throw e; }
+}
+
+// 쓰기 실패의 이유 한 줄.
+const failWhy = (e) => oneLine(e.code || e.message);
 
 // ── 2. 훅 패치 ───────────────────────────────────────────────────────────────
 function hookNames(root) {
@@ -539,11 +584,7 @@ function patchHooks(root) {
 
 function revertScript(root, n, f, r) {
   const bak = `${f}.omcbak`;
-  if (existsSync(bak)) {
-    const why = whyNotWrite(root, f, bak);
-    if (why) { bad(`되돌리지 않음: ${shown(n)} (${why})`); r.fail++; r.failed.push(f); return; }
-    copyFileSync(bak, f); unlinkSync(bak); log(`  되돌림  ${shown(n)}`); r.done++; return;
-  }
+  if (existsSync(bak)) { restoreScript(root, n, f, bak, r); return; }
   // 백업이 없는데 이미 감싸여 있으면 되돌릴 원본이 디스크에 없다. 조용히 넘기지 않고 이름을 댄다.
   //   - 우리 헬퍼가 있으면: 이 도구나 옛 킷이 고쳤는데 백업이 사라진 파일(복사해 온 폴더 등)
   //   - 손 패치: `await import(` 를 `await Promise.race([import(` 로 «바꿔치기» 해서 await import
@@ -553,6 +594,20 @@ function revertScript(root, n, f, r) {
   else if (looksHandPatched(src)) r.foreign.push(n);
 }
 
+// 백업으로 되돌린다. 쓸 수 없는 자리거나 쓰지 못하면 이유를 대고 실패로 센다.
+function restoreScript(root, n, f, bak, r) {
+  const why = whyNotWrite(root, f, bak) ?? restoreFrom(f, bak);
+  if (!why) { log(`  되돌림  ${shown(n)}`); r.done++; return; }
+  bad(`되돌리지 않음: ${shown(n)} (${why})`);
+  r.fail++; r.failed.push(f);
+}
+
+// 백업의 내용으로 파일을 바꾸고 백업을 지운다. 쓰지 못하면 그 이유, 아니면 null.
+function restoreFrom(f, bak) {
+  try { writeAtomic(f, readFileSync(bak)); unlinkSync(bak); return null; }
+  catch (e) { return `쓰지 못함: ${failWhy(e)}`; }
+}
+
 function checkOrPatchScript(root, n, f, r) {
   const info = siteInfo(readFileSync(f, "utf8"));
   // 헬퍼 자리 결함은 check 와 apply 모두 이름을 댄다. 이미 감싼 파일이라 transform 으로는
@@ -560,17 +615,30 @@ function checkOrPatchScript(root, n, f, r) {
   if (info.state === "misplaced") { bad(`헬퍼 자리 결함: ${n} (${info.why})`); r.misplaced++; return; }
   if (info.state !== "needs") { r.skip++; return; }
   if (MODE === "check") { bad(`패치 필요: ${n}`); r.need++; return; }
-
   const bak = `${f}.omcbak`;
   const why = whyNotWrite(root, f, bak);
   if (why) { bad(`쓰지 않음: ${n} (${why})`); r.fail++; return; }
   const out = transform(readFileSync(f, "utf8"));
   if (!out) { bad(`변환 실패: ${n}`); r.fail++; return; }
-  if (!existsSync(bak)) copyFileSync(f, bak);
-  writeFileSync(f, out, "utf8");
+  if (writePatched(f, bak, out, n)) r.done++;
+  else r.fail++;
+}
+
+// 패치한 글을 쓴다. 백업을 먼저 만들고, 쓴 파일이 문법 검사를 통과하지 못하면 백업으로 되돌린다. 성공이면 true.
+// 쓰지 못하면 이유를 대고 false 다(예전에는 예외로 멈췄다).
+function writePatched(f, bak, out, n) {
+  try {
+    backup(f, bak);
+    writeAtomic(f, out);
+  } catch (e) {
+    bad(`쓰지 못함: ${n} (${failWhy(e)})`);
+    return false;
+  }
   const err = syntaxError(f);
-  if (err) { copyFileSync(bak, f); bad(`문법오류로 롤백: ${n}\n      ${err}`); r.fail++; return; }
-  r.done++;
+  if (!err) return true;
+  writeAtomic(f, readFileSync(bak));
+  bad(`문법오류로 롤백: ${n}\n      ${err}`);
+  return false;
 }
 
 // 쓰기 전에 본다. 쓸 파일이 (링크를 따라가서) 플러그인 폴더 밖이거나 백업 자리가 링크면 그 이유를,
@@ -610,13 +678,18 @@ function patchHooksJson(root) {
     const why = whyNotWrite(root, hj, `${hj}.omcbak`);
     if (why) { bad(`hooks.json 을 건드리지 않음 (${why})`); return "unsafe"; }
   }
-  return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj);
+  try {
+    return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj);
+  } catch (e) {
+    bad(`hooks.json 을 쓰지 못함 (${failWhy(e)})`);
+    return "unsafe";
+  }
 }
 
 // 되돌린 결과. ambiguous 와 linked 는 hooks.json 을 되돌리지 못하고 남긴 것이라 끝 줄이 센다.
 function revertHooksJson(root, hj) {
   const bak = `${hj}.omcbak`;
-  if (existsSync(bak)) { copyFileSync(bak, hj); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
+  if (existsSync(bak)) { writeAtomic(hj, readFileSync(bak)); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
   // 이 도구의 백업이 없을 때 PostToolUse 가 그대로면 되돌릴 것이 없다. 옆의 수동 백업으로 덮어쓰면
   // 지금 내용을 잃는다.
   if (hasPostToolUse(hj)) return "no-backup";
@@ -626,7 +699,7 @@ function revertHooksJson(root, hj) {
   const { usable, unsafe } = manualBackups(root, dir);
   if (unsafe.length) bad(`hooks.json 수동 백업 후보가 링크이거나 플러그인 폴더 밖이라 쓰지 않음: ${unsafe.map(shown).join(", ")}`);
   if (usable.length === 1) {
-    copyFileSync(join(dir, usable[0]), hj);
+    writeAtomic(hj, readFileSync(join(dir, usable[0])));
     log(`  되돌림  hooks.json  (수동 백업 사용: ${shown(usable[0])})`);
     return "reverted";
   }
@@ -668,11 +741,11 @@ function removePostToolUse(hj) {
   if (!j.hooks?.PostToolUse) return "already";
   const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
   if (MODE === "check") { bad(`hooks.json PostToolUse 남아있음: ${list.join(", ")}`); return "needs"; }
-  if (!existsSync(bak)) copyFileSync(hj, bak);
+  backup(hj, bak);
   delete j.hooks.PostToolUse;
-  writeFileSync(hj, JSON.stringify(j, null, 2) + "\n", "utf8");
+  writeAtomic(hj, JSON.stringify(j, null, 2) + "\n");
   try { JSON.parse(readFileSync(hj, "utf8")); return list; }
-  catch { copyFileSync(bak, hj); bad("hooks.json 손상으로 롤백"); return "failed"; }
+  catch { writeAtomic(hj, readFileSync(bak)); bad("hooks.json 손상으로 롤백"); return "failed"; }
 }
 
 // ── 4. 자동 업데이트 차단 ────────────────────────────────────────────────────
