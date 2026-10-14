@@ -198,7 +198,7 @@ function targetSha() {
 function unpackTarget(dest) {
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
-  execFileSync("git", ["-C", MARKET, "archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")], { env: gitEnv(), stdio: "ignore" });
+  git(["archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")]);
   execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { stdio: "ignore" });
   unlinkSync(join(dest, "_src.tar"));
 }
@@ -521,7 +521,7 @@ const looksHandPatched = (src) =>
   !src.includes("__omcRaceImport") && /Promise\.race\s*\(\s*\[?[\s\S]{0,120}?\bimport\s*\(/.test(src);
 
 function patchHooks(root) {
-  const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, foreign: [], orphan: [] };
+  const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, foreign: [], orphan: [], failed: [] };
   // revert 는 scripts/ 전체를 훑는다. hooks.json 기반 목록은 두 번 새는데, 실측으로
   // 4.15.7 이 둘 다 겪었다 — PostToolUse 를 지우면 그 스크립트가 목록에서 빠지고(그래서
   // .omcbak 이 있어도 안 돌아온다), 손으로 고친 파일은 .omcbak 조차 없어 아예 안 보인다.
@@ -541,8 +541,8 @@ function revertScript(root, n, f, r) {
   const bak = `${f}.omcbak`;
   if (existsSync(bak)) {
     const why = whyNotWrite(root, f, bak);
-    if (why) { bad(`되돌리지 않음: ${n} (${why})`); r.fail++; return; }
-    copyFileSync(bak, f); unlinkSync(bak); log(`  되돌림  ${n}`); r.done++; return;
+    if (why) { bad(`되돌리지 않음: ${shown(n)} (${why})`); r.fail++; r.failed.push(f); return; }
+    copyFileSync(bak, f); unlinkSync(bak); log(`  되돌림  ${shown(n)}`); r.done++; return;
   }
   // 백업이 없는데 이미 감싸여 있으면 되돌릴 원본이 디스크에 없다. 조용히 넘기지 않고 이름을 댄다.
   //   - 우리 헬퍼가 있으면: 이 도구나 옛 킷이 고쳤는데 백업이 사라진 파일(복사해 온 폴더 등)
@@ -598,6 +598,10 @@ const realOr = (p) => {
   try { return realpathSync(p); } catch { return p; }
 };
 
+// 같은 파일인지 셀 때 쓰는 열쇠. Windows 는 경로의 대소문자를 가리지 않아 소문자로 접는다. junction 이 대상을
+// 캐시 경로와 다른 글자로 적어 두면 같은 파일이 다른 철자로 풀리기 때문이다.
+const fileKey = (p) => (process.platform === "win32" ? realOr(p).toLowerCase() : realOr(p));
+
 // ── 3. PostToolUse 훅 제거 ───────────────────────────────────────────────────
 function patchHooksJson(root) {
   const hj = join(root, "hooks", "hooks.json");
@@ -632,7 +636,11 @@ function revertHooksJson(root, hj) {
 
 // 파일에서 읽은 값(파일 이름, PINNED 의 host)을 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
 // SKILL 은 [!] 줄을 그대로 보고하라고 하므로, 값이 제 줄을 새로 시작하면 도구가 낸 줄처럼 읽힌다.
-const shown = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, "?").slice(0, 120);
+// 줄을 바꾸거나 글자 순서를 바꾸는 문자: C0 과 C1 제어 문자, 폭 없는 공백과 방향 표시, 줄과 문단 구분자,
+// 방향 덮어쓰기와 격리, BOM. oneLine 은 길이를 두고(URL), shown 은 120자로 자른다(이름, host).
+const UNSAFE_CH = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+const oneLine = (s) => String(s).replace(UNSAFE_CH, "?");
+const shown = (s) => oneLine(s).slice(0, 120);
 
 // hooks.json 옆의 수동 백업 후보. usable 은 PostToolUse 를 담은 유효한 JSON 이다. 링크로 심은 후보는
 // unsafe 로 따로 두고 읽지도 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
@@ -684,7 +692,7 @@ function pinMarketplace() {
 
   if (MODE === "revert") return unpinMarketplace(url);
   if (url.startsWith("omc-pinned://")) return "already";
-  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${url})`); return "needs"; }
+  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(url)})`); return "needs"; }
 
   mkdirSync(dirname(PINFILE), { recursive: true });
   // host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
@@ -726,8 +734,8 @@ function otherPluginName(root) {
     try { name = JSON.parse(readFileSync(join(root, rel), "utf8")).name; } catch { continue; }
     if (name === undefined) continue;
     if (name === want) return null;
-    const shown = JSON.stringify(name);
-    return `${rel} 의 name 이 ${shown.length > 80 ? `${shown.slice(0, 80)}...` : shown}`;
+    const quoted = JSON.stringify(name);
+    return `${rel} 의 name 이 ${quoted.length > 80 ? `${quoted.slice(0, 80)}...` : quoted}`;
   }
   return null;
 }
@@ -814,7 +822,9 @@ const needBy = {};
 const misplacedBy = {};
 const foreignBy = {};
 const orphanBy = {};
-// 되돌리지 못하고 남은 파일. 링크로 이어진 판 폴더는 같은 파일을 여러 이름으로 보이므로 실제 경로로 한 번만 센다.
+// 되돌리기 끝 줄이 세는 파일. 쓰지 못한 것(failed)과 백업이 없어 남은 것(left)이다. 링크로 이어진 판 폴더는
+// 같은 파일을 여러 이름으로 보이므로 fileKey 로 한 번만 센다. 위 [2/4] 줄의 건수는 판 폴더마다 센다.
+const failed = new Set();
 const left = new Set();
 for (const v of targets) {
   const root = rootOf(v);
@@ -826,13 +836,14 @@ for (const v of targets) {
   for (const k of ["done", "skip", "fail", "need", "misplaced"]) r[k] += x[k];
   if (x.foreign?.length) foreignBy[v] = x.foreign;
   if (x.orphan?.length) orphanBy[v] = x.orphan;
-  for (const n of [...x.foreign, ...x.orphan]) left.add(realOr(join(root, "scripts", `${n}.mjs`)));
+  for (const n of [...x.foreign, ...x.orphan]) left.add(fileKey(join(root, "scripts", `${n}.mjs`)));
+  for (const p of x.failed) failed.add(fileKey(p));
 }
 log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `되돌림 ${r.done}건${r.fail ? ` / 실패 ${r.fail}건` : ""}` : `패치 ${r.done}건 / 실패 ${r.fail}건`}${r.misplaced ? ` / 헬퍼 자리 결함 ${r.misplaced}건` : ""} / 대상 아님 ${r.skip}건`);
 // 백업이 없어 되돌리지 못한 파일은 되돌릴 원본이 디스크에 없다. 조용히 넘기면 «완전히
 // 되돌렸다» 는 잘못된 인상을 준다 — 무엇이 남았고 어떻게 되찾는지 정확히 말한다.
 function reportNoBackup(v, list, what) {
-  bad(`${v}: ${what} — ${list.join(", ")}`);
+  bad(`${v}: ${what} — ${list.map(shown).join(", ")}`);
   log(`      백업(.omcbak)이 없어 되돌릴 원본이 디스크에 없습니다. 원본이 필요하면:`);
   if (ROOT) log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`);
   else log(`      git -C "${MARKET}" archive v${v} scripts/<이름>.mjs | tar -x -C "${join(CACHE, v)}"`);
@@ -854,8 +865,8 @@ for (const v of targets) {
   else if (hj === "reverted" || hj === "ambiguous" || hj === "linked") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
   else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
-  else if (hj === "unsafe") r.fail++;
-  if (hj === "ambiguous" || hj === "linked") left.add(realOr(join(root, "hooks", "hooks.json")));
+  else if (hj === "unsafe") { r.fail++; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
+  if (hj === "ambiguous" || hj === "linked") left.add(fileKey(join(root, "hooks", "hooks.json")));
 }
 
 log();
@@ -907,7 +918,7 @@ if (MODE === "check") {
   }
 } else if (MODE === "revert") {
   // 백업이 없어 남은 파일과 hooks.json 도 «끝내지 못함» 이다. 완료라고 하면 남은 것을 보지 못하고 넘어간다.
-  const why = [r.fail && `실패 ${r.fail}건`, left.size && `되돌리지 못한 것 ${left.size}건`].filter(Boolean);
+  const why = [failed.size && `실패 ${failed.size}건`, left.size && `되돌리지 못한 것 ${left.size}건`].filter(Boolean);
   log(why.length
     ? `되돌리기를 끝내지 못했습니다. ${why.join(", ")}. 위의 [!] 줄을 확인하십시오.`
     : "되돌리기 완료. Claude Code 를 재시작해야 반영됩니다.");

@@ -718,12 +718,13 @@ test("a PINNED host with line breaks or control characters prints on one line", 
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   assert.equal(run(f.home, ["--no-update"]).code, 0);
   const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
-  writeFileSync(pinfile, JSON.stringify({ originUrl: ORIGIN, host: "elsewhere\n  [!] injected line\u001b[2J" }));
+  // a line feed, an escape, a line separator and a right-to-left override
+  writeFileSync(pinfile, JSON.stringify({ originUrl: ORIGIN, host: "elsewhere\n  [!] injected line\u001b[2J\u2028x\u202ey" }));
   const r = run(f.home, ["--revert"]);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /PINNED 는 다른 기기\(elsewhere/);
   assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
-  assert.doesNotMatch(r.out, /\u001b/);
+  assert.doesNotMatch(r.out, /[\u001b\u2028\u202e]/);
   assert.equal(origin(f.market), ORIGIN);
 });
 
@@ -736,5 +737,170 @@ test("a manual hooks.json backup name with a line break prints on one line", { s
   const r = run(home, ["--revert", "--root", plug]);
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /hooks\.json 수동 백업이 여러 개라 자동 복구하지 않음/);
+  assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
+});
+
+// The end line counts each real file once. A version folder that links to another names the same files, and a write
+// refused there is the same failure, not a second one.
+test("--revert counts a failure once per real file, through linked version folders", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.7.0" }, { v: "5.7.1", active: true }]);
+  const real = join(f.cache, "5.7.0");
+  const linked = join(f.cache, "5.7.1");
+  rmSync(linked, { recursive: true, force: true });
+  try {
+    symlinkSync(real, linked, "junction");
+  } catch {
+    t.skip("links cannot be made here");
+    return;
+  }
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "planted.mjs"), "planted\n");
+  const bak = join(real, "scripts", "foo.mjs.omcbak");
+  rmSync(bak);
+  try {
+    symlinkSync(join(outside, "planted.mjs"), bak);
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(f.home, ["--revert"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 실패 1건\./);
+  assert.equal(read(join(outside, "planted.mjs")), "planted\n");
+});
+
+// Same through the links for hooks.json: two hand-made backups, so it stays unrestored, and that is one file.
+test("--revert counts an unrestorable hooks.json once through linked version folders", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.7.0" }, { v: "5.7.1", active: true }]);
+  const real = join(f.cache, "5.7.0");
+  const linked = join(f.cache, "5.7.1");
+  rmSync(linked, { recursive: true, force: true });
+  try {
+    symlinkSync(real, linked, "junction");
+  } catch {
+    t.skip("links cannot be made here");
+    return;
+  }
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  rmSync(join(real, "hooks", "hooks.json.omcbak"));
+  for (const n of ["bak-1", "bak-2"]) writeFileSync(join(real, "hooks", `hooks.json.${n}`), HOOKS_JSON);
+  const r = run(f.home, ["--revert"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 되돌리지 못한 것 1건\./);
+});
+
+// Windows paths ignore letter case, and a junction may name its target in other letters than the cache path.
+test("on Windows a junction whose target differs in letter case still counts a file once", { skip: process.platform !== "win32" && "Windows only" }, () => {
+  const f = fakeHome([{ v: "5.7.0" }, { v: "5.7.1", active: true }], { git: false });
+  const real = join(f.cache, "5.7.0");
+  const linked = join(f.cache, "5.7.1");
+  rmSync(linked, { recursive: true, force: true });
+  symlinkSync(real.toUpperCase(), linked, "junction");
+  writeFileSync(join(real, "scripts", "stopper.mjs"), "const __omcRaceImport = (p) => p;\nconsole.log(1);\n");
+  const r = run(f.home, ["--revert"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /되돌리지 못한 것 1건/);
+});
+
+// Windows reads environment variable names in any letter case, so git takes Git_Dir as GIT_DIR.
+test("on Windows the tool's git also ignores repository variables written in other letter case", { skip: (process.platform !== "win32" && "Windows only") || (!HAS_GIT && "git not found") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const decoy = join(root, `decoy${seq++}`);
+  mkdirSync(decoy, { recursive: true });
+  const DECOY = "https://example.invalid/decoy.git";
+  for (const a of [["init", "-q"], ["remote", "add", "origin", DECOY]]) assert.equal(runGit(a, decoy).status, 0);
+  const shell = { Git_Dir: join(decoy, ".git"), Git_Work_Tree: decoy };
+  // the fixture bites: git takes the mixed-case names
+  assert.equal(runGit(["remote", "get-url", "origin"], f.market, shell).stdout.trim(), DECOY);
+  assert.equal(run(f.home, ["--no-update"], shell).code, 0);
+  assert.equal(origin(decoy), DECOY, "the decoy keeps its origin");
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`);
+});
+
+// One usable hand-made backup restores hooks.json even with a linked candidate beside it: the revert names the
+// linked one and still finishes.
+test("--revert takes the one usable manual backup, names a linked one beside it, and finishes", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  rmSync(join(plug, "hooks", "hooks.json.omcbak"));
+  writeFileSync(join(plug, "hooks", "hooks.json.bak-1"), HOOKS_JSON);
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "settings.json"), JSON.stringify({ hooks: { PostToolUse: [] }, planted: true }));
+  try {
+    symlinkSync(join(outside, "settings.json"), join(plug, "hooks", "hooks.json.stolen"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(read(join(plug, "hooks", "hooks.json")), HOOKS_JSON, "restored from the usable backup");
+  assert.match(r.out, /수동 백업 사용: hooks\.json\.bak-1/);
+  assert.match(r.out, /수동 백업 후보가 링크이거나 플러그인 폴더 밖이라 쓰지 않음: hooks\.json\.stolen/);
+  assert.match(r.out, /되돌리기 완료/);
+});
+
+test("script names with line breaks print on one line", { skip: process.platform === "win32" && "Windows file names cannot hold line breaks" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  // one restored from its backup, one patched with no backup left
+  const restored = join(plug, "scripts", "y\n  [!] forged restored.mjs");
+  writeFileSync(restored, "patched\n");
+  writeFileSync(`${restored}.omcbak`, "original\n");
+  writeFileSync(join(plug, "scripts", "x\n  [!] forged orphan.mjs"), "const __omcRaceImport = (p) => p;\n");
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.equal(read(restored), "original\n");
+  assert.match(r.out, /패치는 있는데 백업이 없어 되돌리지 못했습니다/);
+  assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] forged")), r.out);
+});
+
+// The tool keeps its own copy of git's list. A newer git that adds a variable must make this fail.
+test("the tool's list of repository variables covers this git's --local-env-vars", { skip: !HAS_GIT && "git not found" }, () => {
+  const listed = /const GIT_REPO_VARS = new Set\(\[([\s\S]*?)\]\)/.exec(read(TOOL))[1];
+  const names = new Set([...listed.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]));
+  const local = runGit(["rev-parse", "--local-env-vars"], root).stdout.split(/\s+/).filter(Boolean);
+  assert.ok(local.includes("GIT_DIR"), local.join(" "));
+  assert.deepEqual(local.filter((v) => !names.has(v)), []);
+});
+
+// A marketplace that is a link resolves to its real folder, and git walks up from there. The ceiling must cover the
+// real folder's parent too, or a broken .git lets the pin land on a repository around the real folder.
+test("a linked marketplace with a broken .git does not pin the repository around its real folder", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }], { git: false });
+  const outer = join(root, `outer${seq++}`);
+  const realMarket = join(outer, "omc");
+  mkdirSync(join(realMarket, ".git"), { recursive: true });
+  const OUTER = "https://example.invalid/outer.git";
+  for (const a of [["init", "-q"], ["remote", "add", "origin", OUTER]]) assert.equal(runGit(a, outer).status, 0);
+  mkdirSync(dirname(f.market), { recursive: true });
+  try {
+    symlinkSync(realMarket, f.market, "junction");
+  } catch {
+    t.skip("links cannot be made here");
+    return;
+  }
+  // the fixture bites: git started in the linked marketplace reaches the outer repository
+  assert.equal(runGit(["remote", "get-url", "origin"], f.market).stdout.trim(), OUTER);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(origin(outer), OUTER, "the outer repository keeps its origin");
+  assert.equal(existsSync(join(f.home, ".claude", "omc-local-patches", "PINNED")), false);
+});
+
+// --check prints the origin it found. A line break stored in the URL must not start a line of its own.
+test("an origin URL with a line break prints on one line in --check", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  if (runGit(["config", "remote.origin.url", "https://example.invalid/omc.git\n  [!] injected"], f.market).status !== 0) {
+    t.skip("this git does not store a line break in a URL");
+    return;
+  }
+  const r = run(f.home, ["--check", "--no-update"]);
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/example\.invalid\/omc\.git\?  \[!\] injected\)/);
   assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
 });
