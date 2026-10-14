@@ -28,6 +28,7 @@
 - `omc-patch`: `--check` 가 쓸 수 없는 훅과 hooks.json 을 미리 알린다. 폴더 밖 링크 때문에 되돌리지 못한 파일은 손 복구 방법을 안내한다.
 - `omc-patch`: 지울 git 변수에 이 PC 의 `git rev-parse --local-env-vars` 결과를 더한다. 업데이트 경로의 fetch 는 환경 변수로 준 git 설정(`http.proxy` 등)을 쓴다.
 - smoke 시험: banker 작업 파일 검사가 대소문자를 가리지 않고 `skills/`, `commands/` 의 모든 글 파일을 본다.
+- 유지보수자용: npm pack 대조 시험이 레지스트리에 접속하지 않는다. smoke 의 DRM 이름 검사가 긴 줄에서도 선형 시간이다. `scripts/gen-skill-changes.js`, `hooks/obsidize-hook.mjs`, `hooks/update-checkin.mjs` 의 main 을 함수 규칙(복잡도 10) 안으로 나눴다(동작 그대로).
 
 ## [0.18.0] - 2026-10-14
 
