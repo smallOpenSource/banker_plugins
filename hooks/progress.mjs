@@ -118,9 +118,10 @@ const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', .
 // stands. `listAt` is the order of the TaskList the list last came from.
 // `plan` is the plan last read from `planPath`, `planShut` whether the whole plan is folded and
 // `planOpen` the ids of its nodes unfolded. `touch` counts the calls that touched a plan file and
-// `taken` is the touch the plan came from, to tell a read that a newer one overtook.
+// `taken` is the touch the plan came from, to tell a read that a newer one overtook. `followed` is the step in
+// progress the pane last brought into view.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
-  order: 0, listAt: 0, plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0 });
+  order: 0, listAt: 0, plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0, followed: null });
 
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
@@ -490,6 +491,9 @@ export function steps(s) {
   return s.loose.calls.length ? [...items, { ...s.loose, status: looseStatus(s, items) }] : items;
 }
 
+// The key of the step in progress (a task or a to-do item in progress, or the prompt that runs), or null.
+const runningKey = (s) => [...steps(s)].reverse().find((t) => ['in_progress', 'running'].includes(statusOf(t)))?.key ?? null;
+
 function callCount(step) {
   return `도구 호출 ${step.count}회${step.failed ? `(실패 ${step.failed}회)` : ''}`;
 }
@@ -736,6 +740,7 @@ async function watchCall($, e, next) {
     const touched = planTouched(s, e, call);
     if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch, own: touched.own, weak: touched.weak });
     $.ui.invalidate('ui.render');
+    void progressFollow($);
   }
 }
 
@@ -756,6 +761,20 @@ async function readText($, path) {
 
 // The session's progress, one per loaded module.
 const ref = { s: freshState() };
+
+// Brings the step in progress into the pane's window when it changes (a task started, a new prompt): in a long list
+// it can sit below the window. `nearest` moves nothing while its row shows, and the person's own scrolling stands
+// until the next change. A refusal (the pane is closed: no surface) or an engine without the move changes nothing.
+export async function progressFollow($) {
+  const key = runningKey(ref.s);
+  if (!key || key === ref.s.followed) return;
+  ref.s.followed = key;
+  try {
+    await $.ui.scroll({ to: { key: `row-${key}` }, in: PANE, block: 'nearest' });
+  } catch {
+    /* an engine without $.ui.scroll */
+  }
+}
 
 // The command and the events only this feature hooks. register.mjs hooks the events every banker
 // feature shares (the engine takes one hook per event from the module) and calls the functions
@@ -778,6 +797,7 @@ export function registerProgress(on) {
     }
     const answer = answerTodo(ref.s, e, Date.now(), open);
     $.ui.invalidate('ui.render');
+    void progressFollow($);
     return answer;
   }).catch(() => ({ deny: '진행 상황 패널이 할 일 목록을 받지 못했습니다.' }));
   on('tool.describe', { tool: TODO_TOOL }, async (_$, e, next) => ({ ...(await next(e)), isDeferred: false })).catch(() => undefined);

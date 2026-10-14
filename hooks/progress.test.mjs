@@ -92,7 +92,7 @@ function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 
     return { catch: (handler) => { reg.caught = handler; } };
   };
   const open = new Map();
-  const seen = { registered: [], opened: [], closed: [], invalidated: 0, logs: [], reads: [], stats: [], tools: [] };
+  const seen = { registered: [], opened: [], closed: [], invalidated: 0, logs: [], reads: [], stats: [], tools: [], scrolls: [] };
   const $ = {
     command: { register: async (spec) => { seen.registered.push(spec); return { command: spec.name }; } },
     tool: toolStandIn(listed, seen),
@@ -103,6 +103,7 @@ function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 
       open: async (p) => { seen.opened.push(p); open.set(p.id, { isShown: !open.has(p.id) || open.get(p.id).isShown || p.focus === true }); },
       close: async (p) => { seen.closed.push(p); open.delete(p.id); },
       invalidate: () => { seen.invalidated += 1; },
+      scroll: async (a) => { seen.scrolls.push(a); return {}; },
       log: (t) => { seen.logs.push(t); },
       resolve: () => ELEMENTS,
     },
@@ -364,6 +365,36 @@ test('a subagent\'s turn.complete does not end the main step, and its calls are 
   tree = await eng.draw();
   button(tree, 'WebSearch mods').props.onPress({});
   assert.match(textOf(about(await eng.draw())), /^하위 에이전트의 WebSearch: mods\./);
+});
+
+test('the step in progress is brought into the pane\'s window when it changes, and only then', async () => {
+  const eng = engine();
+  await eng.raise('command.run', { command: 'progress', args: 'on' });
+  const todos = (at) => Array.from({ length: 50 }, (_, i) => ({ content: `단계 ${i + 1}`, status: i + 1 === at ? 'in_progress' : i + 1 < at ? 'completed' : 'pending' }));
+  const into = (key) => ({ to: { key }, in: PANE, block: 'nearest' });
+  await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(40) });
+  let tree = await eng.draw();
+  assert.deepEqual(eng.seen.scrolls, [into(rowLabeled(tree, '단계 40').props.key)]);
+  await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(40) });
+  await eng.tool({ tool: 'Bash', command: 'make' });
+  assert.equal(eng.seen.scrolls.length, 1, 'the same step in progress asks for no move');
+  await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(41) });
+  tree = await eng.draw();
+  assert.deepEqual(eng.seen.scrolls.at(-1), into(rowLabeled(tree, '단계 41').props.key));
+  assert.equal(eng.seen.scrolls.length, 2);
+});
+
+test('a new prompt\'s step is brought into view as it starts; an engine that refuses or lacks the move changes nothing', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  assert.deepEqual(eng.seen.scrolls, [{ to: { key: 'row-t-t1' }, in: PANE, block: 'nearest' }]);
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  eng.$.ui.scroll = async () => ({ deny: 'no-surface' });
+  await eng.raise('turn.start', { turnId: 't2', text: '둘' });
+  delete eng.$.ui.scroll;
+  await eng.raise('turn.complete', { turnId: 't2', reason: 'answer' });
+  await eng.raise('turn.start', { turnId: 't3', text: '셋' });
+  assert.deepEqual(labels(await eng.draw()), ['하나', '둘', '셋']);
 });
 
 test('a subagent\'s or a fork\'s turn.start makes no step; its calls go under the step in progress', async () => {

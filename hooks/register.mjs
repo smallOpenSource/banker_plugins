@@ -16,7 +16,7 @@ import {
   registerGracefulPause,
 } from './graceful-pause.mjs';
 import {
-  SPEC as PROGRESS_SPEC, progressPlanRead, progressPlanTarget, progressReset, progressTurnCompleted, progressTurnStarted,
+  SPEC as PROGRESS_SPEC, progressFollow, progressPlanRead, progressPlanTarget, progressReset, progressTurnCompleted, progressTurnStarted,
   registerProgress,
 } from './progress.mjs';
 
@@ -103,6 +103,7 @@ export const register = (on) => {
     progressTurnStarted(e);
     await rereadPlan($);
     $.ui.invalidate('ui.render');
+    void progressFollow($);
     return next(e);
   });
 
