@@ -11,8 +11,10 @@
  * read begun before a change keeps what changed after it began; the engine's own order of
  * overlapping calls is not something this module can see.
  *
- * Claude 5 models get no task list tool in Claude Code 2.1.296 (only older models, a background
- * job, or CLAUDE_CODE_ENABLE_TODO_TOOLS do). Opening the pane offers the model one of its own
+ * Claude 5 models get no task list tool in Claude Code 2.1.296 and 2.1.300 unless
+ * CLAUDE_CODE_ENABLE_TODO_TOOLS is set (seen in a live 2.1.300 session with Haiku 5.5: with it
+ * TaskCreate, TaskUpdate, TaskList and TaskGet came and the pane showed their list; without it,
+ * none). Opening the pane offers the model one of its own
  * (`mcp__banker__todo`, TodoWrite's shape) where it has none, and the list it sends is the steps.
  * Above them the pane shows the plan file the session touched last (progress-plan.mjs reads it):
  * the whole plan as a tree that folds like a toggle list, its sections folded at first.
@@ -301,13 +303,18 @@ function mark(s, id, key, order) {
   if (held) held[key] = order;
 }
 
+// Whether a later-begun update already changed the task.
+const overtaken = (held, order) => Boolean(held) && order < (held.updAt ?? 0);
+// The status a TaskUpdate left: the change it answers with, else the one it asked for.
+const updatedStatus = (e, r) => r?.result?.statusChange?.to ?? e.status;
+
 // A task this module never saw (a list from before it loaded, or one another session shares) joins
 // the list while it is not done. Of two updates to one task, the one begun later stands.
 function updateTask(s, e, r, now, { order }) {
   const id = String(e.taskId);
   const held = s.tasks.get(id);
-  if (held && order < (held.updAt ?? 0)) return;
-  const status = r?.result?.statusChange?.to ?? e.status;
+  if (overtaken(held, order)) return;
+  const status = updatedStatus(e, r);
   if (status === 'deleted') {
     s.tasks.delete(id);
     return;
