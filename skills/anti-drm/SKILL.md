@@ -120,6 +120,8 @@ argument-hint: "on | off | status | config"
 
 - `on` 은 `config` 자리에 `on --runtime <런타임>` 을 씀
 - PowerShell 은 `@'` 와 `'@` 사이에 같은 세 줄을 두고 `| node "<경로>/scripts/anti-drm.mjs" config --stdin` 으로 넘김
+- 넘기기 전에 heredoc 안의 줄마다 `^(deny|alt|tsv)=[a-z0-9., ]*$` 에 맞는지 확인. 하나라도 맞지 않으면 실행하지 않고 "질문" 으로 돌아감
+  - "답 처리" 의 단어 검사와 겹치는 두 번째 방벽. 끝 표시(`ANTI_DRM_SETTINGS`, PowerShell 의 `'@`)는 이 꼴에 맞을 수 없어 값이 heredoc 을 일찍 닫지 못함
 - 줄은 `deny=`, `alt=`, `tsv=` 를 하나씩. `tsv=` 는 대체 확장자에 `.tsv` 가 있을 때만 씀
 - `--stdin` 은 입력이 끝날 때까지 기다림. 늘 heredoc 이나 파이프로 넘김
 

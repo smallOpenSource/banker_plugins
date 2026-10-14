@@ -916,3 +916,13 @@ test("tone-compact and anti-drm turned on at the same moment keep both blocks", 
     assert.equal(blocks(text), 1, `round ${round}: anti-drm`);
   }
 });
+
+test("SKILL.md checks each heredoc line before it runs, and no end word can pass that check", () => {
+  const text = read(SKILL);
+  assert.ok(text.includes("`^(deny|alt|tsv)=[a-z0-9., ]*$`"), "the line check is in SKILL.md");
+  const line = /^(deny|alt|tsv)=[a-z0-9., ]*$/;
+  for (const end of ["ANTI_DRM_SETTINGS", "'@"]) assert.equal(line.test(end), false, end);
+  const doc = /<<'ANTI_DRM_SETTINGS'\n([\s\S]*?)\n\s*ANTI_DRM_SETTINGS\n/.exec(text);
+  assert.ok(doc, "the heredoc example is there");
+  for (const l of doc[1].split("\n").map((x) => x.trim())) assert.match(l, line, l);
+});
