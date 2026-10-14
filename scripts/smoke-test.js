@@ -150,22 +150,25 @@ try {
     ...['3d-intro-build', 'motion-graphic-make', 'ultra-chain'].map((s) =>
       [`skills/${s}/references/preview-lib.mjs`, '.txt', 'a MIME type the preview server serves; no file is written']),
   ];
+  // Every text file under skills/ and commands/, in any letter case (a DRM matches NOTES.TXT too). A file that is
+  // not UTF-8 holds no name to read.
   const drmNames = [];
-  (function scanDrm(dir) {
+  const drmName = /[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/gi;
+  const utf8 = new TextDecoder('utf-8', { fatal: true });
+  function scanDrm(dir) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { if (!['node_modules', '__pycache__', '.omc'].includes(e.name)) scanDrm(p); continue; }
-      if (!/\.(md|mjs|js|cjs|py|ps1|sh)$/.test(e.name) || /\.test\.(mjs|ts)$|^test_.*\.py$/.test(e.name)) continue;
+      if (!e.isFile() || /\.test\.(mjs|ts)$|^test_.*\.py$/.test(e.name)) continue;
       const rel = path.relative(root, p).split(path.sep).join('/');
       if (rel.startsWith('skills/anti-drm/')) continue;
-      for (const m of fs.readFileSync(p, 'utf8').matchAll(/[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/g)) drmNames.push([rel, m[0]]);
-    }
-  })(path.join(root, 'skills'));
-  for (const f of fs.readdirSync(path.join(root, 'commands')).filter((n) => n.endsWith('.md'))) {
-    for (const m of fs.readFileSync(path.join(root, 'commands', f), 'utf8').matchAll(/[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/g)) {
-      drmNames.push([`commands/${f}`, m[0]]);
+      let text;
+      try { text = utf8.decode(fs.readFileSync(p)); } catch { continue; }
+      for (const m of text.matchAll(drmName)) drmNames.push([rel, m[0]]);
     }
   }
+  scanDrm(path.join(root, 'skills'));
+  scanDrm(path.join(root, 'commands'));
   const drmUnexplained = [...new Set(drmNames.filter(([rel, name]) => !DRM_KEEP.some(([f, n]) => f === rel && n === name))
     .map(([rel, name]) => `${rel}: ${name}`))];
   const drmUnused = DRM_KEEP.filter(([f, n]) => !drmNames.some(([rel, name]) => rel === f && name === n)).map(([f, n]) => `${f}: ${n}`);
@@ -321,7 +324,7 @@ try {
      && /`reviewers dropped N typed user turn\(s\)`/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.3$/m.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.4$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
      && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && !/공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)

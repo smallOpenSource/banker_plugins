@@ -184,7 +184,7 @@ argument-hint: "on | off | status"
   - 블록이 남음: `omx setup --merge-agents`, 기본 `omx setup`(team 모드 켜짐, 모델 표만 갱신)
   - 블록이 사라짐: `omx setup --force`, 덮어쓰기 확인, team 모드를 끈 `omx setup`. 그 뒤 `on` 다시 실행
 - UTF-8 이 아닌 지침 파일(CP949, UTF-16): 손대지 않고 거부
-- Codex 파일 변경 전 내용: `<파일>.tone-compact.bak` (이 계정만 읽기 가능)
+- Codex 파일 변경 전 내용: `<파일>.tone-compact.bak` (이 계정만 읽기 가능). `off` 결과에 그 경로를 알림
 - 같은 파일에 있는 다른 도구의 블록은 건드리지 않음
 - `status`: 두 런타임 상태를 모두 표시
 - 한 런타임에서 켜도 다른 런타임은 그대로. 필요하면 그쪽에서도 실행
@@ -199,5 +199,7 @@ argument-hint: "on | off | status"
 | 규칙이 이 버전과 다름 | `on` 한 번 실행 |
 | 블록이 Codex 가 읽지 않는 AGENTS.md 에 있음 | `AGENTS.override.md` 가 새로 생김. `on` 실행 시 옮김 |
 | AGENTS.override.md 에 블록만 있어 AGENTS.md 가 가려짐 | override 의 다른 내용이 지워짐. `on` 실행 시 AGENTS.md 로 옮기고 빈 override 삭제 |
+| 다른 banker 블록만 있어 Codex 가 AGENTS.md 를 읽지 않음 | 메시지가 말한 스킬에서 `on` 실행 |
 | UTF-8 이 아닌 파일 | 지침 파일을 UTF-8 로 바꾼 뒤 다시 실행 |
+| 일반 파일이 아님 | 지침 파일 자리(AGENTS.md, AGENTS.override.md)의 폴더나 특수 파일은 지우지 않음. 무엇인지 사용자에게 보이고, 옮기거나 이름을 바꿀지 물은 뒤 다시 실행 |
 | 쓸 권한이 없음 | 해당 파일과 폴더 권한 확인 |

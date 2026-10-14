@@ -43,9 +43,9 @@ argument-hint: "on | off | status | config"
 
    | `- 설정:` 줄 | 다음 |
    |---|---|
-   | `없음` | 아래 "질문" 을 한 뒤 `on --runtime <런타임> --deny "<금지 목록>" --alt "<대체 목록>" --tsv <tab 또는 comma>` |
+   | `없음` | 아래 "질문" 을 한 뒤 "설정 넘기기" 대로 `on --runtime <런타임> --stdin` 실행 |
    | 파일 경로 | `on --runtime <런타임>` |
-   | `올바르지 않음` | 이유를 전하고 `config` 절차를 따름 |
+   | `올바르지 않음` | 이유를 전하고 "질문" 으로 설정을 다시 정한 뒤 `없음` 행과 같은 명령 실행 |
 
 3. 성공하면 출력의 `적용할 규칙:` 아래 규칙을 이 세션에 바로 적용. 다음 세션부터는 자동 적용
 
@@ -63,7 +63,7 @@ argument-hint: "on | off | status | config"
 
 1. `status` 로 지금 설정을 봄
 2. 지금 값을 함께 보이며 아래 "질문" 을 함
-3. `config --deny "<금지 목록>" --alt "<대체 목록>" --tsv <tab 또는 comma>` 실행
+3. "설정 넘기기" 대로 `config --stdin` 실행
 4. 이 런타임이 켜져 있으면 출력의 `적용할 규칙:` 아래 규칙을 이 세션에 바로 적용
 
 ## 질문
@@ -100,11 +100,28 @@ argument-hint: "on | off | status | config"
 2. 직접 입력은 쉼표나 공백으로 나눔
 3. 낱말마다 `^\.?[A-Za-z0-9]+$` 를 만족해야 함. 아니면 그 값을 보이고 다시 물음
 4. 금지와 대체에 같은 확장자가 있으면 다시 물음
-5. 셸에는 정규화한 확장자만 넘김
+5. 정규화한 확장자만 넘김
    - 소문자로 바꿈
    - 앞에 점이 없으면 붙임
-   - 쉼표로 이어 큰따옴표로 감쌈. 예: `--deny ".txt,.pdf"`
+   - 쉼표로 이어 "설정 넘기기" 의 `deny=`, `alt=` 줄에 씀
 6. 스크립트가 거부하면 그 메시지를 전하고 다시 물음
+
+### 설정 넘기기
+
+- 설정 값은 명령줄 인자가 아니라 표준 입력으로 넘김. 따옴표 친 heredoc 안의 글은 셸이 해석하지 않음
+
+  ```bash
+  node "<이 스킬 디렉터리 절대경로>/scripts/anti-drm.mjs" config --stdin <<'ANTI_DRM_SETTINGS'
+  deny=.txt,.pdf
+  alt=.md,.html,.tsv
+  tsv=tab
+  ANTI_DRM_SETTINGS
+  ```
+
+- `on` 은 `config` 자리에 `on --runtime <런타임>` 을 씀
+- PowerShell 은 `@'` 와 `'@` 사이에 같은 세 줄을 두고 `| node "<경로>/scripts/anti-drm.mjs" config --stdin` 으로 넘김
+- 줄은 `deny=`, `alt=`, `tsv=` 를 하나씩. `tsv=` 는 대체 확장자에 `.tsv` 가 있을 때만 씀
+- `--stdin` 은 입력이 끝날 때까지 기다림. 늘 heredoc 이나 파이프로 넘김
 
 ## 종료 코드
 
@@ -206,7 +223,7 @@ argument-hint: "on | off | status | config"
 - Codex 블록은 `USER:OMX:POLICY` 표시로 감쌈
   - 블록이 남음: `omx setup --merge-agents`, 기본 `omx setup`(team 모드 켜짐)
   - 블록이 사라짐: `omx setup --force`, 덮어쓰기 확인, team 모드를 끈 `omx setup`. 그 뒤 `on` 다시 실행
-- Codex 파일 변경 전 내용: `<파일>.anti-drm.bak` (이 계정만 읽기 가능)
+- Codex 파일 변경 전 내용: `<파일>.anti-drm.bak` (이 계정만 읽기 가능). `off` 결과에 그 경로를 알림
 - `tone-compact` 블록과 같은 파일에 있어도 서로 건드리지 않음
 - `on`, `off` 는 그 런타임만 바꿈
 - 설정 값을 준 `on` 과 `config` 는 규칙이 들어 있는 다른 런타임도 새 규칙으로 바꿈
@@ -227,4 +244,5 @@ argument-hint: "on | off | status | config"
 | 설정 폴더가 없음 | 해당 런타임 미설치. 또는 설정 폴더 환경 변수 값 확인 |
 | 규칙이 지금 설정이나 이 버전과 다름 | `on` 한 번 실행 |
 | UTF-8 이 아닌 파일 | 지침 파일을 UTF-8 로 바꾼 뒤 다시 실행 |
+| 일반 파일이 아님 | 지침 파일 자리(AGENTS.md, AGENTS.override.md)의 폴더나 특수 파일은 지우지 않음. 무엇인지 사용자에게 보이고, 옮기거나 이름을 바꿀지 물은 뒤 다시 실행 |
 | 쓸 권한이 없음 | 해당 파일과 폴더 권한 확인 |

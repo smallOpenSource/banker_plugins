@@ -904,3 +904,79 @@ test("an origin URL with a line break prints on one line in --check", { skip: !H
   assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/example\.invalid\/omc\.git\?  \[!\] injected\)/);
   assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
 });
+
+// Unknown arguments used to be ignored: --dry-run applied for real, and --root=<folder> was dropped so that
+// --revert undid every version and the pin.
+test("arguments the tool does not know stop it before anything is read or written", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const act = join(f.cache, "5.6.1");
+  const before = { foo: read(join(act, "scripts", "foo.mjs")), hooks: read(join(act, "hooks", "hooks.json")) };
+  const cases = [
+    [["--dry-run"], /\[!\] 알 수 없는 인자: --dry-run/],
+    [["--no-update", "--dry-run"], /\[!\] 알 수 없는 인자: --dry-run/],
+    [["extra"], /\[!\] 알 수 없는 인자: extra/],
+    [[`--root=${act}`, "--revert"], /\[!\] --root 와 폴더는 띄어 쓰십시오: --root <폴더>/],
+    [["--check", "--scan", join(act, "scripts", "foo.mjs")], /\[!\] --scan 은 첫 인자로만 쓸 수 있습니다/],
+    [["--root", act, "--root", act, "--check"], /\[!\] --root 는 한 번만 쓸 수 있습니다/],
+  ];
+  for (const [args, want] of cases) {
+    const r = run(f.home, args);
+    assert.equal(r.code, 1, `${args.join(" ")}\n${r.out}`);
+    assert.match(r.out, want, args.join(" "));
+    assert.match(r.out, /사용법:/, args.join(" "));
+    assert.doesNotMatch(r.out, /^OMC 패치 /m, "stopped before the first line");
+    assert.deepEqual(omcbaks(join(act, "scripts")), []);
+    assert.equal(read(join(act, "scripts", "foo.mjs")), before.foo);
+    assert.equal(read(join(act, "hooks", "hooks.json")), before.hooks);
+    assert.equal(origin(f.market), ORIGIN, "not pinned");
+  }
+});
+
+test("--help and -h print the usage, exit 0 and change nothing", () => {
+  const home = bareHome();
+  for (const a of ["--help", "-h"]) {
+    const r = run(home, [a]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /^사용법:/);
+    assert.match(r.out, /--root <플러그인 폴더>/);
+    assert.match(r.out, /--scan <파일>\.\.\./);
+    assert.equal(existsSync(join(home, ".claude")), false);
+  }
+});
+
+test("a --root value that starts with one dash, or --root at the end, keeps today's messages", () => {
+  const home = bareHome();
+  const last = run(home, ["--check", "--root"]);
+  assert.equal(last.code, 1, last.out);
+  assert.match(last.out, /--root 뒤에 플러그인 폴더 경로가 필요합니다/);
+  const dash = run(home, ["--root", "-x", "--check"]);
+  assert.equal(dash.code, 1, dash.out);
+  assert.match(dash.out, /플러그인 폴더가 아님/);
+  assert.equal(existsSync(join(home, ".claude")), false);
+});
+
+test("output turns joiners, tag characters and blank-looking letters into ?, and keeps Korean, NFD and spaces", () => {
+  const home = bareHome();
+  const plug = bundle();
+  const odd = [0x2060, 0xe0041, 0x061c, 0x180e, 0x00ad, 0x2028, 0x202e, 0x0085, 0x3164, 0x2800, 0x3000].map((c) => String.fromCodePoint(c));
+  const nfd = "가が".normalize("NFD");
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: `x${odd.join("")}y 한글 ${nfd}` }));
+  const r = run(home, ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  const line = r.out.split("\n").find((l) => l.includes("OMC 플러그인 폴더가 아님"));
+  assert.ok(line, r.out);
+  assert.ok(line.includes(`"x${"?".repeat(odd.length)}y 한글 ${nfd}"`), line);
+  assert.ok(![...line].some((ch) => odd.includes(ch)), line);
+});
+
+test("a script name with a tag character or a word joiner prints them as ?", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const name = `t${String.fromCodePoint(0xe0041)}${String.fromCodePoint(0x2060)}.mjs`;
+  writeFileSync(join(plug, "scripts", name), "const __omcRaceImport = (p) => p;\n");
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /백업이 없어 되돌리지 못했습니다 \S t\?\?$/m);
+  assert.ok(![0xe0041, 0x2060].some((c) => r.out.includes(String.fromCodePoint(c))), r.out);
+});

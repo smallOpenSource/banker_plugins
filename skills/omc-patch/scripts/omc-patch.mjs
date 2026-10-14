@@ -636,9 +636,11 @@ function revertHooksJson(root, hj) {
 
 // 파일에서 읽은 값(파일 이름, PINNED 의 host)을 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
 // SKILL 은 [!] 줄을 그대로 보고하라고 하므로, 값이 제 줄을 새로 시작하면 도구가 낸 줄처럼 읽힌다.
-// 줄을 바꾸거나 글자 순서를 바꾸는 문자: C0 과 C1 제어 문자, 폭 없는 공백과 방향 표시, 줄과 문단 구분자,
-// 방향 덮어쓰기와 격리, BOM. oneLine 은 길이를 두고(URL), shown 은 120자로 자른다(이름, host).
-const UNSAFE_CH = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+// 바꾸는 문자: 제어 문자(Cc), 서식 문자(Cf: 폭 없는 공백, 방향 표시, 단어 결합자, 태그 문자), 줄과 문단 구분자,
+// 사용자 영역과 미할당, 변이 선택자, 기본 무시 글자(U+3164 같은 빈 글자), 점자 빈칸, ASCII 밖 공백.
+// 태그 문자는 보이지 않는 ASCII 로 읽혀 출력을 읽는 에이전트에게 지시를 숨길 수 있다.
+// oneLine 은 길이를 두고(URL), shown 은 120자로 자른다(이름, host).
+const UNSAFE_CH = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
 const oneLine = (s) => String(s).replace(UNSAFE_CH, "?");
 const shown = (s) => oneLine(s).slice(0, 120);
 
@@ -734,10 +736,47 @@ function otherPluginName(root) {
     try { name = JSON.parse(readFileSync(join(root, rel), "utf8")).name; } catch { continue; }
     if (name === undefined) continue;
     if (name === want) return null;
-    const quoted = JSON.stringify(name);
+    // 파일에서 읽은 값이다. JSON.stringify 는 U+2028, U+202E 같은 글자를 그대로 두므로 oneLine 을 거친다.
+    const quoted = oneLine(JSON.stringify(name));
     return `${rel} 의 name 이 ${quoted.length > 80 ? `${quoted.slice(0, 80)}...` : quoted}`;
   }
   return null;
+}
+
+// ── 인자 확인 ────────────────────────────────────────────────────────────
+// 모르는 인자를 말없이 넘기면 --dry-run 이 실제로 적용하고, --root=<폴더> 가 무시돼 --revert 가 모든 판을
+// 되돌리고 고정까지 푼다. 아는 꼴이 아니면 아무것도 읽거나 쓰기 전에 멈춘다.
+const USAGE = [
+  "사용법:",
+  `  node omc-patch.mjs              업데이트(${TARGET_VERSION}) + 패치 + 고정`,
+  "  node omc-patch.mjs --check      진단만 (아무것도 바꾸지 않음)",
+  "  node omc-patch.mjs --revert     패치와 고정 되돌리기",
+  "  node omc-patch.mjs --no-update  버전은 그대로 두고 패치만",
+  "  node omc-patch.mjs --root <플러그인 폴더> [--check | --revert]",
+  "  node omc-patch.mjs --scan <파일>...",
+].join("\n");
+const FLAGS = new Set(["--check", "--revert", "--no-update"]);
+
+// 인자 목록의 문제, 없으면 null. --scan 은 첫 인자일 때만 뒤를 모두 파일로 본다. --root 는 다음 인자를
+// 값으로 가져가고, 값이 없거나 플래그인 경우는 main 의 확인이 맡는다.
+function argProblem(list) {
+  if (list[0] === "--scan") return null;
+  let roots = 0;
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (FLAGS.has(a)) continue;
+    if (a === "--root") { roots++; i++; continue; }
+    if (a === "--scan") return "--scan 은 첫 인자로만 쓸 수 있습니다";
+    if (a.startsWith("--root=")) return "--root 와 폴더는 띄어 쓰십시오: --root <폴더>";
+    return `알 수 없는 인자: ${shown(a)}`;
+  }
+  return roots > 1 ? "--root 는 한 번만 쓸 수 있습니다" : null;
+}
+
+if (args[0] !== "--scan" && (argv.has("--help") || argv.has("-h"))) { log(USAGE); process.exit(0); }
+{
+  const problem = argProblem(args);
+  if (problem) { bad(problem); log(USAGE); process.exit(1); }
 }
 
 // ── --scan: 사실만 내고 끝낸다 ───────────────────────────────────────────────

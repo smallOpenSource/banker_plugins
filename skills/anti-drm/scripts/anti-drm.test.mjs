@@ -468,7 +468,9 @@ test("command line: status by default, usage for anything else", () => {
     runtime: "codex",
     flags: { deny: ".TXT,.csv", alt: ".md" },
     extra: [],
+    stdin: false,
   });
+  assert.equal(parseArgs(["config", "--stdin"]).stdin, true);
 });
 
 test("command line: on and off need a runtime unless Claude Code runs them", () => {
@@ -488,8 +490,10 @@ test("command line: a refusal exits 1, an unexpected error exits 2", () => {
   const refused = cli(["on", "--runtime", "codex"], cliEnv(s));
   assert.equal(refused.code, 1);
   assert.match(refused.out, /설정이 없습니다/);
-  mkdirSync(s.rulesFile, { recursive: true }); // a folder where the rules file should be
-  const broken = cli(["on", "--runtime", "claude", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  writeFileSync(s.agents, "# base\n");
+  // a folder with something in it where the backup of AGENTS.md goes: renaming the temp file onto it fails
+  mkdirSync(join(`${s.agents}.anti-drm.bak`, "x"), { recursive: true });
+  const broken = cli(["on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
   assert.equal(broken.code, 2, broken.out);
   assert.match(broken.out, /예기치 못한 오류로 중단했습니다/);
 });
@@ -729,4 +733,127 @@ test("instruction-toggle.mjs is the same file in tone-compact and anti-drm", () 
   const here = readFileSync(fileURLToPath(new URL("./instruction-toggle.mjs", import.meta.url)));
   const there = readFileSync(fileURLToPath(new URL("../../tone-compact/scripts/instruction-toggle.mjs", import.meta.url)));
   assert.ok(here.equals(there), "run node scripts/sync-adapter.js");
+});
+
+test("while other banker blocks alone fill the override, on says first that Codex does not read ours", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  writeFileSync(s.override, "# mine\n");
+  assert.ok(tcOn("codex", s.tc).ok);
+  writeFileSync(s.override, read(s.override).replace("# mine\n", ""));
+  const codexLine = (r) => r.message.split("\n").find((l) => l.startsWith("Codex:"));
+  const first = turnOn("codex", s.o, FLAGS);
+  assert.ok(first.ok, first.message);
+  assert.match(codexLine(first), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /);
+  const again = turnOn("codex", s.o);
+  assert.match(codexLine(again), /^Codex: 이미 AGENTS\.md 에 있지만 지금은 적용되지 않습니다 \(변경 없음\)\. /);
+  assert.match(again.message, /주의: AGENTS\.override\.md 에 다른 banker 블록\(tone-compact\)만 있어/);
+});
+
+test("settings file: the TSV delimiter is read in any letter case; other types are refused, null is the default", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  const put = (tsv) => writeFileSync(s.o.configFile, JSON.stringify({ deny: [".txt"], alt: [".md", ".tsv"], tsvDelimiter: tsv }));
+  for (const [given, want] of [["Tab", "tab"], ["COMMA", "comma"], [null, "tab"]]) {
+    put(given);
+    assert.equal(readConfig(s.o.configFile).config?.tsvDelimiter, want, String(given));
+  }
+  for (const odd of [5, ["tab"]]) {
+    put(odd);
+    assert.match(readConfig(s.o.configFile).error, /TSV 구분자는 tab 이나 comma 여야 합니다/, JSON.stringify(odd));
+  }
+  assert.equal(checkConfig({ deny: [".txt"], alt: [".md"], tsvDelimiter: "Comma" }).config.tsvDelimiter, "comma");
+});
+
+test("rules: a placeholder left after filling is an error", () => {
+  assert.throws(() => renderRules(`${TEMPLATE}\n{{extra}}`, CONFIG), /자리 표시\(\{\{\)가 남았습니다/);
+  assert.doesNotThrow(() => renderRules(TEMPLATE, CONFIG));
+});
+
+// The command line with something on standard input, in a child process that does not look like Claude Code.
+function cliIn(args, input, s) {
+  const r = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", input, env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  return { code: r.status, out: r.stdout };
+}
+
+test("--stdin: settings lines from standard input, the way the skill passes them in a quoted heredoc", () => {
+  const s = setup();
+  const r = cliIn(["config", "--stdin"], `${String.fromCharCode(0xfeff)}deny=.txt, .PDF\r\nalt=.md .tsv\r\n\r\ntsv=Comma`, s);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readConfig(s.o.configFile).config, { version: 1, deny: [".txt", ".pdf"], alt: [".md", ".tsv"], tsvDelimiter: "comma" });
+  const on = cliIn(["on", "--runtime", "claude", "--stdin"], "deny=.hwp\nalt=.md\n", s);
+  assert.equal(on.code, 0, on.out);
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".hwp"]);
+  assert.ok(existsSync(s.rulesFile));
+});
+
+test("--stdin: unreadable lines, a key twice, too much input, bytes that are not UTF-8 or mixing with flags are refused", () => {
+  const s = setup();
+  const cases = [
+    [["config", "--stdin"], "deny=.txt\nalt=.md\nmode=x\n", /표준 입력의 설정 줄을 읽을 수 없습니다: mode=x/],
+    [["config", "--stdin"], "deny=.txt\ndeny=.pdf\nalt=.md\n", /표준 입력의 설정 줄을 읽을 수 없습니다: deny=\.pdf/],
+    [["config", "--stdin"], `deny=${".txt,".repeat(20000)}\nalt=.md\n`, /표준 입력이 64KiB 보다 큽니다/],
+    [["config", "--stdin"], Buffer.from([0x64, 0x65, 0x6e, 0x79, 0x3d, 0xff, 0x0a]), /표준 입력이 UTF-8 이 아닙니다/],
+    [["config", "--stdin"], "", /사용법/],
+    [["config", "--stdin", "--deny", ".txt"], "alt=.md\n", /사용법/],
+    [["status", "--stdin"], "", /사용법/],
+    [["off", "--runtime", "claude", "--stdin"], "", /사용법/],
+  ];
+  for (const [args, input, want] of cases) {
+    const r = cliIn(args, input, s);
+    assert.equal(r.code, 1, `${args.join(" ")}: ${r.out}`);
+    assert.match(r.out, want, args.join(" "));
+  }
+  assert.equal(readConfig(s.o.configFile), null, "nothing was saved");
+});
+
+test("--stdin: a value with shell syntax is refused as an extension and runs nothing", () => {
+  const s = setup();
+  const marker = join(s.dir, "ran");
+  const r = cliIn(["config", "--stdin"], `deny=.txt,$(touch ${marker})\nalt=.md\n`, s);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /금지 확장자로 쓸 수 없는 값입니다/);
+  assert.equal(existsSync(marker), false);
+});
+
+test("on with settings that this runtime refuses: the settings stay saved, the result says both, exit 1", () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"), { recursive: true });
+  writeFileSync(s.rulesFile, "# someone else's rules\n");
+  const r = cli(["on", "--runtime", "claude", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /설정을 저장했습니다/);
+  assert.match(r.out, /같은 이름의 다른 파일이 있어 그대로 두었습니다/);
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".txt"]);
+  assert.equal(read(s.rulesFile), "# someone else's rules\n");
+});
+
+test("command line: config exits 1 when a runtime that holds the rules could not be refreshed", () => {
+  const s = setup();
+  assert.ok(turnOn("claude", s.o, FLAGS).ok);
+  writeFileSync(s.agents, `# base\n${OPEN}\nhalf a block\n`);
+  const r = cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /설정을 저장했습니다/);
+  assert.match(r.out, /짝이 맞지 않아/);
+});
+
+test("an override with another skill's start marker but no end counts as the user's text: our block goes there", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  writeFileSync(s.override, `${TC_OPEN}\nleft by hand\n`);
+  const r = turnOn("codex", s.o, FLAGS);
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.override)), 1, "ours went to the override Codex reads");
+  assert.equal(blocks(read(s.agents)), 0);
+  assert.ok(turnOff("codex", s.o).ok);
+  assert.equal(read(s.override), `${TC_OPEN}\nleft by hand\n`);
+});
+
+test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
+  const row = read(SKILL).split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
+  assert.ok(row, "the row exists");
+  assert.match(row, /지우지 않음/);
+  assert.match(row, /물은 뒤/);
+  assert.doesNotMatch(row, /치운/);
 });

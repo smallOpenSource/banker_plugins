@@ -33,15 +33,19 @@
  * open and close in turn; a marker quoted inside a sentence, or an end before a
  * start, makes turnOn and turnOff refuse rather than guess where the block ends.
  * So does a file that is not UTF-8 (CP949, UTF-16): written back as text it
- * would lose its bytes.
+ * would lose its bytes. A folder or FIFO at a file's name is never read: a
+ * FIFO would make the read wait forever.
  *
  * Results are { ok, message }; ok false means refused with nothing changed.
  * Anything else that goes wrong throws.
  */
 import {
   accessSync,
+  closeSync,
   constants,
+  fstatSync,
   lstatSync,
+  openSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -60,8 +64,12 @@ export const KEEP_CLOSE = "<!-- USER:OMX:POLICY:END -->";
 
 // The byte order mark an editor may put in front of a file.
 const BOM = String.fromCharCode(0xfeff);
-const noBom = (text) => (text.startsWith(BOM) ? text.slice(BOM.length) : text);
-const lf = (text) => text.replace(/\r\n/g, "\n");
+/** The text without the byte order mark an editor may put in front of it. */
+export const noBom = (text) => (text.startsWith(BOM) ? text.slice(BOM.length) : text);
+/** The text with CRLF line ends turned into LF. */
+export const lf = (text) => text.replace(/\r\n/g, "\n");
+/** How many times needle occurs in text. */
+export const count = (text, needle) => text.split(needle).length - 1;
 const eolOf = (text) => (text.includes("\r\n") ? "\r\n" : "\n");
 const isDir = (path) => {
   try {
@@ -80,27 +88,41 @@ const isLink = (path) => {
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
+// What sits at a name that is not a regular file: a folder, a FIFO or a device.
+// It is never read; reading a FIFO waits for a writer.
+const SPECIAL = Object.freeze({ bytes: null, text: null, special: true });
+
 // A file's bytes and text, null when there is no such file. text is null when
 // the bytes are not UTF-8, which callers refuse: decoding them would replace
-// them with U+FFFD for good. Any other read failure (permissions, a folder at
-// that name) is not "missing" and propagates.
+// them with U+FFFD for good. Anything but a regular file is SPECIAL: the name
+// is opened without blocking and not read. Any other failure (permissions) is
+// not "missing" and propagates.
 function readFile(path) {
-  let bytes;
+  let fd;
   try {
-    bytes = readFileSync(path);
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
     if (e.code === "ENOENT" || e.code === "ENOTDIR") return null;
+    if (e.code === "EISDIR" || isDir(path)) return SPECIAL;
     throw e;
   }
   try {
-    return { bytes, text: UTF8.decode(bytes) };
-  } catch {
-    return { bytes, text: null };
+    if (!fstatSync(fd).isFile()) return SPECIAL;
+    const bytes = readFileSync(fd);
+    try {
+      return { bytes, text: UTF8.decode(bytes) };
+    } catch {
+      return { bytes, text: null };
+    }
+  } finally {
+    closeSync(fd);
   }
 }
 
-const done = (message) => ({ ok: true, message });
-const refuse = (message) => ({ ok: false, message });
+/** A result that did, or found already done, what was asked. */
+export const done = (message) => ({ ok: true, message });
+/** A result that refused and changed nothing. */
+export const refuse = (message) => ({ ok: false, message });
 
 /** A skill's marks: the first line of its rules file, and the lines around its Codex block. */
 export function markersOf(slug) {
@@ -144,9 +166,14 @@ export const denied = (e) => e.code === "EACCES" || e.code === "EPERM" || e.code
  * paragraph separator, private-use, unassigned and variation selector
  * characters become "?": a path from the environment cannot start a line of
  * its own, reorder the text around it, or hide text after a visible letter.
+ * So do letters that print as nothing (default-ignorable ones such as U+3164),
+ * the braille blank and spaces other than the ASCII one, which hide text as blanks.
  */
 export const where = (value) =>
-  String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}]/gu, "?");
+  String(value).replace(
+    /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu,
+    "?",
+  );
 
 // ---- Claude Code: one rules file that is banker's alone ----
 
@@ -317,25 +344,43 @@ const otherBlocks = (t, text) =>
     return spans !== null && spans.length > 0;
   });
 
+const special = (f) => f.special === true;
 const binary = (f) => f.bytes !== null && f.text === null;
 const unpaired = (f) => f.spans === null;
 const hasBlock = (f) => f.spans !== null && f.spans.length > 0;
 const stripped = (f) => (f.text === null ? "" : strip(f.text, f.spans));
+
+// Whether two paths name one file: a link or a hard link between them.
+function sameFile(a, b) {
+  try {
+    const x = statSync(a, { bigint: true });
+    const y = statSync(b, { bigint: true });
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
+}
 
 // Both global instruction files with their bytes and text (null when absent;
 // text null when not UTF-8) and blocks (null when the markers do not pair up).
 // The block's place (target) is the override when the override has text of its
 // own, AGENTS.md otherwise. shadowers names the other banker skills whose
 // blocks alone fill the override: Codex then reads the override, not AGENTS.md.
+// An override that is a link or a hard link to AGENTS.md is one file with it.
 function codexFiles(t, o) {
   const read = (name) => {
     const path = join(o.codexDir, name);
     const file = readFile(path);
-    if (file === null) return { path, bytes: null, text: null, spans: [] };
+    if (file === null || file.special) return { path, bytes: null, text: null, spans: [], special: file !== null };
     return { path, ...file, spans: file.text === null ? null : blockSpansOf(file.text, t.open, t.close) };
   };
   const override = read("AGENTS.override.md");
   const main = read("AGENTS.md");
+  if (override.bytes !== null && main.bytes !== null && sameFile(override.path, main.path)) {
+    // One file under both names: Codex reads it either way, so it is AGENTS.md alone.
+    const none = { path: override.path, bytes: null, text: null, spans: [] };
+    return { target: main, other: none, all: [none, main], shadowers: [] };
+  }
   const ownContent = binary(override) || (override.text !== null && hasContent(withoutBankerBlocks(override.text)));
   const target = ownContent ? override : main;
   const shadowers = ownContent || override.text === null ? [] : otherBlocks(t, override.text);
@@ -359,9 +404,11 @@ function withBlock(t, text, rules) {
 
 // "off", "on", "stale", "misplaced" (only in AGENTS.md while Codex reads the
 // override, so not applied), "hidden" (in the override with no text of its own,
-// applied but hiding AGENTS.md), "unpaired" or "notutf8". Without rules any
-// block in its place counts as "on".
+// applied but hiding AGENTS.md), "unpaired", "notutf8" or "notregular" (a
+// folder or FIFO at a file's name). Without rules any block in its place
+// counts as "on".
 function codexState(t, files, rules) {
+  if (files.all.some(special)) return "notregular";
   if (files.all.some(binary)) return "notutf8";
   if (files.all.some(unpaired)) return "unpaired";
   const inTarget = hasBlock(files.target);
@@ -390,12 +437,22 @@ function writeBlocked(changes) {
 // target changes, after keeping the old bytes in a .bak only this account can
 // read (the file may be a link into a private folder). A new file gets 0644
 // whatever the umask allows more. A file left empty is removed, unless it is a
-// link: Codex skips an empty file anyway.
+// link or has other names (a hard link), whose other names would keep the old
+// text: it is emptied instead. Codex skips an empty file anyway.
 function apply(t, changes) {
   for (const { file, after } of changes) {
     if (file.bytes !== null) writeFresh(`${file.path}.${t.slug}.bak`, file.bytes, 0o600);
-    if (after === "" && !isLink(file.path)) rmSync(file.path, { force: true });
+    if (after === "" && !isLink(file.path) && !hasOtherNames(file.path)) rmSync(file.path, { force: true });
     else writeFileSync(file.path, after, { mode: 0o644 });
+  }
+}
+
+// Whether the file at path is also reachable under another name: a hard link.
+function hasOtherNames(path) {
+  try {
+    return lstatSync(path).nlink > 1;
+  } catch {
+    return false;
   }
 }
 
@@ -410,9 +467,19 @@ const shadowNote = (files) =>
 
 // The refusal for files on and off must not touch, or null.
 function codexRefusal(t, files, state) {
+  if (state === "notregular") return refuse(`일반 파일이 아니라 그대로 두었습니다: ${where(files.all.find(special).path)}`);
   if (state === "notutf8") return refuse(`UTF-8 이 아닌 파일이라 그대로 두었습니다: ${where(files.all.find(binary).path)}`);
   if (state === "unpaired") return refuse(`${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다: ${where(files.all.find(unpaired).path)}`);
   return null;
+}
+
+// What codexOn says it did. A block Codex does not read, because other banker
+// blocks alone fill the override, says so in its first words.
+function onWords(t, state, unread) {
+  if (state === "on") return unread ? "이미 AGENTS.md 에 있지만 지금은 적용되지 않습니다 (변경 없음)" : "이미 켜져 있습니다 (변경 없음)";
+  if (unread) return "AGENTS.md 에 넣었지만 지금은 적용되지 않습니다";
+  const moved = "블록을 맞는 파일로 옮겼습니다";
+  return { stale: t.updatedText, misplaced: moved, hidden: moved }[state] ?? "켰습니다. 다음 세션부터 자동 적용됩니다";
 }
 
 function codexOn(t, o, getRules) {
@@ -422,17 +489,16 @@ function codexOn(t, o, getRules) {
   const state = codexState(t, files, rules);
   const refusal = codexRefusal(t, files, state);
   if (refusal) return refusal;
+  const words = onWords(t, state, files.shadowers.length > 0);
   const tail = `${where(files.target.path)}${shadowNote(files)}`;
-  if (state === "on") return done(`Codex: 이미 켜져 있습니다 (변경 없음). ${tail}`);
+  if (state === "on") return done(`Codex: ${words}. ${tail}`);
   const changes = [{ file: files.target, after: withBlock(t, stripped(files.target), rules) }];
   if (hasBlock(files.other)) changes.push({ file: files.other, after: stripped(files.other) });
   const why = writeBlocked(changes);
   if (why) return refuse(why);
   apply(t, changes);
-  const moved = "블록을 맞는 파일로 옮겼습니다";
-  const what = { stale: t.updatedText, misplaced: moved, hidden: moved }[state];
   const note = files.target === files.all[1] ? `\n${OMX_NOTE}` : "";
-  return done(`Codex: ${what ?? "켰습니다. 다음 세션부터 자동 적용됩니다"}. ${tail}${note}`);
+  return done(`Codex: ${words}. ${tail}${note}`);
 }
 
 function codexOff(t, o) {
@@ -445,7 +511,9 @@ function codexOff(t, o) {
   const why = writeBlocked(changes);
   if (why) return refuse(why);
   apply(t, changes);
-  return done(`Codex: 껐습니다. 다음 세션부터 적용되지 않습니다. ${changes.map((c) => where(c.file.path)).join(", ")}`);
+  const paths = changes.map((c) => where(c.file.path)).join(", ");
+  const baks = changes.map((c) => where(`${c.file.path}.${t.slug}.bak`)).join(", ");
+  return done(`Codex: 껐습니다. 다음 세션부터 적용되지 않습니다. ${paths}\n지우기 전 파일: ${baks}`);
 }
 
 // ---- status ----
@@ -458,6 +526,7 @@ const STATE_TEXT = {
   misplaced: "꺼짐, 단 블록이 Codex 가 읽지 않는 AGENTS.md 에 있음 (on 으로 옮김)",
   hidden: "켜짐, 단 AGENTS.override.md 에 블록만 있어 AGENTS.md 가 가려짐 (on 으로 옮김)",
   notutf8: "UTF-8 이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
+  notregular: "일반 파일이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   unpaired: "표시의 짝이 맞지 않음 (on, off 모두 거부. 남은 표시 줄 정리 필요)",
 };
 
@@ -507,7 +576,7 @@ export function stateLines(t, o, rules) {
  */
 export function present(t, runtime, o) {
   if (runtime === "claude") return isDir(o.claudeDir) && claudeState(t, readFile(claudeFile(t, o))) === "ours";
-  return isDir(o.codexDir) && !["off", "notutf8"].includes(codexState(t, codexFiles(t, o)));
+  return isDir(o.codexDir) && !["off", "notutf8", "notregular"].includes(codexState(t, codexFiles(t, o)));
 }
 
 const knownRuntime = (runtime) => {

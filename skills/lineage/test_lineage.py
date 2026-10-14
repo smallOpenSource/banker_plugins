@@ -2546,6 +2546,14 @@ class TestCacheFileNames(_ReviewCase):
         self.assertFalse(hit)
         self.assertTrue(summary)
 
+    def test_an_empty_cache_file_is_summarized_again(self):
+        path = L.cache_dir("s") / ("a1-%s.md" % self._digest())
+        path.write_text(" \n", encoding="utf-8")
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertFalse(hit)
+        self.assertTrue(summary)
+        self.assertEqual(path.read_text(encoding="utf-8"), summary)
+
     def test_detect_secrets_scans_a_temp_file_that_is_not_txt(self):
         import types
         from unittest import mock

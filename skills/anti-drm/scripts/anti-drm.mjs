@@ -9,8 +9,13 @@
  *   node anti-drm.mjs off    --runtime claude|codex
  *   node anti-drm.mjs status
  *   node anti-drm.mjs config --deny <list> --alt <list> [--tsv tab|comma]
+ *   node anti-drm.mjs on --runtime claude|codex --stdin
+ *   node anti-drm.mjs config --stdin
  *
  * <list> is extensions split by commas or spaces, such as ".txt,.pdf".
+ * --stdin reads the settings from standard input instead, one line each:
+ * deny=<list>, alt=<list> and tsv=tab|comma. The skill passes them in a
+ * quoted heredoc, so no value the user chose is ever read by a shell.
  *
  * The settings are one JSON file both runtimes share, ~/.config/banker/anti-drm.json
  * ($BANKER_ANTI_DRM_CONFIG names another): the denied extensions, the
@@ -50,9 +55,14 @@ import {
   KEEP_CLOSE,
   KEEP_OPEN,
   RUNTIMES,
+  count,
   denied,
+  done,
   hasMarker,
+  lf,
+  noBom,
   present,
+  refuse,
   stateLines,
   toggleSpec,
   turnOff as toggleOff,
@@ -80,12 +90,7 @@ const DEFAULTS = {
   skillFile: fileURLToPath(new URL("../SKILL.md", import.meta.url)),
 };
 
-const BOM = String.fromCharCode(0xfeff);
 const RUNTIME_NAME = { claude: "Claude Code", codex: "Codex" };
-const done = (message) => ({ ok: true, message });
-const refuse = (message) => ({ ok: false, message });
-const count = (text, needle) => text.split(needle).length - 1;
-const lf = (text) => text.replace(/\r\n/g, "\n");
 // A value from outside, as a message shows it. An extension is printable
 // ASCII, so anything else becomes "?" (a line break or a direction mark cannot
 // forge a line or reorder the text), at most 40 characters stay, and a value
@@ -136,10 +141,12 @@ export function checkConfig({ deny, alt, tsvDelimiter = "tab" }) {
   if (reserved.length > 0) return { error: `anti-drm 이 쓰는 형식이라 금지할 수 없습니다: ${reserved.join(" ")}` };
   const both = d.list.filter((x) => a.list.includes(x));
   if (both.length > 0) return { error: `금지 확장자와 대체 확장자에 함께 있습니다: ${both.join(" ")}` };
-  if (tsvDelimiter !== "tab" && tsvDelimiter !== "comma") {
+  // In any letter case, as the --tsv flag takes it; kept lower-cased.
+  const tsv = typeof tsvDelimiter === "string" ? tsvDelimiter.toLowerCase() : tsvDelimiter;
+  if (tsv !== "tab" && tsv !== "comma") {
     return { error: `TSV 구분자는 tab 이나 comma 여야 합니다: ${shown(tsvDelimiter)}` };
   }
-  return { config: { version: 1, deny: d.list, alt: a.list, tsvDelimiter } };
+  return { config: { version: 1, deny: d.list, alt: a.list, tsvDelimiter: tsv } };
 }
 
 /**
@@ -188,7 +195,7 @@ export function readConfig(file) {
   const { text } = got;
   let raw;
   try {
-    raw = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    raw = JSON.parse(noBom(text));
   } catch {
     return { error: "JSON 이 아닙니다" };
   }
@@ -244,7 +251,7 @@ const OWN_KEYS = ["version", "deny", "alt", "tsvDelimiter"];
 function ownSettings(bytes) {
   try {
     const text = bytes.toString("utf8");
-    const raw = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    const raw = JSON.parse(noBom(text));
     const plain = Boolean(raw) && typeof raw === "object" && !Array.isArray(raw);
     return plain && Object.keys(raw).every((k) => OWN_KEYS.includes(k)) && Boolean(checkConfig(raw).config);
   } catch {
@@ -337,13 +344,15 @@ const code = (ext) => `\`${ext}\``;
 export function renderRules(template, config) {
   const map = table(["금지 확장자", "대신 쓸 확장자"], config.deny.map((d) => [code(d), code(replacementFor(d, config.alt))]));
   const alts = table(["확장자", "쓰는 곳"], config.alt.map((a) => [code(a), useOf(a, config)]));
-  return template.replace("{{map}}", () => map).replace("{{alts}}", () => alts);
+  const rules = template.replace("{{map}}", () => map).replace("{{alts}}", () => alts);
+  if (rules.includes("{{")) throw new Error("규칙을 채운 뒤에도 자리 표시({{)가 남았습니다");
+  return rules;
 }
 
 // ---- commands ----
 
 const USAGE =
-  "사용법: anti-drm on | off | status | config [--runtime claude|codex] [--deny <확장자 목록> --alt <확장자 목록> [--tsv tab|comma]]";
+  "사용법: anti-drm on | off | status | config [--runtime claude|codex] [--stdin | --deny <확장자 목록> --alt <확장자 목록> [--tsv tab|comma]]";
 
 // The settings as `status` shows them.
 function configLines(o, found) {
@@ -416,8 +425,7 @@ function refresh(o, rules, skip) {
 // The settings from --deny, --alt and --tsv: { config }, { error }, or { usage } when a list is missing.
 function configFromFlags(flags) {
   if (flags.deny === undefined || flags.alt === undefined) return { usage: true };
-  const tsvDelimiter = (flags.tsv ?? "tab").toLowerCase();
-  return checkConfig({ deny: splitList(flags.deny), alt: splitList(flags.alt), tsvDelimiter });
+  return checkConfig({ deny: splitList(flags.deny), alt: splitList(flags.alt), tsvDelimiter: flags.tsv ?? "tab" });
 }
 
 const settingsGiven = (flags) => ["deny", "alt", "tsv"].some((k) => flags[k] !== undefined);
@@ -438,7 +446,7 @@ function applySettings(o, flags, skip) {
 // The rules from the saved settings: { rules, lines, ok } or { refusal }.
 function savedRules(o) {
   const found = readConfig(o.configFile);
-  if (found === null) return { refusal: refuse("설정이 없습니다. 금지 확장자와 대체 확장자를 --deny, --alt 로 함께 주세요.") };
+  if (found === null) return { refusal: refuse("설정이 없습니다. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.") };
   if (found.error) {
     return { refusal: refuse(`설정 파일이 올바르지 않습니다 (${found.error}): ${where(o.configFile)}. config 로 다시 만드세요.`) };
   }
@@ -481,17 +489,50 @@ export const configure = (opts = {}, flags = {}) => cmdConfig({ ...DEFAULTS, ...
 const FLAG_NAMES = ["runtime", "deny", "alt", "tsv"];
 const COMMANDS = ["on", "off", "status", "config"];
 
-/** { command, runtime, flags, extra } from the command line; each flag takes "x" or "=x". */
+/**
+ * { command, runtime, flags, extra, stdin } from the command line; each value
+ * flag takes "x" or "=x", and --stdin takes nothing.
+ */
 export function parseArgs(argv) {
   const rest = [];
   const flags = {};
+  let stdin = false;
   for (let i = 0; i < argv.length; i++) {
     const m = /^--([a-z]+)(?:=(.*))?$/.exec(argv[i]);
     if (m && FLAG_NAMES.includes(m[1])) flags[m[1]] = m[2] ?? argv[++i] ?? "";
+    else if (argv[i] === "--stdin") stdin = true;
     else rest.push(argv[i]);
   }
   const { runtime, ...settings } = flags;
-  return { command: (rest[0] ?? "status").toLowerCase(), runtime: runtime?.toLowerCase() ?? null, flags: settings, extra: rest.slice(1) };
+  const command = (rest[0] ?? "status").toLowerCase();
+  return { command, runtime: runtime?.toLowerCase() ?? null, flags: settings, extra: rest.slice(1), stdin };
+}
+
+// Lines on standard input that hold the settings: the key, "=", the value.
+const STDIN_LINE = /^(deny|alt|tsv)=(.*)$/;
+const UTF8_STRICT = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * The settings on standard input as flags: { flags } or { error }. At most
+ * 64 KiB of UTF-8; a leading byte order mark and CRLF line ends are fine;
+ * each of deny=, alt= and tsv= once; blank lines are skipped.
+ */
+export function stdinSettings(bytes) {
+  if (bytes.length > MAX_BYTES) return { error: "표준 입력이 64KiB 보다 큽니다" };
+  let text;
+  try {
+    text = UTF8_STRICT.decode(bytes);
+  } catch {
+    return { error: "표준 입력이 UTF-8 이 아닙니다" };
+  }
+  const flags = {};
+  for (const line of noBom(text).split(/\r?\n/)) {
+    if (line.trim() === "") continue;
+    const m = STDIN_LINE.exec(line);
+    if (!m || flags[m[1]] !== undefined) return { error: `표준 입력의 설정 줄을 읽을 수 없습니다: ${shown(line)}` };
+    flags[m[1]] = m[2];
+  }
+  return { flags };
 }
 
 // Settings flags go only with on and config, and config needs both lists.
@@ -501,9 +542,11 @@ function settingsUsage(command, flags) {
 }
 
 // Why the command line cannot run as given, or "" when it can.
-function usageError({ command, runtime, flags, extra }) {
+function usageError({ command, runtime, flags, extra, stdin }) {
   if (extra.length > 0 || !COMMANDS.includes(command)) return USAGE;
   if (runtime !== null && !RUNTIMES.includes(runtime)) return USAGE;
+  // --stdin brings all the settings, so it goes with on and config only and never with a settings flag.
+  if (stdin) return (command === "on" || command === "config") && Object.keys(flags).length === 0 ? "" : USAGE;
   return settingsUsage(command, flags);
 }
 
@@ -517,25 +560,32 @@ function run(command, runtime, flags) {
   return command === "on" ? cmdOn(o, runtime, flags) : cmdOff(o, runtime);
 }
 
-function main(argv, env = process.env) {
+// Writes a message line and gives back the exit status.
+const say = (text, code) => {
+  process.stdout.write(`${text}\n`);
+  return code;
+};
+
+// Whether a command acts on one runtime and so needs to know which.
+const needsRuntime = (command) => command === "on" || command === "off";
+// The settings flags: from standard input with --stdin, else from the command line.
+const settingsOf = (args, input) => (args.stdin ? stdinSettings(input()) : { flags: args.flags });
+
+function main(argv, env = process.env, input = () => readFileSync(0)) {
   const args = parseArgs(argv);
   const why = usageError(args);
-  if (why) {
-    process.stdout.write(`${why}\n`);
-    return 1;
-  }
+  if (why) return say(why, 1);
   const runtime = runtimeOf(args.runtime, env);
-  if ((args.command === "on" || args.command === "off") && !RUNTIMES.includes(runtime)) {
-    process.stdout.write(`런타임을 정할 수 없습니다. --runtime claude 또는 --runtime codex 를 붙이세요.\n${USAGE}\n`);
-    return 1;
+  if (needsRuntime(args.command) && !RUNTIMES.includes(runtime)) {
+    return say(`런타임을 정할 수 없습니다. --runtime claude 또는 --runtime codex 를 붙이세요.\n${USAGE}`, 1);
   }
   try {
-    const { ok, message } = run(args.command, runtime, args.flags);
-    process.stdout.write(`${message}\n`);
-    return ok ? 0 : 1;
+    const got = settingsOf(args, input);
+    if (got.error) return say(`${got.error}\n${USAGE}`, 1);
+    const { ok, message } = run(args.command, runtime, got.flags);
+    return say(message, ok ? 0 : 1);
   } catch (e) {
-    process.stdout.write(`예기치 못한 오류로 중단했습니다: ${where(e.message)}\nstatus 로 상태를 확인하세요.\n`);
-    return 2;
+    return say(`예기치 못한 오류로 중단했습니다: ${where(e.message)}\nstatus 로 상태를 확인하세요.`, 2);
   }
 }
 

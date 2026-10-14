@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -19,6 +20,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { parseArgs, rulesOf, status, turnOff, turnOn } from "./tone-compact.mjs";
+import { count, done, lf, noBom, refuse, where } from "./instruction-toggle.mjs";
 
 const CLI = fileURLToPath(new URL("./tone-compact.mjs", import.meta.url));
 const SKILL = fileURLToPath(new URL("../SKILL.md", import.meta.url));
@@ -457,11 +459,14 @@ test("command line: --runtime=codex follows CODEX_HOME, and off gives the file b
 
 test("command line: an unexpected error exits 2 and leaves no temp file", () => {
   const s = setup();
-  mkdirSync(s.rulesFile, { recursive: true }); // a folder where the rules file should be
-  const r = cli(["on", "--runtime", "claude"], cliEnv(s));
+  writeFileSync(s.agents, "# base\n");
+  // a folder with something in it where the backup of AGENTS.md goes: renaming the temp file onto it fails
+  mkdirSync(join(`${s.agents}.tone-compact.bak`, "x"), { recursive: true });
+  const r = cli(["on", "--runtime", "codex"], cliEnv(s));
   assert.equal(r.code, 2, r.out);
   assert.match(r.out, /예기치 못한 오류로 중단했습니다/);
-  assert.deepEqual(readdirSync(join(s.o.claudeDir, "rules")), ["banker-tone-compact.md"]);
+  assert.deepEqual(readdirSync(s.o.codexDir).sort(), ["AGENTS.md", "AGENTS.md.tone-compact.bak"]);
+  assert.equal(read(s.agents), "# base\n");
 });
 
 test("off keeps the lines on either side apart when text follows the block", () => {
@@ -747,4 +752,145 @@ test("another banker skill's block alone in the override: ours goes to AGENTS.md
 test("the rules may not quote any banker or OMX management marker", () => {
   const wrap = (body) => `a\n<!-- tone-compact:rules:start -->\n${body}\n<!-- tone-compact:rules:end -->\nb\n`;
   assert.throws(() => rulesOf(wrap("x\nsee <!-- banker:anti-drm:start --> there")), /관리 표시/);
+});
+
+test("the shared module gives both skills its small helpers", () => {
+  assert.equal(count("a,b,c", ","), 2);
+  assert.equal(lf("a\r\nb\r\n"), "a\nb\n");
+  assert.equal(noBom(`${String.fromCharCode(0xfeff)}x`), "x");
+  assert.equal(noBom("x"), "x");
+  assert.deepEqual(done("m"), { ok: true, message: "m" });
+  assert.deepEqual(refuse("m"), { ok: false, message: "m" });
+});
+
+// A FIFO where an instructions file goes used to hang status and off (reading waits for a writer); a folder there
+// made them stop with exit 2.
+test("a FIFO where AGENTS.md goes: status returns, on and off refuse with exit 1 and change nothing", posixOnly, () => {
+  const s = setup();
+  assert.equal(spawnSync("mkfifo", [s.agents]).status, 0);
+  const opts = { encoding: "utf8", timeout: 5000, env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } };
+  const st = spawnSync(process.execPath, [CLI, "status"], opts);
+  assert.equal(st.status, 0, `status hung or failed (signal ${st.signal})`);
+  assert.match(st.stdout, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음 \(on, off 모두 거부\)/);
+  for (const command of ["on", "off"]) {
+    const r = spawnSync(process.execPath, [CLI, command, "--runtime", "codex"], opts);
+    assert.equal(r.status, 1, `${command}: ${r.stdout} (signal ${r.signal})`);
+    assert.match(r.stdout, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md/);
+  }
+  assert.deepEqual(readdirSync(s.o.codexDir), ["AGENTS.md"]);
+});
+
+test("a folder where AGENTS.override.md goes: status says so, on and off refuse with exit 1", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  mkdirSync(s.override);
+  const st = cli(["status"], cliEnv(s));
+  assert.equal(st.code, 0, st.out);
+  assert.match(st.out, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음/);
+  for (const command of ["on", "off"]) {
+    const r = cli([command, "--runtime", "codex"], cliEnv(s));
+    assert.equal(r.code, 1, `${command}: ${r.out}`);
+    assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.override\.md/);
+  }
+  assert.equal(read(s.agents), "# base\n");
+});
+
+test("a folder where the rules file goes is someone else's file: on and off refuse, status says so", () => {
+  const s = setup();
+  mkdirSync(s.rulesFile, { recursive: true });
+  const on = cli(["on", "--runtime", "claude"], cliEnv(s));
+  assert.equal(on.code, 1, on.out);
+  assert.match(on.out, /같은 이름의 다른 파일이 있어 그대로 두었습니다/);
+  assert.equal(cli(["off", "--runtime", "claude"], cliEnv(s)).code, 1);
+  assert.match(cli(["status"], cliEnv(s)).out, /- Claude Code: 꺼짐, 같은 이름의 다른 파일이 있음/);
+});
+
+test("a FIFO where the rules file goes: status returns and on refuses", posixOnly, () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"));
+  assert.equal(spawnSync("mkfifo", [s.rulesFile]).status, 0);
+  const opts = { encoding: "utf8", timeout: 5000, env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } };
+  const st = spawnSync(process.execPath, [CLI, "status"], opts);
+  assert.equal(st.status, 0, `status hung or failed (signal ${st.signal})`);
+  const on = spawnSync(process.execPath, [CLI, "on", "--runtime", "claude"], opts);
+  assert.equal(on.status, 1, `${on.stdout} (signal ${on.signal})`);
+});
+
+test("paths lose blank-looking letters, the braille blank and spaces other than the ASCII one", () => {
+  for (const c of [0x3164, 0x115f, 0xffa0, 0x2800, 0x3000, 0x00a0, 0x2060, 0xe0041]) {
+    assert.equal(where(`a${String.fromCodePoint(c)}b`), "a?b", c.toString(16));
+  }
+  const nfd = "/home/사용자/가が".normalize("NFD");
+  assert.equal(where(`${nfd}/My Files`), `${nfd}/My Files`);
+});
+
+test("an override that is a link or a hard link to AGENTS.md is one file: on twice, status and off agree", (t) => {
+  for (const kind of ["symlink", "hardlink"]) {
+    const s = setup();
+    writeFileSync(s.agents, "# shared\n");
+    try {
+      if (kind === "symlink") symlinkSync("AGENTS.md", s.override);
+      else linkSync(s.agents, s.override);
+    } catch (e) {
+      t.diagnostic(`${kind} not made here: ${e.code}`);
+      continue;
+    }
+    assert.ok(turnOn("codex", s.o).ok, kind);
+    const again = turnOn("codex", s.o);
+    assert.match(again.message, /이미 켜져 있습니다/, `${kind}: ${again.message}`);
+    assert.equal(blocks(read(s.agents)), 1, kind);
+    assert.match(status(s.o).message, /- Codex: 켜짐 \(/, kind);
+    assert.ok(turnOff("codex", s.o).ok, kind);
+    assert.equal(read(s.agents), "# shared\n", kind);
+  }
+});
+
+test("an override that is a link to nothing counts as no override", posixOnly, () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  symlinkSync("gone.md", s.override);
+  const r = turnOn("codex", s.o);
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.ok(turnOff("codex", s.o).ok);
+  assert.equal(read(s.agents), "# base\n");
+  assert.equal(lstatSync(s.override).isSymbolicLink(), true, "the link is left alone");
+});
+
+test("Codex off names the backup that keeps the file from before", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  assert.ok(turnOn("codex", s.o).ok);
+  const before = readFileSync(s.agents);
+  const r = turnOff("codex", s.o);
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /\n지우기 전 파일: .*AGENTS\.md\.tone-compact\.bak$/);
+  assert.ok(readFileSync(`${s.agents}.tone-compact.bak`).equals(before));
+});
+
+test("off empties a hard-linked AGENTS.md rather than removing one name, so no copy of the block stays", (t) => {
+  for (const linkFirst of [true, false]) {
+    const s = setup();
+    if (linkFirst) writeFileSync(s.agents, "");
+    else assert.ok(turnOn("codex", s.o).ok);
+    try {
+      linkSync(s.agents, s.override);
+    } catch (e) {
+      t.skip(`no hard links here: ${e.code}`);
+      return;
+    }
+    if (linkFirst) assert.ok(turnOn("codex", s.o).ok);
+    const r = turnOff("codex", s.o);
+    assert.ok(r.ok, r.message);
+    for (const f of [s.agents, s.override]) assert.equal(existsSync(f) ? blocks(read(f)) : 0, 0, `${linkFirst} ${f}`);
+    assert.match(status(s.o).message, /- Codex: 꺼짐 \(/, String(linkFirst));
+  }
+});
+
+test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
+  const row = readFileSync(SKILL, "utf8").split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
+  assert.ok(row, "the row exists");
+  assert.match(row, /지우지 않음/);
+  assert.match(row, /물은 뒤/);
+  assert.doesNotMatch(row, /치운/);
 });
