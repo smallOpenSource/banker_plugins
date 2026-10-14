@@ -34,7 +34,9 @@
  * start, makes turnOn and turnOff refuse rather than guess where the block ends.
  * So does a file that is not UTF-8 (CP949, UTF-16): written back as text it
  * would lose its bytes. A folder or FIFO at a file's name is never read: a
- * FIFO would make the read wait forever.
+ * FIFO would make the read wait forever. Nor is a socket or a link loop; and an
+ * AGENTS.md that is a link to nothing is refused by turnOn, which would
+ * otherwise create the file the link points at.
  *
  * Results are { ok, message }; ok false means refused with nothing changed.
  * Anything else that goes wrong throws.
@@ -91,20 +93,31 @@ const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 // What sits at a name that is not a regular file: a folder, a FIFO or a device.
 // It is never read; reading a FIFO waits for a writer.
 const SPECIAL = Object.freeze({ bytes: null, text: null, special: true });
+// What sits at a name that is a link to nothing: Codex finds no file there, and writing would follow the link.
+const DANGLING = Object.freeze({ bytes: null, text: null, dangling: true });
+// What opening a name fails with when no regular file can be there: links that loop (ELOOP) or a socket (ENXIO,
+// EOPNOTSUPP on macOS).
+const NOT_A_FILE = new Set(["ELOOP", "ENXIO", "EOPNOTSUPP"]);
+
+// What a failed open of path means: null for nothing there, DANGLING for a link to nothing, SPECIAL for a folder,
+// a socket or a link loop. Any other failure (permissions) is not "missing" and propagates.
+function openFailure(path, e) {
+  if (e.code === "ENOENT" || e.code === "ENOTDIR") return isLink(path) ? DANGLING : null;
+  if (e.code === "EISDIR" || NOT_A_FILE.has(e.code) || isDir(path)) return SPECIAL;
+  throw e;
+}
 
 // A file's bytes and text, null when there is no such file. text is null when
 // the bytes are not UTF-8, which callers refuse: decoding them would replace
-// them with U+FFFD for good. Anything but a regular file is SPECIAL: the name
-// is opened without blocking and not read. Any other failure (permissions) is
-// not "missing" and propagates.
+// them with U+FFFD for good. A folder, a socket, a link loop or anything but a
+// regular file is SPECIAL, and a link to nothing is DANGLING: the name is
+// opened without blocking and not read.
 function readFile(path) {
   let fd;
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
-    if (e.code === "ENOENT" || e.code === "ENOTDIR") return null;
-    if (e.code === "EISDIR" || isDir(path)) return SPECIAL;
-    throw e;
+    return openFailure(path, e);
   }
   try {
     if (!fstatSync(fd).isFile()) return SPECIAL;
@@ -183,7 +196,7 @@ const claudeText = (t, rules) => `${t.header}\n${rules}\n`;
 // "off", "foreign" (not banker's file), or, when rules are given, "on" or
 // "stale" (other rules); without rules a banker file is "ours".
 function claudeState(t, file, rules) {
-  if (file === null) return "off";
+  if (file === null || file.dangling) return "off";
   if (file.text === null) return "foreign";
   const body = lf(noBom(file.text));
   if (!body.startsWith(t.ownerMark)) return "foreign";
@@ -371,7 +384,9 @@ function codexFiles(t, o) {
   const read = (name) => {
     const path = join(o.codexDir, name);
     const file = readFile(path);
-    if (file === null || file.special) return { path, bytes: null, text: null, spans: [], special: file !== null };
+    if (file === null || file.special || file.dangling) {
+      return { path, bytes: null, text: null, spans: [], special: file?.special === true, dangling: file?.dangling === true };
+    }
     return { path, ...file, spans: file.text === null ? null : blockSpansOf(file.text, t.open, t.close) };
   };
   const override = read("AGENTS.override.md");
@@ -402,20 +417,26 @@ function withBlock(t, text, rules) {
   return text === "" ? blockFor(t, rules, eol) : text + eol + blockFor(t, rules, eol);
 }
 
+// The state when the block is not in its place: "hidden" (only in an override with no text of its own),
+// "misplaced" (only in AGENTS.md while Codex reads the override), "dangling" (nowhere, and AGENTS.md is a link to
+// nothing that on must not write through) or "off".
+function placeState(files) {
+  if (hasBlock(files.other)) return files.other === files.all[0] ? "hidden" : "misplaced";
+  return files.target.dangling ? "dangling" : "off";
+}
+
 // "off", "on", "stale", "misplaced" (only in AGENTS.md while Codex reads the
 // override, so not applied), "hidden" (in the override with no text of its own,
-// applied but hiding AGENTS.md), "unpaired", "notutf8" or "notregular" (a
-// folder or FIFO at a file's name). Without rules any block in its place
-// counts as "on".
+// applied but hiding AGENTS.md), "dangling" (nowhere, and AGENTS.md is a link to
+// nothing), "unpaired", "notutf8" or "notregular" (a folder, FIFO, socket or
+// link loop at a file's name). Without rules any block in its place counts as "on".
 function codexState(t, files, rules) {
   if (files.all.some(special)) return "notregular";
   if (files.all.some(binary)) return "notutf8";
   if (files.all.some(unpaired)) return "unpaired";
-  const inTarget = hasBlock(files.target);
-  const inOther = hasBlock(files.other);
-  if (!inTarget) return inOther ? (files.other === files.all[0] ? "hidden" : "misplaced") : "off";
+  if (!hasBlock(files.target)) return placeState(files);
   if (rules === undefined) return "on";
-  return blockCurrent(t, files.target, rules) && !inOther ? "on" : "stale";
+  return blockCurrent(t, files.target, rules) && !hasBlock(files.other) ? "on" : "stale";
 }
 
 // Why these files cannot be written, or "" when they can. The folder counts
@@ -500,6 +521,7 @@ function codexOn(t, o, getRules) {
   const state = codexState(t, files, rules);
   const refusal = codexRefusal(t, files, state);
   if (refusal) return refusal;
+  if (files.target.dangling) return refuse(`끊어진 링크라 그대로 두었습니다: ${where(files.target.path)}`);
   const words = onWords(t, state, files.shadowers.length > 0);
   const tail = `${where(files.target.path)}${shadowNote(files)}`;
   if (state === "on") return done(`Codex: ${words}. ${tail}`);
@@ -539,6 +561,7 @@ const STATE_TEXT = {
   notutf8: "UTF-8 이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   notregular: "일반 파일이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   unpaired: "표시의 짝이 맞지 않음 (on, off 모두 거부. 남은 표시 줄 정리 필요)",
+  dangling: "꺼짐, 단 AGENTS.md 가 끊어진 링크라 on 이 거부함 (링크 확인 필요)",
 };
 
 // A state as the status line says it.
@@ -587,7 +610,7 @@ export function stateLines(t, o, rules) {
  */
 export function present(t, runtime, o) {
   if (runtime === "claude") return isDir(o.claudeDir) && claudeState(t, readFile(claudeFile(t, o))) === "ours";
-  return isDir(o.codexDir) && !["off", "notutf8", "notregular"].includes(codexState(t, codexFiles(t, o)));
+  return isDir(o.codexDir) && !["off", "notutf8", "notregular", "dangling"].includes(codexState(t, codexFiles(t, o)));
 }
 
 const knownRuntime = (runtime) => {

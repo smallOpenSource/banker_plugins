@@ -201,5 +201,6 @@ argument-hint: "on | off | status"
 | AGENTS.override.md 에 블록만 있어 AGENTS.md 가 가려짐 | override 의 다른 내용이 지워짐. `on` 실행 시 AGENTS.md 로 옮기고 빈 override 삭제 |
 | 다른 banker 블록만 있어 Codex 가 AGENTS.md 를 읽지 않음 | 메시지가 말한 스킬에서 `on` 실행 |
 | UTF-8 이 아닌 파일 | 지침 파일을 UTF-8 로 바꾼 뒤 다시 실행 |
+| 끊어진 링크라 그대로 두었습니다 | AGENTS.md 가 가리키는 파일이 없음. 링크를 지우거나 바꾸지 않음. 링크와 대상을 보이고 어떻게 할지 물은 뒤 다시 실행 |
 | 일반 파일이 아님 | 지침 파일 자리(AGENTS.md, AGENTS.override.md)의 폴더나 특수 파일은 지우지 않음. 무엇인지 사용자에게 보이고, 옮기거나 이름을 바꿀지 물은 뒤 다시 실행 |
 | 쓸 권한이 없음 | 해당 파일과 폴더 권한 확인 |

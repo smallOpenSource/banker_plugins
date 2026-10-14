@@ -15,6 +15,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -907,4 +908,60 @@ test("status names the file a refused state is about, not the file the block wou
   assert.match(codex(), /UTF-8 이 아닌 지침 파일이 있어 손대지 않음 .*\(.*AGENTS\.md\)$/);
   writeFileSync(s.agents, `# base\n${OPEN}\nhalf a block\n`);
   assert.match(codex(), /표시의 짝이 맞지 않음 .*\(.*AGENTS\.md\)$/);
+});
+
+test("a link loop or a socket where AGENTS.md goes is no regular file: status says so, on and off refuse with exit 1", posixOnly, async (t) => {
+  const s = setup();
+  const check = (what) => {
+    assert.match(cli(["status"], cliEnv(s)).out, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음/, what);
+    for (const command of ["on", "off"]) {
+      const r = cli([command, "--runtime", "codex"], cliEnv(s));
+      assert.equal(r.code, 1, `${what} ${command}: ${r.out}`);
+      assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md/, `${what} ${command}`);
+    }
+  };
+  symlinkSync("loop-b", s.agents);
+  symlinkSync("AGENTS.md", join(s.o.codexDir, "loop-b"));
+  check("link loop");
+  rmSync(s.agents);
+  rmSync(join(s.o.codexDir, "loop-b"));
+  const server = createServer();
+  try {
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(s.agents, resolve); });
+  } catch (e) {
+    t.diagnostic(`no socket here: ${e.code}`);
+    return;
+  }
+  try {
+    check("socket");
+  } finally {
+    server.close();
+  }
+});
+
+test("AGENTS.md that is a link to nothing: on refuses and makes no file where it points; an override with text still works", posixOnly, () => {
+  const s = setup();
+  symlinkSync("gone.md", s.agents);
+  const on = cli(["on", "--runtime", "codex"], cliEnv(s));
+  assert.equal(on.code, 1, on.out);
+  assert.match(on.out, /끊어진 링크라 그대로 두었습니다: .*AGENTS\.md/);
+  assert.equal(existsSync(join(s.o.codexDir, "gone.md")), false, "nothing was made where the link points");
+  assert.equal(lstatSync(s.agents).isSymbolicLink(), true);
+  assert.match(cli(["status"], cliEnv(s)).out, /- Codex: 꺼짐, 단 AGENTS\.md 가 끊어진 링크라 on 이 거부함/);
+  assert.equal(cli(["off", "--runtime", "codex"], cliEnv(s)).code, 0);
+  writeFileSync(s.override, "# mine\n");
+  assert.equal(cli(["on", "--runtime", "codex"], cliEnv(s)).code, 0, "the block goes to the override Codex reads");
+  assert.equal(blocks(read(s.override)), 1);
+  assert.equal(cli(["off", "--runtime", "codex"], cliEnv(s)).code, 0);
+  assert.equal(read(s.override), "# mine\n");
+});
+
+test("Claude Code: a link to nothing where the rules file goes is replaced by on, never written through", posixOnly, () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"));
+  symlinkSync("gone.md", s.rulesFile);
+  const r = turnOn("claude", s.o);
+  assert.ok(r.ok, r.message);
+  assert.equal(lstatSync(s.rulesFile).isSymbolicLink(), false);
+  assert.equal(existsSync(join(s.o.claudeDir, "rules", "gone.md")), false);
 });
