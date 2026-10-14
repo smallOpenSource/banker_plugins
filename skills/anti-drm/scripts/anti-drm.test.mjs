@@ -1,6 +1,6 @@
 // Tests for anti-drm.mjs. Run from anywhere: node --test <repo>/skills/anti-drm/scripts/anti-drm.test.mjs
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -856,4 +856,38 @@ test("the troubleshooting row for a folder or FIFO at an instructions file says 
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
+});
+
+// --stdin used to read all of standard input before checking its size, so input that never ends never ended it.
+test("--stdin stops reading once the input passes 64 KiB, so endless input ends at once", async () => {
+  const s = setup();
+  const child = spawn(process.execPath, [CLI, "config", "--stdin"], { env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  child.stdin.on("error", () => {});
+  const chunk = Buffer.alloc(16 * 1024, "a");
+  const feed = setInterval(() => { if (!child.stdin.destroyed) child.stdin.write(chunk); }, 5);
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => { child.kill(); resolve("timeout"); }, 10000);
+    child.on("exit", (c) => { clearTimeout(timer); resolve(c); });
+  });
+  clearInterval(feed);
+  child.stdin.destroy();
+  assert.equal(code, 1, out);
+  assert.match(out, /표준 입력이 64KiB 보다 큽니다/);
+  assert.equal(readConfig(s.o.configFile), null);
+});
+
+test("--stdin with no settings line refuses on and config alike instead of falling back to saved settings", () => {
+  const s = setup();
+  assert.equal(cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s)).code, 0);
+  for (const args of [["on", "--runtime", "claude", "--stdin"], ["config", "--stdin"]]) {
+    for (const input of ["", "\n \r\n"]) {
+      const r = cliIn(args, input, s);
+      assert.equal(r.code, 1, `${args.join(" ")}: ${r.out}`);
+      assert.match(r.out, /표준 입력에 설정 줄이 없습니다/, args.join(" "));
+    }
+  }
+  assert.equal(existsSync(s.rulesFile), false, "on did not fall back to the saved settings");
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".txt"]);
 });
