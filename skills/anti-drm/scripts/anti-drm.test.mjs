@@ -732,3 +732,18 @@ test("instruction-toggle.mjs is the same file in tone-compact and anti-drm", () 
   const there = readFileSync(fileURLToPath(new URL("../../tone-compact/scripts/instruction-toggle.mjs", import.meta.url)));
   assert.ok(here.equals(there), "run node scripts/sync-adapter.js");
 });
+
+test("while other banker blocks alone fill the override, on says first that Codex does not read ours", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  writeFileSync(s.override, "# mine\n");
+  assert.ok(tcOn("codex", s.tc).ok);
+  writeFileSync(s.override, read(s.override).replace("# mine\n", ""));
+  const codexLine = (r) => r.message.split("\n").find((l) => l.startsWith("Codex:"));
+  const first = turnOn("codex", s.o, FLAGS);
+  assert.ok(first.ok, first.message);
+  assert.match(codexLine(first), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /);
+  const again = turnOn("codex", s.o);
+  assert.match(codexLine(again), /^Codex: 이미 AGENTS\.md 에 있지만 지금은 적용되지 않습니다 \(변경 없음\)\. /);
+  assert.match(again.message, /주의: AGENTS\.override\.md 에 다른 banker 블록\(tone-compact\)만 있어/);
+});

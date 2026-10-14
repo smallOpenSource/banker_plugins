@@ -463,6 +463,15 @@ function codexRefusal(t, files, state) {
   return null;
 }
 
+// What codexOn says it did. A block Codex does not read, because other banker
+// blocks alone fill the override, says so in its first words.
+function onWords(t, state, unread) {
+  if (state === "on") return unread ? "이미 AGENTS.md 에 있지만 지금은 적용되지 않습니다 (변경 없음)" : "이미 켜져 있습니다 (변경 없음)";
+  if (unread) return "AGENTS.md 에 넣었지만 지금은 적용되지 않습니다";
+  const moved = "블록을 맞는 파일로 옮겼습니다";
+  return { stale: t.updatedText, misplaced: moved, hidden: moved }[state] ?? "켰습니다. 다음 세션부터 자동 적용됩니다";
+}
+
 function codexOn(t, o, getRules) {
   if (!isDir(o.codexDir)) return refuse(`Codex 설정 폴더가 없습니다: ${where(o.codexDir)}`);
   const rules = getRules();
@@ -470,17 +479,16 @@ function codexOn(t, o, getRules) {
   const state = codexState(t, files, rules);
   const refusal = codexRefusal(t, files, state);
   if (refusal) return refusal;
+  const words = onWords(t, state, files.shadowers.length > 0);
   const tail = `${where(files.target.path)}${shadowNote(files)}`;
-  if (state === "on") return done(`Codex: 이미 켜져 있습니다 (변경 없음). ${tail}`);
+  if (state === "on") return done(`Codex: ${words}. ${tail}`);
   const changes = [{ file: files.target, after: withBlock(t, stripped(files.target), rules) }];
   if (hasBlock(files.other)) changes.push({ file: files.other, after: stripped(files.other) });
   const why = writeBlocked(changes);
   if (why) return refuse(why);
   apply(t, changes);
-  const moved = "블록을 맞는 파일로 옮겼습니다";
-  const what = { stale: t.updatedText, misplaced: moved, hidden: moved }[state];
   const note = files.target === files.all[1] ? `\n${OMX_NOTE}` : "";
-  return done(`Codex: ${what ?? "켰습니다. 다음 세션부터 자동 적용됩니다"}. ${tail}${note}`);
+  return done(`Codex: ${words}. ${tail}${note}`);
 }
 
 function codexOff(t, o) {
