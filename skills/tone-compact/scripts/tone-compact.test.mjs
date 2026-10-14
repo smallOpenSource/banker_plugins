@@ -743,3 +743,8 @@ test("another banker skill's block alone in the override: ours goes to AGENTS.md
   assert.ok(turnOff("codex", s.o).ok);
   assert.equal(read(s.agents), "# base\n");
 });
+
+test("the rules may not quote any banker or OMX management marker", () => {
+  const wrap = (body) => `a\n<!-- tone-compact:rules:start -->\n${body}\n<!-- tone-compact:rules:end -->\nb\n`;
+  assert.throws(() => rulesOf(wrap("x\nsee <!-- banker:anti-drm:start --> there")), /관리 표시/);
+});

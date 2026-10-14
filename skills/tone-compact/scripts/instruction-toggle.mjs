@@ -141,11 +141,12 @@ export const denied = (e) => e.code === "EACCES" || e.code === "EPERM" || e.code
 
 /**
  * A path or an error text as a message shows it. Control, format, line and
- * paragraph separator, private-use and unassigned characters become "?": a path
- * from the environment cannot start a line of its own or reorder the text
- * around it.
+ * paragraph separator, private-use, unassigned and variation selector
+ * characters become "?": a path from the environment cannot start a line of
+ * its own, reorder the text around it, or hide text after a visible letter.
  */
-export const where = (value) => String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}]/gu, "?");
+export const where = (value) =>
+  String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}]/gu, "?");
 
 // ---- Claude Code: one rules file that is banker's alone ----
 
@@ -237,6 +238,12 @@ function lineOffsets(lines) {
 
 // Any management marker, a banker block's or OMX's, anywhere on a line.
 const ANY_MARKER = /<!-- (?:banker:[a-z0-9-]+:(?:start|end)|USER:OMX:POLICY:(?:START|END)) -->/;
+
+/**
+ * Whether text quotes any management marker. Rules must not: a block holding
+ * one would be refused as soon as it is written, and could never come out.
+ */
+export const hasMarker = (text) => ANY_MARKER.test(text);
 // Whether a marker sits between a block's first and last line: then its end was
 // moved, by hand or by an editor, and cutting to it would take other text along.
 const markerInside = (lines, first, last) => lines.slice(first + 1, last).some((line) => ANY_MARKER.test(line));

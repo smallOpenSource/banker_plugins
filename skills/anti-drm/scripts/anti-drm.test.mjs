@@ -1,7 +1,7 @@
 // Tests for anti-drm.mjs. Run from anywhere: node --test <repo>/skills/anti-drm/scripts/anti-drm.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { after, test } from "node:test";
 import {
   checkConfig,
   configure,
+  ownerTrusted,
   parseArgs,
   readConfig,
   renderRules,
@@ -19,6 +20,7 @@ import {
   turnOff,
   turnOn,
 } from "./anti-drm.mjs";
+import { where } from "./instruction-toggle.mjs";
 import { status as tcStatus, turnOff as tcOff, turnOn as tcOn } from "../../tone-compact/scripts/tone-compact.mjs";
 
 const CLI = fileURLToPath(new URL("./anti-drm.mjs", import.meta.url));
@@ -572,15 +574,6 @@ test("hardening: a settings file another account owns is refused", posixOnly, ()
   assert.ok(readConfig(s.o.configFile).config);
 });
 
-test("hardening: config keeps the settings from before in anti-drm.json.bak, readable by this account only", () => {
-  const s = setup();
-  turnOn("claude", s.o, FLAGS);
-  const before = readFileSync(s.o.configFile);
-  assert.ok(configure(s.o, { deny: ".txt", alt: ".md" }).ok);
-  assert.ok(readFileSync(`${s.o.configFile}.bak`).equals(before), "the .bak holds the bytes from before");
-  if (process.platform !== "win32") assert.equal(statSync(`${s.o.configFile}.bak`).mode & 0o777, 0o600);
-});
-
 test("hardening: paths in messages cannot forge a line or reorder the text", posixOnly, () => {
   const s = setup();
   const rlo = String.fromCharCode(0x202e);
@@ -614,6 +607,97 @@ test("hardening: a block whose end was re-paired by hand around other text is re
   assert.match(status(s.o).message, /- Codex: 표시의 짝이 맞지 않음/);
   assert.ok(tcOff("codex", s.tc).ok, "tone-compact's own block still comes out");
   assert.ok(read(s.agents).includes("my note"));
+});
+
+test("hardening: a settings folder this account cannot enter is a refusal, not an unexpected error", permTest, () => {
+  const s = setup();
+  turnOn("claude", s.o, FLAGS);
+  const folder = join(s.dir, "config", "banker");
+  chmodSync(folder, 0o000);
+  try {
+    const r = configure(s.o, { deny: ".txt", alt: ".md" });
+    assert.equal(r.ok, false);
+    assert.match(r.message, /쓸 권한이 없어 설정을 저장하지 못했습니다 \(EACCES\)/);
+    const c = cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+    assert.equal(c.code, 1, c.out);
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+});
+
+test("hardening: a file anti-drm did not write is kept once in .bak, and later saves do not overwrite it", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+  assert.ok(configure(s.o, FLAGS).ok);
+  assert.equal(read(`${s.o.configFile}.bak`), '{"theme":"dark"}\n');
+  if (process.platform !== "win32") assert.equal(statSync(`${s.o.configFile}.bak`).mode & 0o777, 0o600);
+  assert.ok(configure(s.o, { deny: ".txt", alt: ".md" }).ok);
+  assert.equal(read(`${s.o.configFile}.bak`), '{"theme":"dark"}\n', "the file from before anti-drm is still there");
+  const own = setup();
+  assert.ok(turnOn("claude", own.o, FLAGS).ok);
+  assert.ok(configure(own.o, { deny: ".txt", alt: ".md" }).ok);
+  assert.ok(!existsSync(`${own.o.configFile}.bak`), "anti-drm's own settings need no .bak");
+});
+
+test("hardening: a file over 64 KiB at the settings path is not overwritten or copied", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  const big = "x".repeat(70000);
+  writeFileSync(s.o.configFile, big);
+  const r = configure(s.o, FLAGS);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /64KiB 보다 큰 파일이라 설정을 저장하지 않았습니다/);
+  assert.equal(read(s.o.configFile), big);
+  assert.ok(!existsSync(`${s.o.configFile}.bak`));
+});
+
+test("hardening: an unreadable settings file is refused with the right words, on exits 1", permTest, () => {
+  const s = setup();
+  turnOn("claude", s.o, FLAGS);
+  chmodSync(s.o.configFile, 0o000);
+  try {
+    const r = configure(s.o, { deny: ".txt", alt: ".md" });
+    assert.equal(r.ok, false);
+    assert.match(r.message, /읽을 수 없는 파일이라 설정을 저장하지 않았습니다/);
+    assert.match(status(s.o).message, /- 설정: 올바르지 않음 \(읽을 권한이 없습니다\)/);
+    const on = cli(["on", "--runtime", "claude"], cliEnv(s));
+    assert.equal(on.code, 1, on.out);
+  } finally {
+    chmodSync(s.o.configFile, 0o644);
+  }
+});
+
+test("hardening: a settings link that loops is replaced by config, and on refuses it with exit 1", posixOnly, () => {
+  const s = setup();
+  const folder = join(s.dir, "config", "banker");
+  mkdirSync(folder, { recursive: true });
+  symlinkSync(join(folder, "loop-b"), s.o.configFile);
+  symlinkSync(s.o.configFile, join(folder, "loop-b"));
+  assert.match(readConfig(s.o.configFile).error, /일반 파일이 아닙니다/);
+  assert.equal(cli(["on", "--runtime", "claude"], cliEnv(s)).code, 1);
+  assert.ok(configure(s.o, FLAGS).ok);
+  assert.ok(!lstatSync(s.o.configFile).isSymbolicLink());
+  assert.deepEqual(readConfig(s.o.configFile).config, CONFIG);
+});
+
+test("hardening: root may own the settings when only root can write them", () => {
+  assert.equal(ownerTrusted({ uid: 1001, mode: 0o100664 }, 1001), true);
+  assert.equal(ownerTrusted({ uid: 0, mode: 0o100644 }, 1001), true);
+  assert.equal(ownerTrusted({ uid: 0, mode: 0o100664 }, 1001), false);
+  assert.equal(ownerTrusted({ uid: 0, mode: 0o100646 }, 1001), false);
+  assert.equal(ownerTrusted({ uid: 2002, mode: 0o100644 }, 1001), false);
+});
+
+test("hardening: rules that quote any management marker are refused before they are written", () => {
+  const wrap = (body) => `a\n<!-- anti-drm:rules:start -->\n${body}\n<!-- anti-drm:rules:end -->\nb\n`;
+  assert.throws(() => templateOf(wrap("{{map}} {{alts}}\nsee <!-- banker:tone-compact:end --> here")), /관리 표시/);
+  assert.throws(() => templateOf(wrap("{{map}} {{alts}}\n<!-- USER:OMX:POLICY:START -->")), /관리 표시/);
+});
+
+test("hardening: paths lose variation selectors too", () => {
+  assert.equal(where(`a${String.fromCharCode(0xfe0f)}b${String.fromCharCode(0x202e)}c`), "a?b?c");
+  assert.equal(where("/home/사용자/.config"), "/home/사용자/.config");
 });
 
 test("instruction-toggle.mjs is the same file in tone-compact and anti-drm", () => {

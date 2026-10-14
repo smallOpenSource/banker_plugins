@@ -51,6 +51,7 @@ import {
   KEEP_OPEN,
   RUNTIMES,
   denied,
+  hasMarker,
   present,
   stateLines,
   toggleSpec,
@@ -141,10 +142,23 @@ export function checkConfig({ deny, alt, tsvDelimiter = "tab" }) {
   return { config: { version: 1, deny: d.list, alt: a.list, tsvDelimiter } };
 }
 
-const ownedByOther = (st) => typeof process.getuid === "function" && st.uid !== process.getuid();
+/**
+ * Whether the owner of a settings file may steer this account's rules: this
+ * account, or root when only root can write the file (settings IT deployed).
+ */
+export const ownerTrusted = (st, uid) => st.uid === uid || (st.uid === 0 && (st.mode & 0o022) === 0);
+const ownedByOther = (st) => typeof process.getuid === "function" && !ownerTrusted(st, process.getuid());
+
+// What opening the settings file can fail with, as the status line says it.
+const OPEN_ERRORS = new Map([
+  ["EISDIR", "일반 파일이 아닙니다"],
+  ["ELOOP", "일반 파일이 아닙니다"],
+  ["EACCES", "읽을 권한이 없습니다"],
+  ["EPERM", "읽을 권한이 없습니다"],
+]);
 
 // The settings file's text: null when there is none, { error } when it is not a
-// regular file of at most 64 KiB that this account owns. Opening without
+// regular file of at most 64 KiB that a trusted owner holds. Opening without
 // blocking keeps a FIFO from hanging the command, and another account's file
 // cannot steer this account's rules.
 function settingsText(file) {
@@ -153,7 +167,7 @@ function settingsText(file) {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
     if (e.code === "ENOENT" || e.code === "ENOTDIR") return null;
-    if (e.code === "EISDIR") return { error: "일반 파일이 아닙니다" };
+    if (OPEN_ERRORS.has(e.code)) return { error: OPEN_ERRORS.get(e.code) };
     throw e;
   }
   try {
@@ -182,38 +196,78 @@ export function readConfig(file) {
   return checkConfig({ deny: raw.deny, alt: raw.alt, tsvDelimiter: raw.tsvDelimiter ?? "tab" });
 }
 
-// The bytes of the regular file at path, following a link, or null when there is none.
-function regularBytes(file) {
+// What sits at the settings path: "none", "file" (a regular file, or a link to
+// one), or "other" (a folder, a FIFO). A link that points nowhere or loops is
+// "none": the save replaces the link.
+function pathKind(file) {
+  let st;
   try {
-    return statSync(file).isFile() ? readFileSync(file) : null;
+    st = lstatSync(file);
   } catch (e) {
-    if (e.code === "ENOENT" || e.code === "ENOTDIR") return null;
+    if (e.code === "ENOENT" || e.code === "ENOTDIR") return "none";
     throw e;
   }
+  if (st.isFile()) return "file";
+  if (!st.isSymbolicLink()) return "other";
+  try {
+    return statSync(file).isFile() ? "file" : "none";
+  } catch {
+    return "none";
+  }
+}
+
+// The bytes of the file at the settings path, opened without blocking: { bytes }
+// (null when it turned out not to be a regular file) or { refusal }.
+function priorBytes(file) {
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (e) {
+    if (denied(e)) return { refusal: "읽을 수 없는 파일이라 설정을 저장하지 않았습니다" };
+    throw e;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { bytes: null };
+    if (st.size > MAX_BYTES) return { refusal: "64KiB 보다 큰 파일이라 설정을 저장하지 않았습니다" };
+    return { bytes: readFileSync(fd) };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Whether bytes are settings anti-drm wrote (or could have): nothing is lost when they go.
+function ownSettings(bytes) {
+  try {
+    const text = bytes.toString("utf8");
+    const raw = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    return Boolean(raw) && typeof raw === "object" && Boolean(checkConfig(raw).config);
+  } catch {
+    return false;
+  }
+}
+
+// What a save finds at the settings path: { keep } (the bytes to put in .bak,
+// null for none: nothing there, or anti-drm's own settings) or { refusal }.
+function priorSettings(file) {
+  const kind = pathKind(file);
+  if (kind === "none") return { keep: null };
+  if (kind === "other") return { refusal: "일반 파일이 아니라 설정을 저장하지 않았습니다" };
+  const got = priorBytes(file);
+  if (got.refusal) return got;
+  return { keep: got.bytes === null || ownSettings(got.bytes) ? null : got.bytes };
 }
 
 /**
  * Saves the settings: the folder 0755, the file 0644 through a temp file and a
- * rename. The bytes from before stay in <file>.bak, readable by this account
- * only, whatever file the path named.
+ * rename. keep, when given, is a file anti-drm did not write; its bytes go to
+ * <file>.bak, readable by this account only, and later saves of anti-drm's own
+ * settings leave that .bak alone.
  */
-export function writeConfig(file, config) {
+export function writeConfig(file, config, keep = null) {
   mkdirSync(dirname(file), { recursive: true, mode: 0o755 });
-  const old = regularBytes(file);
-  if (old !== null) writeFresh(`${file}.bak`, old, 0o600);
+  if (keep !== null) writeFresh(`${file}.bak`, keep, 0o600);
   writeFresh(file, `${JSON.stringify(config, null, 2)}\n`, 0o644);
-}
-
-// Whether the settings path holds nothing, a regular file or a link, which the
-// write replaces; a folder or a FIFO there is refused.
-function replaceable(file) {
-  try {
-    const st = lstatSync(file);
-    return st.isFile() || st.isSymbolicLink();
-  } catch (e) {
-    if (e.code === "ENOENT" || e.code === "ENOTDIR") return true;
-    throw e;
-  }
 }
 
 // ---- rules ----
@@ -227,7 +281,7 @@ export function templateOf(skillText) {
     throw new Error("SKILL.md 에서 규칙 틀(anti-drm:rules 표시)을 찾지 못했습니다");
   }
   const template = text.slice(start + RULES_START.length, end).replace(/^\n+|\n+$/g, "");
-  if (PLACES.some((p) => count(template, p) !== 1) || MARKERS.some((m) => template.includes(m))) {
+  if (PLACES.some((p) => count(template, p) !== 1) || MARKERS.some((m) => template.includes(m)) || hasMarker(template)) {
     throw new Error("SKILL.md 의 규칙 틀에 자리 표시가 한 번씩 있지 않거나 관리 표시가 들어 있습니다");
   }
   return template;
@@ -318,9 +372,10 @@ export function status(opts = {}) {
 
 // Saves the settings, as a result to report.
 function save(o, config) {
-  if (!replaceable(o.configFile)) return refuse(`일반 파일이 아니라 설정을 저장하지 않았습니다: ${where(o.configFile)}`);
   try {
-    writeConfig(o.configFile, config);
+    const prior = priorSettings(o.configFile);
+    if (prior.refusal) return refuse(`${prior.refusal}: ${where(o.configFile)}`);
+    writeConfig(o.configFile, config, prior.keep);
   } catch (e) {
     if (denied(e)) return refuse(`쓸 권한이 없어 설정을 저장하지 못했습니다 (${e.code}): ${where(o.configFile)}`);
     throw e;

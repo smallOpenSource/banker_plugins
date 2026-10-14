@@ -27,6 +27,7 @@ import {
   KEEP_OPEN,
   RUNTIMES,
   blockSpansOf,
+  hasMarker,
   stateLines,
   toggleSpec,
   turnOff as toggleOff,
@@ -61,7 +62,7 @@ export function rulesOf(skillText) {
     throw new Error("SKILL.md 에서 규칙 구간(tone-compact:rules 표시)을 찾지 못했습니다");
   }
   const rules = text.slice(start + RULES_START.length, end).replace(/^\n+|\n+$/g, "");
-  if (rules === "" || MARKERS.some((m) => rules.includes(m))) {
+  if (rules === "" || MARKERS.some((m) => rules.includes(m)) || hasMarker(rules)) {
     throw new Error("SKILL.md 의 규칙 구간이 비었거나 관리 표시를 담고 있습니다");
   }
   return rules;
