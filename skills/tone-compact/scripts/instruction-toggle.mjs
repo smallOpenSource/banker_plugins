@@ -33,15 +33,19 @@
  * open and close in turn; a marker quoted inside a sentence, or an end before a
  * start, makes turnOn and turnOff refuse rather than guess where the block ends.
  * So does a file that is not UTF-8 (CP949, UTF-16): written back as text it
- * would lose its bytes.
+ * would lose its bytes. A folder or FIFO at a file's name is never read: a
+ * FIFO would make the read wait forever.
  *
  * Results are { ok, message }; ok false means refused with nothing changed.
  * Anything else that goes wrong throws.
  */
 import {
   accessSync,
+  closeSync,
   constants,
+  fstatSync,
   lstatSync,
+  openSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -84,22 +88,34 @@ const isLink = (path) => {
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
+// What sits at a name that is not a regular file: a folder, a FIFO or a device.
+// It is never read; reading a FIFO waits for a writer.
+const SPECIAL = Object.freeze({ bytes: null, text: null, special: true });
+
 // A file's bytes and text, null when there is no such file. text is null when
 // the bytes are not UTF-8, which callers refuse: decoding them would replace
-// them with U+FFFD for good. Any other read failure (permissions, a folder at
-// that name) is not "missing" and propagates.
+// them with U+FFFD for good. Anything but a regular file is SPECIAL: the name
+// is opened without blocking and not read. Any other failure (permissions) is
+// not "missing" and propagates.
 function readFile(path) {
-  let bytes;
+  let fd;
   try {
-    bytes = readFileSync(path);
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
     if (e.code === "ENOENT" || e.code === "ENOTDIR") return null;
+    if (e.code === "EISDIR" || isDir(path)) return SPECIAL;
     throw e;
   }
   try {
-    return { bytes, text: UTF8.decode(bytes) };
-  } catch {
-    return { bytes, text: null };
+    if (!fstatSync(fd).isFile()) return SPECIAL;
+    const bytes = readFileSync(fd);
+    try {
+      return { bytes, text: UTF8.decode(bytes) };
+    } catch {
+      return { bytes, text: null };
+    }
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -323,6 +339,7 @@ const otherBlocks = (t, text) =>
     return spans !== null && spans.length > 0;
   });
 
+const special = (f) => f.special === true;
 const binary = (f) => f.bytes !== null && f.text === null;
 const unpaired = (f) => f.spans === null;
 const hasBlock = (f) => f.spans !== null && f.spans.length > 0;
@@ -337,7 +354,7 @@ function codexFiles(t, o) {
   const read = (name) => {
     const path = join(o.codexDir, name);
     const file = readFile(path);
-    if (file === null) return { path, bytes: null, text: null, spans: [] };
+    if (file === null || file.special) return { path, bytes: null, text: null, spans: [], special: file !== null };
     return { path, ...file, spans: file.text === null ? null : blockSpansOf(file.text, t.open, t.close) };
   };
   const override = read("AGENTS.override.md");
@@ -365,9 +382,11 @@ function withBlock(t, text, rules) {
 
 // "off", "on", "stale", "misplaced" (only in AGENTS.md while Codex reads the
 // override, so not applied), "hidden" (in the override with no text of its own,
-// applied but hiding AGENTS.md), "unpaired" or "notutf8". Without rules any
-// block in its place counts as "on".
+// applied but hiding AGENTS.md), "unpaired", "notutf8" or "notregular" (a
+// folder or FIFO at a file's name). Without rules any block in its place
+// counts as "on".
 function codexState(t, files, rules) {
+  if (files.all.some(special)) return "notregular";
   if (files.all.some(binary)) return "notutf8";
   if (files.all.some(unpaired)) return "unpaired";
   const inTarget = hasBlock(files.target);
@@ -416,6 +435,7 @@ const shadowNote = (files) =>
 
 // The refusal for files on and off must not touch, or null.
 function codexRefusal(t, files, state) {
+  if (state === "notregular") return refuse(`일반 파일이 아니라 그대로 두었습니다: ${where(files.all.find(special).path)}`);
   if (state === "notutf8") return refuse(`UTF-8 이 아닌 파일이라 그대로 두었습니다: ${where(files.all.find(binary).path)}`);
   if (state === "unpaired") return refuse(`${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다: ${where(files.all.find(unpaired).path)}`);
   return null;
@@ -464,6 +484,7 @@ const STATE_TEXT = {
   misplaced: "꺼짐, 단 블록이 Codex 가 읽지 않는 AGENTS.md 에 있음 (on 으로 옮김)",
   hidden: "켜짐, 단 AGENTS.override.md 에 블록만 있어 AGENTS.md 가 가려짐 (on 으로 옮김)",
   notutf8: "UTF-8 이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
+  notregular: "일반 파일이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   unpaired: "표시의 짝이 맞지 않음 (on, off 모두 거부. 남은 표시 줄 정리 필요)",
 };
 
@@ -513,7 +534,7 @@ export function stateLines(t, o, rules) {
  */
 export function present(t, runtime, o) {
   if (runtime === "claude") return isDir(o.claudeDir) && claudeState(t, readFile(claudeFile(t, o))) === "ours";
-  return isDir(o.codexDir) && !["off", "notutf8"].includes(codexState(t, codexFiles(t, o)));
+  return isDir(o.codexDir) && !["off", "notutf8", "notregular"].includes(codexState(t, codexFiles(t, o)));
 }
 
 const knownRuntime = (runtime) => {

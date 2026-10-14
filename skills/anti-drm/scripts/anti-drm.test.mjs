@@ -488,8 +488,10 @@ test("command line: a refusal exits 1, an unexpected error exits 2", () => {
   const refused = cli(["on", "--runtime", "codex"], cliEnv(s));
   assert.equal(refused.code, 1);
   assert.match(refused.out, /설정이 없습니다/);
-  mkdirSync(s.rulesFile, { recursive: true }); // a folder where the rules file should be
-  const broken = cli(["on", "--runtime", "claude", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  writeFileSync(s.agents, "# base\n");
+  // a folder with something in it where the backup of AGENTS.md goes: renaming the temp file onto it fails
+  mkdirSync(join(`${s.agents}.anti-drm.bak`, "x"), { recursive: true });
+  const broken = cli(["on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
   assert.equal(broken.code, 2, broken.out);
   assert.match(broken.out, /예기치 못한 오류로 중단했습니다/);
 });
