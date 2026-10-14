@@ -954,3 +954,29 @@ test("a --root value that starts with one dash, or --root at the end, keeps toda
   assert.match(dash.out, /플러그인 폴더가 아님/);
   assert.equal(existsSync(join(home, ".claude")), false);
 });
+
+test("output turns joiners, tag characters and blank-looking letters into ?, and keeps Korean, NFD and spaces", () => {
+  const home = bareHome();
+  const plug = bundle();
+  const odd = [0x2060, 0xe0041, 0x061c, 0x180e, 0x00ad, 0x2028, 0x202e, 0x0085, 0x3164, 0x2800, 0x3000].map((c) => String.fromCodePoint(c));
+  const nfd = "가が".normalize("NFD");
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: `x${odd.join("")}y 한글 ${nfd}` }));
+  const r = run(home, ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  const line = r.out.split("\n").find((l) => l.includes("OMC 플러그인 폴더가 아님"));
+  assert.ok(line, r.out);
+  assert.ok(line.includes(`"x${"?".repeat(odd.length)}y 한글 ${nfd}"`), line);
+  assert.ok(![...line].some((ch) => odd.includes(ch)), line);
+});
+
+test("a script name with a tag character or a word joiner prints them as ?", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const name = `t${String.fromCodePoint(0xe0041)}${String.fromCodePoint(0x2060)}.mjs`;
+  writeFileSync(join(plug, "scripts", name), "const __omcRaceImport = (p) => p;\n");
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /백업이 없어 되돌리지 못했습니다 \S t\?\?$/m);
+  assert.ok(![0xe0041, 0x2060].some((c) => r.out.includes(String.fromCodePoint(c))), r.out);
+});
