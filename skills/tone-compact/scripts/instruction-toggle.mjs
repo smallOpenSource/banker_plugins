@@ -101,14 +101,23 @@ const SPECIAL = Object.freeze({ bytes: null, text: null, special: true });
 // What sits at a name that is a link to nothing: Codex finds no file there, and writing would follow the link.
 const DANGLING = Object.freeze({ bytes: null, text: null, dangling: true });
 // What opening a name fails with when no regular file can be there: links that loop (ELOOP) or a socket (ENXIO,
-// EOPNOTSUPP on macOS).
+// EOPNOTSUPP). macOS answers a socket with errno 102, which Node 22 does not name ("Unknown system error -102"), so
+// the kind of what is there decides too.
 const NOT_A_FILE = new Set(["ELOOP", "ENXIO", "EOPNOTSUPP"]);
+// Whether path leads to something that is there and is no regular file: a folder, a socket, a FIFO or a device.
+const notAFile = (path) => {
+  try {
+    return !statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
 
 // What a failed open of path means: null for nothing there, DANGLING for a link to nothing, SPECIAL for a folder,
 // a socket or a link loop. Any other failure (permissions) is not "missing" and propagates.
 function openFailure(path, e) {
   if (e.code === "ENOENT" || e.code === "ENOTDIR") return isLink(path) ? DANGLING : null;
-  if (e.code === "EISDIR" || NOT_A_FILE.has(e.code) || isDir(path)) return SPECIAL;
+  if (e.code === "EISDIR" || NOT_A_FILE.has(e.code) || notAFile(path)) return SPECIAL;
   throw e;
 }
 
