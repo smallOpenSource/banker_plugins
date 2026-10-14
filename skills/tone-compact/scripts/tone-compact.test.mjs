@@ -867,3 +867,30 @@ test("Codex off names the backup that keeps the file from before", () => {
   assert.match(r.message, /\n지우기 전 파일: .*AGENTS\.md\.tone-compact\.bak$/);
   assert.ok(readFileSync(`${s.agents}.tone-compact.bak`).equals(before));
 });
+
+test("off empties a hard-linked AGENTS.md rather than removing one name, so no copy of the block stays", (t) => {
+  for (const linkFirst of [true, false]) {
+    const s = setup();
+    if (linkFirst) writeFileSync(s.agents, "");
+    else assert.ok(turnOn("codex", s.o).ok);
+    try {
+      linkSync(s.agents, s.override);
+    } catch (e) {
+      t.skip(`no hard links here: ${e.code}`);
+      return;
+    }
+    if (linkFirst) assert.ok(turnOn("codex", s.o).ok);
+    const r = turnOff("codex", s.o);
+    assert.ok(r.ok, r.message);
+    for (const f of [s.agents, s.override]) assert.equal(existsSync(f) ? blocks(read(f)) : 0, 0, `${linkFirst} ${f}`);
+    assert.match(status(s.o).message, /- Codex: 꺼짐 \(/, String(linkFirst));
+  }
+});
+
+test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
+  const row = readFileSync(SKILL, "utf8").split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
+  assert.ok(row, "the row exists");
+  assert.match(row, /지우지 않음/);
+  assert.match(row, /물은 뒤/);
+  assert.doesNotMatch(row, /치운/);
+});

@@ -437,12 +437,22 @@ function writeBlocked(changes) {
 // target changes, after keeping the old bytes in a .bak only this account can
 // read (the file may be a link into a private folder). A new file gets 0644
 // whatever the umask allows more. A file left empty is removed, unless it is a
-// link: Codex skips an empty file anyway.
+// link or has other names (a hard link), whose other names would keep the old
+// text: it is emptied instead. Codex skips an empty file anyway.
 function apply(t, changes) {
   for (const { file, after } of changes) {
     if (file.bytes !== null) writeFresh(`${file.path}.${t.slug}.bak`, file.bytes, 0o600);
-    if (after === "" && !isLink(file.path)) rmSync(file.path, { force: true });
+    if (after === "" && !isLink(file.path) && !hasOtherNames(file.path)) rmSync(file.path, { force: true });
     else writeFileSync(file.path, after, { mode: 0o644 });
+  }
+}
+
+// Whether the file at path is also reachable under another name: a hard link.
+function hasOtherNames(path) {
+  try {
+    return lstatSync(path).nlink > 1;
+  } catch {
+    return false;
   }
 }
 

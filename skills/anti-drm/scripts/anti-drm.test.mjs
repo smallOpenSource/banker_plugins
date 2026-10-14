@@ -849,3 +849,11 @@ test("an override with another skill's start marker but no end counts as the use
   assert.ok(turnOff("codex", s.o).ok);
   assert.equal(read(s.override), `${TC_OPEN}\nleft by hand\n`);
 });
+
+test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
+  const row = read(SKILL).split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
+  assert.ok(row, "the row exists");
+  assert.match(row, /지우지 않음/);
+  assert.match(row, /물은 뒤/);
+  assert.doesNotMatch(row, /치운/);
+});
