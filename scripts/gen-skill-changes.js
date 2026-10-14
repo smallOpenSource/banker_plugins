@@ -80,9 +80,11 @@ function prevReleaseRef() {
 
 // from..to 사이에 묶음에 들어가는 파일이 바뀐 skills/<name> 를 banker:<name> ID 배열로. to 미지정이면
 // 작업트리(uncommitted 포함). 파일 이름은 -z 로 받아 git 의 따옴표 처리 없이 그대로 본다.
+// --no-renames: 이름 바꾸기를 지운 것과 새로 만든 것으로 받아, 옛 이름이 있던 스킬도 센다.
+// --end-of-options: "-" 로 시작하는 ref 를 git 옵션으로 읽지 않는다(git 2.24 이상).
 function changedSkills(from, to, root = ROOT) {
   const range = to ? `${from}..${to}` : from; // to 없으면 from..작업트리.
-  const raw = git(['diff', '--name-only', '-z', range, '--', 'skills/'], root);
+  const raw = git(['diff', '--name-only', '-z', '--no-renames', '--end-of-options', range, '--', 'skills/'], root);
   const patterns = excludedPatterns(root);
   const names = new Set();
   for (const rel of raw.split('\0')) {

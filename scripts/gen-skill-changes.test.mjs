@@ -131,3 +131,19 @@ test("the judgment matches npm pack for every file git tracks under skills/", { 
   const patterns = excludedPatterns(REPO);
   assert.deepEqual(tracked.filter((rel) => isShipped(rel, patterns) !== packed.has(rel)), []);
 });
+
+test("a renamed or moved shipped file names the skill it left as well", needGit, () => {
+  const one = fixture();
+  git(one.dir, "mv", "skills/alpha/scripts/a.mjs", "skills/alpha/scripts/a2.test.mjs");
+  assert.deepEqual(changedSkills(one.base, commit(one.dir), one.dir), ["banker:alpha"]);
+  const two = fixture();
+  git(two.dir, "mv", "skills/beta/notes.md", "skills/alpha/notes.md");
+  assert.deepEqual(changedSkills(two.base, commit(two.dir), two.dir), ["banker:alpha", "banker:beta"]);
+});
+
+test("a ref that looks like a git option is refused as a revision, never read as an option", needGit, () => {
+  const { dir } = fixture();
+  const out = join(dir, "written-by-git");
+  assert.throws(() => changedSkills(`--output=${out}`, null, dir));
+  assert.equal(existsSync(out), false);
+});
