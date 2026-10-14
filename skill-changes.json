@@ -121,5 +121,9 @@
     "banker:omc-patch",
     "banker:ultra-chain",
     "banker:vertical-pptx"
+  ],
+  "0.17.1": [
+    "banker:omc-patch",
+    "banker:update-banker"
   ]
 }
