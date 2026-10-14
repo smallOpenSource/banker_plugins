@@ -245,7 +245,7 @@ banker uninstall        # 제거
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
 | `payload-mon` | `hud/omc-hud-custom.mjs` 에 표시 블록 1개 삽입(`.payload-mon.bak` 백업·멱등·`node --check` 검증) + 래퍼 옆 `hud/payload-mon/` 에 모듈 사본 (`off` 로 원복) | — (Codex에서 실행해도 Claude Code HUD 만 다룸) |
 | `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
-| `anti-drm` | `rules/banker-anti-drm.md` 생성 (`off` 로 삭제) + 설정 `~/.config/banker/anti-drm.json`(두 런타임 공용, `off` 뒤에도 남음, 바꾸기 전 내용은 `.bak`) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.anti-drm.bak` 백업·멱등, `off` 로 원복) |
+| `anti-drm` | `rules/banker-anti-drm.md` 생성 (`off` 로 삭제) + 설정 `~/.config/banker/anti-drm.json`(두 런타임 공용, `off` 뒤에도 남음, anti-drm 이 쓰지 않은 파일이 있었으면 `.bak`) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.anti-drm.bak` 백업·멱등, `off` 로 원복) |
 | `omc-patch` | 활성 OMC 버전의 `scripts/*.mjs` 와 `hooks/hooks.json` 수정(`.omcbak` 백업, `PostToolUse` 훅 제거) + OMC 마켓플레이스 `origin` 을 `omc-pinned://` 로 고정(기록 `~/.claude/omc-local-patches/PINNED`, `revert` 로 원복). 헬퍼 자리 결함은 활성 폴더만 되돌린 뒤 다시 패치. project-memory 확인은 임시 폴더에서만 하고 끝나면 지움 | — (Codex에서 실행해도 Claude Code 의 OMC 캐시만 다룸) |
 | `remains` | 설정 파일 미변경. `~/.config/banker/test-boxes.json` 은 읽기만 함(사용자가 만들거나, 사용자가 준 정보로 확인받고 만듦). 처음 접속하는 박스의 호스트 키가 `~/.ssh/known_hosts` 에 더해짐. 테스트박스에는 임시 폴더를 만들고 끝나면 지움(시간 초과나 중단 때는 시작한 프로세스를 먼저 끝냄, 못 지우면 결과에 표시) | 동일 |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
@@ -306,7 +306,7 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 
 > `anti-drm` 을 켰다면 제거 전에 런타임마다 `off` 를 실행하세요(Claude Code `/banker:anti-drm off`, Codex `banker-anti-drm` 에 `off`).\
 > 규칙 파일과 블록은 플러그인 밖에 있어서, 플러그인을 지워도 남아 계속 적용됩니다.\
-> 이미 지웠다면 `~/.claude/rules/banker-anti-drm.md` 를 지우고, AGENTS.md 에서 `<!-- banker:anti-drm:start -->` 부터 `<!-- banker:anti-drm:end -->` 까지와 그 바깥의 `USER:OMX:POLICY` 표시 두 줄을 지우면 됩니다. 설정 파일 `~/.config/banker/anti-drm.json` 도 지우세요.
+> 이미 지웠다면 `~/.claude/rules/banker-anti-drm.md` 를 지우고, AGENTS.md 에서 `<!-- banker:anti-drm:start -->` 부터 `<!-- banker:anti-drm:end -->` 까지와 그 바깥의 `USER:OMX:POLICY` 표시 두 줄을 지우면 됩니다. 설정 파일 `~/.config/banker/anti-drm.json` 과, 있으면 옆의 `anti-drm.json.bak` 도 지우세요.
 
 > `omc-patch` 를 적용했다면 제거 전에 `/banker:omc-patch revert`(Codex는 `banker-omc-patch` 에 `revert`)를 실행하세요.\
 > 훅 패치와 마켓플레이스 고정은 플러그인 밖(`~/.claude/plugins/`)에 있어서, 플러그인을 지워도 남고 OMC 도 계속 자동 업데이트되지 않습니다.\
