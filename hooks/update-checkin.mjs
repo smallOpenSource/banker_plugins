@@ -158,40 +158,42 @@ function fetchSkillChangesMap(url) {
   });
 }
 
+// 보낼 본문. PII/IP/지속ID 없음: version + os(플랫폼 계열) + counts(스킬별 x 시간대)뿐.
+// 로그 없음도 유효한 체크인(설치 펄스 + 알림 fetch 겸함): 빈 counts 로 진행한다.
+function checkinBody() {
+  let raw = '';
+  try { raw = readFileSync(USAGE_LOG_PATH, 'utf8'); } catch { raw = ''; }
+  return JSON.stringify({ version: installedVersion() || 'unknown', os: process.platform, counts: aggregate(raw) });
+}
+
+// 응답의 latest 로 공유 update-check 캐시를 갱신(알림 겸함). 없으면 캐시 미변경.
+// update-fetch 처럼 notified:null 재무장을 하지 않아도 등가다: dedupe 판정이 notified===latest
+// (update-notify)라 전진 버전에서 구 notified 는 항상 신 latest 와 달라 재고지가 정상 발화하고,
+// count-default-on 은 이 훅만·npm 배포는 update-fetch 만 써 같은 캐시를 겹쳐 쓰지 않는다.
+async function refreshUpdateCache(responseBody) {
+  const latest = extractLatest(responseBody);
+  if (!latest) return;
+  // 개인화용: 변경-스킬 매니페스트를 best-effort GET(실패 시 changedSkills 생략, 기존 값 보존).
+  const changesUrl = process.env.BANKER_SKILL_CHANGES_URL || SKILL_CHANGES_URL; // 테스트 주입용 override.
+  const map = await fetchSkillChangesMap(changesUrl);
+  const patch = { latest, checkedAt: Date.now() };
+  if (map) patch.changedSkills = changedSkillsBetween(map, installedVersion(), latest);
+  try { writeUpdateCache(patch); } catch { /* best-effort */ }
+}
+
+// 전송 시도 후(성공/실패 무관) 로그를 비워 24h 윈도우로 상한(배치 유실 허용).
+function resetLog() {
+  try { writeFileSync(USAGE_LOG_PATH, ''); } catch { /* best-effort */ }
+  try { writeFileSync(LAST_FLUSH_PATH, new Date().toISOString()); } catch { /* best-effort */ }
+}
+
 async function main() {
   if (!countingActive()) return; // 미활성 - 무동작(로그 미변경).
   const url = endpoint();
   if (!url) return;              // 엔드포인트 없음 - 무동작(로그 미변경).
-
-  // 로그 없음도 유효한 체크인(설치 펄스 + 알림 fetch 겸함): 빈 counts 로 진행한다.
-  let raw = '';
-  try { raw = readFileSync(USAGE_LOG_PATH, 'utf8'); } catch { raw = ''; }
-
-  // PII/IP/지속ID 없음: version + os(플랫폼 계열) + counts(스킬별 x 시간대)뿐.
-  const payload = JSON.stringify({
-    version: installedVersion() || 'unknown',
-    os: process.platform,
-    counts: aggregate(raw),
-  });
-  const responseBody = await post(url, payload);
-
-  // 응답의 latest 로 공유 update-check 캐시를 갱신(알림 겸함). 없으면 캐시 미변경.
-  // update-fetch 처럼 notified:null 재무장을 하지 않아도 등가다: dedupe 판정이 notified===latest
-  // (update-notify)라 전진 버전에서 구 notified 는 항상 신 latest 와 달라 재고지가 정상 발화하고,
-  // count-default-on 은 이 훅만·npm 배포는 update-fetch 만 써 같은 캐시를 겹쳐 쓰지 않는다.
-  const latest = extractLatest(responseBody);
-  if (latest) {
-    // 개인화용: 변경-스킬 매니페스트를 best-effort GET(실패 시 changedSkills 생략, 기존 값 보존).
-    const changesUrl = process.env.BANKER_SKILL_CHANGES_URL || SKILL_CHANGES_URL; // 테스트 주입용 override.
-    const map = await fetchSkillChangesMap(changesUrl);
-    const patch = { latest, checkedAt: Date.now() };
-    if (map) patch.changedSkills = changedSkillsBetween(map, installedVersion(), latest);
-    try { writeUpdateCache(patch); } catch { /* best-effort */ }
-  }
-
-  // 전송 시도 후(성공/실패 무관) 로그를 비워 24h 윈도우로 상한(배치 유실 허용).
-  try { writeFileSync(USAGE_LOG_PATH, ''); } catch { /* best-effort */ }
-  try { writeFileSync(LAST_FLUSH_PATH, new Date().toISOString()); } catch { /* best-effort */ }
+  const responseBody = await post(url, checkinBody());
+  await refreshUpdateCache(responseBody);
+  resetLog();
 }
 
 main()
