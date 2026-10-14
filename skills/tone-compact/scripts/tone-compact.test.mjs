@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { parseArgs, rulesOf, status, turnOff, turnOn } from "./tone-compact.mjs";
-import { count, done, lf, noBom, refuse, where } from "./instruction-toggle.mjs";
+import { count, done, lf, noBom, refuse, sameInode, where } from "./instruction-toggle.mjs";
 
 const CLI = fileURLToPath(new URL("./tone-compact.mjs", import.meta.url));
 const SKILL = fileURLToPath(new URL("../SKILL.md", import.meta.url));
@@ -826,6 +826,7 @@ test("paths lose blank-looking letters, the braille blank and spaces other than 
 });
 
 test("an override that is a link or a hard link to AGENTS.md is one file: on twice, status and off agree", (t) => {
+  let made = 0;
   for (const kind of ["symlink", "hardlink"]) {
     const s = setup();
     writeFileSync(s.agents, "# shared\n");
@@ -836,6 +837,7 @@ test("an override that is a link or a hard link to AGENTS.md is one file: on twi
       t.diagnostic(`${kind} not made here: ${e.code}`);
       continue;
     }
+    made += 1;
     assert.ok(turnOn("codex", s.o).ok, kind);
     const again = turnOn("codex", s.o);
     assert.match(again.message, /이미 켜져 있습니다/, `${kind}: ${again.message}`);
@@ -844,6 +846,15 @@ test("an override that is a link or a hard link to AGENTS.md is one file: on twi
     assert.ok(turnOff("codex", s.o).ok, kind);
     assert.equal(read(s.agents), "# shared\n", kind);
   }
+  if (made === 0) t.skip("neither a symlink nor a hard link can be made here");
+});
+
+test("same-file checks trust an inode only where the file system gives one", () => {
+  const st = (dev, ino) => ({ dev: BigInt(dev), ino: BigInt(ino) });
+  assert.equal(sameInode(st(1, 5), st(1, 5)), true);
+  assert.equal(sameInode(st(1, 5), st(1, 6)), false);
+  assert.equal(sameInode(st(1, 5), st(2, 5)), false);
+  assert.equal(sameInode(st(1, 0), st(1, 0)), false, "inode 0 says nothing");
 });
 
 test("an override that is a link to nothing counts as no override", posixOnly, () => {

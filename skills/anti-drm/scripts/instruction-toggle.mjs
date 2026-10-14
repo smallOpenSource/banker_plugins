@@ -50,6 +50,7 @@ import {
   openSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -363,12 +364,15 @@ const unpaired = (f) => f.spans === null;
 const hasBlock = (f) => f.spans !== null && f.spans.length > 0;
 const stripped = (f) => (f.text === null ? "" : strip(f.text, f.spans));
 
-// Whether two paths name one file: a link or a hard link between them.
+/** Whether two bigint stats name one file: one device and one inode, where the file system gives inodes at all. */
+export const sameInode = (x, y) => x.ino !== 0n && x.dev === y.dev && x.ino === y.ino;
+
+// Whether two paths name one file: a link (both resolve to one real path) or a hard link (one inode). A file system
+// that gives no inode numbers (0) cannot say so for hard links, so those count as two files.
 function sameFile(a, b) {
   try {
-    const x = statSync(a, { bigint: true });
-    const y = statSync(b, { bigint: true });
-    return x.dev === y.dev && x.ino === y.ino;
+    if (realpathSync(a) === realpathSync(b)) return true;
+    return sameInode(statSync(a, { bigint: true }), statSync(b, { bigint: true }));
   } catch {
     return false;
   }
