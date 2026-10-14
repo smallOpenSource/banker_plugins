@@ -766,6 +766,9 @@ function originUrl() {
   try { return git(["config", "--get", "remote.origin.url"]); } catch { return null; }
 }
 
+// git 오류의 첫 줄. 정화하고 URL 의 인증 정보를 가린다.
+const gitError = (e) => oneLine(redactUrl(String(e.stderr || e.message || "").split("\n").find((l) => l.trim()) || "알 수 없는 오류")).slice(0, 200);
+
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
   // 마켓플레이스 폴더가 제 git 저장소가 아니면 git 이 위쪽 저장소(예: dotfiles 로 관리하는
@@ -779,12 +782,14 @@ function pinMarketplace() {
   if (url.startsWith("omc-pinned://")) return "already";
   if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(redactUrl(url))})`); return "needs"; }
 
+  try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
+  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${gitError(e)})`); return "pin-failed"; }
   mkdirSync(dirname(PINFILE), { recursive: true });
   // host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
   // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
   // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
+  // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다.
   writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600);
-  git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]);
   return "pinned";
 }
 
@@ -796,7 +801,12 @@ function unpinMarketplace(url) {
   if (existsSync(PINFILE)) dropPinRecord();
   const restored = url.startsWith(PIN_PREFIX) ? url.slice(PIN_PREFIX.length) : "";
   if (!restored) return "not-pinned";
-  try { git(["remote", "set-url", "--", "origin", restored]); } catch { /* noop */ }
+  try { git(["remote", "set-url", "--", "origin", restored]); }
+  catch (e) {
+    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${gitError(e)})`);
+    log(`      원래 URL: git -C "${oneLine(MARKET)}" config --get remote.origin.url 결과의 omc-pinned:// 뒤`);
+    return "unpin-failed";
+  }
   return "unpinned";
 }
 
@@ -1017,7 +1027,10 @@ if (ROOT) {
     "no-marketplace": () => bad("마켓플레이스 디렉터리 없음 — 고정 불필요"),
     "no-git": () => bad("마켓플레이스 폴더가 git 저장소가 아님 — 고정하지 않음"),
     "no-remote": () => ok("origin remote 없음 — 이미 fetch 불가"),
+    "pin-failed": () => {},
+    "unpin-failed": () => {},
   }[pin] || (() => {}))();
+  if (pin === "pin-failed" || pin === "unpin-failed") { r.fail++; failed.add("origin"); }
 }
 
 log();

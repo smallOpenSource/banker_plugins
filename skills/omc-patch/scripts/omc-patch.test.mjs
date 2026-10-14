@@ -1100,3 +1100,30 @@ test("an origin that starts with a dash is written back as a value, never read a
   assert.equal(back.code, 0, back.out);
   assert.equal(raw(), "-x/omc.git");
 });
+
+test("a set-url that fails is reported and counted: the pin writes no PINNED, the revert says where the URL is", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const gitDir = join(f.market, ".git");
+  const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
+  chmodSync(gitDir, 0o555);
+  try {
+    const r = run(f.home, ["--no-update"]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /\[!\] 고정 실패: origin 을 바꾸지 못했습니다 \(/);
+    assert.equal(existsSync(pinfile), false, "no record of a pin that did not happen");
+  } finally {
+    chmodSync(gitDir, 0o755);
+  }
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  chmodSync(gitDir, 0o555);
+  try {
+    const back = run(f.home, ["--revert"]);
+    assert.equal(back.code, 1, back.out);
+    assert.match(back.out, /\[!\] 고정 해제 실패: origin 을 되돌리지 못했습니다 \(/);
+    assert.match(back.out, /원래 URL: git -C ".*" config --get remote\.origin\.url 결과의 omc-pinned:\/\/ 뒤/);
+    assert.match(back.out, /되돌리기를 끝내지 못했습니다/);
+  } finally {
+    chmodSync(gitDir, 0o755);
+  }
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`, "still pinned, so a later revert finds the URL");
+});
