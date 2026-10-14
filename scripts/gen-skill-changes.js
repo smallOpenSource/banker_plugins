@@ -96,7 +96,8 @@ function changedSkills(from, to, root = ROOT) {
   return [...names].sort();
 }
 
-function main() {
+// 기록할 판: --version, 없으면 plugin.json. 정하지 못하면 끝낸다.
+function releaseVersion() {
   let version = arg('--version');
   if (!version) {
     try { version = JSON.parse(fs.readFileSync(pluginPath, 'utf8')).version; } catch { version = null; }
@@ -105,41 +106,55 @@ function main() {
     console.error('버전을 확정할 수 없습니다(plugin.json 또는 --version <x.y.z>).');
     process.exit(1);
   }
+  return version;
+}
 
+// 비교 기준: --from, 없으면 직전 릴리스 커밋. 찾지 못하면 끝낸다.
+function fromRef() {
   const from = arg('--from') || prevReleaseRef();
   if (!from) {
     console.error('비교 기준(from)을 찾지 못했습니다. --from <ref> 로 직전 릴리스 커밋을 지정하세요.');
     process.exit(1);
   }
-  const to = arg('--to'); // null 이면 작업트리와 비교.
+  return from;
+}
 
-  let skills;
+// from..to 에서 바뀐 스킬. git 이 실패하면 끝낸다.
+function skillsOrExit(from, to) {
   try {
-    skills = changedSkills(from, to);
+    return changedSkills(from, to);
   } catch (e) {
     console.error('git diff 실패(레포/ref 확인 필요):', e.message);
     process.exit(1);
   }
+}
 
-  console.log(`version=${version} from=${from.slice(0, 12)} to=${to || '작업트리'} 바뀐 스킬(${skills.length}): ${skills.join(', ') || '없음'}`);
-
-  if (printOnly) return;
-  if (!skills.length) {
-    console.log('바뀐 스킬이 없어 항목을 추가하지 않습니다(빈 배열은 개인화에 무의미).');
-    return;
-  }
-
+// skill-changes.json 에 [version] = skills 를 넣고 판 순서로 정렬해 쓴다. 없거나 깨진 파일은 새로 만든다.
+function writeManifest(version, skills) {
   let manifest = {};
   try {
     const obj = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     if (obj && typeof obj === 'object' && !Array.isArray(obj)) manifest = obj;
   } catch { /* 없음·malformed → 새로 만든다 */ }
-
   manifest[version] = skills;
   // 버전 키를 semver 순으로 정렬해 안정적 diff.
   const sorted = {};
   for (const k of Object.keys(manifest).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) sorted[k] = manifest[k];
   fs.writeFileSync(manifestPath, JSON.stringify(sorted, null, 2) + '\n');
+}
+
+function main() {
+  const version = releaseVersion();
+  const from = fromRef();
+  const to = arg('--to'); // null 이면 작업트리와 비교.
+  const skills = skillsOrExit(from, to);
+  console.log(`version=${version} from=${from.slice(0, 12)} to=${to || '작업트리'} 바뀐 스킬(${skills.length}): ${skills.join(', ') || '없음'}`);
+  if (printOnly) return;
+  if (!skills.length) {
+    console.log('바뀐 스킬이 없어 항목을 추가하지 않습니다(빈 배열은 개인화에 무의미).');
+    return;
+  }
+  writeManifest(version, skills);
   console.log(`skill-changes.json 갱신: [${version}] = ${skills.join(', ')}`);
 }
 
