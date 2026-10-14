@@ -747,3 +747,23 @@ test("while other banker blocks alone fill the override, on says first that Code
   assert.match(codexLine(again), /^Codex: 이미 AGENTS\.md 에 있지만 지금은 적용되지 않습니다 \(변경 없음\)\. /);
   assert.match(again.message, /주의: AGENTS\.override\.md 에 다른 banker 블록\(tone-compact\)만 있어/);
 });
+
+test("settings file: the TSV delimiter is read in any letter case; other types are refused, null is the default", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  const put = (tsv) => writeFileSync(s.o.configFile, JSON.stringify({ deny: [".txt"], alt: [".md", ".tsv"], tsvDelimiter: tsv }));
+  for (const [given, want] of [["Tab", "tab"], ["COMMA", "comma"], [null, "tab"]]) {
+    put(given);
+    assert.equal(readConfig(s.o.configFile).config?.tsvDelimiter, want, String(given));
+  }
+  for (const odd of [5, ["tab"]]) {
+    put(odd);
+    assert.match(readConfig(s.o.configFile).error, /TSV 구분자는 tab 이나 comma 여야 합니다/, JSON.stringify(odd));
+  }
+  assert.equal(checkConfig({ deny: [".txt"], alt: [".md"], tsvDelimiter: "Comma" }).config.tsvDelimiter, "comma");
+});
+
+test("rules: a placeholder left after filling is an error", () => {
+  assert.throws(() => renderRules(`${TEMPLATE}\n{{extra}}`, CONFIG), /자리 표시\(\{\{\)가 남았습니다/);
+  assert.doesNotThrow(() => renderRules(TEMPLATE, CONFIG));
+});

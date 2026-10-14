@@ -136,10 +136,12 @@ export function checkConfig({ deny, alt, tsvDelimiter = "tab" }) {
   if (reserved.length > 0) return { error: `anti-drm 이 쓰는 형식이라 금지할 수 없습니다: ${reserved.join(" ")}` };
   const both = d.list.filter((x) => a.list.includes(x));
   if (both.length > 0) return { error: `금지 확장자와 대체 확장자에 함께 있습니다: ${both.join(" ")}` };
-  if (tsvDelimiter !== "tab" && tsvDelimiter !== "comma") {
+  // In any letter case, as the --tsv flag takes it; kept lower-cased.
+  const tsv = typeof tsvDelimiter === "string" ? tsvDelimiter.toLowerCase() : tsvDelimiter;
+  if (tsv !== "tab" && tsv !== "comma") {
     return { error: `TSV 구분자는 tab 이나 comma 여야 합니다: ${shown(tsvDelimiter)}` };
   }
-  return { config: { version: 1, deny: d.list, alt: a.list, tsvDelimiter } };
+  return { config: { version: 1, deny: d.list, alt: a.list, tsvDelimiter: tsv } };
 }
 
 /**
@@ -337,7 +339,9 @@ const code = (ext) => `\`${ext}\``;
 export function renderRules(template, config) {
   const map = table(["금지 확장자", "대신 쓸 확장자"], config.deny.map((d) => [code(d), code(replacementFor(d, config.alt))]));
   const alts = table(["확장자", "쓰는 곳"], config.alt.map((a) => [code(a), useOf(a, config)]));
-  return template.replace("{{map}}", () => map).replace("{{alts}}", () => alts);
+  const rules = template.replace("{{map}}", () => map).replace("{{alts}}", () => alts);
+  if (rules.includes("{{")) throw new Error("규칙을 채운 뒤에도 자리 표시({{)가 남았습니다");
+  return rules;
 }
 
 // ---- commands ----
@@ -416,8 +420,7 @@ function refresh(o, rules, skip) {
 // The settings from --deny, --alt and --tsv: { config }, { error }, or { usage } when a list is missing.
 function configFromFlags(flags) {
   if (flags.deny === undefined || flags.alt === undefined) return { usage: true };
-  const tsvDelimiter = (flags.tsv ?? "tab").toLowerCase();
-  return checkConfig({ deny: splitList(flags.deny), alt: splitList(flags.alt), tsvDelimiter });
+  return checkConfig({ deny: splitList(flags.deny), alt: splitList(flags.alt), tsvDelimiter: flags.tsv ?? "tab" });
 }
 
 const settingsGiven = (flags) => ["deny", "alt", "tsv"].some((k) => flags[k] !== undefined);
