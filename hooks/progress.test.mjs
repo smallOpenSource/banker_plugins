@@ -537,6 +537,45 @@ test('a TaskList that read the list before another agent created a task does not
   assert.deepEqual(labels(await eng.draw()), ['설계', '구현']);
 });
 
+test('a TaskList begun before another change still brings in the tasks only it names', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const listing = later(eng, { tool: 'TaskList' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'in_progress' }, updated('1', { from: 'pending', to: 'in_progress' }));
+  await listing.end({ result: { tasks: [
+    { id: '1', subject: '설계', status: 'pending', blockedBy: [] },
+    { id: '7', subject: '다른 세션의 작업', status: 'pending', blockedBy: [] },
+  ] } });
+  const tree = await eng.draw();
+  assert.deepEqual(labels(tree), ['설계', '다른 세션의 작업']);
+  assert.match(textOf(rowOf(tree, 'k-1')), /진행 중/, 'the update that landed after the list was read stays');
+});
+
+test('of two TaskLists that overlap, the one begun first changes nothing once the later one is in', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const first = later(eng, { tool: 'TaskList', agentId: 'a1' });
+  const second = later(eng, { tool: 'TaskList', agentId: 'a2' });
+  await second.end({ result: { tasks: [
+    { id: '1', subject: '설계', status: 'in_progress', blockedBy: [] },
+    { id: '2', subject: '구현', status: 'pending', blockedBy: [] },
+  ] } });
+  await first.end({ result: { tasks: [{ id: '1', subject: '설계', status: 'pending', blockedBy: [] }] } });
+  const tree = await eng.draw();
+  assert.deepEqual(labels(tree), ['설계', '구현']);
+  assert.match(textOf(rowOf(tree, 'k-1')), /진행 중/);
+});
+
+test('of two TaskUpdates on one task, the one begun later stands whichever ends first', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const first = later(eng, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' });
+  const second = later(eng, { tool: 'TaskUpdate', taskId: '1', status: 'completed' });
+  await second.end(updated('1', { from: 'in_progress', to: 'completed' }));
+  await first.end(updated('1', { from: 'pending', to: 'in_progress' }));
+  assert.match(textOf(rowOf(await eng.draw(), 'k-1')), /완료/);
+});
+
 test('a task call that ends after /clear leaves the new conversation\'s list alone', async () => {
   const eng = engine();
   const listing = later(eng, { tool: 'TaskList' });

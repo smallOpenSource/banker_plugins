@@ -7,7 +7,9 @@
  * step for the work at hand. Under each step are the tool calls made while it was the step in
  * progress (a subagent's or a background agent's included), one level deep. A press on a step or
  * a call shows a short description under the list; a press on a step's arrow folds or unfolds its
- * calls.
+ * calls. Of two calls on the task list that overlap, the one begun later stands, and a list or a
+ * read begun before a change keeps what changed after it began; the engine's own order of
+ * overlapping calls is not something this module can see.
  *
  * Claude 5 models get no task list tool in Claude Code 2.1.296 (only older models, a background
  * job, or CLAUDE_CODE_ENABLE_TODO_TOOLS do). Opening the pane offers the model one of its own
@@ -108,12 +110,14 @@ const tally = () => ({ calls: [], count: 0, failed: 0 });
 // The calls made while the task list has no task in progress.
 const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', ...tally() });
 
-// `rev` counts the task changes (TaskCreate, TaskUpdate) taken in, to tell a stale TaskList or TaskGet.
+// `rev` counts the task changes (TaskCreate, TaskUpdate) taken in, and `order` the calls begun: a TaskList or
+// TaskGet begun before a change keeps what changed after it began, and of two calls that overlap the one begun later
+// stands. `listAt` is the order of the TaskList the list last came from.
 // `plan` is the plan last read from `planPath`, `planShut` whether the whole plan is folded and
 // `planOpen` the ids of its nodes unfolded. `touch` counts the calls that touched a plan file and
 // `taken` is the touch the plan came from, to tell a read that a newer one overtook.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
-  plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0 });
+  order: 0, listAt: 0, plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0 });
 
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
@@ -281,41 +285,67 @@ function createTask(s, e, r, now) {
   putTask(s, { id: String(id), subject: e.subject, description: e.description, activeForm: e.activeForm, status: 'pending' }, now);
 }
 
+// Notes on a task still on the list the order of the call that last changed or read it.
+function mark(s, id, key, order) {
+  const held = s.tasks.get(id);
+  if (held) held[key] = order;
+}
+
 // A task this module never saw (a list from before it loaded, or one another session shares) joins
-// the list while it is not done.
-function updateTask(s, e, r, now) {
+// the list while it is not done. Of two updates to one task, the one begun later stands.
+function updateTask(s, e, r, now, { order }) {
   const id = String(e.taskId);
+  const held = s.tasks.get(id);
+  if (held && order < (held.updAt ?? 0)) return;
   const status = r?.result?.statusChange?.to ?? e.status;
   if (status === 'deleted') {
     s.tasks.delete(id);
     return;
   }
-  if (!s.tasks.has(id) && status !== 'pending' && status !== 'in_progress') return;
+  if (!held && status !== 'pending' && status !== 'in_progress') return;
   putTask(s, { id, subject: e.subject, description: e.description, activeForm: e.activeForm, status }, now);
+  mark(s, id, 'updAt', order);
 }
 
-// TaskList names the whole list, in its order: a task it leaves out is gone. A list whose every task
-// is completed is over, and only brings up to date the tasks still on the pane.
-function listTasks(s, _e, r, now, since) {
+// Whether the pane changed a task after a list or a read of it began.
+const changedSince = (held, since) => (held.changedRev ?? 0) > since;
+// Whether a read begun at (since, order) is older than what the pane holds of a task.
+const behind = (held, since, order) => Boolean(held) && (changedSince(held, since) || order < (held.seenAt ?? 0));
+
+// One task a TaskList names: as the pane holds it where it changed since the list began, else as listed.
+function takeListed(s, before, t, { over, since, order, now }) {
+  const id = String(t.id);
+  const held = before.get(id);
+  if (held) s.tasks.set(id, held);
+  if (held && changedSince(held, since)) return;
+  if (held || !over) putTask(s, { id, subject: t.subject, status: t.status }, now);
+  mark(s, id, 'seenAt', order);
+}
+
+// TaskList names the whole list, in its order: a task it leaves out is gone, unless it changed after the list
+// began. A list whose every task is completed is over, and only brings up to date the tasks still on the pane. A
+// list begun before one already taken in changes nothing.
+function listTasks(s, _e, r, now, { since, order }) {
   const listed = r?.result?.tasks;
-  if (since !== s.rev || !Array.isArray(listed)) return;
+  if (!Array.isArray(listed) || order < s.listAt) return;
+  s.listAt = order;
   const over = listed.every((t) => t.status === 'completed');
   const before = s.tasks;
+  const named = new Set(listed.map((t) => String(t.id)));
   s.tasks = new Map();
-  for (const t of listed) {
-    const id = String(t.id);
-    if (before.has(id)) s.tasks.set(id, before.get(id));
-    if (before.has(id) || !over) putTask(s, { id, subject: t.subject, status: t.status }, now);
-  }
+  for (const t of listed) takeListed(s, before, t, { over, since, order, now });
+  for (const [id, held] of before) if (!named.has(id) && changedSince(held, since)) s.tasks.set(id, held);
 }
 
-// TaskGet reads one task: one it cannot find is gone, and a completed one off the pane stays off.
-function getTask(s, e, r, now, since) {
-  if (since !== s.rev) return;
+// TaskGet reads one task: one it cannot find is gone, and a completed one off the pane stays off. A read older than
+// what the pane holds of the task changes nothing.
+function getTask(s, e, r, now, { since, order }) {
+  if (behind(s.tasks.get(String(e.taskId)), since, order)) return;
   const t = r?.result?.task;
   if (t === null) s.tasks.delete(String(e.taskId));
   if (!t || (t.status === 'completed' && !s.tasks.has(String(t.id)))) return;
   putTask(s, { id: String(t.id), subject: t.subject, description: t.description, status: t.status }, now);
+  mark(s, String(t.id), 'seenAt', order);
 }
 
 const TASK_NOTES = {
@@ -329,15 +359,20 @@ const TASK_NOTES = {
 // A refused or failed call changes nothing: the task list stays as Claude Code holds it. A TaskUpdate
 // that changed nothing (an id it cannot find, a TaskCompleted hook that blocks) answers
 // `success: false` without isError.
-// TaskList and TaskGet run beside other calls: one that read the list before a change landed (`since`,
-// the count when it started, is behind) is stale and changes nothing.
+// TaskList and TaskGet run beside other calls (`since` is the count of changes when one began, `order` its place
+// among the calls begun): what changed after it began, or what a later-begun call already brought, stays.
 const refused = (r) => Boolean(r?.deny || r?.isError || r?.result?.success === false);
 const CHANGES = new Set(['TaskCreate', 'TaskUpdate']);
+// The task a TaskCreate or TaskUpdate changed.
+const changedId = (e, r) => String(e.tool === 'TaskCreate' ? r?.result?.task?.id : e.taskId);
 
-export function noteTaskTool(s, e, r, now, since) {
+export function noteTaskTool(s, e, r, now, since = s.rev, order = ++s.order) {
   if (refused(r)) return;
-  TASK_NOTES[e.tool]?.(s, e, r, now, since ?? s.rev);
-  if (CHANGES.has(e.tool)) s.rev += 1;
+  TASK_NOTES[e.tool]?.(s, e, r, now, { since, order });
+  if (!CHANGES.has(e.tool)) return;
+  s.rev += 1;
+  const held = s.tasks.get(changedId(e, r));
+  if (held) held.changedRev = s.rev;
 }
 
 // The list a to-do call sent, each item's words cleaned, or what is wrong with it.
@@ -676,6 +711,7 @@ export const SPEC = { name: COMMAND, description: '진행 상황 패널을 켜�
 async function watchCall($, e, next) {
   const s = ref.s;
   const since = s.rev;
+  const order = ++s.order;
   const call = startCall(s, e, Date.now());
   let r = { isError: true };
   try {
@@ -683,7 +719,7 @@ async function watchCall($, e, next) {
     return r;
   } finally {
     endCall(call, r, Date.now());
-    if (TASK_TOOLS.has(e.tool)) noteTaskTool(s, e, r, Date.now(), since);
+    if (TASK_TOOLS.has(e.tool)) noteTaskTool(s, e, r, Date.now(), since, order);
     const touched = planTouched(s, e, call);
     if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch, own: touched.own });
     $.ui.invalidate('ui.render');
