@@ -1273,3 +1273,79 @@ test("the update's fetch keeps git settings given in the environment; the calls 
   assert.ok(origins.length > 0, calls.join("\n"));
   for (const c of origins) assert.ok(!c.includes("GIT_CONFIG_COUNT"), c);
 });
+
+test("--scan gives only helperDecls, wrapped and unwrapped, each entry with its own fields", () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const out = JSON.parse(run(home, ["--scan", join(plug, "scripts", "foo.mjs")]).out);
+  assert.deepEqual(Object.keys(out[0]).sort(), ["file", "helperDecls", "unwrapped", "wrapped"]);
+  assert.deepEqual(Object.keys(out[0].helperDecls[0]).sort(), ["depth", "line"]);
+  assert.deepEqual(Object.keys(out[0].wrapped[0]).sort(), ["inFunction", "line"]);
+});
+
+test("--root reads package.json's name when plugin.json has none", () => {
+  const home = bareHome();
+  const plug = bundle();
+  mkdirSync(join(plug, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(plug, ".claude-plugin", "plugin.json"), JSON.stringify({ description: "no name" }));
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: "other-plugin" }));
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /OMC 플러그인 폴더가 아님 \(package\.json 의 name 이 "other-plugin"\)/);
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: "oh-my-claude-sisyphus" }));
+  assert.doesNotMatch(run(home, ["--root", plug, "--check"]).out, /OMC 플러그인 폴더가 아님/);
+});
+
+test("a hooks.json the tool may not write counts as a failure at the end of a revert", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const hj = join(plug, "hooks", "hooks.json");
+  rmSync(`${hj}.omcbak`);
+  try {
+    symlinkSync(join(root, `nowhere${seq++}.json`), `${hj}.omcbak`);
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 을 건드리지 않음 \(백업 자리가 링크\)/);
+  assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 실패 1건/);
+});
+
+test("a refused revert names the hook with odd characters as ?", { skip: process.platform === "win32" && "kept to POSIX file names" }, (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const name = `t${String.fromCodePoint(0x2060)}x`;
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, `${name}.mjs`), "const __omcRaceImport = (p) => p;\n");
+  try {
+    symlinkSync(join(outside, `${name}.mjs`), join(plug, "scripts", `${name}.mjs`));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  writeFileSync(join(plug, "scripts", `${name}.mjs.omcbak`), "// original\n");
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.match(r.out, /되돌리지 않음: t\?x \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.ok(!r.out.includes(String.fromCodePoint(0x2060)), r.out);
+});
+
+test("a bare apply under GIT_DIR of a decoy with the same tag still unpacks the marketplace's copy", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target } = bareApplyFixture();
+  const decoy = join(root, `decoy${seq++}`);
+  mkdirSync(join(decoy, "scripts"), { recursive: true });
+  mkdirSync(join(decoy, "hooks"), { recursive: true });
+  writeFileSync(join(decoy, "hooks", "hooks.json"), HOOKS_JSON);
+  for (const n of ["foo", "stopper"]) writeFileSync(join(decoy, "scripts", `${n}.mjs`), "export const decoy = 1;\n");
+  assert.equal(runGit(["init", "-q"], decoy).status, 0);
+  tagged(decoy, `v${target}`);
+  const r = run(f.home, [], { GIT_DIR: join(decoy, ".git"), GIT_WORK_TREE: decoy });
+  assert.equal(r.code, 0, r.out);
+  const foo = read(join(f.cache, target, "scripts", "foo.mjs"));
+  assert.match(foo, /__omcRaceImport\(import\(/, "the marketplace's hook, patched");
+  assert.doesNotMatch(foo, /decoy/);
+});
