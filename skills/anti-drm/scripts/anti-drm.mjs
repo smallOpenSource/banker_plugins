@@ -566,16 +566,21 @@ const say = (text, code) => {
   return code;
 };
 
+// Whether a command acts on one runtime and so needs to know which.
+const needsRuntime = (command) => command === "on" || command === "off";
+// The settings flags: from standard input with --stdin, else from the command line.
+const settingsOf = (args, input) => (args.stdin ? stdinSettings(input()) : { flags: args.flags });
+
 function main(argv, env = process.env, input = () => readFileSync(0)) {
   const args = parseArgs(argv);
   const why = usageError(args);
   if (why) return say(why, 1);
   const runtime = runtimeOf(args.runtime, env);
-  if ((args.command === "on" || args.command === "off") && !RUNTIMES.includes(runtime)) {
+  if (needsRuntime(args.command) && !RUNTIMES.includes(runtime)) {
     return say(`런타임을 정할 수 없습니다. --runtime claude 또는 --runtime codex 를 붙이세요.\n${USAGE}`, 1);
   }
   try {
-    const got = args.stdin ? stdinSettings(input()) : { flags: args.flags };
+    const got = settingsOf(args, input);
     if (got.error) return say(`${got.error}\n${USAGE}`, 1);
     const { ok, message } = run(args.command, runtime, got.flags);
     return say(message, ok ? 0 : 1);
