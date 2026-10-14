@@ -815,3 +815,37 @@ test("--stdin: a value with shell syntax is refused as an extension and runs not
   assert.match(r.out, /금지 확장자로 쓸 수 없는 값입니다/);
   assert.equal(existsSync(marker), false);
 });
+
+test("on with settings that this runtime refuses: the settings stay saved, the result says both, exit 1", () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"), { recursive: true });
+  writeFileSync(s.rulesFile, "# someone else's rules\n");
+  const r = cli(["on", "--runtime", "claude", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /설정을 저장했습니다/);
+  assert.match(r.out, /같은 이름의 다른 파일이 있어 그대로 두었습니다/);
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".txt"]);
+  assert.equal(read(s.rulesFile), "# someone else's rules\n");
+});
+
+test("command line: config exits 1 when a runtime that holds the rules could not be refreshed", () => {
+  const s = setup();
+  assert.ok(turnOn("claude", s.o, FLAGS).ok);
+  writeFileSync(s.agents, `# base\n${OPEN}\nhalf a block\n`);
+  const r = cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /설정을 저장했습니다/);
+  assert.match(r.out, /짝이 맞지 않아/);
+});
+
+test("an override with another skill's start marker but no end counts as the user's text: our block goes there", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  writeFileSync(s.override, `${TC_OPEN}\nleft by hand\n`);
+  const r = turnOn("codex", s.o, FLAGS);
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.override)), 1, "ours went to the override Codex reads");
+  assert.equal(blocks(read(s.agents)), 0);
+  assert.ok(turnOff("codex", s.o).ok);
+  assert.equal(read(s.override), `${TC_OPEN}\nleft by hand\n`);
+});
