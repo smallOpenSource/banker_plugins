@@ -946,6 +946,19 @@ test('a notice that starts before the prompt\'s turn ends leaves no step running
   assert.match(textOf(rowOf(await eng.draw(), 't-t1')), /완료/);
 });
 
+test('a notice\'s turn stopped by Esc says so under the step, and the step keeps its own state', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '검토해 줘' });
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  await eng.raise('turn.start', { turnId: 't2', text: '<task-notification><status>completed</status><summary>끝</summary></task-notification>' });
+  await eng.raise('turn.complete', { turnId: 't2', reason: 'aborted' });
+  let tree = await eng.draw();
+  assert.match(textOf(rowOf(tree, 't-t1')), /완료/, 'the step keeps its own state');
+  button(tree, '▸').props.onPress({});
+  tree = await eng.draw();
+  assert.ok(labels(tree).includes('알림 처리 중단됨'), labels(tree).join(' | '));
+});
+
 test('a teammate\'s message joins the step, another session\'s is a step of its own', async () => {
   const eng = engine();
   await eng.raise('turn.start', { turnId: 't1', text: '팀으로 해' });

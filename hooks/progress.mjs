@@ -94,6 +94,8 @@ const NOTICE = {
   completed: '백그라운드 작업 끝남', failed: '백그라운드 작업 실패', stopped: '백그라운드 작업 중지됨',
   killed: '백그라운드 작업 중지됨', message: '팀원 메시지',
 };
+// How a notice's turn ended other than with an answer, as the row under its step says it.
+const NOTICE_END = { aborted: '알림 처리 중단됨', refusal: '알림 처리 거절됨', error: '알림 처리 오류로 끝남' };
 // How a prompt's turn ended (turn.complete's reason), as its step's state.
 const ENDED = { answer: 'done', aborted: 'stopped', refusal: 'refused', error: 'failed' };
 // Why a hook failed (the kind of the engine's HookFailure), for a failure that brings no message.
@@ -192,13 +194,16 @@ export function startTurn(s, e, now) {
 }
 
 // A main turn's end; a subagent's (it carries an agentId) ends no step, and a notice's leaves its
-// step's own end as it was. A turn the module never saw start (it loaded mid-turn) ends the step for
-// the work at hand.
+// step's own end as it was. A notice's turn that did not end with an answer (stopped, refused, an
+// error) adds a row saying so under the step. A turn the module never saw start (it loaded mid-turn)
+// ends the step for the work at hand.
 export function endTurn(s, e, now) {
   if (e.agentId) return;
   const host = s.turns.find((x) => x.notices.has(e.turnId));
   if (host) {
     host.notices.delete(e.turnId);
+    const how = pick(NOTICE_END, e.reason);
+    if (how) note(s, host, how, false, now);
     return;
   }
   const t = s.turns.find((x) => x.id === e.turnId) ?? s.turns.find((x) => x.id === AT_HAND && x.status === 'running');
