@@ -150,22 +150,25 @@ try {
     ...['3d-intro-build', 'motion-graphic-make', 'ultra-chain'].map((s) =>
       [`skills/${s}/references/preview-lib.mjs`, '.txt', 'a MIME type the preview server serves; no file is written']),
   ];
+  // Every text file under skills/ and commands/, in any letter case (a DRM matches NOTES.TXT too). A file that is
+  // not UTF-8 holds no name to read.
   const drmNames = [];
-  (function scanDrm(dir) {
+  const drmName = /[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/gi;
+  const utf8 = new TextDecoder('utf-8', { fatal: true });
+  function scanDrm(dir) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { if (!['node_modules', '__pycache__', '.omc'].includes(e.name)) scanDrm(p); continue; }
-      if (!/\.(md|mjs|js|cjs|py|ps1|sh)$/.test(e.name) || /\.test\.(mjs|ts)$|^test_.*\.py$/.test(e.name)) continue;
+      if (!e.isFile() || /\.test\.(mjs|ts)$|^test_.*\.py$/.test(e.name)) continue;
       const rel = path.relative(root, p).split(path.sep).join('/');
       if (rel.startsWith('skills/anti-drm/')) continue;
-      for (const m of fs.readFileSync(p, 'utf8').matchAll(/[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/g)) drmNames.push([rel, m[0]]);
-    }
-  })(path.join(root, 'skills'));
-  for (const f of fs.readdirSync(path.join(root, 'commands')).filter((n) => n.endsWith('.md'))) {
-    for (const m of fs.readFileSync(path.join(root, 'commands', f), 'utf8').matchAll(/[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/g)) {
-      drmNames.push([`commands/${f}`, m[0]]);
+      let text;
+      try { text = utf8.decode(fs.readFileSync(p)); } catch { continue; }
+      for (const m of text.matchAll(drmName)) drmNames.push([rel, m[0]]);
     }
   }
+  scanDrm(path.join(root, 'skills'));
+  scanDrm(path.join(root, 'commands'));
   const drmUnexplained = [...new Set(drmNames.filter(([rel, name]) => !DRM_KEEP.some(([f, n]) => f === rel && n === name))
     .map(([rel, name]) => `${rel}: ${name}`))];
   const drmUnused = DRM_KEEP.filter(([f, n]) => !drmNames.some(([rel, name]) => rel === f && name === n)).map(([f, n]) => `${f}: ${n}`);
