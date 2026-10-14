@@ -15,6 +15,9 @@ const root = path.resolve(__dirname, '..');
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}: ${msg}`); if (!cond) failures++; };
 const run = (cmd, args, opts = {}) => cp.execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+// npm reaches no registry from this harness: update_notifier=false stops the weekly update check, the one request
+// npm pack and a local tarball's install made; offline keeps any other lookup off the network.
+const NPM_OFFLINE = { ...process.env, npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
 const prefix = path.join(tmp, 'prefix');
@@ -24,13 +27,13 @@ fs.mkdirSync(home, { recursive: true });
 
 try {
   // 1) pack
-  const packOut = run('npm', ['pack', '--silent', '--pack-destination', tmp], { cwd: root });
+  const packOut = run('npm', ['pack', '--silent', '--pack-destination', tmp], { cwd: root, env: NPM_OFFLINE });
   const tarball = packOut.trim().split('\n').filter(Boolean).pop().trim();
   const tarPath = path.join(tmp, tarball);
   ok(fs.existsSync(tarPath), `npm pack produced ${tarball}`);
 
   // 2) global install into temp prefix (offline; no deps)
-  run('npm', ['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe' });
+  run('npm', ['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
   const binPath = process.platform === 'win32' ? path.join(prefix, 'banker.cmd') : path.join(prefix, 'bin', 'banker');
   ok(fs.existsSync(binPath), `installed banker bin (${path.relative(tmp, binPath)})`);
 

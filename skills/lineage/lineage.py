@@ -735,9 +735,12 @@ def _page_clean_turn(t, extra, mode):
     return dict(t, text=clean(t["text"]), parts=[clean(p) for p in t.get("parts") or []])
 
 
-# Letters that print as nothing: the Hangul fillers and the braille blank. With the control, format, private-use,
-# unassigned and separator categories, a cache made only of them holds no summary a person can read (3.0.5).
-_BLANK_LETTERS = frozenset(map(chr, (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800)))
+# Letters that print as nothing: the Hangul fillers, the braille blank, and the combining marks Unicode ignores by
+# default (the grapheme joiner, the Khmer inherent vowels, the Mongolian free variation selectors). With the control,
+# format, private-use, unassigned and separator categories, a cache made only of them holds no summary a person can
+# read (3.0.5).
+_BLANK_LETTERS = frozenset(map(chr, (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800,
+                                     0x034F, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180F)))
 _BLANK_CATEGORIES = frozenset(("Cc", "Cf", "Co", "Cn", "Zs", "Zl", "Zp"))
 
 

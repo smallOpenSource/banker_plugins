@@ -105,7 +105,8 @@ test("without --to the working tree is compared, uncommitted edits included", ne
   assert.deepEqual(changedSkills(base, null, dir), ["banker:alpha"]);
 });
 
-// npm reaches no registry from this test: no weekly update check, no audit or funding lookups, offline.
+// npm reaches no registry from this test: update_notifier=false stops the weekly update check, the one request
+// npm pack made; offline keeps any other lookup off the network, and audit and fund are off for any npm that adds one.
 const NPM_OFFLINE = { npm_config_update_notifier: "false", npm_config_offline: "true", npm_config_audit: "false", npm_config_fund: "false" };
 // npm decides what the tarball holds; isShipped must agree with it for every file git tracks under skills/.
 function npmCli() {

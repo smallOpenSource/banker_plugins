@@ -17,7 +17,7 @@
 - `tone-compact`, `anti-drm`: 두 스킬의 `on`, `off` 가 동시에 돌아도 블록이 사라지지 않는다. Codex 폴더의 잠금 파일(`.banker-agents.lock`)로 차례를 지키고, 1분 넘은 잠금은 넘어간다.
 - `tone-compact`, `anti-drm`: 메시지의 경로에서 빈 글자(U+3164 등), 점자 빈칸, ASCII 밖 공백도 `?` 로 바꾼다.
 - `anti-drm`: 설정 파일의 TSV 구분자도 대소문자를 가리지 않는다(`"Tab"`). 채운 규칙에 `{{` 가 남으면 오류로 멈춘다.
-- `lineage` 3.0.5: 공백이나 보이지 않는 글자(BOM, 폭 없는 공백, 한글 채움 문자, 점자 빈칸)만 든 요약 캐시는 읽지 못한 것으로 보고 다시 요약한다.
+- `lineage` 3.0.5: 공백이나 보이지 않는 글자(BOM, 폭 없는 공백, 한글 채움 문자, 점자 빈칸, 제어 문자 등)만 든 요약 캐시는 읽지 못한 것으로 보고 다시 요약한다.
 - `scripts/gen-skill-changes.js`(유지보수자용): npm 묶음에 들어가지 않는 파일(시험, `__pycache__`, `.omc`)만 바뀐 스킬은 바뀐 스킬로 세지 않는다.
 
 ### Changed
@@ -28,7 +28,7 @@
 - `omc-patch`: `--check` 가 쓸 수 없는 훅과 hooks.json 을 미리 알린다. 폴더 밖 링크 때문에 되돌리지 못한 파일은 손 복구 방법을 안내한다.
 - `omc-patch`: 지울 git 변수에 이 PC 의 `git rev-parse --local-env-vars` 결과를 더한다. 업데이트 경로의 fetch 는 환경 변수로 준 git 설정(`http.proxy` 등)을 쓴다.
 - smoke 시험: banker 작업 파일 검사가 대소문자를 가리지 않고 `skills/`, `commands/` 의 모든 글 파일을 본다.
-- 유지보수자용: npm pack 대조 시험이 레지스트리에 접속하지 않는다. smoke 의 DRM 이름 검사가 긴 줄에서도 선형 시간이다. `scripts/gen-skill-changes.js`, `hooks/obsidize-hook.mjs`, `hooks/update-checkin.mjs` 의 main 을 함수 규칙(복잡도 10) 안으로 나눴다(동작 그대로).
+- 유지보수자용: npm pack 대조 시험과 smoke 시험의 npm 이 레지스트리에 접속하지 않는다. smoke 의 DRM 이름 검사가 긴 줄에서도 선형 시간이다. `scripts/gen-skill-changes.js`, `hooks/obsidize-hook.mjs`, `hooks/update-checkin.mjs` 의 main 을 함수 규칙(복잡도 10) 안으로 나눴다(동작 그대로).
 
 ## [0.18.0] - 2026-10-14
 
