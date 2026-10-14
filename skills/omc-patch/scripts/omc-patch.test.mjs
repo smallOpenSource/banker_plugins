@@ -516,6 +516,35 @@ test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to
   assert.equal(origin(f.market), `omc-pinned://${nowhere}`);
 });
 
+test("a bare apply that cannot write installed_plugins.json stops with its name, and no stack trace", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const { f } = bareApplyFixture();
+  const installed = join(f.plugins, "installed_plugins.json");
+  const before = read(installed);
+  chmodSync(f.plugins, 0o555);
+  let r;
+  try {
+    r = run(f.home, []);
+  } finally {
+    chmodSync(f.plugins, 0o755);
+  }
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 쓰지 못함: installed_plugins\.json \(EACCES\)/);
+  assert.match(r.out, /버전 확보 실패 — 중단/);
+  assert.doesNotMatch(r.out, /\n\s+at |Error:/, "no stack trace");
+  assert.equal(read(installed), before);
+});
+
+test("a pin whose PINNED cannot be written is named and counted; origin stays pinned and no stack trace", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  writeFileSync(join(f.home, ".claude", "omc-local-patches"), "a file where the record's folder goes\n");
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 고정 기록\(PINNED\)을 쓰지 못함 \(\w+\)\. origin 은 고정됨/);
+  assert.match(r.out, /완료\. 실패 1건\./);
+  assert.doesNotMatch(r.out, /\n\s+at |Error:/, "no stack trace");
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`);
+});
+
 test("--revert takes the origin from the pinned URL and names a PINNED written on another machine", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   assert.equal(run(f.home, ["--no-update"]).code, 0);
@@ -1068,6 +1097,28 @@ test("paths in the output lose line breaks and direction marks: the --root folde
   for (const r of [notPlugin, other]) {
     assert.ok(!r.out.includes(String.fromCodePoint(0x202e)), r.out);
     assert.ok(!/odd\d+.x\ny/u.test(r.out), r.out);
+  }
+});
+
+test("paths in the output lose line breaks and direction marks: a --root run that reaches the hooks, and its no-backup lines", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const home = bareHome();
+  const odd = join(root, `odd${seq++}${String.fromCodePoint(0x202e)}x\n[!] FORGED`);
+  mkdirSync(join(odd, "hooks"), { recursive: true });
+  mkdirSync(join(odd, "scripts"));
+  writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
+  for (const n of ["foo", "stopper"]) writeFileSync(join(odd, "scripts", `${n}.mjs`), SCRIPT(n));
+  writeFileSync(join(odd, "scripts", "lib.mjs"), LIB);
+  const check = run(home, ["--root", odd, "--check"]);
+  assert.equal(check.code, 0, check.out);
+  const apply = run(home, ["--root", odd]);
+  assert.equal(apply.code, 0, apply.out);
+  rmSync(join(odd, "scripts", "foo.mjs.omcbak"));
+  const revert = run(home, ["--revert", "--root", odd]);
+  assert.equal(revert.code, 1, revert.out);
+  assert.match(revert.out, /패치는 있는데 백업이 없어 되돌리지 못했습니다 — foo/);
+  for (const r of [check, apply, revert]) {
+    assert.ok(!r.out.includes(String.fromCodePoint(0x202e)), r.out);
+    assert.ok(!/^\[!\] FORGED/m.test(r.out), r.out);
   }
 });
 

@@ -237,18 +237,23 @@ function linkNodeModules(dest, have) {
   }
 }
 
-// 활성 버전 전환
+// 활성 버전 전환. installed_plugins.json 을 읽거나 쓰지 못하면 이름과 이유를 대고 false(호출부가 중단한다).
 function switchActive(sha, have) {
-  const j = JSON.parse(readFileSync(INSTALLED, "utf8"));
-  const e = j.plugins?.[PLUGIN_KEY]?.[0];
-  if (!e) { bad(`installed_plugins.json 에 ${PLUGIN_KEY} 항목이 없음 — 수동 확인 필요`); return false; }
-  backup(INSTALLED, `${INSTALLED}.omcbak`);
-  const sep = e.installPath.includes("//") ? "//" : e.installPath.includes("\\") ? "\\" : "/";
-  e.installPath = e.installPath.split(sep).slice(0, -1).concat(TARGET_VERSION).join(sep);
-  e.version = TARGET_VERSION;
-  e.gitCommitSha = sha;
-  e.lastUpdated = new Date().toISOString();
-  writeAtomic(INSTALLED, JSON.stringify(j, null, 2) + "\n");
+  try {
+    const j = JSON.parse(readFileSync(INSTALLED, "utf8"));
+    const e = j.plugins?.[PLUGIN_KEY]?.[0];
+    if (!e) { bad(`installed_plugins.json 에 ${PLUGIN_KEY} 항목이 없음 — 수동 확인 필요`); return false; }
+    backup(INSTALLED, `${INSTALLED}.omcbak`);
+    const sep = e.installPath.includes("//") ? "//" : e.installPath.includes("\\") ? "\\" : "/";
+    e.installPath = e.installPath.split(sep).slice(0, -1).concat(TARGET_VERSION).join(sep);
+    e.version = TARGET_VERSION;
+    e.gitCommitSha = sha;
+    e.lastUpdated = new Date().toISOString();
+    writeAtomic(INSTALLED, JSON.stringify(j, null, 2) + "\n");
+  } catch (err) {
+    bad(`쓰지 못함: installed_plugins.json (${failWhy(err)})`);
+    return false;
+  }
   ok(`${have[0] || "없음"} → ${TARGET_VERSION} (sha ${sha.slice(0, 12)})`);
   return true;
 }
@@ -819,12 +824,17 @@ function pinMarketplace() {
 
   try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
   catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${gitError(e)})`); return "pin-failed"; }
-  mkdirSync(dirname(PINFILE), { recursive: true });
   // host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
   // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
   // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
-  // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다.
-  writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600);
+  // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
+  try {
+    mkdirSync(dirname(PINFILE), { recursive: true });
+    writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600);
+  } catch (e) {
+    bad(`고정 기록(PINNED)을 쓰지 못함 (${failWhy(e)}). origin 은 고정됨: ${oneLine(PINFILE)}`);
+    return "record-failed";
+  }
   return "pinned";
 }
 
@@ -971,9 +981,9 @@ if (ROOT) {
   const { v, src: activeSrc } = activeVersion();
   active = v;
   if (MODE !== "revert" && (MODE === "check" || NO_UPDATE)) {
-    log(`  활성 버전: ${active} (${activeSrc})`);
+    log(`  활성 버전: ${oneLine(active)} (${activeSrc})`);
     if (active !== TARGET_VERSION) {
-      log(`  활성 버전이 대상(${TARGET_VERSION})과 다름 — 기본 apply 는 ${TARGET_VERSION} 로 전환하고, --no-update 는 활성 버전(${active})을 그 자리에서 패치함`);
+      log(`  활성 버전이 대상(${TARGET_VERSION})과 다름 — 기본 apply 는 ${TARGET_VERSION} 로 전환하고, --no-update 는 활성 버전(${oneLine(active)})을 그 자리에서 패치함`);
     }
   }
   // apply 는 활성 버전만 손댄다. revert 와 check 는 설치된 모든 버전을 훑는다 —
@@ -984,7 +994,7 @@ if (ROOT) {
 }
 
 log();
-log(`[2/4] 훅 패치${MODE === "apply" || ROOT ? `  (${active})` : `  (대상 ${targets.length}개 버전)`}`);
+log(`[2/4] 훅 패치${MODE === "apply" || ROOT ? `  (${oneLine(active)})` : `  (대상 ${targets.length}개 버전)`}`);
 const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0 };
 const needBy = {};
 const misplacedBy = {};
@@ -997,7 +1007,7 @@ const left = new Set();
 for (const v of targets) {
   const root = rootOf(v);
   if (!existsSync(root)) continue;
-  if (targets.length > 1) log(`  — ${v}`);
+  if (targets.length > 1) log(`  — ${oneLine(v)}`);
   const x = patchHooks(root);
   needBy[v] = x.need;
   misplacedBy[v] = x.misplaced;
@@ -1011,10 +1021,10 @@ log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `
 // 백업이 없어 되돌리지 못한 파일은 되돌릴 원본이 디스크에 없다. 조용히 넘기면 «완전히
 // 되돌렸다» 는 잘못된 인상을 준다 — 무엇이 남았고 어떻게 되찾는지 정확히 말한다.
 function reportNoBackup(v, list, what) {
-  bad(`${v}: ${what} — ${list.map(shown).join(", ")}`);
+  bad(`${oneLine(v)}: ${what} — ${list.map(shown).join(", ")}`);
   log(`      백업(.omcbak)이 없어 되돌릴 원본이 디스크에 없습니다. 원본이 필요하면:`);
   if (ROOT) log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`);
-  else log(`      git -C "${oneLine(MARKET)}" archive v${v} scripts/<이름>.mjs | tar -x -C "${oneLine(join(CACHE, v))}"`);
+  else log(`      git -C "${oneLine(MARKET)}" archive v${oneLine(v)} scripts/<이름>.mjs | tar -x -C "${oneLine(join(CACHE, v))}"`);
 }
 for (const [v, list] of Object.entries(foreignBy)) reportNoBackup(v, list, "이 도구가 만들지 않은 수정이 남아 있습니다");
 for (const [v, list] of Object.entries(orphanBy)) reportNoBackup(v, list, "패치는 있는데 백업이 없어 되돌리지 못했습니다");
@@ -1064,8 +1074,9 @@ if (ROOT) {
     "no-remote": () => ok("origin remote 없음 — 이미 fetch 불가"),
     "pin-failed": () => {},
     "unpin-failed": () => {},
+    "record-failed": () => {},
   }[pin] || (() => {}))();
-  if (pin === "pin-failed" || pin === "unpin-failed") { r.fail++; failed.add("origin"); }
+  if (["pin-failed", "unpin-failed", "record-failed"].includes(pin)) { r.fail++; failed.add(pin === "record-failed" ? "PINNED" : "origin"); }
 }
 
 log();
@@ -1084,7 +1095,7 @@ if (MODE === "check") {
     : NO_UPDATE ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 --no-update 로 다시 실행하십시오."
     : "결과: 적용되지 않은 항목이 있습니다. 인자 없이 다시 실행하십시오.");
   if (others.length) {
-    log(`    참고: 비활성 버전 ${others.join(", ")} 에 미적용분이 있습니다.`);
+    log(`    참고: 비활성 버전 ${others.map(oneLine).join(", ")} 에 미적용분이 있습니다.`);
     log("          지금 쓰이지 않는 버전이라 판정에 넣지 않았습니다. 그 버전으로 되돌릴 계획이면 함께 적용하십시오.");
   }
 } else if (MODE === "revert") {
