@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 
 const TOOL = fileURLToPath(new URL("./omc-patch.mjs", import.meta.url));
@@ -545,6 +545,28 @@ test("a pin whose PINNED cannot be written is named and counted; origin stays pi
   assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`);
 });
 
+test("a set-url git refuses (an origin with two URLs) shows git's fatal line, the password masked", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "--add", "origin", "https://u:s3cret@example.invalid/two.git"], f.market).status, 0);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/https:\/\/\*\*\*@example\.invalid\/two\.git/);
+  assert.ok(!r.out.includes("s3cret"), r.out);
+});
+
+test("a bare apply under a home with an odd name cleans the marketplace path it names", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }], { git: false });
+  const odd = join(root, `home${seq++}${String.fromCodePoint(0x202e)}x\n[!] FORGED`);
+  renameSync(f.home, odd);
+  const installed = join(odd, ".claude", "plugins", "installed_plugins.json");
+  writeFileSync(installed, read(installed).split(f.home).join(odd));
+  const r = run(odd, []);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /마켓플레이스 없음: .*home\d+\?x\?\[!\] FORGED/);
+  assert.ok(!r.out.includes(String.fromCodePoint(0x202e)), r.out);
+  assert.ok(!/^\[!\] FORGED/m.test(r.out), r.out);
+});
+
 test("--revert takes the origin from the pinned URL and names a PINNED written on another machine", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   assert.equal(run(f.home, ["--no-update"]).code, 0);
@@ -1052,6 +1074,85 @@ test("apply writes through a temp file and a rename: a hook hard-linked to a fil
   assert.match(read(join(plug, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/);
   assert.equal(read(outer), SCRIPT("foo"), "the file outside the plugin folder is untouched");
   assert.deepEqual(readdirSync(join(plug, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
+});
+
+test("an apply keeps a backup that is already there: the first backup stays the original", () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  writeFileSync(`${foo}.omcbak`, "// the original an earlier run kept\n");
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(read(`${foo}.omcbak`), "// the original an earlier run kept\n");
+  assert.match(read(foo), /__omcRaceImport\(import\(/);
+});
+
+// Makes renameSync fail with EPERM the first FAIL_RENAMES times, as Windows does for a file another process holds.
+const RENAME_FAILS = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.renameSync;",
+  "let left = Number(process.env.FAIL_RENAMES);",
+  'fs.renameSync = (...a) => { if (left-- > 0) throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" }); return real(...a); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a rename refused a few times is tried again; one refused every time is named and counted, the file left as it was", () => {
+  const pre = join(root, `rename-fails${seq++}.mjs`);
+  writeFileSync(pre, `${RENAME_FAILS}\n`);
+  const runFailing = (plug, n) => {
+    const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, TOOL, "--root", plug],
+      { encoding: "utf8", env: cleanEnv({ HOME: bareHome(), FAIL_RENAMES: String(n) }) });
+    return { code: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
+  };
+  const few = bundle();
+  const once = runFailing(few, 3);
+  assert.equal(once.code, 0, once.out);
+  assert.match(once.out, /패치 2건 \/ 실패 0건/);
+  const always = bundle();
+  const never = runFailing(always, 999);
+  assert.equal(never.code, 1, never.out);
+  assert.match(never.out, /쓰지 못함: foo \(EPERM\)/);
+  assert.equal(read(join(always, "scripts", "foo.mjs")), SCRIPT("foo"));
+  assert.deepEqual(readdirSync(join(always, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
+});
+
+test("hooks.json and the revert write through no hard link: a name outside the folder keeps its bytes", (t) => {
+  const plug = bundle();
+  const home = bareHome();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  const hj = join(plug, "hooks", "hooks.json");
+  const foo = join(plug, "scripts", "foo.mjs");
+  try {
+    linkSync(hj, join(outside, "hooks.json"));
+  } catch (e) {
+    t.skip(`no hard links here: ${e.code}`);
+    return;
+  }
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  assert.equal(read(join(outside, "hooks.json")), HOOKS_JSON, "apply: the outside name keeps the old hooks.json");
+  assert.doesNotMatch(read(hj), /PostToolUse/);
+  const patched = { hj: read(hj), foo: read(foo) };
+  rmSync(join(outside, "hooks.json"));
+  linkSync(hj, join(outside, "hooks.json"));
+  linkSync(foo, join(outside, "foo.mjs"));
+  assert.equal(run(home, ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(hj), HOOKS_JSON);
+  assert.equal(read(foo), SCRIPT("foo"));
+  assert.equal(read(join(outside, "hooks.json")), patched.hj, "revert: the outside name keeps the patched hooks.json");
+  assert.equal(read(join(outside, "foo.mjs")), patched.foo, "revert: the outside name keeps the patched hook");
+});
+
+test("a hook the patch would leave broken is put back from its backup, and the error line is cleaned", () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  // a name with U+3164, a letter that shows as nothing: node's SyntaxError line repeats it
+  const name = `a${String.fromCodePoint(0x3164)}`;
+  const broken = `${SCRIPT("foo")}let ${name} = 1;\nlet ${name} = 2;\n`;
+  writeFileSync(foo, broken);
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /문법오류로 롤백: foo\n {6}SyntaxError: Identifier 'a\?' has already been declared/);
+  assert.equal(read(foo), broken);
 });
 
 test("a patched hook keeps its file mode", { skip: process.platform === "win32" && "POSIX modes" }, () => {

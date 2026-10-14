@@ -259,9 +259,10 @@ function switchActive(sha, have) {
 }
 
 // ── 쓰기 ─────────────────────────────────────────────────────────────────────
-// 같은 폴더의 새 임시 파일(있으면 실패하는 열기)에 쓴 뒤 rename 으로 바꾼다. 확인과 쓰기 사이에 그 자리가 바뀌어도
-// 링크 너머에 쓰지 않고, 하드 링크로 이어진 다른 이름(폴더 밖 파일)의 내용은 그대로 둔다. 쓸 파일이 링크면 실제
-// 경로에서 바꿔 링크를 남긴다. 권한은 mode 를 주면 그 값, 아니면 원래 파일의 것(없으면 0644)이다.
+// 같은 폴더의 새 임시 파일(있으면 실패하는 열기)에 쓴 뒤 rename 으로 바꾼다. 하드 링크로 이어진 다른 이름(폴더 밖
+// 파일)의 내용은 그대로 둔다. 쓸 파일이 링크면 쓰는 때의 실제 경로에서 바꿔 링크를 남긴다. 그래서 확인 뒤 그 자리가
+// 폴더 밖 링크로 바뀌면 그 실제 파일이 바뀐다(확인과 쓰기 사이의 틈은 줄었을 뿐 없지 않다). 권한은 mode 를 주면
+// 그 값, 아니면 원래 파일의 것(없으면 0644)이다.
 function writeAtomic(file, data, mode) {
   const real = realOr(file);
   const tmp = join(dirname(real), `.${basename(real)}.omc-tmp-${process.pid}`);
@@ -806,8 +807,13 @@ function originUrl() {
   try { return git(["config", "--get", "remote.origin.url"]); } catch { return null; }
 }
 
-// git 오류의 첫 줄. 정화하고 URL 의 인증 정보를 가린다.
-const gitError = (e) => oneLine(redactUrl(String(e.stderr || e.message || "").split("\n").find((l) => l.trim()) || "알 수 없는 오류")).slice(0, 200);
+// git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다).
+// 정화하고 URL 의 인증 정보를 가린다.
+const gitError = (e) => {
+  const lines = String(e.stderr || e.message || "").split("\n").filter((l) => l.trim());
+  const line = lines.find((l) => /^(fatal|error):/.test(l)) || lines[0] || "알 수 없는 오류";
+  return oneLine(redactUrl(line)).slice(0, 200);
+};
 
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
