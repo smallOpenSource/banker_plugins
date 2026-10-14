@@ -350,11 +350,23 @@ const unpaired = (f) => f.spans === null;
 const hasBlock = (f) => f.spans !== null && f.spans.length > 0;
 const stripped = (f) => (f.text === null ? "" : strip(f.text, f.spans));
 
+// Whether two paths name one file: a link or a hard link between them.
+function sameFile(a, b) {
+  try {
+    const x = statSync(a, { bigint: true });
+    const y = statSync(b, { bigint: true });
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
+}
+
 // Both global instruction files with their bytes and text (null when absent;
 // text null when not UTF-8) and blocks (null when the markers do not pair up).
 // The block's place (target) is the override when the override has text of its
 // own, AGENTS.md otherwise. shadowers names the other banker skills whose
 // blocks alone fill the override: Codex then reads the override, not AGENTS.md.
+// An override that is a link or a hard link to AGENTS.md is one file with it.
 function codexFiles(t, o) {
   const read = (name) => {
     const path = join(o.codexDir, name);
@@ -364,6 +376,11 @@ function codexFiles(t, o) {
   };
   const override = read("AGENTS.override.md");
   const main = read("AGENTS.md");
+  if (override.bytes !== null && main.bytes !== null && sameFile(override.path, main.path)) {
+    // One file under both names: Codex reads it either way, so it is AGENTS.md alone.
+    const none = { path: override.path, bytes: null, text: null, spans: [] };
+    return { target: main, other: none, all: [none, main], shadowers: [] };
+  }
   const ownContent = binary(override) || (override.text !== null && hasContent(withoutBankerBlocks(override.text)));
   const target = ownContent ? override : main;
   const shadowers = ownContent || override.text === null ? [] : otherBlocks(t, override.text);

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -821,4 +822,37 @@ test("paths lose blank-looking letters, the braille blank and spaces other than 
   }
   const nfd = "/home/사용자/가が".normalize("NFD");
   assert.equal(where(`${nfd}/My Files`), `${nfd}/My Files`);
+});
+
+test("an override that is a link or a hard link to AGENTS.md is one file: on twice, status and off agree", (t) => {
+  for (const kind of ["symlink", "hardlink"]) {
+    const s = setup();
+    writeFileSync(s.agents, "# shared\n");
+    try {
+      if (kind === "symlink") symlinkSync("AGENTS.md", s.override);
+      else linkSync(s.agents, s.override);
+    } catch (e) {
+      t.diagnostic(`${kind} not made here: ${e.code}`);
+      continue;
+    }
+    assert.ok(turnOn("codex", s.o).ok, kind);
+    const again = turnOn("codex", s.o);
+    assert.match(again.message, /이미 켜져 있습니다/, `${kind}: ${again.message}`);
+    assert.equal(blocks(read(s.agents)), 1, kind);
+    assert.match(status(s.o).message, /- Codex: 켜짐 \(/, kind);
+    assert.ok(turnOff("codex", s.o).ok, kind);
+    assert.equal(read(s.agents), "# shared\n", kind);
+  }
+});
+
+test("an override that is a link to nothing counts as no override", posixOnly, () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  symlinkSync("gone.md", s.override);
+  const r = turnOn("codex", s.o);
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.ok(turnOff("codex", s.o).ok);
+  assert.equal(read(s.agents), "# base\n");
+  assert.equal(lstatSync(s.override).isSymbolicLink(), true, "the link is left alone");
 });
