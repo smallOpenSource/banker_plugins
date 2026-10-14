@@ -999,3 +999,14 @@ test("Codex on and off wait for another banker skill's lock, and take over one a
   assert.equal(blocks(read(s.agents)), 1);
   assert.equal(existsSync(lock), false, "the lock is given back");
 });
+
+test("troubleshooting rows never tell the agent to clear, delete or rename a user's file without asking first", () => {
+  const table = readFileSync(SKILL, "utf8").split("## 문제 해결")[1].split("\n## ")[0];
+  const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
+  for (const row of rows) assert.doesNotMatch(row, /치우|치운|치움|이름 변경 또는 삭제|지운 뒤 다시|옮긴 뒤 다시/, row);
+  for (const head of ["같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님"]) {
+    const row = rows.find((l) => l.startsWith(`| ${head}`));
+    assert.ok(row, head);
+    assert.match(row, /물은 뒤/, row);
+  }
+});

@@ -926,3 +926,17 @@ test("SKILL.md checks each heredoc line before it runs, and no end word can pass
   assert.ok(doc, "the heredoc example is there");
   for (const l of doc[1].split("\n").map((x) => x.trim())) assert.match(l, line, l);
 });
+
+// Rows that send the agent at a user's file must ask first; none may tell it to clear one away.
+const ASK_FIRST = ["설정 파일이 올바르지 않습니다", "일반 파일이 아니라 설정을 저장하지 않았습니다", "64KiB 보다 큰 파일이라",
+  "같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님"];
+test("troubleshooting rows never tell the agent to clear, delete, move or rename a user's file without asking first", () => {
+  const table = read(SKILL).split("## 문제 해결")[1].split("\n## ")[0];
+  const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
+  for (const row of rows) assert.doesNotMatch(row, /치우|치운|치움|이름 변경 또는 삭제|지운 뒤 다시|옮긴 뒤 다시/, row);
+  for (const head of ASK_FIRST) {
+    const row = rows.find((l) => l.startsWith(`| ${head}`));
+    assert.ok(row, head);
+    assert.match(row, /물은 뒤/, row);
+  }
+});
