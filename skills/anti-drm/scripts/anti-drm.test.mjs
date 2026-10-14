@@ -940,3 +940,26 @@ test("troubleshooting rows never tell the agent to clear, delete, move or rename
     assert.match(row, /물은 뒤/, row);
   }
 });
+
+test("while other banker blocks alone fill the override, the stale and moved cases also say first that Codex does not read ours", () => {
+  const codexLine = (r) => r.message.split("\n").find((l) => l.startsWith("Codex:"));
+  const stale = setup();
+  writeFileSync(stale.agents, "# base\n");
+  writeFileSync(stale.override, "# mine\n");
+  assert.ok(tcOn("codex", stale.tc).ok);
+  writeFileSync(stale.override, read(stale.override).replace("# mine\n", ""));
+  assert.ok(turnOn("codex", stale.o, FLAGS).ok);
+  writeFileSync(stale.agents, read(stale.agents).replace("`.pdf`", "`.pdx`"));
+  const r1 = turnOn("codex", stale.o);
+  assert.match(codexLine(r1), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /, r1.message);
+  const moved = setup();
+  writeFileSync(moved.agents, "# base\n");
+  writeFileSync(moved.override, "# mine\n");
+  assert.ok(tcOn("codex", moved.tc).ok);
+  assert.ok(turnOn("codex", moved.o, FLAGS).ok);
+  writeFileSync(moved.override, read(moved.override).replace("# mine\n", ""));
+  const r2 = turnOn("codex", moved.o);
+  assert.match(codexLine(r2), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /, r2.message);
+  assert.equal(blocks(read(moved.agents)), 1, "ours moved to AGENTS.md");
+  assert.equal(blocks(read(moved.override)), 0);
+});

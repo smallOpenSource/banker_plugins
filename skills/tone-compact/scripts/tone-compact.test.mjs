@@ -1010,3 +1010,19 @@ test("troubleshooting rows never tell the agent to clear, delete or rename a use
     assert.match(row, /물은 뒤/, row);
   }
 });
+
+test("a FIFO where AGENTS.override.md goes: status returns and names it, on and off refuse with exit 1", posixOnly, () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  assert.equal(spawnSync("mkfifo", [s.override]).status, 0);
+  const opts = { encoding: "utf8", timeout: 5000, env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } };
+  const st = spawnSync(process.execPath, [CLI, "status"], opts);
+  assert.equal(st.status, 0, `status hung or failed (signal ${st.signal})`);
+  assert.match(st.stdout, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음 .*AGENTS\.override\.md/);
+  for (const command of ["on", "off"]) {
+    const r = spawnSync(process.execPath, [CLI, command, "--runtime", "codex"], opts);
+    assert.equal(r.status, 1, `${command}: ${r.stdout} (signal ${r.signal})`);
+    assert.match(r.stdout, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.override\.md/);
+  }
+  assert.equal(read(s.agents), "# base\n");
+});
