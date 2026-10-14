@@ -814,3 +814,11 @@ test("a FIFO where the rules file goes: status returns and on refuses", posixOnl
   const on = spawnSync(process.execPath, [CLI, "on", "--runtime", "claude"], opts);
   assert.equal(on.status, 1, `${on.stdout} (signal ${on.signal})`);
 });
+
+test("paths lose blank-looking letters, the braille blank and spaces other than the ASCII one", () => {
+  for (const c of [0x3164, 0x115f, 0xffa0, 0x2800, 0x3000, 0x00a0, 0x2060, 0xe0041]) {
+    assert.equal(where(`a${String.fromCodePoint(c)}b`), "a?b", c.toString(16));
+  }
+  const nfd = "/home/사용자/가が".normalize("NFD");
+  assert.equal(where(`${nfd}/My Files`), `${nfd}/My Files`);
+});

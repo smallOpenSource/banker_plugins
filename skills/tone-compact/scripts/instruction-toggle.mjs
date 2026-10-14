@@ -166,9 +166,14 @@ export const denied = (e) => e.code === "EACCES" || e.code === "EPERM" || e.code
  * paragraph separator, private-use, unassigned and variation selector
  * characters become "?": a path from the environment cannot start a line of
  * its own, reorder the text around it, or hide text after a visible letter.
+ * So do letters that print as nothing (default-ignorable ones such as U+3164),
+ * the braille blank and spaces other than the ASCII one, which hide text as blanks.
  */
 export const where = (value) =>
-  String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}]/gu, "?");
+  String(value).replace(
+    /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu,
+    "?",
+  );
 
 // ---- Claude Code: one rules file that is banker's alone ----
 
