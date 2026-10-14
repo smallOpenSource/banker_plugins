@@ -125,11 +125,11 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - 인덱스 경로는 `rev-parse --git-path index` 로 얻고(셸의 `GIT_INDEX_FILE` 도 따른다), 상대 경로면 앞에 `<저장소>/` 를 붙인다. `--path-format` 은 쓰지 않는다. git 2.31 미만은 이 옵션을 모르는 채 글자 그대로 찍고 성공으로 끝난다.
    - 인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다. 커밋이 있으면 사슬이 멈춘다. 커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다.
    - `<기준>` 은 커밋하지 않은 작업이면 `HEAD`, 이미 커밋한 작업이면 작업 전 커밋, 커밋이 없는 저장소면 빈 트리(`git -C '<저장소>' hash-object -t tree /dev/null`)다. `-C` 가 없으면 저장소 밖에서 SHA-1 빈 트리가 나와 SHA-256 저장소에서 사슬이 멈춘다.
-   - 새 파일은 변경에 속한 것만 올린다. 먼저 `git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard` 로 추적하지 않는 새 파일을 모두 본다(`status --short` 는 새 폴더를 한 줄로 접는다). 그중 변경에 속한 파일만 파일 도구로 `$d/new-files.txt` 에 저장소 루트 기준 경로로 한 줄에 하나씩 쓴다(없으면 빈 파일).
+   - 새 파일은 변경에 속한 것만 올린다. 먼저 `git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard` 로 추적하지 않는 새 파일을 모두 본다(`status --short` 는 새 폴더를 한 줄로 접는다). 그중 변경에 속한 파일만 파일 도구로 `$d/new-files.md` 에 저장소 루트 기준 경로로 한 줄에 하나씩 쓴다(없으면 빈 파일).
      - 경로는 글자 그대로 읽는다(`--literal-pathspecs`). 무시되는 파일을 적으면 `add` 가 거부해 사슬이 멈춘다.
      - 한 줄에 파일 하나다. 폴더 줄이나 `.` 은 그 아래 새 파일을 모두 올린다. 그래서 `add -N --dry-run` 이 올릴 파일 가운데 목록에 없는 것이 있으면 그 경로를 찍고 사슬이 멈춘다. 폴더와 그 안 파일을 함께 적은 목록도 같다.
-     - 보내지 않은 새 파일은 `$d/unsent.txt` 에 남는다. 그 수를 `외부 전송(선언)` 줄에 적는다.
-     - 하위 저장소(`unsent.txt` 에서 `/` 로 끝나는 줄) 안의 파일은 목록에 적어도 실리지 않는다. 필요하면 원문 부분으로 붙인다. 하위 저장소와 서브모듈은 사용자 설정과 관계없이 커밋 줄(`Subproject commit`)만 실린다. 목록이 비면 stderr 에 `Nothing specified, nothing added.` 가 찍혀도 정상이다.
+     - 보내지 않은 새 파일은 `$d/unsent.md` 에 남는다. 그 수를 `외부 전송(선언)` 줄에 적는다.
+     - 하위 저장소(`unsent.md` 에서 `/` 로 끝나는 줄) 안의 파일은 목록에 적어도 실리지 않는다. 필요하면 원문 부분으로 붙인다. 하위 저장소와 서브모듈은 사용자 설정과 관계없이 커밋 줄(`Subproject commit`)만 실린다. 목록이 비면 stderr 에 `Nothing specified, nothing added.` 가 찍혀도 정상이다.
      - `--pathspec-from-file` 은 git 2.25 이상이 필요하다. 그보다 옛 git 은 이 옵션을 몰라 사슬이 멈춘다.
    - 다 쓴 뒤 그 id 의 표지가 두 줄(여는 표지와 닫는 표지)뿐인지 센다. 더 있으면 id 를 바꿔 다시 쓴다.
    - diff 가 비거나 git 이 실패하면 사슬이 멈춰 닫는 표지가 붙지 않는다. 2 가 찍히지 않으면 보내지 않고 stderr 의 사유를 본다.
@@ -146,7 +146,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - 0건이면 크기를 본다: `wc -c < "$d/prompt.md"`(PowerShell 은 `(Get-Item -LiteralPath "$d\prompt.md").Length`). 512 KiB(524288 바이트)를 넘으면 보내기 전에 사용자에게 묻는다. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다. 사용자가 보내지 않기로 하면 `model-declined` 다.
 4. 플래그로 고른 좌석마다 `$d/<좌석>/prompt.md` 사본을 만들고 아래 명령으로 보낸다. 좌석은 서브셸에서 자기 폴더로 들어가 띄운다(Claude Code 의 Bash 도구는 `cd` 가 다음 호출까지 남는다).
    - gemini 좌석은 같은 서브셸에서 `gemini-seat.mjs check` 가 먼저 확인한다. 정책 파일이 배포본과 같은지, 홈 밖 상위 폴더에 `.gemini/.env` 나 `.env` 가 없는지 본다. 실패하면 보내지 않는다(`cli-call-failed`). 정책 파일 경로는 그 출력을 쓰고, 출력이 비었거나 그 파일이 없어도 보내지 않는다.
-   - gemini 좌석은 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더(`$o`)로 두고 stderr 를 `$o/err-gemini.txt` 로 받는다. 0.62.0 은 API 오류가 나면 요청 전문(페이로드)을 `os.tmpdir()` 에 `gemini-client-error-*.json` 으로 쓴다(umask 권한). node 의 `os.tmpdir()` 는 POSIX 에서 `TMPDIR` 을, Windows 에서 `TEMP` 와 `TMP` 를 읽는다(Claude Code 는 Windows 에서도 이 bash 블록을 Git Bash 로 돌린다). `$o` 에 두면 정리 때 함께 지워진다.
+   - gemini 좌석은 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더(`$o`)로 두고 stderr 를 `$o/err-gemini.md` 로 받는다. 0.62.0 은 API 오류가 나면 요청 전문(페이로드)을 `os.tmpdir()` 에 `gemini-client-error-*.json` 으로 쓴다(umask 권한). node 의 `os.tmpdir()` 는 POSIX 에서 `TMPDIR` 을, Windows 에서 `TEMP` 와 `TMP` 를 읽는다(Claude Code 는 Windows 에서도 이 bash 블록을 Git Bash 로 돌린다). `$o` 에 두면 정리 때 함께 지워진다.
    - gemini 자체 샌드박스는 `GEMINI_SANDBOX=false` 로 끈다. 이 env 는 설정의 `tools.sandbox` 보다 앞선다(0.62.0). 켜 두면 gemini 는 자체 샌드박스 안에서 다시 뜬다(docker, podman 컨테이너. macOS 에서 값이 `true` 면 `sandbox-exec`). 컨테이너 안에는 정책 파일이 없어 모든 도구가 열리고(`Policy file error` 도 나오지 않는다), 페이로드는 docker 명령줄에 실린다.
    - stderr 에 `Policy file error` 가 있으면 정책을 읽지 못해 도구가 열렸을 수 있으므로 그 좌석은 `ERROR` 다. `Full report` 는 API 오류다. 첫 호출의 권한, 미존재 거절이면 갈아타고(외부 모델 결정 절), 그 밖은 `ERROR` 다.
 5. 좌석 명령은 백그라운드 작업으로 돌린다(Claude Code 는 `run_in_background`, Codex 는 오래 도는 exec 세션). 끝났다는 알림을 받은 뒤 `$o` 의 답 파일을 읽는다.
@@ -170,7 +170,7 @@ d='<찍힌 d>' o='<찍힌 o>' R='<이 스킬 디렉터리 절대경로>/referenc
 # 2단계-1(따로 호출): 추적하지 않는 새 파일을 모두 찍는다. status --short 와 달리 새 폴더를 한 줄로 접지 않는다
 git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard
 
-# 2단계-2: 짧은 부분과 "$d/new-files.txt"(그중 변경에 속한 새 파일, 한 줄에 하나, 없으면 빈 파일)를 파일 도구로 쓴 뒤
+# 2단계-2: 짧은 부분과 "$d/new-files.md"(그중 변경에 속한 새 파일, 한 줄에 하나, 없으면 빈 파일)를 파일 도구로 쓴 뒤
 # 원문과 닫는 표지를 붙이고, 표지가 두 줄인지 센다. 멈추면 stderr 에 사유를 찍는다
 # 목록의 한 줄은 파일 하나다. textconv, 외부 diff 드라이버, 색, 하위 저장소 내용은 싣지 않는다
 # grep 은 command 로 시스템 grep 을 부른다(Claude Code 의 grep 함수는 UTF-8 이 아닌 파일을 세지 않는다)
@@ -178,13 +178,13 @@ git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standar
 # 실제 인덱스의 사본이라 스테이징도 담고 저장소 인덱스는 그대로다. 인덱스 파일이 없으면 커밋 없는 저장소만 이어 간다
 i=$(git -C '<저장소>' rev-parse --git-path index) && case $i in /*|?:*) ;; *) i='<저장소>'/$i ;; esac && rm -f "$d/idx" &&
   { if [ -f "$i" ]; then cp -p "$i" "$d/idx"; elif git -C '<저장소>' rev-parse -q --verify HEAD > /dev/null; then echo "ralph-qa: 커밋이 있는데 인덱스 파일이 없다: $i" >&2; false; fi; } &&
-  LC_ALL=C GIT_INDEX_FILE="$d/idx" git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="$d/new-files.txt" > "$d/added.txt" &&
-  tr -d '\r' < "$d/new-files.txt" > "$d/listed.txt" &&
-  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.txt" | LC_ALL=C command grep -Fxv -f "$d/listed.txt" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄이나 겹친 줄)' >&2; false; }; } &&
-  GIT_INDEX_FILE="$d/idx" git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --pathspec-from-file="$d/new-files.txt" &&
-  GIT_INDEX_FILE="$d/idx" git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard > "$d/unsent.txt" &&
+  LC_ALL=C GIT_INDEX_FILE="$d/idx" git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="$d/new-files.md" > "$d/added.md" &&
+  tr -d '\r' < "$d/new-files.md" > "$d/listed.md" &&
+  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄이나 겹친 줄)' >&2; false; }; } &&
+  GIT_INDEX_FILE="$d/idx" git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --pathspec-from-file="$d/new-files.md" &&
+  GIT_INDEX_FILE="$d/idx" git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard > "$d/unsent.md" &&
   { ! GIT_INDEX_FILE="$d/idx" git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' || { echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; }; } &&
-  GIT_INDEX_FILE="$d/idx" git -C '<저장소>' -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short '<기준>' >> "$d/prompt.md" && rm -f "$d/idx" "$d/added.txt" "$d/listed.txt" &&
+  GIT_INDEX_FILE="$d/idx" git -C '<저장소>' -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short '<기준>' >> "$d/prompt.md" && rm -f "$d/idx" "$d/added.md" "$d/listed.md" &&
   cat '<기준 파일>' >> "$d/prompt.md" &&
   printf '%s\n' '</review-data id="<id>">' >> "$d/prompt.md" && LC_ALL=C command grep -c 'review-data id="<id>"' "$d/prompt.md"
 
@@ -197,14 +197,14 @@ for s in codex gemini opencode; do mkdir -m 700 "$d/$s" && cp "$d/prompt.md" "$d
     --disable multi_agent --disable hooks --disable plugins --disable apps --disable shell_tool \
     -c 'notify=[]' -c 'analytics.enabled=false' -c 'web_search=disabled' <mcp> \
     -c 'otel.exporter="none"' -c 'otel.trace_exporter="none"' -c 'otel.metrics_exporter="none"' \
-    -m '<model>' -s read-only --skip-git-repo-check -o "$o/out-codex.md" - < prompt.md 2> "$o/err-codex.txt" )
+    -m '<model>' -s read-only --skip-git-repo-check -o "$o/out-codex.md" - < prompt.md 2> "$o/err-codex.md" )
 
 # gemini: 정책 파일과 홈 밖 상위 폴더의 .env 를 먼저 확인하고, 실패하면 보내지 않는다
 ( cd "$d/gemini" && pol=$(node "$R/gemini-seat.mjs" check "$d/gemini") && [ -n "$pol" ] && [ -f "$pol" ] &&
   unset GEMINI_CLI_IDE_WORKSPACE_PATH &&
   TMPDIR="$o" TEMP="$o" TMP="$o" GEMINI_SANDBOX=false GEMINI_TELEMETRY_LOG_PROMPTS=false <상한> gemini --skip-trust --approval-mode default --admin-policy "$pol" \
     --allowed-mcp-server-names ralph-qa-none -e none \
-    -m '<model>' -p "첨부한 검토 지시를 따르라" < prompt.md > "$o/out-gemini.md" 2> "$o/err-gemini.txt" )
+    -m '<model>' -p "첨부한 검토 지시를 따르라" < prompt.md > "$o/out-gemini.md" 2> "$o/err-gemini.md" )
 
 # opencode: <id> 는 워크플로 1단계의 무작위 id. 에이전트를 먼저 확인하고, 없으면 보내지 않는다
 A='ralph-qa-review-<id>'
@@ -214,7 +214,7 @@ P='{"*":"deny"}'
     OPENCODE_CONFIG_CONTENT="{\"share\":\"disabled\",\"agent\":{\"compaction\":{\"disable\":true},\"$A\":{\"mode\":\"primary\",\"description\":\"ralph-qa reviewer\",\"permission\":$P}}}" \
     OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_CLAUDE_CODE=1 &&
   <상한> opencode debug agent "$A" --pure > /dev/null 2>&1 &&
-  <상한> opencode run --pure --agent "$A" --title "$A" -m '<provider/model>' "아래 검토 지시를 따르라" < prompt.md > "$o/out-opencode.md" 2> "$o/err-opencode.txt" )
+  <상한> opencode run --pure --agent "$A" --title "$A" -m '<provider/model>' "아래 검토 지시를 따르라" < prompt.md > "$o/out-opencode.md" 2> "$o/err-opencode.md" )
 
 # 6단계: 좌석 작업이 모두 끝났거나 멈춘 뒤. gemini 는 이 좌석의 기록을 지우고, 하루 지난 폴더를 지운 뒤 앞서 끊긴 실행의 기록을 지운다
 # opencode 는 목록에서 제목이 ralph-qa-review-<id> 인 세션과, 제목이 ralph-qa-review- 로 시작하고 directory 의 좌석 폴더가 없는 세션을 지운다
@@ -234,8 +234,8 @@ rm -rf "$d" "$o"
 
 - 모델 플래그(`-m`)는 항상 준다. `fallback` 이 `@cli-default` 일 때만 뺀다. gemini 는 `-m auto`·`-m pro` 도 그대로 준다 — `-m` 이 없으면 설정 모델이 돌아 보고와 실제가 갈린다. 모델 이름과 `-c` 값은 작은따옴표로 감싼다.
 - `-c model_reasoning_effort=<v>` 는 `--effort` 를 줄 때만 codex 명령에 붙인다.
-- **codex 가 실제로 돌린 모델**은 `$o/err-codex.txt` 머리의 `model:` 줄이다. 판정을 집계하기 전에 확인한다. `-m` 으로 준 모델과 다르면 `ERROR` 다. `@cli-default` 로 돌렸으면 그 이름으로 `--codex=<이름>` 프로브를 한 번 더 돌린다. 저자 계열이거나(`self-family`) 계열을 읽지 못하면(`familyKnown: false`) 그 판정을 집계하지 않고 좌석을 `no-default-model` 로 미착석시킨다. 그 모델은 CLI 설정이 정해 저자 선택이 아니다. 첫 판정 전이라 좌석 상실이 아니다.
-- **opencode 에이전트 확인.** 1.3.10 은 `--agent` 의 에이전트를 찾지 못하면 기본 에이전트로 넘어가 사용자 설정의 도구(셸 포함)를 연다(모의 재현). 그래서 같은 서브셸에서 `opencode debug agent` 로 먼저 확인하고, 실패하면 보내지 않는다. `$o/err-opencode.txt` 에 `Falling back to default agent` 가 있으면 그 좌석은 `ERROR` 다.
+- **codex 가 실제로 돌린 모델**은 `$o/err-codex.md` 머리의 `model:` 줄이다. 판정을 집계하기 전에 확인한다. `-m` 으로 준 모델과 다르면 `ERROR` 다. `@cli-default` 로 돌렸으면 그 이름으로 `--codex=<이름>` 프로브를 한 번 더 돌린다. 저자 계열이거나(`self-family`) 계열을 읽지 못하면(`familyKnown: false`) 그 판정을 집계하지 않고 좌석을 `no-default-model` 로 미착석시킨다. 그 모델은 CLI 설정이 정해 저자 선택이 아니다. 첫 판정 전이라 좌석 상실이 아니다.
+- **opencode 에이전트 확인.** 1.3.10 은 `--agent` 의 에이전트를 찾지 못하면 기본 에이전트로 넘어가 사용자 설정의 도구(셸 포함)를 연다(모의 재현). 그래서 같은 서브셸에서 `opencode debug agent` 로 먼저 확인하고, 실패하면 보내지 않는다. `$o/err-opencode.md` 에 `Falling back to default agent` 가 있으면 그 좌석은 `ERROR` 다.
 - **남는 사본.** codex 는 `--ephemeral` 이라 세션을 남기지 않는다.
   - gemini 0.62.0 은 헤드리스 실행마다 페이로드와 답 전문을 `<홈>/.gemini/tmp/<id>/chats/` 에 기록하고(끄는 설정이 없다, 기본 30일 보존), 좌석 폴더 경로를 `projects.json` 에 남긴다. `<홈>` 은 `$GEMINI_CLI_HOME` 이 있으면 그 폴더다. 반복마다 `$d` 를 지우기 전에 `gemini-seat.mjs clean "$d/gemini"` 로 그 좌석 폴더를 가리키는 기록 폴더(`tmp/<id>`, `history/<id>`)를 지운다. `projects.json` 항목에는 경로만 있어 남긴다. `.project_root` 없이 다시 만든 기록 폴더는 `projects.json` 의 좌석 경로로 찾는다. `clean` 과 `sweep` 이 그 폴더도 지운다. `--list-sessions` 는 요약을 만들려고 모델을 한 번 더 부르므로 쓰지 않는다.
   - 좌석 명령과 정리 사이에 실행이 끊기면 gemini 기록과 페이로드 사본이 남는다.
@@ -252,14 +252,14 @@ rm -rf "$d" "$o"
 - Windows PowerShell 에는 `<` 재지정이 없다(실기 미검증).
   - 먼저 `$OutputEncoding` 과 `[Console]::OutputEncoding` 을 UTF-8 로 둔다. 기준 폴더는 `$env:TEMP` 다. 두 폴더는 `$d = Join-Path $env:TEMP ('ralph-qa.' + [guid]::NewGuid().ToString('N'))` 와 `$o = Join-Path $env:TEMP ('ralph-qa-out.' + [guid]::NewGuid().ToString('N'))` 로 이름을 짓는다. 정리 규칙과 `sweep` 이 이 이름을 찾는다. 만든 두 폴더에는 bash 처럼 빈 표지 파일을 둔다(`New-Item -ItemType File -Path (Join-Path $d '.ralph-qa'), (Join-Path $o '.ralph-qa')`).
   - env 는 그 좌석을 띄우는 같은 호출 안에서 `$env:이름='값'` 으로 준다. 다른 호출로 나누면 새 셸이라 사라지고, opencode 는 그때 기본 에이전트로 넘어간다.
-  - 2단계 원문 붙이기: 먼저 bash 와 같은 `git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard` 로 새 파일을 보고, 그중 변경에 속한 것만 파일 도구로 `$d\new-files.txt` 에 쓴다. 5.1 의 `Out-File` 과 `>` 는 BOM 이나 UTF-16 으로 써서 git 이 그 경로를 읽지 못한다. `$i = git -C '<저장소>' rev-parse --git-path index` 로 경로를 얻고, `$i` 가 문자열 하나가 아니면 멈춘다. `[IO.Path]::IsPathRooted($i)` 가 거짓이면 `$i = Join-Path '<저장소>' $i` 로 바꾼다. `Remove-Item -LiteralPath "$d\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath $i` 가 참이면 `Copy-Item -LiteralPath $i "$d\idx"` 로 실제 인덱스를 복사한다. 거짓이면 `git -C '<저장소>' rev-parse -q --verify HEAD > $null` 의 `$LASTEXITCODE` 가 0 이면(커밋이 있으면) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다. `-LiteralPath` 없는 `Test-Path` 는 경로의 `[ ]` 를 와일드카드로 읽어 있는 파일에도 거짓을 낸다. 같은 호출에서 `$env:GIT_INDEX_FILE="$d\idx"` 와 `$env:LC_ALL='C'` 를 두고, 먼저 `$added = @(git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="$d\new-files.txt" | ForEach-Object { $_ -replace "^add '(.*)'$", '$1' })` 로 올라갈 파일을 얻는다. 그 가운데 `$listed = @(Get-Content -LiteralPath "$d\new-files.txt" -Encoding utf8)` 에 없는 것(`$added | Where-Object { $listed -cnotcontains $_ }`)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다. 그다음 `git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --pathspec-from-file="$d\new-files.txt"`, `git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard`(보내지 않은 새 파일이 찍힌다), `git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short --output="$d\diff.txt" '<기준>'` 를 차례로 실행한다. 5.1 에는 `&&` 가 없어 git 마다 `$LASTEXITCODE` 를 본다: `diff --quiet` 는 1 일 때만 계속하고(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다), 나머지는 0 이 아니면 멈춘다. 그다음 `[IO.File]::AppendAllText("$d\prompt.md", [IO.File]::ReadAllText("$d\diff.txt"))` 로 붙이고, `Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL` 와 `Remove-Item -LiteralPath "$d\idx", "$d\diff.txt"` 로 치운다. 5.1 은 git 출력을 파이프로 받으면 콘솔 인코딩으로 읽어 한글을 깨뜨리고, `>>` 는 UTF-16 으로 붙인다.
+  - 2단계 원문 붙이기: 먼저 bash 와 같은 `git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard` 로 새 파일을 보고, 그중 변경에 속한 것만 파일 도구로 `$d\new-files.md` 에 쓴다. 5.1 의 `Out-File` 과 `>` 는 BOM 이나 UTF-16 으로 써서 git 이 그 경로를 읽지 못한다. `$i = git -C '<저장소>' rev-parse --git-path index` 로 경로를 얻고, `$i` 가 문자열 하나가 아니면 멈춘다. `[IO.Path]::IsPathRooted($i)` 가 거짓이면 `$i = Join-Path '<저장소>' $i` 로 바꾼다. `Remove-Item -LiteralPath "$d\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath $i` 가 참이면 `Copy-Item -LiteralPath $i "$d\idx"` 로 실제 인덱스를 복사한다. 거짓이면 `git -C '<저장소>' rev-parse -q --verify HEAD > $null` 의 `$LASTEXITCODE` 가 0 이면(커밋이 있으면) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다. `-LiteralPath` 없는 `Test-Path` 는 경로의 `[ ]` 를 와일드카드로 읽어 있는 파일에도 거짓을 낸다. 같은 호출에서 `$env:GIT_INDEX_FILE="$d\idx"` 와 `$env:LC_ALL='C'` 를 두고, 먼저 `$added = @(git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="$d\new-files.md" | ForEach-Object { $_ -replace "^add '(.*)'$", '$1' })` 로 올라갈 파일을 얻는다. 그 가운데 `$listed = @(Get-Content -LiteralPath "$d\new-files.md" -Encoding utf8)` 에 없는 것(`$added | Where-Object { $listed -cnotcontains $_ }`)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다. 그다음 `git -C '<저장소>' --literal-pathspecs -c advice.addEmptyPathspec=false add -N --pathspec-from-file="$d\new-files.md"`, `git -C '<저장소>' -c core.quotePath=false ls-files --others --exclude-standard`(보내지 않은 새 파일이 찍힌다), `git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short --output="$d\diff.md" '<기준>'` 를 차례로 실행한다. 5.1 에는 `&&` 가 없어 git 마다 `$LASTEXITCODE` 를 본다: `diff --quiet` 는 1 일 때만 계속하고(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다), 나머지는 0 이 아니면 멈춘다. 그다음 `[IO.File]::AppendAllText("$d\prompt.md", [IO.File]::ReadAllText("$d\diff.md"))` 로 붙이고, `Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL` 와 `Remove-Item -LiteralPath "$d\idx", "$d\diff.md"` 로 치운다. 5.1 은 git 출력을 파이프로 받으면 콘솔 인코딩으로 읽어 한글을 깨뜨리고, `>>` 는 UTF-16 으로 붙인다.
   - 표지 세기: `(Select-String -SimpleMatch -Pattern 'review-data id="<id>"' -LiteralPath "$d\prompt.md").Count`.
   - 세 좌석 모두 `Get-Content -Raw -Encoding utf8 -LiteralPath "$d\<좌석>\prompt.md" |` 로 페이로드를 파이프로 넘긴다. codex 는 끝에 `-` 를 둔다. 좌석 폴더로는 `Push-Location -LiteralPath "$d\<좌석>"` 으로 들어가고 끝나면 `Pop-Location` 한다.
   - 답은 `| Out-File -Encoding utf8 -LiteralPath "$o\out-<좌석>.md"` 로 받는다. 5.1 의 `>` 는 UTF-16 으로 쓴다.
   - PowerShell 에는 `<상한>` 에 넣을 명령이 없다. 600 초가 지나도 끝나지 않은 좌석은 그 작업을 멈추고 `ERROR` 로 적는다.
   - 경로를 받는 명령은 모두 `-LiteralPath` 로 준다. 없으면 경로의 `[ ]` 를 와일드카드로 읽는다.
-  - gemini 좌석은 같은 호출에서 `$pol = node "$R\gemini-seat.mjs" check "$d\gemini"` 가 `$LASTEXITCODE` 0 이고 `$pol` 이 비지 않았으며 `Test-Path -LiteralPath $pol` 이 참일 때만 띄운다. 그 호출에 `Remove-Item Env:GEMINI_CLI_IDE_WORKSPACE_PATH -ErrorAction Ignore`, `$env:GEMINI_TELEMETRY_LOG_PROMPTS='false'`, `$env:GEMINI_SANDBOX='false'`, `$env:TEMP=$o`, `$env:TMP=$o` 를 두고 stderr 는 `2> "$o\err-gemini.txt"` 로 받는다. 정리는 좌석 작업이 모두 끝났거나 멈춘 뒤 `node "$R\gemini-seat.mjs" clean "$d\gemini"`, 하루 규칙 `Get-ChildItem -LiteralPath (Split-Path $d) -Directory | Where-Object { $_.Name -match '^ralph-qa(-out)?\.[A-Za-z0-9]+$' -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.LastWriteTime -lt (Get-Date).AddDays(-1) -and (Test-Path -LiteralPath (Join-Path $_.FullName '.ralph-qa') -PathType Leaf) } | Remove-Item -Recurse -Force`, `node "$R\gemini-seat.mjs" sweep (Split-Path $d)` 순서다.
-- 보고의 `외부 전송(선언)` 줄에 좌석별 목적지, 페이로드 크기, 비밀 검사 결과, 보내지 않은 새 파일 수(`unsent.txt` 의 줄 수)를 적는다.
+  - gemini 좌석은 같은 호출에서 `$pol = node "$R\gemini-seat.mjs" check "$d\gemini"` 가 `$LASTEXITCODE` 0 이고 `$pol` 이 비지 않았으며 `Test-Path -LiteralPath $pol` 이 참일 때만 띄운다. 그 호출에 `Remove-Item Env:GEMINI_CLI_IDE_WORKSPACE_PATH -ErrorAction Ignore`, `$env:GEMINI_TELEMETRY_LOG_PROMPTS='false'`, `$env:GEMINI_SANDBOX='false'`, `$env:TEMP=$o`, `$env:TMP=$o` 를 두고 stderr 는 `2> "$o\err-gemini.md"` 로 받는다. 정리는 좌석 작업이 모두 끝났거나 멈춘 뒤 `node "$R\gemini-seat.mjs" clean "$d\gemini"`, 하루 규칙 `Get-ChildItem -LiteralPath (Split-Path $d) -Directory | Where-Object { $_.Name -match '^ralph-qa(-out)?\.[A-Za-z0-9]+$' -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.LastWriteTime -lt (Get-Date).AddDays(-1) -and (Test-Path -LiteralPath (Join-Path $_.FullName '.ralph-qa') -PathType Leaf) } | Remove-Item -Recurse -Force`, `node "$R\gemini-seat.mjs" sweep (Split-Path $d)` 순서다.
+- 보고의 `외부 전송(선언)` 줄에 좌석별 목적지, 페이로드 크기, 비밀 검사 결과, 보내지 않은 새 파일 수(`unsent.md` 의 줄 수)를 적는다.
 
 ## 정족수
 

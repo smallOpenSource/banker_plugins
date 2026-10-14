@@ -200,7 +200,7 @@ OMX 는 OMC 5 와 달리 `ultraqa`·`ultrawork`·`swarm`·`pipeline` 을 아직 
 - **외부 LLM**: `$ask`(로컬 Claude/Gemini CLI 자문).
 - **MCP**: `codex mcp add <NAME> (--url <URL> | -- <COMMAND>...)`.
 - **`/copy` 등 슬래시 명령은 Codex TUI 내장**(컴파일 바이너리 — `~/.codex/skills`·`prompts`·`--help` 목록엔 안 뜸).
-- ⚠️ `~/.codex/AGENTS.md` 본문은 `omx setup/doctor` 가 재생성 → **직접 쓰지 말 것**(조각 소실). `omx setup --merge-agents` 로 다시 만들 때 남는 것은 `<!-- USER:OMX:POLICY:START -->` … `<!-- USER:OMX:POLICY:END -->` 로 감싼 블록뿐이고(banker `tone-compact` 가 이 방식), `--force` 나 덮어쓰기 확인으로 새로 쓰면 그 블록도 사라진다(백업은 `~/.omx/backups/setup/`). 비대화형 `omx setup` 은 기존 AGENTS.md 덮어쓰기를 건너뛴다.
+- ⚠️ `~/.codex/AGENTS.md` 본문은 `omx setup/doctor` 가 재생성 → **직접 쓰지 말 것**(조각 소실). `omx setup --merge-agents` 로 다시 만들 때 남는 것은 `<!-- USER:OMX:POLICY:START -->` … `<!-- USER:OMX:POLICY:END -->` 로 감싼 블록뿐이고(banker `tone-compact`, `anti-drm` 이 이 방식), `--force` 나 덮어쓰기 확인으로 새로 쓰면 그 블록도 사라진다(백업은 `~/.omx/backups/setup/`). 비대화형 `omx setup` 은 기존 AGENTS.md 덮어쓰기를 건너뛴다.
 
 ### OMC ↔ OMX 대응
 OMC(Claude) ↔ OMX(Codex) 는 대체로 대칭이다: `claude mcp`↔`codex mcp`, `~/.claude`↔`~/.codex`,

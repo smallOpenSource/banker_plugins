@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `anti-drm` 스킬. 망분리 PC 의 DRM 이 암호화하는 확장자 대신 대체 확장자로 파일을 만들게 하는 규칙을 켜고 끈다. 기본 금지 확장자는 `.txt` `.pdf` `.ppt` `.pptx` `.doc` `.docx` `.hwp` `.hwpx` `.xls` `.xlsx` `.csv`, 대체 확장자는 `.md` `.html` `.tsv` 다.
+  - 인자는 `on`(기본), `off`, `status`, `config` 다. 처음 켤 때 금지 확장자, 대체 확장자, TSV 구분자(탭, 쉼표)를 묻고 `~/.config/banker/anti-drm.json` 에 둔다. 두 런타임이 이 설정을 함께 쓴다.
+  - 규칙은 `tone-compact` 와 같은 자리에 둔다. Claude Code 는 `rules/banker-anti-drm.md`, Codex 는 AGENTS.md 의 `USER:OMX:POLICY` 블록이다.
+  - 금지 확장자 산출물을 요청받으면 암호화되면 다시 읽지 못한다는 것과 함께 둘 대체 확장자 원본은 DRM 이 보호하지 않는다는 것을 알리고, 확인받은 뒤 만든다. 원본은 대체 확장자로 함께 둔다.
+  - 이미 DRM 이 걸린 파일을 풀거나 변환하지 않고, 읽을 수 없으면 알리기만 한다(평문 사본을 요청하지 않음). 에이전트가 새로 만드는 파일의 확장자만 정하며 조직의 보안 규정이 우선한다. `.md` 와 `.json` 은 anti-drm 이 쓰는 형식이라 금지할 수 없다.
+
+### Changed
+- banker 스킬의 작업 파일이 `.txt` 를 쓰지 않는다. DRM 이 `.txt` 를 암호화하는 PC 에서도 동작하도록 `.md` 로 바꿨다.
+  - `ralph-qa`: 임시 폴더의 파일 목록과 오류 출력
+  - `ultra-chain`: 기준선 `05-baseline.md`, 시험 출력 `qa/local-r<k>.md`, 대조 출력 `visual/compare-r<k>.md`. 이전에 시작한 실행 폴더의 `05-baseline.txt` 는 그대로 읽는다.
+  - `lineage` 3.0.3: 요약 캐시와 detect-secrets 검사용 임시 파일. 3.0.2 까지 쓴 `.txt` 캐시도 읽는다. detect-secrets 는 두 확장자를 같은 형식으로 검사한다.
+  - `3d-intro-build`: 결과물의 엔진 MIT 고지 `scrub-engine.LICENSE.md`
+  - `3d-intro-setup`: 콘솔 샘플 파일 `sample.md`
+  - `front-qa`: 기본 스펙 파일 `docs/note.md`. 없으면 `docs/note.txt` 를 읽는다.
+- `tone-compact` 의 규칙 파일과 Codex 블록을 넣고 빼는 코드를 공통 모듈 `instruction-toggle.mjs` 로 옮겼다. `anti-drm` 이 같은 사본을 쓴다. 출력과 동작은 그대로다. 다만 `AGENTS.override.md` 에 banker 블록만 있으면 내용이 없는 파일로 보고, 다른 banker 블록 때문에 Codex 가 AGENTS.md 를 읽지 않으면 상태와 `on` 결과에서 알린다.
+
 ## [0.17.1] - 2026-10-14
 
 ### Fixed

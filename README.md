@@ -8,7 +8,7 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 61개 + 커맨드 2개**(총 63개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause`, `/progress` 를 묶은 Claude Code 플러그인입니다.\
+banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 62개 + 커맨드 2개**(총 64개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause`, `/progress` 를 묶은 Claude Code 플러그인입니다.\
 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
 
@@ -61,6 +61,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `/graceful-pause` | 작업 도중 방향을 바꾸거나 끼어들고 싶을 때 | 작업 중에 입력해도 바로 전달. 실행 중인 도구 호출이 끝나면 그 단계까지만 마무리하고 멈춘 뒤 지시를 기다림 (Claude Code) |
 | `/progress` | 지금 작업이 어디까지 왔는지 보고 싶을 때 | 진행 상황 패널을 켜고 끔. 세션이 쓰거나 읽은 계획 파일 전체가 위에 접고 펴는 목록으로, 할 일 목록(없으면 요청)과 그 도구 호출이 아래에 보임. 화살표나 제목을 누르면 펼쳐짐 (Claude Code) |
 | `tone-compact` | 답변을 짧은 한글 개조식으로 받고 싶을 때 | 문체 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
+| `anti-drm` | 망분리 PC 의 DRM 이 `.txt`, `.csv` 같은 파일을 암호화해 에이전트가 읽지 못할 때 | 금지 확장자 대신 `.md`, `.html`, `.tsv` 로 만들게 하는 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
 | `omc-patch` | OMC 자동 업데이트 뒤 훅이 느려지거나 훅 프로세스가 쌓일 때, project-memory 가 안 될 때 | 사라진 훅 패치를 다시 적용하고 OMC 자동 업데이트를 고정 |
 | `remains` | 작업 뒤에 남은 버그, 하자, 미검증 항목을 한눈에 보고 싶을 때 | 남은 항목을 표로 정리하고, 등록한 테스트박스에서 시험까지 돌림 |
 | `trouble-shooting` | 문제가 생겨 원인과 해결방법을 정리해야 할 때 | 현상, 문제점, 원인, 해결방법, 조치계획을 표로 간결히 보고(`--no-plan` 은 해결방법까지) |
@@ -135,6 +136,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `cleansing-memory` | 메모리 파일을 문서화된 threshold 내로 정리(중복 최신본화·무손실 압축) |
 | `payload-mon` | 상태표시줄 ctx 옆에 요청 payload 추정치(32MB 한도 대비, 8MB부터) 표시 켜기·끄기 |
 | `tone-compact` | 답변과 새 문서를 ASD-STE100 기반 한글 개조식(표·목록·원어 발음 표기·장식 기호 금지)으로 쓰는 문체 규칙 켜기·끄기(on 기본, 끌 때까지 유지) |
+| `anti-drm` | DRM 이 암호화하는 확장자(기본 11개: 텍스트·오피스·한글·PDF·CSV) 대신 대체 확장자(`.md`·`.html`·`.tsv`)로 파일을 만들게 하는 규칙 켜기·끄기(on 기본, 처음 켤 때 금지 확장자와 대체 확장자를 물음, `config` 로 변경, 끌 때까지 유지) |
 | `omc-patch` | OMC 자동 업데이트 뒤 사라진 훅 패치를 재적용하고 OMC 마켓플레이스 자동 업데이트를 고정(진단·확인·적용·검증·되돌리기). 옛 킷이 블록 안에 넣은 헬퍼(project-memory 꺼짐)를 찾아 고치고, project-memory 훅이 실제로 일하는지 임시 폴더에서 확인 |
 | `remains` | 남은 버그, 하자, 미검증 항목을 찾아 표로 보여 줌. 테스트박스(`~/.config/banker/test-boxes.json`)가 등록돼 있으면 각 OS 에서 시험을 돌려 확인(읽기와 시험만, 고치지 않음) |
 | `trouble-shooting` | 문제를 조사해 현상, 문제점, 원인, 해결방법, 조치계획을 표 하나로 간결히 보고(문제마다 한 행, `--no-plan` 은 해결방법까지, 고치지 않고 보고만) |
@@ -195,7 +197,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 61개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 62개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
@@ -204,7 +206,7 @@ banker uninstall        # 제거
 - Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
 - OMC 5 는 `ultraqa` 를 삭제했습니다. 그래서 Claude Code 의 `all-in-one`·`ultra-init` QA 게이트는 `verify` 순환으로 돌고, Codex 는 OMX `ultraqa` 를 그대로 씁니다.
 - 설치기는 `~/.codex/AGENTS.md` 를 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존). \
-  예외는 사용자가 켠 `tone-compact` 하나입니다. 그 파일 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개를 넣고, `off` 로 뺍니다. \
+  예외는 사용자가 켠 `tone-compact` 와 `anti-drm` 입니다. 각각 그 파일 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개를 넣고, `off` 로 뺍니다. \
   `omx setup --merge-agents` 와 기본 `omx setup` 은 이 블록을 남깁니다. `--force` 나 team 모드를 끈 `omx setup` 처럼 AGENTS.md 를 새로 만들면 사라지므로, 그 뒤 `on` 을 다시 실행합니다.
 
 ## 설정 변경 지점 (Claude Code · Codex)
@@ -243,6 +245,7 @@ banker uninstall        # 제거
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
 | `payload-mon` | `hud/omc-hud-custom.mjs` 에 표시 블록 1개 삽입(`.payload-mon.bak` 백업·멱등·`node --check` 검증) + 래퍼 옆 `hud/payload-mon/` 에 모듈 사본 (`off` 로 원복) | — (Codex에서 실행해도 Claude Code HUD 만 다룸) |
 | `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
+| `anti-drm` | `rules/banker-anti-drm.md` 생성 (`off` 로 삭제) + 설정 `~/.config/banker/anti-drm.json`(두 런타임 공용, `off` 뒤에도 남음) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.anti-drm.bak` 백업·멱등, `off` 로 원복) |
 | `omc-patch` | 활성 OMC 버전의 `scripts/*.mjs` 와 `hooks/hooks.json` 수정(`.omcbak` 백업, `PostToolUse` 훅 제거) + OMC 마켓플레이스 `origin` 을 `omc-pinned://` 로 고정(기록 `~/.claude/omc-local-patches/PINNED`, `revert` 로 원복). 헬퍼 자리 결함은 활성 폴더만 되돌린 뒤 다시 패치. project-memory 확인은 임시 폴더에서만 하고 끝나면 지움 | — (Codex에서 실행해도 Claude Code 의 OMC 캐시만 다룸) |
 | `remains` | 설정 파일 미변경. `~/.config/banker/test-boxes.json` 은 읽기만 함(사용자가 만들거나, 사용자가 준 정보로 확인받고 만듦). 처음 접속하는 박스의 호스트 키가 `~/.ssh/known_hosts` 에 더해짐. 테스트박스에는 임시 폴더를 만들고 끝나면 지움(시간 초과나 중단 때는 시작한 프로세스를 먼저 끝냄, 못 지우면 결과에 표시) | 동일 |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
@@ -300,6 +303,10 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 > `tone-compact` 를 켰다면 제거 전에 런타임마다 `off` 를 실행하세요(Claude Code `/banker:tone-compact off`, Codex `banker-tone-compact` 에 `off`).\
 > 규칙 파일과 블록은 플러그인 밖(`~/.claude/rules/`, `~/.codex/AGENTS.md`)에 있어서, 플러그인을 지워도 남아 계속 적용됩니다.\
 > 이미 지웠다면 `~/.claude/rules/banker-tone-compact.md` 를 지우고, AGENTS.md 에서 `<!-- banker:tone-compact:start -->` 부터 `<!-- banker:tone-compact:end -->` 까지와 그 바깥의 `USER:OMX:POLICY` 표시 두 줄을 지우면 됩니다.
+
+> `anti-drm` 을 켰다면 제거 전에 런타임마다 `off` 를 실행하세요(Claude Code `/banker:anti-drm off`, Codex `banker-anti-drm` 에 `off`).\
+> 규칙 파일과 블록은 플러그인 밖에 있어서, 플러그인을 지워도 남아 계속 적용됩니다.\
+> 이미 지웠다면 `~/.claude/rules/banker-anti-drm.md` 를 지우고, AGENTS.md 에서 `<!-- banker:anti-drm:start -->` 부터 `<!-- banker:anti-drm:end -->` 까지와 그 바깥의 `USER:OMX:POLICY` 표시 두 줄을 지우면 됩니다. 설정 파일 `~/.config/banker/anti-drm.json` 도 지우세요.
 
 > `omc-patch` 를 적용했다면 제거 전에 `/banker:omc-patch revert`(Codex는 `banker-omc-patch` 에 `revert`)를 실행하세요.\
 > 훅 패치와 마켓플레이스 고정은 플러그인 밖(`~/.claude/plugins/`)에 있어서, 플러그인을 지워도 남고 OMC 도 계속 자동 업데이트되지 않습니다.\

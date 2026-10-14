@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.0.2
+version: 3.0.3
 schema_version: 1
 ---
 
@@ -212,7 +212,7 @@ Schema-tolerant 파서: 미지 record type → stderr WARN + 다음 line. `v1`/`
 
 기본 흐름에서는 검토자 요약이 우선이고, 검토자가 `null` 로 둔 턴만 아래 규칙 요약을 쓴다. `--rulebase` 는 규칙 요약만 쓴다.
 
-- 캐시 hit(`~/.cache/lineage/<schema>/<sid>/<uuid>-<digest>.txt`) → 그대로. digest 는 본문+요약기버전
+- 캐시 hit(`~/.cache/lineage/<schema>/<sid>/<uuid>-<digest>.md`, 3.0.2 까지 쓴 `.txt` 도 읽음) → 그대로. digest 는 본문+요약기버전
   해시라 **요약기를 고치면 자동 무효화**된다.
 - miss → head+tail 추출(도입이 순수 의도문이면 결론절을 끝에서 읽어 승격) + 0600 캐시 쓰기.
 - 요약 저장은 항상 **redact 적용 후**(평문 secret 이 디스크에 남지 않음).
@@ -344,7 +344,7 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 
 ~/.cache/lineage/
 ├── stdin-id.key   (stdin 턴 id 의 HMAC 키, 0600. --purge-cache 로 지우면 stdin id 가 바뀐다)
-└── <schema_version>/<session_id>/<turn_uuid>-<digest>.txt       (규칙 요약, 0700/0600)
+└── <schema_version>/<session_id>/<turn_uuid>-<digest>.md        (규칙 요약, 0700/0600)
                                   <turn_uuid>-<digest>-llm.json  (검토자 결정)
 
 work/.lineage-review.json, .lineage-review.part-K.json   (검토 중에만, 0600)

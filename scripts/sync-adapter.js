@@ -1,31 +1,33 @@
 #!/usr/bin/env node
 'use strict';
 /*
- * Shared-module sync guard. Single source of truth = the BUILD copies in
- * skills/3d-intro-build/references/. Each listed file is mirrored, byte-identical, into the other
- * skill that ships it, because banker skills are installed (Claude and Codex) as separate folders.
- *   azure-adapter.mjs, video-pool.mjs     -> 3d-intro-setup      (Azure image + Sora, WAN key pool)
- *   preview-lib.mjs, serve.mjs, curate.mjs -> motion-graphic-make (local servers, review page)
- *   preview-lib.mjs, serve.mjs             -> ultra-chain         (local server for the mock and the report)
+ * Shared-module sync guard. banker skills are installed (Claude and Codex) as separate folders, so a
+ * module two skills use is kept as a byte-identical copy in each. Each pair names its source of truth:
+ *   3d-intro-build/references: azure-adapter.mjs, video-pool.mjs     -> 3d-intro-setup      (Azure image + Sora, WAN key pool)
+ *   3d-intro-build/references: preview-lib.mjs, serve.mjs, curate.mjs -> motion-graphic-make (local servers, review page)
+ *   3d-intro-build/references: preview-lib.mjs, serve.mjs             -> ultra-chain         (local server for the mock and the report)
+ *   tone-compact/scripts: instruction-toggle.mjs                      -> anti-drm            (rules on and off for Claude Code and Codex)
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
- *   node scripts/sync-adapter.js --check  # exit 1 if any pair differs (used in CI/prepublish)
+ *   node scripts/sync-adapter.js --check  # exit 1 if any pair differs
  */
 const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const MIRRORS = [
-  { skill: '3d-intro-setup', files: ['azure-adapter.mjs', 'video-pool.mjs'] },
-  { skill: 'motion-graphic-make', files: ['preview-lib.mjs', 'serve.mjs', 'curate.mjs'] },
-  { skill: 'ultra-chain', files: ['preview-lib.mjs', 'serve.mjs'] },
+  { from: '3d-intro-build/references', to: '3d-intro-setup/references', files: ['azure-adapter.mjs', 'video-pool.mjs'] },
+  { from: '3d-intro-build/references', to: 'motion-graphic-make/references', files: ['preview-lib.mjs', 'serve.mjs', 'curate.mjs'] },
+  { from: '3d-intro-build/references', to: 'ultra-chain/references', files: ['preview-lib.mjs', 'serve.mjs'] },
+  { from: 'tone-compact/scripts', to: 'anti-drm/scripts', files: ['instruction-toggle.mjs'] },
 ];
 const check = process.argv.includes('--check');
 
 let failed = false;
-for (const { skill, file } of MIRRORS.flatMap((m) => m.files.map((f) => ({ skill: m.skill, file: f })))) {
-  const canonicalPath = path.join(root, 'skills', '3d-intro-build', 'references', file);
-  const mirrorPath = path.join(root, 'skills', skill, 'references', file);
+for (const { from, to, file } of MIRRORS.flatMap((m) => m.files.map((f) => ({ from: m.from, to: m.to, file: f })))) {
+  const skill = to.split('/')[0];
+  const canonicalPath = path.join(root, 'skills', ...from.split('/'), file);
+  const mirrorPath = path.join(root, 'skills', ...to.split('/'), file);
 
   if (!fs.existsSync(canonicalPath)) {
     console.error(`ADAPTER SOURCE MISSING: ${path.relative(root, canonicalPath)} (source of truth).`);

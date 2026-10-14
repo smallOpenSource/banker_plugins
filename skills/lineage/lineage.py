@@ -189,7 +189,7 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
         from detect_secrets import SecretsCollection
         from detect_secrets.settings import default_settings
         import tempfile
-        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
                                          encoding="utf-8") as tf:
             tf.write(out)
             tmp = tf.name
@@ -734,6 +734,17 @@ def _page_clean_turn(t, extra, mode):
     return dict(t, text=clean(t["text"]), parts=[clean(p) for p in t.get("parts") or []])
 
 
+def _read_cached(p):
+    """The summary cached at p, else at the same name with .txt, which 3.0.2 and earlier wrote.
+    None when neither can be read: missing, or bytes that are not UTF-8 (a DRM encrypted them)."""
+    for cached in (p, p.with_name(p.stem + ".txt")):
+        try:
+            return cached.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            continue
+    return None
+
+
 def read_or_summarize(turn: dict, session_id: str, rebuild: bool = False,
                       redact_extra=None, redact_mode: str = "full"):
     """Return (summary, cache_hit). Cache key includes the content hash AND the
@@ -745,15 +756,13 @@ def read_or_summarize(turn: dict, session_id: str, rebuild: bool = False,
     ).hexdigest()[:8]
     try:                                          # ids come from the transcript: keep them in the cache
         p = (cache_dir(_safe_name(turn.get("session") or session_id))
-             / f"{_safe_name(turn['uuid'])}-{digest}.txt")
+             / f"{_safe_name(turn['uuid'])}-{digest}.md")
     except OSError as e:                          # no writable cache: summarize anyway
         _warn_once("_no_cache", f"cache unavailable ({e}); summaries are not cached")
         p = None
-    if p is not None and p.exists() and not rebuild:
-        try:
-            return p.read_text(encoding="utf-8").strip(), True
-        except (OSError, UnicodeDecodeError):
-            pass
+    cached = None if p is None or rebuild else _read_cached(p)
+    if cached is not None:
+        return cached, True
     redacted = summarize_turn(_page_clean_turn(turn, redact_extra, redact_mode))
     if p is not None:
         try:

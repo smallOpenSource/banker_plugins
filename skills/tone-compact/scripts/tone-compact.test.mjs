@@ -728,3 +728,18 @@ test("line-ending and BOM changes by an editor do not make a block or rules file
   turnOff("codex", bom.o);
   assert.ok(!existsSync(bom.agents), "nothing is left of a file on created");
 });
+
+test("another banker skill's block alone in the override: ours goes to AGENTS.md, and on and status say Codex reads the override", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const other = [KEEP_OPEN, "<!-- banker:anti-drm:start -->", "other rules", "<!-- banker:anti-drm:end -->", KEEP_CLOSE, ""].join("\n");
+  writeFileSync(s.override, other);
+  const r = turnOn("codex", s.o);
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /다른 banker 블록\(anti-drm\)만 있어 Codex 가 AGENTS.md 를 읽지 않습니다/);
+  assert.equal(blocks(read(s.agents)), 1, "our block goes to AGENTS.md");
+  assert.equal(read(s.override), other, "the other skill's block is left where it is");
+  assert.match(status(s.o).message, /Codex: 꺼짐, 단 AGENTS.override.md 에 다른 banker 블록\(anti-drm\)만 있어/);
+  assert.ok(turnOff("codex", s.o).ok);
+  assert.equal(read(s.agents), "# base\n");
+});

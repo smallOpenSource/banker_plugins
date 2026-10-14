@@ -2520,6 +2520,74 @@ class TestPageRedaction(_ReviewCase):
         self.assertNotIn("ant-api03", err)
 
 
+class TestCacheFileNames(_ReviewCase):
+    """Summaries are cached as .md, which a DRM that encrypts .txt leaves readable (3.0.3).
+    A summary cached as .txt by 3.0.2 or earlier is still read."""
+
+    TEXT = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
+
+    def _digest(self):
+        return hashlib.sha256((self.TEXT + chr(0) + "s" + str(L.SUMMARIZER_VERSION)).encode()).hexdigest()[:8]
+
+    def test_a_new_summary_is_cached_as_md(self):
+        _, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertFalse(hit)
+        self.assertEqual(sorted(os.listdir(L.cache_dir("s"))), ["a1-%s.md" % self._digest()])
+
+    def test_a_summary_cached_as_txt_by_3_0_2_is_reused(self):
+        (L.cache_dir("s") / ("a1-%s.txt" % self._digest())).write_text("옛 캐시의 요약", encoding="utf-8")
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertTrue(hit)
+        self.assertEqual(summary, "옛 캐시의 요약")
+
+    def test_an_unreadable_cache_file_is_summarized_again(self):
+        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_bytes(bytes([0xFF, 0xFE, 0x00]) + b"encrypted")
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertFalse(hit)
+        self.assertTrue(summary)
+
+    def test_detect_secrets_scans_a_temp_file_that_is_not_txt(self):
+        import types
+        from unittest import mock
+        seen = []
+
+        class Collection:
+            files = []
+
+            def scan_file(self, name):
+                seen.append(name)
+
+        ds = types.ModuleType("detect_secrets")
+        ds.SecretsCollection = Collection
+        settings = types.ModuleType("detect_secrets.settings")
+        settings.default_settings = contextlib.nullcontext
+        with mock.patch.dict(sys.modules, {"detect_secrets": ds, "detect_secrets.settings": settings}):
+            L.redact("평범한 글")
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(seen[0].endswith(".md"), seen[0])
+
+    def test_detect_secrets_finds_the_same_in_md_as_in_txt(self):
+        import importlib.util
+        if importlib.util.find_spec("detect_secrets") is None:
+            self.skipTest("detect-secrets is not installed")
+        from detect_secrets import SecretsCollection
+        from detect_secrets.settings import default_settings
+        chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        key = "".join(chars[(i * 37 + 11) % 55] for i in range(40))
+        body = "pass" + 'word = "' + key[:16] + '"\napi_' + 'key = "' + key + '"\n'
+        found = {}
+        for suffix in (".txt", ".md"):
+            path = os.path.join(self.d, "sample" + suffix)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(body)
+            col = SecretsCollection()
+            with default_settings():
+                col.scan_file(path)
+            found[suffix] = sorted((s.type, s.secret_value) for name in col.files for s in col[name])
+        self.assertTrue(found[".md"], "the sample holds findings")
+        self.assertEqual(found[".txt"], found[".md"])
+
+
 class TestRulebaseMatches2x(unittest.TestCase):
     def test_rulebase_output_is_byte_for_byte_the_2x_output(self):
         try:
