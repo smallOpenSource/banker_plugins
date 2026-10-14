@@ -31,6 +31,7 @@ import {
   toggleSpec,
   turnOff as toggleOff,
   turnOn as toggleOn,
+  where,
 } from "./instruction-toggle.mjs";
 
 const RULES_START = "<!-- tone-compact:rules:start -->";
@@ -78,7 +79,7 @@ export function status(opts = {}) {
   try {
     rules = loadRules(o);
   } catch (e) {
-    lines.push(`- 규칙 원문을 읽지 못해 버전은 비교하지 않음 (${e.code || e.message})`);
+    lines.push(`- 규칙 원문을 읽지 못해 버전은 비교하지 않음 (${where(e.code || e.message)})`);
   }
   lines.push(...stateLines(TOGGLE, o, rules));
   return { ok: true, message: lines.join("\n") };
@@ -131,7 +132,7 @@ function main(argv, env = process.env) {
     process.stdout.write(`${message}\n`);
     return ok ? 0 : 1;
   } catch (e) {
-    process.stdout.write(`예기치 못한 오류로 중단했습니다: ${e.message}\nstatus 로 상태를 확인하세요.\n`);
+    process.stdout.write(`예기치 못한 오류로 중단했습니다: ${where(e.message)}\nstatus 로 상태를 확인하세요.\n`);
     return 2;
   }
 }

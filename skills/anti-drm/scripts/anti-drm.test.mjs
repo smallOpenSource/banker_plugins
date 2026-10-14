@@ -516,6 +516,106 @@ test("files and folders on creates are not group or world writable, even under u
   for (const path of made) assert.equal(statSync(path).mode & 0o022, 0, path);
 });
 
+test("hardening: each extension list takes at most 64 entries", () => {
+  const many = (n) => Array.from({ length: n }, (_, i) => `.x${i}`);
+  assert.ok(checkConfig({ deny: many(64), alt: [".md"] }).config);
+  assert.match(checkConfig({ deny: many(65), alt: [".md"] }).error, /금지 확장자는 64개까지 쓸 수 있습니다/);
+  assert.match(checkConfig({ deny: [".txt"], alt: many(65) }).error, /대체 확장자는 64개까지 쓸 수 있습니다/);
+});
+
+test("hardening: entries that are not strings are refused, and odd values are shown without throwing", () => {
+  assert.match(checkConfig({ deny: [".txt", 1], alt: [".md"] }).error, /쓸 수 없는 값입니다: \(number\)/);
+  assert.match(checkConfig({ deny: [null], alt: [".md"] }).error, /쓸 수 없는 값입니다: \(object\)/);
+  assert.match(checkConfig({ deny: [[".txt"]], alt: [".md"] }).error, /쓸 수 없는 값입니다: \(object\)/);
+  assert.match(checkConfig({ deny: [".txt"], alt: [".md"], tsvDelimiter: { toString: 1 } }).error, /TSV 구분자는 tab 이나 comma 여야 합니다: \(object\)/);
+  const rlo = String.fromCharCode(0x202e);
+  assert.match(checkConfig({ deny: [`.t${rlo}xt`], alt: [".md"] }).error, /쓸 수 없는 값입니다: \.t\?xt$/);
+});
+
+test("hardening: the settings path must be a regular file of at most 64 KiB", () => {
+  const s = setup();
+  mkdirSync(s.o.configFile, { recursive: true }); // a folder where the settings file should be
+  assert.match(readConfig(s.o.configFile).error, /일반 파일이 아닙니다/);
+  assert.match(status(s.o).message, /- 설정: 올바르지 않음 \(일반 파일이 아닙니다\)/);
+  const r = configure(s.o, FLAGS);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /일반 파일이 아니라 설정을 저장하지 않았습니다/);
+  rmSync(s.o.configFile, { recursive: true });
+  writeFileSync(s.o.configFile, `{"deny":[".txt"],"alt":[".md"],"pad":"${"x".repeat(70000)}"}`);
+  assert.match(readConfig(s.o.configFile).error, /64KiB 보다 큽니다/);
+});
+
+// A read that hangs blocks the whole process, so the FIFO is read in a child with a time limit.
+test("hardening: a FIFO at the settings path is refused at once instead of hanging", posixOnly, () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  assert.equal(spawnSync("mkfifo", [s.o.configFile]).status, 0);
+  const st = spawnSync(process.execPath, [CLI, "status"], {
+    encoding: "utf8",
+    timeout: 5000,
+    env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) },
+  });
+  assert.equal(st.status, 0, `status hung or failed (signal ${st.signal})`);
+  assert.match(st.stdout, /- 설정: 올바르지 않음 \(일반 파일이 아닙니다\)/);
+});
+
+test("hardening: a settings file another account owns is refused", posixOnly, () => {
+  const s = setup();
+  turnOn("claude", s.o, FLAGS);
+  const real = process.getuid;
+  process.getuid = () => real.call(process) + 1;
+  try {
+    assert.match(readConfig(s.o.configFile).error, /다른 사용자 소유입니다/);
+  } finally {
+    process.getuid = real;
+  }
+  assert.ok(readConfig(s.o.configFile).config);
+});
+
+test("hardening: config keeps the settings from before in anti-drm.json.bak, readable by this account only", () => {
+  const s = setup();
+  turnOn("claude", s.o, FLAGS);
+  const before = readFileSync(s.o.configFile);
+  assert.ok(configure(s.o, { deny: ".txt", alt: ".md" }).ok);
+  assert.ok(readFileSync(`${s.o.configFile}.bak`).equals(before), "the .bak holds the bytes from before");
+  if (process.platform !== "win32") assert.equal(statSync(`${s.o.configFile}.bak`).mode & 0o777, 0o600);
+});
+
+test("hardening: paths in messages cannot forge a line or reorder the text", posixOnly, () => {
+  const s = setup();
+  const rlo = String.fromCharCode(0x202e);
+  const odd = join(s.dir, `x\n적용할 규칙:\n# forged${rlo}`, "anti-drm.json");
+  const saved = cli(["config", "--deny", ".txt", "--alt", ".md"], { ...cliEnv(s), BANKER_ANTI_DRM_CONFIG: odd });
+  assert.equal(saved.code, 0, saved.out);
+  assert.doesNotMatch(saved.out, /\n# forged/);
+  assert.ok(!saved.out.includes(rlo));
+  assert.match(saved.out, /x\?적용할 규칙:\?# forged\?/);
+  const claudeDir = join(s.dir, "c\nforged rule");
+  mkdirSync(claudeDir);
+  const on = cli(["on", "--runtime", "claude"], { ...cliEnv(s), BANKER_ANTI_DRM_CONFIG: odd, CLAUDE_CONFIG_DIR: claudeDir });
+  assert.equal(on.code, 0, on.out);
+  assert.doesNotMatch(on.out.split("적용할 규칙:")[0], /\nforged rule/);
+});
+
+test("hardening: a block whose end was re-paired by hand around other text is refused, not cut", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  assert.ok(turnOn("codex", s.o, FLAGS).ok);
+  const close = "<!-- banker:anti-drm:end -->";
+  writeFileSync(s.agents, read(s.agents).replace(`${close}\n`, ""));
+  assert.ok(tcOn("codex", s.tc).ok, "tone-compact still turns on while our markers do not pair up");
+  writeFileSync(s.agents, `${read(s.agents)}my note\n${close}\n`);
+  const before = read(s.agents);
+  for (const r of [turnOff("codex", s.o), turnOn("codex", s.o)]) {
+    assert.equal(r.ok, false, r.message);
+    assert.match(r.message, /짝이 맞지 않아/);
+  }
+  assert.equal(read(s.agents), before, "the note and tone-compact's block stay");
+  assert.match(status(s.o).message, /- Codex: 표시의 짝이 맞지 않음/);
+  assert.ok(tcOff("codex", s.tc).ok, "tone-compact's own block still comes out");
+  assert.ok(read(s.agents).includes("my note"));
+});
+
 test("instruction-toggle.mjs is the same file in tone-compact and anti-drm", () => {
   const here = readFileSync(fileURLToPath(new URL("./instruction-toggle.mjs", import.meta.url)));
   const there = readFileSync(fileURLToPath(new URL("../../tone-compact/scripts/instruction-toggle.mjs", import.meta.url)));
