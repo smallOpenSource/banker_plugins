@@ -139,6 +139,15 @@ export function writeFresh(file, data, mode = 0o644) {
 /** Whether an error is about permissions or a read-only file system. */
 export const denied = (e) => e.code === "EACCES" || e.code === "EPERM" || e.code === "EROFS";
 
+/**
+ * A path or an error text as a message shows it. Control, format, line and
+ * paragraph separator, private-use, unassigned and variation selector
+ * characters become "?": a path from the environment cannot start a line of
+ * its own, reorder the text around it, or hide text after a visible letter.
+ */
+export const where = (value) =>
+  String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}]/gu, "?");
+
 // ---- Claude Code: one rules file that is banker's alone ----
 
 const claudeFile = (t, o) => join(o.claudeDir, "rules", `banker-${t.slug}.md`);
@@ -157,22 +166,23 @@ function claudeState(t, file, rules) {
 
 function claudeOn(t, o, getRules) {
   const file = claudeFile(t, o);
-  if (!isDir(o.claudeDir)) return refuse(`Claude Code 설정 폴더가 없습니다: ${o.claudeDir}`);
+  const shown = where(file);
+  if (!isDir(o.claudeDir)) return refuse(`Claude Code 설정 폴더가 없습니다: ${where(o.claudeDir)}`);
   const rules = getRules();
   const state = claudeState(t, readFile(file), rules);
-  if (state === "foreign") return refuse(`같은 이름의 다른 파일이 있어 그대로 두었습니다: ${file}`);
-  if (state === "on") return done(`Claude Code: 이미 켜져 있습니다 (변경 없음). ${file}`);
+  if (state === "foreign") return refuse(`같은 이름의 다른 파일이 있어 그대로 두었습니다: ${shown}`);
+  if (state === "on") return done(`Claude Code: 이미 켜져 있습니다 (변경 없음). ${shown}`);
   try {
     mkdirSync(dirname(file), { recursive: true, mode: 0o755 });
     writeFresh(file, claudeText(t, rules));
   } catch (e) {
-    if (denied(e)) return refuse(`쓸 권한이 없어 켜지 못했습니다 (${e.code}): ${file}`);
+    if (denied(e)) return refuse(`쓸 권한이 없어 켜지 못했습니다 (${e.code}): ${shown}`);
     throw e;
   }
   return done(
     state === "stale"
-      ? `Claude Code: ${t.updatedText}. ${file}`
-      : `Claude Code: 켰습니다. 다음 세션부터 자동 적용됩니다. ${file}`,
+      ? `Claude Code: ${t.updatedText}. ${shown}`
+      : `Claude Code: 켰습니다. 다음 세션부터 자동 적용됩니다. ${shown}`,
   );
 }
 
@@ -180,14 +190,14 @@ function claudeOff(t, o) {
   const file = claudeFile(t, o);
   const state = claudeState(t, readFile(file));
   if (state === "off") return done("Claude Code: 이미 꺼져 있습니다 (변경 없음).");
-  if (state === "foreign") return refuse(`같은 이름의 다른 파일이 있어 그대로 두었습니다: ${file}`);
+  if (state === "foreign") return refuse(`같은 이름의 다른 파일이 있어 그대로 두었습니다: ${where(file)}`);
   try {
     rmSync(file);
   } catch (e) {
-    if (denied(e)) return refuse(`지울 권한이 없어 끄지 못했습니다 (${e.code}): ${file}`);
+    if (denied(e)) return refuse(`지울 권한이 없어 끄지 못했습니다 (${e.code}): ${where(file)}`);
     throw e;
   }
-  return done(`Claude Code: 껐습니다. 다음 세션부터 적용되지 않습니다. ${file}`);
+  return done(`Claude Code: 껐습니다. 다음 세션부터 적용되지 않습니다. ${where(file)}`);
 }
 
 // ---- Codex: one block in the global instructions file Codex reads ----
@@ -215,26 +225,46 @@ function spanOf(lines, offsets, first, last) {
   return { cut: offsets[top] - joint, from: offsets[top], to: offsets[bottom] + lines[bottom].length, blankBefore };
 }
 
-/**
- * Where the blocks between whole lines `open` and `close` sit in text, or null
- * when those markers are not whole lines that open and close in turn. turnOn
- * and turnOff refuse null, so a marker quoted inside a sentence can never make
- * them cut the user's own text.
- */
-export function blockSpansOf(text, open, close) {
-  const lines = text.split(/(?<=\n)/);
+// Where each line starts in the text.
+function lineOffsets(lines) {
   const offsets = [];
   let at = 0;
   for (const line of lines) {
     offsets.push(at);
     at += line.length;
   }
+  return offsets;
+}
+
+// Any management marker, a banker block's or OMX's, anywhere on a line.
+const ANY_MARKER = /<!-- (?:banker:[a-z0-9-]+:(?:start|end)|USER:OMX:POLICY:(?:START|END)) -->/;
+
+/**
+ * Whether text quotes any management marker. Rules must not: a block holding
+ * one would be refused as soon as it is written, and could never come out.
+ */
+export const hasMarker = (text) => ANY_MARKER.test(text);
+// Whether a marker sits between a block's first and last line: then its end was
+// moved, by hand or by an editor, and cutting to it would take other text along.
+const markerInside = (lines, first, last) => lines.slice(first + 1, last).some((line) => ANY_MARKER.test(line));
+
+/**
+ * Where the blocks between whole lines `open` and `close` sit in text, or null
+ * when those markers are not whole lines that open and close in turn, or when
+ * another management marker sits inside a block. turnOn and turnOff refuse
+ * null, so a marker quoted inside a sentence, or an end put back by hand around
+ * other text, can never make them cut the user's own text.
+ */
+export function blockSpansOf(text, open, close) {
+  const lines = text.split(/(?<=\n)/);
+  const offsets = lineOffsets(lines);
   const spans = [];
   let first = -1;
   for (let i = 0; i < lines.length; i++) {
     const bare = bareAt(lines, i);
     if (bare === open && first === -1) first = i;
     else if (bare === close && first !== -1) {
+      if (markerInside(lines, first, i)) return null;
       spans.push(spanOf(lines, offsets, first, i));
       first = -1;
     } else if (lines[i].includes(open) || lines[i].includes(close)) return null;
@@ -349,7 +379,7 @@ function writeBlocked(changes) {
       try {
         accessSync(path, constants.W_OK);
       } catch (e) {
-        return `쓸 권한이 없어 그대로 두었습니다 (${e.code || e.message}): ${path}`;
+        return `쓸 권한이 없어 그대로 두었습니다 (${where(e.code || e.message)}): ${where(path)}`;
       }
     }
   }
@@ -380,19 +410,19 @@ const shadowNote = (files) =>
 
 // The refusal for files on and off must not touch, or null.
 function codexRefusal(t, files, state) {
-  if (state === "notutf8") return refuse(`UTF-8 이 아닌 파일이라 그대로 두었습니다: ${files.all.find(binary).path}`);
-  if (state === "unpaired") return refuse(`${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다: ${files.all.find(unpaired).path}`);
+  if (state === "notutf8") return refuse(`UTF-8 이 아닌 파일이라 그대로 두었습니다: ${where(files.all.find(binary).path)}`);
+  if (state === "unpaired") return refuse(`${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다: ${where(files.all.find(unpaired).path)}`);
   return null;
 }
 
 function codexOn(t, o, getRules) {
-  if (!isDir(o.codexDir)) return refuse(`Codex 설정 폴더가 없습니다: ${o.codexDir}`);
+  if (!isDir(o.codexDir)) return refuse(`Codex 설정 폴더가 없습니다: ${where(o.codexDir)}`);
   const rules = getRules();
   const files = codexFiles(t, o);
   const state = codexState(t, files, rules);
   const refusal = codexRefusal(t, files, state);
   if (refusal) return refusal;
-  const tail = `${files.target.path}${shadowNote(files)}`;
+  const tail = `${where(files.target.path)}${shadowNote(files)}`;
   if (state === "on") return done(`Codex: 이미 켜져 있습니다 (변경 없음). ${tail}`);
   const changes = [{ file: files.target, after: withBlock(t, stripped(files.target), rules) }];
   if (hasBlock(files.other)) changes.push({ file: files.other, after: stripped(files.other) });
@@ -406,7 +436,7 @@ function codexOn(t, o, getRules) {
 }
 
 function codexOff(t, o) {
-  if (!isDir(o.codexDir)) return done(`Codex: 설정 폴더가 없어 끌 것이 없습니다 (변경 없음). ${o.codexDir}`);
+  if (!isDir(o.codexDir)) return done(`Codex: 설정 폴더가 없어 끌 것이 없습니다 (변경 없음). ${where(o.codexDir)}`);
   const files = codexFiles(t, o);
   const refusal = codexRefusal(t, files, codexState(t, files));
   if (refusal) return refusal;
@@ -415,7 +445,7 @@ function codexOff(t, o) {
   const why = writeBlocked(changes);
   if (why) return refuse(why);
   apply(t, changes);
-  return done(`Codex: 껐습니다. 다음 세션부터 적용되지 않습니다. ${changes.map((c) => c.file.path).join(", ")}`);
+  return done(`Codex: 껐습니다. 다음 세션부터 적용되지 않습니다. ${changes.map((c) => where(c.file.path)).join(", ")}`);
 }
 
 // ---- status ----
@@ -445,9 +475,9 @@ function stateText(t, { state, who }) {
 function describe(t, name, look) {
   try {
     const found = look();
-    return `- ${name}: ${stateText(t, found)} (${found.path})`;
+    return `- ${name}: ${stateText(t, found)} (${where(found.path)})`;
   } catch (e) {
-    return `- ${name}: 읽을 수 없음 (${e.code || e.message})`;
+    return `- ${name}: 읽을 수 없음 (${where(e.code || e.message)})`;
   }
 }
 

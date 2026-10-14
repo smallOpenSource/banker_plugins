@@ -27,10 +27,12 @@ import {
   KEEP_OPEN,
   RUNTIMES,
   blockSpansOf,
+  hasMarker,
   stateLines,
   toggleSpec,
   turnOff as toggleOff,
   turnOn as toggleOn,
+  where,
 } from "./instruction-toggle.mjs";
 
 const RULES_START = "<!-- tone-compact:rules:start -->";
@@ -60,7 +62,7 @@ export function rulesOf(skillText) {
     throw new Error("SKILL.md 에서 규칙 구간(tone-compact:rules 표시)을 찾지 못했습니다");
   }
   const rules = text.slice(start + RULES_START.length, end).replace(/^\n+|\n+$/g, "");
-  if (rules === "" || MARKERS.some((m) => rules.includes(m))) {
+  if (rules === "" || MARKERS.some((m) => rules.includes(m)) || hasMarker(rules)) {
     throw new Error("SKILL.md 의 규칙 구간이 비었거나 관리 표시를 담고 있습니다");
   }
   return rules;
@@ -78,7 +80,7 @@ export function status(opts = {}) {
   try {
     rules = loadRules(o);
   } catch (e) {
-    lines.push(`- 규칙 원문을 읽지 못해 버전은 비교하지 않음 (${e.code || e.message})`);
+    lines.push(`- 규칙 원문을 읽지 못해 버전은 비교하지 않음 (${where(e.code || e.message)})`);
   }
   lines.push(...stateLines(TOGGLE, o, rules));
   return { ok: true, message: lines.join("\n") };
@@ -131,7 +133,7 @@ function main(argv, env = process.env) {
     process.stdout.write(`${message}\n`);
     return ok ? 0 : 1;
   } catch (e) {
-    process.stdout.write(`예기치 못한 오류로 중단했습니다: ${e.message}\nstatus 로 상태를 확인하세요.\n`);
+    process.stdout.write(`예기치 못한 오류로 중단했습니다: ${where(e.message)}\nstatus 로 상태를 확인하세요.\n`);
     return 2;
   }
 }

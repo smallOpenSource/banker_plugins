@@ -5,6 +5,7 @@
 ### Added
 - `anti-drm` 스킬. 망분리 PC 의 DRM 이 암호화하는 확장자 대신 대체 확장자로 파일을 만들게 하는 규칙을 켜고 끈다. 기본 금지 확장자는 `.txt` `.pdf` `.ppt` `.pptx` `.doc` `.docx` `.hwp` `.hwpx` `.xls` `.xlsx` `.csv`, 대체 확장자는 `.md` `.html` `.tsv` 다.
   - 인자는 `on`(기본), `off`, `status`, `config` 다. 처음 켤 때 금지 확장자, 대체 확장자, TSV 구분자(탭, 쉼표)를 묻고 `~/.config/banker/anti-drm.json` 에 둔다. 두 런타임이 이 설정을 함께 쓴다.
+  - 설정 파일은 64KiB 이하의 일반 파일만 읽는다. 소유자는 이 계정이나, root 만 쓸 수 있는 root 여야 한다. 목록은 각각 64개까지 받는다. 그 자리에 anti-drm 이 쓰지 않은 파일이 있으면 `anti-drm.json.bak` 에 한 번 남기고, 폴더, FIFO, 64KiB 를 넘거나 읽을 수 없는 파일은 덮어쓰지 않는다. 메시지의 경로에서 제어 문자와 서식 문자는 `?` 로 바꾼다.
   - 규칙은 `tone-compact` 와 같은 자리에 둔다. Claude Code 는 `rules/banker-anti-drm.md`, Codex 는 AGENTS.md 의 `USER:OMX:POLICY` 블록이다.
   - 금지 확장자 산출물을 요청받으면 암호화되면 다시 읽지 못한다는 것과 함께 둘 대체 확장자 원본은 DRM 이 보호하지 않는다는 것을 알리고, 확인받은 뒤 만든다. 원본은 대체 확장자로 함께 둔다.
   - 이미 DRM 이 걸린 파일을 풀거나 변환하지 않고, 읽을 수 없으면 알리기만 한다(평문 사본을 요청하지 않음). 에이전트가 새로 만드는 파일의 확장자만 정하며 조직의 보안 규정이 우선한다. `.md` 와 `.json` 은 anti-drm 이 쓰는 형식이라 금지할 수 없다.
@@ -17,7 +18,7 @@
   - `3d-intro-build`: 결과물의 엔진 MIT 고지 `scrub-engine.LICENSE.md`
   - `3d-intro-setup`: 콘솔 샘플 파일 `sample.md`
   - `front-qa`: 기본 스펙 파일 `docs/note.md`. 없으면 `docs/note.txt` 를 읽는다.
-- `tone-compact` 의 규칙 파일과 Codex 블록을 넣고 빼는 코드를 공통 모듈 `instruction-toggle.mjs` 로 옮겼다. `anti-drm` 이 같은 사본을 쓴다. 출력과 동작은 그대로다. 다만 `AGENTS.override.md` 에 banker 블록만 있으면 내용이 없는 파일로 보고, 다른 banker 블록 때문에 Codex 가 AGENTS.md 를 읽지 않으면 상태와 `on` 결과에서 알린다.
+- `tone-compact` 의 규칙 파일과 Codex 블록을 넣고 빼는 코드를 공통 모듈 `instruction-toggle.mjs` 로 옮겼다. `anti-drm` 이 같은 사본을 쓴다. 블록 안에 다른 관리 표시 줄이 있으면(손으로 짝을 다시 맞춘 경우) 넣고 빼기를 거부해 남의 글을 자르지 않는다. 메시지의 경로와 오류 문구에서 제어 문자와 서식 문자를 `?` 로 바꾼다. 출력과 동작은 그대로다. 다만 `AGENTS.override.md` 에 banker 블록만 있으면 내용이 없는 파일로 보고, 다른 banker 블록 때문에 Codex 가 AGENTS.md 를 읽지 않으면 상태와 `on` 결과에서 알린다.
 
 ## [0.17.1] - 2026-10-14
 
