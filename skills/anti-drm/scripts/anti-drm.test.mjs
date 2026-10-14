@@ -159,6 +159,16 @@ test("rules: the wording follows the replacements and the TSV delimiter", () => 
   assert.ok(own.includes("| `.log` | `.md` |"));
 });
 
+test("the rules never ask for a plaintext copy, say a replacement copy is not protected, and put the organization's rules first", () => {
+  assert.ok(!RULES.includes("평문 사본을 요청함"), "no request for a plaintext copy of a protected file");
+  assert.ok(RULES.includes("평문 사본을 요청하거나 권하지 않음"));
+  assert.ok(RULES.includes("함께 둘 대체 확장자 원본은 DRM 이 보호하지 않음"));
+  assert.ok(RULES.includes("조직의 보안 규정이 이 규칙보다 우선함"));
+  assert.ok(RULES.includes("이미 DRM 이 걸린 파일을 풀거나 다른 형식으로 바꾸지 않음"));
+  assert.doesNotMatch(RULES, /DRM 을 피하/, "the rules do not claim to avoid DRM while steering away from it");
+  assert.doesNotMatch(read(SKILL), /DRM 을 피하/);
+});
+
 test("the template is in SKILL.md once, with each placeholder once and no management marker", () => {
   const wrap = (body) => `a\n<!-- anti-drm:rules:start -->\n${body}\n<!-- anti-drm:rules:end -->\nb\n`;
   assert.equal(templateOf(wrap("x {{map}} y {{alts}}").replace(/\n/g, "\r\n")), "x {{map}} y {{alts}}");
