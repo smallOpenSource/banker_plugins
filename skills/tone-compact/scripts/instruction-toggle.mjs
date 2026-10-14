@@ -465,12 +465,23 @@ const shadowNote = (files) =>
     ? ""
     : `\n주의: AGENTS.override.md 에 다른 banker 블록(${files.shadowers.join(", ")})만 있어 Codex 가 AGENTS.md 를 읽지 않습니다. 그 스킬에서 on 을 실행해 블록을 옮기세요.`;
 
+// The file a refused state is about: the folder or FIFO, the file that is not UTF-8, or the one whose markers do
+// not pair up; null in any other state.
+function problemFile(files, state) {
+  const which = { notregular: special, notutf8: binary, unpaired }[state];
+  return which ? files.all.find(which) : null;
+}
+
 // The refusal for files on and off must not touch, or null.
 function codexRefusal(t, files, state) {
-  if (state === "notregular") return refuse(`일반 파일이 아니라 그대로 두었습니다: ${where(files.all.find(special).path)}`);
-  if (state === "notutf8") return refuse(`UTF-8 이 아닌 파일이라 그대로 두었습니다: ${where(files.all.find(binary).path)}`);
-  if (state === "unpaired") return refuse(`${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다: ${where(files.all.find(unpaired).path)}`);
-  return null;
+  const file = problemFile(files, state);
+  if (!file) return null;
+  const why = {
+    notregular: "일반 파일이 아니라 그대로 두었습니다",
+    notutf8: "UTF-8 이 아닌 파일이라 그대로 두었습니다",
+    unpaired: `${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다`,
+  }[state];
+  return refuse(`${why}: ${where(file.path)}`);
 }
 
 // What codexOn says it did. A block Codex does not read, because other banker
@@ -555,7 +566,7 @@ function codexLook(t, o, rules) {
   const files = codexFiles(t, o);
   const state = codexState(t, files, rules);
   const shadowed = files.shadowers.length > 0 && (state === "on" || state === "stale");
-  return { state: shadowed ? "shadowed" : state, path: files.target.path, who: files.shadowers };
+  return { state: shadowed ? "shadowed" : state, path: (problemFile(files, state) ?? files.target).path, who: files.shadowers };
 }
 
 /** One status line per runtime: "- Claude Code: ..." and "- Codex: ...". rules may be undefined. */

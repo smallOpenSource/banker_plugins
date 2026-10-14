@@ -894,3 +894,17 @@ test("the troubleshooting row for a folder or FIFO at an instructions file says 
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
 });
+
+test("status names the file a refused state is about, not the file the block would go to", () => {
+  const s = setup();
+  const codex = () => status(s.o).message.split("\n").find((l) => l.startsWith("- Codex:"));
+  writeFileSync(s.agents, "# base\n");
+  mkdirSync(s.override);
+  assert.match(codex(), /일반 파일이 아닌 지침 파일이 있어 손대지 않음 .*\(.*AGENTS\.override\.md\)$/);
+  rmSync(s.override, { recursive: true });
+  writeFileSync(s.override, "# mine\n");
+  writeFileSync(s.agents, Buffer.from([0x23, 0x20, 0xff, 0x0a]));
+  assert.match(codex(), /UTF-8 이 아닌 지침 파일이 있어 손대지 않음 .*\(.*AGENTS\.md\)$/);
+  writeFileSync(s.agents, `# base\n${OPEN}\nhalf a block\n`);
+  assert.match(codex(), /표시의 짝이 맞지 않음 .*\(.*AGENTS\.md\)$/);
+});
