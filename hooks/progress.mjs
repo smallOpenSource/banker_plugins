@@ -26,7 +26,7 @@
  * hooks/progress-fallback.mjs answer there instead.
  */
 
-import { cells, clip, fit, isPlanPath, parsePlan, pick, readPrompt } from './progress-plan.mjs';
+import { cells, clip, fit, parsePlan, pick, planKind, readPrompt } from './progress-plan.mjs';
 
 const COMMAND = 'progress';
 const PANE = 'banker-progress';
@@ -405,12 +405,13 @@ export function answerTodo(s, e, now, paneOpen = true) {
 
 // The plan file a call touched, with the touch's count, when it is one and the call went through:
 // a write by anyone, a read by the session itself (an agent reviewing a plan does not make it the plan).
-// `own` is a write by the session itself.
+// `own` is a write by the session itself; `weak` a review round or open questions beside a plan.
 export function planTouched(s, e, call) {
   const path = e.file_path ?? e.notebook_path;
-  if (!call?.ok || !PLAN_TOUCH.has(e.tool) || !isPlanPath(path) || (e.tool === 'Read' && e.agentId)) return null;
+  const kind = planKind(path);
+  if (!call?.ok || !PLAN_TOUCH.has(e.tool) || !kind || (e.tool === 'Read' && e.agentId)) return null;
   s.touch += 1;
-  return { path, touch: s.touch, own: !e.agentId && e.tool !== 'Read' };
+  return { path, touch: s.touch, own: !e.agentId && e.tool !== 'Read', weak: kind === 'weak' };
 }
 
 function parsed(path, text) {
@@ -429,10 +430,13 @@ function current(s, path, { touch, since }) {
   return path === s.planPath && s.taken <= since;
 }
 
-// Whether what was read stays off the pane: no plan, or a file with no steps in place of a plan that
-// has some, unless the session wrote it itself (an agent's review written beside a plan, or a note the
-// session only read, does not push the plan away; a plan the session writes is the plan, steps or not).
-const keepsOff = (s, path, plan, read) => !plan || (path !== s.planPath && !plan.total && Boolean(s.plan?.total) && !read.own);
+// Whether what was read stays off the pane: no plan; a review round or open questions while the pane shows another
+// plan; or a file with no steps in place of a plan that has some, unless the session wrote it itself (an agent's
+// review written beside a plan, or a note the session only read, does not push the plan away; a plan the session
+// writes is the plan, steps or not).
+const keepsOff = (s, path, plan, read) => !plan
+  || (path !== s.planPath && Boolean(s.plan) && read.weak === true)
+  || (path !== s.planPath && !plan.total && Boolean(s.plan?.total) && !read.own);
 
 // The ids in a tree, to keep the unfolded ones that are still there when a plan is read again.
 function treeIds(nodes, out = new Set()) {
@@ -722,7 +726,7 @@ async function watchCall($, e, next) {
     endCall(call, r, Date.now());
     if (TASK_TOOLS.has(e.tool)) noteTaskTool(s, e, r, Date.now(), since, order);
     const touched = planTouched(s, e, call);
-    if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch, own: touched.own });
+    if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch, own: touched.own, weak: touched.weak });
     $.ui.invalidate('ui.render');
   }
 }

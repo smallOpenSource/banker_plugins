@@ -1025,6 +1025,31 @@ test('a file with no steps does not take the place of a plan with steps', async 
   assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획']);
 });
 
+test('a prd.json outside .omc becomes the plan when it is a PRD, and leaves the plan alone when it is not', async () => {
+  const top = '/w/prd.json';
+  const moved = '/srv/omc-state/p1/state/sessions/s1/prd.json';
+  const other = '/w/app/prd.json';
+  const prd = (title) => JSON.stringify({ title, stories: [{ title: 'A', passes: true }, { title: 'B', passes: false }] });
+  const eng = engine({ files: new Map([[top, prd('맨 위 PRD')], [moved, prd('옮긴 PRD')], [other, '{"name":"not a prd"}']]) });
+  await eng.tool({ tool: 'Write', file_path: top });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 맨 위 PRD']);
+  await eng.tool({ tool: 'Write', file_path: moved });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 옮긴 PRD']);
+  await eng.tool({ tool: 'Write', file_path: other });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 옮긴 PRD'], 'a prd.json that is no PRD leaves the plan');
+});
+
+test('a review round shows as the plan only while there is no other plan', async () => {
+  const review = '/w/.omc/plans/deploy-critic-r1.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [review, '# 검토 의견\n- [ ] 고칠 것\n']]) });
+  await eng.tool({ tool: 'Write', file_path: review });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 검토 의견'], 'alone, the review round is the plan');
+  await eng.tool({ tool: 'Write', file_path: PLAN });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획'], 'a plan takes its place');
+  await eng.tool({ tool: 'Write', file_path: review });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획'], 'and keeps it');
+});
+
 test('a node that holds others folds by its arrow or its words; a heading is bold, a code line dim, a number set apart', async () => {
   const md = '# 계획\n## 구현\n1. 설계\n   - [x] 초안\n```bash\n  npm test\n```\n| 칸 | 값 |\n|---|---|\n| a | 1 |\n';
   const eng = engine({ files: new Map([[PLAN, md]]) });

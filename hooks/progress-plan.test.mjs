@@ -3,7 +3,7 @@
 import { strict as assert } from 'node:assert';
 import { performance } from 'node:perf_hooks';
 import { test } from 'node:test';
-import { cells, clip, fit, isPlanPath, nameNodes, parsePlan, planTree, readPrompt, untag, withoutPastes } from './progress-plan.mjs';
+import { cells, clip, fit, isPlanPath, nameNodes, parsePlan, planKind, planTree, readPrompt, untag, withoutPastes } from './progress-plan.mjs';
 
 const steps = (plan) => plan.steps.map((s) => [s.title, s.status]);
 
@@ -30,10 +30,18 @@ test('a background task\'s notice reads as a notice with its summary', () => {
 
 test('plan files are the plan folders\' markdown, a ralph PRD and the ultragoal goals', () => {
   for (const p of ['/w/.omc/plans/a.md', 'C:\\w\\.omc\\plans\\a.md', '/w/docs/superpowers/plans/2026-a.md', '/home/u/.claude/plans/slug.md',
-    '/w/.omc/prd.json', '/w/.omc/state/sessions/abc/prd.json', '/w/.omc/ultragoal/goals.json']) assert.ok(isPlanPath(p), p);
-  for (const p of ['/w/notes.md', '/w/.omc/plans/sub/a.txt', '/w/.omc/wiki/a.md', '/w/prd.json', '/w/.omc/ultragoal/ledger.jsonl', '', undefined]) {
+    '/w/.omc/prd.json', '/w/.omc/state/sessions/abc/prd.json', '/w/.omc/ultragoal/goals.json', '/w/prd.json']) assert.ok(isPlanPath(p), p);
+  for (const p of ['/w/notes.md', '/w/.omc/plans/sub/a.txt', '/w/.omc/wiki/a.md', '/w/prd.json.bak', '/w/.omc/ultragoal/ledger.jsonl', '', undefined]) {
     assert.ok(!isPlanPath(p), String(p));
   }
+});
+
+test('a ralph PRD and ultragoal goals are plans wherever they sit; review rounds beside a plan are weak plans', () => {
+  for (const p of ['/w/prd.json', '/srv/omc-state/p1/state/sessions/abc/prd.json', '/srv/omc-state/p1/ultragoal/goals.json', 'C:\\w\\prd.json']) {
+    assert.equal(planKind(p), 'plan', p);
+  }
+  for (const p of ['/w/.omc/plans/x-critic-r2.md', '/w/.omc/plans/open-questions.md', '/w/.omc/plans/x-review.md']) assert.equal(planKind(p), 'weak', p);
+  for (const p of ['/w/notes.md', '/w/prd.json.bak', '/w/goals.json', '/w/.omc/ultragoal/ledger.jsonl', '', undefined]) assert.equal(planKind(p), null, String(p));
 });
 
 test('superpowers tasks are the steps, each as far along as its checkboxes', () => {

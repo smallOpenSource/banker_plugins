@@ -183,18 +183,24 @@ const PLAN_PATHS = [
   /\/\.omc\/plans\/[^/]+\.md$/,
   /\/docs\/superpowers\/plans\/[^/]+\.md$/,
   /\/\.claude\/plans\/[^/]+\.md$/,
-  /\/\.omc\/(?:state\/(?:[^/]+\/)*)?prd\.json$/,
-  /\/\.omc\/ultragoal\/goals\.json$/,
+  // A ralph PRD and ultragoal's goals wherever they sit: OMC_STATE_DIR moves OMC's state out of .omc (a mod cannot
+  // read that variable), and a project may keep its PRD at the top. Only a file that parses as one becomes the plan.
+  /\/prd\.json$/,
+  /\/ultragoal\/goals\.json$/,
 ];
 // Plan folders keep a plan's review rounds beside it (ralplan's `<plan>-critic-r2.md`,
-// `architect-review-r1.md`) and OMC's open questions: a name that ends so is no plan.
-const NOT_A_PLAN = [/(?:^|[-_])(?:critic|architect|review|verdict|feedback)(?:-r\d+)?\.md$/i, /^open-questions\.md$/i];
+// `architect-review-r1.md`) and OMC's open questions: a name that ends so is a weak plan, the plan only while the
+// pane has no other.
+const WEAK_NAMES = [/(?:^|[-_])(?:critic|architect|review|verdict|feedback)(?:-r\d+)?\.md$/i, /^open-questions\.md$/i];
 
-export const isPlanPath = (path) => {
+/** What a path is to the pane: 'plan', 'weak' (a review round or open questions beside a plan), or null. */
+export function planKind(path) {
   const p = String(path ?? '').replaceAll('\\', '/');
-  const name = p.split('/').at(-1);
-  return PLAN_PATHS.some((re) => re.test(p)) && !NOT_A_PLAN.some((re) => re.test(name));
-};
+  if (!PLAN_PATHS.some((re) => re.test(p))) return null;
+  return WEAK_NAMES.some((re) => re.test(p.split('/').at(-1))) ? 'weak' : 'plan';
+}
+
+export const isPlanPath = (path) => planKind(path) === 'plan';
 
 // ── a plan file ──────────────────────────────────────────────────────────────
 
