@@ -20,9 +20,10 @@
  * goes on with the last prompt's step instead of becoming one: the step runs again while it does,
  * and keeps its own end and time.
  *
- * `/progress` and `/progress show` toggle the pane, `on` and `off` set it. The command is
- * registered `immediate`, so it answers while a turn runs. An engine without mods never loads
- * this file: commands/progress.md and hooks/progress-fallback.mjs answer there instead.
+ * `/progress` and `/progress show` toggle the pane, `on` and `off` set it. From Claude Code 2.1.289
+ * on the command is registered `immediate`, so it answers while a turn runs; an older engine gets it
+ * as a plain command. An engine without mods never loads this file: commands/progress.md and
+ * hooks/progress-fallback.mjs answer there instead.
  */
 
 import { cells, clip, fit, isPlanPath, parsePlan, pick, readPrompt } from './progress-plan.mjs';

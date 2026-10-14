@@ -14,13 +14,14 @@ function engine({ version = '2.1.296', refuse = null } = {}) {
     hooks.set(id, hook);
     return { catch: () => {} };
   };
-  const seen = { registered: [], logs: [] };
+  const seen = { registered: [], specs: [], logs: [] };
   const $ = {
     session: { version: async () => ({ version, base: version }) },
     command: {
       register: async (spec) => {
         if (spec.name === refuse) throw new Error('taken');
         seen.registered.push(spec.name);
+        seen.specs.push(spec);
         return { command: spec.name };
       },
     },
@@ -62,4 +63,14 @@ test('a command the engine refuses is logged, and the other still registers', as
   assert.deepEqual(eng.seen.registered, ['graceful-pause']);
   assert.equal(eng.seen.logs.length, 1);
   assert.match(eng.seen.logs[0], /^\/progress 를 등록하지 못했습니다 \(taken\)$/);
+});
+
+test('/progress answers at once only from 2.1.289 on; an older engine, or one with no version, gets a plain command', async () => {
+  for (const [version, immediate] of [['2.1.289', true], ['2.1.299', true], ['2.1.288', undefined], [null, undefined]]) {
+    const eng = engine({ version });
+    await eng.start();
+    const spec = eng.seen.specs.find((s) => s.name === 'progress');
+    assert.ok(spec, String(version));
+    assert.equal(spec.immediate, immediate, String(version));
+  }
 });

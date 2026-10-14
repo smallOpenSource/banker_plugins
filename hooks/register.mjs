@@ -37,13 +37,18 @@ async function registerOne($, spec) {
   }
 }
 
-// /graceful-pause from 2.1.289 on (an older engine gets one line saying why), /progress wherever
-// mods run. A name the engine refuses is logged and the other still registers.
+// A command spec without `immediate`, for an engine where answering at once was not seen to work.
+const withoutImmediate = ({ immediate: _immediate, ...spec }) => spec;
+
+// /graceful-pause from 2.1.289 on (an older engine gets one line saying why). /progress wherever mods run, as a
+// command that answers at once (immediate) only from 2.1.289 on, where that was seen to work; below it, or with no
+// version, it answers when the turn ends. A name the engine refuses is logged and the other still registers.
 async function registerCommands($) {
   const version = await engineVersion($);
-  if (atLeast(version, MIN_ENGINE)) await registerOne($, PAUSE_SPEC);
+  const recent = atLeast(version, MIN_ENGINE);
+  if (recent) await registerOne($, PAUSE_SPEC);
   else $.ui.log(`/${PAUSE} 는 Claude Code ${MIN_ENGINE.join('.')} 이상에서만 켭니다 (이 엔진: ${version || '버전 미상'})`);
-  await registerOne($, PROGRESS_SPEC);
+  await registerOne($, recent ? PROGRESS_SPEC : withoutImmediate(PROGRESS_SPEC));
 }
 
 // /progress's plan file, read again at a turn's start and end: a ralph PRD or a plan's checkboxes
