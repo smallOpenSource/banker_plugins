@@ -204,6 +204,7 @@ try {
   ok(installed.includes('banker-tone-compact'), 'new tone-compact installed as banker-tone-compact');
   const tcDir = path.join(instDir, 'banker-tone-compact');
   ok(fs.existsSync(path.join(tcDir, 'scripts', 'tone-compact.mjs')), 'banker-tone-compact carries scripts/tone-compact.mjs into the Codex install');
+  ok(fs.existsSync(path.join(tcDir, 'scripts', 'instruction-toggle.mjs')), 'banker-tone-compact carries scripts/instruction-toggle.mjs into the Codex install');
   const tcSkill = fs.readFileSync(path.join(tcDir, 'SKILL.md'), 'utf8');
   ok(/^---\nname: banker-tone-compact\n/.test(tcSkill) && tcSkill.includes('<!-- tone-compact:rules:start -->') && tcSkill.includes('<!-- tone-compact:rules:end -->'),
      'Codex copy of tone-compact keeps its rule markers after the name rewrite');
