@@ -186,7 +186,10 @@ function dropFinished(s) {
   s.loose = looseStep();
 }
 
+// A main turn's start. A subagent's, a fork's or a teammate's run (it carries an agentId; Claude Code 2.1.300
+// raises turn.start for them too) makes no step: its calls go under the step in progress.
 export function startTurn(s, e, now) {
+  if (e.agentId) return;
   const said = readPrompt(e.text);
   if (said.kind === 'notice') return noticeTurn(s, e, said, now);
   dropFinished(s);

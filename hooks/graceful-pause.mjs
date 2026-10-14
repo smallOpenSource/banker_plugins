@@ -124,8 +124,9 @@ const fresh = () => ({ main: null, step: -1, pending: null, background: 0, queue
 const listed = (v) => (Array.isArray(v) ? v.length : 0);
 const backgroundCount = (e) => listed(e.background_tasks) + listed(e.session_crons);
 
-// The main turn in flight and its latest model request; subagent loops raise no turn.start and
-// end with an agentId. `queued`: a report prompt not started yet. One per loaded module.
+// The main turn in flight and its latest model request; a subagent's, a fork's or a teammate's loop starts
+// and ends with an agentId (Claude Code 2.1.300 raises turn.start for them too) and is not the main turn.
+// `queued`: a report prompt not started yet. One per loaded module.
 const state = fresh();
 
 // The command and the events only this feature hooks. register.mjs hooks the events every banker
@@ -167,6 +168,7 @@ export function pauseReset() {
 }
 
 export function pauseTurnStarted(e) {
+  if (e.agentId) return;
   Object.assign(state, { main: e.turnId, step: -1, queued: false });
 }
 

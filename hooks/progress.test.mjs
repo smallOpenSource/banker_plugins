@@ -366,6 +366,22 @@ test('a subagent\'s turn.complete does not end the main step, and its calls are 
   assert.match(textOf(about(await eng.draw())), /^하위 에이전트의 WebSearch: mods\./);
 });
 
+test('a subagent\'s or a fork\'s turn.start makes no step; its calls go under the step in progress', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '포크로 pwd 실행해 줘' });
+  await eng.tool({ tool: 'Agent', description: 'pwd 실행' });
+  await eng.raise('turn.start', { turnId: 'f1', text: 'Bash 로 pwd 를 실행하라', agentId: 'a1' });
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  await eng.tool({ tool: 'Bash', command: 'pwd', agentId: 'a1' });
+  await eng.raise('turn.complete', { turnId: 'f1', reason: 'answer', agentId: 'a1' });
+  let tree = await eng.draw();
+  assert.deepEqual(labels(tree), ['▸', '포크로 pwd 실행해 줘']);
+  assert.match(textOf(rowOf(tree, 't-t1')), /완료/, 'no step is left running');
+  button(tree, '▸').props.onPress({});
+  tree = await eng.draw();
+  assert.ok(labels(tree).includes('Bash pwd'), labels(tree).join(' | '));
+});
+
 test('the task list replaces prompts as steps, and calls go to the task in progress', async () => {
   const eng = engine();
   await eng.raise('turn.start', { turnId: 't1', text: '만들어 줘' });
