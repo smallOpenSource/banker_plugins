@@ -929,7 +929,8 @@ test("SKILL.md checks each heredoc line before it runs, and no end word can pass
 
 // Rows that send the agent at a user's file must ask first; none may tell it to clear one away.
 const ASK_FIRST = ["설정 파일이 올바르지 않습니다", "일반 파일이 아니라 설정을 저장하지 않았습니다", "64KiB 보다 큰 파일이라",
-  "같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님"];
+  "같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
+  "다른 banker 지침 작업이 끝나지 않아"];
 test("troubleshooting rows never tell the agent to clear, delete, move or rename a user's file without asking first", () => {
   const table = read(SKILL).split("## 문제 해결")[1].split("\n## ")[0];
   const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));

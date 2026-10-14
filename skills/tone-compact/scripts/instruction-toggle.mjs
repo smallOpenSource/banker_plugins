@@ -505,16 +505,18 @@ function tryLock(path, token) {
 }
 
 // Removes a lock a dead run left; true when there is none now, so the next try may take it. The name itself is
-// looked at, not where it leads: a link to nothing or a link loop there is a lock like any other.
+// looked at, not where it leads: a link to nothing or a link loop there is a lock like any other. A lock dated more
+// than a minute away either way (a clock set back) is stale too. A folder there is none of this module's: it stays,
+// and the wait ends in a refusal.
 function dropStale(path) {
-  let age;
+  let st;
   try {
-    age = Date.now() - lstatSync(path).mtimeMs;
+    st = lstatSync(path);
   } catch (e) {
     if (e.code === "ENOENT") return true; /* gone in between */
     throw e;
   }
-  if (age <= LOCK_STALE_MS) return false;
+  if (st.isDirectory() || Math.abs(Date.now() - st.mtimeMs) <= LOCK_STALE_MS) return false;
   rmSync(path, { force: true });
   return true;
 }

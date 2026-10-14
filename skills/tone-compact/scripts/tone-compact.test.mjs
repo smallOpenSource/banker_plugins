@@ -1001,6 +1001,27 @@ test("Codex on and off wait for another banker skill's lock, and take over one a
   assert.equal(existsSync(lock), false, "the lock is given back");
 });
 
+test("Codex: a folder where the lock goes is never removed and the wait ends in a refusal; a lock dated a day ahead is taken over", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  mkdirSync(lock);
+  const old = new Date(Date.now() - 120_000);
+  utimesSync(lock, old, old);
+  const r = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.equal(r.ok, false, r.message);
+  assert.match(r.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/);
+  assert.equal(statSync(lock).isDirectory(), true, "the folder stays");
+  rmSync(lock, { recursive: true });
+  writeFileSync(lock, "4242 0 held");
+  const ahead = new Date(Date.now() + 24 * 3600_000);
+  utimesSync(lock, ahead, ahead);
+  const t = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.ok(t.ok, t.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(existsSync(lock), false, "the lock is given back");
+});
+
 // Runs code (an ES module reading its arguments from process.argv.slice(1)) in a child with a deadline, so a run
 // that never ends fails the test instead of holding it, and returns the JSON the code printed.
 function inChild(code, ...args) {
@@ -1061,7 +1082,8 @@ test("troubleshooting rows never tell the agent to clear, delete or rename a use
   const table = readFileSync(SKILL, "utf8").split("## 문제 해결")[1].split("\n## ")[0];
   const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
   for (const row of rows) assert.doesNotMatch(row, /치우|치운|치움|이름 변경 또는 삭제|지운 뒤 다시|옮긴 뒤 다시/, row);
-  for (const head of ["같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님"]) {
+  for (const head of ["같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
+    "다른 banker 지침 작업이 끝나지 않아"]) {
     const row = rows.find((l) => l.startsWith(`| ${head}`));
     assert.ok(row, head);
     assert.match(row, /물은 뒤/, row);
