@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.18.0] - 2026-10-14
 
 ### Added
 - `anti-drm` 스킬. 망분리 PC 의 DRM 이 암호화하는 확장자 대신 대체 확장자로 파일을 만들게 하는 규칙을 켜고 끈다. 기본 금지 확장자는 `.txt` `.pdf` `.ppt` `.pptx` `.doc` `.docx` `.hwp` `.hwpx` `.xls` `.xlsx` `.csv`, 대체 확장자는 `.md` `.html` `.tsv` 다.

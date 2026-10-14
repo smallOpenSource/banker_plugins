@@ -125,5 +125,15 @@
   "0.17.1": [
     "banker:omc-patch",
     "banker:update-banker"
+  ],
+  "0.18.0": [
+    "banker:3d-intro-build",
+    "banker:3d-intro-setup",
+    "banker:anti-drm",
+    "banker:lineage",
+    "banker:omc-reference",
+    "banker:ralph-qa",
+    "banker:tone-compact",
+    "banker:ultra-chain"
   ]
 }
