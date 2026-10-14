@@ -117,6 +117,12 @@ test("the judgment matches npm pack for every file git tracks under skills/", { 
     t.skip("npm-cli.js not found beside node");
     return;
   }
+  // The test boxes run an archive copy of the repository, which is no git checkout: nothing to list.
+  const inside = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: REPO, encoding: "utf8" });
+  if (inside.status !== 0 || inside.stdout.trim() !== "true") {
+    t.skip("not a git checkout (an archive copy of the repository)");
+    return;
+  }
   const r = spawnSync(process.execPath, [cli, "pack", "--dry-run", "--json", "--ignore-scripts"],
     { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   assert.equal(r.status, 0, r.stderr);
