@@ -6,6 +6,7 @@ import {
   existsSync,
   linkSync,
   lstatSync,
+  lutimesSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -998,6 +999,62 @@ test("Codex on and off wait for another banker skill's lock, and take over one a
   assert.ok(r.ok, r.message);
   assert.equal(blocks(read(s.agents)), 1);
   assert.equal(existsSync(lock), false, "the lock is given back");
+});
+
+// Runs code (an ES module reading its arguments from process.argv.slice(1)) in a child with a deadline, so a run
+// that never ends fails the test instead of holding it, and returns the JSON the code printed.
+function inChild(code, ...args) {
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code, ...args], { encoding: "utf8", timeout: 15_000 });
+  assert.equal(r.error?.code, undefined, "the child ended before its deadline");
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+const lexists = (p) => {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("Codex: a link to nothing or a link loop where the lock goes ends the wait at its deadline, and one a minute old is taken over", posixOnly, () => {
+  const on = `const { turnOn } = await import(${JSON.stringify(new URL("./tone-compact.mjs", import.meta.url).href)});
+console.log(JSON.stringify(turnOn("codex", JSON.parse(process.argv[1]))));`;
+  for (const [name, target] of [["link to nothing", "gone"], ["link loop", ".banker-agents.lock"]]) {
+    const s = setup();
+    writeFileSync(s.agents, "# base\n");
+    const lock = join(s.o.codexDir, ".banker-agents.lock");
+    symlinkSync(target, lock);
+    const o = JSON.stringify({ ...s.o, lockWaitMs: 200 });
+    const held = inChild(on, o);
+    assert.equal(held.ok, false, `${name}: ${held.message}`);
+    assert.match(held.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/, name);
+    assert.equal(read(s.agents), "# base\n", name);
+    const old = new Date(Date.now() - 120_000);
+    lutimesSync(lock, old, old);
+    const r = inChild(on, o);
+    assert.ok(r.ok, `${name}: ${r.message}`);
+    assert.equal(blocks(read(s.agents)), 1, name);
+    assert.equal(lexists(lock), false, `${name}: the old link is gone and the lock given back`);
+    assert.equal(existsSync(join(s.o.codexDir, "gone")), false, `${name}: nothing was made where the link pointed`);
+  }
+});
+
+test("Codex: a lock that turned into a pipe while held is left there, never opened to be read", posixOnly, () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const code = `const { toggleSpec, turnOn } = await import(${JSON.stringify(new URL("./instruction-toggle.mjs", import.meta.url).href)});
+const { rmSync } = await import("node:fs");
+const { spawnSync } = await import("node:child_process");
+const [o, lock] = [JSON.parse(process.argv[1]), process.argv[2]];
+const t = toggleSpec({ slug: "tone-compact", staleText: "old", updatedText: "updated" });
+console.log(JSON.stringify(turnOn(t, "codex", o, () => { rmSync(lock); spawnSync("mkfifo", [lock]); return "rules"; })));`;
+  const r = inChild(code, JSON.stringify(s.o), lock);
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(lstatSync(lock).isFIFO(), true, "a lock that is no longer this run's stays");
 });
 
 test("troubleshooting rows never tell the agent to clear, delete or rename a user's file without asking first", () => {

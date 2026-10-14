@@ -504,37 +504,39 @@ function tryLock(path, token) {
   }
 }
 
-// Removes a lock a dead run left; true when there is none now, so the next try may take it.
+// Removes a lock a dead run left; true when there is none now, so the next try may take it. The name itself is
+// looked at, not where it leads: a link to nothing or a link loop there is a lock like any other.
 function dropStale(path) {
   let age;
   try {
-    age = Date.now() - statSync(path).mtimeMs;
-  } catch {
-    return true; /* gone in between */
+    age = Date.now() - lstatSync(path).mtimeMs;
+  } catch (e) {
+    if (e.code === "ENOENT") return true; /* gone in between */
+    throw e;
   }
   if (age <= LOCK_STALE_MS) return false;
   rmSync(path, { force: true });
   return true;
 }
 
-// Takes the lock: { path, token }, or null when another run held it for waitMs.
+// Takes the lock: { path, token }, or null when another run held it for waitMs. The deadline is looked at every
+// round, so no lock spot, whatever is there, keeps the wait going past it.
 function takeLock(dir, waitMs) {
   const path = join(dir, LOCK);
   const token = `${process.pid} ${Date.now()} ${Math.random()}`;
   const until = Date.now() + waitMs;
   for (;;) {
     if (tryLock(path, token)) return { path, token };
-    if (!dropStale(path)) {
-      if (Date.now() >= until) return null;
-      Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
-    }
+    if (Date.now() >= until) return null;
+    if (!dropStale(path)) Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
   }
 }
 
-// Gives the lock back while it is still this run's.
+// Gives the lock back while it is still this run's. The name is opened without blocking: a pipe put there is not
+// this run's lock and stays.
 function dropLock(lock) {
   try {
-    if (readFileSync(lock.path, "utf8") === lock.token) rmSync(lock.path, { force: true });
+    if (readFile(lock.path)?.text === lock.token) rmSync(lock.path, { force: true });
   } catch {
     /* already gone */
   }
