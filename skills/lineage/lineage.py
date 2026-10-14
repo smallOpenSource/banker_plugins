@@ -736,12 +736,15 @@ def _page_clean_turn(t, extra, mode):
 
 def _read_cached(p):
     """The summary cached at p, else at the same name with .txt, which 3.0.2 and earlier wrote.
-    None when neither can be read: missing, or bytes that are not UTF-8 (a DRM encrypted them)."""
+    None when neither holds one: missing, bytes that are not UTF-8 (a DRM encrypted them), or
+    only whitespace (a write that stopped early); the turn is then summarized again (3.0.4)."""
     for cached in (p, p.with_name(p.stem + ".txt")):
         try:
-            return cached.read_text(encoding="utf-8").strip()
+            text = cached.read_text(encoding="utf-8").strip()
         except (OSError, UnicodeDecodeError):
             continue
+        if text:
+            return text
     return None
 
 
