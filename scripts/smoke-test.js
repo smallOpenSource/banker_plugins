@@ -153,7 +153,8 @@ try {
   // Every text file under skills/ and commands/, in any letter case (a DRM matches NOTES.TXT too). A file that is
   // not UTF-8 holds no name to read.
   const drmNames = [];
-  const drmName = /[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/gi;
+  // A name starts only where a run of name letters starts: a long run is read once, not once per letter.
+  const drmName = /(?<![A-Za-z0-9_./<>{}$*-])[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/gi;
   const utf8 = new TextDecoder('utf-8', { fatal: true });
   function scanDrm(dir) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -174,6 +175,11 @@ try {
   const drmUnused = DRM_KEEP.filter(([f, n]) => !drmNames.some(([rel, name]) => rel === f && name === n)).map(([f, n]) => `${f}: ${n}`);
   ok(drmUnexplained.length === 0 && drmUnused.length === 0,
      `banker work files avoid .txt and .csv (unexplained: [${drmUnexplained.join(', ')}]; unused allowances: [${drmUnused.join(', ')}])`);
+  const longRun = `${'a'.repeat(100000)} NOTES.TXT x/y.csv`;
+  const t0 = Date.now();
+  const longHits = [...longRun.matchAll(drmName)].map((m) => m[0]);
+  const took = Date.now() - t0;
+  ok(took < 1000 && longHits.join(' ') === 'NOTES.TXT x/y.csv', `DRM name scan reads a 100,000-letter run in linear time (${took} ms)`);
   // 6) REAL codex install into a fresh temp HOME: assert dir==name (Codex discovery) + stale sweep
   const home2 = path.join(tmp, 'home2');
   const staleDir = path.join(home2, '.codex', 'skills', 'banker-STALE');
