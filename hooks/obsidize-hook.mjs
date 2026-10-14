@@ -135,11 +135,14 @@ function canonicalize(wikiDir, tool, page) {
   if (why) log(wikiDir, tool, `${basename(page)}: ${why}`);
 }
 
+// A write can be redirected with workingDirectory; fall back to the session cwd.
+function writeRoot(payload) {
+  return payload?.tool_input?.workingDirectory || payload?.cwd || process.cwd();
+}
+
 async function main() {
   const { payload, error } = await readPayload();
-  // A write can be redirected with workingDirectory; fall back to the session cwd.
-  const root = payload?.tool_input?.workingDirectory || payload?.cwd || process.cwd();
-  const wikiDir = findArmedWikiDir(root);
+  const wikiDir = findArmedWikiDir(writeRoot(payload));
   if (!wikiDir) return; // Not armed: change nothing, log nothing.
 
   const tool = payload?.tool_name ?? 'unknown';
