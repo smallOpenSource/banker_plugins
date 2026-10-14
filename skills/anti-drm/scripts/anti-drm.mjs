@@ -218,11 +218,12 @@ function pathKind(file) {
 
 // The bytes of the file at the settings path, opened without blocking: { bytes }
 // (null when it turned out not to be a regular file) or { refusal }.
-function priorBytes(file) {
+export function priorBytes(file) {
   let fd;
   try {
     fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
+    if (e.code === "ENOENT" || e.code === "ENOTDIR") return { bytes: null };
     if (denied(e)) return { refusal: "읽을 수 없는 파일이라 설정을 저장하지 않았습니다" };
     throw e;
   }
@@ -236,12 +237,26 @@ function priorBytes(file) {
   }
 }
 
+// The keys anti-drm writes; a file with any other key holds something of the user's.
+const OWN_KEYS = ["version", "deny", "alt", "tsvDelimiter"];
+
 // Whether bytes are settings anti-drm wrote (or could have): nothing is lost when they go.
 function ownSettings(bytes) {
   try {
     const text = bytes.toString("utf8");
     const raw = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
-    return Boolean(raw) && typeof raw === "object" && Boolean(checkConfig(raw).config);
+    const plain = Boolean(raw) && typeof raw === "object" && !Array.isArray(raw);
+    return plain && Object.keys(raw).every((k) => OWN_KEYS.includes(k)) && Boolean(checkConfig(raw).config);
+  } catch {
+    return false;
+  }
+}
+
+// Whether anything, a dangling link included, already sits at path.
+function taken(path) {
+  try {
+    lstatSync(path);
+    return true;
   } catch {
     return false;
   }
@@ -261,12 +276,12 @@ function priorSettings(file) {
 /**
  * Saves the settings: the folder 0755, the file 0644 through a temp file and a
  * rename. keep, when given, is a file anti-drm did not write; its bytes go to
- * <file>.bak, readable by this account only, and later saves of anti-drm's own
- * settings leave that .bak alone.
+ * <file>.bak, readable by this account only, once: a .bak already there is the
+ * first such file and stays.
  */
 export function writeConfig(file, config, keep = null) {
   mkdirSync(dirname(file), { recursive: true, mode: 0o755 });
-  if (keep !== null) writeFresh(`${file}.bak`, keep, 0o600);
+  if (keep !== null && !taken(`${file}.bak`)) writeFresh(`${file}.bak`, keep, 0o600);
   writeFresh(file, `${JSON.stringify(config, null, 2)}\n`, 0o644);
 }
 

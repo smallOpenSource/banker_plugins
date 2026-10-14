@@ -10,6 +10,7 @@ import {
   checkConfig,
   configure,
   ownerTrusted,
+  priorBytes,
   parseArgs,
   readConfig,
   renderRules,
@@ -698,6 +699,30 @@ test("hardening: rules that quote any management marker are refused before they 
 test("hardening: paths lose variation selectors too", () => {
   assert.equal(where(`a${String.fromCharCode(0xfe0f)}b${String.fromCharCode(0x202e)}c`), "a?b?c");
   assert.equal(where("/home/사용자/.config"), "/home/사용자/.config");
+});
+
+test("hardening: a settings file that vanishes before it is read leaves nothing to keep", () => {
+  const s = setup();
+  assert.deepEqual(priorBytes(join(s.dir, "gone", "anti-drm.json")), { bytes: null });
+});
+
+test("hardening: settings with a key anti-drm does not write are kept in .bak", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  const mine = '{"deny":[".txt"],"alt":[".md"],"note":"my reminder"}\n';
+  writeFileSync(s.o.configFile, mine);
+  assert.ok(configure(s.o, FLAGS).ok);
+  assert.equal(read(`${s.o.configFile}.bak`), mine);
+});
+
+test("hardening: the first file anti-drm did not write stays in .bak, a later one does not replace it", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+  assert.ok(configure(s.o, FLAGS).ok);
+  writeFileSync(s.o.configFile, "{\n");
+  assert.ok(configure(s.o, FLAGS).ok);
+  assert.equal(read(`${s.o.configFile}.bak`), '{"theme":"dark"}\n');
 });
 
 test("instruction-toggle.mjs is the same file in tone-compact and anti-drm", () => {
