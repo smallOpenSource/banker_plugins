@@ -103,15 +103,40 @@ function resolvePages(wikiDir, toolResponse) {
     .filter((path) => existsSync(path));
 }
 
-async function main() {
-  let payload = null;
-  let stdinError = null;
+// The hook payload, or the error that kept it from being read.
+async function readPayload() {
   try {
-    payload = JSON.parse(await readStdin());
+    return { payload: JSON.parse(await readStdin()), error: null };
   } catch (err) {
-    stdinError = err;
+    return { payload: null, error: err };
   }
+}
 
+// Why a canonicalizer run failed, or null when it ran and reported JSON.
+function runFailure(run) {
+  if (run.error) return `canonicalizer did not run: ${run.error.message}`;
+  if (run.status !== 0) return `canonicalizer exited ${run.status}: ${run.stderr || run.stdout}`;
+  try {
+    JSON.parse(run.stdout);
+    return null;
+  } catch {
+    return 'canonicalizer report was not json';
+  }
+}
+
+// Canonicalizes one page; a failure appends its one log line.
+function canonicalize(wikiDir, tool, page) {
+  const run = spawnSync(process.execPath, [CANONICALIZER, page, '--profile=omc', '--json'], {
+    encoding: 'utf8',
+    timeout: CANONICALIZE_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  const why = runFailure(run);
+  if (why) log(wikiDir, tool, `${basename(page)}: ${why}`);
+}
+
+async function main() {
+  const { payload, error } = await readPayload();
   // A write can be redirected with workingDirectory; fall back to the session cwd.
   const root = payload?.tool_input?.workingDirectory || payload?.cwd || process.cwd();
   const wikiDir = findArmedWikiDir(root);
@@ -119,27 +144,9 @@ async function main() {
 
   const tool = payload?.tool_name ?? 'unknown';
   try {
-    if (stdinError) return log(wikiDir, tool, `unreadable hook payload: ${stdinError.message}`);
+    if (error) return log(wikiDir, tool, `unreadable hook payload: ${error.message}`);
     if (!existsSync(CANONICALIZER)) return log(wikiDir, tool, `canonicalizer missing at ${CANONICALIZER}`);
-
-    for (const page of resolvePages(wikiDir, payload.tool_response)) {
-      const run = spawnSync(process.execPath, [CANONICALIZER, page, '--profile=omc', '--json'], {
-        encoding: 'utf8',
-        timeout: CANONICALIZE_TIMEOUT_MS,
-        windowsHide: true,
-      });
-      if (run.error) {
-        log(wikiDir, tool, `${basename(page)}: canonicalizer did not run: ${run.error.message}`);
-      } else if (run.status !== 0) {
-        log(wikiDir, tool, `${basename(page)}: canonicalizer exited ${run.status}: ${run.stderr || run.stdout}`);
-      } else {
-        try {
-          JSON.parse(run.stdout);
-        } catch {
-          log(wikiDir, tool, `${basename(page)}: canonicalizer report was not json`);
-        }
-      }
-    }
+    for (const page of resolvePages(wikiDir, payload.tool_response)) canonicalize(wikiDir, tool, page);
   } catch (err) {
     log(wikiDir, tool, `unexpected: ${err.message}`);
   }
