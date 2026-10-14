@@ -1,0 +1,485 @@
+// Tests for anti-drm.mjs. Run from anywhere: node --test <repo>/skills/anti-drm/scripts/anti-drm.test.mjs
+import { strict as assert } from "node:assert";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { after, test } from "node:test";
+import {
+  checkConfig,
+  configure,
+  parseArgs,
+  readConfig,
+  renderRules,
+  replacementFor,
+  splitList,
+  status,
+  templateOf,
+  turnOff,
+  turnOn,
+} from "./anti-drm.mjs";
+import { status as tcStatus, turnOff as tcOff, turnOn as tcOn } from "../../tone-compact/scripts/tone-compact.mjs";
+
+const CLI = fileURLToPath(new URL("./anti-drm.mjs", import.meta.url));
+const SKILL = fileURLToPath(new URL("../SKILL.md", import.meta.url));
+const TEMPLATE = templateOf(readFileSync(SKILL, "utf8"));
+const root = mkdtempSync(join(tmpdir(), "anti-drm-test-"));
+after(() => rmSync(root, { recursive: true, force: true }));
+
+const BOM = String.fromCharCode(0xfeff);
+const KEEP_OPEN = "<!-- USER:OMX:POLICY:START -->";
+const KEEP_CLOSE = "<!-- USER:OMX:POLICY:END -->";
+const OPEN = "<!-- banker:anti-drm:start -->";
+const TC_OPEN = "<!-- banker:tone-compact:start -->";
+const DENY = ".txt,.pdf,.ppt,.pptx,.doc,.docx,.hwp,.hwpx,.xls,.xlsx,.csv";
+const FLAGS = { deny: DENY, alt: ".md,.html,.tsv" };
+const CONFIG = checkConfig({ deny: splitList(DENY), alt: splitList(FLAGS.alt) }).config;
+const RULES = renderRules(TEMPLATE, CONFIG);
+
+const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
+const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+const permTest = { skip: process.platform === "win32" ? "Windows has no POSIX mode bits" : asRoot && "root ignores mode bits" };
+
+let cases = 0;
+// Config folders for one test, and a settings path whose folders do not exist yet.
+function setup({ claude = true, codex = true } = {}) {
+  const dir = join(root, `case-${cases++}`);
+  mkdirSync(dir);
+  const o = {
+    claudeDir: join(dir, "claude"),
+    codexDir: join(dir, "codex"),
+    configFile: join(dir, "config", "banker", "anti-drm.json"),
+    skillFile: SKILL,
+  };
+  if (claude) mkdirSync(o.claudeDir);
+  if (codex) mkdirSync(o.codexDir);
+  return {
+    dir,
+    o,
+    tc: { claudeDir: o.claudeDir, codexDir: o.codexDir },
+    rulesFile: join(o.claudeDir, "rules", "banker-anti-drm.md"),
+    agents: join(o.codexDir, "AGENTS.md"),
+    override: join(o.codexDir, "AGENTS.override.md"),
+  };
+}
+
+const read = (file) => readFileSync(file, "utf8");
+const blocks = (text, open = OPEN) => text.split(open).length - 1;
+
+// The command line, in a child process that does not look like Claude Code unless the test says so.
+function cli(args, env = {}) {
+  const r = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...env } });
+  return { code: r.status, out: r.stdout };
+}
+const cliEnv = (s) => ({ CLAUDE_CONFIG_DIR: s.o.claudeDir, CODEX_HOME: s.o.codexDir, BANKER_ANTI_DRM_CONFIG: s.o.configFile });
+
+// What `omx setup --merge-agents` does to a generated AGENTS.md (oh-my-codex
+// preserveUserOmxPolicyBlocks): the new managed text, then each USER:OMX:POLICY
+// block of the old file that the new text does not already hold.
+function omxRewrite(oldText, managed) {
+  const kept = [];
+  for (let from = 0; ; ) {
+    const s = oldText.indexOf(KEEP_OPEN, from);
+    if (s === -1) break;
+    const e = oldText.indexOf(KEEP_CLOSE, s);
+    if (e === -1) break;
+    kept.push(oldText.slice(s, e + KEEP_CLOSE.length));
+    from = e + KEEP_CLOSE.length;
+  }
+  const missing = kept.filter((b) => !managed.includes(b));
+  if (missing.length === 0) return managed;
+  return `${managed.trimEnd()}\n\n${missing.join("\n\n")}\n`;
+}
+
+test("settings: extensions are lower-cased, dotted and kept once, in the order given", () => {
+  const r = checkConfig({ deny: ["TXT", ".Pdf", "txt", " csv "], alt: ["md", ".HTML"] });
+  assert.deepEqual(r.config, { version: 1, deny: [".txt", ".pdf", ".csv"], alt: [".md", ".html"], tsvDelimiter: "tab" });
+  assert.deepEqual(splitList(" .txt, .pdf  .csv,,"), [".txt", ".pdf", ".csv"]);
+  assert.deepEqual(splitList(undefined), []);
+});
+
+test("settings: empty lists, odd words, shared or reserved extensions and unknown delimiters are refused", () => {
+  const refused = [
+    [{ deny: [], alt: [".md"] }, /금지 확장자가 비어 있습니다/],
+    [{ deny: ".txt", alt: [".md"] }, /금지 확장자가 목록이 아닙니다/],
+    [{ deny: [".txt"], alt: [] }, /대체 확장자가 비어 있습니다/],
+    [{ deny: [".t-xt"], alt: [".md"] }, /금지 확장자로 쓸 수 없는 값입니다: \.t-xt/],
+    [{ deny: ["../x"], alt: [".md"] }, /쓸 수 없는 값/],
+    [{ deny: [".abcdefghijklmnop"], alt: [".md"] }, /쓸 수 없는 값/],
+    [{ deny: [".txt"], alt: [".TXT"] }, /함께 있습니다: \.txt/],
+    [{ deny: [".md", ".json"], alt: [".html"] }, /anti-drm 이 쓰는 형식이라 금지할 수 없습니다: \.md \.json/],
+    [{ deny: [".txt"], alt: [".md"], tsvDelimiter: "pipe" }, /TSV 구분자는 tab 이나 comma 여야 합니다/],
+  ];
+  for (const [input, error] of refused) assert.match(checkConfig(input).error ?? "", error, JSON.stringify(input));
+  const forged = checkConfig({ deny: ["a\n[x] 완료"], alt: [".md"] }).error;
+  assert.ok(!forged.includes("\n"), "a value shown in a message cannot start a line of its own");
+});
+
+test("settings file: none, not JSON, not an object, a byte order mark and unknown keys", () => {
+  const s = setup();
+  assert.equal(readConfig(s.o.configFile), null);
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, "{");
+  assert.match(readConfig(s.o.configFile).error, /JSON 이 아닙니다/);
+  writeFileSync(s.o.configFile, "[]");
+  assert.match(readConfig(s.o.configFile).error, /JSON 객체가 아닙니다/);
+  writeFileSync(s.o.configFile, `${BOM}{"deny":["TXT"],"alt":[".md"],"note":"edited by hand"}\r\n`);
+  assert.deepEqual(readConfig(s.o.configFile).config, { version: 1, deny: [".txt"], alt: [".md"], tsvDelimiter: "tab" });
+});
+
+test("rules: the default settings give one row per denied extension", () => {
+  const rows = RULES.split("\n").filter((l) => /^\| `\.[a-z]+` \| `\.[a-z]+` \|$/.test(l));
+  assert.equal(rows.length, 11);
+  for (const row of ["| `.txt` | `.md` |", "| `.hwpx` | `.md` |", "| `.pdf` | `.html` |", "| `.pptx` | `.html` |", "| `.csv` | `.tsv` |", "| `.xlsx` | `.tsv` |"]) {
+    assert.ok(RULES.includes(row), row);
+  }
+  assert.ok(RULES.includes("| `.tsv` | 표 데이터. 탭으로 구분하고 첫 줄은 머리글 |"));
+  assert.ok(RULES.startsWith("# 파일 확장자 규칙 (banker anti-drm)"));
+  assert.ok(!RULES.includes("{{") && !RULES.includes("<!--"), "no placeholder or marker left");
+});
+
+test("rules: a replacement the user did not choose falls back in order", () => {
+  assert.equal(replacementFor(".pdf", [".md"]), ".md");
+  assert.equal(replacementFor(".csv", [".md", ".html"]), ".md");
+  assert.equal(replacementFor(".csv", [".html"]), ".html");
+  assert.equal(replacementFor(".log", [".html", ".md"]), ".md");
+  assert.equal(replacementFor(".txt", [".adoc"]), ".adoc");
+});
+
+test("rules: the wording follows the replacements and the TSV delimiter", () => {
+  const noTsv = renderRules(TEMPLATE, checkConfig({ deny: [".csv"], alt: [".md", ".html"] }).config);
+  assert.ok(noTsv.includes("| `.md` | 글과 메모. 표 데이터는 마크다운 표 |"));
+  assert.ok(noTsv.includes("| `.csv` | `.md` |"));
+  const comma = renderRules(TEMPLATE, checkConfig({ deny: [".csv"], alt: [".tsv", ".md"], tsvDelimiter: "comma" }).config);
+  assert.ok(comma.includes("| `.tsv` | 표 데이터. CSV 내용을 그대로 쓰고 확장자만 .tsv. 읽고 쓰는 코드에 구분자 쉼표를 명시 |"));
+  assert.ok(comma.includes("| `.md` | 글과 메모 |"));
+  const own = renderRules(TEMPLATE, checkConfig({ deny: [".log"], alt: [".adoc", ".md"] }).config);
+  assert.ok(own.includes("| `.adoc` | 사용자가 정한 대체 확장자 |"));
+  assert.ok(own.includes("| `.log` | `.md` |"));
+});
+
+test("the template is in SKILL.md once, with each placeholder once and no management marker", () => {
+  const wrap = (body) => `a\n<!-- anti-drm:rules:start -->\n${body}\n<!-- anti-drm:rules:end -->\nb\n`;
+  assert.equal(templateOf(wrap("x {{map}} y {{alts}}").replace(/\n/g, "\r\n")), "x {{map}} y {{alts}}");
+  assert.throws(() => templateOf("no markers"), /찾지 못했습니다/);
+  assert.throws(() => templateOf(wrap("{{map}}") + wrap("{{alts}}")), /찾지 못했습니다/);
+  assert.throws(() => templateOf(wrap("{{map}} only")), /자리 표시/);
+  assert.throws(() => templateOf(wrap("{{map}} {{map}} {{alts}}")), /자리 표시/);
+  assert.throws(() => templateOf(wrap(`{{map}} {{alts}}\n${OPEN}`)), /관리 표시/);
+});
+
+test("SKILL.md keeps its own rules outside code: no decorative symbols, emoji or exclamation marks", () => {
+  const text = read(SKILL);
+  assert.match(text, /^---\nname: anti-drm\n/);
+  const prose = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "").replace(/<!--[\s\S]*?-->/g, "");
+  assert.doesNotMatch(prose, /[→⇒←↔·…※★☆✓✔✗✘●○■□▶◆—–]/u);
+  assert.doesNotMatch(prose, /\p{Extended_Pictographic}/u);
+  assert.ok(!prose.includes("!"), "no exclamation marks in prose");
+});
+
+test("the rules list three or more items vertically, never inline: at most one comma per line or table cell", () => {
+  const comma = renderRules(TEMPLATE, checkConfig({ deny: [".csv"], alt: [".tsv"], tsvDelimiter: "comma" }).config);
+  for (const rules of [RULES, comma]) {
+    const prose = rules.replace(/`[^`\n]*`/g, "");
+    for (const line of prose.split("\n")) {
+      const cells = line.trim().startsWith("|") ? line.split("|") : [line];
+      for (const cell of cells) assert.ok(cell.split(",").length <= 2, `inline enumeration: ${line.trim()}`);
+    }
+  }
+});
+
+test("Claude Code: on with settings saves them, writes the rules file, and a second on changes nothing", () => {
+  const s = setup();
+  const r = turnOn("claude", s.o, FLAGS);
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /설정을 저장했습니다/);
+  assert.ok(r.message.endsWith(`적용할 규칙:\n${RULES}`), "the rules follow, for this session");
+  assert.deepEqual(readConfig(s.o.configFile).config, CONFIG);
+  const text = read(s.rulesFile);
+  assert.ok(text.startsWith("<!-- banker anti-drm"));
+  assert.ok(text.endsWith(`\n${RULES}\n`));
+  const again = turnOn("claude", s.o);
+  assert.ok(again.ok && /변경 없음/.test(again.message), again.message);
+  assert.equal(read(s.rulesFile), text);
+});
+
+test("on without settings, with one list only, or with a reserved extension refuses and writes nothing", () => {
+  const s = setup();
+  const none = turnOn("claude", s.o);
+  assert.equal(none.ok, false);
+  assert.match(none.message, /설정이 없습니다/);
+  const half = turnOn("claude", s.o, { deny: ".txt" });
+  assert.equal(half.ok, false);
+  assert.match(half.message, /사용법/);
+  const bad = turnOn("claude", s.o, { deny: ".md", alt: ".html" });
+  assert.equal(bad.ok, false);
+  assert.match(bad.message, /설정을 저장하지 않았습니다: anti-drm 이 쓰는 형식/);
+  assert.ok(!existsSync(s.rulesFile) && !existsSync(s.o.configFile));
+});
+
+test("Claude Code: off deletes the rules file and keeps the settings", () => {
+  const s = setup();
+  turnOn("claude", s.o, FLAGS);
+  const r = turnOff("claude", s.o);
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /설정은 남겨 두었습니다/);
+  assert.ok(!existsSync(s.rulesFile));
+  assert.deepEqual(readConfig(s.o.configFile).config, CONFIG);
+  assert.match(turnOff("claude", s.o).message, /이미 꺼져 있습니다/);
+  assert.ok(turnOn("claude", s.o).ok, "on again asks nothing: the settings are there");
+});
+
+test("Claude Code: a file at the name that is not banker's is left alone", () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"));
+  writeFileSync(s.rulesFile, "# my own rules\n");
+  for (const r of [turnOn("claude", s.o, FLAGS), turnOff("claude", s.o)]) {
+    assert.equal(r.ok, false);
+    assert.match(r.message, /다른 파일/);
+  }
+  assert.equal(read(s.rulesFile), "# my own rules\n");
+});
+
+test("Codex: on adds one block and off gives back the bytes", () => {
+  const shapes = { lf: "# my agents\nkeep me\n", "no final break": "# my agents\nkeep me", crlf: "# my agents\r\nkeep me\r\n" };
+  for (const [name, original] of Object.entries(shapes)) {
+    const s = setup();
+    writeFileSync(s.agents, original);
+    assert.ok(turnOn("codex", s.o, FLAGS).ok, name);
+    const on = read(s.agents);
+    assert.equal(blocks(on), 1, name);
+    assert.ok(on.startsWith(original), name);
+    assert.ok(on.includes("# 파일 확장자 규칙 (banker anti-drm)"), name);
+    assert.match(status(s.o).message, /- Codex: 켜짐 \(/, name);
+    assert.ok(turnOff("codex", s.o).ok, name);
+    assert.equal(read(s.agents), original, name);
+    assert.ok(existsSync(`${s.agents}.anti-drm.bak`), name);
+  }
+});
+
+test("tone-compact's block and ours share AGENTS.md: either goes first, and off takes out only its own", () => {
+  for (const first of ["tone", "anti"]) {
+    for (const eol of ["\n", "\r\n"]) {
+      const s = setup();
+      const original = `# base${eol}`;
+      writeFileSync(s.agents, original);
+      const on = { tone: () => tcOn("codex", s.tc), anti: () => turnOn("codex", s.o, FLAGS) };
+      const off = { tone: () => tcOff("codex", s.tc), anti: () => turnOff("codex", s.o) };
+      const second = first === "tone" ? "anti" : "tone";
+      const label = `${first} first, ${JSON.stringify(eol)}`;
+      assert.ok(on[first]().ok && on[second]().ok, label);
+      assert.equal(blocks(read(s.agents)) + blocks(read(s.agents), TC_OPEN), 2, label);
+      assert.ok(off[first]().ok, label);
+      assert.equal(blocks(read(s.agents), first === "tone" ? TC_OPEN : OPEN), 0, `${label}: the first block is gone`);
+      assert.equal(blocks(read(s.agents), first === "tone" ? OPEN : TC_OPEN), 1, `${label}: the second block stays`);
+      assert.ok(off[second]().ok, label);
+      assert.equal(read(s.agents), original, `${label}: the bytes from before`);
+    }
+  }
+});
+
+test("both blocks survive an omx setup --merge-agents rewrite, and off still takes each out cleanly", () => {
+  const s = setup();
+  const managed = "<!-- omx:generated:agents-md -->\n# oh-my-codex\nnew guidance\n";
+  writeFileSync(s.agents, "<!-- omx:generated:agents-md -->\nold guidance\n");
+  assert.ok(tcOn("codex", s.tc).ok && turnOn("codex", s.o, FLAGS).ok);
+  writeFileSync(s.agents, omxRewrite(read(s.agents), managed));
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(blocks(read(s.agents), TC_OPEN), 1);
+  assert.match(status(s.o).message, /- Codex: 켜짐 \(/);
+  assert.ok(turnOff("codex", s.o).ok && tcOff("codex", s.tc).ok);
+  assert.equal(read(s.agents), managed);
+});
+
+test("an override holding only tone-compact's block: ours goes to AGENTS.md and says so, until tone-compact's on moves its block", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  writeFileSync(s.override, "# mine\n");
+  assert.ok(tcOn("codex", s.tc).ok);
+  writeFileSync(s.override, read(s.override).replace("# mine\n", ""));
+  const r = turnOn("codex", s.o, FLAGS);
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /다른 banker 블록\(tone-compact\)만 있어 Codex 가 AGENTS.md 를 읽지 않습니다/);
+  assert.equal(blocks(read(s.agents)), 1, "ours went to AGENTS.md");
+  assert.match(status(s.o).message, /- Codex: 꺼짐, 단 AGENTS.override.md 에 다른 banker 블록\(tone-compact\)만 있어/);
+  assert.match(tcStatus(s.tc).message, /- Codex: 켜짐, 단 AGENTS.override.md 에 블록만 있어 AGENTS.md 가 가려짐/);
+  assert.ok(tcOn("codex", s.tc).ok, "tone-compact's on moves its block");
+  assert.ok(!existsSync(s.override), "the override left empty is removed");
+  assert.match(status(s.o).message, /- Codex: 켜짐 \(/);
+  assert.ok(turnOff("codex", s.o).ok && tcOff("codex", s.tc).ok);
+  assert.equal(read(s.agents), "# base\n");
+});
+
+test("config saves the settings and refreshes only the runtimes that hold the rules", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  turnOn("claude", s.o, FLAGS);
+  const r = configure(s.o, { deny: ".txt,.csv", alt: ".md,.tsv", tsv: "comma" });
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /설정을 저장했습니다/);
+  assert.match(r.message, /Claude Code: 규칙을 지금 설정으로 바꿨습니다/);
+  assert.doesNotMatch(r.message, /Codex:/, "Codex held no rules");
+  const rules = read(s.rulesFile);
+  assert.ok(rules.includes("| `.csv` | `.tsv` |") && !rules.includes("| `.pdf` |"));
+  assert.ok(rules.includes("CSV 내용을 그대로 쓰고 확장자만 .tsv"));
+  assert.equal(read(s.agents), "# base\n");
+  assert.match(status(s.o).message, /TSV 구분자: 쉼표/);
+});
+
+test("config with no runtime on only saves, and on later uses the saved settings", () => {
+  const s = setup();
+  const r = configure(s.o, { deny: ".txt", alt: ".md" });
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /켜진 런타임이 없어 규칙은 바꾸지 않았습니다/);
+  assert.doesNotMatch(r.message, /적용할 규칙/);
+  assert.ok(!existsSync(s.rulesFile));
+  assert.ok(turnOn("claude", s.o).ok);
+  assert.ok(read(s.rulesFile).includes("| `.txt` | `.md` |"));
+});
+
+test("config reports a runtime it could not refresh and fails, with the settings saved", () => {
+  const s = setup();
+  turnOn("claude", s.o, FLAGS);
+  writeFileSync(s.agents, `# base\n${OPEN}\nhalf a block\n`);
+  const r = configure(s.o, { deny: ".txt", alt: ".md" });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /설정을 저장했습니다/);
+  assert.match(r.message, /Claude Code: 규칙을 지금 설정으로 바꿨습니다/);
+  assert.match(r.message, /짝이 맞지 않아/);
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".txt"]);
+});
+
+test("on with new settings refreshes the other runtime too", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  turnOn("claude", s.o, FLAGS);
+  turnOn("codex", s.o);
+  const r = turnOn("claude", s.o, { deny: ".txt", alt: ".md" });
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /Codex: 규칙을 지금 설정으로 바꿨습니다/);
+  const agents = read(s.agents);
+  assert.ok(agents.includes("| `.txt` | `.md` |") && !agents.includes("| `.pdf` |"));
+});
+
+test("status: the settings, then both runtimes; settings changed behind its back show as different", () => {
+  const s = setup();
+  assert.match(status(s.o).message, /^anti-drm 상태\n- 설정: 없음 \(on 이나 config 로 만듦\)\n- Claude Code: 꺼짐/);
+  turnOn("claude", s.o, FLAGS);
+  const st = status(s.o).message;
+  assert.match(st, /- 설정: .*anti-drm\.json\n {2}- 금지 확장자 11개: \.txt \.pdf/);
+  assert.match(st, / {2}- 대체 확장자 3개: \.md \.html \.tsv\n {2}- TSV 구분자: 탭/);
+  assert.match(st, /- Claude Code: 켜짐 \(/);
+  assert.match(st, /- Codex: 꺼짐 \(/);
+  writeFileSync(s.o.configFile, JSON.stringify({ deny: [".txt"], alt: [".md"] }));
+  assert.match(status(s.o).message, /- Claude Code: 켜짐, 단 규칙이 지금 설정이나 이 버전과 다름 \(on 으로 갱신\)/);
+  const r = turnOn("claude", s.o);
+  assert.ok(r.ok && /규칙을 지금 설정으로 바꿨습니다/.test(r.message), r.message);
+});
+
+test("a broken settings file: status says so, on refuses, config writes a new one", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, "{");
+  assert.match(status(s.o).message, /- 설정: 올바르지 않음 \(JSON 이 아닙니다\)/);
+  const r = turnOn("claude", s.o);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /설정 파일이 올바르지 않습니다/);
+  assert.ok(configure(s.o, FLAGS).ok);
+  assert.deepEqual(readConfig(s.o.configFile).config, CONFIG);
+});
+
+test("a settings folder this account cannot write is refused with nothing changed", permTest, () => {
+  const s = setup();
+  const folder = join(s.dir, "config", "banker");
+  mkdirSync(folder, { recursive: true });
+  chmodSync(folder, 0o555);
+  try {
+    const r = configure(s.o, FLAGS);
+    assert.equal(r.ok, false);
+    assert.match(r.message, /쓸 권한이 없어 설정을 저장하지 못했습니다/);
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+  assert.ok(!existsSync(s.o.configFile));
+});
+
+test("command line: status by default, usage for anything else", () => {
+  const s = setup();
+  const st = cli([], cliEnv(s));
+  assert.equal(st.code, 0);
+  assert.match(st.out, /^anti-drm 상태\n- 설정: 없음/);
+  const misuse = [
+    ["bogus"],
+    ["on", "extra"],
+    ["off", "--runtime", "claude", "--deny", ".txt"],
+    ["status", "--alt", ".md"],
+    ["config", "--deny", ".txt"],
+    ["status", "--runtime", "bogus"],
+  ];
+  for (const args of misuse) {
+    const r = cli(args, cliEnv(s));
+    assert.equal(r.code, 1, args.join(" "));
+    assert.match(r.out, /사용법/, args.join(" "));
+  }
+  assert.deepEqual(parseArgs(["ON", "--runtime=Codex", "--deny", ".TXT,.csv", "--alt=.md"]), {
+    command: "on",
+    runtime: "codex",
+    flags: { deny: ".TXT,.csv", alt: ".md" },
+    extra: [],
+  });
+});
+
+test("command line: on and off need a runtime unless Claude Code runs them", () => {
+  const s = setup();
+  const missing = cli(["on", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  assert.equal(missing.code, 1);
+  assert.match(missing.out, /런타임을 정할 수 없습니다/);
+  assert.ok(!existsSync(s.o.configFile), "nothing saved before the runtime is known");
+  const claude = cli(["on", "--deny", ".txt", "--alt", ".md"], { ...cliEnv(s), CLAUDECODE: "1" });
+  assert.equal(claude.code, 0, claude.out);
+  assert.ok(existsSync(s.rulesFile), "CLAUDE_CONFIG_DIR decides where the rules file goes");
+  assert.ok(existsSync(s.o.configFile), "BANKER_ANTI_DRM_CONFIG decides where the settings go");
+});
+
+test("command line: a refusal exits 1, an unexpected error exits 2", () => {
+  const s = setup();
+  const refused = cli(["on", "--runtime", "codex"], cliEnv(s));
+  assert.equal(refused.code, 1);
+  assert.match(refused.out, /설정이 없습니다/);
+  mkdirSync(s.rulesFile, { recursive: true }); // a folder where the rules file should be
+  const broken = cli(["on", "--runtime", "claude", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  assert.equal(broken.code, 2, broken.out);
+  assert.match(broken.out, /예기치 못한 오류로 중단했습니다/);
+});
+
+test("command line: config needs no runtime and prints the rules only when a runtime holds them", () => {
+  const s = setup();
+  const quiet = cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
+  assert.equal(quiet.code, 0, quiet.out);
+  assert.doesNotMatch(quiet.out, /적용할 규칙/);
+  assert.equal(cli(["on", "--runtime", "codex"], cliEnv(s)).code, 0);
+  const loud = cli(["config", "--deny", ".csv", "--alt", ".tsv", "--tsv", "comma"], cliEnv(s));
+  assert.equal(loud.code, 0, loud.out);
+  assert.match(loud.out, /Codex: 규칙을 지금 설정으로 바꿨습니다/);
+  assert.match(loud.out, /적용할 규칙:\n# 파일 확장자 규칙/);
+});
+
+test("files and folders on creates are not group or world writable, even under umask 002", posixOnly, () => {
+  const s = setup();
+  const sh = (args) =>
+    spawnSync("sh", ["-c", `umask 002 && "${process.execPath}" "${CLI}" ${args}`], {
+      encoding: "utf8",
+      env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) },
+    });
+  assert.equal(sh("on --runtime claude --deny .txt --alt .md").status, 0);
+  assert.equal(sh("on --runtime codex").status, 0);
+  const made = [join(s.o.claudeDir, "rules"), s.rulesFile, s.agents, join(s.dir, "config"), join(s.dir, "config", "banker"), s.o.configFile];
+  for (const path of made) assert.equal(statSync(path).mode & 0o022, 0, path);
+});
+
+test("instruction-toggle.mjs is the same file in tone-compact and anti-drm", () => {
+  const here = readFileSync(fileURLToPath(new URL("./instruction-toggle.mjs", import.meta.url)));
+  const there = readFileSync(fileURLToPath(new URL("../../tone-compact/scripts/instruction-toggle.mjs", import.meta.url)));
+  assert.ok(here.equals(there), "run node scripts/sync-adapter.js");
+});

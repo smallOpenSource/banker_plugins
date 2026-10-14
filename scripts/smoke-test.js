@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (61 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (62 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -39,7 +39,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 61, `codex dry-run plans 61 skill copies (got ${copies})`);
+  ok(copies === 62, `codex dry-run plans 62 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -159,7 +159,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 61, `real codex install has 61 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 62, `real codex install has 62 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -205,6 +205,18 @@ try {
   const tcDir = path.join(instDir, 'banker-tone-compact');
   ok(fs.existsSync(path.join(tcDir, 'scripts', 'tone-compact.mjs')), 'banker-tone-compact carries scripts/tone-compact.mjs into the Codex install');
   ok(fs.existsSync(path.join(tcDir, 'scripts', 'instruction-toggle.mjs')), 'banker-tone-compact carries scripts/instruction-toggle.mjs into the Codex install');
+  // anti-drm runs its script from the skill's own folder with the shared toggle module beside it, and fills the
+  // rules from the template in its SKILL.md; the template markers must survive the frontmatter `name:` rewrite.
+  ok(installed.includes('banker-anti-drm'), 'new anti-drm installed as banker-anti-drm');
+  const adDir = path.join(instDir, 'banker-anti-drm');
+  ok(['anti-drm.mjs', 'instruction-toggle.mjs'].every((f) => fs.existsSync(path.join(adDir, 'scripts', f))),
+     'banker-anti-drm carries scripts/anti-drm.mjs + scripts/instruction-toggle.mjs into the Codex install');
+  const adSkill = fs.readFileSync(path.join(adDir, 'SKILL.md'), 'utf8');
+  ok(/^---\nname: banker-anti-drm\n/.test(adSkill) && adSkill.includes('<!-- anti-drm:rules:start -->') && adSkill.includes('<!-- anti-drm:rules:end -->'),
+     'Codex copy of anti-drm keeps its rule template markers after the name rewrite');
+  const toggleTc = fs.readFileSync(path.join(root, 'skills', 'tone-compact', 'scripts', 'instruction-toggle.mjs'));
+  const toggleAd = fs.readFileSync(path.join(root, 'skills', 'anti-drm', 'scripts', 'instruction-toggle.mjs'));
+  ok(toggleTc.equals(toggleAd), 'instruction-toggle.mjs is byte-identical across tone-compact and anti-drm');
   const tcSkill = fs.readFileSync(path.join(tcDir, 'SKILL.md'), 'utf8');
   ok(/^---\nname: banker-tone-compact\n/.test(tcSkill) && tcSkill.includes('<!-- tone-compact:rules:start -->') && tcSkill.includes('<!-- tone-compact:rules:end -->'),
      'Codex copy of tone-compact keeps its rule markers after the name rewrite');
@@ -346,6 +358,7 @@ try {
     path.join('skills', 'payload-mon', 'scripts', 'payload-mon.test.mjs'),
     path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
+    path.join('skills', 'anti-drm', 'scripts', 'anti-drm.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),
