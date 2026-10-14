@@ -1074,3 +1074,29 @@ test("an origin with a user and password shows only ***, and PINNED keeps no URL
     assert.ok(out.includes(`origin=${plain})`), `a URL with no password is left as it is: ${out}`);
   }
 });
+
+test("the pin keeps the origin as written, not as a global insteadOf expands it, and the revert gives it back", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const gitconfig = join(root, `insteadof${seq++}.gitconfig`);
+  writeFileSync(gitconfig, '[url "https://example.invalid/"]\n\tinsteadOf = ex:\n');
+  assert.equal(runGit(["remote", "set-url", "origin", "ex:omc.git"], f.market).status, 0);
+  const env = { GIT_CONFIG_GLOBAL: gitconfig };
+  // the fixture bites: get-url expands the short form
+  assert.equal(runGit(["remote", "get-url", "origin"], f.market, env).stdout.trim(), "https://example.invalid/omc.git");
+  assert.equal(run(f.home, ["--no-update"], env).code, 0);
+  const raw = () => runGit(["config", "--get", "remote.origin.url"], f.market).stdout.trim();
+  assert.equal(raw(), "omc-pinned://ex:omc.git");
+  assert.equal(run(f.home, ["--revert"], env).code, 0);
+  assert.equal(raw(), "ex:omc.git");
+});
+
+test("an origin that starts with a dash is written back as a value, never read as an option", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["config", "remote.origin.url", "-x/omc.git"], f.market).status, 0);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const raw = () => runGit(["config", "--get", "remote.origin.url"], f.market).stdout.trim();
+  assert.equal(raw(), "omc-pinned://-x/omc.git");
+  const back = run(f.home, ["--revert"]);
+  assert.equal(back.code, 0, back.out);
+  assert.equal(raw(), "-x/omc.git");
+});

@@ -759,14 +759,21 @@ function removePostToolUse(hj) {
 // origin remote 의 URL 을 무효 주소로 바꿔 fetch 를 실패시킨다(원래 URL 은
 // `omc-pinned://` 뒤에 그대로 남기고 --revert 가 거기서 복구한다. PINNED 파일은 기록이다).
 // 저장소 자체는 그대로라 이미 받은 태그로 재설치·검증이 가능하다.
+
+// origin 의 원문. `git remote get-url` 은 전역 insteadOf 를 펼친 값을 내서, 그 값이 고정되고 되돌린 뒤에도 원래
+// 값 대신 남았다. 설정 값을 그대로 읽는다. 없으면(git 이 1 로 끝남) null.
+function originUrl() {
+  try { return git(["config", "--get", "remote.origin.url"]); } catch { return null; }
+}
+
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
   // 마켓플레이스 폴더가 제 git 저장소가 아니면 git 이 위쪽 저장소(예: dotfiles 로 관리하는
   // ~/.claude)를 찾아 그 origin 을 바꾼다. 제 .git 이 있을 때만 고정하고 되돌린다. .git 이 있어도
   // 깨졌으면 git 이 위로 올라가는데, 그것은 gitEnv 의 천장이 막는다(origin 을 못 읽어 no-remote).
   if (!existsSync(join(MARKET, ".git"))) return "no-git";
-  let url;
-  try { url = git(["remote", "get-url", "origin"]); } catch { return "no-remote"; }
+  const url = originUrl();
+  if (url === null) return "no-remote";
 
   if (MODE === "revert") return unpinMarketplace(url);
   if (url.startsWith("omc-pinned://")) return "already";
@@ -777,7 +784,7 @@ function pinMarketplace() {
   // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
   // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
   writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600);
-  git(["remote", "set-url", "origin", `omc-pinned://${url}`]);
+  git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]);
   return "pinned";
 }
 
@@ -789,7 +796,7 @@ function unpinMarketplace(url) {
   if (existsSync(PINFILE)) dropPinRecord();
   const restored = url.startsWith(PIN_PREFIX) ? url.slice(PIN_PREFIX.length) : "";
   if (!restored) return "not-pinned";
-  try { git(["remote", "set-url", "origin", restored]); } catch { /* noop */ }
+  try { git(["remote", "set-url", "--", "origin", restored]); } catch { /* noop */ }
   return "unpinned";
 }
 
