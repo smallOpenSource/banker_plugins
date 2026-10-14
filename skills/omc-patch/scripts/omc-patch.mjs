@@ -740,6 +740,42 @@ function otherPluginName(root) {
   return null;
 }
 
+// ── 인자 확인 ────────────────────────────────────────────────────────────
+// 모르는 인자를 말없이 넘기면 --dry-run 이 실제로 적용하고, --root=<폴더> 가 무시돼 --revert 가 모든 판을
+// 되돌리고 고정까지 푼다. 아는 꼴이 아니면 아무것도 읽거나 쓰기 전에 멈춘다.
+const USAGE = [
+  "사용법:",
+  `  node omc-patch.mjs              업데이트(${TARGET_VERSION}) + 패치 + 고정`,
+  "  node omc-patch.mjs --check      진단만 (아무것도 바꾸지 않음)",
+  "  node omc-patch.mjs --revert     패치와 고정 되돌리기",
+  "  node omc-patch.mjs --no-update  버전은 그대로 두고 패치만",
+  "  node omc-patch.mjs --root <플러그인 폴더> [--check | --revert]",
+  "  node omc-patch.mjs --scan <파일>...",
+].join("\n");
+const FLAGS = new Set(["--check", "--revert", "--no-update"]);
+
+// 인자 목록의 문제, 없으면 null. --scan 은 첫 인자일 때만 뒤를 모두 파일로 본다. --root 는 다음 인자를
+// 값으로 가져가고, 값이 없거나 플래그인 경우는 main 의 확인이 맡는다.
+function argProblem(list) {
+  if (list[0] === "--scan") return null;
+  let roots = 0;
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (FLAGS.has(a)) continue;
+    if (a === "--root") { roots++; i++; continue; }
+    if (a === "--scan") return "--scan 은 첫 인자로만 쓸 수 있습니다";
+    if (a.startsWith("--root=")) return "--root 와 폴더는 띄어 쓰십시오: --root <폴더>";
+    return `알 수 없는 인자: ${shown(a)}`;
+  }
+  return roots > 1 ? "--root 는 한 번만 쓸 수 있습니다" : null;
+}
+
+if (args[0] !== "--scan" && (argv.has("--help") || argv.has("-h"))) { log(USAGE); process.exit(0); }
+{
+  const problem = argProblem(args);
+  if (problem) { bad(problem); log(USAGE); process.exit(1); }
+}
+
 // ── --scan: 사실만 내고 끝낸다 ───────────────────────────────────────────────
 // 아래 main 보다 먼저 끝나야 한다. 이 모드는 installed_plugins.json 도 플러그인 캐시도 읽지 않는다.
 // 결과는 입력 순서대로 JSON 배열 한 줄이다. 동기 쓰기로 내보내야 process.exit 가 잘라먹지 않는다.

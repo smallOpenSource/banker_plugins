@@ -223,4 +223,5 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --revert
 - 도구는 git 을 부를 때 저장소를 고르는 변수(`GIT_DIR`, `GIT_WORK_TREE` 등 `git rev-parse --local-env-vars` 목록)를 지운다. git 훅 안에서 불러도 마켓플레이스 저장소만 다룬다.
 - 마켓플레이스의 `.git` 이 깨졌으면(중단된 clone 등) git 이 위쪽 저장소로 올라가지 못하게 막는다. 그때 `[4/4]` 는 `origin remote 없음` 으로 끝나고 고정하지 않는다.
 - `--scan` 은 읽기만 한다. 플러그인 캐시도 `installed_plugins.json` 도 읽지 않고 준 파일만 본다.
+- 도구는 모르는 인자를 받지 않는다. `--check`, `--revert`, `--no-update`, `--root <폴더>`, `--scan <파일>...`, `--help` 밖의 인자나 `--root=<폴더>` 꼴을 주면 아무것도 하지 않고 사용법과 함께 종료 1 로 멈춘다.
 - 도구의 주석과 출력 문구는 한글이다.
