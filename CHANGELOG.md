@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `omc-patch`: 모르는 인자를 받지 않는다. 예전에는 말없이 넘겨 `--dry-run` 을 줘도 실제로 적용했고, `--root=<폴더>` 꼴은 `--root` 가 무시돼 `--revert` 가 모든 판을 되돌리고 고정까지 풀었다. 이제 아는 인자 밖이면 아무것도 읽거나 쓰지 않고 사용법과 함께 종료 1 로 멈춘다. `--help` 는 사용법을 낸다.
+- `omc-patch`: 출력 정화를 유니코드 속성 기준으로 넓혔다. 단어 결합자, 태그 문자(보이지 않는 ASCII), 빈 글자(U+3164 등), 점자 빈칸, ASCII 밖 공백을 `?` 로 바꾼다. `--root` 이름표 출력도 정화한다.
+- `tone-compact`, `anti-drm`: 지침 파일 자리(AGENTS.md, AGENTS.override.md, 규칙 파일)에 폴더나 FIFO 가 있으면 읽지 않는다. 예전에는 FIFO 에서 `status` 와 `off` 가 멈췄다. 이제 `on`, `off` 는 거부(종료 1)하고 `status` 는 그 사실을 보인다.
+- `tone-compact`, `anti-drm`: AGENTS.override.md 가 AGENTS.md 의 링크나 하드 링크면 한 파일로 다룬다. 예전에는 `on` 을 할 때마다 블록이 들어갔다 빠졌다 했다.
+- `tone-compact`, `anti-drm`: 메시지의 경로에서 빈 글자(U+3164 등), 점자 빈칸, ASCII 밖 공백도 `?` 로 바꾼다.
+- `anti-drm`: 설정 파일의 TSV 구분자도 대소문자를 가리지 않는다(`"Tab"`). 채운 규칙에 `{{` 가 남으면 오류로 멈춘다.
+- `lineage` 3.0.4: 공백만 있는 요약 캐시는 읽지 못한 것으로 보고 다시 요약한다.
+- `scripts/gen-skill-changes.js`(유지보수자용): npm 묶음에 들어가지 않는 파일(시험, `__pycache__`, `.omc`)만 바뀐 스킬은 바뀐 스킬로 세지 않는다.
+
+### Changed
+- `anti-drm`: 설정 값을 표준 입력(`--stdin`, 줄마다 `deny=`, `alt=`, `tsv=`)으로 받는다. 스킬은 따옴표 친 heredoc 으로 넘겨 사용자가 고른 값이 셸을 거치지 않는다. `--deny`, `--alt`, `--tsv` 도 그대로 받는다.
+- `tone-compact`, `anti-drm`: Codex `off` 결과에 지우기 전 파일(`<파일>.<스킬>.bak`)을 알린다. 다른 banker 블록 때문에 Codex 가 AGENTS.md 를 읽지 않으면 `on` 의 첫 문장이 그렇다고 말한다.
+- `update-banker`: Claude Code 가 캐시의 옛 판을 지우는 규칙을 확인된 사실로 적었다(`.orphaned_at` 뒤 14일, 그 판을 쓰는 세션 없음, 링크 판 제외).
+- smoke 시험: banker 작업 파일 검사가 대소문자를 가리지 않고 `skills/`, `commands/` 의 모든 글 파일을 본다.
+
 ## [0.18.0] - 2026-10-14
 
 ### Added
