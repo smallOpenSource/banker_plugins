@@ -38,6 +38,10 @@
  * AGENTS.md that is a link to nothing is refused by turnOn, which would
  * otherwise create the file the link points at.
  *
+ * Codex's files are read and written under a lock file (.banker-agents.lock in
+ * the Codex folder), so both skills turned on at once keep both blocks; a lock
+ * older than a minute is taken over.
+ *
  * Results are { ok, message }; ok false means refused with nothing changed.
  * Anything else that goes wrong throws.
  */
@@ -481,6 +485,80 @@ function hasOtherNames(path) {
   }
 }
 
+// The lock both banker skills take while they read and write Codex's instructions files: two on's at once would
+// each write the file back with only their own block. A lock is held for milliseconds; one older than a minute was
+// left by a run that died.
+const LOCK = ".banker-agents.lock";
+const LOCK_STALE_MS = 60_000;
+const LOCK_STEP_MS = 50;
+const SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+// Makes the lock file; false when one is there already. Anything else (permissions) throws.
+function tryLock(path, token) {
+  try {
+    writeFileSync(path, token, { flag: "wx", mode: 0o600 });
+    return true;
+  } catch (e) {
+    if (e.code === "EEXIST") return false;
+    throw e;
+  }
+}
+
+// Removes a lock a dead run left; true when there is none now, so the next try may take it.
+function dropStale(path) {
+  let age;
+  try {
+    age = Date.now() - statSync(path).mtimeMs;
+  } catch {
+    return true; /* gone in between */
+  }
+  if (age <= LOCK_STALE_MS) return false;
+  rmSync(path, { force: true });
+  return true;
+}
+
+// Takes the lock: { path, token }, or null when another run held it for waitMs.
+function takeLock(dir, waitMs) {
+  const path = join(dir, LOCK);
+  const token = `${process.pid} ${Date.now()} ${Math.random()}`;
+  const until = Date.now() + waitMs;
+  for (;;) {
+    if (tryLock(path, token)) return { path, token };
+    if (!dropStale(path)) {
+      if (Date.now() >= until) return null;
+      Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
+    }
+  }
+}
+
+// Gives the lock back while it is still this run's.
+function dropLock(lock) {
+  try {
+    if (readFileSync(lock.path, "utf8") === lock.token) rmSync(lock.path, { force: true });
+  } catch {
+    /* already gone */
+  }
+}
+
+// Runs fn holding the lock; a lock another run keeps past the wait is a refusal. A folder this account cannot write
+// takes no lock, and nothing in it can be written either: fn then only reads, and writeBlocked refuses any change,
+// so "already on" and "already off" answer as before.
+function locked(o, fn) {
+  let lock;
+  try {
+    lock = takeLock(o.codexDir, o.lockWaitMs ?? 5000);
+  } catch (e) {
+    if (denied(e)) return fn();
+    throw e;
+  }
+  if (!lock) return refuse(`다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다: ${where(join(o.codexDir, LOCK))}`);
+  try {
+    return fn();
+  } finally {
+    dropLock(lock);
+  }
+}
+
 const OMX_NOTE =
   "참고: omx setup 이 AGENTS.md 를 새로 만들면(--force, 덮어쓰기 확인, team 모드를 끈 상태의 omx setup) 이 블록이 사라집니다. 그 뒤에는 on 을 다시 실행하세요. --merge-agents 와 기본 omx setup 은 블록을 남깁니다.";
 
@@ -520,6 +598,10 @@ function onWords(t, state, unread) {
 
 function codexOn(t, o, getRules) {
   if (!isDir(o.codexDir)) return refuse(`Codex 설정 폴더가 없습니다: ${where(o.codexDir)}`);
+  return locked(o, () => codexOnHeld(t, o, getRules));
+}
+
+function codexOnHeld(t, o, getRules) {
   const rules = getRules();
   const files = codexFiles(t, o);
   const state = codexState(t, files, rules);
@@ -540,6 +622,10 @@ function codexOn(t, o, getRules) {
 
 function codexOff(t, o) {
   if (!isDir(o.codexDir)) return done(`Codex: 설정 폴더가 없어 끌 것이 없습니다 (변경 없음). ${where(o.codexDir)}`);
+  return locked(o, () => codexOffHeld(t, o));
+}
+
+function codexOffHeld(t, o) {
   const files = codexFiles(t, o);
   const refusal = codexRefusal(t, files, codexState(t, files));
   if (refusal) return refusal;

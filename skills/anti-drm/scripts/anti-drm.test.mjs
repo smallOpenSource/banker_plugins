@@ -899,3 +899,20 @@ test("--stdin: spaces around a value are dropped, and the usage says --stdin wai
   assert.equal(readConfig(s.o.configFile).config.tsvDelimiter, "comma");
   assert.match(cli(["bogus"], cliEnv(s)).out, /--stdin 은 표준 입력이 끝날 때까지 기다립니다/);
 });
+
+test("tone-compact and anti-drm turned on at the same moment keep both blocks", async () => {
+  const TC_CLI = fileURLToPath(new URL("../../tone-compact/scripts/tone-compact.mjs", import.meta.url));
+  for (let round = 0; round < 20; round++) {
+    const s = setup();
+    writeFileSync(s.agents, "# base\n");
+    const env = { ...process.env, CLAUDECODE: "", ...cliEnv(s) };
+    const runs = [
+      [TC_CLI, "on", "--runtime", "codex"],
+      [CLI, "on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"],
+    ].map((args) => new Promise((resolve) => spawn(process.execPath, args, { env }).on("exit", resolve)));
+    assert.deepEqual(await Promise.all(runs), [0, 0], `round ${round}`);
+    const text = read(s.agents);
+    assert.equal(blocks(text, TC_OPEN), 1, `round ${round}: tone-compact`);
+    assert.equal(blocks(text), 1, `round ${round}: anti-drm`);
+  }
+});

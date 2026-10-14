@@ -13,6 +13,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -582,6 +583,8 @@ test("a read-only Codex folder is refused up front instead of failing halfway", 
     const r = cli(["on", "--runtime", "codex"], cliEnv(s));
     assert.equal(r.code, 1, r.out);
     assert.match(r.out, /쓸 권한이 없어/);
+    const off = cli(["off", "--runtime", "codex"], cliEnv(s));
+    assert.equal(off.code, 0, `already off answers as before: ${off.out}`);
   } finally {
     chmodSync(s.o.codexDir, 0o755);
   }
@@ -975,4 +978,24 @@ test("Claude Code: a link to nothing where the rules file goes is replaced by on
   assert.ok(r.ok, r.message);
   assert.equal(lstatSync(s.rulesFile).isSymbolicLink(), false);
   assert.equal(existsSync(join(s.o.claudeDir, "rules", "gone.md")), false);
+});
+
+test("Codex on and off wait for another banker skill's lock, and take over one a dead run left", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  writeFileSync(lock, "4242 0 held");
+  const started = Date.now();
+  const held = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.equal(held.ok, false, held.message);
+  assert.match(held.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다: .*\.banker-agents\.lock/);
+  assert.ok(Date.now() - started >= 200, "it waited");
+  assert.equal(read(s.agents), "# base\n");
+  assert.equal(turnOff("codex", { ...s.o, lockWaitMs: 200 }).ok, false);
+  const old = new Date(Date.now() - 120_000);
+  utimesSync(lock, old, old);
+  const r = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(existsSync(lock), false, "the lock is given back");
 });
