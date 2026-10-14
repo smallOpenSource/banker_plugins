@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { parseArgs, rulesOf, status, turnOff, turnOn } from "./tone-compact.mjs";
+import { count, done, lf, noBom, refuse, where } from "./instruction-toggle.mjs";
 
 const CLI = fileURLToPath(new URL("./tone-compact.mjs", import.meta.url));
 const SKILL = fileURLToPath(new URL("../SKILL.md", import.meta.url));
@@ -747,4 +748,13 @@ test("another banker skill's block alone in the override: ours goes to AGENTS.md
 test("the rules may not quote any banker or OMX management marker", () => {
   const wrap = (body) => `a\n<!-- tone-compact:rules:start -->\n${body}\n<!-- tone-compact:rules:end -->\nb\n`;
   assert.throws(() => rulesOf(wrap("x\nsee <!-- banker:anti-drm:start --> there")), /관리 표시/);
+});
+
+test("the shared module gives both skills its small helpers", () => {
+  assert.equal(count("a,b,c", ","), 2);
+  assert.equal(lf("a\r\nb\r\n"), "a\nb\n");
+  assert.equal(noBom(`${String.fromCharCode(0xfeff)}x`), "x");
+  assert.equal(noBom("x"), "x");
+  assert.deepEqual(done("m"), { ok: true, message: "m" });
+  assert.deepEqual(refuse("m"), { ok: false, message: "m" });
 });

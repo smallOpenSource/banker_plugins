@@ -50,9 +50,14 @@ import {
   KEEP_CLOSE,
   KEEP_OPEN,
   RUNTIMES,
+  count,
   denied,
+  done,
   hasMarker,
+  lf,
+  noBom,
   present,
+  refuse,
   stateLines,
   toggleSpec,
   turnOff as toggleOff,
@@ -80,12 +85,7 @@ const DEFAULTS = {
   skillFile: fileURLToPath(new URL("../SKILL.md", import.meta.url)),
 };
 
-const BOM = String.fromCharCode(0xfeff);
 const RUNTIME_NAME = { claude: "Claude Code", codex: "Codex" };
-const done = (message) => ({ ok: true, message });
-const refuse = (message) => ({ ok: false, message });
-const count = (text, needle) => text.split(needle).length - 1;
-const lf = (text) => text.replace(/\r\n/g, "\n");
 // A value from outside, as a message shows it. An extension is printable
 // ASCII, so anything else becomes "?" (a line break or a direction mark cannot
 // forge a line or reorder the text), at most 40 characters stay, and a value
@@ -188,7 +188,7 @@ export function readConfig(file) {
   const { text } = got;
   let raw;
   try {
-    raw = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    raw = JSON.parse(noBom(text));
   } catch {
     return { error: "JSON 이 아닙니다" };
   }
@@ -244,7 +244,7 @@ const OWN_KEYS = ["version", "deny", "alt", "tsvDelimiter"];
 function ownSettings(bytes) {
   try {
     const text = bytes.toString("utf8");
-    const raw = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    const raw = JSON.parse(noBom(text));
     const plain = Boolean(raw) && typeof raw === "object" && !Array.isArray(raw);
     return plain && Object.keys(raw).every((k) => OWN_KEYS.includes(k)) && Boolean(checkConfig(raw).config);
   } catch {

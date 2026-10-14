@@ -27,7 +27,9 @@ import {
   KEEP_OPEN,
   RUNTIMES,
   blockSpansOf,
+  count,
   hasMarker,
+  lf,
   stateLines,
   toggleSpec,
   turnOff as toggleOff,
@@ -49,9 +51,6 @@ const DEFAULTS = {
   codexDir: process.env.CODEX_HOME || join(homedir(), ".codex"),
   skillFile: fileURLToPath(new URL("../SKILL.md", import.meta.url)),
 };
-
-const count = (text, needle) => text.split(needle).length - 1;
-const lf = (text) => text.replace(/\r\n/g, "\n");
 
 /** The rules: the text between the markers in SKILL.md, without the line breaks around it. */
 export function rulesOf(skillText) {

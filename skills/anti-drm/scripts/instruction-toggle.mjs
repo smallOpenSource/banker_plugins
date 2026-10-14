@@ -60,8 +60,12 @@ export const KEEP_CLOSE = "<!-- USER:OMX:POLICY:END -->";
 
 // The byte order mark an editor may put in front of a file.
 const BOM = String.fromCharCode(0xfeff);
-const noBom = (text) => (text.startsWith(BOM) ? text.slice(BOM.length) : text);
-const lf = (text) => text.replace(/\r\n/g, "\n");
+/** The text without the byte order mark an editor may put in front of it. */
+export const noBom = (text) => (text.startsWith(BOM) ? text.slice(BOM.length) : text);
+/** The text with CRLF line ends turned into LF. */
+export const lf = (text) => text.replace(/\r\n/g, "\n");
+/** How many times needle occurs in text. */
+export const count = (text, needle) => text.split(needle).length - 1;
 const eolOf = (text) => (text.includes("\r\n") ? "\r\n" : "\n");
 const isDir = (path) => {
   try {
@@ -99,8 +103,10 @@ function readFile(path) {
   }
 }
 
-const done = (message) => ({ ok: true, message });
-const refuse = (message) => ({ ok: false, message });
+/** A result that did, or found already done, what was asked. */
+export const done = (message) => ({ ok: true, message });
+/** A result that refused and changed nothing. */
+export const refuse = (message) => ({ ok: false, message });
 
 /** A skill's marks: the first line of its rules file, and the lines around its Codex block. */
 export function markersOf(slug) {
