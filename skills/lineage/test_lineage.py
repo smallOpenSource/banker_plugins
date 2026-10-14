@@ -2554,6 +2554,21 @@ class TestCacheFileNames(_ReviewCase):
         self.assertTrue(summary)
         self.assertEqual(path.read_text(encoding="utf-8"), summary)
 
+    def test_a_cache_of_only_blank_looking_letters_is_summarized_again(self):
+        path = L.cache_dir("s") / ("a1-%s.md" % self._digest())
+        path.write_text("".join(map(chr, (0xFEFF, 0x200B, 0x3164, 0x2800, 0x3000))) + "\n", encoding="utf-8")
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertFalse(hit)
+        self.assertTrue(summary)
+        self.assertEqual(path.read_text(encoding="utf-8"), summary)
+
+    def test_a_cache_with_a_visible_letter_among_blank_ones_is_a_hit(self):
+        cached = chr(0x200B) + "요약" + chr(0x3164)
+        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_text(cached, encoding="utf-8")
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertTrue(hit)
+        self.assertEqual(summary, cached)
+
     def test_detect_secrets_scans_a_temp_file_that_is_not_txt(self):
         import types
         from unittest import mock

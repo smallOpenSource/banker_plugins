@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.0.4
+version: 3.0.5
 schema_version: 1
 ---
 
