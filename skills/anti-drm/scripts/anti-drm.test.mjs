@@ -468,7 +468,9 @@ test("command line: status by default, usage for anything else", () => {
     runtime: "codex",
     flags: { deny: ".TXT,.csv", alt: ".md" },
     extra: [],
+    stdin: false,
   });
+  assert.equal(parseArgs(["config", "--stdin"]).stdin, true);
 });
 
 test("command line: on and off need a runtime unless Claude Code runs them", () => {
@@ -766,4 +768,50 @@ test("settings file: the TSV delimiter is read in any letter case; other types a
 test("rules: a placeholder left after filling is an error", () => {
   assert.throws(() => renderRules(`${TEMPLATE}\n{{extra}}`, CONFIG), /자리 표시\(\{\{\)가 남았습니다/);
   assert.doesNotThrow(() => renderRules(TEMPLATE, CONFIG));
+});
+
+// The command line with something on standard input, in a child process that does not look like Claude Code.
+function cliIn(args, input, s) {
+  const r = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", input, env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  return { code: r.status, out: r.stdout };
+}
+
+test("--stdin: settings lines from standard input, the way the skill passes them in a quoted heredoc", () => {
+  const s = setup();
+  const r = cliIn(["config", "--stdin"], `${String.fromCharCode(0xfeff)}deny=.txt, .PDF\r\nalt=.md .tsv\r\n\r\ntsv=Comma`, s);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readConfig(s.o.configFile).config, { version: 1, deny: [".txt", ".pdf"], alt: [".md", ".tsv"], tsvDelimiter: "comma" });
+  const on = cliIn(["on", "--runtime", "claude", "--stdin"], "deny=.hwp\nalt=.md\n", s);
+  assert.equal(on.code, 0, on.out);
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".hwp"]);
+  assert.ok(existsSync(s.rulesFile));
+});
+
+test("--stdin: unreadable lines, a key twice, too much input, bytes that are not UTF-8 or mixing with flags are refused", () => {
+  const s = setup();
+  const cases = [
+    [["config", "--stdin"], "deny=.txt\nalt=.md\nmode=x\n", /표준 입력의 설정 줄을 읽을 수 없습니다: mode=x/],
+    [["config", "--stdin"], "deny=.txt\ndeny=.pdf\nalt=.md\n", /표준 입력의 설정 줄을 읽을 수 없습니다: deny=\.pdf/],
+    [["config", "--stdin"], `deny=${".txt,".repeat(20000)}\nalt=.md\n`, /표준 입력이 64KiB 보다 큽니다/],
+    [["config", "--stdin"], Buffer.from([0x64, 0x65, 0x6e, 0x79, 0x3d, 0xff, 0x0a]), /표준 입력이 UTF-8 이 아닙니다/],
+    [["config", "--stdin"], "", /사용법/],
+    [["config", "--stdin", "--deny", ".txt"], "alt=.md\n", /사용법/],
+    [["status", "--stdin"], "", /사용법/],
+    [["off", "--runtime", "claude", "--stdin"], "", /사용법/],
+  ];
+  for (const [args, input, want] of cases) {
+    const r = cliIn(args, input, s);
+    assert.equal(r.code, 1, `${args.join(" ")}: ${r.out}`);
+    assert.match(r.out, want, args.join(" "));
+  }
+  assert.equal(readConfig(s.o.configFile), null, "nothing was saved");
+});
+
+test("--stdin: a value with shell syntax is refused as an extension and runs nothing", () => {
+  const s = setup();
+  const marker = join(s.dir, "ran");
+  const r = cliIn(["config", "--stdin"], `deny=.txt,$(touch ${marker})\nalt=.md\n`, s);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /금지 확장자로 쓸 수 없는 값입니다/);
+  assert.equal(existsSync(marker), false);
 });

@@ -43,9 +43,9 @@ argument-hint: "on | off | status | config"
 
    | `- 설정:` 줄 | 다음 |
    |---|---|
-   | `없음` | 아래 "질문" 을 한 뒤 `on --runtime <런타임> --deny "<금지 목록>" --alt "<대체 목록>" --tsv <tab 또는 comma>` |
+   | `없음` | 아래 "질문" 을 한 뒤 "설정 넘기기" 대로 `on --runtime <런타임> --stdin` 실행 |
    | 파일 경로 | `on --runtime <런타임>` |
-   | `올바르지 않음` | 이유를 전하고 `config` 절차를 따름 |
+   | `올바르지 않음` | 이유를 전하고 "질문" 으로 설정을 다시 정한 뒤 `없음` 행과 같은 명령 실행 |
 
 3. 성공하면 출력의 `적용할 규칙:` 아래 규칙을 이 세션에 바로 적용. 다음 세션부터는 자동 적용
 
@@ -63,7 +63,7 @@ argument-hint: "on | off | status | config"
 
 1. `status` 로 지금 설정을 봄
 2. 지금 값을 함께 보이며 아래 "질문" 을 함
-3. `config --deny "<금지 목록>" --alt "<대체 목록>" --tsv <tab 또는 comma>` 실행
+3. "설정 넘기기" 대로 `config --stdin` 실행
 4. 이 런타임이 켜져 있으면 출력의 `적용할 규칙:` 아래 규칙을 이 세션에 바로 적용
 
 ## 질문
@@ -100,11 +100,28 @@ argument-hint: "on | off | status | config"
 2. 직접 입력은 쉼표나 공백으로 나눔
 3. 낱말마다 `^\.?[A-Za-z0-9]+$` 를 만족해야 함. 아니면 그 값을 보이고 다시 물음
 4. 금지와 대체에 같은 확장자가 있으면 다시 물음
-5. 셸에는 정규화한 확장자만 넘김
+5. 정규화한 확장자만 넘김
    - 소문자로 바꿈
    - 앞에 점이 없으면 붙임
-   - 쉼표로 이어 큰따옴표로 감쌈. 예: `--deny ".txt,.pdf"`
+   - 쉼표로 이어 "설정 넘기기" 의 `deny=`, `alt=` 줄에 씀
 6. 스크립트가 거부하면 그 메시지를 전하고 다시 물음
+
+### 설정 넘기기
+
+- 설정 값은 명령줄 인자가 아니라 표준 입력으로 넘김. 따옴표 친 heredoc 안의 글은 셸이 해석하지 않음
+
+  ```bash
+  node "<이 스킬 디렉터리 절대경로>/scripts/anti-drm.mjs" config --stdin <<'ANTI_DRM_SETTINGS'
+  deny=.txt,.pdf
+  alt=.md,.html,.tsv
+  tsv=tab
+  ANTI_DRM_SETTINGS
+  ```
+
+- `on` 은 `config` 자리에 `on --runtime <런타임>` 을 씀
+- PowerShell 은 `@'` 와 `'@` 사이에 같은 세 줄을 두고 `| node "<경로>/scripts/anti-drm.mjs" config --stdin` 으로 넘김
+- 줄은 `deny=`, `alt=`, `tsv=` 를 하나씩. `tsv=` 는 대체 확장자에 `.tsv` 가 있을 때만 씀
+- `--stdin` 은 입력이 끝날 때까지 기다림. 늘 heredoc 이나 파이프로 넘김
 
 ## 종료 코드
 
