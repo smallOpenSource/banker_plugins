@@ -279,6 +279,34 @@ test("tone-compact's block and ours share AGENTS.md: either goes first, and off 
   }
 });
 
+test("files without a final line break come back byte for byte after two blocks, whichever goes off first", () => {
+  const orders = [
+    ["tone", "anti", "tone", "anti"],
+    ["tone", "anti", "anti", "tone"],
+    ["anti", "tone", "anti", "tone"],
+    ["anti", "tone", "tone", "anti"],
+  ];
+  const shapes = [
+    { name: "AGENTS.md", agents: "# base", override: null },
+    { name: "AGENTS.md with CRLF", agents: "# base\r\nmine", override: null },
+    { name: "override with text of its own", agents: "# base\n", override: "# mine\n  " },
+  ];
+  for (const shape of shapes) {
+    for (const [on1, on2, off1, off2] of orders) {
+      const s = setup();
+      writeFileSync(s.agents, shape.agents);
+      if (shape.override !== null) writeFileSync(s.override, shape.override);
+      const on = { tone: () => tcOn("codex", s.tc), anti: () => turnOn("codex", s.o, FLAGS) };
+      const off = { tone: () => tcOff("codex", s.tc), anti: () => turnOff("codex", s.o) };
+      const label = `${shape.name}: on ${on1} ${on2}, off ${off1} ${off2}`;
+      assert.ok(on[on1]().ok && on[on2]().ok, label);
+      assert.ok(off[off1]().ok && off[off2]().ok, label);
+      assert.equal(read(s.agents), shape.agents, label);
+      if (shape.override !== null) assert.equal(read(s.override), shape.override, label);
+    }
+  }
+});
+
 test("both blocks survive an omx setup --merge-agents rewrite, and off still takes each out cleanly", () => {
   const s = setup();
   const managed = "<!-- omx:generated:agents-md -->\n# oh-my-codex\nnew guidance\n";

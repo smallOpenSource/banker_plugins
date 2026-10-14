@@ -242,15 +242,21 @@ export function blockSpansOf(text, open, close) {
   return first === -1 ? spans : null;
 }
 
+// A block, banker's or any USER:OMX:POLICY one, right after a line break.
+const BLOCK_NEXT = /^\r?\n(?:<!-- USER:OMX:POLICY:START -->|<!-- banker:)/;
+
 // The text without its blocks: exactly what it was before `on` added them. The
 // line break `on` put in front goes with the block when the block ends the file
 // or has a blank line of its own in front; with other text after it, the break
-// stays, so the lines on either side never run together.
+// stays, so the lines on either side never run together. When another block
+// follows, its own leading break keeps the lines apart, so this one goes too:
+// two blocks taken out in the order they went in then leave a text that had no
+// final line break as it was.
 function strip(text, spans) {
   let out = "";
   let at = 0;
   for (const s of spans) {
-    const keepBreak = s.to < text.length && !s.blankBefore;
+    const keepBreak = s.to < text.length && !s.blankBefore && !BLOCK_NEXT.test(text.slice(s.to));
     out += text.slice(at, keepBreak ? s.from : s.cut);
     at = s.to;
   }
