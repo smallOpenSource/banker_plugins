@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 
@@ -458,11 +458,19 @@ test("on Windows a --root given in other letter case is the same folder", { skip
   assert.match(r.out, /패치 2건 \/ 실패 0건/);
 });
 
-// The bare apply (no --no-update) path: the tool unpacks its TARGET_VERSION from the marketplace tag,
-// links node_modules to the previous version, switches installed_plugins.json and patches the new folder.
-test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to it and patches it", { skip: !HAS_GIT && "git not found" }, () => {
+const ID = ["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
+// Commits everything in repo and tags it.
+function tagged(repo, tag) {
+  for (const a of [["add", "-A"], [...ID, "commit", "-qm", "v"], [...ID, "tag", tag]]) {
+    const g = runGit(a, repo);
+    assert.equal(g.status, 0, g.stderr);
+  }
+}
+
+// A home whose marketplace holds a tagged copy of the plugin, for the bare apply: { f, target, nowhere }. The origin
+// is a local path that does not exist, so the tool's fetch fails at once without the network.
+function bareApplyFixture() {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
-  // a local path that does not exist, so the tool's git fetch fails at once without the network
   const nowhere = join(root, `no-remote${seq++}.git`);
   assert.equal(runGit(["remote", "set-url", "origin", nowhere], f.market).status, 0);
   const target = /const TARGET_VERSION = "([\d.]+)"/.exec(read(TOOL))[1];
@@ -472,11 +480,14 @@ test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to
   for (const n of ["foo", "stopper"]) writeFileSync(join(f.market, "scripts", `${n}.mjs`), SCRIPT(n));
   writeFileSync(join(f.market, "scripts", "lib.mjs"), LIB);
   mkdirSync(join(f.cache, "5.6.1", "node_modules"), { recursive: true });
-  const id = ["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
-  for (const a of [["add", "-A"], [...id, "commit", "-qm", "v"], [...id, "tag", `v${target}`]]) {
-    const g = runGit(a, f.market);
-    assert.equal(g.status, 0, g.stderr);
-  }
+  tagged(f.market, `v${target}`);
+  return { f, target, nowhere };
+}
+
+// The bare apply (no --no-update) path: the tool unpacks its TARGET_VERSION from the marketplace tag,
+// links node_modules to the previous version, switches installed_plugins.json and patches the new folder.
+test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to it and patches it", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target, nowhere } = bareApplyFixture();
   const r = run(f.home, []);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, new RegExp(`5\\.6\\.1 → ${target.replace(/\./g, "\\.")} \\(sha [0-9a-f]{12}\\)`));
@@ -864,15 +875,6 @@ test("script names with line breaks print on one line", { skip: process.platform
   assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] forged")), r.out);
 });
 
-// The tool keeps its own copy of git's list. A newer git that adds a variable must make this fail.
-test("the tool's list of repository variables covers this git's --local-env-vars", { skip: !HAS_GIT && "git not found" }, () => {
-  const listed = /const GIT_REPO_VARS = new Set\(\[([\s\S]*?)\]\)/.exec(read(TOOL))[1];
-  const names = new Set([...listed.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]));
-  const local = runGit(["rev-parse", "--local-env-vars"], root).stdout.split(/\s+/).filter(Boolean);
-  assert.ok(local.includes("GIT_DIR"), local.join(" "));
-  assert.deepEqual(local.filter((v) => !names.has(v)), []);
-});
-
 // A marketplace that is a link resolves to its real folder, and git walks up from there. The ceiling must cover the
 // real folder's parent too, or a broken .git lets the pin land on a repository around the real folder.
 test("a linked marketplace with a broken .git does not pin the repository around its real folder", { skip: !HAS_GIT && "git not found" }, (t) => {
@@ -1200,4 +1202,58 @@ test("only the hand patch's own shape at the top level counts as a hand edit", (
     assert.equal(/이 도구가 만들지 않은 수정이 남아 있습니다/.test(r.out), hand, `${what}\n${r.out}`);
     assert.equal(r.code, hand ? 1 : 0, `${what}\n${r.out}`);
   }
+});
+
+// A git that writes down each call's arguments and the GIT_ and FAKE_ names in its environment, then runs the real
+// git. To `rev-parse --local-env-vars` it adds one name more, as a newer git would.
+function loggingGit(t) {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) {
+    t.skip("git not found on PATH");
+    return null;
+  }
+  const dir = join(root, `gitwrap${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  const log = join(dir, "calls.log");
+  writeFileSync(join(dir, "git"), [
+    "#!/bin/sh",
+    `printf '%s|' "$*" >> '${log}'`,
+    `env | sed 's/=.*//' | grep -E '^(GIT_|FAKE_)' | sort | tr '\\n' ' ' >> '${log}'`,
+    `echo >> '${log}'`,
+    'if [ "$1" = rev-parse ] && [ "$2" = --local-env-vars ]; then',
+    `  '${realGit}' "$@"; echo GIT_FAKE_NEW_REPO_VAR; exit 0`,
+    "fi",
+    `exec '${realGit}' "$@"`,
+    "",
+  ].join("\n"), { mode: 0o755 });
+  return { PATH: `${dir}${delimiter}${process.env.PATH}`, log };
+}
+
+const posixGit = { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "a POSIX shell wrapper") };
+
+test("a repository variable only this git's --local-env-vars names is dropped too", posixGit, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const w = loggingGit(t);
+  if (!w) return;
+  const r = run(f.home, ["--no-update"], { PATH: w.PATH, GIT_FAKE_NEW_REPO_VAR: "decoy" });
+  assert.equal(r.code, 0, r.out);
+  const calls = read(w.log).trim().split("\n");
+  const later = calls.filter((c) => !c.startsWith("rev-parse --local-env-vars|"));
+  assert.ok(later.length > 0, calls.join("\n"));
+  for (const c of later) assert.ok(!c.includes("GIT_FAKE_NEW_REPO_VAR"), c);
+});
+
+test("the update's fetch keeps git settings given in the environment; the calls that read and write origin drop them", posixGit, (t) => {
+  const { f } = bareApplyFixture();
+  const w = loggingGit(t);
+  if (!w) return;
+  const env = { PATH: w.PATH, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.proxy", GIT_CONFIG_VALUE_0: "http://127.0.0.1:9" };
+  const r = run(f.home, [], env);
+  assert.equal(r.code, 0, r.out);
+  const calls = read(w.log).trim().split("\n");
+  const fetch = calls.find((c) => c.startsWith("fetch "));
+  assert.ok(fetch && fetch.includes("GIT_CONFIG_COUNT"), calls.join("\n"));
+  const origins = calls.filter((c) => /^(config --get remote\.origin\.url|remote set-url)/.test(c));
+  assert.ok(origins.length > 0, calls.join("\n"));
+  for (const c of origins) assert.ok(!c.includes("GIT_CONFIG_COUNT"), c);
 });

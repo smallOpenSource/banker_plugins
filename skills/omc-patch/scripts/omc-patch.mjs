@@ -139,22 +139,42 @@ function entryVersion(e, versions) {
 
 // git 이 일할 저장소를 cwd 와 상관없이 정하는 변수. git 훅처럼 GIT_DIR 을 내보낸 셸에서 이 도구를 부르면
 // 마켓플레이스가 아니라 그 저장소의 origin 을 고정했다(/tmp 에서 재현). git 이 다른 저장소로 옮겨 갈 때
-// 지우는 목록(`git rev-parse --local-env-vars`, git 2.43)과 같다. Windows 는 변수 이름의 대소문자를 가리지 않는다.
+// 지우는 목록(`git rev-parse --local-env-vars`, git 2.43)의 고정 사본이다. 실행할 때 이 PC 의 git 이 말하는 목록을
+// 더한다(gitRepoVars). Windows 는 변수 이름의 대소문자를 가리지 않는다.
 const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
   "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
   "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"]);
+
+// 지울 변수: 고정 목록에 이 PC 의 git 이 말하는 목록을 더한다. 새 git 이 변수를 더해도 따라간다. git 을 부를 수
+// 없으면 고정 목록만 쓴다. 처음 한 번만 묻는다.
+let repoVars = null;
+function gitRepoVars() {
+  if (repoVars) return repoVars;
+  repoVars = new Set(GIT_REPO_VARS);
+  try {
+    const out = execFileSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    for (const v of out.split(/\s+/)) if (/^GIT_[A-Z0-9_]+$/.test(v)) repoVars.add(v);
+  } catch { /* 고정 목록만 */ }
+  return repoVars;
+}
+
+// 환경 변수로 준 git 설정. 업데이트 경로의 fetch 에만 남긴다(회사망의 http.proxy 같은 값). origin 을 읽고 쓰는
+// 호출에서는 지운다. 그 값이 origin 을 바꿔 보이게 할 수 있다.
+const isEnvConfig = (k) => /^GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)$/.test(k.toUpperCase());
+
 // 마켓플레이스의 .git 이 깨졌으면(중단된 clone) git 은 위로 올라가 다음 저장소(dotfiles 로 관리하는 ~/.claude 등)를
 // 고른다. 바로 위 폴더를 천장(GIT_CEILING_DIRECTORIES)으로 두어 마켓플레이스 밖으로 나가지 못하게 한다.
 // 마켓플레이스가 링크면 실제 경로 쪽 위 폴더도 막는다. 셸에 있던 천장 값은 대소문자와 상관없이 이 값으로 바꾼다.
-const gitEnv = () => {
-  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
+const gitEnv = ({ network = false } = {}) => {
+  const vars = gitRepoVars();
+  const drop = (k) => !(network && isEnvConfig(k)) && (vars.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES");
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
   env.GIT_CEILING_DIRECTORIES = [...new Set([dirname(MARKET), dirname(realOr(MARKET))])].join(PATH_LIST_SEP);
   return env;
 };
 
-function git(args, cwd = MARKET) {
-  return execFileSync("git", args, { cwd, env: gitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+function git(args, cwd = MARKET, opts = {}) {
+  return execFileSync("git", args, { cwd, env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 // ── 1. 업데이트 ──────────────────────────────────────────────────────────────
@@ -190,7 +210,7 @@ function canInstallTarget() {
 
 // 태그 v<TARGET_VERSION> 의 커밋. 못 찾으면 null.
 function targetSha() {
-  try { git(["fetch", "--tags", "--quiet", "origin"]); } catch { /* 오프라인이어도 로컬 태그가 있으면 진행 */ }
+  try { git(["fetch", "--tags", "--quiet", "origin"], MARKET, { network: true }); } catch { /* 오프라인이어도 로컬 태그가 있으면 진행 */ }
   try { return git(["rev-parse", `v${TARGET_VERSION}^{}`]); }
   catch { bad(`태그 v${TARGET_VERSION} 를 마켓플레이스에서 찾을 수 없음`); return null; }
 }
