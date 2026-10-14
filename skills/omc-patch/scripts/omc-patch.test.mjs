@@ -448,12 +448,28 @@ test("a version folder that links to another is patched through the link and rev
 });
 
 // A guard against a false refusal: an odd-case --root is the same folder on Windows. realpathSync keeps the
-// case it is given, so this does not prove the lower-casing in insideRoot by itself.
+// case it is given; the test below proves the lower-casing in insideRoot with a junction.
 test("on Windows a --root given in other letter case is the same folder", { skip: process.platform !== "win32" && "Windows only" }, () => {
   const home = bareHome();
   const plug = bundle();
   const other = plug === plug.toUpperCase() ? plug.toLowerCase() : plug.toUpperCase();
   const r = run(home, ["--root", other]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /패치 2건 \/ 실패 0건/);
+});
+
+// A junction keeps its target as written. When that differs in letter case from the folder the tool was given,
+// only insideRoot's lower-casing keeps the file inside the plugin folder.
+test("on Windows a scripts junction whose target is written in other letter case is still inside the plugin folder", { skip: process.platform !== "win32" && "Windows only" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  const real = join(plug, "real-scripts");
+  renameSync(join(plug, "scripts"), real);
+  const odd = real === real.toUpperCase() ? real.toLowerCase() : real.toUpperCase();
+  symlinkSync(odd, join(plug, "scripts"), "junction");
+  const check = run(home, ["--root", plug, "--check"]);
+  assert.doesNotMatch(check.out, /쓸 수 없음/, check.out);
+  const r = run(home, ["--root", plug]);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /패치 2건 \/ 실패 0건/);
 });
