@@ -3,7 +3,7 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
@@ -21,11 +21,18 @@ const ORIGIN = "https://example.invalid/omc.git";
 const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
   "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
   "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"]);
+// HOME and XDG_CONFIG_HOME cover git older than 2.32, which ignores GIT_CONFIG_GLOBAL. An empty template folder
+// keeps the developer's template hooks out of the fixture repositories. The developer's ceiling is dropped too, so a
+// fixture that relies on git walking up still does.
 const NO_GITCONFIG = join(root, "empty.gitconfig");
+const NO_TEMPLATES = join(root, "empty-templates");
 writeFileSync(NO_GITCONFIG, "");
+mkdirSync(NO_TEMPLATES);
 function cleanEnv(extra = {}) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !GIT_REPO_VARS.has(k.toUpperCase())));
-  return { ...env, GIT_CONFIG_GLOBAL: NO_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1", ...extra };
+  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
+  return { ...env, GIT_CONFIG_GLOBAL: NO_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1", GIT_TEMPLATE_DIR: NO_TEMPLATES,
+    HOME: root, XDG_CONFIG_HOME: root, ...extra };
 }
 const runGit = (args, cwd, extra) => spawnSync("git", args, { cwd, encoding: "utf8", env: cleanEnv(extra) });
 
@@ -671,4 +678,63 @@ test("--revert counts what it could not restore once per real file and does not 
   assert.match(r.out, /5\.7\.0: 이 도구가 만들지 않은 수정이 남아 있습니다 — stopper/);
   assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 되돌리지 못한 것 1건\./);
   assert.equal(read(join(real, "scripts", "stopper.mjs")), hand, "a hand patch is not the tool's to undo");
+});
+
+// A marketplace .git that is there but broken (an interrupted clone) is no repository to git, so git walks up and
+// takes the next one, such as a ~/.claude kept in a dotfiles repository. The pin must not land there.
+test("a broken marketplace .git does not let git walk up to an enclosing repository", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }], { git: false });
+  mkdirSync(join(f.market, ".git"), { recursive: true });
+  const claude = join(f.home, ".claude");
+  const dotfiles = "https://example.invalid/dotfiles.git";
+  for (const a of [["init", "-q"], ["remote", "add", "origin", dotfiles]]) assert.equal(runGit(a, claude).status, 0);
+  // the fixture bites: plain git started in the marketplace reaches the dotfiles repository
+  assert.equal(runGit(["remote", "get-url", "origin"], f.market).stdout.trim(), dotfiles);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(origin(claude), dotfiles, "the ~/.claude repo origin is untouched");
+  assert.equal(existsSync(join(claude, "omc-local-patches", "PINNED")), false);
+  assert.equal(run(f.home, ["--revert"]).code, 0);
+  assert.equal(origin(claude), dotfiles);
+});
+
+// PINNED is a record only: the original URL lives in the pinned origin. Revert never writes the origin from
+// PINNED, so a record with no host, an empty one, or this machine's own stale one cannot change an unpinned origin.
+test("--revert never takes the origin from PINNED, whatever its host says", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
+  mkdirSync(dirname(pinfile), { recursive: true });
+  for (const rec of [{}, { host: "" }, { host: 0 }, { host: null }, { host: hostname() }]) {
+    writeFileSync(pinfile, JSON.stringify({ ...rec, originUrl: "https://evil.example/omc.git" }));
+    const r = run(f.home, ["--revert"]);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(origin(f.market), ORIGIN, JSON.stringify(rec));
+    assert.equal(existsSync(pinfile), false);
+  }
+});
+
+// The SKILL reports [!] lines word for word, so a value read from a file must not start a line of its own.
+test("a PINNED host with line breaks or control characters prints on one line", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
+  writeFileSync(pinfile, JSON.stringify({ originUrl: ORIGIN, host: "elsewhere\n  [!] injected line\u001b[2J" }));
+  const r = run(f.home, ["--revert"]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /PINNED 는 다른 기기\(elsewhere/);
+  assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
+  assert.doesNotMatch(r.out, /\u001b/);
+  assert.equal(origin(f.market), ORIGIN);
+});
+
+test("a manual hooks.json backup name with a line break prints on one line", { skip: process.platform === "win32" && "Windows file names cannot hold line breaks" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  rmSync(join(plug, "hooks", "hooks.json.omcbak"));
+  for (const n of ["a\n  [!] injected", "b"]) writeFileSync(join(plug, "hooks", `hooks.json.${n}`), HOOKS_JSON);
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 수동 백업이 여러 개라 자동 복구하지 않음/);
+  assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
 });

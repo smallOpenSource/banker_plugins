@@ -25,7 +25,7 @@ import {
   readFileSync, writeFileSync, writeSync, existsSync, copyFileSync, readdirSync,
   unlinkSync, mkdirSync, rmSync, symlinkSync, lstatSync, realpathSync,
 } from "node:fs";
-import { join, dirname, resolve, sep as PATH_SEP } from "node:path";
+import { join, dirname, resolve, sep as PATH_SEP, delimiter as PATH_LIST_SEP } from "node:path";
 import { homedir, hostname } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -142,7 +142,15 @@ function entryVersion(e, versions) {
 const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
   "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
   "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"]);
-const gitEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !GIT_REPO_VARS.has(k.toUpperCase())));
+// 마켓플레이스의 .git 이 깨졌으면(중단된 clone) git 은 위로 올라가 다음 저장소(dotfiles 로 관리하는 ~/.claude 등)를
+// 고른다. 바로 위 폴더를 천장(GIT_CEILING_DIRECTORIES)으로 두어 마켓플레이스 밖으로 나가지 못하게 한다.
+// 마켓플레이스가 링크면 실제 경로 쪽 위 폴더도 막는다. 셸에 있던 천장 값은 대소문자와 상관없이 이 값으로 바꾼다.
+const gitEnv = () => {
+  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
+  env.GIT_CEILING_DIRECTORIES = [...new Set([dirname(MARKET), dirname(realOr(MARKET))])].join(PATH_LIST_SEP);
+  return env;
+};
 
 function git(args, cwd = MARKET) {
   return execFileSync("git", args, { cwd, env: gitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -612,15 +620,19 @@ function revertHooksJson(root, hj) {
   // PostToolUse 를 담고 있는 유효한 JSON 이 딱 하나면 그것이 제거 직전 상태다 — 무엇을 썼는지 밝히고 되돌린다.
   const dir = dirname(hj);
   const { usable, unsafe } = manualBackups(root, dir);
-  if (unsafe.length) bad(`hooks.json 수동 백업 후보가 링크이거나 플러그인 폴더 밖이라 쓰지 않음: ${unsafe.join(", ")}`);
+  if (unsafe.length) bad(`hooks.json 수동 백업 후보가 링크이거나 플러그인 폴더 밖이라 쓰지 않음: ${unsafe.map(shown).join(", ")}`);
   if (usable.length === 1) {
     copyFileSync(join(dir, usable[0]), hj);
-    log(`  되돌림  hooks.json  (수동 백업 사용: ${usable[0]})`);
+    log(`  되돌림  hooks.json  (수동 백업 사용: ${shown(usable[0])})`);
     return "reverted";
   }
-  if (usable.length > 1) { bad(`hooks.json 수동 백업이 여러 개라 자동 복구하지 않음: ${usable.join(", ")}`); return "ambiguous"; }
+  if (usable.length > 1) { bad(`hooks.json 수동 백업이 여러 개라 자동 복구하지 않음: ${usable.map(shown).join(", ")}`); return "ambiguous"; }
   return unsafe.length ? "linked" : "no-backup";
 }
+
+// 파일에서 읽은 값(파일 이름, PINNED 의 host)을 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
+// SKILL 은 [!] 줄을 그대로 보고하라고 하므로, 값이 제 줄을 새로 시작하면 도구가 낸 줄처럼 읽힌다.
+const shown = (s) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]/g, "?").slice(0, 120);
 
 // hooks.json 옆의 수동 백업 후보. usable 은 PostToolUse 를 담은 유효한 JSON 이다. 링크로 심은 후보는
 // unsafe 로 따로 두고 읽지도 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
@@ -659,12 +671,13 @@ function removePostToolUse(hj) {
 // 올릴 수 있다. 그러면 위 패치가 통째로 덮어써진다. 로컬에서 막을 수 있는
 // 지점은 "마켓플레이스 저장소가 새 커밋을 가져오지 못하게" 하는 것뿐이다.
 // origin remote 의 URL 을 무효 주소로 바꿔 fetch 를 실패시킨다(원래 URL 은
-// PINNED 파일에 적어 두고 --revert 로 복구한다). 저장소 자체는 그대로라
-// 이미 받은 태그로 재설치·검증이 가능하다.
+// `omc-pinned://` 뒤에 그대로 남기고 --revert 가 거기서 복구한다. PINNED 파일은 기록이다).
+// 저장소 자체는 그대로라 이미 받은 태그로 재설치·검증이 가능하다.
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
   // 마켓플레이스 폴더가 제 git 저장소가 아니면 git 이 위쪽 저장소(예: dotfiles 로 관리하는
-  // ~/.claude)를 찾아 그 origin 을 바꾼다. 제 .git 이 있을 때만 고정하고 되돌린다.
+  // ~/.claude)를 찾아 그 origin 을 바꾼다. 제 .git 이 있을 때만 고정하고 되돌린다. .git 이 있어도
+  // 깨졌으면 git 이 위로 올라가는데, 그것은 gitEnv 의 천장이 막는다(origin 을 못 읽어 no-remote).
   if (!existsSync(join(MARKET, ".git"))) return "no-git";
   let url;
   try { url = git(["remote", "get-url", "origin"]); } catch { return "no-remote"; }
@@ -681,35 +694,26 @@ function pinMarketplace() {
   return "pinned";
 }
 
-// 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 파일이 아니라
-// 거기서 복원한다. PINNED 는 배포 폴더에 같이 딸려 오므로 다른 PC 의 값일 수 있고,
-// PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 그 사실이 눈에 띄지도 않는다.
+// 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 거기서만 복원한다.
+// PINNED 의 값으로 origin 을 쓰지 않는다. PINNED 는 배포 폴더에 같이 딸려 오므로 다른 PC 의 값일 수 있고,
+// host 가 없는 기록은 어느 기기의 것인지 모른다. origin 이 고정 상태가 아니면 되돌릴 것도 없다.
 function unpinMarketplace(url) {
   const PIN_PREFIX = "omc-pinned://";
-  let restored = null;
-  if (url.startsWith(PIN_PREFIX)) restored = url.slice(PIN_PREFIX.length);
-  if (existsSync(PINFILE)) {
-    const saved = takeSavedOrigin();
-    if (!restored && saved) restored = saved;
-  }
+  if (existsSync(PINFILE)) dropPinRecord();
+  const restored = url.startsWith(PIN_PREFIX) ? url.slice(PIN_PREFIX.length) : "";
   if (!restored) return "not-pinned";
   try { git(["remote", "set-url", "origin", restored]); } catch { /* noop */ }
   return "unpinned";
 }
 
-// PINNED 를 읽고 지운다. 이 기기의 원래 URL 이면 그 값을, 아니면 null.
-// 다른 기기의 기록이면 알리고 그 값은 쓰지 않는다. origin 이 고정 상태가 아니어도 마찬가지다.
-function takeSavedOrigin() {
+// PINNED 를 지운다. 다른 기기의 기록이면 알린다. 깨진 기록(JSON 이 아니거나, null 처럼 객체가 아닌 값)은 말없이 지운다.
+function dropPinRecord() {
   let saved = null;
   try { saved = JSON.parse(readFileSync(PINFILE, "utf8")); } catch { /* 깨졌으면 무시 */ }
   unlinkSync(PINFILE);
-  // null, 숫자, 문자열도 깨진 기록이다(손으로 고친 파일, 깨진 사본).
-  if (!saved || typeof saved !== "object") return null;
-  if (saved.host && saved.host !== hostname()) {
-    bad(`PINNED 는 다른 기기(${saved.host})의 기록입니다 — 그 값은 쓰지 않습니다.`);
-    return null;
+  if (saved && typeof saved === "object" && saved.host && saved.host !== hostname()) {
+    bad(`PINNED 는 다른 기기(${shown(saved.host)})의 기록입니다 — 그 값은 쓰지 않습니다.`);
   }
-  return typeof saved.originUrl === "string" && saved.originUrl ? saved.originUrl : null;
 }
 
 // --root 폴더의 이름표. .claude-plugin/plugin.json 의 name 이 있으면 그것으로, 없으면 package.json 의 name

@@ -218,8 +218,9 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --revert
 - 헬퍼 자리 결함이 남은 채 `revert` 없이 적용을 다시 돌려도 바뀌는 것이 없다. 이미 감싼 파일은 건너뛰기 때문이다.
 - `--root` 와 `--revert --root` 는 그 폴더만 다룬다. 고정 해제까지 하려면 인자 없는 `--revert` 를 쓴다.
 - 고정을 풀지 않고 OMC 를 올리려면 먼저 `revert` 한다. 그렇지 않으면 마켓플레이스 fetch 가 계속 실패한다.
-- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다. `revert` 는 origin 값에서 원래 URL 을 되찾는다. 다른 기기의 `PINNED` 는 알리기만 하고 그 값을 쓰지 않는다.
+- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다. `revert` 는 origin 값에서만 원래 URL 을 되찾고, `PINNED` 의 값으로 origin 을 쓰지 않는다. 다른 기기의 기록이면 알리기만 한다.
 - `--check` 와 `--revert` 를 함께 주면 도구는 아무것도 하지 않고 종료 코드 1 로 멈춘다. 진단만 하려면 `--check` 만 준다.
 - 도구는 git 을 부를 때 저장소를 고르는 변수(`GIT_DIR`, `GIT_WORK_TREE` 등 `git rev-parse --local-env-vars` 목록)를 지운다. git 훅 안에서 불러도 마켓플레이스 저장소만 다룬다.
+- 마켓플레이스의 `.git` 이 깨졌으면(중단된 clone 등) git 이 위쪽 저장소로 올라가지 못하게 막는다. 그때 `[4/4]` 는 `origin remote 없음` 으로 끝나고 고정하지 않는다.
 - `--scan` 은 읽기만 한다. 플러그인 캐시도 `installed_plugins.json` 도 읽지 않고 준 파일만 본다.
 - 도구의 주석과 출력 문구는 한글이다.

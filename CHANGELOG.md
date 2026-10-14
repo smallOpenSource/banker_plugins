@@ -9,16 +9,19 @@
 - `omc-patch` 의 `--root` 가 다른 플러그인 폴더도 받던 것. 이름표(`.claude-plugin/plugin.json` 의 name, 없으면 `package.json` 의 name)가 OMC 가 아니면 멈춘다. 이름표가 없는 폴더는 통과한다.
 - `omc-patch` 가 `--check` 와 `--revert` 를 함께 받으면 되돌리기로 파일을 쓰던 것. 이제 아무것도 하지 않고 종료 코드 1 로 멈춘다.
 - `omc-patch` 의 git 호출이 셸의 `GIT_DIR` 같은 변수를 물려받던 것. git 훅처럼 그 변수를 내보낸 셸에서 부르면 마켓플레이스가 아니라 그 저장소의 origin 을 고정했다. 이제 git 이 다른 저장소로 옮겨 갈 때 지우는 변수(`git rev-parse --local-env-vars`)를 지우고 부른다.
+- `omc-patch` 가 마켓플레이스의 `.git` 이 깨졌을 때(중단된 clone 등) 위쪽 저장소의 origin 을 고정하던 것. git 이 마켓플레이스 밖으로 올라가 dotfiles 로 관리하는 `~/.claude` 같은 저장소를 골랐다. 이제 마켓플레이스 바로 위 폴더를 `GIT_CEILING_DIRECTORIES` 로 막는다.
 - `omc-patch` 의 되돌리기가 되돌리지 못한 것이 남아도 `되돌리기 완료.` 와 종료 코드 0 으로 끝나던 것. 백업이 없는 패치 파일, 손 수정, 수동 백업이 여러 개인 hooks.json, 링크라서 쓰지 않은 수동 백업 후보를 세어 `되돌리기를 끝내지 못했습니다. 되돌리지 못한 것 N건.` 과 종료 코드 1 로 끝낸다. 링크로 같은 폴더를 가리키는 판 폴더는 한 번만 센다. 링크라서 쓰지 않은 후보는 이름을 댄다.
 - `omc-patch` 의 되돌리기가 hooks.json 에 PostToolUse 가 그대로인데도 수동 백업을 찾던 것. 후보가 하나면 지금 내용을 그 백업으로 덮어썼고, 여럿이면 되돌릴 것이 없는데도 경고를 냈다.
-- `omc-patch` 의 되돌리기가 `PINNED` 내용이 `null` 이면 TypeError 로 멈추던 것. 다른 기기의 `PINNED` 값을 쓰지 않는다고 알리면서, origin 이 고정 상태가 아니면 그 값을 쓰던 것.
+- `omc-patch` 의 되돌리기가 `PINNED` 내용이 `null` 이면 TypeError 로 멈추던 것.
+- `omc-patch` 의 되돌리기가 origin 이 고정 상태가 아니면 `PINNED` 의 값으로 origin 을 쓰던 것. 다른 기기의 값은 쓰지 않는다고 알리면서도 썼고, host 가 없는 기록은 그 검사도 지나갔다. 원래 URL 은 고정한 origin(`omc-pinned://` 뒤)에 있으므로, 이제 거기서만 되돌리고 `PINNED` 는 기록으로만 본다.
+- `omc-patch` 가 `PINNED` 의 host 와 hooks.json 수동 백업 이름을 그대로 출력하던 것. 줄바꿈이 든 값이 도구가 낸 것 같은 `[!]` 줄을 만들 수 있었다. 이제 줄바꿈과 제어 문자를 `?` 로 바꾼다.
 - `update-banker` 가 적은 `claude plugin update` 옵션. Claude Code 2.1.296 의 help 에 맞춰 `--json`, `-y/--yes`, `--accept-command` 를 더하고 `--scope` 기본값을 auto-detect 로 고쳤다.
 
 ### Changed
 - `omc-patch` 의 안내 문구. 헬퍼 자리 결함에는 인자 없는 `--revert`(모든 판, 고정 해제) 대신 `--revert --root "<활성 폴더>"` 를 안내한다. `--no-update` 진단은 `인자 없이` 대신 `--check 없이 --no-update 로` 다시 실행하라고 안내한다. 그래서 스킬의 대체 규칙 두 개를 지웠다.
 - `omc-patch` 도구의 함수를 나눠 함수 규칙(50줄, 복잡도 10)을 지킨다. npm 에 올라간 OMC 32개 판(4.14.0~5.7.1)에서 옛 도구와 진단, 패치 결과, 되돌리기, `--scan` 결과가 바이트까지 같다.
 - 도구 머리 주석이 `--root` 를 활성 캐시 폴더에도 쓴다고 적고, 런처와 README 는 킷 배포 폴더에만 있다고 적는다.
-- `omc-patch` 시험이 개발자의 전역, 시스템 git 설정과 셸의 저장소 변수(`GIT_DIR` 등)를 읽지 않는다. git 훅에서 시험을 돌려도 개발자의 저장소를 건드리지 않는다.
+- `omc-patch` 시험이 개발자의 전역, 시스템 git 설정, 템플릿 훅, 셸의 저장소 변수(`GIT_DIR` 등)를 읽지 않는다. git 2.32 미만도 전역 설정을 읽지 않게 `HOME` 을 바꾼다. git 훅에서 시험을 돌려도 개발자의 저장소를 건드리지 않는다.
 
 ## [0.17.0] - 2026-10-14
 
