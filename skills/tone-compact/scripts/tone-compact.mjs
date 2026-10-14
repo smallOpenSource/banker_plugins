@@ -108,10 +108,17 @@ const USAGE = "사용법: tone-compact on | off | status [--runtime claude|codex
 // The runtime on and off act on: the flag, else Claude Code when it runs this.
 const runtimeOf = (flag, env) => flag ?? (env.CLAUDECODE === "1" ? "claude" : null);
 
+// Why the command line cannot run as given, or "" when it can.
+function usageError(command, flag, extra) {
+  if (extra.length > 0 || !["on", "off", "status"].includes(command)) return USAGE;
+  return flag !== null && !RUNTIMES.includes(flag) ? USAGE : "";
+}
+
 function main(argv, env = process.env) {
   const { command, runtime: flag, extra } = parseArgs(argv);
-  if (extra.length > 0 || !["on", "off", "status"].includes(command) || (flag !== null && !RUNTIMES.includes(flag))) {
-    process.stdout.write(`${USAGE}\n`);
+  const why = usageError(command, flag, extra);
+  if (why) {
+    process.stdout.write(`${why}\n`);
     return 1;
   }
   const runtime = runtimeOf(flag, env);
