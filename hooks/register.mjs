@@ -103,7 +103,7 @@ export const register = (on) => {
     progressTurnStarted(e);
     await rereadPlan($);
     $.ui.invalidate('ui.render');
-    void progressFollow($);
+    progressFollow($);
     return next(e);
   });
 

@@ -92,18 +92,23 @@ function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 
     return { catch: (handler) => { reg.caught = handler; } };
   };
   const open = new Map();
-  const seen = { registered: [], opened: [], closed: [], invalidated: 0, logs: [], reads: [], stats: [], tools: [], scrolls: [] };
+  const seen = { registered: [], opened: [], closed: [], invalidated: 0, logs: [], reads: [], stats: [], tools: [], scrolls: [], waits: [] };
+  // The engine's timers: a callback runs once the test settles them, as after a wait.
+  const timers = [];
+  // What a move answers, one per call; past the end, a move that went through.
+  const scrollAnswers = [];
   const $ = {
     command: { register: async (spec) => { seen.registered.push(spec); return { command: spec.name }; } },
     tool: toolStandIn(listed, seen),
     session: { version: async () => ({ version: '2.1.296', base: '2.1.296' }) },
+    clock: { after: (ms, fn) => { seen.waits.push(ms); timers.push(fn); return { cancel: () => {} }; } },
     fs: fsStandIn(files, held, waiting, seen, kinds),
     ui: {
       panes: async () => [...open].map(([id, p]) => ({ id, title: id, isShown: p.isShown, isFocused: false, isPlaced: true })),
       open: async (p) => { seen.opened.push(p); open.set(p.id, { isShown: !open.has(p.id) || open.get(p.id).isShown || p.focus === true }); },
       close: async (p) => { seen.closed.push(p); open.delete(p.id); },
       invalidate: () => { seen.invalidated += 1; },
-      scroll: async (a) => { seen.scrolls.push(a); return {}; },
+      scroll: async (a) => { seen.scrolls.push(a); return scrollAnswers.shift() ?? {}; },
       log: (t) => { seen.logs.push(t); },
       resolve: () => ELEMENTS,
     },
@@ -124,7 +129,11 @@ function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 
     waiting.get(path)?.();
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { $, seen, open, files, held, raise, tool, draw, cover, caught, release };
+  // Runs the timers due, and those they set, until none is left.
+  const settle = async () => {
+    while (timers.length) await timers.shift()();
+  };
+  return { $, seen, open, files, held, raise, tool, draw, cover, caught, release, settle, scrollAnswers };
 }
 
 const walk = (node, out = []) => {
@@ -373,25 +382,50 @@ test('the step in progress is brought into the pane\'s window when it changes, a
   const todos = (at) => Array.from({ length: 50 }, (_, i) => ({ content: `단계 ${i + 1}`, status: i + 1 === at ? 'in_progress' : i + 1 < at ? 'completed' : 'pending' }));
   const into = (key) => ({ to: { key }, in: PANE, block: 'nearest' });
   await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(40) });
+  assert.deepEqual(eng.seen.scrolls, [], 'the move waits for the drawing that brings the row');
+  await eng.settle();
   let tree = await eng.draw();
   assert.deepEqual(eng.seen.scrolls, [into(rowLabeled(tree, '단계 40').props.key)]);
   await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(40) });
   await eng.tool({ tool: 'Bash', command: 'make' });
+  await eng.settle();
   assert.equal(eng.seen.scrolls.length, 1, 'the same step in progress asks for no move');
   await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(41) });
+  await eng.settle();
   tree = await eng.draw();
   assert.deepEqual(eng.seen.scrolls.at(-1), into(rowLabeled(tree, '단계 41').props.key));
   assert.equal(eng.seen.scrolls.length, 2);
 });
 
-test('a new prompt\'s step is brought into view as it starts; an engine that refuses or lacks the move changes nothing', async () => {
+test('a move refused because the row is not drawn yet is asked again; a closed pane, or the person\'s own move, ends it', async () => {
+  const eng = engine();
+  const NOT_DRAWN = { deny: 'no element of its own is drawn under that key' };
+  eng.scrollAnswers.push(NOT_DRAWN, NOT_DRAWN);
+  await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.settle();
+  assert.equal(eng.seen.scrolls.length, 3, 'asked again until the row was drawn');
+  assert.ok(eng.seen.waits.every((ms) => ms > 0), 'each ask waits first');
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  for (const deny of ['no-surface: the pane is not open', 'the window moved meanwhile']) {
+    const before = eng.seen.scrolls.length;
+    eng.scrollAnswers.push({ deny });
+    await eng.raise('turn.start', { turnId: `t-${before}`, text: deny });
+    await eng.settle();
+    await eng.raise('turn.complete', { turnId: `t-${before}`, reason: 'answer' });
+    assert.equal(eng.seen.scrolls.length, before + 1, deny);
+  }
+});
+
+test('a new prompt\'s step is brought into view as it starts; an engine that lacks the move changes nothing', async () => {
   const eng = engine();
   await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.settle();
   assert.deepEqual(eng.seen.scrolls, [{ to: { key: 'row-t-t1' }, in: PANE, block: 'nearest' }]);
   await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
-  eng.$.ui.scroll = async () => ({ deny: 'no-surface' });
-  await eng.raise('turn.start', { turnId: 't2', text: '둘' });
   delete eng.$.ui.scroll;
+  await eng.raise('turn.start', { turnId: 't2', text: '둘' });
+  await eng.settle();
+  delete eng.$.clock;
   await eng.raise('turn.complete', { turnId: 't2', reason: 'answer' });
   await eng.raise('turn.start', { turnId: 't3', text: '셋' });
   assert.deepEqual(labels(await eng.draw()), ['하나', '둘', '셋']);

@@ -740,7 +740,7 @@ async function watchCall($, e, next) {
     const touched = planTouched(s, e, call);
     if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch, own: touched.own, weak: touched.weak });
     $.ui.invalidate('ui.render');
-    void progressFollow($);
+    progressFollow($);
   }
 }
 
@@ -762,17 +762,37 @@ async function readText($, path) {
 // The session's progress, one per loaded module.
 const ref = { s: freshState() };
 
+// How long a move waits, and how many times it asks. The row a change brings is drawn after the invalidate that came
+// with it; a move asked before that is refused ("no element of its own is drawn under that key" in 2.1.300).
+const FOLLOW_WAIT_MS = 100;
+const FOLLOW_TRIES = 4;
+
 // Brings the step in progress into the pane's window when it changes (a task started, a new prompt): in a long list
 // it can sit below the window. `nearest` moves nothing while its row shows, and the person's own scrolling stands
-// until the next change. A refusal (the pane is closed: no surface) or an engine without the move changes nothing.
-export async function progressFollow($) {
+// until the next change. A closed pane (no surface) or an engine without the move changes nothing.
+export function progressFollow($) {
   const key = runningKey(ref.s);
   if (!key || key === ref.s.followed) return;
   ref.s.followed = key;
+  followSoon($, key, FOLLOW_TRIES);
+}
+
+// Asks for the move after a wait, and again while the row is not drawn yet. A later change of the step in progress,
+// or any other refusal (no surface, the person moved the window meanwhile), ends it.
+function followSoon($, key, tries) {
   try {
-    await $.ui.scroll({ to: { key: `row-${key}` }, in: PANE, block: 'nearest' });
+    $.clock.after(FOLLOW_WAIT_MS, async () => {
+      if (ref.s.followed !== key) return;
+      let answer;
+      try {
+        answer = await $.ui.scroll({ to: { key: `row-${key}` }, in: PANE, block: 'nearest' });
+      } catch {
+        return; /* an engine without $.ui.scroll */
+      }
+      if (tries > 1 && /\bdrawn\b/.test(answer?.deny ?? '')) followSoon($, key, tries - 1);
+    });
   } catch {
-    /* an engine without $.ui.scroll */
+    /* an engine without $.clock */
   }
 }
 
@@ -797,7 +817,7 @@ export function registerProgress(on) {
     }
     const answer = answerTodo(ref.s, e, Date.now(), open);
     $.ui.invalidate('ui.render');
-    void progressFollow($);
+    progressFollow($);
     return answer;
   }).catch(() => ({ deny: '진행 상황 패널이 할 일 목록을 받지 못했습니다.' }));
   on('tool.describe', { tool: TODO_TOOL }, async (_$, e, next) => ({ ...(await next(e)), isDeferred: false })).catch(() => undefined);
