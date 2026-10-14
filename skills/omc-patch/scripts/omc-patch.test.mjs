@@ -1052,3 +1052,25 @@ test("paths in the output lose line breaks and direction marks: the --root folde
     assert.ok(!/odd\d+.x\ny/u.test(r.out), r.out);
   }
 });
+
+test("an origin with a user and password shows only ***, and PINNED keeps no URL and is readable by this account alone", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const secret = "https://u:s3cret@example.invalid/omc.git";
+  assert.equal(runGit(["remote", "set-url", "origin", secret], f.market).status, 0);
+  const check = run(f.home, ["--check", "--no-update"]);
+  assert.match(check.out, /origin=https:\/\/\*\*\*@example\.invalid\/omc\.git\)/);
+  assert.ok(!check.out.includes("s3cret"), check.out);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
+  const text = read(pinfile);
+  assert.ok(!text.includes("s3cret") && !text.includes("originUrl"), text);
+  if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
+  assert.equal(run(f.home, ["--revert"]).code, 0);
+  assert.equal(origin(f.market), secret, "the revert still restores the whole URL from origin");
+  for (const plain of ["git@example.invalid:o/omc.git", "https://example.invalid/a@b/omc.git"]) {
+    assert.equal(runGit(["remote", "set-url", "origin", plain], f.market).status, 0);
+    const out = run(f.home, ["--check", "--no-update"]).out;
+    assert.ok(out.includes(`origin=${plain})`), `a URL with no password is left as it is: ${out}`);
+  }
+});
