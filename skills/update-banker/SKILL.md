@@ -116,7 +116,8 @@ PATH 의 banker             : 0.2.0   (구버전)
 claude plugin update banker@banker-plugins
 ```
 
-- 옵션은 `-s/--scope`(`user`|`project`|`local`|`managed`, 기본 `user`)와 `-h/--help` 뿐이다. help 문구는 "Update a plugin to the latest version (restart required to apply)".
+- Claude Code 2.1.296 의 옵션은 `-s/--scope`(`user`|`project`|`local`|`managed`, 기본 auto-detect), `--json`(사람용 문구 대신 기계용 결과 한 줄), `-y/--yes`, `--accept-command <sha256>`, `-h/--help` 다. help 문구는 "Update a plugin to the latest version (restart required to apply)".
+- `-y` 와 `--accept-command` 는 마켓플레이스가 선언한 설치 명령(command 원천이나 headersHelper)을 승인할 때만 쓴다. banker 마켓플레이스는 원천이 저장소 폴더(`"source": "."`)라 선언한 명령이 없어 둘 다 필요 없다.
 - **옵션은 문서가 아니라 live `--help` 가 정본이다.** 공식문서의 옵션표는 실제 CLI 보다 뒤처져 있다(`plugin install` 의 `--config` 누락 확인). 옵션을 쓰기 전에 `claude plugin update --help` 로 확인하라.
 - `<plugin>` 은 bare name(`banker`) 또는 `plugin@marketplace`(`banker@banker-plugins`) 둘 다 받는다. 마켓플레이스가 여럿이면 후자로 특정한다.
 - **반영에는 재시작이 필요하다**(help 가 명시). 재시작 전 관측이 옛 값인 것은 실패가 아니다.
