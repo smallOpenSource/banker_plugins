@@ -353,7 +353,8 @@ export function renderRules(template, config) {
 // ---- commands ----
 
 const USAGE =
-  "사용법: anti-drm on | off | status | config [--runtime claude|codex] [--stdin | --deny <확장자 목록> --alt <확장자 목록> [--tsv tab|comma]]";
+  "사용법: anti-drm on | off | status | config [--runtime claude|codex] [--stdin | --deny <확장자 목록> --alt <확장자 목록> [--tsv tab|comma]]\n" +
+  "--stdin 은 표준 입력이 끝날 때까지 기다립니다.";
 
 // The settings as `status` shows them.
 function configLines(o, found) {
@@ -531,7 +532,7 @@ export function stdinSettings(bytes) {
     if (line.trim() === "") continue;
     const m = STDIN_LINE.exec(line);
     if (!m || flags[m[1]] !== undefined) return { error: `표준 입력의 설정 줄을 읽을 수 없습니다: ${shown(line)}` };
-    flags[m[1]] = m[2];
+    flags[m[1]] = m[2].trim();
   }
   return { flags };
 }

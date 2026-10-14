@@ -891,3 +891,11 @@ test("--stdin with no settings line refuses on and config alike instead of falli
   assert.equal(existsSync(s.rulesFile), false, "on did not fall back to the saved settings");
   assert.deepEqual(readConfig(s.o.configFile).config.deny, [".txt"]);
 });
+
+test("--stdin: spaces around a value are dropped, and the usage says --stdin waits for its input", () => {
+  const s = setup();
+  const r = cliIn(["config", "--stdin"], "deny= .txt \nalt= .md , .tsv \ntsv= comma  \n", s);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(readConfig(s.o.configFile).config.tsvDelimiter, "comma");
+  assert.match(cli(["bogus"], cliEnv(s)).out, /--stdin 은 표준 입력이 끝날 때까지 기다립니다/);
+});
