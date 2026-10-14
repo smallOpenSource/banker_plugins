@@ -1032,3 +1032,23 @@ test("a hook the tool cannot write is named and counted; the file stays as it wa
     chmodSync(scripts, 0o755);
   }
 });
+
+test("paths in the output lose line breaks and direction marks: the --root folder in every line that names it", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const home = bareHome();
+  const odd = join(root, `odd${seq++}${String.fromCodePoint(0x202e)}x\ny`);
+  mkdirSync(odd, { recursive: true });
+  const notPlugin = run(home, ["--root", odd]);
+  assert.equal(notPlugin.code, 1, notPlugin.out);
+  assert.match(notPlugin.out, /플러그인 폴더가 아님 \(hooks\/hooks\.json 과 scripts\/ 가 있어야 함\): .*odd\d+\?x\?y$/m);
+  mkdirSync(join(odd, "hooks"));
+  mkdirSync(join(odd, "scripts"));
+  writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
+  writeFileSync(join(odd, "package.json"), JSON.stringify({ name: "other" }));
+  const other = run(home, ["--root", odd, "--check"]);
+  assert.match(other.out, /^OMC 패치 {2}\(대상 폴더 .*odd\d+\?x\?y\) {2}모드: check$/m);
+  assert.match(other.out, /OMC 플러그인 폴더가 아님 \(package\.json 의 name 이 "other"\): .*odd\d+\?x\?y$/m);
+  for (const r of [notPlugin, other]) {
+    assert.ok(!r.out.includes(String.fromCodePoint(0x202e)), r.out);
+    assert.ok(!/odd\d+.x\ny/u.test(r.out), r.out);
+  }
+});

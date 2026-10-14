@@ -175,8 +175,8 @@ function ensureVersion() {
 
 // 마켓플레이스가 제 git 저장소이고 git 과 tar 가 있어야 TARGET_VERSION 을 꺼낼 수 있다.
 function canInstallTarget() {
-  if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${MARKET}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
-  if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${MARKET}`); return false; }
+  if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${oneLine(MARKET)}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
+  if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${oneLine(MARKET)}`); return false; }
 
   // git 과 tar 에 의존한다. Windows 10+ / macOS / 대부분의 Linux 배포판에는 둘 다 있지만,
   // 최소 설치 컨테이너나 tar 없는 환경에서는 없을 수 있다. 여기서 못 찾으면 아래에서
@@ -213,7 +213,7 @@ function linkNodeModules(dest, have) {
     try { symlinkSync(join(CACHE, prev, "node_modules"), nm, "junction"); ok(`node_modules → ${prev} 링크`); }
     catch (e) { bad(`node_modules 링크 실패(${e.code}). \`npm install\` 이 필요할 수 있음`); }
   } else if (!existsSync(nm)) {
-    bad(`node_modules 없음. ${dest} 에서 \`npm install --omit=dev\` 를 실행하십시오`);
+    bad(`node_modules 없음. ${oneLine(dest)} 에서 \`npm install --omit=dev\` 를 실행하십시오`);
   }
 }
 
@@ -637,7 +637,7 @@ function writePatched(f, bak, out, n) {
   const err = syntaxError(f);
   if (!err) return true;
   writeAtomic(f, readFileSync(bak));
-  bad(`문법오류로 롤백: ${n}\n      ${err}`);
+  bad(`문법오류로 롤백: ${n}\n      ${oneLine(err)}`);
   return false;
 }
 
@@ -707,7 +707,7 @@ function revertHooksJson(root, hj) {
   return unsafe.length ? "linked" : "no-backup";
 }
 
-// 파일에서 읽은 값(파일 이름, PINNED 의 host)을 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
+// 파일에서 읽은 값(파일 이름, PINNED 의 host)과 출력하는 경로를 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
 // SKILL 은 [!] 줄을 그대로 보고하라고 하므로, 값이 제 줄을 새로 시작하면 도구가 낸 줄처럼 읽힌다.
 // 바꾸는 문자: 제어 문자(Cc), 서식 문자(Cf: 폭 없는 공백, 방향 표시, 단어 결합자, 태그 문자), 줄과 문단 구분자,
 // 사용자 영역과 미할당, 변이 선택자, 기본 무시 글자(U+3164 같은 빈 글자), 점자 빈칸, ASCII 밖 공백.
@@ -874,7 +874,7 @@ if (argv.has("--check") && argv.has("--revert")) {
   process.exit(1);
 }
 log(ROOT
-  ? `OMC 패치  (대상 폴더 ${ROOT})  모드: ${MODE}`
+  ? `OMC 패치  (대상 폴더 ${oneLine(ROOT)})  모드: ${MODE}`
   : `OMC 패치  (대상 ${TARGET_VERSION})  모드: ${MODE}${NO_UPDATE ? " --no-update" : ""}`);
 log(`플랫폼: ${process.platform}  node ${process.version}`);
 log();
@@ -888,22 +888,22 @@ const rootOf = (v) => (ROOT ? v : join(CACHE, v));
 // active 는 아래에서 정해지므로 쓰는 자리에서 부른다.
 const misplacedHint = () => (ROOT
   ? "--revert --root 로 되돌린 뒤 같은 --root 로 다시 적용하십시오."
-  : `--revert --root "${join(CACHE, active)}" 로 활성 폴더만 되돌린 뒤 다시 적용하십시오.`);
+  : `--revert --root "${oneLine(join(CACHE, active))}" 로 활성 폴더만 되돌린 뒤 다시 적용하십시오.`);
 if (ROOT) {
   // 그 폴더 하나만 고친다(판 폴더도 installed_plugins.json 도 없는 번들 사본, 또는 활성 캐시 폴더).
   // 판 바꾸기([1/4])와 마켓플레이스 고정([4/4])은 하지 않는다 — 그 둘은 이 PC 의 설정이고 이 폴더의 것이 아니다.
   if (!existsSync(join(ROOT, "hooks", "hooks.json")) || !existsSync(join(ROOT, "scripts"))) {
-    bad(`플러그인 폴더가 아님 (hooks/hooks.json 과 scripts/ 가 있어야 함): ${ROOT}`);
+    bad(`플러그인 폴더가 아님 (hooks/hooks.json 과 scripts/ 가 있어야 함): ${oneLine(ROOT)}`);
     process.exit(1);
   }
   const other = otherPluginName(ROOT);
-  if (other) { bad(`OMC 플러그인 폴더가 아님 (${other}): ${ROOT}`); process.exit(1); }
+  if (other) { bad(`OMC 플러그인 폴더가 아님 (${other}): ${oneLine(ROOT)}`); process.exit(1); }
   log("[1/4] 버전");
   log("  건너뜀 (--root 는 판을 바꾸지 않음)");
   active = ROOT;
   targets = [ROOT];
 } else {
-  if (!existsSync(INSTALLED)) { bad(`Claude Code 플러그인 설정을 찾을 수 없음: ${INSTALLED}`); process.exit(1); }
+  if (!existsSync(INSTALLED)) { bad(`Claude Code 플러그인 설정을 찾을 수 없음: ${oneLine(INSTALLED)}`); process.exit(1); }
 
   log("[1/4] 버전");
   if (NO_UPDATE) log("  건너뜀 (--no-update)");
@@ -924,7 +924,7 @@ if (ROOT) {
   // 여러 버전이 나란히 있을 때 이전 버전에 수정이 남으면, 롤백했을 때 예상과 다른
   // 상태가 된다(실제로 4.15.7 의 hooks.json 수정이 그렇게 남았다).
   targets = MODE === "apply" ? [active] : (versions.length ? versions : [active]);
-  if (!existsSync(join(CACHE, active))) { bad(`설치 경로 없음: ${join(CACHE, active)}`); process.exit(1); }
+  if (!existsSync(join(CACHE, active))) { bad(`설치 경로 없음: ${oneLine(join(CACHE, active))}`); process.exit(1); }
 }
 
 log();
@@ -958,7 +958,7 @@ function reportNoBackup(v, list, what) {
   bad(`${v}: ${what} — ${list.map(shown).join(", ")}`);
   log(`      백업(.omcbak)이 없어 되돌릴 원본이 디스크에 없습니다. 원본이 필요하면:`);
   if (ROOT) log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`);
-  else log(`      git -C "${MARKET}" archive v${v} scripts/<이름>.mjs | tar -x -C "${join(CACHE, v)}"`);
+  else log(`      git -C "${oneLine(MARKET)}" archive v${v} scripts/<이름>.mjs | tar -x -C "${oneLine(join(CACHE, v))}"`);
 }
 for (const [v, list] of Object.entries(foreignBy)) reportNoBackup(v, list, "이 도구가 만들지 않은 수정이 남아 있습니다");
 for (const [v, list] of Object.entries(orphanBy)) reportNoBackup(v, list, "패치는 있는데 백업이 없어 되돌리지 못했습니다");
@@ -994,7 +994,7 @@ if (ROOT) {
   try {
     const st = JSON.parse(readFileSync(join(CFG, "settings.json"), "utf8"));
     const off = st?.env?.DISABLE_AUTOUPDATER;
-    log(`  DISABLE_AUTOUPDATER: ${off ? `${off} (전역 차단 중)` : "미설정 (다른 마켓플레이스는 계속 자동 업데이트)"}`);
+    log(`  DISABLE_AUTOUPDATER: ${off ? `${oneLine(off)} (전역 차단 중)` : "미설정 (다른 마켓플레이스는 계속 자동 업데이트)"}`);
   } catch { /* settings.json 이 없거나 읽을 수 없으면 표시만 생략 */ }
   pin = pinMarketplace();
   ({
