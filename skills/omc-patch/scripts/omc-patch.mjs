@@ -560,10 +560,19 @@ function syntaxError(file) {
   }
 }
 
-// 이 도구가 아닌 «손» 이 import 를 감싼 흔적. 우리 헬퍼는 안 쓰고 Promise.race 를
-// import 바로 앞에 직접 붙인 모양이다.
-const looksHandPatched = (src) =>
-  !src.includes("__omcRaceImport") && /Promise\.race\s*\(\s*\[?[\s\S]{0,120}?\bimport\s*\(/.test(src);
+// 이 도구가 아닌 «손» 이 import 를 감싼 흔적. 4.15.7 의 손 수정은 최상위의 `await import(` 를
+// `await Promise.race([import(` 로 바꿔치기했다. 그 모양이 최상위(함수 밖) 코드 자리에 있을 때만 손 수정으로 본다.
+// 문자열, 주석, 함수 몸통 안의 같은 모양이나 import 가 첫 원소가 아닌 race 는 상류 코드일 수 있어 세지 않는다.
+const HAND_PATCH = /^await\s+Promise\.race\s*\(\s*\[\s*import\s*\(/;
+function looksHandPatched(src) {
+  if (src.includes("__omcRaceImport")) return false;
+  let found = false;
+  scanTopLevelAwaitImports(src, (i, fnStack) => {
+    if (found || src[i] !== "a" || fnStack.some(Boolean) || (i > 0 && ID_CH.test(src[i - 1]))) return;
+    found = HAND_PATCH.test(src.slice(i, i + 80));
+  });
+  return found;
+}
 
 function patchHooks(root) {
   const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, foreign: [], orphan: [], failed: [] };

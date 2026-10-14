@@ -1183,3 +1183,21 @@ test("a revert that may not write outside the plugin folder says how to restore 
   assert.match(r.out, /손으로 되돌리려면 .*foo\.mjs\.omcbak 을 확인한 뒤 그 내용으로 .*foo\.mjs 을 덮어쓰고 백업을 지우십시오\./);
   assert.equal(read(join(outside, "foo.mjs.omcbak")), SCRIPT("foo"), "the backup outside is left for the person");
 });
+
+test("only the hand patch's own shape at the top level counts as a hand edit", () => {
+  const home = bareHome();
+  const cases = [
+    ["top level", 'const m = await Promise.race([import("./lib.mjs"), new Promise((r) => setTimeout(r, 9))]);\n', true],
+    ["in a function", 'async function f() { return await Promise.race([import("./lib.mjs"), 1]); }\nexport { f };\n', false],
+    ["in a comment", '// await Promise.race([import("./lib.mjs")])\nexport const y = 1;\n', false],
+    ["in a string", 'export const s = "await Promise.race([import(\\"x\\")])";\n', false],
+    ["import not first", 'const m = await Promise.race([Promise.resolve(1), import("./lib.mjs")]);\n', false],
+  ];
+  for (const [what, src, hand] of cases) {
+    const plug = bundle();
+    writeFileSync(join(plug, "scripts", "stopper.mjs"), src);
+    const r = run(home, ["--revert", "--root", plug]);
+    assert.equal(/이 도구가 만들지 않은 수정이 남아 있습니다/.test(r.out), hand, `${what}\n${r.out}`);
+    assert.equal(r.code, hand ? 1 : 0, `${what}\n${r.out}`);
+  }
+});
