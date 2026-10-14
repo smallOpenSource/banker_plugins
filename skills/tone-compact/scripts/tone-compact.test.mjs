@@ -856,3 +856,14 @@ test("an override that is a link to nothing counts as no override", posixOnly, (
   assert.equal(read(s.agents), "# base\n");
   assert.equal(lstatSync(s.override).isSymbolicLink(), true, "the link is left alone");
 });
+
+test("Codex off names the backup that keeps the file from before", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  assert.ok(turnOn("codex", s.o).ok);
+  const before = readFileSync(s.agents);
+  const r = turnOff("codex", s.o);
+  assert.ok(r.ok, r.message);
+  assert.match(r.message, /\n지우기 전 파일: .*AGENTS\.md\.tone-compact\.bak$/);
+  assert.ok(readFileSync(`${s.agents}.tone-compact.bak`).equals(before));
+});

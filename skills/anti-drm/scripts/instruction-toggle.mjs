@@ -493,7 +493,9 @@ function codexOff(t, o) {
   const why = writeBlocked(changes);
   if (why) return refuse(why);
   apply(t, changes);
-  return done(`Codex: 껐습니다. 다음 세션부터 적용되지 않습니다. ${changes.map((c) => where(c.file.path)).join(", ")}`);
+  const paths = changes.map((c) => where(c.file.path)).join(", ");
+  const baks = changes.map((c) => where(`${c.file.path}.${t.slug}.bak`)).join(", ");
+  return done(`Codex: 껐습니다. 다음 세션부터 적용되지 않습니다. ${paths}\n지우기 전 파일: ${baks}`);
 }
 
 // ---- status ----

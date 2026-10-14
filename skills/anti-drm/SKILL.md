@@ -206,7 +206,7 @@ argument-hint: "on | off | status | config"
 - Codex 블록은 `USER:OMX:POLICY` 표시로 감쌈
   - 블록이 남음: `omx setup --merge-agents`, 기본 `omx setup`(team 모드 켜짐)
   - 블록이 사라짐: `omx setup --force`, 덮어쓰기 확인, team 모드를 끈 `omx setup`. 그 뒤 `on` 다시 실행
-- Codex 파일 변경 전 내용: `<파일>.anti-drm.bak` (이 계정만 읽기 가능)
+- Codex 파일 변경 전 내용: `<파일>.anti-drm.bak` (이 계정만 읽기 가능). `off` 결과에 그 경로를 알림
 - `tone-compact` 블록과 같은 파일에 있어도 서로 건드리지 않음
 - `on`, `off` 는 그 런타임만 바꿈
 - 설정 값을 준 `on` 과 `config` 는 규칙이 들어 있는 다른 런타임도 새 규칙으로 바꿈

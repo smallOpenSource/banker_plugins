@@ -184,7 +184,7 @@ argument-hint: "on | off | status"
   - 블록이 남음: `omx setup --merge-agents`, 기본 `omx setup`(team 모드 켜짐, 모델 표만 갱신)
   - 블록이 사라짐: `omx setup --force`, 덮어쓰기 확인, team 모드를 끈 `omx setup`. 그 뒤 `on` 다시 실행
 - UTF-8 이 아닌 지침 파일(CP949, UTF-16): 손대지 않고 거부
-- Codex 파일 변경 전 내용: `<파일>.tone-compact.bak` (이 계정만 읽기 가능)
+- Codex 파일 변경 전 내용: `<파일>.tone-compact.bak` (이 계정만 읽기 가능). `off` 결과에 그 경로를 알림
 - 같은 파일에 있는 다른 도구의 블록은 건드리지 않음
 - `status`: 두 런타임 상태를 모두 표시
 - 한 런타임에서 켜도 다른 런타임은 그대로. 필요하면 그쪽에서도 실행
