@@ -105,6 +105,8 @@ test("without --to the working tree is compared, uncommitted edits included", ne
   assert.deepEqual(changedSkills(base, null, dir), ["banker:alpha"]);
 });
 
+// npm reaches no registry from this test: no weekly update check, no audit or funding lookups, offline.
+const NPM_OFFLINE = { npm_config_update_notifier: "false", npm_config_offline: "true", npm_config_audit: "false", npm_config_fund: "false" };
 // npm decides what the tarball holds; isShipped must agree with it for every file git tracks under skills/.
 function npmCli() {
   const bin = dirname(realpathSync(process.execPath));
@@ -124,7 +126,7 @@ test("the judgment matches npm pack for every file git tracks under skills/", { 
     return;
   }
   const r = spawnSync(process.execPath, [cli, "pack", "--dry-run", "--json", "--ignore-scripts"],
-    { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: { ...process.env, ...NPM_OFFLINE } });
   assert.equal(r.status, 0, r.stderr);
   const packed = new Set(JSON.parse(r.stdout)[0].files.map((f) => f.path.split("\\").join("/")));
   const tracked = git(REPO, "ls-files", "-z", "--", "skills").split("\0").filter(Boolean);
