@@ -4,7 +4,12 @@
 
 ### Fixed
 - `omc-patch`: 모르는 인자를 받지 않는다. 예전에는 말없이 넘겨 `--dry-run` 을 줘도 실제로 적용했고, `--root=<폴더>` 꼴은 `--root` 가 무시돼 `--revert` 가 모든 판을 되돌리고 고정까지 풀었다. 이제 아는 인자 밖이면 아무것도 읽거나 쓰지 않고 사용법과 함께 종료 1 로 멈춘다. `--help` 는 사용법을 낸다.
-- `omc-patch`: 출력 정화를 유니코드 속성 기준으로 넓혔다. 단어 결합자, 태그 문자(보이지 않는 ASCII), 빈 글자(U+3164 등), 점자 빈칸, ASCII 밖 공백을 `?` 로 바꾼다. `--root` 이름표 출력도 정화한다.
+- `omc-patch`: 출력 정화를 유니코드 속성 기준으로 넓혔다. 단어 결합자, 태그 문자(보이지 않는 ASCII), 빈 글자(U+3164 등), 점자 빈칸, ASCII 밖 공백을 `?` 로 바꾼다. `--root` 이름표 출력도 정화한다. 출력하는 경로(`--root` 폴더, 마켓플레이스, 캐시)와 문법 오류 줄도 정화한다.
+- `omc-patch`: 새 임시 파일과 rename 으로 쓴다. 하드 링크로 이어진 폴더 밖 파일이 바뀌지 않고, 확인과 쓰기 사이의 틈이 없다. 쓰지 못한 파일은 이름을 대고 실패로 센다. 예전에는 예외로 멈췄다.
+- `omc-patch`: origin 의 인증 정보를 출력에서 `***` 로 가리고, PINNED 에 URL 을 남기지 않는다. PINNED 는 이 계정만 읽는다(0600).
+- `omc-patch`: origin 을 설정 값 그대로 읽는다. 전역 `insteadOf` 가 펼친 URL 이 고정되거나 되돌린 뒤 남지 않고, `-` 로 시작하는 origin 도 옵션으로 읽지 않는다.
+- `omc-patch`: origin 을 바꾸지 못하면 `[!]` 로 알리고 종료 1 이다. 예전에는 되돌리기가 성공이라고 했고, 고정은 기록만 남기고 예외로 멈췄다.
+- `omc-patch`: 손 수정 판정이 실제 손 패치 모양(최상위의 `await Promise.race([import(`)만 본다.
 - `tone-compact`, `anti-drm`: 지침 파일 자리(AGENTS.md, AGENTS.override.md, 규칙 파일)에 폴더, FIFO, 소켓, 링크 고리가 있으면 읽지 않는다. 예전에는 FIFO 에서 `status` 와 `off` 가 멈췄고, 폴더와 소켓, 링크 고리에서는 종료 2 로 끝났다. 이제 `on`, `off` 는 거부(종료 1)하고 `status` 는 그 사실과 그 파일의 경로를 보인다.
 - `tone-compact`, `anti-drm`: UTF-8 이 아닌 파일이나 표시 짝이 맞지 않는 파일이 있으면 `status` 가 그 파일의 경로를 보인다. 예전에는 블록이 들어갈 파일을 보였다.
 - `tone-compact`, `anti-drm`: AGENTS.override.md 가 AGENTS.md 의 링크나 하드 링크면 한 파일로 다룬다. 예전에는 `on` 을 할 때마다 블록이 들어갔다 빠졌다 했다. 같은 파일인지는 실제 경로나 inode 로 보고, inode 번호 0 은 믿지 않는다.
@@ -20,6 +25,8 @@
 - `tone-compact`, `anti-drm`: 문제 해결 표가 사용자 파일을 치우거나 지우라고 하지 않는다. 무엇인지 보이고 물은 뒤 다시 실행한다.
 - `tone-compact`, `anti-drm`: Codex `off` 결과에 지우기 전 파일(`<파일>.<스킬>.bak`)을 알린다. 다른 banker 블록 때문에 Codex 가 AGENTS.md 를 읽지 않으면 `on` 의 첫 문장이 그렇다고 말한다.
 - `update-banker`: Claude Code 가 캐시의 옛 판을 지우는 규칙을 확인된 사실로 적었다(`.orphaned_at` 뒤 14일, 그 판을 쓰는 세션 없음, 링크 판 제외).
+- `omc-patch`: `--check` 가 쓸 수 없는 훅과 hooks.json 을 미리 알린다. 폴더 밖 링크 때문에 되돌리지 못한 파일은 손 복구 방법을 안내한다.
+- `omc-patch`: 지울 git 변수에 이 PC 의 `git rev-parse --local-env-vars` 결과를 더한다. 업데이트 경로의 fetch 는 환경 변수로 준 git 설정(`http.proxy` 등)을 쓴다.
 - smoke 시험: banker 작업 파일 검사가 대소문자를 가리지 않고 `skills/`, `commands/` 의 모든 글 파일을 본다.
 
 ## [0.18.0] - 2026-10-14
