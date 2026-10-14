@@ -1127,3 +1127,59 @@ test("a set-url that fails is reported and counted: the pin writes no PINNED, th
   }
   assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`, "still pinned, so a later revert finds the URL");
 });
+
+test("--check names a hook it would need to patch but could not write", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "foo.mjs"), SCRIPT("foo"));
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  try {
+    symlinkSync(join(outside, "foo.mjs"), join(plug, "scripts", "foo.mjs"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.match(r.out, /패치 필요, 쓸 수 없음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.match(r.out, /패치 필요: stopper$/m);
+});
+
+test("--check also names a hooks.json it would need to change but could not write", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  try {
+    symlinkSync(join(root, `nowhere${seq++}.json`), join(plug, "hooks", "hooks.json.omcbak"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.match(r.out, /hooks\.json PostToolUse 남아있음, 쓸 수 없음 \(백업 자리가 링크\): foo/);
+});
+
+test("a revert that may not write outside the plugin folder says how to restore by hand", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  // an old tool patched these while they sat outside, behind a linked scripts/ folder
+  for (const n of ["foo", "stopper"]) {
+    writeFileSync(join(outside, `${n}.mjs`), "const __omcRaceImport = (p) => p;\n");
+    writeFileSync(join(outside, `${n}.mjs.omcbak`), SCRIPT(n));
+  }
+  writeFileSync(join(outside, "lib.mjs"), LIB);
+  rmSync(join(plug, "scripts"), { recursive: true });
+  try {
+    symlinkSync(outside, join(plug, "scripts"), "junction");
+  } catch {
+    t.skip("links cannot be made here");
+    return;
+  }
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.match(r.out, /손으로 되돌리려면 .*foo\.mjs\.omcbak 을 확인한 뒤 그 내용으로 .*foo\.mjs 을 덮어쓰고 백업을 지우십시오\./);
+  assert.equal(read(join(outside, "foo.mjs.omcbak")), SCRIPT("foo"), "the backup outside is left for the person");
+});

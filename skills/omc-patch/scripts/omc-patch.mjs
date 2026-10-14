@@ -599,6 +599,10 @@ function restoreScript(root, n, f, bak, r) {
   const why = whyNotWrite(root, f, bak) ?? restoreFrom(f, bak);
   if (!why) { log(`  되돌림  ${shown(n)}`); r.done++; return; }
   bad(`되돌리지 않음: ${shown(n)} (${why})`);
+  // 옛 도구가 폴더 밖 링크 너머에서 고친 파일이다. 이 도구는 폴더 밖에 쓰지 않으므로 손 복구 방법을 알린다.
+  if (why === OUTSIDE) {
+    log(`      손으로 되돌리려면 ${oneLine(realOr(bak))} 을 확인한 뒤 그 내용으로 ${oneLine(realOr(f))} 을 덮어쓰고 백업을 지우십시오.`);
+  }
   r.fail++; r.failed.push(f);
 }
 
@@ -614,9 +618,10 @@ function checkOrPatchScript(root, n, f, r) {
   // 고칠 수 없으므로 apply 도 건드리지 않고, 되돌린 뒤 다시 적용하라고 안내한다(misplacedHint).
   if (info.state === "misplaced") { bad(`헬퍼 자리 결함: ${n} (${info.why})`); r.misplaced++; return; }
   if (info.state !== "needs") { r.skip++; return; }
-  if (MODE === "check") { bad(`패치 필요: ${n}`); r.need++; return; }
   const bak = `${f}.omcbak`;
   const why = whyNotWrite(root, f, bak);
+  // --check 도 쓰기 조건을 본다. apply 에서야 «쓰지 않음» 이 되는 파일을 진단에서 미리 알린다.
+  if (MODE === "check") { bad(why ? `패치 필요, 쓸 수 없음: ${n} (${why})` : `패치 필요: ${n}`); r.need++; return; }
   if (why) { bad(`쓰지 않음: ${n} (${why})`); r.fail++; return; }
   const out = transform(readFileSync(f, "utf8"));
   if (!out) { bad(`변환 실패: ${n}`); r.fail++; return; }
@@ -641,11 +646,14 @@ function writePatched(f, bak, out, n) {
   return false;
 }
 
+// 폴더 밖 쓰기를 거부한 이유. 되돌리기는 이 이유일 때 손 복구 방법을 함께 알린다.
+const OUTSIDE = "파일이 플러그인 폴더 밖에 있음";
+
 // 쓰기 전에 본다. 쓸 파일이 (링크를 따라가서) 플러그인 폴더 밖이거나 백업 자리가 링크면 그 이유를,
-// 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, copyFileSync 가 링크가 가리키는 곳에 쓴다.
+// 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, 복사가 링크가 가리키는 곳에 쓴다.
 function whyNotWrite(root, file, bak) {
   if (isLink(bak)) return "백업 자리가 링크";
-  if (!insideRoot(root, file)) return "파일이 플러그인 폴더 밖에 있음";
+  if (!insideRoot(root, file)) return OUTSIDE;
   return null;
 }
 
@@ -674,12 +682,10 @@ const fileKey = (p) => (process.platform === "win32" ? realOr(p).toLowerCase() :
 function patchHooksJson(root) {
   const hj = join(root, "hooks", "hooks.json");
   if (!existsSync(hj)) return "no-file";
-  if (MODE !== "check") {
-    const why = whyNotWrite(root, hj, `${hj}.omcbak`);
-    if (why) { bad(`hooks.json 을 건드리지 않음 (${why})`); return "unsafe"; }
-  }
+  const why = whyNotWrite(root, hj, `${hj}.omcbak`);
+  if (why && MODE !== "check") { bad(`hooks.json 을 건드리지 않음 (${why})`); return "unsafe"; }
   try {
-    return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj);
+    return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj, why);
   } catch (e) {
     bad(`hooks.json 을 쓰지 못함 (${failWhy(e)})`);
     return "unsafe";
@@ -738,12 +744,12 @@ const hasPostToolUse = (p) => {
   catch { return false; }
 };
 
-function removePostToolUse(hj) {
+function removePostToolUse(hj, why) {
   const bak = `${hj}.omcbak`;
   const j = JSON.parse(readFileSync(hj, "utf8"));
   if (!j.hooks?.PostToolUse) return "already";
   const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
-  if (MODE === "check") { bad(`hooks.json PostToolUse 남아있음: ${list.join(", ")}`); return "needs"; }
+  if (MODE === "check") { bad(`hooks.json PostToolUse 남아있음${why ? `, 쓸 수 없음 (${why})` : ""}: ${list.join(", ")}`); return "needs"; }
   backup(hj, bak);
   delete j.hooks.PostToolUse;
   writeAtomic(hj, JSON.stringify(j, null, 2) + "\n");
