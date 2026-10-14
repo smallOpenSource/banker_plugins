@@ -136,8 +136,16 @@ function entryVersion(e, versions) {
   return null;
 }
 
+// git 이 일할 저장소를 cwd 와 상관없이 정하는 변수. git 훅처럼 GIT_DIR 을 내보낸 셸에서 이 도구를 부르면
+// 마켓플레이스가 아니라 그 저장소의 origin 을 고정했다(/tmp 에서 재현). git 이 다른 저장소로 옮겨 갈 때
+// 지우는 목록(`git rev-parse --local-env-vars`, git 2.43)과 같다. Windows 는 변수 이름의 대소문자를 가리지 않는다.
+const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+  "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+  "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"]);
+const gitEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !GIT_REPO_VARS.has(k.toUpperCase())));
+
 function git(args, cwd = MARKET) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", args, { cwd, env: gitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 // ── 1. 업데이트 ──────────────────────────────────────────────────────────────
@@ -182,7 +190,7 @@ function targetSha() {
 function unpackTarget(dest) {
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
-  execFileSync("git", ["-C", MARKET, "archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")], { stdio: "ignore" });
+  execFileSync("git", ["-C", MARKET, "archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")], { env: gitEnv(), stdio: "ignore" });
   execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { stdio: "ignore" });
   unlinkSync(join(dest, "_src.tar"));
 }
@@ -577,6 +585,11 @@ function insideRoot(root, p) {
   catch { return false; }
 }
 
+// 실제 경로. 풀 수 없으면 받은 그대로.
+const realOr = (p) => {
+  try { return realpathSync(p); } catch { return p; }
+};
+
 // ── 3. PostToolUse 훅 제거 ───────────────────────────────────────────────────
 function patchHooksJson(root) {
   const hj = join(root, "hooks", "hooks.json");
@@ -588,29 +601,44 @@ function patchHooksJson(root) {
   return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj);
 }
 
+// 되돌린 결과. ambiguous 와 linked 는 hooks.json 을 되돌리지 못하고 남긴 것이라 끝 줄이 센다.
 function revertHooksJson(root, hj) {
   const bak = `${hj}.omcbak`;
   if (existsSync(bak)) { copyFileSync(bak, hj); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
-  // 이 도구가 만든 백업이 없어도, 손으로 만든 백업이 남아 있을 수 있다(실측: 4.15.7 의
-  // hooks.json.bak-20260906-postoolremove). PostToolUse 를 담고 있는 유효한 JSON 이
-  // 딱 하나면 그것이 제거 직전 상태다 — 무엇을 썼는지 밝히고 되돌린다.
+  // 이 도구의 백업이 없을 때 PostToolUse 가 그대로면 되돌릴 것이 없다. 옆의 수동 백업으로 덮어쓰면
+  // 지금 내용을 잃는다.
+  if (hasPostToolUse(hj)) return "no-backup";
+  // 손으로 만든 백업이 남아 있을 수 있다(실측: 4.15.7 의 hooks.json.bak-20260906-postoolremove).
+  // PostToolUse 를 담고 있는 유효한 JSON 이 딱 하나면 그것이 제거 직전 상태다 — 무엇을 썼는지 밝히고 되돌린다.
   const dir = dirname(hj);
-  const cands = readdirSync(dir)
-    .filter((f) => f.startsWith("hooks.json.") && f !== "hooks.json.omcbak")
-    // 링크로 심은 후보는 쓰지 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
-    .filter((f) => !isLink(join(dir, f)) && insideRoot(root, join(dir, f)))
-    .filter((f) => {
-      try { return !!JSON.parse(readFileSync(join(dir, f), "utf8"))?.hooks?.PostToolUse; }
-      catch { return false; }
-    });
-  if (cands.length === 1) {
-    copyFileSync(join(dir, cands[0]), hj);
-    log(`  되돌림  hooks.json  (수동 백업 사용: ${cands[0]})`);
+  const { usable, unsafe } = manualBackups(root, dir);
+  if (unsafe.length) bad(`hooks.json 수동 백업 후보가 링크이거나 플러그인 폴더 밖이라 쓰지 않음: ${unsafe.join(", ")}`);
+  if (usable.length === 1) {
+    copyFileSync(join(dir, usable[0]), hj);
+    log(`  되돌림  hooks.json  (수동 백업 사용: ${usable[0]})`);
     return "reverted";
   }
-  if (cands.length > 1) { bad(`hooks.json 수동 백업이 여러 개라 자동 복구하지 않음: ${cands.join(", ")}`); return "ambiguous"; }
-  return "no-backup";
+  if (usable.length > 1) { bad(`hooks.json 수동 백업이 여러 개라 자동 복구하지 않음: ${usable.join(", ")}`); return "ambiguous"; }
+  return unsafe.length ? "linked" : "no-backup";
 }
+
+// hooks.json 옆의 수동 백업 후보. usable 은 PostToolUse 를 담은 유효한 JSON 이다. 링크로 심은 후보는
+// unsafe 로 따로 두고 읽지도 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
+function manualBackups(root, dir) {
+  const usable = [], unsafe = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.startsWith("hooks.json.") || f === "hooks.json.omcbak") continue;
+    const p = join(dir, f);
+    if (isLink(p) || !insideRoot(root, p)) unsafe.push(f);
+    else if (hasPostToolUse(p)) usable.push(f);
+  }
+  return { usable, unsafe };
+}
+
+const hasPostToolUse = (p) => {
+  try { return !!JSON.parse(readFileSync(p, "utf8"))?.hooks?.PostToolUse; }
+  catch { return false; }
+};
 
 function removePostToolUse(hj) {
   const bak = `${hj}.omcbak`;
@@ -669,15 +697,19 @@ function unpinMarketplace(url) {
   return "unpinned";
 }
 
-// PINNED 를 읽고 지운다. 다른 기기의 기록이면 알린다. 원래 URL 이 없으면 null.
+// PINNED 를 읽고 지운다. 이 기기의 원래 URL 이면 그 값을, 아니면 null.
+// 다른 기기의 기록이면 알리고 그 값은 쓰지 않는다. origin 이 고정 상태가 아니어도 마찬가지다.
 function takeSavedOrigin() {
-  let saved = {};
+  let saved = null;
   try { saved = JSON.parse(readFileSync(PINFILE, "utf8")); } catch { /* 깨졌으면 무시 */ }
-  if (saved.host && saved.host !== hostname()) {
-    bad(`PINNED 는 다른 기기(${saved.host})의 기록입니다 — 그 값은 쓰지 않고 현재 origin 에서 복원합니다.`);
-  }
   unlinkSync(PINFILE);
-  return saved.originUrl || null;
+  // null, 숫자, 문자열도 깨진 기록이다(손으로 고친 파일, 깨진 사본).
+  if (!saved || typeof saved !== "object") return null;
+  if (saved.host && saved.host !== hostname()) {
+    bad(`PINNED 는 다른 기기(${saved.host})의 기록입니다 — 그 값은 쓰지 않습니다.`);
+    return null;
+  }
+  return typeof saved.originUrl === "string" && saved.originUrl ? saved.originUrl : null;
 }
 
 // --root 폴더의 이름표. .claude-plugin/plugin.json 의 name 이 있으면 그것으로, 없으면 package.json 의 name
@@ -712,6 +744,11 @@ if (SCAN_AT >= 0) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 if (ROOT_AT >= 0 && !ROOT) { bad("--root 뒤에 플러그인 폴더 경로가 필요합니다."); process.exit(1); }
+// --check 는 읽기 전용이다. --revert 와 함께 받으면 예전에는 되돌리기가 이겨 파일을 썼다. 무엇도 하지 않고 멈춘다.
+if (argv.has("--check") && argv.has("--revert")) {
+  bad("--check 와 --revert 는 함께 쓸 수 없습니다. 진단만 하려면 --check 만 주십시오.");
+  process.exit(1);
+}
 log(ROOT
   ? `OMC 패치  (대상 폴더 ${ROOT})  모드: ${MODE}`
   : `OMC 패치  (대상 ${TARGET_VERSION})  모드: ${MODE}${NO_UPDATE ? " --no-update" : ""}`);
@@ -773,6 +810,8 @@ const needBy = {};
 const misplacedBy = {};
 const foreignBy = {};
 const orphanBy = {};
+// 되돌리지 못하고 남은 파일. 링크로 이어진 판 폴더는 같은 파일을 여러 이름으로 보이므로 실제 경로로 한 번만 센다.
+const left = new Set();
 for (const v of targets) {
   const root = rootOf(v);
   if (!existsSync(root)) continue;
@@ -783,6 +822,7 @@ for (const v of targets) {
   for (const k of ["done", "skip", "fail", "need", "misplaced"]) r[k] += x[k];
   if (x.foreign?.length) foreignBy[v] = x.foreign;
   if (x.orphan?.length) orphanBy[v] = x.orphan;
+  for (const n of [...x.foreign, ...x.orphan]) left.add(realOr(join(root, "scripts", `${n}.mjs`)));
 }
 log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `되돌림 ${r.done}건${r.fail ? ` / 실패 ${r.fail}건` : ""}` : `패치 ${r.done}건 / 실패 ${r.fail}건`}${r.misplaced ? ` / 헬퍼 자리 결함 ${r.misplaced}건` : ""} / 대상 아님 ${r.skip}건`);
 // 백업이 없어 되돌리지 못한 파일은 되돌릴 원본이 디스크에 없다. 조용히 넘기면 «완전히
@@ -807,10 +847,11 @@ for (const v of targets) {
   if (Array.isArray(hj)) ok(`${tag}제거: ${hj.join(", ")}`);
   else if (hj === "already") ok(`${tag}이미 제거됨`);
   else if (hj === "needs") hjNeedBy[v] = true;
-  else if (hj === "reverted" || hj === "ambiguous") { /* patchHooksJson 이 출력함 */ }
+  else if (hj === "reverted" || hj === "ambiguous" || hj === "linked") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
   else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
   else if (hj === "unsafe") r.fail++;
+  if (hj === "ambiguous" || hj === "linked") left.add(realOr(join(root, "hooks", "hooks.json")));
 }
 
 log();
@@ -861,8 +902,10 @@ if (MODE === "check") {
     log("          지금 쓰이지 않는 버전이라 판정에 넣지 않았습니다. 그 버전으로 되돌릴 계획이면 함께 적용하십시오.");
   }
 } else if (MODE === "revert") {
-  log(r.fail
-    ? `되돌리기를 끝내지 못했습니다. 실패 ${r.fail}건. 위의 [!] 줄을 확인하십시오.`
+  // 백업이 없어 남은 파일과 hooks.json 도 «끝내지 못함» 이다. 완료라고 하면 남은 것을 보지 못하고 넘어간다.
+  const why = [r.fail && `실패 ${r.fail}건`, left.size && `되돌리지 못한 것 ${left.size}건`].filter(Boolean);
+  log(why.length
+    ? `되돌리기를 끝내지 못했습니다. ${why.join(", ")}. 위의 [!] 줄을 확인하십시오.`
     : "되돌리기 완료. Claude Code 를 재시작해야 반영됩니다.");
 } else {
   log(`완료. 실패 ${r.fail}건.`);
@@ -870,4 +913,4 @@ if (MODE === "check") {
   log("    훅 스크립트 패치는 즉시 적용됩니다 (훅이 호출될 때마다 파일을 새로 읽습니다).");
   log("[!] PostToolUse 훅 제거는 hooks.json 변경이라 각 세션이 다시 시작될 때부터 적용됩니다.");
 }
-process.exit(r.fail > 0 ? 1 : 0);
+process.exit(r.fail > 0 || left.size > 0 ? 1 : 0);
