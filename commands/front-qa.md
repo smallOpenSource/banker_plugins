@@ -1,11 +1,11 @@
 ---
-description: "스펙 파일(기본 `docs/note.txt`)을 바탕으로 프론트엔드를 구현하고, 레퍼런스 구현과 같은지 엄격하게 QA 하는 워크플로(`ralplan`, `ralph`, `/loop`)."
-argument-hint: "[스펙 파일 경로. 생략하면 docs/note.txt]"
+description: "스펙 파일(기본 `docs/note.md`)을 바탕으로 프론트엔드를 구현하고, 레퍼런스 구현과 같은지 엄격하게 QA 하는 워크플로(`ralplan`, `ralph`, `/loop`)."
+argument-hint: "[스펙 파일 경로. 생략하면 docs/note.md]"
 ---
 
 # /front-qa — 스펙 기반 프론트엔드 구현 + 엄격 QA
 
-`$1`(없으면 `docs/note.txt`)의 요구사항을 React 프론트엔드(`$FRONTEND_DIR`, 예: `apps/web`)에 구현하고,
+`$1`(없으면 `docs/note.md`. 그 파일이 없고 `docs/note.txt` 가 있으면 그 파일)의 요구사항을 React 프론트엔드(`$FRONTEND_DIR`, 예: `apps/web`)에 구현하고,
 **레퍼런스 구현(reference implementation — 예: 이전 Streamlit/타 빌드)과 엄격 비교 + 스펙 지시 정확 준수**를 검증한다. 모든 항목 해결까지 진행.
 
 ## 0. 전제조건: OMC (없으면 설치부터)

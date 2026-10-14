@@ -56,15 +56,15 @@ function repo(t, { commit = true } = {}) {
 }
 
 // Runs the chain with the placeholders filled, as a session would after writing the short part
-// (here only the opening marker) and new-files.txt with its file tool.
+// (here only the opening marker) and new-files.md with its file tool.
 function step2(ctx, { base = "HEAD", list = "", env = {}, prelude = "" } = {}) {
   writeFileSync(join(ctx.d, "prompt.md"), '<review-data id="t1">\n');
-  writeFileSync(join(ctx.d, "new-files.txt"), list);
+  writeFileSync(join(ctx.d, "new-files.md"), list);
   writeFileSync(join(ctx.dir, "base.md"), "the base file\n");
   const script = CHAIN.replaceAll("<저장소>", ctx.repo).replaceAll("<기준 파일>", join(ctx.dir, "base.md"))
     .replaceAll("<기준>", base).replaceAll("<id>", "t1");
   const r = spawnSync("bash", ["-c", `${prelude}\nd='${ctx.d}'\n${script}`], { encoding: "utf8", env: { ...ctx.env, ...env } });
-  const unsent = join(ctx.d, "unsent.txt");
+  const unsent = join(ctx.d, "unsent.md");
   return {
     status: r.status, stderr: r.stderr, counted: r.stdout.trim().split("\n").pop(),
     prompt: readFileSync(join(ctx.d, "prompt.md"), "utf8"),
@@ -89,7 +89,7 @@ test("the listing names each new file in a new folder, where status --short show
   assert.deepEqual(r.stdout.split("\n").filter(Boolean).sort(), ["scratch/conn.json", "scratch/deep/notes.txt"]);
 });
 
-test("only the new files the author lists go out; the rest are left in unsent.txt", { skip: SKIP }, (t) => {
+test("only the new files the author lists go out; the rest are left in unsent.md", { skip: SKIP }, (t) => {
   const ctx = repo(t);
   put(ctx, "a.txt", "two\n");
   put(ctx, "newfeat/f.mjs", "export const f = 1;\n");

@@ -296,7 +296,7 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 
 - 백업을 먼저 한다. 백업은 프로젝트의 `backup/` 아래에 둔다. `/tmp` 는 쓰지 않는다.
 - `site/` 의 파일을 사이트의 정적 폴더로 옮긴다. `#world` 를 본문 위에 두고, `stepNav.end` 는 본문 시작 요소를 가리킨다.
-- 사이트 CSP 에 `connect-src 'self'`, `media-src 'self' blob:`, `style-src` 의 `styleHash` 를 더한다. 인라인을 허용하지 않아도 된다. `scrub-engine.LICENSE.txt`(엔진의 MIT 고지)도 함께 옮긴다.
+- 사이트 CSP 에 `connect-src 'self'`, `media-src 'self' blob:`, `style-src` 의 `styleHash` 를 더한다. 인라인을 허용하지 않아도 된다. `scrub-engine.LICENSE.md`(엔진의 MIT 고지)도 함께 옮긴다.
 - 배포 뒤 운영 주소에 `verify-intro.mjs` 를 다시 돌려 결과를 대조해 보고한다.
 
 ---

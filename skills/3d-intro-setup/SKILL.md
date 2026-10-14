@@ -152,7 +152,7 @@ AZURE_IMAGE_API_KEY=<Image 리소스 키>
 ### 모드 (b) — 콘솔 샘플 파일
 Azure AI Foundry/AI Hub 콘솔의 "Sample code"/"View code" 패널이 주는 curl 또는 Python 스니펫에는 원문 키가 들어 있다. 사람이 이것을 **채팅에 붙이지 않고** 비공개 파일에 저장한다:
 ```bash
-mkdir -p ~/.config/banker/3d-intro && (umask 077 && touch ~/.config/banker/3d-intro/sample.txt)   # 사람이 이 파일에 샘플을 붙여 저장
+mkdir -p ~/.config/banker/3d-intro && (umask 077 && touch ~/.config/banker/3d-intro/sample.md)   # 사람이 이 파일에 샘플을 붙여 저장
 ```
 에이전트는 그 파일을 읽어 키를 화면에 내지 않고 키 파일에 바로 합친 뒤 샘플 파일을 지운다. 리소스마다 마지막 인자를 `sora`, `image`, `wan:<n>` 중 하나로 준다:
 ```bash
@@ -178,8 +178,8 @@ node -e "
   const replaced = old && add[names.apiKey] && old !== add[names.apiKey] ? redact(old) : null;
   console.log(JSON.stringify({ file: target, endpoint: p.endpoint, deployment: p.deployment, apiVersion: p.apiVersion, apiKey: redact(p.apiKey), replaced }));
 })();
-" "$HOME/.config/banker/3d-intro/sample.txt" sora
-rm -f "$HOME/.config/banker/3d-intro/sample.txt"
+" "$HOME/.config/banker/3d-intro/sample.md" sora
+rm -f "$HOME/.config/banker/3d-intro/sample.md"
 ```
 파싱 결과(저장한 파일, 엔드포인트, 배포명, apiVersion, 길이만 보이는 key)를 사람에게 보여 주고 확인받는다.
 `replaced` 에 길이가 보이면 파일에 있던 다른 키를 이 샘플의 키로 바꾼 것이다. 교체(로테이션)가 아니었다면 사람이 키 파일의 키 줄을 다시 적는다.

@@ -54,9 +54,9 @@ test('the engine CSS file carries what the engine injects, and the CSP hash is o
   const css = read(dir, 'scrub-engine.css');
   assert.ok(injected.startsWith('@layer sw {\n') && injected.endsWith('\n}') && injected.includes('.sw-copy{'));
   assert.ok(css.endsWith(injected), 'the rules are the injected text, unchanged');
-  assert.match(css, /^\/\* scroll-world[^]*MIT[^]*scrub-engine\.LICENSE\.txt[^]*\*\/\n/, 'a notice heads the copied rules');
+  assert.match(css, /^\/\* scroll-world[^]*MIT[^]*scrub-engine\.LICENSE\.md[^]*\*\/\n/, 'a notice heads the copied rules');
   assert.equal(r.styleHash, `'sha256-${crypto.createHash('sha256').update(injected).digest('base64')}'`);
-  assert.equal(read(dir, 'scrub-engine.LICENSE.txt'), fs.readFileSync(path.join(HERE, 'LICENSE'), 'utf8'), 'the MIT notice ships with the engine');
+  assert.equal(read(dir, 'scrub-engine.LICENSE.md'), fs.readFileSync(path.join(HERE, 'LICENSE'), 'utf8'), 'the MIT notice ships with the engine');
 });
 
 test('an engine checked out with CRLF line ends gives the same injected text and hash', () => {

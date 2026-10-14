@@ -134,6 +134,43 @@ try {
   ok(breaks.length === 0,
      `descriptions pass the mechanical tone checks: symbols, translationese, sentence length, one line; argument-hint symbols (${descs.length} checked${breaks.length ? '; ' + breaks.join('; ') : ''})`);
 
+  // anti-drm: banker's own work files avoid .txt and .csv, which a DRM may encrypt so that the agent can no longer
+  // read them back. A name below stays only for the reason beside it. Tests are repo-only and skipped; anti-drm
+  // itself names the denied extensions. An allowance that matches nothing fails too, so the list stays true.
+  const DRM_KEEP = [
+    ['skills/audit-security/SKILL.md', 'requirements.txt', 'a name the Python tools fix; the skill only reads it'],
+    ['skills/audit-security/SKILL.md', '<requirements>.txt', 'the same name in a command template'],
+    ['skills/rfp-author/references/research-provenance.md', '/tmp/rfp_pdf.txt', 'a record of past research, not a step'],
+    ['skills/rfp-author/references/research-provenance.md', '/tmp/nist6001.txt', 'a record of past research, not a step'],
+    ['skills/lineage/lineage.py', '.txt', 'reads a summary cached by lineage 3.0.2 or earlier; writes .md'],
+    ['skills/lineage/SKILL.md', '.txt', 'says the cache of 3.0.2 or earlier is still read'],
+    ['skills/ultra-chain/SKILL.md', '05-baseline.txt', 'the baseline of a run begun before the change, read when resuming'],
+    ['commands/front-qa.md', 'docs/note.txt', 'the old default spec, read only when docs/note.md is missing'],
+    ['commands/front-qa.md', 'progress.txt', "OMC's checkpoint file, named by OMC"],
+    ...['3d-intro-build', 'motion-graphic-make', 'ultra-chain'].map((s) =>
+      [`skills/${s}/references/preview-lib.mjs`, '.txt', 'a MIME type the preview server serves; no file is written']),
+  ];
+  const drmNames = [];
+  (function scanDrm(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (!['node_modules', '__pycache__', '.omc'].includes(e.name)) scanDrm(p); continue; }
+      if (!/\.(md|mjs|js|cjs|py|ps1|sh)$/.test(e.name) || /\.test\.(mjs|ts)$|^test_.*\.py$/.test(e.name)) continue;
+      const rel = path.relative(root, p).split(path.sep).join('/');
+      if (rel.startsWith('skills/anti-drm/')) continue;
+      for (const m of fs.readFileSync(p, 'utf8').matchAll(/[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/g)) drmNames.push([rel, m[0]]);
+    }
+  })(path.join(root, 'skills'));
+  for (const f of fs.readdirSync(path.join(root, 'commands')).filter((n) => n.endsWith('.md'))) {
+    for (const m of fs.readFileSync(path.join(root, 'commands', f), 'utf8').matchAll(/[A-Za-z0-9_./<>{}$*-]*\.(?:txt|csv)\b/g)) {
+      drmNames.push([`commands/${f}`, m[0]]);
+    }
+  }
+  const drmUnexplained = [...new Set(drmNames.filter(([rel, name]) => !DRM_KEEP.some(([f, n]) => f === rel && n === name))
+    .map(([rel, name]) => `${rel}: ${name}`))];
+  const drmUnused = DRM_KEEP.filter(([f, n]) => !drmNames.some(([rel, name]) => rel === f && name === n)).map(([f, n]) => `${f}: ${n}`);
+  ok(drmUnexplained.length === 0 && drmUnused.length === 0,
+     `banker work files avoid .txt and .csv (unexplained: [${drmUnexplained.join(', ')}]; unused allowances: [${drmUnused.join(', ')}])`);
   // 6) REAL codex install into a fresh temp HOME: assert dir==name (Codex discovery) + stale sweep
   const home2 = path.join(tmp, 'home2');
   const staleDir = path.join(home2, '.codex', 'skills', 'banker-STALE');
@@ -284,7 +321,7 @@ try {
      && /`reviewers dropped N typed user turn\(s\)`/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.2$/m.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.3$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
      && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && !/공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
@@ -573,13 +610,13 @@ try {
      && !/--path-format/.test(seatCode) && /인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다/.test(rqSkill)
      && /커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다/.test(rqSkill) && !/경로를 잘못 얻어도 사본 없이 말없이 진행하지 않는다/.test(rqSkill)
      && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\/new-files\.txt" &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard > "\$d\/unsent\.txt" &&$/m.test(seatCode)
-     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.txt" > "\$d\/added\.txt" &&$/m.test(seatCode)
-     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.txt" > "$d/listed.txt" &&`)
-     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.txt" | LC_ALL=C command grep -Fxv -f "$d/listed.txt" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄이나 겹친 줄)' >&2; false; }; } &&`)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
+     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
+     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" > "$d/listed.md" &&`)
+     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄이나 겹친 줄)' >&2; false; }; } &&`)
      && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" "\$d\/added\.txt" "\$d\/listed\.txt" &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" &&$/m.test(seatCode)
      && !/'<저장소>'(?: -c \S+)* diff (?!--no-ext-diff --no-textconv --no-color --submodule=short )/.test(seatCode)
      && / && LC_ALL=C command grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m.test(seatCode) && !/(?<!command )grep -c/.test(seatCode)
      && !/read-tree/.test(seatCode) && !/git -C '<저장소>' diff HEAD/.test(seatCode) && !/add -N \.(?=[\s`]|$)/m.test(rqSkill)
@@ -591,8 +628,8 @@ try {
   // chain names its reason; the chain itself runs in references/step2-chain.test.mjs.
   ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard$/m.test(seatCode)
      && /\(`status --short` 는 새 폴더를 한 줄로 접는다\)/.test(rqSkill) && !/`git -C '<저장소>' status --short` 로 `\?\?` 파일을 본다/.test(rqSkill)
-     && /그중 변경에 속한 파일만 파일 도구로 `\$d\/new-files\.txt` 에 저장소 루트 기준 경로로 한 줄에 하나씩 쓴다\(없으면 빈 파일\)/.test(rqSkill)
-     && /보내지 않은 새 파일은 `\$d\/unsent\.txt` 에 남는다\. 그 수를 `외부 전송\(선언\)` 줄에 적는다/.test(rqSkill)
+     && /그중 변경에 속한 파일만 파일 도구로 `\$d\/new-files\.md` 에 저장소 루트 기준 경로로 한 줄에 하나씩 쓴다\(없으면 빈 파일\)/.test(rqSkill)
+     && /보내지 않은 새 파일은 `\$d\/unsent\.md` 에 남는다\. 그 수를 `외부 전송\(선언\)` 줄에 적는다/.test(rqSkill)
      && /`--pathspec-from-file` 은 git 2\.25 이상이 필요하다/.test(rqSkill)
      && /한 줄에 파일 하나다\. 폴더 줄이나 `\.` 은 그 아래 새 파일을 모두 올린다/.test(rqSkill)
      && /`목록에 없는 새 파일이 올라간다`: 찍힌 경로를 올린 줄\(폴더 줄, `\.`\)을 보낼 파일 줄로 바꾸고/.test(rqSkill)
@@ -610,7 +647,7 @@ try {
      && /관련 코드 범위는 바뀐 줄 둘레 3줄 밖에 있는데 판정에 필요한 함수 본문이나 호출부다/.test(rqSkill)
      && /`sed -n '<시작>,<끝>p' '<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
      && /파일을 읽는 도구가 없는 외부 좌석\(gemini, opencode, 셸을 끈 codex\)/.test(rqSkill) && !/도구가 없는 gemini, opencode 좌석/.test(rqSkill),
-     'S23-a: only the new files the author lists go out (the rest stay in unsent.txt), stops name their reason, a payload over 512 KiB is asked about, related code goes as ranges');
+     'S23-a: only the new files the author lists go out (the rest stay in unsent.md), stops name their reason, a payload over 512 KiB is asked about, related code goes as ranges');
   // opencode: -f truncates at 50 KB, an unknown --agent falls back to the default agent, and only a
   // per-run agent defined in CONFIG_CONTENT with the deny-all permission survives user config.
   ok(/^\( cd "\$d\/opencode" &&/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md"/.test(ocCmd) && !/opencode run[^\n]* -f /.test(ocCmd)
@@ -620,7 +657,7 @@ try {
      && /OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1/.test(ocCmd)
      && /OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_CLAUDE_CODE=1/.test(ocCmd)
      && /opencode debug agent "\$A" --pure > \/dev\/null 2>&1 &&/.test(ocCmd)
-     && /opencode run --pure --agent "\$A" --title "\$A"/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md" 2> "\$o\/err-opencode\.txt" \)/.test(ocCmd)
+     && /opencode run --pure --agent "\$A" --title "\$A"/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md" 2> "\$o\/err-opencode\.md" \)/.test(ocCmd)
      && /\( cd "\$d\/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session list --pure --format json \)/.test(seatCode)
      && /\( cd "\$d\/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session delete /.test(seatCode),
      'S23-b: opencode reads the payload from stdin as a per-run deny-all agent it checks first, with compaction, project config, share, title and CLAUDE.md off, and its session is listed and deleted from the seat folder with the refresh off');
@@ -628,7 +665,7 @@ try {
      && ['multi_agent', 'hooks', 'plugins', 'apps', 'shell_tool'].every((f) => cxCmd.includes(`--disable ${f}`))
      && /-c 'notify=\[\]' -c 'analytics\.enabled=false' -c 'web_search=disabled' <mcp>/.test(cxCmd)
      && /-c 'otel\.exporter="none"' -c 'otel\.trace_exporter="none"' -c 'otel\.metrics_exporter="none"'/.test(cxCmd)
-     && /-s read-only --skip-git-repo-check -o "\$o\/out-codex\.md" - < prompt\.md 2> "\$o\/err-codex\.txt"/.test(cxCmd)
+     && /-s read-only --skip-git-repo-check -o "\$o\/out-codex\.md" - < prompt\.md 2> "\$o\/err-codex\.md"/.test(cxCmd)
      && /mcp_servers\.<이름>\.enabled=false/.test(seatBlock) && /`model:` 줄/.test(rqSkill),
      'S23-c: codex runs rooted in its seat folder with its shell, rules, sub-agents, hooks, plugins, apps, notify, web search, metrics, OpenTelemetry and each MCP server off, read-only');
   // gemini opens its tools without a word when the policy file is missing or changed, so the helper
@@ -643,7 +680,7 @@ try {
   ok(/^\( cd "\$d\/gemini" && pol=\$\(node "\$R\/gemini-seat\.mjs" check "\$d\/gemini"\) && \[ -n "\$pol" \] && \[ -f "\$pol" \] &&\n  unset GEMINI_CLI_IDE_WORKSPACE_PATH &&/.test(gmCmd)
      && /TMPDIR="\$o" TEMP="\$o" TMP="\$o" GEMINI_SANDBOX=false GEMINI_TELEMETRY_LOG_PROMPTS=false <상한> gemini --skip-trust --approval-mode default --admin-policy "\$pol"/.test(gmCmd)
      && /--allowed-mcp-server-names ralph-qa-none -e none/.test(gmCmd)
-     && /-p "첨부한 검토 지시를 따르라" < prompt\.md > "\$o\/out-gemini\.md" 2> "\$o\/err-gemini\.txt" \)/.test(gmCmd)
+     && /-p "첨부한 검토 지시를 따르라" < prompt\.md > "\$o\/out-gemini\.md" 2> "\$o\/err-gemini\.md" \)/.test(gmCmd)
      && cleanAt >= 0 && findAt > cleanAt && sweepAt > findAt && rmAt > sweepAt
      && JSON.stringify(gmPolicy) === JSON.stringify(['[[rule]]', 'toolName = "*"', 'decision = "deny"', 'priority = 100']),
      'S23-d: gemini runs only after its helper checks the deny-all policy and the folders above, with its own sandbox, MCP servers, extensions and prompt telemetry off, its error report in the answer folder, and its records cleaned and swept before the folders go');
@@ -653,18 +690,18 @@ try {
   const psStep2 = rqLines.find((l) => l.includes('2단계 원문 붙이기')) || '';
   const psGemini = rqLines.find((l) => l.includes('gemini 좌석은 같은 호출에서 `$pol')) || '';
   const pathFormat = rqLines.filter((l) => l.includes('--path-format'));
-  ok(/`git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard` 로 새 파일을 보고, 그중 변경에 속한 것만 파일 도구로 `\$d\\new-files\.txt` 에 쓴다\./.test(psStep2)
+  ok(/`git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard` 로 새 파일을 보고, 그중 변경에 속한 것만 파일 도구로 `\$d\\new-files\.md` 에 쓴다\./.test(psStep2)
      && /`\$i = git -C '<저장소>' rev-parse --git-path index` 로 경로를 얻고, `\$i` 가 문자열 하나가 아니면 멈춘다\./.test(psStep2)
      && /`\[IO\.Path\]::IsPathRooted\(\$i\)` 가 거짓이면 `\$i = Join-Path '<저장소>' \$i` 로 바꾼다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"` 로 실제 인덱스를 복사한다\./.test(psStep2)
      && /`git -C '<저장소>' rev-parse -q --verify HEAD > \$null` 의 `\$LASTEXITCODE` 가 0 이면\(커밋이 있으면\) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.txt" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
+     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
      && /`\$added \| Where-Object \{ \$listed -cnotcontains \$_ \}`\)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다\./.test(psStep2)
      && /`Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL`/.test(psStep2)
-     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\\new-files\.txt"`/.test(psStep2)
-     && /`git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short --output="\$d\\diff\.txt" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
+     && /`git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
      && /`diff --quiet` 는 1 일 때만 계속하고\(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다\), 나머지는 0 이 아니면 멈춘다\./.test(psStep2)
-     && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.txt"` 로 치운다/.test(psStep2)
+     && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.md"` 로 치운다/.test(psStep2)
      && !/read-tree|--path-format|if \(Test-Path \$i\)|add -N \./.test(psStep2)
      && pathFormat.length === 1
      && /인덱스 경로는 `rev-parse --git-path index` 로 얻고\(셸의 `GIT_INDEX_FILE` 도 따른다\), 상대 경로면 앞에 `<저장소>\/` 를 붙인다\. `--path-format` 은 쓰지 않는다\./.test(pathFormat[0])
