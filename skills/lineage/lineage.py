@@ -425,6 +425,57 @@ KNOWN_CONTENT_ITEMS = {"text", "tool_use", "tool_result", "thinking"}
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")   # strip control chars (keeps \t\n)
 
 
+def _is_turn_record(obj, seen_unknown_type, unsafe_schema):
+    """Whether a record is a user or assistant turn. A side chain or a team record is not, nor is another type:
+    one nobody knows is named once, and a schema marker (v...) stops the run unless --unsafe-schema."""
+    if obj.get("isSidechain") or obj.get("teamName") or obj.get("agentName"):
+        return False
+    t = obj.get("type")
+    if t in ("user", "assistant"):
+        return True
+    if t and t not in KNOWN_TYPES and t not in seen_unknown_type:
+        seen_unknown_type.add(t)
+        print(f"[WARN] unknown record type '{t}' skipped", file=sys.stderr)
+        if not unsafe_schema and t.startswith("v"):
+            print(f"[ERROR] schema marker '{t}' unrecognized — "
+                  "rerun with --unsafe-schema to proceed",
+                  file=sys.stderr)
+            raise SystemExit(2)
+    return False
+
+
+def _take_item(item, line_no, text_parts, tools):
+    """Add one item of a message's content list to the text parts or the tool counts."""
+    if not isinstance(item, dict):
+        return
+    it = item.get("type")
+    if it == "text":
+        text_parts.append(item.get("text") or "")
+    elif it == "tool_use":
+        name = item.get("name", "?")
+        tools[name] = tools.get(name, 0) + 1
+    elif it not in KNOWN_CONTENT_ITEMS:
+        print(f"[WARN] line {line_no}: unknown content type "
+              f"'{it}' skipped", file=sys.stderr)
+
+
+def _content_parts(content, line_no):
+    """(text parts, tool counts) of a message's content, or None for a shape nobody knows (named in a WARN
+    unless the content is missing)."""
+    text_parts, tools = [], {}
+    if isinstance(content, str):
+        text_parts.append(content)
+    elif isinstance(content, list):
+        for item in content:
+            _take_item(item, line_no, text_parts, tools)
+    else:
+        if content is not None:
+            print(f"[WARN] line {line_no}: unknown content shape "
+                  f"({type(content).__name__})", file=sys.stderr)
+        return None
+    return text_parts, tools
+
+
 def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
                 session_name=None):
     """Yield dicts: {role, text, ts, uuid, tools, line_no, parts, session,
@@ -444,54 +495,18 @@ def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
         except json.JSONDecodeError:
             print(f"[WARN] line {line_no}: invalid JSON skipped", file=sys.stderr)
             continue
-        if obj.get("isSidechain"):
+        if not _is_turn_record(obj, seen_unknown_type, unsafe_schema):
             continue
-        if obj.get("teamName") or obj.get("agentName"):
-            continue
-        t = obj.get("type")
-        if t not in ("user", "assistant"):
-            if t and t not in KNOWN_TYPES and t not in seen_unknown_type:
-                seen_unknown_type.add(t)
-                print(f"[WARN] unknown record type '{t}' skipped", file=sys.stderr)
-                if not unsafe_schema and t and t.startswith("v"):
-                    print(f"[ERROR] schema marker '{t}' unrecognized — "
-                          "rerun with --unsafe-schema to proceed",
-                          file=sys.stderr)
-                    raise SystemExit(2)
-            continue
-
         msg = obj.get("message") or {}
-        role = msg.get("role") or t
-        content = msg.get("content")
+        role = msg.get("role") or obj.get("type")
         ts = obj.get("timestamp")
         uuid_ = obj.get("uuid") or hashlib.sha256(
             f"{line_no}:{ts}".encode()).hexdigest()[:16]
 
-        text_parts = []
-        tools = {}
-        if isinstance(content, str):
-            text_parts.append(content)
-        elif isinstance(content, list):
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                it = item.get("type")
-                if it == "text":
-                    text_parts.append(item.get("text") or "")
-                elif it == "tool_use":
-                    tools[item.get("name", "?")] = tools.get(
-                        item.get("name", "?"), 0) + 1
-                elif it in ("tool_result", "thinking"):
-                    continue
-                elif it not in KNOWN_CONTENT_ITEMS:
-                    print(f"[WARN] line {line_no}: unknown content type "
-                          f"'{it}' skipped", file=sys.stderr)
-        else:
-            if content is not None:
-                print(f"[WARN] line {line_no}: unknown content shape "
-                      f"({type(content).__name__})", file=sys.stderr)
+        got = _content_parts(msg.get("content"), line_no)
+        if got is None:
             continue
-
+        text_parts, tools = got
         text = _CTRL_RE.sub("", "\n".join(p for p in text_parts if p).strip())
         if not text and not tools:
             continue

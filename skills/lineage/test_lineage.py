@@ -2669,5 +2669,76 @@ class TestRulebaseMatches2x(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
+    """Which transcript records become turns, and what is said about the ones that do not (parse_turns, split into
+    _is_turn_record, _content_parts and _take_item in 3.0.6)."""
+
+    @staticmethod
+    def _read(lines, unsafe=False):
+        stream = io.StringIO("\n".join(json.dumps(o) for o in lines))
+        err = io.StringIO()
+        code = None
+        turns = []
+        with contextlib.redirect_stderr(err):
+            try:
+                turns = list(L.parse_turns(stream, unsafe_schema=unsafe, session_id="s", session_name="s"))
+            except SystemExit as e:
+                code = e.code
+        return turns, err.getvalue(), code
+
+    def test_side_chain_team_and_agent_records_are_not_turns(self):
+        keep = _rec("user", "keep this one")
+        skipped = [dict(_rec("user", "side"), isSidechain=True), dict(_rec("assistant", "team"), teamName="t"),
+                   dict(_rec("assistant", "agent"), agentName="a")]
+        turns, err, code = self._read(skipped + [keep])
+        self.assertEqual([t["text"] for t in turns], ["keep this one"])
+        self.assertEqual((err, code), ("", None))
+
+    def test_a_type_nobody_knows_is_named_once_and_the_known_ones_are_silent(self):
+        other = [{"type": "summary"}, {"type": "agent-setting"}, {"type": "permission-mode"}, {"type": "foo"}, {"type": "foo"}, {}]
+        turns, err, code = self._read(other + [_rec("assistant", "after")])
+        self.assertEqual([t["text"] for t in turns], ["after"])
+        self.assertEqual(err, "[WARN] unknown record type 'foo' skipped\n")
+        self.assertIsNone(code)
+
+    def test_a_schema_marker_stops_the_run_unless_unsafe_schema_is_given(self):
+        lines = [_rec("user", "before"), {"type": "v2"}, _rec("user", "after")]
+        turns, err, code = self._read(lines)
+        self.assertEqual(code, 2)
+        self.assertEqual([t["text"] for t in turns], [])   # the generator ends at the marker; nothing is returned
+        self.assertIn("[ERROR] schema marker 'v2' unrecognized", err)
+        self.assertIn("--unsafe-schema", err)
+        turns, err, code = self._read(lines, unsafe=True)
+        self.assertIsNone(code)
+        self.assertEqual([t["text"] for t in turns], ["before", "after"])
+        self.assertEqual(err, "[WARN] unknown record type 'v2' skipped\n")
+
+    def test_content_items_become_text_and_tool_counts_and_only_unknown_types_are_named(self):
+        items = [{"type": "text", "text": "one"}, {"type": "tool_use", "name": "Bash"}, {"type": "tool_use", "name": "Bash"},
+                 {"type": "tool_use"}, {"type": "tool_result"}, {"type": "thinking"}, {"type": "image"}, "stray", 5,
+                 {"type": "text", "text": None}, {"type": "text", "text": "two"}]
+        turns, err, code = self._read([{"type": "assistant", "uuid": "a", "timestamp": "t", "message": {"content": items}}])
+        self.assertEqual(len(turns), 1)
+        self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("one\ntwo", {"Bash": 2, "?": 1}))
+        self.assertEqual(err, "[WARN] line 1: unknown content type 'image' skipped\n")
+
+    def test_content_of_a_shape_nobody_knows_is_named_unless_it_is_missing(self):
+        lines = [{"type": "user", "uuid": "a", "message": {"content": 5}}, {"type": "user", "uuid": "b", "message": {}},
+                 {"type": "user", "uuid": "c", "message": {"content": {"type": "text"}}}]
+        turns, err, code = self._read(lines)
+        self.assertEqual(turns, [])
+        self.assertEqual(err, "[WARN] line 1: unknown content shape (int)\n[WARN] line 3: unknown content shape (dict)\n")
+
+    def test_a_missing_role_is_the_record_type_a_missing_id_comes_from_the_line_and_a_tool_only_turn_stays(self):
+        lines = [{"type": "user", "timestamp": "t1", "message": {"content": "hello"}},
+                 {"type": "assistant", "uuid": "keep", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read"}]}},
+                 {"type": "assistant", "uuid": "empty", "message": {"content": [{"type": "tool_result"}, {"type": "text", "text": ""}]}}]
+        turns, err, code = self._read(lines)
+        self.assertEqual([t["role"] for t in turns], ["user", "assistant"])
+        self.assertEqual(turns[0]["uuid"], hashlib.sha256(b"1:t1").hexdigest()[:16])
+        self.assertEqual((turns[1]["text"], turns[1]["parts"], turns[1]["tools"]), ("", [], {"Read": 1}))
+        self.assertEqual(err, "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
