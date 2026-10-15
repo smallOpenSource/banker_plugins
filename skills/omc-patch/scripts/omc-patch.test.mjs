@@ -545,6 +545,51 @@ test("a pin whose PINNED cannot be written is named and counted; origin stays pi
   assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`);
 });
 
+test("origin's user part is masked whatever it holds: a space, a tab, an @ in the password; so is a token in the query", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const pw = "S3" + "CRETPW";
+  for (const url of [`https://user name:${pw}@example.invalid/omc.git`, `https://user:pass ${pw}@example.invalid/omc.git`,
+    `https://user:p@${pw}@example.invalid/omc.git`, `https://us\ter:${pw}@example.invalid/omc.git`,
+    `https://example.invalid/omc.git?access_token=${pw}`]) {
+    assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
+    const out = run(f.home, ["--check", "--no-update"]).out;
+    assert.ok(!out.includes(pw), `${JSON.stringify(url)}: ${out}`);
+    assert.match(out, /origin=https:\/\/(\*\*\*@)?example\.invalid\/omc\.git/, JSON.stringify(url));
+  }
+});
+
+test("an apply over an origin an older tool pinned drops the URL from that PINNED and leaves it to this account; --check writes nothing", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const withPassword = `https://u:${"s3" + "cret"}@example.invalid/omc.git`;
+  assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${withPassword}`], f.market).status, 0);
+  const dir = join(f.home, ".claude", "omc-local-patches");
+  mkdirSync(dir, { recursive: true });
+  const pinfile = join(dir, "PINNED");
+  writeFileSync(pinfile, `${JSON.stringify({ pinnedAt: "2026-10-01T00:00:00.000Z", version: "5.6.1", host: hostname(), originUrl: withPassword })}\n`);
+  chmodSync(pinfile, 0o644);
+  assert.equal(run(f.home, ["--check", "--no-update"]).code, 0);
+  assert.ok(read(pinfile).includes("originUrl"), "--check leaves the record as it is");
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /이미 고정됨/);
+  const saved = JSON.parse(read(pinfile));
+  assert.equal(saved.originUrl, undefined);
+  assert.equal(saved.host, hostname());
+  if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
+});
+
+test("--check over a hooks.json that is no JSON says it cannot read it, without its text, and does not call it all applied", () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  writeFileSync(join(plug, "hooks", "hooks.json"), '{ "hooks": { "secret-ish": ');
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 을 읽지 못함 \(JSON 이 아님\)/);
+  assert.ok(!r.out.includes("secret-ish"), r.out);
+  assert.doesNotMatch(r.out, /결과: 모두 적용된 상태입니다\./);
+});
+
 test("a set-url git refuses (an origin with two URLs) shows git's fatal line, the password masked", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   // put together at run time, so a secret scanner reading this file finds no credential in it
@@ -1390,6 +1435,7 @@ function loggingGit(t) {
     "#!/bin/sh",
     `printf '%s|' "$*" >> '${log}'`,
     `env | sed 's/=.*//' | grep -E '^(GIT_|FAKE_)' | sort | tr '\\n' ' ' >> '${log}'`,
+    `env | grep -E '^GIT_CONFIG_KEY_[0-9]+=' | sort | tr '\\n' ' ' >> '${log}'`,
     `echo >> '${log}'`,
     'if [ "$1" = rev-parse ] && [ "$2" = --local-env-vars ]; then',
     `  '${realGit}' "$@"; echo GIT_FAKE_NEW_REPO_VAR; exit 0`,
@@ -1414,16 +1460,25 @@ test("a repository variable only this git's --local-env-vars names is dropped to
   for (const c of later) assert.ok(!c.includes("GIT_FAKE_NEW_REPO_VAR"), c);
 });
 
-test("the update's fetch keeps git settings given in the environment; the calls that read and write origin drop them", posixGit, (t) => {
+test("the update's fetch keeps only proxy and TLS settings given in the environment; url rewrites, hook paths and the calls on origin drop them", posixGit, (t) => {
   const { f } = bareApplyFixture();
   const w = loggingGit(t);
   if (!w) return;
-  const env = { PATH: w.PATH, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.proxy", GIT_CONFIG_VALUE_0: "http://127.0.0.1:9" };
+  const env = {
+    PATH: w.PATH, GIT_CONFIG_COUNT: "3",
+    GIT_CONFIG_KEY_0: `url.${join(root, "elsewhere")}.insteadOf`, GIT_CONFIG_VALUE_0: join(root, "nowhere.git"),
+    GIT_CONFIG_KEY_1: "http.proxy", GIT_CONFIG_VALUE_1: "http://127.0.0.1:9",
+    GIT_CONFIG_KEY_2: "core.hooksPath", GIT_CONFIG_VALUE_2: join(root, "hooks"),
+    GIT_CONFIG_PARAMETERS: `'core.hookspath'='${join(root, "hooks")}'`,
+  };
   const r = run(f.home, [], env);
   assert.equal(r.code, 0, r.out);
   const calls = read(w.log).trim().split("\n");
   const fetch = calls.find((c) => c.startsWith("fetch "));
-  assert.ok(fetch && fetch.includes("GIT_CONFIG_COUNT"), calls.join("\n"));
+  assert.ok(fetch, calls.join("\n"));
+  assert.match(fetch, /GIT_CONFIG_COUNT /);
+  assert.match(fetch, /GIT_CONFIG_KEY_0=http\.proxy /);
+  assert.doesNotMatch(fetch, /insteadOf|hooksPath|GIT_CONFIG_KEY_1|GIT_CONFIG_PARAMETERS/i);
   const origins = calls.filter((c) => /^(config --get remote\.origin\.url|remote set-url)/.test(c));
   assert.ok(origins.length > 0, calls.join("\n"));
   for (const c of origins) assert.ok(!c.includes("GIT_CONFIG_COUNT"), c);

@@ -158,17 +158,30 @@ function gitRepoVars() {
   return repoVars;
 }
 
-// 환경 변수로 준 git 설정. 업데이트 경로의 fetch 에만 남긴다(회사망의 http.proxy 같은 값). origin 을 읽고 쓰는
-// 호출에서는 지운다. 그 값이 origin 을 바꿔 보이게 할 수 있다.
+// 환경 변수로 준 git 설정은 모든 호출에서 지운다. 그 값이 origin 을 바꿔 보이게 할 수 있다. 업데이트 경로의 fetch 에만
+// 프록시와 TLS 신뢰 설정(회사망의 http.proxy 같은 값)을 다시 번호를 매겨 넘긴다. url.*.insteadOf 는 다른 저장소의 태그를
+// 받아 오고 core.hooksPath 는 훅을 돌리므로 넘기지 않는다. GIT_CONFIG_PARAMETERS(`git -c`)도 넘기지 않는다.
 const isEnvConfig = (k) => /^GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)$/.test(k.toUpperCase());
+const FETCH_KEYS = /^https?\.(proxy|sslcainfo|sslverify|proxyauthmethod)$/i;
+function fetchConfig(env) {
+  const kept = [];
+  for (let i = 0; i < (Number(env.GIT_CONFIG_COUNT) || 0); i++) {
+    const key = env[`GIT_CONFIG_KEY_${i}`];
+    if (typeof key === "string" && FETCH_KEYS.test(key)) kept.push([key, env[`GIT_CONFIG_VALUE_${i}`] ?? ""]);
+  }
+  const out = kept.length ? { GIT_CONFIG_COUNT: String(kept.length) } : {};
+  kept.forEach(([k, v], i) => Object.assign(out, { [`GIT_CONFIG_KEY_${i}`]: k, [`GIT_CONFIG_VALUE_${i}`]: v }));
+  return out;
+}
 
 // 마켓플레이스의 .git 이 깨졌으면(중단된 clone) git 은 위로 올라가 다음 저장소(dotfiles 로 관리하는 ~/.claude 등)를
 // 고른다. 바로 위 폴더를 천장(GIT_CEILING_DIRECTORIES)으로 두어 마켓플레이스 밖으로 나가지 못하게 한다.
 // 마켓플레이스가 링크면 실제 경로 쪽 위 폴더도 막는다. 셸에 있던 천장 값은 대소문자와 상관없이 이 값으로 바꾼다.
 const gitEnv = ({ network = false } = {}) => {
   const vars = gitRepoVars();
-  const drop = (k) => !(network && isEnvConfig(k)) && (vars.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES");
+  const drop = (k) => isEnvConfig(k) || vars.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
+  if (network) Object.assign(env, fetchConfig(process.env));
   env.GIT_CEILING_DIRECTORIES = [...new Set([dirname(MARKET), dirname(realOr(MARKET))])].join(PATH_LIST_SEP);
   return env;
 };
@@ -722,7 +735,8 @@ function patchHooksJson(root) {
   try {
     return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj, why);
   } catch (e) {
-    bad(`hooks.json 을 쓰지 못함 (${failWhy(e)})`);
+    // JSON 오류 문구는 파일의 글을 담으므로 내지 않는다.
+    bad(e instanceof SyntaxError ? "hooks.json 을 읽지 못함 (JSON 이 아님)" : `hooks.json 을 쓰지 못함 (${failWhy(e)})`);
     return "unsafe";
   }
 }
@@ -757,9 +771,10 @@ function revertHooksJson(root, hj) {
 const UNSAFE_CH = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
 const oneLine = (s) => String(s).replace(UNSAFE_CH, "?");
 const shown = (s) => oneLine(s).slice(0, 120);
-// URL 의 사용자 정보(`//<사용자>:<비밀>@`)를 가린다. 출력과 기록에 비밀이 남지 않는다. ssh 꼴(`git@host:`)과
-// 경로 안의 @ 는 그대로다.
-const redactUrl = (url) => String(url).replace(/\/\/[^/@\s]+@/g, "//***@");
+// URL 의 사용자 정보(`//` 뒤 첫 `/` 앞의 마지막 `@` 까지. 공백, 탭, 비밀번호 안의 @ 도)와 쿼리의 토큰을 가린다. 출력과
+// 기록에 비밀이 남지 않는다. ssh 꼴(`git@host:`)과 경로 안의 @ 는 그대로다.
+const redactUrl = (url) => String(url).replace(/(\/\/)[^/]*@/g, "$1***@")
+  .replace(/([?&](?:access_|private_|oauth_)?token=)[^&#\s]*/gi, "$1***");
 
 // hooks.json 옆의 수동 백업 후보. usable 은 PostToolUse 를 담은 유효한 JSON 이다. 링크로 심은 후보는
 // unsafe 로 따로 두고 읽지도 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
@@ -825,7 +840,7 @@ function pinMarketplace() {
   if (url === null) return "no-remote";
 
   if (MODE === "revert") return unpinMarketplace(url);
-  if (url.startsWith("omc-pinned://")) return "already";
+  if (url.startsWith("omc-pinned://")) { scrubPinRecord(); return "already"; }
   if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(redactUrl(url))})`); return "needs"; }
 
   try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
@@ -842,6 +857,19 @@ function pinMarketplace() {
     return "record-failed";
   }
   return "pinned";
+}
+
+// 옛 도구가 남긴 고정 기록의 URL(인증 정보가 들 수 있음)을 지우고 이 계정만 읽게 한다. --check 는 쓰지 않는다. 일반
+// 파일이 아니거나 읽을 수 없거나 깨진 기록은 그대로 둔다(기록일 뿐이다).
+function scrubPinRecord() {
+  if (MODE === "check") return;
+  try {
+    if (!lstatSync(PINFILE).isFile()) return;
+    const rec = JSON.parse(readFileSync(PINFILE, "utf8"));
+    if (!rec || typeof rec !== "object" || !("originUrl" in rec)) return;
+    delete rec.originUrl;
+    writeAtomic(PINFILE, JSON.stringify(rec, null, 2) + "\n", 0o600);
+  } catch { /* 없거나 깨진 기록 */ }
 }
 
 // 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 거기서만 복원한다.
@@ -1038,6 +1066,7 @@ for (const [v, list] of Object.entries(orphanBy)) reportNoBackup(v, list, "패�
 log();
 log("[3/4] PostToolUse 훅 제거");
 const hjNeedBy = {};
+const hjFailBy = {};
 for (const v of targets) {
   const root = rootOf(v);
   if (!existsSync(root)) continue;
@@ -1049,7 +1078,7 @@ for (const v of targets) {
   else if (hj === "reverted" || hj === "ambiguous" || hj === "linked") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
   else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
-  else if (hj === "unsafe") { r.fail++; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
+  else if (hj === "unsafe") { r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
   if (hj === "ambiguous" || hj === "linked") left.add(fileKey(join(root, "hooks", "hooks.json")));
 }
 
@@ -1093,9 +1122,10 @@ if (MODE === "check") {
   // 헬퍼 자리 결함이 하나라도 있으면 «모두 적용» 이 아니다. 다시 적용만으로는 안 고쳐지므로
   // 그 안내를 먼저 낸다(되돌린 뒤 적용하면 «패치 필요» 항목도 함께 처리된다).
   const misplacedActive = misplacedBy[active] || 0;
-  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && pin !== "needs" && misplacedActive === 0;
+  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && pin !== "needs" && misplacedActive === 0;
   const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
   log(clean ? "결과: 모두 적용된 상태입니다."
+    : hjFailBy[active] ? "결과: hooks.json 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."
     : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${misplacedHint()}`
     : ROOT ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 같은 --root 로 다시 실행하십시오."
     : NO_UPDATE ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 --no-update 로 다시 실행하십시오."
