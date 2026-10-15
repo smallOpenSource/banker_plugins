@@ -661,6 +661,8 @@ class TestRenderIntegration(unittest.TestCase):
 class TestRangeFiltersE2E(unittest.TestCase):
     def _run(self, records, extra_args):
         d = tempfile.mkdtemp()
+        # Without this every run left one folder per test in the temp dir (six per run).
+        self.addCleanup(shutil.rmtree, d, True)
         jf = os.path.join(d, "s.jsonl")
         with open(jf, "w", encoding="utf-8") as f:
             for r in records:
