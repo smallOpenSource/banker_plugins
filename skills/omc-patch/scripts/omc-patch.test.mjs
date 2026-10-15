@@ -3,8 +3,8 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync,
-  symlinkSync, writeFileSync,
+  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync,
+  statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -1642,7 +1642,7 @@ test("a set-url that fails is reported and counted: the pin writes no PINNED, th
     const back = run(f.home, ["--revert"]);
     assert.equal(back.code, 1, back.out);
     assert.match(back.out, /\[!\] 고정 해제 실패: origin 을 되돌리지 못했습니다 \(/);
-    assert.match(back.out, /원래 URL: git -C ".*" config --get remote\.origin\.url 결과의 omc-pinned:\/\/ 뒤/);
+    assert.match(back.out, /원래 URL\(자격증명은 가림\): https:\/\/example\.invalid\/omc\.git\. 원문은 origin 의 omc-pinned:\/\/ 뒤에 그대로 있습니다\./);
     assert.match(back.out, /되돌리기를 끝내지 못했습니다/);
   } finally {
     chmodSync(gitDir, 0o755);
@@ -1702,7 +1702,7 @@ test("a revert that may not write outside the plugin folder says how to restore 
   const r = run(home, ["--revert", "--root", plug]);
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
-  assert.match(r.out, /손으로 되돌리려면 .*foo\.mjs\.omcbak 을 확인한 뒤 그 내용으로 .*foo\.mjs 을 덮어쓰고 백업을 지우십시오\./);
+  assert.match(r.out, /손으로 되돌리려면 .*foo\.mjs\.omcbak 의 내용을 확인한 뒤 .*foo\.mjs 에 덮어쓰고 백업을 지우십시오\./);
   assert.equal(read(join(outside, "foo.mjs.omcbak")), SCRIPT("foo"), "the backup outside is left for the person");
 });
 
@@ -1881,4 +1881,402 @@ test("a bare apply under GIT_DIR of a decoy with the same tag still unpacks the 
   const foo = read(join(f.cache, target, "scripts", "foo.mjs"));
   assert.match(foo, /__omcRaceImport\(import\(/, "the marketplace's hook, patched");
   assert.doesNotMatch(foo, /decoy/);
+});
+
+// ── tests for the fixes under review (candidates B1) ─────────────────────────────────────────────────────
+
+// Makes the second rename into foo.mjs fail, as a full disk or a virus scanner holding the file might: the patch
+// was written, the file fails the syntax check, and the way back is refused.
+const ROLLBACK_FAILS = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.renameSync; let n = 0;",
+  'fs.renameSync = (from, to) => { if (String(to).endsWith("foo.mjs") && n++ >= 1) throw Object.assign(new Error("ENOSPC: no space left on device, rename"), { code: "ENOSPC" }); return real(from, to); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a hook whose rollback cannot be written is named with where its backup is, and counted; no stack trace", () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  const broken = `${SCRIPT("foo")}let a = 1;\nlet a = 2;\n`;
+  writeFileSync(foo, broken);
+  const pre = join(root, `rollback-fails${seq++}.mjs`);
+  writeFileSync(pre, `${ROLLBACK_FAILS}\n`);
+  const r = runImport(pre, bareHome(), ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 롤백도 실패: foo \(ENOSPC\)\. .*foo\.mjs\.omcbak 으로 손수 되돌리십시오/);
+  assert.match(r.out, /패치 1건 \/ 실패 1건/);
+  assert.match(r.out, /완료\. 실패 1건\./);
+  assert.doesNotMatch(r.out, /\n\s+at /, "no stack trace");
+  assert.equal(read(`${foo}.omcbak`), broken, "the backup is the way back");
+  assert.match(read(join(plug, "scripts", "stopper.mjs")), /__omcRaceImport\(import\(/, "the other hook is still patched");
+});
+
+test("a hook that links to another file inside the folder keeps its link, the target is patched and reverts", (t) => {
+  const plug = bundle();
+  const sc = join(plug, "scripts");
+  renameSync(join(sc, "foo.mjs"), join(sc, "foo-real.mjs"));
+  try {
+    symlinkSync("foo-real.mjs", join(sc, "foo.mjs"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  assert.ok(lstatSync(join(sc, "foo.mjs")).isSymbolicLink(), "the link is still a link");
+  assert.match(read(join(sc, "foo-real.mjs")), /__omcRaceImport\(import\(/, "the file it leads to is patched");
+  assert.equal(run(bareHome(), ["--revert", "--root", plug]).code, 0);
+  assert.ok(lstatSync(join(sc, "foo.mjs")).isSymbolicLink());
+  assert.equal(read(join(sc, "foo-real.mjs")), SCRIPT("foo"));
+});
+
+test("a bare apply that cannot read installed_plugins.json says it could not read it, and prints none of its text", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const broken = bareApplyFixture().f;
+  writeFileSync(join(broken.plugins, "installed_plugins.json"), '{ "plugins": { "oh-my-claudecode@omc": [ { "scope": "user", s3cr3t-ish } ] } }\n');
+  const syntax = run(broken.home, []);
+  assert.equal(syntax.code, 1, syntax.out);
+  assert.match(syntax.out, /\[!\] 읽지 못함: installed_plugins\.json \(JSON 이 아님\)/);
+  assert.ok(!syntax.out.includes("s3cr3t-ish"), syntax.out);
+  const denied = bareApplyFixture().f;
+  const installed = join(denied.plugins, "installed_plugins.json");
+  chmodSync(installed, 0o000);
+  let r;
+  try {
+    r = run(denied.home, []);
+  } finally {
+    chmodSync(installed, 0o644);
+  }
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 읽지 못함: installed_plugins\.json \(EACCES\)/);
+});
+
+test("a revert that may not write outside the plugin folder does not tell to overwrite a file the old tool never patched", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  // someone's own file the link leads to, with an old backup beside the link
+  writeFileSync(join(outside, "foo.mjs"), "// my own work, never patched by this tool\n");
+  writeFileSync(join(plug, "scripts", "foo.mjs.omcbak"), SCRIPT("foo"));
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  try {
+    symlinkSync(join(outside, "foo.mjs"), join(plug, "scripts", "foo.mjs"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.match(r.out, /패치가 보이지 않습니다\. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오\./);
+  assert.doesNotMatch(r.out, /덮어쓰고/);
+  assert.equal(read(join(outside, "foo.mjs")), "// my own work, never patched by this tool\n", "the file it leads to is untouched");
+});
+
+test("an error the tool did not expect prints on one line with the folder name cleaned, and ends with 1", { skip: (process.platform === "win32" && "kept to POSIX file names") || (asRoot && "root reads any file") }, () => {
+  const odd = join(root, `odd${seq++}\n[!] FORGED${String.fromCodePoint(0x202e)}x`);
+  mkdirSync(join(odd, "hooks"), { recursive: true });
+  mkdirSync(join(odd, "scripts"), { recursive: true });
+  writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
+  for (const n of ["foo", "stopper"]) writeFileSync(join(odd, "scripts", `${n}.mjs`), SCRIPT(n));
+  writeFileSync(join(odd, "scripts", "lib.mjs"), LIB);
+  chmodSync(join(odd, "hooks", "hooks.json"), 0o000);
+  let r;
+  try {
+    r = run(bareHome(), ["--root", odd, "--check"]);
+  } finally {
+    chmodSync(join(odd, "hooks", "hooks.json"), 0o644);
+  }
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 처리하지 못한 오류: EACCES/);
+  assert.doesNotMatch(r.out, /^\s*\[!\] FORGED/m, "the folder name makes no line of its own");
+  assert.doesNotMatch(r.out, new RegExp(String.fromCodePoint(0x202e)), "no direction mark");
+  assert.doesNotMatch(r.out, /\n\s+at /, "no stack trace");
+});
+
+// Makes the check for hooks.json throw a TypeError, as a defect of the tool's own would.
+const TOOL_DEFECT = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.existsSync;",
+  'fs.existsSync = (p) => { if (String(p).endsWith("hooks.json")) throw new TypeError("boom\\n[!] FORGED"); return real(p); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a defect of the tool's own prints one cleaned line and where it happened, not a raw stack trace", () => {
+  const pre = join(root, `tool-defect${seq++}.mjs`);
+  writeFileSync(pre, `${TOOL_DEFECT}\n`);
+  const r = runImport(pre, bareHome(), ["--root", bundle(), "--check"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 처리하지 못한 오류: boom\?\[!\] FORGED\n\s+at /);
+  assert.doesNotMatch(r.out, /^\s*\[!\] FORGED/m);
+  assert.doesNotMatch(r.out, /TypeError:/, "not Node's own report");
+});
+
+const posixFifo = { skip: process.platform === "win32" && "no FIFOs here" };
+test("a hook that leads to a FIFO or sits as a folder is not read: --check and apply name it and end", posixFifo, (t) => {
+  const outside = join(root, `fifo${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  if (spawnSync("mkfifo", [join(outside, "pipe")]).status !== 0) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  const plug = bundle();
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  symlinkSync(join(outside, "pipe"), join(plug, "scripts", "foo.mjs"));
+  rmSync(join(plug, "scripts", "stopper.mjs"));
+  mkdirSync(join(plug, "scripts", "stopper.mjs"));
+  const env = cleanEnv({ HOME: bareHome(), USERPROFILE: bareHome() });
+  for (const args of [["--root", plug, "--check"], ["--root", plug]]) {
+    const r = spawnSync(process.execPath, [TOOL, ...args], { encoding: "utf8", env, timeout: 20000 });
+    const out = `${r.stdout || ""}${r.stderr || ""}`;
+    assert.equal(r.error?.code, undefined, `the run ended before its deadline: ${args.join(" ")}`);
+    assert.match(out, /\[!\] 읽지 못함: foo \(ENOTFILE\)/);
+    assert.match(out, /\[!\] 읽지 못함: stopper \(ENOTFILE\)/);
+    assert.doesNotMatch(out, /결과: 모두 적용된 상태입니다\./);
+    assert.doesNotMatch(out, /\n\s+at |Error:/, "no stack trace");
+  }
+  assert.ok(lstatSync(join(outside, "pipe")).isFIFO(), "the FIFO is still a FIFO");
+});
+
+// Writes down the order of fsync and rename for every file the tool replaces.
+const ORDER_LOG = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const { fsyncSync, renameSync } = fs;",
+  'const log = (s) => fs.appendFileSync(process.env.ORDER_LOG, `${s}\\n`);',
+  'fs.fsyncSync = (fd) => { log("fsync"); return fsyncSync(fd); };',
+  'fs.renameSync = (a, b) => { log(`rename ${String(b).split(/[\\\\/]/).pop()}`); return renameSync(a, b); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("every file the tool replaces is flushed to disk before the rename", () => {
+  const plug = bundle();
+  const pre = join(root, `order-log${seq++}.mjs`);
+  const log = join(root, `order${seq++}.log`);
+  writeFileSync(pre, `${ORDER_LOG}\n`);
+  writeFileSync(log, "");
+  const env = cleanEnv({ HOME: bareHome(), USERPROFILE: bareHome(), ORDER_LOG: log });
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, TOOL, "--root", plug], { encoding: "utf8", env });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  const lines = read(log).trim().split("\n");
+  const renames = lines.map((l, i) => [l, i]).filter(([l]) => l.startsWith("rename "));
+  assert.deepEqual(renames.map(([l]) => l).sort(), ["rename foo.mjs", "rename hooks.json", "rename stopper.mjs"]);
+  for (const [l, i] of renames) assert.equal(lines[i - 1], "fsync", `${l} follows an fsync`);
+});
+
+// A git and a tar that write down the folder each call runs in, then run the real one.
+function pwdWrappers(t) {
+  const real = Object.fromEntries(["git", "tar"].map((c) => [c, spawnSync("sh", ["-c", `command -v ${c}`], { encoding: "utf8" }).stdout.trim()]));
+  if (!real.git || !real.tar) {
+    t.skip("git or tar not found on PATH");
+    return null;
+  }
+  const dir = join(root, `pwdwrap${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  const log = join(dir, "calls.log");
+  for (const c of ["git", "tar"]) {
+    writeFileSync(join(dir, c), ["#!/bin/sh", `printf '%s|%s|%s\\n' '${c}' "$*" "$(pwd -P)" >> '${log}'`, `exec '${real[c]}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  }
+  return { PATH: `${dir}${delimiter}${process.env.PATH}`, log };
+}
+test("the git and tar the tool starts by name run in the home folder, and the repository's git in the marketplace", posixGit, (t) => {
+  const { f } = bareApplyFixture();
+  const w = pwdWrappers(t);
+  if (!w) return;
+  const r = run(f.home, [], { PATH: w.PATH });
+  assert.equal(r.code, 0, r.out);
+  const calls = read(w.log).trim().split("\n").map((l) => { const [cmd, args, pwd] = l.split("|"); return { cmd, args, pwd }; });
+  const byName = (c) => c.cmd === "tar" || /^--version/.test(c.args) || /^rev-parse --local-env-vars/.test(c.args);
+  assert.ok(calls.filter(byName).length >= 4, JSON.stringify(calls));
+  for (const c of calls) assert.equal(c.pwd, realpathSync(byName(c) ? f.home : f.market), `${c.cmd} ${c.args}`);
+});
+
+// Hands back text that already holds the helper on the second read of foo.mjs, as a run that came first would leave it.
+// Counts the reads too: a hook is read once.
+const READ_COUNT = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const { readFileSync, openSync } = fs;",
+  'const log = (s) => fs.appendFileSync(process.env.READ_LOG, `${s}\\n`);',
+  'fs.readFileSync = (p, ...a) => { if (typeof p === "string" && p.endsWith("foo.mjs")) log("read"); return readFileSync(p, ...a); };',
+  'fs.openSync = (p, ...a) => { if (typeof p === "string" && p.endsWith("foo.mjs")) log("read"); return openSync(p, ...a); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a hook is read once per run: a second read could see what another run wrote in between", () => {
+  const plug = bundle();
+  const pre = join(root, `read-count${seq++}.mjs`);
+  const log = join(root, `reads${seq++}.log`);
+  writeFileSync(pre, `${READ_COUNT}\n`);
+  writeFileSync(log, "");
+  const env = cleanEnv({ HOME: bareHome(), USERPROFILE: bareHome(), READ_LOG: log });
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, TOOL, "--root", plug], { encoding: "utf8", env });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.equal(read(log).trim().split("\n").length, 1, "foo.mjs is read exactly once");
+});
+
+test("a set-url that fails shows the original URL with its credentials masked, and no command that would print them", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const withPassword = `https://u:${"s3" + "cret"}@example.invalid/omc.git?api_key=${"k3" + "y"}`;
+  assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${withPassword}`], f.market).status, 0);
+  const gitDir = join(f.market, ".git");
+  chmodSync(gitDir, 0o555);
+  let back;
+  try {
+    back = run(f.home, ["--revert"]);
+  } finally {
+    chmodSync(gitDir, 0o755);
+  }
+  assert.equal(back.code, 1, back.out);
+  assert.match(back.out, /원래 URL\(자격증명은 가림\): https:\/\/\*\*\*@example\.invalid\/omc\.git\?api_key=\*\*\*\. 원문은 origin 의 omc-pinned:\/\/ 뒤에 그대로 있습니다\./);
+  assert.ok(!back.out.includes("s3cret") && !back.out.includes("k3y"), back.out);
+  assert.doesNotMatch(back.out, /config --get/);
+});
+
+test("a query value is masked whatever its name", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const pw = "S3" + "CRETPW";
+  for (const name of ["token", "auth_token", "api_key", "apikey", "key", "password", "secret", "sig", "X-Amz-Signature", "Token"]) {
+    const url = `https://example.invalid/omc.git?a=1&${name}=${pw}`;
+    assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
+    const out = run(f.home, ["--check", "--no-update"]).out;
+    assert.ok(!out.includes(pw), `${name}: ${out}`);
+    assert.match(out, /origin=https:\/\/example\.invalid\/omc\.git\?a=\*\*\*&/, name);
+  }
+});
+
+test("--check names the version whose hooks.json it cannot read; the verdict leaves an idle version out and says so", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(join(f.cache, "5.3.0", "hooks", "hooks.json"), "{ broken");
+  const r = run(f.home, ["--check", "--no-update"]);
+  assert.match(r.out, /\[!\] 5\.3\.0: hooks\.json 을 읽지 못함 \(JSON 이 아님\)/, "the line names its version, as the ok lines do");
+  assert.match(r.out, /ok  5\.6\.1: 이미 제거됨/);
+  assert.match(r.out, /결과: 모두 적용된 상태입니다\./);
+  assert.match(r.out, /참고: 비활성 버전 5\.3\.0 의 hooks\.json 을 확인하지 못했습니다\./);
+  assert.equal(r.code, 1, "a file it could not read still ends the run with 1");
+});
+
+test("the hint for a patch with no backup goes through a temp tar file, never a pipe", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  rmSync(join(f.cache, "5.6.1", "scripts", "foo.mjs.omcbak"));
+  const r = run(f.home, ["--revert"]);
+  assert.match(r.out, /git -C ".*" archive -o "<임시 tar>" v5\.6\.1 scripts\/<이름>\.mjs\n\s+tar -xf "<임시 tar>" -C ".*5\.6\.1"/);
+  assert.doesNotMatch(r.out, /archive v5\.6\.1 .*\|/);
+});
+
+// Removes the backup for real first, then lets the tool try: another run got there first.
+const BACKUP_GONE_FIRST = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.unlinkSync;",
+  'fs.unlinkSync = (p) => { if (String(p).endsWith(".omcbak")) { try { real(p); } catch { /* already gone */ } } return real(p); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+// Refuses to remove a backup, as a file another process holds open does on Windows.
+const BACKUP_HELD = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.unlinkSync;",
+  'fs.unlinkSync = (p) => { if (String(p).endsWith(".omcbak")) throw Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" }); return real(p); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a revert whose backup another run removed first has still restored the hook; one that cannot remove it says so and counts it", () => {
+  const plug = bundle();
+  const home = bareHome();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const gone = join(root, `backup-gone${seq++}.mjs`);
+  writeFileSync(gone, `${BACKUP_GONE_FIRST}\n`);
+  const first = runImport(gone, home, ["--revert", "--root", plug]);
+  assert.equal(first.code, 0, first.out);
+  assert.doesNotMatch(first.out, /\[!\]/);
+  assert.equal(read(join(plug, "scripts", "foo.mjs")), SCRIPT("foo"));
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const held = join(root, `backup-held${seq++}.mjs`);
+  writeFileSync(held, `${BACKUP_HELD}\n`);
+  const second = runImport(held, home, ["--revert", "--root", plug]);
+  assert.equal(second.code, 1, second.out);
+  assert.match(second.out, /\[!\] 되돌렸으나 백업을 지우지 못함: foo \(EPERM\)/);
+  assert.match(second.out, /\[!\] 되돌렸으나 hooks\.json 의 백업을 지우지 못함 \(EPERM\)/);
+  assert.doesNotMatch(second.out, /되돌리지 않음/);
+  assert.equal(read(join(plug, "scripts", "foo.mjs")), SCRIPT("foo"), "the hook is restored all the same");
+  assert.ok(existsSync(join(plug, "scripts", "foo.mjs.omcbak")), "the backup is left for a later revert");
+});
+
+// Plays the run that came first: before the tool opens foo.mjs.omcbak, puts the original back and removes the backup.
+const OTHER_RUN_FIRST = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const { openSync, readFileSync, copyFileSync, unlinkSync } = fs; let done = false;",
+  'const play = (p) => { if (!done && typeof p === "string" && p.endsWith("foo.mjs.omcbak")) { done = true; copyFileSync(p, p.slice(0, -7)); unlinkSync(p); } };',
+  "fs.openSync = (p, ...a) => { play(p); return openSync(p, ...a); };",
+  "fs.readFileSync = (p, ...a) => { play(p); return readFileSync(p, ...a); };",
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a revert whose backup is taken by a run that came first does not call that a failure", () => {
+  const plug = bundle();
+  const home = bareHome();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const pre = join(root, `other-run-first${seq++}.mjs`);
+  writeFileSync(pre, `${OTHER_RUN_FIRST}\n`);
+  const r = runImport(pre, home, ["--root", plug, "--revert"]);
+  assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.out, /\[!\]/);
+  assert.equal(read(join(plug, "scripts", "foo.mjs")), SCRIPT("foo"), "the other run's restore stands");
+  assert.equal(read(join(plug, "scripts", "stopper.mjs")), SCRIPT("stopper"), "and this run restores the rest");
+});
+
+test("a hook this account may not write is not replaced: --check says so beforehand, apply names it and counts it", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  chmodSync(foo, 0o444);
+  const check = run(bareHome(), ["--root", plug, "--check"]);
+  assert.match(check.out, /패치 필요, 쓸 수 없음: foo \(쓸 권한이 없음\)/);
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 쓰지 않음: foo \(쓸 권한이 없음\)/);
+  assert.equal(read(foo), SCRIPT("foo"));
+  assert.equal(statSync(foo).mode & 0o777, 0o444);
+});
+
+test("a revert does not turn a FIFO that a hook leads to into a file", posixFifo, (t) => {
+  const plug = bundle();
+  const sc = join(plug, "scripts");
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  rmSync(join(sc, "foo.mjs"));
+  if (spawnSync("mkfifo", [join(sc, "pipe")]).status !== 0) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  symlinkSync("pipe", join(sc, "foo.mjs"));
+  const r = run(bareHome(), ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 되돌리지 않음: foo \(일반 파일이 아님\)/);
+  assert.ok(lstatSync(join(sc, "pipe")).isFIFO(), "the FIFO is still a FIFO");
+});
+
+test("a bare apply that finds the target version in the cache but not active switches to it, and stops when it cannot", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const { f, target } = bareApplyFixture();
+  const installed = join(f.plugins, "installed_plugins.json");
+  chmodSync(f.plugins, 0o555);
+  try {
+    assert.equal(run(f.home, []).code, 1);
+  } finally {
+    chmodSync(f.plugins, 0o755);
+  }
+  const entry = () => JSON.parse(read(installed)).plugins["oh-my-claudecode@omc"][0];
+  assert.equal(entry().version, "5.6.1", "the failed switch changed nothing");
+  assert.ok(existsSync(join(f.cache, target)), "the target version is in the cache now");
+  // with the tag gone the switch cannot name its commit: stop, change nothing
+  const tag = runGit(["tag", "-l", `v${target}`], f.market).stdout.trim();
+  assert.equal(runGit(["tag", "-d", tag], f.market).status, 0);
+  const lost = run(f.home, []);
+  assert.equal(lost.code, 1, lost.out);
+  assert.match(lost.out, /태그 v.* 를 마켓플레이스에서 찾을 수 없음/);
+  assert.equal(entry().version, "5.6.1");
+  assert.doesNotMatch(lost.out, /완료\./);
+  // with the tag back, the second run does what the first was asked to
+  assert.equal(runGit(["tag", tag], f.market).status, 0);
+  const r = run(f.home, []);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, new RegExp(`${target.replace(/\./g, "\\.")} 은 캐시에 있으나 활성 판은 5\\.6\\.1 입니다`));
+  assert.equal(entry().version, target);
+  assert.match(read(join(f.cache, target, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/, "the target version is the one patched");
 });
