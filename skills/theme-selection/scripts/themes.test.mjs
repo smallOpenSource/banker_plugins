@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, rmdirSync,
-  symlinkSync, unlinkSync,
+  symlinkSync, unlinkSync, existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -28,7 +28,7 @@ import {
   contrast, luminance, withLightness, pyround, mix,
   corrected, correctedPalette, palettePairs, labelOnAccent,
   parseYamlColors, parseProseColors, themeFromDesign, labelOf, loadDesignMd,
-  loadBundled, resolveThemes, pickTheme, byLabel,
+  loadBundled, resolveThemes, pickTheme, byLabel, assertSlugs, onStdoutError,
   renderCss, renderJson, renderWidget, audit, parseArgs,
 } from "./themes.mjs";
 
@@ -329,6 +329,28 @@ test("--dark-via 세 값은 각각 다른 다크 선택자를 낸다", () => {
   assert.ok(media.includes(`@media (prefers-color-scheme: dark){html{--shadow:`));
 });
 
+// 🔴 고르개 없이 모드만 쓰는 화면은 `<html>` 에 `data-theme` 이 없어 `:root`
+// 규칙만 맞습니다. `:root` 가 라이트만 들면 그 화면에서는 다크가 켜지지 않습니다.
+test(":root 는 기본 테마의 라이트와 다크를 --dark-via 의 자리에 둘 다 든다", () => {
+  const darkHead = {
+    attr: ":root[data-mode=\"dark\"]{",
+    class: ":root.dark{",
+    media: "@media (prefers-color-scheme: dark){:root{",
+  };
+  for (const [mode, head] of Object.entries(darkHead)) {
+    const opts = parseArgs(["css", "--only", "airbnb,stripe", "--default", "stripe",
+                            "--dark-via", mode]);
+    const resolved = resolveThemes(opts);
+    const stripe = resolved.themes.get("stripe");
+    const decl = (values) => palettePairs(values, opts)
+      .map(([name, value]) => `--${name}:${value}`).join(";");
+    const lines = renderCss(resolved, opts).split("\n");
+    assert.equal(lines[0], `:root{${decl(stripe.light)}}`, `${mode} 라이트`);
+    const tail = mode === "media" ? "}}" : "}";
+    assert.equal(lines[1], `${head}${decl(stripe.dark)}${tail}`, `${mode} 다크`);
+  }
+});
+
 /* ============================================================
    11 · 12 · 13 - 번들 148 조합으로 가려지지 않는 세 자리
    ============================================================ */
@@ -577,13 +599,17 @@ test("--design-md 는 세 모양을 받고, 같은 슬러그는 번들을 덮는
 });
 
 // 🔴 이름은 CSS 선택자, HTML 속성, `<script>` 안의 JSON 에 그대로 들어갑니다.
-// Windows 에서도 만들 수 있는 이름(빈칸, `}`)으로 잽니다.
-test("--design-md 의 테마 이름은 영문, 숫자, ., -, _ 만 받는다", () => {
+// Windows 에서도 만들 수 있는 이름(빈칸, `}`)으로 잽니다. 한글 폴더 이름은
+// 흔하므로 받아야 합니다.
+test("--design-md 의 테마 이름은 글자, 숫자, ., -, _ 만 받는다", () => {
   for (const slug of loadBundled().themes.keys()) {
     assert.match(slug, SLUG, `번들 이름 ${slug} 이 규칙 밖이다`);
   }
   const root = scratch("slug");
   try {
+    mkdirSync(join(root, "ok", "쇼핑몰"), { recursive: true });
+    writeFileSync(join(root, "ok", "쇼핑몰", "DESIGN.md"), YAML_DESIGN);
+    assert.deepEqual(loadDesignMd(join(root, "ok")).map(([slug]) => slug), ["쇼핑몰"]);
     for (const bad of ["bad name", "bad}x"]) {
       mkdirSync(join(root, bad));
       writeFileSync(join(root, bad, "DESIGN.md"), YAML_DESIGN);
@@ -699,12 +725,20 @@ test("링크 경로로 불러도 실제 경로와 같은 출력과 종료 코드
 });
 
 // 🔴 폐쇄망에서 도는 스킬입니다. 엔진이 들여오는 모듈을 허용 목록으로 못박습니다.
+// 주석을 뗀 뒤 따옴표 종류와 상관없이 `from "..."` 과 `import "..."` 를 모두
+// 모읍니다. 큰따옴표의 `from` 만 보면 `import 'node:child_process';` 가 빠집니다.
 test("엔진은 node:fs, node:path, node:url 만 들여온다", () => {
-  const src = readFileSync(SCRIPT, "utf8");
-  const imports = [...src.matchAll(/^import\s[^;]*?\sfrom\s+"([^"]+)";/gm)]
-    .map((hit) => hit[1]).sort();
-  assert.deepEqual(imports, ["node:fs", "node:path", "node:url"]);
-  assert.doesNotMatch(src, /\b(?:fetch|require)\s*\(|\bimport\s*\(/);
+  const code = readFileSync(SCRIPT, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:\\])\/\/.*$/gm, "$1");
+  const specifiers = [
+    ...code.matchAll(/\bfrom\s*["'`]([^"'`]+)["'`]/g),
+    ...code.matchAll(/\bimport\s*["'`]([^"'`]+)["'`]/g),
+  ].map((hit) => hit[1]);
+  assert.deepEqual([...new Set(specifiers)].sort(), ["node:fs", "node:path", "node:url"]);
+  assert.doesNotMatch(code, /\b(?:fetch|require)\s*\(|\bimport\s*\(/);
+  assert.doesNotMatch(code,
+    /["'`](?:node:)?(?:https?|http2|net|tls|dgram|child_process|worker_threads|cluster)["'`]/);
 });
 
 test("고르개는 세 덩이를 순서대로 내고, 배선 스크립트만 ready 래퍼로 감싼다", () => {
@@ -717,4 +751,90 @@ test("고르개는 세 덩이를 순서대로 내고, 배선 스크립트만 rea
   assert.ok(!blocks[1].includes("getElementById"), "head 스크립트가 DOM 을 본다");
   assert.ok(blocks[2].includes('document.readyState === "loading"'));
   assert.ok(blocks[2].includes('addEventListener("DOMContentLoaded", wire)'));
+});
+
+// 🔴 `--dark-via class` 의 CSS 는 `.dark` 만 봅니다. 모드 버튼이 `data-mode` 만
+// 바꾸면 Tailwind 의 class 모드에서 버튼이 색을 바꾸지 못합니다. media 는 OS
+// 설정만 따르므로 버튼을 내지 않습니다.
+test("고르개의 모드 버튼은 data-mode 와 .dark 를 함께 바꾸고, media 면 버튼이 없다", () => {
+  const html = (mode) => {
+    const opts = parseArgs(["widget", "--only", "airbnb", "--dark-via", mode]);
+    return renderWidget(resolveThemes(opts), opts);
+  };
+  const attr = html("attr");
+  assert.equal(html("class"), attr, "attr 와 class 의 고르개가 다르다");
+  assert.ok(attr.includes('id="theme-mode"'), "모드 버튼이 없다");
+  assert.ok(attr.includes('root.classList.toggle("dark", next === "dark")'));
+  const [markup, head] = html("media").split("\n\n");
+  assert.ok(!markup.includes('id="theme-mode"'), "media 인데 모드 버튼이 있다");
+  assert.ok(head.includes('root.classList.toggle("dark", mode === "dark")'));
+});
+
+test("assertSlugs 는 글자, 숫자, ., -, _ 밖의 이름을 거부한다", () => {
+  assert.doesNotThrow(() => assertSlugs(["x.ai", "bmw-m", "ai_studio", "쇼핑몰",
+                                         "e\u{301}clair"]));
+  for (const bad of ["a b", "a\u{202E}b", "a\u{2028}b", "a<b", "-lead", ""]) {
+    assert.throws(() => assertSlugs([bad]), /may use only letters/, JSON.stringify(bad));
+  }
+});
+
+test("onStdoutError 는 EPIPE 만 받아 정한 종료 코드로 끝내고, 다른 오류는 던진다", () => {
+  const exits = [];
+  const pipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  onStdoutError(pipe, (code) => exits.push(code));
+  assert.deepEqual(exits, [process.exitCode ?? 0]);
+  const other = Object.assign(new Error("write EIO"), { code: "EIO" });
+  assert.throws(() => onStdoutError(other, (code) => exits.push(code)), /EIO/);
+  assert.equal(exits.length, 1, "EPIPE 가 아닌데 끝냈다");
+});
+
+// 🔴 읽는 쪽(`node -e ""`)이 읽지 않고 바로 닫히면 남은 쓰기가 EPIPE 로 끝납니다.
+// 쓰는 쪽의 종료 코드는 `( ... ; echo $? )` 로 받습니다. POSIX 셸 문법이라
+// Windows 에서는 건너뜁니다.
+test("읽는 쪽이 먼저 닫혀도 스택 추적 없이 종료 코드 0 이다",
+     { skip: process.platform === "win32" && "POSIX 셸 문법" }, () => {
+  const root = scratch("epipe");
+  try {
+    const err = join(root, "err.log");
+    const code = join(root, "code.log");
+    const quote = (path) => `"${path}"`;
+    const node = quote(process.execPath);
+    const res = spawnSync(
+      `(${node} ${quote(SCRIPT)} json 2>${quote(err)}; echo $? >${quote(code)})`
+      + ` | ${node} -e ""`, { shell: true, encoding: "utf8", timeout: 60000 });
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(readFileSync(code, "utf8").trim(), "0", readFileSync(err, "utf8"));
+    assert.equal(readFileSync(err, "utf8"), "", "쓰는 쪽이 오류를 냈다");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 🔴 링크를 따라가면 프로젝트 밖의 파일을 덮거나, 끊긴 링크가 가리키는 자리에
+// 새 파일을 만듭니다. Windows 는 권한이 없으면 파일 링크를 못 만들어 건너뜁니다.
+test("--out 이 심볼릭 링크면 쓰지 않고 종료 코드 2 다", (t) => {
+  const root = scratch("link-out");
+  try {
+    const victim = join(root, "victim.md");
+    const made = join(root, "made-by-link.css");
+    writeFileSync(victim, "keep\n");
+    const link = join(root, "link.css");
+    const dangling = join(root, "dangling.css");
+    try {
+      symlinkSync(victim, link);
+      symlinkSync(made, dangling);
+    } catch {
+      t.skip("이 기계에서는 파일 링크를 만들 수 없다");
+      return;
+    }
+    for (const target of [link, dangling]) {
+      const res = run(SCRIPT, ["css", "--only", "airbnb", "--out", target]);
+      assert.equal(res.status, 2, res.stderr);
+      assert.match(res.stderr, /symbolic link/);
+    }
+    assert.equal(readFileSync(victim, "utf8"), "keep\n", "링크가 가리키는 파일이 덮였다");
+    assert.equal(existsSync(made), false, "끊긴 링크가 가리키는 자리에 파일이 생겼다");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -6,7 +6,7 @@
 ## 공통 순서
 1. `css` 로 CSS 파일을 낸다.
 2. 프로젝트가 그 파일을 읽는다.
-3. `<html>` 에 `data-theme` 과 `data-mode` 속성이 걸린다. 걸지 않아도 `:root` 의 기본 테마 라이트 값으로 화면이 읽힌다.
+3. `<html>` 에 `data-theme` 과 `data-mode` 속성이 걸린다. 걸지 않아도 `:root` 가 기본 테마의 라이트와 다크를 들고 있어 화면이 읽힌다. 다크는 `--dark-via` 로 고른 자리(속성, 클래스, OS 설정)를 따른다.
 4. 색을 쓰는 자리는 하드코딩 대신 `var(--ink)` 처럼 변수를 쓴다.
 
 ```
@@ -64,6 +64,7 @@ module.exports = {
 ```
 
 이 방식은 `bg-surface text-ink-on-surface` 처럼 쓴다. Tailwind 의 `dark:` 변형을 쓰려면 `--dark-via class` 로 CSS 를 내고 `darkMode: "class"` 를 맞춘다.
+고르개를 붙이면 `widget` 에도 `--dark-via class` 를 준다. 모드 버튼이 `data-mode` 와 `.dark` 를 함께 바꾸므로 이 설정과 맞는다.
 `--prefix` 를 줬다면 `var(--<prefix>bg)` 처럼 이름을 맞춘다.
 
 ## React 와 Vue
@@ -75,12 +76,14 @@ module.exports = {
 import { useEffect, useState } from "react";
 export function useTheme(allowed, fallback) {
   const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem("theme");
+    let saved = null;
+    // 서버 렌더에는 localStorage 가 없고, 저장소를 막은 브라우저는 예외를 던진다.
+    try { saved = localStorage.getItem("theme"); } catch { saved = null; }
     return allowed.includes(saved) ? saved : fallback;
   });
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("theme", theme);
+    try { localStorage.setItem("theme", theme); } catch { /* 막힌 저장소 */ }
   }, [theme]);
   return [theme, setTheme];
 }
@@ -88,7 +91,7 @@ export function useTheme(allowed, fallback) {
 
 Vue 3 도 같다. `ref` 에 이름을 담고 `watchEffect` 안에서 `document.documentElement.setAttribute("data-theme", theme.value)` 를 부른다.
 
-모드(`data-mode="dark"`)도 같은 자리에 같은 방식으로 건다. 저장된 값은 허용 목록에 대어 본 뒤에 쓴다.
+모드(`data-mode="dark"`)도 같은 자리에 같은 방식으로 건다. `--dark-via class` 로 냈으면 `classList.toggle("dark", 다크인지)` 로 `.dark` 를 건다. 저장된 값은 허용 목록에 대어 본 뒤에 쓴다.
 
 첫 그림 전의 깜빡임은 아래 head 스크립트를 `index.html` 의 `<head>` 에 두어야 막는다.
 
@@ -105,6 +108,8 @@ Vue 3 도 같다. `ref` 에 이름을 담고 `watchEffect` 안에서 `document.d
 node <스킬>/scripts/themes.mjs widget --only superhuman,airbnb,stripe --out widget.html
 ```
 
+CSS 를 낼 때와 같은 `--dark-via` 를 준다. 모드 버튼은 `data-mode` 와 `.dark` 를 함께 바꾸고, `--dark-via media` 면 버튼이 없다(다크는 OS 설정을 따름).
+
 | 덩이 | 두는 곳 | 하는 일 |
 |---|---|---|
 | 고르개 마크업 | 페이지의 헤더 등 보이는 자리 | `<select>` 와 모드 버튼 |
@@ -119,6 +124,8 @@ node <스킬>/scripts/themes.mjs widget --only superhuman,airbnb,stripe --out wi
 
 저장된 이름은 닫힌 집합(박혀 있는 테마 목록)에 대어 본다. 목록 밖이면 기본 테마로 되돌린다.
 
+CSP(Content-Security-Policy)를 쓰는 사이트는 인라인 스크립트 둘에 nonce 나 해시를 붙인다. `'unsafe-inline'` 으로 풀지 않는다.
+
 ## 모드만 쓰는 화면
 
 테마를 고르는 사람이 없고 라이트와 다크만 OS 설정을 따르면 되면 고르개가 필요 없다.
@@ -127,7 +134,7 @@ node <스킬>/scripts/themes.mjs widget --only superhuman,airbnb,stripe --out wi
 node <스킬>/scripts/themes.mjs css --only superhuman --dark-via media --out public/themes.css
 ```
 
-`@media (prefers-color-scheme: dark)` 안에 다크 값이 들어간다. JS 가 없어도 된다.
+`@media (prefers-color-scheme: dark)` 안에 다크 값이 들어간다. `:root` 도 기본 테마의 다크를 그 안에 들고 있어, `<html>` 에 속성을 걸지 않아도 OS 가 다크면 다크가 된다. JS 가 없어도 된다.
 
 ## 서버 렌더
 
@@ -150,4 +157,5 @@ app.get("/", (req, res) => {
 - 테마당 규칙이 둘이다. 라이트 하나, 다크 하나.
 - 규칙마다 13 선언이다.
 - 74종 전부면 148 규칙이다.
+- 여기에 `:root` 의 기본 테마 라이트와 다크 둘, `--shadow` 둘이 더해진다.
 - 쓸 테마만 `--only` 로 줄이는 쪽을 권한다.

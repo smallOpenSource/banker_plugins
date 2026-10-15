@@ -15,7 +15,7 @@
 // 대조하는 도구는 이 패키지에 들어 있지 않습니다.
 
 import {
-  readFileSync, writeFileSync, readdirSync, statSync, realpathSync,
+  readFileSync, writeFileSync, readdirSync, statSync, lstatSync, realpathSync,
 } from "node:fs";
 import { dirname, join, resolve, basename, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -458,9 +458,23 @@ function slugForFile(path) {
 
 // 테마 이름(슬러그)에 쓰는 글자. 🔴 이름은 CSS 선택자의 따옴표 안, 고르개의
 // HTML 속성, `<script>` 안의 JSON 에 그대로 들어갑니다. `"` 나 `<` 가 든 폴더
-// 이름 하나가 산출물을 깨거나 스크립트를 끼워 넣습니다. 번들 74종 중 다섯은
-// 이름에 점이 있습니다(`x.ai` 등).
-export const SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// 이름 하나가 산출물을 깨거나 스크립트를 끼워 넣습니다. 글자와 숫자는 유니코드
+// 전체(한글 폴더 이름 포함)를 받고, 기호는 `.` `-` `_` 만 받습니다. 빈칸, 제어
+// 문자, 서식 문자(방향 바꿈 등), 줄 구분자는 글자가 아니라서 걸립니다. 번들
+// 74종 중 다섯은 이름에 점이 있습니다(`x.ai` 등).
+export const SLUG = /^[\p{L}\p{N}][\p{L}\p{M}\p{N}._-]*$/u;
+
+const SLUG_RULE = `may use only letters, digits, ".", "-" and "_"`;
+
+// 🔴 산출물에 들어가는 이름은 모두 `resolveThemes` 의 목록에서 나옵니다.
+// 출처(번들, DESIGN.md)와 상관없이 거기서 한 번 더 봅니다.
+export function assertSlugs(names) {
+  for (const slug of names) {
+    if (!SLUG.test(slug)) {
+      throw new Error(`theme name ${JSON.stringify(slug)} ${SLUG_RULE}`);
+    }
+  }
+}
 
 function isFile(path) {
   try { return statSync(path).isFile(); } catch { return false; }
@@ -484,7 +498,7 @@ export function loadDesignMd(path) {
     // 들킵니다.
     if (!SLUG.test(slug)) {
       throw new Error(`--design-md ${JSON.stringify(file)}: theme name `
-        + `${JSON.stringify(slug)} may use only letters, digits, ".", "-" and "_"`);
+        + `${JSON.stringify(slug)} ${SLUG_RULE}`);
     }
     const theme = themeFromDesign(readDesign(file));
     if (theme === null) continue;
@@ -521,6 +535,7 @@ export function resolveThemes(opts) {
   for (const path of opts.designMd) {
     for (const [slug, theme] of loadDesignMd(path)) themes.set(slug, theme);
   }
+  assertSlugs(themes.keys());
   let slugs = [...themes.keys()];
   if (opts.only !== null) {
     const allow = new Set(opts.only);
@@ -560,39 +575,37 @@ function declarations(pairs, prefix) {
   return pairs.map(([name, value]) => `--${prefix}${name}:${value}`).join(";");
 }
 
+// `--dark-via` 가 고른 자리에 다크 규칙을 겁니다. `base` 는 라이트 규칙의
+// 선택자입니다.
+function darkRule(base, body, darkVia) {
+  if (darkVia === "media") return `@media (prefers-color-scheme: dark){${base}{${body}}}`;
+  if (darkVia === "class") return `${base}.dark{${body}}`;
+  return `${base}[data-mode="dark"]{${body}}`;
+}
+
 export function renderCss(resolved, opts) {
   const { prefix, darkVia } = opts;
   const out = [];
-  // 🔴 `:root` 가 언제나 먼저입니다. 선택자가 `html[data-theme=...]` 이라
-  // 특정성이 높아 테마 규칙이 이깁니다. `:root` 를 두는 까닭은 JS 가 꺼졌거나
-  // 저장된 이름이 목록 밖일 때 화면이 여전히 읽히게 하는 것입니다.
+  // 🔴 `:root` 가 언제나 먼저이고 기본 테마의 라이트와 다크를 둘 다 듭니다.
+  // 테마 규칙은 `html[data-theme=...]` 이 붙어 같은 모드의 `:root` 규칙보다
+  // 특정성이 높아 이깁니다. `:root` 를 두는 까닭은 JS 가 꺼졌거나 저장된 이름이
+  // 목록 밖일 때도 화면이 읽히게 하는 것입니다. 다크가 빠지면 고르개 없이
+  // 모드만 쓰는 화면(`<html>` 에 `data-theme` 이 없음)에서 다크가 켜지지 않습니다.
   if (resolved.default !== null) {
     const base = resolved.themes.get(resolved.default);
     out.push(`:root{${declarations(palettePairs(base.light, opts), prefix)}}`);
+    out.push(darkRule(":root", declarations(palettePairs(base.dark, opts), prefix),
+                      darkVia));
   }
   for (const [slug, theme] of [...resolved.themes.entries()].sort()) {
-    const light = declarations(palettePairs(theme.light, opts), prefix);
-    const dark = declarations(palettePairs(theme.dark, opts), prefix);
-    out.push(`html[data-theme="${slug}"]{${light}}`);
-    if (darkVia === "media") {
-      out.push(`@media (prefers-color-scheme: dark){`
-               + `html[data-theme="${slug}"]{${dark}}}`);
-    } else if (darkVia === "class") {
-      out.push(`html[data-theme="${slug}"].dark{${dark}}`);
-    } else {
-      out.push(`html[data-theme="${slug}"][data-mode="dark"]{${dark}}`);
-    }
+    const selector = `html[data-theme="${slug}"]`;
+    out.push(`${selector}{${declarations(palettePairs(theme.light, opts), prefix)}}`);
+    out.push(darkRule(selector,
+                      declarations(palettePairs(theme.dark, opts), prefix), darkVia));
   }
   out.push("/* 그림자는 모드의 성질입니다. 테마마다 두면 같은 값이 반복됩니다. */");
   out.push(`html{--${prefix}shadow:${SHADOW_LIGHT}}`);
-  if (darkVia === "media") {
-    out.push(`@media (prefers-color-scheme: dark)`
-             + `{html{--${prefix}shadow:${SHADOW_DARK}}}`);
-  } else if (darkVia === "class") {
-    out.push(`html.dark{--${prefix}shadow:${SHADOW_DARK}}`);
-  } else {
-    out.push(`html[data-mode="dark"]{--${prefix}shadow:${SHADOW_DARK}}`);
-  }
+  out.push(darkRule("html", `--${prefix}shadow:${SHADOW_DARK}`, darkVia));
   return out.join("\n");
 }
 
@@ -622,18 +635,22 @@ function esc(text) {
 }
 
 // 고르개 마크업. 테마 목록이 닫힌 집합으로 박혀 있습니다.
-function widgetMarkup(entries) {
+//
+// 🔴 `--dark-via media` 면 모드 버튼을 내지 않습니다. 그 CSS 의 다크는 OS 설정만
+// 따르고, 버튼은 그것을 바꿀 수 없어서 눌러도 아무 일이 없는 버튼이 됩니다.
+function widgetMarkup(entries, darkVia) {
   const options = entries
     .map(([slug, theme]) =>
       `    <option value="${esc(slug)}">${esc(theme.label)}</option>`)
     .join("\n");
+  const button = darkVia === "media" ? "" : `
+  <button id="theme-mode" type="button" aria-pressed="false"
+          aria-label="Dark mode">Dark</button>`;
   return `<!-- 1. 고르개 마크업. 테마 목록이 닫힌 집합으로 박혀 있습니다. -->
 <div class="theme-pick-wrap">
   <select id="theme-pick" aria-label="Theme">
 ${options}
-  </select>
-  <button id="theme-mode" type="button" aria-pressed="false"
-          aria-label="Dark mode">Dark</button>
+  </select>${button}
 </div>`;
 }
 
@@ -660,6 +677,8 @@ function widgetHead(slugs, fallback) {
   } catch (err) { /* 저장소가 막힌 브라우저. 기본값으로 갑니다. */ }
   root.setAttribute("data-theme", pickTheme(saved, THEMES, FALLBACK));
   root.setAttribute("data-mode", mode === "dark" ? "dark" : "light");
+  // 🔴 .dark 클래스도 같이 겁니다. --dark-via class 로 낸 CSS 는 이것만 봅니다.
+  root.classList.toggle("dark", mode === "dark");
   window.__themePick = pickTheme;
   window.__themeList = THEMES;
   window.__themeFallback = FALLBACK;
@@ -702,6 +721,7 @@ const WIDGET_WIRE = `<!-- 3. 배선 스크립트.
       mode.addEventListener("click", function () {
         var next = root.getAttribute("data-mode") === "dark" ? "light" : "dark";
         root.setAttribute("data-mode", next);
+        root.classList.toggle("dark", next === "dark");
         save("mode", next);
         paint();
       });
@@ -716,11 +736,15 @@ const WIDGET_WIRE = `<!-- 3. 배선 스크립트.
 </script>`;
 
 // 🔴 세 덩이는 빈 줄 하나로 가릅니다. 두는 곳이 서로 달라서(마크업 자리,
-// <head>, 마크업 뒤) 한 덩이로 합치지 않습니다.
-export function renderWidget(resolved) {
+// <head>, 마크업 뒤) 한 덩이로 합치지 않습니다. 모드 버튼은 `data-mode` 와
+// `.dark` 를 함께 바꾸므로 `--dark-via attr` 와 `class` CSS 에 모두 맞습니다.
+//
+// 🔴 `<script>` 안의 JSON 에는 이름만 들어갑니다. 이름은 `resolveThemes` 가
+// SLUG 로 검사해 `<`, `/`, 줄 구분자가 없으므로 따로 이스케이프하지 않습니다.
+export function renderWidget(resolved, opts = {}) {
   const entries = byLabel(resolved.themes);
   const slugs = entries.map(([slug]) => slug);
-  return [widgetMarkup(entries), widgetHead(slugs, resolved.default),
+  return [widgetMarkup(entries, opts.darkVia), widgetHead(slugs, resolved.default),
           WIDGET_WIRE].join("\n\n");
 }
 
@@ -880,11 +904,30 @@ export function parseArgs(argv) {
   return opts;
 }
 
+// 🔴 `--out` 이 심볼릭 링크면 쓰지 않습니다. 링크를 따라가면 프로젝트 밖의
+// 파일을 덮거나, 끊긴 링크가 가리키는 자리에 새 파일을 만듭니다.
+function refuseLink(path) {
+  let link = false;
+  try {
+    link = lstatSync(path).isSymbolicLink();
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  if (link) {
+    throw new Error(`--out ${JSON.stringify(path)} is a symbolic link; not writing through it`);
+  }
+}
+
 function emit(text, out) {
-  if (out === null) process.stdout.write(`${text}\n`);
+  if (out === null) {
+    process.stdout.write(`${text}\n`);
+    return;
+  }
   // 🔴 `--out` 은 css 뿐 아니라 json · widget · list 에서도 돕니다. 산출물을
   // 파일로 받는 쪽이 명령마다 다르면 쓰는 사람이 외울 것이 늘어납니다.
-  else writeFileSync(resolve(out), `${text}\n`);
+  const path = resolve(out);
+  refuseLink(path);
+  writeFileSync(path, `${text}\n`);
 }
 
 const RENDER = new Map([
@@ -989,9 +1032,23 @@ function invokedDirectly() {
   }
 }
 
+// 🔴 읽는 쪽이 먼저 닫히면(`json | head`) 남은 쓰기가 EPIPE 로 끝납니다. 받지
+// 않으면 스택 추적과 함께 종료 코드 1(`check` 의 "어긋남" 과 같은 값)이 됩니다.
+// EPIPE 만 받아 이미 정한 종료 코드로 끝내고, 다른 오류는 그대로 던집니다.
+export function onStdoutError(err, exit = (code) => process.exit(code)) {
+  if (err && err.code === "EPIPE") {
+    exit(process.exitCode ?? 0);
+    return;
+  }
+  throw err;
+}
+
 // 🔴 `process.exit()` 가 아니라 `process.exitCode` 입니다. `process.exit()` 는
 // 표준출력에 남은 쓰기를 기다리지 않습니다. 표준출력이 파이프이면 64KiB 를
 // 넘는 출력이 잘립니다. 번들 전체의 `json`(약 70KB)이 65,536 바이트에서 잘려
 // 깨진 JSON 이 되는 것을 Linux 와 macOS 의 Node 22, 24 에서 확인했습니다.
 // 에이전트는 출력을 파이프로 받습니다.
-if (invokedDirectly()) process.exitCode = main(process.argv.slice(2));
+if (invokedDirectly()) {
+  process.stdout.on("error", onStdoutError);
+  process.exitCode = main(process.argv.slice(2));
+}

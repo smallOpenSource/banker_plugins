@@ -16,6 +16,7 @@
 
 - 문서 본문은 옮기지 않았다.
 - MIT 조건에 따라 원본의 저작권 고지와 허가 고지를 `LICENSE` 로 함께 배포한다.
+- `LICENSE` 는 2026-10-15 에 원본 저장소의 `LICENSE`(GitHub blob `5cea5d78a41df83eafe1fb9fc0710675a5b7acf6`)를 글자 그대로 옮긴 것이다.
 
 ## 상표
 
