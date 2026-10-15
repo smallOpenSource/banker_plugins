@@ -20,6 +20,7 @@ import pathlib
 import re
 import sys
 import tempfile
+import unicodedata
 from html.parser import HTMLParser
 
 if sys.version_info < (3, 7):
@@ -734,16 +735,39 @@ def _page_clean_turn(t, extra, mode):
     return dict(t, text=clean(t["text"]), parts=[clean(p) for p in t.get("parts") or []])
 
 
+# Letters that print as nothing: the Hangul fillers, the braille blank, and the combining marks Unicode ignores by
+# default (the grapheme joiner, the Khmer inherent vowels, the Mongolian free variation selectors). With the control,
+# format, private-use, unassigned and separator categories, a cache made only of them holds no summary a person can
+# read (3.0.5).
+_BLANK_LETTERS = frozenset(map(chr, (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800,
+                                     0x034F, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180F)))
+_BLANK_CATEGORIES = frozenset(("Cc", "Cf", "Co", "Cn", "Zs", "Zl", "Zp"))
+
+
+def _blank(ch):
+    """Whether ch prints as nothing: whitespace, a blank-looking letter, or a variation selector."""
+    if ch.isspace() or ch in _BLANK_LETTERS or unicodedata.category(ch) in _BLANK_CATEGORIES:
+        return True
+    o = ord(ch)
+    return 0xFE00 <= o <= 0xFE0F or 0xE0100 <= o <= 0xE01EF
+
+
+def _has_visible(text):
+    """Whether text holds a letter a person can see."""
+    return not all(_blank(ch) for ch in text)
+
+
 def _read_cached(p):
     """The summary cached at p, else at the same name with .txt, which 3.0.2 and earlier wrote.
     None when neither holds one: missing, bytes that are not UTF-8 (a DRM encrypted them), or
-    only whitespace (a write that stopped early); the turn is then summarized again (3.0.4)."""
+    nothing a person can see (a write that stopped early, or only blank-looking letters); the
+    turn is then summarized again (3.0.4, 3.0.5)."""
     for cached in (p, p.with_name(p.stem + ".txt")):
         try:
             text = cached.read_text(encoding="utf-8").strip()
         except (OSError, UnicodeDecodeError):
             continue
-        if text:
+        if _has_visible(text):
             return text
     return None
 

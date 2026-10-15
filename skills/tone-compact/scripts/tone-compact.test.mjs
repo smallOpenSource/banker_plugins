@@ -6,6 +6,7 @@ import {
   existsSync,
   linkSync,
   lstatSync,
+  lutimesSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -13,14 +14,16 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { parseArgs, rulesOf, status, turnOff, turnOn } from "./tone-compact.mjs";
-import { count, done, lf, noBom, refuse, where } from "./instruction-toggle.mjs";
+import { count, done, lf, noBom, refuse, sameInode, where } from "./instruction-toggle.mjs";
 
 const CLI = fileURLToPath(new URL("./tone-compact.mjs", import.meta.url));
 const SKILL = fileURLToPath(new URL("../SKILL.md", import.meta.url));
@@ -581,6 +584,8 @@ test("a read-only Codex folder is refused up front instead of failing halfway", 
     const r = cli(["on", "--runtime", "codex"], cliEnv(s));
     assert.equal(r.code, 1, r.out);
     assert.match(r.out, /쓸 권한이 없어/);
+    const off = cli(["off", "--runtime", "codex"], cliEnv(s));
+    assert.equal(off.code, 0, `already off answers as before: ${off.out}`);
   } finally {
     chmodSync(s.o.codexDir, 0o755);
   }
@@ -825,6 +830,7 @@ test("paths lose blank-looking letters, the braille blank and spaces other than 
 });
 
 test("an override that is a link or a hard link to AGENTS.md is one file: on twice, status and off agree", (t) => {
+  let made = 0;
   for (const kind of ["symlink", "hardlink"]) {
     const s = setup();
     writeFileSync(s.agents, "# shared\n");
@@ -835,6 +841,7 @@ test("an override that is a link or a hard link to AGENTS.md is one file: on twi
       t.diagnostic(`${kind} not made here: ${e.code}`);
       continue;
     }
+    made += 1;
     assert.ok(turnOn("codex", s.o).ok, kind);
     const again = turnOn("codex", s.o);
     assert.match(again.message, /이미 켜져 있습니다/, `${kind}: ${again.message}`);
@@ -843,6 +850,15 @@ test("an override that is a link or a hard link to AGENTS.md is one file: on twi
     assert.ok(turnOff("codex", s.o).ok, kind);
     assert.equal(read(s.agents), "# shared\n", kind);
   }
+  if (made === 0) t.skip("neither a symlink nor a hard link can be made here");
+});
+
+test("same-file checks trust an inode only where the file system gives one", () => {
+  const st = (dev, ino) => ({ dev: BigInt(dev), ino: BigInt(ino) });
+  assert.equal(sameInode(st(1, 5), st(1, 5)), true);
+  assert.equal(sameInode(st(1, 5), st(1, 6)), false);
+  assert.equal(sameInode(st(1, 5), st(2, 5)), false);
+  assert.equal(sameInode(st(1, 0), st(1, 0)), false, "inode 0 says nothing");
 });
 
 test("an override that is a link to nothing counts as no override", posixOnly, () => {
@@ -893,4 +909,199 @@ test("the troubleshooting row for a folder or FIFO at an instructions file says 
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
+});
+
+test("status names the file a refused state is about, not the file the block would go to", () => {
+  const s = setup();
+  const codex = () => status(s.o).message.split("\n").find((l) => l.startsWith("- Codex:"));
+  writeFileSync(s.agents, "# base\n");
+  mkdirSync(s.override);
+  assert.match(codex(), /일반 파일이 아닌 지침 파일이 있어 손대지 않음 .*\(.*AGENTS\.override\.md\)$/);
+  rmSync(s.override, { recursive: true });
+  writeFileSync(s.override, "# mine\n");
+  writeFileSync(s.agents, Buffer.from([0x23, 0x20, 0xff, 0x0a]));
+  assert.match(codex(), /UTF-8 이 아닌 지침 파일이 있어 손대지 않음 .*\(.*AGENTS\.md\)$/);
+  writeFileSync(s.agents, `# base\n${OPEN}\nhalf a block\n`);
+  assert.match(codex(), /표시의 짝이 맞지 않음 .*\(.*AGENTS\.md\)$/);
+});
+
+test("a link loop or a socket where AGENTS.md goes is no regular file: status says so, on and off refuse with exit 1", posixOnly, async (t) => {
+  const s = setup();
+  const check = (what) => {
+    assert.match(cli(["status"], cliEnv(s)).out, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음/, what);
+    for (const command of ["on", "off"]) {
+      const r = cli([command, "--runtime", "codex"], cliEnv(s));
+      assert.equal(r.code, 1, `${what} ${command}: ${r.out}`);
+      assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md/, `${what} ${command}`);
+    }
+  };
+  symlinkSync("loop-b", s.agents);
+  symlinkSync("AGENTS.md", join(s.o.codexDir, "loop-b"));
+  check("link loop");
+  rmSync(s.agents);
+  rmSync(join(s.o.codexDir, "loop-b"));
+  const server = createServer();
+  try {
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(s.agents, resolve); });
+  } catch (e) {
+    t.diagnostic(`no socket here: ${e.code}`);
+    return;
+  }
+  try {
+    check("socket");
+  } finally {
+    server.close();
+  }
+});
+
+test("AGENTS.md that is a link to nothing: on refuses and makes no file where it points; an override with text still works", posixOnly, () => {
+  const s = setup();
+  symlinkSync("gone.md", s.agents);
+  const on = cli(["on", "--runtime", "codex"], cliEnv(s));
+  assert.equal(on.code, 1, on.out);
+  assert.match(on.out, /끊어진 링크라 그대로 두었습니다: .*AGENTS\.md/);
+  assert.equal(existsSync(join(s.o.codexDir, "gone.md")), false, "nothing was made where the link points");
+  assert.equal(lstatSync(s.agents).isSymbolicLink(), true);
+  assert.match(cli(["status"], cliEnv(s)).out, /- Codex: 꺼짐, 단 AGENTS\.md 가 끊어진 링크라 on 이 거부함/);
+  assert.equal(cli(["off", "--runtime", "codex"], cliEnv(s)).code, 0);
+  writeFileSync(s.override, "# mine\n");
+  assert.equal(cli(["on", "--runtime", "codex"], cliEnv(s)).code, 0, "the block goes to the override Codex reads");
+  assert.equal(blocks(read(s.override)), 1);
+  assert.equal(cli(["off", "--runtime", "codex"], cliEnv(s)).code, 0);
+  assert.equal(read(s.override), "# mine\n");
+});
+
+test("Claude Code: a link to nothing where the rules file goes is replaced by on, never written through", posixOnly, () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"));
+  symlinkSync("gone.md", s.rulesFile);
+  const r = turnOn("claude", s.o);
+  assert.ok(r.ok, r.message);
+  assert.equal(lstatSync(s.rulesFile).isSymbolicLink(), false);
+  assert.equal(existsSync(join(s.o.claudeDir, "rules", "gone.md")), false);
+});
+
+test("Codex on and off wait for another banker skill's lock, and take over one a dead run left", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  writeFileSync(lock, "4242 0 held");
+  const started = Date.now();
+  const held = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.equal(held.ok, false, held.message);
+  assert.match(held.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다: .*\.banker-agents\.lock/);
+  assert.ok(Date.now() - started >= 200, "it waited");
+  assert.equal(read(s.agents), "# base\n");
+  assert.equal(turnOff("codex", { ...s.o, lockWaitMs: 200 }).ok, false);
+  const old = new Date(Date.now() - 120_000);
+  utimesSync(lock, old, old);
+  const r = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(existsSync(lock), false, "the lock is given back");
+});
+
+test("Codex: a folder where the lock goes is never removed and the wait ends in a refusal; a lock dated a day ahead is taken over", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  mkdirSync(lock);
+  const old = new Date(Date.now() - 120_000);
+  utimesSync(lock, old, old);
+  const r = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.equal(r.ok, false, r.message);
+  assert.match(r.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/);
+  assert.equal(statSync(lock).isDirectory(), true, "the folder stays");
+  rmSync(lock, { recursive: true });
+  writeFileSync(lock, "4242 0 held");
+  const ahead = new Date(Date.now() + 24 * 3600_000);
+  utimesSync(lock, ahead, ahead);
+  const t = turnOn("codex", { ...s.o, lockWaitMs: 200 });
+  assert.ok(t.ok, t.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(existsSync(lock), false, "the lock is given back");
+});
+
+// Runs code (an ES module reading its arguments from process.argv.slice(1)) in a child with a deadline, so a run
+// that never ends fails the test instead of holding it, and returns the JSON the code printed.
+function inChild(code, ...args) {
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code, ...args], { encoding: "utf8", timeout: 15_000 });
+  assert.equal(r.error?.code, undefined, "the child ended before its deadline");
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+const lexists = (p) => {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("Codex: a link to nothing or a link loop where the lock goes ends the wait at its deadline, and one a minute old is taken over", posixOnly, () => {
+  const on = `const { turnOn } = await import(${JSON.stringify(new URL("./tone-compact.mjs", import.meta.url).href)});
+console.log(JSON.stringify(turnOn("codex", JSON.parse(process.argv[1]))));`;
+  for (const [name, target] of [["link to nothing", "gone"], ["link loop", ".banker-agents.lock"]]) {
+    const s = setup();
+    writeFileSync(s.agents, "# base\n");
+    const lock = join(s.o.codexDir, ".banker-agents.lock");
+    symlinkSync(target, lock);
+    const o = JSON.stringify({ ...s.o, lockWaitMs: 200 });
+    const held = inChild(on, o);
+    assert.equal(held.ok, false, `${name}: ${held.message}`);
+    assert.match(held.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/, name);
+    assert.equal(read(s.agents), "# base\n", name);
+    const old = new Date(Date.now() - 120_000);
+    lutimesSync(lock, old, old);
+    const r = inChild(on, o);
+    assert.ok(r.ok, `${name}: ${r.message}`);
+    assert.equal(blocks(read(s.agents)), 1, name);
+    assert.equal(lexists(lock), false, `${name}: the old link is gone and the lock given back`);
+    assert.equal(existsSync(join(s.o.codexDir, "gone")), false, `${name}: nothing was made where the link pointed`);
+  }
+});
+
+test("Codex: a lock that turned into a pipe while held is left there, never opened to be read", posixOnly, () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const code = `const { toggleSpec, turnOn } = await import(${JSON.stringify(new URL("./instruction-toggle.mjs", import.meta.url).href)});
+const { rmSync } = await import("node:fs");
+const { spawnSync } = await import("node:child_process");
+const [o, lock] = [JSON.parse(process.argv[1]), process.argv[2]];
+const t = toggleSpec({ slug: "tone-compact", staleText: "old", updatedText: "updated" });
+console.log(JSON.stringify(turnOn(t, "codex", o, () => { rmSync(lock); spawnSync("mkfifo", [lock]); return "rules"; })));`;
+  const r = inChild(code, JSON.stringify(s.o), lock);
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(lstatSync(lock).isFIFO(), true, "a lock that is no longer this run's stays");
+});
+
+test("troubleshooting rows never tell the agent to clear, delete or rename a user's file without asking first", () => {
+  const table = readFileSync(SKILL, "utf8").split("## 문제 해결")[1].split("\n## ")[0];
+  const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
+  for (const row of rows) assert.doesNotMatch(row, /치우|치운|치움|이름 변경 또는 삭제|지운 뒤 다시|옮긴 뒤 다시/, row);
+  for (const head of ["같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
+    "다른 banker 지침 작업이 끝나지 않아"]) {
+    const row = rows.find((l) => l.startsWith(`| ${head}`));
+    assert.ok(row, head);
+    assert.match(row, /물은 뒤/, row);
+  }
+});
+
+test("a FIFO where AGENTS.override.md goes: status returns and names it, on and off refuse with exit 1", posixOnly, () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  assert.equal(spawnSync("mkfifo", [s.override]).status, 0);
+  const opts = { encoding: "utf8", timeout: 5000, env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } };
+  const st = spawnSync(process.execPath, [CLI, "status"], opts);
+  assert.equal(st.status, 0, `status hung or failed (signal ${st.signal})`);
+  assert.match(st.stdout, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음 .*AGENTS\.override\.md/);
+  for (const command of ["on", "off"]) {
+    const r = spawnSync(process.execPath, [CLI, command, "--runtime", "codex"], opts);
+    assert.equal(r.status, 1, `${command}: ${r.stdout} (signal ${r.signal})`);
+    assert.match(r.stdout, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.override\.md/);
+  }
+  assert.equal(read(s.agents), "# base\n");
 });

@@ -2,10 +2,13 @@
 // No network and no real home: every run uses a fake HOME in a temp dir.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { delimiter, dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 
 const TOOL = fileURLToPath(new URL("./omc-patch.mjs", import.meta.url));
@@ -13,6 +16,7 @@ const root = mkdtempSync(join(tmpdir(), "omc-patch-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
 const HAS_GIT = spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0;
+const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const ORIGIN = "https://example.invalid/omc.git";
 
 // Git run by these tests, and the tool they start, reads neither the developer's global or system config nor a
@@ -444,7 +448,7 @@ test("a version folder that links to another is patched through the link and rev
 });
 
 // A guard against a false refusal: an odd-case --root is the same folder on Windows. realpathSync keeps the
-// case it is given, so this does not prove the lower-casing in insideRoot by itself.
+// case it is given; the test below proves the lower-casing in insideRoot with a junction.
 test("on Windows a --root given in other letter case is the same folder", { skip: process.platform !== "win32" && "Windows only" }, () => {
   const home = bareHome();
   const plug = bundle();
@@ -454,11 +458,35 @@ test("on Windows a --root given in other letter case is the same folder", { skip
   assert.match(r.out, /패치 2건 \/ 실패 0건/);
 });
 
-// The bare apply (no --no-update) path: the tool unpacks its TARGET_VERSION from the marketplace tag,
-// links node_modules to the previous version, switches installed_plugins.json and patches the new folder.
-test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to it and patches it", { skip: !HAS_GIT && "git not found" }, () => {
+// A junction keeps its target as written. When that differs in letter case from the folder the tool was given,
+// only insideRoot's lower-casing keeps the file inside the plugin folder.
+test("on Windows a scripts junction whose target is written in other letter case is still inside the plugin folder", { skip: process.platform !== "win32" && "Windows only" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  const real = join(plug, "real-scripts");
+  renameSync(join(plug, "scripts"), real);
+  const odd = real === real.toUpperCase() ? real.toLowerCase() : real.toUpperCase();
+  symlinkSync(odd, join(plug, "scripts"), "junction");
+  const check = run(home, ["--root", plug, "--check"]);
+  assert.doesNotMatch(check.out, /쓸 수 없음/, check.out);
+  const r = run(home, ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /패치 2건 \/ 실패 0건/);
+});
+
+const ID = ["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
+// Commits everything in repo and tags it.
+function tagged(repo, tag) {
+  for (const a of [["add", "-A"], [...ID, "commit", "-qm", "v"], [...ID, "tag", tag]]) {
+    const g = runGit(a, repo);
+    assert.equal(g.status, 0, g.stderr);
+  }
+}
+
+// A home whose marketplace holds a tagged copy of the plugin, for the bare apply: { f, target, nowhere }. The origin
+// is a local path that does not exist, so the tool's fetch fails at once without the network.
+function bareApplyFixture() {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
-  // a local path that does not exist, so the tool's git fetch fails at once without the network
   const nowhere = join(root, `no-remote${seq++}.git`);
   assert.equal(runGit(["remote", "set-url", "origin", nowhere], f.market).status, 0);
   const target = /const TARGET_VERSION = "([\d.]+)"/.exec(read(TOOL))[1];
@@ -468,11 +496,14 @@ test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to
   for (const n of ["foo", "stopper"]) writeFileSync(join(f.market, "scripts", `${n}.mjs`), SCRIPT(n));
   writeFileSync(join(f.market, "scripts", "lib.mjs"), LIB);
   mkdirSync(join(f.cache, "5.6.1", "node_modules"), { recursive: true });
-  const id = ["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
-  for (const a of [["add", "-A"], [...id, "commit", "-qm", "v"], [...id, "tag", `v${target}`]]) {
-    const g = runGit(a, f.market);
-    assert.equal(g.status, 0, g.stderr);
-  }
+  tagged(f.market, `v${target}`);
+  return { f, target, nowhere };
+}
+
+// The bare apply (no --no-update) path: the tool unpacks its TARGET_VERSION from the marketplace tag,
+// links node_modules to the previous version, switches installed_plugins.json and patches the new folder.
+test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to it and patches it", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target, nowhere } = bareApplyFixture();
   const r = run(f.home, []);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, new RegExp(`5\\.6\\.1 → ${target.replace(/\./g, "\\.")} \\(sha [0-9a-f]{12}\\)`));
@@ -483,6 +514,104 @@ test("a bare apply installs TARGET_VERSION from the marketplace tag, switches to
   assert.ok(existsSync(join(f.cache, target, "node_modules")), "node_modules points at the previous version");
   assert.match(read(join(f.cache, target, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/, "the new active version is patched");
   assert.equal(origin(f.market), `omc-pinned://${nowhere}`);
+});
+
+test("a bare apply that cannot write installed_plugins.json stops with its name, and no stack trace", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const { f } = bareApplyFixture();
+  const installed = join(f.plugins, "installed_plugins.json");
+  const before = read(installed);
+  chmodSync(f.plugins, 0o555);
+  let r;
+  try {
+    r = run(f.home, []);
+  } finally {
+    chmodSync(f.plugins, 0o755);
+  }
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 쓰지 못함: installed_plugins\.json \(EACCES\)/);
+  assert.match(r.out, /버전 확보 실패 — 중단/);
+  assert.doesNotMatch(r.out, /\n\s+at |Error:/, "no stack trace");
+  assert.equal(read(installed), before);
+});
+
+test("a pin whose PINNED cannot be written is named and counted; origin stays pinned and no stack trace", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  writeFileSync(join(f.home, ".claude", "omc-local-patches"), "a file where the record's folder goes\n");
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 고정 기록\(PINNED\)을 쓰지 못함 \(\w+\)\. origin 은 고정됨/);
+  assert.match(r.out, /완료\. 실패 1건\./);
+  assert.doesNotMatch(r.out, /\n\s+at |Error:/, "no stack trace");
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`);
+});
+
+test("origin's user part is masked whatever it holds: a space, a tab, an @ in the password; so is a token in the query", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const pw = "S3" + "CRETPW";
+  for (const url of [`https://user name:${pw}@example.invalid/omc.git`, `https://user:pass ${pw}@example.invalid/omc.git`,
+    `https://user:p@${pw}@example.invalid/omc.git`, `https://us\ter:${pw}@example.invalid/omc.git`,
+    `https://example.invalid/omc.git?access_token=${pw}`]) {
+    assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
+    const out = run(f.home, ["--check", "--no-update"]).out;
+    assert.ok(!out.includes(pw), `${JSON.stringify(url)}: ${out}`);
+    assert.match(out, /origin=https:\/\/(\*\*\*@)?example\.invalid\/omc\.git/, JSON.stringify(url));
+  }
+});
+
+test("an apply over an origin an older tool pinned drops the URL from that PINNED and leaves it to this account; --check writes nothing", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const withPassword = `https://u:${"s3" + "cret"}@example.invalid/omc.git`;
+  assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${withPassword}`], f.market).status, 0);
+  const dir = join(f.home, ".claude", "omc-local-patches");
+  mkdirSync(dir, { recursive: true });
+  const pinfile = join(dir, "PINNED");
+  writeFileSync(pinfile, `${JSON.stringify({ pinnedAt: "2026-10-01T00:00:00.000Z", version: "5.6.1", host: hostname(), originUrl: withPassword })}\n`);
+  chmodSync(pinfile, 0o644);
+  assert.equal(run(f.home, ["--check", "--no-update"]).code, 0);
+  assert.ok(read(pinfile).includes("originUrl"), "--check leaves the record as it is");
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /이미 고정됨/);
+  const saved = JSON.parse(read(pinfile));
+  assert.equal(saved.originUrl, undefined);
+  assert.equal(saved.host, hostname());
+  if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
+});
+
+test("--check over a hooks.json that is no JSON says it cannot read it, without its text, and does not call it all applied", () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  writeFileSync(join(plug, "hooks", "hooks.json"), '{ "hooks": { "secret-ish": ');
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 을 읽지 못함 \(JSON 이 아님\)/);
+  assert.ok(!r.out.includes("secret-ish"), r.out);
+  assert.doesNotMatch(r.out, /결과: 모두 적용된 상태입니다\./);
+});
+
+test("a set-url git refuses (an origin with two URLs) shows git's fatal line, the password masked", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  // put together at run time, so a secret scanner reading this file finds no credential in it
+  const twoUrl = `https://u:${"s3" + "cret"}@example.invalid/two.git`;
+  assert.equal(runGit(["remote", "set-url", "--add", "origin", twoUrl], f.market).status, 0);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/https:\/\/\*\*\*@example\.invalid\/two\.git/);
+  assert.ok(!r.out.includes("s3cret"), r.out);
+});
+
+test("a bare apply under a home with an odd name cleans the marketplace path it names", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }], { git: false });
+  const odd = join(root, `home${seq++}${String.fromCodePoint(0x202e)}x\n[!] FORGED`);
+  renameSync(f.home, odd);
+  const installed = join(odd, ".claude", "plugins", "installed_plugins.json");
+  writeFileSync(installed, read(installed).split(f.home).join(odd));
+  const r = run(odd, []);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /마켓플레이스 없음: .*home\d+\?x\?\[!\] FORGED/);
+  assert.ok(!r.out.includes(String.fromCodePoint(0x202e)), r.out);
+  assert.ok(!/^\[!\] FORGED/m.test(r.out), r.out);
 });
 
 test("--revert takes the origin from the pinned URL and names a PINNED written on another machine", { skip: !HAS_GIT && "git not found" }, () => {
@@ -860,15 +989,6 @@ test("script names with line breaks print on one line", { skip: process.platform
   assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] forged")), r.out);
 });
 
-// The tool keeps its own copy of git's list. A newer git that adds a variable must make this fail.
-test("the tool's list of repository variables covers this git's --local-env-vars", { skip: !HAS_GIT && "git not found" }, () => {
-  const listed = /const GIT_REPO_VARS = new Set\(\[([\s\S]*?)\]\)/.exec(read(TOOL))[1];
-  const names = new Set([...listed.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]));
-  const local = runGit(["rev-parse", "--local-env-vars"], root).stdout.split(/\s+/).filter(Boolean);
-  assert.ok(local.includes("GIT_DIR"), local.join(" "));
-  assert.deepEqual(local.filter((v) => !names.has(v)), []);
-});
-
 // A marketplace that is a link resolves to its real folder, and git walks up from there. The ceiling must cover the
 // real folder's parent too, or a broken .git lets the pin land on a repository around the real folder.
 test("a linked marketplace with a broken .git does not pin the repository around its real folder", { skip: !HAS_GIT && "git not found" }, (t) => {
@@ -979,4 +1099,488 @@ test("a script name with a tag character or a word joiner prints them as ?", { s
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /백업이 없어 되돌리지 못했습니다 \S t\?\?$/m);
   assert.ok(![0xe0041, 0x2060].some((c) => r.out.includes(String.fromCodePoint(c))), r.out);
+});
+
+// Writing in place used to change every name of a hard-linked hook, the one outside the plugin folder too.
+test("apply writes through a temp file and a rename: a hook hard-linked to a file outside leaves that file as it was", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  const outer = join(outside, "foo.mjs");
+  writeFileSync(outer, SCRIPT("foo"));
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  try {
+    linkSync(outer, join(plug, "scripts", "foo.mjs"));
+  } catch (e) {
+    t.skip(`no hard links here: ${e.code}`);
+    return;
+  }
+  const r = run(home, ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(read(join(plug, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/);
+  assert.equal(read(outer), SCRIPT("foo"), "the file outside the plugin folder is untouched");
+  assert.deepEqual(readdirSync(join(plug, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
+});
+
+test("an apply keeps a backup that is already there: the first backup stays the original", () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  writeFileSync(`${foo}.omcbak`, "// the original an earlier run kept\n");
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(read(`${foo}.omcbak`), "// the original an earlier run kept\n");
+  assert.match(read(foo), /__omcRaceImport\(import\(/);
+});
+
+// Makes renameSync fail with EPERM the first FAIL_RENAMES times, as Windows does for a file another process holds.
+const RENAME_FAILS = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.renameSync;",
+  "let left = Number(process.env.FAIL_RENAMES);",
+  'fs.renameSync = (...a) => { if (left-- > 0) throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" }); return real(...a); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a rename refused a few times is tried again; one refused every time is named and counted, the file left as it was", () => {
+  const pre = join(root, `rename-fails${seq++}.mjs`);
+  writeFileSync(pre, `${RENAME_FAILS}\n`);
+  const runFailing = (plug, n) => {
+    const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, TOOL, "--root", plug],
+      { encoding: "utf8", env: cleanEnv({ HOME: bareHome(), FAIL_RENAMES: String(n) }) });
+    return { code: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
+  };
+  const few = bundle();
+  const once = runFailing(few, 3);
+  assert.equal(once.code, 0, once.out);
+  assert.match(once.out, /패치 2건 \/ 실패 0건/);
+  // five retries: a rename refused five times still goes through, one refused six times does not
+  const five = runFailing(bundle(), 5);
+  assert.match(five.out, /패치 2건 \/ 실패 0건/, five.out);
+  const six = runFailing(bundle(), 6);
+  assert.match(six.out, /패치 1건 \/ 실패 1건/, six.out);
+  assert.equal(six.out.match(/쓰지 못함: \w+ \(EPERM\)/g)?.length, 1, six.out);
+  const always = bundle();
+  const never = runFailing(always, 999);
+  assert.equal(never.code, 1, never.out);
+  assert.match(never.out, /쓰지 못함: foo \(EPERM\)/);
+  assert.equal(read(join(always, "scripts", "foo.mjs")), SCRIPT("foo"));
+  assert.deepEqual(readdirSync(join(always, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
+});
+
+test("hooks.json and the revert write through no hard link: a name outside the folder keeps its bytes", (t) => {
+  const plug = bundle();
+  const home = bareHome();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  const hj = join(plug, "hooks", "hooks.json");
+  const foo = join(plug, "scripts", "foo.mjs");
+  try {
+    linkSync(hj, join(outside, "hooks.json"));
+  } catch (e) {
+    t.skip(`no hard links here: ${e.code}`);
+    return;
+  }
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  assert.equal(read(join(outside, "hooks.json")), HOOKS_JSON, "apply: the outside name keeps the old hooks.json");
+  assert.doesNotMatch(read(hj), /PostToolUse/);
+  const patched = { hj: read(hj), foo: read(foo) };
+  rmSync(join(outside, "hooks.json"));
+  linkSync(hj, join(outside, "hooks.json"));
+  linkSync(foo, join(outside, "foo.mjs"));
+  assert.equal(run(home, ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(hj), HOOKS_JSON);
+  assert.equal(read(foo), SCRIPT("foo"));
+  assert.equal(read(join(outside, "hooks.json")), patched.hj, "revert: the outside name keeps the patched hooks.json");
+  assert.equal(read(join(outside, "foo.mjs")), patched.foo, "revert: the outside name keeps the patched hook");
+});
+
+test("a hook the patch would leave broken is put back from its backup, and the error line is cleaned", () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  // a name with U+3164, a letter that shows as nothing: node's SyntaxError line repeats it
+  const name = `a${String.fromCodePoint(0x3164)}`;
+  const broken = `${SCRIPT("foo")}let ${name} = 1;\nlet ${name} = 2;\n`;
+  writeFileSync(foo, broken);
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /문법오류로 롤백: foo\n {6}SyntaxError: Identifier 'a\?' has already been declared/);
+  assert.equal(read(foo), broken);
+});
+
+test("a patched hook keeps its file mode", { skip: process.platform === "win32" && "POSIX modes" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  chmodSync(foo, 0o640);
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  assert.equal(statSync(foo).mode & 0o777, 0o640);
+});
+
+// A folder the tool cannot write used to stop it with an exception and a stack trace.
+test("a hook the tool cannot write is named and counted; the file stays as it was and no temp file is left", { skip: process.platform === "win32" ? "POSIX modes" : asRoot && "root ignores modes" }, () => {
+  const home = bareHome();
+  const plug = bundle();
+  const scripts = join(plug, "scripts");
+  chmodSync(scripts, 0o555);
+  try {
+    const r = run(home, ["--root", plug]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /쓰지 못함: foo \(EACCES\)/);
+    assert.equal(read(join(scripts, "foo.mjs")), SCRIPT("foo"));
+    assert.deepEqual(readdirSync(scripts).filter((x) => x.includes(".omc-tmp-") || x.endsWith(".omcbak")), []);
+  } finally {
+    chmodSync(scripts, 0o755);
+  }
+});
+
+test("paths in the output lose line breaks and direction marks: the --root folder in every line that names it", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const home = bareHome();
+  const odd = join(root, `odd${seq++}${String.fromCodePoint(0x202e)}x\ny`);
+  mkdirSync(odd, { recursive: true });
+  const notPlugin = run(home, ["--root", odd]);
+  assert.equal(notPlugin.code, 1, notPlugin.out);
+  assert.match(notPlugin.out, /플러그인 폴더가 아님 \(hooks\/hooks\.json 과 scripts\/ 가 있어야 함\): .*odd\d+\?x\?y$/m);
+  mkdirSync(join(odd, "hooks"));
+  mkdirSync(join(odd, "scripts"));
+  writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
+  writeFileSync(join(odd, "package.json"), JSON.stringify({ name: "other" }));
+  const other = run(home, ["--root", odd, "--check"]);
+  assert.match(other.out, /^OMC 패치 {2}\(대상 폴더 .*odd\d+\?x\?y\) {2}모드: check$/m);
+  assert.match(other.out, /OMC 플러그인 폴더가 아님 \(package\.json 의 name 이 "other"\): .*odd\d+\?x\?y$/m);
+  for (const r of [notPlugin, other]) {
+    assert.ok(!r.out.includes(String.fromCodePoint(0x202e)), r.out);
+    assert.ok(!/odd\d+.x\ny/u.test(r.out), r.out);
+  }
+});
+
+test("paths in the output lose line breaks and direction marks: a --root run that reaches the hooks, and its no-backup lines", { skip: process.platform === "win32" && "kept to POSIX file names" }, () => {
+  const home = bareHome();
+  const odd = join(root, `odd${seq++}${String.fromCodePoint(0x202e)}x\n[!] FORGED`);
+  mkdirSync(join(odd, "hooks"), { recursive: true });
+  mkdirSync(join(odd, "scripts"));
+  writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
+  for (const n of ["foo", "stopper"]) writeFileSync(join(odd, "scripts", `${n}.mjs`), SCRIPT(n));
+  writeFileSync(join(odd, "scripts", "lib.mjs"), LIB);
+  const check = run(home, ["--root", odd, "--check"]);
+  assert.equal(check.code, 0, check.out);
+  const apply = run(home, ["--root", odd]);
+  assert.equal(apply.code, 0, apply.out);
+  rmSync(join(odd, "scripts", "foo.mjs.omcbak"));
+  const revert = run(home, ["--revert", "--root", odd]);
+  assert.equal(revert.code, 1, revert.out);
+  assert.match(revert.out, /패치는 있는데 백업이 없어 되돌리지 못했습니다 — foo/);
+  for (const r of [check, apply, revert]) {
+    assert.ok(!r.out.includes(String.fromCodePoint(0x202e)), r.out);
+    assert.ok(!/^\[!\] FORGED/m.test(r.out), r.out);
+  }
+});
+
+test("an origin with a user and password shows only ***, and PINNED keeps no URL and is readable by this account alone", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  // put together at run time, so a secret scanner reading this file finds no credential in it
+  const withPassword = `https://u:${"s3" + "cret"}@example.invalid/omc.git`;
+  assert.equal(runGit(["remote", "set-url", "origin", withPassword], f.market).status, 0);
+  const check = run(f.home, ["--check", "--no-update"]);
+  assert.match(check.out, /origin=https:\/\/\*\*\*@example\.invalid\/omc\.git\)/);
+  assert.ok(!check.out.includes("s3cret"), check.out);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
+  const text = read(pinfile);
+  assert.ok(!text.includes("s3cret") && !text.includes("originUrl"), text);
+  if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
+  assert.equal(run(f.home, ["--revert"]).code, 0);
+  assert.equal(origin(f.market), withPassword, "the revert still restores the whole URL from origin");
+  for (const plain of ["git@example.invalid:o/omc.git", "https://example.invalid/a@b/omc.git"]) {
+    assert.equal(runGit(["remote", "set-url", "origin", plain], f.market).status, 0);
+    const out = run(f.home, ["--check", "--no-update"]).out;
+    assert.ok(out.includes(`origin=${plain})`), `a URL with no password is left as it is: ${out}`);
+  }
+});
+
+test("the pin keeps the origin as written, not as a global insteadOf expands it, and the revert gives it back", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const gitconfig = join(root, `insteadof${seq++}.gitconfig`);
+  writeFileSync(gitconfig, '[url "https://example.invalid/"]\n\tinsteadOf = ex:\n');
+  assert.equal(runGit(["remote", "set-url", "origin", "ex:omc.git"], f.market).status, 0);
+  const env = { GIT_CONFIG_GLOBAL: gitconfig };
+  // the fixture bites: get-url expands the short form
+  assert.equal(runGit(["remote", "get-url", "origin"], f.market, env).stdout.trim(), "https://example.invalid/omc.git");
+  assert.equal(run(f.home, ["--no-update"], env).code, 0);
+  const raw = () => runGit(["config", "--get", "remote.origin.url"], f.market).stdout.trim();
+  assert.equal(raw(), "omc-pinned://ex:omc.git");
+  assert.equal(run(f.home, ["--revert"], env).code, 0);
+  assert.equal(raw(), "ex:omc.git");
+});
+
+test("an origin that starts with a dash is written back as a value, never read as an option", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["config", "remote.origin.url", "-x/omc.git"], f.market).status, 0);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const raw = () => runGit(["config", "--get", "remote.origin.url"], f.market).stdout.trim();
+  assert.equal(raw(), "omc-pinned://-x/omc.git");
+  const back = run(f.home, ["--revert"]);
+  assert.equal(back.code, 0, back.out);
+  assert.equal(raw(), "-x/omc.git");
+});
+
+test("a set-url that fails is reported and counted: the pin writes no PINNED, the revert says where the URL is", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const gitDir = join(f.market, ".git");
+  const pinfile = join(f.home, ".claude", "omc-local-patches", "PINNED");
+  chmodSync(gitDir, 0o555);
+  try {
+    const r = run(f.home, ["--no-update"]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /\[!\] 고정 실패: origin 을 바꾸지 못했습니다 \(/);
+    assert.equal(existsSync(pinfile), false, "no record of a pin that did not happen");
+  } finally {
+    chmodSync(gitDir, 0o755);
+  }
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  chmodSync(gitDir, 0o555);
+  try {
+    const back = run(f.home, ["--revert"]);
+    assert.equal(back.code, 1, back.out);
+    assert.match(back.out, /\[!\] 고정 해제 실패: origin 을 되돌리지 못했습니다 \(/);
+    assert.match(back.out, /원래 URL: git -C ".*" config --get remote\.origin\.url 결과의 omc-pinned:\/\/ 뒤/);
+    assert.match(back.out, /되돌리기를 끝내지 못했습니다/);
+  } finally {
+    chmodSync(gitDir, 0o755);
+  }
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`, "still pinned, so a later revert finds the URL");
+});
+
+test("--check names a hook it would need to patch but could not write", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "foo.mjs"), SCRIPT("foo"));
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  try {
+    symlinkSync(join(outside, "foo.mjs"), join(plug, "scripts", "foo.mjs"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.match(r.out, /패치 필요, 쓸 수 없음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.match(r.out, /패치 필요: stopper$/m);
+});
+
+test("--check also names a hooks.json it would need to change but could not write", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  try {
+    symlinkSync(join(root, `nowhere${seq++}.json`), join(plug, "hooks", "hooks.json.omcbak"));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.match(r.out, /hooks\.json PostToolUse 남아있음, 쓸 수 없음 \(백업 자리가 링크\): foo/);
+});
+
+test("a revert that may not write outside the plugin folder says how to restore by hand", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  // an old tool patched these while they sat outside, behind a linked scripts/ folder
+  for (const n of ["foo", "stopper"]) {
+    writeFileSync(join(outside, `${n}.mjs`), "const __omcRaceImport = (p) => p;\n");
+    writeFileSync(join(outside, `${n}.mjs.omcbak`), SCRIPT(n));
+  }
+  writeFileSync(join(outside, "lib.mjs"), LIB);
+  rmSync(join(plug, "scripts"), { recursive: true });
+  try {
+    symlinkSync(outside, join(plug, "scripts"), "junction");
+  } catch {
+    t.skip("links cannot be made here");
+    return;
+  }
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.match(r.out, /손으로 되돌리려면 .*foo\.mjs\.omcbak 을 확인한 뒤 그 내용으로 .*foo\.mjs 을 덮어쓰고 백업을 지우십시오\./);
+  assert.equal(read(join(outside, "foo.mjs.omcbak")), SCRIPT("foo"), "the backup outside is left for the person");
+});
+
+test("only the hand patch's own shape at the top level counts as a hand edit", () => {
+  const home = bareHome();
+  const cases = [
+    ["top level", 'const m = await Promise.race([import("./lib.mjs"), new Promise((r) => setTimeout(r, 9))]);\n', true],
+    ["in a function", 'async function f() { return await Promise.race([import("./lib.mjs"), 1]); }\nexport { f };\n', false],
+    ["in a comment", '// await Promise.race([import("./lib.mjs")])\nexport const y = 1;\n', false],
+    ["in a string", 'export const s = "await Promise.race([import(\\"x\\")])";\n', false],
+    ["import not first", 'const m = await Promise.race([Promise.resolve(1), import("./lib.mjs")]);\n', false],
+  ];
+  for (const [what, src, hand] of cases) {
+    const plug = bundle();
+    writeFileSync(join(plug, "scripts", "stopper.mjs"), src);
+    const r = run(home, ["--revert", "--root", plug]);
+    assert.equal(/이 도구가 만들지 않은 수정이 남아 있습니다/.test(r.out), hand, `${what}\n${r.out}`);
+    assert.equal(r.code, hand ? 1 : 0, `${what}\n${r.out}`);
+  }
+});
+
+// A git that writes down each call's arguments and the GIT_ and FAKE_ names in its environment, then runs the real
+// git. To `rev-parse --local-env-vars` it adds one name more, as a newer git would.
+function loggingGit(t) {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) {
+    t.skip("git not found on PATH");
+    return null;
+  }
+  const dir = join(root, `gitwrap${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  const log = join(dir, "calls.log");
+  writeFileSync(join(dir, "git"), [
+    "#!/bin/sh",
+    `printf '%s|' "$*" >> '${log}'`,
+    `env | sed 's/=.*//' | grep -E '^(GIT_|FAKE_)' | sort | tr '\\n' ' ' >> '${log}'`,
+    `env | grep -E '^GIT_CONFIG_KEY_[0-9]+=' | sort | tr '\\n' ' ' >> '${log}'`,
+    `echo >> '${log}'`,
+    'if [ "$1" = rev-parse ] && [ "$2" = --local-env-vars ]; then',
+    `  '${realGit}' "$@"; echo GIT_FAKE_NEW_REPO_VAR; exit 0`,
+    "fi",
+    `exec '${realGit}' "$@"`,
+    "",
+  ].join("\n"), { mode: 0o755 });
+  return { PATH: `${dir}${delimiter}${process.env.PATH}`, log };
+}
+
+const posixGit = { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "a POSIX shell wrapper") };
+
+test("a repository variable only this git's --local-env-vars names is dropped too", posixGit, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const w = loggingGit(t);
+  if (!w) return;
+  const r = run(f.home, ["--no-update"], { PATH: w.PATH, GIT_FAKE_NEW_REPO_VAR: "decoy" });
+  assert.equal(r.code, 0, r.out);
+  const calls = read(w.log).trim().split("\n");
+  const later = calls.filter((c) => !c.startsWith("rev-parse --local-env-vars|"));
+  assert.ok(later.length > 0, calls.join("\n"));
+  for (const c of later) assert.ok(!c.includes("GIT_FAKE_NEW_REPO_VAR"), c);
+});
+
+test("the update's fetch keeps only proxy and TLS settings given in the environment; url rewrites, hook paths and the calls on origin drop them", posixGit, (t) => {
+  const { f } = bareApplyFixture();
+  const w = loggingGit(t);
+  if (!w) return;
+  const env = {
+    PATH: w.PATH, GIT_CONFIG_COUNT: "3",
+    GIT_CONFIG_KEY_0: `url.${join(root, "elsewhere")}.insteadOf`, GIT_CONFIG_VALUE_0: join(root, "nowhere.git"),
+    GIT_CONFIG_KEY_1: "http.proxy", GIT_CONFIG_VALUE_1: "http://127.0.0.1:9",
+    GIT_CONFIG_KEY_2: "core.hooksPath", GIT_CONFIG_VALUE_2: join(root, "hooks"),
+    GIT_CONFIG_PARAMETERS: `'core.hookspath'='${join(root, "hooks")}'`,
+  };
+  const r = run(f.home, [], env);
+  assert.equal(r.code, 0, r.out);
+  const calls = read(w.log).trim().split("\n");
+  const fetch = calls.find((c) => c.startsWith("fetch "));
+  assert.ok(fetch, calls.join("\n"));
+  assert.match(fetch, /GIT_CONFIG_COUNT /);
+  assert.match(fetch, /GIT_CONFIG_KEY_0=http\.proxy /);
+  assert.doesNotMatch(fetch, /insteadOf|hooksPath|GIT_CONFIG_KEY_1|GIT_CONFIG_PARAMETERS/i);
+  const origins = calls.filter((c) => /^(config --get remote\.origin\.url|remote set-url)/.test(c));
+  assert.ok(origins.length > 0, calls.join("\n"));
+  for (const c of origins) assert.ok(!c.includes("GIT_CONFIG_COUNT"), c);
+});
+
+test("every git or tar the tool starts by name runs in the home folder: on Windows a project folder's git.exe is not found first", () => {
+  const src = read(TOOL);
+  const calls = [...src.matchAll(/execFileSync\((?!process\.execPath)([^,]+),[^\n]*/g)].map((m) => m[0]);
+  assert.ok(calls.length >= 4, calls.join("\n"));
+  for (const c of calls) assert.match(c, /\bcwd\b/, c);
+});
+
+test("a huge GIT_CONFIG_COUNT is not walked to its end", posixGit, (t) => {
+  const { f } = bareApplyFixture();
+  const w = loggingGit(t);
+  if (!w) return;
+  const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home, PATH: w.PATH, GIT_CONFIG_COUNT: "2000000000", GIT_CONFIG_KEY_0: "http.proxy", GIT_CONFIG_VALUE_0: "http://127.0.0.1:9" });
+  delete env.OMC_PATCH_INSTALLED;
+  const r = spawnSync(process.execPath, [TOOL], { encoding: "utf8", env, timeout: 30000 });
+  assert.equal(r.error?.code, undefined, "the run ended before its deadline");
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.match(read(w.log).split("\n").find((c) => c.startsWith("fetch ")) ?? "", /GIT_CONFIG_KEY_0=http\.proxy /);
+});
+
+test("--scan gives only helperDecls, wrapped and unwrapped, each entry with its own fields", () => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const out = JSON.parse(run(home, ["--scan", join(plug, "scripts", "foo.mjs")]).out);
+  assert.deepEqual(Object.keys(out[0]).sort(), ["file", "helperDecls", "unwrapped", "wrapped"]);
+  assert.deepEqual(Object.keys(out[0].helperDecls[0]).sort(), ["depth", "line"]);
+  assert.deepEqual(Object.keys(out[0].wrapped[0]).sort(), ["inFunction", "line"]);
+});
+
+test("--root reads package.json's name when plugin.json has none", () => {
+  const home = bareHome();
+  const plug = bundle();
+  mkdirSync(join(plug, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(plug, ".claude-plugin", "plugin.json"), JSON.stringify({ description: "no name" }));
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: "other-plugin" }));
+  const r = run(home, ["--root", plug, "--check"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /OMC 플러그인 폴더가 아님 \(package\.json 의 name 이 "other-plugin"\)/);
+  writeFileSync(join(plug, "package.json"), JSON.stringify({ name: "oh-my-claude-sisyphus" }));
+  assert.doesNotMatch(run(home, ["--root", plug, "--check"]).out, /OMC 플러그인 폴더가 아님/);
+});
+
+test("a hooks.json the tool may not write counts as a failure at the end of a revert", (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  assert.equal(run(home, ["--root", plug]).code, 0);
+  const hj = join(plug, "hooks", "hooks.json");
+  rmSync(`${hj}.omcbak`);
+  try {
+    symlinkSync(join(root, `nowhere${seq++}.json`), `${hj}.omcbak`);
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 을 건드리지 않음 \(백업 자리가 링크\)/);
+  assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 실패 1건/);
+});
+
+test("a refused revert names the hook with odd characters as ?", { skip: process.platform === "win32" && "kept to POSIX file names" }, (t) => {
+  const home = bareHome();
+  const plug = bundle();
+  const name = `t${String.fromCodePoint(0x2060)}x`;
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, `${name}.mjs`), "const __omcRaceImport = (p) => p;\n");
+  try {
+    symlinkSync(join(outside, `${name}.mjs`), join(plug, "scripts", `${name}.mjs`));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  writeFileSync(join(plug, "scripts", `${name}.mjs.omcbak`), "// original\n");
+  const r = run(home, ["--revert", "--root", plug]);
+  assert.match(r.out, /되돌리지 않음: t\?x \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.ok(!r.out.includes(String.fromCodePoint(0x2060)), r.out);
+});
+
+test("a bare apply under GIT_DIR of a decoy with the same tag still unpacks the marketplace's copy", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target } = bareApplyFixture();
+  const decoy = join(root, `decoy${seq++}`);
+  mkdirSync(join(decoy, "scripts"), { recursive: true });
+  mkdirSync(join(decoy, "hooks"), { recursive: true });
+  writeFileSync(join(decoy, "hooks", "hooks.json"), HOOKS_JSON);
+  for (const n of ["foo", "stopper"]) writeFileSync(join(decoy, "scripts", `${n}.mjs`), "export const decoy = 1;\n");
+  assert.equal(runGit(["init", "-q"], decoy).status, 0);
+  tagged(decoy, `v${target}`);
+  const r = run(f.home, [], { GIT_DIR: join(decoy, ".git"), GIT_WORK_TREE: decoy });
+  assert.equal(r.code, 0, r.out);
+  const foo = read(join(f.cache, target, "scripts", "foo.mjs"));
+  assert.match(foo, /__omcRaceImport\(import\(/, "the marketplace's hook, patched");
+  assert.doesNotMatch(foo, /decoy/);
 });

@@ -263,6 +263,21 @@ test('a subagent run ending inside the main turn leaves the main turn running', 
   assert.equal(eng.seen.appended.length, 1);
 });
 
+test('a fork or subagent loop that starts during the main turn leaves the note aimed at the main turn', async () => {
+  const eng = await started();
+  await turnStart(eng, 'main');
+  await eng.raise('turn.start', { text: 'run pwd', turnId: 'fork-loop', agentId: 'agent-7' }, { turnId: 'fork-loop' });
+  await modelStep(eng, 'main', 0);
+  await run(eng);
+  await modelStep(eng, 'main', 1);
+  await stopped(eng);
+  await turnEnd(eng, 'main');
+  assert.equal(eng.seen.appended.length, 1, 'the main turn read the note, so it is not voided');
+  await turnEnd(eng, 'fork-loop', { agentId: 'agent-7' });
+  const res = await run(eng);
+  assert.match(res.text, /진행 중인 작업이 없/, 'idle once the main turn ended');
+});
+
 test('once the turn completes, or is interrupted, the session counts as idle again', async () => {
   for (const extra of [{}, { reason: 'aborted', isAborted: true }, { reason: 'error' }]) {
     const eng = await started();

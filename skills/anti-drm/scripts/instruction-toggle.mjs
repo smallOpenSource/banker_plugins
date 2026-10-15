@@ -34,7 +34,13 @@
  * start, makes turnOn and turnOff refuse rather than guess where the block ends.
  * So does a file that is not UTF-8 (CP949, UTF-16): written back as text it
  * would lose its bytes. A folder or FIFO at a file's name is never read: a
- * FIFO would make the read wait forever.
+ * FIFO would make the read wait forever. Nor is a socket or a link loop; and an
+ * AGENTS.md that is a link to nothing is refused by turnOn, which would
+ * otherwise create the file the link points at.
+ *
+ * Codex's files are read and written under a lock file (.banker-agents.lock in
+ * the Codex folder), so both skills turned on at once keep both blocks; a lock
+ * older than a minute is taken over.
  *
  * Results are { ok, message }; ok false means refused with nothing changed.
  * Anything else that goes wrong throws.
@@ -48,6 +54,7 @@ import {
   openSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -91,20 +98,40 @@ const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 // What sits at a name that is not a regular file: a folder, a FIFO or a device.
 // It is never read; reading a FIFO waits for a writer.
 const SPECIAL = Object.freeze({ bytes: null, text: null, special: true });
+// What sits at a name that is a link to nothing: Codex finds no file there, and writing would follow the link.
+const DANGLING = Object.freeze({ bytes: null, text: null, dangling: true });
+// What opening a name fails with when no regular file can be there: links that loop (ELOOP) or a socket (ENXIO,
+// EOPNOTSUPP). macOS answers a socket with errno 102, which Node 22 does not name ("Unknown system error -102"), so
+// the kind of what is there decides too.
+const NOT_A_FILE = new Set(["ELOOP", "ENXIO", "EOPNOTSUPP"]);
+// Whether path leads to something that is there and is no regular file: a folder, a socket, a FIFO or a device.
+const notAFile = (path) => {
+  try {
+    return !statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
+
+// What a failed open of path means: null for nothing there, DANGLING for a link to nothing, SPECIAL for a folder,
+// a socket or a link loop. Any other failure (permissions) is not "missing" and propagates.
+function openFailure(path, e) {
+  if (e.code === "ENOENT" || e.code === "ENOTDIR") return isLink(path) ? DANGLING : null;
+  if (e.code === "EISDIR" || NOT_A_FILE.has(e.code) || notAFile(path)) return SPECIAL;
+  throw e;
+}
 
 // A file's bytes and text, null when there is no such file. text is null when
 // the bytes are not UTF-8, which callers refuse: decoding them would replace
-// them with U+FFFD for good. Anything but a regular file is SPECIAL: the name
-// is opened without blocking and not read. Any other failure (permissions) is
-// not "missing" and propagates.
+// them with U+FFFD for good. A folder, a socket, a link loop or anything but a
+// regular file is SPECIAL, and a link to nothing is DANGLING: the name is
+// opened without blocking and not read.
 function readFile(path) {
   let fd;
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
-    if (e.code === "ENOENT" || e.code === "ENOTDIR") return null;
-    if (e.code === "EISDIR" || isDir(path)) return SPECIAL;
-    throw e;
+    return openFailure(path, e);
   }
   try {
     if (!fstatSync(fd).isFile()) return SPECIAL;
@@ -183,7 +210,7 @@ const claudeText = (t, rules) => `${t.header}\n${rules}\n`;
 // "off", "foreign" (not banker's file), or, when rules are given, "on" or
 // "stale" (other rules); without rules a banker file is "ours".
 function claudeState(t, file, rules) {
-  if (file === null) return "off";
+  if (file === null || file.dangling) return "off";
   if (file.text === null) return "foreign";
   const body = lf(noBom(file.text));
   if (!body.startsWith(t.ownerMark)) return "foreign";
@@ -350,12 +377,15 @@ const unpaired = (f) => f.spans === null;
 const hasBlock = (f) => f.spans !== null && f.spans.length > 0;
 const stripped = (f) => (f.text === null ? "" : strip(f.text, f.spans));
 
-// Whether two paths name one file: a link or a hard link between them.
+/** Whether two bigint stats name one file: one device and one inode, where the file system gives inodes at all. */
+export const sameInode = (x, y) => x.ino !== 0n && x.dev === y.dev && x.ino === y.ino;
+
+// Whether two paths name one file: a link (both resolve to one real path) or a hard link (one inode). A file system
+// that gives no inode numbers (0) cannot say so for hard links, so those count as two files.
 function sameFile(a, b) {
   try {
-    const x = statSync(a, { bigint: true });
-    const y = statSync(b, { bigint: true });
-    return x.dev === y.dev && x.ino === y.ino;
+    if (realpathSync(a) === realpathSync(b)) return true;
+    return sameInode(statSync(a, { bigint: true }), statSync(b, { bigint: true }));
   } catch {
     return false;
   }
@@ -371,7 +401,9 @@ function codexFiles(t, o) {
   const read = (name) => {
     const path = join(o.codexDir, name);
     const file = readFile(path);
-    if (file === null || file.special) return { path, bytes: null, text: null, spans: [], special: file !== null };
+    if (file === null || file.special || file.dangling) {
+      return { path, bytes: null, text: null, spans: [], special: file?.special === true, dangling: file?.dangling === true };
+    }
     return { path, ...file, spans: file.text === null ? null : blockSpansOf(file.text, t.open, t.close) };
   };
   const override = read("AGENTS.override.md");
@@ -402,20 +434,26 @@ function withBlock(t, text, rules) {
   return text === "" ? blockFor(t, rules, eol) : text + eol + blockFor(t, rules, eol);
 }
 
+// The state when the block is not in its place: "hidden" (only in an override with no text of its own),
+// "misplaced" (only in AGENTS.md while Codex reads the override), "dangling" (nowhere, and AGENTS.md is a link to
+// nothing that on must not write through) or "off".
+function placeState(files) {
+  if (hasBlock(files.other)) return files.other === files.all[0] ? "hidden" : "misplaced";
+  return files.target.dangling ? "dangling" : "off";
+}
+
 // "off", "on", "stale", "misplaced" (only in AGENTS.md while Codex reads the
 // override, so not applied), "hidden" (in the override with no text of its own,
-// applied but hiding AGENTS.md), "unpaired", "notutf8" or "notregular" (a
-// folder or FIFO at a file's name). Without rules any block in its place
-// counts as "on".
+// applied but hiding AGENTS.md), "dangling" (nowhere, and AGENTS.md is a link to
+// nothing), "unpaired", "notutf8" or "notregular" (a folder, FIFO, socket or
+// link loop at a file's name). Without rules any block in its place counts as "on".
 function codexState(t, files, rules) {
   if (files.all.some(special)) return "notregular";
   if (files.all.some(binary)) return "notutf8";
   if (files.all.some(unpaired)) return "unpaired";
-  const inTarget = hasBlock(files.target);
-  const inOther = hasBlock(files.other);
-  if (!inTarget) return inOther ? (files.other === files.all[0] ? "hidden" : "misplaced") : "off";
+  if (!hasBlock(files.target)) return placeState(files);
   if (rules === undefined) return "on";
-  return blockCurrent(t, files.target, rules) && !inOther ? "on" : "stale";
+  return blockCurrent(t, files.target, rules) && !hasBlock(files.other) ? "on" : "stale";
 }
 
 // Why these files cannot be written, or "" when they can. The folder counts
@@ -456,6 +494,84 @@ function hasOtherNames(path) {
   }
 }
 
+// The lock both banker skills take while they read and write Codex's instructions files: two on's at once would
+// each write the file back with only their own block. A lock is held for milliseconds; one older than a minute was
+// left by a run that died.
+const LOCK = ".banker-agents.lock";
+const LOCK_STALE_MS = 60_000;
+const LOCK_STEP_MS = 50;
+const SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+// Makes the lock file; false when one is there already. Anything else (permissions) throws.
+function tryLock(path, token) {
+  try {
+    writeFileSync(path, token, { flag: "wx", mode: 0o600 });
+    return true;
+  } catch (e) {
+    if (e.code === "EEXIST") return false;
+    throw e;
+  }
+}
+
+// Removes a lock a dead run left; true when there is none now, so the next try may take it. The name itself is
+// looked at, not where it leads: a link to nothing or a link loop there is a lock like any other. A lock dated more
+// than a minute away either way (a clock set back) is stale too. A folder there is none of this module's: it stays,
+// and the wait ends in a refusal.
+function dropStale(path) {
+  let st;
+  try {
+    st = lstatSync(path);
+  } catch (e) {
+    if (e.code === "ENOENT") return true; /* gone in between */
+    throw e;
+  }
+  if (st.isDirectory() || Math.abs(Date.now() - st.mtimeMs) <= LOCK_STALE_MS) return false;
+  rmSync(path, { force: true });
+  return true;
+}
+
+// Takes the lock: { path, token }, or null when another run held it for waitMs. The deadline is looked at every
+// round, so no lock spot, whatever is there, keeps the wait going past it.
+function takeLock(dir, waitMs) {
+  const path = join(dir, LOCK);
+  const token = `${process.pid} ${Date.now()} ${Math.random()}`;
+  const until = Date.now() + waitMs;
+  for (;;) {
+    if (tryLock(path, token)) return { path, token };
+    if (Date.now() >= until) return null;
+    if (!dropStale(path)) Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
+  }
+}
+
+// Gives the lock back while it is still this run's. The name is opened without blocking: a pipe put there is not
+// this run's lock and stays.
+function dropLock(lock) {
+  try {
+    if (readFile(lock.path)?.text === lock.token) rmSync(lock.path, { force: true });
+  } catch {
+    /* already gone */
+  }
+}
+
+// Runs fn holding the lock; a lock another run keeps past the wait is a refusal. A folder this account cannot write
+// takes no lock, and nothing in it can be written either: fn then only reads, and writeBlocked refuses any change,
+// so "already on" and "already off" answer as before.
+function locked(o, fn) {
+  let lock;
+  try {
+    lock = takeLock(o.codexDir, o.lockWaitMs ?? 5000);
+  } catch (e) {
+    if (denied(e)) return fn();
+    throw e;
+  }
+  if (!lock) return refuse(`다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다: ${where(join(o.codexDir, LOCK))}`);
+  try {
+    return fn();
+  } finally {
+    dropLock(lock);
+  }
+}
+
 const OMX_NOTE =
   "참고: omx setup 이 AGENTS.md 를 새로 만들면(--force, 덮어쓰기 확인, team 모드를 끈 상태의 omx setup) 이 블록이 사라집니다. 그 뒤에는 on 을 다시 실행하세요. --merge-agents 와 기본 omx setup 은 블록을 남깁니다.";
 
@@ -465,12 +581,23 @@ const shadowNote = (files) =>
     ? ""
     : `\n주의: AGENTS.override.md 에 다른 banker 블록(${files.shadowers.join(", ")})만 있어 Codex 가 AGENTS.md 를 읽지 않습니다. 그 스킬에서 on 을 실행해 블록을 옮기세요.`;
 
+// The file a refused state is about: the folder or FIFO, the file that is not UTF-8, or the one whose markers do
+// not pair up; null in any other state.
+function problemFile(files, state) {
+  const which = { notregular: special, notutf8: binary, unpaired }[state];
+  return which ? files.all.find(which) : null;
+}
+
 // The refusal for files on and off must not touch, or null.
 function codexRefusal(t, files, state) {
-  if (state === "notregular") return refuse(`일반 파일이 아니라 그대로 두었습니다: ${where(files.all.find(special).path)}`);
-  if (state === "notutf8") return refuse(`UTF-8 이 아닌 파일이라 그대로 두었습니다: ${where(files.all.find(binary).path)}`);
-  if (state === "unpaired") return refuse(`${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다: ${where(files.all.find(unpaired).path)}`);
-  return null;
+  const file = problemFile(files, state);
+  if (!file) return null;
+  const why = {
+    notregular: "일반 파일이 아니라 그대로 두었습니다",
+    notutf8: "UTF-8 이 아닌 파일이라 그대로 두었습니다",
+    unpaired: `${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다`,
+  }[state];
+  return refuse(`${why}: ${where(file.path)}`);
 }
 
 // What codexOn says it did. A block Codex does not read, because other banker
@@ -484,11 +611,16 @@ function onWords(t, state, unread) {
 
 function codexOn(t, o, getRules) {
   if (!isDir(o.codexDir)) return refuse(`Codex 설정 폴더가 없습니다: ${where(o.codexDir)}`);
+  return locked(o, () => codexOnHeld(t, o, getRules));
+}
+
+function codexOnHeld(t, o, getRules) {
   const rules = getRules();
   const files = codexFiles(t, o);
   const state = codexState(t, files, rules);
   const refusal = codexRefusal(t, files, state);
   if (refusal) return refusal;
+  if (files.target.dangling) return refuse(`끊어진 링크라 그대로 두었습니다: ${where(files.target.path)}`);
   const words = onWords(t, state, files.shadowers.length > 0);
   const tail = `${where(files.target.path)}${shadowNote(files)}`;
   if (state === "on") return done(`Codex: ${words}. ${tail}`);
@@ -503,6 +635,10 @@ function codexOn(t, o, getRules) {
 
 function codexOff(t, o) {
   if (!isDir(o.codexDir)) return done(`Codex: 설정 폴더가 없어 끌 것이 없습니다 (변경 없음). ${where(o.codexDir)}`);
+  return locked(o, () => codexOffHeld(t, o));
+}
+
+function codexOffHeld(t, o) {
   const files = codexFiles(t, o);
   const refusal = codexRefusal(t, files, codexState(t, files));
   if (refusal) return refusal;
@@ -528,6 +664,7 @@ const STATE_TEXT = {
   notutf8: "UTF-8 이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   notregular: "일반 파일이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   unpaired: "표시의 짝이 맞지 않음 (on, off 모두 거부. 남은 표시 줄 정리 필요)",
+  dangling: "꺼짐, 단 AGENTS.md 가 끊어진 링크라 on 이 거부함 (링크 확인 필요)",
 };
 
 // A state as the status line says it.
@@ -555,7 +692,7 @@ function codexLook(t, o, rules) {
   const files = codexFiles(t, o);
   const state = codexState(t, files, rules);
   const shadowed = files.shadowers.length > 0 && (state === "on" || state === "stale");
-  return { state: shadowed ? "shadowed" : state, path: files.target.path, who: files.shadowers };
+  return { state: shadowed ? "shadowed" : state, path: (problemFile(files, state) ?? files.target).path, who: files.shadowers };
 }
 
 /** One status line per runtime: "- Claude Code: ..." and "- Codex: ...". rules may be undefined. */
@@ -576,7 +713,7 @@ export function stateLines(t, o, rules) {
  */
 export function present(t, runtime, o) {
   if (runtime === "claude") return isDir(o.claudeDir) && claudeState(t, readFile(claudeFile(t, o))) === "ours";
-  return isDir(o.codexDir) && !["off", "notutf8", "notregular"].includes(codexState(t, codexFiles(t, o)));
+  return isDir(o.codexDir) && !["off", "notutf8", "notregular", "dangling"].includes(codexState(t, codexFiles(t, o)));
 }
 
 const knownRuntime = (runtime) => {

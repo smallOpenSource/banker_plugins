@@ -2520,6 +2520,28 @@ class TestPageRedaction(_ReviewCase):
         self.assertNotIn("ant-api03", err)
 
 
+class TestHasVisible(unittest.TestCase):
+    """What counts as a summary a person can see (3.0.5): blank-looking letters alone do not."""
+
+    BLANK = [
+        "", chr(0) * 8, chr(0xFEFF), chr(0x200B) + chr(0x200D), chr(0x3164), chr(0x115F) + chr(0x1160), chr(0xFFA0),
+        chr(0x2800), chr(0xA0) + chr(0x2028), chr(0xFE0F), chr(0xE0100), chr(0xE000), chr(0x0378),
+        "".join(map(chr, (0x034F, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180F))),
+    ]
+    VISIBLE = [
+        "a", "요약", "e" + chr(0x301), chr(0x1F44D), chr(0x1F468) + chr(0x200D) + chr(0x1F469), chr(0x1100),
+        chr(0x3131), chr(0x263A) + chr(0xFE0F), chr(0x845B) + chr(0xE0100),
+    ]
+
+    def test_blank_looking_text_holds_nothing_visible(self):
+        for text in self.BLANK:
+            self.assertFalse(L._has_visible(text), [hex(ord(c)) for c in text])
+
+    def test_a_visible_letter_counts_whatever_blank_ones_come_with_it(self):
+        for text in self.VISIBLE:
+            self.assertTrue(L._has_visible(text), [hex(ord(c)) for c in text])
+
+
 class TestCacheFileNames(_ReviewCase):
     """Summaries are cached as .md, which a DRM that encrypts .txt leaves readable (3.0.3).
     A summary cached as .txt by 3.0.2 or earlier is still read."""
@@ -2553,6 +2575,27 @@ class TestCacheFileNames(_ReviewCase):
         self.assertFalse(hit)
         self.assertTrue(summary)
         self.assertEqual(path.read_text(encoding="utf-8"), summary)
+
+    def test_a_cache_of_only_blank_looking_letters_is_summarized_again(self):
+        path = L.cache_dir("s") / ("a1-%s.md" % self._digest())
+        path.write_text("".join(map(chr, (0xFEFF, 0x200B, 0x3164, 0x2800, 0x3000))) + "\n", encoding="utf-8")
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertFalse(hit)
+        self.assertTrue(summary)
+        self.assertEqual(path.read_text(encoding="utf-8"), summary)
+
+    def test_a_cache_with_a_visible_letter_among_blank_ones_is_a_hit(self):
+        cached = chr(0x200B) + "요약" + chr(0x3164)
+        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_text(cached, encoding="utf-8")
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertTrue(hit)
+        self.assertEqual(summary, cached)
+
+    def test_a_cache_of_nul_bytes_is_summarized_again(self):
+        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_bytes(bytes(64))
+        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        self.assertFalse(hit)
+        self.assertTrue(summary)
 
     def test_detect_secrets_scans_a_temp_file_that_is_not_txt(self):
         import types

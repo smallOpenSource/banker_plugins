@@ -1,6 +1,6 @@
 // Tests for anti-drm.mjs. Run from anywhere: node --test <repo>/skills/anti-drm/scripts/anti-drm.test.mjs
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -856,4 +856,111 @@ test("the troubleshooting row for a folder or FIFO at an instructions file says 
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
+});
+
+// --stdin used to read all of standard input before checking its size, so input that never ends never ended it.
+test("--stdin stops reading once the input passes 64 KiB, so endless input ends at once", async () => {
+  const s = setup();
+  const child = spawn(process.execPath, [CLI, "config", "--stdin"], { env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  child.stdin.on("error", () => {});
+  const chunk = Buffer.alloc(16 * 1024, "a");
+  const feed = setInterval(() => { if (!child.stdin.destroyed) child.stdin.write(chunk); }, 5);
+  const code = await new Promise((resolve) => {
+    const timer = setTimeout(() => { child.kill(); resolve("timeout"); }, 10000);
+    child.on("exit", (c) => { clearTimeout(timer); resolve(c); });
+  });
+  clearInterval(feed);
+  child.stdin.destroy();
+  assert.equal(code, 1, out);
+  assert.match(out, /표준 입력이 64KiB 보다 큽니다/);
+  assert.equal(readConfig(s.o.configFile), null);
+});
+
+test("--stdin with no settings line refuses on and config alike instead of falling back to saved settings", () => {
+  const s = setup();
+  assert.equal(cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s)).code, 0);
+  for (const args of [["on", "--runtime", "claude", "--stdin"], ["config", "--stdin"]]) {
+    for (const input of ["", "\n \r\n"]) {
+      const r = cliIn(args, input, s);
+      assert.equal(r.code, 1, `${args.join(" ")}: ${r.out}`);
+      assert.match(r.out, /표준 입력에 설정 줄이 없습니다/, args.join(" "));
+    }
+  }
+  assert.equal(existsSync(s.rulesFile), false, "on did not fall back to the saved settings");
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".txt"]);
+});
+
+test("--stdin: spaces around a value are dropped, and the usage says --stdin waits for its input", () => {
+  const s = setup();
+  const r = cliIn(["config", "--stdin"], "deny= .txt \nalt= .md , .tsv \ntsv= comma  \n", s);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(readConfig(s.o.configFile).config.tsvDelimiter, "comma");
+  assert.match(cli(["bogus"], cliEnv(s)).out, /--stdin 은 표준 입력이 끝날 때까지 기다립니다/);
+});
+
+test("tone-compact and anti-drm turned on at the same moment keep both blocks", async () => {
+  const TC_CLI = fileURLToPath(new URL("../../tone-compact/scripts/tone-compact.mjs", import.meta.url));
+  for (let round = 0; round < 20; round++) {
+    const s = setup();
+    writeFileSync(s.agents, "# base\n");
+    const env = { ...process.env, CLAUDECODE: "", ...cliEnv(s) };
+    const runs = [
+      [TC_CLI, "on", "--runtime", "codex"],
+      [CLI, "on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"],
+    ].map((args) => new Promise((resolve) => spawn(process.execPath, args, { env }).on("exit", resolve)));
+    assert.deepEqual(await Promise.all(runs), [0, 0], `round ${round}`);
+    const text = read(s.agents);
+    assert.equal(blocks(text, TC_OPEN), 1, `round ${round}: tone-compact`);
+    assert.equal(blocks(text), 1, `round ${round}: anti-drm`);
+  }
+});
+
+test("SKILL.md checks each heredoc line before it runs, and no end word can pass that check", () => {
+  const text = read(SKILL);
+  assert.ok(text.includes("`^(deny|alt|tsv)=[a-z0-9., ]*$`"), "the line check is in SKILL.md");
+  const line = /^(deny|alt|tsv)=[a-z0-9., ]*$/;
+  for (const end of ["ANTI_DRM_SETTINGS", "'@"]) assert.equal(line.test(end), false, end);
+  const doc = /<<'ANTI_DRM_SETTINGS'\n([\s\S]*?)\n\s*ANTI_DRM_SETTINGS\n/.exec(text);
+  assert.ok(doc, "the heredoc example is there");
+  for (const l of doc[1].split("\n").map((x) => x.trim())) assert.match(l, line, l);
+});
+
+// Rows that send the agent at a user's file must ask first; none may tell it to clear one away.
+const ASK_FIRST = ["설정 파일이 올바르지 않습니다", "일반 파일이 아니라 설정을 저장하지 않았습니다", "64KiB 보다 큰 파일이라",
+  "같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
+  "다른 banker 지침 작업이 끝나지 않아"];
+test("troubleshooting rows never tell the agent to clear, delete, move or rename a user's file without asking first", () => {
+  const table = read(SKILL).split("## 문제 해결")[1].split("\n## ")[0];
+  const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
+  for (const row of rows) assert.doesNotMatch(row, /치우|치운|치움|이름 변경 또는 삭제|지운 뒤 다시|옮긴 뒤 다시/, row);
+  for (const head of ASK_FIRST) {
+    const row = rows.find((l) => l.startsWith(`| ${head}`));
+    assert.ok(row, head);
+    assert.match(row, /물은 뒤/, row);
+  }
+});
+
+test("while other banker blocks alone fill the override, the stale and moved cases also say first that Codex does not read ours", () => {
+  const codexLine = (r) => r.message.split("\n").find((l) => l.startsWith("Codex:"));
+  const stale = setup();
+  writeFileSync(stale.agents, "# base\n");
+  writeFileSync(stale.override, "# mine\n");
+  assert.ok(tcOn("codex", stale.tc).ok);
+  writeFileSync(stale.override, read(stale.override).replace("# mine\n", ""));
+  assert.ok(turnOn("codex", stale.o, FLAGS).ok);
+  writeFileSync(stale.agents, read(stale.agents).replace("`.pdf`", "`.pdx`"));
+  const r1 = turnOn("codex", stale.o);
+  assert.match(codexLine(r1), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /, r1.message);
+  const moved = setup();
+  writeFileSync(moved.agents, "# base\n");
+  writeFileSync(moved.override, "# mine\n");
+  assert.ok(tcOn("codex", moved.tc).ok);
+  assert.ok(turnOn("codex", moved.o, FLAGS).ok);
+  writeFileSync(moved.override, read(moved.override).replace("# mine\n", ""));
+  const r2 = turnOn("codex", moved.o);
+  assert.match(codexLine(r2), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /, r2.message);
+  assert.equal(blocks(read(moved.agents)), 1, "ours moved to AGENTS.md");
+  assert.equal(blocks(read(moved.override)), 0);
 });

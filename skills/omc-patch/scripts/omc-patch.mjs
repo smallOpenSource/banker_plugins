@@ -24,8 +24,9 @@
 import {
   readFileSync, writeFileSync, writeSync, existsSync, copyFileSync, readdirSync,
   unlinkSync, mkdirSync, rmSync, symlinkSync, lstatSync, realpathSync,
+  chmodSync, renameSync, statSync, constants as FS_CONST,
 } from "node:fs";
-import { join, dirname, resolve, sep as PATH_SEP, delimiter as PATH_LIST_SEP } from "node:path";
+import { join, dirname, basename, resolve, sep as PATH_SEP, delimiter as PATH_LIST_SEP } from "node:path";
 import { homedir, hostname } from "node:os";
 import { execFileSync } from "node:child_process";
 
@@ -138,22 +139,58 @@ function entryVersion(e, versions) {
 
 // git 이 일할 저장소를 cwd 와 상관없이 정하는 변수. git 훅처럼 GIT_DIR 을 내보낸 셸에서 이 도구를 부르면
 // 마켓플레이스가 아니라 그 저장소의 origin 을 고정했다(/tmp 에서 재현). git 이 다른 저장소로 옮겨 갈 때
-// 지우는 목록(`git rev-parse --local-env-vars`, git 2.43)과 같다. Windows 는 변수 이름의 대소문자를 가리지 않는다.
+// 지우는 목록(`git rev-parse --local-env-vars`, git 2.43)의 고정 사본이다. 실행할 때 이 PC 의 git 이 말하는 목록을
+// 더한다(gitRepoVars). Windows 는 변수 이름의 대소문자를 가리지 않는다.
 const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
   "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
   "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"]);
+
+// 지울 변수: 고정 목록에 이 PC 의 git 이 말하는 목록을 더한다. 새 git 이 변수를 더해도 따라간다. git 을 부를 수
+// 없으면 고정 목록만 쓴다. 처음 한 번만 묻는다.
+let repoVars = null;
+function gitRepoVars() {
+  if (repoVars) return repoVars;
+  repoVars = new Set(GIT_REPO_VARS);
+  try {
+    // 이름으로 부르는 프로그램(git, tar)은 홈 폴더에서 돌린다. Windows 는 현재 폴더의 git.exe 를 PATH 보다 먼저 찾는다.
+    const out = execFileSync("git", ["rev-parse", "--local-env-vars"], { cwd: homedir(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    for (const v of out.split(/\s+/)) if (/^GIT_[A-Z0-9_]+$/.test(v)) repoVars.add(v);
+  } catch { /* 고정 목록만 */ }
+  return repoVars;
+}
+
+// 환경 변수로 준 git 설정은 모든 호출에서 지운다. 그 값이 origin 을 바꿔 보이게 할 수 있다. 업데이트 경로의 fetch 에만
+// 프록시와 TLS 신뢰 설정(회사망의 http.proxy 같은 값)을 다시 번호를 매겨 넘긴다. url.*.insteadOf 는 다른 저장소의 태그를
+// 받아 오고 core.hooksPath 는 훅을 돌리므로 넘기지 않는다. GIT_CONFIG_PARAMETERS(`git -c`)도 넘기지 않는다.
+const isEnvConfig = (k) => /^GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)$/.test(k.toUpperCase());
+const FETCH_KEYS = /^https?\.(proxy|sslcainfo|sslverify|proxyauthmethod)$/i;
+// 많아야 64쌍을 보고, 빠진 키에서 멈춘다(엄청난 GIT_CONFIG_COUNT 를 끝까지 돌지 않는다).
+function fetchConfig(env) {
+  const kept = [];
+  for (let i = 0; i < Math.min(Number(env.GIT_CONFIG_COUNT) || 0, 64); i++) {
+    const key = env[`GIT_CONFIG_KEY_${i}`];
+    if (key === undefined) break;
+    if (FETCH_KEYS.test(key)) kept.push([key, env[`GIT_CONFIG_VALUE_${i}`] ?? ""]);
+  }
+  const out = kept.length ? { GIT_CONFIG_COUNT: String(kept.length) } : {};
+  kept.forEach(([k, v], i) => Object.assign(out, { [`GIT_CONFIG_KEY_${i}`]: k, [`GIT_CONFIG_VALUE_${i}`]: v }));
+  return out;
+}
+
 // 마켓플레이스의 .git 이 깨졌으면(중단된 clone) git 은 위로 올라가 다음 저장소(dotfiles 로 관리하는 ~/.claude 등)를
 // 고른다. 바로 위 폴더를 천장(GIT_CEILING_DIRECTORIES)으로 두어 마켓플레이스 밖으로 나가지 못하게 한다.
 // 마켓플레이스가 링크면 실제 경로 쪽 위 폴더도 막는다. 셸에 있던 천장 값은 대소문자와 상관없이 이 값으로 바꾼다.
-const gitEnv = () => {
-  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
+const gitEnv = ({ network = false } = {}) => {
+  const vars = gitRepoVars();
+  const drop = (k) => isEnvConfig(k) || vars.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
+  if (network) Object.assign(env, fetchConfig(process.env));
   env.GIT_CEILING_DIRECTORIES = [...new Set([dirname(MARKET), dirname(realOr(MARKET))])].join(PATH_LIST_SEP);
   return env;
 };
 
-function git(args, cwd = MARKET) {
-  return execFileSync("git", args, { cwd, env: gitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+function git(args, cwd = MARKET, opts = {}) {
+  return execFileSync("git", args, { cwd, env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 // ── 1. 업데이트 ──────────────────────────────────────────────────────────────
@@ -174,14 +211,14 @@ function ensureVersion() {
 
 // 마켓플레이스가 제 git 저장소이고 git 과 tar 가 있어야 TARGET_VERSION 을 꺼낼 수 있다.
 function canInstallTarget() {
-  if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${MARKET}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
-  if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${MARKET}`); return false; }
+  if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${oneLine(MARKET)}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
+  if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${oneLine(MARKET)}`); return false; }
 
   // git 과 tar 에 의존한다. Windows 10+ / macOS / 대부분의 Linux 배포판에는 둘 다 있지만,
   // 최소 설치 컨테이너나 tar 없는 환경에서는 없을 수 있다. 여기서 못 찾으면 아래에서
   // execFileSync 가 ENOENT 로 죽어 원인이 안 보이므로, 먼저 확인하고 무엇이 없는지 말한다.
   for (const [cmd, why] of [["git", "마켓플레이스에서 소스를 꺼내는 데"], ["tar", "그 소스를 푸는 데"]]) {
-    try { execFileSync(cmd, ["--version"], { stdio: "ignore" }); }
+    try { execFileSync(cmd, ["--version"], { cwd: homedir(), stdio: "ignore" }); }
     catch { bad(`${cmd} 를 찾을 수 없습니다 (${why} 필요). 설치한 뒤 다시 실행하거나, --no-update 로 패치만 적용하십시오.`); return false; }
   }
   return true;
@@ -189,7 +226,7 @@ function canInstallTarget() {
 
 // 태그 v<TARGET_VERSION> 의 커밋. 못 찾으면 null.
 function targetSha() {
-  try { git(["fetch", "--tags", "--quiet", "origin"]); } catch { /* 오프라인이어도 로컬 태그가 있으면 진행 */ }
+  try { git(["fetch", "--tags", "--quiet", "origin"], MARKET, { network: true }); } catch { /* 오프라인이어도 로컬 태그가 있으면 진행 */ }
   try { return git(["rev-parse", `v${TARGET_VERSION}^{}`]); }
   catch { bad(`태그 v${TARGET_VERSION} 를 마켓플레이스에서 찾을 수 없음`); return null; }
 }
@@ -199,7 +236,7 @@ function unpackTarget(dest) {
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
   git(["archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")]);
-  execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { stdio: "ignore" });
+  execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { cwd: homedir(), stdio: "ignore" });
   unlinkSync(join(dest, "_src.tar"));
 }
 
@@ -212,25 +249,75 @@ function linkNodeModules(dest, have) {
     try { symlinkSync(join(CACHE, prev, "node_modules"), nm, "junction"); ok(`node_modules → ${prev} 링크`); }
     catch (e) { bad(`node_modules 링크 실패(${e.code}). \`npm install\` 이 필요할 수 있음`); }
   } else if (!existsSync(nm)) {
-    bad(`node_modules 없음. ${dest} 에서 \`npm install --omit=dev\` 를 실행하십시오`);
+    bad(`node_modules 없음. ${oneLine(dest)} 에서 \`npm install --omit=dev\` 를 실행하십시오`);
   }
 }
 
-// 활성 버전 전환
+// 활성 버전 전환. installed_plugins.json 을 읽거나 쓰지 못하면 이름과 이유를 대고 false(호출부가 중단한다).
 function switchActive(sha, have) {
-  const j = JSON.parse(readFileSync(INSTALLED, "utf8"));
-  const e = j.plugins?.[PLUGIN_KEY]?.[0];
-  if (!e) { bad(`installed_plugins.json 에 ${PLUGIN_KEY} 항목이 없음 — 수동 확인 필요`); return false; }
-  if (!existsSync(`${INSTALLED}.omcbak`)) copyFileSync(INSTALLED, `${INSTALLED}.omcbak`);
-  const sep = e.installPath.includes("//") ? "//" : e.installPath.includes("\\") ? "\\" : "/";
-  e.installPath = e.installPath.split(sep).slice(0, -1).concat(TARGET_VERSION).join(sep);
-  e.version = TARGET_VERSION;
-  e.gitCommitSha = sha;
-  e.lastUpdated = new Date().toISOString();
-  writeFileSync(INSTALLED, JSON.stringify(j, null, 2) + "\n", "utf8");
+  try {
+    const j = JSON.parse(readFileSync(INSTALLED, "utf8"));
+    const e = j.plugins?.[PLUGIN_KEY]?.[0];
+    if (!e) { bad(`installed_plugins.json 에 ${PLUGIN_KEY} 항목이 없음 — 수동 확인 필요`); return false; }
+    backup(INSTALLED, `${INSTALLED}.omcbak`);
+    const sep = e.installPath.includes("//") ? "//" : e.installPath.includes("\\") ? "\\" : "/";
+    e.installPath = e.installPath.split(sep).slice(0, -1).concat(TARGET_VERSION).join(sep);
+    e.version = TARGET_VERSION;
+    e.gitCommitSha = sha;
+    e.lastUpdated = new Date().toISOString();
+    writeAtomic(INSTALLED, JSON.stringify(j, null, 2) + "\n");
+  } catch (err) {
+    bad(`쓰지 못함: installed_plugins.json (${failWhy(err)})`);
+    return false;
+  }
   ok(`${have[0] || "없음"} → ${TARGET_VERSION} (sha ${sha.slice(0, 12)})`);
   return true;
 }
+
+// ── 쓰기 ─────────────────────────────────────────────────────────────────────
+// 같은 폴더의 새 임시 파일(있으면 실패하는 열기)에 쓴 뒤 rename 으로 바꾼다. 하드 링크로 이어진 다른 이름(폴더 밖
+// 파일)의 내용은 그대로 둔다. 쓸 파일이 링크면 쓰는 때의 실제 경로에서 바꿔 링크를 남긴다. 그래서 확인 뒤 그 자리가
+// 폴더 밖 링크로 바뀌면 그 실제 파일이 바뀐다(확인과 쓰기 사이의 틈은 줄었을 뿐 없지 않다). 권한은 mode 를 주면
+// 그 값, 아니면 원래 파일의 것(없으면 0644)이다.
+function writeAtomic(file, data, mode) {
+  const real = realOr(file);
+  const tmp = join(dirname(real), `.${basename(real)}.omc-tmp-${process.pid}`);
+  rmSync(tmp, { force: true });
+  try {
+    writeFileSync(tmp, data, { flag: "wx" });
+    chmodSync(tmp, mode ?? modeOf(real));
+    renameRetry(tmp, real);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+// 파일의 권한 비트. 읽을 수 없으면 0644.
+function modeOf(p) {
+  try { return statSync(p).mode & 0o777; } catch { return 0o644; }
+}
+
+// Windows 에서 다른 프로세스가 연 파일은 rename 이 잠시 거부된다(EPERM, EBUSY, EACCES). 100ms 간격으로 5번까지 다시 한다.
+const RENAME_PAUSE = new Int32Array(new SharedArrayBuffer(4));
+function renameRetry(from, to) {
+  for (let i = 0; ; i++) {
+    try { renameSync(from, to); return; }
+    catch (e) {
+      if (i >= 5 || !["EPERM", "EBUSY", "EACCES"].includes(e.code)) throw e;
+      Atomics.wait(RENAME_PAUSE, 0, 0, 100);
+    }
+  }
+}
+
+// 백업을 만든다. 이미 있으면 처음 백업을 지킨다. 있으면 실패하는 복사라 확인과 복사 사이에 틈이 없다.
+function backup(file, bak) {
+  try { copyFileSync(file, bak, FS_CONST.COPYFILE_EXCL); }
+  catch (e) { if (e.code !== "EEXIST") throw e; }
+}
+
+// 쓰기 실패의 이유 한 줄.
+const failWhy = (e) => oneLine(e.code || e.message);
 
 // ── 2. 훅 패치 ───────────────────────────────────────────────────────────────
 function hookNames(root) {
@@ -515,10 +602,19 @@ function syntaxError(file) {
   }
 }
 
-// 이 도구가 아닌 «손» 이 import 를 감싼 흔적. 우리 헬퍼는 안 쓰고 Promise.race 를
-// import 바로 앞에 직접 붙인 모양이다.
-const looksHandPatched = (src) =>
-  !src.includes("__omcRaceImport") && /Promise\.race\s*\(\s*\[?[\s\S]{0,120}?\bimport\s*\(/.test(src);
+// 이 도구가 아닌 «손» 이 import 를 감싼 흔적. 4.15.7 의 손 수정은 최상위의 `await import(` 를
+// `await Promise.race([import(` 로 바꿔치기했다. 그 모양이 최상위(함수 밖) 코드 자리에 있을 때만 손 수정으로 본다.
+// 문자열, 주석, 함수 몸통 안의 같은 모양이나 import 가 첫 원소가 아닌 race 는 상류 코드일 수 있어 세지 않는다.
+const HAND_PATCH = /^await\s+Promise\.race\s*\(\s*\[\s*import\s*\(/;
+function looksHandPatched(src) {
+  if (src.includes("__omcRaceImport")) return false;
+  let found = false;
+  scanTopLevelAwaitImports(src, (i, fnStack) => {
+    if (found || src[i] !== "a" || fnStack.some(Boolean) || (i > 0 && ID_CH.test(src[i - 1]))) return;
+    found = HAND_PATCH.test(src.slice(i, i + 80));
+  });
+  return found;
+}
 
 function patchHooks(root) {
   const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, foreign: [], orphan: [], failed: [] };
@@ -539,11 +635,7 @@ function patchHooks(root) {
 
 function revertScript(root, n, f, r) {
   const bak = `${f}.omcbak`;
-  if (existsSync(bak)) {
-    const why = whyNotWrite(root, f, bak);
-    if (why) { bad(`되돌리지 않음: ${shown(n)} (${why})`); r.fail++; r.failed.push(f); return; }
-    copyFileSync(bak, f); unlinkSync(bak); log(`  되돌림  ${shown(n)}`); r.done++; return;
-  }
+  if (existsSync(bak)) { restoreScript(root, n, f, bak, r); return; }
   // 백업이 없는데 이미 감싸여 있으면 되돌릴 원본이 디스크에 없다. 조용히 넘기지 않고 이름을 댄다.
   //   - 우리 헬퍼가 있으면: 이 도구나 옛 킷이 고쳤는데 백업이 사라진 파일(복사해 온 폴더 등)
   //   - 손 패치: `await import(` 를 `await Promise.race([import(` 로 «바꿔치기» 해서 await import
@@ -553,31 +645,66 @@ function revertScript(root, n, f, r) {
   else if (looksHandPatched(src)) r.foreign.push(n);
 }
 
+// 백업으로 되돌린다. 쓸 수 없는 자리거나 쓰지 못하면 이유를 대고 실패로 센다.
+function restoreScript(root, n, f, bak, r) {
+  const why = whyNotWrite(root, f, bak) ?? restoreFrom(f, bak);
+  if (!why) { log(`  되돌림  ${shown(n)}`); r.done++; return; }
+  bad(`되돌리지 않음: ${shown(n)} (${why})`);
+  // 옛 도구가 폴더 밖 링크 너머에서 고친 파일이다. 이 도구는 폴더 밖에 쓰지 않으므로 손 복구 방법을 알린다.
+  if (why === OUTSIDE) {
+    log(`      손으로 되돌리려면 ${oneLine(realOr(bak))} 을 확인한 뒤 그 내용으로 ${oneLine(realOr(f))} 을 덮어쓰고 백업을 지우십시오.`);
+  }
+  r.fail++; r.failed.push(f);
+}
+
+// 백업의 내용으로 파일을 바꾸고 백업을 지운다. 쓰지 못하면 그 이유, 아니면 null.
+function restoreFrom(f, bak) {
+  try { writeAtomic(f, readFileSync(bak)); unlinkSync(bak); return null; }
+  catch (e) { return `쓰지 못함: ${failWhy(e)}`; }
+}
+
 function checkOrPatchScript(root, n, f, r) {
   const info = siteInfo(readFileSync(f, "utf8"));
   // 헬퍼 자리 결함은 check 와 apply 모두 이름을 댄다. 이미 감싼 파일이라 transform 으로는
   // 고칠 수 없으므로 apply 도 건드리지 않고, 되돌린 뒤 다시 적용하라고 안내한다(misplacedHint).
   if (info.state === "misplaced") { bad(`헬퍼 자리 결함: ${n} (${info.why})`); r.misplaced++; return; }
   if (info.state !== "needs") { r.skip++; return; }
-  if (MODE === "check") { bad(`패치 필요: ${n}`); r.need++; return; }
-
   const bak = `${f}.omcbak`;
   const why = whyNotWrite(root, f, bak);
+  // --check 도 쓰기 조건을 본다. apply 에서야 «쓰지 않음» 이 되는 파일을 진단에서 미리 알린다.
+  if (MODE === "check") { bad(why ? `패치 필요, 쓸 수 없음: ${n} (${why})` : `패치 필요: ${n}`); r.need++; return; }
   if (why) { bad(`쓰지 않음: ${n} (${why})`); r.fail++; return; }
   const out = transform(readFileSync(f, "utf8"));
   if (!out) { bad(`변환 실패: ${n}`); r.fail++; return; }
-  if (!existsSync(bak)) copyFileSync(f, bak);
-  writeFileSync(f, out, "utf8");
-  const err = syntaxError(f);
-  if (err) { copyFileSync(bak, f); bad(`문법오류로 롤백: ${n}\n      ${err}`); r.fail++; return; }
-  r.done++;
+  if (writePatched(f, bak, out, n)) r.done++;
+  else r.fail++;
 }
 
+// 패치한 글을 쓴다. 백업을 먼저 만들고, 쓴 파일이 문법 검사를 통과하지 못하면 백업으로 되돌린다. 성공이면 true.
+// 쓰지 못하면 이유를 대고 false 다(예전에는 예외로 멈췄다).
+function writePatched(f, bak, out, n) {
+  try {
+    backup(f, bak);
+    writeAtomic(f, out);
+  } catch (e) {
+    bad(`쓰지 못함: ${n} (${failWhy(e)})`);
+    return false;
+  }
+  const err = syntaxError(f);
+  if (!err) return true;
+  writeAtomic(f, readFileSync(bak));
+  bad(`문법오류로 롤백: ${n}\n      ${oneLine(err)}`);
+  return false;
+}
+
+// 폴더 밖 쓰기를 거부한 이유. 되돌리기는 이 이유일 때 손 복구 방법을 함께 알린다.
+const OUTSIDE = "파일이 플러그인 폴더 밖에 있음";
+
 // 쓰기 전에 본다. 쓸 파일이 (링크를 따라가서) 플러그인 폴더 밖이거나 백업 자리가 링크면 그 이유를,
-// 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, copyFileSync 가 링크가 가리키는 곳에 쓴다.
+// 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, 복사가 링크가 가리키는 곳에 쓴다.
 function whyNotWrite(root, file, bak) {
   if (isLink(bak)) return "백업 자리가 링크";
-  if (!insideRoot(root, file)) return "파일이 플러그인 폴더 밖에 있음";
+  if (!insideRoot(root, file)) return OUTSIDE;
   return null;
 }
 
@@ -606,17 +733,21 @@ const fileKey = (p) => (process.platform === "win32" ? realOr(p).toLowerCase() :
 function patchHooksJson(root) {
   const hj = join(root, "hooks", "hooks.json");
   if (!existsSync(hj)) return "no-file";
-  if (MODE !== "check") {
-    const why = whyNotWrite(root, hj, `${hj}.omcbak`);
-    if (why) { bad(`hooks.json 을 건드리지 않음 (${why})`); return "unsafe"; }
+  const why = whyNotWrite(root, hj, `${hj}.omcbak`);
+  if (why && MODE !== "check") { bad(`hooks.json 을 건드리지 않음 (${why})`); return "unsafe"; }
+  try {
+    return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj, why);
+  } catch (e) {
+    // JSON 오류 문구는 파일의 글을 담으므로 내지 않는다.
+    bad(e instanceof SyntaxError ? "hooks.json 을 읽지 못함 (JSON 이 아님)" : `hooks.json 을 쓰지 못함 (${failWhy(e)})`);
+    return "unsafe";
   }
-  return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj);
 }
 
 // 되돌린 결과. ambiguous 와 linked 는 hooks.json 을 되돌리지 못하고 남긴 것이라 끝 줄이 센다.
 function revertHooksJson(root, hj) {
   const bak = `${hj}.omcbak`;
-  if (existsSync(bak)) { copyFileSync(bak, hj); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
+  if (existsSync(bak)) { writeAtomic(hj, readFileSync(bak)); unlinkSync(bak); log("  되돌림  hooks.json"); return "reverted"; }
   // 이 도구의 백업이 없을 때 PostToolUse 가 그대로면 되돌릴 것이 없다. 옆의 수동 백업으로 덮어쓰면
   // 지금 내용을 잃는다.
   if (hasPostToolUse(hj)) return "no-backup";
@@ -626,7 +757,7 @@ function revertHooksJson(root, hj) {
   const { usable, unsafe } = manualBackups(root, dir);
   if (unsafe.length) bad(`hooks.json 수동 백업 후보가 링크이거나 플러그인 폴더 밖이라 쓰지 않음: ${unsafe.map(shown).join(", ")}`);
   if (usable.length === 1) {
-    copyFileSync(join(dir, usable[0]), hj);
+    writeAtomic(hj, readFileSync(join(dir, usable[0])));
     log(`  되돌림  hooks.json  (수동 백업 사용: ${shown(usable[0])})`);
     return "reverted";
   }
@@ -634,7 +765,7 @@ function revertHooksJson(root, hj) {
   return unsafe.length ? "linked" : "no-backup";
 }
 
-// 파일에서 읽은 값(파일 이름, PINNED 의 host)을 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
+// 파일에서 읽은 값(파일 이름, PINNED 의 host)과 출력하는 경로를 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
 // SKILL 은 [!] 줄을 그대로 보고하라고 하므로, 값이 제 줄을 새로 시작하면 도구가 낸 줄처럼 읽힌다.
 // 바꾸는 문자: 제어 문자(Cc), 서식 문자(Cf: 폭 없는 공백, 방향 표시, 단어 결합자, 태그 문자), 줄과 문단 구분자,
 // 사용자 영역과 미할당, 변이 선택자, 기본 무시 글자(U+3164 같은 빈 글자), 점자 빈칸, ASCII 밖 공백.
@@ -643,6 +774,10 @@ function revertHooksJson(root, hj) {
 const UNSAFE_CH = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
 const oneLine = (s) => String(s).replace(UNSAFE_CH, "?");
 const shown = (s) => oneLine(s).slice(0, 120);
+// URL 의 사용자 정보(`//` 뒤 첫 `/` 앞의 마지막 `@` 까지. 공백, 탭, 비밀번호 안의 @ 도)와 쿼리의 토큰을 가린다. 출력과
+// 기록에 비밀이 남지 않는다. ssh 꼴(`git@host:`)과 경로 안의 @ 는 그대로다.
+const redactUrl = (url) => String(url).replace(/(\/\/)[^/]*@/g, "$1***@")
+  .replace(/([?&](?:access_|private_|oauth_)?token=)[^&#\s]*/gi, "$1***");
 
 // hooks.json 옆의 수동 백업 후보. usable 은 PostToolUse 를 담은 유효한 JSON 이다. 링크로 심은 후보는
 // unsafe 로 따로 두고 읽지도 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
@@ -662,17 +797,17 @@ const hasPostToolUse = (p) => {
   catch { return false; }
 };
 
-function removePostToolUse(hj) {
+function removePostToolUse(hj, why) {
   const bak = `${hj}.omcbak`;
   const j = JSON.parse(readFileSync(hj, "utf8"));
   if (!j.hooks?.PostToolUse) return "already";
   const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
-  if (MODE === "check") { bad(`hooks.json PostToolUse 남아있음: ${list.join(", ")}`); return "needs"; }
-  if (!existsSync(bak)) copyFileSync(hj, bak);
+  if (MODE === "check") { bad(`hooks.json PostToolUse 남아있음${why ? `, 쓸 수 없음 (${why})` : ""}: ${list.join(", ")}`); return "needs"; }
+  backup(hj, bak);
   delete j.hooks.PostToolUse;
-  writeFileSync(hj, JSON.stringify(j, null, 2) + "\n", "utf8");
+  writeAtomic(hj, JSON.stringify(j, null, 2) + "\n");
   try { JSON.parse(readFileSync(hj, "utf8")); return list; }
-  catch { copyFileSync(bak, hj); bad("hooks.json 손상으로 롤백"); return "failed"; }
+  catch { writeAtomic(hj, readFileSync(bak)); bad("hooks.json 손상으로 롤백"); return "failed"; }
 }
 
 // ── 4. 자동 업데이트 차단 ────────────────────────────────────────────────────
@@ -683,25 +818,61 @@ function removePostToolUse(hj) {
 // origin remote 의 URL 을 무효 주소로 바꿔 fetch 를 실패시킨다(원래 URL 은
 // `omc-pinned://` 뒤에 그대로 남기고 --revert 가 거기서 복구한다. PINNED 파일은 기록이다).
 // 저장소 자체는 그대로라 이미 받은 태그로 재설치·검증이 가능하다.
+
+// origin 의 원문. `git remote get-url` 은 전역 insteadOf 를 펼친 값을 내서, 그 값이 고정되고 되돌린 뒤에도 원래
+// 값 대신 남았다. 설정 값을 그대로 읽는다. 없으면(git 이 1 로 끝남) null.
+function originUrl() {
+  try { return git(["config", "--get", "remote.origin.url"]); } catch { return null; }
+}
+
+// git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다).
+// 정화하고 URL 의 인증 정보를 가린다.
+const gitError = (e) => {
+  const lines = String(e.stderr || e.message || "").split("\n").filter((l) => l.trim());
+  const line = lines.find((l) => /^(fatal|error):/.test(l)) || lines[0] || "알 수 없는 오류";
+  return oneLine(redactUrl(line)).slice(0, 200);
+};
+
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
   // 마켓플레이스 폴더가 제 git 저장소가 아니면 git 이 위쪽 저장소(예: dotfiles 로 관리하는
   // ~/.claude)를 찾아 그 origin 을 바꾼다. 제 .git 이 있을 때만 고정하고 되돌린다. .git 이 있어도
   // 깨졌으면 git 이 위로 올라가는데, 그것은 gitEnv 의 천장이 막는다(origin 을 못 읽어 no-remote).
   if (!existsSync(join(MARKET, ".git"))) return "no-git";
-  let url;
-  try { url = git(["remote", "get-url", "origin"]); } catch { return "no-remote"; }
+  const url = originUrl();
+  if (url === null) return "no-remote";
 
   if (MODE === "revert") return unpinMarketplace(url);
-  if (url.startsWith("omc-pinned://")) return "already";
-  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(url)})`); return "needs"; }
+  if (url.startsWith("omc-pinned://")) { scrubPinRecord(); return "already"; }
+  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(redactUrl(url))})`); return "needs"; }
 
-  mkdirSync(dirname(PINFILE), { recursive: true });
+  try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
+  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${gitError(e)})`); return "pin-failed"; }
   // host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
   // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
-  writeFileSync(PINFILE, JSON.stringify({ originUrl: url, pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", "utf8");
-  git(["remote", "set-url", "origin", `omc-pinned://${url}`]);
+  // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
+  // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
+  try {
+    mkdirSync(dirname(PINFILE), { recursive: true });
+    writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600);
+  } catch (e) {
+    bad(`고정 기록(PINNED)을 쓰지 못함 (${failWhy(e)}). origin 은 고정됨: ${oneLine(PINFILE)}`);
+    return "record-failed";
+  }
   return "pinned";
+}
+
+// 옛 도구가 남긴 고정 기록의 URL(인증 정보가 들 수 있음)을 지우고 이 계정만 읽게 한다. --check 는 쓰지 않는다. 일반
+// 파일이 아니거나 읽을 수 없거나 깨진 기록은 그대로 둔다(기록일 뿐이다).
+function scrubPinRecord() {
+  if (MODE === "check") return;
+  try {
+    if (!lstatSync(PINFILE).isFile()) return;
+    const rec = JSON.parse(readFileSync(PINFILE, "utf8"));
+    if (!rec || typeof rec !== "object" || !("originUrl" in rec)) return;
+    delete rec.originUrl;
+    writeAtomic(PINFILE, JSON.stringify(rec, null, 2) + "\n", 0o600);
+  } catch { /* 없거나 깨진 기록 */ }
 }
 
 // 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 거기서만 복원한다.
@@ -712,7 +883,12 @@ function unpinMarketplace(url) {
   if (existsSync(PINFILE)) dropPinRecord();
   const restored = url.startsWith(PIN_PREFIX) ? url.slice(PIN_PREFIX.length) : "";
   if (!restored) return "not-pinned";
-  try { git(["remote", "set-url", "origin", restored]); } catch { /* noop */ }
+  try { git(["remote", "set-url", "--", "origin", restored]); }
+  catch (e) {
+    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${gitError(e)})`);
+    log(`      원래 URL: git -C "${oneLine(MARKET)}" config --get remote.origin.url 결과의 omc-pinned:// 뒤`);
+    return "unpin-failed";
+  }
   return "unpinned";
 }
 
@@ -801,7 +977,7 @@ if (argv.has("--check") && argv.has("--revert")) {
   process.exit(1);
 }
 log(ROOT
-  ? `OMC 패치  (대상 폴더 ${ROOT})  모드: ${MODE}`
+  ? `OMC 패치  (대상 폴더 ${oneLine(ROOT)})  모드: ${MODE}`
   : `OMC 패치  (대상 ${TARGET_VERSION})  모드: ${MODE}${NO_UPDATE ? " --no-update" : ""}`);
 log(`플랫폼: ${process.platform}  node ${process.version}`);
 log();
@@ -815,22 +991,22 @@ const rootOf = (v) => (ROOT ? v : join(CACHE, v));
 // active 는 아래에서 정해지므로 쓰는 자리에서 부른다.
 const misplacedHint = () => (ROOT
   ? "--revert --root 로 되돌린 뒤 같은 --root 로 다시 적용하십시오."
-  : `--revert --root "${join(CACHE, active)}" 로 활성 폴더만 되돌린 뒤 다시 적용하십시오.`);
+  : `--revert --root "${oneLine(join(CACHE, active))}" 로 활성 폴더만 되돌린 뒤 다시 적용하십시오.`);
 if (ROOT) {
   // 그 폴더 하나만 고친다(판 폴더도 installed_plugins.json 도 없는 번들 사본, 또는 활성 캐시 폴더).
   // 판 바꾸기([1/4])와 마켓플레이스 고정([4/4])은 하지 않는다 — 그 둘은 이 PC 의 설정이고 이 폴더의 것이 아니다.
   if (!existsSync(join(ROOT, "hooks", "hooks.json")) || !existsSync(join(ROOT, "scripts"))) {
-    bad(`플러그인 폴더가 아님 (hooks/hooks.json 과 scripts/ 가 있어야 함): ${ROOT}`);
+    bad(`플러그인 폴더가 아님 (hooks/hooks.json 과 scripts/ 가 있어야 함): ${oneLine(ROOT)}`);
     process.exit(1);
   }
   const other = otherPluginName(ROOT);
-  if (other) { bad(`OMC 플러그인 폴더가 아님 (${other}): ${ROOT}`); process.exit(1); }
+  if (other) { bad(`OMC 플러그인 폴더가 아님 (${other}): ${oneLine(ROOT)}`); process.exit(1); }
   log("[1/4] 버전");
   log("  건너뜀 (--root 는 판을 바꾸지 않음)");
   active = ROOT;
   targets = [ROOT];
 } else {
-  if (!existsSync(INSTALLED)) { bad(`Claude Code 플러그인 설정을 찾을 수 없음: ${INSTALLED}`); process.exit(1); }
+  if (!existsSync(INSTALLED)) { bad(`Claude Code 플러그인 설정을 찾을 수 없음: ${oneLine(INSTALLED)}`); process.exit(1); }
 
   log("[1/4] 버전");
   if (NO_UPDATE) log("  건너뜀 (--no-update)");
@@ -842,20 +1018,20 @@ if (ROOT) {
   const { v, src: activeSrc } = activeVersion();
   active = v;
   if (MODE !== "revert" && (MODE === "check" || NO_UPDATE)) {
-    log(`  활성 버전: ${active} (${activeSrc})`);
+    log(`  활성 버전: ${oneLine(active)} (${activeSrc})`);
     if (active !== TARGET_VERSION) {
-      log(`  활성 버전이 대상(${TARGET_VERSION})과 다름 — 기본 apply 는 ${TARGET_VERSION} 로 전환하고, --no-update 는 활성 버전(${active})을 그 자리에서 패치함`);
+      log(`  활성 버전이 대상(${TARGET_VERSION})과 다름 — 기본 apply 는 ${TARGET_VERSION} 로 전환하고, --no-update 는 활성 버전(${oneLine(active)})을 그 자리에서 패치함`);
     }
   }
   // apply 는 활성 버전만 손댄다. revert 와 check 는 설치된 모든 버전을 훑는다 —
   // 여러 버전이 나란히 있을 때 이전 버전에 수정이 남으면, 롤백했을 때 예상과 다른
   // 상태가 된다(실제로 4.15.7 의 hooks.json 수정이 그렇게 남았다).
   targets = MODE === "apply" ? [active] : (versions.length ? versions : [active]);
-  if (!existsSync(join(CACHE, active))) { bad(`설치 경로 없음: ${join(CACHE, active)}`); process.exit(1); }
+  if (!existsSync(join(CACHE, active))) { bad(`설치 경로 없음: ${oneLine(join(CACHE, active))}`); process.exit(1); }
 }
 
 log();
-log(`[2/4] 훅 패치${MODE === "apply" || ROOT ? `  (${active})` : `  (대상 ${targets.length}개 버전)`}`);
+log(`[2/4] 훅 패치${MODE === "apply" || ROOT ? `  (${oneLine(active)})` : `  (대상 ${targets.length}개 버전)`}`);
 const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0 };
 const needBy = {};
 const misplacedBy = {};
@@ -868,7 +1044,7 @@ const left = new Set();
 for (const v of targets) {
   const root = rootOf(v);
   if (!existsSync(root)) continue;
-  if (targets.length > 1) log(`  — ${v}`);
+  if (targets.length > 1) log(`  — ${oneLine(v)}`);
   const x = patchHooks(root);
   needBy[v] = x.need;
   misplacedBy[v] = x.misplaced;
@@ -882,10 +1058,10 @@ log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `
 // 백업이 없어 되돌리지 못한 파일은 되돌릴 원본이 디스크에 없다. 조용히 넘기면 «완전히
 // 되돌렸다» 는 잘못된 인상을 준다 — 무엇이 남았고 어떻게 되찾는지 정확히 말한다.
 function reportNoBackup(v, list, what) {
-  bad(`${v}: ${what} — ${list.map(shown).join(", ")}`);
+  bad(`${oneLine(v)}: ${what} — ${list.map(shown).join(", ")}`);
   log(`      백업(.omcbak)이 없어 되돌릴 원본이 디스크에 없습니다. 원본이 필요하면:`);
   if (ROOT) log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`);
-  else log(`      git -C "${MARKET}" archive v${v} scripts/<이름>.mjs | tar -x -C "${join(CACHE, v)}"`);
+  else log(`      git -C "${oneLine(MARKET)}" archive v${oneLine(v)} scripts/<이름>.mjs | tar -x -C "${oneLine(join(CACHE, v))}"`);
 }
 for (const [v, list] of Object.entries(foreignBy)) reportNoBackup(v, list, "이 도구가 만들지 않은 수정이 남아 있습니다");
 for (const [v, list] of Object.entries(orphanBy)) reportNoBackup(v, list, "패치는 있는데 백업이 없어 되돌리지 못했습니다");
@@ -893,6 +1069,7 @@ for (const [v, list] of Object.entries(orphanBy)) reportNoBackup(v, list, "패�
 log();
 log("[3/4] PostToolUse 훅 제거");
 const hjNeedBy = {};
+const hjFailBy = {};
 for (const v of targets) {
   const root = rootOf(v);
   if (!existsSync(root)) continue;
@@ -904,7 +1081,7 @@ for (const v of targets) {
   else if (hj === "reverted" || hj === "ambiguous" || hj === "linked") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
   else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
-  else if (hj === "unsafe") { r.fail++; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
+  else if (hj === "unsafe") { r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
   if (hj === "ambiguous" || hj === "linked") left.add(fileKey(join(root, "hooks", "hooks.json")));
 }
 
@@ -921,7 +1098,7 @@ if (ROOT) {
   try {
     const st = JSON.parse(readFileSync(join(CFG, "settings.json"), "utf8"));
     const off = st?.env?.DISABLE_AUTOUPDATER;
-    log(`  DISABLE_AUTOUPDATER: ${off ? `${off} (전역 차단 중)` : "미설정 (다른 마켓플레이스는 계속 자동 업데이트)"}`);
+    log(`  DISABLE_AUTOUPDATER: ${off ? `${oneLine(off)} (전역 차단 중)` : "미설정 (다른 마켓플레이스는 계속 자동 업데이트)"}`);
   } catch { /* settings.json 이 없거나 읽을 수 없으면 표시만 생략 */ }
   pin = pinMarketplace();
   ({
@@ -933,7 +1110,11 @@ if (ROOT) {
     "no-marketplace": () => bad("마켓플레이스 디렉터리 없음 — 고정 불필요"),
     "no-git": () => bad("마켓플레이스 폴더가 git 저장소가 아님 — 고정하지 않음"),
     "no-remote": () => ok("origin remote 없음 — 이미 fetch 불가"),
+    "pin-failed": () => {},
+    "unpin-failed": () => {},
+    "record-failed": () => {},
   }[pin] || (() => {}))();
+  if (["pin-failed", "unpin-failed", "record-failed"].includes(pin)) { r.fail++; failed.add(pin === "record-failed" ? "PINNED" : "origin"); }
 }
 
 log();
@@ -944,15 +1125,16 @@ if (MODE === "check") {
   // 헬퍼 자리 결함이 하나라도 있으면 «모두 적용» 이 아니다. 다시 적용만으로는 안 고쳐지므로
   // 그 안내를 먼저 낸다(되돌린 뒤 적용하면 «패치 필요» 항목도 함께 처리된다).
   const misplacedActive = misplacedBy[active] || 0;
-  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && pin !== "needs" && misplacedActive === 0;
+  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && pin !== "needs" && misplacedActive === 0;
   const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
   log(clean ? "결과: 모두 적용된 상태입니다."
+    : hjFailBy[active] ? "결과: hooks.json 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."
     : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${misplacedHint()}`
     : ROOT ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 같은 --root 로 다시 실행하십시오."
     : NO_UPDATE ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 --no-update 로 다시 실행하십시오."
     : "결과: 적용되지 않은 항목이 있습니다. 인자 없이 다시 실행하십시오.");
   if (others.length) {
-    log(`    참고: 비활성 버전 ${others.join(", ")} 에 미적용분이 있습니다.`);
+    log(`    참고: 비활성 버전 ${others.map(oneLine).join(", ")} 에 미적용분이 있습니다.`);
     log("          지금 쓰이지 않는 버전이라 판정에 넣지 않았습니다. 그 버전으로 되돌릴 계획이면 함께 적용하십시오.");
   }
 } else if (MODE === "revert") {

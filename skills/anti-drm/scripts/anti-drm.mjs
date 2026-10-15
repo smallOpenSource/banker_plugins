@@ -45,6 +45,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   realpathSync,
   statSync,
 } from "node:fs";
@@ -352,7 +353,8 @@ export function renderRules(template, config) {
 // ---- commands ----
 
 const USAGE =
-  "사용법: anti-drm on | off | status | config [--runtime claude|codex] [--stdin | --deny <확장자 목록> --alt <확장자 목록> [--tsv tab|comma]]";
+  "사용법: anti-drm on | off | status | config [--runtime claude|codex] [--stdin | --deny <확장자 목록> --alt <확장자 목록> [--tsv tab|comma]]\n" +
+  "--stdin 은 표준 입력이 끝날 때까지 기다립니다.";
 
 // The settings as `status` shows them.
 function configLines(o, found) {
@@ -530,9 +532,48 @@ export function stdinSettings(bytes) {
     if (line.trim() === "") continue;
     const m = STDIN_LINE.exec(line);
     if (!m || flags[m[1]] !== undefined) return { error: `표준 입력의 설정 줄을 읽을 수 없습니다: ${shown(line)}` };
-    flags[m[1]] = m[2];
+    flags[m[1]] = m[2].trim();
   }
   return { flags };
+}
+
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
+
+// Standard input, read up to cap bytes and one more: { bytes } at the end of input, or { tooBig: true } as soon as
+// more than cap came. A pipe left non-blocking answers EAGAIN until data comes: wait a little and read again.
+function readCapped(fd, cap) {
+  const chunks = [];
+  const buf = Buffer.alloc(64 * 1024);
+  let total = 0;
+  for (;;) {
+    const n = readSome(fd, buf);
+    if (n === 0) return { bytes: Buffer.concat(chunks) };
+    total += n;
+    if (total > cap) return { tooBig: true };
+    chunks.push(Buffer.from(buf.subarray(0, n)));
+  }
+}
+
+// One read into buf: how many bytes came, 0 at the end of input (Windows may say EOF instead).
+function readSome(fd, buf) {
+  for (;;) {
+    try {
+      return readSync(fd, buf, 0, buf.length, null);
+    } catch (e) {
+      if (e.code === "EOF") return 0;
+      if (e.code !== "EAGAIN") throw e;
+      Atomics.wait(PAUSE, 0, 0, 10);
+    }
+  }
+}
+
+// The settings standard input held: an error when it was too big or unreadable, or held no settings line, which
+// on and config both refuse rather than reach for the saved settings.
+function stdinFrom(got) {
+  if (got.tooBig) return { error: "표준 입력이 64KiB 보다 큽니다" };
+  const read = stdinSettings(got.bytes);
+  if (read.error || Object.keys(read.flags).length > 0) return read;
+  return { error: "표준 입력에 설정 줄이 없습니다" };
 }
 
 // Settings flags go only with on and config, and config needs both lists.
@@ -569,9 +610,9 @@ const say = (text, code) => {
 // Whether a command acts on one runtime and so needs to know which.
 const needsRuntime = (command) => command === "on" || command === "off";
 // The settings flags: from standard input with --stdin, else from the command line.
-const settingsOf = (args, input) => (args.stdin ? stdinSettings(input()) : { flags: args.flags });
+const settingsOf = (args, input) => (args.stdin ? stdinFrom(input()) : { flags: args.flags });
 
-function main(argv, env = process.env, input = () => readFileSync(0)) {
+function main(argv, env = process.env, input = () => readCapped(0, MAX_BYTES)) {
   const args = parseArgs(argv);
   const why = usageError(args);
   if (why) return say(why, 1);

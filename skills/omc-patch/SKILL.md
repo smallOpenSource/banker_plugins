@@ -45,7 +45,7 @@ OMC(oh-my-claudecode)가 새 버전으로 자동 업데이트되면 로컬 훅 �
 - 판정은 출력 문구로 한다. 종료 코드 0 만으로 완료라고 보고하지 않는다.
 - 캐시에는 정션이나 심볼릭 링크로 이어진 버전 폴더가 있을 수 있다(예: 옛 버전 폴더가 새 버전을 가리킴). 이때 한 번의 변경이 두 버전 폴더에 함께 보인다. 정상이다.
 - 도구는 `os.homedir()/.claude` 를 쓴다. `CLAUDE_CONFIG_DIR` 로 설정 폴더를 옮겼다면 이 도구는 그 폴더를 보지 않는다.
-- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//***@` 로 가린다. 출력을 그대로 보고하라는 단계에서도 이 가림은 지킨다. 그 URL 은 `PINNED` 에도 평문으로 남으니 사용자에게 알린다.
+- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//***@` 로 가린다. 출력을 그대로 보고하라는 단계에서도 이 가림은 지킨다. 옛 판의 도구가 만든 `PINNED` 에는 그 URL 이 남아 있을 수 있다. 이 판은 다음 적용(`--check` 가 아닌 실행) 때 그 칸을 지우고 권한을 0600 으로 맞춘다.
 
 ## 절차
 
@@ -184,13 +184,17 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
    | 그 밖의 `probe-pm:` 줄(종료 코드 2) | 명령 오류다. 경로를 다시 구해 한 번만 다시 실행한다. 같으면 출력을 보고하고 멈춘다 |
    | 판정 줄 뒤의 `probe-pm: 임시 폴더를 지우지 못함` | 판정은 그대로 쓴다. 남은 임시 폴더 경로를 보고에 적어 사용자가 지우게 한다 |
 
-5. 마켓플레이스 고정을 확인한다. `omc-pinned://` 로 시작하면 고정된 것이다.
+5. 마켓플레이스 고정을 확인한다. `omc-pinned://` 로 시작하면 고정된 것이다. 명령은 origin 의 사용자 정보를 `//***@` 로 가려서 낸다.
 
    ```bash
-   git -C "$HOME/.claude/plugins/marketplaces/omc" remote get-url origin
+   git -C "$HOME/.claude/plugins/marketplaces/omc" config --get remote.origin.url | sed -E 's#(//)[^/]*@#\1***@#'
    ```
 
-   PowerShell 에서는 `$HOME` 대신 `$env:USERPROFILE` 을 쓴다.
+   PowerShell:
+
+   ```powershell
+   (git -C "$env:USERPROFILE/.claude/plugins/marketplaces/omc" config --get remote.origin.url) -replace '(//)[^/]*@', '$1***@'
+   ```
 
 ### 5. 보고
 
@@ -218,10 +222,14 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --revert
 - 헬퍼 자리 결함이 남은 채 `revert` 없이 적용을 다시 돌려도 바뀌는 것이 없다. 이미 감싼 파일은 건너뛰기 때문이다.
 - `--root` 와 `--revert --root` 는 그 폴더만 다룬다. 고정 해제까지 하려면 인자 없는 `--revert` 를 쓴다.
 - 고정을 풀지 않고 OMC 를 올리려면 먼저 `revert` 한다. 그렇지 않으면 마켓플레이스 fetch 가 계속 실패한다.
-- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다. `revert` 는 origin 값에서만 원래 URL 을 되찾고, `PINNED` 의 값으로 origin 을 쓰지 않는다. 다른 기기의 기록이면 알리기만 한다.
+- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 고정한 시각, 판, 기기 이름만 담고 URL 은 담지 않는다. 옛 판의 기록에 URL 칸이 있으면 다음 적용 때 지운다. 이 계정만 읽을 수 있다(0600). 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다. `revert` 는 origin 값에서만 원래 URL 을 되찾는다. 다른 기기의 기록이면 알리기만 한다.
 - `--check` 와 `--revert` 를 함께 주면 도구는 아무것도 하지 않고 종료 코드 1 로 멈춘다. 진단만 하려면 `--check` 만 준다.
 - 도구는 git 을 부를 때 저장소를 고르는 변수(`GIT_DIR`, `GIT_WORK_TREE` 등 `git rev-parse --local-env-vars` 목록)를 지운다. git 훅 안에서 불러도 마켓플레이스 저장소만 다룬다.
 - 마켓플레이스의 `.git` 이 깨졌으면(중단된 clone 등) git 이 위쪽 저장소로 올라가지 못하게 막는다. 그때 `[4/4]` 는 `origin remote 없음` 으로 끝나고 고정하지 않는다.
 - `--scan` 은 읽기만 한다. 플러그인 캐시도 `installed_plugins.json` 도 읽지 않고 준 파일만 본다.
 - 도구는 모르는 인자를 받지 않는다. `--check`, `--revert`, `--no-update`, `--root <폴더>`, `--scan <파일>...`, `--help` 밖의 인자나 `--root=<폴더>` 꼴을 주면 아무것도 하지 않고 사용법과 함께 종료 1 로 멈춘다.
+- 출력의 origin URL 에 사용자 이름과 비밀번호가 있으면 `//***@` 로 가린다. 도구는 origin 을 설정 값 그대로 읽어 고정하고 되돌린다(전역 `insteadOf` 를 펼치지 않음).
+- origin 을 바꾸지 못하면(`.git` 쓰기 권한 등) `[!] 고정 실패` 나 `[!] 고정 해제 실패` 와 종료 1 로 끝난다. 그 줄을 그대로 보고한다. 고정 해제에 실패해도 원래 URL 은 `git config --get remote.origin.url` 결과의 `omc-pinned://` 뒤에 남는다.
+- `--check` 는 쓸 수 없는 파일을 `패치 필요, 쓸 수 없음` 으로 미리 알린다. 폴더 밖 링크 때문에 되돌리지 못한 파일은 손 복구 방법을 함께 낸다. 사용자 승인 없이 그 방법을 실행하지 않는다.
+- 파일은 새 임시 파일과 rename 으로 바꾼다. 하드 링크로 이어진 폴더 밖 파일은 바뀌지 않는다. 쓰지 못한 파일은 `쓰지 못함` 으로 이름을 대고 실패로 센다.
 - 도구의 주석과 출력 문구는 한글이다.
