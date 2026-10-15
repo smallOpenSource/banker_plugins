@@ -38,6 +38,7 @@
 - `omc-patch`: 지울 git 변수에 이 PC 의 `git rev-parse --local-env-vars` 결과를 더한다. 업데이트 경로의 fetch 는 환경 변수로 준 git 설정 가운데 프록시와 TLS 신뢰 설정(`http.proxy`, `http.sslCAInfo`, `http.sslVerify`, `http.proxyAuthMethod`)만 쓴다. `url.*.insteadOf`, `core.hooksPath` 같은 나머지는 예전처럼 지운다.
 - smoke 시험: banker 작업 파일 검사가 대소문자를 가리지 않고 `skills/`, `commands/` 의 모든 글 파일을 본다.
 - `/progress`: 위치와 상관없이 `prd.json` 과 `ultragoal/goals.json` 을 PRD 나 목표 모양일 때 계획으로 본다. 검토 문서 이름(`-critic`, `-review` 등)의 파일은 다른 계획이 없을 때만 계획으로 보인다.
+- README: 첫 부분을 □ 개조식으로 정리했다. Codex 설명은 실제 동작에 맞췄다. 스킬과 커맨드는 Codex CLI 에 모두 설치되고, 도구 의존성이 있는 스킬은 실행할 때 그 도구가 필요하다.
 - 유지보수자용: npm pack 대조 시험과 smoke 시험의 npm 이 레지스트리에 접속하지 않는다. smoke 의 DRM 이름 검사가 긴 줄에서도 선형 시간이다. `scripts/gen-skill-changes.js`, `hooks/obsidize-hook.mjs`, `hooks/update-checkin.mjs` 의 main 을 함수 규칙(복잡도 10) 안으로 나눴다(동작 그대로).
 
 ## [0.18.0] - 2026-10-14

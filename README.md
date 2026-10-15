@@ -8,11 +8,18 @@
 
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
-banker는 QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 62개 + 커맨드 2개**(총 64개 구성요소)와 Claude Code 즉시 명령 `/graceful-pause`, `/progress` 를 묶은 Claude Code 플러그인입니다.\
-설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.\
-이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자 플러그인(`.claude-plugin/plugin.json`, name `banker`)이며, 도구에 무관한 스킬은 Codex CLI에도 설치됩니다.
+□ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 62개 + 커맨드 2개**(총 64개 구성요소)
+- Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
-> npm 패키지(`@kaydash9999/banker-plugins`)와 GitHub 저장소(`smallOpenSource/banker_plugins`)는 같은 메인테이너가 관리합니다.
+□ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
+
+□ 이 저장소 자체가 Claude Code 마켓플레이스(`.claude-plugin/marketplace.json`)이자,\
+플러그인(`.claude-plugin/plugin.json`, name `banker`)이며,\
+스킬과 커맨드는 Codex CLI에도 모두 구성됩니다.\
+도구 의존성이 있는 스킬은 실행할 때 그 도구가 필요합니다.
+
+> npm 패키지(`@kaydash9999/banker-plugins`)와 GitHub 저장소(`smallOpenSource/banker_plugins`)는 같은 메인테이너가 관리
 
 ## 빠른 시작
 
