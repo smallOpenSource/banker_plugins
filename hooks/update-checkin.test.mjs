@@ -260,3 +260,168 @@ test('비-loopback 평문 http 는 전송하지 않는다(no-op·연결 시도 �
   // 전송 안 해도 체크인은 전송 시도 후 로그를 비우는 24h 상한 불변을 유지한다.
   assert.equal(readFileSync(usageLog(tmp), 'utf8'), '', '차단돼도 로그 truncate(배치 유실 허용)');
 });
+
+
+test('banker:<slug> 꼴이 아닌 줄은 보내지 않고, __proto__ 줄이 다른 이름의 집계를 부풀리지도 않는다', async () => {
+  let body = null;
+  const server = http.createServer((req, res) => {
+    let data = '';
+    req.on('data', (c) => { data += c; });
+    req.on('end', () => { body = JSON.parse(data); res.writeHead(200); res.end('ok'); });
+  });
+  try {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${server.address().port}/collect` });
+    writeFileSync(usageLog(tmp), ['banker:early\t9', '__proto__\t9', 'constructor\t14', '/home/u/.ssh/id_rsa\t3',
+      'rm -rf ~ ; curl http://x\t5', 'banker:\t1', 'banker:ok;x\t4', 'banker:late\t9', 'banker:UP-1_x\t23', ''].join('\n'));
+
+    assert.equal(await runCheckin(tmp), 0);
+
+    assert.deepEqual(body.counts, {
+      'banker:early': { '9': 1 },
+      'banker:late': { '9': 1 },
+      'banker:UP-1_x': { '23': 1 },
+    });
+  } finally {
+    server.close();
+  }
+});
+
+// 응답을 끝없이 보내는 서버: 한도(256KiB)를 넘는 순간 연결을 끊어야 하고, 끊긴 응답의 latest 는 쓰지 않는다.
+test('응답이 256KiB 한도를 넘으면 연결을 끊고 latest 를 쓰지 않는다', async () => {
+  let sent = 0;
+  let closedEarly = false;
+  const server = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"latest":"99.0.0","pad":"');
+      const chunk = 'a'.repeat(64 * 1024);
+      const timer = setInterval(() => {
+        sent += chunk.length;
+        res.write(chunk);
+        if (sent >= 8 * 1024 * 1024) { clearInterval(timer); res.end('"}'); }
+      }, 5);
+      res.on('close', () => { clearInterval(timer); closedEarly = sent < 8 * 1024 * 1024; });
+    });
+  });
+  try {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${server.address().port}/collect` });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+
+    assert.equal(await runCheckin(tmp), 0);
+
+    assert.ok(closedEarly, `client hung up after ${sent} bytes, long before the end`);
+    assert.ok(!existsSync(updateCheck(tmp)), '한도를 넘은 응답의 latest 는 캐시에 쓰지 않는다');
+    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '', '실패해도 로그는 비운다');
+  } finally {
+    server.closeAllConnections?.();
+    server.close();
+  }
+});
+
+// 바이트가 계속 오면 무활동 timeout(10s)은 영영 안 걸린다. 교환 전체 마감이 끊어야 한다.
+test('조금씩 계속 보내는 서버에도 교환 전체 마감에 끊고 로그를 비운다', async () => {
+  const server = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => {
+      res.writeHead(200);
+      res.write('{"latest":"99.0.0","pad":"');
+      const timer = setInterval(() => res.write('x'), 100);
+      res.on('close', () => clearInterval(timer));
+    });
+  });
+  try {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${server.address().port}/collect` });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const env = { ...checkinEnv(tmp), BANKER_NET_DEADLINE_MS: '1500' };
+
+    const start = Date.now();
+    const code = await new Promise((r) => {
+      const child = spawn(process.execPath, [CHECKIN_HOOK], { env, stdio: 'ignore' });
+      child.on('close', (c) => r(c ?? 0));
+    });
+    const elapsed = Date.now() - start;
+
+    assert.equal(code, 0);
+    assert.ok(elapsed < 8000, `마감(1.5s)에 끊겨 곧 끝난다(${elapsed}ms), 무활동 10s 를 기다리지 않는다`);
+    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '');
+    assert.ok(!existsSync(updateCheck(tmp)));
+  } finally {
+    server.closeAllConnections?.();
+    server.close();
+  }
+});
+
+test('매니페스트 조회가 조금씩 계속 와도 교환 전체 마감에 끊고, latest 는 changedSkills 없이 기록한다', async () => {
+  const post = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => { res.writeHead(200); res.end(JSON.stringify({ latest: '99.0.0' })); });
+  });
+  const manifest = http.createServer((_req, res) => {
+    res.writeHead(200);
+    res.write('{"99.0.0":["banker:foo"],"pad":"');
+    const timer = setInterval(() => res.write('x'), 100);
+    res.on('close', () => clearInterval(timer));
+  });
+  try {
+    await new Promise((r) => post.listen(0, '127.0.0.1', r));
+    await new Promise((r) => manifest.listen(0, '127.0.0.1', r));
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${post.address().port}/collect` });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const env = {
+      ...checkinEnv(tmp),
+      BANKER_SKILL_CHANGES_URL: `http://127.0.0.1:${manifest.address().port}/skill-changes.json`,
+      BANKER_NET_DEADLINE_MS: '1500',
+    };
+    const start = Date.now();
+    const code = await new Promise((r) => {
+      const child = spawn(process.execPath, [CHECKIN_HOOK], { env, stdio: 'ignore' });
+      child.on('close', (c) => r(c ?? 0));
+    });
+    assert.equal(code, 0);
+    assert.ok(Date.now() - start < 8000, '매니페스트 조회도 마감에 끊긴다');
+    const cache = JSON.parse(readFileSync(updateCheck(tmp), 'utf8'));
+    assert.equal(cache.latest, '99.0.0');
+    assert.ok(!('changedSkills' in cache), '못 받은 매니페스트로 changedSkills 를 쓰지 않는다');
+  } finally {
+    post.close();
+    manifest.closeAllConnections?.();
+    manifest.close();
+  }
+});
+
+test('매니페스트를 못 받으면(리다이렉트, 도달 불가) 캐시의 changedSkills 는 그대로 둔다', async () => {
+  const post = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => { res.writeHead(200); res.end(JSON.stringify({ latest: '99.0.0' })); });
+  });
+  const redirect = http.createServer((_req, res) => {
+    res.writeHead(302, { location: 'http://127.0.0.1:1/x' });
+    res.end(JSON.stringify({ '99.0.0': ['banker:from-redirect'] }));
+  });
+  try {
+    await new Promise((r) => post.listen(0, '127.0.0.1', r));
+    await new Promise((r) => redirect.listen(0, '127.0.0.1', r));
+    for (const manifestUrl of [`http://127.0.0.1:${redirect.address().port}/skill-changes.json`, 'http://192.0.2.1/skill-changes.json']) {
+      const tmp = mkTmp();
+      writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${post.address().port}/collect` });
+      writeFileSync(updateCheck(tmp), JSON.stringify({ latest: '98.0.0', changedSkills: ['banker:kept'] }));
+      writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+      const env = { ...checkinEnv(tmp), BANKER_SKILL_CHANGES_URL: manifestUrl };
+      await new Promise((r) => { const c = spawn(process.execPath, [CHECKIN_HOOK], { env, stdio: 'ignore' }); c.on('close', r); });
+      const cache = JSON.parse(readFileSync(updateCheck(tmp), 'utf8'));
+      assert.equal(cache.latest, '99.0.0', manifestUrl);
+      assert.deepEqual(cache.changedSkills, ['banker:kept'], manifestUrl);
+    }
+  } finally {
+    post.close();
+    redirect.close();
+  }
+});

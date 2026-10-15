@@ -27,27 +27,32 @@ import {
   installedVersion,
   writeUpdateCache,
   changedSkillsBetween,
+  SKILL_NAME_RE,
+  collectBody,
+  netDeadlineMs,
 } from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
+const NET_DEADLINE_MS = netDeadlineMs(); // 교환 전체 마감(위 값은 무활동 기준).
+const MAX_BODY_BYTES = 256 * 1024; // 체크인 응답, 매니페스트 모두 수 KB 다.
 
 // usage-log 각 줄 `<name>\t<hour 0-23>` 를 스킬별 x 시간대별 count 로 집계한다.
 // 빈 줄·TAB 없는 줄·이름 없는 줄·hour 가 0-23 정수가 아닌 줄은 무시한다.
 // 반환 예: { 'banker:compact-copy': { '9': 3, '14': 1 }, 'banker:setup': { '9': 1 } }.
 function aggregate(raw) {
-  const counts = {};
+  const counts = Object.create(null);
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;              // 빈 줄 무시.
     const tab = line.indexOf('\t');
     if (tab < 0) continue;                    // TAB 없는 malformed 줄 무시.
     const name = line.slice(0, tab).trim();
     const hourStr = line.slice(tab + 1).trim();
-    if (!name) continue;                      // 이름 없는 줄 무시.
+    if (!SKILL_NAME_RE.test(name)) continue;  // banker:<slug> 꼴이 아닌 줄 무시(쓰는 훅과 같은 규칙).
     if (!/^\d+$/.test(hourStr)) continue;     // 정수 아닌 hour 무시(음수·소수·비수치 배제).
     const hour = Number(hourStr);
     if (hour > 23) continue;                  // 0-23 범위 밖 무시(하한은 \d+ 가 보장).
     const key = String(hour);                 // '09' -> '9' 정규화.
-    if (!counts[name]) counts[name] = {};
+    if (!counts[name]) counts[name] = Object.create(null);
     counts[name][key] = (counts[name][key] || 0) + 1;
   }
   return counts;
@@ -65,7 +70,8 @@ function isLoopback(hostname) {
 function post(url, body) {
   return new Promise((resolvePromise) => {
     let done = false;
-    const finish = (responseBody = null) => { if (!done) { done = true; resolvePromise(responseBody); } };
+    let deadline = null;
+    const finish = (responseBody = null) => { if (!done) { done = true; clearTimeout(deadline); resolvePromise(responseBody); } };
     let parsed;
     try {
       parsed = new URL(url);
@@ -85,14 +91,10 @@ function post(url, body) {
       const req = transport.request(parsed, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
-      }, (res) => {
-        let data = '';
-        res.on('data', (c) => { data += c; });
-        res.on('end', () => finish(data));
-        res.on('error', () => finish());
-      });
+      }, (res) => collectBody(res, MAX_BODY_BYTES, finish));
       req.on('error', () => finish()); // 연결 거부/리셋 등은 즉시 여기로.
       req.setTimeout(NET_TIMEOUT_MS, () => req.destroy());
+      deadline = setTimeout(() => { req.destroy(); finish(); }, NET_DEADLINE_MS);
       req.write(body);
       req.end();
     } catch {
@@ -120,7 +122,8 @@ function extractLatest(responseBody) {
 function fetchSkillChangesMap(url) {
   return new Promise((resolvePromise) => {
     let done = false;
-    const finish = (result) => { if (!done) { done = true; resolvePromise(result); } };
+    let deadline = null;
+    const finish = (result) => { if (!done) { done = true; clearTimeout(deadline); resolvePromise(result); } };
     let parsed;
     try {
       parsed = new URL(url);
@@ -137,20 +140,18 @@ function fetchSkillChangesMap(url) {
       const req = transport.request(parsed, { method: 'GET' }, (res) => {
         const status = res.statusCode || 0;
         if (status >= 300 && status < 400) { res.resume(); return finish(null); } // 리다이렉트 미추적.
-        let data = '';
-        res.on('data', (c) => { data += c; });
-        res.on('end', () => {
+        collectBody(res, MAX_BODY_BYTES, (data) => {
           try {
-            const obj = JSON.parse(data);
+            const obj = JSON.parse(data); // data null(한도 초과, 스트림 오류)은 null 로 읽혀 아래서 걸러진다.
             finish((obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : null);
           } catch {
             finish(null);
           }
         });
-        res.on('error', () => finish(null));
       });
       req.on('error', () => finish(null));
       req.setTimeout(NET_TIMEOUT_MS, () => req.destroy());
+      deadline = setTimeout(() => { req.destroy(); finish(null); }, NET_DEADLINE_MS);
       req.end(); // GET - 요청 본문 없음.
     } catch {
       finish(null);

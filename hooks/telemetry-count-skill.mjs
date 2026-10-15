@@ -22,11 +22,10 @@
  */
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 
-import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
+import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES, SKILL_NAME_RE } from '../bin/lib/telemetry-config.mjs';
 
 // banker:<name> 전체 일치 - 이름 문자열 자체를 검증한다(TAB/개행 등 이질 문자가 섞여
-// usage-log 의 `name\thour` 형식을 깨는 것을 막는다). i 플래그는 매칭만 관대하게(실제 이름은 소문자).
-const NAME_RE = /^banker:[a-z0-9_-]+$/i;
+// usage-log 의 `name\thour` 형식을 깨는 것을 막는다). 규칙은 telemetry-config 의 SKILL_NAME_RE 하나다.
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -43,7 +42,7 @@ function readStdin() {
 function extractName(payload) {
   const candidates = [payload?.tool_input?.skill, payload?.tool_response?.commandName];
   for (const c of candidates) {
-    if (typeof c === 'string' && NAME_RE.test(c)) return c;
+    if (typeof c === 'string' && SKILL_NAME_RE.test(c)) return c;
   }
   return null;
 }

@@ -17,7 +17,9 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}: ${msg}`); if
 const run = (cmd, args, opts = {}) => cp.execFileSync(cmd, args, { encoding: 'utf8', ...opts });
 // npm reaches no registry from this harness: update_notifier=false stops the weekly update check, the one request
 // npm pack and a local tarball's install made; offline keeps any other lookup off the network.
-const NPM_OFFLINE = { ...process.env, npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
+const OFFLINE_SETTINGS = { npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
+// npm reads npm_config_* names whatever their case and the last spelling wins: drop every spelling of the settings set here.
+const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !(k.toLowerCase() in OFFLINE_SETTINGS))), ...OFFLINE_SETTINGS };
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
 const prefix = path.join(tmp, 'prefix');
@@ -380,7 +382,7 @@ try {
   if (py) {
     const pyRes = cp.spawnSync(py, ['-B', '-m', 'unittest', 'test_lineage'],
       { cwd: path.join(root, 'skills', 'lineage'), encoding: 'utf8',
-        env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+        env: { ...process.env, HOME: home, USERPROFILE: home, PYTHONDONTWRITEBYTECODE: '1' } });
     const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
     ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${tail})`);
   } else {
