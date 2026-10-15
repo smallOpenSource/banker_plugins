@@ -135,5 +135,12 @@
     "banker:ralph-qa",
     "banker:tone-compact",
     "banker:ultra-chain"
+  ],
+  "0.18.1": [
+    "banker:anti-drm",
+    "banker:lineage",
+    "banker:omc-patch",
+    "banker:tone-compact",
+    "banker:update-banker"
   ]
 }
