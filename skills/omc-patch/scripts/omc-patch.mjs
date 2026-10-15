@@ -843,36 +843,72 @@ function pinMarketplace() {
   if (url === null) return "no-remote";
 
   if (MODE === "revert") return unpinMarketplace(url);
-  if (url.startsWith("omc-pinned://")) { scrubPinRecord(); return "already"; }
+  if (url.startsWith("omc-pinned://")) return alreadyPinned();
   if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(redactUrl(url))})`); return "needs"; }
 
   try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
   catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${gitError(e)})`); return "pin-failed"; }
-  // host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
-  // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
-  // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
-  // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
+  return writePinRecord() ? "pinned" : "record-failed";
+}
+
+// host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
+// PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
+// URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
+// 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
+function writePinRecord() {
   try {
     mkdirSync(dirname(PINFILE), { recursive: true });
     writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600);
+    return true;
   } catch (e) {
     bad(`고정 기록(PINNED)을 쓰지 못함 (${failWhy(e)}). origin 은 고정됨: ${oneLine(PINFILE)}`);
-    return "record-failed";
+    return false;
   }
-  return "pinned";
 }
 
-// 옛 도구가 남긴 고정 기록의 URL(인증 정보가 들 수 있음)을 지우고 이 계정만 읽게 한다. --check 는 쓰지 않는다. 일반
-// 파일이 아니거나 읽을 수 없거나 깨진 기록은 그대로 둔다(기록일 뿐이다).
+// 이미 고정된 origin. 옛 기록의 URL 칸을 지우지 못했으면 고정은 그대로 두고 실패로 센다.
+const alreadyPinned = () => (scrubPinRecord() ? "already" : "scrub-failed");
+
+// 옛 도구가 남긴 고정 기록의 URL(인증 정보가 들 수 있음)을 지우고 이 계정만 읽게 한다. --check 는 쓰지 않는다.
+// 할 일이 없거나 지웠으면 true 다. 칸이 있는데 지우지 못했거나 기록을 읽지 못해 확인하지 못했으면 [!] 로 알리고
+// false 다. 링크인 기록은 따라가 쓰지 않는다(사용자가 고친다).
 function scrubPinRecord() {
-  if (MODE === "check") return;
+  if (MODE === "check") return true;
+  let text;
+  try { text = pinRecordText(); }
+  catch (e) { return pinUrlLeft(`확인하지 못함 (읽지 못함: ${failWhy(e)})`); }
+  if (text === null || !text.includes("originUrl")) return true;
+  if (isLink(PINFILE)) return pinUrlLeft("지우지 못함 (링크라 따라가 쓰지 않음)");
+  return dropPinUrl(text);
+}
+
+// 고정 기록의 글. 없거나 일반 파일로 이어지지 않으면(폴더, FIFO, 끊어진 링크, 링크 고리) null 이다. 그런 자리에는
+// URL 이 들 수 없다. 읽지 못하면 던진다.
+function pinRecordText() {
   try {
-    if (!lstatSync(PINFILE).isFile()) return;
-    const rec = JSON.parse(readFileSync(PINFILE, "utf8"));
-    if (!rec || typeof rec !== "object" || !("originUrl" in rec)) return;
-    delete rec.originUrl;
-    writeAtomic(PINFILE, JSON.stringify(rec, null, 2) + "\n", 0o600);
-  } catch { /* 없거나 깨진 기록 */ }
+    if (!statSync(PINFILE).isFile()) return null;
+  } catch (e) {
+    if (["ENOENT", "ENOTDIR", "ELOOP"].includes(e.code)) return null;
+    throw e;
+  }
+  return readFileSync(PINFILE, "utf8");
+}
+
+// 기록에서 URL 칸을 빼고 이 계정만 읽게(0600) 다시 쓴다. 최상위에 그 칸이 없으면 할 일이 없다.
+function dropPinUrl(text) {
+  let rec;
+  try { rec = JSON.parse(text); }
+  catch { return pinUrlLeft("지우지 못함 (JSON 이 아님)"); }
+  if (!rec || typeof rec !== "object" || !("originUrl" in rec)) return true;
+  delete rec.originUrl;
+  try { writeAtomic(PINFILE, JSON.stringify(rec, null, 2) + "\n", 0o600); return true; }
+  catch (e) { return pinUrlLeft(`지우지 못함 (쓰지 못함: ${failWhy(e)})`); }
+}
+
+// 옛 URL 칸이 남았을 수 있음을 알린다. 인증 정보가 든 URL 이 남을 수 있어 실패로 센다. 기록의 글은 내지 않는다.
+function pinUrlLeft(what) {
+  bad(`고정 기록(PINNED)의 옛 URL 칸을 ${what}.\n      인증 정보가 든 URL 이 남았을 수 있습니다: ${oneLine(PINFILE)}`);
+  return false;
 }
 
 // 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 거기서만 복원한다.
@@ -1081,7 +1117,8 @@ for (const v of targets) {
   else if (hj === "reverted" || hj === "ambiguous" || hj === "linked") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
   else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
-  else if (hj === "unsafe") { r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
+  // "failed" 는 고친 hooks.json 이 JSON 으로 읽히지 않아 되돌린 경우다. 고치지 못했으니 실패로 센다.
+  else if (hj === "unsafe" || hj === "failed") { r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
   if (hj === "ambiguous" || hj === "linked") left.add(fileKey(join(root, "hooks", "hooks.json")));
 }
 
@@ -1113,8 +1150,12 @@ if (ROOT) {
     "pin-failed": () => {},
     "unpin-failed": () => {},
     "record-failed": () => {},
+    "scrub-failed": () => ok("이미 고정됨"),
   }[pin] || (() => {}))();
-  if (["pin-failed", "unpin-failed", "record-failed"].includes(pin)) { r.fail++; failed.add(pin === "record-failed" ? "PINNED" : "origin"); }
+  if (["pin-failed", "unpin-failed", "record-failed", "scrub-failed"].includes(pin)) {
+    r.fail++;
+    failed.add(["record-failed", "scrub-failed"].includes(pin) ? "PINNED" : "origin");
+  }
 }
 
 log();

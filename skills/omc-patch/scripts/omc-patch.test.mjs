@@ -3,8 +3,8 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync,
-  writeFileSync,
+  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync,
+  symlinkSync, writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -576,6 +576,98 @@ test("an apply over an origin an older tool pinned drops the URL from that PINNE
   assert.equal(saved.originUrl, undefined);
   assert.equal(saved.host, hostname());
   if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
+});
+
+// An origin an older tool pinned, with the password in it, and the record that tool would have left (not written yet).
+function olderPin() {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const secret = "s3" + "cret";
+  const withPassword = `https://u:${secret}@example.invalid/omc.git`;
+  assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${withPassword}`], f.market).status, 0);
+  const dir = join(f.home, ".claude", "omc-local-patches");
+  mkdirSync(dir, { recursive: true });
+  const record = `${JSON.stringify({ pinnedAt: "2026-10-01T00:00:00.000Z", version: "5.6.1", host: hostname(), originUrl: withPassword })}\n`;
+  return { f, secret, withPassword, record, pinfile: join(dir, "PINNED") };
+}
+
+// Runs the tool with a module loaded first, which changes what node:fs does for this run only.
+function runImport(pre, home, args) {
+  const env = cleanEnv({ HOME: home, USERPROFILE: home });
+  delete env.OMC_PATCH_INSTALLED;
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, TOOL, ...args], { encoding: "utf8", env });
+  return { code: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
+}
+
+// Makes renameSync fail with EROFS for a file named PINNED, as a read-only file system does.
+const PIN_RENAME_FAILS = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.renameSync;",
+  'fs.renameSync = (from, to) => { if (String(to).endsWith("PINNED")) throw Object.assign(new Error("EROFS: read-only file system, rename"), { code: "EROFS" }); return real(from, to); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("an older PINNED whose URL cannot be written away is named and counted, and stays as it was", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, secret, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  const pre = join(root, `pin-rename-fails${seq++}.mjs`);
+  writeFileSync(pre, `${PIN_RENAME_FAILS}\n`);
+  const r = runImport(pre, f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지우지 못함 \(쓰지 못함: EROFS\)\./);
+  assert.match(r.out, /인증 정보가 든 URL 이 남았을 수 있습니다: /);
+  assert.match(r.out, /이미 고정됨/);
+  assert.match(r.out, /완료\. 실패 1건\./);
+  assert.equal(read(pinfile), record, "the record is as it was");
+  assert.ok(!r.out.includes(secret), "the password is not printed");
+});
+
+test("an older PINNED that is a link is not written through: named and counted, the file it leads to left as it was", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const { f, secret, record, pinfile } = olderPin();
+  const dotfiles = join(root, `dotfiles${seq++}`);
+  mkdirSync(dotfiles, { recursive: true });
+  writeFileSync(join(dotfiles, "PINNED"), record);
+  try {
+    symlinkSync(join(dotfiles, "PINNED"), pinfile);
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /옛 URL 칸을 지우지 못함 \(링크라 따라가 쓰지 않음\)/);
+  assert.match(r.out, /완료\. 실패 1건\./);
+  assert.equal(read(join(dotfiles, "PINNED")), record);
+  assert.ok(lstatSync(pinfile).isSymbolicLink(), "the link stays a link");
+  assert.ok(!r.out.includes(secret), "the password is not printed");
+});
+
+test("an older PINNED that is no JSON but holds the URL key is named and counted; one with no such key is left quietly", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, secret, withPassword, pinfile } = olderPin();
+  const cut = `{"pinnedAt":"2026-10-01T00:00:00.000Z","originUrl":"${withPassword}"`;
+  writeFileSync(pinfile, cut);
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /옛 URL 칸을 지우지 못함 \(JSON 이 아님\)/);
+  assert.equal(read(pinfile), cut);
+  assert.ok(!r.out.includes(secret), "the password is not printed");
+  writeFileSync(pinfile, "{ not json");
+  const quiet = run(f.home, ["--no-update"]);
+  assert.equal(quiet.code, 0, quiet.out);
+  assert.doesNotMatch(quiet.out, /PINNED/);
+});
+
+test("an older PINNED this account cannot read is named and counted: the URL in it cannot be checked", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX permission bits") || (asRoot && "root reads any file") }, () => {
+  const { f, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  chmodSync(pinfile, 0o000);
+  try {
+    const r = run(f.home, ["--no-update"]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /고정 기록\(PINNED\)의 옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/);
+    assert.match(r.out, /완료\. 실패 1건\./);
+  } finally {
+    chmodSync(pinfile, 0o600);
+  }
 });
 
 test("--check over a hooks.json that is no JSON says it cannot read it, without its text, and does not call it all applied", () => {
@@ -1166,6 +1258,26 @@ test("a rename refused a few times is tried again; one refused every time is nam
   assert.match(never.out, /쓰지 못함: foo \(EPERM\)/);
   assert.equal(read(join(always, "scripts", "foo.mjs")), SCRIPT("foo"));
   assert.deepEqual(readdirSync(join(always, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
+});
+
+// Breaks the first hooks.json renamed into place, as a full disk or another writer might: what reads back is no JSON.
+const HOOKS_JSON_BREAKS = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.renameSync;",
+  "let left = 1;",
+  'fs.renameSync = (from, to) => { if (String(to).endsWith("hooks.json") && left-- > 0) fs.writeFileSync(from, "{ broken"); return real(from, to); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a hooks.json that reads back broken is rolled back, and the rollback is named and counted as a failure", () => {
+  const plug = bundle();
+  const pre = join(root, `hooks-json-breaks${seq++}.mjs`);
+  writeFileSync(pre, `${HOOKS_JSON_BREAKS}\n`);
+  const r = runImport(pre, bareHome(), ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 손상으로 롤백/);
+  assert.match(r.out, /완료\. 실패 1건\./);
+  assert.equal(read(join(plug, "hooks", "hooks.json")), HOOKS_JSON, "hooks.json is as it was");
 });
 
 test("hooks.json and the revert write through no hard link: a name outside the folder keeps its bytes", (t) => {
