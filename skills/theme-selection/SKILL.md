@@ -15,7 +15,7 @@ argument-hint: "list | css | json | widget | check [--design-md PATH] [--only SL
 - Codex: 사용자 메시지에서 읽는다.
 - 사용자 입력을 셸 명령에 그대로 붙이지 않는다. 명령과 옵션은 아래 표에 있는 것만 쓴다.
 - 🔴 경로는 작은따옴표로 감싼다(bash, zsh, PowerShell 모두). 큰따옴표 안의 `$(...)` 와 백틱은 셸이 엔진보다 먼저 실행한다.
-- 경로에 작은따옴표, `$`, 백틱, 줄바꿈이 있으면 실행하지 않고 사용자에게 알린다.
+- 경로에 작은따옴표(`'`, 그리고 PowerShell 이 같게 읽는 `‘` `’` `‚` `‛`), `$`, 백틱, 줄바꿈이 있으면 실행하지 않고 사용자에게 알린다.
 
 ## 절차
 
@@ -31,7 +31,8 @@ argument-hint: "list | css | json | widget | check [--design-md PATH] [--only SL
    - 파일, `DESIGN.md` 를 담은 폴더, `<이름>/DESIGN.md` 를 담은 폴더를 모두 받는다.
    - `<이름>/DESIGN.md` 가 여럿이면 그 부모 폴더 하나를 넘긴다. 하위 경로를 하나씩 셸에 적지 않는다. 폴더 이름은 엔진이 검사한다.
    - 여러 번 줄 수 있고 뒤가 이긴다. 슬러그가 같으면 번들을 덮는다.
-   - 슬러그(폴더 이름이나 확장자를 뗀 파일 이름)는 글자(한글 포함), 숫자, `.`, `-`, `_` 만 받는다. 빈칸이나 다른 기호가 있으면 종료 코드 2 로 멈춘다. 이름을 바꾸자고 사용자에게 알린다.
+   - 슬러그(폴더 이름이나 확장자를 뗀 파일 이름)는 글자(한글 포함), 숫자, `.`, `-`, `_` 만 받는다. 빈칸, 다른 기호, 보이지 않는 글자가 있으면 종료 코드 2 로 멈춘다. 이름을 바꾸자고 사용자에게 알린다.
+   - 한글 이름은 NFC 로 맞춰 읽는다. macOS 의 분해형 폴더 이름도 `--only 쇼핑몰` 과 맞는다.
 3. 쓸 테마를 정한다. 사용자가 고르면 `--only` 로 줄인다.
    - 74종 전부를 내면 테마 규칙만 148 개다. 쓸 것만 `--only` 로 고르는 쪽을 먼저 권한다.
    - 모르면 `node <스킬>/scripts/themes.mjs list` 로 목록을 보고 사용자에게 묻는다. 2단계에서 `--design-md` 를 정했으면 `list` 에도 준다.
@@ -40,7 +41,7 @@ argument-hint: "list | css | json | widget | check [--design-md PATH] [--only SL
    - `--out` 은 이미 있는 파일을 묻지 않고 덮어쓴다. 그 경로에 파일이 있으면 먼저 사용자에게 묻는다.
    - 프로젝트가 다크를 `class` 나 `@media` 로 다루면 `--dark-via class` 나 `--dark-via media` 를 준다.
 5. 테마를 고르는 사람이 있는 화면이면 고르개를 붙인다.
-   - `node <스킬>/scripts/themes.mjs widget --only a,b,c` 가 세 덩이를 낸다. CSS 를 낼 때와 같은 `--dark-via` 를 준다.
+   - `node <스킬>/scripts/themes.mjs widget --only a,b,c` 가 세 덩이를 낸다. CSS 를 낼 때와 같은 `--only`, `--default`, `--dark-via` 를 준다. `--default` 가 다르면 첫 방문의 고르개 테마와 `:root` 테마가 갈린다.
    - 모드 버튼은 `data-mode` 속성과 `.dark` 클래스를 함께 바꾼다. 그래서 `attr`, `class` 둘 다 맞는다. `media` 면 모드 버튼 없이 낸다(다크는 OS 설정을 따름).
    - 어디에 두는지는 `references/integrate.md` 의 고르개 절을 따른다.
    - 모드만 쓰는 화면은 고르개 없이 `--dark-via media` 로 끝낸다. `:root` 가 기본 테마의 다크도 들고 있어 `<html>` 에 속성이 없어도 OS 가 다크면 다크가 된다.
@@ -85,7 +86,7 @@ argument-hint: "list | css | json | widget | check [--design-md PATH] [--only SL
 | `--target N` | `-on-surface` 와 `accent` 의 목표 대비. 기본 3.0 |
 | `--label-target N` | 버튼 글자 목표 대비. 기본 4.5. 4.58 을 넘기면 답 없는 조합이 생기고 `check` 가 그 자리를 보고함 |
 | `--no-correct` | 보정 없이 원본 값을 냄. 대조군 전용 |
-| `--out FILE` | 표준출력 대신 파일로. 있는 파일은 덮어씀. 심볼릭 링크면 쓰지 않음(종료 2) |
+| `--out FILE` | 표준출력 대신 파일로. 있는 파일은 덮어씀. 그 파일 자체가 심볼릭 링크면 쓰지 않음(종료 2). 상위 폴더의 링크는 따라감 |
 | `--json` | `check` 에서만. 기계가 읽는 감사 결과 |
 
 | 종료 코드 | 뜻 |

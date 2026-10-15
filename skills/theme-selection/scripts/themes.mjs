@@ -464,13 +464,22 @@ function slugForFile(path) {
 // 74종 중 다섯은 이름에 점이 있습니다(`x.ai` 등).
 export const SLUG = /^[\p{L}\p{N}][\p{L}\p{M}\p{N}._-]*$/u;
 
-const SLUG_RULE = `may use only letters, digits, ".", "-" and "_"`;
+// 🔴 보이지 않는 글자(Default_Ignorable. 예: U+3164 한글 채움 문자, U+FE0F 변형
+// 선택자)는 글자로 분류돼도 받지 않습니다. 고르개에 빈칸처럼 보이거나 다른
+// 이름과 똑같아 보이는 항목이 생깁니다.
+const INVISIBLE = /\p{Default_Ignorable_Code_Point}/u;
+
+const SLUG_RULE = `may use only letters, digits, ".", "-" and "_" (no invisible characters)`;
+
+export function validSlug(slug) {
+  return SLUG.test(slug) && !INVISIBLE.test(slug);
+}
 
 // 🔴 산출물에 들어가는 이름은 모두 `resolveThemes` 의 목록에서 나옵니다.
 // 출처(번들, DESIGN.md)와 상관없이 거기서 한 번 더 봅니다.
 export function assertSlugs(names) {
   for (const slug of names) {
-    if (!SLUG.test(slug)) {
+    if (!validSlug(slug)) {
       throw new Error(`theme name ${JSON.stringify(slug)} ${SLUG_RULE}`);
     }
   }
@@ -493,10 +502,13 @@ function designFiles(full) {
 
 export function loadDesignMd(path) {
   const out = [];
-  for (const [slug, file] of designFiles(resolve(path))) {
+  for (const [raw, file] of designFiles(resolve(path))) {
+    // 🔴 이름을 NFC 로 맞춥니다. macOS 는 한글 폴더 이름을 흔히 분해형(NFD)으로
+    // 두어, 그대로 쓰면 사용자가 친 `--only 쇼핑몰`(NFC)과 맞지 않습니다.
+    const slug = raw.normalize("NFC");
     // 🔴 걸러 버리지 않고 멈춥니다. 조용히 빠진 테마는 고르개에서 사라진 뒤에야
     // 들킵니다.
-    if (!SLUG.test(slug)) {
+    if (!validSlug(slug)) {
       throw new Error(`--design-md ${JSON.stringify(file)}: theme name `
         + `${JSON.stringify(slug)} ${SLUG_RULE}`);
     }
@@ -528,9 +540,8 @@ export function loadBundled(file = join(HERE, "..", "assets", "palettes.json")) 
 
 // 번들 위에 `--design-md` 를 얹습니다. 🔴 뒤가 이기고, 같은 슬러그는 번들을
 // 덮습니다. 그 덮기가 없으면 소비자가 자기 DESIGN.md 로 번들 테마를 고칠 수
-// 없습니다.
-export function resolveThemes(opts) {
-  const bundled = loadBundled();
+// 없습니다. `bundled` 는 시험이 다른 번들을 넣을 때만 줍니다.
+export function resolveThemes(opts, bundled = loadBundled()) {
   const themes = new Map(bundled.themes);
   for (const path of opts.designMd) {
     for (const [slug, theme] of loadDesignMd(path)) themes.set(slug, theme);
@@ -854,10 +865,12 @@ function prefixOf(text) {
 // 값을 받는 옵션. 🔴 다음 인자는 `-` 로 시작해도 값입니다(`--prefix -x`).
 const VALUE_OPTIONS = new Map([
   ["--design-md", (opts, value) => { opts.designMd.push(value); }],
+  // 🔴 이름은 NFC 로 맞춥니다. 슬러그도 NFC 라 분해형으로 친 한글 이름이
+  // 말없이 걸러지지 않습니다.
   ["--only", (opts, value) => {
-    opts.only = value.split(",").map((s) => s.trim()).filter(Boolean);
+    opts.only = value.split(",").map((s) => s.trim().normalize("NFC")).filter(Boolean);
   }],
-  ["--default", (opts, value) => { opts.default = value; }],
+  ["--default", (opts, value) => { opts.default = value.normalize("NFC"); }],
   ["--prefix", (opts, value) => { opts.prefix = prefixOf(value); }],
   ["--dark-via", (opts, value) => { opts.darkVia = darkVia(value); }],
   ["--target", (opts, value) => { opts.target = positive("--target", value); }],

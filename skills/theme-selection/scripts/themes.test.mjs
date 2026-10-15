@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  FIELDS, OUT_NAMES, SURFACE_JOBS, TARGET, LABEL_TARGET, WHITE, BLACK, SLUG,
+  FIELDS, OUT_NAMES, SURFACE_JOBS, TARGET, LABEL_TARGET, WHITE, BLACK, SLUG, validSlug,
   contrast, luminance, withLightness, pyround, mix,
   corrected, correctedPalette, palettePairs, labelOnAccent,
   parseYamlColors, parseProseColors, themeFromDesign, labelOf, loadDesignMd,
@@ -603,7 +603,7 @@ test("--design-md 는 세 모양을 받고, 같은 슬러그는 번들을 덮는
 // 흔하므로 받아야 합니다.
 test("--design-md 의 테마 이름은 글자, 숫자, ., -, _ 만 받는다", () => {
   for (const slug of loadBundled().themes.keys()) {
-    assert.match(slug, SLUG, `번들 이름 ${slug} 이 규칙 밖이다`);
+    assert.ok(validSlug(slug), `번들 이름 ${slug} 이 규칙 밖이다`);
   }
   const root = scratch("slug");
   try {
@@ -770,11 +770,49 @@ test("고르개의 모드 버튼은 data-mode 와 .dark 를 함께 바꾸고, me
   assert.ok(head.includes('root.classList.toggle("dark", mode === "dark")'));
 });
 
-test("assertSlugs 는 글자, 숫자, ., -, _ 밖의 이름을 거부한다", () => {
+// 🔴 U+3164(한글 채움 문자)와 U+FE0F(변형 선택자)는 글자와 결합 표시로 분류돼
+// SLUG 만으로는 통과합니다. 보이지 않는 글자 검사가 따로 걸러야 합니다.
+test("assertSlugs 는 글자, 숫자, ., -, _ 밖의 이름과 보이지 않는 글자를 거부한다", () => {
   assert.doesNotThrow(() => assertSlugs(["x.ai", "bmw-m", "ai_studio", "쇼핑몰",
                                          "e\u{301}clair"]));
-  for (const bad of ["a b", "a\u{202E}b", "a\u{2028}b", "a<b", "-lead", ""]) {
+  for (const bad of ["a b", "a\u{202E}b", "a\u{2028}b", "a<b", "-lead", "",
+                     "\u{3164}", "Airbnb\u{FE0F}"]) {
     assert.throws(() => assertSlugs([bad]), /may use only letters/, JSON.stringify(bad));
+  }
+  assert.ok(SLUG.test("\u{3164}") && SLUG.test("Airbnb\u{FE0F}"),
+            "대조군: 이 둘은 SLUG 만으로는 통과해야 위 거부가 보이지 않는 글자 검사의 일이다");
+});
+
+// 🔴 이 호출이 빠지면 번들(palettes.json)에 든 나쁜 이름이 검사 없이 산출물로
+// 나갑니다. 번들을 바꿔 넣어 그 자리를 잽니다.
+test("resolveThemes 는 번들 이름도 출력 전에 검사한다", () => {
+  const bundled = loadBundled();
+  const themes = new Map(bundled.themes);
+  themes.set("bad name", bundled.themes.get("airbnb"));
+  assert.throws(() => resolveThemes(parseArgs(["list"]), { ...bundled, themes }),
+                /may use only letters/);
+  assert.equal(resolveThemes(parseArgs(["list"]), bundled).themes.size, 74, "대조군");
+});
+
+// 🔴 macOS 는 한글 폴더 이름을 흔히 분해형(NFD)으로 둡니다. 슬러그와 `--only`,
+// `--default` 가 모두 NFC 로 맞춰져야 사용자가 친 이름과 맞습니다.
+test("한글 슬러그는 NFC 로 맞추고 --only, --default 도 NFC 로 읽는다", () => {
+  const nfc = "쇼핑몰";
+  const nfd = nfc.normalize("NFD");
+  assert.notEqual(nfd, nfc, "대조군: 분해형은 다른 문자열이어야 한다");
+  const root = scratch("nfd");
+  try {
+    mkdirSync(join(root, nfd));
+    writeFileSync(join(root, nfd, "DESIGN.md"), YAML_DESIGN);
+    assert.deepEqual(loadDesignMd(root).map(([slug]) => slug), [nfc]);
+    const opts = parseArgs(["list", "--design-md", root, "--only", nfd, "--default", nfd]);
+    assert.deepEqual(opts.only, [nfc]);
+    assert.equal(opts.default, nfc);
+    const resolved = resolveThemes(opts);
+    assert.deepEqual([...resolved.themes.keys()], [nfc]);
+    assert.equal(resolved.default, nfc);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
