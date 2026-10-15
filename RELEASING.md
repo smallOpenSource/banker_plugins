@@ -25,7 +25,8 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 
 5. **마켓플레이스 버전 올리기** — `.claude-plugin/marketplace.json` 의 `metadata.version` 을 새 버전으로 바꾼다.
 
-6. **CHANGELOG 갱신** — `CHANGELOG.md` 최상단에 새 버전 섹션을 추가한다.
+6. **CHANGELOG 와 LIST.md 갱신** — `CHANGELOG.md` 최상단에 새 버전 섹션을 추가한다. 이어서 `LIST.md` 의 구성요소 표를 갱신한다(방법은 `LIST.md` 의 '갱신 방법' 절).
+   - 4번처럼 릴리스 커밋 전에 한다. 커밋 뒤에는 직전 릴리스 커밋이 방금 만든 커밋으로 잡혀 이번 릴리스의 변경이 보이지 않는다.
 
 7. **검증** — 유닛·스모크가 초록인지 확인한다.
    ```bash
@@ -52,7 +53,7 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
      A4P_REQUIRE_BUILDERS=1 node --test skills/vertical-pptx/a4p.test.mjs
    ```
 
-8. **커밋** — 위 변경(`plugin.json` · `package.json` · `skill-changes.json` · `marketplace.json` · `CHANGELOG.md` · 코드)을 **한 릴리스 커밋**으로 묶는다.
+8. **커밋** — 위 변경(`plugin.json` · `package.json` · `skill-changes.json` · `marketplace.json` · `CHANGELOG.md` · `LIST.md` · 코드)을 **한 릴리스 커밋**으로 묶는다.
 
 9. **push** — `git push` 로 main 에 올린다. GitHub 채널이 전진하고, `skill-changes.json` 의 GitHub raw 도 이때 반영된다(개인화 알림이 읽는 소스).
 
