@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+npm 에는 0.18.1 을 게시하지 않았다. npm 에서는 이 판이 0.18.0 다음이며, 아래 [0.18.1] 의 변경도 함께 담는다.
+
+### Added
+- `theme-selection`: 프로젝트에 테마 74종을 라이트와 다크 한 쌍씩(148 조합) CSS 사용자 지정 속성으로 입힌다. 대비 보정을 거친 값을 내고, 테마 고르개(마크업과 스크립트 둘)와 대비 감사(`check`)도 낸다. 프로젝트의 DESIGN.md 를 읽어 테마로 더하거나 같은 이름의 번들 테마를 덮는다. Node 만 쓰고 인터넷을 쓰지 않는다.
+- `theme-selection`: 번들 팔레트는 VoltAgent/awesome-design-md(MIT)의 DESIGN.md 에서 색 값을 읽어 만들었다. 원본 라이선스와 출처 고지는 `assets/LICENSE`, `assets/NOTICE.md` 에 있다. 테마 이름의 상표는 각 소유자의 것이다.
+
+### Changed
+- README: 첫 부분을 □ 개조식으로 정리했다. Codex 설명은 실제 동작에 맞췄다. 스킬과 커맨드는 Codex CLI 에 모두 설치되고, 도구 의존성이 있는 스킬은 실행할 때 그 도구가 필요하다.
+- 유지보수자용: smoke 시험이 스킬 63개와 `theme-selection` 의 Codex 설치본(스크립트, 팔레트, 고지 파일)을 보고, 설치본을 한 번 실행한다. CI 의 manifest 개수 단언을 63 으로 고쳤다. 0.18.0 부터 61 로 남아 있었다.
+
 ## [0.18.1] - 2026-10-15
 
 ### Fixed
@@ -38,7 +50,6 @@
 - `omc-patch`: 지울 git 변수에 이 PC 의 `git rev-parse --local-env-vars` 결과를 더한다. 업데이트 경로의 fetch 는 환경 변수로 준 git 설정 가운데 프록시와 TLS 신뢰 설정(`http.proxy`, `http.sslCAInfo`, `http.sslVerify`, `http.proxyAuthMethod`)만 쓴다. `url.*.insteadOf`, `core.hooksPath` 같은 나머지는 예전처럼 지운다.
 - smoke 시험: banker 작업 파일 검사가 대소문자를 가리지 않고 `skills/`, `commands/` 의 모든 글 파일을 본다.
 - `/progress`: 위치와 상관없이 `prd.json` 과 `ultragoal/goals.json` 을 PRD 나 목표 모양일 때 계획으로 본다. 검토 문서 이름(`-critic`, `-review` 등)의 파일은 다른 계획이 없을 때만 계획으로 보인다.
-- README: 첫 부분을 □ 개조식으로 정리했다. Codex 설명은 실제 동작에 맞췄다. 스킬과 커맨드는 Codex CLI 에 모두 설치되고, 도구 의존성이 있는 스킬은 실행할 때 그 도구가 필요하다.
 - 유지보수자용: npm pack 대조 시험과 smoke 시험의 npm 이 레지스트리에 접속하지 않는다. smoke 의 DRM 이름 검사가 긴 줄에서도 선형 시간이다. `scripts/gen-skill-changes.js`, `hooks/obsidize-hook.mjs`, `hooks/update-checkin.mjs` 의 main 을 함수 규칙(복잡도 10) 안으로 나눴다(동작 그대로).
 
 ## [0.18.0] - 2026-10-14

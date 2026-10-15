@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 62개 + 커맨드 2개**(총 64개 구성요소)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 63개 + 커맨드 2개**(총 65개 구성요소)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -109,6 +109,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `make-notion-guide` | API 호출 가이드를 노션 양식 문서로 작성 |
 | `pdf-vision-extract` | 비주얼 PDF를 고해상도 PNG로 변환(비전 입력) |
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
+| `theme-selection` | 테마 74종을 라이트와 다크 CSS 변수로 입힘(대비 보정 포함). 테마 고르개와 대비 감사도 냄 |
 | `rfp-author` | 외주 제안요청서(RFP) 저작 (범용 프레임워크) |
 | `humanizer` | AI 글 흔적 제거(자연스러운 문체로 윤문) |
 | `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export. 세션 모델이 턴마다 1줄 요약을 쓰고 남길 턴을 고름(`--rulebase` 는 규칙만), 마크다운 렌더, 다중 세션 병합 |
@@ -204,7 +205,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 62개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 63개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
@@ -359,14 +360,17 @@ Codex CLI는 샌드박스가 네트워크를 차단하므로 알림·카운팅 �
 
 banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://github.com/smallOpenSource).
 
-**번들된 코드 (이 패키지가 재배포)**
+**번들된 코드와 데이터 (이 패키지가 재배포)**
 - `skills/humanizer`: [blader/humanizer](https://github.com/blader/humanizer) 기반, **MIT License**(© 2025 Siqi Chen).\
   원본 라이선스 고지는 `skills/humanizer/LICENSE` 에 포함.\
   패턴 목록은 Wikipedia [*Signs of AI writing*](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)(WikiProject AI Cleanup, **CC BY-SA**)에 기반합니다.
 - `skills/3d-intro-build/references`: [oso95/scroll-world](https://github.com/oso95/scroll-world) 의 스크럽 엔진(`scrub-engine.js`·`index-template.html`)을 그대로 벤더링, **MIT License**(© 2026 cyw).\
   원본 라이선스 고지는 `skills/3d-intro-build/references/LICENSE` 와 `NOTICE.md` 에 포함.
+- `skills/theme-selection/assets`: 번들 팔레트(`palettes.json`)는 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) 의 DESIGN.md 에서 색 값을 읽어 만든 것, **MIT License**(© 2026 VoltAgent).\
+  원본 라이선스 고지는 `skills/theme-selection/assets/LICENSE` 와 `NOTICE.md` 에 포함.\
+  테마 이름의 상표는 각 소유자에게 있으며, banker 는 그 회사들과 관계가 없습니다.
 
-코드로 포함(재배포)하는 서드파티는 `humanizer` 와 `scroll-world`(`3d-intro-build`) 둘입니다.\
+코드로 포함(재배포)하는 서드파티는 `humanizer` 와 `scroll-world`(`3d-intro-build`) 둘이고, 데이터로 포함하는 것은 `awesome-design-md`(`theme-selection`) 하나입니다.\
 아래는 스킬이 **런타임에 의존하거나 연동**하는 외부 요소로, banker 가 재배포하지 않으며 각 라이선스·상표는 소유자에게 있습니다.
 
 **의존 라이브러리·도구 (사용 시 별도 설치, 라이선스는 각 프로젝트 소유)**

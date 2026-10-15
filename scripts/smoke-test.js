@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
- * targets -> assert planned actions match the manifest (62 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (63 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -42,7 +42,7 @@ try {
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 62, `codex dry-run plans 62 skill copies (got ${copies})`);
+  ok(copies === 63, `codex dry-run plans 63 skill copies (got ${copies})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -208,7 +208,7 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 62, `real codex install has 62 banker-* skills (got ${installed.length})`);
+  ok(installed.length === 63, `real codex install has 63 banker-* skills (got ${installed.length})`);
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -273,6 +273,19 @@ try {
   ok(installed.includes('banker-omc-patch'), 'new omc-patch installed as banker-omc-patch');
   ok(fs.existsSync(path.join(instDir, 'banker-omc-patch', 'scripts', 'omc-patch.mjs')), 'banker-omc-patch carries scripts/omc-patch.mjs into the Codex install');
   ok(fs.existsSync(path.join(instDir, 'banker-omc-patch', 'scripts', 'probe-pm.mjs')), 'banker-omc-patch carries scripts/probe-pm.mjs into the Codex install');
+  // theme-selection runs scripts/themes.mjs from the skill's own folder, and the engine reads the palettes beside
+  // it (../assets/palettes.json); their MIT notice travels with them. Run the installed copy once: a copy that has
+  // the file but cannot find its palettes would pass an existence check alone.
+  ok(installed.includes('banker-theme-selection'), 'new theme-selection installed as banker-theme-selection');
+  const tsDir = path.join(instDir, 'banker-theme-selection');
+  const tsFiles = ['scripts/themes.mjs', 'assets/palettes.json', 'assets/LICENSE', 'assets/NOTICE.md',
+    'references/integrate.md', 'references/contrast.md'];
+  ok(tsFiles.every((f) => fs.existsSync(path.join(tsDir, ...f.split('/')))),
+     `banker-theme-selection carries ${tsFiles.join(', ')} into the Codex install`);
+  const tsRun = cp.spawnSync(process.execPath, [path.join(tsDir, 'scripts', 'themes.mjs'), 'list', '--only', 'airbnb'],
+    { encoding: 'utf8' });
+  ok(tsRun.status === 0 && tsRun.stdout === 'airbnb\tAirbnb\n',
+     `the Codex copy of theme-selection runs and reads its palettes (status ${tsRun.status}, stderr ${JSON.stringify(tsRun.stderr)})`);
   // remains runs its box tool from the skill's own folder (scripts/boxes.mjs), so the Codex copy needs it too.
   ok(installed.includes('banker-remains'), 'new remains installed as banker-remains');
   ok(fs.existsSync(path.join(instDir, 'banker-remains', 'scripts', 'boxes.mjs')), 'banker-remains carries scripts/boxes.mjs into the Codex install');
@@ -408,6 +421,7 @@ try {
     path.join('skills', 'payload-mon', 'scripts', 'payload-size.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
     path.join('skills', 'anti-drm', 'scripts', 'anti-drm.test.mjs'),
+    path.join('skills', 'theme-selection', 'scripts', 'themes.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),
