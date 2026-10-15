@@ -1154,6 +1154,12 @@ test("a rename refused a few times is tried again; one refused every time is nam
   const once = runFailing(few, 3);
   assert.equal(once.code, 0, once.out);
   assert.match(once.out, /패치 2건 \/ 실패 0건/);
+  // five retries: a rename refused five times still goes through, one refused six times does not
+  const five = runFailing(bundle(), 5);
+  assert.match(five.out, /패치 2건 \/ 실패 0건/, five.out);
+  const six = runFailing(bundle(), 6);
+  assert.match(six.out, /패치 1건 \/ 실패 1건/, six.out);
+  assert.equal(six.out.match(/쓰지 못함: \w+ \(EPERM\)/g)?.length, 1, six.out);
   const always = bundle();
   const never = runFailing(always, 999);
   assert.equal(never.code, 1, never.out);
@@ -1482,6 +1488,25 @@ test("the update's fetch keeps only proxy and TLS settings given in the environm
   const origins = calls.filter((c) => /^(config --get remote\.origin\.url|remote set-url)/.test(c));
   assert.ok(origins.length > 0, calls.join("\n"));
   for (const c of origins) assert.ok(!c.includes("GIT_CONFIG_COUNT"), c);
+});
+
+test("every git or tar the tool starts by name runs in the home folder: on Windows a project folder's git.exe is not found first", () => {
+  const src = read(TOOL);
+  const calls = [...src.matchAll(/execFileSync\((?!process\.execPath)([^,]+),[^\n]*/g)].map((m) => m[0]);
+  assert.ok(calls.length >= 4, calls.join("\n"));
+  for (const c of calls) assert.match(c, /\bcwd\b/, c);
+});
+
+test("a huge GIT_CONFIG_COUNT is not walked to its end", posixGit, (t) => {
+  const { f } = bareApplyFixture();
+  const w = loggingGit(t);
+  if (!w) return;
+  const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home, PATH: w.PATH, GIT_CONFIG_COUNT: "2000000000", GIT_CONFIG_KEY_0: "http.proxy", GIT_CONFIG_VALUE_0: "http://127.0.0.1:9" });
+  delete env.OMC_PATCH_INSTALLED;
+  const r = spawnSync(process.execPath, [TOOL], { encoding: "utf8", env, timeout: 30000 });
+  assert.equal(r.error?.code, undefined, "the run ended before its deadline");
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.match(read(w.log).split("\n").find((c) => c.startsWith("fetch ")) ?? "", /GIT_CONFIG_KEY_0=http\.proxy /);
 });
 
 test("--scan gives only helperDecls, wrapped and unwrapped, each entry with its own fields", () => {

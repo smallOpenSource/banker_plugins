@@ -152,7 +152,8 @@ function gitRepoVars() {
   if (repoVars) return repoVars;
   repoVars = new Set(GIT_REPO_VARS);
   try {
-    const out = execFileSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    // 이름으로 부르는 프로그램(git, tar)은 홈 폴더에서 돌린다. Windows 는 현재 폴더의 git.exe 를 PATH 보다 먼저 찾는다.
+    const out = execFileSync("git", ["rev-parse", "--local-env-vars"], { cwd: homedir(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     for (const v of out.split(/\s+/)) if (/^GIT_[A-Z0-9_]+$/.test(v)) repoVars.add(v);
   } catch { /* 고정 목록만 */ }
   return repoVars;
@@ -163,11 +164,13 @@ function gitRepoVars() {
 // 받아 오고 core.hooksPath 는 훅을 돌리므로 넘기지 않는다. GIT_CONFIG_PARAMETERS(`git -c`)도 넘기지 않는다.
 const isEnvConfig = (k) => /^GIT_CONFIG_(PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)$/.test(k.toUpperCase());
 const FETCH_KEYS = /^https?\.(proxy|sslcainfo|sslverify|proxyauthmethod)$/i;
+// 많아야 64쌍을 보고, 빠진 키에서 멈춘다(엄청난 GIT_CONFIG_COUNT 를 끝까지 돌지 않는다).
 function fetchConfig(env) {
   const kept = [];
-  for (let i = 0; i < (Number(env.GIT_CONFIG_COUNT) || 0); i++) {
+  for (let i = 0; i < Math.min(Number(env.GIT_CONFIG_COUNT) || 0, 64); i++) {
     const key = env[`GIT_CONFIG_KEY_${i}`];
-    if (typeof key === "string" && FETCH_KEYS.test(key)) kept.push([key, env[`GIT_CONFIG_VALUE_${i}`] ?? ""]);
+    if (key === undefined) break;
+    if (FETCH_KEYS.test(key)) kept.push([key, env[`GIT_CONFIG_VALUE_${i}`] ?? ""]);
   }
   const out = kept.length ? { GIT_CONFIG_COUNT: String(kept.length) } : {};
   kept.forEach(([k, v], i) => Object.assign(out, { [`GIT_CONFIG_KEY_${i}`]: k, [`GIT_CONFIG_VALUE_${i}`]: v }));
@@ -215,7 +218,7 @@ function canInstallTarget() {
   // 최소 설치 컨테이너나 tar 없는 환경에서는 없을 수 있다. 여기서 못 찾으면 아래에서
   // execFileSync 가 ENOENT 로 죽어 원인이 안 보이므로, 먼저 확인하고 무엇이 없는지 말한다.
   for (const [cmd, why] of [["git", "마켓플레이스에서 소스를 꺼내는 데"], ["tar", "그 소스를 푸는 데"]]) {
-    try { execFileSync(cmd, ["--version"], { stdio: "ignore" }); }
+    try { execFileSync(cmd, ["--version"], { cwd: homedir(), stdio: "ignore" }); }
     catch { bad(`${cmd} 를 찾을 수 없습니다 (${why} 필요). 설치한 뒤 다시 실행하거나, --no-update 로 패치만 적용하십시오.`); return false; }
   }
   return true;
@@ -233,7 +236,7 @@ function unpackTarget(dest) {
   if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
   git(["archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")]);
-  execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { stdio: "ignore" });
+  execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { cwd: homedir(), stdio: "ignore" });
   unlinkSync(join(dest, "_src.tar"));
 }
 
