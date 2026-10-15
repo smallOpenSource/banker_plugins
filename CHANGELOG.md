@@ -19,11 +19,11 @@
 - `anti-drm`: 설정 파일의 TSV 구분자도 대소문자를 가리지 않는다(`"Tab"`). 채운 규칙에 `{{` 가 남으면 오류로 멈춘다.
 - `lineage` 3.0.5: 공백이나 보이지 않는 글자(BOM, 폭 없는 공백, 한글 채움 문자, 점자 빈칸, 제어 문자 등)만 든 요약 캐시는 읽지 못한 것으로 보고 다시 요약한다.
 - `scripts/gen-skill-changes.js`(유지보수자용): npm 묶음에 들어가지 않는 파일(시험, `__pycache__`, `.omc`)만 바뀐 스킬은 바뀐 스킬로 세지 않는다.
-- `/progress`: 늦게 끝난 TaskList, TaskGet 이 그 결과에만 있는 작업을 버리지 않는다. 겹친 조회와 갱신은 나중에 시작한 것이 남는다.
+- `/progress`: 늦게 끝난 TaskList, TaskGet 이 그 결과에만 있는 작업을 버리지 않는다. 겹친 조회와 상태 갱신은 나중에 시작한 것이 남고, 삭제보다 먼저 시작한 조회나 갱신은 지운 작업을 되살리지 않는다.
 - `/progress`: 알림 턴이 대답 없이 끝나면(중단, 거절, 오류) 단계 아래에 그 사실을 보인다.
 - `/progress`: Claude Code 2.1.289 아래 판에서는 즉시 실행 없이 일반 명령으로 등록한다.
 - `/progress`, `/graceful-pause`: 하위 에이전트, 포크, 팀원의 턴 시작을 단계나 주 턴으로 보지 않는다. Claude Code 2.1.300 은 그 턴에도 `turn.start` 를 보내, 예전에는 포크의 지시문이 단계로 생겨 다음 요청 전까지 진행 중으로 남았고 `/graceful-pause` 는 포크를 멈출 턴으로 잘못 기억했다.
-- `/progress`: 진행 중인 단계가 바뀌면 패널 창을 그 행으로 옮긴다. 예전에는 긴 목록에서 진행 단계가 창 밖에 남았다.
+- `/progress`: 진행 중인 단계가 바뀌거나 패널을 다시 열면 패널 창을 그 행으로 옮긴다. 예전에는 긴 목록에서 진행 단계가 창 밖에 남았다.
 
 ### Changed
 - `anti-drm`: 설정 값을 표준 입력(`--stdin`, 줄마다 `deny=`, `alt=`, `tsv=`)으로 받는다. 스킬은 따옴표 친 heredoc 으로 넘겨 사용자가 고른 값이 셸을 거치지 않고, 넘기기 전에 heredoc 줄마다 꼴을 확인한다. 입력은 64KiB 를 넘는 순간 읽기를 멈추고, 설정 줄이 없으면 `on` 과 `config` 모두 거부하며, 값 앞뒤 공백은 지운다. `--deny`, `--alt`, `--tsv` 도 그대로 받는다.
@@ -33,7 +33,7 @@
 - `omc-patch`: `--check` 가 쓸 수 없는 훅과 hooks.json 을 미리 알린다. 폴더 밖 링크 때문에 되돌리지 못한 파일은 손 복구 방법을 안내한다.
 - `omc-patch`: 지울 git 변수에 이 PC 의 `git rev-parse --local-env-vars` 결과를 더한다. 업데이트 경로의 fetch 는 환경 변수로 준 git 설정(`http.proxy` 등)을 쓴다.
 - smoke 시험: banker 작업 파일 검사가 대소문자를 가리지 않고 `skills/`, `commands/` 의 모든 글 파일을 본다.
-- `/progress`: 위치와 상관없이 `prd.json`(PRD 모양일 때)과 `ultragoal/goals.json` 을 계획으로 본다. 검토 문서 이름(`-critic`, `-review` 등)의 파일은 다른 계획이 없을 때만 계획으로 보인다.
+- `/progress`: 위치와 상관없이 `prd.json` 과 `ultragoal/goals.json` 을 PRD 나 목표 모양일 때 계획으로 본다. 검토 문서 이름(`-critic`, `-review` 등)의 파일은 다른 계획이 없을 때만 계획으로 보인다.
 - 유지보수자용: npm pack 대조 시험과 smoke 시험의 npm 이 레지스트리에 접속하지 않는다. smoke 의 DRM 이름 검사가 긴 줄에서도 선형 시간이다. `scripts/gen-skill-changes.js`, `hooks/obsidize-hook.mjs`, `hooks/update-checkin.mjs` 의 main 을 함수 규칙(복잡도 10) 안으로 나눴다(동작 그대로).
 
 ## [0.18.0] - 2026-10-14

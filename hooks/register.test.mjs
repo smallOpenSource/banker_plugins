@@ -74,3 +74,13 @@ test('/progress answers at once only from 2.1.289 on; an older engine, or one wi
     assert.equal(spec.immediate, immediate, String(version));
   }
 });
+
+test('register.mjs hands $ to no imported function: older engines refuse the whole module for that', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('./register.mjs', import.meta.url), 'utf8');
+  const imported = [...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\/[^']+'/g)]
+    .flatMap((m) => m[1].split(',').map((n) => n.trim().split(/\s+as\s+/).pop()).filter(Boolean));
+  assert.ok(imported.includes('registerProgress'), 'the import lists were read');
+  const passed = imported.filter((name) => new RegExp(`\\b${name}\\(\\s*\\$\\s*[,)]`).test(src));
+  assert.deepEqual(passed, []);
+});

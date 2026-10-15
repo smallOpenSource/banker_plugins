@@ -376,32 +376,49 @@ test('a subagent\'s turn.complete does not end the main step, and its calls are 
   assert.match(textOf(about(await eng.draw())), /^하위 에이전트의 WebSearch: mods\./);
 });
 
+// The pane follows the step in progress as it draws: a drawing asks for a move (after a wait) when that step changed.
+const into = (key) => ({ to: { key }, in: PANE, block: 'nearest' });
+const NOT_DRAWN = { deny: 'no element of its own is drawn under that key' };
+
 test('the step in progress is brought into the pane\'s window when it changes, and only then', async () => {
   const eng = engine();
   await eng.raise('command.run', { command: 'progress', args: 'on' });
   const todos = (at) => Array.from({ length: 50 }, (_, i) => ({ content: `단계 ${i + 1}`, status: i + 1 === at ? 'in_progress' : i + 1 < at ? 'completed' : 'pending' }));
-  const into = (key) => ({ to: { key }, in: PANE, block: 'nearest' });
   await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(40) });
-  assert.deepEqual(eng.seen.scrolls, [], 'the move waits for the drawing that brings the row');
-  await eng.settle();
   let tree = await eng.draw();
+  assert.deepEqual(eng.seen.scrolls, [], 'the move waits');
+  await eng.settle();
   assert.deepEqual(eng.seen.scrolls, [into(rowLabeled(tree, '단계 40').props.key)]);
   await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(40) });
   await eng.tool({ tool: 'Bash', command: 'make' });
+  await eng.draw();
   await eng.settle();
   assert.equal(eng.seen.scrolls.length, 1, 'the same step in progress asks for no move');
   await eng.raise('tool.call', { tool: TODO_TOOL, todos: todos(41) });
-  await eng.settle();
   tree = await eng.draw();
+  await eng.settle();
   assert.deepEqual(eng.seen.scrolls.at(-1), into(rowLabeled(tree, '단계 41').props.key));
   assert.equal(eng.seen.scrolls.length, 2);
 });
 
+test('a pane opened again follows the step in progress, which it may hold below the window', async () => {
+  const eng = engine();
+  await eng.raise('command.run', { command: 'progress', args: 'on' });
+  await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.draw();
+  await eng.settle();
+  await eng.raise('command.run', { command: 'progress', args: 'off' });
+  await eng.raise('command.run', { command: 'progress', args: 'on' });
+  await eng.draw();
+  await eng.settle();
+  assert.deepEqual(eng.seen.scrolls, [into('row-t-t1'), into('row-t-t1')]);
+});
+
 test('a move refused because the row is not drawn yet is asked again; a closed pane, or the person\'s own move, ends it', async () => {
   const eng = engine();
-  const NOT_DRAWN = { deny: 'no element of its own is drawn under that key' };
   eng.scrollAnswers.push(NOT_DRAWN, NOT_DRAWN);
   await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.draw();
   await eng.settle();
   assert.equal(eng.seen.scrolls.length, 3, 'asked again until the row was drawn');
   assert.ok(eng.seen.waits.every((ms) => ms > 0), 'each ask waits first');
@@ -410,20 +427,60 @@ test('a move refused because the row is not drawn yet is asked again; a closed p
     const before = eng.seen.scrolls.length;
     eng.scrollAnswers.push({ deny });
     await eng.raise('turn.start', { turnId: `t-${before}`, text: deny });
+    await eng.draw();
     await eng.settle();
     await eng.raise('turn.complete', { turnId: `t-${before}`, reason: 'answer' });
     assert.equal(eng.seen.scrolls.length, before + 1, deny);
   }
 });
 
-test('a new prompt\'s step is brought into view as it starts; an engine that lacks the move changes nothing', async () => {
+test('a move refused as not drawn yet is asked four times at most', async () => {
+  const eng = engine();
+  for (let i = 0; i < 10; i++) eng.scrollAnswers.push(NOT_DRAWN);
+  await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.draw();
+  await eng.settle();
+  assert.equal(eng.seen.scrolls.length, 4);
+});
+
+test('Claude Code\'s own task tools bring the step in progress into view too', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  await eng.tool({ tool: 'TaskCreate', subject: '구현' }, created('2', '구현'));
+  await eng.tool({ tool: 'TaskUpdate', taskId: '2', status: 'in_progress' }, updated('2', { from: 'pending', to: 'in_progress' }));
+  await eng.draw();
+  await eng.settle();
+  assert.deepEqual(eng.seen.scrolls.at(-1), into('row-k-2'));
+});
+
+test('a move still waiting when the step in progress changes again, or after /clear, asks for nothing', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  await eng.tool({ tool: 'TaskCreate', subject: '구현' }, created('2', '구현'));
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'in_progress' }, updated('1', { from: 'pending', to: 'in_progress' }));
+  await eng.draw();
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'completed' }, updated('1', { from: 'in_progress', to: 'completed' }));
+  await eng.tool({ tool: 'TaskUpdate', taskId: '2', status: 'in_progress' }, updated('2', { from: 'pending', to: 'in_progress' }));
+  await eng.draw();
+  await eng.settle();
+  assert.deepEqual(eng.seen.scrolls.map((a) => a.to.key), ['row-k-2']);
+  await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.raise('session.end', { reason: 'clear' });
+  await eng.draw();
+  await eng.settle();
+  assert.deepEqual(eng.seen.scrolls.map((a) => a.to.key), ['row-k-2'], 'nothing is asked for a list /clear emptied');
+});
+
+test('a new prompt\'s step is brought into view as the pane draws it; an engine that lacks the move changes nothing', async () => {
   const eng = engine();
   await eng.raise('turn.start', { turnId: 't1', text: '하나' });
+  await eng.draw();
   await eng.settle();
-  assert.deepEqual(eng.seen.scrolls, [{ to: { key: 'row-t-t1' }, in: PANE, block: 'nearest' }]);
+  assert.deepEqual(eng.seen.scrolls, [into('row-t-t1')]);
   await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
   delete eng.$.ui.scroll;
   await eng.raise('turn.start', { turnId: 't2', text: '둘' });
+  await eng.draw();
   await eng.settle();
   delete eng.$.clock;
   await eng.raise('turn.complete', { turnId: 't2', reason: 'answer' });
@@ -645,6 +702,57 @@ test('of two TaskLists that overlap, the one begun first changes nothing once th
   const tree = await eng.draw();
   assert.deepEqual(labels(tree), ['설계', '구현']);
   assert.match(textOf(rowOf(tree, 'k-1')), /진행 중/);
+});
+
+test('a TaskList or TaskGet begun before a delete does not bring the deleted task back', async () => {
+  for (const read of [
+    { e: { tool: 'TaskList' }, answer: { result: { tasks: [{ id: '1', subject: '설계', status: 'pending', blockedBy: [] }, { id: '2', subject: '구현', status: 'pending', blockedBy: [] }] } } },
+    { e: { tool: 'TaskGet', taskId: '1' }, answer: { result: { task: { id: '1', subject: '설계', status: 'pending', blocks: [] } } } },
+  ]) {
+    const eng = engine();
+    await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+    await eng.tool({ tool: 'TaskCreate', subject: '구현' }, created('2', '구현'));
+    const reading = later(eng, read.e);
+    await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'deleted' }, updated('1', { from: 'pending', to: 'deleted' }));
+    await reading.end(read.answer);
+    assert.deepEqual(labels(await eng.draw()), ['구현'], read.e.tool);
+  }
+});
+
+test('an update begun before a delete that ends after it does not bring the task back', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  await eng.tool({ tool: 'TaskCreate', subject: '구현' }, created('2', '구현'));
+  const starting = later(eng, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'deleted' }, updated('1', { from: 'pending', to: 'deleted' }));
+  await starting.end(updated('1', { from: 'pending', to: 'in_progress' }));
+  assert.deepEqual(labels(await eng.draw()), ['구현']);
+});
+
+test('an update with no status begun later does not undo an earlier-begun status update', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const finishing = later(eng, { tool: 'TaskUpdate', taskId: '1', status: 'completed' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', owner: 'w' }, { result: { success: true, taskId: '1', updatedFields: ['owner'] } });
+  await finishing.end(updated('1', { from: 'pending', to: 'completed' }));
+  assert.match(textOf(rowOf(await eng.draw(), 'k-1')), /완료/);
+});
+
+test('a TaskCreate that ends after a later-begun update of its task keeps that update\'s status', async () => {
+  const eng = engine();
+  const creating = later(eng, { tool: 'TaskCreate', subject: '설계' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'in_progress' }, updated('1', { from: 'pending', to: 'in_progress' }));
+  await creating.end(created('1', '설계'));
+  assert.match(textOf(rowOf(await eng.draw(), 'k-1')), /진행 중/);
+});
+
+test('a TaskList begun before a TaskGet changes nothing the TaskGet brought', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const listing = later(eng, { tool: 'TaskList' });
+  await eng.tool({ tool: 'TaskGet', taskId: '1' }, { result: { task: { id: '1', subject: '설계', status: 'in_progress', blocks: [] } } });
+  await listing.end({ result: { tasks: [{ id: '1', subject: '설계', status: 'pending', blockedBy: [] }] } });
+  assert.match(textOf(rowOf(await eng.draw(), 'k-1')), /진행 중/);
 });
 
 test('of two TaskUpdates on one task, the one begun later stands whichever ends first', async () => {

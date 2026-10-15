@@ -5,9 +5,11 @@
  *
  * The engine reads the module's source before it runs it: each `on("<event>", hook)` names its
  * event as a string literal, an event without a matcher is hooked once in the whole module (its
- * imported files included), and `$` goes only to functions declared in the file that holds it.
- * So each feature (graceful-pause.mjs, progress.mjs) hooks the events only it needs, and this
- * file hooks the four they share: it calls the features' plain functions for them and makes the
+ * imported files included), and `$` goes only to functions declared in the file that holds it
+ * (2.1.300 also takes a function imported from the module's own files; an older engine refuses
+ * the whole module, so this file keeps to the older rule, and a test holds it). So each feature
+ * (graceful-pause.mjs, progress.mjs) hooks the events only it needs, and this file hooks the
+ * four they share: it calls the features' plain functions for them and makes the
  * engine calls itself, the module's command registrations among them. The engine shows a
  * `$.ui.log` line under the plugin's name, so the lines here do not repeat it.
  */
@@ -16,7 +18,7 @@ import {
   registerGracefulPause,
 } from './graceful-pause.mjs';
 import {
-  SPEC as PROGRESS_SPEC, progressFollow, progressPlanRead, progressPlanTarget, progressReset, progressTurnCompleted, progressTurnStarted,
+  SPEC as PROGRESS_SPEC, progressPlanRead, progressPlanTarget, progressReset, progressTurnCompleted, progressTurnStarted,
   registerProgress,
 } from './progress.mjs';
 
@@ -103,7 +105,6 @@ export const register = (on) => {
     progressTurnStarted(e);
     await rereadPlan($);
     $.ui.invalidate('ui.render');
-    progressFollow($);
     return next(e);
   });
 

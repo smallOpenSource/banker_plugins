@@ -12,10 +12,11 @@
  * overlapping calls is not something this module can see.
  *
  * Claude 5 models get no task list tool in Claude Code 2.1.296 and 2.1.300 unless
- * CLAUDE_CODE_ENABLE_TODO_TOOLS is set (seen in a live 2.1.300 session with Haiku 5.5: with it
- * TaskCreate, TaskUpdate, TaskList and TaskGet came and the pane showed their list; without it,
- * none). Opening the pane offers the model one of its own
- * (`mcp__banker__todo`, TodoWrite's shape) where it has none, and the list it sends is the steps.
+ * CLAUDE_CODE_ENABLE_TODO_TOOLS is set; older models and a background job get one. (Seen in a
+ * live 2.1.300 session with Haiku 5.5: with the variable TaskCreate, TaskUpdate, TaskList and
+ * TaskGet came and the pane showed their list; without it, none.) Opening the pane offers the
+ * model one of its own (`mcp__banker__todo`, TodoWrite's shape) where it has none, and the list it
+ * sends is the steps.
  * Above them the pane shows the plan file the session touched last (progress-plan.mjs reads it):
  * the whole plan as a tree that folds like a toggle list, its sections folded at first.
  * A prompt's harness tags leave its title, and a background task's notice (or a teammate's message)
@@ -117,13 +118,15 @@ const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', .
 
 // `rev` counts the task changes (TaskCreate, TaskUpdate) taken in, and `order` the calls begun: a TaskList or
 // TaskGet begun before a change keeps what changed after it began, and of two calls that overlap the one begun later
-// stands. `listAt` is the order of the TaskList the list last came from.
+// stands. `marks` holds, per task id, the orders that decide it (markOf). `listAt` is the order of the TaskList the
+// list last came from.
 // `plan` is the plan last read from `planPath`, `planShut` whether the whole plan is folded and
 // `planOpen` the ids of its nodes unfolded. `touch` counts the calls that touched a plan file and
 // `taken` is the touch the plan came from, to tell a read that a newer one overtook. `followed` is the step in
-// progress the pane last brought into view.
+// progress the pane last asked to bring into view.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
-  order: 0, listAt: 0, plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0, followed: null });
+  order: 0, marks: new Map(), listAt: 0, plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0,
+  followed: null });
 
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
@@ -291,52 +294,66 @@ function putTask(s, t, now) {
   while (s.tasks.size > MAX_STEPS) s.tasks.delete(overflow([...s.tasks.values()]).id);
 }
 
-function createTask(s, e, r, now) {
+// The marks of a task id, made on first use. They live in the state, not on the task, so a task deleted, or not
+// created yet, keeps them: `changedRev` the change count after its last TaskCreate or TaskUpdate (a delete
+// included), `statusAt` and `status` the order and the status of the last status update begun, `seenAt` the order
+// of the last read taken in.
+function markOf(s, id) {
+  if (!s.marks.has(id)) s.marks.set(id, {});
+  return s.marks.get(id);
+}
+
+// Whether a list or a read begun at (since, order) is older than what the pane holds of a task: the task changed
+// after it began (a delete too), or a later-begun read already brought it.
+function stale(s, id, since, order) {
+  const m = s.marks.get(id);
+  return Boolean(m) && ((m.changedRev ?? 0) > since || order < (m.seenAt ?? 0));
+}
+
+// An update begun after the create may end first (the ids are predictable): its status stands, and a delete wins.
+function createTask(s, e, r, now, { order }) {
   const id = r?.result?.task?.id;
   if (id === undefined) return;
-  putTask(s, { id: String(id), subject: e.subject, description: e.description, activeForm: e.activeForm, status: 'pending' }, now);
+  const m = s.marks.get(String(id));
+  const status = m && order < (m.statusAt ?? 0) ? m.status : 'pending';
+  if (status === 'deleted') return;
+  putTask(s, { id: String(id), subject: e.subject, description: e.description, activeForm: e.activeForm, status }, now);
 }
 
-// Notes on a task still on the list the order of the call that last changed or read it.
-function mark(s, id, key, order) {
-  const held = s.tasks.get(id);
-  if (held) held[key] = order;
-}
-
-// Whether a later-begun update already changed the task.
-const overtaken = (held, order) => Boolean(held) && order < (held.updAt ?? 0);
 // The status a TaskUpdate left: the change it answers with, else the one it asked for.
 const updatedStatus = (e, r) => r?.result?.statusChange?.to ?? e.status;
 
-// A task this module never saw (a list from before it loaded, or one another session shares) joins
-// the list while it is not done. Of two updates to one task, the one begun later stands.
+// A task this module never saw (a list from before it loaded, or one another session shares) joins the list while
+// it is not done. Of two status updates to one task, the one begun later stands; an update without a status (an
+// owner, a description) brings its words only.
 function updateTask(s, e, r, now, { order }) {
   const id = String(e.taskId);
-  const held = s.tasks.get(id);
-  if (overtaken(held, order)) return;
   const status = updatedStatus(e, r);
+  if (status !== undefined) {
+    const m = markOf(s, id);
+    if (order < (m.statusAt ?? 0)) return;
+    Object.assign(m, { statusAt: order, status });
+  }
   if (status === 'deleted') {
     s.tasks.delete(id);
     return;
   }
-  if (!held && status !== 'pending' && status !== 'in_progress') return;
+  if (!s.tasks.has(id) && status !== 'pending' && status !== 'in_progress') return;
   putTask(s, { id, subject: e.subject, description: e.description, activeForm: e.activeForm, status }, now);
-  mark(s, id, 'updAt', order);
 }
 
-// Whether the pane changed a task after a list or a read of it began.
-const changedSince = (held, since) => (held.changedRev ?? 0) > since;
-// Whether a read begun at (since, order) is older than what the pane holds of a task.
-const behind = (held, since, order) => Boolean(held) && (changedSince(held, since) || order < (held.seenAt ?? 0));
+// Whether the pane changed a task (a delete too) after a list of it began.
+const changedAfter = (s, id, since) => (s.marks.get(id)?.changedRev ?? 0) > since;
 
-// One task a TaskList names: as the pane holds it where it changed since the list began, else as listed.
+// One task a TaskList names: as the pane holds it where it changed since the list began or a later-begun read
+// brought it, else as listed.
 function takeListed(s, before, t, { over, since, order, now }) {
   const id = String(t.id);
   const held = before.get(id);
   if (held) s.tasks.set(id, held);
-  if (held && changedSince(held, since)) return;
+  if (stale(s, id, since, order)) return;
   if (held || !over) putTask(s, { id, subject: t.subject, status: t.status }, now);
-  mark(s, id, 'seenAt', order);
+  markOf(s, id).seenAt = order;
 }
 
 // TaskList names the whole list, in its order: a task it leaves out is gone, unless it changed after the list
@@ -351,18 +368,18 @@ function listTasks(s, _e, r, now, { since, order }) {
   const named = new Set(listed.map((t) => String(t.id)));
   s.tasks = new Map();
   for (const t of listed) takeListed(s, before, t, { over, since, order, now });
-  for (const [id, held] of before) if (!named.has(id) && changedSince(held, since)) s.tasks.set(id, held);
+  for (const [id, held] of before) if (!named.has(id) && changedAfter(s, id, since)) s.tasks.set(id, held);
 }
 
 // TaskGet reads one task: one it cannot find is gone, and a completed one off the pane stays off. A read older than
 // what the pane holds of the task changes nothing.
 function getTask(s, e, r, now, { since, order }) {
-  if (behind(s.tasks.get(String(e.taskId)), since, order)) return;
+  if (stale(s, String(e.taskId), since, order)) return;
   const t = r?.result?.task;
   if (t === null) s.tasks.delete(String(e.taskId));
   if (!t || (t.status === 'completed' && !s.tasks.has(String(t.id)))) return;
   putTask(s, { id: String(t.id), subject: t.subject, description: t.description, status: t.status }, now);
-  mark(s, String(t.id), 'seenAt', order);
+  markOf(s, String(t.id)).seenAt = order;
 }
 
 const TASK_NOTES = {
@@ -380,16 +397,16 @@ const TASK_NOTES = {
 // among the calls begun): what changed after it began, or what a later-begun call already brought, stays.
 const refused = (r) => Boolean(r?.deny || r?.isError || r?.result?.success === false);
 const CHANGES = new Set(['TaskCreate', 'TaskUpdate']);
-// The task a TaskCreate or TaskUpdate changed.
-const changedId = (e, r) => String(e.tool === 'TaskCreate' ? r?.result?.task?.id : e.taskId);
+// The task a TaskCreate or TaskUpdate changed, or undefined where the answer names none.
+const changedId = (e, r) => (e.tool === 'TaskCreate' ? r?.result?.task?.id : e.taskId);
 
 export function noteTaskTool(s, e, r, now, since = s.rev, order = ++s.order) {
   if (refused(r)) return;
   TASK_NOTES[e.tool]?.(s, e, r, now, { since, order });
   if (!CHANGES.has(e.tool)) return;
   s.rev += 1;
-  const held = s.tasks.get(changedId(e, r));
-  if (held) held.changedRev = s.rev;
+  const id = changedId(e, r);
+  if (id !== undefined) markOf(s, String(id)).changedRev = s.rev;
 }
 
 // The list a to-do call sent, each item's words cleaned, or what is wrong with it.
@@ -715,6 +732,7 @@ export async function runProgress($, args) {
     return {};
   }
   await showPane($, pane);
+  ref.s.followed = null;
   await offerTodo($);
   return {};
 }
@@ -747,7 +765,6 @@ async function watchCall($, e, next) {
     const touched = planTouched(s, e, call);
     if (touched) takePlan(s, touched.path, await readText($, touched.path), { touch: touched.touch, own: touched.own, weak: touched.weak });
     $.ui.invalidate('ui.render');
-    progressFollow($);
   }
 }
 
@@ -774,10 +791,11 @@ const ref = { s: freshState() };
 const FOLLOW_WAIT_MS = 100;
 const FOLLOW_TRIES = 4;
 
-// Brings the step in progress into the pane's window when it changes (a task started, a new prompt): in a long list
-// it can sit below the window. `nearest` moves nothing while its row shows, and the person's own scrolling stands
-// until the next change. A closed pane (no surface) or an engine without the move changes nothing.
-export function progressFollow($) {
+// Brings the step in progress into the pane's window as the pane draws, when that step changed (a task started, a
+// new prompt) or the pane was opened again: in a long list it can sit below the window. Only a drawn pane asks, so a
+// closed one or a tab behind another asks nothing. `nearest` moves nothing while its row shows, and the person's own
+// scrolling stands until the next change. An engine without the move changes nothing.
+function follow($) {
   const key = runningKey(ref.s);
   if (!key || key === ref.s.followed) return;
   ref.s.followed = key;
@@ -824,13 +842,13 @@ export function registerProgress(on) {
     }
     const answer = answerTodo(ref.s, e, Date.now(), open);
     $.ui.invalidate('ui.render');
-    progressFollow($);
     return answer;
   }).catch(() => ({ deny: '진행 상황 패널이 할 일 목록을 받지 못했습니다.' }));
   on('tool.describe', { tool: TODO_TOOL }, async (_$, e, next) => ({ ...(await next(e)), isDeferred: false })).catch(() => undefined);
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e);
     const redraw = () => $.ui.invalidate('ui.render');
+    follow($);
     const cols = Number.isFinite(e.props?.bodyColumns) ? e.props.bodyColumns : Infinity;
     const act = {
       cols,
