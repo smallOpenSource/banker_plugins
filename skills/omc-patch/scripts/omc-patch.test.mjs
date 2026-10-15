@@ -6,6 +6,7 @@ import {
   chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -634,7 +635,7 @@ test("an older PINNED that is a link is not written through: named and counted, 
   }
   const r = run(f.home, ["--no-update"]);
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /옛 URL 칸을 지우지 못함 \(링크라 따라가 쓰지 않음\)/);
+  assert.match(r.out, /옛 URL 칸을 지울 수 없음 \(링크라 따라가 쓰지 않음\)/);
   assert.match(r.out, /완료\. 실패 1건\./);
   assert.equal(read(join(dotfiles, "PINNED")), record);
   assert.ok(lstatSync(pinfile).isSymbolicLink(), "the link stays a link");
@@ -647,7 +648,7 @@ test("an older PINNED that is no JSON but holds the URL key is named and counted
   writeFileSync(pinfile, cut);
   const r = run(f.home, ["--no-update"]);
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /옛 URL 칸을 지우지 못함 \(JSON 이 아님\)/);
+  assert.match(r.out, /옛 URL 칸을 지울 수 없음 \(JSON 이 아님\)/);
   assert.equal(read(pinfile), cut);
   assert.ok(!r.out.includes(secret), "the password is not printed");
   writeFileSync(pinfile, "{ not json");
@@ -696,11 +697,11 @@ test("--check names an older PINNED the apply cannot clean (no JSON, unreadable,
     const c = run(f.home, ["--check", "--no-update"]);
     assert.equal(c.code, 0, c.out);
     assert.match(c.out, why);
-    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸은 이 도구로 지울 수 없습니다\. 위의 \[!\] 줄을 확인하십시오\./);
+    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\. 위의 \[!\] 줄을 확인하십시오\./);
     assert.ok(!c.out.includes(secret), "the password is not printed");
   };
   writeFileSync(pinfile, `{"originUrl":"${withPassword}"`);
-  blocked(/\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지우지 못함 \(JSON 이 아님\)/);
+  blocked(/\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지울 수 없음 \(JSON 이 아님\)/);
   if (process.platform !== "win32" && !asRoot) {
     writeFileSync(pinfile, record);
     chmodSync(pinfile, 0o000);
@@ -720,7 +721,7 @@ test("--check names an older PINNED the apply cannot clean (no JSON, unreadable,
     t.skip("file symlinks need privileges here");
     return;
   }
-  blocked(/옛 URL 칸을 지우지 못함 \(링크라 따라가 쓰지 않음\)/);
+  blocked(/옛 URL 칸을 지울 수 없음 \(링크라 따라가 쓰지 않음\)/);
   assert.equal(read(join(dotfiles, "PINNED")), record);
 });
 
@@ -749,7 +750,7 @@ test("--revert keeps a linked PINNED that leads to an older URL: named and count
   }
   const r = run(f.home, ["--revert"]);
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지우지 못함 \(링크라 따라가 쓰지 않음\)/);
+  assert.match(r.out, /\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지울 수 없음 \(링크라 따라가 쓰지 않음\)/);
   assert.match(r.out, /고정 해제 \(origin 복구\)/);
   assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 실패 1건\./);
   assert.equal(origin(f.market), withPassword, "the origin comes back from the pinned URL");
@@ -809,7 +810,7 @@ test("a record folder this account cannot write or open: --revert names the PINN
     assert.match(a.out, /완료\. 실패 1건\./);
     const c = run(f.home, ["--check", "--no-update"]);
     assert.match(c.out, /옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/);
-    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸은 이 도구로 지울 수 없습니다\./);
+    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
     const unopened = run(f.home, ["--revert"]);
     assert.equal(unopened.code, 1, unopened.out);
     assert.match(unopened.out, /\[!\] 고정 기록\(PINNED\)을 지우지 못함 \(EACCES\)/);
@@ -2279,4 +2280,424 @@ test("a bare apply that finds the target version in the cache but not active swi
   assert.match(r.out, new RegExp(`${target.replace(/\./g, "\\.")} 은 캐시에 있으나 활성 판은 5\\.6\\.1 입니다`));
   assert.equal(entry().version, target);
   assert.match(read(join(f.cache, target, "scripts", "foo.mjs")), /__omcRaceImport\(import\(/, "the target version is the one patched");
+});
+
+// ---- PINNED writes never follow a link: the first pin, a re-pin after a kept link, and a link swapped in during the write.
+const BACKSLASH = String.fromCharCode(92);
+const pinPath = (f) => join(f.home, ".claude", "omc-local-patches", "PINNED");
+// Puts `content` in a file elsewhere ("dotfiles") and makes PINNED a link to it. Returns the file, or null when links need privileges.
+function linkPinTo(t, f, content) {
+  const dot = join(root, `dotfiles${seq++}`);
+  mkdirSync(dot, { recursive: true });
+  mkdirSync(dirname(pinPath(f)), { recursive: true });
+  const target = join(dot, "PINNED");
+  writeFileSync(target, content);
+  rmSync(pinPath(f), { force: true });
+  try {
+    symlinkSync(target, pinPath(f));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return null;
+  }
+  return target;
+}
+
+test("a first pin whose PINNED is a link is refused and counted: the file it leads to and the link are left, the origin stays pinned", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const target = linkPinTo(t, f, "notes the user keeps here\n");
+  if (!target) return;
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 고정 기록\(PINNED\)을 쓰지 못함 \(링크라 따라가 쓰지 않음\)\. origin 은 고정됨/);
+  assert.match(r.out, /완료\. 실패 1건\./);
+  assert.equal(read(target), "notes the user keeps here\n");
+  assert.ok(lstatSync(pinPath(f)).isSymbolicLink(), "the link stays a link");
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`);
+  assert.equal(run(f.home, ["--no-update"]).code, 0, "a later apply, with no URL field in the target, is quiet");
+});
+
+test("a first pin whose PINNED is a dangling link is refused too: no file appears where it leads", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  mkdirSync(dirname(pinPath(f)), { recursive: true });
+  const gone = join(root, `gone${seq++}`, "PINNED");
+  try {
+    symlinkSync(gone, pinPath(f));
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.ok(lstatSync(pinPath(f)).isSymbolicLink(), "the link stays a link");
+  assert.throws(() => lstatSync(gone), { code: "ENOENT" });
+});
+
+test("an apply after a revert that kept a linked PINNED does not write through the link", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const { f, record } = olderPin();
+  const target = linkPinTo(t, f, record);
+  if (!target) return;
+  assert.equal(run(f.home, ["--revert"]).code, 1, "the revert keeps the link and counts it");
+  const again = run(f.home, ["--no-update"]);
+  assert.equal(read(target), record, "the file the link leads to is as it was");
+  assert.equal(again.code, 1, again.out);
+});
+
+test("a PINNED swapped for a link between the check and the write is replaced, never written through", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "file symlinks need privileges") }, () => {
+  const { f, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  const victim = join(root, `victim${seq++}.txt`);
+  writeFileSync(victim, "IMPORTANT USER DATA\n");
+  const pre = join(root, `swap-to-link${seq++}.mjs`);
+  writeFileSync(pre, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.lstatSync; let done = false;",
+    `fs.lstatSync = (p, ...a) => { const r = real(p, ...a); if (!done && String(p).endsWith("PINNED")) { done = true; fs.unlinkSync(p); fs.symlinkSync(${JSON.stringify(victim)}, p); } return r; };`,
+    "syncBuiltinESMExports();",
+  ].join("\n"));
+  runImport(pre, f.home, ["--no-update"]);
+  assert.equal(read(victim), "IMPORTANT USER DATA\n");
+});
+
+test("a link planted at PINNED after the check of a first pin is replaced, never written through", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "file symlinks need privileges") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const victim = join(root, `victim${seq++}.txt`);
+  writeFileSync(victim, "IMPORTANT USER DATA\n");
+  const pre = join(root, `plant-link${seq++}.mjs`);
+  writeFileSync(pre, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.lstatSync; let done = false;",
+    `fs.lstatSync = (p, ...a) => { try { return real(p, ...a); } catch (e) { if (!done && String(p).endsWith("PINNED")) { done = true; fs.symlinkSync(${JSON.stringify(victim)}, p); } throw e; } };`,
+    "syncBuiltinESMExports();",
+  ].join("\n"));
+  runImport(pre, f.home, ["--no-update"]);
+  assert.equal(read(victim), "IMPORTANT USER DATA\n");
+});
+
+test("a record folder that is itself a link keeps working: only a PINNED that is a link is refused", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const kept = join(root, `kept${seq++}`);
+  mkdirSync(kept, { recursive: true });
+  try {
+    symlinkSync(kept, join(f.home, ".claude", "omc-local-patches"));
+  } catch {
+    t.skip("symlinks need privileges here");
+    return;
+  }
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 0, r.out);
+  assert.ok(statSync(join(kept, "PINNED")).isFile(), "the record is written into the folder the link leads to");
+  assert.equal(run(f.home, ["--revert"]).code, 0);
+  assert.ok(lstatSync(join(f.home, ".claude", "omc-local-patches")).isSymbolicLink(), "the folder link stays");
+});
+
+// ---- hard links: the other names of an old record keep the URL, so the run says so.
+test("an apply and a revert over an old record with another hard-linked name say the URL stays in the other name", { skip: !HAS_GIT && "git not found" }, (t) => {
+  for (const mode of ["--no-update", "--revert"]) {
+    const { f, secret, record, pinfile } = olderPin();
+    writeFileSync(pinfile, record);
+    const other = join(root, `other-name${seq++}`);
+    try {
+      linkSync(pinfile, other);
+    } catch {
+      t.skip("hard links are not available here");
+      return;
+    }
+    const ino = lstatSync(pinfile, { bigint: true }).ino;
+    const r = run(f.home, [mode]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /옛 URL 칸을 이 이름에서만 지움 \(같은 파일의 다른 이름이 있어 그쪽에는 남음\)/);
+    assert.ok(r.out.includes(`다른 이름은 같은 파일 시스템에서 inode(Windows 는 파일 ID) ${ino} 로 찾습니다.`), r.out);
+    assert.ok(!r.out.includes(secret), "the password is not printed");
+  }
+});
+
+test("a hard-linked record with no URL field is not named", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  try {
+    linkSync(pinPath(f), join(root, `other-name${seq++}`));
+  } catch {
+    t.skip("hard links are not available here");
+    return;
+  }
+  assert.doesNotMatch(run(f.home, ["--no-update"]).out, /PINNED/);
+  const rev = run(f.home, ["--revert"]);
+  assert.equal(rev.code, 0, rev.out);
+});
+
+// ---- the result of --check when the record cannot be cleaned: it is the result only when nothing else is left to apply.
+test("--check with patches left and a record this tool cannot clean says patches are left, with a note; the apply patches and counts the record", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const { f, record } = olderPin();
+  if (!linkPinTo(t, f, record)) return;
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.match(c.out, /결과: 적용되지 않은 항목이 있습니다\./);
+  assert.match(c.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+  assert.match(c.out, /적용해도 그곳의 칸은 남고, 적용은 이 항목을 실패로 세어 종료 1 로 끝납니다\./);
+  const a = run(f.home, ["--no-update"]);
+  assert.equal(a.code, 1, a.out);
+  assert.match(a.out, /패치 2건 \/ 실패 0건/);
+  assert.match(a.out, /완료\. 실패 1건\./);
+  const again = run(f.home, ["--check", "--no-update"]);
+  assert.match(again.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+  assert.doesNotMatch(again.out, /참고: 고정 기록/);
+});
+
+test("--check over an unwritable record folder says it cannot drop the URL, and does not promise to", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX permission bits") || (asRoot && "root ignores modes") }, () => {
+  const { f, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  chmodSync(dirname(pinfile), 0o555);
+  try {
+    const c = run(f.home, ["--check", "--no-update"]);
+    assert.match(c.out, /옛 URL 칸을 지울 수 없음 \(쓰지 못함: EACCES\)/);
+    assert.doesNotMatch(c.out, /적용하면 지움/);
+    assert.match(c.out, /결과: 적용되지 않은 항목이 있습니다\./);
+  } finally {
+    chmodSync(dirname(pinfile), 0o755);
+  }
+});
+
+// ---- a revert always drops the record, whatever state the marketplace is in.
+for (const state of ["no marketplace folder", "no .git", "no origin"]) {
+  test(`--revert with ${state} still removes a leftover PINNED`, { skip: !HAS_GIT && "git not found" }, () => {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(run(f.home, ["--no-update"]).code, 0);
+    if (state === "no marketplace folder") rmSync(f.market, { recursive: true });
+    if (state === "no .git") rmSync(join(f.market, ".git"), { recursive: true });
+    if (state === "no origin") assert.equal(runGit(["remote", "remove", "origin"], f.market).status, 0);
+    const r = run(f.home, ["--revert"]);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(existsSync(pinPath(f)), false);
+  });
+}
+
+test("a revert whose set-url fails still removes PINNED; the origin stays pinned and the failure is counted once", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const gitDir = join(f.market, ".git");
+  chmodSync(gitDir, 0o555);
+  try {
+    const back = run(f.home, ["--revert"]);
+    assert.equal(back.code, 1, back.out);
+    assert.match(back.out, /되돌리기를 끝내지 못했습니다\. 실패 1건\./);
+  } finally {
+    chmodSync(gitDir, 0o755);
+  }
+  assert.equal(existsSync(pinPath(f)), false, "the record goes even when the origin could not be restored");
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`);
+});
+
+// ---- an old record is looked at when the marketplace cannot be pinned too (none, no .git, no origin).
+for (const state of ["no marketplace folder", "no .git", "no origin"]) {
+  test(`--check names an old PINNED's URL with ${state}, and the apply drops it`, { skip: !HAS_GIT && "git not found" }, () => {
+    const { f, record, pinfile } = olderPin();
+    assert.equal(run(f.home, ["--no-update"]).code, 0, "patches and pins first");
+    writeFileSync(pinfile, record);
+    if (state === "no marketplace folder") rmSync(f.market, { recursive: true });
+    if (state === "no .git") rmSync(join(f.market, ".git"), { recursive: true });
+    if (state === "no origin") assert.equal(runGit(["remote", "remove", "origin"], f.market).status, 0);
+    const c = run(f.home, ["--check", "--no-update"]);
+    assert.match(c.out, /옛 URL 칸이 남아 있음 \(적용하면 지움\)/);
+    assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다/);
+    const a = run(f.home, ["--no-update"]);
+    assert.equal(a.code, 0, a.out);
+    assert.equal(JSON.parse(read(pinfile)).originUrl, undefined);
+  });
+}
+
+test("with no marketplace and no PINNED at all, --check and the apply are as quiet as before", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  rmSync(f.market, { recursive: true });
+  rmSync(pinPath(f));
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 모두 적용된 상태입니다\./);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+});
+
+// ---- the record is judged by its parsed top-level key; the text decides only what is not JSON.
+test("a key written with an escape sequence is still the URL field: --check names it and the apply drops it", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, secret, withPassword, pinfile } = olderPin();
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(pinfile, `{"origin${BACKSLASH}u0055rl": "${withPassword}", "host": "x"}\n`);
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /옛 URL 칸이 남아 있음 \(적용하면 지움\)/);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  assert.ok(!read(pinfile).includes(secret), "the secret is gone from the file");
+});
+
+test("a link to a JSON file that names originUrl only inside a value is not blocked; one to a text file that holds the word still is", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const { f } = olderPin();
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  if (!linkPinTo(t, f, `${JSON.stringify({ pinnedAt: "t", note: "the old tool wrote originUrl here" })}\n`)) return;
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 모두 적용된 상태입니다\./);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  linkPinTo(t, f, "# notes\nthe old tool wrote an originUrl field\n");
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+});
+
+test("a JSON value that is no object, holding the word, is left alone", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, pinfile } = olderPin();
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(pinfile, '"originUrl"\n');
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 모두 적용된 상태입니다\./);
+});
+
+// ---- reads: every file the tool reads is opened without blocking and checked as a regular file before its read.
+const posixFifoGit = { skip: (process.platform === "win32" && "no FIFOs here") || (!HAS_GIT && "git not found") };
+const mkfifoAt = (p) => {
+  rmSync(p, { force: true });
+  return spawnSync("mkfifo", [p]).status === 0;
+};
+// Runs the tool with a deadline, with a module loaded first if pre is given. error is ETIMEDOUT when the run was killed.
+function runBy(home, args, pre) {
+  const env = cleanEnv({ HOME: home, USERPROFILE: home });
+  delete env.OMC_PATCH_INSTALLED;
+  const first = pre ? ["--import", pathToFileURL(pre).href] : [];
+  const r = spawnSync(process.execPath, [...first, TOOL, ...args], { encoding: "utf8", env, timeout: 20000 });
+  return { code: r.status, error: r.error?.code, out: `${r.stdout || ""}${r.stderr || ""}` };
+}
+
+test("a FIFO in place of installed_plugins.json is not read: --check guesses the version, the bare apply names the file", posixFifoGit, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  if (!mkfifoAt(join(f.plugins, "installed_plugins.json"))) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  const check = runBy(f.home, ["--check", "--no-update"]);
+  assert.equal(check.error, undefined, "--check ended before its deadline");
+  assert.match(check.out, /활성 버전: 5\.6\.1 \(추정: installed_plugins\.json 에서 확인 못 함\)/);
+  const { f: bare } = bareApplyFixture();
+  mkfifoAt(join(bare.plugins, "installed_plugins.json"));
+  const r = runBy(bare.home, []);
+  assert.equal(r.error, undefined, "the bare apply ended before its deadline");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 읽지 못함: installed_plugins\.json \(ENOTFILE\)/);
+  assert.doesNotMatch(r.out, /\n\s+at |Error:/, "no stack trace");
+});
+
+test("a FIFO in place of settings.json is not read: --check and the apply leave out its line and end", posixFifoGit, (t) => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const settings = join(f.home, ".claude", "settings.json");
+  if (!mkfifoAt(settings)) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  for (const args of [["--check", "--no-update"], ["--no-update"]]) {
+    const r = runBy(f.home, args);
+    assert.equal(r.error, undefined, `the run ended before its deadline: ${args.join(" ")}`);
+    assert.doesNotMatch(r.out, /DISABLE_AUTOUPDATER:/, "the settings line is left out");
+    assert.doesNotMatch(r.out, /\n\s+at |Error:/, "no stack trace");
+  }
+  assert.ok(lstatSync(settings).isFIFO(), "the FIFO is still a FIFO");
+});
+
+test("FIFOs in place of the name labels of a --root folder are not read: the folder counts as one with no label", posixFifo, (t) => {
+  const plug = bundle();
+  if (!mkfifoAt(join(plug, "package.json"))) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  mkdirSync(join(plug, ".claude-plugin"));
+  mkfifoAt(join(plug, ".claude-plugin", "plugin.json"));
+  const r = runBy(bareHome(), ["--root", plug, "--check"]);
+  assert.equal(r.error, undefined, "the run ended before its deadline");
+  assert.doesNotMatch(r.out, /OMC 플러그인 폴더가 아님/);
+  assert.match(r.out, /결과: 적용되지 않은 항목이 있습니다\./);
+});
+
+test("--scan names a FIFO it was given and ends", posixFifo, (t) => {
+  const dir = join(root, `scan${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  if (!mkfifoAt(join(dir, "pipe.mjs"))) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  const r = runBy(bareHome(), ["--scan", join(dir, "pipe.mjs")]);
+  assert.equal(r.error, undefined, "the run ended before its deadline");
+  assert.equal(r.code, 1, r.out);
+  assert.deepEqual(JSON.parse(r.out).map((x) => x.error), ["ENOTFILE"]);
+});
+
+// A module that swaps the file a named function is about to read for a FIFO, after that function's stat and before its read.
+const swapToFifoIn = (fn, tail) => [
+  'import fs from "node:fs";',
+  'import { execFileSync } from "node:child_process";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.statSync;",
+  "let done = false;",
+  `fs.statSync = (p, ...a) => { const r = real(p, ...a); if (!done && r && r.isFile() && String(p).endsWith(${JSON.stringify(tail)}) && new Error().stack.includes(${JSON.stringify(fn)})) { done = true; fs.unlinkSync(p); execFileSync("mkfifo", [String(p)]); } return r; };`,
+  "syncBuiltinESMExports();",
+].join("\n");
+
+test("a PINNED swapped for a FIFO between its stat and its read does not stall --check", posixFifoGit, (t) => {
+  if (!mkfifoAt(join(root, `probe${seq++}`))) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  const { f, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  const pre = join(root, `pin-swap${seq++}.mjs`);
+  writeFileSync(pre, `${swapToFifoIn("pinRecordText", "PINNED")}\n`);
+  const r = runBy(f.home, ["--check", "--no-update"], pre);
+  assert.equal(r.error, undefined, "the run ended before its deadline");
+  assert.ok(lstatSync(pinfile).isFIFO(), "the record was swapped for a FIFO in the run");
+  assert.doesNotMatch(r.out, /읽지 못함|확인하지 못함/);
+});
+
+test("a PINNED that is a socket is passed over as a FIFO is: no read error", posixFifoGit, async (t) => {
+  const { f, pinfile } = olderPin();
+  const srv = createServer();
+  try {
+    await new Promise((res, rej) => { srv.once("error", rej); srv.listen(pinfile, res); });
+  } catch (e) {
+    t.skip(`no socket at this path here: ${e.code}`);
+    return;
+  }
+  try {
+    const r = runBy(f.home, ["--check", "--no-update"]);
+    assert.equal(r.error, undefined, "the run ended before its deadline");
+    assert.doesNotMatch(r.out, /읽지 못함|확인하지 못함/);
+  } finally {
+    await new Promise((res) => srv.close(res));
+  }
+});
+
+test("a file a hook link leads to, swapped for a FIFO before the revert peeks into it, does not stall the revert", posixFifo, (t) => {
+  if (!mkfifoAt(join(root, `probe${seq++}`))) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  const home = bareHome();
+  const plug = bundle();
+  const outside = join(root, `outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "foo.mjs"), "// my own work, never patched by this tool\n");
+  writeFileSync(join(plug, "scripts", "foo.mjs.omcbak"), SCRIPT("foo"));
+  rmSync(join(plug, "scripts", "foo.mjs"));
+  symlinkSync(join(outside, "foo.mjs"), join(plug, "scripts", "foo.mjs"));
+  const pre = join(root, `peek-swap${seq++}.mjs`);
+  writeFileSync(pre, `${swapToFifoIn("patchedByOldTool", "foo.mjs")}\n`);
+  const r = runBy(home, ["--revert", "--root", plug], pre);
+  assert.equal(r.error, undefined, "the revert ended before its deadline");
+  assert.ok(lstatSync(join(outside, "foo.mjs")).isFIFO(), "the file was swapped for a FIFO in the run");
+  assert.match(r.out, /패치가 보이지 않습니다\. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오\./);
+});
+
+// ---- hard links: --check says the apply can clean only this name, and every run gives the number to find the other names by.
+test("--check over an old record with another hard-linked name says the apply cleans only this name, with the inode to find the other by", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const { f, secret, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  try {
+    linkSync(pinfile, join(root, `other-name${seq++}`));
+  } catch {
+    t.skip("hard links are not available here");
+    return;
+  }
+  const ino = lstatSync(pinfile, { bigint: true }).ino;
+  const r = run(f.home, ["--check", "--no-update"]);
+  assert.match(r.out, /옛 URL 칸을 이 이름에서만 지울 수 있음 \(같은 파일의 다른 이름이 있어 그쪽에는 남음\)/);
+  assert.ok(r.out.includes(`다른 이름은 같은 파일 시스템에서 inode(Windows 는 파일 ID) ${ino} 로 찾습니다.`), r.out);
+  assert.doesNotMatch(r.out, /적용하면 지움/);
+  assert.match(r.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+  assert.ok(!r.out.includes(secret), "the password is not printed");
 });
