@@ -843,44 +843,101 @@ function pinMarketplace() {
   if (url === null) return "no-remote";
 
   if (MODE === "revert") return unpinMarketplace(url);
-  if (url.startsWith("omc-pinned://")) { scrubPinRecord(); return "already"; }
+  if (url.startsWith("omc-pinned://")) return alreadyPinned();
   if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(redactUrl(url))})`); return "needs"; }
 
   try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
   catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${gitError(e)})`); return "pin-failed"; }
-  // host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
-  // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
-  // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
-  // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
+  return writePinRecord() ? "pinned" : "record-failed";
+}
+
+// host 를 남긴다. 이 폴더는 통째로 복사해 배포하므로 PINNED 도 같이 딸려 가는데,
+// PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
+// URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
+// 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
+function writePinRecord() {
   try {
     mkdirSync(dirname(PINFILE), { recursive: true });
     writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600);
+    return true;
   } catch (e) {
     bad(`고정 기록(PINNED)을 쓰지 못함 (${failWhy(e)}). origin 은 고정됨: ${oneLine(PINFILE)}`);
-    return "record-failed";
+    return false;
   }
-  return "pinned";
 }
 
-// 옛 도구가 남긴 고정 기록의 URL(인증 정보가 들 수 있음)을 지우고 이 계정만 읽게 한다. --check 는 쓰지 않는다. 일반
-// 파일이 아니거나 읽을 수 없거나 깨진 기록은 그대로 둔다(기록일 뿐이다).
+// 이미 고정된 origin. 옛 기록의 URL 칸을 지우지 못했으면 고정은 그대로 두고 실패로 센다.
+// --check 는 쓰지 않고 그 칸이 남았는지만 알린다. 모두 적용됐다고 하면 SKILL 이 적용을 건너뛰어, 이미 적용한 PC 에는
+// 그 칸을 지울 적용이 오지 않는다(고정된 OMC 는 업데이트도 오지 않는다).
+function alreadyPinned() {
+  if (MODE === "check") return pinUrlCheck();
+  return scrubPinRecord() ? "already" : "scrub-failed";
+}
+
+// 옛 도구가 남긴 고정 기록의 URL(인증 정보가 들 수 있음)을 지우고 이 계정만 읽게(0600) 한다.
+// 할 일이 없거나 지웠으면 true 다. 지우지 못했거나 기록을 읽지 못해 확인하지 못했으면 [!] 로 알리고 false 다.
 function scrubPinRecord() {
-  if (MODE === "check") return;
+  const left = pinUrlLeftover();
+  if (!left) return true;
+  if (left.why) return pinUrlLeft(left.why);
+  delete left.rec.originUrl;
+  try { writeAtomic(PINFILE, JSON.stringify(left.rec, null, 2) + "\n", 0o600); return true; }
+  catch (e) { return pinUrlLeft(`지우지 못함 (쓰지 못함: ${failWhy(e)})`); }
+}
+
+// --check 의 판정. 남은 칸을 적용이 지울 수 있으면 scrub-needs, 이 도구로 지울 수 없으면 그 까닭을 알리고
+// scrub-blocked 다. 남은 칸이 없으면 already 다.
+function pinUrlCheck() {
+  const left = pinUrlLeftover();
+  if (!left) return "already";
+  if (left.why) {
+    pinUrlLeft(left.why);
+    return "scrub-blocked";
+  }
+  bad(`고정 기록(PINNED)에 옛 URL 칸이 남아 있음 (적용하면 지움): ${oneLine(PINFILE)}`);
+  return "scrub-needs";
+}
+
+// 고정 기록에 남은 옛 URL 칸. 없으면 null 이다. 있으면 그 칸을 뺄 기록(rec)이나 이 도구가 지우지 못하는 까닭(why)이다.
+// 글에 그 이름이 있어도 최상위 칸이 아니면 없는 것이다. 링크인 기록은 따라가 쓰지 않으므로(사용자가 고친다) 링크에는
+// rec 를 내지 않는다.
+function pinUrlLeftover() {
+  let text;
+  try { text = pinRecordText(); }
+  catch (e) { return { why: `확인하지 못함 (읽지 못함: ${failWhy(e)})` }; }
+  if (text === null || !text.includes("originUrl")) return null;
+  if (isLink(PINFILE)) return { why: "지우지 못함 (링크라 따라가 쓰지 않음)" };
+  let rec;
+  try { rec = JSON.parse(text); }
+  catch { return { why: "지우지 못함 (JSON 이 아님)" }; }
+  return rec && typeof rec === "object" && "originUrl" in rec ? { rec } : null;
+}
+
+// 고정 기록의 글. 없거나 일반 파일로 이어지지 않으면(폴더, FIFO, 끊어진 링크, 링크 고리) null 이다. 그런 자리에는
+// URL 이 들 수 없다. 읽지 못하면 던진다.
+function pinRecordText() {
   try {
-    if (!lstatSync(PINFILE).isFile()) return;
-    const rec = JSON.parse(readFileSync(PINFILE, "utf8"));
-    if (!rec || typeof rec !== "object" || !("originUrl" in rec)) return;
-    delete rec.originUrl;
-    writeAtomic(PINFILE, JSON.stringify(rec, null, 2) + "\n", 0o600);
-  } catch { /* 없거나 깨진 기록 */ }
+    if (!statSync(PINFILE).isFile()) return null;
+  } catch (e) {
+    if (["ENOENT", "ENOTDIR", "ELOOP"].includes(e.code)) return null;
+    throw e;
+  }
+  return readFileSync(PINFILE, "utf8");
+}
+
+// 옛 URL 칸이 남았을 수 있음을 알린다. 인증 정보가 든 URL 이 남을 수 있어 적용과 되돌리기는 실패로 센다.
+// 기록의 글은 내지 않는다.
+function pinUrlLeft(what) {
+  bad(`고정 기록(PINNED)의 옛 URL 칸을 ${what}.\n      인증 정보가 든 URL 이 남았을 수 있습니다: ${oneLine(PINFILE)}`);
+  return false;
 }
 
 // 원본 URL 은 현재 origin 안에 그대로 들어 있다(`omc-pinned://` + 원본). 거기서만 복원한다.
 // PINNED 의 값으로 origin 을 쓰지 않는다. PINNED 는 배포 폴더에 같이 딸려 오므로 다른 PC 의 값일 수 있고,
 // host 가 없는 기록은 어느 기기의 것인지 모른다. origin 이 고정 상태가 아니면 되돌릴 것도 없다.
+// 고정 기록은 이 뒤에 dropPinRecord 가 지운다. 기록을 지우지 못해도 origin 은 되돌린다.
 function unpinMarketplace(url) {
   const PIN_PREFIX = "omc-pinned://";
-  if (existsSync(PINFILE)) dropPinRecord();
   const restored = url.startsWith(PIN_PREFIX) ? url.slice(PIN_PREFIX.length) : "";
   if (!restored) return "not-pinned";
   try { git(["remote", "set-url", "--", "origin", restored]); }
@@ -892,11 +949,32 @@ function unpinMarketplace(url) {
   return "unpinned";
 }
 
-// PINNED 를 지운다. 다른 기기의 기록이면 알린다. 깨진 기록(JSON 이 아니거나, null 처럼 객체가 아닌 값)은 말없이 지운다.
+// PINNED 를 지운다. 지웠거나 지울 것이 없으면 true 다. 깨진 기록(JSON 이 아니거나, null 처럼 객체가 아닌 값)은 말없이
+// 지운다. 링크는 링크만 지우는데, 링크 너머에 옛 URL 칸이 있거나 그것을 확인하지 못하면 링크를 두고 알린다(링크 너머는
+// 쓰지 않음). 지우지 못해도(읽기 전용 폴더, 폴더인 PINNED) 알린다. 둘 다 false 다. 일반 파일이 아니면 읽지 않는다(FIFO).
 function dropPinRecord() {
+  if (!pinRecordThere()) return true;
+  const left = isLink(PINFILE) && pinUrlLeftover();
+  if (left) return pinUrlLeft(left.why);
   let saved = null;
-  try { saved = JSON.parse(readFileSync(PINFILE, "utf8")); } catch { /* 깨졌으면 무시 */ }
-  unlinkSync(PINFILE);
+  try { saved = JSON.parse(pinRecordText()); } catch { /* 깨졌거나 읽지 못하면 무시 */ }
+  try { unlinkSync(PINFILE); }
+  catch (e) {
+    bad(`고정 기록(PINNED)을 지우지 못함 (${failWhy(e)}): ${oneLine(PINFILE)}`);
+    return false;
+  }
+  warnForeignPin(saved);
+  return true;
+}
+
+// 고정 기록 자리에 무엇이 있는가(끊어진 링크 포함). 위 폴더를 열 수 없어 확인하지 못하면 있는 것으로 본다.
+function pinRecordThere() {
+  try { lstatSync(PINFILE); return true; }
+  catch (e) { return !["ENOENT", "ENOTDIR"].includes(e.code); }
+}
+
+// 다른 기기의 기록이면 알린다. 그 값은 쓰지 않는다.
+function warnForeignPin(saved) {
   if (saved && typeof saved === "object" && saved.host && saved.host !== hostname()) {
     bad(`PINNED 는 다른 기기(${shown(saved.host)})의 기록입니다 — 그 값은 쓰지 않습니다.`);
   }
@@ -1081,7 +1159,8 @@ for (const v of targets) {
   else if (hj === "reverted" || hj === "ambiguous" || hj === "linked") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
   else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
-  else if (hj === "unsafe") { r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
+  // "failed" 는 고친 hooks.json 이 JSON 으로 읽히지 않아 되돌린 경우다. 고치지 못했으니 실패로 센다.
+  else if (hj === "unsafe" || hj === "failed") { r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
   if (hj === "ambiguous" || hj === "linked") left.add(fileKey(join(root, "hooks", "hooks.json")));
 }
 
@@ -1113,8 +1192,19 @@ if (ROOT) {
     "pin-failed": () => {},
     "unpin-failed": () => {},
     "record-failed": () => {},
+    "scrub-failed": () => ok("이미 고정됨"),
+    "scrub-needs": () => ok("이미 고정됨"),
+    "scrub-blocked": () => ok("이미 고정됨"),
   }[pin] || (() => {}))();
-  if (["pin-failed", "unpin-failed", "record-failed"].includes(pin)) { r.fail++; failed.add(pin === "record-failed" ? "PINNED" : "origin"); }
+  if (["pin-failed", "unpin-failed", "record-failed", "scrub-failed"].includes(pin)) {
+    r.fail++;
+    failed.add(["record-failed", "scrub-failed"].includes(pin) ? "PINNED" : "origin");
+  }
+  // 되돌리기는 origin 을 다룬 뒤 고정 기록을 지운다. 지우지 못하면 origin 과 따로 실패로 센다.
+  if (["unpinned", "not-pinned", "unpin-failed"].includes(pin) && !dropPinRecord()) {
+    r.fail++;
+    failed.add("PINNED");
+  }
 }
 
 log();
@@ -1125,11 +1215,13 @@ if (MODE === "check") {
   // 헬퍼 자리 결함이 하나라도 있으면 «모두 적용» 이 아니다. 다시 적용만으로는 안 고쳐지므로
   // 그 안내를 먼저 낸다(되돌린 뒤 적용하면 «패치 필요» 항목도 함께 처리된다).
   const misplacedActive = misplacedBy[active] || 0;
-  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && pin !== "needs" && misplacedActive === 0;
+  const pinNeeds = ["needs", "scrub-needs", "scrub-blocked"].includes(pin);
+  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && !pinNeeds && misplacedActive === 0;
   const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
   log(clean ? "결과: 모두 적용된 상태입니다."
     : hjFailBy[active] ? "결과: hooks.json 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."
     : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${misplacedHint()}`
+    : pin === "scrub-blocked" ? "결과: 고정 기록(PINNED)의 옛 URL 칸은 이 도구로 지울 수 없습니다. 위의 [!] 줄을 확인하십시오."
     : ROOT ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 같은 --root 로 다시 실행하십시오."
     : NO_UPDATE ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 --no-update 로 다시 실행하십시오."
     : "결과: 적용되지 않은 항목이 있습니다. 인자 없이 다시 실행하십시오.");
