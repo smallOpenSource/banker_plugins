@@ -408,8 +408,13 @@ test('a pane opened again follows the step in progress, which it may hold below 
   await eng.draw();
   await eng.settle();
   await eng.raise('command.run', { command: 'progress', args: 'off' });
+  // an engine may draw the pane before the open answers
+  const open = eng.$.ui.open;
+  eng.$.ui.open = async (p) => {
+    await open(p);
+    await eng.draw();
+  };
   await eng.raise('command.run', { command: 'progress', args: 'on' });
-  await eng.draw();
   await eng.settle();
   assert.deepEqual(eng.seen.scrolls, [into('row-t-t1'), into('row-t-t1')]);
 });
@@ -753,6 +758,32 @@ test('a TaskList begun before a TaskGet changes nothing the TaskGet brought', as
   await eng.tool({ tool: 'TaskGet', taskId: '1' }, { result: { task: { id: '1', subject: '설계', status: 'in_progress', blocks: [] } } });
   await listing.end({ result: { tasks: [{ id: '1', subject: '설계', status: 'pending', blockedBy: [] }] } });
   assert.match(textOf(rowOf(await eng.draw(), 'k-1')), /진행 중/);
+});
+
+test('an update with no status of a task the pane does not hold leaves a list begun before it alone', async () => {
+  const eng = engine();
+  const listing = later(eng, { tool: 'TaskList' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '7', owner: 'w' }, { result: { success: true, taskId: '7', updatedFields: ['owner'] } });
+  await listing.end({ result: { tasks: [{ id: '7', subject: '다른 세션의 작업', status: 'pending', blockedBy: [] }] } });
+  assert.deepEqual(labels(await eng.draw()), ['다른 세션의 작업']);
+});
+
+test('a list or a read begun before a status update shows that update\'s status for a task the pane did not hold', async () => {
+  const eng = engine();
+  const listing = later(eng, { tool: 'TaskList' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '7', status: 'completed' }, updated('7', { from: 'in_progress', to: 'completed' }));
+  await listing.end({ result: { tasks: [
+    { id: '7', subject: '다른 세션의 작업', status: 'in_progress', blockedBy: [] },
+    { id: '8', subject: '남은 작업', status: 'pending', blockedBy: [] },
+  ] } });
+  let tree = await eng.draw();
+  assert.deepEqual(labels(tree), ['다른 세션의 작업', '남은 작업']);
+  assert.match(textOf(rowOf(tree, 'k-7')), /완료/);
+  const reading = later(eng, { tool: 'TaskGet', taskId: '9' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '9', status: 'completed' }, updated('9', { from: 'in_progress', to: 'completed' }));
+  await reading.end({ result: { task: { id: '9', subject: '또 다른 작업', status: 'in_progress', blocks: [] } } });
+  tree = await eng.draw();
+  assert.ok(!labels(tree).includes('또 다른 작업'), 'a read older than the completion does not bring the task back as in progress');
 });
 
 test('of two TaskUpdates on one task, the one begun later stands whichever ends first', async () => {

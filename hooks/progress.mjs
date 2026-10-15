@@ -344,6 +344,12 @@ function updateTask(s, e, r, now, { order }) {
 
 // Whether the pane changed a task (a delete too) after a list of it began.
 const changedAfter = (s, id, since) => (s.marks.get(id)?.changedRev ?? 0) > since;
+// The status a list or a read begun at order shows for a task: a status update begun after it stands, also for a
+// task the pane did not hold then.
+const readStatus = (s, id, order, status) => {
+  const m = s.marks.get(id);
+  return m && order < (m.statusAt ?? 0) ? m.status : status;
+};
 
 // One task a TaskList names: as the pane holds it where it changed since the list began or a later-begun read
 // brought it, else as listed.
@@ -352,7 +358,9 @@ function takeListed(s, before, t, { over, since, order, now }) {
   const held = before.get(id);
   if (held) s.tasks.set(id, held);
   if (stale(s, id, since, order)) return;
-  if (held || !over) putTask(s, { id, subject: t.subject, status: t.status }, now);
+  const status = readStatus(s, id, order, t.status);
+  if (status === 'deleted') return;
+  if (held || !over) putTask(s, { id, subject: t.subject, status }, now);
   markOf(s, id).seenAt = order;
 }
 
@@ -377,9 +385,12 @@ function getTask(s, e, r, now, { since, order }) {
   if (stale(s, String(e.taskId), since, order)) return;
   const t = r?.result?.task;
   if (t === null) s.tasks.delete(String(e.taskId));
-  if (!t || (t.status === 'completed' && !s.tasks.has(String(t.id)))) return;
-  putTask(s, { id: String(t.id), subject: t.subject, description: t.description, status: t.status }, now);
-  markOf(s, String(t.id)).seenAt = order;
+  if (!t) return;
+  const id = String(t.id);
+  const status = readStatus(s, id, order, t.status);
+  if (status === 'deleted' || (status === 'completed' && !s.tasks.has(id))) return;
+  putTask(s, { id, subject: t.subject, description: t.description, status }, now);
+  markOf(s, id).seenAt = order;
 }
 
 const TASK_NOTES = {
@@ -405,8 +416,10 @@ export function noteTaskTool(s, e, r, now, since = s.rev, order = ++s.order) {
   TASK_NOTES[e.tool]?.(s, e, r, now, { since, order });
   if (!CHANGES.has(e.tool)) return;
   s.rev += 1;
+  // Only a change the pane took in marks the task: one it holds after the change, or a delete. An update of a task the
+  // pane does not hold leaves the lists alone (its status still counts, through readStatus).
   const id = changedId(e, r);
-  if (id !== undefined) markOf(s, String(id)).changedRev = s.rev;
+  if (id !== undefined && (s.tasks.has(String(id)) || updatedStatus(e, r) === 'deleted')) markOf(s, String(id)).changedRev = s.rev;
 }
 
 // The list a to-do call sent, each item's words cleaned, or what is wrong with it.
@@ -731,8 +744,8 @@ export async function runProgress($, args) {
     if (pane) await $.ui.close({ id: PANE });
     return {};
   }
+  ref.s.followed = null; // before the open: the engine may draw the pane before the open answers
   await showPane($, pane);
-  ref.s.followed = null;
   await offerTodo($);
   return {};
 }
