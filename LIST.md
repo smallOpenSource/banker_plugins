@@ -24,10 +24,11 @@ README 의 총 구성요소 수는 스킬과 커맨드만 센 수입니다.
 | 마지막 업데이트 날짜 | 구성요소 파일을 마지막으로 바꾼 커밋의 날짜입니다. |
 | 마지막 업데이트 버전 | 그 커밋이 처음 실린 릴리스 버전입니다. |
 | 형태 | 구성요소의 종류입니다. 맨 위 "구성" 줄의 세 가지 중 하나입니다. |
-| 비고 | 이름과 역할의 이력, 세는 방식의 예외를 적습니다. |
+| 비고 | 이름과 역할의 이력, 마지막 업데이트를 읽을 때의 주의(일괄 수정, 세지 않은 변경)를 적습니다. |
 
 2026-06-25 는 저장소의 첫 커밋 날입니다.
 그 전의 개발은 이 표에 반영하지 않습니다.
+
 처음 넣은 커밋의 시각이 같으면 표에 적는 이름의 문자 순서로 번호를 매깁니다.
 그래서 같은 커밋에서는 `/` 로 시작하는 커맨드와 즉시명령이 스킬보다 앞에 옵니다.
 
@@ -168,15 +169,21 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 2. 이번 릴리스에서 바뀐 구성요소를 찾습니다.
    - 스킬: `node scripts/gen-skill-changes.js --print`
    - 커맨드와 즉시명령: `git diff --name-only "$P" -- commands hooks` 의 결과 가운데 "구성요소 파일"에 있는 파일
-   - 커밋하지 않은 변경과 새 파일: `git status --short -- skills commands hooks`
-     - 위 두 명령은 git 에 아직 넣지 않은 새 파일을 보지 못합니다.
+   - 커밋하지 않은 변경과 새 파일: 아래 명령
+     - 앞의 두 명령은 git 에 아직 넣지 않은 새 파일을 보지 못합니다.
+   ```bash
+   git status --short -- skills commands hooks \
+     ':(exclude,glob)**/*.test.mjs' ':(exclude,glob)**/*.test.ts' \
+     ':(exclude,glob)**/test_*.py' ':(exclude,glob)**/__pycache__/**' \
+     ':(exclude,glob)**/.omc/**'
+   ```
 3. 바뀐 구성요소마다 마지막 업데이트 날짜와 버전을 고칩니다.
    - 버전: 이번 릴리스 버전
-   - 날짜: 아래 명령의 결과
+   - 날짜: 아래 명령이 내는 날짜(함께 나오는 커밋은 6번에서 씀)
    - 2번의 `git status` 에 나온 구성요소: 릴리스 커밋을 만드는 날짜(보통 CHANGELOG 새 섹션의 날짜)
      - 자정을 넘겨 커밋하면 커밋한 날짜로 맞춥니다.
    ```bash
-   git log -1 --no-merges --format=%ad --date=short -- <파일> \
+   git log -1 --no-merges --format='%ad %h' --date=short -- <파일> \
      ':(exclude,glob)**/*.test.mjs' ':(exclude,glob)**/*.test.ts' \
      ':(exclude,glob)**/test_*.py' ':(exclude,glob)**/__pycache__/**' \
      ':(exclude,glob)**/.omc/**'
@@ -195,3 +202,4 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
      ':(exclude,glob)**/.omc/**' | sed -E 's#^(skills/[^/]+)/.*#\1#' | sort -u | wc -l
    ```
 7. 맨 위의 기준 버전, 날짜, 개수를 고칩니다.
+   - 날짜: CHANGELOG 새 섹션의 날짜
