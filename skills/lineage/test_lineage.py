@@ -20,6 +20,21 @@ import pathlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lineage as L  # noqa: E402
 
+_REAL_CACHE_BASE = L.CACHE_BASE
+_CACHE_FOR_ALL = None
+
+
+def setUpModule():
+    """No test writes under the real ~/.cache/lineage: every test starts with a private summary cache."""
+    global _CACHE_FOR_ALL
+    _CACHE_FOR_ALL = tempfile.mkdtemp()
+    L.CACHE_BASE = pathlib.Path(_CACHE_FOR_ALL)
+
+
+def tearDownModule():
+    L.CACHE_BASE = _REAL_CACHE_BASE
+    shutil.rmtree(_CACHE_FOR_ALL, ignore_errors=True)
+
 
 def _turn(role, text, ts="2026-08-09T10:00:00Z", uuid="u", tools=None,
           session="s", parts=None):
@@ -2558,6 +2573,12 @@ class TestCacheFileNames(_ReviewCase):
         self.assertFalse(hit)
         self.assertEqual(sorted(os.listdir(L.cache_dir("s"))), ["a1-%s.md" % self._digest()])
 
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes")
+    def test_a_new_summary_is_cached_private_to_the_user(self):
+        L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        path = L.cache_dir("s") / ("a1-%s.md" % self._digest())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
     def test_a_summary_cached_as_txt_by_3_0_2_is_reused(self):
         (L.cache_dir("s") / ("a1-%s.txt" % self._digest())).write_text("옛 캐시의 요약", encoding="utf-8")
         summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
@@ -2639,6 +2660,264 @@ class TestCacheFileNames(_ReviewCase):
             found[suffix] = sorted((s.type, s.secret_value) for name in col.files for s in col[name])
         self.assertTrue(found[".md"], "the sample holds findings")
         self.assertEqual(found[".txt"], found[".md"])
+
+
+class TestCacheIsPrivateToTheTests(unittest.TestCase):
+    def test_the_cache_is_not_the_users_own(self):
+        self.assertNotEqual(L.CACHE_BASE, _REAL_CACHE_BASE)
+        self.assertTrue(str(L.CACHE_BASE).startswith(tempfile.gettempdir()), L.CACHE_BASE)
+
+
+class TestBlankReviewerSummary(_ReviewCase):
+    """A reviewer summary that prints as nothing falls to the rules' summary, as a blank one does."""
+
+    def _page_summaries(self, summary):
+        self._write(self._records())
+        self._emit()
+        rc, text = self._apply([{"id": "a1", "keep": True, "summary": summary}])
+        self.assertEqual(rc, 0)
+        return [s.split("</span>")[0] for s in text.split('<span class="sum">')[1:]]
+
+    def test_summaries_of_invisible_letters_only_use_the_rules_summary(self):
+        for blank in (chr(0x200B) * 3, chr(0x3164) * 2, chr(0xFEFF) + chr(0x2060), " \n\t ", chr(0x200B) + " " + chr(0x180B)):
+            sums = self._page_summaries(blank)
+            self.assertTrue(any("스크립트" in s for s in sums), [hex(ord(c)) for c in blank])
+            self.assertFalse(any(not L._has_visible(s) for s in sums), [hex(ord(c)) for c in blank])
+
+    def test_a_summary_with_a_visible_letter_among_blank_ones_is_kept(self):
+        kept = chr(0x200B) + "배포 통과" + chr(0x3164)
+        self.assertIn(kept, self._page_summaries(kept))
+
+
+class TestOddFilesAtCachePlaces(_ReviewCase):
+    """Only a regular file of sensible size is read as a cache. A pipe, a socket, a link or an oversize file left
+    at a cache place is summarized again, and the write replaces it."""
+
+    TEXT = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
+
+    def _place(self):
+        digest = hashlib.sha256((self.TEXT + chr(0) + "s" + str(L.SUMMARIZER_VERSION)).encode()).hexdigest()[:8]
+        return L.cache_dir("s") / ("a1-%s.md" % digest)
+
+    def _in_child(self, call):
+        """`call` (python source using L) in another process: a pipe can stop a process for good. Its stdout."""
+        import subprocess
+        code = ("import sys, pathlib; sys.path.insert(0, %r); import lineage as L; L.CACHE_BASE = pathlib.Path(%r); %s"
+                % (os.path.dirname(os.path.abspath(L.__file__)), self.cache, call))
+        done = subprocess.run([sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.strip()
+
+    def _summarize_in_child(self):
+        return self._in_child("s, hit = L.read_or_summarize({'role': 'assistant', 'text': %r, 'parts': [%r], "
+                              "'uuid': 'a1', 'session': 's', 'ts': 'x', 'tools': {}}, 's'); print(hit)" % (self.TEXT, self.TEXT))
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
+    def test_a_pipe_nobody_writes_to_does_not_stop_the_run(self):
+        place = self._place()
+        os.mkfifo(str(place))
+        self.assertEqual(self._summarize_in_child(), "False")
+        self.assertTrue(place.is_file() and not place.is_symlink(), "the pipe was replaced by the summary")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
+    def test_a_line_waiting_in_a_pipe_is_not_read_as_a_summary(self):
+        place = self._place()
+        os.mkfifo(str(place))
+        held = os.open(str(place), os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, held)
+        os.write(held, "파이프에 든 글".encode("utf-8"))
+        self.assertEqual(self._summarize_in_child(), "False")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
+    def test_a_pipe_at_the_stdin_key_place_does_not_stop_the_run(self):
+        os.makedirs(self.cache, exist_ok=True)
+        os.mkfifo(os.path.join(self.cache, "stdin-id.key"))
+        self.assertEqual(self._in_child("print(len(L._stdin_id_key()))"), "32")
+
+    def _read_small_after_a_swap(self, place):
+        """What _read_small returns for `place` when lstat still says "regular file" (the place was swapped after the
+        check): only the checks made on the opened file can save the run. In another process: a pipe can stop it."""
+        decoy = pathlib.Path(self.d) / "decoy.md"
+        decoy.write_text("x", encoding="utf-8")
+        return self._in_child("import os; real = os.lstat; decoy = real(%r); "
+                              "os.lstat = lambda p, *a, **k: decoy if str(p) == %r else real(p, *a, **k); "
+                              "print(L._read_small(%r))" % (str(decoy), str(place), str(place)))
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
+    def test_a_pipe_swapped_in_after_the_check_is_not_waited_for_or_read(self):
+        place = self._place()
+        os.mkfifo(str(place))
+        self.assertEqual(self._read_small_after_a_swap(place), "None")
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "no O_NOFOLLOW here")
+    def test_a_link_swapped_in_after_the_check_is_not_followed(self):
+        place, victim = self._place(), pathlib.Path(self.d) / "victim.md"
+        victim.write_text("다른 파일의 내용", encoding="utf-8")
+        try:
+            place.symlink_to(victim)
+        except (OSError, NotImplementedError):
+            self.skipTest("cannot make a link here")
+        self.assertEqual(self._read_small_after_a_swap(place), "None")
+
+    def test_a_socket_at_the_cache_place_is_summarized_again(self):
+        import socket
+        if not hasattr(socket, "AF_UNIX"):
+            self.skipTest("no unix sockets here")
+        place = self._place()
+        sock = socket.socket(socket.AF_UNIX)
+        self.addCleanup(sock.close)
+        try:
+            sock.bind(str(place))
+        except OSError as e:
+            self.skipTest("cannot make a socket here: %s" % e)
+        summary, hit = L.read_or_summarize({"role": "assistant", "text": self.TEXT, "parts": [self.TEXT], "uuid": "a1",
+                                            "session": "s", "ts": "x", "tools": {}}, "s")
+        self.assertFalse(hit)
+        self.assertTrue(summary)
+
+    def test_a_link_at_the_cache_place_is_neither_read_nor_written_through(self):
+        place, victim = self._place(), pathlib.Path(self.d) / "victim.md"
+        victim.write_text("다른 파일의 내용", encoding="utf-8")
+        try:
+            place.symlink_to(victim)
+        except (OSError, NotImplementedError):
+            self.skipTest("cannot make a link here")
+        summary, hit = L.read_or_summarize({"role": "assistant", "text": self.TEXT, "parts": [self.TEXT], "uuid": "a1",
+                                            "session": "s", "ts": "x", "tools": {}}, "s")
+        self.assertFalse(hit)
+        self.assertNotEqual(summary, "다른 파일의 내용")
+        self.assertEqual(victim.read_text(encoding="utf-8"), "다른 파일의 내용")
+        self.assertFalse(place.is_symlink())
+        self.assertEqual(place.read_text(encoding="utf-8"), summary)
+
+    def test_a_link_is_not_followed_where_the_os_has_no_o_nofollow(self):
+        from unittest import mock
+        place, victim = self._place(), pathlib.Path(self.d) / "victim.md"
+        victim.write_text("다른 파일의 내용", encoding="utf-8")
+        try:
+            place.symlink_to(victim)
+        except (OSError, NotImplementedError):
+            self.skipTest("cannot make a link here")
+        with mock.patch.object(os, "O_NOFOLLOW", 0, create=True):      # Windows has none: lstat has to refuse the link
+            self.assertIsNone(L._read_small(place))
+
+    def test_an_oversize_cache_file_is_summarized_again(self):
+        place = self._place()
+        place.write_text("summary " * (L.CACHE_READ_MAX // 4), encoding="utf-8")
+        self.assertGreater(place.stat().st_size, L.CACHE_READ_MAX)
+        summary, hit = L.read_or_summarize({"role": "assistant", "text": self.TEXT, "parts": [self.TEXT], "uuid": "a1",
+                                            "session": "s", "ts": "x", "tools": {}}, "s")
+        self.assertFalse(hit)
+        self.assertLess(len(summary), 200)
+
+    def test_a_decision_cache_that_is_not_small_or_is_nested_too_deep_reads_as_none(self):
+        path = L._llm_cache_path("a1", "s", "abc123abc123")
+        for body in ("[" * 100000, "[" * 5000, '{"keep": null, "summary": "' + "가" * L.CACHE_READ_MAX + '"}'):
+            path.write_text(body, encoding="utf-8")
+            self.assertIsNone(L.read_llm_cache("a1", "s", "abc123abc123"))
+        path.write_text('{"keep": true, "summary": "통과"}', encoding="utf-8")
+        self.assertEqual(L.read_llm_cache("a1", "s", "abc123abc123"), {"keep": True, "summary": "통과"})
+
+
+class TestBidiControlsOnThePage(_ReviewCase):
+    """Direction controls are shown as [U+XXXX] wherever text reaches the page: bubbles, summaries
+    (the rules' and a reviewer's, from the cache or not), code blocks."""
+
+    RLO, PDF, LRI, PDI = (chr(0x202E), chr(0x202C), chr(0x2066), chr(0x2069))
+
+    def _records(self):
+        spoof = "점검 결과 " + self.RLO + "txt.exe" + self.PDF + " 파일을 확인했습니다."
+        return [
+            _rec("user", "파일 " + self.RLO + "gpj.exe" + self.PDF + " 점검", uuid="u1"),
+            self._asst(spoof + " " + self.LRI + "추가" + self.PDI + "\n\n```\nrun " + self.RLO + "cod" + self.PDF + "\n```", "a1"),
+        ]
+
+    def _controls_in(self, text):
+        return [c for c in text if ord(c) in (*range(0x202A, 0x202F), *range(0x2066, 0x206A))]
+
+    def test_no_direction_control_reaches_the_page_and_each_is_shown_as_text(self):
+        self._write(self._records())
+        self._emit()
+        rc, text = self._apply([{"id": "a1", "keep": True, "summary": "요약 " + self.RLO + "txt.exe" + self.PDF}])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._controls_in(text), [])
+        self.assertIn("[U+202E]txt.exe[U+202C]", text)
+        self.assertIn("[U+2066]추가[U+2069]", text)
+
+    def test_the_rules_summary_and_a_cache_hit_are_clean_too(self):
+        self._write(self._records())
+        for _ in range(2):                                     # the second run reads the summary cache
+            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])
+            self.assertEqual(rc, 0)
+            page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+            with open(os.path.join(self.d, page), encoding="utf-8") as f:
+                self.assertEqual(self._controls_in(f.read()), [])
+            os.unlink(os.path.join(self.d, page))
+
+    def test_letters_of_right_to_left_scripts_and_direction_marks_are_left_alone(self):
+        arabic, hebrew = "".join(map(chr, range(0x627, 0x62D))), "".join(map(chr, range(0x5D0, 0x5D4)))
+        marks = chr(0x200F) + chr(0x200E) + chr(0x61C)          # direction marks order neighbours, they do not override
+        self._write([_rec("user", "בדיקה " + arabic + marks + " " + hebrew, uuid="u1")])
+        self._emit()
+        _, text = self._apply()
+        self.assertIn(arabic + marks + " " + hebrew, text)
+
+
+class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
+    """A transcript line that is not an object, or is nested too deep to parse, is skipped with a WARN like any bad
+    line; a review pack nested too deep is refused with a message, not a traceback."""
+
+    def _run(self, lines, extra=()):
+        with open(self.jf, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output",
+                         os.path.join(self.d, "out.html")] + list(extra))
+        return rc, err.getvalue()
+
+    def test_lines_that_are_not_objects_or_nest_too_deep_are_skipped(self):
+        good = lambda n: json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
+        bad = ["null", "[1, 2]", "5", '"text"', "[" * 100000]
+        rc, err = self._run([good(1)] + bad + [good(2)])
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.count("skipped"), len(bad))
+        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("안녕하세요 1", text)
+        self.assertIn("안녕하세요 2", text)
+
+    def test_samples_nested_too_deep_are_refused_with_a_message(self):
+        samples = pathlib.Path(self.d) / "samples.json"
+        samples.write_text("[" * 100000, encoding="utf-8")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            L._check_coverage([], samples)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("cannot read the samples", err.getvalue())
+
+    def test_a_pack_nested_too_deep_is_refused_with_a_message(self):
+        with open(self.pack, "w", encoding="utf-8") as f:
+            f.write("[" * 100000)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = L.main(["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"), "--skip-reviewer"])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("cannot read review pack", err.getvalue())
+
+    def test_an_export_with_odd_shaped_records_finishes(self):
+        good = lambda n: json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
+        odd = [json.dumps({"type": 5}), json.dumps({"type": "user", "message": "hello"}),
+               json.dumps({"type": "assistant", "uuid": "o", "message": {"content": [{"type": "text", "text": 5}]}})]
+        rc, err = self._run([good(1)] + odd + [good(2)])
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.count("of an unknown shape skipped"), 3)
+        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("안녕하세요 1", text)
+        self.assertIn("안녕하세요 2", text)
 
 
 class TestRulebaseMatches2x(unittest.TestCase):
@@ -2738,6 +3017,22 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         self.assertEqual(turns[0]["uuid"], hashlib.sha256(b"1:t1").hexdigest()[:16])
         self.assertEqual((turns[1]["text"], turns[1]["parts"], turns[1]["tools"]), ("", [], {"Read": 1}))
         self.assertEqual(err, "")
+
+
+    def test_a_record_whose_type_or_message_has_an_odd_shape_is_skipped_with_a_warning(self):
+        odd = [{"type": 5}, {"type": ["user"]}, {"type": {"a": 1}},
+               {"type": "user", "message": "hello"}, {"type": "assistant", "message": ["x"]}]
+        turns, err, code = self._read(odd + [_rec("user", "kept")])
+        self.assertIsNone(code)
+        self.assertEqual([t["text"] for t in turns], ["kept"])
+        self.assertEqual(err, "".join("[WARN] line %d: record of an unknown shape skipped\n" % n for n in range(1, 6)))
+
+    def test_a_content_item_whose_type_text_or_tool_name_has_an_odd_shape_is_skipped(self):
+        items = [{"type": "tool_use", "name": ["Bash"]}, {"type": ["text"]}, {"type": {"t": 1}},
+                 {"type": "text", "text": 5}, {"type": "text", "text": "kept"}, {"type": "tool_use", "name": "Read"}]
+        turns, err, code = self._read([{"type": "assistant", "uuid": "a", "message": {"content": items}}])
+        self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
+        self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 4)
 
 
 if __name__ == "__main__":
