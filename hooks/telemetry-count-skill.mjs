@@ -5,6 +5,8 @@
  *
  * fail-closed 규약(각 항목은 telemetry-count-skill.test.mjs 가 검증한다):
  *  - countingActive() 가 아니면 로컬 쓰기조차 하지 않는다. 파일도 만들지 않는다.
+ *  - 기록 자리가 FIFO 면 기다리지 않고, 링크면 그 너머에 쓰지 않는다(Windows 는 열기 전에 본다). 하드 링크에 쓰지
+ *    않는 것은 공용 appendUsageLog 의 시험(bin/lib/telemetry-config.test.mjs)이 검증한다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션/툴호출을 절대 막지 않는다.
  *  - PII/식별자를 다루지 않는다. 로그 한 줄 = 이름 문자열 + TAB + hour(0-23) 뿐이다.
  *
@@ -20,9 +22,7 @@
  *
  * 배선: hooks.json 의 PostToolUse(matcher Skill)에 등록되어 모델 자동 스킬 호출 시 발화한다.
  */
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
-
-import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES, SKILL_NAME_RE } from '../bin/lib/telemetry-config.mjs';
+import { appendUsageLog, countingActive, recordUsedSkill, SKILL_NAME_RE } from '../bin/lib/telemetry-config.mjs';
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -46,29 +46,6 @@ function extractName(payload) {
   return null;
 }
 
-// 파일의 개행 개수 = 줄 수(각 append 가 끝에 개행을 붙이므로). 없거나 읽기 실패면 0.
-function lineCount(path) {
-  try {
-    const raw = readFileSync(path, 'utf8');
-    return (raw.match(/\n/g) || []).length;
-  } catch {
-    return 0;
-  }
-}
-
-// usage-log 에 `<name>\t<hour>` 한 줄을 append 한다(hour = 로컬 시각 0-23). 상한 도달 시
-// 스킵(best-effort; 체크인이 비우면 재개). flush/checkin 은 여기서 spawn 하지 않는다
-// (트리거는 SessionStart update-notify 소관).
-function record(name) {
-  try { mkdirSync(configDir(), { recursive: true }); } catch { /* best-effort */ }
-  try {
-    if (lineCount(USAGE_LOG_PATH) < LOG_MAX_LINES) {
-      const hour = new Date().getHours();
-      appendFileSync(USAGE_LOG_PATH, `${name}\t${hour}\n`);
-    }
-  } catch { /* best-effort */ }
-}
-
 async function main() {
   let raw;
   try {
@@ -85,7 +62,7 @@ async function main() {
   if (!countingActive()) return; // 카운팅 비활성 - 로컬 쓰기조차 하지 않는다.
   const name = extractName(payload);
   if (!name) return; // banker:<name> 아님 - 무동작.
-  record(name);            // 서버 카운팅용 usage-log append (스킬별 x 시간대 버킷).
+  appendUsageLog(name);    // 서버 카운팅용 usage-log 한 줄 (스킬별 x 시간대 버킷). 상한이면 건너뛴다.
   recordUsedSkill(name);   // 개인화 알림용 로컬 집합 union (전송 안 함; update-notify 만 로컬에서 읽는다).
 }
 

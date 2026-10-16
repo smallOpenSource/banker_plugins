@@ -5,7 +5,9 @@
  */
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
-  readUsedSkills, recordUsedSkill, changedSkillsBetween,
+  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog,
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
   SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX, SKILL_NAME_RE, netDeadlineMs,
 } from './telemetry-config.mjs';
@@ -286,4 +288,138 @@ test('SKILL_NAME_RE: banker:<이름> 의 이름은 64자까지이고 실제 스�
   ];
   assert.ok(names.length > 10);
   for (const n of names) assert.ok(SKILL_NAME_RE.test(`banker:${n}`), n);
+});
+
+// ---- 새 파일 쓰기가 임시 이름의 링크를 따라가지 않는다 ----
+// 옛 판은 `<이름>.<pid>.tmp` 에 그냥 써서, 그 이름에 놓인 링크가 가리키는 파일을 덮었다.
+
+// 이 계정이 여기서 심볼릭 링크를 만들 수 있는지(Windows 는 권한이 있어야 한다).
+function canSymlink() {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-tc-link-'));
+  try {
+    fs.symlinkSync('nowhere', path.join(probe, 'probe'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+}
+const NO_LINKS = !canSymlink() && '이 계정은 링크를 만들 수 없다';
+
+// victim 파일(`keep\n`)과 at 에서 그리로 가는 링크를 만들고 victim 경로를 돌려준다.
+function plantLink(at) {
+  fs.mkdirSync(path.dirname(at), { recursive: true });
+  const victim = path.join(tmpDir, 'victim');
+  fs.writeFileSync(victim, 'keep\n');
+  fs.symlinkSync(victim, at);
+  return victim;
+}
+
+// crypto.randomBytes 를 고정한 채 fn 을 부른다. 임시 이름을 미리 알아 그 자리에 무엇을 둬 보는 시험용.
+function withFixedRandom(fn) {
+  const real = crypto.randomBytes;
+  crypto.randomBytes = () => Buffer.from('0a1b2c3d', 'hex');
+  syncBuiltinESMExports();
+  try {
+    return fn();
+  } finally {
+    crypto.randomBytes = real;
+    syncBuiltinESMExports();
+  }
+}
+
+test('writeUpdateCache: pid 만 쓴 옛 임시 이름의 링크는 따라가지도 막히지도 않는다', { skip: NO_LINKS }, () => {
+  const old = path.join(configDir(), `update-check.json.${process.pid}.tmp`);
+  const victim = plantLink(old);
+  assert.strictEqual(writeUpdateCache({ latest: '1.0.0' }), true, '옛 이름의 링크가 쓰기를 막지 않는다');
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
+  const cachePath = path.join(configDir(), 'update-check.json');
+  assert.strictEqual(fs.lstatSync(cachePath).isSymbolicLink(), false, '캐시는 링크가 아닌 파일');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(cachePath, 'utf8')), { latest: '1.0.0' });
+  assert.strictEqual(fs.lstatSync(old).isSymbolicLink(), true, '심은 링크는 그대로');
+});
+
+test('recordUsedSkill: pid 만 쓴 옛 임시 이름의 링크는 따라가지도 막히지도 않는다', { skip: NO_LINKS }, () => {
+  const old = path.join(configDir(), `used-skills.json.${process.pid}.tmp`);
+  const victim = plantLink(old);
+  assert.strictEqual(recordUsedSkill('banker:foo'), true, '옛 이름의 링크가 쓰기를 막지 않는다');
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
+  assert.strictEqual(fs.lstatSync(path.join(configDir(), 'used-skills.json')).isSymbolicLink(), false, '집합은 링크가 아닌 파일');
+  assert.deepStrictEqual(readUsedSkills(), ['banker:foo']);
+});
+
+test('writeUpdateCache: 임시 이름에 이미 무엇이 있으면 쓰지 않고, 그것을 지우지도 그 너머에 쓰지도 않는다', { skip: NO_LINKS }, () => {
+  const taken = path.join(configDir(), `update-check.json.${process.pid}.0a1b2c3d.tmp`);
+  const victim = plantLink(taken);
+  assert.strictEqual(withFixedRandom(() => writeUpdateCache({ latest: '1.0.0' })), false);
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
+  assert.strictEqual(fs.lstatSync(taken).isSymbolicLink(), true, '이 쓰기가 만든 것이 아니라 그대로 둔다');
+  assert.strictEqual(fs.existsSync(path.join(configDir(), 'update-check.json')), false, '캐시는 생기지 않는다');
+});
+
+test('writeUpdateCache: 캐시 자리가 폴더면 그대로 두고 임시 파일을 남기지 않는다', () => {
+  const cachePath = path.join(configDir(), 'update-check.json');
+  fs.mkdirSync(cachePath, { recursive: true });
+  assert.strictEqual(writeUpdateCache({ latest: '1.0.0' }), false);
+  assert.strictEqual(fs.statSync(cachePath).isDirectory(), true, '폴더는 그대로');
+  assert.deepStrictEqual(fs.readdirSync(configDir()).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
+});
+
+// ---- 사용 기록 한 줄 더하기(appendUsageLog): FIFO 를 기다리지 않고 링크 너머에 쓰지 않는다 ----
+
+const usageLogPath = () => path.join(configDir(), 'usage-log');
+
+test('appendUsageLog: 없으면 만들고 name\\thour 한 줄을 더한다', () => {
+  assert.strictEqual(appendUsageLog('banker:foo'), true);
+  assert.strictEqual(appendUsageLog('banker:foo'), true);
+  const lines = fs.readFileSync(usageLogPath(), 'utf8').split('\n');
+  assert.strictEqual(lines.pop(), '', '줄마다 개행으로 끝난다');
+  assert.strictEqual(lines.length, 2);
+  for (const line of lines) assert.match(line, /^banker:foo\t([0-9]|1[0-9]|2[0-3])$/);
+});
+
+test('appendUsageLog: banker:<이름> 꼴이 아니면 쓰지 않는다', () => {
+  for (const bad of ['banker:a\tb', 'other:x', '']) {
+    assert.strictEqual(appendUsageLog(bad), false, JSON.stringify(bad));
+  }
+  assert.strictEqual(fs.existsSync(usageLogPath()), false, '기록이 생기지 않는다');
+});
+
+test('appendUsageLog: 기록 자리의 링크 너머에 쓰지 않고 링크는 그대로 둔다', { skip: NO_LINKS }, () => {
+  const victim = plantLink(usageLogPath());
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
+  assert.strictEqual(fs.lstatSync(usageLogPath()).isSymbolicLink(), true, '링크는 그대로');
+});
+
+test('appendUsageLog: 끊어진 링크인 기록 자리로 새 파일을 만들지 않는다', { skip: NO_LINKS }, () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const nowhere = path.join(tmpDir, 'nowhere');
+  fs.symlinkSync(nowhere, usageLogPath());
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.existsSync(nowhere), false, '링크 대상 자리에 아무것도 생기지 않는다');
+});
+
+test('appendUsageLog: 같은 파일에 다른 이름이 있으면(하드 링크) 쓰지 않는다', () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const victim = path.join(tmpDir, 'victim');
+  fs.writeFileSync(victim, 'keep\n');
+  fs.linkSync(victim, usageLogPath());
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '다른 이름의 내용은 그대로');
+});
+
+test('appendUsageLog: 기록 자리가 폴더면 그대로 둔다', () => {
+  fs.mkdirSync(usageLogPath(), { recursive: true });
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.statSync(usageLogPath()).isDirectory(), true, '폴더는 그대로');
+});
+
+test('appendUsageLog: 설정 폴더 자체가 링크여도 줄을 더한다', { skip: NO_LINKS }, () => {
+  const real = path.join(tmpDir, 'real-banker');
+  fs.mkdirSync(real);
+  fs.symlinkSync(real, configDir(), 'dir');
+  assert.strictEqual(appendUsageLog('banker:foo'), true);
+  assert.match(fs.readFileSync(path.join(real, 'usage-log'), 'utf8'), /^banker:foo\t([0-9]|1[0-9]|2[0-3])\n$/);
 });

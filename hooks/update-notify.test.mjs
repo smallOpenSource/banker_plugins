@@ -13,7 +13,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,13 +57,14 @@ const readCache = (tmp) => JSON.parse(readFileSync(cachePath(tmp), 'utf8'));
 
 // 훅을 자식으로 spawn. XDG 격리 + BANKER_* 정리 후 overrides 적용(마지막에 이겨 opt-out 주입 가능).
 // input 으로 SessionStart payload 를 흘려 stdin EOF 를 보장(비TTY 안전·드레인 검증).
-function runNotify(tmp, { input = '{}', env: overrides = {} } = {}) {
+// timeout 은 FIFO 에서 멈추는지 보는 시험용(지나면 죽인다).
+function runNotify(tmp, { input = '{}', env: overrides = {}, timeout } = {}) {
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_UPDATE_CHECK;
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
   Object.assign(env, overrides);
-  return spawnSync(process.execPath, [NOTIFY_HOOK], { input, encoding: 'utf8', env });
+  return spawnSync(process.execPath, [NOTIFY_HOOK], { input, encoding: 'utf8', env, timeout });
 }
 
 const NOW = () => Date.now(); // fresh checkedAt → throttle 미경과 → 포그라운드에서 fetcher spawn 안 함.
@@ -192,6 +193,17 @@ test('malformed stdin payload 여도 캐시 기반 고지는 정상(파싱 실�
   assert.equal(res.status, 0);
   const out = JSON.parse(res.stdout.trim());
   assert.match(out.systemMessage, /99\.0\.0/);
+});
+
+test('캐시 자리가 FIFO 여도 기다리지 않는다', { skip: process.platform === 'win32' && 'Windows 에는 FIFO 가 없다' }, () => {
+  const tmp = mkTmp();
+  mkdirSync(bankerDir(tmp), { recursive: true });
+  assert.equal(spawnSync('mkfifo', [cachePath(tmp)]).status, 0, 'mkfifo');
+  const res = runNotify(tmp, { ...LOOPBACK, timeout: 10_000 });
+  assert.equal(res.signal, null, '훅이 스스로 끝났다');
+  assert.equal(res.status, 0);
+  assert.equal(res.stdout.trim(), '', '캐시를 읽지 못하면 알리지 않는다');
+  assert.equal(lstatSync(cachePath(tmp)).isFIFO(), true, 'FIFO 는 그대로');
 });
 
 // ---- 개인화 알림 (changedSkills ∩ 써본스킬) ----

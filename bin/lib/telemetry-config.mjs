@@ -1,9 +1,10 @@
 /*
  * telemetry-config - banker 텔레메트리 config/consent 공용 모듈 (bin·hook 공유).
- * 의존성 0 (Node 내장 모듈만: node:fs, node:path, node:os). ESM(.mjs).
+ * 의존성 0 (Node 내장 모듈만: node:fs, node:path, node:os, node:crypto). ESM(.mjs).
  * import 시 부작용 없음: 경로는 resolver 로 호출 시 계산하고, 파일시스템 접근·mkdir 은
  * 각 함수 호출 시에만 일어난다. readConfig/isEnabled/endpoint 는 어떤 예외도 밖으로 던지지 않는다.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -73,10 +74,95 @@ export function collectBody(res, maxBytes, done) {
   res.on('error', () => done(null));
 }
 
-// config.json 을 읽어 객체로 반환. 파일 없음·malformed JSON·권한 오류 등 어떤 예외에도 던지지 않고 {} 반환.
+// 일반 파일의 글. 그 밖(FIFO, 폴더)과 오류는 ''. 막지 않고 열어 FIFO 를 기다리지 않는다.
+export function readRegular(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+    return fs.fstatSync(fd).isFile() ? fs.readFileSync(fd, 'utf8') : '';
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* best-effort */ }
+  }
+}
+
+// target 자리에 data 를 놓는다. 새 임시 파일을 만들어(wx: 그 이름에 무엇이 있으면 만들지 않음) 쓰고 rename 으로
+// 옮겨, 임시 이름이나 target 자리의 링크를 따라 다른 파일을 덮지 않는다. 임시 이름에 난수를 붙이는 것은 Windows 의
+// wx 가 끊어진 링크를 따라가 그 너머에 새 파일을 만들기 때문이다: 이름을 미리 알 수 없어야 링크를 심어 둘 수 없다.
+// 실패하면 던진다. 지우는 것은 이 호출이 만든 임시 파일뿐이고, 그 이름에 이미 있던 것은 둔다.
+export function writeByRename(target, data) {
+  const tmp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  let made = false;
+  try {
+    const fd = fs.openSync(tmp, 'wx');
+    made = true;
+    try {
+      fs.writeFileSync(fd, data);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    if (made) try { fs.unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
+}
+
+// 사용 기록을 덧붙이기로 여는 깃발. 같은 fd 로 줄 수도 센다. 링크를 따르지 않고(O_NOFOLLOW) FIFO 를 기다리지
+// 않는다(O_NONBLOCK). Windows 에는 둘 다 없어 열기 전에 자리를 보고 링크면 두며, 그 뒤에 바뀌어 든 링크는 거기서
+// 따라간다(obsidize 훅과 같은 한계. Windows 는 wx 도 끊어진 링크를 따라가 원자적으로 막을 수단이 없다).
+const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+const APPEND_FLAGS = fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_CREAT | NO_FOLLOW
+  | (fs.constants.O_NONBLOCK ?? 0);
+
+function isLink(file) {
+  try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; }
+}
+
+// 사용 기록을 덧붙이기로 연 fd. 일반 파일이고 이름이 하나(nlink 1)일 때만 돌려주고, 그 밖(링크, 하드 링크, FIFO,
+// 폴더)은 연 것을 닫고 null. 없으면 새로 만든다. 열기 자체의 오류는 던진다.
+function openLogForAppend(file) {
+  if (!NO_FOLLOW && isLink(file)) return null;
+  const fd = fs.openSync(file, APPEND_FLAGS);
+  let ok = false;
+  try {
+    const st = fs.fstatSync(fd);
+    ok = st.isFile() && st.nlink <= 1;
+  } finally {
+    if (!ok) fs.closeSync(fd);
+  }
+  return ok ? fd : null;
+}
+
+// 사용 기록(usage-log)에 `<name>\t<hour>` 한 줄을 더한다(hour = 로컬 시각 0-23, name 은 SKILL_NAME_RE 꼴만).
+// 줄이 LOG_MAX_LINES 에 이르렀으면 더하지 않는다(best-effort, 체크인이 비우면 다시 쌓인다). 기록 자리가 FIFO 면
+// 기다리지 않고, 링크나 하드 링크면 그 너머 파일에 쓰지 않으며, 끊어진 링크로 새 파일을 만들지 않는다(링크인 자리는
+// 다음 체크인이 링크를 옮겨 지운다). configDir() 를 매 호출 재계산한다(테스트 격리). 더했으면 true, 그 밖과 모든
+// 오류는 false.
+export function appendUsageLog(name) {
+  if (typeof name !== 'string' || !SKILL_NAME_RE.test(name)) return false;
+  let fd = null;
+  try {
+    fs.mkdirSync(configDir(), { recursive: true });
+    fd = openLogForAppend(path.join(configDir(), 'usage-log'));
+    if (fd === null) return false;
+    const lines = (fs.readFileSync(fd, 'utf8').match(/\n/g) || []).length;
+    if (lines >= LOG_MAX_LINES) return false;
+    fs.writeSync(fd, `${name}\t${new Date().getHours()}\n`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch { /* best-effort */ }
+  }
+}
+
+// config.json 을 읽어 객체로 반환. 파일 없음·malformed JSON·권한 오류·일반 파일 아님(FIFO 를 기다리지 않음) 등
+// 어떤 예외에도 던지지 않고 {} 반환.
 export function readConfig() {
   try {
-    const raw = fs.readFileSync(path.join(configDir(), 'config.json'), 'utf8');
+    const raw = readRegular(path.join(configDir(), 'config.json'));
     const obj = JSON.parse(raw);
     return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
   } catch {
@@ -209,9 +295,9 @@ export function compareVersions(a, b) {
 }
 
 // update-check 캐시를 read-modify-write 로 병합 기록한다: 기존 JSON 을 읽어({} on 실패) patch 의
-// 필드만 덮고 나머지 형제 필드는 보존한 뒤, configDir() mkdir -p → temp 파일 쓰기 → rename(원자적)
-// 으로 기록한다. 테스트 격리를 위해 경로는 configDir() 로 매 호출 재계산한다(UPDATE_CHECK_PATH 상수
-// 비의존). 모든 오류를 삼켜 best-effort: 성공 true, 실패 false.
+// 필드만 덮고 나머지 형제 필드는 보존한 뒤, configDir() mkdir -p → writeByRename(새 임시 파일, rename)
+// 으로 기록한다. 캐시 자리가 FIFO 여도 읽으며 기다리지 않는다. 테스트 격리를 위해 경로는 configDir() 로 매 호출
+// 재계산한다(UPDATE_CHECK_PATH 상수 비의존). 모든 오류를 삼켜 best-effort: 성공 true, 실패 false.
 export function writeUpdateCache(patch) {
   try {
     const dir = configDir();
@@ -219,13 +305,11 @@ export function writeUpdateCache(patch) {
     const cachePath = path.join(dir, 'update-check.json');
     let existing = {};
     try {
-      const obj = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      const obj = JSON.parse(readRegular(cachePath));
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) existing = obj;
-    } catch { /* 없음·malformed → {} */ }
+    } catch { /* 없음·malformed·일반 파일 아님 → {} */ }
     const merged = { ...existing, ...(patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}) };
-    const tmp = path.join(dir, `update-check.json.${process.pid}.tmp`);
-    fs.writeFileSync(tmp, JSON.stringify(merged, null, 2));
-    fs.renameSync(tmp, cachePath);
+    writeByRename(cachePath, JSON.stringify(merged, null, 2));
     return true;
   } catch {
     return false;
@@ -236,10 +320,11 @@ export function writeUpdateCache(patch) {
 // 이 집합은 절대 서버로 보내지 않는다: update-checkin 페이로드는 usage-log 집계(counts)만 담는다.
 // update-notify 가 로컬에서 읽어, 새 버전에서 바뀐 스킬 중 "사용자가 써 본 것"만 골라 알림에 이름을 넣는다.
 
-// 로컬 "써 본 스킬" 배열을 반환. 없음·malformed·비배열 → []. 문자열 원소만 남긴다. 어떤 오류에도 [].
+// 로컬 "써 본 스킬" 배열을 반환. 없음·malformed·비배열·일반 파일 아님(FIFO 를 기다리지 않음) → [].
+// 문자열 원소만 남긴다. 어떤 오류에도 [].
 export function readUsedSkills() {
   try {
-    const arr = JSON.parse(fs.readFileSync(path.join(configDir(), 'used-skills.json'), 'utf8'));
+    const arr = JSON.parse(readRegular(path.join(configDir(), 'used-skills.json')));
     return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string' && x) : [];
   } catch {
     return [];
@@ -248,7 +333,7 @@ export function readUsedSkills() {
 
 // name 을 로컬 집합에 union 한다(개인화 알림용, 전송 안 함). 이미 있으면 파일을 쓰지 않는다(핫패스 절약).
 // 상한(USED_SKILLS_MAX) 도달 시 새 이름은 무시한다(오래된 것 보존; 개인화는 근사여도 무방). configDir() 를
-// 매 호출 재계산(테스트 격리) + temp→rename 원자적 기록. 모든 오류를 삼켜 신규 기록 시 true, 그 외 false.
+// 매 호출 재계산(테스트 격리) + writeByRename 으로 기록. 모든 오류를 삼켜 신규 기록 시 true, 그 외 false.
 export function recordUsedSkill(name) {
   try {
     if (typeof name !== 'string' || !name) return false;
@@ -258,10 +343,7 @@ export function recordUsedSkill(name) {
     set.push(name);
     const dir = configDir();
     fs.mkdirSync(dir, { recursive: true });
-    const target = path.join(dir, 'used-skills.json');
-    const tmp = path.join(dir, `used-skills.json.${process.pid}.tmp`);
-    fs.writeFileSync(tmp, JSON.stringify(set));
-    fs.renameSync(tmp, target);
+    writeByRename(path.join(dir, 'used-skills.json'), JSON.stringify(set));
     return true;
   } catch {
     return false;

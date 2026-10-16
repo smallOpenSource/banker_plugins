@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +35,8 @@ function enable(tmp, { endpoint = 'http://127.0.0.1:1/collect' } = {}) {
   writeFileSync(join(bankerDir(tmp), 'config.json'), JSON.stringify({ telemetry: true, endpoint }));
 }
 
-function runSkillCount(tmp, input, overrides = {}) {
+// opts 는 spawnSync 옵션(예: FIFO 에서 멈추는지 보려는 timeout).
+function runSkillCount(tmp, input, overrides = {}, opts = {}) {
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
@@ -44,6 +45,7 @@ function runSkillCount(tmp, input, overrides = {}) {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf8',
     env,
+    ...opts,
   });
 }
 
@@ -139,4 +141,38 @@ test('상한(LOG_MAX_LINES) 도달 시 append 스킵', () => {
   assert.equal(res.status, 0);
   const lines = readFileSync(usageLog(tmp), 'utf8').split('\n').filter(Boolean).length;
   assert.equal(lines, LOG_MAX_LINES, '상한에서는 더 쌓지 않는다(체크인이 비우면 재개)');
+});
+
+const NO_FIFO = process.platform === 'win32' && 'Windows 에는 FIFO 가 없다';
+
+// 이 계정이 여기서 심볼릭 링크를 만들 수 있는지(Windows 는 권한이 있어야 한다).
+function canSymlink() {
+  try {
+    symlinkSync('nowhere', join(mkTmp(), 'probe'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+const NO_LINKS = !canSymlink() && '이 계정은 링크를 만들 수 없다';
+
+test('기록 자리가 FIFO 면 기다리지 않고 FIFO 는 그대로 둔다', { skip: NO_FIFO }, () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  assert.equal(spawnSync('mkfifo', [usageLog(tmp)]).status, 0, 'mkfifo');
+  const res = runSkillCount(tmp, { tool_name: 'Skill', tool_input: { skill: 'banker:foo' } }, {}, { timeout: 10_000 });
+  assert.equal(res.signal, null, '훅이 스스로 끝났다');
+  assert.equal(res.status, 0);
+  assert.equal(lstatSync(usageLog(tmp)).isFIFO(), true, 'FIFO 는 그대로');
+});
+
+test('기록 자리가 링크면 그 너머에 쓰지 않는다', { skip: NO_LINKS }, () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const victim = join(tmp, 'victim');
+  writeFileSync(victim, 'keep\n');
+  symlinkSync(victim, usageLog(tmp));
+  const res = runSkillCount(tmp, { tool_name: 'Skill', tool_input: { skill: 'banker:foo' } });
+  assert.equal(res.status, 0);
+  assert.equal(readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
 });
