@@ -4,7 +4,7 @@
 Deterministic core. One-line summary per assistant turn (cached, redacted).
 Renders assistant markdown, filters harness noise, folds long messages, and
 self-verifies the output markup. See SKILL.md for the full design and the
-`work/lineage-change-request.html` spec for the classification rules.
+`docs/lineage-change-request.html` spec for the classification rules.
 
 Runtime-agnostic: works from any transcript via --session / --from-transcript.
 Auto-discovery assumes Claude Code's ~/.claude/projects/<encoded-cwd>/ layout.
@@ -18,6 +18,7 @@ import math
 import os
 import pathlib
 import re
+import stat
 import sys
 import tempfile
 import unicodedata
@@ -425,6 +426,96 @@ KNOWN_CONTENT_ITEMS = {"text", "tool_use", "tool_result", "thinking"}
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")   # strip control chars (keeps \t\n)
 
 
+def _json_object(raw, line_no):
+    """The JSON object a transcript line holds, else None after a WARN: a line that is not JSON, is nested
+    deeper than the parser reads, holds a number longer than it reads (ValueError since 3.11), or holds
+    something other than an object is skipped, not fatal."""
+    try:
+        obj = json.loads(raw)
+    except (ValueError, RecursionError):                  # JSONDecodeError is a ValueError
+        print(f"[WARN] line {line_no}: invalid JSON skipped", file=sys.stderr)
+        return None
+    if not isinstance(obj, dict):
+        print(f"[WARN] line {line_no}: not a JSON object skipped", file=sys.stderr)
+        return None
+    return obj
+
+
+def _is_turn_record(obj, seen_unknown_type, unsafe_schema, line_no):
+    """Whether a record is a user or assistant turn. A side chain or a team record is not, nor is another type:
+    one nobody knows is named once, and a schema marker (v...) stops the run unless --unsafe-schema. A record
+    whose type, or a turn whose message, has a shape a transcript does not give is named and skipped."""
+    if obj.get("isSidechain") or obj.get("teamName") or obj.get("agentName"):
+        return False
+    t = obj.get("type")
+    if (t and not isinstance(t, str)) or (t in ("user", "assistant") and _odd_message(obj.get("message"))):
+        print(f"[WARN] line {line_no}: record of an unknown shape skipped", file=sys.stderr)
+        return False
+    if t in ("user", "assistant"):
+        return True
+    if t and t not in KNOWN_TYPES and t not in seen_unknown_type:
+        seen_unknown_type.add(t)
+        print(f"[WARN] unknown record type {t!r} skipped", file=sys.stderr)    # repr: no raw control character
+        if not unsafe_schema and t.startswith("v"):
+            print(f"[ERROR] schema marker {t!r} unrecognized — "
+                  "rerun with --unsafe-schema to proceed",
+                  file=sys.stderr)
+            raise SystemExit(2)
+    return False
+
+
+def _stamp(ts):
+    """A record's timestamp when it is text, else None: a number or another shape reads as a missing one."""
+    return ts if isinstance(ts, str) else None
+
+
+def _odd_message(msg):
+    """Whether a turn's message has a shape a transcript does not give (a missing or empty one reads as empty)."""
+    return bool(msg) and not isinstance(msg, dict)
+
+
+def _odd_item(it, text, name):
+    """Whether a content item's type, text or tool name has a shape a transcript does not give. A missing or empty
+    text reads as empty and a missing or null tool name as '?'."""
+    return ((it is not None and not isinstance(it, str)) or (it == "text" and not isinstance(text, str))
+            or (it == "tool_use" and not isinstance(name, str)))
+
+
+def _take_item(item, line_no, text_parts, tools):
+    """Add one item of a message's content list to the text parts or the tool counts. An item whose type, text or
+    tool name has a shape a transcript does not give is named and skipped."""
+    if not isinstance(item, dict):
+        return
+    it, text, name = item.get("type"), item.get("text") or "", item.get("name")
+    name = "?" if name is None else name
+    if _odd_item(it, text, name):
+        print(f"[WARN] line {line_no}: content item of an unknown shape skipped", file=sys.stderr)
+    elif it == "text":
+        text_parts.append(text)
+    elif it == "tool_use":
+        tools[name] = tools.get(name, 0) + 1
+    elif it not in KNOWN_CONTENT_ITEMS:
+        print(f"[WARN] line {line_no}: unknown content type "
+              f"{it!r} skipped", file=sys.stderr)
+
+
+def _content_parts(content, line_no):
+    """(text parts, tool counts) of a message's content, or None for a shape nobody knows (named in a WARN
+    unless the content is missing)."""
+    text_parts, tools = [], {}
+    if isinstance(content, str):
+        text_parts.append(content)
+    elif isinstance(content, list):
+        for item in content:
+            _take_item(item, line_no, text_parts, tools)
+    else:
+        if content is not None:
+            print(f"[WARN] line {line_no}: unknown content shape "
+                  f"({type(content).__name__})", file=sys.stderr)
+        return None
+    return text_parts, tools
+
+
 def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
                 session_name=None):
     """Yield dicts: {role, text, ts, uuid, tools, line_no, parts, session,
@@ -439,59 +530,18 @@ def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
         raw = raw.strip()
         if not raw:
             continue
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError:
-            print(f"[WARN] line {line_no}: invalid JSON skipped", file=sys.stderr)
+        obj = _json_object(raw, line_no)
+        if obj is None or not _is_turn_record(obj, seen_unknown_type, unsafe_schema, line_no):
             continue
-        if obj.get("isSidechain"):
-            continue
-        if obj.get("teamName") or obj.get("agentName"):
-            continue
-        t = obj.get("type")
-        if t not in ("user", "assistant"):
-            if t and t not in KNOWN_TYPES and t not in seen_unknown_type:
-                seen_unknown_type.add(t)
-                print(f"[WARN] unknown record type '{t}' skipped", file=sys.stderr)
-                if not unsafe_schema and t and t.startswith("v"):
-                    print(f"[ERROR] schema marker '{t}' unrecognized — "
-                          "rerun with --unsafe-schema to proceed",
-                          file=sys.stderr)
-                    raise SystemExit(2)
-            continue
-
         msg = obj.get("message") or {}
-        role = msg.get("role") or t
-        content = msg.get("content")
-        ts = obj.get("timestamp")
+        role = msg.get("role") or obj.get("type")
+        ts = _stamp(obj.get("timestamp"))
         uuid_ = obj.get("uuid") or hashlib.sha256(
             f"{line_no}:{ts}".encode()).hexdigest()[:16]
-
-        text_parts = []
-        tools = {}
-        if isinstance(content, str):
-            text_parts.append(content)
-        elif isinstance(content, list):
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                it = item.get("type")
-                if it == "text":
-                    text_parts.append(item.get("text") or "")
-                elif it == "tool_use":
-                    tools[item.get("name", "?")] = tools.get(
-                        item.get("name", "?"), 0) + 1
-                elif it in ("tool_result", "thinking"):
-                    continue
-                elif it not in KNOWN_CONTENT_ITEMS:
-                    print(f"[WARN] line {line_no}: unknown content type "
-                          f"'{it}' skipped", file=sys.stderr)
-        else:
-            if content is not None:
-                print(f"[WARN] line {line_no}: unknown content shape "
-                      f"({type(content).__name__})", file=sys.stderr)
+        got = _content_parts(msg.get("content"), line_no)
+        if got is None:
             continue
-
+        text_parts, tools = got
         text = _CTRL_RE.sub("", "\n".join(p for p in text_parts if p).strip())
         if not text and not tools:
             continue
@@ -693,18 +743,16 @@ def _stdin_id_key():
     to a model that never sees the key, so an id gives no way to test a guessed password. With no
     cache folder to keep it in, the key lasts one run."""
     path = CACHE_BASE / "stdin-id.key"
-    try:
-        key = path.read_bytes()
-        if len(key) == 32:
-            return key
-    except OSError:
-        pass
+    key = _read_small(path, 64)
+    if key is not None and len(key) == 32:
+        return key
     key = os.urandom(32)
     tmp = path.with_name("%s.%d" % (path.name, os.getpid()))
     try:
         CACHE_BASE.mkdir(parents=True, exist_ok=True)
         os.chmod(str(CACHE_BASE), 0o700)
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+        # O_EXCL: a name that is already there (a link planted at this guessable name among them) is refused
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(key)
         os.replace(str(tmp), str(path))           # whole or not at all
@@ -741,11 +789,14 @@ def _page_clean_turn(t, extra, mode):
 # read (3.0.5).
 _BLANK_LETTERS = frozenset(map(chr, (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800,
                                      0x034F, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180F)))
+# Cn follows the Unicode table of the Python that runs: a character newer than that table reads as unassigned, so
+# a cache made only of such characters is summarized again every run (the page is the same).
 _BLANK_CATEGORIES = frozenset(("Cc", "Cf", "Co", "Cn", "Zs", "Zl", "Zp"))
 
 
 def _blank(ch):
-    """Whether ch prints as nothing: whitespace, a blank-looking letter, or a variation selector."""
+    """Whether ch prints as nothing: whitespace, a blank-looking letter, or a variation selector.
+    White space is in the blank categories too (Zs, Zl, Zp, Cc); str.isspace() only answers it sooner."""
     if ch.isspace() or ch in _BLANK_LETTERS or unicodedata.category(ch) in _BLANK_CATEGORIES:
         return True
     o = ord(ch)
@@ -757,16 +808,45 @@ def _has_visible(text):
     return not all(_blank(ch) for ch in text)
 
 
+CACHE_READ_MAX = 64 * 1024  # bytes: a cached summary or decision is some hundred (120 characters), so this is generous
+
+
+def _read_small(path, limit=CACHE_READ_MAX):
+    """The bytes of the regular file at path when it holds at most `limit`, else None (missing, a link, a pipe, a
+    folder, a larger file). Opened without blocking and without following a link, so a pipe or a link left at a
+    cache place neither stops a run nor sends it to another file. Windows has neither flag: there the lstat
+    turns a link away, but a link swapped in between the lstat and the open is followed."""
+    flags = (os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+             | getattr(os, "O_BINARY", 0))
+    try:
+        if not stat.S_ISREG(os.lstat(str(path)).st_mode):      # a link (Windows has no O_NOFOLLOW), pipe, folder
+            return None
+        fd = os.open(str(path), flags)
+        with os.fdopen(fd, "rb") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                return None
+            data = f.read(limit + 1)
+    except OSError:
+        return None
+    return data if len(data) <= limit else None
+
+
+def _read_text(path):
+    """The UTF-8 text _read_small gives, else None (bytes that are not UTF-8: a DRM encrypted them)."""
+    data = _read_small(path)
+    try:
+        return None if data is None else data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def _read_cached(p):
     """The summary cached at p, else at the same name with .txt, which 3.0.2 and earlier wrote.
     None when neither holds one: missing, bytes that are not UTF-8 (a DRM encrypted them), or
     nothing a person can see (a write that stopped early, or only blank-looking letters); the
     turn is then summarized again (3.0.4, 3.0.5)."""
     for cached in (p, p.with_name(p.stem + ".txt")):
-        try:
-            text = cached.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
-            continue
+        text = (_read_text(cached) or "").strip()
         if _has_visible(text):
             return text
     return None
@@ -793,9 +873,7 @@ def read_or_summarize(turn: dict, session_id: str, rebuild: bool = False,
     redacted = summarize_turn(_page_clean_turn(turn, redact_extra, redact_mode))
     if p is not None:
         try:
-            fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(redacted)
+            _write_private(p, redacted)
         except OSError:
             pass
     return redacted, False
@@ -1398,7 +1476,7 @@ def _write_private(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         os.replace(tmp, str(path))
     except BaseException:
@@ -1407,6 +1485,13 @@ def _write_private(path, text):
         except OSError:
             pass
         raise
+
+
+def _write_text_lf(path, text):
+    """Write `text` to `path` as UTF-8 with LF line ends on every OS. Text mode on Windows
+    would write CRLF, so the same transcript would give a different page there."""
+    with open(str(path), "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
 
 
 def _safe_name(s):
@@ -1444,8 +1529,8 @@ def read_llm_cache(turn_id, session, digest):
                    "every turn is reviewed")
         return None
     try:
-        got = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError):
+        got = json.loads(_read_text(path) or "")
+    except (ValueError, RecursionError):
         return None
     if not isinstance(got, dict):
         return None
@@ -1727,7 +1812,7 @@ def _is_pack_turn(x):
 def _load_pack(path):
     try:
         pack = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError) as e:
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError) as e:
         return _bad(f"cannot read review pack {path}: {e}")
     if not isinstance(pack, dict) or pack.get("schema") != REVIEW_SCHEMA:
         return _bad(f"{path} is not a {REVIEW_SCHEMA} pack (made by another lineage version? "
@@ -1846,7 +1931,8 @@ def _clean_summary(s, extra, mode):
     next reviewer and the gate's critic, so no part of a key may stay in it."""
     pre, n = review_redact(" ".join(s.split()), extra)
     red, found = redact(pre, extra=extra, mode=mode)
-    return (_cut(red, SUMMARY_MAX) or None), n + sum(found.values())
+    cut = _cut(red, SUMMARY_MAX)
+    return (cut if _has_visible(cut) else None), n + sum(found.values())
 
 
 def _warn_coverage(pack, decided):
@@ -2331,6 +2417,16 @@ def default_output(args, jsonl_path, session_id):
     return f"work/lineage-{slug}.html"
 
 
+# The controls that embed, override or isolate text direction (U+202A..U+202E, U+2066..U+2069). In a page they
+# reorder what a reader sees and can reach past the element that holds them, so the page shows each as a visible
+# [U+XXXX] instead. Plain letters of right-to-left scripts, and the direction marks, stay.
+_BIDI_CONTROLS = re.compile("[" + "".join(map(chr, (*range(0x202A, 0x202F), *range(0x2066, 0x206A)))) + "]")
+
+
+def _show_bidi_controls(text):
+    return _BIDI_CONTROLS.sub(lambda m: "[U+%04X]" % ord(m.group()), text)
+
+
 def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
                      open_details=False, title="Session Lineage", summaries=None,
                      prior_redactions=None):
@@ -2360,8 +2456,8 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
     html_doc = HTML_TEMPLATE
     html_doc = html_doc.replace("{{TITLE}}", html.escape(title), 1)
     html_doc = html_doc.replace("{{HEADER_TITLE}}", html.escape(title), 1)
-    html_doc = html_doc.replace("{{DATE_RANGE}}", html.escape(date_range), 1)
-    html_doc = html_doc.replace("{{TURNS}}", "\n".join(rows), 1)
+    html_doc = html_doc.replace("{{DATE_RANGE}}", html.escape(_show_bidi_controls(date_range)), 1)
+    html_doc = html_doc.replace("{{TURNS}}", _show_bidi_controls("\n".join(rows)), 1)
 
     errs = self_verify(html_doc)
     if errs:
@@ -2369,7 +2465,7 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
 
     out = _with_timestamp_suffix(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(html_doc, encoding="utf-8")
+    _write_text_lf(out, html_doc)
 
     _run_reviewer_gate(turns, out, session_id, args, summaries=summaries)
 
@@ -2613,7 +2709,7 @@ def _check_coverage(verdict, samples):
     """Exit 2 unless the verdict answers each of the samples in file `samples`."""
     try:
         gaps = _verdict_gaps(verdict, json.loads(samples.read_text(encoding="utf-8")))
-    except (OSError, ValueError, UnicodeDecodeError, AttributeError) as e:
+    except (OSError, ValueError, UnicodeDecodeError, AttributeError, RecursionError) as e:
         gaps = f"cannot read the samples: {e}"
     if gaps:
         print(f"[lineage] ERROR: the verdict does not answer {samples} ({gaps}); have the "

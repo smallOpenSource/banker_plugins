@@ -22,11 +22,7 @@
  */
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 
-import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
-
-// banker:<name> 전체 일치 - 이름 문자열 자체를 검증한다(TAB/개행 등 이질 문자가 섞여
-// usage-log 의 `name\thour` 형식을 깨는 것을 막는다). i 플래그는 매칭만 관대하게(실제 이름은 소문자).
-const NAME_RE = /^banker:[a-z0-9_-]+$/i;
+import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES, SKILL_NAME_RE } from '../bin/lib/telemetry-config.mjs';
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -39,11 +35,13 @@ function readStdin() {
 }
 
 // PostToolUse(Skill) payload 에서 모델이 자동 호출한 banker:<name> 스킬 이름을 추출한다.
+// 이름은 telemetry-config 의 SKILL_NAME_RE 전체 일치로 검증한다(TAB, 개행 같은 글자가 usage-log 의
+// `name\thour` 형식을 깨지 않게).
 // 주 소스는 tool_input.skill, 없거나 미매치면 보조로 tool_response.commandName 을 시도한다.
 function extractName(payload) {
   const candidates = [payload?.tool_input?.skill, payload?.tool_response?.commandName];
   for (const c of candidates) {
-    if (typeof c === 'string' && NAME_RE.test(c)) return c;
+    if (typeof c === 'string' && SKILL_NAME_RE.test(c)) return c;
   }
   return null;
 }

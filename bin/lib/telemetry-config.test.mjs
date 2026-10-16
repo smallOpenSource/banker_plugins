@@ -8,13 +8,14 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
   readUsedSkills, recordUsedSkill, changedSkillsBetween,
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
-  SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX,
+  SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX, SKILL_NAME_RE, netDeadlineMs,
 } from './telemetry-config.mjs';
 
 // 테스트가 만지는 env 만 스냅샷/복원한다.
@@ -266,4 +267,23 @@ test('changedSkillsBetween: installed<v<=latest 합집합·중복제거·순서 
   // malformed 버전 키·비배열 값은 건너뛴다(throw 없음).
   const messy = { 'x.y.z': ['banker:z'], '0.9.0': 'notarray', '0.9.1': ['banker:ok', 42] };
   assert.deepStrictEqual(changedSkillsBetween(messy, '0.8.0', '0.9.5'), ['banker:ok']);
+});
+
+test('netDeadlineMs: 시험용 값은 마감을 줄이기만 한다(30초보다 길면 30초)', () => {
+  assert.strictEqual(netDeadlineMs({ BANKER_NET_DEADLINE_MS: '60000' }), 30_000);
+  assert.strictEqual(netDeadlineMs({ BANKER_NET_DEADLINE_MS: '2147483647' }), 30_000);
+  assert.strictEqual(netDeadlineMs({ BANKER_NET_DEADLINE_MS: '1500' }), 1500);
+  assert.strictEqual(netDeadlineMs({}), 30_000);
+});
+
+test('SKILL_NAME_RE: banker:<이름> 의 이름은 64자까지이고 실제 스킬과 명령의 이름은 모두 맞는다', () => {
+  assert.ok(SKILL_NAME_RE.test(`banker:${'a'.repeat(64)}`));
+  assert.ok(!SKILL_NAME_RE.test(`banker:${'a'.repeat(65)}`), '긴 이름은 사용 기록과 체크인에 싣지 않는다');
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const names = [
+    ...fs.readdirSync(path.join(root, 'skills')).filter((d) => fs.existsSync(path.join(root, 'skills', d, 'SKILL.md'))),
+    ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)),
+  ];
+  assert.ok(names.length > 10);
+  for (const n of names) assert.ok(SKILL_NAME_RE.test(`banker:${n}`), n);
 });

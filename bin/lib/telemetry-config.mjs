@@ -48,6 +48,31 @@ export const NPM_LATEST_URL = 'https://registry.npmjs.org/@kaydash9999/banker-pl
 // 테스트는 BANKER_SKILL_CHANGES_URL 로 loopback mock 을 주입해 실제 네트워크를 때리지 않는다.
 export const SKILL_CHANGES_URL = 'https://raw.githubusercontent.com/smallOpenSource/banker_plugins/main/skill-changes.json';
 
+// usage-log 와 체크인 본문에 실리는 스킬/커맨드 이름 꼴. 쓰는 훅 둘과 보내는 훅이 같은 규칙을 쓴다.
+// 이름은 64자까지다(가장 긴 실제 이름은 24자). 모델이 지어낸 긴 이름이 기록과 체크인에 실리지 않게 한다.
+export const SKILL_NAME_RE = /^banker:[a-z0-9_-]{1,64}$/i;
+
+// 갱신 확인 요청 하나의 전체 마감(ms). 시험이 줄일 수 있게 BANKER_NET_DEADLINE_MS 를 받되 줄이기만 한다: 30초보다
+// 길면 30초다. setTimeout 이 1ms 로 바꿔 버리는 값(0 이하, 숫자 아님)도 버리고 30초를 쓴다. 문서에 적지 않는 시험용 장치다.
+export function netDeadlineMs(env = process.env) {
+  const v = Number(env.BANKER_NET_DEADLINE_MS);
+  return Number.isFinite(v) && v > 0 ? Math.min(v, 30_000) : 30_000;
+}
+
+// 네트워크 응답 본문을 maxBytes 까지만 모아 done(문자열)로 넘긴다. 한도를 넘으면 연결을 끊고 done(null),
+// 응답 스트림 오류도 done(null). 낯선 서버가 끝없이 보내도 메모리가 한도 밖으로 늘지 않게 한다.
+export function collectBody(res, maxBytes, done) {
+  const chunks = [];
+  let size = 0;
+  res.on('data', (c) => {
+    size += c.length;
+    if (size > maxBytes) { res.destroy(); done(null); return; }
+    chunks.push(c);
+  });
+  res.on('end', () => done(Buffer.concat(chunks).toString('utf8')));
+  res.on('error', () => done(null));
+}
+
 // config.json 을 읽어 객체로 반환. 파일 없음·malformed JSON·권한 오류 등 어떤 예외에도 던지지 않고 {} 반환.
 export function readConfig() {
   try {

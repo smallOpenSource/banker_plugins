@@ -12,7 +12,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -135,14 +135,14 @@ function makeTree({ realCanonicalizer = false } = {}) {
 
 const arm = (tree) => writeFileSync(join(tree.wikiDir, '.obsidizer'), '');
 
-function runHook(tree, payload, { stubFail = false } = {}) {
+function runHook(tree, payload, { stubFail = false, cwd = tree.project, env: extraEnv = {} } = {}) {
   const env = { ...process.env, STUB_ARGV_LOG: tree.argvLog, STUB_FAIL: stubFail ? '1' : '0' };
   delete env.OMC_STATE_DIR; // never let the real environment redirect the fixture vault
   return spawnSync(process.execPath, [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs')], {
     input: typeof payload === 'string' ? payload : JSON.stringify(payload),
     encoding: 'utf8',
-    cwd: tree.project,
-    env,
+    cwd,
+    env: { ...env, ...extraEnv },
   });
 }
 
@@ -405,4 +405,157 @@ test('integration: the hook drives the real canonicalizer and stays idempotent',
   assert.equal(second.status, 0);
   assert.equal(page(tree), afterFirst, 'second fire is a byte-level no-op — `updated` is content-gated, not wall-clock');
   assert.equal(readFileSync(join(tree.wikiDir, 'index.md'), 'utf8'), INDEX_BEFORE, 'reserved index.md untouched');
+});
+
+
+// The failure lines: every canonicalizer failure is one line "<time>\t<tool>\t<page>: <why>" in the vault's log.
+const canonicalizerPath = (tree) => join(tree.pluginRoot, 'skills', 'obsidizer', 'obsidize.mjs');
+const stubWith = (tree, source) => writeFileSync(canonicalizerPath(tree), source);
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/;
+const INGEST_TOOL = 'mcp__plugin_oh-my-claudecode_t__wiki_ingest';
+
+test('log: an error with line breaks and blank runs is one line that names the tool and the page', () => {
+  const tree = makeTree();
+  arm(tree);
+  stubWith(tree, "process.stderr.write('first\\n\\n\\tsecond   third\\r\\nfourth\\n'); process.exitCode = 3;");
+
+  const res = runHook(tree, payloadFor(tree, INGEST_RESPONSE));
+
+  assert.equal(res.status, 0);
+  const lines = logLines(tree);
+  assert.equal(lines.length, 1);
+  const [time, tool, reason] = lines[0].split('\t');
+  assert.match(time, ISO_TIME);
+  assert.equal(tool, INGEST_TOOL);
+  assert.equal(reason, 'test-page.md: canonicalizer exited 3: first second third fourth');
+});
+
+test('log: the report on stdout stands in when stderr is empty', () => {
+  const tree = makeTree();
+  arm(tree);
+  stubWith(tree, "process.stdout.write('only on stdout'); process.exitCode = 2;");
+  runHook(tree, payloadFor(tree, INGEST_RESPONSE));
+  assert.deepEqual(logLines(tree).map((l) => l.split('\t')[2]), ['test-page.md: canonicalizer exited 2: only on stdout']);
+});
+
+test('log: an exit 0 whose report is not json is logged as that', () => {
+  const tree = makeTree();
+  arm(tree);
+  stubWith(tree, "process.stdout.write('this is not json');");
+  const res = runHook(tree, payloadFor(tree, INGEST_RESPONSE));
+  assert.equal(res.status, 0);
+  assert.deepEqual(logLines(tree).map((l) => l.split('\t')[2]), ['test-page.md: canonicalizer report was not json']);
+});
+
+test('log: a missing canonicalizer is logged once with its path, and no page is touched', () => {
+  const tree = makeTree();
+  arm(tree);
+  // The hook finds itself through links (macOS: /var is /private/var), so the path in the line is the real one.
+  const where = join(realpathSync(dirname(canonicalizerPath(tree))), 'obsidize.mjs');
+  rmSync(canonicalizerPath(tree));
+  const res = runHook(tree, payloadFor(tree, INGEST_RESPONSE));
+  assert.equal(res.status, 0);
+  assert.deepEqual(logLines(tree).map((l) => l.split('\t').slice(1)), [[INGEST_TOOL, `canonicalizer missing at ${where}`]]);
+  assert.equal(page(tree), PAGE_BEFORE);
+});
+
+test('log: a canonicalizer that outlives the hook timeout is logged as not run', { timeout: 20000 }, () => {
+  const tree = makeTree();
+  arm(tree);
+  stubWith(tree, 'setTimeout(() => {}, 60000);');
+  const res = runHook(tree, payloadFor(tree, INGEST_RESPONSE));
+  assert.equal(res.status, 0);
+  assert.match(logLines(tree)[0], /\ttest-page\.md: canonicalizer did not run: .*ETIMEDOUT/);
+});
+
+test('where the vault is: workingDirectory, then payload cwd, then the process cwd; a state dir relocates it', () => {
+  const tree = makeTree();
+  arm(tree);
+  const elsewhere = join(tree.tmp, 'elsewhere');
+  mkdirSync(elsewhere);
+  const run = (payload, opts) => {
+    writeFileSync(tree.argvLog, '');
+    runHook(tree, payload, opts);
+    return readArgv(tree).length;
+  };
+  const named = (extra) => ({ ...payloadFor(tree, INGEST_RESPONSE), ...extra });
+  assert.equal(run(named({ cwd: elsewhere, tool_input: { workingDirectory: tree.project } }), { cwd: elsewhere }), 1, 'workingDirectory wins over cwd');
+  assert.equal(run(named({ cwd: tree.project }), { cwd: elsewhere }), 1, 'payload cwd wins over the process cwd');
+  assert.equal(run('{not json', { cwd: tree.project }), 0, 'an unreadable payload falls back to the process cwd (and logs)');
+  assert.equal(logLines(tree).filter((l) => /unreadable hook payload/.test(l)).length, 1);
+  assert.equal(run(named({ cwd: elsewhere }), { cwd: elsewhere }), 0, 'a project without an armed vault is left alone');
+
+  const state = join(tree.tmp, 'state');
+  const relocated = join(state, 'abc123', 'wiki');
+  mkdirSync(relocated, { recursive: true });
+  writeFileSync(join(relocated, '.obsidizer'), '');
+  writeFileSync(join(relocated, 'test-page.md'), PAGE_BEFORE);
+  assert.equal(run(named({ cwd: elsewhere }), { cwd: elsewhere, env: { OMC_STATE_DIR: state } }), 1, 'OMC_STATE_DIR/<project>/wiki is found');
+  assert.notEqual(readFileSync(join(relocated, 'test-page.md'), 'utf8'), PAGE_BEFORE);
+});
+
+test('log: control characters (ESC among them) become spaces and a long reason is cut at 500 characters', () => {
+  const tree = makeTree();
+  arm(tree);
+  stubWith(tree, "process.stderr.write('\\x1b[2J\\x1b[31mFAKE\\x07\\x9b0m ' + 'A'.repeat(5000)); process.exitCode = 1;");
+  runHook(tree, payloadFor(tree, INGEST_RESPONSE));
+  const [line] = logLines(tree);
+  assert.ok(!/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(line), 'no control character is left in the line');
+  const reason = line.split('\t')[2];
+  assert.match(reason, /^test-page\.md: canonicalizer exited 1: \[2J \[31mFAKE 0m A+\.\.\.$/);
+  assert.equal(reason.length, 500 + 3);
+});
+
+// A listing of the vault is the one call in the dispatch that can throw; a folder nobody may read reaches it.
+test('log: a vault folder that cannot be listed is logged as unexpected and the hook still exits 0', (t) => {
+  const tree = makeTree();
+  arm(tree);
+  chmodSync(tree.wikiDir, 0o300);
+  let res;
+  try {
+    try {
+      readdirSync(tree.wikiDir);
+      return t.skip('this account lists a folder without read permission (root, Windows, or a file system that ignores modes)');
+    } catch {
+      // Refused, as this test needs.
+    }
+    res = runHook(tree, payloadFor(tree, INGEST_RESPONSE_NO_PATH));
+  } finally {
+    chmodSync(tree.wikiDir, 0o700);
+  }
+  assert.equal(res.status, 0);
+  assert.equal(logLines(tree).length, 1);
+  assert.match(logLines(tree)[0], new RegExp(`\\t${INGEST_TOOL}\\tunexpected: EACCES`));
+  assert.equal(readArgv(tree).length, 0, 'no page is canonicalized');
+});
+
+// The log place is in the vault, which a cloned repository can carry: a link there must not send the line to another file.
+test('log: a log place that is a link is not written through, and the link stays', (t) => {
+  const tree = makeTree();
+  arm(tree);
+  const victim = join(tree.tmp, 'victim.txt');
+  writeFileSync(victim, 'my own file\n');
+  try {
+    symlinkSync(victim, join(tree.wikiDir, '.obsidizer-hook.log'));
+  } catch {
+    return t.skip('no symbolic links here');
+  }
+  const res = runHook(tree, payloadFor(tree, INGEST_RESPONSE), { stubFail: true });
+  assert.equal(res.status, 0);
+  assert.equal(readFileSync(victim, 'utf8'), 'my own file\n', 'the file the link leads to is untouched');
+  assert.ok(lstatSync(join(tree.wikiDir, '.obsidizer-hook.log')).isSymbolicLink(), 'the link stays a link');
+});
+
+test('log: a pipe at the log place does not stop the hook', { skip: process.platform === 'win32' && 'no FIFOs here' }, (t) => {
+  const tree = makeTree();
+  arm(tree);
+  if (spawnSync('mkfifo', [join(tree.wikiDir, '.obsidizer-hook.log')]).status !== 0) return t.skip('no mkfifo here');
+  const env = { ...process.env, STUB_ARGV_LOG: tree.argvLog, STUB_FAIL: '1' };
+  delete env.OMC_STATE_DIR;
+  const res = spawnSync(process.execPath, [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs')], {
+    input: JSON.stringify(payloadFor(tree, INGEST_RESPONSE)), encoding: 'utf8', cwd: tree.project, env, timeout: 10000,
+  });
+  assert.equal(res.error?.code, undefined, 'the hook ended before its deadline');
+  assert.equal(res.status, 0);
+  assert.ok(lstatSync(join(tree.wikiDir, '.obsidizer-hook.log')).isFIFO(), 'the pipe stays a pipe');
 });

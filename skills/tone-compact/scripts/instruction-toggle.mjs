@@ -42,7 +42,9 @@
  * the Codex folder), so both skills turned on at once keep both blocks; a lock
  * older than a minute is taken over.
  *
- * Results are { ok, message }; ok false means refused with nothing changed.
+ * Results are { ok, message }; ok false means refused with nothing changed, or,
+ * when a change of two files was refused at the second, with the first changed
+ * and named in the message ("앞서 바꾼 파일").
  * Anything else that goes wrong throws.
  */
 import {
@@ -95,7 +97,7 @@ const isLink = (path) => {
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
-// What sits at a name that is not a regular file: a folder, a FIFO or a device.
+// What sits at a name that is not a regular file: a folder, a FIFO, a socket, a device or a link loop.
 // It is never read; reading a FIFO waits for a writer.
 const SPECIAL = Object.freeze({ bytes: null, text: null, special: true });
 // What sits at a name that is a link to nothing: Codex finds no file there, and writing would follow the link.
@@ -148,7 +150,7 @@ function readFile(path) {
 
 /** A result that did, or found already done, what was asked. */
 export const done = (message) => ({ ok: true, message });
-/** A result that refused and changed nothing. */
+/** A result that refused and changed nothing, unless its message names a file changed before (applied). */
 export const refuse = (message) => ({ ok: false, message });
 
 /** A skill's marks: the first line of its rules file, and the lines around its Codex block. */
@@ -226,6 +228,7 @@ function claudeOn(t, o, getRules) {
   const state = claudeState(t, readFile(file), rules);
   if (state === "foreign") return refuse(`같은 이름의 다른 파일이 있어 그대로 두었습니다: ${shown}`);
   if (state === "on") return done(`Claude Code: 이미 켜져 있습니다 (변경 없음). ${shown}`);
+  const wasLink = isLink(file);
   try {
     mkdirSync(dirname(file), { recursive: true, mode: 0o755 });
     writeFresh(file, claudeText(t, rules));
@@ -233,12 +236,12 @@ function claudeOn(t, o, getRules) {
     if (denied(e)) return refuse(`쓸 권한이 없어 켜지 못했습니다 (${e.code}): ${shown}`);
     throw e;
   }
-  return done(
-    state === "stale"
-      ? `Claude Code: ${t.updatedText}. ${shown}`
-      : `Claude Code: 켰습니다. 다음 세션부터 자동 적용됩니다. ${shown}`,
-  );
+  const words = state === "stale" ? `Claude Code: ${t.updatedText}. ${shown}` : `Claude Code: 켰습니다. 다음 세션부터 자동 적용됩니다. ${shown}`;
+  return done(wasLink ? `${words}\n${LINK_REPLACED}` : words);
 }
+
+/** The note for a name that was a link (to nothing, or to an older copy) and is now a regular file. */
+export const LINK_REPLACED = "참고: 링크였던 자리를 일반 파일로 바꿨습니다. 링크가 가리키던 곳은 건드리지 않았습니다.";
 
 function claudeOff(t, o) {
   const file = claudeFile(t, o);
@@ -435,10 +438,14 @@ function withBlock(t, text, rules) {
 }
 
 // The state when the block is not in its place: "hidden" (only in an override with no text of its own),
-// "misplaced" (only in AGENTS.md while Codex reads the override), "dangling" (nowhere, and AGENTS.md is a link to
-// nothing that on must not write through) or "off".
+// "hiddenbroken" (the same, with AGENTS.md a link to nothing, so on cannot move it), "misplaced" (only in AGENTS.md
+// while Codex reads the override), "dangling" (nowhere, and AGENTS.md is a link to nothing that on must not write
+// through) or "off".
 function placeState(files) {
-  if (hasBlock(files.other)) return files.other === files.all[0] ? "hidden" : "misplaced";
+  if (hasBlock(files.other)) {
+    if (files.other !== files.all[0]) return "misplaced";
+    return files.target.dangling ? "hiddenbroken" : "hidden";
+  }
   return files.target.dangling ? "dangling" : "off";
 }
 
@@ -477,12 +484,32 @@ function writeBlocked(changes) {
 // whatever the umask allows more. A file left empty is removed, unless it is a
 // link or has other names (a hard link), whose other names would keep the old
 // text: it is emptied instead. Codex skips an empty file anyway.
+// A file that was not there when it was read is created only if it still is not ("wx"): a name that appeared in
+// between, a link planted there among them, is not written through.
 function apply(t, changes) {
   for (const { file, after } of changes) {
     if (file.bytes !== null) writeFresh(`${file.path}.${t.slug}.bak`, file.bytes, 0o600);
     if (after === "" && !isLink(file.path) && !hasOtherNames(file.path)) rmSync(file.path, { force: true });
-    else writeFileSync(file.path, after, { mode: 0o644 });
+    else writeFileSync(file.path, after, { mode: 0o644, flag: file.bytes === null ? "wx" : "w" });
   }
+}
+
+// Applies the changes, or the refusal for a write that failed with nothing of the file changed: a name that
+// appeared in between (EEXIST), or a write a sandbox refused after access() allowed it. The refusal names the place
+// the system refused (a rename's target, as the backup, or the file it was about), and a file changed before the
+// failing one. Other errors propagate.
+function applied(t, changes) {
+  let i = 0;
+  try {
+    for (; i < changes.length; i++) apply(t, [changes[i]]);
+  } catch (e) {
+    if (e.code !== "EEXIST" && !denied(e)) throw e;
+    const why = e.code === "EEXIST" ? "쓰는 사이에 같은 이름이 생겨 그대로 두었습니다" : `쓸 권한이 없어 그대로 두었습니다 (${where(e.code)})`;
+    const at = [e.dest, e.path].find((p) => typeof p === "string") ?? changes[i].file.path;
+    const before = i === 0 ? "" : `\n앞서 바꾼 파일: ${changes.slice(0, i).map((c) => where(c.file.path)).join(", ")}`;
+    return refuse(`${why}: ${where(at)}${before}`);
+  }
+  return null;
 }
 
 // Whether the file at path is also reachable under another name: a hard link.
@@ -522,7 +549,7 @@ function dropStale(path) {
   try {
     st = lstatSync(path);
   } catch (e) {
-    if (e.code === "ENOENT") return true; /* gone in between */
+    if (e.code === "ENOENT" || e.code === "ESTALE") return true; /* gone in between (ESTALE: a network share's word for it) */
     throw e;
   }
   if (st.isDirectory() || Math.abs(Date.now() - st.mtimeMs) <= LOCK_STALE_MS) return false;
@@ -628,7 +655,8 @@ function codexOnHeld(t, o, getRules) {
   if (hasBlock(files.other)) changes.push({ file: files.other, after: stripped(files.other) });
   const why = writeBlocked(changes);
   if (why) return refuse(why);
-  apply(t, changes);
+  const failed = applied(t, changes);
+  if (failed) return failed;
   const note = files.target === files.all[1] ? `\n${OMX_NOTE}` : "";
   return done(`Codex: ${words}. ${tail}${note}`);
 }
@@ -646,7 +674,8 @@ function codexOffHeld(t, o) {
   if (changes.length === 0) return done("Codex: 이미 꺼져 있습니다 (변경 없음).");
   const why = writeBlocked(changes);
   if (why) return refuse(why);
-  apply(t, changes);
+  const failed = applied(t, changes);
+  if (failed) return failed;
   const paths = changes.map((c) => where(c.file.path)).join(", ");
   const baks = changes.map((c) => where(`${c.file.path}.${t.slug}.bak`)).join(", ");
   return done(`Codex: 껐습니다. 다음 세션부터 적용되지 않습니다. ${paths}\n지우기 전 파일: ${baks}`);
@@ -661,6 +690,7 @@ const STATE_TEXT = {
   foreign: "꺼짐, 같은 이름의 다른 파일이 있음 (손대지 않음)",
   misplaced: "꺼짐, 단 블록이 Codex 가 읽지 않는 AGENTS.md 에 있음 (on 으로 옮김)",
   hidden: "켜짐, 단 AGENTS.override.md 에 블록만 있어 AGENTS.md 가 가려짐 (on 으로 옮김)",
+  hiddenbroken: "켜짐, 단 AGENTS.override.md 에 블록만 있고 AGENTS.md 가 끊어진 링크라 on 이 블록을 옮기지 못함 (링크 확인 필요)",
   notutf8: "UTF-8 이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   notregular: "일반 파일이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   unpaired: "표시의 짝이 맞지 않음 (on, off 모두 거부. 남은 표시 줄 정리 필요)",

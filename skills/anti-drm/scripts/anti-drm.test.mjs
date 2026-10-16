@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import {
   checkConfig,
@@ -491,11 +491,16 @@ test("command line: a refusal exits 1, an unexpected error exits 2", () => {
   assert.equal(refused.code, 1);
   assert.match(refused.out, /설정이 없습니다/);
   writeFileSync(s.agents, "# base\n");
-  // a folder with something in it where the backup of AGENTS.md goes: renaming the temp file onto it fails
-  mkdirSync(join(`${s.agents}.anti-drm.bak`, "x"), { recursive: true });
-  const broken = cli(["on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
-  assert.equal(broken.code, 2, broken.out);
-  assert.match(broken.out, /예기치 못한 오류로 중단했습니다/);
+  // an EIO from the rename onto the backup of AGENTS.md (a folder there gives EISDIR on POSIX but EPERM, a denied
+  // write, on Windows, so it is not used for this)
+  const pre = join(s.dir, "pre.mjs");
+  writeFileSync(pre, ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";', "const real = fs.renameSync;",
+    'fs.renameSync = (from, to) => { if (String(to).endsWith(".anti-drm.bak")) throw Object.assign(new Error("EIO: rename"), { code: "EIO", syscall: "rename", path: String(from), dest: String(to) }); return real(from, to); };',
+    "syncBuiltinESMExports();"].join("\n"));
+  const broken = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"],
+    { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  assert.equal(broken.status, 2, broken.stdout);
+  assert.match(broken.stdout, /예기치 못한 오류로 중단했습니다/);
 });
 
 test("command line: config needs no runtime and prints the rules only when a runtime holds them", () => {
@@ -930,7 +935,7 @@ test("SKILL.md checks each heredoc line before it runs, and no end word can pass
 // Rows that send the agent at a user's file must ask first; none may tell it to clear one away.
 const ASK_FIRST = ["설정 파일이 올바르지 않습니다", "일반 파일이 아니라 설정을 저장하지 않았습니다", "64KiB 보다 큰 파일이라",
   "같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
-  "다른 banker 지침 작업이 끝나지 않아"];
+  "다른 banker 지침 작업이 끝나지 않아", "쓰는 사이에 같은 이름이 생겨", "AGENTS.md 가 끊어진 링크라 on 이 블록을 옮기지 못함"];
 test("troubleshooting rows never tell the agent to clear, delete, move or rename a user's file without asking first", () => {
   const table = read(SKILL).split("## 문제 해결")[1].split("\n## ")[0];
   const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
@@ -963,4 +968,119 @@ test("while other banker blocks alone fill the override, the stale and moved cas
   assert.match(codexLine(r2), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /, r2.message);
   assert.equal(blocks(read(moved.agents)), 1, "ours moved to AGENTS.md");
   assert.equal(blocks(read(moved.override)), 0);
+});
+
+test("config says so when the settings path was a link it replaced, and where the link led stays", posixOnly, () => {
+  const s = setup();
+  const folder = join(s.dir, "config", "banker");
+  mkdirSync(folder, { recursive: true });
+  symlinkSync(join(folder, "gone.json"), s.o.configFile);
+  const gone = configure(s.o, FLAGS);
+  assert.ok(gone.ok, gone.message);
+  assert.match(gone.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\. 링크가 가리키던 곳은 건드리지 않았습니다\./);
+  assert.ok(!existsSync(join(folder, "gone.json")), "nothing was made where the link pointed");
+  const t = setup();
+  const tf = join(t.dir, "config", "banker");
+  mkdirSync(tf, { recursive: true });
+  const dotfiles = join(t.dir, "dotfiles-anti-drm.json");
+  writeFileSync(dotfiles, '{"deny":[".txt"],"alt":[".md"]}\n');
+  symlinkSync(dotfiles, t.o.configFile);
+  const older = configure(t.o, FLAGS);
+  assert.ok(older.ok, older.message);
+  assert.match(older.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다/);
+  assert.equal(read(dotfiles), '{"deny":[".txt"],"alt":[".md"]}\n', "the copy the link led to is as it was");
+  assert.doesNotMatch(configure(t.o, FLAGS).message, /링크였던 자리/, "a plain file says nothing about links");
+});
+
+test("config says where a file anti-drm did not write went, and says so when it was not kept", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+  const first = configure(s.o, FLAGS);
+  assert.ok(first.ok, first.message);
+  assert.match(first.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 .*anti-drm\.json\.bak 에 남겼습니다\./);
+  writeFileSync(s.o.configFile, "{\n");
+  const second = configure(s.o, FLAGS);
+  assert.ok(second.ok, second.message);
+  assert.match(second.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다\. 먼저 남긴 파일이 있습니다: .*anti-drm\.json\.bak/);
+  assert.equal(read(`${s.o.configFile}.bak`), '{"theme":"dark"}\n');
+  assert.doesNotMatch(configure(s.o, FLAGS).message, /참고:/, "anti-drm's own settings go without a word");
+});
+
+test("config does not call a folder or a link at .bak a file kept before: it says something that is not a regular file is there", () => {
+  const places = [["a folder", (bak) => { mkdirSync(bak); return true; }]];
+  if (process.platform !== "win32") places.push(["a link to nothing", (bak) => { symlinkSync(join(bak, "..", "nowhere"), bak); return true; }]);
+  for (const [what, make] of places) {
+    const s = setup();
+    mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+    writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+    make(`${s.o.configFile}.bak`);
+    const r = configure(s.o, FLAGS);
+    assert.ok(r.ok, `${what}: ${r.message}`);
+    assert.match(r.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다\. 그 자리에 일반 파일이 아닌 것이 있습니다: .*anti-drm\.json\.bak/, what);
+    assert.doesNotMatch(r.message, /먼저 남긴 파일/, what);
+  }
+});
+
+// The note and the write come from one look at .bak: a .bak that appears after a first look is not reported as kept.
+test("config's note about .bak is what it did, even when a .bak appears between two looks", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+  const bak = `${s.o.configFile}.bak`;
+  const pre = join(s.dir, "pre.mjs");
+  writeFileSync(pre, ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.lstatSync;", "let looks = 0;",
+    `fs.lstatSync = (p, ...a) => { if (String(p) === ${JSON.stringify(bak)} && ++looks === 2) fs.writeFileSync(p, "someone else's\\n"); return real(p, ...a); };`,
+    "syncBuiltinESMExports();"].join("\n"));
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "config", "--deny", ".txt", "--alt", ".md"],
+    { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /참고: anti-drm 이 쓰지 않은 원래 파일은 .*anti-drm\.json\.bak 에 남겼습니다\./);
+  assert.equal(read(bak), '{"theme":"dark"}\n', "what the note says was kept is in .bak");
+});
+
+test("a broken settings file has one procedure in the on table and the troubleshooting row: ask, a new file, a foreign one kept once in .bak, nothing moved by the agent", () => {
+  const lines = read(SKILL).split("\n");
+  const onRow = lines.find((l) => l.trim().startsWith("| `올바르지 않음`"));
+  const fixRow = read(SKILL).split("## 문제 해결")[1].split("\n").find((l) => l.startsWith("| 설정 파일이 올바르지 않습니다"));
+  for (const row of [onRow, fixRow]) {
+    assert.ok(row, "the row is there");
+    assert.match(row, /다시 정할지 물/, row);
+    assert.match(row, /새 파일로 바뀌/, row);
+    assert.match(row, /`anti-drm\.json\.bak` 에 한 번 남/, row);
+    assert.match(row, /에이전트가 그 파일을 직접 지우거나 옮기지 않음/, row);
+    assert.match(row, /폴더나 특수 파일이거나, 64KiB 보다 크거나, 읽을 수 없는 파일이면 바꾸지 않고 거부함/, row);
+    assert.match(row, /링크는 링크만 일반 파일로 바뀌고 가리키던 곳은 그대로 둠/, row);
+  }
+});
+
+// "Show" in the troubleshooting table means ls -l first: a row cannot name every place a planted link may sit.
+test("the troubleshooting section says to show a file with ls -l first and to open only a regular file that is not a link", () => {
+  const section = read(SKILL).split("## 문제 해결")[1].split("\n| 메시지 |")[0];
+  assert.match(section, /`ls -l` 로 그 이름의 종류와 링크 대상 경로를 보이는 것/);
+  assert.match(section, /링크가 아닌 일반 파일임을 본 뒤에만 내용을 연다/);
+});
+
+// A name that may be a link someone planted is shown by its path: opening it would put the file it leads to (a key,
+// say) into the session.
+test("the rows that show a file that may be a link say to show only the link and where it leads, not its content", () => {
+  const rows = read(SKILL).split("\n").filter((l) => /^\| (쓰는 사이에 같은 이름이 생겨|같은 이름의 다른 파일이 있음)/.test(l));
+  assert.equal(rows.length, 2);
+  for (const row of rows) assert.match(row, /링크면 `ls -l` 로 링크와 대상 경로만 보이고 대상 내용은 열지 않음/, row);
+});
+
+test("--stdin: a pipe left non-blocking answers EAGAIN until the settings come, and they are read when they do", posixOnly, async () => {
+  const s = setup();
+  const pre = join(s.dir, "touch-stdin.mjs");
+  writeFileSync(pre, "void process.stdin;\n");       // a stdin stream sets the pipe to non-blocking before the CLI reads it
+  const child = spawn(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "config", "--stdin"],
+    { env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) }, stdio: ["pipe", "pipe", "pipe"] });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  child.stderr.on("data", (d) => { out += d; });
+  setTimeout(() => child.stdin.end("deny=.hwp\nalt=.md\n"), 300);
+  const code = await new Promise((resolve) => child.on("close", resolve));
+  assert.equal(code, 0, out);
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".hwp"]);
 });

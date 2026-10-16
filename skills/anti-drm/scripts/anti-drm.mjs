@@ -61,6 +61,7 @@ import {
   done,
   hasMarker,
   lf,
+  LINK_REPLACED,
   noBom,
   present,
   refuse,
@@ -260,14 +261,19 @@ function ownSettings(bytes) {
   }
 }
 
-// Whether anything, a dangling link included, already sits at path.
-function taken(path) {
+// Keeps a file anti-drm did not write at bak, once, and says what it did: "kept", "earlier" (a regular file is there
+// already and stays) or "other" (something else is there: a link, a dangling one too, or a folder; nothing is written).
+// The note comes from the same look as the write.
+function keepOnce(bak, bytes) {
+  let st;
   try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
+    st = lstatSync(bak);
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+    writeFresh(bak, bytes, 0o600);
+    return "kept";
   }
+  return st.isFile() ? "earlier" : "other";
 }
 
 // What a save finds at the settings path: { keep } (the bytes to put in .bak,
@@ -285,12 +291,14 @@ function priorSettings(file) {
  * Saves the settings: the folder 0755, the file 0644 through a temp file and a
  * rename. keep, when given, is a file anti-drm did not write; its bytes go to
  * <file>.bak, readable by this account only, once: a .bak already there is the
- * first such file and stays.
+ * first such file and stays. Gives back what became of keep: null when none was
+ * given, else "kept", "earlier" or "other" (see keepOnce).
  */
 export function writeConfig(file, config, keep = null) {
   mkdirSync(dirname(file), { recursive: true, mode: 0o755 });
-  if (keep !== null && !taken(`${file}.bak`)) writeFresh(`${file}.bak`, keep, 0o600);
+  const kept = keep === null ? null : keepOnce(`${file}.bak`, keep);
   writeFresh(file, `${JSON.stringify(config, null, 2)}\n`, 0o644);
+  return kept;
 }
 
 // ---- rules ----
@@ -396,17 +404,42 @@ export function status(opts = {}) {
   return done(lines.join("\n"));
 }
 
+// What a save does beyond writing the settings, as lines to report: a link at the settings path becomes a regular
+// file (where it led stays), and a file anti-drm did not write goes to .bak, or is not kept when an earlier one, or
+// something that is not a regular file, is there already. kept is what writeConfig gave back.
+const KEPT_NOTES = {
+  kept: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 ${bak} 에 남겼습니다.`,
+  earlier: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다. 먼저 남긴 파일이 있습니다: ${bak}`,
+  other: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다. 그 자리에 일반 파일이 아닌 것이 있습니다: ${bak}`,
+};
+function saveNotes(file, wasLink, kept) {
+  const notes = wasLink ? [LINK_REPLACED] : [];
+  if (kept) notes.push(KEPT_NOTES[kept](where(`${file}.bak`)));
+  return notes;
+}
+
+// Whether the name itself is a link, whatever it leads to.
+function pathIsLink(file) {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 // Saves the settings, as a result to report.
 function save(o, config) {
+  let notes;
   try {
     const prior = priorSettings(o.configFile);
     if (prior.refusal) return refuse(`${prior.refusal}: ${where(o.configFile)}`);
-    writeConfig(o.configFile, config, prior.keep);
+    const wasLink = pathIsLink(o.configFile);
+    notes = saveNotes(o.configFile, wasLink, writeConfig(o.configFile, config, prior.keep));
   } catch (e) {
     if (denied(e)) return refuse(`쓸 권한이 없어 설정을 저장하지 못했습니다 (${e.code}): ${where(o.configFile)}`);
     throw e;
   }
-  return done(`설정을 저장했습니다: ${where(o.configFile)}`);
+  return done([`설정을 저장했습니다: ${where(o.configFile)}`, ...notes].join("\n"));
 }
 
 // New rules in each runtime that holds the rules, but `skip`. A runtime that

@@ -17,7 +17,9 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}: ${msg}`); if
 const run = (cmd, args, opts = {}) => cp.execFileSync(cmd, args, { encoding: 'utf8', ...opts });
 // npm reaches no registry from this harness: update_notifier=false stops the weekly update check, the one request
 // npm pack and a local tarball's install made; offline keeps any other lookup off the network.
-const NPM_OFFLINE = { ...process.env, npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
+const OFFLINE_SETTINGS = { npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
+// npm reads npm_config_* names whatever their case and the last spelling wins: drop every spelling of the settings set here.
+const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !(k.toLowerCase() in OFFLINE_SETTINGS))), ...OFFLINE_SETTINGS };
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
 const prefix = path.join(tmp, 'prefix');
@@ -346,7 +348,7 @@ try {
      && /`reviewers dropped N typed user turn\(s\)`/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.5$/m.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.6$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
      && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && !/공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
@@ -380,7 +382,7 @@ try {
   if (py) {
     const pyRes = cp.spawnSync(py, ['-B', '-m', 'unittest', 'test_lineage'],
       { cwd: path.join(root, 'skills', 'lineage'), encoding: 'utf8',
-        env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+        env: { ...process.env, HOME: home, USERPROFILE: home, PYTHONDONTWRITEBYTECODE: '1' } });
     const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
     ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${tail})`);
   } else {

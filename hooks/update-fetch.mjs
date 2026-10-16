@@ -19,9 +19,11 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 
-import { UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, writeUpdateCache } from '../bin/lib/telemetry-config.mjs';
+import { UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, writeUpdateCache, collectBody, netDeadlineMs } from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
+const NET_DEADLINE_MS = netDeadlineMs(); // 교환 전체 마감(위 값은 무활동 기준).
+const MAX_BODY_BYTES = 256 * 1024; // npm /latest 응답은 수 KB 다.
 
 // loopback 호스트만 평문 http 를 허용한다(로컬 테스트 mock 전용). update-checkin.mjs 와 동일 판별:
 // URL.hostname 은 IPv6 를 대괄호로 감싸므로([::1]) 벗겨서 비교한다.
@@ -45,7 +47,8 @@ function readCache() {
 function fetchLatestVersion(url) {
   return new Promise((resolvePromise) => {
     let done = false;
-    const finish = (result) => { if (!done) { done = true; resolvePromise(result); } };
+    let deadline = null;
+    const finish = (result) => { if (!done) { done = true; clearTimeout(deadline); resolvePromise(result); } };
     let parsed;
     try {
       parsed = new URL(url);
@@ -67,21 +70,19 @@ function fetchLatestVersion(url) {
           res.resume();
           return finish(null);
         }
-        let data = '';
-        res.on('data', (c) => { data += c; });
-        res.on('end', () => {
+        collectBody(res, MAX_BODY_BYTES, (data) => {
           try {
-            const obj = JSON.parse(data);
+            const obj = JSON.parse(data); // data null(한도 초과, 스트림 오류)은 null 로 읽혀 version 이 없다.
             const v = obj && typeof obj === 'object' ? obj.version : undefined;
             finish((typeof v === 'string' && v) ? v : null);
           } catch {
             finish(null); // 빈/malformed 본문.
           }
         });
-        res.on('error', () => finish(null));
       });
       req.on('error', () => finish(null)); // 연결 거부/리셋 등은 즉시 여기로.
       req.setTimeout(NET_TIMEOUT_MS, () => req.destroy());
+      deadline = setTimeout(() => { req.destroy(); finish(null); }, NET_DEADLINE_MS);
       req.end(); // GET - 요청 본문 없음.
     } catch {
       finish(null);

@@ -278,3 +278,65 @@ test('loopback http 판별 가드가 배선돼 있다(::1/127.0.0.1/localhost)',
   assert.match(src, /'127\.0\.0\.1'/, '127.0.0.1 loopback 포함');
   assert.match(src, /'::1'/, '::1 loopback 포함');
 });
+
+
+test('npm 응답이 256KiB 한도를 넘으면 연결을 끊고 캐시를 쓰지 않는다', async () => {
+  const body = '{"version":"99.0.0","pad":"' + 'a'.repeat(1024 * 1024) + '"}';
+  const server = await mockServer({ body });
+  try {
+    const tmp = mkTmp();
+    const code = await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`);
+    assert.equal(code, 0);
+    assert.ok(!existsSync(cachePath(tmp)), '한도를 넘은 응답의 version 은 쓰지 않는다');
+  } finally {
+    server.close();
+  }
+});
+
+test('조금씩 계속 보내는 서버에도 교환 전체 마감에 끊고 끝낸다', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200);
+    res.write('{"version":"99.0.0","pad":"');
+    const timer = setInterval(() => res.write('x'), 100);
+    res.on('close', () => clearInterval(timer));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const tmp = mkTmp();
+    const env = { ...fetchEnv(tmp, `http://127.0.0.1:${server.address().port}/latest`), BANKER_NET_DEADLINE_MS: '1500' };
+    const start = Date.now();
+    const code = await new Promise((r) => {
+      const child = spawn(process.execPath, [FETCH_HOOK], { env, stdio: 'ignore' });
+      child.on('close', (c) => r(c ?? 0));
+    });
+    assert.equal(code, 0);
+    assert.ok(Date.now() - start < 8000, '마감에 끊긴다');
+    assert.ok(!existsSync(cachePath(tmp)));
+  } finally {
+    server.closeAllConnections?.();
+    server.close();
+  }
+});
+
+test('시험용 마감 값(BANKER_NET_DEADLINE_MS)이 0 이하, 숫자 아님, 2^31-1 초과면 버리고 30초 마감을 쓴다', async () => {
+  // setTimeout 은 음수와 2^31-1 초과를 1ms 로 바꾼다. 그 값을 받으면 300ms 뒤에 오는 정상 응답도 끊긴다.
+  const server = http.createServer((req, res) => {
+    setTimeout(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"version":"99.0.0"}'); }, 300);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    for (const bad of ['-5', '0', 'abc', '3000000000']) {
+      const tmp = mkTmp();
+      const env = { ...fetchEnv(tmp, `http://127.0.0.1:${server.address().port}/latest`), BANKER_NET_DEADLINE_MS: bad };
+      const code = await new Promise((r) => {
+        const child = spawn(process.execPath, [FETCH_HOOK], { env, stdio: 'ignore' });
+        child.on('close', (c) => r(c ?? 0));
+      });
+      assert.equal(code, 0, bad);
+      assert.ok(existsSync(cachePath(tmp)), `${bad}: 300ms 뒤에 온 응답을 받아 캐시를 쓴다`);
+      assert.equal(readCache(tmp).latest, '99.0.0', bad);
+    }
+  } finally {
+    server.close();
+  }
+});

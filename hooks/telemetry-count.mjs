@@ -22,11 +22,7 @@
  */
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 
-import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
-
-// banker:<name> 전체 일치 - 이름 문자열 자체를 검증한다(TAB/개행 등 이질 문자가 섞여
-// usage-log 의 `name\thour` 형식을 깨는 것을 막는다). i 플래그는 매칭만 관대하게(실제 이름은 소문자).
-const NAME_RE = /^banker:[a-z0-9_-]+$/i;
+import { configDir, countingActive, recordUsedSkill, USAGE_LOG_PATH, LOG_MAX_LINES, SKILL_NAME_RE } from '../bin/lib/telemetry-config.mjs';
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -39,11 +35,13 @@ function readStdin() {
 }
 
 // UserPromptExpansion payload 에서 사용자가 직접 호출한 banker:<name> 이름을 추출한다.
+// 이름은 telemetry-config 의 SKILL_NAME_RE 전체 일치로 검증한다(TAB, 개행 같은 글자가 usage-log 의
+// `name\thour` 형식을 깨지 않게).
 // command_source 가 'plugin' 이고 command_name 이 banker:<name> 형식일 때만 반환, 그 외 null.
 function extractName(payload) {
   if (payload?.command_source !== 'plugin') return null;
   const name = payload?.command_name;
-  return (typeof name === 'string' && NAME_RE.test(name)) ? name : null;
+  return (typeof name === 'string' && SKILL_NAME_RE.test(name)) ? name : null;
 }
 
 // 파일의 개행 개수 = 줄 수(각 append 가 끝에 개행을 붙이므로). 없거나 읽기 실패면 0.

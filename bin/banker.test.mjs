@@ -27,7 +27,10 @@ function withXdg(fn) {
   try { return fn(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 function run(args, dir, extraEnv = {}) {
-  const env = { ...process.env, XDG_CONFIG_HOME: dir, ...extraEnv };
+  const env = { ...process.env, XDG_CONFIG_HOME: dir };
+  // The developer's own opt-outs would turn the default-state tests red; each test passes the ones it wants.
+  for (const k of ['BANKER_NO_TELEMETRY', 'BANKER_NO_UPDATE_CHECK', 'BANKER_TELEMETRY_ENDPOINT']) delete env[k];
+  Object.assign(env, extraEnv);
   // input:'' -> stdin is a closed pipe (never a TTY); timeout guards against any accidental hang.
   const r = spawnSync(process.execPath, [BANKER, ...args], { encoding: 'utf8', input: '', env, timeout: 20000 });
   return { out: `${r.stdout || ''}${r.stderr || ''}`, code: r.status, r };
