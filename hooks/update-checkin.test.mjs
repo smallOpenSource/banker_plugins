@@ -686,3 +686,82 @@ test('the claim is removed once the lines are sent, and nothing but the log name
     assert.deepEqual(readdirSync(bankerDir(tmp)).filter((n) => n.startsWith('usage-log.')), []);
   });
 });
+
+test("a link at last-flush's old pid-only name neither stops it nor is followed", { skip: !canSymlink() && 'this account cannot make links' }, async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const victim = join(tmp, 'victim3');
+    writeFileSync(victim, 'keep me\n');
+    const pre = join(tmp, 'pre.mjs');
+    writeFileSync(pre, [
+      'import fs from "node:fs";',
+      `fs.symlinkSync(${JSON.stringify(victim)}, ${JSON.stringify(lastFlush(tmp))} + "." + process.pid + ".tmp");`,
+    ].join('\n'));
+    assert.equal(await spawnCheckin(tmp, { pre }), 0);
+    assert.equal(lstatSync(lastFlush(tmp)).isFile(), true, 'last-flush was written as a file of its own');
+    assert.equal(readFileSync(victim, 'utf8'), 'keep me\n', 'the file the link led to is untouched');
+    const planted = readdirSync(bankerDir(tmp)).filter((n) => /^last-flush\.\d+\.tmp$/.test(n));
+    assert.equal(planted.length, 1, 'the planted link stays');
+    assert.equal(lstatSync(join(bankerDir(tmp), planted[0])).isSymbolicLink(), true);
+  });
+});
+
+test("last-flush's new file is not written through something already at its name", { skip: !canSymlink() && 'this account cannot make links' }, async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const victim = join(tmp, 'victim4');
+    writeFileSync(victim, 'keep me\n');
+    const pre = join(tmp, 'pre.mjs');
+    writeFileSync(pre, [
+      'import crypto from "node:crypto";',
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'crypto.randomBytes = () => Buffer.from("0a1b2c3d", "hex");',
+      'syncBuiltinESMExports();',
+      `fs.symlinkSync(${JSON.stringify(victim)}, ${JSON.stringify(lastFlush(tmp))} + "." + process.pid + ".0a1b2c3d.tmp");`,
+    ].join('\n'));
+    assert.equal(await spawnCheckin(tmp, { pre }), 0);
+    assert.equal(readFileSync(victim, 'utf8'), 'keep me\n', 'the file the link led to is untouched');
+    const planted = readdirSync(bankerDir(tmp)).filter((n) => /^last-flush\.\d+\.0a1b2c3d\.tmp$/.test(n));
+    assert.equal(planted.length, 1, 'what was already at that name stays');
+    assert.equal(lstatSync(join(bankerDir(tmp), planted[0])).isSymbolicLink(), true);
+  });
+});
+
+test('claim names that are a folder or a pipe are left as they are', async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    const old = Date.now() - 2 * 3600_000;
+    const folder = join(bankerDir(tmp), `usage-log.sending-1-${old}-0a1b2c3d`);
+    mkdirSync(folder);
+    const pipes = process.platform !== 'win32';
+    const pipe = join(bankerDir(tmp), `usage-log.sending-2-${old}-0a1b2c3d`);
+    if (pipes) assert.equal(spawnSync('mkfifo', [pipe]).status, 0, 'mkfifo');
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp, { timeout: 10_000 }), 0, 'the checkin ended on its own');
+    assert.equal(lstatSync(folder).isDirectory(), true, 'the folder stays');
+    if (pipes) assert.equal(lstatSync(pipe).isFIFO(), true, 'the pipe stays');
+    assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } });
+  });
+});
+
+test('an update-check cache that is a pipe is not waited on, and becomes a cache file', { skip: process.platform === 'win32' && 'Windows has no FIFO files' }, async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    assert.equal(spawnSync('mkfifo', [updateCheck(tmp)]).status, 0, 'mkfifo');
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp, { timeout: 10_000 }), 0, 'the checkin ended on its own');
+    assert.equal(lstatSync(updateCheck(tmp)).isFile(), true, 'the cache is a file now');
+    assert.equal(JSON.parse(readFileSync(updateCheck(tmp), 'utf8')).latest, '0.9.0');
+  });
+});

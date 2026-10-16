@@ -17,9 +17,7 @@
  * count-default-on: 이 훅은 hooks.json 에 배선되지 않는다(스탠드얼론 .mjs). update-notify 가
  * countingActive + 엔드포인트 설정 시 fetcher 로 detached spawn 한다(응답 latest 가 알림 캐시를 겸함).
  */
-import {
-  closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync,
-} from 'node:fs';
+import { lstatSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
@@ -37,6 +35,8 @@ import {
   SKILL_NAME_RE,
   collectBody,
   netDeadlineMs,
+  readRegular,
+  writeByRename,
 } from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
@@ -182,19 +182,6 @@ const RENAME_TRIES = 3;
 const RENAME_REST_MS = 50;
 const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
-// 일반 파일의 글. 그 밖(FIFO, 폴더)과 오류는 ''. 막지 않고 열어 FIFO 를 기다리지 않는다.
-function readRegular(path) {
-  let fd;
-  try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
-    return fstatSync(fd).isFile() ? readFileSync(fd, 'utf8') : '';
-  } catch {
-    return '';
-  } finally {
-    if (fd !== undefined) try { closeSync(fd); } catch { /* best-effort */ }
-  }
-}
-
 // 보내기 전에 로그 이름을 바꿔 차지한다. rename 은 원자적이라 함께 시작한 체크인 가운데 하나만 그 줄을 읽고,
 // 보내는 동안 더해진 줄은 새 로그로 가 다음 체크인이 보낸다. 링크면 링크 자체가 옮겨진다(대상은 그대로).
 // 로그가 없거나 폴더, FIFO 이거나 이름을 바꾸지 못하면(다른 체크인이 먼저 차지, Windows 에서 백신이 쥠)
@@ -257,16 +244,10 @@ async function refreshUpdateCache(responseBody) {
 }
 
 // 전송 시도 후(성공/실패 무관) 차지한 파일을 지워 24h 윈도우로 상한(배치 유실 허용)하고 last-flush 를 남긴다.
-// last-flush 는 새 파일에 쓴 뒤 rename 으로 놓아, 그 이름 자리의 링크를 따라 다른 파일을 덮지 않는다.
+// last-flush 는 writeByRename 으로 놓아, 그 이름 자리나 임시 이름의 링크를 따라 다른 파일을 덮지 않는다.
 function finishClaim(claim) {
   if (claim) try { unlinkSync(claim); } catch { /* best-effort */ }
-  const tmp = `${LAST_FLUSH_PATH}.${process.pid}.tmp`;
-  try {
-    writeFileSync(tmp, new Date().toISOString(), { flag: 'wx' });
-    renameSync(tmp, LAST_FLUSH_PATH);
-  } catch {
-    try { unlinkSync(tmp); } catch { /* best-effort */ }
-  }
+  try { writeByRename(LAST_FLUSH_PATH, new Date().toISOString()); } catch { /* best-effort */ }
 }
 
 async function main() {

@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +35,8 @@ function enable(tmp, { endpoint = 'http://127.0.0.1:1/collect' } = {}) {
   writeFileSync(join(bankerDir(tmp), 'config.json'), JSON.stringify({ telemetry: true, endpoint }));
 }
 
-function runCount(tmp, input, overrides = {}) {
+// opts 는 spawnSync 옵션(예: FIFO 에서 멈추는지 보려는 timeout).
+function runCount(tmp, input, overrides = {}, opts = {}) {
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
@@ -44,6 +45,7 @@ function runCount(tmp, input, overrides = {}) {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf8',
     env,
+    ...opts,
   });
 }
 
@@ -130,4 +132,18 @@ test('상한(LOG_MAX_LINES) 도달 시 append 스킵', () => {
   assert.equal(res.status, 0);
   const lines = readFileSync(usageLog(tmp), 'utf8').split('\n').filter(Boolean).length;
   assert.equal(lines, LOG_MAX_LINES, '상한에서는 더 쌓지 않는다(체크인이 비우면 재개)');
+});
+
+const NO_FIFO = process.platform === 'win32' && 'Windows 에는 FIFO 가 없다';
+
+test('used-skills.json 자리가 FIFO 여도 기다리지 않는다', { skip: NO_FIFO }, () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  assert.equal(spawnSync('mkfifo', [usedSkills(tmp)]).status, 0, 'mkfifo');
+  const res = runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' }, {}, { timeout: 10_000 });
+  assert.equal(res.signal, null, '훅이 스스로 끝났다');
+  assert.equal(res.status, 0);
+  assert.equal(readFileSync(usageLog(tmp), 'utf8').split('\n').filter(Boolean).length, 1, '기록에 줄 하나');
+  assert.equal(lstatSync(usedSkills(tmp)).isFile(), true, '집합은 일반 파일이 된다');
+  assert.deepEqual(JSON.parse(readFileSync(usedSkills(tmp), 'utf8')), ['banker:foo']);
 });
