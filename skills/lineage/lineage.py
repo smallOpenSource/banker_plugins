@@ -10,6 +10,7 @@ Runtime-agnostic: works from any transcript via --session / --from-transcript.
 Auto-discovery assumes Claude Code's ~/.claude/projects/<encoded-cwd>/ layout.
 """
 import argparse
+import bisect
 import hashlib
 import hmac
 import html
@@ -170,6 +171,75 @@ def _mask(s: str) -> str:
     return (s[:4] + "****" + s[-4:]) if len(s) > 8 else "[REDACTED]"
 
 
+# Characters that print as nothing, and U+FFFD, which a lone surrogate became: Unicode's default-ignorable code
+# points (the zero-width space and joiners, the soft hyphen, the direction controls, the variation selectors, the
+# tag characters, the Hangul fillers). One inside a value cuts it for the patterns, so a value cut by them is put
+# back together where a pattern finds it once they are gone (3.0.8).
+_SPLITTER_RANGES = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5),
+                    (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164),
+                    (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0xFFFD, 0xFFFD),
+                    (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+_SPLITTERS = "".join(chr(a) if a == b else chr(a) + "-" + chr(b) for a, b in _SPLITTER_RANGES)
+_SPLITTER_RE = re.compile("[" + _SPLITTERS + "]")
+_UNSPLIT_RE = re.compile("[^" + _SPLITTERS + "]+")
+
+
+def _unsplit_runs(text):
+    """`text` without its splitters, and for each run of other characters (where it starts there, where in text)."""
+    starts, parts, at = [], [], 0
+    for m in _UNSPLIT_RE.finditer(text):
+        starts.append((at, m.start()))
+        parts.append(m.group(0))
+        at += len(parts[-1])
+    return "".join(parts), starts
+
+
+def _split_spans(text, joined, starts, patterns, entropy):
+    """The stretches of `text`, sorted, where a pattern (and with `entropy` the entropy rule) finds a value in
+    `joined` that splitters cut or touch. Each runs from just after the character before the value to just before
+    the character after it, so the value's neighbours are the same once its splitters are gone."""
+    first = [j for j, _ in starts]
+
+    def at(j):  # where joined[j] is in text
+        k = bisect.bisect_right(first, j) - 1
+        return starts[k][1] + j - starts[k][0]
+    found = [m for pat in patterns for m in pat.finditer(joined)]
+    if entropy:
+        found += [m for m in ENTROPY_LONG.finditer(joined) if shannon_entropy(m.group(0)) >= 4.5]
+    spans = []
+    for m in found:
+        s = at(m.start() - 1) + 1 if m.start() > 0 else 0
+        e = at(m.end()) if m.end() < len(joined) else len(text)
+        if e - s > m.end() - m.start():
+            spans.append((s, e))
+    return sorted(spans)
+
+
+def _merged(spans):
+    """Sorted stretches with those that overlap or touch put together."""
+    out = []
+    for s, e in spans:
+        if out and s <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], e)
+        else:
+            out.append([s, e])
+    return out
+
+
+def _rejoin_split(text, patterns, entropy=False):
+    """`text` with the splitters taken out of each stretch where, once they are gone, one of `patterns` (and with
+    `entropy` the entropy rule) finds a value: the layers after then see the value whole and hide it. The rest of
+    the text is left as it is (3.0.8)."""
+    if not _SPLITTER_RE.search(text):
+        return text
+    joined, starts = _unsplit_runs(text)
+    out, at = [], 0
+    for s, e in _merged(_split_spans(text, joined, starts, patterns, entropy)):
+        out += [text[at:s], _SPLITTER_RE.sub("", text[s:e])]
+        at = e
+    return "".join(out) + text[at:]
+
+
 def redact(text: str, extra: "str | None" = None, mode: str = "full"):
     """Multi-layer redaction. Returns (redacted_text, count_by_kind)."""
     counts = {}
@@ -326,11 +396,21 @@ def _reviewer_patterns(text):
     return text, counts
 
 
+def _rejoin_secrets(text, extra=None):
+    """`text` with each secret a splitter cuts put back together, for every pattern a page or a reviewer's text is
+    hidden with: the reviewer's, the page's, the entropy rule and the --redact-extra keywords (3.0.8)."""
+    keywords = [k.strip() for k in (extra or "").split(",") if k.strip()]
+    patterns = ([p for _, p in REVIEW_SECRET_PATTERNS] + [p for _, p in SECRET_PATTERNS]
+                + [re.compile(re.escape(k), re.IGNORECASE) for k in keywords])
+    return _rejoin_split(text, patterns, entropy=True)
+
+
 def review_redact(text, extra=None):
     """Text as a reviewer model reads it: the reviewer-only patterns first, while the keys
     are whole (the entropy rule would otherwise cut a key and leave the rest), then fully
-    redacted (never masked, whatever --redact-mode says). Returns (text, count)."""
-    pre, counts = _reviewer_patterns(text)
+    redacted (never masked, whatever --redact-mode says). A secret a character that prints as
+    nothing cuts is put back together first (3.0.8). Returns (text, count)."""
+    pre, counts = _reviewer_patterns(_rejoin_secrets(text, extra))
     red, found = redact(pre, extra=extra, mode="full")
     return red, sum(counts.values()) + sum(found.values())
 
@@ -339,8 +419,9 @@ def page_redact(text, extra=None, mode="full"):
     """Text as every page shows it (3.0.2): the reviewer patterns first, while keys are whole,
     each hit replaced whole whatever --redact-mode says (a mask keeps 4+4 characters, most of
     a short password); then the page's redaction with this run's mode and keywords. Returns
-    (text, count_by_kind); a second pass over its output finds nothing."""
-    pre, counts = _reviewer_patterns(text)
+    (text, count_by_kind); a second pass over its output finds nothing. A secret a character that
+    prints as nothing cuts is put back together first (3.0.8)."""
+    pre, counts = _reviewer_patterns(_rejoin_secrets(text, extra))
     red, found = redact(pre, extra=extra, mode=mode)
     for k, v in found.items():
         counts[k] = counts.get(k, 0) + v

@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 import pathlib
 
@@ -3312,6 +3313,53 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
                          [hashlib.sha256(("%d:t%d" % (n, n)).encode()).hexdigest()[:16] for n in range(1, 6)])
         self.assertEqual(err, "".join("[WARN] line %d: uuid that is not text replaced by an id from the line\n" % n
                                       for n in range(1, 5)))
+
+
+class TestSplitSecrets(unittest.TestCase):
+    """A secret cut by a character that prints as nothing (or by U+FFFD, which a lone surrogate became) is hidden
+    whole, and the text around it is left as it was (3.0.8)."""
+    ZW, SHY, FFFD, ZWJ = chr(0x200B), chr(0x00AD), chr(0xFFFD), chr(0x200D)
+
+    def test_a_key_split_by_a_zero_width_space_is_hidden_whole_on_the_page(self):
+        tail = "Kp2LmN8vR4tY6u" "W1eB3nH5jC9dF0gA"  # in pieces, so no secret scanner reads this file as holding a key
+        red, _ = L.page_redact("key sk-ant-api03-Zq7x" + self.ZW + tail + " end")
+        self.assertIn("[REDACTED:AnthropicKey]", red)
+        self.assertNotIn(tail, red)
+        self.assertNotIn(self.ZW, red)
+        self.assertTrue(red.startswith("key ") and red.endswith(" end"), red)
+
+    def test_a_key_split_by_a_replacement_character_is_hidden_whole_for_the_reviewer(self):
+        red, n = L.review_redact("id AKIAABCDEFGH" + self.FFFD + "IJKLMNOP ok")
+        self.assertGreaterEqual(n, 1)
+        self.assertNotIn("IJKLMNOP", red)
+        self.assertNotIn(self.FFFD, red)
+
+    def test_a_password_whose_keyword_a_soft_hyphen_splits_is_hidden(self):
+        red, _ = L.page_redact("pass" + self.SHY + 'word: "hunter22"')
+        self.assertNotIn("hunter22", red)
+
+    def test_a_redact_extra_keyword_split_by_a_zero_width_space_is_hidden(self):
+        red, _ = L.page_redact("ac" + self.ZW + "me-corp", "acme")
+        self.assertNotIn("acme", red.lower())
+        self.assertNotIn(self.ZW, red)
+
+    def test_mask_mode_masks_a_split_key_whole(self):
+        red, _ = L.page_redact("AKIAABCDEFGH" + self.ZW + "IJKLMNOP", None, "mask")
+        self.assertIn("AKIA****MNOP", red)
+        self.assertNotIn(self.ZW, red)
+
+    def test_invisible_characters_outside_a_secret_are_left_as_they_are(self):
+        text = "a" + self.ZW + "b 안녕" + self.SHY + "하세요 " + chr(0x1F468) + self.ZWJ + chr(0x1F469)
+        self.assertEqual(L.page_redact(text), (text, {}))
+        self.assertEqual(L.review_redact(text), (text, 0))
+
+    def test_many_emoji_joiners_do_not_slow_the_redaction(self):
+        key = "AKIA" "ABCDEFGHIJKLMNOP"
+        text = (chr(0x1F468) + self.ZWJ + chr(0x1F469) + " ") * 200000 + " " + key
+        start = time.monotonic()
+        red, _ = L.page_redact(text)
+        self.assertLess(time.monotonic() - start, 5.0)
+        self.assertNotIn(key, red)
 
 
 if __name__ == "__main__":

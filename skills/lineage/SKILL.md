@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.0.7
+version: 3.0.8
 schema_version: 1
 ---
 
@@ -225,6 +225,7 @@ Schema-tolerant 파서: 미지 record type → stderr WARN + 다음 line. `v1`/`
 1차 `detect-secrets>=1.5`(pip 설치 시), 미설치 → 내장 fallback + WARN.
 내장: AWS IAM(AKIA/ASIA)·GitHub PAT·Slack·JWT·private key·한/영 평문 password·Shannon entropy≥4.5.
 확장 `--redact-extra "k1,k2"`. 부분 마스킹 `--redact-mode mask`(페이지 패턴만. 검토자 패턴이 찾은 값은 늘 전부 가린다).
+보이지 않는 글자(폭 없는 공백, 소프트 하이픈, 변형 선택자 같은 기본 무시 글자)나 U+FFFD 가 끼어 쪼개진 값도, 그 글자를 뺀 모양을 패턴이 찾으면 그 구간에서만 글자를 빼고 통째로 가린다(3.0.8). 비밀 밖의 글은 바꾸지 않는다.
 
 ### 5. Render
 
@@ -331,6 +332,7 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 - 규칙 요약 캐시는 본문만으로 키를 잡는다. `--redact-mode` 나 `--redact-extra` 를 바꿔 다시 돌린 `--rulebase` 는 앞선 실행의 요약을 쓸 수 있다(2.x 동작 그대로). 기본 흐름의 묶음은 요약을 매번 새로 만든다. 묶음 형식은 `lineage-review/2` 라 0.15.1 이 만든 묶음은 `--emit-review` 부터 다시 한다.
 - 검토자는 긴 턴의 앞뒤만 본다(`clipped: true`). 가운데에만 있는 결론은 놓칠 수 있다.
 - 검토자 패턴은 흔한 모양만 가린다. `/` 가 든 URL 비밀번호와 키 이름이 100자를 넘는 16진 키는 가리지 못한다(값이 길고 무작위면 엔트로피 규칙이 가릴 수 있다). curl `-u` 패턴은 값 전체가 `docker -u 1000:1000` 같은 uid:gid, `rsync -u host:/path`, `date -u +%H:%M` 같은 날짜 형식(`+%` 뒤에 글자가 오면 나머지는 보지 않는다), 양쪽 모두 변수인 꼴(`$UID:$GID`, `${UID}:${GID}`, `%USER%:%PASS%`, `$(id -u):$(id -g)`), 기본값이 콜론 없는 경로(`/`, `~`, `.` 로 시작)인 변수(`mktemp -u "${TMPDIR:-/tmp}/x"`), 앞선 가림이 남긴 표식(`-u [REDACTED:JWT]`)일 때만 둔다. 이스케이프한 따옴표 안에서도 같다. 다른 명령의 `-u 이름:값`(`-u root:root`, `ps -u postgres:postgres`, `rsync -avu host:dir/`, `ls -lu a:bcd`), 기본값이 경로가 아닌 변수(`${UID:-1000}:${GID:-1000}`, `${API_KEY:-…}`)는 가린다. 숫자만으로 된 이름과 비밀번호, `/` 로 시작하는 비밀번호, `$` 로 시작해 변수처럼 보이는 비밀번호(`$USER:$ecret`), `-U` 와 `--proxy-user`, 붙여 쓴 묶음(`-suUSER:PW`), `-u=USER:PW`, 공백이 든 비밀번호의 둘째 낱말부터, 인자 목록에서 다른 종류의 따옴표가 든 비밀번호(`'-u', "USER:P'W"`), 사용자 안에서 따옴표 뒤에 `-eu`, `--user` 같은 플래그 꼴과 따옴표가 오는 꼴(`"$USER"-eu":PW"`), requests 의 `auth=(...)`, value 가 name 보다 앞에 온 HAR 은 가리지 못한다. 백틱 명령 치환(`` `id -u`:`id -g` ``)과 `\$(id -u):\$(id -g)` 는 가운데 일부가 가려진다(3.0.0 과 같다). 값이 `/`, `~`, `$` 로 시작하는 password 값(`$PWD:/workspace`, `OLDPWD=/home/...`, `password=$DB_PASSWORD`), 이미 가린 표식, 값 전체가 마스크 꼴(`abcd****wxyz`, `****`)인 값은 두고, `PGPASSWORD=`, `MYSQL_PWD=` 의 값은 가린다. `password=os.environ[...]`, `암호: AES-256-GCM` 처럼 코드나 이름인 값과 `sk-` 로 시작하는 긴 세션 이름은 지나치게 가린다. Basic 인증 패턴은 `HTTP_AUTHORIZATION` 처럼 앞에 `_` 가 붙은 이름, 구분자 없는 `Authorization Basic …`, 백틱이나 대괄호(`["Basic …"]`) 안의 값을 가리지 못한다.
+- 보이지 않는 글자로 쪼갠 값 가운데 detect-secrets 만 찾는 값은 찾지 못한다. 키 바로 앞이 글자나 숫자이고 그 사이와 키 안에 보이지 않는 글자가 있으면, 앞 글자 조건이 있는 검토자 패턴(Anthropic, OpenAI, Google 키)은 놓칠 수 있다.
 - 페이지 패턴 가운데 JWT 와 개인 키 패턴은 같은 머리(`eyJ`, `-----BEGIN`)가 긴 줄에 되풀이되면 시간이 줄 길이의 제곱으로 는다(2.x 동작 그대로). 기본 흐름은 턴마다 여러 번 가리므로 그만큼 더 걸린다.
 - 마크다운의 **중첩 리스트는 평탄화**되고 각주는 미지원.
 - 사용자가 질문에 래퍼 블록(`<task-notification>…`)을 **인용**하면 문장은 남고 그 블록만 사라진다.
