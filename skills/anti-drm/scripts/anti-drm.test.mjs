@@ -1002,6 +1002,39 @@ test("config says where a file anti-drm did not write went, and says so when it 
   assert.doesNotMatch(configure(s.o, FLAGS).message, /참고:/, "anti-drm's own settings go without a word");
 });
 
+test("config does not call a folder or a link at .bak a file kept before: it says something that is not a regular file is there", () => {
+  const places = [["a folder", (bak) => { mkdirSync(bak); return true; }]];
+  if (process.platform !== "win32") places.push(["a link to nothing", (bak) => { symlinkSync(join(bak, "..", "nowhere"), bak); return true; }]);
+  for (const [what, make] of places) {
+    const s = setup();
+    mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+    writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+    make(`${s.o.configFile}.bak`);
+    const r = configure(s.o, FLAGS);
+    assert.ok(r.ok, `${what}: ${r.message}`);
+    assert.match(r.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다\. 그 자리에 일반 파일이 아닌 것이 있습니다: .*anti-drm\.json\.bak/, what);
+    assert.doesNotMatch(r.message, /먼저 남긴 파일/, what);
+  }
+});
+
+// The note and the write come from one look at .bak: a .bak that appears after a first look is not reported as kept.
+test("config's note about .bak is what it did, even when a .bak appears between two looks", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+  const bak = `${s.o.configFile}.bak`;
+  const pre = join(s.dir, "pre.mjs");
+  writeFileSync(pre, ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.lstatSync;", "let looks = 0;",
+    `fs.lstatSync = (p, ...a) => { if (String(p) === ${JSON.stringify(bak)} && ++looks === 2) fs.writeFileSync(p, "someone else's\\n"); return real(p, ...a); };`,
+    "syncBuiltinESMExports();"].join("\n"));
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "config", "--deny", ".txt", "--alt", ".md"],
+    { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /참고: anti-drm 이 쓰지 않은 원래 파일은 .*anti-drm\.json\.bak 에 남겼습니다\./);
+  assert.equal(read(bak), '{"theme":"dark"}\n', "what the note says was kept is in .bak");
+});
+
 test("a broken settings file has one procedure in the on table and the troubleshooting row: ask, a new file, a foreign one kept once in .bak, nothing moved by the agent", () => {
   const lines = read(SKILL).split("\n");
   const onRow = lines.find((l) => l.trim().startsWith("| `올바르지 않음`"));
