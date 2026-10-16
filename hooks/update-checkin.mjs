@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /*
  * banker 카운팅 체크인 훅 - usage-log 를 스킬별 x 시간대(hour 0-23)별 count 로 집계해 엔드포인트로
- * 한 번 POST 하고, 응답의 latest 로 update-check 캐시를 겸해 갱신한다. 전송 시도 후(성공/실패 무관)
- * 로그를 truncate 해 24h 윈도우로 상한한다. telemetry-flush 를 대체(evolve)한다.
+ * 한 번 POST 하고, 응답의 latest 로 update-check 캐시를 겸해 갱신한다. 보내기 전에 로그 이름을 바꿔
+ * 차지하고, 시도 뒤(성공/실패 무관) 차지한 파일을 지워 24h 윈도우로 상한한다. telemetry-flush 를
+ * 대체(evolve)한다.
  *
  * fail-closed 규약(각 항목은 update-checkin.test.mjs 가 검증한다):
  *  - 미활성(countingActive) 또는 엔드포인트 없음이면 무동작(로그도 건드리지 않는다).
@@ -10,13 +11,18 @@
  *    counts=스킬별 x 시간대별 호출수).
  *  - 자체 네트워크 timeout 으로 hang 방지. 어떤 오류도 삼키고 항상 exit 0. 어떤 경로도 reject 안 함.
  *  - 비-loopback 평문 http 는 전송하지 않는다(https-only). loopback http 만 로컬 테스트 mock 에 허용.
+ *  - 함께 시작한 체크인은 같은 줄을 두 번 보내지 않는다(로그 이름 바꾸기는 하나만 성공한다).
+ *  - 로그 자리가 FIFO 면 기다리지 않고, 로그나 last-flush 자리가 링크면 링크 너머 파일을 비우거나 덮지 않는다.
  *
  * count-default-on: 이 훅은 hooks.json 에 배선되지 않는다(스탠드얼론 .mjs). update-notify 가
  * countingActive + 엔드포인트 설정 시 fetcher 로 detached spawn 한다(응답 latest 가 알림 캐시를 겸함).
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync,
+} from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import { dirname, join } from 'node:path';
 
 import {
   countingActive,
@@ -160,11 +166,58 @@ function fetchSkillChangesMap(url) {
 }
 
 // 보낼 본문. PII/IP/지속ID 없음: version + os(플랫폼 계열) + counts(스킬별 x 시간대)뿐.
-// 로그 없음도 유효한 체크인(설치 펄스 + 알림 fetch 겸함): 빈 counts 로 진행한다.
-function checkinBody() {
-  let raw = '';
-  try { raw = readFileSync(USAGE_LOG_PATH, 'utf8'); } catch { raw = ''; }
+// 차지한 줄이 없어도 유효한 체크인(설치 펄스 + 알림 fetch 겸함): 빈 counts 로 진행한다.
+function checkinBody(raw) {
   return JSON.stringify({ version: installedVersion() || 'unknown', os: process.platform, counts: aggregate(raw) });
+}
+
+// 차지한 로그의 이름(usage-log.sending-<pid>-<ms>)과, 죽은 체크인이 남긴 것으로 볼 나이.
+const CLAIM_RE = /^usage-log\.sending-\d+-\d+$/;
+const CLAIM_MAX_AGE_MS = 3_600_000;
+
+// 일반 파일의 글. 그 밖(FIFO, 폴더)과 오류는 ''. 막지 않고 열어 FIFO 를 기다리지 않는다.
+function readRegular(path) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    return fstatSync(fd).isFile() ? readFileSync(fd, 'utf8') : '';
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) try { closeSync(fd); } catch { /* best-effort */ }
+  }
+}
+
+// 보내기 전에 로그 이름을 바꿔 차지한다. rename 은 원자적이라 함께 시작한 체크인 가운데 하나만 그 줄을 읽고,
+// 보내는 동안 더해진 줄은 새 로그로 가 다음 체크인이 보낸다. 링크면 링크 자체가 옮겨진다(대상은 그대로).
+// 로그가 없거나 폴더, FIFO 이거나 이름을 바꾸지 못하면(다른 체크인이 먼저 차지, Windows 에서 백신이 쥠)
+// 아무것도 차지하지 않고 로그는 다음 체크인에 남긴다.
+function claimLog() {
+  try {
+    const st = lstatSync(USAGE_LOG_PATH);
+    if (!st.isFile() && !st.isSymbolicLink()) return { raw: '', claim: null };
+    const claim = join(dirname(USAGE_LOG_PATH), `usage-log.sending-${process.pid}-${Date.now()}`);
+    renameSync(USAGE_LOG_PATH, claim);
+    return { raw: readRegular(claim), claim };
+  } catch {
+    return { raw: '', claim: null };
+  }
+}
+
+// 죽은 체크인이 남긴 차지 파일(한 시간보다 오래된 것)을 지운다(배치 유실 허용). 더 젊은 것은 아직 보내는
+// 다른 체크인의 것이라 둔다. 이름 자체를 보고 지운다(링크면 링크만 지워진다).
+function dropOldClaims(now = Date.now()) {
+  const dir = dirname(USAGE_LOG_PATH);
+  let names;
+  try { names = readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    if (!CLAIM_RE.test(name)) continue;
+    const path = join(dir, name);
+    try {
+      const st = lstatSync(path);
+      if ((st.isFile() || st.isSymbolicLink()) && now - st.mtimeMs > CLAIM_MAX_AGE_MS) unlinkSync(path);
+    } catch { /* best-effort */ }
+  }
 }
 
 // 응답의 latest 로 공유 update-check 캐시를 갱신(알림 겸함). 없으면 캐시 미변경.
@@ -182,18 +235,27 @@ async function refreshUpdateCache(responseBody) {
   try { writeUpdateCache(patch); } catch { /* best-effort */ }
 }
 
-// 전송 시도 후(성공/실패 무관) 로그를 비워 24h 윈도우로 상한(배치 유실 허용).
-function resetLog() {
-  try { writeFileSync(USAGE_LOG_PATH, ''); } catch { /* best-effort */ }
-  try { writeFileSync(LAST_FLUSH_PATH, new Date().toISOString()); } catch { /* best-effort */ }
+// 전송 시도 후(성공/실패 무관) 차지한 파일을 지워 24h 윈도우로 상한(배치 유실 허용)하고 last-flush 를 남긴다.
+// last-flush 는 새 파일에 쓴 뒤 rename 으로 놓아, 그 이름 자리의 링크를 따라 다른 파일을 덮지 않는다.
+function finishClaim(claim) {
+  if (claim) try { unlinkSync(claim); } catch { /* best-effort */ }
+  const tmp = `${LAST_FLUSH_PATH}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, new Date().toISOString(), { flag: 'wx' });
+    renameSync(tmp, LAST_FLUSH_PATH);
+  } catch {
+    try { unlinkSync(tmp); } catch { /* best-effort */ }
+  }
 }
 
 async function main() {
   if (!countingActive()) return; // 미활성 - 무동작(로그 미변경).
   const url = endpoint();
   if (!url) return;              // 엔드포인트 없음 - 무동작(로그 미변경).
-  const responseBody = await post(url, checkinBody());
-  resetLog(); // 보낸 직후 비운다. 매니페스트를 받는 동안(최대 30초) 시작한 세션이 같은 로그를 다시 보내지 않게.
+  dropOldClaims();
+  const { raw, claim } = claimLog();
+  const responseBody = await post(url, checkinBody(raw));
+  finishClaim(claim); // 보내는 동안 더해진 줄은 새 로그에 남아 다음 체크인이 보낸다.
   await refreshUpdateCache(responseBody);
 }
 
