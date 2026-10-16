@@ -1,7 +1,7 @@
 // Tests for tone-compact.mjs. Run from the repo root: node --test skills/tone-compact/scripts/*.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import {
+import fs, {
   chmodSync,
   existsSync,
   linkSync,
@@ -17,6 +17,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1247,6 +1248,34 @@ test("Codex: a stale file handle while a dead run's lock is looked at counts as 
   const r = cliWith(s, pre, ["on", "--runtime", "codex"]);
   assert.equal(r.code, 0, r.out);
   assert.equal(blocks(read(s.agents)), 1);
+});
+
+// A network share that keeps answering ESTALE for the lock: the wait rests between looks and ends in the usual
+// refusal, instead of calling lstat as fast as it can until the deadline.
+test("Codex: a lock spot that keeps answering ESTALE is waited on with rests, then refused", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  writeFileSync(lock, "another run");
+  const real = fs.lstatSync;
+  let looks = 0;
+  fs.lstatSync = (p, ...a) => {
+    if (String(p) !== lock) return real(p, ...a);
+    looks++;
+    throw Object.assign(new Error("ESTALE: stale file handle, lstat"), { code: "ESTALE" });
+  };
+  syncBuiltinESMExports();
+  let r;
+  try {
+    r = turnOn("codex", { ...s.o, lockWaitMs: 300 });
+  } finally {
+    fs.lstatSync = real;
+    syncBuiltinESMExports();
+  }
+  assert.equal(r.ok, false);
+  assert.match(r.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/);
+  assert.ok(looks < 50, `the wait rested between looks (${looks} looks in 300 ms)`);
+  assert.equal(read(s.agents), "# base\n");
 });
 
 test("an override holding only our block over AGENTS.md that is a link to nothing: status says on cannot move it, as on refuses", posixOnly, () => {
