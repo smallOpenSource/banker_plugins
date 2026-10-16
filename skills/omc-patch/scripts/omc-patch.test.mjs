@@ -2186,6 +2186,47 @@ test("a set-url that ends with no error text does not print the command line, fo
   }
 });
 
+// The SKILL takes its next step from the result line, so every result line the tool can print has a row in its table.
+test("every result line the tool can print has its row in the SKILL's table of result lines", () => {
+  const results = new Set([...read(TOOL).matchAll(/결과: (.*?다\.)/g)].map((m) => m[1].replace(/\$\{[^}]*\}/g, "N")));
+  assert.ok(results.size >= 6, [...results].join(" | "));
+  const table = read(join(dirname(TOOL), "..", "SKILL.md")).split("| `결과:` 줄 | 다음 |")[1].split("\n\n")[0];
+  for (const r of results) assert.ok(table.includes(`| \`${r}\` |`), `no row for: ${r}`);
+});
+
+// A git that cannot read the marketplace's config (it refuses another account's repository, or is not there at all)
+// says nothing about the origin: the run names it and counts it, and --check does not call it all applied.
+test("an origin git cannot read is named and counted: the revert does not say it is done, --check does not say all is applied", posixGit, (t) => {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) {
+    t.skip("git not found on PATH");
+    return;
+  }
+  const dir = join(root, `refusinggit${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "git"), ["#!/bin/sh",
+    'if [ "$1" = config ] && [ "$2" = --get ]; then echo "fatal: detected dubious ownership in repository at \'/x\'" >&2; exit 128; fi',
+    `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  const noGit = join(root, `nogit${seq++}`);
+  mkdirSync(noGit, { recursive: true });
+  for (const [PATH, why] of [[`${dir}${delimiter}${process.env.PATH}`, /origin 을 읽지 못함 \(fatal: detected dubious ownership/], [noGit, /origin 을 읽지 못함 \(git 을 실행하지 못함 \(ENOENT\)\)/]]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${ORIGIN}`], f.market).status, 0);
+    const back = run(f.home, ["--revert"], { PATH });
+    assert.equal(back.code, 1, back.out);
+    assert.match(back.out, why);
+    assert.doesNotMatch(back.out, /origin remote 없음|되돌리기 완료/);
+    assert.match(back.out, /되돌리기를 끝내지 못했습니다/);
+    assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`, "the origin is still pinned");
+    const check = run(f.home, ["--check", "--no-update"], { PATH });
+    assert.equal(check.code, 1, check.out);
+    assert.match(check.out, /결과: 마켓플레이스 origin 을 확인하지 못했습니다\./);
+    const apply = run(f.home, ["--no-update"], { PATH });
+    assert.equal(apply.code, 1, apply.out);
+    assert.match(apply.out, /완료\. 실패 1건\./);
+  }
+});
+
 test("a query value is masked whatever its name", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   const pw = "S3" + "CRETPW";

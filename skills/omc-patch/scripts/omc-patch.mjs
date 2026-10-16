@@ -968,8 +968,11 @@ function removePostToolUse(hj, why) {
 
 // origin 의 원문. `git remote get-url` 은 전역 insteadOf 를 펼친 값을 내서, 그 값이 고정되고 되돌린 뒤에도 원래
 // 값 대신 남았다. 설정 값을 그대로 읽는다. 없으면(git 이 1 로 끝남) null.
+// git 이 그 밖의 까닭으로 읽지 못하면(git 없음, 다른 계정 저장소 거부, 깨진 설정) { unreadable } 이다. 없는 것으로 보면
+// 고정과 되돌리기가 하지 않은 일을 했다고 끝난다.
 function originUrl() {
-  try { return git(["config", "--get", "remote.origin.url"]); } catch { return null; }
+  try { return git(["config", "--get", "remote.origin.url"]); }
+  catch (e) { return e.status === 1 ? null : { unreadable: gitError(e) }; }
 }
 
 // git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다).
@@ -992,6 +995,7 @@ function pinMarketplace() {
   if (!existsSync(join(MARKET, ".git"))) return "no-git";
   const url = originUrl();
   if (url === null) return "no-remote";
+  if (typeof url !== "string") { bad(`origin 을 읽지 못함 (${url.unreadable}): ${oneLine(MARKET)}`); return "origin-unreadable"; }
 
   if (MODE === "revert") return unpinMarketplace(url);
   if (url.startsWith("omc-pinned://")) return alreadyPinned();
@@ -1388,6 +1392,7 @@ if (ROOT) {
     "no-git": () => bad("마켓플레이스 폴더가 git 저장소가 아님 — 고정하지 않음"),
     "no-remote": () => ok("origin remote 없음 — 이미 fetch 불가"),
     "pin-failed": () => {},
+    "origin-unreadable": () => {},
     "unpin-failed": () => {},
     "record-failed": () => {},
     "scrub-failed": () => ok("이미 고정됨"),
@@ -1399,7 +1404,7 @@ if (ROOT) {
     const rec = alreadyPinned();
     if (rec !== "already") pin = rec;
   }
-  if (["pin-failed", "unpin-failed", "record-failed", "scrub-failed"].includes(pin)) {
+  if (["pin-failed", "origin-unreadable", "unpin-failed", "record-failed", "scrub-failed"].includes(pin)) {
     r.fail++;
     failed.add(["record-failed", "scrub-failed"].includes(pin) ? "PINNED" : "origin");
   }
@@ -1419,13 +1424,15 @@ if (MODE === "check") {
   // 그 안내를 먼저 낸다(되돌린 뒤 적용하면 «패치 필요» 항목도 함께 처리된다).
   const misplacedActive = misplacedBy[active] || 0;
   const pinNeeds = ["needs", "scrub-needs", "scrub-blocked"].includes(pin);
-  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && !pinNeeds && misplacedActive === 0;
+  const pinUnread = pin === "origin-unreadable";
+  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && !pinNeeds && !pinUnread && misplacedActive === 0;
   // 막힘 줄이 결과가 되는 때는 적용으로 고칠 항목이 없고 막힘만 남은 때다. 고칠 항목이 함께 있으면 그 항목이 결과이고
   // 막힘은 참고로 알린다(적용은 훅을 패치하고 그 칸은 남겨 실패로 센다).
   const blockedResult = pin === "scrub-blocked" && (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && !misplacedActive;
   const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
   log(clean ? "결과: 모두 적용된 상태입니다."
     : hjFailBy[active] ? "결과: hooks.json 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."
+    : pinUnread ? "결과: 마켓플레이스 origin 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."
     : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${misplacedHint()}`
     : blockedResult ? "결과: 고정 기록(PINNED)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다. 위의 [!] 줄을 확인하십시오."
     : ROOT ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 같은 --root 로 다시 실행하십시오."

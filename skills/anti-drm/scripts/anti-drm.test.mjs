@@ -1050,7 +1050,8 @@ test("a broken settings file has one procedure in the on table and the troublesh
     assert.match(row, /새 파일로 바뀌/, row);
     assert.match(row, /`anti-drm\.json\.bak` 에 한 번 남/, row);
     assert.match(row, /에이전트가 그 파일을 직접 지우거나 옮기지 않음/, row);
-    assert.match(row, /일반 파일이 아니거나, 64KiB 보다 크거나, 읽을 수 없으면 바꾸지 않고 거부함/, row);
+    assert.match(row, /폴더나 특수 파일이거나, 64KiB 보다 크거나, 읽을 수 없는 파일이면 바꾸지 않고 거부함/, row);
+    assert.match(row, /링크는 링크만 일반 파일로 바뀌고 가리키던 곳은 그대로 둠/, row);
   }
 });
 

@@ -1654,6 +1654,19 @@ test('a TaskList begun after a TaskGet leaves out a task the pane never held: th
   assert.deepEqual(labels(await eng.draw()), ['다른 작업'], 'the list begun later stands');
 });
 
+// A read that finds a task deleted takes it off the pane, as a delete does, so it wins over an earlier-begun read
+// whatever that read brought.
+test('a TaskGet that reads a task on the pane as deleted takes it off, and an earlier-begun read changes nothing', async () => {
+  for (const earlier of [{ task: { id: '7', subject: '설계', status: 'in_progress', blocks: [] } }, { task: { id: '7', subject: '설계', status: 'completed', blocks: [] } }, { task: null }]) {
+    const eng = engine();
+    await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('7', '설계'));
+    const reading = later(eng, { tool: 'TaskGet', taskId: '7' });
+    await eng.tool({ tool: 'TaskGet', taskId: '7' }, { result: { task: { id: '7', subject: '설계', status: 'deleted', blocks: [] } } });
+    await reading.end({ result: earlier });
+    assert.deepEqual(labels(await eng.draw()), ['진행 중인 작업 없음'], JSON.stringify(earlier));
+  }
+});
+
 test('a TaskGet that reads a task off the pane as completed beats an earlier-begun TaskGet that read it pending', async () => {
   const task = (status) => ({ result: { task: { id: '7', subject: '다른 세션의 작업', status, blocks: [] } } });
   const eng = engine();
