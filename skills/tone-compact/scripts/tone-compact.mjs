@@ -15,7 +15,8 @@
  *
  * `off` never needs the rules, so it works even when SKILL.md cannot be read.
  * Exit status 0 means done or already so; 1 means refused or a usage error, with
- * nothing changed; 2 means an unexpected error stopped the command partway, so
+ * nothing changed (a refusal at the second of two files names the first, which
+ * it changed); 2 means an unexpected error stopped the command partway, so
  * check `status`.
  */
 import { readFileSync, realpathSync } from "node:fs";

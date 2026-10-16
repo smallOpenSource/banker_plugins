@@ -1157,6 +1157,34 @@ test("Codex: a write a sandbox refuses after access() allowed it is a refusal wi
   assert.equal(blocks(read(s.agents)), 1, "the block is still there");
 });
 
+// A move of the block between two files adds it to the new file first and takes it out of the old one after, so a
+// refusal partway leaves the rules on: the message names the file changed before the refusal, and on again ends the move.
+test("Codex: a refusal partway through a move names the file it changed first, and on again finishes the move", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  writeFileSync(s.override, "# override\n");
+  assert.equal(cli(["on", "--runtime", "codex"], cliEnv(s)).code, 0);
+  writeFileSync(s.override, read(s.override).replace("# override\n", ""));
+  const pre = [...FS_HOOK, "const real = fs.rmSync;",
+    `fs.rmSync = (p, ...a) => { if (String(p) === ${JSON.stringify(s.override)}) throw Object.assign(new Error("EACCES: permission denied, unlink"), { code: "EACCES" }); return real(p, ...a); };`,
+    "syncBuiltinESMExports();"].join("\n");
+  const r = cliWith(s, pre, ["on", "--runtime", "codex"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /쓸 권한이 없어 그대로 두었습니다 \(EACCES\): .*AGENTS\.override\.md/);
+  assert.match(r.out, /\n앞서 바꾼 파일: .*AGENTS\.md/);
+  assert.equal(blocks(read(s.agents)), 1, "the block went to AGENTS.md first");
+  assert.equal(blocks(read(s.override)), 1, "the override still holds its block");
+  assert.equal(cli(["on", "--runtime", "codex"], cliEnv(s)).code, 0);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.ok(!existsSync(s.override), "on again ends the move");
+});
+
+test("the exit status table says a refusal that names a file changed before it left that file changed", () => {
+  const row = readFileSync(SKILL, "utf8").split("\n").find((l) => /^\s*\| 1 \|/.test(l));
+  assert.match(row, /`앞서 바꾼 파일:`/);
+  assert.match(row, /이미 바뀜/);
+});
+
 test("Codex: a stale file handle while a dead run's lock is looked at counts as no lock", () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");

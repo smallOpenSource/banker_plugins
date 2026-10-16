@@ -42,7 +42,9 @@
  * the Codex folder), so both skills turned on at once keep both blocks; a lock
  * older than a minute is taken over.
  *
- * Results are { ok, message }; ok false means refused with nothing changed.
+ * Results are { ok, message }; ok false means refused with nothing changed, or,
+ * when a change of two files was refused at the second, with the first changed
+ * and named in the message ("앞서 바꾼 파일").
  * Anything else that goes wrong throws.
  */
 import {
@@ -148,7 +150,7 @@ function readFile(path) {
 
 /** A result that did, or found already done, what was asked. */
 export const done = (message) => ({ ok: true, message });
-/** A result that refused and changed nothing. */
+/** A result that refused and changed nothing, unless its message names a file changed before (applied). */
 export const refuse = (message) => ({ ok: false, message });
 
 /** A skill's marks: the first line of its rules file, and the lines around its Codex block. */
