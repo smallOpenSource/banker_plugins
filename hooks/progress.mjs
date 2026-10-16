@@ -384,7 +384,8 @@ function listTasks(s, _e, r, now, { since, order }) {
 }
 
 // TaskGet reads one task: one it cannot find is gone, and a completed one off the pane stays off. A read older than
-// what the pane holds of the task changes nothing.
+// what the pane holds of the task changes nothing. A read taken in makes an earlier-begun read of the task stale,
+// one that leaves the task off the pane too.
 function getTask(s, e, r, now, { since, order }) {
   if (stale(s, String(e.taskId), since, order)) return;
   const t = r?.result?.task;
@@ -395,8 +396,9 @@ function getTask(s, e, r, now, { since, order }) {
   if (!t) return;
   const id = String(t.id);
   const status = readStatus(s, id, order, t.status);
-  if (status === 'deleted' || (status === 'completed' && !s.tasks.has(id))) return;
-  putTask(s, { id, subject: t.subject, description: t.description, status }, now);
+  if (status !== 'deleted' && (status !== 'completed' || s.tasks.has(id))) {
+    putTask(s, { id, subject: t.subject, description: t.description, status }, now);
+  }
   markOf(s, id).seenAt = order;
 }
 

@@ -1654,6 +1654,15 @@ test('a TaskList begun after a TaskGet leaves out a task the pane never held: th
   assert.deepEqual(labels(await eng.draw()), ['다른 작업'], 'the list begun later stands');
 });
 
+test('a TaskGet that reads a task off the pane as completed beats an earlier-begun TaskGet that read it pending', async () => {
+  const task = (status) => ({ result: { task: { id: '7', subject: '다른 세션의 작업', status, blocks: [] } } });
+  const eng = engine();
+  const reading = later(eng, { tool: 'TaskGet', taskId: '7' });
+  await eng.tool({ tool: 'TaskGet', taskId: '7' }, task('completed'));
+  await reading.end(task('pending'));
+  assert.deepEqual(labels(await eng.draw()), ['진행 중인 작업 없음'], 'the read begun later stands: a completed task stays off the pane');
+});
+
 // ---- reads that overlap, against a random model (seeded: the same runs every time) ----
 function seeded(seed) {
   let a = seed >>> 0;
