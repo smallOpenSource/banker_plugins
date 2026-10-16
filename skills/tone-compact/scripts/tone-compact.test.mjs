@@ -925,30 +925,36 @@ test("status names the file a refused state is about, not the file the block wou
   assert.match(codex(), /표시의 짝이 맞지 않음 .*\(.*AGENTS\.md\)$/);
 });
 
-test("a link loop or a socket where AGENTS.md goes is no regular file: status says so, on and off refuse with exit 1", posixOnly, async (t) => {
+// status, on and off where no regular file can be at AGENTS.md.
+function refusesNotRegular(s, what) {
+  assert.match(cli(["status"], cliEnv(s)).out, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음/, what);
+  for (const command of ["on", "off"]) {
+    const r = cli([command, "--runtime", "codex"], cliEnv(s));
+    assert.equal(r.code, 1, `${what} ${command}: ${r.out}`);
+    assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md/, `${what} ${command}`);
+  }
+}
+
+test("a link loop where AGENTS.md goes is no regular file: status says so, on and off refuse with exit 1", posixOnly, () => {
   const s = setup();
-  const check = (what) => {
-    assert.match(cli(["status"], cliEnv(s)).out, /- Codex: 일반 파일이 아닌 지침 파일이 있어 손대지 않음/, what);
-    for (const command of ["on", "off"]) {
-      const r = cli([command, "--runtime", "codex"], cliEnv(s));
-      assert.equal(r.code, 1, `${what} ${command}: ${r.out}`);
-      assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md/, `${what} ${command}`);
-    }
-  };
   symlinkSync("loop-b", s.agents);
   symlinkSync("AGENTS.md", join(s.o.codexDir, "loop-b"));
-  check("link loop");
-  rmSync(s.agents);
-  rmSync(join(s.o.codexDir, "loop-b"));
+  refusesNotRegular(s, "link loop");
+});
+
+// A socket path past about 100 bytes is refused by some systems (macOS allows 104), so such a run says it skipped.
+test("a socket where AGENTS.md goes is no regular file: status says so, on and off refuse with exit 1", posixOnly, async (t) => {
+  const s = setup();
+  const bytes = Buffer.byteLength(s.agents);
+  if (bytes >= 100) return t.skip(`the socket path is ${bytes} bytes, past what some systems allow`);
   const server = createServer();
   try {
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(s.agents, resolve); });
   } catch (e) {
-    t.diagnostic(`no socket here: ${e.code}`);
-    return;
+    return t.skip(`no socket here: ${e.code}`);
   }
   try {
-    check("socket");
+    refusesNotRegular(s, "socket");
   } finally {
     server.close();
   }
