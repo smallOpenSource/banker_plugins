@@ -1111,6 +1111,13 @@ console.log(JSON.stringify(turnOn(t, "codex", o, () => { rmSync(lock); spawnSync
   assert.equal(lstatSync(lock).isFIFO(), true, "a lock that is no longer this run's stays");
 });
 
+// "Show" in the troubleshooting table means ls -l first: a row cannot name every place a planted link may sit.
+test("the troubleshooting section says to show a file with ls -l first and to open only a regular file that is not a link", () => {
+  const section = readFileSync(SKILL, "utf8").split("## 문제 해결")[1].split("\n| 메시지 |")[0];
+  assert.match(section, /`ls -l` 로 그 이름의 종류와 링크 대상 경로를 보이는 것/);
+  assert.match(section, /링크가 아닌 일반 파일임을 본 뒤에만 내용을 연다/);
+});
+
 // A name that may be a link someone planted is shown by its path: opening it would put the file it leads to (a key,
 // say) into the session.
 test("the rows that show a file that may be a link say to show only the link and where it leads, not its content", () => {

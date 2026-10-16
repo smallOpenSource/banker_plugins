@@ -909,15 +909,21 @@ const redactUrl = (url) => String(url).replace(/(\/\/)[^/]*@/g, "$1***@")
   .replace(/([?&][^=&#\s?]*=)[^&#\s]*/g, "$1***");
 
 // URL 의 scheme 과 host 까지만. 비밀은 사용자 정보와 쿼리 밖(경로, 조각, `;` 매개변수)에도 들 수 있어 나머지는 버린다.
-// scp 꼴(`git@host:org/repo.git`)은 host 만이다.
+// scp 꼴(`git@host:org/repo.git`)은 host 만이다. 파서가 host 로 읽어도 host 모양(이름이나 [IPv6], 선택 포트)이 아니면
+// 보이지 않는다(ssh 같은 scheme 은 host 뒤의 `;k=...` 까지 host 로 읽는다).
+const HOST_SHAPE = /^(?:[A-Za-z0-9._-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?$/;
 function hostOnly(url) {
+  let scheme = "", host;
   try {
     const u = new URL(String(url));
-    return u.host ? `${u.protocol}//${u.host}` : "(호스트가 없는 URL 또는 로컬 경로)";
+    if (!u.host) return "(호스트가 없는 URL 또는 로컬 경로)";
+    [scheme, host] = [`${u.protocol}//`, u.host];
   } catch {
     const scp = /^(?:[^@/:]+@)?([^:/]+):(?!\/\/)/.exec(String(url));
-    return scp ? scp[1] : "(URL 꼴이 아님)";
+    if (!scp) return "(URL 꼴이 아님)";
+    host = scp[1];
   }
+  return HOST_SHAPE.test(host) ? `${scheme}${host}` : "(호스트를 알아볼 수 없음)";
 }
 
 // hooks.json 옆의 수동 백업 후보. usable 은 PostToolUse 를 담은 유효한 JSON 이다. 링크로 심은 후보는
@@ -967,10 +973,14 @@ function originUrl() {
 }
 
 // git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다).
-// 정화하고 URL 의 인증 정보를 가린다.
+// 정화하고 URL 의 인증 정보를 가린다. git 이 오류 문구 없이 끝나면 Node 의 문구(명령 줄 전체, 곧 URL 전체가 든다)를
+// 쓰지 않고 어떻게 끝났는지만 댄다.
 const gitError = (e) => {
-  const lines = String(e.stderr || e.message || "").split("\n").filter((l) => l.trim());
-  const line = lines.find((l) => /^(fatal|error):/.test(l)) || lines[0] || "알 수 없는 오류";
+  const lines = String(e.stderr || "").split("\n").filter((l) => l.trim());
+  if (!lines.length) {
+    return e.status == null && !e.signal && e.code ? `git 을 실행하지 못함 (${oneLine(e.code)})` : `git 이 오류 문구 없이 끝남 (${oneLine(e.signal || e.status)})`;
+  }
+  const line = lines.find((l) => /^(fatal|error):/.test(l)) || lines[0];
   return oneLine(redactUrl(line)).slice(0, 200);
 };
 

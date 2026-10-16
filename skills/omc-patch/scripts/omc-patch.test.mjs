@@ -2141,6 +2141,10 @@ test("a set-url that fails names the original URL up to its host, whatever part 
     [`https://example.invalid/omc.git;auth=${secret}`, "https://example.invalid"],
     [`https://u:${secret}@example.invalid:8443/omc.git?token=${secret}`, "https://example.invalid:8443"],
     [`git@example.invalid:org/omc-${secret}.git`, "example.invalid"],
+    [`https://[::1]:8443/${secret}/omc.git`, "https://[::1]:8443"],
+    // what a parser reads as the host but is not shaped like one is not shown either
+    [`ssh://example.invalid;k=${secret}/omc.git`, "(호스트를 알아볼 수 없음)"],
+    [`a@${secret}@example.invalid:org/omc.git`, "(호스트를 알아볼 수 없음)"],
   ]) {
     const f = fakeHome([{ v: "5.6.1", active: true }]);
     assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${url}`], f.market).status, 0);
@@ -2155,6 +2159,30 @@ test("a set-url that fails names the original URL up to its host, whatever part 
     assert.equal(back.code, 1, back.out);
     assert.ok(back.out.includes(`원래 URL(호스트까지만): ${shownAs}. 원문은 origin 의 omc-pinned:// 뒤에 그대로 있습니다.`), back.out);
     assert.ok(!back.out.includes(secret), `${url}: ${back.out}`);
+  }
+});
+
+// A git that ends with no error text leaves only Node's own message, which holds the command line and so the whole
+// URL: the line says how git ended instead, and the URL stays out beyond its host.
+test("a set-url that ends with no error text does not print the command line, for the pin and the revert", posixGit, (t) => {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) {
+    t.skip("git not found on PATH");
+    return;
+  }
+  const dir = join(root, `quietgit${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$1" = remote ] && [ "$2" = set-url ]; then exit 1; fi', `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  const PATH = `${dir}${delimiter}${process.env.PATH}`;
+  const mark = "PATH" + "MARK7";
+  const url = `https://u:${"s3" + "cret"}@example.invalid/${mark}/omc.git;p=${mark}?token=x#${mark}`;
+  for (const [args, pinned, line] of [[["--revert"], true, "고정 해제 실패"], [["--no-update"], false, "고정 실패"]]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", pinned ? `omc-pinned://${url}` : url], f.market).status, 0);
+    const r = run(f.home, args, { PATH });
+    assert.equal(r.code, 1, r.out);
+    assert.ok(r.out.includes(`${line}: origin 을 `) && r.out.includes("(git 이 오류 문구 없이 끝남 (1))"), r.out);
+    assert.ok(!r.out.includes(mark) && !r.out.includes("s3cret"), `${args}: ${r.out}`);
   }
 });
 
