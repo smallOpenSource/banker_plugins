@@ -529,45 +529,52 @@ const LOCK_STALE_MS = 60_000;
 const LOCK_STEP_MS = 50;
 const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
-// Makes the lock file; false when one is there already. Anything else (permissions) throws.
+// Makes the lock file: "taken", "held" when one is there already, or "stale" when a network share answered with a
+// stale file handle (ESTALE), which the next try may not. Anything else (permissions) throws.
 function tryLock(path, token) {
   try {
     writeFileSync(path, token, { flag: "wx", mode: 0o600 });
-    return true;
+    return "taken";
   } catch (e) {
-    if (e.code === "EEXIST") return false;
+    if (e.code === "EEXIST") return "held";
+    if (e.code === "ESTALE") return "stale";
     throw e;
   }
 }
 
-// Removes a lock a dead run left; true when there is none now, so the next try may take it. The name itself is
-// looked at, not where it leads: a link to nothing or a link loop there is a lock like any other. A lock dated more
-// than a minute away either way (a clock set back) is stale too. A folder there is none of this module's: it stays,
-// and the wait ends in a refusal.
+// Removes a lock a dead run left. The name itself is looked at, not where it leads: a link to nothing or a link loop
+// there is a lock like any other. A lock dated more than a minute away either way (a clock set back) is stale too.
+// A folder there is none of this module's: it stays, and the wait ends in a refusal. A name gone in between, or a
+// network share's stale file handle (ESTALE) at the look or the removal, is left for the next round.
 function dropStale(path) {
   let st;
   try {
     st = lstatSync(path);
   } catch (e) {
-    if (e.code === "ENOENT") return true; /* gone in between */
-    if (e.code === "ESTALE") return false; /* a network share's stale handle: rest and look again, not spin */
+    if (e.code === "ENOENT" || e.code === "ESTALE") return;
     throw e;
   }
-  if (st.isDirectory() || Math.abs(Date.now() - st.mtimeMs) <= LOCK_STALE_MS) return false;
-  rmSync(path, { force: true });
-  return true;
+  if (st.isDirectory() || Math.abs(Date.now() - st.mtimeMs) <= LOCK_STALE_MS) return;
+  try {
+    rmSync(path, { force: true });
+  } catch (e) {
+    if (e.code !== "ESTALE") throw e;
+  }
 }
 
-// Takes the lock: { path, token }, or null when another run held it for waitMs. The deadline is looked at every
-// round, so no lock spot, whatever is there, keeps the wait going past it.
+// Takes the lock: { path, token }, or { path, why } once the wait ends without it: why is "stale" when the last try
+// met a stale file handle instead of a lock, else "held". Every round that does not take the lock rests, so no answer
+// of the file system makes the wait spin; the deadline is looked at every round, so no lock spot keeps it going past.
 function takeLock(dir, waitMs) {
   const path = join(dir, LOCK);
   const token = `${process.pid} ${Date.now()} ${Math.random()}`;
   const until = Date.now() + waitMs;
   for (;;) {
-    if (tryLock(path, token)) return { path, token };
-    if (Date.now() >= until) return null;
-    if (!dropStale(path)) Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
+    const got = tryLock(path, token);
+    if (got === "taken") return { path, token };
+    if (Date.now() >= until) return { path, why: got };
+    if (got === "held") dropStale(path);
+    Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
   }
 }
 
@@ -592,7 +599,11 @@ function locked(o, fn) {
     if (denied(e)) return fn();
     throw e;
   }
-  if (!lock) return refuse(`다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다: ${where(join(o.codexDir, LOCK))}`);
+  if (!lock.token) {
+    return refuse(lock.why === "stale"
+      ? `네트워크 공유가 잠금 자리에 계속 ESTALE(오래된 파일 핸들)을 돌려줘 그대로 두었습니다: ${where(lock.path)}`
+      : `다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다: ${where(lock.path)}`);
+  }
   try {
     return fn();
   } finally {

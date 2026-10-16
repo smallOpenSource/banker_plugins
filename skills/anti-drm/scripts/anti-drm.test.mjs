@@ -1282,3 +1282,9 @@ test("the exit code table says a refusal may come after an earlier file was alre
   assert.match(row, /`앞서 바꾼 파일:`/);
   assert.match(row, /이미 바뀜/);
 });
+
+test("the troubleshooting table has the row for a lock spot that keeps answering ESTALE", () => {
+  const rows = read(SKILL).split("\n").filter((l) => l.startsWith("| 네트워크 공유가 잠금 자리에 계속 ESTALE(오래된 파일 핸들)을 돌려줘 그대로 두었습니다 |"));
+  assert.equal(rows.length, 1);
+  assert.match(rows[0], /잠금을 임의로 지우지 않음/);
+});
