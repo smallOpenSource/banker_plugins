@@ -23,6 +23,7 @@ import stat
 import sys
 import tempfile
 import unicodedata
+from array import array
 from html.parser import HTMLParser
 from typing import Any
 
@@ -171,48 +172,75 @@ def _mask(s: str) -> str:
     return (s[:4] + "****" + s[-4:]) if len(s) > 8 else "[REDACTED]"
 
 
-# Characters that print as nothing, and U+FFFD, which a lone surrogate became: Unicode's default-ignorable code
-# points (the zero-width space and joiners, the soft hyphen, the direction controls, the variation selectors, the
-# tag characters, the Hangul fillers). One inside a value cuts it for the patterns, so a value cut by them is put
-# back together where a pattern finds it once they are gone (3.0.8).
-_SPLITTER_RANGES = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5),
-                    (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164),
-                    (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0xFFFD, 0xFFFD),
-                    (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+# Characters that cut a value for the patterns while no person reads them as a separator: Unicode's default-ignorable
+# code points (the zero-width space and joiners, the soft hyphen, the direction controls, the variation selectors,
+# the tag characters, the Hangul fillers) and the other format characters, the controls and spaces that are no
+# space, tab or line break, private use, the braille blank, and U+FFFC and U+FFFD, which stand for something lost
+# (a lone surrogate became U+FFFD). A value cut by them is put back together where a pattern finds it once they
+# are gone (3.0.8).
+_SPLITTER_RANGES = (
+    (0x0000, 0x0008), (0x000E, 0x001B), (0x007F, 0x0084), (0x0086, 0x009F), (0x00A0, 0x00A0), (0x00AD, 0x00AD),
+    (0x034F, 0x034F), (0x0600, 0x0605), (0x061C, 0x061C), (0x06DD, 0x06DD), (0x070F, 0x070F), (0x0890, 0x0891),
+    (0x08E2, 0x08E2), (0x115F, 0x1160), (0x1680, 0x1680), (0x17B4, 0x17B5), (0x180B, 0x180F), (0x2000, 0x200F),
+    (0x202A, 0x202F), (0x205F, 0x206F), (0x2800, 0x2800), (0x3000, 0x3000), (0x3164, 0x3164), (0xE000, 0xF8FF),
+    (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFFD), (0x110BD, 0x110BD), (0x110CD, 0x110CD),
+    (0x13430, 0x1343F), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF), (0xF0000, 0xFFFFD),
+    (0x100000, 0x10FFFD))
 _SPLITTERS = "".join(chr(a) if a == b else chr(a) + "-" + chr(b) for a, b in _SPLITTER_RANGES)
 _SPLITTER_RE = re.compile("[" + _SPLITTERS + "]")
 _UNSPLIT_RE = re.compile("[^" + _SPLITTERS + "]+")
+# A character a value can hold: past a splitter next to a found value, one of these means another value begins.
+_VALUE_CHAR_RE = re.compile(r"[A-Za-z0-9_+/=.\-]")
 
 
 def _unsplit_runs(text):
-    """`text` without its splitters, and for each run of other characters (where it starts there, where in text)."""
-    starts, parts, at = [], [], 0
+    """`text` without its splitters, and where each run of other characters starts in it and in `text`."""
+    firsts, origins, parts, at = array("q"), array("q"), [], 0
     for m in _UNSPLIT_RE.finditer(text):
-        starts.append((at, m.start()))
+        firsts.append(at)
+        origins.append(m.start())
         parts.append(m.group(0))
-        at += len(parts[-1])
-    return "".join(parts), starts
+        at += m.end() - m.start()
+    return "".join(parts), firsts, origins
 
 
-def _split_spans(text, joined, starts, patterns, entropy):
-    """The stretches of `text`, sorted, where a pattern (and with `entropy` the entropy rule) finds a value in
-    `joined` that splitters cut or touch. Each runs from just after the character before the value to just before
-    the character after it, so the value's neighbours are the same once its splitters are gone."""
-    first = [j for j, _ in starts]
-
-    def at(j):  # where joined[j] is in text
-        k = bisect.bisect_right(first, j) - 1
-        return starts[k][1] + j - starts[k][0]
-    found = [m for pat in patterns for m in pat.finditer(joined)]
+def _matches(text, patterns, entropy):
+    """The matches of `patterns` in `text`, and with `entropy` the runs the entropy rule hides."""
+    found = [m for pat in patterns for m in pat.finditer(text)]
     if entropy:
-        found += [m for m in ENTROPY_LONG.finditer(joined) if shannon_entropy(m.group(0)) >= 4.5]
+        found += [m for m in ENTROPY_LONG.finditer(text) if shannon_entropy(m.group(0)) >= 4.5]
+    return found
+
+
+def _cut_spans(text, joined, firsts, origins, matches):
+    """Where in `text` the values `matches` found in `joined` lie, for those splitters cut or touch. A stretch takes
+    in the splitters next to its value when the character past them is no value character (so the value's
+    neighbours are those it had in `joined`); a splitter between the value and another value stays."""
+    def at(j):  # where joined[j] is in text
+        k = bisect.bisect_right(firsts, j) - 1
+        return origins[k] + j - firsts[k]
     spans = []
-    for m in found:
-        s = at(m.start() - 1) + 1 if m.start() > 0 else 0
-        e = at(m.end()) if m.end() < len(joined) else len(text)
+    for m in matches:
+        s, e = at(m.start()), at(m.end() - 1) + 1
+        before = at(m.start() - 1) + 1 if m.start() else 0
+        after = at(m.end()) if m.end() < len(joined) else len(text)
+        if before == 0 or not _VALUE_CHAR_RE.match(text[before - 1]):
+            s = before
+        if after == len(text) or not _VALUE_CHAR_RE.match(text[after]):
+            e = after
         if e - s > m.end() - m.start():
             spans.append((s, e))
-    return sorted(spans)
+    return spans
+
+
+def _kept(spans, plain):
+    """The stretches of `spans` to join: those no value the patterns find in the text as it stands holds already,
+    and that cut none of those values in two. Joining across such a value would glue it to its neighbour, so the
+    neighbour's own pattern (a lookbehind, a keyword the greedy class ate) no longer finds it."""
+    def cuts(d, o):
+        return d[0] < o[1] and o[0] < d[1] and not (d[0] <= o[0] and o[1] <= d[1])
+    return [d for d in spans if not any(o[0] <= d[0] and d[1] <= o[1] for o in plain)
+            and not any(cuts(d, o) for o in plain)]
 
 
 def _merged(spans):
@@ -228,20 +256,23 @@ def _merged(spans):
 
 def _rejoin_split(text, patterns, entropy=False):
     """`text` with the splitters taken out of each stretch where, once they are gone, one of `patterns` (and with
-    `entropy` the entropy rule) finds a value: the layers after then see the value whole and hide it. The rest of
-    the text is left as it is (3.0.8)."""
+    `entropy` the entropy rule) finds a value that the text as it stands does not show whole: the layers after
+    then see that value and hide it. The rest of the text is left as it is (3.0.8)."""
     if not _SPLITTER_RE.search(text):
         return text
-    joined, starts = _unsplit_runs(text)
+    joined, firsts, origins = _unsplit_runs(text)
+    spans = _cut_spans(text, joined, firsts, origins, _matches(joined, patterns, entropy))
+    if spans:
+        spans = _kept(spans, [(m.start(), m.end()) for m in _matches(text, patterns, entropy)])
     out, at = [], 0
-    for s, e in _merged(_split_spans(text, joined, starts, patterns, entropy)):
+    for s, e in _merged(sorted(spans)):
         out += [text[at:s], _SPLITTER_RE.sub("", text[s:e])]
         at = e
     return "".join(out) + text[at:]
 
 
 def redact(text: str, extra: "str | None" = None, mode: str = "full"):
-    """Multi-layer redaction. Returns (redacted_text, count_by_kind)."""
+    """Multi-layer redaction; page_redact and review_redact join split secrets first (3.0.8). Returns (text, counts)."""
     counts = {}
     out = text
     for name, pat in SECRET_PATTERNS:
@@ -387,7 +418,7 @@ REVIEW_SECRET_PATTERNS = [
 
 def _reviewer_patterns(text):
     """`text` with what the reviewer patterns find replaced whole by [REDACTED:<name>], and the
-    count by name."""
+    count by name. A split secret is put back together by its callers first (3.0.8)."""
     counts = {}
     for name, pat in REVIEW_SECRET_PATTERNS:
         text, k = pat.subn(f"[REDACTED:{name}]", text)
@@ -405,26 +436,62 @@ def _rejoin_secrets(text, extra=None):
     return _rejoin_split(text, patterns, entropy=True)
 
 
+def _with_rejoins(text, extra, one_pass):
+    """`one_pass` (text -> (text, found)) over `text` with its split secrets put back together. Once anything was
+    joined, again over its output until a pass changes nothing (at most four passes): a value next to one a marker
+    replaced may be found only then. So a second call finds nothing. A value the text shows whole is hidden in the
+    first pass exactly as 3.0.7 hid it (3.0.8). Returns (text, [found])."""
+    joined = _rejoin_secrets(text, extra)
+    moved = joined != text
+    red, found = one_pass(joined)
+    founds = [found]
+    for _ in range(3):
+        joined = _rejoin_secrets(red, extra)
+        if joined == red and not moved:
+            break  # nothing joined: 3.0.7's one pass is final
+        moved = True
+        again, found = one_pass(joined)
+        if again == red:
+            break
+        red = again
+        founds.append(found)
+    return red, founds
+
+
+def _review_pass(text, extra):
+    pre, counts = _reviewer_patterns(text)
+    red, found = redact(pre, extra=extra, mode="full")
+    return red, sum(counts.values()) + sum(found.values())
+
+
 def review_redact(text, extra=None):
     """Text as a reviewer model reads it: the reviewer-only patterns first, while the keys
     are whole (the entropy rule would otherwise cut a key and leave the rest), then fully
-    redacted (never masked, whatever --redact-mode says). A secret a character that prints as
-    nothing cuts is put back together first (3.0.8). Returns (text, count)."""
-    pre, counts = _reviewer_patterns(_rejoin_secrets(text, extra))
-    red, found = redact(pre, extra=extra, mode="full")
-    return red, sum(counts.values()) + sum(found.values())
+    redacted (never masked, whatever --redact-mode says). A secret a splitter cuts is put back
+    together (3.0.8). Returns (text, count)."""
+    red, founds = _with_rejoins(text, extra, lambda t: _review_pass(t, extra))
+    return red, sum(founds)
+
+
+def _page_pass(text, extra, mode):
+    pre, counts = _reviewer_patterns(text)
+    red, found = redact(pre, extra=extra, mode=mode)
+    for k, v in found.items():
+        counts[k] = counts.get(k, 0) + v
+    return red, counts
 
 
 def page_redact(text, extra=None, mode="full"):
     """Text as every page shows it (3.0.2): the reviewer patterns first, while keys are whole,
     each hit replaced whole whatever --redact-mode says (a mask keeps 4+4 characters, most of
-    a short password); then the page's redaction with this run's mode and keywords. Returns
-    (text, count_by_kind); a second pass over its output finds nothing. A secret a character that
-    prints as nothing cuts is put back together first (3.0.8)."""
-    pre, counts = _reviewer_patterns(_rejoin_secrets(text, extra))
-    red, found = redact(pre, extra=extra, mode=mode)
-    for k, v in found.items():
-        counts[k] = counts.get(k, 0) + v
+    a short password); then the page's redaction with this run's mode and keywords. A secret a
+    splitter cuts is put back together (3.0.8). Returns (text, count_by_kind); a second pass
+    over its output finds nothing."""
+    red, founds = _with_rejoins(text, extra, lambda t: _page_pass(t, extra, mode))
+    counts = {}
+    for found in founds:
+        for k, v in found.items():
+            counts[k] = counts.get(k, 0) + v
     return red, counts
 
 

@@ -579,12 +579,17 @@ function takeLock(dir, waitMs) {
 }
 
 // Gives the lock back while it is still this run's. The name is opened without blocking: a pipe put there is not
-// this run's lock and stays.
+// this run's lock and stays. A network share's stale file handle (ESTALE) is tried again after a rest, three times
+// at most; a lock still left goes stale in a minute.
 function dropLock(lock) {
-  try {
-    if (readFile(lock.path)?.text === lock.token) rmSync(lock.path, { force: true });
-  } catch {
-    /* already gone */
+  for (let tried = 1; ; tried++) {
+    try {
+      if (readFile(lock.path)?.text === lock.token) rmSync(lock.path, { force: true });
+      return;
+    } catch (e) {
+      if (e.code !== "ESTALE" || tried >= 3) return; /* already gone, or not this run's to take away */
+      Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
+    }
   }
 }
 

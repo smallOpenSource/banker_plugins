@@ -20,6 +20,7 @@
 import {
   closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
 import { dirname, join } from 'node:path';
@@ -171,9 +172,15 @@ function checkinBody(raw) {
   return JSON.stringify({ version: installedVersion() || 'unknown', os: process.platform, counts: aggregate(raw) });
 }
 
-// 차지한 로그의 이름(usage-log.sending-<pid>-<ms>)과, 죽은 체크인이 남긴 것으로 볼 나이.
-const CLAIM_RE = /^usage-log\.sending-\d+-\d+$/;
+// 차지한 로그의 이름(usage-log.sending-<pid>-<차지한 ms>-<난수>)과, 죽은 체크인이 남긴 것으로 볼 나이. 나이는
+// 이름의 시각으로 센다: 이름을 바꿔도 수정 시각은 로그를 마지막으로 쓴 때 그대로다. 난수는 PID 가 같은 다른
+// 이름공간(컨테이너)의 체크인과 이름이 겹치지 않게 한다.
+const CLAIM_RE = /^usage-log\.sending-\d+-(\d+)(?:-[0-9a-f]+)?$/;
 const CLAIM_MAX_AGE_MS = 3_600_000;
+// 백신이나 동기화 도구가 로그를 잠시 쥐어 이름을 못 바꿀 때(Windows 의 EPERM, EBUSY) 쉬었다 다시 해 볼 횟수와 쉼.
+const RENAME_TRIES = 3;
+const RENAME_REST_MS = 50;
+const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
 // 일반 파일의 글. 그 밖(FIFO, 폴더)과 오류는 ''. 막지 않고 열어 FIFO 를 기다리지 않는다.
 function readRegular(path) {
@@ -196,26 +203,40 @@ function claimLog() {
   try {
     const st = lstatSync(USAGE_LOG_PATH);
     if (!st.isFile() && !st.isSymbolicLink()) return { raw: '', claim: null };
-    const claim = join(dirname(USAGE_LOG_PATH), `usage-log.sending-${process.pid}-${Date.now()}`);
-    renameSync(USAGE_LOG_PATH, claim);
-    return { raw: readRegular(claim), claim };
   } catch {
     return { raw: '', claim: null };
   }
+  const claim = join(dirname(USAGE_LOG_PATH), `usage-log.sending-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
+  return renameAside(USAGE_LOG_PATH, claim) ? { raw: readRegular(claim), claim } : { raw: '', claim: null };
 }
 
-// 죽은 체크인이 남긴 차지 파일(한 시간보다 오래된 것)을 지운다(배치 유실 허용). 더 젊은 것은 아직 보내는
-// 다른 체크인의 것이라 둔다. 이름 자체를 보고 지운다(링크면 링크만 지워진다).
+// 이름을 바꿨으면 true. 잠시 쥔 것(EPERM, EBUSY, EACCES)은 RENAME_TRIES 번까지 쉬었다 다시 하고, 없어졌으면
+// (다른 체크인이 먼저 차지) 곧 false.
+function renameAside(from, to) {
+  for (let tried = 1; ; tried++) {
+    try {
+      renameSync(from, to);
+      return true;
+    } catch (e) {
+      if (tried >= RENAME_TRIES || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) return false;
+      Atomics.wait(SLEEP, 0, 0, RENAME_REST_MS);
+    }
+  }
+}
+
+// 죽은 체크인이 남긴 차지 파일(차지한 지 한 시간이 넘은 것, 시계를 되돌려 한 시간 넘게 앞선 것)을 지운다(배치
+// 유실 허용). 더 젊은 것은 아직 보내는 다른 체크인의 것이라 둔다. 이름 자체를 보고 지운다(링크면 링크만 지워진다).
 function dropOldClaims(now = Date.now()) {
   const dir = dirname(USAGE_LOG_PATH);
   let names;
   try { names = readdirSync(dir); } catch { return; }
   for (const name of names) {
-    if (!CLAIM_RE.test(name)) continue;
+    const made = CLAIM_RE.exec(name);
+    if (!made || Math.abs(now - Number(made[1])) <= CLAIM_MAX_AGE_MS) continue;
     const path = join(dir, name);
     try {
       const st = lstatSync(path);
-      if ((st.isFile() || st.isSymbolicLink()) && now - st.mtimeMs > CLAIM_MAX_AGE_MS) unlinkSync(path);
+      if (st.isFile() || st.isSymbolicLink()) unlinkSync(path);
     } catch { /* best-effort */ }
   }
 }

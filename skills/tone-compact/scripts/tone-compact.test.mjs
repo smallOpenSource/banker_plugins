@@ -1399,3 +1399,35 @@ test("the troubleshooting table has the row for a lock spot that keeps answering
   assert.equal(rows.length, 1);
   assert.match(rows[0], /잠금을 임의로 지우지 않음/);
 });
+
+test("Codex: an ESTALE while the lock is given back is tried again, and no lock outlives the run", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const [realOpen, realWrite] = [fs.openSync, fs.writeFileSync];
+  let written = false;
+  let stale = 0;
+  fs.writeFileSync = (p, ...a) => {
+    const r = realWrite(p, ...a);
+    if (String(p) === s.agents) written = true;
+    return r;
+  };
+  fs.openSync = (p, ...a) => {
+    if (written && stale === 0 && String(p) === lock) {
+      stale++;
+      throw estale("open");
+    }
+    return realOpen(p, ...a);
+  };
+  syncBuiltinESMExports();
+  let r;
+  try {
+    r = turnOn("codex", { ...s.o, lockWaitMs: 300 });
+  } finally {
+    [fs.openSync, fs.writeFileSync] = [realOpen, realWrite];
+    syncBuiltinESMExports();
+  }
+  assert.ok(r.ok, r.message);
+  assert.equal(stale, 1, "the give-back met the stale handle");
+  assert.equal(existsSync(lock), false, "the lock was given back on the next try");
+});
