@@ -156,5 +156,10 @@
     "banker:anti-drm",
     "banker:lineage",
     "banker:tone-compact"
+  ],
+  "0.19.3": [
+    "banker:anti-drm",
+    "banker:lineage",
+    "banker:tone-compact"
   ]
 }
