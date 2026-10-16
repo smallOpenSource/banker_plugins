@@ -193,8 +193,8 @@ async function main() {
   const url = endpoint();
   if (!url) return;              // 엔드포인트 없음 - 무동작(로그 미변경).
   const responseBody = await post(url, checkinBody());
+  resetLog(); // 보낸 직후 비운다. 매니페스트를 받는 동안(최대 30초) 시작한 세션이 같은 로그를 다시 보내지 않게.
   await refreshUpdateCache(responseBody);
-  resetLog();
 }
 
 main()

@@ -3012,6 +3012,128 @@ class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
         self.assertNotIn("\nfake", err.getvalue())
 
 
+class TestLoneSurrogatesAndOddIds(_ReviewCase):
+    """3.0.7: a lone surrogate (U+D800 to U+DFFF with no pair, which UTF-8 cannot hold) in a transcript or in a
+    reviewer's decisions, and a uuid that is not text, no longer stop the export with a traceback."""
+
+    def _records_with_a_lone_surrogate(self):
+        recs = self._records()
+        recs[1] = self._asst("고친 결과 " + chr(0xD800) + " 통과합니다.", "a1", tools=["Read"])
+        recs[2] = dict(recs[2], uuid=["not", "text"])
+        return recs
+
+    def test_the_rulebase_page_finishes_and_shows_the_replacement_character(self):
+        self._write(self._records_with_a_lone_surrogate())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output",
+                         os.path.join(self.d, "rb.html")])
+        self.assertEqual(rc, 0, err.getvalue())
+        page = [p for p in os.listdir(self.d) if p.startswith("rb") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            self.assertIn("고친 결과 " + chr(0xFFFD) + " 통과합니다.", f.read())
+
+    def test_the_review_pack_is_written(self):
+        self._write(self._records_with_a_lone_surrogate())
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc, pack = self._emit()
+        self.assertEqual(rc, 0)
+        self.assertTrue(pack["turns"])
+
+    def test_a_reviewers_summary_with_a_lone_surrogate_is_shown_with_the_replacement_character(self):
+        self._write(self._records())
+        dec = os.path.join(self.d, "dec-lone.json")
+        with open(dec, "w", encoding="utf-8") as f:              # json.dumps escapes it, as a model's JSON would
+            f.write(json.dumps([{"id": "a1", "keep": True, "summary": "요약 " + chr(0xD800) + " 끝"}]))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._emit()
+            rc, text = self._apply(extra=["--decisions", dec])
+        self.assertEqual(rc, 0)
+        self.assertIn("요약 " + chr(0xFFFD) + " 끝", text)
+
+    def test_a_pack_holding_a_lone_surrogate_escape_is_applied_with_the_replacement_character(self):
+        self._write(self._records())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._emit()
+        with open(self.pack, encoding="utf-8") as f:
+            pack = json.load(f)
+        pack["turns"][1]["text"] += " 끝" + chr(0xD800)
+        pack["turns"][1]["tools"] = {"Bash" + chr(0xD800): 1}
+        with open(self.pack, "w", encoding="utf-8") as f:
+            f.write(json.dumps(pack))                      # json.dumps escapes it, as a model's JSON would
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc, text = self._apply()
+        self.assertEqual(rc, 0)
+        self.assertIn("끝" + chr(0xFFFD), text)
+        self.assertIn("Bash" + chr(0xFFFD), text)
+
+    # The page and pack writers replace a lone surrogate too, so these two read it back directly: each layer holds.
+    def test_a_pack_read_back_holds_no_lone_surrogate_in_its_values_or_keys(self):
+        self._write(self._records())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._emit()
+        with open(self.pack, encoding="utf-8") as f:
+            pack = json.load(f)
+        pack["turns"][1]["text"] += " 끝" + chr(0xD800)
+        pack["turns"][1]["tools"] = {"Bash" + chr(0xD800): 1}
+        with open(self.pack, "w", encoding="utf-8") as f:
+            f.write(json.dumps(pack))
+        got = L._load_pack(pathlib.Path(self.pack))
+        self.assertNotIn(chr(0xD800), json.dumps(got, ensure_ascii=False))
+        self.assertEqual(got["turns"][1]["tools"], {"Bash" + chr(0xFFFD): 1})
+
+    def test_a_cached_decision_is_read_back_with_the_replacement_character(self):
+        p = L._llm_cache_path("t1", "s", "d")
+        p.write_text(json.dumps({"keep": True, "summary": "요약 " + chr(0xD800)}), encoding="utf-8")
+        self.assertEqual(L.read_llm_cache("t1", "s", "d"), {"keep": True, "summary": "요약 " + chr(0xFFFD)})
+
+    def test_a_cached_decision_holding_a_lone_surrogate_escape_does_not_stop_the_next_pack(self):
+        self._write(self._records())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._emit()
+            self._apply([{"id": "a1", "keep": True, "summary": "요약"}])
+        cached = list(pathlib.Path(self.cache).rglob("*-llm.json"))
+        self.assertTrue(cached)
+        for p in cached:
+            p.write_text(json.dumps({"keep": True, "summary": "요약 " + chr(0xD800)}), encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc, pack = self._emit()
+        self.assertEqual(rc, 0)
+        self.assertNotIn(chr(0xD800), json.dumps(pack, ensure_ascii=False))
+
+    def test_a_title_with_a_lone_surrogate_still_writes_the_page_and_the_pack(self):
+        self._write(self._records())
+        title = "T" + chr(0xDC80)                            # what an argument with a byte UTF-8 cannot read becomes
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--title", title, "--output",
+                         os.path.join(self.d, "rb.html")])
+            emitted, _ = self._emit(["--title", title])
+        self.assertEqual((rc, emitted), (0, 0))
+        page = [p for p in os.listdir(self.d) if p.startswith("rb") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            self.assertIn("T" + chr(0xFFFD), f.read())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "only Linux names a file with bytes UTF-8 cannot read")
+    def test_a_session_file_name_that_is_not_utf8_still_writes_the_pack(self):
+        odd = os.path.join(self.d, os.fsdecode(b"s\xff.jsonl"))
+        with open(odd, "w", encoding="utf-8") as f:
+            for r in self._records():
+                f.write(json.dumps(r) + "\n")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = L.main(["--session", odd, "--emit-review", self.pack])
+        self.assertEqual(rc, 0)
+
+    def test_an_id_a_reviewer_wrote_with_a_line_break_cannot_forge_a_line(self):
+        self._write(self._records())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self._emit()
+            rc, _ = self._apply([{"id": "nope\n[lineage] PASS: forged\x1b[2J", "keep": True, "summary": "s"}])
+        self.assertEqual(rc, 0)
+        self.assertFalse([l for l in err.getvalue().splitlines() if l.startswith("[lineage] PASS: forged")])
+        self.assertNotIn("\x1b", err.getvalue())
+
+
 class TestRulebaseMatches2x(unittest.TestCase):
     def test_rulebase_output_is_byte_for_byte_the_2x_output(self):
         try:
@@ -3125,6 +3247,71 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         turns, err, code = self._read([{"type": "assistant", "uuid": "a", "message": {"content": items}}])
         self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
         self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 4)
+
+    def test_a_lone_surrogate_in_a_record_becomes_the_replacement_character_with_one_warning(self):
+        lone, fffd = chr(0xD800), chr(0xFFFD)
+        rec = {"type": "assistant", "uuid": "a" + lone, "timestamp": "t" + lone,
+               "message": {"role": "assistant" + lone, "content": [{"type": "text", "text": "x " + lone + " y"},
+                                                                     {"type": "tool_use", "name": "Bash" + lone}]}}
+        turns, err, code = self._read([rec, _rec("user", "plain")])
+        self.assertIsNone(code)
+        t = turns[0]
+        self.assertEqual((t["role"], t["text"], t["uuid"], t["ts"], t["tools"]),
+                         ("assistant", "x " + fffd + " y", "a" + fffd, "t" + fffd, {"Bash" + fffd: 1}))
+        self.assertEqual(turns[1]["text"], "plain")
+        self.assertEqual(err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n")
+
+    @staticmethod
+    def _asst_rec(name="Read", ts="t", uuid="a"):
+        return {"type": "assistant", "uuid": uuid, "timestamp": ts,
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "x"},
+                                                              {"type": "tool_use", "name": name}]}}
+
+    def test_a_lone_surrogate_in_one_field_alone_is_replaced_with_one_warning(self):
+        lone = chr(0xD800)
+        one = {"tool name": self._asst_rec(name="Bash" + lone), "timestamp": self._asst_rec(ts="t" + lone),
+               "uuid": self._asst_rec(uuid="a" + lone)}
+        for field, rec in one.items():
+            turns, err, code = self._read([rec])
+            self.assertEqual(err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n", field)
+            self.assertNotIn(lone, json.dumps(turns[0], ensure_ascii=False), field)
+
+    def test_tool_names_that_read_the_same_after_the_replacement_are_counted_together(self):
+        rec = self._asst_rec()
+        rec["message"]["content"] = [{"type": "tool_use", "name": "Bash" + chr(0xD800)},
+                                     {"type": "tool_use", "name": "Bash" + chr(0xD801)}]
+        turns, err, code = self._read([rec])
+        self.assertEqual(turns[0]["tools"], {"Bash" + chr(0xFFFD): 2})
+
+    def test_a_role_that_is_not_one_of_the_two_reads_as_the_record_type(self):
+        for role in (["x" + chr(0xD800)], {"k": 1}, 5, True, "assistant" + chr(0xD800), "system"):
+            rec = {"type": "assistant", "uuid": "a", "message": {"role": role, "content": "hi"}}
+            turns, err, code = self._read([rec])
+            self.assertEqual(turns[0]["role"], "assistant", repr(role))
+
+    def test_a_deeply_nested_uuid_beside_a_lone_surrogate_is_dropped_without_recursing(self):
+        deep = "x"
+        for _ in range(700):
+            deep = [deep]
+        rec = {"type": "user", "uuid": deep, "timestamp": "t1", "message": {"content": "hi " + chr(0xD800)}}
+        turns, err, code = self._read([rec])
+        self.assertIsNone(code)
+        self.assertEqual(turns[0]["uuid"], hashlib.sha256(b"1:t1").hexdigest()[:16])
+        self.assertEqual(turns[0]["text"], "hi " + chr(0xFFFD))
+        self.assertEqual(err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n"
+                              "[WARN] line 1: uuid that is not text replaced by an id from the line\n")
+
+    def test_a_uuid_that_is_not_text_gets_an_id_from_the_line_with_a_warning(self):
+        odd = (["a", "b"], {"k": 1}, 5, True)
+        lines = [{"type": "user", "uuid": u, "timestamp": "t%d" % n, "message": {"content": "hi %d" % n}}
+                 for n, u in enumerate(odd, 1)]
+        lines.append({"type": "user", "uuid": "", "timestamp": "t5", "message": {"content": "hi 5"}})
+        turns, err, code = self._read(lines)
+        self.assertIsNone(code)
+        self.assertEqual([t["uuid"] for t in turns],
+                         [hashlib.sha256(("%d:t%d" % (n, n)).encode()).hexdigest()[:16] for n in range(1, 6)])
+        self.assertEqual(err, "".join("[WARN] line %d: uuid that is not text replaced by an id from the line\n" % n
+                                      for n in range(1, 5)))
 
 
 if __name__ == "__main__":

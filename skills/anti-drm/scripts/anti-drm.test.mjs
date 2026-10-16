@@ -1275,3 +1275,10 @@ test("--stdin: a pipe left non-blocking answers EAGAIN until the settings come, 
   assert.equal(code, 0, out);
   assert.deepEqual(readConfig(s.o.configFile).config.deny, [".hwp"]);
 });
+
+// A refusal while two files change can come after the first was written; the message's last line names it.
+test("the exit code table says a refusal may come after an earlier file was already changed", () => {
+  const row = read(SKILL).split("\n").find((l) => /^\s*\| 1 \|/.test(l));
+  assert.match(row, /`앞서 바꾼 파일:`/);
+  assert.match(row, /이미 바뀜/);
+});

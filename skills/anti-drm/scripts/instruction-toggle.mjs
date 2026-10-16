@@ -549,7 +549,8 @@ function dropStale(path) {
   try {
     st = lstatSync(path);
   } catch (e) {
-    if (e.code === "ENOENT" || e.code === "ESTALE") return true; /* gone in between (ESTALE: a network share's word for it) */
+    if (e.code === "ENOENT") return true; /* gone in between */
+    if (e.code === "ESTALE") return false; /* a network share's stale handle: rest and look again, not spin */
     throw e;
   }
   if (st.isDirectory() || Math.abs(Date.now() - st.mtimeMs) <= LOCK_STALE_MS) return false;

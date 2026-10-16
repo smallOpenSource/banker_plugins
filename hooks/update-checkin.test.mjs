@@ -425,3 +425,34 @@ test('매니페스트를 못 받으면(리다이렉트, 도달 불가) 캐시의
     redirect.close();
   }
 });
+
+test('로그는 체크인을 보낸 직후 비운다: 매니페스트를 받는 사이 시작한 세션이 같은 로그를 다시 보내지 않는다', async () => {
+  const tmp = mkTmp();
+  let logAtManifest = null;
+  const post = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => { res.writeHead(200); res.end(JSON.stringify({ latest: '99.0.0' })); });
+  });
+  const manifest = http.createServer((_req, res) => {
+    logAtManifest = readFileSync(usageLog(tmp), 'utf8');
+    res.writeHead(200);
+    res.end('{}');
+  });
+  try {
+    await new Promise((r) => post.listen(0, '127.0.0.1', r));
+    await new Promise((r) => manifest.listen(0, '127.0.0.1', r));
+    writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${post.address().port}/collect` });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const env = { ...checkinEnv(tmp), BANKER_SKILL_CHANGES_URL: `http://127.0.0.1:${manifest.address().port}/skill-changes.json` };
+    const code = await new Promise((r) => {
+      const child = spawn(process.execPath, [CHECKIN_HOOK], { env, stdio: 'ignore' });
+      child.on('close', (c) => r(c ?? 0));
+    });
+    assert.equal(code, 0);
+    assert.equal(logAtManifest, '', '매니페스트를 물을 때 로그는 이미 비어 있다');
+    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '');
+  } finally {
+    post.close();
+    manifest.close();
+  }
+});
