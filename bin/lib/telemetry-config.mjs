@@ -49,13 +49,14 @@ export const NPM_LATEST_URL = 'https://registry.npmjs.org/@kaydash9999/banker-pl
 export const SKILL_CHANGES_URL = 'https://raw.githubusercontent.com/smallOpenSource/banker_plugins/main/skill-changes.json';
 
 // usage-log 와 체크인 본문에 실리는 스킬/커맨드 이름 꼴. 쓰는 훅 둘과 보내는 훅이 같은 규칙을 쓴다.
-export const SKILL_NAME_RE = /^banker:[a-z0-9_-]+$/i;
+// 이름은 64자까지다(가장 긴 실제 이름은 24자). 모델이 지어낸 긴 이름이 기록과 체크인에 실리지 않게 한다.
+export const SKILL_NAME_RE = /^banker:[a-z0-9_-]{1,64}$/i;
 
-// 갱신 확인 요청 하나의 전체 마감(ms). 시험이 줄일 수 있게 BANKER_NET_DEADLINE_MS 를 받되, setTimeout 이 1ms 로
-// 바꿔 버리는 값(0 이하, 숫자 아님, 2^31-1 초과)은 버리고 30초를 쓴다. 문서에 적지 않는 시험용 장치다.
+// 갱신 확인 요청 하나의 전체 마감(ms). 시험이 줄일 수 있게 BANKER_NET_DEADLINE_MS 를 받되 줄이기만 한다: 30초보다
+// 길면 30초다. setTimeout 이 1ms 로 바꿔 버리는 값(0 이하, 숫자 아님)도 버리고 30초를 쓴다. 문서에 적지 않는 시험용 장치다.
 export function netDeadlineMs(env = process.env) {
   const v = Number(env.BANKER_NET_DEADLINE_MS);
-  return Number.isFinite(v) && v > 0 && v <= 2 ** 31 - 1 ? v : 30_000;
+  return Number.isFinite(v) && v > 0 ? Math.min(v, 30_000) : 30_000;
 }
 
 // 네트워크 응답 본문을 maxBytes 까지만 모아 done(문자열)로 넘긴다. 한도를 넘으면 연결을 끊고 done(null),

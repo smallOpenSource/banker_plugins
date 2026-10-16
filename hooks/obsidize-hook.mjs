@@ -17,10 +17,11 @@
  *  - Exits 0 on every path. A hook cannot block or alter a tool result and must not try.
  *  - Every error appends exactly one line to <wikiDir>/.obsidizer-hook.log. Exit 0 hides
  *    stderr too, so that log is the only channel by which a permanently broken hook is
- *    discoverable rather than silently doing nothing forever.
+ *    discoverable rather than silently doing nothing forever. Only a regular file there is
+ *    written: a link (a cloned repository can carry one) or a pipe gets no line.
  */
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, statSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,6 +29,8 @@ const CANONICALIZER = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'sk
 const FLAG = '.obsidizer';
 const LOG = '.obsidizer-hook.log';
 const LOG_REASON_MAX = 500;
+// Append, never through a link, and never wait for a pipe's reader (Windows has neither flag; there a link is followed).
+const LOG_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 // OMC owns these three. index.md is rewritten on every ingest, so it is always the freshest
 // file in the vault — the scan fallback below would target it first without this guard.
 const RESERVED = new Set(['index.md', 'log.md', 'environment.md']);
@@ -51,7 +54,12 @@ function log(wikiDir, tool, reason) {
   const text = String(reason).replace(/[\s\x00-\x1f\x7f-\x9f]+/g, ' ').trim();
   const line = `${new Date().toISOString()}\t${tool}\t${text.length > LOG_REASON_MAX ? `${text.slice(0, LOG_REASON_MAX)}...` : text}\n`;
   try {
-    appendFileSync(join(wikiDir, LOG), line);
+    const fd = openSync(join(wikiDir, LOG), LOG_FLAGS, 0o600);
+    try {
+      if (fstatSync(fd).isFile()) writeSync(fd, line);
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     // The log is best-effort; the failure path must never throw.
   }

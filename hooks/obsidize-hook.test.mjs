@@ -12,7 +12,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -527,4 +527,35 @@ test('log: a vault folder that cannot be listed is logged as unexpected and the 
   assert.equal(logLines(tree).length, 1);
   assert.match(logLines(tree)[0], new RegExp(`\\t${INGEST_TOOL}\\tunexpected: EACCES`));
   assert.equal(readArgv(tree).length, 0, 'no page is canonicalized');
+});
+
+// The log place is in the vault, which a cloned repository can carry: a link there must not send the line to another file.
+test('log: a log place that is a link is not written through, and the link stays', (t) => {
+  const tree = makeTree();
+  arm(tree);
+  const victim = join(tree.tmp, 'victim.txt');
+  writeFileSync(victim, 'my own file\n');
+  try {
+    symlinkSync(victim, join(tree.wikiDir, '.obsidizer-hook.log'));
+  } catch {
+    return t.skip('no symbolic links here');
+  }
+  const res = runHook(tree, payloadFor(tree, INGEST_RESPONSE), { stubFail: true });
+  assert.equal(res.status, 0);
+  assert.equal(readFileSync(victim, 'utf8'), 'my own file\n', 'the file the link leads to is untouched');
+  assert.ok(lstatSync(join(tree.wikiDir, '.obsidizer-hook.log')).isSymbolicLink(), 'the link stays a link');
+});
+
+test('log: a pipe at the log place does not stop the hook', { skip: process.platform === 'win32' && 'no FIFOs here' }, (t) => {
+  const tree = makeTree();
+  arm(tree);
+  if (spawnSync('mkfifo', [join(tree.wikiDir, '.obsidizer-hook.log')]).status !== 0) return t.skip('no mkfifo here');
+  const env = { ...process.env, STUB_ARGV_LOG: tree.argvLog, STUB_FAIL: '1' };
+  delete env.OMC_STATE_DIR;
+  const res = spawnSync(process.execPath, [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs')], {
+    input: JSON.stringify(payloadFor(tree, INGEST_RESPONSE)), encoding: 'utf8', cwd: tree.project, env, timeout: 10000,
+  });
+  assert.equal(res.error?.code, undefined, 'the hook ended before its deadline');
+  assert.equal(res.status, 0);
+  assert.ok(lstatSync(join(tree.wikiDir, '.obsidizer-hook.log')).isFIFO(), 'the pipe stays a pipe');
 });
