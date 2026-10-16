@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import {
   checkConfig,
@@ -1000,4 +1000,32 @@ test("config says where a file anti-drm did not write went, and says so when it 
   assert.match(second.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다\. 먼저 남긴 파일이 있습니다: .*anti-drm\.json\.bak/);
   assert.equal(read(`${s.o.configFile}.bak`), '{"theme":"dark"}\n');
   assert.doesNotMatch(configure(s.o, FLAGS).message, /참고:/, "anti-drm's own settings go without a word");
+});
+
+test("a broken settings file has one procedure in the on table and the troubleshooting row: ask, a new file, a foreign one kept once in .bak, nothing moved by the agent", () => {
+  const lines = read(SKILL).split("\n");
+  const onRow = lines.find((l) => l.trim().startsWith("| `올바르지 않음`"));
+  const fixRow = read(SKILL).split("## 문제 해결")[1].split("\n").find((l) => l.startsWith("| 설정 파일이 올바르지 않습니다"));
+  for (const row of [onRow, fixRow]) {
+    assert.ok(row, "the row is there");
+    assert.match(row, /다시 정할지 물/, row);
+    assert.match(row, /새 파일로 바뀌/, row);
+    assert.match(row, /`anti-drm\.json\.bak` 에 한 번 남/, row);
+    assert.match(row, /에이전트가 그 파일을 직접 지우거나 옮기지 않음/, row);
+  }
+});
+
+test("--stdin: a pipe left non-blocking answers EAGAIN until the settings come, and they are read when they do", posixOnly, async () => {
+  const s = setup();
+  const pre = join(s.dir, "touch-stdin.mjs");
+  writeFileSync(pre, "void process.stdin;\n");       // a stdin stream sets the pipe to non-blocking before the CLI reads it
+  const child = spawn(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "config", "--stdin"],
+    { env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) }, stdio: ["pipe", "pipe", "pipe"] });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  child.stderr.on("data", (d) => { out += d; });
+  setTimeout(() => child.stdin.end("deny=.hwp\nalt=.md\n"), 300);
+  const code = await new Promise((resolve) => child.on("close", resolve));
+  assert.equal(code, 0, out);
+  assert.deepEqual(readConfig(s.o.configFile).config.deny, [".hwp"]);
 });
