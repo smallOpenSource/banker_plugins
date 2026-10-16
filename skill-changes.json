@@ -145,5 +145,11 @@
   ],
   "0.19.0": [
     "banker:theme-selection"
+  ],
+  "0.19.1": [
+    "banker:anti-drm",
+    "banker:lineage",
+    "banker:omc-patch",
+    "banker:tone-compact"
   ]
 }
