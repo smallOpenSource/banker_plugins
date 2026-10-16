@@ -442,17 +442,28 @@ def _without_lone_surrogates(value: Any) -> Any:
     return value
 
 
+def _lone_to_fffd(value):
+    """A str with each lone surrogate as U+FFFD; anything else as it is (no walk into it)."""
+    return _LONE_SURROGATE_RE.sub(chr(0xFFFD), value) if isinstance(value, str) else value
+
+
+def _shown_id(value):
+    """An id from a transcript or a reviewer as a message shows it: as it is when it prints as one plain line, else its
+    repr, so a line break or a control character in it cannot forge a line of lineage's own."""
+    return value if isinstance(value, str) and value.isprintable() else repr(value)
+
+
 def _clean_strings(line_no, role, text, tools, ts, uuid_):
     """A record's role, text, tool counts, timestamp and uuid with each lone surrogate as U+FFFD, after one WARN for
-    the line."""
+    the line. Only text is touched: a uuid of another shape is replaced later, whole."""
     if not any(isinstance(s, str) and _LONE_SURROGATE_RE.search(s) for s in (role, text, ts, uuid_, *tools)):
         return role, text, tools, ts, uuid_
     print(f"[WARN] line {line_no}: lone surrogate replaced with U+FFFD", file=sys.stderr)
     counts = {}
     for name, n in tools.items():
-        name = _without_lone_surrogates(name)
+        name = _lone_to_fffd(name)
         counts[name] = counts.get(name, 0) + n
-    clean = _without_lone_surrogates
+    clean = _lone_to_fffd
     return clean(role), clean(text), counts, clean(ts), clean(uuid_)
 
 
@@ -581,8 +592,10 @@ def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
         text = _CTRL_RE.sub("", "\n".join(p for p in text_parts if p).strip())
         if not text and not tools:
             continue
+        role = msg.get("role")
+        role = role if role in ("user", "assistant") else obj.get("type")   # the type _is_turn_record let through
         role, text, tools, ts, uuid_ = _clean_strings(
-            line_no, msg.get("role") or obj.get("type"), text, tools, _stamp(obj.get("timestamp")), obj.get("uuid"))
+            line_no, role, text, tools, _stamp(obj.get("timestamp")), obj.get("uuid"))
         uuid_ = _turn_id(uuid_, line_no, ts)
 
         yield {"role": role, "text": text, "ts": ts, "uuid": uuid_,
@@ -1516,7 +1529,7 @@ def _write_private(path, text):
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
+            f.write(_lone_to_fffd(text))   # a title or a file name may still bring one: UTF-8 cannot hold it
         os.replace(tmp, str(path))
     except BaseException:
         try:
@@ -1530,7 +1543,7 @@ def _write_text_lf(path, text):
     """Write `text` to `path` as UTF-8 with LF line ends on every OS. Text mode on Windows
     would write CRLF, so the same transcript would give a different page there."""
     with open(str(path), "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
+        f.write(_lone_to_fffd(text))   # a title or a file name may still bring one: UTF-8 cannot hold it
 
 
 def _safe_name(s):
@@ -1576,7 +1589,7 @@ def read_llm_cache(turn_id, session, digest):
     keep, summary = got.get("keep"), got.get("summary")
     if not (_is_keep(keep) and _is_summary(summary)):
         return None
-    return {"keep": keep, "summary": summary}
+    return {"keep": keep, "summary": _lone_to_fffd(summary)}
 
 
 def write_llm_cache(turn_id, session, digest, keep, summary):
@@ -1944,7 +1957,7 @@ def _load_decisions(files):
         try:
             if f.stat().st_size > DECISIONS_MAX:
                 raise ValueError(f"larger than {DECISIONS_MAX} bytes")
-            items = _without_lone_surrogates(_decisions_text(f.read_text(encoding="utf-8")))
+            items = _decisions_text(f.read_text(encoding="utf-8"))
         except (OSError, ValueError, UnicodeDecodeError, RecursionError) as e:
             return _bad(f"cannot read decisions {f}: {e}")
         if not isinstance(items, list):
@@ -1953,10 +1966,10 @@ def _load_decisions(files):
             why = _decision_problem(d)
             if why:
                 return _bad(f"{f}[{k}]: {why}")
-            cur = merged.setdefault(d["id"], {})
+            cur = merged.setdefault(_lone_to_fffd(d["id"]), {})          # a model's JSON may hold a lone surrogate
             for key in ("keep", "summary"):
                 if d.get(key) is not None:
-                    cur[key] = d[key]
+                    cur[key] = _lone_to_fffd(d[key])
         if items and all(d.get("keep") is None and d.get("summary") is None for d in items):
             print(f"[lineage] WARN: {f}: all {len(items)} decisions are null; the rules "
                   "decide those turns", file=sys.stderr)
@@ -2083,7 +2096,7 @@ def _check_pack(pack, merged, args):
     unknown = [i for i in merged if i not in ids]
     if unknown:
         print(f"[lineage] WARN: decisions name {len(unknown)} turn(s) not in the pack, "
-              f"ignored: {', '.join(unknown[:5])}", file=sys.stderr)
+              f"ignored: {', '.join(_shown_id(i) for i in unknown[:5])}", file=sys.stderr)
     _warn_coverage(pack, set(merged) | {x["id"] for x in pack["turns"]
                                         if x["llm"].get("cached")})
     if pack.get("redact_mode") in ("full", "mask"):
@@ -2148,7 +2161,7 @@ def _report_review(stats, turns, pack, typed):
         print(f"[lineage] note: {stats['flag-kept']} turn(s) a reviewer marked keep: false "
               "stay, as --keep-trivia or --keep-tool-only asked", file=sys.stderr)
     if typed:
-        print(f"[lineage] WARN: reviewers dropped {len(typed)} typed user turn(s): {', '.join(typed[:10])}"
+        print(f"[lineage] WARN: reviewers dropped {len(typed)} typed user turn(s): {', '.join(_shown_id(i) for i in typed[:10])}"
               f"{' ...' if len(typed) > 10 else ''}; tell the user", file=sys.stderr)
 
 

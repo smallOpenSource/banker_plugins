@@ -6,7 +6,7 @@
 // can judge them: elsewhere that test is skipped, and the box suite runs it on the Windows box.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,9 +36,13 @@ function psBlocks(text) {
   return blocks;
 }
 
-// A placeholder a person fills in (<설치된 버전>, <경로>) becomes a word, so only real syntax is judged. PowerShell
-// has no < operator, so <...> on one line is a placeholder or text inside a string.
-const withoutPlaceholders = (code) => code.replace(/<[^<>\n]+>/g, "PLACEHOLDER");
+// A placeholder a person fills in (<설치된 버전>, <경로>) becomes a word, so only real syntax is judged. It has no
+// space just inside its brackets: `< in.txt >` is a redirection 5.1 refuses, and it must stay to be found.
+const withoutPlaceholders = (code) => code.replace(/<(?=\S)[^<>\n]*\S>/g, "PLACEHOLDER");
+
+// Whether a block names a module or an assembly to load, which PowerShell does while it parses: such a block is
+// named and not parsed, so the test never runs code from a document.
+const loadsCodeAtParse = (code) => /^\s*using\s+(module|assembly)\b/im.test(code);
 
 // The markdown files under skills/ and commands/.
 function docs() {
@@ -54,14 +58,15 @@ function docs() {
   return out.sort();
 }
 
-const works = (bin, args) => spawnSync(bin, args, { encoding: "utf8" }).status === 0;
-const powershell51 = process.platform === "win32" &&
-  works("powershell.exe", ["-NoProfile", "-Command", "if ($PSVersionTable.PSVersion.Major -ne 5) { exit 1 }"]);
+// Windows PowerShell 5.1 by its own path: a bare name would be looked up in the current folder first on Windows.
+const POWERSHELL = join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+const TIMEOUT_MS = 120_000;
 
 // ASCII only: Windows PowerShell 5.1 reads a script without a BOM in the ANSI code page. The results go to a UTF-8
-// file, since 5.1 writes the console code page (949 on Korean Windows) into a pipe.
+// file, since 5.1 writes the console code page (949 on Korean Windows) into a pipe. Stop makes a failure exit 1.
 const PARSE = [
   "param([string]$Dir)",
+  "$ErrorActionPreference = 'Stop'",
   "$out = New-Object 'System.Collections.Generic.List[string]'",
   "Get-ChildItem -LiteralPath $Dir -Filter 'b*.ps1' | Sort-Object Name | ForEach-Object {",
   "  $name = $_.BaseName; $tokens = $null; $errs = $null",
@@ -77,10 +82,11 @@ function parse51(codes) {
   try {
     codes.forEach((c, i) => writeFileSync(join(dir, `b${String(i).padStart(4, "0")}.ps1`), `${BOM}${c.replace(/\n/g, "\r\n")}\r\n`));
     writeFileSync(join(dir, "parse.ps1"), PARSE);
-    const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-      join(dir, "parse.ps1"), dir], { encoding: "utf8" });
-    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
-    return readFileSync(join(dir, "result.tsv"), "utf8").split(/\r?\n/).filter(Boolean).map((l) => {
+    const r = spawnSync(POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+      join(dir, "parse.ps1"), dir], { encoding: "utf8", timeout: TIMEOUT_MS });
+    const result = join(dir, "result.tsv");
+    assert.ok(r.status === 0 && existsSync(result), `the parse did not finish (status ${r.status}): ${r.stdout}${r.stderr}`);
+    return readFileSync(result, "utf8").split(/\r?\n/).filter(Boolean).map((l) => {
       const [name, line, message] = l.split("\t");
       return { index: Number(name.slice(1)), line: Number(line), message };
     });
@@ -96,8 +102,17 @@ test("PowerShell blocks are found in fences, indented ones too, with their line 
 
 test("placeholders become a word, and operators and redirections stay", () => {
   assert.equal(withoutPlaceholders("nvm use <설치된 버전>"), "nvm use PLACEHOLDER");
+  assert.equal(withoutPlaceholders("<x> and <java21-bin>"), "PLACEHOLDER and PLACEHOLDER");
   const plain = "git status 2>&1 > out.txt; if ($a -lt 3) { 'x' }";
   assert.equal(withoutPlaceholders(plain), plain);
+  const redirect = "Get-Content < in.txt > out.txt";       // a real 5.1 error (no < operator) must stay to be found
+  assert.equal(withoutPlaceholders(redirect), redirect);
+});
+
+test("a block that would load code while it is parsed is named, so the parse never runs it", () => {
+  assert.equal(loadsCodeAtParse("using module ./Helpers.psm1\nGet-Item ."), true);
+  assert.equal(loadsCodeAtParse("  USING Assembly System.Windows.Forms"), true);
+  assert.equal(loadsCodeAtParse("# using module in a comment\n$using:x"), false);
 });
 
 test("the skills and commands hold PowerShell blocks to check", () => {
@@ -105,10 +120,18 @@ test("the skills and commands hold PowerShell blocks to check", () => {
   assert.ok(n >= 20, `${n} blocks`);
 });
 
-test("every PowerShell block parses in Windows PowerShell 5.1", { skip: !powershell51 && "Windows PowerShell 5.1 is not here (only it can judge 5.1 syntax)" }, () => {
+// Windows always has 5.1, so there a missing one is a failure, not a skip.
+test("every PowerShell block parses in Windows PowerShell 5.1", { skip: process.platform !== "win32" && "Windows PowerShell 5.1 is only on Windows (only it can judge 5.1 syntax)" }, () => {
+  const v = spawnSync(POWERSHELL, ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"], { encoding: "utf8", timeout: TIMEOUT_MS });
+  assert.equal(String(v.stdout).trim(), "5", `Windows PowerShell 5.1 at ${POWERSHELL}: ${v.stdout}${v.stderr}${v.error ?? ""}`);
   const blocks = docs().flatMap((f) => psBlocks(readFileSync(f, "utf8")).map((b) => ({ ...b, file: relative(ROOT, f) })));
-  const errors = parse51([...blocks.map((b) => withoutPlaceholders(b.code)), "Write-Output 1 && Write-Output 2"]);
-  assert.ok(errors.some((e) => e.index === blocks.length), "a known 5.1 syntax error is found, so a pass means something");
+  assert.deepEqual(blocks.filter((b) => loadsCodeAtParse(b.code)).map((b) => `${b.file}:${b.line}`), [],
+    "blocks that load a module or an assembly while parsed are not parsed here");
+  const controls = ["Write-Output 1 && Write-Output 2", withoutPlaceholders("Get-Content < in.txt > out.txt")];
+  const errors = parse51([...blocks.map((b) => withoutPlaceholders(b.code)), ...controls]);
+  for (let k = 0; k < controls.length; k++) {
+    assert.ok(errors.some((e) => e.index === blocks.length + k), `the known 5.1 error ${controls[k]} is found, so a pass means something`);
+  }
   const found = errors.filter((e) => e.index < blocks.length).map((e) => `${blocks[e.index].file}:${blocks[e.index].line + e.line}: ${e.message}`);
   assert.deepEqual(found, []);
 });

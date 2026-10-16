@@ -1235,7 +1235,7 @@ test("the exit status table says a refusal that names a file changed before it l
   assert.match(row, /이미 바뀜/);
 });
 
-test("Codex: a stale file handle while a dead run's lock is looked at counts as no lock", () => {
+test("Codex: a stale file handle while a dead run's lock is looked at is looked at again, and the dead lock is cleared", () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");
   const lock = join(s.o.codexDir, ".banker-agents.lock");
