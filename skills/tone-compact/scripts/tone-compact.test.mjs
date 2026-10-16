@@ -1310,3 +1310,124 @@ test("Claude Code: on says so when the rules file was a link it replaced, and le
   const again = turnOn("claude", t.o);
   assert.doesNotMatch(again.message, /링크였던 자리/, "a plain file says nothing about links");
 });
+
+// Runs turnOn for Codex with one fs function swapped for `fake` (given the real one), and puts the real one back.
+function onWithFs(s, name, fake, lockWaitMs = 300) {
+  const real = fs[name];
+  fs[name] = fake(real);
+  syncBuiltinESMExports();
+  try {
+    return turnOn("codex", { ...s.o, lockWaitMs });
+  } finally {
+    fs[name] = real;
+    syncBuiltinESMExports();
+  }
+}
+const estale = (call) => Object.assign(new Error(`ESTALE: stale file handle, ${call}`), { code: "ESTALE" });
+
+// A share whose look at the lock says nothing is there while making it says one is (a stale cache): the wait rests
+// between tries, instead of trying as fast as it can until the deadline.
+test("Codex: a lock spot whose look says it is gone while the make says it is there is waited on with rests, then refused", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  writeFileSync(lock, "another run");
+  let looks = 0;
+  const r = onWithFs(s, "lstatSync", (real) => (p, ...a) => {
+    if (String(p) !== lock) return real(p, ...a);
+    looks++;
+    throw Object.assign(new Error("ENOENT: no such file or directory, lstat"), { code: "ENOENT" });
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/);
+  assert.ok(looks < 50, `the wait rested between tries (${looks} looks in 300 ms)`);
+  assert.equal(read(s.agents), "# base\n");
+});
+
+// A share that answers ESTALE to every make of the lock: the wait rests between tries, and the refusal names
+// ESTALE rather than another banker run (there may be no lock at all).
+test("Codex: a lock spot whose make keeps answering ESTALE is waited on with rests, then refused with ESTALE named", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  let makes = 0;
+  const r = onWithFs(s, "writeFileSync", (real) => (p, data, opts, ...a) => {
+    if (String(p) !== lock || opts?.flag !== "wx") return real(p, data, opts, ...a);
+    makes++;
+    throw estale("open");
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /네트워크 공유가 잠금 자리에 계속 ESTALE\(오래된 파일 핸들\)을 돌려줘 그대로 두었습니다: .*\.banker-agents\.lock/);
+  assert.ok(makes < 50, `the wait rested between tries (${makes} makes in 300 ms)`);
+  assert.equal(read(s.agents), "# base\n");
+});
+
+test("Codex: an ESTALE once while the lock is made is tried again, and on goes on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  let done = false;
+  const r = onWithFs(s, "writeFileSync", (real) => (p, data, opts, ...a) => {
+    if (done || String(p) !== lock || opts?.flag !== "wx") return real(p, data, opts, ...a);
+    done = true;
+    throw estale("open");
+  });
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+});
+
+test("Codex: an ESTALE while a dead run's lock is removed is looked at again, and the dead lock is cleared", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  writeFileSync(lock, "a dead run");
+  const old = new Date(Date.now() - 10 * 60_000);
+  utimesSync(lock, old, old);
+  let done = false;
+  const r = onWithFs(s, "rmSync", (real) => (p, ...a) => {
+    if (done || String(p) !== lock) return real(p, ...a);
+    done = true;
+    throw estale("unlink");
+  });
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(existsSync(lock), false, "the lock is given back");
+});
+
+test("the troubleshooting table has the row for a lock spot that keeps answering ESTALE", () => {
+  const rows = read(SKILL).split("\n").filter((l) => l.startsWith("| 네트워크 공유가 잠금 자리에 계속 ESTALE(오래된 파일 핸들)을 돌려줘 그대로 두었습니다 |"));
+  assert.equal(rows.length, 1);
+  assert.match(rows[0], /잠금을 임의로 지우지 않음/);
+});
+
+test("Codex: an ESTALE while the lock is given back is tried again, and no lock outlives the run", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const [realOpen, realWrite] = [fs.openSync, fs.writeFileSync];
+  let written = false;
+  let stale = 0;
+  fs.writeFileSync = (p, ...a) => {
+    const r = realWrite(p, ...a);
+    if (String(p) === s.agents) written = true;
+    return r;
+  };
+  fs.openSync = (p, ...a) => {
+    if (written && stale === 0 && String(p) === lock) {
+      stale++;
+      throw estale("open");
+    }
+    return realOpen(p, ...a);
+  };
+  syncBuiltinESMExports();
+  let r;
+  try {
+    r = turnOn("codex", { ...s.o, lockWaitMs: 300 });
+  } finally {
+    [fs.openSync, fs.writeFileSync] = [realOpen, realWrite];
+    syncBuiltinESMExports();
+  }
+  assert.ok(r.ok, r.message);
+  assert.equal(stale, 1, "the give-back met the stale handle");
+  assert.equal(existsSync(lock), false, "the lock was given back on the next try");
+});

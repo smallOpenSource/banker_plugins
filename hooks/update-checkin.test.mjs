@@ -7,12 +7,15 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHECKIN_HOOK = join(HERE, 'update-checkin.mjs');
@@ -56,6 +59,78 @@ function runCheckin(tmp) {
     const child = spawn(process.execPath, [CHECKIN_HOOK], { env: checkinEnv(tmp), stdio: 'ignore' });
     child.on('close', (code) => resolvePromise(code ?? 0));
   });
+}
+
+// 로그 글. 체크인이 로그 이름을 바꿔 차지하므로 보낸 뒤에는 이름이 없을 수 있다(없으면 '').
+const logText = (tmp) => (existsSync(usageLog(tmp)) ? readFileSync(usageLog(tmp), 'utf8') : '');
+
+const lexists = (p) => {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// 체크인 본문을 bodies 에 모으고, n 개가 오거나 첫 본문 뒤 5초가 지나면 모두에 답하는 서버. 두 체크인을 함께
+// 보내는 중에 붙잡아 둘 수 있다. onRequest 는 본문이 다 온 뒤, 답하기 전에 부른다.
+function holdServer(n, bodies, onRequest = () => {}) {
+  const waiting = [];
+  let timer = null;
+  const answerAll = () => {
+    clearTimeout(timer);
+    timer = null;
+    for (const res of waiting.splice(0)) {
+      res.writeHead(200);
+      res.end(JSON.stringify({ latest: '0.9.0' }));
+    }
+  };
+  return http.createServer((req, res) => {
+    let data = '';
+    req.on('data', (c) => { data += c; });
+    req.on('end', () => {
+      try { bodies.push(JSON.parse(data)); } catch { bodies.push(null); }
+      onRequest();
+      waiting.push(res);
+      if (bodies.length >= n) answerAll();
+      else if (!timer) timer = setTimeout(answerAll, 5000);
+    });
+  });
+}
+
+// 이 시험의 env 로 훅을 돌린다. pre(파일 경로)가 있으면 그 모듈을 먼저 불러온다. timeout 이 지나면 죽인다.
+// 종료 코드를 돌려주고, 죽였으면 null.
+function spawnCheckin(tmp, { pre, timeout = 15_000 } = {}) {
+  const args = pre ? ['--import', pathToFileURL(pre).href, CHECKIN_HOOK] : [CHECKIN_HOOK];
+  return new Promise((resolvePromise) => {
+    const child = spawn(process.execPath, args, { env: checkinEnv(tmp), stdio: 'ignore' });
+    const killer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    child.on('close', (code) => {
+      clearTimeout(killer);
+      resolvePromise(code);
+    });
+  });
+}
+
+// 이 계정이 여기서 심볼릭 링크를 만들 수 있는지(Windows 는 권한이 있어야 한다).
+function canSymlink() {
+  try {
+    symlinkSync('nowhere', join(mkTmp(), 'probe'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function withServer(server, fn) {
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    return await fn(`http://127.0.0.1:${server.address().port}/collect`);
+  } finally {
+    server.closeAllConnections?.();
+    server.close();
+  }
 }
 
 // 확실히 닫힌 loopback 포트(열었다가 즉시 닫아 확보) -> 연결 즉시 거부(빠른 실패).
@@ -132,7 +207,7 @@ test('정상 체크인: 스킬별 x 시간대 counts/version/os POST, PII/IP/식
     const serial = JSON.stringify(body);
     assert.ok(!serial.includes(os.hostname()), '호스트명 미포함');
     try { assert.ok(!serial.includes(os.userInfo().username), '사용자명 미포함'); } catch { /* userInfo 불가 환경 */ }
-    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '', '전송 후 로그 truncate');
+    assert.equal(logText(tmp), '', '전송 후 로그 truncate');
     assert.ok(existsSync(lastFlush(tmp)), 'last-flush 갱신');
   } finally {
     server.close();
@@ -165,7 +240,7 @@ test('malformed/빈 줄은 무시하고 유효한 name\\thour 만 집계한다',
     assert.ok(body, '서버가 JSON 본문을 받았다');
     assert.deepEqual(body.counts, { 'banker:foo': { '0': 2 } }, 'malformed/범위밖 무시, 유효 줄만 집계');
     assert.ok(!existsSync(updateCheck(tmp)), 'latest 없는 응답이면 캐시 미변경');
-    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '', '전송 후 로그 truncate');
+    assert.equal(logText(tmp), '', '전송 후 로그 truncate');
   } finally {
     server.close();
   }
@@ -239,7 +314,7 @@ test('전송 실패(도달 불가 endpoint)에도 로그 truncate 하고 hang �
   const elapsed = Date.now() - start;
 
   assert.equal(res.status, 0);
-  assert.equal(readFileSync(usageLog(tmp), 'utf8'), '', '실패해도 로그를 비운다(24h 상한)');
+  assert.equal(logText(tmp), '', '실패해도 로그를 비운다(24h 상한)');
   assert.ok(existsSync(lastFlush(tmp)), 'last-flush 갱신');
   assert.ok(!existsSync(updateCheck(tmp)), '전송 실패면 latest 없음 -> 캐시 미생성');
   assert.ok(elapsed < 9000, `hang 없이 빠르게 종료(${elapsed}ms) - 연결 거부가 10s timeout 전에 처리`);
@@ -258,7 +333,7 @@ test('비-loopback 평문 http 는 전송하지 않는다(no-op·연결 시도 �
   assert.ok(elapsed < 3000, `가드가 연결 시도 없이 즉시 no-op 이어야 한다(${elapsed}ms, 10s timeout 아님)`);
   assert.ok(!existsSync(updateCheck(tmp)), '전송 안 하므로 latest 없음 -> 캐시 미생성');
   // 전송 안 해도 체크인은 전송 시도 후 로그를 비우는 24h 상한 불변을 유지한다.
-  assert.equal(readFileSync(usageLog(tmp), 'utf8'), '', '차단돼도 로그 truncate(배치 유실 허용)');
+  assert.equal(logText(tmp), '', '차단돼도 로그 truncate(배치 유실 허용)');
 });
 
 
@@ -316,7 +391,7 @@ test('응답이 256KiB 한도를 넘으면 연결을 끊고 latest 를 쓰지 �
 
     assert.ok(closedEarly, `client hung up after ${sent} bytes, long before the end`);
     assert.ok(!existsSync(updateCheck(tmp)), '한도를 넘은 응답의 latest 는 캐시에 쓰지 않는다');
-    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '', '실패해도 로그는 비운다');
+    assert.equal(logText(tmp), '', '실패해도 로그는 비운다');
   } finally {
     server.closeAllConnections?.();
     server.close();
@@ -350,7 +425,7 @@ test('조금씩 계속 보내는 서버에도 교환 전체 마감에 끊고 로
 
     assert.equal(code, 0);
     assert.ok(elapsed < 8000, `마감(1.5s)에 끊겨 곧 끝난다(${elapsed}ms), 무활동 10s 를 기다리지 않는다`);
-    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '');
+    assert.equal(logText(tmp), '');
     assert.ok(!existsSync(updateCheck(tmp)));
   } finally {
     server.closeAllConnections?.();
@@ -434,7 +509,7 @@ test('로그는 체크인을 보낸 직후 비운다: 매니페스트를 받는 
     req.on('end', () => { res.writeHead(200); res.end(JSON.stringify({ latest: '99.0.0' })); });
   });
   const manifest = http.createServer((_req, res) => {
-    logAtManifest = readFileSync(usageLog(tmp), 'utf8');
+    logAtManifest = logText(tmp);
     res.writeHead(200);
     res.end('{}');
   });
@@ -450,9 +525,164 @@ test('로그는 체크인을 보낸 직후 비운다: 매니페스트를 받는 
     });
     assert.equal(code, 0);
     assert.equal(logAtManifest, '', '매니페스트를 물을 때 로그는 이미 비어 있다');
-    assert.equal(readFileSync(usageLog(tmp), 'utf8'), '');
+    assert.equal(logText(tmp), '');
   } finally {
     post.close();
     manifest.close();
   }
+});
+
+test('two checkins that start together send the log once', async () => {
+  const bodies = [];
+  await withServer(holdServer(2, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n'.repeat(3));
+    assert.deepEqual(await Promise.all([spawnCheckin(tmp), spawnCheckin(tmp)]), [0, 0]);
+    assert.equal(bodies.length, 2, 'both checkins sent');
+    const sent = bodies.reduce((sum, b) => sum + (b?.counts?.['banker:foo']?.['9'] ?? 0), 0);
+    assert.equal(sent, 3, 'the three lines were sent once in all');
+  });
+});
+
+test('lines written while a checkin sends stay for the next one', async () => {
+  const bodies = [];
+  const tmp = mkTmp();
+  await withServer(holdServer(1, bodies, () => appendFileSync(usageLog(tmp), 'banker:bar\t10\n')), async (url) => {
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp), 0);
+    assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } });
+    assert.equal(logText(tmp), 'banker:bar\t10\n', 'the line written mid-send waits for the next checkin');
+  });
+});
+
+test('a claim a dead checkin left is removed an hour after it was made, and a young one is kept', async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    const now = Date.now();
+    const old = join(bankerDir(tmp), `usage-log.sending-1-${now - 2 * 3600_000}-0a1b2c3d`);
+    const ahead = join(bankerDir(tmp), `usage-log.sending-3-${now + 2 * 3600_000}`);
+    const young = join(bankerDir(tmp), `usage-log.sending-2-${now}-0a1b2c3d`);
+    for (const f of [old, ahead, young]) writeFileSync(f, 'banker:old\t1\n');
+    // rename keeps the log's own time: a claim made a moment ago may hold a log last written hours before
+    const hoursAgo = new Date(now - 3 * 3600_000);
+    utimesSync(young, hoursAgo, hoursAgo);
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp), 0);
+    assert.equal(existsSync(old), false, 'a claim made more than an hour ago is gone');
+    assert.equal(existsSync(ahead), false, 'a claim dated more than an hour ahead (a clock set back) is gone too');
+    assert.equal(existsSync(young), true, "a claim made a moment ago is another checkin's and stays");
+    assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } }, 'no claim is sent again');
+  });
+});
+
+test('a pipe where the log goes is not waited on', { skip: process.platform === 'win32' && 'Windows has no FIFO files' }, async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    assert.equal(spawnSync('mkfifo', [usageLog(tmp)]).status, 0, 'mkfifo');
+    assert.equal(await spawnCheckin(tmp, { timeout: 10_000 }), 0, 'the checkin ended on its own');
+    assert.deepEqual(bodies[0]?.counts, {});
+    assert.equal(lstatSync(usageLog(tmp)).isFIFO(), true, 'the pipe stays');
+  });
+});
+
+test('a link where the log goes is moved aside, and the file it leads to is left as it was', { skip: !canSymlink() && 'this account cannot make links' }, async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    const victim = join(tmp, 'victim');
+    writeFileSync(victim, 'banker:foo\t9\n');
+    symlinkSync(victim, usageLog(tmp));
+    assert.equal(await spawnCheckin(tmp), 0);
+    assert.equal(readFileSync(victim, 'utf8'), 'banker:foo\t9\n', 'the file the link led to is untouched');
+    assert.equal(lexists(usageLog(tmp)), false, 'the link was moved aside and removed');
+    assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } });
+  });
+});
+
+test('a log that cannot be renamed is left for the next checkin', async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const pre = join(tmp, 'pre.mjs');
+    writeFileSync(pre, [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'const real = fs.renameSync;',
+      `fs.renameSync = (from, to) => { if (String(from) === ${JSON.stringify(usageLog(tmp))}) throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" }); return real(from, to); };`,
+      'syncBuiltinESMExports();',
+    ].join('\n'));
+    assert.equal(await spawnCheckin(tmp, { pre }), 0);
+    assert.deepEqual(bodies[0].counts, {}, 'nothing it could not claim is sent');
+    assert.equal(logText(tmp), 'banker:foo\t9\n', 'the log stays for the next checkin');
+  });
+});
+
+test('last-flush is not written through a link', { skip: !canSymlink() && 'this account cannot make links' }, async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    const victim = join(tmp, 'victim2');
+    writeFileSync(victim, 'keep me\n');
+    symlinkSync(victim, lastFlush(tmp));
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp), 0);
+    assert.equal(readFileSync(victim, 'utf8'), 'keep me\n', 'the file the link led to is untouched');
+    assert.equal(lstatSync(lastFlush(tmp)).isSymbolicLink(), false, 'last-flush is now a file of its own');
+  });
+});
+
+test('a log a scanner holds for a moment is claimed on the next try', async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    const pre = join(tmp, 'pre.mjs');
+    writeFileSync(pre, [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'const real = fs.renameSync;',
+      'let held = true;',
+      `fs.renameSync = (from, to) => { if (held && String(from) === ${JSON.stringify(usageLog(tmp))}) { held = false; throw Object.assign(new Error("EBUSY: resource busy or locked, rename"), { code: "EBUSY" }); } return real(from, to); };`,
+      'syncBuiltinESMExports();',
+    ].join('\n'));
+    assert.equal(await spawnCheckin(tmp, { pre }), 0);
+    assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } }, 'the lines were sent');
+    assert.equal(logText(tmp), '', 'and the log was emptied');
+  });
+});
+
+test('a link to a pipe where the log goes is not waited on, and the pipe stays', { skip: process.platform === 'win32' && 'Windows has no FIFO files' }, async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    const fifo = join(tmp, 'target.fifo');
+    assert.equal(spawnSync('mkfifo', [fifo]).status, 0, 'mkfifo');
+    symlinkSync(fifo, usageLog(tmp));
+    assert.equal(await spawnCheckin(tmp, { timeout: 10_000 }), 0, 'the checkin ended on its own');
+    assert.deepEqual(bodies[0]?.counts, {});
+    assert.equal(lstatSync(fifo).isFIFO(), true, 'the pipe the link led to stays');
+  });
+});
+
+test('the claim is removed once the lines are sent, and nothing but the log names is left', async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp), 0);
+    assert.deepEqual(readdirSync(bankerDir(tmp)).filter((n) => n.startsWith('usage-log.')), []);
+  });
 });
