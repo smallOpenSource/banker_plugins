@@ -428,10 +428,11 @@ _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")   # strip control chars (
 
 def _json_object(raw, line_no):
     """The JSON object a transcript line holds, else None after a WARN: a line that is not JSON, is nested
-    deeper than the parser reads, or holds something other than an object is skipped, not fatal."""
+    deeper than the parser reads, holds a number longer than it reads (ValueError since 3.11), or holds
+    something other than an object is skipped, not fatal."""
     try:
         obj = json.loads(raw)
-    except (json.JSONDecodeError, RecursionError):
+    except (ValueError, RecursionError):                  # JSONDecodeError is a ValueError
         print(f"[WARN] line {line_no}: invalid JSON skipped", file=sys.stderr)
         return None
     if not isinstance(obj, dict):
@@ -454,13 +455,18 @@ def _is_turn_record(obj, seen_unknown_type, unsafe_schema, line_no):
         return True
     if t and t not in KNOWN_TYPES and t not in seen_unknown_type:
         seen_unknown_type.add(t)
-        print(f"[WARN] unknown record type '{t}' skipped", file=sys.stderr)
+        print(f"[WARN] unknown record type {t!r} skipped", file=sys.stderr)    # repr: no raw control character
         if not unsafe_schema and t.startswith("v"):
-            print(f"[ERROR] schema marker '{t}' unrecognized — "
+            print(f"[ERROR] schema marker {t!r} unrecognized — "
                   "rerun with --unsafe-schema to proceed",
                   file=sys.stderr)
             raise SystemExit(2)
     return False
+
+
+def _stamp(ts):
+    """A record's timestamp when it is text, else None: a number or another shape reads as a missing one."""
+    return ts if isinstance(ts, str) else None
 
 
 def _odd_message(msg):
@@ -470,9 +476,9 @@ def _odd_message(msg):
 
 def _odd_item(it, text, name):
     """Whether a content item's type, text or tool name has a shape a transcript does not give. A missing or empty
-    text reads as empty and a missing tool name as '?', as before."""
+    text reads as empty and a missing or null tool name as '?'."""
     return ((it is not None and not isinstance(it, str)) or (it == "text" and not isinstance(text, str))
-            or (it == "tool_use" and name is not None and not isinstance(name, str)))
+            or (it == "tool_use" and not isinstance(name, str)))
 
 
 def _take_item(item, line_no, text_parts, tools):
@@ -480,7 +486,8 @@ def _take_item(item, line_no, text_parts, tools):
     tool name has a shape a transcript does not give is named and skipped."""
     if not isinstance(item, dict):
         return
-    it, text, name = item.get("type"), item.get("text") or "", item.get("name", "?")
+    it, text, name = item.get("type"), item.get("text") or "", item.get("name")
+    name = "?" if name is None else name
     if _odd_item(it, text, name):
         print(f"[WARN] line {line_no}: content item of an unknown shape skipped", file=sys.stderr)
     elif it == "text":
@@ -489,7 +496,7 @@ def _take_item(item, line_no, text_parts, tools):
         tools[name] = tools.get(name, 0) + 1
     elif it not in KNOWN_CONTENT_ITEMS:
         print(f"[WARN] line {line_no}: unknown content type "
-              f"'{it}' skipped", file=sys.stderr)
+              f"{it!r} skipped", file=sys.stderr)
 
 
 def _content_parts(content, line_no):
@@ -528,7 +535,7 @@ def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
             continue
         msg = obj.get("message") or {}
         role = msg.get("role") or obj.get("type")
-        ts = obj.get("timestamp")
+        ts = _stamp(obj.get("timestamp"))
         uuid_ = obj.get("uuid") or hashlib.sha256(
             f"{line_no}:{ts}".encode()).hexdigest()[:16]
         got = _content_parts(msg.get("content"), line_no)
@@ -744,7 +751,8 @@ def _stdin_id_key():
     try:
         CACHE_BASE.mkdir(parents=True, exist_ok=True)
         os.chmod(str(CACHE_BASE), 0o700)
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+        # O_EXCL: a name that is already there (a link planted at this guessable name among them) is refused
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(key)
         os.replace(str(tmp), str(path))           # whole or not at all
@@ -806,7 +814,8 @@ CACHE_READ_MAX = 64 * 1024  # bytes: a cached summary or decision is some hundre
 def _read_small(path, limit=CACHE_READ_MAX):
     """The bytes of the regular file at path when it holds at most `limit`, else None (missing, a link, a pipe, a
     folder, a larger file). Opened without blocking and without following a link, so a pipe or a link left at a
-    cache place neither stops a run nor sends it to another file."""
+    cache place neither stops a run nor sends it to another file. Windows has neither flag: there the lstat
+    turns a link away, but a link swapped in between the lstat and the open is followed."""
     flags = (os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
              | getattr(os, "O_BINARY", 0))
     try:
@@ -2447,7 +2456,7 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
     html_doc = HTML_TEMPLATE
     html_doc = html_doc.replace("{{TITLE}}", html.escape(title), 1)
     html_doc = html_doc.replace("{{HEADER_TITLE}}", html.escape(title), 1)
-    html_doc = html_doc.replace("{{DATE_RANGE}}", html.escape(date_range), 1)
+    html_doc = html_doc.replace("{{DATE_RANGE}}", html.escape(_show_bidi_controls(date_range)), 1)
     html_doc = html_doc.replace("{{TURNS}}", _show_bidi_controls("\n".join(rows)), 1)
 
     errs = self_verify(html_doc)

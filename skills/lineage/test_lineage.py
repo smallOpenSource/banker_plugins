@@ -1140,6 +1140,19 @@ class TestLlmReviewSources(_ReviewCase):
         self.assertEqual(len(first), 32)
         self.assertNotEqual(first, second, "nothing stored: each run has a key of its own")
 
+    def test_a_link_at_the_keys_temporary_name_is_not_written_through(self):
+        os.makedirs(self.cache, exist_ok=True)
+        victim = os.path.join(self.d, "victim.txt")
+        with open(victim, "wb") as f:
+            f.write(b"someone's file\n")
+        try:
+            os.symlink(victim, os.path.join(self.cache, "stdin-id.key.%d" % os.getpid()))
+        except (OSError, NotImplementedError):
+            self.skipTest("no symbolic links here")
+        self.assertEqual(len(L._stdin_id_key()), 32)
+        with open(victim, "rb") as f:
+            self.assertEqual(f.read(), b"someone's file\n", "the file the link leads to is untouched")
+
     def test_all_sessions_keeps_each_turns_session_for_the_dividers(self):
         a = os.path.join(self.d, "aaaa1111.jsonl")
         b = os.path.join(self.d, "bbbb2222.jsonl")
@@ -2862,6 +2875,29 @@ class TestBidiControlsOnThePage(_ReviewCase):
         _, text = self._apply()
         self.assertIn(arabic + marks + " " + hebrew, text)
 
+    def test_each_of_the_nine_controls_is_shown_and_the_code_points_beside_them_are_left_alone(self):
+        controls = [chr(c) for c in (*range(0x202A, 0x202F), *range(0x2066, 0x206A))]
+        self.assertEqual(len(controls), 9)
+        beside = chr(0x202F) + chr(0x206A)                     # just outside the two ranges
+        self._write([_rec("user", "점검 " + " ".join("%d%s" % (i, c) for i, c in enumerate(controls)) + " 끝" + beside,
+                          uuid="u1")])
+        self._emit()
+        _, text = self._apply()
+        self.assertEqual(self._controls_in(text), [])
+        for i, c in enumerate(controls):
+            self.assertIn("%d[U+%04X]" % (i, ord(c)), text)
+        self.assertIn(beside, text)
+
+    def test_a_control_in_a_timestamp_is_shown_in_the_date_range_too(self):
+        self._write([_rec("user", "점검", ts=self.RLO + "2026-08-09T10:00:00Z", uuid="u1")])
+        rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])
+        self.assertEqual(rc, 0)
+        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(self._controls_in(text), [])
+        self.assertIn('id="now">[U+202E]2026-08-0<', text)
+
 
 class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
     """A transcript line that is not an object, or is nested too deep to parse, is skipped with a WARN like any bad
@@ -2918,6 +2954,62 @@ class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
             text = f.read()
         self.assertIn("안녕하세요 1", text)
         self.assertIn("안녕하세요 2", text)
+
+    def _page(self):
+        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            return f.read()
+
+    def test_a_number_longer_than_the_parser_reads_is_skipped(self):
+        good = lambda n: json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
+        rc, err = self._run([good(1), '{"type": "user", "n": ' + "9" * 5000 + "}", good(2)])
+        self.assertEqual(rc, 0, err)
+        if hasattr(sys, "get_int_max_str_digits"):            # 3.11, and 3.7 to 3.10 from their 2022 security releases
+            self.assertIn("line 2: invalid JSON skipped", err)
+        text = self._page()
+        self.assertIn("안녕하세요 1", text)
+        self.assertIn("안녕하세요 2", text)
+
+    def test_a_timestamp_that_is_not_text_reads_as_missing(self):
+        stamps = [5, 1.5, True, ["2026"], {"a": 1}, "2026-08-09T10:00:00Z"]
+        rc, err = self._run([json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="t%d" % n, ts=ts))
+                             for n, ts in enumerate(stamps)])
+        self.assertEqual(rc, 0, err)
+        text = self._page()
+        for n in range(len(stamps)):
+            self.assertIn("안녕하세요 %d" % n, text)
+
+    def test_a_null_tool_name_beside_named_tools_reads_as_unknown(self):
+        recs = [_rec("user", "점검해 주세요", uuid="u1"),
+                {"type": "assistant", "uuid": "a1", "timestamp": "2026-08-09T10:00:01Z",
+                 "message": {"role": "assistant", "content": [{"type": "text", "text": "확인합니다"},
+                                                              {"type": "tool_use", "name": None, "input": {}}]}},
+                {"type": "assistant", "uuid": "a2", "timestamp": "2026-08-09T10:00:02Z",
+                 "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read", "input": {}}]}}]
+        for extra in ((), ("--redact-extra", "secretword")):
+            rc, err = self._run([json.dumps(r) for r in recs], extra)
+            self.assertEqual(rc, 0, err)
+            text = self._page()
+            self.assertIn("?×1, Read×1", text)
+            self.assertNotIn("None×", text)
+            for p in os.listdir(self.d):
+                if p.startswith("out") and p.endswith(".html"):
+                    os.unlink(os.path.join(self.d, p))
+
+    def test_a_record_type_with_control_characters_is_named_escaped(self):
+        rc, err = self._run([json.dumps({"type": "x\x1b[31m\n[lineage] ERROR: forged"}),
+                             json.dumps(_rec("user", "안녕하세요", uuid="g1"))])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("unknown record type", err)
+        self.assertNotIn("\x1b", err)
+        self.assertFalse([l for l in err.splitlines() if l.startswith("[lineage] ERROR")], err)
+        stream = io.StringIO(json.dumps({"type": "v9\x1b[2J\nfake"}) + "\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+            list(L.parse_turns(stream, session_id="s", session_name="s"))
+        self.assertIn("schema marker", err.getvalue())
+        self.assertNotIn("\x1b", err.getvalue())
+        self.assertNotIn("\nfake", err.getvalue())
 
 
 class TestRulebaseMatches2x(unittest.TestCase):
