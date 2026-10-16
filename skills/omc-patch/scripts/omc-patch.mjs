@@ -290,8 +290,9 @@ function switchActive(sha, have) {
 // ── 쓰기 ─────────────────────────────────────────────────────────────────────
 // 같은 폴더의 새 임시 파일(있으면 실패하는 열기)에 쓴 뒤 rename 으로 바꾼다. 하드 링크로 이어진 다른 이름(폴더 밖
 // 파일)의 내용은 그대로 둔다. 쓸 파일이 링크면 쓰는 때의 실제 경로에서 바꿔 링크를 남긴다. 그래서 확인 뒤 그 자리가
-// 폴더 밖 링크로 바뀌면 그 실제 파일이 바뀐다(확인과 쓰기 사이의 틈은 줄었을 뿐 없지 않다). 권한은 mode 를 주면
-// 그 값, 아니면 원래 파일의 것(없으면 0644)이다.
+// 폴더 밖 링크로 바뀌면 그 실제 파일이 바뀐다(확인과 쓰기 사이의 틈은 줄었을 뿐 없지 않다). follow 가 false 면
+// 링크를 따라가지 않고 그 이름 자리를 새 파일로 바꾼다(링크는 사라지고 링크가 가리키던 파일은 그대로다. 고정 기록).
+// 권한은 mode 를 주면 그 값, 아니면 원래 파일의 것(없으면 0644)이다.
 function writeAtomic(file, data, mode, { follow = true } = {}) {
   const real = follow ? realOr(file) : file;
   const tmp = join(dirname(real), `.${basename(real)}.omc-tmp-${process.pid}`);
@@ -367,9 +368,11 @@ function readHook(n, f, r) {
   }
 }
 
+// hooks.json 과 그 백업이 부르는 훅 이름. 읽지 못하는 파일은 건너뛴다. hooks.json 은 [3/4] 가 이름과 이유를 대고 센다.
 function hookNames(root) {
   const files = [join(root, "hooks", "hooks.json"), `${join(root, "hooks", "hooks.json")}.omcbak`];
-  const src = files.filter(existsSync).map((f) => readRegular(f, "utf8")).join("");
+  const readOrEmpty = (f) => { try { return readRegular(f, "utf8"); } catch { return ""; } };
+  const src = files.filter(existsSync).map(readOrEmpty).join("");
   return [...new Set([...src.matchAll(/scripts\/([\w-]+)\.mjs/g)].map((m) => m[1]))].sort();
 }
 
@@ -848,8 +851,9 @@ function patchHooksJson(root) {
   try {
     return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj, why);
   } catch (e) {
-    // JSON 오류 문구는 파일의 글을 담으므로 내지 않는다.
-    hjBad(e instanceof SyntaxError ? "hooks.json 을 읽지 못함 (JSON 이 아님)" : `hooks.json 을 쓰지 못함 (${failWhy(e)})`);
+    // JSON 오류 문구는 파일의 글을 담으므로 내지 않는다. check 는 읽기만 하므로 실패도 읽기다.
+    const why = e instanceof SyntaxError ? "JSON 이 아님" : failWhy(e);
+    hjBad(e instanceof SyntaxError || MODE === "check" ? `hooks.json 을 읽지 못함 (${why})` : `hooks.json 을 쓰지 못함 (${why})`);
     return "unsafe";
   }
 }
@@ -898,10 +902,23 @@ process.on("uncaughtException", (e) => {
   if (!e?.code) for (const l of String(e?.stack ?? "").split("\n").filter((x) => /^\s+at /.test(x)).slice(0, 3)) log(`      ${oneLine(l.trim())}`);
   process.exit(1);
 });
-// URL 의 사용자 정보(`//` 뒤 첫 `/` 앞의 마지막 `@` 까지. 공백, 탭, 비밀번호 안의 @ 도)와 쿼리의 토큰을 가린다. 출력과
-// 기록에 비밀이 남지 않는다. ssh 꼴(`git@host:`)과 경로 안의 @ 는 그대로다.
+// URL 의 사용자 정보(`//` 뒤 첫 `/` 앞의 마지막 `@` 까지. 공백, 탭, 비밀번호 안의 @ 도)와 쿼리의 값(이름과 상관없이)을
+// 가린다. 출력과 기록에 비밀이 남지 않는다. ssh 꼴(`git@host:`)과 경로 안의 @ 는 그대로다. 쿼리의 이름 칸은 `?` 를 받지
+// 않는다. 받으면 `=` 없는 `?` 가 많은 origin 에서 시작 자리마다 끝까지 읽어 길이의 제곱만큼 걸린다.
 const redactUrl = (url) => String(url).replace(/(\/\/)[^/]*@/g, "$1***@")
-  .replace(/([?&][^=&#\s]*=)[^&#\s]*/g, "$1***");
+  .replace(/([?&][^=&#\s?]*=)[^&#\s]*/g, "$1***");
+
+// URL 의 scheme 과 host 까지만. 비밀은 사용자 정보와 쿼리 밖(경로, 조각, `;` 매개변수)에도 들 수 있어 나머지는 버린다.
+// scp 꼴(`git@host:org/repo.git`)은 host 만이다.
+function hostOnly(url) {
+  try {
+    const u = new URL(String(url));
+    return u.host ? `${u.protocol}//${u.host}` : "(호스트가 없는 URL 또는 로컬 경로)";
+  } catch {
+    const scp = /^(?:[^@/:]+@)?([^:/]+):(?!\/\/)/.exec(String(url));
+    return scp ? scp[1] : "(URL 꼴이 아님)";
+  }
+}
 
 // hooks.json 옆의 수동 백업 후보. usable 은 PostToolUse 를 담은 유효한 JSON 이다. 링크로 심은 후보는
 // unsafe 로 따로 두고 읽지도 않는다. 폴더 밖 파일(PostToolUse 키가 있는 settings.json 등)이 hooks.json 이 된다.
@@ -979,16 +996,26 @@ function pinMarketplace() {
 // PINFILE 은 스크립트 위치가 아니라 homedir() 기준이라 남의 기록인 줄 모르고 쓰기 쉽다.
 // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
 // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
+// 덮어쓴 옛 기록에 URL 칸이 있었고 같은 파일의 다른 이름이 있으면, 그쪽에 남은 칸을 알리고 실패로 센다.
 function writePinRecord() {
+  let ino = null;
   try {
     mkdirSync(dirname(PINFILE), { recursive: true });
     if (isLink(PINFILE)) throw new Error("링크라 따라가 쓰지 않음");
+    ino = oldCellIno();
     writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600, { follow: false });
-    return true;
   } catch (e) {
     bad(`고정 기록(PINNED)을 쓰지 못함 (${failWhy(e)}). origin 은 고정됨: ${oneLine(PINFILE)}`);
     return false;
   }
+  return ino === null ? true : sharedLeft(SHARED_WHY, ino);
+}
+
+// 덮어쓸 옛 기록에 URL 칸이 있고 같은 파일의 다른 이름이 있으면 그 inode 다. 칸이 없거나, 다른 이름이 없거나,
+// 기록을 읽지 못하면 null 이다.
+function oldCellIno() {
+  try { return hasUrlKey(parseRecord(pinRecordText()).rec) ? sharedIno() : null; }
+  catch { return null; }
 }
 
 // 이미 고정된 origin. 옛 기록의 URL 칸을 지우지 못했으면 고정은 그대로 두고 실패로 센다.
@@ -1099,7 +1126,7 @@ function unpinMarketplace(url) {
   try { git(["remote", "set-url", "--", "origin", restored]); }
   catch (e) {
     bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${gitError(e)})`);
-    log(`      원래 URL(자격증명은 가림): ${oneLine(redactUrl(restored))}. 원문은 origin 의 omc-pinned:// 뒤에 그대로 있습니다.`);
+    log(`      원래 URL(호스트까지만): ${oneLine(hostOnly(restored))}. 원문은 origin 의 omc-pinned:// 뒤에 그대로 있습니다.`);
     return "unpin-failed";
   }
   return "unpinned";

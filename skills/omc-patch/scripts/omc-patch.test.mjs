@@ -1643,7 +1643,7 @@ test("a set-url that fails is reported and counted: the pin writes no PINNED, th
     const back = run(f.home, ["--revert"]);
     assert.equal(back.code, 1, back.out);
     assert.match(back.out, /\[!\] 고정 해제 실패: origin 을 되돌리지 못했습니다 \(/);
-    assert.match(back.out, /원래 URL\(자격증명은 가림\): https:\/\/example\.invalid\/omc\.git\. 원문은 origin 의 omc-pinned:\/\/ 뒤에 그대로 있습니다\./);
+    assert.match(back.out, /원래 URL\(호스트까지만\): https:\/\/example\.invalid\. 원문은 origin 의 omc-pinned:\/\/ 뒤에 그대로 있습니다\./);
     assert.match(back.out, /되돌리기를 끝내지 못했습니다/);
   } finally {
     chmodSync(gitDir, 0o755);
@@ -1884,7 +1884,7 @@ test("a bare apply under GIT_DIR of a decoy with the same tag still unpacks the 
   assert.doesNotMatch(foo, /decoy/);
 });
 
-// ── tests for the fixes under review (candidates B1) ─────────────────────────────────────────────────────
+// ── a rollback that fails, hooks it cannot read or write, two runs at once, writes down to the disk, masked URLs ──
 
 // Makes the second rename into foo.mjs fail, as a full disk or a virus scanner holding the file might: the patch
 // was written, the file fails the syntax check, and the way back is refused.
@@ -1979,12 +1979,13 @@ test("an error the tool did not expect prints on one line with the folder name c
   writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
   for (const n of ["foo", "stopper"]) writeFileSync(join(odd, "scripts", `${n}.mjs`), SCRIPT(n));
   writeFileSync(join(odd, "scripts", "lib.mjs"), LIB);
-  chmodSync(join(odd, "hooks", "hooks.json"), 0o000);
+  // a revert lists the scripts folder without a guard of its own (a hooks.json it cannot read is named in [3/4] now)
+  chmodSync(join(odd, "scripts"), 0o000);
   let r;
   try {
-    r = run(bareHome(), ["--root", odd, "--check"]);
+    r = run(bareHome(), ["--root", odd, "--revert"]);
   } finally {
-    chmodSync(join(odd, "hooks", "hooks.json"), 0o644);
+    chmodSync(join(odd, "scripts"), 0o755);
   }
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /\[!\] 처리하지 못한 오류: EACCES/);
@@ -2112,7 +2113,7 @@ test("a hook is read once per run: a second read could see what another run wrot
   assert.equal(read(log).trim().split("\n").length, 1, "foo.mjs is read exactly once");
 });
 
-test("a set-url that fails shows the original URL with its credentials masked, and no command that would print them", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+test("a set-url that fails shows the original URL up to its host, and no command that would print the rest", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   const withPassword = `https://u:${"s3" + "cret"}@example.invalid/omc.git?api_key=${"k3" + "y"}`;
   assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${withPassword}`], f.market).status, 0);
@@ -2125,9 +2126,36 @@ test("a set-url that fails shows the original URL with its credentials masked, a
     chmodSync(gitDir, 0o755);
   }
   assert.equal(back.code, 1, back.out);
-  assert.match(back.out, /원래 URL\(자격증명은 가림\): https:\/\/\*\*\*@example\.invalid\/omc\.git\?api_key=\*\*\*\. 원문은 origin 의 omc-pinned:\/\/ 뒤에 그대로 있습니다\./);
+  assert.match(back.out, /원래 URL\(호스트까지만\): https:\/\/example\.invalid\. 원문은 origin 의 omc-pinned:\/\/ 뒤에 그대로 있습니다\./);
   assert.ok(!back.out.includes("s3cret") && !back.out.includes("k3y"), back.out);
   assert.doesNotMatch(back.out, /config --get/);
+});
+
+// A secret may sit in the path, a fragment or a ";" parameter as well as in the user part and the query, so the line
+// names the URL up to its host. The whole URL is still in origin, after omc-pinned://.
+test("a set-url that fails names the original URL up to its host, whatever part holds a secret", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const secret = "S3" + "CRETPW";
+  for (const [url, shownAs] of [
+    [`https://example.invalid/${secret}/omc.git`, "https://example.invalid"],
+    [`https://example.invalid/omc.git#access_token=${secret}`, "https://example.invalid"],
+    [`https://example.invalid/omc.git;auth=${secret}`, "https://example.invalid"],
+    [`https://u:${secret}@example.invalid:8443/omc.git?token=${secret}`, "https://example.invalid:8443"],
+    [`git@example.invalid:org/omc-${secret}.git`, "example.invalid"],
+  ]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${url}`], f.market).status, 0);
+    const gitDir = join(f.market, ".git");
+    chmodSync(gitDir, 0o555);
+    let back;
+    try {
+      back = run(f.home, ["--revert"]);
+    } finally {
+      chmodSync(gitDir, 0o755);
+    }
+    assert.equal(back.code, 1, back.out);
+    assert.ok(back.out.includes(`원래 URL(호스트까지만): ${shownAs}. 원문은 origin 의 omc-pinned:// 뒤에 그대로 있습니다.`), back.out);
+    assert.ok(!back.out.includes(secret), `${url}: ${back.out}`);
+  }
 });
 
 test("a query value is masked whatever its name", { skip: !HAS_GIT && "git not found" }, () => {
@@ -2140,6 +2168,18 @@ test("a query value is masked whatever its name", { skip: !HAS_GIT && "git not f
     assert.ok(!out.includes(pw), `${name}: ${out}`);
     assert.match(out, /origin=https:\/\/example\.invalid\/omc\.git\?a=\*\*\*&/, name);
   }
+});
+
+// The query mask reads each name once: an origin of many "?" and no "=" is masked in time that grows with its length,
+// not with its square (with "?" allowed in the name, 100,000 of them took 16 seconds).
+test("an origin of many question marks is masked without stalling --check", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  // written to the config file, not given to git: a command line this long is more than Windows takes
+  const config = join(f.market, ".git", "config");
+  writeFileSync(config, read(config).replace(ORIGIN, `${ORIGIN}?${"?".repeat(300000)}`));
+  const r = runBy(f.home, ["--check", "--no-update"]);
+  assert.equal(r.error, undefined, "the run ended before its deadline");
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/example\.invalid\/omc\.git\?\?\?/);
 });
 
 test("--check names the version whose hooks.json it cannot read; the verdict leaves an idle version out and says so", { skip: !HAS_GIT && "git not found" }, () => {
@@ -2413,6 +2453,29 @@ test("an apply and a revert over an old record with another hard-linked name say
   }
 });
 
+// The first pin writes a new record over the old one: the other name of an old record keeps the URL all the same.
+test("a first pin over an old record that has another hard-linked name says the URL stays there, and counts it", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const { f, secret, record, pinfile } = olderPin();
+  assert.equal(runGit(["remote", "set-url", "origin", ORIGIN], f.market).status, 0, "the origin is not pinned yet");
+  writeFileSync(pinfile, record);
+  const other = join(root, `other-name${seq++}`);
+  try {
+    linkSync(pinfile, other);
+  } catch {
+    t.skip("hard links are not available here");
+    return;
+  }
+  const ino = lstatSync(pinfile, { bigint: true }).ino;
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /옛 URL 칸을 이 이름에서만 지움 \(같은 파일의 다른 이름이 있어 그쪽에는 남음\)/);
+  assert.ok(r.out.includes(`다른 이름은 같은 파일 시스템에서 inode(Windows 는 파일 ID) ${ino} 로 찾습니다.`), r.out);
+  assert.equal(origin(f.market), `omc-pinned://${ORIGIN}`, "the origin is pinned all the same");
+  assert.equal(JSON.parse(read(pinfile)).originUrl, undefined, "this name holds the new record");
+  assert.ok(read(other).includes(secret), "the other name is left as it was");
+  assert.ok(!r.out.includes(secret), "the password is not printed");
+});
+
 test("a hard-linked record with no URL field is not named", { skip: !HAS_GIT && "git not found" }, (t) => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   assert.equal(run(f.home, ["--no-update"]).code, 0);
@@ -2659,6 +2722,69 @@ test("a PINNED that is a socket is passed over as a FIFO is: no read error", pos
     assert.doesNotMatch(r.out, /읽지 못함|확인하지 못함/);
   } finally {
     await new Promise((res) => srv.close(res));
+  }
+});
+
+test("a PINNED that is a FIFO is not read: --check, the apply and the revert end, and the revert removes it", posixFifoGit, (t) => {
+  const { f, pinfile } = olderPin();
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  if (!mkfifoAt(pinfile)) {
+    t.skip("no mkfifo here");
+    return;
+  }
+  for (const args of [["--check", "--no-update"], ["--no-update"]]) {
+    const r = runBy(f.home, args);
+    assert.equal(r.error, undefined, `the run ended before its deadline: ${args.join(" ")}`);
+    assert.doesNotMatch(r.out, /읽지 못함|확인하지 못함/);
+  }
+  const back = runBy(f.home, ["--revert"]);
+  assert.equal(back.error, undefined, "the revert ended before its deadline");
+  assert.equal(back.code, 0, back.out);
+  assert.equal(existsSync(pinfile), false, "the revert removed the FIFO");
+});
+
+// A link to itself (a link loop) and a record folder that is a file stop the stat of PINNED (ELOOP, ENOTDIR) as a
+// missing record does: neither can hold a URL.
+test("a PINNED that is a link to itself, and a record folder that is a file, hold no record: --check and the revert pass over them", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const { f, pinfile } = olderPin();
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  rmSync(pinfile, { force: true });
+  try {
+    symlinkSync(pinfile, pinfile);
+  } catch {
+    t.skip("file symlinks need privileges here");
+    return;
+  }
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 모두 적용된 상태입니다\./, "a link loop");
+  rmSync(pinfile, { force: true });
+  rmSync(dirname(pinfile), { recursive: true });
+  writeFileSync(dirname(pinfile), "a file where the record folder would be\n");
+  assert.match(run(f.home, ["--check", "--no-update"]).out, /결과: 모두 적용된 상태입니다\./, "a record folder that is a file");
+  const back = run(f.home, ["--revert"]);
+  assert.equal(back.code, 0, back.out);
+});
+
+// hooks.json is read first for the hook names. One that is not a regular file is named where hooks.json is checked,
+// not lost in a line about an error the tool did not handle.
+test("a hooks.json that is a FIFO or a folder is named: --check could not read it, the apply leaves it, both count it", posixFifo, (t) => {
+  const folder = (p) => { rmSync(p); mkdirSync(p); return true; };
+  for (const make of [mkfifoAt, folder]) {
+    for (const [args, line, verdict] of [
+      [["--check"], /\[!\] hooks\.json 을 읽지 못함 \(ENOTFILE\)/, /결과: hooks\.json 을 확인하지 못했습니다\./],
+      [[], /\[!\] hooks\.json 을 건드리지 않음 \(일반 파일이 아님\)/, /완료\. 실패 1건\./],
+    ]) {
+      const plug = bundle();
+      if (!make(join(plug, "hooks", "hooks.json"))) {
+        t.skip("no mkfifo here");
+        return;
+      }
+      const r = runBy(bareHome(), ["--root", plug, ...args]);
+      assert.equal(r.error, undefined, `the run ended before its deadline: ${args.join(" ")}`);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, line);
+      assert.match(r.out, verdict);
+      assert.doesNotMatch(r.out, /처리하지 못한 오류/);
+    }
   }
 });
 
