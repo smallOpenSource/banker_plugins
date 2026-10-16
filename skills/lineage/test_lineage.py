@@ -3012,6 +3012,46 @@ class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
         self.assertNotIn("\nfake", err.getvalue())
 
 
+class TestLoneSurrogatesAndOddIds(_ReviewCase):
+    """3.0.7: a lone surrogate (U+D800 to U+DFFF with no pair, which UTF-8 cannot hold) in a transcript or in a
+    reviewer's decisions, and a uuid that is not text, no longer stop the export with a traceback."""
+
+    def _records_with_a_lone_surrogate(self):
+        recs = self._records()
+        recs[1] = self._asst("고친 결과 " + chr(0xD800) + " 통과합니다.", "a1", tools=["Read"])
+        recs[2] = dict(recs[2], uuid=["not", "text"])
+        return recs
+
+    def test_the_rulebase_page_finishes_and_shows_the_replacement_character(self):
+        self._write(self._records_with_a_lone_surrogate())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output",
+                         os.path.join(self.d, "rb.html")])
+        self.assertEqual(rc, 0, err.getvalue())
+        page = [p for p in os.listdir(self.d) if p.startswith("rb") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            self.assertIn("고친 결과 " + chr(0xFFFD) + " 통과합니다.", f.read())
+
+    def test_the_review_pack_is_written(self):
+        self._write(self._records_with_a_lone_surrogate())
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc, pack = self._emit()
+        self.assertEqual(rc, 0)
+        self.assertTrue(pack["turns"])
+
+    def test_a_reviewers_summary_with_a_lone_surrogate_is_shown_with_the_replacement_character(self):
+        self._write(self._records())
+        dec = os.path.join(self.d, "dec-lone.json")
+        with open(dec, "w", encoding="utf-8") as f:              # json.dumps escapes it, as a model's JSON would
+            f.write(json.dumps([{"id": "a1", "keep": True, "summary": "요약 " + chr(0xD800) + " 끝"}]))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._emit()
+            rc, text = self._apply(extra=["--decisions", dec])
+        self.assertEqual(rc, 0)
+        self.assertIn("요약 " + chr(0xFFFD) + " 끝", text)
+
+
 class TestRulebaseMatches2x(unittest.TestCase):
     def test_rulebase_output_is_byte_for_byte_the_2x_output(self):
         try:
@@ -3125,6 +3165,31 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         turns, err, code = self._read([{"type": "assistant", "uuid": "a", "message": {"content": items}}])
         self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
         self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 4)
+
+    def test_a_lone_surrogate_in_a_record_becomes_the_replacement_character_with_one_warning(self):
+        lone, fffd = chr(0xD800), chr(0xFFFD)
+        rec = {"type": "assistant", "uuid": "a" + lone, "timestamp": "t" + lone,
+               "message": {"role": "assistant" + lone, "content": [{"type": "text", "text": "x " + lone + " y"},
+                                                                     {"type": "tool_use", "name": "Bash" + lone}]}}
+        turns, err, code = self._read([rec, _rec("user", "plain")])
+        self.assertIsNone(code)
+        t = turns[0]
+        self.assertEqual((t["role"], t["text"], t["uuid"], t["ts"], t["tools"]),
+                         ("assistant" + fffd, "x " + fffd + " y", "a" + fffd, "t" + fffd, {"Bash" + fffd: 1}))
+        self.assertEqual(turns[1]["text"], "plain")
+        self.assertEqual(err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n")
+
+    def test_a_uuid_that_is_not_text_gets_an_id_from_the_line_with_a_warning(self):
+        odd = (["a", "b"], {"k": 1}, 5, True)
+        lines = [{"type": "user", "uuid": u, "timestamp": "t%d" % n, "message": {"content": "hi %d" % n}}
+                 for n, u in enumerate(odd, 1)]
+        lines.append({"type": "user", "uuid": "", "timestamp": "t5", "message": {"content": "hi 5"}})
+        turns, err, code = self._read(lines)
+        self.assertIsNone(code)
+        self.assertEqual([t["uuid"] for t in turns],
+                         [hashlib.sha256(("%d:t%d" % (n, n)).encode()).hexdigest()[:16] for n in range(1, 6)])
+        self.assertEqual(err, "".join("[WARN] line %d: uuid that is not text replaced by an id from the line\n" % n
+                                      for n in range(1, 5)))
 
 
 if __name__ == "__main__":
