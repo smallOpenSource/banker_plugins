@@ -109,6 +109,55 @@ export function writeByRename(target, data) {
   }
 }
 
+// 사용 기록을 덧붙이기로 여는 깃발. 같은 fd 로 줄 수도 센다. 링크를 따르지 않고(O_NOFOLLOW) FIFO 를 기다리지
+// 않는다(O_NONBLOCK). Windows 에는 둘 다 없어 열기 전에 자리를 보고 링크면 두며, 그 뒤에 바뀌어 든 링크는 거기서
+// 따라간다(obsidize 훅과 같은 한계. Windows 는 wx 도 끊어진 링크를 따라가 원자적으로 막을 수단이 없다).
+const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+const APPEND_FLAGS = fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_CREAT | NO_FOLLOW
+  | (fs.constants.O_NONBLOCK ?? 0);
+
+function isLink(file) {
+  try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; }
+}
+
+// 사용 기록을 덧붙이기로 연 fd. 일반 파일이고 이름이 하나(nlink 1)일 때만 돌려주고, 그 밖(링크, 하드 링크, FIFO,
+// 폴더)은 연 것을 닫고 null. 없으면 새로 만든다. 열기 자체의 오류는 던진다.
+function openLogForAppend(file) {
+  if (!NO_FOLLOW && isLink(file)) return null;
+  const fd = fs.openSync(file, APPEND_FLAGS);
+  let ok = false;
+  try {
+    const st = fs.fstatSync(fd);
+    ok = st.isFile() && st.nlink <= 1;
+  } finally {
+    if (!ok) fs.closeSync(fd);
+  }
+  return ok ? fd : null;
+}
+
+// 사용 기록(usage-log)에 `<name>\t<hour>` 한 줄을 더한다(hour = 로컬 시각 0-23, name 은 SKILL_NAME_RE 꼴만).
+// 줄이 LOG_MAX_LINES 에 이르렀으면 더하지 않는다(best-effort, 체크인이 비우면 다시 쌓인다). 기록 자리가 FIFO 면
+// 기다리지 않고, 링크나 하드 링크면 그 너머 파일에 쓰지 않으며, 끊어진 링크로 새 파일을 만들지 않는다(링크인 자리는
+// 다음 체크인이 링크를 옮겨 지운다). configDir() 를 매 호출 재계산한다(테스트 격리). 더했으면 true, 그 밖과 모든
+// 오류는 false.
+export function appendUsageLog(name) {
+  if (typeof name !== 'string' || !SKILL_NAME_RE.test(name)) return false;
+  let fd = null;
+  try {
+    fs.mkdirSync(configDir(), { recursive: true });
+    fd = openLogForAppend(path.join(configDir(), 'usage-log'));
+    if (fd === null) return false;
+    const lines = (fs.readFileSync(fd, 'utf8').match(/\n/g) || []).length;
+    if (lines >= LOG_MAX_LINES) return false;
+    fs.writeSync(fd, `${name}\t${new Date().getHours()}\n`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch { /* best-effort */ }
+  }
+}
+
 // config.json 을 읽어 객체로 반환. 파일 없음·malformed JSON·권한 오류 등 어떤 예외에도 던지지 않고 {} 반환.
 export function readConfig() {
   try {

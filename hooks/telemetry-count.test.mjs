@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -146,4 +146,36 @@ test('used-skills.json 자리가 FIFO 여도 기다리지 않는다', { skip: NO
   assert.equal(readFileSync(usageLog(tmp), 'utf8').split('\n').filter(Boolean).length, 1, '기록에 줄 하나');
   assert.equal(lstatSync(usedSkills(tmp)).isFile(), true, '집합은 일반 파일이 된다');
   assert.deepEqual(JSON.parse(readFileSync(usedSkills(tmp), 'utf8')), ['banker:foo']);
+});
+
+// 이 계정이 여기서 심볼릭 링크를 만들 수 있는지(Windows 는 권한이 있어야 한다).
+function canSymlink() {
+  try {
+    symlinkSync('nowhere', join(mkTmp(), 'probe'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+const NO_LINKS = !canSymlink() && '이 계정은 링크를 만들 수 없다';
+
+test('기록 자리가 FIFO 면 기다리지 않고 FIFO 는 그대로 둔다', { skip: NO_FIFO }, () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  assert.equal(spawnSync('mkfifo', [usageLog(tmp)]).status, 0, 'mkfifo');
+  const res = runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' }, {}, { timeout: 10_000 });
+  assert.equal(res.signal, null, '훅이 스스로 끝났다');
+  assert.equal(res.status, 0);
+  assert.equal(lstatSync(usageLog(tmp)).isFIFO(), true, 'FIFO 는 그대로');
+});
+
+test('기록 자리가 링크면 그 너머에 쓰지 않는다', { skip: NO_LINKS }, () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const victim = join(tmp, 'victim');
+  writeFileSync(victim, 'keep\n');
+  symlinkSync(victim, usageLog(tmp));
+  const res = runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' });
+  assert.equal(res.status, 0);
+  assert.equal(readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
 });

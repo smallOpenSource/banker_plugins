@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
-  readUsedSkills, recordUsedSkill, changedSkillsBetween,
+  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog,
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
   SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX, SKILL_NAME_RE, netDeadlineMs,
 } from './telemetry-config.mjs';
@@ -364,4 +364,62 @@ test('writeUpdateCache: 캐시 자리가 폴더면 그대로 두고 임시 파�
   assert.strictEqual(writeUpdateCache({ latest: '1.0.0' }), false);
   assert.strictEqual(fs.statSync(cachePath).isDirectory(), true, '폴더는 그대로');
   assert.deepStrictEqual(fs.readdirSync(configDir()).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
+});
+
+// ---- 사용 기록 한 줄 더하기(appendUsageLog): FIFO 를 기다리지 않고 링크 너머에 쓰지 않는다 ----
+
+const usageLogPath = () => path.join(configDir(), 'usage-log');
+
+test('appendUsageLog: 없으면 만들고 name\\thour 한 줄을 더한다', () => {
+  assert.strictEqual(appendUsageLog('banker:foo'), true);
+  assert.strictEqual(appendUsageLog('banker:foo'), true);
+  const lines = fs.readFileSync(usageLogPath(), 'utf8').split('\n');
+  assert.strictEqual(lines.pop(), '', '줄마다 개행으로 끝난다');
+  assert.strictEqual(lines.length, 2);
+  for (const line of lines) assert.match(line, /^banker:foo\t([0-9]|1[0-9]|2[0-3])$/);
+});
+
+test('appendUsageLog: banker:<이름> 꼴이 아니면 쓰지 않는다', () => {
+  for (const bad of ['banker:a\tb', 'other:x', '']) {
+    assert.strictEqual(appendUsageLog(bad), false, JSON.stringify(bad));
+  }
+  assert.strictEqual(fs.existsSync(usageLogPath()), false, '기록이 생기지 않는다');
+});
+
+test('appendUsageLog: 기록 자리의 링크 너머에 쓰지 않고 링크는 그대로 둔다', { skip: NO_LINKS }, () => {
+  const victim = plantLink(usageLogPath());
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
+  assert.strictEqual(fs.lstatSync(usageLogPath()).isSymbolicLink(), true, '링크는 그대로');
+});
+
+test('appendUsageLog: 끊어진 링크인 기록 자리로 새 파일을 만들지 않는다', { skip: NO_LINKS }, () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const nowhere = path.join(tmpDir, 'nowhere');
+  fs.symlinkSync(nowhere, usageLogPath());
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.existsSync(nowhere), false, '링크 대상 자리에 아무것도 생기지 않는다');
+});
+
+test('appendUsageLog: 같은 파일에 다른 이름이 있으면(하드 링크) 쓰지 않는다', () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const victim = path.join(tmpDir, 'victim');
+  fs.writeFileSync(victim, 'keep\n');
+  fs.linkSync(victim, usageLogPath());
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '다른 이름의 내용은 그대로');
+});
+
+test('appendUsageLog: 기록 자리가 폴더면 그대로 둔다', () => {
+  fs.mkdirSync(usageLogPath(), { recursive: true });
+  assert.strictEqual(appendUsageLog('banker:foo'), false);
+  assert.strictEqual(fs.statSync(usageLogPath()).isDirectory(), true, '폴더는 그대로');
+});
+
+test('appendUsageLog: 설정 폴더 자체가 링크여도 줄을 더한다', { skip: NO_LINKS }, () => {
+  const real = path.join(tmpDir, 'real-banker');
+  fs.mkdirSync(real);
+  fs.symlinkSync(real, configDir(), 'dir');
+  assert.strictEqual(appendUsageLog('banker:foo'), true);
+  assert.match(fs.readFileSync(path.join(real, 'usage-log'), 'utf8'), /^banker:foo\t([0-9]|1[0-9]|2[0-3])\n$/);
 });
