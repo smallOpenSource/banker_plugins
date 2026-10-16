@@ -12,6 +12,7 @@ Auto-discovery assumes Claude Code's ~/.claude/projects/<encoded-cwd>/ layout.
 import argparse
 import bisect
 import hashlib
+import heapq
 import hmac
 import html
 import json
@@ -172,6 +173,69 @@ def _mask(s: str) -> str:
     return (s[:4] + "****" + s[-4:]) if len(s) > 8 else "[REDACTED]"
 
 
+class _Trail:
+    """Where each character of a text that redaction rewrites stood in the text it started as (-1 for one a marker
+    or a mask put in). A text whose split secrets were joined first is kept only if it shows no character that the
+    one pass over the text as it stands (3.0.7) hid (3.0.8)."""
+
+    def __init__(self, n):
+        self.n, self.pos = n, None  # None: each character is where it was
+
+    def carry(self, edits):
+        """Follow `edits` (start, end, replacement), sorted and apart: an empty replacement drops what it covers, a
+        mask keeps where its first and last four characters were, a marker is all new."""
+        if not edits:
+            return
+        pos = array("q", range(self.n)) if self.pos is None else self.pos
+        out, at, new = array("q"), 0, array("q", [-1])
+        for s, e, r in edits:
+            out += pos[at:s]
+            if r.startswith("[REDACTED"):
+                out += new * len(r)
+            elif r:
+                out += pos[s:s + 4] + new * (len(r) - 8) + pos[e - 4:e]
+            at = e
+        self.pos = out + pos[at:]
+
+    def sub(self, pat, repl, text):
+        """pat.sub(repl, text), the trail following what it replaced."""
+        edits = []
+
+        def noted(m):
+            r = repl(m)
+            if r != m.group(0):
+                edits.append((m.start(), m.end(), r))
+            return r
+        out = pat.sub(noted, text)
+        self.carry(edits)
+        return out
+
+    def shown(self):
+        """A byte for each character of the text it started as: 1 where the text it follows shows that character."""
+        if self.pos is None:
+            return bytearray(b"\x01") * self.n
+        seen = bytearray(self.n)
+        for p in self.pos:
+            if p >= 0:
+                seen[p] = 1
+        return seen
+
+
+def _plain_sub(pat, repl, text):
+    return pat.sub(repl, text)
+
+
+def _sub_for(trail):
+    """The substitution a redaction layer makes its replacements with: kept on `trail` when there is one."""
+    return _plain_sub if trail is None else trail.sub
+
+
+def _shows_more(trail, shown):
+    """Whether the text `trail` follows shows a character of the text it started as that `shown` (a _Trail.shown of
+    another text from the same start) has hidden."""
+    return (int.from_bytes(trail.shown(), "little") & ~int.from_bytes(shown, "little")) != 0
+
+
 # Characters that cut a value for the patterns while no person reads them as a separator: Unicode's default-ignorable
 # code points (the zero-width space and joiners, the soft hyphen, the direction controls, the variation selectors,
 # the tag characters, the Hangul fillers) and the other format characters, the controls and spaces that are no
@@ -236,11 +300,18 @@ def _cut_spans(text, joined, firsts, origins, matches):
 def _kept(spans, plain):
     """The stretches of `spans` to join: those no value the patterns find in the text as it stands holds already,
     and that cut none of those values in two. Joining across such a value would glue it to its neighbour, so the
-    neighbour's own pattern (a lookbehind, a keyword the greedy class ate) no longer finds it."""
-    def cuts(d, o):
-        return d[0] < o[1] and o[0] < d[1] and not (d[0] <= o[0] and o[1] <= d[1])
-    return [d for d in spans if not any(o[0] <= d[0] and d[1] <= o[1] for o in plain)
-            and not any(cuts(d, o) for o in plain)]
+    neighbour's own pattern (a lookbehind, a keyword the greedy class ate) no longer finds it. Both lists are swept
+    in order with a heap of the values still open, so many of them stay fast."""
+    plain, out, heap, at = sorted(plain), [], [], 0
+    for s, e in sorted(spans):
+        while at < len(plain) and plain[at][0] < e:
+            heapq.heappush(heap, (plain[at][1], plain[at][0]))
+            at += 1
+        while heap and heap[0][0] <= s:
+            heapq.heappop(heap)
+        if not any((o_s <= s and e <= o_e) or not (s <= o_s and o_e <= e) for o_e, o_s in heap):
+            out.append((s, e))
+    return out
 
 
 def _merged(spans):
@@ -254,32 +325,35 @@ def _merged(spans):
     return out
 
 
-def _rejoin_split(text, patterns, entropy=False):
+def _rejoin_split(text, patterns, entropy=False, trail=None):
     """`text` with the splitters taken out of each stretch where, once they are gone, one of `patterns` (and with
     `entropy` the entropy rule) finds a value that the text as it stands does not show whole: the layers after
-    then see that value and hide it. The rest of the text is left as it is (3.0.8)."""
+    then see that value and hide it. The rest of the text is left as it is (3.0.8). `trail` follows what is taken out."""
     if not _SPLITTER_RE.search(text):
         return text
     joined, firsts, origins = _unsplit_runs(text)
     spans = _cut_spans(text, joined, firsts, origins, _matches(joined, patterns, entropy))
     if spans:
         spans = _kept(spans, [(m.start(), m.end()) for m in _matches(text, patterns, entropy)])
+    drops = [(m.start(), m.end(), "") for s, e in _merged(sorted(spans)) for m in _SPLITTER_RE.finditer(text, s, e)]
+    if trail is not None:
+        trail.carry(drops)
     out, at = [], 0
-    for s, e in _merged(sorted(spans)):
-        out += [text[at:s], _SPLITTER_RE.sub("", text[s:e])]
+    for s, e, _ in drops:
+        out.append(text[at:s])
         at = e
     return "".join(out) + text[at:]
 
 
-def redact(text: str, extra: "str | None" = None, mode: str = "full"):
-    """Multi-layer redaction; page_redact and review_redact join split secrets first (3.0.8). Returns (text, counts)."""
-    counts = {}
-    out = text
+def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None):
+    """Multi-layer redaction; page_redact and review_redact join split secrets first (3.0.8). Returns (text, counts).
+    With `trail` (a _Trail), where each character of the result came from is followed too."""
+    counts, out, sub = {}, text, _sub_for(trail)
     for name, pat in SECRET_PATTERNS:
         def repl(m, n=name):
             counts[n] = counts.get(n, 0) + 1
             return _mask(m.group(0)) if mode == "mask" else f"[REDACTED:{n}]"
-        out = pat.sub(repl, out)
+        out = sub(pat, repl, out)
 
     def ent_repl(m):
         s = m.group(0)
@@ -287,7 +361,7 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
             counts["entropy"] = counts.get("entropy", 0) + 1
             return _mask(s) if mode == "mask" else "[REDACTED:entropy]"
         return s
-    out = ENTROPY_LONG.sub(ent_repl, out)
+    out = sub(ENTROPY_LONG, ent_repl, out)
 
     try:
         from detect_secrets import SecretsCollection
@@ -305,7 +379,7 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
                 for s in col[fname]:
                     sv = s.secret_value
                     if sv and sv in out:
-                        out = out.replace(sv, "[REDACTED:ds]")
+                        out = sub(re.compile(re.escape(sv)), lambda m: "[REDACTED:ds]", out)
                         counts["ds:detect-secrets"] = counts.get(
                             "ds:detect-secrets", 0) + 1
         finally:
@@ -329,8 +403,8 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full"):
             # a marker an earlier pass left stays whole: a keyword inside its name is no secret
             pat = re.compile(r"\[REDACTED(?::[^\]\s]*)?\]|" + re.escape(kw), re.IGNORECASE)
             hits = []
-            out = pat.sub(lambda m: m.group(0) if m.group(0).upper().startswith("[REDACTED")
-                          else hits.append(1) or "[REDACTED]", out)
+            out = sub(pat, lambda m: m.group(0) if m.group(0).upper().startswith("[REDACTED")
+                      else hits.append(1) or "[REDACTED]", out)
             if hits:
                 counts[f"custom:{kw}"] = len(hits)
     return out, counts
@@ -416,40 +490,73 @@ REVIEW_SECRET_PATTERNS = [
 ]
 
 
-def _reviewer_patterns(text):
+def _reviewer_patterns(text, trail=None):
     """`text` with what the reviewer patterns find replaced whole by [REDACTED:<name>], and the
     count by name. A split secret is put back together by its callers first (3.0.8)."""
-    counts = {}
+    counts, sub = {}, _sub_for(trail)
     for name, pat in REVIEW_SECRET_PATTERNS:
-        text, k = pat.subn(f"[REDACTED:{name}]", text)
-        if k:
-            counts[name] = k
+        hits = []
+        text = sub(pat, lambda m, marker=f"[REDACTED:{name}]": hits.append(1) or marker, text)
+        if hits:
+            counts[name] = len(hits)
     return text, counts
 
 
-def _rejoin_secrets(text, extra=None):
+def _rejoin_secrets(text, extra=None, trail=None):
     """`text` with each secret a splitter cuts put back together, for every pattern a page or a reviewer's text is
     hidden with: the reviewer's, the page's, the entropy rule and the --redact-extra keywords (3.0.8)."""
     keywords = [k.strip() for k in (extra or "").split(",") if k.strip()]
     patterns = ([p for _, p in REVIEW_SECRET_PATTERNS] + [p for _, p in SECRET_PATTERNS]
                 + [re.compile(re.escape(k), re.IGNORECASE) for k in keywords])
-    return _rejoin_split(text, patterns, entropy=True)
+    return _rejoin_split(text, patterns, entropy=True, trail=trail)
 
 
-def _with_rejoins(text, extra, one_pass):
-    """`one_pass` (text -> (text, found)) over `text` with its split secrets put back together. Once anything was
-    joined, again over its output until a pass changes nothing (at most four passes): a value next to one a marker
-    replaced may be found only then. So a second call finds nothing. A value the text shows whole is hidden in the
-    first pass exactly as 3.0.7 hid it (3.0.8). Returns (text, [found])."""
-    joined = _rejoin_secrets(text, extra)
+def _join_first(text, extra, one_pass):
+    """`one_pass` (text, trail -> (text, found)) over `text` with its split secrets put back together. Once anything
+    was joined, again over its output until a pass changes nothing (at most four passes): a value next to one a
+    marker replaced may be found only then. Returns (text, [found], the _Trail of the text, or None when nothing
+    was joined)."""
+    trail = _Trail(len(text)) if _SPLITTER_RE.search(text) else None
+    joined = _rejoin_secrets(text, extra, trail)
     moved = joined != text
-    red, found = one_pass(joined)
+    red, found = one_pass(joined, trail)
     founds = [found]
     for _ in range(3):
-        joined = _rejoin_secrets(red, extra)
+        joined = _rejoin_secrets(red, extra, trail)
         if joined == red and not moved:
             break  # nothing joined: 3.0.7's one pass is final
         moved = True
+        again, found = one_pass(joined, trail)
+        if again == red:
+            break
+        red = again
+        founds.append(found)
+    return red, founds, trail if moved else None
+
+
+# The key patterns that may find the same key: one kind when passes are compared.
+_KEY_FAMILY = {"AnthropicKey": "key", "OpenAIKey": "key", "GoogleKey": "key"}
+
+
+def _kinds(founds):
+    """How many values of each kind the passes hid, the entropy rule and detect-secrets apart: joining pieces
+    changes how many runs the entropy rule sees."""
+    kinds = {}
+    for found in founds:
+        for k, v in found.items():
+            if k != "entropy" and not k.startswith("ds:"):
+                k = _KEY_FAMILY.get(k, k)
+                kinds[k] = kinds.get(k, 0) + v
+    return kinds
+
+
+def _from_floor(red, found, extra, one_pass):
+    """Joining as _join_first does, but from the output of one pass over the text as it stands."""
+    founds = [found]
+    for _ in range(4):
+        joined = _rejoin_secrets(red, extra)
+        if joined == red:
+            break
         again, found = one_pass(joined)
         if again == red:
             break
@@ -458,10 +565,71 @@ def _with_rejoins(text, extra, one_pass):
     return red, founds
 
 
-def _review_pass(text, extra):
-    pre, counts = _reviewer_patterns(text)
-    red, found = redact(pre, extra=extra, mode="full")
-    return red, sum(counts.values()) + sum(found.values())
+def _hidden_by(floor, base):
+    """The stretches of the text it started as that `floor` (whose trail is `base`) hides, in order, each with what
+    stands for it in `floor`: [(start, end, marker)]."""
+    pos, out, i, n = base.pos, [], 0, len(floor)
+    while i < n:
+        if pos[i] >= 0:
+            i += 1
+            continue
+        j = i
+        while j < n and pos[j] < 0:
+            j += 1
+        out.append((pos[i - 1] + 1 if i else 0, pos[j] if j < n else base.n, floor[i:j]))
+        i = j
+    return out
+
+
+def _patched(red, trail, shown, hidden):
+    """`red` (whose trail is `trail`) with each run of characters it shows that `shown` has hidden put under what
+    stands for them in that text (`hidden`, from _hidden_by), and how many markers that took by name."""
+    pos, starts = trail.pos, [lo for lo, _, _ in hidden]
+    out, counts, at, i = [], {}, 0, 0
+    while i < len(red):
+        if pos[i] < 0 or shown[pos[i]]:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(red) and pos[j] >= 0 and not shown[pos[j]]:
+            j += 1
+        marker = hidden[bisect.bisect_right(starts, pos[i]) - 1][2]
+        name = re.fullmatch(r"\[REDACTED:(\w+)\]", marker)
+        if name:
+            counts[name.group(1)] = counts.get(name.group(1), 0) + 1
+        out += [red[at:i], marker]
+        at = i = j
+    return "".join(out) + red[at:], counts
+
+
+def _with_rejoins(text, extra, one_pass):
+    """_join_first, with each character it shows that one pass over the text as it stands hid (3.0.7 did that one
+    pass) put back under that pass's marker; but if it hides fewer values of some kind, the joining starts from that
+    pass's output instead. Each pass only hides more, so no character 3.0.7 hid shows (3.0.8). Returns (text,
+    [found])."""
+    red, founds, trail = _join_first(text, extra, one_pass)
+    if trail is None:
+        return red, founds  # nothing joined: that was the one pass over the text as it stands
+    base = _Trail(len(text))
+    floor, found = one_pass(text, base)
+    joined = _kinds(founds)
+    if not all(joined.get(k, 0) >= v for k, v in _kinds([found]).items()):
+        return _from_floor(floor, found, extra, one_pass)
+    shown = base.shown()
+    if not _shows_more(trail, shown):
+        return red, founds
+    patched, put_back = _patched(red, trail, shown, _hidden_by(floor, base))
+    again, found = one_pass(patched)
+    out, more = _from_floor(again, found, extra, one_pass)
+    return out, founds + [put_back] + more
+
+
+def _review_pass(text, extra, trail=None):
+    pre, counts = _reviewer_patterns(text, trail)
+    red, found = redact(pre, extra=extra, mode="full", trail=trail)
+    for k, v in found.items():
+        counts[k] = counts.get(k, 0) + v
+    return red, counts
 
 
 def review_redact(text, extra=None):
@@ -469,13 +637,13 @@ def review_redact(text, extra=None):
     are whole (the entropy rule would otherwise cut a key and leave the rest), then fully
     redacted (never masked, whatever --redact-mode says). A secret a splitter cuts is put back
     together (3.0.8). Returns (text, count)."""
-    red, founds = _with_rejoins(text, extra, lambda t: _review_pass(t, extra))
-    return red, sum(founds)
+    red, founds = _with_rejoins(text, extra, lambda t, trail=None: _review_pass(t, extra, trail))
+    return red, sum(sum(f.values()) for f in founds)
 
 
-def _page_pass(text, extra, mode):
-    pre, counts = _reviewer_patterns(text)
-    red, found = redact(pre, extra=extra, mode=mode)
+def _page_pass(text, extra, mode, trail=None):
+    pre, counts = _reviewer_patterns(text, trail)
+    red, found = redact(pre, extra=extra, mode=mode, trail=trail)
     for k, v in found.items():
         counts[k] = counts.get(k, 0) + v
     return red, counts
@@ -485,9 +653,10 @@ def page_redact(text, extra=None, mode="full"):
     """Text as every page shows it (3.0.2): the reviewer patterns first, while keys are whole,
     each hit replaced whole whatever --redact-mode says (a mask keeps 4+4 characters, most of
     a short password); then the page's redaction with this run's mode and keywords. A secret a
-    splitter cuts is put back together (3.0.8). Returns (text, count_by_kind); a second pass
-    over its output finds nothing."""
-    red, founds = _with_rejoins(text, extra, lambda t: _page_pass(t, extra, mode))
+    splitter cuts is put back together (3.0.8). Returns (text, count_by_kind). A second pass
+    over its output finds nothing, but for two values glued with no separator at all (a key
+    run into `Bearer`), where the second shows only once the first is a marker, as in 3.0.7."""
+    red, founds = _with_rejoins(text, extra, lambda t, trail=None: _page_pass(t, extra, mode, trail))
     counts = {}
     for found in founds:
         for k, v in found.items():

@@ -3473,6 +3473,87 @@ class TestSplitSecrets(unittest.TestCase):
         self.assertEqual(red, "k [REDACTED:AnthropicKey] e")
         self.assertEqual(counts, {"AnthropicKey": 1})
 
+    # From the second security review of 3.0.8: neighbours packed tight, where a joined run or a greedy class takes
+    # in the next value's keyword; 3.0.7 hid each of these values.
+    ASIA_KEY = "ASIA" "QZXKWJ7Y8RN5TB2M"
+
+    def test_a_key_after_a_hex_key_across_one_invisible_character_stays_hidden(self):
+        for sep in (chr(0x200C), chr(0x00A0)):
+            red, _ = L.page_redact("api_key=" + self.HEX32 + sep + self.ASIA_KEY)
+            self.assertEqual(red, "api_[REDACTED:HexKey]" + sep + "[REDACTED:ASIA]", hex(ord(sep)))
+
+    def test_a_hex_key_after_a_split_key_keeps_its_keyword(self):
+        cut = len(self.OPENAI_KEY) // 2
+        key = self.OPENAI_KEY[:cut] + self.ZW + self.OPENAI_KEY[cut:]
+        red, _ = L.page_redact(key + chr(0xFEFF) + "api_key=" + self.HEX32)
+        self.assertNotIn(self.HEX32, red)
+        self.assertIn("[REDACTED:HexKey]", red)
+
+    def test_a_url_password_after_a_split_key_stays_hidden(self):
+        cut = len(self.OPENAI_KEY) // 2
+        key = self.OPENAI_KEY[:cut] + self.ZW + self.OPENAI_KEY[cut:]
+        cred = "Pw7q" "Lz9xRt"
+        red, _ = L.page_redact(key + chr(0xFEFF) + "https://user:" + cred + "@db.example.com/x")
+        self.assertNotIn(cred, red)
+
+    # From the mask-mode measurement of 3.0.8: a value 3.0.7 hid only by the entropy rule, which a neighbour's
+    # pattern takes a part of once the neighbours are joined.
+    def test_a_token_only_the_entropy_rule_hides_stays_hidden_when_a_url_after_it_is_joined(self):
+        head = "gh" "p_" + "a1B2c3D4e5F6g7H8i" "9J0k1L2m3N4o5P6q7R"   # no token pattern, only the entropy rule
+        text = (head + self.FFFD + "8" + chr(0x1B) + "https" + chr(0xE000) + "://user:" + "s3cr3t" "Pw99"
+                + "@host.example")
+        for mode in ("full", "mask"):
+            self.assertNotIn("c3D4e5", L.page_redact(text, None, mode)[0], mode)
+        self.assertNotIn("c3D4e5", L.review_redact(text)[0])
+
+    def test_a_bearer_value_only_the_entropy_rule_hides_stays_hidden_when_its_neighbours_are_joined(self):
+        value = "Zq7xKp2LmN8vR4tY" "6uW1eB3n"   # 24 characters: the entropy rule finds it only with the word after it
+        text = ("api_key=" + self.HEX32 + chr(0x3164) + "Bearer " + value + "pass" "word" + chr(0x200C)
+                + ": hunter22xyz")
+        for mode in ("full", "mask"):
+            self.assertNotIn(value[4:12], L.page_redact(text, None, mode)[0], mode)
+        self.assertNotIn(value[4:12], L.review_redact(text)[0])
+
+    def test_a_split_key_after_a_name_the_entropy_rule_takes_in_is_hidden_whole(self):
+        # 3.0.7 hid `x=` with the key's head in one entropy run and left the tail; joined, the key's own pattern
+        # hides it all, and `x=` stays hidden as 3.0.7 hid it
+        key = "AI" "za" + "9LuG7o1xz6oO1n5Hu" "bdh1ep6oYWeer65T" "hY"
+        text = "x=" + key[:-4] + chr(0xFFA0) + key[-4:] + ";"
+        for mode in ("full", "mask"):
+            red, counts = L.page_redact(text, None, mode)
+            self.assertNotIn(key[-4:], red, mode)
+            self.assertNotIn(key[4:12], red, mode)
+            self.assertEqual(counts.get("GoogleKey"), 1, mode)
+            self.assertEqual(L.page_redact(red, None, mode), (red, {}), mode)
+
+    def test_the_trail_of_a_pass_shows_what_a_mask_keeps_and_nothing_a_marker_hides(self):
+        text = "x " + self.AKIA_KEY + " y " + self.HEX32[:8]
+        for mode, red, shown in (("mask", "x AKIA****MNOP y " + self.HEX32[:8], [1] * 6 + [0] * 12 + [1] * 15),
+                                 ("full", "x [REDACTED:AKIA] y " + self.HEX32[:8], [1] * 2 + [0] * 20 + [1] * 11)):
+            trail = L._Trail(len(text))
+            self.assertEqual(L._page_pass(text, None, mode, trail)[0], red, mode)
+            self.assertEqual(list(trail.shown()), shown, mode)
+
+    def test_many_values_next_to_invisible_characters_do_not_slow_the_redaction(self):
+        text = (self.AKIA_KEY + self.ZW + " ") * 5000
+        start = time.monotonic()
+        red, counts = L.page_redact(text)
+        if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
+            self.assertLess(time.monotonic() - start, 3.0)
+        self.assertEqual(counts, {"AKIA": 5000})
+
+    def test_an_invisible_character_with_nothing_to_join_costs_one_pass_as_in_3_0_7(self):
+        smile = chr(0x263A) + chr(0xFE0F)
+        for name, call in (("_page_pass", L.page_redact), ("_review_pass", L.review_redact)):
+            real, calls = getattr(L, name), []
+            setattr(L, name, lambda *a, real=real: calls.append(1) or real(*a))
+            try:
+                red = call("smile " + smile + " and " + self.AKIA_KEY + " end")[0]
+            finally:
+                setattr(L, name, real)
+            self.assertEqual(len(calls), 1, name)
+            self.assertEqual(red, "smile " + smile + " and [REDACTED:AKIA] end", name)
+
     def test_a_second_pass_changes_nothing(self):
         text = "id " + self.AKIA_KEY[:7] + self.FFFD + self.AKIA_KEY[7:] + " ok" + self.ZW
         once, _ = L.page_redact(text)
