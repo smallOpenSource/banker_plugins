@@ -179,3 +179,15 @@ test('기록 자리가 링크면 그 너머에 쓰지 않는다', { skip: NO_LIN
   assert.equal(res.status, 0);
   assert.equal(readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
 });
+
+test('config.json 자리가 FIFO 여도 기다리지 않는다', { skip: NO_FIFO }, () => {
+  const tmp = mkTmp();
+  mkdirSync(bankerDir(tmp), { recursive: true });
+  const config = join(bankerDir(tmp), 'config.json');
+  assert.equal(spawnSync('mkfifo', [config]).status, 0, 'mkfifo');
+  const res = runCount(tmp, { command_name: 'banker:foo', command_source: 'plugin' }, {}, { timeout: 10_000 });
+  assert.equal(res.signal, null, '훅이 스스로 끝났다');
+  assert.equal(res.status, 0);
+  assert.match(readFileSync(usageLog(tmp), 'utf8'), /^banker:foo\t/, '설정을 읽지 못해도 기본 켜짐이라 기록한다');
+  assert.equal(lstatSync(config).isFIFO(), true, 'FIFO 는 그대로');
+});

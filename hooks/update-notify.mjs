@@ -14,14 +14,14 @@
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션을 절대 막지 않는다. 비TTY 안전.
  */
 import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS,
   noUpdateCheck, countingActive, endpoint,
-  installedVersion, compareVersions, writeUpdateCache, readUsedSkills,
+  installedVersion, compareVersions, writeUpdateCache, readUsedSkills, readRegular,
 } from '../bin/lib/telemetry-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,10 +38,11 @@ function readStdin() {
   });
 }
 
-// 캐시({latest,checkedAt,notified})를 객체로 반환. 없음·malformed·배열 → null(무고지·throttle 경과 취급).
+// 캐시({latest,checkedAt,notified})를 객체로 반환. 없음·malformed·배열·일반 파일 아님(FIFO 를 기다리지 않음) → null
+// (무고지·throttle 경과 취급).
 function readCache() {
   try {
-    const obj = JSON.parse(readFileSync(UPDATE_CHECK_PATH, 'utf8'));
+    const obj = JSON.parse(readRegular(UPDATE_CHECK_PATH));
     return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : null;
   } catch {
     return null;

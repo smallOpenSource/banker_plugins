@@ -15,11 +15,12 @@
  *
  * 이 훅은 hooks.json 에 배선되지 않는다(스탠드얼론 .mjs). update-notify 가 detached spawn 한다.
  */
-import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 
-import { UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, writeUpdateCache, collectBody, netDeadlineMs } from '../bin/lib/telemetry-config.mjs';
+import {
+  UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, writeUpdateCache, collectBody, netDeadlineMs, readRegular,
+} from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
 const NET_DEADLINE_MS = netDeadlineMs(); // 교환 전체 마감(위 값은 무활동 기준).
@@ -32,10 +33,11 @@ function isLoopback(hostname) {
   return h === 'localhost' || h === '127.0.0.1' || h === '::1';
 }
 
-// update-check 캐시를 읽어 객체로 반환. 없음·malformed·권한 오류 등 어떤 예외에도 던지지 않고 {} 반환.
+// update-check 캐시를 읽어 객체로 반환. 없음·malformed·권한 오류·일반 파일 아님(FIFO 를 기다리지 않음) 등 어떤
+// 예외에도 던지지 않고 {} 반환.
 function readCache() {
   try {
-    const obj = JSON.parse(readFileSync(UPDATE_CHECK_PATH, 'utf8'));
+    const obj = JSON.parse(readRegular(UPDATE_CHECK_PATH));
     return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
   } catch {
     return {};

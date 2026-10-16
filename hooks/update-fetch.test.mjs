@@ -7,7 +7,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -46,10 +46,16 @@ function fetchEnv(tmp, npmUrl) {
 }
 
 // in-process 서버와 통신하는 경로용: 이벤트 루프를 살려두려면 비동기 spawn 이어야 한다.
-function runFetch(tmp, npmUrl) {
+// timeout 이 있으면 그 뒤 죽이고 null 을 돌려준다(FIFO 에서 멈추는지 보는 시험용).
+function runFetch(tmp, npmUrl, { timeout } = {}) {
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [FETCH_HOOK], { env: fetchEnv(tmp, npmUrl), stdio: 'ignore' });
-    child.on('close', (code) => resolvePromise(code ?? 0));
+    let killed = false;
+    const killer = timeout ? setTimeout(() => { killed = true; child.kill('SIGKILL'); }, timeout) : null;
+    child.on('close', (code) => {
+      clearTimeout(killer);
+      resolvePromise(killed ? null : (code ?? 0));
+    });
   });
 }
 
@@ -336,6 +342,21 @@ test('시험용 마감 값(BANKER_NET_DEADLINE_MS)이 0 이하, 숫자 아님, 2
       assert.ok(existsSync(cachePath(tmp)), `${bad}: 300ms 뒤에 온 응답을 받아 캐시를 쓴다`);
       assert.equal(readCache(tmp).latest, '99.0.0', bad);
     }
+  } finally {
+    server.close();
+  }
+});
+
+test('캐시 자리가 FIFO 여도 기다리지 않고 받은 latest 를 일반 파일 캐시에 쓴다', { skip: process.platform === 'win32' && 'Windows 에는 FIFO 가 없다' }, async () => {
+  const tmp = mkTmp();
+  mkdirSync(bankerDir(tmp), { recursive: true });
+  assert.equal(spawnSync('mkfifo', [cachePath(tmp)]).status, 0, 'mkfifo');
+  const server = await mockServer({ body: { version: '9.9.9' } });
+  try {
+    const code = await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`, { timeout: 10_000 });
+    assert.equal(code, 0, '훅이 스스로 끝났다');
+    assert.equal(lstatSync(cachePath(tmp)).isFile(), true, '캐시는 일반 파일이 된다');
+    assert.equal(readCache(tmp).latest, '9.9.9');
   } finally {
     server.close();
   }

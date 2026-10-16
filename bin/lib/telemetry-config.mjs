@@ -158,10 +158,11 @@ export function appendUsageLog(name) {
   }
 }
 
-// config.json 을 읽어 객체로 반환. 파일 없음·malformed JSON·권한 오류 등 어떤 예외에도 던지지 않고 {} 반환.
+// config.json 을 읽어 객체로 반환. 파일 없음·malformed JSON·권한 오류·일반 파일 아님(FIFO 를 기다리지 않음) 등
+// 어떤 예외에도 던지지 않고 {} 반환.
 export function readConfig() {
   try {
-    const raw = fs.readFileSync(path.join(configDir(), 'config.json'), 'utf8');
+    const raw = readRegular(path.join(configDir(), 'config.json'));
     const obj = JSON.parse(raw);
     return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
   } catch {
