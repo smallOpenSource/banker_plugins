@@ -460,14 +460,41 @@ test("command line: --runtime=codex follows CODEX_HOME, and off gives the file b
   assert.equal(read(s.agents), "# base\n");
 });
 
+// Throws a system error from the rename onto the backup of AGENTS.md, as Node gives it (path and dest set).
+const backupRenameFails = (code) => [...FS_HOOK, "const real = fs.renameSync;",
+  `fs.renameSync = (from, to) => { if (String(to).endsWith(".tone-compact.bak")) throw Object.assign(new Error(\`${code}: rename\`), { code: "${code}", syscall: "rename", path: String(from), dest: String(to) }); return real(from, to); };`,
+  "syncBuiltinESMExports();"].join("\n");
+
+// An error that is neither a refusal nor a denied write (EIO here; a folder at the backup's name gives EISDIR on
+// POSIX and EPERM on Windows, so it is not used for this) ends the command with 2.
 test("command line: an unexpected error exits 2 and leaves no temp file", () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");
-  // a folder with something in it where the backup of AGENTS.md goes: renaming the temp file onto it fails
-  mkdirSync(join(`${s.agents}.tone-compact.bak`, "x"), { recursive: true });
-  const r = cli(["on", "--runtime", "codex"], cliEnv(s));
+  const r = cliWith(s, backupRenameFails("EIO"), ["on", "--runtime", "codex"]);
   assert.equal(r.code, 2, r.out);
   assert.match(r.out, /예기치 못한 오류로 중단했습니다/);
+  assert.deepEqual(readdirSync(s.o.codexDir).sort(), ["AGENTS.md"]);
+  assert.equal(read(s.agents), "# base\n");
+});
+
+test("a write the system refuses is named where it was refused: an EPERM on the rename onto the backup names the backup", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const r = cliWith(s, backupRenameFails("EPERM"), ["on", "--runtime", "codex"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /쓸 권한이 없어 그대로 두었습니다 \(EPERM\): .*AGENTS\.md\.tone-compact\.bak/);
+  assert.equal(read(s.agents), "# base\n");
+});
+
+// Windows answers a rename onto a folder with EPERM, which counts as a denied write; POSIX answers EISDIR, an error
+// the tool does not expect. Either way nothing is changed and the backup's name is in the message.
+test("a folder at the backup's name stops on with the backup named and AGENTS.md as it was", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  mkdirSync(join(`${s.agents}.tone-compact.bak`, "x"), { recursive: true });
+  const r = cli(["on", "--runtime", "codex"], cliEnv(s));
+  assert.equal(r.code, process.platform === "win32" ? 1 : 2, r.out);
+  assert.match(r.out, /AGENTS\.md\.tone-compact\.bak/);
   assert.deepEqual(readdirSync(s.o.codexDir).sort(), ["AGENTS.md", "AGENTS.md.tone-compact.bak"]);
   assert.equal(read(s.agents), "# base\n");
 });
@@ -1082,6 +1109,14 @@ console.log(JSON.stringify(turnOn(t, "codex", o, () => { rmSync(lock); spawnSync
   assert.ok(r.ok, r.message);
   assert.equal(blocks(read(s.agents)), 1);
   assert.equal(lstatSync(lock).isFIFO(), true, "a lock that is no longer this run's stays");
+});
+
+// A name that may be a link someone planted is shown by its path: opening it would put the file it leads to (a key,
+// say) into the session.
+test("the rows that show a file that may be a link say to show only the link and where it leads, not its content", () => {
+  const rows = readFileSync(SKILL, "utf8").split("\n").filter((l) => /^\| (쓰는 사이에 같은 이름이 생겨|같은 이름의 다른 파일이 있음)/.test(l));
+  assert.equal(rows.length, 2);
+  for (const row of rows) assert.match(row, /링크면 `ls -l` 로 링크와 대상 경로만 보이고 대상 내용은 열지 않음/, row);
 });
 
 test("troubleshooting rows never tell the agent to clear, delete or rename a user's file without asking first", () => {

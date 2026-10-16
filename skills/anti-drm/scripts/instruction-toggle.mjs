@@ -495,8 +495,9 @@ function apply(t, changes) {
 }
 
 // Applies the changes, or the refusal for a write that failed with nothing of the file changed: a name that
-// appeared in between (EEXIST), or a write a sandbox refused after access() allowed it. A file changed before the
-// failing one is named. Other errors propagate.
+// appeared in between (EEXIST), or a write a sandbox refused after access() allowed it. The refusal names the place
+// the system refused (a rename's target, as the backup, or the file it was about), and a file changed before the
+// failing one. Other errors propagate.
 function applied(t, changes) {
   let i = 0;
   try {
@@ -504,8 +505,9 @@ function applied(t, changes) {
   } catch (e) {
     if (e.code !== "EEXIST" && !denied(e)) throw e;
     const why = e.code === "EEXIST" ? "쓰는 사이에 같은 이름이 생겨 그대로 두었습니다" : `쓸 권한이 없어 그대로 두었습니다 (${where(e.code)})`;
+    const at = [e.dest, e.path].find((p) => typeof p === "string") ?? changes[i].file.path;
     const before = i === 0 ? "" : `\n앞서 바꾼 파일: ${changes.slice(0, i).map((c) => where(c.file.path)).join(", ")}`;
-    return refuse(`${why}: ${where(changes[i].file.path)}${before}`);
+    return refuse(`${why}: ${where(at)}${before}`);
   }
   return null;
 }

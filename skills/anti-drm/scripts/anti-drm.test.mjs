@@ -491,11 +491,16 @@ test("command line: a refusal exits 1, an unexpected error exits 2", () => {
   assert.equal(refused.code, 1);
   assert.match(refused.out, /설정이 없습니다/);
   writeFileSync(s.agents, "# base\n");
-  // a folder with something in it where the backup of AGENTS.md goes: renaming the temp file onto it fails
-  mkdirSync(join(`${s.agents}.anti-drm.bak`, "x"), { recursive: true });
-  const broken = cli(["on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
-  assert.equal(broken.code, 2, broken.out);
-  assert.match(broken.out, /예기치 못한 오류로 중단했습니다/);
+  // an EIO from the rename onto the backup of AGENTS.md (a folder there gives EISDIR on POSIX but EPERM, a denied
+  // write, on Windows, so it is not used for this)
+  const pre = join(s.dir, "pre.mjs");
+  writeFileSync(pre, ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";', "const real = fs.renameSync;",
+    'fs.renameSync = (from, to) => { if (String(to).endsWith(".anti-drm.bak")) throw Object.assign(new Error("EIO: rename"), { code: "EIO", syscall: "rename", path: String(from), dest: String(to) }); return real(from, to); };',
+    "syncBuiltinESMExports();"].join("\n"));
+  const broken = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "on", "--runtime", "codex", "--deny", ".txt", "--alt", ".md"],
+    { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  assert.equal(broken.status, 2, broken.stdout);
+  assert.match(broken.stdout, /예기치 못한 오류로 중단했습니다/);
 });
 
 test("command line: config needs no runtime and prints the rules only when a runtime holds them", () => {
@@ -1045,7 +1050,16 @@ test("a broken settings file has one procedure in the on table and the troublesh
     assert.match(row, /새 파일로 바뀌/, row);
     assert.match(row, /`anti-drm\.json\.bak` 에 한 번 남/, row);
     assert.match(row, /에이전트가 그 파일을 직접 지우거나 옮기지 않음/, row);
+    assert.match(row, /일반 파일이 아니거나, 64KiB 보다 크거나, 읽을 수 없으면 바꾸지 않고 거부함/, row);
   }
+});
+
+// A name that may be a link someone planted is shown by its path: opening it would put the file it leads to (a key,
+// say) into the session.
+test("the rows that show a file that may be a link say to show only the link and where it leads, not its content", () => {
+  const rows = read(SKILL).split("\n").filter((l) => /^\| (쓰는 사이에 같은 이름이 생겨|같은 이름의 다른 파일이 있음)/.test(l));
+  assert.equal(rows.length, 2);
+  for (const row of rows) assert.match(row, /링크면 `ls -l` 로 링크와 대상 경로만 보이고 대상 내용은 열지 않음/, row);
 });
 
 test("--stdin: a pipe left non-blocking answers EAGAIN until the settings come, and they are read when they do", posixOnly, async () => {

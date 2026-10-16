@@ -21,7 +21,7 @@
  *    written: a link (a cloned repository can carry one) or a pipe gets no line.
  */
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, statSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, statSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,8 +29,10 @@ const CANONICALIZER = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'sk
 const FLAG = '.obsidizer';
 const LOG = '.obsidizer-hook.log';
 const LOG_REASON_MAX = 500;
-// Append, never through a link, and never wait for a pipe's reader (Windows has neither flag; there a link is followed).
-const LOG_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+// Append, never through a link, and never wait for a pipe's reader. Windows has neither flag: there the log place is
+// looked at first and a link is left alone (one swapped in after that look is still followed there).
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
+const LOG_FLAGS = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | NO_FOLLOW | (constants.O_NONBLOCK ?? 0);
 // OMC owns these three. index.md is rewritten on every ingest, so it is always the freshest
 // file in the vault — the scan fallback below would target it first without this guard.
 const RESERVED = new Set(['index.md', 'log.md', 'environment.md']);
@@ -53,8 +55,10 @@ function log(wikiDir, tool, reason) {
   // One line of plain text: whitespace and control characters (ESC among them) fold to a space, and a long reason is cut.
   const text = String(reason).replace(/[\s\x00-\x1f\x7f-\x9f]+/g, ' ').trim();
   const line = `${new Date().toISOString()}\t${tool}\t${text.length > LOG_REASON_MAX ? `${text.slice(0, LOG_REASON_MAX)}...` : text}\n`;
+  const at = join(wikiDir, LOG);
   try {
-    const fd = openSync(join(wikiDir, LOG), LOG_FLAGS, 0o600);
+    if (!NO_FOLLOW && isLink(at)) return;
+    const fd = openSync(at, LOG_FLAGS, 0o600);
     try {
       if (fstatSync(fd).isFile()) writeSync(fd, line);
     } finally {
@@ -63,6 +67,10 @@ function log(wikiDir, tool, reason) {
   } catch {
     // The log is best-effort; the failure path must never throw.
   }
+}
+
+function isLink(path) {
+  try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
 }
 
 function isDir(path) {
