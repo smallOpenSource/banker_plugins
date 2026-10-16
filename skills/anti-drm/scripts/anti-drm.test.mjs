@@ -1,7 +1,7 @@
 // Tests for anti-drm.mjs. Run from anywhere: node --test <repo>/skills/anti-drm/scripts/anti-drm.test.mjs
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -43,6 +43,19 @@ const RULES = renderRules(TEMPLATE, CONFIG);
 const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
 const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const permTest = { skip: process.platform === "win32" ? "Windows has no POSIX mode bits" : asRoot && "root ignores mode bits" };
+
+// Whether this account can make a symlink: Windows needs Developer Mode or an elevated prompt for one.
+function canSymlink() {
+  const probe = join(root, "symlink-probe");
+  try {
+    symlinkSync(join(root, "nowhere"), probe);
+    rmSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const symlinkTest = { skip: !canSymlink() && "this account cannot make symlinks" };
 
 let cases = 0;
 // Config folders for one test, and a settings path whose folders do not exist yet.
@@ -992,6 +1005,112 @@ test("config says so when the settings path was a link it replaced, and where th
   assert.doesNotMatch(configure(t.o, FLAGS).message, /링크였던 자리/, "a plain file says nothing about links");
 });
 
+// A link or a hard link at the settings path is replaced by this name only: what it led to stays where it is, so
+// no copy of it (a key, say) goes to .bak, where the troubleshooting table would open it as a regular file.
+test("config does not copy what a settings link leads to into .bak: the link is replaced and its target stays", symlinkTest, () => {
+  for (const [what, bytes] of [["a small file", "-----BEGIN KEY-----\nabc\n"], ["a file over 64 KiB", "x".repeat(70000)]]) {
+    const s = setup();
+    mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+    const target = join(s.dir, "id_key");
+    writeFileSync(target, bytes);
+    symlinkSync(target, s.o.configFile);
+    const r = configure(s.o, FLAGS);
+    assert.ok(r.ok, `${what}: ${r.message}`);
+    assert.match(r.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\./, what);
+    assert.doesNotMatch(r.message, /\.bak/, what);
+    assert.ok(!existsSync(`${s.o.configFile}.bak`), `${what}: nothing went to .bak`);
+    assert.equal(read(target), bytes, `${what}: the file the link led to is as it was`);
+    assert.ok(!lstatSync(s.o.configFile).isSymbolicLink(), what);
+    assert.deepEqual(readConfig(s.o.configFile).config, CONFIG, what);
+  }
+});
+
+test("config replaces a settings link to a file it cannot read instead of refusing, and reads nothing", permTest, () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  const target = join(s.dir, "locked");
+  writeFileSync(target, "locked\n");
+  symlinkSync(target, s.o.configFile);
+  chmodSync(target, 0o000);
+  try {
+    const r = configure(s.o, FLAGS);
+    assert.ok(r.ok, r.message);
+    assert.match(r.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\./);
+    assert.ok(!existsSync(`${s.o.configFile}.bak`));
+  } finally {
+    chmodSync(target, 0o644);
+  }
+  assert.equal(read(target), "locked\n");
+});
+
+test("config does not copy a file that has another name (a hard link) into .bak: this name is replaced and says so", () => {
+  const cases = [
+    ["a small file", '{"theme":"dark"}\n'],
+    ["a file over 64 KiB", "x".repeat(70000)],
+    ["anti-drm's own settings", '{"deny":[".txt"],"alt":[".md"]}\n'],
+  ];
+  for (const [what, bytes] of cases) {
+    const s = setup();
+    mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+    const other = join(s.dir, "other-name.json");
+    writeFileSync(other, bytes);
+    linkSync(other, s.o.configFile);
+    const r = configure(s.o, FLAGS);
+    assert.ok(r.ok, `${what}: ${r.message}`);
+    assert.match(r.message, /참고: 하드 링크였던 자리를 일반 파일로 바꿨습니다\. 같은 파일의 다른 이름은 건드리지 않았습니다\./, what);
+    assert.doesNotMatch(r.message, /\.bak/, what);
+    assert.ok(!existsSync(`${s.o.configFile}.bak`), `${what}: nothing went to .bak`);
+    assert.equal(read(other), bytes, `${what}: the other name keeps the old bytes`);
+    assert.equal(lstatSync(s.o.configFile).nlink, 1, what);
+    assert.deepEqual(readConfig(s.o.configFile).config, CONFIG, what);
+  }
+});
+
+test("priorBytes reads only a regular file with this one name: not what a link leads to, not a hard link", () => {
+  const s = setup();
+  const secret = join(s.dir, "secret");
+  writeFileSync(secret, "secret\n");
+  const hard = join(s.dir, "hard.json");
+  linkSync(secret, hard);
+  assert.deepEqual(priorBytes(hard), { bytes: null }, "a file with another name is not read");
+  if (process.platform !== "win32") {
+    const link = join(s.dir, "link.json");
+    symlinkSync(secret, link);
+    assert.deepEqual(priorBytes(link), { bytes: null }, "a link is not followed");
+  }
+  const own = join(s.dir, "own.json");
+  writeFileSync(own, "own\n");
+  assert.deepEqual(priorBytes(own), { bytes: Buffer.from("own\n") });
+});
+
+// The first look sees a regular file; a link put there before the open is not followed (O_NOFOLLOW), so what it
+// leads to is neither read nor kept. Windows has no O_NOFOLLOW: the look before the open stands in.
+test("config does not read what a link swapped in after the first look leads to", posixOnly, () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+  const secret = join(s.dir, "id_key");
+  writeFileSync(secret, "-----BEGIN KEY-----\nabc\n");
+  const pre = join(s.dir, "swap.mjs");
+  writeFileSync(pre, ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.lstatSync;", "let looks = 0;",
+    `fs.lstatSync = (p, ...a) => { const st = real(p, ...a); if (String(p) === ${JSON.stringify(s.o.configFile)} && ++looks === 1) { fs.rmSync(p); fs.symlinkSync(${JSON.stringify(secret)}, p); } return st; };`,
+    "syncBuiltinESMExports();"].join("\n"));
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "config", "--deny", ".txt", "--alt", ".md"],
+    { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\./);
+  assert.ok(!existsSync(`${s.o.configFile}.bak`), "what the link led to was not kept");
+  assert.equal(read(secret), "-----BEGIN KEY-----\nabc\n");
+  assert.ok(!lstatSync(s.o.configFile).isSymbolicLink());
+});
+
+test("the settings bullets say a link or a hard link is replaced by name only and nothing of it goes to .bak", () => {
+  const section = read(SKILL).split("\n## 동작")[1].split("\n## 문제 해결")[0];
+  assert.match(section, /링크와 하드 링크는 그 이름만 새 파일로 바꿈\. 가리키던 파일은 읽지 않고 그대로 둠/);
+  assert.match(section, /`anti-drm\.json\.bak` 에 한 번 남김 \(이 계정만 읽기 가능\)\. 링크와 하드 링크는 남기지 않음/);
+});
+
 test("config says where a file anti-drm did not write went, and says so when it was not kept", () => {
   const s = setup();
   mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
@@ -1051,7 +1170,7 @@ test("a broken settings file has one procedure in the on table and the troublesh
     assert.match(row, /`anti-drm\.json\.bak` 에 한 번 남/, row);
     assert.match(row, /에이전트가 그 파일을 직접 지우거나 옮기지 않음/, row);
     assert.match(row, /폴더나 특수 파일이거나, 64KiB 보다 크거나, 읽을 수 없는 파일이면 바꾸지 않고 거부함/, row);
-    assert.match(row, /링크는 링크만 일반 파일로 바뀌고 가리키던 곳은 그대로 둠/, row);
+    assert.match(row, /링크와 하드 링크는 거부하지 않고 그 이름만 일반 파일로 바꾸며, 가리키던 파일은 그대로 두고 `\.bak` 에 남기지 않음/, row);
   }
 });
 

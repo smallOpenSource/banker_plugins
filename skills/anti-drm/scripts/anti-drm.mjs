@@ -47,7 +47,6 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  statSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -205,9 +204,9 @@ export function readConfig(file) {
   return checkConfig({ deny: raw.deny, alt: raw.alt, tsvDelimiter: raw.tsvDelimiter ?? "tab" });
 }
 
-// What sits at the settings path: "none", "file" (a regular file, or a link to
-// one), or "other" (a folder, a FIFO). A link that points nowhere or loops is
-// "none": the save replaces the link.
+// What sits at the settings path: "none", "file" (a regular file with this one name), "link" (a link, wherever it
+// leads), "hardlink" (a regular file with another name too) or "other" (a folder, a FIFO). The save replaces a link
+// or a hard link by this name only: what it led to stays, so nothing of it is read or kept.
 function pathKind(file) {
   let st;
   try {
@@ -216,29 +215,30 @@ function pathKind(file) {
     if (e.code === "ENOENT" || e.code === "ENOTDIR") return "none";
     throw e;
   }
-  if (st.isFile()) return "file";
-  if (!st.isSymbolicLink()) return "other";
-  try {
-    return statSync(file).isFile() ? "file" : "none";
-  } catch {
-    return "none";
-  }
+  if (st.isSymbolicLink()) return "link";
+  if (!st.isFile()) return "other";
+  return st.nlink > 1 ? "hardlink" : "file";
 }
 
-// The bytes of the file at the settings path, opened without blocking: { bytes }
-// (null when it turned out not to be a regular file) or { refusal }.
+// Opened without blocking, and without following a link where the system can: Windows has no O_NOFOLLOW, and the
+// look before the open stands in for it.
+const PRIOR_OPEN = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
+
+// The bytes of the regular file with this one name at the settings path: { bytes } (null when it turned out to be
+// something else: gone, a link, not a regular file, or a file with another name too, which the save loses nothing
+// of) or { refusal }.
 export function priorBytes(file) {
   let fd;
   try {
-    fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    fd = openSync(file, PRIOR_OPEN);
   } catch (e) {
-    if (e.code === "ENOENT" || e.code === "ENOTDIR") return { bytes: null };
+    if (e.code === "ENOENT" || e.code === "ENOTDIR" || e.code === "ELOOP") return { bytes: null };
     if (denied(e)) return { refusal: "읽을 수 없는 파일이라 설정을 저장하지 않았습니다" };
     throw e;
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile()) return { bytes: null };
+    if (!st.isFile() || st.nlink > 1) return { bytes: null };
     if (st.size > MAX_BYTES) return { refusal: "64KiB 보다 큰 파일이라 설정을 저장하지 않았습니다" };
     return { bytes: readFileSync(fd) };
   } finally {
@@ -276,12 +276,12 @@ function keepOnce(bak, bytes) {
   return st.isFile() ? "earlier" : "other";
 }
 
-// What a save finds at the settings path: { keep } (the bytes to put in .bak,
-// null for none: nothing there, or anti-drm's own settings) or { refusal }.
+// What a save finds at the settings path: { keep } (the bytes to put in .bak, null for none: nothing there, a link
+// or a hard link, whose file stays, or anti-drm's own settings) or { refusal }.
 function priorSettings(file) {
   const kind = pathKind(file);
-  if (kind === "none") return { keep: null };
   if (kind === "other") return { refusal: "일반 파일이 아니라 설정을 저장하지 않았습니다" };
+  if (kind !== "file") return { keep: null };
   const got = priorBytes(file);
   if (got.refusal) return got;
   return { keep: got.bytes === null || ownSettings(got.bytes) ? null : got.bytes };
@@ -404,37 +404,33 @@ export function status(opts = {}) {
   return done(lines.join("\n"));
 }
 
-// What a save does beyond writing the settings, as lines to report: a link at the settings path becomes a regular
-// file (where it led stays), and a file anti-drm did not write goes to .bak, or is not kept when an earlier one, or
-// something that is not a regular file, is there already. kept is what writeConfig gave back.
+// What a save does beyond writing the settings, as lines to report: a link or a hard link at the settings path becomes
+// a regular file (what it led to stays, and nothing of it goes to .bak), and a file anti-drm did not write goes to
+// .bak, or is not kept when an earlier one, or something that is not a regular file, is there already. kept is what
+// writeConfig gave back.
 const KEPT_NOTES = {
   kept: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 ${bak} 에 남겼습니다.`,
   earlier: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다. 먼저 남긴 파일이 있습니다: ${bak}`,
   other: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다. 그 자리에 일반 파일이 아닌 것이 있습니다: ${bak}`,
 };
-function saveNotes(file, wasLink, kept) {
-  const notes = wasLink ? [LINK_REPLACED] : [];
+const REPLACED_NOTES = {
+  link: LINK_REPLACED,
+  hardlink: "참고: 하드 링크였던 자리를 일반 파일로 바꿨습니다. 같은 파일의 다른 이름은 건드리지 않았습니다.",
+};
+function saveNotes(file, replaced, kept) {
+  const notes = REPLACED_NOTES[replaced] ? [REPLACED_NOTES[replaced]] : [];
   if (kept) notes.push(KEPT_NOTES[kept](where(`${file}.bak`)));
   return notes;
 }
 
-// Whether the name itself is a link, whatever it leads to.
-function pathIsLink(file) {
-  try {
-    return lstatSync(file).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-// Saves the settings, as a result to report.
+// Saves the settings, as a result to report. The look just before the write names what the rename replaces.
 function save(o, config) {
   let notes;
   try {
     const prior = priorSettings(o.configFile);
     if (prior.refusal) return refuse(`${prior.refusal}: ${where(o.configFile)}`);
-    const wasLink = pathIsLink(o.configFile);
-    notes = saveNotes(o.configFile, wasLink, writeConfig(o.configFile, config, prior.keep));
+    const replaced = pathKind(o.configFile);
+    notes = saveNotes(o.configFile, replaced, writeConfig(o.configFile, config, prior.keep));
   } catch (e) {
     if (denied(e)) return refuse(`쓸 권한이 없어 설정을 저장하지 못했습니다 (${e.code}): ${where(o.configFile)}`);
     throw e;
