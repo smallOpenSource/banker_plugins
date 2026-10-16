@@ -930,7 +930,7 @@ test("SKILL.md checks each heredoc line before it runs, and no end word can pass
 // Rows that send the agent at a user's file must ask first; none may tell it to clear one away.
 const ASK_FIRST = ["설정 파일이 올바르지 않습니다", "일반 파일이 아니라 설정을 저장하지 않았습니다", "64KiB 보다 큰 파일이라",
   "같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
-  "다른 banker 지침 작업이 끝나지 않아"];
+  "다른 banker 지침 작업이 끝나지 않아", "쓰는 사이에 같은 이름이 생겨", "AGENTS.md 가 끊어진 링크라 on 이 블록을 옮기지 못함"];
 test("troubleshooting rows never tell the agent to clear, delete, move or rename a user's file without asking first", () => {
   const table = read(SKILL).split("## 문제 해결")[1].split("\n## ")[0];
   const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
@@ -963,4 +963,41 @@ test("while other banker blocks alone fill the override, the stale and moved cas
   assert.match(codexLine(r2), /^Codex: AGENTS\.md 에 넣었지만 지금은 적용되지 않습니다\. /, r2.message);
   assert.equal(blocks(read(moved.agents)), 1, "ours moved to AGENTS.md");
   assert.equal(blocks(read(moved.override)), 0);
+});
+
+test("config says so when the settings path was a link it replaced, and where the link led stays", posixOnly, () => {
+  const s = setup();
+  const folder = join(s.dir, "config", "banker");
+  mkdirSync(folder, { recursive: true });
+  symlinkSync(join(folder, "gone.json"), s.o.configFile);
+  const gone = configure(s.o, FLAGS);
+  assert.ok(gone.ok, gone.message);
+  assert.match(gone.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\. 링크가 가리키던 곳은 건드리지 않았습니다\./);
+  assert.ok(!existsSync(join(folder, "gone.json")), "nothing was made where the link pointed");
+  const t = setup();
+  const tf = join(t.dir, "config", "banker");
+  mkdirSync(tf, { recursive: true });
+  const dotfiles = join(t.dir, "dotfiles-anti-drm.json");
+  writeFileSync(dotfiles, '{"deny":[".txt"],"alt":[".md"]}\n');
+  symlinkSync(dotfiles, t.o.configFile);
+  const older = configure(t.o, FLAGS);
+  assert.ok(older.ok, older.message);
+  assert.match(older.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다/);
+  assert.equal(read(dotfiles), '{"deny":[".txt"],"alt":[".md"]}\n', "the copy the link led to is as it was");
+  assert.doesNotMatch(configure(t.o, FLAGS).message, /링크였던 자리/, "a plain file says nothing about links");
+});
+
+test("config says where a file anti-drm did not write went, and says so when it was not kept", () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
+  const first = configure(s.o, FLAGS);
+  assert.ok(first.ok, first.message);
+  assert.match(first.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 .*anti-drm\.json\.bak 에 남겼습니다\./);
+  writeFileSync(s.o.configFile, "{\n");
+  const second = configure(s.o, FLAGS);
+  assert.ok(second.ok, second.message);
+  assert.match(second.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다\. 먼저 남긴 파일이 있습니다: .*anti-drm\.json\.bak/);
+  assert.equal(read(`${s.o.configFile}.bak`), '{"theme":"dark"}\n');
+  assert.doesNotMatch(configure(s.o, FLAGS).message, /참고:/, "anti-drm's own settings go without a word");
 });

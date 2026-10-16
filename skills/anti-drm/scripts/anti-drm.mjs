@@ -61,6 +61,7 @@ import {
   done,
   hasMarker,
   lf,
+  LINK_REPLACED,
   noBom,
   present,
   refuse,
@@ -396,17 +397,42 @@ export function status(opts = {}) {
   return done(lines.join("\n"));
 }
 
+// What a save does beyond writing the settings, as lines to report: a link at the settings path becomes a regular
+// file (where it led stays), and a file anti-drm did not write goes to .bak, or is not kept when an earlier one is
+// there already.
+function saveNotes(file, keep) {
+  const notes = [];
+  if (pathIsLink(file)) notes.push(LINK_REPLACED);
+  if (keep === null) return notes;
+  const bak = where(`${file}.bak`);
+  notes.push(taken(`${file}.bak`)
+    ? `참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다. 먼저 남긴 파일이 있습니다: ${bak}`
+    : `참고: anti-drm 이 쓰지 않은 원래 파일은 ${bak} 에 남겼습니다.`);
+  return notes;
+}
+
+// Whether the name itself is a link, whatever it leads to.
+function pathIsLink(file) {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 // Saves the settings, as a result to report.
 function save(o, config) {
+  let notes;
   try {
     const prior = priorSettings(o.configFile);
     if (prior.refusal) return refuse(`${prior.refusal}: ${where(o.configFile)}`);
+    notes = saveNotes(o.configFile, prior.keep);
     writeConfig(o.configFile, config, prior.keep);
   } catch (e) {
     if (denied(e)) return refuse(`쓸 권한이 없어 설정을 저장하지 못했습니다 (${e.code}): ${where(o.configFile)}`);
     throw e;
   }
-  return done(`설정을 저장했습니다: ${where(o.configFile)}`);
+  return done([`설정을 저장했습니다: ${where(o.configFile)}`, ...notes].join("\n"));
 }
 
 // New rules in each runtime that holds the rules, but `skip`. A runtime that

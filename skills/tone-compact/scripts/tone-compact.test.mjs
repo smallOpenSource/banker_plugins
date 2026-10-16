@@ -20,7 +20,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { parseArgs, rulesOf, status, turnOff, turnOn } from "./tone-compact.mjs";
 import { count, done, lf, noBom, refuse, sameInode, where } from "./instruction-toggle.mjs";
@@ -1083,7 +1083,7 @@ test("troubleshooting rows never tell the agent to clear, delete or rename a use
   const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
   for (const row of rows) assert.doesNotMatch(row, /치우|치운|치움|이름 변경 또는 삭제|지운 뒤 다시|옮긴 뒤 다시/, row);
   for (const head of ["같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
-    "다른 banker 지침 작업이 끝나지 않아"]) {
+    "다른 banker 지침 작업이 끝나지 않아", "쓰는 사이에 같은 이름이 생겨", "AGENTS.md 가 끊어진 링크라 on 이 블록을 옮기지 못함"]) {
     const row = rows.find((l) => l.startsWith(`| ${head}`));
     assert.ok(row, head);
     assert.match(row, /물은 뒤/, row);
@@ -1104,4 +1104,97 @@ test("a FIFO where AGENTS.override.md goes: status returns and names it, on and 
     assert.match(r.stdout, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.override\.md/);
   }
   assert.equal(read(s.agents), "# base\n");
+});
+
+// ---- what changed between a look and a write, and what a sandbox refuses ----
+
+// Runs the command line with a module loaded first that changes what node:fs does for this run only.
+function cliWith(s, pre, args) {
+  const file = join(s.dir, `pre-${cases++}.mjs`);
+  writeFileSync(file, `${pre}\n`);
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(file).href, CLI, ...args],
+    { encoding: "utf8", timeout: 15_000, env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  assert.equal(r.error?.code, undefined, "the run ended before its deadline");
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+}
+const FS_HOOK = ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";'];
+
+test("Codex: a link planted where a new AGENTS.md goes, after on looked, is refused and the file it leads to is untouched", posixOnly, () => {
+  const s = setup();
+  const victim = join(s.dir, "victim.md");
+  writeFileSync(victim, "someone's notes\n");
+  const pre = [...FS_HOOK, "const real = fs.accessSync;", "let done = false;",
+    `fs.accessSync = (p, ...a) => { if (!done && String(p) === ${JSON.stringify(s.o.codexDir)}) { done = true; fs.symlinkSync(${JSON.stringify(victim)}, ${JSON.stringify(s.agents)}); } return real(p, ...a); };`,
+    "syncBuiltinESMExports();"].join("\n");
+  const r = cliWith(s, pre, ["on", "--runtime", "codex"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /쓰는 사이에 같은 이름이 생겨 그대로 두었습니다: .*AGENTS\.md/);
+  assert.equal(read(victim), "someone's notes\n", "the file the link leads to is untouched");
+  assert.ok(lstatSync(s.agents).isSymbolicLink(), "the planted link stays");
+});
+
+test("Codex: a write a sandbox refuses after access() allowed it is a refusal with exit 1, for on and off", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const pre = [...FS_HOOK, "const real = fs.writeFileSync;",
+    `fs.writeFileSync = (p, ...a) => { if (String(p) === ${JSON.stringify(s.agents)}) throw Object.assign(new Error("EACCES: permission denied, open"), { code: "EACCES" }); return real(p, ...a); };`,
+    "syncBuiltinESMExports();"].join("\n");
+  const on = cliWith(s, pre, ["on", "--runtime", "codex"]);
+  assert.equal(on.code, 1, on.out);
+  assert.match(on.out, /쓸 권한이 없어 그대로 두었습니다 \(EACCES\): .*AGENTS\.md/);
+  assert.doesNotMatch(on.out, /예기치 못한 오류/);
+  assert.equal(read(s.agents), "# base\n");
+  assert.equal(cli(["on", "--runtime", "codex"], cliEnv(s)).code, 0);
+  const off = cliWith(s, pre, ["off", "--runtime", "codex"]);
+  assert.equal(off.code, 1, off.out);
+  assert.match(off.out, /쓸 권한이 없어 그대로 두었습니다 \(EACCES\): .*AGENTS\.md/);
+  assert.equal(blocks(read(s.agents)), 1, "the block is still there");
+});
+
+test("Codex: a stale file handle while a dead run's lock is looked at counts as no lock", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  writeFileSync(lock, "a dead run");
+  const old = new Date(Date.now() - 10 * 60_000);
+  utimesSync(lock, old, old);
+  const pre = [...FS_HOOK, "const real = fs.lstatSync;", "let done = false;",
+    `fs.lstatSync = (p, ...a) => { if (!done && String(p) === ${JSON.stringify(lock)}) { done = true; throw Object.assign(new Error("ESTALE: stale file handle, lstat"), { code: "ESTALE" }); } return real(p, ...a); };`,
+    "syncBuiltinESMExports();"].join("\n");
+  const r = cliWith(s, pre, ["on", "--runtime", "codex"]);
+  assert.equal(r.code, 0, r.out);
+  assert.equal(blocks(read(s.agents)), 1);
+});
+
+test("an override holding only our block over AGENTS.md that is a link to nothing: status says on cannot move it, as on refuses", posixOnly, () => {
+  const s = setup();
+  writeFileSync(s.override, "# override\n");
+  assert.ok(turnOn("codex", s.o).ok);
+  writeFileSync(s.override, read(s.override).replace("# override\n", ""));
+  symlinkSync("gone.md", s.agents);
+  assert.match(status(s.o).message, /- Codex: 켜짐, 단 AGENTS\.override\.md 에 블록만 있고 AGENTS\.md 가 끊어진 링크라 on 이 블록을 옮기지 못함/);
+  const r = turnOn("codex", s.o);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /끊어진 링크라 그대로 두었습니다/);
+});
+
+test("Claude Code: on says so when the rules file was a link it replaced, and leaves where the link led as it was", posixOnly, () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"));
+  symlinkSync("gone.md", s.rulesFile);
+  const gone = turnOn("claude", s.o);
+  assert.ok(gone.ok, gone.message);
+  assert.match(gone.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\. 링크가 가리키던 곳은 건드리지 않았습니다\./);
+  const t = setup();
+  mkdirSync(join(t.o.claudeDir, "rules"));
+  const copy = join(t.dir, "dotfiles-rules.md");
+  writeFileSync(copy, "<!-- banker tone-compact: an older copy -->\nold rules\n");
+  symlinkSync(copy, t.rulesFile);
+  const older = turnOn("claude", t.o);
+  assert.ok(older.ok, older.message);
+  assert.match(older.message, /참고: 링크였던 자리를 일반 파일로 바꿨습니다/);
+  assert.equal(lstatSync(t.rulesFile).isSymbolicLink(), false);
+  assert.equal(read(copy), "<!-- banker tone-compact: an older copy -->\nold rules\n", "the copy the link led to is as it was");
+  const again = turnOn("claude", t.o);
+  assert.doesNotMatch(again.message, /링크였던 자리/, "a plain file says nothing about links");
 });
