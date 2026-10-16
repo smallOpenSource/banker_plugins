@@ -9,6 +9,7 @@ import { after, test } from "node:test";
 import {
   checkConfig,
   configure,
+  nameNow,
   ownerTrusted,
   priorBytes,
   parseArgs,
@@ -55,7 +56,8 @@ function canSymlink() {
     return false;
   }
 }
-const symlinkTest = { skip: !canSymlink() && "this account cannot make symlinks" };
+const symlinks = canSymlink();
+const symlinkTest = { skip: !symlinks && "this account cannot make symlinks" };
 
 let cases = 0;
 // Config folders for one test, and a settings path whose folders do not exist yet.
@@ -948,7 +950,8 @@ test("SKILL.md checks each heredoc line before it runs, and no end word can pass
 // Rows that send the agent at a user's file must ask first; none may tell it to clear one away.
 const ASK_FIRST = ["설정 파일이 올바르지 않습니다", "일반 파일이 아니라 설정을 저장하지 않았습니다", "64KiB 보다 큰 파일이라",
   "같은 이름의 다른 파일이 있음", "표시의 짝이 맞지 않음", "끊어진 링크라", "일반 파일이 아님", "UTF-8 이 아닌 파일",
-  "다른 banker 지침 작업이 끝나지 않아", "쓰는 사이에 같은 이름이 생겨", "AGENTS.md 가 끊어진 링크라 on 이 블록을 옮기지 못함"];
+  "다른 banker 지침 작업이 끝나지 않아", "쓰는 사이에 같은 이름이 생겨", "AGENTS.md 가 끊어진 링크라 on 이 블록을 옮기지 못함",
+  "확인하는 사이에 바뀐 자리라"];
 test("troubleshooting rows never tell the agent to clear, delete, move or rename a user's file without asking first", () => {
   const table = read(SKILL).split("## 문제 해결")[1].split("\n## ")[0];
   const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| 메시지"));
@@ -1073,14 +1076,74 @@ test("priorBytes reads only a regular file with this one name: not what a link l
   const hard = join(s.dir, "hard.json");
   linkSync(secret, hard);
   assert.deepEqual(priorBytes(hard), { bytes: null }, "a file with another name is not read");
-  if (process.platform !== "win32") {
+  assert.deepEqual(priorBytes(hard, 0), { bytes: null }, "nor without O_NOFOLLOW");
+  if (symlinks) {
+    const key = join(s.dir, "key");                     // one name only, so the link count cannot be what stops the read
+    writeFileSync(key, "key\n");
     const link = join(s.dir, "link.json");
-    symlinkSync(secret, link);
+    symlinkSync(key, link);
     assert.deepEqual(priorBytes(link), { bytes: null }, "a link is not followed");
+    assert.deepEqual(priorBytes(link, 0), { bytes: null }, "without O_NOFOLLOW, as on Windows, the look after the open keeps it unread");
   }
   const own = join(s.dir, "own.json");
   writeFileSync(own, "own\n");
   assert.deepEqual(priorBytes(own), { bytes: Buffer.from("own\n") });
+  assert.deepEqual(priorBytes(own, 0), { bytes: Buffer.from("own\n") }, "the look after the open finds the same file");
+});
+
+// The look after the open, from the two stats alone: what Windows, which has no O_NOFOLLOW, decides with.
+test("nameNow: what the settings name holds after the open, against the opened file", () => {
+  const file = (ino, dev = 7n, nlink = 1n) => ({ isFile: () => true, isSymbolicLink: () => false, ino, dev, nlink });
+  const link = { isFile: () => false, isSymbolicLink: () => true, ino: 9n, dev: 7n, nlink: 1n };
+  const fifo = { isFile: () => false, isSymbolicLink: () => false, ino: 5n, dev: 7n, nlink: 1n };
+  const opened = file(5n);
+  assert.equal(nameNow(opened, file(5n)), "same");
+  assert.equal(nameNow(opened, link), "link");
+  assert.equal(nameNow(opened, file(5n, 7n, 2n)), "hardlink");
+  assert.equal(nameNow(opened, file(6n)), "changed", "another file");
+  assert.equal(nameNow(opened, file(5n, 8n)), "changed", "the same number on another volume");
+  assert.equal(nameNow(opened, fifo), "changed", "not a regular file");
+  assert.equal(nameNow(opened, null), "changed", "gone");
+  assert.equal(nameNow(file(0n), file(6n)), "same", "an ID of 0 proves nothing");
+});
+
+// A hard link to a file this account cannot read is replaced by this name only, like a link to one: nothing reads it.
+test("config replaces a hard link to a file it cannot read instead of refusing, and reads nothing", permTest, () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  const other = join(s.dir, "locked.json");
+  writeFileSync(other, "locked\n");
+  linkSync(other, s.o.configFile);
+  chmodSync(other, 0o000);
+  try {
+    const r = configure(s.o, FLAGS);
+    assert.ok(r.ok, r.message);
+    assert.match(r.message, /참고: 하드 링크였던 자리를 일반 파일로 바꿨습니다\./);
+    assert.ok(!existsSync(`${s.o.configFile}.bak`));
+  } finally {
+    chmodSync(other, 0o644);
+  }
+  assert.equal(read(other), "locked\n");
+});
+
+// With O_NOFOLLOW stripped from every open, as on Windows, the look before the open alone keeps a planted link unread.
+test("without O_NOFOLLOW (as on Windows) a planted settings link is still neither read nor kept", posixOnly, () => {
+  const s = setup();
+  mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
+  const secret = join(s.dir, "id_key");
+  writeFileSync(secret, "-----BEGIN KEY-----\nabc\n");
+  symlinkSync(secret, s.o.configFile);
+  const pre = join(s.dir, "no-nofollow.mjs");
+  writeFileSync(pre, ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.openSync;",
+    "fs.openSync = (p, flags, ...a) => real(p, typeof flags === \"number\" ? flags & ~fs.constants.O_NOFOLLOW : flags, ...a);",
+    "syncBuiltinESMExports();"].join("\n"));
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "config", "--deny", ".txt", "--alt", ".md"],
+    { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\./);
+  assert.ok(!existsSync(`${s.o.configFile}.bak`), "what the link led to was not kept");
+  assert.equal(read(secret), "-----BEGIN KEY-----\nabc\n");
 });
 
 // The first look sees a regular file; a link put there before the open is not followed (O_NOFOLLOW), so what it
@@ -1107,8 +1170,17 @@ test("config does not read what a link swapped in after the first look leads to"
 
 test("the settings bullets say a link or a hard link is replaced by name only and nothing of it goes to .bak", () => {
   const section = read(SKILL).split("\n## 동작")[1].split("\n## 문제 해결")[0];
-  assert.match(section, /링크와 하드 링크는 그 이름만 새 파일로 바꿈\. 가리키던 파일은 읽지 않고 그대로 둠/);
+  assert.match(section, /읽는 파일: 64KiB 이하의 일반 파일만\(링크면 가리키는 파일을 읽음\)/);
+  assert.match(section, /읽을 수 없는 파일은 덮어쓰지 않음\(링크와 하드 링크는 다음 줄\)/);
+  assert.match(section, /저장할 때 링크와 하드 링크\(이름이 둘 이상인 일반 파일\)는 그 이름만 새 파일로 바꿈\. 가리키던 파일은 읽지 않고 그대로 둠/);
   assert.match(section, /`anti-drm\.json\.bak` 에 한 번 남김 \(이 계정만 읽기 가능\)\. 링크와 하드 링크는 남기지 않음/);
+});
+
+// A .bak may hold a copy of what a link led to (a key, say): 0.19.0 kept one for a settings link, and the Codex
+// instructions file is still copied through its link. It is named by its path, never opened.
+test("the troubleshooting section says a .bak file is named by its path and its content is never opened", () => {
+  const section = read(SKILL).split("## 문제 해결")[1].split("\n| 메시지 |")[0];
+  assert.match(section, /`\.bak` 파일\(`anti-drm\.json\.bak`, `<파일>\.anti-drm\.bak`\)은 내용을 열지 않고 경로만 알린다/);
 });
 
 test("config says where a file anti-drm did not write went, and says so when it was not kept", () => {
@@ -1170,7 +1242,7 @@ test("a broken settings file has one procedure in the on table and the troublesh
     assert.match(row, /`anti-drm\.json\.bak` 에 한 번 남/, row);
     assert.match(row, /에이전트가 그 파일을 직접 지우거나 옮기지 않음/, row);
     assert.match(row, /폴더나 특수 파일이거나, 64KiB 보다 크거나, 읽을 수 없는 파일이면 바꾸지 않고 거부함/, row);
-    assert.match(row, /링크와 하드 링크는 거부하지 않고 그 이름만 일반 파일로 바꾸며, 가리키던 파일은 그대로 두고 `\.bak` 에 남기지 않음/, row);
+    assert.match(row, /링크와 하드 링크\(이름이 둘 이상인 일반 파일\)는 거부하지 않고 그 이름만 일반 파일로 바꾸며, 가리키던 파일은 그대로 두고 `\.bak` 에 남기지 않음/, row);
   }
 });
 
@@ -1184,8 +1256,8 @@ test("the troubleshooting section says to show a file with ls -l first and to op
 // A name that may be a link someone planted is shown by its path: opening it would put the file it leads to (a key,
 // say) into the session.
 test("the rows that show a file that may be a link say to show only the link and where it leads, not its content", () => {
-  const rows = read(SKILL).split("\n").filter((l) => /^\| (쓰는 사이에 같은 이름이 생겨|같은 이름의 다른 파일이 있음)/.test(l));
-  assert.equal(rows.length, 2);
+  const rows = read(SKILL).split("\n").filter((l) => /^\| (쓰는 사이에 같은 이름이 생겨|같은 이름의 다른 파일이 있음|확인하는 사이에 바뀐 자리라)/.test(l));
+  assert.equal(rows.length, 3);
   for (const row of rows) assert.match(row, /링크면 `ls -l` 로 링크와 대상 경로만 보이고 대상 내용은 열지 않음/, row);
 });
 

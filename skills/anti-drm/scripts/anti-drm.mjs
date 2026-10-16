@@ -220,27 +220,59 @@ function pathKind(file) {
   return st.nlink > 1 ? "hardlink" : "file";
 }
 
-// Opened without blocking, and without following a link where the system can: Windows has no O_NOFOLLOW, and the
-// look before the open stands in for it.
-const PRIOR_OPEN = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
+// Opened without blocking. O_NOFOLLOW, where the system has it, keeps the open from following a link put at the name
+// after the first look; Windows has none, so there the name is looked at again after the open.
+const PRIOR_OPEN = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
 
-// The bytes of the regular file with this one name at the settings path: { bytes } (null when it turned out to be
-// something else: gone, a link, not a regular file, or a file with another name too, which the save loses nothing
-// of) or { refusal }.
-export function priorBytes(file) {
+/**
+ * What the settings name holds after the open, against the opened file, from their bigint stats: "same", "link" (a
+ * link now: the open followed it), "hardlink" (the opened file has another name now) or "changed" (gone, not a regular
+ * file, or another file: the file IDs differ; an ID of 0, which some file systems give, proves nothing).
+ */
+export function nameNow(opened, now) {
+  if (now?.isSymbolicLink()) return "link";
+  if (!now?.isFile()) return "changed";
+  if (opened.ino !== 0n && (now.ino !== opened.ino || now.dev !== opened.dev)) return "changed";
+  return now.nlink > 1n ? "hardlink" : "same";
+}
+
+// The name's own stats in bigint, or null when it cannot be looked at.
+function lstatOrNull(file) {
+  try {
+    return lstatSync(file, { bigint: true });
+  } catch {
+    return null;
+  }
+}
+
+// What the file opened at the settings path gives, as priorBytes says. Without O_NOFOLLOW the name must still hold it.
+function openedBytes(file, fd, noFollow) {
+  const st = fstatSync(fd);
+  if (!st.isFile() || st.nlink > 1) return { bytes: null };
+  const now = noFollow ? "same" : nameNow(fstatSync(fd, { bigint: true }), lstatOrNull(file));
+  if (now === "changed") return { refusal: "확인하는 사이에 바뀐 자리라 설정을 저장하지 않았습니다" };
+  if (now !== "same") return { bytes: null };
+  if (st.size > MAX_BYTES) return { refusal: "64KiB 보다 큰 파일이라 설정을 저장하지 않았습니다" };
+  return { bytes: readFileSync(fd) };
+}
+
+/**
+ * The bytes of the regular file with this one name at the settings path: { bytes } (null when it turned out to be
+ * something else: gone, a link, not a regular file, or a file with another name too, which the save loses nothing
+ * of) or { refusal }. noFollow is O_NOFOLLOW where the system has it; 0 takes the Windows way.
+ */
+export function priorBytes(file, noFollow = NO_FOLLOW) {
   let fd;
   try {
-    fd = openSync(file, PRIOR_OPEN);
+    fd = openSync(file, PRIOR_OPEN | noFollow);
   } catch (e) {
     if (e.code === "ENOENT" || e.code === "ENOTDIR" || e.code === "ELOOP") return { bytes: null };
     if (denied(e)) return { refusal: "읽을 수 없는 파일이라 설정을 저장하지 않았습니다" };
     throw e;
   }
   try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink > 1) return { bytes: null };
-    if (st.size > MAX_BYTES) return { refusal: "64KiB 보다 큰 파일이라 설정을 저장하지 않았습니다" };
-    return { bytes: readFileSync(fd) };
+    return openedBytes(file, fd, noFollow);
   } finally {
     closeSync(fd);
   }

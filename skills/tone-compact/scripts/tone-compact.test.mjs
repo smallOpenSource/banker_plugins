@@ -1118,6 +1118,13 @@ test("the troubleshooting section says to show a file with ls -l first and to op
   assert.match(section, /링크가 아닌 일반 파일임을 본 뒤에만 내용을 연다/);
 });
 
+// The Codex instructions file is copied to .bak through its link, so a .bak may hold what a planted link led to (a key,
+// say). It is named by its path, never opened.
+test("the troubleshooting section says a .bak file is named by its path and its content is never opened", () => {
+  const section = readFileSync(SKILL, "utf8").split("## 문제 해결")[1].split("\n| 메시지 |")[0];
+  assert.match(section, /`<파일>\.tone-compact\.bak` 은 내용을 열지 않고 경로만 알린다/);
+});
+
 // A name that may be a link someone planted is shown by its path: opening it would put the file it leads to (a key,
 // say) into the session.
 test("the rows that show a file that may be a link say to show only the link and where it leads, not its content", () => {
