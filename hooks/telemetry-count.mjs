@@ -5,7 +5,8 @@
  *
  * fail-closed 규약(각 항목은 telemetry-count.test.mjs 가 검증한다):
  *  - countingActive() 가 아니면 로컬 쓰기조차 하지 않는다. 파일도 만들지 않는다.
- *  - 기록 자리가 FIFO 면 기다리지 않고, 링크나 하드 링크면 그 너머에 쓰지 않는다(Windows 는 열기 전에 본다).
+ *  - 기록 자리가 FIFO 면 기다리지 않고, 링크면 그 너머에 쓰지 않는다(Windows 는 열기 전에 본다). 하드 링크에 쓰지
+ *    않는 것은 공용 appendUsageLog 의 시험(bin/lib/telemetry-config.test.mjs)이 검증한다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션/프롬프트를 절대 막지 않는다.
  *  - PII/식별자를 다루지 않는다. 로그 한 줄 = 이름 문자열 + TAB + hour(0-23) 뿐이다.
  *

@@ -77,6 +77,15 @@ test('status: 업데이트-체크 캐시 반영 (마지막 체크 시각 · 캐�
   assert.match(out, /업데이트 있음/);
 }));
 
+test('status: 업데이트-체크 캐시 자리가 FIFO 여도 기다리지 않는다', { skip: process.platform === 'win32' && 'Windows 에는 FIFO 가 없다' }, () => withXdg((dir) => {
+  fs.mkdirSync(path.join(dir, 'banker'), { recursive: true });
+  assert.strictEqual(spawnSync('mkfifo', [updateCachePath(dir)]).status, 0, 'mkfifo');
+  const { out, code, r } = run(['telemetry', 'status'], dir);
+  assert.strictEqual(r.signal, null, '명령이 스스로 끝났다');
+  assert.strictEqual(code, 0);
+  assert.match(out, /비교 불가/, '캐시를 읽지 못하면 비교하지 않는다');
+}));
+
 test('telemetry on (기본 상태) -> opt-out 해제 확인 (내장 기본 엔드포인트라 미설정 안내 없음)', () => withXdg((dir) => {
   const { out, code } = run(['telemetry', 'on'], dir);
   assert.strictEqual(code, 0);

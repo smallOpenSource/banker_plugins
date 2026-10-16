@@ -342,7 +342,7 @@ async function telemetryCmd(sub) {
     log('  참고: 엔드포인트가 설정되어 있고 opt-out 이 아닐 때(env·config 둘 다 아님)만 실제로 전송됩니다.');
 
     let cache = {};
-    try { cache = JSON.parse(fs.readFileSync(tc.UPDATE_CHECK_PATH, 'utf8')); } catch { /* 캐시 없음/malformed */ }
+    try { cache = JSON.parse(tc.readRegular(tc.UPDATE_CHECK_PATH)); } catch { /* 캐시 없음/malformed/일반 파일 아님(FIFO 를 기다리지 않음) */ }
     const installed = tc.installedVersion();
     const cmp = (cache.latest && installed) ? tc.compareVersions(cache.latest, installed) : null;
     log('[업데이트 체크] 새 버전 알림 (기본값: 켜짐)');
