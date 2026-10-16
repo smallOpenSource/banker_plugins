@@ -97,6 +97,7 @@ export const register = (on) => {
   on('session.end', async ($, e, next) => {
     pauseReset();
     progressReset();
+    $.ui.invalidate('ui.render'); // the pane shows at once what /clear emptied
     return next(e);
   });
 

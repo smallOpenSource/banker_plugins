@@ -12,10 +12,10 @@ const PANE = 'banker-progress'
 // the lines logged. As in Claude Code 2.1.296, an open resolves to nothing and raises a pane only
 // with `focus`. `refuse` names a command it will not register; `panesDeny` refuses the pane list.
 // `files` holds what `$.fs.read` finds; a path it does not hold is refused, as a missing file is.
-type Below = { tool?: (e: any) => any; refuse?: string; panesDeny?: string; files?: Map<string, string> }
+type Below = { tool?: (e: any) => any; refuse?: string; panesDeny?: string; files?: Map<string, string>; readMs?: number }
 const answer = (e: any): any => (e.tool === 'Bash' ? { result: {}, text: 'exit 1', isError: true } : { result: {}, text: 'ok' })
 
-function beneath(on: any, { tool = answer, refuse, panesDeny, files = new Map() }: Below = {}) {
+function beneath(on: any, { tool = answer, refuse, panesDeny, files = new Map(), readMs = 0 }: Below = {}) {
   const registered: { name: string; immediate?: true; argumentHint?: string }[] = []
   const open = new Map<string, boolean>()
   const opens: any[] = []
@@ -41,10 +41,14 @@ function beneath(on: any, { tool = answer, refuse, panesDeny, files = new Map() 
     return { value: undefined }
   })
   on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+  on('session.end', (_: unknown, e: any) => ({ sessionId: e.sessionId }))
   on('turn.start', (_: unknown, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: 'engine' }))
   on('tool.call', (_: unknown, e: any) => tool(e))
-  on('fs.read', (_: unknown, e: any) => (files.has(e.path) ? { value: files.get(e.path) } : { deny: `ENOENT: ${e.path}` }))
+  on('fs.read', async (_: unknown, e: any) => {
+    if (readMs) await new Promise((resolve) => setTimeout(resolve, readMs))
+    return files.has(e.path) ? { value: files.get(e.path) } : { deny: `ENOENT: ${e.path}` }
+  })
   on('fs.stat', (_: unknown, e: any) => (files.has(e.path)
     ? { value: { kind: 'file', size: files.get(e.path)!.length, mtimeMs: 0, isLink: false } } : { deny: `ENOENT: ${e.path}` }))
   return { registered, open, opens, logged }
@@ -247,5 +251,31 @@ test('a plan longer than the pane draws shows its first 300 rows and says how ma
   expect(await ui.find({ type: 'Text', text: /^단계 301$/ })).toBeUndefined()
   expect((await ui.find({ key: 'plan-more' }))?.text).toBe('외 20줄')
   expect((await ui.find({ key: 'row-t-t1' }))?.text).toContain('긴 계획')
+  await ui.unmount()
+})
+
+test('/clear empties a mounted pane at once, not at the next prompt', async ($, on) => {
+  beneath(on)
+  await $.session.start(START)
+  const ui = await mountPane($)
+  await $.turn.start({ text: '작업', turnId: 't1' })
+  expect((await ui.find({ key: 't-t1' }))?.text).toBe('작업')
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+  expect(await ui.find({ key: 't-t1' })).toBeUndefined()
+  expect((await ui.find({ key: 'idle' }))?.text).toBe('진행 중인 작업 없음')
+  await ui.unmount()
+})
+
+test('a tool call alone redraws a mounted pane, a slow plan read included', async ($, on) => {
+  const plan = '/work/.omc/plans/deploy.md'
+  beneath(on, { files: new Map([[plan, '# 배포 계획\n\n## 작업 순서\n\n1. 설계\n']]), readMs: 40 })
+  await $.session.start(START)
+  const ui = await mountPane($)
+  await $.turn.start({ text: '작업', turnId: 't1' })
+  expect(await ui.find({ key: 'arrow-t-t1' })).toBeUndefined()
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect(await ui.find({ key: 'arrow-t-t1' })).toBeDefined()
+  await $.tool.call({ tool: 'Write', file_path: plan, content: '' })
+  expect((await ui.find({ key: 'plan' }))?.text).toBe('계획: 배포 계획')
   await ui.unmount()
 })

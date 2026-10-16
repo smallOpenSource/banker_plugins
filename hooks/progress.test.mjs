@@ -71,6 +71,17 @@ const fsStandIn = (files, held, waiting, seen, kinds) => ({
   },
 });
 
+// The engine's panes and drawing: a new pane is shown, and a pane behind another plugin's pane rises only with `focus`.
+const uiStandIn = (open, seen, scrollAnswers) => ({
+  panes: async () => [...open].map(([id, p]) => ({ id, title: id, isShown: p.isShown, isFocused: false, isPlaced: true })),
+  open: async (p) => { seen.opened.push(p); open.set(p.id, { isShown: !open.has(p.id) || open.get(p.id).isShown || p.focus === true }); },
+  close: async (p) => { seen.closed.push(p); open.delete(p.id); },
+  invalidate: () => { seen.invalidated += 1; },
+  scroll: async (a) => { seen.scrolls.push(a); return scrollAnswers.shift() ?? {}; },
+  log: (t) => { seen.logs.push(t); },
+  resolve: () => ELEMENTS,
+});
+
 // A stand-in for the engine's side: it records what the module registers and calls on `$`,
 // keeps the open panes, and raises events through the module's hooks the way the engine does. As
 // in Claude Code 2.1.296, `$.ui.open` resolves to nothing, a new pane is shown, and a pane behind
@@ -103,15 +114,7 @@ function engine({ files = new Map(), held = new Set(), tools = ['Bash', 'Read', 
     session: { version: async () => ({ version: '2.1.296', base: '2.1.296' }) },
     clock: { after: (ms, fn) => { seen.waits.push(ms); timers.push(fn); return { cancel: () => {} }; } },
     fs: fsStandIn(files, held, waiting, seen, kinds),
-    ui: {
-      panes: async () => [...open].map(([id, p]) => ({ id, title: id, isShown: p.isShown, isFocused: false, isPlaced: true })),
-      open: async (p) => { seen.opened.push(p); open.set(p.id, { isShown: !open.has(p.id) || open.get(p.id).isShown || p.focus === true }); },
-      close: async (p) => { seen.closed.push(p); open.delete(p.id); },
-      invalidate: () => { seen.invalidated += 1; },
-      scroll: async (a) => { seen.scrolls.push(a); return scrollAnswers.shift() ?? {}; },
-      log: (t) => { seen.logs.push(t); },
-      resolve: () => ELEMENTS,
-    },
+    ui: uiStandIn(open, seen, scrollAnswers),
   };
   register(on);
   const raise = raiser(hooks, $);
@@ -333,10 +336,12 @@ test('a press on the shown step clears the description, and a second arrow press
   assert.equal(button(await eng.draw(), 'Grep TODO'), undefined);
 });
 
-test('/clear (session.end, and no session.start after it) empties the list', async () => {
+test('/clear (session.end, and no session.start after it) empties the list, and the pane is asked to draw it at once', async () => {
   const eng = engine();
   await eng.raise('turn.start', { turnId: 't1', text: '작업' });
+  const asked = eng.seen.invalidated;
   await eng.raise('session.end', { reason: 'clear' });
+  assert.ok(eng.seen.invalidated > asked, 'a pane that stays as drawn shows the old list until the next prompt');
   assert.deepEqual(labels(await eng.draw()), ['진행 중인 작업 없음']);
 });
 
@@ -1513,4 +1518,220 @@ test('without mods the fallback hook stops the expansion with the one message, a
   const hooks = JSON.parse(readFileSync(new URL('./hooks.json', import.meta.url), 'utf8'));
   const entry = hooks.hooks.UserPromptExpansion.find((x) => x.matcher === '^banker:progress$');
   assert.match(entry.hooks[0].command, /hooks\/progress-fallback\.mjs"?$/);
+});
+
+const REVIEW = '/w/.omc/plans/deploy-critic-r1.md';
+const REVIEW_MD = '# 검토 의견\n- [ ] 고칠 것\n';
+
+test('a review round whose read lands first does not overtake a plan touched before it', async () => {
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [REVIEW, REVIEW_MD]]), held: new Set([PLAN]) });
+  const first = eng.tool({ tool: 'Write', file_path: PLAN });
+  await new Promise((resolve) => setImmediate(resolve));
+  await eng.tool({ tool: 'Write', file_path: REVIEW });
+  await eng.release(PLAN);
+  await first;
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획']);
+});
+
+test('a plan with no steps that the session only read replaces a review round that has checkboxes', async () => {
+  const notes = '/w/.omc/plans/design-notes.md';
+  const eng = engine({ files: new Map([[REVIEW, REVIEW_MD], [notes, '# 설계 메모\n결정만 적음\n']]) });
+  await eng.tool({ tool: 'Write', file_path: REVIEW });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 검토 의견']);
+  await eng.tool({ tool: 'Read', file_path: notes });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 설계 메모']);
+});
+
+test('the first review round keeps its place against a later one, as the design says: a plan on the pane is not changed', async () => {
+  const second = '/w/.omc/plans/deploy-architect-review-r1.md';
+  const eng = engine({ files: new Map([[REVIEW, REVIEW_MD], [second, '# 다른 검토\n- [ ] 다른 것\n']]) });
+  await eng.tool({ tool: 'Write', file_path: REVIEW });
+  await eng.tool({ tool: 'Write', file_path: second });
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 검토 의견']);
+});
+
+test('every way a notice\'s turn ends without an answer says so under the step, as a failed row', async () => {
+  const eng = engine();
+  await eng.raise('turn.start', { turnId: 't1', text: '검토해 줘' });
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  const notice = '<task-notification><status>completed</status><summary>끝</summary></task-notification>';
+  const says = { aborted: '알림 처리 중단됨', refusal: '알림 처리 거절됨', error: '알림 처리 오류로 끝남' };
+  for (const reason of Object.keys(says)) {
+    await eng.raise('turn.start', { turnId: `n-${reason}`, text: notice });
+    await eng.raise('turn.complete', { turnId: `n-${reason}`, reason });
+  }
+  button(await eng.draw(), '▸').props.onPress({});
+  const tree = await eng.draw();
+  for (const word of Object.values(says)) assert.match(textOf(rowLabeled(tree, word)), /실패/, word);
+});
+
+test('with two items in progress the calls go under the last one, and the pane follows it', async () => {
+  const eng = engine();
+  const item = (content, status) => ({ content, status, activeForm: `${content} 중` });
+  await eng.tool({ tool: 'TodoWrite', todos: [item('A 하기', 'in_progress'), item('B 하기', 'in_progress'), item('C 하기', 'pending')] });
+  await eng.tool({ tool: 'Bash', command: 'make' });
+  const tree = await eng.draw();
+  assert.deepEqual(labels(tree), ['A 하기', '▸', 'B 하기', 'C 하기'], 'only B holds the call');
+  await eng.settle();
+  assert.deepEqual(eng.seen.scrolls.at(-1), into(rowLabeled(tree, 'B 하기').props.key));
+});
+
+test('a TaskList begun after a TaskCreate that leaves the task out drops it', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  await eng.tool({ tool: 'TaskList' }, { result: { tasks: [{ id: '2', subject: '다른 세션의 작업', status: 'pending', blockedBy: [] }] } });
+  assert.deepEqual(labels(await eng.draw()), ['다른 세션의 작업']);
+});
+
+test('a TaskList that took a task in makes an earlier-begun TaskGet of it stale', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const reading = later(eng, { tool: 'TaskGet', taskId: '1' });
+  await eng.tool({ tool: 'TaskList' }, { result: { tasks: [{ id: '1', subject: '설계', status: 'in_progress', blockedBy: [] }] } });
+  await reading.end({ result: { task: { id: '1', subject: '설계', status: 'pending', blocks: [] } } });
+  assert.match(textOf(rowOf(await eng.draw(), 'k-1')), /진행 중/);
+});
+
+test('a TaskCreate that ends after a later-begun delete of its task does not make it', async () => {
+  const eng = engine();
+  const creating = later(eng, { tool: 'TaskCreate', subject: '설계' });
+  await eng.tool({ tool: 'TaskUpdate', taskId: '1', status: 'deleted' }, updated('1', { from: 'pending', to: 'deleted' }));
+  await creating.end(created('1', '설계'));
+  assert.deepEqual(labels(await eng.draw()), ['진행 중인 작업 없음']);
+});
+
+test('a read finding a task gone beats an earlier-begun read of it, and a read that brought a task beats an earlier-begun list that left it out', async () => {
+  const task = { id: '1', subject: '설계', status: 'pending', blocks: [] };
+  const eng = engine();
+  await eng.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const first = later(eng, { tool: 'TaskGet', taskId: '1' });
+  await eng.tool({ tool: 'TaskGet', taskId: '1' }, { result: { task: null } });
+  await first.end({ result: { task } });
+  assert.deepEqual(labels(await eng.draw()), ['진행 중인 작업 없음'], 'a TaskGet that found it gone');
+  const other = engine();
+  await other.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  await other.tool({ tool: 'TaskCreate', subject: '구현' }, created('2', '구현'));
+  const getting = later(other, { tool: 'TaskGet', taskId: '1' });
+  await other.tool({ tool: 'TaskList' }, { result: { tasks: [{ id: '2', subject: '구현', status: 'pending', blockedBy: [] }] } });
+  await getting.end({ result: { task } });
+  assert.deepEqual(labels(await other.draw()), ['구현'], 'a TaskList that left it out');
+  const third = engine();
+  await third.tool({ tool: 'TaskCreate', subject: '설계' }, created('1', '설계'));
+  const listing = later(third, { tool: 'TaskList' });
+  await third.tool({ tool: 'TaskGet', taskId: '7' }, { result: { task: { id: '7', subject: '다른 세션의 작업', status: 'pending', blocks: [] } } });
+  await listing.end({ result: { tasks: [{ id: '1', subject: '설계', status: 'pending', blockedBy: [] }] } });
+  assert.deepEqual(labels(await third.draw()), ['설계', '다른 세션의 작업'], 'a TaskGet that brought it in');
+});
+
+test('the pane is asked again after each change it shows: a tool call, a plan taken in, a turn end and start, a to-do list', async () => {
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD]]), held: new Set([PLAN]) });
+  let drawing = Promise.resolve(null);
+  eng.$.ui.invalidate = () => { eng.seen.invalidated += 1; drawing = eng.draw(); }; // the surface asks at once
+  const shown = async () => labels(await drawing);
+  await eng.raise('turn.start', { turnId: 't1', text: '작업' });
+  assert.deepEqual(await shown(), ['작업']);
+  await eng.tool({ tool: 'Bash', command: 'ls' });
+  assert.deepEqual(await shown(), ['▸', '작업'], 'a tool call draws its arrow');
+  const writing = eng.tool({ tool: 'Write', file_path: PLAN });
+  await new Promise((resolve) => setImmediate(resolve));
+  await eng.release(PLAN);
+  await writing;
+  assert.deepEqual((await shown()).slice(0, 2), ['▾', '계획: 배포 계획'], 'the last asking came after the plan was taken in');
+  await eng.raise('turn.complete', { turnId: 't1', reason: 'answer' });
+  assert.match(textOf(rowOf(await drawing, 't-t1')), /완료/, 'a turn end draws the step done');
+  eng.files.set(PLAN, '# 배포 계획\n- [x] 설계\n');
+  await eng.raise('turn.start', { turnId: 't2', text: '다음' });
+  assert.match(textOf(rowOf(await drawing, 'plan')), /1\/1 완료/, 'a turn start draws the plan read again');
+  await eng.raise('tool.call', { tool: TODO_TOOL, todos: [{ content: '하나', status: 'in_progress' }] });
+  assert.ok((await shown()).includes('하나'), 'the to-do list draws');
+});
+
+test('a TaskList begun after a TaskGet leaves out a task the pane never held: the TaskGet that finds it later changes nothing', async () => {
+  const eng = engine();
+  const reading = later(eng, { tool: 'TaskGet', taskId: '7' });
+  await eng.tool({ tool: 'TaskList' }, { result: { tasks: [{ id: '8', subject: '다른 작업', status: 'pending', blockedBy: [] }] } });
+  await reading.end({ result: { task: { id: '7', subject: '지워진 작업', status: 'pending', blocks: [] } } });
+  assert.deepEqual(labels(await eng.draw()), ['다른 작업'], 'the list begun later stands');
+});
+
+// ---- reads that overlap, against a random model (seeded: the same runs every time) ----
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// A TaskGet or TaskList whose start, read and end fall at random: { e, start, read, end, saw } with `saw` the shared
+// list at its read, which is what its answer says.
+function randomRead(rand, truth) {
+  const start = rand() * 100;
+  const read = start + rand() * 50;
+  const e = rand() < 0.5 ? { tool: 'TaskList' } : { tool: 'TaskGet', taskId: String(1 + Math.floor(rand() * 6)) };
+  return { e, start, read, end: read + rand() * 50, answer() {
+    this.saw = new Map(truth);
+    const task = (id) => ({ id, subject: `작업 ${id}`, status: truth.get(id), blockedBy: [], blocks: [] });
+    return e.tool === 'TaskList' ? { result: { tasks: [...truth.keys()].map(task) } }
+      : { result: { task: truth.has(e.taskId) ? task(e.taskId) : null } };
+  } };
+}
+
+// Another session's change to the shared list: a new task, a delete, or a move between pending and in progress.
+function otherSession(rand, truth, made) {
+  const ids = [...truth.keys()];
+  const kind = rand();
+  if (kind < 0.35 && made.next <= 6) truth.set(String(made.next++), 'pending');
+  else if (kind < 0.7 && ids.length) truth.delete(ids[Math.floor(rand() * ids.length)]);
+  else if (ids.length) {
+    const id = ids[Math.floor(rand() * ids.length)];
+    truth.set(id, truth.get(id) === 'pending' ? 'in_progress' : 'pending');
+  }
+}
+
+// The ids where the pane differs from the latest-begun call that said anything about them, and whether two calls
+// ended in another order than they began.
+function overlapRun(rand) {
+  const s = freshState();
+  const truth = new Map();
+  for (const id of ['1', '2', '3', '4']) {
+    truth.set(id, 'pending');
+    noteTaskTool(s, { tool: 'TaskCreate', subject: `작업 ${id}` }, { result: { task: { id } } }, 0);
+  }
+  const calls = Array.from({ length: 6 }, () => randomRead(rand, truth));
+  const made = { next: 5 };
+  const events = calls.flatMap((c) => [
+    [c.start, 0, () => { c.since = s.rev; c.order = ++s.order; }],
+    [c.read, 1, () => { c.r = c.answer(); }],
+    [c.end, 2, () => noteTaskTool(s, c.e, c.r, 0, c.since, c.order)],
+  ]);
+  for (let i = 0; i < 4; i++) events.push([rand() * 150, 3, () => otherSession(rand, truth, made)]);
+  events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  for (const [, , run] of events) run();
+  const differs = ['1', '2', '3', '4', '5', '6'].filter((id) => {
+    const says = calls.filter((c) => c.e.tool === 'TaskList' || c.e.taskId === id).sort((a, b) => b.order - a.order)[0];
+    const want = says ? (says.saw.get(id) ?? null) : (Number(id) <= 4 ? 'pending' : null);
+    return (s.tasks.get(id)?.status ?? null) !== want;
+  });
+  const byStart = [...calls].sort((a, b) => a.start - b.start);
+  return { differs, crossed: byStart.some((c, i) => i > 0 && c.end < byStart[i - 1].end) };
+}
+
+test('reads that overlap at random: the pane always shows what the latest-begun read said about each task', () => {
+  let runs = 0;
+  let crossed = 0;
+  const wrong = [];
+  for (const seed of [1, 2, 3]) {
+    const rand = seeded(seed);
+    for (let i = 0; i < 1500; i++) {
+      const run = overlapRun(rand);
+      runs += 1;
+      crossed += run.crossed ? 1 : 0;
+      if (run.differs.length) wrong.push(`seed ${seed} run ${i}: ${run.differs.join(', ')}`);
+    }
+  }
+  assert.ok(crossed > runs / 2, `the model overlaps calls in most runs (${crossed} of ${runs})`);
+  assert.deepEqual(wrong.slice(0, 5), [], `${wrong.length} runs broke the start-order rule`);
 });

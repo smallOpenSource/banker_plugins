@@ -303,9 +303,11 @@ function markOf(s, id) {
   return s.marks.get(id);
 }
 
-// Whether a list or a read begun at (since, order) is older than what the pane holds of a task: the task changed
-// after it began (a delete too), or a later-begun read already brought it.
+// Whether a list or a read begun at (since, order) is older than what the pane holds of a task: a list begun after it
+// was taken in (a list names the whole list, so this holds for a task it left out that the pane never held, too), the
+// task changed after it began (a delete too), or a later-begun read already brought it.
 function stale(s, id, since, order) {
+  if (order < s.listAt) return true;
   const m = s.marks.get(id);
   return Boolean(m) && ((m.changedRev ?? 0) > since || order < (m.seenAt ?? 0));
 }
@@ -342,8 +344,6 @@ function updateTask(s, e, r, now, { order }) {
   putTask(s, { id, subject: e.subject, description: e.description, activeForm: e.activeForm, status }, now);
 }
 
-// Whether the pane changed a task (a delete too) after a list of it began.
-const changedAfter = (s, id, since) => (s.marks.get(id)?.changedRev ?? 0) > since;
 // The status a list or a read begun at order shows for a task: a status update begun after it stands, also for a
 // task the pane did not hold then.
 const readStatus = (s, id, order, status) => {
@@ -376,7 +376,11 @@ function listTasks(s, _e, r, now, { since, order }) {
   const named = new Set(listed.map((t) => String(t.id)));
   s.tasks = new Map();
   for (const t of listed) takeListed(s, before, t, { over, since, order, now });
-  for (const [id, held] of before) if (!named.has(id) && changedAfter(s, id, since)) s.tasks.set(id, held);
+  for (const [id, held] of before) {
+    if (named.has(id)) continue;
+    if (stale(s, id, since, order)) s.tasks.set(id, held);
+    else markOf(s, id).seenAt = order;
+  }
 }
 
 // TaskGet reads one task: one it cannot find is gone, and a completed one off the pane stays off. A read older than
@@ -384,7 +388,10 @@ function listTasks(s, _e, r, now, { since, order }) {
 function getTask(s, e, r, now, { since, order }) {
   if (stale(s, String(e.taskId), since, order)) return;
   const t = r?.result?.task;
-  if (t === null) s.tasks.delete(String(e.taskId));
+  if (t === null) {
+    s.tasks.delete(String(e.taskId));
+    markOf(s, String(e.taskId)).seenAt = order;
+  }
   if (!t) return;
   const id = String(t.id);
   const status = readStatus(s, id, order, t.status);
@@ -476,13 +483,17 @@ function current(s, path, { touch, since }) {
   return path === s.planPath && s.taken <= since;
 }
 
+// A file with no steps does not push out a plan that has some, unless the session wrote it itself; a weak plan holds no
+// such place, since any plan replaces it.
+const stepless = (s, path, plan, read) => path !== s.planPath && !plan.total && Boolean(s.plan?.total) && !read.own && planKind(s.planPath) !== 'weak';
+
 // Whether what was read stays off the pane: no plan; a review round or open questions while the pane shows another
 // plan; or a file with no steps in place of a plan that has some, unless the session wrote it itself (an agent's
 // review written beside a plan, or a note the session only read, does not push the plan away; a plan the session
 // writes is the plan, steps or not).
 const keepsOff = (s, path, plan, read) => !plan
   || (path !== s.planPath && Boolean(s.plan) && read.weak === true)
-  || (path !== s.planPath && !plan.total && Boolean(s.plan?.total) && !read.own);
+  || stepless(s, path, plan, read);
 
 // The ids in a tree, to keep the unfolded ones that are still there when a plan is read again.
 function treeIds(nodes, out = new Set()) {
@@ -501,7 +512,7 @@ export function takePlan(s, path, text, read = {}) {
   const plan = parsed(path, text);
   if (keepsOff(s, path, plan, read)) return;
   const moving = path !== s.planPath;
-  if (read.touch !== undefined) s.taken = read.touch;
+  if (read.touch !== undefined && !read.weak) s.taken = read.touch; // a weak plan does not make an older touch late
   if (moving && s.selected === 'plan') s.selected = null;
   const ids = treeIds(plan.tree);
   s.planOpen = moving ? new Set() : new Set([...s.planOpen].filter((id) => ids.has(id)));

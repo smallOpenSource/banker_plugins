@@ -171,7 +171,8 @@ test('a UTF-8 byte order mark is no part of the plan', () => {
 
 test('review rounds and open questions beside a plan are no plan', () => {
   for (const p of ['/w/.omc/plans/vertical-pptx-critic-r2.md', '/w/.omc/plans/architect-review-r1.md', '/w/.omc/plans/critic-verdict-r1.md',
-    '/w/.omc/plans/banker-ralph-qa-impl-review.md', '/w/.omc/plans/open-questions.md']) assert.ok(!isPlanPath(p), p);
+    '/w/.omc/plans/banker-ralph-qa-impl-review.md', '/w/.omc/plans/open-questions.md', '/w/.omc/plans/vertical-pptx-architect.md',
+    '/w/.omc/plans/banker-ralph-qa-architect-r2.md']) assert.ok(!isPlanPath(p), p);
   assert.ok(isPlanPath('/w/.omc/plans/vertical-pptx.md'));
 });
 

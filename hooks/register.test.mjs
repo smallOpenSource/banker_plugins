@@ -75,12 +75,23 @@ test('/progress answers at once only from 2.1.289 on; an older engine, or one wi
   }
 });
 
-test('register.mjs hands $ to no imported function: older engines refuse the whole module for that', async () => {
+// The text inside the parentheses of each call `name(...)`, nested parentheses kept.
+function callArgs(src, name) {
+  return [...src.matchAll(new RegExp(`\\b${name}\\(`, 'g'))].map((m) => {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < src.length && depth; i++) depth += src[i] === '(' ? 1 : src[i] === ')' ? -1 : 0;
+    return src.slice(m.index + m[0].length, i - 1);
+  });
+}
+
+test('register.mjs hands $ to no imported function, in any place of the call: older engines refuse the whole module for that', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('./register.mjs', import.meta.url), 'utf8');
   const imported = [...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\/[^']+'/g)]
     .flatMap((m) => m[1].split(',').map((n) => n.trim().split(/\s+as\s+/).pop()).filter(Boolean));
   assert.ok(imported.includes('registerProgress'), 'the import lists were read');
-  const passed = imported.filter((name) => new RegExp(`\\b${name}\\(\\s*\\$\\s*[,)]`).test(src));
+  const bare = /(?<![\w$.])\$(?![\w$.])/; // `$` by itself, not `$.ui` or `a$`
+  const passed = imported.filter((name) => callArgs(src, name).some((args) => bare.test(args)));
   assert.deepEqual(passed, []);
 });
