@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.19.2] - 2026-10-16
 
 ### Changed
 - `anti-drm` SKILL: 종료 코드 1 행에 `앞서 바꾼 파일:` 줄이 있으면 그 파일은 이미 바뀌었다고 적는다(tone-compact 와 같게).

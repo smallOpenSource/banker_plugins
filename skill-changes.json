@@ -151,5 +151,10 @@
     "banker:lineage",
     "banker:omc-patch",
     "banker:tone-compact"
+  ],
+  "0.19.2": [
+    "banker:anti-drm",
+    "banker:lineage",
+    "banker:tone-compact"
   ]
 }
