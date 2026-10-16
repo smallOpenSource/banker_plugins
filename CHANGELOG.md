@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.19.4] - 2026-10-17
 
 ### Changed
 - 유지보수자용: 체크인 훅 시험이 `last-flush` 임시 이름의 링크, 폴더나 FIFO 인 차지 이름을 덮는다.
