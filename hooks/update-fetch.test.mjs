@@ -7,11 +7,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FETCH_HOOK = join(HERE, 'update-fetch.mjs');
@@ -46,10 +46,12 @@ function fetchEnv(tmp, npmUrl) {
 }
 
 // in-process 서버와 통신하는 경로용: 이벤트 루프를 살려두려면 비동기 spawn 이어야 한다.
-// timeout 이 있으면 그 뒤 죽이고 null 을 돌려준다(FIFO 에서 멈추는지 보는 시험용).
-function runFetch(tmp, npmUrl, { timeout } = {}) {
+// timeout 이 있으면 그 뒤 죽이고 null 을 돌려준다(FIFO 에서 멈추는지 보는 시험용). pre 는 훅보다 먼저 --import 로 불러올
+// 모듈 경로, env 는 더할 환경 변수.
+function runFetch(tmp, npmUrl, { timeout, pre, env = {} } = {}) {
   return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, [FETCH_HOOK], { env: fetchEnv(tmp, npmUrl), stdio: 'ignore' });
+    const args = pre ? ['--import', pathToFileURL(pre).href, FETCH_HOOK] : [FETCH_HOOK];
+    const child = spawn(process.execPath, args, { env: { ...fetchEnv(tmp, npmUrl), ...env }, stdio: 'ignore' });
     let killed = false;
     const killer = timeout ? setTimeout(() => { killed = true; child.kill('SIGKILL'); }, timeout) : null;
     child.on('close', (code) => {
@@ -127,6 +129,25 @@ test('정상 응답: 캐시 latest/checkedAt 갱신 + GET 무페이로드', asyn
     const cache = readCache(tmp);
     assert.equal(cache.latest, '0.9.0');
     assert.ok(typeof cache.checkedAt === 'number' && cache.checkedAt > 0, 'checkedAt 갱신');
+  } finally {
+    server.close();
+  }
+});
+
+// 암호 모듈 없이 빌드한 Node 를 흉내 내는 시험 도구(--import). 배포에 들지 않는 scripts/ 아래에 있다. 이 훅은 https 를
+// 가져와 그런 Node 에서는 시작하지 못하므로, 여기서는 NO_CRYPTO_ONLY=1 로 node:crypto 만 막아 이 훅이 crypto 를 맨 위에서
+// 가져오지 않는지만 본다.
+const NO_CRYPTO = join(HERE, '..', 'scripts', 'test-fixtures', 'no-crypto.mjs');
+
+test('node:crypto 만 막아도 받은 latest 를 캐시에 쓴다(맨 위에서 crypto 를 가져오지 않음)', async () => {
+  const tmp = mkTmp();
+  const server = await mockServer({ body: { version: '9.9.9' } });
+  try {
+    writeCache(tmp, { latest: '0.8.0', checkedAt: 0 }); // throttle 만료(epoch 0).
+    const code = await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`, { pre: NO_CRYPTO, env: { NO_CRYPTO_ONLY: '1' } });
+    assert.equal(code, 0);
+    assert.equal(readCache(tmp).latest, '9.9.9');
+    assert.deepEqual(readdirSync(bankerDir(tmp)).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
   } finally {
     server.close();
   }

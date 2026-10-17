@@ -1,11 +1,12 @@
 /*
  * telemetry-config - banker 텔레메트리 config/consent 공용 모듈 (bin·hook 공유).
- * 의존성 0 (Node 내장 모듈만: node:fs, node:path, node:os, node:crypto). ESM(.mjs).
+ * 의존성 0 (Node 내장 모듈만: node:fs, node:module, node:path, node:os, node:url. node:crypto 는 임시 이름의
+ * 난수가 필요할 때만 불러온다). ESM(.mjs).
  * import 시 부작용 없음: 경로는 resolver 로 호출 시 계산하고, 파일시스템 접근·mkdir 은
  * 각 함수 호출 시에만 일어난다. readConfig/isEnabled/endpoint 는 어떤 예외도 밖으로 던지지 않는다.
  */
-import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -87,12 +88,24 @@ export function readRegular(file) {
   }
 }
 
+const requireBuiltin = createRequire(import.meta.url);
+
+// 16진 소문자 8자 난수. node:crypto 는 부를 때 불러온다: 맨 위에서 가져오면 훅을 시작할 때마다 약 8ms 가 든다(node 24
+// 실측). crypto 없이 빌드한 Node 에서는 Math.random 으로 만든다. 임시 이름을 미리 알기 어렵게 하려는 값이라 비밀이 아니다.
+export function randomHex() {
+  try {
+    return requireBuiltin('node:crypto').randomBytes(4).toString('hex');
+  } catch {
+    return Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0');
+  }
+}
+
 // target 자리에 data 를 놓는다. 새 임시 파일을 만들어(wx: 그 이름에 무엇이 있으면 만들지 않음) 쓰고 rename 으로
 // 옮겨, 임시 이름이나 target 자리의 링크를 따라 다른 파일을 덮지 않는다. 임시 이름에 난수를 붙이는 것은 Windows 의
 // wx 가 끊어진 링크를 따라가 그 너머에 새 파일을 만들기 때문이다: 이름을 미리 알 수 없어야 링크를 심어 둘 수 없다.
 // 실패하면 던진다. 지우는 것은 이 호출이 만든 임시 파일뿐이고, 그 이름에 이미 있던 것은 둔다.
 export function writeByRename(target, data) {
-  const tmp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  const tmp = `${target}.${process.pid}.${randomHex()}.tmp`;
   let made = false;
   try {
     const fd = fs.openSync(tmp, 'wx');

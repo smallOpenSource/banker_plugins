@@ -42,8 +42,8 @@ function writeConfig(tmp, cfg) {
 }
 
 // 격리 env: XDG 로 config 를 tmp 에 가두고, 상속된 텔레메트리/업데이트 env 오버라이드를 제거한다.
-function checkinEnv(tmp) {
-  const env = { ...process.env, XDG_CONFIG_HOME: tmp };
+function checkinEnv(tmp, extra = {}) {
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, ...extra };
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
   delete env.BANKER_NO_UPDATE_CHECK;
@@ -101,10 +101,10 @@ function holdServer(n, bodies, onRequest = () => {}) {
 
 // 이 시험의 env 로 훅을 돌린다. pre(파일 경로)가 있으면 그 모듈을 먼저 불러온다. timeout 이 지나면 죽인다.
 // 종료 코드를 돌려주고, 죽였으면 null.
-function spawnCheckin(tmp, { pre, timeout = 15_000 } = {}) {
+function spawnCheckin(tmp, { pre, timeout = 15_000, env = {} } = {}) {
   const args = pre ? ['--import', pathToFileURL(pre).href, CHECKIN_HOOK] : [CHECKIN_HOOK];
   return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, args, { env: checkinEnv(tmp), stdio: 'ignore' });
+    const child = spawn(process.execPath, args, { env: checkinEnv(tmp, env), stdio: 'ignore' });
     const killer = setTimeout(() => child.kill('SIGKILL'), timeout);
     child.on('close', (code) => {
       clearTimeout(killer);
@@ -763,5 +763,22 @@ test('an update-check cache that is a pipe is not waited on, and becomes a cache
     assert.equal(await spawnCheckin(tmp, { timeout: 10_000 }), 0, 'the checkin ended on its own');
     assert.equal(lstatSync(updateCheck(tmp)).isFile(), true, 'the cache is a file now');
     assert.equal(JSON.parse(readFileSync(updateCheck(tmp), 'utf8')).latest, '0.9.0');
+  });
+});
+
+// 암호 모듈 없이 빌드한 Node 를 흉내 내는 시험 도구(--import). 배포에 들지 않는 scripts/ 아래에 있다. 체크인은 https 를
+// 가져와 그런 Node 에서는 시작하지 못하므로, 여기서는 NO_CRYPTO_ONLY=1 로 node:crypto 만 막아 체크인이 crypto 를 맨 위에서
+// 가져오지 않는지만 본다.
+const NO_CRYPTO = join(HERE, '..', 'scripts', 'test-fixtures', 'no-crypto.mjs');
+
+test('the checkin does not import node:crypto at the top (only node:crypto blocked)', async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp, { pre: NO_CRYPTO, env: { NO_CRYPTO_ONLY: '1' } }), 0);
+    assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } });
+    assert.deepEqual(readdirSync(bankerDir(tmp)).filter((n) => n.startsWith('usage-log.sending-')), [], 'the claimed log is not left behind');
   });
 });
