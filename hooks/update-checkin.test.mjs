@@ -765,3 +765,18 @@ test('an update-check cache that is a pipe is not waited on, and becomes a cache
     assert.equal(JSON.parse(readFileSync(updateCheck(tmp), 'utf8')).latest, '0.9.0');
   });
 });
+
+// node:crypto 를 불러오지 못하는 Node 를 흉내 내는 시험 도구(--import). 배포에 들지 않는 scripts/ 아래에 있다.
+const NO_CRYPTO = join(HERE, '..', 'scripts', 'test-fixtures', 'no-crypto.mjs');
+
+test('the checkin still claims and sends on a Node that cannot load crypto', async () => {
+  const bodies = [];
+  await withServer(holdServer(1, bodies), async (url) => {
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: url });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    assert.equal(await spawnCheckin(tmp, { pre: NO_CRYPTO }), 0);
+    assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } });
+    assert.deepEqual(readdirSync(bankerDir(tmp)).filter((n) => n.startsWith('usage-log.sending-')), [], 'the claimed log is not left behind');
+  });
+});

@@ -18,7 +18,6 @@
  * countingActive + 엔드포인트 설정 시 fetcher 로 detached spawn 한다(응답 latest 가 알림 캐시를 겸함).
  */
 import { lstatSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
 import { dirname, join } from 'node:path';
@@ -37,6 +36,7 @@ import {
   netDeadlineMs,
   readRegular,
   writeByRename,
+  randomHex,
 } from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
@@ -193,7 +193,7 @@ function claimLog() {
   } catch {
     return { raw: '', claim: null };
   }
-  const claim = join(dirname(USAGE_LOG_PATH), `usage-log.sending-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
+  const claim = join(dirname(USAGE_LOG_PATH), `usage-log.sending-${process.pid}-${Date.now()}-${randomHex()}`);
   return renameAside(USAGE_LOG_PATH, claim) ? { raw: readRegular(claim), claim } : { raw: '', claim: null };
 }
 
