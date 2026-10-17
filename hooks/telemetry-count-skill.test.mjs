@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -164,6 +164,7 @@ test('기록 자리가 FIFO 면 기다리지 않고 FIFO 는 그대로 둔다', 
   assert.equal(res.signal, null, '훅이 스스로 끝났다');
   assert.equal(res.status, 0);
   assert.equal(lstatSync(usageLog(tmp)).isFIFO(), true, 'FIFO 는 그대로');
+  assert.deepEqual(JSON.parse(readFileSync(usedSkills(tmp), 'utf8')), ['banker:foo'], '써 본 스킬 집합에는 남긴다');
 });
 
 test('기록 자리가 링크면 그 너머에 쓰지 않는다', { skip: NO_LINKS }, () => {
@@ -175,4 +176,17 @@ test('기록 자리가 링크면 그 너머에 쓰지 않는다', { skip: NO_LIN
   const res = runSkillCount(tmp, { tool_name: 'Skill', tool_input: { skill: 'banker:foo' } });
   assert.equal(res.status, 0);
   assert.equal(readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키는 파일은 그대로');
+  assert.deepEqual(JSON.parse(readFileSync(usedSkills(tmp), 'utf8')), ['banker:foo'], '써 본 스킬 집합에는 남긴다');
+});
+
+test('기록 자리에 다른 이름이 있어(하드 링크) 기록을 거절해도 써 본 스킬 집합에는 남긴다', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const snap = join(tmp, 'snap');
+  writeFileSync(snap, 'keep\n');
+  linkSync(snap, usageLog(tmp));
+  const res = runSkillCount(tmp, { tool_name: 'Skill', tool_input: { skill: 'banker:foo' } });
+  assert.equal(res.status, 0);
+  assert.equal(readFileSync(snap, 'utf8'), 'keep\n', '다른 이름의 내용은 그대로');
+  assert.deepEqual(JSON.parse(readFileSync(usedSkills(tmp), 'utf8')), ['banker:foo'], '써 본 스킬 집합에는 남긴다');
 });

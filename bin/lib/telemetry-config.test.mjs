@@ -5,6 +5,7 @@
  */
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -15,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
-  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog,
+  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog, readRegular, writeByRename,
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
   SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX, SKILL_NAME_RE, netDeadlineMs,
 } from './telemetry-config.mjs';
@@ -422,4 +423,93 @@ test('appendUsageLog: 설정 폴더 자체가 링크여도 줄을 더한다', { 
   fs.symlinkSync(real, configDir(), 'dir');
   assert.strictEqual(appendUsageLog('banker:foo'), true);
   assert.match(fs.readFileSync(path.join(real, 'usage-log'), 'utf8'), /^banker:foo\t([0-9]|1[0-9]|2[0-3])\n$/);
+});
+
+// ---- 링크인 설정, 공용 도우미 둘(readRegular, writeByRename)의 직접 시험 ----
+
+const NO_FIFO = process.platform === 'win32' && 'Windows 에는 FIFO 가 없다';
+const TC_URL = new URL('./telemetry-config.mjs', import.meta.url).href;
+const tmpNames = () => fs.readdirSync(configDir()).filter((n) => n.endsWith('.tmp'));
+
+test('countingActive: 링크인 config.json 의 telemetry:false 도 따른다', { skip: NO_LINKS }, () => {
+  const real = path.join(tmpDir, 'dotfiles', 'banker.json');
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  fs.writeFileSync(real, JSON.stringify({ telemetry: false }));
+  fs.mkdirSync(configDir(), { recursive: true });
+  fs.symlinkSync(real, path.join(configDir(), 'config.json'));
+  assert.deepStrictEqual(readConfig(), { telemetry: false });
+  assert.strictEqual(countingActive(), false, '링크로 둔 설정의 끔을 따른다');
+});
+
+test('readRegular: 일반 파일은 글을, 없거나 폴더면 빈 글을 준다', () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const file = path.join(configDir(), 'a.txt');
+  fs.writeFileSync(file, 'a\n');
+  assert.strictEqual(readRegular(file), 'a\n');
+  assert.strictEqual(readRegular(path.join(configDir(), 'none')), '', '없는 이름');
+  assert.strictEqual(readRegular(configDir()), '', '폴더');
+});
+
+test('readRegular: 일반 파일로 가는 링크는 따라가 글을 준다', { skip: NO_LINKS }, () => {
+  const at = path.join(configDir(), 'linked.json');
+  plantLink(at);
+  assert.strictEqual(readRegular(at), 'keep\n');
+});
+
+test('readRegular: FIFO 를 기다리지 않고 빈 글을 준다', { skip: NO_FIFO }, () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const fifo = path.join(configDir(), 'pipe');
+  assert.strictEqual(spawnSync('mkfifo', [fifo]).status, 0, 'mkfifo');
+  const code = `import { readRegular } from ${JSON.stringify(TC_URL)}; process.stdout.write(JSON.stringify(readRegular(process.argv[1])));`;
+  const res = spawnSync(process.execPath, ['--input-type=module', '-e', code, fifo], { encoding: 'utf8', timeout: 10_000 });
+  assert.strictEqual(res.signal, null, '스스로 끝났다');
+  assert.strictEqual(res.status, 0);
+  assert.strictEqual(res.stdout, '""');
+});
+
+test('writeByRename: 새 파일을 쓰고 덮으며 임시 파일을 남기지 않는다', () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const target = path.join(configDir(), 'thing.json');
+  writeByRename(target, 'x');
+  writeByRename(target, 'y');
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), 'y');
+  assert.deepStrictEqual(tmpNames(), [], '임시 파일이 남지 않는다');
+});
+
+test('writeByRename: 링크 자리는 링크만 새 파일로 바뀌고 가리키던 파일은 그대로다', { skip: NO_LINKS }, () => {
+  const target = path.join(configDir(), 'thing.json');
+  const victim = plantLink(target);
+  writeByRename(target, 'new');
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '링크가 가리키던 파일은 그대로');
+  assert.strictEqual(fs.lstatSync(target).isSymbolicLink(), false, '그 자리는 링크가 아닌 파일');
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), 'new');
+});
+
+test('writeByRename: 같은 파일의 다른 이름(하드 링크)은 그대로다', () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const victim = path.join(tmpDir, 'victim');
+  fs.writeFileSync(victim, 'keep\n');
+  const target = path.join(configDir(), 'thing.json');
+  fs.linkSync(victim, target);
+  writeByRename(target, 'new');
+  assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep\n', '다른 이름의 내용은 그대로');
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), 'new');
+});
+
+test('writeByRename: 임시 이름에 이미 무엇이 있으면 EEXIST 로 던지고 그것을 그대로 둔다', () => {
+  fs.mkdirSync(configDir(), { recursive: true });
+  const target = path.join(configDir(), 'thing.json');
+  const taken = `${target}.${process.pid}.0a1b2c3d.tmp`;
+  fs.writeFileSync(taken, 'mine\n');
+  withFixedRandom(() => assert.throws(() => writeByRename(target, 'x'), { code: 'EEXIST' }));
+  assert.strictEqual(fs.readFileSync(taken, 'utf8'), 'mine\n', '이 쓰기가 만든 것이 아니라 그대로 둔다');
+  assert.strictEqual(fs.existsSync(target), false, '대상은 생기지 않는다');
+});
+
+test('writeByRename: 옮기지 못하면 던지고 만든 임시 파일을 지운다', () => {
+  const target = path.join(configDir(), 'thing.json');
+  fs.mkdirSync(target, { recursive: true });
+  assert.throws(() => writeByRename(target, 'x'));
+  assert.strictEqual(fs.statSync(target).isDirectory(), true, '폴더는 그대로');
+  assert.deepStrictEqual(tmpNames(), [], '만든 임시 파일을 지운다');
 });
