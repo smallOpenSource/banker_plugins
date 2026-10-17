@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.19.5] - 2026-10-17
 
 ### Changed
 - 유지보수자용: 시험이 링크인 `config.json` 의 `telemetry:false`, 기록 자리를 거절한 뒤의 써 본 스킬 집합, `readRegular` 와 `writeByRename` 을 직접 덮는다.
