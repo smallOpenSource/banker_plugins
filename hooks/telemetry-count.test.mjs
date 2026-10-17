@@ -6,10 +6,10 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { LOG_MAX_LINES } from '../bin/lib/telemetry-config.mjs';
 
@@ -35,17 +35,18 @@ function enable(tmp, { endpoint = 'http://127.0.0.1:1/collect' } = {}) {
   writeFileSync(join(bankerDir(tmp), 'config.json'), JSON.stringify({ telemetry: true, endpoint }));
 }
 
-// opts 는 spawnSync 옵션(예: FIFO 에서 멈추는지 보려는 timeout).
+// opts 는 spawnSync 옵션(예: FIFO 에서 멈추는지 보려는 timeout)과 pre(훅보다 먼저 --import 로 불러올 모듈 경로).
 function runCount(tmp, input, overrides = {}, opts = {}) {
+  const { pre, ...spawnOpts } = opts;
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
   Object.assign(env, overrides); // 마지막에 적용해 opt-out(BANKER_NO_TELEMETRY) 주입 가능.
-  return spawnSync(process.execPath, [COUNT_HOOK], {
+  return spawnSync(process.execPath, pre ? ['--import', pathToFileURL(pre).href, COUNT_HOOK] : [COUNT_HOOK], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf8',
     env,
-    ...opts,
+    ...spawnOpts,
   });
 }
 
@@ -204,4 +205,29 @@ test('config.json 자리가 FIFO 여도 기다리지 않는다', { skip: NO_FIFO
   assert.equal(res.status, 0);
   assert.match(readFileSync(usageLog(tmp), 'utf8'), /^banker:foo\t/, '설정을 읽지 못해도 기본 켜짐이라 기록한다');
   assert.equal(lstatSync(config).isFIFO(), true, 'FIFO 는 그대로');
+});
+
+// node:crypto 를 불러오지 못하는 Node 를 흉내 내는 시험 도구(--import). 배포에 들지 않는 scripts/ 아래에 있다.
+const NO_CRYPTO = join(HERE, '..', 'scripts', 'test-fixtures', 'no-crypto.mjs');
+
+test('crypto 를 불러오지 못하는 Node 에서도 기록하고, 이미 써 본 스킬이면 crypto 를 부르지 않는다', () => {
+  const input = { command_name: 'banker:foo', command_source: 'plugin' };
+  const known = mkTmp();
+  enable(known);
+  writeFileSync(usedSkills(known), JSON.stringify(['banker:foo']));
+  const knownMark = join(known, 'crypto-mark');
+  let res = runCount(known, input, { NO_CRYPTO_MARK: knownMark }, { pre: NO_CRYPTO });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(readFileSync(usageLog(known), 'utf8'), /^banker:foo\t\d+\n$/);
+  assert.equal(existsSync(knownMark), false, '이미 써 본 스킬이면 crypto 를 부르지 않는다');
+
+  const fresh = mkTmp();
+  enable(fresh);
+  const freshMark = join(fresh, 'crypto-mark');
+  res = runCount(fresh, input, { NO_CRYPTO_MARK: freshMark }, { pre: NO_CRYPTO });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(readFileSync(usageLog(fresh), 'utf8'), /^banker:foo\t\d+\n$/);
+  assert.deepEqual(JSON.parse(readFileSync(usedSkills(fresh), 'utf8')), ['banker:foo']);
+  assert.deepEqual(readdirSync(bankerDir(fresh)).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
+  assert.deepEqual([...new Set(readFileSync(freshMark, 'utf8').split('\n').filter(Boolean))], ['cjs'], '처음 쓰는 스킬은 부를 때 불러오려다 대체 이름으로 쓴다');
 });

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
-  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog, readRegular, writeByRename,
+  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog, readRegular, writeByRename, randomHex,
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
   SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX, SKILL_NAME_RE, netDeadlineMs,
 } from './telemetry-config.mjs';
@@ -512,4 +512,28 @@ test('writeByRename: 옮기지 못하면 던지고 만든 임시 파일을 지�
   assert.throws(() => writeByRename(target, 'x'));
   assert.strictEqual(fs.statSync(target).isDirectory(), true, '폴더는 그대로');
   assert.deepStrictEqual(tmpNames(), [], '만든 임시 파일을 지운다');
+});
+
+// ---- 임시 이름의 난수(randomHex): node:crypto 는 부를 때 불러오고, 못 불러오면 대체 값 ----
+
+const NO_CRYPTO_URL = new URL('../../scripts/test-fixtures/no-crypto.mjs', import.meta.url).href;
+
+test('randomHex: 16진 8자를 내고 부를 때마다 다르다', () => {
+  const a = randomHex();
+  const b = randomHex();
+  assert.match(a, /^[0-9a-f]{8}$/);
+  assert.match(b, /^[0-9a-f]{8}$/);
+  assert.notStrictEqual(a, b);
+});
+
+test('randomHex: crypto 를 불러오지 못하는 Node 에서는 Math.random 으로 16진 8자를 낸다', () => {
+  const mark = path.join(tmpDir, 'crypto-mark');
+  const code = `import { randomHex } from ${JSON.stringify(TC_URL)}; process.stdout.write(randomHex() + ' ' + randomHex());`;
+  const res = spawnSync(process.execPath, ['--import', NO_CRYPTO_URL, '--input-type=module', '-e', code], {
+    encoding: 'utf8', env: { ...process.env, NO_CRYPTO_MARK: mark },
+  });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.match(res.stdout, /^[0-9a-f]{8} [0-9a-f]{8}$/);
+  const tries = fs.readFileSync(mark, 'utf8').split('\n').filter(Boolean);
+  assert.ok(tries.length > 0 && tries.every((t) => t === 'cjs'), `흉내가 부를 때의 불러오기를 가로챘다: ${tries.join(',')}`);
 });

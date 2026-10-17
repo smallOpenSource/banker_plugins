@@ -4,6 +4,10 @@
 
 ### Changed
 - 유지보수자용: 시험이 링크인 `config.json` 의 `telemetry:false`, 기록 자리를 거절한 뒤의 써 본 스킬 집합, `readRegular` 와 `writeByRename` 을 직접 덮는다.
+- 유지보수자용: `node:crypto` 를 불러오지 못하는 Node 를 흉내 내는 시험 도구(`scripts/test-fixtures/no-crypto.mjs`)로 훅을 시험한다.
+
+### Fixed
+- 사용량 기록 훅, 세션 시작 알림, 백그라운드 갱신 확인은 Node 의 암호 모듈(`node:crypto`)을 시작할 때 불러오지 않고, 임시 파일 이름의 난수가 필요할 때만 불러온다. 0.19.4 부터 시작할 때마다 이 모듈을 불러와, 사용량 기록 훅 한 번이 약 8ms 느려졌다(node 24 에서 70ms 가 79ms). 암호 모듈 없이 빌드한 Node 에서는 이 훅들이 시작하자마자 실패했다. 이제는 난수를 `Math.random` 으로 만들어 그대로 돈다.
 
 ## [0.19.4] - 2026-10-17
 

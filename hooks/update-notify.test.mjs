@@ -13,10 +13,10 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { chooseFetcher } from './update-notify.mjs';
 import { installedVersion } from '../bin/lib/telemetry-config.mjs';
@@ -57,14 +57,15 @@ const readCache = (tmp) => JSON.parse(readFileSync(cachePath(tmp), 'utf8'));
 
 // 훅을 자식으로 spawn. XDG 격리 + BANKER_* 정리 후 overrides 적용(마지막에 이겨 opt-out 주입 가능).
 // input 으로 SessionStart payload 를 흘려 stdin EOF 를 보장(비TTY 안전·드레인 검증).
-// timeout 은 FIFO 에서 멈추는지 보는 시험용(지나면 죽인다).
-function runNotify(tmp, { input = '{}', env: overrides = {}, timeout } = {}) {
+// timeout 은 FIFO 에서 멈추는지 보는 시험용(지나면 죽인다). pre 는 훅보다 먼저 --import 로 불러올 모듈 경로.
+function runNotify(tmp, { input = '{}', env: overrides = {}, timeout, pre } = {}) {
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_UPDATE_CHECK;
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
   Object.assign(env, overrides);
-  return spawnSync(process.execPath, [NOTIFY_HOOK], { input, encoding: 'utf8', env, timeout });
+  const args = pre ? ['--import', pathToFileURL(pre).href, NOTIFY_HOOK] : [NOTIFY_HOOK];
+  return spawnSync(process.execPath, args, { input, encoding: 'utf8', env, timeout });
 }
 
 const NOW = () => Date.now(); // fresh checkedAt → throttle 미경과 → 포그라운드에서 fetcher spawn 안 함.
@@ -204,6 +205,29 @@ test('캐시 자리가 FIFO 여도 기다리지 않는다', { skip: process.plat
   assert.equal(res.status, 0);
   assert.equal(res.stdout.trim(), '', '캐시를 읽지 못하면 알리지 않는다');
   assert.equal(lstatSync(cachePath(tmp)).isFIFO(), true, 'FIFO 는 그대로');
+});
+
+// node:crypto 를 불러오지 못하는 Node 를 흉내 내는 시험 도구(--import). 배포에 들지 않는 scripts/ 아래에 있다.
+const NO_CRYPTO = join(HERE, '..', 'scripts', 'test-fixtures', 'no-crypto.mjs');
+
+test('crypto 를 불러오지 못하는 Node 에서도 알림을 보이고, 보일 것이 없으면 crypto 를 부르지 않는다', () => {
+  const quiet = mkTmp();
+  writeCache(quiet, { latest: '0.0.1', checkedAt: NOW() });
+  const quietMark = join(quiet, 'crypto-mark');
+  let res = runNotify(quiet, { env: { ...LOOPBACK.env, NO_CRYPTO_MARK: quietMark }, pre: NO_CRYPTO });
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(res.stdout.trim(), '');
+  assert.equal(existsSync(quietMark), false, '보일 알림이 없으면 crypto 를 부르지 않는다');
+
+  const loud = mkTmp();
+  writeCache(loud, { latest: '99.0.0', checkedAt: NOW() });
+  const loudMark = join(loud, 'crypto-mark');
+  res = runNotify(loud, { env: { ...LOOPBACK.env, NO_CRYPTO_MARK: loudMark }, pre: NO_CRYPTO });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(JSON.parse(res.stdout.trim()).systemMessage, /banker 99\.0\.0 사용 가능/);
+  assert.equal(readCache(loud).notified, '99.0.0', '알린 버전을 캐시에 남긴다');
+  assert.deepEqual(readdirSync(bankerDir(loud)).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
+  assert.deepEqual([...new Set(readFileSync(loudMark, 'utf8').split('\n').filter(Boolean))], ['cjs'], '캐시를 쓸 때 불러오려다 대체 이름으로 쓴다');
 });
 
 // ---- 개인화 알림 (changedSkills ∩ 써본스킬) ----
