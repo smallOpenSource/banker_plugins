@@ -535,5 +535,18 @@ test('randomHex: crypto 를 불러오지 못하는 Node 에서는 Math.random �
   assert.strictEqual(res.status, 0, res.stderr);
   assert.match(res.stdout, /^[0-9a-f]{8} [0-9a-f]{8}$/);
   const tries = fs.readFileSync(mark, 'utf8').split('\n').filter(Boolean);
-  assert.ok(tries.length > 0 && tries.every((t) => t === 'cjs'), `흉내가 부를 때의 불러오기를 가로챘다: ${tries.join(',')}`);
+  assert.ok(tries.length > 0 && tries.every((t) => t === 'cjs crypto'), `흉내가 부를 때의 불러오기를 가로챘다: ${tries.join(',')}`);
+});
+
+test('시험 도구: 암호 모듈 없이 빌드한 Node 처럼 https 와 tls 도 불러오지 못하게 한다', () => {
+  const code = [
+    "import { createRequire } from 'node:module';",
+    'const got = [];',
+    "try { await import('node:https'); got.push('loaded'); } catch (e) { got.push(e.code); }",
+    "try { createRequire(import.meta.url)('tls'); got.push('loaded'); } catch (e) { got.push(e.code); }",
+    "process.stdout.write(got.join(' '));",
+  ].join('\n');
+  const res = spawnSync(process.execPath, ['--import', NO_CRYPTO_URL, '--input-type=module', '-e', code], { encoding: 'utf8' });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(res.stdout, 'ERR_NO_CRYPTO ERR_NO_CRYPTO');
 });

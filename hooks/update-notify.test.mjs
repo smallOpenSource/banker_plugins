@@ -227,7 +227,7 @@ test('crypto 를 불러오지 못하는 Node 에서도 알림을 보이고, 보�
   assert.match(JSON.parse(res.stdout.trim()).systemMessage, /banker 99\.0\.0 사용 가능/);
   assert.equal(readCache(loud).notified, '99.0.0', '알린 버전을 캐시에 남긴다');
   assert.deepEqual(readdirSync(bankerDir(loud)).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
-  assert.deepEqual([...new Set(readFileSync(loudMark, 'utf8').split('\n').filter(Boolean))], ['cjs'], '캐시를 쓸 때 불러오려다 대체 이름으로 쓴다');
+  assert.deepEqual([...new Set(readFileSync(loudMark, 'utf8').split('\n').filter(Boolean))], ['cjs crypto'], '캐시를 쓸 때 불러오려다 대체 이름으로 쓴다');
 });
 
 // ---- 개인화 알림 (changedSkills ∩ 써본스킬) ----

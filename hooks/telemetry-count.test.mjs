@@ -229,5 +229,5 @@ test('crypto 를 불러오지 못하는 Node 에서도 기록하고, 이미 써 
   assert.match(readFileSync(usageLog(fresh), 'utf8'), /^banker:foo\t\d+\n$/);
   assert.deepEqual(JSON.parse(readFileSync(usedSkills(fresh), 'utf8')), ['banker:foo']);
   assert.deepEqual(readdirSync(bankerDir(fresh)).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
-  assert.deepEqual([...new Set(readFileSync(freshMark, 'utf8').split('\n').filter(Boolean))], ['cjs'], '처음 쓰는 스킬은 부를 때 불러오려다 대체 이름으로 쓴다');
+  assert.deepEqual([...new Set(readFileSync(freshMark, 'utf8').split('\n').filter(Boolean))], ['cjs crypto'], '처음 쓰는 스킬은 부를 때 불러오려다 대체 이름으로 쓴다');
 });
