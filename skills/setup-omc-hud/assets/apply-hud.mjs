@@ -7,7 +7,7 @@
  *   - hud/lib/config-dir.mjs (loader dependency)
  *   - hud/omc-hud-custom.mjs (the custom compact/colored formatter)
  *   - .omc/hud-config.json   (HUD preset/elements)
- *   - settings.json          (statusLine -> the custom formatter; existing file backed up)
+ *   - settings.json          (statusLine -> the custom formatter; backed up when it changes)
  *
  * Runs identically on Linux, macOS, and Windows (only needs node + an OMC install).
  * Run it directly with `node apply-hud.mjs` on every OS; the templates are read
@@ -15,9 +15,9 @@
  *
  * Based on smallOpenSource/omc_hud d3cedd5 (MIT, see LICENSE-omc_hud). Changes:
  * statusLine path quoted; a settings.json that is not a JSON object is refused
- * before any file changes (the original replaced it), saying where its JSON
- * breaks but never quoting it; one holding only white space is read as {}, as
- * Claude Code does; UTF-8 BOM accepted; CLAUDE_CONFIG_DIR trimmed, "~" expanded
+ * before any file changes (the original replaced it), naming the line and
+ * column when Node reports one but never quoting it; one holding only white
+ * space is read as {}, as Claude Code does; UTF-8 BOM accepted; CLAUDE_CONFIG_DIR trimmed, "~" expanded
  * and made absolute; formatter and HUD config backed up when they differ (the
  * blocks payload-mon and claude-update-last add do not count), settings.json only
  * when it changes; pre-releases sort below their release; no
@@ -28,7 +28,7 @@
  * folders 0755; the other statusLine fields (padding, ...) stay.
  * At the end it runs the installed formatter once with no input and reports
  * whether OMC's HUD loads and which version draws (the render check); that never
- * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 15s limit.
+ * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 25s limit.
  * Exit 1 means nothing changed; exit 2 means an unexpected error stopped it partway.
  */
 import { spawnSync } from "node:child_process";
@@ -207,7 +207,8 @@ const TOOL_BLOCKS = [
 ];
 const withoutToolBlocks = (text) => TOOL_BLOCKS.reduce((t, blocks) => t.replace(blocks, ""), text);
 const sameBytes = (a, b) => a.equals(b);
-// Those blocks alone are no reason for a backup: they come back with `payload-mon on`.
+// Those blocks alone are no reason for a backup: `payload-mon on` puts its block back, and wrapper v4
+// needs no claude-update-last block.
 const sameFormatter = (a, b) => withoutToolBlocks(a.toString("latin1")) === withoutToolBlocks(b.toString("latin1"));
 
 // Keep a timestamped copy, with its bytes and mode, of a file that differs from what replaces it.
@@ -273,11 +274,17 @@ function pointStatusLine() {
 // 5. Render check: run the installed formatter once with no input, as the statusLine command does,
 //    with `node` from PATH. With no input OMC prints its diagnostic, whose first line names the version
 //    that loaded ("[OMC] HUD v5.7.4 | preset: full"), and uses no network. Reported only: the install
-//    is done either way. APPLY_HUD_CHECK_TIMEOUT_MS shortens the 15s limit for tests.
-const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 15000;
+//    is done either way. The 25s limit outwaits the formatter, which gives up on its own within 20s
+//    and then ends its fallback child; killing it sooner would leave that child running.
+//    APPLY_HUD_CHECK_TIMEOUT_MS shortens the limit for tests.
+const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 25000;
 const BLAME =
   "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
 const clip = (s, n = 200) => String(s).slice(0, n);
+// No input, and the config folder as working folder: OMC's loader looks in the working folder's
+// node_modules and runs git from it, and Windows looks there first for a bare program name, so the
+// folder the installer was started in (a project, say) must not be it.
+const RUN_OPTS = { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: true, cwd: CONFIG_DIR };
 
 // node as the statusLine shell finds it, but only in PATH folders given as absolute paths: spawning the
 // bare name would on Windows try the working folder first, where a project's own node.exe could run.
@@ -309,7 +316,7 @@ function omcVersion(root) {
 function loadReason(node, root) {
   const hud = join(root, "dist", "hud", "index.js");
   if (!existsSync(hud)) return "no dist/hud/index.js";
-  const r = spawnSync(node, [hud], { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: true });
+  const r = spawnSync(node, [hud], RUN_OPTS);
   const line = /^\w*Error\b.*$/m.exec(r.stderr || "");
   return line ? clip(line[0]) : "";
 }
@@ -333,7 +340,7 @@ function judgeRender(out, node) {
 function renderReport() {
   const node = findNode(process.env.PATH);
   if (!node) return ['[!!] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show.'];
-  const r = spawnSync(node, [wrapperDst], { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: true });
+  const r = spawnSync(node, [wrapperDst], RUN_OPTS);
   if (r.error && r.error.code === "ETIMEDOUT") return [`[!!] Render check: the statusline gave no answer in ${CHECK_MS / 1000}s.`];
   if (r.error) throw r.error;
   if (r.status !== 0) {
@@ -357,7 +364,7 @@ try {
   pointStatusLine();
 } catch (e) {
   log(`[x] Stopped partway (${e.code || e.message}); some files may have changed.`);
-  log(`    A replaced file's earlier version is in <file>.backup.${stamp}.`);
+  log(`    Earlier versions it replaced, apart from the loader and the tool blocks, are in <file>.backup.${stamp}.`);
   process.exit(2);
 }
 

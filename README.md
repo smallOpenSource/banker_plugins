@@ -247,7 +247,7 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine`(`settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex는 OMX `hud`) |
+| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex는 OMX `hud`) |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |

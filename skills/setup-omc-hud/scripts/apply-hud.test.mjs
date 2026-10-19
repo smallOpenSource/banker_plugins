@@ -336,6 +336,34 @@ test("렌더 확인: OMC 가 불러오기에 실패하면 [!!] 와 OMC 의 줄",
   assert.match(out, /run setup-omc-hud again after it/);
 });
 
+test("렌더 확인의 자식은 설정 폴더에서 돌아, 설치를 돌린 폴더의 파일이 끼어들지 않음", () => {
+  // Both children note where they run: the formatter (through the loader it imports) and the HUD of
+  // the version that fails. OMC's loader looks in the working folder's node_modules, and its git runs
+  // from there; on Windows a bare name is also looked up in the working folder first.
+  const cfg = fresh();
+  const cwd = fresh("cwd");
+  const loader = 'import { writeFileSync } from "node:fs";\nwriteFileSync(new URL("./cwd-seen.txt", import.meta.url), process.cwd());\n' + banner("5.7.4");
+  const dist = 'require("fs").writeFileSync(require("path").join(__dirname, "cwd-seen.txt"), process.cwd());\nthrow new Error("broken");\n';
+  const omc = { "5.7.4": { pkg: true, loader: banner("5.7.4") }, "5.7.5": { pkg: true, loader, dist } };
+  const r = install({ cfg, cwd, versions: ["5.7.4", "5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[!!\] Render check: the statusline loads OMC 5\.7\.4, not the installed 5\.7\.5/);
+  const real = realpathSync(cfg);
+  assert.equal(realpathSync(readFileSync(join(cfg, "hud", "cwd-seen.txt"), "utf8")), real, "the formatter runs in the config folder");
+  const distSeen = join(omcCache(cfg), "5.7.5", "dist", "hud", "cwd-seen.txt");
+  assert.equal(realpathSync(readFileSync(distSeen, "utf8")), real, "so does the failing version's HUD");
+});
+
+test("렌더 확인의 기본 시간 제한은 래퍼가 스스로 끝내는 시간보다 김", () => {
+  // Killing a formatter that is still working would leave its fallback child running: the formatter
+  // gives up on its own after stdin, the in-process render and that child, or at its hard exit.
+  const wrapper = readFileSync(join(ASSETS, "omc-hud-custom.mjs"), "utf8");
+  const ms = (name) => Number(new RegExp(`const ${name} = (\\d+);`).exec(wrapper)[1]);
+  const own = Math.max(ms("STDIN_TIMEOUT_MS") + ms("RENDER_TIMEOUT_MS") + ms("SPAWN_TIMEOUT_MS"), ms("HARD_EXIT_MS"));
+  const limit = Number(/APPLY_HUD_CHECK_TIMEOUT_MS\) \|\| (\d+);/.exec(readFileSync(APPLY, "utf8"))[1]);
+  assert.ok(limit > own, `the render check's ${limit}ms must outwait the formatter's own ${own}ms`);
+});
+
 test("렌더 확인: 설정 폴더 경로가 길어도 OMC 줄의 끝에 있는 이유까지 보임", () => {
   const long = `/home/${"deep/".repeat(40)}dist/hud/index.js`;
   const { out } = renderWith(`console.log("[OMC HUD] HUD import failed from ${long}: Cannot find package 'zod'");\n`);

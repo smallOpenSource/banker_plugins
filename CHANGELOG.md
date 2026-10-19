@@ -11,7 +11,7 @@
 ### Fixed
 - `setup-omc-hud` 를 다시 설치할 때마다 래퍼와 `settings.json` 의 백업이 하나씩 쌓이던 것. payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 이제 백업하지 않는다.
 - `setup-omc-hud` 설치 스크립트가 빈 `settings.json` 을 "JSON 객체가 아님" 으로 거부하던 것. Claude Code 처럼 `{}` 로 읽는다.
-- `setup-omc-hud` 설치 스크립트가 주석이나 끝 쉼표가 든 `settings.json` 을 거부할 때 이유를 말하지 않던 것. 이제 오류 위치와, Claude Code 도 이 파일을 읽지 못한다는 것을 알린다. 파일 내용은 출력에 넣지 않는다.
+- `setup-omc-hud` 설치 스크립트가 주석이나 끝 쉼표가 든 `settings.json` 을 거부할 때 이유를 말하지 않던 것. 이제 그 이유와, Claude Code 도 이 파일을 읽지 못한다는 것을 알린다. Node 가 위치를 알려 주면 줄과 칸도 적는다. 파일 내용은 출력에 넣지 않는다.
 - `payload-mon` 의 `on`, `off` 가 BOM 으로 시작하는 래퍼를 "node --check 실패" 로 거부하던 것. 그 래퍼는 node 로 정상 실행된다.
 - `payload-mon` 블록이 CRLF 래퍼에 LF 줄끝으로 들어가던 것. 이제 래퍼의 줄끝을 따른다. 편집기가 래퍼 전체를 CRLF 로 저장한 뒤 `status` 가 "켜짐이 불완전" 이라 하던 것도 고친다. Windows 에서 Git 기본 설정으로 받은 설치본이 이런 꼴일 수 있다.
 - 래퍼 파일만 다른 폴더로 링크하면(dotfiles 등) 래퍼 v4 의 `PL:` 칸이 보이지 않는데 `on` 과 `status` 는 PL 칸을 안내하던 것. 모듈 사본을 링크가 가리키는 파일 옆에 둔다. 0.20.1 로 켠 이런 설치는 `status` 가 불완전으로 알리고, `on` 한 번으로 고쳐진다.
