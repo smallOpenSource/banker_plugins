@@ -250,6 +250,48 @@ test("블록이 있어도 손으로 고친 래퍼는 백업함", () => {
   assert.equal(readFileSync(join(cfg, "hud", kept[0]), "utf8"), edited);
 });
 
+test("짝 없는 payload-mon 여는 줄이 많은 큰 래퍼도 다시 설치가 빨리 끝남", () => {
+  const cfg = fresh();
+  const first = install({ cfg });
+  assert.equal(first.status, 0, first.out);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  writeFileSync(wrapper, readFileSync(wrapper, "utf8") + "// >>> payload-mon >>>\n".repeat(90000));
+  const started = Date.now();
+  const again = install({ cfg, home: first.home, versions: [] });
+  const took = Date.now() - started;
+  assert.equal(again.status, 0, again.out);
+  assert.ok(took < 5000, `took ${took}ms`);
+  assert.equal(backups(join(cfg, "hud"), "omc-hud-custom.mjs").length, 1);
+});
+
+// Installs, turns `script` on and edits its block by hand: the first `from` past its opening marker.
+function editedBlock(script, open, from, to) {
+  const cfg = fresh();
+  const first = install({ cfg });
+  assert.equal(first.status, 0, first.out);
+  turnOnTool(script, cfg, first.home);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  const text = readFileSync(wrapper, "utf8");
+  const at = text.indexOf(open);
+  assert.ok(at >= 0 && text.indexOf(from, at) > at, "the block holds the word");
+  const edited = text.slice(0, at) + text.slice(at).replace(from, to);
+  writeFileSync(wrapper, edited);
+  return { cfg, home: first.home, edited };
+}
+for (const [name, script, open, from, to] of [
+  ["payload-mon", PAYLOAD_MON, "// >>> payload-mon >>>", "shown", "SHOWN"],
+  ["claude-update-last", CLAUDE_UPDATE_LAST, "// >>> claude-update-last >>>", "goes after", "GOES AFTER"],
+]) {
+  test(`블록 안쪽을 손으로 고친 래퍼는 다시 설치할 때 백업함(${name})`, () => {
+    const { cfg, home, edited } = editedBlock(script, open, from, to);
+    const again = install({ cfg, home, versions: [] });
+    assert.equal(again.status, 0, again.out);
+    const kept = backups(join(cfg, "hud"), "omc-hud-custom.mjs");
+    assert.equal(kept.length, 1, again.out);
+    assert.equal(readFileSync(join(cfg, "hud", kept[0]), "utf8"), edited);
+  });
+}
+
 test("버전 폴더는 숫자로 비교하고 정식판을 pre-release 보다 위로", () => {
   const loaderAfter = (versions, bare = []) => {
     const cfg = fresh();

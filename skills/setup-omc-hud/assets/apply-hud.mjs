@@ -19,7 +19,7 @@
  * column when Node reports one but never quoting it; one holding only white
  * space is read as {}, as Claude Code does; UTF-8 BOM accepted; CLAUDE_CONFIG_DIR trimmed, "~" expanded
  * and made absolute; formatter and HUD config backed up when they differ (the
- * blocks payload-mon and claude-update-last add do not count), settings.json only
+ * blocks payload-mon and claude-update-last add do not count unless edited by hand), settings.json only
  * when it changes; pre-releases sort below their release; no
  * folder is made when OMC is missing. Also refused before any change: a config
  * folder path the statusLine shell would act on, a file or folder it cannot
@@ -199,17 +199,82 @@ function writeOwned(file, data) {
 }
 
 // The marker blocks payload-mon and claude-update-last add to the installed formatter, matched as those
-// tools match them (payload-mon.mjs BLOCKS, claude-update-last.mjs's block pattern). Read as latin1,
-// which maps every byte to one character, so text outside the blocks compares byte for byte.
+// tools match them (payload-mon.mjs BLOCKS, claude-update-last.mjs BLOCKS). Read as latin1, which maps
+// every byte to one character, so text outside the blocks compares byte for byte.
 const TOOL_BLOCKS = [
   /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[ \t]*\r?\n/gm,
   /^[ \t]*\/\/ >>> claude-update-last >>>(?:(?!\/\/ >>> claude-update-last >>>)[\s\S])*?\/\/ <<< claude-update-last <<<[ \t]*(?:\r?\n|(?![\s\S]))/gm,
 ];
-const withoutToolBlocks = (text) => TOOL_BLOCKS.reduce((t, blocks) => t.replace(blocks, ""), text);
+// payload-mon's closing line (payload-mon.mjs CLOSE_LINE). No block reaches past the last one, so its
+// pattern runs only on the text before it: otherwise every stray opening line scans to the end again
+// (a 2MB file of them took 28s).
+const PM_CLOSE = /\/\/ <<< payload-mon <<<[ \t]*\r?\n/g;
+// The text without the tools' blocks, and the blocks it held.
+function splitToolBlocks(text) {
+  const blocks = [];
+  const take = (t, pattern) =>
+    t.replace(pattern, (block) => {
+      blocks.push(block);
+      return "";
+    });
+  let end = -1;
+  for (const m of text.matchAll(PM_CLOSE)) end = m.index + m[0].length;
+  const rest = end < 0 ? text : take(text.slice(0, end), TOOL_BLOCKS[0]) + text.slice(end);
+  return { body: take(rest, TOOL_BLOCKS[1]), blocks };
+}
+// The blocks as the tools write them (payload-mon.mjs placeBlock, claude-update-last.mjs blockText), with
+// LF line endings and payload-mon's import of its module copy as "<module copy>" (the URL is the tool's to
+// choose). A block that differs from both was edited by hand. When a tool's block changes, the test "payload-mon 블록만 다른 래퍼와 바뀌지 않은 settings.json 은
+// 다시 설치해도 백업하지 않음" fails until this copy follows.
+const TOOL_BLOCK_TEXTS = [
+  [
+    "  // >>> payload-mon >>>",
+    "  // payload-mon: estimated API request payload against the 32MB request limit, shown",
+    "  // like ctx from 8MB (25%) on. `payload-mon off` removes this block; a missing or",
+    "  // broken module costs only this segment, never the statusline.",
+    "  try {",
+    "    const transcript = JSON.parse(input)?.transcript_path;",
+    "    if (transcript) {",
+    "      const { estimatePayloadBytes, payloadSegment } = await <module copy>;",
+    "      const segment = payloadSegment(estimatePayloadBytes(transcript));",
+    "      if (segment) colored.push(colorRate(segment));",
+    "    }",
+    "  } catch {",
+    "    /* no stdin JSON, unreadable transcript or module error */",
+    "  }",
+    "  // <<< payload-mon <<<",
+    "",
+  ].join("\n"),
+  [
+    "  // >>> claude-update-last >>>",
+    "  // claude-update-last (setup-omc-hud): OMC's Claude Code update notice",
+    "  // (\"[Claude#X] -> Y claude update\") goes after every other segment.",
+    "  // `claude-update-last off` removes this block; on any error the order stays as it was.",
+    "  try {",
+    "    const notice = /^\\[Claude(?:#[^\\]]*)?\\]\\s*->\\s*\\S+\\s+claude\\s+update\\b/;",
+    "    const plain = (s) => stripAnsi(String(s)).trim();",
+    "    const found = segs.find((s) => notice.test(plain(s)));",
+    "    if (found) {",
+    "      const moved = A(\"2\", plain(found));",
+    "      for (let i = colored.length - 1; i >= 0; i--) if (notice.test(plain(colored[i]))) colored.splice(i, 1);",
+    "      colored.push(moved);",
+    "    }",
+    "  } catch {",
+    "    /* keep the order the wrapper chose */",
+    "  }",
+    "  // <<< claude-update-last <<<",
+    "",
+  ].join("\n"),
+];
+const toolMade = (block) =>
+  TOOL_BLOCK_TEXTS.includes(block.replace(/\r\n/g, "\n").replace(/await import\("[^"\\]*"\)/, "await <module copy>"));
 const sameBytes = (a, b) => a.equals(b);
-// Those blocks alone are no reason for a backup: `payload-mon on` puts its block back, and wrapper v4
-// needs no claude-update-last block.
-const sameFormatter = (a, b) => withoutToolBlocks(a.toString("latin1")) === withoutToolBlocks(b.toString("latin1"));
+// Blocks as the tools write them are no reason for a backup: `payload-mon on` puts its block back, and
+// wrapper v4 needs no claude-update-last block. A block edited by hand is one.
+function sameFormatter(a, b) {
+  const old = splitToolBlocks(a.toString("latin1"));
+  return old.body === splitToolBlocks(b.toString("latin1")).body && old.blocks.every(toolMade);
+}
 
 // Keep a timestamped copy, with its bytes and mode, of a file that differs from what replaces it.
 function backupIfDifferent(dst, next, label, same = sameBytes) {
@@ -234,7 +299,7 @@ function installLoader() {
 
 // 3. Install the custom formatter and HUD config from the bundled templates.
 //    Files that differ from the templates (local edits) are kept as timestamped
-//    backups first; the blocks payload-mon / claude-update-last add do not count.
+//    backups first; the blocks payload-mon / claude-update-last add, as they write them, do not count.
 function installTemplates() {
   const wrapperSrc = readFileSync(join(SELF, "omc-hud-custom.mjs"));
   const configSrc = readFileSync(join(SELF, "hud-config.json"));
@@ -393,7 +458,7 @@ try {
   pointStatusLine();
 } catch (e) {
   log(`[x] Stopped partway (${e.code || e.message}); some files may have changed.`);
-  log(`    Earlier versions it replaced, apart from the loader and the tool blocks, are in <file>.backup.${stamp}.`);
+  log(`    Earlier versions it replaced, apart from the loader and blocks as the tools wrote them, are in <file>.backup.${stamp}.`);
   process.exit(2);
 }
 

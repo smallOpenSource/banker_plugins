@@ -35,7 +35,7 @@ const OPEN = "// >>> claude-update-last >>>";
 const CLOSE = "// <<< claude-update-last <<<";
 // A block's body never crosses another opening marker, so a stray one above a
 // block is left over (and refused) instead of taking the code between with it.
-const BLOCKS =
+export const BLOCKS =
   /^[ \t]*\/\/ >>> claude-update-last >>>(?:(?!\/\/ >>> claude-update-last >>>)[\s\S])*?\/\/ <<< claude-update-last <<<[ \t]*(?:\r?\n|(?![\s\S]))/gm;
 // The block goes right before the line that joins the segments into the statusline.
 const JOIN_LINE = /^ {2}let result = colored\.join\(SEP\);\r?$/gm;

@@ -829,3 +829,14 @@ test("CLAUDE_CONFIG_DIR 가 따옴표 안 ~/x 여도 홈 아래 래퍼를 씀", 
   const shown = spawnSync(process.execPath, [CLI, "status"], { encoding: "utf8", env });
   assert.ok(shown.stdout.includes(`(${hudFile})`), shown.stdout);
 });
+
+test("on and off finish quickly on a 3MB wrapper of closing then opening markers", () => {
+  const strays = "// <<< payload-mon <<<\n".repeat(65000) + "// >>> payload-mon >>>\n".repeat(65000);
+  const c = setup(HUD_V4 + strays);
+  for (const run of [turnOff, turnOn]) {
+    const started = Date.now();
+    run(c);
+    const took = Date.now() - started;
+    assert.ok(took < 5000, `${run.name} took ${took}ms`);
+  }
+});

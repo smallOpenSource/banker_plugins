@@ -63,7 +63,10 @@ import { CACHE_DIR, clearCache, estimatePayloadBytes, REQUEST_LIMIT_BYTES, SHOW_
 
 const OPEN = "// >>> payload-mon >>>";
 const CLOSE = "// <<< payload-mon <<<";
-const BLOCKS = /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[ \t]*\r?\n/gm;
+export const BLOCKS = /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[ \t]*\r?\n/gm;
+// The closing line. No block reaches past the last one, so the pattern runs only on the text before it:
+// otherwise every stray opening line scans to the end again (a 2MB file of them took 28s).
+export const CLOSE_LINE = /\/\/ <<< payload-mon <<<[ \t]*\r?\n/g;
 // The block goes right after the line that adds ctx.
 const CTX_LINE = /^ {2}if \(f\.ctx\) colored\.push\(colorCtx\(f\.ctx\)\);\r?\n/m;
 // The statusline JSON the block reads, in either layout.
@@ -139,6 +142,13 @@ const insertBlock = (base, url) => base.replace(CTX_LINE, (line) => line + place
 
 const count = (text, needle) => text.split(needle).length - 1;
 
+// The text without its blocks, the pattern run only up to the last closing line (see CLOSE_LINE).
+function withoutBlocks(src) {
+  let end = -1;
+  for (const m of src.matchAll(CLOSE_LINE)) end = m.index + m[0].length;
+  return end < 0 ? src : src.slice(0, end).replace(BLOCKS, "") + src.slice(end);
+}
+
 // The wrapper's text, null when there is no such file. Any other read failure
 // (permissions, say) is not "missing" and propagates.
 const readText = (file) => {
@@ -174,7 +184,7 @@ function blockEol(src, url) {
 // not pair up would let the block pattern swallow the code between them.
 function misfit(src) {
   if (count(src, OPEN) !== count(src, CLOSE)) return "payload-mon 표시(>>> / <<<)의 짝이 맞지 않습니다";
-  const base = src.replace(BLOCKS, "");
+  const base = withoutBlocks(src);
   if (!base.includes("omc-hud.mjs") || !base.includes("const colorRate")) return "OMC 커스텀 HUD 래퍼가 아닙니다";
   if (!INPUT_DECL.test(base)) return "삽입 위치를 찾지 못했습니다(statusline 입력을 담는 input 변수가 없음)";
   if (!CTX_LINE.test(base)) return "삽입 위치를 찾지 못했습니다(ctx를 넣는 줄이 없음)";
@@ -307,14 +317,14 @@ export function turnOn(opts = {}) {
   const done = showsPL(src)
     ? "켰습니다. 다음 statusline 갱신부터 PL 칸에 요청 크기가 늘 표시됩니다."
     : "켰습니다. 다음 statusline 갱신부터 8MB 이상이면 ctx 옆에 payload가 표시됩니다.";
-  const after = insertBlock(src.replace(BLOCKS, ""), moduleUrl(o.hudFile));
+  const after = insertBlock(withoutBlocks(src), moduleUrl(o.hudFile));
   return commit(o.hudFile, src, after, done + notShownNote(o), () => syncModule(o));
 }
 
 function removeBlocks(o, src) {
   if (src === null) return { ok: true, message: `HUD 래퍼가 없어 끌 것이 없습니다: ${o.hudFile}` };
   if (count(src, OPEN) !== count(src, CLOSE)) return refusal("payload-mon 표시(>>> / <<<)의 짝이 맞지 않습니다", o.hudFile);
-  const out = src.replace(BLOCKS, "");
+  const out = withoutBlocks(src);
   if (out === src) return { ok: true, message: "이미 꺼져 있습니다 (래퍼 변경 없음)." };
   return commit(o.hudFile, src, out, "껐습니다. 다음 statusline 갱신부터 payload가 표시되지 않습니다.");
 }
