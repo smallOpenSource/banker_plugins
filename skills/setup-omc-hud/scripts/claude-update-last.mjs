@@ -28,7 +28,7 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const OPEN = "// >>> claude-update-last >>>";
@@ -42,7 +42,16 @@ const JOIN_LINE = /^ {2}let result = colored\.join\(SEP\);\r?$/gm;
 // What the block reads at that line, all in the wrapper's own scope there.
 const NAMES = [/\bconst segs\b/, /\bconst colored\b/, /\bconst stripAnsi\b/, /\bconst A = /];
 
-const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+// The same rules as ../assets/apply-hud.mjs (OMC's getClaudeConfigDir): trim, expand a leading "~",
+// make it absolute, drop a trailing separator, so this finds the wrapper the installer wrote.
+function configDir() {
+  const v = (process.env.CLAUDE_CONFIG_DIR || "").trim();
+  if (!v) return join(homedir(), ".claude");
+  if (v === "~") return homedir();
+  if (v.startsWith("~/") || v.startsWith("~\\")) return join(homedir(), v.slice(2));
+  return resolve(v);
+}
+const CONFIG_DIR = configDir().replace(/[\\/]+$/, "");
 
 const DEFAULTS = {
   hudFile: process.env.CLAUDE_UPDATE_LAST_HUD_FILE || join(CONFIG_DIR, "hud", "omc-hud-custom.mjs"),

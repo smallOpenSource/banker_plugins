@@ -1,6 +1,6 @@
 ---
 name: payload-mon
-description: "OMC HUD 상태표시줄의 `ctx` 옆에, 현재 세션이 보내는 API 요청의 페이로드 추정치를 32MB 한도 대비로 표시하는 기능을 켜고 끔. 8MB 부터 표시. 'payload-mon'/'payload 모니터 켜/꺼'/'상태표시줄 payload 표시'/'요청 크기 경고'/'32MB 한도 경고'/'payload 표시가 안 보여' 시 사용."
+description: "OMC HUD 상태표시줄에 현재 세션이 보내는 API 요청의 페이로드 추정치를 32MB 한도 대비로 표시하는 기능을 켜고 끔. 래퍼 v4 는 `PL:` 칸으로 늘 보이고, 옛 래퍼는 8MB 부터 `ctx` 옆에 보임. 'payload-mon'/'payload 모니터 켜/꺼'/'상태표시줄 payload 표시'/'요청 크기 경고'/'32MB 한도 경고'/'payload 표시가 안 보여' 시 사용."
 argument-hint: "on | off | status"
 ---
 
@@ -11,6 +11,7 @@ argument-hint: "on | off | status"
 Claude Code 는 요청 본문이 32MB 를 넘으면 "Request too large (max 32MB)" 로 거절한다.
 이 한도는 토큰이 아니라 바이트라서, ctx(컨텍스트 %)가 낮아도 이미지나 큰 도구 결과가 쌓이면 걸린다.
 이 스킬은 그 바이트를 추정해 한도의 25%(8MB)부터 ctx 옆에 `payload:28%/9.0MB` 처럼 보여 준다.
+`setup-omc-hud` 가 까는 래퍼 v4 는 이 스킬의 모듈로 크기를 늘 `se` 앞에 `PL:0.5M` 처럼 보이고, 블록이 내는 칸은 그 `PL:` 이 대신한다.
 
 ## 실행
 
@@ -41,13 +42,14 @@ node "<이 스킬 디렉터리 절대경로>/scripts/payload-mon.mjs" <on|off|st
   블록이 불러오는 추정 모듈은 래퍼 옆 `hud/payload-mon/payload-size.mjs` 에 사본으로 둔다. 플러그인 설치 경로는 버전마다 바뀌어 업데이트 뒤에 사라지기 때문이다.
   이미 켜져 있으면 래퍼를 바꾸지 않고, 모듈 사본이 이 버전과 다를 때만 사본을 맞춘다. 예전 방식(블록 2개)으로 켜져 있었다면 새 방식으로 바꾼다.
   바꾸기 전 내용은 `omc-hud-custom.mjs.payload-mon.bak` 에 남는다.
-- `off`: 그 블록만 빼서 래퍼를 켜기 전 상태로 되돌리고, 모듈 사본과 추정치 캐시를 지운다.
+- `off`: 그 블록만 빼서 래퍼를 켜기 전 상태로 되돌리고, 모듈 사본과 추정치 캐시를 지운다. 래퍼 v4 에서는 모듈 사본이 없어져 `PL:` 칸도 사라진다.
 - `status`: 켜짐·꺼짐, 모듈 사본이 이 버전과 같은지, statusLine 이 이 래퍼를 쓰는지, 현재 세션의 추정치를 보여 준다.
 - 같은 래퍼에 자기 표시 블록을 넣는 다른 도구가 있어도 서로의 블록을 건드리지 않는다.
 
 ## 무엇을 어떻게 보여 주는가
 
-- `ctx:21%|payload:28%/9.0MB|se:…`: 32MB 대비 %(ctx 와 같은 색: 70% 미만 초록, 85% 미만 노랑, 그 이상 빨강)와 크기(MB, 청록). 8MB 미만이면 숨긴다.
+- 래퍼 v4: `PL:9.0M|se:0.7h|…`. 크기(MB, 소수 1자리)를 늘 보이고, 색은 32MB 대비 %(70% 미만 초록, 85% 미만 노랑, 그 이상 분홍)다.
+- 옛 래퍼: `ctx:21%|payload:28%/9.0MB|se:…`: 32MB 대비 %(ctx 와 같은 색: 70% 미만 초록, 85% 미만 노랑, 그 이상 빨강)와 크기(MB, 청록). 8MB 미만이면 숨긴다.
 - 값은 마지막 `/compact` 이후 Claude Code 가 실제로 보내는 메시지의 바이트다. Claude Code 가 32MB 한도를 판정하는 방식과 같고, 무엇을 넣고 뺄지는 Claude Code 2.1.288 의 요청 필터를 따른다.
 - 세션 파일 크기가 아니다. 71MB 짜리 세션 파일도 실제 전송분은 0.1MB 일 수 있다. 알려진 오차는 `scripts/payload-size.mjs` 머리 주석에 있다.
 
@@ -60,7 +62,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/payload-mon.mjs" <on|off|st
 - "모듈 사본을 쓰지 못했습니다": 래퍼 옆 `hud/payload-mon/` 에 쓸 수 없다(권한, 같은 이름의 파일, 디스크 공간). 래퍼는 그대로다.
 - "표시(>>> / <<<)의 짝이 맞지 않습니다": 래퍼에 payload-mon 표시 줄이 한쪽만 남았다. `on`·`off` 모두 거부하므로, 손으로 고치지 말라는 원칙의 유일한 예외다.
   `setup-omc-hud` 로 HUD 를 재설치하거나, 래퍼에서 짝 없이 남은 `// >>> payload-mon >>>` 또는 `// <<< payload-mon <<<` 줄을 지운 뒤 다시 실행한다.
-- HUD 를 재설치한 뒤 payload 가 안 보이면 `on` 을 다시 실행한다. `setup-omc-hud` 로 재설치했다면 그 스킬이 다시 켠다.
+- HUD 를 재설치한 뒤 payload 가 안 보이면 `on` 을 다시 실행한다. `setup-omc-hud` 는 설치할 때마다 이 스킬을 늘 켠다(래퍼 v4 의 `PL:` 칸이 모듈 사본을 씀).
 - banker 업데이트 알림에 payload-mon 이 바뀌었다고 나오거나 `status` 에 "모듈 사본이 이 버전과 다름" 이 나오면, `on` 을 한 번 실행해 사본을 맞춘다.
 - `status` 에 "주의: statusLine 명령에 … 보이지 않습니다" 가 나오면 statusline 이 다른 명령이다. smart-compact 처럼 HUD 를 감싸 호출하는 래퍼라면 정상 표시된다. 이 스킬은 OMC 커스텀 HUD 래퍼에만 붙는다.
 - 추정치가 실제 "Request too large" 시점과 크게 어긋나면 Claude Code 가 세션 파일 형식이나 요청 필터를 바꿨을 수 있다. banker 이슈로 알린다.

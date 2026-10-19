@@ -180,7 +180,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `setup-omc` | oh-my-claudecode(OMC) 설치·갱신 (Codex는 OMX) |
 | `setup-harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
 | `setup-playwright` | Playwright + headless 브라우저 (RHEL8/Rocky8·non-root·no-conda 폴백) |
-| `setup-omc-hud` | omc_hud 상태표시줄 (OS별). Claude 갱신 안내는 줄 맨 끝 |
+| `setup-omc-hud` | omc_hud 상태표시줄(래퍼 v4). 스킬에 든 파일로 오프라인 설치, 모든 OS 같은 명령 |
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
 | `setup-stitch` | Stitch 디자인 MCP 프록시 등록(RockyLinux8 proxy) |
 | `docs-setup` | arch-diagram·pdf-vision-extract 의존성(pptx·pymupdf·plantuml) 설치 |
@@ -247,7 +247,7 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine` + `hud/omc-hud-custom.mjs` 에 Claude 갱신 안내를 줄 맨 끝으로 옮기는 블록 1개(`.claude-update-last.bak` 백업·멱등·`node --check` 검증, `off` 로 원복) | — (Codex는 OMX `hud`) |
+| `setup-omc-hud` | `statusLine`(`settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex는 OMX `hud`) |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
@@ -301,7 +301,8 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 > 표시 블록과 모듈 사본은 플러그인 밖(`~/.claude/hud/`)에 있어서, 플러그인을 지워도 남아 계속 표시됩니다.\
 > 이미 지웠다면 HUD를 재설치하거나, `omc-hud-custom.mjs` 에서 `// >>> payload-mon >>>` 부터 `// <<< payload-mon <<<` 까지 지우면 됩니다.
 
-> `setup-omc-hud` 가 넣은 Claude 갱신 안내 블록도 플러그인 밖(`~/.claude/hud/omc-hud-custom.mjs`)에 남습니다. 원래 순서로 되돌리려면 제거 전에 `/banker:setup-omc-hud off` 를 실행하세요.\
+> `setup-omc-hud` 가 설치한 상태표시줄 래퍼와 설정도 플러그인 밖(`~/.claude/hud/`, `~/.claude/.omc/`)에 있어서, 플러그인을 지워도 남습니다.\
+> 0.19.5 이하의 `setup-omc-hud` 가 옛 래퍼에 넣은 Claude 갱신 안내 블록은 제거 전에 `/banker:setup-omc-hud off` 로 뺄 수 있습니다.\
 > 이미 지웠다면 HUD를 재설치하거나, `// >>> claude-update-last >>>` 부터 `// <<< claude-update-last <<<` 까지 지우면 됩니다. 블록을 남겨 두어도 상태표시줄은 깨지지 않습니다.
 
 > `setup-bypass-permissions` 로 바꾼 권한 모드는 `settings.json` 에 남아, 플러그인을 지워도 모든 세션에서 확인 없이 도구가 실행됩니다. 제거 전에 `/banker:setup-bypass-permissions off` 를 실행하세요.\
@@ -366,6 +367,8 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
   패턴 목록은 Wikipedia [*Signs of AI writing*](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)(WikiProject AI Cleanup, **CC BY-SA**)에 기반합니다.
 - `skills/3d-intro-build/references`: [oso95/scroll-world](https://github.com/oso95/scroll-world) 의 스크럽 엔진(`scrub-engine.js`·`index-template.html`)을 그대로 벤더링, **MIT License**(© 2026 cyw).\
   원본 라이선스 고지는 `skills/3d-intro-build/references/LICENSE` 와 `NOTICE.md` 에 포함.
+- `skills/setup-omc-hud/assets`: 상태표시줄 래퍼와 설치 스크립트는 [smallOpenSource/omc_hud](https://github.com/smallOpenSource/omc_hud) d3cedd5 를 고친 것, **MIT License**(© 2026 smallOpenSource).\
+  원본 라이선스 고지는 `skills/setup-omc-hud/assets/LICENSE-omc_hud` 에 포함.
 - `skills/theme-selection/assets`: 번들 팔레트(`palettes.json`)는 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) 의 DESIGN.md 에서 색 값을 읽어 만든 것, **MIT License**(© 2026 VoltAgent).\
   원본 라이선스 고지는 `skills/theme-selection/assets/LICENSE` 와 `NOTICE.md` 에 포함.\
   테마 이름의 상표는 각 소유자에게 있으며, banker 는 그 회사들과 관계가 없습니다.
