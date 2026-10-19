@@ -173,5 +173,9 @@
   "0.20.2": [
     "banker:payload-mon",
     "banker:setup-omc-hud"
+  ],
+  "0.20.3": [
+    "banker:payload-mon",
+    "banker:setup-omc-hud"
   ]
 }
