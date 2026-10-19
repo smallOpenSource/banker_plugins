@@ -829,3 +829,62 @@ test("CLAUDE_CONFIG_DIR 가 따옴표 안 ~/x 여도 홈 아래 래퍼를 씀", 
   const shown = spawnSync(process.execPath, [CLI, "status"], { encoding: "utf8", env });
   assert.ok(shown.stdout.includes(`(${hudFile})`), shown.stdout);
 });
+
+test("on and off finish quickly on a 3MB wrapper of closing then opening markers", () => {
+  const strays = "// <<< payload-mon <<<\n".repeat(65000) + "// >>> payload-mon >>>\n".repeat(65000);
+  const c = setup(HUD_V4 + strays);
+  for (const run of [turnOff, turnOn]) {
+    const started = Date.now();
+    run(c);
+    const took = Date.now() - started;
+    assert.ok(took < 5000, `${run.name} took ${took}ms`);
+  }
+});
+
+test("on refuses to write the module copy into a copy folder that is a link, and leaves the wrapper alone", posixOnly, () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  symlinkSync(outside, join(c.dir, "payload-mon"));
+  const before = readFileSync(c.hudFile);
+  const on = turnOn(c);
+  assert.equal(on.ok, false, on.message);
+  assert.match(on.message, /사본 폴더가 링크입니다/);
+  assert.ok(readFileSync(c.hudFile).equals(before));
+  assert.equal(existsSync(join(outside, "payload-size.mjs")), false);
+});
+
+test("off does not delete through a copy folder that is a link", posixOnly, () => {
+  const c = setup(HUD_V4);
+  assert.equal(turnOn(c).ok, true);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "payload-size.mjs"), "// a file of someone else's\n");
+  rmSync(join(c.dir, "payload-mon"), { recursive: true });
+  symlinkSync(outside, join(c.dir, "payload-mon"));
+  const off = turnOff(c);
+  assert.equal(off.ok, true, off.message);
+  assert.ok(existsSync(join(outside, "payload-size.mjs")));
+  assert.match(off.message, /사본 폴더가 링크라 모듈 사본은 지우지 않았습니다/);
+});
+
+test("status names a copy folder that is a link instead of pointing at on", posixOnly, () => {
+  const c = setup(HUD_V4);
+  assert.equal(turnOn(c).ok, true);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  rmSync(join(c.dir, "payload-mon"), { recursive: true });
+  symlinkSync(outside, join(c.dir, "payload-mon"));
+  const shown = status(c).message;
+  assert.match(shown, /사본 폴더가 링크/);
+  assert.doesNotMatch(shown, /on 으로 복구/);
+});
+
+test("off on a wrapper link that leads nowhere says there is nothing to turn off", posixOnly, () => {
+  const c = setup(HUD_V4);
+  rmSync(c.hudFile);
+  symlinkSync(join(c.dir, "gone.mjs"), c.hudFile);
+  const off = turnOff(c);
+  assert.equal(off.ok, true, off.message);
+  assert.match(off.message, /HUD 래퍼가 없어 끌 것이 없습니다/);
+});

@@ -79,7 +79,7 @@ node "<이 스킬 디렉터리 절대경로>\assets\apply-hud.mjs"
   - OMC 가 없으면 OMC 를 먼저 설치한다(`setup-omc` 스킬). 이 스킬은 OMC 를 설치하지 않는다.
   - 설정 폴더 경로에 셸이 해석하는 글자가 있으면 그 글자가 없는 폴더를 쓰게 안내한다.
   - 쓸 수 없는 파일이나 폴더가 있으면 권한을 고친 뒤 다시 실행한다.
-- 종료 코드 2 면 예기치 못한 오류로 중간에 멈춘 것이다. 출력을 그대로 보고하고, 바꾼 파일의 이전 판은 `<파일>.backup.<시각>` 에 있다고 알린다. 로더와 도구 블록은 백업하지 않는다.
+- 종료 코드 2 면 예기치 못한 오류로 중간에 멈춘 것이다. 출력을 그대로 보고하고, 바꾼 파일의 이전 판은 `<파일>.backup.<시각>` 에 있다고 알린다. 로더와, 도구가 쓴 그대로의 블록은 백업하지 않는다(블록 안을 손으로 고쳤으면 그 래퍼를 백업한다).
 
 ## 2. payload-mon 켜기
 
@@ -90,7 +90,7 @@ node "<이 스킬 디렉터리 절대경로>/../payload-mon/scripts/payload-mon.
 ```
 
 - Codex 사본에서 실행할 때 경로는 `<이 스킬 디렉터리 절대경로>/../banker-payload-mon/scripts/payload-mon.mjs` 다.
-- 이유: `PL:` 칸은 payload-mon 이 래퍼 옆(`hud/payload-mon/`)에 두는 크기 계산 모듈을 쓴다. 모듈이 없으면 `PL:` 이 나오지 않는다. 래퍼 파일이 링크면 링크가 가리키는 파일 옆에 둔다.
+- 이유: `PL:` 칸은 payload-mon 이 래퍼 옆(`hud/payload-mon/`)에 두는 크기 계산 모듈을 쓴다. 모듈이 없으면 `PL:` 이 나오지 않는다. 래퍼 파일이 링크면 링크가 가리키는 파일 옆에 둔다. 래퍼는 이 모듈을 링크가 가리키는 파일 옆에서, 로더(`omc-hud.mjs`)는 statusLine 명령의 경로 옆에서 먼저 찾는다.
 - 출력 `켰습니다. 다음 statusline 갱신부터 PL 칸에 요청 크기가 늘 표시됩니다.` 를 확인한다. `이미 켜져 있습니다`, `모듈 사본을 이 버전으로 맞췄습니다` 도 정상이다.
 
 ## 3. 보고
@@ -115,13 +115,13 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 ## 함정
 
 - 다시 설치하면 래퍼와 `hud-config.json` 을 첨부 파일로 덮어쓴다. 손으로 고친 내용은 `.backup.<시각>` 에만 남는다.
-- payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 백업하지 않는다.
+- 도구가 쓴 그대로의 payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 백업하지 않는다. 블록 안을 손으로 고쳤으면 그 래퍼를 백업한다.
 - `settings.json` 의 `omcHud` 값은 `hud-config.json` 의 같은 키를 덮어쓴다. 래퍼가 기대는 아래 키를 바꾸면 칸이 달라지거나 OMC 원문이 그대로 나온다.
   - `omcLabel`, `useBars`
   - `maxWidth`, `maxOutputLines`
   - `showCallCounts`, `callCountsFormat`
   - `contextBar`, `gitBranch`
-- `payload-mon off` 를 실행하면 크기 계산 모듈이 지워져 `PL:` 칸도 사라진다. 다시 보려면 `payload-mon on`.
+- `payload-mon off` 를 실행하면 크기 계산 모듈이 지워져 `PL:` 칸도 사라진다. 다시 보려면 `payload-mon on`. 사본 폴더(`hud/payload-mon/`)가 링크면 그 안을 지우지 않으므로 `PL:` 칸이 남는다.
 - v4 에서 payload-mon 블록은 모듈을 깔기 위해서만 남는다. 갱신마다 크기 추정이 두 번 돌지만 두 번째는 캐시를 쓴다.
 - 래퍼를 손으로 고칠 때 `if (f.ctx) colored.push(colorCtx(f.ctx));` 줄을 지우지 않는다. 실행상 비어 있지만 `payload-mon on` 이 이 줄 바로 뒤에 블록을 넣는다.
 - 래퍼는 statusLine 프로세스가 받은 터미널 폭(stderr, stdout 의 `columns`, 그다음 `COLUMNS`)으로 줄을 접는다. 폭을 받지 못하면 한 줄로 나오고 Claude Code 가 끝을 자른다.
@@ -136,4 +136,4 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 - 래퍼, HUD 설정, 모듈 사본은 플러그인 밖(`<설정 폴더>/hud/`, `<설정 폴더>/.omc/`)에 있다. 플러그인을 지워도 상태표시줄은 남는다.
 - OMC 를 지울 때는 statusLine 도 지운다. OMC 로더는 플러그인을 못 찾으면 작업 폴더의 `node_modules` 에서 OMC HUD 를 찾아 불러오기 때문이다.
 - 설치 끝의 렌더 확인은 래퍼를 입력 없이 한 번 돌려, OMC 진단의 첫 줄(`[OMC] HUD v<판> | preset: <이름>`)로 OMC 를 불러왔는지와 그린 판을 본다. 네트워크는 쓰지 않는다.
-- 렌더 확인이 OMC 를 불러오지 못한다거나 옛 판이 그린다고 하면 OMC 쪽 문제다. `/oh-my-claudecode:omc-setup` 은 고치면서 statusLine 을 OMC 명령으로 되돌리므로, 쓴 뒤에는 이 스킬을 다시 실행한다. omc-patch 를 쓰는 PC 는 omc-patch 도 다시 적용한다.
+- 렌더 확인이 `[!!]` 로 OMC 를 불러오지 못한다거나 옛 판이 그린다고 하면 OMC 쪽 문제다. `[..]` 는 이 확인으로 알 수 없었다는 뜻이다(OMC 가 입력 없이 아무것도 내지 않음, 판만 다르고 이유를 못 찾음, Windows 에 `node.cmd` 만 있음). `/oh-my-claudecode:omc-setup` 은 고치면서 statusLine 을 OMC 명령으로 되돌리므로, 쓴 뒤에는 이 스킬을 다시 실행한다. omc-patch 를 쓰는 PC 는 omc-patch 도 다시 적용한다.

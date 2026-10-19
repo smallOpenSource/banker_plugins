@@ -19,7 +19,7 @@
  * column when Node reports one but never quoting it; one holding only white
  * space is read as {}, as Claude Code does; UTF-8 BOM accepted; CLAUDE_CONFIG_DIR trimmed, "~" expanded
  * and made absolute; formatter and HUD config backed up when they differ (the
- * blocks payload-mon and claude-update-last add do not count), settings.json only
+ * blocks payload-mon and claude-update-last add do not count unless edited by hand), settings.json only
  * when it changes; pre-releases sort below their release; no
  * folder is made when OMC is missing. Also refused before any change: a config
  * folder path the statusLine shell would act on, a file or folder it cannot
@@ -199,17 +199,82 @@ function writeOwned(file, data) {
 }
 
 // The marker blocks payload-mon and claude-update-last add to the installed formatter, matched as those
-// tools match them (payload-mon.mjs BLOCKS, claude-update-last.mjs's block pattern). Read as latin1,
-// which maps every byte to one character, so text outside the blocks compares byte for byte.
+// tools match them (payload-mon.mjs BLOCKS, claude-update-last.mjs BLOCKS). Read as latin1, which maps
+// every byte to one character, so text outside the blocks compares byte for byte.
 const TOOL_BLOCKS = [
   /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[ \t]*\r?\n/gm,
   /^[ \t]*\/\/ >>> claude-update-last >>>(?:(?!\/\/ >>> claude-update-last >>>)[\s\S])*?\/\/ <<< claude-update-last <<<[ \t]*(?:\r?\n|(?![\s\S]))/gm,
 ];
-const withoutToolBlocks = (text) => TOOL_BLOCKS.reduce((t, blocks) => t.replace(blocks, ""), text);
+// payload-mon's closing line (payload-mon.mjs CLOSE_LINE). No block reaches past the last one, so its
+// pattern runs only on the text before it: otherwise every stray opening line scans to the end again
+// (a 2MB file of them took 28s).
+const PM_CLOSE = /\/\/ <<< payload-mon <<<[ \t]*\r?\n/g;
+// The text without the tools' blocks, and the blocks it held.
+function splitToolBlocks(text) {
+  const blocks = [];
+  const take = (t, pattern) =>
+    t.replace(pattern, (block) => {
+      blocks.push(block);
+      return "";
+    });
+  let end = -1;
+  for (const m of text.matchAll(PM_CLOSE)) end = m.index + m[0].length;
+  const rest = end < 0 ? text : take(text.slice(0, end), TOOL_BLOCKS[0]) + text.slice(end);
+  return { body: take(rest, TOOL_BLOCKS[1]), blocks };
+}
+// The blocks as the tools write them (payload-mon.mjs placeBlock, claude-update-last.mjs blockText), with
+// LF line endings and payload-mon's import of its module copy as "<module copy>" (where the copy sits is the
+// tool's to choose; a URL to any other file is an edit). A block that differs from both was edited by hand. When a tool's block changes, the test "payload-mon 블록만 다른 래퍼와 바뀌지 않은 settings.json 은
+// 다시 설치해도 백업하지 않음" fails until this copy follows.
+const TOOL_BLOCK_TEXTS = [
+  [
+    "  // >>> payload-mon >>>",
+    "  // payload-mon: estimated API request payload against the 32MB request limit, shown",
+    "  // like ctx from 8MB (25%) on. `payload-mon off` removes this block; a missing or",
+    "  // broken module costs only this segment, never the statusline.",
+    "  try {",
+    "    const transcript = JSON.parse(input)?.transcript_path;",
+    "    if (transcript) {",
+    "      const { estimatePayloadBytes, payloadSegment } = await <module copy>;",
+    "      const segment = payloadSegment(estimatePayloadBytes(transcript));",
+    "      if (segment) colored.push(colorRate(segment));",
+    "    }",
+    "  } catch {",
+    "    /* no stdin JSON, unreadable transcript or module error */",
+    "  }",
+    "  // <<< payload-mon <<<",
+    "",
+  ].join("\n"),
+  [
+    "  // >>> claude-update-last >>>",
+    "  // claude-update-last (setup-omc-hud): OMC's Claude Code update notice",
+    "  // (\"[Claude#X] -> Y claude update\") goes after every other segment.",
+    "  // `claude-update-last off` removes this block; on any error the order stays as it was.",
+    "  try {",
+    "    const notice = /^\\[Claude(?:#[^\\]]*)?\\]\\s*->\\s*\\S+\\s+claude\\s+update\\b/;",
+    "    const plain = (s) => stripAnsi(String(s)).trim();",
+    "    const found = segs.find((s) => notice.test(plain(s)));",
+    "    if (found) {",
+    "      const moved = A(\"2\", plain(found));",
+    "      for (let i = colored.length - 1; i >= 0; i--) if (notice.test(plain(colored[i]))) colored.splice(i, 1);",
+    "      colored.push(moved);",
+    "    }",
+    "  } catch {",
+    "    /* keep the order the wrapper chose */",
+    "  }",
+    "  // <<< claude-update-last <<<",
+    "",
+  ].join("\n"),
+];
+const toolMade = (block) =>
+  TOOL_BLOCK_TEXTS.includes(block.replace(/\r\n/g, "\n").replace(/await import\("file:\/\/[^"\\]*\/payload-mon\/payload-size\.mjs"\)/, "await <module copy>"));
 const sameBytes = (a, b) => a.equals(b);
-// Those blocks alone are no reason for a backup: `payload-mon on` puts its block back, and wrapper v4
-// needs no claude-update-last block.
-const sameFormatter = (a, b) => withoutToolBlocks(a.toString("latin1")) === withoutToolBlocks(b.toString("latin1"));
+// Blocks as the tools write them are no reason for a backup: `payload-mon on` puts its block back, and
+// wrapper v4 needs no claude-update-last block. A block edited by hand is one.
+function sameFormatter(a, b) {
+  const old = splitToolBlocks(a.toString("latin1"));
+  return old.body === splitToolBlocks(b.toString("latin1")).body && old.blocks.every(toolMade);
+}
 
 // Keep a timestamped copy, with its bytes and mode, of a file that differs from what replaces it.
 function backupIfDifferent(dst, next, label, same = sameBytes) {
@@ -234,7 +299,7 @@ function installLoader() {
 
 // 3. Install the custom formatter and HUD config from the bundled templates.
 //    Files that differ from the templates (local edits) are kept as timestamped
-//    backups first; the blocks payload-mon / claude-update-last add do not count.
+//    backups first; the blocks payload-mon / claude-update-last add, as they write them, do not count.
 function installTemplates() {
   const wrapperSrc = readFileSync(join(SELF, "omc-hud-custom.mjs"));
   const configSrc = readFileSync(join(SELF, "hud-config.json"));
@@ -280,7 +345,10 @@ function pointStatusLine() {
 const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 25000;
 const BLAME =
   "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
-const clip = (s, n = 200) => String(s).slice(0, n);
+// Characters that could act on a terminal or pass for a line of their own are shown as "?", as
+// omc-patch.mjs (UNSAFE_CH) shows file values in output an agent reads.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
+const clip = (s, n = 200) => String(s).replace(UNSAFE, "?").slice(0, n);
 // No input, and the config folder as working folder: OMC's loader looks in the working folder's
 // node_modules and runs git from it, and Windows looks there first for a bare program name, so the
 // folder the installer was started in (a project, say) must not be it.
@@ -288,19 +356,30 @@ const RUN_OPTS = { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: 
 
 // node as the statusLine shell finds it, but only in PATH folders given as absolute paths: spawning the
 // bare name would on Windows try the working folder first, where a project's own node.exe could run.
-function findNode(pathEnv) {
-  const name = process.platform === "win32" ? "node.exe" : "node";
+// Like the shell, it passes over a file it may not run.
+function findNode(pathEnv, name = process.platform === "win32" ? "node.exe" : "node") {
   for (const entry of (pathEnv || "").split(delimiter)) {
     const dir = entry.replace(/^"(.*)"$/, "$1");
     if (!dir || !isAbsolute(dir)) continue;
+    const file = join(dir, name);
     try {
-      if (statSync(join(dir, name)).isFile()) return join(dir, name);
+      if (statSync(file).isFile()) {
+        accessSync(file, constants.X_OK);
+        return file;
+      }
     } catch {
-      /* not in this folder */
+      /* not in this folder, or not runnable */
     }
   }
   return null;
 }
+
+const NO_NODE = '[!!] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show.';
+// Claude Code runs statusLine with Git Bash when it finds it, else with PowerShell. Of the two only
+// PowerShell runs node.cmd for "node", and this check cannot tell which it will be, so it does not run.
+const NODE_CMD_ONLY =
+  '[..] Render check: skipped; PATH has node.cmd but no node.exe, and Git Bash, which Claude Code runs statusLine with when it finds it, does not run node.cmd as "node".';
+const noNodeLine = (pathEnv) => (process.platform === "win32" && findNode(pathEnv, "node.cmd") ? NODE_CMD_ONLY : NO_NODE);
 
 function omcVersion(root) {
   if (!root) return null;
@@ -312,41 +391,58 @@ function omcVersion(root) {
   }
 }
 
+// The first line of a Node error ("Error: ...", "TypeError [ERR_X]: ..."), "" when there is none.
+const errorLine = (text) => /^\w*Error\b.*$/m.exec(text || "")?.[0] ?? "";
+
 // Why an OMC version does not load: its HUD's own error when run directly.
 function loadReason(node, root) {
   const hud = join(root, "dist", "hud", "index.js");
   if (!existsSync(hud)) return "no dist/hud/index.js";
   const r = spawnSync(node, [hud], RUN_OPTS);
-  const line = /^\w*Error\b.*$/m.exec(r.stderr || "");
-  return line ? clip(line[0]) : "";
+  const line = errorLine(r.stderr);
+  return line ? clip(line) : "";
 }
+
+const NO_OUTPUT = "[..] Render check: OMC printed nothing with no input, so this check cannot tell whether the statusline draws.";
 
 // What the formatter printed, as report lines.
 function judgeRender(out, node) {
   const banner = /^\[OMC\] HUD v(\S+) \| preset: /m.exec(out);
   if (banner) {
     const installed = omcVersion(pluginRoot);
-    if (!installed || installed === banner[1]) return [`[ok] Render check: the statusline loads OMC ${banner[1]}.`];
+    // Both version strings come from OMC (its output, its package.json): shown through clip like its lines.
+    const [drew, want] = [clip(banner[1], 40), clip(installed, 40)];
+    if (!installed || installed === banner[1]) return [`[ok] Render check: the statusline loads OMC ${drew}.`];
     const why = loadReason(node, pluginRoot);
-    const line = `[!!] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}; ${installed} does not load`;
-    return [`${line}${why ? ` (${why})` : ""}.`, BLAME];
+    // Without an error from the installed version, all this check saw is which version drew.
+    if (!why) return [`[..] Render check: the statusline loads OMC ${drew}, not the installed ${want}.`];
+    return [`[!!] Render check: the statusline loads OMC ${drew}, not the installed ${want}; ${want} does not load (${why}).`, BLAME];
   }
+  // The formatter says this when OMC printed nothing; with no input that alone does not say it cannot draw.
+  if (/^\[OMC HUD\] no output$/m.test(out)) return [NO_OUTPUT];
   // OMC's line ends with the reason, after a path that can be long: keep it whole within reason.
   const failed = /^\[OMC HUD\] .*$/m.exec(out);
   if (failed) return [`[!!] Render check: OMC's HUD does not load: ${clip(failed[0], 1000)}`, BLAME];
+  // A loader that cannot load prints Node's error, header lines first; its module path can be long.
+  const error = errorLine(out);
+  if (error) return [`[!!] Render check: the statusline prints an error instead of a line: ${clip(error, 1000)}`];
   return [`[..] Render check: unrecognized output: ${clip(out.split("\n")[0])}`];
+}
+
+// A statusline command that exited non-zero: its Node error line when stderr has one, else the first line.
+function failedLine(r) {
+  const stderr = (r.stderr || "").trim();
+  const err = errorLine(stderr) || stderr.split("\n")[0];
+  return `[!!] Render check: the statusline command failed (exit ${r.status ?? r.signal})${err ? `: ${clip(err)}` : ""}`;
 }
 
 function renderReport() {
   const node = findNode(process.env.PATH);
-  if (!node) return ['[!!] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show.'];
+  if (!node) return [noNodeLine(process.env.PATH)];
   const r = spawnSync(node, [wrapperDst], RUN_OPTS);
   if (r.error && r.error.code === "ETIMEDOUT") return [`[!!] Render check: the statusline gave no answer in ${CHECK_MS / 1000}s.`];
   if (r.error) throw r.error;
-  if (r.status !== 0) {
-    const err = (r.stderr || "").trim().split("\n")[0];
-    return [`[!!] Render check: the statusline command failed (exit ${r.status ?? r.signal})${err ? `: ${clip(err)}` : ""}`];
-  }
+  if (r.status !== 0) return [failedLine(r)];
   return judgeRender((r.stdout || "").replace(/\x1b\[[0-9;]*m/g, ""), node);
 }
 
@@ -364,7 +460,7 @@ try {
   pointStatusLine();
 } catch (e) {
   log(`[x] Stopped partway (${e.code || e.message}); some files may have changed.`);
-  log(`    Earlier versions it replaced, apart from the loader and the tool blocks, are in <file>.backup.${stamp}.`);
+  log(`    Earlier versions it replaced, apart from the loader and blocks as the tools wrote them, are in <file>.backup.${stamp}.`);
   process.exit(2);
 }
 

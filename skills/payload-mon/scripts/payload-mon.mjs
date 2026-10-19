@@ -26,7 +26,8 @@
  * import pointing there would go dark without a word. `on` writes the copy and
  * refreshes it when this version's module differs; `status` says when it does.
  * When the wrapper file itself is a symlink, the copy goes beside the file it
- * points at, where wrapper v4 looks.
+ * points at, where wrapper v4 looks first. A copy folder (payload-mon/) that is
+ * itself a link is neither written nor emptied through: `on` refuses it.
  *
  * The block takes the ctx line's line ending, so a CRLF wrapper stays CRLF, and
  * a block whose line endings an editor rewrote still counts as on. A wrapper
@@ -63,7 +64,10 @@ import { CACHE_DIR, clearCache, estimatePayloadBytes, REQUEST_LIMIT_BYTES, SHOW_
 
 const OPEN = "// >>> payload-mon >>>";
 const CLOSE = "// <<< payload-mon <<<";
-const BLOCKS = /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[ \t]*\r?\n/gm;
+export const BLOCKS = /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[ \t]*\r?\n/gm;
+// The closing line. No block reaches past the last one, so the pattern runs only on the text before it:
+// otherwise every stray opening line scans to the end again (a 2MB file of them took 28s).
+export const CLOSE_LINE = /\/\/ <<< payload-mon <<<[ \t]*\r?\n/g;
 // The block goes right after the line that adds ctx.
 const CTX_LINE = /^ {2}if \(f\.ctx\) colored\.push\(colorCtx\(f\.ctx\)\);\r?\n/m;
 // The statusline JSON the block reads, in either layout.
@@ -139,6 +143,13 @@ const insertBlock = (base, url) => base.replace(CTX_LINE, (line) => line + place
 
 const count = (text, needle) => text.split(needle).length - 1;
 
+// The text without its blocks, the pattern run only up to the last closing line (see CLOSE_LINE).
+function withoutBlocks(src) {
+  let end = -1;
+  for (const m of src.matchAll(CLOSE_LINE)) end = m.index + m[0].length;
+  return end < 0 ? src : src.slice(0, end).replace(BLOCKS, "") + src.slice(end);
+}
+
 // The wrapper's text, null when there is no such file. Any other read failure
 // (permissions, say) is not "missing" and propagates.
 const readText = (file) => {
@@ -174,7 +185,7 @@ function blockEol(src, url) {
 // not pair up would let the block pattern swallow the code between them.
 function misfit(src) {
   if (count(src, OPEN) !== count(src, CLOSE)) return "payload-mon 표시(>>> / <<<)의 짝이 맞지 않습니다";
-  const base = src.replace(BLOCKS, "");
+  const base = withoutBlocks(src);
   if (!base.includes("omc-hud.mjs") || !base.includes("const colorRate")) return "OMC 커스텀 HUD 래퍼가 아닙니다";
   if (!INPUT_DECL.test(base)) return "삽입 위치를 찾지 못했습니다(statusline 입력을 담는 input 변수가 없음)";
   if (!CTX_LINE.test(base)) return "삽입 위치를 찾지 못했습니다(ctx를 넣는 줄이 없음)";
@@ -187,6 +198,16 @@ function copyState(o) {
   if (copy === null) return "missing";
   const source = readBytes(o.moduleSource);
   return source !== null && copy.equals(source) ? "current" : "stale";
+}
+
+// Whether the folder holding `file` is a link. The copy folder is this tool's, and a link there
+// would take the copy, or its removal, to wherever it points.
+function linkedFolder(file) {
+  try {
+    return lstatSync(dirname(file)).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 // Replaces file through a fresh temp file ("wx") and a rename: a link planted at
@@ -210,8 +231,9 @@ function writeFresh(file, data, mode) {
 // away again: mkdirSync names a folder only when it created it, and rmdir
 // leaves one that something else has meanwhile put a file in.
 function syncModule(o) {
-  if (copyState(o) === "current") return false;
   const copy = moduleCopy(o.hudFile);
+  if (linkedFolder(copy)) throw new Error(`사본 폴더가 링크입니다: ${dirname(copy)}`);
+  if (copyState(o) === "current") return false;
   const made = mkdirSync(dirname(copy), { recursive: true, mode: 0o755 }) !== undefined;
   try {
     writeFresh(copy, readFileSync(o.moduleSource), 0o644);
@@ -307,23 +329,26 @@ export function turnOn(opts = {}) {
   const done = showsPL(src)
     ? "켰습니다. 다음 statusline 갱신부터 PL 칸에 요청 크기가 늘 표시됩니다."
     : "켰습니다. 다음 statusline 갱신부터 8MB 이상이면 ctx 옆에 payload가 표시됩니다.";
-  const after = insertBlock(src.replace(BLOCKS, ""), moduleUrl(o.hudFile));
+  const after = insertBlock(withoutBlocks(src), moduleUrl(o.hudFile));
   return commit(o.hudFile, src, after, done + notShownNote(o), () => syncModule(o));
 }
 
 function removeBlocks(o, src) {
   if (src === null) return { ok: true, message: `HUD 래퍼가 없어 끌 것이 없습니다: ${o.hudFile}` };
   if (count(src, OPEN) !== count(src, CLOSE)) return refusal("payload-mon 표시(>>> / <<<)의 짝이 맞지 않습니다", o.hudFile);
-  const out = src.replace(BLOCKS, "");
+  const out = withoutBlocks(src);
   if (out === src) return { ok: true, message: "이미 꺼져 있습니다 (래퍼 변경 없음)." };
   return commit(o.hudFile, src, out, "껐습니다. 다음 statusline 갱신부터 payload가 표시되지 않습니다.");
 }
 
 // What off leaves behind otherwise: the cache (when this account controls its
 // folder), and the module copy with its folder (only when nothing else is in
-// it), also the one 0.20.1 left beside a linked wrapper. None failing undoes off.
+// it), also the one 0.20.1 left beside a linked wrapper, but nothing through a copy folder that is a link.
+// None failing undoes off.
+// Returns the copy folders it left alone because they are links.
 function removeLeftovers(o) {
-  const copies = [...new Set([moduleCopy(o.hudFile), besideLink(o.hudFile)])];
+  const all = [...new Set([moduleCopy(o.hudFile), besideLink(o.hudFile)])];
+  const copies = all.filter((copy) => !linkedFolder(copy));
   for (const remove of [() => clearCache(o.cacheDir), ...copies.map((copy) => () => rmSync(copy, { force: true }))]) {
     try {
       remove();
@@ -338,14 +363,18 @@ function removeLeftovers(o) {
       /* absent, or holds something that is not ours */
     }
   }
+  return all.filter((copy) => !copies.includes(copy)).map((copy) => dirname(copy));
 }
 
 export function turnOff(opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const res = removeBlocks(o, readText(o.hudFile));
-  if (res.ok) removeLeftovers(o);
-  return res;
+  if (!res.ok) return res;
+  // A copy kept in a linked folder still feeds wrapper v4's PL segment, so off says so.
+  const kept = removeLeftovers(o);
+  return kept.length ? { ...res, message: `${res.message} ${KEPT_NOTE}: ${kept.join(", ")}` } : res;
 }
+const KEPT_NOTE = "사본 폴더가 링크라 모듈 사본은 지우지 않았습니다(래퍼 v4 의 PL 칸이 계속 보일 수 있음)";
 
 // The estimate for the session that runs this, "" if unknown, ending with where
 // it shows when `where` names it:
@@ -378,7 +407,16 @@ function stateOf(src, o) {
   // on and off both refuse this, so pointing at on would be a dead end.
   if (count(src, OPEN) !== count(src, CLOSE)) return "표시(>>> / <<<)의 짝이 맞지 않습니다 (on·off 모두 거부: HUD 재설치 또는 남은 표시 줄 정리)";
   if (blockEol(src, moduleUrl(o.hudFile)) === "") return "켜짐이 불완전하거나 오래됨 (on 으로 복구)";
-  return "켜짐" + COPY_NOTE[copyState(o)];
+  return "켜짐" + copyNote(o);
+}
+
+// What status adds about the module copy. In a copy folder that is a link, on refuses to write it, so
+// pointing at on would be a dead end.
+function copyNote(o) {
+  const state = copyState(o);
+  const copy = moduleCopy(o.hudFile);
+  if (state !== "current" && linkedFolder(copy)) return `, 단 사본 폴더가 링크라 모듈 사본을 쓰지 않음 (링크를 일반 폴더로 바꾼 뒤 on): ${dirname(copy)}`;
+  return COPY_NOTE[state];
 }
 
 // What status says about the wrapper. A wrapper it cannot read is reported, not

@@ -619,6 +619,19 @@ test("첨부 래퍼에 on 했다가 off 하면 바이트로 같음", () => {
   assert.equal(readFileSync(c.hudFile, "utf8"), V4);
 });
 
+test("BOM 으로 시작하는 첨부 래퍼도 on, off 하고 BOM 을 지킴", () => {
+  const BOM = String.fromCharCode(0xfeff);
+  const c = setupV4(BOM + V4);
+  const on = turnOn(c);
+  assert.equal(on.ok, true, on.message);
+  const text = readFileSync(c.hudFile, "utf8");
+  assert.equal(text.charCodeAt(0), 0xfeff);
+  assert.equal(markers(text), 1);
+  const off = turnOff(c);
+  assert.equal(off.ok, true, off.message);
+  assert.equal(readFileSync(c.hudFile, "utf8"), BOM + V4);
+});
+
 test("첨부 래퍼에 블록이 있어도 출력이 같고 갱신 안내는 한 번", () => {
   const c = setupV4();
   const before = renderV4(c);

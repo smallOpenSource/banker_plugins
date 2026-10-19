@@ -3,7 +3,20 @@
 // version folder that holds only the two files the installer copies.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,7 +52,7 @@ function omcFiles(dir, version, o) {
   return [
     [o.template !== false, join(lib, "hud-wrapper-template.txt"), o.loader ?? `// loader ${version}\n${banner(version)}`],
     [o.configDir !== false, join(lib, "config-dir.mjs"), "export const getClaudeConfigDir = () => '';\n"],
-    [o.pkg === true, join(dir, "package.json"), JSON.stringify({ version }) + "\n"],
+    [Boolean(o.pkg), join(dir, "package.json"), JSON.stringify(o.pkg === true ? { version } : o.pkg) + "\n"],
     [o.dist !== undefined, join(dir, "dist", "hud", "index.js"), o.dist],
   ].filter(([wanted]) => wanted);
 }
@@ -57,10 +70,11 @@ const loaderOf = (cfg) => readFileSync(join(cfg, "hud", "omc-hud.mjs"), "utf8").
 
 const cleanEnv = () =>
   Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|OMC_PLUGIN_ROOT|HOME|USERPROFILE)$/i.test(k)));
-const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], omcMode: undefined, omc: {} };
+const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], omcMode: undefined, omc: {}, apply: APPLY };
 // Runs the installer. `cfg` is where the config folder really is; `value` is what CLAUDE_CONFIG_DIR
 // says (default `cfg`, null to leave it unset). `bare` versions lack the template, `half` ones config-dir.mjs.
-// `omc` holds more fakeOmc options per version; an `env.PATH` replaces the PATH under any spelling.
+// `omc` holds more fakeOmc options per version; an `env.PATH` replaces the PATH under any spelling. `apply` is
+// the installer to run (a copy beside other attached files, say).
 function install(opts) {
   const o = { ...INSTALL_DEFAULTS, home: fresh("home"), value: opts.cfg, ...opts };
   for (const v of o.versions) fakeOmc(join(omcCache(o.cfg), v), v, { mode: o.omcMode, ...o.omc[v] });
@@ -70,7 +84,7 @@ function install(opts) {
   if (o.env.PATH !== undefined) for (const k of Object.keys(base)) if (/^path$/i.test(k)) delete base[k];
   const childEnv = { ...base, HOME: o.home, USERPROFILE: o.home, ...o.env };
   if (o.value !== null) childEnv.CLAUDE_CONFIG_DIR = o.value;
-  const [cmd, ...args] = [...o.wrap, process.execPath, APPLY];
+  const [cmd, ...args] = [...o.wrap, process.execPath, o.apply];
   const r = spawnSync(cmd, args, { cwd: o.cwd, env: childEnv, encoding: "utf8" });
   return { status: r.status, out: `${r.stdout}${r.stderr}`, err: r.stderr, home: o.home };
 }
@@ -237,6 +251,49 @@ test("블록이 있어도 손으로 고친 래퍼는 백업함", () => {
   assert.equal(readFileSync(join(cfg, "hud", kept[0]), "utf8"), edited);
 });
 
+test("짝 없는 payload-mon 여는 줄이 많은 큰 래퍼도 다시 설치가 빨리 끝남", () => {
+  const cfg = fresh();
+  const first = install({ cfg });
+  assert.equal(first.status, 0, first.out);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  writeFileSync(wrapper, readFileSync(wrapper, "utf8") + "// >>> payload-mon >>>\n".repeat(90000));
+  const started = Date.now();
+  const again = install({ cfg, home: first.home, versions: [] });
+  const took = Date.now() - started;
+  assert.equal(again.status, 0, again.out);
+  assert.ok(took < 5000, `took ${took}ms`);
+  assert.equal(backups(join(cfg, "hud"), "omc-hud-custom.mjs").length, 1);
+});
+
+// Installs, turns `script` on and edits its block by hand: the first `from` past its opening marker.
+function editedBlock(script, open, from, to) {
+  const cfg = fresh();
+  const first = install({ cfg });
+  assert.equal(first.status, 0, first.out);
+  turnOnTool(script, cfg, first.home);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  const text = readFileSync(wrapper, "utf8");
+  const at = text.indexOf(open);
+  assert.ok(at >= 0 && text.indexOf(from, at) > at, "the block holds the word");
+  const edited = text.slice(0, at) + text.slice(at).replace(from, to);
+  writeFileSync(wrapper, edited);
+  return { cfg, home: first.home, edited };
+}
+for (const [name, script, open, from, to] of [
+  ["payload-mon", PAYLOAD_MON, "// >>> payload-mon >>>", "shown", "SHOWN"],
+  ["claude-update-last", CLAUDE_UPDATE_LAST, "// >>> claude-update-last >>>", "goes after", "GOES AFTER"],
+  ["payload-mon 모듈 주소", PAYLOAD_MON, "// >>> payload-mon >>>", "payload-size.mjs", "payload-sizf.mjs"],
+]) {
+  test(`블록 안쪽을 손으로 고친 래퍼는 다시 설치할 때 백업함(${name})`, () => {
+    const { cfg, home, edited } = editedBlock(script, open, from, to);
+    const again = install({ cfg, home, versions: [] });
+    assert.equal(again.status, 0, again.out);
+    const kept = backups(join(cfg, "hud"), "omc-hud-custom.mjs");
+    assert.equal(kept.length, 1, again.out);
+    assert.equal(readFileSync(join(cfg, "hud", kept[0]), "utf8"), edited);
+  });
+}
+
 test("버전 폴더는 숫자로 비교하고 정식판을 pre-release 보다 위로", () => {
   const loaderAfter = (versions, bare = []) => {
     const cfg = fresh();
@@ -402,6 +459,93 @@ test("렌더 확인: 모르는 출력은 [..] 로 첫 줄을 보임", () => {
   assert.match(renderWith('console.log("hello");\n').out, /\[\.\.\] Render check: unrecognized output: hello/);
 });
 
+test("래퍼 파일만 링크한 설정 폴더에 설치하면 렌더 확인이 [ok]", posixOnly, () => {
+  const cfg = fresh();
+  const dot = fresh("dot");
+  writeFileSync(join(dot, "omc-hud-custom.mjs"), "// old wrapper\n");
+  mkdirSync(join(cfg, "hud"), { recursive: true });
+  symlinkSync(join(dot, "omc-hud-custom.mjs"), join(cfg, "hud", "omc-hud-custom.mjs"));
+  const r = install({ cfg, env: withNode() });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[ok\] Render check: the statusline loads OMC 5\.7\.4\./);
+  assert.ok(readFileSync(join(dot, "omc-hud-custom.mjs")).equals(asset("omc-hud-custom.mjs")));
+  assert.ok(lstatSync(join(cfg, "hud", "omc-hud.mjs")).isFile());
+});
+
+test("렌더 확인: 상태표시줄이 Node 오류를 내면 [!!] 와 Error 줄", () => {
+  assert.match(
+    renderWith('import "./no-such-module.mjs";\n').out,
+    /\[!!\] Render check: the statusline prints an error instead of a line: Error \[ERR_MODULE_NOT_FOUND\]: Cannot find module/,
+  );
+});
+
+test("렌더 확인: OMC 가 입력 없이 아무것도 내지 않으면 [..] 로 알리고 OMC 탓으로 단정하지 않음", () => {
+  const { out } = renderWith('console.log("[OMC HUD] no output");\n');
+  assert.match(out, /\[\.\.\] Render check: OMC printed nothing with no input, so this check cannot tell whether the statusline draws\./);
+  assert.doesNotMatch(out, /OMC's install is at fault/);
+});
+
+test("렌더 확인: 판이 다르고 설치한 판이 오류 없이 돌면 [..] 로 판만 알림", () => {
+  const omc = {
+    "5.7.4": { pkg: true, loader: banner("5.7.4") },
+    "5.7.5": { pkg: true, loader: banner("5.7.4"), dist: 'console.log("ok");\n' },
+  };
+  const r = install({ cfg: fresh(), versions: ["5.7.4", "5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[\.\.\] Render check: the statusline loads OMC 5\.7\.4, not the installed 5\.7\.5\./);
+  assert.doesNotMatch(r.out, /does not load|OMC's install is at fault/);
+});
+
+test("렌더 확인은 PATH 앞쪽의 실행할 수 없는 node 를 건너뜀", posixOnly, () => {
+  const dir = fresh("noexec");
+  writeFileSync(join(dir, "node"), "#!/bin/sh\n");
+  chmodSync(join(dir, "node"), 0o644);
+  const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}${dirname(process.execPath)}` });
+  assert.match(out, /\[ok\] Render check/);
+  assert.doesNotMatch(out, /skipped/);
+});
+
+test("렌더 확인: node.cmd 만 있으면 [..] 로 Git Bash 가 못 돌린다고 알림", { skip: POSIX && "Windows only" }, () => {
+  const dir = fresh("cmd");
+  writeFileSync(join(dir, "node.cmd"), `@"${process.execPath}" %*\r\n`);
+  const sys = join(process.env.SystemRoot || "C:\\Windows", "System32");
+  const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}${sys}` });
+  assert.match(out, /\[\.\.\] Render check: skipped; PATH has node\.cmd but no node\.exe/);
+});
+
+test("렌더 확인 출력의 제어 글자는 ? 로 바뀜", () => {
+  const esc = String.fromCharCode(27);
+  const bel = String.fromCharCode(7);
+  const { out } = renderWith(`console.log(${JSON.stringify(`[OMC HUD] HUD import failed: ${esc}]0;t${bel}x`)});\n`);
+  assert.match(out, /Render check: OMC's HUD does not load: \[OMC HUD\] HUD import failed: \?\]0;t\?x/);
+  assert.ok(!out.includes(esc) && !out.includes(bel));
+});
+
+test("렌더 확인은 OMC 판 문자열의 제어 글자와 줄바꿈도 ? 로 바꿈", () => {
+  const esc = String.fromCharCode(27);
+  const drawn = `[OMC] HUD v5.7.4${esc}]0;t | preset: full`;
+  const omc = { "5.7.5": { pkg: { version: `5.7.5${esc}]0;x\n[ok] Render check: fake` }, loader: `console.log(${JSON.stringify(drawn)});\n` } };
+  const r = install({ cfg: fresh(), versions: ["5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(!r.out.includes(esc), r.out);
+  assert.doesNotMatch(r.out, /^\[ok\] Render check: fake/m);
+  assert.match(r.out, /the statusline loads OMC 5\.7\.4\?\]0;t, not the installed 5\.7\.5\?\]0;x\?\[ok\] Render check: fake/);
+});
+
+test("렌더 확인 정화는 한글 경로를 그대로 둠", () => {
+  const cfg = join(fresh(), "claude cfg 한글");
+  mkdirSync(cfg, { recursive: true });
+  const line = `[OMC HUD] HUD import failed from ${slash(cfg)}/x: Cannot find package 'zod'`;
+  const r = install({ cfg, env: withNode(), omc: { "5.7.4": { pkg: true, loader: `console.log(${JSON.stringify(line)});\n` } } });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.out.includes(`OMC's HUD does not load: ${line}`), r.out);
+});
+
+test("렌더 확인: 상태표시줄 명령이 실패하면 stderr 의 Error 줄을 보임", () => {
+  const loader = 'process.stderr.write("node:internal/x:1\\n\\nError: boom\\n");\nprocess.exit(3);\n';
+  assert.match(renderWith(loader).out, /failed \(exit 3\): Error: boom/);
+});
+
 test("settings.json 백업은 원본과 같은 바이트와 권한", () => {
   const cfg = fresh();
   // Not UTF-8 inside a JSON string (a CP949 editor, say): parsing still works, the backup must keep the bytes.
@@ -522,4 +666,62 @@ test("다시 설치하면 그룹이 쓸 수 있던 래퍼와 로더도 0644 로"
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
   for (const f of owned) assert.equal(modeOf(join(cfg, "hud", f)), 0o644, f);
+});
+
+test("CRLF 첨부 래퍼로 설치하고 두 블록을 켠 뒤 다시 설치해도 래퍼 백업이 없음", () => {
+  // A Windows checkout with core.autocrlf=true (the repository has no .gitattributes) gives the attached files CRLF.
+  const assets = fresh("assets-crlf");
+  for (const name of readdirSync(ASSETS)) writeFileSync(join(assets, name), readFileSync(join(ASSETS, name)));
+  writeFileSync(join(assets, "omc-hud-custom.mjs"), readFileSync(join(ASSETS, "omc-hud-custom.mjs"), "utf8").replace(/\r?\n/g, "\r\n"));
+  const apply = join(assets, "apply-hud.mjs");
+  const cfg = fresh();
+  const first = install({ cfg, apply });
+  assert.equal(first.status, 0, first.out);
+  turnOnTool(PAYLOAD_MON, cfg, first.home);
+  turnOnTool(CLAUDE_UPDATE_LAST, cfg, first.home);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  assert.doesNotMatch(readFileSync(wrapper, "latin1"), /[^\r]\n/, "every line ends in CRLF");
+  const again = install({ cfg, home: first.home, versions: [], apply });
+  assert.equal(again.status, 0, again.out);
+  assert.deepEqual(backups(join(cfg, "hud"), "omc-hud-custom.mjs"), []);
+});
+
+test("설치 스크립트의 블록 정규식은 두 도구의 것과 글자까지 같음", async () => {
+  const pm = await import("../../payload-mon/scripts/payload-mon.mjs");
+  const cul = await import("./claude-update-last.mjs");
+  const src = readFileSync(APPLY, "utf8");
+  const listed = /^const TOOL_BLOCKS = \[\n([\s\S]*?)\n\];$/m.exec(src)[1].split("\n").map((l) => l.trim().replace(/,$/, ""));
+  assert.deepEqual(listed, [String(pm.BLOCKS), String(cul.BLOCKS)]);
+  assert.equal(/^const PM_CLOSE = (.*);$/m.exec(src)[1], String(pm.CLOSE_LINE));
+});
+
+test("BOM 이 붙은 settings.json 의 JSON 오류도 줄과 칸이 맞음", () => {
+  const cfg = fresh();
+  writeFileSync(join(cfg, "settings.json"), String.fromCharCode(0xfeff) + '{\n  "a": 1,\n}\n');
+  const r = install({ cfg });
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /settings\.json is not valid JSON \(line 3, column 1\)/);
+});
+
+test("렌더 확인: 신호로 끝난 상태표시줄 명령은 신호 이름을 알림", posixOnly, () => {
+  assert.match(renderWith('process.kill(process.pid, "SIGTERM");\n').out, /failed \(exit SIGTERM\)/);
+});
+
+test("렌더 확인: 새 판에 dist 가 없으면 이유가 no dist/hud/index.js", () => {
+  const omc = { "5.7.4": { pkg: true, loader: banner("5.7.4") }, "5.7.5": { pkg: true, loader: banner("5.7.4") } };
+  const r = install({ cfg: fresh(), versions: ["5.7.4", "5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /5\.7\.5 does not load \(no dist\/hud\/index\.js\)\./);
+});
+
+test("렌더 확인: 출력이 너무 크면 [..] skipped 와 이유", () => {
+  const loader = 'process.stdout.write("x".repeat(3 * 1024 * 1024) + "\\n");\n';
+  assert.match(renderWith(loader).out, /\[\.\.\] Render check: skipped \(ENOBUFS\)/);
+});
+
+test("렌더 확인은 PATH 의 따옴표 친 폴더에서도 node 를 찾고 node 라는 폴더는 건너뜀", () => {
+  const dir = fresh("node-dir");
+  mkdirSync(join(dir, process.platform === "win32" ? "node.exe" : "node"));
+  const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}"${dirname(process.execPath)}"` });
+  assert.match(out, /\[ok\] Render check/);
 });
