@@ -18,18 +18,26 @@
  * before any file changes (the original replaced it); UTF-8 BOM accepted;
  * CLAUDE_CONFIG_DIR trimmed, "~" expanded and made absolute; formatter and HUD
  * config backed up when they differ; pre-releases sort below their release; no
- * folder is made when OMC is missing.
+ * folder is made when OMC is missing. Also refused before any change: a config
+ * folder path the statusLine shell would act on, a file or folder it cannot
+ * write, an OMC folder without both loader files, a relative OMC_PLUGIN_ROOT.
+ * Backups keep the original bytes and mode; the files it writes are 0644 and new
+ * folders 0755; the other statusLine fields (padding, ...) stay.
+ * Exit 1 means nothing changed; exit 2 means an unexpected error stopped it partway.
  */
 import {
+  accessSync,
+  chmodSync,
+  constants,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   writeFileSync,
-  copyFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = dirname(fileURLToPath(import.meta.url));
@@ -45,14 +53,25 @@ function configDir() {
 const CONFIG_DIR = configDir().replace(/[\\/]+$/, "");
 const HUD_DIR = join(CONFIG_DIR, "hud");
 const OMC_DIR = join(CONFIG_DIR, ".omc");
+const settingsPath = join(CONFIG_DIR, "settings.json");
+const loaderDst = join(HUD_DIR, "omc-hud.mjs");
+const libDst = join(HUD_DIR, "lib", "config-dir.mjs");
+const wrapperDst = join(HUD_DIR, "omc-hud-custom.mjs");
+const configDst = join(OMC_DIR, "hud-config.json");
+// An absolute forward-slash path: Claude Code runs statusLine through a shell (Git Bash or
+// PowerShell on Windows) that treats backslashes as escapes.
+const cmdPath = wrapperDst.split(sep).join("/");
 const log = (m) => process.stdout.write(m + "\n");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+const refuse = (lines) => {
+  for (const l of lines) log(l);
+  process.exit(1);
+};
 
 // 0. Check settings.json before touching anything, so a refusal leaves every
 //    file as it was. Refuse rather than replace: a fresh file would drop every
 //    other setting. A BOM (Windows editors) is dropped when the file is written
 //    back; the backup keeps the original bytes.
-const settingsPath = join(CONFIG_DIR, "settings.json");
 let settings = {};
 let settingsRaw = null;
 if (existsSync(settingsPath)) {
@@ -63,25 +82,27 @@ if (existsSync(settingsPath)) {
     settings = undefined;
   }
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
-    log("[x] Existing settings.json is not a JSON object; nothing changed. Fix it and re-run.");
-    process.exit(1);
+    refuse(["[x] Existing settings.json is not a JSON object; nothing changed. Fix it and re-run."]);
   }
 }
 
-// Keep a timestamped copy of a file that differs from what replaces it.
-function backupIfDifferent(dst, next, label) {
-  if (!existsSync(dst)) return;
-  const prev = readFileSync(dst);
-  if (prev.equals(next)) return;
-  const keep = dst + ".backup." + stamp;
-  writeFileSync(keep, prev);
-  log(`[ok] Backed up ${label} -> ${keep}`);
+// Inside the command's double quotes these still act: a quote ends the path, $ and `
+// run what follows, %VAR% expands, a backslash escapes, a line break ends the command.
+if (/["`$%\\\r\n]/.test(cmdPath)) {
+  refuse([
+    '[x] The config folder path has a character the statusLine shell would act on (" ` $ % \\ or a line break); nothing changed.',
+    "    Use a config folder without it (CLAUDE_CONFIG_DIR).",
+  ]);
 }
 
 // 1. Resolve the installed OMC plugin root (for the canonical HUD loader template).
 function resolvePluginRoot() {
-  const hasTemplate = (r) => !!r && existsSync(join(r, "scripts", "lib", "hud-wrapper-template.txt"));
-  if (hasTemplate(process.env.OMC_PLUGIN_ROOT)) return process.env.OMC_PLUGIN_ROOT;
+  const lib = (r) => join(r, "scripts", "lib");
+  // The loader needs both files; a folder holding only one would leave hud/ half replaced.
+  const complete = (r) => existsSync(join(lib(r), "hud-wrapper-template.txt")) && existsSync(join(lib(r), "config-dir.mjs"));
+  const fromEnv = process.env.OMC_PLUGIN_ROOT;
+  // Only an absolute path: a relative one would be read from the project folder the command runs in.
+  if (fromEnv && isAbsolute(fromEnv) && complete(fromEnv)) return fromEnv;
   const base = join(CONFIG_DIR, "plugins", "cache", "omc", "oh-my-claudecode");
   if (!existsSync(base)) return null;
   const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z0-9.-]+))?$/;
@@ -98,59 +119,116 @@ function resolvePluginRoot() {
     .sort(newer);
   for (const v of versions) {
     const r = join(base, v);
-    if (hasTemplate(r)) return r;
+    if (complete(r)) return r;
   }
   return null;
 }
 
 const pluginRoot = resolvePluginRoot();
-const loaderDst = join(HUD_DIR, "omc-hud.mjs");
 if (!pluginRoot && !existsSync(loaderDst)) {
-  log("[x] OMC plugin not installed and no existing hud/omc-hud.mjs found.");
-  log("    Install OMC first, then re-run:");
-  log("      /plugin install oh-my-claudecode   (or)   npm i -g oh-my-claude-sisyphus");
-  process.exit(1);
+  refuse([
+    "[x] OMC plugin not installed and no existing hud/omc-hud.mjs found.",
+    "    Install OMC first, then re-run:",
+    "      /plugin install oh-my-claudecode   (or set OMC_PLUGIN_ROOT to an OMC version folder)",
+  ]);
 }
 
-// 2. Ensure target directories exist, only once there is something to install,
-//    then copy the loader.
-for (const d of [join(HUD_DIR, "lib"), OMC_DIR]) mkdirSync(d, { recursive: true });
-if (pluginRoot) {
-  copyFileSync(join(pluginRoot, "scripts", "lib", "hud-wrapper-template.txt"), loaderDst);
-  copyFileSync(join(pluginRoot, "scripts", "lib", "config-dir.mjs"), join(HUD_DIR, "lib", "config-dir.mjs"));
+// Every file this run writes or backs up, checked before the first write so that a
+// refusal changes nothing; a new file or backup needs its folder, or the nearest one
+// that exists, to take it.
+function unwritable() {
+  for (const p of [settingsPath, loaderDst, libDst, wrapperDst, configDst]) {
+    if (!existsSync(p)) continue;
+    try {
+      accessSync(p, constants.W_OK);
+    } catch (e) {
+      return `${p} (${e.code})`;
+    }
+  }
+  for (const dir of [CONFIG_DIR, HUD_DIR, join(HUD_DIR, "lib"), OMC_DIR]) {
+    let d = dir;
+    while (!existsSync(d) && dirname(d) !== d) d = dirname(d);
+    try {
+      accessSync(d, constants.W_OK);
+    } catch (e) {
+      return `${d} (${e.code})`;
+    }
+  }
+  return "";
+}
+const blocked = unwritable();
+if (blocked) refuse([`[x] Cannot write ${blocked}; nothing changed. Fix the permission and re-run.`]);
+
+// The statusline runs or reads these on every refresh, so no other account may change them.
+const FILE_MODE = 0o644;
+function writeOwned(file, data) {
+  writeFileSync(file, data, { mode: FILE_MODE });
+  if (process.platform !== "win32") chmodSync(file, FILE_MODE);
+}
+
+// Keep a timestamped copy, with its bytes and mode, of a file that differs from what replaces it.
+function backupIfDifferent(dst, next, label) {
+  if (!existsSync(dst)) return;
+  if (readFileSync(dst).equals(next)) return;
+  const keep = dst + ".backup." + stamp;
+  copyFileSync(dst, keep);
+  log(`[ok] Backed up ${label} -> ${keep}`);
+}
+
+// 2. Ensure target directories exist, then copy the loader.
+function installLoader() {
+  for (const d of [join(HUD_DIR, "lib"), OMC_DIR]) mkdirSync(d, { recursive: true, mode: 0o755 });
+  if (!pluginRoot) {
+    log("[..] OMC plugin root not found; keeping existing hud/omc-hud.mjs");
+    return;
+  }
+  writeOwned(loaderDst, readFileSync(join(pluginRoot, "scripts", "lib", "hud-wrapper-template.txt")));
+  writeOwned(libDst, readFileSync(join(pluginRoot, "scripts", "lib", "config-dir.mjs")));
   log("[ok] OMC HUD loader installed from " + pluginRoot);
-} else {
-  log("[..] OMC plugin root not found; keeping existing hud/omc-hud.mjs");
 }
 
 // 3. Install the custom formatter and HUD config from the bundled templates.
 //    Files that differ from the templates (local edits, blocks added by
 //    payload-mon / claude-update-last) are kept as timestamped backups first.
-const wrapperDst = join(HUD_DIR, "omc-hud-custom.mjs");
-const configDst = join(OMC_DIR, "hud-config.json");
-const wrapperSrc = readFileSync(join(SELF, "omc-hud-custom.mjs"));
-const configSrc = readFileSync(join(SELF, "hud-config.json"));
-backupIfDifferent(wrapperDst, wrapperSrc, "previous formatter");
-backupIfDifferent(configDst, configSrc, "previous HUD config");
-writeFileSync(wrapperDst, wrapperSrc);
-writeFileSync(configDst, configSrc);
-log("[ok] Custom formatter -> " + wrapperDst);
-log("[ok] HUD config       -> " + configDst);
-
-// 4. Point settings.json statusLine at the custom formatter.
-//    Use an absolute forward-slash path: Claude Code runs statusLine via a shell
-//    that treats backslashes as escapes, so forward slashes are required on Windows too.
-const cmdPath = wrapperDst.split(sep).join("/");
-if (settingsRaw !== null) {
-  const backup = settingsPath + ".backup." + stamp;
-  writeFileSync(backup, settingsRaw);
-  log("[ok] Backed up settings.json -> " + backup);
+function installTemplates() {
+  const wrapperSrc = readFileSync(join(SELF, "omc-hud-custom.mjs"));
+  const configSrc = readFileSync(join(SELF, "hud-config.json"));
+  backupIfDifferent(wrapperDst, wrapperSrc, "previous formatter");
+  backupIfDifferent(configDst, configSrc, "previous HUD config");
+  writeOwned(wrapperDst, wrapperSrc);
+  writeOwned(configDst, configSrc);
+  log("[ok] Custom formatter -> " + wrapperDst);
+  log("[ok] HUD config       -> " + configDst);
 }
-// Quoted so a config dir with spaces (C:/Users/First Last/.claude) still runs.
-const command = `node "${cmdPath}"`;
-settings.statusLine = { type: "command", command };
-writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-log("[ok] statusLine -> " + command);
+
+// 4. Point settings.json statusLine at the custom formatter; its other fields (padding, ...) stay.
+const objectOr = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
+function pointStatusLine() {
+  if (settingsRaw !== null) {
+    const backup = settingsPath + ".backup." + stamp;
+    copyFileSync(settingsPath, backup); // the original bytes and mode
+    log("[ok] Backed up settings.json -> " + backup);
+  }
+  // Quoted so a config dir with spaces (C:/Users/First Last/.claude) still runs.
+  const command = `node "${cmdPath}"`;
+  const prior = objectOr(settings.statusLine);
+  if (typeof prior.command === "string" && prior.command && prior.command !== command) {
+    log(`[..] statusLine ran ${JSON.stringify(prior.command)}; it now runs the custom HUD (the old value is in the backup)`);
+  }
+  settings.statusLine = { ...prior, type: "command", command };
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  log("[ok] statusLine -> " + command);
+}
+
+try {
+  installLoader();
+  installTemplates();
+  pointStatusLine();
+} catch (e) {
+  log(`[x] Stopped partway (${e.code || e.message}); some files may have changed.`);
+  log(`    A replaced file's earlier version is in <file>.backup.${stamp}.`);
+  process.exit(2);
+}
 
 log("");
 log("Done. Restart Claude Code to load the new statusline.");

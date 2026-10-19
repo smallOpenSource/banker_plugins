@@ -46,9 +46,10 @@ argument-hint: "[off|status]"
   - `%` 는 70% 미만 초록, 85% 미만 노랑, 그 이상 분홍(256색 213)
   - `<mb>` 는 32MB 대비 같은 기준
 - OMC 는 ctx 가 80% 를 넘으면 뒤에 `COMPRESS?`, `CRITICAL` 을 붙인다. 래퍼는 이 글자를 빼고 색으로만 보인다.
-- todo, ralph, autopilot, `agents:<n>`(실행 중인 에이전트) 같은 OMC 상태 칸은 활성일 때만 `⚡<skills>` 와 `<cwd>` 사이에 흐리게 나온다.
+- ralph, autopilot, `agents:<n>`(실행 중인 에이전트) 같은 OMC 상태 칸은 활성일 때만 `⚡<skills>` 와 `<cwd>` 사이에 흐리게 나온다.
 - 화면 폭을 넘으면 칸 사이에서 다음 줄로 넘어간다.
-- 둘째 줄부터는 OMC 의 상세 줄이다. OMC 와 Claude Code 의 갱신 안내 줄은 뺀다.
+- 둘째 줄부터는 OMC 의 상세 줄(에이전트 목록, todo, 경고)이다. OMC 와 Claude Code 의 갱신 안내 줄은 뺀다.
+- 첨부 HUD 설정은 OMC 출력을 8줄까지 둔다. 넘으면 OMC 가 상세 줄을 `... (+N lines)` 한 줄로 접는다.
 
 ## 0. 감지
 
@@ -71,9 +72,13 @@ node "<이 스킬 디렉터리 절대경로>\assets\apply-hud.mjs"
 ```
 
 - `[ok] statusLine -> node "<설정 폴더>/hud/omc-hud-custom.mjs"` 줄을 확인한다.
+- 기존 statusLine 이 다른 명령이었으면 `[..] statusLine ran ...` 줄이 나온다. 보고에 그대로 넣는다.
 - 종료 코드 1 이면 출력의 `[x]` 줄을 그대로 보고하고 멈춘다. 이때 바뀐 파일은 없다.
   - `settings.json` 이 JSON 객체가 아니면 사용자가 고친 뒤 다시 실행한다.
   - OMC 가 없으면 OMC 를 먼저 설치한다(`setup-omc` 스킬). 이 스킬은 OMC 를 설치하지 않는다.
+  - 설정 폴더 경로에 셸이 해석하는 글자가 있으면 그 글자가 없는 폴더를 쓰게 안내한다.
+  - 쓸 수 없는 파일이나 폴더가 있으면 권한을 고친 뒤 다시 실행한다.
+- 종료 코드 2 면 예기치 못한 오류로 중간에 멈춘 것이다. 출력을 그대로 보고하고, 바뀐 파일의 이전 판은 `<파일>.backup.<시각>` 에 있다고 알린다.
 
 ## 2. payload-mon 켜기
 
@@ -108,15 +113,22 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 ## 함정
 
 - 다시 설치하면 래퍼와 `hud-config.json` 을 첨부 파일로 덮어쓴다. 손으로 고친 내용은 `.backup.<시각>` 에만 남는다.
-- `settings.json` 의 `omcHud` 가 `hud-config.json` 보다 먼저 적용된다. 표시가 첨부 설정과 다르면 `omcHud` 를 확인한다.
+- `settings.json` 의 `omcHud` 값은 `hud-config.json` 의 같은 키를 덮어쓴다. 래퍼가 기대는 아래 키를 바꾸면 칸이 달라지거나 OMC 원문이 그대로 나온다.
+  - `omcLabel`, `useBars`
+  - `maxWidth`, `maxOutputLines`
+  - `showCallCounts`, `callCountsFormat`
+  - `contextBar`, `gitBranch`
 - `payload-mon off` 를 실행하면 크기 계산 모듈이 지워져 `PL:` 칸도 사라진다. 다시 보려면 `payload-mon on`.
 - v4 에서 payload-mon 블록은 모듈을 깔기 위해서만 남는다. 갱신마다 크기 추정이 두 번 돌지만 두 번째는 캐시를 쓴다.
 - 래퍼를 손으로 고칠 때 `if (f.ctx) colored.push(colorCtx(f.ctx));` 줄을 지우지 않는다. 실행상 비어 있지만 `payload-mon on` 이 이 줄 바로 뒤에 블록을 넣는다.
 - 래퍼는 statusLine 프로세스가 받은 터미널 폭(stderr, stdout 의 `columns`, 그다음 `COLUMNS`)으로 줄을 접는다. 폭을 받지 못하면 한 줄로 나오고 Claude Code 가 끝을 자른다.
+- Claude Code 는 자기 화면이 터미널이면 그 폭과 높이를 `COLUMNS`, `LINES` 로 넘긴다(2.1.303 에서 확인). 그래서 보통은 접힌다.
 - 분홍은 256색 코드다. 256색을 못 쓰는 터미널에서는 기본 색으로 보인다.
 - statusLine 은 PATH 의 `node` 를 쓴다. GUI 로 띄운 Claude Code(macOS Dock, VS Code 확장)는 PATH 에 `/opt/homebrew/bin` 같은 폴더가 빠질 수 있다(추정). 상태표시줄이 안 나오면 PATH 를 확인한다.
-- 설정 폴더 경로에 `$`, 백틱(bash, PowerShell), `%VAR%`(cmd)가 있으면 셸이 statusLine 명령을 펼친다. 큰따옴표로는 막지 못한다. 드문 경우다.
+- 설정 폴더 경로에 `"`, 백틱, `$`, `%`, `\`, 줄바꿈이 있으면 설치 스크립트가 거부한다. statusLine 명령의 큰따옴표 안에서도 셸이 이 글자를 해석해, 명령이 깨지거나 경로 속 명령이 실행되기 때문이다.
+- 기존 statusLine 의 다른 필드(`padding`, `refreshInterval` 등)는 그대로 둔다. 다른 래퍼(smart-compact 등)가 감싼 명령은 이 래퍼의 명령으로 바뀐다. 이전 값은 `settings.json` 백업에 있다.
 - 갱신 안내는 OMC 의 문구 `[Claude#<cur>] -> <new> claude update` 로 찾는다. OMC 가 문구를 바꾸면 줄이지 못하고 원문이 경로 앞 칸에 남는다. 상태표시줄은 깨지지 않는다.
 - `[!] omc <ver> - paste: ` 와 `[!] claude <new> - paste: ` 로 시작하는 갱신 안내 줄은 뺀다. OMC 가 이 문구를 바꾸면 다시 보인다.
 - 설치는 네트워크를 쓰지 않는다. 다만 OMC 가 렌더할 때 네트워크로 얻는 정보(새 Claude Code 판 같은)는 오프라인에서 빠질 수 있다.
 - 래퍼, HUD 설정, 모듈 사본은 플러그인 밖(`<설정 폴더>/hud/`, `<설정 폴더>/.omc/`)에 있다. 플러그인을 지워도 상태표시줄은 남는다.
+- OMC 를 지울 때는 statusLine 도 지운다. OMC 로더는 플러그인을 못 찾으면 작업 폴더의 `node_modules` 에서 OMC HUD 를 찾아 불러오기 때문이다.

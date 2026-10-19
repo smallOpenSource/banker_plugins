@@ -37,7 +37,7 @@
     "showCallCounts": true,
     "callCountsFormat": "emoji",
     "safeMode": true,
-    "maxOutputLines": 3
+    "maxOutputLines": 8
   },
   "thresholds": {
     "contextWarning": 70,

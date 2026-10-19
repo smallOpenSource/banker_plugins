@@ -4,7 +4,9 @@
 
 ### Changed
 - `setup-omc-hud` 가 상태표시줄 파일을 내려받지 않고 스킬에 든 파일(`skills/setup-omc-hud/assets/`)로 설치한다. 모든 OS 에서 `node assets/apply-hud.mjs` 한 명령이고, 네트워크가 없어도 끝까지 된다. 예전에는 GitHub 의 omc_hud 저장소에서 OS 별 스크립트를 받아, 원본이 바뀌면 설치 결과도 말없이 바뀌었다.
-- 설치 스크립트는 설정 폴더 경로의 공백과 `settings.json` 앞의 BOM 을 처리하고, 손으로 고친 래퍼와 HUD 설정은 `.backup.<시각>` 으로 남긴다. `settings.json` 이 JSON 객체가 아니거나 OMC 가 없으면 아무 파일도 바꾸지 않고 멈춘다.
+- 설치 스크립트는 설정 폴더 경로의 공백과 `settings.json` 앞의 BOM 을 처리하고, 손으로 고친 래퍼와 HUD 설정은 `.backup.<시각>` 으로 남긴다. 백업은 원본의 바이트와 권한을 그대로 두고, statusLine 의 다른 필드(`padding` 등)는 남긴다.
+- 설치 스크립트는 `settings.json` 이 JSON 객체가 아니거나, OMC 가 없거나, 설정 폴더 경로에 셸이 해석하는 글자(`"`, `$`, 백틱, `%`, `\`, 줄바꿈)가 있거나, 쓸 수 없는 파일이 있으면 아무 파일도 바꾸지 않고 멈춘다(종료 1). 예기치 못한 오류로 중간에 멈추면 종료 2 로 알린다.
+- 첨부 HUD 설정은 OMC 출력을 8줄까지 둔다. 3줄이면 에이전트가 하나만 돌아도 갱신 안내와 함께 상세 줄이 `... (+N lines)` 로 접혔다.
 - 상태표시줄 래퍼가 v4 로 바뀐다. 첫 줄은 `<model>/<effort>|5h:<pct>/<reset>|wk:<pct>/<reset>|<mm>:<pct>/<reset>|think|PL:<mb>M|se:<hours>h|ctx:<pct>%|🤖<agents>|🔧<tools>|⚡<skills>|<cwd>|<account>|<branch>|claude<cur>→<new>` 이고, 둘째 줄부터 에이전트 목록 같은 상세 줄이 붙는다. 화면 폭을 넘으면 칸 사이에서 접는다. OMC 와 Claude Code 의 갱신 안내 줄, OMC 판 표시는 보이지 않는다.
 - `setup-omc-hud` 는 설치할 때마다 payload-mon 을 켠다. `PL:` 칸이 payload-mon 의 크기 계산 모듈을 쓰기 때문이다. 예전에는 켜져 있던 경우만 다시 켰다.
 - `setup-omc-hud` 의 Claude 갱신 안내 블록 단계를 뺀다. 새 래퍼가 안내를 줄여 직접 맨 끝에 둔다. 인자 `off`, `status` 는 옛 래퍼에 넣은 블록을 위해 남는다.
