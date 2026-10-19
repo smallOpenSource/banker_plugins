@@ -99,6 +99,23 @@ const LAYOUTS = [
   ["the current omc_hud wrapper (in-process)", HUD_INPROC],
 ];
 
+// Wrapper v4 (setup-omc-hud 0.20.0) shows the size in its own PL segment right
+// after the ctx line, where the block also goes. Kept out of LAYOUTS: those
+// tests render the block's payload segment, which v4 replaces with PL.
+const HUD_V4 = HUD_INPROC.replace(
+  "  if (f.ctx) colored.push(colorCtx(f.ctx));\n",
+  [
+    "  if (f.ctx) colored.push(colorCtx(f.ctx));",
+    "  try {",
+    "    const transcript = JSON.parse(input)?.transcript_path;",
+    "    if (transcript) colored.push(`PL:${(0).toFixed(1)}M`);",
+    "  } catch {",
+    "    /* no stdin JSON */",
+    "  }",
+    "",
+  ].join("\n"),
+);
+
 // What another tool's patcher adds to the same wrapper, at the anchors such
 // patchers use, with its own markers.
 const withOtherBlocks = (src) =>
@@ -177,6 +194,7 @@ for (const [layout, hud] of LAYOUTS) {
     const c = setup(hud);
     const res = turnOn(c);
     assert.equal(res.ok, true, res.message);
+    assert.match(res.message, /8MB 이상이면 ctx 옆에 payload가 표시됩니다/);
     assert.equal(markers(readFileSync(c.hudFile, "utf8")), 1);
     assert.equal(render(c, transcriptOf(c.dir, NINE_MB)), "ctx:21%|<payload:28%/9.0MB>|se:1.0hr\n");
   });
@@ -201,6 +219,20 @@ for (const [layout, hud] of LAYOUTS) {
     assert.equal(existsSync(dirname(copyOf(c))), false);
   });
 }
+
+test("on tells a v4 wrapper that the size shows in its PL segment", () => {
+  const res = turnOn(setup(HUD_V4));
+  assert.equal(res.ok, true, res.message);
+  assert.match(res.message, /PL 칸에 요청 크기가 늘 표시됩니다/);
+  assert.doesNotMatch(res.message, /8MB|ctx 옆/);
+});
+
+test("a v4 wrapper saved with CRLF is still taken for v4", () => {
+  const res = turnOn(setup(HUD_V4.replace(/\n/g, "\r\n")));
+  assert.equal(res.ok, true, res.message);
+  assert.match(res.message, /PL 칸에 요청 크기가 늘 표시됩니다/);
+  assert.doesNotMatch(res.message, /8MB|ctx 옆/);
+});
 
 test("the block imports a copy kept beside the wrapper, so it outlives the plugin folder it came from", () => {
   const c = setup();
@@ -421,8 +453,9 @@ test("on says so when the wrapper is missing", () => {
   assert.match(res.message, /래퍼가 없습니다/);
 });
 
-test("status reports on/off, whether the statusline uses the wrapper, and this session's estimate", () => {
-  const c = setup();
+// A wrapper the statusline runs, with session s1's transcript (1MB) in a projects folder.
+function withSession(hudText) {
+  const c = setup(hudText);
   const projectsDir = join(c.dir, "projects");
   mkdirSync(join(projectsDir, "-work"), { recursive: true });
   writeFileSync(
@@ -431,18 +464,37 @@ test("status reports on/off, whether the statusline uses the wrapper, and this s
   );
   const settingsFile = join(c.dir, "settings.json");
   writeFileSync(settingsFile, JSON.stringify({ statusLine: { type: "command", command: `node ${c.hudFile}` } }));
-  const opts = { ...c, settingsFile, projectsDir, sessionId: "s1" };
+  return { c, settingsFile, opts: { ...c, settingsFile, projectsDir, sessionId: "s1" } };
+}
 
-  assert.match(status(opts).message, /꺼짐/);
+test("status reports on/off, whether the statusline uses the wrapper, and this session's estimate", () => {
+  const { c, settingsFile, opts } = withSession(HUD);
+
+  const off = status(opts).message;
+  assert.match(off, /꺼짐/);
+  assert.match(off, /현재 세션: 1\.0MB \/ 32MB \(3%\)$/m);
+  assert.doesNotMatch(off, /부터 표시/);
   turnOn(c);
   const on = status(opts).message;
   assert.match(on, /payload-mon: 켜짐 \(/);
-  assert.match(on, /현재 세션: 1\.0MB \/ 32MB \(3%\)/);
+  assert.match(on, /현재 세션: 1\.0MB \/ 32MB \(3%\), 8MB부터 표시/);
   assert.doesNotMatch(on, /주의/);
 
   // Another wrapper around the HUD hides its name from the command; say what that means.
   writeFileSync(settingsFile, JSON.stringify({ statusLine: { type: "command", command: "node ~/.claude/wrap.mjs" } }));
   assert.match(status(opts).message, /주의: statusLine 명령에 omc-hud-custom\.mjs가 보이지 않습니다\. 다른 래퍼/);
+});
+
+test("status on a v4 wrapper says where the estimate shows only while it is on", () => {
+  const { c, opts } = withSession(HUD_V4);
+
+  const off = status(opts).message;
+  assert.match(off, /현재 세션: 1\.0MB \/ 32MB \(3%\)$/m);
+  assert.doesNotMatch(off, /PL 칸|부터 표시/);
+  turnOn(c);
+  const on = status(opts).message;
+  assert.match(on, /현재 세션: 1\.0MB \/ 32MB \(3%\), PL 칸에 늘 표시/);
+  assert.doesNotMatch(on, /8MB부터/);
 });
 
 // The CLI as Claude runs it, kept off the real config folder and the live session.

@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `payload-mon` 의 `on` 과 `status` 가 래퍼 v4 에서도 "8MB 이상이면 ctx 옆에 표시" 라고 안내하던 것. v4 는 크기를 `PL:` 칸에 늘 보이므로 이제 그렇게 안내한다. `status` 는 켜져 있을 때만 어디에 보이는지 적는다. 옛 래퍼의 `on` 안내는 그대로다. README 의 payload-mon 설명도 고친다.
+
 ## [0.20.0] - 2026-10-19
 
 ### Changed

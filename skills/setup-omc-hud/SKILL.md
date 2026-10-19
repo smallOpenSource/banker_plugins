@@ -90,7 +90,7 @@ node "<이 스킬 디렉터리 절대경로>/../payload-mon/scripts/payload-mon.
 
 - Codex 사본에서 실행할 때 경로는 `<이 스킬 디렉터리 절대경로>/../banker-payload-mon/scripts/payload-mon.mjs` 다.
 - 이유: `PL:` 칸은 payload-mon 이 래퍼 옆(`hud/payload-mon/`)에 두는 크기 계산 모듈을 쓴다. 모듈이 없으면 `PL:` 이 나오지 않는다.
-- 이 단계의 출력 "8MB 이상이면 ctx 옆에 payload가 표시됩니다" 는 옛 래퍼 기준이다. 그대로 옮기지 말고 "PL 칸에 쓰는 모듈을 설치함" 으로 보고한다.
+- 출력 `켰습니다. 다음 statusline 갱신부터 PL 칸에 요청 크기가 늘 표시됩니다.` 를 확인한다. `이미 켜져 있습니다`, `모듈 사본을 이 버전으로 맞췄습니다` 도 정상이다.
 
 ## 3. 보고
 

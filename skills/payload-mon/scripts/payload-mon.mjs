@@ -17,7 +17,8 @@
  * `const input`, runs the HUD in-process and keeps spawnSync for a fallback
  * branch. A block anchored on spawnSync would land in that branch, so the ctx
  * line is the only anchor. Earlier versions that also put a block before
- * spawnSync are converted on the next `on`.
+ * spawnSync are converted on the next `on`. Wrapper v4 (setup-omc-hud 0.20.0)
+ * shows the size in its own PL segment, so `on` and `status` point there.
  *
  * The block imports a copy of payload-size.mjs kept beside the wrapper
  * (<hud>/payload-mon/payload-size.mjs), not the module in this folder: a plugin
@@ -60,6 +61,8 @@ const BLOCKS = /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[
 const CTX_LINE = /^ {2}if \(f\.ctx\) colored\.push\(colorCtx\(f\.ctx\)\);\r?\n/m;
 // The statusline JSON the block reads, in either layout.
 const INPUT_DECL = /^(?:let|const) input\b/m;
+// Wrapper v4 pushes its own PL segment: the size from 0MB on, in place of the block's segment.
+const PL_SEGMENT = /colored\.push\(`PL:/;
 const MB = 1024 * 1024;
 
 // The same rules as setup-omc-hud's installer (OMC's getClaudeConfigDir): trim, expand a leading "~",
@@ -249,6 +252,15 @@ const notShownNote = (o) =>
     : `\n주의: statusLine 명령에 ${basename(o.hudFile)}가 보이지 않습니다. ` +
       "다른 래퍼(smart-compact 등)가 HUD를 감싸 호출하면 정상 표시되고, 아니면 화면에 나타나지 않습니다.";
 
+const showsPL = (src) => src !== null && PL_SEGMENT.test(src);
+
+// Where the size shows, named only while it does: the block in place and a
+// module copy to import. "" otherwise, so status never promises a segment.
+function displayWhere(o, src) {
+  if (src === null || !inPlace(src, moduleUrl(o.hudFile)) || copyState(o) === "missing") return "";
+  return showsPL(src) ? "PL 칸에 늘 표시" : `${SHOW_FROM_BYTES / MB}MB부터 표시`;
+}
+
 export function turnOn(opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const src = readText(o.hudFile);
@@ -263,7 +275,9 @@ export function turnOn(opts = {}) {
   }
   const why = misfit(src);
   if (why) return refusal(why, o.hudFile);
-  const done = "켰습니다. 다음 statusline 갱신부터 8MB 이상이면 ctx 옆에 payload가 표시됩니다.";
+  const done = showsPL(src)
+    ? "켰습니다. 다음 statusline 갱신부터 PL 칸에 요청 크기가 늘 표시됩니다."
+    : "켰습니다. 다음 statusline 갱신부터 8MB 이상이면 ctx 옆에 payload가 표시됩니다.";
   const after = insertBlock(src.replace(BLOCKS, ""), moduleUrl(o.hudFile));
   return commit(o.hudFile, src, after, done + notShownNote(o), () => syncModule(o));
 }
@@ -302,8 +316,12 @@ export function turnOff(opts = {}) {
   return res;
 }
 
-// "현재 세션: 0.8MB / 32MB (2%), 8MB부터 표시" for the session that runs this, "" if unknown.
-function sessionEstimate(o) {
+// The estimate for the session that runs this, "" if unknown, ending with where
+// it shows when `where` names it:
+//   "현재 세션: 0.8MB / 32MB (2%), PL 칸에 늘 표시"   (wrapper v4, on)
+//   "현재 세션: 0.8MB / 32MB (2%), 8MB부터 표시"      (older wrappers, on)
+//   "현재 세션: 0.8MB / 32MB (2%)"                    (off, or no module copy)
+function sessionEstimate(o, where) {
   if (!o.sessionId || !existsSync(o.projectsDir)) return "";
   const file = `${o.sessionId}.jsonl`;
   const project = readdirSync(o.projectsDir).find((d) => existsSync(join(o.projectsDir, d, file)));
@@ -311,7 +329,7 @@ function sessionEstimate(o) {
   try {
     const bytes = estimatePayloadBytes(join(o.projectsDir, project, file), o.cacheDir);
     const pct = Math.floor((bytes / REQUEST_LIMIT_BYTES) * 100);
-    return `현재 세션: ${(bytes / MB).toFixed(1)}MB / 32MB (${pct}%), ${SHOW_FROM_BYTES / MB}MB부터 표시`;
+    return `현재 세션: ${(bytes / MB).toFixed(1)}MB / 32MB (${pct}%)` + (where ? `, ${where}` : "");
   } catch {
     return "";
   }
@@ -347,7 +365,9 @@ export function status(opts = {}) {
   const lines = [`payload-mon: ${describe(o)} (${o.hudFile})`];
   const note = notShownNote(o);
   if (note) lines.push(note.trim());
-  const estimate = sessionEstimate(o);
+  // null when the wrapper is missing or unreadable; describe has already said which.
+  const src = readBytes(o.hudFile)?.toString("utf8") ?? null;
+  const estimate = sessionEstimate(o, displayWhere(o, src));
   if (estimate) lines.push(estimate);
   return { ok: true, message: lines.join("\n") };
 }
