@@ -277,7 +277,7 @@ function pointStatusLine() {
 const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 15000;
 const BLAME =
   "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
-const clip = (s) => String(s).slice(0, 200);
+const clip = (s, n = 200) => String(s).slice(0, n);
 
 // node as the statusLine shell finds it, but only in PATH folders given as absolute paths: spawning the
 // bare name would on Windows try the working folder first, where a project's own node.exe could run.
@@ -324,8 +324,9 @@ function judgeRender(out, node) {
     const line = `[!!] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}; ${installed} does not load`;
     return [`${line}${why ? ` (${why})` : ""}.`, BLAME];
   }
+  // OMC's line ends with the reason, after a path that can be long: keep it whole within reason.
   const failed = /^\[OMC HUD\] .*$/m.exec(out);
-  if (failed) return [`[!!] Render check: OMC's HUD does not load: ${clip(failed[0])}`, BLAME];
+  if (failed) return [`[!!] Render check: OMC's HUD does not load: ${clip(failed[0], 1000)}`, BLAME];
   return [`[..] Render check: unrecognized output: ${clip(out.split("\n")[0])}`];
 }
 

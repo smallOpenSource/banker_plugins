@@ -336,6 +336,12 @@ test("렌더 확인: OMC 가 불러오기에 실패하면 [!!] 와 OMC 의 줄",
   assert.match(out, /run setup-omc-hud again after it/);
 });
 
+test("렌더 확인: 설정 폴더 경로가 길어도 OMC 줄의 끝에 있는 이유까지 보임", () => {
+  const long = `/home/${"deep/".repeat(40)}dist/hud/index.js`;
+  const { out } = renderWith(`console.log("[OMC HUD] HUD import failed from ${long}: Cannot find package 'zod'");\n`);
+  assert.match(out, /OMC's HUD does not load: \[OMC HUD\] HUD import failed from .*: Cannot find package 'zod'/);
+});
+
 test("렌더 확인: PATH 에 node 가 없으면 [!!]", () => {
   const { cfg, out } = renderWith(banner("5.7.4"), { PATH: fresh("empty-path") });
   assert.match(out, /\[!!\] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show\./);
