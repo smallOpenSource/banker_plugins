@@ -144,10 +144,14 @@ test('node:crypto 만 막아도 받은 latest 를 캐시에 쓴다(맨 위에서
   const server = await mockServer({ body: { version: '9.9.9' } });
   try {
     writeCache(tmp, { latest: '0.8.0', checkedAt: 0 }); // throttle 만료(epoch 0).
-    const code = await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`, { pre: NO_CRYPTO, env: { NO_CRYPTO_ONLY: '1' } });
+    const mark = join(tmp, 'crypto-mark');
+    const code = await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`, {
+      pre: NO_CRYPTO, env: { NO_CRYPTO_ONLY: '1', NO_CRYPTO_MARK: mark },
+    });
     assert.equal(code, 0);
     assert.equal(readCache(tmp).latest, '9.9.9');
     assert.deepEqual(readdirSync(bankerDir(tmp)).filter((n) => n.endsWith('.tmp')), [], '임시 파일이 남지 않는다');
+    assert.deepEqual([...new Set(readFileSync(mark, 'utf8').split('\n').filter(Boolean))], ['cjs crypto'], '흉내가 부를 때의 불러오기를 가로챘다');
   } finally {
     server.close();
   }

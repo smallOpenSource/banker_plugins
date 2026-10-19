@@ -638,6 +638,13 @@ test("payload-mon on, claude-update-last on 뒤 둘 다 off 하면 첨부 래퍼
   assert.equal(readFileSync(c.hudFile, "utf8"), V4);
 });
 
+test("payload-mon on 의 안내가 첨부 래퍼 v4 에서 PL 칸을 말함", () => {
+  const res = payloadMon.turnOn(pmOf(setupV4()));
+  assert.equal(res.ok, true, res.message);
+  assert.match(res.message, /PL 칸에 요청 크기가 늘 표시됩니다/);
+  assert.doesNotMatch(res.message, /8MB/);
+});
+
 test("CRLF 로 바꾼 첨부 래퍼에도 두 블록이 들어가고 빠짐", () => {
   const crlf = V4.replace(/\r?\n/g, "\r\n");
   const c = setupV4(crlf);

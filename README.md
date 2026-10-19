@@ -142,7 +142,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `update-banker` | 설치된 banker 를 3채널(Claude·npm·Codex) 순서 게이트로 최신화 |
 | `refresh-readme` | 코드와 어긋난 README 를 현재 상태에 맞게 갱신(드리프트 해소) |
 | `cleansing-memory` | 메모리 파일을 문서화된 threshold 내로 정리(중복 최신본화·무손실 압축) |
-| `payload-mon` | 상태표시줄 ctx 옆에 요청 payload 추정치(32MB 한도 대비, 8MB부터) 표시 켜기·끄기 |
+| `payload-mon` | 상태표시줄에 요청 payload 추정치(32MB 한도 대비) 표시 켜기·끄기. 래퍼 v4 는 `PL:` 칸에 늘, 옛 래퍼는 8MB부터 ctx 옆에 |
 | `tone-compact` | 답변과 새 문서를 ASD-STE100 기반 한글 개조식(표·목록·원어 발음 표기·장식 기호 금지)으로 쓰는 문체 규칙 켜기·끄기(on 기본, 끌 때까지 유지) |
 | `anti-drm` | DRM 이 암호화하는 확장자(기본 11개: 텍스트·오피스·한글·PDF·CSV) 대신 대체 확장자(`.md`·`.html`·`.tsv`)로 파일을 만들게 하는 규칙 켜기·끄기(on 기본, 처음 켤 때 금지 확장자와 대체 확장자를 물음, `config` 로 변경, 끌 때까지 유지) |
 | `omc-patch` | OMC 자동 업데이트 뒤 사라진 훅 패치를 재적용하고 OMC 마켓플레이스 자동 업데이트를 고정(진단·확인·적용·검증·되돌리기). 옛 킷이 블록 안에 넣은 헬퍼(project-memory 꺼짐)를 찾아 고치고, project-memory 훅이 실제로 일하는지 임시 폴더에서 확인 |

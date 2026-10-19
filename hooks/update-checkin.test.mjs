@@ -777,8 +777,10 @@ test('the checkin does not import node:crypto at the top (only node:crypto block
     const tmp = mkTmp();
     writeConfig(tmp, { telemetry: true, endpoint: url });
     writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
-    assert.equal(await spawnCheckin(tmp, { pre: NO_CRYPTO, env: { NO_CRYPTO_ONLY: '1' } }), 0);
+    const mark = join(tmp, 'crypto-mark');
+    assert.equal(await spawnCheckin(tmp, { pre: NO_CRYPTO, env: { NO_CRYPTO_ONLY: '1', NO_CRYPTO_MARK: mark } }), 0);
     assert.deepEqual(bodies[0].counts, { 'banker:foo': { '9': 1 } });
     assert.deepEqual(readdirSync(bankerDir(tmp)).filter((n) => n.startsWith('usage-log.sending-')), [], 'the claimed log is not left behind');
+    assert.deepEqual([...new Set(readFileSync(mark, 'utf8').split('\n').filter(Boolean))], ['cjs crypto'], 'the shim intercepted the lazy load');
   });
 });
