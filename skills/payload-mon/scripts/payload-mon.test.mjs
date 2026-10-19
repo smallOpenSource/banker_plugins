@@ -632,3 +632,20 @@ test("a folder made for the copy is taken away again when the copy cannot be wri
   assert.equal(existsSync(dirname(copyOf(c))), false);
   assert.equal(readFileSync(c.hudFile, "utf8"), HUD);
 });
+
+test("CLAUDE_CONFIG_DIR 가 따옴표 안 ~/x 여도 홈 아래 래퍼를 씀", () => {
+  const c = setup();
+  const config = join(c.dir, "x");
+  const hudFile = join(config, "hud", "omc-hud-custom.mjs");
+  mkdirSync(dirname(hudFile), { recursive: true });
+  writeFileSync(hudFile, HUD);
+  // A value a shell never expanded ("~/x", say, in quotes), with a stray space: setup-omc-hud's installer
+  // reads it as <home>/x, so payload-mon has to find the wrapper there too.
+  const env = cliEnv(c, { PAYLOAD_MON_HUD_FILE: "", CLAUDE_CONFIG_DIR: "~/x " });
+  const on = spawnSync(process.execPath, [CLI, "on"], { encoding: "utf8", env });
+  assert.equal(on.status, 0, on.stdout);
+  assert.equal(markers(readFileSync(hudFile, "utf8")), 1);
+  assert.ok(existsSync(join(config, "hud", "payload-mon", "payload-size.mjs")));
+  const shown = spawnSync(process.execPath, [CLI, "status"], { encoding: "utf8", env });
+  assert.ok(shown.stdout.includes(`(${hudFile})`), shown.stdout);
+});

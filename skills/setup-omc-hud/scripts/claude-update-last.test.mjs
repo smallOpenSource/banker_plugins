@@ -652,3 +652,16 @@ test("CRLF 로 바꾼 첨부 래퍼에도 두 블록이 들어가고 빠짐", ()
   assert.equal(payloadMon.turnOff(pmOf(c)).ok, true);
   assert.equal(readFileSync(c.hudFile, "utf8"), crlf);
 });
+
+test("CLAUDE_CONFIG_DIR 가 따옴표 안 ~/x 여도 홈 아래 래퍼를 씀", () => {
+  const c = setup();
+  const hudFile = join(c.dir, "x", "hud", "omc-hud-custom.mjs");
+  mkdirSync(dirname(hudFile), { recursive: true });
+  writeFileSync(hudFile, HUD_OLD);
+  // The installer (../assets/apply-hud.mjs) reads "~/x " as <home>/x; this tool must agree.
+  const env = cliEnv(c, { CLAUDE_UPDATE_LAST_HUD_FILE: "", CLAUDE_CONFIG_DIR: "~/x " });
+  const on = spawnSync(process.execPath, [CLI, "on"], { encoding: "utf8", env });
+  assert.equal(on.status, 0, on.stdout);
+  assert.equal(markers(readFileSync(hudFile, "utf8")), 1);
+  assert.equal(readFileSync(c.hudFile, "utf8"), HUD_OLD, "the wrapper outside that folder is untouched");
+});

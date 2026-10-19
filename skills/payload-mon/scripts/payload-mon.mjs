@@ -49,7 +49,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { CACHE_DIR, clearCache, estimatePayloadBytes, REQUEST_LIMIT_BYTES, SHOW_FROM_BYTES } from "./payload-size.mjs";
 
@@ -62,7 +62,17 @@ const CTX_LINE = /^ {2}if \(f\.ctx\) colored\.push\(colorCtx\(f\.ctx\)\);\r?\n/m
 const INPUT_DECL = /^(?:let|const) input\b/m;
 const MB = 1024 * 1024;
 
-const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+// The same rules as setup-omc-hud's installer (OMC's getClaudeConfigDir): trim, expand a leading "~",
+// make it absolute, drop a trailing separator. A value no shell expanded ("~/x" in quotes) still finds
+// the wrapper the installer put there.
+function configDir() {
+  const v = (process.env.CLAUDE_CONFIG_DIR || "").trim();
+  if (!v) return join(homedir(), ".claude");
+  if (v === "~") return homedir();
+  if (v.startsWith("~/") || v.startsWith("~\\")) return join(homedir(), v.slice(2));
+  return resolve(v);
+}
+const CONFIG_DIR = configDir().replace(/[\\/]+$/, "");
 
 const DEFAULTS = {
   hudFile: process.env.PAYLOAD_MON_HUD_FILE || join(CONFIG_DIR, "hud", "omc-hud-custom.mjs"),
