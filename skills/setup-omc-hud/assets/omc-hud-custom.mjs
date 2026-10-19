@@ -196,10 +196,28 @@ try {
 //    statusline. Swapping process.stdin for a stream carrying the same bytes
 //    restores identical behaviour to the spawnSync path, which fed the child
 //    through its stdin.
-async function renderInProcess(ms) {
+// What the HUD writes to stdout is collected instead of printed; `onLine` runs
+// once a full line is in.
+function captureStdout(onLine) {
   const origWrite = process.stdout.write.bind(process.stdout);
-  const origStdin = Object.getOwnPropertyDescriptor(process, "stdin");
   let captured = "";
+  process.stdout.write = (chunk, enc, cb) => {
+    captured += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    const done = typeof enc === "function" ? enc : cb;
+    if (typeof done === "function") done();
+    if (captured.includes("\n")) onLine();
+    return true;
+  };
+  return {
+    text: () => captured,
+    restore: () => {
+      process.stdout.write = origWrite;
+    },
+  };
+}
+
+async function renderInProcess(ms) {
+  const origStdin = Object.getOwnPropertyDescriptor(process, "stdin");
   let settleFirstLine;
   const firstLine = new Promise((r) => {
     settleFirstLine = r;
@@ -213,14 +231,7 @@ async function renderInProcess(ms) {
     /* leave the real stdin in place; the fallback path still works */
   }
 
-  process.stdout.write = (chunk, enc, cb) => {
-    captured += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-    const done = typeof enc === "function" ? enc : cb;
-    if (typeof done === "function") done();
-    if (captured.includes("\n")) settleFirstLine();
-    return true;
-  };
-
+  const out = captureStdout(settleFirstLine);
   let budgetTimer;
   const budget = new Promise((r) => {
     budgetTimer = setTimeout(r, ms); // ref'd on purpose
@@ -236,7 +247,7 @@ async function renderInProcess(ms) {
     ]);
   } finally {
     clearTimeout(budgetTimer);
-    process.stdout.write = origWrite;
+    out.restore();
     // Restore the real stdin so the spawnSync fallback below behaves normally.
     if (origStdin) {
       try {
@@ -246,7 +257,7 @@ async function renderInProcess(ms) {
       }
     }
   }
-  return captured;
+  return out.text();
 }
 
 // OMC 5.x wraps its line at the terminal width (index.js: stderr/stdout
@@ -308,23 +319,19 @@ const WIDE_BMP_EMOJI = [
   [0x27b0, 0x27b0], [0x27bf, 0x27bf], [0x2b1b, 0x2b1c], [0x2b50, 0x2b50],
   [0x2b55, 0x2b55],
 ];
+// Every two-column range: Hangul Jamo, the emoji above, CJK, Hangul syllables, CJK compatibility and
+// forms, fullwidth forms, the emoji planes and the supplementary ideographs.
+const WIDE_RANGES = [
+  [0x1100, 0x115f], ...WIDE_BMP_EMOJI, [0x2e80, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f],
+  [0xff00, 0xff60], [0xffe0, 0xffe6], [0x1f300, 0x1faff], [0x20000, 0x10ffff],
+];
+const isWide = (c) => WIDE_RANGES.some(([lo, hi]) => c >= lo && c <= hi);
 const visibleWidth = (s) => {
   let w = 0;
   for (const ch of stripAnsi(s)) {
     const c = ch.codePointAt(0);
     if (c === 0x200d || (c >= 0xfe00 && c <= 0xfe0f)) continue;
-    const wide =
-      (c >= 0x1100 && c <= 0x115f) ||
-      WIDE_BMP_EMOJI.some(([lo, hi]) => c >= lo && c <= hi) ||
-      (c >= 0x2e80 && c <= 0xa4cf) ||
-      (c >= 0xac00 && c <= 0xd7a3) ||
-      (c >= 0xf900 && c <= 0xfaff) ||
-      (c >= 0xfe30 && c <= 0xfe4f) ||
-      (c >= 0xff00 && c <= 0xff60) ||
-      (c >= 0xffe0 && c <= 0xffe6) ||
-      (c >= 0x1f300 && c <= 0x1faff) ||
-      c >= 0x20000;
-    w += wide ? 2 : 1;
+    w += isWide(c) ? 2 : 1;
   }
   return w;
 };

@@ -32,19 +32,20 @@ function fakeOmc(dir, version, withTemplate = true) {
 }
 const omcCache = (cfg) => join(cfg, "plugins", "cache", "omc", "oh-my-claudecode");
 
+const cleanEnv = () =>
+  Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|OMC_PLUGIN_ROOT|HOME|USERPROFILE)$/i.test(k)));
+const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], env: {}, wrap: [] };
 // Runs the installer. `cfg` is where the config folder really is; `value` is what CLAUDE_CONFIG_DIR
 // says (default `cfg`, null to leave it unset).
-function install({ cfg, value = cfg, home = fresh("home"), cwd = root, versions = ["5.7.4"], bare = [], env = {}, wrap = [] }) {
-  for (const v of versions) fakeOmc(join(omcCache(cfg), v), v);
-  for (const v of bare) fakeOmc(join(omcCache(cfg), v), v, false);
-  const base = Object.fromEntries(
-    Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|OMC_PLUGIN_ROOT|HOME|USERPROFILE)$/i.test(k)),
-  );
-  const childEnv = { ...base, HOME: home, USERPROFILE: home, ...env };
-  if (value !== null) childEnv.CLAUDE_CONFIG_DIR = value;
-  const [cmd, ...args] = [...wrap, process.execPath, APPLY];
-  const r = spawnSync(cmd, args, { cwd, env: childEnv, encoding: "utf8" });
-  return { status: r.status, out: `${r.stdout}${r.stderr}`, home };
+function install(opts) {
+  const o = { ...INSTALL_DEFAULTS, home: fresh("home"), value: opts.cfg, ...opts };
+  for (const v of o.versions) fakeOmc(join(omcCache(o.cfg), v), v);
+  for (const v of o.bare) fakeOmc(join(omcCache(o.cfg), v), v, false);
+  const childEnv = { ...cleanEnv(), HOME: o.home, USERPROFILE: o.home, ...o.env };
+  if (o.value !== null) childEnv.CLAUDE_CONFIG_DIR = o.value;
+  const [cmd, ...args] = [...o.wrap, process.execPath, APPLY];
+  const r = spawnSync(cmd, args, { cwd: o.cwd, env: childEnv, encoding: "utf8" });
+  return { status: r.status, out: `${r.stdout}${r.stderr}`, home: o.home };
 }
 const settingsOf = (cfg) => JSON.parse(readFileSync(join(cfg, "settings.json"), "utf8"));
 const backups = (dir, name) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.startsWith(`${name}.backup.`)) : []);

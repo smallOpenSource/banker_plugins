@@ -53,28 +53,35 @@ function omcOut(over = {}, below = [AGENT_LINE, ...HINTS]) {
 
 let seq = 0;
 const plain = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
-// Renders once. `stdin` is the statusline JSON; `env` adds to (or with null removes from) the base env.
-function renderWith({ omc = omcOut(), stdin = { effort: { level: "high" } }, env = {}, payloadBytes, hud } = {}) {
-  const dir = join(root, `r-${++seq}`);
+// Lays out hud/: the wrapper (unless `hud` already holds one), the fake loader with its output and,
+// for a PL size, payload-mon's module.
+function layHud(dir, { hud, omc, payloadBytes }) {
   const hudDir = hud || join(dir, "hud");
-  mkdirSync(hudDir, { recursive: true });
+  mkdirSync(join(hudDir, "payload-mon"), { recursive: true });
   if (!hud) writeFileSync(join(hudDir, "omc-hud-custom.mjs"), WRAPPER);
+  if (!hud && payloadBytes !== undefined) writeFileSync(join(hudDir, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD);
   writeFileSync(join(hudDir, "omc-hud.mjs"), FAKE_OMC);
   writeFileSync(join(hudDir, "omc-out.txt"), omc);
-  const input = { ...stdin };
-  if (payloadBytes !== undefined) {
-    mkdirSync(join(hudDir, "payload-mon"), { recursive: true });
-    if (!hud) writeFileSync(join(hudDir, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD);
-    input.transcript_path = join(dir, "t.jsonl");
-  }
+  return hudDir;
+}
+// The env a render runs with: an account file in its own CLAUDE_CONFIG_DIR, no width, and `env` on top
+// (null removes a name).
+function renderEnv(dir, env, payloadBytes) {
   const cfg = join(dir, "cfg");
   mkdirSync(cfg, { recursive: true });
   writeFileSync(join(cfg, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "user@example.com" } }));
   const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(COLUMNS|CLAUDE_CONFIG_DIR)$/i.test(k)));
   const merged = { ...base, CLAUDE_CONFIG_DIR: cfg, PL_BYTES: String(payloadBytes ?? 0), ...env };
   for (const [k, v] of Object.entries(env)) if (v === null) delete merged[k];
+  return merged;
+}
+// Renders once. `stdin` is the statusline JSON; a PL size adds a transcript path to it.
+function renderWith({ omc = omcOut(), stdin = { effort: { level: "high" } }, env = {}, payloadBytes, hud } = {}) {
+  const dir = join(root, `r-${++seq}`);
+  const hudDir = layHud(dir, { hud, omc, payloadBytes });
+  const input = payloadBytes === undefined ? stdin : { ...stdin, transcript_path: join(dir, "t.jsonl") };
   const r = spawnSync(process.execPath, [join(hudDir, "omc-hud-custom.mjs")], {
-    input: JSON.stringify(input), env: merged, encoding: "utf8", timeout: 30000,
+    input: JSON.stringify(input), env: renderEnv(dir, env, payloadBytes), encoding: "utf8", timeout: 30000,
   });
   return r.stdout;
 }
