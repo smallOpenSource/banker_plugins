@@ -70,10 +70,11 @@ const loaderOf = (cfg) => readFileSync(join(cfg, "hud", "omc-hud.mjs"), "utf8").
 
 const cleanEnv = () =>
   Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|OMC_PLUGIN_ROOT|HOME|USERPROFILE)$/i.test(k)));
-const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], omcMode: undefined, omc: {} };
+const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], omcMode: undefined, omc: {}, apply: APPLY };
 // Runs the installer. `cfg` is where the config folder really is; `value` is what CLAUDE_CONFIG_DIR
 // says (default `cfg`, null to leave it unset). `bare` versions lack the template, `half` ones config-dir.mjs.
-// `omc` holds more fakeOmc options per version; an `env.PATH` replaces the PATH under any spelling.
+// `omc` holds more fakeOmc options per version; an `env.PATH` replaces the PATH under any spelling. `apply` is
+// the installer to run (a copy beside other attached files, say).
 function install(opts) {
   const o = { ...INSTALL_DEFAULTS, home: fresh("home"), value: opts.cfg, ...opts };
   for (const v of o.versions) fakeOmc(join(omcCache(o.cfg), v), v, { mode: o.omcMode, ...o.omc[v] });
@@ -83,7 +84,7 @@ function install(opts) {
   if (o.env.PATH !== undefined) for (const k of Object.keys(base)) if (/^path$/i.test(k)) delete base[k];
   const childEnv = { ...base, HOME: o.home, USERPROFILE: o.home, ...o.env };
   if (o.value !== null) childEnv.CLAUDE_CONFIG_DIR = o.value;
-  const [cmd, ...args] = [...o.wrap, process.execPath, APPLY];
+  const [cmd, ...args] = [...o.wrap, process.execPath, o.apply];
   const r = spawnSync(cmd, args, { cwd: o.cwd, env: childEnv, encoding: "utf8" });
   return { status: r.status, out: `${r.stdout}${r.stderr}`, err: r.stderr, home: o.home };
 }
@@ -653,4 +654,62 @@ test("다시 설치하면 그룹이 쓸 수 있던 래퍼와 로더도 0644 로"
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
   for (const f of owned) assert.equal(modeOf(join(cfg, "hud", f)), 0o644, f);
+});
+
+test("CRLF 첨부 래퍼로 설치하고 두 블록을 켠 뒤 다시 설치해도 래퍼 백업이 없음", () => {
+  // A Windows checkout with core.autocrlf=true (the repository has no .gitattributes) gives the attached files CRLF.
+  const assets = fresh("assets-crlf");
+  for (const name of readdirSync(ASSETS)) writeFileSync(join(assets, name), readFileSync(join(ASSETS, name)));
+  writeFileSync(join(assets, "omc-hud-custom.mjs"), readFileSync(join(ASSETS, "omc-hud-custom.mjs"), "utf8").replace(/\r?\n/g, "\r\n"));
+  const apply = join(assets, "apply-hud.mjs");
+  const cfg = fresh();
+  const first = install({ cfg, apply });
+  assert.equal(first.status, 0, first.out);
+  turnOnTool(PAYLOAD_MON, cfg, first.home);
+  turnOnTool(CLAUDE_UPDATE_LAST, cfg, first.home);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  assert.doesNotMatch(readFileSync(wrapper, "latin1"), /[^\r]\n/, "every line ends in CRLF");
+  const again = install({ cfg, home: first.home, versions: [], apply });
+  assert.equal(again.status, 0, again.out);
+  assert.deepEqual(backups(join(cfg, "hud"), "omc-hud-custom.mjs"), []);
+});
+
+test("설치 스크립트의 블록 정규식은 두 도구의 것과 글자까지 같음", async () => {
+  const pm = await import("../../payload-mon/scripts/payload-mon.mjs");
+  const cul = await import("./claude-update-last.mjs");
+  const src = readFileSync(APPLY, "utf8");
+  const listed = /^const TOOL_BLOCKS = \[\n([\s\S]*?)\n\];$/m.exec(src)[1].split("\n").map((l) => l.trim().replace(/,$/, ""));
+  assert.deepEqual(listed, [String(pm.BLOCKS), String(cul.BLOCKS)]);
+  assert.equal(/^const PM_CLOSE = (.*);$/m.exec(src)[1], String(pm.CLOSE_LINE));
+});
+
+test("BOM 이 붙은 settings.json 의 JSON 오류도 줄과 칸이 맞음", () => {
+  const cfg = fresh();
+  writeFileSync(join(cfg, "settings.json"), String.fromCharCode(0xfeff) + '{\n  "a": 1,\n}\n');
+  const r = install({ cfg });
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /settings\.json is not valid JSON \(line 3, column 1\)/);
+});
+
+test("렌더 확인: 신호로 끝난 상태표시줄 명령은 신호 이름을 알림", posixOnly, () => {
+  assert.match(renderWith('process.kill(process.pid, "SIGTERM");\n').out, /failed \(exit SIGTERM\)/);
+});
+
+test("렌더 확인: 새 판에 dist 가 없으면 이유가 no dist/hud/index.js", () => {
+  const omc = { "5.7.4": { pkg: true, loader: banner("5.7.4") }, "5.7.5": { pkg: true, loader: banner("5.7.4") } };
+  const r = install({ cfg: fresh(), versions: ["5.7.4", "5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /5\.7\.5 does not load \(no dist\/hud\/index\.js\)\./);
+});
+
+test("렌더 확인: 출력이 너무 크면 [..] skipped 와 이유", () => {
+  const loader = 'process.stdout.write("x".repeat(3 * 1024 * 1024) + "\\n");\n';
+  assert.match(renderWith(loader).out, /\[\.\.\] Render check: skipped \(ENOBUFS\)/);
+});
+
+test("렌더 확인은 PATH 의 따옴표 친 폴더에서도 node 를 찾고 node 라는 폴더는 건너뜀", () => {
+  const dir = fresh("node-dir");
+  mkdirSync(join(dir, process.platform === "win32" ? "node.exe" : "node"));
+  const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}"${dirname(process.execPath)}"` });
+  assert.match(out, /\[ok\] Render check/);
 });

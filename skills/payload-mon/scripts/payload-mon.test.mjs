@@ -866,3 +866,12 @@ test("off does not delete through a copy folder that is a link", posixOnly, () =
   assert.equal(off.ok, true, off.message);
   assert.ok(existsSync(join(outside, "payload-size.mjs")));
 });
+
+test("off on a wrapper link that leads nowhere says there is nothing to turn off", posixOnly, () => {
+  const c = setup(HUD_V4);
+  rmSync(c.hudFile);
+  symlinkSync(join(c.dir, "gone.mjs"), c.hudFile);
+  const off = turnOff(c);
+  assert.equal(off.ok, true, off.message);
+  assert.match(off.message, /HUD 래퍼가 없어 끌 것이 없습니다/);
+});
