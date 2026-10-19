@@ -150,12 +150,14 @@ function writeFresh(file, data) {
   }
 }
 
-// The first lines of node's complaint about `text` as an ES module, "" if it parses.
+// The first lines of node's complaint about `text` as an ES module, "" if it parses. A leading BOM
+// is left out: node runs a wrapper that starts with one, but `node --check` rejects a BOM before a
+// shebang (Node 20, 24).
 function syntaxError(text) {
   const dir = mkdtempSync(join(tmpdir(), "claude-update-last-"));
   try {
     const file = join(dir, "check.mjs");
-    writeFileSync(file, text);
+    writeFileSync(file, text.replace(/^\uFEFF/, ""));
     const r = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
     return r.status === 0 ? "" : String(r.stderr || r.error).trim().split("\n").slice(0, 3).join(" | ");
   } finally {
