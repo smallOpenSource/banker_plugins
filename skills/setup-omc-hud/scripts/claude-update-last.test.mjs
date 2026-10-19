@@ -570,3 +570,85 @@ test("a wrapper that exists but cannot be read is not taken for a missing one", 
     chmodSync(c.hudFile, 0o644);
   }
 });
+
+// The bundled v4 wrapper (../assets/omc-hud-custom.mjs) as the sample: it already puts the notice
+// last as claude<running>→<latest>, so the block finds nothing to move and only has to come and go cleanly.
+const V4 = readFileSync(new URL("../assets/omc-hud-custom.mjs", import.meta.url), "utf8");
+// Stands in for omc-hud.mjs next to the wrapper, printing OMC 5.7.4's two lines and a hint below.
+const V4_OMC = [
+  "/work | branch:main",
+  "[OMC#5.7.4L] | \x1b[1m[Claude#2.1.300] -> 2.1.302 claude update\x1b[22m | Model: Opus 5.5 | session:42m | ctx:12% | 🔧14 🤖1 ⚡3",
+  "[!] claude 2.1.302 - paste: ! claude update",
+  "",
+].join("\n");
+const V4_LINE = "Op5.5/high|se:0.7h|ctx:12%|🤖1|🔧14|⚡3|/work|main|claude2.1.300→2.1.302";
+
+function setupV4(text = V4) {
+  const c = setup(text);
+  writeFileSync(join(c.dir, "omc-out.txt"), V4_OMC);
+  writeFileSync(join(c.dir, "omc-hud.mjs"),
+    'import { readFileSync } from "node:fs";\nprocess.stdout.write(readFileSync(new URL("./omc-out.txt", import.meta.url), "utf8"));\n');
+  return c;
+}
+// Renders the v4 wrapper as Claude Code does, with no width and no account file.
+function renderV4(c) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(COLUMNS|CLAUDE_CONFIG_DIR)$/i.test(k)));
+  const r = spawnSync(process.execPath, [c.hudFile], {
+    input: JSON.stringify({ effort: { level: "high" } }), env: { ...env, CLAUDE_CONFIG_DIR: c.dir }, encoding: "utf8", timeout: 30000,
+  });
+  return r.stdout.replace(/\x1b\[[0-9;]*m/g, "");
+}
+// payload-mon kept off the live config, as in the test above.
+const pmOf = (c) => ({
+  hudFile: c.hudFile,
+  cacheDir: join(c.dir, basename(CACHE_DIR)),
+  settingsFile: join(c.dir, "settings.json"),
+  projectsDir: join(c.dir, "projects"),
+  sessionId: "",
+});
+
+test("첨부 래퍼에 on 했다가 off 하면 바이트로 같음", () => {
+  const c = setupV4();
+  const on = turnOn(c);
+  assert.equal(on.ok, true, on.message);
+  assert.equal(markers(readFileSync(c.hudFile, "utf8")), 1);
+  const off = turnOff(c);
+  assert.equal(off.ok, true, off.message);
+  assert.equal(readFileSync(c.hudFile, "utf8"), V4);
+});
+
+test("첨부 래퍼에 블록이 있어도 출력이 같고 갱신 안내는 한 번", () => {
+  const c = setupV4();
+  const before = renderV4(c);
+  assert.equal(before.split("\n")[0], V4_LINE);
+  assert.equal(turnOn(c).ok, true);
+  const after = renderV4(c);
+  assert.equal(after, before);
+  assert.doesNotMatch(after, /\[Claude#/);
+  assert.equal(after.split("claude2.1.300→2.1.302").length - 1, 1);
+});
+
+test("payload-mon on, claude-update-last on 뒤 둘 다 off 하면 첨부 래퍼와 바이트로 같음", () => {
+  const c = setupV4();
+  assert.equal(payloadMon.turnOn(pmOf(c)).ok, true);
+  assert.equal(turnOn(c).ok, true);
+  assert.equal(renderV4(c).split("\n")[0], V4_LINE);
+  assert.equal(turnOff(c).ok, true);
+  assert.equal(payloadMon.turnOff(pmOf(c)).ok, true);
+  assert.equal(readFileSync(c.hudFile, "utf8"), V4);
+});
+
+test("CRLF 로 바꾼 첨부 래퍼에도 두 블록이 들어가고 빠짐", () => {
+  const crlf = V4.replace(/\r?\n/g, "\r\n");
+  const c = setupV4(crlf);
+  assert.equal(payloadMon.turnOn(pmOf(c)).ok, true);
+  assert.equal(turnOn(c).ok, true);
+  const on = readFileSync(c.hudFile, "utf8");
+  // This block keeps the wrapper's CRLF; payload-mon's goes in with LF, which node runs all the same.
+  assert.match(on, /\/\/ >>> claude-update-last >>>\r\n/);
+  assert.equal(markers(on), 1);
+  assert.equal(renderV4(c).split("\n")[0], V4_LINE);
+  assert.equal(turnOff(c).ok, true);
+  assert.equal(payloadMon.turnOff(pmOf(c)).ok, true);
+  assert.equal(readFileSync(c.hudFile, "utf8"), crlf);
+});
