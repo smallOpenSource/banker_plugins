@@ -3,7 +3,20 @@
 // version folder that holds only the two files the installer copies.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -400,6 +413,31 @@ test("렌더 확인: 상태표시줄 명령이 실패하면 종료 코드를 알
 
 test("렌더 확인: 모르는 출력은 [..] 로 첫 줄을 보임", () => {
   assert.match(renderWith('console.log("hello");\n').out, /\[\.\.\] Render check: unrecognized output: hello/);
+});
+
+test("래퍼 파일만 링크한 설정 폴더에 설치하면 렌더 확인이 [ok]", posixOnly, () => {
+  const cfg = fresh();
+  const dot = fresh("dot");
+  writeFileSync(join(dot, "omc-hud-custom.mjs"), "// old wrapper\n");
+  mkdirSync(join(cfg, "hud"), { recursive: true });
+  symlinkSync(join(dot, "omc-hud-custom.mjs"), join(cfg, "hud", "omc-hud-custom.mjs"));
+  const r = install({ cfg, env: withNode() });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[ok\] Render check: the statusline loads OMC 5\.7\.4\./);
+  assert.ok(readFileSync(join(dot, "omc-hud-custom.mjs")).equals(asset("omc-hud-custom.mjs")));
+  assert.ok(lstatSync(join(cfg, "hud", "omc-hud.mjs")).isFile());
+});
+
+test("렌더 확인: 상태표시줄이 Node 오류를 내면 [!!] 와 Error 줄", () => {
+  assert.match(
+    renderWith('import "./no-such-module.mjs";\n').out,
+    /\[!!\] Render check: the statusline prints an error instead of a line: Error \[ERR_MODULE_NOT_FOUND\]: Cannot find module/,
+  );
+});
+
+test("렌더 확인: 상태표시줄 명령이 실패하면 stderr 의 Error 줄을 보임", () => {
+  const loader = 'process.stderr.write("node:internal/x:1\\n\\nError: boom\\n");\nprocess.exit(3);\n';
+  assert.match(renderWith(loader).out, /failed \(exit 3\): Error: boom/);
 });
 
 test("settings.json 백업은 원본과 같은 바이트와 권한", () => {

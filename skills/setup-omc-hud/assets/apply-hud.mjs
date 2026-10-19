@@ -312,13 +312,16 @@ function omcVersion(root) {
   }
 }
 
+// The first line of a Node error ("Error: ...", "TypeError [ERR_X]: ..."), "" when there is none.
+const errorLine = (text) => /^\w*Error\b.*$/m.exec(text || "")?.[0] ?? "";
+
 // Why an OMC version does not load: its HUD's own error when run directly.
 function loadReason(node, root) {
   const hud = join(root, "dist", "hud", "index.js");
   if (!existsSync(hud)) return "no dist/hud/index.js";
   const r = spawnSync(node, [hud], RUN_OPTS);
-  const line = /^\w*Error\b.*$/m.exec(r.stderr || "");
-  return line ? clip(line[0]) : "";
+  const line = errorLine(r.stderr);
+  return line ? clip(line) : "";
 }
 
 // What the formatter printed, as report lines.
@@ -334,7 +337,17 @@ function judgeRender(out, node) {
   // OMC's line ends with the reason, after a path that can be long: keep it whole within reason.
   const failed = /^\[OMC HUD\] .*$/m.exec(out);
   if (failed) return [`[!!] Render check: OMC's HUD does not load: ${clip(failed[0], 1000)}`, BLAME];
+  // A loader that cannot load prints Node's error, header lines first; its module path can be long.
+  const error = errorLine(out);
+  if (error) return [`[!!] Render check: the statusline prints an error instead of a line: ${clip(error, 1000)}`];
   return [`[..] Render check: unrecognized output: ${clip(out.split("\n")[0])}`];
+}
+
+// A statusline command that exited non-zero: its Node error line when stderr has one, else the first line.
+function failedLine(r) {
+  const stderr = (r.stderr || "").trim();
+  const err = errorLine(stderr) || stderr.split("\n")[0];
+  return `[!!] Render check: the statusline command failed (exit ${r.status ?? r.signal})${err ? `: ${clip(err)}` : ""}`;
 }
 
 function renderReport() {
@@ -343,10 +356,7 @@ function renderReport() {
   const r = spawnSync(node, [wrapperDst], RUN_OPTS);
   if (r.error && r.error.code === "ETIMEDOUT") return [`[!!] Render check: the statusline gave no answer in ${CHECK_MS / 1000}s.`];
   if (r.error) throw r.error;
-  if (r.status !== 0) {
-    const err = (r.stderr || "").trim().split("\n")[0];
-    return [`[!!] Render check: the statusline command failed (exit ${r.status ?? r.signal})${err ? `: ${clip(err)}` : ""}`];
-  }
+  if (r.status !== 0) return [failedLine(r)];
   return judgeRender((r.stdout || "").replace(/\x1b\[[0-9;]*m/g, ""), node);
 }
 

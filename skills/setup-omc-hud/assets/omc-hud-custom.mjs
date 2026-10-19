@@ -18,8 +18,9 @@
  *     segment each: 🤖1|🔧14|⚡3. A count OMC leaves out (zero) stays out.
  *   - per-model usage badge (fable:0%(1h31m)) -> Fa:0%/1h31m, after the rate windows.
  *   - PL:<MB, 1 decimal>M always shown before se. It reads payload-mon's module
- *     copy next to this file (hud/payload-mon/payload-size.mjs); without it PL
- *     is left out.
+ *     copy next to this file (hud/payload-mon/payload-size.mjs; when the
+ *     statusLine path is a link, next to the file it points at first); without
+ *     it PL is left out.
  *   - cwd group split on "|"; branch shown without "branch:" after the account.
  *   - OMC#X.Y.Z label no longer shown, nor OMC's update hint lines
  *     ("[!] omc X - paste: ! ...", "[!] claude X - paste: ! claude update").
@@ -68,14 +69,38 @@
  *    We wait for the first complete line instead.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const HUD = join(__dirname, "omc-hud.mjs");
+// The statusLine command names this file. When that name is a link (dotfiles, say), node runs the
+// file it points at: the installer puts omc-hud.mjs beside the link and payload-mon puts its copy
+// beside the file, so both folders are looked in. The command's name counts only when it leads to
+// this file (another script may have imported this one), and the file's own folder comes from
+// realpath: with --preserve-symlinks-main, import.meta.url names the link.
+function hereDirs() {
+  const dirs = { named: null, real: __dirname, self: __dirname };
+  try {
+    const real = realpathSync(fileURLToPath(import.meta.url));
+    dirs.real = dirname(real);
+    const named = process.argv[1] ? resolve(process.argv[1]) : "";
+    if (named && realpathSync(named) === real) dirs.named = dirname(named);
+  } catch {
+    /* keep this file's own folder */
+  }
+  return dirs;
+}
+const HERE = hereDirs();
+// The first of these folders (each once, in this order) that holds the file; the first one's path
+// when none does.
+function findSibling(dirs, ...parts) {
+  const paths = [...new Set(dirs.filter(Boolean))].map((d) => join(d, ...parts));
+  return paths.find((p) => existsSync(p)) ?? paths[0];
+}
+const HUD = findSibling([HERE.named, HERE.real, HERE.self], "omc-hud.mjs");
 
 const STDIN_TIMEOUT_MS = 2000; // Claude Code pipes the payload immediately
 const RENDER_TIMEOUT_MS = 10000; // see timer discipline note above
@@ -482,7 +507,8 @@ try {
   try {
     const transcript = JSON.parse(input)?.transcript_path;
     if (transcript) {
-      const { estimatePayloadBytes, REQUEST_LIMIT_BYTES } = await import(pathToFileURL(join(__dirname, "payload-mon", "payload-size.mjs")).href);
+      const copy = findSibling([HERE.real, HERE.named, HERE.self], "payload-mon", "payload-size.mjs");
+      const { estimatePayloadBytes, REQUEST_LIMIT_BYTES } = await import(pathToFileURL(copy).href);
       const bytes = estimatePayloadBytes(transcript);
       if (Number.isFinite(bytes)) {
         for (let i = colored.length - 1; i >= 0; i--) if (/^payload:/.test(stripAnsi(colored[i]))) colored.splice(i, 1);

@@ -4,10 +4,10 @@
 // OMC output, the way OMC 5.7.4 lays it out (captured from a real render on 2026-10-19).
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { turnOn } from "../../payload-mon/scripts/payload-mon.mjs";
 
@@ -202,4 +202,55 @@ test("stdin 에 effort 가 없으면 OMC 의 effort 칸에서 가져옴", () => 
 test("래퍼에 절대경로가 없음", () => {
   // A drive letter stands alone: "Model:/" in a regex is not one.
   assert.doesNotMatch(WRAPPER.toString("utf8"), /\/home\/|\/Users\/|(?<![A-Za-z0-9])[A-Za-z]:[\\/]/);
+});
+
+// Links made without privileges are a POSIX matter.
+const posixOnly = { skip: process.platform === "win32" && "Windows needs privileges for symlinks" };
+const MB9 = 9 * 1024 * 1024;
+// real/ holds the wrapper, the loader and payload-mon's copy; link/ holds links to the wrapper and the
+// loader, as when a dotfiles setup links both files into hud/.
+function linkedLayout() {
+  const dir = join(root, `r-${++seq}`);
+  const real = layHud(join(dir, "real-root"), { omc: omcOut() });
+  writeFileSync(join(real, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD);
+  const link = join(dir, "link");
+  mkdirSync(link, { recursive: true });
+  for (const f of ["omc-hud-custom.mjs", "omc-hud.mjs"]) symlinkSync(join(real, f), join(link, f));
+  return { real, link };
+}
+
+test("래퍼 파일만 다른 폴더로 링크해도 링크 옆의 로더로 그림", posixOnly, () => {
+  const hud = layHud(join(root, `r-${++seq}`), { omc: omcOut() });
+  const dot = join(hud, "..", "dot");
+  mkdirSync(dot);
+  renameSync(join(hud, "omc-hud-custom.mjs"), join(dot, "omc-hud-custom.mjs"));
+  symlinkSync(join(dot, "omc-hud-custom.mjs"), join(hud, "omc-hud-custom.mjs"));
+  assert.equal(firstLine(renderWith({ hud })), firstLine(renderWith()));
+});
+
+test("--preserve-symlinks-main 이어도 링크가 가리키는 파일 옆의 PL 사본을 씀", posixOnly, () => {
+  const { link } = linkedLayout();
+  const out = renderWith({ hud: link, payloadBytes: MB9, env: { NODE_OPTIONS: "--preserve-symlinks-main" } });
+  assert.match(firstLine(out), /PL:9\.0M/);
+});
+
+test("링크 옆에 남은 옛 사본보다 링크가 가리키는 파일 옆의 사본을 씀", posixOnly, () => {
+  const { link } = linkedLayout();
+  mkdirSync(join(link, "payload-mon"), { recursive: true });
+  writeFileSync(join(link, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD.replace("Number(process.env.PL_BYTES)", "1"));
+  assert.match(firstLine(renderWith({ hud: link, payloadBytes: MB9 })), /PL:9\.0M/);
+});
+
+test("다른 스크립트가 불러와도 이 파일 옆의 로더를 씀", () => {
+  const dir = join(root, `r-${++seq}`);
+  const hud = layHud(dir, { omc: omcOut() });
+  const outer = join(dir, "outer");
+  mkdirSync(outer, { recursive: true });
+  writeFileSync(join(outer, "omc-hud.mjs"), 'console.log("DECOY");\n');
+  writeFileSync(join(outer, "run.mjs"), `await import(${JSON.stringify(pathToFileURL(join(hud, "omc-hud-custom.mjs")).href)});\n`);
+  const r = spawnSync(process.execPath, [join(outer, "run.mjs")], {
+    input: JSON.stringify({ effort: { level: "high" } }), env: renderEnv(dir, {}), encoding: "utf8", timeout: 30000,
+  });
+  assert.doesNotMatch(r.stdout, /DECOY/);
+  assert.equal(firstLine(r.stdout), firstLine(renderWith()));
 });
