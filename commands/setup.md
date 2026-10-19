@@ -31,7 +31,7 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    - **setup-omc** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa` 의존성.
    - **setup-harness-factory** — revfactory/harness(팀 아키텍처 팩토리) 설치+구성+안내(Codex=meta-harness).
    - **setup-insane-search** — insane-search 플러그인(차단 사이트 우회, Claude/Codex 양쪽).
-   - **setup-omc-hud** — omc_hud 상태표시줄(OS별).
+   - **setup-omc-hud** — omc_hud 상태표시줄(래퍼 v4, 스킬에 든 파일로 오프라인 설치).
    - **setup-stitch** — Stitch(디자인 생성) MCP 프록시 등록(RockyLinux8 proxy-script, API key 필요).
 
    **의존성 라이브러리**

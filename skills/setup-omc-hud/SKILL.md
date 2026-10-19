@@ -1,73 +1,122 @@
 ---
 name: setup-omc-hud
-description: "Claude Code 의 상태표시줄 omc_hud 를 OS별 적용 스크립트로 설치하고, Claude Code 갱신 안내를 줄 맨 끝으로 옮김. Codex 는 OMX 의 `hud` 스킬을 씀. 'setup-omc-hud'/'omc_hud 설치'/'Claude 갱신 안내 위치' 또는 `/banker:setup` 시 사용."
+description: "Claude Code 상태표시줄 omc_hud 래퍼를 스킬에 든 파일로 설치. 내려받지 않고 오프라인에서 모든 OS 같은 명령으로 동작하며, PL 칸에 쓰는 payload-mon 모듈도 켬. Codex 는 OMX 의 `hud` 스킬을 씀. 'setup-omc-hud'/'omc_hud 설치'/'상태표시줄 설치' 또는 `/banker:setup` 시 사용."
 argument-hint: "[off|status]"
 ---
 
-# setup-omc-hud — omc_hud 상태표시줄 설치 (OS별)
+# setup-omc-hud: omc_hud 상태표시줄 설치 (오프라인)
 
-`smallOpenSource/omc_hud` 의 apply 스크립트를 OS에 맞게 내려받아 적용한다. `wget` 없으면 `curl`로 폴백. 답변은 한글.
+이 스킬 폴더의 `assets/` 에 든 파일로 상태표시줄 래퍼 v4 를 설치한다. 답변은 한글.
 
-**런타임:** omc_hud 는 Claude Code 상태표시줄(`~/.claude/settings.json` statusLine) 대상이다. **Codex 런타임에선 oh-my-codex(OMX)가 자체 `hud` 스킬/구성을 제공**하므로, Codex에선 이 스킬 대신 OMX 의 `hud` 를 사용한다.
+- 내려받는 것이 없다. 네트워크가 없어도 끝까지 된다.
+- Windows, Linux, macOS 모두 `node` 명령 하나로 같은 절차를 밟는다.
+- 설치 파일: `apply-hud.mjs`(설치 스크립트), `omc-hud-custom.mjs`(래퍼 v4), `hud-config.json`(HUD 설정), `LICENSE-omc_hud`(원본 omc_hud 의 MIT 라이선스)
 
-**인자가 `off` 또는 `status` 일 때:** 0~3단계를 건너뛰고 3단계의 Claude 갱신 안내 스크립트만 그 인자로 실행해 결과를 보고한다(`off` 는 안내를 래퍼가 정한 자리로 되돌림, `status` 는 상태만 확인).
+**런타임:** Claude Code 상태표시줄(`<설정 폴더>/settings.json` 의 `statusLine`)이 대상이다. Codex 런타임에서는 oh-my-codex(OMX)가 자체 `hud` 스킬을 주므로 이 스킬 대신 OMX 의 `hud` 를 쓴다.
+
+**인자가 `off` 또는 `status` 일 때:** 0~3단계를 건너뛰고 "인자 off, status" 절만 실행한다.
+
+## 표시 형식
+
+```
+<model>/<effort>|5h:<pct>/<reset>|wk:<pct>/<reset>|<mm>:<pct>/<reset>|think|PL:<mb>M|se:<hours>h|ctx:<pct>%|🤖<agents>|🔧<tools>|⚡<skills>|<cwd>|<account>|<branch>|claude<cur>→<new>
+<에이전트 목록, 경고 같은 상세 줄>
+```
+
+| 변수 | 뜻 | 예 | 나오는 조건 |
+|---|---|---|---|
+| `<model>` | 모델 이름 앞 2글자와 버전 | `Op5.5` | 항상 |
+| `<effort>` | 추론 강도 | `high` | Claude Code 가 넘기거나 OMC 가 effort 칸을 낼 때 |
+| `<pct>`, `<reset>` | 사용률과 초기화까지 남은 시간 | `96%`, `1h5m` | 사용량 정보가 있을 때 |
+| `<mm>` | 모델별 사용량의 모델 이름 앞 2글자 | `Fa` | OMC 가 모델별 사용량을 낼 때 |
+| `think` | 확장 사고 표시 | `think` | 확장 사고가 켜져 있을 때 |
+| `<mb>` | 요청 크기 추정치(MB, 소수 1자리) | `0.5` | payload-mon 모듈이 있을 때 |
+| `<hours>` | 세션 시간(시간, 소수 1자리) | `0.7` | 항상 |
+| `ctx:<pct>%` | 대화 맥락 사용률 | `ctx:12%` | OMC 가 ctx 를 낼 때 |
+| `<agents>` | 이 세션의 에이전트 호출 수 | `1` | 1 이상일 때 |
+| `<tools>` | 도구 호출 수 | `14` | 1 이상일 때 |
+| `<skills>` | 스킬 호출 수 | `3` | 1 이상일 때 |
+| `<cwd>` | 작업 폴더 | `/home/user/project` | 항상 |
+| `<account>` | 로그인 계정 이메일의 `@` 앞부분 | `user` | `.claude.json` 에 이메일이 있을 때 |
+| `<branch>` | git 브랜치 | `main` | git 저장소 안일 때 |
+| `<cur>`, `<new>` | 지금 Claude Code 판과 새 판 | `2.1.300`, `2.1.302` | 새 판이 있을 때. 지금 판을 모르면 `claude→<new>` |
+
+- 조건이 맞지 않는 칸은 구분자 `|` 와 함께 빠진다.
+- 색
+  - `%` 는 70% 미만 초록, 85% 미만 노랑, 그 이상 분홍(256색 213)
+  - `<mb>` 는 32MB 대비 같은 기준
+- OMC 는 ctx 가 80% 를 넘으면 뒤에 `COMPRESS?`, `CRITICAL` 을 붙인다. 래퍼는 이 글자를 빼고 색으로만 보인다.
+- todo, ralph, autopilot, `agents:<n>`(실행 중인 에이전트) 같은 OMC 상태 칸은 활성일 때만 `⚡<skills>` 와 `<cwd>` 사이에 흐리게 나온다.
+- 화면 폭을 넘으면 칸 사이에서 다음 줄로 넘어간다.
+- 둘째 줄부터는 OMC 의 상세 줄이다. OMC 와 Claude Code 의 갱신 안내 줄은 뺀다.
 
 ## 0. 감지
+
+- `node -v` 로 Node 18 이상인지 본다. OMC 5.7.4 는 Node 20 이상을 적는다.
+- 설정 폴더는 `$CLAUDE_CONFIG_DIR`, 없으면 `~/.claude` 다.
+- OMC 가 설치돼 있어야 한다. 없으면 1단계가 멈추고 알린다.
+
+## 1. 적용
+
+모든 OS 에서 같은 명령이다.
+
+bash, zsh:
 ```bash
-case "$(uname -s)" in Darwin) OS=mac;; Linux) OS=linux;; *) OS=windows;; esac; echo "OS=$OS"
-command -v wget >/dev/null && echo "dl=wget" || { command -v curl >/dev/null && echo "dl=curl" || echo "dl=none(설치 필요)"; }
-# 적용 스크립트가 래퍼를 덮어쓰면 payload-mon 표시 블록이 빠진다. 지금 켜져 있는지 기억해 둔다(3단계에서 사용).
-HUD_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hud/omc-hud-custom.mjs"
-grep -qF '// >>> payload-mon >>>' "$HUD_FILE" 2>/dev/null && echo "payload-mon=on" || echo "payload-mon=off"
-```
-Windows(PowerShell)에서는 같은 확인을 이렇게 한다:
-```powershell
-$cfg = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { "$env:USERPROFILE\.claude" }
-if (Select-String -Quiet -SimpleMatch -LiteralPath "$cfg\hud\omc-hud-custom.mjs" -Pattern '// >>> payload-mon >>>' -ErrorAction SilentlyContinue) { "payload-mon=on" } else { "payload-mon=off" }
+node "<이 스킬 디렉터리 절대경로>/assets/apply-hud.mjs"
 ```
 
-## 1. mac / linux — apply 스크립트 적용
+PowerShell:
+```powershell
+node "<이 스킬 디렉터리 절대경로>\assets\apply-hud.mjs"
+```
+
+- `[ok] statusLine -> node "<설정 폴더>/hud/omc-hud-custom.mjs"` 줄을 확인한다.
+- 종료 코드 1 이면 출력의 `[x]` 줄을 그대로 보고하고 멈춘다. 이때 바뀐 파일은 없다.
+  - `settings.json` 이 JSON 객체가 아니면 사용자가 고친 뒤 다시 실행한다.
+  - OMC 가 없으면 OMC 를 먼저 설치한다(`setup-omc` 스킬). 이 스킬은 OMC 를 설치하지 않는다.
+
+## 2. payload-mon 켜기
+
+이전 상태와 상관없이 늘 실행한다.
+
 ```bash
-RAW=https://raw.githubusercontent.com/smallOpenSource/omc_hud/refs/heads/main
-mkdir -p ~/dummy && cd ~/dummy
-script=$([ "$OS" = mac ] && echo apply-hud-macos.sh || echo apply-hud-linux.sh)
-for f in "$script" apply-hud.mjs hud-config.json omc-hud-custom.mjs; do
-  if command -v wget >/dev/null; then wget -q "$RAW/$f"; else curl -fsSLO "$RAW/$f"; fi
-done
-chmod +x "$script" && "./$script"
-rm -f "$script" apply-hud.mjs hud-config.json omc-hud-custom.mjs   # 정리
-cd - >/dev/null
+node "<이 스킬 디렉터리 절대경로>/../payload-mon/scripts/payload-mon.mjs" on
 ```
 
-## 2. windows
-`wget`이 없는 경우가 많아 **프로젝트 통째로 받아 적용**한다:
-```powershell
-# git 있으면
-git clone https://github.com/smallOpenSource/omc_hud.git "$env:TEMP\omc_hud"; cd "$env:TEMP\omc_hud"
-# 저장소의 windows 적용 스크립트(apply-hud-*.ps1/.cmd) 또는 `node apply-hud.mjs` 안내를 따른다.
-```
-git 없으면 GitHub "Download ZIP" → 해제 → 동봉 적용 스크립트 실행.
+- Codex 사본에서 실행할 때 경로는 `<이 스킬 디렉터리 절대경로>/../banker-payload-mon/scripts/payload-mon.mjs` 다.
+- 이유: `PL:` 칸은 payload-mon 이 래퍼 옆(`hud/payload-mon/`)에 두는 크기 계산 모듈을 쓴다. 모듈이 없으면 `PL:` 이 나오지 않는다.
+- 이 단계의 출력 "8MB 이상이면 ctx 옆에 payload가 표시됩니다" 는 옛 래퍼 기준이다. 그대로 옮기지 말고 "PL 칸에 쓰는 모듈을 설치함" 으로 보고한다.
 
-## 3. 검증·보고
-- 적용 스크립트가 `~/.claude/settings.json` 의 statusLine 등을 갱신했는지(스크립트 출력 확인).
-- HUD는 **다음 프롬프트/세션**부터 반영될 수 있음 → 안 보이면 재시작 안내.
-- `~/dummy` 임시파일 정리 확인. 이미 적용돼 있으면 재적용 불필요.
-- **payload-mon 복구**: 0단계에서 `payload-mon=on` 이었다면, 적용 스크립트가 래퍼를 덮어써 payload 표시 블록이 빠진 상태다.
-  payload-mon 스킬(Claude Code `/banker:payload-mon`, Codex `banker-payload-mon`)을 `on` 으로 실행해 다시 켜고, 그 결과를 함께 보고한다.
-  `payload-mon=off` 였다면 아무것도 하지 않는다(사용자가 켠 적 없는 기능을 켜지 않는다).
-- **Claude 갱신 안내 위치**: payload-mon 처리 뒤에 이 스킬의 스크립트를 `on` 으로 실행한다. 재적용을 건너뛴 경우에도 실행하고, Windows 도 같은 명령이다.
-  ```bash
-  node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" on
-  ```
-  새 Claude Code 가 나오면 OMC 가 띄우는 `[Claude#2.1.288] -> 2.1.289 claude update` 를 상태표시줄 1번째 줄 맨 끝(OMC 표시 뒤)으로 옮긴다. 2번째 줄의 `[!] claude 2.1.289 - paste: ! claude update` 안내는 그대로 둔다.
-  출력을 그대로 보고한다. 종료 코드 1(거부)이면 래퍼는 바뀌지 않았으니 이유만 보고하고, 2(예기치 못한 오류로 중간에 멈춤)면 `status` 결과를 함께 보고한다.
-  되돌리기는 `off`, 상태 확인은 `status`.
+## 3. 보고
+
+- 1단계 출력의 statusLine 줄과 백업 경로
+- 2단계 결과
+- statusLine 이 바뀌었으면 Claude Code 재시작 안내
+
+## 인자 off, status
+
+옛 래퍼(v3)에 넣었던 Claude 갱신 안내 블록(`claude-update-last`)을 다룬다. v4 래퍼는 갱신 안내를 직접 줄 맨 끝에 두므로 새 설치에는 이 블록이 필요 없다.
+
+```bash
+node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
+```
+
+- `off` 는 블록을 뺀다. `status` 는 상태만 본다.
+- 출력을 그대로 보고한다. 종료 코드 1(거부)이면 래퍼는 바뀌지 않았으니 이유만 보고한다.
+- 종료 코드 2(예기치 못한 오류로 중간에 멈춤)면 `status` 결과를 함께 보고한다.
 
 ## 함정
-- `curl` 다운로드는 **대문자 `-O`**(원격 파일명 유지). 소문자 `-o`는 출력명 지정이라 다름.
-- raw URL 의 `refs/heads/main` 브랜치명이 바뀌면 404 → 저장소 확인.
-- `.mjs` 적용은 Node 필요(`node -v`).
-- `claude-update-last` 를 `off` 로 꺼 두었어도 이 스킬을 다시 실행하면 3단계에서 다시 켜진다. 래퍼가 정한 자리를 원하면 끝난 뒤 `off`.
-- 블록은 OMC 의 안내 문구(`[Claude#X] -> Y claude update`)로 안내를 찾는다. OMC 가 문구를 바꾸면 안내는 래퍼가 정한 자리에 남고, 상태표시줄은 깨지지 않는다.
-- 블록은 래퍼가 세그먼트를 합치는 줄에서 `segs`·`colored` 를 읽는다. 래퍼 구조가 바뀌어 그 줄에서 이 이름이 보이지 않으면 `on` 은 성공해도 효과가 없다(상태표시줄은 그대로). 새 Claude Code 가 나왔을 때 안내가 맨 끝에 오는지로 확인한다.
-- 이 블록은 플러그인 밖(`~/.claude/hud/`)에 남는다. 플러그인을 지우기 전에 `off` 를 실행한다.
+
+- 다시 설치하면 래퍼와 `hud-config.json` 을 첨부 파일로 덮어쓴다. 손으로 고친 내용은 `.backup.<시각>` 에만 남는다.
+- `settings.json` 의 `omcHud` 가 `hud-config.json` 보다 먼저 적용된다. 표시가 첨부 설정과 다르면 `omcHud` 를 확인한다.
+- `payload-mon off` 를 실행하면 크기 계산 모듈이 지워져 `PL:` 칸도 사라진다. 다시 보려면 `payload-mon on`.
+- v4 에서 payload-mon 블록은 모듈을 깔기 위해서만 남는다. 갱신마다 크기 추정이 두 번 돌지만 두 번째는 캐시를 쓴다.
+- 래퍼를 손으로 고칠 때 `if (f.ctx) colored.push(colorCtx(f.ctx));` 줄을 지우지 않는다. 실행상 비어 있지만 `payload-mon on` 이 이 줄 바로 뒤에 블록을 넣는다.
+- 래퍼는 statusLine 프로세스가 받은 터미널 폭(stderr, stdout 의 `columns`, 그다음 `COLUMNS`)으로 줄을 접는다. 폭을 받지 못하면 한 줄로 나오고 Claude Code 가 끝을 자른다.
+- 분홍은 256색 코드다. 256색을 못 쓰는 터미널에서는 기본 색으로 보인다.
+- statusLine 은 PATH 의 `node` 를 쓴다. GUI 로 띄운 Claude Code(macOS Dock, VS Code 확장)는 PATH 에 `/opt/homebrew/bin` 같은 폴더가 빠질 수 있다(추정). 상태표시줄이 안 나오면 PATH 를 확인한다.
+- 설정 폴더 경로에 `$`, 백틱(bash, PowerShell), `%VAR%`(cmd)가 있으면 셸이 statusLine 명령을 펼친다. 큰따옴표로는 막지 못한다. 드문 경우다.
+- 갱신 안내는 OMC 의 문구 `[Claude#<cur>] -> <new> claude update` 로 찾는다. OMC 가 문구를 바꾸면 줄이지 못하고 원문이 경로 앞 칸에 남는다. 상태표시줄은 깨지지 않는다.
+- `[!] omc <ver> - paste: ` 와 `[!] claude <new> - paste: ` 로 시작하는 갱신 안내 줄은 뺀다. OMC 가 이 문구를 바꾸면 다시 보인다.
+- 설치는 네트워크를 쓰지 않는다. 다만 OMC 가 렌더할 때 네트워크로 얻는 정보(새 Claude Code 판 같은)는 오프라인에서 빠질 수 있다.
+- 래퍼, HUD 설정, 모듈 사본은 플러그인 밖(`<설정 폴더>/hud/`, `<설정 폴더>/.omc/`)에 있다. 플러그인을 지워도 상태표시줄은 남는다.

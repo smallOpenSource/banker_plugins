@@ -152,6 +152,7 @@ try {
     ['skills/ultra-chain/SKILL.md', '05-baseline.txt', 'the baseline of a run begun before the change, read when resuming'],
     ['commands/front-qa.md', 'docs/note.txt', 'the old default spec, read only when docs/note.md is missing'],
     ['commands/front-qa.md', 'progress.txt', "OMC's checkpoint file, named by OMC"],
+    ['skills/setup-omc-hud/assets/apply-hud.mjs', 'hud-wrapper-template.txt', "OMC's HUD loader template, named by OMC; the installer only reads it"],
     ...['3d-intro-build', 'motion-graphic-make', 'ultra-chain'].map((s) =>
       [`skills/${s}/references/preview-lib.mjs`, '.txt', 'a MIME type the preview server serves; no file is written']),
   ];
@@ -299,10 +300,30 @@ try {
      `banker-ultra-chain carries references/${ucFiles.join(' + references/')} into the Codex install`);
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
-  // setup-omc-hud step 3 runs scripts/claude-update-last.mjs from the skill's own folder; every copy of that
-  // folder ships it, Codex's included (there the skill points at OMX's hud, so the script sits unused).
-  ok(fs.existsSync(path.join(instDir, 'banker-setup-omc-hud', 'scripts', 'claude-update-last.mjs')),
-     'banker-setup-omc-hud carries scripts/claude-update-last.mjs into the Codex install');
+  // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its
+  // off/status arguments run scripts/claude-update-last.mjs; every copy of that folder ships them, Codex's included
+  // (there the skill points at OMX's hud, so they sit unused). Run the installed copy's installer once, against a
+  // temp config with a stand-in OMC: a copy that has the files but cannot install from them would pass alone.
+  const hudSkillDir = path.join(instDir, 'banker-setup-omc-hud');
+  const hudFiles = ['scripts/claude-update-last.mjs', 'assets/apply-hud.mjs', 'assets/omc-hud-custom.mjs',
+    'assets/hud-config.json', 'assets/LICENSE-omc_hud'];
+  ok(hudFiles.every((f) => fs.existsSync(path.join(hudSkillDir, ...f.split('/')))),
+     `banker-setup-omc-hud carries ${hudFiles.join(', ')} into the Codex install`);
+  const hudCfg = path.join(tmp, 'hud cfg');
+  const omcLib = path.join(hudCfg, 'plugins', 'cache', 'omc', 'oh-my-claudecode', '5.7.4', 'scripts', 'lib');
+  fs.mkdirSync(omcLib, { recursive: true });
+  fs.writeFileSync(path.join(omcLib, 'hud-wrapper-template.txt'), '// loader\n');
+  fs.writeFileSync(path.join(omcLib, 'config-dir.mjs'), 'export {};\n');
+  const hudRun = cp.spawnSync(process.execPath, [path.join(hudSkillDir, 'assets', 'apply-hud.mjs')],
+    { encoding: 'utf8', env: { ...env2, CLAUDE_CONFIG_DIR: hudCfg, OMC_PLUGIN_ROOT: '' } });
+  let hudCmd = '';
+  try { hudCmd = JSON.parse(fs.readFileSync(path.join(hudCfg, 'settings.json'), 'utf8')).statusLine.command; } catch { /* not written */ }
+  ok(hudRun.status === 0 && hudCmd === `node "${path.join(hudCfg, 'hud', 'omc-hud-custom.mjs').split(path.sep).join('/')}"`,
+     `the Codex copy of setup-omc-hud installs the statusline from its own files (status ${hudRun.status}, command ${JSON.stringify(hudCmd)})`);
+  // ...and its procedure works offline: SKILL.md runs no download (the bundled files replaced the omc_hud one).
+  const hudSkill = fs.readFileSync(path.join(root, 'skills', 'setup-omc-hud', 'SKILL.md'), 'utf8');
+  const fetches = hudSkill.match(/\b(?:wget|curl|git clone|Invoke-WebRequest|iwr|npm (?:i|install))\b|raw\.githubusercontent|github\.com\/smallOpenSource\/omc_hud/g) || [];
+  ok(fetches.length === 0, `setup-omc-hud's SKILL.md downloads nothing (found ${JSON.stringify(fetches)})`);
   // setup-bypass-permissions runs its scripts from its own folder, and must never start on the model's
   // say-so: Claude Code reads disable-model-invocation from SKILL.md, Codex reads agents/openai.yaml.
   const bpDir = path.join(instDir, 'banker-setup-bypass-permissions');
@@ -431,6 +452,8 @@ try {
     path.join('skills', 'ultra-chain', 'references', 'chain-report.test.mjs'),
     path.join('skills', 'ultra-chain', 'references', 'capture.test.mjs'),
     path.join('skills', 'setup-omc-hud', 'scripts', 'claude-update-last.test.mjs'),
+    path.join('skills', 'setup-omc-hud', 'scripts', 'apply-hud.test.mjs'),
+    path.join('skills', 'setup-omc-hud', 'scripts', 'omc-hud-custom.test.mjs'),
     path.join('skills', 'setup-bypass-permissions', 'scripts', 'bypass-permissions.test.mjs'),
     path.join('skills', 'setup-bypass-permissions', 'scripts', 'fallbacks.test.mjs'),
     path.join('hooks', 'graceful-pause.test.mjs'), path.join('hooks', 'graceful-pause.engine.test.ts'),

@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- `setup-omc-hud` 가 상태표시줄 파일을 내려받지 않고 스킬에 든 파일(`skills/setup-omc-hud/assets/`)로 설치한다. 모든 OS 에서 `node assets/apply-hud.mjs` 한 명령이고, 네트워크가 없어도 끝까지 된다. 예전에는 GitHub 의 omc_hud 저장소에서 OS 별 스크립트를 받아, 원본이 바뀌면 설치 결과도 말없이 바뀌었다.
+- 설치 스크립트는 설정 폴더 경로의 공백과 `settings.json` 앞의 BOM 을 처리하고, 손으로 고친 래퍼와 HUD 설정은 `.backup.<시각>` 으로 남긴다. `settings.json` 이 JSON 객체가 아니거나 OMC 가 없으면 아무 파일도 바꾸지 않고 멈춘다.
+- 상태표시줄 래퍼가 v4 로 바뀐다. 첫 줄은 `<model>/<effort>|5h:<pct>/<reset>|wk:<pct>/<reset>|<mm>:<pct>/<reset>|think|PL:<mb>M|se:<hours>h|ctx:<pct>%|🤖<agents>|🔧<tools>|⚡<skills>|<cwd>|<account>|<branch>|claude<cur>→<new>` 이고, 둘째 줄부터 에이전트 목록 같은 상세 줄이 붙는다. 화면 폭을 넘으면 칸 사이에서 접는다. OMC 와 Claude Code 의 갱신 안내 줄, OMC 판 표시는 보이지 않는다.
+- `setup-omc-hud` 는 설치할 때마다 payload-mon 을 켠다. `PL:` 칸이 payload-mon 의 크기 계산 모듈을 쓰기 때문이다. 예전에는 켜져 있던 경우만 다시 켰다.
+- `setup-omc-hud` 의 Claude 갱신 안내 블록 단계를 뺀다. 새 래퍼가 안내를 줄여 직접 맨 끝에 둔다. 인자 `off`, `status` 는 옛 래퍼에 넣은 블록을 위해 남는다.
+- 유지보수자용: 설치 스크립트, 래퍼 형식, 블록 도구 둘과 래퍼 v4 의 왕복을 시험한다. smoke 는 스킬 설명서에 내려받기 명령이 없는지와 Codex 사본의 설치 스크립트가 도는지를 본다.
+
+### Fixed
+- `payload-mon` 과 `setup-omc-hud` 의 블록 도구가 따옴표 안에서 펼쳐지지 않은 `~` 나 끝 공백이 든 `CLAUDE_CONFIG_DIR` 를 그대로 경로로 써서, 설치 스크립트가 만든 래퍼를 찾지 못하던 것. 이제 설치 스크립트와 같이 `~/x` 를 `<홈>/x` 로 읽는다.
+
 ## [0.19.5] - 2026-10-17
 
 ### Changed
