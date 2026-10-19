@@ -9,6 +9,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -16,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { status, turnOff, turnOn } from "./payload-mon.mjs";
 import { CACHE_DIR } from "./payload-size.mjs";
@@ -326,6 +328,114 @@ test("a CRLF wrapper goes on and comes off byte for byte", () => {
   assert.equal(readFileSync(c.hudFile, "utf8"), crlf);
 });
 
+test("on and off take a wrapper that starts with a BOM, which node runs as it is", () => {
+  for (const hud of [HUD, HUD_V4]) {
+    // node runs a BOM before the shebang; only `node --check` rejects it.
+    const withBom = "\uFEFF#!/usr/bin/env node\n" + hud;
+    const c = setup(withBom);
+    const on = turnOn(c);
+    assert.equal(on.ok, true, on.message);
+    assert.ok(readFileSync(c.hudFile, "utf8").startsWith("\uFEFF#!"), "the BOM stays");
+    if (hud === HUD) assert.equal(render(c, transcriptOf(c.dir, NINE_MB)), "ctx:21%|<payload:28%/9.0MB>|se:1.0hr\n");
+    const off = turnOff(c);
+    assert.equal(off.ok, true, off.message);
+    assert.equal(readFileSync(c.hudFile, "utf8"), withBom);
+  }
+});
+
+// A line break with no carriage return before it.
+const LF_ONLY = /(^|[^\r])\n/;
+
+test("a CRLF wrapper keeps CRLF on every line while the block is in", () => {
+  const crlf = HUD.replace(/\n/g, "\r\n");
+  const c = setup(crlf);
+  assert.equal(turnOn(c).ok, true);
+  assert.doesNotMatch(readFileSync(c.hudFile, "utf8"), LF_ONLY);
+  assert.match(status(c).message, /payload-mon: 켜짐 \(/);
+  assert.equal(turnOff(c).ok, true);
+  assert.equal(readFileSync(c.hudFile, "utf8"), crlf);
+});
+
+test("status still says on after an editor saves the whole wrapper with CRLF, and on changes nothing", () => {
+  const c = setup();
+  turnOn(c);
+  writeFileSync(c.hudFile, readFileSync(c.hudFile, "utf8").replace(/\r?\n/g, "\r\n"));
+  const saved = readFileSync(c.hudFile, "utf8");
+  assert.match(status(c).message, /payload-mon: 켜짐 \(/);
+  const res = turnOn(c);
+  assert.equal(res.ok, true, res.message);
+  assert.match(res.message, /이미 켜져/);
+  assert.equal(readFileSync(c.hudFile, "utf8"), saved);
+});
+
+test("on rewrites an LF block that 0.20.1 left in a CRLF wrapper", () => {
+  const c = setup();
+  turnOn(c);
+  const lf = readFileSync(c.hudFile, "utf8");
+  const block = /^ {2}\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<\n/m.exec(lf)[0];
+  const at = lf.indexOf(block);
+  const crlf = (s) => s.replace(/\n/g, "\r\n");
+  writeFileSync(c.hudFile, crlf(lf.slice(0, at)) + block + crlf(lf.slice(at + block.length)));
+  assert.match(status(c).message, /payload-mon: 켜짐 \(/);
+  const res = turnOn(c);
+  assert.equal(res.ok, true, res.message);
+  assert.match(res.message, /켰습니다/);
+  assert.doesNotMatch(readFileSync(c.hudFile, "utf8"), LF_ONLY);
+});
+
+// A wrapper file that is a symlink, as dotfiles setups make: the real file in real/, the link in link/.
+// `inLink` turns it on first as a plain file in link/, the way 0.20.1 left such a setup.
+function linkedWrapper(hudText = HUD_V4, inLink = false) {
+  const c = setup(hudText);
+  const real = join(c.dir, "real");
+  const link = join(c.dir, "link");
+  mkdirSync(real);
+  mkdirSync(link);
+  const linked = { ...c, hudFile: join(link, "omc-hud-custom.mjs"), real, link };
+  renameSync(c.hudFile, linked.hudFile);
+  if (inLink) assert.equal(turnOn(linked).ok, true);
+  renameSync(linked.hudFile, join(real, "omc-hud-custom.mjs"));
+  symlinkSync(join(real, "omc-hud-custom.mjs"), linked.hudFile);
+  return linked;
+}
+
+test("on puts the module copy next to the file a linked wrapper points at, where wrapper v4 looks", posixOnly, () => {
+  const c = linkedWrapper();
+  const res = turnOn(c);
+  assert.equal(res.ok, true, res.message);
+  const copy = join(realpathSync(c.real), "payload-mon", "payload-size.mjs");
+  assert.ok(existsSync(copy), "a copy beside the real file");
+  assert.equal(existsSync(join(c.link, "payload-mon")), false, "nothing beside the link");
+  assert.ok(readFileSync(c.hudFile, "utf8").includes(pathToFileURL(copy).href), "the block imports that copy");
+});
+
+test("a linked wrapper turned on by 0.20.1 shows as incomplete, on moves the copy and off clears both places", posixOnly, () => {
+  const c = linkedWrapper(HUD_V4, true);
+  assert.ok(existsSync(join(c.link, "payload-mon", "payload-size.mjs")), "0.20.1's copy beside the link");
+  assert.match(status(c).message, /불완전하거나 오래됨/);
+  const res = turnOn(c);
+  assert.equal(res.ok, true, res.message);
+  assert.ok(existsSync(join(c.real, "payload-mon", "payload-size.mjs")));
+  assert.match(status(c).message, /payload-mon: 켜짐 \(/);
+  assert.equal(turnOff(c).ok, true);
+  assert.equal(existsSync(join(c.real, "payload-mon")), false);
+  assert.equal(existsSync(join(c.link, "payload-mon")), false);
+});
+
+test("a wrapper reached through a linked folder keeps its copy at the configured path", posixOnly, () => {
+  const c = setup();
+  const real = join(c.dir, "real");
+  mkdirSync(real);
+  renameSync(c.hudFile, join(real, "omc-hud-custom.mjs"));
+  const linkdir = join(c.dir, "linkdir");
+  symlinkSync(real, linkdir, "dir");
+  const viaLink = { ...c, hudFile: join(linkdir, "omc-hud-custom.mjs") };
+  assert.equal(turnOn(viaLink).ok, true);
+  const url = pathToFileURL(join(linkdir, "payload-mon", "payload-size.mjs")).href;
+  assert.ok(readFileSync(viaLink.hudFile, "utf8").includes(url), "the block keeps the folder link's path");
+  assert.match(turnOn(viaLink).message, /이미 켜져/);
+});
+
 test("markers that do not pair up are refused by on and off, which leave the wrapper alone", () => {
   const stray = HUD + "// >>> payload-mon >>>\n";
   const c = setup(stray);
@@ -495,6 +605,24 @@ test("status on a v4 wrapper says where the estimate shows only while it is on",
   const on = status(opts).message;
   assert.match(on, /현재 세션: 1\.0MB \/ 32MB \(3%\), PL 칸에 늘 표시/);
   assert.doesNotMatch(on, /8MB부터/);
+});
+
+test("status names no display spot while the module copy is missing, v4 or older wrapper", () => {
+  for (const hud of [HUD_V4, HUD]) {
+    const { c, opts } = withSession(hud);
+    turnOn(c);
+    rmSync(copyOf(c));
+    const msg = status(opts).message;
+    assert.match(msg, /모듈 사본이 없어 표시되지 않음/);
+    assert.match(msg, /현재 세션: 1\.0MB \/ 32MB \(3%\)$/m);
+    assert.doesNotMatch(msg, /PL 칸|부터 표시/);
+  }
+});
+
+test("on keeps the older guidance for a wrapper that only mentions PL in a comment", () => {
+  const res = turnOn(setup(HUD_INPROC.replace("const colorRate", "// PL: is what the newer wrapper shows\nconst colorRate")));
+  assert.equal(res.ok, true, res.message);
+  assert.match(res.message, /8MB 이상이면 ctx 옆에 payload가 표시됩니다/);
 });
 
 // The CLI as Claude runs it, kept off the real config folder and the live session.

@@ -7,7 +7,7 @@
  *   - hud/lib/config-dir.mjs (loader dependency)
  *   - hud/omc-hud-custom.mjs (the custom compact/colored formatter)
  *   - .omc/hud-config.json   (HUD preset/elements)
- *   - settings.json          (statusLine -> the custom formatter; existing file backed up)
+ *   - settings.json          (statusLine -> the custom formatter; backed up when it changes)
  *
  * Runs identically on Linux, macOS, and Windows (only needs node + an OMC install).
  * Run it directly with `node apply-hud.mjs` on every OS; the templates are read
@@ -15,16 +15,23 @@
  *
  * Based on smallOpenSource/omc_hud d3cedd5 (MIT, see LICENSE-omc_hud). Changes:
  * statusLine path quoted; a settings.json that is not a JSON object is refused
- * before any file changes (the original replaced it); UTF-8 BOM accepted;
- * CLAUDE_CONFIG_DIR trimmed, "~" expanded and made absolute; formatter and HUD
- * config backed up when they differ; pre-releases sort below their release; no
+ * before any file changes (the original replaced it), naming the line and
+ * column when Node reports one but never quoting it; one holding only white
+ * space is read as {}, as Claude Code does; UTF-8 BOM accepted; CLAUDE_CONFIG_DIR trimmed, "~" expanded
+ * and made absolute; formatter and HUD config backed up when they differ (the
+ * blocks payload-mon and claude-update-last add do not count), settings.json only
+ * when it changes; pre-releases sort below their release; no
  * folder is made when OMC is missing. Also refused before any change: a config
  * folder path the statusLine shell would act on, a file or folder it cannot
  * write, an OMC folder without both loader files, a relative OMC_PLUGIN_ROOT.
  * Backups keep the original bytes and mode; the files it writes are 0644 and new
  * folders 0755; the other statusLine fields (padding, ...) stay.
+ * At the end it runs the installed formatter once with no input and reports
+ * whether OMC's HUD loads and which version draws (the render check); that never
+ * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 25s limit.
  * Exit 1 means nothing changed; exit 2 means an unexpected error stopped it partway.
  */
+import { spawnSync } from "node:child_process";
 import {
   accessSync,
   chmodSync,
@@ -34,10 +41,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = dirname(fileURLToPath(import.meta.url));
@@ -72,18 +80,42 @@ const refuse = (lines) => {
 //    file as it was. Refuse rather than replace: a fresh file would drop every
 //    other setting. A BOM (Windows editors) is dropped when the file is written
 //    back; the backup keeps the original bytes.
+//    Read as Claude Code (2.1.303) reads it: white space only is {}, and JSON
+//    with comments or trailing commas is invalid. A refusal says where the JSON
+//    breaks (from Node's "at position N") but never quotes it: Node's own message
+//    does, and the file can hold tokens.
+function jsonErrorAt(text, message) {
+  const m = /at position (\d+)/.exec(message);
+  if (!m) return "";
+  const before = text.slice(0, Number(m[1]));
+  return `line ${before.split("\n").length}, column ${before.length - before.lastIndexOf("\n")}`;
+}
+const kindOf = (v) => (v === null ? "null" : Array.isArray(v) ? "an array" : `a ${typeof v}`);
+function readSettings(raw) {
+  const text = raw.replace(/^\uFEFF/, "");
+  if (text.trim() === "") return { settings: {}, empty: true };
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (e) {
+    const at = jsonErrorAt(text, String(e && e.message));
+    return {
+      refusal:
+        `[x] settings.json is not valid JSON${at ? ` (${at})` : ""}; nothing changed. ` +
+        "Claude Code cannot read it either: comments and trailing commas are not allowed. Fix it and re-run.",
+    };
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) return { settings: value, empty: false };
+  return { refusal: `[x] settings.json holds ${kindOf(value)}, not a JSON object; nothing changed. Fix it and re-run.` };
+}
 let settings = {};
 let settingsRaw = null;
 if (existsSync(settingsPath)) {
   settingsRaw = readFileSync(settingsPath, "utf8");
-  try {
-    settings = JSON.parse(settingsRaw.replace(/^\uFEFF/, ""));
-  } catch {
-    settings = undefined;
-  }
-  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
-    refuse(["[x] Existing settings.json is not a JSON object; nothing changed. Fix it and re-run."]);
-  }
+  const read = readSettings(settingsRaw);
+  if (read.refusal) refuse([read.refusal]);
+  settings = read.settings;
+  if (read.empty) log("[..] settings.json is empty; read as {} as Claude Code does");
 }
 
 // Inside the command's double quotes these still act: a quote ends the path, $ and `
@@ -166,10 +198,23 @@ function writeOwned(file, data) {
   if (process.platform !== "win32") chmodSync(file, FILE_MODE);
 }
 
+// The marker blocks payload-mon and claude-update-last add to the installed formatter, matched as those
+// tools match them (payload-mon.mjs BLOCKS, claude-update-last.mjs's block pattern). Read as latin1,
+// which maps every byte to one character, so text outside the blocks compares byte for byte.
+const TOOL_BLOCKS = [
+  /^[ \t]*\/\/ >>> payload-mon >>>[\s\S]*?\/\/ <<< payload-mon <<<[ \t]*\r?\n/gm,
+  /^[ \t]*\/\/ >>> claude-update-last >>>(?:(?!\/\/ >>> claude-update-last >>>)[\s\S])*?\/\/ <<< claude-update-last <<<[ \t]*(?:\r?\n|(?![\s\S]))/gm,
+];
+const withoutToolBlocks = (text) => TOOL_BLOCKS.reduce((t, blocks) => t.replace(blocks, ""), text);
+const sameBytes = (a, b) => a.equals(b);
+// Those blocks alone are no reason for a backup: `payload-mon on` puts its block back, and wrapper v4
+// needs no claude-update-last block.
+const sameFormatter = (a, b) => withoutToolBlocks(a.toString("latin1")) === withoutToolBlocks(b.toString("latin1"));
+
 // Keep a timestamped copy, with its bytes and mode, of a file that differs from what replaces it.
-function backupIfDifferent(dst, next, label) {
+function backupIfDifferent(dst, next, label, same = sameBytes) {
   if (!existsSync(dst)) return;
-  if (readFileSync(dst).equals(next)) return;
+  if (same(readFileSync(dst), next)) return;
   const keep = dst + ".backup." + stamp;
   copyFileSync(dst, keep);
   log(`[ok] Backed up ${label} -> ${keep}`);
@@ -188,12 +233,12 @@ function installLoader() {
 }
 
 // 3. Install the custom formatter and HUD config from the bundled templates.
-//    Files that differ from the templates (local edits, blocks added by
-//    payload-mon / claude-update-last) are kept as timestamped backups first.
+//    Files that differ from the templates (local edits) are kept as timestamped
+//    backups first; the blocks payload-mon / claude-update-last add do not count.
 function installTemplates() {
   const wrapperSrc = readFileSync(join(SELF, "omc-hud-custom.mjs"));
   const configSrc = readFileSync(join(SELF, "hud-config.json"));
-  backupIfDifferent(wrapperDst, wrapperSrc, "previous formatter");
+  backupIfDifferent(wrapperDst, wrapperSrc, "previous formatter", sameFormatter);
   backupIfDifferent(configDst, configSrc, "previous HUD config");
   writeOwned(wrapperDst, wrapperSrc);
   writeOwned(configDst, configSrc);
@@ -202,13 +247,9 @@ function installTemplates() {
 }
 
 // 4. Point settings.json statusLine at the custom formatter; its other fields (padding, ...) stay.
+//    A settings.json that already says exactly this is neither backed up nor written.
 const objectOr = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 function pointStatusLine() {
-  if (settingsRaw !== null) {
-    const backup = settingsPath + ".backup." + stamp;
-    copyFileSync(settingsPath, backup); // the original bytes and mode
-    log("[ok] Backed up settings.json -> " + backup);
-  }
   // Quoted so a config dir with spaces (C:/Users/First Last/.claude) still runs.
   const command = `node "${cmdPath}"`;
   const prior = objectOr(settings.statusLine);
@@ -216,8 +257,105 @@ function pointStatusLine() {
     log(`[..] statusLine ran ${JSON.stringify(prior.command)}; it now runs the custom HUD (the old value is in the backup)`);
   }
   settings.statusLine = { ...prior, type: "command", command };
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  const next = JSON.stringify(settings, null, 2) + "\n";
+  if (next === settingsRaw) {
+    log(`[ok] statusLine -> ${command} (settings.json unchanged, no backup)`);
+    return;
+  }
+  if (settingsRaw !== null) {
+    const backup = settingsPath + ".backup." + stamp;
+    copyFileSync(settingsPath, backup); // the original bytes and mode
+    log("[ok] Backed up settings.json -> " + backup);
+  }
+  writeFileSync(settingsPath, next);
   log("[ok] statusLine -> " + command);
+}
+
+// 5. Render check: run the installed formatter once with no input, as the statusLine command does,
+//    with `node` from PATH. With no input OMC prints its diagnostic, whose first line names the version
+//    that loaded ("[OMC] HUD v5.7.4 | preset: full"), and uses no network. Reported only: the install
+//    is done either way. The 25s limit outwaits the formatter, which gives up on its own within 20s
+//    and then ends its fallback child; killing it sooner would leave that child running.
+//    APPLY_HUD_CHECK_TIMEOUT_MS shortens the limit for tests.
+const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 25000;
+const BLAME =
+  "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
+const clip = (s, n = 200) => String(s).slice(0, n);
+// No input, and the config folder as working folder: OMC's loader looks in the working folder's
+// node_modules and runs git from it, and Windows looks there first for a bare program name, so the
+// folder the installer was started in (a project, say) must not be it.
+const RUN_OPTS = { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: true, cwd: CONFIG_DIR };
+
+// node as the statusLine shell finds it, but only in PATH folders given as absolute paths: spawning the
+// bare name would on Windows try the working folder first, where a project's own node.exe could run.
+function findNode(pathEnv) {
+  const name = process.platform === "win32" ? "node.exe" : "node";
+  for (const entry of (pathEnv || "").split(delimiter)) {
+    const dir = entry.replace(/^"(.*)"$/, "$1");
+    if (!dir || !isAbsolute(dir)) continue;
+    try {
+      if (statSync(join(dir, name)).isFile()) return join(dir, name);
+    } catch {
+      /* not in this folder */
+    }
+  }
+  return null;
+}
+
+function omcVersion(root) {
+  if (!root) return null;
+  try {
+    const v = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// Why an OMC version does not load: its HUD's own error when run directly.
+function loadReason(node, root) {
+  const hud = join(root, "dist", "hud", "index.js");
+  if (!existsSync(hud)) return "no dist/hud/index.js";
+  const r = spawnSync(node, [hud], RUN_OPTS);
+  const line = /^\w*Error\b.*$/m.exec(r.stderr || "");
+  return line ? clip(line[0]) : "";
+}
+
+// What the formatter printed, as report lines.
+function judgeRender(out, node) {
+  const banner = /^\[OMC\] HUD v(\S+) \| preset: /m.exec(out);
+  if (banner) {
+    const installed = omcVersion(pluginRoot);
+    if (!installed || installed === banner[1]) return [`[ok] Render check: the statusline loads OMC ${banner[1]}.`];
+    const why = loadReason(node, pluginRoot);
+    const line = `[!!] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}; ${installed} does not load`;
+    return [`${line}${why ? ` (${why})` : ""}.`, BLAME];
+  }
+  // OMC's line ends with the reason, after a path that can be long: keep it whole within reason.
+  const failed = /^\[OMC HUD\] .*$/m.exec(out);
+  if (failed) return [`[!!] Render check: OMC's HUD does not load: ${clip(failed[0], 1000)}`, BLAME];
+  return [`[..] Render check: unrecognized output: ${clip(out.split("\n")[0])}`];
+}
+
+function renderReport() {
+  const node = findNode(process.env.PATH);
+  if (!node) return ['[!!] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show.'];
+  const r = spawnSync(node, [wrapperDst], RUN_OPTS);
+  if (r.error && r.error.code === "ETIMEDOUT") return [`[!!] Render check: the statusline gave no answer in ${CHECK_MS / 1000}s.`];
+  if (r.error) throw r.error;
+  if (r.status !== 0) {
+    const err = (r.stderr || "").trim().split("\n")[0];
+    return [`[!!] Render check: the statusline command failed (exit ${r.status ?? r.signal})${err ? `: ${clip(err)}` : ""}`];
+  }
+  return judgeRender((r.stdout || "").replace(/\x1b\[[0-9;]*m/g, ""), node);
+}
+
+function renderCheck() {
+  try {
+    for (const line of renderReport()) log(line);
+  } catch (e) {
+    log(`[..] Render check: skipped (${e.code || e.message})`);
+  }
 }
 
 try {
@@ -226,9 +364,10 @@ try {
   pointStatusLine();
 } catch (e) {
   log(`[x] Stopped partway (${e.code || e.message}); some files may have changed.`);
-  log(`    A replaced file's earlier version is in <file>.backup.${stamp}.`);
+  log(`    Earlier versions it replaced, apart from the loader and the tool blocks, are in <file>.backup.${stamp}.`);
   process.exit(2);
 }
 
+renderCheck();
 log("");
 log("Done. Restart Claude Code to load the new statusline.");

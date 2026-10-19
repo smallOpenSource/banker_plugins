@@ -590,11 +590,13 @@ function setupV4(text = V4) {
     'import { readFileSync } from "node:fs";\nprocess.stdout.write(readFileSync(new URL("./omc-out.txt", import.meta.url), "utf8"));\n');
   return c;
 }
-// Renders the v4 wrapper as Claude Code does, with no width and no account file.
-function renderV4(c) {
+// Renders the v4 wrapper as Claude Code does, with no width and no account file. `file` is the path
+// the statusLine command names, `transcript` the session file payload-mon sizes up (its cache stays in c.dir).
+function renderV4(c, { file = c.hudFile, transcript } = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(COLUMNS|CLAUDE_CONFIG_DIR)$/i.test(k)));
-  const r = spawnSync(process.execPath, [c.hudFile], {
-    input: JSON.stringify({ effort: { level: "high" } }), env: { ...env, CLAUDE_CONFIG_DIR: c.dir }, encoding: "utf8", timeout: 30000,
+  const input = JSON.stringify({ effort: { level: "high" }, ...(transcript ? { transcript_path: transcript } : {}) });
+  const r = spawnSync(process.execPath, [file], {
+    input, env: { ...env, CLAUDE_CONFIG_DIR: c.dir, TMPDIR: c.dir, TEMP: c.dir, TMP: c.dir }, encoding: "utf8", timeout: 30000,
   });
   return r.stdout.replace(/\x1b\[[0-9;]*m/g, "");
 }
@@ -651,13 +653,30 @@ test("CRLF 로 바꾼 첨부 래퍼에도 두 블록이 들어가고 빠짐", ()
   assert.equal(payloadMon.turnOn(pmOf(c)).ok, true);
   assert.equal(turnOn(c).ok, true);
   const on = readFileSync(c.hudFile, "utf8");
-  // This block keeps the wrapper's CRLF; payload-mon's goes in with LF, which node runs all the same.
+  // Both blocks keep the wrapper's CRLF.
   assert.match(on, /\/\/ >>> claude-update-last >>>\r\n/);
+  assert.match(on, /\/\/ >>> payload-mon >>>\r\n/);
+  assert.doesNotMatch(on, /(^|[^\r])\n/);
   assert.equal(markers(on), 1);
   assert.equal(renderV4(c).split("\n")[0], V4_LINE);
   assert.equal(turnOff(c).ok, true);
   assert.equal(payloadMon.turnOff(pmOf(c)).ok, true);
   assert.equal(readFileSync(c.hudFile, "utf8"), crlf);
+});
+
+test("래퍼 파일만 링크해도 첨부 래퍼 v4 가 PL 칸을 그림", posixOnly, () => {
+  // The real wrapper (with the omc-hud.mjs beside it) stays in c.dir; statusLine names a link elsewhere.
+  const c = setupV4();
+  const link = join(c.dir, "dotfiles-link", "omc-hud-custom.mjs");
+  mkdirSync(dirname(link));
+  symlinkSync(c.hudFile, link);
+  const res = payloadMon.turnOn({ ...pmOf(c), hudFile: link });
+  assert.equal(res.ok, true, res.message);
+  const transcript = join(c.dir, "session.jsonl");
+  writeFileSync(transcript, JSON.stringify({ type: "user", message: { role: "user", content: "x".repeat(9 * 1024 * 1024) } }) + "\n");
+  const first = renderV4(c, { file: link, transcript }).split("\n")[0];
+  assert.match(first, /\|PL:9\.0M\|/);
+  assert.doesNotMatch(first, /payload:/);
 });
 
 test("CLAUDE_CONFIG_DIR 가 따옴표 안 ~/x 여도 홈 아래 래퍼를 씀", () => {

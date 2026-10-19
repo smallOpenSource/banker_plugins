@@ -180,7 +180,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `setup-omc` | oh-my-claudecode(OMC) 설치·갱신 (Codex는 OMX) |
 | `setup-harness-factory` | revfactory/harness 팀 아키텍처 팩토리 설치·구성·사용안내 (Codex=meta-harness) |
 | `setup-playwright` | Playwright + headless 브라우저 (RHEL8/Rocky8·non-root·no-conda 폴백) |
-| `setup-omc-hud` | omc_hud 상태표시줄(래퍼 v4). 스킬에 든 파일로 오프라인 설치, 모든 OS 같은 명령 |
+| `setup-omc-hud` | omc_hud 상태표시줄(래퍼 v4). 스킬에 든 파일로 오프라인 설치, 모든 OS 같은 명령, 설치 직후 렌더 확인 |
 | `setup-insane-search` | insane-search 플러그인 설치 (Claude·Codex) |
 | `setup-stitch` | Stitch 디자인 MCP 프록시 등록(RockyLinux8 proxy) |
 | `docs-setup` | arch-diagram·pdf-vision-extract 의존성(pptx·pymupdf·plantuml) 설치 |
@@ -247,7 +247,7 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine`(`settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex는 OMX `hud`) |
+| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex는 OMX `hud`) |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
