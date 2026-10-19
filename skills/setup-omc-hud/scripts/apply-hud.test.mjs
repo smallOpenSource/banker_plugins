@@ -30,24 +30,25 @@ const asset = (name) => readFileSync(join(ASSETS, name));
 
 // The first line of OMC's diagnostic for a run with no input, which names the version that loaded.
 const banner = (v) => `console.log("[OMC] HUD v${v} | preset: full");\n`;
-// A fake OMC version folder: the loader template says which version it came from. `template` and
-// `configDir` leave out either file the installer copies; `mode` sets both files' mode bits (POSIX).
+// A fake OMC version folder: the loader template says which version it came from. `template: false` and
+// `configDir: false` leave out either file the installer copies; `mode` sets the files' mode bits (POSIX).
 // For the render check: `loader` replaces the template's text (the installed hud/omc-hud.mjs runs it),
-// `pkg` writes the package.json OMC carries, `dist` the dist/hud/index.js its loader imports.
-function fakeOmc(dir, version, { template = true, configDir = true, mode, loader, pkg = false, dist } = {}) {
+// `pkg: true` writes the package.json OMC carries, `dist` the dist/hud/index.js its loader imports.
+function omcFiles(dir, version, o) {
   const lib = join(dir, "scripts", "lib");
-  mkdirSync(lib, { recursive: true });
-  const files = [];
-  if (template) files.push([join(lib, "hud-wrapper-template.txt"), loader ?? `// loader ${version}\n${banner(version)}`]);
-  if (configDir) files.push([join(lib, "config-dir.mjs"), "export const getClaudeConfigDir = () => '';\n"]);
-  if (pkg) files.push([join(dir, "package.json"), JSON.stringify({ version }) + "\n"]);
-  if (dist !== undefined) {
-    mkdirSync(join(dir, "dist", "hud"), { recursive: true });
-    files.push([join(dir, "dist", "hud", "index.js"), dist]);
-  }
-  for (const [file, text] of files) {
+  return [
+    [o.template !== false, join(lib, "hud-wrapper-template.txt"), o.loader ?? `// loader ${version}\n${banner(version)}`],
+    [o.configDir !== false, join(lib, "config-dir.mjs"), "export const getClaudeConfigDir = () => '';\n"],
+    [o.pkg === true, join(dir, "package.json"), JSON.stringify({ version }) + "\n"],
+    [o.dist !== undefined, join(dir, "dist", "hud", "index.js"), o.dist],
+  ].filter(([wanted]) => wanted);
+}
+function fakeOmc(dir, version, o = {}) {
+  mkdirSync(join(dir, "scripts", "lib"), { recursive: true });
+  for (const [, file, text] of omcFiles(dir, version, o)) {
+    mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, text);
-    if (mode && POSIX) chmodSync(file, mode);
+    if (o.mode && POSIX) chmodSync(file, o.mode);
   }
 }
 const omcCache = (cfg) => join(cfg, "plugins", "cache", "omc", "oh-my-claudecode");
