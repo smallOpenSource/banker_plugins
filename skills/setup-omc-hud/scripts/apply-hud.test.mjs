@@ -435,6 +435,57 @@ test("렌더 확인: 상태표시줄이 Node 오류를 내면 [!!] 와 Error 줄
   );
 });
 
+test("렌더 확인: OMC 가 입력 없이 아무것도 내지 않으면 [..] 로 알리고 OMC 탓으로 단정하지 않음", () => {
+  const { out } = renderWith('console.log("[OMC HUD] no output");\n');
+  assert.match(out, /\[\.\.\] Render check: OMC printed nothing with no input, so this check cannot tell whether the statusline draws\./);
+  assert.doesNotMatch(out, /OMC's install is at fault/);
+});
+
+test("렌더 확인: 판이 다르고 설치한 판이 오류 없이 돌면 [..] 로 판만 알림", () => {
+  const omc = {
+    "5.7.4": { pkg: true, loader: banner("5.7.4") },
+    "5.7.5": { pkg: true, loader: banner("5.7.4"), dist: 'console.log("ok");\n' },
+  };
+  const r = install({ cfg: fresh(), versions: ["5.7.4", "5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[\.\.\] Render check: the statusline loads OMC 5\.7\.4, not the installed 5\.7\.5\./);
+  assert.doesNotMatch(r.out, /does not load|OMC's install is at fault/);
+});
+
+test("렌더 확인은 PATH 앞쪽의 실행할 수 없는 node 를 건너뜀", posixOnly, () => {
+  const dir = fresh("noexec");
+  writeFileSync(join(dir, "node"), "#!/bin/sh\n");
+  chmodSync(join(dir, "node"), 0o644);
+  const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}${dirname(process.execPath)}` });
+  assert.match(out, /\[ok\] Render check/);
+  assert.doesNotMatch(out, /skipped/);
+});
+
+test("렌더 확인: node.cmd 만 있으면 [..] 로 Git Bash 가 못 돌린다고 알림", { skip: POSIX && "Windows only" }, () => {
+  const dir = fresh("cmd");
+  writeFileSync(join(dir, "node.cmd"), `@"${process.execPath}" %*\r\n`);
+  const sys = join(process.env.SystemRoot || "C:\\Windows", "System32");
+  const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}${sys}` });
+  assert.match(out, /\[\.\.\] Render check: skipped; PATH has node\.cmd but no node\.exe/);
+});
+
+test("렌더 확인 출력의 제어 글자는 ? 로 바뀜", () => {
+  const esc = String.fromCharCode(27);
+  const bel = String.fromCharCode(7);
+  const { out } = renderWith(`console.log(${JSON.stringify(`[OMC HUD] HUD import failed: ${esc}]0;t${bel}x`)});\n`);
+  assert.match(out, /Render check: OMC's HUD does not load: \[OMC HUD\] HUD import failed: \?\]0;t\?x/);
+  assert.ok(!out.includes(esc) && !out.includes(bel));
+});
+
+test("렌더 확인 정화는 한글 경로를 그대로 둠", () => {
+  const cfg = join(fresh(), "claude cfg 한글");
+  mkdirSync(cfg, { recursive: true });
+  const line = `[OMC HUD] HUD import failed from ${slash(cfg)}/x: Cannot find package 'zod'`;
+  const r = install({ cfg, env: withNode(), omc: { "5.7.4": { pkg: true, loader: `console.log(${JSON.stringify(line)});\n` } } });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.out.includes(`OMC's HUD does not load: ${line}`), r.out);
+});
+
 test("렌더 확인: 상태표시줄 명령이 실패하면 stderr 의 Error 줄을 보임", () => {
   const loader = 'process.stderr.write("node:internal/x:1\\n\\nError: boom\\n");\nprocess.exit(3);\n';
   assert.match(renderWith(loader).out, /failed \(exit 3\): Error: boom/);

@@ -280,7 +280,10 @@ function pointStatusLine() {
 const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 25000;
 const BLAME =
   "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
-const clip = (s, n = 200) => String(s).slice(0, n);
+// Characters that could act on a terminal or pass for a line of their own are shown as "?", as
+// omc-patch.mjs (UNSAFE_CH) shows file values in output an agent reads.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
+const clip = (s, n = 200) => String(s).replace(UNSAFE, "?").slice(0, n);
 // No input, and the config folder as working folder: OMC's loader looks in the working folder's
 // node_modules and runs git from it, and Windows looks there first for a bare program name, so the
 // folder the installer was started in (a project, say) must not be it.
@@ -288,19 +291,30 @@ const RUN_OPTS = { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: 
 
 // node as the statusLine shell finds it, but only in PATH folders given as absolute paths: spawning the
 // bare name would on Windows try the working folder first, where a project's own node.exe could run.
-function findNode(pathEnv) {
-  const name = process.platform === "win32" ? "node.exe" : "node";
+// Like the shell, it passes over a file it may not run.
+function findNode(pathEnv, name = process.platform === "win32" ? "node.exe" : "node") {
   for (const entry of (pathEnv || "").split(delimiter)) {
     const dir = entry.replace(/^"(.*)"$/, "$1");
     if (!dir || !isAbsolute(dir)) continue;
+    const file = join(dir, name);
     try {
-      if (statSync(join(dir, name)).isFile()) return join(dir, name);
+      if (statSync(file).isFile()) {
+        accessSync(file, constants.X_OK);
+        return file;
+      }
     } catch {
-      /* not in this folder */
+      /* not in this folder, or not runnable */
     }
   }
   return null;
 }
+
+const NO_NODE = '[!!] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show.';
+// Claude Code runs statusLine with Git Bash when it finds it, else with PowerShell. Of the two only
+// PowerShell runs node.cmd for "node", and this check cannot tell which it will be, so it does not run.
+const NODE_CMD_ONLY =
+  '[..] Render check: skipped; PATH has node.cmd but no node.exe, and Git Bash, which Claude Code runs statusLine with when it finds it, does not run node.cmd as "node".';
+const noNodeLine = (pathEnv) => (process.platform === "win32" && findNode(pathEnv, "node.cmd") ? NODE_CMD_ONLY : NO_NODE);
 
 function omcVersion(root) {
   if (!root) return null;
@@ -324,6 +338,8 @@ function loadReason(node, root) {
   return line ? clip(line) : "";
 }
 
+const NO_OUTPUT = "[..] Render check: OMC printed nothing with no input, so this check cannot tell whether the statusline draws.";
+
 // What the formatter printed, as report lines.
 function judgeRender(out, node) {
   const banner = /^\[OMC\] HUD v(\S+) \| preset: /m.exec(out);
@@ -331,9 +347,12 @@ function judgeRender(out, node) {
     const installed = omcVersion(pluginRoot);
     if (!installed || installed === banner[1]) return [`[ok] Render check: the statusline loads OMC ${banner[1]}.`];
     const why = loadReason(node, pluginRoot);
-    const line = `[!!] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}; ${installed} does not load`;
-    return [`${line}${why ? ` (${why})` : ""}.`, BLAME];
+    // Without an error from the installed version, all this check saw is which version drew.
+    if (!why) return [`[..] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}.`];
+    return [`[!!] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}; ${installed} does not load (${why}).`, BLAME];
   }
+  // The formatter says this when OMC printed nothing; with no input that alone does not say it cannot draw.
+  if (/^\[OMC HUD\] no output$/m.test(out)) return [NO_OUTPUT];
   // OMC's line ends with the reason, after a path that can be long: keep it whole within reason.
   const failed = /^\[OMC HUD\] .*$/m.exec(out);
   if (failed) return [`[!!] Render check: OMC's HUD does not load: ${clip(failed[0], 1000)}`, BLAME];
@@ -352,7 +371,7 @@ function failedLine(r) {
 
 function renderReport() {
   const node = findNode(process.env.PATH);
-  if (!node) return ['[!!] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show.'];
+  if (!node) return [noNodeLine(process.env.PATH)];
   const r = spawnSync(node, [wrapperDst], RUN_OPTS);
   if (r.error && r.error.code === "ETIMEDOUT") return [`[!!] Render check: the statusline gave no answer in ${CHECK_MS / 1000}s.`];
   if (r.error) throw r.error;

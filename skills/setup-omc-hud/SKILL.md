@@ -136,4 +136,4 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 - 래퍼, HUD 설정, 모듈 사본은 플러그인 밖(`<설정 폴더>/hud/`, `<설정 폴더>/.omc/`)에 있다. 플러그인을 지워도 상태표시줄은 남는다.
 - OMC 를 지울 때는 statusLine 도 지운다. OMC 로더는 플러그인을 못 찾으면 작업 폴더의 `node_modules` 에서 OMC HUD 를 찾아 불러오기 때문이다.
 - 설치 끝의 렌더 확인은 래퍼를 입력 없이 한 번 돌려, OMC 진단의 첫 줄(`[OMC] HUD v<판> | preset: <이름>`)로 OMC 를 불러왔는지와 그린 판을 본다. 네트워크는 쓰지 않는다.
-- 렌더 확인이 OMC 를 불러오지 못한다거나 옛 판이 그린다고 하면 OMC 쪽 문제다. `/oh-my-claudecode:omc-setup` 은 고치면서 statusLine 을 OMC 명령으로 되돌리므로, 쓴 뒤에는 이 스킬을 다시 실행한다. omc-patch 를 쓰는 PC 는 omc-patch 도 다시 적용한다.
+- 렌더 확인이 `[!!]` 로 OMC 를 불러오지 못한다거나 옛 판이 그린다고 하면 OMC 쪽 문제다. `[..]` 는 이 확인으로 알 수 없었다는 뜻이다(OMC 가 입력 없이 아무것도 내지 않음, 판만 다르고 이유를 못 찾음, Windows 에 `node.cmd` 만 있음). `/oh-my-claudecode:omc-setup` 은 고치면서 statusLine 을 OMC 명령으로 되돌리므로, 쓴 뒤에는 이 스킬을 다시 실행한다. omc-patch 를 쓰는 PC 는 omc-patch 도 다시 적용한다.
