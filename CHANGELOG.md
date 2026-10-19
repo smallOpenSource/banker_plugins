@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.0] - 2026-10-19
 
 ### Changed
 - `setup-omc-hud` 가 상태표시줄 파일을 내려받지 않고 스킬에 든 파일(`skills/setup-omc-hud/assets/`)로 설치한다. 모든 OS 에서 `node assets/apply-hud.mjs` 한 명령이고, 네트워크가 없어도 끝까지 된다. 예전에는 GitHub 의 omc_hud 저장소에서 OS 별 스크립트를 받아, 원본이 바뀌면 설치 결과도 말없이 바뀌었다.

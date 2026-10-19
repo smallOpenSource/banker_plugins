@@ -161,5 +161,9 @@
     "banker:anti-drm",
     "banker:lineage",
     "banker:tone-compact"
+  ],
+  "0.20.0": [
+    "banker:payload-mon",
+    "banker:setup-omc-hud"
   ]
 }
