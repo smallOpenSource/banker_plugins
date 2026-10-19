@@ -74,7 +74,7 @@ node "<이 스킬 디렉터리 절대경로>\assets\apply-hud.mjs"
 - `[ok] statusLine -> node "<설정 폴더>/hud/omc-hud-custom.mjs"` 줄을 확인한다.
 - 기존 statusLine 이 다른 명령이었으면 `[..] statusLine ran ...` 줄이 나온다. 보고에 그대로 넣는다.
 - 종료 코드 1 이면 출력의 `[x]` 줄을 그대로 보고하고 멈춘다. 이때 바뀐 파일은 없다.
-  - `settings.json` 이 JSON 객체가 아니면 사용자가 고친 뒤 다시 실행한다.
+  - `settings.json` 이 JSON 문법에 맞지 않거나(주석, 끝 쉼표 포함) 객체가 아니면 사용자가 고친 뒤 다시 실행한다. 빈 파일은 Claude Code 처럼 `{}` 로 읽는다.
   - OMC 가 없으면 OMC 를 먼저 설치한다(`setup-omc` 스킬). 이 스킬은 OMC 를 설치하지 않는다.
   - 설정 폴더 경로에 셸이 해석하는 글자가 있으면 그 글자가 없는 폴더를 쓰게 안내한다.
   - 쓸 수 없는 파일이나 폴더가 있으면 권한을 고친 뒤 다시 실행한다.
@@ -113,6 +113,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 ## 함정
 
 - 다시 설치하면 래퍼와 `hud-config.json` 을 첨부 파일로 덮어쓴다. 손으로 고친 내용은 `.backup.<시각>` 에만 남는다.
+- payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 백업하지 않는다.
 - `settings.json` 의 `omcHud` 값은 `hud-config.json` 의 같은 키를 덮어쓴다. 래퍼가 기대는 아래 키를 바꾸면 칸이 달라지거나 OMC 원문이 그대로 나온다.
   - `omcLabel`, `useBars`
   - `maxWidth`, `maxOutputLines`

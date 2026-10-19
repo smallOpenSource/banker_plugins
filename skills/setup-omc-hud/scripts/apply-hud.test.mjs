@@ -62,6 +62,15 @@ function install(opts) {
 const settingsOf = (cfg) => JSON.parse(readFileSync(join(cfg, "settings.json"), "utf8"));
 const backups = (dir, name) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.startsWith(`${name}.backup.`)) : []);
 
+// The two block tools as the skill runs them after an install, on the same config folder.
+const PAYLOAD_MON = fileURLToPath(new URL("../../payload-mon/scripts/payload-mon.mjs", import.meta.url));
+const CLAUDE_UPDATE_LAST = fileURLToPath(new URL("./claude-update-last.mjs", import.meta.url));
+function turnOnTool(script, cfg, home) {
+  const env = { ...cleanEnv(), HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: cfg, PAYLOAD_MON_HUD_FILE: "", CLAUDE_UPDATE_LAST_HUD_FILE: "" };
+  const r = spawnSync(process.execPath, [script, "on"], { cwd: root, env, encoding: "utf8" });
+  assert.equal(r.status, 0, `${script}: ${r.stdout}${r.stderr}`);
+}
+
 test("공백과 한글이 든 설정 폴더에 설치하면 statusLine 이 따옴표 친 슬래시 경로", () => {
   const cfg = join(fresh(), "claude cfg 한글");
   mkdirSync(cfg, { recursive: true });
@@ -91,17 +100,51 @@ test("BOM 이 있는 settings.json 을 받아 BOM 없이 다시 씀", () => {
   assert.deepEqual([...readFileSync(join(cfg, bak)).subarray(0, 3)], [0xef, 0xbb, 0xbf]);
 });
 
+// A settings.json the installer refuses: exit 1, the reason, and no file or folder changed.
+function assertRefused(bad, want) {
+  const cfg = fresh();
+  writeFileSync(join(cfg, "settings.json"), bad);
+  const r = install({ cfg });
+  assert.equal(r.status, 1, `${bad}: ${r.out}`);
+  assert.match(r.out, want);
+  assert.ok(!existsSync(join(cfg, "hud")), `${bad}: no hud folder`);
+  assert.ok(!existsSync(join(cfg, ".omc")), `${bad}: no .omc folder`);
+  assert.equal(readFileSync(join(cfg, "settings.json"), "utf8"), bad);
+  assert.deepEqual(backups(cfg, "settings.json"), []);
+  return r;
+}
+
 test("settings.json 이 깨진 JSON, null, 배열이면 종료 1 이고 아무것도 바꾸지 않음", () => {
-  for (const bad of ["{", "null", "[]"]) {
+  assertRefused("{", /\[x\] settings\.json is not valid JSON \(line 1, column 2\); nothing changed\. Claude Code cannot read it either/);
+  assertRefused("null", /\[x\] settings\.json holds null, not a JSON object; nothing changed\. Fix it and re-run\./);
+  assertRefused("[]", /\[x\] settings\.json holds an array, not a JSON object; nothing changed/);
+});
+
+test("빈 settings.json 은 Claude Code 처럼 {} 로 읽고 statusLine 을 넣음", () => {
+  for (const empty of ["", " \n", "\uFEFF"]) {
     const cfg = fresh();
-    writeFileSync(join(cfg, "settings.json"), bad);
+    writeFileSync(join(cfg, "settings.json"), empty);
     const r = install({ cfg });
-    assert.equal(r.status, 1, `${bad}: ${r.out}`);
-    assert.match(r.out, /\[x\] Existing settings\.json is not a JSON object/);
-    assert.ok(!existsSync(join(cfg, "hud")), `${bad}: no hud folder`);
-    assert.ok(!existsSync(join(cfg, ".omc")), `${bad}: no .omc folder`);
-    assert.equal(readFileSync(join(cfg, "settings.json"), "utf8"), bad);
-    assert.deepEqual(backups(cfg, "settings.json"), []);
+    assert.equal(r.status, 0, `${JSON.stringify(empty)}: ${r.out}`);
+    assert.match(r.out, /\[\.\.\] settings\.json is empty; read as \{\} as Claude Code does/);
+    assert.equal(settingsOf(cfg).statusLine.command, `node "${slash(cfg)}/hud/omc-hud-custom.mjs"`);
+    const kept = backups(cfg, "settings.json");
+    assert.equal(kept.length, 1, `${JSON.stringify(empty)}: one backup`);
+    assert.equal(readFileSync(join(cfg, kept[0]), "utf8"), empty);
+  }
+});
+
+test("주석이나 끝 쉼표가 든 settings.json 은 위치와 이유를 알리고 파일 내용은 내보내지 않음", () => {
+  const why = "nothing changed\\. Claude Code cannot read it either: comments and trailing commas are not allowed\\. Fix it and re-run\\.";
+  const cases = [
+    ['{\n  // keep\n  "env": {}\n}', new RegExp(`\\[x\\] settings\\.json is not valid JSON \\(line 2, column 3\\); ${why}`)],
+    ['{"theme":"x",}', /not valid JSON \(line 1, column 14\); nothing changed/],
+    // Node's own message quotes the file around this error ('..."nv":{"K":tok-1234567"...') and has no position.
+    ['{"env":{"K":tok-1234567}}', new RegExp(`\\[x\\] settings\\.json is not valid JSON; ${why}`)],
+  ];
+  for (const [bad, want] of cases) {
+    const r = assertRefused(bad, want);
+    assert.doesNotMatch(r.out, /keep|"theme"|tok-1234567|"K"/, "no part of the file reaches the output");
   }
 });
 
@@ -145,6 +188,38 @@ test("다시 설치할 때 바뀐 래퍼만 백업", () => {
   assert.deepEqual(backups(join(cfg, ".omc"), "hud-config.json"), []);
   assert.equal(install({ cfg, versions: [] }).status, 0);
   assert.equal(backups(join(cfg, "hud"), "omc-hud-custom.mjs").length, 1, "unchanged wrapper is not backed up");
+});
+
+test("payload-mon 블록만 다른 래퍼와 바뀌지 않은 settings.json 은 다시 설치해도 백업하지 않음", () => {
+  const cfg = fresh();
+  const first = install({ cfg });
+  assert.equal(first.status, 0, first.out);
+  turnOnTool(PAYLOAD_MON, cfg, first.home);
+  turnOnTool(CLAUDE_UPDATE_LAST, cfg, first.home);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  const text = readFileSync(wrapper, "utf8");
+  assert.ok(text.includes("// >>> payload-mon >>>") && text.includes("// >>> claude-update-last >>>"), "both blocks went in");
+  const again = install({ cfg, home: first.home, versions: [] });
+  assert.equal(again.status, 0, again.out);
+  assert.deepEqual(backups(join(cfg, "hud"), "omc-hud-custom.mjs"), []);
+  assert.deepEqual(backups(cfg, "settings.json"), []);
+  assert.match(again.out, /\[ok\] statusLine -> node ".*" \(settings\.json unchanged, no backup\)/);
+  assert.ok(readFileSync(wrapper).equals(asset("omc-hud-custom.mjs")));
+});
+
+test("블록이 있어도 손으로 고친 래퍼는 백업함", () => {
+  const cfg = fresh();
+  const first = install({ cfg });
+  assert.equal(first.status, 0, first.out);
+  turnOnTool(PAYLOAD_MON, cfg, first.home);
+  const wrapper = join(cfg, "hud", "omc-hud-custom.mjs");
+  const edited = readFileSync(wrapper, "utf8") + "// edited by hand\n";
+  writeFileSync(wrapper, edited);
+  const again = install({ cfg, home: first.home, versions: [] });
+  assert.equal(again.status, 0, again.out);
+  const kept = backups(join(cfg, "hud"), "omc-hud-custom.mjs");
+  assert.equal(kept.length, 1, again.out);
+  assert.equal(readFileSync(join(cfg, "hud", kept[0]), "utf8"), edited);
 });
 
 test("버전 폴더는 숫자로 비교하고 정식판을 pre-release 보다 위로", () => {

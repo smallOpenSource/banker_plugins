@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `setup-omc-hud` 를 다시 설치할 때마다 래퍼와 `settings.json` 의 백업이 하나씩 쌓이던 것. payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 이제 백업하지 않는다.
+- `setup-omc-hud` 설치 스크립트가 빈 `settings.json` 을 "JSON 객체가 아님" 으로 거부하던 것. Claude Code 처럼 `{}` 로 읽는다.
+- `setup-omc-hud` 설치 스크립트가 주석이나 끝 쉼표가 든 `settings.json` 을 거부할 때 이유를 말하지 않던 것. 이제 오류 위치와, Claude Code 도 이 파일을 읽지 못한다는 것을 알린다. 파일 내용은 출력에 넣지 않는다.
+
 ## [0.20.1] - 2026-10-19
 
 ### Changed
