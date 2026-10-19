@@ -72,6 +72,7 @@ node "<이 스킬 디렉터리 절대경로>\assets\apply-hud.mjs"
 ```
 
 - `[ok] statusLine -> node "<설정 폴더>/hud/omc-hud-custom.mjs"` 줄을 확인한다.
+- `Render check` 줄을 확인한다. `[ok]` 면 정상이다. `[!!]` 나 `[..]` 면 그 줄을 그대로 보고한다. 이때도 설치는 끝났다(종료 0).
 - 기존 statusLine 이 다른 명령이었으면 `[..] statusLine ran ...` 줄이 나온다. 보고에 그대로 넣는다.
 - 종료 코드 1 이면 출력의 `[x]` 줄을 그대로 보고하고 멈춘다. 이때 바뀐 파일은 없다.
   - `settings.json` 이 JSON 문법에 맞지 않거나(주석, 끝 쉼표 포함) 객체가 아니면 사용자가 고친 뒤 다시 실행한다. 빈 파일은 Claude Code 처럼 `{}` 로 읽는다.
@@ -95,6 +96,7 @@ node "<이 스킬 디렉터리 절대경로>/../payload-mon/scripts/payload-mon.
 ## 3. 보고
 
 - 1단계 출력의 statusLine 줄과 백업 경로
+- 1단계의 `Render check` 줄
 - 2단계 결과
 - statusLine 이 바뀌었으면 Claude Code 재시작 안내
 
@@ -133,3 +135,5 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 - 설치는 네트워크를 쓰지 않는다. 다만 OMC 가 렌더할 때 네트워크로 얻는 정보(새 Claude Code 판 같은)는 오프라인에서 빠질 수 있다.
 - 래퍼, HUD 설정, 모듈 사본은 플러그인 밖(`<설정 폴더>/hud/`, `<설정 폴더>/.omc/`)에 있다. 플러그인을 지워도 상태표시줄은 남는다.
 - OMC 를 지울 때는 statusLine 도 지운다. OMC 로더는 플러그인을 못 찾으면 작업 폴더의 `node_modules` 에서 OMC HUD 를 찾아 불러오기 때문이다.
+- 설치 끝의 렌더 확인은 래퍼를 입력 없이 한 번 돌려, OMC 진단의 첫 줄(`[OMC] HUD v<판> | preset: <이름>`)로 OMC 를 불러왔는지와 그린 판을 본다. 네트워크는 쓰지 않는다.
+- 렌더 확인이 OMC 를 불러오지 못한다거나 옛 판이 그린다고 하면 OMC 쪽 문제다. `/oh-my-claudecode:omc-setup` 은 고치면서 statusLine 을 OMC 명령으로 되돌리므로, 쓴 뒤에는 이 스킬을 다시 실행한다. omc-patch 를 쓰는 PC 는 omc-patch 도 다시 적용한다.

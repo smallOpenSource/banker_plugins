@@ -26,8 +26,12 @@
  * write, an OMC folder without both loader files, a relative OMC_PLUGIN_ROOT.
  * Backups keep the original bytes and mode; the files it writes are 0644 and new
  * folders 0755; the other statusLine fields (padding, ...) stay.
+ * At the end it runs the installed formatter once with no input and reports
+ * whether OMC's HUD loads and which version draws (the render check); that never
+ * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 15s limit.
  * Exit 1 means nothing changed; exit 2 means an unexpected error stopped it partway.
  */
+import { spawnSync } from "node:child_process";
 import {
   accessSync,
   chmodSync,
@@ -37,10 +41,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = dirname(fileURLToPath(import.meta.url));
@@ -265,6 +270,86 @@ function pointStatusLine() {
   log("[ok] statusLine -> " + command);
 }
 
+// 5. Render check: run the installed formatter once with no input, as the statusLine command does,
+//    with `node` from PATH. With no input OMC prints its diagnostic, whose first line names the version
+//    that loaded ("[OMC] HUD v5.7.4 | preset: full"), and uses no network. Reported only: the install
+//    is done either way. APPLY_HUD_CHECK_TIMEOUT_MS shortens the 15s limit for tests.
+const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 15000;
+const BLAME =
+  "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
+const clip = (s) => String(s).slice(0, 200);
+
+// node as the statusLine shell finds it, but only in PATH folders given as absolute paths: spawning the
+// bare name would on Windows try the working folder first, where a project's own node.exe could run.
+function findNode(pathEnv) {
+  const name = process.platform === "win32" ? "node.exe" : "node";
+  for (const entry of (pathEnv || "").split(delimiter)) {
+    const dir = entry.replace(/^"(.*)"$/, "$1");
+    if (!dir || !isAbsolute(dir)) continue;
+    try {
+      if (statSync(join(dir, name)).isFile()) return join(dir, name);
+    } catch {
+      /* not in this folder */
+    }
+  }
+  return null;
+}
+
+function omcVersion(root) {
+  if (!root) return null;
+  try {
+    const v = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// Why an OMC version does not load: its HUD's own error when run directly.
+function loadReason(node, root) {
+  const hud = join(root, "dist", "hud", "index.js");
+  if (!existsSync(hud)) return "no dist/hud/index.js";
+  const r = spawnSync(node, [hud], { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: true });
+  const line = /^\w*Error\b.*$/m.exec(r.stderr || "");
+  return line ? clip(line[0]) : "";
+}
+
+// What the formatter printed, as report lines.
+function judgeRender(out, node) {
+  const banner = /^\[OMC\] HUD v(\S+) \| preset: /m.exec(out);
+  if (banner) {
+    const installed = omcVersion(pluginRoot);
+    if (!installed || installed === banner[1]) return [`[ok] Render check: the statusline loads OMC ${banner[1]}.`];
+    const why = loadReason(node, pluginRoot);
+    const line = `[!!] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}; ${installed} does not load`;
+    return [`${line}${why ? ` (${why})` : ""}.`, BLAME];
+  }
+  const failed = /^\[OMC HUD\] .*$/m.exec(out);
+  if (failed) return [`[!!] Render check: OMC's HUD does not load: ${clip(failed[0])}`, BLAME];
+  return [`[..] Render check: unrecognized output: ${clip(out.split("\n")[0])}`];
+}
+
+function renderReport() {
+  const node = findNode(process.env.PATH);
+  if (!node) return ['[!!] Render check: no "node" on PATH; the statusLine command runs "node", so the statusline will not show.'];
+  const r = spawnSync(node, [wrapperDst], { input: "", encoding: "utf8", timeout: CHECK_MS, windowsHide: true });
+  if (r.error && r.error.code === "ETIMEDOUT") return [`[!!] Render check: the statusline gave no answer in ${CHECK_MS / 1000}s.`];
+  if (r.error) throw r.error;
+  if (r.status !== 0) {
+    const err = (r.stderr || "").trim().split("\n")[0];
+    return [`[!!] Render check: the statusline command failed (exit ${r.status ?? r.signal})${err ? `: ${clip(err)}` : ""}`];
+  }
+  return judgeRender((r.stdout || "").replace(/\x1b\[[0-9;]*m/g, ""), node);
+}
+
+function renderCheck() {
+  try {
+    for (const line of renderReport()) log(line);
+  } catch (e) {
+    log(`[..] Render check: skipped (${e.code || e.message})`);
+  }
+}
+
 try {
   installLoader();
   installTemplates();
@@ -275,5 +360,6 @@ try {
   process.exit(2);
 }
 
+renderCheck();
 log("");
 log("Done. Restart Claude Code to load the new statusline.");
