@@ -607,6 +607,24 @@ test("status on a v4 wrapper says where the estimate shows only while it is on",
   assert.doesNotMatch(on, /8MB부터/);
 });
 
+test("status names no display spot while the module copy is missing, v4 or older wrapper", () => {
+  for (const hud of [HUD_V4, HUD]) {
+    const { c, opts } = withSession(hud);
+    turnOn(c);
+    rmSync(copyOf(c));
+    const msg = status(opts).message;
+    assert.match(msg, /모듈 사본이 없어 표시되지 않음/);
+    assert.match(msg, /현재 세션: 1\.0MB \/ 32MB \(3%\)$/m);
+    assert.doesNotMatch(msg, /PL 칸|부터 표시/);
+  }
+});
+
+test("on keeps the older guidance for a wrapper that only mentions PL in a comment", () => {
+  const res = turnOn(setup(HUD_INPROC.replace("const colorRate", "// PL: is what the newer wrapper shows\nconst colorRate")));
+  assert.equal(res.ok, true, res.message);
+  assert.match(res.message, /8MB 이상이면 ctx 옆에 payload가 표시됩니다/);
+});
+
 // The CLI as Claude runs it, kept off the real config folder and the live session.
 const cliEnv = (c, extra = {}) => ({
   ...process.env,

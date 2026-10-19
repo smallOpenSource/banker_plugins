@@ -5,6 +5,9 @@
 ### Added
 - `setup-omc-hud` 설치 스크립트가 끝에 상태표시줄 래퍼를 입력 없이 한 번 돌려, OMC 를 불러오는지와 어느 판이 그리는지 알린다(`Render check`). 새 OMC 판이 불러오기에 실패해 옛 판으로 넘어가면 그 이유와 함께 알린다. 네트워크는 쓰지 않고, 설치 결과(종료 코드)는 바꾸지 않는다.
 
+### Changed
+- 유지보수자용: payload-mon `status` 의 모듈 사본 없음 분기와 래퍼 v4 판별 꼴(주석의 `PL:` 글자)을 시험하고, 난수 대체 시험의 주석을 바로잡는다.
+
 ### Fixed
 - `setup-omc-hud` 를 다시 설치할 때마다 래퍼와 `settings.json` 의 백업이 하나씩 쌓이던 것. payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 이제 백업하지 않는다.
 - `setup-omc-hud` 설치 스크립트가 빈 `settings.json` 을 "JSON 객체가 아님" 으로 거부하던 것. Claude Code 처럼 `{}` 로 읽는다.

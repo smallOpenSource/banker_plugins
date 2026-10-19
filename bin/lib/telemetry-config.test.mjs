@@ -529,7 +529,7 @@ test('randomHex: 16진 8자를 내고 부를 때마다 다르다', () => {
 test('randomHex: crypto 를 불러오지 못하는 Node 에서는 Math.random 으로 16진 8자를 낸다', () => {
   const mark = path.join(tmpDir, 'crypto-mark');
   // Math.random 을 고정해 정확한 출력을 본다: 0.5 * 2^32 = 0x80000000, 0.001 * 2^32 = 4294967.296 에서 0x418937(앞을 0 으로 채움).
-  // 상수, 0 채움 빠짐, 16비트 난수는 꼴(16진 8자)만 보는 단언을 통과한다.
+  // 상수와 16비트 난수는 꼴(16진 8자)만 보는 단언을 통과하고, 0 채움 빠짐도 대개(두 번 불러 약 88%) 통과한다.
   const code = `import { randomHex } from ${JSON.stringify(TC_URL)};
 const seq = [0.5, 0.001]; Math.random = () => seq.shift();
 process.stdout.write(randomHex() + ' ' + randomHex());`;
