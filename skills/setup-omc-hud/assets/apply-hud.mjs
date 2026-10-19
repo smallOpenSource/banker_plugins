@@ -223,8 +223,8 @@ function splitToolBlocks(text) {
   return { body: take(rest, TOOL_BLOCKS[1]), blocks };
 }
 // The blocks as the tools write them (payload-mon.mjs placeBlock, claude-update-last.mjs blockText), with
-// LF line endings and payload-mon's import of its module copy as "<module copy>" (the URL is the tool's to
-// choose). A block that differs from both was edited by hand. When a tool's block changes, the test "payload-mon 블록만 다른 래퍼와 바뀌지 않은 settings.json 은
+// LF line endings and payload-mon's import of its module copy as "<module copy>" (where the copy sits is the
+// tool's to choose; a URL to any other file is an edit). A block that differs from both was edited by hand. When a tool's block changes, the test "payload-mon 블록만 다른 래퍼와 바뀌지 않은 settings.json 은
 // 다시 설치해도 백업하지 않음" fails until this copy follows.
 const TOOL_BLOCK_TEXTS = [
   [
@@ -267,7 +267,7 @@ const TOOL_BLOCK_TEXTS = [
   ].join("\n"),
 ];
 const toolMade = (block) =>
-  TOOL_BLOCK_TEXTS.includes(block.replace(/\r\n/g, "\n").replace(/await import\("[^"\\]*"\)/, "await <module copy>"));
+  TOOL_BLOCK_TEXTS.includes(block.replace(/\r\n/g, "\n").replace(/await import\("file:\/\/[^"\\]*\/payload-mon\/payload-size\.mjs"\)/, "await <module copy>"));
 const sameBytes = (a, b) => a.equals(b);
 // Blocks as the tools write them are no reason for a backup: `payload-mon on` puts its block back, and
 // wrapper v4 needs no claude-update-last block. A block edited by hand is one.
@@ -410,11 +410,13 @@ function judgeRender(out, node) {
   const banner = /^\[OMC\] HUD v(\S+) \| preset: /m.exec(out);
   if (banner) {
     const installed = omcVersion(pluginRoot);
-    if (!installed || installed === banner[1]) return [`[ok] Render check: the statusline loads OMC ${banner[1]}.`];
+    // Both version strings come from OMC (its output, its package.json): shown through clip like its lines.
+    const [drew, want] = [clip(banner[1], 40), clip(installed, 40)];
+    if (!installed || installed === banner[1]) return [`[ok] Render check: the statusline loads OMC ${drew}.`];
     const why = loadReason(node, pluginRoot);
     // Without an error from the installed version, all this check saw is which version drew.
-    if (!why) return [`[..] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}.`];
-    return [`[!!] Render check: the statusline loads OMC ${banner[1]}, not the installed ${installed}; ${installed} does not load (${why}).`, BLAME];
+    if (!why) return [`[..] Render check: the statusline loads OMC ${drew}, not the installed ${want}.`];
+    return [`[!!] Render check: the statusline loads OMC ${drew}, not the installed ${want}; ${want} does not load (${why}).`, BLAME];
   }
   // The formatter says this when OMC printed nothing; with no input that alone does not say it cannot draw.
   if (/^\[OMC HUD\] no output$/m.test(out)) return [NO_OUTPUT];

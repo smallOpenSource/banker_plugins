@@ -345,8 +345,10 @@ function removeBlocks(o, src) {
 // folder), and the module copy with its folder (only when nothing else is in
 // it), also the one 0.20.1 left beside a linked wrapper, but nothing through a copy folder that is a link.
 // None failing undoes off.
+// Returns the copy folders it left alone because they are links.
 function removeLeftovers(o) {
-  const copies = [...new Set([moduleCopy(o.hudFile), besideLink(o.hudFile)])].filter((copy) => !linkedFolder(copy));
+  const all = [...new Set([moduleCopy(o.hudFile), besideLink(o.hudFile)])];
+  const copies = all.filter((copy) => !linkedFolder(copy));
   for (const remove of [() => clearCache(o.cacheDir), ...copies.map((copy) => () => rmSync(copy, { force: true }))]) {
     try {
       remove();
@@ -361,14 +363,18 @@ function removeLeftovers(o) {
       /* absent, or holds something that is not ours */
     }
   }
+  return all.filter((copy) => !copies.includes(copy)).map((copy) => dirname(copy));
 }
 
 export function turnOff(opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const res = removeBlocks(o, readText(o.hudFile));
-  if (res.ok) removeLeftovers(o);
-  return res;
+  if (!res.ok) return res;
+  // A copy kept in a linked folder still feeds wrapper v4's PL segment, so off says so.
+  const kept = removeLeftovers(o);
+  return kept.length ? { ...res, message: `${res.message} ${KEPT_NOTE}: ${kept.join(", ")}` } : res;
 }
+const KEPT_NOTE = "사본 폴더가 링크라 모듈 사본은 지우지 않았습니다(래퍼 v4 의 PL 칸이 계속 보일 수 있음)";
 
 // The estimate for the session that runs this, "" if unknown, ending with where
 // it shows when `where` names it:
@@ -401,7 +407,16 @@ function stateOf(src, o) {
   // on and off both refuse this, so pointing at on would be a dead end.
   if (count(src, OPEN) !== count(src, CLOSE)) return "표시(>>> / <<<)의 짝이 맞지 않습니다 (on·off 모두 거부: HUD 재설치 또는 남은 표시 줄 정리)";
   if (blockEol(src, moduleUrl(o.hudFile)) === "") return "켜짐이 불완전하거나 오래됨 (on 으로 복구)";
-  return "켜짐" + COPY_NOTE[copyState(o)];
+  return "켜짐" + copyNote(o);
+}
+
+// What status adds about the module copy. In a copy folder that is a link, on refuses to write it, so
+// pointing at on would be a dead end.
+function copyNote(o) {
+  const state = copyState(o);
+  const copy = moduleCopy(o.hudFile);
+  if (state !== "current" && linkedFolder(copy)) return `, 단 사본 폴더가 링크라 모듈 사본을 쓰지 않음 (링크를 일반 폴더로 바꾼 뒤 on): ${dirname(copy)}`;
+  return COPY_NOTE[state];
 }
 
 // What status says about the wrapper. A wrapper it cannot read is reported, not

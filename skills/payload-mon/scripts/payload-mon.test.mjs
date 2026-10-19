@@ -865,6 +865,19 @@ test("off does not delete through a copy folder that is a link", posixOnly, () =
   const off = turnOff(c);
   assert.equal(off.ok, true, off.message);
   assert.ok(existsSync(join(outside, "payload-size.mjs")));
+  assert.match(off.message, /사본 폴더가 링크라 모듈 사본은 지우지 않았습니다/);
+});
+
+test("status names a copy folder that is a link instead of pointing at on", posixOnly, () => {
+  const c = setup(HUD_V4);
+  assert.equal(turnOn(c).ok, true);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  rmSync(join(c.dir, "payload-mon"), { recursive: true });
+  symlinkSync(outside, join(c.dir, "payload-mon"));
+  const shown = status(c).message;
+  assert.match(shown, /사본 폴더가 링크/);
+  assert.doesNotMatch(shown, /on 으로 복구/);
 });
 
 test("off on a wrapper link that leads nowhere says there is nothing to turn off", posixOnly, () => {

@@ -52,7 +52,7 @@ function omcFiles(dir, version, o) {
   return [
     [o.template !== false, join(lib, "hud-wrapper-template.txt"), o.loader ?? `// loader ${version}\n${banner(version)}`],
     [o.configDir !== false, join(lib, "config-dir.mjs"), "export const getClaudeConfigDir = () => '';\n"],
-    [o.pkg === true, join(dir, "package.json"), JSON.stringify({ version }) + "\n"],
+    [Boolean(o.pkg), join(dir, "package.json"), JSON.stringify(o.pkg === true ? { version } : o.pkg) + "\n"],
     [o.dist !== undefined, join(dir, "dist", "hud", "index.js"), o.dist],
   ].filter(([wanted]) => wanted);
 }
@@ -282,6 +282,7 @@ function editedBlock(script, open, from, to) {
 for (const [name, script, open, from, to] of [
   ["payload-mon", PAYLOAD_MON, "// >>> payload-mon >>>", "shown", "SHOWN"],
   ["claude-update-last", CLAUDE_UPDATE_LAST, "// >>> claude-update-last >>>", "goes after", "GOES AFTER"],
+  ["payload-mon 모듈 주소", PAYLOAD_MON, "// >>> payload-mon >>>", "payload-size.mjs", "payload-sizf.mjs"],
 ]) {
   test(`블록 안쪽을 손으로 고친 래퍼는 다시 설치할 때 백업함(${name})`, () => {
     const { cfg, home, edited } = editedBlock(script, open, from, to);
@@ -518,6 +519,17 @@ test("렌더 확인 출력의 제어 글자는 ? 로 바뀜", () => {
   const { out } = renderWith(`console.log(${JSON.stringify(`[OMC HUD] HUD import failed: ${esc}]0;t${bel}x`)});\n`);
   assert.match(out, /Render check: OMC's HUD does not load: \[OMC HUD\] HUD import failed: \?\]0;t\?x/);
   assert.ok(!out.includes(esc) && !out.includes(bel));
+});
+
+test("렌더 확인은 OMC 판 문자열의 제어 글자와 줄바꿈도 ? 로 바꿈", () => {
+  const esc = String.fromCharCode(27);
+  const drawn = `[OMC] HUD v5.7.4${esc}]0;t | preset: full`;
+  const omc = { "5.7.5": { pkg: { version: `5.7.5${esc}]0;x\n[ok] Render check: fake` }, loader: `console.log(${JSON.stringify(drawn)});\n` } };
+  const r = install({ cfg: fresh(), versions: ["5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(!r.out.includes(esc), r.out);
+  assert.doesNotMatch(r.out, /^\[ok\] Render check: fake/m);
+  assert.match(r.out, /the statusline loads OMC 5\.7\.4\?\]0;t, not the installed 5\.7\.5\?\]0;x\?\[ok\] Render check: fake/);
 });
 
 test("렌더 확인 정화는 한글 경로를 그대로 둠", () => {

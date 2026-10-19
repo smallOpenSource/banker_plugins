@@ -115,13 +115,13 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 ## 함정
 
 - 다시 설치하면 래퍼와 `hud-config.json` 을 첨부 파일로 덮어쓴다. 손으로 고친 내용은 `.backup.<시각>` 에만 남는다.
-- payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 백업하지 않는다.
+- 도구가 쓴 그대로의 payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 백업하지 않는다. 블록 안을 손으로 고쳤으면 그 래퍼를 백업한다.
 - `settings.json` 의 `omcHud` 값은 `hud-config.json` 의 같은 키를 덮어쓴다. 래퍼가 기대는 아래 키를 바꾸면 칸이 달라지거나 OMC 원문이 그대로 나온다.
   - `omcLabel`, `useBars`
   - `maxWidth`, `maxOutputLines`
   - `showCallCounts`, `callCountsFormat`
   - `contextBar`, `gitBranch`
-- `payload-mon off` 를 실행하면 크기 계산 모듈이 지워져 `PL:` 칸도 사라진다. 다시 보려면 `payload-mon on`.
+- `payload-mon off` 를 실행하면 크기 계산 모듈이 지워져 `PL:` 칸도 사라진다. 다시 보려면 `payload-mon on`. 사본 폴더(`hud/payload-mon/`)가 링크면 그 안을 지우지 않으므로 `PL:` 칸이 남는다.
 - v4 에서 payload-mon 블록은 모듈을 깔기 위해서만 남는다. 갱신마다 크기 추정이 두 번 돌지만 두 번째는 캐시를 쓴다.
 - 래퍼를 손으로 고칠 때 `if (f.ctx) colored.push(colorCtx(f.ctx));` 줄을 지우지 않는다. 실행상 비어 있지만 `payload-mon on` 이 이 줄 바로 뒤에 블록을 넣는다.
 - 래퍼는 statusLine 프로세스가 받은 터미널 폭(stderr, stdout 의 `columns`, 그다음 `COLUMNS`)으로 줄을 접는다. 폭을 받지 못하면 한 줄로 나오고 Claude Code 가 끝을 자른다.
