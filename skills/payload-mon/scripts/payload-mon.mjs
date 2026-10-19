@@ -26,7 +26,8 @@
  * import pointing there would go dark without a word. `on` writes the copy and
  * refreshes it when this version's module differs; `status` says when it does.
  * When the wrapper file itself is a symlink, the copy goes beside the file it
- * points at, where wrapper v4 looks.
+ * points at, where wrapper v4 looks first. A copy folder (payload-mon/) that is
+ * itself a link is neither written nor emptied through: `on` refuses it.
  *
  * The block takes the ctx line's line ending, so a CRLF wrapper stays CRLF, and
  * a block whose line endings an editor rewrote still counts as on. A wrapper
@@ -199,6 +200,16 @@ function copyState(o) {
   return source !== null && copy.equals(source) ? "current" : "stale";
 }
 
+// Whether the folder holding `file` is a link. The copy folder is this tool's, and a link there
+// would take the copy, or its removal, to wherever it points.
+function linkedFolder(file) {
+  try {
+    return lstatSync(dirname(file)).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 // Replaces file through a fresh temp file ("wx") and a rename: a link planted at
 // either name is replaced rather than written through, and a write that fails
 // leaves the old file as it was.
@@ -220,8 +231,9 @@ function writeFresh(file, data, mode) {
 // away again: mkdirSync names a folder only when it created it, and rmdir
 // leaves one that something else has meanwhile put a file in.
 function syncModule(o) {
-  if (copyState(o) === "current") return false;
   const copy = moduleCopy(o.hudFile);
+  if (linkedFolder(copy)) throw new Error(`사본 폴더가 링크입니다: ${dirname(copy)}`);
+  if (copyState(o) === "current") return false;
   const made = mkdirSync(dirname(copy), { recursive: true, mode: 0o755 }) !== undefined;
   try {
     writeFresh(copy, readFileSync(o.moduleSource), 0o644);
@@ -331,9 +343,10 @@ function removeBlocks(o, src) {
 
 // What off leaves behind otherwise: the cache (when this account controls its
 // folder), and the module copy with its folder (only when nothing else is in
-// it), also the one 0.20.1 left beside a linked wrapper. None failing undoes off.
+// it), also the one 0.20.1 left beside a linked wrapper, but nothing through a copy folder that is a link.
+// None failing undoes off.
 function removeLeftovers(o) {
-  const copies = [...new Set([moduleCopy(o.hudFile), besideLink(o.hudFile)])];
+  const copies = [...new Set([moduleCopy(o.hudFile), besideLink(o.hudFile)])].filter((copy) => !linkedFolder(copy));
   for (const remove of [() => clearCache(o.cacheDir), ...copies.map((copy) => () => rmSync(copy, { force: true }))]) {
     try {
       remove();

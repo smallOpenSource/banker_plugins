@@ -840,3 +840,29 @@ test("on and off finish quickly on a 3MB wrapper of closing then opening markers
     assert.ok(took < 5000, `${run.name} took ${took}ms`);
   }
 });
+
+test("on refuses to write the module copy into a copy folder that is a link, and leaves the wrapper alone", posixOnly, () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  symlinkSync(outside, join(c.dir, "payload-mon"));
+  const before = readFileSync(c.hudFile);
+  const on = turnOn(c);
+  assert.equal(on.ok, false, on.message);
+  assert.match(on.message, /사본 폴더가 링크입니다/);
+  assert.ok(readFileSync(c.hudFile).equals(before));
+  assert.equal(existsSync(join(outside, "payload-size.mjs")), false);
+});
+
+test("off does not delete through a copy folder that is a link", posixOnly, () => {
+  const c = setup(HUD_V4);
+  assert.equal(turnOn(c).ok, true);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "payload-size.mjs"), "// a file of someone else's\n");
+  rmSync(join(c.dir, "payload-mon"), { recursive: true });
+  symlinkSync(outside, join(c.dir, "payload-mon"));
+  const off = turnOff(c);
+  assert.equal(off.ok, true, off.message);
+  assert.ok(existsSync(join(outside, "payload-size.mjs")));
+});
