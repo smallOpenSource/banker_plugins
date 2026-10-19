@@ -69,7 +69,7 @@ test("공백과 한글이 든 설정 폴더에 설치하면 statusLine 이 따�
 
 test("BOM 이 있는 settings.json 을 받아 BOM 없이 다시 씀", () => {
   const cfg = fresh();
-  writeFileSync(join(cfg, "settings.json"), "﻿" + JSON.stringify({ theme: "dark" }));
+  writeFileSync(join(cfg, "settings.json"), "\uFEFF" + JSON.stringify({ theme: "dark" }));
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
   assert.equal(readFileSync(join(cfg, "settings.json"))[0], 0x7b);

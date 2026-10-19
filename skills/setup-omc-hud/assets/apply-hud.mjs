@@ -58,7 +58,7 @@ let settingsRaw = null;
 if (existsSync(settingsPath)) {
   settingsRaw = readFileSync(settingsPath, "utf8");
   try {
-    settings = JSON.parse(settingsRaw.replace(/^﻿/, ""));
+    settings = JSON.parse(settingsRaw.replace(/^\uFEFF/, ""));
   } catch {
     settings = undefined;
   }
