@@ -5,13 +5,17 @@
  * Runs the canonical OMC HUD (omc-hud.mjs), then reformats its rendered line
  * into a compact pipe-delimited layout requested by the user:
  *
- *   <model>/<effort>|5h:<pct>/<reset>|wk:<pct>/<reset>|<mm>:<pct>/<reset>|think|PL:<mb>M|se:<hours>h|🔧<tools>|🤖<agents>|<cwd>|<account>|<branch>|claude<cur>→<new>
- *   e.g. Op5.5/high|5h:8%/1h23m|wk:96%/1h23m|Fa:0%/1h23m|think|PL:0.4M|se:0.4h|🔧12|...
+ *   <model>/<effort>|5h:<pct>/<reset>|wk:<pct>/<reset>|<mm>:<pct>/<reset>|think|PL:<mb>M|se:<hours>h|ctx:<pct>%|🤖<agents>|🔧<tools>|⚡<skills>|<cwd>|<account>|<branch>|claude<cur>→<new>
+ *   e.g. Op5.5/high|5h:8%/1h23m|wk:96%/1h23m|Fa:0%/1h23m|think|PL:0.4M|se:0.4h|ctx:12%|🤖1|🔧14|⚡3|...
  *
  * Changes vs v3:
  *   - OMC 5.x wraps at the terminal width; the width is hidden from OMC and the
  *     wrapper wraps the compact line itself at segment boundaries (no "…").
- *   - effort:<level> badge and ctx dropped; session -> se:<hours, 1 decimal>h.
+ *   - effort:<level> badge dropped; session -> se:<hours, 1 decimal>h.
+ *   - ctx:<pct>% comes right after se, without OMC's " COMPRESS?" / " CRITICAL"
+ *     words (the color shows the level).
+ *   - OMC's call counts ("🔧14 🤖1 ⚡3") are shown agents, tools, skills, one
+ *     segment each: 🤖1|🔧14|⚡3. A count OMC leaves out (zero) stays out.
  *   - per-model usage badge (fable:0%(1h31m)) -> Fa:0%/1h31m, after the rate windows.
  *   - PL:<MB, 1 decimal>M always shown before se. It reads payload-mon's module
  *     copy next to this file (hud/payload-mon/payload-size.mjs); without it PL
@@ -415,6 +419,7 @@ try {
   }
 
   const f = { label: "", model: "", r5: "", rwk: "", rsn: "", think: "", ctx: "", se: "", counts: "" };
+  let ctxShown = ""; // the ctx segment shown after se; f.ctx stays empty (see the ctx line below)
   const extra = [];
   const modelRates = []; // per-model usage badges, shown right after the rate windows
   const slash = (s) => s.replace(/%\(([^)]+)\)/, "%/$1"); // 6%(3h56m) -> 6%/3h56m
@@ -439,7 +444,9 @@ try {
     } else if (/^effort:/.test(s)) {
       // OMC 5.x effort badge; the level already rides on the model (Op5.5/high).
     } else if (/^ctx:/.test(s)) {
-      // ctx hidden on request; f.ctx stays empty.
+      // "ctx:82% COMPRESS?" -> "ctx:82%": the color already says how full it is.
+      const m = s.match(/^ctx:(\d+)%/);
+      ctxShown = m ? `ctx:${m[1]}%` : s;
     } else if (/^session:/.test(s)) {
       const m = s.match(/session:(\d+)m/);
       f.se = m ? `se:${(parseInt(m[1], 10) / 60).toFixed(1)}h` : s.replace(/^session:/, "se:");
@@ -458,8 +465,8 @@ try {
   if (f.rsn) colored.push(colorRate(f.rsn));
   for (const r of modelRates) colored.push(colorRate(r));
   if (f.think) colored.push(A("36", f.think));
-  // Keep the next line: f.ctx is always empty now, but `payload-mon on` inserts
-  // its block right after this exact line.
+  // Keep the next line: f.ctx is always empty now (ctx is shown after se), but
+  // `payload-mon on` inserts its block right after this exact line, ahead of PL.
   if (f.ctx) colored.push(colorCtx(f.ctx));
   // PL: payload size always shown before se, as "PL:0.3M" (MB, one decimal),
   // colored by its share of the 32MB limit. Replaces the payload-mon segment,
@@ -480,7 +487,13 @@ try {
     /* no stdin JSON, unreadable transcript or module missing */
   }
   if (f.se) colored.push(colorSe(f.se));
-  if (f.counts) colored.push(f.counts.trim().replace(/\s+/g, SEP));
+  if (ctxShown) colored.push(colorCtx(ctxShown));
+  // OMC prints "🔧14 🤖1 ⚡3" ("T:14 A:1 S:3" in ASCII) and leaves out a zero count.
+  // Show agents, tools, skills, one segment each; anything else keeps its place after them.
+  if (f.counts) {
+    const rank = (p) => (/^(?:🤖|A:)/u.test(p) ? 0 : /^(?:🔧|T:)/u.test(p) ? 1 : /^(?:⚡|S:)/u.test(p) ? 2 : 3);
+    colored.push(...f.counts.trim().split(/\s+/).sort((a, b) => rank(a) - rank(b)));
+  }
   for (const e of extra) colored.push(A("2", e));
   // OMC's cwd group is "cwd | branch:x | ...": keep the cwd parts here with "|",
   // and move the branch (without its "branch:" label) right before OMC#.
