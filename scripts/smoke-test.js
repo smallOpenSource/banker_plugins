@@ -412,7 +412,16 @@ try {
       { cwd: path.join(root, 'skills', 'lineage'), encoding: 'utf8',
         env: { ...process.env, HOME: home, USERPROFILE: home, PYTHONDONTWRITEBYTECODE: '1' } });
     const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
-    ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${tail})`);
+    // the failing tests by name (Class.test): unittest writes `FAIL: test (module.Class)` before 3.11 and
+    // `FAIL: test (module.Class.test)` from 3.11 on
+    const failed = `${pyRes.stdout || ''}${pyRes.stderr || ''}`.split('\n')
+      .map((l) => /^(?:FAIL|ERROR): (\S+) \((\S+)\)$/.exec(l)).filter(Boolean)
+      .map(([, name, where]) => {
+        const parts = where.split('.');
+        if (parts[parts.length - 1] === name) parts.pop();
+        return `${parts.pop()}.${name}`;
+      }).slice(0, 5);
+    ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${failed.length ? failed.join(', ') : tail})`);
   } else {
     console.log('SKIP: no python>=3.7 found — lineage.py suite not run (EL8 default python3=3.6 exits at import)');
   }

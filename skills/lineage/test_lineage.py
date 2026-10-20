@@ -1550,10 +1550,10 @@ class TestLlmReviewHardening(_ReviewCase):
                 + " -u\n" + "=" * 50000 + " --user" + "=" * 50000 + " -u " + "1" * 50000
                 + " " + '-u"' * 30000 + " " + '"-u", "' * 20000 + " " + 'authorization", ' * 20000
                 + " " + " -abcdefu" * 20000 + " " + 'authorization"]' * 20000)
-        start = time.monotonic()
+        start = time.process_time()
         for _, pat in L.REVIEW_SECRET_PATTERNS:
             pat.sub("[R]", text)
-        self.assertLess(time.monotonic() - start, 5)
+        self.assertLess(time.process_time() - start, 5)
 
     def test_a_rule_summary_cut_through_a_secret_leaves_no_half_for_the_reviewer(self):
         token = "gh" + "p_" + "Q8z" * 12          # cut at 58 characters, no pattern matches the half
@@ -1956,9 +1956,9 @@ class TestLlmReviewHardening(_ReviewCase):
                   '"-xu","a', '"--user","a', "'-xu','a", "'--user','a", '"-u","', '","-u',
                   bs + '"-u' + bs + '",' + bs + '"')
         for piece in pieces:
-            start = time.monotonic()
+            start = time.process_time()
             pat.sub("[R]", piece * 40000)
-            self.assertLess(time.monotonic() - start, 2, repr(piece))
+            self.assertLess(time.process_time() - start, 2, repr(piece))
 
     def test_a_quote_of_the_parts_turns_is_not_read_as_decisions(self):
         answer = [{"id": "a%d" % k, "keep": True, "summary": "요약 %d" % k} for k in range(2)]
@@ -1989,11 +1989,11 @@ class TestLlmReviewHardening(_ReviewCase):
         dec = os.path.join(self.d, "review.part-1.decisions.json")
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here is my answer: " + "[" * 100000)
-        start = time.monotonic()
+        start = time.process_time()
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "o.html"), "--skip-reviewer"])
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
-        self.assertLess(time.monotonic() - start, 5, "a run of brackets is tried once, not at each one")
+        self.assertLess(time.process_time() - start, 5, "a run of brackets is tried once, not at each one")
         # deep enough that no Python's json parses it whole (3.12 reads 1,200 levels, 3.11 does not)
         self.assertEqual(L._decisions_text("[" * 100000 + "]" * 100000), [], "nested empty lists hold an empty one")
 
@@ -2188,12 +2188,12 @@ class TestLlmReviewGateReruns(_ReviewCase):
         dec = os.path.join(self.d, "dec-nested.json")
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here: " + '[{"id":"a"},' * 25000)
-        start = time.monotonic()
+        start = time.process_time()
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"),
                                   "--skip-reviewer", "--decisions", dec])
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
-        self.assertLess(time.monotonic() - start, 5)
+        self.assertLess(time.process_time() - start, 5)
 
     def test_a_decisions_file_over_the_size_cap_is_not_read(self):
         # a good answer padded past the cap: only the size check refuses it
@@ -2311,9 +2311,9 @@ class TestPatternsForPages(_ReviewCase):
         pat = dict(L.REVIEW_SECRET_PATTERNS)["PasswordBare"]
         for piece in ("Password=****;", "pwd=ab****;", "password:****,", "암호=****&", "password=*****",
                       "password=||||||", "pwd=", "암호=", "password:e.x,", "password ", "$password=abcdef", "비밀 번호:"):
-            start = time.monotonic()
+            start = time.process_time()
             pat.sub("[R]", piece * 40000 + "****")
-            self.assertLess(time.monotonic() - start, 2, repr(piece))
+            self.assertLess(time.process_time() - start, 2, repr(piece))
 
     def test_extra_keywords_leave_marker_names_whole(self):
         red, counts = L.redact("[REDACTED:CurlUser] 와 user 와 [REDACTED]", extra="user,redacted")
@@ -2456,9 +2456,9 @@ class TestPageRedaction(_ReviewCase):
             recs.append(self._asst("실행했습니다.\n\n%s -u svc%d:%s https://x 로 확인했습니다." % (c, k, self.PW),
                                    "a%d" % k, ts=ts.replace(":00Z", ":30Z")))
         self._write(recs)
-        start = time.monotonic()
+        start = time.process_time()
         rc, page, err = self._rulebase_page()
-        took = time.monotonic() - start
+        took = time.process_time() - start
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Hunter22", page)
         self.assertNotIn("still holds", err)
@@ -2887,6 +2887,27 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
             self.assertIsNone(L.read_llm_cache("a1", "s", "abc123abc123"))
         path.write_text('{"keep": true, "summary": "통과"}', encoding="utf-8")
         self.assertEqual(L.read_llm_cache("a1", "s", "abc123abc123"), {"keep": True, "summary": "통과"})
+
+    def test_a_cache_file_of_exactly_64_kib_is_read_and_one_byte_more_is_not(self):
+        self.assertEqual(L.CACHE_READ_MAX, 64 * 1024, "SKILL.md and CHANGELOG 0.19.1 promise 64KiB")
+        place = pathlib.Path(self.d) / "summary.md"
+        body = ("요약 " + "x" * (64 * 1024 - len("요약 ".encode("utf-8")))).encode("utf-8")
+        place.write_bytes(body)
+        self.assertEqual(L._read_small(place), body)
+        place.write_bytes(body + b"x")
+        self.assertIsNone(L._read_small(place))
+
+    def test_pages_and_caches_are_written_with_lf_where_text_mode_would_write_crlf(self):
+        import _pyio
+        from unittest import mock
+        page, cache = pathlib.Path(self.d) / "page.html", pathlib.Path(self.d) / "c" / "s.md"
+        # Windows text mode, played on any OS: the pure-Python io writes os.linesep for each \n unless newline="\n"
+        with mock.patch.object(os, "linesep", "\r\n"), mock.patch("builtins.open", _pyio.open), \
+                mock.patch("io.open", _pyio.open):
+            L._write_text_lf(page, "a\nb\n")
+            L._write_private(cache, "c\nd\n")
+        self.assertEqual(page.read_bytes(), b"a\nb\n")
+        self.assertEqual(cache.read_bytes(), b"c\nd\n")
 
 
 class TestBidiControlsOnThePage(_ReviewCase):
@@ -3325,6 +3346,15 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
         self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 4)
 
+    def test_a_numeric_tool_name_or_item_type_is_skipped_with_the_odd_shape_warning(self):
+        # 0.19.1 turned a numeric name's `5×1` and a numeric type's unknown-type line into this warning
+        items = [{"type": "tool_use", "name": 5}, {"type": 5}, {"type": "text", "text": "kept"},
+                 {"type": "tool_use", "name": "Read"}]
+        turns, err, code = self._read([{"type": "assistant", "uuid": "a", "message": {"content": items}}])
+        self.assertIsNone(code)
+        self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
+        self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 2)
+
     def test_a_lone_surrogate_in_a_record_becomes_the_replacement_character_with_one_warning(self):
         lone, fffd = chr(0xD800), chr(0xFFFD)
         rec = {"type": "assistant", "uuid": "a" + lone, "timestamp": "t" + lone,
@@ -3432,10 +3462,10 @@ class TestSplitSecrets(unittest.TestCase):
     def test_many_emoji_joiners_do_not_slow_the_redaction(self):
         key = "AKIA" "ABCDEFGHIJKLMNOP"
         text = (chr(0x1F468) + self.ZWJ + chr(0x1F469) + " ") * 200000 + " " + key
-        start = time.monotonic()
+        start = time.process_time()
         red, _ = L.page_redact(text)
         if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
-            self.assertLess(time.monotonic() - start, 5.0)
+            self.assertLess(time.process_time() - start, 5.0)
         self.assertNotIn(key, red)
 
     # Values whose only separator is one invisible character: 3.0.7 hid each, and joining them would glue the
@@ -3611,10 +3641,10 @@ class TestSplitSecrets(unittest.TestCase):
 
     def test_many_values_next_to_invisible_characters_do_not_slow_the_redaction(self):
         text = (self.AKIA_KEY + self.ZW + " ") * 5000
-        start = time.monotonic()
+        start = time.process_time()
         red, counts = L.page_redact(text)
         if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
-            self.assertLess(time.monotonic() - start, 3.0)
+            self.assertLess(time.process_time() - start, 3.0)
         self.assertEqual(counts, {"AKIA": 5000})
 
     def test_an_invisible_character_with_nothing_to_join_costs_one_pass_as_in_3_0_7(self):
