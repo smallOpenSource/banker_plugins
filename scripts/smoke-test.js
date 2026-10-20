@@ -393,6 +393,11 @@ try {
      && /기본값이 콜론 없는 경로\(`\/`, `~`, `\.` 로 시작\)인 변수/.test(linSkill) && /기본값이 경로가 아닌 변수\(`\$\{UID:-1000\}:\$\{GID:-1000\}`, `\$\{API_KEY:-…\}`\)는 가린다/.test(linSkill)
      && /`ls -lu a:bcd`/.test(linSkill) && !/`ls -lu a:b`/.test(linSkill),
      'lineage: the gate rerun keeps its paths and page, the critic has a stated rule, a refused list counts as a failure, re-reviews stop at two, and dropped user turns are named');
+  // The summary cache is kept only by the summarizer version: a release that changes the summarizer or the page
+  // redaction and keeps the version reuses the old summaries (3.0.8 did). The SKILL says so instead of "자동 무효화".
+  ok(!/자동 무효화/.test(linSkill)
+     && (linSkill.match(/요약기나 가림을 바꾼 판은 요약기 버전\(`SUMMARIZER_VERSION`\)을 올려/g) || []).length === 2,
+     'lineage: the SKILL says a release that changes the summarizer or the redaction bumps SUMMARIZER_VERSION, not that the cache invalidates itself');
   const bpFm = fs.readFileSync(path.join(root, 'skills', 'setup-bypass-permissions', 'SKILL.md'), 'utf8').split(/\n---/)[0];
   ok(/^disable-model-invocation: true$/m.test(bpFm),
      'setup-bypass-permissions/SKILL.md sets disable-model-invocation: the model cannot start it');

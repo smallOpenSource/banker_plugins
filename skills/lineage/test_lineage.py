@@ -3751,6 +3751,22 @@ class TestRedactLayers(unittest.TestCase):
         self.assertEqual(err, "[lineage] WARN: detect-secrets unavailable, using fallback "
                               "(pip install 'detect-secrets>=1.5')\n")
 
+    def test_an_import_error_inside_the_scan_is_the_unavailable_warning(self):
+        import types
+        from unittest import mock
+        mod, settings = types.ModuleType("detect_secrets"), types.ModuleType("detect_secrets.settings")
+
+        class Col:
+            files = []
+
+            def scan_file(self, p):
+                raise ImportError("lazy plugin import failed")
+        mod.SecretsCollection, settings.default_settings = Col, contextlib.nullcontext
+        with mock.patch.dict(sys.modules, {"detect_secrets": mod, "detect_secrets.settings": settings}):
+            got = _quiet(L.redact, "text")
+        self.assertEqual(got, (("text", {}), "[lineage] WARN: detect-secrets unavailable, using fallback "
+                                             "(pip install 'detect-secrets>=1.5')\n"))
+
     def test_the_entropy_rule_hides_a_run_of_exactly_4_5_bits(self):
         at, under = "ABCDEFGH" * 2 + "IJKLMNOPQRSTUVWX", "ABCDEFGHI" * 2 + "JKLMNOPQRSTUVW"
         self.assertEqual((L.shannon_entropy(at), L.shannon_entropy(under)), (4.5, 4.4375))
@@ -3788,6 +3804,11 @@ class TestMarkdownBlocks(unittest.TestCase):
 
     def test_list_lines_of_either_kind_make_one_list_named_by_the_first(self):
         self.assertEqual(L.render_markdown("1. a\n- b"), "<ol><li>a</li><li>b</li></ol>")
+
+    def test_a_table_is_judged_before_a_list(self):
+        self.assertEqual(L.render_markdown("- a | b\n|---|---|\n| 1 | 2 |"),
+                         "<table><thead><tr><th>- a</th><th>b</th></tr></thead>"
+                         "<tbody><tr><td>1</td><td>2</td></tr></tbody></table>")
 
 
 class TestRowsAcrossTurns(_ReviewCase):
@@ -3863,6 +3884,8 @@ class TestMainPaths(_ReviewCase):
     def test_a_schema_marker_through_main_exits_2(self):
         self._write([_rec("user", "before", uuid="u1"), {"type": "v9"}])
         self.assertEqual(self._rulebase()[0], 2)
+        self.assertEqual(_quiet(L.main, ["--from-transcript", self.jf, "--rulebase", "--skip-reviewer",
+                                         "--output", os.path.join(self.d, "out.html")])[0], 2)
 
     def test_an_invalid_turns_range_exits_2_in_both_flows(self):
         self._write(self._records())
@@ -3870,6 +3893,19 @@ class TestMainPaths(_ReviewCase):
         rc = _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack, "--turns", "bad"])[0]
         self.assertEqual(rc, 2)
         self.assertFalse(os.path.exists(self.pack))
+
+    def test_an_empty_stdin_still_gets_its_id_key(self):
+        from unittest import mock
+        with mock.patch.object(sys, "stdin", io.StringIO("")):
+            rc = _quiet(L.main, ["--from-transcript", "-", "--rulebase", "--skip-reviewer",
+                                 "--output", os.path.join(self.d, "out.html")])[0]
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.isfile(os.path.join(self.cache, "stdin-id.key")))
+
+    def test_a_bad_turns_range_fails_before_the_output_name_is_chosen(self):
+        self._write([{"type": "summary", "customTitle": "my-title"}] + self._records())
+        self.assertEqual(_quiet(L.main, ["--session", self.jf, "--rulebase", "--skip-reviewer", "--turns", "bad"]),
+                         (2, "[lineage] invalid --turns 'bad'\n"))
 
     def test_a_tool_only_turn_is_left_out_unless_kept(self):
         self._write([_rec("user", "실행해 주세요", uuid="u1"), self._asst("", "a1", tools=["Bash"])])
