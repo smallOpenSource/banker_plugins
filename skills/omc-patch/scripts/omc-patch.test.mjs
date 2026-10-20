@@ -3677,6 +3677,42 @@ test("a bare apply whose origin gets credentials from an insteadOf rule gives gi
   for (const piece of ["localhost", "Kx7Yp"]) assert.ok(!r.out.includes(piece), `${piece} in ${r.out}`);
 });
 
+// Review 3: the proxy address never shows in git's line, but curl misreads a raw "/" in its password the same way and
+// names the proxy's user ("Could not resolve proxy: alice"; here "Failed to connect to localhost port 9", which asks no
+// name server). A proxy from the environment or from git's settings drops git's words; a well-formed one keeps them.
+const NO_WORDS_PROXY = /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\(프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어 git 의 문구는 싣지 않음\)$/;
+test("a bare apply through a proxy whose password has a raw slash gives git's exit and none of its words", { skip: !HAS_GIT && "git not found" }, () => {
+  const broken = `http://localhost:${["9", "Kx7Yp"].join("/")}@127.0.0.1:9`;
+  const viaEnv = { http_proxy: broken, HTTP_PROXY: broken };
+  const viaConfig = (home) => {
+    const cfg = join(home, ".gitconfig");
+    writeFileSync(cfg, `[http]\n\tproxy = ${broken}\n`);
+    return { GIT_CONFIG_GLOBAL: cfg };
+  };
+  for (const [how, extra] of [["environment", () => viaEnv], ["git config", viaConfig]]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", "http://127.0.0.1:9/omc.git"], f.market).status, 0);
+    const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "20000", NO_PROXY: "", no_proxy: "", ...extra(f.home) });
+    assert.equal(r.code, 1, `${how}\n${r.out}`);
+    const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+    assert.match(cause, NO_WORDS_PROXY, `${how}: ${cause}`);
+    for (const piece of ["localhost", "Kx7Yp"]) assert.ok(!r.out.includes(piece), `${how}: ${piece} in ${r.out}`);
+  }
+});
+
+test("a bare apply through a well-formed proxy with credentials still gives git's line, with no credentials in it", { skip: !HAS_GIT && "git not found" }, () => {
+  const user = ["pu", "ser"].join(""), pass = ["Zz9", "Pw"].join("");
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", "http://127.0.0.1:9/omc.git"], f.market).status, 0);
+  const proxy = `http://${user}:${pass}@127.0.0.1:9`;
+  const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "20000", NO_PROXY: "", no_proxy: "", http_proxy: proxy, HTTP_PROXY: proxy });
+  assert.equal(r.code, 1, r.out);
+  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+  assert.match(cause, /origin 에서 태그를 받지 못함: .*127\.0\.0\.1/, cause);
+  assert.doesNotMatch(cause, /git 의 문구는 싣지 않음/, cause);
+  for (const piece of [user, pass]) assert.ok(!r.out.includes(piece), `${piece} in ${r.out}`);
+});
+
 // Same line: a git whose error names the host but not the address (a git that hides the address, or a first error line
 // without it) gets nothing through either, as long as the origin itself carries the credentials.
 test("with credentials in the origin the cause line drops git's words even when git's line has no address", posixGit, (t) => {

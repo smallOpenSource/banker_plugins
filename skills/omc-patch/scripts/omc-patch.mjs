@@ -245,10 +245,11 @@ function canInstallTarget({ tar = true } = {}) {
 }
 
 // origin 에서 태그를 받는다. 받았으면 null, 받지 못했으면 그 까닭 한 줄. 이 도구가 고정한 origin 은 받을 수 없으므로
-// 부르지 않고 그렇다고 한다(git 은 "remote helper" 오류만 낸다). git 이 쓴 주소에 사용자 정보가 있으면 git(curl)의 문구가
-// 그 조각을 실을 수 있어(비밀번호 안의 `/` 를 호스트의 끝으로 읽어 "Port number ended with 'Q'", "Could not resolve host:
-// alice") 문구는 싣지 않고 git 이 어떻게 끝났는지만 댄다. 사용자 정보는 origin 에 있거나 전역 insteadOf 규칙이 더한다.
-// 뒤의 것은 git 의 오류 줄에 든 주소를 gitError 가 가린 자리(`//***@`)로 안다.
+// 부르지 않고 그렇다고 한다(git 은 "remote helper" 오류만 낸다). curl 은 비밀번호 안의 `/` 를 호스트의 끝으로 읽어 사용자
+// 정보 조각을 문구에 싣는다("Port number ended with 'Q'", "Could not resolve host: alice"). 그래서 다음이면 문구는 싣지
+// 않고 git 이 어떻게 끝났는지만 댄다: origin 에 사용자 정보가 있음, git 의 오류 줄에 사용자 정보가 든 주소가 남음(전역
+// insteadOf 가 더한 것. gitError 가 가린 자리 `//***@` 로 안다), 프록시 주소를 curl 이 잘못 읽을 수 있음(proxyMisread).
+// 바른 꼴의 사용자 정보는 git 이 줄에서 떼고 curl 도 제대로 읽어, 그 줄은 그대로 싣는다.
 function fetchTags() {
   const url = originUrl();
   if (typeof url === "string" && url.startsWith("omc-pinned://")) return "origin 이 고정되어 있음(omc-pinned://). 받으려면 먼저 --revert 로 고정을 푸십시오";
@@ -256,9 +257,31 @@ function fetchTags() {
   catch (e) {
     if (e.code === "ETIMEDOUT") return `${FETCH_TIMEOUT_MS / 1000}초 안에 끝나지 않아 끊음(응답하지 않는 망일 수 있음)`;
     const why = gitError(e);
-    if (hasUserinfo(url) || why.includes("//***@")) return `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
+    const ended = `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남`;
+    if (hasUserinfo(url) || why.includes("//***@")) return `${ended}(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
+    if (proxyMisread()) return `${ended}(프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어 git 의 문구는 싣지 않음)`;
     return why;
   }
+}
+
+// 주소의 사용자 정보(처음 `//` 뒤부터, 없으면 처음부터 마지막 `@` 까지)에 날 `/` `?` `#` `\` 가 있는지. curl 은 그 앞에서
+// authority 를 끊는다. 그러면 사용자 이름이 호스트가 되고 비밀번호 앞부분이 포트가 된다.
+const brokenUserinfo = (v) => {
+  const s = String(v);
+  const at = s.lastIndexOf("@");
+  const i = s.indexOf("//");
+  return at !== -1 && /[/?#\\]/.test(s.slice(i !== -1 && i < at ? i + 2 : 0, at));
+};
+
+// 태그 받기가 쓸 수 있는 프록시 주소 가운데 curl 이 잘못 읽을 것이 있는지. 프록시 주소는 git 의 줄에 실리지 않아
+// ("Could not resolve proxy: alice" 처럼 호스트만) 설정에서 본다: curl 이 읽는 환경 변수와 git 이 넘기는 `*.proxy` 설정
+// (태그 받기와 같은 환경, `http.proxy`, `http.<url>.proxy`, `remote.origin.proxy`).
+function proxyMisread() {
+  const env = Object.entries(process.env).filter(([k]) => /^(https?|all)_proxy$/i.test(k)).map(([, v]) => v);
+  let cfg = [];
+  try { cfg = git(["config", "--get-regexp", "\\.proxy$"], MARKET, { network: true }).split("\n").map((l) => l.slice(l.indexOf(" ") + 1)); }
+  catch { /* 그런 설정이 없으면 git 은 종료 1 */ }
+  return [...env, ...cfg].some(brokenUserinfo);
 }
 
 // URL 에 사용자 정보가 있는지(redactUrl 이 가리는 자리: 처음 `//` 뒤부터 마지막 `@` 까지).
