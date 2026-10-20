@@ -934,6 +934,13 @@ try {
      && /\| osv-scanner \| 종료 코드 0 이나 1 \| 127, 128 은 오류/.test(asSkill)
      && /0건으로 세지 않고 리포트 Unknown 에 "미커버\(네트워크 없음\)" 로 적는다/.test(asSkill),
      'airgap-2: audit-security reads a tool output as a result only when it is one, and writes "미커버" instead of 0');
+  // deep-research with no web tool that works ends as "웹 조사 불가" instead of a report without sources, and ultra-chain's
+  // research gate does not pass on zero claims.
+  const drSkill = fs.readFileSync(path.join(root, 'skills', 'deep-research', 'SKILL.md'), 'utf8');
+  const ucSkill = fs.readFileSync(path.join(root, 'skills', 'ultra-chain', 'SKILL.md'), 'utf8');
+  ok(/검색과 fetch 가 모두 실패하면\(네트워크 없음\) 보고서를 만들지 않고 "웹 조사 불가: <오류>" 로 끝낸다/.test(drSkill)
+     && /`skipped` 와 이유 "네트워크 없음"/.test(ucSkill) && /주장이 0개면 게이트를 지나지 않은 것이다/.test(ucSkill),
+     'airgap-8: deep-research ends as "웹 조사 불가" when every web tool fails, and ultra-chain records the step as skipped');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
