@@ -955,7 +955,11 @@ test('azFetch: a server that accepts the connection and never answers ends withi
 });
 
 test('pollVideo: polls stop at timeoutMs of wall time, each request limited to what is left', { timeout: 10_000 }, async () => {
-  const hang = (signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  // like a socket, the hung request keeps the event loop alive (the timer behind AbortSignal.timeout does not)
+  const hang = (signal) => new Promise((_, reject) => {
+    const alive = setInterval(() => {}, 1000);
+    signal.addEventListener('abort', () => { clearInterval(alive); reject(signal.reason); }, { once: true });
+  });
   installFetch((url, opts) => hang(opts.signal));
   const t0 = Date.now();
   const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-x', intervalMs: 20, maxTicks: 1000, timeoutMs: 250 });

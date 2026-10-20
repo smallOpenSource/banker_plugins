@@ -1082,8 +1082,13 @@ test('downloadWanVideo: a connection dropped mid-body counts as a failed try and
   assert.deepEqual([n, slept], [3, [2000, 4000]]);
 });
 
-// A request that never answers: it ends only when its signal aborts.
-const hang = (signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+// A request that never answers: it ends only when its signal aborts. Like a socket it keeps the event loop
+// alive meanwhile; the timer behind AbortSignal.timeout does not, and Node 20 and 22 would end the test
+// file with the request still pending.
+const hang = (signal) => new Promise((_, reject) => {
+  const alive = setInterval(() => {}, 1000);
+  signal.addEventListener('abort', () => { clearInterval(alive); reject(signal.reason); }, { once: true });
+});
 const realClock = { now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
 test('generateClip: a poll whose requests never answer ends at the poll deadline and says how long it polled', { timeout: 10_000 }, async () => {
