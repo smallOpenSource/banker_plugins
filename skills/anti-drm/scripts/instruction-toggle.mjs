@@ -495,21 +495,28 @@ function apply(t, changes) {
 }
 
 // Applies the changes, or the refusal for a write that failed with nothing of the file changed: a name that
-// appeared in between (EEXIST), or a write a sandbox refused after access() allowed it. The refusal names the place
-// the system refused (a rename's target, as the backup, or the file it was about), and a file changed before the
-// failing one. Other errors propagate.
+// appeared in between (EEXIST), a folder where the write goes (EISDIR; Windows answers a rename onto one with EPERM),
+// or a write a sandbox refused after access() allowed it. The refusal names the place the system refused (a rename's
+// target, as the backup, or the file it was about), and a file changed before the failing one. Other errors propagate.
 function applied(t, changes) {
   let i = 0;
   try {
     for (; i < changes.length; i++) apply(t, [changes[i]]);
   } catch (e) {
-    if (e.code !== "EEXIST" && !denied(e)) throw e;
-    const why = e.code === "EEXIST" ? "쓰는 사이에 같은 이름이 생겨 그대로 두었습니다" : `쓸 권한이 없어 그대로 두었습니다 (${where(e.code)})`;
+    if (e.code !== "EEXIST" && e.code !== "EISDIR" && !denied(e)) throw e;
     const at = [e.dest, e.path].find((p) => typeof p === "string") ?? changes[i].file.path;
     const before = i === 0 ? "" : `\n앞서 바꾼 파일: ${changes.slice(0, i).map((c) => where(c.file.path)).join(", ")}`;
-    return refuse(`${why}: ${where(at)}${before}`);
+    return refuse(`${refusedWhy(e, at)}: ${where(at)}${before}`);
   }
   return null;
+}
+
+// Why a write applied() refuses failed: a name that appeared in between, something that is no regular file at the
+// place it went (a folder), or permissions.
+function refusedWhy(e, at) {
+  if (e.code === "EEXIST") return "쓰는 사이에 같은 이름이 생겨 그대로 두었습니다";
+  if (notAFile(at)) return "일반 파일이 아니라 그대로 두었습니다";
+  return `쓸 권한이 없어 그대로 두었습니다 (${where(e.code)})`;
 }
 
 // Whether the file at path is also reachable under another name: a hard link.

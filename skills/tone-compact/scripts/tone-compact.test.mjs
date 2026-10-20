@@ -487,16 +487,32 @@ test("a write the system refuses is named where it was refused: an EPERM on the 
   assert.equal(read(s.agents), "# base\n");
 });
 
-// Windows answers a rename onto a folder with EPERM, which counts as a denied write; POSIX answers EISDIR, an error
-// the tool does not expect. Either way nothing is changed and the backup's name is in the message.
+// Windows answers a rename onto a folder with EPERM, POSIX with EISDIR: either way on refuses, says what is there
+// rather than a permission problem, names the backup and changes nothing.
 test("a folder at the backup's name stops on with the backup named and AGENTS.md as it was", () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");
   mkdirSync(join(`${s.agents}.tone-compact.bak`, "x"), { recursive: true });
   const r = cli(["on", "--runtime", "codex"], cliEnv(s));
-  assert.equal(r.code, process.platform === "win32" ? 1 : 2, r.out);
-  assert.match(r.out, /AGENTS\.md\.tone-compact\.bak/);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md\.tone-compact\.bak/);
+  assert.doesNotMatch(r.out, /쓸 권한이 없어|예기치 못한 오류/);
   assert.deepEqual(readdirSync(s.o.codexDir).sort(), ["AGENTS.md", "AGENTS.md.tone-compact.bak"]);
+  assert.equal(read(s.agents), "# base\n");
+});
+
+// The same folder where the rename answers EPERM, as Windows does: still no regular file, not a permission problem.
+const renameOntoFolderIsEperm = () => [...FS_HOOK, "const real = fs.renameSync;",
+  "fs.renameSync = (from, to) => { if (fs.statSync(to, { throwIfNoEntry: false })?.isDirectory()) throw Object.assign(new Error(\"EPERM: rename\"), { code: \"EPERM\", syscall: \"rename\", path: String(from), dest: String(to) }); return real(from, to); };",
+  "syncBuiltinESMExports();"].join("\n");
+test("a folder at the backup's name that the rename answers with EPERM, as on Windows, is named as no regular file", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  mkdirSync(join(`${s.agents}.tone-compact.bak`, "x"), { recursive: true });
+  const r = cliWith(s, renameOntoFolderIsEperm(), ["on", "--runtime", "codex"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md\.tone-compact\.bak/);
+  assert.doesNotMatch(r.out, /쓸 권한이 없어/);
   assert.equal(read(s.agents), "# base\n");
 });
 
@@ -934,6 +950,7 @@ test("off empties a hard-linked AGENTS.md rather than removing one name, so no c
 test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
   const row = readFileSync(SKILL, "utf8").split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
   assert.ok(row, "the row exists");
+  assert.match(row, /`<파일>\.tone-compact\.bak`/);
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);

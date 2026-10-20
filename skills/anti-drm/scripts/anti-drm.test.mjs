@@ -441,6 +441,13 @@ test("a broken settings file: status says so, on refuses, config writes a new on
   const r = turnOn("claude", s.o);
   assert.equal(r.ok, false);
   assert.match(r.message, /설정 파일이 올바르지 않습니다/);
+  // The way out is the SKILL's one step: settings given to on itself, as when there are none.
+  assert.match(r.message, /\. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요\.$/);
+  assert.doesNotMatch(r.message, /config 로/);
+  const fixed = turnOn("claude", s.o, FLAGS);
+  assert.ok(fixed.ok, fixed.message);
+  assert.ok(existsSync(s.rulesFile), "one on with the settings turns the rules on");
+  writeFileSync(s.o.configFile, "{");
   assert.ok(configure(s.o, FLAGS).ok);
   assert.deepEqual(readConfig(s.o.configFile).config, CONFIG);
 });
@@ -873,6 +880,7 @@ test("an override with another skill's start marker but no end counts as the use
 test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
   const row = read(SKILL).split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
   assert.ok(row, "the row exists");
+  assert.match(row, /`<파일>\.anti-drm\.bak`/);
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
