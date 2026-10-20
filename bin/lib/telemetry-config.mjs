@@ -42,6 +42,13 @@ export const USED_SKILLS_MAX = 300;
 export const UPDATE_CHECK_PATH = path.join(configDir(), 'update-check.json');
 // 업데이트 체크/체크인 스로틀 창(24h). 이 간격 미경과면 재조회하지 않는다.
 export const UPDATE_THROTTLE_MS = 24 * 60 * 60 * 1000;
+
+// 업데이트 확인을 다시 할 때인지: 마지막 성공(checkedAt)과 마지막 실패한 시도(triedAt) 모두에서 하루가 지났을 때.
+// 그래서 네트워크에 닿지 못한 확인도 하루를 쉰다(세션마다 다시 시도하지 않음). 숫자가 아닌 시각은 없는 것으로 본다.
+export function updateCheckDue(cache, now = Date.now()) {
+  const times = [cache?.checkedAt, cache?.triedAt].filter((t) => typeof t === 'number' && Number.isFinite(t));
+  return times.every((t) => now - t >= UPDATE_THROTTLE_MS);
+}
 // 최신 버전 조회용 공개 npm 레지스트리 URL. 본문 .version 을 직접 반환한다(실측 확정).
 export const NPM_LATEST_URL = 'https://registry.npmjs.org/@kaydash9999/banker-plugins/latest';
 // 버전별 "바뀐 스킬 목록" 매니페스트(공개 GitHub raw JSON: {"x.y.z": ["banker:skill", ...]}). update-fetch/

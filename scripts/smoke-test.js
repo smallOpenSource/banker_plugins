@@ -589,7 +589,7 @@ try {
   ok(/\| 전송 경로 \| 확인 수준 \|/.test(rqSkill) && !/전달 메커니즘/.test(rqSkill),
      'S6: flag table uses the 전송 경로/확인 수준 columns (old 전달 메커니즘 header gone)');
   const rqReadmeRows = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
-    .split(/\r?\n/).filter((l) => /ralph-qa/.test(l));
+    .split(/\r?\n/).filter((l) => /^\|/.test(l) && /ralph-qa/.test(l));   // the two table rows, not prose mentions
   ok(rqReadmeRows.length === 2 && rqReadmeRows.every((l) => !/폴백|최후/.test(l) && /세션 모델/.test(l)),
      `S7: both README ralph-qa rows describe the session-model backbone without fallback wording (rows: ${rqReadmeRows.length})`);
   // Anchor each trigger to its position in the disjunction list (`⟸`/`∨`), not to a bare mention.

@@ -11,6 +11,7 @@
  *    counts=스킬별 x 시간대별 호출수).
  *  - 무활동 10초 timeout 과 요청마다 30초 교환 전체 마감으로 hang 하지 않는다.
  *  - 응답 본문은 256KiB 까지만 모은다. 넘으면 연결을 끊고 그 응답을 쓰지 않는다.
+ *  - 응답에서 latest 를 얻지 못하면(전송 실패, 차단, 없는 값) 시도 시각(triedAt)만 캐시에 써 하루를 쉰다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 어떤 경로도 reject 안 함.
  *  - 비-loopback 평문 http 는 전송하지 않는다(https-only). loopback http 만 로컬 테스트 mock 에 허용.
  *  - 함께 시작한 체크인은 같은 줄을 두 번 보내지 않는다(로그 이름 바꾸기는 하나만 성공한다).
@@ -238,7 +239,10 @@ function dropOldClaims(now = Date.now()) {
 // count-default-on 은 이 훅만·npm 배포는 update-fetch 만 써 같은 캐시를 겹쳐 쓰지 않는다.
 async function refreshUpdateCache(responseBody) {
   const latest = extractLatest(responseBody);
-  if (!latest) return;
+  if (!latest) { // 시도 시각만 남겨 update-notify 가 하루 동안 다시 띄우지 않게 한다(네트워크 없는 곳의 세션마다 시도).
+    try { writeUpdateCache({ triedAt: Date.now() }); } catch { /* best-effort */ }
+    return;
+  }
   // 개인화용: 변경-스킬 매니페스트를 best-effort GET(실패 시 changedSkills 생략, 기존 값 보존).
   const changesUrl = process.env.BANKER_SKILL_CHANGES_URL || SKILL_CHANGES_URL; // 테스트 주입용 override.
   const map = await fetchSkillChangesMap(changesUrl);

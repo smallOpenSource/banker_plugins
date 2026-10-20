@@ -14,6 +14,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -75,11 +76,25 @@ const NOW = () => Date.now(); // fresh checkedAt → throttle 미경과 → 포�
 // countingActive+endpoint → update-checkin 선택 → 127.0.0.1:1 POST → 즉시 실패·삼킴. 고지 판정에는 무영향.
 const LOOPBACK = { env: { BANKER_TELEMETRY_ENDPOINT: 'http://127.0.0.1:1/collect' } };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Polls `ok` every 50 ms until it holds or `ms` pass (then fails with `msg`).
+async function until(ok, ms, msg) {
+  for (const end = Date.now() + ms; !ok(); await sleep(50)) {
+    if (Date.now() > end) assert.fail(msg);
+  }
+}
+// The detached checkin of a LOOPBACK run fails and writes the time it tried as its last act: waiting for that keeps
+// it from writing into a folder the cleanup already removed.
+const tried = (tmp) => {
+  try { return typeof readCache(tmp).triedAt === 'number'; } catch { return false; }
+};
+
 // ---- 알림 동작 (블랙박스 spawn) ----
 
-test('캐시 없음이면 무고지(빈 stdout·exit 0)', () => {
+test('캐시 없음이면 무고지(빈 stdout·exit 0)', async () => {
   const tmp = mkTmp();
   const res = runNotify(tmp, LOOPBACK); // 캐시 없음 → throttle 경과 → detached refresh(loopback 로 무해화)
+  await until(() => tried(tmp), 10000, '뒤에서 띄운 체크인이 실패하고 시도 시각을 쓴다');
   assert.equal(res.status, 0);
   assert.equal(res.stdout.trim(), '');
 });
@@ -170,11 +185,12 @@ test('config.updateCheck===false 면 무동작', () => {
   assert.equal(res.stdout.trim(), '');
 });
 
-test('malformed 캐시면 무고지·exit 0', () => {
+test('malformed 캐시면 무고지·exit 0', async () => {
   const tmp = mkTmp();
   mkdirSync(bankerDir(tmp), { recursive: true });
   writeFileSync(cachePath(tmp), '{ broken ');
   const res = runNotify(tmp, LOOPBACK); // malformed → readCache null → throttle 경과 → detached refresh(loopback)
+  await until(() => tried(tmp), 10000, '뒤에서 띄운 체크인이 실패하고 시도 시각을 쓴다');
   assert.equal(res.status, 0);
   assert.equal(res.stdout.trim(), '');
 });
@@ -194,6 +210,24 @@ test('malformed stdin payload 여도 캐시 기반 고지는 정상(파싱 실�
   assert.equal(res.status, 0);
   const out = JSON.parse(res.stdout.trim());
   assert.match(out.systemMessage, /99\.0\.0/);
+});
+
+test('체크인이 실패한 뒤 하루 안의 세션 시작은 다시 시도하지 않는다(네트워크 없는 곳)', async () => {
+  const tmp = mkTmp();
+  const seen = [];
+  const server = net.createServer((sock) => { seen.push(Date.now()); sock.destroy(); }); // 받자마자 끊는다
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const env = { BANKER_TELEMETRY_ENDPOINT: `http://127.0.0.1:${server.address().port}/collect` };
+  try {
+    runNotify(tmp, { env });                  // 캐시 없음: 뒤에서 체크인을 띄운다
+    await until(() => seen.length === 1 && tried(tmp), 10000, '첫 체크인이 끊기고 시도 시각을 쓴다');
+    assert.deepEqual(Object.keys(readCache(tmp)), ['triedAt'], '실패는 latest 와 checkedAt 을 쓰지 않는다');
+    runNotify(tmp, { env });                  // 실패한 지 하루 안
+    await sleep(1500);
+    assert.equal(seen.length, 1, '두 번째 세션 시작은 연결하지 않는다');
+  } finally {
+    server.close();
+  }
 });
 
 test('캐시 자리가 FIFO 여도 기다리지 않는다', { skip: process.platform === 'win32' && 'Windows 에는 FIFO 가 없다' }, () => {

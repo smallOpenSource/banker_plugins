@@ -35,6 +35,8 @@ const bankerDir = (tmp) => join(tmp, 'banker');
 const usageLog = (tmp) => join(bankerDir(tmp), 'usage-log');
 const lastFlush = (tmp) => join(bankerDir(tmp), 'last-flush');
 const updateCheck = (tmp) => join(bankerDir(tmp), 'update-check.json');
+// The fields of the update-check cache, sorted. A checkin that got no latest writes only when it tried.
+const cacheKeys = (tmp) => Object.keys(JSON.parse(readFileSync(updateCheck(tmp), 'utf8'))).sort();
 
 function writeConfig(tmp, cfg) {
   mkdirSync(bankerDir(tmp), { recursive: true });
@@ -239,7 +241,7 @@ test('malformed/빈 줄은 무시하고 유효한 name\\thour 만 집계한다',
     assert.equal(code, 0);
     assert.ok(body, '서버가 JSON 본문을 받았다');
     assert.deepEqual(body.counts, { 'banker:foo': { '0': 2 } }, 'malformed/범위밖 무시, 유효 줄만 집계');
-    assert.ok(!existsSync(updateCheck(tmp)), 'latest 없는 응답이면 캐시 미변경');
+    assert.deepEqual(cacheKeys(tmp), ['triedAt'], 'latest 없는 응답이면 시도 시각만 써 하루를 쉰다(세션마다 다시 보내지 않음)');
     assert.equal(logText(tmp), '', '전송 후 로그 truncate');
   } finally {
     server.close();
@@ -316,7 +318,7 @@ test('전송 실패(도달 불가 endpoint)에도 로그 truncate 하고 hang �
   assert.equal(res.status, 0);
   assert.equal(logText(tmp), '', '실패해도 로그를 비운다(24h 상한)');
   assert.ok(existsSync(lastFlush(tmp)), 'last-flush 갱신');
-  assert.ok(!existsSync(updateCheck(tmp)), '전송 실패면 latest 없음 -> 캐시 미생성');
+  assert.deepEqual(cacheKeys(tmp), ['triedAt'], '전송이 실패하면 시도 시각만 쓰고 latest 와 checkedAt 은 쓰지 않는다');
   assert.ok(elapsed < 9000, `hang 없이 빠르게 종료(${elapsed}ms) - 연결 거부가 10s timeout 전에 처리`);
 });
 
@@ -331,7 +333,7 @@ test('비-loopback 평문 http 는 전송하지 않는다(no-op·연결 시도 �
   const elapsed = Date.now() - start;
   assert.equal(res.status, 0);
   assert.ok(elapsed < 3000, `가드가 연결 시도 없이 즉시 no-op 이어야 한다(${elapsed}ms, 10s timeout 아님)`);
-  assert.ok(!existsSync(updateCheck(tmp)), '전송 안 하므로 latest 없음 -> 캐시 미생성');
+  assert.deepEqual(cacheKeys(tmp), ['triedAt'], '보내지 못한 실행도 시도 시각만 쓴다(하루를 쉼)');
   // 전송 안 해도 체크인은 전송 시도 후 로그를 비우는 24h 상한 불변을 유지한다.
   assert.equal(logText(tmp), '', '차단돼도 로그 truncate(배치 유실 허용)');
 });
@@ -390,7 +392,7 @@ test('응답이 256KiB 한도를 넘으면 연결을 끊고 latest 를 쓰지 �
     assert.equal(await runCheckin(tmp), 0);
 
     assert.ok(closedEarly, `client hung up after ${sent} bytes, long before the end`);
-    assert.ok(!existsSync(updateCheck(tmp)), '한도를 넘은 응답의 latest 는 캐시에 쓰지 않는다');
+    assert.deepEqual(cacheKeys(tmp), ['triedAt'], '한도를 넘은 응답의 latest 는 쓰지 않고 시도 시각만 쓴다');
     assert.equal(logText(tmp), '', '실패해도 로그는 비운다');
   } finally {
     server.closeAllConnections?.();
@@ -426,7 +428,7 @@ test('조금씩 계속 보내는 서버에도 교환 전체 마감에 끊고 로
     assert.equal(code, 0);
     assert.ok(elapsed < 8000, `마감(1.5s)에 끊겨 곧 끝난다(${elapsed}ms), 무활동 10s 를 기다리지 않는다`);
     assert.equal(logText(tmp), '');
-    assert.ok(!existsSync(updateCheck(tmp)));
+    assert.deepEqual(cacheKeys(tmp), ['triedAt'], '마감에 끊긴 응답의 latest 는 쓰지 않는다');
   } finally {
     server.closeAllConnections?.();
     server.close();

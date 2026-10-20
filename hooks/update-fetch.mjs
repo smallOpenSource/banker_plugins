@@ -5,12 +5,13 @@
  * 자체는 캐시만 읽는 별도 훅이 담당한다(이 파일은 네트워크 조회만 - 화면 출력 없음).
  *
  * fail-closed 규약(각 항목은 update-fetch.test.mjs 가 검증한다):
- *  - throttle(UPDATE_THROTTLE_MS) 미경과면 무동작(캐시가 없으면 진행).
+ *  - 마지막 성공(checkedAt)이나 마지막 실패한 시도(triedAt)에서 하루가 지나지 않았으면 무동작(updateCheckDue).
  *  - 비-https 는 loopback(localhost/127.0.0.1/::1) 에서만 http 허용, 그 외 비-https 는 거부.
  *  - 3xx 리다이렉트는 따라가지 않고 no-op.
  *  - 무활동 10초 timeout 과 요청마다 30초 교환 전체 마감으로 hang 하지 않는다.
  *  - 응답 본문은 256KiB 까지만 모은다. 넘으면 연결을 끊고 그 응답을 쓰지 않는다.
- *  - 응답 JSON 에서 version 문자열만 방어 추출 - 없거나 비문자열이면 무동작(캐시 미기록).
+ *  - 응답 JSON 에서 version 문자열만 방어 추출. 버전을 얻지 못하면(조회 실패, 거부, 없거나 비문자열) 시도 시각
+ *    (triedAt)만 써서 하루를 쉰다. latest 와 checkedAt 은 쓰지 않는다.
  *  - 캐시는 writeUpdateCache 로 병합 기록: fetch 된 latest 가 기존 캐시와 다르면 notified 를 초기화
  *    (재무장)하고, 같으면 형제 필드(notified 등)를 patch 에서 생략해 그대로 보존한다.
  *  - 어떤 오류도 삼키고 항상 exit 0. GET 뿐이라 페이로드/식별자 전송이 없다.
@@ -21,7 +22,7 @@ import http from 'node:http';
 import https from 'node:https';
 
 import {
-  UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, writeUpdateCache, collectBody, netDeadlineMs, readRegular,
+  UPDATE_CHECK_PATH, NPM_LATEST_URL, writeUpdateCache, collectBody, netDeadlineMs, readRegular, updateCheckDue,
 } from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
@@ -97,12 +98,14 @@ function fetchLatestVersion(url) {
 
 async function main() {
   const cache = readCache();
-  const checkedAt = typeof cache.checkedAt === 'number' ? cache.checkedAt : null;
-  if (checkedAt !== null && (Date.now() - checkedAt) < UPDATE_THROTTLE_MS) return; // throttle 미경과 - no-op.
+  if (!updateCheckDue(cache)) return; // 성공이나 실패한 시도에서 하루가 지나지 않음 - no-op.
 
   const url = process.env.BANKER_NPM_URL || NPM_LATEST_URL; // 테스트 주입용 override.
   const latest = await fetchLatestVersion(url);
-  if (!latest) return; // 조회 실패·거부·malformed - 캐시 미기록.
+  if (!latest) { // 조회 실패·거부·malformed - 버전은 쓰지 않고 시도 시각만 남겨 하루를 쉰다.
+    writeUpdateCache({ triedAt: Date.now() });
+    return;
+  }
 
   // 개인화 매니페스트는 여기서 조회하지 않는다: update-fetch 는 카운팅 opt-out(countingActive false) 경로의
   // fetcher 이고, 개인화 표시도 countingActive() 로 게이트되므로 이 경로에선 표시될 일이 없다. 매니페스트

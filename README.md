@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![npm downloads](https://img.shields.io/npm/dm/@kaydash9999/banker-plugins)](https://www.npmjs.com/package/@kaydash9999/banker-plugins) [![GitHub stars](https://img.shields.io/github/stars/smallOpenSource/banker_plugins)](https://github.com/smallOpenSource/banker_plugins)
 
-[빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [라이선스 / 서드파티](#라이선스--서드파티)
+[빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
 - QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 63개 + 커맨드 2개**(총 65개 구성요소)
@@ -337,7 +337,7 @@ banker는 기본값(default-on)으로 두 가지를 합니다.\
 끄기:
 
 ```bash
-export BANKER_NO_UPDATE_CHECK=1   # 업데이트 알림만 끄기
+export BANKER_NO_UPDATE_CHECK=1   # 업데이트 알림 끄기(체크인 전송도 함께 멈춤)
 export BANKER_NO_TELEMETRY=1      # 사용량 카운팅만 끄기
 ```
 
@@ -356,6 +356,26 @@ Codex CLI는 샌드박스가 네트워크를 차단하므로 알림·카운팅 �
 | <https://banker.banker-plugins.workers.dev/> | 사용량 대시보드 (npm 다운로드 지표 + 스킬 사용 집계 차트) |
 | <https://banker.banker-plugins.workers.dev/stats> | 집계 데이터 JSON |
 | <https://banker.banker-plugins.workers.dev/health> | 헬스 체크 (`ok`) |
+
+## 오프라인에서 쓰기
+
+네트워크가 없는 곳에서도 banker 를 설치하고 쓸 수 있습니다.\
+설치는 네트워크가 되는 곳에서 받은 묶음 하나로 끝납니다. banker 는 의존성이 없어 더 받을 것이 없습니다.
+
+```bash
+npm pack @kaydash9999/banker-plugins              # 네트워크가 되는 곳에서. kaydash9999-banker-plugins-<판>.tgz 가 생김
+npm i -g ./kaydash9999-banker-plugins-<판>.tgz     # 옮긴 뒤
+banker setup
+```
+
+- 세션 시작 훅의 업데이트 조회와 체크인은 따로 돌아 세션을 기다리게 하지 않습니다. 실패하면 24시간 동안 다시 시도하지 않고, 아예 시도하지 않게 하려면 `BANKER_NO_UPDATE_CHECK=1` 을 둡니다.
+- 네트워크가 필요한 스킬
+  - 내려받는 설치 스킬: `setup-omc-hud`, `setup-bypass-permissions` 를 뺀 `setup-*`, `docs-setup`, `vertical-pptx-setup`, `motion-graphic-setup`, `3d-intro-setup`
+  - `update-banker`, `audit-security` 의 의존성 취약점 조회, `deep-research`
+  - 유료 API 를 부르는 `3d-intro-build`, `ralph-qa` 의 외부 좌석(codex, gemini, opencode)
+- 내려받는 설치 스킬과 `update-banker` 는 먼저 원천에 닿는지 보고, 닿지 못하면 내려받지 않고 그렇게 알립니다.
+- 나머지는 시도한 뒤 정한 시간 안에 실패를 알리고, 결과가 있는 것처럼 보이지 않게 합니다.
+- 그 밖의 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`)은 네트워크 없이 그대로 씁니다.
 
 ## 라이선스 / 서드파티
 

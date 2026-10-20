@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS,
+  UPDATE_CHECK_PATH, updateCheckDue,
   noUpdateCheck, countingActive, endpoint,
   installedVersion, compareVersions, writeUpdateCache, readUsedSkills, readRegular,
 } from '../bin/lib/telemetry-config.mjs';
@@ -89,13 +89,6 @@ function maybeNotify(cached) {
   writeUpdateCache({ notified: cached.latest }); // 형제 필드(latest/checkedAt/changedSkills) 보존하며 notified 만 병합.
 }
 
-// checkedAt 기준 throttle 경과 여부. 캐시 없음·checkedAt 미기록/비수치 → 경과로 본다(첫 조회 유도).
-function throttleElapsed(cached) {
-  const checkedAt = cached?.checkedAt;
-  if (typeof checkedAt !== 'number') return true;
-  return (Date.now() - checkedAt) >= UPDATE_THROTTLE_MS;
-}
-
 // 갱신 fetcher 절대경로 결정: count-default-on 활성(countingActive) + 엔드포인트 설정 시
 // update-checkin.mjs(체크인이 알림 조회를 겸함), 그 외에는 update-fetch.mjs(공개 npm GET 폴백).
 // 경로는 이 파일 기준으로 resolve 한다. (형제 스토리가 생성 중 - 런타임에 존재하면 된다.)
@@ -121,7 +114,7 @@ async function main() {
 
   const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
   maybeNotify(cached);
-  if (throttleElapsed(cached)) spawnFetcher(); // 갱신은 백그라운드로 위임.
+  if (updateCheckDue(cached)) spawnFetcher(); // 갱신은 백그라운드로 위임. 실패한 시도(triedAt)에서도 하루를 쉰다.
 }
 
 // 직접 실행(훅)일 때만 main() 을 돌린다. import(테스트)시엔 chooseFetcher 만 노출하고 main 은 미실행.
