@@ -3,7 +3,7 @@
 // Run from the repo root: node --test skills/ralph-qa/references/step2-chain.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,8 @@ const BLOCK = ((SKILL.split("## 외부 좌석 전송")[1] || "").match(/```bash\
 const CHAIN = (BLOCK.match(/^i=\$\(git [\s\S]*?grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m) || [])[0] || "";
 // The listing the author reads before choosing the new files to send.
 const LISTING = (BLOCK.match(/^git -C '<저장소>' .*ls-files --others --exclude-standard$/m) || [])[0] || "";
+// The folded listing for a long one.
+const FOLDED = (BLOCK.match(/^git -C '<저장소>' .*ls-files --others --exclude-standard --directory$/m) || [])[0] || "";
 
 const works = (cmd) => spawnSync(cmd, ["--version"], { encoding: "utf8" }).status === 0;
 const SKIP = process.platform === "win32" ? "Git Bash path handling is not checked on Windows"
@@ -295,4 +297,137 @@ test("the user's color and submodule diff settings change nothing that goes out"
   assert.ok(sent(r, "a.txt"), r.prompt);
   assert.ok(!r.prompt.includes("\u001b"), "no color codes before the lines the scanner anchors on");
   assert.ok(!r.prompt.includes("NESTED-CONTENT") && r.prompt.includes("Subproject commit"), r.prompt);
+});
+
+// 0.20.4 B3: the diff's own context and attributes, a split index, names with a newline or a quote, the
+// related-range command, a long listing, and a second try in the same folder
+// B3-08, B3-18, B3-23 (research): settings outside the chain's own flags
+const lines200 = (changed = []) => Array.from({ length: 200 }, (_, i) => `line ${i + 1}${changed.includes(i + 1) ? " CHANGED" : ""}\n`).join("");
+const contextLines = (r) => r.prompt.split("\n").filter((l) => /^ line \d+$/.test(l)).length;
+
+test("the user's diff.context, diff.interHunkContext and GIT_DIFF_OPTS send no more than three lines around a change", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "big.txt", lines200());
+  git(ctx, "add", "big.txt");
+  git(ctx, "commit", "-qm", "big");
+  put(ctx, "big.txt", lines200([100, 110]));
+  assert.equal(contextLines(step2(ctx)), 12, "two hunks of 3 + 3");
+  git(ctx, "config", "--global", "diff.context", "40");
+  git(ctx, "config", "--global", "diff.interHunkContext", "20");
+  const r = step2(ctx, { env: { GIT_DIFF_OPTS: "--unified=15" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(contextLines(r), 12, r.prompt);
+});
+
+test("a diff attribute in the user's global attributes file leaves a binary file a binary line", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  writeFileSync(join(ctx.repo, "blob.bin"), Buffer.from("BIN\0ONE\nRAW-1\n"));
+  git(ctx, "add", "blob.bin");
+  git(ctx, "commit", "-qm", "bin");
+  writeFileSync(join(ctx.repo, "blob.bin"), Buffer.from("BIN\0TWO\nRAW-2\n"));
+  mkdirSync(join(ctx.dir, "home", ".config", "git"), { recursive: true });
+  writeFileSync(join(ctx.dir, "home", ".config", "git", "attributes"), "*.bin diff\n");
+  const r = step2(ctx);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(/^Binary files /m.test(r.prompt) && !r.prompt.includes("RAW-"), r.prompt);
+});
+
+test("a split index repo keeps its .git as it was: the add -N on the copy writes no shared index there", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  git(ctx, "config", "core.splitIndex", "true");
+  git(ctx, "update-index", "--split-index");
+  put(ctx, "a.txt", "two\n");
+  put(ctx, "n.txt", "new\n");
+  const shared = () => readdirSync(join(ctx.repo, ".git")).filter((f) => f.startsWith("sharedindex.")).sort();
+  const before = shared();
+  const r = step2(ctx, { list: "n.txt\n" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(sent(r, "a.txt") && sent(r, "n.txt"), r.prompt);
+  assert.deepEqual(shared(), before, "no new sharedindex.<hash> in the repo's .git");
+});
+
+test("a new file whose name holds a newline stops the chain, since the list check would read the name as two lines", { skip: SKIP }, (t) => {
+  // with a folder line by mistake, the two halves of the name match two listed lines and the check passed
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  put(ctx, "scratch/p", "intended\n");
+  put(ctx, "q", "intended q\n");
+  put(ctx, "scratch/p\nq", "NOT-LISTED\n");
+  const r = step2(ctx, { list: "scratch/p\nq\nscratch\n" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /줄바꿈/);
+  assert.ok(!r.prompt.includes("NOT-LISTED") && !r.prompt.includes("</review-data"), r.prompt);
+});
+
+// The related-range command of step 2, as SKILL.md writes it in prose.
+const RANGE = (SKILL.match(/`(\{ git -C '<저장소>' --literal-pathspecs ls-files --error-unmatch [^`]+? &&)`/) || [])[1] || "";
+const range = (ctx, file, from, to) => {
+  const q = file.replaceAll("'", "'\\''");
+  const cmd = RANGE.replaceAll("<저장소>", ctx.repo).replaceAll("<파일>", q).replaceAll("<시작>", String(from)).replaceAll("<끝>", String(to));
+  return spawnSync("bash", ["-c", `d='${ctx.d}'\n${cmd} echo appended`], { encoding: "utf8", env: ctx.env });
+};
+
+test("a related range names its file and lines, reads any name, and comes only from a tracked or listed file", { skip: SKIP }, (t) => {
+  assert.ok(RANGE, "no related-range command in step 2");
+  const ctx = repo(t);
+  for (const name of ["-x.txt", "it's.txt"]) put(ctx, name, "l1\nl2\nl3\nl4\n");
+  git(ctx, "add", "--", "-x.txt", "it's.txt");
+  git(ctx, "commit", "-qm", "names");
+  put(ctx, "listed.mjs", "n1\nn2\n");
+  put(ctx, "-listed.mjs", "d1\nd2\n");
+  put(ctx, "-x-unsent.txt", "UNSENT\n");
+  put(ctx, "unsent.mjs", "u1\nUNSENT\n");
+  put(ctx, "debug.log", "IGNORED\n");
+  writeFileSync(join(ctx.d, "new-files.md"), "listed.mjs\r\n-listed.mjs\n");
+  writeFileSync(join(ctx.d, "prompt.md"), "");
+  for (const [name, from, to] of [["-x.txt", 2, 3], ["it's.txt", 1, 1], ["listed.mjs", 2, 2], ["-listed.mjs", 1, 1]]) {
+    const r = range(ctx, name, from, to);
+    assert.equal(r.status, 0, r.stderr);
+  }
+  assert.equal(readFileSync(join(ctx.d, "prompt.md"), "utf8"), "=== -x.txt:2-3\nl2\nl3\n=== it's.txt:1-1\nl1\n=== listed.mjs:2-2\nn2\n=== -listed.mjs:1-1\nd1\n");
+  for (const name of ["unsent.mjs", "debug.log", "../outside.txt", "-x-unsent.txt"]) {
+    const r = range(ctx, name, 1, 2);
+    assert.notEqual(r.status, 0, name);
+    assert.match(r.stderr, /추적 파일도 목록의 새 파일도 아니다/);
+  }
+  assert.ok(!/UNSENT|IGNORED/.test(readFileSync(join(ctx.d, "prompt.md"), "utf8")));
+});
+
+test("a long listing folds each wholly new folder to one line and opens the one asked for", { skip: SKIP }, (t) => {
+  assert.ok(FOLDED, "no folded listing in the bash block");
+  const ctx = repo(t);
+  for (let k = 0; k < 300; k += 1) put(ctx, `node_modules/p${k}/i.js`, "x\n");
+  put(ctx, "src/feature.mjs", "export const f = 1;\n");
+  const r = spawnSync("bash", ["-c", FOLDED.replaceAll("<저장소>", ctx.repo)], { encoding: "utf8", env: ctx.env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.split("\n").filter(Boolean).sort(), ["node_modules/", "src/"]);
+});
+
+test("a name the listing quotes goes out written as itself; the quoted line or a ./ line is no stop for a folder", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, 'q"uote.txt', "q\n");
+  put(ctx, "plain.txt", "p\n");
+  const listed = spawnSync("bash", ["-c", LISTING.replaceAll("<저장소>", ctx.repo)], { encoding: "utf8", env: ctx.env }).stdout;
+  assert.ok(listed.split("\n").includes('"q\\"uote.txt"'), listed);
+  let r = step2(ctx, { list: '"q\\"uote.txt"\n' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /^q"uote\.txt$/m, "the stop prints the name to write");
+  assert.match(r.stderr, /따옴표를 풀지 않은 줄/);
+  r = step2(ctx, { list: 'q"uote.txt\n./plain.txt\n' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.prompt.includes('+++ "b/q\\"uote.txt"') && sent(r, "plain.txt"), r.prompt);
+});
+
+test("a second try in the same folder starts from a fresh index copy, so a file taken off the list stays out", { skip: SKIP }, (t) => {
+  // A repo without a commit has no index file to copy over the last try's $d/idx: the chain removes that copy first.
+  const ctx = repo(t, { commit: false });
+  put(ctx, "secret.txt", "K=v\n");
+  const first = step2(ctx, { base: "HEAD", list: "a.txt\nsecret.txt\n" }); // no HEAD yet: stops after add -N
+  assert.notEqual(first.status, 0);
+  assert.ok(existsSync(join(ctx.d, "idx")), "the stopped try left its index copy behind");
+  const empty = git(ctx, "hash-object", "-t", "tree", "/dev/null").trim();
+  const r = step2(ctx, { base: empty, list: "a.txt\n" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(sent(r, "a.txt") && !r.prompt.includes("secret.txt"), r.prompt);
+  assert.ok(r.unsent.includes("secret.txt"), `left in unsent.md: ${r.unsent}`);
 });

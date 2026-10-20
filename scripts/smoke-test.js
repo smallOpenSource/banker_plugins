@@ -661,13 +661,14 @@ try {
      && !/--path-format/.test(seatCode) && /인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다/.test(rqSkill)
      && /커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다/.test(rqSkill) && !/경로를 잘못 얻어도 사본 없이 말없이 진행하지 않는다/.test(rqSkill)
      && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
      && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
      && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
-     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" > "$d/listed.md" &&`)
-     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄이나 겹친 줄)' >&2; false; }; } &&`)
+     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" | sed 's|^\./||' > "$d/listed.md" &&`)
+     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄, 겹친 줄, 따옴표를 풀지 않은 줄)' >&2; false; }; } &&`)
+     && seatCode.split('\n').includes(String.raw`  { [ -z "$(git -C '<저장소>' ls-files -z --others --exclude-standard | LC_ALL=C tr -dc '\n' | LC_ALL=C tr '\n' x)" ] || { echo 'ralph-qa: 이름에 줄바꿈이 든 새 파일이 있다(목록 비교가 그 이름을 두 줄로 읽는다)' >&2; false; }; } &&`)
      && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" &&$/m.test(seatCode)
+     && /^  GIT_DIFF_OPTS= GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.attributesFile=\/dev\/null diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" &&$/m.test(seatCode)
      && !/'<저장소>'(?: -c \S+)* diff (?!--no-ext-diff --no-textconv --no-color --submodule=short )/.test(seatCode)
      && / && LC_ALL=C command grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m.test(seatCode) && !/(?<!command )grep -c/.test(seatCode)
      && !/read-tree/.test(seatCode) && !/git -C '<저장소>' diff HEAD/.test(seatCode) && !/add -N \.(?=[\s`]|$)/m.test(rqSkill)
@@ -696,7 +697,8 @@ try {
      && /첫 판정 뒤의 반복에서 페이로드를 만들지 못하거나 사용자가 보내지 않기로 하면 그 좌석은 `ERROR` 다/.test(rqSkill)
      && /페이로드의 예: 커밋이 있는데 인덱스 파일이 없음, 보낼 diff 도 붙일 대상도 없음, 물을 수 없는 실행에서 512 KiB 초과/.test(rqSkill)
      && /관련 코드 범위는 바뀐 줄 둘레 3줄 밖에 있는데 판정에 필요한 함수 본문이나 호출부다/.test(rqSkill)
-     && /`sed -n '<시작>,<끝>p' '<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
+     && /추적 파일이나 `new-files\.md` 에 적은 새 파일에서만 떼고/.test(rqSkill) && /printf '%s\\n' '=== <파일>:<시작>-<끝>' >> "\$d\/prompt\.md" && sed -n '<시작>,<끝>p' '<저장소>\/<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill)
+     && /이름의 `'` 는 `'\\''` 로 쓴다/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
      && /파일을 읽는 도구가 없는 외부 좌석\(gemini, opencode, 셸을 끈 codex\)/.test(rqSkill) && !/도구가 없는 gemini, opencode 좌석/.test(rqSkill),
      'S23-a: only the new files the author lists go out (the rest stay in unsent.md), stops name their reason, a payload over 512 KiB is asked about, related code goes as ranges');
   // opencode: -f truncates at 50 KB, an unknown --agent falls back to the default agent, and only a
@@ -808,6 +810,13 @@ try {
      'S22-b: the codex unseat list names a line the probe could not place, an escaped quoted key and a managed file read short');
   ok(/그 시작이 models\.dev 사본\(`~\/\.cache\/opencode\/models\.json`\)을 지우고/.test(rqSkill) && /프로브는 그 경우 `notes` 에 까닭을 적는다/.test(rqSkill),
      'S21-b: the limits say a seat or cleanup start of opencode may empty its models.dev copy, and the probe says so');
+  ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard --directory$/m.test(seatCode)
+     && /목록이 100줄을 넘으면/.test(rqSkill) && /줄은 실제 이름으로 적는다/.test(rqSkill)
+     && /`이름에 줄바꿈이 든 새 파일이 있다`: /.test(rqSkill) && /문맥은 사용자 설정과 관계없이 3줄이다/.test(rqSkill)
+     && /`-c core\.splitIndex=false`/.test(rqSkill),
+     'S23-k: a long listing is folded by folder, list lines are real names (unquoted, no ./), a new name with a newline stops, and the diff keeps its own context and attributes');
+  ok(/\+ 2단계의 `unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill),
+     'S12-b: the source-independent seat also gets the list of new files left out of the diff');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
