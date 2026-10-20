@@ -879,7 +879,8 @@ test("a set-url git refuses (an origin with two URLs) shows git's fatal line, th
   assert.equal(runGit(["remote", "set-url", "--add", "origin", twoUrl], f.market).status, 0);
   const r = run(f.home, ["--no-update"]);
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/https:\/\/\*\*\*@example\.invalid\/two\.git/);
+  // masked from the first // to the last @, so the inner https:// goes with it
+  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/\*\*\*@example\.invalid\/two\.git/);
   assert.ok(!r.out.includes("s3cret"), r.out);
 });
 
@@ -1594,10 +1595,11 @@ test("an origin with a user and password shows only ***, and PINNED keeps no URL
   if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
   assert.equal(run(f.home, ["--revert"]).code, 0);
   assert.equal(origin(f.market), withPassword, "the revert still restores the whole URL from origin");
-  for (const plain of ["git@example.invalid:o/omc.git", "https://example.invalid/a@b/omc.git"]) {
+  // An scp-style URL has no // and is left as it is. An @ in a path is taken for the end of a password: from // to that @ is masked.
+  for (const [plain, shown] of [["git@example.invalid:o/omc.git", "git@example.invalid:o/omc.git"], ["https://example.invalid/a@b/omc.git", "https://***@b/omc.git"]]) {
     assert.equal(runGit(["remote", "set-url", "origin", plain], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
-    assert.ok(out.includes(`origin=${plain})`), `a URL with no password is left as it is: ${out}`);
+    assert.ok(out.includes(`origin=${shown})`), `${plain}: ${out}`);
   }
 });
 
@@ -3150,4 +3152,36 @@ test("--check names a hook it cannot read in an inactive version as a note, not 
   try { c = run(f.home, ["--check", "--no-update"]); } finally { chmodSync(foo, 0o644); }
   assert.doesNotMatch(c.out, /결과: 훅 스크립트를 확인하지 못했습니다/, c.out);
   assert.match(c.out, /참고: 비활성 버전 5\.3\.0 의 훅 스크립트를 확인하지 못했습니다\. 판정에는 넣지 않았습니다\./, c.out);
+});
+
+// 0.20.4 B2 Task 6: URL masking up to the last @ after //, and the unpin-failure line (B2-08, B2-09)
+test("the unpin-failure line shows no user or password when an @ follows a raw / ? # or \\ in the password", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  for (const sep of ["/", "?", "#", BACKSLASH]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://https://alice:12345${sep}rest-${"s3" + "cret"}@github.com/x.git`], f.market).status, 0);
+    chmodSync(join(f.market, ".git"), 0o555);
+    let r;
+    try { r = run(f.home, ["--revert"]); } finally { chmodSync(join(f.market, ".git"), 0o755); }
+    assert.match(r.out, /고정 해제 실패/, r.out);
+    assert.doesNotMatch(r.out, new RegExp(`alice|12345|${"s3" + "cret"}`), `${JSON.stringify(sep)}: ${r.out}`);
+  }
+});
+
+test("--check masks a password that holds a raw /", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", `https://alice:pa/ss-${"s3" + "cret"}@github.com/x.git`], f.market).status, 0);
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.match(c.out, /마켓플레이스 미고정/);
+  assert.doesNotMatch(c.out, new RegExp(`${"s3" + "cret"}|alice:pa`), c.out);
+});
+
+test("an origin of many slashes is masked without stalling --check", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const config = join(f.market, ".git", "config");
+  writeFileSync(config, read(config).replace(ORIGIN, `https:${"/".repeat(300000)}x`));
+  const t0 = Date.now();
+  const c = runBy(f.home, ["--check", "--no-update"]);
+  assert.equal(c.error, undefined, "the run ended before its deadline");
+  assert.match(c.out, /마켓플레이스 미고정/);
+  assert.ok(Date.now() - t0 < 10000, `took ${Date.now() - t0} ms`);
 });

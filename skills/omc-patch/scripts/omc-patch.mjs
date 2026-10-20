@@ -961,18 +961,30 @@ process.on("uncaughtException", (e) => {
   if (!e?.code) for (const l of String(e?.stack ?? "").split("\n").filter((x) => /^\s+at /.test(x)).slice(0, 3)) log(`      ${oneLine(l.trim())}`);
   process.exit(1);
 });
-// URL 의 사용자 정보(`//` 뒤 첫 `/` 앞의 마지막 `@` 까지. 공백, 탭, 비밀번호 안의 @ 도)와 쿼리의 값(이름과 상관없이)을
-// 가린다. 출력과 기록에 비밀이 남지 않는다. ssh 꼴(`git@host:`)과 경로 안의 @ 는 그대로다. 쿼리의 이름 칸은 `?` 를 받지
-// 않는다. 받으면 `=` 없는 `?` 가 많은 origin 에서 시작 자리마다 끝까지 읽어 길이의 제곱만큼 걸린다.
-const redactUrl = (url) => String(url).replace(/(\/\/)[^/]*@/g, "$1***@")
-  .replace(/([?&][^=&#\s?]*=)[^&#\s]*/g, "$1***");
+// URL 의 사용자 정보와 쿼리의 값(이름과 상관없이)을 가린다. 출력과 기록에 비밀이 남지 않는다. 사용자 정보는 처음 `//` 뒤부터
+// 마지막 `@` 까지다(공백, 탭, 비밀번호 안의 `/` `?` `#` `@` 도). 경로나 쿼리에 `@` 가 든 URL 은 호스트까지 가려진다 — 비밀번호를
+// 놓치는 것보다 낫다. `//` 가 없는 ssh 꼴(`git@host:`)은 그대로다. 위치로 찾아 길이에 비례해 끝난다(`//.*@` 꼴 정규식은 `@` 없이
+// `/` 가 많은 글에서 길이의 제곱만큼 걸린다). 쿼리의 이름 칸은 `?` 를 받지 않는다. 받으면 `=` 없는 `?` 가 많은 origin 에서
+// 시작 자리마다 끝까지 읽어 길이의 제곱만큼 걸린다.
+function redactUrl(url) {
+  let s = String(url);
+  const i = s.indexOf("//");
+  const at = s.lastIndexOf("@");
+  if (i !== -1 && at > i + 1) s = `${s.slice(0, i + 2)}***${s.slice(at)}`;
+  return s.replace(/([?&][^=&#\s?]*=)[^&#\s]*/g, "$1***");
+}
 
 // URL 의 scheme 과 host 까지만. 비밀은 사용자 정보와 쿼리 밖(경로, 조각, `;` 매개변수)에도 들 수 있어 나머지는 버린다.
 // scp 꼴(`git@host:org/repo.git`)은 host 만이다. 파서가 host 로 읽어도 host 모양(이름이나 [IPv6], 선택 포트)이 아니면
 // 보이지 않는다(ssh 같은 scheme 은 host 뒤의 `;k=...` 까지 host 로 읽는다).
 const HOST_SHAPE = /^(?:[A-Za-z0-9._-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?$/;
+// `scheme://` 뒤 첫 `/` `?` `#` `\` 앞까지(파서가 읽는 authority). 비밀번호에 그 글자가 날로 들면 파서는 그 앞의 `이름:숫자` 를
+// host:port 로 읽고 `@` 를 경로로 보낸다. authority 에 `@` 가 없는데 그 뒤에 `@` 가 있으면 host 를 믿지 않는다.
+const AUTHORITY = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#\\]*)/;
 function hostOnly(url) {
   let scheme = "", host;
+  const auth = AUTHORITY.exec(String(url));
+  if (auth && !auth[1].includes("@") && String(url).includes("@", auth[0].length)) return "(호스트를 알아볼 수 없음)";
   try {
     const u = new URL(String(url));
     if (!u.host) return "(호스트가 없는 URL 또는 로컬 경로)";
