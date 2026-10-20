@@ -28,7 +28,24 @@ const root = mkdtempSync(join(tmpdir(), "apply-hud-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 // Mode bits are POSIX matters, and root writes files it may not.
 const POSIX = process.platform !== "win32";
-const posixOnly = { skip: !POSIX && "Windows has no POSIX mode bits" };
+const posixModes = { skip: !POSIX && "Windows has no POSIX mode bits" };
+const posixSignals = { skip: !POSIX && "Windows has no POSIX signals" };
+// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
+// tests that make one run only where this account can.
+const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+const canLinkFiles = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
+  try {
+    writeFileSync(join(probe, "a"), "");
+    symlinkSync(join(probe, "a"), join(probe, "b"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+const fileLinks = { skip: !canLinkFiles && "this account cannot make file links" };
 const asRoot = POSIX && process.getuid?.() === 0;
 const modeOf = (p) => statSync(p).mode & 0o777;
 
@@ -433,7 +450,7 @@ test("렌더 확인: PATH 에 node 가 없으면 [!!]", () => {
   assert.equal(settingsOf(cfg).statusLine.command, `node "${slash(cfg)}/hud/omc-hud-custom.mjs"`);
 });
 
-test("렌더 확인은 PATH 의 상대 경로 폴더에 있는 node 를 실행하지 않음", posixOnly, () => {
+test("렌더 확인은 PATH 의 상대 경로 폴더에 있는 node 를 실행하지 않음", posixModes, () => {
   const cfg = fresh();
   const cwd = fresh("cwd");
   const marker = join(cwd, "ran");
@@ -459,7 +476,7 @@ test("렌더 확인: 모르는 출력은 [..] 로 첫 줄을 보임", () => {
   assert.match(renderWith('console.log("hello");\n').out, /\[\.\.\] Render check: unrecognized output: hello/);
 });
 
-test("래퍼 파일만 링크한 설정 폴더에 설치하면 렌더 확인이 [ok]", posixOnly, () => {
+test("래퍼 파일만 링크한 설정 폴더에 설치하면 렌더 확인이 [ok]", fileLinks, () => {
   const cfg = fresh();
   const dot = fresh("dot");
   writeFileSync(join(dot, "omc-hud-custom.mjs"), "// old wrapper\n");
@@ -496,7 +513,7 @@ test("렌더 확인: 판이 다르고 설치한 판이 오류 없이 돌면 [..]
   assert.doesNotMatch(r.out, /does not load|OMC's install is at fault/);
 });
 
-test("렌더 확인은 PATH 앞쪽의 실행할 수 없는 node 를 건너뜀", posixOnly, () => {
+test("렌더 확인은 PATH 앞쪽의 실행할 수 없는 node 를 건너뜀", posixModes, () => {
   const dir = fresh("noexec");
   writeFileSync(join(dir, "node"), "#!/bin/sh\n");
   chmodSync(join(dir, "node"), 0o644);
@@ -559,7 +576,7 @@ test("settings.json 백업은 원본과 같은 바이트와 권한", () => {
   if (POSIX) assert.equal(modeOf(join(cfg, bak)), 0o600, "backup as private as the original");
 });
 
-test("새 폴더와 파일은 umask 002 에서도 그룹이 쓸 수 없음", posixOnly, () => {
+test("새 폴더와 파일은 umask 002 에서도 그룹이 쓸 수 없음", posixModes, () => {
   const cfg = fresh();
   const r = install({ cfg, omcMode: 0o664, wrap: ["sh", "-c", 'umask 002; exec "$0" "$@"'] });
   assert.equal(r.status, 0, r.out);
@@ -655,7 +672,7 @@ test("첨부 HUD 설정은 상세 줄을 8줄까지 둠", () => {
   assert.equal(JSON.parse(asset("hud-config.json")).elements.maxOutputLines, 8);
 });
 
-test("다시 설치하면 그룹이 쓸 수 있던 래퍼와 로더도 0644 로", posixOnly, () => {
+test("다시 설치하면 그룹이 쓸 수 있던 래퍼와 로더도 0644 로", posixModes, () => {
   const cfg = fresh();
   mkdirSync(join(cfg, "hud", "lib"), { recursive: true });
   const owned = ["omc-hud-custom.mjs", "omc-hud.mjs", join("lib", "config-dir.mjs")];
@@ -703,7 +720,7 @@ test("BOM 이 붙은 settings.json 의 JSON 오류도 줄과 칸이 맞음", () 
   assert.match(r.out, /settings\.json is not valid JSON \(line 3, column 1\)/);
 });
 
-test("렌더 확인: 신호로 끝난 상태표시줄 명령은 신호 이름을 알림", posixOnly, () => {
+test("렌더 확인: 신호로 끝난 상태표시줄 명령은 신호 이름을 알림", posixSignals, () => {
   assert.match(renderWith('process.kill(process.pid, "SIGTERM");\n').out, /failed \(exit SIGTERM\)/);
 });
 
@@ -736,7 +753,7 @@ test("이전 statusLine 명령의 보이지 않는 글자는 ? 로 보임", () =
   assert.ok(!r.out.includes(rlo), "the control character is not printed");
 });
 
-test("settings.json 은 새 파일로 바꿔 넣고 권한을 지킴", posixOnly, () => {
+test("settings.json 은 새 파일로 바꿔 넣고 권한을 지킴", posixModes, () => {
   const cfg = fresh();
   const file = join(cfg, "settings.json");
   writeFileSync(file, JSON.stringify({ theme: "dark" }));
@@ -759,7 +776,7 @@ function linkedSettings() {
   return { cfg, dot, target };
 }
 
-test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈", posixOnly, () => {
+test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈", fileLinks, () => {
   const { cfg, target } = linkedSettings();
   const ino = statSync(target).ino;
   const r = install({ cfg });
@@ -771,7 +788,7 @@ test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈
   assert.notEqual(statSync(target).ino, ino, "the file it points at was replaced");
 });
 
-test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (!POSIX && "mode bits") || (asRoot && "root writes read-only folders") }, () => {
+test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (!POSIX && "mode bits") || (asRoot && "root writes read-only folders") || (!canLinkFiles && "this account cannot make file links") }, () => {
   const { cfg, dot, target } = linkedSettings();
   chmodSync(dot, 0o555);
   try {
@@ -782,4 +799,41 @@ test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (
   } finally {
     chmodSync(dot, 0o755);
   }
+});
+
+test("렌더 확인 정화는 제어 글자 밖의 서식, 사용자 영역, 미할당, 변이 선택, 점자 빈칸, 넓은 공백도 ? 로 바꿈", () => {
+  const odd = [0x202e, 0xe000, 0x0378, 0xfe0f, 0x2800, 0x3000, 0x00a0].map((c) => String.fromCharCode(c));
+  const { out } = renderWith(`console.log(${JSON.stringify(`[OMC HUD] HUD import failed: a${odd.join("b")}c`)});\n`);
+  assert.match(out, /OMC's HUD does not load: \[OMC HUD\] HUD import failed: a\?b\?b\?b\?b\?b\?b\?c/);
+  for (const ch of odd) assert.ok(!out.includes(ch), `U+${ch.charCodeAt(0).toString(16)} is shown as ?`);
+});
+
+const ESC = String.fromCharCode(27);
+test("렌더 확인: stderr 의 오류 줄도 정화", () => {
+  const { out } = renderWith(`process.stderr.write(${JSON.stringify(`Error: bad${ESC}x\n`)});\nprocess.exit(3);\n`);
+  assert.match(out, /failed \(exit 3\): Error: bad\?x/);
+  assert.ok(!out.includes(ESC));
+});
+
+test("렌더 확인: Node 오류 줄도 정화", () => {
+  const { out } = renderWith(`import ${JSON.stringify(`./no-such-${ESC}.mjs`)};\n`);
+  assert.match(out, /prints an error instead of a line: Error \[ERR_MODULE_NOT_FOUND\]: Cannot find module .*no-such-\?\.mjs/);
+  assert.ok(!out.includes(ESC));
+});
+
+test("렌더 확인: 이유 줄도 정화", () => {
+  const omc = {
+    "5.7.4": { pkg: true, loader: banner("5.7.4") },
+    "5.7.5": { pkg: true, loader: banner("5.7.4"), dist: `throw new Error(${JSON.stringify(`boom${ESC}x`)});\n` },
+  };
+  const r = install({ cfg: fresh(), versions: ["5.7.4", "5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /5\.7\.5 does not load \(Error: boom\?x\)\./);
+  assert.ok(!r.out.includes(ESC));
+});
+
+test("렌더 확인: 모르는 출력도 정화", () => {
+  const { out } = renderWith(`console.log(${JSON.stringify(`hello${ESC}x`)});\n`);
+  assert.match(out, /unrecognized output: hello\?x/);
+  assert.ok(!out.includes(ESC));
 });

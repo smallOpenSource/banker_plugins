@@ -26,7 +26,22 @@ const root = mkdtempSync(join(tmpdir(), "claude-update-last-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
 // Links made without privileges and mode bits are POSIX matters; root ignores mode bits.
-const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
+// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
+// tests that make one run only where this account can.
+const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+const canLinkFiles = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
+  try {
+    writeFileSync(join(probe, "a"), "");
+    symlinkSync(join(probe, "a"), join(probe, "b"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+const fileLinks = { skip: !canLinkFiles && "this account cannot make file links" };
 const asRoot = process.platform !== "win32" && process.getuid?.() === 0;
 
 // Runnable stand-ins for omc-hud-custom.mjs: the lines the block relies on, laid
@@ -540,7 +555,7 @@ test("an unexpected failure partway exits 2, points at status and keeps the wrap
   assert.deepEqual(readdirSync(c.dir).filter((name) => name.endsWith(".tmp")), [], "the failed write's temp file is gone");
 });
 
-test("the backup is written fresh, never through a link planted at its name", posixOnly, () => {
+test("the backup is written fresh, never through a link planted at its name", fileLinks, () => {
   const c = setup();
   const victim = join(c.dir, "victim.txt");
   writeFileSync(victim, "keep me");
@@ -677,7 +692,7 @@ test("CRLF 로 바꾼 첨부 래퍼에도 두 블록이 들어가고 빠짐", ()
   assert.equal(readFileSync(c.hudFile, "utf8"), crlf);
 });
 
-test("래퍼 파일만 링크해도 첨부 래퍼 v4 가 PL 칸을 그림", posixOnly, () => {
+test("래퍼 파일만 링크해도 첨부 래퍼 v4 가 PL 칸을 그림", fileLinks, () => {
   // The real wrapper (with the omc-hud.mjs beside it) stays in c.dir; statusLine names a link elsewhere.
   const c = setupV4();
   const link = join(c.dir, "dotfiles-link", "omc-hud-custom.mjs");
