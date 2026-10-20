@@ -389,6 +389,7 @@ function printLastChecks(cache) {
 
 // 캐시의 최신 버전과 설치 버전을 견준 한 줄.
 function versionVerdict(tc, cache, installed) {
+  if (!cache.latest && Object.keys(cache).length) return '  비교 불가 (확인에 성공한 적이 없어 최신 버전 정보 없음)';
   const cmp = (cache.latest && installed) ? tc.compareVersions(cache.latest, installed) : null;
   if (cmp === null) return '  비교 불가 (캐시 없음 또는 malformed)';
   return cmp > 0 ? `  업데이트 있음 (${installed} → ${cache.latest})` : '  최신 버전 사용 중';

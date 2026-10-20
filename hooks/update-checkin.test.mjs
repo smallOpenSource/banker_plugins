@@ -224,7 +224,7 @@ test('malformed/빈 줄은 무시하고 유효한 name\\thour 만 집계한다',
     req.on('end', () => {
       try { body = JSON.parse(data); } catch { /* ignore */ }
       res.writeHead(200);
-      res.end('ok'); // latest 없음 - 캐시 미변경 경로.
+      res.end('ok'); // latest 없음 - 시도 시각(triedAt)만 쓰는 경로.
     });
   });
   try {

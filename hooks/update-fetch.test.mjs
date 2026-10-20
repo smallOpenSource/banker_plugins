@@ -271,7 +271,7 @@ test('비-https 비-loopback URL 은 전송 시도 없이 즉시 no-op', () => {
 
 test('https 스킴은 loopback 여부와 무관하게 통과한다(가드가 조기 차단하지 않는다)', () => {
   // TLS 핸드셰이크까지는 요구하지 않는다 - 닫힌 포트라 즉시 거부되지만, 핵심은 가드가 finish(null)
-  // 로 미리 막지 않고 transport.request(https) 까지 도달한다는 것. 실패해도 캐시 미기록·exit 0.
+  // 로 미리 막지 않고 transport.request(https) 까지 도달한다는 것. 실패하면 시도 시각(triedAt)만 쓰고 exit 0.
   const tmp = mkTmp();
   return closedPort().then((port) => {
     const start = Date.now();

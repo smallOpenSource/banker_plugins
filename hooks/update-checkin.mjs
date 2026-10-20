@@ -233,7 +233,7 @@ function dropOldClaims(now = Date.now()) {
   }
 }
 
-// 응답의 latest 로 공유 update-check 캐시를 갱신(알림 겸함). 없으면 캐시 미변경.
+// 응답의 latest 로 공유 update-check 캐시를 갱신(알림 겸함). 없으면 시도 시각(triedAt)만 쓴다.
 // update-fetch 처럼 notified:null 재무장을 하지 않아도 등가다: dedupe 판정이 notified===latest
 // (update-notify)라 전진 버전에서 구 notified 는 항상 신 latest 와 달라 재고지가 정상 발화하고,
 // count-default-on 은 이 훅만·npm 배포는 update-fetch 만 써 같은 캐시를 겹쳐 쓰지 않는다.

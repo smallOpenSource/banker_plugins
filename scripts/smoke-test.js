@@ -941,6 +941,16 @@ try {
   ok(/검색과 fetch 가 모두 실패하면\(네트워크 없음\) 보고서를 만들지 않고 "웹 조사 불가: <오류>" 로 끝낸다/.test(drSkill)
      && /`skipped` 와 이유 "네트워크 없음"/.test(ucSkill) && /주장이 0개면 게이트를 지나지 않은 것이다/.test(ucSkill),
      'airgap-8: deep-research ends as "웹 조사 불가" when every web tool fails, and ultra-chain records the step as skipped');
+  // README and PRIVACY tell an offline user what really happens: which skills need the network and how each one ends
+  // without it, and that the hooks do not take HTTPS_PROXY.
+  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const offlineReadme = readme.slice(readme.indexOf('## 오프라인에서 쓰기'), readme.indexOf('## 라이선스'));
+  const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8');
+  ok(!/그 밖의 스킬/.test(offlineReadme) && /네트워크를 쓰지 않는 스킬\(예: /.test(offlineReadme)
+     && /`ultra-chain` 1단계/.test(offlineReadme) && /`motion-graphic-make`/.test(offlineReadme) && /`nothing-design`/.test(offlineReadme)
+     && /OS 패키지 관리자\(dnf, apt, brew, winget\)의 단계는 .*미리 판정하지 않고 시도합니다/.test(offlineReadme)
+     && [offlineReadme, privacy].every((t) => /훅은 `HTTPS_PROXY`, `HTTP_PROXY` 를 따르지 않습니다/.test(t)),
+     'airgap-11: the README offline section names the skills that need the network and how each ends, and both docs say the hooks ignore HTTPS_PROXY');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
