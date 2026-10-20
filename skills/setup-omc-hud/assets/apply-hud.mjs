@@ -25,7 +25,9 @@
  * folder path the statusLine shell would act on, a file or folder it cannot
  * write, an OMC folder without both loader files, a relative OMC_PLUGIN_ROOT.
  * Backups keep the original bytes and mode; the files it writes are 0644 and new
- * folders 0755; the other statusLine fields (padding, ...) stay.
+ * folders 0755; the other statusLine fields (padding, ...) stay. settings.json goes
+ * in as a new file through a rename (a link keeps pointing at it), in place where
+ * that cannot be done.
  * At the end it runs the installed formatter once with no input and reports
  * whether OMC's HUD loads and which version draws (the render check); that never
  * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 25s limit.
@@ -39,8 +41,12 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  lstatSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -315,6 +321,39 @@ function installTemplates() {
   log("[ok] HUD config       -> " + configDst);
 }
 
+// settings.json goes in as a new file through a rename, so a stop midway never leaves it half written.
+// One that is a link (dotfiles) keeps its link, and the file it points at is the one replaced. Where
+// that cannot be done (a folder this account may not write, a file another program holds open), or
+// the link leads nowhere yet, it is written in place as before.
+const IN_PLACE = new Set(["EACCES", "EPERM", "EBUSY", "EXDEV"]);
+const isLink = (p) => {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+function writeSettings(file, text) {
+  let target = file;
+  let mode;
+  try {
+    target = realpathSync(file);
+    mode = statSync(target).mode & 0o777;
+  } catch {
+    if (isLink(file)) return writeFileSync(file, text);
+  }
+  const tmp = `${target}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, text, { flag: "wx", mode });
+    if (mode !== undefined && process.platform !== "win32") chmodSync(tmp, mode);
+    renameSync(tmp, target);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    if (!IN_PLACE.has(e.code)) throw e;
+    writeFileSync(file, text);
+  }
+}
+
 // 4. Point settings.json statusLine at the custom formatter; its other fields (padding, ...) stay.
 //    A settings.json that already says exactly this is neither backed up nor written.
 const objectOr = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
@@ -336,7 +375,7 @@ function pointStatusLine() {
     copyFileSync(settingsPath, backup); // the original bytes and mode
     log("[ok] Backed up settings.json -> " + backup);
   }
-  writeFileSync(settingsPath, next);
+  writeSettings(settingsPath, next);
   log("[ok] statusLine -> " + command);
 }
 

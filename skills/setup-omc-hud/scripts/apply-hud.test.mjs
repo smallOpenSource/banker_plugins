@@ -735,3 +735,51 @@ test("이전 statusLine 명령의 보이지 않는 글자는 ? 로 보임", () =
   assert.match(r.out, /\[\.\.\] statusLine ran "node old\?\.mjs"/);
   assert.ok(!r.out.includes(rlo), "the control character is not printed");
 });
+
+test("settings.json 은 새 파일로 바꿔 넣고 권한을 지킴", posixOnly, () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  chmodSync(file, 0o600);
+  const ino = statSync(file).ino;
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.notEqual(statSync(file).ino, ino, "replaced through a rename");
+  assert.equal(modeOf(file), 0o600);
+  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
+});
+
+// A settings.json kept in a dotfiles folder and linked into the config folder.
+function linkedSettings() {
+  const cfg = fresh();
+  const dot = fresh("dot");
+  const target = join(dot, "settings.json");
+  writeFileSync(target, JSON.stringify({ theme: "dark" }));
+  symlinkSync(target, join(cfg, "settings.json"));
+  return { cfg, dot, target };
+}
+
+test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈", posixOnly, () => {
+  const { cfg, target } = linkedSettings();
+  const ino = statSync(target).ino;
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink(), "the link stays");
+  const s = JSON.parse(readFileSync(target, "utf8"));
+  assert.equal(s.theme, "dark");
+  assert.match(s.statusLine.command, /omc-hud-custom\.mjs/);
+  assert.notEqual(statSync(target).ino, ino, "the file it points at was replaced");
+});
+
+test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (!POSIX && "mode bits") || (asRoot && "root writes read-only folders") }, () => {
+  const { cfg, dot, target } = linkedSettings();
+  chmodSync(dot, 0o555);
+  try {
+    const r = install({ cfg });
+    assert.equal(r.status, 0, r.out);
+    assert.match(JSON.parse(readFileSync(target, "utf8")).statusLine.command, /omc-hud-custom\.mjs/);
+    assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink());
+  } finally {
+    chmodSync(dot, 0o755);
+  }
+});
