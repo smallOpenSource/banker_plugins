@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 
 const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
@@ -87,11 +87,11 @@ const loaderOf = (cfg) => readFileSync(join(cfg, "hud", "omc-hud.mjs"), "utf8").
 
 const cleanEnv = () =>
   Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|OMC_PLUGIN_ROOT|HOME|USERPROFILE)$/i.test(k)));
-const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], omcMode: undefined, omc: {}, apply: APPLY };
+const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], nodeArgs: [], omcMode: undefined, omc: {}, apply: APPLY };
 // Runs the installer. `cfg` is where the config folder really is; `value` is what CLAUDE_CONFIG_DIR
 // says (default `cfg`, null to leave it unset). `bare` versions lack the template, `half` ones config-dir.mjs.
 // `omc` holds more fakeOmc options per version; an `env.PATH` replaces the PATH under any spelling. `apply` is
-// the installer to run (a copy beside other attached files, say).
+// the installer to run (a copy beside other attached files, say), `nodeArgs` go to node before it (a preload, say).
 function install(opts) {
   const o = { ...INSTALL_DEFAULTS, home: fresh("home"), value: opts.cfg, ...opts };
   for (const v of o.versions) fakeOmc(join(omcCache(o.cfg), v), v, { mode: o.omcMode, ...o.omc[v] });
@@ -101,7 +101,7 @@ function install(opts) {
   if (o.env.PATH !== undefined) for (const k of Object.keys(base)) if (/^path$/i.test(k)) delete base[k];
   const childEnv = { ...base, HOME: o.home, USERPROFILE: o.home, ...o.env };
   if (o.value !== null) childEnv.CLAUDE_CONFIG_DIR = o.value;
-  const [cmd, ...args] = [...o.wrap, process.execPath, o.apply];
+  const [cmd, ...args] = [...o.wrap, process.execPath, ...o.nodeArgs, o.apply];
   const r = spawnSync(cmd, args, { cwd: o.cwd, env: childEnv, encoding: "utf8" });
   return { status: r.status, out: `${r.stdout}${r.stderr}`, err: r.stderr, home: o.home };
 }
@@ -786,6 +786,81 @@ test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈
   assert.equal(s.theme, "dark");
   assert.match(s.statusLine.command, /omc-hud-custom\.mjs/);
   assert.notEqual(statSync(target).ino, ino, "the file it points at was replaced");
+});
+
+// The installer's temporary file is named after its pid; a preload pins the pid so a test can put
+// something at that name first.
+const PID = 4242424;
+function pinnedPid() {
+  const file = join(root, `pid-${++seq}.mjs`);
+  writeFileSync(file, `Object.defineProperty(process, "pid", { value: ${PID} });\n`);
+  return ["--import", pathToFileURL(file).href];
+}
+
+test("같은 pid 의 임시 파일이 남아 있어도 settings.json 을 바꿔 넣고 그 파일을 치움", () => {
+  const cfg = fresh();
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
+  writeFileSync(join(cfg, `settings.json.${PID}.tmp`), "left by an earlier run that was killed\n");
+  const ino = statSync(join(cfg, "settings.json")).ino;
+  const r = install({ cfg, nodeArgs: pinnedPid() });
+  assert.equal(r.status, 0, r.out);
+  assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
+  assert.notEqual(statSync(join(cfg, "settings.json")).ino, ino, "went in through the rename, not in place");
+  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
+});
+
+test("임시 파일 자리에 끊어진 링크가 있어도 그 너머에 쓰지 않음", fileLinks, () => {
+  const cfg = fresh();
+  const outside = fresh("outside");
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
+  symlinkSync(join(outside, "planted.json"), join(cfg, `settings.json.${PID}.tmp`));
+  const r = install({ cfg, nodeArgs: pinnedPid() });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(existsSync(join(outside, "planted.json")), false, "nothing was written where the link led");
+  assert.ok(!lstatSync(join(cfg, "settings.json")).isSymbolicLink());
+  assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
+});
+
+// A preload that makes one fs call fail with `code` for the installer's temporary file, on every OS.
+function failingPreload(fn, code) {
+  const file = join(root, `fail-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    `const real = fs.${fn};`,
+    `fs.${fn} = function (p, ...rest) {`,
+    `  if (String(p).endsWith(".tmp")) throw Object.assign(new Error("${code} (test)"), { code: "${code}" });`,
+    "  return real.call(this, p, ...rest);",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return ["--import", pathToFileURL(file).href];
+}
+
+test("settings.json 을 rename 하지 못하면 오류가 무엇이든 제자리에 쓰고 임시 파일을 남기지 않음", () => {
+  for (const code of ["EPERM", "EIO", "ENOTSUP"]) {
+    const cfg = fresh();
+    writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
+    const r = install({ cfg, nodeArgs: failingPreload("renameSync", code) });
+    assert.equal(r.status, 0, `${code}: ${r.out}`);
+    assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/, code);
+    assert.deepEqual(readdirSync(cfg).filter((name) => name.endsWith(".tmp")), [], code);
+  }
+});
+
+test("디스크가 가득 차 임시 파일을 못 쓰면 settings.json 을 그대로 두고 멈춤", () => {
+  for (const code of ["ENOSPC", "EDQUOT"]) {
+    const cfg = fresh();
+    const file = join(cfg, "settings.json");
+    writeFileSync(file, JSON.stringify({ theme: "dark" }));
+    const before = readFileSync(file);
+    const r = install({ cfg, nodeArgs: failingPreload("writeFileSync", code) });
+    assert.notEqual(r.status, 0, `${code}: ${r.out}`);
+    assert.match(r.out, new RegExp(code));
+    assert.ok(readFileSync(file).equals(before), `${code}: settings.json is as it was`);
+    assert.deepEqual(readdirSync(cfg).filter((name) => name.endsWith(".tmp")), [], code);
+  }
 });
 
 test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (!POSIX && "Windows has no POSIX mode bits") || (asRoot && "root writes read-only folders") || (!canLinkFiles && "this account cannot make file links") }, () => {

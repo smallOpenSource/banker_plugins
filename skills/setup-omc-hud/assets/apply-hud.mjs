@@ -27,7 +27,7 @@
  * Backups keep the original bytes and mode; the files it writes are 0644 and new
  * folders 0755; the other statusLine fields (padding, ...) stay. settings.json goes
  * in as a new file through a rename (a link keeps pointing at it), in place where
- * that cannot be done.
+ * that cannot be done, and is left as it was when the disk is full.
  * At the end it runs the installed formatter once with no input and reports
  * whether OMC's HUD loads and which version draws (the render check); that never
  * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 25s limit.
@@ -322,10 +322,13 @@ function installTemplates() {
 }
 
 // settings.json goes in as a new file through a rename, so a stop midway never leaves it half written.
-// One that is a link (dotfiles) keeps its link, and the file it points at is the one replaced. Where
-// that cannot be done (a folder this account may not write, a file another program holds open), or
-// the link leads nowhere yet, it is written in place as before.
-const IN_PLACE = new Set(["EACCES", "EPERM", "EBUSY", "EXDEV"]);
+// One that is a link (dotfiles) keeps its link, and the file it points at is the one replaced. A file
+// left at the temporary name (an earlier run with this pid, or a link put there) is removed first and
+// never written through. Where the new file cannot go in (a folder this account may not write, a file
+// another program holds open, a file system that refuses the rename), or the link leads nowhere yet,
+// it is written in place as before; only a full disk stops it, as writing in place could then cut
+// settings.json short.
+const FULL_DISK = new Set(["ENOSPC", "EDQUOT"]);
 const isLink = (p) => {
   try {
     return lstatSync(p).isSymbolicLink();
@@ -344,12 +347,17 @@ function writeSettings(file, text) {
   }
   const tmp = `${target}.${process.pid}.tmp`;
   try {
+    rmSync(tmp, { force: true });
     writeFileSync(tmp, text, { flag: "wx", mode });
     if (mode !== undefined && process.platform !== "win32") chmodSync(tmp, mode);
     renameSync(tmp, target);
   } catch (e) {
-    rmSync(tmp, { force: true });
-    if (!IN_PLACE.has(e.code)) throw e;
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* a folder at that name: left alone */
+    }
+    if (FULL_DISK.has(e.code)) throw e;
     writeFileSync(file, text);
   }
 }
