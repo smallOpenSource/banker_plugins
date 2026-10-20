@@ -877,6 +877,33 @@ try {
       || /\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b[^|\n]*\|\s*(?:iex|Invoke-Expression)\b/i.test(l))
     .map((l) => `${f}: ${l.trim().slice(0, 60)}`));
   ok(piped.length === 0, `airgap-3: no SKILL or command pipes a download into a shell (found ${JSON.stringify(piped)})`);
+  // A skill that downloads first sees whether its sources answer within 10 s and reports "오프라인이라 설치하지 않음"
+  // instead of waiting on every command (npm 70 s, curl and git without end); the curl, wget and git calls left have limits.
+  const DL_DOCS = ['setup-node', 'setup-python', 'setup-java', 'setup-lsp', 'setup-playwright', 'setup-mcp', 'setup-stitch',
+    'setup-tmux', 'setup-pwsh', 'setup-sandbox', 'setup-omc', 'setup-harness-factory', 'setup-insane-search', 'docs-setup',
+    'vertical-pptx-setup', 'motion-graphic-setup', '3d-intro-setup'].map((d) => path.join('skills', d, 'SKILL.md'))
+    .concat(path.join('commands', 'setup.md'));
+  const NET_CHECK = /npm ping --fetch-retries=0 --fetch-timeout=10000|curl(?:\.exe)? -sS -o (?:\/dev\/null|NUL) --connect-timeout 5 --max-time 10 /;
+  const DOWNLOADS = /\b(?:curl|wget|git(?: -c \S+)* clone|npx|npm (?:i|install)\b|pip3? install|pipx install|uv tool install|uvx|dnf (?:-y )?install|apt(?:-get)? (?:-y )?install|brew install|winget install|Invoke-RestMethod|Invoke-WebRequest|nvm install|playwright install|claude plugin (?:marketplace add|install)|omc update)\b/;
+  const firstDownloadAt = (text) => {
+    for (const m of text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
+      const code = m[1].split('\n').map((l) => l.replace(/\s#\s.*$/, ''));   // a trailing comment names, it does not run
+      if (code.some((l) => !NET_CHECK.test(l) && !/^\s*#/.test(l) && !/\bcommand -v\b/.test(l) && DOWNLOADS.test(l))) return m.index;
+    }
+    return Infinity;
+  };
+  const unchecked = DL_DOCS.filter((f) => {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    const at = t.search(NET_CHECK);
+    return at < 0 || at > firstDownloadAt(t) || !/오프라인이라 설치하지 않음/.test(t);
+  });
+  ok(unchecked.length === 0, `airgap-4: each downloading skill and /banker:setup checks its sources before the first download (unchecked: ${JSON.stringify(unchecked)})`);
+  const unlimited = DL_DOCS.flatMap((f) => [...fs.readFileSync(path.join(root, f), 'utf8').matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
+    .flatMap((m) => m[1].split('\n')).map((l) => l.replace(/\s#\s.*$/, '')).filter((l) => !/^\s*#/.test(l))
+    .filter((l) => (/\bcurl(?:\.exe)? -/.test(l) && !/--max-time \d+/.test(l)) || (/\bwget -/.test(l) && !/--timeout=\d+/.test(l))
+      || (/\bgit\b.*\bclone\b/.test(l) && !/http\.lowSpeedTime=\d+/.test(l)))
+    .map((l) => `${f}: ${l.trim().slice(0, 50)}`));
+  ok(unlimited.length === 0, `airgap-4b: the curl, wget and git clone calls of those skills have time limits (found ${JSON.stringify(unlimited)})`);
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

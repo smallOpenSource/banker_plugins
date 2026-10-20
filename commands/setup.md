@@ -10,6 +10,14 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
 
 ## 절차
 
+0. **네트워크 확인**: 항목을 고르기 전에 원천에 닿는지 한 번 본다(각 10초 안).
+   ```bash
+   npm ping --fetch-retries=0 --fetch-timeout=10000
+   curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com
+   ```
+   - 둘 다 실패하면 오프라인이다. 내려받는 항목은 시도하지 않고 "오프라인이라 설치하지 않음(필요한 것: <항목>)" 으로 보고한다. 내려받기가 없는 항목(`setup-omc-hud`)과 이미 설치된 것의 확인만 진행한다.
+   - 하나만 되면(예: 사내 npm 미러만 열린 망) 그 원천을 쓰는 항목만 진행한다. 항목마다의 확인은 각 스킬의 0단계가 다시 한다.
+   - Windows PowerShell 에서는 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 https://github.com` 의 `$LASTEXITCODE` 로 본다.
 1. **선택 받기**: `$ARGUMENTS` 에 컴포넌트명이 명시돼 있으면 그것만 실행(질문 생략).
    비어 있으면 아래를 `AskUserQuestion`(**multiSelect: true**)으로 제시한다(**Codex 런타임엔 AskUserQuestion 이 없으므로 목록을 제시하고 설치할 항목을 사용자에게 물어 받는다**). 항목은 **계층/의존 순서**로 묶여 있으니, 뒤 계층을 고르면 앞 계층 전제를 먼저 채운다:
    - 질문 하나에 선택지는 4개까지다. 5개 이상인 묶음은 두 질문으로 나눈다.

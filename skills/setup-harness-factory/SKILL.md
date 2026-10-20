@@ -26,6 +26,17 @@ ls -la .claude/agents .claude/skills 2>/dev/null   # 기존 harness 산출물 �
 - 기존 `.claude/agents/`·`.claude/skills/`·`CLAUDE.md`에 harness 흔적이 있으면 신규 생성이 아니라
   확장·유지보수로 다룬다(harness 자신의 Phase 0 감사 원칙).
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com   # 마켓플레이스, git clone
+```
+
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
+- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+
 ## 1. 설치
 ### Claude Code
 세션 안(슬래시 커맨드):
@@ -43,7 +54,7 @@ ls -la .claude/agents .claude/skills 2>/dev/null   # 기존 harness 산출물 �
 ### Codex CLI
 마켓플레이스 개념이 없고 Python 인스톨러를 쓴다:
 ```bash
-git clone https://github.com/SaehwanPark/meta-harness
+git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 clone https://github.com/SaehwanPark/meta-harness
 cd meta-harness
 python3 scripts/install_harness.py --scope user --layout codex
 # 프로젝트 범위: python3 scripts/install_harness.py --scope project --target <repo> --layout codex

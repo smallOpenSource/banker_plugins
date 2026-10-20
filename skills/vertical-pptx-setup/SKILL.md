@@ -36,6 +36,20 @@ for v in 3.13 3.12 3.11 3.10 3.9; do command -v python$v >/dev/null && echo "pyt
 **python 버전 주의.** `python3` 이 3.6 이나 3.7 인 배포판이 있다(RHEL8/Rocky8 계열의 기본이 3.6.8 이다).
 python-pptx 는 그보다 높은 버전을 요구하므로 `python3` 을 그대로 쓰지 말고 위 스캔에서 고른 인터프리터를 쓴다.
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+npm ping --fetch-retries=0 --fetch-timeout=10000                                                  # pptxgenjs
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/                  # python-pptx
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://download.documentfoundation.org   # LibreOffice
+```
+
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
+- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. 빌더 설치 (둘 중 하나면 충분하다)
 
 **node 경로(권장).** `fontFace` 하나로 한글 3슬롯(`a:latin`·`a:ea`·`a:cs`)이 전부 채워져 한글 깨짐 위험이 구조적으로 낮다.
@@ -118,10 +132,10 @@ $SOFFICE --version          # 6.4.7.2 처럼 배포판 버전이 찍히면 성�
 **glibc 2.29 이상: 업스트림 tarball 도 쓸 수 있다.** 자체 라이브러리를 번들해 배포판과 안 싸운다.
 
 ```bash
-V=$(curl -s https://download.documentfoundation.org/libreoffice/stable/ \
+V=$(curl -s --connect-timeout 10 --max-time 30 https://download.documentfoundation.org/libreoffice/stable/ \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+/' | sort -V | tail -1 | tr -d '/')
 A=$(uname -m)          # x86_64 또는 aarch64. 업스트림이 둘 다 제공한다
-curl -sL -o /tmp/lo.tar.gz \
+curl -sL --connect-timeout 10 --max-time 1800 -o /tmp/lo.tar.gz \
   "https://download.documentfoundation.org/libreoffice/stable/$V/rpm/$A/LibreOffice_${V}_Linux_${A/x86_64/x86-64}_rpm.tar.gz"
 ```
 
@@ -141,7 +155,7 @@ brew 가 없으면 업스트림 dmg 를 받는다. 아키텍처 이름이 `aarch
 
 ```bash
 V=<위와 동일하게 조회>
-curl -sL -o /tmp/lo.dmg "https://download.documentfoundation.org/libreoffice/stable/$V/mac/aarch64/LibreOffice_${V}_MacOS_aarch64.dmg"
+curl -sL --connect-timeout 10 --max-time 1800 -o /tmp/lo.dmg "https://download.documentfoundation.org/libreoffice/stable/$V/mac/aarch64/LibreOffice_${V}_MacOS_aarch64.dmg"
 hdiutil attach /tmp/lo.dmg -nobrowse -quiet
 cp -R "/Volumes/LibreOffice/LibreOffice.app" /Applications/     # root 또는 쓰기 권한 필요
 hdiutil detach "/Volumes/LibreOffice" -quiet

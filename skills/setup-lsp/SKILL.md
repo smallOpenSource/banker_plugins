@@ -40,6 +40,20 @@ ls src/main/resources/application.* >/dev/null 2>&1 && echo "lang: spring"
 ```
 > Windows(PowerShell): `Get-Command claude,codex,npm,pipx,java`, `Test-Path tsconfig.json,pom.xml` 등으로 동일 감지. jdtls 는 `jdtls.bat`.
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+npm ping --fetch-retries=0 --fetch-timeout=10000                                       # ts, bash 서버(npm)
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/       # py 서버(pipx)
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://download.eclipse.org   # jdtls
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com             # Spring Boot LS, lsp-mcp
+```
+
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
+- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+
 ## 1. 사전요구(preflight)
 
 각 서버는 선행 런타임이 필요하다 - **없으면 먼저 해당 setup 스킬을 실행**(추정·강행 금지):
@@ -86,7 +100,7 @@ for c in basedpyright-langserver ruff; do command -v $c >/dev/null && echo "✓ 
 **jdtls (Java LSP)** - Eclipse 최신 스냅샷:
 ```bash
 mkdir -p ~/.local/jdtls
-curl -fLo /tmp/jdtls.tar.gz \
+curl -fL --connect-timeout 10 --max-time 600 -o /tmp/jdtls.tar.gz \
   "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz"
 tar -xzf /tmp/jdtls.tar.gz -C ~/.local/jdtls
 rm /tmp/jdtls.tar.gz
@@ -102,8 +116,8 @@ TARGET="$HOME/.local/spring-boot-ls"; VSIX=/tmp/sbls.vsix; LINK=spring-boot-lang
 mkdir -p "$TARGET"
 VSIX_URL="https://vmware.gallery.vsassets.io/_apis/public/gallery/publisher/vmware/extension/vscode-spring-boot/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage"
 FALLBACK="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/vmware/vsextensions/vscode-spring-boot/latest/vspackage"
-curl -fL --connect-timeout 30 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$VSIX_URL" 2>/dev/null \
-  || curl -fL --connect-timeout 30 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$FALLBACK"
+curl -fL --connect-timeout 30 --max-time 600 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$VSIX_URL" 2>/dev/null \
+  || curl -fL --connect-timeout 30 --max-time 600 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$FALLBACK"
 # ZIP 매직 검증 (HTML 에러페이지면 즉시 중단)
 [ "$(xxd -l 4 "$VSIX" | awk 'NR==1{print $2$3}')" = "504b0304" ] \
   || { echo "✗ ZIP 아님(HTML 에러페이지?)"; rm -f "$VSIX"; exit 1; }
@@ -118,7 +132,7 @@ rm -f "$VSIX"; find ~/.local/spring-boot-ls -name "$LINK" -ls
 ## 6. lsp-mcp 브리지 설치 (Codex 경로 - Claude Code 는 건너뜀)
 ```bash
 mkdir -p ~/.local/src
-git clone https://github.com/CesarPetrescu/lsp-mcp.git ~/.local/src/lsp-mcp
+git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 clone https://github.com/CesarPetrescu/lsp-mcp.git ~/.local/src/lsp-mcp
 pipx install --editable ~/.local/src/lsp-mcp     # → ~/.local/bin/codex-lsp-bridge (Windows: .exe)
 which codex-lsp-bridge && codex-lsp-bridge --help | head -5
 ```

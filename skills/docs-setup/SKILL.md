@@ -25,6 +25,18 @@ ls -d ~/.venvs/*/bin/python ~/miniconda3/envs/*/bin/python /usr/bin/python3* 2>/
 conda env list 2>/dev/null
 ```
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/   # python-pptx, pymupdf
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com         # plantuml.jar
+```
+
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
+- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+
 ## 1. python 환경 선택 (질문 또는 자동)
 - **`--python <path>`**: 주어진 인터프리터 사용.
 - **`--ask`**: 위 스캔 후보를 제시하고 사용자가 택함(Claude=`AskUserQuestion`, Codex=목록 제시).
@@ -47,7 +59,7 @@ conda env list 2>/dev/null
 java 필요(`java -version`). plantuml.jar + 래퍼:
 ```bash
 mkdir -p ~/bin
-[ -f ~/bin/plantuml.jar ] || curl -fsSL -o ~/bin/plantuml.jar \
+[ -f ~/bin/plantuml.jar ] || curl -fsSL --connect-timeout 10 --max-time 300 -o ~/bin/plantuml.jar \
   https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar
 cat > ~/bin/plantuml <<'EOF'
 #!/bin/bash

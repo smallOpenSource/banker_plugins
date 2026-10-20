@@ -36,6 +36,19 @@ POOL="$SKILL_DIR/references/video-pool.mjs"
 **이미 확보 확인**: `node -v` 가 18 이상이고 `ffmpeg` 가 있으면 §1~§2 는 건너뛴다.
 크레덴셜도 이미 완전하면(§3 첫 단계) 프롬프트 없이 §4 프리플라이트로 직행한다.
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+npm ping --fetch-retries=0 --fetch-timeout=10000                                   # ffmpeg-static
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://nodejs.org/dist/   # nvm 이 받는 Node
+```
+
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
+- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. Node ≥18 확보
 어댑터가 global `fetch`/`FormData`/`Blob` 등 Node 18+ 내장 기능만 쓴다(추가 의존성 없음) — 18 미만이면 어댑터 자체가 동작하지 않는다.
 이미 nvm 등으로 관리 중이면 `nvm install --lts && nvm alias default 'lts/*'` 로 충분하다.

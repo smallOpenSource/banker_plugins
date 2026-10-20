@@ -19,6 +19,20 @@ for t in conda node npx python3 Xvfb xvfb-run; do command -v $t >/dev/null && ec
 ```
 **이미 설치 확인**: `ls "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" 2>/dev/null | grep -i chromium` 가 있으면 브라우저 설치는 skip(검증만).
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+npm ping --fetch-retries=0 --fetch-timeout=10000                                   # npx playwright
+curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/   # Python playwright
+```
+
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
+- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+- 브라우저 바이너리는 Playwright 의 내려받기 서버에서 받는다. 막힌 망에서는 `PLAYWRIGHT_DOWNLOAD_HOST` 로 사내 미러를 준다.
+
 ## 1. 공유 브라우저 경로 + 환경 (모든 OS 공통)
 브라우저를 한 곳에 두고 MCP·스크립트가 `PLAYWRIGHT_BROWSERS_PATH` 로 공유한다.
 - **root/sudo 가능**: 공용 경로(예 `/app/playwright-browsers`) + `/etc/profile.d/playwright.sh`.
