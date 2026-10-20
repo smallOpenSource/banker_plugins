@@ -538,8 +538,9 @@ const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
 // Makes the lock file: "taken", "held" when one is there already, or "stale" when a network share answered with a
 // stale file handle (ESTALE), which the next try may not. A lock file this try made but could not write is taken
-// away again while the name still holds that very file, so it keeps no one waiting; "left" when it may still be there.
-// Anything else (permissions) throws, after taking away the file this try made.
+// away again while the name still holds that very file (one device and one inode), so it keeps no one waiting; "left"
+// when it may still be there (no stats or no inode number to prove it is that file, or the share could not say).
+// Any other error (permissions, EIO) throws, after the same taking away.
 function tryLock(path, token) {
   let fd;
   try {
@@ -609,7 +610,7 @@ function dropStale(path) {
 }
 
 // Takes the lock: { path, token }, or { path, why } once the wait ends without it: why is "stale" when the last try
-// met a stale file handle instead of a lock, else "held". Every round that does not take the lock rests, so no answer
+// met a stale file handle instead of a lock, or a lock this run made could not be taken away again, else "held". Every round that does not take the lock rests, so no answer
 // of the file system makes the wait spin; the deadline is looked at every round, so no lock spot keeps it going past.
 function takeLock(dir, waitMs) {
   const path = join(dir, LOCK);

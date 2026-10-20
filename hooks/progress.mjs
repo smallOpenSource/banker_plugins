@@ -122,8 +122,8 @@ const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', .
 // list last came from.
 // `plan` is the plan last read from `planPath`, `planShut` whether the whole plan is folded and
 // `planOpen` the ids of its nodes unfolded. `touch` counts the calls that touched a plan file and
-// `taken` is the touch the plan came from, to tell a read that a newer one overtook (a weak plan's touch does not
-// count). `shown` is the touch, or the read again's count of touches, that the words on the pane came from: a later
+// `taken` is the newest touch whose read was taken in, to tell a read that a newer one overtook (a weak plan's touch does
+// not count). `shown` is the touch, or the read again's count of touches, that the words on the pane came from: a later
 // read of the file shown that began before them does not take their place. `followed` is the step in
 // progress the pane last asked to bring into view.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
@@ -299,17 +299,23 @@ function putTask(s, t, now) {
 // The marks of a task id, made on first use. They live in the state, not on the task, so a task deleted, or not
 // created yet, keeps them: `changedRev` the change count after its last TaskCreate or TaskUpdate (a delete
 // included), `statusAt` and `status` the order and the status of the last status update begun, `seenAt` the order
-// of the last read taken in. Past MAX_MARKS the oldest mark of a task off the pane goes, so reads of ids the store
-// does not have cannot grow them without end.
+// of the last read taken in. Past MAX_MARKS the oldest marks of tasks off the pane go (trimMarks), so reads of ids the
+// store does not have cannot grow them without end.
 const MAX_MARKS = 1000;
 // A task id longer than this is no id the store hands out: a read that misses it leaves no mark.
 const MAX_ID = 64;
 function markOf(s, id) {
-  if (!s.marks.has(id)) {
-    s.marks.set(id, {});
-    if (s.marks.size > MAX_MARKS) s.marks.delete([...s.marks.keys()].find((k) => !s.tasks.has(k)));
-  }
+  if (!s.marks.has(id)) s.marks.set(id, {});
   return s.marks.get(id);
+}
+
+// Drops the oldest marks of tasks off the pane down to MAX_MARKS. It runs once a call is taken in, when every task the
+// pane holds is in place again: a TaskList fills a new list, and a task not moved yet must not count as off the pane.
+function trimMarks(s) {
+  for (const k of s.marks.keys()) {
+    if (s.marks.size <= MAX_MARKS) return;
+    if (!s.tasks.has(k)) s.marks.delete(k);
+  }
 }
 
 // Whether a list or a read begun at (since, order) is older than what the pane holds of a task: a list begun after this
@@ -436,10 +442,14 @@ const changedId = (e, r) => (e.tool === 'TaskCreate' ? r?.result?.task?.id : e.t
 export function noteTaskTool(s, e, r, now, since = s.rev, order = ++s.order) {
   if (refused(r)) return;
   TASK_NOTES[e.tool]?.(s, e, r, now, { since, order });
-  if (!CHANGES.has(e.tool)) return;
+  if (CHANGES.has(e.tool)) noteChange(s, e, r);
+  trimMarks(s);
+}
+
+// Only a change the pane took in marks the task: one it holds after the change, or a delete. An update of a task the
+// pane does not hold leaves the lists alone (its status still counts, through readStatus).
+function noteChange(s, e, r) {
   s.rev += 1;
-  // Only a change the pane took in marks the task: one it holds after the change, or a delete. An update of a task the
-  // pane does not hold leaves the lists alone (its status still counts, through readStatus).
   const id = changedId(e, r);
   if (id !== undefined && (s.tasks.has(String(id)) || updatedStatus(e, r) === 'deleted')) markOf(s, String(id)).changedRev = s.rev;
 }

@@ -963,6 +963,7 @@ test("the troubleshooting row for a folder or FIFO at an instructions file says 
   const row = readFileSync(SKILL, "utf8").split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
   assert.ok(row, "the row exists");
   assert.match(row, /`<파일>\.tone-compact\.bak`/);
+  assert.doesNotMatch(row, /백업 자리\([^)]*\)의 폴더나 특수 파일/, "at the backup's name only a folder is refused; a FIFO or a link there is replaced");
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
@@ -1585,4 +1586,27 @@ test("Codex: a made lock with no inode number to prove it is left, and the refus
   assert.equal(r.ok, false);
   assert.match(r.message, /네트워크 공유가 잠금 자리에 계속 ESTALE\(오래된 파일 핸들\)을 돌려줘 그대로 두었습니다/);
   assert.ok(existsSync(lock), "the lock that could not be proven this run's stays");
+});
+
+test("Codex: a lock made but not written because of another error (EIO) is taken away, and the error stops on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const made = new Set();
+  let failed = 0;
+  assert.throws(() => onWithFakes(s, {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock) made.add(fd);
+      return fd;
+    },
+    writeFileSync: (real) => (p, data, ...a) => {
+      if (!made.has(p) || failed > 0) return real(p, data, ...a);
+      failed++;
+      throw Object.assign(new Error("EIO: i/o error, write"), { code: "EIO" });
+    },
+  }), (e) => e.code === "EIO");
+  assert.equal(failed, 1);
+  assert.equal(existsSync(lock), false, "the lock this run made is gone");
+  assert.equal(read(s.agents), "# base\n");
 });

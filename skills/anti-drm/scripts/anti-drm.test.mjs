@@ -881,6 +881,7 @@ test("the troubleshooting row for a folder or FIFO at an instructions file says 
   const row = read(SKILL).split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
   assert.ok(row, "the row exists");
   assert.match(row, /`<파일>\.anti-drm\.bak`/);
+  assert.doesNotMatch(row, /백업 자리\([^)]*\)의 폴더나 특수 파일/, "at the backup's name only a folder is refused; a FIFO or a link there is replaced");
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);

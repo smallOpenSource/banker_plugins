@@ -1819,3 +1819,17 @@ test('a touch\'s read of a review round begun before a read again does not take 
   await late;
   assert.match(textOf(rowOf(await eng.draw(), 'plan')), /1\/1 완료/, 'the older read that landed last left the newer words');
 });
+
+test('the mark cap, reached while a late TaskList is taken in, keeps the marks of the tasks on the pane', () => {
+  const s = freshState();
+  noteTaskTool(s, { tool: 'TaskCreate', subject: '구현' }, created('1', '구현'), 0);
+  noteTaskTool(s, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' }, updated('1', { from: 'pending', to: 'in_progress' }), 0);
+  for (let i = 0; i < 1200; i++) noteTaskTool(s, { tool: 'TaskGet', taskId: `x${i}` }, { result: { task: null } }, 0);
+  const since = s.rev;
+  const order = ++s.order; // a TaskList begins here
+  noteTaskTool(s, { tool: 'TaskUpdate', taskId: '1', status: 'completed' }, updated('1', { from: 'in_progress', to: 'completed' }), 0);
+  const late = { result: { tasks: [{ id: 'n1', subject: '다른 세션의 작업', status: 'pending' }, { id: '1', subject: '구현', status: 'in_progress' }] } };
+  noteTaskTool(s, { tool: 'TaskList' }, late, 0, since, order);
+  assert.equal(s.tasks.get('1')?.status, 'completed', 'the list begun before the task was completed does not bring it back');
+  assert.ok(s.marks.size <= 1000, `${s.marks.size} marks`);
+});

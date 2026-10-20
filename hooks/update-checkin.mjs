@@ -127,9 +127,9 @@ function extractLatest(responseBody) {
 
 // 변경-스킬 매니페스트(공개 GitHub raw JSON: {"x.y.z": ["banker:skill", ...]})를 GET 해 객체로 반환한다.
 // update-fetch 의 동일 함수와 self-contained 로 나란히 둔다(훅별 자기완결 관례·isLoopback 도 이미 각자 보유).
-// post() 와 동일한 안전 가드: 비-https 는 loopback 만 허용·3xx no-op·무활동 timeout 과 교환 전체 마감·본문 256KiB
-// 상한·malformed→null. 어떤
-// 실패에도 reject 하지 않고 null 로 resolve 한다(개인화는 best-effort). 비배열 객체만 반환.
+// post() 와 동일한 안전 가드: 비-https 는 loopback 만 허용·3xx no-op·무활동 timeout 과 교환 전체 마감·
+// 본문 256KiB 상한·malformed→null. 어떤 실패에도 reject 하지 않고 null 로 resolve 한다(개인화는 best-effort).
+// 비배열 객체만 반환.
 function fetchSkillChangesMap(url) {
   return new Promise((resolvePromise) => {
     let done = false;
