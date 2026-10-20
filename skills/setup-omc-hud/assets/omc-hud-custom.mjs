@@ -18,9 +18,10 @@
  *     segment each: 🤖1|🔧14|⚡3. A count OMC leaves out (zero) stays out.
  *   - per-model usage badge (fable:0%(1h31m)) -> Fa:0%/1h31m, after the rate windows.
  *   - PL:<MB, 1 decimal>M always shown before se. It reads payload-mon's module
- *     copy next to this file (hud/payload-mon/payload-size.mjs; when the
- *     statusLine path is a link, next to the file it points at first, and in
- *     the config folder's hud/ last); without it PL is left out.
+ *     copy, payload-mon/payload-size.mjs, from the first of these folders that
+ *     holds it as a regular file: this file's (the one a statusLine link points
+ *     at), the link's, the config folder's hud/, then the folder import.meta.url
+ *     names (the link's under --preserve-symlinks); without it PL is left out.
  *   - cwd group split on "|"; branch shown without "branch:" after the account.
  *   - OMC#X.Y.Z label no longer shown, nor OMC's update hint lines
  *     ("[!] omc X - paste: ! ...", "[!] claude X - paste: ! claude update").
@@ -156,7 +157,8 @@ function claudeJsonDir() {
   return v ? expandDir(v) : homedir();
 }
 // Where Claude Code was started (the statusline JSON's workspace.project_dir, else the working
-// folder): Claude Code reads a relative CLAUDE_CONFIG_DIR from there, so this does too.
+// folder). A relative CLAUDE_CONFIG_DIR is read from there: Claude Code reads it from its own working
+// folder, which is the same one until it moves (into a worktree, say).
 function startDir() {
   try {
     const d = JSON.parse(input)?.workspace?.project_dir;

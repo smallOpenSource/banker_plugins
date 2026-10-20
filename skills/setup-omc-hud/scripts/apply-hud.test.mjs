@@ -5,7 +5,9 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  chownSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -874,6 +876,147 @@ test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (
   } finally {
     chmodSync(dot, 0o755);
   }
+});
+
+// B1-1: the new branches of writeSettings that no test pinned.
+test("settings.json 은 umask 가 지우는 권한 비트도 그대로 두고 새 파일로 바꿔 넣음", posixModes, () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  chmodSync(file, 0o664);
+  const ino = statSync(file).ino;
+  const r = install({ cfg, wrap: ["sh", "-c", 'umask 022; exec "$0" "$@"'] });
+  assert.equal(r.status, 0, r.out);
+  assert.notEqual(statSync(file).ino, ino, "replaced through a rename");
+  assert.equal(modeOf(file), 0o664);
+});
+
+test("끊어진 링크인 settings.json 은 링크를 두고 가리키는 자리에 씀", fileLinks, () => {
+  const cfg = fresh();
+  const target = join(fresh("dot"), "settings.json");
+  symlinkSync(target, join(cfg, "settings.json"));
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink(), "the link stays");
+  assert.match(JSON.parse(readFileSync(target, "utf8")).statusLine.command, /omc-hud-custom\.mjs/);
+});
+
+// A preload under which a rename between two folders fails as one between two file systems does (EXDEV).
+function renameInOneFolderOnly() {
+  const file = join(root, `exdev-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs from "node:fs";',
+    'import { dirname } from "node:path";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.renameSync;",
+    "fs.renameSync = function (a, b, ...rest) {",
+    '  if (dirname(String(a)) !== dirname(String(b))) throw Object.assign(new Error("EXDEV (test)"), { code: "EXDEV" });',
+    "  return real.call(this, a, b, ...rest);",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return ["--import", pathToFileURL(file).href];
+}
+
+test("링크인 settings.json 의 임시 파일은 가리키는 파일 옆이라 링크가 다른 파일 시스템에 있어도 바꿔 넣음", fileLinks, () => {
+  const { cfg, target } = linkedSettings();
+  const ino = statSync(target).ino;
+  const r = install({ cfg, nodeArgs: renameInOneFolderOnly() });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink(), "the link stays");
+  assert.match(JSON.parse(readFileSync(target, "utf8")).statusLine.command, /omc-hud-custom\.mjs/);
+  assert.notEqual(statSync(target).ino, ino, "renamed within the target's folder, not written in place");
+});
+
+// B1-2: a rename must not part a hard link or hand settings.json to another owner or group.
+test("하드 링크인 settings.json 은 제자리에 써 다른 이름도 같은 내용", () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  const other = join(fresh("dot"), "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  linkSync(file, other);
+  const ino = statSync(file).ino;
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(statSync(file).ino, ino, "written in place");
+  assert.equal(statSync(other).nlink, 2, "still one file with two names");
+  assert.match(JSON.parse(readFileSync(other, "utf8")).statusLine.command, /omc-hud-custom\.mjs/);
+  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
+});
+
+test("하드 링크인 settings.json 도 디스크가 가득 차 새 파일을 못 쓰면 그대로 두고 멈춤", () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  const other = join(fresh("dot"), "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  linkSync(file, other);
+  const before = readFileSync(file);
+  const r = install({ cfg, nodeArgs: failingPreload("writeFileSync", "ENOSPC") });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /ENOSPC/);
+  assert.ok(readFileSync(other).equals(before), "settings.json is as it was");
+  assert.equal(statSync(file).nlink, 2);
+});
+
+// The group a new file in the test folders gets (the account's on Linux, the folder's on macOS), and another group
+// of this account's, which a settings.json made anew could not keep.
+const newFileGroup = (() => {
+  const probe = join(root, "group-probe");
+  writeFileSync(probe, "");
+  try {
+    return statSync(probe).gid;
+  } finally {
+    rmSync(probe);
+  }
+})();
+const otherGroup = POSIX ? process.getgroups().find((g) => g !== newFileGroup) : undefined;
+const otherGroupOpts = { skip: (!POSIX && "Windows has no POSIX groups") || (otherGroup === undefined && "this account is in one group only") };
+
+test("새 파일이면 그룹이 바뀔 settings.json 은 제자리에 써 그룹과 권한이 그대로", otherGroupOpts, () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  chownSync(file, process.getuid(), otherGroup);
+  chmodSync(file, 0o660);
+  const ino = statSync(file).ino;
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(statSync(file).ino, ino, "written in place");
+  assert.equal(statSync(file).gid, otherGroup);
+  assert.equal(modeOf(file), 0o660);
+  assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
+});
+
+// A preload under which the installer's temporary file reports another owner, as when settings.json belongs to
+// another account (root, say) that lets this one write it. Tied to the installer reading it with statSync.
+function otherOwnerPreload() {
+  const file = join(root, `owner-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.statSync;",
+    "fs.statSync = function (p, ...rest) {",
+    "  const st = real.call(this, p, ...rest);",
+    '  if (st && String(p).endsWith(".tmp")) st.uid += 1;',
+    "  return st;",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return ["--import", pathToFileURL(file).href];
+}
+
+test("새 파일이면 소유자가 바뀔 settings.json 은 제자리에 씀", () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  const ino = statSync(file).ino;
+  const r = install({ cfg, nodeArgs: otherOwnerPreload() });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(statSync(file).ino, ino, "written in place");
+  assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
+  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
 });
 
 test("렌더 확인 정화는 제어 글자 밖의 서식, 사용자 영역, 미할당, 변이 선택, 점자 빈칸, 넓은 공백도 ? 로 바꿈", () => {
