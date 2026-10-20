@@ -346,10 +346,9 @@ def _rejoin_split(text, patterns, entropy=False, trail=None):
     return "".join(out) + text[at:]
 
 
-def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None):
-    """Multi-layer redaction; page_redact and review_redact join split secrets first (3.0.8). Returns (text, counts).
-    With `trail` (a _Trail), where each character of the result came from is followed too."""
-    counts, out, sub = {}, text, _sub_for(trail)
+def _hide_patterns(out, mode, sub, counts):
+    """`out` with each value the page patterns and the entropy rule find replaced by its marker, or by a mask with
+    mode mask; `counts` adds them up by name."""
     for name, pat in SECRET_PATTERNS:
         def repl(m, n=name):
             counts[n] = counts.get(n, 0) + 1
@@ -362,32 +361,42 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None
             counts["entropy"] = counts.get("entropy", 0) + 1
             return _mask(s) if mode == "mask" else "[REDACTED:entropy]"
         return s
-    out = sub(ENTROPY_LONG, ent_repl, out)
+    return sub(ENTROPY_LONG, ent_repl, out)
 
+
+def _scan_detected(held, sub, counts):
+    """held[0] with each value detect-secrets finds in it replaced: raises ImportError when it is not installed.
+    held[0] keeps what was replaced before a failure, as one pass over a local did."""
+    from detect_secrets import SecretsCollection
+    from detect_secrets.settings import default_settings
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                     encoding="utf-8") as tf:
+        tf.write(held[0])
+        tmp = tf.name
     try:
-        from detect_secrets import SecretsCollection
-        from detect_secrets.settings import default_settings
-        import tempfile
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
-                                         encoding="utf-8") as tf:
-            tf.write(out)
-            tmp = tf.name
+        col = SecretsCollection()
+        with default_settings():
+            col.scan_file(tmp)
+        for fname in col.files:
+            for s in col[fname]:
+                sv = s.secret_value
+                if sv and sv in held[0]:
+                    held[0] = sub(re.compile(re.escape(sv)), lambda m: "[REDACTED:ds]", held[0])
+                    counts["ds:detect-secrets"] = counts.get(
+                        "ds:detect-secrets", 0) + 1
+    finally:
         try:
-            col = SecretsCollection()
-            with default_settings():
-                col.scan_file(tmp)
-            for fname in col.files:
-                for s in col[fname]:
-                    sv = s.secret_value
-                    if sv and sv in out:
-                        out = sub(re.compile(re.escape(sv)), lambda m: "[REDACTED:ds]", out)
-                        counts["ds:detect-secrets"] = counts.get(
-                            "ds:detect-secrets", 0) + 1
-        finally:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _hide_detected(out, sub, counts):
+    """`out` after detect-secrets, when it is installed; a WARN once a run when it is not, or when it fails."""
+    held = [out]
+    try:
+        _scan_detected(held, sub, counts)
     except ImportError:
         if not getattr(redact, "_ds_warned", False):
             print("[lineage] WARN: detect-secrets unavailable, using fallback "
@@ -398,16 +407,30 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None
             print(f"[lineage] WARN: detect-secrets error ({e}), continuing "
                   "with fallback", file=sys.stderr)
             redact._ds_err_warned = True
+    return held[0]
 
+
+def _hide_extra(out, extra, sub, counts):
+    """`out` with each --redact-extra keyword replaced; a marker an earlier pass left stays whole: a keyword inside
+    its name is no secret."""
+    for kw in [k.strip() for k in extra.split(",") if k.strip()]:
+        pat = re.compile(r"\[REDACTED(?::[^\]\s]*)?\]|" + re.escape(kw), re.IGNORECASE)
+        hits = []
+        out = sub(pat, lambda m: m.group(0) if m.group(0).upper().startswith("[REDACTED")
+                  else hits.append(1) or "[REDACTED]", out)
+        if hits:
+            counts[f"custom:{kw}"] = len(hits)
+    return out
+
+
+def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None):
+    """Multi-layer redaction; page_redact and review_redact join split secrets first (3.0.8). Returns (text, counts).
+    With `trail` (a _Trail), where each character of the result came from is followed too."""
+    counts, sub = {}, _sub_for(trail)
+    out = _hide_patterns(text, mode, sub, counts)
+    out = _hide_detected(out, sub, counts)
     if extra:
-        for kw in [k.strip() for k in extra.split(",") if k.strip()]:
-            # a marker an earlier pass left stays whole: a keyword inside its name is no secret
-            pat = re.compile(r"\[REDACTED(?::[^\]\s]*)?\]|" + re.escape(kw), re.IGNORECASE)
-            hits = []
-            out = sub(pat, lambda m: m.group(0) if m.group(0).upper().startswith("[REDACTED")
-                      else hits.append(1) or "[REDACTED]", out)
-            if hits:
-                counts[f"custom:{kw}"] = len(hits)
+        out = _hide_extra(out, extra, sub, counts)
     return out, counts
 
 
