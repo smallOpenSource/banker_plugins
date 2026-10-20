@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
-import { pipeline } from 'node:stream';
+import { Transform, pipeline } from 'node:stream';
 
 export const LOOPBACK = '127.0.0.1';
 // Answers { pid } so a stop can tell this server from another process on the same port.
@@ -80,15 +80,19 @@ export function send(res, status, body, headers = {}) {
 export const READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
 
 // An open regular file: { fd, size }, or { status } when there is none (404) or it cannot be read (403).
-function openRegular(fp) {
+// With `expect` ({ dev, ino } of the file a check passed), another file at the path is none: the path
+// changed between that check and this open.
+function openRegular(fp, expect) {
   let fd;
   try { fd = fs.openSync(fp, READ_FLAGS); } catch (e) { return { status: ['ENOENT', 'ENOTDIR', 'EISDIR'].includes(e.code) ? 404 : 403 }; }
   let st = null;
   try { st = fs.fstatSync(fd); } catch { /* a status the system cannot give (EIO on a network drive) */ }
-  if (st && st.isFile()) return { fd, size: st.size };
+  if (st && st.isFile() && sameFile(st, expect)) return { fd, size: st.size };
   fs.closeSync(fd);
   return { status: st ? 404 : 403 };
 }
+
+const sameFile = (st, expect) => !expect || (st.dev === expect.dev && st.ino === expect.ino);
 
 // Sends the bytes `start`..`end` of an open file (what the headers declared, even if the file grows
 // meanwhile) and closes it, also when the browser drops the download midway (a pipe would keep the
@@ -98,14 +102,25 @@ function stream(res, fp, { fd, start, end }) {
     fs.closeSync(fd);
     return void res.end();
   }
-  pipeline(fs.createReadStream(fp, { fd, start, end }), res, () => {});
+  pipeline(fs.createReadStream(fp, { fd, start, end }), declaredLength(end - start + 1), res, () => {});
+}
+
+// Passes the bytes on and fails at the end when they were fewer than the headers declared (the file
+// shrank since): the pipeline then destroys the response, which closes the connection. Ended as
+// usual, it would leave the browser waiting on a kept-alive connection for bytes that never come.
+function declaredLength(want) {
+  let sent = 0;
+  return new Transform({
+    transform(chunk, _enc, done) { sent += chunk.length; done(null, chunk); },
+    flush(done) { done(sent < want ? new Error('the file is shorter than its declared length') : null); },
+  });
 }
 
 // A file, with byte ranges for video (smoother scrubbing). Never cached: a rebuilt page is fresh.
 // The file is opened before any header goes out, so one that cannot be read gets 403 instead of
-// ending the server.
-export function sendFile(req, res, fp, headers = {}) {
-  const f = openRegular(fp);
+// ending the server. `expect` ({ dev, ino }) names the only file that may go out (404 otherwise).
+export function sendFile(req, res, fp, headers = {}, { expect } = {}) {
+  const f = openRegular(fp, expect);
   if (f.status) return send(res, f.status, String(f.status), headers);
   const type = MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream';
   const base = { ...headers, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };

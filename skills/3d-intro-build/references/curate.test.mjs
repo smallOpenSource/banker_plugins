@@ -490,3 +490,45 @@ test('an archived take lands inside the dated folder whatever the spelling of it
   assert.match(move.to, /^rejected-\d{8}\/stills\/s1-t1\.png$/);
   assert.ok(fs.existsSync(path.join(dir, ...move.to.split('/'))));
 });
+
+test('a listed file swapped for a link after its check is not served from where the link leads', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, async (t) => {
+  const dir = project();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-out-'));
+  made.push(outside);
+  fs.writeFileSync(path.join(outside, 'leak.png'), 'from outside');
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const listed = path.join(dir, 'stills', 's1-t1.png');
+  const open = fs.openSync;
+  fs.openSync = (p, ...rest) => {
+    if (p === listed) { // the race: the path changes between the link check and the open
+      fs.openSync = open;
+      fs.rmSync(listed);
+      fs.symlinkSync(path.join(outside, 'leak.png'), listed);
+    }
+    return open(p, ...rest);
+  };
+  t.after(() => { fs.openSync = open; });
+  const r = await fetch(`http://127.0.0.1:${s.port}/stills/s1-t1.png`);
+  const body = await r.text();
+  assert.equal(r.status, 404);
+  assert.notEqual(body, 'from outside');
+  assert.equal(fs.openSync, open, 'the open went through the swap');
+  // the same swap inside the check, right after the links were followed: the file it records is the link
+  const other = path.join(dir, 'stills', 's1-t2.png');
+  const realpath = fs.realpathSync;
+  fs.realpathSync = (p, ...rest) => {
+    const real = realpath(p, ...rest);
+    if (p === other) {
+      fs.realpathSync = realpath;
+      fs.rmSync(other);
+      fs.symlinkSync(path.join(outside, 'leak.png'), other);
+    }
+    return real;
+  };
+  t.after(() => { fs.realpathSync = realpath; });
+  const r2 = await fetch(`http://127.0.0.1:${s.port}/stills/s1-t2.png`);
+  assert.equal(r2.status, 404);
+  assert.notEqual(await r2.text(), 'from outside');
+  assert.equal(fs.realpathSync, realpath, 'the check went through the swap');
+});

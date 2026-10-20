@@ -382,3 +382,25 @@ test('notes and logs a report links to are text, so the browser shows them rathe
   assert.equal(res.headers.get('content-type'), 'text/plain;charset=utf-8');
   assert.equal(await res.text(), '# 계획\n<b>그대로</b>\n');
 });
+
+test('a file shorter than the length it was declared at ends the connection, so the browser does not wait for bytes that never come', { timeout: 15_000 }, async (t) => {
+  const dir = site();
+  const s = await startServe(dir, {});
+  t.after(() => s.close());
+  // the file shrinks after its length was read: the status says 500 bytes more than there are
+  wrapFstat(t, (stat) => { const st = stat(); return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { size: st.size + 500 }); });
+  const got = await new Promise((resolve) => {
+    const chunks = [];
+    const sock = net.connect({ host: '127.0.0.1', port: s.port }, () => {
+      sock.write(`GET /assets/a.mp4 HTTP/1.1\r\nHost: localhost:${s.port}\r\nConnection: keep-alive\r\n\r\n`);
+    });
+    const timer = setTimeout(() => { sock.destroy(); resolve({ closed: false, wire: Buffer.concat(chunks) }); }, 3000);
+    sock.on('data', (c) => chunks.push(c));
+    sock.on('close', () => { clearTimeout(timer); resolve({ closed: true, wire: Buffer.concat(chunks) }); });
+    sock.on('error', () => {});
+  });
+  assert.ok(got.closed, 'the server closed the connection within 3 s');
+  const split = got.wire.indexOf('\r\n\r\n');
+  assert.match(got.wire.subarray(0, split).toString(), /content-length: 1500/i);
+  assert.equal(got.wire.length - split - 4, 1000, 'the bytes the file has');
+});
