@@ -4,6 +4,7 @@
 
 ### Changed
 - 유지보수자용: setup-omc-hud 와 payload-mon 의 링크 시험이 Windows 에서도 돈다(폴더는 정션, 파일 링크는 만들 수 있는 계정에서). 시험 빈틈 6묶음을 메운다.
+- 유지보수자용: ralph-qa 3단계 검사기의 선형 시간 시험을 꼴마다 CPU 시간으로 재, 동시에 돌려도 흔들리지 않게 한다. scan 예외의 exit 2, 같은 폴더의 두 번째 시도, 상한의 생존 단언 같은 시험 빈틈을 메운다.
 
 ### Fixed
 - `setup-omc-hud` 설치 스크립트가 이전 statusLine 명령을 알리는 줄에서 방향 제어 같은 보이지 않는 글자를 그대로 찍던 것. `?` 로 바꾼다.
@@ -22,6 +23,14 @@
 - 인자 없는 적용의 판 전환 줄이 바꾸기 전 판을 잘못 적던 것, 마켓플레이스 폴더나 git 이 없어도 태그를 찾을 수 없다고 알리던 것, `installed_plugins.json` 의 거짓 값에서 이유 없이 멈추던 것.
 - 손 복구 안내가 헬퍼 이름만 보고 무관한 파일에 덮어쓰라 하던 것.
 - `omc-patch` SKILL 의 PowerShell 블록이 Windows PowerShell 5.1 의 한글 사용자 폴더에서 깨지던 것, 다른 이름 찾기 안내가 범위 없이 찾던 것, 임시 tar 이름이 정해지지 않던 것.
+- `ralph-qa` 2단계가 목록 밖 자료를 외부 좌석에 싣던 길들. 관련 코드 범위에 출처 확인이 없던 것, 이름에 줄바꿈이 든 새 파일이 목록 비교를 통과하던 것, 사용자의 `diff.context`, `diff.interHunkContext`, `GIT_DIFF_OPTS` 가 문맥을 늘리던 것. 이제 관련 범위는 추적 파일이나 목록의 새 파일에서만 `=== <파일>:<시작>-<끝>` 머리 줄과 함께 떼고, 줄바꿈 든 이름에서 멈추며, 문맥은 3줄이다.
+- `ralph-qa` 2단계에서 attributes 의 `diff` 속성이 바이너리 파일을 글로 펼치면 그 바이트가 나가던 것. 이제 diff 에 NUL 바이트가 있으면 붙이기 전에 멈춘다. `-diff`, `binary` 로 가려 둔 파일은 그대로 가려진다.
+- `ralph-qa` 2단계가 split index 저장소의 `.git` 에 공유 인덱스 파일을 남기던 것.
+- `ralph-qa` 3단계 검사기가 `*_FILE` 키가 앞에 있는 줄이나 `env`, `docker -e` 의 `KEY=값` 낱말 비밀번호를 놓치던 것(0.15.0 은 잡던 꼴 포함), SKILL 이 시키는 가림 `[REDACTED]` 를 다시 잡아 가림과 재검사가 끝나지 않던 것. 값에 붙은 가림은 계속 잡는다.
+- `ralph-qa` 프로브가 TOML 따옴표 키의 이스케이프(`"sandbox\u005Fmode"`)를 풀지 않아 관리 파일의 거부와 MCP 끄기를 놓치던 것. 이제 그런 설정이면 codex 좌석을 세우지 않고, 끝까지 못 읽은 설정은 파일과 줄을 알린다. opencode 의 models.dev 사본이 비었을 때 그 까닭도 알린다.
+- `ralph-qa` 의 gemini 기록 정리가 두 프로젝트 폴더가 같은 이름을 가진 사용자 기록 폴더를 지우던 것.
+- `ralph-qa` 5단계 상한(`timeout -k 10 600`)이 TERM 을 견딘 작업 프로세스를 남기던 것. 이제 `timeout -s KILL 600` 이다. Git Bash 에서 Windows 의 `timeout` 이 잡히면 `/usr/bin/timeout` 을 쓴다. 6단계는 끊긴 실행의 opencode 세션을 링크를 푼 경로(macOS `/private/var`)와 Windows 경로 꼴로도 찾는다.
+- `ralph-qa` 의 PowerShell 2단계가 bash 와 달라 보낼 수 없던 것(`unsent.md`, 기준 파일, 닫는 표지, BOM 없는 쓰기, `[ ]` 든 경로의 `2>`, Windows PowerShell 5.1 의 UTF-16 err 파일). "보낼 diff 가 없다" 갈래에 따를 명령이 없던 것, 긴 목록과 따옴표로 찍힌 이름의 안내, 512 KiB 상한의 범위(나누기 전 전체)와 분할 절차, 출처 독립 좌석이 보내지 않은 새 파일 목록을 받지 못하던 것.
 
 ## [0.20.3] - 2026-10-20
 

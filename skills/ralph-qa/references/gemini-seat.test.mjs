@@ -286,3 +286,26 @@ test("usage errors, and a missing seat folder for check, exit 2", (t) => {
   assert.equal(run(SEAT, ["check", join(dir, "missing")]).status, 2);
   assert.equal(run(SEAT, ["sweep"]).status, 2);
 });
+
+// 0.20.4 B3: two project folders under one name
+test("a name projects.json gives two project folders is no seat's, so clean and sweep leave its unmarked folder", (t) => {
+  const dir = scratch(t);
+  const home = join(dir, "gh");
+  const base = join(dir, "base");
+  const seat = join(base, "ralph-qa.aaaaaa", "gemini");
+  const gone = join(base, "ralph-qa.bbbbbb", "gemini");
+  const work = join(dir, "work", "gemini");
+  for (const d of [seat, work]) mkdirSync(d, { recursive: true });
+  // the user's own project first, the seat last: a Map built from the pairs keeps the seat
+  projectsJson(home, { [work]: "gemini", [seat]: "gemini", [join(dir, "w2")]: "gemini-1", [gone]: "gemini-1" });
+  const users = [unmarked(home, "tmp", "gemini"), unmarked(home, "tmp", "gemini-1")];
+  const env = { GEMINI_CLI_HOME: home };
+  for (const args of [["clean", seat], ["sweep", base]]) {
+    const r = run(SEAT, args, env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).removed, [], args[0]);
+  }
+  assert.ok(users.every((p) => existsSync(p)), "the user's history stays");
+  projectsJson(home, { [seat]: "gemini", [seat + "/"]: "gemini" });
+  assert.deepEqual(JSON.parse(run(SEAT, ["clean", seat], env).stdout).removed, [users[0]], "one folder spelt twice is still one owner");
+});

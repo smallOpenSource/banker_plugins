@@ -17,6 +17,8 @@ const DAY_RULE = (BLOCK.match(/^find "\$\(dirname "\$d"\)" .*$/m) || [])[0] || "
 const PS_RULE = (SKILL.match(/하루 규칙 `(Get-ChildItem [^`]+)`/) || [])[1] || "";
 // The limit for a system without timeout (macOS), written in the block's comment.
 const PERL_LIMIT = (BLOCK.match(/^#\s+(perl -e '.*' 600)$/m) || [])[1] || "";
+// The limit for a system with timeout (Linux, Git Bash), as step 5 names it.
+const TIMEOUT_LIMIT = (SKILL.match(/`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `(timeout [^`]+ 600)`/) || [])[1] || "";
 
 const works = (cmd, arg = "--version") => spawnSync(cmd, [arg], { encoding: "utf8" }).status === 0;
 const SKIP = process.platform === "win32" ? "Git Bash path handling is not checked on Windows" : !works("bash") ? "no bash" : false;
@@ -74,6 +76,7 @@ function left(b, target) {
 test("the skill still holds step 1, the perl limit and both day rules these tests run", () => {
   assert.ok(STEP1, "no step 1 in the bash block");
   assert.ok(PERL_LIMIT, "no perl limit in the bash block");
+  assert.ok(TIMEOUT_LIMIT, "no timeout limit in step 5");
   assert.ok(DAY_RULE, "no day rule in the bash block");
   assert.ok(PS_RULE, "no PowerShell day rule");
 });
@@ -110,13 +113,14 @@ test("the PowerShell day rule removes only marked folders past a day, never a us
 // The seat CLIs start their work in a child process (codex's and gemini's npm entry points), so a
 // limit that ends only the process it started leaves the work running past the cleanup.
 test("both limits end the seat and the child it started", { skip: SKIP }, async (t) => {
-  const limits = [["timeout", "timeout -k 1 1"], ["perl", PERL_LIMIT.replace(/ 600$/, " 1").replace("sleep 10", "sleep 1")]];
+  const limits = [["timeout", TIMEOUT_LIMIT.replace(/ 600$/, " 1").replace("-k 10", "-k 1")], ["perl", PERL_LIMIT.replace(/ 600$/, " 1").replace("sleep 10", "sleep 1")]];
   for (const [name, limit] of limits) {
     if (!works(name, name === "perl" ? "-v" : "--version")) continue;
     const dir = scratch(t);
     const pid = join(dir, "child.pid");
     // as in the seat command, a shell waits for the limit and reads its exit status
-    const r = spawnSync("bash", ["-c", `( ${limit} sh -c 'sleep 30 & echo $! > "${pid}"; wait' ); exit $?`], { encoding: "utf8", timeout: 60000 });
+    // the child gives up the pipes, so spawnSync returns when the limit does and a child still alive is seen
+    const r = spawnSync("bash", ["-c", `( ${limit} sh -c 'sleep 30 > /dev/null 2>&1 & echo $! > "${pid}"; wait' ); exit $?`], { encoding: "utf8", timeout: 60000 });
     assert.ok([124, 137].includes(r.status), `${name}: exit ${r.status} ${r.stderr}`);
     const child = Number(readFileSync(pid, "utf8"));
     let alive = true;
@@ -130,4 +134,58 @@ test("both limits end the seat and the child it started", { skip: SKIP }, async 
     }
     assert.equal(alive, false, `${name}: the child ${child} outlived the limit`);
   }
+});
+
+// 0.20.4 B3: a worker that outlives TERM, and the base folder as opencode records it
+// An entry point that exits on TERM can leave a worker that keeps working past TERM (gemini's
+// relaunched child, an MCP server): the limit must end it too. The worker gives up the pipes, so
+// spawnSync returns when the limit does and a worker still alive is seen.
+test("both limits end a worker that outlives TERM after its entry point exits", { skip: SKIP }, async (t) => {
+  const limits = [["timeout", TIMEOUT_LIMIT.replace(/ 600$/, " 1").replace("-k 10", "-k 1")], ["perl", PERL_LIMIT.replace(/ 600$/, " 1").replace("sleep 10", "sleep 1")]];
+  for (const [name, limit] of limits) {
+    if (!works(name, name === "perl" ? "-v" : "--version")) continue;
+    const dir = scratch(t);
+    const pid = join(dir, "worker.pid");
+    const worker = `sh -c "trap \\"\\" TERM; exec sleep 30" > /dev/null 2>&1`;
+    const r = spawnSync("bash", ["-c", `( ${limit} sh -c '${worker} & echo $! > "${pid}"; wait' ); exit $?`], { encoding: "utf8", timeout: 60000 });
+    assert.ok([124, 137].includes(r.status), `${name}: exit ${r.status} ${r.stderr}`);
+    const w = Number(readFileSync(pid, "utf8"));
+    let alive = true;
+    for (let k = 0; k < 30 && alive; k += 1) {
+      try {
+        process.kill(w, 0);
+        await new Promise((done) => setTimeout(done, 100));
+      } catch {
+        alive = false;
+      }
+    }
+    if (alive) process.kill(w, "SIGKILL");
+    assert.equal(alive, false, `${name}: the worker ${w} outlived the limit`);
+  }
+});
+
+// The two spellings of the base folder step 6 prints before it reads opencode's session list.
+const BASES = (BLOCK.match(/^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"\nif command -v cygpath > \/dev\/null; then cygpath -w "\$\(dirname "\$d"\)"; fi$/m) || [])[0] || "";
+test("step 6 prints the base folder as written and as resolved, the way opencode records a session's folder", { skip: SKIP }, (t) => {
+  assert.ok(BASES, "no base-folder lines in step 6");
+  const dir = scratch(t);
+  if (process.platform === "win32") {
+    // Git Bash (a forced run): opencode writes C:\...\ralph-qa.<id>\opencode, the third line cygpath -w prints
+    const seatWin = join(dir, "T", "ralph-qa.abc123", "opencode");
+    mkdirSync(seatWin, { recursive: true });
+    const cwd = spawnSync(process.execPath, ["-e", "console.log(process.cwd())"], { cwd: seatWin, encoding: "utf8" }).stdout.trim();
+    const w = spawnSync("bash", ["-c", `d='${join(dir, "T", "ralph-qa.abc123").replaceAll("\\", "/")}'\n${BASES}`], { encoding: "utf8" });
+    assert.equal(w.status, 0, w.stderr);
+    assert.equal(cwd.toLowerCase(), join(w.stdout.trim().split("\n")[2], "ralph-qa.abc123", "opencode").toLowerCase());
+    return;
+  }
+  mkdirSync(join(dir, "private", "var", "T", "ralph-qa.abc123", "opencode"), { recursive: true });
+  symlinkSync(join(dir, "private", "var"), join(dir, "var"));
+  const seat = join(dir, "var", "T", "ralph-qa.abc123", "opencode");
+  const recorded = spawnSync(process.execPath, ["-e", "console.log(process.cwd())"], { cwd: seat, encoding: "utf8" }).stdout.trim();
+  const r = spawnSync("bash", ["-c", `d='${join(dir, "var", "T", "ralph-qa.abc123")}'\n${BASES}`], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const [written, resolved] = r.stdout.trim().split("\n");
+  assert.ok(!recorded.startsWith(written + "/"), "the written base alone misses the session's folder");
+  assert.equal(recorded, join(resolved, "ralph-qa.abc123", "opencode"));
 });

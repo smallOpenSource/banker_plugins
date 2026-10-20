@@ -661,13 +661,17 @@ try {
      && !/--path-format/.test(seatCode) && /인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다/.test(rqSkill)
      && /커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다/.test(rqSkill) && !/경로를 잘못 얻어도 사본 없이 말없이 진행하지 않는다/.test(rqSkill)
      && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
-     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
-     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" > "$d/listed.md" &&`)
-     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄이나 겹친 줄)' >&2; false; }; } &&`)
-     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
+     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
+     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" | sed 's|^\./||' > "$d/listed.md" &&`)
+     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄, 겹친 줄, 따옴표를 풀지 않은 줄)' >&2; false; }; } &&`)
+     && seatCode.split('\n').includes(String.raw`  { [ -z "$(git -C '<저장소>' ls-files -z --others --exclude-standard | LC_ALL=C tr -dc '\n' | LC_ALL=C tr '\n' x)" ] || { echo 'ralph-qa: 이름에 줄바꿈이 든 새 파일이 있다(목록 비교가 그 이름을 두 줄로 읽는다)' >&2; false; }; } &&`)
+     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
+     && /^  GIT_DIFF_OPTS= GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 '<기준>' > "\$d\/diff\.md" &&$/m.test(seatCode)
+     && seatCode.split('\n').includes(String.raw`  { LC_ALL=C tr -d '\000' < "$d/diff.md" | cmp -s - "$d/diff.md" || { echo 'ralph-qa: diff 에 바이너리 바이트가 있다(attributes 의 diff 속성이 바이너리 파일을 글로 펼침)' >&2; false; }; } &&`)
+     && seatCode.split('\n').includes(String.raw`  cat "$d/diff.md" >> "$d/prompt.md" && rm -f "$d/idx" "$d/added.md" "$d/listed.md" "$d/diff.md" &&`)
+     && !/core\.attributesFile/.test(rqSkill)
      && !/'<저장소>'(?: -c \S+)* diff (?!--no-ext-diff --no-textconv --no-color --submodule=short )/.test(seatCode)
      && / && LC_ALL=C command grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m.test(seatCode) && !/(?<!command )grep -c/.test(seatCode)
      && !/read-tree/.test(seatCode) && !/git -C '<저장소>' diff HEAD/.test(seatCode) && !/add -N \.(?=[\s`]|$)/m.test(rqSkill)
@@ -690,13 +694,14 @@ try {
      && /색과 하위 저장소 내용도 사용자 설정과 관계없이 끈다\(`--no-color --submodule=short`\)/.test(rqSkill)
      && /2 가 찍히지 않으면 보내지 않고 stderr 의 사유를 본다/.test(rqSkill)
      && /`커밋이 있는데 인덱스 파일이 없다`: 다시 해도 풀리지 않는다\. 사용자에게 알리고 외부 좌석은 `cli-call-failed` 로 적는다/.test(rqSkill)
-     && /`보낼 diff 가 없다`: 검토 대상이 무시되는 폴더\(`\.omc\/plans\/` 등\)나 저장소 밖에 있으면 새 `\$d` 에서 그 파일을 원문 부분으로 붙인다/.test(rqSkill)
+     && /`보낼 diff 가 없다`: 검토 대상이 무시되는 폴더\(`\.omc\/plans\/` 등\)나 저장소 밖에 있으면 같은 `\$d` 에서 짧은 부분부터 다시 쓴 뒤, 블록의 `2단계-2 대체` 사슬로/.test(rqSkill)
      && /512 KiB\(524288 바이트\)를 넘으면 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다\. 사용자가 보내지 않기로 하면 `model-declined` 다/.test(rqSkill)
      && /아래와 3단계의 `cli-call-failed` 는 그 좌석이 아직 판정을 내지 않았을 때다\. 첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다/.test(rqSkill)
      && /첫 판정 뒤의 반복에서 페이로드를 만들지 못하거나 사용자가 보내지 않기로 하면 그 좌석은 `ERROR` 다/.test(rqSkill)
      && /페이로드의 예: 커밋이 있는데 인덱스 파일이 없음, 보낼 diff 도 붙일 대상도 없음, 물을 수 없는 실행에서 512 KiB 초과/.test(rqSkill)
      && /관련 코드 범위는 바뀐 줄 둘레 3줄 밖에 있는데 판정에 필요한 함수 본문이나 호출부다/.test(rqSkill)
-     && /`sed -n '<시작>,<끝>p' '<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
+     && /추적 파일이나 `new-files\.md` 에 적은 새 파일에서만 떼고/.test(rqSkill) && /printf '%s\\n' '=== <파일>:<시작>-<끝>' >> "\$d\/prompt\.md" && sed -n '<시작>,<끝>p' '<저장소>\/<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill)
+     && /이름의 `'` 는 `'\\''` 로 쓴다/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
      && /파일을 읽는 도구가 없는 외부 좌석\(gemini, opencode, 셸을 끈 codex\)/.test(rqSkill) && !/도구가 없는 gemini, opencode 좌석/.test(rqSkill),
      'S23-a: only the new files the author lists go out (the rest stay in unsent.md), stops name their reason, a payload over 512 KiB is asked about, related code goes as ranges');
   // opencode: -f truncates at 50 KB, an unknown --agent falls back to the default agent, and only a
@@ -746,11 +751,13 @@ try {
      && /`\[IO\.Path\]::IsPathRooted\(\$i\)` 가 거짓이면 `\$i = Join-Path '<저장소>' \$i` 로 바꾼다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"` 로 실제 인덱스를 복사한다\./.test(psStep2)
      && /`git -C '<저장소>' rev-parse -q --verify HEAD > \$null` 의 `\$LASTEXITCODE` 가 0 이면\(커밋이 있으면\) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
+     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
      && /`\$added \| Where-Object \{ \$listed -cnotcontains \$_ \}`\)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다\./.test(psStep2)
      && /`Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL`/.test(psStep2)
-     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
-     && /`git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
+     && /`git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /`\[IO\.File\]::ReadAllBytes\("\$d\\diff\.md"\) -contains 0` 이 참이면 `diff 에 바이너리 바이트가 있다` 를 찍고 멈춘다/.test(psStep2)
+     && /`Remove-Item Env:GIT_DIFF_OPTS -ErrorAction Ignore`/.test(psStep2)
      && /`diff --quiet` 는 1 일 때만 계속하고\(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다\), 나머지는 0 이 아니면 멈춘다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.md"` 로 치운다/.test(psStep2)
      && !/read-tree|--path-format|if \(Test-Path \$i\)|add -N \./.test(psStep2)
@@ -763,7 +770,9 @@ try {
   ok(/Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다/.test(rqSkill)
      && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 좌석 프로세스 트리 전체가 멈춘다/.test(rqSkill)
      && /셸에서 프로세스 그룹을 죽여서는 좌석 서브셸이 멈추지 않는다/.test(rqSkill) && /Codex 는 그 exec 세션이 끝날 때까지 기다린다/.test(rqSkill)
-     && /`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `timeout -k 10 600` 을, 없으면\(macOS 기본\) 블록 주석의 `perl` 명령을 넣는다\. 둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다\(exit 124 또는 137\)/.test(rqSkill)
+     && /`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `timeout -s KILL 600` 을, 없으면\(macOS 기본\) 블록 주석의 `perl` 명령을 넣는다\./.test(rqSkill) && /둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다\(exit 137\)/.test(rqSkill) && !/<상한> 은 5단계: timeout 이 있으면 timeout -k/.test(seatBlock)
+     && /^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"$/m.test(seatCode) && /^if command -v cygpath > \/dev\/null; then cygpath -w "\$\(dirname "\$d"\)"; fi$/m.test(seatCode)
+     && /기준 폴더는 6단계가 찍는 줄\(적은 경로, `pwd -P` 로 푼 경로, Git Bash 면 `cygpath -w` 꼴\) 모두와 견준다/.test(rqSkill)
      && seatBlock.includes("perl -e 'setpgrp; $SIG{ALRM} = sub { $SIG{TERM} = \"IGNORE\"; kill TERM => -$$; sleep 10; kill KILL => -$$ }; alarm shift; system @ARGV;")
      && !/alarm shift; exec @ARGV/.test(rqSkill) && /^  <상한> opencode debug agent /m.test(ocCmd)
      && /^\( cd "\$d\/codex" && <상한> codex exec /m.test(seatCode) && / <상한> gemini --skip-trust /.test(gmCmd) && /^  <상한> opencode run /m.test(ocCmd)
@@ -801,6 +810,38 @@ try {
   ok(/`<review-data id="<id>">`/.test(rqSkill) && /실행마다 무작위 id/.test(rqSkill)
      && /파일을 쓰지 않고, 모델 호출/.test(rqSkill) && /게이트 결과/.test(rqSkill),
      'S24: every seat\'s instructions open with a per-run data boundary and the no-write rule, and the author passes gate output');
+  // 0.20.4 B3: the probe names where it read a codex config short, an escaped key unseats codex, and a seat or cleanup
+  // start of opencode may empty its models.dev copy.
+  ok(/프로브가 자리를 잡지 못한 줄/.test(rqSkill) && /정하거나 프로브가 그 파일을 끝까지 읽지 못하면 좌석을 세우지 않는다/.test(rqSkill)
+     && /따옴표 키에 이스케이프\(`\\`\)가 든 설정/.test(rqSkill),
+     'S22-b: the codex unseat list names a line the probe could not place, an escaped quoted key and a managed file read short');
+  ok(/그 시작이 models\.dev 사본\(`~\/\.cache\/opencode\/models\.json`\)을 지우고/.test(rqSkill) && /프로브는 그 경우 `notes` 에 까닭을 적는다/.test(rqSkill),
+     'S21-b: the limits say a seat or cleanup start of opencode may empty its models.dev copy, and the probe says so');
+  ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard --directory$/m.test(seatCode)
+     && /목록이 100줄을 넘으면/.test(rqSkill) && /줄은 실제 이름으로 적는다/.test(rqSkill)
+     && /`이름에 줄바꿈이 든 새 파일이 있다`: /.test(rqSkill) && /문맥은 사용자 설정과 관계없이 3줄이다/.test(rqSkill)
+     && /사본을 읽고 쓰는 git 명령마다 `-c core\.splitIndex=false` 를 줘/.test(rqSkill) && /`-diff`, `binary` 로 가려 둔 파일은 가린 채/.test(rqSkill)
+     && /`diff 에 바이너리 바이트가 있다`: /.test(rqSkill) && /Claude Code 는 3만 자/.test(rqSkill),
+     'S23-k: a long listing is folded by folder, list lines are real names (unquoted, no ./), a new name with a newline stops, and the diff keeps its own context and attributes');
+  ok(/\+ 2단계의 `unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill),
+     'S12-b: the source-independent seat also gets the list of new files left out of the diff');
+  // The PowerShell form of step 2 keeps what bash keeps: the unsent list, the parts after the diff and the closing marker,
+  // written without a BOM, the encoding set in every call; a stderr redirect cannot take -LiteralPath, so it goes to a
+  // relative path, and the UTF-16 err file of 5.1 is read with Select-String.
+  ok(/`\[IO\.File\]::WriteAllLines\("\$d\\unsent\.md", \[string\[\]\]\$u\)`/.test(psStep2)
+     && /닫는 표지는 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '<\/review-data id="<id>">' \+ \[char\]10\)` 로 붙인다/.test(psStep2)
+     && !rqSkill.includes('"`n"')
+     && /기준 파일과 게이트 원문 출력은 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", \[IO\.File\]::ReadAllText\('<기준 파일>'\)\)`/.test(psStep2)
+     && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
+     && /`2>` 재지정은 `-LiteralPath` 를 받지 못해/.test(rqSkill) && !/`2> "\$o\\err-gemini\.md"`/.test(rqSkill)
+     && /Select-String -LiteralPath "\$o\\err-<좌석>\.md"/.test(rqSkill) && /gemini 의 `Policy file error` 와 `Full report`/.test(rqSkill) && /호출마다 먼저 `\$OutputEncoding`/.test(rqSkill),
+     'S23-h: the PowerShell step 2 writes unsent.md, the base file and the closing marker like bash, BOM-free, the encoding in every call, and 2> to a path without brackets');
+  ok(/^rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" && cat '<검토 대상 파일>' '<기준 파일>' >> "\$d\/prompt\.md" &&$/m.test(seatCode),
+     'S23-i: the no-diff branch has its own chain in the same $d');
+  ok(/상한은 나누기 전의 `prompt\.md` 전체에 건다/.test(rqSkill) && /부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다/.test(rqSkill),
+     'S23-j: the 512 KiB cap is on the whole payload before any split, and each part is counted and scanned');
+  ok(/Git Bash 에서 `command -v timeout` 이 `\/c\/Windows\/system32\/timeout` 이면/.test(rqSkill) && /`\/usr\/bin\/timeout -s KILL 600`/.test(rqSkill),
+     'S23-l: in Git Bash the limit is GNU timeout, not the Windows timeout a PATH may put first');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

@@ -205,6 +205,13 @@ const STRING_VALUE = /^(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(?:#.*)?$/s;
 
 // A dotted key's segments, quotes taken off (escapes kept as written).
 const keyPath = (text) => [...text.matchAll(SEG_RE)].map((m) => m[1] ?? m[2] ?? m[3]);
+// True when a "basic" key segment holds an escape: codex reads the key the escape spells
+// ("sandbox\u005Fmode" is sandbox_mode), and the probe keeps it as written.
+const escapedKey = (text) => [...text.matchAll(SEG_RE)].some((m) => m[1]?.includes("\\"));
+// Such a key leaves the read not whole: what codex reads there is not what the probe placed.
+function markEscape(state, keyText) {
+  if (escapedKey(keyText)) state.unplaced = true;
+}
 
 // The walk's state: where it is (open string, nesting depth, table, array being gathered) and
 // what it found so far.
@@ -324,9 +331,15 @@ function tomlLine(state, line) {
     return;
   }
   const header = HEADER_RE.exec(line);
-  if (header) return enterTable(state, header);
+  if (header) {
+    markEscape(state, header[2]);
+    return enterTable(state, header);
+  }
   const assign = ASSIGN_RE.exec(line);
-  if (assign) return assignment(state, keyPath(assign[1]), assign[2]);
+  if (assign) {
+    markEscape(state, assign[1]);
+    return assignment(state, keyPath(assign[1]), assign[2]);
+  }
   if (!/^\s*(?:#|$)/.test(line)) state.unplaced = true;
 }
 
@@ -361,13 +374,25 @@ const rawMcpNames = (lines) => lines.filter((l) => !/^\s*#/.test(l))
 // defined (table headers, under [mcp_servers], dotted keys), whether servers were written in a
 // form it does not list or that the text names beyond what it listed (`mcpUnread`), whether any
 // table sets a model (`modelKeys`), whether a multi-line string, array or inline table was left
-// open or a line could not be placed (`broken`), and the strings of each top-level array
+// open or a line could not be placed (`broken`, with `brokenAt`: the first line it could not place
+// or the line that opened what is still open), and the strings of each top-level array
 // (`arrays`). Enough for those keys; not a TOML parser.
 export function readToml(text) {
   const state = tomlState();
   const lines = String(text ?? "").split(/\r?\n/);
-  for (const line of lines) tomlLine(state, line);
+  const isOpen = () => state.open !== null || state.depth > 0;
+  // the first line it could not place, and the line that opened what is still open at the end
+  let badAt = 0;
+  let openAt = 0;
+  lines.forEach((line, i) => {
+    const wasOpen = isOpen();
+    const wasBad = state.unplaced;
+    tomlLine(state, line);
+    if (!wasBad && state.unplaced) badAt = i + 1;
+    if (!wasOpen && isOpen()) openAt = i + 1;
+  });
   const unlisted = rawMcpNames(lines).filter((n) => !state.mcpServers.has(n));
+  const broken = isOpen() || state.unplaced;
   return {
     values: state.values,
     roots: [...state.roots],
@@ -375,7 +400,8 @@ export function readToml(text) {
     mcpServers: [...state.mcpServers],
     mcpUnread: state.mcpUnread || unlisted.length > 0,
     modelKeys: state.modelKeys,
-    broken: state.open !== null || state.depth > 0 || state.unplaced,
+    broken,
+    ...(broken ? { brokenAt: Math.min(...[badAt, isOpen() ? openAt : 0].filter(Boolean)) } : {}),
   };
 }
 
@@ -491,7 +517,8 @@ function codexConfigFiles(world) {
 
 // Those layers as one: the first layer with a value wins, MCP servers add up.
 function codexConfig(world) {
-  const layers = codexConfigFiles(world).map((f) => readToml(world.readFile(f)));
+  const files = codexConfigFiles(world);
+  const layers = files.map((f) => readToml(world.readFile(f)));
   const pick = (key) => layers.map((l) => l.values[key]).find((v) => v !== undefined);
   return {
     cfg: { model: pick("model"), model_provider: pick("model_provider"), profile: pick("profile") },
@@ -499,6 +526,7 @@ function codexConfig(world) {
     mcpUnread: layers.some((l) => l.mcpUnread),
     modelKeys: layers.some((l) => l.modelKeys),
     broken: layers.some((l) => l.broken),
+    brokenAt: layers.map((l, k) => (l.broken ? `${files[k]} line ${l.brokenAt}` : null)).filter(Boolean),
   };
 }
 
@@ -513,7 +541,7 @@ function mcpBlockedSeat(seat, conf, notes) {
   if (!bad && !conf.mcpUnread && !conf.broken) return null;
   if (bad) notes.push(`${bad} MCP server name(s) hold characters \`-c mcp_servers.<name>.enabled=false\` cannot address: rename them to letters, digits, _ and -`);
   if (conf.mcpUnread) notes.push("the probe could not list every MCP server the codex config defines (one inline mcp_servers table, or a name its walk did not place): write each server as its own [mcp_servers.<name>] table");
-  if (conf.broken) notes.push("the probe could not read the codex config to its end (a multi-line string, array or inline table left open, or a line it could not place), so its list of MCP servers may be short");
+  if (conf.broken) notes.push(`the probe could not read the codex config to its end at ${conf.brokenAt.join(", ")} (a multi-line string, array or inline table left open, or a line it could not place), so its list of MCP servers may be short`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -530,7 +558,7 @@ function managedBlockedSeat(seat, world, notes) {
   const read = readToml(world.readFile(CODEX_MANAGED));
   const keys = read.roots.filter((k) => SEAT_KEYS.includes(k));
   if (!keys.length && !read.broken) return null;
-  notes.push(`${CODEX_MANAGED} ${keys.length ? `sets ${keys.join(", ")}` : "could not be read to its end"}, which codex applies over the seat's -c flags: the seat cannot hold its guards`);
+  notes.push(`${CODEX_MANAGED} ${keys.length ? `sets ${keys.join(", ")}` : `could not be read to its end (line ${read.brokenAt})`}, which codex applies over the seat's -c flags: the seat cannot hold its guards`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -551,7 +579,7 @@ function requirementsBlockedSeat(seat, world, notes) {
   const allows = (k) => SEAT_ALLOWS[k] !== undefined && (read.arrays[k] ?? []).includes(SEAT_ALLOWS[k]);
   const keys = read.roots.filter((k) => !GUARD_FREE.includes(k) && !allows(k));
   if (!keys.length && !read.broken) return null;
-  notes.push(`${CODEX_REQUIREMENTS} ${keys.length ? `sets ${keys.join(", ")}` : "could not be read to its end"}, which codex holds over the seat's -c, --disable and -s flags: the seat cannot hold its guards`);
+  notes.push(`${CODEX_REQUIREMENTS} ${keys.length ? `sets ${keys.join(", ")}` : `could not be read to its end (line ${read.brokenAt})`}, which codex holds over the seat's -c, --disable and -s flags: the seat cannot hold its guards`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -797,9 +825,11 @@ function opencodeModels(cfg) {
   return { configured: own, models: [own, ...listed] };
 }
 
+const opencodeCache = (world) => join(world.env.XDG_CACHE_HOME || join(world.home, ".cache"), "opencode");
+
 // The providers opencode's local copy of the models.dev list knows; null when it cannot be read.
 function catalogProviders(world) {
-  const file = join(world.env.XDG_CACHE_HOME || join(world.home, ".cache"), "opencode", "models.json");
+  const file = join(opencodeCache(world), "models.json");
   const read = readJsonc(world.readFile(file));
   return read.value ? new Set(Object.keys(read.value)) : null;
 }
@@ -835,6 +865,10 @@ function opencodeSeat(flag, { world, authorFamilies }) {
   notes.push(...cfg.unreadable.map((f) => `config not readable: ${f}`));
   if (world.env.OPENCODE_CONFIG_CONTENT) notes.push("$OPENCODE_CONFIG_CONTENT is not read: the seat command replaces it with its own reviewer agent");
   const catalog = catalogProviders(world);
+  // opencode empties its cache on a start after an update; with the list refresh off it fetches nothing
+  if (!catalog && world.readFile(join(opencodeCache(world), "version")) != null) {
+    notes.push("opencode's models.dev copy is missing or unreadable while its cache version file is there: an opencode start with the list refresh off (the seat and cleanup commands) empties the cache after an update; start opencode once, online and without OPENCODE_DISABLE_MODELS_FETCH, to fetch it again");
+  }
   const closed = closedSet(cfg, catalog);
   const out = flagged(seat, flag, authorFamilies) ?? opencodeDecision(seat, { configured, unsure: cfg.unreadable.length > 0, closed, catalog });
   return withNotes(out, notes);
