@@ -927,6 +927,13 @@ try {
   ok(/npm i -g hyperframes@<판>/.test(mgSetup) && /`hyperframes <명령>` 을 직접 부른다/.test(mgSetup)
      && /전역 설치한 `hyperframes doctor`/.test(mgMake) && /Stitch 는 원격 서비스라 네트워크가 없으면 쓸 수 없다/.test(stitchSkill),
      'airgap-9: the npx tools have an offline way (global install, then the executable), and setup-stitch says it needs the network');
+  // audit-security: offline, npm audit exits 1 with only an error in its JSON and osv-scanner exits 127 with an empty
+  // list; read as results they count 0 vulnerabilities. A tool's output is read only when it is a result, else "미커버".
+  const asSkill = fs.readFileSync(path.join(root, 'skills', 'audit-security', 'SKILL.md'), 'utf8');
+  ok(/\| npm audit \| 본문에 `error` 키가 없고 `metadata\.vulnerabilities` 가 있음 \|/.test(asSkill)
+     && /\| osv-scanner \| 종료 코드 0 이나 1 \| 127, 128 은 오류/.test(asSkill)
+     && /0건으로 세지 않고 리포트 Unknown 에 "미커버\(네트워크 없음\)" 로 적는다/.test(asSkill),
+     'airgap-2: audit-security reads a tool output as a result only when it is one, and writes "미커버" instead of 0');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

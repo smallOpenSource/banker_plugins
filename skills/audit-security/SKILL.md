@@ -41,7 +41,7 @@ consensus는 고신뢰, 단일툴은 needs-review. 산출물은 방안·권고 �
 
 - ⚠️ **오래된 glibc 환경**(예: RHEL8 glibc 2.28): Go 정적 바이너리(osv/trivy/grype/gitleaks)는 glibc 무관해 `~/.local/bin`에 두면 그대로 동작. Python wheel·ast-grep CLI는 glibc 2.29+ 요구로 실패할 수 있음 → semgrep은 **glibc 핀 venv**로 격리.
 - ⚠️ **`set -u` 주의**: 일부 쉘 init이 `$ZSH_VERSION` 등 unbound 변수를 참조해 `set -u`가 command-substitution 서브셸을 깨뜨릴 수 있음(다운로드 URL이 빈 문자열이 됨). 러너는 `set -o pipefail`만 권장.
-- ⚠️ **exit code 1 = 정상**(스캔 한정): osv/grype/gitleaks/npm audit는 "findings present"를 rc=1로 반환 — 에러 아님. (단 setup 러너의 exit 1은 "도구 미설치 잔존"으로 다름.)
+- ⚠️ **exit code 1 = 정상**(스캔 한정): osv/grype/gitleaks/npm audit는 "findings present"를 rc=1로 반환 — 에러 아님. (단 setup 러너의 exit 1은 "도구 미설치 잔존"으로 다름.) 그래도 결과로 읽기 전에 아래 "결과로 읽는 조건" 을 먼저 본다. 네트워크가 없으면 npm audit 도 rc 1 이지만 본문은 오류뿐이다.
 
 ## 2단계 — 스캔 (멱등, 전 서브앱)
 도구는 소스/`pom.xml`/`package.json`/CI 무변경. 3 카테고리:
@@ -54,6 +54,21 @@ consensus는 고신뢰, 단일툴은 needs-review. 산출물은 방안·권고 �
 | **grype** | `dir:$ROOT --exclude …` | (설치패키지/컨테이너용) | ⚠️ **소스 dir scan은 0건 가능** — lockfile 부적합. osv+trivy로 대체 |
 | **npm audit** | `(cd <frontend> && npm audit --json)` | `package-lock.json` | npm registry advisory |
 | **pip-audit** | `-r <requirements>.txt` | (PyPI+OSV) | ⚠️ 일부 env에서 실패 가능 → Python은 osv로 커버 |
+
+#### 결과로 읽는 조건 (네트워크 없음과 0건을 가른다)
+SCA 도구는 advisory DB 나 레지스트리를 네트워크에서 받는다. 네트워크가 없으면 결과 JSON 을 그대로 셀 때 0건이 된다(실측: 오프라인 `npm audit --json` 은 1.6초에 rc 1, 본문은 `message` 와 `error` 뿐. `osv-scanner scan source` 는 20초 뒤 rc 127, stdout 이 빔. `--offline` 에 로컬 DB 가 없으면 rc 127 과 `{"results": []}`).
+
+| 도구 | 결과로 읽는 조건 | 아니면 |
+|---|---|---|
+| npm audit | 본문에 `error` 키가 없고 `metadata.vulnerabilities` 가 있음 | 미커버 |
+| osv-scanner | 종료 코드 0 이나 1 | 127, 128 은 오류. stderr 의 "no offline version of the OSV database" 도 오류 |
+| trivy, grype | stderr 에 DB 내려받기 실패가 없음 | 미커버 |
+| semgrep | stderr 에 `p/...` 규칙 내려받기 실패가 없음 | 미커버 |
+| pip-audit | 종료 코드 0 이나 1 이고 stderr 에 연결 오류가 없음 | 미커버 |
+
+- 조건을 못 채운 도구는 0건으로 세지 않고 리포트 Unknown 에 "미커버(네트워크 없음)" 로 적는다. 한 축의 도구가 모두 미커버면 그 축 전체를 미커버로 적는다.
+- Secrets 축(gitleaks, detect-secrets)은 로컬이라 네트워크와 관계없다.
+- 오프라인에서 돌리는 길: osv-scanner `--offline-vulnerabilities`(미리 받은 DB), trivy `--skip-db-update --offline-scan`(DB 사본), grype `GRYPE_DB_AUTO_UPDATE=false`(가져온 DB), semgrep 은 로컬 규칙 파일(`--config <파일>`). 판마다 이름이 다를 수 있어 `--help` 로 확인한다.
 
 ### SAST (소스 정적) — semgrep CE
 ```
