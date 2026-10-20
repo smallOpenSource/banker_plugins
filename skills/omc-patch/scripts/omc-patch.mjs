@@ -379,9 +379,11 @@ const failWhy = (e) => oneLine(e.code || e.message);
 function readHook(n, f, r) {
   try { return readRegular(f, "utf8"); }
   catch (e) {
+    // 읽지 못한 훅은 --check 에서도 실패다. "패치 필요" 로 세면 결과 줄이 적용을 권하는데, 그 적용도 같은 읽기에서 실패한다.
     bad(`읽지 못함: ${shown(n)} (${failWhy(e)})`);
-    if (MODE === "check") r.need++;
-    else { r.fail++; r.failed.push(f); }
+    r.fail++;
+    r.failed.push(f);
+    if (MODE === "check") r.unread++;
     return null;
   }
 }
@@ -691,7 +693,7 @@ function looksHandPatched(src) {
 }
 
 function patchHooks(root) {
-  const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, foreign: [], orphan: [], failed: [] };
+  const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, unread: 0, foreign: [], orphan: [], failed: [] };
   // revert 는 scripts/ 전체를 훑는다. hooks.json 기반 목록은 두 번 새는데, 실측으로
   // 4.15.7 이 둘 다 겪었다 — PostToolUse 를 지우면 그 스크립트가 목록에서 빠지고(그래서
   // .omcbak 이 있어도 안 돌아온다), 손으로 고친 파일은 .omcbak 조차 없어 아예 안 보인다.
@@ -1135,7 +1137,7 @@ function sharedIno() {
 const sharedLeft = (what, ino) => pinUrlLeft(what, `\n      다른 이름은 같은 파일 시스템에서 inode(Windows 는 파일 ID) ${ino} 로 찾습니다.`);
 
 // --check 의 판정. 남은 칸을 적용이 지울 수 있으면 scrub-needs, 이 도구로 지울 수 없으면 그 까닭을 알리고
-// scrub-blocked 다. 남은 칸이 없으면 already 다.
+// scrub-blocked 다. 기록을 읽지 못했거나 JSON 이 아니어서 칸이 있는지 모르면 scrub-unsure 다. 남은 칸이 없으면 already 다.
 function pinUrlCheck() {
   const left = pinUrlLeftover();
   if (!left) return "already";
@@ -1144,7 +1146,7 @@ function pinUrlCheck() {
   if (why || ino !== null) {
     if (why) pinUrlLeft(why);
     else sharedLeft(SHARED_CHECK_WHY, ino);
-    return "scrub-blocked";
+    return left.unsure ? "scrub-unsure" : "scrub-blocked";
   }
   bad(`고정 기록(PINNED)에 옛 URL 칸이 남아 있음 (적용하면 지움): ${oneLine(PINFILE)}`);
   return "scrub-needs";
@@ -1162,12 +1164,13 @@ function pinDirWhy() {
 function pinUrlLeftover() {
   let text;
   try { text = pinRecordText(); }
-  catch (e) { return { why: `확인하지 못함 (읽지 못함: ${failWhy(e)})` }; }
+  catch (e) { return { why: `확인하지 못함 (읽지 못함: ${failWhy(e)})`, unsure: true }; }
   if (text === null) return null;
   const { ok, rec } = parseRecord(text);
   if (ok ? !hasUrlKey(rec) : !text.includes("originUrl")) return null;
   if (isLink(PINFILE)) return { why: "지울 수 없음 (링크라 따라가 쓰지 않음)" };
-  return ok ? { rec } : { why: "지울 수 없음 (JSON 이 아님)" };
+  // JSON 이 아닌 글은 originUrl 이 칸인지 알 수 없다. 읽지 못한 기록과 함께 "남았을 수 있음" 이다(unsure).
+  return ok ? { rec } : { why: "지울 수 없음 (JSON 이 아님)", unsure: true };
 }
 
 // 기록의 글을 JSON 으로 읽는다. 읽히면 ok 가 true 다. 최상위 칸만 본다: 글에 그 이름이 있어도 칸이 아니면 없는 것이다.
@@ -1329,6 +1332,8 @@ log();
 // targets 는 «고칠 플러그인 폴더» 의 이름표 목록이다. 기본은 캐시의 판 번호이고, --root 는
 // 그 폴더 경로 하나다. rootOf 가 이름표를 폴더로 바꾼다.
 let active, targets;
+// installed_plugins.json 에서 활성 판을 찾지 못해 추정했는가. 적용은 멈추고 --check 는 그렇다고 결과 줄에 낸다.
+let activeGuessed = false;
 const rootOf = (v) => (ROOT ? v : join(CACHE, v));
 // 헬퍼 자리 결함은 이 판의 apply 로 고칠 수 없다(이미 감싼 파일). 원본으로 되돌린 뒤 다시 적용한다.
 // 되돌리기는 그 폴더 하나만 한다. 인자 없는 --revert 는 설치된 모든 판을 되돌리고 고정까지 푼다.
@@ -1361,11 +1366,17 @@ if (ROOT) {
   // [1/4] 뒤에 계산해야 일반 apply 가 TARGET_VERSION 으로 전환한 결과가 반영된다.
   const { v, src: activeSrc } = activeVersion();
   active = v;
+  activeGuessed = activeSrc.startsWith("추정");
   if (MODE !== "revert" && (MODE === "check" || NO_UPDATE)) {
     log(`  활성 버전: ${oneLine(active)} (${activeSrc})`);
     if (active !== TARGET_VERSION) {
       log(`  활성 버전이 대상(${TARGET_VERSION})과 다름 — 기본 apply 는 ${TARGET_VERSION} 로 전환하고, --no-update 는 활성 버전(${oneLine(active)})을 그 자리에서 패치함`);
     }
+  }
+  // 추정한 판에 적용하면 Claude Code 가 쓰는 판은 그대로 남고, 그 뒤 --check 는 추정한 판을 보고 적용됐다고 한다. 쓰기 전에 멈춘다.
+  if (MODE === "apply" && activeGuessed) {
+    bad(`활성 버전을 installed_plugins.json 에서 확인하지 못해 적용하지 않음 (추정한 판 ${oneLine(active)})`);
+    process.exit(1);
   }
   // apply 는 활성 버전만 손댄다. revert 와 check 는 설치된 모든 버전을 훑는다 —
   // 여러 버전이 나란히 있을 때 이전 버전에 수정이 남으면, 롤백했을 때 예상과 다른
@@ -1379,6 +1390,7 @@ log(`[2/4] 훅 패치${MODE === "apply" || ROOT ? `  (${oneLine(active)})` : `  
 const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0 };
 const needBy = {};
 const misplacedBy = {};
+const unreadBy = {};
 const foreignBy = {};
 const orphanBy = {};
 // 되돌리기 끝 줄이 세는 파일. 쓰지 못한 것(failed)과 백업이 없어 남은 것(left)이다. 링크로 이어진 판 폴더는
@@ -1392,6 +1404,7 @@ for (const v of targets) {
   const x = patchHooks(root);
   needBy[v] = x.need;
   misplacedBy[v] = x.misplaced;
+  unreadBy[v] = x.unread;
   for (const k of ["done", "skip", "fail", "need", "misplaced"]) r[k] += x[k];
   if (x.foreign?.length) foreignBy[v] = x.foreign;
   if (x.orphan?.length) orphanBy[v] = x.orphan;
@@ -1466,6 +1479,7 @@ if (ROOT) {
     "scrub-failed": () => ok("이미 고정됨"),
     "scrub-needs": () => ok("이미 고정됨"),
     "scrub-blocked": () => ok("이미 고정됨"),
+    "scrub-unsure": () => ok("이미 고정됨"),
   }[pin] || (() => {}))();
   // 마켓플레이스를 못 찾아 고정하지 않은 PC 에도 옛 판이 남긴 기록은 있을 수 있다. 같은 판정으로 다룬다.
   if (MODE !== "revert" && ["no-marketplace", "no-git", "no-remote"].includes(pin)) {
@@ -1491,27 +1505,42 @@ if (MODE === "check") {
   // 헬퍼 자리 결함이 하나라도 있으면 «모두 적용» 이 아니다. 다시 적용만으로는 안 고쳐지므로
   // 그 안내를 먼저 낸다(되돌린 뒤 적용하면 «패치 필요» 항목도 함께 처리된다).
   const misplacedActive = misplacedBy[active] || 0;
-  const pinNeeds = ["needs", "scrub-needs", "scrub-blocked"].includes(pin);
+  const unreadActive = unreadBy[active] || 0;
+  const pinNeeds = ["needs", "scrub-needs", "scrub-blocked", "scrub-unsure"].includes(pin);
   const pinUnread = pin === "origin-unreadable";
-  const clean = (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && !pinNeeds && !pinUnread && misplacedActive === 0;
-  // 막힘 줄이 결과가 되는 때는 적용으로 고칠 항목이 없고 막힘만 남은 때다. 고칠 항목이 함께 있으면 그 항목이 결과이고
-  // 막힘은 참고로 알린다(적용은 훅을 패치하고 그 칸은 남겨 실패로 센다).
-  const blockedResult = pin === "scrub-blocked" && (needBy[active] || 0) === 0 && !hjNeedBy[active] && !hjFailBy[active] && !misplacedActive;
-  const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
-  log(clean ? "결과: 모두 적용된 상태입니다."
-    : hjFailBy[active] ? "결과: hooks.json 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."
-    : pinUnread ? "결과: 마켓플레이스 origin 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."
-    : misplacedActive ? `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${misplacedHint()}`
-    : blockedResult ? "결과: 고정 기록(PINNED)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다. 위의 [!] 줄을 확인하십시오."
-    : ROOT ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 같은 --root 로 다시 실행하십시오."
-    : NO_UPDATE ? "결과: 적용되지 않은 항목이 있습니다. --check 없이 --no-update 로 다시 실행하십시오."
-    : "결과: 적용되지 않은 항목이 있습니다. 인자 없이 다시 실행하십시오.");
-  if (pin === "scrub-blocked" && !blockedResult) {
-    log("    참고: 고정 기록(PINNED)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다. 위의 [!] 줄을 확인하십시오.");
+  const toApply = (needBy[active] || 0) > 0 || !!hjNeedBy[active];
+  const clean = !toApply && !hjFailBy[active] && !pinNeeds && !pinUnread && misplacedActive === 0 && !unreadActive && !activeGuessed;
+  // 고정 기록 줄이 결과가 되는 때는 적용으로 고칠 항목이 없고 그 줄만 남은 때다. 고칠 항목이 함께 있으면 그 항목이 결과이고
+  // 고정 기록 줄은 참고로 알린다(적용은 훅을 패치하고 그 칸은 남겨 실패로 센다).
+  const pinOnly = !toApply && !hjFailBy[active] && !misplacedActive && !unreadActive && !activeGuessed;
+  const PIN_LINES = {
+    "scrub-blocked": "결과: 고정 기록(PINNED)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다. 위의 [!] 줄을 확인하십시오.",
+    "scrub-unsure": "결과: 고정 기록(PINNED)을 확인하지 못했습니다. 옛 URL 칸이 남았을 수 있습니다. 위의 [!] 줄을 확인하십시오.",
+  };
+  const rerun = ROOT ? "--check 없이 같은 --root 로 다시 실행하십시오."
+    : NO_UPDATE ? "--check 없이 --no-update 로 다시 실행하십시오." : "인자 없이 다시 실행하십시오.";
+  // 결과 줄 표. 위에서부터 처음 맞는 줄 하나를 낸다. SKILL 1단계의 결과 줄 표도 이 순서다.
+  const RESULTS = [
+    [activeGuessed, "결과: 활성 버전을 확인하지 못했습니다. 위의 활성 버전 줄을 확인하십시오."],
+    [hjFailBy[active], "결과: hooks.json 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."],
+    [unreadActive, "결과: 훅 스크립트를 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."],
+    [pinUnread, "결과: 마켓플레이스 origin 을 확인하지 못했습니다. 위의 [!] 줄을 확인하십시오."],
+    [misplacedActive, `결과: 헬퍼 자리 결함 ${misplacedActive}건이 있습니다. ${misplacedHint()}`],
+    [pinOnly && pin === "scrub-blocked", PIN_LINES["scrub-blocked"]],
+    [pinOnly && pin === "scrub-unsure", PIN_LINES["scrub-unsure"]],
+    [!clean, `결과: 적용되지 않은 항목이 있습니다. ${rerun}`],
+    [true, "결과: 모두 적용된 상태입니다."],
+  ];
+  log(RESULTS.find(([when]) => when)[1]);
+  if (PIN_LINES[pin] && !pinOnly) {
+    log(`    참고: ${PIN_LINES[pin].slice("결과: ".length)}`);
     log("          적용해도 그곳의 칸은 남고, 적용은 이 항목을 실패로 세어 종료 1 로 끝납니다.");
   }
+  const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
   const unreadable = targets.filter((v) => v !== active && hjFailBy[v]);
   if (unreadable.length) log(`    참고: 비활성 버전 ${unreadable.map(oneLine).join(", ")} 의 hooks.json 을 확인하지 못했습니다. 판정에는 넣지 않았습니다.`);
+  const unreadHooks = targets.filter((v) => v !== active && unreadBy[v]);
+  if (unreadHooks.length) log(`    참고: 비활성 버전 ${unreadHooks.map(oneLine).join(", ")} 의 훅 스크립트를 확인하지 못했습니다. 판정에는 넣지 않았습니다.`);
   if (others.length) {
     log(`    참고: 비활성 버전 ${others.map(oneLine).join(", ")} 에 미적용분이 있습니다.`);
     log("          지금 쓰이지 않는 버전이라 판정에 넣지 않았습니다. 그 버전으로 되돌릴 계획이면 함께 적용하십시오.");
@@ -1528,4 +1557,5 @@ if (MODE === "check") {
   log("    훅 스크립트 패치는 즉시 적용됩니다 (훅이 호출될 때마다 파일을 새로 읽습니다).");
   log("[!] PostToolUse 훅 제거는 hooks.json 변경이라 각 세션이 다시 시작될 때부터 적용됩니다.");
 }
-process.exit(r.fail > 0 || left.size > 0 ? 1 : 0);
+// --check 가 활성 판을 추정했으면 확인하지 못한 것이라 종료 1 이다(읽지 못한 hooks.json, 훅, origin 과 같다).
+process.exit(r.fail > 0 || left.size > 0 || (MODE === "check" && activeGuessed) ? 1 : 0);

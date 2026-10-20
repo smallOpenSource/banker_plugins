@@ -693,20 +693,23 @@ test("--check names an older PINNED's URL as not applied yet, without its text; 
 test("--check names an older PINNED the apply cannot clean (no JSON, unreadable, a link) and says this tool cannot", { skip: !HAS_GIT && "git not found" }, (t) => {
   const { f, secret, withPassword, record, pinfile } = olderPin();
   assert.equal(run(f.home, ["--no-update"]).code, 0);
-  const blocked = (why) => {
+  // A record it could not read, or no JSON, may hold the field: "could not check". A link that holds it: "cannot clean".
+  const CANNOT = /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\. 위의 \[!\] 줄을 확인하십시오\./;
+  const UNSURE = /결과: 고정 기록\(PINNED\)을 확인하지 못했습니다\. 옛 URL 칸이 남았을 수 있습니다\. 위의 \[!\] 줄을 확인하십시오\./;
+  const blocked = (why, result = CANNOT) => {
     const c = run(f.home, ["--check", "--no-update"]);
     assert.equal(c.code, 0, c.out);
     assert.match(c.out, why);
-    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\. 위의 \[!\] 줄을 확인하십시오\./);
+    assert.match(c.out, result);
     assert.ok(!c.out.includes(secret), "the password is not printed");
   };
   writeFileSync(pinfile, `{"originUrl":"${withPassword}"`);
-  blocked(/\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지울 수 없음 \(JSON 이 아님\)/);
+  blocked(/\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지울 수 없음 \(JSON 이 아님\)/, UNSURE);
   if (process.platform !== "win32" && !asRoot) {
     writeFileSync(pinfile, record);
     chmodSync(pinfile, 0o000);
     try {
-      blocked(/옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/);
+      blocked(/옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/, UNSURE);
     } finally {
       chmodSync(pinfile, 0o600);
     }
@@ -810,7 +813,7 @@ test("a record folder this account cannot write or open: --revert names the PINN
     assert.match(a.out, /완료\. 실패 1건\./);
     const c = run(f.home, ["--check", "--no-update"]);
     assert.match(c.out, /옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/);
-    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+    assert.match(c.out, /결과: 고정 기록\(PINNED\)을 확인하지 못했습니다\. 옛 URL 칸이 남았을 수 있습니다\./);
     const unopened = run(f.home, ["--revert"]);
     assert.equal(unopened.code, 1, unopened.out);
     assert.match(unopened.out, /\[!\] 고정 기록\(PINNED\)을 지우지 못함 \(EACCES\)/);
@@ -3083,4 +3086,68 @@ test("the hand-restore hint does not tell to overwrite a file that only names th
   const r = run(bareHome(), ["--root", plug, "--revert"]);
   assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
   assert.doesNotMatch(r.out, /에 덮어쓰고 백업을 지우십시오/, r.out);
+});
+
+// 0.20.4 B2 Task 5: result lines for a guessed active version, a PINNED it could not check, and a hook it could not read (B2-04, B2-11, B2-12)
+test("a --no-update apply that could only guess the active version stops before it writes anything", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }, { v: "5.7.0" }]);
+  writeFileSync(join(f.plugins, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: {} }) + "\n");
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  for (const v of ["5.6.1", "5.7.0"]) assert.deepEqual(omcbaks(join(f.cache, v, "scripts")), [], `${v} untouched`);
+  assert.equal(origin(f.market), ORIGIN, "not pinned");
+});
+
+test("--check that could only guess the active version does not say all is applied", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }, { v: "5.7.0" }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const installed = join(f.plugins, "installed_plugins.json");
+  writeFileSync(installed, JSON.stringify({ version: 2, plugins: {} }) + "\n");
+  // the guess (5.7.0) is patched by hand-free means: patch it through --root, as a guessing apply would have
+  assert.equal(run(bareHome(), ["--root", join(f.cache, "5.7.0")]).code, 0);
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.match(c.out, /활성 버전: 5\.7\.0 \(추정/, "the guess is the patched folder");
+  assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다\./, c.out.match(/^결과.*$/m)?.[0]);
+});
+
+test("--check over a PINNED it cannot read does not say the URL field is there", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX permission bits") || (asRoot && "root reads any file") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  chmodSync(pinPath(f), 0o000);
+  let c;
+  try { c = run(f.home, ["--check", "--no-update"]); } finally { chmodSync(pinPath(f), 0o600); }
+  assert.doesNotMatch(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다/, c.out);
+  assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다/);
+});
+
+test("--check over a PINNED that is no JSON does not say the URL field is there", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(pinPath(f), "notes: originUrl was taken out by hand\n");
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.doesNotMatch(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다/, c.out);
+});
+
+test("--check over a hook it cannot read says it could not check it, ends with 1 and asks for no rerun", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const foo = join(plug, "scripts", "foo.mjs");
+  chmodSync(foo, 0o000);
+  let c;
+  try { c = run(bareHome(), ["--root", plug, "--check"]); } finally { chmodSync(foo, 0o644); }
+  assert.match(c.out, /\[!\] 읽지 못함: foo \(EACCES\)/);
+  assert.doesNotMatch(c.out, /다시 실행하십시오/, c.out);
+  assert.doesNotMatch(c.out, /패치 필요 1건/, "an unread hook is not counted as one to patch");
+  assert.equal(c.code, 1, c.out);
+});
+
+test("--check names a hook it cannot read in an inactive version as a note, not as the result", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const foo = join(f.cache, "5.3.0", "scripts", "foo.mjs");
+  chmodSync(foo, 0o000);
+  let c;
+  try { c = run(f.home, ["--check", "--no-update"]); } finally { chmodSync(foo, 0o644); }
+  assert.doesNotMatch(c.out, /결과: 훅 스크립트를 확인하지 못했습니다/, c.out);
+  assert.match(c.out, /참고: 비활성 버전 5\.3\.0 의 훅 스크립트를 확인하지 못했습니다\. 판정에는 넣지 않았습니다\./, c.out);
 });
