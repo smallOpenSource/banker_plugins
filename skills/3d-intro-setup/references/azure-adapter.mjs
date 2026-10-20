@@ -340,31 +340,44 @@ export const safeForKey = (u) => u.protocol === 'https:' || localHttp(u);
 
 /**
  * Whether this process's fetch sends an http request to `u` through a proxy named in the environment:
- * Node 24 does when NODE_USE_ENV_PROXY=1 or --use-env-proxy is on and http_proxy or HTTP_PROXY is set,
- * unless NO_PROXY names the host. Over plain http the proxy reads the request, a key included. Read
- * as Node 24.13 does, and toward "proxied" where unsure: NODE_USE_ENV_PROXY other than empty or 0 is
- * on, and only `*` or the host itself (`[::1]` with its brackets) in every NO_PROXY set counts, not a
- * port, a leading dot or a range.
+ * Node 22 and 24 do when NODE_USE_ENV_PROXY=1 or --use-env-proxy is on and http_proxy or HTTP_PROXY is
+ * set, unless NO_PROXY names the host. Over plain http the proxy reads the request, a key included.
+ * Read as Node 22.23 and 24.13 do (measured), and toward "proxied" where unsure: NODE_USE_ENV_PROXY
+ * other than empty or 0 is on (Node takes only 1), `--use-env-proxy` with any value is on, and the host
+ * must be named in no_proxy and NO_PROXY both, when set (Node takes no_proxy when it is set, even
+ * empty). An entry names it as `*`, the host, or the host with this URL's own port written out;
+ * a leading dot, a range or a default port does not count.
  */
 export function envProxied(u, env = process.env, flags = process.execArgv) {
   if (!envProxyOn(env, flags) || !(env.http_proxy || env.HTTP_PROXY)) return false;
-  const lists = [env.no_proxy, env.NO_PROXY].filter(Boolean);
-  return !lists.length || !lists.every((list) => noProxyNames(list, u.hostname)); // URL gives the host in lower case
+  const lists = [env.no_proxy, env.NO_PROXY].filter((list) => list !== undefined);
+  return !lists.length || !lists.every((list) => noProxyNames(list, u));
 }
 
 function envProxyOn(env, flags) {
   if (env.NODE_USE_ENV_PROXY && env.NODE_USE_ENV_PROXY !== '0') return true;
-  return [...flags, ...String(env.NODE_OPTIONS || '').split(/\s+/)].includes('--use-env-proxy');
+  return [...flags, ...String(env.NODE_OPTIONS || '').split(/\s+/)].some((t) => t === '--use-env-proxy' || t.startsWith('--use-env-proxy='));
 }
 
-const noProxyNames = (list, host) => list.split(',').map((x) => x.trim().toLowerCase()).some((x) => x === '*' || x === host);
+// Entries are split at commas and spaces, and compared in lower case (URL gives the host in lower case).
+const noProxyNames = (list, u) => list.toLowerCase().split(/[\s,]+/).some((x) => noProxyEntry(x, u));
+
+function noProxyEntry(x, u) {
+  if (x === '*') return true;
+  const m = x.match(/^(\[[^\]]*\]|[^:[\]]*)(?::(\d+))?$/);
+  return Boolean(m) && m[1] === u.hostname && (m[2] === undefined || m[2] === u.port);
+}
+
+// The environment as this module found it. Node takes the proxy settings when it starts, so a change
+// made later does not take the proxy away: a key is held back when either says a proxy is in the way.
+const ENV_AT_LOAD = { ...process.env };
 
 // A key goes only where safeForKey allows, and over http only straight to this machine: not through
 // a proxy the environment puts in the way. Both refusals come before anything is sent.
 function assertKeyMayGo(target, headers) {
   if (!Object.keys(headers).some(isSecret)) return;
   if (!safeForKey(target)) throw refused('EINSECURE', 'a key is sent only over https');
-  if (target.protocol === 'http:' && envProxied(target)) {
+  if (target.protocol === 'http:' && (envProxied(target) || envProxied(target, ENV_AT_LOAD))) {
     throw refused('EPROXYKEY', 'a key over http goes only straight to this machine, and the environment sends http through a proxy (NO_PROXY can name the host)');
   }
 }
