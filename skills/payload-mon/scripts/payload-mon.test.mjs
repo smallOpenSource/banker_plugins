@@ -959,6 +959,42 @@ test("the take-back leaves a different file in the swapped folder alone", () => 
   assert.equal(readFileSync(join(outside, "payload-size.mjs"), "utf8"), "// a file of someone else's\n");
 });
 
+// Another racing program: right after payload-mon makes the copy folder (before it stamps the folder and
+// writes the copy), the folder becomes a link to `outside`.
+function mkdirSwapPreload(outside) {
+  const file = join(root, `mkdir-swap-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs, { rmSync, symlinkSync } from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const mkdir = fs.mkdirSync;",
+    "let swapped = false;",
+    "fs.mkdirSync = function (p, ...rest) {",
+    "  const made = mkdir.call(this, p, ...rest);",
+    "  if (!swapped && typeof p === \"string\" && /[\\\\/]payload-mon$/.test(p)) {",
+    "    swapped = true;",
+    "    rmSync(p, { recursive: true, force: true });",
+    `    symlinkSync(${JSON.stringify(outside)}, p, process.platform === "win32" ? "junction" : "dir");`,
+    "  }",
+    "  return made;",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+
+test("on refuses a copy folder that turns into a link right after it is made, before the copy is written", () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  const before = readFileSync(c.hudFile);
+  const r = onWith(c, mkdirSwapPreload(outside));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 링크입니다/);
+  assert.deepEqual(readdirSync(outside), [], "nothing was written through the link");
+  assert.ok(readFileSync(c.hudFile).equals(before));
+});
+
 test("on refuses a copy folder that became a link even when the copy in it is current", () => {
   const c = setup(HUD_V4);
   assert.equal(turnOn(c).ok, true);

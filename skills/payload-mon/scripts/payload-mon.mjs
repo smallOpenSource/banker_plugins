@@ -260,6 +260,8 @@ function syncModule(o) {
   const made = mkdirSync(dirname(copy), { recursive: true, mode: 0o755 }) !== undefined;
   try {
     const stamp = folderStamp(dirname(copy));
+    // From the same lstat: a folder that became a link since the check above is refused before the write.
+    if (stamp.endsWith(":true")) throw new Error(`사본 폴더가 링크입니다: ${dirname(copy)}`);
     writeFresh(copy, data, 0o644);
     checkFolder(copy, stamp, data);
   } catch (e) {
