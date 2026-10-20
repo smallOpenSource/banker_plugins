@@ -1054,3 +1054,108 @@ test('downloadWanVideo: a failed try is retried after a growing wait; three fail
   await assert.rejects(P.downloadWanVideo('https://oss.example.com/v.mp4', { sleep: async () => {} }), /HTTP 503/);
   assert.equal(n, -7, 'three tries, then the stop');
 });
+
+test('generateClip: a Sora submit still throttled after five tries stops as rate, each wait the server\'s Retry-After from 1 s to 10 min', async () => {
+  for (const [ra, ms] of [['7', 7000], ['3600', 600_000], ['0', 1000]]) {
+    let posts = 0;
+    installFetch({ sora: () => { posts++; return json(429, { error: { code: 'too_many_requests' } }, { 'retry-after': ra }); } });
+    const slept = [];
+    const err = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async (t) => { slept.push(t); } }).then(() => null, (e) => e);
+    assert.equal(posts, 5);
+    assert.deepEqual([err?.kind, err?.provider, err?.status], ['rate', 'sora', 429]);
+    assert.deepEqual(slept, [ms, ms, ms, ms]);
+  }
+});
+
+test('generateClip: a WAN 5xx submit with a code the pool does not know may have made a task, so it is not sent to the next key', async () => {
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? json(503, { code: 'SomeServer5xx', message: 'x' }) : null) });
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1' && e.status === 503);
+  assert.deepEqual(createdOn(calls), [1]);
+});
+
+test('downloadWanVideo: a connection dropped mid-body counts as a failed try and is tried again', async () => {
+  let n = 0;
+  const dropped = () => ({ status: 200, ok: true, headers: new Headers(), arrayBuffer: async () => { throw Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } }); } });
+  globalThis.fetch = async () => (++n < 3 ? dropped() : new Response(MP4, { status: 200 }));
+  const slept = [];
+  assert.ok((await P.downloadWanVideo('https://oss.example.com/v.mp4', { sleep: async (t) => { slept.push(t); } })).equals(MP4));
+  assert.deepEqual([n, slept], [3, [2000, 4000]]);
+});
+
+// A request that never answers: it ends only when its signal aborts.
+const hang = (signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+const realClock = { now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+
+test('generateClip: a poll whose requests never answer ends at the poll deadline and says how long it polled', { timeout: 10_000 }, async () => {
+  for (const [cr, polled, check] of [
+    [creds(), '/api/v1/tasks/', (e) => e.provider === 'wan' && e.taskId === 'task-1-1'],
+    [soraOnly(), `${SORA}/openai/v1/videos/sora-job-1?`, (e) => e.provider === 'sora' && e.taskId === 'sora-job-1'],
+  ]) {
+    installFetch();
+    const routed = globalThis.fetch;
+    let polls = 0;
+    globalThis.fetch = (url, opts) => (String(url).includes(polled) ? (polls++, hang(opts.signal)) : routed(url, opts));
+    const t0 = Date.now();
+    const err = await run({ creds: cr, statePath: tmpState(), ...realClock, pollIntervalMs: 50, pollTimeoutMs: 300 }).then(() => null, (e) => e);
+    const took = Date.now() - t0;
+    assert.equal(err?.kind, 'timeout', err?.message);
+    assert.ok(check(err), err.message);
+    assert.ok(took < 2000, `ended in ${took} ms`);
+    assert.ok(polls <= 2, `${polls} polls`);
+    // the hung request ends at the deadline, then one interval passes: more than 300 ms in all
+    const said = Number(err.message.match(/after polling for (\d+) ms/)?.[1]);
+    assert.ok(said > 300 && said <= took, `said ${said} ms, took ${took} ms: ${err.message}`);
+  }
+});
+
+test('generateClip: poll time is counted on the injected clock, slow poll requests included', async () => {
+  for (const [cr, polled, running] of [
+    [creds(), '/api/v1/tasks/', () => json(200, { output: { task_id: 'task-1-1', task_status: 'RUNNING' } })],
+    [soraOnly(), `${SORA}/openai/v1/videos/sora-job-1?`, () => json(200, { id: 'sora-job-1', status: 'in_progress' })],
+  ]) {
+    const c = clock();
+    installFetch();
+    const routed = globalThis.fetch;
+    let polls = 0;
+    globalThis.fetch = async (url, opts) => {
+      if (!String(url).includes(polled)) return routed(url, opts);
+      polls++;
+      c.advance(1000);
+      return running();
+    };
+    const err = await run({ creds: cr, statePath: tmpState(), clock: c, pollIntervalMs: 1, pollTimeoutMs: 3000 }).then(() => null, (e) => e);
+    assert.equal(err?.kind, 'timeout', err?.message);
+    assert.equal(polls, 3, `${polls} polls of 1 s each in a 3 s poll`);
+    assert.match(err.message, /after polling for 3003 ms/);
+  }
+});
+
+test('wanPollTask: each poll request is limited to 120 s, or to the time left when that is less', async () => {
+  const seen = [];
+  const timeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => { seen.push(ms); return timeout.call(AbortSignal, ms); };
+  try {
+    let n = 0;
+    installFetch({ wanTask: (id) => (++n < 2 ? json(200, { output: { task_id: id, task_status: 'RUNNING' } }) : null) });
+    const c = clock();
+    const entry = P.loadWanPool(creds())[0];
+    const p = await P.wanPollTask({ entry, taskId: 't', intervalMs: 1000, timeoutMs: 30 * 60_000, now: c.now, sleep: async () => { c.advance(30 * 60_000 - 50_000); } });
+    assert.equal(p.state, 'SUCCEEDED');
+  } finally {
+    AbortSignal.timeout = timeout;
+  }
+  assert.deepEqual(seen, [120_000, 50_000]);
+});
+
+test('generateClip: a Sora job polled with no interval still gets every poll up to the deadline', async () => {
+  let polls = 0;
+  installFetch();
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).startsWith(`${SORA}/openai/v1/videos/sora-job-1?`)) return routed(url, opts);
+    return json(200, { id: 'sora-job-1', status: ++polls < 3 ? 'in_progress' : 'completed' });
+  };
+  const r = await run({ creds: soraOnly(), statePath: tmpState(), pollIntervalMs: 0, pollTimeoutMs: 5 });
+  assert.equal(r.provider, 'sora');
+  assert.equal(polls, 3);
+});

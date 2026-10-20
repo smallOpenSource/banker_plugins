@@ -237,6 +237,7 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
   | `kind: 'timeout'` / `'download'` | task 는 있음(과금됐을 수 있음) | `resumeClip({ creds, provider: err.provider, label: err.label, taskId: err.taskId, seconds: err.seconds })` |
   | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음 | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함 |
   | `kind: 'unreachable'` | Sora 연결 거부(아무것도 보내지 않음) | 네트워크를 확인한 뒤 다시 부름 |
+  | `kind: 'rate'` | Sora 가 다섯 번 제출 모두 429 로 거절함(만든 job 없음, 과금 없음) | 잠시 기다린 뒤 다시 부름 |
   | `kind` 가 없는 오류 | 예상하지 못한 실패 | 원인을 확인하기 전에는 다시 부르지 않음 |
 
 - 클립 해상도는 WAN 과 Sora 가 조금 다를 수 있다. `concatClips` 와 엔진이 크기를 맞춘다.

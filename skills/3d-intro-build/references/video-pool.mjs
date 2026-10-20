@@ -280,20 +280,24 @@ function parseRetryAfter(h) {
 
 const WAN_FETCH_DEFAULTS = { method: 'GET', binary: false, timeoutMs: API_TIMEOUT_MS };
 
+// The body is read inside the try: a connection that drops mid-body is a network failure, which
+// the caller's retry sees, not a throw past it.
 async function wanFetch(url, opts = {}) {
   const o = { ...WAN_FETCH_DEFAULTS, ...defined(opts) };
-  let r;
   try {
-    r = await fetchGuarded(url, {
+    const r = await fetchGuarded(url, {
       method: o.method, headers: wanHeaders(o), body: o.body === undefined ? undefined : JSON.stringify(o.body), signal: AbortSignal.timeout(o.timeoutMs),
     });
+    const retryAfterMs = parseRetryAfter(r.headers.get('retry-after'));
+    if (o.binary) return { status: r.status, ok: r.ok, body: Buffer.from(await r.arrayBuffer()), code: null, message: null, retryAfterMs };
+    return { status: r.status, ok: r.ok, ...(await parsedBody(r)), retryAfterMs };
   } catch (e) {
     return networkFailure(e);
   }
-  const retryAfterMs = parseRetryAfter(r.headers.get('retry-after'));
-  if (o.binary) return { status: r.status, ok: r.ok, body: Buffer.from(await r.arrayBuffer()), code: null, message: null, retryAfterMs };
-  return { status: r.status, ok: r.ok, ...(await parsedBody(r)), retryAfterMs };
 }
+
+// A poll request's limit: the usual one, or less when the poll deadline is nearer.
+const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, end - t));
 
 function wanHeaders({ key, body }) {
   const headers = {};
@@ -382,13 +386,17 @@ export async function wanCreateTask({ entry, prompt, firstFramePng, lastFramePng
 /**
  * Poll a WAN task to a terminal state. Returns {state, output} where state is
  * SUCCEEDED | FAILED | CANCELED | UNKNOWN | TIMEOUT | HTTP (a 4xx other than 429 on the poll itself).
+ * The poll ends after `timeoutMs` of wall time on the `now` clock: each request is limited to the
+ * time left, so a server that stops answering cannot stretch the wait. TIMEOUT carries `elapsedMs`.
  */
-export async function wanPollTask({ entry, taskId, intervalMs = 15_000, timeoutMs = 30 * 60_000, sleep = realSleep, onTick } = {}) {
+export async function wanPollTask({ entry, taskId, intervalMs = 15_000, timeoutMs = 30 * 60_000, sleep = realSleep, now = Date.now, onTick } = {}) {
   const url = `${entry.endpoint}${WAN_TASK_PATH}${encodeURIComponent(taskId)}`;
   const ticks = Math.max(1, Math.ceil(timeoutMs / Math.max(1, intervalMs)));
+  const start = now();
+  const end = start + timeoutMs;
   let unknown = 0;
   for (let i = 0; i < ticks; i++) {
-    const r = await wanFetch(url, { key: entry.key });
+    const r = await wanFetch(url, { key: entry.key, timeoutMs: timeLeft(end, now()) });
     if (r.ok) {
       const out = r.body?.output || {};
       if (typeof onTick === 'function') onTick(out.task_status, i);
@@ -401,8 +409,9 @@ export async function wanPollTask({ entry, taskId, intervalMs = 15_000, timeoutM
     }
     // 429/5xx/network on a poll: keep polling — the task itself is still running
     await sleep(intervalMs);
+    if (now() >= end) break;
   }
-  return { state: 'TIMEOUT', output: {} };
+  return { state: 'TIMEOUT', output: {}, elapsedMs: now() - start };
 }
 
 /** Download a finished WAN video (signed URL, no auth header). Returns an mp4 Buffer. */
@@ -516,7 +525,7 @@ function recordSuccess(file, entry, t, taskId, emit) {
 // task may have billed; returns {fail} only when the task ended without output for a known reason.
 async function finishWanTask(ctx, e, taskId, parameters) {
   const p = await wanPollTask({
-    entry: e, taskId, intervalMs: ctx.pollIntervalMs, timeoutMs: ctx.pollTimeoutMs, sleep: ctx.sleep,
+    entry: e, taskId, intervalMs: ctx.pollIntervalMs, timeoutMs: ctx.pollTimeoutMs, sleep: ctx.sleep, now: ctx.now,
     onTick: (s, i) => ctx.emit({ type: 'poll', provider: 'wan', label: e.label, taskId, status: s, tick: i }),
   });
   if (p.state === 'SUCCEEDED') return { clip: await succeededClip(ctx, e, taskId, p, parameters.duration) };
@@ -536,7 +545,7 @@ function failedTask(e, taskId, p) {
 // The poll could not tell how the task ended: keep the taskId so nothing is submitted twice.
 function lostTask(ctx, e, taskId, p, seconds) {
   if (p.state === 'TIMEOUT') {
-    return stopError('timeout', `WAN task ${taskId} (${e.label}) still running after ${ctx.pollTimeoutMs} ms; resume with resumeClip`, { provider: 'wan', taskId, label: e.label, seconds });
+    return stopError('timeout', `WAN task ${taskId} (${e.label}) still running after polling for ${p.elapsedMs} ms; resume with resumeClip`, { provider: 'wan', taskId, label: e.label, seconds });
   }
   if (p.state === 'HTTP') {
     if (p.status === 401) applyFailure(ctx.statePath, e, 'unusable', { code: p.output.code, status: p.status }, ctx.now(), ctx.creds, ctx.emit);
@@ -632,8 +641,9 @@ function assertSubmitSettled(e, c) {
   if (c.status === 0 && !c.preSend) {
     throw stopError('submit_unknown', `WAN submit to ${e.label} got no usable answer (${c.message || 'network error'}); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label });
   }
-  if (!c.taskId && (c.ok || (c.status >= 500 && !c.code))) {
-    // a 2xx without task_id or a bare gateway 5xx: the backend may have accepted the task
+  if (!c.taskId && (c.ok || (c.status >= 500 && !codeKind(c.code)))) {
+    // a 2xx without task_id, or a 5xx without a code the pool knows (a bare gateway 5xx, a new
+    // server code): the backend may have accepted the task
     throw stopError('submit_unknown', `WAN submit to ${e.label} got an ambiguous answer (HTTP ${c.status}, no task_id); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label, status: c.status });
   }
 }
@@ -660,10 +670,11 @@ function soraConn(creds) {
 // Poll an accepted Sora job to a downloaded clip; same stop rules as finishWanTask.
 async function finishSoraJob(ctx, jobId, secs) {
   const conn = soraConn(ctx.creds);
+  const t0 = ctx.now();
   const st = await pollSoraJob(ctx, conn, jobId);
   if (st && SORA_FAILED.has(st.status)) throw soraFailure(st, jobId);
   if (!st || !SORA_DONE.has(st.status)) {
-    throw stopError('timeout', `Sora job ${jobId} still ${st?.status ?? 'unknown'} after ${ctx.pollTimeoutMs} ms; resume with resumeClip`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', seconds: secs });
+    throw stopError('timeout', `Sora job ${jobId} still ${st?.status ?? 'unknown'} after polling for ${ctx.now() - t0} ms; resume with resumeClip`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', seconds: secs });
   }
   const mp4 = await downloadSoraClip(conn, jobId, secs);
   ctx.emit({ type: 'done', provider: 'sora', label: 'AZURE_SORA', taskId: jobId });
@@ -676,8 +687,8 @@ async function pollSoraJob(ctx, conn, jobId) {
   const interval = Math.max(0, ctx.pollIntervalMs);
   try {
     return await pollVideo({
-      endpoint: conn.endpoint, key: conn.key, id: jobId, apiVersion: conn.apiVersion, sleep: ctx.sleep,
-      intervalMs: interval, maxTicks: Math.max(1, Math.ceil(ctx.pollTimeoutMs / Math.max(1, interval))),
+      endpoint: conn.endpoint, key: conn.key, id: jobId, apiVersion: conn.apiVersion, sleep: ctx.sleep, now: ctx.now,
+      intervalMs: interval, maxTicks: Math.max(1, Math.ceil(ctx.pollTimeoutMs / Math.max(1, interval))), timeoutMs: ctx.pollTimeoutMs,
       onTick: (s, i) => ctx.emit({ type: 'poll', provider: 'sora', taskId: jobId, status: s?.status, tick: i }),
     });
   } catch (e) {
@@ -701,33 +712,48 @@ async function downloadSoraClip(conn, jobId, secs) {
 }
 
 async function runSora(ctx) {
-  const { creds, prompt, firstFramePng, lastFramePng, size, seconds, emit, sleep } = ctx;
-  const { endpoint, key, apiVersion, model } = soraConn(creds);
-  const secs = snapSoraSeconds(seconds);
-  if (lastFramePng) emit({ type: 'note', provider: 'sora', message: 'Sora takes one input_reference; the last frame is ignored (forward-chaining)' });
-  let job;
-  for (let i = 0; ; i++) {
-    try {
-      emit({ type: 'submit', provider: 'sora', label: 'AZURE_SORA', model, attempt: i + 1 });
-      job = await createVideo({ endpoint, key, model, prompt, size, seconds: secs, inputReferencePng: firstFramePng, apiVersion });
-      break;
-    } catch (e) {
-      // a 429 is a refusal, so retrying it cannot double-bill; a lost connection or a bare 5xx can
-      if (e.status === 429 && i < 4) {
-        const ms = Math.min(RATE_MAX_MS, RATE_BASE_MS * 2 ** i);
-        emit({ type: 'wait', provider: 'sora', ms, reason: 'HTTP 429' });
-        await sleep(ms);
-        continue;
-      }
-      if (/moderation|content_policy|safety/i.test(e.message)) throw new ContentRejectedError('sora', 'moderation', e.message);
-      if ((e.status === 0 && !PRE_SEND_ERRORS.has(e.errno)) || e.status >= 500 || (e.status >= 200 && e.status < 300)) {
-        throw stopError('submit_unknown', `Sora submit got no usable answer (${e.status === 0 ? e.errno || 'network' : `HTTP ${e.status}`}); the job may exist — check Azure before resubmitting`, { provider: 'sora', status: e.status });
-      }
-      throw stopError(e.status === 0 ? 'unreachable' : 'invalid_request', e.message, { provider: 'sora', status: e.status });
-    }
-  }
+  const conn = soraConn(ctx.creds);
+  const secs = snapSoraSeconds(ctx.seconds);
+  if (ctx.lastFramePng) ctx.emit({ type: 'note', provider: 'sora', message: 'Sora takes one input_reference; the last frame is ignored (forward-chaining)' });
+  const job = await submitSora(ctx, conn, secs);
   return finishSoraJob(ctx, job.id, secs);
 }
+
+const SORA_SUBMIT_TRIES = 5;
+
+// A 429 is a refusal, so retrying it cannot double-bill; a lost connection or a bare 5xx can. Each
+// wait is the server's Retry-After, else 30 s doubling, from 1 s to 10 min.
+async function submitSora(ctx, conn, secs) {
+  for (let i = 0; ; i++) {
+    try {
+      ctx.emit({ type: 'submit', provider: 'sora', label: 'AZURE_SORA', model: conn.model, attempt: i + 1 });
+      return await createVideo({
+        endpoint: conn.endpoint, key: conn.key, model: conn.model, prompt: ctx.prompt, size: ctx.size, seconds: secs, inputReferencePng: ctx.firstFramePng, apiVersion: conn.apiVersion,
+      });
+    } catch (e) {
+      if (e.status !== 429 || i >= SORA_SUBMIT_TRIES - 1) throw soraSubmitError(e);
+      const ms = Math.min(RATE_MAX_MS, Math.max(RETRY_MIN_MS, e.retryAfterMs ?? RATE_BASE_MS * 2 ** i));
+      ctx.emit({ type: 'wait', provider: 'sora', ms, reason: 'HTTP 429' });
+      await ctx.sleep(ms);
+    }
+  }
+}
+
+// The stop for a Sora submit that made no job, or may have made one.
+function soraSubmitError(e) {
+  if (/moderation|content_policy|safety/i.test(e.message)) return new ContentRejectedError('sora', 'moderation', e.message);
+  if (e.status === 429) {
+    return stopError('rate', `Sora still answered HTTP 429 after ${SORA_SUBMIT_TRIES} tries; no job was made — wait, then generate the leg again`, { provider: 'sora', status: 429 });
+  }
+  if (soraMayHaveJob(e)) {
+    const answer = e.status === 0 ? e.errno || 'network' : `HTTP ${e.status}`;
+    return stopError('submit_unknown', `Sora submit got no usable answer (${answer}); the job may exist — check Azure before resubmitting`, { provider: 'sora', status: e.status });
+  }
+  return stopError(e.status === 0 ? 'unreachable' : 'invalid_request', e.message, { provider: 'sora', status: e.status });
+}
+
+// A lost connection, a 5xx, or a 2xx without an id: the request may have reached Sora.
+const soraMayHaveJob = (e) => (e.status === 0 && !PRE_SEND_ERRORS.has(e.errno)) || e.status >= 500 || (e.status >= 200 && e.status < 300);
 
 // Explicit `undefined`/`null` options fall back to the defaults instead of overriding them.
 const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null));
@@ -752,6 +778,7 @@ const DEFAULTS = { size: '720x1280', seconds: 5, pollIntervalMs: 15_000, pollTim
  *   kind 'submit_unknown' | 'task_lost' | 'no_video' | 'failed'  outcome unknown — check the console
  *                                       ('failed': the task ended for a reason the pool does not know)
  *   kind 'unreachable'                  Sora host refused the connection (nothing was sent)
+ *   kind 'rate'                         Sora kept answering 429 (no job was made) — wait, then call again
  * @returns {Promise<{mp4:Buffer, provider:'wan'|'sora', label:string, model:string, seconds:number, taskId:string, usage:object|null}>}
  */
 export async function generateClip(opts = {}) {

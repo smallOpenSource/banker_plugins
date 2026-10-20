@@ -220,7 +220,7 @@ node -e "
   const { resolveCreds, listVideos, azFetch, redact } = await import('$ADAPTER');
   const c = resolveCreds({ projectDir: process.cwd() });
   if (!c._source) { console.log('크레덴셜 없음 -- §3 먼저 실행'); process.exit(2); }
-  const how = (r) => (r.error ? r.error.cause?.code || r.error.code || r.error.name : r.authStyle);   // status 0 이면 이유
+  const how = (r) => (r.error ? r.errno || r.error.name : r.authStyle);   // status 0 이면 이유(ENOTFOUND, TimeoutError 등)
   const sora = await listVideos({ endpoint: c.AZURE_SORA_ENDPOINT, key: c.AZURE_SORA_API_KEY, apiVersion: c.AZURE_SORA_API_VERSION || 'preview' });
   console.log('sora.listVideos ->', sora.status, '(' + how(sora) + ')');
   const imgv = c.AZURE_GPT_IMAGE_API_VERSION || 'preview';
@@ -249,7 +249,7 @@ node -e "
 | `images.badreq` 가 404 (`DeploymentNotFound`) | - | 엔드포인트·인증은 OK 지만 **배포명이 틀림** — §3 에서 `AZURE_GPT_IMAGE_DEPLOYMENT` 를 콘솔의 실제 배포명으로 재확인 |
 | 둘 중 하나라도 401/403 | - | 인증 실패 — `azFetch` 가 `api-key`→`Bearer` 두 헤더 스타일을 이미 자동 재시도하므로, 그래도 401/403 이면 헤더 스타일이 아니라 키·엔드포인트 자체가 틀린 것(§3 재입력) |
 | `images.badreq` 가 200 | - | 있을 수 없음(프롬프트 없이 생성이 성공할 리 없다) — 어댑터·API 버전 불일치 의심, 정직히 보고 |
-| status 0 | - | 네트워크 오류(엔드포인트 오타·오프라인) |
+| status 0 | - | 네트워크 오류(엔드포인트 오타·오프라인). `TimeoutError` 는 120초 안에 응답이 없었다는 뜻 |
 | status 0 (`EINSECURE`) | - | endpoint 가 `http://` 다. 키를 평문으로 보내지 않으려고 보내기 전에 막았다 — `https://` 로 고침(이 기기의 localhost 만 http 허용) |
 
 ## 5. 검증 (보고 의무)

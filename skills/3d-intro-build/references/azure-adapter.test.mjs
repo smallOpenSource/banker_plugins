@@ -9,6 +9,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -896,4 +897,68 @@ test('generateImage: a 429 waits the server hint capped at 60 s, else 10 s doubl
   const buf = await A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p', onNote });
   assert.equal(buf.toString(), 'png-after-429');
   assert.deepEqual(notes.filter((m) => /HTTP 429/.test(m)), ['HTTP 429; retry 1/3 in 60000 ms', 'HTTP 429; retry 2/3 in 20000 ms']);
+});
+
+test('createVideo: a 429 carries the server\'s Retry-After for the caller\'s wait', async () => {
+  installFetch(() => mock429({ 'retry-after': '7' }));
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 429 && e.retryAfterMs === 7000);
+});
+
+test('azFetch: a connection dropped mid-body ends as status 0, and downloadVideo says so', async () => {
+  const dropped = () => ({ status: 200, ok: true, headers: { get: () => 'video/mp4' }, arrayBuffer: async () => { throw Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } }); } });
+  installFetch(dropped);
+  const r = await A.azFetch(`${EP}/x`, { key: KEY, binary: true });
+  assert.deepEqual([r.status, r.errno], [0, 'UND_ERR_SOCKET']);
+  await assert.rejects(() => A.downloadVideo({ endpoint: EP, key: KEY, id: 'vid-1' }), /downloadVideo failed: HTTP 0 \(UND_ERR_SOCKET\)/);
+});
+
+test('azFetch helpers: a request that timed out says TimeoutError, not the DOMException code', async () => {
+  installFetch(() => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); });
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 0 && e.errno === 'TimeoutError' && /\(TimeoutError\)/.test(e.message));
+  await assert.rejects(() => A.downloadVideo({ endpoint: EP, key: KEY, id: 'v' }), /HTTP 0 \(TimeoutError\)/);
+});
+
+test('azFetch: requests are limited to 120 s, downloads to 600 s, image generation to 300 s, the Bearer retry and a long poll included', async () => {
+  const seen = [];
+  const timeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => { seen.push(ms); return timeout.call(AbortSignal, ms); };
+  try {
+    const b64 = Buffer.from('PNG').toString('base64');
+    const calls = installFetch((url, opts, i) => (i === 0 ? mockJson({}, 401) : url.includes('/content') ? mockBinary(Buffer.from('MP4')) : mockJson({ data: [{ b64_json: b64 }] })));
+    await A.listVideos({ endpoint: EP, key: KEY });
+    await A.downloadVideo({ endpoint: EP, key: KEY, id: 'vid-1' });
+    await A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' });
+    await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I') });
+    await A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 });
+    await A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-1', maxTicks: 1, timeoutMs: 900_000, sleep: async () => {} });
+    assert.ok(calls.every((c) => c.opts.signal instanceof AbortSignal), 'every request has a signal');
+  } finally {
+    AbortSignal.timeout = timeout;
+  }
+  assert.deepEqual(seen, [120_000, 120_000, 600_000, 300_000, 300_000, 300_000, 120_000]);
+});
+
+test('azFetch: a server that accepts the connection and never answers ends within timeoutMs as status 0', { timeout: 10_000 }, async () => {
+  const socks = [];
+  const server = net.createServer((s) => socks.push(s));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const t0 = Date.now();
+    const r = await A.azFetch(`http://127.0.0.1:${server.address().port}/openai/v1/videos?api-version=preview`, { timeoutMs: 200 });
+    assert.deepEqual([r.status, r.errno], [0, 'TimeoutError']);
+    assert.ok(Date.now() - t0 < 2000, `${Date.now() - t0} ms`);
+  } finally {
+    for (const s of socks) s.destroy();
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('pollVideo: polls stop at timeoutMs of wall time, each request limited to what is left', { timeout: 10_000 }, async () => {
+  const hang = (signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  installFetch((url, opts) => hang(opts.signal));
+  const t0 = Date.now();
+  const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-x', intervalMs: 20, maxTicks: 1000, timeoutMs: 250 });
+  const took = Date.now() - t0;
+  assert.equal(st, null);
+  assert.ok(took >= 250 && took < 2000, `${took} ms`);
 });

@@ -53,7 +53,9 @@ function truncate(x, n = 300) {
 
 // Why an azFetch result has no HTTP answer, for error messages: " (EINSECURE)" and the like. The
 // error's code or name only, never its text: fetch can quote a header value, a key included.
-const why = (r) => (r.error ? ` (${r.error.cause?.code || r.error.code || r.error.name})` : '');
+const why = (r) => (r.error ? ` (${r.errno || r.error.name})` : '');
+// AbortSignal.timeout rejects with a DOMException whose numeric code (23) means nothing to a reader
+const errnoOf = (e) => (e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.code || e?.code || null);
 
 // Last n chars of ffmpeg stderr (the useful part) for error messages.
 const tail = (s, n = 400) => { const str = String(s || ''); return str.length > n ? str.slice(-n) : str; };
@@ -304,35 +306,55 @@ function retryAfterMsOf(headers) {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
 }
 
+// Each request ends within its limit. Without one, a server that takes the connection and never
+// answers holds a request for undici's 300 s, and a poll of 180 requests for hours.
+const API_TIMEOUT_MS = 120_000;
+const DOWNLOAD_TIMEOUT_MS = 600_000;
+// An image is made while its request waits, and is billed: it keeps the 300 s undici gave it.
+const IMAGE_TIMEOUT_MS = 300_000;
+
 /**
  * Fetch an Azure URL trying the `api-key` header first and, on 401/403, retrying with
- * `Authorization: Bearer`. Never throws on HTTP status; a network error yields {status:0}.
- * `retryAfterMs` carries the server's Retry-After hint (null when absent).
- * @returns {Promise<{status:number, ok:boolean, ct:string, body:any, authStyle:string|null, retryAfterMs:number|null, error?:Error}>}
+ * `Authorization: Bearer`. Never throws on HTTP status; a network error, before the answer or
+ * while its body is read, yields {status:0} with `error` and `errno` (a code such as
+ * ECONNRESET or TimeoutError). Each request is limited to `timeoutMs` (default 120 s, 600 s
+ * for a binary download). `retryAfterMs` carries the server's Retry-After hint (null when absent).
+ * @param {{key?:string, binary?:boolean, headers?:object, method?:string, body?:any, timeoutMs?:number}} [opts] method defaults to GET
+ * @returns {Promise<{status:number, ok:boolean, ct:string, body:any, authStyle:string|null, retryAfterMs:number|null, error?:Error, errno?:string|null}>}
  */
-export async function azFetch(url, { key, binary = false, headers = {}, method = 'GET', body } = {}) {
-  const styles = key ? [{ 'api-key': key }, { Authorization: `Bearer ${key}` }] : [{}];
-  let last = { status: 0, ok: false, ct: '', body: null, authStyle: null };
-  for (const auth of styles) {
-    const opts = { method, headers: { ...headers, ...auth } };
-    if (body !== undefined) opts.body = body;
-    let r;
-    try {
-      r = await fetchGuarded(url, opts);
-    } catch (e) {
-      last = { status: 0, ok: false, ct: '', body: null, authStyle: null, error: e };
-      break; // network error is not an auth problem — do not retry other styles
-    }
-    const ct = r.headers.get('content-type') || '';
-    let parsed;
-    if (binary) parsed = Buffer.from(await r.arrayBuffer());
-    else if (ct.includes('json')) parsed = await r.json().catch(() => null);
-    else parsed = await r.text().catch(() => null);
-    last = { status: r.status, ok: r.ok, ct, body: parsed, authStyle: Object.keys(auth)[0] || null, retryAfterMs: retryAfterMsOf(r.headers) };
-    if (r.status !== 401 && r.status !== 403) return last; // accepted (or a non-auth error)
-    // else: this auth style was rejected — fall through and try the next
+export async function azFetch(url, opts = {}) {
+  const { key, binary = false } = opts;
+  const limitMs = opts.timeoutMs ?? (binary ? DOWNLOAD_TIMEOUT_MS : API_TIMEOUT_MS);
+  let last;
+  for (const auth of authStyles(key)) {
+    last = await azAttempt(url, { ...opts, auth, binary, limitMs });
+    // accepted, a non-auth error, or a network error (not an auth problem): no other style is tried
+    if (last.status !== 401 && last.status !== 403) return last;
   }
   return last;
+}
+
+const authStyles = (key) => (key ? [{ 'api-key': key }, { Authorization: `Bearer ${key}` }] : [{}]);
+
+// One request with one auth style. The body is read inside the try: a connection that drops
+// mid-body is a network error like any other, not a throw past the caller's retry.
+async function azAttempt(url, { method = 'GET', headers = {}, body, auth, binary, limitMs }) {
+  const opts = { method, headers: { ...headers, ...auth }, signal: AbortSignal.timeout(limitMs) };
+  if (body !== undefined) opts.body = body;
+  const authStyle = Object.keys(auth)[0] || null;
+  try {
+    const r = await fetchGuarded(url, opts);
+    const ct = r.headers.get('content-type') || '';
+    return { status: r.status, ok: r.ok, ct, body: await azBody(r, ct, binary), authStyle, retryAfterMs: retryAfterMsOf(r.headers) };
+  } catch (e) {
+    return { status: 0, ok: false, ct: '', body: null, authStyle: null, error: e, errno: errnoOf(e) };
+  }
+}
+
+async function azBody(r, ct, binary) {
+  if (binary) return Buffer.from(await r.arrayBuffer());
+  if (ct.includes('json')) return r.json().catch(() => null);
+  return r.text().catch(() => null);
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +365,7 @@ export async function azFetch(url, { key, binary = false, headers = {}, method =
 // else 10s, 20s, 40s…; either way at most 60s per wait. Low-tier (S0) image deployments hit this.
 async function postJsonWith429Retry(url, { key, body, retries, onNote }) {
   for (let i = 0; ; i++) {
-    const r = await azFetch(url, { key, method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    const r = await azFetch(url, { key, method: 'POST', headers: { 'Content-Type': 'application/json' }, body, timeoutMs: IMAGE_TIMEOUT_MS });
     if (r.status !== 429 || i >= retries) return r;
     const ms = Math.min(60000, r.retryAfterMs ?? 10000 * 2 ** i);
     if (typeof onNote === 'function') onNote(`HTTP 429; retry ${i + 1}/${retries} in ${ms} ms`);
@@ -391,7 +413,7 @@ export async function editImage({
   fd.append('image', new Blob([imageBuf], { type: 'image/png' }), 'image.png');
   if (maskBuf) fd.append('mask', new Blob([maskBuf], { type: 'image/png' }), 'mask.png');
   const r = await azFetch(`${endpoint}/openai/v1/images/edits?api-version=${apiVersion}`, {
-    key, method: 'POST', body: fd,
+    key, method: 'POST', body: fd, timeoutMs: IMAGE_TIMEOUT_MS,
   });
   const b64 = r.body?.data?.[0]?.b64_json;
   if (!(r.ok && b64)) throw new Error(`editImage failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
@@ -402,7 +424,7 @@ export async function editImage({
 export async function generateImageFlux({ endpoint, key, prompt, width, height, apiVersion = 'preview' } = {}) {
   const r = await azFetch(`${endpoint}/providers/blackforestlabs/v1/flux-2-pro?api-version=${apiVersion}`, {
     key, method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, width, height }),
+    body: JSON.stringify({ prompt, width, height }), timeoutMs: IMAGE_TIMEOUT_MS,
   });
   const b64 = r.body?.data?.[0]?.b64_json || r.body?.b64_json || r.body?.image;
   if (!(r.ok && b64)) throw new Error(`generateImageFlux failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
@@ -427,6 +449,13 @@ export async function listVideos({ endpoint, key, apiVersion = 'preview' } = {})
 export async function createVideo({
   endpoint, key, model = 'sora-2', prompt, size = '720x1280', seconds = 4, inputReferencePng, apiVersion = 'preview',
 } = {}) {
+  const body = videoForm({ model, prompt, size, seconds, inputReferencePng });
+  const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body });
+  if (!(r.ok && r.body?.id)) throw createVideoError(r);
+  return r.body;
+}
+
+function videoForm({ model, prompt, size, seconds, inputReferencePng }) {
   const fd = new FormData();
   fd.append('model', model);
   fd.append('prompt', prompt);
@@ -435,43 +464,50 @@ export async function createVideo({
   if (inputReferencePng) {
     fd.append('input_reference', new Blob([inputReferencePng], { type: 'image/png' }), 'input_reference.png');
   }
-  const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body: fd });
-  if (!(r.ok && r.body?.id)) {
-    // status 0 = network error; errno tells a refused connection (nothing sent) from a lost one
-    const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-    err.status = r.status;
-    err.errno = r.error?.cause?.code || r.error?.code || null;
-    throw err;
-  }
-  return r.body;
+  return fd;
 }
 
-const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180 };
+// status 0 = network error; errno tells a refused connection (nothing sent) from a lost one.
+// retryAfterMs is the server's wait for a 429.
+function createVideoError(r) {
+  const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
+  return Object.assign(err, { status: r.status, errno: r.errno || null, retryAfterMs: r.retryAfterMs ?? null });
+}
+
+const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180, now: Date.now };
 const POLL_RETRY_4XX = new Set([408, 429]);
 const withoutUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 
 /**
- * Poll a Sora job until a terminal status (or maxTicks). Polls first, then sleeps, so a job
- * that is already terminal returns without waiting. `onTick(status, i)` is optional; `sleep`
- * replaces the wait between polls. 408, 429, 5xx and network errors keep polling. Any other
- * 4xx throws at once with `err.status` and `err.code`: a job the server no longer knows, or a
- * key it refuses, never turns terminal.
+ * Poll a Sora job until a terminal status, maxTicks polls, or `timeoutMs` of wall time on the
+ * `now` clock (default maxTicks x intervalMs), whichever comes first. Each request is limited to
+ * the time left, so a server that stops answering cannot stretch the wait. Polls first, then
+ * sleeps, so a job that is already terminal returns without waiting. `onTick(status, i)` is
+ * optional; `sleep` replaces the wait between polls. 408, 429, 5xx and network errors keep
+ * polling. Any other 4xx throws at once with `err.status` and `err.code`: a job the server no
+ * longer knows, or a key it refuses, never turns terminal.
  * @returns the last status object seen.
  */
 export async function pollVideo(opts = {}) {
   const o = { ...POLL_DEFAULTS, sleep, ...withoutUndefined(opts) };
   const url = `${o.endpoint}/openai/v1/videos/${o.id}?api-version=${o.apiVersion}`;
+  const end = o.now() + (o.timeoutMs ?? o.intervalMs * o.maxTicks);
   let st = null;
   for (let i = 0; i < o.maxTicks; i++) {
-    const r = await azFetch(url, { key: o.key, method: 'GET' });
+    const r = await azFetch(url, { key: o.key, method: 'GET', timeoutMs: timeLeft(end, o.now()) });
     throwIfRefused(r, o.id);
     if (r.ok) st = r.body || st;
     if (typeof o.onTick === 'function') o.onTick(st, i);
-    if (st && TERMINAL_STATUS.has(st.status)) break;
+    if (settled(st)) break;
     await o.sleep(o.intervalMs);
+    if (o.now() >= end) break;
   }
   return st;
 }
+
+// A poll request's limit: the usual one, or less when the deadline is nearer.
+const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, end - t));
+const settled = (st) => Boolean(st) && TERMINAL_STATUS.has(st.status);
 
 function throwIfRefused(r, id) {
   if (r.status < 400 || r.status >= 500 || POLL_RETRY_4XX.has(r.status)) return;
