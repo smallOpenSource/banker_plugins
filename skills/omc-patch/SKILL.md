@@ -11,6 +11,8 @@ OMC(oh-my-claudecode)가 새 버전으로 자동 업데이트되면 로컬 훅 �
 
 패치 내용은 두 가지다.
 - 훅 스크립트 최상위의 `await import(...)` 에 10초 시간 제한을 건다. 로드가 멈춰도 훅이 끝까지 가고 프로세스가 남지 않는다.
+  - 시간 제한에 걸리면 훅의 stderr 에 `[OMC local patch] import 가 10초 안에 끝나지 않아 빈 모듈로 진행합니다` 한 줄을 남긴다. 종료 코드는 그대로다.
+  - 이 줄이 없는 옛 헬퍼로 패치한 훅도 `적용됨` 으로 보이고 되돌리기도 그대로 된다. 새 헬퍼는 되돌린 뒤 다시 적용하거나 새 OMC 판에 적용할 때 들어간다.
 - `hooks.json` 의 `PostToolUse` 훅을 제거한다.
 
 추가로 OMC 마켓플레이스 저장소의 `origin` 을 `omc-pinned://<원래 URL>` 로 바꿔 자동 업데이트를 막는다.
@@ -39,18 +41,38 @@ OMC(oh-my-claudecode)가 새 버전으로 자동 업데이트되면 로컬 훅 �
 - 진단도 늘 `--no-update` 와 함께 한다. 그것 없이 진단하면 도구가 `인자 없이 다시 실행하십시오.` 라고 안내하는데, 인자 없는 apply 를 뜻하므로 따르지 않는다.
 - 인자 없는 `--revert` 는 설치된 모든 버전을 되돌리고 고정까지 푼다. 헬퍼 자리 결함에는 도구가 안내하는 대로 활성 폴더만 `--revert --root` 로 되돌린다(3단계 1).
 - `--root` 는 폴더의 이름표가 OMC 가 아니면 `OMC 플러그인 폴더가 아님` 으로 멈춘다. `.claude-plugin/plugin.json` 의 name 이 있으면 그것으로, 없으면 `package.json` 의 name 으로 정한다. 다른 폴더를 잘못 준 실수를 막는 확인이고, 이름표가 없는 폴더는 통과한다.
-- 쓸 파일이 링크로 플러그인 폴더 밖을 가리키거나 백업 자리(`.omcbak`)가 링크면 도구는 쓰지 않고 실패로 센다. 문구는 적용 때 `쓰지 않음`, 되돌리기 때 `되돌리지 않음`, hooks.json 은 `hooks.json 을 건드리지 않음` 이다.
+- 쓸 파일이 링크로 플러그인 폴더 밖을 가리키거나 백업 자리(`.omcbak`)가 링크, 또는 일반 파일이 아닌 것(FIFO, 폴더)이면 도구는 쓰지 않고 실패로 센다. 문구는 적용 때 `쓰지 않음`, 되돌리기 때 `되돌리지 않음`, hooks.json 은 `hooks.json 을 건드리지 않음` 이다.
+- 같은 판 폴더에 새 원본이 깔렸는데 옛 `.omcbak` 이 남은 경우
+  - 되돌리기는 지금 파일에 패치가 없고 백업과 글이 다르면 덮지 않는다. `되돌리지 않음: <이름> (지금 파일에 패치가 없고 백업과 글이 다름. 백업이 옛 원본일 수 있음)` 으로 알리고 실패로 센다. hooks.json 은 `hooks.json 을 되돌리지 않음 (...)` 이다.
+  - 그 훅은 이미 원본이다. 남은 백업은 옛 원본이다. 지울지 사용자에게 묻고, 고른 경우에만 그 백업을 지운다.
+  - 적용은 백업이 지금 원본과 다르면 백업을 지금 원본으로 바꾸고 `ok  옛 백업을 지금 원본으로 바꿈: <이름>` 으로 알린다.
 - 패치 규칙은 OMC 훅 코드의 모양에 맞춰져 있다. 처음 보는 OMC 버전이면 반드시 `check` 를 먼저 실행한다.
 - `실패 N건` 이 1건 이상이면 멈추고 출력을 그대로 보고한다. 예외는 2단계에서 남기기로 한 `PINNED` 줄 하나뿐이다(3단계 2). 문법 오류가 난 파일은 도구가 원본으로 자동 롤백한다. 고친 hooks.json 이 다시 읽어 JSON 이 아니어도 원본으로 되돌리고(`hooks.json 손상으로 롤백`) 실패로 센다.
 - 판정은 출력 문구로 한다. 종료 코드 0 만으로 완료라고 보고하지 않는다.
 - 캐시에는 정션이나 심볼릭 링크로 이어진 버전 폴더가 있을 수 있다(예: 옛 버전 폴더가 새 버전을 가리킴). 이때 한 번의 변경이 두 버전 폴더에 함께 보인다. 정상이다.
 - 도구는 `os.homedir()/.claude` 를 쓴다. `CLAUDE_CONFIG_DIR` 로 설정 폴더를 옮겼다면 이 도구는 그 폴더를 보지 않는다.
-- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//***@` 로 가린다. 출력을 그대로 보고하라는 단계에서도 이 가림은 지킨다. 옛 판의 도구가 만든 `PINNED` 에는 그 URL 이 남아 있을 수 있다. `--check` 는 그 칸을 `[!] 고정 기록(PINNED)에 옛 URL 칸이 남아 있음 (적용하면 지움)` 으로 알리고 모두 적용된 상태로 보지 않는다. 적용(`--check` 가 아닌 실행)은 그 칸을 지우고 권한을 0600 으로 맞춘다(POSIX. Windows 는 chmod 가 쓰기 비트만 다뤄 폴더의 상속 권한을 따른다). 이 도구가 다 지울 수 없으면(칸이 든 기록이 링크, JSON 이 아님, 폴더에 쓰지 못함, 읽지 못함, 같은 파일의 다른 이름이 있음) `[!] 고정 기록(PINNED)의 옛 URL 칸을 ...` 줄로 알리고 적용은 실패로 센다(종료 1). 다른 이름이 있으면 적용은 이 이름에서만 지우고 다른 이름에는 남긴다. 링크는 따라가 쓰지 않으며, 링크 너머에 그 칸이 없으면 알리지 않는다. 되돌리기는 `PINNED` 를 지운다. 링크 너머에 그 칸이 있거나 링크 너머를 읽지 못하거나, 지우지 못하거나, 같은 파일의 다른 이름이 있을 때만 실패로 세고, 링크가 아닌 기록은 JSON 이 아니거나 읽지 못해도 그냥 지운다. `PINNED` 는 기록일 뿐이라 지워도 고정과 되돌리기에 영향이 없다. 알린 줄은 아래 `PINNED` 줄 다루기대로 묻는다. 기록 파일의 내용은 읽어 보이지 않는다(인증 정보가 들 수 있음).
+- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//` 뒤부터 마지막 `@` 까지를 `***` 로 가린다(도구와 같은 범위). 출력을 그대로 보고하라는 단계에서도 이 가림은 지킨다.
+- 옛 판의 도구가 만든 `PINNED` 에는 그 URL 이 남아 있을 수 있다.
+  - `--check` 는 그 칸을 `[!] 고정 기록(PINNED)에 옛 URL 칸이 남아 있음 (적용하면 지움)` 으로 알리고 모두 적용된 상태로 보지 않는다.
+  - 적용(`--check` 가 아닌 실행)은 그 칸을 지우고 권한을 0600 으로 맞춘다(POSIX. Windows 는 chmod 가 쓰기 비트만 다뤄 폴더의 상속 권한을 따른다).
+  - 이 도구가 다 지울 수 없으면(칸이 든 기록이 링크, JSON 이 아님, 폴더에 쓰지 못함, 읽지 못함, 같은 파일의 다른 이름이 있음) `[!] 고정 기록(PINNED)의 옛 URL 칸을 ...` 줄로 알리고 적용은 실패로 센다(종료 1).
+  - 다른 이름이 있으면 적용은 이 이름에서만 지우고 다른 이름에는 남긴다. 링크는 따라가 쓰지 않으며, 링크 너머에 그 칸이 없으면 알리지 않는다.
+  - 되돌리기는 `PINNED` 를 지운다. 링크 너머에 그 칸이 있거나 링크 너머를 읽지 못하거나, 지우지 못하거나, 같은 파일의 다른 이름이 있을 때만 실패로 센다.
+  - 링크가 아닌 기록은 JSON 이 아니거나 읽지 못해도 그냥 지운다. `PINNED` 는 기록일 뿐이라 지워도 고정과 되돌리기에 영향이 없다.
+  - 알린 줄은 아래 `PINNED` 줄 다루기대로 묻는다. 기록 파일의 내용은 읽어 보이지 않는다(인증 정보가 들 수 있음).
 - `PINNED` 줄 다루기. `[!] 고정 기록(PINNED)의 옛 URL 칸을 ...` 줄이 나오면 그 줄의 경로를 사용자에게 보이고 그 기록을 지울지 남길지 묻는다. `--check` 에서 나온 줄은 2단계 승인 질문에서 함께 묻는다. 적용이나 되돌리기에서 처음 나온 줄은 멈추고 보고한 뒤 묻는다. 이때도 기록의 내용은 읽지 않고 경로만 보인다.
   - 폴더 권한이 원인(`쓰지 못함`)이면 권한을 고칠지도 묻는다.
   - 링크면 URL 칸은 링크가 가리키는 파일에 있다. 그 파일의 경로도 보인다. 경로는 `node -e "console.log(require('fs').realpathSync(process.argv[1]))" "<링크 경로>"` 로 구한다(bash, PowerShell 같음). 그 파일이 `PINNED` 기록이 맞는지는 사용자가 직접 열어 확인한 뒤 답하게 한다(링크는 글자만 보고 막으므로 무관한 파일일 수 있다).
-  - 같은 파일의 다른 이름이 있다는 줄이면 그 아래 `다른 이름은 ... 로 찾습니다.` 줄의 번호로 다른 이름을 찾아 경로를 보인다. 찾은 이름 중 `PINNED` 가 아닌 것이 다른 이름이다. POSIX 는 `find "<맨 위 폴더>" -xdev -inum <번호> 2>/dev/null` 이고, 맨 위 폴더는 `df -P "<PINNED 가 든 폴더>"` 둘째 줄의 마지막 칸이다. Windows 는 `fsutil file queryFileNameById <드라이브>\ <번호>` 이다(관리자 셸에서만 확인함). 찾지 못하면(권한으로 못 본 폴더 등) 번호를 그대로 사용자에게 알린다.
-  - 사용자가 지우기를 고르면 그것이 승인이다. 보인 경로만 지운다. 링크면 링크와 그것이 가리키는 파일을, 다른 이름이 있으면 `PINNED` 와 찾은 다른 이름을 모두 지운다. 하나라도 남기면 그 안에 URL 이 남는다. 링크가 가리키는 파일이 `PINNED` 기록이 아니라고 사용자가 답하면 그 파일은 지우지 않고 링크만 지울지 묻는다.
+  - 같은 파일의 다른 이름이 있다는 줄이면 그 아래 `다른 이름은 ... 로 찾습니다.` 줄의 번호로 다른 이름을 찾아 경로를 보인다. 찾은 이름 중 `PINNED` 가 아닌 것이 다른 이름이다.
+    - POSIX 는 먼저 홈 폴더에서 찾는다: `find "$HOME" -xdev -inum <번호> 2>/dev/null`.
+    - 못 찾으면 번호를 사용자에게 알리고, `PINNED` 가 든 파일 시스템 전체에서 찾을지 묻는다. 오래 걸릴 수 있다.
+    - 그 파일 시스템의 맨 위 폴더는 Linux 는 `stat -c %m "<PINNED 가 든 폴더>"` 이다. macOS 는 `df -P "<PINNED 가 든 폴더>" | awk 'NR==2{for(i=6;i<=NF;i++) printf "%s%s",$i,(i<NF?" ":"\n")}'` 이다(공백 든 마운트 지점도 읽음). 그 폴더에서 같은 `find` 를 돌린다.
+    - 찾은 경로가 같은 파일인지 확인한다. 적용 전이면 `[ "<찾은 경로>" -ef "<PINNED>" ]` 가 참이어야 한다. 적용 뒤에는 `PINNED` 가 새 파일이다. 그래서 찾은 경로의 장치 번호가 `PINNED` 가 든 폴더의 것과 같아야 한다(Linux `stat -c %d`, macOS `stat -f %d`).
+    - Windows 는 적용 전이면 `fsutil hardlink list "<PINNED 경로>"` 가 모든 이름을 보인다. 볼륨 루트 기준 경로라 앞에 드라이브를 붙인다. 적용 뒤에는 `fsutil file queryFileNameById <드라이브>\ <번호>` 이다. 둘 다 관리자 셸에서만 확인했다.
+    - 찾은 경로마다 번호를 붙여 보이고, 지울 것을 사용자가 고르게 한다.
+    - 찾은 경로가 git 작업 트리 안이면(`git -C "<그 폴더>" rev-parse --is-inside-work-tree` 가 `true`) 지워도 git 이력에는 남는다고 알린다.
+    - 찾지 못하면(권한으로 못 본 폴더 등) 번호를 그대로 사용자에게 알린다.
+  - 사용자가 지우기를 고르면 그것이 승인이다. 고른 경로만 지운다. 링크면 링크와 그것이 가리키는 파일을, 다른 이름이 있으면 `PINNED` 와 고른 다른 이름을 지운다. 하나라도 남기면 그 안에 URL 이 남는다. 링크가 가리키는 파일이 `PINNED` 기록이 아니라고 사용자가 답하면 그 파일은 지우지 않고 링크만 지울지 묻는다.
   - 남기기로 하면 그 줄은 예상된 실패다. 적용에서는 3단계 2 의 예외, 검증에서는 4단계 1 의 예외를 따른다. 다른 이름이 있는 기록을 남기고 적용하면 적용은 `PINNED` 의 칸만 지운다. 그 뒤 `--check` 는 다른 이름을 보지 못하니 5단계 보고에 그 경로를 적는다.
 
 ## 절차
@@ -63,9 +85,13 @@ bash:
 R=$(node -e 'const j=require(require("path").join(require("os").homedir(),".claude/plugins/installed_plugins.json"));console.log(j.plugins["oh-my-claudecode@omc"][0].installPath)')
 ```
 
-PowerShell:
+PowerShell(Windows PowerShell 5.1 과 PowerShell 7 에서 같다):
+- `installed_plugins.json` 은 `-Encoding UTF8` 로 읽는다. 5.1 은 BOM 없는 파일을 시스템 코드 페이지(예: 949)로 읽어, 경로에 한글이 있으면 `$r` 이 빈 값이 된다.
+- 도구 출력을 변수나 파이프로 받아 판정할 때는 먼저 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` 을 실행한다. 5.1 은 node 의 UTF-8 출력을 콘솔 코드 페이지로 읽어 한글 문구가 깨진다. 출력을 그대로 흘려 보는 것은 괜찮다.
+- Git Bash 가 있으면 bash 블록을 먼저 쓴다.
+
 ```powershell
-$r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+$r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
 ```
 
 ### 1. 진단
@@ -75,20 +101,24 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 ```
 
 - `활성 버전: X (installed_plugins.json)` 줄로 실제 활성 버전을 확인한다.
-- 그 줄이 `(추정: ...)` 로 끝나면 도구가 `installed_plugins.json` 에서 활성 버전을 찾지 못한 것이다. 적용하지 않고 출력을 그대로 보고하고 끝낸다. 추정한 폴더를 패치하면 실제 활성 버전은 그대로 남는데 `check` 는 적용된 것으로 보일 수 있다.
+- 그 줄이 `(추정: ...)` 로 끝나면 도구가 `installed_plugins.json` 에서 활성 버전을 찾지 못한 것이다. 결과 줄은 `활성 버전을 확인하지 못했습니다.` 이고, 도구의 적용도 쓰기 전에 멈춘다. 적용하지 않고 출력을 그대로 보고하고 끝낸다.
 - `패치 필요 N건` 은 설치된 모든 버전 폴더를 합친 수다. 판정은 `결과:` 줄로 한다. 그 아래 `참고:` 줄은 아래 항목대로 다룬다.
 
 | `결과:` 줄 | 다음 |
 |---|---|
-| `모두 적용된 상태입니다.` | 4단계 검증으로 건너뜀 |
-| `헬퍼 자리 결함 N건이 있습니다.` | 2단계 확인 뒤 3단계에서 활성 폴더부터 되돌림 |
-| `적용되지 않은 항목이 있습니다.` | 2단계 확인 뒤 3단계 적용 |
+| `활성 버전을 확인하지 못했습니다.` | 적용하지 않고 위의 `활성 버전:` 줄을 그대로 보고(`installed_plugins.json` 에서 활성 버전을 찾지 못함) |
 | `hooks.json 을 확인하지 못했습니다.` | 적용하지 않고 위의 `[!]` 줄을 그대로 보고 |
+| `훅 스크립트를 확인하지 못했습니다.` | 적용하지 않고 위의 `[!] 읽지 못함` 줄을 그대로 보고(적용도 같은 훅을 읽지 못해 실패한다) |
 | `마켓플레이스 origin 을 확인하지 못했습니다.` | 적용하지 않고 위의 `[!]` 줄을 그대로 보고(git 이 없거나 마켓플레이스 저장소를 읽지 못함) |
+| `헬퍼 자리 결함 N건이 있습니다.` | 2단계 확인 뒤 3단계에서 활성 폴더부터 되돌림 |
 | `고정 기록(PINNED)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다.` | 적용할 항목은 없다. 2단계에서 그 기록을 지울지 남길지만 묻는다(`규칙` 절의 `PINNED` 줄 다루기). 어느 쪽이든 그 뒤 4단계 검증으로 건너뜀 |
+| `고정 기록(PINNED)을 확인하지 못했습니다.` | 기록을 읽지 못했거나 JSON 이 아니어서 옛 URL 칸이 남았는지 모른다. 바로 위 행과 같이 다룬다 |
+| `적용되지 않은 항목이 있습니다.` | 2단계 확인 뒤 3단계 적용 |
+| `모두 적용된 상태입니다.` | 4단계 검증으로 건너뜀 |
 
+- 표는 도구가 고르는 순서다. 위에서부터 처음 맞는 줄 하나가 나온다.
 - `참고: 비활성 버전 ...` 은 지금 쓰지 않는 버전이라 판정에 들어가지 않는다.
-- `결과:` 줄 아래의 `참고: 고정 기록(PINNED)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다.` 는 적용할 항목도 있다는 뜻이다. 적용해도 그곳의 칸은 남고 적용은 `실패 1건` 으로 끝난다. 2단계에서 함께 묻는다. 위 표의 같은 문구 결과 줄은 적용할 항목 없이 이것만 남았을 때 나온다.
+- `결과:` 줄 아래의 `참고: 고정 기록(PINNED)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다.` 는 적용할 항목도 있다는 뜻이다. 적용해도 그곳의 칸은 남고 적용은 `실패 1건` 으로 끝난다. 2단계에서 함께 묻는다. 위 표의 같은 문구 결과 줄은 적용할 항목 없이 이것만 남았을 때 나온다. `참고: 고정 기록(PINNED)을 확인하지 못했습니다.` 도 같다.
 - 인자가 `check` 이면 여기서 결과만 보고하고 끝낸다.
 
 ### 2. 확인 (적용 전 필수)
@@ -113,13 +143,17 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
    node "<이 스킬 디렉터리 절대경로>\scripts\omc-patch.mjs" --revert --root $r
    ```
 
    - `되돌림  <훅 이름>` 줄과 `되돌리기 완료.` 를 확인한다. 끝의 `재시작해야 반영됩니다` 는 이 중간 단계에서는 무시한다. 2 에서 바로 다시 패치한다.
    - `되돌리기를 끝내지 못했습니다.` 가 나오면 멈추고 위의 `[!]` 줄을 그대로 보고한다. 종료 코드는 1 이다. 끝 줄의 `실패 N건` 은 쓰기를 거부한 파일, `되돌리지 못한 것 N건` 은 백업이 없거나 수동 백업 후보를 쓸 수 없어 남은 파일이다. 끝 줄은 링크로 같은 폴더를 가리키는 판이 여럿이어도 파일마다 한 번 센다.
-   - `[!]` 줄에 `패치는 있는데 백업이 없어 되돌리지 못했습니다 — <이름>` 이 있으면 그 파일에 `.omcbak` 백업이 없는 것이다. 이 도구로는 되돌릴 원본이 없으니 멈추고 보고한다. 원본은 같은 버전의 OMC 저장소에서 다시 받아야 한다. 파이프 대신 파일을 거친다(Windows PowerShell 5.1 의 파이프는 바이너리를 텍스트로 바꿔 파일을 깨뜨린다): `git -C "<마켓플레이스 폴더>" archive -o "<임시 tar>" v<버전> scripts/<이름>.mjs` 뒤 `tar -xf "<임시 tar>" -C "<활성 폴더>"`. 이 명령은 사용자 승인 뒤에만 실행한다.
+   - `[!]` 줄에 `패치는 있는데 백업이 없어 되돌리지 못했습니다 — <이름>` 이 있으면 그 파일에 `.omcbak` 백업이 없는 것이다. 이 도구로는 되돌릴 원본이 없으니 멈추고 보고한다.
+     - 원본은 같은 버전의 OMC 저장소에서 다시 받아야 한다. 이 명령은 사용자 승인 뒤에만 실행한다.
+     - 파이프 대신 새 임시 폴더의 파일을 거친다. Windows PowerShell 5.1 의 파이프는 바이너리를 텍스트로 바꿔 파일을 깨뜨린다.
+     - bash: `T=$(mktemp -d)` 로 폴더를 만들고, `git -C "<마켓플레이스 폴더>" archive -o "$T/src.tar" v<버전> scripts/<이름>.mjs` 와 `tar -xf "$T/src.tar" -C "<활성 폴더>"` 를 실행한 뒤 `rm -rf "$T"` 로 지운다.
+     - PowerShell: `$T = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName()); New-Item -ItemType Directory $T | Out-Null` 로 폴더를 만들고, 같은 두 명령을 `"$T\src.tar"` 로 실행한 뒤 `Remove-Item -Recurse -Force $T` 로 지운다.
 
 2. 적용한다.
 
@@ -151,7 +185,8 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
    $f = @(Get-ChildItem "$r\scripts\*.omcbak" | % { $_.FullName -replace '\.omcbak$','' })
    $f | % { node --check $_; "{0} syntax={1}" -f (Split-Path $_ -Leaf), $LASTEXITCODE }
    (node "<이 스킬 디렉터리 절대경로>\scripts\omc-patch.mjs" --scan @f | ConvertFrom-Json) | % { "{0} depth={1}" -f (Split-Path $_.file -Leaf), (@($_.helperDecls | % depth) -join ',') }
@@ -168,7 +203,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
    $env:CLAUDE_PLUGIN_ROOT = $r; $env:OMC_NOTIFY = '0'
    '{"session_id":"smoke-test","cwd":"C:\\nonexistent","hook_event_name":"Stop"}' | node "$r\scripts\run.cjs" "$r\scripts\persistent-mode.mjs"; "exit=$LASTEXITCODE"
    Remove-Item Env:CLAUDE_PLUGIN_ROOT, Env:OMC_NOTIFY
@@ -185,7 +220,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
    node "<이 스킬 디렉터리 절대경로>\scripts\probe-pm.mjs" --plugin $r
    ```
 
@@ -238,15 +273,28 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --revert
 - 헬퍼 자리 결함이 남은 채 `revert` 없이 적용을 다시 돌려도 바뀌는 것이 없다. 이미 감싼 파일은 건너뛰기 때문이다.
 - `--root` 와 `--revert --root` 는 그 폴더만 다룬다. 고정 해제까지 하려면 인자 없는 `--revert` 를 쓴다.
 - 고정을 풀지 않고 OMC 를 올리려면 먼저 `revert` 한다. 그렇지 않으면 마켓플레이스 fetch 가 계속 실패한다.
-- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 고정한 시각, 판, 기기 이름만 담고 URL 은 담지 않는다. 옛 판의 기록에 URL 칸이 있으면 `--check` 가 알리고 다음 적용 때 지운다. 지우지 못하면 `[!]` 로 알리고 실패로 센다(링크는 따라가 쓰지 않음). 하드 링크로 이어진 다른 이름에는 그 칸이 남는다. 도구는 그 이름을 찾을 번호를 알린다. POSIX 에서는 이 계정만 읽을 수 있다(0600). Windows 에서는 폴더의 상속 권한을 따른다. 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다. `revert` 는 origin 값에서만 원래 URL 을 되찾는다. 다른 기기의 기록이면 알리기만 한다.
+- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다.
+  - 고정한 시각, 패치한 판, 기기 이름만 담고 URL 은 담지 않는다.
+  - 옛 판의 기록에 URL 칸이 있으면 `--check` 가 알리고 다음 적용 때 지운다. 지우지 못하면 `[!]` 로 알리고 실패로 센다(링크는 따라가 쓰지 않음).
+  - 하드 링크로 이어진 다른 이름에는 그 칸이 남는다. 기록을 읽지 못했거나 JSON 이 아니면 남았을 수 있다고 알린다. 도구는 그 이름을 찾을 번호를 알린다.
+  - POSIX 에서는 이 계정만 읽을 수 있다(0600). 기록 폴더는 처음 만들 때 이 계정만 쓰게(0700) 만든다. Windows 에서는 폴더의 상속 권한을 따른다.
+  - 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다.
+  - `revert` 는 origin 값에서만 원래 URL 을 되찾는다. 다른 기기의 기록이면 알리기만 한다.
 - `--check` 와 `--revert` 를 함께 주면 도구는 아무것도 하지 않고 종료 코드 1 로 멈춘다. 진단만 하려면 `--check` 만 준다.
 - 도구는 git 을 부를 때 저장소를 고르는 변수(`GIT_DIR`, `GIT_WORK_TREE` 등 `git rev-parse --local-env-vars` 목록)를 지운다. git 훅 안에서 불러도 마켓플레이스 저장소만 다룬다.
 - 마켓플레이스의 `.git` 이 깨졌으면(중단된 clone 등) git 이 위쪽 저장소로 올라가지 못하게 막는다. 그때 `[4/4]` 는 `origin remote 없음` 으로 끝나고 고정하지 않는다.
 - `--scan` 은 읽기만 한다. 플러그인 캐시도 `installed_plugins.json` 도 읽지 않고 준 파일만 본다.
 - 도구는 모르는 인자를 받지 않는다. `--check`, `--revert`, `--no-update`, `--root <폴더>`, `--scan <파일>...`, `--help` 밖의 인자나 `--root=<폴더>` 꼴을 주면 아무것도 하지 않고 사용법과 함께 종료 1 로 멈춘다.
-- 출력의 origin URL 에 사용자 이름과 비밀번호가 있으면 `//***@` 로 가린다. 도구는 origin 을 설정 값 그대로 읽어 고정하고 되돌린다(전역 `insteadOf` 를 펼치지 않음).
+- 도구는 출력의 URL 을 `//` 뒤부터 마지막 `@` 까지 `***` 로 가린다. 비밀번호에 `/` `?` `#` 가 들어도 새지 않고, 경로에 `@` 가 든 URL 은 호스트까지 가려진다. 도구는 origin 을 설정 값 그대로 읽어 고정하고 되돌린다(전역 `insteadOf` 를 펼치지 않음).
 - origin 을 바꾸지 못하면(`.git` 쓰기 권한 등) `[!] 고정 실패` 나 `[!] 고정 해제 실패` 와 종료 1 로 끝난다. 그 줄을 그대로 보고한다. 고정 해제에 실패하면 도구가 원래 URL 을 호스트까지만 보인다. 원문은 origin 의 `omc-pinned://` 뒤에 그대로 남는다.
 - `--check` 는 쓸 수 없는 파일을 `패치 필요, 쓸 수 없음` 으로 미리 알린다. 폴더 밖 링크 때문에 되돌리지 못한 파일은 손 복구 방법을 함께 낸다. 링크 대상 파일에 이 도구 계열의 패치가 보이지 않으면 덮어쓰라고 하지 않고, 링크가 가리키는 곳이 맞는지 먼저 확인하라고 한다. 사용자 승인 없이 그 방법을 실행하지 않는다.
 - 파일은 새 임시 파일을 디스크까지 내린 뒤 rename 으로 바꾼다. 하드 링크로 이어진 폴더 밖 파일은 바뀌지 않는다. 쓰지 못한 파일은 `쓰지 못함` 으로 이름을 대고 실패로 센다.
-- 읽을 수 없는 훅(권한, 폴더, FIFO)은 `읽지 못함: <이름> (<코드>)`, 쓸 권한이 없거나 일반 파일이 아닌 훅은 `쓰지 않음: <이름> (쓸 권한이 없음 또는 일반 파일이 아님)` 으로 알리고 실패로 센다. `--check` 는 읽지 못한 훅이 있으면 모두 적용된 상태로 보지 않는다. 설정 파일도 일반 파일만 읽는다. `installed_plugins.json` 이 FIFO 처럼 일반 파일이 아니면 활성 버전이 `(추정: ...)` 으로 나오고, `settings.json` 이면 `DISABLE_AUTOUPDATER` 줄을 생략한다. 도구가 처리하지 못한 오류는 경로를 정화한 한 줄과 종료 1 로 끝난다.
+- 읽을 수 없는 훅과 쓸 수 없는 훅
+  - 읽을 수 없는 훅(권한, 폴더, FIFO)은 `읽지 못함: <이름> (<코드>)` 으로 알리고 실패로 센다.
+  - 쓸 권한이 없거나 일반 파일이 아닌 훅은 `쓰지 않음: <이름> (쓸 권한이 없음 또는 일반 파일이 아님)` 으로 알리고 실패로 센다.
+  - `--check` 는 활성 버전의 훅을 읽지 못하면 `결과: 훅 스크립트를 확인하지 못했습니다.` 와 종료 1 로 끝난다. 다시 실행하라고 하지 않는다.
+- 설정 파일도 일반 파일만 읽는다.
+  - `installed_plugins.json` 이 FIFO 처럼 일반 파일이 아니면 활성 버전이 `(추정: ...)` 으로 나온다.
+  - `settings.json` 이 그렇다면 `DISABLE_AUTOUPDATER` 줄을 생략한다.
+- 도구가 처리하지 못한 오류는 경로를 정화한 한 줄과 종료 1 로 끝난다.
 - 도구의 주석과 출력 문구는 한글이다.

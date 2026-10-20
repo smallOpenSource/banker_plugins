@@ -592,8 +592,8 @@ function olderPin() {
 }
 
 // Runs the tool with a module loaded first, which changes what node:fs does for this run only.
-function runImport(pre, home, args) {
-  const env = cleanEnv({ HOME: home, USERPROFILE: home });
+function runImport(pre, home, args, extra = {}) {
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, ...extra });
   delete env.OMC_PATCH_INSTALLED;
   const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, TOOL, ...args], { encoding: "utf8", env });
   return { code: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
@@ -693,20 +693,23 @@ test("--check names an older PINNED's URL as not applied yet, without its text; 
 test("--check names an older PINNED the apply cannot clean (no JSON, unreadable, a link) and says this tool cannot", { skip: !HAS_GIT && "git not found" }, (t) => {
   const { f, secret, withPassword, record, pinfile } = olderPin();
   assert.equal(run(f.home, ["--no-update"]).code, 0);
-  const blocked = (why) => {
+  // A record it could not read, or no JSON, may hold the field: "could not check". A link that holds it: "cannot clean".
+  const CANNOT = /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\. 위의 \[!\] 줄을 확인하십시오\./;
+  const UNSURE = /결과: 고정 기록\(PINNED\)을 확인하지 못했습니다\. 옛 URL 칸이 남았을 수 있습니다\. 위의 \[!\] 줄을 확인하십시오\./;
+  const blocked = (why, result = CANNOT) => {
     const c = run(f.home, ["--check", "--no-update"]);
     assert.equal(c.code, 0, c.out);
     assert.match(c.out, why);
-    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\. 위의 \[!\] 줄을 확인하십시오\./);
+    assert.match(c.out, result);
     assert.ok(!c.out.includes(secret), "the password is not printed");
   };
   writeFileSync(pinfile, `{"originUrl":"${withPassword}"`);
-  blocked(/\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지울 수 없음 \(JSON 이 아님\)/);
+  blocked(/\[!\] 고정 기록\(PINNED\)의 옛 URL 칸을 지울 수 없음 \(JSON 이 아님\)/, UNSURE);
   if (process.platform !== "win32" && !asRoot) {
     writeFileSync(pinfile, record);
     chmodSync(pinfile, 0o000);
     try {
-      blocked(/옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/);
+      blocked(/옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/, UNSURE);
     } finally {
       chmodSync(pinfile, 0o600);
     }
@@ -810,7 +813,7 @@ test("a record folder this account cannot write or open: --revert names the PINN
     assert.match(a.out, /완료\. 실패 1건\./);
     const c = run(f.home, ["--check", "--no-update"]);
     assert.match(c.out, /옛 URL 칸을 확인하지 못함 \(읽지 못함: EACCES\)/);
-    assert.match(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+    assert.match(c.out, /결과: 고정 기록\(PINNED\)을 확인하지 못했습니다\. 옛 URL 칸이 남았을 수 있습니다\./);
     const unopened = run(f.home, ["--revert"]);
     assert.equal(unopened.code, 1, unopened.out);
     assert.match(unopened.out, /\[!\] 고정 기록\(PINNED\)을 지우지 못함 \(EACCES\)/);
@@ -876,7 +879,8 @@ test("a set-url git refuses (an origin with two URLs) shows git's fatal line, th
   assert.equal(runGit(["remote", "set-url", "--add", "origin", twoUrl], f.market).status, 0);
   const r = run(f.home, ["--no-update"]);
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/https:\/\/\*\*\*@example\.invalid\/two\.git/);
+  // masked from the first // to the last @, so the inner https:// goes with it
+  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/\*\*\*@example\.invalid\/two\.git/);
   assert.ok(!r.out.includes("s3cret"), r.out);
 });
 
@@ -1258,7 +1262,7 @@ test("script names with line breaks print on one line", { skip: process.platform
   assert.equal(run(home, ["--root", plug]).code, 0);
   // one restored from its backup, one patched with no backup left
   const restored = join(plug, "scripts", "y\n  [!] forged restored.mjs");
-  writeFileSync(restored, "patched\n");
+  writeFileSync(restored, "const __omcRaceImport = (p) => p;\npatched\n");
   writeFileSync(`${restored}.omcbak`, "original\n");
   writeFileSync(join(plug, "scripts", "x\n  [!] forged orphan.mjs"), "const __omcRaceImport = (p) => p;\n");
   const r = run(home, ["--revert", "--root", plug]);
@@ -1402,13 +1406,14 @@ test("apply writes through a temp file and a rename: a hook hard-linked to a fil
   assert.deepEqual(readdirSync(join(plug, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
 });
 
-test("an apply keeps a backup that is already there: the first backup stays the original", () => {
+test("an apply over a backup that is not the current original makes it the current original, and says so", () => {
   const plug = bundle();
   const foo = join(plug, "scripts", "foo.mjs");
-  writeFileSync(`${foo}.omcbak`, "// the original an earlier run kept\n");
+  writeFileSync(`${foo}.omcbak`, "// an older original an earlier run kept\n");
   const r = run(bareHome(), ["--root", plug]);
   assert.equal(r.code, 0, r.out);
-  assert.equal(read(`${foo}.omcbak`), "// the original an earlier run kept\n");
+  assert.equal(read(`${foo}.omcbak`), SCRIPT("foo"), "a later revert gives back the original that was there");
+  assert.match(r.out, /ok {2}옛 백업을 지금 원본으로 바꿈: foo/);
   assert.match(read(foo), /__omcRaceImport\(import\(/);
 });
 
@@ -1591,10 +1596,11 @@ test("an origin with a user and password shows only ***, and PINNED keeps no URL
   if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
   assert.equal(run(f.home, ["--revert"]).code, 0);
   assert.equal(origin(f.market), withPassword, "the revert still restores the whole URL from origin");
-  for (const plain of ["git@example.invalid:o/omc.git", "https://example.invalid/a@b/omc.git"]) {
+  // An scp-style URL has no // and is left as it is. An @ in a path is taken for the end of a password: from // to that @ is masked.
+  for (const [plain, shown] of [["git@example.invalid:o/omc.git", "git@example.invalid:o/omc.git"], ["https://example.invalid/a@b/omc.git", "https://***@b/omc.git"]]) {
     assert.equal(runGit(["remote", "set-url", "origin", plain], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
-    assert.ok(out.includes(`origin=${plain})`), `a URL with no password is left as it is: ${out}`);
+    assert.ok(out.includes(`origin=${shown})`), `${plain}: ${out}`);
   }
 });
 
@@ -1687,9 +1693,11 @@ test("a revert that may not write outside the plugin folder says how to restore 
   const plug = bundle();
   const outside = join(root, `outside${seq++}`);
   mkdirSync(outside, { recursive: true });
-  // an old tool patched these while they sat outside, behind a linked scripts/ folder
+  // an old tool patched these while they sat outside, behind a linked scripts/ folder: the text this tool makes of them
+  const made = bundle();
+  assert.equal(run(bareHome(), ["--root", made]).code, 0);
   for (const n of ["foo", "stopper"]) {
-    writeFileSync(join(outside, `${n}.mjs`), "const __omcRaceImport = (p) => p;\n");
+    writeFileSync(join(outside, `${n}.mjs`), read(join(made, "scripts", `${n}.mjs`)));
     writeFileSync(join(outside, `${n}.mjs.omcbak`), SCRIPT(n));
   }
   writeFileSync(join(outside, "lib.mjs"), LIB);
@@ -1979,14 +1987,20 @@ test("an error the tool did not expect prints on one line with the folder name c
   writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
   for (const n of ["foo", "stopper"]) writeFileSync(join(odd, "scripts", `${n}.mjs`), SCRIPT(n));
   writeFileSync(join(odd, "scripts", "lib.mjs"), LIB);
-  // a revert lists the scripts folder without a guard of its own (a hooks.json it cannot read is named in [3/4] now)
-  chmodSync(join(odd, "scripts"), 0o000);
-  let r;
-  try {
-    r = run(bareHome(), ["--root", odd, "--revert"]);
-  } finally {
-    chmodSync(join(odd, "scripts"), 0o755);
-  }
+  // A system error the tool has no guard for, naming the folder: the check for hooks.json fails as an EACCES would.
+  const pre = join(root, `unexpected${seq++}.mjs`);
+  writeFileSync(pre, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.existsSync;",
+    "fs.existsSync = (p) => {",
+    "  if (String(p).endsWith(\"hooks.json\")) throw Object.assign(new Error(`EACCES: permission denied, access '${p}'`), { code: \"EACCES\" });",
+    "  return real(p);",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  const r = runImport(pre, bareHome(), ["--root", odd, "--revert"]);
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /\[!\] 처리하지 못한 오류: EACCES/);
   assert.doesNotMatch(r.out, /^\s*\[!\] FORGED/m, "the folder name makes no line of its own");
@@ -2269,6 +2283,7 @@ test("the hint for a patch with no backup goes through a temp tar file, never a 
   rmSync(join(f.cache, "5.6.1", "scripts", "foo.mjs.omcbak"));
   const r = run(f.home, ["--revert"]);
   assert.match(r.out, /git -C ".*" archive -o "<임시 tar>" v5\.6\.1 scripts\/<이름>\.mjs\n\s+tar -xf "<임시 tar>" -C ".*5\.6\.1"/);
+  assert.match(r.out, /<임시 tar> 는 새로 만든 임시 폴더\(bash: mktemp -d\) 안의 파일로 정하고, 다 쓴 뒤 폴더째 지우십시오\./, "the temp file is not a name picked by hand");
   assert.doesNotMatch(r.out, /archive v5\.6\.1 .*\|/);
 });
 
@@ -2895,4 +2910,548 @@ test("--check over an old record with another hard-linked name says the apply cl
   assert.doesNotMatch(r.out, /적용하면 지움/);
   assert.match(r.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
   assert.ok(!r.out.includes(secret), "the password is not printed");
+});
+
+// 0.20.4 B2 Task 1: reverts that stop or say done when they did not finish (B2-01, B2-10, B2-13)
+test("a revert over a version folder with no scripts folder goes on: the other versions, hooks.json and the pin are reverted", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const half = join(f.cache, "5.5.0");
+  mkdirSync(join(half, "hooks"), { recursive: true });
+  writeFileSync(join(half, "hooks", "hooks.json"), HOOKS_JSON);
+  const r = run(f.home, ["--revert"]);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/, r.out);
+  assert.equal(origin(f.market), ORIGIN, "the pin is undone");
+  assert.match(read(join(f.cache, "5.6.1", "hooks", "hooks.json")), /PostToolUse/, "the active hooks.json is reverted");
+  assert.equal(r.code, 0, r.out);
+});
+
+test("a revert over a version folder whose scripts is a file names it and counts it, and still undoes the pin", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const odd = join(f.cache, "5.5.0");
+  mkdirSync(join(odd, "hooks"), { recursive: true });
+  writeFileSync(join(odd, "scripts"), "not a folder\n");
+  const r = run(f.home, ["--revert"]);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/, r.out);
+  assert.match(r.out, /scripts/);
+  assert.equal(r.code, 1, r.out);
+  assert.equal(origin(f.market), ORIGIN, "the pin is undone");
+});
+
+test("--revert over a PINNED whose host is an object ends with its last line and no crash", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(pinPath(f), JSON.stringify({ pinnedAt: "x", version: "5.7.0", host: { toString: 1, valueOf: 1 } }) + "\n");
+  const r = run(f.home, ["--revert"]);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/, r.out);
+  assert.match(r.out, /되돌리기 완료\./);
+  assert.equal(r.code, 0, r.out);
+});
+
+test("an apply over a write-only hooks.json says it could not read it; a revert does not call it done", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  const hj = join(plug, "hooks", "hooks.json");
+  chmodSync(hj, 0o200);
+  let a, r;
+  try {
+    a = run(bareHome(), ["--root", plug]);
+    r = run(bareHome(), ["--root", plug, "--revert"]);
+  } finally { chmodSync(hj, 0o644); }
+  assert.match(a.out, /hooks\.json 을 읽지 못함 \(EACCES\)/, a.out);
+  assert.doesNotMatch(r.out, /되돌리기 완료\./, r.out);
+  assert.equal(r.code, 1, r.out);
+});
+
+// 0.20.4 B2 Task 2: a bare apply's switch line, a missing marketplace or git, and an installed_plugins.json of 0, false, "" or null (B2-14, B2-15, B2-16)
+test("a bare apply that switches from an older active version names that version in its switch line", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target } = bareApplyFixture();
+  assert.equal(run(f.home, []).code, 0);
+  const installed = join(f.plugins, "installed_plugins.json");
+  const j = JSON.parse(read(installed));
+  Object.assign(j.plugins["oh-my-claudecode@omc"][0], { version: "5.6.1", installPath: join(f.cache, "5.6.1") });
+  writeFileSync(installed, JSON.stringify(j, null, 2) + "\n");
+  const r = run(f.home, []);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, new RegExp(`ok  5\\.6\\.1 → ${target.replace(/\./g, "\\.")} \\(sha`), r.out);
+});
+
+test("a bare apply that would switch with no marketplace folder says the folder is missing, not the tag", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f } = bareApplyFixture();
+  assert.equal(run(f.home, []).code, 0);
+  const installed = join(f.plugins, "installed_plugins.json");
+  const j = JSON.parse(read(installed));
+  Object.assign(j.plugins["oh-my-claudecode@omc"][0], { version: "5.6.1", installPath: join(f.cache, "5.6.1") });
+  writeFileSync(installed, JSON.stringify(j, null, 2) + "\n");
+  renameSync(f.market, `${f.market}.gone`);
+  const r = run(f.home, []);
+  renameSync(`${f.market}.gone`, f.market);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /마켓플레이스 없음/, r.out);
+  assert.doesNotMatch(r.out, /태그 v.* 를 마켓플레이스에서 찾을 수 없음/);
+});
+
+for (const value of ["0", "false", '""', "null"]) {
+  test(`a bare apply over an installed_plugins.json that holds ${value} says why it stops`, { skip: !HAS_GIT && "git not found" }, () => {
+    const { f } = bareApplyFixture();
+    writeFileSync(join(f.plugins, "installed_plugins.json"), `${value}\n`);
+    const r = run(f.home, []);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /installed_plugins\.json 에 oh-my-claudecode@omc 항목이 없음/, r.out);
+  });
+}
+
+// 0.20.4 B2 Task 3: the pin record's version, other names of an old record, backup slots that are no regular file, the test variable, and temp file modes (B2-05, B2-17, B2-18, B2-19, B2-22)
+test("a --no-update pin records the version it patched, not the bare apply's target", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  assert.equal(JSON.parse(read(pinPath(f))).version, "5.6.1");
+});
+
+const OLD_TEXT = (secret) => `pinnedAt: x\noriginUrl: "https://u:${secret}@example.invalid/omc.git"\n`;
+for (const how of ["no JSON", "unreadable"]) {
+  test(`a first pin and a revert over an old record that is ${how}, with another hard-linked name, say the URL may stay there`, { skip: (!HAS_GIT && "git not found") || (how === "unreadable" && (process.platform === "win32" || asRoot) && "POSIX permission bits") }, (t) => {
+    for (const pinned of [false, true]) {
+      const { f, secret, pinfile } = olderPin();
+      if (!pinned) assert.equal(runGit(["remote", "set-url", "origin", ORIGIN], f.market).status, 0);
+      writeFileSync(pinfile, OLD_TEXT(secret));
+      const other = join(root, `b217-other${seq++}`);
+      try { linkSync(pinfile, other); } catch { t.skip("hard links are not available here"); return; }
+      if (how === "unreadable") chmodSync(pinfile, 0o000);
+      const r = run(f.home, pinned ? ["--revert"] : ["--no-update"]);
+      if (how === "unreadable") chmodSync(other, 0o600);
+      assert.equal(r.code, 1, `${pinned ? "revert" : "first pin"}: ${r.out}`);
+      assert.match(r.out, /다른 이름/, r.out);
+      assert.ok(!r.out.includes(secret), "the password is not printed");
+    }
+  });
+}
+
+test("an apply refuses a backup slot that is a FIFO or a folder: named, counted, the hook left as it was", posixFifo, (t) => {
+  const plug = bundle();
+  const s = join(plug, "scripts");
+  if (!mkfifoAt(join(s, "foo.mjs.omcbak"))) { t.skip("no mkfifo here"); return; }
+  mkdirSync(join(s, "stopper.mjs.omcbak"));
+  const r = runBy(bareHome(), ["--root", plug]);
+  assert.equal(r.error, undefined, "the apply ended before its deadline");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /쓰지 않음: foo \(백업 자리가 일반 파일이 아님\)/, "refused before anything is read or written");
+  assert.match(r.out, /쓰지 않음: stopper \(백업 자리가 일반 파일이 아님\)/);
+  assert.equal(read(join(s, "foo.mjs")), SCRIPT("foo"), "foo is left unpatched");
+  assert.equal(read(join(s, "stopper.mjs")), SCRIPT("stopper"), "stopper is left unpatched");
+});
+
+test("an apply refuses a hooks.json backup slot that is a folder", () => {
+  const plug = bundle();
+  mkdirSync(join(plug, "hooks", "hooks.json.omcbak"));
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 을 건드리지 않음 \(백업 자리가 일반 파일이 아님\)/, r.out);
+  assert.match(read(join(plug, "hooks", "hooks.json")), /PostToolUse/, "PostToolUse is kept while there is no backup");
+});
+
+test("OMC_PATCH_INSTALLED is read by --check only: an apply patches what installed_plugins.json names", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }, { v: "5.3.0" }]);
+  const other = join(root, `other-installed${seq++}.json`);
+  writeFileSync(other, JSON.stringify({ version: 2, plugins: { "oh-my-claudecode@omc": [{ installPath: join(f.cache, "5.3.0"), version: "5.3.0" }] } }) + "\n");
+  const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home, OMC_PATCH_INSTALLED: other });
+  const r = spawnSync(process.execPath, [TOOL, "--no-update"], { encoding: "utf8", env });
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(omcbaks(join(f.cache, "5.3.0", "scripts")), [], "the version the variable names is untouched");
+  assert.ok(omcbaks(join(f.cache, "5.6.1", "scripts")).length > 0, "the active version is patched");
+});
+
+const PEEK_MODE = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.fsyncSync;",
+  'fs.fsyncSync = (fd) => { process.stderr.write(`tmp-mode ${(fs.fstatSync(fd).mode & 0o777).toString(8)}\\n`); return real(fd); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a temp file is made with its final mode, and a new record folder is this account's alone", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const pre = join(root, `peek-mode${seq++}.mjs`);
+  writeFileSync(pre, `${PEEK_MODE}\n`);
+  const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home });
+  const r = spawnSync("sh", ["-c", `umask 0002 && exec "${process.execPath}" --import "${pathToFileURL(pre).href}" "${TOOL}" --no-update`], { encoding: "utf8", env });
+  const modes = [...String(r.stderr).matchAll(/tmp-mode (\d+)/g)].map((m) => m[1]);
+  assert.equal(modes[modes.length - 1], "600", `PINNED's temp file: ${modes.join(",")}`);
+  assert.equal(statSync(dirname(pinPath(f))).mode & 0o777, 0o700);
+});
+
+// 0.20.4 B2 Task 4: the hand-restore hint (B2-20)
+test("the hand-restore hint does not tell to overwrite a file that only names the helper", (t) => {
+  const plug = bundle();
+  const outside = join(root, `b220-outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  const notes = join(outside, "mynotes.mjs");
+  writeFileSync(notes, "// my notes about __omcRaceImport\nexport const notes = 1;\n");
+  const foo = join(plug, "scripts", "foo.mjs");
+  rmSync(foo);
+  try { symlinkSync(notes, foo); } catch { t.skip("file symlinks need privileges here"); return; }
+  writeFileSync(`${foo}.omcbak`, SCRIPT("foo"));
+  const r = run(bareHome(), ["--root", plug, "--revert"]);
+  assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.doesNotMatch(r.out, /에 덮어쓰고 백업을 지우십시오/, r.out);
+});
+
+// 0.20.4 B2 Task 5: result lines for a guessed active version, a PINNED it could not check, and a hook it could not read (B2-04, B2-11, B2-12)
+test("a --no-update apply that could only guess the active version stops before it writes anything", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }, { v: "5.7.0" }]);
+  writeFileSync(join(f.plugins, "installed_plugins.json"), JSON.stringify({ version: 2, plugins: {} }) + "\n");
+  const r = run(f.home, ["--no-update"]);
+  assert.equal(r.code, 1, r.out);
+  for (const v of ["5.6.1", "5.7.0"]) assert.deepEqual(omcbaks(join(f.cache, v, "scripts")), [], `${v} untouched`);
+  assert.equal(origin(f.market), ORIGIN, "not pinned");
+});
+
+test("--check that could only guess the active version does not say all is applied", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }, { v: "5.7.0" }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const installed = join(f.plugins, "installed_plugins.json");
+  writeFileSync(installed, JSON.stringify({ version: 2, plugins: {} }) + "\n");
+  // the guess (5.7.0) is patched by hand-free means: patch it through --root, as a guessing apply would have
+  assert.equal(run(bareHome(), ["--root", join(f.cache, "5.7.0")]).code, 0);
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.match(c.out, /활성 버전: 5\.7\.0 \(추정/, "the guess is the patched folder");
+  assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다\./, c.out.match(/^결과.*$/m)?.[0]);
+  assert.match(c.out, /결과: 활성 버전을 확인하지 못했습니다\. 위의 활성 버전 줄을 확인하십시오\./);
+  assert.equal(c.code, 1, "a check that only guessed ends with 1");
+});
+
+test("--check over a PINNED it cannot read does not say the URL field is there", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX permission bits") || (asRoot && "root reads any file") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  chmodSync(pinPath(f), 0o000);
+  let c;
+  try { c = run(f.home, ["--check", "--no-update"]); } finally { chmodSync(pinPath(f), 0o600); }
+  assert.doesNotMatch(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다/, c.out);
+  assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다/);
+});
+
+test("--check over a PINNED that is no JSON does not say the URL field is there", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(pinPath(f), "notes: originUrl was taken out by hand\n");
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.doesNotMatch(c.out, /결과: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다/, c.out);
+});
+
+test("--check over a hook it cannot read says it could not check it, ends with 1 and asks for no rerun", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const foo = join(plug, "scripts", "foo.mjs");
+  chmodSync(foo, 0o000);
+  let c;
+  try { c = run(bareHome(), ["--root", plug, "--check"]); } finally { chmodSync(foo, 0o644); }
+  assert.match(c.out, /\[!\] 읽지 못함: foo \(EACCES\)/);
+  assert.doesNotMatch(c.out, /다시 실행하십시오/, c.out);
+  assert.doesNotMatch(c.out, /패치 필요 1건/, "an unread hook is not counted as one to patch");
+  assert.equal(c.code, 1, c.out);
+});
+
+test("--check names a hook it cannot read in an inactive version as a note, not as the result", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const foo = join(f.cache, "5.3.0", "scripts", "foo.mjs");
+  chmodSync(foo, 0o000);
+  let c;
+  try { c = run(f.home, ["--check", "--no-update"]); } finally { chmodSync(foo, 0o644); }
+  assert.doesNotMatch(c.out, /결과: 훅 스크립트를 확인하지 못했습니다/, c.out);
+  assert.match(c.out, /참고: 비활성 버전 5\.3\.0 의 훅 스크립트를 확인하지 못했습니다\. 판정에는 넣지 않았습니다\./, c.out);
+});
+
+// 0.20.4 B2 Task 6: URL masking up to the last @ after //, and the unpin-failure line (B2-08, B2-09)
+// The user name may hold a raw @ too (an e-mail address): the parser then reads the domain and the start of the password as host:port.
+test("the unpin-failure line shows no user or password when an @ follows a raw / ? # or \\ in the password", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  for (const user of ["alice", "alice@corp.example"]) {
+    for (const sep of ["/", "?", "#", BACKSLASH]) {
+      const f = fakeHome([{ v: "5.6.1", active: true }]);
+      assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://https://${user}:12345${sep}rest-${"s3" + "cret"}@github.com/x.git`], f.market).status, 0);
+      chmodSync(join(f.market, ".git"), 0o555);
+      let r;
+      try { r = run(f.home, ["--revert"]); } finally { chmodSync(join(f.market, ".git"), 0o755); }
+      assert.match(r.out, /고정 해제 실패/, r.out);
+      assert.doesNotMatch(r.out, new RegExp(`alice|corp\\.example|12345|${"s3" + "cret"}`), `${user} ${JSON.stringify(sep)}: ${r.out}`);
+    }
+  }
+});
+
+test("--check masks a password that holds a raw /", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", `https://alice:pa/ss-${"s3" + "cret"}@github.com/x.git`], f.market).status, 0);
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.match(c.out, /마켓플레이스 미고정/);
+  assert.doesNotMatch(c.out, new RegExp(`${"s3" + "cret"}|alice:pa`), c.out);
+});
+
+test("an origin of many slashes is masked without stalling --check", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const config = join(f.market, ".git", "config");
+  writeFileSync(config, read(config).replace(ORIGIN, `https:${"/".repeat(300000)}x`));
+  const t0 = Date.now();
+  const c = runBy(f.home, ["--check", "--no-update"]);
+  assert.equal(c.error, undefined, "the run ended before its deadline");
+  assert.match(c.out, /마켓플레이스 미고정/);
+  assert.ok(Date.now() - t0 < 10000, `took ${Date.now() - t0} ms`);
+});
+
+// 0.20.4 B2 Task 7: an old .omcbak never goes over a new original; the apply makes the backup the current original (B2-02)
+const NEW_ORIGINAL = (n) => `import { pathToFileURL } from "node:url";\nconst { x, y } = await import("./lib.mjs");\nconsole.log("${n} NEW:" + typeof x);\n`;
+
+test("a revert leaves a hook that a new original replaced after the patch: the old backup is not put over it", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const foo = join(f.cache, "5.6.1", "scripts", "foo.mjs");
+  writeFileSync(foo, NEW_ORIGINAL("foo"));
+  const r = run(f.home, ["--revert"]);
+  assert.equal(read(foo), NEW_ORIGINAL("foo"), "the new original stays");
+  assert.match(r.out, /\[!\].*foo/, "the hook is named");
+  assert.doesNotMatch(r.out, /되돌리기 완료\./);
+});
+
+test("an apply over a new original and a revert give back that new original, not the old backup", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const foo = join(f.cache, "5.6.1", "scripts", "foo.mjs");
+  writeFileSync(foo, NEW_ORIGINAL("foo"));
+  run(f.home, ["--no-update"]);
+  run(f.home, ["--revert"]);
+  assert.equal(read(foo), NEW_ORIGINAL("foo"));
+});
+
+test("a revert does not put an old hooks.json backup over a hooks.json that still has PostToolUse", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const hj = join(f.cache, "5.6.1", "hooks", "hooks.json");
+  const fresh = HOOKS_JSON.replace("stopper.mjs", "stopper2.mjs");
+  writeFileSync(hj, fresh);
+  run(f.home, ["--revert"]);
+  assert.equal(read(hj), fresh, "the new hooks.json stays");
+});
+
+// 0.20.4 B2 review 1: the backup an apply puts in place of an old one is the file it checked, and only an original
+test("an apply over a new hooks.json makes the hooks.json backup that new original, and a revert gives it back", () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const hj = join(plug, "hooks", "hooks.json");
+  const fresh = HOOKS_JSON.replace("stopper.mjs", "stopper2.mjs");
+  writeFileSync(hj, fresh);
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /ok {2}옛 백업을 지금 원본으로 바꿈: hooks\.json/);
+  assert.equal(run(bareHome(), ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(hj), fresh, "the revert gives back the new hooks.json");
+});
+
+// Another run writes its result into a file between two reads of this run, as two runs started together do: the
+// RACE_AT-th time this run opens <RACE_FILE>.omcbak, RACE_WITH goes into <RACE_FILE> and RACE_LOG says so.
+const RACE = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const { openSync, readFileSync, writeFileSync } = fs;",
+  "let left = Number(process.env.RACE_AT);",
+  "fs.openSync = (p, ...a) => {",
+  '  if (typeof p === "string" && p.endsWith(`${process.env.RACE_FILE}.omcbak`) && --left === 0) {',
+  '    writeFileSync(p.slice(0, -".omcbak".length), readFileSync(process.env.RACE_WITH));',
+  '    writeFileSync(process.env.RACE_LOG, "written");',
+  "  }",
+  "  return openSync(p, ...a);",
+  "};",
+  "syncBuiltinESMExports();",
+].join("\n");
+function raceRun(plug, file, at, withText) {
+  const pre = join(root, `race${seq++}.mjs`);
+  const text = join(root, `race-with${seq++}`);
+  const log = join(root, `race${seq++}.log`);
+  writeFileSync(pre, `${RACE}\n`);
+  writeFileSync(text, withText);
+  const r = runImport(pre, bareHome(), ["--root", plug], { RACE_FILE: file, RACE_AT: String(at), RACE_WITH: text, RACE_LOG: log });
+  assert.equal(existsSync(log) && read(log), "written", "the other run wrote between this run's reads");
+  return r;
+}
+
+test("an apply that another run patched between its reads keeps the backup the original, so a revert gives it back", () => {
+  const first = bundle();
+  assert.equal(run(bareHome(), ["--root", first]).code, 0);
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  writeFileSync(`${foo}.omcbak`, SCRIPT("foo"));
+  // the first open of foo.mjs.omcbak comes after this run read foo.mjs
+  const r = raceRun(plug, "foo.mjs", 1, read(join(first, "scripts", "foo.mjs")));
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /패치 2건 \/ 실패 0건/, "this run read foo.mjs before the other run patched it");
+  assert.doesNotMatch(r.out, /옛 백업을 지금 원본으로 바꿈/);
+  assert.equal(read(`${foo}.omcbak`), SCRIPT("foo"), "the backup is still the original");
+  assert.equal(run(bareHome(), ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(foo), SCRIPT("foo"), "the revert gives back the original");
+});
+
+test("an apply that another run took PostToolUse out of between its reads keeps the hooks.json backup, so a revert gives PostToolUse back", () => {
+  const plug = bundle();
+  const hj = join(plug, "hooks", "hooks.json");
+  writeFileSync(`${hj}.omcbak`, HOOKS_JSON);
+  const j = JSON.parse(HOOKS_JSON);
+  delete j.hooks.PostToolUse;
+  // [2/4] opens hooks.json.omcbak once for the hook names; the second open comes after [3/4] read hooks.json
+  const r = raceRun(plug, "hooks.json", 2, JSON.stringify(j, null, 2) + "\n");
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /ok {2}제거: foo/, "this run read hooks.json before the other run took PostToolUse out");
+  assert.doesNotMatch(r.out, /옛 백업을 지금 원본으로 바꿈/);
+  assert.equal(read(`${hj}.omcbak`), HOOKS_JSON, "the backup is still the original");
+  assert.equal(run(bareHome(), ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(hj), HOOKS_JSON, "the revert gives back PostToolUse");
+});
+
+// 0.20.4 B2 Task 8: the helper says on stderr when the time limit cut an import (B2-03, its bytes change)
+test("a patched hook whose import hangs says on stderr that the time limit cut it", { timeout: 40000 }, () => {
+  const plug = bundle();
+  writeFileSync(join(plug, "scripts", "lib.mjs"), "setInterval(() => {}, 1000);\nawait new Promise(() => {});\nexport const x = () => 1;\n");
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const r = spawnSync(process.execPath, [join(plug, "scripts", "foo.mjs")], { encoding: "utf8", timeout: 30000 });
+  assert.equal(r.error, undefined, "the hook ended by itself");
+  assert.notEqual(r.stderr, "", "the cut is not silent");
+});
+
+// The helper before 0.20.4: no stderr line on a timeout, and its first comment named a README that was never shipped.
+const OLD_HELPER_LINE = "// --- OMC local patch: bound top-level dynamic import (see ~/.claude/omc-local-patches/README.md)";
+const asOldHelper = (text) => text
+  .replace(/\/\/ --- OMC local patch: bound top-level dynamic import \([^)\n]*\)/, OLD_HELPER_LINE)
+  .replace(/\n[^\n]*\[OMC local patch\] import [^\n]*\n/, "\n");
+test("a hook patched by the previous helper is still seen as patched and its revert gives back the original", () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  for (const n of ["foo", "stopper"]) {
+    const f = join(plug, "scripts", `${n}.mjs`);
+    writeFileSync(f, asOldHelper(read(f)));
+    assert.ok(read(f).includes(OLD_HELPER_LINE) && !read(f).includes("[OMC local patch] import"), "a hook as the previous helper left it");
+  }
+  const c = run(bareHome(), ["--root", plug, "--check"]);
+  assert.match(c.out, /결과: 모두 적용된 상태입니다\./, c.out);
+  const r = run(bareHome(), ["--root", plug, "--revert"]);
+  assert.equal(r.code, 0, r.out);
+  for (const n of ["foo", "stopper"]) assert.equal(read(join(plug, "scripts", `${n}.mjs`)), SCRIPT(n), `${n} is its original again`);
+});
+
+// 0.20.4 B2 Task 9: the SKILL's search for other names and the temp tar (B2-21)
+test("the SKILL's search for another name is bounded and the temp tar comes from mktemp", () => {
+  const skill = read(join(dirname(TOOL), "..", "SKILL.md"));
+  assert.match(skill, /mktemp/, "a temp tar name the agent does not pick by itself");
+  assert.doesNotMatch(skill, /둘째 줄의 마지막 칸/, "no df column parsing that breaks on a mount point with spaces");
+});
+
+// 0.20.4 B2 Task 10: tests that hold each condition of the --check verdict and each read guard on its own (B2-23, from
+// the 2026-10-16 review's appendix B; the four of it already in this file are left out).
+
+// --check: the blocked line is the result only when nothing else is left; with anything else left it is a note.
+const LEFT = {
+  "a script that lost its patch": (act) => writeFileSync(join(act, "scripts", "foo.mjs"), read(join(act, "scripts", "foo.mjs.omcbak"))),
+  "PostToolUse back in hooks.json": (act) => writeFileSync(join(act, "hooks", "hooks.json"), read(join(act, "hooks", "hooks.json.omcbak"))),
+};
+for (const [what, undo] of Object.entries(LEFT)) {
+  test(`--check with only ${what} left and a record it cannot clean: the patches are the result, the record a note`, { skip: !HAS_GIT && "git not found" }, (t) => {
+    const { f, record } = olderPin();
+    assert.equal(run(f.home, ["--no-update"]).code, 0);
+    if (!linkPinTo(t, f, record)) return;
+    undo(join(f.cache, "5.6.1"));
+    const c = run(f.home, ["--check", "--no-update"]);
+    assert.match(c.out, /결과: 적용되지 않은 항목이 있습니다\./);
+    assert.doesNotMatch(c.out, /결과: 고정 기록/);
+    assert.match(c.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+  });
+}
+const BROKEN = {
+  "a hooks.json it cannot read": [(act) => writeFileSync(join(act, "hooks", "hooks.json"), "{ broken"), /결과: hooks\.json 을 확인하지 못했습니다\./],
+  "a helper out of place": [(act) => writeFileSync(join(act, "scripts", "stopper.mjs"), 'await __omcRaceImport(import("./lib.mjs"));\n'), /결과: 헬퍼 자리 결함 1건이 있습니다\./],
+};
+for (const [what, [breakIt, verdict]] of Object.entries(BROKEN)) {
+  test(`--check with ${what} and a record it cannot clean: that is the result, the record still a note`, { skip: !HAS_GIT && "git not found" }, (t) => {
+    const { f, record } = olderPin();
+    assert.equal(run(f.home, ["--no-update"]).code, 0);
+    if (!linkPinTo(t, f, record)) return;
+    breakIt(join(f.cache, "5.6.1"));
+    const c = run(f.home, ["--check", "--no-update"]);
+    assert.match(c.out, verdict);
+    assert.match(c.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+  });
+}
+
+// --check: a hook it cannot read keeps the verdict from saying all is applied, even when nothing else is left.
+test("--check with an unreadable hook as the only thing wrong does not say all is applied", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const foo = join(plug, "scripts", "foo.mjs");
+  chmodSync(foo, 0o000);
+  try {
+    const c = run(bareHome(), ["--root", plug, "--check"]);
+    assert.match(c.out, /\[!\] 읽지 못함: foo \(EACCES\)/);
+    assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다\./);
+    assert.match(c.out, /결과: 훅 스크립트를 확인하지 못했습니다\./);
+  } finally {
+    chmodSync(foo, 0o644);
+  }
+});
+
+// Reads of the files around a hook never stall on a FIFO, and a revert counts a hook it cannot read.
+test("a hooks.json.omcbak that is a FIFO is not read by a revert, and a FIFO named like a manual backup is passed over", posixFifo, (t) => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const hj = join(plug, "hooks", "hooks.json");
+  rmSync(`${hj}.omcbak`);
+  if (!mkfifoAt(`${hj}.bak-by-hand`)) { t.skip("no mkfifo here"); return; }
+  const manual = runBy(bareHome(), ["--root", plug, "--revert"]);
+  assert.equal(manual.error, undefined, "the revert ended before its deadline (manual backup candidate)");
+  assert.equal(manual.code, 0, manual.out);
+  rmSync(`${hj}.bak-by-hand`);
+  assert.ok(mkfifoAt(`${hj}.omcbak`));
+  const bak = runBy(bareHome(), ["--root", plug, "--revert"]);
+  assert.equal(bak.error, undefined, "the revert ended before its deadline (backup)");
+  assert.equal(bak.code, 1, bak.out);
+});
+
+test("a revert counts a hook it cannot read when there is no backup: named, counted, and it does not end in a crash line", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const foo = join(plug, "scripts", "foo.mjs");
+  rmSync(`${foo}.omcbak`);
+  chmodSync(foo, 0o000);
+  let r;
+  try {
+    r = run(bareHome(), ["--revert", "--root", plug]);
+  } finally {
+    chmodSync(foo, 0o644);
+  }
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 읽지 못함: foo \(EACCES\)/);
+  assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 실패 1건\./);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/);
+});
+
+test("a hook backup that is a FIFO is not read by a revert: named, counted, and the run ends", posixFifo, (t) => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const bak = join(plug, "scripts", "foo.mjs.omcbak");
+  if (!mkfifoAt(bak)) { t.skip("no mkfifo here"); return; }
+  const r = runBy(bareHome(), ["--revert", "--root", plug]);
+  assert.equal(r.error, undefined, "the revert ended before its deadline");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 되돌리지 않음: foo \(백업 자리가 일반 파일이 아님\)/);
+  assert.ok(lstatSync(bak).isFIFO(), "the FIFO is still a FIFO");
+});
+
+// A file ID the size of an NTFS one, 14355223812554955, does not survive a Number (the last digit reads 6): the number printed
+// for finding the other name must come from a BigInt on every OS, not only where the IDs are that large.
+test("the number given for the other name of a hard-linked record keeps every digit of a 64-bit ID", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  const pre = join(root, `big-ino${seq++}.mjs`);
+  writeFileSync(pre, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.lstatSync;",
+    'fs.lstatSync = (p, o) => { const st = real(p, o); return o?.bigint && String(p).endsWith("PINNED") ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino: 14355223812554955n, nlink: 2n }) : st; };',
+    "syncBuiltinESMExports();",
+  ].join("\n"));
+  const r = runImport(pre, f.home, ["--check", "--no-update"]);
+  assert.ok(r.out.includes("파일 ID) 14355223812554955 로 찾습니다."), r.out);
 });
