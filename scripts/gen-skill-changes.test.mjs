@@ -107,12 +107,14 @@ test("without --to the working tree is compared, uncommitted edits included", ne
 
 // npm reaches no registry from this test: update_notifier=false stops the weekly update check, the one request
 // npm pack made; offline keeps any other lookup off the network, and audit and fund are off for any npm that adds one.
-const NPM_OFFLINE = { npm_config_update_notifier: "false", npm_config_offline: "true", npm_config_audit: "false", npm_config_fund: "false" };
+// Its cache and logs go to this test's folder, not the real ~/.npm.
+const NPM_OFFLINE = { npm_config_update_notifier: "false", npm_config_offline: "true", npm_config_audit: "false", npm_config_fund: "false",
+  npm_config_cache: join(root, "npm-cache") };
 // npm reads npm_config_* names whatever their case and the last spelling wins, so the caller's own NPM_CONFIG_OFFLINE
 // (after our npm_config_offline in the environment's order) would undo it: drop every spelling of the keys set here.
 function npmOfflineEnv(base) {
   const env = { ...base };
-  for (const key of Object.keys(env)) if (key.toLowerCase() in NPM_OFFLINE) delete env[key];
+  for (const key of Object.keys(env)) if (Object.hasOwn(NPM_OFFLINE, key.toLowerCase())) delete env[key];
   return { ...env, ...NPM_OFFLINE };
 }
 // npm decides what the tarball holds; isShipped must agree with it for every file git tracks under skills/.
@@ -261,4 +263,13 @@ test("a skill deleted whole is not named, though its files changed", needGit, ()
   const { dir, base } = fixture();
   git(dir, "rm", "-rq", "skills/beta");
   assert.deepEqual(changedSkills(base, commit(dir), dir), []);
+});
+
+test("npm's environment drops every spelling of the keys it sets, keeps a name an object inherits, and keeps npm's cache in this test's folder", () => {
+  const env = npmOfflineEnv({ constructor: "kept", NPM_CONFIG_OFFLINE: "false", Npm_Config_Cache: "/elsewhere", PATH: "/bin" });
+  assert.equal(env.constructor, "kept", "a variable named like an inherited property is not dropped");
+  assert.equal(env.NPM_CONFIG_OFFLINE, undefined);
+  assert.equal(env.Npm_Config_Cache, undefined);
+  assert.equal(env.npm_config_offline, "true");
+  assert.ok(env.npm_config_cache?.startsWith(root), `npm_config_cache ${env.npm_config_cache} is under the test folder`);
 });

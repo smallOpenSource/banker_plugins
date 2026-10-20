@@ -2,7 +2,7 @@
 'use strict';
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
- * npm pack -> install the tarball into a TEMP prefix + TEMP HOME -> dry-run setup for both
+ * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
  * targets -> assert planned actions match the manifest (63 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
@@ -15,13 +15,16 @@ const root = path.resolve(__dirname, '..');
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}: ${msg}`); if (!cond) failures++; };
 const run = (cmd, args, opts = {}) => cp.execFileSync(cmd, args, { encoding: 'utf8', ...opts });
-// npm reaches no registry from this harness: update_notifier=false stops the weekly update check, the one request
-// npm pack and a local tarball's install made; offline keeps any other lookup off the network.
-const OFFLINE_SETTINGS = { npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
-// npm reads npm_config_* names whatever their case and the last spelling wins: drop every spelling of the settings set here.
-const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !(k.toLowerCase() in OFFLINE_SETTINGS))), ...OFFLINE_SETTINGS };
-
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
+// npm reaches no registry from this harness: update_notifier=false stops the weekly update check, the one request
+// npm pack and a local tarball's install made; offline keeps any other lookup off the network. Its cache and logs go
+// to the temp folder, not the real ~/.npm.
+const OFFLINE_SETTINGS = { npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false',
+  npm_config_cache: path.join(tmp, 'npm-cache') };
+// npm reads npm_config_* names whatever their case and the last spelling wins: drop every spelling of the settings set
+// here (an own key only: a variable named like `constructor` is no setting).
+const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !Object.hasOwn(OFFLINE_SETTINGS, k.toLowerCase()))), ...OFFLINE_SETTINGS };
+
 const prefix = path.join(tmp, 'prefix');
 const home = path.join(tmp, 'home');
 fs.mkdirSync(prefix, { recursive: true });
@@ -33,6 +36,7 @@ try {
   const tarball = packOut.trim().split('\n').filter(Boolean).pop().trim();
   const tarPath = path.join(tmp, tarball);
   ok(fs.existsSync(tarPath), `npm pack produced ${tarball}`);
+  ok(fs.existsSync(path.join(tmp, 'npm-cache', '_logs')), 'npm kept its cache and logs in the temp folder (not ~/.npm)');
 
   // 2) global install into temp prefix (offline; no deps)
   run('npm', ['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
