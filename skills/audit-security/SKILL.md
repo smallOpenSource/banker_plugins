@@ -17,7 +17,7 @@ consensus는 고신뢰, 단일툴은 needs-review. 산출물은 방안·권고 �
 - 이전 세션/에이전트의 "취약점 없음" 주장을 **직접 재검증**할 때
 
 ## 불변 원칙
-1. **read-only**: 소스·`pom.xml`/`package.json`/`requirements.txt`/CI **일절 무변경**. 도구·러너·결과는 작업용 디렉터리(예: gitignored `.audit/` 또는 `$RESEARCH_DIR`)에 격리. 도구는 advisory DB만 조회(소스 미수정).
+1. **read-only**: 소스·`pom.xml`/`package.json`/`requirements.txt`/CI **일절 무변경**. 도구·러너·결과는 감사 대상 저장소 밖의 작업 폴더(`$RESEARCH_DIR`, 없으면 `mktemp -d` 로 만든 개인 폴더)에 격리. 저장소 안의 폴더(예: `.audit/`)는 쓰지 않는다. 저장소가 그 자리에 링크를 심어 두면 결과 쓰기가 링크 너머 파일을 덮는다. 만든 폴더의 경로는 리포트 Evidence 에 적는다. 다시 돌릴 러너와 결과를 오래 두려면 `RESEARCH_DIR` 로 저장소 밖 폴더를 준다(`/tmp` 는 OS 가 비울 수 있다). 도구는 advisory DB만 조회(소스 미수정).
 2. **시크릿 값 비노출**: 리포트·로그에 **secret value 절대 미기입**. `RuleID + file:LINE`만. 값 확인이 필요하면 사용자에게 "해당 file:LINE 직접 확인" 안내(cat/grep로 값 출력 금지).
 3. **local-first + 온라인 교차검증**: advisory DB는 로컬/공개(OSV·deps.dev·trivy-db)를 1차로, 온라인은 recall 보강용 교차검증만. **active-verify 금지** — 시크릿을 **실 엔드포인트에 인증 시도**하는 egress는 금지(특히 규제·민감 환경에선 절대 불가).
 4. **verify-before-claim**: 모든 finding은 `CVE-ID`/`RuleID` + `file:LINE` 동반. "0건 = 안전 보증" **금지**(semgrep CE는 intraprocedural — 함수 경계 taint 미추적; parse 실패 파일 = 미커버). 완료 전 4-field(① 변경 ② Evidence ③ 검증 ④ Unknown), ⏳=0일 때만 "완료".
@@ -64,7 +64,7 @@ SCA 도구는 advisory DB 나 레지스트리를 네트워크에서 받는다. �
 - 로컬 DB 가 비어 있으면 rc 0 과 `{"results": []}` 다. 문제없음과 모양이 같다.
 - 패키지 소스가 없으면 rc 128 이다. 네트워크가 아니라 대상이 없는 것이다.
 
-도구마다 stdout 은 `$OUT/<도구>.json`, stderr 는 `$OUT/<도구>.err` 로 따로 남기고 종료 코드를 적는다. `OUT` 은 1번 규칙의 작업 폴더다(`OUT="${RESEARCH_DIR:-.audit}"; mkdir -p "$OUT"`). 비어 있으면 `/<도구>.json` 에 쓰게 되므로 먼저 정한다. 아래 조건은 이 셋으로 본다. 조건을 모두 채워야 결과로 읽는다.
+도구마다 stdout 은 `$OUT/<도구>.json`, stderr 는 `$OUT/<도구>.err` 로 따로 남기고 종료 코드를 적는다. `OUT` 은 1번 규칙의 작업 폴더다(`OUT="${RESEARCH_DIR:-$(mktemp -d)}"; mkdir -p "$OUT"`). 비어 있으면 `/<도구>.json` 에 쓰게 되므로 먼저 정한다. 아래 조건은 이 셋으로 본다. 조건을 모두 채워야 결과로 읽는다.
 
 | 도구 | 결과로 읽는 조건 | 실측 |
 |---|---|---|

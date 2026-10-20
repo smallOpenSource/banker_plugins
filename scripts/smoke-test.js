@@ -957,11 +957,12 @@ try {
   const pyBad = pyDocs.filter((f) => {
     const lines = joinedLines(fs.readFileSync(path.join(root, f), 'utf8'));
     const at = (re) => lines.findIndex((l) => re.test(l));
-    const li = at(/^L=\$\( \(pip config list \|\| pip3 config list \|\| python3 -m pip config list\) 2>\/dev\/null\)/), ins = at(/^I="\$\{PIP_INDEX_URL:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^install\\\.index-url=/);
+    const li = at(/^L=\$\( \(cd ~ && \{ pip config list \|\| pip3 config list \|\| python3 -m pip config list; \}\) 2>\/dev\/null\)/), ins = at(/^I="\$\{PIP_INDEX_URL:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^install\\\.index-url=/);
     const glo = at(/^I="\$\{I:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^global\\\.index-url=/);
     const cut = at(/^I=\$\(printf %s "\$\{I:-https:\/\/pypi\.org\/simple\}" \| sed -E 's#\^\(\[A-Za-z\]\[A-Za-z0-9\+\.-\]\*:\/\/\)\[\^\/\]\*@#\\1#; s#\/\$##'\)/);
     const get = at(/^curl -sSI -o \/dev\/null --connect-timeout 5 --max-time 10 "\$I\/pip\/"/);
-    return !(li >= 0 && li < ins && ins < glo && glo < cut && cut < get) || lines.some((l) => /\bcurl\b/.test(l) && /PIP_INDEX_URL|pip config|\$\{I:-/.test(l));
+    return !(li >= 0 && li < ins && ins < glo && glo < cut && cut < get) || lines.some((l) => /\bcurl\b/.test(l) && /PIP_INDEX_URL|pip config|\$\{I:-/.test(l))
+      || lines.some((l) => /\bpython3? -m pip config\b/.test(l) && !/\(cd ~ && \{/.test(l));
   });
   ok(pyDocs.length === 6 && pyBad.length === 0,
      `airgap-4g: the pip index check reads pip's settings and cuts the user info of the URL before curl (docs ${pyDocs.length}, wrong: ${JSON.stringify(pyBad)})`);
@@ -1041,7 +1042,8 @@ try {
      && !/stderr 에 [^|]*(?:없음|없다) \| 미커버 \|/.test(asSkill)
      && /0건으로 세지 않는다\. 리포트 Unknown 에 "미커버\(네트워크 없음 또는 대상 없음\): <도구>, 종료 <코드>, <stderr 첫 줄>" 로 적는다/.test(asSkill)
      && /stderr 는 `\$OUT\/<도구>\.err` 로 따로 남기고 종료 코드를 적는다/.test(asSkill)
-     && /DB 의 기준일\(파일 수정 시각\)을 Evidence 에 적는다/.test(asSkill) && /`OUT="\$\{RESEARCH_DIR:-\.audit\}"; mkdir -p "\$OUT"`/.test(asSkill),
+     && /DB 의 기준일\(파일 수정 시각\)을 Evidence 에 적는다/.test(asSkill) && /`OUT="\$\{RESEARCH_DIR:-\$\(mktemp -d\)\}"; mkdir -p "\$OUT"`/.test(asSkill)
+     && /감사 대상 저장소 밖의 작업 폴더/.test(asSkill) && !/gitignored `\.audit\/`/.test(asSkill),
      'airgap-2: audit-security reads a tool output as a result only when it parses and shows a scan, and writes "미커버" with the exit code and stderr instead of 0');
   // deep-research with no web tool that works ends as "웹 조사 불가" instead of a report without sources, and ultra-chain's
   // research gate does not pass on zero claims.
