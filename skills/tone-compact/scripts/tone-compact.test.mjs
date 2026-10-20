@@ -38,6 +38,18 @@ const KEEP_CLOSE = "<!-- USER:OMX:POLICY:END -->";
 
 // Links made without privileges and mode bits are POSIX matters; root ignores mode bits.
 const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
+// Whether this account can make a symlink: Windows needs Developer Mode or an elevated prompt for one.
+function canSymlink() {
+  const probe = join(root, "symlink-probe");
+  try {
+    symlinkSync(join(root, "nowhere"), probe);
+    rmSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const symlinkTest = { skip: !canSymlink() && "this account cannot make symlinks" };
 const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const permTest = { skip: process.platform === "win32" ? "Windows has no POSIX mode bits" : asRoot && "root ignores mode bits" };
 
@@ -1307,7 +1319,7 @@ test("an override holding only our block over AGENTS.md that is a link to nothin
   assert.match(r.message, /끊어진 링크라 그대로 두었습니다/);
 });
 
-test("Claude Code: on says so when the rules file was a link it replaced, and leaves where the link led as it was", posixOnly, () => {
+test("Claude Code: on says so when the rules file was a link it replaced, and leaves where the link led as it was", symlinkTest, () => {
   const s = setup();
   mkdirSync(join(s.o.claudeDir, "rules"));
   symlinkSync("gone.md", s.rulesFile);
