@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { pwshEnv, pwshVars } from '../../../scripts/test-fixtures/pwsh-env.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = join(HERE, 'fallback', 'bypass-permissions.py');
@@ -19,11 +20,15 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 const works = (bin, args) => spawnSync(bin, args, { encoding: 'utf8' }).status === 0;
 const python = ['python3', 'python'].find((bin) => works(bin, ['-c', 'import sys; assert sys.version_info >= (3, 6)']));
-const powershell = ['powershell', 'pwsh'].find((bin) => works(bin, ['-NoProfile', '-Command', 'exit 0']));
+// The PowerShell probes run with a temp home and the telemetry and update-check opt-outs (scripts/test-fixtures/pwsh-env.mjs).
+const PSE = pwshEnv();
+after(() => rmSync(PSE.home, { recursive: true, force: true }));
+const psWorks = (bin, args) => spawnSync(bin, args, { encoding: 'utf8', env: PSE.env }).status === 0;
+const powershell = ['powershell', 'pwsh'].find((bin) => psWorks(bin, ['-NoProfile', '-Command', 'exit 0']));
 const asRoot = process.platform !== 'win32' && process.getuid?.() === 0;
 const posix = process.platform !== 'win32';
 // PowerShell sets a file mode on macOS and Linux only where .NET has SetUnixFileMode (PowerShell 7.3+).
-const psModes = posix && powershell && works(powershell, ['-NoProfile', '-Command',
+const psModes = posix && powershell && psWorks(powershell, ['-NoProfile', '-Command',
   "if ($null -eq [System.IO.File].GetMethod('SetUnixFileMode', [type[]]@([string], [System.IO.UnixFileMode]))) { exit 1 }"]);
 
 // The two fallbacks behind one interface: run(c, ...args) as Claude, or a person, would run them.
@@ -52,6 +57,7 @@ const env = (c, extra = {}) => ({
   BANKER_BYPASS_TEST: '1',
   BANKER_BYPASS_POLICY_HOME: c.policyHome,
   IS_SANDBOX: '',
+  ...pwshVars(c.dir),
   ...extra,
 });
 const run = (shell, c, args, extra) => spawnSync(shell.bin, shell.args(...args), { encoding: 'utf8', env: env(c, extra) });

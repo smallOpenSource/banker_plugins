@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { after, test } from "node:test";
+import { pwshEnv } from "../../../scripts/test-fixtures/pwsh-env.mjs";
 
 const SKILL = readFileSync(fileURLToPath(new URL("../SKILL.md", import.meta.url)), "utf8");
 const BLOCK = ((SKILL.split("## 외부 좌석 전송")[1] || "").match(/```bash\n([\s\S]*?)```/) || [])[1] || "";
@@ -554,11 +555,14 @@ test("a listed ./ line names its file for the related range too, as the chain re
 });
 
 // The PowerShell step 2 is prose: its spans run in pwsh where there is one (Windows paths take / off Windows).
-const PS = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "exit 0"], { encoding: "utf8" }).status === 0;
+// pwsh runs with a temp home and the telemetry and update-check opt-outs (scripts/test-fixtures/pwsh-env.mjs).
+const PSE = pwshEnv();
+after(() => rmSync(PSE.home, { recursive: true, force: true }));
+const PS = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "exit 0"], { encoding: "utf8", env: PSE.env }).status === 0;
 const PS_LINE = SKILL.split("\n").find((l) => l.startsWith("  - 2단계 원문 붙이기:")) || "";
 const psSpan = (re) => (PS_LINE.match(re) || [])[1] || "";
 const posixPs = (s) => (process.platform === "win32" ? s : s.replaceAll("$d\\", "$d/").replaceAll("<저장소>\\<파일>", "<저장소>/<파일>"));
-const pwsh = (script) => spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+const pwsh = (script) => spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", env: PSE.env });
 const psq = (s) => s.replaceAll("'", "''");
 
 test("the PowerShell list check takes a ./ line as the file it names, as the bash chain does", { skip: !PS && "no pwsh" }, (t) => {

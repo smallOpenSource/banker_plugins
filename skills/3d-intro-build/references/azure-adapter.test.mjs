@@ -1341,7 +1341,7 @@ test('persistCreds: a project key file that is a link is refused with nothing wr
   fs.writeFileSync(dotfile, '[user]\n\tname = me\n');
   const target = path.join(proj, '.env.3d-intro.local');
   fs.symlinkSync(path.join('..', 'home', '.gitconfig'), target); // what a cloned repository can bring
-  assert.throws(() => A.persistCreds({ AZURE_SORA_ENDPOINT: 'https://x.example.com' }, { target }), /is a link, and a project key file is written only as a file of its own; nothing was written/);
+  assert.throws(() => A.persistCreds({ AZURE_SORA_ENDPOINT: 'https://x.example.com' }, { target }), /is a link, and a project key file is written only as a file of its own; nothing was written\. Edit the file it points at yourself, or put a file of its own there/);
   assert.equal(fs.readFileSync(dotfile, 'utf8'), '[user]\n\tname = me\n');
   // in its own folder too: a link to the repository's .git/config would stop every git command there
   fs.mkdirSync(path.join(proj, '.git'));

@@ -139,6 +139,23 @@ test('정상 응답: 캐시 latest/checkedAt 갱신 + GET 무페이로드', asyn
   }
 });
 
+test('확인에 성공하면 남아 있던 시도 시각(triedAt)을 비운다(시계를 되돌린 PC 의 미래 시각이 성공 뒤에도 "실패" 로 보이지 않게)', async () => {
+  for (const [latest, body] of [['0.8.0', '0.9.0'], ['0.9.0', '0.9.0']]) {   // 새 판과 같은 판, 두 쓰기 길 모두
+    const tmp = mkTmp();
+    const server = await mockServer({ body: { version: body } });
+    try {
+      writeCache(tmp, { latest, triedAt: Date.now() + 30 * 24 * 3600 * 1000 }); // 미래 시각: 쉼으로 세지 않아 바로 확인
+      assert.equal(await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`), 0);
+      const cache = readCache(tmp);
+      assert.equal(cache.latest, body);
+      assert.ok(typeof cache.checkedAt === 'number' && cache.checkedAt > 0, 'checkedAt 갱신');
+      assert.equal(cache.triedAt, null, `${latest} 에서 ${body}: 시도 시각을 비움`);
+    } finally {
+      server.close();
+    }
+  }
+});
+
 // 암호 모듈 없이 빌드한 Node 를 흉내 내는 시험 도구(--import). 배포에 들지 않는 scripts/ 아래에 있다. 이 훅은 https 를
 // 가져와 그런 Node 에서는 시작하지 못하므로, 여기서는 NO_CRYPTO_ONLY=1 로 node:crypto 만 막아 이 훅이 crypto 를 맨 위에서
 // 가져오지 않는지만 본다.

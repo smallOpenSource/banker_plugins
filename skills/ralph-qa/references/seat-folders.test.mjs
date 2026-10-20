@@ -8,7 +8,8 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { after, test } from "node:test";
+import { pwshEnv } from "../../../scripts/test-fixtures/pwsh-env.mjs";
 
 const SKILL = readFileSync(fileURLToPath(new URL("../SKILL.md", import.meta.url)), "utf8");
 const BLOCK = ((SKILL.split("## 외부 좌석 전송")[1] || "").match(/```bash\n([\s\S]*?)```/) || [])[1] || "";
@@ -22,7 +23,11 @@ const TIMEOUT_LIMIT = (SKILL.match(/`<상한>` 자리에 `timeout` 이 있으면
 
 const works = (cmd, arg = "--version") => spawnSync(cmd, [arg], { encoding: "utf8" }).status === 0;
 const SKIP = process.platform === "win32" ? "Git Bash path handling is not checked on Windows" : !works("bash") ? "no bash" : false;
-const PS_SKIP = process.platform === "win32" ? "checked where bash is" : !works("pwsh", "-Version") ? "no pwsh" : false;
+// pwsh runs with a temp home and the telemetry and update-check opt-outs (scripts/test-fixtures/pwsh-env.mjs).
+const PSE = pwshEnv();
+after(() => rmSync(PSE.home, { recursive: true, force: true }));
+const PS_SKIP = process.platform === "win32" ? "checked where bash is"
+  : spawnSync("pwsh", ["-Version"], { encoding: "utf8", env: PSE.env }).status !== 0 ? "no pwsh" : false;
 
 const DAYS_2 = (Date.now() - 2 * 86400 * 1000) / 1000;
 
@@ -105,7 +110,7 @@ test("the PowerShell day rule removes only marked folders past a day, never a us
   const dir = scratch(t);
   const { b, target } = base(dir);
   const r = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", `$d = '${join(b, "ralph-qa.cur999")}'; ${PS_RULE}`],
-    { encoding: "utf8" });
+    { encoding: "utf8", env: PSE.env });
   assert.equal(r.status, 0, r.stderr);
   left(b, target);
 });

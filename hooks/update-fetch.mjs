@@ -112,9 +112,9 @@ async function main() {
   // 조회는 카운팅 활성 경로의 update-checkin 만 수행한다(중복·죽은 조회 제거).
   const cachedLatest = typeof cache.latest === 'string' ? cache.latest : null;
   if (cachedLatest !== latest) {
-    writeUpdateCache({ latest, checkedAt: Date.now(), notified: null }); // 신버전 - notified 재무장.
+    writeUpdateCache({ latest, checkedAt: Date.now(), notified: null, triedAt: null }); // 신버전 - notified 재무장. 남은 실패 시도 시각은 비움.
   } else {
-    writeUpdateCache({ latest, checkedAt: Date.now() }); // 동일 버전 - notified 등 형제 필드는 병합 보존.
+    writeUpdateCache({ latest, checkedAt: Date.now(), triedAt: null }); // 동일 버전 - notified 등 형제 필드는 병합 보존, 실패 시도 시각은 비움.
   }
 }
 

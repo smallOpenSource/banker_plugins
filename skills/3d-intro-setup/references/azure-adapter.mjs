@@ -227,7 +227,7 @@ function keyFileAt(target) {
 // there is refused. The home key and settings files keep following a link anywhere (a dotfiles setup).
 function refuseProjectLink(target) {
   if ([homeCredsPath(), homeSettingsPath()].includes(path.resolve(target))) return;
-  throw new Error(`persistCreds: ${target} is a link, and a project key file is written only as a file of its own; nothing was written`);
+  throw new Error(`persistCreds: ${target} is a link, and a project key file is written only as a file of its own; nothing was written. Edit the file it points at yourself, or put a file of its own there (or use the home key file)`);
 }
 
 function linkedFile(link) {

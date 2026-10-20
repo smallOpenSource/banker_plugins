@@ -180,14 +180,14 @@ function fetchConfig(env) {
   return out;
 }
 
-// 마켓플레이스의 .git 이 깨졌으면(중단된 clone) git 은 위로 올라가 다음 저장소(dotfiles 로 관리하는 ~/.claude 등)를
-// 고른다. 바로 위 폴더를 천장(GIT_CEILING_DIRECTORIES)으로 두어 마켓플레이스 밖으로 나가지 못하게 한다.
-// 마켓플레이스가 링크면 실제 경로 쪽 위 폴더도 막는다. 셸에 있던 천장 값은 대소문자와 상관없이 이 값으로 바꾼다.
 // 업데이트 fetch 만 받는 값. 받는 속도가 초당 1000바이트 밑으로 30초 이어지면 git(curl)이 스스로 끊고, 자격 증명을 터미널에서 묻지 않는다.
 const NET_ENV = { GIT_HTTP_LOW_SPEED_LIMIT: "1000", GIT_HTTP_LOW_SPEED_TIME: "30", GIT_TERMINAL_PROMPT: "0" };
 // fetch 전체의 시간 제한(ms). 응답하지 않는 망(연결을 붙잡는 방화벽, TLS 블랙홀)에서 멈추지 않게 한다. 시험이 줄일 수 있게
 // OMC_PATCH_FETCH_TIMEOUT_MS 를 받되 줄이기만 한다. 0 이하나 숫자가 아니면 버린다. 문서에 적지 않는 시험용 장치다.
 const FETCH_TIMEOUT_MS = Math.min(Number(process.env.OMC_PATCH_FETCH_TIMEOUT_MS) > 0 ? Number(process.env.OMC_PATCH_FETCH_TIMEOUT_MS) : 120000, 120000);
+// 마켓플레이스의 .git 이 깨졌으면(중단된 clone) git 은 위로 올라가 다음 저장소(dotfiles 로 관리하는 ~/.claude 등)를
+// 고른다. 바로 위 폴더를 천장(GIT_CEILING_DIRECTORIES)으로 두어 마켓플레이스 밖으로 나가지 못하게 한다.
+// 마켓플레이스가 링크면 실제 경로 쪽 위 폴더도 막는다. 셸에 있던 천장 값은 대소문자와 상관없이 이 값으로 바꾼다.
 const gitEnv = ({ network = false } = {}) => {
   const vars = gitRepoVars();
   const drop = (k) => isEnvConfig(k) || vars.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";

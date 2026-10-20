@@ -6,6 +6,7 @@ import {
   chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
 } from "node:fs";
+import { createServer as httpServer } from "node:http";
 import { createServer } from "node:net";
 import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -3651,6 +3652,26 @@ test("a bare apply over an origin with credentials keeps no quoted piece of git'
   assert.ok(cause, r.out);
   assert.ok(!cause.replace(/'\*\*\*'/g, "").includes("'"), `a quoted piece is left: ${cause}`);
   for (const piece of ["Qz", "Xy", "'Q'"]) assert.ok(!cause.includes(piece), `${piece} in ${cause}`);
+});
+
+// Final batch: the fetch never asks for credentials on a terminal (GIT_TERMINAL_PROMPT=0): an origin that wants a login
+// ends the fetch with git's own line saying so, and no prompt waits for an answer.
+test("a bare apply over an origin that wants a login does not ask for it on a terminal", { skip: !HAS_GIT && "git not found", timeout: 60000 }, async () => {
+  const srv = httpServer((req, res) => { res.writeHead(401, { "WWW-Authenticate": 'Basic realm="x"' }); res.end(); });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  try {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `http://127.0.0.1:${srv.address().port}/omc.git`], f.market).status, 0);
+    const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home, OMC_PATCH_FETCH_TIMEOUT_MS: "20000", NO_PROXY: "*", no_proxy: "*" });
+    delete env.OMC_PATCH_INSTALLED;
+    const r = await new Promise((res) => {
+      execFile(process.execPath, [TOOL], { env, encoding: "utf8", timeout: 40000 }, (e, so, se) => res({ code: e ? e.code : 0, out: `${so}${se}` }));
+    });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /origin 에서 태그를 받지 못함: .*terminal prompts disabled/, r.out);
+  } finally {
+    srv.close();
+  }
 });
 
 // B7 item 10, same line: an origin this tool pinned cannot be fetched; the bare apply says so instead of git's remote-helper error.
