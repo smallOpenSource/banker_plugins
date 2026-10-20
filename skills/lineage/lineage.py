@@ -2676,114 +2676,149 @@ def _flag_clash(args):
     return None
 
 
-def main(argv=None) -> int:
-    args = build_arg_parser().parse_args(argv)
-
+def _merge_env_extra(args):
+    """LINEAGE_REDACT_EXTRA's keywords after --redact-extra's."""
     env_extra = os.environ.get("LINEAGE_REDACT_EXTRA", "").strip()
     if env_extra:
         args.redact_extra = ",".join(
             p for p in (args.redact_extra, env_extra) if p)
 
-    clash = _flag_clash(args)
-    if clash:
-        print(f"[lineage] ERROR: {clash}", file=sys.stderr)
-        return 2
 
-    if args.purge_cache:
-        import shutil
-        if CACHE_BASE.exists():
-            shutil.rmtree(CACHE_BASE)
-            print(f"[lineage] cache purged: {CACHE_BASE}", file=sys.stderr)
-        else:
-            print("[lineage] no cache to purge", file=sys.stderr)
-        return 0
+def _purge_cache():
+    import shutil
+    if CACHE_BASE.exists():
+        shutil.rmtree(CACHE_BASE)
+        print(f"[lineage] cache purged: {CACHE_BASE}", file=sys.stderr)
+    else:
+        print("[lineage] no cache to purge", file=sys.stderr)
+    return 0
 
-    if args.apply_review:
-        if any((args.last, args.from_, args.to, args.turns, args.session,
-                args.all_sessions, args.from_transcript)):
-            print("[lineage] note: --apply-review renders the pack; source and range "
-                  "flags were applied at --emit-review", file=sys.stderr)
-        return apply_review(args)
 
-    # ---- Resolve input → raw turns (parse + parts + session) ----
+def _run_apply(args):
+    if any((args.last, args.from_, args.to, args.turns, args.session,
+            args.all_sessions, args.from_transcript)):
+        print("[lineage] note: --apply-review renders the pack; source and range "
+              "flags were applied at --emit-review", file=sys.stderr)
+    return apply_review(args)
+
+
+def _read_all_sessions(args):
+    """Every session of the project folder, merged record by record in time order."""
+    files = project_jsonl_files()
+    if not files:
+        print("[lineage] --all-sessions: no jsonl found in project dir",
+              file=sys.stderr)
+        return 2, [], "session", None
+    starts = {p: session_start(p) for p in files}
     turns = []
-    session_id = "session"
-    jsonl_path = None
+    for p in files:
+        name = discover_session_name(p) or p.stem[:8]
+        part = _load_turns_from(p, args.unsafe_schema, p.stem, name)
+        fill_missing_ts(part)
+        for t in part:
+            t["session_ts"] = starts[p] or "9999"
+        turns.extend(part)
+    # record-level chronological sort (stable → same-ts keeps file order)
+    turns.sort(key=lambda t: t.get("ts") or t.get("session_ts") or "9999")
+    print(f"[lineage] --all-sessions: merged {len(files)} sessions",
+          file=sys.stderr)
+    return None, turns, "all-sessions", None
+
+
+def _read_transcript(args):
+    """A transcript pasted on stdin ('-') or read from a file."""
+    if args.from_transcript == "-":
+        turns = list(parse_turns(sys.stdin, unsafe_schema=args.unsafe_schema,
+                                 session_id="stdin"))
+        return None, turns, "stdin", None
+    jsonl_path = pathlib.Path(args.from_transcript)
+    session_id = "file-" + jsonl_path.stem
+    turns = _load_turns_from(jsonl_path, args.unsafe_schema, session_id, None)
+    return None, turns, session_id, jsonl_path
+
+
+def _read_discovered(args):
+    """The newest session of the project folder."""
+    f = auto_discover_jsonl()
+    if not f:
+        print("[lineage] No jsonl found. Use one of:",
+              "\n  --session FILE         explicit jsonl path",
+              "\n  --all-sessions         merge all project sessions",
+              "\n  --from-transcript -    paste transcript via stdin",
+              "\n  --from-transcript FILE read transcript from file",
+              "\n(non-ASCII cwd may not auto-encode — use --session)",
+              file=sys.stderr)
+        return 2, [], "session", None
+    turns = _load_turns_from(f, args.unsafe_schema, f.stem, None)
+    print(f"[lineage] auto-discovered session: {f.name}", file=sys.stderr)
+    return None, turns, f.stem, f
+
+
+def _read_input(args):
+    """(exit code or None, raw turns, session id, jsonl path) from the source the flags name. The code is 2 when
+    there is no source, or the code a schema marker stopped the read with."""
     try:
         if args.all_sessions:
-            files = project_jsonl_files()
-            if not files:
-                print("[lineage] --all-sessions: no jsonl found in project dir",
-                      file=sys.stderr)
-                return 2
-            starts = {p: session_start(p) for p in files}
-            for p in files:
-                name = discover_session_name(p) or p.stem[:8]
-                part = _load_turns_from(p, args.unsafe_schema, p.stem, name)
-                fill_missing_ts(part)
-                for t in part:
-                    t["session_ts"] = starts[p] or "9999"
-                turns.extend(part)
-            # record-level chronological sort (stable → same-ts keeps file order)
-            turns.sort(key=lambda t: t.get("ts") or t.get("session_ts") or "9999")
-            session_id = "all-sessions"
-            print(f"[lineage] --all-sessions: merged {len(files)} sessions",
-                  file=sys.stderr)
-        elif args.from_transcript:
-            if args.from_transcript == "-":
-                turns = list(parse_turns(sys.stdin, unsafe_schema=args.unsafe_schema,
-                                         session_id="stdin"))
-                session_id = "stdin"
-            else:
-                jsonl_path = pathlib.Path(args.from_transcript)
-                session_id = "file-" + jsonl_path.stem
-                turns = _load_turns_from(jsonl_path, args.unsafe_schema,
-                                         session_id, None)
-        elif args.session:
+            return _read_all_sessions(args)
+        if args.from_transcript:
+            return _read_transcript(args)
+        if args.session:
             jsonl_path = pathlib.Path(args.session)
-            session_id = jsonl_path.stem
-            turns = _load_turns_from(jsonl_path, args.unsafe_schema,
-                                     session_id, None)
-        else:
-            f = auto_discover_jsonl()
-            if not f:
-                print("[lineage] No jsonl found. Use one of:",
-                      "\n  --session FILE         explicit jsonl path",
-                      "\n  --all-sessions         merge all project sessions",
-                      "\n  --from-transcript -    paste transcript via stdin",
-                      "\n  --from-transcript FILE read transcript from file",
-                      "\n(non-ASCII cwd may not auto-encode — use --session)",
-                      file=sys.stderr)
-                return 2
-            jsonl_path = f
-            session_id = f.stem
-            turns = _load_turns_from(f, args.unsafe_schema, session_id, None)
-            print(f"[lineage] auto-discovered session: {f.name}", file=sys.stderr)
+            turns = _load_turns_from(jsonl_path, args.unsafe_schema, jsonl_path.stem, None)
+            return None, turns, jsonl_path.stem, jsonl_path
+        return _read_discovered(args)
     except SystemExit as e:
-        return int(e.code) if isinstance(e.code, int) else 2
+        return (int(e.code) if isinstance(e.code, int) else 2), [], "session", None
 
-    # stdin → derive per-turn uuid from the content so the caches work (keyed: see _stdin_id_key)
-    if args.from_transcript == "-":
-        key = _stdin_id_key()
-        for t in turns:
-            t["uuid"] = hmac.new(key, str(t["text"]).encode(), hashlib.sha256).hexdigest()[:16]
 
-    # ---- Pipeline order (R6): classify → merge → echo → hide-tool-only → range ----
-    turns = classify_turns(turns, drop_trivia=args.drop_trivia)
-    turns = merge_assistant_runs(turns)
-    if args.emit_review:
-        drops = heuristic_drops(turns, args)
-        window = review_window(turns, drops, args)
-        if window is None:
-            return 2
-        return emit_review(turns, drops, window, session_id,
-                           default_output(args, jsonl_path, session_id), args)
+def _stdin_ids(turns):
+    """stdin → derive per-turn uuid from the content so the caches work (keyed: see _stdin_id_key)."""
+    key = _stdin_id_key()
+    for t in turns:
+        t["uuid"] = hmac.new(key, str(t["text"]).encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def _run_emit(turns, session_id, jsonl_path, args):
+    drops = heuristic_drops(turns, args)
+    window = review_window(turns, drops, args)
+    if window is None:
+        return 2
+    return emit_review(turns, drops, window, session_id,
+                       default_output(args, jsonl_path, session_id), args)
+
+
+def _rulebase_turns(turns, args):
+    """The turns a --rulebase page shows: echo exchanges and tool-only turns gone (unless kept), then the range.
+    None on an invalid --turns."""
     if args.drop_trivia:
         turns = drop_echo_exchanges(turns)
     if args.hide_tool_only:
         turns = [t for t in turns
                  if not (t["role"] == "assistant" and not t["text"].strip())]
-    turns = select_range(turns, args)
+    return select_range(turns, args)
+
+
+def main(argv=None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    _merge_env_extra(args)
+    clash = _flag_clash(args)
+    if clash:
+        print(f"[lineage] ERROR: {clash}", file=sys.stderr)
+        return 2
+    if args.purge_cache:
+        return _purge_cache()
+    if args.apply_review:
+        return _run_apply(args)
+    rc, turns, session_id, jsonl_path = _read_input(args)
+    if rc is not None:
+        return rc
+    if args.from_transcript == "-":
+        _stdin_ids(turns)
+    # ---- Pipeline order (R6): classify → merge → echo → hide-tool-only → range ----
+    turns = merge_assistant_runs(classify_turns(turns, drop_trivia=args.drop_trivia))
+    if args.emit_review:
+        return _run_emit(turns, session_id, jsonl_path, args)
+    turns = _rulebase_turns(turns, args)
     if turns is None:
         return 2
     if args.output is None:
