@@ -1351,8 +1351,8 @@ test("Codex: a lock spot whose make keeps answering ESTALE is waited on with res
   writeFileSync(s.agents, "# base\n");
   const lock = join(s.o.codexDir, ".banker-agents.lock");
   let makes = 0;
-  const r = onWithFs(s, "writeFileSync", (real) => (p, data, opts, ...a) => {
-    if (String(p) !== lock || opts?.flag !== "wx") return real(p, data, opts, ...a);
+  const r = onWithFs(s, "openSync", (real) => (p, flags, ...a) => {
+    if (String(p) !== lock || flags !== "wx") return real(p, flags, ...a);
     makes++;
     throw estale("open");
   });
@@ -1367,8 +1367,8 @@ test("Codex: an ESTALE once while the lock is made is tried again, and on goes o
   writeFileSync(s.agents, "# base\n");
   const lock = join(s.o.codexDir, ".banker-agents.lock");
   let done = false;
-  const r = onWithFs(s, "writeFileSync", (real) => (p, data, opts, ...a) => {
-    if (done || String(p) !== lock || opts?.flag !== "wx") return real(p, data, opts, ...a);
+  const r = onWithFs(s, "openSync", (real) => (p, flags, ...a) => {
+    if (done || String(p) !== lock || flags !== "wx") return real(p, flags, ...a);
     done = true;
     throw estale("open");
   });
@@ -1430,4 +1430,130 @@ test("Codex: an ESTALE while the lock is given back is tried again, and no lock 
   assert.ok(r.ok, r.message);
   assert.equal(stale, 1, "the give-back met the stale handle");
   assert.equal(existsSync(lock), false, "the lock was given back on the next try");
+});
+
+// Runs turnOn for Codex with several fs functions swapped (each fake is given the real one), and puts them back.
+function onWithFakes(s, fakes, lockWaitMs = 300) {
+  const real = Object.fromEntries(Object.keys(fakes).map((name) => [name, fs[name]]));
+  for (const [name, fake] of Object.entries(fakes)) fs[name] = fake(real[name]);
+  syncBuiltinESMExports();
+  try {
+    return turnOn("codex", { ...s.o, lockWaitMs });
+  } finally {
+    Object.assign(fs, real);
+    syncBuiltinESMExports();
+  }
+}
+
+// A share that makes the lock file and then answers ESTALE to its write, once, whichever call makes and writes it.
+function staleLockWrite(lock) {
+  const made = new Set();
+  let stale = 0;
+  const fakes = {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock) made.add(fd);
+      return fd;
+    },
+    writeFileSync: (real) => (p, data, opts, ...a) => {
+      const byName = String(p) === lock && opts?.flag === "wx";
+      if (stale > 0 || !(made.has(p) || byName)) return real(p, data, opts, ...a);
+      stale++;
+      if (byName) real(p, "", opts); // the make went through, the write did not
+      throw estale("write");
+    },
+  };
+  return { fakes, stale: () => stale };
+}
+
+// The bigint stats of the lock with its inode changed, once the write failed: `ino` gives the new one.
+const lockLooksLike = (lock, h, ino) => (real) => (p, ...a) => {
+  const st = real(p, ...a);
+  if (String(p) !== lock || h.stale() === 0 || typeof st.ino !== "bigint") return st;
+  return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino: ino(st.ino) });
+};
+
+test("Codex: a lock made but not written because of ESTALE is taken away, and on goes on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  const r = onWithFakes(s, h.fakes);
+  assert.equal(h.stale(), 1, "the write of the lock met the stale handle");
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(existsSync(lock), false, "no lock outlives the run");
+});
+
+// A share reports a failed write when the file is closed (close(2): NFS flushes there): handled like the write.
+test("Codex: a lock whose close answers ESTALE is taken away like a failed write, and on goes on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const made = new Set();
+  let stale = 0;
+  const r = onWithFakes(s, {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock && a[0] === "wx") made.add(fd);
+      return fd;
+    },
+    closeSync: (real) => (fd) => {
+      real(fd);
+      if (!made.delete(fd) || stale > 0) return;
+      stale++;
+      fs.truncateSync(lock, 0); // the token never reached the share
+      throw estale("close");
+    },
+  });
+  assert.equal(stale, 1, "the close of the lock met the stale handle");
+  assert.ok(r.ok, r.message);
+  assert.equal(existsSync(lock), false, "no lock outlives the run");
+});
+
+// Only the very file this try made goes: a file at the name with another inode (another run's lock) stays.
+test("Codex: after a lock write that failed, a file at the lock's name that is not the one made is left alone", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  const r = onWithFakes(s, { ...h.fakes, lstatSync: lockLooksLike(lock, h, (ino) => ino + 1n) });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/);
+  assert.ok(existsSync(lock), "the file at the lock's name stays");
+  assert.equal(read(s.agents), "# base\n");
+});
+
+// The write and then the look at the name both meet ESTALE, so the made lock stays: the refusal names ESTALE.
+test("Codex: a made lock that a stale share keeps from being taken away ends in a refusal that names ESTALE", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  let looks = 0;
+  const r = onWithFakes(s, {
+    ...h.fakes,
+    lstatSync: (real) => (p, ...a) => {
+      if (String(p) === lock && h.stale() === 1 && looks++ === 0) throw estale("lstat");
+      return real(p, ...a);
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /네트워크 공유가 잠금 자리에 계속 ESTALE\(오래된 파일 핸들\)을 돌려줘 그대로 두었습니다/);
+});
+
+// Where the file system gives no inode numbers, the made lock cannot be proven this run's: it stays, ESTALE named.
+test("Codex: a made lock with no inode number to prove it is left, and the refusal names ESTALE", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  const zero = (real) => (fd, ...a) => {
+    const st = real(fd, ...a);
+    return typeof st.ino === "bigint" ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino: 0n }) : st;
+  };
+  const r = onWithFakes(s, { ...h.fakes, fstatSync: zero });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /네트워크 공유가 잠금 자리에 계속 ESTALE\(오래된 파일 핸들\)을 돌려줘 그대로 두었습니다/);
+  assert.ok(existsSync(lock), "the lock that could not be proven this run's stays");
 });

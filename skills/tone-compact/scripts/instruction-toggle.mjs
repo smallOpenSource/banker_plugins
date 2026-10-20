@@ -530,15 +530,54 @@ const LOCK_STEP_MS = 50;
 const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
 // Makes the lock file: "taken", "held" when one is there already, or "stale" when a network share answered with a
-// stale file handle (ESTALE), which the next try may not. Anything else (permissions) throws.
+// stale file handle (ESTALE), which the next try may not. A lock file this try made but could not write is taken
+// away again while the name still holds that very file, so it keeps no one waiting; "left" when it may still be there.
+// Anything else (permissions) throws, after taking away the file this try made.
 function tryLock(path, token) {
+  let fd;
   try {
-    writeFileSync(path, token, { flag: "wx", mode: 0o600 });
-    return "taken";
+    fd = openSync(path, "wx", 0o600);
   } catch (e) {
     if (e.code === "EEXIST") return "held";
     if (e.code === "ESTALE") return "stale";
     throw e;
+  }
+  const failed = writeToken(fd, token);
+  if (failed === null) return "taken";
+  const gone = dropMade(path, failed.made);
+  if (failed.error.code !== "ESTALE") throw failed.error;
+  return gone ? "stale" : "left";
+}
+
+// Writes the token into the lock file just made and closes it: null when both went well, else the first error and
+// the file's bigint stats (null when they could not be had). A share often reports a failed write at the close.
+function writeToken(fd, token) {
+  let made = null;
+  let error = null;
+  try {
+    made = fstatSync(fd, { bigint: true });
+    writeFileSync(fd, token);
+  } catch (e) {
+    error = e;
+  }
+  try {
+    closeSync(fd);
+  } catch (e) {
+    error ??= e;
+  }
+  return error === null ? null : { made, error };
+}
+
+// Removes the lock file a failed try made, only while the name still holds it (one device and one inode): true when
+// that file is not there any more, false when it may be (the share could not say, or gives no inode number; such a
+// lock goes stale in a minute).
+function dropMade(path, made) {
+  if (made === null || made.ino === 0n) return false;
+  try {
+    if (sameInode(made, lstatSync(path, { bigint: true }))) rmSync(path, { force: true });
+    return true;
+  } catch (e) {
+    return e.code === "ENOENT";
   }
 }
 
@@ -569,10 +608,13 @@ function takeLock(dir, waitMs) {
   const path = join(dir, LOCK);
   const token = `${process.pid} ${Date.now()} ${Math.random()}`;
   const until = Date.now() + waitMs;
+  // a made lock this run could not take away again names ESTALE as the cause, not another banker run
+  let left = false;
   for (;;) {
     const got = tryLock(path, token);
     if (got === "taken") return { path, token };
-    if (Date.now() >= until) return { path, why: got };
+    left ||= got === "left";
+    if (Date.now() >= until) return { path, why: left ? "stale" : got };
     if (got === "held") dropStale(path);
     Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
   }
