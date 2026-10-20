@@ -432,8 +432,8 @@ _CU_SKIP = (r"(?!" + _CU_LEAD + r"(?:\+[\"']?%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" 
             + r"|[^\s:=\"'`(]*\)):" + _CU_REF + r")(?![^\s\"'`;|&)\\^])"
             r"|\$\{\w+:[-=?+]?[/~.][^\s}\"'`(:]*\}[^\s:]*(?!\S)))")
 
-# Extra patterns for text a reviewer model reads (part files) and nothing else: the page
-# and --rulebase keep the patterns above, so their output stays as it was.
+# Patterns every page (the reviewed flow and --rulebase) and every part file hides with before the
+# page patterns above, while keys are whole (3.0.2).
 # A value a redaction already replaced: a marker ([REDACTED...]) or a value that is only a mask
 # (abcd****wxyz: up to 4 characters, a whole run of *, up to 4 characters, then the value ends; a
 # closing `, |, * or ) and then . , ; : ! ? may stand between, as in **password: ****h12** or
@@ -2351,7 +2351,7 @@ def _show(x, llm_summary, turns, summaries, stats, prior):
         if isinstance(v, int):
             prior[k] = prior.get(k, 0) + v
     # what the gate's critic reads: the reviewer's summary, else the rules' cut from the
-    # fully redacted text (the page's is cut first and may keep half a secret)
+    # fully redacted text (the page's may hold a --redact-mode mask: 4 + 4 characters of a value)
     sample = (llm_summary if shows else None) or x["rule"].get("review_summary")
     turns.append({"uuid": x["id"], "role": x["role"], "text": x["text"],
                   "ts": x.get("ts") or None, "tools": dict(x.get("tools") or {}),
