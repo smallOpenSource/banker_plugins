@@ -61,7 +61,8 @@ OS별 상세 설치 절차(Ubuntu NodeSource·RHEL8/Rocky8 dnf 모듈·Windows w
 - Ubuntu/Debian: `sudo apt-get install -y ffmpeg`
 - RHEL8/Rocky8: BaseOS/AppStream 미포함(라이선스) → RPM Fusion 후 `dnf install -y ffmpeg`
 - Windows: `winget install --id Gyan.FFmpeg -e`
-- 전부 막히면(권한/오프라인) 홈 폴더의 전용 폴더에 `ffmpeg-static` 을 받는다. 프로젝트 안에서 npm 을 돌리면 그 프로젝트의 `.npmrc` 와 스크립트가 끼어든다:
+- 오프라인이면 `ffmpeg-static` 도 받을 수 없다(npm 설치에 네트워크가 필요하다). 미리 받아 둔 ffmpeg 실행 파일의 절대 경로를 `~/.config/banker/3d-intro/settings.env` 의 `FFMPEG_PATH` 로 준다.
+- 네트워크는 되는데 시스템 패키지가 막히면(권한 없음, 저장소 미제공) 홈 폴더의 전용 폴더에 `ffmpeg-static` 을 받는다. 프로젝트 안에서 npm 을 돌리면 그 프로젝트의 `.npmrc` 와 스크립트가 끼어든다:
   `(cd ~ && npm install --prefix ~/.config/banker/3d-intro/tools ffmpeg-static)` 후 `export FFMPEG_PATH="$(cd ~ && node -p "require(require('path').resolve('.config/banker/3d-intro/tools/node_modules/ffmpeg-static'))")"`
 
 **★ banker 플러그인 자체(스킬 파일·npm 패키지 배포물)에는 ffmpeg 바이너리를 절대 번들하지 않는다** — 위 설치는 전부 사용자 시스템(홈 폴더 포함)에만 적용된다(motion-graphic-setup과 동일 원칙).
@@ -282,7 +283,7 @@ command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffm
   WAN 키는 Model Studio 콘솔의 API Key 관리에서 그 키를 지우고 새로 만들어 교체한다.
 - **WAN 키 검증은 GET task 로만**: 존재하지 않는 task 조회는 과금이 없고 키 유효성(200 vs 401)을 가른다. 생성 요청(POST)은 과금될 수 있으니 점검용으로 쓰지 않는다.
 - **이미지 배포 429**: 낮은 티어(S0) 이미지 배포는 연속 호출에 `429 RateLimitReached` 를 낸다. 프리플라이트를 짧은 간격으로 반복하지 않는다.
-- **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백.
+- **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백(오프라인이면 미리 받은 실행 파일을 `FFMPEG_PATH` 로).
 - **ffmpeg 바이너리 미번들 원칙**: 위 폴백은 홈 폴더의 전용 폴더 `~/.config/banker/3d-intro/tools` 에만 설치한다(§2). banker 플러그인 배포물에는 절대 포함하지 않는다.
 - **프리플라이트는 배포명 실존까지는 증명 못 한다**: `images.badreq` 400 은 "리소스가 살아있고 키가 맞다"는 뜻이지 `AZURE_GPT_IMAGE_DEPLOYMENT` 로 지정한 배포가 실제 존재·활성 상태인지는 증명하지 않는다 — 무과금으로는 확인할 방법이 없어 첫 실제 생성(3d-intro-build)에서만 드러난다.
 - **`.env.3d-intro.local` 자동 gitignore 는 이 저장소 한정**: 이 저장소는 `.env.*.local` 패턴으로 이미 커버되지만, 다른 프로젝트에 이 스킬을 쓸 때는 그 프로젝트의 `.gitignore` 를 §3 저장 단계에서 별도로 확인·추가해야 한다.

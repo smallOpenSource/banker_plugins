@@ -92,7 +92,8 @@ node -v
 
 ## 2. ffmpeg 확보
 hyperframes 렌더러(headless Chrome 캡처 + ffmpeg 인코딩)가 요구하는 `ffmpeg` 실행 파일을 확보한다.
-1순위는 시스템 패키지, 2순위(권한 없음/오프라인/저장소 미제공)는 프로젝트-로컬 `ffmpeg-static` npm 폴백이다.
+1순위는 시스템 패키지, 2순위(권한 없음, 저장소 미제공)는 프로젝트-로컬 `ffmpeg-static` npm 폴백이다.
+오프라인이면 `ffmpeg-static` 도 받을 수 없다(npm 설치에 네트워크가 필요하다). 미리 받아 둔 ffmpeg 실행 파일의 절대 경로를 `export FFMPEG_PATH=<절대 경로>` 로 준다.
 
 **★ banker 플러그인 자체(스킬 파일·npm 패키지 배포물)에는 ffmpeg 바이너리를 절대 번들하지 않는다.** 아래 폴백은 사용자 프로젝트의 `node_modules` 에만 설치된다.
 
@@ -153,7 +154,7 @@ npx hyperframes doctor                                     # 종합 진단(node/
 
 ## 함정
 - **RHEL8/Rocky8 dnf 모듈 nodejs 버전**: AppStream 스트림이 22 미만일 수 있음(사전 `dnf module list nodejs` 확인) → NodeSource 저장소 또는 `setup-node`(nvm) 로 위임.
-- **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → RPM Fusion 필요, 접근 막히면 `ffmpeg-static` 폴백.
+- **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → RPM Fusion 필요, 저장소에만 닿지 못하면 `ffmpeg-static` 폴백(오프라인이면 미리 받은 실행 파일을 `FFMPEG_PATH` 로).
 - **ffmpeg 바이너리 미번들 원칙**: `ffmpeg-static` 폴백은 사용자 프로젝트 `node_modules` 한정 — banker 플러그인 배포물에는 절대 포함하지 않는다(라이선스·배포 크기·플랫폼별 바이너리 불일치 회피).
 - **GEMINI_API_KEY 는 선택**: AI 이미지 생성이 필요한 카테고리에서만 쓰이고, 무료 폼 카테고리(kinetic-type·stat·charts·logo-reveal·lower-thirds·maps)는 키 없이 전부 동작한다 — 이 스킬은 어떤 API 키도 요구하지 않는다.
 - **Windows PATH 충돌**: winget Node 와 nvm-windows 동시 설치 금지(상세는 `setup-node` 함정 참조).

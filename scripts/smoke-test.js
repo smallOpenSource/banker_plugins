@@ -912,6 +912,13 @@ try {
      && /claude mcp add git -s user -- mcp-server-git/.test(mcpSkill)
      && /네트워크가 필요한 서버\(context7, fetch, tavily\)는 등록하지 않/.test(mcpSkill),
      'airgap-5: setup-mcp registers pinned installed executables offline and leaves out the network-service servers');
+  // ffmpeg-static is an npm package: with no network it cannot come either, so it is no offline fallback. Offline, the
+  // skills point FFMPEG_PATH at an ffmpeg brought in beforehand.
+  const ffDocs = ['3d-intro-setup', 'motion-graphic-setup'].map((d) => [d, fs.readFileSync(path.join(root, 'skills', d, 'SKILL.md'), 'utf8')]);
+  const ffWrong = ffDocs.flatMap(([d, t]) => t.split(/\r?\n/).filter((l) => /오프라인/.test(l) && /ffmpeg-static/.test(l) && !/받을 수 없다|미리 받/.test(l))
+    .map((l) => `${d}: ${l.trim().slice(0, 60)}`));
+  ok(ffWrong.length === 0 && ffDocs.every(([, t]) => /오프라인이면 `ffmpeg-static` 도 받을 수 없다/.test(t) && /미리 받아 둔 ffmpeg 실행 파일의 절대 경로/.test(t)),
+     `airgap-7: ffmpeg-static is not offered as the offline fallback; offline, FFMPEG_PATH points at an ffmpeg brought in beforehand (found ${JSON.stringify(ffWrong)})`);
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
