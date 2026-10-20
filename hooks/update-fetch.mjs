@@ -8,6 +8,8 @@
  *  - throttle(UPDATE_THROTTLE_MS) 미경과면 무동작(캐시가 없으면 진행).
  *  - 비-https 는 loopback(localhost/127.0.0.1/::1) 에서만 http 허용, 그 외 비-https 는 거부.
  *  - 3xx 리다이렉트는 따라가지 않고 no-op.
+ *  - 무활동 10초 timeout 과 요청마다 30초 교환 전체 마감으로 hang 하지 않는다.
+ *  - 응답 본문은 256KiB 까지만 모은다. 넘으면 연결을 끊고 그 응답을 쓰지 않는다.
  *  - 응답 JSON 에서 version 문자열만 방어 추출 - 없거나 비문자열이면 무동작(캐시 미기록).
  *  - 캐시는 writeUpdateCache 로 병합 기록: fetch 된 latest 가 기존 캐시와 다르면 notified 를 초기화
  *    (재무장)하고, 같으면 형제 필드(notified 등)를 patch 에서 생략해 그대로 보존한다.
@@ -45,7 +47,8 @@ function readCache() {
 }
 
 // url 에 GET 요청해 응답 JSON 의 version 문자열만 추출한다. 실패·거부·리다이렉트·malformed 는 전부
-// null. reject 하지 않고 항상 resolve 한다(hang 방지). GET 뿐이라 페이로드·식별자 헤더가 없다.
+// null. reject 하지 않고 항상 resolve 한다(무활동 timeout 과 교환 전체 마감, 본문 256KiB 상한). GET 뿐이라
+// 페이로드·식별자 헤더가 없다.
 function fetchLatestVersion(url) {
   return new Promise((resolvePromise) => {
     let done = false;

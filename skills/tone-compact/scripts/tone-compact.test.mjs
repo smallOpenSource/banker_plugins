@@ -38,6 +38,18 @@ const KEEP_CLOSE = "<!-- USER:OMX:POLICY:END -->";
 
 // Links made without privileges and mode bits are POSIX matters; root ignores mode bits.
 const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
+// Whether this account can make a symlink: Windows needs Developer Mode or an elevated prompt for one.
+function canSymlink() {
+  const probe = join(root, "symlink-probe");
+  try {
+    symlinkSync(join(root, "nowhere"), probe);
+    rmSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const symlinkTest = { skip: !canSymlink() && "this account cannot make symlinks" };
 const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const permTest = { skip: process.platform === "win32" ? "Windows has no POSIX mode bits" : asRoot && "root ignores mode bits" };
 
@@ -487,16 +499,32 @@ test("a write the system refuses is named where it was refused: an EPERM on the 
   assert.equal(read(s.agents), "# base\n");
 });
 
-// Windows answers a rename onto a folder with EPERM, which counts as a denied write; POSIX answers EISDIR, an error
-// the tool does not expect. Either way nothing is changed and the backup's name is in the message.
+// Windows answers a rename onto a folder with EPERM, POSIX with EISDIR: either way on refuses, says what is there
+// rather than a permission problem, names the backup and changes nothing.
 test("a folder at the backup's name stops on with the backup named and AGENTS.md as it was", () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");
   mkdirSync(join(`${s.agents}.tone-compact.bak`, "x"), { recursive: true });
   const r = cli(["on", "--runtime", "codex"], cliEnv(s));
-  assert.equal(r.code, process.platform === "win32" ? 1 : 2, r.out);
-  assert.match(r.out, /AGENTS\.md\.tone-compact\.bak/);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md\.tone-compact\.bak/);
+  assert.doesNotMatch(r.out, /쓸 권한이 없어|예기치 못한 오류/);
   assert.deepEqual(readdirSync(s.o.codexDir).sort(), ["AGENTS.md", "AGENTS.md.tone-compact.bak"]);
+  assert.equal(read(s.agents), "# base\n");
+});
+
+// The same folder where the rename answers EPERM, as Windows does: still no regular file, not a permission problem.
+const renameOntoFolderIsEperm = () => [...FS_HOOK, "const real = fs.renameSync;",
+  "fs.renameSync = (from, to) => { if (fs.statSync(to, { throwIfNoEntry: false })?.isDirectory()) throw Object.assign(new Error(\"EPERM: rename\"), { code: \"EPERM\", syscall: \"rename\", path: String(from), dest: String(to) }); return real(from, to); };",
+  "syncBuiltinESMExports();"].join("\n");
+test("a folder at the backup's name that the rename answers with EPERM, as on Windows, is named as no regular file", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  mkdirSync(join(`${s.agents}.tone-compact.bak`, "x"), { recursive: true });
+  const r = cliWith(s, renameOntoFolderIsEperm(), ["on", "--runtime", "codex"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /일반 파일이 아니라 그대로 두었습니다: .*AGENTS\.md\.tone-compact\.bak/);
+  assert.doesNotMatch(r.out, /쓸 권한이 없어/);
   assert.equal(read(s.agents), "# base\n");
 });
 
@@ -934,6 +962,8 @@ test("off empties a hard-linked AGENTS.md rather than removing one name, so no c
 test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
   const row = readFileSync(SKILL, "utf8").split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
   assert.ok(row, "the row exists");
+  assert.match(row, /`<파일>\.tone-compact\.bak`/);
+  assert.doesNotMatch(row, /백업 자리\([^)]*\)의 폴더나 특수 파일/, "at the backup's name only a folder is refused; a FIFO or a link there is replaced");
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
@@ -1290,7 +1320,7 @@ test("an override holding only our block over AGENTS.md that is a link to nothin
   assert.match(r.message, /끊어진 링크라 그대로 두었습니다/);
 });
 
-test("Claude Code: on says so when the rules file was a link it replaced, and leaves where the link led as it was", posixOnly, () => {
+test("Claude Code: on says so when the rules file was a link it replaced, and leaves where the link led as it was", symlinkTest, () => {
   const s = setup();
   mkdirSync(join(s.o.claudeDir, "rules"));
   symlinkSync("gone.md", s.rulesFile);
@@ -1351,8 +1381,8 @@ test("Codex: a lock spot whose make keeps answering ESTALE is waited on with res
   writeFileSync(s.agents, "# base\n");
   const lock = join(s.o.codexDir, ".banker-agents.lock");
   let makes = 0;
-  const r = onWithFs(s, "writeFileSync", (real) => (p, data, opts, ...a) => {
-    if (String(p) !== lock || opts?.flag !== "wx") return real(p, data, opts, ...a);
+  const r = onWithFs(s, "openSync", (real) => (p, flags, ...a) => {
+    if (String(p) !== lock || flags !== "wx") return real(p, flags, ...a);
     makes++;
     throw estale("open");
   });
@@ -1367,8 +1397,8 @@ test("Codex: an ESTALE once while the lock is made is tried again, and on goes o
   writeFileSync(s.agents, "# base\n");
   const lock = join(s.o.codexDir, ".banker-agents.lock");
   let done = false;
-  const r = onWithFs(s, "writeFileSync", (real) => (p, data, opts, ...a) => {
-    if (done || String(p) !== lock || opts?.flag !== "wx") return real(p, data, opts, ...a);
+  const r = onWithFs(s, "openSync", (real) => (p, flags, ...a) => {
+    if (done || String(p) !== lock || flags !== "wx") return real(p, flags, ...a);
     done = true;
     throw estale("open");
   });
@@ -1430,4 +1460,153 @@ test("Codex: an ESTALE while the lock is given back is tried again, and no lock 
   assert.ok(r.ok, r.message);
   assert.equal(stale, 1, "the give-back met the stale handle");
   assert.equal(existsSync(lock), false, "the lock was given back on the next try");
+});
+
+// Runs turnOn for Codex with several fs functions swapped (each fake is given the real one), and puts them back.
+function onWithFakes(s, fakes, lockWaitMs = 300) {
+  const real = Object.fromEntries(Object.keys(fakes).map((name) => [name, fs[name]]));
+  for (const [name, fake] of Object.entries(fakes)) fs[name] = fake(real[name]);
+  syncBuiltinESMExports();
+  try {
+    return turnOn("codex", { ...s.o, lockWaitMs });
+  } finally {
+    Object.assign(fs, real);
+    syncBuiltinESMExports();
+  }
+}
+
+// A share that makes the lock file and then answers ESTALE to its write, once, whichever call makes and writes it.
+function staleLockWrite(lock) {
+  const made = new Set();
+  let stale = 0;
+  const fakes = {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock) made.add(fd);
+      return fd;
+    },
+    writeFileSync: (real) => (p, data, opts, ...a) => {
+      const byName = String(p) === lock && opts?.flag === "wx";
+      if (stale > 0 || !(made.has(p) || byName)) return real(p, data, opts, ...a);
+      stale++;
+      if (byName) real(p, "", opts); // the make went through, the write did not
+      throw estale("write");
+    },
+  };
+  return { fakes, stale: () => stale };
+}
+
+// The bigint stats of the lock with its inode changed, once the write failed: `ino` gives the new one.
+const lockLooksLike = (lock, h, ino) => (real) => (p, ...a) => {
+  const st = real(p, ...a);
+  if (String(p) !== lock || h.stale() === 0 || typeof st.ino !== "bigint") return st;
+  return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino: ino(st.ino) });
+};
+
+test("Codex: a lock made but not written because of ESTALE is taken away, and on goes on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  const r = onWithFakes(s, h.fakes);
+  assert.equal(h.stale(), 1, "the write of the lock met the stale handle");
+  assert.ok(r.ok, r.message);
+  assert.equal(blocks(read(s.agents)), 1);
+  assert.equal(existsSync(lock), false, "no lock outlives the run");
+});
+
+// A share reports a failed write when the file is closed (close(2): NFS flushes there): handled like the write.
+test("Codex: a lock whose close answers ESTALE is taken away like a failed write, and on goes on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const made = new Set();
+  let stale = 0;
+  const r = onWithFakes(s, {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock && a[0] === "wx") made.add(fd);
+      return fd;
+    },
+    closeSync: (real) => (fd) => {
+      real(fd);
+      if (!made.delete(fd) || stale > 0) return;
+      stale++;
+      fs.truncateSync(lock, 0); // the token never reached the share
+      throw estale("close");
+    },
+  });
+  assert.equal(stale, 1, "the close of the lock met the stale handle");
+  assert.ok(r.ok, r.message);
+  assert.equal(existsSync(lock), false, "no lock outlives the run");
+});
+
+// Only the very file this try made goes: a file at the name with another inode (another run's lock) stays.
+test("Codex: after a lock write that failed, a file at the lock's name that is not the one made is left alone", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  const r = onWithFakes(s, { ...h.fakes, lstatSync: lockLooksLike(lock, h, (ino) => ino + 1n) });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/);
+  assert.ok(existsSync(lock), "the file at the lock's name stays");
+  assert.equal(read(s.agents), "# base\n");
+});
+
+// The write and then the look at the name both meet ESTALE, so the made lock stays: the refusal names ESTALE.
+test("Codex: a made lock that a stale share keeps from being taken away ends in a refusal that names ESTALE", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  let looks = 0;
+  const r = onWithFakes(s, {
+    ...h.fakes,
+    lstatSync: (real) => (p, ...a) => {
+      if (String(p) === lock && h.stale() === 1 && looks++ === 0) throw estale("lstat");
+      return real(p, ...a);
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /네트워크 공유가 잠금 자리에 계속 ESTALE\(오래된 파일 핸들\)을 돌려줘 그대로 두었습니다/);
+});
+
+// Where the file system gives no inode numbers, the made lock cannot be proven this run's: it stays, ESTALE named.
+test("Codex: a made lock with no inode number to prove it is left, and the refusal names ESTALE", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const h = staleLockWrite(lock);
+  const zero = (real) => (fd, ...a) => {
+    const st = real(fd, ...a);
+    return typeof st.ino === "bigint" ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino: 0n }) : st;
+  };
+  const r = onWithFakes(s, { ...h.fakes, fstatSync: zero });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /네트워크 공유가 잠금 자리에 계속 ESTALE\(오래된 파일 핸들\)을 돌려줘 그대로 두었습니다/);
+  assert.ok(existsSync(lock), "the lock that could not be proven this run's stays");
+});
+
+test("Codex: a lock made but not written because of another error (EIO) is taken away, and the error stops on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const made = new Set();
+  let failed = 0;
+  assert.throws(() => onWithFakes(s, {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock) made.add(fd);
+      return fd;
+    },
+    writeFileSync: (real) => (p, data, ...a) => {
+      if (!made.has(p) || failed > 0) return real(p, data, ...a);
+      failed++;
+      throw Object.assign(new Error("EIO: i/o error, write"), { code: "EIO" });
+    },
+  }), (e) => e.code === "EIO");
+  assert.equal(failed, 1);
+  assert.equal(existsSync(lock), false, "the lock this run made is gone");
+  assert.equal(read(s.agents), "# base\n");
 });

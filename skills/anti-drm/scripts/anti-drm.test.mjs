@@ -441,6 +441,13 @@ test("a broken settings file: status says so, on refuses, config writes a new on
   const r = turnOn("claude", s.o);
   assert.equal(r.ok, false);
   assert.match(r.message, /설정 파일이 올바르지 않습니다/);
+  // The way out is the SKILL's one step: settings given to on itself, as when there are none.
+  assert.match(r.message, /\. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요\.$/);
+  assert.doesNotMatch(r.message, /config 로/);
+  const fixed = turnOn("claude", s.o, FLAGS);
+  assert.ok(fixed.ok, fixed.message);
+  assert.ok(existsSync(s.rulesFile), "one on with the settings turns the rules on");
+  writeFileSync(s.o.configFile, "{");
   assert.ok(configure(s.o, FLAGS).ok);
   assert.deepEqual(readConfig(s.o.configFile).config, CONFIG);
 });
@@ -873,6 +880,8 @@ test("an override with another skill's start marker but no end counts as the use
 test("the troubleshooting row for a folder or FIFO at an instructions file says not to delete it and to ask first", () => {
   const row = read(SKILL).split("\n").find((l) => l.startsWith("| 일반 파일이 아님 |"));
   assert.ok(row, "the row exists");
+  assert.match(row, /`<파일>\.anti-drm\.bak`/);
+  assert.doesNotMatch(row, /백업 자리\([^)]*\)의 폴더나 특수 파일/, "at the backup's name only a folder is refused; a FIFO or a link there is replaced");
   assert.match(row, /지우지 않음/);
   assert.match(row, /물은 뒤/);
   assert.doesNotMatch(row, /치운/);
@@ -986,7 +995,7 @@ test("while other banker blocks alone fill the override, the stale and moved cas
   assert.equal(blocks(read(moved.override)), 0);
 });
 
-test("config says so when the settings path was a link it replaced, and where the link led stays", posixOnly, () => {
+test("config says so when the settings path was a link it replaced, and where the link led stays", symlinkTest, () => {
   const s = setup();
   const folder = join(s.dir, "config", "banker");
   mkdirSync(folder, { recursive: true });
@@ -1155,13 +1164,19 @@ test("config does not read what a link swapped in after the first look leads to"
   const secret = join(s.dir, "id_key");
   writeFileSync(secret, "-----BEGIN KEY-----\nabc\n");
   const pre = join(s.dir, "swap.mjs");
+  const order = join(s.dir, "order.txt");
+  const name = JSON.stringify(s.o.configFile);
   writeFileSync(pre, ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";',
-    "const real = fs.lstatSync;", "let looks = 0;",
-    `fs.lstatSync = (p, ...a) => { const st = real(p, ...a); if (String(p) === ${JSON.stringify(s.o.configFile)} && ++looks === 1) { fs.rmSync(p); fs.symlinkSync(${JSON.stringify(secret)}, p); } return st; };`,
+    "const [realLstat, realOpen] = [fs.lstatSync, fs.openSync];", "let looks = 0;",
+    `const note = (what) => fs.appendFileSync(${JSON.stringify(order)}, what + "\\n");`,
+    `fs.lstatSync = (p, ...a) => { const st = realLstat(p, ...a); if (String(p) === ${name}) { note("look"); if (++looks === 1) { fs.unlinkSync(p); fs.symlinkSync(${JSON.stringify(secret)}, p); note("swap"); } } return st; };`,
+    `fs.openSync = (p, ...a) => { if (String(p) === ${name}) note("open"); return realOpen(p, ...a); };`,
     "syncBuiltinESMExports();"].join("\n"));
   const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, CLI, "config", "--deny", ".txt", "--alt", ".md"],
     { encoding: "utf8", env: { ...process.env, CLAUDECODE: "", ...cliEnv(s) } });
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  // The swap must fall between the look that saw a regular file and the open: a look added in front would move it.
+  assert.match(read(order), /^look\nswap\nopen\n/, "the name was swapped after the first look and opened after the swap");
   assert.match(r.stdout, /참고: 링크였던 자리를 일반 파일로 바꿨습니다\./);
   assert.ok(!existsSync(`${s.o.configFile}.bak`), "what the link led to was not kept");
   assert.equal(read(secret), "-----BEGIN KEY-----\nabc\n");
@@ -1287,4 +1302,20 @@ test("the troubleshooting table has the row for a lock spot that keeps answering
   const rows = read(SKILL).split("\n").filter((l) => l.startsWith("| 네트워크 공유가 잠금 자리에 계속 ESTALE(오래된 파일 핸들)을 돌려줘 그대로 두었습니다 |"));
   assert.equal(rows.length, 1);
   assert.match(rows[0], /잠금을 임의로 지우지 않음/);
+});
+
+// A rules-file link to someone else's file is that file: on refuses it as any foreign file, says nothing about a link
+// it did not replace, and leaves the link and the file it leads to as they were.
+test("Claude Code: a rules-file link to someone else's file is refused with no link note, and the link and its file stay", symlinkTest, () => {
+  const s = setup();
+  mkdirSync(join(s.o.claudeDir, "rules"));
+  const theirs = join(s.dir, "dotfiles-rules.md");
+  writeFileSync(theirs, "# someone's own rules\n");
+  symlinkSync(theirs, s.rulesFile);
+  const r = turnOn("claude", s.o, FLAGS);
+  assert.equal(r.ok, false);
+  assert.match(r.message, /같은 이름의 다른 파일이 있어 그대로 두었습니다: .*banker-anti-drm\.md/);
+  assert.doesNotMatch(r.message, /링크였던 자리/);
+  assert.ok(lstatSync(s.rulesFile).isSymbolicLink(), "the link stays");
+  assert.equal(read(theirs), "# someone's own rules\n", "the file it leads to is untouched");
 });

@@ -9,7 +9,9 @@
  *  - 미활성(countingActive) 또는 엔드포인트 없음이면 무동작(로그도 건드리지 않는다).
  *  - PII/IP/지속ID 절대 미포함. 페이로드는 {version, os, counts} 세 키뿐(os=플랫폼 계열,
  *    counts=스킬별 x 시간대별 호출수).
- *  - 자체 네트워크 timeout 으로 hang 방지. 어떤 오류도 삼키고 항상 exit 0. 어떤 경로도 reject 안 함.
+ *  - 무활동 10초 timeout 과 요청마다 30초 교환 전체 마감으로 hang 하지 않는다.
+ *  - 응답 본문은 256KiB 까지만 모은다. 넘으면 연결을 끊고 그 응답을 쓰지 않는다.
+ *  - 어떤 오류도 삼키고 항상 exit 0. 어떤 경로도 reject 안 함.
  *  - 비-loopback 평문 http 는 전송하지 않는다(https-only). loopback http 만 로컬 테스트 mock 에 허용.
  *  - 함께 시작한 체크인은 같은 줄을 두 번 보내지 않는다(로그 이름 바꾸기는 하나만 성공한다).
  *  - 로그 자리가 FIFO 면 기다리지 않고, 로그나 last-flush 자리가 링크면 링크 너머 파일을 비우거나 덮지 않는다.
@@ -73,7 +75,8 @@ function isLoopback(hostname) {
 }
 
 // 엔드포인트로 JSON POST. 어떤 경로에서도 reject 하지 않고, 전송 시도가 끝나면 응답 본문(문자열)
-// 또는 null 로 resolve 한다. 자체 timeout(NET_TIMEOUT_MS)으로 무응답 엔드포인트에도 hang 하지 않는다.
+// 또는 null 로 resolve 한다. 무활동 timeout(NET_TIMEOUT_MS)과 교환 전체 마감(NET_DEADLINE_MS)으로 무응답
+// 엔드포인트에도 hang 하지 않고, 본문은 MAX_BODY_BYTES 까지만 모은다.
 function post(url, body) {
   return new Promise((resolvePromise) => {
     let done = false;
@@ -124,8 +127,9 @@ function extractLatest(responseBody) {
 
 // 변경-스킬 매니페스트(공개 GitHub raw JSON: {"x.y.z": ["banker:skill", ...]})를 GET 해 객체로 반환한다.
 // update-fetch 의 동일 함수와 self-contained 로 나란히 둔다(훅별 자기완결 관례·isLoopback 도 이미 각자 보유).
-// post() 와 동일한 안전 가드: 비-https 는 loopback 만 허용·3xx no-op·자체 timeout·malformed→null. 어떤
-// 실패에도 reject 하지 않고 null 로 resolve 한다(개인화는 best-effort). 비배열 객체만 반환.
+// post() 와 동일한 안전 가드: 비-https 는 loopback 만 허용·3xx no-op·무활동 timeout 과 교환 전체 마감·
+// 본문 256KiB 상한·malformed→null. 어떤 실패에도 reject 하지 않고 null 로 resolve 한다(개인화는 best-effort).
+// 비배열 객체만 반환.
 function fetchSkillChangesMap(url) {
   return new Promise((resolvePromise) => {
     let done = false;

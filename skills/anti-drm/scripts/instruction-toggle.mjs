@@ -495,21 +495,28 @@ function apply(t, changes) {
 }
 
 // Applies the changes, or the refusal for a write that failed with nothing of the file changed: a name that
-// appeared in between (EEXIST), or a write a sandbox refused after access() allowed it. The refusal names the place
-// the system refused (a rename's target, as the backup, or the file it was about), and a file changed before the
-// failing one. Other errors propagate.
+// appeared in between (EEXIST), a folder where the write goes (EISDIR; Windows answers a rename onto one with EPERM),
+// or a write a sandbox refused after access() allowed it. The refusal names the place the system refused (a rename's
+// target, as the backup, or the file it was about), and a file changed before the failing one. Other errors propagate.
 function applied(t, changes) {
   let i = 0;
   try {
     for (; i < changes.length; i++) apply(t, [changes[i]]);
   } catch (e) {
-    if (e.code !== "EEXIST" && !denied(e)) throw e;
-    const why = e.code === "EEXIST" ? "쓰는 사이에 같은 이름이 생겨 그대로 두었습니다" : `쓸 권한이 없어 그대로 두었습니다 (${where(e.code)})`;
+    if (e.code !== "EEXIST" && e.code !== "EISDIR" && !denied(e)) throw e;
     const at = [e.dest, e.path].find((p) => typeof p === "string") ?? changes[i].file.path;
     const before = i === 0 ? "" : `\n앞서 바꾼 파일: ${changes.slice(0, i).map((c) => where(c.file.path)).join(", ")}`;
-    return refuse(`${why}: ${where(at)}${before}`);
+    return refuse(`${refusedWhy(e, at)}: ${where(at)}${before}`);
   }
   return null;
+}
+
+// Why a write applied() refuses failed: a name that appeared in between, something that is no regular file at the
+// place it went (a folder), or permissions.
+function refusedWhy(e, at) {
+  if (e.code === "EEXIST") return "쓰는 사이에 같은 이름이 생겨 그대로 두었습니다";
+  if (notAFile(at)) return "일반 파일이 아니라 그대로 두었습니다";
+  return `쓸 권한이 없어 그대로 두었습니다 (${where(e.code)})`;
 }
 
 // Whether the file at path is also reachable under another name: a hard link.
@@ -530,15 +537,55 @@ const LOCK_STEP_MS = 50;
 const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 
 // Makes the lock file: "taken", "held" when one is there already, or "stale" when a network share answered with a
-// stale file handle (ESTALE), which the next try may not. Anything else (permissions) throws.
+// stale file handle (ESTALE), which the next try may not. A lock file this try made but could not write is taken
+// away again while the name still holds that very file (one device and one inode), so it keeps no one waiting; "left"
+// when it may still be there (no stats or no inode number to prove it is that file, or the share could not say).
+// Any other error (permissions, EIO) throws, after the same taking away.
 function tryLock(path, token) {
+  let fd;
   try {
-    writeFileSync(path, token, { flag: "wx", mode: 0o600 });
-    return "taken";
+    fd = openSync(path, "wx", 0o600);
   } catch (e) {
     if (e.code === "EEXIST") return "held";
     if (e.code === "ESTALE") return "stale";
     throw e;
+  }
+  const failed = writeToken(fd, token);
+  if (failed === null) return "taken";
+  const gone = dropMade(path, failed.made);
+  if (failed.error.code !== "ESTALE") throw failed.error;
+  return gone ? "stale" : "left";
+}
+
+// Writes the token into the lock file just made and closes it: null when both went well, else the first error and
+// the file's bigint stats (null when they could not be had). A share often reports a failed write at the close.
+function writeToken(fd, token) {
+  let made = null;
+  let error = null;
+  try {
+    made = fstatSync(fd, { bigint: true });
+    writeFileSync(fd, token);
+  } catch (e) {
+    error = e;
+  }
+  try {
+    closeSync(fd);
+  } catch (e) {
+    error ??= e;
+  }
+  return error === null ? null : { made, error };
+}
+
+// Removes the lock file a failed try made, only while the name still holds it (one device and one inode): true when
+// that file is not there any more, false when it may be (the share could not say, or gives no inode number; such a
+// lock goes stale in a minute).
+function dropMade(path, made) {
+  if (made === null || made.ino === 0n) return false;
+  try {
+    if (sameInode(made, lstatSync(path, { bigint: true }))) rmSync(path, { force: true });
+    return true;
+  } catch (e) {
+    return e.code === "ENOENT";
   }
 }
 
@@ -563,16 +610,19 @@ function dropStale(path) {
 }
 
 // Takes the lock: { path, token }, or { path, why } once the wait ends without it: why is "stale" when the last try
-// met a stale file handle instead of a lock, else "held". Every round that does not take the lock rests, so no answer
+// met a stale file handle instead of a lock, or a lock this run made could not be taken away again, else "held". Every round that does not take the lock rests, so no answer
 // of the file system makes the wait spin; the deadline is looked at every round, so no lock spot keeps it going past.
 function takeLock(dir, waitMs) {
   const path = join(dir, LOCK);
   const token = `${process.pid} ${Date.now()} ${Math.random()}`;
   const until = Date.now() + waitMs;
+  // a made lock this run could not take away again names ESTALE as the cause, not another banker run
+  let left = false;
   for (;;) {
     const got = tryLock(path, token);
     if (got === "taken") return { path, token };
-    if (Date.now() >= until) return { path, why: got };
+    left ||= got === "left";
+    if (Date.now() >= until) return { path, why: left ? "stale" : got };
     if (got === "held") dropStale(path);
     Atomics.wait(SLEEP, 0, 0, LOCK_STEP_MS);
   }

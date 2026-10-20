@@ -511,7 +511,7 @@ function savedRules(o) {
   const found = readConfig(o.configFile);
   if (found === null) return { refusal: refuse("설정이 없습니다. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.") };
   if (found.error) {
-    return { refusal: refuse(`설정 파일이 올바르지 않습니다 (${found.error}): ${where(o.configFile)}. config 로 다시 만드세요.`) };
+    return { refusal: refuse(`설정 파일이 올바르지 않습니다 (${found.error}): ${where(o.configFile)}. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.`) };
   }
   return { rules: renderRules(loadTemplate(o), found.config), lines: [], ok: true };
 }
