@@ -1325,11 +1325,13 @@ def _is_block_start(lines, i):
     if (_FENCE_RE.match(line) or _HEAD_RE.match(line) or _HR_RE.match(line)
             or _QUOTE_RE.match(line) or _LIST_RE.match(line)):
         return True
-    # table: this line has a pipe AND the next line is a delimiter row
-    if ("|" in line and i + 1 < len(lines)
-            and "-" in lines[i + 1] and _TABLE_DELIM_RE.match(lines[i + 1])):
-        return True
-    return False
+    return _is_table_start(lines, i)
+
+
+def _is_table_start(lines, i):
+    """Whether lines[i] starts a table: it has a pipe AND the next line is a delimiter row."""
+    return bool("|" in lines[i] and i + 1 < len(lines)
+                and "-" in lines[i + 1] and _TABLE_DELIM_RE.match(lines[i + 1]))
 
 
 def _render_table(lines, i):
@@ -1348,85 +1350,90 @@ def _render_table(lines, i):
             % (thead, body)), i
 
 
+def _md_fence(lines, i, fence):
+    """A code block from the fence at lines[i] to the first closing fence at least as long (or the end), and the
+    index past it."""
+    i += 1
+    buf = []
+    while i < len(lines):
+        mc = _FENCE_CLOSE_RE.match(lines[i])
+        if mc and len(mc.group(1)) >= len(fence):
+            i += 1
+            break
+        buf.append(lines[i])
+        i += 1
+    return "<pre><code>%s</code></pre>" % html.escape("\n".join(buf)), i
+
+
+def _md_quote(lines, i, depth):
+    """The blockquote of the run of `>` lines at lines[i], rendered one level deeper, and the index past it."""
+    buf = []
+    while i < len(lines) and _QUOTE_RE.match(lines[i]):
+        buf.append(re.sub(r"^\s*>\s?", "", lines[i]))
+        i += 1
+    return "<blockquote>%s</blockquote>" % render_markdown("\n".join(buf), depth + 1), i
+
+
+def _md_list(lines, i):
+    """The list of the run of list lines at lines[i] (ordered when the first is numbered; nested ones flatten),
+    and the index past it."""
+    tag = "ol" if re.match(r"^\s*\d+[.)]", lines[i]) else "ul"
+    items = []
+    while i < len(lines):
+        mli = _LIST_RE.match(lines[i])
+        if not mli:
+            break
+        items.append(_md_inline(html.escape(mli.group(3))))
+        i += 1
+    return "<%s>%s</%s>" % (tag, "".join("<li>%s</li>" % it for it in items), tag), i
+
+
+def _md_paragraph(lines, i):
+    """The paragraph that starts at lines[i] (at least that line: C-2, no endless loop), its lines joined with <br>
+    (N5: pre-wrap keeps leading spaces without a second break), and the index past it."""
+    buf = [lines[i]]
+    i += 1
+    while i < len(lines) and lines[i].strip() and not _is_block_start(lines, i):
+        buf.append(lines[i])
+        i += 1
+    return "<p>%s</p>" % "<br>".join(_md_inline(html.escape(b)) for b in buf), i
+
+
+def _md_block(lines, i, depth):
+    """The HTML of the block that starts at lines[i] (None for a blank line), and the index past it."""
+    line = lines[i]
+    mf = _FENCE_RE.match(line)
+    if mf:
+        return _md_fence(lines, i, mf.group(1))
+    mh = _HEAD_RE.match(line)
+    if mh:
+        hl = max(3, min(6, len(mh.group(1))))     # h3..h6 (avoid page-header clash)
+        return "<h%d>%s</h%d>" % (hl, _md_inline(html.escape(mh.group(2).strip())), hl), i + 1
+    if _HR_RE.match(line):
+        return "<hr>", i + 1
+    if _QUOTE_RE.match(line):
+        return _md_quote(lines, i, depth)
+    if _is_table_start(lines, i):
+        return _render_table(lines, i)
+    if _LIST_RE.match(line):
+        return _md_list(lines, i)
+    if not line.strip():
+        return None, i + 1
+    return _md_paragraph(lines, i)
+
+
 def render_markdown(text, depth=0):
     """Block-level markdown → HTML. External deps: none. Escapes first; no stage
     re-runs over prior markup. Nested lists flatten; footnotes unsupported.
     """
     if depth > _BLOCKQUOTE_MAX_DEPTH:
         return "<p>%s</p>" % _md_inline(html.escape(text))
-    text = _CTRL_RE.sub("", text)
-    lines = text.split("\n")
-    out = []
-    i, n = 0, len(lines)
-    while i < n:
-        line = lines[i]
-        mf = _FENCE_RE.match(line)
-        if mf:
-            fence = mf.group(1)
-            i += 1
-            buf = []
-            while i < n:
-                mc = _FENCE_CLOSE_RE.match(lines[i])
-                if mc and len(mc.group(1)) >= len(fence):
-                    i += 1
-                    break
-                buf.append(lines[i])
-                i += 1
-            out.append("<pre><code>%s</code></pre>"
-                       % html.escape("\n".join(buf)))
-            continue
-        mh = _HEAD_RE.match(line)
-        if mh:
-            hl = max(3, min(6, len(mh.group(1))))     # h3..h6 (avoid page-header clash)
-            out.append("<h%d>%s</h%d>"
-                       % (hl, _md_inline(html.escape(mh.group(2).strip())), hl))
-            i += 1
-            continue
-        if _HR_RE.match(line):
-            out.append("<hr>")
-            i += 1
-            continue
-        if _QUOTE_RE.match(line):
-            buf = []
-            while i < n and _QUOTE_RE.match(lines[i]):
-                buf.append(re.sub(r"^\s*>\s?", "", lines[i]))
-                i += 1
-            out.append("<blockquote>%s</blockquote>"
-                       % render_markdown("\n".join(buf), depth + 1))
-            continue
-        if ("|" in line and i + 1 < n and "-" in lines[i + 1]
-                and _TABLE_DELIM_RE.match(lines[i + 1])):
-            tbl, i = _render_table(lines, i)
-            out.append(tbl)
-            continue
-        ml = _LIST_RE.match(line)
-        if ml:
-            ordered = bool(re.match(r"^\s*\d+[.)]", line))
-            tag = "ol" if ordered else "ul"
-            items = []
-            while i < n:
-                mli = _LIST_RE.match(lines[i])
-                if not mli:
-                    break
-                items.append(_md_inline(html.escape(mli.group(3))))
-                i += 1
-            out.append("<%s>%s</%s>"
-                       % (tag, "".join("<li>%s</li>" % it for it in items), tag))
-            continue
-        if not line.strip():
-            i += 1
-            continue
-        # paragraph: force-consume at least this line (C-2: no infinite loop)
-        buf = [line]
-        i += 1
-        while i < n and lines[i].strip() and not _is_block_start(lines, i):
-            buf.append(lines[i])
-            i += 1
-        # source newlines within a paragraph become <br> (N5). pre-wrap on the
-        # container preserves leading/aligned spaces without double-breaking,
-        # because we join with <br> and emit no literal newline between lines.
-        out.append("<p>%s</p>"
-                   % "<br>".join(_md_inline(html.escape(b)) for b in buf))
+    lines = _CTRL_RE.sub("", text).split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        block, i = _md_block(lines, i, depth)
+        if block is not None:
+            out.append(block)
     return "\n".join(out)
 
 
