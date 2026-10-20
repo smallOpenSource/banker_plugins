@@ -75,11 +75,13 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
   - `-c` 로 끌 수 없는 이름(영문자, 숫자, `_`, `-` 밖의 글자. codex 가 키를 점에서 나눈다)
   - `mcp_servers` 를 인라인 표 하나로 적은 설정
   - 본문의 `mcp_servers.<이름>` 이 읽은 목록에 없음(문자열 안의 언급도 센다)
-  - 여러 줄 문자열, 배열, 인라인 표가 끝까지 닫히지 않은 설정
-- codex 는 관리 설정 파일(`/etc/codex/managed_config.toml`)을 `-c` 보다 나중에 얹는다. 그 파일이 좌석이 끄거나 고정하는 키(`notify`, `otel`, `mcp_servers`, `web_search`, `tools`, `analytics`, `features`, `hooks`, `sandbox_mode`, `sandbox_workspace_write`, `approval_policy`)를 정하면 좌석을 세우지 않는다(`cli-call-failed`).
+  - 여러 줄 문자열, 배열, 인라인 표가 끝까지 닫히지 않았거나, 프로브가 자리를 잡지 못한 줄(따옴표 없는 비ASCII 키, 키도 표 머리도 아닌 줄)이 있는 설정. `notes` 에 그 파일과 줄 번호를 적는다
+  - 따옴표 키에 이스케이프(`\`)가 든 설정. codex 는 `"sandbox\u005Fmode"` 를 `sandbox_mode` 로 풀어 읽는데 프로브는 쓴 그대로 둔다
+- codex 는 관리 설정 파일(`/etc/codex/managed_config.toml`)을 `-c` 보다 나중에 얹는다. 그 파일이 좌석이 끄거나 고정하는 키(`notify`, `otel`, `mcp_servers`, `web_search`, `tools`, `analytics`, `features`, `hooks`, `sandbox_mode`, `sandbox_workspace_write`, `approval_policy`)를 정하거나 프로브가 그 파일을 끝까지 읽지 못하면 좌석을 세우지 않는다(`cli-call-failed`). 읽지 못했으면 `notes` 에 그 줄 번호를 적는다.
 - codex 는 요구 파일(`/etc/codex/requirements.toml`)을 `-c`, `--disable`, `-s` 보다 앞세워, 허용하지 않는 값 대신 요구 값으로 돈다. 0.144.5 를 가짜 `/etc` 에서 돌려 보니 `features.shell_tool = true` 가 `--disable shell_tool` 을 무르고 셸 도구가 돌아왔다. 그래서 이 파일이 있으면 다음 경우만 좌석을 세우고, 나머지는 `cli-call-failed` 다.
   - 허용 목록 `allowed_sandbox_modes`, `allowed_approval_policies`, `allowed_web_search_modes` 가 좌석 값(`read-only`, `never`, `disabled`)을 담는다.
   - 그 밖의 키는 `enforce_residency` 뿐이다.
+  - 프로브가 그 파일을 끝까지 읽는다.
 - gemini 의 시스템 정책 폴더(Linux `/etc/gemini-cli/policies`, macOS `/Library/Application Support/GeminiCli/policies`, Windows `C:\ProgramData\gemini-cli\policies`)에 정책 파일이 있으면 gemini 가 `--admin-policy` 를 무시한다. 좌석의 읽기 전용 장치가 그 플래그라 좌석을 세우지 않는다(`cli-call-failed`). 설정에 훅이 있으면 `notes` 로 알린다. 훅을 끌 플래그는 없다.
 - gemini 설정의 `context.includeDirectories` 가 작업 공간을 넓히거나 IDE 모드(`ide.enabled`)가 켜져 있으면 좌석을 세우지 않는다(`cli-call-failed`). 그 폴더 목록과 IDE 의 열린 파일이 요청에 실린다. IDE 연결을 켜 둔 사용자는 이 실행 동안 `ide.enabled` 를 끈다. 사용 통계를 끄는 설정(`privacy.usageStatisticsEnabled: false`)이 없으면 `notes` 로 알린다.
 - gemini 설정은 시스템, 사용자, 시스템 기본값(`system-defaults.json`) 세 계층을 그 순서로 읽는다. 위 판정은 세 계층 어디에 있든 같다.
@@ -434,6 +436,8 @@ Codex 에서 역할을 지정했다면 백본 줄에 `type=<역할> · model=<�
 - **백본 검토자는 게이트를 직접 돌리지 못한다.** 실행 증거는 저자가 넣은 원문 출력이고, 검토자는 그 출력이 명령과 코드에 맞는지 대조한다.
 - **"가장 뛰어난 모델" 은 CLI 가 말하는 순서다.** codex 는 내장 카탈로그의 `priority`, gemini 는 CLI 의 `pro` 별칭이 근거이고, opencode 는 성능 순위가 없어 묻는다(기본 모델을 고르는 고정 정렬만 있다). 이 스킬이 성능을 재지는 않는다. 그 프로바이더가 그 모델을 실제로 주는지는 첫 호출 전에는 모른다(프로브는 HTTP 0건).
 - 내장 카탈로그는 CLI 버전과 함께 낡는다. CLI 를 갱신하면 1위가 바뀔 수 있다.
+- 좌석 명령과 정리 명령은 opencode 를 띄운다. 캐시 폴더의 `version` 파일이 없거나 낡았으면(opencode 를 갱신한 뒤 첫 시작) 그 시작이 models.dev 사본(`~/.cache/opencode/models.json`)을 지우고, 목록 갱신을 끈 채라 다시 받지 않는다(1.3.10 실측).
+  그러면 다음 실행의 프로브는 `single-candidate` 로 앉히던 좌석도 `no-catalog` 로 묻고, 물을 수 없는 실행은 `fallback` 으로 앉는다. 프로브는 그 경우 `notes` 에 까닭을 적는다. 네트워크가 되는 곳에서 갱신 차단 env 없이 opencode 를 한 번 띄우면 사본이 돌아온다.
 - **프로브가 못 보는 설정이 있다.** opencode 의 원격 설정(`.well-known`, 계정 설정)과 로그인으로 쓰는 내장 프로바이더 모델, gemini 의 `.env`, codex 의 `-c` 덮어쓰기와 프로필, MDM·클라우드 관리 설정이다. 못 보는 쪽 모델은 질문의 직접 입력으로 고른다. codex 좌석은 실행 뒤 `model:` 줄로 실제 모델을 확인한다(외부 좌석 전송 절).
 - codex 의 관리 설정 파일(`/etc/codex/managed_config.toml`)과 요구 파일(`/etc/codex/requirements.toml`)은 프로브가 읽는다. macOS MDM 관리 설정과 업무 계정의 클라우드 요구는 읽지 못해, 그 환경에서는 좌석이 플래그로 끈 것이 실제로 꺼졌는지 모른다. Windows 의 두 파일 위치는 확인하지 못해 읽지 않는다.
 - codex 좌석에 남는 읽기 도구는 이미지를 여는 `view_image` 하나다. 이 도구를 끌 설정은 0.144.5 에서 찾지 못했다. 이미지 파일은 디스크 어디서나 읽을 수 있어 데이터 경계 지시로만 막는다.

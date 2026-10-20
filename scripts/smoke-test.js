@@ -801,6 +801,13 @@ try {
   ok(/`<review-data id="<id>">`/.test(rqSkill) && /실행마다 무작위 id/.test(rqSkill)
      && /파일을 쓰지 않고, 모델 호출/.test(rqSkill) && /게이트 결과/.test(rqSkill),
      'S24: every seat\'s instructions open with a per-run data boundary and the no-write rule, and the author passes gate output');
+  // 0.20.4 B3: the probe names where it read a codex config short, an escaped key unseats codex, and a seat or cleanup
+  // start of opencode may empty its models.dev copy.
+  ok(/프로브가 자리를 잡지 못한 줄/.test(rqSkill) && /정하거나 프로브가 그 파일을 끝까지 읽지 못하면 좌석을 세우지 않는다/.test(rqSkill)
+     && /따옴표 키에 이스케이프\(`\\`\)가 든 설정/.test(rqSkill),
+     'S22-b: the codex unseat list names a line the probe could not place, an escaped quoted key and a managed file read short');
+  ok(/그 시작이 models\.dev 사본\(`~\/\.cache\/opencode\/models\.json`\)을 지우고/.test(rqSkill) && /프로브는 그 경우 `notes` 에 까닭을 적는다/.test(rqSkill),
+     'S21-b: the limits say a seat or cleanup start of opencode may empty its models.dev copy, and the probe says so');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

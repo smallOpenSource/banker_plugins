@@ -333,10 +333,14 @@ test("a line the probe cannot place keeps the config from being read as whole", 
   const s = one({ codex: null }, codexWith('model = "gpt-5.6-sol"\n[mcp_servers.작성기]\ncommand = "x"\n'));
   assert.equal(s.reason, "cli-call-failed");
   assert.ok(s.notes.some((n) => n.includes("a line it could not place")), s.notes.join("; "));
+  assert.ok(s.notes.some((n) => n.includes(`${join("/home/u", ".codex", "config.toml")} line 2`)), "the note names the file and the line: " + s.notes.join("; "));
   const managed = one({ codex: null }, world({ ...CODEX, files: { "/home/u/.codex/config.toml": 'model = "gpt-5.5"\n',
     "/etc/codex/managed_config.toml": "[notify.작성기]\n" } }));
   assert.equal(managed.reason, "cli-call-failed", "a managed file read short may set a key the seat turns off");
   assert.ok(managed.notes.some((n) => n.includes("could not be read to its end")), managed.notes.join("; "));
+  assert.ok(managed.notes.some((n) => n.includes("could not be read to its end (line 1)")), managed.notes.join("; "));
+  const open = one({ codex: null }, codexWith('model = "gpt-5.6-sol"\nnotify = [\n  "a",\n'));
+  assert.ok(open.notes.some((n) => n.includes("config.toml line 2")), "an array left open is named by the line that opened it: " + open.notes.join("; "));
 });
 
 test("a [mcp_servers] block the walk reads as text still counts in the cross-check", () => {
@@ -859,4 +863,31 @@ test("every reason the probe gives is one SKILL.md lists, and the two lists do n
   assert.deepEqual(ABSENT_REASONS.filter((r) => DECISION_REASONS.includes(r)), []);
   const skillSet = ["model-declined"];
   assert.deepEqual([...listed].filter((r) => !seen.has(r) && !skillSet.includes(r)), [], "the scenarios reach every probe-set reason");
+});
+
+// 0.20.4 B3: an escaped quoted key, the file and line a config is read short at, an emptied opencode cache
+test("an escape in a quoted TOML key keeps the config from being read as whole, since codex reads the key it spells", () => {
+  const U = "\\u005F"; // the TOML escape for _: codex reads "sandbox\u005Fmode" as sandbox_mode
+  for (const text of [`"sandbox${U}mode" = "danger-full-access"\n`, `["mcp${U}servers".evil]\ncommand = "node"\n`,
+    `"mcp${U}servers".evil.command = "node"\n`, `["mcp${U}servers"]\nevil = { command = "node" }\n`,
+    `["mcp\\U0000005Fservers".evil]\ncommand = "node"\n`]) {
+    assert.equal(readToml(text).broken, true, text);
+  }
+  assert.equal(readToml(`['mcp${U}servers'.x]\ncommand = "node"\n`).broken, false, "a 'literal' key holds no escape");
+  const managed = one({ codex: null }, world({ ...CODEX, files: { "/home/u/.codex/config.toml": 'model = "gpt-5.5"\n',
+    "/etc/codex/managed_config.toml": `"sandbox${U}mode" = "danger-full-access"\n` } }));
+  assert.equal(managed.reason, "cli-call-failed", "the managed file may set sandbox_mode");
+  const user = one({ codex: null }, codexWith(`model = "gpt-5.6-sol"\n["mcp${U}servers".evil]\ncommand = "node"\n`));
+  assert.equal(user.reason, "cli-call-failed", "the seat could not turn evil off");
+});
+
+test("an opencode cache emptied after an update is named in the notes, not only as no-catalog", () => {
+  const cfg = JSON.stringify({ model: "ollama-qwen/qwen3-coder:30b", enabled_providers: ["ollama-qwen"], provider: { "ollama-qwen": { models: { "qwen3-coder:30b": {} } } } });
+  const files = { "/home/u/.config/opencode/opencode.json": cfg, "/home/u/.cache/opencode/version": "21" };
+  const out = probe({ requested: { opencode: null }, runtime: "claude", world: world({ bins: { opencode: "/usr/bin/opencode" }, files }) });
+  const s = out.seats[0];
+  assert.equal(s.reason, "no-catalog");
+  assert.ok((s.notes ?? []).some((n) => n.includes("models.dev copy is missing")), JSON.stringify(s));
+  const fresh = probe({ requested: { opencode: null }, runtime: "claude", world: world({ bins: { opencode: "/usr/bin/opencode" }, files: { ...files, "/home/u/.cache/opencode/models.json": "{\"openai\":{}}" } }) });
+  assert.equal(fresh.seats[0].reason, "single-candidate");
 });
