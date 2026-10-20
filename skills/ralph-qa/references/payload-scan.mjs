@@ -16,8 +16,8 @@
  * hex keys, Basic and Bearer credentials, credentials in URLs and
  * long high-entropy strings (a lockfile's sha512- integrity hash and a Go or Terraform h1: hash
  * aside); they do not prove a payload clean. A Docker secret file's path after a *_FILE key is
- * not read as the password it points to, and a value masked as `[REDACTED]` (the mask SKILL.md
- * asks for) is no value, so a masked payload scans clean. Every repeat and lookahead is bounded (a run longer than
+ * not read as the password it points to, and a value masked as a whole `[REDACTED]` word (the mask
+ * SKILL.md asks for) is no value, so a masked payload scans clean; a mask glued to the rest of a value is not. Every repeat and lookahead is bounded (a run longer than
  * 65536 characters is read in pieces) or anchored, so a long line takes linear time and cannot
  * overflow the regex stack.
  */
@@ -27,8 +27,9 @@ import { fileURLToPath } from "node:url";
 const SECRET_KEY = String.raw`(?:api[_-]?key|secret|token|passw(?:or)?d|pwd|access[_-]?key|credential|비밀번호|패스워드)[\w-]{0,64}["']?\s*[:=]\s*`;
 // `pass` and `passphrase` count only as a word of their own (DB_PASS, "pass"), not inside bypass.
 const PASS_WORD = String.raw`(?:passw(?:or)?d|pwd|passcode|(?<![a-z])pass(?:phrase)?(?![a-z]))`;
-// An env-style key that holds a password word, up to its `=`, and a value that is no reference or placeholder.
-const ENV_KEY = String.raw`[A-Za-z0-9_]{0,64}(?:passw(?:or)?d|pwd|passcode)[A-Za-z0-9_]{0,64}=(?![-$<{%])`;
+// An env-style key that holds a password word, up to its `=`, and a value that is no reference or whole placeholder
+// (`$X`, `<your-password>`, `{{ x }}`, `%(x)s`, `%X%`). A value that only starts with `<` or `{` is still read.
+const ENV_KEY = String.raw`[A-Za-z0-9_]{0,64}(?:passw(?:or)?d|pwd|passcode)[A-Za-z0-9_]{0,64}=(?!-|\$|<[^>\s]{1,64}>|\{\{|%\(|%[A-Za-z_][A-Za-z0-9_]{0,64}%)`;
 const PASSWORD_KEY = String.raw`(?:${PASS_WORD}|비밀번호|패스워드)[\w-]{0,64}["']?\s*[:=]\s*`;
 // An unquoted value that is not code: none of the characters an expression or a reference
 // holds, and at least one symbol (an identifier has none).
@@ -103,6 +104,8 @@ const KEYED = new Set(["assigned-secret", "assigned-secret-bare", "assigned-pass
   "dockerfile-env-password"]);
 
 const KEY_END = new RegExp(`-----END ${PRIVATE_KEY}`);
+// The mask SKILL.md asks for, as a word of its own. One glued to the rest of a value is no mask: what is left is read.
+const WHOLE_MASK = /(?<!\w)\[REDACTED\](?!\w)/g;
 
 // Each line's secret-like kinds, once per kind and line. A private key closes at the first END
 // marker at or after its line: the END lines are found once and walked with the lines, so many
@@ -114,7 +117,7 @@ export function scan(text) {
   let next = 0;
   lines.forEach((line, i) => {
     while (next < ends.length && ends[next] < i + 1) next += 1;
-    const plain = line.replaceAll("[REDACTED]", "-");
+    const plain = line.replace(WHOLE_MASK, "-");
     const keyed = plain.replace(SECRET_FILE_PATH, "$1-");
     for (const [kind, re] of PATTERNS) {
       if (!re.test(KEYED.has(kind) ? keyed : plain)) continue;

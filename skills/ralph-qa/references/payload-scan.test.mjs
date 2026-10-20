@@ -218,7 +218,8 @@ test("long lines take linear time, so a big generated file cannot stall the chec
   const SHAPES = [["", "secret", 4000], ["postgres://", "a", 24000], ["", "password", 3000], ["", "pwd", 8000], ["", "a.", 12000],
     ["", "token=a|", 20000], ["", "pwd:", 10000], ["", "token=", 10000], ["", "--token=", 15000], ["", "credential=", 8000],
     ["", "secret_key:abc_def_ghi|", 2500], ["", "token:", 8000], ["", "DB_PASS=", 10000],
-    [" -u", "=", 30000], [" --user", "=", 30000], [" -u ", "a:", 15000], ["ENV ", "PASS", 7500, " x"]];
+    [" -u", "=", 30000], [" --user", "=", 30000], [" -u ", "a:", 15000], ["ENV ", "PASS", 7500, " x"],
+    [" ", "pwd", 8000], ['"', "pwd", 8000]];
   const clock = process.platform === "win32" ? () => Number(process.hrtime.bigint()) / 1e6
     : () => { const u = process.cpuUsage(); return (u.user + u.system) / 1000; };
   const ms = (t) => {
@@ -359,4 +360,26 @@ test("the command line exits 2 and prints no report when the scan itself throws"
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// 0.20.4 B3 review 1: a value that starts with < or {, and a [REDACTED] glued to the rest of a value
+test("a password value that starts with < or { is still caught; only a whole placeholder is left", () => {
+  const P = "PASS" + "WORD";
+  const v = "Zx9pQ7" + "rTw2";
+  for (const line of [`DB_${P}={${v}`, `export MYSQL_PWD=<${v}`, `+DB_${P}={${v}`, `docker run -e DB_${P}=<${v} img`]) {
+    assert.ok(scan(line).count > 0, `not caught: ${line}`);
+  }
+  // a whole placeholder is no value to env-password (assigned-password still reads a value with a symbol, %X% too)
+  for (const line of [`DB_${P}=<your-pass${"word"}>`, `DB_${P}={{ secret }}`, `DB_${P}=%(pw)s`, `DB_${P}=%DB_PASS%`]) {
+    assert.ok(!scan(line).hits.some((h) => h.kind === "env-password"), `env-password on: ${line}`);
+  }
+});
+
+test("a [REDACTED] glued to the rest of a value is no mask: the rescan still catches what is left", () => {
+  const M = "[REDACTED]";
+  const jwt = ["ey" + "J" + "a".repeat(12), "ey" + "J" + "b".repeat(12), "c".repeat(16)].join(".");
+  for (const line of [`--pass${"word"} ${M}Zx9pQ7rTw2`, `token ${M}${jwt}`]) {
+    assert.ok(scan(line).count > 0, `not caught: ${line}`);
+  }
+  assert.equal(scan(`--pass${"word"} ${M}`).count, 0, "a whole mask is no value");
 });
