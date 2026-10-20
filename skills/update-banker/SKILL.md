@@ -70,10 +70,20 @@ banker 는 서로 다른 메커니즘의 채널 3개로 설치되고, 그 채널
 여기서 찍은 값이 4단계 검증의 before 다. 먼저 어떤 채널이 이 머신에 실재하는지 판정한다.
 
 ```bash
+npm ping --fetch-retries=0 --fetch-timeout=10000   # 레지스트리 도달 확인(네트워크가 없으면 1초 안에 실패)
 command -v claude >/dev/null && echo "claude: present" || echo "claude: absent (Claude 채널 스킵)"
 command -v codex  >/dev/null && echo "codex: present"  || echo "codex: absent (Codex 채널 스킵)"
 command -v banker >/dev/null && banker --version || echo "banker: absent"
-npm view @kaydash9999/banker-plugins version
+npm view @kaydash9999/banker-plugins version --fetch-retries=0
+```
+
+레지스트리에 닿지 못하면(`npm ping` 의 종료 코드가 0 이 아님) "레지스트리에 닿지 못함. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고, 어느 채널도 바꾸지 않고 멈춘다. `--check` 도 드리프트를 판정하지 않고 같은 보고로 끝낸다.
+
+- **`npm view` 는 이 확인을 대신하지 못한다.** npm 캐시에 옛 값이 있으면 레지스트리에 닿지 못해도 그 값을 종료 0 으로, 경고 없이 낸다(`--prefer-online`, `--offline` 도 같다). `--fetch-retries=0` 은 실패까지의 약 70초 대기만 없앤다.
+- 사내 미러가 `npm ping` 에 답하지 않으면, 빈 임시 캐시로 한 번 더 묻고 그 값으로 판정한다. 캐시가 비어 있어 옛 값이 나올 수 없다. 이것도 실패하면 위처럼 멈춘다.
+
+```bash
+T=$(mktemp -d) && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --cache "$T"; rm -rf "$T"
 ```
 
 부재한 채널은 그 자리에서 "스킵" 으로 확정한다. 없는 채널을 되살리려 들지 마라(그건 설치지 갱신이 아니다).
@@ -84,7 +94,7 @@ npm view @kaydash9999/banker-plugins version
 ```bash
 npm i -g @kaydash9999/banker-plugins@latest
 banker --version
-npm view @kaydash9999/banker-plugins version
+npm view @kaydash9999/banker-plugins version --fetch-retries=0
 ```
 
 두 값이 **일치할 때만** 다음 단계로 간다. 불일치면 **즉시 중단**하고 보고한다. 우회하지 마라.
@@ -166,7 +176,7 @@ console.log(e&&e[0]?e[0].version:'absent (Claude 채널 미설치 -> 스킵)')"
 프로브 2, npm(두 값이 같아야 한다):
 ```bash
 banker --version
-npm view @kaydash9999/banker-plugins version
+npm view @kaydash9999/banker-plugins version --fetch-retries=0
 ```
 
 프로브 3, Codex. **축이 둘이다**(skills, prompts). 각각 설치분과 매니페스트를 대조한다. 스킬만 세면 프롬프트 소실을 못 본다:
@@ -209,6 +219,7 @@ Codex prompts   : 2 -> 2   (매니페스트 2)    유지
 ## 함정
 - **3채널을 하나로 뭉개는 것.** "banker 버전" 이라는 단일 값은 없다.
 - **exit 0 을 성공으로 읽는 것.** 이 도메인에서 종료 코드는 신호가 아니다. 관측만이 신호다.
+- **낡은 npm 캐시 값을 최신으로 읽는 것.** 레지스트리에 닿지 못해도 `npm view` 는 캐시의 옛 값을 종료 0 으로 낸다. 0단계의 `npm ping` 이 실패하면 멈춘다.
 - **순서를 바꾸는 것.** Codex 를 npm 보다 먼저 돌리면 sweep 이 현재 설치분을 지우고 구버전 개수만 복원한다. `~/.codex/skills` 와 `~/.codex/prompts` **둘 다** 다. 이것이 이 스킬에서 데이터가 사라지는 유일하고 실재하는 경로다.
 - **스킬만 세는 것.** 프롬프트 축을 빼면 구버전 매니페스트의 **복원 대상 command 가 0** 일 때 생기는 **프롬프트 100% 소실**을 구조적으로 볼 수 없다. `banker doctor` 도 프롬프트를 세지 않으므로 대체가 안 된다.
 - **sweep 차액을 "배포본에서 빠진 것" 으로 단정하는 것.** sweep 은 `banker-` 접두사만 본다. 사용자가 손수 만든 것도 지운다. 오귀속하지 말고 이름을 제시하라.

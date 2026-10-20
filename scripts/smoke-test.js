@@ -858,6 +858,15 @@ try {
      'S23-j: the 512 KiB cap is on the whole payload before any split, and each part is counted and scanned');
   ok(/Git Bash 에서 `command -v timeout` 이 `\/c\/Windows\/system32\/timeout` 이면/.test(rqSkill) && /`\/usr\/bin\/timeout -s KILL 600`/.test(rqSkill),
      'S23-l: in Git Bash the limit is GNU timeout, not the Windows timeout a PATH may put first');
+
+  // 9) airgap (0.20.4 B7): with no network a skill neither waits on every command nor reports a stale or empty result
+  // as a success.
+  const ubSkill = fs.readFileSync(path.join(root, 'skills', 'update-banker', 'SKILL.md'), 'utf8');
+  const ubStep0 = ubSkill.slice(ubSkill.indexOf('### 0. 관측'), ubSkill.indexOf('### 1. npm 먼저'));
+  ok(/npm ping --fetch-retries=0 --fetch-timeout=10000/.test(ubStep0) && ubStep0.indexOf('npm ping') < ubStep0.indexOf('npm view')
+     && /레지스트리에 닿지 못하면\(`npm ping` 의 종료 코드가 0 이 아님\) .* 어느 채널도 바꾸지 않고 멈춘다/.test(ubStep0)
+     && (ubSkill.match(/npm view @kaydash9999\/banker-plugins version(?! --fetch-retries=0)/g) || []).length === 0,
+     'airgap-1: update-banker checks the registry is reachable before npm view, stops when it is not, and npm view never waits on retries');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
