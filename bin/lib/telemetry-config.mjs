@@ -63,16 +63,20 @@ export function netDeadlineMs(env = process.env) {
 
 // 네트워크 응답 본문을 maxBytes 까지만 모아 done(문자열)로 넘긴다. 한도를 넘으면 연결을 끊고 done(null),
 // 응답 스트림 오류도 done(null). 낯선 서버가 끝없이 보내도 메모리가 한도 밖으로 늘지 않게 한다.
+// done 은 한 번만 부른다. 끊은 뒤에 오는 end 로 잘린 몸을 다시 넘기지 않는다.
 export function collectBody(res, maxBytes, done) {
   const chunks = [];
   let size = 0;
+  let settled = false;
+  const once = (body) => { if (!settled) { settled = true; done(body); } };
   res.on('data', (c) => {
+    if (settled) return;
     size += c.length;
-    if (size > maxBytes) { res.destroy(); done(null); return; }
+    if (size > maxBytes) { res.destroy(); once(null); return; }
     chunks.push(c);
   });
-  res.on('end', () => done(Buffer.concat(chunks).toString('utf8')));
-  res.on('error', () => done(null));
+  res.on('end', () => once(Buffer.concat(chunks).toString('utf8')));
+  res.on('error', () => once(null));
 }
 
 // 일반 파일의 글. 그 밖(FIFO, 폴더)과 오류는 ''. 막지 않고 열어 FIFO 를 기다리지 않는다.
@@ -370,22 +374,25 @@ export function changedSkillsBetween(map, installed, latest) {
   try {
     if (!map || typeof map !== 'object' || Array.isArray(map)) return [];
     if (typeof installed !== 'string' || typeof latest !== 'string') return [];
-    const seen = new Set();
-    const out = [];
+    const out = new Set(); // 처음 나온 순서를 지킨다.
     for (const v of Object.keys(map)) {
-      const gt = compareVersions(v, installed);
-      const le = compareVersions(v, latest);
-      if (gt === null || le === null) continue;   // malformed 버전 키 무시.
-      if (gt > 0 && le <= 0) {
-        const skills = map[v];
-        if (!Array.isArray(skills)) continue;
-        for (const s of skills) {
-          if (typeof s === 'string' && s && !seen.has(s)) { seen.add(s); out.push(s); }
-        }
-      }
+      if (inRange(v, installed, latest)) addSkills(out, map[v]);
     }
-    return out;
+    return [...out];
   } catch {
     return [];
   }
+}
+
+// installed < v <= latest 인지. malformed 버전(compareVersions null)은 false.
+function inRange(v, installed, latest) {
+  const gt = compareVersions(v, installed);
+  const le = compareVersions(v, latest);
+  return gt !== null && le !== null && gt > 0 && le <= 0;
+}
+
+// 배열의 비지 않은 문자열만 집합에 더한다. 배열이 아니면 건너뛴다.
+function addSkills(out, skills) {
+  if (!Array.isArray(skills)) return;
+  for (const s of skills) if (typeof s === 'string' && s) out.add(s);
 }

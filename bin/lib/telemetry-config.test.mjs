@@ -7,7 +7,9 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import http from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import {
   configDir, readConfig, writeConfig, isEnabled, endpoint,
   noUpdateCheck, countingActive, installedVersion, compareVersions, writeUpdateCache,
-  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog, readRegular, writeByRename, randomHex,
+  readUsedSkills, recordUsedSkill, changedSkillsBetween, appendUsageLog, readRegular, writeByRename, randomHex, collectBody,
   UPDATE_CHECK_PATH, UPDATE_THROTTLE_MS, NPM_LATEST_URL, DEFAULT_ENDPOINT,
   SKILL_CHANGES_URL, USED_SKILLS_PATH, USED_SKILLS_MAX, SKILL_NAME_RE, netDeadlineMs,
 } from './telemetry-config.mjs';
@@ -270,6 +272,8 @@ test('changedSkillsBetween: installed<v<=latest 합집합·중복제거·순서 
   // malformed 버전 키·비배열 값은 건너뛴다(throw 없음).
   const messy = { 'x.y.z': ['banker:z'], '0.9.0': 'notarray', '0.9.1': ['banker:ok', 42] };
   assert.deepStrictEqual(changedSkillsBetween(messy, '0.8.0', '0.9.5'), ['banker:ok']);
+  assert.deepStrictEqual(changedSkillsBetween({ '0.9.0': ['banker:b'] }, '0.8.0', '0.10'), [], 'malformed latest');
+  assert.deepStrictEqual(changedSkillsBetween({ '0.9.0': ['banker:b'] }, '0.8', '0.10.0'), [], 'malformed installed');
 });
 
 test('netDeadlineMs: 시험용 값은 마감을 줄이기만 한다(30초보다 길면 30초)', () => {
@@ -553,4 +557,43 @@ test('시험 도구: 암호 모듈 없이 빌드한 Node 처럼 https 와 tls �
   const res = spawnSync(process.execPath, ['--import', NO_CRYPTO_URL, '--input-type=module', '-e', code], { encoding: 'utf8' });
   assert.strictEqual(res.status, 0, res.stderr);
   assert.strictEqual(res.stdout, 'ERR_NO_CRYPTO ERR_NO_CRYPTO');
+});
+
+// The values collectBody hands done for an answer of n bytes sent in one go from this machine: a length, or null.
+async function collectFromLoopback(n, max) {
+  const server = http.createServer((q, res) => { res.writeHead(200, { 'content-length': n }); res.end(Buffer.alloc(n, 0x61)); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const got = [];
+    await new Promise((resolve) => {
+      http.get({ host: '127.0.0.1', port: server.address().port, path: '/' }, (res) => {
+        collectBody(res, max, (body) => { got.push(body === null ? null : body.length); });
+        res.on('close', () => setTimeout(resolve, 50));
+      }).on('error', () => setTimeout(resolve, 50));
+    });
+    return got;
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((r) => server.close(r));
+  }
+}
+
+test('collectBody: 정확히 한도(256KiB)인 몸은 받고, 한도+1 은 null 을 한 번만 넘긴다', async () => {
+  const MAX = 256 * 1024;
+  assert.deepStrictEqual(await collectFromLoopback(MAX, MAX), [MAX]);
+  assert.deepStrictEqual(await collectFromLoopback(MAX + 1, MAX), [null], '끊은 뒤 오는 end 로 잘린 몸을 다시 넘기지 않는다');
+});
+
+test('collectBody: 한도를 넘은 뒤 오는 data, error, end 는 done 을 다시 부르지 않는다', () => {
+  const res = new EventEmitter();
+  let destroyed = 0;
+  res.destroy = () => { destroyed += 1; };
+  const calls = [];
+  collectBody(res, 4, (body) => calls.push(body));
+  res.emit('data', Buffer.from('abcde'));
+  res.emit('data', Buffer.from('f'));
+  res.emit('error', new Error('aborted'));
+  res.emit('end');
+  assert.deepStrictEqual(calls, [null]);
+  assert.strictEqual(destroyed, 1);
 });
