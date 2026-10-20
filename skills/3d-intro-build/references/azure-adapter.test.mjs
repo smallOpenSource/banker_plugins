@@ -16,6 +16,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as A from './azure-adapter.mjs';
 
+// An inode number read as BigInt: NTFS file IDs pass 2^53 (seen on the Windows test box), and a Number loses the low bits.
+const inoOf = (p) => fs.statSync(p, { bigint: true }).ino;
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EP = 'https://unit-test.example.com';
 const KEY = 'placeholder-key-0000';
@@ -1027,7 +1030,7 @@ test('persistCreds: a key file with a second name (a hard link) is written in pl
 test('persistCreds: a key file whose new copy would get another owner or group is written in place', () => {
   const target = path.join(mkTmp('persist-owner-'), 'env');
   fs.writeFileSync(target, 'A=1\n');
-  const ino = fs.statSync(target).ino;
+  const ino = inoOf(target);
   const fstat = fs.fstatSync;
   fs.fstatSync = (fd, ...rest) => { const st = fstat(fd, ...rest); return { ...st, uid: st.uid + 1 }; };
   try {
@@ -1036,7 +1039,7 @@ test('persistCreds: a key file whose new copy would get another owner or group i
     fs.fstatSync = fstat;
   }
   assert.equal(fs.readFileSync(target, 'utf8'), 'A=2\n');
-  assert.equal(fs.statSync(target).ino, ino, 'the same file, not a new one renamed over it');
+  assert.equal(inoOf(target), ino, 'the same file, not a new one renamed over it');
 });
 
 test('persistCreds: the home key file that is a link is written where it points and stays a link; a link to nothing is refused', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {

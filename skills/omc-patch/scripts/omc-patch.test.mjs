@@ -3680,7 +3680,10 @@ test("a bare apply whose origin gets credentials from an insteadOf rule gives gi
 // Review 3: the proxy address never shows in git's line, but curl misreads a raw "/" in its password the same way and
 // names the proxy's user ("Could not resolve proxy: alice"; here "Failed to connect to localhost port 9", which asks no
 // name server). A proxy from the environment or from git's settings drops git's words; a well-formed one keeps them.
-const NO_WORDS_PROXY = /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\(프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어 git 의 문구는 싣지 않음\)$/;
+// Newer git checks the proxy address itself and prints it whole ("Invalid proxy URL '<address>': only SOCKS proxies
+// support paths": git 2.50 on the macOS box, 2.55 on the Windows box); the tool masks it and the address rule drops git's
+// words. git 2.43 here hands it to curl, which misreads it, and the proxy rule drops them. Either reason will do.
+const NO_WORDS_PROXY = /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\((?:주소에 사용자 정보가 있어|프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어) git 의 문구는 싣지 않음\)$/;
 test("a bare apply through a proxy whose password has a raw slash gives git's exit and none of its words", { skip: !HAS_GIT && "git not found" }, () => {
   const broken = `http://localhost:${["9", "Kx7Yp"].join("/")}@127.0.0.1:9`;
   const viaEnv = { http_proxy: broken, HTTP_PROXY: broken };

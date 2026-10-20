@@ -24,6 +24,9 @@ import { delimiter, dirname, join, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 
+// An inode number read as BigInt: NTFS file IDs pass 2^53 (seen on the Windows test box), and a Number loses the low bits.
+const inoOf = (p) => statSync(p, { bigint: true }).ino;
+
 const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
 const APPLY = join(ASSETS, "apply-hud.mjs");
 const root = mkdtempSync(join(tmpdir(), "apply-hud-test-"));
@@ -760,10 +763,10 @@ test("settings.json 은 새 파일로 바꿔 넣고 권한을 지킴", posixMode
   const file = join(cfg, "settings.json");
   writeFileSync(file, JSON.stringify({ theme: "dark" }));
   chmodSync(file, 0o600);
-  const ino = statSync(file).ino;
+  const ino = inoOf(file);
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
-  assert.notEqual(statSync(file).ino, ino, "replaced through a rename");
+  assert.notEqual(inoOf(file), ino, "replaced through a rename");
   assert.equal(modeOf(file), 0o600);
   assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
 });
@@ -780,14 +783,14 @@ function linkedSettings() {
 
 test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈", fileLinks, () => {
   const { cfg, target } = linkedSettings();
-  const ino = statSync(target).ino;
+  const ino = inoOf(target);
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
   assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink(), "the link stays");
   const s = JSON.parse(readFileSync(target, "utf8"));
   assert.equal(s.theme, "dark");
   assert.match(s.statusLine.command, /omc-hud-custom\.mjs/);
-  assert.notEqual(statSync(target).ino, ino, "the file it points at was replaced");
+  assert.notEqual(inoOf(target), ino, "the file it points at was replaced");
 });
 
 // The installer's temporary file is named after its pid; a preload pins the pid so a test can put
@@ -803,11 +806,11 @@ test("같은 pid 의 임시 파일이 남아 있어도 settings.json 을 바꿔 
   const cfg = fresh();
   writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
   writeFileSync(join(cfg, `settings.json.${PID}.tmp`), "left by an earlier run that was killed\n");
-  const ino = statSync(join(cfg, "settings.json")).ino;
+  const ino = inoOf(join(cfg, "settings.json"));
   const r = install({ cfg, nodeArgs: pinnedPid() });
   assert.equal(r.status, 0, r.out);
   assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
-  assert.notEqual(statSync(join(cfg, "settings.json")).ino, ino, "went in through the rename, not in place");
+  assert.notEqual(inoOf(join(cfg, "settings.json")), ino, "went in through the rename, not in place");
   assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
 });
 
@@ -884,10 +887,10 @@ test("settings.json 은 umask 가 지우는 권한 비트도 그대로 두고 �
   const file = join(cfg, "settings.json");
   writeFileSync(file, JSON.stringify({ theme: "dark" }));
   chmodSync(file, 0o664);
-  const ino = statSync(file).ino;
+  const ino = inoOf(file);
   const r = install({ cfg, wrap: ["sh", "-c", 'umask 022; exec "$0" "$@"'] });
   assert.equal(r.status, 0, r.out);
-  assert.notEqual(statSync(file).ino, ino, "replaced through a rename");
+  assert.notEqual(inoOf(file), ino, "replaced through a rename");
   assert.equal(modeOf(file), 0o664);
 });
 
@@ -921,12 +924,12 @@ function renameInOneFolderOnly() {
 
 test("링크인 settings.json 의 임시 파일은 가리키는 파일 옆이라 링크가 다른 파일 시스템에 있어도 바꿔 넣음", fileLinks, () => {
   const { cfg, target } = linkedSettings();
-  const ino = statSync(target).ino;
+  const ino = inoOf(target);
   const r = install({ cfg, nodeArgs: renameInOneFolderOnly() });
   assert.equal(r.status, 0, r.out);
   assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink(), "the link stays");
   assert.match(JSON.parse(readFileSync(target, "utf8")).statusLine.command, /omc-hud-custom\.mjs/);
-  assert.notEqual(statSync(target).ino, ino, "renamed within the target's folder, not written in place");
+  assert.notEqual(inoOf(target), ino, "renamed within the target's folder, not written in place");
 });
 
 // B1-2: a rename must not part a hard link or hand settings.json to another owner or group.
@@ -936,10 +939,10 @@ test("하드 링크인 settings.json 은 제자리에 써 다른 이름도 같�
   const other = join(fresh("dot"), "settings.json");
   writeFileSync(file, JSON.stringify({ theme: "dark" }));
   linkSync(file, other);
-  const ino = statSync(file).ino;
+  const ino = inoOf(file);
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
-  assert.equal(statSync(file).ino, ino, "written in place");
+  assert.equal(inoOf(file), ino, "written in place");
   assert.equal(statSync(other).nlink, 2, "still one file with two names");
   assert.match(JSON.parse(readFileSync(other, "utf8")).statusLine.command, /omc-hud-custom\.mjs/);
   assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
@@ -979,10 +982,10 @@ test("새 파일이면 그룹이 바뀔 settings.json 은 제자리에 써 그�
   writeFileSync(file, JSON.stringify({ theme: "dark" }));
   chownSync(file, process.getuid(), otherGroup);
   chmodSync(file, 0o660);
-  const ino = statSync(file).ino;
+  const ino = inoOf(file);
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
-  assert.equal(statSync(file).ino, ino, "written in place");
+  assert.equal(inoOf(file), ino, "written in place");
   assert.equal(statSync(file).gid, otherGroup);
   assert.equal(modeOf(file), 0o660);
   assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
@@ -1011,10 +1014,10 @@ test("새 파일이면 소유자가 바뀔 settings.json 은 제자리에 씀", 
   const cfg = fresh();
   const file = join(cfg, "settings.json");
   writeFileSync(file, JSON.stringify({ theme: "dark" }));
-  const ino = statSync(file).ino;
+  const ino = inoOf(file);
   const r = install({ cfg, nodeArgs: otherOwnerPreload() });
   assert.equal(r.status, 0, r.out);
-  assert.equal(statSync(file).ino, ino, "written in place");
+  assert.equal(inoOf(file), ino, "written in place");
   assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
   assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
 });
