@@ -1197,3 +1197,34 @@ test('SKILL: a task_lost leg whose task the console still shows is finished with
   const row = buildSkill().split('\n').find((l) => l.trim().startsWith('|') && l.includes("'task_lost'"));
   assert.match(row, /`task_lost` 인데 콘솔에 task 가 있으면 `resumeClip` 으로 마저 받음\(새 제출 없음\)/);
 });
+
+test('wanParams: a size it cannot read is taken as 720x1280', () => {
+  assert.deepEqual([P.wanParams({ size: 'bogus' }).resolution, P.wanParams({ size: 'bogus' }).ratio], ['720P', '9:16']);
+});
+
+test('generateClip: a WAN task without frames sends no media field', async () => {
+  const calls = installFetch();
+  await run({ creds: creds(), statePath: tmpState() });
+  assert.deepEqual(Object.keys(creates(calls)[0].body.input), ['prompt']);
+});
+
+test('generateClip: request-rate cooldowns without Retry-After double from 30 s and stop at 10 min', async () => {
+  const c = clock();
+  installFetch({ wanCreate: () => json(429, { code: 'Throttling.RateQuota' }) });
+  const one = creds({ WAN_2_ENDPOINT: undefined, WAN_2_API_KEY: undefined, WAN_3_ENDPOINT: undefined, WAN_3_API_KEY: undefined, VIDEO_PROVIDER_ORDER: 'wan' });
+  const statePath = tmpState();
+  const waits = [];
+  await assert.rejects(run({ creds: one, statePath, clock: c, maxRateWaitMs: 3_600_000, onEvent: (e) => { if (e.type === 'wait') waits.push(e.ms); } }), /no video provider available/);
+  assert.deepEqual(waits, [30_000, 60_000, 120_000, 240_000, 480_000]);
+  const [s] = P.poolSummary({ creds: one, statePath, now: c.now() });
+  assert.deepEqual([s.status, s.until - c.now()], ['cooldown', 600_000]);
+});
+
+test('generateClip: a transient failure keeps the first 120 characters of its message in the key\'s reason', async () => {
+  const c = clock();
+  installFetch({ wanCreate: (n) => (n === 1 ? json(500, { code: 'InternalError', message: 'x'.repeat(200) }) : null) });
+  const statePath = tmpState();
+  await run({ creds: creds(), statePath, clock: c });
+  const s = P.poolSummary({ creds: creds(), statePath, now: c.now() }).find((e) => e.label === 'WAN_1');
+  assert.equal(s.reason, `InternalError: ${'x'.repeat(120)}`);
+});

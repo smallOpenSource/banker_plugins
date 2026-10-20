@@ -247,6 +247,21 @@ export function poolSummary({ creds = {}, statePath = defaultStatePath(), now = 
 const inflight = new Map();
 
 function pickEntry(pool, state, t, limit) {
+  const { ready, soonest, busy } = scanPool(pool, state, t, limit);
+  if (ready.length) {
+    // least recently used first: spreads requests over the pool, so no single key takes every rate hit
+    ready.sort((a, b) => (state.entries[a.fp]?.lastUsedAt || 0) - (state.entries[b.fp]?.lastUsedAt || 0) || a.n - b.n);
+    return { entry: ready[0] };
+  }
+  // a busy key frees up as soon as one of our own tasks finishes — always worth waiting for
+  if (busy) return { entry: null, waitMs: 1000, busy: true };
+  if (soonest != null) return { entry: null, waitMs: Math.max(0, soonest - t) };
+  return { entry: null, waitMs: null };
+}
+
+// The pool at time t: the entries that can take a task now, the soonest end of a cooldown, and
+// whether a usable key is only at its in-flight limit.
+function scanPool(pool, state, t, limit) {
   const ready = [];
   let soonest = null;
   let busy = false;
@@ -257,15 +272,7 @@ function pickEntry(pool, state, t, limit) {
     if ((inflight.get(e.fp) || 0) >= limit) { busy = true; continue; }
     ready.push(e);
   }
-  if (ready.length) {
-    // least recently used first: spreads requests over the pool, so no single key takes every rate hit
-    ready.sort((a, b) => (state.entries[a.fp]?.lastUsedAt || 0) - (state.entries[b.fp]?.lastUsedAt || 0) || a.n - b.n);
-    return { entry: ready[0] };
-  }
-  // a busy key frees up as soon as one of our own tasks finishes — always worth waiting for
-  if (busy) return { entry: null, waitMs: 1000, busy: true };
-  if (soonest != null) return { entry: null, waitMs: Math.max(0, soonest - t) };
-  return { entry: null, waitMs: null };
+  return { ready, soonest, busy };
 }
 
 // ---------------------------------------------------------------------------
@@ -357,32 +364,47 @@ export async function frameDataUri(buf) {
 
 /** WAN generation parameters for an output size like '720x1280'. */
 export function wanParams({ size = '720x1280', seconds = 5, hasFrame = false, creds = {}, overrides = {} } = {}) {
-  const m = String(size).match(/^(\d+)x(\d+)$/);
-  const w = m ? +m[1] : 720, h = m ? +m[2] : 1280;
-  const short = Math.min(w, h);
-  const resolution = creds.WAN_RESOLUTION || (short >= 1080 ? '1080P' : short >= 720 ? '720P' : '480P');
-  const g = (a, b) => (b ? g(b, a % b) : a);
-  const d = g(w, h);
-  const exact = `${w / d}:${h / d}`;
-  // with a first frame, 'adaptive' follows the frame's own aspect, so nothing gets cropped
-  const ratio = hasFrame ? 'adaptive' : (WAN_RATIOS.has(exact) ? exact : 'adaptive');
+  const { w, h } = sizeOf(size);
+  const resolution = wanResolution(creds, Math.min(w, h));
+  const ratio = wanRatio(w, h, hasFrame);
   const duration = Math.min(30, Math.max(2, Math.round(Number(seconds) || 5)));
   const promptExtend = String(creds.WAN_PROMPT_EXTEND || '').toLowerCase() === 'true';
   return { resolution, ratio, duration, audio: false, watermark: false, prompt_extend: promptExtend, ...overrides };
 }
 
+// An output size like '720x1280' as numbers; 720x1280 when it is not one.
+function sizeOf(size) {
+  const m = String(size).match(/^(\d+)x(\d+)$/);
+  return m ? { w: +m[1], h: +m[2] } : { w: 720, h: 1280 };
+}
+
+const wanResolution = (creds, short) => creds.WAN_RESOLUTION || (short >= 1080 ? '1080P' : short >= 720 ? '720P' : '480P');
+
+// with a first frame, 'adaptive' follows the frame's own aspect, so nothing gets cropped
+function wanRatio(w, h, hasFrame) {
+  if (hasFrame) return 'adaptive';
+  const g = (a, b) => (b ? g(b, a % b) : a);
+  const d = g(w, h);
+  const exact = `${w / d}:${h / d}`;
+  return WAN_RATIOS.has(exact) ? exact : 'adaptive';
+}
+
 /** Submit one WAN task. Returns the wanFetch result plus taskId when accepted. PAID CALL. */
 export async function wanCreateTask({ entry, prompt, firstFramePng, lastFramePng, parameters } = {}) {
-  if (lastFramePng && !firstFramePng) throw new Error('wanCreateTask: lastFramePng needs firstFramePng');
-  const media = [];
-  if (firstFramePng) media.push({ type: 'first_frame', url: await frameDataUri(firstFramePng) });
-  if (lastFramePng) media.push({ type: 'last_frame', url: await frameDataUri(lastFramePng) });
-  const input = { prompt };
-  if (media.length) input.media = media;
+  const input = { prompt, ...(await wanMedia(firstFramePng, lastFramePng)) };
   const r = await wanFetch(`${entry.endpoint}${WAN_CREATE_PATH}`, {
     key: entry.key, method: 'POST', body: { model: entry.model, input, parameters },
   });
   return { ...r, taskId: r.ok ? r.body?.output?.task_id || null : null };
+}
+
+// The frames a task starts (and ends) on, as WAN's input.media; nothing without frames.
+async function wanMedia(firstFramePng, lastFramePng) {
+  if (lastFramePng && !firstFramePng) throw new Error('wanCreateTask: lastFramePng needs firstFramePng');
+  const media = [];
+  if (firstFramePng) media.push({ type: 'first_frame', url: await frameDataUri(firstFramePng) });
+  if (lastFramePng) media.push({ type: 'last_frame', url: await frameDataUri(lastFramePng) });
+  return media.length ? { media } : {};
 }
 
 /**
@@ -396,24 +418,33 @@ export async function wanPollTask({ entry, taskId, intervalMs = 15_000, timeoutM
   const ticks = Math.max(1, Math.ceil(timeoutMs / Math.max(1, intervalMs)));
   const start = now();
   const end = start + timeoutMs;
-  let unknown = 0;
+  const seen = { unknown: 0 };
   for (let i = 0; i < ticks; i++) {
     const r = await wanFetch(url, { key: entry.key, timeoutMs: timeLeft(end, now()) });
-    if (r.ok) {
-      const out = r.body?.output || {};
-      if (typeof onTick === 'function') onTick(out.task_status, i);
-      if (out.task_status === 'SUCCEEDED' || out.task_status === 'FAILED' || out.task_status === 'CANCELED') {
-        return { state: out.task_status, output: out, usage: r.body?.usage || null };
-      }
-      if (out.task_status === 'UNKNOWN' && ++unknown >= UNKNOWN_POLLS_TO_FAIL) return { state: 'UNKNOWN', output: out };
-    } else if (r.status >= 400 && r.status < 500 && r.status !== 429) {
-      return { state: 'HTTP', output: { code: r.code, message: r.message }, status: r.status };
-    }
-    // 429/5xx/network on a poll: keep polling — the task itself is still running
+    const outcome = pollOutcome(r, seen, onTick, i);
+    if (outcome) return outcome;
     await sleep(intervalMs);
     if (now() >= end) break;
   }
   return { state: 'TIMEOUT', output: {}, elapsedMs: now() - start };
+}
+
+const WAN_TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELED']);
+const pollOutcome = (r, seen, onTick, i) => (r.ok ? answerOutcome(r.body, seen, onTick, i) : refusedPoll(r));
+
+// What a poll's answer ends the poll with, or null to keep polling (a task still on its way).
+function answerOutcome(body, seen, onTick, i) {
+  const out = body?.output || {};
+  if (typeof onTick === 'function') onTick(out.task_status, i);
+  if (WAN_TERMINAL.has(out.task_status)) return { state: out.task_status, output: out, usage: body?.usage || null };
+  if (out.task_status === 'UNKNOWN' && ++seen.unknown >= UNKNOWN_POLLS_TO_FAIL) return { state: 'UNKNOWN', output: out };
+  return null;
+}
+
+// A 4xx other than 429 on the poll itself ends it; 429/5xx/network keep polling — the task is still running.
+function refusedPoll(r) {
+  if (r.status >= 400 && r.status < 500 && r.status !== 429) return { state: 'HTTP', output: { code: r.code, message: r.message }, status: r.status };
+  return null;
 }
 
 /** Download a finished WAN video (signed URL, no auth header). Returns an mp4 Buffer. */
@@ -489,30 +520,39 @@ export function snapSoraSeconds(sec) {
 
 function applyFailure(file, entry, kind, { code, status, retryAfterMs, message }, t, creds, emit) {
   const reason = code || (status ? `HTTP ${status}` : 'network');
-  updateEntry(file, entry, (st) => {
-    // strikes count CONSECUTIVE hits: anything older than the window they guard is forgotten
-    const fresh = st.lastFailAt && t - st.lastFailAt < RATE_MAX_MS * 2;
-    const base = { ...st, reason, lastFailAt: t };
-    if (kind === 'unusable') return { ...base, status: 'invalid', at: t };
-    if (kind === 'denied' || kind === 'exhausted') return { ...base, status: 'exhausted', at: t, until: t + exhaustedTtlMs(creds), quotaStrikes: 0 };
-    if (kind === 'quota') {
-      const strikes = (fresh ? st.quotaStrikes || 0 : 0) + 1;
-      if (strikes >= QUOTA_STRIKES_TO_EXHAUST) {
-        return { ...base, status: 'exhausted', reason: `${reason} x${strikes}`, quotaStrikes: 0, at: t, until: t + QUOTA_STRIKE_TTL_MS };
-      }
-      return { ...base, quotaStrikes: strikes, cooldownUntil: t + (retryAfterMs ?? RATE_BASE_MS * 2 ** (strikes - 1)) };
-    }
-    if (kind === 'rate') {
-      const strikes = (fresh ? st.rateStrikes || 0 : 0) + 1;
-      return { ...base, rateStrikes: strikes, cooldownUntil: t + (retryAfterMs ?? Math.min(RATE_MAX_MS, RATE_BASE_MS * 2 ** (strikes - 1))) };
-    }
-    // transient
-    const n = (fresh ? st.transientStrikes || 0 : 0) + 1;
-    return {
-      ...base, transientStrikes: n, cooldownUntil: t + Math.min(RATE_MAX_MS, TRANSIENT_BASE_MS * n),
-      reason: message ? `${reason}: ${String(message).slice(0, 120)}` : reason,
-    };
-  }, emit);
+  updateEntry(file, entry, (st) => failedState(st, kind, { reason, retryAfterMs, message, t, creds }), emit);
+}
+
+// An entry's state after a failure of this kind at time f.t. Strikes count CONSECUTIVE hits: anything
+// older than the window they guard is forgotten.
+function failedState(st, kind, f) {
+  const fresh = Boolean(st.lastFailAt && f.t - st.lastFailAt < RATE_MAX_MS * 2);
+  const base = { ...st, reason: f.reason, lastFailAt: f.t };
+  if (kind === 'unusable') return { ...base, status: 'invalid', at: f.t };
+  if (kind === 'denied' || kind === 'exhausted') return { ...base, status: 'exhausted', at: f.t, until: f.t + exhaustedTtlMs(f.creds), quotaStrikes: 0 };
+  if (kind === 'quota') return quotaState(base, strikesAfter(fresh, st.quotaStrikes), f);
+  if (kind === 'rate') return rateState(base, strikesAfter(fresh, st.rateStrikes), f);
+  return transientState(base, strikesAfter(fresh, st.transientStrikes), f);
+}
+
+const strikesAfter = (fresh, n) => (fresh ? n || 0 : 0) + 1;
+
+function quotaState(base, strikes, { reason, retryAfterMs, t }) {
+  if (strikes >= QUOTA_STRIKES_TO_EXHAUST) {
+    return { ...base, status: 'exhausted', reason: `${reason} x${strikes}`, quotaStrikes: 0, at: t, until: t + QUOTA_STRIKE_TTL_MS };
+  }
+  return { ...base, quotaStrikes: strikes, cooldownUntil: t + (retryAfterMs ?? RATE_BASE_MS * 2 ** (strikes - 1)) };
+}
+
+function rateState(base, strikes, { retryAfterMs, t }) {
+  return { ...base, rateStrikes: strikes, cooldownUntil: t + (retryAfterMs ?? Math.min(RATE_MAX_MS, RATE_BASE_MS * 2 ** (strikes - 1))) };
+}
+
+function transientState(base, n, { reason, message, t }) {
+  return {
+    ...base, transientStrikes: n, cooldownUntil: t + Math.min(RATE_MAX_MS, TRANSIENT_BASE_MS * n),
+    reason: message ? `${reason}: ${String(message).slice(0, 120)}` : reason,
+  };
 }
 
 // Idempotent per task: resuming a task whose download failed must not count it twice.
@@ -790,18 +830,23 @@ export async function generateClip(opts = {}) {
   const ctx = makeCtx(o);
   const tried = [];
   for (const p of o.order || parseProviderOrder(o.creds.VIDEO_PROVIDER_ORDER)) {
-    if (p === 'wan') {
-      tried.push('wan');
-      const r = await runWan(ctx);
-      if (r) return r;
-    } else if (p === 'sora') {
-      if (!soraReady(ctx)) continue;
-      tried.push('sora');
-      ctx.emit({ type: 'fallback', provider: 'sora', from: tried.slice(0, -1) });
-      return runSora(ctx);
-    }
+    const clip = await tryProvider(ctx, p, tried);
+    if (clip) return clip;
   }
   throw new Error(`generateClip: no video provider available (tried: ${tried.join(', ') || 'none'})`);
+}
+
+// One provider's go at the leg: the clip, or null to go on to the next. Sora, once it runs, ends the
+// leg (with a clip or a throw).
+async function tryProvider(ctx, p, tried) {
+  if (p === 'wan') {
+    tried.push('wan');
+    return runWan(ctx);
+  }
+  if (p !== 'sora' || !soraReady(ctx)) return null;
+  tried.push('sora');
+  ctx.emit({ type: 'fallback', provider: 'sora', from: tried.slice(0, -1) });
+  return runSora(ctx);
 }
 
 // Whether Sora can take the leg. Not set up: skipped with an event. An endpoint that is set but not
