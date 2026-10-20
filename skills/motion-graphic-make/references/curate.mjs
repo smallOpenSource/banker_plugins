@@ -64,8 +64,26 @@ const MEDIA = /\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i;
 function linkRefusal(dir, fp) {
   let real;
   try { real = fs.realpathSync(fp); } catch { return null; }
+  return realRefusal(dir, real);
+}
+
+function realRefusal(dir, real) {
   if (!real.startsWith(fs.realpathSync(dir) + path.sep)) return '링크가 프로젝트 폴더 밖을 가리켜 보이지 않습니다.';
   return MEDIA.test(real) ? null : '링크가 이미지나 영상이 아닌 파일을 가리켜 보이지 않습니다.';
+}
+
+// What a listed path may be served as: { dev, ino } of the file its links lead to, taken without
+// following a link, so a link put in its place after this check is not that file. null when there is
+// no such file, or its links leave the project or end at a file that is not an image or a video.
+function servedFile(dir, fp) {
+  try {
+    const real = fs.realpathSync(fp);
+    if (realRefusal(dir, real)) return null;
+    const st = fs.lstatSync(real);
+    return { dev: st.dev, ino: st.ino };
+  } catch {
+    return null;
+  }
 }
 
 // Why a listed file is neither shown nor served nor hashed, or null when it may be: it must be an
@@ -505,8 +523,9 @@ async function page(dir, res) {
 function serveListed(dir, req, res, urlPath) {
   const fp = resolveInside(dir, urlPath);
   if (!fp) return send(res, 403, '403');
-  if (!listedFiles(dir).has(fp) || linkRefusal(dir, fp)) return send(res, 404, '404');
-  sendFile(req, res, fp);
+  const expect = listedFiles(dir).has(fp) ? servedFile(dir, fp) : null;
+  if (!expect) return send(res, 404, '404');
+  sendFile(req, res, fp, {}, { expect });
 }
 
 function route(dir, req, res, urlPath) {

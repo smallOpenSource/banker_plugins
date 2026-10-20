@@ -125,7 +125,7 @@ grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null ||
 - **Image(gpt-image 계열)**: endpoint + 배포명(예: `gpt-image-2`, `gpt-image-2.5-sunburst`. 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
   AI Foundry 리소스(`https://<resource>.services.ai.azure.com`)도 그대로 쓴다. 콘솔이 `.../models` 를 붙여 보여줘도 저장은 origin 까지만 한다(이미지 경로는 `/openai/v1/images/...` 이고 `/models/images/...` 는 404).
 
-비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일 전체를 새로 쓰되 기존 값, 사람이 적은 키 포함, 은 그대로 둔다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다.
+비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일의 줄은 사람이 적은 키, 주석, `export` 줄, 줄 끝, 다른 인코딩의 글자까지 그대로 두고 바꿀 이름의 줄만 바꾸거나 끝에 더한다. 새 파일로 통째 바꿔 써서 오류로 끊겨도 원래 파일이 남는다. 하드 링크, 소유자가 다른 파일, 새 파일을 만들 수 없는 폴더의 파일은 전처럼 제자리에 쓴다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다.
 쓰는 곳은 `resolveCreds` 가 이미 읽는 키 파일(홈 fallback 포함)이고, 없을 때만 프로젝트 파일이다. 홈 파일을 쓰는 사람에게 프로젝트 파일을 새로 만들면 그 파일이 먼저 읽혀 홈의 키가 가려진다:
 ```bash
 node -e "
@@ -220,7 +220,7 @@ node -e "
   const { resolveCreds, listVideos, azFetch, redact } = await import('$ADAPTER');
   const c = resolveCreds({ projectDir: process.cwd() });
   if (!c._source) { console.log('크레덴셜 없음 -- §3 먼저 실행'); process.exit(2); }
-  const how = (r) => (r.error ? r.error.cause?.code || r.error.code || r.error.name : r.authStyle);   // status 0 이면 이유
+  const how = (r) => (r.error ? r.errno || r.error.name : r.authStyle);   // status 0 이면 이유(ENOTFOUND, TimeoutError 등)
   const sora = await listVideos({ endpoint: c.AZURE_SORA_ENDPOINT, key: c.AZURE_SORA_API_KEY, apiVersion: c.AZURE_SORA_API_VERSION || 'preview' });
   console.log('sora.listVideos ->', sora.status, '(' + how(sora) + ')');
   const imgv = c.AZURE_GPT_IMAGE_API_VERSION || 'preview';
@@ -249,8 +249,9 @@ node -e "
 | `images.badreq` 가 404 (`DeploymentNotFound`) | - | 엔드포인트·인증은 OK 지만 **배포명이 틀림** — §3 에서 `AZURE_GPT_IMAGE_DEPLOYMENT` 를 콘솔의 실제 배포명으로 재확인 |
 | 둘 중 하나라도 401/403 | - | 인증 실패 — `azFetch` 가 `api-key`→`Bearer` 두 헤더 스타일을 이미 자동 재시도하므로, 그래도 401/403 이면 헤더 스타일이 아니라 키·엔드포인트 자체가 틀린 것(§3 재입력) |
 | `images.badreq` 가 200 | - | 있을 수 없음(프롬프트 없이 생성이 성공할 리 없다) — 어댑터·API 버전 불일치 의심, 정직히 보고 |
-| status 0 | - | 네트워크 오류(엔드포인트 오타·오프라인) |
+| status 0 | - | 네트워크 오류(엔드포인트 오타·오프라인). `TimeoutError` 는 120초 안에 응답이 없었다는 뜻 |
 | status 0 (`EINSECURE`) | - | endpoint 가 `http://` 다. 키를 평문으로 보내지 않으려고 보내기 전에 막았다 — `https://` 로 고침(이 기기의 localhost 만 http 허용) |
+| status 0 (`EPROXYKEY`) | - | endpoint 가 이 기기의 `http://` 인데 Node 가 env 프록시(`NODE_USE_ENV_PROXY=1`, `--use-env-proxy`)로 http 를 보낸다. 키가 프록시에 보이지 않게 보내기 전에 막았다 — `NO_PROXY` 에 그 호스트(`localhost`, `127.0.0.1`, `[::1]`)나 `호스트:포트` 를 그대로 적거나(`no_proxy` 도 있으면 그쪽에도) env 프록시를 끔 |
 
 ## 5. 검증 (보고 의무)
 ```bash
@@ -269,6 +270,6 @@ command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffm
 - **WAN 키 검증은 GET task 로만**: 존재하지 않는 task 조회는 과금이 없고 키 유효성(200 vs 401)을 가른다. 생성 요청(POST)은 과금될 수 있으니 점검용으로 쓰지 않는다.
 - **이미지 배포 429**: 낮은 티어(S0) 이미지 배포는 연속 호출에 `429 RateLimitReached` 를 낸다. 프리플라이트를 짧은 간격으로 반복하지 않는다.
 - **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백.
-- **ffmpeg 바이너리 미번들 원칙**: 위 폴백은 사용자 프로젝트 `node_modules` 한정 — banker 플러그인 배포물에는 절대 포함하지 않는다.
+- **ffmpeg 바이너리 미번들 원칙**: 위 폴백은 홈 폴더의 전용 폴더 `~/.config/banker/3d-intro/tools` 에만 설치한다(§2). banker 플러그인 배포물에는 절대 포함하지 않는다.
 - **프리플라이트는 배포명 실존까지는 증명 못 한다**: `images.badreq` 400 은 "리소스가 살아있고 키가 맞다"는 뜻이지 `AZURE_GPT_IMAGE_DEPLOYMENT` 로 지정한 배포가 실제 존재·활성 상태인지는 증명하지 않는다 — 무과금으로는 확인할 방법이 없어 첫 실제 생성(3d-intro-build)에서만 드러난다.
 - **`.env.3d-intro.local` 자동 gitignore 는 이 저장소 한정**: 이 저장소는 `.env.*.local` 패턴으로 이미 커버되지만, 다른 프로젝트에 이 스킬을 쓸 때는 그 프로젝트의 `.gitignore` 를 §3 저장 단계에서 별도로 확인·추가해야 한다.

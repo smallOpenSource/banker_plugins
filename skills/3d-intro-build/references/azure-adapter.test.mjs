@@ -9,6 +9,8 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -844,4 +846,456 @@ test('3d-intro-setup: the free preflight says why a request was not sent, and se
 // keep HERE referenced (documents the co-located adapter under test)
 test('adapter module resolves next to this test file', () => {
   assert.ok(fs.existsSync(path.join(HERE, 'azure-adapter.mjs')));
+});
+
+test('prompts.md sends every leg through generateClip, with no fixed Sora model', () => {
+  const doc = fs.readFileSync(path.join(HERE, 'prompts.md'), 'utf8');
+  assert.match(doc, /^## 4\.[^\n]*`generateClip`/m, 'the leg section names the pool entry point');
+  assert.doesNotMatch(doc, /model: 'sora-2'/, 'the model comes from the key file');
+  assert.doesNotMatch(doc, /`createVideo` 에 넣기/, 'the seed still goes to generateClip');
+});
+
+test('3d-intro-setup: the no-bundle rule names the home tools folder the fallback installs into', () => {
+  const setup = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(setup, /사용자 프로젝트 `node_modules` 한정/);
+  assert.match(setup, /미번들 원칙[^\n]*~\/\.config\/banker\/3d-intro\/tools/);
+});
+
+// ---------------------------------------------------------------------------
+// Retry-After forms and the 60 s cap of the image 429 retry
+
+function mock429(headers) {
+  const r = mockJson({ error: { code: 'RateLimitReached' } }, 429);
+  const h = Object.fromEntries(Object.entries({ 'content-type': 'application/json', ...headers }).map(([k, v]) => [k.toLowerCase(), v]));
+  r.headers = { get: (k) => h[String(k).toLowerCase()] ?? null };
+  return r;
+}
+
+test('azFetch: Retry-After reads as seconds or an HTTP date, and retry-after-ms wins over it', async () => {
+  const at = new Date(Date.now() + 20_000).toUTCString();
+  for (const [headers, check] of [
+    [{ 'retry-after': '7' }, (ms) => ms === 7000],
+    [{ 'retry-after-ms': '1500', 'retry-after': '9' }, (ms) => ms === 1500],
+    [{ 'retry-after': at }, (ms) => ms > 15_000 && ms <= 20_000],
+    [{}, (ms) => ms === null],
+  ]) {
+    installFetch(() => mock429(headers));
+    const r = await A.azFetch(`${EP}/x`, { key: KEY });
+    assert.ok(check(r.retryAfterMs), `${JSON.stringify(headers)} -> ${r.retryAfterMs}`);
+  }
+});
+
+test('generateImage: a 429 waits the server hint capped at 60 s, else 10 s doubling', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const b64 = Buffer.from('png-after-429').toString('base64');
+  installFetch((url, opts, i) => (i === 0 ? mock429({ 'retry-after': '300' }) : i === 1 ? mock429({}) : mockJson({ data: [{ b64_json: b64 }] })));
+  const notes = [];
+  const onNote = (m) => {
+    notes.push(m);
+    const ms = Number((m.match(/in (\d+) ms/) || [])[1]);
+    setImmediate(() => t.mock.timers.tick(ms));
+  };
+  const buf = await A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p', onNote });
+  assert.equal(buf.toString(), 'png-after-429');
+  assert.deepEqual(notes.filter((m) => /HTTP 429/.test(m)), ['HTTP 429; retry 1/3 in 60000 ms', 'HTTP 429; retry 2/3 in 20000 ms']);
+});
+
+test('createVideo: a 429 carries the server\'s Retry-After for the caller\'s wait', async () => {
+  installFetch(() => mock429({ 'retry-after': '7' }));
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 429 && e.retryAfterMs === 7000);
+});
+
+test('azFetch: a connection dropped mid-body ends as status 0, and downloadVideo says so', async () => {
+  const dropped = () => ({ status: 200, ok: true, headers: { get: () => 'video/mp4' }, arrayBuffer: async () => { throw Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } }); } });
+  installFetch(dropped);
+  const r = await A.azFetch(`${EP}/x`, { key: KEY, binary: true });
+  assert.deepEqual([r.status, r.errno], [0, 'UND_ERR_SOCKET']);
+  await assert.rejects(() => A.downloadVideo({ endpoint: EP, key: KEY, id: 'vid-1' }), /downloadVideo failed: HTTP 0 \(UND_ERR_SOCKET\)/);
+});
+
+test('azFetch helpers: a request that timed out says TimeoutError, not the DOMException code', async () => {
+  installFetch(() => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); });
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 0 && e.errno === 'TimeoutError' && /\(TimeoutError\)/.test(e.message));
+  await assert.rejects(() => A.downloadVideo({ endpoint: EP, key: KEY, id: 'v' }), /HTTP 0 \(TimeoutError\)/);
+});
+
+test('azFetch: requests are limited to 120 s, downloads to 600 s, image generation to 300 s, the Bearer retry and a long poll included', async () => {
+  const seen = [];
+  const timeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => { seen.push(ms); return timeout.call(AbortSignal, ms); };
+  try {
+    const b64 = Buffer.from('PNG').toString('base64');
+    const calls = installFetch((url, opts, i) => (i === 0 ? mockJson({}, 401) : url.includes('/content') ? mockBinary(Buffer.from('MP4')) : mockJson({ data: [{ b64_json: b64 }] })));
+    await A.listVideos({ endpoint: EP, key: KEY });
+    await A.downloadVideo({ endpoint: EP, key: KEY, id: 'vid-1' });
+    await A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' });
+    await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I') });
+    await A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 });
+    await A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-1', maxTicks: 1, timeoutMs: 900_000, sleep: async () => {} });
+    assert.ok(calls.every((c) => c.opts.signal instanceof AbortSignal), 'every request has a signal');
+  } finally {
+    AbortSignal.timeout = timeout;
+  }
+  assert.deepEqual(seen, [120_000, 120_000, 600_000, 300_000, 300_000, 300_000, 120_000]);
+});
+
+test('azFetch: a server that accepts the connection and never answers ends within timeoutMs as status 0', { timeout: 10_000 }, async () => {
+  const socks = [];
+  const server = net.createServer((s) => socks.push(s));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const t0 = Date.now();
+    const r = await A.azFetch(`http://127.0.0.1:${server.address().port}/openai/v1/videos?api-version=preview`, { timeoutMs: 200 });
+    assert.deepEqual([r.status, r.errno], [0, 'TimeoutError']);
+    assert.ok(Date.now() - t0 < 2000, `${Date.now() - t0} ms`);
+  } finally {
+    for (const s of socks) s.destroy();
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('pollVideo: polls stop at timeoutMs of wall time, each request limited to what is left', { timeout: 10_000 }, async () => {
+  // like a socket, the hung request keeps the event loop alive (the timer behind AbortSignal.timeout does not)
+  const hang = (signal) => new Promise((_, reject) => {
+    const alive = setInterval(() => {}, 1000);
+    signal.addEventListener('abort', () => { clearInterval(alive); reject(signal.reason); }, { once: true });
+  });
+  installFetch((url, opts) => hang(opts.signal));
+  const t0 = Date.now();
+  const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'vid-x', intervalMs: 20, maxTicks: 1000, timeoutMs: 250 });
+  const took = Date.now() - t0;
+  assert.equal(st, null);
+  assert.ok(took >= 250 && took < 2000, `${took} ms`);
+});
+
+test('persistCreds: a later write keeps the hand-written lines and their order, and changes only the names it sets', () => {
+  const target = path.join(mkTmp('persist-keep-'), 'env');
+  const before = [
+    '# my Sora resource',
+    'export AZURE_SORA_API_KEY=placeholder-exported',
+    'AZURE_SORA_ENDPOINT=https://old.example.com  # old',
+    'OTHER=1  # kept as written',
+    'AZURE_SORA_ENDPOINT=https://older.example.com',
+  ];
+  fs.writeFileSync(target, `${before.join('\n')}\n`);
+  const prev = A.parseEnvFile(fs.readFileSync(target, 'utf8'));
+  A.persistCreds({ ...prev, AZURE_SORA_ENDPOINT: 'https://new.example.com', AZURE_SORA_DEPLOYMENT: 'sora-2' }, { target });
+  const after = [...before.slice(0, 4), 'AZURE_SORA_ENDPOINT=https://new.example.com', 'AZURE_SORA_DEPLOYMENT=sora-2'];
+  assert.equal(fs.readFileSync(target, 'utf8'), `${after.join('\n')}\n`);
+});
+
+test('persistCreds: a CRLF key file stays CRLF, and a last line without a line end gets one', () => {
+  const dir = mkTmp('persist-eol-');
+  const crlf = path.join(dir, 'crlf.env');
+  fs.writeFileSync(crlf, 'A=1\r\nB=2\r\n');
+  A.persistCreds({ A: '1', B: '3', C: '4' }, { target: crlf });
+  assert.equal(fs.readFileSync(crlf, 'utf8'), 'A=1\r\nB=3\r\nC=4\r\n');
+  const open = path.join(dir, 'open.env');
+  fs.writeFileSync(open, '# x\nA=1');
+  A.persistCreds({ A: '2' }, { target: open });
+  assert.equal(fs.readFileSync(open, 'utf8'), '# x\nA=2\n');
+});
+
+test('persistCreds: a write cut short leaves the old key file whole, and no temp file', () => {
+  const dir = mkTmp('persist-atomic-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  const write = fs.writeFileSync;
+  fs.writeFileSync = (f, data, ...rest) => {
+    write(f, String(data).slice(0, 2), ...rest); // part of the bytes reach the disk
+    throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+  };
+  try {
+    assert.throws(() => A.persistCreds({ A: '2' }, { target }), /no space left/);
+  } finally {
+    fs.writeFileSync = write;
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'A=1\n');
+  assert.deepEqual(fs.readdirSync(dir), ['env']);
+});
+
+test('persistCreds: a key file with a second name (a hard link) is written in place, so both names see the change', () => {
+  const dir = mkTmp('persist-hardlink-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  fs.linkSync(target, path.join(dir, 'other-name'));
+  A.persistCreds({ A: '2' }, { target });
+  assert.equal(fs.readFileSync(path.join(dir, 'other-name'), 'utf8'), 'A=2\n');
+  assert.equal(fs.statSync(target).nlink, 2);
+});
+
+test('persistCreds: a key file whose new copy would get another owner or group is written in place', () => {
+  const target = path.join(mkTmp('persist-owner-'), 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  const ino = fs.statSync(target).ino;
+  const fstat = fs.fstatSync;
+  fs.fstatSync = (fd, ...rest) => { const st = fstat(fd, ...rest); return { ...st, uid: st.uid + 1 }; };
+  try {
+    A.persistCreds({ A: '2' }, { target });
+  } finally {
+    fs.fstatSync = fstat;
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'A=2\n');
+  assert.equal(fs.statSync(target).ino, ino, 'the same file, not a new one renamed over it');
+});
+
+test('persistCreds: a key file that is a link is written where it points and stays a link; a link to nothing is refused', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {
+  const dir = mkTmp('persist-symlink-');
+  const real = path.join(dir, 'real.env');
+  fs.writeFileSync(real, '# mine\nA=1\n');
+  const target = path.join(dir, 'env');
+  fs.symlinkSync(real, target);
+  A.persistCreds({ A: '2' }, { target });
+  assert.ok(fs.lstatSync(target).isSymbolicLink());
+  assert.equal(fs.readFileSync(real, 'utf8'), '# mine\nA=2\n');
+  const dangling = path.join(dir, 'dangling');
+  fs.symlinkSync(path.join(dir, 'missing.env'), dangling);
+  assert.throws(() => A.persistCreds({ A: '2' }, { target: dangling }), /nothing was written/);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['dangling', 'env', 'real.env']);
+});
+
+test('persistCreds: a folder or a pipe at the key file path is refused, nothing read or written', { skip: process.platform === 'win32' && 'no mkfifo' }, () => {
+  const dir = mkTmp('persist-special-');
+  const pipe = path.join(dir, 'env');
+  cp.execFileSync('mkfifo', [pipe]);
+  // in a child: opening a pipe with no reader would block this process for good
+  const adapter = JSON.stringify(pathToFileURL(path.join(HERE, 'azure-adapter.mjs')).href);
+  const child = cp.spawnSync(process.execPath, ['--input-type=module', '-e', `const A = await import(${adapter}); try { A.persistCreds({ A: '1' }, { target: process.argv[1] }); console.log('wrote'); } catch (e) { console.log(e.message); }`, pipe], { encoding: 'utf8', timeout: 5000 });
+  assert.match(child.stdout, /not a regular file/, `${child.stdout}${child.stderr}${child.error || ''}`);
+  fs.mkdirSync(path.join(dir, 'folder'));
+  assert.throws(() => A.persistCreds({ A: '1' }, { target: path.join(dir, 'folder') }), /not a regular file/);
+});
+
+test('envProxied: a request goes through an env proxy as Node 22 and 24 send it, read toward "proxied"', () => {
+  const on = { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://proxy.example:3128' };
+  const cases = [
+    [{}, [], 'http://127.0.0.1:9/', false],
+    [{ HTTP_PROXY: 'http://proxy.example:3128' }, [], 'http://127.0.0.1:9/', false],
+    [{ NODE_USE_ENV_PROXY: '1' }, [], 'http://127.0.0.1:9/', false],
+    [on, [], 'http://127.0.0.1:9/', true],
+    [{ NODE_USE_ENV_PROXY: '0', HTTP_PROXY: 'http://p:1' }, [], 'http://127.0.0.1:9/', false],
+    [{ NODE_USE_ENV_PROXY: 'true', HTTP_PROXY: 'http://p:1' }, [], 'http://127.0.0.1:9/', true],
+    [{ http_proxy: 'http://p:1' }, ['--use-env-proxy'], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--max-old-space-size=99 --use-env-proxy' }, [], 'http://localhost:9/', true],
+    [{ ...on, NO_PROXY: '*' }, [], 'http://127.0.0.1:9/', false],
+    [{ ...on, NO_PROXY: 'other.example, 127.0.0.1' }, [], 'http://127.0.0.1:9/', false],
+    [{ ...on, no_proxy: 'LOCALHOST' }, [], 'http://localhost:9/', false],
+    [{ ...on, NO_PROXY: '[::1]' }, [], 'http://[::1]:9/', false],
+    [{ ...on, NO_PROXY: 'localhost' }, [], 'http://127.0.0.1:9/', true],
+    [{ ...on, NO_PROXY: '127.0.0.1:9' }, [], 'http://127.0.0.1:9/', false],
+    [{ ...on, NO_PROXY: '[::1]:9' }, [], 'http://[::1]:9/', false],
+    [{ ...on, NO_PROXY: '127.0.0.1:8' }, [], 'http://127.0.0.1:9/', true],
+    [{ ...on, NO_PROXY: 'localhost:80' }, [], 'http://localhost/', true],
+    [{ ...on, NO_PROXY: '127.0.0.1 localhost' }, [], 'http://127.0.0.1:9/', false],
+    [{ ...on, NO_PROXY: '*.localhost' }, [], 'http://localhost:9/', true],
+    [{ ...on, NO_PROXY: 'localhost.' }, [], 'http://localhost:9/', true],
+    [{ ...on, no_proxy: '', NO_PROXY: '127.0.0.1' }, [], 'http://127.0.0.1:9/', true],
+    // Node 22 and 24 take no_proxy here and go straight; both lists must name the host, so a Node that took NO_PROXY first leaks nothing
+    [{ ...on, NO_PROXY: '', no_proxy: '127.0.0.1' }, [], 'http://127.0.0.1:9/', true],
+    [{ ...on, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' }, [], 'http://127.0.0.1:9/', false],
+    [{ http_proxy: 'http://p:1' }, ['--use-env-proxy=true'], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--use-env-proxy=true' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1' }, ['--use_env_proxy'], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--use-env_proxy' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--max-old-space-size=99 "--use-env-proxy"' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--use-env-proxy=false' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--no-use-env-proxy' }, [], 'http://localhost:9/', false],
+    [{ http_proxy: 'http://p:1' }, ['--experimental-config-file=node.config.json'], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--experimental-default-config-file' }, [], 'http://localhost:9/', true],
+    [{ NODE_OPTIONS: '--experimental-default-config-file' }, [], 'http://localhost:9/', false],
+    [{ ...on, NO_PROXY: '.localhost' }, [], 'http://localhost:9/', true],
+    [{ ...on, NO_PROXY: '::1' }, [], 'http://[::1]:9/', true],
+    [{ ...on, NO_PROXY: '127.0.0.0/8' }, [], 'http://127.0.0.1:9/', true],
+    [{ ...on, no_proxy: 'other.example', NO_PROXY: '127.0.0.1' }, [], 'http://127.0.0.1:9/', true],
+  ];
+  for (const [env, flags, url, want] of cases) {
+    assert.equal(A.envProxied(new URL(url), env, flags), want, `${JSON.stringify(env)} ${flags} ${url}`);
+  }
+});
+
+test('fetchGuarded: a key over http to this machine is not sent while the environment would carry it through a proxy', async () => {
+  const calls = routeFetch({ 'http://localhost:9/x': { body: 'local' } });
+  const saved = { NODE_USE_ENV_PROXY: process.env.NODE_USE_ENV_PROXY, HTTP_PROXY: process.env.HTTP_PROXY, NO_PROXY: process.env.NO_PROXY, no_proxy: process.env.no_proxy };
+  Object.assign(process.env, { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://proxy.example:3128' });
+  delete process.env.NO_PROXY;
+  delete process.env.no_proxy;
+  try {
+    await assert.rejects(A.fetchGuarded('http://localhost:9/x', { headers: { 'api-key': 'k' } }), (e) => e.cause?.code === 'EPROXYKEY');
+    const r = await A.azFetch('http://localhost:9/x', { key: 'k' });
+    assert.deepEqual([r.status, r.errno, calls.length], [0, 'EPROXYKEY', 0]);
+    assert.equal(await (await A.fetchGuarded('http://localhost:9/x')).text(), 'local', 'without a key the request may go');
+    process.env.NO_PROXY = 'localhost';
+    assert.equal(await (await A.fetchGuarded('http://localhost:9/x', { headers: { 'api-key': 'k' } })).text(), 'local', 'NO_PROXY names the host');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('azFetch in a Node started with an env proxy: a key over http to this machine never reaches the proxy', { timeout: 30_000 }, async () => {
+  const target = http.createServer((q, s) => s.end(q.headers['api-key'] ? 'keyed' : 'plain'));
+  await new Promise((r) => target.listen(0, '127.0.0.1', r));
+  const seen = [];
+  // a proxy that turns every tunnel down (Node retries a proxy that just drops the connection, for good)
+  const proxy = net.createServer((sock) => sock.once('data', (d) => { seen.push(d.toString().split('\r\n')[0]); sock.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n'); }));
+  await new Promise((r) => proxy.listen(0, '127.0.0.1', r));
+  const adapter = JSON.stringify(pathToFileURL(path.join(HERE, 'azure-adapter.mjs')).href);
+  const url = `http://127.0.0.1:${target.address().port}/x`;
+  const run = (extra, first = '') => new Promise((resolve) => {
+    const env = { PATH: process.env.PATH, NODE_USE_ENV_PROXY: '1', HTTP_PROXY: `http://127.0.0.1:${proxy.address().port}`, ...extra };
+    const code = `const A = await import(${adapter}); ${first} const r = await A.azFetch(${JSON.stringify(url)}, { key: 'placeholder-key', timeoutMs: 2000 }); console.log(JSON.stringify([r.status, r.errno ?? null, r.body]));`;
+    const child = cp.spawn(process.execPath, ['--input-type=module', '-e', code], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => child.kill(), 10_000);
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; }); // Node 22 warns that its env proxy is experimental
+    child.on('close', () => { clearTimeout(timer); resolve({ out: out.trim(), err }); });
+  });
+  try {
+    const held = await run({});
+    assert.equal(held.out, JSON.stringify([0, 'EPROXYKEY', null]), held.err);
+    const direct = await run({ NO_PROXY: '127.0.0.1' });
+    assert.equal(direct.out, JSON.stringify([200, null, 'keyed']), direct.err);
+    // Node takes these settings when it starts: clearing them afterwards does not send the key straight
+    const cleared = await run({}, 'delete process.env.NODE_USE_ENV_PROXY; delete process.env.HTTP_PROXY;');
+    assert.equal(cleared.out, JSON.stringify([0, 'EPROXYKEY', null]), cleared.err);
+    assert.deepEqual(seen, [], 'the proxy saw nothing');
+  } finally {
+    target.close();
+    proxy.close();
+  }
+});
+
+test('createVideoTwoImage: posts both frames and the inpaint items to the jobs API; a failure names the path as unvalidated', async () => {
+  const calls = installFetch(() => mockJson({ id: 'job-2' }));
+  const job = await A.createVideoTwoImage({ endpoint: EP, key: KEY, prompt: 'p', firstPng: Buffer.from('F'), lastPng: Buffer.from('L'), size: '1280x720', seconds: 8 });
+  assert.equal(job.id, 'job-2');
+  assert.match(calls[0].url, /\/openai\/v1\/video\/generations\/jobs\?api-version=preview$/);
+  const fd = calls[0].opts.body;
+  assert.deepEqual([...fd.keys()], ['model', 'prompt', 'size', 'n_seconds', 'inpaint_items', 'files', 'files']);
+  assert.deepEqual([fd.get('model'), fd.get('prompt'), fd.get('size'), fd.get('n_seconds')], ['sora-2', 'p', '1280x720', '8']);
+  assert.deepEqual(JSON.parse(fd.get('inpaint_items')).map((x) => [x.frame_index, x.file_name]), [[0, 'first.png'], [-1, 'last.png']]);
+  installFetch(() => mockJson({ job_id: 'job-3' }));
+  assert.equal((await A.createVideoTwoImage({ endpoint: EP, key: KEY, firstPng: Buffer.from('F'), lastPng: Buffer.from('L') })).job_id, 'job-3');
+  installFetch(() => mockJson({ error: { code: 'NotFound' } }, 404));
+  await assert.rejects(A.createVideoTwoImage({ endpoint: EP, key: KEY, firstPng: Buffer.from('F'), lastPng: Buffer.from('L') }), (e) => e.message.startsWith('createVideoTwoImage (UNVALIDATED) failed: HTTP 404 '));
+  installFetch(() => mockJson({ status: 'queued' }));
+  await assert.rejects(A.createVideoTwoImage({ endpoint: EP, key: KEY, firstPng: Buffer.from('F'), lastPng: Buffer.from('L') }), (e) => e.message.startsWith('createVideoTwoImage (UNVALIDATED) failed: HTTP 200 '));
+});
+
+test('generateImageFlux: takes the image from data[0].b64_json, b64_json or image; a failure says so with its status', async () => {
+  for (const body of [{ data: [{ b64_json: 'QQ==' }] }, { b64_json: 'QQ==' }, { image: 'QQ==' }]) {
+    installFetch(() => mockJson(body));
+    assert.equal((await A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 })).toString(), 'A');
+  }
+  const calls = installFetch(() => mockJson({ error: 'no' }, 500));
+  await assert.rejects(A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 }), (e) => e.message.startsWith('generateImageFlux failed: HTTP 500 '));
+  assert.match(calls[0].url, /\/providers\/blackforestlabs\/v1\/flux-2-pro\?api-version=preview$/);
+  assert.deepEqual(JSON.parse(calls[0].opts.body), { prompt: 'p', width: 8, height: 8 });
+});
+
+test('editImage and generateImage: a failure message keeps its form, the path tried included', async () => {
+  installFetch(() => mockJson({ error: 'bad' }, 400));
+  await assert.rejects(A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I') }), (e) => e.message.startsWith('editImage failed: HTTP 400 '));
+  await assert.rejects(A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' }), (e) => e.message.startsWith('generateImage failed (classic-fallback(2025-04-01-preview)): HTTP 400 '));
+  installFetch(() => mockJson({ error: 'slow' }, 429));
+  await assert.rejects(A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', retry429: 0 }), (e) => e.message.startsWith('generateImage failed (v1): HTTP 429 '));
+});
+
+test('editImage: a mask goes as its own form field; without one there is none', async () => {
+  const b64 = Buffer.from('E').toString('base64');
+  const calls = installFetch(() => mockJson({ data: [{ b64_json: b64 }] }));
+  await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I'), maskBuf: Buffer.from('M'), size: '1024x1024' });
+  await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I') });
+  assert.deepEqual([...calls[0].opts.body.keys()], ['model', 'prompt', 'size', 'image', 'mask']);
+  assert.deepEqual([...calls[1].opts.body.keys()], ['model', 'prompt', 'image']);
+});
+
+test('concatClips: no clips is refused before ffmpeg runs', async () => {
+  let ran = 0;
+  cp.spawnSync = () => { ran++; return { status: 0, stdout: '', stderr: '' }; };
+  for (const list of [[], undefined, 'a.mp4']) {
+    await assert.rejects(A.concatClips(list, '/tmp/out.mp4', { ffmpeg: '/usr/bin/ffmpeg' }), /concatClips: no input clips/);
+  }
+  assert.equal(ran, 0);
+});
+
+const sockErr = () => Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } });
+const cutAnswer = (ct) => () => ({
+  status: 200, ok: true, headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? ct : null) },
+  json: async () => { throw sockErr(); }, text: async () => { throw sockErr(); },
+});
+
+test('azFetch: a JSON or text answer cut off mid-body is a network error (status 0), not an empty 200', async () => {
+  for (const ct of ['application/json', 'text/plain']) {
+    installFetch(cutAnswer(ct));
+    const r = await A.azFetch(`${EP}/x`, { key: KEY });
+    assert.deepEqual([r.status, r.errno], [0, 'UND_ERR_SOCKET'], ct);
+  }
+});
+
+test('generateImage: a v1 answer cut off mid-body is not sent again on the classic path (it may have billed)', async () => {
+  const calls = installFetch(cutAnswer('application/json'));
+  await assert.rejects(A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' }), (e) => e.message.startsWith('generateImage failed (v1): HTTP 0 (UND_ERR_SOCKET)'));
+  assert.equal(calls.length, 1);
+});
+
+test('azFetch and pollVideo: a time limit or a clock in fractions of a ms is taken as whole ms, never a throw', async () => {
+  installFetch(() => mockJson({ id: 'v', status: 'completed' }));
+  assert.equal((await A.azFetch(`${EP}/x`, { key: KEY, timeoutMs: 1.5 })).status, 200);
+  let t = 0.25;
+  const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'v', timeoutMs: 1000, now: () => (t += 0.5), sleep: async () => {} });
+  assert.equal(st?.status, 'completed');
+});
+
+test('persistCreds: a comment in another encoding (CP949) and each line\'s own line end come back byte for byte', () => {
+  const target = path.join(mkTmp('persist-bytes-'), 'env');
+  const note = Buffer.concat([Buffer.from('# '), Buffer.from([0xc5, 0xb0, 0x20, 0xb8, 0xde, 0xb8, 0xf0]), Buffer.from('\n')]);
+  fs.writeFileSync(target, Buffer.concat([note, Buffer.from('A=1\r\nB=2\n')]));
+  A.persistCreds({ A: '1', B: '3', C: '4' }, { target });
+  assert.deepEqual(fs.readFileSync(target), Buffer.concat([note, Buffer.from('A=1\r\nB=3\nC=4\r\n')]));
+});
+
+test('persistCreds: a value with non-ASCII text is written as UTF-8 and, unchanged, leaves its line as it was', () => {
+  const target = path.join(mkTmp('persist-utf8-'), 'env');
+  A.persistCreds({ FFMPEG_PATH: 'C:\\미디어\\ffmpeg.exe' }, { target });
+  assert.equal(A.parseEnvFile(fs.readFileSync(target, 'utf8')).FFMPEG_PATH, 'C:\\미디어\\ffmpeg.exe');
+  fs.writeFileSync(target, 'FFMPEG_PATH = C:\\미디어\\ffmpeg.exe  # 내 경로\n');
+  A.persistCreds({ FFMPEG_PATH: 'C:\\미디어\\ffmpeg.exe' }, { target });
+  assert.equal(fs.readFileSync(target, 'utf8'), 'FFMPEG_PATH = C:\\미디어\\ffmpeg.exe  # 내 경로\n');
+});
+
+test('persistCreds: a key file whose folder takes no new file is written in place, as before', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'POSIX folder modes (root writes anyway)' }, () => {
+  const dir = mkTmp('persist-rodir-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, '# mine\nA=1\n');
+  fs.chmodSync(dir, 0o500);
+  try {
+    A.persistCreds({ A: '2' }, { target });
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), '# mine\nA=2\n');
+  assert.deepEqual(fs.readdirSync(dir), ['env']);
+});
+
+test('persistCreds: a rename the system refuses (on Windows, a file another program holds) falls back to writing in place', () => {
+  const dir = mkTmp('persist-busy-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  const rename = fs.renameSync;
+  fs.renameSync = () => { throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' }); };
+  try {
+    A.persistCreds({ A: '2' }, { target });
+  } finally {
+    fs.renameSync = rename;
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'A=2\n');
+  assert.deepEqual(fs.readdirSync(dir), ['env']);
+});
+
+test('3d-intro-setup: the persistCreds note names the files written in place, not that every write survives a cut', () => {
+  const line = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8').split('\n').find((l) => l.includes('`persistCreds()` 로 합친다'));
+  assert.match(line, /오류로 끊겨도 원래 파일이 남는다/);
+  assert.match(line, /하드 링크, 소유자가 다른 파일, 새 파일을 만들 수 없는 폴더의 파일은 전처럼 제자리에 쓴다/);
 });

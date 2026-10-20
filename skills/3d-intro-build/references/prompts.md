@@ -80,7 +80,7 @@ Subject: [SCENE.subject — 미니어처 장면을 묘사: 건물/공간, 일하
 
 - `size` = `ORIENTATION` (`720x1280` 세로 / `1280x720` 가로). Sora 크기와 반드시 일치시킨다.
 - `quality` = `low`(미리보기·저렴) 또는 `high`(최종).
-- **N3 주의:** v1 경로가 실패해 classic 폴백이 뜨면 반환 크기가 `1024x1536`(2:3)라 `720x1280` 이 아니다. `createVideo` 에 넣기 전에 Sora 크기로 리사이즈(ffmpeg `scale`)하거나 재생성한다. v1 경로(`720x1280`)가 검증된 happy path 다.
+- **N3 주의:** v1 경로가 실패해 classic 폴백이 뜨면 반환 크기가 `1024x1536`(2:3)라 `720x1280` 이 아니다. 영상 씨앗(`generateClip` 의 `firstFramePng`)으로 쓰기 전에 ORIENTATION 크기로 리사이즈(ffmpeg `scale`)하거나 재생성한다. v1 경로(`720x1280`)가 검증된 happy path 다.
 
 ### FLUX 코히전 옵트인 (`generateImageFlux` / FLUX.2-pro)
 
@@ -90,14 +90,14 @@ Subject: [SCENE.subject — 미니어처 장면을 묘사: 건물/공간, 일하
 
 ---
 
-## 4. Fly-through — forward-chaining leg 프롬프트 (`Sora-2`, `createVideo`)
+## 4. Fly-through — forward-chaining leg 프롬프트 (`generateClip`: WAN 키 풀이 먼저, 쓸 수 있는 키가 없으면 `Sora-2`)
 
 Azure `/videos` 는 `input_reference` 를 **딱 하나만** 받는다(두-이미지는 400).
 그래서 연속성은 **forward-chaining** 으로 만든다: 이전 클립의 **실제 마지막 프레임**을 다음 클립의 `input_reference` 로 넣는다.
 아래 굵은 절이 **모션 핸드오프 계약**이다 — 글자 그대로 유지하고, 씬별 표현은 가운데 MOVE 슬롯에 넣는다.
 
 **Leg 0 (씨앗) — 씬 1 스틸에서 dive-in:**
-`input_reference = 씬 1 스틸`.
+`firstFramePng = 씬 1 스틸`.
 
 ```
 Single continuous cinematic camera move, no cuts. Begin high and far, looking down at the
@@ -142,7 +142,7 @@ tilt. It only travels straight and level, the world sliding past beneath the sam
 잔잔한 전진 활공의 한 컷으로 읽혀야 한다(옆으로 흐르는 모션블러·완결 안 된 오빗 금지).
 아니면 그 leg 를 재생성한다 — 나쁜 핸드오프 프레임 하나가 뒤의 모든 leg 를 오염시킨다.
 
-어댑터 인자: `model: 'sora-2'`, `size: ORIENTATION`, `seconds`(기본 4; 예산·길이에 따라 조정).
+`generateClip` 인자: `size: ORIENTATION`, `seconds`(기본 5. WAN 은 정수 2~30초, Sora 로 폴백되면 4, 8, 12초 중 가장 가까운 값), `firstFramePng`. 모델과 provider 순서는 키 파일(`WAN_MODEL`, `AZURE_SORA_DEPLOYMENT`, `VIDEO_PROVIDER_ORDER`)이 정한다. `createVideo` 를 직접 부르지 않는다. 키 풀, 폴백, 이중 과금 방지를 건너뛴다(SKILL.md Step 4).
 
 ---
 

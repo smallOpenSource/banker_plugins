@@ -18,7 +18,7 @@
  *        [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project]
  *     --viewports  a trailing t marks a touch screen, r reduced motion (default: the six below)
  *     --header     the site's fixed header (default: the engine's .sw-topbar)
- *     --playwright-from-project  also look in the current folder's node_modules, first (your own project only)
+ *     --playwright-from-project  also look in the current folder's node_modules, before the global npm root (your own project only)
  *   Exit 0 when nothing failed, 1 otherwise; the report (JSON) goes to --out or stdout.
  *
  * Needs Playwright with Chromium (setup-playwright skill: npx playwright install chromium), found
@@ -138,17 +138,24 @@ function globalRoot() {
   return String(r.stdout || '').trim();
 }
 
+// The playwright entry outside this script's folder: the project's when asked, else the global root's.
+function outsideEntry(fromProject) {
+  const fromHere = fromProject ? resolveFrom(process.cwd()) : null;
+  if (fromHere) return fromHere;
+  const root = globalRoot();
+  return root ? resolveFrom(root) : null;
+}
+
 /**
- * The playwright package: beside this script, else in the global npm root. The project's own
- * node_modules (the current folder) is read only with `fromProject` (--playwright-from-project), and
- * then first: a repository can ship a node_modules of its own, and loading it runs its code.
+ * The playwright package: beside this script (or in a folder above it), else in the global npm root.
+ * The project's own node_modules (the current folder) is read only with `fromProject`
+ * (--playwright-from-project), and then before the global root: a repository can ship a node_modules
+ * of its own, and loading it runs its code. `importBeside` replaces the first import (tests).
  * `npx playwright install chromium` alone fetches the browser, not this package.
  */
-export async function loadPlaywright({ fromProject = false } = {}) {
-  try { return await import('playwright'); } catch { /* not beside this script */ }
-  const fromHere = fromProject ? resolveFrom(process.cwd()) : null;
-  const root = fromHere ? null : globalRoot();
-  const entry = fromHere || (root && resolveFrom(root));
+export async function loadPlaywright({ fromProject = false, importBeside = () => import('playwright') } = {}) {
+  try { return await importBeside(); } catch { /* not beside this script */ }
+  const entry = outsideEntry(fromProject);
   if (entry) {
     const mod = await import(pathToFileURL(entry).href);
     return mod.chromium ? mod : mod.default;

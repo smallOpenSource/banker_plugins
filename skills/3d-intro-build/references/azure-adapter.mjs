@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 // Default import (the CJS module.exports object) so ffmpeg helpers can read cp.spawnSync at
 // call time — a destructured `import { spawnSync }` snapshots the binding and cannot be stubbed.
 import cp from 'node:child_process';
@@ -53,7 +54,9 @@ function truncate(x, n = 300) {
 
 // Why an azFetch result has no HTTP answer, for error messages: " (EINSECURE)" and the like. The
 // error's code or name only, never its text: fetch can quote a header value, a key included.
-const why = (r) => (r.error ? ` (${r.error.cause?.code || r.error.code || r.error.name})` : '');
+const why = (r) => (r.error ? ` (${r.errno || r.error.name})` : '');
+// AbortSignal.timeout rejects with a DOMException whose numeric code (23) means nothing to a reader
+const errnoOf = (e) => (e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.code || e?.code || null);
 
 // Last n chars of ffmpeg stderr (the useful part) for error messages.
 const tail = (s, n = 400) => { const str = String(s || ''); return str.length > n ? str.slice(-n) : str; };
@@ -190,15 +193,135 @@ function withoutMachineOnly(creds) {
  * and null/undefined values are skipped. Returns the written path. A name that is not a variable
  * name, or a value with a line break, throws before anything is written: either would add lines of
  * its own (a FFMPEG_PATH, a second endpoint) to the file.
+ * The file's lines stay as a person wrote them (comments, `export` lines, names not set here, each
+ * line's own end, bytes in another encoding): only the line each set name is read from changes, and a
+ * name the file lacks is added at the end. The new file replaces the old one whole, so a write cut
+ * short by an error leaves the old one. A file with a second name (a hard link), one the new copy would
+ * give another owner, or one in a folder that takes no new file (or that Windows holds open) is written
+ * in place, as before. A link is written where it points; a folder, a pipe or a link to nothing is refused.
  */
 export function persistCreds(creds, { target } = {}) {
   if (!target) throw new Error('persistCreds: target path required');
-  const lines = Object.entries(creds || {}).filter(([k, v]) => !k.startsWith('_') && v != null).map(([k, v]) => envLine(k, String(v)));
-  const body = lines.length ? `${lines.join('\n')}\n` : '';
+  const set = Object.entries(creds || {}).filter(([k, v]) => !k.startsWith('_') && v != null).map(([k, v]) => [k, String(v)]);
+  for (const [k, v] of set) envLine(k, v);
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(target, body, { mode: 0o600 });
-  try { fs.chmodSync(target, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
+  const file = keyFileAt(target);
+  writeKeyFile(file, mergedEnv(readIfAny(file), set));
   return target;
+}
+
+// Where the key file's bytes live: the path, or what a link there points to (a plain write would
+// follow it too). Anything but a regular file is refused: a pipe would block the write for good.
+function keyFileAt(target) {
+  let st;
+  try { st = fs.lstatSync(target); } catch (e) { if (e.code === 'ENOENT') return target; throw e; }
+  const file = st.isSymbolicLink() ? linkedFile(target) : target;
+  if (!fs.statSync(file).isFile()) throw new Error(`persistCreds: ${target} is not a regular file; nothing was written`);
+  return file;
+}
+
+function linkedFile(link) {
+  try { return fs.realpathSync(link); } catch (e) {
+    if (e.code === 'ENOENT') throw new Error(`persistCreds: ${link} is a link to nothing; nothing was written`);
+    throw e;
+  }
+}
+
+// latin1 reads each byte as one character, so a line in another encoding (a CP949 comment) is
+// written back byte for byte.
+function readIfAny(file) {
+  try { return fs.readFileSync(file, 'latin1'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
+}
+
+// The file's bytes with each set name's value in place. parseEnvFile reads a name's last assignment,
+// so that line is the one replaced, unless it already reads as the new value; a name the file lacks
+// is appended. Every line keeps its own end; an added one takes \r\n when the file has any. New text
+// goes in as UTF-8.
+function mergedEnv(text, set) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = splitLines(text, eol);
+  const lastAt = new Map(lines.map((l, i) => [assignedName(l.body), i]).filter(([k]) => k));
+  for (const [k, v] of set) {
+    const i = lastAt.get(k);
+    const line = asLatin1(envLine(k, v));
+    if (i === undefined) lines.push({ body: line, end: eol });
+    else if (parseEnvFile(asUtf8(lines[i].body))[k] !== v) lines[i].body = line;
+  }
+  return Buffer.from(lines.map((l) => l.body + l.end).join(''), 'latin1');
+}
+
+// Each line with its own end; a last line without one gets `eol`.
+function splitLines(text, eol) {
+  return (text.match(/[^\n]*\n|[^\n]+$/g) || []).map((l) => {
+    const m = /\r?\n$/.exec(l);
+    return m ? { body: l.slice(0, m.index), end: m[0] } : { body: l, end: eol };
+  });
+}
+
+const asLatin1 = (s) => Buffer.from(s, 'utf8').toString('latin1');
+const asUtf8 = (s) => Buffer.from(s, 'latin1').toString('utf8');
+
+// The name a line assigns, as parseEnvFile reads it (null for a comment, an `export` line, or text).
+function assignedName(line) {
+  const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+  return m ? m[1] : null;
+}
+
+// The new contents go to a fresh random name opened exclusively ('wx') and are renamed over the old
+// file. A file with a second name (a hard link), or one the new copy would give another owner or
+// group, is written in place: a rename would part it from its other name, or hand it to this user.
+// So is one whose folder takes no new file, or whose rename the system refuses: the old in-place
+// write still works there.
+function writeKeyFile(file, body) {
+  const old = statIfAny(file);
+  if (old && old.nlink > 1) return writeInPlace(file, body);
+  const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  const fd = openNew(tmp);
+  if (fd === null) return writeInPlace(file, body);
+  let moved = false;
+  try {
+    moved = fillTemp(fd, body, old) && renamed(tmp, file);
+  } finally {
+    if (!moved) fs.rmSync(tmp, { force: true });
+  }
+  return moved ? chmodPrivate(file) : writeInPlace(file, body);
+}
+
+// A read-only folder, one that is not this user's, or (on Windows) a file another program holds.
+const NO_NEW_FILE = new Set(['EACCES', 'EPERM', 'EBUSY', 'EROFS']);
+
+function openNew(tmp) {
+  try { return fs.openSync(tmp, 'wx', 0o600); } catch (e) { if (NO_NEW_FILE.has(e.code)) return null; throw e; }
+}
+
+function renamed(tmp, file) {
+  try { fs.renameSync(tmp, file); return true; } catch (e) { if (NO_NEW_FILE.has(e.code)) return false; throw e; }
+}
+
+// Fill and close the new file. False, with nothing written, when its owner or group is not the old file's.
+function fillTemp(fd, body, old) {
+  try {
+    const st = fs.fstatSync(fd);
+    if (old && (st.uid !== old.uid || st.gid !== old.gid)) return false;
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);
+    return true;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeInPlace(file, body) {
+  fs.writeFileSync(file, body, { mode: 0o600 });
+  return chmodPrivate(file);
+}
+
+function statIfAny(file) {
+  try { return fs.statSync(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+}
+
+function chmodPrivate(file) {
+  try { fs.chmodSync(file, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
 }
 
 // One KEY=VALUE line for persistCreds, refusing a name or value that would make lines of its own.
@@ -242,6 +365,61 @@ const plainHeaders = (h) => (Array.isArray(h) || h instanceof Headers ? Object.f
 /** Whether a key may go to this URL: over https, or over http only to this machine (a local mock or proxy). */
 export const safeForKey = (u) => u.protocol === 'https:' || localHttp(u);
 
+/**
+ * Whether this process's fetch sends an http request to `u` through a proxy named in the environment:
+ * Node 22 and 24 do when NODE_USE_ENV_PROXY=1 or --use-env-proxy is on and http_proxy or HTTP_PROXY is
+ * set, unless NO_PROXY names the host. Over plain http the proxy reads the request, a key included.
+ * Read as Node 22.23 and 24.13 do (measured), and toward "proxied" where unsure: NODE_USE_ENV_PROXY
+ * other than empty or 0 is on (Node takes only 1); the flag on the command line or in NODE_OPTIONS is on
+ * in any spelling Node takes (`_` for `-`, quoted, with a value, even `=false`), and so is a Node
+ * config file, which can turn it on unseen; and the host
+ * must be named in no_proxy and NO_PROXY both, when set (Node takes no_proxy when it is set, even
+ * empty). An entry names it as `*`, the host, or the host with this URL's own port written out;
+ * a leading dot, a range or a default port does not count.
+ */
+export function envProxied(u, env = process.env, flags = process.execArgv) {
+  if (!envProxyOn(env, flags) || !(env.http_proxy || env.HTTP_PROXY)) return false;
+  const lists = [env.no_proxy, env.NO_PROXY].filter((list) => list !== undefined);
+  return !lists.length || !lists.every((list) => noProxyNames(list, u));
+}
+
+function envProxyOn(env, flags) {
+  if (env.NODE_USE_ENV_PROXY && env.NODE_USE_ENV_PROXY !== '0') return true;
+  const given = [...flags, env.NODE_OPTIONS || ''].join(' ');
+  return PROXY_FLAG.test(given) || CONFIG_FILE_FLAG.test(given);
+}
+
+// `--use-env-proxy` as Node takes it (`--no-use-env-proxy` turns it off), and the flags that load a
+// Node config file, whose nodeOptions can turn it on without either showing here.
+const PROXY_FLAG = /--use[-_]env[-_]proxy(?![\w-])/;
+const CONFIG_FILE_FLAG = /--experimental[-_](?:default[-_])?config[-_]file(?![\w-])/;
+
+// Entries are split at commas and spaces, and compared in lower case (URL gives the host in lower case).
+const noProxyNames = (list, u) => list.toLowerCase().split(/[\s,]+/).some((x) => noProxyEntry(x, u));
+
+function noProxyEntry(x, u) {
+  if (x === '*') return true;
+  const m = x.match(/^(\[[^\]]*\]|[^:[\]]*)(?::(\d+))?$/);
+  return Boolean(m) && m[1] === u.hostname && (m[2] === undefined || m[2] === u.port);
+}
+
+// The environment as this module found it. Node takes the proxy settings when it starts, so a change
+// made later does not take the proxy away: a key is held back when either says a proxy is in the way.
+const ENV_AT_LOAD = { ...process.env };
+
+/** Whether a key is held back from this URL (EPROXYKEY): http that an env proxy would carry, now or as Node started. */
+export const keyHeldBack = (u) => u.protocol === 'http:' && (envProxied(u) || envProxied(u, ENV_AT_LOAD));
+
+// A key goes only where safeForKey allows, and over http only straight to this machine: not through
+// a proxy the environment puts in the way. Both refusals come before anything is sent.
+function assertKeyMayGo(target, headers) {
+  if (!Object.keys(headers).some(isSecret)) return;
+  if (!safeForKey(target)) throw refused('EINSECURE', 'a key is sent only over https');
+  if (keyHeldBack(target)) {
+    throw refused('EPROXYKEY', 'a key over http goes only straight to this machine, and the environment sends http through a proxy (NO_PROXY can name the host)');
+  }
+}
+
 // Where a redirect goes. The request was sent already, so a Location that is not a URL, or one that
 // leaves https, ends it with a code that does not read as "nothing sent". http stays allowed only
 // while the request is on this machine over http (a local mock); from anywhere else, an https
@@ -273,13 +451,14 @@ function nextHop(req, status, crossOrigin) {
  * another origin without the key headers; a request with a body only by a 307 or 308 within its
  * origin (fetch itself forwards a custom `api-key` header and re-sends the body on 307 and 308 to
  * any origin, and turns a POST into a GET on 301 to 303). A key goes only where safeForKey allows: an http
- * URL with one is refused before anything is sent (cause.code EINSECURE), and no redirect leaves
- * https. Throws as fetch does on a network error.
+ * URL with one is refused before anything is sent (cause.code EINSECURE), and so is an http one to this
+ * machine that an env proxy would carry (EPROXYKEY); no redirect leaves https. Throws as fetch does on
+ * a network error.
  */
 export async function fetchGuarded(url, init = {}) {
   let target = new URL(String(url));
   let req = { ...init, headers: plainHeaders(init.headers), redirect: 'manual' };
-  if (!safeForKey(target) && Object.keys(req.headers).some(isSecret)) throw refused('EINSECURE', 'a key is sent only over https');
+  assertKeyMayGo(target, req.headers);
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
     const r = await globalThis.fetch(target.href, req);
     const location = REDIRECT_STATUS.has(r.status) ? r.headers.get('location') : null;
@@ -304,35 +483,58 @@ function retryAfterMsOf(headers) {
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
 }
 
+// Each request ends within its limit. Without one, a server that takes the connection and never
+// answers holds a request for undici's 300 s, and a poll of 180 requests for hours.
+const API_TIMEOUT_MS = 120_000;
+const DOWNLOAD_TIMEOUT_MS = 600_000;
+// An image is made while its request waits, and is billed: it keeps the 300 s undici gave it.
+const IMAGE_TIMEOUT_MS = 300_000;
+
 /**
  * Fetch an Azure URL trying the `api-key` header first and, on 401/403, retrying with
- * `Authorization: Bearer`. Never throws on HTTP status; a network error yields {status:0}.
- * `retryAfterMs` carries the server's Retry-After hint (null when absent).
- * @returns {Promise<{status:number, ok:boolean, ct:string, body:any, authStyle:string|null, retryAfterMs:number|null, error?:Error}>}
+ * `Authorization: Bearer`. Never throws on HTTP status; a network error, before the answer or
+ * while its body is read, yields {status:0} with `error` and `errno` (a code such as
+ * ECONNRESET or TimeoutError). Each request is limited to `timeoutMs` (default 120 s, 600 s
+ * for a binary download). `retryAfterMs` carries the server's Retry-After hint (null when absent).
+ * @param {{key?:string, binary?:boolean, headers?:object, method?:string, body?:any, timeoutMs?:number}} [opts] method defaults to GET
+ * @returns {Promise<{status:number, ok:boolean, ct:string, body:any, authStyle:string|null, retryAfterMs:number|null, error?:Error, errno?:string|null}>}
  */
-export async function azFetch(url, { key, binary = false, headers = {}, method = 'GET', body } = {}) {
-  const styles = key ? [{ 'api-key': key }, { Authorization: `Bearer ${key}` }] : [{}];
-  let last = { status: 0, ok: false, ct: '', body: null, authStyle: null };
-  for (const auth of styles) {
-    const opts = { method, headers: { ...headers, ...auth } };
-    if (body !== undefined) opts.body = body;
-    let r;
-    try {
-      r = await fetchGuarded(url, opts);
-    } catch (e) {
-      last = { status: 0, ok: false, ct: '', body: null, authStyle: null, error: e };
-      break; // network error is not an auth problem — do not retry other styles
-    }
-    const ct = r.headers.get('content-type') || '';
-    let parsed;
-    if (binary) parsed = Buffer.from(await r.arrayBuffer());
-    else if (ct.includes('json')) parsed = await r.json().catch(() => null);
-    else parsed = await r.text().catch(() => null);
-    last = { status: r.status, ok: r.ok, ct, body: parsed, authStyle: Object.keys(auth)[0] || null, retryAfterMs: retryAfterMsOf(r.headers) };
-    if (r.status !== 401 && r.status !== 403) return last; // accepted (or a non-auth error)
-    // else: this auth style was rejected — fall through and try the next
+export async function azFetch(url, opts = {}) {
+  const { key, binary = false } = opts;
+  const limitMs = Math.ceil(opts.timeoutMs ?? (binary ? DOWNLOAD_TIMEOUT_MS : API_TIMEOUT_MS)); // AbortSignal.timeout takes whole ms only
+  let last;
+  for (const auth of authStyles(key)) {
+    last = await azAttempt(url, { ...opts, auth, binary, limitMs });
+    // accepted, a non-auth error, or a network error (not an auth problem): no other style is tried
+    if (last.status !== 401 && last.status !== 403) return last;
   }
   return last;
+}
+
+const authStyles = (key) => (key ? [{ 'api-key': key }, { Authorization: `Bearer ${key}` }] : [{}]);
+
+// One request with one auth style. The body is read inside the try: a connection that drops
+// mid-body is a network error like any other, not a throw past the caller's retry. So is a time limit
+// AbortSignal.timeout will not take (not a whole number of ms).
+async function azAttempt(url, { method = 'GET', headers = {}, body, auth, binary, limitMs }) {
+  const authStyle = Object.keys(auth)[0] || null;
+  try {
+    const opts = { method, headers: { ...headers, ...auth }, signal: AbortSignal.timeout(limitMs) };
+    if (body !== undefined) opts.body = body;
+    const r = await fetchGuarded(url, opts);
+    const ct = r.headers.get('content-type') || '';
+    return { status: r.status, ok: r.ok, ct, body: await azBody(r, ct, binary), authStyle, retryAfterMs: retryAfterMsOf(r.headers) };
+  } catch (e) {
+    return { status: 0, ok: false, ct: '', body: null, authStyle: null, error: e, errno: errnoOf(e) };
+  }
+}
+
+// A read cut short throws (the caller's catch makes it status 0); a JSON body that does not parse is null.
+async function azBody(r, ct, binary) {
+  if (binary) return Buffer.from(await r.arrayBuffer());
+  const text = await r.text();
+  if (!ct.includes('json')) return text;
+  try { return JSON.parse(text); } catch { return null; }
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +545,7 @@ export async function azFetch(url, { key, binary = false, headers = {}, method =
 // else 10s, 20s, 40s…; either way at most 60s per wait. Low-tier (S0) image deployments hit this.
 async function postJsonWith429Retry(url, { key, body, retries, onNote }) {
   for (let i = 0; ; i++) {
-    const r = await azFetch(url, { key, method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    const r = await azFetch(url, { key, method: 'POST', headers: { 'Content-Type': 'application/json' }, body, timeoutMs: IMAGE_TIMEOUT_MS });
     if (r.status !== 429 || i >= retries) return r;
     const ms = Math.min(60000, r.retryAfterMs ?? 10000 * 2 ** i);
     if (typeof onNote === 'function') onNote(`HTTP 429; retry ${i + 1}/${retries} in ${ms} ms`);
@@ -363,20 +565,24 @@ export async function generateImage({
   prompt, size = '720x1280', quality = 'low', n = 1, onNote, retry429 = 3,
 } = {}) {
   const genBody = { model: deployment, prompt, size, quality, n };
-  let r = await postJsonWith429Retry(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, {
-    key, body: JSON.stringify(genBody), retries: retry429, onNote,
-  });
+  const post = (url, body) => postJsonWith429Retry(url, { key, body: JSON.stringify(body), retries: retry429, onNote });
+  let r = await post(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, genBody);
   let note = 'v1';
-  // no classic retry on 429 (shared limit) or on a lost connection (the v1 call may have billed)
-  if (!(r.ok && r.body?.data?.[0]?.b64_json) && r.status !== 429 && r.status !== 0) {
+  if (classicWorthTrying(r)) {
     note = 'classic-fallback(2025-04-01-preview)';
     if (typeof onNote === 'function') onNote(`generateImage: v1 path failed (HTTP ${r.status}); trying ${note}`);
-    r = await postJsonWith429Retry(`${endpoint}/openai/deployments/${deployment}/images/generations?api-version=2025-04-01-preview`, {
-      key, body: JSON.stringify({ ...genBody, size: classicSize(size) }), retries: retry429, onNote,
-    });
+    r = await post(`${endpoint}/openai/deployments/${deployment}/images/generations?api-version=2025-04-01-preview`, { ...genBody, size: classicSize(size) });
   }
-  const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`generateImage failed (${note}): HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
+  return pngFrom(r, dataB64(r), `generateImage failed (${note})`);
+}
+
+// no classic retry on 429 (shared limit) or on a lost connection (the v1 call may have billed)
+const classicWorthTrying = (r) => !(r.ok && dataB64(r)) && r.status !== 429 && r.status !== 0;
+const dataB64 = (r) => r.body?.data?.[0]?.b64_json;
+
+// The PNG an image call answered with, or an error that starts with `failed`.
+function pngFrom(r, b64, failed) {
+  if (!(r.ok && b64)) throw new Error(`${failed}: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -384,29 +590,29 @@ export async function generateImage({
 export async function editImage({
   endpoint, key, deployment, apiVersion = 'preview', prompt, imageBuf, maskBuf, size,
 } = {}) {
+  const r = await azFetch(`${endpoint}/openai/v1/images/edits?api-version=${apiVersion}`, {
+    key, method: 'POST', body: editForm({ deployment, prompt, imageBuf, maskBuf, size }), timeoutMs: IMAGE_TIMEOUT_MS,
+  });
+  return pngFrom(r, dataB64(r), 'editImage failed');
+}
+
+function editForm({ deployment, prompt, imageBuf, maskBuf, size }) {
   const fd = new FormData();
   fd.append('model', deployment);
   fd.append('prompt', prompt);
   if (size) fd.append('size', size);
   fd.append('image', new Blob([imageBuf], { type: 'image/png' }), 'image.png');
   if (maskBuf) fd.append('mask', new Blob([maskBuf], { type: 'image/png' }), 'mask.png');
-  const r = await azFetch(`${endpoint}/openai/v1/images/edits?api-version=${apiVersion}`, {
-    key, method: 'POST', body: fd,
-  });
-  const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`editImage failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return Buffer.from(b64, 'base64');
+  return fd;
 }
 
 /** Generate a still via the Black Forest Labs FLUX provider path. Returns a PNG Buffer. */
 export async function generateImageFlux({ endpoint, key, prompt, width, height, apiVersion = 'preview' } = {}) {
   const r = await azFetch(`${endpoint}/providers/blackforestlabs/v1/flux-2-pro?api-version=${apiVersion}`, {
     key, method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, width, height }),
+    body: JSON.stringify({ prompt, width, height }), timeoutMs: IMAGE_TIMEOUT_MS,
   });
-  const b64 = r.body?.data?.[0]?.b64_json || r.body?.b64_json || r.body?.image;
-  if (!(r.ok && b64)) throw new Error(`generateImageFlux failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return Buffer.from(b64, 'base64');
+  return pngFrom(r, dataB64(r) || r.body?.b64_json || r.body?.image, 'generateImageFlux failed');
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +633,13 @@ export async function listVideos({ endpoint, key, apiVersion = 'preview' } = {})
 export async function createVideo({
   endpoint, key, model = 'sora-2', prompt, size = '720x1280', seconds = 4, inputReferencePng, apiVersion = 'preview',
 } = {}) {
+  const body = videoForm({ model, prompt, size, seconds, inputReferencePng });
+  const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body });
+  if (!(r.ok && r.body?.id)) throw createVideoError(r);
+  return r.body;
+}
+
+function videoForm({ model, prompt, size, seconds, inputReferencePng }) {
   const fd = new FormData();
   fd.append('model', model);
   fd.append('prompt', prompt);
@@ -435,43 +648,50 @@ export async function createVideo({
   if (inputReferencePng) {
     fd.append('input_reference', new Blob([inputReferencePng], { type: 'image/png' }), 'input_reference.png');
   }
-  const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body: fd });
-  if (!(r.ok && r.body?.id)) {
-    // status 0 = network error; errno tells a refused connection (nothing sent) from a lost one
-    const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-    err.status = r.status;
-    err.errno = r.error?.cause?.code || r.error?.code || null;
-    throw err;
-  }
-  return r.body;
+  return fd;
 }
 
-const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180 };
+// status 0 = network error; errno tells a refused connection (nothing sent) from a lost one.
+// retryAfterMs is the server's wait for a 429.
+function createVideoError(r) {
+  const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
+  return Object.assign(err, { status: r.status, errno: r.errno || null, retryAfterMs: r.retryAfterMs ?? null });
+}
+
+const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180, now: Date.now };
 const POLL_RETRY_4XX = new Set([408, 429]);
 const withoutUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 
 /**
- * Poll a Sora job until a terminal status (or maxTicks). Polls first, then sleeps, so a job
- * that is already terminal returns without waiting. `onTick(status, i)` is optional; `sleep`
- * replaces the wait between polls. 408, 429, 5xx and network errors keep polling. Any other
- * 4xx throws at once with `err.status` and `err.code`: a job the server no longer knows, or a
- * key it refuses, never turns terminal.
+ * Poll a Sora job until a terminal status, maxTicks polls, or `timeoutMs` of wall time on the
+ * `now` clock (default maxTicks x intervalMs), whichever comes first. Each request is limited to
+ * the time left, so a server that stops answering cannot stretch the wait. Polls first, then
+ * sleeps, so a job that is already terminal returns without waiting. `onTick(status, i)` is
+ * optional; `sleep` replaces the wait between polls. 408, 429, 5xx and network errors keep
+ * polling. Any other 4xx throws at once with `err.status` and `err.code`: a job the server no
+ * longer knows, or a key it refuses, never turns terminal.
  * @returns the last status object seen.
  */
 export async function pollVideo(opts = {}) {
   const o = { ...POLL_DEFAULTS, sleep, ...withoutUndefined(opts) };
   const url = `${o.endpoint}/openai/v1/videos/${o.id}?api-version=${o.apiVersion}`;
+  const end = o.now() + (o.timeoutMs ?? o.intervalMs * o.maxTicks);
   let st = null;
   for (let i = 0; i < o.maxTicks; i++) {
-    const r = await azFetch(url, { key: o.key, method: 'GET' });
+    const r = await azFetch(url, { key: o.key, method: 'GET', timeoutMs: timeLeft(end, o.now()) });
     throwIfRefused(r, o.id);
     if (r.ok) st = r.body || st;
     if (typeof o.onTick === 'function') o.onTick(st, i);
-    if (st && TERMINAL_STATUS.has(st.status)) break;
+    if (settled(st)) break;
     await o.sleep(o.intervalMs);
+    if (o.now() >= end) break;
   }
   return st;
 }
+
+// A poll request's limit: the usual one, or less when the deadline is nearer (azFetch rounds it up to whole ms).
+const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, end - t));
+const settled = (st) => Boolean(st) && TERMINAL_STATUS.has(st.status);
 
 function throwIfRefused(r, id) {
   if (r.status < 400 || r.status >= 500 || POLL_RETRY_4XX.has(r.status)) return;
@@ -513,6 +733,16 @@ export async function detectTwoImageSupport({ endpoint, key, apiVersion = 'previ
 export async function createVideoTwoImage({
   endpoint, key, model = 'sora-2', prompt = '', firstPng, lastPng, size = '720x1280', seconds = 4, apiVersion = 'preview',
 } = {}) {
+  const r = await azFetch(`${endpoint}/openai/v1/video/generations/jobs?api-version=${apiVersion}`, {
+    key, method: 'POST', body: twoImageForm({ model, prompt, firstPng, lastPng, size, seconds }),
+  });
+  if (!(r.ok && jobIdOf(r))) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
+  return r.body;
+}
+
+const jobIdOf = (r) => r.body?.id || r.body?.job_id;
+
+function twoImageForm({ model, prompt, firstPng, lastPng, size, seconds }) {
   const fd = new FormData();
   fd.append('model', model);
   fd.append('prompt', prompt);
@@ -525,12 +755,7 @@ export async function createVideoTwoImage({
   ]));
   fd.append('files', new Blob([firstPng], { type: 'image/png' }), 'first.png');
   fd.append('files', new Blob([lastPng], { type: 'image/png' }), 'last.png');
-  const r = await azFetch(`${endpoint}/openai/v1/video/generations/jobs?api-version=${apiVersion}`, {
-    key, method: 'POST', body: fd,
-  });
-  const id = r.body?.id || r.body?.job_id;
-  if (!(r.ok && id)) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return r.body;
+  return fd;
 }
 
 // ---------------------------------------------------------------------------
@@ -656,16 +881,25 @@ export async function crossfade(aMp4, bMp4, out, sec = 0.5, { ffmpeg, offset } =
  */
 export async function concatClips(mp4List, out, { ffmpeg, fps = 30, width = 720, height = 1280 } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
+  const r = runFf(bin, concatArgs(clipList(mp4List), out, { fps, width, height }));
+  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`concatClips failed: ${tail(r.stderr)}`);
+  return out;
+}
+
+function clipList(mp4List) {
   const list = Array.isArray(mp4List) ? mp4List : [];
   if (list.length === 0) throw new Error('concatClips: no input clips');
+  return list;
+}
+
+// One -i per clip, each normalized (fps, scale, sar, pix_fmt) before the concat filter joins them.
+function concatArgs(list, out, { fps, width, height }) {
   const args = ['-y'];
   for (const f of list) args.push('-i', f);
   const norm = list.map((_, i) => `[${i}:v]fps=${fps},scale=${width}:${height},setsar=1,format=yuv420p[v${i}]`);
   const chain = `${list.map((_, i) => `[v${i}]`).join('')}concat=n=${list.length}:v=1[v]`;
   args.push('-filter_complex', `${norm.join(';')};${chain}`, '-map', '[v]', out);
-  const r = runFf(bin, args);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`concatClips failed: ${tail(r.stderr)}`);
-  return out;
+  return args;
 }
 
 // Probe an mp4's duration (seconds) by parsing ffmpeg's stderr banner. Returns null if absent.

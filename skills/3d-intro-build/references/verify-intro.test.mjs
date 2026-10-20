@@ -136,10 +136,12 @@ test('playwright comes from the project only when asked, and npm never runs from
   process.chdir(proj);
   process.env.PATH = ['.', PATH].join(path.delimiter);
   try {
-    const unasked = await loadPlaywright().then((m) => m.chromium, () => null);
+    // Nothing beside the script: a playwright in a folder above this checkout would win the bare import.
+    const importBeside = () => Promise.reject(new Error('not beside'));
+    const unasked = await loadPlaywright({ importBeside }).then((m) => m.chromium, () => null);
     assert.notEqual(unasked, 'from-project', 'the project package is not loaded unless asked');
     assert.equal(fs.existsSync(path.join(proj, 'planted-npm-ran')), false, 'npm did not run from the project folder');
-    assert.equal((await loadPlaywright({ fromProject: true })).chromium, 'from-project');
+    assert.equal((await loadPlaywright({ fromProject: true, importBeside })).chromium, 'from-project');
   } finally {
     process.chdir(cwd);
     process.env.PATH = PATH;

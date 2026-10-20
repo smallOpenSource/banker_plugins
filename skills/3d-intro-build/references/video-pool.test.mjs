@@ -54,6 +54,29 @@ function png(colorType) {
   return b;
 }
 
+// The WAN answer for a ws-unit URL: a submit gets a task (or wanCreate's answer), a poll SUCCEEDED
+// (or wanTask's). null for another path.
+function wanAnswer(m, call, { wanCreate, wanTask }, nextId) {
+  if (m[2] === CREATE) {
+    return (wanCreate && wanCreate(Number(m[1]), call)) || json(200, { request_id: 'r', output: { task_id: nextId(m[1]), task_status: 'PENDING' } });
+  }
+  if (!m[2].startsWith('/api/v1/tasks/')) return null;
+  const id = decodeURIComponent(m[2].slice('/api/v1/tasks/'.length));
+  return (wanTask && wanTask(id)) || json(200, { output: { task_id: id, task_status: 'SUCCEEDED', video_url: `https://oss.example.com/${id}.mp4` }, usage: { duration: 5 } });
+}
+
+// The download and Sora answers, or null for a URL no test serves.
+function otherAnswer(u, opts, sora) {
+  if (u.startsWith('https://oss.example.com/')) return new Response(MP4, { status: 200 });
+  if (u.startsWith(`${SORA}/openai/v1/videos?`)) {
+    if (opts.method !== 'POST') return json(200, { data: [] });
+    return sora === 'ok' ? json(200, { id: 'sora-job-1', status: 'queued' }) : sora();
+  }
+  if (u.startsWith(`${SORA}/openai/v1/videos/sora-job-1/content`)) return new Response(MP4, { status: 200, headers: { 'content-type': 'video/mp4' } });
+  if (u.startsWith(`${SORA}/openai/v1/videos/sora-job-1?`)) return json(200, { id: 'sora-job-1', status: 'completed' });
+  return null;
+}
+
 /**
  * Route stubbed fetch calls. `wanCreate(n, call)` decides each WAN create response for entry n;
  * tasks succeed on first poll unless `wanTask(taskId)` says otherwise. Every call is recorded.
@@ -61,30 +84,14 @@ function png(colorType) {
 function installFetch({ wanCreate, wanTask, sora = 'ok' } = {}) {
   const calls = [];
   let seq = 0;
+  const nextId = (n) => `task-${n}-${++seq}`;
   globalThis.fetch = async (url, opts = {}) => {
     const u = String(url);
     const call = { url: u, opts, body: opts.body && typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body };
     calls.push(call);
     const m = u.match(/^https:\/\/ws-unit(\d)\.example\.com(.*)$/);
-    if (m && m[2] === CREATE) {
-      const r = wanCreate ? wanCreate(Number(m[1]), call) : null;
-      if (r) return r;
-      const id = `task-${m[1]}-${++seq}`;
-      return json(200, { request_id: 'r', output: { task_id: id, task_status: 'PENDING' } });
-    }
-    if (m && m[2].startsWith('/api/v1/tasks/')) {
-      const id = decodeURIComponent(m[2].slice('/api/v1/tasks/'.length));
-      const r = wanTask ? wanTask(id) : null;
-      if (r) return r;
-      return json(200, { output: { task_id: id, task_status: 'SUCCEEDED', video_url: `https://oss.example.com/${id}.mp4` }, usage: { duration: 5 } });
-    }
-    if (u.startsWith('https://oss.example.com/')) return new Response(MP4, { status: 200 });
-    if (u.startsWith(`${SORA}/openai/v1/videos?`)) {
-      if (opts.method === 'POST') return sora === 'ok' ? json(200, { id: 'sora-job-1', status: 'queued' }) : sora();
-      return json(200, { data: [] });
-    }
-    if (u.startsWith(`${SORA}/openai/v1/videos/sora-job-1/content`)) return new Response(MP4, { status: 200, headers: { 'content-type': 'video/mp4' } });
-    if (u.startsWith(`${SORA}/openai/v1/videos/sora-job-1?`)) return json(200, { id: 'sora-job-1', status: 'completed' });
+    const r = (m && wanAnswer(m, call, { wanCreate, wanTask }, nextId)) || otherAnswer(u, opts, sora);
+    if (r) return r;
     throw new Error(`unrouted fetch ${u}`);
   };
   return calls;
@@ -877,4 +884,399 @@ test('generateClip: a WAN request is not sent with its key or prompt to another 
   };
   await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1');
   assert.equal(creates(calls)[0].opts.redirect, 'manual');
+});
+
+// ---------------------------------------------------------------------------
+// the Sora path, an HTTP-date Retry-After, the attempt cap, poll patience
+
+const soraPosts = (calls) => calls.filter((c) => c.url.startsWith(`${SORA}/openai/v1/videos?`) && c.opts.method === 'POST');
+const soraOnly = (extra = {}) => creds({ VIDEO_PROVIDER_ORDER: 'sora', ...extra });
+
+test('generateClip: a Sora 429 on submit waits with the injected sleep and retries; only the accepted request makes a job', async () => {
+  let posts = 0;
+  installFetch({ sora: () => (++posts < 3 ? json(429, { error: { code: 'too_many_requests' } }) : json(200, { id: 'sora-job-1', status: 'queued' })) });
+  const slept = [];
+  const events = [];
+  const r = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async (ms) => { slept.push(ms); }, onEvent: (e) => events.push(e) });
+  assert.equal(r.provider, 'sora');
+  assert.equal(posts, 3);
+  assert.deepEqual(events.filter((e) => e.type === 'wait' && e.provider === 'sora').map((e) => e.ms), [30_000, 60_000]);
+  assert.deepEqual(slept, [30_000, 60_000], 'the waits go through the injected sleep');
+});
+
+test('generateClip: a Sora 429 that never clears stops after five requests', async () => {
+  let posts = 0;
+  installFetch({ sora: () => { posts++; return json(429, { error: { code: 'too_many_requests' } }); } });
+  const err = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async () => {} }).then(() => null, (e) => e);
+  assert.equal(posts, 5);
+  assert.equal(err.provider, 'sora');
+  assert.equal(err.status, 429);
+});
+
+test('generateClip: a Sora submit refused by moderation is ContentRejectedError, not resubmitted', async () => {
+  let posts = 0;
+  installFetch({ sora: () => { posts++; return json(400, { error: { code: 'moderation_blocked', message: 'rejected by the safety system' } }); } });
+  await assert.rejects(() => run({ creds: soraOnly(), statePath: tmpState() }), (e) => e instanceof P.ContentRejectedError && e.provider === 'sora');
+  assert.equal(posts, 1);
+});
+
+test('generateClip: a Sora job that fails moderation is ContentRejectedError; another failed job stops as failed with its id', async () => {
+  for (const [error, check] of [
+    [{ code: 'moderation_blocked', message: 'blocked' }, (e) => e instanceof P.ContentRejectedError && e.provider === 'sora'],
+    [{ code: 'internal_error', message: 'x' }, (e) => e.kind === 'failed' && e.provider === 'sora' && e.taskId === 'sora-job-1' && e.code === 'internal_error'],
+  ]) {
+    const calls = installFetch();
+    const routed = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => (String(url).startsWith(`${SORA}/openai/v1/videos/sora-job-1?`) ? json(200, { id: 'sora-job-1', status: 'failed', error }) : routed(url, opts));
+    await assert.rejects(() => run({ creds: soraOnly(), statePath: tmpState() }), check);
+    assert.equal(soraPosts(calls).length, 1, `${error.code} is not resubmitted`);
+    assert.ok(!calls.some((c) => c.url.includes('/content')), 'nothing downloaded');
+  }
+});
+
+test('generateClip: a Sora clip that cannot be downloaded stops as download with the job id and seconds, for resumeClip', async () => {
+  const calls = installFetch();
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => (String(url).startsWith(`${SORA}/openai/v1/videos/sora-job-1/content`) ? new Response('', { status: 503 }) : routed(url, opts));
+  await assert.rejects(() => run({ creds: soraOnly(), statePath: tmpState(), seconds: 8 }),
+    (e) => e.kind === 'download' && e.provider === 'sora' && e.taskId === 'sora-job-1' && e.label === 'AZURE_SORA' && e.seconds === 8);
+  assert.equal(soraPosts(calls).length, 1);
+});
+
+test('generateClip: a Sora submit answered 5xx may have made a job (submit_unknown); a 4xx made none (invalid_request)', async () => {
+  for (const [status, kind] of [[500, 'submit_unknown'], [503, 'submit_unknown'], [400, 'invalid_request']]) {
+    let posts = 0;
+    installFetch({ sora: () => { posts++; return json(status, { error: { code: 'x', message: 'y' } }); } });
+    await assert.rejects(() => run({ creds: soraOnly(), statePath: tmpState() }), (e) => e.kind === kind && e.provider === 'sora' && e.status === status);
+    assert.equal(posts, 1, `HTTP ${status} is not sent again`);
+  }
+});
+
+test('generateClip / resumeClip: Sora uses the deployment and api-version from the key file, and resume echoes snapped seconds', async () => {
+  const calls = installFetch();
+  const cr = soraOnly({ AZURE_SORA_DEPLOYMENT: 'sora-2-prod', AZURE_SORA_API_VERSION: '2025-05-01' });
+  const r = await run({ creds: cr, statePath: tmpState() });
+  const post = soraPosts(calls)[0];
+  assert.equal(post.body.get('model'), 'sora-2-prod');
+  assert.match(post.url, /[?&]api-version=2025-05-01(&|$)/);
+  assert.equal(r.model, 'sora-2-prod');
+  const back = await P.resumeClip({ creds: cr, statePath: tmpState(), provider: 'sora', taskId: 'sora-job-1', seconds: 5, pollIntervalMs: 0, sleep: async () => {} });
+  assert.equal(back.seconds, 4, '5 s is reported as the 4 s Sora made');
+  assert.match(calls.filter((c) => c.url.includes('/videos/sora-job-1')).at(-1).url, /api-version=2025-05-01/);
+});
+
+test('generateClip: a Sora endpoint without its key is skipped with an event and never called', async () => {
+  const calls = installFetch({ wanCreate: () => json(400, { code: 'Arrearage' }) });
+  const events = [];
+  await assert.rejects(() => run({ creds: creds({ AZURE_SORA_API_KEY: undefined }), statePath: tmpState(), onEvent: (e) => events.push(e) }), /no video provider available \(tried: wan\)/);
+  assert.ok(events.some((e) => e.type === 'skip' && e.provider === 'sora'));
+  assert.ok(!calls.some((c) => c.url.startsWith(SORA)));
+});
+
+test('snapSoraSeconds: a missing or zero length is the 4 s default', () => {
+  assert.deepEqual([undefined, null, 0, 'x'].map(P.snapSoraSeconds), [4, 4, 4, 4]);
+});
+
+test('generateClip: a Retry-After given as an HTTP date rests the key until that time', async () => {
+  const at = new Date(Date.now() + 90_000).toUTCString();
+  installFetch({ wanCreate: (n) => (n === 1 ? json(429, { code: 'Throttling.RateQuota' }, { 'retry-after': at }) : null) });
+  const statePath = tmpState();
+  const c = clock();
+  const cr = creds({ WAN_3_ENDPOINT: undefined });
+  assert.equal((await run({ creds: cr, statePath, clock: c, maxRateWaitMs: 0 })).label, 'WAN_2');
+  const s = P.poolSummary({ creds: cr, statePath, now: c.now() })[0];
+  assert.equal(s.status, 'cooldown');
+  assert.ok(s.until - c.now() > 60_000 && s.until - c.now() <= 90_000, `about 90 s, not the 30 s default: ${s.until - c.now()}`);
+});
+
+test('generateClip: a key that keeps answering 429 is tried pool x 4 + 2 times, then the pool gives up', async () => {
+  const calls = installFetch({ wanCreate: () => json(429, { code: 'Throttling.RateQuota' }, { 'retry-after': '7' }) });
+  const cr = creds({ WAN_2_ENDPOINT: undefined, WAN_3_ENDPOINT: undefined, AZURE_SORA_ENDPOINT: undefined });
+  const events = [];
+  await assert.rejects(() => run({ creds: cr, statePath: tmpState(), maxRateWaitMs: 60_000, onEvent: (e) => events.push(e) }), /no video provider/);
+  assert.equal(creates(calls).length, 6);
+  assert.ok(events.some((e) => e.type === 'pool-unavailable' && /gave up after 6 attempts/.test(e.reason || '')));
+});
+
+test('generateClip: a poll keeps going through UNKNOWN (under five), 429 and 5xx answers to the finished task', async () => {
+  const answers = [
+    (id) => json(200, { output: { task_id: id, task_status: 'UNKNOWN' } }),
+    () => json(429, { code: 'Throttling' }),
+    () => new Response('bad gateway', { status: 502 }),
+    (id) => json(200, { output: { task_id: id, task_status: 'UNKNOWN' } }),
+  ];
+  let i = 0;
+  const calls = installFetch({ wanTask: (id) => (i < answers.length ? answers[i++](id) : null) });
+  const r = await run({ creds: creds(), statePath: tmpState(), pollIntervalMs: 1, pollTimeoutMs: 100 });
+  assert.equal(r.provider, 'wan');
+  assert.equal(i, answers.length);
+  assert.equal(creates(calls).length, 1);
+});
+
+test('generateClip: a 429 without Retry-After cools the key 30 s; a quota 429 then rests it 30 s, 60 s', async () => {
+  for (const [code, want] of [['Throttling.RateQuota', [30_000]], ['Throttling.AllocationQuota', [30_000, 60_000]]]) {
+    installFetch({ wanCreate: (n) => (n === 1 ? json(429, { code }) : null) });
+    const statePath = tmpState();
+    const c = clock();
+    const cr = creds({ WAN_3_ENDPOINT: undefined, AZURE_SORA_ENDPOINT: undefined });
+    const got = [];
+    for (const _ of want) {
+      await run({ creds: cr, statePath, clock: c, maxRateWaitMs: 0 });
+      const s = P.poolSummary({ creds: cr, statePath, now: c.now() })[0];
+      got.push(s.until - c.now());
+      c.advance(s.until - c.now());
+    }
+    assert.deepEqual(got, want, code);
+  }
+});
+
+test('generateClip: a submit whose redirect was refused says so, not that the connection was lost', async () => {
+  for (const [answer, code] of [
+    [() => new Response('', { status: 302, headers: { location: 'https://elsewhere.example.org/x' } }), 'ECROSSREDIRECT'],
+    [() => new Response('', { status: 303, headers: { location: '/throttled' } }), 'EBODYREDIRECT'],
+    [() => new Response('', { status: 302, headers: { location: 'http://[' } }), 'EBADREDIRECT'],
+  ]) {
+    installFetch({ wanCreate: (n) => (n === 1 ? answer() : null) });
+    const err = await run({ creds: creds(), statePath: tmpState() }).then(() => null, (e) => e);
+    assert.equal(err.kind, 'submit_unknown');
+    assert.ok(err.message.includes(code), err.message);
+    assert.doesNotMatch(err.message, /lost its connection/, err.message);
+  }
+});
+
+test('downloadWanVideo: a failed try is retried after a growing wait; three failures stop', async () => {
+  let n = 0;
+  globalThis.fetch = async () => (++n < 3 ? new Response('', { status: 503 }) : new Response(MP4, { status: 200 }));
+  const slept = [];
+  assert.ok((await P.downloadWanVideo('https://oss.example.com/v.mp4', { sleep: async (ms) => { slept.push(ms); } })).equals(MP4));
+  assert.deepEqual([n, slept], [3, [2000, 4000]]);
+  n = -10;
+  await assert.rejects(P.downloadWanVideo('https://oss.example.com/v.mp4', { sleep: async () => {} }), /HTTP 503/);
+  assert.equal(n, -7, 'three tries, then the stop');
+});
+
+test('generateClip: a Sora submit still throttled after five tries stops as rate, each wait the server\'s Retry-After from 1 s to 10 min', async () => {
+  for (const [ra, ms] of [['7', 7000], ['3600', 600_000], ['0', 1000]]) {
+    let posts = 0;
+    installFetch({ sora: () => { posts++; return json(429, { error: { code: 'too_many_requests' } }, { 'retry-after': ra }); } });
+    const slept = [];
+    const err = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async (t) => { slept.push(t); } }).then(() => null, (e) => e);
+    assert.equal(posts, 5);
+    assert.deepEqual([err?.kind, err?.provider, err?.status], ['rate', 'sora', 429]);
+    assert.deepEqual(slept, [ms, ms, ms, ms]);
+  }
+});
+
+test('generateClip: a WAN 5xx submit with a code the pool does not know may have made a task, so it is not sent to the next key', async () => {
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? json(503, { code: 'SomeServer5xx', message: 'x' }) : null) });
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1' && e.status === 503);
+  assert.deepEqual(createdOn(calls), [1]);
+});
+
+test('downloadWanVideo: a connection dropped mid-body counts as a failed try and is tried again', async () => {
+  let n = 0;
+  const dropped = () => ({ status: 200, ok: true, headers: new Headers(), arrayBuffer: async () => { throw Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } }); } });
+  globalThis.fetch = async () => (++n < 3 ? dropped() : new Response(MP4, { status: 200 }));
+  const slept = [];
+  assert.ok((await P.downloadWanVideo('https://oss.example.com/v.mp4', { sleep: async (t) => { slept.push(t); } })).equals(MP4));
+  assert.deepEqual([n, slept], [3, [2000, 4000]]);
+});
+
+// A request that never answers: it ends only when its signal aborts. Like a socket it keeps the event loop
+// alive meanwhile; the timer behind AbortSignal.timeout does not, and Node 20 and 22 would end the test
+// file with the request still pending.
+const hang = (signal) => new Promise((_, reject) => {
+  const alive = setInterval(() => {}, 1000);
+  signal.addEventListener('abort', () => { clearInterval(alive); reject(signal.reason); }, { once: true });
+});
+const realClock = { now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+
+test('generateClip: a poll whose requests never answer ends at the poll deadline and says how long it polled', { timeout: 10_000 }, async () => {
+  for (const [cr, polled, check] of [
+    [creds(), '/api/v1/tasks/', (e) => e.provider === 'wan' && e.taskId === 'task-1-1'],
+    [soraOnly(), `${SORA}/openai/v1/videos/sora-job-1?`, (e) => e.provider === 'sora' && e.taskId === 'sora-job-1'],
+  ]) {
+    installFetch();
+    const routed = globalThis.fetch;
+    let polls = 0;
+    globalThis.fetch = (url, opts) => (String(url).includes(polled) ? (polls++, hang(opts.signal)) : routed(url, opts));
+    const t0 = Date.now();
+    const err = await run({ creds: cr, statePath: tmpState(), ...realClock, pollIntervalMs: 50, pollTimeoutMs: 300 }).then(() => null, (e) => e);
+    const took = Date.now() - t0;
+    assert.equal(err?.kind, 'timeout', err?.message);
+    assert.ok(check(err), err.message);
+    assert.ok(took < 2000, `ended in ${took} ms`);
+    assert.ok(polls <= 2, `${polls} polls`);
+    // the hung request ends at the deadline, then one interval passes: more than 300 ms in all
+    const said = Number(err.message.match(/after polling for (\d+) ms/)?.[1]);
+    assert.ok(said > 300 && said <= took, `said ${said} ms, took ${took} ms: ${err.message}`);
+  }
+});
+
+test('generateClip: poll time is counted on the injected clock, slow poll requests included', async () => {
+  for (const [cr, polled, running] of [
+    [creds(), '/api/v1/tasks/', () => json(200, { output: { task_id: 'task-1-1', task_status: 'RUNNING' } })],
+    [soraOnly(), `${SORA}/openai/v1/videos/sora-job-1?`, () => json(200, { id: 'sora-job-1', status: 'in_progress' })],
+  ]) {
+    const c = clock();
+    installFetch();
+    const routed = globalThis.fetch;
+    let polls = 0;
+    globalThis.fetch = async (url, opts) => {
+      if (!String(url).includes(polled)) return routed(url, opts);
+      polls++;
+      c.advance(1000);
+      return running();
+    };
+    const err = await run({ creds: cr, statePath: tmpState(), clock: c, pollIntervalMs: 1, pollTimeoutMs: 3000 }).then(() => null, (e) => e);
+    assert.equal(err?.kind, 'timeout', err?.message);
+    assert.equal(polls, 3, `${polls} polls of 1 s each in a 3 s poll`);
+    assert.match(err.message, /after polling for 3003 ms/);
+  }
+});
+
+test('wanPollTask: each poll request is limited to 120 s, or to the time left when that is less', async () => {
+  const seen = [];
+  const timeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => { seen.push(ms); return timeout.call(AbortSignal, ms); };
+  try {
+    let n = 0;
+    installFetch({ wanTask: (id) => (++n < 2 ? json(200, { output: { task_id: id, task_status: 'RUNNING' } }) : null) });
+    const c = clock();
+    const entry = P.loadWanPool(creds())[0];
+    const p = await P.wanPollTask({ entry, taskId: 't', intervalMs: 1000, timeoutMs: 30 * 60_000, now: c.now, sleep: async () => { c.advance(30 * 60_000 - 50_000); } });
+    assert.equal(p.state, 'SUCCEEDED');
+  } finally {
+    AbortSignal.timeout = timeout;
+  }
+  assert.deepEqual(seen, [120_000, 50_000]);
+});
+
+test('generateClip: a Sora job polled with no interval still gets every poll up to the deadline', async () => {
+  let polls = 0;
+  installFetch();
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).startsWith(`${SORA}/openai/v1/videos/sora-job-1?`)) return routed(url, opts);
+    return json(200, { id: 'sora-job-1', status: ++polls < 3 ? 'in_progress' : 'completed' });
+  };
+  const r = await run({ creds: soraOnly(), statePath: tmpState(), pollIntervalMs: 0, pollTimeoutMs: 5 });
+  assert.equal(r.provider, 'sora');
+  assert.equal(polls, 3);
+});
+
+// Runs fn with an env proxy that would carry http, as NODE_USE_ENV_PROXY=1 and HTTP_PROXY do.
+async function withEnvProxy(fn) {
+  const saved = Object.fromEntries(['NODE_USE_ENV_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'no_proxy'].map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://proxy.example:3128' });
+  delete process.env.NO_PROXY;
+  delete process.env.no_proxy;
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+test('generateClip: a WAN entry whose key an env proxy would carry over http is skipped before anything is sent, and the next key serves', async () => {
+  await withEnvProxy(async () => {
+    const calls = installFetch();
+    const events = [];
+    const r = await run({ creds: creds({ WAN_1_ENDPOINT: 'http://localhost:9' }), statePath: tmpState(), onEvent: (e) => events.push(e) });
+    assert.equal(r.label, 'WAN_2');
+    assert.ok(!calls.some((c) => c.url.startsWith('http://localhost:9')), 'nothing went to the http endpoint');
+    assert.ok(events.some((e) => e.type === 'skip' && e.label === 'WAN_1' && /EPROXYKEY/.test(e.reason)), JSON.stringify(events.slice(0, 3)));
+    assert.ok(!events.some((e) => e.type === 'submit' && e.label === 'WAN_1'), 'WAN_1 was never submitted to');
+  });
+});
+
+test('generateClip: when an env proxy would carry every WAN key, the leg stops as invalid_request without paying for Sora', async () => {
+  await withEnvProxy(async () => {
+    const calls = installFetch();
+    const cr = creds({ WAN_1_ENDPOINT: 'http://localhost:9', WAN_2_ENDPOINT: 'http://127.0.0.1:9', WAN_3_ENDPOINT: 'http://[::1]:9' });
+    await assert.rejects(() => run({ creds: cr, statePath: tmpState() }), (e) => e.kind === 'invalid_request' && e.provider === 'wan' && /held back/.test(e.message) && /WAN_3 EPROXYKEY/.test(e.message));
+    assert.equal(calls.length, 0, 'nothing was sent, Sora included');
+  });
+});
+
+test('generateClip and resumeClip: a Sora or WAN endpoint whose key an env proxy would carry stops as invalid_request, nothing sent', async () => {
+  await withEnvProxy(async () => {
+    const calls = installFetch();
+    const sora = creds({ AZURE_SORA_ENDPOINT: 'http://localhost:9', VIDEO_PROVIDER_ORDER: 'sora' });
+    await assert.rejects(() => run({ creds: sora, statePath: tmpState() }), (e) => e.kind === 'invalid_request' && e.provider === 'sora' && /EPROXYKEY/.test(e.message));
+    const resume = { statePath: tmpState(), pollIntervalMs: 1, pollTimeoutMs: 50, sleep: async () => {} };
+    await assert.rejects(P.resumeClip({ ...resume, creds: sora, provider: 'sora', taskId: 'sora-job-1' }), (e) => e.kind === 'invalid_request' && e.taskId === 'sora-job-1' && /EPROXYKEY/.test(e.message));
+    await assert.rejects(P.resumeClip({ ...resume, creds: creds({ WAN_1_ENDPOINT: 'http://localhost:9' }), provider: 'wan', label: 'WAN_1', taskId: 'task-1-1' }), (e) => e.kind === 'invalid_request' && e.label === 'WAN_1' && /EPROXYKEY/.test(e.message));
+    assert.equal(calls.length, 0);
+  });
+});
+
+const buildSkill = () => fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+
+test('SKILL: a FAILED task sent to the next key rests on a premise the docs do not confirm, with its worst case', () => {
+  const line = buildSkill().split('\n').find((l) => l.includes('같은 leg 를 두 번 과금하지 않는다'));
+  assert.match(line, /FAILED\/CANCELED task 가 과금되지 않는다는 것은 전제/);
+  assert.match(line, /키 수 x 4 \+ 2/);
+  assert.doesNotMatch(line, /task 를 만들지 않은 게 확실할 때뿐/);
+  const head = fs.readFileSync(new URL('./video-pool.mjs', import.meta.url), 'utf8').split('\n').slice(0, 40).join(' ');
+  assert.match(head, /an assumption the official docs do not confirm/);
+  assert.match(head, /keys x 4 \+ 2/);
+  assert.doesNotMatch(head, /provably did/);
+});
+
+test('SKILL: the cost approval says the Sora estimate applies whenever no WAN key can take the leg, not only when keys run out', () => {
+  const line = buildSkill().split('\n').find((l) => l.includes('이 Sora 추정이 적용된다'));
+  assert.match(line, /소진, 2분 넘는 쿨다운, 시도 한도/);
+});
+
+test('SKILL: a task_lost leg whose task the console still shows is finished with resumeClip, not submitted again', () => {
+  const row = buildSkill().split('\n').find((l) => l.trim().startsWith('|') && l.includes("'task_lost'"));
+  assert.match(row, /`task_lost` 인데 콘솔에 task 가 있으면 `resumeClip` 으로 마저 받음\(새 제출 없음\)/);
+});
+
+test('wanParams: a size it cannot read is taken as 720x1280', () => {
+  assert.deepEqual([P.wanParams({ size: 'bogus' }).resolution, P.wanParams({ size: 'bogus' }).ratio], ['720P', '9:16']);
+});
+
+test('generateClip: a WAN task without frames sends no media field', async () => {
+  const calls = installFetch();
+  await run({ creds: creds(), statePath: tmpState() });
+  assert.deepEqual(Object.keys(creates(calls)[0].body.input), ['prompt']);
+});
+
+test('generateClip: request-rate cooldowns without Retry-After double from 30 s and stop at 10 min', async () => {
+  const c = clock();
+  installFetch({ wanCreate: () => json(429, { code: 'Throttling.RateQuota' }) });
+  const one = creds({ WAN_2_ENDPOINT: undefined, WAN_2_API_KEY: undefined, WAN_3_ENDPOINT: undefined, WAN_3_API_KEY: undefined, VIDEO_PROVIDER_ORDER: 'wan' });
+  const statePath = tmpState();
+  const waits = [];
+  await assert.rejects(run({ creds: one, statePath, clock: c, maxRateWaitMs: 3_600_000, onEvent: (e) => { if (e.type === 'wait') waits.push(e.ms); } }), /no video provider available/);
+  assert.deepEqual(waits, [30_000, 60_000, 120_000, 240_000, 480_000]);
+  const [s] = P.poolSummary({ creds: one, statePath, now: c.now() });
+  assert.deepEqual([s.status, s.until - c.now()], ['cooldown', 600_000]);
+});
+
+test('generateClip: a transient failure keeps the first 120 characters of its message in the key\'s reason', async () => {
+  const c = clock();
+  installFetch({ wanCreate: (n) => (n === 1 ? json(500, { code: 'InternalError', message: 'x'.repeat(200) }) : null) });
+  const statePath = tmpState();
+  await run({ creds: creds(), statePath, clock: c });
+  const s = P.poolSummary({ creds: creds(), statePath, now: c.now() }).find((e) => e.label === 'WAN_1');
+  assert.equal(s.reason, `InternalError: ${'x'.repeat(120)}`);
+});
+
+test('generateClip: a WAN submit whose answer is cut off mid-body is a lost connection (submit_unknown), named as such', async () => {
+  const cut = () => ({ status: 200, ok: true, headers: new Headers({ 'content-type': 'application/json' }), text: async () => { throw Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } }); } });
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? cut() : null) });
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1' && /no usable answer \(UND_ERR_SOCKET\)/.test(e.message));
+  assert.deepEqual(createdOn(calls), [1]);
+});
+
+test('wanPollTask: a clock that gives fractions of a ms still sends its first poll', async () => {
+  installFetch();
+  let t = 0.25;
+  const entry = P.loadWanPool(creds())[0];
+  const p = await P.wanPollTask({ entry, taskId: 't', intervalMs: 1, timeoutMs: 1000, now: () => (t += 0.5), sleep: async () => {} });
+  assert.equal(p.state, 'SUCCEEDED');
+  assert.ok(t < 10, `the first poll was answered (the clock is at ${t} ms, not near the deadline)`);
 });

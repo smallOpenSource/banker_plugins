@@ -64,6 +64,7 @@ if (creds._ignored) console.log('프로젝트 키 파일에서 쓰지 않는 값
   쉬는 키를 바로 다시 쓰려면 `resetPoolState({ creds, labels: ['WAN_2'] })` 로 그 키의 기록을 지운다(`labels` 를 빼면 전체). 서버의 `Retry-After` 는 1초에서 10분 사이로만 받는다.
   `malformed` 는 endpoint 가 https URL 이 아니거나(http 는 이 기기의 localhost 만 허용) 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
   Azure 호출도 같다. 키는 https 로만 보내고, `http://` endpoint 는 보내기 전에 막는다(Sora 영상 단계는 `invalid_request`, 이미지 생성 같은 그 밖의 호출은 `HTTP 0 (EINSECURE)` 오류).
+  이 기기의 `http://` 로 키를 보낼 때도 Node 가 env 프록시(`NODE_USE_ENV_PROXY=1`, `--use-env-proxy`)로 http 를 보내면 보내기 전에 막는다(`EPROXYKEY`). `NO_PROXY` 에 그 호스트나 `호스트:포트` 를 그대로 적으면(`no_proxy` 도 있으면 그쪽에도) 직접 보낸다. 영상 단계는 그런 WAN 항목을 보내기 전에 건너뛰고, 모든 항목이 그렇거나 Sora endpoint 가 그렇다면 Sora 로 넘어가지 않고 `invalid_request` 로 멈춘다.
   WAN 항목(`WAN_<n>_ENDPOINT`, `WAN_<n>_API_KEY`)이 하나도 없으면 영상은 처음부터 Sora 로 만든다. 이때 정지와 비행 모드(Step 4B)는 쓸 수 없다.
 - 독립 검증(Step 6)에는 Node 용 playwright 패키지와 Chromium 이 필요하다. `npx playwright install chromium`(`setup-playwright`)은 브라우저만 받으므로, 패키지도 `npm i -g playwright` 로 설치해 둔다. 사용자가 자기 프로젝트에 `npm i -D playwright` 로 설치했다고 확인해 준 때만 Step 6 에 `--playwright-from-project` 를 준다. 프로젝트에 `node_modules/playwright` 가 있다는 이유만으로는 주지 않는다. 이 옵션이 없으면 프로젝트의 `node_modules` 는 읽지 않는다(저장소가 함께 가져온 코드가 실행되지 않게).
 
@@ -113,7 +114,7 @@ const cost = CLIP_MODE === 'holdFlight'
 - 사용자에게 `cost.images` / `cost.videos` / `cost.usd` 와 BUDGET 대비를 보여준다.
 - `cost.videos` 는 **Sora 단가($0.10/초) 기준**이다.
   WAN 단가와 계정별 무료 할당량은 API 로 조회할 수 없다(Model Studio 에 할당량 조회 API 가 문서화돼 있지 않음).
-  그러니 "WAN 이 먼저 쓰이고, 실제 WAN 비용은 Model Studio 콘솔에서 확인, 키가 소진되면 이 Sora 추정이 적용된다" 고 그대로 알린다.
+  그러니 "WAN 이 먼저 쓰이고, 실제 WAN 비용은 Model Studio 콘솔에서 확인, 쓸 수 있는 WAN 키가 없으면(소진, 2분 넘는 쿨다운, 시도 한도) 이 Sora 추정이 적용된다" 고 그대로 알린다.
 - `holdFlight` 는 장면 사이 비행 클립만 과금한다(기본 5초 x 장면 수-1). 정지 클립은 스틸을 인코딩해 무료다.
 - WAN 클립 길이는 정수 2~30초(기본 5초), Sora 는 4, 8, 12초뿐이다. 폴백되면 길이가 가장 가까운 Sora 값으로 바뀐다(5초에서 4초).
 - MOBILE=yes 면 세로 체인이 추가돼 대략 2배임을 명시한다.
@@ -226,17 +227,18 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 - **키 풀 동작** - WAN 키는 가장 오래전에 쓴 것부터 고른다. 할당량 소진(`AllocationQuota.*`, `Arrearage`, `BudgetLimitExceeded` 등)과 모델 권한 없음(`*AccessDenied`)은 그 키를 24시간 쉬게 하고 다음 키로 다시 제출한다.
   요청 속도 429(`Throttling.RateQuota` 등)는 `Retry-After` 만큼 그 키만 쉬게 할 뿐 퇴출하지 않는다. `Throttling.AllocationQuota` 만 연속 3회면 1시간 쉬게 한다. `InvalidApiKey` 키는 키를 바꿀 때까지 제외한다.
   상태는 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남는다.
-- **같은 leg 를 두 번 과금하지 않는다** - 다른 키로 다시 제출하는 것은 첫 제출이 task 를 만들지 않은 게 확실할 때뿐이다(서버가 거절, 요청을 보내기 전 연결 실패, task 가 키 할당량이나 알려진 일시 오류로 FAILED/CANCELED).
+- **같은 leg 를 두 번 과금하지 않는다** - 다른 키로 다시 제출하는 것은 첫 제출이 과금되지 않았다고 볼 때뿐이다(서버가 거절, 요청을 보내기 전 연결 실패, task 가 키 할당량이나 알려진 일시 오류로 FAILED/CANCELED). FAILED/CANCELED task 가 과금되지 않는다는 것은 전제이고 공식 문서에서 확인하지 못했다. 그 전제가 틀리면 한 leg 가 최대 (키 수 x 4 + 2)번 제출된다.
 - **폴백(chain 모드)** - 쓸 수 있는 WAN 키가 없으면 그 leg 부터 Sora 로 만든다. 체인 도중에 provider 가 바뀌면 화풍이 달라질 수 있으니 leg 마다 `r.provider` 를 기록하고 바뀐 지점을 알린다.
 - **멈추는 경우(재제출, 폴백 안 함)** - 아래 오류에서 같은 leg 를 `generateClip` 으로 다시 부르지 않는다.
 
   | 오류 | 뜻 | 다음 행동 |
   |---|---|---|
   | `ContentRejectedError` | 검열(`DataInspectionFailed` 등) | 프롬프트나 프레임을 고쳐 다시 부름 |
-  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`, 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume | 설정을 고침(task 는 생기지 않음) |
+  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`, 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume, env 프록시가 키를 막는 http endpoint(`EPROXYKEY`) | 설정을 고침(task 는 생기지 않음. resume 이면 고친 뒤 다시 resume) |
   | `kind: 'timeout'` / `'download'` | task 는 있음(과금됐을 수 있음) | `resumeClip({ creds, provider: err.provider, label: err.label, taskId: err.taskId, seconds: err.seconds })` |
-  | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음 | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함 |
+  | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음 | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함. `task_lost` 인데 콘솔에 task 가 있으면 `resumeClip` 으로 마저 받음(새 제출 없음) |
   | `kind: 'unreachable'` | Sora 연결 거부(아무것도 보내지 않음) | 네트워크를 확인한 뒤 다시 부름 |
+  | `kind: 'rate'` | Sora 가 다섯 번 제출 모두 429 로 거절함(만든 job 없음, 과금 없음) | 잠시 기다린 뒤 다시 부름 |
   | `kind` 가 없는 오류 | 예상하지 못한 실패 | 원인을 확인하기 전에는 다시 부르지 않음 |
 
 - 클립 해상도는 WAN 과 Sora 가 조금 다를 수 있다. `concatClips` 와 엔진이 크기를 맞춘다.
