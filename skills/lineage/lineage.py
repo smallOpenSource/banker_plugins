@@ -1646,102 +1646,110 @@ def _fmt_time(ts):
     return ts[11:16] if ts and len(ts) >= 16 else ""
 
 
-def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
-                open_details=False, markdown=True, all_sessions=False, summaries=None):
-    rows = []
-    last_date = None
-    last_session = None
-    cache_hits = 0
-    cache_total = 0
-    redact_counts = {}
-    open_attr = " open" if open_details else ""
+class _Rows:
+    """What render_rows carries from turn to turn: the rows so far, the redaction settings and what they hid by kind,
+    the open flag and markdown, the date and session the last pills showed, and the rule summaries' cache hits."""
 
-    def _red(text):
-        r, c = page_redact(text, extra=redact_extra, mode=redact_mode)
+    def __init__(self, redact_extra, redact_mode, open_details, markdown):
+        self.extra, self.mode, self.markdown = redact_extra, redact_mode, markdown
+        self.open_attr = " open" if open_details else ""
+        self.rows, self.counts = [], {}
+        self.last_date = self.last_session = None
+        self.hits = self.total = 0
+
+    def red(self, text):
+        r, c = page_redact(text, extra=self.extra, mode=self.mode)
         for k, v in c.items():
-            redact_counts[k] = redact_counts.get(k, 0) + v
+            self.counts[k] = self.counts.get(k, 0) + v
         return r
 
-    for t in turns:
-        ts = t.get("ts") or ""
-        # session-transition divider (--all-sessions)
-        if all_sessions and t.get("session") != last_session:
-            last_session = t.get("session")
-            name = html.escape(_red(t.get("session_name") or last_session or "session"))
-            rows.append('<div class="day" data-mark="%s">'
-                        '<span class="pill pill-session">%s</span></div>'
-                        % (name, name))
-            last_date = None
-        if ts:
-            d = ts[:10]
-            if d != last_date:
-                rows.append('<div class="day" data-mark="%s">'
-                            '<span class="pill pill-date">%s</span></div>'
-                            % (html.escape(d), html.escape(d)))
-                last_date = d
-        time_hm = html.escape(_fmt_time(ts))
-        role = t["role"]
 
-        if role == "mark":
-            rows.append('<div class="day"><span class="pill pill-compact">'
-                        '⋯ 이전 대화 요약(compaction) ⋯</span></div>')
-            continue
+def _pills(rs, t, all_sessions):
+    """The session pill (--all-sessions, when the session changes) and the date pill (when the day changes) before
+    turn `t`."""
+    if all_sessions and t.get("session") != rs.last_session:
+        rs.last_session = t.get("session")
+        name = html.escape(rs.red(t.get("session_name") or rs.last_session or "session"))
+        rs.rows.append('<div class="day" data-mark="%s">'
+                       '<span class="pill pill-session">%s</span></div>'
+                       % (name, name))
+        rs.last_date = None
+    ts = t.get("ts") or ""
+    if ts:
+        d = ts[:10]
+        if d != rs.last_date:
+            rs.rows.append('<div class="day" data-mark="%s">'
+                           '<span class="pill pill-date">%s</span></div>'
+                           % (html.escape(d), html.escape(d)))
+            rs.last_date = d
 
-        if role == "user":
-            red = _red(t["text"])
-            if len(red) > USER_FOLD:
-                reviewed = _reviewed_fold(t, summaries)
-                summary = html.escape(_red(reviewed) if reviewed else user_fold_summary(red))
-                body = render_body(red, markdown=markdown)
-                rows.append(
-                    '<div class="row me"><span class="time">%s</span>'
-                    '<div class="bubble"><details%s>'
-                    '<summary><span class="sum">%s</span></summary>'
-                    '<div class="detail">%s</div></details></div></div>'
-                    % (time_hm, open_attr, summary, body))
-            else:
-                rows.append(
-                    '<div class="row me"><span class="time">%s</span>'
-                    '<div class="bubble"><div class="plain">%s</div></div></div>'
-                    % (time_hm, render_body(red, markdown=markdown)))
-            continue
 
-        # assistant or agent bubble
-        summary, hit = _page_summary(t, summaries, session_id, rebuild,
-                                     redact_extra, redact_mode)
-        if hit is not None:
-            cache_total += 1
-            cache_hits += bool(hit)
-        esc_sum = html.escape(_red(summary))
-        detail_body = render_body(_red(t["text"]), markdown=markdown)
+def _user_row(rs, t, summaries, time_hm):
+    """A user bubble: plain, or folded under a summary (the reviewer's, else cut from it) past USER_FOLD."""
+    red = rs.red(t["text"])
+    if len(red) > USER_FOLD:
+        reviewed = _reviewed_fold(t, summaries)
+        summary = html.escape(rs.red(reviewed) if reviewed else user_fold_summary(red))
+        body = render_body(red, markdown=rs.markdown)
+        return ('<div class="row me"><span class="time">%s</span>'
+                '<div class="bubble"><details%s>'
+                '<summary><span class="sum">%s</span></summary>'
+                '<div class="detail">%s</div></details></div></div>'
+                % (time_hm, rs.open_attr, summary, body))
+    return ('<div class="row me"><span class="time">%s</span>'
+            '<div class="bubble"><div class="plain">%s</div></div></div>'
+            % (time_hm, render_body(red, markdown=rs.markdown)))
 
-        tools_html = ""
-        if t.get("tools"):
-            ts_list = ", ".join(f"{_hide_keywords(k, redact_extra)}×{v}"
-                                for k, v in sorted(t["tools"].items()))
-            total = sum(t["tools"].values())
-            tools_html = ('<div class="tools">🔧 도구 %d건: %s</div>'
-                          % (total, html.escape(ts_list)))
 
-        if role == "agent":
-            who = html.escape(_red(t.get("agent_from") or "agent"))
-            avatar = "🤝"
-            from_line = '<div class="from">%s</div>' % who
-            row_cls = "row bot agent"
-        else:
-            avatar = "C"
-            from_line = ""
-            row_cls = "row bot"
+def _tools_line(tools, redact_extra):
+    """The `🔧 도구 N건` line of a bot bubble ("" without tools), the --redact-extra keywords hidden in the names."""
+    if not tools:
+        return ""
+    ts_list = ", ".join(f"{_hide_keywords(k, redact_extra)}×{v}"
+                        for k, v in sorted(tools.items()))
+    return ('<div class="tools">🔧 도구 %d건: %s</div>'
+            % (sum(tools.values()), html.escape(ts_list)))
 
-        rows.append(
-            '<div class="%s"><div class="avatar%s">%s</div>'
+
+def _bot_row(rs, t, summary, time_hm):
+    """An assistant or agent bubble: the summary, the details (body, tools) and, for an agent, who sent it."""
+    esc_sum = html.escape(rs.red(summary))
+    detail_body = render_body(rs.red(t["text"]), markdown=rs.markdown)
+    tools_html = _tools_line(t.get("tools"), rs.extra)
+    role = t["role"]
+    if role == "agent":
+        who = html.escape(rs.red(t.get("agent_from") or "agent"))
+        avatar, from_line, row_cls = "🤝", '<div class="from">%s</div>' % who, "row bot agent"
+    else:
+        avatar, from_line, row_cls = "C", "", "row bot"
+    return ('<div class="%s"><div class="avatar%s">%s</div>'
             '<div class="bubble"><details%s>'
             '<summary><span class="sum">%s</span></summary>'
             '<div class="detail">%s%s%s</div></details></div>'
             '<span class="time">%s</span></div>'
             % (row_cls, " agent" if role == "agent" else "", avatar,
-               open_attr, esc_sum, from_line, detail_body, tools_html, time_hm))
-    return rows, redact_counts, cache_hits, cache_total
+               rs.open_attr, esc_sum, from_line, detail_body, tools_html, time_hm))
+
+
+def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
+                open_details=False, markdown=True, all_sessions=False, summaries=None):
+    rs = _Rows(redact_extra, redact_mode, open_details, markdown)
+    for t in turns:
+        _pills(rs, t, all_sessions)
+        time_hm = html.escape(_fmt_time(t.get("ts") or ""))
+        if t["role"] == "mark":
+            rs.rows.append('<div class="day"><span class="pill pill-compact">'
+                           '⋯ 이전 대화 요약(compaction) ⋯</span></div>')
+        elif t["role"] == "user":
+            rs.rows.append(_user_row(rs, t, summaries, time_hm))
+        else:
+            summary, hit = _page_summary(t, summaries, session_id, rebuild,
+                                         redact_extra, redact_mode)
+            if hit is not None:
+                rs.total += 1
+                rs.hits += bool(hit)
+            rs.rows.append(_bot_row(rs, t, summary, time_hm))
+    return rs.rows, rs.counts, rs.hits, rs.total
 
 
 _TAG_RE = re.compile(r"<[^>]*>")
