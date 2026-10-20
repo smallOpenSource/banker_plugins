@@ -2283,6 +2283,7 @@ test("the hint for a patch with no backup goes through a temp tar file, never a 
   rmSync(join(f.cache, "5.6.1", "scripts", "foo.mjs.omcbak"));
   const r = run(f.home, ["--revert"]);
   assert.match(r.out, /git -C ".*" archive -o "<임시 tar>" v5\.6\.1 scripts\/<이름>\.mjs\n\s+tar -xf "<임시 tar>" -C ".*5\.6\.1"/);
+  assert.match(r.out, /<임시 tar> 는 새로 만든 임시 폴더\(bash: mktemp -d\) 안의 파일로 정하고, 다 쓴 뒤 폴더째 지우십시오\./, "the temp file is not a name picked by hand");
   assert.doesNotMatch(r.out, /archive v5\.6\.1 .*\|/);
 });
 
@@ -3111,6 +3112,8 @@ test("--check that could only guess the active version does not say all is appli
   const c = run(f.home, ["--check", "--no-update"]);
   assert.match(c.out, /활성 버전: 5\.7\.0 \(추정/, "the guess is the patched folder");
   assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다\./, c.out.match(/^결과.*$/m)?.[0]);
+  assert.match(c.out, /결과: 활성 버전을 확인하지 못했습니다\. 위의 활성 버전 줄을 확인하십시오\./);
+  assert.equal(c.code, 1, "a check that only guessed ends with 1");
 });
 
 test("--check over a PINNED it cannot read does not say the URL field is there", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX permission bits") || (asRoot && "root reads any file") }, () => {
