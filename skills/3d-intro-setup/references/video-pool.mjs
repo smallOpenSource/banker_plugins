@@ -630,7 +630,7 @@ async function attemptOnKey(ctx, e, parameters, attempt) {
 // server, and a second key would bill the same leg twice.
 function assertSubmitSettled(e, c) {
   if (c.status === 0 && !c.preSend) {
-    throw stopError('submit_unknown', `WAN submit to ${e.label} lost its connection (${c.message || 'network error'}); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label });
+    throw stopError('submit_unknown', `WAN submit to ${e.label} got no usable answer (${c.message || 'network error'}); the task may exist — check the Model Studio console before resubmitting`, { provider: 'wan', label: e.label });
   }
   if (!c.taskId && (c.ok || (c.status >= 500 && !c.code))) {
     // a 2xx without task_id or a bare gateway 5xx: the backend may have accepted the task

@@ -845,3 +845,55 @@ test('3d-intro-setup: the free preflight says why a request was not sent, and se
 test('adapter module resolves next to this test file', () => {
   assert.ok(fs.existsSync(path.join(HERE, 'azure-adapter.mjs')));
 });
+
+test('prompts.md sends every leg through generateClip, with no fixed Sora model', () => {
+  const doc = fs.readFileSync(path.join(HERE, 'prompts.md'), 'utf8');
+  assert.match(doc, /^## 4\.[^\n]*`generateClip`/m, 'the leg section names the pool entry point');
+  assert.doesNotMatch(doc, /model: 'sora-2'/, 'the model comes from the key file');
+  assert.doesNotMatch(doc, /`createVideo` 에 넣기/, 'the seed still goes to generateClip');
+});
+
+test('3d-intro-setup: the no-bundle rule names the home tools folder the fallback installs into', () => {
+  const setup = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(setup, /사용자 프로젝트 `node_modules` 한정/);
+  assert.match(setup, /미번들 원칙[^\n]*~\/\.config\/banker\/3d-intro\/tools/);
+});
+
+// ---------------------------------------------------------------------------
+// Retry-After forms and the 60 s cap of the image 429 retry
+
+function mock429(headers) {
+  const r = mockJson({ error: { code: 'RateLimitReached' } }, 429);
+  const h = Object.fromEntries(Object.entries({ 'content-type': 'application/json', ...headers }).map(([k, v]) => [k.toLowerCase(), v]));
+  r.headers = { get: (k) => h[String(k).toLowerCase()] ?? null };
+  return r;
+}
+
+test('azFetch: Retry-After reads as seconds or an HTTP date, and retry-after-ms wins over it', async () => {
+  const at = new Date(Date.now() + 20_000).toUTCString();
+  for (const [headers, check] of [
+    [{ 'retry-after': '7' }, (ms) => ms === 7000],
+    [{ 'retry-after-ms': '1500', 'retry-after': '9' }, (ms) => ms === 1500],
+    [{ 'retry-after': at }, (ms) => ms > 15_000 && ms <= 20_000],
+    [{}, (ms) => ms === null],
+  ]) {
+    installFetch(() => mock429(headers));
+    const r = await A.azFetch(`${EP}/x`, { key: KEY });
+    assert.ok(check(r.retryAfterMs), `${JSON.stringify(headers)} -> ${r.retryAfterMs}`);
+  }
+});
+
+test('generateImage: a 429 waits the server hint capped at 60 s, else 10 s doubling', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const b64 = Buffer.from('png-after-429').toString('base64');
+  installFetch((url, opts, i) => (i === 0 ? mock429({ 'retry-after': '300' }) : i === 1 ? mock429({}) : mockJson({ data: [{ b64_json: b64 }] })));
+  const notes = [];
+  const onNote = (m) => {
+    notes.push(m);
+    const ms = Number((m.match(/in (\d+) ms/) || [])[1]);
+    setImmediate(() => t.mock.timers.tick(ms));
+  };
+  const buf = await A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p', onNote });
+  assert.equal(buf.toString(), 'png-after-429');
+  assert.deepEqual(notes.filter((m) => /HTTP 429/.test(m)), ['HTTP 429; retry 1/3 in 60000 ms', 'HTTP 429; retry 2/3 in 20000 ms']);
+});
