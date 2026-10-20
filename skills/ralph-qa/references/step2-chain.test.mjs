@@ -454,4 +454,3 @@ test("with no diff to send, the same folder takes the review file, the base file
   assert.ok(prompt.includes("the plan\nthe base file\n</review-data"), prompt);
   for (const f of ["idx", "added.md", "listed.md"]) assert.ok(!existsSync(join(ctx.d, f)), `${f} is left`);
 });
-
