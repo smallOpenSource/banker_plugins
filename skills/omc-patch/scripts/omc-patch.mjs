@@ -79,7 +79,7 @@ const ok = (s) => console.log(`  ok  ${s}`);
 // 심볼이 undefined 가 되고, 호출부에 이미 있는 null 검사/try-catch 가 no-op
 // 경로를 태운다. 정상 로드 시에는 동작이 전혀 바뀌지 않는다.
 const HELPER = `
-// --- OMC local patch: bound top-level dynamic import (see ~/.claude/omc-local-patches/README.md)
+// --- OMC local patch: bound top-level dynamic import (made by omc-patch; undo with omc-patch --revert)
 const __omcRaceImport = (p) => {
   let t;
   const timed = new Promise((res) => {
@@ -88,6 +88,8 @@ const __omcRaceImport = (p) => {
     // 뜨지도 못한다(실측: 원본과 패치본이 똑같이 150ms 안에 죽었다). import 가 정상적으로
     // 끝나면 아래에서 clearTimeout 하므로 정상 경로는 한 톨도 느려지지 않는다.
     t = setTimeout(() => {
+      // 훅이 일을 건너뛴 것을 알 수 있게 한 줄 남긴다. 종료 코드는 바꾸지 않는다(0 이 아니면 Claude Code 가 훅 오류로 본다).
+      try { process.stderr.write('[OMC local patch] import 가 ${IMPORT_TIMEOUT_MS / 1000}초 안에 끝나지 않아 빈 모듈로 진행합니다\\n'); } catch { /* 알림만 */ }
       const k = setTimeout(() => process.exit(typeof process.exitCode === 'number' ? process.exitCode : 0), ${EXIT_GRACE_MS});
       if (k && k.unref) k.unref();
       // 빈 객체를 돌려주는 것이 중요하다. 호출부 다수가 \`const { a } = await import(...)\`

@@ -3220,3 +3220,33 @@ test("a revert does not put an old hooks.json backup over a hooks.json that stil
   run(f.home, ["--revert"]);
   assert.equal(read(hj), fresh, "the new hooks.json stays");
 });
+
+// 0.20.4 B2 Task 8: the helper says on stderr when the time limit cut an import (B2-03, its bytes change)
+test("a patched hook whose import hangs says on stderr that the time limit cut it", { timeout: 40000 }, () => {
+  const plug = bundle();
+  writeFileSync(join(plug, "scripts", "lib.mjs"), "setInterval(() => {}, 1000);\nawait new Promise(() => {});\nexport const x = () => 1;\n");
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const r = spawnSync(process.execPath, [join(plug, "scripts", "foo.mjs")], { encoding: "utf8", timeout: 30000 });
+  assert.equal(r.error, undefined, "the hook ended by itself");
+  assert.notEqual(r.stderr, "", "the cut is not silent");
+});
+
+// The helper before 0.20.4: no stderr line on a timeout, and its first comment named a README that was never shipped.
+const OLD_HELPER_LINE = "// --- OMC local patch: bound top-level dynamic import (see ~/.claude/omc-local-patches/README.md)";
+const asOldHelper = (text) => text
+  .replace(/\/\/ --- OMC local patch: bound top-level dynamic import \([^)\n]*\)/, OLD_HELPER_LINE)
+  .replace(/\n[^\n]*\[OMC local patch\] import [^\n]*\n/, "\n");
+test("a hook patched by the previous helper is still seen as patched and its revert gives back the original", () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  for (const n of ["foo", "stopper"]) {
+    const f = join(plug, "scripts", `${n}.mjs`);
+    writeFileSync(f, asOldHelper(read(f)));
+    assert.ok(read(f).includes(OLD_HELPER_LINE) && !read(f).includes("[OMC local patch] import"), "a hook as the previous helper left it");
+  }
+  const c = run(bareHome(), ["--root", plug, "--check"]);
+  assert.match(c.out, /결과: 모두 적용된 상태입니다\./, c.out);
+  const r = run(bareHome(), ["--root", plug, "--revert"]);
+  assert.equal(r.code, 0, r.out);
+  for (const n of ["foo", "stopper"]) assert.equal(read(join(plug, "scripts", `${n}.mjs`)), SCRIPT(n), `${n} is its original again`);
+});
