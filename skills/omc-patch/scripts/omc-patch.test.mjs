@@ -592,8 +592,8 @@ function olderPin() {
 }
 
 // Runs the tool with a module loaded first, which changes what node:fs does for this run only.
-function runImport(pre, home, args) {
-  const env = cleanEnv({ HOME: home, USERPROFILE: home });
+function runImport(pre, home, args, extra = {}) {
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, ...extra });
   delete env.OMC_PATCH_INSTALLED;
   const r = spawnSync(process.execPath, ["--import", pathToFileURL(pre).href, TOOL, ...args], { encoding: "utf8", env });
   return { code: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
@@ -3225,6 +3225,79 @@ test("a revert does not put an old hooks.json backup over a hooks.json that stil
   writeFileSync(hj, fresh);
   run(f.home, ["--revert"]);
   assert.equal(read(hj), fresh, "the new hooks.json stays");
+});
+
+// 0.20.4 B2 review 1: the backup an apply puts in place of an old one is the file it checked, and only an original
+test("an apply over a new hooks.json makes the hooks.json backup that new original, and a revert gives it back", () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const hj = join(plug, "hooks", "hooks.json");
+  const fresh = HOOKS_JSON.replace("stopper.mjs", "stopper2.mjs");
+  writeFileSync(hj, fresh);
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /ok {2}옛 백업을 지금 원본으로 바꿈: hooks\.json/);
+  assert.equal(run(bareHome(), ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(hj), fresh, "the revert gives back the new hooks.json");
+});
+
+// Another run writes its result into a file between two reads of this run, as two runs started together do: the
+// RACE_AT-th time this run opens <RACE_FILE>.omcbak, RACE_WITH goes into <RACE_FILE> and RACE_LOG says so.
+const RACE = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const { openSync, readFileSync, writeFileSync } = fs;",
+  "let left = Number(process.env.RACE_AT);",
+  "fs.openSync = (p, ...a) => {",
+  '  if (typeof p === "string" && p.endsWith(`${process.env.RACE_FILE}.omcbak`) && --left === 0) {',
+  '    writeFileSync(p.slice(0, -".omcbak".length), readFileSync(process.env.RACE_WITH));',
+  '    writeFileSync(process.env.RACE_LOG, "written");',
+  "  }",
+  "  return openSync(p, ...a);",
+  "};",
+  "syncBuiltinESMExports();",
+].join("\n");
+function raceRun(plug, file, at, withText) {
+  const pre = join(root, `race${seq++}.mjs`);
+  const text = join(root, `race-with${seq++}`);
+  const log = join(root, `race${seq++}.log`);
+  writeFileSync(pre, `${RACE}\n`);
+  writeFileSync(text, withText);
+  const r = runImport(pre, bareHome(), ["--root", plug], { RACE_FILE: file, RACE_AT: String(at), RACE_WITH: text, RACE_LOG: log });
+  assert.equal(existsSync(log) && read(log), "written", "the other run wrote between this run's reads");
+  return r;
+}
+
+test("an apply that another run patched between its reads keeps the backup the original, so a revert gives it back", () => {
+  const first = bundle();
+  assert.equal(run(bareHome(), ["--root", first]).code, 0);
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  writeFileSync(`${foo}.omcbak`, SCRIPT("foo"));
+  // the first open of foo.mjs.omcbak comes after this run read foo.mjs
+  const r = raceRun(plug, "foo.mjs", 1, read(join(first, "scripts", "foo.mjs")));
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /패치 2건 \/ 실패 0건/, "this run read foo.mjs before the other run patched it");
+  assert.doesNotMatch(r.out, /옛 백업을 지금 원본으로 바꿈/);
+  assert.equal(read(`${foo}.omcbak`), SCRIPT("foo"), "the backup is still the original");
+  assert.equal(run(bareHome(), ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(foo), SCRIPT("foo"), "the revert gives back the original");
+});
+
+test("an apply that another run took PostToolUse out of between its reads keeps the hooks.json backup, so a revert gives PostToolUse back", () => {
+  const plug = bundle();
+  const hj = join(plug, "hooks", "hooks.json");
+  writeFileSync(`${hj}.omcbak`, HOOKS_JSON);
+  const j = JSON.parse(HOOKS_JSON);
+  delete j.hooks.PostToolUse;
+  // [2/4] opens hooks.json.omcbak once for the hook names; the second open comes after [3/4] read hooks.json
+  const r = raceRun(plug, "hooks.json", 2, JSON.stringify(j, null, 2) + "\n");
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /ok {2}제거: foo/, "this run read hooks.json before the other run took PostToolUse out");
+  assert.doesNotMatch(r.out, /옛 백업을 지금 원본으로 바꿈/);
+  assert.equal(read(`${hj}.omcbak`), HOOKS_JSON, "the backup is still the original");
+  assert.equal(run(bareHome(), ["--revert", "--root", plug]).code, 0);
+  assert.equal(read(hj), HOOKS_JSON, "the revert gives back PostToolUse");
 });
 
 // 0.20.4 B2 Task 8: the helper says on stderr when the time limit cut an import (B2-03, its bytes change)

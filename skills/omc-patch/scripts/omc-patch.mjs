@@ -365,11 +365,13 @@ function backup(file, bak) {
 
 // 적용 직전에 본다. 이미 있는 백업이 지금 원본(패치 전)과 다르면 그 백업은 옛 원본이다(같은 판 폴더에 새 원본이 깔림). 지금
 // 원본으로 바꿔야 나중의 되돌리기가 새 원본을 돌려준다. 정상 흐름에서는 둘이 같아 바꾸지 않는다. 백업이 없으면 backup 이 만든다.
-function freshBackup(file, bak, name) {
+// 다시 읽은 글이 원본이 아니면(isOriginal 이 거짓) 바꾸지 않는다. 같이 돈 다른 실행이 이 실행의 두 읽기 사이에 먼저 패치했으면 그
+// 글은 패치본이고, 그것을 백업에 쓰면 되돌리기가 패치본을 돌려준다. 확인한 글을 그대로 쓰므로 확인과 쓰기 사이에 틈이 없다.
+function freshBackup(file, bak, name, isOriginal) {
   const saved = readBackup(bak);
   if (saved === null) return;
   const now = readRegular(file);
-  if (saved.equals(now)) return;
+  if (saved.equals(now) || !isOriginal(now.toString("utf8"))) return;
   writeAtomic(bak, now, modeOf(bak), { follow: false });
   ok(`옛 백업을 지금 원본으로 바꿈: ${shown(name)}`);
 }
@@ -706,6 +708,9 @@ function looksHandPatched(src) {
   return found;
 }
 
+// 패치(이 도구의 헬퍼, 손 패치)가 없는 글인가. 적용이 옛 백업을 바꾸기 전에 지금 글이 원본인지 본다.
+const unpatched = (src) => !src.includes("__omcRaceImport") && !looksHandPatched(src);
+
 function patchHooks(root) {
   const r = { done: 0, skip: 0, fail: 0, need: 0, misplaced: 0, unread: 0, foreign: [], orphan: [], failed: [] };
   // revert 는 scripts/ 전체를 훑는다. hooks.json 기반 목록은 두 번 새는데, 실측으로
@@ -842,7 +847,7 @@ function checkOrPatchScript(root, n, f, r) {
 // 쓰지 못하면 이유를 대고 false 다(예전에는 예외로 멈췄다).
 function writePatched(f, bak, out, n) {
   try {
-    freshBackup(f, bak, n);
+    freshBackup(f, bak, n, unpatched);
     backup(f, bak);
     writeAtomic(f, out);
   } catch (e) {
@@ -1049,8 +1054,13 @@ function staleHooksJson(hj, saved) {
   return !now.equals(saved) && hasPostToolUse(hj);
 }
 
+// 글이 PostToolUse 가 든 JSON 인가. 적용이 옛 hooks.json 백업을 바꾸기 전에 지금 글이 원본(지우기 전)인지도 본다.
+const postToolUseIn = (text) => {
+  try { return !!JSON.parse(text)?.hooks?.PostToolUse; }
+  catch { return false; }
+};
 const hasPostToolUse = (p) => {
-  try { return !!JSON.parse(readRegular(p, "utf8"))?.hooks?.PostToolUse; }
+  try { return postToolUseIn(readRegular(p, "utf8")); }
   catch { return false; }
 };
 
@@ -1060,7 +1070,7 @@ function removePostToolUse(hj, why) {
   if (!j.hooks?.PostToolUse) return "already";
   const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
   if (MODE === "check") { hjBad(`hooks.json PostToolUse 남아있음${why ? `, 쓸 수 없음 (${why})` : ""}: ${list.join(", ")}`); return "needs"; }
-  freshBackup(hj, bak, `${hjTag}hooks.json`);
+  freshBackup(hj, bak, `${hjTag}hooks.json`, postToolUseIn);
   backup(hj, bak);
   delete j.hooks.PostToolUse;
   writeAtomic(hj, JSON.stringify(j, null, 2) + "\n");
