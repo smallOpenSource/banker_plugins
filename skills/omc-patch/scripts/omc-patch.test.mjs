@@ -3257,3 +3257,119 @@ test("the SKILL's search for another name is bounded and the temp tar comes from
   assert.match(skill, /mktemp/, "a temp tar name the agent does not pick by itself");
   assert.doesNotMatch(skill, /둘째 줄의 마지막 칸/, "no df column parsing that breaks on a mount point with spaces");
 });
+
+// 0.20.4 B2 Task 10: tests that hold each condition of the --check verdict and each read guard on its own (B2-23, from
+// the 2026-10-16 review's appendix B; the four of it already in this file are left out).
+
+// --check: the blocked line is the result only when nothing else is left; with anything else left it is a note.
+const LEFT = {
+  "a script that lost its patch": (act) => writeFileSync(join(act, "scripts", "foo.mjs"), read(join(act, "scripts", "foo.mjs.omcbak"))),
+  "PostToolUse back in hooks.json": (act) => writeFileSync(join(act, "hooks", "hooks.json"), read(join(act, "hooks", "hooks.json.omcbak"))),
+};
+for (const [what, undo] of Object.entries(LEFT)) {
+  test(`--check with only ${what} left and a record it cannot clean: the patches are the result, the record a note`, { skip: !HAS_GIT && "git not found" }, (t) => {
+    const { f, record } = olderPin();
+    assert.equal(run(f.home, ["--no-update"]).code, 0);
+    if (!linkPinTo(t, f, record)) return;
+    undo(join(f.cache, "5.6.1"));
+    const c = run(f.home, ["--check", "--no-update"]);
+    assert.match(c.out, /결과: 적용되지 않은 항목이 있습니다\./);
+    assert.doesNotMatch(c.out, /결과: 고정 기록/);
+    assert.match(c.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+  });
+}
+const BROKEN = {
+  "a hooks.json it cannot read": [(act) => writeFileSync(join(act, "hooks", "hooks.json"), "{ broken"), /결과: hooks\.json 을 확인하지 못했습니다\./],
+  "a helper out of place": [(act) => writeFileSync(join(act, "scripts", "stopper.mjs"), 'await __omcRaceImport(import("./lib.mjs"));\n'), /결과: 헬퍼 자리 결함 1건이 있습니다\./],
+};
+for (const [what, [breakIt, verdict]] of Object.entries(BROKEN)) {
+  test(`--check with ${what} and a record it cannot clean: that is the result, the record still a note`, { skip: !HAS_GIT && "git not found" }, (t) => {
+    const { f, record } = olderPin();
+    assert.equal(run(f.home, ["--no-update"]).code, 0);
+    if (!linkPinTo(t, f, record)) return;
+    breakIt(join(f.cache, "5.6.1"));
+    const c = run(f.home, ["--check", "--no-update"]);
+    assert.match(c.out, verdict);
+    assert.match(c.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
+  });
+}
+
+// --check: a hook it cannot read keeps the verdict from saying all is applied, even when nothing else is left.
+test("--check with an unreadable hook as the only thing wrong does not say all is applied", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const foo = join(plug, "scripts", "foo.mjs");
+  chmodSync(foo, 0o000);
+  try {
+    const c = run(bareHome(), ["--root", plug, "--check"]);
+    assert.match(c.out, /\[!\] 읽지 못함: foo \(EACCES\)/);
+    assert.doesNotMatch(c.out, /결과: 모두 적용된 상태입니다\./);
+    assert.match(c.out, /결과: 훅 스크립트를 확인하지 못했습니다\./);
+  } finally {
+    chmodSync(foo, 0o644);
+  }
+});
+
+// Reads of the files around a hook never stall on a FIFO, and a revert counts a hook it cannot read.
+test("a hooks.json.omcbak that is a FIFO is not read by a revert, and a FIFO named like a manual backup is passed over", posixFifo, (t) => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const hj = join(plug, "hooks", "hooks.json");
+  rmSync(`${hj}.omcbak`);
+  if (!mkfifoAt(`${hj}.bak-by-hand`)) { t.skip("no mkfifo here"); return; }
+  const manual = runBy(bareHome(), ["--root", plug, "--revert"]);
+  assert.equal(manual.error, undefined, "the revert ended before its deadline (manual backup candidate)");
+  assert.equal(manual.code, 0, manual.out);
+  rmSync(`${hj}.bak-by-hand`);
+  assert.ok(mkfifoAt(`${hj}.omcbak`));
+  const bak = runBy(bareHome(), ["--root", plug, "--revert"]);
+  assert.equal(bak.error, undefined, "the revert ended before its deadline (backup)");
+  assert.equal(bak.code, 1, bak.out);
+});
+
+test("a revert counts a hook it cannot read when there is no backup: named, counted, and it does not end in a crash line", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const foo = join(plug, "scripts", "foo.mjs");
+  rmSync(`${foo}.omcbak`);
+  chmodSync(foo, 0o000);
+  let r;
+  try {
+    r = run(bareHome(), ["--revert", "--root", plug]);
+  } finally {
+    chmodSync(foo, 0o644);
+  }
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 읽지 못함: foo \(EACCES\)/);
+  assert.match(r.out, /되돌리기를 끝내지 못했습니다\. 실패 1건\./);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/);
+});
+
+test("a hook backup that is a FIFO is not read by a revert: named, counted, and the run ends", posixFifo, (t) => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const bak = join(plug, "scripts", "foo.mjs.omcbak");
+  if (!mkfifoAt(bak)) { t.skip("no mkfifo here"); return; }
+  const r = runBy(bareHome(), ["--revert", "--root", plug]);
+  assert.equal(r.error, undefined, "the revert ended before its deadline");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 되돌리지 않음: foo \(백업 자리가 일반 파일이 아님\)/);
+  assert.ok(lstatSync(bak).isFIFO(), "the FIFO is still a FIFO");
+});
+
+// A file ID the size of an NTFS one, 14355223812554955, does not survive a Number (the last digit reads 6): the number printed
+// for finding the other name must come from a BigInt on every OS, not only where the IDs are that large.
+test("the number given for the other name of a hard-linked record keeps every digit of a 64-bit ID", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, record, pinfile } = olderPin();
+  writeFileSync(pinfile, record);
+  const pre = join(root, `big-ino${seq++}.mjs`);
+  writeFileSync(pre, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.lstatSync;",
+    'fs.lstatSync = (p, o) => { const st = real(p, o); return o?.bigint && String(p).endsWith("PINNED") ? Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino: 14355223812554955n, nlink: 2n }) : st; };',
+    "syncBuiltinESMExports();",
+  ].join("\n"));
+  const r = runImport(pre, f.home, ["--check", "--no-update"]);
+  assert.ok(r.out.includes("파일 ID) 14355223812554955 로 찾습니다."), r.out);
+});
