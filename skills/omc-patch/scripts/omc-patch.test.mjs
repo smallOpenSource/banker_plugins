@@ -3162,15 +3162,18 @@ test("--check names a hook it cannot read in an inactive version as a note, not 
 });
 
 // 0.20.4 B2 Task 6: URL masking up to the last @ after //, and the unpin-failure line (B2-08, B2-09)
+// The user name may hold a raw @ too (an e-mail address): the parser then reads the domain and the start of the password as host:port.
 test("the unpin-failure line shows no user or password when an @ follows a raw / ? # or \\ in the password", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
-  for (const sep of ["/", "?", "#", BACKSLASH]) {
-    const f = fakeHome([{ v: "5.6.1", active: true }]);
-    assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://https://alice:12345${sep}rest-${"s3" + "cret"}@github.com/x.git`], f.market).status, 0);
-    chmodSync(join(f.market, ".git"), 0o555);
-    let r;
-    try { r = run(f.home, ["--revert"]); } finally { chmodSync(join(f.market, ".git"), 0o755); }
-    assert.match(r.out, /고정 해제 실패/, r.out);
-    assert.doesNotMatch(r.out, new RegExp(`alice|12345|${"s3" + "cret"}`), `${JSON.stringify(sep)}: ${r.out}`);
+  for (const user of ["alice", "alice@corp.example"]) {
+    for (const sep of ["/", "?", "#", BACKSLASH]) {
+      const f = fakeHome([{ v: "5.6.1", active: true }]);
+      assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://https://${user}:12345${sep}rest-${"s3" + "cret"}@github.com/x.git`], f.market).status, 0);
+      chmodSync(join(f.market, ".git"), 0o555);
+      let r;
+      try { r = run(f.home, ["--revert"]); } finally { chmodSync(join(f.market, ".git"), 0o755); }
+      assert.match(r.out, /고정 해제 실패/, r.out);
+      assert.doesNotMatch(r.out, new RegExp(`alice|corp\\.example|12345|${"s3" + "cret"}`), `${user} ${JSON.stringify(sep)}: ${r.out}`);
+    }
   }
 });
 

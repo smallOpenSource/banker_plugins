@@ -1015,12 +1015,13 @@ function redactUrl(url) {
 // 보이지 않는다(ssh 같은 scheme 은 host 뒤의 `;k=...` 까지 host 로 읽는다).
 const HOST_SHAPE = /^(?:[A-Za-z0-9._-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?$/;
 // `scheme://` 뒤 첫 `/` `?` `#` `\` 앞까지(파서가 읽는 authority). 비밀번호에 그 글자가 날로 들면 파서는 그 앞의 `이름:숫자` 를
-// host:port 로 읽고 `@` 를 경로로 보낸다. authority 에 `@` 가 없는데 그 뒤에 `@` 가 있으면 host 를 믿지 않는다.
+// host:port 로 읽고 `@` 를 경로로 보낸다. 사용자 이름에도 날 `@` 가 들면(이메일 주소) 그 뒤의 `도메인:숫자` 를 읽는다. 그래서
+// authority 뒤에 `@` 가 있으면 host 를 믿지 않는다(가림이 마지막 `@` 까지인 것과 같은 쪽. 경로에 `@` 가 든 URL 은 host 도 감춘다).
 const AUTHORITY = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^/?#\\]*)/;
 function hostOnly(url) {
   let scheme = "", host;
   const auth = AUTHORITY.exec(String(url));
-  if (auth && !auth[1].includes("@") && String(url).includes("@", auth[0].length)) return "(호스트를 알아볼 수 없음)";
+  if (auth && String(url).includes("@", auth[0].length)) return "(호스트를 알아볼 수 없음)";
   try {
     const u = new URL(String(url));
     if (!u.host) return "(호스트가 없는 URL 또는 로컬 경로)";
