@@ -835,6 +835,8 @@ try {
      'S23-i: the no-diff branch has its own chain in the same $d');
   ok(/상한은 나누기 전의 `prompt\.md` 전체에 건다/.test(rqSkill) && /부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다/.test(rqSkill),
      'S23-j: the 512 KiB cap is on the whole payload before any split, and each part is counted and scanned');
+  ok(/Git Bash 에서 `command -v timeout` 이 `\/c\/Windows\/system32\/timeout` 이면/.test(rqSkill) && /`\/usr\/bin\/timeout -s KILL 600`/.test(rqSkill),
+     'S23-l: in Git Bash the limit is GNU timeout, not the Windows timeout a PATH may put first');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
