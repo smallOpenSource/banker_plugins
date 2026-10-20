@@ -143,6 +143,7 @@ npx hyperframes doctor
 - `init`: 최초 실행 시 스캐폴딩과 함께 전역 스킬셋(라우터 `/hyperframes` + `hyperframes-*` 도메인 스킬 + `media-use`)을 설치하고, 이미 있으면 최신 여부만 GitHub 기준으로 확인한다.
 - `skills update`: 코어 스킬만 골라 최신화한다(비대화형 환경 권장 경로) — 이미 최신이면 no-op.
 - `doctor`: Node·ffmpeg·설치된 스킬 등 실행 환경을 종합 진단한다.
+- 오프라인에서 쓰려면: 전역이나 프로젝트에 깔린 것이 없으면 `npx hyperframes` 는 패키지를 받으려 해, 네트워크가 없으면 약 70초 뒤 실패한다. 네트워크가 되는 곳에서 `npm i -g hyperframes@<판>` 으로 깔아 두고 `hyperframes <명령>` 을 직접 부른다. 0단계 확인이 오프라인이면 `npx` 를 쓰지 않고, 네트워크가 필요한 `init` 의 최신 확인과 `skills update` 는 "오프라인이라 설치하지 않음" 으로 보고한다.
 
 ## 4. 검증 (보고 의무)
 ```bash

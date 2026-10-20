@@ -919,6 +919,14 @@ try {
     .map((l) => `${d}: ${l.trim().slice(0, 60)}`));
   ok(ffWrong.length === 0 && ffDocs.every(([, t]) => /오프라인이면 `ffmpeg-static` 도 받을 수 없다/.test(t) && /미리 받아 둔 ffmpeg 실행 파일의 절대 경로/.test(t)),
      `airgap-7: ffmpeg-static is not offered as the offline fallback; offline, FFMPEG_PATH points at an ffmpeg brought in beforehand (found ${JSON.stringify(ffWrong)})`);
+  // A tool called through npx asks the registry for a version each time (offline: about 70 s, then a failure): the skills
+  // that call one give the offline way (a pinned global install, then the executable by name), and Stitch says it needs the network.
+  const mgSetup = fs.readFileSync(path.join(root, 'skills', 'motion-graphic-setup', 'SKILL.md'), 'utf8');
+  const mgMake = fs.readFileSync(path.join(root, 'skills', 'motion-graphic-make', 'SKILL.md'), 'utf8');
+  const stitchSkill = fs.readFileSync(path.join(root, 'skills', 'setup-stitch', 'SKILL.md'), 'utf8');
+  ok(/npm i -g hyperframes@<판>/.test(mgSetup) && /`hyperframes <명령>` 을 직접 부른다/.test(mgSetup)
+     && /전역 설치한 `hyperframes doctor`/.test(mgMake) && /Stitch 는 원격 서비스라 네트워크가 없으면 쓸 수 없다/.test(stitchSkill),
+     'airgap-9: the npx tools have an offline way (global install, then the executable), and setup-stitch says it needs the network');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

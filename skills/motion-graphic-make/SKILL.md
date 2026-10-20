@@ -13,7 +13,7 @@ description: "10초 안팎의 내레이션 없는 모션 그래픽(키네틱 타
 ## 0. 전제조건: hyperframes (없으면 설치부터)
 이 스킬은 hyperframes CLI 가 설치, 정상 동작해야 한다.
 **진행 전 가용성을 먼저 확인**하고, 문제가 있으면 **설치부터 안내**한다(추정, 임의 재설치 금지):
-- 확인: `npx hyperframes doctor`
+- 확인: `npx hyperframes doctor`(오프라인에서는 전역 설치한 `hyperframes doctor`. 깔린 것이 없으면 `npx` 가 패키지를 받으려 해 네트워크가 없으면 약 70초 뒤 실패한다)
 - 실패/미설치면 먼저 `motion-graphic-setup` 스킬로 설치(Claude Code: `/banker:setup` 에서 motion-graphic-setup / Codex: `banker-motion-graphic-setup`). 설치, 검증 후 이 스킬을 이어서 진행한다.
 - 독립 검증에서 배치한 페이지를 잴 때는 Node 용 playwright 패키지와 Chromium 이 필요하다(`npm i -g playwright && npx playwright install chromium`).
 
