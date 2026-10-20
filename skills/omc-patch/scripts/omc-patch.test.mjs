@@ -2991,3 +2991,78 @@ for (const value of ["0", "false", '""', "null"]) {
     assert.match(r.out, /installed_plugins\.json 에 oh-my-claudecode@omc 항목이 없음/, r.out);
   });
 }
+
+// 0.20.4 B2 Task 3: the pin record's version, other names of an old record, backup slots that are no regular file, the test variable, and temp file modes (B2-05, B2-17, B2-18, B2-19, B2-22)
+test("a --no-update pin records the version it patched, not the bare apply's target", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  assert.equal(JSON.parse(read(pinPath(f))).version, "5.6.1");
+});
+
+const OLD_TEXT = (secret) => `pinnedAt: x\noriginUrl: "https://u:${secret}@example.invalid/omc.git"\n`;
+for (const how of ["no JSON", "unreadable"]) {
+  test(`a first pin and a revert over an old record that is ${how}, with another hard-linked name, say the URL may stay there`, { skip: (!HAS_GIT && "git not found") || (how === "unreadable" && (process.platform === "win32" || asRoot) && "POSIX permission bits") }, (t) => {
+    for (const pinned of [false, true]) {
+      const { f, secret, pinfile } = olderPin();
+      if (!pinned) assert.equal(runGit(["remote", "set-url", "origin", ORIGIN], f.market).status, 0);
+      writeFileSync(pinfile, OLD_TEXT(secret));
+      const other = join(root, `b217-other${seq++}`);
+      try { linkSync(pinfile, other); } catch { t.skip("hard links are not available here"); return; }
+      if (how === "unreadable") chmodSync(pinfile, 0o000);
+      const r = run(f.home, pinned ? ["--revert"] : ["--no-update"]);
+      if (how === "unreadable") chmodSync(other, 0o600);
+      assert.equal(r.code, 1, `${pinned ? "revert" : "first pin"}: ${r.out}`);
+      assert.match(r.out, /다른 이름/, r.out);
+      assert.ok(!r.out.includes(secret), "the password is not printed");
+    }
+  });
+}
+
+test("an apply refuses a backup slot that is a FIFO or a folder: named, counted, the hook left as it was", posixFifo, (t) => {
+  const plug = bundle();
+  const s = join(plug, "scripts");
+  if (!mkfifoAt(join(s, "foo.mjs.omcbak"))) { t.skip("no mkfifo here"); return; }
+  mkdirSync(join(s, "stopper.mjs.omcbak"));
+  const r = runBy(bareHome(), ["--root", plug]);
+  assert.equal(r.error, undefined, "the apply ended before its deadline");
+  assert.equal(r.code, 1, r.out);
+  assert.equal(read(join(s, "foo.mjs")), SCRIPT("foo"), "foo is left unpatched");
+  assert.equal(read(join(s, "stopper.mjs")), SCRIPT("stopper"), "stopper is left unpatched");
+});
+
+test("an apply refuses a hooks.json backup slot that is a folder", () => {
+  const plug = bundle();
+  mkdirSync(join(plug, "hooks", "hooks.json.omcbak"));
+  const r = run(bareHome(), ["--root", plug]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(read(join(plug, "hooks", "hooks.json")), /PostToolUse/, "PostToolUse is kept while there is no backup");
+});
+
+test("OMC_PATCH_INSTALLED is read by --check only: an apply patches what installed_plugins.json names", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }, { v: "5.3.0" }]);
+  const other = join(root, `other-installed${seq++}.json`);
+  writeFileSync(other, JSON.stringify({ version: 2, plugins: { "oh-my-claudecode@omc": [{ installPath: join(f.cache, "5.3.0"), version: "5.3.0" }] } }) + "\n");
+  const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home, OMC_PATCH_INSTALLED: other });
+  const r = spawnSync(process.execPath, [TOOL, "--no-update"], { encoding: "utf8", env });
+  assert.equal(r.status, 0, r.stdout);
+  assert.deepEqual(omcbaks(join(f.cache, "5.3.0", "scripts")), [], "the version the variable names is untouched");
+  assert.ok(omcbaks(join(f.cache, "5.6.1", "scripts")).length > 0, "the active version is patched");
+});
+
+const PEEK_MODE = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const real = fs.fsyncSync;",
+  'fs.fsyncSync = (fd) => { process.stderr.write(`tmp-mode ${(fs.fstatSync(fd).mode & 0o777).toString(8)}\\n`); return real(fd); };',
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a temp file is made with its final mode, and a new record folder is this account's alone", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX modes") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const pre = join(root, `peek-mode${seq++}.mjs`);
+  writeFileSync(pre, `${PEEK_MODE}\n`);
+  const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home });
+  const r = spawnSync("sh", ["-c", `umask 0002 && exec "${process.execPath}" --import "${pathToFileURL(pre).href}" "${TOOL}" --no-update`], { encoding: "utf8", env });
+  const modes = [...String(r.stderr).matchAll(/tmp-mode (\d+)/g)].map((m) => m[1]);
+  assert.equal(modes[modes.length - 1], "600", `PINNED's temp file: ${modes.join(",")}`);
+  assert.equal(statSync(dirname(pinPath(f))).mode & 0o777, 0o700);
+});

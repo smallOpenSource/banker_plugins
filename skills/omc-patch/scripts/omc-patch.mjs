@@ -16,7 +16,7 @@
  *
  * 활성 버전은 installed_plugins.json 의 oh-my-claudecode@omc 항목(version, installPath)에서
  * 읽는다. 캐시에 TARGET_VERSION 이 있다고 그것을 활성으로 보지 않는다(--no-update 는 활성 버전을 패치).
- * OMC_PATCH_INSTALLED=<json 경로> 로 읽을 파일을 바꿀 수 있다(시험용, --check 와 함께).
+ * OMC_PATCH_INSTALLED=<json 경로> 로 읽을 파일을 바꿀 수 있다(시험용, --check 에서만 받음).
  *
  * OS: Windows / macOS / Linux 공통. 런처(apply.cmd, apply.sh)와 배경 문서(README.md)는
  * 킷 배포 폴더에만 있다. 이 파일만 옮겨 쓰는 곳(예: 스킬 폴더)에는 없다.
@@ -61,8 +61,9 @@ const CFG = join(homedir(), ".claude");
 const PLUGINS = join(CFG, "plugins");
 const CACHE = join(PLUGINS, "cache", MARKETPLACE, "oh-my-claudecode");
 const MARKET = join(PLUGINS, "marketplaces", MARKETPLACE);
-// OMC_PATCH_INSTALLED: 시험용. installed_plugins.json 대신 읽을 JSON 경로(읽기 전용 용도).
-const INSTALLED = process.env.OMC_PATCH_INSTALLED || join(PLUGINS, "installed_plugins.json");
+// OMC_PATCH_INSTALLED: 시험용. --check 일 때만 installed_plugins.json 대신 읽을 JSON 경로(읽기 전용). 적용과 되돌리기는
+// 늘 Claude Code 가 읽는 파일을 본다 — 다른 파일이 정한 판을 패치하거나 그 파일에 쓰지 않게.
+const INSTALLED = (MODE === "check" && process.env.OMC_PATCH_INSTALLED) || join(PLUGINS, "installed_plugins.json");
 const PINFILE = join(CFG, "omc-local-patches", "PINNED");
 
 const log = (s = "") => console.log(s);
@@ -307,14 +308,16 @@ function switchActive(sha) {
 // 파일)의 내용은 그대로 둔다. 쓸 파일이 링크면 쓰는 때의 실제 경로에서 바꿔 링크를 남긴다. 그래서 확인 뒤 그 자리가
 // 폴더 밖 링크로 바뀌면 그 실제 파일이 바뀐다(확인과 쓰기 사이의 틈은 줄었을 뿐 없지 않다). follow 가 false 면
 // 링크를 따라가지 않고 그 이름 자리를 새 파일로 바꾼다(링크는 사라지고 링크가 가리키던 파일은 그대로다. 고정 기록).
-// 권한은 mode 를 주면 그 값, 아니면 원래 파일의 것(없으면 0644)이다.
+// 권한은 mode 를 주면 그 값, 아니면 원래 파일의 것(없으면 0644)이다. 임시 파일을 만들 때부터 그 권한으로 연다(umask 가
+// 줄인 비트는 chmod 가 맞춘다). 만든 뒤에 맞추면 그 사이 기본 권한(0664 등)으로 남이 읽을 수 있다.
 function writeAtomic(file, data, mode, { follow = true } = {}) {
   const real = follow ? realOr(file) : file;
   const tmp = join(dirname(real), `.${basename(real)}.omc-tmp-${process.pid}`);
+  const m = mode ?? modeOf(real);
   rmSync(tmp, { force: true });
   try {
-    writeSynced(tmp, data);
-    chmodSync(tmp, mode ?? modeOf(real));
+    writeSynced(tmp, data, m);
+    chmodSync(tmp, m);
     renameRetry(tmp, real);
   } catch (e) {
     rmSync(tmp, { force: true });
@@ -324,8 +327,8 @@ function writeAtomic(file, data, mode, { follow = true } = {}) {
 
 // 새 임시 파일(있으면 실패하는 열기)에 쓰고 디스크까지 내린다. 내리지 않고 rename 하면 전원이 나가거나 NFS 에서
 // 새 이름 아래 짧거나 빈 파일이 남을 수 있다(OMC 의 atomicWriteFileSync, obsidizer 의 writeTemp 와 같은 꼴).
-function writeSynced(tmp, data) {
-  const fd = openSync(tmp, "wx");
+function writeSynced(tmp, data, mode) {
+  const fd = openSync(tmp, "wx", mode);
   try {
     writeFileSync(fd, data);
     fsyncSync(fd);
@@ -825,12 +828,24 @@ function writePatched(f, bak, out, n) {
 // 폴더 밖 쓰기를 거부한 이유. 되돌리기는 이 이유일 때 손 복구 방법을 함께 알린다.
 const OUTSIDE = "파일이 플러그인 폴더 밖에 있음";
 
-// 쓰기 전에 본다. 쓸 파일이 (링크를 따라가서) 플러그인 폴더 밖이거나 백업 자리가 링크면 그 이유를,
-// 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, 복사가 링크가 가리키는 곳에 쓴다.
+// 쓰기 전에 본다. 쓸 파일이 (링크를 따라가서) 플러그인 폴더 밖이거나 백업 자리가 링크, 또는 일반 파일이 아닌 것(FIFO,
+// 폴더)이면 그 이유를, 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, 복사가 링크가 가리키는 곳에 쓴다.
+// 일반 파일이 아닌 백업 자리는 있으면 실패하는 복사가 EEXIST 로 끝나 "처음 백업" 으로 보이므로, 백업 없이 패치하게 된다.
 function whyNotWrite(root, file, bak) {
   if (isLink(bak)) return "백업 자리가 링크";
+  if (notRegularAt(bak)) return "백업 자리가 일반 파일이 아님";
   if (!insideRoot(root, file)) return OUTSIDE;
   return notWritable(file);
+}
+
+// 그 자리에 일반 파일도 링크도 아닌 것(FIFO, 폴더, 장치)이 있으면 true. 없는 자리는 false.
+function notRegularAt(p) {
+  try {
+    const st = lstatSync(p);
+    return !st.isFile() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 // 있는 자리가 일반 파일이 아니거나(FIFO, 폴더, 장치) 이 계정이 쓸 수 없으면 그 이유. 새 파일로 바꿔 쓰는 방식이 파일 권한을
@@ -1049,25 +1064,33 @@ function pinMarketplace() {
 // URL 은 남기지 않는다. 원래 URL 은 origin 의 `omc-pinned://` 뒤에 있고, 인증 정보가 든 URL 이 기록에 남는다.
 // 고정이 된 뒤에만 쓴다. 실패한 고정의 기록은 남기지 않는다. 기록을 쓰지 못하면 고정은 둔 채 실패로 센다.
 // 덮어쓴 옛 기록에 URL 칸이 있었고 같은 파일의 다른 이름이 있으면, 그쪽에 남은 칸을 알리고 실패로 센다.
+// 판은 패치한 활성 판이다(--no-update 면 그 판, 인자 없는 적용이면 전환한 판). 기록 폴더는 처음 만들 때 이 계정만 쓰게(0700) 한다.
 function writePinRecord() {
   let ino = null;
+  let held = null;
   try {
-    mkdirSync(dirname(PINFILE), { recursive: true });
+    mkdirSync(dirname(PINFILE), { recursive: true, mode: 0o700 });
     if (isLink(PINFILE)) throw new Error("링크라 따라가 쓰지 않음");
-    ino = oldCellIno();
-    writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: TARGET_VERSION, host: hostname() }, null, 2) + "\n", 0o600, { follow: false });
+    held = urlInRecord();
+    ino = held ? sharedIno() : null;
+    writeAtomic(PINFILE, JSON.stringify({ pinnedAt: new Date().toISOString(), version: active, host: hostname() }, null, 2) + "\n", 0o600, { follow: false });
   } catch (e) {
     bad(`고정 기록(PINNED)을 쓰지 못함 (${failWhy(e)}). origin 은 고정됨: ${oneLine(PINFILE)}`);
     return false;
   }
-  return ino === null ? true : sharedLeft(SHARED_WHY, ino);
+  return ino === null ? true : sharedLeft(sharedWhy(held), ino);
 }
 
-// 덮어쓸 옛 기록에 URL 칸이 있고 같은 파일의 다른 이름이 있으면 그 inode 다. 칸이 없거나, 다른 이름이 없거나,
-// 기록을 읽지 못하면 null 이다.
-function oldCellIno() {
-  try { return hasUrlKey(parseRecord(pinRecordText()).rec) ? sharedIno() : null; }
-  catch { return null; }
+// 덮어쓰거나 지울 옛 기록이 URL 을 담는가. "yes" 는 JSON 의 최상위 칸을 봄, "maybe" 는 읽지 못했거나 JSON 이 아닌 글에
+// originUrl 이 있음(칸인지 모름), null 은 없음(일반 파일로 이어지지 않는 자리 포함). 같은 파일의 다른 이름을 알릴지와
+// 그 문구("남음", "남았을 수 있음")를 가른다.
+function urlInRecord() {
+  let text;
+  try { text = pinRecordText(); } catch { return "maybe"; }
+  if (text === null) return null;
+  const { ok, rec } = parseRecord(text);
+  if (ok) return hasUrlKey(rec) ? "yes" : null;
+  return text.includes("originUrl") ? "maybe" : null;
 }
 
 // 이미 고정된 origin. 옛 기록의 URL 칸을 지우지 못했으면 고정은 그대로 두고 실패로 센다.
@@ -1091,6 +1114,8 @@ function scrubPinRecord() {
   return ino === null ? true : sharedLeft(SHARED_WHY, ino);
 }
 const SHARED_WHY = "이 이름에서만 지움 (같은 파일의 다른 이름이 있어 그쪽에는 남음)";
+const SHARED_MAYBE_WHY = "이 이름에서만 지움 (같은 파일의 다른 이름이 있어 그쪽에 남았을 수 있음)";
+const sharedWhy = (held) => (held === "yes" ? SHARED_WHY : SHARED_MAYBE_WHY);
 const SHARED_CHECK_WHY = "이 이름에서만 지울 수 있음 (같은 파일의 다른 이름이 있어 그쪽에는 남음)";
 
 // 기록에 같은 파일의 다른 이름(하드 링크)이 있으면 그 파일의 inode(Windows 는 파일 ID, 정밀도를 잃지 않게 BigInt)다.
@@ -1193,14 +1218,15 @@ function dropPinRecord() {
   if (left) return pinUrlLeft(left.why);
   let saved = null;
   try { saved = JSON.parse(pinRecordText()); } catch { /* 깨졌거나 읽지 못하면 무시 */ }
-  const ino = hasUrlKey(saved) ? sharedIno() : null;
+  const held = urlInRecord();
+  const ino = held ? sharedIno() : null;
   try { unlinkSync(PINFILE); }
   catch (e) {
     bad(`고정 기록(PINNED)을 지우지 못함 (${failWhy(e)}): ${oneLine(PINFILE)}`);
     return false;
   }
   warnForeignPin(saved);
-  return ino === null ? true : sharedLeft(SHARED_WHY, ino);
+  return ino === null ? true : sharedLeft(sharedWhy(held), ino);
 }
 
 // 고정 기록 자리에 무엇이 있는가(끊어진 링크 포함). 위 폴더를 열 수 없어 확인하지 못하면 있는 것으로 본다.
