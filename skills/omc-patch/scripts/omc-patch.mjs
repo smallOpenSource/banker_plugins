@@ -677,9 +677,7 @@ function patchHooks(root) {
   // revert 는 scripts/ 전체를 훑는다. hooks.json 기반 목록은 두 번 새는데, 실측으로
   // 4.15.7 이 둘 다 겪었다 — PostToolUse 를 지우면 그 스크립트가 목록에서 빠지고(그래서
   // .omcbak 이 있어도 안 돌아온다), 손으로 고친 파일은 .omcbak 조차 없어 아예 안 보인다.
-  const names = MODE === "revert"
-    ? readdirSync(join(root, "scripts")).filter((f) => f.endsWith(".mjs")).map((f) => f.slice(0, -4)).sort()
-    : hookNames(root);
+  const names = MODE === "revert" ? scriptNames(root, r) : hookNames(root);
   for (const n of names) {
     const f = join(root, "scripts", `${n}.mjs`);
     if (!existsSync(f)) continue;
@@ -687,6 +685,19 @@ function patchHooks(root) {
     else checkOrPatchScript(root, n, f, r);
   }
   return r;
+}
+
+// revert 가 훑는 이름: scripts/ 의 .mjs 전부. scripts/ 가 없는 판 폴더는 되돌릴 훅이 없어 한 줄로 알리고 넘어간다.
+// 그 밖에 목록을 읽지 못하면(파일, 권한) 이름과 이유를 대고 실패로 센다 — 다음 판과 [3/4], [4/4] 는 그대로 간다.
+function scriptNames(root, r) {
+  const dir = join(root, "scripts");
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith(".mjs")).map((f) => f.slice(0, -4)).sort();
+  } catch (e) {
+    if (e.code === "ENOENT") log("  건너뜀: scripts 폴더 없음");
+    else { bad(`읽지 못함: scripts (${failWhy(e)}): ${oneLine(dir)}`); r.fail++; r.failed.push(dir); }
+    return [];
+  }
 }
 
 function revertScript(root, n, f, r) {
@@ -851,11 +862,21 @@ function patchHooksJson(root) {
   try {
     return MODE === "revert" ? revertHooksJson(root, hj) : removePostToolUse(hj, why);
   } catch (e) {
-    // JSON 오류 문구는 파일의 글을 담으므로 내지 않는다. check 는 읽기만 하므로 실패도 읽기다.
-    const why = e instanceof SyntaxError ? "JSON 이 아님" : failWhy(e);
-    hjBad(e instanceof SyntaxError || MODE === "check" ? `hooks.json 을 읽지 못함 (${why})` : `hooks.json 을 쓰지 못함 (${why})`);
+    hjBad(hooksJsonFailure(e));
     return "unsafe";
   }
+}
+
+// JSON 오류 문구는 파일의 글을 담으므로 내지 않는다. check 는 읽기만 하므로 실패도 읽기다.
+function hooksJsonFailure(e) {
+  const why = e instanceof SyntaxError ? "JSON 이 아님" : failWhy(e);
+  return e instanceof SyntaxError || e.reading || MODE === "check" ? `hooks.json 을 읽지 못함 (${why})` : `hooks.json 을 쓰지 못함 (${why})`;
+}
+
+// hooks.json 의 글. 읽기 실패에는 reading 표시를 달아 던진다 — 쓰기 실패와 같은 catch 가 맞는 문구를 고르게.
+function readHooksJson(hj) {
+  try { return readRegular(hj, "utf8"); }
+  catch (e) { throw Object.assign(e, { reading: true }); }
 }
 
 // 되돌린 결과. ambiguous 와 linked 는 hooks.json 을 되돌리지 못하고 남긴 것이라 끝 줄이 센다.
@@ -870,7 +891,9 @@ function revertHooksJson(root, hj) {
     return "reverted";
   }
   // 이 도구의 백업이 없을 때 PostToolUse 가 그대로면 되돌릴 것이 없다. 옆의 수동 백업으로 덮어쓰면
-  // 지금 내용을 잃는다.
+  // 지금 내용을 잃는다. 읽지 못하면 PostToolUse 가 있는지 모르므로 "되돌릴 것 없음" 이라 하지 않는다
+  // (위 catch 가 읽기 실패로 알리고 센다). 깨진 JSON 은 아래 수동 백업 찾기로 넘긴다.
+  readHooksJson(hj);
   if (hasPostToolUse(hj)) return "no-backup";
   // 손으로 만든 백업이 남아 있을 수 있다(실측: 4.15.7 의 hooks.json.bak-20260906-postoolremove).
   // PostToolUse 를 담고 있는 유효한 JSON 이 딱 하나면 그것이 제거 직전 상태다 — 무엇을 썼는지 밝히고 되돌린다.
@@ -946,7 +969,7 @@ const hasPostToolUse = (p) => {
 
 function removePostToolUse(hj, why) {
   const bak = `${hj}.omcbak`;
-  const j = JSON.parse(readRegular(hj, "utf8"));
+  const j = JSON.parse(readHooksJson(hj));
   if (!j.hooks?.PostToolUse) return "already";
   const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
   if (MODE === "check") { hjBad(`hooks.json PostToolUse 남아있음${why ? `, 쓸 수 없음 (${why})` : ""}: ${list.join(", ")}`); return "needs"; }
@@ -1173,7 +1196,7 @@ function pinRecordThere() {
 
 // 다른 기기의 기록이면 알린다. 그 값은 쓰지 않는다.
 function warnForeignPin(saved) {
-  if (saved && typeof saved === "object" && saved.host && saved.host !== hostname()) {
+  if (saved && typeof saved === "object" && typeof saved.host === "string" && saved.host && saved.host !== hostname()) {
     bad(`PINNED 는 다른 기기(${shown(saved.host)})의 기록입니다 — 그 값은 쓰지 않습니다.`);
   }
 }

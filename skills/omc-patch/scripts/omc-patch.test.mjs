@@ -1979,14 +1979,20 @@ test("an error the tool did not expect prints on one line with the folder name c
   writeFileSync(join(odd, "hooks", "hooks.json"), HOOKS_JSON);
   for (const n of ["foo", "stopper"]) writeFileSync(join(odd, "scripts", `${n}.mjs`), SCRIPT(n));
   writeFileSync(join(odd, "scripts", "lib.mjs"), LIB);
-  // a revert lists the scripts folder without a guard of its own (a hooks.json it cannot read is named in [3/4] now)
-  chmodSync(join(odd, "scripts"), 0o000);
-  let r;
-  try {
-    r = run(bareHome(), ["--root", odd, "--revert"]);
-  } finally {
-    chmodSync(join(odd, "scripts"), 0o755);
-  }
+  // A system error the tool has no guard for, naming the folder: the check for hooks.json fails as an EACCES would.
+  const pre = join(root, `unexpected${seq++}.mjs`);
+  writeFileSync(pre, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const real = fs.existsSync;",
+    "fs.existsSync = (p) => {",
+    "  if (String(p).endsWith(\"hooks.json\")) throw Object.assign(new Error(`EACCES: permission denied, access '${p}'`), { code: \"EACCES\" });",
+    "  return real(p);",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  const r = runImport(pre, bareHome(), ["--root", odd, "--revert"]);
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /\[!\] 처리하지 못한 오류: EACCES/);
   assert.doesNotMatch(r.out, /^\s*\[!\] FORGED/m, "the folder name makes no line of its own");
@@ -2895,4 +2901,55 @@ test("--check over an old record with another hard-linked name says the apply cl
   assert.doesNotMatch(r.out, /적용하면 지움/);
   assert.match(r.out, /참고: 고정 기록\(PINNED\)의 옛 URL 칸이 이 도구로 지울 수 없는 곳에 있습니다\./);
   assert.ok(!r.out.includes(secret), "the password is not printed");
+});
+
+// 0.20.4 B2 Task 1: reverts that stop or say done when they did not finish (B2-01, B2-10, B2-13)
+test("a revert over a version folder with no scripts folder goes on: the other versions, hooks.json and the pin are reverted", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const half = join(f.cache, "5.5.0");
+  mkdirSync(join(half, "hooks"), { recursive: true });
+  writeFileSync(join(half, "hooks", "hooks.json"), HOOKS_JSON);
+  const r = run(f.home, ["--revert"]);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/, r.out);
+  assert.equal(origin(f.market), ORIGIN, "the pin is undone");
+  assert.match(read(join(f.cache, "5.6.1", "hooks", "hooks.json")), /PostToolUse/, "the active hooks.json is reverted");
+  assert.equal(r.code, 0, r.out);
+});
+
+test("a revert over a version folder whose scripts is a file names it and counts it, and still undoes the pin", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const odd = join(f.cache, "5.5.0");
+  mkdirSync(join(odd, "hooks"), { recursive: true });
+  writeFileSync(join(odd, "scripts"), "not a folder\n");
+  const r = run(f.home, ["--revert"]);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/, r.out);
+  assert.match(r.out, /scripts/);
+  assert.equal(r.code, 1, r.out);
+  assert.equal(origin(f.market), ORIGIN, "the pin is undone");
+});
+
+test("--revert over a PINNED whose host is an object ends with its last line and no crash", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(pinPath(f), JSON.stringify({ pinnedAt: "x", version: "5.7.0", host: { toString: 1, valueOf: 1 } }) + "\n");
+  const r = run(f.home, ["--revert"]);
+  assert.doesNotMatch(r.out, /처리하지 못한 오류/, r.out);
+  assert.match(r.out, /되돌리기 완료\./);
+  assert.equal(r.code, 0, r.out);
+});
+
+test("an apply over a write-only hooks.json says it could not read it; a revert does not call it done", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  const hj = join(plug, "hooks", "hooks.json");
+  chmodSync(hj, 0o200);
+  let a, r;
+  try {
+    a = run(bareHome(), ["--root", plug]);
+    r = run(bareHome(), ["--root", plug, "--revert"]);
+  } finally { chmodSync(hj, 0o644); }
+  assert.match(a.out, /hooks\.json 을 읽지 못함 \(EACCES\)/, a.out);
+  assert.doesNotMatch(r.out, /되돌리기 완료\./, r.out);
+  assert.equal(r.code, 1, r.out);
 });
