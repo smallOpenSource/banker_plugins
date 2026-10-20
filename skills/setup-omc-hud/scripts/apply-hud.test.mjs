@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 
 const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
@@ -28,7 +28,24 @@ const root = mkdtempSync(join(tmpdir(), "apply-hud-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 // Mode bits are POSIX matters, and root writes files it may not.
 const POSIX = process.platform !== "win32";
-const posixOnly = { skip: !POSIX && "Windows has no POSIX mode bits" };
+const posixModes = { skip: !POSIX && "Windows has no POSIX mode bits" };
+const posixSignals = { skip: !POSIX && "Windows has no POSIX signals" };
+// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
+// tests that make one run only where this account can.
+const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+const canLinkFiles = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
+  try {
+    writeFileSync(join(probe, "a"), "");
+    symlinkSync(join(probe, "a"), join(probe, "b"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+const fileLinks = { skip: !canLinkFiles && "this account cannot make file links" };
 const asRoot = POSIX && process.getuid?.() === 0;
 const modeOf = (p) => statSync(p).mode & 0o777;
 
@@ -70,11 +87,11 @@ const loaderOf = (cfg) => readFileSync(join(cfg, "hud", "omc-hud.mjs"), "utf8").
 
 const cleanEnv = () =>
   Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE_CONFIG_DIR|OMC_PLUGIN_ROOT|HOME|USERPROFILE)$/i.test(k)));
-const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], omcMode: undefined, omc: {}, apply: APPLY };
+const INSTALL_DEFAULTS = { cwd: root, versions: ["5.7.4"], bare: [], half: [], env: {}, wrap: [], nodeArgs: [], omcMode: undefined, omc: {}, apply: APPLY };
 // Runs the installer. `cfg` is where the config folder really is; `value` is what CLAUDE_CONFIG_DIR
 // says (default `cfg`, null to leave it unset). `bare` versions lack the template, `half` ones config-dir.mjs.
 // `omc` holds more fakeOmc options per version; an `env.PATH` replaces the PATH under any spelling. `apply` is
-// the installer to run (a copy beside other attached files, say).
+// the installer to run (a copy beside other attached files, say), `nodeArgs` go to node before it (a preload, say).
 function install(opts) {
   const o = { ...INSTALL_DEFAULTS, home: fresh("home"), value: opts.cfg, ...opts };
   for (const v of o.versions) fakeOmc(join(omcCache(o.cfg), v), v, { mode: o.omcMode, ...o.omc[v] });
@@ -84,7 +101,7 @@ function install(opts) {
   if (o.env.PATH !== undefined) for (const k of Object.keys(base)) if (/^path$/i.test(k)) delete base[k];
   const childEnv = { ...base, HOME: o.home, USERPROFILE: o.home, ...o.env };
   if (o.value !== null) childEnv.CLAUDE_CONFIG_DIR = o.value;
-  const [cmd, ...args] = [...o.wrap, process.execPath, o.apply];
+  const [cmd, ...args] = [...o.wrap, process.execPath, ...o.nodeArgs, o.apply];
   const r = spawnSync(cmd, args, { cwd: o.cwd, env: childEnv, encoding: "utf8" });
   return { status: r.status, out: `${r.stdout}${r.stderr}`, err: r.stderr, home: o.home };
 }
@@ -433,7 +450,7 @@ test("렌더 확인: PATH 에 node 가 없으면 [!!]", () => {
   assert.equal(settingsOf(cfg).statusLine.command, `node "${slash(cfg)}/hud/omc-hud-custom.mjs"`);
 });
 
-test("렌더 확인은 PATH 의 상대 경로 폴더에 있는 node 를 실행하지 않음", posixOnly, () => {
+test("렌더 확인은 PATH 의 상대 경로 폴더에 있는 node 를 실행하지 않음", posixModes, () => {
   const cfg = fresh();
   const cwd = fresh("cwd");
   const marker = join(cwd, "ran");
@@ -459,7 +476,7 @@ test("렌더 확인: 모르는 출력은 [..] 로 첫 줄을 보임", () => {
   assert.match(renderWith('console.log("hello");\n').out, /\[\.\.\] Render check: unrecognized output: hello/);
 });
 
-test("래퍼 파일만 링크한 설정 폴더에 설치하면 렌더 확인이 [ok]", posixOnly, () => {
+test("래퍼 파일만 링크한 설정 폴더에 설치하면 렌더 확인이 [ok]", fileLinks, () => {
   const cfg = fresh();
   const dot = fresh("dot");
   writeFileSync(join(dot, "omc-hud-custom.mjs"), "// old wrapper\n");
@@ -496,7 +513,7 @@ test("렌더 확인: 판이 다르고 설치한 판이 오류 없이 돌면 [..]
   assert.doesNotMatch(r.out, /does not load|OMC's install is at fault/);
 });
 
-test("렌더 확인은 PATH 앞쪽의 실행할 수 없는 node 를 건너뜀", posixOnly, () => {
+test("렌더 확인은 PATH 앞쪽의 실행할 수 없는 node 를 건너뜀", posixModes, () => {
   const dir = fresh("noexec");
   writeFileSync(join(dir, "node"), "#!/bin/sh\n");
   chmodSync(join(dir, "node"), 0o644);
@@ -559,7 +576,7 @@ test("settings.json 백업은 원본과 같은 바이트와 권한", () => {
   if (POSIX) assert.equal(modeOf(join(cfg, bak)), 0o600, "backup as private as the original");
 });
 
-test("새 폴더와 파일은 umask 002 에서도 그룹이 쓸 수 없음", posixOnly, () => {
+test("새 폴더와 파일은 umask 002 에서도 그룹이 쓸 수 없음", posixModes, () => {
   const cfg = fresh();
   const r = install({ cfg, omcMode: 0o664, wrap: ["sh", "-c", 'umask 002; exec "$0" "$@"'] });
   assert.equal(r.status, 0, r.out);
@@ -593,7 +610,7 @@ test("작은따옴표, 괄호, & 가 든 경로는 설치함", () => {
   assert.equal(settingsOf(cfg).statusLine.command, `node "${slash(cfg)}/hud/omc-hud-custom.mjs"`);
 });
 
-test("settings.json 을 쓸 수 없으면 종료 1 이고 아무것도 바꾸지 않음", { skip: (!POSIX && "mode bits") || (asRoot && "root writes read-only files") }, () => {
+test("settings.json 을 쓸 수 없으면 종료 1 이고 아무것도 바꾸지 않음", { skip: (!POSIX && "Windows has no POSIX mode bits") || (asRoot && "root writes read-only files") }, () => {
   const cfg = fresh();
   writeFileSync(join(cfg, "settings.json"), '{"theme":"x"}');
   chmodSync(join(cfg, "settings.json"), 0o444);
@@ -655,7 +672,7 @@ test("첨부 HUD 설정은 상세 줄을 8줄까지 둠", () => {
   assert.equal(JSON.parse(asset("hud-config.json")).elements.maxOutputLines, 8);
 });
 
-test("다시 설치하면 그룹이 쓸 수 있던 래퍼와 로더도 0644 로", posixOnly, () => {
+test("다시 설치하면 그룹이 쓸 수 있던 래퍼와 로더도 0644 로", posixModes, () => {
   const cfg = fresh();
   mkdirSync(join(cfg, "hud", "lib"), { recursive: true });
   const owned = ["omc-hud-custom.mjs", "omc-hud.mjs", join("lib", "config-dir.mjs")];
@@ -703,7 +720,7 @@ test("BOM 이 붙은 settings.json 의 JSON 오류도 줄과 칸이 맞음", () 
   assert.match(r.out, /settings\.json is not valid JSON \(line 3, column 1\)/);
 });
 
-test("렌더 확인: 신호로 끝난 상태표시줄 명령은 신호 이름을 알림", posixOnly, () => {
+test("렌더 확인: 신호로 끝난 상태표시줄 명령은 신호 이름을 알림", posixSignals, () => {
   assert.match(renderWith('process.kill(process.pid, "SIGTERM");\n').out, /failed \(exit SIGTERM\)/);
 });
 
@@ -724,4 +741,174 @@ test("렌더 확인은 PATH 의 따옴표 친 폴더에서도 node 를 찾고 no
   mkdirSync(join(dir, process.platform === "win32" ? "node.exe" : "node"));
   const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}"${dirname(process.execPath)}"` });
   assert.match(out, /\[ok\] Render check/);
+});
+
+test("이전 statusLine 명령의 보이지 않는 글자는 ? 로 보임", () => {
+  const cfg = fresh();
+  const rlo = String.fromCharCode(0x202e);
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: `node old${rlo}.mjs` } }));
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[\.\.\] statusLine ran "node old\?\.mjs"/);
+  assert.ok(!r.out.includes(rlo), "the control character is not printed");
+});
+
+test("settings.json 은 새 파일로 바꿔 넣고 권한을 지킴", posixModes, () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  chmodSync(file, 0o600);
+  const ino = statSync(file).ino;
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.notEqual(statSync(file).ino, ino, "replaced through a rename");
+  assert.equal(modeOf(file), 0o600);
+  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
+});
+
+// A settings.json kept in a dotfiles folder and linked into the config folder.
+function linkedSettings() {
+  const cfg = fresh();
+  const dot = fresh("dot");
+  const target = join(dot, "settings.json");
+  writeFileSync(target, JSON.stringify({ theme: "dark" }));
+  symlinkSync(target, join(cfg, "settings.json"));
+  return { cfg, dot, target };
+}
+
+test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈", fileLinks, () => {
+  const { cfg, target } = linkedSettings();
+  const ino = statSync(target).ino;
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink(), "the link stays");
+  const s = JSON.parse(readFileSync(target, "utf8"));
+  assert.equal(s.theme, "dark");
+  assert.match(s.statusLine.command, /omc-hud-custom\.mjs/);
+  assert.notEqual(statSync(target).ino, ino, "the file it points at was replaced");
+});
+
+// The installer's temporary file is named after its pid; a preload pins the pid so a test can put
+// something at that name first.
+const PID = 4242424;
+function pinnedPid() {
+  const file = join(root, `pid-${++seq}.mjs`);
+  writeFileSync(file, `Object.defineProperty(process, "pid", { value: ${PID} });\n`);
+  return ["--import", pathToFileURL(file).href];
+}
+
+test("같은 pid 의 임시 파일이 남아 있어도 settings.json 을 바꿔 넣고 그 파일을 치움", () => {
+  const cfg = fresh();
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
+  writeFileSync(join(cfg, `settings.json.${PID}.tmp`), "left by an earlier run that was killed\n");
+  const ino = statSync(join(cfg, "settings.json")).ino;
+  const r = install({ cfg, nodeArgs: pinnedPid() });
+  assert.equal(r.status, 0, r.out);
+  assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
+  assert.notEqual(statSync(join(cfg, "settings.json")).ino, ino, "went in through the rename, not in place");
+  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
+});
+
+test("임시 파일 자리에 끊어진 링크가 있어도 그 너머에 쓰지 않음", fileLinks, () => {
+  const cfg = fresh();
+  const outside = fresh("outside");
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
+  symlinkSync(join(outside, "planted.json"), join(cfg, `settings.json.${PID}.tmp`));
+  const r = install({ cfg, nodeArgs: pinnedPid() });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(existsSync(join(outside, "planted.json")), false, "nothing was written where the link led");
+  assert.ok(!lstatSync(join(cfg, "settings.json")).isSymbolicLink());
+  assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
+});
+
+// A preload that makes one fs call fail with `code` for the installer's temporary file, on every OS.
+function failingPreload(fn, code) {
+  const file = join(root, `fail-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    `const real = fs.${fn};`,
+    `fs.${fn} = function (p, ...rest) {`,
+    `  if (String(p).endsWith(".tmp")) throw Object.assign(new Error("${code} (test)"), { code: "${code}" });`,
+    "  return real.call(this, p, ...rest);",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return ["--import", pathToFileURL(file).href];
+}
+
+test("settings.json 을 rename 하지 못하면 오류가 무엇이든 제자리에 쓰고 임시 파일을 남기지 않음", () => {
+  for (const code of ["EPERM", "EIO", "ENOTSUP"]) {
+    const cfg = fresh();
+    writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
+    const r = install({ cfg, nodeArgs: failingPreload("renameSync", code) });
+    assert.equal(r.status, 0, `${code}: ${r.out}`);
+    assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/, code);
+    assert.deepEqual(readdirSync(cfg).filter((name) => name.endsWith(".tmp")), [], code);
+  }
+});
+
+test("디스크가 가득 차 임시 파일을 못 쓰면 settings.json 을 그대로 두고 멈춤", () => {
+  for (const code of ["ENOSPC", "EDQUOT"]) {
+    const cfg = fresh();
+    const file = join(cfg, "settings.json");
+    writeFileSync(file, JSON.stringify({ theme: "dark" }));
+    const before = readFileSync(file);
+    const r = install({ cfg, nodeArgs: failingPreload("writeFileSync", code) });
+    assert.notEqual(r.status, 0, `${code}: ${r.out}`);
+    assert.match(r.out, new RegExp(code));
+    assert.ok(readFileSync(file).equals(before), `${code}: settings.json is as it was`);
+    assert.deepEqual(readdirSync(cfg).filter((name) => name.endsWith(".tmp")), [], code);
+  }
+});
+
+test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (!POSIX && "Windows has no POSIX mode bits") || (asRoot && "root writes read-only folders") || (!canLinkFiles && "this account cannot make file links") }, () => {
+  const { cfg, dot, target } = linkedSettings();
+  chmodSync(dot, 0o555);
+  try {
+    const r = install({ cfg });
+    assert.equal(r.status, 0, r.out);
+    assert.match(JSON.parse(readFileSync(target, "utf8")).statusLine.command, /omc-hud-custom\.mjs/);
+    assert.ok(lstatSync(join(cfg, "settings.json")).isSymbolicLink());
+  } finally {
+    chmodSync(dot, 0o755);
+  }
+});
+
+test("렌더 확인 정화는 제어 글자 밖의 서식, 사용자 영역, 미할당, 변이 선택, 점자 빈칸, 넓은 공백도 ? 로 바꿈", () => {
+  const odd = [0x202e, 0xe000, 0x0378, 0xfe0f, 0x2800, 0x3000, 0x00a0].map((c) => String.fromCharCode(c));
+  const { out } = renderWith(`console.log(${JSON.stringify(`[OMC HUD] HUD import failed: a${odd.join("b")}c`)});\n`);
+  assert.match(out, /OMC's HUD does not load: \[OMC HUD\] HUD import failed: a\?b\?b\?b\?b\?b\?b\?c/);
+  for (const ch of odd) assert.ok(!out.includes(ch), `U+${ch.charCodeAt(0).toString(16)} is shown as ?`);
+});
+
+const ESC = String.fromCharCode(27);
+test("렌더 확인: stderr 의 오류 줄도 정화", () => {
+  const { out } = renderWith(`process.stderr.write(${JSON.stringify(`Error: bad${ESC}x\n`)});\nprocess.exit(3);\n`);
+  assert.match(out, /failed \(exit 3\): Error: bad\?x/);
+  assert.ok(!out.includes(ESC));
+});
+
+test("렌더 확인: Node 오류 줄도 정화", () => {
+  const { out } = renderWith(`import ${JSON.stringify(`./no-such-${ESC}.mjs`)};\n`);
+  assert.match(out, /prints an error instead of a line: Error \[ERR_MODULE_NOT_FOUND\]: Cannot find module .*no-such-\?\.mjs/);
+  assert.ok(!out.includes(ESC));
+});
+
+test("렌더 확인: 이유 줄도 정화", () => {
+  const omc = {
+    "5.7.4": { pkg: true, loader: banner("5.7.4") },
+    "5.7.5": { pkg: true, loader: banner("5.7.4"), dist: `throw new Error(${JSON.stringify(`boom${ESC}x`)});\n` },
+  };
+  const r = install({ cfg: fresh(), versions: ["5.7.4", "5.7.5"], env: withNode(), omc });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /5\.7\.5 does not load \(Error: boom\?x\)\./);
+  assert.ok(!r.out.includes(ESC));
+});
+
+test("렌더 확인: 모르는 출력도 정화", () => {
+  const { out } = renderWith(`console.log(${JSON.stringify(`hello${ESC}x`)});\n`);
+  assert.match(out, /unrecognized output: hello\?x/);
+  assert.ok(!out.includes(ESC));
 });

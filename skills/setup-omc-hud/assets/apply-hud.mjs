@@ -25,7 +25,9 @@
  * folder path the statusLine shell would act on, a file or folder it cannot
  * write, an OMC folder without both loader files, a relative OMC_PLUGIN_ROOT.
  * Backups keep the original bytes and mode; the files it writes are 0644 and new
- * folders 0755; the other statusLine fields (padding, ...) stay.
+ * folders 0755; the other statusLine fields (padding, ...) stay. settings.json goes
+ * in as a new file through a rename (a link keeps pointing at it), in place where
+ * that cannot be done, and is left as it was when the disk is full.
  * At the end it runs the installed formatter once with no input and reports
  * whether OMC's HUD loads and which version draws (the render check); that never
  * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 25s limit.
@@ -39,8 +41,12 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  lstatSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -70,6 +76,10 @@ const configDst = join(OMC_DIR, "hud-config.json");
 // PowerShell on Windows) that treats backslashes as escapes.
 const cmdPath = wrapperDst.split(sep).join("/");
 const log = (m) => process.stdout.write(m + "\n");
+// Characters that could act on a terminal or pass for a line of their own are shown as "?", as
+// omc-patch.mjs (UNSAFE_CH) shows file values in output an agent reads.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
+const shown = (s) => String(s).replace(UNSAFE, "?");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const refuse = (lines) => {
   for (const l of lines) log(l);
@@ -311,6 +321,47 @@ function installTemplates() {
   log("[ok] HUD config       -> " + configDst);
 }
 
+// settings.json goes in as a new file through a rename, so a stop midway never leaves it half written.
+// One that is a link (dotfiles) keeps its link, and the file it points at is the one replaced. A file
+// left at the temporary name (an earlier run with this pid, or a link put there) is removed first and
+// never written through. Where the new file cannot go in (a folder this account may not write, a file
+// another program holds open, a file system that refuses the rename), or the link leads nowhere yet,
+// it is written in place as before; only a full disk stops it, as writing in place could then cut
+// settings.json short.
+const FULL_DISK = new Set(["ENOSPC", "EDQUOT"]);
+const isLink = (p) => {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+function writeSettings(file, text) {
+  let target = file;
+  let mode;
+  try {
+    target = realpathSync(file);
+    mode = statSync(target).mode & 0o777;
+  } catch {
+    if (isLink(file)) return writeFileSync(file, text);
+  }
+  const tmp = `${target}.${process.pid}.tmp`;
+  try {
+    rmSync(tmp, { force: true });
+    writeFileSync(tmp, text, { flag: "wx", mode });
+    if (mode !== undefined && process.platform !== "win32") chmodSync(tmp, mode);
+    renameSync(tmp, target);
+  } catch (e) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* a folder at that name: left alone */
+    }
+    if (FULL_DISK.has(e.code)) throw e;
+    writeFileSync(file, text);
+  }
+}
+
 // 4. Point settings.json statusLine at the custom formatter; its other fields (padding, ...) stay.
 //    A settings.json that already says exactly this is neither backed up nor written.
 const objectOr = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
@@ -319,7 +370,7 @@ function pointStatusLine() {
   const command = `node "${cmdPath}"`;
   const prior = objectOr(settings.statusLine);
   if (typeof prior.command === "string" && prior.command && prior.command !== command) {
-    log(`[..] statusLine ran ${JSON.stringify(prior.command)}; it now runs the custom HUD (the old value is in the backup)`);
+    log(`[..] statusLine ran ${shown(JSON.stringify(prior.command))}; it now runs the custom HUD (the old value is in the backup)`);
   }
   settings.statusLine = { ...prior, type: "command", command };
   const next = JSON.stringify(settings, null, 2) + "\n";
@@ -332,7 +383,7 @@ function pointStatusLine() {
     copyFileSync(settingsPath, backup); // the original bytes and mode
     log("[ok] Backed up settings.json -> " + backup);
   }
-  writeFileSync(settingsPath, next);
+  writeSettings(settingsPath, next);
   log("[ok] statusLine -> " + command);
 }
 
@@ -345,10 +396,7 @@ function pointStatusLine() {
 const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 25000;
 const BLAME =
   "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
-// Characters that could act on a terminal or pass for a line of their own are shown as "?", as
-// omc-patch.mjs (UNSAFE_CH) shows file values in output an agent reads.
-const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
-const clip = (s, n = 200) => String(s).replace(UNSAFE, "?").slice(0, n);
+const clip = (s, n = 200) => shown(s).slice(0, n);
 // No input, and the config folder as working folder: OMC's loader looks in the working folder's
 // node_modules and runs git from it, and Windows looks there first for a bare program name, so the
 // folder the installer was started in (a project, say) must not be it.

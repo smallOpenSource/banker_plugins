@@ -27,7 +27,8 @@
  * refreshes it when this version's module differs; `status` says when it does.
  * When the wrapper file itself is a symlink, the copy goes beside the file it
  * points at, where wrapper v4 looks first. A copy folder (payload-mon/) that is
- * itself a link is neither written nor emptied through: `on` refuses it.
+ * itself a link is neither written nor emptied through: `on` refuses it, and
+ * also refuses (taking its copy back) when the folder changes while it writes.
  *
  * The block takes the ctx line's line ending, so a CRLF wrapper stays CRLF, and
  * a block whose line endings an editor rewrote still counts as on. A wrapper
@@ -225,6 +226,26 @@ function writeFresh(file, data, mode) {
   }
 }
 
+// The copy folder's identity, to tell afterwards whether it is still the folder that was written into.
+const folderStamp = (dir) => {
+  const s = lstatSync(dir);
+  return `${s.dev}:${s.ino}:${s.isSymbolicLink()}`;
+};
+// After the write: when the copy folder is no longer the one stamped before (another program swapped it,
+// for a link say), the copy went wherever it now leads. It is taken back from there only when it is ours
+// byte for byte, and the write is refused. Node has no openat, so a swap after this check goes unseen.
+function checkFolder(copy, stamp, data) {
+  const dir = dirname(copy);
+  if (folderStamp(dir) === stamp) return;
+  try {
+    const landed = join(realpathSync(dir), basename(copy));
+    if (readFileSync(landed).equals(data)) rmSync(landed, { force: true });
+  } catch {
+    /* nothing there to take back */
+  }
+  throw new Error(`사본 폴더가 쓰는 동안 바뀌었습니다: ${dir}`);
+}
+
 // Brings the copy up to this version's module; true when it had to write. The
 // statusline imports it on every refresh, so no other account may change it
 // (reading it is harmless). When the write fails, a folder made here is taken
@@ -234,9 +255,15 @@ function syncModule(o) {
   const copy = moduleCopy(o.hudFile);
   if (linkedFolder(copy)) throw new Error(`사본 폴더가 링크입니다: ${dirname(copy)}`);
   if (copyState(o) === "current") return false;
+  // Read first: a module that cannot be read leaves no folder behind.
+  const data = readFileSync(o.moduleSource);
   const made = mkdirSync(dirname(copy), { recursive: true, mode: 0o755 }) !== undefined;
   try {
-    writeFresh(copy, readFileSync(o.moduleSource), 0o644);
+    const stamp = folderStamp(dirname(copy));
+    // From the same lstat: a folder that became a link since the check above is refused before the write.
+    if (stamp.endsWith(":true")) throw new Error(`사본 폴더가 링크입니다: ${dirname(copy)}`);
+    writeFresh(copy, data, 0o644);
+    checkFolder(copy, stamp, data);
   } catch (e) {
     if (made) {
       try {

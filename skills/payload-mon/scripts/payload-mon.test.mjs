@@ -29,7 +29,23 @@ const root = mkdtempSync(join(tmpdir(), "payload-mon-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
 // Ownership and mode-bit checks, and links made without privileges, are POSIX matters.
-const posixOnly = { skip: process.platform === "win32" && "Windows has no uid or POSIX mode bits" };
+const posixModes = { skip: process.platform === "win32" && "Windows has no uid or POSIX mode bits" };
+// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
+// tests that make one run only where this account can.
+const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+const canLinkFiles = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
+  try {
+    writeFileSync(join(probe, "a"), "");
+    symlinkSync(join(probe, "a"), join(probe, "b"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+const fileLinks = { skip: !canLinkFiles && "this account cannot make file links" };
 
 // Runnable stand-ins for omc-hud-custom.mjs: the lines the block relies on, laid
 // out and indented as in the two real wrappers around omc-hud.mjs.
@@ -399,7 +415,7 @@ function linkedWrapper(hudText = HUD_V4, inLink = false) {
   return linked;
 }
 
-test("on puts the module copy next to the file a linked wrapper points at, where wrapper v4 looks", posixOnly, () => {
+test("on puts the module copy next to the file a linked wrapper points at, where wrapper v4 looks", fileLinks, () => {
   const c = linkedWrapper();
   const res = turnOn(c);
   assert.equal(res.ok, true, res.message);
@@ -409,7 +425,7 @@ test("on puts the module copy next to the file a linked wrapper points at, where
   assert.ok(readFileSync(c.hudFile, "utf8").includes(pathToFileURL(copy).href), "the block imports that copy");
 });
 
-test("a linked wrapper turned on by 0.20.1 shows as incomplete, on moves the copy and off clears both places", posixOnly, () => {
+test("a linked wrapper turned on by 0.20.1 shows as incomplete, on moves the copy and off clears both places", fileLinks, () => {
   const c = linkedWrapper(HUD_V4, true);
   assert.ok(existsSync(join(c.link, "payload-mon", "payload-size.mjs")), "0.20.1's copy beside the link");
   assert.match(status(c).message, /불완전하거나 오래됨/);
@@ -422,13 +438,13 @@ test("a linked wrapper turned on by 0.20.1 shows as incomplete, on moves the cop
   assert.equal(existsSync(join(c.link, "payload-mon")), false);
 });
 
-test("a wrapper reached through a linked folder keeps its copy at the configured path", posixOnly, () => {
+test("a wrapper reached through a linked folder keeps its copy at the configured path", () => {
   const c = setup();
   const real = join(c.dir, "real");
   mkdirSync(real);
   renameSync(c.hudFile, join(real, "omc-hud-custom.mjs"));
   const linkdir = join(c.dir, "linkdir");
-  symlinkSync(real, linkdir, "dir");
+  linkDir(real, linkdir);
   const viaLink = { ...c, hudFile: join(linkdir, "omc-hud-custom.mjs") };
   assert.equal(turnOn(viaLink).ok, true);
   const url = pathToFileURL(join(linkdir, "payload-mon", "payload-size.mjs")).href;
@@ -708,7 +724,7 @@ test("an unexpected failure partway exits 2, points at status and keeps the wrap
   assert.deepEqual(readdirSync(c.dir).filter((name) => name.endsWith(".tmp")), [], "the failed write's temp file is gone");
 });
 
-test("off leaves alone a cache folder this account does not control", posixOnly, () => {
+test("off leaves alone a cache folder this account does not control", posixModes, () => {
   const c = setup();
   turnOn(c);
   mkdirSync(c.cacheDir);
@@ -719,14 +735,14 @@ test("off leaves alone a cache folder this account does not control", posixOnly,
   assert.equal(readFileSync(c.hudFile, "utf8"), HUD);
 });
 
-test("no other account can change the module copy the statusline imports", posixOnly, () => {
+test("no other account can change the module copy the statusline imports", posixModes, () => {
   const c = setup();
   turnOn(c);
   assert.equal(statSync(copyOf(c)).mode & 0o022, 0, "copy writable by group or others");
   assert.equal(statSync(dirname(copyOf(c))).mode & 0o022, 0, "copy's folder writable by group or others");
 });
 
-test("on replaces a link planted at the copy's name instead of writing through it", posixOnly, () => {
+test("on replaces a link planted at the copy's name instead of writing through it", fileLinks, () => {
   const c = setup();
   mkdirSync(dirname(copyOf(c)), { mode: 0o700 });
   const victim = join(c.dir, "victim.txt");
@@ -738,7 +754,7 @@ test("on replaces a link planted at the copy's name instead of writing through i
   assert.deepEqual(readFileSync(copyOf(c)), readFileSync(MODULE));
 });
 
-test("the backup is written fresh, never through a link planted at its name", posixOnly, () => {
+test("the backup is written fresh, never through a link planted at its name", fileLinks, () => {
   const c = setup();
   const victim = join(c.dir, "victim.txt");
   writeFileSync(victim, "keep me");
@@ -841,11 +857,11 @@ test("on and off finish quickly on a 3MB wrapper of closing then opening markers
   }
 });
 
-test("on refuses to write the module copy into a copy folder that is a link, and leaves the wrapper alone", posixOnly, () => {
+test("on refuses to write the module copy into a copy folder that is a link, and leaves the wrapper alone", () => {
   const c = setup(HUD_V4);
   const outside = join(c.dir, "outside");
   mkdirSync(outside);
-  symlinkSync(outside, join(c.dir, "payload-mon"));
+  linkDir(outside, join(c.dir, "payload-mon"));
   const before = readFileSync(c.hudFile);
   const on = turnOn(c);
   assert.equal(on.ok, false, on.message);
@@ -854,37 +870,149 @@ test("on refuses to write the module copy into a copy folder that is a link, and
   assert.equal(existsSync(join(outside, "payload-size.mjs")), false);
 });
 
-test("off does not delete through a copy folder that is a link", posixOnly, () => {
+test("off does not delete through a copy folder that is a link", () => {
   const c = setup(HUD_V4);
   assert.equal(turnOn(c).ok, true);
   const outside = join(c.dir, "outside");
   mkdirSync(outside);
   writeFileSync(join(outside, "payload-size.mjs"), "// a file of someone else's\n");
   rmSync(join(c.dir, "payload-mon"), { recursive: true });
-  symlinkSync(outside, join(c.dir, "payload-mon"));
+  linkDir(outside, join(c.dir, "payload-mon"));
   const off = turnOff(c);
   assert.equal(off.ok, true, off.message);
   assert.ok(existsSync(join(outside, "payload-size.mjs")));
   assert.match(off.message, /사본 폴더가 링크라 모듈 사본은 지우지 않았습니다/);
 });
 
-test("status names a copy folder that is a link instead of pointing at on", posixOnly, () => {
+test("status names a copy folder that is a link instead of pointing at on", () => {
   const c = setup(HUD_V4);
   assert.equal(turnOn(c).ok, true);
   const outside = join(c.dir, "outside");
   mkdirSync(outside);
   rmSync(join(c.dir, "payload-mon"), { recursive: true });
-  symlinkSync(outside, join(c.dir, "payload-mon"));
+  linkDir(outside, join(c.dir, "payload-mon"));
   const shown = status(c).message;
   assert.match(shown, /사본 폴더가 링크/);
   assert.doesNotMatch(shown, /on 으로 복구/);
 });
 
-test("off on a wrapper link that leads nowhere says there is nothing to turn off", posixOnly, () => {
+test("off on a wrapper link that leads nowhere says there is nothing to turn off", fileLinks, () => {
   const c = setup(HUD_V4);
   rmSync(c.hudFile);
   symlinkSync(join(c.dir, "gone.mjs"), c.hudFile);
   const off = turnOff(c);
   assert.equal(off.ok, true, off.message);
   assert.match(off.message, /HUD 래퍼가 없어 끌 것이 없습니다/);
+});
+
+// A preload for the CLI that plays a second program racing payload-mon: right before payload-mon writes
+// its temporary copy, the copy folder becomes a link to `outside`. With `after`, that program also puts
+// its own file there once payload-mon has renamed its copy in.
+function swapPreload(outside, after = null) {
+  const file = join(root, `swap-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs, { rmSync, symlinkSync, writeFileSync as write0 } from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'import { dirname } from "node:path";',
+    "const write = fs.writeFileSync;",
+    "const rename = fs.renameSync;",
+    "let swapped = false;",
+    "fs.writeFileSync = function (p, ...rest) {",
+    "  if (!swapped && typeof p === \"string\" && /payload-mon[\\\\/]payload-size\\.mjs\\.\\d+\\.tmp$/.test(p)) {",
+    "    swapped = true;",
+    "    rmSync(dirname(p), { recursive: true, force: true });",
+    `    symlinkSync(${JSON.stringify(outside)}, dirname(p), process.platform === "win32" ? "junction" : "dir");`,
+    "  }",
+    "  return write.call(this, p, ...rest);",
+    "};",
+    "fs.renameSync = function (from, to) {",
+    "  rename.call(this, from, to);",
+    after === null ? "" : `  if (swapped && /payload-size\\.mjs$/.test(to)) write0(to, ${JSON.stringify(after)});`,
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+const onWith = (c, preload) =>
+  spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, CLI, "on"], { encoding: "utf8", env: cliEnv(c) });
+
+test("on refuses and takes back its copy when the copy folder turns into a link while it writes", () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  const before = readFileSync(c.hudFile);
+  const r = onWith(c, swapPreload(outside));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 쓰는 동안 바뀌었습니다/);
+  assert.equal(existsSync(join(outside, "payload-size.mjs")), false, "the copy written through the link was taken back");
+  assert.ok(readFileSync(c.hudFile).equals(before));
+});
+
+test("the take-back leaves a different file in the swapped folder alone", () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  const r = onWith(c, swapPreload(outside, "// a file of someone else's\n"));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 쓰는 동안 바뀌었습니다/);
+  assert.equal(readFileSync(join(outside, "payload-size.mjs"), "utf8"), "// a file of someone else's\n");
+});
+
+// Another racing program: right after payload-mon makes the copy folder (before it stamps the folder and
+// writes the copy), the folder becomes a link to `outside`.
+function mkdirSwapPreload(outside) {
+  const file = join(root, `mkdir-swap-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs, { rmSync, symlinkSync } from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const mkdir = fs.mkdirSync;",
+    "let swapped = false;",
+    "fs.mkdirSync = function (p, ...rest) {",
+    "  const made = mkdir.call(this, p, ...rest);",
+    "  if (!swapped && typeof p === \"string\" && /[\\\\/]payload-mon$/.test(p)) {",
+    "    swapped = true;",
+    "    rmSync(p, { recursive: true, force: true });",
+    `    symlinkSync(${JSON.stringify(outside)}, p, process.platform === "win32" ? "junction" : "dir");`,
+    "  }",
+    "  return made;",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+
+test("on refuses a copy folder that turns into a link right after it is made, before the copy is written", () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  const before = readFileSync(c.hudFile);
+  const r = onWith(c, mkdirSwapPreload(outside));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 링크입니다/);
+  assert.deepEqual(readdirSync(outside), [], "nothing was written through the link");
+  assert.ok(readFileSync(c.hudFile).equals(before));
+});
+
+test("on refuses a copy folder that became a link even when the copy in it is current", () => {
+  const c = setup(HUD_V4);
+  assert.equal(turnOn(c).ok, true);
+  const outside = join(c.dir, "outside");
+  renameSync(join(c.dir, "payload-mon"), outside);
+  linkDir(outside, join(c.dir, "payload-mon"));
+  const on = turnOn(c);
+  assert.equal(on.ok, false, on.message);
+  assert.match(on.message, /사본 폴더가 링크입니다/);
+});
+
+test("off does not delete through the old copy folder beside a linked wrapper when that folder is a link", fileLinks, () => {
+  const c = linkedWrapper();
+  assert.equal(turnOn(c).ok, true);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "payload-size.mjs"), "// a file of someone else's\n");
+  linkDir(outside, join(c.link, "payload-mon"));
+  assert.equal(turnOff(c).ok, true);
+  assert.ok(existsSync(join(outside, "payload-size.mjs")));
 });

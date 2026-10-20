@@ -204,8 +204,22 @@ test("래퍼에 절대경로가 없음", () => {
   assert.doesNotMatch(WRAPPER.toString("utf8"), /\/home\/|\/Users\/|(?<![A-Za-z0-9])[A-Za-z]:[\\/]/);
 });
 
-// Links made without privileges are a POSIX matter.
-const posixOnly = { skip: process.platform === "win32" && "Windows needs privileges for symlinks" };
+// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
+// tests that make one run only where this account can.
+const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+const canLinkFiles = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
+  try {
+    writeFileSync(join(probe, "a"), "");
+    symlinkSync(join(probe, "a"), join(probe, "b"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+const fileLinks = { skip: !canLinkFiles && "this account cannot make file links" };
 const MB9 = 9 * 1024 * 1024;
 // real/ holds the wrapper, the loader and payload-mon's copy; link/ holds links to the wrapper and the
 // loader, as when a dotfiles setup links both files into hud/.
@@ -219,7 +233,7 @@ function linkedLayout() {
   return { real, link };
 }
 
-test("래퍼 파일만 다른 폴더로 링크해도 링크 옆의 로더로 그림", posixOnly, () => {
+test("래퍼 파일만 다른 폴더로 링크해도 링크 옆의 로더로 그림", fileLinks, () => {
   const hud = layHud(join(root, `r-${++seq}`), { omc: omcOut() });
   const dot = join(hud, "..", "dot");
   mkdirSync(dot);
@@ -228,13 +242,13 @@ test("래퍼 파일만 다른 폴더로 링크해도 링크 옆의 로더로 그
   assert.equal(firstLine(renderWith({ hud })), firstLine(renderWith()));
 });
 
-test("--preserve-symlinks-main 이어도 링크가 가리키는 파일 옆의 PL 사본을 씀", posixOnly, () => {
+test("--preserve-symlinks-main 이어도 링크가 가리키는 파일 옆의 PL 사본을 씀", fileLinks, () => {
   const { link } = linkedLayout();
   const out = renderWith({ hud: link, payloadBytes: MB9, env: { NODE_OPTIONS: "--preserve-symlinks-main" } });
   assert.match(firstLine(out), /PL:9\.0M/);
 });
 
-test("링크 옆에 남은 옛 사본보다 링크가 가리키는 파일 옆의 사본을 씀", posixOnly, () => {
+test("링크 옆에 남은 옛 사본보다 링크가 가리키는 파일 옆의 사본을 씀", fileLinks, () => {
   const { link } = linkedLayout();
   mkdirSync(join(link, "payload-mon"), { recursive: true });
   writeFileSync(join(link, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD.replace("Number(process.env.PL_BYTES)", "1"));
@@ -253,4 +267,82 @@ test("다른 스크립트가 불러와도 이 파일 옆의 로더를 씀", () =
   });
   assert.doesNotMatch(r.stdout, /DECOY/);
   assert.equal(firstLine(r.stdout), firstLine(renderWith()));
+});
+
+// Renders the wrapper at `file` as the test laid it out (no layHud), from `cwd` when given.
+function renderAt(file, { stdin = { effort: { level: "high" } }, env = {}, cwd } = {}) {
+  const dir = join(root, `r-${++seq}`);
+  mkdirSync(dir, { recursive: true });
+  const r = spawnSync(process.execPath, [file], {
+    input: JSON.stringify(stdin), env: renderEnv(dir, env), encoding: "utf8", timeout: 30000, cwd,
+  });
+  return r.stdout;
+}
+
+test("명령 경로 옆의 omc-hud.mjs 가 폴더면 실제 파일 옆의 로더를 씀", fileLinks, () => {
+  const { link } = linkedLayout();
+  rmSync(join(link, "omc-hud.mjs"));
+  mkdirSync(join(link, "omc-hud.mjs"));
+  assert.equal(firstLine(renderAt(join(link, "omc-hud-custom.mjs"))), firstLine(renderWith()));
+});
+
+test("다른 스크립트가 링크 경로로 불러와도 설정 폴더 hud 의 로더를 씀", fileLinks, () => {
+  const dir = join(root, `r-${++seq}`);
+  const real = join(dir, "real");
+  mkdirSync(real, { recursive: true });
+  writeFileSync(join(real, "omc-hud-custom.mjs"), WRAPPER);
+  const env = renderEnv(dir, {});
+  const cfgHud = join(env.CLAUDE_CONFIG_DIR, "hud");
+  mkdirSync(cfgHud, { recursive: true });
+  writeFileSync(join(cfgHud, "omc-hud.mjs"), FAKE_OMC);
+  writeFileSync(join(cfgHud, "omc-out.txt"), omcOut());
+  symlinkSync(join(real, "omc-hud-custom.mjs"), join(cfgHud, "omc-hud-custom.mjs"));
+  const outer = join(dir, "outer");
+  mkdirSync(outer);
+  writeFileSync(join(outer, "run.mjs"), `await import(${JSON.stringify(pathToFileURL(join(cfgHud, "omc-hud-custom.mjs")).href)});\n`);
+  const r = spawnSync(process.execPath, [join(outer, "run.mjs")], {
+    input: JSON.stringify({ effort: { level: "high" } }), env, encoding: "utf8", timeout: 30000,
+  });
+  assert.equal(firstLine(r.stdout), firstLine(renderWith()));
+});
+
+// A project folder holding a config folder named relatively, `rel`, with its own account.
+function relativeConfig() {
+  const dir = join(root, `r-${++seq}`);
+  const hud = layHud(dir, { omc: omcOut() });
+  const proj = join(dir, "proj");
+  mkdirSync(join(proj, "rel"), { recursive: true });
+  writeFileSync(join(proj, "rel", ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "relacct@example.com" } }));
+  const elsewhere = join(dir, "elsewhere");
+  mkdirSync(elsewhere);
+  return { wrapper: join(hud, "omc-hud-custom.mjs"), proj, elsewhere };
+}
+
+test("상대경로 CLAUDE_CONFIG_DIR 는 Claude Code 를 시작한 폴더 기준으로 계정을 읽음", () => {
+  const { wrapper, proj, elsewhere } = relativeConfig();
+  const out = renderAt(wrapper, {
+    stdin: { effort: { level: "high" }, workspace: { project_dir: proj } }, env: { CLAUDE_CONFIG_DIR: "rel" }, cwd: elsewhere,
+  });
+  assert.match(firstLine(out), /relacct/);
+});
+
+test("상대경로 CLAUDE_CONFIG_DIR 인데 project_dir 이 없으면 작업 폴더 기준", () => {
+  const { wrapper, proj } = relativeConfig();
+  assert.match(firstLine(renderAt(wrapper, { env: { CLAUDE_CONFIG_DIR: "rel" }, cwd: proj })), /relacct/);
+});
+
+test("명령 경로와 실제 파일 옆에 로더가 둘 다 있으면 명령 경로 옆 것을 씀", fileLinks, () => {
+  const { link } = linkedLayout();
+  rmSync(join(link, "omc-hud.mjs"));
+  writeFileSync(join(link, "omc-hud.mjs"), FAKE_OMC);
+  writeFileSync(join(link, "omc-out.txt"), omcOut().replace(PATH_LINE, "/home/u/linkside | branch:main"));
+  assert.match(firstLine(renderAt(join(link, "omc-hud-custom.mjs"))), /\/home\/u\/linkside/);
+});
+
+test("사본이 명령 경로 옆에만 있어도 PL 칸이 보임", fileLinks, () => {
+  const { real, link } = linkedLayout();
+  rmSync(join(real, "payload-mon", "payload-size.mjs"));
+  mkdirSync(join(link, "payload-mon"), { recursive: true });
+  writeFileSync(join(link, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD);
+  assert.match(firstLine(renderWith({ hud: link, payloadBytes: MB9 })), /PL:9\.0M/);
 });
