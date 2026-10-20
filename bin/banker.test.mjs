@@ -77,6 +77,15 @@ test('status: 업데이트-체크 캐시 반영 (마지막 체크 시각 · 캐�
   assert.match(out, /업데이트 있음/);
 }));
 
+test('status: 지금보다 뒤의 시도 시각은 하루를 쉰다고 하지 않고 다음 세션에 다시 시도한다고 한다', () => withXdg((dir) => {
+  const triedAt = Date.now() + 10 * 24 * 3600000;                           // 시계를 되돌린 PC
+  writeUpdateCacheFixture(dir, { triedAt });
+  const { out, code } = run(['telemetry', 'status'], dir);
+  assert.equal(code, 0);
+  assert.match(out, /마지막 시도: [^\n]*\(실패\. 시각이 지금보다 뒤라 다음 세션 시작에 다시 시도합니다\)/, out);
+  assert.doesNotMatch(out, /그 뒤 24시간은 다시 시도하지 않습니다/, out);
+}));
+
 test('status: 마지막으로 실패한 시도는 마지막 체크와 따로 보인다', () => withXdg((dir) => {
   const checkedAt = 1700000000000;
   const triedAt = checkedAt + 3600000;

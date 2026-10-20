@@ -379,11 +379,12 @@ function readUpdateCacheFile(tc) {
   }
 }
 
-// 마지막 확인 시각, 그리고 그 뒤에 실패한 시도가 있으면 그 시각.
+// 마지막 확인 시각, 그리고 그 뒤에 실패한 시도가 있으면 그 시각. 지금보다 뒤의 시도 시각은 쉼으로 세지 않는다(updateCheckDue).
 function printLastChecks(cache) {
   log(`  마지막 체크: ${isoTime(cache.checkedAt) || '없음'}`);
   if (isoTime(cache.triedAt) && !(cache.triedAt <= cache.checkedAt)) {
-    log(`  마지막 시도: ${isoTime(cache.triedAt)} (실패. 그 뒤 24시간은 다시 시도하지 않습니다)`);
+    const rest = cache.triedAt > Date.now() ? '시각이 지금보다 뒤라 다음 세션 시작에 다시 시도합니다' : '그 뒤 24시간은 다시 시도하지 않습니다';
+    log(`  마지막 시도: ${isoTime(cache.triedAt)} (실패. ${rest})`);
   }
 }
 

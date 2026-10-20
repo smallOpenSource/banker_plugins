@@ -45,9 +45,10 @@ export const UPDATE_THROTTLE_MS = 24 * 60 * 60 * 1000;
 
 // 업데이트 확인을 다시 할 때인지: 마지막 성공(checkedAt)과 마지막 실패한 시도(triedAt) 모두에서 하루가 지났을 때.
 // 그래서 네트워크에 닿지 못한 확인도 하루를 쉰다(세션마다 다시 시도하지 않음). 숫자가 아닌 시각은 없는 것으로 본다.
+// 지금보다 뒤의 시각(적은 뒤 시계가 되돌려짐)은 쉼으로 세지 않는다. 그 시각이 올 때까지 확인이 멈추지 않게.
 export function updateCheckDue(cache, now = Date.now()) {
   const times = [cache?.checkedAt, cache?.triedAt].filter((t) => typeof t === 'number' && Number.isFinite(t));
-  return times.every((t) => now - t >= UPDATE_THROTTLE_MS);
+  return times.every((t) => t > now || now - t >= UPDATE_THROTTLE_MS);
 }
 // 최신 버전 조회용 공개 npm 레지스트리 URL. 본문 .version 을 직접 반환한다(실측 확정).
 export const NPM_LATEST_URL = 'https://registry.npmjs.org/@kaydash9999/banker-plugins/latest';
