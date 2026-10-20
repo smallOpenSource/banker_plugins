@@ -151,8 +151,8 @@ try {
     ['skills/audit-security/SKILL.md', '<requirements>.txt', 'the same name in a command template'],
     ['skills/rfp-author/references/research-provenance.md', '/tmp/rfp_pdf.txt', 'a record of past research, not a step'],
     ['skills/rfp-author/references/research-provenance.md', '/tmp/nist6001.txt', 'a record of past research, not a step'],
-    ['skills/lineage/lineage.py', '.txt', 'reads a summary cached by lineage 3.0.2 or earlier; writes .md'],
-    ['skills/lineage/SKILL.md', '.txt', 'says the cache of 3.0.2 or earlier is still read'],
+    ['skills/lineage/lineage.py', '.txt', 'reads the .txt name lineage 3.0.2 and earlier wrote (none matches since summarizer version 4); writes .md'],
+    ['skills/lineage/SKILL.md', '.txt', 'names the .txt of lineage 3.0.2 and earlier, not used since summarizer version 4'],
     ['skills/ultra-chain/SKILL.md', '05-baseline.txt', 'the baseline of a run begun before the change, read when resuming'],
     ['commands/front-qa.md', 'docs/note.txt', 'the old default spec, read only when docs/note.md is missing'],
     ['commands/front-qa.md', 'progress.txt', "OMC's checkpoint file, named by OMC"],
@@ -371,13 +371,16 @@ try {
      && /`idx` 가 든 객체가 하나라도 있는 JSON 배열/.test(linSkill)
      && /같은 파트를 두 번 다시 검토해도 턴이 빠지거나 배열이 없으면 더 띄우지 않는다/.test(linSkill) && /그 파트의 결정 파일을 쓰지 않는다/.test(linSkill)
      && /`reviewers dropped N typed user turn\(s\)`/.test(linSkill)
+     && /`!` 명령 뒤 하네스가 쓴 출력 턴\(`<bash-stdout>` 블록 뒤 `<bash-stderr>` 블록, 실패하면 `<bash-stderr>` 블록 하나만 있는 턴\. 가리기 전 글로 본다\)은 세지 않는다/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.8$/m.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.9$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
      && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && !/공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
      && /검토자 패턴은 모든 페이지\(기본 흐름과 `--rulebase`\)에도 건다/.test(linSkill) && /비밀을 가린 턴은 2\.x 와 다를 수 있다/.test(linSkill)
+     && !/비밀이 없는 턴에서 2\.x 와 같다/.test(linSkill) && !/\(2\.x 동작, 모델 호출 없음\)/.test(linSkill)
+     && !/출력 경로를 페이지처럼 그대로 둔다/.test(linSkill)
      && /규칙 요약은 가린 본문에서 자른다/.test(linSkill) && /값이 `\/`, `~`, `\$` 로 시작하는 password 값/.test(linSkill)
      && !/페이지는 이 패턴을 쓰지 않으므로/.test(linSkill)
      && /`the page still holds secret-like text \(<패턴>=N\)` WARN 을 내면, 패턴 이름과 수를 사용자에게 알리고 공유하기 전에 페이지를 확인하라고 말한다/.test(linSkill)
@@ -409,7 +412,16 @@ try {
       { cwd: path.join(root, 'skills', 'lineage'), encoding: 'utf8',
         env: { ...process.env, HOME: home, USERPROFILE: home, PYTHONDONTWRITEBYTECODE: '1' } });
     const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
-    ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${tail})`);
+    // the failing tests by name (Class.test): unittest writes `FAIL: test (module.Class)` before 3.11 and
+    // `FAIL: test (module.Class.test)` from 3.11 on
+    const failed = `${pyRes.stdout || ''}${pyRes.stderr || ''}`.split(/\r?\n/)
+      .map((l) => /^(?:FAIL|ERROR): (\S+) \((\S+)\)$/.exec(l)).filter(Boolean)
+      .map(([, name, where]) => {
+        const parts = where.split('.');
+        if (parts[parts.length - 1] === name) parts.pop();
+        return `${parts.pop()}.${name}`;
+      }).slice(0, 5);
+    ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${failed.length ? failed.join(', ') : tail})`);
   } else {
     console.log('SKIP: no python>=3.7 found — lineage.py suite not run (EL8 default python3=3.6 exits at import)');
   }

@@ -1550,10 +1550,10 @@ class TestLlmReviewHardening(_ReviewCase):
                 + " -u\n" + "=" * 50000 + " --user" + "=" * 50000 + " -u " + "1" * 50000
                 + " " + '-u"' * 30000 + " " + '"-u", "' * 20000 + " " + 'authorization", ' * 20000
                 + " " + " -abcdefu" * 20000 + " " + 'authorization"]' * 20000)
-        start = time.monotonic()
+        start = time.process_time()
         for _, pat in L.REVIEW_SECRET_PATTERNS:
             pat.sub("[R]", text)
-        self.assertLess(time.monotonic() - start, 5)
+        self.assertLess(time.process_time() - start, 5)
 
     def test_a_rule_summary_cut_through_a_secret_leaves_no_half_for_the_reviewer(self):
         token = "gh" + "p_" + "Q8z" * 12          # cut at 58 characters, no pattern matches the half
@@ -1956,9 +1956,9 @@ class TestLlmReviewHardening(_ReviewCase):
                   '"-xu","a', '"--user","a', "'-xu','a", "'--user','a", '"-u","', '","-u',
                   bs + '"-u' + bs + '",' + bs + '"')
         for piece in pieces:
-            start = time.monotonic()
+            start = time.process_time()
             pat.sub("[R]", piece * 40000)
-            self.assertLess(time.monotonic() - start, 2, repr(piece))
+            self.assertLess(time.process_time() - start, 2, repr(piece))
 
     def test_a_quote_of_the_parts_turns_is_not_read_as_decisions(self):
         answer = [{"id": "a%d" % k, "keep": True, "summary": "요약 %d" % k} for k in range(2)]
@@ -1989,11 +1989,11 @@ class TestLlmReviewHardening(_ReviewCase):
         dec = os.path.join(self.d, "review.part-1.decisions.json")
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here is my answer: " + "[" * 100000)
-        start = time.monotonic()
+        start = time.process_time()
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "o.html"), "--skip-reviewer"])
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
-        self.assertLess(time.monotonic() - start, 5, "a run of brackets is tried once, not at each one")
+        self.assertLess(time.process_time() - start, 5, "a run of brackets is tried once, not at each one")
         # deep enough that no Python's json parses it whole (3.12 reads 1,200 levels, 3.11 does not)
         self.assertEqual(L._decisions_text("[" * 100000 + "]" * 100000), [], "nested empty lists hold an empty one")
 
@@ -2188,12 +2188,12 @@ class TestLlmReviewGateReruns(_ReviewCase):
         dec = os.path.join(self.d, "dec-nested.json")
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here: " + '[{"id":"a"},' * 25000)
-        start = time.monotonic()
+        start = time.process_time()
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"),
                                   "--skip-reviewer", "--decisions", dec])
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
-        self.assertLess(time.monotonic() - start, 5)
+        self.assertLess(time.process_time() - start, 5)
 
     def test_a_decisions_file_over_the_size_cap_is_not_read(self):
         # a good answer padded past the cap: only the size check refuses it
@@ -2238,6 +2238,41 @@ class TestLlmReviewGateReruns(_ReviewCase):
         (rc, _text), err = _quiet(self._apply, [{"id": "u1", "keep": False}, {"id": "m1", "keep": False}])
         self.assertEqual(rc, 0)
         self.assertIn("reviewers dropped 1 typed user turn(s): u1", err)
+
+    def test_the_output_claude_code_writes_after_a_bang_command_is_not_a_typed_turn(self):
+        # Claude Code writes a `!` command's output as a user record with no isMeta: the user typed only the command
+        typed = _rec("user", "<bash-input>ls</bash-input>", ts="2026-08-09T10:03:00Z", uuid="b1")
+        out = _rec("user", "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr>",
+                   ts="2026-08-09T10:03:01Z", uuid="o1")
+        failed = _rec("user", "<bash-stderr>Command failed: exit 2</bash-stderr>\n", ts="2026-08-09T10:03:30Z",
+                      uuid="o2")
+        asked = _rec("user", "<bash-stdout>total 0</bash-stdout> 이 출력은 무슨 뜻인가요", ts="2026-08-09T10:04:00Z",
+                     uuid="p1")                   # words after the blocks are the user's
+        self._write(self._records() + [typed, out, failed, asked])
+        _quiet(self._emit)
+        dropped = ("u1", "a1", "b1", "o1", "o2", "p1")          # a1 is the assistant's: never typed by the user
+        (rc, _text), err = _quiet(self._apply, [{"id": i, "keep": False} for i in dropped])
+        self.assertEqual(rc, 0)
+        self.assertIn("reviewers dropped 3 typed user turn(s): u1, b1, p1;", err)
+
+    def test_only_the_two_records_claude_code_writes_for_a_bang_command_are_left_uncounted(self):
+        # judged on the text before redaction: a hidden value at the end of the output takes the closing tags with it
+        shapes = {"o3": "<bash-stdout>pass" "word: " + "Abc12345" + "xyz</bash-stdout><bash-stderr></bash-stderr>",
+                  "q1": "이 출력은 무슨 뜻인가요 <bash-stdout>total 0</bash-stdout>",
+                  "q2": "<bash-stdout>total 0</bash-stdout> 무슨 뜻인가요 <bash-stderr></bash-stderr>",
+                  "q3": "<bash-stdout>total 0</bash-stdout>",               # Claude Code always adds the stderr block
+                  "q4": "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr> 이건 무슨 뜻인가요",
+                  "q5": "이건 무슨 뜻인가요 <bash-stderr>Command failed: exit 2</bash-stderr>",
+                  "q6": "<bash-stderr>Command failed: exit 2</bash-stderr> 이건 무슨 뜻인가요"}
+        recs = [_rec("user", text, ts="2026-08-09T10:0%d:00Z" % (3 + k), uuid=i)
+                for k, (i, text) in enumerate(shapes.items())]
+        self._write(self._records() + recs)
+        _quiet(self._emit)
+        with open(os.path.join(self.d, "review.part-1.json"), encoding="utf-8") as f:
+            self.assertFalse(any("bang_output" in x for x in json.load(f)["turns"]), "the reviewers read no new field")
+        (rc, _text), err = _quiet(self._apply, [{"id": i, "keep": False} for i in shapes])
+        self.assertEqual(rc, 0)
+        self.assertIn("reviewers dropped 6 typed user turn(s): q1, q2, q3, q4, q5, q6;", err)
 
 
 class TestPatternsForPages(_ReviewCase):
@@ -2295,9 +2330,9 @@ class TestPatternsForPages(_ReviewCase):
         pat = dict(L.REVIEW_SECRET_PATTERNS)["PasswordBare"]
         for piece in ("Password=****;", "pwd=ab****;", "password:****,", "암호=****&", "password=*****",
                       "password=||||||", "pwd=", "암호=", "password:e.x,", "password ", "$password=abcdef", "비밀 번호:"):
-            start = time.monotonic()
+            start = time.process_time()
             pat.sub("[R]", piece * 40000 + "****")
-            self.assertLess(time.monotonic() - start, 2, repr(piece))
+            self.assertLess(time.process_time() - start, 2, repr(piece))
 
     def test_extra_keywords_leave_marker_names_whole(self):
         red, counts = L.redact("[REDACTED:CurlUser] 와 user 와 [REDACTED]", extra="user,redacted")
@@ -2440,9 +2475,9 @@ class TestPageRedaction(_ReviewCase):
             recs.append(self._asst("실행했습니다.\n\n%s -u svc%d:%s https://x 로 확인했습니다." % (c, k, self.PW),
                                    "a%d" % k, ts=ts.replace(":00Z", ":30Z")))
         self._write(recs)
-        start = time.monotonic()
+        start = time.process_time()
         rc, page, err = self._rulebase_page()
-        took = time.monotonic() - start
+        took = time.process_time() - start
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Hunter22", page)
         self.assertNotIn("still holds", err)
@@ -2474,6 +2509,45 @@ class TestPageRedaction(_ReviewCase):
         rc, page, err = self._rulebase_page()
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Xy7p", page)
+
+    # 3.0.8 joins a split key before hiding it, yet kept the summarizer version: a summary cut through the key by
+    # 3.0.7 stayed in the cache under the same key
+    ZW, KEY = chr(0x200B), "AKIA" + "ABCDEFGHIJKLMNOP"
+    SPLIT_TEXT = "가" * 100 + " " + KEY[:9] + ZW + KEY[9:] + " 를 찾았습니다."
+    CUT_BY_3_0_7 = "가" * 100 + " " + KEY[:9] + ZW + KEY[9:15] + "…"
+
+    def test_a_summary_cached_by_3_0_8_is_not_reused(self):
+        self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst(self.SPLIT_TEXT, "a1")])
+        old = hashlib.sha256((self.SPLIT_TEXT + "\x00s" + "3").encode()).hexdigest()[:8]
+        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(self.CUT_BY_3_0_7, encoding="utf-8")
+        rc, page, err = self._rulebase_page()
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(self.KEY[:9], page.replace(self.ZW, ""))
+
+    def test_a_rule_summary_cached_before_split_secrets_were_joined_is_made_again(self):
+        turn = {"role": "assistant", "text": self.SPLIT_TEXT, "parts": [self.SPLIT_TEXT], "uuid": "a1",
+                "session": "s", "ts": "x", "tools": {}}
+        old = hashlib.sha256((self.SPLIT_TEXT + "\x00s" + "3").encode()).hexdigest()[:8]   # 3.0.2 to 3.0.8
+        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(self.CUT_BY_3_0_7, encoding="utf-8")
+        summary, hit = _quiet(L.read_or_summarize, turn, "s")[0]
+        self.assertFalse(hit)
+        self.assertNotIn(self.KEY[:9], summary.replace(self.ZW, ""))
+
+    def test_a_decision_cached_before_a_split_key_was_joined_is_not_reused(self):
+        # 3.0.8 keyed a decision on the text as it stands, as 3.0.7 did when no reviewer pattern found the split key
+        key = "sk-proj-" + "Q7wErTy9" + "UiOpAsDf" + "GhJkLzXc"        # pieces: no secret scanner reads one whole
+        text = "새 키 " + key[:12] + self.ZW + key[12:] + " 를 설정했고 배포가 통과합니다."
+        self._write([_rec("user", "키를 바꿔 주세요", uuid="u1"), self._asst(text, "a1")])
+        digest = L._llm_digest(L.redact(text)[0], L._decision_context(None, {}))
+        L._write_private(L._llm_cache_path("a1", "s", digest),
+                         json.dumps({"keep": True, "summary": "키 %s 로 바꿈" % (key[:12] + self.ZW + key[12:16])}))
+        rc, pack = _quiet(self._emit)[0]
+        self.assertEqual(rc, 0)
+        a1 = [x for x in pack["turns"] if x["id"] == "a1"][0]
+        self.assertFalse(a1["llm"].get("cached"), "the turn is reviewed again")
+        rc, page = _quiet(self._apply)[0]
+        self.assertEqual(rc, 0)
+        self.assertNotIn(key[:12], page.replace(self.ZW, ""))
 
     def test_rulebase_gate_samples_hide_reviewer_hits_whole_before_the_cut(self):
         c = "cu" + "rl"
@@ -2576,7 +2650,7 @@ class TestHasVisible(unittest.TestCase):
 
 class TestCacheFileNames(_ReviewCase):
     """Summaries are cached as .md, which a DRM that encrypts .txt leaves readable (3.0.3).
-    A summary cached as .txt by 3.0.2 or earlier is still read."""
+    The .txt name 3.0.2 and earlier wrote is still read; since summarizer version 4 no file of theirs matches."""
 
     TEXT = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
 
@@ -2833,6 +2907,27 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
         path.write_text('{"keep": true, "summary": "통과"}', encoding="utf-8")
         self.assertEqual(L.read_llm_cache("a1", "s", "abc123abc123"), {"keep": True, "summary": "통과"})
 
+    def test_a_cache_file_of_exactly_64_kib_is_read_and_one_byte_more_is_not(self):
+        self.assertEqual(L.CACHE_READ_MAX, 64 * 1024, "SKILL.md and CHANGELOG 0.19.1 promise 64KiB")
+        place = pathlib.Path(self.d) / "summary.md"
+        body = ("요약 " + "x" * (64 * 1024 - len("요약 ".encode("utf-8")))).encode("utf-8")
+        place.write_bytes(body)
+        self.assertEqual(L._read_small(place), body)
+        place.write_bytes(body + b"x")
+        self.assertIsNone(L._read_small(place))
+
+    def test_pages_and_caches_are_written_with_lf_where_text_mode_would_write_crlf(self):
+        import _pyio
+        from unittest import mock
+        page, cache = pathlib.Path(self.d) / "page.html", pathlib.Path(self.d) / "c" / "s.md"
+        # Windows text mode, played on any OS: the pure-Python io writes os.linesep for each \n unless newline="\n"
+        with mock.patch.object(os, "linesep", "\r\n"), mock.patch("builtins.open", _pyio.open), \
+                mock.patch("io.open", _pyio.open):
+            L._write_text_lf(page, "a\nb\n")
+            L._write_private(cache, "c\nd\n")
+        self.assertEqual(page.read_bytes(), b"a\nb\n")
+        self.assertEqual(cache.read_bytes(), b"c\nd\n")
+
 
 class TestBidiControlsOnThePage(_ReviewCase):
     """Direction controls are shown as [U+XXXX] wherever text reaches the page: bubbles, summaries
@@ -2899,6 +2994,26 @@ class TestBidiControlsOnThePage(_ReviewCase):
             text = f.read()
         self.assertEqual(self._controls_in(text), [])
         self.assertIn('id="now">[U+202E]2026-08-0<', text)
+
+    def test_a_control_in_the_title_is_shown_in_the_title_and_the_header(self):
+        self._write([_rec("user", "점검", uuid="u1")])
+        rc = _quiet(L.main, ["--session", self.jf, "--rulebase", "--skip-reviewer", "--title",
+                             "회고 " + self.RLO + "gpj.exe" + self.PDF, "--output", os.path.join(self.d, "out.html")])[0]
+        self.assertEqual(rc, 0)
+        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(self._controls_in(text), [])
+        self.assertIn("<title>회고 [U+202E]gpj.exe[U+202C]</title>", text)
+        self.assertIn("<h1>회고 [U+202E]gpj.exe[U+202C]</h1>", text)
+
+    def test_a_control_in_a_review_packs_title_is_shown_too(self):
+        self._write([_rec("user", "점검", uuid="u1")])
+        _quiet(self._emit, ["--title", "회고 " + self.RLO + "gpj.exe" + self.PDF])
+        rc, text = _quiet(self._apply)[0]
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._controls_in(text), [])
+        self.assertIn("<h1>회고 [U+202E]gpj.exe[U+202C]</h1>", text)
 
 
 class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
@@ -3250,6 +3365,15 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
         self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 4)
 
+    def test_a_numeric_tool_name_or_item_type_is_skipped_with_the_odd_shape_warning(self):
+        # 0.19.1 turned a numeric name's `5×1` and a numeric type's unknown-type line into this warning
+        items = [{"type": "tool_use", "name": 5}, {"type": 5}, {"type": "text", "text": "kept"},
+                 {"type": "tool_use", "name": "Read"}]
+        turns, err, code = self._read([{"type": "assistant", "uuid": "a", "message": {"content": items}}])
+        self.assertIsNone(code)
+        self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
+        self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 2)
+
     def test_a_lone_surrogate_in_a_record_becomes_the_replacement_character_with_one_warning(self):
         lone, fffd = chr(0xD800), chr(0xFFFD)
         rec = {"type": "assistant", "uuid": "a" + lone, "timestamp": "t" + lone,
@@ -3357,10 +3481,10 @@ class TestSplitSecrets(unittest.TestCase):
     def test_many_emoji_joiners_do_not_slow_the_redaction(self):
         key = "AKIA" "ABCDEFGHIJKLMNOP"
         text = (chr(0x1F468) + self.ZWJ + chr(0x1F469) + " ") * 200000 + " " + key
-        start = time.monotonic()
+        start = time.process_time()
         red, _ = L.page_redact(text)
         if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
-            self.assertLess(time.monotonic() - start, 5.0)
+            self.assertLess(time.process_time() - start, 5.0)
         self.assertNotIn(key, red)
 
     # Values whose only separator is one invisible character: 3.0.7 hid each, and joining them would glue the
@@ -3536,10 +3660,10 @@ class TestSplitSecrets(unittest.TestCase):
 
     def test_many_values_next_to_invisible_characters_do_not_slow_the_redaction(self):
         text = (self.AKIA_KEY + self.ZW + " ") * 5000
-        start = time.monotonic()
+        start = time.process_time()
         red, counts = L.page_redact(text)
         if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
-            self.assertLess(time.monotonic() - start, 3.0)
+            self.assertLess(time.process_time() - start, 3.0)
         self.assertEqual(counts, {"AKIA": 5000})
 
     def test_an_invisible_character_with_nothing_to_join_costs_one_pass_as_in_3_0_7(self):
@@ -3558,6 +3682,444 @@ class TestSplitSecrets(unittest.TestCase):
         text = "id " + self.AKIA_KEY[:7] + self.FFFD + self.AKIA_KEY[7:] + " ok" + self.ZW
         once, _ = L.page_redact(text)
         self.assertEqual(L.page_redact(once), (once, {}))
+
+
+# ---- 3.0.9 split of redact, render_markdown, render_rows and main into helpers, behaviour unchanged ----
+# The characterization tests below each kill a mutant the suite before them let live. The goldens pin sha256 of what
+# the four functions give for the corpora below, made on the code before the split: a change of a golden is a change
+# of behaviour, so update one only when that is the intent. Every value in them is made up.
+
+
+def _no_detect_secrets():
+    """detect-secrets absent whatever is installed: the fallback path, the same on every machine."""
+    from unittest import mock
+    return mock.patch.dict(sys.modules, {"detect_secrets": None})
+
+
+def _forget_ds_warnings():
+    """Clear the once-a-run detect-secrets WARN flags; returns a function that puts them back as they were."""
+    names = ("_ds_warned", "_ds_err_warned")
+    saved = {a: getattr(L.redact, a) for a in names if hasattr(L.redact, a)}
+    for a in saved:
+        delattr(L.redact, a)
+
+    def restore():
+        for a in names:
+            if hasattr(L.redact, a):
+                delattr(L.redact, a)
+        for a, v in saved.items():
+            setattr(L.redact, a, v)
+    return restore
+
+
+class _FakeDetectSecrets:
+    """A stand-in detect_secrets module pair that finds `findings` in any file, or raises at the `boom_at`-th."""
+
+    def __init__(self, findings, boom_at=None):
+        self.findings, self.boom_at = findings, boom_at
+
+    def modules(self):
+        import types
+        mod, settings = types.ModuleType("detect_secrets"), types.ModuleType("detect_secrets.settings")
+        findings, boom_at, seen = self.findings, self.boom_at, []
+        self.seen = seen
+
+        class Col:
+            def __init__(self):
+                self.files = []
+
+            def scan_file(self, p):
+                seen.append(p)
+                self.files = [p]
+
+            def __getitem__(self, f):
+                for k, v in enumerate(findings):
+                    if boom_at is not None and k == boom_at:
+                        raise RuntimeError("boom")
+                    yield types.SimpleNamespace(secret_value=v)
+        mod.SecretsCollection, settings.default_settings = Col, contextlib.nullcontext
+        return {"detect_secrets": mod, "detect_secrets.settings": settings}
+
+
+class TestRedactLayers(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(_forget_ds_warnings())
+
+    def test_a_run_without_detect_secrets_warns_once(self):
+        with _no_detect_secrets():
+            err = _quiet(lambda: (L.redact("a"), L.redact("b")))[1]
+        self.assertEqual(err, "[lineage] WARN: detect-secrets unavailable, using fallback "
+                              "(pip install 'detect-secrets>=1.5')\n")
+
+    def test_the_entropy_rule_hides_a_run_of_exactly_4_5_bits(self):
+        at, under = "ABCDEFGH" * 2 + "IJKLMNOPQRSTUVWX", "ABCDEFGHI" * 2 + "JKLMNOPQRSTUVW"
+        self.assertEqual((L.shannon_entropy(at), L.shannon_entropy(under)), (4.5, 4.4375))
+        with _no_detect_secrets():
+            got = _quiet(lambda: (L.redact(at), L.redact(under)))[0]
+        self.assertEqual(got, (("[REDACTED:entropy]", {"entropy": 1}), (under, {})))
+
+    def test_detect_secrets_finds_are_hidden_and_its_scratch_file_goes(self):
+        from unittest import mock
+        fake = _FakeDetectSecrets(["s3cr3tvalue", ""])
+        with mock.patch.dict(sys.modules, fake.modules()):
+            got = _quiet(L.redact, "token s3cr3tvalue here")[0]
+        self.assertEqual(got, ("token [REDACTED:ds] here", {"ds:detect-secrets": 1}))
+        self.assertFalse(os.path.exists(fake.seen[0]), "the scratch file detect-secrets read is removed")
+
+
+class TestMarkdownBlocks(unittest.TestCase):
+    def test_a_quote_line_loses_one_space_after_its_marker(self):
+        self.assertEqual(L.render_markdown("> a\n>  b"), "<blockquote><p>a<br> b</p></blockquote>")
+
+    def test_quotes_nest_33_deep_and_the_rest_is_text(self):
+        out = L.render_markdown(">" * 34 + " x")
+        self.assertEqual(out.count("<blockquote>"), 33)
+        self.assertIn("<p>&gt; x</p>", out)
+
+    def test_a_delimiter_row_without_a_dash_is_no_table(self):
+        self.assertEqual(L.render_markdown("| a | b |\n| : | : |\n| 1 | 2 |"),
+                         "<p>| a | b |<br>| : | : |<br>| 1 | 2 |</p>")
+
+    def test_a_heading_drops_the_spaces_after_it(self):
+        self.assertEqual(L.render_markdown("# spaced title   "), "<h3>spaced title</h3>")
+
+    def test_a_code_block_keeps_its_blank_lines(self):
+        self.assertEqual(L.render_markdown("```\n\ncode\n\n```"), "<pre><code>\ncode\n</code></pre>")
+
+    def test_list_lines_of_either_kind_make_one_list_named_by_the_first(self):
+        self.assertEqual(L.render_markdown("1. a\n- b"), "<ol><li>a</li><li>b</li></ol>")
+
+
+class TestRowsAcrossTurns(_ReviewCase):
+    def _rows(self, turns, **kw):
+        return _quiet(L.render_rows, turns, "s", None, "full", False, **kw)[0]
+
+    def test_a_user_turn_folds_past_400_characters_not_at_400(self):
+        rows = self._rows([_turn("user", "x" * 400, uuid="a"), _turn("user", "y" * 401, uuid="b")])[0]
+        self.assertEqual(['class="plain"' in r for r in rows if 'class="row me"' in r], [True, False])
+
+    def test_the_date_pill_comes_again_after_a_session_pill(self):
+        turns = [_turn("user", "a", uuid="a", session="s1"), _turn("user", "b", uuid="b", session="s2")]
+        rows = self._rows(turns, all_sessions=True)[0]
+        self.assertEqual([("pill-session" in r, "pill-date" in r) for r in rows if 'class="day"' in r],
+                         [(True, False), (False, True), (True, False), (False, True)])
+
+    def test_cache_hits_count_only_summaries_read_from_the_cache(self):
+        turns = [_turn("assistant", "첫 답입니다. 결과가 나왔습니다.", uuid="a1")]
+        self.assertEqual(self._rows(turns)[2:], (0, 1))
+        self.assertEqual(self._rows(turns)[2:], (1, 1))
+
+
+class TestMainPaths(_ReviewCase):
+    def _page(self):
+        pages = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")]
+        if not pages:
+            return ""
+        with open(os.path.join(self.d, pages[0]), encoding="utf-8") as f:
+            return f.read()
+
+    def _rulebase(self, *extra):
+        return _quiet(L.main, ["--session", self.jf, "--rulebase", "--skip-reviewer",
+                               "--output", os.path.join(self.d, "out.html")] + list(extra))
+
+    def test_keywords_from_the_environment_join_those_of_the_flag(self):
+        from unittest import mock
+        self._write([_rec("user", "alpha 와 beta 를 점검", uuid="u1")])
+        with mock.patch.dict(os.environ, {"LINEAGE_REDACT_EXTRA": " beta "}):
+            rc, err = self._rulebase("--redact-extra", "alpha")
+        self.assertEqual(rc, 0)
+        self.assertIn("[REDACTED] 와 [REDACTED] 를 점검", self._page())
+        self.assertIn("custom:alpha=1, custom:beta=1", err)
+
+    def test_purge_cache_removes_the_cache_then_finds_none(self):
+        os.makedirs(os.path.join(self.cache, "2", "s"))
+        self.assertEqual(_quiet(L.main, ["--purge-cache"]), (0, "[lineage] cache purged: %s\n" % self.cache))
+        self.assertFalse(os.path.exists(self.cache))
+        self.assertEqual(_quiet(L.main, ["--purge-cache"]), (0, "[lineage] no cache to purge\n"))
+
+    def test_apply_review_names_the_source_and_range_flags_it_does_not_use(self):
+        rc, err = _quiet(L.main, ["--apply-review", os.path.join(self.d, "none.json"), "--last", "3"])
+        self.assertEqual(rc, 2)
+        self.assertTrue(err.startswith("[lineage] note: --apply-review renders the pack; source and range flags were "
+                                       "applied at --emit-review\n"), err)
+
+    def test_all_sessions_with_no_session_and_no_source_at_all_exit_2(self):
+        from unittest import mock
+        with mock.patch.object(L, "project_jsonl_files", lambda: []):
+            self.assertEqual(_quiet(L.main, ["--all-sessions", "--rulebase"]),
+                             (2, "[lineage] --all-sessions: no jsonl found in project dir\n"))
+        with mock.patch.object(L, "auto_discover_jsonl", lambda: None):
+            rc, err = _quiet(L.main, ["--rulebase"])
+        self.assertEqual(rc, 2)
+        self.assertTrue(err.startswith("[lineage] No jsonl found. Use one of:"), err)
+
+    def test_a_transcript_file_keeps_its_cache_under_file_and_its_name(self):
+        self._write([_rec("user", "점검", uuid="u1"), self._asst("점검했고 결과가 나왔습니다.", "a1")])
+        rc = _quiet(L.main, ["--from-transcript", self.jf, "--rulebase", "--skip-reviewer",
+                             "--output", os.path.join(self.d, "out.html")])[0]
+        self.assertEqual(rc, 0)
+        self.assertEqual(os.listdir(os.path.join(self.cache, "2")), ["file-s"])
+
+    def test_a_schema_marker_through_main_exits_2(self):
+        self._write([_rec("user", "before", uuid="u1"), {"type": "v9"}])
+        self.assertEqual(self._rulebase()[0], 2)
+
+    def test_an_invalid_turns_range_exits_2_in_both_flows(self):
+        self._write(self._records())
+        self.assertEqual(self._rulebase("--turns", "x-y"), (2, "[lineage] invalid --turns 'x-y'\n"))
+        rc = _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack, "--turns", "bad"])[0]
+        self.assertEqual(rc, 2)
+        self.assertFalse(os.path.exists(self.pack))
+
+    def test_a_tool_only_turn_is_left_out_unless_kept(self):
+        self._write([_rec("user", "실행해 주세요", uuid="u1"), self._asst("", "a1", tools=["Bash"])])
+        self._rulebase()
+        self.assertNotIn("도구 1건", self._page())
+        for p in os.listdir(self.d):
+            if p.endswith(".html"):
+                os.unlink(os.path.join(self.d, p))
+        self._rulebase("--keep-tool-only")
+        self.assertIn("도구 1건", self._page())
+
+
+_SPLIT_TEXTS = [
+    "", "plain words only", "AKIA" "IOSFODNN7EXAMPLE and ASIA" "IOSFODNN7EXAMPLE",
+    "ghp_" + "a" * 36, "xoxb-" + "1234567890-abc", "eyJ" "hbGciOi.eyJzdWIiOi.c2lnbmF0dXJl",
+    "-----BEGIN RSA " "PRIVATE KEY-----\nMIIabc\n-----END RSA " "PRIVATE KEY-----",
+    'password: "hunter' '2024" and 암호 = \'비밀번호값\'', "Zq8XvB3nK9pL2mR7" "tY4wE6sA1dF5gH0j" * 2,
+    "a" * 36, "acme-corp deploy with ACME key; act now",
+    "[REDACTED:Password] and acme inside [REDACTED:acme] marker", "red slack [REDACTED:Slack]",
+    "key " + "AKIA" + "ABCDE" + chr(0x200B) + "FGHIJKLMNOP", "multi\nline\ttext with tab",
+]
+
+_SPLIT_MARKDOWN = [
+    "", "   ", "# h1\n## h2\n### h3\n#### h4\n##### h5\n###### h6\n####### seven", "#nospace", "# spaced title   ",
+    "```\ncode\n```", "```py\nx = 1\n````", "````\n```\nstill\n````\nafter", "```\nunclosed\nto the end",
+    "  ```\nindented fence\n  ```", "```\n<b>raw</b>\n```",
+    "---\n***\n___\n- - -", "> q1\n> q2\n>q3\n\nafter", "> > nested\n> back", ">" * 40 + " deep", ">" * 33 + " cap",
+    "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 |", "| a | b |\n| : | : |\n| 1 | 2 |",
+    "intro\n| a | b |\n|---|---|\n| 1 | 2 |",
+    "| a |\nno delim", "- one\n- two\n* three\n+ four\n1. five\n2) six", "1. a\n- b", "  - indented\n    - nested",
+    "line1\nline2\n\n\nline3", "para\n# heading right after", "para\n```\ncode\n```", "para\n> quote", "para\n- item",
+    "a\x07b\x00c", "**b** *i* ~~d~~ `c` [l](https://x.io) [j](javascript:x)", "<script>alert(1)</script>",
+    "line with trailing spaces   \n  leading", "\r\nwindows\r\nlines\r\n", "- \n- x", "1.\n2. y",
+    "| x |\n|---|\n", "text | pipe\n---\nnot table", "```\n\ncode\n\n```",
+]
+
+
+def _split_digest(value):
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _split_redact_corpus():
+    out = []
+    for t in _SPLIT_TEXTS:
+        for mode in ("full", "mask"):
+            for extra in (None, "acme,act", "red", " , "):
+                for with_trail in (False, True):
+                    trail = L._Trail(len(t)) if with_trail else None
+                    got = L.redact(t, extra, mode, trail)
+                    out.append([t, mode, extra, with_trail, got, None if trail is None or trail.pos is None
+                                else list(trail.pos)])
+    return out
+
+
+def _split_detect_secrets_corpus():
+    from unittest import mock
+    out = []
+    for name, fake in (("finds", _FakeDetectSecrets(["s3cr3tvalue", "missing", ""])),
+                       ("boom-after-one", _FakeDetectSecrets(["s3cr3tvalue", "x"], boom_at=1)),
+                       ("boom-first", _FakeDetectSecrets(["s3cr3tvalue"], boom_at=0))):
+        with mock.patch.dict(sys.modules, fake.modules()):
+            for t in ("token s3cr3tvalue here", "nothing"):
+                out.append([name, t, L.redact(t, "acme", "full")])
+    return out
+
+
+def _split_markdown_corpus():
+    return ([[m, L.render_markdown(m)] for m in _SPLIT_MARKDOWN]
+            + [[d, L.render_markdown("> x", d)] for d in range(30, 35)])
+
+
+def _split_turn(role, text, ts, uuid, tools=None, session="s", name=None, **kw):
+    t = {"role": role, "text": text, "ts": ts, "uuid": uuid, "tools": tools or {}, "line_no": 1,
+         "parts": [text] if text else [], "session": session, "session_name": session if name is None else name}
+    t.update(kw)
+    return t
+
+
+def _split_rows_turns():
+    rlo, pdf = chr(0x202E), chr(0x202C)
+    return [
+        _split_turn("user", "질문 acme", "2026-08-09T10:00:00Z", "u1", session="s1", name="acme-session"),
+        _split_turn("assistant", "## 답\n- 하나\n\n고쳤습니다. AKIA" "IOSFODNN7EXAMPLE", "2026-08-09T10:00:05Z", "a1",
+                    tools={"Read": 2, "acme_tool": 1, "Bash": 1}, session="s1", name="acme-session"),
+        _split_turn("mark", "compaction", "2026-08-09T10:01:00Z", "m1", session="s1"),
+        _split_turn("user", "배경 설명입니다. " * 50 + "acme 요청", "2026-08-10T09:00:00Z", "u2", session="s1"),
+        _split_turn("agent", "보고: 끝났습니다", "2026-08-10T09:00:30Z", "g1", session="s2", name="",
+                    agent_from="acme-bot"),
+        _split_turn("agent", "익명 보고", None, "g2", session="s2", agent_from=None),
+        _split_turn("user", "x" * 400, "", "u3", session="s2"),
+        _split_turn("user", "y" * 401, "2026-08-10T09:05:00Z", "u4", session=None),
+        _split_turn("assistant", "", "2026-08-10T09:06:00Z", "a2", tools={"Edit": 1}, session=None),
+        _split_turn("assistant", 'password: "hunter' '2024" ' + rlo + "x" + pdf, "2026-08-11T00:00:00Z", "a3",
+                    session="s3"),
+    ]
+
+
+def _split_rows_corpus():
+    """render_rows over the turns above for every setting, the summary cache starting empty (a hit counts)."""
+    reviewed = {"a1": "검토자 요약 acme", "u2": "긴 질문 요약 AKIA" "IOSFODNN7EXAMPLE", "g1": "에이전트 요약"}
+    out = []
+    for extra in (None, "acme"):
+        for mode in ("full", "mask"):
+            for all_sessions in (False, True):
+                for summaries in (None, reviewed):
+                    for open_details, markdown in ((False, True), (True, False)):
+                        for rebuild in (False, True):
+                            got = L.render_rows(_split_rows_turns(), "sid", extra, mode, rebuild,
+                                                open_details=open_details, markdown=markdown,
+                                                all_sessions=all_sessions, summaries=summaries)
+                            out.append([extra, mode, all_sessions, bool(summaries), open_details, markdown, rebuild,
+                                        got])
+    return out
+
+
+def _split_jsonl(path, records):
+    with open(str(path), "w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _split_rec(role, content, uuid, ts):
+    return {"type": role, "uuid": uuid, "timestamp": ts, "message": {"role": role, "content": content}}
+
+
+def _split_sources(root):
+    """The transcripts main reads in the main corpus: a session, a second one, one with a schema marker, a long one."""
+    def asst(text, uuid, ts, tools=()):
+        return _split_rec("assistant", [{"type": "text", "text": text}]
+                          + [{"type": "tool_use", "name": n} for n in tools], uuid, ts)
+    files = [root / n for n in ("s.jsonl", "t.jsonl", "m.jsonl", "many.jsonl")]
+    _split_jsonl(files[0], [_split_rec("user", "배포 스크립트를 고쳐 주세요", "u1", "2026-08-09T10:00:00Z"),
+                            asst("먼저 읽겠습니다.\n\n고쳤고 배포가 통과합니다.", "a1", "2026-08-09T10:00:05Z", ["Read"]),
+                            _split_rec("user", "ok", "u2", "2026-08-09T10:01:00Z"),
+                            asst("ok", "a2", "2026-08-09T10:01:01Z"),
+                            asst("", "a3", "2026-08-09T10:01:05Z", ["Bash"]),
+                            _split_rec("user", "토큰은 AKIA" "IOSFODNN7EXAMPLE 입니다", "u3", "2026-08-09T10:02:00Z"),
+                            {"type": "summary", "customTitle": "배포 회고"}])
+    _split_jsonl(files[1], [_split_rec("user", "두 번째 세션", "v1", "2026-08-08T09:00:00Z"),
+                            asst("답입니다.", "b1", "2026-08-08T09:00:10Z")])
+    _split_jsonl(files[2], [_split_rec("user", "before", "w1", "2026-08-09T10:00:00Z"), {"type": "v9"}])
+    _split_jsonl(files[3], [_split_rec("user", "질문 %d" % k, "q%d" % k, "2026-08-09T10:%02d:00Z" % (k % 60))
+                            for k in range(105)])
+    return files
+
+
+def _split_main_cases(root, jf, marker, many):
+    page = lambda n: str(root / (n + "_260101+0000.html"))   # a name with its stamp: no clock in the name
+    rb = ["--rulebase", "--skip-reviewer"]
+    return [
+        ["--purge-cache"], ["--purge-cache"],
+        ["--emit-review", ""], ["--apply-review", ""], ["--purge-cache", "--emit-review", "p.json"],
+        ["--emit-review", "a.json", "--apply-review", "b.json"], ["--rulebase", "--emit-review", "p.json"],
+        ["--rulebase", "--apply-review", "p.json"], ["--decisions", "d.json"],
+        ["--apply-review", str(root / "missing.json"), "--last", "3"],
+        ["--session", jf] + rb + ["--output", page("r1")],
+        ["--session", jf, "--skip-reviewer", "--output", page("r2"), "--keep-trivia", "--keep-tool-only", "--open",
+         "--no-markdown"],
+        ["--session", jf] + rb + ["--output", page("r3"), "--turns", "x-y"],
+        ["--session", jf] + rb + ["--output", page("r4"), "--turns", "2-3", "--last", "1"],
+        ["--session", jf, "--emit-review", str(root / "pk.json"), "--turns", "bad", "--output", page("pk")],
+        ["--session", jf, "--emit-review", str(root / "pk.json"), "--last", "2", "--redact-extra", "배포",
+         "--output", page("pk")],
+        ["--session", marker] + rb + ["--output", page("r5")],
+        ["--session", marker] + rb + ["--output", page("r6"), "--unsafe-schema"],
+        ["--from-transcript", jf] + rb + ["--output", page("r7")],
+        ["--session", jf] + rb + ["--redact-extra", "배포", "--output", page("r8")],
+        ["--session", many] + rb + ["--output", page("r9")],
+    ], page
+
+
+def _split_main_corpus(root):
+    """(exit code of each run, sha256 of each page written) for main over the cases above and the sources that need
+    the environment, stdin or the project folder. stderr is left out: it names temporary paths."""
+    from unittest import mock
+    L.CACHE_BASE = root / "cache"
+    (root / "cache" / "2" / "s").mkdir(parents=True)        # the first --purge-cache finds a cache
+    jf, jf2, marker, many = _split_sources(root)
+    cases, page = _split_main_cases(root, str(jf), str(marker), str(many))
+
+    def rc(argv):
+        try:
+            return L.main(argv)
+        except SystemExit as e:
+            return "exit %s" % e.code
+    rb = ["--rulebase", "--skip-reviewer"]
+    with mock.patch.dict(os.environ):
+        os.environ.pop("LINEAGE_REDACT_EXTRA", None)
+        codes = [rc(argv) for argv in cases]
+        os.environ["LINEAGE_REDACT_EXTRA"] = "acme, 스크립트"
+        codes.append(rc(["--session", str(jf)] + rb + ["--output", page("e1")]))
+        os.environ["LINEAGE_REDACT_EXTRA"] = "토큰"
+        codes.append(rc(["--session", str(jf)] + rb + ["--redact-extra", "배포", "--output", page("e2")]))
+        os.environ.pop("LINEAGE_REDACT_EXTRA", None)
+        with mock.patch.object(sys, "stdin", io.StringIO(jf.read_text(encoding="utf-8"))):
+            codes.append(rc(["--from-transcript", "-"] + rb + ["--output", page("s1")]))
+        with mock.patch.object(L, "auto_discover_jsonl", lambda: None):
+            codes.append(rc(["--rulebase"]))
+        with mock.patch.object(L, "auto_discover_jsonl", lambda: jf):
+            codes.append(rc(rb + ["--output", page("a1")]))
+        with mock.patch.object(L, "project_jsonl_files", lambda: []):
+            codes.append(rc(["--all-sessions", "--rulebase"]))
+        with mock.patch.object(L, "project_jsonl_files", lambda: [jf, jf2]):
+            codes.append(rc(["--all-sessions"] + rb + ["--output", page("all")]))
+            codes.append(rc(["--all-sessions", "--emit-review", str(root / "pk2.json"), "--output", page("pk2")]))
+        with mock.patch.object(L, "project_jsonl_files", lambda: [jf, marker]):
+            codes.append(rc(["--all-sessions"] + rb + ["--output", page("am")]))
+    pages = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.glob("*.html"))}
+    return codes, pages
+
+
+# sha256 (_split_digest) of each corpus above on lineage 3.0.9 before the split
+_GOLDEN_SPLIT = {
+    "redact": "6f7bd9a55258b818860b3283a44c4dbccceb41fa1bf277f536db9b41d7e8b230",  # pragma: allowlist secret
+    "redact-ds": "763682e69ce09cb631179b8696c76825c652ac4f790af611f45467fe0b9a560a",  # pragma: allowlist secret
+    "render_markdown": "62a8a24847d443599ad7431ce90da4e57b979c6a7a2ee12a5c2d6306daabfde4",  # pragma: allowlist secret
+    "render_rows": "4107ed7e7fe070648d8faff9fa34affe3f05ed0b7b95a489d407d0d89fd79ef4",  # pragma: allowlist secret
+    "main": "226ecddd63e95fc7c7ab8c75899ed61614a7a4cef971bf16fcfbe291b29faab1",  # pragma: allowlist secret
+}
+
+
+class TestSplitGoldens(unittest.TestCase):
+    """redact, render_markdown, render_rows and main give what they gave before the 3.0.9 split (_GOLDEN_SPLIT)."""
+
+    def setUp(self):
+        self.d = pathlib.Path(tempfile.mkdtemp())
+        saved = L.CACHE_BASE
+        self.addCleanup(setattr, L, "CACHE_BASE", saved)
+        self.addCleanup(shutil.rmtree, str(self.d), True)
+        self.addCleanup(_forget_ds_warnings())
+
+    def _same(self, name, corpus, *a):
+        with _no_detect_secrets():
+            value = _quiet(corpus, *a)[0]
+        self.assertEqual(_split_digest(value), _GOLDEN_SPLIT[name], name)
+
+    def test_redact(self):
+        self._same("redact", _split_redact_corpus)
+        value = _quiet(_split_detect_secrets_corpus)[0]          # each fake is put in for its own runs
+        self.assertEqual(_split_digest(value), _GOLDEN_SPLIT["redact-ds"], "redact-ds")
+
+    def test_render_markdown(self):
+        self._same("render_markdown", _split_markdown_corpus)
+
+    def test_render_rows(self):
+        L.CACHE_BASE = self.d / "cache"
+        self._same("render_rows", _split_rows_corpus)
+
+    def test_main(self):
+        self._same("main", _split_main_corpus, self.d)
 
 
 if __name__ == "__main__":

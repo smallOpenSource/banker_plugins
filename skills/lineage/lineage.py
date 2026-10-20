@@ -34,7 +34,8 @@ if sys.version_info < (3, 7):
     sys.exit(2)
 
 SCHEMA_VERSION = 2          # cache dir schema (v2: redacted summaries only)
-SUMMARIZER_VERSION = 3      # bump when summarize_turn logic changes (B-3 cache key); 3: cut from redacted text
+SUMMARIZER_VERSION = 4      # bump when summarize_turn or the page redaction changes (B-3 cache key)
+                            # 3: cut from redacted text (3.0.2); 4: split secrets joined first (3.0.8)
 USER_FOLD = 400             # collapse user messages longer than this (E-1)
 ECHO_ASK = 40               # echo-exchange: user question length ceiling (A-4)
 ECHO_REPLY = 5              # echo-exchange: assistant reply length ceiling (A-4)
@@ -345,10 +346,9 @@ def _rejoin_split(text, patterns, entropy=False, trail=None):
     return "".join(out) + text[at:]
 
 
-def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None):
-    """Multi-layer redaction; page_redact and review_redact join split secrets first (3.0.8). Returns (text, counts).
-    With `trail` (a _Trail), where each character of the result came from is followed too."""
-    counts, out, sub = {}, text, _sub_for(trail)
+def _hide_patterns(out, mode, sub, counts):
+    """`out` with each value the page patterns and the entropy rule find replaced by its marker, or by a mask with
+    mode mask; `counts` adds them up by name."""
     for name, pat in SECRET_PATTERNS:
         def repl(m, n=name):
             counts[n] = counts.get(n, 0) + 1
@@ -361,32 +361,42 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None
             counts["entropy"] = counts.get("entropy", 0) + 1
             return _mask(s) if mode == "mask" else "[REDACTED:entropy]"
         return s
-    out = sub(ENTROPY_LONG, ent_repl, out)
+    return sub(ENTROPY_LONG, ent_repl, out)
 
+
+def _scan_detected(held, sub, counts):
+    """held[0] with each value detect-secrets finds in it replaced: raises ImportError when it is not installed.
+    held[0] keeps what was replaced before a failure, as one pass over a local did."""
+    from detect_secrets import SecretsCollection
+    from detect_secrets.settings import default_settings
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                     encoding="utf-8") as tf:
+        tf.write(held[0])
+        tmp = tf.name
     try:
-        from detect_secrets import SecretsCollection
-        from detect_secrets.settings import default_settings
-        import tempfile
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
-                                         encoding="utf-8") as tf:
-            tf.write(out)
-            tmp = tf.name
+        col = SecretsCollection()
+        with default_settings():
+            col.scan_file(tmp)
+        for fname in col.files:
+            for s in col[fname]:
+                sv = s.secret_value
+                if sv and sv in held[0]:
+                    held[0] = sub(re.compile(re.escape(sv)), lambda m: "[REDACTED:ds]", held[0])
+                    counts["ds:detect-secrets"] = counts.get(
+                        "ds:detect-secrets", 0) + 1
+    finally:
         try:
-            col = SecretsCollection()
-            with default_settings():
-                col.scan_file(tmp)
-            for fname in col.files:
-                for s in col[fname]:
-                    sv = s.secret_value
-                    if sv and sv in out:
-                        out = sub(re.compile(re.escape(sv)), lambda m: "[REDACTED:ds]", out)
-                        counts["ds:detect-secrets"] = counts.get(
-                            "ds:detect-secrets", 0) + 1
-        finally:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _hide_detected(out, sub, counts):
+    """`out` after detect-secrets, when it is installed; a WARN once a run when it is not, or when it fails."""
+    held = [out]
+    try:
+        _scan_detected(held, sub, counts)
     except ImportError:
         if not getattr(redact, "_ds_warned", False):
             print("[lineage] WARN: detect-secrets unavailable, using fallback "
@@ -397,16 +407,30 @@ def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None
             print(f"[lineage] WARN: detect-secrets error ({e}), continuing "
                   "with fallback", file=sys.stderr)
             redact._ds_err_warned = True
+    return held[0]
 
+
+def _hide_extra(out, extra, sub, counts):
+    """`out` with each --redact-extra keyword replaced; a marker an earlier pass left stays whole: a keyword inside
+    its name is no secret."""
+    for kw in [k.strip() for k in extra.split(",") if k.strip()]:
+        pat = re.compile(r"\[REDACTED(?::[^\]\s]*)?\]|" + re.escape(kw), re.IGNORECASE)
+        hits = []
+        out = sub(pat, lambda m: m.group(0) if m.group(0).upper().startswith("[REDACTED")
+                  else hits.append(1) or "[REDACTED]", out)
+        if hits:
+            counts[f"custom:{kw}"] = len(hits)
+    return out
+
+
+def redact(text: str, extra: "str | None" = None, mode: str = "full", trail=None):
+    """Multi-layer redaction; page_redact and review_redact join split secrets first (3.0.8). Returns (text, counts).
+    With `trail` (a _Trail), where each character of the result came from is followed too."""
+    counts, sub = {}, _sub_for(trail)
+    out = _hide_patterns(text, mode, sub, counts)
+    out = _hide_detected(out, sub, counts)
     if extra:
-        for kw in [k.strip() for k in extra.split(",") if k.strip()]:
-            # a marker an earlier pass left stays whole: a keyword inside its name is no secret
-            pat = re.compile(r"\[REDACTED(?::[^\]\s]*)?\]|" + re.escape(kw), re.IGNORECASE)
-            hits = []
-            out = sub(pat, lambda m: m.group(0) if m.group(0).upper().startswith("[REDACTED")
-                      else hits.append(1) or "[REDACTED]", out)
-            if hits:
-                counts[f"custom:{kw}"] = len(hits)
+        out = _hide_extra(out, extra, sub, counts)
     return out, counts
 
 
@@ -431,8 +455,8 @@ _CU_SKIP = (r"(?!" + _CU_LEAD + r"(?:\+[\"']?%[-_0^#]?[A-Za-z%]|(?:\d+:\d+|(?:" 
             + r"|[^\s:=\"'`(]*\)):" + _CU_REF + r")(?![^\s\"'`;|&)\\^])"
             r"|\$\{\w+:[-=?+]?[/~.][^\s}\"'`(:]*\}[^\s:]*(?!\S)))")
 
-# Extra patterns for text a reviewer model reads (part files) and nothing else: the page
-# and --rulebase keep the patterns above, so their output stays as it was.
+# Patterns every page (the reviewed flow and --rulebase) and every part file hides with before the
+# page patterns above, while keys are whole (3.0.2).
 # A value a redaction already replaced: a marker ([REDACTED...]) or a value that is only a mask
 # (abcd****wxyz: up to 4 characters, a whole run of *, up to 4 characters, then the value ends; a
 # closing `, |, * or ) and then . , ; : ! ? may stand between, as in **password: ****h12** or
@@ -1210,7 +1234,8 @@ def _read_text(path):
 
 
 def _read_cached(p):
-    """The summary cached at p, else at the same name with .txt, which 3.0.2 and earlier wrote.
+    """The summary cached at p, else at the same name with .txt, the name 3.0.2 and earlier wrote (their digests
+    carry summarizer version 2 or 3, so since version 4 no file of theirs is found).
     None when neither holds one: missing, bytes that are not UTF-8 (a DRM encrypted them), or
     nothing a person can see (a write that stopped early, or only blank-looking letters); the
     turn is then summarized again (3.0.4, 3.0.5)."""
@@ -1300,11 +1325,13 @@ def _is_block_start(lines, i):
     if (_FENCE_RE.match(line) or _HEAD_RE.match(line) or _HR_RE.match(line)
             or _QUOTE_RE.match(line) or _LIST_RE.match(line)):
         return True
-    # table: this line has a pipe AND the next line is a delimiter row
-    if ("|" in line and i + 1 < len(lines)
-            and "-" in lines[i + 1] and _TABLE_DELIM_RE.match(lines[i + 1])):
-        return True
-    return False
+    return _is_table_start(lines, i)
+
+
+def _is_table_start(lines, i):
+    """Whether lines[i] starts a table: it has a pipe AND the next line is a delimiter row."""
+    return bool("|" in lines[i] and i + 1 < len(lines)
+                and "-" in lines[i + 1] and _TABLE_DELIM_RE.match(lines[i + 1]))
 
 
 def _render_table(lines, i):
@@ -1323,85 +1350,90 @@ def _render_table(lines, i):
             % (thead, body)), i
 
 
+def _md_fence(lines, i, fence):
+    """A code block from the fence at lines[i] to the first closing fence at least as long (or the end), and the
+    index past it."""
+    i += 1
+    buf = []
+    while i < len(lines):
+        mc = _FENCE_CLOSE_RE.match(lines[i])
+        if mc and len(mc.group(1)) >= len(fence):
+            i += 1
+            break
+        buf.append(lines[i])
+        i += 1
+    return "<pre><code>%s</code></pre>" % html.escape("\n".join(buf)), i
+
+
+def _md_quote(lines, i, depth):
+    """The blockquote of the run of `>` lines at lines[i], rendered one level deeper, and the index past it."""
+    buf = []
+    while i < len(lines) and _QUOTE_RE.match(lines[i]):
+        buf.append(re.sub(r"^\s*>\s?", "", lines[i]))
+        i += 1
+    return "<blockquote>%s</blockquote>" % render_markdown("\n".join(buf), depth + 1), i
+
+
+def _md_list(lines, i):
+    """The list of the run of list lines at lines[i] (ordered when the first is numbered; nested ones flatten),
+    and the index past it."""
+    tag = "ol" if re.match(r"^\s*\d+[.)]", lines[i]) else "ul"
+    items = []
+    while i < len(lines):
+        mli = _LIST_RE.match(lines[i])
+        if not mli:
+            break
+        items.append(_md_inline(html.escape(mli.group(3))))
+        i += 1
+    return "<%s>%s</%s>" % (tag, "".join("<li>%s</li>" % it for it in items), tag), i
+
+
+def _md_paragraph(lines, i):
+    """The paragraph that starts at lines[i] (at least that line: C-2, no endless loop), its lines joined with <br>
+    (N5: pre-wrap keeps leading spaces without a second break), and the index past it."""
+    buf = [lines[i]]
+    i += 1
+    while i < len(lines) and lines[i].strip() and not _is_block_start(lines, i):
+        buf.append(lines[i])
+        i += 1
+    return "<p>%s</p>" % "<br>".join(_md_inline(html.escape(b)) for b in buf), i
+
+
+def _md_block(lines, i, depth):
+    """The HTML of the block that starts at lines[i] (None for a blank line), and the index past it."""
+    line = lines[i]
+    mf = _FENCE_RE.match(line)
+    if mf:
+        return _md_fence(lines, i, mf.group(1))
+    mh = _HEAD_RE.match(line)
+    if mh:
+        hl = max(3, min(6, len(mh.group(1))))     # h3..h6 (avoid page-header clash)
+        return "<h%d>%s</h%d>" % (hl, _md_inline(html.escape(mh.group(2).strip())), hl), i + 1
+    if _HR_RE.match(line):
+        return "<hr>", i + 1
+    if _QUOTE_RE.match(line):
+        return _md_quote(lines, i, depth)
+    if _is_table_start(lines, i):
+        return _render_table(lines, i)
+    if _LIST_RE.match(line):
+        return _md_list(lines, i)
+    if not line.strip():
+        return None, i + 1
+    return _md_paragraph(lines, i)
+
+
 def render_markdown(text, depth=0):
     """Block-level markdown → HTML. External deps: none. Escapes first; no stage
     re-runs over prior markup. Nested lists flatten; footnotes unsupported.
     """
     if depth > _BLOCKQUOTE_MAX_DEPTH:
         return "<p>%s</p>" % _md_inline(html.escape(text))
-    text = _CTRL_RE.sub("", text)
-    lines = text.split("\n")
-    out = []
-    i, n = 0, len(lines)
-    while i < n:
-        line = lines[i]
-        mf = _FENCE_RE.match(line)
-        if mf:
-            fence = mf.group(1)
-            i += 1
-            buf = []
-            while i < n:
-                mc = _FENCE_CLOSE_RE.match(lines[i])
-                if mc and len(mc.group(1)) >= len(fence):
-                    i += 1
-                    break
-                buf.append(lines[i])
-                i += 1
-            out.append("<pre><code>%s</code></pre>"
-                       % html.escape("\n".join(buf)))
-            continue
-        mh = _HEAD_RE.match(line)
-        if mh:
-            hl = max(3, min(6, len(mh.group(1))))     # h3..h6 (avoid page-header clash)
-            out.append("<h%d>%s</h%d>"
-                       % (hl, _md_inline(html.escape(mh.group(2).strip())), hl))
-            i += 1
-            continue
-        if _HR_RE.match(line):
-            out.append("<hr>")
-            i += 1
-            continue
-        if _QUOTE_RE.match(line):
-            buf = []
-            while i < n and _QUOTE_RE.match(lines[i]):
-                buf.append(re.sub(r"^\s*>\s?", "", lines[i]))
-                i += 1
-            out.append("<blockquote>%s</blockquote>"
-                       % render_markdown("\n".join(buf), depth + 1))
-            continue
-        if ("|" in line and i + 1 < n and "-" in lines[i + 1]
-                and _TABLE_DELIM_RE.match(lines[i + 1])):
-            tbl, i = _render_table(lines, i)
-            out.append(tbl)
-            continue
-        ml = _LIST_RE.match(line)
-        if ml:
-            ordered = bool(re.match(r"^\s*\d+[.)]", line))
-            tag = "ol" if ordered else "ul"
-            items = []
-            while i < n:
-                mli = _LIST_RE.match(lines[i])
-                if not mli:
-                    break
-                items.append(_md_inline(html.escape(mli.group(3))))
-                i += 1
-            out.append("<%s>%s</%s>"
-                       % (tag, "".join("<li>%s</li>" % it for it in items), tag))
-            continue
-        if not line.strip():
-            i += 1
-            continue
-        # paragraph: force-consume at least this line (C-2: no infinite loop)
-        buf = [line]
-        i += 1
-        while i < n and lines[i].strip() and not _is_block_start(lines, i):
-            buf.append(lines[i])
-            i += 1
-        # source newlines within a paragraph become <br> (N5). pre-wrap on the
-        # container preserves leading/aligned spaces without double-breaking,
-        # because we join with <br> and emit no literal newline between lines.
-        out.append("<p>%s</p>"
-                   % "<br>".join(_md_inline(html.escape(b)) for b in buf))
+    lines = _CTRL_RE.sub("", text).split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        block, i = _md_block(lines, i, depth)
+        if block is not None:
+            out.append(block)
     return "\n".join(out)
 
 
@@ -1614,102 +1646,110 @@ def _fmt_time(ts):
     return ts[11:16] if ts and len(ts) >= 16 else ""
 
 
-def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
-                open_details=False, markdown=True, all_sessions=False, summaries=None):
-    rows = []
-    last_date = None
-    last_session = None
-    cache_hits = 0
-    cache_total = 0
-    redact_counts = {}
-    open_attr = " open" if open_details else ""
+class _Rows:
+    """What render_rows carries from turn to turn: the rows so far, the redaction settings and what they hid by kind,
+    the open flag and markdown, the date and session the last pills showed, and the rule summaries' cache hits."""
 
-    def _red(text):
-        r, c = page_redact(text, extra=redact_extra, mode=redact_mode)
+    def __init__(self, redact_extra, redact_mode, open_details, markdown):
+        self.extra, self.mode, self.markdown = redact_extra, redact_mode, markdown
+        self.open_attr = " open" if open_details else ""
+        self.rows, self.counts = [], {}
+        self.last_date = self.last_session = None
+        self.hits = self.total = 0
+
+    def red(self, text):
+        r, c = page_redact(text, extra=self.extra, mode=self.mode)
         for k, v in c.items():
-            redact_counts[k] = redact_counts.get(k, 0) + v
+            self.counts[k] = self.counts.get(k, 0) + v
         return r
 
-    for t in turns:
-        ts = t.get("ts") or ""
-        # session-transition divider (--all-sessions)
-        if all_sessions and t.get("session") != last_session:
-            last_session = t.get("session")
-            name = html.escape(_red(t.get("session_name") or last_session or "session"))
-            rows.append('<div class="day" data-mark="%s">'
-                        '<span class="pill pill-session">%s</span></div>'
-                        % (name, name))
-            last_date = None
-        if ts:
-            d = ts[:10]
-            if d != last_date:
-                rows.append('<div class="day" data-mark="%s">'
-                            '<span class="pill pill-date">%s</span></div>'
-                            % (html.escape(d), html.escape(d)))
-                last_date = d
-        time_hm = html.escape(_fmt_time(ts))
-        role = t["role"]
 
-        if role == "mark":
-            rows.append('<div class="day"><span class="pill pill-compact">'
-                        '⋯ 이전 대화 요약(compaction) ⋯</span></div>')
-            continue
+def _pills(rs, t, all_sessions):
+    """The session pill (--all-sessions, when the session changes) and the date pill (when the day changes) before
+    turn `t`."""
+    if all_sessions and t.get("session") != rs.last_session:
+        rs.last_session = t.get("session")
+        name = html.escape(rs.red(t.get("session_name") or rs.last_session or "session"))
+        rs.rows.append('<div class="day" data-mark="%s">'
+                       '<span class="pill pill-session">%s</span></div>'
+                       % (name, name))
+        rs.last_date = None
+    ts = t.get("ts") or ""
+    if ts:
+        d = ts[:10]
+        if d != rs.last_date:
+            rs.rows.append('<div class="day" data-mark="%s">'
+                           '<span class="pill pill-date">%s</span></div>'
+                           % (html.escape(d), html.escape(d)))
+            rs.last_date = d
 
-        if role == "user":
-            red = _red(t["text"])
-            if len(red) > USER_FOLD:
-                reviewed = _reviewed_fold(t, summaries)
-                summary = html.escape(_red(reviewed) if reviewed else user_fold_summary(red))
-                body = render_body(red, markdown=markdown)
-                rows.append(
-                    '<div class="row me"><span class="time">%s</span>'
-                    '<div class="bubble"><details%s>'
-                    '<summary><span class="sum">%s</span></summary>'
-                    '<div class="detail">%s</div></details></div></div>'
-                    % (time_hm, open_attr, summary, body))
-            else:
-                rows.append(
-                    '<div class="row me"><span class="time">%s</span>'
-                    '<div class="bubble"><div class="plain">%s</div></div></div>'
-                    % (time_hm, render_body(red, markdown=markdown)))
-            continue
 
-        # assistant or agent bubble
-        summary, hit = _page_summary(t, summaries, session_id, rebuild,
-                                     redact_extra, redact_mode)
-        if hit is not None:
-            cache_total += 1
-            cache_hits += bool(hit)
-        esc_sum = html.escape(_red(summary))
-        detail_body = render_body(_red(t["text"]), markdown=markdown)
+def _user_row(rs, t, summaries, time_hm):
+    """A user bubble: plain, or folded under a summary (the reviewer's, else cut from it) past USER_FOLD."""
+    red = rs.red(t["text"])
+    if len(red) > USER_FOLD:
+        reviewed = _reviewed_fold(t, summaries)
+        summary = html.escape(rs.red(reviewed) if reviewed else user_fold_summary(red))
+        body = render_body(red, markdown=rs.markdown)
+        return ('<div class="row me"><span class="time">%s</span>'
+                '<div class="bubble"><details%s>'
+                '<summary><span class="sum">%s</span></summary>'
+                '<div class="detail">%s</div></details></div></div>'
+                % (time_hm, rs.open_attr, summary, body))
+    return ('<div class="row me"><span class="time">%s</span>'
+            '<div class="bubble"><div class="plain">%s</div></div></div>'
+            % (time_hm, render_body(red, markdown=rs.markdown)))
 
-        tools_html = ""
-        if t.get("tools"):
-            ts_list = ", ".join(f"{_hide_keywords(k, redact_extra)}×{v}"
-                                for k, v in sorted(t["tools"].items()))
-            total = sum(t["tools"].values())
-            tools_html = ('<div class="tools">🔧 도구 %d건: %s</div>'
-                          % (total, html.escape(ts_list)))
 
-        if role == "agent":
-            who = html.escape(_red(t.get("agent_from") or "agent"))
-            avatar = "🤝"
-            from_line = '<div class="from">%s</div>' % who
-            row_cls = "row bot agent"
-        else:
-            avatar = "C"
-            from_line = ""
-            row_cls = "row bot"
+def _tools_line(tools, redact_extra):
+    """The `🔧 도구 N건` line of a bot bubble ("" without tools), the --redact-extra keywords hidden in the names."""
+    if not tools:
+        return ""
+    ts_list = ", ".join(f"{_hide_keywords(k, redact_extra)}×{v}"
+                        for k, v in sorted(tools.items()))
+    return ('<div class="tools">🔧 도구 %d건: %s</div>'
+            % (sum(tools.values()), html.escape(ts_list)))
 
-        rows.append(
-            '<div class="%s"><div class="avatar%s">%s</div>'
+
+def _bot_row(rs, t, summary, time_hm):
+    """An assistant or agent bubble: the summary, the details (body, tools) and, for an agent, who sent it."""
+    esc_sum = html.escape(rs.red(summary))
+    detail_body = render_body(rs.red(t["text"]), markdown=rs.markdown)
+    tools_html = _tools_line(t.get("tools"), rs.extra)
+    role = t["role"]
+    if role == "agent":
+        who = html.escape(rs.red(t.get("agent_from") or "agent"))
+        avatar, from_line, row_cls = "🤝", '<div class="from">%s</div>' % who, "row bot agent"
+    else:
+        avatar, from_line, row_cls = "C", "", "row bot"
+    return ('<div class="%s"><div class="avatar%s">%s</div>'
             '<div class="bubble"><details%s>'
             '<summary><span class="sum">%s</span></summary>'
             '<div class="detail">%s%s%s</div></details></div>'
             '<span class="time">%s</span></div>'
             % (row_cls, " agent" if role == "agent" else "", avatar,
-               open_attr, esc_sum, from_line, detail_body, tools_html, time_hm))
-    return rows, redact_counts, cache_hits, cache_total
+               rs.open_attr, esc_sum, from_line, detail_body, tools_html, time_hm))
+
+
+def render_rows(turns, session_id, redact_extra, redact_mode, rebuild,
+                open_details=False, markdown=True, all_sessions=False, summaries=None):
+    rs = _Rows(redact_extra, redact_mode, open_details, markdown)
+    for t in turns:
+        _pills(rs, t, all_sessions)
+        time_hm = html.escape(_fmt_time(t.get("ts") or ""))
+        if t["role"] == "mark":
+            rs.rows.append('<div class="day"><span class="pill pill-compact">'
+                           '⋯ 이전 대화 요약(compaction) ⋯</span></div>')
+        elif t["role"] == "user":
+            rs.rows.append(_user_row(rs, t, summaries, time_hm))
+        else:
+            summary, hit = _page_summary(t, summaries, session_id, rebuild,
+                                         redact_extra, redact_mode)
+            if hit is not None:
+                rs.total += 1
+                rs.hits += bool(hit)
+            rs.rows.append(_bot_row(rs, t, summary, time_hm))
+    return rs.rows, rs.counts, rs.hits, rs.total
 
 
 _TAG_RE = re.compile(r"<[^>]*>")
@@ -2004,12 +2044,15 @@ def _review_view(t, red, args):
 def _pack_turn(n, t, tid, why, session_id, args, counts):
     """One turn of the pack under its final id `tid` (the text as the page shows it, the rules'
     decision, the reviewer's slot), and the reviewer's view of it. The cached decision keys on
-    the text with the page's patterns only (`llm_key`), as 3.0.1 did."""
+    the text with the page's patterns only (`llm_key`), as 3.0.1 did, its split secrets joined first: a key
+    found only once joined keys anew, so no decision 3.0.8 or earlier cached for such a turn is read (it is
+    reviewed once more)."""
     red, found = page_redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)
     for k, v in found.items():
         counts[k] = counts.get(k, 0) + v
     hit = any(name in found for name, _ in REVIEW_SECRET_PATTERNS)
-    key_text = redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)[0] if hit else red
+    key_text = (redact(_rejoin_secrets(t["text"], args.redact_extra), extra=args.redact_extra,
+                       mode=args.redact_mode)[0] if hit else red)
     preview, clipped = _preview(review_redact(t["text"], args.redact_extra)[0])
     session = t.get("session") or session_id
     context = _decision_context(why, _keeps(args))
@@ -2025,6 +2068,8 @@ def _pack_turn(n, t, tid, why, session_id, args, counts):
             "llm": dict(cached, cached=True) if cached else {"keep": None, "summary": None}}
     if t.get("meta"):
         turn["meta"] = True
+    if t["role"] == "user" and _bang_output(t["text"]):
+        turn["bang_output"] = True               # for the dropped-turn WARN only: no part file carries it
     for k in ("session", "session_name", "agent_from"):
         if t.get(k):
             turn[k] = t[k] if k == "session" else page_redact(t[k], args.redact_extra, args.redact_mode)[0]
@@ -2093,7 +2138,8 @@ def _sheet(k, of, part_path, group, args):
     turns = []
     for x, view in group:
         y = {key: v for key, v in x.items()
-             if key not in ("text", "session", "session_name", "agent_from", "redactions", "llm_key")}
+             if key not in ("text", "session", "session_name", "agent_from", "redactions", "llm_key",
+                            "bang_output")}
         y["rule"] = {k: v for k, v in x["rule"].items() if k != "review_summary"}
         y["rule"]["summary"] = view["summary"]
         y["tools"] = {_hide_keywords(name, args.redact_extra): n for name, n in x["tools"].items()}
@@ -2348,7 +2394,7 @@ def _show(x, llm_summary, turns, summaries, stats, prior):
         if isinstance(v, int):
             prior[k] = prior.get(k, 0) + v
     # what the gate's critic reads: the reviewer's summary, else the rules' cut from the
-    # fully redacted text (the page's is cut first and may keep half a secret)
+    # fully redacted text (the page's may hold a --redact-mode mask: 4 + 4 characters of a value)
     sample = (llm_summary if shows else None) or x["rule"].get("review_summary")
     turns.append({"uuid": x["id"], "role": x["role"], "text": x["text"],
                   "ts": x.get("ts") or None, "tools": dict(x.get("tools") or {}),
@@ -2370,6 +2416,23 @@ def _kept_by_flag(pack, x):
     return pack.get("keep_tool_only") is True and tool_only
 
 
+def _bang_output(text):
+    """Whether `text` is the record Claude Code writes after a `!` command and nothing else (2.1.304, no isMeta): a
+    <bash-stdout> block then a <bash-stderr> block, or one <bash-stderr> block when the command failed. String checks
+    only, linear in the text: a pattern repeating the blocks could take exponential time on many closing tags."""
+    if text.startswith("<bash-stdout>"):
+        return "</bash-stdout><bash-stderr>" in text and text.endswith("</bash-stderr>")
+    return text.startswith("<bash-stderr>") and text.endswith("</bash-stderr>")
+
+
+def _typed_by_user(x):
+    """Whether pack turn `x` holds words the user typed: a user turn the rules keep that is neither a body the
+    harness injected (meta) nor what Claude Code writes after a `!` command (bang_output, judged on the text before
+    redaction: a hidden value at the end of the output takes the closing tags with it)."""
+    return (x["role"] == "user" and x["rule"]["keep"] and not x.get("meta")
+            and x.get("bang_output") is not True)
+
+
 def _review_result(pack, merged, args):
     """(turns to render, their summaries, cache writes, counts, prior redactions, the ids of
     turns the user typed that the reviewers dropped) from the pack and the decisions: a
@@ -2384,7 +2447,7 @@ def _review_result(pack, merged, args):
         held = llm_keep is False and _kept_by_flag(pack, x)
         stats["flag-kept"] += held
         keep = bool(_first(None if held else llm_keep, x["rule"]["keep"]))
-        if not keep and x["role"] == "user" and x["rule"]["keep"] and not x.get("meta"):
+        if not keep and _typed_by_user(x):
             typed.append(x["id"])               # typed by the user: the rules keep these
         llm_summary = _reviewer_summary(x, d, args, stats)
         if x["id"] in merged:                    # reviewed, even if left to the rules
@@ -2613,114 +2676,149 @@ def _flag_clash(args):
     return None
 
 
-def main(argv=None) -> int:
-    args = build_arg_parser().parse_args(argv)
-
+def _merge_env_extra(args):
+    """LINEAGE_REDACT_EXTRA's keywords after --redact-extra's."""
     env_extra = os.environ.get("LINEAGE_REDACT_EXTRA", "").strip()
     if env_extra:
         args.redact_extra = ",".join(
             p for p in (args.redact_extra, env_extra) if p)
 
-    clash = _flag_clash(args)
-    if clash:
-        print(f"[lineage] ERROR: {clash}", file=sys.stderr)
-        return 2
 
-    if args.purge_cache:
-        import shutil
-        if CACHE_BASE.exists():
-            shutil.rmtree(CACHE_BASE)
-            print(f"[lineage] cache purged: {CACHE_BASE}", file=sys.stderr)
-        else:
-            print("[lineage] no cache to purge", file=sys.stderr)
-        return 0
+def _purge_cache():
+    import shutil
+    if CACHE_BASE.exists():
+        shutil.rmtree(CACHE_BASE)
+        print(f"[lineage] cache purged: {CACHE_BASE}", file=sys.stderr)
+    else:
+        print("[lineage] no cache to purge", file=sys.stderr)
+    return 0
 
-    if args.apply_review:
-        if any((args.last, args.from_, args.to, args.turns, args.session,
-                args.all_sessions, args.from_transcript)):
-            print("[lineage] note: --apply-review renders the pack; source and range "
-                  "flags were applied at --emit-review", file=sys.stderr)
-        return apply_review(args)
 
-    # ---- Resolve input → raw turns (parse + parts + session) ----
+def _run_apply(args):
+    if any((args.last, args.from_, args.to, args.turns, args.session,
+            args.all_sessions, args.from_transcript)):
+        print("[lineage] note: --apply-review renders the pack; source and range "
+              "flags were applied at --emit-review", file=sys.stderr)
+    return apply_review(args)
+
+
+def _read_all_sessions(args):
+    """Every session of the project folder, merged record by record in time order."""
+    files = project_jsonl_files()
+    if not files:
+        print("[lineage] --all-sessions: no jsonl found in project dir",
+              file=sys.stderr)
+        return 2, [], "session", None
+    starts = {p: session_start(p) for p in files}
     turns = []
-    session_id = "session"
-    jsonl_path = None
+    for p in files:
+        name = discover_session_name(p) or p.stem[:8]
+        part = _load_turns_from(p, args.unsafe_schema, p.stem, name)
+        fill_missing_ts(part)
+        for t in part:
+            t["session_ts"] = starts[p] or "9999"
+        turns.extend(part)
+    # record-level chronological sort (stable → same-ts keeps file order)
+    turns.sort(key=lambda t: t.get("ts") or t.get("session_ts") or "9999")
+    print(f"[lineage] --all-sessions: merged {len(files)} sessions",
+          file=sys.stderr)
+    return None, turns, "all-sessions", None
+
+
+def _read_transcript(args):
+    """A transcript pasted on stdin ('-') or read from a file."""
+    if args.from_transcript == "-":
+        turns = list(parse_turns(sys.stdin, unsafe_schema=args.unsafe_schema,
+                                 session_id="stdin"))
+        return None, turns, "stdin", None
+    jsonl_path = pathlib.Path(args.from_transcript)
+    session_id = "file-" + jsonl_path.stem
+    turns = _load_turns_from(jsonl_path, args.unsafe_schema, session_id, None)
+    return None, turns, session_id, jsonl_path
+
+
+def _read_discovered(args):
+    """The newest session of the project folder."""
+    f = auto_discover_jsonl()
+    if not f:
+        print("[lineage] No jsonl found. Use one of:",
+              "\n  --session FILE         explicit jsonl path",
+              "\n  --all-sessions         merge all project sessions",
+              "\n  --from-transcript -    paste transcript via stdin",
+              "\n  --from-transcript FILE read transcript from file",
+              "\n(non-ASCII cwd may not auto-encode — use --session)",
+              file=sys.stderr)
+        return 2, [], "session", None
+    turns = _load_turns_from(f, args.unsafe_schema, f.stem, None)
+    print(f"[lineage] auto-discovered session: {f.name}", file=sys.stderr)
+    return None, turns, f.stem, f
+
+
+def _read_input(args):
+    """(exit code or None, raw turns, session id, jsonl path) from the source the flags name. The code is 2 when
+    there is no source, or the code a schema marker stopped the read with."""
     try:
         if args.all_sessions:
-            files = project_jsonl_files()
-            if not files:
-                print("[lineage] --all-sessions: no jsonl found in project dir",
-                      file=sys.stderr)
-                return 2
-            starts = {p: session_start(p) for p in files}
-            for p in files:
-                name = discover_session_name(p) or p.stem[:8]
-                part = _load_turns_from(p, args.unsafe_schema, p.stem, name)
-                fill_missing_ts(part)
-                for t in part:
-                    t["session_ts"] = starts[p] or "9999"
-                turns.extend(part)
-            # record-level chronological sort (stable → same-ts keeps file order)
-            turns.sort(key=lambda t: t.get("ts") or t.get("session_ts") or "9999")
-            session_id = "all-sessions"
-            print(f"[lineage] --all-sessions: merged {len(files)} sessions",
-                  file=sys.stderr)
-        elif args.from_transcript:
-            if args.from_transcript == "-":
-                turns = list(parse_turns(sys.stdin, unsafe_schema=args.unsafe_schema,
-                                         session_id="stdin"))
-                session_id = "stdin"
-            else:
-                jsonl_path = pathlib.Path(args.from_transcript)
-                session_id = "file-" + jsonl_path.stem
-                turns = _load_turns_from(jsonl_path, args.unsafe_schema,
-                                         session_id, None)
-        elif args.session:
+            return _read_all_sessions(args)
+        if args.from_transcript:
+            return _read_transcript(args)
+        if args.session:
             jsonl_path = pathlib.Path(args.session)
-            session_id = jsonl_path.stem
-            turns = _load_turns_from(jsonl_path, args.unsafe_schema,
-                                     session_id, None)
-        else:
-            f = auto_discover_jsonl()
-            if not f:
-                print("[lineage] No jsonl found. Use one of:",
-                      "\n  --session FILE         explicit jsonl path",
-                      "\n  --all-sessions         merge all project sessions",
-                      "\n  --from-transcript -    paste transcript via stdin",
-                      "\n  --from-transcript FILE read transcript from file",
-                      "\n(non-ASCII cwd may not auto-encode — use --session)",
-                      file=sys.stderr)
-                return 2
-            jsonl_path = f
-            session_id = f.stem
-            turns = _load_turns_from(f, args.unsafe_schema, session_id, None)
-            print(f"[lineage] auto-discovered session: {f.name}", file=sys.stderr)
+            turns = _load_turns_from(jsonl_path, args.unsafe_schema, jsonl_path.stem, None)
+            return None, turns, jsonl_path.stem, jsonl_path
+        return _read_discovered(args)
     except SystemExit as e:
-        return int(e.code) if isinstance(e.code, int) else 2
+        return (int(e.code) if isinstance(e.code, int) else 2), [], "session", None
 
-    # stdin → derive per-turn uuid from the content so the caches work (keyed: see _stdin_id_key)
-    if args.from_transcript == "-":
-        key = _stdin_id_key()
-        for t in turns:
-            t["uuid"] = hmac.new(key, str(t["text"]).encode(), hashlib.sha256).hexdigest()[:16]
 
-    # ---- Pipeline order (R6): classify → merge → echo → hide-tool-only → range ----
-    turns = classify_turns(turns, drop_trivia=args.drop_trivia)
-    turns = merge_assistant_runs(turns)
-    if args.emit_review:
-        drops = heuristic_drops(turns, args)
-        window = review_window(turns, drops, args)
-        if window is None:
-            return 2
-        return emit_review(turns, drops, window, session_id,
-                           default_output(args, jsonl_path, session_id), args)
+def _stdin_ids(turns):
+    """stdin → derive per-turn uuid from the content so the caches work (keyed: see _stdin_id_key)."""
+    key = _stdin_id_key()
+    for t in turns:
+        t["uuid"] = hmac.new(key, str(t["text"]).encode(), hashlib.sha256).hexdigest()[:16]
+
+
+def _run_emit(turns, session_id, jsonl_path, args):
+    drops = heuristic_drops(turns, args)
+    window = review_window(turns, drops, args)
+    if window is None:
+        return 2
+    return emit_review(turns, drops, window, session_id,
+                       default_output(args, jsonl_path, session_id), args)
+
+
+def _rulebase_turns(turns, args):
+    """The turns a --rulebase page shows: echo exchanges and tool-only turns gone (unless kept), then the range.
+    None on an invalid --turns."""
     if args.drop_trivia:
         turns = drop_echo_exchanges(turns)
     if args.hide_tool_only:
         turns = [t for t in turns
                  if not (t["role"] == "assistant" and not t["text"].strip())]
-    turns = select_range(turns, args)
+    return select_range(turns, args)
+
+
+def main(argv=None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    _merge_env_extra(args)
+    clash = _flag_clash(args)
+    if clash:
+        print(f"[lineage] ERROR: {clash}", file=sys.stderr)
+        return 2
+    if args.purge_cache:
+        return _purge_cache()
+    if args.apply_review:
+        return _run_apply(args)
+    rc, turns, session_id, jsonl_path = _read_input(args)
+    if rc is not None:
+        return rc
+    if args.from_transcript == "-":
+        _stdin_ids(turns)
+    # ---- Pipeline order (R6): classify → merge → echo → hide-tool-only → range ----
+    turns = merge_assistant_runs(classify_turns(turns, drop_trivia=args.drop_trivia))
+    if args.emit_review:
+        return _run_emit(turns, session_id, jsonl_path, args)
+    turns = _rulebase_turns(turns, args)
     if turns is None:
         return 2
     if args.output is None:
@@ -2823,8 +2921,8 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
         date_range = first if first == last else f"{first} ~ {last}"
 
     html_doc = HTML_TEMPLATE
-    html_doc = html_doc.replace("{{TITLE}}", html.escape(title), 1)
-    html_doc = html_doc.replace("{{HEADER_TITLE}}", html.escape(title), 1)
+    html_doc = html_doc.replace("{{TITLE}}", html.escape(_show_bidi_controls(title)), 1)
+    html_doc = html_doc.replace("{{HEADER_TITLE}}", html.escape(_show_bidi_controls(title)), 1)
     html_doc = html_doc.replace("{{DATE_RANGE}}", html.escape(_show_bidi_controls(date_range)), 1)
     html_doc = html_doc.replace("{{TURNS}}", _show_bidi_controls("\n".join(rows)), 1)
 
