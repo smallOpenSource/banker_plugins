@@ -2838,8 +2838,8 @@ def render_and_write(turns, session_id, args, all_sessions=False, markdown=True,
         date_range = first if first == last else f"{first} ~ {last}"
 
     html_doc = HTML_TEMPLATE
-    html_doc = html_doc.replace("{{TITLE}}", html.escape(title), 1)
-    html_doc = html_doc.replace("{{HEADER_TITLE}}", html.escape(title), 1)
+    html_doc = html_doc.replace("{{TITLE}}", html.escape(_show_bidi_controls(title)), 1)
+    html_doc = html_doc.replace("{{HEADER_TITLE}}", html.escape(_show_bidi_controls(title)), 1)
     html_doc = html_doc.replace("{{DATE_RANGE}}", html.escape(_show_bidi_controls(date_range)), 1)
     html_doc = html_doc.replace("{{TURNS}}", _show_bidi_controls("\n".join(rows)), 1)
 

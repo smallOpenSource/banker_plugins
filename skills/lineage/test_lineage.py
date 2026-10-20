@@ -2955,6 +2955,26 @@ class TestBidiControlsOnThePage(_ReviewCase):
         self.assertEqual(self._controls_in(text), [])
         self.assertIn('id="now">[U+202E]2026-08-0<', text)
 
+    def test_a_control_in_the_title_is_shown_in_the_title_and_the_header(self):
+        self._write([_rec("user", "점검", uuid="u1")])
+        rc = _quiet(L.main, ["--session", self.jf, "--rulebase", "--skip-reviewer", "--title",
+                             "회고 " + self.RLO + "gpj.exe" + self.PDF, "--output", os.path.join(self.d, "out.html")])[0]
+        self.assertEqual(rc, 0)
+        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        with open(os.path.join(self.d, page), encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(self._controls_in(text), [])
+        self.assertIn("<title>회고 [U+202E]gpj.exe[U+202C]</title>", text)
+        self.assertIn("<h1>회고 [U+202E]gpj.exe[U+202C]</h1>", text)
+
+    def test_a_control_in_a_review_packs_title_is_shown_too(self):
+        self._write([_rec("user", "점검", uuid="u1")])
+        _quiet(self._emit, ["--title", "회고 " + self.RLO + "gpj.exe" + self.PDF])
+        rc, text = _quiet(self._apply)[0]
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._controls_in(text), [])
+        self.assertIn("<h1>회고 [U+202E]gpj.exe[U+202C]</h1>", text)
+
 
 class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
     """A transcript line that is not an object, or is nested too deep to parse, is skipped with a WARN like any bad
