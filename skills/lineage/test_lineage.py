@@ -2239,6 +2239,22 @@ class TestLlmReviewGateReruns(_ReviewCase):
         self.assertEqual(rc, 0)
         self.assertIn("reviewers dropped 1 typed user turn(s): u1", err)
 
+    def test_the_output_claude_code_writes_after_a_bang_command_is_not_a_typed_turn(self):
+        # Claude Code writes a `!` command's output as a user record with no isMeta: the user typed only the command
+        typed = _rec("user", "<bash-input>ls</bash-input>", ts="2026-08-09T10:03:00Z", uuid="b1")
+        out = _rec("user", "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr>",
+                   ts="2026-08-09T10:03:01Z", uuid="o1")
+        failed = _rec("user", "<bash-stderr>Command failed: exit 2</bash-stderr>\n", ts="2026-08-09T10:03:30Z",
+                      uuid="o2")
+        asked = _rec("user", "<bash-stdout>total 0</bash-stdout> 이 출력은 무슨 뜻인가요", ts="2026-08-09T10:04:00Z",
+                     uuid="p1")                   # words after the blocks are the user's
+        self._write(self._records() + [typed, out, failed, asked])
+        _quiet(self._emit)
+        dropped = ("u1", "a1", "b1", "o1", "o2", "p1")          # a1 is the assistant's: never typed by the user
+        (rc, _text), err = _quiet(self._apply, [{"id": i, "keep": False} for i in dropped])
+        self.assertEqual(rc, 0)
+        self.assertIn("reviewers dropped 3 typed user turn(s): u1, b1, p1;", err)
+
 
 class TestPatternsForPages(_ReviewCase):
     """3.0.2: the reviewer patterns redact pages too, so what they hide by mistake shows to

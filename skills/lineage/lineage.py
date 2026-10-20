@@ -2370,6 +2370,18 @@ def _kept_by_flag(pack, x):
     return pack.get("keep_tool_only") is True and tool_only
 
 
+def _typed_by_user(x):
+    """Whether pack turn `x` holds words the user typed: a user turn the rules keep that is neither a body the
+    harness injected (meta) nor the output Claude Code writes after a `!` command (only <bash-stdout> and
+    <bash-stderr> blocks, no isMeta). Only the ends of the text (stripped when the pack was made) are looked at: a
+    pattern repeating the blocks could take exponential time on a text of many closing tags."""
+    if x["role"] != "user" or not x["rule"]["keep"] or x.get("meta"):
+        return False
+    t = x["text"]
+    output = t.startswith(("<bash-stdout>", "<bash-stderr>")) and t.endswith(("</bash-stdout>", "</bash-stderr>"))
+    return not output
+
+
 def _review_result(pack, merged, args):
     """(turns to render, their summaries, cache writes, counts, prior redactions, the ids of
     turns the user typed that the reviewers dropped) from the pack and the decisions: a
@@ -2384,7 +2396,7 @@ def _review_result(pack, merged, args):
         held = llm_keep is False and _kept_by_flag(pack, x)
         stats["flag-kept"] += held
         keep = bool(_first(None if held else llm_keep, x["rule"]["keep"]))
-        if not keep and x["role"] == "user" and x["rule"]["keep"] and not x.get("meta"):
+        if not keep and _typed_by_user(x):
             typed.append(x["id"])               # typed by the user: the rules keep these
         llm_summary = _reviewer_summary(x, d, args, stats)
         if x["id"] in merged:                    # reviewed, even if left to the rules
