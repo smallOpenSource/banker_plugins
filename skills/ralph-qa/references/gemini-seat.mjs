@@ -114,7 +114,12 @@ function registered(g) {
   try {
     const { projects } = JSON.parse(readFileSync(join(g, "projects.json"), "utf8"));
     if (!projects || typeof projects !== "object" || Array.isArray(projects)) return new Map();
-    return new Map(Object.entries(projects).filter(([, name]) => typeof name === "string").map(([owner, name]) => [name, owner]));
+    const pairs = Object.entries(projects).filter(([, name]) => typeof name === "string");
+    // A name two project folders claim (a hand edit, another gemini) is no seat's for sure: it
+    // gets no owner, and its unmarked folder stays. One folder written twice ("x", "x/") is one owner.
+    const owners = new Map();
+    for (const [owner, name] of pairs) owners.set(name, new Set([...(owners.get(name) ?? []), resolve(owner)]));
+    return new Map(pairs.filter(([, name]) => owners.get(name).size === 1).map(([owner, name]) => [name, owner]));
   } catch {
     return new Map();
   }
