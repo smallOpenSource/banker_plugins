@@ -86,7 +86,7 @@ command -v banker >/dev/null && banker --version || echo "banker: absent"
 - 사내 미러가 `npm ping` 에 답하지 않으면, 빈 임시 캐시로 한 번 더 묻고 그 값으로 판정한다. 캐시가 비어 있어 옛 값이 나올 수 없다. 이것도 실패하면 위처럼 멈춘다.
 
 ```bash
-(cd ~ && T=$(mktemp -d) && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r)
+(cd ~ && T=$(mktemp -d) && { npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r; })
 ```
 
 부재한 채널은 그 자리에서 "스킵" 으로 확정한다. 없는 채널을 되살리려 들지 마라(그건 설치지 갱신이 아니다).

@@ -371,7 +371,7 @@ banker setup
 - 세션 시작 훅의 업데이트 조회와 체크인은 따로 돌아 세션을 기다리게 하지 않습니다. 실패하면 24시간 동안 다시 시도하지 않고, 아예 시도하지 않게 하려면 `BANKER_NO_UPDATE_CHECK=1` 을 둡니다.
 - 훅은 `HTTPS_PROXY`, `HTTP_PROXY` 를 따르지 않습니다(Node 가 `NODE_USE_ENV_PROXY=1` 일 때만 따름). 프록시를 거쳐야만 밖에 닿는 망에서는 훅의 확인이 실패로 기록됩니다(`banker telemetry status` 의 "마지막 시도").
 - 네트워크가 필요한 스킬과 네트워크 없이 끝나는 모습
-  - 내려받는 설치 스킬(`setup-omc-hud`, `setup-bypass-permissions` 를 뺀 `setup-*`, `docs-setup`, `vertical-pptx-setup`, `motion-graphic-setup`, `3d-intro-setup`): 웹 원천(npm, PyPI, GitHub 등)은 먼저 닿는지 보고, 닿지 못하면 받지 않고 "오프라인이라 설치하지 않음" 으로 알립니다. OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 그 관리자의 미러 설정을 따르므로 미리 판정하지 않고 시도합니다.
+  - 내려받는 설치 스킬(`setup-omc-hud`, `setup-bypass-permissions` 를 뺀 `setup-*`, `docs-setup`, `vertical-pptx-setup`, `motion-graphic-setup`, `3d-intro-setup`): 웹 원천(npm, PyPI, GitHub 등)은 먼저 닿는지 보고, 닿지 못하면 받지 않고 "오프라인이라 설치하지 않음" 으로 알립니다. OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 그 관리자의 미러 설정을 따르므로 미리 판정하지 않고 시도합니다. 단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다.
   - `update-banker`: 레지스트리에 닿지 못하면 어느 채널도 바꾸지 않고 멈춥니다.
   - `audit-security` 의 의존성 취약점 조회: 결과로 읽을 수 없는 도구는 0건이 아니라 "미커버" 로 적습니다.
   - `deep-research`, 이를 부르는 `ultra-chain` 1단계, `ultra-interview` 의 조사: 웹 도구가 모두 실패하면 조사하지 못했다고 알립니다.
