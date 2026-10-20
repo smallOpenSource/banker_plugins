@@ -193,10 +193,12 @@ function withoutMachineOnly(creds) {
  * and null/undefined values are skipped. Returns the written path. A name that is not a variable
  * name, or a value with a line break, throws before anything is written: either would add lines of
  * its own (a FFMPEG_PATH, a second endpoint) to the file.
- * The file's lines stay as a person wrote them (comments, `export` lines, names not set here, line
- * ends): only the line each set name is read from changes, and a name the file lacks is added at
- * the end. The new file replaces the old one whole, so a write cut short leaves the old one. A link
- * is written where it points; a folder, a pipe or a link to nothing is refused.
+ * The file's lines stay as a person wrote them (comments, `export` lines, names not set here, each
+ * line's own end, bytes in another encoding): only the line each set name is read from changes, and a
+ * name the file lacks is added at the end. The new file replaces the old one whole, so a write cut
+ * short by an error leaves the old one. A file with a second name (a hard link), one the new copy would
+ * give another owner, or one in a folder that takes no new file (or that Windows holds open) is written
+ * in place, as before. A link is written where it points; a folder, a pipe or a link to nothing is refused.
  */
 export function persistCreds(creds, { target } = {}) {
   if (!target) throw new Error('persistCreds: target path required');
@@ -225,25 +227,39 @@ function linkedFile(link) {
   }
 }
 
+// latin1 reads each byte as one character, so a line in another encoding (a CP949 comment) is
+// written back byte for byte.
 function readIfAny(file) {
-  try { return fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
+  try { return fs.readFileSync(file, 'latin1'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
 }
 
-// The file's lines with each set name's value in place. parseEnvFile reads a name's last assignment,
+// The file's bytes with each set name's value in place. parseEnvFile reads a name's last assignment,
 // so that line is the one replaced, unless it already reads as the new value; a name the file lacks
-// is appended. The file's line end (\n or \r\n) is kept.
+// is appended. Every line keeps its own end; an added one takes \r\n when the file has any. New text
+// goes in as UTF-8.
 function mergedEnv(text, set) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const lines = text ? text.split(/\r?\n/) : [];
-  if (lines[lines.length - 1] === '') lines.pop();
-  const lastAt = new Map(lines.map((line, i) => [assignedName(line), i]).filter(([k]) => k));
+  const lines = splitLines(text, eol);
+  const lastAt = new Map(lines.map((l, i) => [assignedName(l.body), i]).filter(([k]) => k));
   for (const [k, v] of set) {
     const i = lastAt.get(k);
-    if (i === undefined) lines.push(envLine(k, v));
-    else if (parseEnvFile(lines[i])[k] !== v) lines[i] = envLine(k, v);
+    const line = asLatin1(envLine(k, v));
+    if (i === undefined) lines.push({ body: line, end: eol });
+    else if (parseEnvFile(asUtf8(lines[i].body))[k] !== v) lines[i].body = line;
   }
-  return lines.length ? `${lines.join(eol)}${eol}` : '';
+  return Buffer.from(lines.map((l) => l.body + l.end).join(''), 'latin1');
 }
+
+// Each line with its own end; a last line without one gets `eol`.
+function splitLines(text, eol) {
+  return (text.match(/[^\n]*\n|[^\n]+$/g) || []).map((l) => {
+    const m = /\r?\n$/.exec(l);
+    return m ? { body: l.slice(0, m.index), end: m[0] } : { body: l, end: eol };
+  });
+}
+
+const asLatin1 = (s) => Buffer.from(s, 'utf8').toString('latin1');
+const asUtf8 = (s) => Buffer.from(s, 'latin1').toString('utf8');
 
 // The name a line assigns, as parseEnvFile reads it (null for a comment, an `export` line, or text).
 function assignedName(line) {
@@ -254,21 +270,32 @@ function assignedName(line) {
 // The new contents go to a fresh random name opened exclusively ('wx') and are renamed over the old
 // file. A file with a second name (a hard link), or one the new copy would give another owner or
 // group, is written in place: a rename would part it from its other name, or hand it to this user.
+// So is one whose folder takes no new file, or whose rename the system refuses: the old in-place
+// write still works there.
 function writeKeyFile(file, body) {
   const old = statIfAny(file);
   if (old && old.nlink > 1) return writeInPlace(file, body);
   const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
-  const fd = fs.openSync(tmp, 'wx', 0o600);
+  const fd = openNew(tmp);
+  if (fd === null) return writeInPlace(file, body);
   let moved = false;
   try {
-    if (fillTemp(fd, body, old)) {
-      fs.renameSync(tmp, file);
-      moved = true;
-    }
+    moved = fillTemp(fd, body, old) && renamed(tmp, file);
   } finally {
     if (!moved) fs.rmSync(tmp, { force: true });
   }
   return moved ? chmodPrivate(file) : writeInPlace(file, body);
+}
+
+// A read-only folder, one that is not this user's, or (on Windows) a file another program holds.
+const NO_NEW_FILE = new Set(['EACCES', 'EPERM', 'EBUSY', 'EROFS']);
+
+function openNew(tmp) {
+  try { return fs.openSync(tmp, 'wx', 0o600); } catch (e) { if (NO_NEW_FILE.has(e.code)) return null; throw e; }
+}
+
+function renamed(tmp, file) {
+  try { fs.renameSync(tmp, file); return true; } catch (e) { if (NO_NEW_FILE.has(e.code)) return false; throw e; }
 }
 
 // Fill and close the new file. False, with nothing written, when its owner or group is not the old file's.
@@ -343,7 +370,9 @@ export const safeForKey = (u) => u.protocol === 'https:' || localHttp(u);
  * Node 22 and 24 do when NODE_USE_ENV_PROXY=1 or --use-env-proxy is on and http_proxy or HTTP_PROXY is
  * set, unless NO_PROXY names the host. Over plain http the proxy reads the request, a key included.
  * Read as Node 22.23 and 24.13 do (measured), and toward "proxied" where unsure: NODE_USE_ENV_PROXY
- * other than empty or 0 is on (Node takes only 1), `--use-env-proxy` with any value is on, and the host
+ * other than empty or 0 is on (Node takes only 1); the flag on the command line or in NODE_OPTIONS is on
+ * in any spelling Node takes (`_` for `-`, quoted, with a value, even `=false`), and so is a Node
+ * config file, which can turn it on unseen; and the host
  * must be named in no_proxy and NO_PROXY both, when set (Node takes no_proxy when it is set, even
  * empty). An entry names it as `*`, the host, or the host with this URL's own port written out;
  * a leading dot, a range or a default port does not count.
@@ -356,8 +385,14 @@ export function envProxied(u, env = process.env, flags = process.execArgv) {
 
 function envProxyOn(env, flags) {
   if (env.NODE_USE_ENV_PROXY && env.NODE_USE_ENV_PROXY !== '0') return true;
-  return [...flags, ...String(env.NODE_OPTIONS || '').split(/\s+/)].some((t) => t === '--use-env-proxy' || t.startsWith('--use-env-proxy='));
+  const given = [...flags, env.NODE_OPTIONS || ''].join(' ');
+  return PROXY_FLAG.test(given) || CONFIG_FILE_FLAG.test(given);
 }
+
+// `--use-env-proxy` as Node takes it (`--no-use-env-proxy` turns it off), and the flags that load a
+// Node config file, whose nodeOptions can turn it on without either showing here.
+const PROXY_FLAG = /--use[-_]env[-_]proxy(?![\w-])/;
+const CONFIG_FILE_FLAG = /--experimental[-_](?:default[-_])?config[-_]file(?![\w-])/;
 
 // Entries are split at commas and spaces, and compared in lower case (URL gives the host in lower case).
 const noProxyNames = (list, u) => list.toLowerCase().split(/[\s,]+/).some((x) => noProxyEntry(x, u));
@@ -372,12 +407,15 @@ function noProxyEntry(x, u) {
 // made later does not take the proxy away: a key is held back when either says a proxy is in the way.
 const ENV_AT_LOAD = { ...process.env };
 
+/** Whether a key is held back from this URL (EPROXYKEY): http that an env proxy would carry, now or as Node started. */
+export const keyHeldBack = (u) => u.protocol === 'http:' && (envProxied(u) || envProxied(u, ENV_AT_LOAD));
+
 // A key goes only where safeForKey allows, and over http only straight to this machine: not through
 // a proxy the environment puts in the way. Both refusals come before anything is sent.
 function assertKeyMayGo(target, headers) {
   if (!Object.keys(headers).some(isSecret)) return;
   if (!safeForKey(target)) throw refused('EINSECURE', 'a key is sent only over https');
-  if (target.protocol === 'http:' && (envProxied(target) || envProxied(target, ENV_AT_LOAD))) {
+  if (keyHeldBack(target)) {
     throw refused('EPROXYKEY', 'a key over http goes only straight to this machine, and the environment sends http through a proxy (NO_PROXY can name the host)');
   }
 }
@@ -463,7 +501,7 @@ const IMAGE_TIMEOUT_MS = 300_000;
  */
 export async function azFetch(url, opts = {}) {
   const { key, binary = false } = opts;
-  const limitMs = opts.timeoutMs ?? (binary ? DOWNLOAD_TIMEOUT_MS : API_TIMEOUT_MS);
+  const limitMs = Math.ceil(opts.timeoutMs ?? (binary ? DOWNLOAD_TIMEOUT_MS : API_TIMEOUT_MS)); // AbortSignal.timeout takes whole ms only
   let last;
   for (const auth of authStyles(key)) {
     last = await azAttempt(url, { ...opts, auth, binary, limitMs });
@@ -476,12 +514,13 @@ export async function azFetch(url, opts = {}) {
 const authStyles = (key) => (key ? [{ 'api-key': key }, { Authorization: `Bearer ${key}` }] : [{}]);
 
 // One request with one auth style. The body is read inside the try: a connection that drops
-// mid-body is a network error like any other, not a throw past the caller's retry.
+// mid-body is a network error like any other, not a throw past the caller's retry. So is a time limit
+// AbortSignal.timeout will not take (not a whole number of ms).
 async function azAttempt(url, { method = 'GET', headers = {}, body, auth, binary, limitMs }) {
-  const opts = { method, headers: { ...headers, ...auth }, signal: AbortSignal.timeout(limitMs) };
-  if (body !== undefined) opts.body = body;
   const authStyle = Object.keys(auth)[0] || null;
   try {
+    const opts = { method, headers: { ...headers, ...auth }, signal: AbortSignal.timeout(limitMs) };
+    if (body !== undefined) opts.body = body;
     const r = await fetchGuarded(url, opts);
     const ct = r.headers.get('content-type') || '';
     return { status: r.status, ok: r.ok, ct, body: await azBody(r, ct, binary), authStyle, retryAfterMs: retryAfterMsOf(r.headers) };
@@ -490,10 +529,12 @@ async function azAttempt(url, { method = 'GET', headers = {}, body, auth, binary
   }
 }
 
+// A read cut short throws (the caller's catch makes it status 0); a JSON body that does not parse is null.
 async function azBody(r, ct, binary) {
   if (binary) return Buffer.from(await r.arrayBuffer());
-  if (ct.includes('json')) return r.json().catch(() => null);
-  return r.text().catch(() => null);
+  const text = await r.text();
+  if (!ct.includes('json')) return text;
+  try { return JSON.parse(text); } catch { return null; }
 }
 
 // ---------------------------------------------------------------------------
@@ -648,7 +689,7 @@ export async function pollVideo(opts = {}) {
   return st;
 }
 
-// A poll request's limit: the usual one, or less when the deadline is nearer.
+// A poll request's limit: the usual one, or less when the deadline is nearer (azFetch rounds it up to whole ms).
 const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, end - t));
 const settled = (st) => Boolean(st) && TERMINAL_STATUS.has(st.status);
 

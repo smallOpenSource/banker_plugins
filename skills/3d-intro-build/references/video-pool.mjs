@@ -39,7 +39,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
-import { createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey } from './azure-adapter.mjs';
+import { createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey, keyHeldBack } from './azure-adapter.mjs';
 
 export const WAN_DEFAULT_MODEL = 'wan3.0-video-prime';
 const WAN_CREATE_PATH = '/api/v1/services/aigc/video-generation/video-synthesis';
@@ -305,8 +305,8 @@ async function wanFetch(url, opts = {}) {
   }
 }
 
-// A poll request's limit: the usual one, or less when the poll deadline is nearer.
-const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, end - t));
+// A poll request's limit: the usual one, or less when the poll deadline is nearer (whole ms for AbortSignal.timeout).
+const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, Math.ceil(end - t)));
 
 function wanHeaders({ key, body }) {
   const headers = {};
@@ -325,8 +325,9 @@ function networkFailure(e) {
   return { status: 0, ok: false, body: null, code: null, message: errno || e?.name || 'network error', retryAfterMs: null, preSend: PRE_SEND_ERRORS.has(errno), errno };
 }
 
+// A read cut short throws: wanFetch's catch makes it a network failure, as for a binary body.
 async function parsedBody(r) {
-  const text = await r.text().catch(() => '');
+  const text = await r.text();
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
   return { body: parsed, code: parsed?.code || null, message: parsed?.message || null };
@@ -633,18 +634,35 @@ async function runWan(ctx) {
   return poolUnavailable(ctx, `gave up after ${attempts} attempts`);
 }
 
-// The usable part of the WAN pool. Malformed entries are skipped with an event. When every configured
-// entry is malformed the leg stops: a config error must not turn into a paid Sora clip.
+// The usable part of the WAN pool. Malformed entries, and those whose key an env proxy would carry, are
+// skipped with an event. When every configured entry is one of these the leg stops: a config error must
+// not turn into a paid Sora clip.
 function usablePool(ctx) {
   const all = loadWanPool(ctx.creds);
-  const bad = all.filter(malformedField);
-  for (const b of bad) ctx.emit({ type: 'skip', provider: 'wan', label: b.label, reason: `${malformedField(b)} is malformed (not an https URL / not one model id)` });
-  if (all.length && bad.length === all.length) {
-    throw stopError('invalid_request', `every WAN entry is malformed (${bad.map((b) => `${b.label} ${malformedField(b)}`).join(', ')}); fix the env file — nothing was sent, and Sora was not used`, { provider: 'wan' });
-  }
-  const pool = all.filter((e) => !malformedField(e));
+  const refusals = all.map((e) => [e, entryRefusal(e)]).filter(([, r]) => r);
+  for (const [e, r] of refusals) ctx.emit({ type: 'skip', provider: 'wan', label: e.label, reason: r.reason });
+  if (all.length && refusals.length === all.length) throw everyEntryRefused(refusals);
+  const refused = new Set(refusals.map(([e]) => e));
+  const pool = all.filter((e) => !refused.has(e));
   if (!pool.length) ctx.emit({ type: 'skip', provider: 'wan', reason: 'no usable WAN_<n>_ENDPOINT + WAN_<n>_API_KEY entries' });
   return pool;
+}
+
+// fetchGuarded would hold the key back from this origin (EPROXYKEY): http that an env proxy carries.
+const proxyHolds = (origin) => Boolean(origin) && keyHeldBack(new URL(origin));
+const HELD_BACK = 'the endpoint is http and the environment sends http through a proxy, so the key is held back (EPROXYKEY); name the host in NO_PROXY or use https';
+
+// Why an entry cannot take a leg here, or null: a malformed field, or a key the env proxy would carry.
+function entryRefusal(e) {
+  const field = malformedField(e);
+  if (field) return { tag: field, reason: `${field} is malformed (not an https URL / not one model id)` };
+  return proxyHolds(e.endpoint) ? { tag: 'EPROXYKEY', reason: HELD_BACK } : null;
+}
+
+function everyEntryRefused(refusals) {
+  const held = refusals.some(([, r]) => r.tag === 'EPROXYKEY');
+  const list = refusals.map(([e, r]) => `${e.label} ${r.tag}`).join(', ');
+  return stopError('invalid_request', `every WAN entry is ${held ? 'malformed or held back' : 'malformed'} (${list}); fix the env file${held ? ' or the proxy setting' : ''} — nothing was sent, and Sora was not used`, { provider: 'wan' });
 }
 
 // Wait when a key frees up soon: an in-flight slot always, a cooldown only within maxRateWaitMs.
@@ -858,6 +876,7 @@ function soraReady(ctx) {
     return false;
   }
   if (!originOf(endpoint)) throw stopError('invalid_request', 'AZURE_SORA_ENDPOINT is not an https URL; fix the env file — nothing was sent', { provider: 'sora' });
+  if (proxyHolds(originOf(endpoint))) throw stopError('invalid_request', `AZURE_SORA_ENDPOINT: ${HELD_BACK} — nothing was sent`, { provider: 'sora' });
   return true;
 }
 
@@ -876,6 +895,9 @@ export async function resumeClip(opts = {}) {
   if (!originOf(o.creds.AZURE_SORA_ENDPOINT) || !o.creds.AZURE_SORA_API_KEY) {
     throw stopError('invalid_request', 'resumeClip: resuming a Sora job needs AZURE_SORA_ENDPOINT as an https URL and AZURE_SORA_API_KEY (run 3d-intro-setup); nothing was sent', { provider: 'sora', taskId: o.taskId });
   }
+  if (proxyHolds(originOf(o.creds.AZURE_SORA_ENDPOINT))) {
+    throw stopError('invalid_request', `resumeClip: AZURE_SORA_ENDPOINT: ${HELD_BACK} — nothing was sent`, { provider: 'sora', taskId: o.taskId });
+  }
   return finishSoraJob(ctx, o.taskId, o.seconds == null ? null : snapSoraSeconds(o.seconds));
 }
 
@@ -884,6 +906,9 @@ async function resumeWan(ctx, o) {
   if (!e) throw new Error(`resumeClip: ${o.label} is not in the WAN pool (was the key removed?)`);
   if (e.badEndpoint) {
     throw stopError('invalid_request', `resumeClip: ${o.label} endpoint is not an https URL; fix the env file — nothing was sent`, { provider: 'wan', label: o.label, taskId: o.taskId });
+  }
+  if (proxyHolds(e.endpoint)) {
+    throw stopError('invalid_request', `resumeClip: ${o.label}: ${HELD_BACK} — nothing was sent`, { provider: 'wan', label: o.label, taskId: o.taskId });
   }
   const out = await finishWanTask(ctx, e, o.taskId, { duration: Math.round(Number(o.seconds) || 0) || null });
   if (out.clip) return out.clip;

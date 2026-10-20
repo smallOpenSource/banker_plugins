@@ -1165,19 +1165,50 @@ test('generateClip: a Sora job polled with no interval still gets every poll up 
   assert.equal(polls, 3);
 });
 
-test('generateClip: a WAN key held back because an env proxy would carry it over http moves on to the next key', async () => {
+// Runs fn with an env proxy that would carry http, as NODE_USE_ENV_PROXY=1 and HTTP_PROXY do.
+async function withEnvProxy(fn) {
   const saved = Object.fromEntries(['NODE_USE_ENV_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'no_proxy'].map((k) => [k, process.env[k]]));
   Object.assign(process.env, { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://proxy.example:3128' });
   delete process.env.NO_PROXY;
   delete process.env.no_proxy;
   try {
-    const calls = installFetch();
-    const r = await run({ creds: creds({ WAN_1_ENDPOINT: 'http://localhost:9' }), statePath: tmpState() });
-    assert.equal(r.label, 'WAN_2');
-    assert.ok(!calls.some((c) => c.url.startsWith('http://localhost:9')), 'nothing went to the http endpoint');
+    return await fn();
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
+}
+
+test('generateClip: a WAN entry whose key an env proxy would carry over http is skipped before anything is sent, and the next key serves', async () => {
+  await withEnvProxy(async () => {
+    const calls = installFetch();
+    const events = [];
+    const r = await run({ creds: creds({ WAN_1_ENDPOINT: 'http://localhost:9' }), statePath: tmpState(), onEvent: (e) => events.push(e) });
+    assert.equal(r.label, 'WAN_2');
+    assert.ok(!calls.some((c) => c.url.startsWith('http://localhost:9')), 'nothing went to the http endpoint');
+    assert.ok(events.some((e) => e.type === 'skip' && e.label === 'WAN_1' && /EPROXYKEY/.test(e.reason)), JSON.stringify(events.slice(0, 3)));
+    assert.ok(!events.some((e) => e.type === 'submit' && e.label === 'WAN_1'), 'WAN_1 was never submitted to');
+  });
+});
+
+test('generateClip: when an env proxy would carry every WAN key, the leg stops as invalid_request without paying for Sora', async () => {
+  await withEnvProxy(async () => {
+    const calls = installFetch();
+    const cr = creds({ WAN_1_ENDPOINT: 'http://localhost:9', WAN_2_ENDPOINT: 'http://127.0.0.1:9', WAN_3_ENDPOINT: 'http://[::1]:9' });
+    await assert.rejects(() => run({ creds: cr, statePath: tmpState() }), (e) => e.kind === 'invalid_request' && e.provider === 'wan' && /held back/.test(e.message) && /WAN_3 EPROXYKEY/.test(e.message));
+    assert.equal(calls.length, 0, 'nothing was sent, Sora included');
+  });
+});
+
+test('generateClip and resumeClip: a Sora or WAN endpoint whose key an env proxy would carry stops as invalid_request, nothing sent', async () => {
+  await withEnvProxy(async () => {
+    const calls = installFetch();
+    const sora = creds({ AZURE_SORA_ENDPOINT: 'http://localhost:9', VIDEO_PROVIDER_ORDER: 'sora' });
+    await assert.rejects(() => run({ creds: sora, statePath: tmpState() }), (e) => e.kind === 'invalid_request' && e.provider === 'sora' && /EPROXYKEY/.test(e.message));
+    const resume = { statePath: tmpState(), pollIntervalMs: 1, pollTimeoutMs: 50, sleep: async () => {} };
+    await assert.rejects(P.resumeClip({ ...resume, creds: sora, provider: 'sora', taskId: 'sora-job-1' }), (e) => e.kind === 'invalid_request' && e.taskId === 'sora-job-1' && /EPROXYKEY/.test(e.message));
+    await assert.rejects(P.resumeClip({ ...resume, creds: creds({ WAN_1_ENDPOINT: 'http://localhost:9' }), provider: 'wan', label: 'WAN_1', taskId: 'task-1-1' }), (e) => e.kind === 'invalid_request' && e.label === 'WAN_1' && /EPROXYKEY/.test(e.message));
+    assert.equal(calls.length, 0);
+  });
 });
 
 const buildSkill = () => fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
@@ -1232,4 +1263,20 @@ test('generateClip: a transient failure keeps the first 120 characters of its me
   await run({ creds: creds(), statePath, clock: c });
   const s = P.poolSummary({ creds: creds(), statePath, now: c.now() }).find((e) => e.label === 'WAN_1');
   assert.equal(s.reason, `InternalError: ${'x'.repeat(120)}`);
+});
+
+test('generateClip: a WAN submit whose answer is cut off mid-body is a lost connection (submit_unknown), named as such', async () => {
+  const cut = () => ({ status: 200, ok: true, headers: new Headers({ 'content-type': 'application/json' }), text: async () => { throw Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } }); } });
+  const calls = installFetch({ wanCreate: (n) => (n === 1 ? cut() : null) });
+  await assert.rejects(() => run({ creds: creds(), statePath: tmpState() }), (e) => e.kind === 'submit_unknown' && e.label === 'WAN_1' && /no usable answer \(UND_ERR_SOCKET\)/.test(e.message));
+  assert.deepEqual(createdOn(calls), [1]);
+});
+
+test('wanPollTask: a clock that gives fractions of a ms still sends its first poll', async () => {
+  installFetch();
+  let t = 0.25;
+  const entry = P.loadWanPool(creds())[0];
+  const p = await P.wanPollTask({ entry, taskId: 't', intervalMs: 1, timeoutMs: 1000, now: () => (t += 0.5), sleep: async () => {} });
+  assert.equal(p.state, 'SUCCEEDED');
+  assert.ok(t < 10, `the first poll was answered (the clock is at ${t} ms, not near the deadline)`);
 });

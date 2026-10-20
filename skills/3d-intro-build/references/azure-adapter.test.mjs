@@ -1095,6 +1095,14 @@ test('envProxied: a request goes through an env proxy as Node 22 and 24 send it,
     [{ ...on, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' }, [], 'http://127.0.0.1:9/', false],
     [{ http_proxy: 'http://p:1' }, ['--use-env-proxy=true'], 'http://localhost:9/', true],
     [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--use-env-proxy=true' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1' }, ['--use_env_proxy'], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--use-env_proxy' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--max-old-space-size=99 "--use-env-proxy"' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--use-env-proxy=false' }, [], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--no-use-env-proxy' }, [], 'http://localhost:9/', false],
+    [{ http_proxy: 'http://p:1' }, ['--experimental-config-file=node.config.json'], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--experimental-default-config-file' }, [], 'http://localhost:9/', true],
+    [{ NODE_OPTIONS: '--experimental-default-config-file' }, [], 'http://localhost:9/', false],
     [{ ...on, NO_PROXY: '.localhost' }, [], 'http://localhost:9/', true],
     [{ ...on, NO_PROXY: '::1' }, [], 'http://[::1]:9/', true],
     [{ ...on, NO_PROXY: '127.0.0.0/8' }, [], 'http://127.0.0.1:9/', true],
@@ -1210,4 +1218,84 @@ test('concatClips: no clips is refused before ffmpeg runs', async () => {
     await assert.rejects(A.concatClips(list, '/tmp/out.mp4', { ffmpeg: '/usr/bin/ffmpeg' }), /concatClips: no input clips/);
   }
   assert.equal(ran, 0);
+});
+
+const sockErr = () => Object.assign(new TypeError('terminated'), { cause: { code: 'UND_ERR_SOCKET' } });
+const cutAnswer = (ct) => () => ({
+  status: 200, ok: true, headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? ct : null) },
+  json: async () => { throw sockErr(); }, text: async () => { throw sockErr(); },
+});
+
+test('azFetch: a JSON or text answer cut off mid-body is a network error (status 0), not an empty 200', async () => {
+  for (const ct of ['application/json', 'text/plain']) {
+    installFetch(cutAnswer(ct));
+    const r = await A.azFetch(`${EP}/x`, { key: KEY });
+    assert.deepEqual([r.status, r.errno], [0, 'UND_ERR_SOCKET'], ct);
+  }
+});
+
+test('generateImage: a v1 answer cut off mid-body is not sent again on the classic path (it may have billed)', async () => {
+  const calls = installFetch(cutAnswer('application/json'));
+  await assert.rejects(A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' }), (e) => e.message.startsWith('generateImage failed (v1): HTTP 0 (UND_ERR_SOCKET)'));
+  assert.equal(calls.length, 1);
+});
+
+test('azFetch and pollVideo: a time limit or a clock in fractions of a ms is taken as whole ms, never a throw', async () => {
+  installFetch(() => mockJson({ id: 'v', status: 'completed' }));
+  assert.equal((await A.azFetch(`${EP}/x`, { key: KEY, timeoutMs: 1.5 })).status, 200);
+  let t = 0.25;
+  const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'v', timeoutMs: 1000, now: () => (t += 0.5), sleep: async () => {} });
+  assert.equal(st?.status, 'completed');
+});
+
+test('persistCreds: a comment in another encoding (CP949) and each line\'s own line end come back byte for byte', () => {
+  const target = path.join(mkTmp('persist-bytes-'), 'env');
+  const note = Buffer.concat([Buffer.from('# '), Buffer.from([0xc5, 0xb0, 0x20, 0xb8, 0xde, 0xb8, 0xf0]), Buffer.from('\n')]);
+  fs.writeFileSync(target, Buffer.concat([note, Buffer.from('A=1\r\nB=2\n')]));
+  A.persistCreds({ A: '1', B: '3', C: '4' }, { target });
+  assert.deepEqual(fs.readFileSync(target), Buffer.concat([note, Buffer.from('A=1\r\nB=3\nC=4\r\n')]));
+});
+
+test('persistCreds: a value with non-ASCII text is written as UTF-8 and, unchanged, leaves its line as it was', () => {
+  const target = path.join(mkTmp('persist-utf8-'), 'env');
+  A.persistCreds({ FFMPEG_PATH: 'C:\\미디어\\ffmpeg.exe' }, { target });
+  assert.equal(A.parseEnvFile(fs.readFileSync(target, 'utf8')).FFMPEG_PATH, 'C:\\미디어\\ffmpeg.exe');
+  fs.writeFileSync(target, 'FFMPEG_PATH = C:\\미디어\\ffmpeg.exe  # 내 경로\n');
+  A.persistCreds({ FFMPEG_PATH: 'C:\\미디어\\ffmpeg.exe' }, { target });
+  assert.equal(fs.readFileSync(target, 'utf8'), 'FFMPEG_PATH = C:\\미디어\\ffmpeg.exe  # 내 경로\n');
+});
+
+test('persistCreds: a key file whose folder takes no new file is written in place, as before', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'POSIX folder modes (root writes anyway)' }, () => {
+  const dir = mkTmp('persist-rodir-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, '# mine\nA=1\n');
+  fs.chmodSync(dir, 0o500);
+  try {
+    A.persistCreds({ A: '2' }, { target });
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), '# mine\nA=2\n');
+  assert.deepEqual(fs.readdirSync(dir), ['env']);
+});
+
+test('persistCreds: a rename the system refuses (on Windows, a file another program holds) falls back to writing in place', () => {
+  const dir = mkTmp('persist-busy-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  const rename = fs.renameSync;
+  fs.renameSync = () => { throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' }); };
+  try {
+    A.persistCreds({ A: '2' }, { target });
+  } finally {
+    fs.renameSync = rename;
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'A=2\n');
+  assert.deepEqual(fs.readdirSync(dir), ['env']);
+});
+
+test('3d-intro-setup: the persistCreds note names the files written in place, not that every write survives a cut', () => {
+  const line = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8').split('\n').find((l) => l.includes('`persistCreds()` 로 합친다'));
+  assert.match(line, /오류로 끊겨도 원래 파일이 남는다/);
+  assert.match(line, /하드 링크, 소유자가 다른 파일, 새 파일을 만들 수 없는 폴더의 파일은 전처럼 제자리에 쓴다/);
 });
