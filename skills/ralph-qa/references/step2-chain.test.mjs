@@ -3,7 +3,7 @@
 // Run from the repo root: node --test skills/ralph-qa/references/step2-chain.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -504,4 +504,88 @@ test("with no diff to send, the same folder takes the review file, the base file
   const prompt = readFileSync(join(ctx.d, "prompt.md"), "utf8");
   assert.ok(prompt.includes("the plan\nthe base file\n</review-data"), prompt);
   for (const f of ["idx", "added.md", "listed.md"]) assert.ok(!existsSync(join(ctx.d, f)), `${f} is left`);
+});
+
+// 0.20.4 last cleanup: a related range is never read through a link, and a ./ line names its file
+const canLink = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "rq-link-"));
+  try {
+    symlinkSync(join(dir, "x"), join(dir, "l"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+test("a related range is not read through a link: a tracked or listed link, or a file in a linked folder, stops", { skip: SKIP || (!canLink && "no symlinks here") }, (t) => {
+  const ctx = repo(t);
+  const outside = join(ctx.dir, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "secret.txt"), "OUTSIDE-1\nOUTSIDE-2\n");
+  symlinkSync(join(outside, "secret.txt"), join(ctx.repo, "link.txt"));
+  put(ctx, "sub/y.txt", "inside\n");
+  git(ctx, "add", "link.txt", "sub/y.txt");
+  git(ctx, "commit", "-qm", "a link and a folder");
+  symlinkSync(join(outside, "secret.txt"), join(ctx.repo, "new-link.txt"));
+  writeFileSync(join(ctx.d, "new-files.md"), "new-link.txt\n");
+  writeFileSync(join(ctx.d, "prompt.md"), "");
+  // the folder of a tracked file turned into a link outside git (an archive that came with its .git)
+  rmSync(join(ctx.repo, "sub"), { recursive: true });
+  writeFileSync(join(outside, "y.txt"), "OUTSIDE-SUB\n");
+  symlinkSync(outside, join(ctx.repo, "sub"));
+  for (const name of ["link.txt", "new-link.txt", "sub/y.txt"]) {
+    const r = range(ctx, name, 1, 2);
+    assert.notEqual(r.status, 0, name);
+    assert.match(r.stderr, /링크이거나 링크 폴더 아래/, name);
+  }
+  assert.equal(readFileSync(join(ctx.d, "prompt.md"), "utf8"), "", "nothing from outside the repo");
+});
+
+test("a listed ./ line names its file for the related range too, as the chain reads the list", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "plain.txt", "p1\np2\n");
+  writeFileSync(join(ctx.d, "new-files.md"), "./plain.txt\n");
+  writeFileSync(join(ctx.d, "prompt.md"), "");
+  const r = range(ctx, "plain.txt", 2, 2);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(ctx.d, "prompt.md"), "utf8"), "=== plain.txt:2-2\np2\n");
+});
+
+// The PowerShell step 2 is prose: its spans run in pwsh where there is one (Windows paths take / off Windows).
+const PS = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "exit 0"], { encoding: "utf8" }).status === 0;
+const PS_LINE = SKILL.split("\n").find((l) => l.startsWith("  - 2단계 원문 붙이기:")) || "";
+const psSpan = (re) => (PS_LINE.match(re) || [])[1] || "";
+const posixPs = (s) => (process.platform === "win32" ? s : s.replaceAll("$d\\", "$d/").replaceAll("<저장소>\\<파일>", "<저장소>/<파일>"));
+const pwsh = (script) => spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+const psq = (s) => s.replaceAll("'", "''");
+
+test("the PowerShell list check takes a ./ line as the file it names, as the bash chain does", { skip: !PS && "no pwsh" }, (t) => {
+  const listed = psSpan(/`(\$listed = @\(Get-Content [^`]+)`/);
+  const extra = psSpan(/`(\$added \| Where-Object \{ \$listed -cnotcontains \$_ \})`/);
+  assert.ok(listed && extra, "no $listed or list check in the PowerShell step 2");
+  const dir = mkdtempSync(join(tmpdir(), "rq-ps-list-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "new-files.md"), "./plain.txt\r\nq.txt\n");
+  const r = pwsh(`$d = '${psq(dir)}'; $added = @('plain.txt', 'q.txt'); ${posixPs(listed)}; @(${extra}).Count`);
+  assert.equal(r.stdout.trim(), "0", r.stderr);
+});
+
+test("the PowerShell related range finds a link at the file or at a folder above it", { skip: (!PS && "no pwsh") || (!canLink && "no symlinks here") }, (t) => {
+  const loop = psSpan(/`(\$link = \$false; for [^`]+)`/);
+  assert.ok(loop, "no link check for the related range in the PowerShell step 2");
+  const dir = mkdtempSync(join(tmpdir(), "rq-ps-link-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const repoDir = join(dir, "repo");
+  const outside = join(dir, "outside");
+  mkdirSync(join(repoDir, "real"), { recursive: true });
+  mkdirSync(outside);
+  writeFileSync(join(repoDir, "a.txt"), "a\n");
+  writeFileSync(join(repoDir, "real", "b.txt"), "b\n");
+  writeFileSync(join(outside, "s.txt"), "s\n");
+  symlinkSync(join(outside, "s.txt"), join(repoDir, "link.txt"));
+  symlinkSync(outside, join(repoDir, "sub"), "dir");
+  const link = (file) => pwsh(`${posixPs(loop).replaceAll("<저장소>", psq(repoDir)).replaceAll("<파일>", psq(file))}; [string]$link`).stdout.trim();
+  assert.deepEqual(["a.txt", "real/b.txt", "link.txt", "sub/s.txt"].map(link), ["False", "False", "True", "True"]);
 });

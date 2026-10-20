@@ -109,17 +109,18 @@ function projectRoot(dir) {
 }
 
 // <g>/projects.json, gemini's map from a project folder to its folder name under tmp/ and
-// history/, read the other way round: folder name to project folder.
+// history/, read the other way round: folder name to the project folders that claim it.
 function registered(g) {
   try {
     const { projects } = JSON.parse(readFileSync(join(g, "projects.json"), "utf8"));
     if (!projects || typeof projects !== "object" || Array.isArray(projects)) return new Map();
-    const pairs = Object.entries(projects).filter(([, name]) => typeof name === "string");
-    // A name two project folders claim (a hand edit, another gemini) is no seat's for sure: it
-    // gets no owner, and its unmarked folder stays. One folder written twice ("x", "x/") is one owner.
     const owners = new Map();
-    for (const [owner, name] of pairs) owners.set(name, new Set([...(owners.get(name) ?? []), resolve(owner)]));
-    return new Map(pairs.filter(([, name]) => owners.get(name).size === 1).map(([owner, name]) => [name, owner]));
+    for (const [owner, name] of Object.entries(projects)) {
+      if (typeof name !== "string") continue;
+      if (!owners.has(name)) owners.set(name, new Set());
+      owners.get(name).add(resolve(owner));
+    }
+    return owners;
   } catch {
     return new Map();
   }
@@ -127,8 +128,10 @@ function registered(g) {
 
 // Each folder gemini keeps under tmp/ or history/, here and under .cache/.gemini, with the
 // folder its .project_root names. A folder without the marker (a seat that wrote its session
-// again after its run cleaned up) gets the project projects.json gives its name. Only folders
-// read from tmp/ and history/ are looked up, so no name there reaches another folder.
+// again after its run cleaned up) gets the project projects.json gives its name. A name two
+// project folders claim (a hand edit, another gemini) is no seat's for sure: its unmarked folder
+// gets no owner, only the `claimants`, and stays. One folder written twice ("x", "x/") is one owner.
+// Only folders read from tmp/ and history/ are looked up, so no name there reaches another folder.
 function projectFolders(env) {
   const home = geminiHome(env);
   return [join(home, ".gemini"), join(home, ".cache", ".gemini")].flatMap((g) => {
@@ -136,29 +139,50 @@ function projectFolders(env) {
     return ["tmp", "history"].flatMap((kind) => listDir(join(g, kind)).map((name) => {
       const dir = join(g, kind, name);
       const root = projectRoot(dir);
-      return { dir, owner: root === undefined ? names.get(name) : root };
+      if (root !== undefined) return { dir, owner: root, claimants: [] };
+      const claimants = [...(names.get(name) ?? [])];
+      return { dir, owner: claimants.length === 1 ? claimants[0] : null, claimants };
     }));
-  }).filter((p) => p.owner);
+  }).filter((p) => p.owner || p.claimants.length > 1);
+}
+
+// Whether a project folder is `seat`, by the path as written or as resolved (it may be gone).
+function seatOwner(seat, platform) {
+  const want = new Set([norm(seat, platform), norm(real(seat), platform)]);
+  return (owner) => want.has(norm(owner, platform));
+}
+
+// Whether a project folder is <base>/ralph-qa.<id>/gemini and gone (a run cut short before its
+// clean). A run still going has its seat folder, so its records stay.
+const SEAT_PARENT = /^ralph-qa\.[A-Za-z0-9]+$/;
+function staleOwner(base, platform, exists) {
+  const roots = new Set([norm(base, platform), norm(real(base), platform)]);
+  return (owner) => {
+    const o = norm(owner, platform);
+    return basename(o) === "gemini" && SEAT_PARENT.test(basename(dirname(o))) && roots.has(dirname(dirname(o))) && !exists(owner);
+  };
+}
+
+// The folders to remove, of the project folders `mine` takes, and those left because their name
+// is also another project folder's.
+function folderPlan(env, mine) {
+  const all = projectFolders(env);
+  return {
+    dirs: all.filter((p) => p.owner && mine(p.owner)).map((p) => p.dir),
+    skipped: all.filter((p) => !p.owner && p.claimants.some(mine)).map((p) => p.dir),
+  };
 }
 
 // The folders gemini keeps for sessions run in `seat`, matched by the path as written and as
 // resolved; the seat folder may be gone already.
 export function sessionFolders(seat, { env = process.env, platform = process.platform } = {}) {
-  const want = new Set([norm(seat, platform), norm(real(seat), platform)]);
-  return projectFolders(env).filter((p) => want.has(norm(p.owner, platform))).map((p) => p.dir);
+  return folderPlan(env, seatOwner(seat, platform)).dirs;
 }
 
 // The session folders of seat folders under `base` that are gone: .project_root names
-// <base>/ralph-qa.<id>/gemini and that folder no longer exists (a run cut short before its clean).
-// A run still going has its seat folder, so its records stay.
-const SEAT_PARENT = /^ralph-qa\.[A-Za-z0-9]+$/;
+// <base>/ralph-qa.<id>/gemini and that folder no longer exists.
 export function staleSessionFolders(base, { env = process.env, platform = process.platform, exists = existsSync } = {}) {
-  const roots = new Set([norm(base, platform), norm(real(base), platform)]);
-  const stale = ({ owner }) => {
-    const o = norm(owner, platform);
-    return basename(o) === "gemini" && SEAT_PARENT.test(basename(dirname(o))) && roots.has(dirname(dirname(o))) && !exists(owner);
-  };
-  return projectFolders(env).filter(stale).map((p) => p.dir);
+  return folderPlan(env, staleOwner(base, platform, exists)).dirs;
 }
 
 function check(seat) {
@@ -181,9 +205,13 @@ function check(seat) {
   return 0;
 }
 
-function remove(dirs) {
+// Removes `dirs` and says which folders it left (`skipped`), on stdout as JSON and one line each on stderr.
+function remove({ dirs, skipped }) {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
-  process.stdout.write(JSON.stringify({ removed: dirs }) + "\n");
+  for (const dir of skipped) {
+    process.stderr.write(`gemini-seat: left ${dir}: two project folders in projects.json claim its name, so it may hold another project's sessions; remove it by hand if they are the seat's\n`);
+  }
+  process.stdout.write(JSON.stringify({ removed: dirs, skipped }) + "\n");
   return 0;
 }
 
@@ -198,7 +226,8 @@ function main(argv) {
     return 2;
   }
   if (cmd === "check") return check(folder);
-  return remove(cmd === "clean" ? sessionFolders(folder) : staleSessionFolders(folder));
+  const mine = cmd === "clean" ? seatOwner(folder, process.platform) : staleOwner(folder, process.platform, existsSync);
+  return remove(folderPlan(process.env, mine));
 }
 
 const invokedDirectly = () => {
