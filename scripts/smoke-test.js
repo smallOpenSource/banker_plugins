@@ -889,7 +889,7 @@ try {
     'setup-tmux', 'setup-pwsh', 'setup-sandbox', 'setup-omc', 'setup-harness-factory', 'setup-insane-search', 'docs-setup',
     'vertical-pptx-setup', 'motion-graphic-setup', '3d-intro-setup'].map((d) => path.join('skills', d, 'SKILL.md'))
     .concat(path.join('commands', 'setup.md'));
-  const NET_CHECK = /\(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000\)|curl(?:\.exe)? -sSI -o (?:\/dev\/null|NUL) --connect-timeout 5 --max-time 10 /;
+  const NET_CHECK = /\(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000\)|curl(?:\.exe)? (?:-K - )?-sSI -o (?:\/dev\/null|NUL) --connect-timeout 5 --max-time 10\b/;
   const DOWNLOADS = /\b(?:curl|wget|git(?: -c \S+)* clone|npx|npm (?:i|install)\b|pip3? install|pipx install|uv tool install|uvx|dnf (?:-y )?install|apt(?:-get)? (?:-y )?install|brew install|winget install|Invoke-RestMethod|Invoke-WebRequest|nvm install|playwright install|claude plugin (?:marketplace add|install)|omc update)\b/;
   // Code blocks only (a sentence that quotes a command runs nothing), trailing comments cut.
   const codeBlocks = (text) => [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
@@ -962,21 +962,38 @@ try {
   const pyBad = pyDocs.filter((f) => {
     const lines = joinedLines(fs.readFileSync(path.join(root, f), 'utf8'));
     const at = (re) => lines.findIndex((l) => re.test(l));
-    const li = at(/^L=\$\( \(cd ~ && \{ pip config list \|\| pip3 config list \|\| python3 -m pip config list; \}\) 2>\/dev\/null\)/), ins = at(/^I="\$\{PIP_INDEX_URL:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^install\\\.index-url=/);
+    const li = at(/^L=\$\( \(cd ~ && \{ pip config list \|\| pip3 config list \|\| python3 -m pip config list; \}\) 2>\/dev\/null\) \|\| echo "pip 설정을 읽지 못함/), ins = at(/^I="\$\{PIP_INDEX_URL:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^install\\\.index-url=/);
     const glo = at(/^I="\$\{I:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^global\\\.index-url=/);
     const cut = at(/^I=\$\(printf %s "\$\{I:-https:\/\/pypi\.org\/simple\}" \| sed -E 's#\^\(\[A-Za-z\]\[A-Za-z0-9\+\.-\]\*:\/\/\)\[\^\/\]\*@#\\1#; s#\/\$##'\)/);
-    const get = at(/^curl -sSI -o \/dev\/null --connect-timeout 5 --max-time 10 "\$I\/pip\/"/);
+    const get = at(/^printf 'url = "%s"\\n' "\$I\/pip\/" \| curl -K - -sSI -o \/dev\/null --connect-timeout 5 --max-time 10\b/);
     return !(li >= 0 && li < ins && ins < glo && glo < cut && cut < get) || lines.some((l) => /\bcurl\b/.test(l) && /PIP_INDEX_URL|pip config|\$\{I:-/.test(l))
+      || lines.some((l) => /\bcurl\b[^|]*"\$I\b/.test(l))
       || lines.some((l) => /\bpython3? -m pip config\b/.test(l) && !/\(cd ~ && \{/.test(l));
   });
   ok(pyDocs.length === 6 && pyBad.length === 0,
-     `airgap-4g: the pip index check reads pip's settings and cuts the user info of the URL before curl (docs ${pyDocs.length}, wrong: ${JSON.stringify(pyBad)})`);
+     `airgap-4g: the pip index check reads pip's settings (says so when it cannot), cuts the user info and gives curl the URL on its standard input, not in its arguments (docs ${pyDocs.length}, wrong: ${JSON.stringify(pyBad)})`);
   // LibreOffice run with a profile under a guessable /tmp name can start from a profile another user made first
   // (macro settings included): the profile goes into a private folder.
   const vpSetup = fs.readFileSync(path.join(root, 'skills', 'vertical-pptx-setup', 'SKILL.md'), 'utf8');
   ok(!/\/tmp\/lo-profile/.test(vpSetup.replace(/`\/tmp\/lo-profile-\$\$` 처럼 짐작할 수 있는 이름은 쓰지 않는다/, ''))
      && /`P=\$\(mktemp -d\)` 로 만든 개인 폴더를 `-env:UserInstallation=file:\/\/\$P` 로 주고, 끝나면 `rm -rf "\$P"` 로 지운다/.test(vpSetup),
      'airgap-4h: the LibreOffice profile for automation goes into a private folder, not a guessable /tmp name');
+  // `python -c`, `python -m` and a script on standard input put the current folder first on the import path: run
+  // in someone else's repository, its `pip/`, `json.py` or `pptx.py` runs as the user. The docs run them from the home
+  // folder (absolute paths for the files they read), or in PowerShell between Push-Location ~ and Pop-Location.
+  // Kept: lineage's own test run in its own skill folder.
+  const PY_RUN = /(?:^|[\s;&|(`])(?:python[0-9.]*|"?\$\{?PY(?:_BASE)?\}?"?|~?[\w./-]*\/bin\/python[0-9.]*)\s+(?:-[A-HJ-Za-z]+\s+)*(?:-c\b|-m\b|-\s*<<)/;
+  const pyDocsAll = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
+    ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
+    .filter((f) => fs.existsSync(path.join(root, f)));
+  const cwdImports = pyDocsAll.flatMap((f) => {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    const spans = [...t.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map((m) => m[1]).filter((c) => / install | -c /.test(c));
+    return [...joinedLines(t), ...spans].filter((l) => PY_RUN.test(l) && !/\(cd ~ && |Push-Location ~;/.test(l))
+      .filter((l) => !(f === path.join('skills', 'lineage', 'SKILL.md') && /^python3 -m unittest test_lineage\b/.test(l.trim())))
+      .map((l) => `${f}: ${l.trim().slice(0, 60)}`);
+  });
+  ok(cwdImports.length === 0, `airgap-4i: python -c, -m and stdin scripts run from the home folder, not the current one (found ${JSON.stringify(cwdImports)})`);
   // setup-mcp: `npx -y` and `uvx` ask the registry for a version at every start (offline: about 70 s, then a failure, each
   // session); the offline path registers pinned, installed executables and leaves out the servers that are a network service.
   const mcpSkill = fs.readFileSync(path.join(root, 'skills', 'setup-mcp', 'SKILL.md'), 'utf8');

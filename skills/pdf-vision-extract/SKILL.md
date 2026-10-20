@@ -35,7 +35,7 @@ Target: **long edge = 2400 px** (just under cap, leaves headroom).
 
 ```bash
 ls -lh <pdf-path>
-python3 -c "import fitz; d=fitz.open('<pdf-path>'); print('pages=', d.page_count)"
+(cd ~ && python3 -c "import fitz; d=fitz.open('<absolute-pdf-path>'); print('pages=', d.page_count)")   # from home: -c, -m and a stdin script import from the current folder first
 ```
 
 ### 2. Choose output directory
@@ -49,7 +49,7 @@ Convention: place PNGs **next to** existing design assets, in a subfolder named 
 PyMuPDF is the most reliable single-dependency path (no Poppler, no ImageMagick).
 
 ```bash
-python3 - <<'PY'
+(cd ~ && python3 - <<'PY'
 import fitz, os
 SRC = "<absolute-pdf-path>"
 OUT = "<absolute-output-dir>"
@@ -63,9 +63,10 @@ for i, page in enumerate(doc, start=1):
     pix.save(f"{OUT}/page-{i:03d}.png")
     print(f"[{i}/{doc.page_count}] page-{i:03d}.png {pix.width}x{pix.height}")
 PY
+)
 ```
 
-Install if missing: `python3 -m pip install --user pymupdf`
+Install if missing: `(cd ~ && python3 -m pip install --user pymupdf)`
 
 ### 4. Fallback toolchain
 
@@ -83,7 +84,7 @@ If Python/PyMuPDF unavailable:
 
 ```bash
 ls <OUT> | wc -l                # page count matches PDF
-python3 -c "from PIL import Image; im=Image.open('<OUT>/page-001.png'); print(im.size)"
+(cd ~ && python3 -c "from PIL import Image; im=Image.open('<absolute-output-dir>/page-001.png'); print(im.size)")
 ```
 
 Expect long edge ≈ 2400 px.
@@ -110,8 +111,8 @@ For multiple pages in one turn, batch multiple `Read` calls in parallel.
 For a hybrid pipeline (visual + searchable text), also extract markdown:
 
 ```bash
-python3 -m pip install --user pymupdf4llm
-python3 -c "import pymupdf4llm; print(pymupdf4llm.to_markdown('<pdf>'))" > <OUT>/text.md
+(cd ~ && python3 -m pip install --user pymupdf4llm)
+(cd ~ && python3 -c "import pymupdf4llm; print(pymupdf4llm.to_markdown('<absolute-pdf-path>'))") > <OUT>/text.md
 ```
 
 Then `grep` the `.md` for labels and cross-reference with the PNGs.
