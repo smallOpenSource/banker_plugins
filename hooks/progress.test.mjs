@@ -1757,3 +1757,65 @@ test('reads that overlap at random: the pane always shows what the latest-begun 
   assert.ok(crossed > runs / 2, `the model overlaps calls in most runs (${crossed} of ${runs})`);
   assert.deepEqual(wrong.slice(0, 5), [], `${wrong.length} runs broke the start-order rule`);
 });
+
+test('a review round touched twice keeps the newer read when the older one lands last', async () => {
+  const eng = engine({ files: new Map([[REVIEW, REVIEW_MD]]), held: new Set([REVIEW]) });
+  const first = eng.tool({ tool: 'Read', file_path: REVIEW });
+  await new Promise((resolve) => setImmediate(resolve));
+  eng.files.set(REVIEW, '# 검토 의견\n- [x] 고칠 것\n');
+  await eng.tool({ tool: 'Edit', file_path: REVIEW, agentId: 'a1' });
+  await eng.release(REVIEW);
+  await first;
+  assert.match(textOf(rowOf(await eng.draw(), 'plan')), /1\/1 완료/);
+});
+
+test('a read again that lands after a newer write of a review round does not undo it', async () => {
+  const eng = engine({ files: new Map([[REVIEW, REVIEW_MD]]) });
+  await eng.tool({ tool: 'Write', file_path: REVIEW });
+  eng.held.add(REVIEW);
+  const ending = eng.raise('turn.complete', { turnId: 't0', reason: 'answer' });
+  await new Promise((resolve) => setImmediate(resolve));
+  eng.files.set(REVIEW, '# 검토 의견\n- [x] 고칠 것\n');
+  await eng.tool({ tool: 'Edit', file_path: REVIEW, agentId: 'a1' });
+  await eng.release(REVIEW);
+  await ending;
+  assert.match(textOf(rowOf(await eng.draw(), 'plan')), /1\/1 완료/, 'the read again of the old text that landed late changed nothing');
+});
+
+test('TaskGet reads of ids the store does not have keep at most 1,000 marks, none for an id past 64 characters, and a task on the pane keeps its own', () => {
+  const s = freshState();
+  noteTaskTool(s, { tool: 'TaskCreate', subject: '구현' }, created('1', '구현'), 0);
+  noteTaskTool(s, { tool: 'TaskUpdate', taskId: '1', status: 'in_progress' }, updated('1', { from: 'pending', to: 'in_progress' }), 0);
+  for (let i = 0; i < 5000; i++) noteTaskTool(s, { tool: 'TaskGet', taskId: `x${i}` }, { result: { task: null } }, 0);
+  noteTaskTool(s, { tool: 'TaskGet', taskId: 'y'.repeat(65) }, { result: { task: null } }, 0);
+  assert.ok(s.marks.size <= 1000, `${s.marks.size} marks`);
+  assert.ok([...s.marks.keys()].every((k) => k.length <= 64), 'no mark for an id longer than 64 characters');
+  assert.equal(s.marks.get('1')?.status, 'in_progress', 'the mark of a task on the pane stays');
+});
+
+test('a task id or state the pane does not know is drawn cleaned, never as a function\'s text', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskList' }, { result: { tasks: [
+    { id: '1', subject: '상태가 이상함', status: 'constructor' },
+    { id: '2\u001b[31m‮', status: 'in_progress' },
+  ] } });
+  const tree = await eng.draw();
+  const children = walk(tree).filter((n) => n.type === 'Text').flatMap((n) => n.props.children);
+  assert.ok(children.every((c) => typeof c === 'string'), 'every word drawn is text');
+  assert.ok(labels(tree).every((l) => !/[\u0000-\u001f\u007f‪-‮]/.test(l)), JSON.stringify(labels(tree)));
+  button(tree, '상태가 이상함').props.onPress({});
+  assert.doesNotMatch(textOf(about(await eng.draw())), /function|native code/);
+});
+
+test('a touch\'s read of a review round begun before a read again does not take the read again\'s words when it lands last', async () => {
+  const eng = engine({ files: new Map([[REVIEW, REVIEW_MD]]) });
+  await eng.tool({ tool: 'Write', file_path: REVIEW });
+  eng.held.add(REVIEW);
+  const late = eng.tool({ tool: 'Edit', file_path: REVIEW, agentId: 'a1' }); // its read takes the text as it is now
+  await new Promise((resolve) => setImmediate(resolve));
+  eng.files.set(REVIEW, '# 검토 의견\n- [x] 고칠 것\n');
+  await eng.raise('turn.complete', { turnId: 't0', reason: 'answer' }); // the read again takes the newer text
+  await eng.release(REVIEW);
+  await late;
+  assert.match(textOf(rowOf(await eng.draw(), 'plan')), /1\/1 완료/, 'the older read that landed last left the newer words');
+});

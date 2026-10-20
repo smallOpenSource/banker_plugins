@@ -122,11 +122,13 @@ const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', .
 // list last came from.
 // `plan` is the plan last read from `planPath`, `planShut` whether the whole plan is folded and
 // `planOpen` the ids of its nodes unfolded. `touch` counts the calls that touched a plan file and
-// `taken` is the touch the plan came from, to tell a read that a newer one overtook. `followed` is the step in
+// `taken` is the touch the plan came from, to tell a read that a newer one overtook (a weak plan's touch does not
+// count). `shown` is the touch, or the read again's count of touches, that the words on the pane came from: a later
+// read of the file shown that began before them does not take their place. `followed` is the step in
 // progress the pane last asked to bring into view.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
   order: 0, marks: new Map(), listAt: 0, plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0,
-  followed: null });
+  shown: 0, followed: null });
 
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
@@ -285,7 +287,7 @@ function writeTodos(s, e, now) {
 // Adds a task or brings it up to date; a task keeps its key, calls and times. One known only by
 // its id is named by it until a TaskGet or a TaskList says more.
 function putTask(s, t, now) {
-  const held = s.tasks.get(t.id) ?? { key: `k-${t.id}`, id: t.id, title: `작업 #${t.id}`, description: '', ...tally() };
+  const held = s.tasks.get(t.id) ?? { key: `k-${t.id}`, id: t.id, title: clip(`작업 #${t.id}`, 60), description: '', ...tally() };
   const title = clip(t.subject, 60);
   if (title) held.title = title;
   for (const k of ['description', 'activeForm']) if (t[k] !== undefined) held[k] = t[k];
@@ -297,15 +299,23 @@ function putTask(s, t, now) {
 // The marks of a task id, made on first use. They live in the state, not on the task, so a task deleted, or not
 // created yet, keeps them: `changedRev` the change count after its last TaskCreate or TaskUpdate (a delete
 // included), `statusAt` and `status` the order and the status of the last status update begun, `seenAt` the order
-// of the last read taken in.
+// of the last read taken in. Past MAX_MARKS the oldest mark of a task off the pane goes, so reads of ids the store
+// does not have cannot grow them without end.
+const MAX_MARKS = 1000;
+// A task id longer than this is no id the store hands out: a read that misses it leaves no mark.
+const MAX_ID = 64;
 function markOf(s, id) {
-  if (!s.marks.has(id)) s.marks.set(id, {});
+  if (!s.marks.has(id)) {
+    s.marks.set(id, {});
+    if (s.marks.size > MAX_MARKS) s.marks.delete([...s.marks.keys()].find((k) => !s.tasks.has(k)));
+  }
   return s.marks.get(id);
 }
 
-// Whether a list or a read begun at (since, order) is older than what the pane holds of a task: a list begun after it
-// was taken in (a list names the whole list, so this holds for a task it left out that the pane never held, too), the
-// task changed after it began (a delete too), or a later-begun read already brought it.
+// Whether a list or a read begun at (since, order) is older than what the pane holds of a task: a list begun after this
+// one began was already taken in (a list names the whole list, so this holds for a task it left out that the pane never
+// held, too), the task changed after this one began (a delete too), or a later-begun read already brought it. The first
+// takes the order calls began in for the order they read the list in, which holds where a call reads soon after it begins.
 function stale(s, id, since, order) {
   if (order < s.listAt) return true;
   const m = s.marks.get(id);
@@ -389,16 +399,20 @@ function listTasks(s, _e, r, now, { since, order }) {
 function getTask(s, e, r, now, { since, order }) {
   if (stale(s, String(e.taskId), since, order)) return;
   const t = r?.result?.task;
-  if (t === null) {
-    s.tasks.delete(String(e.taskId));
-    markOf(s, String(e.taskId)).seenAt = order;
-  }
+  if (t === null) noTask(s, String(e.taskId), order);
   if (!t) return;
   const id = String(t.id);
   const status = readStatus(s, id, order, t.status);
   if (status === 'deleted') s.tasks.delete(id);
   else if (status !== 'completed' || s.tasks.has(id)) putTask(s, { id, subject: t.subject, description: t.description, status }, now);
   markOf(s, id).seenAt = order;
+}
+
+// The store has no such task: it leaves the pane and the read is marked, unless the id is longer than any the store
+// hands out.
+function noTask(s, id, order) {
+  s.tasks.delete(id);
+  if (id.length <= MAX_ID) markOf(s, id).seenAt = order;
 }
 
 const TASK_NOTES = {
@@ -477,11 +491,25 @@ function parsed(path, text) {
 }
 
 // Whether a read may change the plan: a read for a touch newer than the one the plan came from, or a
-// read again of the plan's own file (begun when `since` touches were counted) that no touch taken
-// in the meantime overtook.
+// read again of the plan's own file (begun when `since` touches were counted) begun after the words on the pane
+// came in (`shown`), so neither an older touch nor an older read again takes their place.
 function current(s, path, { touch, since }) {
   if (touch !== undefined) return touch > s.taken;
-  return path === s.planPath && s.taken <= since;
+  return path === s.planPath && s.shown <= since;
+}
+
+// What a read taken in leaves, and whether its words go on the pane. `taken` makes older touches late (a weak plan's
+// touch does not), `shown` is the touch or the read again's since the words came from: a touch's read of the file
+// shown, begun before the read whose words are shown, leaves them.
+function noteTouch(s, read, moving) {
+  if (read.touch === undefined) {
+    s.shown = read.since;
+    return true;
+  }
+  if (!read.weak) s.taken = read.touch;
+  if (!moving && read.touch <= s.shown) return false;
+  s.shown = read.touch;
+  return true;
 }
 
 // A file with no steps does not push out a plan that has some, unless the session wrote it itself; a weak plan holds no
@@ -513,7 +541,7 @@ export function takePlan(s, path, text, read = {}) {
   const plan = parsed(path, text);
   if (keepsOff(s, path, plan, read)) return;
   const moving = path !== s.planPath;
-  if (read.touch !== undefined && !read.weak) s.taken = read.touch; // a weak plan does not make an older touch late
+  if (!noteTouch(s, read, moving)) return;
   if (moving && s.selected === 'plan') s.selected = null;
   const ids = treeIds(plan.tree);
   s.planOpen = moving ? new Set() : new Set([...s.planOpen].filter((id) => ids.has(id)));
@@ -551,8 +579,11 @@ function stepState(step, now) {
   const status = statusOf(step);
   const doing = status === 'in_progress' && step.activeForm ? `(${clip(step.activeForm, 40)})` : '';
   const time = Number.isFinite(step.startedAt) ? `, ${seconds((step.endedAt ?? now) - step.startedAt)}` : '';
-  return `${STATUS[status] ?? status}${doing}${time}`;
+  return `${stateName(status)}${doing}${time}`;
 }
+
+// A state's word: the pane's own, else the state cleaned (a name such as `constructor` is no word of the table).
+const stateName = (status) => pick(STATUS, status) ?? clip(status, 20);
 
 function stepWords(step, now) {
   if (step.key === 'idle') return '아직 시작한 작업이 없습니다. 요청을 보내면 여기에 단계가 쌓입니다.';
@@ -627,7 +658,7 @@ function stepRow(ui, s, step, act) {
     ? Button({ key: `arrow-${step.key}`, label: isOpen ? '▾' : '▸', plain: true, onPress: () => act.fold(step.key) })
     : Text({ children: [' '] });
   const status = statusOf(step);
-  const state = STATUS[status] ?? status ?? '';
+  const state = stateName(status);
   return Box({ key: `row-${step.key}`, flexDirection: 'row', columnGap: 1, children: [
     arrow,
     Button({ key: step.key, label: room(step.title, act, 2, state), plain: true, onPress: () => act.select(step.key) }),
