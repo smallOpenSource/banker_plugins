@@ -3640,18 +3640,19 @@ test("a bare apply whose origin never answers cuts the fetch at its time limit a
   }
 });
 
-// Final batch: git's message can quote a piece of an origin's password (curl reads a raw "/" in it as the end of the
-// host: "Port number ended with 'Q'"). With credentials in the origin, the cause line keeps no quoted piece.
-test("a bare apply over an origin with credentials keeps no quoted piece of git's message in its cause line", { skip: !HAS_GIT && "git not found" }, () => {
-  const f = fakeHome([{ v: "5.6.1", active: true }]);
-  const pass = ["Qz", "Xy"].join("/");
-  assert.equal(runGit(["remote", "set-url", "origin", `http://u:${pass}@127.0.0.1:9/omc.git`], f.market).status, 0);
-  const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "5000" });
-  assert.equal(r.code, 1, r.out);
-  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
-  assert.ok(cause, r.out);
-  assert.ok(!cause.replace(/'\*\*\*'/g, "").includes("'"), `a quoted piece is left: ${cause}`);
-  for (const piece of ["Qz", "Xy", "'Q'"]) assert.ok(!cause.includes(piece), `${piece} in ${cause}`);
+// Final batch: git's message can carry a piece of an origin's password, quoted or not (curl reads a raw "/" in it as
+// the end of the host: "Port number ended with 'Q'", "Could not resolve host: ssKJ"). With credentials in the origin,
+// the cause line gives git's exit and none of its words.
+test("a bare apply over an origin with credentials gives git's exit and none of its words in its cause line", { skip: !HAS_GIT && "git not found" }, () => {
+  for (const pass of [["Qz", "Xy"].join("/"), ["p@ss", "KJ"].join("/")]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `http://u:${pass}@127.0.0.1:9/omc.git`], f.market).status, 0);
+    const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "5000" });
+    assert.equal(r.code, 1, r.out);
+    const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+    assert.match(cause, /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\(origin 주소에 사용자 정보가 있어 git 의 문구는 싣지 않음\)$/, cause);
+    for (const piece of pass.split(/[/@]/).filter((x) => x.length > 1)) assert.ok(!cause.includes(piece), `${piece} in ${cause}`);
+  }
 });
 
 // Final batch: the fetch never asks for credentials on a terminal (GIT_TERMINAL_PROMPT=0): an origin that wants a login

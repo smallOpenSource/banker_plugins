@@ -126,7 +126,7 @@ FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 �
 키 파일은 먼저 비공개로 만든다(이미 있으면 그대로 둔다). `echo >>` 로 새 파일을 만들면 0644 로 남는다.
 홈 키 파일(아래 fallback)이 이미 있으면 프로젝트 파일을 만들지 않는다. 빈 프로젝트 파일이 먼저 읽혀 홈의 키가 가려진다.
 ```bash
-if [ -L .env.3d-intro.local ]; then echo ".env.3d-intro.local 이 링크라 쓰지 않음(persistCreds 도 쓰지 않는다). 링크를 지우고 다시 만든다"; else [ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local); fi
+if [ -L .env.3d-intro.local ]; then echo ".env.3d-intro.local 이 링크라 쓰지 않음(persistCreds 도 쓰지 않는다). 그 링크를 지울지는 사람이 정한다. 홈 키 파일이 있으면 그것을 쓴다"; else [ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local); fi
 ls -l .env.3d-intro.local ~/.config/banker/3d-intro/env 2>/dev/null || true   # 있는 파일이 -rw------- 면 된다
 ```
 여러 프로젝트에서 재사용하려면 프로젝트 파일 대신 홈 폴더 fallback 을 쓴다. `resolveCreds` 가 project-local 다음으로 찾는 경로다.
