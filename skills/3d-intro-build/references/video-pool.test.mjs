@@ -1159,3 +1159,18 @@ test('generateClip: a Sora job polled with no interval still gets every poll up 
   assert.equal(r.provider, 'sora');
   assert.equal(polls, 3);
 });
+
+test('generateClip: a WAN key held back because an env proxy would carry it over http moves on to the next key', async () => {
+  const saved = Object.fromEntries(['NODE_USE_ENV_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'no_proxy'].map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://proxy.example:3128' });
+  delete process.env.NO_PROXY;
+  delete process.env.no_proxy;
+  try {
+    const calls = installFetch();
+    const r = await run({ creds: creds({ WAN_1_ENDPOINT: 'http://localhost:9' }), statePath: tmpState() });
+    assert.equal(r.label, 'WAN_2');
+    assert.ok(!calls.some((c) => c.url.startsWith('http://localhost:9')), 'nothing went to the http endpoint');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

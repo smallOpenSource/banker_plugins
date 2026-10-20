@@ -251,6 +251,7 @@ node -e "
 | `images.badreq` 가 200 | - | 있을 수 없음(프롬프트 없이 생성이 성공할 리 없다) — 어댑터·API 버전 불일치 의심, 정직히 보고 |
 | status 0 | - | 네트워크 오류(엔드포인트 오타·오프라인). `TimeoutError` 는 120초 안에 응답이 없었다는 뜻 |
 | status 0 (`EINSECURE`) | - | endpoint 가 `http://` 다. 키를 평문으로 보내지 않으려고 보내기 전에 막았다 — `https://` 로 고침(이 기기의 localhost 만 http 허용) |
+| status 0 (`EPROXYKEY`) | - | endpoint 가 이 기기의 `http://` 인데 Node 가 env 프록시(`NODE_USE_ENV_PROXY=1`, `--use-env-proxy`)로 http 를 보낸다. 키가 프록시에 보이지 않게 보내기 전에 막았다 — `NO_PROXY` 에 그 호스트(`localhost`, `127.0.0.1`, `[::1]`)를 그대로 적거나 env 프록시를 끔 |
 
 ## 5. 검증 (보고 의무)
 ```bash

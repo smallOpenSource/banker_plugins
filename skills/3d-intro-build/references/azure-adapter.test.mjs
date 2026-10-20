@@ -9,6 +9,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import cp from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -1059,4 +1060,78 @@ test('persistCreds: a folder or a pipe at the key file path is refused, nothing 
   assert.match(child.stdout, /not a regular file/, `${child.stdout}${child.stderr}${child.error || ''}`);
   fs.mkdirSync(path.join(dir, 'folder'));
   assert.throws(() => A.persistCreds({ A: '1' }, { target: path.join(dir, 'folder') }), /not a regular file/);
+});
+
+test('envProxied: a request goes through an env proxy as Node 24 sends it, read toward "proxied"', () => {
+  const on = { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://proxy.example:3128' };
+  const cases = [
+    [{}, [], 'http://127.0.0.1:9/', false],
+    [{ HTTP_PROXY: 'http://proxy.example:3128' }, [], 'http://127.0.0.1:9/', false],
+    [{ NODE_USE_ENV_PROXY: '1' }, [], 'http://127.0.0.1:9/', false],
+    [on, [], 'http://127.0.0.1:9/', true],
+    [{ NODE_USE_ENV_PROXY: '0', HTTP_PROXY: 'http://p:1' }, [], 'http://127.0.0.1:9/', false],
+    [{ NODE_USE_ENV_PROXY: 'true', HTTP_PROXY: 'http://p:1' }, [], 'http://127.0.0.1:9/', true],
+    [{ http_proxy: 'http://p:1' }, ['--use-env-proxy'], 'http://localhost:9/', true],
+    [{ http_proxy: 'http://p:1', NODE_OPTIONS: '--max-old-space-size=99 --use-env-proxy' }, [], 'http://localhost:9/', true],
+    [{ ...on, NO_PROXY: '*' }, [], 'http://127.0.0.1:9/', false],
+    [{ ...on, NO_PROXY: 'other.example, 127.0.0.1' }, [], 'http://127.0.0.1:9/', false],
+    [{ ...on, no_proxy: 'LOCALHOST' }, [], 'http://localhost:9/', false],
+    [{ ...on, NO_PROXY: '[::1]' }, [], 'http://[::1]:9/', false],
+    [{ ...on, NO_PROXY: 'localhost' }, [], 'http://127.0.0.1:9/', true],
+    [{ ...on, NO_PROXY: '127.0.0.1:9' }, [], 'http://127.0.0.1:9/', true],
+    [{ ...on, NO_PROXY: '.localhost' }, [], 'http://localhost:9/', true],
+    [{ ...on, NO_PROXY: '::1' }, [], 'http://[::1]:9/', true],
+    [{ ...on, NO_PROXY: '127.0.0.0/8' }, [], 'http://127.0.0.1:9/', true],
+    [{ ...on, no_proxy: 'other.example', NO_PROXY: '127.0.0.1' }, [], 'http://127.0.0.1:9/', true],
+  ];
+  for (const [env, flags, url, want] of cases) {
+    assert.equal(A.envProxied(new URL(url), env, flags), want, `${JSON.stringify(env)} ${flags} ${url}`);
+  }
+});
+
+test('fetchGuarded: a key over http to this machine is not sent while the environment would carry it through a proxy', async () => {
+  const calls = routeFetch({ 'http://localhost:9/x': { body: 'local' } });
+  const saved = { NODE_USE_ENV_PROXY: process.env.NODE_USE_ENV_PROXY, HTTP_PROXY: process.env.HTTP_PROXY, NO_PROXY: process.env.NO_PROXY, no_proxy: process.env.no_proxy };
+  Object.assign(process.env, { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://proxy.example:3128' });
+  delete process.env.NO_PROXY;
+  delete process.env.no_proxy;
+  try {
+    await assert.rejects(A.fetchGuarded('http://localhost:9/x', { headers: { 'api-key': 'k' } }), (e) => e.cause?.code === 'EPROXYKEY');
+    const r = await A.azFetch('http://localhost:9/x', { key: 'k' });
+    assert.deepEqual([r.status, r.errno, calls.length], [0, 'EPROXYKEY', 0]);
+    assert.equal(await (await A.fetchGuarded('http://localhost:9/x')).text(), 'local', 'without a key the request may go');
+    process.env.NO_PROXY = 'localhost';
+    assert.equal(await (await A.fetchGuarded('http://localhost:9/x', { headers: { 'api-key': 'k' } })).text(), 'local', 'NO_PROXY names the host');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('azFetch in a Node started with an env proxy: a key over http to this machine never reaches the proxy', { timeout: 30_000 }, async () => {
+  const target = http.createServer((q, s) => s.end(q.headers['api-key'] ? 'keyed' : 'plain'));
+  await new Promise((r) => target.listen(0, '127.0.0.1', r));
+  const seen = [];
+  // a proxy that turns every tunnel down (Node retries a proxy that just drops the connection, for good)
+  const proxy = net.createServer((sock) => sock.once('data', (d) => { seen.push(d.toString().split('\r\n')[0]); sock.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n'); }));
+  await new Promise((r) => proxy.listen(0, '127.0.0.1', r));
+  const adapter = JSON.stringify(pathToFileURL(path.join(HERE, 'azure-adapter.mjs')).href);
+  const url = `http://127.0.0.1:${target.address().port}/x`;
+  const run = (extra) => new Promise((resolve) => {
+    const env = { PATH: process.env.PATH, NODE_USE_ENV_PROXY: '1', HTTP_PROXY: `http://127.0.0.1:${proxy.address().port}`, ...extra };
+    const code = `const A = await import(${adapter}); const r = await A.azFetch(${JSON.stringify(url)}, { key: 'placeholder-key', timeoutMs: 2000 }); console.log(JSON.stringify([r.status, r.errno ?? null, r.body]));`;
+    const child = cp.spawn(process.execPath, ['--input-type=module', '-e', code], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => child.kill(), 10_000);
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('close', () => { clearTimeout(timer); resolve(out.trim()); });
+  });
+  try {
+    assert.equal(await run({}), JSON.stringify([0, 'EPROXYKEY', null]));
+    assert.equal(await run({ NO_PROXY: '127.0.0.1' }), JSON.stringify([200, null, 'keyed']));
+    assert.deepEqual(seen, [], 'the proxy saw nothing');
+  } finally {
+    target.close();
+    proxy.close();
+  }
 });

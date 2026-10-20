@@ -74,9 +74,9 @@ const TRANSIENT_CODES = new Set([
   'InternalError', 'InternalError.Timeout', 'ServiceUnavailable', 'ModelUnavailable', 'Throttling.ServiceOverloaded',
 ]);
 // Errors that mean the request never left this machine, so resubmitting elsewhere cannot double-bill.
-// EINSECURE is fetchGuarded refusing a key over http before sending. Its redirect codes are not here:
-// a redirect answers a request that was sent.
-const PRE_SEND_ERRORS = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'ERR_INVALID_URL', 'EINSECURE']);
+// EINSECURE and EPROXYKEY are fetchGuarded refusing a key over http (or through an env proxy) before
+// sending. Its redirect codes are not here: a redirect answers a request that was sent.
+const PRE_SEND_ERRORS = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'ERR_INVALID_URL', 'EINSECURE', 'EPROXYKEY']);
 
 /**
  * Map a WAN failure to a pool action.

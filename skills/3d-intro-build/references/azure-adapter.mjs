@@ -338,6 +338,37 @@ const plainHeaders = (h) => (Array.isArray(h) || h instanceof Headers ? Object.f
 /** Whether a key may go to this URL: over https, or over http only to this machine (a local mock or proxy). */
 export const safeForKey = (u) => u.protocol === 'https:' || localHttp(u);
 
+/**
+ * Whether this process's fetch sends an http request to `u` through a proxy named in the environment:
+ * Node 24 does when NODE_USE_ENV_PROXY=1 or --use-env-proxy is on and http_proxy or HTTP_PROXY is set,
+ * unless NO_PROXY names the host. Over plain http the proxy reads the request, a key included. Read
+ * as Node 24.13 does, and toward "proxied" where unsure: NODE_USE_ENV_PROXY other than empty or 0 is
+ * on, and only `*` or the host itself (`[::1]` with its brackets) in every NO_PROXY set counts, not a
+ * port, a leading dot or a range.
+ */
+export function envProxied(u, env = process.env, flags = process.execArgv) {
+  if (!envProxyOn(env, flags) || !(env.http_proxy || env.HTTP_PROXY)) return false;
+  const lists = [env.no_proxy, env.NO_PROXY].filter(Boolean);
+  return !lists.length || !lists.every((list) => noProxyNames(list, u.hostname)); // URL gives the host in lower case
+}
+
+function envProxyOn(env, flags) {
+  if (env.NODE_USE_ENV_PROXY && env.NODE_USE_ENV_PROXY !== '0') return true;
+  return [...flags, ...String(env.NODE_OPTIONS || '').split(/\s+/)].includes('--use-env-proxy');
+}
+
+const noProxyNames = (list, host) => list.split(',').map((x) => x.trim().toLowerCase()).some((x) => x === '*' || x === host);
+
+// A key goes only where safeForKey allows, and over http only straight to this machine: not through
+// a proxy the environment puts in the way. Both refusals come before anything is sent.
+function assertKeyMayGo(target, headers) {
+  if (!Object.keys(headers).some(isSecret)) return;
+  if (!safeForKey(target)) throw refused('EINSECURE', 'a key is sent only over https');
+  if (target.protocol === 'http:' && envProxied(target)) {
+    throw refused('EPROXYKEY', 'a key over http goes only straight to this machine, and the environment sends http through a proxy (NO_PROXY can name the host)');
+  }
+}
+
 // Where a redirect goes. The request was sent already, so a Location that is not a URL, or one that
 // leaves https, ends it with a code that does not read as "nothing sent". http stays allowed only
 // while the request is on this machine over http (a local mock); from anywhere else, an https
@@ -369,13 +400,14 @@ function nextHop(req, status, crossOrigin) {
  * another origin without the key headers; a request with a body only by a 307 or 308 within its
  * origin (fetch itself forwards a custom `api-key` header and re-sends the body on 307 and 308 to
  * any origin, and turns a POST into a GET on 301 to 303). A key goes only where safeForKey allows: an http
- * URL with one is refused before anything is sent (cause.code EINSECURE), and no redirect leaves
- * https. Throws as fetch does on a network error.
+ * URL with one is refused before anything is sent (cause.code EINSECURE), and so is an http one to this
+ * machine that an env proxy would carry (EPROXYKEY); no redirect leaves https. Throws as fetch does on
+ * a network error.
  */
 export async function fetchGuarded(url, init = {}) {
   let target = new URL(String(url));
   let req = { ...init, headers: plainHeaders(init.headers), redirect: 'manual' };
-  if (!safeForKey(target) && Object.keys(req.headers).some(isSecret)) throw refused('EINSECURE', 'a key is sent only over https');
+  assertKeyMayGo(target, req.headers);
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
     const r = await globalThis.fetch(target.href, req);
     const location = REDIRECT_STATUS.has(r.status) ? r.headers.get('location') : null;
