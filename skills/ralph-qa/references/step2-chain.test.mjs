@@ -321,23 +321,64 @@ test("the user's diff.context, diff.interHunkContext and GIT_DIFF_OPTS send no m
   assert.equal(contextLines(r), 12, r.prompt);
 });
 
-test("a diff attribute in the user's global attributes file leaves a binary file a binary line", { skip: SKIP }, (t) => {
+test("a diff attribute that spells a binary file out as text stops the chain before anything goes out", { skip: SKIP }, (t) => {
+  for (const where of ["global", "repo"]) {
+    const ctx = repo(t);
+    writeFileSync(join(ctx.repo, "blob.bin"), Buffer.from("BIN\0ONE\nRAW-1\n"));
+    git(ctx, "add", "blob.bin");
+    git(ctx, "commit", "-qm", "bin");
+    writeFileSync(join(ctx.repo, "blob.bin"), Buffer.from("BIN\0TWO\nRAW-2\n"));
+    if (where === "global") {
+      mkdirSync(join(ctx.dir, "home", ".config", "git"), { recursive: true });
+      writeFileSync(join(ctx.dir, "home", ".config", "git", "attributes"), "*.bin diff\n");
+    } else {
+      writeFileSync(join(ctx.repo, ".git", "info", "attributes"), "*.bin diff\n");
+    }
+    const r = step2(ctx);
+    assert.notEqual(r.status, 0, where);
+    assert.match(r.stderr, /바이너리 바이트/, where);
+    assert.ok(!r.prompt.includes("RAW-") && !r.prompt.includes("</review-data"), `${where}: ${r.prompt}`);
+  }
+});
+
+test("a file the user's global attributes hide from diffs with -diff stays hidden", { skip: SKIP }, (t) => {
   const ctx = repo(t);
-  writeFileSync(join(ctx.repo, "blob.bin"), Buffer.from("BIN\0ONE\nRAW-1\n"));
-  git(ctx, "add", "blob.bin");
-  git(ctx, "commit", "-qm", "bin");
-  writeFileSync(join(ctx.repo, "blob.bin"), Buffer.from("BIN\0TWO\nRAW-2\n"));
+  put(ctx, "creds.dat", "value=ONE\n");
+  git(ctx, "add", "creds.dat");
+  git(ctx, "commit", "-qm", "creds");
+  put(ctx, "creds.dat", "value=TWO\n");
   mkdirSync(join(ctx.dir, "home", ".config", "git"), { recursive: true });
-  writeFileSync(join(ctx.dir, "home", ".config", "git", "attributes"), "*.bin diff\n");
+  writeFileSync(join(ctx.dir, "home", ".config", "git", "attributes"), "*.dat -diff\n");
   const r = step2(ctx);
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(/^Binary files /m.test(r.prompt) && !r.prompt.includes("RAW-"), r.prompt);
+  assert.ok(/^Binary files /m.test(r.prompt) && !r.prompt.includes("value=TWO"), r.prompt);
 });
 
 test("a split index repo keeps its .git as it was: the add -N on the copy writes no shared index there", { skip: SKIP }, (t) => {
   const ctx = repo(t);
   git(ctx, "config", "core.splitIndex", "true");
   git(ctx, "update-index", "--split-index");
+  put(ctx, "a.txt", "two\n");
+  put(ctx, "n.txt", "new\n");
+  const shared = () => readdirSync(join(ctx.repo, ".git")).filter((f) => f.startsWith("sharedindex.")).sort();
+  const before = shared();
+  const r = step2(ctx, { list: "n.txt\n" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(sent(r, "a.txt") && sent(r, "n.txt"), r.prompt);
+  assert.deepEqual(shared(), before, "no new sharedindex.<hash> in the repo's .git");
+});
+
+test("a split index repo with a file whose stat alone changed keeps its .git as it was", { skip: SKIP }, (t) => {
+  // git diff writes the copy back as a split index when a tracked file's stat changed: every command on the copy
+  // must keep it whole, not only add -N
+  const ctx = repo(t);
+  for (let k = 0; k < 6; k += 1) put(ctx, `f${k}.txt`, `${k}\n`);
+  git(ctx, "add", ".");
+  git(ctx, "commit", "-qm", "more");
+  git(ctx, "config", "core.splitIndex", "true");
+  git(ctx, "update-index", "--split-index");
+  const old = new Date(Date.now() - 3600 * 1000);
+  utimesSync(join(ctx.repo, "f1.txt"), old, old);
   put(ctx, "a.txt", "two\n");
   put(ctx, "n.txt", "new\n");
   const shared = () => readdirSync(join(ctx.repo, ".git")).filter((f) => f.startsWith("sharedindex.")).sort();

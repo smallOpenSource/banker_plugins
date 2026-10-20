@@ -662,13 +662,16 @@ try {
      && /커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다/.test(rqSkill) && !/경로를 잘못 얻어도 사본 없이 말없이 진행하지 않는다/.test(rqSkill)
      && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)
      && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
-     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
+     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
+     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
      && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" | sed 's|^\./||' > "$d/listed.md" &&`)
      && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄, 겹친 줄, 따옴표를 풀지 않은 줄)' >&2; false; }; } &&`)
      && seatCode.split('\n').includes(String.raw`  { [ -z "$(git -C '<저장소>' ls-files -z --others --exclude-standard | LC_ALL=C tr -dc '\n' | LC_ALL=C tr '\n' x)" ] || { echo 'ralph-qa: 이름에 줄바꿈이 든 새 파일이 있다(목록 비교가 그 이름을 두 줄로 읽는다)' >&2; false; }; } &&`)
-     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
-     && /^  GIT_DIFF_OPTS= GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.attributesFile=\/dev\/null diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 '<기준>' >> "\$d\/prompt\.md" && rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" &&$/m.test(seatCode)
+     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
+     && /^  GIT_DIFF_OPTS= GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 '<기준>' > "\$d\/diff\.md" &&$/m.test(seatCode)
+     && seatCode.split('\n').includes(String.raw`  { LC_ALL=C tr -d '\000' < "$d/diff.md" | cmp -s - "$d/diff.md" || { echo 'ralph-qa: diff 에 바이너리 바이트가 있다(attributes 의 diff 속성이 바이너리 파일을 글로 펼침)' >&2; false; }; } &&`)
+     && seatCode.split('\n').includes(String.raw`  cat "$d/diff.md" >> "$d/prompt.md" && rm -f "$d/idx" "$d/added.md" "$d/listed.md" "$d/diff.md" &&`)
+     && !/core\.attributesFile/.test(rqSkill)
      && !/'<저장소>'(?: -c \S+)* diff (?!--no-ext-diff --no-textconv --no-color --submodule=short )/.test(seatCode)
      && / && LC_ALL=C command grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m.test(seatCode) && !/(?<!command )grep -c/.test(seatCode)
      && !/read-tree/.test(seatCode) && !/git -C '<저장소>' diff HEAD/.test(seatCode) && !/add -N \.(?=[\s`]|$)/m.test(rqSkill)
@@ -748,11 +751,12 @@ try {
      && /`\[IO\.Path\]::IsPathRooted\(\$i\)` 가 거짓이면 `\$i = Join-Path '<저장소>' \$i` 로 바꾼다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"` 로 실제 인덱스를 복사한다\./.test(psStep2)
      && /`git -C '<저장소>' rev-parse -q --verify HEAD > \$null` 의 `\$LASTEXITCODE` 가 0 이면\(커밋이 있으면\) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
+     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
      && /`\$added \| Where-Object \{ \$listed -cnotcontains \$_ \}`\)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다\./.test(psStep2)
      && /`Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL`/.test(psStep2)
      && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
-     && /`git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false -c core\.attributesFile=\/dev\/null diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /`git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /`\[IO\.File\]::ReadAllBytes\("\$d\\diff\.md"\) -contains 0` 이 참이면 `diff 에 바이너리 바이트가 있다` 를 찍고 멈춘다/.test(psStep2)
      && /`Remove-Item Env:GIT_DIFF_OPTS -ErrorAction Ignore`/.test(psStep2)
      && /`diff --quiet` 는 1 일 때만 계속하고\(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다\), 나머지는 0 이 아니면 멈춘다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.md"` 로 치운다/.test(psStep2)
@@ -816,7 +820,8 @@ try {
   ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard --directory$/m.test(seatCode)
      && /목록이 100줄을 넘으면/.test(rqSkill) && /줄은 실제 이름으로 적는다/.test(rqSkill)
      && /`이름에 줄바꿈이 든 새 파일이 있다`: /.test(rqSkill) && /문맥은 사용자 설정과 관계없이 3줄이다/.test(rqSkill)
-     && /`-c core\.splitIndex=false`/.test(rqSkill),
+     && /사본을 읽고 쓰는 git 명령마다 `-c core\.splitIndex=false` 를 줘/.test(rqSkill) && /`-diff`, `binary` 로 가려 둔 파일은 가린 채/.test(rqSkill)
+     && /`diff 에 바이너리 바이트가 있다`: /.test(rqSkill) && /Claude Code 는 3만 자/.test(rqSkill),
      'S23-k: a long listing is folded by folder, list lines are real names (unquoted, no ./), a new name with a newline stops, and the diff keeps its own context and attributes');
   ok(/\+ 2단계의 `unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill),
      'S12-b: the source-independent seat also gets the list of new files left out of the diff');
@@ -829,7 +834,7 @@ try {
      && /기준 파일과 게이트 원문 출력은 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", \[IO\.File\]::ReadAllText\('<기준 파일>'\)\)`/.test(psStep2)
      && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
      && /`2>` 재지정은 `-LiteralPath` 를 받지 못해/.test(rqSkill) && !/`2> "\$o\\err-gemini\.md"`/.test(rqSkill)
-     && /Select-String -LiteralPath "\$o\\err-<좌석>\.md"/.test(rqSkill) && /호출마다 먼저 `\$OutputEncoding`/.test(rqSkill),
+     && /Select-String -LiteralPath "\$o\\err-<좌석>\.md"/.test(rqSkill) && /gemini 의 `Policy file error` 와 `Full report`/.test(rqSkill) && /호출마다 먼저 `\$OutputEncoding`/.test(rqSkill),
      'S23-h: the PowerShell step 2 writes unsent.md, the base file and the closing marker like bash, BOM-free, the encoding in every call, and 2> to a path without brackets');
   ok(/^rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" && cat '<검토 대상 파일>' '<기준 파일>' >> "\$d\/prompt\.md" &&$/m.test(seatCode),
      'S23-i: the no-diff branch has its own chain in the same $d');
