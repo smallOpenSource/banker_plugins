@@ -17,6 +17,8 @@ const CHAIN = (BLOCK.match(/^i=\$\(git [\s\S]*?grep -c 'review-data id="<id>"' "
 const LISTING = (BLOCK.match(/^git -C '<저장소>' .*ls-files --others --exclude-standard$/m) || [])[0] || "";
 // The folded listing for a long one.
 const FOLDED = (BLOCK.match(/^git -C '<저장소>' .*ls-files --others --exclude-standard --directory$/m) || [])[0] || "";
+// The chain for a review with no diff to send.
+const NO_DIFF = (BLOCK.match(/^rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" && cat '<검토 대상 파일>'[\s\S]*?grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m) || [])[0] || "";
 
 const works = (cmd) => spawnSync(cmd, ["--version"], { encoding: "utf8" }).status === 0;
 const SKIP = process.platform === "win32" ? "Git Bash path handling is not checked on Windows"
@@ -431,3 +433,25 @@ test("a second try in the same folder starts from a fresh index copy, so a file 
   assert.ok(sent(r, "a.txt") && !r.prompt.includes("secret.txt"), r.prompt);
   assert.ok(r.unsent.includes("secret.txt"), `left in unsent.md: ${r.unsent}`);
 });
+
+// 0.20.4 B3: the no-diff branch
+test("with no diff to send, the same folder takes the review file, the base file and the closing marker", { skip: SKIP }, (t) => {
+  assert.ok(NO_DIFF, "no chain for a review with no diff in the bash block");
+  const ctx = repo(t);
+  put(ctx, ".gitignore", "*.log\n.omc/\n");
+  git(ctx, "add", ".gitignore");
+  git(ctx, "commit", "-qm", "ignore .omc");
+  put(ctx, ".omc/plans/p.md", "the plan\n");
+  const stop = step2(ctx);
+  assert.match(stop.stderr, /보낼 diff 가 없다/);
+  writeFileSync(join(ctx.d, "prompt.md"), '<review-data id="t1">\n');
+  const script = NO_DIFF.replaceAll("<검토 대상 파일>", join(ctx.repo, ".omc/plans/p.md"))
+    .replaceAll("<기준 파일>", join(ctx.dir, "base.md")).replaceAll("<id>", "t1");
+  const r = spawnSync("bash", ["-c", `d='${ctx.d}'\n${script}`], { encoding: "utf8", env: ctx.env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "2");
+  const prompt = readFileSync(join(ctx.d, "prompt.md"), "utf8");
+  assert.ok(prompt.includes("the plan\nthe base file\n</review-data"), prompt);
+  for (const f of ["idx", "added.md", "listed.md"]) assert.ok(!existsSync(join(ctx.d, f)), `${f} is left`);
+});
+

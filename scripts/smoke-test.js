@@ -691,7 +691,7 @@ try {
      && /색과 하위 저장소 내용도 사용자 설정과 관계없이 끈다\(`--no-color --submodule=short`\)/.test(rqSkill)
      && /2 가 찍히지 않으면 보내지 않고 stderr 의 사유를 본다/.test(rqSkill)
      && /`커밋이 있는데 인덱스 파일이 없다`: 다시 해도 풀리지 않는다\. 사용자에게 알리고 외부 좌석은 `cli-call-failed` 로 적는다/.test(rqSkill)
-     && /`보낼 diff 가 없다`: 검토 대상이 무시되는 폴더\(`\.omc\/plans\/` 등\)나 저장소 밖에 있으면 새 `\$d` 에서 그 파일을 원문 부분으로 붙인다/.test(rqSkill)
+     && /`보낼 diff 가 없다`: 검토 대상이 무시되는 폴더\(`\.omc\/plans\/` 등\)나 저장소 밖에 있으면 같은 `\$d` 에서 짧은 부분부터 다시 쓴 뒤, 블록의 `2단계-2 대체` 사슬로/.test(rqSkill)
      && /512 KiB\(524288 바이트\)를 넘으면 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다\. 사용자가 보내지 않기로 하면 `model-declined` 다/.test(rqSkill)
      && /아래와 3단계의 `cli-call-failed` 는 그 좌석이 아직 판정을 내지 않았을 때다\. 첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다/.test(rqSkill)
      && /첫 판정 뒤의 반복에서 페이로드를 만들지 못하거나 사용자가 보내지 않기로 하면 그 좌석은 `ERROR` 다/.test(rqSkill)
@@ -751,8 +751,9 @@ try {
      && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
      && /`\$added \| Where-Object \{ \$listed -cnotcontains \$_ \}`\)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다\./.test(psStep2)
      && /`Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL`/.test(psStep2)
-     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
-     && /`git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false diff --no-ext-diff --no-textconv --no-color --submodule=short --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
+     && /`git -C '<저장소>' diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false -c core\.attributesFile=\/dev\/null diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
+     && /`Remove-Item Env:GIT_DIFF_OPTS -ErrorAction Ignore`/.test(psStep2)
      && /`diff --quiet` 는 1 일 때만 계속하고\(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다\), 나머지는 0 이 아니면 멈춘다\./.test(psStep2)
      && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.md"` 로 치운다/.test(psStep2)
      && !/read-tree|--path-format|if \(Test-Path \$i\)|add -N \./.test(psStep2)
@@ -817,6 +818,18 @@ try {
      'S23-k: a long listing is folded by folder, list lines are real names (unquoted, no ./), a new name with a newline stops, and the diff keeps its own context and attributes');
   ok(/\+ 2단계의 `unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill),
      'S12-b: the source-independent seat also gets the list of new files left out of the diff');
+  // The PowerShell form of step 2 keeps what bash keeps: the unsent list, the parts after the diff and the closing marker,
+  // written without a BOM, the encoding set in every call; a stderr redirect cannot take -LiteralPath, so it goes to a
+  // relative path, and the UTF-16 err file of 5.1 is read with Select-String.
+  ok(/`\[IO\.File\]::WriteAllLines\("\$d\\unsent\.md", \[string\[\]\]\$u\)`/.test(psStep2)
+     && /닫는 표지는 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '<\/review-data id="<id>">' \+ "`n"\)` 로 붙인다/.test(psStep2)
+     && /기준 파일과 게이트 원문 출력은 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", \[IO\.File\]::ReadAllText\('<기준 파일>'\)\)`/.test(psStep2)
+     && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
+     && /`2>` 재지정은 `-LiteralPath` 를 받지 못해/.test(rqSkill) && !/`2> "\$o\\err-gemini\.md"`/.test(rqSkill)
+     && /Select-String -LiteralPath "\$o\\err-<좌석>\.md"/.test(rqSkill) && /호출마다 먼저 `\$OutputEncoding`/.test(rqSkill),
+     'S23-h: the PowerShell step 2 writes unsent.md, the base file and the closing marker like bash, BOM-free, the encoding in every call, and 2> to a path without brackets');
+  ok(/^rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" && cat '<검토 대상 파일>' '<기준 파일>' >> "\$d\/prompt\.md" &&$/m.test(seatCode),
+     'S23-i: the no-diff branch has its own chain in the same $d');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
