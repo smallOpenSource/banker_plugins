@@ -156,7 +156,8 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - gemini 자체 샌드박스는 `GEMINI_SANDBOX=false` 로 끈다. 이 env 는 설정의 `tools.sandbox` 보다 앞선다(0.62.0). 켜 두면 gemini 는 자체 샌드박스 안에서 다시 뜬다(docker, podman 컨테이너. macOS 에서 값이 `true` 면 `sandbox-exec`). 컨테이너 안에는 정책 파일이 없어 모든 도구가 열리고(`Policy file error` 도 나오지 않는다), 페이로드는 docker 명령줄에 실린다.
    - stderr 에 `Policy file error` 가 있으면 정책을 읽지 못해 도구가 열렸을 수 있으므로 그 좌석은 `ERROR` 다. `Full report` 는 API 오류다. 첫 호출의 권한, 미존재 거절이면 갈아타고(외부 모델 결정 절), 그 밖은 `ERROR` 다.
 5. 좌석 명령은 백그라운드 작업으로 돌린다(Claude Code 는 `run_in_background`, Codex 는 오래 도는 exec 세션). 끝났다는 알림을 받은 뒤 `$o` 의 답 파일을 읽는다.
-   - 좌석마다 상한은 600 초다. 명령의 `<상한>` 자리에 `timeout` 이 있으면(Linux, Git Bash) `timeout -k 10 600` 을, 없으면(macOS 기본) 블록 주석의 `perl` 명령을 넣는다. 둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다(exit 124 또는 137). `alarm` 만 거는 perl 은 진입점만 끝내고 작업 프로세스를 남긴다(codex, gemini 의 npm 진입점은 작업 프로세스를 자식으로 띄운다). Codex 는 그 exec 세션이 끝날 때까지 기다린다.
+   - 좌석마다 상한은 600 초다. 명령의 `<상한>` 자리에 `timeout` 이 있으면(Linux, Git Bash) `timeout -s KILL 600` 을, 없으면(macOS 기본) 블록 주석의 `perl` 명령을 넣는다. 앞은 상한에서 좌석의 프로세스 그룹에 바로 KILL 을 보내고, 뒤는 TERM 을 보낸 뒤 10초 뒤 KILL 을 보낸다. 둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다(exit 137). Git Bash 의 `timeout` 도 네이티브 Windows 손자 프로세스까지 끝낸다(Windows 박스 실측).
+     - `timeout -k 10 600` 은 진입점이 TERM 에 먼저 끝나면 KILL 을 보내지 않아, TERM 을 견딘 작업 프로세스가 남는다(coreutils 8.30 실측). `alarm` 만 거는 perl 은 진입점만 끝내고 작업 프로세스를 남긴다(codex, gemini 의 npm 진입점은 작업 프로세스를 자식으로 띄운다). Codex 는 그 exec 세션이 끝날 때까지 기다린다.
    - Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다. 상한을 넣지 못했거나 상한 뒤에도 끝나지 않은 좌석은 그 작업을 백그라운드 작업 중지 도구(`TaskStop`)로 멈춘다. 그러면 좌석 프로세스 트리 전체가 멈춘다. 셸에서 프로세스 그룹을 죽여서는 좌석 서브셸이 멈추지 않는다(실측).
    - 하위 에이전트로 돌면 좌석이 모두 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다. 먼저 답을 내면 그 백그라운드 작업도 함께 끝나 정리 없이 사본이 남는다.
    - 상한에 걸린 좌석, 멈춘 좌석, 빈 답은 `ERROR` 다. 모델 거절로 보고 갈아타지 않는다.
@@ -203,7 +204,7 @@ i=$(git -C '<저장소>' rev-parse --git-path index) && case $i in /*|?:*) ;; *)
 rm -f "$d/idx" "$d/added.md" "$d/listed.md" && cat '<검토 대상 파일>' '<기준 파일>' >> "$d/prompt.md" &&
   printf '%s\n' '</review-data id="<id>">' >> "$d/prompt.md" && LC_ALL=C command grep -c 'review-data id="<id>"' "$d/prompt.md"
 
-# 3단계 검사 뒤 4단계: 플래그로 고른 좌석마다. <상한> 은 5단계: timeout 이 있으면 timeout -k 10 600, 없으면 아래 perl 명령
+# 3단계 검사 뒤 4단계: 플래그로 고른 좌석마다. <상한> 은 5단계: timeout 이 있으면 timeout -s KILL 600, 없으면 아래 perl 명령
 #   perl -e 'setpgrp; $SIG{ALRM} = sub { $SIG{TERM} = "IGNORE"; kill TERM => -$$; sleep 10; kill KILL => -$$ }; alarm shift; system @ARGV; exit($? == -1 ? 127 : $? & 127 ? 128 + ($? & 127) : $? >> 8)' 600
 for s in codex gemini opencode; do mkdir -m 700 "$d/$s" && cp "$d/prompt.md" "$d/$s/"; done
 
@@ -236,6 +237,7 @@ P='{"*":"deny"}'
 node "$R/gemini-seat.mjs" clean "$d/gemini"
 find "$(dirname "$d")" -maxdepth 1 -type d \( -name 'ralph-qa.??????' -o -name 'ralph-qa-out.??????' \) -mmin +1440 -exec test -f '{}/.ralph-qa' \; -exec rm -rf {} +
 node "$R/gemini-seat.mjs" sweep "$(dirname "$d")"
+printf '%s\n' "$(dirname "$d")" "$(cd "$(dirname "$d")" && pwd -P)"
 ( cd "$d/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session list --pure --format json )
 ( cd "$d/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session delete '<세션 id>' --pure )
 rm -rf "$d" "$o"
@@ -258,7 +260,7 @@ rm -rf "$d" "$o"
     - 폴더가 남은 경우(세션이 끊김): 다음 실행의 6단계가 같은 기준 폴더에서 하루 지난 폴더를 지우고, 이어서 `sweep` 이 그 기록을 지운다.
     - 진행 중인 실행은 좌석 폴더가 있고 하루가 지나지 않아 건드리지 않는다.
   - gemini 의 API 오류 보고(`gemini-client-error-*.json`)에는 요청 전문이 든다. 좌석 명령이 `TMPDIR`, `TEMP`, `TMP` 를 `$o` 로 두므로 `$o` 를 지울 때 함께 지워진다.
-  - opencode 는 좌석 세션을 사용자 opencode DB 에 남긴다. 좌석 폴더(git 밖)에서 갱신 차단 env 를 주고 `opencode session list --pure --format json` 으로 제목이 `ralph-qa-review-<id>` 인 세션을 찾아 `opencode session delete <세션 id>` 로 지운다. 저장소 밖 폴더의 세션은 한 프로젝트(전역)로 묶여 지난 실행의 세션도 이 목록에 보인다. 제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa.<영숫자>/opencode` 인데 그 폴더가 없는 세션(끊긴 실행이 남긴 것)도 함께 지운다(1.3.10 의 목록 JSON 은 `id`, `title`, `directory` 를 주고, 기본으로 최근 100개까지 보인다). 저장소 안에서 돌리면 그 저장소 프로젝트의 세션만 보이고 `.git/opencode` 가 생긴다. 목록에서는 빠지지만 DB 파일의 빈 자리에는 바로 지워지지 않고 남을 수 있다.
+  - opencode 는 좌석 세션을 사용자 opencode DB 에 남긴다. 좌석 폴더(git 밖)에서 갱신 차단 env 를 주고 `opencode session list --pure --format json` 으로 제목이 `ralph-qa-review-<id>` 인 세션을 찾아 `opencode session delete <세션 id>` 로 지운다. 저장소 밖 폴더의 세션은 한 프로젝트(전역)로 묶여 지난 실행의 세션도 이 목록에 보인다. 제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa.<영숫자>/opencode` 인데 그 폴더가 없는 세션(끊긴 실행이 남긴 것)도 함께 지운다(1.3.10 의 목록 JSON 은 `id`, `title`, `directory` 를 주고, 기본으로 최근 100개까지 보인다). opencode 는 `directory` 를 링크를 푼 경로로 적는다(macOS 의 `$TMPDIR` 는 `/var` 링크 아래라 `/private/var/...`). 그래서 기준 폴더는 6단계가 찍는 두 줄(적은 경로와 `pwd -P` 로 푼 경로) 모두와 견준다. 저장소 안에서 돌리면 그 저장소 프로젝트의 세션만 보이고 `.git/opencode` 가 생긴다. 목록에서는 빠지지만 DB 파일의 빈 자리에는 바로 지워지지 않고 남을 수 있다.
 - opencode 좌석은 `OPENCODE_CONFIG_CONTENT` 를 덮는다. 사용자가 이 env 로 프로바이더를 정해 두었다면 그 설정을 파일(`$OPENCODE_CONFIG`)로 옮겨야 그 좌석이 같은 프로바이더를 쓴다.
 - 런타임 샌드박스: Codex 의 기본 `workspace-write` 샌드박스는 HOME 쓰기를 막아 gemini, opencode 가 시작부터 실패한다(opencode 는 `EROFS`). Linux 에서는 기준 폴더(`$XDG_RUNTIME_DIR`, `~/.cache`)도 읽기 전용이라 1단계부터 실패한다.
   - 그래서 Codex 에서는 이 절의 명령 전부(폴더 만들기, 페이로드 쓰기, 사본, 좌석 명령, 정리)를 샌드박스 밖에서 실행하도록 승인을 요청한다. 1단계의 이유로 기준 폴더를 `/tmp` 로 옮기지 않는다.
