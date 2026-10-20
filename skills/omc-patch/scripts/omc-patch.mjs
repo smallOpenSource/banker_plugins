@@ -88,8 +88,8 @@ const __omcRaceImport = (p) => {
     // 뜨지도 못한다(실측: 원본과 패치본이 똑같이 150ms 안에 죽었다). import 가 정상적으로
     // 끝나면 아래에서 clearTimeout 하므로 정상 경로는 한 톨도 느려지지 않는다.
     t = setTimeout(() => {
-      // 훅이 일을 건너뛴 것을 알 수 있게 한 줄 남긴다. 종료 코드는 바꾸지 않는다(0 이 아니면 Claude Code 가 훅 오류로 본다).
-      try { process.stderr.write('[OMC local patch] import 가 ${IMPORT_TIMEOUT_MS / 1000}초 안에 끝나지 않아 빈 모듈로 진행합니다\\n'); } catch { /* 알림만 */ }
+      // 훅이 일을 건너뛴 것을 알 수 있게 한 줄 남긴다. 종료 코드는 바꾸지 않는다(0 이 아니면 Claude Code 가 훅 오류로 본다). 닫힌 stderr 의 쓰기 오류는 뒤에 error 이벤트로 오므로 먼저 받아 둔다.
+      try { process.stderr.on('error', () => {}); process.stderr.write('[OMC local patch] import 가 ${IMPORT_TIMEOUT_MS / 1000}초 안에 끝나지 않아 빈 모듈로 진행합니다\\n'); } catch { /* 알림만 */ }
       const k = setTimeout(() => process.exit(typeof process.exitCode === 'number' ? process.exitCode : 0), ${EXIT_GRACE_MS});
       if (k && k.unref) k.unref();
       // 빈 객체를 돌려주는 것이 중요하다. 호출부 다수가 \`const { a } = await import(...)\`
@@ -180,6 +180,11 @@ function fetchConfig(env) {
   return out;
 }
 
+// 업데이트 fetch 만 받는 값. 받는 속도가 초당 1000바이트 밑으로 30초 이어지면 git(curl)이 스스로 끊고, 자격 증명을 터미널에서 묻지 않는다.
+const NET_ENV = { GIT_HTTP_LOW_SPEED_LIMIT: "1000", GIT_HTTP_LOW_SPEED_TIME: "30", GIT_TERMINAL_PROMPT: "0" };
+// fetch 전체의 시간 제한(ms). 응답하지 않는 망(연결을 붙잡는 방화벽, TLS 블랙홀)에서 멈추지 않게 한다. 시험이 줄일 수 있게
+// OMC_PATCH_FETCH_TIMEOUT_MS 를 받되 줄이기만 한다. 0 이하나 숫자가 아니면 버린다. 문서에 적지 않는 시험용 장치다.
+const FETCH_TIMEOUT_MS = Math.min(Number(process.env.OMC_PATCH_FETCH_TIMEOUT_MS) > 0 ? Number(process.env.OMC_PATCH_FETCH_TIMEOUT_MS) : 120000, 120000);
 // 마켓플레이스의 .git 이 깨졌으면(중단된 clone) git 은 위로 올라가 다음 저장소(dotfiles 로 관리하는 ~/.claude 등)를
 // 고른다. 바로 위 폴더를 천장(GIT_CEILING_DIRECTORIES)으로 두어 마켓플레이스 밖으로 나가지 못하게 한다.
 // 마켓플레이스가 링크면 실제 경로 쪽 위 폴더도 막는다. 셸에 있던 천장 값은 대소문자와 상관없이 이 값으로 바꾼다.
@@ -187,13 +192,13 @@ const gitEnv = ({ network = false } = {}) => {
   const vars = gitRepoVars();
   const drop = (k) => isEnvConfig(k) || vars.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
-  if (network) Object.assign(env, fetchConfig(process.env));
+  if (network) Object.assign(env, fetchConfig(process.env), NET_ENV);
   env.GIT_CEILING_DIRECTORIES = [...new Set([dirname(MARKET), dirname(realOr(MARKET))])].join(PATH_LIST_SEP);
   return env;
 };
 
 function git(args, cwd = MARKET, opts = {}) {
-  return execFileSync("git", args, { cwd, env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", args, { cwd, env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: opts.timeout }).trim();
 }
 
 // ── 1. 업데이트 ──────────────────────────────────────────────────────────────
@@ -239,11 +244,62 @@ function canInstallTarget({ tar = true } = {}) {
   return true;
 }
 
-// 태그 v<TARGET_VERSION> 의 커밋. 못 찾으면 null.
+// origin 에서 태그를 받는다. 받았으면 null, 받지 못했으면 그 까닭 한 줄. 이 도구가 고정한 origin 은 받을 수 없으므로
+// 부르지 않고 그렇다고 한다(git 은 "remote helper" 오류만 낸다). curl 은 비밀번호 안의 `/` 를 호스트의 끝으로 읽어 사용자
+// 정보 조각을 문구에 싣는다("Port number ended with 'Q'", "Could not resolve host: alice"). 그래서 다음이면 문구는 싣지
+// 않고 git 이 어떻게 끝났는지만 댄다: origin 에 사용자 정보가 있음, git 의 오류 줄에 사용자 정보가 든 주소가 남음(전역
+// insteadOf 가 더한 것. gitError 가 가린 자리 `//***@` 로 안다), 프록시 주소를 curl 이 잘못 읽을 수 있음(proxyMisread).
+// 바른 꼴의 사용자 정보는 git 이 줄에서 떼고 curl 도 제대로 읽어, 그 줄은 그대로 싣는다.
+function fetchTags() {
+  const url = originUrl();
+  if (typeof url === "string" && url.startsWith("omc-pinned://")) return "origin 이 고정되어 있음(omc-pinned://). 받으려면 먼저 --revert 로 고정을 푸십시오";
+  try { git(["fetch", "--tags", "--quiet", "origin"], MARKET, { network: true, timeout: FETCH_TIMEOUT_MS }); return null; }
+  catch (e) {
+    if (e.code === "ETIMEDOUT") return `${FETCH_TIMEOUT_MS / 1000}초 안에 끝나지 않아 끊음(응답하지 않는 망일 수 있음)`;
+    const why = gitError(e);
+    const ended = `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남`;
+    if (hasUserinfo(url) || why.includes("//***@")) return `${ended}(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
+    if (proxyMisread()) return `${ended}(프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어 git 의 문구는 싣지 않음)`;
+    return why;
+  }
+}
+
+// 주소의 사용자 정보(처음 `//` 뒤부터, 없으면 처음부터 마지막 `@` 까지)에 날 `/` `?` `#` `\` 가 있는지. curl 은 그 앞에서
+// authority 를 끊는다. 그러면 사용자 이름이 호스트가 되고 비밀번호 앞부분이 포트가 된다.
+const brokenUserinfo = (v) => {
+  const s = String(v);
+  const at = s.lastIndexOf("@");
+  const i = s.indexOf("//");
+  return at !== -1 && /[/?#\\]/.test(s.slice(i !== -1 && i < at ? i + 2 : 0, at));
+};
+
+// 태그 받기가 쓸 수 있는 프록시 주소 가운데 curl 이 잘못 읽을 것이 있는지. 프록시 주소는 git 의 줄에 실리지 않아
+// ("Could not resolve proxy: alice" 처럼 호스트만) 설정에서 본다: curl 이 읽는 환경 변수와 git 이 넘기는 `*.proxy` 설정
+// (태그 받기와 같은 환경, `http.proxy`, `http.<url>.proxy`, `remote.origin.proxy`).
+function proxyMisread() {
+  const env = Object.entries(process.env).filter(([k]) => /^(https?|all)_proxy$/i.test(k)).map(([, v]) => v);
+  let cfg = [];
+  try { cfg = git(["config", "--get-regexp", "\\.proxy$"], MARKET, { network: true }).split("\n").map((l) => l.slice(l.indexOf(" ") + 1)); }
+  catch { /* 그런 설정이 없으면 git 은 종료 1 */ }
+  return [...env, ...cfg].some(brokenUserinfo);
+}
+
+// URL 에 사용자 정보가 있는지(redactUrl 이 가리는 자리: 처음 `//` 뒤부터 마지막 `@` 까지).
+const hasUserinfo = (url) => {
+  const s = String(url);
+  const i = s.indexOf("//");
+  return i !== -1 && s.lastIndexOf("@") > i + 1;
+};
+
+// 태그 v<TARGET_VERSION> 의 커밋. 못 찾으면 null. 받지 못해도 로컬 태그가 있으면 진행한다(오프라인). 없으면 받지 못한 까닭도 댄다.
 function targetSha() {
-  try { git(["fetch", "--tags", "--quiet", "origin"], MARKET, { network: true }); } catch { /* 오프라인이어도 로컬 태그가 있으면 진행 */ }
+  const why = fetchTags();
   try { return git(["rev-parse", `v${TARGET_VERSION}^{}`]); }
-  catch { bad(`태그 v${TARGET_VERSION} 를 마켓플레이스에서 찾을 수 없음`); return null; }
+  catch {
+    bad(`태그 v${TARGET_VERSION} 를 마켓플레이스에서 찾을 수 없음`);
+    if (why) log(`      origin 에서 태그를 받지 못함: ${why}`);
+    return null;
+  }
 }
 
 // git archive | tar 로 소스를 편다. 저장소에 dist/ 가 포함되어 빌드는 불필요하다.
@@ -688,10 +744,11 @@ function syntaxError(file) {
   }
 }
 
-// 백업의 글. 없거나 읽으려는 순간 사라졌으면 null(다른 실행이 먼저 되돌렸을 수 있다).
+// 백업의 글. 없거나 읽으려는 순간 사라졌으면 null(다른 실행이 먼저 되돌렸을 수 있다). 그 밖에 읽지 못하면 backupRead 표시를 달아
+// 던진다 — 쓰기 실패와 같은 catch 가 "읽지 못함" 으로 알리게.
 function readBackup(bak) {
   try { return readRegular(bak); }
-  catch (e) { if (e.code === "ENOENT") return null; throw e; }
+  catch (e) { if (e.code === "ENOENT") return null; throw Object.assign(e, { backupRead: true }); }
 }
 
 // 이 도구가 아닌 «손» 이 import 를 감싼 흔적. 4.15.7 의 손 수정은 최상위의 `await import(` 를
@@ -752,8 +809,6 @@ function revertScript(root, n, f, r) {
   else if (looksHandPatched(src)) r.foreign.push(n);
 }
 
-// 백업으로 되돌린다. 쓸 수 없는 자리거나 쓰지 못하면 이유를 대고 실패로 센다. 백업이 읽으려는 순간 사라졌으면 false
-// (다른 실행이 먼저 되돌렸을 수 있다. 호출부가 백업 없음으로 다시 본다).
 // 되돌리기 전에 본다(쓰기 조건 뒤). 지금 파일에 패치(헬퍼, 손 패치)가 없고 글이 백업과 다르면 그 사이 같은 판 폴더에 새 원본이
 // 깔린 것이다. 옛 백업을 덮으면 새 원본을 잃는다. 그 이유를, 아니면 null. 어느 쪽이든 읽지 못하면 판단하지 않는다(전처럼 복구).
 const STALE = "지금 파일에 패치가 없고 백업과 글이 다름. 백업이 옛 원본일 수 있음";
@@ -769,6 +824,8 @@ function staleWhy(f, bak) {
   return now === saved ? null : STALE;
 }
 
+// 백업으로 되돌린다. 쓸 수 없는 자리거나 쓰지 못하면 이유를 대고 실패로 센다. 백업이 읽으려는 순간 사라졌으면 false
+// (다른 실행이 먼저 되돌렸을 수 있다. 호출부가 백업 없음으로 다시 본다).
 function restoreScript(root, n, f, bak, r) {
   const why = whyNotWrite(root, f, bak) ?? staleWhy(f, bak) ?? restoreFrom(f, bak);
   if (why === GONE) return false;
@@ -805,7 +862,7 @@ function handRestoreHint(bak, f) {
   const target = realOr(f);
   return patchedByOldTool(target, bak)
     ? `손으로 되돌리려면 ${oneLine(realOr(bak))} 의 내용을 확인한 뒤 ${oneLine(target)} 에 덮어쓰고 백업을 지우십시오.`
-    : `링크가 가리키는 ${oneLine(target)} 에 이 도구의 패치가 보이지 않습니다. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오.`;
+    : `링크가 가리키는 ${oneLine(target)} 의 글은 지금 이 도구가 만드는 패치본과 같지 않거나 읽어 확인할 수 없습니다. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오.`;
 }
 
 // 백업의 내용으로 파일을 바꾼다. 쓰지 못하면 그 이유, 백업이 읽으려는 순간 사라졌으면 GONE, 아니면 null.
@@ -851,7 +908,7 @@ function writePatched(f, bak, out, n) {
     backup(f, bak);
     writeAtomic(f, out);
   } catch (e) {
-    bad(`쓰지 못함: ${n} (${failWhy(e)})`);
+    bad(e.backupRead ? `읽지 못함: ${n} 의 백업 (${failWhy(e)})` : `쓰지 못함: ${n} (${failWhy(e)})`);
     return false;
   }
   const err = syntaxError(f);
@@ -941,6 +998,7 @@ function patchHooksJson(root) {
 // JSON 오류 문구는 파일의 글을 담으므로 내지 않는다. check 는 읽기만 하므로 실패도 읽기다.
 function hooksJsonFailure(e) {
   const why = e instanceof SyntaxError ? "JSON 이 아님" : failWhy(e);
+  if (e.backupRead) return `hooks.json 의 백업을 읽지 못함 (${why})`;
   return e instanceof SyntaxError || e.reading || MODE === "check" ? `hooks.json 을 읽지 못함 (${why})` : `hooks.json 을 쓰지 못함 (${why})`;
 }
 
@@ -1598,7 +1656,7 @@ if (MODE === "check") {
   log(RESULTS.find(([when]) => when)[1]);
   if (PIN_LINES[pin] && !pinOnly) {
     log(`    참고: ${PIN_LINES[pin].slice("결과: ".length)}`);
-    log("          적용해도 그곳의 칸은 남고, 적용은 이 항목을 실패로 세어 종료 1 로 끝납니다.");
+    log(`          ${pin === "scrub-unsure" ? "칸이 남아 있으면 적용도 지우지 못하고" : "적용해도 그곳의 칸은 남고"}, 적용은 이 항목을 실패로 세어 종료 1 로 끝납니다.`);
   }
   const others = targets.filter((v) => v !== active && ((needBy[v] || 0) > 0 || hjNeedBy[v] || (misplacedBy[v] || 0) > 0));
   const unreadable = targets.filter((v) => v !== active && hjFailBy[v]);

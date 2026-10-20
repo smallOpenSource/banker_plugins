@@ -32,11 +32,12 @@ command -v codex >/dev/null && codex mcp list 2>/dev/null
 
 ```bash
 (cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)   # npx 서버
-L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null)   # 홈 폴더에서. pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함), install 절이 global 절보다 앞선다
+# pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함)를 홈 폴더에서 읽는다. install 절이 global 절보다 앞선다
+L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null) || echo "pip 설정을 읽지 못함(pip 이 없거나 10 미만). 사내 미러를 쓰면 확인 주소를 그 미러로 바꿔 본다"
 I="${PIP_INDEX_URL:-$(printf '%s\n' "$L" | sed -n "s/^install\.index-url='\(.*\)'$/\1/p")}"
 I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
-I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보(비밀)는 뗌
-curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "$I/pip/"   # uvx 서버
+I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보는 뗌
+printf 'url = "%s"\n' "$I/pip/" | curl -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # uvx 서버
 ```
 
 - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
@@ -47,7 +48,7 @@ curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "$I/pip/"   # uvx 서�
 - PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config list` 의 `install.index-url` 이나 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
 - `pip config get` 은 `PIP_CONFIG_FILE` 로 준 파일을 읽지 않아(pip 25.0 실측) `pip config list` 를 읽는다.
 - 홈 폴더에서 읽는다. `python3 -m pip` 는 지금 폴더를 import 경로 맨 앞에 두어, 지금 폴더에 있는 남의 저장소의 `pip/` 가 실행될 수 있다.
-- 색인 주소에 든 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 명령 인자에 실린 비밀은 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
+- bash 블록은 주소를 명령 인자가 아니라 표준 입력의 curl 설정(`-K -`)으로 넘긴다. 명령 인자는 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있어, 경로나 질의에 든 토큰도 거기 싣지 않는다. 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
 - Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
 - 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 
@@ -158,10 +159,10 @@ codex mcp add tavily --env TAVILY_API_KEY=YOUR_TAVILY_API_KEY -- npx -y tavily-m
 고른다:
 ```bash
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"
-"$PY" -c "import tomllib" 2>/dev/null || echo "⚠ tomllib 없음 - Python 3.11+ 설치 후 재시도(setup-python 참고)"
+(cd ~ && "$PY" -c "import tomllib") 2>/dev/null || echo "⚠ tomllib 없음 - Python 3.11+ 설치 후 재시도(setup-python 참고)"   # 홈에서: -c, -m, 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 ```
 ```bash
-"$PY" <<'EOF'
+(cd ~ && "$PY" <<'EOF'   # 홈에서: 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 import re
 from pathlib import Path
 import tomllib
@@ -186,14 +187,15 @@ tomllib.loads(new_text)  # 패치 후 재검증
 CFG.write_text(new_text, encoding="utf-8")
 print("patched:", [n for n in NAMES if f"[mcp_servers.{n}]" in new_text])
 EOF
+)
 ```
 
 ## 검증 (보고 의무)
 ```bash
 claude mcp list                                # 각 서버가 ✔ Connected 인지 확인
-codex mcp list --json | python3 -m json.tool   # 각 서버 등록 확인(json.tool 은 아무 python3 로 충분)
+codex mcp list --json | (cd ~ && python3 -m json.tool)   # 각 서버 등록 확인(json.tool 은 아무 python3 로 충분)
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"   # tomllib=3.11+
-"$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml', encoding='utf-8').read()); print('✓ TOML 유효')"
+(cd ~ && "$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml', encoding='utf-8').read()); print('✓ TOML 유효')")
 grep -c 'startup_timeout_sec = 300' ~/.codex/config.toml   # 5(+tavily)건 이상 기대
 ```
 4-field 보고: 변경(등록한 서버 목록·config.toml 패치분) / Evidence(위 출력) / 검증(Connected·TOML 유효) /

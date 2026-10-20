@@ -141,12 +141,12 @@ Claude Code 의 Bash 도구 샌드박스는 `~/.claude/settings.json` 의 `sandb
 흔하므로(예: `docs-setup` 이 다루는 것과 같은 함정) 먼저 3.11+ 인터프리터를 고른다:
 ```bash
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"
-"$PY" -c "import tomllib" 2>/dev/null || echo "⚠ tomllib 없음 - Python 3.11+ 설치 후 재시도(setup-python 참고)"
+(cd ~ && "$PY" -c "import tomllib") 2>/dev/null || echo "⚠ tomllib 없음 - Python 3.11+ 설치 후 재시도(setup-python 참고)"   # 홈에서: -c, -m, 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 ```
 그 `$PY` 로 패치한다. `sandbox_mode` 치환은 **첫 `[` 테이블 헤더 이전(root 영역)만** 대상으로 삼아
 `[profiles.*]` 하위의 같은 이름 override(예: 프로필별 `read-only` 강제)를 절대 건드리지 않는다(멱등):
 ```bash
-"$PY" <<'EOF'
+(cd ~ && "$PY" <<'EOF'   # 홈에서: 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 import re
 from pathlib import Path
 import tomllib
@@ -175,6 +175,7 @@ tomllib.loads(text)  # 패치 후 재검증
 CFG.write_text(text, encoding="utf-8")
 print("✓ sandbox_mode=workspace-write, network_access=true")
 EOF
+)
 ```
 
 ## 검증 (보고 의무)
@@ -188,10 +189,10 @@ git config --global --get-all safe.directory
 
 grep -n 'sandbox_mode\|network_access' ~/.codex/config.toml
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"   # tomllib=3.11+
-"$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml', encoding='utf-8').read()); print('✓ TOML 유효')"
+(cd ~ && "$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml', encoding='utf-8').read()); print('✓ TOML 유효')")
 timeout 30 codex sandbox -- echo sandbox-ok    # Codex 자체 샌드박스 러너로 실제 실행 확인
 
-python3 -m json.tool ~/.claude/settings.json >/dev/null && echo "settings.json 유효"
+(cd ~ && python3 -m json.tool ~/.claude/settings.json) >/dev/null && echo "settings.json 유효"
 # Claude Code sandbox 설정은 settings.json 로 확인(위 json.tool). 실제 동작은 세션에서 Bash 도구 실행으로 관찰
 ```
 4-field 보고: 변경(설치 패키지·sysctl 파일·config.toml/settings.json 변경분) / Evidence(위 출력) /

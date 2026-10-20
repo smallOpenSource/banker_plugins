@@ -80,14 +80,15 @@ export function send(res, status, body, headers = {}) {
 export const READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
 
 // An open regular file: { fd, size }, or { status } when there is none (404) or it cannot be read (403).
-// With `expect` ({ dev, ino } of the file a check passed), another file at the path is none: the path
-// changed between that check and this open.
+// With `expect` ({ dev, ino } of the file a check passed, as BigInt), another file at the path is none:
+// the path changed between that check and this open. BigInt, since an NTFS file id is 64 bits and a
+// Number keeps only 53: two files could read as one.
 function openRegular(fp, expect) {
   let fd;
   try { fd = fs.openSync(fp, READ_FLAGS); } catch (e) { return { status: ['ENOENT', 'ENOTDIR', 'EISDIR'].includes(e.code) ? 404 : 403 }; }
   let st = null;
-  try { st = fs.fstatSync(fd); } catch { /* a status the system cannot give (EIO on a network drive) */ }
-  if (st && st.isFile() && sameFile(st, expect)) return { fd, size: st.size };
+  try { st = fs.fstatSync(fd, { bigint: true }); } catch { /* a status the system cannot give (EIO on a network drive) */ }
+  if (st && st.isFile() && sameFile(st, expect)) return { fd, size: Number(st.size) };
   fs.closeSync(fd);
   return { status: st ? 404 : 403 };
 }

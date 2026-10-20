@@ -46,13 +46,16 @@ ls src/main/resources/application.* >/dev/null 2>&1 && echo "lang: spring"
 
 ```bash
 (cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)                              # ts, bash 서버(npm)
-L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null)   # 홈 폴더에서. pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함), install 절이 global 절보다 앞선다
+# pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함)를 홈 폴더에서 읽는다. install 절이 global 절보다 앞선다
+L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null) || echo "pip 설정을 읽지 못함(pip 이 없거나 10 미만). 사내 미러를 쓰면 확인 주소를 그 미러로 바꿔 본다"
 I="${PIP_INDEX_URL:-$(printf '%s\n' "$L" | sed -n "s/^install\.index-url='\(.*\)'$/\1/p")}"
 I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
-I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보(비밀)는 뗌
-curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "$I/pip/"   # py 서버(pipx)
+I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보는 뗌
+printf 'url = "%s"\n' "$I/pip/" | curl -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # py 서버(pipx)
 curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://download.eclipse.org   # jdtls
-curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com             # Spring Boot LS, lsp-mcp
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com             # lsp-mcp
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://vmware.gallery.vsassets.io   # Spring Boot LS(VSIX)
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://marketplace.visualstudio.com # Spring Boot LS(VSIX 대체 원천. 둘 중 하나만 닿아도 받을 수 있다)
 ```
 
 - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
@@ -63,7 +66,7 @@ curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com     
 - PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config list` 의 `install.index-url` 이나 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
 - `pip config get` 은 `PIP_CONFIG_FILE` 로 준 파일을 읽지 않아(pip 25.0 실측) `pip config list` 를 읽는다.
 - 홈 폴더에서 읽는다. `python3 -m pip` 는 지금 폴더를 import 경로 맨 앞에 두어, 지금 폴더에 있는 남의 저장소의 `pip/` 가 실행될 수 있다.
-- 색인 주소에 든 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 명령 인자에 실린 비밀은 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
+- bash 블록은 주소를 명령 인자가 아니라 표준 입력의 curl 설정(`-K -`)으로 넘긴다. 명령 인자는 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있어, 경로나 질의에 든 토큰도 거기 싣지 않는다. 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
 - Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
 - 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 
@@ -135,7 +138,7 @@ curl -fL --connect-timeout 30 --speed-limit 1000 --speed-time 30 --retry 2 -H "U
 # ZIP 매직 검증 (HTML 에러페이지면 즉시 중단)
 [ "$(xxd -l 4 "$VSIX" | awk 'NR==1{print $2$3}')" = "504b0304" ] \
   || { echo "✗ ZIP 아님(HTML 에러페이지?)"; rm -f "$VSIX"; exit 1; }
-rm -rf "${TARGET:?}"/*; unzip -o -q "$VSIX" -d "$TARGET"
+find "${TARGET:?}" -mindepth 1 -delete; unzip -o -q "$VSIX" -d "$TARGET"   # 글롭 없이 비움(zsh 는 빈 폴더의 * 에서 멈춤)
 JAR=$(find "$TARGET" -name "spring-boot-language-server-*-exec.jar" | sort -V | tail -1)
 [ -n "$JAR" ] || { echo "✗ exec.jar 미발견"; rm -f "$VSIX"; exit 1; }
 ln -sf "$(basename "$JAR")" "$(dirname "$JAR")/$LINK"     # 디렉토리 이동에도 유효한 상대 링크
@@ -172,7 +175,7 @@ language_id = "spring-boot-properties"
 EOF
 # TOML 유효성 (중복/문법오류 즉시 감지). tomllib 는 Python 3.11+ - RHEL8/Rocky8 기본 python3(3.6)면 setup-python 의 3.11 을 쓴다:
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"
-"$PY" -c "import tomllib; tomllib.loads(open('config/default.toml',encoding='utf-8').read()); print('OK lsp-mcp TOML')" 2>/dev/null \
+(cd ~ && "$PY" -c "import tomllib; tomllib.loads(open('$HOME/.local/src/lsp-mcp/config/default.toml',encoding='utf-8').read()); print('OK lsp-mcp TOML')") 2>/dev/null \
   || echo "⚠ tomllib(3.11+) 미가용 - append 는 위 grep guard 로 이미 적용됨, setup-python 설치 후 재검증"
 cd - >/dev/null
 ```
@@ -184,7 +187,7 @@ cd - >/dev/null
 ### 7-Codex - `[mcp_servers.lsp_bridge]` 등록
 OMX 가 배포한 기존 엔트리를 보존하려 **Python replace-or-append** 로 patch(전체 덮어쓰기 금지):
 ```bash
-python3 - << 'PY'
+(cd ~ && python3 - << 'PY'   # 홈에서: -c, -m, 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 import re
 from pathlib import Path
 home = str(Path.home())                        # Windows: str(Path.home()).replace("\\","/")
@@ -206,8 +209,9 @@ txt = rep(txt, "mcp_servers.lsp_bridge", block + "\n")
 p.write_text(txt, encoding="utf-8")            # Windows: encoding 필수(CP949 회피)
 print("patched")
 PY
+)
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"   # tomllib=3.11+
-"$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml',encoding='utf-8').read()); print('OK config.toml valid')" 2>/dev/null \
+(cd ~ && "$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml',encoding='utf-8').read()); print('OK config.toml valid')") 2>/dev/null \
   || echo "⚠ tomllib(3.11+) 미가용 - patch 는 적용됨, setup-python 후 재검증"
 ```
 
@@ -241,7 +245,7 @@ jdtls --version 2>/dev/null || which jdtls           # Windows: jdtls.bat
 codex-lsp-bridge --help | head -3
 grep -q 'lsp_bridge' ~/.codex/config.toml && echo "✓ config.toml lsp_bridge" || echo "✗ 미등록"
 PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"   # tomllib=3.11+
-"$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml',encoding='utf-8').read()); print('✓ config.toml valid')" 2>/dev/null || echo "⚠ tomllib(3.11+) 미가용 - setup-python 후 재검증"
+(cd ~ && "$PY" -c "import tomllib; tomllib.loads(open('$HOME/.codex/config.toml',encoding='utf-8').read()); print('✓ config.toml valid')") 2>/dev/null || echo "⚠ tomllib(3.11+) 미가용 - setup-python 후 재검증"
 # Claude 만: lsp_servers 도구로 인식 서버 나열
 ```
 4-field 보고: **변경**(설치 서버·브리지·config 배선) / **Evidence**(위 --version·valid 출력) / **검증**(각 서버 응답 + 브리지·config TOML valid + 런타임 인식) / **Unknown**(네트워크 차단으로 미설치·JDK 21 부재로 java/spring 스킵 등).

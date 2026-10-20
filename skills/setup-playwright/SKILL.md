@@ -25,11 +25,12 @@ for t in conda node npx python3 Xvfb xvfb-run; do command -v $t >/dev/null && ec
 
 ```bash
 (cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)   # npx playwright
-L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null)   # 홈 폴더에서. pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함), install 절이 global 절보다 앞선다
+# pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함)를 홈 폴더에서 읽는다. install 절이 global 절보다 앞선다
+L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null) || echo "pip 설정을 읽지 못함(pip 이 없거나 10 미만). 사내 미러를 쓰면 확인 주소를 그 미러로 바꿔 본다"
 I="${PIP_INDEX_URL:-$(printf '%s\n' "$L" | sed -n "s/^install\.index-url='\(.*\)'$/\1/p")}"
 I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
-I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보(비밀)는 뗌
-curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "$I/pip/"   # Python playwright
+I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보는 뗌
+printf 'url = "%s"\n' "$I/pip/" | curl -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # Python playwright
 ```
 
 - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
@@ -40,7 +41,7 @@ curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "$I/pip/"   # Python pl
 - PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config list` 의 `install.index-url` 이나 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
 - `pip config get` 은 `PIP_CONFIG_FILE` 로 준 파일을 읽지 않아(pip 25.0 실측) `pip config list` 를 읽는다.
 - 홈 폴더에서 읽는다. `python3 -m pip` 는 지금 폴더를 import 경로 맨 앞에 두어, 지금 폴더에 있는 남의 저장소의 `pip/` 가 실행될 수 있다.
-- 색인 주소에 든 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 명령 인자에 실린 비밀은 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
+- bash 블록은 주소를 명령 인자가 아니라 표준 입력의 curl 설정(`-K -`)으로 넘긴다. 명령 인자는 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있어, 경로나 질의에 든 토큰도 거기 싣지 않는다. 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
 - Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
 - 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 - OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
@@ -60,7 +61,7 @@ grep -q PLAYWRIGHT_BROWSERS_PATH ~/.bashrc 2>/dev/null || echo 'export PLAYWRIGH
 - **Node 경로(권장·간단)**: `npx playwright install chromium` (root면 `--with-deps` 로 OS 라이브러리까지). Node 없으면 distro 패키지/nvm 로 Node 먼저.
 - **Python venv(conda 없을 때)**:
   ```bash
-  python3 -m venv ~/.venvs/playwright
+  (cd ~ && python3 -m venv ~/.venvs/playwright)   # 홈에서: -c, -m, 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
   ~/.venvs/playwright/bin/pip install -U pip playwright
   ~/.venvs/playwright/bin/playwright install chromium
   ```
@@ -141,7 +142,7 @@ ls "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" | grep -i chromium 
 [ "$(uname -s)" = Linux ] && { ps -ef | grep -q "[X]vfb.*:99" && echo "Xvfb :99 up" || echo "Xvfb down (headless면 §3)"; }
 # launch smoke test (Node 또는 venv)
 DISPLAY=${DISPLAY:-:99} npx playwright --version 2>/dev/null || \
-  ~/.venvs/playwright/bin/python -c "from playwright.sync_api import sync_playwright as s; p=s().start(); b=p.chromium.launch(headless=True); print('launch OK'); b.close(); p.stop()"
+  (cd ~ && ~/.venvs/playwright/bin/python -c "from playwright.sync_api import sync_playwright as s; p=s().start(); b=p.chromium.launch(headless=True); print('launch OK'); b.close(); p.stop()")
 ```
 4-field 보고: 변경(설치 항목·env 파일) / Evidence(위 출력) / 검증(launch OK) / Unknown(관리자 권한 라이브러리 미설치 등).
 

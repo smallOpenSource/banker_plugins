@@ -891,3 +891,29 @@ test("an opencode cache emptied after an update is named in the notes, not only 
   const fresh = probe({ requested: { opencode: null }, runtime: "claude", world: world({ bins: { opencode: "/usr/bin/opencode" }, files: { ...files, "/home/u/.cache/opencode/models.json": "{\"openai\":{}}" } }) });
   assert.equal(fresh.seats[0].reason, "single-candidate");
 });
+
+// 0.20.4 last cleanup: the opencode note only with a version file, the requirements note's line, the
+// escape named, and what an offline machine gets
+const OPENCODE_CFG = JSON.stringify({ model: "ollama-qwen/qwen3-coder:30b", enabled_providers: ["ollama-qwen"], provider: { "ollama-qwen": { models: { "qwen3-coder:30b": {} } } } });
+const opencodeWith = (files) => probe({ requested: { opencode: null }, runtime: "claude",
+  world: world({ bins: { opencode: "/usr/bin/opencode" }, files: { "/home/u/.config/opencode/opencode.json": OPENCODE_CFG, ...files } }) }).seats[0];
+
+test("no opencode cache note without a version file, as when the copy was never fetched", () => {
+  const s = opencodeWith({});
+  assert.equal(s.reason, "no-catalog");
+  assert.ok(!(s.notes ?? []).some((n) => n.includes("models.dev copy")), JSON.stringify(s));
+});
+
+test("a requirements file read short names its line, as the managed file does", () => {
+  const s = one({ codex: null }, world({ ...CODEX, files: { "/home/u/.codex/config.toml": 'model = "gpt-5.5"\n', "/etc/codex/requirements.toml": "# c\n작성기 = 1\n" } }));
+  assert.equal(s.reason, "cli-call-failed");
+  assert.ok(s.notes.some((n) => n.includes("requirements.toml could not be read to its end (line 2)")), s.notes.join("; "));
+});
+
+test("the note for a config read short names an escaped quoted key as a cause; the emptied-cache note says what happens offline", () => {
+  const U = String.fromCharCode(92) + "u005F"; // the TOML escape for _
+  const s = one({ codex: null }, codexWith(`model = "gpt-5.6-sol"\n["mcp${U}servers".evil]\ncommand = "node"\n`));
+  assert.ok(s.notes.some((n) => n.includes("config.toml line 2") && n.includes("escape")), s.notes.join("; "));
+  const emptied = opencodeWith({ "/home/u/.cache/opencode/version": "21" });
+  assert.ok((emptied.notes ?? []).some((n) => n.includes("models.dev copy is missing") && n.includes("offline")), JSON.stringify(emptied));
+});

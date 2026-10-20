@@ -27,7 +27,8 @@
  * Backups keep the original bytes and mode; the files it writes are 0644 and new
  * folders 0755; the other statusLine fields (padding, ...) stay. settings.json goes
  * in as a new file through a rename (a link keeps pointing at it), in place where
- * that cannot be done, and is left as it was when the disk is full.
+ * that cannot be done or would part a hard link or change its owner or group, and
+ * is left as it was when the disk is too full for the new file.
  * At the end it runs the installed formatter once with no input and reports
  * whether OMC's HUD loads and which version draws (the render check); that never
  * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 25s limit.
@@ -324,10 +325,12 @@ function installTemplates() {
 // settings.json goes in as a new file through a rename, so a stop midway never leaves it half written.
 // One that is a link (dotfiles) keeps its link, and the file it points at is the one replaced. A file
 // left at the temporary name (an earlier run with this pid, or a link put there) is removed first and
-// never written through. Where the new file cannot go in (a folder this account may not write, a file
-// another program holds open, a file system that refuses the rename), or the link leads nowhere yet,
-// it is written in place as before; only a full disk stops it, as writing in place could then cut
-// settings.json short.
+// never written through. It is written in place as before where the new file cannot go in (a folder
+// this account may not write, a file another program holds open, a file system that refuses the
+// rename) or the link leads nowhere yet, and where a rename would part a hard link (its other name
+// would keep the old text) or the new file has another owner or group. Only a full disk stops it, as
+// writing in place could then cut settings.json short; the new file is written before that choice, so
+// a hard link or another owner finds a full disk first too.
 const FULL_DISK = new Set(["ENOSPC", "EDQUOT"]);
 const isLink = (p) => {
   try {
@@ -336,12 +339,28 @@ const isLink = (p) => {
     return false;
   }
 };
+const removeTmp = (tmp) => {
+  try {
+    rmSync(tmp, { force: true });
+  } catch {
+    /* a folder at that name: left alone */
+  }
+};
+// Whether the file, as `old` was, must keep its inode: it has a second name (a hard link), or the new file
+// `tmp` got another owner or group than it had.
+function keepsInode(old, tmp) {
+  if (!old) return false;
+  const now = statSync(tmp);
+  return old.nlink > 1 || now.uid !== old.uid || now.gid !== old.gid;
+}
 function writeSettings(file, text) {
   let target = file;
+  let old;
   let mode;
   try {
     target = realpathSync(file);
-    mode = statSync(target).mode & 0o777;
+    old = statSync(target);
+    mode = old.mode & 0o777;
   } catch {
     if (isLink(file)) return writeFileSync(file, text);
   }
@@ -350,16 +369,13 @@ function writeSettings(file, text) {
     rmSync(tmp, { force: true });
     writeFileSync(tmp, text, { flag: "wx", mode });
     if (mode !== undefined && process.platform !== "win32") chmodSync(tmp, mode);
-    renameSync(tmp, target);
+    if (!keepsInode(old, tmp)) return renameSync(tmp, target);
   } catch (e) {
-    try {
-      rmSync(tmp, { force: true });
-    } catch {
-      /* a folder at that name: left alone */
-    }
     if (FULL_DISK.has(e.code)) throw e;
-    writeFileSync(file, text);
+  } finally {
+    removeTmp(tmp);
   }
+  writeFileSync(file, text);
 }
 
 // 4. Point settings.json statusLine at the custom formatter; its other fields (padding, ...) stay.

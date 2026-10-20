@@ -53,6 +53,12 @@ const BUILD_PY = path.join(HERE, 'build_a4p.py');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'a4p-test-'));
 const tmp = (name) => path.join(TMP, name);
 
+// fontconfig keeps its cache in $XDG_CACHE_HOME/fontconfig (~/.cache/fontconfig when that is unset), and fc-match, which
+// verify_a4p.mjs and both builders run here and in children, writes there when a font folder's system cache is out of
+// date. Pointed into TMP for this run, then put back.
+const XDG_CACHE_HOME = process.env.XDG_CACHE_HOME;
+process.env.XDG_CACHE_HOME = tmp('xdg-cache');
+
 // A python run can leave a __pycache__ beside the script it imported from. build_a4p.py imports
 // nothing local so this should stay empty, but the repo has to come out of a test run unchanged.
 // Only a directory this run created is removed; one that was already there is left alone.
@@ -60,6 +66,8 @@ const PYCACHE = path.join(HERE, '__pycache__');
 const PYCACHE_PREEXISTING = fs.existsSync(PYCACHE);
 
 after(() => {
+  if (XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
+  else process.env.XDG_CACHE_HOME = XDG_CACHE_HOME;
   fs.rmSync(TMP, { recursive: true, force: true });
   if (!PYCACHE_PREEXISTING) fs.rmSync(PYCACHE, { recursive: true, force: true });
 });

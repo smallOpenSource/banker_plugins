@@ -610,4 +610,10 @@ test('updateCheckDue: 마지막 성공(checkedAt)과 마지막 실패한 시도(
   assert.strictEqual(updateCheckDue({ checkedAt: now - 1000, triedAt: now - 3 * day }, now), false, '옛 실패가 새 성공을 앞지르지 않는다');
   assert.strictEqual(updateCheckDue({ checkedAt: now - 2 * day, triedAt: now - day }, now), true, '둘 다 하루가 지남');
   assert.strictEqual(updateCheckDue({ checkedAt: 'x', triedAt: null }, now), true, '숫자가 아닌 값은 없는 것으로 본다');
+  // A time after now (the clock was set back after it was written: an airgap VM, a restored snapshot) does not rest the
+  // check until that time comes: it counts as due, and the next try writes a time of now.
+  assert.strictEqual(updateCheckDue({ checkedAt: now + 365 * day }, now), true, '미래의 성공 시각은 쉼으로 세지 않는다');
+  assert.strictEqual(updateCheckDue({ triedAt: now + 10 * day }, now), true, '미래의 시도 시각도');
+  assert.strictEqual(updateCheckDue({ checkedAt: now + 365 * day, triedAt: now - 1000 }, now), false, '미래 시각이 남아도 방금의 실패는 하루를 쉰다');
+  assert.strictEqual(updateCheckDue({ checkedAt: now + 1, triedAt: now - day }, now), true, '1ms 뒤의 시각도 미래다');
 });

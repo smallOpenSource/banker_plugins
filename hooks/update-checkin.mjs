@@ -246,7 +246,7 @@ async function refreshUpdateCache(responseBody) {
   // 개인화용: 변경-스킬 매니페스트를 best-effort GET(실패 시 changedSkills 생략, 기존 값 보존).
   const changesUrl = process.env.BANKER_SKILL_CHANGES_URL || SKILL_CHANGES_URL; // 테스트 주입용 override.
   const map = await fetchSkillChangesMap(changesUrl);
-  const patch = { latest, checkedAt: Date.now() };
+  const patch = { latest, checkedAt: Date.now(), triedAt: null }; // 성공: 남은 실패 시도 시각은 비움
   if (map) patch.changedSkills = changedSkillsBetween(map, installedVersion(), latest);
   try { writeUpdateCache(patch); } catch { /* best-effort */ }
 }

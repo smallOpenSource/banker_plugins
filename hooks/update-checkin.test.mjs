@@ -275,6 +275,30 @@ test('응답 {latest} 수신 시 update-check 캐시에 latest 기록(알림 겸
   }
 });
 
+test('응답 {latest} 를 받으면 남아 있던 시도 시각(triedAt)을 비운다', async () => {
+  const server = http.createServer((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ latest: '0.9.0' }));
+    });
+  });
+  try {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const tmp = mkTmp();
+    writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${server.address().port}/collect` });
+    writeFileSync(usageLog(tmp), 'banker:foo\t9\n');
+    mkdirSync(dirname(updateCheck(tmp)), { recursive: true });
+    writeFileSync(updateCheck(tmp), JSON.stringify({ triedAt: Date.now() + 30 * 24 * 3600 * 1000 }));
+    assert.equal(await runCheckin(tmp), 0);
+    const cache = JSON.parse(readFileSync(updateCheck(tmp), 'utf8'));
+    assert.equal(cache.latest, '0.9.0');
+    assert.equal(cache.triedAt, null, '성공한 체크인은 시도 시각을 비움');
+  } finally {
+    server.close();
+  }
+});
+
 test('개인화: 응답 {latest} + 매니페스트 조회 성공 시 changedSkills 를 캐시에 저장', async () => {
   const post = http.createServer((req, res) => {
     req.on('data', () => {});

@@ -1,11 +1,12 @@
 // Tests for omc-patch.mjs. Run from the repo root: node --test skills/omc-patch/scripts/omc-patch.test.mjs
 // No network and no real home: every run uses a fake HOME in a temp dir.
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
 } from "node:fs";
+import { createServer as httpServer } from "node:http";
 import { createServer } from "node:net";
 import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -28,13 +29,14 @@ const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG",
   "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"]);
 // HOME and XDG_CONFIG_HOME cover git older than 2.32, which ignores GIT_CONFIG_GLOBAL. An empty template folder
 // keeps the developer's template hooks out of the fixture repositories. The developer's ceiling is dropped too, so a
-// fixture that relies on git walking up still does.
+// fixture that relies on git walking up still does. The developer's askpass helpers (GIT_ASKPASS, SSH_ASKPASS: an editor's
+// terminal sets one) are dropped as well: GIT_TERMINAL_PROMPT=0 does not stop git from calling them.
 const NO_GITCONFIG = join(root, "empty.gitconfig");
 const NO_TEMPLATES = join(root, "empty-templates");
 writeFileSync(NO_GITCONFIG, "");
 mkdirSync(NO_TEMPLATES);
 function cleanEnv(extra = {}) {
-  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
+  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || /^(GIT_CEILING_DIRECTORIES|GIT_ASKPASS|SSH_ASKPASS)$/i.test(k);
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
   return { ...env, GIT_CONFIG_GLOBAL: NO_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1", GIT_TEMPLATE_DIR: NO_TEMPLATES,
     HOME: root, XDG_CONFIG_HOME: root, ...extra };
@@ -1975,7 +1977,7 @@ test("a revert that may not write outside the plugin folder does not tell to ove
   }
   const r = run(home, ["--revert", "--root", plug]);
   assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
-  assert.match(r.out, /패치가 보이지 않습니다\. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오\./);
+  assert.match(r.out, /패치본과 같지 않거나 읽어 확인할 수 없습니다\. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오\./);
   assert.doesNotMatch(r.out, /덮어쓰고/);
   assert.equal(read(join(outside, "foo.mjs")), "// my own work, never patched by this tool\n", "the file it leads to is untouched");
 });
@@ -2890,7 +2892,7 @@ test("a file a hook link leads to, swapped for a FIFO before the revert peeks in
   const r = runBy(home, ["--revert", "--root", plug], pre);
   assert.equal(r.error, undefined, "the revert ended before its deadline");
   assert.ok(lstatSync(join(outside, "foo.mjs")).isFIFO(), "the file was swapped for a FIFO in the run");
-  assert.match(r.out, /패치가 보이지 않습니다\. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오\./);
+  assert.match(r.out, /패치본과 같지 않거나 읽어 확인할 수 없습니다\. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오\./);
 });
 
 // ---- hard links: --check says the apply can clean only this name, and every run gives the number to find the other names by.
@@ -3021,7 +3023,7 @@ for (const how of ["no JSON", "unreadable"]) {
       const r = run(f.home, pinned ? ["--revert"] : ["--no-update"]);
       if (how === "unreadable") chmodSync(other, 0o600);
       assert.equal(r.code, 1, `${pinned ? "revert" : "first pin"}: ${r.out}`);
-      assert.match(r.out, /다른 이름/, r.out);
+      assert.match(r.out, /이 이름에서만 지움 \(같은 파일의 다른 이름이 있어 그쪽에 남았을 수 있음\)/, r.out);
       assert.ok(!r.out.includes(secret), "the password is not printed");
     }
   });
@@ -3159,6 +3161,7 @@ test("--check names a hook it cannot read in an inactive version as a note, not 
   try { c = run(f.home, ["--check", "--no-update"]); } finally { chmodSync(foo, 0o644); }
   assert.doesNotMatch(c.out, /결과: 훅 스크립트를 확인하지 못했습니다/, c.out);
   assert.match(c.out, /참고: 비활성 버전 5\.3\.0 의 훅 스크립트를 확인하지 못했습니다\. 판정에는 넣지 않았습니다\./, c.out);
+  assert.equal(c.code, 1, "a hook it could not read still ends --check with 1");
 });
 
 // 0.20.4 B2 Task 6: URL masking up to the last @ after //, and the unpin-failure line (B2-08, B2-09)
@@ -3454,4 +3457,311 @@ test("the number given for the other name of a hard-linked record keeps every di
   ].join("\n"));
   const r = runImport(pre, f.home, ["--check", "--no-update"]);
   assert.ok(r.out.includes("파일 ID) 14355223812554955 로 찾습니다."), r.out);
+});
+
+// ---- 0.20.4 final batch (omc-patch): B2 deferred rows 1, 3, 5, 6, 7, 8, 10, 11, 12 and B7 item 10
+const SKILL_TEXT = () => read(join(dirname(TOOL), "..", "SKILL.md"));
+
+// B2 row 1: the helper's stderr line must not end the hook with 1, nor stop its work, when no one reads stderr (EPIPE).
+test("a patched hook whose import hangs still ends with 0 and goes on when its stderr reader is gone", { timeout: 40000 }, async () => {
+  const plug = bundle();
+  writeFileSync(join(plug, "scripts", "lib.mjs"), "setInterval(() => {}, 1000);\nawait new Promise(() => {});\nexport const x = () => 1;\n");
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const r = await new Promise((res) => {
+    const c = spawn(process.execPath, [join(plug, "scripts", "foo.mjs")], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    c.stdout.on("data", (d) => { out += d; });
+    c.stderr.destroy();
+    const kill = setTimeout(() => c.kill("SIGKILL"), 30000);
+    c.on("close", (code, signal) => { clearTimeout(kill); res({ code, signal, out }); });
+  });
+  assert.equal(r.signal, null, "the hook ended by itself");
+  assert.equal(r.code, 0, "the helper's stderr line does not change the exit code");
+  assert.match(r.out, /foo:undefined/, "the hook went on with an empty module");
+});
+
+// B2 row 3: a file behind a link that an older helper patched is not "no patch"; the hint says it is not this tool's patch or could not be read.
+test("the hand-restore hint over a file an older helper patched says it is not this tool's patch", (t) => {
+  const plug = bundle();
+  const made = bundle();
+  assert.equal(run(bareHome(), ["--root", made]).code, 0);
+  const outside = join(root, `old-helper-outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  const target = join(outside, "foo.mjs");
+  const oldPatched = asOldHelper(read(join(made, "scripts", "foo.mjs")));
+  writeFileSync(target, oldPatched);
+  const foo = join(plug, "scripts", "foo.mjs");
+  rmSync(foo);
+  try { symlinkSync(target, foo); } catch { t.skip("file symlinks need privileges here"); return; }
+  writeFileSync(`${foo}.omcbak`, SCRIPT("foo"));
+  const r = run(bareHome(), ["--root", plug, "--revert"]);
+  assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.doesNotMatch(r.out, /패치가 보이지 않습니다|에 덮어쓰고/, r.out);
+  assert.match(r.out, /의 글은 지금 이 도구가 만드는 패치본과 같지 않거나 읽어 확인할 수 없습니다\. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오\./);
+  assert.equal(read(target), oldPatched, "the file it leads to is untouched");
+});
+
+// B2 row 5 (mutants 가, 나): a backup equal to the file, as an apply cut off before its write leaves it, is not an old original.
+test("a revert over files that equal their backups, as an apply cut off before its writes leaves them, finishes and drops the backups", () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  const hj = join(plug, "hooks", "hooks.json");
+  writeFileSync(`${foo}.omcbak`, SCRIPT("foo"));
+  writeFileSync(`${hj}.omcbak`, HOOKS_JSON);
+  const r = run(bareHome(), ["--revert", "--root", plug]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /되돌림 {2}foo/);
+  assert.match(r.out, /되돌림 {2}hooks\.json/);
+  assert.doesNotMatch(r.out, /되돌리지 않음/);
+  assert.deepEqual([existsSync(`${foo}.omcbak`), existsSync(`${hj}.omcbak`)], [false, false], "both backups are dropped");
+});
+
+// B2 row 5 (mutant 라): the temp file's mode is set after it is made; a strict umask alone would leave 0700 and 0600.
+test("a patched hook and hooks.json keep their modes under a strict umask", { skip: process.platform === "win32" && "POSIX modes" }, () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  const hj = join(plug, "hooks", "hooks.json");
+  chmodSync(foo, 0o755);
+  chmodSync(join(plug, "scripts", "stopper.mjs"), 0o644);
+  chmodSync(hj, 0o644);
+  const env = cleanEnv({ HOME: bareHome() });
+  delete env.OMC_PATCH_INSTALLED;
+  const r = spawnSync("sh", ["-c", `umask 077 && exec "${process.execPath}" "${TOOL}" --root "${plug}"`], { encoding: "utf8", env });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.deepEqual([foo, join(plug, "scripts", "stopper.mjs"), hj].map((p) => (statSync(p).mode & 0o777).toString(8)), ["755", "644", "644"]);
+});
+
+// B2 row 5 (mutants 마, 바, 사): the tool's result table and the SKILL's table list the result lines in the same order.
+test("the tool picks its result line in the order the SKILL's table lists them", () => {
+  const src = read(TOOL);
+  const pin = Object.fromEntries([...src.matchAll(/"(scrub-[\w-]+)": "결과: (.*?다\.)/g)].map((m) => [m[1], m[2]]));
+  const at = src.indexOf("const RESULTS = [");
+  assert.ok(at > 0, "the tool keeps its result lines in one table");
+  const block = src.slice(at, src.indexOf("\n  ];", at));
+  const order = [...block.matchAll(/결과: (.*?다\.)|PIN_LINES\["([\w-]+)"\]/g)].map((m) => (m[1] ?? pin[m[2]]).replace(/\$\{[^}]*\}/g, "N"));
+  const table = SKILL_TEXT().split("| `결과:` 줄 | 다음 |")[1].split("\n\n")[0];
+  const rows = [...table.matchAll(/^\| `(.*?)` \|/gm)].map((m) => m[1]);
+  assert.ok(order.length >= 9, order.join(" | "));
+  assert.deepEqual(order, rows);
+});
+
+// B2 row 6: a kept record may come back as either PINNED result line; step 4.1 takes both as expected.
+test("the SKILL's check after the apply takes either PINNED result line as expected when the record is kept", () => {
+  const lines = [...read(TOOL).matchAll(/"scrub-[\w-]+": "(결과: .*?다\.)/g)].map((m) => m[1]);
+  assert.equal(lines.length, 2, lines.join(" | "));
+  const step = SKILL_TEXT().split("### 4. 검증")[1].split("```")[0];
+  for (const l of lines) assert.ok(step.includes(`\`${l}\``), `step 4.1 does not name: ${l}`);
+});
+
+// B2 row 7: an unreadable hook in an idle version is a note, and --check still ends with 1; the SKILL says so.
+test("the SKILL says --check still ends with 1 over an idle version's unreadable hook or hooks.json", () => {
+  assert.ok(/비활성 버전의 훅이나 `hooks\.json` 을 읽지 못하면[^\n]*종료 코드는 그래도 1 이다/.test(SKILL_TEXT()), "the SKILL does not say an idle version's unread file still ends --check with 1");
+});
+
+// B2 row 8: a backup the apply cannot read is a read failure, named as one; the hook is left unpatched.
+test("an apply that cannot read a backup names the backup as unread, counts it and leaves the file", { skip: (process.platform === "win32" && "POSIX modes") || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  const foo = join(plug, "scripts", "foo.mjs");
+  const hj = join(plug, "hooks", "hooks.json");
+  writeFileSync(`${foo}.omcbak`, `${SCRIPT("foo")}// an older original\n`);
+  writeFileSync(`${hj}.omcbak`, HOOKS_JSON.replace("stopper.mjs", "stopper-old.mjs"));
+  chmodSync(`${foo}.omcbak`, 0o000);
+  chmodSync(`${hj}.omcbak`, 0o000);
+  let r;
+  try { r = run(bareHome(), ["--root", plug]); } finally { chmodSync(`${foo}.omcbak`, 0o644); chmodSync(`${hj}.omcbak`, 0o644); }
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /\[!\] 읽지 못함: foo 의 백업 \(EACCES\)/);
+  assert.match(r.out, /\[!\] hooks\.json 의 백업을 읽지 못함 \(EACCES\)/);
+  assert.doesNotMatch(r.out, /쓰지 못함/);
+  assert.equal(read(foo), SCRIPT("foo"), "foo is left unpatched");
+  assert.equal(read(hj), HOOKS_JSON, "hooks.json is left as it was");
+});
+
+// B2 row 10: the SKILL's search for another name of a record still finds it when the home folder is a link.
+test("the SKILL's search for another name finds it when the home folder is a link", { skip: process.platform === "win32" && "a POSIX shell command" }, (t) => {
+  const cmd = /`(find "\$HOME"\/? -xdev -inum <번호> 2>\/dev\/null)`/.exec(SKILL_TEXT())?.[1];
+  assert.ok(cmd, "the SKILL names the search");
+  const real = join(root, `real-home${seq++}`);
+  mkdirSync(join(real, ".claude", "omc-local-patches"), { recursive: true });
+  const pin = join(real, ".claude", "omc-local-patches", "PINNED");
+  writeFileSync(pin, "{}\n");
+  try { linkSync(pin, join(real, "dotfiles-PINNED")); } catch { t.skip("hard links are not available here"); return; }
+  const home = join(root, `home-link${seq++}`);
+  try { symlinkSync(real, home); } catch { t.skip("links cannot be made here"); return; }
+  const ino = String(lstatSync(pin, { bigint: true }).ino);
+  const r = spawnSync("sh", ["-c", cmd.replace("<번호>", ino)], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  assert.match(r.stdout, /dotfiles-PINNED/, `${cmd}\n${r.stdout}${r.stderr}`);
+});
+
+// B2 row 11: when the record could not be checked, the second note line does not say the field is there.
+test("--check with patches left and a record it could not check does not say the field stays after an apply", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  writeFileSync(pinPath(f), "notes: originUrl may be in here\n");
+  const act = join(f.cache, "5.6.1");
+  writeFileSync(join(act, "scripts", "foo.mjs"), read(join(act, "scripts", "foo.mjs.omcbak")));
+  const c = run(f.home, ["--check", "--no-update"]);
+  assert.match(c.out, /결과: 적용되지 않은 항목이 있습니다\./);
+  assert.match(c.out, /참고: 고정 기록\(PINNED\)을 확인하지 못했습니다\./);
+  assert.doesNotMatch(c.out, /그곳의 칸은 남고/, c.out);
+  assert.match(c.out, /칸이 남아 있으면 적용도 지우지 못하고, 적용은 이 항목을 실패로 세어 종료 1 로 끝납니다\./);
+});
+
+// B2 row 12: after a guessed active version stops the run, the SKILL tells the person what to look at first.
+test("the SKILL tells what to check first when the active version could only be guessed", () => {
+  const table = SKILL_TEXT().split("| `결과:` 줄 | 다음 |")[1].split("\n\n")[0];
+  const row = table.split("\n").find((l) => l.startsWith("| `활성 버전을 확인하지 못했습니다.` |")) ?? "";
+  assert.match(row, /\/plugin/, row);
+  assert.match(row, /oh-my-claudecode@omc/, row);
+});
+
+// B7 item 10: an origin that takes the connection and never answers (a firewall that holds it) does not stall the bare apply.
+test("a bare apply whose origin never answers cuts the fetch at its time limit and says it got no tag", { skip: !HAS_GIT && "git not found", timeout: 60000 }, async () => {
+  const held = new Set();
+  const srv = createServer((s) => held.add(s));
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  try {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `http://127.0.0.1:${srv.address().port}/omc.git`], f.market).status, 0);
+    const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home, OMC_PATCH_FETCH_TIMEOUT_MS: "1000", NO_PROXY: "*", no_proxy: "*" });
+    delete env.OMC_PATCH_INSTALLED;
+    const t0 = Date.now();
+    const r = await new Promise((res) => {
+      execFile(process.execPath, [TOOL], { env, encoding: "utf8", timeout: 30000 }, (e, so, se) => res({ code: e ? e.code : 0, killed: !!e?.killed, ms: Date.now() - t0, out: `${so}${se}` }));
+    });
+    assert.equal(r.killed, false, `the run ended before the test's deadline\n${r.out}`);
+    assert.ok(r.ms < 10000, `took ${r.ms} ms`);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /태그 v.* 를 마켓플레이스에서 찾을 수 없음/);
+    assert.match(r.out, /origin 에서 태그를 받지 못함: 1초 안에 끝나지 않아 끊음\(응답하지 않는 망일 수 있음\)/);
+    assert.equal(JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0].version, "5.6.1", "nothing switched");
+  } finally {
+    for (const s of held) s.destroy();
+    srv.close();
+  }
+});
+
+// Final batch: git's message can carry a piece of an origin's credentials, quoted or not. curl reads a raw "/" in the
+// password as the end of the host: "Port number ended with 'Q'", "Could not resolve host: alice", "Failed to connect to
+// localhost port 9". With credentials in the origin, the cause line gives git's exit and none of its words. The shapes
+// here never ask a name server: curl stops at the port, or the host is localhost and port 9 is closed.
+const NO_WORDS = /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음\)$/;
+const NO_PROXY_ENV = { NO_PROXY: "*", no_proxy: "*" };
+test("a bare apply over an origin with credentials gives git's exit and none of its words in its cause line", { skip: !HAS_GIT && "git not found" }, () => {
+  const alice = ["al", "ice"].join("");
+  const shapes = [[alice, ["Qz", "Xy"].join("/")], ["localhost", ["9", "Kx7Yp"].join("/")], [alice, ["p@localhost:9", "KJ"].join("/")]];
+  for (const [user, pass] of shapes) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `http://${user}:${pass}@127.0.0.1:9/omc.git`], f.market).status, 0);
+    const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "20000", ...NO_PROXY_ENV });
+    assert.equal(r.code, 1, r.out);
+    const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+    assert.match(cause, NO_WORDS, cause);
+    for (const piece of [user, ...pass.split(/[/@:]/).filter((x) => x.length > 1)]) assert.ok(!r.out.includes(piece), `${piece} in ${r.out}`);
+  }
+});
+
+// Final batch, review 2: an origin with no credentials can get them from a url.<base>.insteadOf rule in the person's git
+// config (a mirror pattern). git's line then names the rewritten address (masked by the tool), and the cause line drops
+// git's words there too. The rule sits in HOME's .gitconfig, which git older than 2.32 reads instead of GIT_CONFIG_GLOBAL;
+// without the rule the origin is a closed local port, so no name server is asked either way.
+test("a bare apply whose origin gets credentials from an insteadOf rule gives git's exit and none of its words", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", "http://127.0.0.1:9/mirror/omc.git"], f.market).status, 0);
+  const cfg = join(f.home, ".gitconfig");
+  writeFileSync(cfg, `[url "http://localhost:${["9", "Kx7Yp"].join("/")}@127.0.0.1:9/"]\n\tinsteadOf = http://127.0.0.1:9/mirror/\n`);
+  const r = run(f.home, [], { GIT_CONFIG_GLOBAL: cfg, OMC_PATCH_FETCH_TIMEOUT_MS: "20000", ...NO_PROXY_ENV });
+  assert.equal(r.code, 1, r.out);
+  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+  assert.match(cause, NO_WORDS, cause);
+  for (const piece of ["localhost", "Kx7Yp"]) assert.ok(!r.out.includes(piece), `${piece} in ${r.out}`);
+});
+
+// Review 3: the proxy address never shows in git's line, but curl misreads a raw "/" in its password the same way and
+// names the proxy's user ("Could not resolve proxy: alice"; here "Failed to connect to localhost port 9", which asks no
+// name server). A proxy from the environment or from git's settings drops git's words; a well-formed one keeps them.
+// Newer git checks the proxy address itself and prints it whole ("Invalid proxy URL '<address>': only SOCKS proxies
+// support paths": git 2.50 on the macOS box, 2.55 on the Windows box); the tool masks it and the address rule drops git's
+// words. git 2.43 here hands it to curl, which misreads it, and the proxy rule drops them. Either reason will do.
+const NO_WORDS_PROXY = /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\((?:주소에 사용자 정보가 있어|프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어) git 의 문구는 싣지 않음\)$/;
+test("a bare apply through a proxy whose password has a raw slash gives git's exit and none of its words", { skip: !HAS_GIT && "git not found" }, () => {
+  const broken = `http://localhost:${["9", "Kx7Yp"].join("/")}@127.0.0.1:9`;
+  const viaEnv = { http_proxy: broken, HTTP_PROXY: broken };
+  const viaConfig = (home) => {
+    const cfg = join(home, ".gitconfig");
+    writeFileSync(cfg, `[http]\n\tproxy = ${broken}\n`);
+    return { GIT_CONFIG_GLOBAL: cfg };
+  };
+  for (const [how, extra] of [["environment", () => viaEnv], ["git config", viaConfig]]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", "http://127.0.0.1:9/omc.git"], f.market).status, 0);
+    const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "20000", NO_PROXY: "", no_proxy: "", ...extra(f.home) });
+    assert.equal(r.code, 1, `${how}\n${r.out}`);
+    const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+    assert.match(cause, NO_WORDS_PROXY, `${how}: ${cause}`);
+    for (const piece of ["localhost", "Kx7Yp"]) assert.ok(!r.out.includes(piece), `${how}: ${piece} in ${r.out}`);
+  }
+});
+
+test("a bare apply through a well-formed proxy with credentials still gives git's line, with no credentials in it", { skip: !HAS_GIT && "git not found" }, () => {
+  const user = ["pu", "ser"].join(""), pass = ["Zz9", "Pw"].join("");
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", "http://127.0.0.1:9/omc.git"], f.market).status, 0);
+  const proxy = `http://${user}:${pass}@127.0.0.1:9`;
+  const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "20000", NO_PROXY: "", no_proxy: "", http_proxy: proxy, HTTP_PROXY: proxy });
+  assert.equal(r.code, 1, r.out);
+  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+  assert.match(cause, /origin 에서 태그를 받지 못함: .*127\.0\.0\.1/, cause);
+  assert.doesNotMatch(cause, /git 의 문구는 싣지 않음/, cause);
+  for (const piece of [user, pass]) assert.ok(!r.out.includes(piece), `${piece} in ${r.out}`);
+});
+
+// Same line: a git whose error names the host but not the address (a git that hides the address, or a first error line
+// without it) gets nothing through either, as long as the origin itself carries the credentials.
+test("with credentials in the origin the cause line drops git's words even when git's line has no address", posixGit, (t) => {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) return t.skip("git not found on PATH");
+  const alice = ["al", "ice"].join("");
+  const dir = join(root, `gitwrap${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$1" = fetch ]; then', `  echo "fatal: Could not resolve host: ${alice}" >&2; exit 128`,
+    "fi", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", `http://${alice}:${["", "Kx7Yp"].join("/")}@127.0.0.1:9/omc.git`], f.market).status, 0);
+  const r = run(f.home, [], { PATH: `${dir}${delimiter}${process.env.PATH}` });
+  assert.equal(r.code, 1, r.out);
+  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+  assert.match(cause, NO_WORDS, cause);
+  assert.ok(!r.out.includes(alice), r.out);
+});
+
+// Final batch: the fetch never asks for credentials on a terminal (GIT_TERMINAL_PROMPT=0): an origin that wants a login
+// ends the fetch with git's own line saying so, and no prompt waits for an answer.
+test("a bare apply over an origin that wants a login does not ask for it on a terminal", { skip: !HAS_GIT && "git not found", timeout: 60000 }, async () => {
+  const srv = httpServer((req, res) => { res.writeHead(401, { "WWW-Authenticate": 'Basic realm="x"' }); res.end(); });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  try {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", `http://127.0.0.1:${srv.address().port}/omc.git`], f.market).status, 0);
+    const env = cleanEnv({ HOME: f.home, USERPROFILE: f.home, OMC_PATCH_FETCH_TIMEOUT_MS: "20000", NO_PROXY: "*", no_proxy: "*" });
+    delete env.OMC_PATCH_INSTALLED;
+    const r = await new Promise((res) => {
+      execFile(process.execPath, [TOOL], { env, encoding: "utf8", timeout: 40000 }, (e, so, se) => res({ code: e ? e.code : 0, out: `${so}${se}` }));
+    });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /origin 에서 태그를 받지 못함: .*terminal prompts disabled/, r.out);
+  } finally {
+    srv.close();
+  }
+});
+
+// B7 item 10, same line: an origin this tool pinned cannot be fetched; the bare apply says so instead of git's remote-helper error.
+test("a bare apply over an origin this tool pinned says the pin is why it got no tag", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", `omc-pinned://${ORIGIN}`], f.market).status, 0);
+  const r = run(f.home, []);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /태그 v.* 를 마켓플레이스에서 찾을 수 없음/);
+  assert.match(r.out, /origin 에서 태그를 받지 못함: origin 이 고정되어 있음\(omc-pinned:\/\/\)\. 받으려면 먼저 --revert 로 고정을 푸십시오/);
+  assert.doesNotMatch(r.out, /remote helper|Broken pipe/);
 });

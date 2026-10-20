@@ -541,7 +541,7 @@ function mcpBlockedSeat(seat, conf, notes) {
   if (!bad && !conf.mcpUnread && !conf.broken) return null;
   if (bad) notes.push(`${bad} MCP server name(s) hold characters \`-c mcp_servers.<name>.enabled=false\` cannot address: rename them to letters, digits, _ and -`);
   if (conf.mcpUnread) notes.push("the probe could not list every MCP server the codex config defines (one inline mcp_servers table, or a name its walk did not place): write each server as its own [mcp_servers.<name>] table");
-  if (conf.broken) notes.push(`the probe could not read the codex config to its end at ${conf.brokenAt.join(", ")} (a multi-line string, array or inline table left open, or a line it could not place), so its list of MCP servers may be short`);
+  if (conf.broken) notes.push(`the probe could not read the codex config to its end at ${conf.brokenAt.join(", ")} (a multi-line string, array or inline table left open, or a line it could not place, such as a quoted key with a \\ escape that codex reads as another key), so its list of MCP servers may be short`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -867,7 +867,7 @@ function opencodeSeat(flag, { world, authorFamilies }) {
   const catalog = catalogProviders(world);
   // opencode empties its cache on a start after an update; with the list refresh off it fetches nothing
   if (!catalog && world.readFile(join(opencodeCache(world), "version")) != null) {
-    notes.push("opencode's models.dev copy is missing or unreadable while its cache version file is there: an opencode start with the list refresh off (the seat and cleanup commands) empties the cache after an update; start opencode once, online and without OPENCODE_DISABLE_MODELS_FETCH, to fetch it again");
+    notes.push("opencode's models.dev copy is missing or unreadable while its cache version file is there: an opencode start with the list refresh off (the seat and cleanup commands) empties the cache after an update; start opencode once, online and without OPENCODE_DISABLE_MODELS_FETCH, to fetch it again; offline it cannot come back: where the copy let the seat be adopted (single-candidate), each run asks instead (no-catalog), and a run that cannot ask seats the fallback");
   }
   const closed = closedSet(cfg, catalog);
   const out = flagged(seat, flag, authorFamilies) ?? opencodeDecision(seat, { configured, unsure: cfg.unreadable.length > 0, closed, catalog });

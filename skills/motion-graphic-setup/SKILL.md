@@ -39,6 +39,7 @@ if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { (ffmpeg -version)[0] } e
 ```bash
 (cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)                            # hyperframes(npx), ffmpeg-static
 curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://deb.nodesource.com   # Ubuntu, Debian 의 NodeSource 저장소
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://rpm.nodesource.com   # RHEL, Rocky 의 NodeSource 저장소
 ```
 
 - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.

@@ -286,24 +286,25 @@ test("명령 경로 옆의 omc-hud.mjs 가 폴더면 실제 파일 옆의 로더
   assert.equal(firstLine(renderAt(join(link, "omc-hud-custom.mjs"))), firstLine(renderWith()));
 });
 
-test("다른 스크립트가 링크 경로로 불러와도 설정 폴더 hud 의 로더를 씀", fileLinks, () => {
+test("다른 스크립트가 링크 경로로 불러와도 설정 폴더 hud 의 로더와 PL 사본을 씀", fileLinks, () => {
   const dir = join(root, `r-${++seq}`);
   const real = join(dir, "real");
   mkdirSync(real, { recursive: true });
   writeFileSync(join(real, "omc-hud-custom.mjs"), WRAPPER);
-  const env = renderEnv(dir, {});
+  const env = renderEnv(dir, {}, MB9);
   const cfgHud = join(env.CLAUDE_CONFIG_DIR, "hud");
-  mkdirSync(cfgHud, { recursive: true });
+  mkdirSync(join(cfgHud, "payload-mon"), { recursive: true });
   writeFileSync(join(cfgHud, "omc-hud.mjs"), FAKE_OMC);
   writeFileSync(join(cfgHud, "omc-out.txt"), omcOut());
+  writeFileSync(join(cfgHud, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD);
   symlinkSync(join(real, "omc-hud-custom.mjs"), join(cfgHud, "omc-hud-custom.mjs"));
   const outer = join(dir, "outer");
   mkdirSync(outer);
   writeFileSync(join(outer, "run.mjs"), `await import(${JSON.stringify(pathToFileURL(join(cfgHud, "omc-hud-custom.mjs")).href)});\n`);
   const r = spawnSync(process.execPath, [join(outer, "run.mjs")], {
-    input: JSON.stringify({ effort: { level: "high" } }), env, encoding: "utf8", timeout: 30000,
+    input: JSON.stringify({ effort: { level: "high" }, transcript_path: join(dir, "t.jsonl") }), env, encoding: "utf8", timeout: 30000,
   });
-  assert.equal(firstLine(r.stdout), firstLine(renderWith()));
+  assert.equal(firstLine(r.stdout), firstLine(renderWith({ payloadBytes: MB9 })));
 });
 
 // A project folder holding a config folder named relatively, `rel`, with its own account.
@@ -329,6 +330,12 @@ test("상대경로 CLAUDE_CONFIG_DIR 는 Claude Code 를 시작한 폴더 기준
 test("상대경로 CLAUDE_CONFIG_DIR 인데 project_dir 이 없으면 작업 폴더 기준", () => {
   const { wrapper, proj } = relativeConfig();
   assert.match(firstLine(renderAt(wrapper, { env: { CLAUDE_CONFIG_DIR: "rel" }, cwd: proj })), /relacct/);
+});
+
+test("상대경로 CLAUDE_CONFIG_DIR 인데 project_dir 도 상대경로면 작업 폴더 기준", () => {
+  const { wrapper, proj } = relativeConfig();
+  const stdin = { effort: { level: "high" }, workspace: { project_dir: "elsewhere" } };
+  assert.match(firstLine(renderAt(wrapper, { stdin, env: { CLAUDE_CONFIG_DIR: "rel" }, cwd: proj })), /relacct/);
 });
 
 test("명령 경로와 실제 파일 옆에 로더가 둘 다 있으면 명령 경로 옆 것을 씀", fileLinks, () => {

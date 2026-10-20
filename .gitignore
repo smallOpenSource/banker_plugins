@@ -40,6 +40,8 @@ work/
 .env
 .env.local
 .env.*.local
+# the key copy persistCreds leaves when it is killed before its rename (.env.3d-intro.local.<hex>.tmp)
+.env.*.local.*.tmp
 .secrets/
 
 # --- OS cruft ---

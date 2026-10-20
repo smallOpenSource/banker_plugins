@@ -129,8 +129,24 @@ function plantedProject() {
   return proj;
 }
 
+// npm settings for the `npm root -g` that loadPlaywright runs: its cache and log go to a temp folder, not the real
+// ~/.npm/_logs, and it makes no update check. npm reads npm_config_* names whatever their case, so every spelling of
+// these is set aside while the test runs.
+const NPM_KEYS = ['npm_config_cache', 'npm_config_update_notifier'];
+function npmToTemp(dir) {
+  const saved = Object.entries(process.env).filter(([k]) => NPM_KEYS.includes(k.toLowerCase()));
+  for (const [k] of saved) delete process.env[k];
+  Object.assign(process.env, { npm_config_cache: path.join(dir, 'npm-cache'), npm_config_update_notifier: 'false' });
+  return () => {
+    for (const k of NPM_KEYS) delete process.env[k];
+    Object.assign(process.env, Object.fromEntries(saved));
+  };
+}
+
 test('playwright comes from the project only when asked, and npm never runs from the project folder', async () => {
   const proj = plantedProject();
+  const npmDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vi-npm-'));
+  const restoreNpm = npmToTemp(npmDir);
   const cwd = process.cwd();
   const PATH = process.env.PATH;
   process.chdir(proj);
@@ -145,6 +161,8 @@ test('playwright comes from the project only when asked, and npm never runs from
   } finally {
     process.chdir(cwd);
     process.env.PATH = PATH;
+    restoreNpm();
+    fs.rmSync(npmDir, { recursive: true, force: true });
     fs.rmSync(proj, { recursive: true, force: true });
   }
 });

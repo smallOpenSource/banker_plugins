@@ -309,3 +309,25 @@ test("a name projects.json gives two project folders is no seat's, so clean and 
   projectsJson(home, { [seat]: "gemini", [seat + "/"]: "gemini" });
   assert.deepEqual(JSON.parse(run(SEAT, ["clean", seat], env).stdout).removed, [users[0]], "one folder spelt twice is still one owner");
 });
+
+// 0.20.4 last cleanup: a folder left for a contested name is named
+test("clean and sweep name the unmarked folder they leave because two project folders claim its name", (t) => {
+  const dir = scratch(t);
+  const home = join(dir, "gh");
+  const base = join(dir, "base");
+  const seat = join(base, "ralph-qa.aaaaaa", "gemini");
+  const gone = join(base, "ralph-qa.bbbbbb", "gemini");
+  const work = join(dir, "work", "gemini");
+  for (const d of [seat, work]) mkdirSync(d, { recursive: true });
+  projectsJson(home, { [work]: "gemini", [seat]: "gemini", [join(dir, "w2")]: "gemini-1", [gone]: "gemini-1" });
+  const left = [unmarked(home, "tmp", "gemini"), unmarked(home, "tmp", "gemini-1")];
+  const env = { GEMINI_CLI_HOME: home };
+  for (const [args, kept] of [[["clean", seat], left[0]], [["sweep", base], left[1]]]) {
+    const r = run(SEAT, args, env);
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.deepEqual([out.removed, out.skipped], [[], [kept]], args[0]);
+    assert.ok(r.stderr.includes(kept) && /two project folders/.test(r.stderr), `${args[0]} says what it left: ${r.stderr}`);
+  }
+  assert.ok(left.every((p) => existsSync(p)), "the folders stay");
+});

@@ -532,3 +532,32 @@ test('a listed file swapped for a link after its check is not served from where 
   assert.notEqual(await r2.text(), 'from outside');
   assert.equal(fs.realpathSync, realpath, 'the check went through the swap');
 });
+
+// 0.20.4 last cleanup: a 64-bit file id (NTFS) is compared whole
+test('a listed file swapped for another whose 64-bit file id reads as the same Number is still told apart', async (t) => {
+  const dir = project();
+  const s = await startCurate(dir, {});
+  t.after(() => s.close());
+  const listed = path.join(dir, 'stills', 's1-t1.png');
+  const real = fs.realpathSync(listed);
+  // past 2^53 a Number drops the low bits of an id, so these two read as one
+  const ID_A = 2n ** 60n + 1n;
+  const ID_B = 2n ** 60n + 2n;
+  const withIno = (st, id, opts) => Object.setPrototypeOf({ ...st, ino: opts?.bigint ? id : Number(id) }, Object.getPrototypeOf(st));
+  const { lstatSync, fstatSync, openSync } = fs;
+  t.after(() => Object.assign(fs, { lstatSync, fstatSync, openSync }));
+  fs.lstatSync = (p, opts) => (p === real ? withIno(lstatSync(p, opts), ID_A, opts) : lstatSync(p, opts));
+  fs.fstatSync = (fd, opts) => withIno(fstatSync(fd, opts), ID_B, opts);
+  fs.openSync = (p, ...rest) => {
+    if (p === listed) { // the path changes between its check and the open
+      fs.openSync = openSync;
+      fs.rmSync(listed);
+      fs.writeFileSync(listed, 'SWAPPED IN');
+    }
+    return openSync(p, ...rest);
+  };
+  const r = await fetch(`http://127.0.0.1:${s.port}/stills/s1-t1.png`);
+  const body = await r.text();
+  assert.equal(r.status, 404);
+  assert.notEqual(body, 'SWAPPED IN');
+});

@@ -302,7 +302,7 @@ test('a level-1 title with nothing before it is no node; front matter and commen
   assert.deepEqual(shape(tree(md)), [['text', '본문'], ['head', '다음']]);
   assert.deepEqual(shape(tree('들머리\n# 제목\n')), [['text', '들머리'], ['head', '제목']], 'a title after other text is a heading of its own');
   assert.deepEqual(shape(tree('# 제목 ##\n## 둘 #\n### 셋#\n')), [['head', '둘', ['head', '셋#']]], 'a closing run of # goes after a space only');
-  assert.deepEqual(shape(tree('﻿# 제목\r\n- a\r\n')), [['item', 'a', 'marker=-']]);
+  assert.deepEqual(shape(tree('\u{FEFF}# 제목\r\n- a\r\n')), [['item', 'a', 'marker=-']]);
 });
 
 test('a node keeps its id when the plan is written again around it, and same-named siblings get ids of their own', () => {
@@ -375,7 +375,7 @@ test('hostile plans parse into a tree in bounded time', () => {
 });
 
 test('what the engine will not draw never reaches a node, a code line or a title: private-use, bidi overrides', () => {
-  const bad = '\u{10EEEE}‮⁦';
+  const bad = '\u{10EEEE}\u{E000}\u{202E}\u{2066}';
   const [item, code] = tree(`# 계획\n- a${bad}b\n\`\`\`\nx${bad}y\n\`\`\`\n`);
   assert.equal(item.text, 'a b');
   assert.equal(code.children[0].text, 'xy');

@@ -126,16 +126,16 @@ FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 �
 키 파일은 먼저 비공개로 만든다(이미 있으면 그대로 둔다). `echo >>` 로 새 파일을 만들면 0644 로 남는다.
 홈 키 파일(아래 fallback)이 이미 있으면 프로젝트 파일을 만들지 않는다. 빈 프로젝트 파일이 먼저 읽혀 홈의 키가 가려진다.
 ```bash
-[ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local)
+if [ -L .env.3d-intro.local ]; then echo ".env.3d-intro.local 이 링크라 쓰지 않음(persistCreds 도 쓰지 않는다). 그 링크를 지울지는 사람이 정한다. 홈 키 파일이 있으면 그것을 쓴다"; else [ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local); fi
 ls -l .env.3d-intro.local ~/.config/banker/3d-intro/env 2>/dev/null || true   # 있는 파일이 -rw------- 면 된다
 ```
 여러 프로젝트에서 재사용하려면 프로젝트 파일 대신 홈 폴더 fallback 을 쓴다. `resolveCreds` 가 project-local 다음으로 찾는 경로다.
 ```bash
 mkdir -p ~/.config/banker/3d-intro && chmod 700 ~/.config/banker/3d-intro && (umask 077 && touch ~/.config/banker/3d-intro/env)
 ```
-그 프로젝트의 `.gitignore` 에 무시 규칙이 있는지 확인하고 없으면 추가한다(이 저장소는 `.env.*.local` 로 이미 커버된다):
+그 프로젝트의 `.gitignore` 에 `.env.3d-intro.local*` 줄이 있는지 확인하고 없으면 추가한다. 키 파일과, 쓰다가 강제로 끊기면 남는 키 사본(`.env.3d-intro.local.<16자리 hex>.tmp`)을 함께 무시한다. `.env.3d-intro.local`, `.env.*.local` 줄은 그 사본을 무시하지 못한다. 마지막 줄에 줄 끝이 없으면 먼저 줄을 바꾼다. 그대로 붙이면 마지막 줄의 규칙(예: `.env`)이 깨진다. `.gitignore` 가 링크면 쓰지 않는다(저장소가 심은 링크로 그 저장소의 `.git/config` 같은 파일에 줄이 붙지 않게):
 ```bash
-grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null || echo '.env.3d-intro.local' >> .gitignore
+if [ -L .gitignore ]; then echo ".gitignore 가 링크라 쓰지 않음. 가리키는 파일이 맞는지 보고 손으로 더한다"; else grep -qxF '.env.3d-intro.local*' .gitignore 2>/dev/null || { [ -s .gitignore ] && [ -n "$(tail -c 1 .gitignore)" ] && echo; echo '.env.3d-intro.local*'; } >> .gitignore; fi
 ```
 
 ### 모드 (a) — 직접 입력
@@ -144,7 +144,7 @@ grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null ||
 - **Image(gpt-image 계열)**: endpoint + 배포명(예: `gpt-image-2`, `gpt-image-2.5-sunburst`. 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
   AI Foundry 리소스(`https://<resource>.services.ai.azure.com`)도 그대로 쓴다. 콘솔이 `.../models` 를 붙여 보여줘도 저장은 origin 까지만 한다(이미지 경로는 `/openai/v1/images/...` 이고 `/models/images/...` 는 404).
 
-비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일의 줄은 사람이 적은 키, 주석, `export` 줄, 줄 끝, 다른 인코딩의 글자까지 그대로 두고 바꿀 이름의 줄만 바꾸거나 끝에 더한다. 새 파일로 통째 바꿔 써서 오류로 끊겨도 원래 파일이 남는다. 하드 링크, 소유자가 다른 파일, 새 파일을 만들 수 없는 폴더의 파일은 전처럼 제자리에 쓴다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다.
+비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일의 줄은 사람이 적은 키, 주석, `export` 줄, 줄 끝, 다른 인코딩의 글자까지 그대로 두고 바꿀 이름의 줄만 바꾸거나 끝에 더한다. 새 파일로 통째 바꿔 써서 오류로 끊겨도 원래 파일이 남는다. 하드 링크, 소유자가 다른 파일, 새 파일을 만들 수 없는 폴더의 파일은 전처럼 제자리에 쓴다. 프로젝트 키 파일이 링크면 쓰지 않는다(저장소가 심은 링크가 사용자 파일이나 그 저장소의 `.git/config` 같은 파일에 줄을 더하지 않게. 홈 키 파일과 설정 파일의 링크는 따른다). 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다.
 쓰는 곳은 `resolveCreds` 가 이미 읽는 키 파일(홈 fallback 포함)이고, 없을 때만 프로젝트 파일이다. 홈 파일을 쓰는 사람에게 프로젝트 파일을 새로 만들면 그 파일이 먼저 읽혀 홈의 키가 가려진다:
 ```bash
 node -e "
@@ -291,4 +291,4 @@ command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffm
 - **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백(오프라인이면 미리 받은 실행 파일을 `FFMPEG_PATH` 로).
 - **ffmpeg 바이너리 미번들 원칙**: 위 폴백은 홈 폴더의 전용 폴더 `~/.config/banker/3d-intro/tools` 에만 설치한다(§2). banker 플러그인 배포물에는 절대 포함하지 않는다.
 - **프리플라이트는 배포명 실존까지는 증명 못 한다**: `images.badreq` 400 은 "리소스가 살아있고 키가 맞다"는 뜻이지 `AZURE_GPT_IMAGE_DEPLOYMENT` 로 지정한 배포가 실제 존재·활성 상태인지는 증명하지 않는다 — 무과금으로는 확인할 방법이 없어 첫 실제 생성(3d-intro-build)에서만 드러난다.
-- **`.env.3d-intro.local` 자동 gitignore 는 이 저장소 한정**: 이 저장소는 `.env.*.local` 패턴으로 이미 커버되지만, 다른 프로젝트에 이 스킬을 쓸 때는 그 프로젝트의 `.gitignore` 를 §3 저장 단계에서 별도로 확인·추가해야 한다.
+- **`.env.3d-intro.local` 자동 gitignore 는 이 저장소 한정**: 이 저장소는 `.env.*.local` 과 `.env.*.local.*.tmp` 패턴으로 커버되지만, 다른 프로젝트에 이 스킬을 쓸 때는 그 프로젝트의 `.gitignore` 를 §3 저장 단계에서 별도로 확인·추가해야 한다.

@@ -363,7 +363,7 @@ pptxgenjs 는 `fontFace` 하나면 되고, python-pptx 는 `a:ea`·`a:cs` 를 �
 
 ```bash
 npm i --no-save --no-audit --no-fund pptxgenjs@4
-python -m pip install --target <dir> python-pptx fonttools
+(cd ~ && python -m pip install --target <절대 경로> python-pptx fonttools)   # 홈에서: -c, -m, 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 ```
 
 `--target` 으로 받았으면 그 경로를 `PYTHONPATH` 에, npm 쪽은 `NODE_PATH` 에 넣어 부른다.
