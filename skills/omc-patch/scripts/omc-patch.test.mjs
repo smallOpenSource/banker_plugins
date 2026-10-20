@@ -1262,7 +1262,7 @@ test("script names with line breaks print on one line", { skip: process.platform
   assert.equal(run(home, ["--root", plug]).code, 0);
   // one restored from its backup, one patched with no backup left
   const restored = join(plug, "scripts", "y\n  [!] forged restored.mjs");
-  writeFileSync(restored, "patched\n");
+  writeFileSync(restored, "const __omcRaceImport = (p) => p;\npatched\n");
   writeFileSync(`${restored}.omcbak`, "original\n");
   writeFileSync(join(plug, "scripts", "x\n  [!] forged orphan.mjs"), "const __omcRaceImport = (p) => p;\n");
   const r = run(home, ["--revert", "--root", plug]);
@@ -1406,13 +1406,14 @@ test("apply writes through a temp file and a rename: a hook hard-linked to a fil
   assert.deepEqual(readdirSync(join(plug, "scripts")).filter((x) => x.includes(".omc-tmp-")), [], "no temp file is left");
 });
 
-test("an apply keeps a backup that is already there: the first backup stays the original", () => {
+test("an apply over a backup that is not the current original makes it the current original, and says so", () => {
   const plug = bundle();
   const foo = join(plug, "scripts", "foo.mjs");
-  writeFileSync(`${foo}.omcbak`, "// the original an earlier run kept\n");
+  writeFileSync(`${foo}.omcbak`, "// an older original an earlier run kept\n");
   const r = run(bareHome(), ["--root", plug]);
   assert.equal(r.code, 0, r.out);
-  assert.equal(read(`${foo}.omcbak`), "// the original an earlier run kept\n");
+  assert.equal(read(`${foo}.omcbak`), SCRIPT("foo"), "a later revert gives back the original that was there");
+  assert.match(r.out, /ok {2}옛 백업을 지금 원본으로 바꿈: foo/);
   assert.match(read(foo), /__omcRaceImport\(import\(/);
 });
 
@@ -3184,4 +3185,38 @@ test("an origin of many slashes is masked without stalling --check", { skip: !HA
   assert.equal(c.error, undefined, "the run ended before its deadline");
   assert.match(c.out, /마켓플레이스 미고정/);
   assert.ok(Date.now() - t0 < 10000, `took ${Date.now() - t0} ms`);
+});
+
+// 0.20.4 B2 Task 7: an old .omcbak never goes over a new original; the apply makes the backup the current original (B2-02)
+const NEW_ORIGINAL = (n) => `import { pathToFileURL } from "node:url";\nconst { x, y } = await import("./lib.mjs");\nconsole.log("${n} NEW:" + typeof x);\n`;
+
+test("a revert leaves a hook that a new original replaced after the patch: the old backup is not put over it", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const foo = join(f.cache, "5.6.1", "scripts", "foo.mjs");
+  writeFileSync(foo, NEW_ORIGINAL("foo"));
+  const r = run(f.home, ["--revert"]);
+  assert.equal(read(foo), NEW_ORIGINAL("foo"), "the new original stays");
+  assert.match(r.out, /\[!\].*foo/, "the hook is named");
+  assert.doesNotMatch(r.out, /되돌리기 완료\./);
+});
+
+test("an apply over a new original and a revert give back that new original, not the old backup", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const foo = join(f.cache, "5.6.1", "scripts", "foo.mjs");
+  writeFileSync(foo, NEW_ORIGINAL("foo"));
+  run(f.home, ["--no-update"]);
+  run(f.home, ["--revert"]);
+  assert.equal(read(foo), NEW_ORIGINAL("foo"));
+});
+
+test("a revert does not put an old hooks.json backup over a hooks.json that still has PostToolUse", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(run(f.home, ["--no-update"]).code, 0);
+  const hj = join(f.cache, "5.6.1", "hooks", "hooks.json");
+  const fresh = HOOKS_JSON.replace("stopper.mjs", "stopper2.mjs");
+  writeFileSync(hj, fresh);
+  run(f.home, ["--revert"]);
+  assert.equal(read(hj), fresh, "the new hooks.json stays");
 });

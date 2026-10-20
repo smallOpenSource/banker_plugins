@@ -354,10 +354,22 @@ function renameRetry(from, to) {
   }
 }
 
-// 백업을 만든다. 이미 있으면 처음 백업을 지킨다. 있으면 실패하는 복사라 확인과 복사 사이에 틈이 없다.
+// 백업을 만든다. 이미 있으면 그대로 둔다(적용은 그 전에 freshBackup 으로 지금 원본과 맞춘다). 있으면 실패하는 복사라 확인과
+// 복사 사이에 틈이 없다.
 function backup(file, bak) {
   try { copyFileSync(file, bak, FS_CONST.COPYFILE_EXCL); }
   catch (e) { if (e.code !== "EEXIST") throw e; }
+}
+
+// 적용 직전에 본다. 이미 있는 백업이 지금 원본(패치 전)과 다르면 그 백업은 옛 원본이다(같은 판 폴더에 새 원본이 깔림). 지금
+// 원본으로 바꿔야 나중의 되돌리기가 새 원본을 돌려준다. 정상 흐름에서는 둘이 같아 바꾸지 않는다. 백업이 없으면 backup 이 만든다.
+function freshBackup(file, bak, name) {
+  const saved = readBackup(bak);
+  if (saved === null) return;
+  const now = readRegular(file);
+  if (saved.equals(now)) return;
+  writeAtomic(bak, now, modeOf(bak), { follow: false });
+  ok(`옛 백업을 지금 원본으로 바꿈: ${shown(name)}`);
 }
 
 // 일반 파일만 읽는다. FIFO 는 열기만 하고 읽지 않으며, 폴더와 소켓, 장치는 던진다(형제 도구의 읽기와 같은 꼴).
@@ -735,8 +747,23 @@ function revertScript(root, n, f, r) {
 
 // 백업으로 되돌린다. 쓸 수 없는 자리거나 쓰지 못하면 이유를 대고 실패로 센다. 백업이 읽으려는 순간 사라졌으면 false
 // (다른 실행이 먼저 되돌렸을 수 있다. 호출부가 백업 없음으로 다시 본다).
+// 되돌리기 전에 본다(쓰기 조건 뒤). 지금 파일에 패치(헬퍼, 손 패치)가 없고 글이 백업과 다르면 그 사이 같은 판 폴더에 새 원본이
+// 깔린 것이다. 옛 백업을 덮으면 새 원본을 잃는다. 그 이유를, 아니면 null. 어느 쪽이든 읽지 못하면 판단하지 않는다(전처럼 복구).
+const STALE = "지금 파일에 패치가 없고 백업과 글이 다름. 백업이 옛 원본일 수 있음";
+function staleWhy(f, bak) {
+  let now, saved;
+  try {
+    now = readRegular(f, "utf8");
+    saved = readRegular(bak, "utf8");
+  } catch {
+    return null;
+  }
+  if (now.includes("__omcRaceImport") || looksHandPatched(now)) return null;
+  return now === saved ? null : STALE;
+}
+
 function restoreScript(root, n, f, bak, r) {
-  const why = whyNotWrite(root, f, bak) ?? restoreFrom(f, bak);
+  const why = whyNotWrite(root, f, bak) ?? staleWhy(f, bak) ?? restoreFrom(f, bak);
   if (why === GONE) return false;
   if (!why) {
     log(`  되돌림  ${shown(n)}`); r.done++;
@@ -813,6 +840,7 @@ function checkOrPatchScript(root, n, f, r) {
 // 쓰지 못하면 이유를 대고 false 다(예전에는 예외로 멈췄다).
 function writePatched(f, bak, out, n) {
   try {
+    freshBackup(f, bak, n);
     backup(f, bak);
     writeAtomic(f, out);
   } catch (e) {
@@ -920,6 +948,7 @@ function revertHooksJson(root, hj) {
   const bak = `${hj}.omcbak`;
   const saved = readBackup(bak);
   if (saved !== null) {
+    if (staleHooksJson(hj, saved)) { hjBad(`hooks.json 을 되돌리지 않음 (지금 파일에 PostToolUse 가 있고 백업과 글이 다름. 백업이 옛 원본일 수 있음)`); return "unsafe"; }
     writeAtomic(hj, saved);
     log(`  되돌림  ${hjTag}hooks.json`);
     const left = dropBackup(bak);
@@ -1010,6 +1039,14 @@ function manualBackups(root, dir) {
   return { usable, unsafe };
 }
 
+// 되돌리기 전에 본다. 이 도구가 지운 PostToolUse 가 지금 hooks.json 에 다시 있고 글이 백업과 다르면 그 사이 새 hooks.json 이
+// 깔린 것이다. 옛 백업을 덮으면 새 훅 등록을 잃는다. 읽지 못하면 판단하지 않는다(전처럼 복구).
+function staleHooksJson(hj, saved) {
+  let now;
+  try { now = readRegular(hj); } catch { return false; }
+  return !now.equals(saved) && hasPostToolUse(hj);
+}
+
 const hasPostToolUse = (p) => {
   try { return !!JSON.parse(readRegular(p, "utf8"))?.hooks?.PostToolUse; }
   catch { return false; }
@@ -1021,6 +1058,7 @@ function removePostToolUse(hj, why) {
   if (!j.hooks?.PostToolUse) return "already";
   const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
   if (MODE === "check") { hjBad(`hooks.json PostToolUse 남아있음${why ? `, 쓸 수 없음 (${why})` : ""}: ${list.join(", ")}`); return "needs"; }
+  freshBackup(hj, bak, `${hjTag}hooks.json`);
   backup(hj, bak);
   delete j.hooks.PostToolUse;
   writeAtomic(hj, JSON.stringify(j, null, 2) + "\n");
