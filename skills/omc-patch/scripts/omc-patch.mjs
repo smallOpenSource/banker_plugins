@@ -196,13 +196,7 @@ function git(args, cwd = MARKET, opts = {}) {
 // ── 1. 업데이트 ──────────────────────────────────────────────────────────────
 function ensureVersion() {
   const have = installedVersions();
-  if (have.includes(TARGET_VERSION)) {
-    const now = activeVersion().v;
-    if (MODE === "check" || now === TARGET_VERSION) { ok(`${TARGET_VERSION} 설치되어 있음`); return true; }
-    log(`  ${TARGET_VERSION} 은 캐시에 있으나 활성 판은 ${oneLine(now)} 입니다. 전환합니다`);
-    const sha = targetSha();
-    return sha === null ? false : switchActive(sha, have);
-  }
+  if (have.includes(TARGET_VERSION)) return useCached();
   if (MODE === "check") { bad(`${TARGET_VERSION} 미설치 (설치된 버전: ${have.join(", ") || "없음"})`); return false; }
   if (!canInstallTarget()) return false;
 
@@ -212,18 +206,30 @@ function ensureVersion() {
   const dest = join(CACHE, TARGET_VERSION);
   unpackTarget(dest);
   linkNodeModules(dest, have);
-  return switchActive(sha, have);
+  return switchActive(sha);
 }
 
-// 마켓플레이스가 제 git 저장소이고 git 과 tar 가 있어야 TARGET_VERSION 을 꺼낼 수 있다.
-function canInstallTarget() {
+// TARGET_VERSION 이 캐시에 있을 때. 이미 활성이면 끝, 아니면 마켓플레이스 태그의 커밋으로 전환한다.
+// 전환도 마켓플레이스와 git 이 있어야 하므로 먼저 확인한다(풀지 않으므로 tar 는 없어도 된다).
+function useCached() {
+  const now = activeVersion().v;
+  if (MODE === "check" || now === TARGET_VERSION) { ok(`${TARGET_VERSION} 설치되어 있음`); return true; }
+  log(`  ${TARGET_VERSION} 은 캐시에 있으나 활성 판은 ${oneLine(now)} 입니다. 전환합니다`);
+  if (!canInstallTarget({ tar: false })) return false;
+  const sha = targetSha();
+  return sha === null ? false : switchActive(sha);
+}
+
+// 마켓플레이스가 제 git 저장소이고 git 이 있어야 TARGET_VERSION 의 커밋을 찾고, 풀려면 tar 도 있어야 한다.
+function canInstallTarget({ tar = true } = {}) {
   if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${oneLine(MARKET)}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
   if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${oneLine(MARKET)}`); return false; }
 
   // git 과 tar 에 의존한다. Windows 10+ / macOS / 대부분의 Linux 배포판에는 둘 다 있지만,
   // 최소 설치 컨테이너나 tar 없는 환경에서는 없을 수 있다. 여기서 못 찾으면 아래에서
   // execFileSync 가 ENOENT 로 죽어 원인이 안 보이므로, 먼저 확인하고 무엇이 없는지 말한다.
-  for (const [cmd, why] of [["git", "마켓플레이스에서 소스를 꺼내는 데"], ["tar", "그 소스를 푸는 데"]]) {
+  const tools = [["git", "마켓플레이스에서 소스를 꺼내는 데"], ["tar", "그 소스를 푸는 데"]].slice(0, tar ? 2 : 1);
+  for (const [cmd, why] of tools) {
     try { execFileSync(cmd, ["--version"], { cwd: homedir(), stdio: "ignore" }); }
     catch { bad(`${cmd} 를 찾을 수 없습니다 (${why} 필요). 설치한 뒤 다시 실행하거나, --no-update 로 패치만 적용하십시오.`); return false; }
   }
@@ -259,22 +265,31 @@ function linkNodeModules(dest, have) {
   }
 }
 
-// installed_plugins.json 을 읽는다. 읽지 못하거나 JSON 이 아니면 이름과 이유를 대고 null(파일 글은 내지 않는다).
+// installed_plugins.json 을 읽는다. 읽지 못하거나 JSON 이 아니면 이름과 이유를 대고 undefined(파일 글은 내지 않는다).
+// 읽은 값이 0, false, "", null 이어도 그 값을 돌려준다 — 실패와 섞이면 이유 없이 멈춘다.
 function readInstalled() {
   try { return JSON.parse(readRegular(INSTALLED, "utf8")); }
-  catch (err) { bad(`읽지 못함: installed_plugins.json (${err instanceof SyntaxError ? "JSON 이 아님" : failWhy(err)})`); return null; }
+  catch (err) { bad(`읽지 못함: installed_plugins.json (${err instanceof SyntaxError ? "JSON 이 아님" : failWhy(err)})`); return undefined; }
+}
+
+// installPath 의 마지막 칸(판)을 v 로 바꾼다. 구분자는 그 경로가 쓰는 것을 따른다.
+function withVersion(installPath, v) {
+  const sep = installPath.includes("//") ? "//" : installPath.includes("\\") ? "\\" : "/";
+  return installPath.split(sep).slice(0, -1).concat(v).join(sep);
 }
 
 // 활성 버전 전환. installed_plugins.json 을 읽거나 쓰지 못하면 이름과 이유를 대고 false(호출부가 중단한다).
-function switchActive(sha, have) {
+// 완료 줄의 앞 판은 바꾸기 전 항목의 version 이다(캐시 목록의 첫 판이 아니라).
+function switchActive(sha) {
   const j = readInstalled();
-  if (!j) return false;
+  if (j === undefined) return false;
+  let from;
   try {
-    const e = j.plugins?.[PLUGIN_KEY]?.[0];
+    const e = j?.plugins?.[PLUGIN_KEY]?.[0];
     if (!e) { bad(`installed_plugins.json 에 ${PLUGIN_KEY} 항목이 없음 — 수동 확인 필요`); return false; }
+    from = typeof e.version === "string" ? e.version : "?";
     backup(INSTALLED, `${INSTALLED}.omcbak`);
-    const sep = e.installPath.includes("//") ? "//" : e.installPath.includes("\\") ? "\\" : "/";
-    e.installPath = e.installPath.split(sep).slice(0, -1).concat(TARGET_VERSION).join(sep);
+    e.installPath = withVersion(e.installPath, TARGET_VERSION);
     e.version = TARGET_VERSION;
     e.gitCommitSha = sha;
     e.lastUpdated = new Date().toISOString();
@@ -283,7 +298,7 @@ function switchActive(sha, have) {
     bad(`쓰지 못함: installed_plugins.json (${failWhy(err)})`);
     return false;
   }
-  ok(`${have[0] || "없음"} → ${TARGET_VERSION} (sha ${sha.slice(0, 12)})`);
+  ok(`${oneLine(from)} → ${TARGET_VERSION} (sha ${sha.slice(0, 12)})`);
   return true;
 }
 

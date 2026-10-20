@@ -2953,3 +2953,41 @@ test("an apply over a write-only hooks.json says it could not read it; a revert 
   assert.doesNotMatch(r.out, /되돌리기 완료\./, r.out);
   assert.equal(r.code, 1, r.out);
 });
+
+// 0.20.4 B2 Task 2: a bare apply's switch line, a missing marketplace or git, and an installed_plugins.json of 0, false, "" or null (B2-14, B2-15, B2-16)
+test("a bare apply that switches from an older active version names that version in its switch line", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target } = bareApplyFixture();
+  assert.equal(run(f.home, []).code, 0);
+  const installed = join(f.plugins, "installed_plugins.json");
+  const j = JSON.parse(read(installed));
+  Object.assign(j.plugins["oh-my-claudecode@omc"][0], { version: "5.6.1", installPath: join(f.cache, "5.6.1") });
+  writeFileSync(installed, JSON.stringify(j, null, 2) + "\n");
+  const r = run(f.home, []);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, new RegExp(`ok  5\\.6\\.1 → ${target.replace(/\./g, "\\.")} \\(sha`), r.out);
+});
+
+test("a bare apply that would switch with no marketplace folder says the folder is missing, not the tag", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f } = bareApplyFixture();
+  assert.equal(run(f.home, []).code, 0);
+  const installed = join(f.plugins, "installed_plugins.json");
+  const j = JSON.parse(read(installed));
+  Object.assign(j.plugins["oh-my-claudecode@omc"][0], { version: "5.6.1", installPath: join(f.cache, "5.6.1") });
+  writeFileSync(installed, JSON.stringify(j, null, 2) + "\n");
+  renameSync(f.market, `${f.market}.gone`);
+  const r = run(f.home, []);
+  renameSync(`${f.market}.gone`, f.market);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /마켓플레이스 없음/, r.out);
+  assert.doesNotMatch(r.out, /태그 v.* 를 마켓플레이스에서 찾을 수 없음/);
+});
+
+for (const value of ["0", "false", '""', "null"]) {
+  test(`a bare apply over an installed_plugins.json that holds ${value} says why it stops`, { skip: !HAS_GIT && "git not found" }, () => {
+    const { f } = bareApplyFixture();
+    writeFileSync(join(f.plugins, "installed_plugins.json"), `${value}\n`);
+    const r = run(f.home, []);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /installed_plugins\.json 에 oh-my-claudecode@omc 항목이 없음/, r.out);
+  });
+}
