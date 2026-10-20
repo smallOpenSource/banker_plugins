@@ -725,3 +725,13 @@ test("렌더 확인은 PATH 의 따옴표 친 폴더에서도 node 를 찾고 no
   const { out } = renderWith(banner("5.7.4"), { PATH: `${dir}${delimiter}"${dirname(process.execPath)}"` });
   assert.match(out, /\[ok\] Render check/);
 });
+
+test("이전 statusLine 명령의 보이지 않는 글자는 ? 로 보임", () => {
+  const cfg = fresh();
+  const rlo = String.fromCharCode(0x202e);
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: `node old${rlo}.mjs` } }));
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[\.\.\] statusLine ran "node old\?\.mjs"/);
+  assert.ok(!r.out.includes(rlo), "the control character is not printed");
+});

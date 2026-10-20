@@ -70,6 +70,10 @@ const configDst = join(OMC_DIR, "hud-config.json");
 // PowerShell on Windows) that treats backslashes as escapes.
 const cmdPath = wrapperDst.split(sep).join("/");
 const log = (m) => process.stdout.write(m + "\n");
+// Characters that could act on a terminal or pass for a line of their own are shown as "?", as
+// omc-patch.mjs (UNSAFE_CH) shows file values in output an agent reads.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
+const shown = (s) => String(s).replace(UNSAFE, "?");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const refuse = (lines) => {
   for (const l of lines) log(l);
@@ -319,7 +323,7 @@ function pointStatusLine() {
   const command = `node "${cmdPath}"`;
   const prior = objectOr(settings.statusLine);
   if (typeof prior.command === "string" && prior.command && prior.command !== command) {
-    log(`[..] statusLine ran ${JSON.stringify(prior.command)}; it now runs the custom HUD (the old value is in the backup)`);
+    log(`[..] statusLine ran ${shown(JSON.stringify(prior.command))}; it now runs the custom HUD (the old value is in the backup)`);
   }
   settings.statusLine = { ...prior, type: "command", command };
   const next = JSON.stringify(settings, null, 2) + "\n";
@@ -345,10 +349,7 @@ function pointStatusLine() {
 const CHECK_MS = Number(process.env.APPLY_HUD_CHECK_TIMEOUT_MS) || 25000;
 const BLAME =
   "    OMC's install is at fault. /oh-my-claudecode:omc-setup repairs it but points statusLine back at OMC, so run setup-omc-hud again after it.";
-// Characters that could act on a terminal or pass for a line of their own are shown as "?", as
-// omc-patch.mjs (UNSAFE_CH) shows file values in output an agent reads.
-const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
-const clip = (s, n = 200) => String(s).replace(UNSAFE, "?").slice(0, n);
+const clip = (s, n = 200) => shown(s).slice(0, n);
 // No input, and the config folder as working folder: OMC's loader looks in the working folder's
 // node_modules and runs git from it, and Windows looks there first for a bare program name, so the
 // folder the installer was started in (a project, say) must not be it.
