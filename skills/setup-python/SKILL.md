@@ -28,6 +28,28 @@ if (Get-Command pipx -ErrorAction SilentlyContinue) { pipx --version } else { "p
 if (Get-Command uv   -ErrorAction SilentlyContinue) { uv --version }   else { "uv: 미설치" }
 ```
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null)   # 홈 폴더에서. pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함), install 절이 global 절보다 앞선다
+I="${PIP_INDEX_URL:-$(printf '%s\n' "$L" | sed -n "s/^install\.index-url='\(.*\)'$/\1/p")}"
+I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
+I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보(비밀)는 뗌
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "$I/pip/"   # pipx, uv 패키지(PyPI)
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://astral.sh   # uv 설치 스크립트
+```
+
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config list` 의 `install.index-url` 이나 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
+- `pip config get` 은 `PIP_CONFIG_FILE` 로 준 파일을 읽지 않아(pip 25.0 실측) `pip config list` 를 읽는다.
+- 홈 폴더에서 읽는다. `python3 -m pip` 는 지금 폴더를 import 경로 맨 앞에 두어, 지금 폴더에 있는 남의 저장소의 `pip/` 가 실행될 수 있다.
+- 색인 주소에 든 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 명령 인자에 실린 비밀은 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. Rocky Linux 8
 ```bash
 sudo dnf -y module install python311/common
@@ -86,7 +108,9 @@ esac
 command -v pipx >/dev/null && pipx ensurepath || "$PY" -m pipx ensurepath
 # macOS 대안: brew install pipx && pipx ensurepath
 
-curl -LsSf https://astral.sh/uv/install.sh | sh     # macOS/Linux 공통, 항상 최신 fetch(버전 고정 불필요)
+T=$(mktemp -d)                                      # uv: macOS/Linux 공통, 항상 최신 fetch(버전 고정 불필요)
+curl -LsSf --connect-timeout 10 --max-time 120 -o "$T/uv-install.sh" https://astral.sh/uv/install.sh && sh "$T/uv-install.sh"
+rm -rf "$T"                                         # 받았을 때만 실행(셸에 바로 넘기면 받기 실패도 종료 0)
 
 RC_FILE="$HOME/.bashrc"   # macOS는 $HOME/.zshrc
 grep -q '### BANKER_PYTHON_BEGIN ###' "$RC_FILE" || cat >> "$RC_FILE" <<'EOF'
@@ -100,7 +124,13 @@ source "$RC_FILE"
 ```powershell
 python -m pip install --user pipx
 python -m pipx ensurepath
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+$D = Join-Path $env:TEMP ([guid]::NewGuid())     # 예측할 수 없는 새 폴더(공용 TEMP 에서 남이 미리 둔 파일을 실행하지 않게)
+try {
+  New-Item -ItemType Directory -ErrorAction Stop $D | Out-Null
+  $T = Join-Path $D "uv-install.ps1"
+  Invoke-RestMethod -TimeoutSec 60 -OutFile $T -ErrorAction Stop https://astral.sh/uv/install.ps1
+  powershell -ExecutionPolicy ByPass -File $T
+} catch { "uv 설치 스크립트를 받지 못했습니다: $($_.Exception.Message)" } finally { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $D }
 ```
 
 ## 검증 (보고 의무)

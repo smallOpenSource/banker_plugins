@@ -28,6 +28,19 @@ Windows(PowerShell):
 Get-Command tmux -ErrorAction SilentlyContinue
 ```
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com   # tmux 소스(Rocky8 빌드)
+```
+
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. OS별 설치
 
 ### Rocky Linux 8 / RHEL8 - 소스빌드 필수
@@ -37,10 +50,11 @@ Get-Command tmux -ErrorAction SilentlyContinue
 # 이미 3.6a+ 면 재빌드 불필요(멱등)
 /usr/local/bin/tmux -V 2>/dev/null | grep -qE '3\.[6-9]|[4-9]\.' && echo "이미 충족 - skip" || {
   sudo dnf install -y libevent-devel ncurses-devel gcc make byacc
-  cd /tmp
-  curl -fLO https://github.com/tmux/tmux/releases/download/3.6a/tmux-3.6a.tar.gz
-  tar xzf tmux-3.6a.tar.gz && cd tmux-3.6a
-  ./configure && make && sudo make install     # /usr/local/bin/tmux 로 설치됨
+  T=$(mktemp -d) && cd "$T" \
+    && curl -fL --connect-timeout 10 --max-time 300 -o tmux-3.6a.tar.gz https://github.com/tmux/tmux/releases/download/3.6a/tmux-3.6a.tar.gz \
+    && tar xzf tmux-3.6a.tar.gz && cd tmux-3.6a \
+    && ./configure && make && sudo make install     # /usr/local/bin/tmux 로 설치됨
+  cd ~; rm -rf "$T"
 }
 ```
 > **`/usr/bin/tmux`(2.7)를 지우지 않는다** - PATH 상 `/usr/local/bin` 이 먼저 오는지만 확인해

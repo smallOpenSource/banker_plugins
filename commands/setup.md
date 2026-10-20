@@ -10,6 +10,18 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
 
 ## 절차
 
+0. **네트워크 확인**: 항목을 고르기 전에 원천에 닿는지 한 번 본다(각 10초 안). 결과는 알림으로만 쓰고, 이것만으로 항목을 건너뛰지 않는다.
+   ```bash
+   if command -v npm >/dev/null; then (cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000); else echo "npm 없음(확인하지 못함)"; fi
+   curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com
+   ```
+   - 둘 다 실패하면 "네트워크가 없거나 막힌 것으로 보임. 항목마다 자기 원천을 다시 확인하고, 닿지 않는 원천에서 받는 단계는 하지 않음" 으로 먼저 알린다.
+   - 항목을 건너뛸지는 각 스킬의 0단계가 그 스킬의 원천으로 정한다. 사내 미러만 열린 망(`npm ping` 에 답하지 않는 npm 미러, PyPI 미러)에서도 그 원천을 쓰는 항목은 진행된다. 닿지 않는 원천에서 받는 단계만 "오프라인이라 설치하지 않음(필요한 것: <항목>)" 으로 보고된다.
+   - `npm` 이 아직 없으면(새 PC) npm 쪽은 오프라인이 아니라 확인하지 못한 것이다. `setup-node` 가 npm 을 깐 뒤 각 스킬의 0단계가 다시 확인한다.
+   - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
+   - OS 패키지 관리자(dnf, apt, brew, winget)만 쓰는 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 각 스킬의 규칙대로 시도한다.
+   - 내려받기가 없는 항목(`setup-omc-hud`)과 이미 설치된 것의 확인은 그대로 진행한다.
+   - Windows PowerShell 에서는 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 https://github.com` 의 `$LASTEXITCODE` 로 본다. `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
 1. **선택 받기**: `$ARGUMENTS` 에 컴포넌트명이 명시돼 있으면 그것만 실행(질문 생략).
    비어 있으면 아래를 `AskUserQuestion`(**multiSelect: true**)으로 제시한다(**Codex 런타임엔 AskUserQuestion 이 없으므로 목록을 제시하고 설치할 항목을 사용자에게 물어 받는다**). 항목은 **계층/의존 순서**로 묶여 있으니, 뒤 계층을 고르면 앞 계층 전제를 먼저 채운다:
    - 질문 하나에 선택지는 4개까지다. 5개 이상인 묶음은 두 질문으로 나눈다.

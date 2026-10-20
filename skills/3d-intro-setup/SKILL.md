@@ -36,6 +36,24 @@ POOL="$SKILL_DIR/references/video-pool.mjs"
 **이미 확보 확인**: `node -v` 가 18 이상이고 `ffmpeg` 가 있으면 §1~§2 는 건너뛴다.
 크레덴셜도 이미 완전하면(§3 첫 단계) 프롬프트 없이 §4 프리플라이트로 직행한다.
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)                          # ffmpeg-static
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://nodejs.org/dist/   # nvm 이 받는 Node
+```
+
+- `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
+- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && { npm view ffmpeg-static version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r; })` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`ffmpeg-static`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다.
+- `npm` 이 없으면(명령 없음) 오프라인이 아니라 확인하지 못한 것이다. Node 를 먼저 갖춘다(`setup-node`).
+- `npm ping` 은 npm 의 프록시 설정(`proxy`, `https-proxy`)을 따른다. 사내 미러만 열린 망이면 그 미러가 쓰이는지 npm 설정을 본다.
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. Node ≥18 확보
 어댑터가 global `fetch`/`FormData`/`Blob` 등 Node 18+ 내장 기능만 쓴다(추가 의존성 없음) — 18 미만이면 어댑터 자체가 동작하지 않는다.
 이미 nvm 등으로 관리 중이면 `nvm install --lts && nvm alias default 'lts/*'` 로 충분하다.
@@ -48,7 +66,8 @@ OS별 상세 설치 절차(Ubuntu NodeSource·RHEL8/Rocky8 dnf 모듈·Windows w
 - Ubuntu/Debian: `sudo apt-get install -y ffmpeg`
 - RHEL8/Rocky8: BaseOS/AppStream 미포함(라이선스) → RPM Fusion 후 `dnf install -y ffmpeg`
 - Windows: `winget install --id Gyan.FFmpeg -e`
-- 전부 막히면(권한/오프라인) 홈 폴더의 전용 폴더에 `ffmpeg-static` 을 받는다. 프로젝트 안에서 npm 을 돌리면 그 프로젝트의 `.npmrc` 와 스크립트가 끼어든다:
+- 오프라인이면 `ffmpeg-static` 도 받을 수 없다(npm 설치에 네트워크가 필요하다). 미리 받아 둔 ffmpeg 실행 파일의 절대 경로를 `~/.config/banker/3d-intro/settings.env` 의 `FFMPEG_PATH` 로 준다.
+- 네트워크는 되는데 시스템 패키지가 막히면(권한 없음, 저장소 미제공) 홈 폴더의 전용 폴더에 `ffmpeg-static` 을 받는다. 프로젝트 안에서 npm 을 돌리면 그 프로젝트의 `.npmrc` 와 스크립트가 끼어든다:
   `(cd ~ && npm install --prefix ~/.config/banker/3d-intro/tools ffmpeg-static)` 후 `export FFMPEG_PATH="$(cd ~ && node -p "require(require('path').resolve('.config/banker/3d-intro/tools/node_modules/ffmpeg-static'))")"`
 
 **★ banker 플러그인 자체(스킬 파일·npm 패키지 배포물)에는 ffmpeg 바이너리를 절대 번들하지 않는다** — 위 설치는 전부 사용자 시스템(홈 폴더 포함)에만 적용된다(motion-graphic-setup과 동일 원칙).
@@ -269,7 +288,7 @@ command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffm
   WAN 키는 Model Studio 콘솔의 API Key 관리에서 그 키를 지우고 새로 만들어 교체한다.
 - **WAN 키 검증은 GET task 로만**: 존재하지 않는 task 조회는 과금이 없고 키 유효성(200 vs 401)을 가른다. 생성 요청(POST)은 과금될 수 있으니 점검용으로 쓰지 않는다.
 - **이미지 배포 429**: 낮은 티어(S0) 이미지 배포는 연속 호출에 `429 RateLimitReached` 를 낸다. 프리플라이트를 짧은 간격으로 반복하지 않는다.
-- **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백.
+- **RHEL8/Rocky8 ffmpeg 미제공**: BaseOS/AppStream 에 없음(라이선스) → motion-graphic-setup 과 동일하게 RPM Fusion 또는 `ffmpeg-static` 폴백(오프라인이면 미리 받은 실행 파일을 `FFMPEG_PATH` 로).
 - **ffmpeg 바이너리 미번들 원칙**: 위 폴백은 홈 폴더의 전용 폴더 `~/.config/banker/3d-intro/tools` 에만 설치한다(§2). banker 플러그인 배포물에는 절대 포함하지 않는다.
 - **프리플라이트는 배포명 실존까지는 증명 못 한다**: `images.badreq` 400 은 "리소스가 살아있고 키가 맞다"는 뜻이지 `AZURE_GPT_IMAGE_DEPLOYMENT` 로 지정한 배포가 실제 존재·활성 상태인지는 증명하지 않는다 — 무과금으로는 확인할 방법이 없어 첫 실제 생성(3d-intro-build)에서만 드러난다.
 - **`.env.3d-intro.local` 자동 gitignore 는 이 저장소 한정**: 이 저장소는 `.env.*.local` 패턴으로 이미 커버되지만, 다른 프로젝트에 이 스킬을 쓸 때는 그 프로젝트의 `.gitignore` 를 §3 저장 단계에서 별도로 확인·추가해야 한다.

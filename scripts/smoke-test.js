@@ -589,7 +589,7 @@ try {
   ok(/\| 전송 경로 \| 확인 수준 \|/.test(rqSkill) && !/전달 메커니즘/.test(rqSkill),
      'S6: flag table uses the 전송 경로/확인 수준 columns (old 전달 메커니즘 header gone)');
   const rqReadmeRows = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
-    .split(/\r?\n/).filter((l) => /ralph-qa/.test(l));
+    .split(/\r?\n/).filter((l) => /^\|/.test(l) && /ralph-qa/.test(l));   // the two table rows, not prose mentions
   ok(rqReadmeRows.length === 2 && rqReadmeRows.every((l) => !/폴백|최후/.test(l) && /세션 모델/.test(l)),
      `S7: both README ralph-qa rows describe the session-model backbone without fallback wording (rows: ${rqReadmeRows.length})`);
   // Anchor each trigger to its position in the disjunction list (`⟸`/`∨`), not to a bare mention.
@@ -858,6 +858,211 @@ try {
      'S23-j: the 512 KiB cap is on the whole payload before any split, and each part is counted and scanned');
   ok(/Git Bash 에서 `command -v timeout` 이 `\/c\/Windows\/system32\/timeout` 이면/.test(rqSkill) && /`\/usr\/bin\/timeout -s KILL 600`/.test(rqSkill),
      'S23-l: in Git Bash the limit is GNU timeout, not the Windows timeout a PATH may put first');
+
+  // 9) airgap (0.20.4 B7): with no network a skill neither waits on every command nor reports a stale or empty result
+  // as a success.
+  const ubSkill = fs.readFileSync(path.join(root, 'skills', 'update-banker', 'SKILL.md'), 'utf8');
+  const ubStep0 = ubSkill.slice(ubSkill.indexOf('### 0. 관측'), ubSkill.indexOf('### 1. npm 먼저'));
+  ok(/\(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000\)/.test(ubStep0) && ubStep0.indexOf('npm ping') < ubStep0.indexOf('npm view')
+     && /레지스트리에 닿지 못하면\(`npm ping` 의 종료 코드가 0 이 아님\) .* 어느 채널도 바꾸지 않고 멈춘다/.test(ubStep0)
+     && /`npm` 이 없으면\(명령 없음, 종료 코드 127\) 레지스트리 문제가 아니다/.test(ubStep0)
+     && ubSkill.split(/\r?\n/).filter((l) => /npm view @kaydash9999\/banker-plugins version/.test(l)).every((l) => /--fetch-retries=0/.test(l)),
+     'airgap-1: update-banker checks the registry is reachable before npm view, stops when it is not (npm missing is no registry fault), and npm view never waits on retries');
+  // A script piped from a download into a shell exits 0 when the download fails (the pipe's code is the shell's):
+  // every SKILL and command saves the script first and runs it only when it came.
+  const mdDocs = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
+    ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
+    .filter((f) => fs.existsSync(path.join(root, f)));
+  const piped = mdDocs.flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').split(/\r?\n/)
+    .filter((l) => /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+(?:-E\s+)?)?(?:ba|z)?sh\b/.test(l)
+      || /\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b[^|\n]*\|\s*(?:iex|Invoke-Expression)\b/i.test(l))
+    .map((l) => `${f}: ${l.trim().slice(0, 60)}`));
+  ok(piped.length === 0, `airgap-3: no SKILL or command pipes a download into a shell (found ${JSON.stringify(piped)})`);
+  // A skill that downloads first sees whether its sources answer within 10 s and reports "오프라인이라 설치하지 않음"
+  // instead of waiting on every command (npm 70 s, curl and git without end); the curl, wget and git calls left have limits.
+  const DL_DOCS = ['setup-node', 'setup-python', 'setup-java', 'setup-lsp', 'setup-playwright', 'setup-mcp', 'setup-stitch',
+    'setup-tmux', 'setup-pwsh', 'setup-sandbox', 'setup-omc', 'setup-harness-factory', 'setup-insane-search', 'docs-setup',
+    'vertical-pptx-setup', 'motion-graphic-setup', '3d-intro-setup'].map((d) => path.join('skills', d, 'SKILL.md'))
+    .concat(path.join('commands', 'setup.md'));
+  const NET_CHECK = /\(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000\)|curl(?:\.exe)? -sSI -o (?:\/dev\/null|NUL) --connect-timeout 5 --max-time 10 /;
+  const DOWNLOADS = /\b(?:curl|wget|git(?: -c \S+)* clone|npx|npm (?:i|install)\b|pip3? install|pipx install|uv tool install|uvx|dnf (?:-y )?install|apt(?:-get)? (?:-y )?install|brew install|winget install|Invoke-RestMethod|Invoke-WebRequest|nvm install|playwright install|claude plugin (?:marketplace add|install)|omc update)\b/;
+  // Code blocks only (a sentence that quotes a command runs nothing), trailing comments cut.
+  const codeBlocks = (text) => [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
+    .map((m) => ({ at: m.index, lines: m[1].split('\n').map((l) => l.replace(/\s#\s.*$/, '')).filter((l) => !/^\s*#/.test(l)) }));
+  const firstBlockAt = (text, pick) => (codeBlocks(text).find((b) => b.lines.some(pick)) || { at: Infinity }).at;
+  const isNetCheck = (l) => NET_CHECK.test(l);
+  const isDownload = (l) => !isNetCheck(l) && !/\bcommand -v\b/.test(l) && DOWNLOADS.test(l);
+  const unchecked = DL_DOCS.filter((f) => {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    const at = firstBlockAt(t, isNetCheck);
+    return at === Infinity || at > firstBlockAt(t, isDownload) || !/오프라인이라 설치하지 않음/.test(t);
+  });
+  // The npm check runs in the home folder (a project's .npmrc must not pick the registry or a token), and a web check
+  // asks for the head only (a body of tens of MB must not decide "offline" on a slow line).
+  const leaky = [...DL_DOCS, path.join('skills', 'update-banker', 'SKILL.md')].flatMap((f) => codeBlocks(fs.readFileSync(path.join(root, f), 'utf8'))
+    .flatMap((b) => b.lines).filter((l) => (/\bnpm (?:ping|view)\b/.test(l) && !/\(cd ~ && (?:T=\$\(mktemp -d\) && \{ )?npm (?:ping|view)\b/.test(l))
+      || /curl(?:\.exe)? -sS -o (?:\/dev\/null|NUL) --connect-timeout/.test(l) || /pypi\.org\/simple\/(?:\s|$)/.test(l))
+    .map((l) => `${f}: ${l.trim().slice(0, 60)}`));
+  ok(leaky.length === 0, `airgap-4c: the npm checks run in the home folder and the web checks ask for the head of a small page (found ${JSON.stringify(leaky)})`);
+  // A mirror that does not answer `npm ping` is no offline network: the npm checks ask once more for the skill's own
+  // package with an empty cache (no stale value can come). A PC with no npm yet is unchecked, not offline. /banker:setup
+  // skips only what comes from the web, and the OS package manager steps are tried (they use their own mirrors).
+  const npmDocs = DL_DOCS.filter((f) => f !== path.join('commands', 'setup.md') && codeBlocks(fs.readFileSync(path.join(root, f), 'utf8'))
+    .some((b) => b.lines.some((l) => /\(cd ~ && npm ping\b/.test(l))));
+  const noFallback = npmDocs.filter((f) => {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    return !/`\(cd ~ && T=\$\(mktemp -d\) && \{ npm view (\S+) version --fetch-retries=0 --fetch-timeout=10000 --cache "\$T"; r=\$\?; rm -rf "\$T"; exit \$r; \}\)` 도 실패해야 오프라인으로 본다\. 이 스킬이 설치할 패키지\(`\1`\)/.test(t)
+      || !/`npm` 이 없으면\(명령 없음\) 오프라인이 아니라 확인하지 못한 것이다/.test(t);
+  });
+  const setupCmd = fs.readFileSync(path.join(root, 'commands', 'setup.md'), 'utf8');
+  ok(npmDocs.length >= 8 && noFallback.length === 0
+     && /`npm` 이 아직 없으면\(새 PC\) npm 쪽은 오프라인이 아니라 확인하지 못한 것이다/.test(setupCmd)
+     && /결과는 알림으로만 쓰고, 이것만으로 항목을 건너뛰지 않는다/.test(setupCmd)
+     && /항목을 건너뛸지는 각 스킬의 0단계가 그 스킬의 원천으로 정한다/.test(setupCmd) && !/웹 원천에서 받는 항목만 시도하지 않고/.test(setupCmd)
+     && /OS 패키지 관리자\(dnf, apt, brew, winget\)만 쓰는 단계는 .*이 확인과 관계없이 각 스킬의 규칙대로 시도한다/.test(setupCmd),
+     `airgap-4d: a mirror without ping and a PC without npm are not read as offline, /banker:setup skips nothing on its own check, and the OS package manager steps are tried (npm docs ${npmDocs.length}, no fallback: ${JSON.stringify(noFallback)})`);
+  ok(unchecked.length === 0, `airgap-4: each downloading skill and /banker:setup checks its sources before the first download (unchecked: ${JSON.stringify(unchecked)})`);
+  const unlimited = DL_DOCS.flatMap((f) => [...fs.readFileSync(path.join(root, f), 'utf8').matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
+    .flatMap((m) => m[1].split('\n')).map((l) => l.replace(/\s#\s.*$/, '')).filter((l) => !/^\s*#/.test(l))
+    .filter((l) => (/\bcurl(?:\.exe)? -/.test(l) && !/--max-time \d+|--speed-time \d+/.test(l)) || (/\bwget -/.test(l) && !/--timeout=\d+/.test(l))
+      || (/\bgit\b.*\bclone\b/.test(l) && !/http\.lowSpeedTime=\d+/.test(l)))
+    .map((l) => `${f}: ${l.trim().slice(0, 50)}`));
+  ok(unlimited.length === 0, `airgap-4b: the curl, wget and git clone calls of those skills have time limits (found ${JSON.stringify(unlimited)})`);
+  // A download to a fixed /tmp name can be taken over by another user (a file planted there first is unpacked, built or
+  // run, some of it as root): the skills download into a private folder (mktemp -d). The large files use stall detection,
+  // not a total limit that cuts a slow line still receiving, and a cut download leaves no file that looks installed.
+  const joinedLines = (text) => codeBlocks(text).flatMap((b) => b.lines.join('\n').replace(/\\\n\s*/g, ' ').split('\n'));
+  const fixedTmp = DL_DOCS.flatMap((f) => joinedLines(fs.readFileSync(path.join(root, f), 'utf8'))
+    .filter((l) => /\bcd \/(?:var\/)?tmp\b|(?:-o|-O|--output|--output-dir|--destdir|-C|>)[= ]?\s*"?\/(?:var\/)?tmp\b|\b\w+=\/(?:var\/)?tmp\//.test(l)).map((l) => `${f}: ${l.trim().slice(0, 60)}`));
+  const BIG = /jdt-language-server-latest|"\$VSIX_URL"|"\$FALLBACK"|LibreOffice_\$\{V\}_(?:Linux|MacOS)|releases\/latest\/download\/plantuml\.jar/;
+  const bigLines = DL_DOCS.flatMap((f) => joinedLines(fs.readFileSync(path.join(root, f), 'utf8'))
+    .filter((l) => /\bcurl -/.test(l) && BIG.test(l)).map((l) => [f, l]));
+  const noStall = bigLines.filter(([, l]) => !/--speed-limit 1000 --speed-time 30/.test(l) || /--max-time/.test(l)).map(([f, l]) => `${f}: ${l.trim().slice(0, 60)}`);
+  const docsSetup = fs.readFileSync(path.join(root, 'skills', 'docs-setup', 'SKILL.md'), 'utf8');
+  ok(fixedTmp.length === 0 && bigLines.length >= 5 && noStall.length === 0
+     && /-o ~\/bin\/plantuml\.jar\.part .*&& mv ~\/bin\/plantuml\.jar\.part ~\/bin\/plantuml\.jar;/s.test(docsSetup),
+     `airgap-4e: downloads go to a private folder, the large ones use stall detection, and plantuml.jar gets its name only when complete (fixed /tmp: ${JSON.stringify(fixedTmp)}, large ${bigLines.length}, no stall detection: ${JSON.stringify(noStall)})`);
+  // PowerShell: a script saved under a name another user can guess ($PID) in a shared TEMP can be swapped before it runs;
+  // it goes into a new folder with a GUID name, removed afterwards.
+  const psGuess = DL_DOCS.flatMap((f) => joinedLines(fs.readFileSync(path.join(root, f), 'utf8'))
+    .filter((l) => /\$env:TEMP\b/.test(l) && !/\[guid\]::NewGuid\(\)/.test(l)).map((l) => `${f}: ${l.trim().slice(0, 60)}`));
+  const pySkill = fs.readFileSync(path.join(root, 'skills', 'setup-python', 'SKILL.md'), 'utf8');
+  ok(psGuess.length === 0 && /\$D = Join-Path \$env:TEMP \(\[guid\]::NewGuid\(\)\)/.test(pySkill)
+     && /New-Item -ItemType Directory -ErrorAction Stop \$D/.test(pySkill) && /finally \{ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue \$D \}/.test(pySkill),
+     `airgap-4f: a PowerShell download goes into a new folder with a GUID name that is removed afterwards (guessable: ${JSON.stringify(psGuess)})`);
+  // The pip index check: pip's own settings (`pip config get` does not read PIP_CONFIG_FILE, `pip config list` does;
+  // install before global, the env first), and the user info of the index URL is cut before curl: a secret in a
+  // command's arguments shows in `ps` to the other users of the machine. Reachability needs no login (401 answers too).
+  const pyDocs = DL_DOCS.filter((f) => codeBlocks(fs.readFileSync(path.join(root, f), 'utf8')).some((b) => b.lines.some((l) => /\bpip config\b/.test(l))));
+  const pyBad = pyDocs.filter((f) => {
+    const lines = joinedLines(fs.readFileSync(path.join(root, f), 'utf8'));
+    const at = (re) => lines.findIndex((l) => re.test(l));
+    const li = at(/^L=\$\( \(cd ~ && \{ pip config list \|\| pip3 config list \|\| python3 -m pip config list; \}\) 2>\/dev\/null\)/), ins = at(/^I="\$\{PIP_INDEX_URL:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^install\\\.index-url=/);
+    const glo = at(/^I="\$\{I:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^global\\\.index-url=/);
+    const cut = at(/^I=\$\(printf %s "\$\{I:-https:\/\/pypi\.org\/simple\}" \| sed -E 's#\^\(\[A-Za-z\]\[A-Za-z0-9\+\.-\]\*:\/\/\)\[\^\/\]\*@#\\1#; s#\/\$##'\)/);
+    const get = at(/^curl -sSI -o \/dev\/null --connect-timeout 5 --max-time 10 "\$I\/pip\/"/);
+    return !(li >= 0 && li < ins && ins < glo && glo < cut && cut < get) || lines.some((l) => /\bcurl\b/.test(l) && /PIP_INDEX_URL|pip config|\$\{I:-/.test(l))
+      || lines.some((l) => /\bpython3? -m pip config\b/.test(l) && !/\(cd ~ && \{/.test(l));
+  });
+  ok(pyDocs.length === 6 && pyBad.length === 0,
+     `airgap-4g: the pip index check reads pip's settings and cuts the user info of the URL before curl (docs ${pyDocs.length}, wrong: ${JSON.stringify(pyBad)})`);
+  // LibreOffice run with a profile under a guessable /tmp name can start from a profile another user made first
+  // (macro settings included): the profile goes into a private folder.
+  const vpSetup = fs.readFileSync(path.join(root, 'skills', 'vertical-pptx-setup', 'SKILL.md'), 'utf8');
+  ok(!/\/tmp\/lo-profile/.test(vpSetup.replace(/`\/tmp\/lo-profile-\$\$` 처럼 짐작할 수 있는 이름은 쓰지 않는다/, ''))
+     && /`P=\$\(mktemp -d\)` 로 만든 개인 폴더를 `-env:UserInstallation=file:\/\/\$P` 로 주고, 끝나면 `rm -rf "\$P"` 로 지운다/.test(vpSetup),
+     'airgap-4h: the LibreOffice profile for automation goes into a private folder, not a guessable /tmp name');
+  // setup-mcp: `npx -y` and `uvx` ask the registry for a version at every start (offline: about 70 s, then a failure, each
+  // session); the offline path registers pinned, installed executables and leaves out the servers that are a network service.
+  const mcpSkill = fs.readFileSync(path.join(root, 'skills', 'setup-mcp', 'SKILL.md'), 'utf8');
+  ok(/npm i -g @modelcontextprotocol\/server-sequential-thinking@<판> @modelcontextprotocol\/server-filesystem@<판>/.test(mcpSkill)
+     && /claude mcp add sequential-thinking -s user -- mcp-server-sequential-thinking/.test(mcpSkill)
+     && /claude mcp add git -s user -- mcp-server-git/.test(mcpSkill)
+     && /네트워크가 필요한 서버\(context7, fetch, tavily\)는 등록하지 않/.test(mcpSkill),
+     'airgap-5: setup-mcp registers pinned installed executables offline and leaves out the network-service servers');
+  // A server registered online under the same name makes `claude mcp add` fail ("already exists"): the offline block
+  // removes each name first, as the online sections do, for Claude Code and Codex.
+  const mcpOffline = mcpSkill.slice(mcpSkill.indexOf('### 네트워크가 없는 곳 (오프라인 경로)'), mcpSkill.indexOf('## 3. Claude Code 배선'));
+  const removedFirst = (rm, add) => { const r = mcpOffline.indexOf(rm); return r >= 0 && mcpOffline.indexOf(add, r) > r; };
+  ok(['sequential-thinking', 'filesystem', 'git'].every((n) => removedFirst(`claude mcp remove ${n} -s user 2>/dev/null\n`, `claude mcp add ${n} -s user --`)
+       && removedFirst(`codex mcp remove ${n} 2>/dev/null;`, `codex mcp add ${n} --`))
+     && /`uvx <패키지>` 가 오프라인에서 어떻게 끝나는지는 재지 못했다\(미실측\)/.test(mcpOffline) && !/`uvx <패키지>` 는 서버를 띄울 때마다/.test(mcpOffline)
+     && /```bash\nFS_DIR="\$\{FS_DIR:-\$HOME\/projects\}"\ncodex mcp remove sequential-thinking/.test(mcpOffline),
+     'airgap-5b: the setup-mcp offline block removes an earlier registration before each add, and does not claim a measured uvx failure');
+  // A command quoted in a sentence is run as written: an npm view or ping there runs in the home folder too.
+  const npmSpans = [...DL_DOCS, path.join('skills', 'update-banker', 'SKILL.md')].flatMap((f) => [...fs.readFileSync(path.join(root, f), 'utf8')
+    .replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map((m) => m[1])
+    .filter((c) => (/\bnpm view (?!\.\.\.)\S+ \S+/.test(c) || /\bnpm ping --/.test(c)) && !/^(?:\(cd ~ && |Push-Location ~; )/.test(c)).map((c) => `${f}: ${c.slice(0, 60)}`));
+  ok(npmSpans.length === 0, `airgap-5c: npm view and ping commands quoted in sentences run in the home folder too (found ${JSON.stringify(npmSpans)})`);
+  // PowerShell: after npm in the home folder the shell comes back, else the next steps run in the home folder.
+  const noPop = [...DL_DOCS, path.join('skills', 'update-banker', 'SKILL.md')].flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').split(/\r?\n/)
+    .filter((l) => /Push-Location ~/.test(l) && !/Pop-Location/.test(l)).map((l) => `${f}: ${l.trim().slice(0, 60)}`));
+  ok(noPop.length === 0, `airgap-5d: each Push-Location ~ comes with Pop-Location (found ${JSON.stringify(noPop)})`);
+  // ffmpeg-static is an npm package: with no network it cannot come either, so it is no offline fallback. Offline, the
+  // skills point FFMPEG_PATH at an ffmpeg brought in beforehand.
+  const ffDocs = ['3d-intro-setup', 'motion-graphic-setup'].map((d) => [d, fs.readFileSync(path.join(root, 'skills', d, 'SKILL.md'), 'utf8')]);
+  // Wrong: offline among the cases of the ffmpeg-static fallback, or "오프라인이면" leading to ffmpeg-static as the way.
+  const ffWrong = ffDocs.flatMap(([d, t]) => t.split(/\r?\n/).filter((l) => /ffmpeg-static/.test(l)
+    && ((/폴백/.test(l) && /오프라인(?!이면 미리 받)/.test(l) && !/(?:받을|쓸) 수 없다/.test(l)) || (/오프라인이면[^.]*ffmpeg-static/.test(l) && !/받을 수 없다/.test(l))))
+    .map((l) => `${d}: ${l.trim().slice(0, 60)}`));
+  ok(ffWrong.length === 0 && ffDocs.every(([, t]) => /오프라인이면 `ffmpeg-static` 도 받을 수 없다/.test(t) && /미리 받아 둔 ffmpeg 실행 파일의 절대 경로/.test(t)),
+     `airgap-7: ffmpeg-static is not offered as the offline fallback; offline, FFMPEG_PATH points at an ffmpeg brought in beforehand (found ${JSON.stringify(ffWrong)})`);
+  // A tool called through npx asks the registry for a version each time (offline: about 70 s, then a failure): the skills
+  // that call one give the offline way (a pinned global install, then the executable by name), and Stitch says it needs the network.
+  const mgSetup = fs.readFileSync(path.join(root, 'skills', 'motion-graphic-setup', 'SKILL.md'), 'utf8');
+  const mgMake = fs.readFileSync(path.join(root, 'skills', 'motion-graphic-make', 'SKILL.md'), 'utf8');
+  const stitchSkill = fs.readFileSync(path.join(root, 'skills', 'setup-stitch', 'SKILL.md'), 'utf8');
+  ok(/npm i -g hyperframes@<판>/.test(mgSetup) && /`hyperframes <명령>` 을 직접 부른다/.test(mgSetup)
+     && /전역 설치한 `hyperframes doctor`/.test(mgMake) && /Stitch 는 원격 서비스라 네트워크가 없으면 쓸 수 없다/.test(stitchSkill),
+     'airgap-9: the npx tools have an offline way (global install, then the executable), and setup-stitch says it needs the network');
+  // motion-graphic-setup: the install check and the verification call the global hyperframes when there is one; npx (it
+  // downloads when nothing is installed: about 70 s offline, read as "not installed") only after the network check.
+  const mgNpx = joinedLines(mgSetup).filter((l) => /\bnpx hyperframes\b/.test(l) && !/command -v hyperframes\b/.test(l));
+  ok(mgNpx.length === 0 && !/`npx hyperframes doctor` 가 통과하면/.test(mgSetup)
+     && /^hf\(\) \{ if command -v hyperframes >\/dev\/null; then hyperframes "\$@"; else npx hyperframes "\$@"; fi; \}/m.test(mgSetup)
+     && /전역 설치가 있으면 `hyperframes doctor` 다\. 없으면 아래 네트워크 확인이 통과한 뒤에만 `npx hyperframes doctor` 를 부른다/.test(mgSetup)
+     && /오프라인이라 hyperframes 진단을 하지 못함/.test(mgSetup),
+     `airgap-9b: motion-graphic-setup calls the global hyperframes when installed and npx only after the network check (unguarded: ${JSON.stringify(mgNpx)})`);
+  // zsh does not split an unquoted variable into words: `X="a b"` then `$X ...` runs a command named "a b" there.
+  const splitVars = [...DL_DOCS, path.join('skills', 'update-banker', 'SKILL.md')].flatMap((f) => codeBlocks(fs.readFileSync(path.join(root, f), 'utf8'))
+    .flatMap((b) => {
+      const names = b.lines.flatMap((l) => [...l.matchAll(/(?:^|[;&|]\s*)(\w+)="[^"$]* [^"]*"/g)].map((m) => m[1]));
+      return b.lines.filter((l) => names.some((n) => new RegExp(`(?:^|[;&|]\\s*)\\$\\{?${n}\\b(?!\\})?(?!")`).test(l.trim())));
+    }).map((l) => `${f}: ${l.trim().slice(0, 60)}`));
+  ok(splitVars.length === 0, `airgap-9c: no code block runs a command from an unquoted variable holding words (zsh does not split it) (found ${JSON.stringify(splitVars)})`);
+  // audit-security: offline, npm audit exits 1 with only an error in its JSON and osv-scanner exits 127 with an empty
+  // list; read as results they count 0 vulnerabilities. A tool's output is read only when it is a result, else "미커버".
+  const asSkill = fs.readFileSync(path.join(root, 'skills', 'audit-security', 'SKILL.md'), 'utf8');
+  // The conditions are positive (an empty offline DB exits 0 with the same body as "no issues"; a negative "no error
+  // text" passes a tool that never ran): the output parses and shows that something was scanned.
+  ok(/\| npm audit \| 종료 코드 0 이나 1\. 본문이 JSON 이고 `error` 키가 없음\. `metadata\.dependencies\.total` 이 0 보다 큼 \| 실측 \|/.test(asSkill)
+     && /\| osv-scanner \| 종료 코드 0 이나 1\. 본문이 JSON\. stderr 의 `Scanned <파일> file and found <N> package` 의 N 합이 0 보다 큼 \| 실측 \|/.test(asSkill)
+     && /\| osv-scanner 오프라인 DB \| .*항목을 1개 이상 가짐 \| 실측 \|/.test(asSkill)
+     && ['trivy', 'grype', 'semgrep', 'pip-audit'].every((t) => new RegExp(`^\\| ${t} \\| 종료 코드 [^|]*본문이 JSON[^|]*\\| 미실측 \\|$`, 'm').test(asSkill))
+     && !/stderr 에 [^|]*(?:없음|없다) \| 미커버 \|/.test(asSkill)
+     && /0건으로 세지 않는다\. 리포트 Unknown 에 "미커버\(네트워크 없음 또는 대상 없음\): <도구>, 종료 <코드>, <stderr 첫 줄>" 로 적는다/.test(asSkill)
+     && /stderr 는 `\$OUT\/<도구>\.err` 로 따로 남기고 종료 코드를 적는다/.test(asSkill)
+     && /DB 의 기준일\(파일 수정 시각\)을 Evidence 에 적는다/.test(asSkill) && /`OUT="\$\{RESEARCH_DIR:-\$\(mktemp -d\)\}"; mkdir -p "\$OUT"`/.test(asSkill)
+     && /감사 대상 저장소 밖의 작업 폴더/.test(asSkill) && !/gitignored `\.audit\/`/.test(asSkill),
+     'airgap-2: audit-security reads a tool output as a result only when it parses and shows a scan, and writes "미커버" with the exit code and stderr instead of 0');
+  // deep-research with no web tool that works ends as "웹 조사 불가" instead of a report without sources, and ultra-chain's
+  // research gate does not pass on zero claims.
+  const drSkill = fs.readFileSync(path.join(root, 'skills', 'deep-research', 'SKILL.md'), 'utf8');
+  const ucSkill = fs.readFileSync(path.join(root, 'skills', 'ultra-chain', 'SKILL.md'), 'utf8');
+  ok(/검색과 fetch 가 모두 실패하면\(네트워크 없음\) 보고서를 만들지 않고 "웹 조사 불가: <오류>" 로 끝낸다/.test(drSkill)
+     && /`skipped` 와 이유 "네트워크 없음"/.test(ucSkill) && /주장이 0개면 게이트를 지나지 않은 것이다/.test(ucSkill)
+     && /수단이 있어도 호출이 모두 실패하면\(네트워크 없음\) 같다/.test(fs.readFileSync(path.join(root, 'skills', 'ultra-interview', 'SKILL.md'), 'utf8')),
+     'airgap-8: deep-research ends as "웹 조사 불가" when every web tool fails, and ultra-chain records the step as skipped');
+  // README and PRIVACY tell an offline user what really happens: which skills need the network and how each one ends
+  // without it, and that the hooks do not take HTTPS_PROXY.
+  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const offlineReadme = readme.slice(readme.indexOf('## 오프라인에서 쓰기'), readme.indexOf('## 라이선스'));
+  const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8');
+  ok(!/그 밖의 스킬/.test(offlineReadme) && /네트워크를 쓰지 않는 스킬\(예: /.test(offlineReadme)
+     && /`ultra-chain` 1단계/.test(offlineReadme) && /`motion-graphic-make`/.test(offlineReadme) && /`nothing-design`/.test(offlineReadme)
+     && /OS 패키지 관리자\(dnf, apt, brew, winget\)의 단계는 .*미리 판정하지 않고 시도합니다/.test(offlineReadme) && /단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다/.test(offlineReadme)
+     && [offlineReadme, privacy].every((t) => /훅은 `HTTPS_PROXY`, `HTTP_PROXY` 를 따르지 않습니다/.test(t)),
+     'airgap-11: the README offline section names the skills that need the network and how each ends, and both docs say the hooks ignore HTTPS_PROXY');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

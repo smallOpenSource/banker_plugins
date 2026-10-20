@@ -17,7 +17,7 @@ consensus는 고신뢰, 단일툴은 needs-review. 산출물은 방안·권고 �
 - 이전 세션/에이전트의 "취약점 없음" 주장을 **직접 재검증**할 때
 
 ## 불변 원칙
-1. **read-only**: 소스·`pom.xml`/`package.json`/`requirements.txt`/CI **일절 무변경**. 도구·러너·결과는 작업용 디렉터리(예: gitignored `.audit/` 또는 `$RESEARCH_DIR`)에 격리. 도구는 advisory DB만 조회(소스 미수정).
+1. **read-only**: 소스·`pom.xml`/`package.json`/`requirements.txt`/CI **일절 무변경**. 도구·러너·결과는 감사 대상 저장소 밖의 작업 폴더(`$RESEARCH_DIR`, 없으면 `mktemp -d` 로 만든 개인 폴더)에 격리. 저장소 안의 폴더(예: `.audit/`)는 쓰지 않는다. 저장소가 그 자리에 링크를 심어 두면 결과 쓰기가 링크 너머 파일을 덮는다. 만든 폴더의 경로는 리포트 Evidence 에 적는다. 다시 돌릴 러너와 결과를 오래 두려면 `RESEARCH_DIR` 로 저장소 밖 폴더를 준다(`/tmp` 는 OS 가 비울 수 있다). 도구는 advisory DB만 조회(소스 미수정).
 2. **시크릿 값 비노출**: 리포트·로그에 **secret value 절대 미기입**. `RuleID + file:LINE`만. 값 확인이 필요하면 사용자에게 "해당 file:LINE 직접 확인" 안내(cat/grep로 값 출력 금지).
 3. **local-first + 온라인 교차검증**: advisory DB는 로컬/공개(OSV·deps.dev·trivy-db)를 1차로, 온라인은 recall 보강용 교차검증만. **active-verify 금지** — 시크릿을 **실 엔드포인트에 인증 시도**하는 egress는 금지(특히 규제·민감 환경에선 절대 불가).
 4. **verify-before-claim**: 모든 finding은 `CVE-ID`/`RuleID` + `file:LINE` 동반. "0건 = 안전 보증" **금지**(semgrep CE는 intraprocedural — 함수 경계 taint 미추적; parse 실패 파일 = 미커버). 완료 전 4-field(① 변경 ② Evidence ③ 검증 ④ Unknown), ⏳=0일 때만 "완료".
@@ -41,7 +41,7 @@ consensus는 고신뢰, 단일툴은 needs-review. 산출물은 방안·권고 �
 
 - ⚠️ **오래된 glibc 환경**(예: RHEL8 glibc 2.28): Go 정적 바이너리(osv/trivy/grype/gitleaks)는 glibc 무관해 `~/.local/bin`에 두면 그대로 동작. Python wheel·ast-grep CLI는 glibc 2.29+ 요구로 실패할 수 있음 → semgrep은 **glibc 핀 venv**로 격리.
 - ⚠️ **`set -u` 주의**: 일부 쉘 init이 `$ZSH_VERSION` 등 unbound 변수를 참조해 `set -u`가 command-substitution 서브셸을 깨뜨릴 수 있음(다운로드 URL이 빈 문자열이 됨). 러너는 `set -o pipefail`만 권장.
-- ⚠️ **exit code 1 = 정상**(스캔 한정): osv/grype/gitleaks/npm audit는 "findings present"를 rc=1로 반환 — 에러 아님. (단 setup 러너의 exit 1은 "도구 미설치 잔존"으로 다름.)
+- ⚠️ **exit code 1 = 정상**(스캔 한정): osv/grype/gitleaks/npm audit는 "findings present"를 rc=1로 반환 — 에러 아님. (단 setup 러너의 exit 1은 "도구 미설치 잔존"으로 다름.) 그래도 결과로 읽기 전에 아래 "결과로 읽는 조건" 을 먼저 본다. 네트워크가 없으면 npm audit 도 rc 1 이지만 본문은 오류뿐이다.
 
 ## 2단계 — 스캔 (멱등, 전 서브앱)
 도구는 소스/`pom.xml`/`package.json`/CI 무변경. 3 카테고리:
@@ -54,6 +54,35 @@ consensus는 고신뢰, 단일툴은 needs-review. 산출물은 방안·권고 �
 | **grype** | `dir:$ROOT --exclude …` | (설치패키지/컨테이너용) | ⚠️ **소스 dir scan은 0건 가능** — lockfile 부적합. osv+trivy로 대체 |
 | **npm audit** | `(cd <frontend> && npm audit --json)` | `package-lock.json` | npm registry advisory |
 | **pip-audit** | `-r <requirements>.txt` | (PyPI+OSV) | ⚠️ 일부 env에서 실패 가능 → Python은 osv로 커버 |
+
+#### 결과로 읽는 조건 (네트워크 없음과 0건을 가른다)
+SCA 도구는 advisory DB 나 레지스트리를 네트워크에서 받는다. 네트워크가 없으면 결과 JSON 을 그대로 셀 때 0건이 된다.
+실측(osv-scanner 2.4.0, npm 11, 네트워크 없음):
+- 오프라인 `npm audit --json` 은 rc 1 이고, 본문은 `message` 와 `error` 뿐이다.
+- `osv-scanner scan source` 는 20초 뒤 rc 127 이고, stdout 이 빈다.
+- `--offline-vulnerabilities` 에 로컬 DB 가 없으면 rc 127 과 `{"results": []}` 이다.
+- 로컬 DB 가 비어 있으면 rc 0 과 `{"results": []}` 다. 문제없음과 모양이 같다.
+- 패키지 소스가 없으면 rc 128 이다. 네트워크가 아니라 대상이 없는 것이다.
+
+도구마다 stdout 은 `$OUT/<도구>.json`, stderr 는 `$OUT/<도구>.err` 로 따로 남기고 종료 코드를 적는다. `OUT` 은 1번 규칙의 작업 폴더다(`OUT="${RESEARCH_DIR:-$(mktemp -d)}"; mkdir -p "$OUT"`). 비어 있으면 `/<도구>.json` 에 쓰게 되므로 먼저 정한다. 아래 조건은 이 셋으로 본다. 조건을 모두 채워야 결과로 읽는다.
+
+| 도구 | 결과로 읽는 조건 | 실측 |
+|---|---|---|
+| npm audit | 종료 코드 0 이나 1. 본문이 JSON 이고 `error` 키가 없음. `metadata.dependencies.total` 이 0 보다 큼 | 실측 |
+| osv-scanner | 종료 코드 0 이나 1. 본문이 JSON. stderr 의 `Scanned <파일> file and found <N> package` 의 N 합이 0 보다 큼 | 실측 |
+| osv-scanner 오프라인 DB | 위 조건에 더해, stderr 의 `Loaded <생태계> local db from <경로>` 가 가리키는 파일이 항목을 1개 이상 가짐 | 실측 |
+| trivy | 종료 코드 0. 본문이 JSON 이고 `Results` 가 1개 이상 | 미실측 |
+| grype | 종료 코드 0 이나 1. 본문이 JSON 이고 `matches` 키가 있음. stderr 에 DB 오류가 없음 | 미실측 |
+| semgrep | 종료 코드 0 이나 1. 본문이 JSON 이고 `paths.scanned` 가 1개 이상. `errors` 에 규칙 내려받기 실패가 없음 | 미실측 |
+| pip-audit | 종료 코드 0 이나 1. 본문이 JSON 이고 `dependencies` 가 1개 이상 | 미실측 |
+
+- 조건을 하나라도 못 채운 도구는 0건으로 세지 않는다. 리포트 Unknown 에 "미커버(네트워크 없음 또는 대상 없음): <도구>, 종료 <코드>, <stderr 첫 줄>" 로 적는다.
+- 이유를 짐작해 하나로 정하지 않는다. osv-scanner 의 128 은 패키지 소스 없음이고, npm audit 의 `ENOLOCK` 은 잠금 파일 없음이다.
+- 미실측 행은 이 머신에 도구가 없어 출력 모양을 재지 못한 조건이다. 실제 출력이 조건과 달라 판단이 서지 않으면 미커버로 적는다.
+- 오프라인 DB 로 돌렸으면 DB 의 기준일(파일 수정 시각)을 Evidence 에 적는다. 그 뒤에 나온 advisory 는 Unknown 에 미커버로 적는다.
+- 한 축의 도구가 모두 미커버면 그 축 전체를 미커버로 적는다.
+- Secrets 축(gitleaks, detect-secrets)은 로컬이라 네트워크와 관계없다.
+- 오프라인에서 돌리는 길: osv-scanner `--offline-vulnerabilities`(미리 받은 DB), trivy `--skip-db-update --offline-scan`(DB 사본), grype `GRYPE_DB_AUTO_UPDATE=false`(가져온 DB), semgrep 은 로컬 규칙 파일(`--config <파일>`). 판마다 이름이 다를 수 있어 `--help` 로 확인한다.
 
 ### SAST (소스 정적) — semgrep CE
 ```

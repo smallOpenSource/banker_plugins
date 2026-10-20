@@ -77,6 +77,26 @@ test('status: 업데이트-체크 캐시 반영 (마지막 체크 시각 · 캐�
   assert.match(out, /업데이트 있음/);
 }));
 
+test('status: 마지막으로 실패한 시도는 마지막 체크와 따로 보인다', () => withXdg((dir) => {
+  const checkedAt = 1700000000000;
+  const triedAt = checkedAt + 3600000;
+  writeUpdateCacheFixture(dir, { latest: '999.0.0', checkedAt, triedAt });
+  const { out, code } = run(['telemetry', 'status'], dir);
+  assert.equal(code, 0);
+  assert.ok(out.includes(`마지막 시도: ${new Date(triedAt).toISOString()}`), out);
+  assert.match(out, /마지막 시도: [^\n]*실패/);
+  writeUpdateCacheFixture(dir, { latest: '999.0.0', checkedAt: triedAt + 1, triedAt });
+  assert.doesNotMatch(run(['telemetry', 'status'], dir).out, /마지막 시도:/, '그 뒤에 성공했으면 보이지 않는다');
+  writeUpdateCacheFixture(dir, { checkedAt: 1e20, triedAt: 8.64e15 + 1 });     // 날짜로 바꿀 수 없는 값
+  assert.equal(run(['telemetry', 'status'], dir).code, 0, '깨진 시각에도 멈추지 않는다');
+  writeUpdateCacheFixture(dir, { triedAt });                                // 확인에 성공한 적이 없는 캐시
+  const tried = run(['telemetry', 'status'], dir).out;
+  assert.match(tried, /비교 불가 \(확인에 성공한 적이 없어 최신 버전 정보 없음\)/, tried);
+  assert.doesNotMatch(tried, /캐시 없음 또는 malformed/, '캐시는 있고 깨지지 않았다');
+  writeUpdateCacheFixture(dir, null);                                       // 객체가 아닌 JSON
+  assert.equal(run(['telemetry', 'status'], dir).code, 0, 'null 캐시에도 멈추지 않는다');
+}));
+
 test('status: 업데이트-체크 캐시 자리가 FIFO 여도 기다리지 않는다', { skip: process.platform === 'win32' && 'Windows 에는 FIFO 가 없다' }, () => withXdg((dir) => {
   fs.mkdirSync(path.join(dir, 'banker'), { recursive: true });
   assert.strictEqual(spawnSync('mkfifo', [updateCachePath(dir)]).status, 0, 'mkfifo');

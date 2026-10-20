@@ -28,6 +28,20 @@ if (Get-Command node -ErrorAction SilentlyContinue) { node -v } else { "node: �
 if (Get-Command nvm  -ErrorAction SilentlyContinue) { nvm version } else { "nvm-windows: 미설치" }
 ```
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://raw.githubusercontent.com   # nvm 설치 스크립트(GitHub)
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://nodejs.org/dist/            # nvm 이 받는 Node
+```
+
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. Rocky Linux 8
 ```bash
 command -v curl >/dev/null && command -v git >/dev/null || sudo dnf install -y curl git
@@ -50,17 +64,20 @@ command -v curl >/dev/null && command -v git >/dev/null || sudo apt install -y c
 ## nvm 공통 설치 (Rocky8·Ubuntu·Debian·macOS)
 ```bash
 # 최신 nvm 릴리스 태그 자동확인(하드코딩 회피). 실패 시 수동 확인 안내
-NVM_LATEST=$(curl -fsSL https://api.github.com/repos/nvm-sh/nvm/releases/latest \
+NVM_LATEST=$(curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/nvm-sh/nvm/releases/latest \
   | grep -m1 '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
 if [ -z "$NVM_LATEST" ]; then
-  echo "⚠️ 최신 태그 자동확인 실패. https://github.com/nvm-sh/nvm/releases 에서 수동 확인 후 <TAG> 치환"
-  NVM_LATEST="<TAG>"
+  echo "nvm 최신 태그를 받지 못했습니다. 설치하지 않습니다(https://github.com/nvm-sh/nvm/releases 에서 태그를 확인해 다시 실행)."
+else
+  T=$(mktemp -d)
+  curl -fsSL --connect-timeout 10 --max-time 120 -o "$T/install.sh" \
+    "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh" && bash "$T/install.sh"
+  rm -rf "$T"
 fi
-curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh" | bash
 
-# 설치 스크립트가 rc 파일을 자동 갱신하나, 컨테이너 등 미반영 환경 대비 idempotent 마커도 병행
+# 설치 스크립트가 rc 파일을 자동 갱신하나, 컨테이너 등 미반영 환경 대비 idempotent 마커도 병행(nvm 이 깔렸을 때만)
 RC_FILE="$HOME/.bashrc"    # macOS는 $HOME/.zshrc
-grep -q '### BANKER_NODE_BEGIN ###' "$RC_FILE" || cat >> "$RC_FILE" <<'EOF'
+[ -s "$HOME/.nvm/nvm.sh" ] && { grep -q '### BANKER_NODE_BEGIN ###' "$RC_FILE" || cat >> "$RC_FILE"; } <<'EOF'
 
 ### BANKER_NODE_BEGIN ###
 export NVM_DIR="$HOME/.nvm"

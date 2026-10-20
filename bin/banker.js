@@ -26,6 +26,12 @@ function version() {
 }
 function log(...a) { console.log(...a); }
 function warn(...a) { console.error(...a); }
+// 캐시에 적힌 밀리초 시각의 ISO 글, 없거나 날짜로 바꿀 수 없으면(깨진 캐시) ''.
+function isoTime(t) {
+  if (typeof t !== 'number' || !Number.isFinite(t)) return '';
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+}
 
 // GitHub 저장소에 별을 단다 (gh CLI 인증 사용). star 는 repo 쓰기 권한이 필요 없어 인증된 어느 계정으로도
 // 가능하다. gh 미설치/미인증/실패는 {ok:false, reason} 로 반환해 호출부가 URL 안내로 폴백하게 한다.
@@ -311,50 +317,82 @@ const TELEMETRY_USAGE = `Usage: banker telemetry <on|off|status>
 
 async function telemetryCmd(sub) {
   const tc = await loadTelemetry();
-  if (sub === 'on' || sub === 'off') {
-    const cfg = tc.readConfig();
-    if (sub === 'off') cfg.telemetry = false;                        // opt-out 저장
-    else delete cfg.telemetry;                                       // opt-out 해제: 기본-on 으로 복귀
-    if (!tc.writeConfig(cfg)) {
-      warn('banker: 설정을 저장하지 못했습니다 (config 쓰기 실패).');
-      process.exitCode = 1;
-      return;
-    }
-    if (sub === 'off') {
-      log('카운팅을 껐습니다 (off). config.telemetry=false 로 opt-out 을 저장했습니다.');
-    } else {
-      log('카운팅 opt-out 을 해제했습니다 (on). 기본값(켜짐)으로 복귀합니다.');
-      if (!tc.endpoint()) log('참고: 엔드포인트가 설정되어 있지 않아 지금은 아무것도 전송하지 않습니다.');
-    }
-    return;
-  }
+  if (sub === 'on' || sub === 'off') return telemetrySwitch(tc, sub);
   if (sub === 'status') {
-    const cfg = tc.readConfig();
-    const v = process.env.BANKER_NO_TELEMETRY;
-    const envOptOut = !(v === undefined || v === '' || v === '0' || v === 'false');
-    const cfgOptOut = cfg.telemetry === false;
-    log('banker 상태:');
-    log('[카운팅] 익명 사용량 카운팅 (기본값: 켜짐 · count-default-on)');
-    log(`  엔드포인트 설정: ${tc.endpoint() != null ? '설정됨' : '미설정'}`);
-    log(`  opt-out(BANKER_NO_TELEMETRY): ${envOptOut ? '적용됨' : '미적용'}`);
-    log(`  opt-out(config.telemetry=false): ${cfgOptOut ? '적용됨' : '미적용'}`);
-    log(`  실효 상태(effective): ${tc.countingActive() ? 'enabled' : 'disabled'}`);
-    log('  참고: 엔드포인트가 설정되어 있고 opt-out 이 아닐 때(env·config 둘 다 아님)만 실제로 전송됩니다.');
-
-    let cache = {};
-    try { cache = JSON.parse(tc.readRegular(tc.UPDATE_CHECK_PATH)); } catch { /* 캐시 없음/malformed/일반 파일 아님(FIFO 를 기다리지 않음) */ }
-    const installed = tc.installedVersion();
-    const cmp = (cache.latest && installed) ? tc.compareVersions(cache.latest, installed) : null;
-    log('[업데이트 체크] 새 버전 알림 (기본값: 켜짐)');
-    log(`  opt-out(BANKER_NO_UPDATE_CHECK/config.updateCheck=false): ${tc.noUpdateCheck() ? '적용됨' : '미적용'}`);
-    log(`  마지막 체크: ${cache.checkedAt ? new Date(cache.checkedAt).toISOString() : '없음'}`);
-    log(`  캐시된 최신 버전: ${cache.latest || '없음'} / 설치된 버전: ${installed || '알 수 없음'}`);
-    log(cmp === null ? '  비교 불가 (캐시 없음 또는 malformed)'
-      : cmp > 0 ? `  업데이트 있음 (${installed} → ${cache.latest})`
-      : '  최신 버전 사용 중');
+    printCountingStatus(tc);
+    printUpdateCheckStatus(tc);
     return;
   }
   log(TELEMETRY_USAGE);                                              // 알 수 없는 하위명령: 사용법 출력
+}
+
+// `telemetry on|off`: config 에 opt-out 을 저장하거나(off) 지워 기본값(켜짐)으로 돌아간다(on).
+function telemetrySwitch(tc, sub) {
+  const cfg = tc.readConfig();
+  if (sub === 'off') cfg.telemetry = false;                          // opt-out 저장
+  else delete cfg.telemetry;                                         // opt-out 해제: 기본-on 으로 복귀
+  if (!tc.writeConfig(cfg)) {
+    warn('banker: 설정을 저장하지 못했습니다 (config 쓰기 실패).');
+    process.exitCode = 1;
+    return;
+  }
+  if (sub === 'off') {
+    log('카운팅을 껐습니다 (off). config.telemetry=false 로 opt-out 을 저장했습니다.');
+    return;
+  }
+  log('카운팅 opt-out 을 해제했습니다 (on). 기본값(켜짐)으로 복귀합니다.');
+  if (!tc.endpoint()) log('참고: 엔드포인트가 설정되어 있지 않아 지금은 아무것도 전송하지 않습니다.');
+}
+
+// `telemetry status` 의 카운팅 절: 엔드포인트, 두 opt-out, 그 결과.
+function printCountingStatus(tc) {
+  const cfg = tc.readConfig();
+  const v = process.env.BANKER_NO_TELEMETRY;
+  const envOptOut = !(v === undefined || v === '' || v === '0' || v === 'false');
+  log('banker 상태:');
+  log('[카운팅] 익명 사용량 카운팅 (기본값: 켜짐 · count-default-on)');
+  log(`  엔드포인트 설정: ${tc.endpoint() != null ? '설정됨' : '미설정'}`);
+  log(`  opt-out(BANKER_NO_TELEMETRY): ${envOptOut ? '적용됨' : '미적용'}`);
+  log(`  opt-out(config.telemetry=false): ${cfg.telemetry === false ? '적용됨' : '미적용'}`);
+  log(`  실효 상태(effective): ${tc.countingActive() ? 'enabled' : 'disabled'}`);
+  log('  참고: 엔드포인트가 설정되어 있고 opt-out 이 아닐 때(env·config 둘 다 아님)만 실제로 전송됩니다.');
+}
+
+// `telemetry status` 의 업데이트 확인 절: opt-out, 마지막 확인과 실패한 시도, 캐시의 최신 버전과 설치 버전.
+function printUpdateCheckStatus(tc) {
+  const cache = readUpdateCacheFile(tc);
+  const installed = tc.installedVersion();
+  log('[업데이트 체크] 새 버전 알림 (기본값: 켜짐)');
+  log(`  opt-out(BANKER_NO_UPDATE_CHECK/config.updateCheck=false): ${tc.noUpdateCheck() ? '적용됨' : '미적용'}`);
+  printLastChecks(cache);
+  log(`  캐시된 최신 버전: ${cache.latest || '없음'} / 설치된 버전: ${installed || '알 수 없음'}`);
+  log(versionVerdict(tc, cache, installed));
+}
+
+// update-check 캐시 객체. 없음, malformed, 객체가 아닌 JSON, 일반 파일 아님(FIFO 를 기다리지 않음)은 {}.
+function readUpdateCacheFile(tc) {
+  try {
+    const cache = JSON.parse(tc.readRegular(tc.UPDATE_CHECK_PATH));
+    return cache && typeof cache === 'object' && !Array.isArray(cache) ? cache : {};
+  } catch {
+    return {};
+  }
+}
+
+// 마지막 확인 시각, 그리고 그 뒤에 실패한 시도가 있으면 그 시각.
+function printLastChecks(cache) {
+  log(`  마지막 체크: ${isoTime(cache.checkedAt) || '없음'}`);
+  if (isoTime(cache.triedAt) && !(cache.triedAt <= cache.checkedAt)) {
+    log(`  마지막 시도: ${isoTime(cache.triedAt)} (실패. 그 뒤 24시간은 다시 시도하지 않습니다)`);
+  }
+}
+
+// 캐시의 최신 버전과 설치 버전을 견준 한 줄.
+function versionVerdict(tc, cache, installed) {
+  if (!cache.latest && Object.keys(cache).length) return '  비교 불가 (확인에 성공한 적이 없어 최신 버전 정보 없음)';
+  const cmp = (cache.latest && installed) ? tc.compareVersions(cache.latest, installed) : null;
+  if (cmp === null) return '  비교 불가 (캐시 없음 또는 malformed)';
+  return cmp > 0 ? `  업데이트 있음 (${installed} → ${cache.latest})` : '  최신 버전 사용 중';
 }
 
 const HELP = `banker v${version()} — install the banker plugin into Claude Code and/or Codex CLI

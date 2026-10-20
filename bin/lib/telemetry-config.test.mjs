@@ -597,3 +597,17 @@ test('collectBody: 한도를 넘은 뒤 오는 data, error, end 는 done 을 다
   assert.deepStrictEqual(calls, [null]);
   assert.strictEqual(destroyed, 1);
 });
+
+test('updateCheckDue: 마지막 성공(checkedAt)과 마지막 실패한 시도(triedAt) 중 늦은 것에서 하루가 지나야 다시 확인한다', async () => {
+  const { updateCheckDue } = await import('./telemetry-config.mjs');
+  const now = 1800000000000;
+  const day = UPDATE_THROTTLE_MS;
+  assert.strictEqual(updateCheckDue(null, now), true, '캐시 없음');
+  assert.strictEqual(updateCheckDue({}, now), true, '두 시각 모두 없음');
+  assert.strictEqual(updateCheckDue({ checkedAt: now - day + 1 }, now), false, '성공한 지 하루 안');
+  assert.strictEqual(updateCheckDue({ checkedAt: now - day }, now), true, '성공한 지 꼭 하루');
+  assert.strictEqual(updateCheckDue({ checkedAt: now - 3 * day, triedAt: now - 1000 }, now), false, '실패한 시도도 하루를 쉰다');
+  assert.strictEqual(updateCheckDue({ checkedAt: now - 1000, triedAt: now - 3 * day }, now), false, '옛 실패가 새 성공을 앞지르지 않는다');
+  assert.strictEqual(updateCheckDue({ checkedAt: now - 2 * day, triedAt: now - day }, now), true, '둘 다 하루가 지남');
+  assert.strictEqual(updateCheckDue({ checkedAt: 'x', triedAt: null }, now), true, '숫자가 아닌 값은 없는 것으로 본다');
+});

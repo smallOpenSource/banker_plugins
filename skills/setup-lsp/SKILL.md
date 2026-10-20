@@ -40,6 +40,33 @@ ls src/main/resources/application.* >/dev/null 2>&1 && echo "lang: spring"
 ```
 > Windows(PowerShell): `Get-Command claude,codex,npm,pipx,java`, `Test-Path tsconfig.json,pom.xml` 등으로 동일 감지. jdtls 는 `jdtls.bat`.
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)                              # ts, bash 서버(npm)
+L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null)   # 홈 폴더에서. pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함), install 절이 global 절보다 앞선다
+I="${PIP_INDEX_URL:-$(printf '%s\n' "$L" | sed -n "s/^install\.index-url='\(.*\)'$/\1/p")}"
+I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
+I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보(비밀)는 뗌
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "$I/pip/"   # py 서버(pipx)
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://download.eclipse.org   # jdtls
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com             # Spring Boot LS, lsp-mcp
+```
+
+- `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
+- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && { npm view bash-language-server version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r; })` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`bash-language-server`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다.
+- `npm` 이 없으면(명령 없음) 오프라인이 아니라 확인하지 못한 것이다. Node 를 먼저 갖춘다(`setup-node`).
+- `npm ping` 은 npm 의 프록시 설정(`proxy`, `https-proxy`)을 따른다. 사내 미러만 열린 망이면 그 미러가 쓰이는지 npm 설정을 본다.
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config list` 의 `install.index-url` 이나 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
+- `pip config get` 은 `PIP_CONFIG_FILE` 로 준 파일을 읽지 않아(pip 25.0 실측) `pip config list` 를 읽는다.
+- 홈 폴더에서 읽는다. `python3 -m pip` 는 지금 폴더를 import 경로 맨 앞에 두어, 지금 폴더에 있는 남의 저장소의 `pip/` 가 실행될 수 있다.
+- 색인 주소에 든 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 명령 인자에 실린 비밀은 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+
 ## 1. 사전요구(preflight)
 
 각 서버는 선행 런타임이 필요하다 - **없으면 먼저 해당 setup 스킬을 실행**(추정·강행 금지):
@@ -86,10 +113,11 @@ for c in basedpyright-langserver ruff; do command -v $c >/dev/null && echo "✓ 
 **jdtls (Java LSP)** - Eclipse 최신 스냅샷:
 ```bash
 mkdir -p ~/.local/jdtls
-curl -fLo /tmp/jdtls.tar.gz \
-  "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz"
-tar -xzf /tmp/jdtls.tar.gz -C ~/.local/jdtls
-rm /tmp/jdtls.tar.gz
+T=$(mktemp -d) \
+  && curl -fL --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o "$T/jdtls.tar.gz" \
+       "https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz" \
+  && tar -xzf "$T/jdtls.tar.gz" -C ~/.local/jdtls
+rm -rf "$T"
 chmod +x ~/.local/jdtls/bin/jdtls
 which jdtls        # PATH 에 ~/.local/jdtls/bin 필요
 ```
@@ -98,12 +126,12 @@ which jdtls        # PATH 에 ~/.local/jdtls/bin 필요
 **Spring Boot Language Server** - VSIX(=ZIP) 다운로드. vsassets.io/marketplace 가 **HTML 에러페이지**를 반환할 수 있어 **ZIP 매직바이트(`504b0304`) 검증** 후 `find` 로 `*-exec.jar` 탐색 + 심볼릭 링크:
 ```bash
 set -euo pipefail
-TARGET="$HOME/.local/spring-boot-ls"; VSIX=/tmp/sbls.vsix; LINK=spring-boot-language-server.jar
+TARGET="$HOME/.local/spring-boot-ls"; T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; VSIX="$T/sbls.vsix"; LINK=spring-boot-language-server.jar
 mkdir -p "$TARGET"
 VSIX_URL="https://vmware.gallery.vsassets.io/_apis/public/gallery/publisher/vmware/extension/vscode-spring-boot/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage"
 FALLBACK="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/vmware/vsextensions/vscode-spring-boot/latest/vspackage"
-curl -fL --connect-timeout 30 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$VSIX_URL" 2>/dev/null \
-  || curl -fL --connect-timeout 30 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$FALLBACK"
+curl -fL --connect-timeout 30 --speed-limit 1000 --speed-time 30 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$VSIX_URL" 2>/dev/null \
+  || curl -fL --connect-timeout 30 --speed-limit 1000 --speed-time 30 --retry 2 -H "User-Agent: Mozilla/5.0" -o "$VSIX" "$FALLBACK"
 # ZIP 매직 검증 (HTML 에러페이지면 즉시 중단)
 [ "$(xxd -l 4 "$VSIX" | awk 'NR==1{print $2$3}')" = "504b0304" ] \
   || { echo "✗ ZIP 아님(HTML 에러페이지?)"; rm -f "$VSIX"; exit 1; }
@@ -118,7 +146,7 @@ rm -f "$VSIX"; find ~/.local/spring-boot-ls -name "$LINK" -ls
 ## 6. lsp-mcp 브리지 설치 (Codex 경로 - Claude Code 는 건너뜀)
 ```bash
 mkdir -p ~/.local/src
-git clone https://github.com/CesarPetrescu/lsp-mcp.git ~/.local/src/lsp-mcp
+git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 clone https://github.com/CesarPetrescu/lsp-mcp.git ~/.local/src/lsp-mcp
 pipx install --editable ~/.local/src/lsp-mcp     # → ~/.local/bin/codex-lsp-bridge (Windows: .exe)
 which codex-lsp-bridge && codex-lsp-bridge --help | head -5
 ```

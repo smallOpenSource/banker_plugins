@@ -37,6 +37,11 @@ function readCache(tmp) {
   return JSON.parse(readFileSync(cachePath(tmp), 'utf8'));
 }
 
+// A run that got no version writes the time it tried and nothing else: no latest, no checkedAt.
+function assertOnlyTried(tmp, msg) {
+  assert.deepEqual(Object.keys(readCache(tmp)), ['triedAt'], msg);
+}
+
 function fetchEnv(tmp, npmUrl) {
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_UPDATE_CHECK;
@@ -157,40 +162,56 @@ test('node:crypto 만 막아도 받은 latest 를 캐시에 쓴다(맨 위에서
   }
 });
 
-test('빈 응답 본문 → 캐시 미기록', async () => {
+test('빈 응답 본문 → 버전 미기록(시도 시각만)', async () => {
   const tmp = mkTmp();
   const server = await mockServer({ body: '' });
   try {
     const port = server.address().port;
     const code = await runFetch(tmp, `http://127.0.0.1:${port}/latest`);
     assert.equal(code, 0);
-    assert.ok(!existsSync(cachePath(tmp)), '빈 본문이면 캐시 파일조차 안 만든다');
+    assertOnlyTried(tmp, '빈 본문이면 버전을 쓰지 않는다');
   } finally {
     server.close();
   }
 });
 
-test('malformed JSON 응답 → 캐시 미기록', async () => {
+test('조회가 실패하면 시도 시각(triedAt)만 쓰고, 그 뒤 하루 안의 실행은 다시 조회하지 않는다', async () => {
+  const tmp = mkTmp();
+  let hits = 0;
+  const server = http.createServer((req, res) => { hits++; res.writeHead(500); res.end(); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/latest`;
+    assert.equal(await runFetch(tmp, url), 0);
+    assertOnlyTried(tmp, '버전을 얻지 못한 실행은 시도 시각만 쓴다');
+    assert.equal(await runFetch(tmp, url), 0);
+    assert.equal(hits, 1, '실패한 뒤 하루 안에는 다시 조회하지 않는다(네트워크 없는 곳에서 세션마다 기다리지 않음)');
+  } finally {
+    server.close();
+  }
+});
+
+test('malformed JSON 응답 → 버전 미기록(시도 시각만)', async () => {
   const tmp = mkTmp();
   const server = await mockServer({ body: 'not json {' });
   try {
     const port = server.address().port;
     const code = await runFetch(tmp, `http://127.0.0.1:${port}/latest`);
     assert.equal(code, 0);
-    assert.ok(!existsSync(cachePath(tmp)));
+    assertOnlyTried(tmp, 'malformed JSON - 버전을 쓰지 않는다');
   } finally {
     server.close();
   }
 });
 
-test('version 필드 없음/비문자열 응답 → 캐시 미기록', async () => {
+test('version 필드 없음/비문자열 응답 → 버전 미기록(시도 시각만)', async () => {
   const tmp = mkTmp();
   const server = await mockServer({ body: { error: 'not found' } }); // version 없음.
   try {
     const port = server.address().port;
     const code = await runFetch(tmp, `http://127.0.0.1:${port}/latest`);
     assert.equal(code, 0);
-    assert.ok(!existsSync(cachePath(tmp)), 'version 필드 없음 - 캐시 미기록');
+    assertOnlyTried(tmp, 'version 필드 없음 - 버전을 쓰지 않는다');
   } finally {
     server.close();
   }
@@ -201,13 +222,13 @@ test('version 필드 없음/비문자열 응답 → 캐시 미기록', async () 
     const port2 = server2.address().port;
     const code2 = await runFetch(tmp2, `http://127.0.0.1:${port2}/latest`);
     assert.equal(code2, 0);
-    assert.ok(!existsSync(cachePath(tmp2)), 'version 비문자열 - 캐시 미기록');
+    assertOnlyTried(tmp2, 'version 비문자열 - 버전을 쓰지 않는다');
   } finally {
     server2.close();
   }
 });
 
-test('3xx 리다이렉트는 따라가지 않고 no-op(캐시 미기록)', async () => {
+test('3xx 리다이렉트는 따라가지 않고 no-op(버전 미기록, 시도 시각만)', async () => {
   const tmp = mkTmp();
   const server = http.createServer((req, res) => {
     res.writeHead(302, { location: 'http://127.0.0.1:1/elsewhere' });
@@ -218,7 +239,7 @@ test('3xx 리다이렉트는 따라가지 않고 no-op(캐시 미기록)', async
     const port = server.address().port;
     const code = await runFetch(tmp, `http://127.0.0.1:${port}/latest`);
     assert.equal(code, 0);
-    assert.ok(!existsSync(cachePath(tmp)), '리다이렉트를 따라가지 않고 캐시 미기록');
+    assertOnlyTried(tmp, '리다이렉트를 따라가지 않고 버전을 쓰지 않는다');
   } finally {
     server.close();
   }
@@ -231,7 +252,7 @@ test('네트워크 오류(닫힌 포트) → no-op·exit 0·hang 없음', () => 
     const res = spawnSync(process.execPath, [FETCH_HOOK], { encoding: 'utf8', env: fetchEnv(tmp, `http://127.0.0.1:${port}/latest`) });
     const elapsed = Date.now() - start;
     assert.equal(res.status, 0);
-    assert.ok(!existsSync(cachePath(tmp)), '연결 거부 - 캐시 미기록');
+    assertOnlyTried(tmp, '연결 거부 - 시도 시각만 쓴다');
     assert.ok(elapsed < 9000, `hang 없이 빠르게 종료(${elapsed}ms)`);
   });
 });
@@ -245,12 +266,12 @@ test('비-https 비-loopback URL 은 전송 시도 없이 즉시 no-op', () => {
   const elapsed = Date.now() - start;
   assert.equal(res.status, 0);
   assert.ok(elapsed < 3000, `가드가 즉시 no-op 이어야 한다(${elapsed}ms)`);
-  assert.ok(!existsSync(cachePath(tmp)), '차단됐으므로 캐시 미기록');
+  assertOnlyTried(tmp, '차단돼도 시도 시각만 쓴다(하루를 쉼)');
 });
 
 test('https 스킴은 loopback 여부와 무관하게 통과한다(가드가 조기 차단하지 않는다)', () => {
   // TLS 핸드셰이크까지는 요구하지 않는다 - 닫힌 포트라 즉시 거부되지만, 핵심은 가드가 finish(null)
-  // 로 미리 막지 않고 transport.request(https) 까지 도달한다는 것. 실패해도 캐시 미기록·exit 0.
+  // 로 미리 막지 않고 transport.request(https) 까지 도달한다는 것. 실패하면 시도 시각(triedAt)만 쓰고 exit 0.
   const tmp = mkTmp();
   return closedPort().then((port) => {
     const start = Date.now();
@@ -258,7 +279,7 @@ test('https 스킴은 loopback 여부와 무관하게 통과한다(가드가 조
     const elapsed = Date.now() - start;
     assert.equal(res.status, 0);
     assert.ok(elapsed < 9000, `https 경로도 hang 없이 종료(${elapsed}ms)`);
-    assert.ok(!existsSync(cachePath(tmp)), 'https 실패 시 캐시 미기록');
+    assertOnlyTried(tmp, 'https 실패 시 시도 시각만 쓴다');
   });
 });
 
@@ -311,14 +332,14 @@ test('loopback http 판별 가드가 배선돼 있다(::1/127.0.0.1/localhost)',
 });
 
 
-test('npm 응답이 256KiB 한도를 넘으면 연결을 끊고 캐시를 쓰지 않는다', async () => {
+test('npm 응답이 256KiB 한도를 넘으면 연결을 끊고 버전을 쓰지 않는다', async () => {
   const body = '{"version":"99.0.0","pad":"' + 'a'.repeat(1024 * 1024) + '"}';
   const server = await mockServer({ body });
   try {
     const tmp = mkTmp();
     const code = await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`);
     assert.equal(code, 0);
-    assert.ok(!existsSync(cachePath(tmp)), '한도를 넘은 응답의 version 은 쓰지 않는다');
+    assertOnlyTried(tmp, '한도를 넘은 응답의 version 은 쓰지 않는다');
   } finally {
     server.close();
   }
@@ -342,7 +363,7 @@ test('조금씩 계속 보내는 서버에도 교환 전체 마감에 끊고 끝
     });
     assert.equal(code, 0);
     assert.ok(Date.now() - start < 8000, '마감에 끊긴다');
-    assert.ok(!existsSync(cachePath(tmp)));
+    assertOnlyTried(tmp, '마감에 끊긴 응답의 version 은 쓰지 않는다');
   } finally {
     server.closeAllConnections?.();
     server.close();

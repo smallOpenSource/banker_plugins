@@ -31,6 +31,19 @@ git config --global --get-all safe.directory 2>/dev/null
 [ -f ~/.claude/settings.json ] && grep -A3 '"sandbox"' ~/.claude/settings.json
 ```
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://sh.rustup.rs   # rust, cargo(4단계)
+```
+
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. Linux - bubblewrap + socat + userns sysctl
 ### Rocky Linux 8 / RHEL8
 ```bash
@@ -87,7 +100,12 @@ command -v sandbox-exec >/dev/null && echo "Seatbelt 내장 OK"
 
 ## 4. 폴드인 - rust/cargo
 ```bash
-command -v cargo >/dev/null || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+command -v cargo >/dev/null || {
+  T=$(mktemp -d)
+  curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 120 -o "$T/rustup-init.sh" https://sh.rustup.rs \
+    && sh "$T/rustup-init.sh" -y                    # 받았을 때만 실행
+  rm -rf "$T"
+}
 source "$HOME/.cargo/env" 2>/dev/null
 cargo --version
 ```

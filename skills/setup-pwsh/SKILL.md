@@ -29,6 +29,18 @@ Get-Command git, pwsh -ErrorAction SilentlyContinue
   에서는 `$null`(미정의)** 이다 - `$IsWindows` 로만 판정하면 진짜 Windows 를 비-Windows 로 오판해 no-op 한다. 보조 신호로만 쓴다.
 - 비-Windows(PowerShell 없이 `uname` 만)면 **"Windows 전용 - 해당 없음"** 을 보고하고 멈춘다(no-op 도 유효한 결과).
 
+### 네트워크 확인 (내려받기 전)
+
+winget 의 기본 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 winget 을 부르지 않고, 이미 설치된 pwsh 의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: PowerShell 7)" 으로 보고한다.
+
+```powershell
+curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 https://cdn.winget.microsoft.com/cache  # winget 의 기본 원천(머리만)
+$LASTEXITCODE                                                                                 # 0 이면 닿음
+```
+
+- PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이라 `curl.exe` 로 부른다. `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. 시스템 프록시만 쓰는 망이면 `HTTPS_PROXY` 를 먼저 맞추고 본다.
+- 사내 winget 원천을 쓰면(`winget source list`) 그 주소로 본다.
+
 ## 1. winget 설치
 ```powershell
 winget install --id Microsoft.PowerShell -e

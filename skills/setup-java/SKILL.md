@@ -26,6 +26,19 @@ if (Get-Command java -ErrorAction SilentlyContinue) { java -version } else { "ja
 [Environment]::GetEnvironmentVariable('JAVA_HOME','User')
 ```
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://packages.adoptium.net   # Debian 12 의 Adoptium 저장소
+```
+
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+- OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+
 ## 1. Rocky Linux 8
 ```bash
 sudo dnf install -y java-21-openjdk-devel
@@ -51,7 +64,7 @@ export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")
 ⚠️ **default·backports 저장소 모두 JDK 21을 제공하지 않는다.** Adoptium 레포 추가가 유일한 경로(재확인: 배포판이 이후 21을 backport하면 이 단계는 생략 가능).
 ```bash
 sudo apt-get install -y wget gnupg
-wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | \
+wget -qO - --timeout=10 --tries=2 https://packages.adoptium.net/artifactory/api/gpg/key/public | \
   sudo gpg --dearmor -o /usr/share/keyrings/adoptium.gpg
 echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" | \
   sudo tee /etc/apt/sources.list.d/adoptium.list

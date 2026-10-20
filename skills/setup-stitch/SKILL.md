@@ -12,6 +12,22 @@ Stitch(withgoogle) 디자인 생성 MCP 를 프록시로 Claude Code 에 붙인�
 - Node/npx 설치 확인(`node -v`).
 - API key 발급: https://stitch.withgoogle.com/settings (사용자가 직접).
 
+### 네트워크 확인 (내려받기 전)
+
+이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+
+```bash
+(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)   # npx 프록시
+```
+
+- `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
+- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && { npm view @_davideast/stitch-mcp version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r; })` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`@_davideast/stitch-mcp`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다.
+- `npm` 이 없으면(명령 없음) 오프라인이 아니라 확인하지 못한 것이다. Node 를 먼저 갖춘다(`setup-node`).
+- `npm ping` 은 npm 의 프록시 설정(`proxy`, `https-proxy`)을 따른다. 사내 미러만 열린 망이면 그 미러가 쓰이는지 npm 설정을 본다.
+- Windows PowerShell 에서는 `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
+- Stitch 는 원격 서비스라 네트워크가 없으면 쓸 수 없다. 확인이 실패하면 등록하지 않고 "오프라인이라 설치하지 않음(필요한 것: 네트워크, Stitch 서비스)" 으로 보고한다.
+
 ## 1. mac / linux — 프록시 스크립트 + MCP 등록
 > key 는 채팅/기록에 남기지 말고, 사용자가 **자기 터미널**에서 `YOUR_STITCH_API_KEY` 를 실제 키로 교체.
 ```bash
