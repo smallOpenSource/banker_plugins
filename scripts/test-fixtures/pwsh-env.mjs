@@ -1,5 +1,5 @@
 // The environment a test gives the pwsh it starts. pwsh keeps a start-up cache, a module folder and a telemetry id
-// under HOME and the XDG folders, and on start it sends telemetry and checks for a new version unless told not to.
+// under HOME and the XDG folders, and on start it can send telemetry and check for a new version unless told not to.
 // So each pwsh a test starts gets a temp home and the opt-outs: nothing in the real home, no request out.
 // The caller removes `home` when it is done (an after() hook).
 import { mkdtempSync } from "node:fs";

@@ -29,13 +29,14 @@ const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG",
   "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR"]);
 // HOME and XDG_CONFIG_HOME cover git older than 2.32, which ignores GIT_CONFIG_GLOBAL. An empty template folder
 // keeps the developer's template hooks out of the fixture repositories. The developer's ceiling is dropped too, so a
-// fixture that relies on git walking up still does.
+// fixture that relies on git walking up still does. The developer's askpass helpers (GIT_ASKPASS, SSH_ASKPASS: an editor's
+// terminal sets one) are dropped as well: GIT_TERMINAL_PROMPT=0 does not stop git from calling them.
 const NO_GITCONFIG = join(root, "empty.gitconfig");
 const NO_TEMPLATES = join(root, "empty-templates");
 writeFileSync(NO_GITCONFIG, "");
 mkdirSync(NO_TEMPLATES);
 function cleanEnv(extra = {}) {
-  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || k.toUpperCase() === "GIT_CEILING_DIRECTORIES";
+  const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || /^(GIT_CEILING_DIRECTORIES|GIT_ASKPASS|SSH_ASKPASS)$/i.test(k);
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
   return { ...env, GIT_CONFIG_GLOBAL: NO_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1", GIT_TEMPLATE_DIR: NO_TEMPLATES,
     HOME: root, XDG_CONFIG_HOME: root, ...extra };
@@ -3640,19 +3641,59 @@ test("a bare apply whose origin never answers cuts the fetch at its time limit a
   }
 });
 
-// Final batch: git's message can carry a piece of an origin's password, quoted or not (curl reads a raw "/" in it as
-// the end of the host: "Port number ended with 'Q'", "Could not resolve host: ssKJ"). With credentials in the origin,
-// the cause line gives git's exit and none of its words.
+// Final batch: git's message can carry a piece of an origin's credentials, quoted or not. curl reads a raw "/" in the
+// password as the end of the host: "Port number ended with 'Q'", "Could not resolve host: alice", "Failed to connect to
+// localhost port 9". With credentials in the origin, the cause line gives git's exit and none of its words. The shapes
+// here never ask a name server: curl stops at the port, or the host is localhost and port 9 is closed.
+const NO_WORDS = /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음\)$/;
+const NO_PROXY_ENV = { NO_PROXY: "*", no_proxy: "*" };
 test("a bare apply over an origin with credentials gives git's exit and none of its words in its cause line", { skip: !HAS_GIT && "git not found" }, () => {
-  for (const pass of [["Qz", "Xy"].join("/"), ["p@ss", "KJ"].join("/")]) {
+  const alice = ["al", "ice"].join("");
+  const shapes = [[alice, ["Qz", "Xy"].join("/")], ["localhost", ["9", "Kx7Yp"].join("/")], [alice, ["p@localhost:9", "KJ"].join("/")]];
+  for (const [user, pass] of shapes) {
     const f = fakeHome([{ v: "5.6.1", active: true }]);
-    assert.equal(runGit(["remote", "set-url", "origin", `http://u:${pass}@127.0.0.1:9/omc.git`], f.market).status, 0);
-    const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "5000" });
+    assert.equal(runGit(["remote", "set-url", "origin", `http://${user}:${pass}@127.0.0.1:9/omc.git`], f.market).status, 0);
+    const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "20000", ...NO_PROXY_ENV });
     assert.equal(r.code, 1, r.out);
     const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
-    assert.match(cause, /origin 에서 태그를 받지 못함: git 이 종료 \S+ 로 끝남\(origin 주소에 사용자 정보가 있어 git 의 문구는 싣지 않음\)$/, cause);
-    for (const piece of pass.split(/[/@]/).filter((x) => x.length > 1)) assert.ok(!cause.includes(piece), `${piece} in ${cause}`);
+    assert.match(cause, NO_WORDS, cause);
+    for (const piece of [user, ...pass.split(/[/@:]/).filter((x) => x.length > 1)]) assert.ok(!r.out.includes(piece), `${piece} in ${r.out}`);
   }
+});
+
+// Final batch, review 2: an origin with no credentials can get them from a url.<base>.insteadOf rule in the person's git
+// config (a mirror pattern). git's line then names the rewritten address (masked by the tool), and the cause line drops
+// git's words there too. The rule sits in HOME's .gitconfig, which git older than 2.32 reads instead of GIT_CONFIG_GLOBAL;
+// without the rule the origin is a closed local port, so no name server is asked either way.
+test("a bare apply whose origin gets credentials from an insteadOf rule gives git's exit and none of its words", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", "http://127.0.0.1:9/mirror/omc.git"], f.market).status, 0);
+  const cfg = join(f.home, ".gitconfig");
+  writeFileSync(cfg, `[url "http://localhost:${["9", "Kx7Yp"].join("/")}@127.0.0.1:9/"]\n\tinsteadOf = http://127.0.0.1:9/mirror/\n`);
+  const r = run(f.home, [], { GIT_CONFIG_GLOBAL: cfg, OMC_PATCH_FETCH_TIMEOUT_MS: "20000", ...NO_PROXY_ENV });
+  assert.equal(r.code, 1, r.out);
+  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+  assert.match(cause, NO_WORDS, cause);
+  for (const piece of ["localhost", "Kx7Yp"]) assert.ok(!r.out.includes(piece), `${piece} in ${r.out}`);
+});
+
+// Same line: a git whose error names the host but not the address (a git that hides the address, or a first error line
+// without it) gets nothing through either, as long as the origin itself carries the credentials.
+test("with credentials in the origin the cause line drops git's words even when git's line has no address", posixGit, (t) => {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) return t.skip("git not found on PATH");
+  const alice = ["al", "ice"].join("");
+  const dir = join(root, `gitwrap${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$1" = fetch ]; then', `  echo "fatal: Could not resolve host: ${alice}" >&2; exit 128`,
+    "fi", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", `http://${alice}:${["", "Kx7Yp"].join("/")}@127.0.0.1:9/omc.git`], f.market).status, 0);
+  const r = run(f.home, [], { PATH: `${dir}${delimiter}${process.env.PATH}` });
+  assert.equal(r.code, 1, r.out);
+  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+  assert.match(cause, NO_WORDS, cause);
+  assert.ok(!r.out.includes(alice), r.out);
 });
 
 // Final batch: the fetch never asks for credentials on a terminal (GIT_TERMINAL_PROMPT=0): an origin that wants a login

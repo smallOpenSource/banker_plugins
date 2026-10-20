@@ -878,10 +878,10 @@ try {
   const mdDocs = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
     ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
     .filter((f) => fs.existsSync(path.join(root, f)));
-  // Lines joined at a trailing backslash first; a download fed to a shell through `<(…)` or `"$(…)"`, or to iex in
-  // PowerShell, is the same pipe.
+  // Lines joined at a trailing backslash first; a download fed to a shell through `<(…)` or `"$(…)"` or `env`, or to iex
+  // in PowerShell, is the same pipe.
   const piped = mdDocs.flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/)
-    .filter((l) => /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo(?:\s+-\S+)*\s+)?(?:\/\S*\/)?(?:ba|z)?sh\b/.test(l)
+    .filter((l) => /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo(?:\s+-\S+)*\s+)?(?:(?:\/\S*\/)?env(?:\s+(?:-\S+|[A-Za-z_]\w*=\S*))*\s+)?(?:\/\S*\/)?(?:ba|z)?sh\b/.test(l)
       || /\b(?:ba|z)?sh\s+(?:-c\s+)?["']?(?:<\(|\$\()\s*(?:curl|wget)\b/.test(l) || /(?:^|[\s;&|(])(?:source|\.)\s+<\(\s*(?:curl|wget)\b/.test(l) || /\beval\s+["']?\$\(\s*(?:curl|wget)\b/.test(l)
       || /\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b[^|\n]*\|\s*(?:iex|Invoke-Expression)\b/i.test(l)
       || /\b(?:iex|Invoke-Expression)\b\s*\(+\s*(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|New-Object)\b/i.test(l))

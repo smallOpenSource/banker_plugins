@@ -244,18 +244,20 @@ function canInstallTarget({ tar = true } = {}) {
   return true;
 }
 
-// origin 에서 태그를 받는다. 받았으면 null, 받지 못했으면 그 까닭 한 줄(URL 의 인증 정보는 가림). 이 도구가 고정한 origin 은
-// 받을 수 없으므로 부르지 않고 그렇다고 한다(git 은 "remote helper" 오류만 낸다). origin 에 사용자 정보가 있으면 git(curl)의
-// 문구가 비밀번호 조각을 실을 수 있어(비밀번호 안의 `/` 를 호스트의 끝으로 읽어 "Port number ended with 'Q'",
-// "Could not resolve host: ssKJ") 문구는 싣지 않고 git 이 어떻게 끝났는지만 댄다.
+// origin 에서 태그를 받는다. 받았으면 null, 받지 못했으면 그 까닭 한 줄. 이 도구가 고정한 origin 은 받을 수 없으므로
+// 부르지 않고 그렇다고 한다(git 은 "remote helper" 오류만 낸다). git 이 쓴 주소에 사용자 정보가 있으면 git(curl)의 문구가
+// 그 조각을 실을 수 있어(비밀번호 안의 `/` 를 호스트의 끝으로 읽어 "Port number ended with 'Q'", "Could not resolve host:
+// alice") 문구는 싣지 않고 git 이 어떻게 끝났는지만 댄다. 사용자 정보는 origin 에 있거나 전역 insteadOf 규칙이 더한다.
+// 뒤의 것은 git 의 오류 줄에 든 주소를 gitError 가 가린 자리(`//***@`)로 안다.
 function fetchTags() {
   const url = originUrl();
   if (typeof url === "string" && url.startsWith("omc-pinned://")) return "origin 이 고정되어 있음(omc-pinned://). 받으려면 먼저 --revert 로 고정을 푸십시오";
   try { git(["fetch", "--tags", "--quiet", "origin"], MARKET, { network: true, timeout: FETCH_TIMEOUT_MS }); return null; }
   catch (e) {
     if (e.code === "ETIMEDOUT") return `${FETCH_TIMEOUT_MS / 1000}초 안에 끝나지 않아 끊음(응답하지 않는 망일 수 있음)`;
-    if (hasUserinfo(url)) return `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남(origin 주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
-    return gitError(e);
+    const why = gitError(e);
+    if (hasUserinfo(url) || why.includes("//***@")) return `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
+    return why;
   }
 }
 
