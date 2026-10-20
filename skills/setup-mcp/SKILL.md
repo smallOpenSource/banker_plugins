@@ -56,6 +56,26 @@ curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/
 `<dir>` = `--fs-dir` 인자 또는 기본 `$HOME/projects`. **홈 디렉터리 전체를 넘기지 않는다** - Serena
 `--project` 경고와 같은 이유(파일 노출 범위 과다)로, 실제 프로젝트 경로만 지정한다.
 
+### 네트워크가 없는 곳 (오프라인 경로)
+
+`npx -y <패키지>` 와 `uvx <패키지>` 는 서버를 띄울 때마다 레지스트리에서 판을 정한다. 네트워크가 없으면 이미 받은 패키지가 있어도 세션마다 약 70초 뒤 실패한다(Codex 는 아래 `startup_timeout_sec = 300` 까지 기다릴 수 있다).
+0단계 확인이 실패하면 3절, 4절 대신 이렇게 한다.
+
+- 네트워크가 필요한 서버(context7, fetch, tavily)는 등록하지 않고 "네트워크가 필요한 서버라 등록하지 않음" 으로 보고한다. 서비스 자체가 원격이라 깔아 두어도 쓸 수 없다.
+- 로컬에서 도는 서버(sequential-thinking, filesystem, git)는 판을 고정해 설치하고, 그 실행 파일을 직접 등록한다. 설치는 네트워크가 되는 곳(또는 사내 npm, PyPI 미러)에서 한 번 한다. 깔린 뒤에는 실행 파일을 바로 부르므로 레지스트리를 묻지 않는다.
+- `<판>` 은 네트워크가 되는 곳에서 `npm view <패키지> version` 으로 정한다.
+
+```bash
+npm i -g @modelcontextprotocol/server-sequential-thinking@<판> @modelcontextprotocol/server-filesystem@<판>
+uv tool install mcp-server-git==<판>       # uv 가 없으면 pipx install mcp-server-git==<판>
+
+FS_DIR="${FS_DIR:-$HOME/projects}"
+claude mcp add sequential-thinking -s user -- mcp-server-sequential-thinking
+claude mcp add filesystem -s user -- mcp-server-filesystem "$FS_DIR"
+claude mcp add git -s user -- mcp-server-git
+```
+Codex 는 같은 실행 파일로 등록한다: `codex mcp add sequential-thinking -- mcp-server-sequential-thinking`, `codex mcp add filesystem -- mcp-server-filesystem "$FS_DIR"`, `codex mcp add git -- mcp-server-git`. 다운로드가 없으므로 `startup_timeout_sec` 패치는 필요 없다.
+
 ## 3. Claude Code 배선
 ```bash
 FS_DIR="${FS_DIR:-$HOME/projects}"

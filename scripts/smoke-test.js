@@ -904,6 +904,14 @@ try {
       || (/\bgit\b.*\bclone\b/.test(l) && !/http\.lowSpeedTime=\d+/.test(l)))
     .map((l) => `${f}: ${l.trim().slice(0, 50)}`));
   ok(unlimited.length === 0, `airgap-4b: the curl, wget and git clone calls of those skills have time limits (found ${JSON.stringify(unlimited)})`);
+  // setup-mcp: `npx -y` and `uvx` ask the registry for a version at every start (offline: about 70 s, then a failure, each
+  // session); the offline path registers pinned, installed executables and leaves out the servers that are a network service.
+  const mcpSkill = fs.readFileSync(path.join(root, 'skills', 'setup-mcp', 'SKILL.md'), 'utf8');
+  ok(/npm i -g @modelcontextprotocol\/server-sequential-thinking@<판> @modelcontextprotocol\/server-filesystem@<판>/.test(mcpSkill)
+     && /claude mcp add sequential-thinking -s user -- mcp-server-sequential-thinking/.test(mcpSkill)
+     && /claude mcp add git -s user -- mcp-server-git/.test(mcpSkill)
+     && /네트워크가 필요한 서버\(context7, fetch, tavily\)는 등록하지 않/.test(mcpSkill),
+     'airgap-5: setup-mcp registers pinned installed executables offline and leaves out the network-service servers');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
