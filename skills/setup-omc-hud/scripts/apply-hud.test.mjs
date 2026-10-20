@@ -610,7 +610,7 @@ test("작은따옴표, 괄호, & 가 든 경로는 설치함", () => {
   assert.equal(settingsOf(cfg).statusLine.command, `node "${slash(cfg)}/hud/omc-hud-custom.mjs"`);
 });
 
-test("settings.json 을 쓸 수 없으면 종료 1 이고 아무것도 바꾸지 않음", { skip: (!POSIX && "mode bits") || (asRoot && "root writes read-only files") }, () => {
+test("settings.json 을 쓸 수 없으면 종료 1 이고 아무것도 바꾸지 않음", { skip: (!POSIX && "Windows has no POSIX mode bits") || (asRoot && "root writes read-only files") }, () => {
   const cfg = fresh();
   writeFileSync(join(cfg, "settings.json"), '{"theme":"x"}');
   chmodSync(join(cfg, "settings.json"), 0o444);
@@ -788,7 +788,7 @@ test("링크인 settings.json 은 링크를 두고 가리키는 파일을 바꿈
   assert.notEqual(statSync(target).ino, ino, "the file it points at was replaced");
 });
 
-test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (!POSIX && "mode bits") || (asRoot && "root writes read-only folders") || (!canLinkFiles && "this account cannot make file links") }, () => {
+test("settings.json 을 새 파일로 못 바꾸면 제자리에 씀", { skip: (!POSIX && "Windows has no POSIX mode bits") || (asRoot && "root writes read-only folders") || (!canLinkFiles && "this account cannot make file links") }, () => {
   const { cfg, dot, target } = linkedSettings();
   chmodSync(dot, 0o555);
   try {
