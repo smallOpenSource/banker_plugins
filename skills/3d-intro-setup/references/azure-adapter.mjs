@@ -511,20 +511,24 @@ export async function generateImage({
   prompt, size = '720x1280', quality = 'low', n = 1, onNote, retry429 = 3,
 } = {}) {
   const genBody = { model: deployment, prompt, size, quality, n };
-  let r = await postJsonWith429Retry(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, {
-    key, body: JSON.stringify(genBody), retries: retry429, onNote,
-  });
+  const post = (url, body) => postJsonWith429Retry(url, { key, body: JSON.stringify(body), retries: retry429, onNote });
+  let r = await post(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, genBody);
   let note = 'v1';
-  // no classic retry on 429 (shared limit) or on a lost connection (the v1 call may have billed)
-  if (!(r.ok && r.body?.data?.[0]?.b64_json) && r.status !== 429 && r.status !== 0) {
+  if (classicWorthTrying(r)) {
     note = 'classic-fallback(2025-04-01-preview)';
     if (typeof onNote === 'function') onNote(`generateImage: v1 path failed (HTTP ${r.status}); trying ${note}`);
-    r = await postJsonWith429Retry(`${endpoint}/openai/deployments/${deployment}/images/generations?api-version=2025-04-01-preview`, {
-      key, body: JSON.stringify({ ...genBody, size: classicSize(size) }), retries: retry429, onNote,
-    });
+    r = await post(`${endpoint}/openai/deployments/${deployment}/images/generations?api-version=2025-04-01-preview`, { ...genBody, size: classicSize(size) });
   }
-  const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`generateImage failed (${note}): HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
+  return pngFrom(r, dataB64(r), `generateImage failed (${note})`);
+}
+
+// no classic retry on 429 (shared limit) or on a lost connection (the v1 call may have billed)
+const classicWorthTrying = (r) => !(r.ok && dataB64(r)) && r.status !== 429 && r.status !== 0;
+const dataB64 = (r) => r.body?.data?.[0]?.b64_json;
+
+// The PNG an image call answered with, or an error that starts with `failed`.
+function pngFrom(r, b64, failed) {
+  if (!(r.ok && b64)) throw new Error(`${failed}: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
   return Buffer.from(b64, 'base64');
 }
 
@@ -532,18 +536,20 @@ export async function generateImage({
 export async function editImage({
   endpoint, key, deployment, apiVersion = 'preview', prompt, imageBuf, maskBuf, size,
 } = {}) {
+  const r = await azFetch(`${endpoint}/openai/v1/images/edits?api-version=${apiVersion}`, {
+    key, method: 'POST', body: editForm({ deployment, prompt, imageBuf, maskBuf, size }), timeoutMs: IMAGE_TIMEOUT_MS,
+  });
+  return pngFrom(r, dataB64(r), 'editImage failed');
+}
+
+function editForm({ deployment, prompt, imageBuf, maskBuf, size }) {
   const fd = new FormData();
   fd.append('model', deployment);
   fd.append('prompt', prompt);
   if (size) fd.append('size', size);
   fd.append('image', new Blob([imageBuf], { type: 'image/png' }), 'image.png');
   if (maskBuf) fd.append('mask', new Blob([maskBuf], { type: 'image/png' }), 'mask.png');
-  const r = await azFetch(`${endpoint}/openai/v1/images/edits?api-version=${apiVersion}`, {
-    key, method: 'POST', body: fd, timeoutMs: IMAGE_TIMEOUT_MS,
-  });
-  const b64 = r.body?.data?.[0]?.b64_json;
-  if (!(r.ok && b64)) throw new Error(`editImage failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return Buffer.from(b64, 'base64');
+  return fd;
 }
 
 /** Generate a still via the Black Forest Labs FLUX provider path. Returns a PNG Buffer. */
@@ -552,9 +558,7 @@ export async function generateImageFlux({ endpoint, key, prompt, width, height, 
     key, method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, width, height }), timeoutMs: IMAGE_TIMEOUT_MS,
   });
-  const b64 = r.body?.data?.[0]?.b64_json || r.body?.b64_json || r.body?.image;
-  if (!(r.ok && b64)) throw new Error(`generateImageFlux failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return Buffer.from(b64, 'base64');
+  return pngFrom(r, dataB64(r) || r.body?.b64_json || r.body?.image, 'generateImageFlux failed');
 }
 
 // ---------------------------------------------------------------------------
@@ -675,6 +679,16 @@ export async function detectTwoImageSupport({ endpoint, key, apiVersion = 'previ
 export async function createVideoTwoImage({
   endpoint, key, model = 'sora-2', prompt = '', firstPng, lastPng, size = '720x1280', seconds = 4, apiVersion = 'preview',
 } = {}) {
+  const r = await azFetch(`${endpoint}/openai/v1/video/generations/jobs?api-version=${apiVersion}`, {
+    key, method: 'POST', body: twoImageForm({ model, prompt, firstPng, lastPng, size, seconds }),
+  });
+  if (!(r.ok && jobIdOf(r))) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
+  return r.body;
+}
+
+const jobIdOf = (r) => r.body?.id || r.body?.job_id;
+
+function twoImageForm({ model, prompt, firstPng, lastPng, size, seconds }) {
   const fd = new FormData();
   fd.append('model', model);
   fd.append('prompt', prompt);
@@ -687,12 +701,7 @@ export async function createVideoTwoImage({
   ]));
   fd.append('files', new Blob([firstPng], { type: 'image/png' }), 'first.png');
   fd.append('files', new Blob([lastPng], { type: 'image/png' }), 'last.png');
-  const r = await azFetch(`${endpoint}/openai/v1/video/generations/jobs?api-version=${apiVersion}`, {
-    key, method: 'POST', body: fd,
-  });
-  const id = r.body?.id || r.body?.job_id;
-  if (!(r.ok && id)) throw new Error(`createVideoTwoImage (UNVALIDATED) failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return r.body;
+  return fd;
 }
 
 // ---------------------------------------------------------------------------
@@ -818,16 +827,25 @@ export async function crossfade(aMp4, bMp4, out, sec = 0.5, { ffmpeg, offset } =
  */
 export async function concatClips(mp4List, out, { ffmpeg, fps = 30, width = 720, height = 1280 } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
+  const r = runFf(bin, concatArgs(clipList(mp4List), out, { fps, width, height }));
+  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`concatClips failed: ${tail(r.stderr)}`);
+  return out;
+}
+
+function clipList(mp4List) {
   const list = Array.isArray(mp4List) ? mp4List : [];
   if (list.length === 0) throw new Error('concatClips: no input clips');
+  return list;
+}
+
+// One -i per clip, each normalized (fps, scale, sar, pix_fmt) before the concat filter joins them.
+function concatArgs(list, out, { fps, width, height }) {
   const args = ['-y'];
   for (const f of list) args.push('-i', f);
   const norm = list.map((_, i) => `[${i}:v]fps=${fps},scale=${width}:${height},setsar=1,format=yuv420p[v${i}]`);
   const chain = `${list.map((_, i) => `[v${i}]`).join('')}concat=n=${list.length}:v=1[v]`;
   args.push('-filter_complex', `${norm.join(';')};${chain}`, '-map', '[v]', out);
-  const r = runFf(bin, args);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`concatClips failed: ${tail(r.stderr)}`);
-  return out;
+  return args;
 }
 
 // Probe an mp4's duration (seconds) by parsing ffmpeg's stderr banner. Returns null if absent.

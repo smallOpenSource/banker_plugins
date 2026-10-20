@@ -1135,3 +1135,57 @@ test('azFetch in a Node started with an env proxy: a key over http to this machi
     proxy.close();
   }
 });
+
+test('createVideoTwoImage: posts both frames and the inpaint items to the jobs API; a failure names the path as unvalidated', async () => {
+  const calls = installFetch(() => mockJson({ id: 'job-2' }));
+  const job = await A.createVideoTwoImage({ endpoint: EP, key: KEY, prompt: 'p', firstPng: Buffer.from('F'), lastPng: Buffer.from('L'), size: '1280x720', seconds: 8 });
+  assert.equal(job.id, 'job-2');
+  assert.match(calls[0].url, /\/openai\/v1\/video\/generations\/jobs\?api-version=preview$/);
+  const fd = calls[0].opts.body;
+  assert.deepEqual([...fd.keys()], ['model', 'prompt', 'size', 'n_seconds', 'inpaint_items', 'files', 'files']);
+  assert.deepEqual([fd.get('model'), fd.get('prompt'), fd.get('size'), fd.get('n_seconds')], ['sora-2', 'p', '1280x720', '8']);
+  assert.deepEqual(JSON.parse(fd.get('inpaint_items')).map((x) => [x.frame_index, x.file_name]), [[0, 'first.png'], [-1, 'last.png']]);
+  installFetch(() => mockJson({ job_id: 'job-3' }));
+  assert.equal((await A.createVideoTwoImage({ endpoint: EP, key: KEY, firstPng: Buffer.from('F'), lastPng: Buffer.from('L') })).job_id, 'job-3');
+  installFetch(() => mockJson({ error: { code: 'NotFound' } }, 404));
+  await assert.rejects(A.createVideoTwoImage({ endpoint: EP, key: KEY, firstPng: Buffer.from('F'), lastPng: Buffer.from('L') }), (e) => e.message.startsWith('createVideoTwoImage (UNVALIDATED) failed: HTTP 404 '));
+  installFetch(() => mockJson({ status: 'queued' }));
+  await assert.rejects(A.createVideoTwoImage({ endpoint: EP, key: KEY, firstPng: Buffer.from('F'), lastPng: Buffer.from('L') }), (e) => e.message.startsWith('createVideoTwoImage (UNVALIDATED) failed: HTTP 200 '));
+});
+
+test('generateImageFlux: takes the image from data[0].b64_json, b64_json or image; a failure says so with its status', async () => {
+  for (const body of [{ data: [{ b64_json: 'QQ==' }] }, { b64_json: 'QQ==' }, { image: 'QQ==' }]) {
+    installFetch(() => mockJson(body));
+    assert.equal((await A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 })).toString(), 'A');
+  }
+  const calls = installFetch(() => mockJson({ error: 'no' }, 500));
+  await assert.rejects(A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 }), (e) => e.message.startsWith('generateImageFlux failed: HTTP 500 '));
+  assert.match(calls[0].url, /\/providers\/blackforestlabs\/v1\/flux-2-pro\?api-version=preview$/);
+  assert.deepEqual(JSON.parse(calls[0].opts.body), { prompt: 'p', width: 8, height: 8 });
+});
+
+test('editImage and generateImage: a failure message keeps its form, the path tried included', async () => {
+  installFetch(() => mockJson({ error: 'bad' }, 400));
+  await assert.rejects(A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I') }), (e) => e.message.startsWith('editImage failed: HTTP 400 '));
+  await assert.rejects(A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' }), (e) => e.message.startsWith('generateImage failed (classic-fallback(2025-04-01-preview)): HTTP 400 '));
+  installFetch(() => mockJson({ error: 'slow' }, 429));
+  await assert.rejects(A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', retry429: 0 }), (e) => e.message.startsWith('generateImage failed (v1): HTTP 429 '));
+});
+
+test('editImage: a mask goes as its own form field; without one there is none', async () => {
+  const b64 = Buffer.from('E').toString('base64');
+  const calls = installFetch(() => mockJson({ data: [{ b64_json: b64 }] }));
+  await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I'), maskBuf: Buffer.from('M'), size: '1024x1024' });
+  await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I') });
+  assert.deepEqual([...calls[0].opts.body.keys()], ['model', 'prompt', 'size', 'image', 'mask']);
+  assert.deepEqual([...calls[1].opts.body.keys()], ['model', 'prompt', 'image']);
+});
+
+test('concatClips: no clips is refused before ffmpeg runs', async () => {
+  let ran = 0;
+  cp.spawnSync = () => { ran++; return { status: 0, stdout: '', stderr: '' }; };
+  for (const list of [[], undefined, 'a.mp4']) {
+    await assert.rejects(A.concatClips(list, '/tmp/out.mp4', { ffmpeg: '/usr/bin/ffmpeg' }), /concatClips: no input clips/);
+  }
+  assert.equal(ran, 0);
+});
