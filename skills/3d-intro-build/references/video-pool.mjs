@@ -410,7 +410,8 @@ async function wanMedia(firstFramePng, lastFramePng) {
 
 /**
  * Poll a WAN task to a terminal state. Returns {state, output} where state is
- * SUCCEEDED | FAILED | CANCELED | UNKNOWN | TIMEOUT | HTTP (a 4xx other than 429 on the poll itself).
+ * SUCCEEDED | FAILED | CANCELED | UNKNOWN | TIMEOUT | HTTP (a 4xx other than 429 on the poll itself, or
+ * status 0 with code EINSECURE or EPROXYKEY: the key was held back and nothing was sent).
  * The poll ends after `timeoutMs` of wall time on the `now` clock: each request is limited to the
  * time left, so a server that stops answering cannot stretch the wait. TIMEOUT carries `elapsedMs`.
  */
@@ -443,8 +444,11 @@ function answerOutcome(body, seen, onTick, i) {
 }
 
 // A 4xx other than 429 on the poll itself ends it; 429/5xx/network keep polling — the task is still running.
+// So does a key held back before sending (EINSECURE, EPROXYKEY): no later poll could send it either.
+const HELD_KEY = new Set(['EINSECURE', 'EPROXYKEY']);
 function refusedPoll(r) {
   if (r.status >= 400 && r.status < 500 && r.status !== 429) return { state: 'HTTP', output: { code: r.code, message: r.message }, status: r.status };
+  if (r.status === 0 && HELD_KEY.has(r.errno)) return { state: 'HTTP', output: { code: r.errno, message: r.message }, status: 0 };
   return null;
 }
 
@@ -782,7 +786,8 @@ async function runSora(ctx) {
 const SORA_SUBMIT_TRIES = 5;
 
 // A 429 is a refusal, so retrying it cannot double-bill; a lost connection or a bare 5xx can. Each
-// wait is the server's Retry-After, else 30 s doubling, from 1 s to 10 min.
+// wait is the server's Retry-After, else 30 s doubling, from 1 s to 10 min. A Retry-After longer
+// than maxRateWaitMs is not waited out: the leg stops as `rate` at once, as WAN's waits do.
 async function submitSora(ctx, conn, secs) {
   for (let i = 0; ; i++) {
     try {
@@ -792,11 +797,17 @@ async function submitSora(ctx, conn, secs) {
       });
     } catch (e) {
       if (e.status !== 429 || i >= SORA_SUBMIT_TRIES - 1) throw soraSubmitError(e);
+      if (e.retryAfterMs != null && e.retryAfterMs > ctx.maxRateWaitMs) throw soraRateStop(e.retryAfterMs, ctx.maxRateWaitMs);
       const ms = Math.min(RATE_MAX_MS, Math.max(RETRY_MIN_MS, e.retryAfterMs ?? RATE_BASE_MS * 2 ** i));
       ctx.emit({ type: 'wait', provider: 'sora', ms, reason: 'HTTP 429' });
       await ctx.sleep(ms);
     }
   }
+}
+
+// The stop for a Sora 429 that asks for a longer wait than the caller allows; no job was made.
+function soraRateStop(retryAfterMs, maxRateWaitMs) {
+  return stopError('rate', `Sora answered HTTP 429 with a Retry-After of ${Math.ceil(retryAfterMs / 1000)} s, past maxRateWaitMs (${maxRateWaitMs} ms); no job was made; wait, then generate the leg again`, { provider: 'sora', status: 429, retryAfterMs });
 }
 
 // The stop for a Sora submit that made no job, or may have made one.
@@ -838,7 +849,8 @@ const DEFAULTS = { size: '720x1280', seconds: 5, pollIntervalMs: 15_000, pollTim
  *   kind 'submit_unknown' | 'task_lost' | 'no_video' | 'failed'  outcome unknown — check the console
  *                                       ('failed': the task ended for a reason the pool does not know)
  *   kind 'unreachable'                  Sora host refused the connection (nothing was sent)
- *   kind 'rate'                         Sora kept answering 429 (no job was made) — wait, then call again
+ *   kind 'rate'                         Sora kept answering 429, or asked (Retry-After, err.retryAfterMs) for a
+ *                                       wait past maxRateWaitMs (no job was made); wait, then call again
  * @returns {Promise<{mp4:Buffer, provider:'wan'|'sora', label:string, model:string, seconds:number, taskId:string, usage:object|null}>}
  */
 export async function generateClip(opts = {}) {

@@ -1039,11 +1039,14 @@ test('persistCreds: a key file whose new copy would get another owner or group i
   assert.equal(fs.statSync(target).ino, ino, 'the same file, not a new one renamed over it');
 });
 
-test('persistCreds: a key file that is a link is written where it points and stays a link; a link to nothing is refused', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {
+test('persistCreds: the home key file that is a link is written where it points and stays a link; a link to nothing is refused', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {
   const dir = mkTmp('persist-symlink-');
+  process.env.HOME = path.join(dir, 'home');
+  process.env.USERPROFILE = process.env.HOME;
   const real = path.join(dir, 'real.env');
   fs.writeFileSync(real, '# mine\nA=1\n');
-  const target = path.join(dir, 'env');
+  const target = A.homeCredsPath();
+  fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.symlinkSync(real, target);
   A.persistCreds({ A: '2' }, { target });
   assert.ok(fs.lstatSync(target).isSymbolicLink());
@@ -1051,7 +1054,7 @@ test('persistCreds: a key file that is a link is written where it points and sta
   const dangling = path.join(dir, 'dangling');
   fs.symlinkSync(path.join(dir, 'missing.env'), dangling);
   assert.throws(() => A.persistCreds({ A: '2' }, { target: dangling }), /nothing was written/);
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['dangling', 'env', 'real.env']);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['dangling', 'home', 'real.env']);
 });
 
 test('persistCreds: a folder or a pipe at the key file path is refused, nothing read or written', { skip: process.platform === 'win32' && 'no mkfifo' }, () => {
@@ -1298,4 +1301,103 @@ test('3d-intro-setup: the persistCreds note names the files written in place, no
   const line = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8').split('\n').find((l) => l.includes('`persistCreds()` 로 합친다'));
   assert.match(line, /오류로 끊겨도 원래 파일이 남는다/);
   assert.match(line, /하드 링크, 소유자가 다른 파일, 새 파일을 만들 수 없는 폴더의 파일은 전처럼 제자리에 쓴다/);
+});
+
+// 0.20.4 last cleanup
+test('pollVideo: called with intervalMs 0 and no timeoutMs, it still asks the server, each request with the usual limit', async () => {
+  let n = 0;
+  const calls = installFetch(() => mockJson({ id: 'v', status: ++n >= 3 ? 'completed' : 'in_progress' }));
+  const st = await A.pollVideo({ endpoint: EP, key: KEY, id: 'v', intervalMs: 0, sleep: async () => {} });
+  assert.equal(st?.status, 'completed');
+  assert.equal(calls.length, 3);
+});
+
+test('pollVideo: a key held back before sending (EINSECURE, EPROXYKEY) ends the poll at once, not at its deadline', async () => {
+  const calls = installFetch(() => mockJson({ id: 'v', status: 'in_progress' }));
+  const env = { NODE_USE_ENV_PROXY: process.env.NODE_USE_ENV_PROXY, HTTP_PROXY: process.env.HTTP_PROXY };
+  try {
+    for (const [endpoint, code] of [['http://example.invalid', 'EINSECURE'], ['http://127.0.0.1:9', 'EPROXYKEY']]) {
+      if (code === 'EPROXYKEY') Object.assign(process.env, { NODE_USE_ENV_PROXY: '1', HTTP_PROXY: 'http://127.0.0.1:9' });
+      let ticks = 0;
+      await assert.rejects(A.pollVideo({ endpoint, key: KEY, id: 'v', sleep: async () => { ticks++; } }),
+        (e) => e.status === 0 && e.code === code && /nothing was sent/.test(e.message), code);
+      assert.equal(ticks, 0, code);
+    }
+  } finally {
+    for (const [k, v] of Object.entries(env)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  assert.equal(calls.length, 0, 'nothing reached fetch');
+});
+
+test('persistCreds: a project key file that is a link is refused with nothing written, out of its folder or in it; the home key file still follows its link', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {
+  const root = mkTmp('persist-linkout-');
+  const home = path.join(root, 'home');
+  const proj = path.join(root, 'proj');
+  fs.mkdirSync(home);
+  fs.mkdirSync(proj);
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  const dotfile = path.join(home, '.gitconfig');
+  fs.writeFileSync(dotfile, '[user]\n\tname = me\n');
+  const target = path.join(proj, '.env.3d-intro.local');
+  fs.symlinkSync(path.join('..', 'home', '.gitconfig'), target); // what a cloned repository can bring
+  assert.throws(() => A.persistCreds({ AZURE_SORA_ENDPOINT: 'https://x.example.com' }, { target }), /is a link, and a project key file is written only as a file of its own; nothing was written/);
+  assert.equal(fs.readFileSync(dotfile, 'utf8'), '[user]\n\tname = me\n');
+  // in its own folder too: a link to the repository's .git/config would stop every git command there
+  fs.mkdirSync(path.join(proj, '.git'));
+  fs.writeFileSync(path.join(proj, '.git', 'config'), '[core]\n\tbare = false\n');
+  fs.rmSync(target);
+  fs.symlinkSync(path.join('.git', 'config'), target);
+  assert.throws(() => A.persistCreds({ AZURE_SORA_ENDPOINT: 'https://x.example.com' }, { target }), /is a link, and a project key file is written only as a file of its own/);
+  assert.equal(fs.readFileSync(path.join(proj, '.git', 'config'), 'utf8'), '[core]\n\tbare = false\n');
+  const kept = path.join(root, 'dotfiles', 'env');
+  fs.mkdirSync(path.dirname(kept));
+  fs.writeFileSync(kept, 'A=1\n');
+  fs.mkdirSync(path.dirname(A.homeCredsPath()), { recursive: true });
+  fs.symlinkSync(kept, A.homeCredsPath());
+  A.persistCreds({ A: '2' }, { target: A.homeCredsPath() });
+  assert.equal(fs.readFileSync(kept, 'utf8'), 'A=2\n', 'a dotfiles link of the home key file is written where it points');
+});
+
+test('persistCreds: a file system whose fsync says EINVAL or ENOTSUP still gets the new file whole; another fsync error still stops it', () => {
+  for (const [code, ok] of [['EINVAL', true], ['ENOTSUP', true], ['EIO', false]]) {
+    const dir = mkTmp('persist-fsync-');
+    const target = path.join(dir, 'env');
+    fs.writeFileSync(target, '# mine\nA=1\n');
+    const fsync = fs.fsyncSync;
+    fs.fsyncSync = () => { throw Object.assign(new Error(`${code}: fsync`), { code }); };
+    try {
+      if (ok) A.persistCreds({ A: '2' }, { target });
+      else assert.throws(() => A.persistCreds({ A: '2' }, { target }), { code });
+    } finally {
+      fs.fsyncSync = fsync;
+    }
+    assert.equal(fs.readFileSync(target, 'utf8'), ok ? '# mine\nA=2\n' : '# mine\nA=1\n', code);
+    assert.deepEqual(fs.readdirSync(dir), ['env'], code);
+  }
+});
+
+test('azFetch: a request refused for its header value gives back an error without the key in it', async () => {
+  const key = ['placeholder', 'key', 'cut', 'by', 'a', 'nul'].join('-');
+  installFetch((url, opts) => { throw new TypeError(`Headers.append: "${opts.headers['api-key']}" is an invalid header value.`); }); // as undici words it
+  const r = await A.azFetch(`${EP}/x`, { key: key + String.fromCharCode(0) });
+  assert.deepEqual([r.status, r.error?.name], [0, 'TypeError']);
+  const shown = `${r.error.message}\n${r.error.stack}\n${JSON.stringify(r.error)}`;
+  assert.ok(!shown.includes(key), 'the error the result holds quotes the key');
+});
+
+test('3d-intro-setup: the .gitignore line covers the key file and its temp copy, and does not glue onto a last line without a line end', { skip: process.platform === 'win32' && 'the bash line is run where bash is' }, () => {
+  const setup = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
+  const line = setup.split('\n').find((l) => /^grep -q.*\.gitignore/.test(l));
+  assert.ok(line, 'no .gitignore line in the setup skill');
+  for (const before of [null, '.env.3d-intro.local\n', '.env.*.local\n', 'node_modules\n.env']) {
+    const dir = mkTmp('gitignore-');
+    const env = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1' };
+    cp.execFileSync('git', ['init', '-q'], { cwd: dir, env });
+    if (before !== null) fs.writeFileSync(path.join(dir, '.gitignore'), before);
+    cp.execFileSync('bash', ['-c', line], { cwd: dir, env });
+    const ignored = (f) => cp.spawnSync('git', ['check-ignore', '-q', '--', f], { cwd: dir, env }).status === 0;
+    for (const f of ['.env.3d-intro.local', '.env.3d-intro.local.0123456789abcdef.tmp']) assert.ok(ignored(f), `${f} after ${JSON.stringify(before)}`);
+    if (before?.endsWith('.env')) assert.ok(ignored('.env'), 'the last line before still ignores .env');
+  }
 });

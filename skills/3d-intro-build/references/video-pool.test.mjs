@@ -1056,11 +1056,12 @@ test('downloadWanVideo: a failed try is retried after a growing wait; three fail
 });
 
 test('generateClip: a Sora submit still throttled after five tries stops as rate, each wait the server\'s Retry-After from 1 s to 10 min', async () => {
-  for (const [ra, ms] of [['7', 7000], ['3600', 600_000], ['0', 1000]]) {
+  // 3600 s is past the default maxRateWaitMs, which stops at once: given a longer one, the wait is held to 10 min
+  for (const [ra, ms, maxRateWaitMs] of [['7', 7000], ['3600', 600_000, 3_600_000], ['0', 1000]]) {
     let posts = 0;
     installFetch({ sora: () => { posts++; return json(429, { error: { code: 'too_many_requests' } }, { 'retry-after': ra }); } });
     const slept = [];
-    const err = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async (t) => { slept.push(t); } }).then(() => null, (e) => e);
+    const err = await run({ creds: soraOnly(), statePath: tmpState(), maxRateWaitMs, sleep: async (t) => { slept.push(t); } }).then(() => null, (e) => e);
     assert.equal(posts, 5);
     assert.deepEqual([err?.kind, err?.provider, err?.status], ['rate', 'sora', 429]);
     assert.deepEqual(slept, [ms, ms, ms, ms]);
@@ -1279,4 +1280,25 @@ test('wanPollTask: a clock that gives fractions of a ms still sends its first po
   const p = await P.wanPollTask({ entry, taskId: 't', intervalMs: 1, timeoutMs: 1000, now: () => (t += 0.5), sleep: async () => {} });
   assert.equal(p.state, 'SUCCEEDED');
   assert.ok(t < 10, `the first poll was answered (the clock is at ${t} ms, not near the deadline)`);
+});
+
+// 0.20.4 last cleanup
+test('generateClip: a Sora 429 whose Retry-After is past maxRateWaitMs stops as rate at once; a longer maxRateWaitMs waits it out', async () => {
+  let posts = 0;
+  installFetch({ sora: () => { posts++; return json(429, { error: { code: 'too_many_requests' } }, { 'retry-after': '600' }); } });
+  const slept = [];
+  const err = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async (t) => { slept.push(t); } }).then(() => null, (e) => e);
+  assert.deepEqual([posts, slept, err?.kind, err?.status, err?.retryAfterMs], [1, [], 'rate', 429, 600_000]);
+  assert.match(err.message, /Retry-After of 600 s, past maxRateWaitMs \(120000 ms\); no job was made/);
+  posts = 0;
+  const waited = [];
+  const err2 = await run({ creds: soraOnly(), statePath: tmpState(), maxRateWaitMs: 600_000, sleep: async (t) => { waited.push(t); } }).then(() => null, (e) => e);
+  assert.deepEqual([posts, waited, err2?.kind], [5, [600_000, 600_000, 600_000, 600_000], 'rate']);
+});
+
+test('wanPollTask: a key held back before sending (EINSECURE) ends the poll at once as HTTP 0, not as TIMEOUT', async () => {
+  const calls = installFetch();
+  let ticks = 0;
+  const p = await P.wanPollTask({ entry: { endpoint: 'http://example.invalid', key: creds().WAN_1_API_KEY, label: 'WAN_1' }, taskId: 't', sleep: async () => { ticks++; } });
+  assert.deepEqual([p.state, p.status, p.output.code, ticks, calls.length], ['HTTP', 0, 'EINSECURE', 0, 0]);
 });

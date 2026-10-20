@@ -388,7 +388,7 @@ test('a file shorter than the length it was declared at ends the connection, so 
   const s = await startServe(dir, {});
   t.after(() => s.close());
   // the file shrinks after its length was read: the status says 500 bytes more than there are
-  wrapFstat(t, (stat) => { const st = stat(); return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { size: st.size + 500 }); });
+  wrapFstat(t, (stat) => { const st = stat(); return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { size: st.size + (typeof st.size === 'bigint' ? 500n : 500) }); });
   const got = await new Promise((resolve) => {
     const chunks = [];
     const sock = net.connect({ host: '127.0.0.1', port: s.port }, () => {

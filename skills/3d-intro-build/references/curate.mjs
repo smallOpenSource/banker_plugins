@@ -72,14 +72,14 @@ function realRefusal(dir, real) {
   return MEDIA.test(real) ? null : '링크가 이미지나 영상이 아닌 파일을 가리켜 보이지 않습니다.';
 }
 
-// What a listed path may be served as: { dev, ino } of the file its links lead to, taken without
+// What a listed path may be served as: { dev, ino } (BigInt) of the file its links lead to, taken without
 // following a link, so a link put in its place after this check is not that file. null when there is
 // no such file, or its links leave the project or end at a file that is not an image or a video.
 function servedFile(dir, fp) {
   try {
     const real = fs.realpathSync(fp);
     if (realRefusal(dir, real)) return null;
-    const st = fs.lstatSync(real);
+    const st = fs.lstatSync(real, { bigint: true });
     return { dev: st.dev, ino: st.ino };
   } catch {
     return null;

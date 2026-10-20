@@ -198,7 +198,8 @@ function withoutMachineOnly(creds) {
  * name the file lacks is added at the end. The new file replaces the old one whole, so a write cut
  * short by an error leaves the old one. A file with a second name (a hard link), one the new copy would
  * give another owner, or one in a folder that takes no new file (or that Windows holds open) is written
- * in place, as before. A link is written where it points; a folder, a pipe or a link to nothing is refused.
+ * in place, as before. The home key and settings files are written where a link of theirs points; any other
+ * key file that is a link (one a repository can bring) is refused, as are a folder, a pipe and a link to nothing.
  */
 export function persistCreds(creds, { target } = {}) {
   if (!target) throw new Error('persistCreds: target path required');
@@ -217,7 +218,16 @@ function keyFileAt(target) {
   try { st = fs.lstatSync(target); } catch (e) { if (e.code === 'ENOENT') return target; throw e; }
   const file = st.isSymbolicLink() ? linkedFile(target) : target;
   if (!fs.statSync(file).isFile()) throw new Error(`persistCreds: ${target} is not a regular file; nothing was written`);
+  if (file !== target) refuseProjectLink(target);
   return file;
+}
+
+// A project's key file can come with a repository, and a link there can lead to a file of the user's (a
+// dotfile) or of the repository (its .git/config, a tracked file) that must not get KEY= lines: a link
+// there is refused. The home key and settings files keep following a link anywhere (a dotfiles setup).
+function refuseProjectLink(target) {
+  if ([homeCredsPath(), homeSettingsPath()].includes(path.resolve(target))) return;
+  throw new Error(`persistCreds: ${target} is a link, and a project key file is written only as a file of its own; nothing was written`);
 }
 
 function linkedFile(link) {
@@ -304,11 +314,18 @@ function fillTemp(fd, body, old) {
     const st = fs.fstatSync(fd);
     if (old && (st.uid !== old.uid || st.gid !== old.gid)) return false;
     fs.writeFileSync(fd, body);
-    fs.fsyncSync(fd);
+    syncIfAble(fd);
     return true;
   } finally {
     fs.closeSync(fd);
   }
+}
+
+// fsync where the file system does it. One that does not (EINVAL, ENOTSUP) still gets the whole new
+// file by the rename; only its crash safety is less.
+const NO_FSYNC = new Set(['EINVAL', 'ENOTSUP']);
+function syncIfAble(fd) {
+  try { fs.fsyncSync(fd); } catch (e) { if (!NO_FSYNC.has(e.code)) throw e; }
 }
 
 function writeInPlace(file, body) {
@@ -493,7 +510,7 @@ const IMAGE_TIMEOUT_MS = 300_000;
 /**
  * Fetch an Azure URL trying the `api-key` header first and, on 401/403, retrying with
  * `Authorization: Bearer`. Never throws on HTTP status; a network error, before the answer or
- * while its body is read, yields {status:0} with `error` and `errno` (a code such as
+ * while its body is read, yields {status:0} with `error` (its name and codes only, no message text) and `errno` (a code such as
  * ECONNRESET or TimeoutError). Each request is limited to `timeoutMs` (default 120 s, 600 s
  * for a binary download). `retryAfterMs` carries the server's Retry-After hint (null when absent).
  * @param {{key?:string, binary?:boolean, headers?:object, method?:string, body?:any, timeoutMs?:number}} [opts] method defaults to GET
@@ -525,8 +542,18 @@ async function azAttempt(url, { method = 'GET', headers = {}, body, auth, binary
     const ct = r.headers.get('content-type') || '';
     return { status: r.status, ok: r.ok, ct, body: await azBody(r, ct, binary), authStyle, retryAfterMs: retryAfterMsOf(r.headers) };
   } catch (e) {
-    return { status: 0, ok: false, ct: '', body: null, authStyle: null, error: e, errno: errnoOf(e) };
+    return { status: 0, ok: false, ct: '', body: null, authStyle: null, error: codeOnly(e), errno: errnoOf(e) };
   }
+}
+
+// The error a request failed with, without its text: undici quotes a header value it refuses (a key
+// with a NUL or a line break) in its message. Its name, its code and its cause's code stay.
+function codeOnly(e) {
+  const { name, code, cause } = Object(e);
+  const err = Object.assign(new Error(errnoOf(e) || name || 'network error'), { name: name || 'Error' });
+  if (code !== undefined) err.code = code;
+  if (cause && cause.code) err.cause = { code: cause.code };
+  return err;
 }
 
 // A read cut short throws (the caller's catch makes it status 0); a JSON body that does not parse is null.
@@ -664,21 +691,23 @@ const withoutUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(
 
 /**
  * Poll a Sora job until a terminal status, maxTicks polls, or `timeoutMs` of wall time on the
- * `now` clock (default maxTicks x intervalMs), whichever comes first. Each request is limited to
+ * `now` clock (default maxTicks x intervalMs, at least one request's 120 s), whichever comes first. Each request is limited to
  * the time left, so a server that stops answering cannot stretch the wait. Polls first, then
  * sleeps, so a job that is already terminal returns without waiting. `onTick(status, i)` is
  * optional; `sleep` replaces the wait between polls. 408, 429, 5xx and network errors keep
  * polling. Any other 4xx throws at once with `err.status` and `err.code`: a job the server no
- * longer knows, or a key it refuses, never turns terminal.
+ * longer knows, or a key it refuses, never turns terminal. So does a key held back before sending
+ * (err.status 0, err.code EINSECURE or EPROXYKEY): no later poll could send it.
  * @returns the last status object seen.
  */
 export async function pollVideo(opts = {}) {
   const o = { ...POLL_DEFAULTS, sleep, ...withoutUndefined(opts) };
   const url = `${o.endpoint}/openai/v1/videos/${o.id}?api-version=${o.apiVersion}`;
-  const end = o.now() + (o.timeoutMs ?? o.intervalMs * o.maxTicks);
+  const end = o.now() + (o.timeoutMs ?? Math.max(o.intervalMs * o.maxTicks, API_TIMEOUT_MS));
   let st = null;
   for (let i = 0; i < o.maxTicks; i++) {
     const r = await azFetch(url, { key: o.key, method: 'GET', timeoutMs: timeLeft(end, o.now()) });
+    throwIfHeldBack(r, o.id);
     throwIfRefused(r, o.id);
     if (r.ok) st = r.body || st;
     if (typeof o.onTick === 'function') o.onTick(st, i);
@@ -692,6 +721,12 @@ export async function pollVideo(opts = {}) {
 // A poll request's limit: the usual one, or less when the deadline is nearer (azFetch rounds it up to whole ms).
 const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, end - t));
 const settled = (st) => Boolean(st) && TERMINAL_STATUS.has(st.status);
+
+const HELD_KEY = new Set(['EINSECURE', 'EPROXYKEY']);
+function throwIfHeldBack(r, id) {
+  if (r.status !== 0 || !HELD_KEY.has(r.errno)) return;
+  throw Object.assign(new Error(`pollVideo: job ${id}: the key was held back (${r.errno}); nothing was sent`), { status: 0, code: r.errno });
+}
 
 function throwIfRefused(r, id) {
   if (r.status < 400 || r.status >= 500 || POLL_RETRY_4XX.has(r.status)) return;
