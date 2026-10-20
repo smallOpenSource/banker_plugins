@@ -149,7 +149,8 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
 3. `node "<이 스킬 디렉터리 절대경로>/references/payload-scan.mjs" "$d/prompt.md"` 로 비밀처럼 보이는 문자열을 찾는다. 걸린 줄의 값을 `[REDACTED]` 로 가린 뒤 다시 검사하고, 0건이 될 때까지 보내지 않는다. 검사가 끝나지 않거나 실패해도(exit 2) 보내지 않는다. exit 0 이고 출력 JSON 의 `count` 가 0 일 때만 0건으로 읽고, 출력이 없으면 실패로 본다.
    - `private-key`(PGP 블록 포함)는 그 줄부터 `end` 줄까지 블록 전체를 가린다. `end` 가 `null` 이면 보내지 않는다.
    - 검사기는 흔한 형식만 본다. 0건이 안전의 증명은 아니다. curl `-u` 의 값 전체가 숫자:숫자면(따옴표 포함) uid:gid 로 보고 잡지 않는다.
-   - 0건이면 크기를 본다: `wc -c < "$d/prompt.md"`(PowerShell 은 `(Get-Item -LiteralPath "$d\prompt.md").Length`). 512 KiB(524288 바이트)를 넘으면 보내기 전에 사용자에게 묻는다. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다. 사용자가 보내지 않기로 하면 `model-declined` 다.
+   - 0건이면 크기를 본다: `wc -c < "$d/prompt.md"`(PowerShell 은 `(Get-Item -LiteralPath "$d\prompt.md").Length`). 512 KiB(524288 바이트)를 넘으면 보내기 전에 사용자에게 묻는다. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다. 사용자가 보내지 않기로 하면 `model-declined` 다. 상한은 나누기 전의 `prompt.md` 전체에 건다. 나눠 보낼 때도 부분마다 재지 않고 전체 크기로 묻는다.
+   - 나눠 보낼 때(좌석의 문맥이나 입력 한도. 아래 함정)는 원문 부분을 파일 경계에서 나눈다. 부분마다 같은 고정 앞머리, 사용자 요청 문장, 수용 기준, 같은 id 의 여는 표지와 닫는 표지를 두고, 머리에 `부분 <k>/<N>` 을 적는다. 부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다.
 4. 플래그로 고른 좌석마다 `$d/<좌석>/prompt.md` 사본을 만들고 아래 명령으로 보낸다. 좌석은 서브셸에서 자기 폴더로 들어가 띄운다(Claude Code 의 Bash 도구는 `cd` 가 다음 호출까지 남는다).
    - gemini 좌석은 같은 서브셸에서 `gemini-seat.mjs check` 가 먼저 확인한다. 정책 파일이 배포본과 같은지, 홈 밖 상위 폴더에 `.gemini/.env` 나 `.env` 가 없는지 본다. 실패하면 보내지 않는다(`cli-call-failed`). 정책 파일 경로는 그 출력을 쓰고, 출력이 비었거나 그 파일이 없어도 보내지 않는다.
    - gemini 좌석은 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더(`$o`)로 두고 stderr 를 `$o/err-gemini.md` 로 받는다. 0.62.0 은 API 오류가 나면 요청 전문(페이로드)을 `os.tmpdir()` 에 `gemini-client-error-*.json` 으로 쓴다(umask 권한). node 의 `os.tmpdir()` 는 POSIX 에서 `TMPDIR` 을, Windows 에서 `TEMP` 와 `TMP` 를 읽는다(Claude Code 는 Windows 에서도 이 bash 블록을 Git Bash 로 돌린다). `$o` 에 두면 정리 때 함께 지워진다.

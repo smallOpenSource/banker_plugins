@@ -831,6 +831,8 @@ try {
      'S23-h: the PowerShell step 2 writes unsent.md, the base file and the closing marker like bash, BOM-free, the encoding in every call, and 2> to a path without brackets');
   ok(/^rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" && cat '<검토 대상 파일>' '<기준 파일>' >> "\$d\/prompt\.md" &&$/m.test(seatCode),
      'S23-i: the no-diff branch has its own chain in the same $d');
+  ok(/상한은 나누기 전의 `prompt\.md` 전체에 건다/.test(rqSkill) && /부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다/.test(rqSkill),
+     'S23-j: the 512 KiB cap is on the whole payload before any split, and each part is counted and scanned');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
