@@ -1687,9 +1687,11 @@ test("a revert that may not write outside the plugin folder says how to restore 
   const plug = bundle();
   const outside = join(root, `outside${seq++}`);
   mkdirSync(outside, { recursive: true });
-  // an old tool patched these while they sat outside, behind a linked scripts/ folder
+  // an old tool patched these while they sat outside, behind a linked scripts/ folder: the text this tool makes of them
+  const made = bundle();
+  assert.equal(run(bareHome(), ["--root", made]).code, 0);
   for (const n of ["foo", "stopper"]) {
-    writeFileSync(join(outside, `${n}.mjs`), "const __omcRaceImport = (p) => p;\n");
+    writeFileSync(join(outside, `${n}.mjs`), read(join(made, "scripts", `${n}.mjs`)));
     writeFileSync(join(outside, `${n}.mjs.omcbak`), SCRIPT(n));
   }
   writeFileSync(join(outside, "lib.mjs"), LIB);
@@ -3065,4 +3067,20 @@ test("a temp file is made with its final mode, and a new record folder is this a
   const modes = [...String(r.stderr).matchAll(/tmp-mode (\d+)/g)].map((m) => m[1]);
   assert.equal(modes[modes.length - 1], "600", `PINNED's temp file: ${modes.join(",")}`);
   assert.equal(statSync(dirname(pinPath(f))).mode & 0o777, 0o700);
+});
+
+// 0.20.4 B2 Task 4: the hand-restore hint (B2-20)
+test("the hand-restore hint does not tell to overwrite a file that only names the helper", (t) => {
+  const plug = bundle();
+  const outside = join(root, `b220-outside${seq++}`);
+  mkdirSync(outside, { recursive: true });
+  const notes = join(outside, "mynotes.mjs");
+  writeFileSync(notes, "// my notes about __omcRaceImport\nexport const notes = 1;\n");
+  const foo = join(plug, "scripts", "foo.mjs");
+  rmSync(foo);
+  try { symlinkSync(notes, foo); } catch { t.skip("file symlinks need privileges here"); return; }
+  writeFileSync(`${foo}.omcbak`, SCRIPT("foo"));
+  const r = run(bareHome(), ["--root", plug, "--revert"]);
+  assert.match(r.out, /되돌리지 않음: foo \(파일이 플러그인 폴더 밖에 있음\)/);
+  assert.doesNotMatch(r.out, /에 덮어쓰고 백업을 지우십시오/, r.out);
 });

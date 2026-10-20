@@ -749,21 +749,25 @@ function restoreScript(root, n, f, bak, r) {
   return true;
 }
 
-// 링크 너머의 일반 파일(1MiB 이하)에 헬퍼가 있는가. 옛 도구가 링크를 따라가 거기서 고친 파일이면 참이다.
+// 링크 너머의 일반 파일(1MiB 이하)이 백업을 이 도구가 패치한 글과 같은가. 옛 도구가 링크를 따라가 거기서 고친 파일이면 참이다.
+// 헬퍼 이름만 든 다른 파일(메모, 손으로 고친 파일)은 거짓이다 — 거기에 백업을 덮어쓰라고 하면 그 파일의 글을 잃는다.
+// 다른 자리에 헬퍼를 넣던 옛 킷의 패치본과 옛 헬퍼로 패치한 파일도 거짓이라 "먼저 확인" 쪽으로 간다(보수 쪽).
 const PEEK_MAX = 1 << 20;
-function patchedByOldTool(p) {
+function patchedByOldTool(p, bak) {
   try {
     const st = statSync(p);
-    return st.isFile() && st.size <= PEEK_MAX && readRegular(p, "utf8").includes("__omcRaceImport");
+    if (!st.isFile() || st.size > PEEK_MAX) return false;
+    const patched = transform(readRegular(bak, "utf8"));
+    return patched !== null && patched === readRegular(p, "utf8");
   } catch {
     return false;
   }
 }
 
-// 손 복구 안내. 링크 너머의 파일에 이 도구 계열의 패치가 있을 때만 백업으로 덮어쓰라고 하고, 아니면 링크부터 확인하게 한다.
+// 손 복구 안내. 링크 너머의 파일이 이 도구의 패치본일 때만 백업으로 덮어쓰라고 하고, 아니면 링크부터 확인하게 한다.
 function handRestoreHint(bak, f) {
   const target = realOr(f);
-  return patchedByOldTool(target)
+  return patchedByOldTool(target, bak)
     ? `손으로 되돌리려면 ${oneLine(realOr(bak))} 의 내용을 확인한 뒤 ${oneLine(target)} 에 덮어쓰고 백업을 지우십시오.`
     : `링크가 가리키는 ${oneLine(target)} 에 이 도구의 패치가 보이지 않습니다. 덮어쓰지 말고 링크가 가리키는 곳이 맞는지 먼저 확인하십시오.`;
 }
