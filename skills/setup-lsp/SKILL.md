@@ -136,7 +136,7 @@ curl -fL --connect-timeout 30 --speed-limit 1000 --speed-time 30 --retry 2 -H "U
 # ZIP 매직 검증 (HTML 에러페이지면 즉시 중단)
 [ "$(xxd -l 4 "$VSIX" | awk 'NR==1{print $2$3}')" = "504b0304" ] \
   || { echo "✗ ZIP 아님(HTML 에러페이지?)"; rm -f "$VSIX"; exit 1; }
-rm -rf "${TARGET:?}"/*; unzip -o -q "$VSIX" -d "$TARGET"
+find "${TARGET:?}" -mindepth 1 -delete; unzip -o -q "$VSIX" -d "$TARGET"   # 글롭 없이 비움(zsh 는 빈 폴더의 * 에서 멈춤)
 JAR=$(find "$TARGET" -name "spring-boot-language-server-*-exec.jar" | sort -V | tail -1)
 [ -n "$JAR" ] || { echo "✗ exec.jar 미발견"; rm -f "$VSIX"; exit 1; }
 ln -sf "$(basename "$JAR")" "$(dirname "$JAR")/$LINK"     # 디렉토리 이동에도 유효한 상대 링크

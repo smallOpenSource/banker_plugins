@@ -994,6 +994,14 @@ try {
       .map((l) => `${f}: ${l.trim().slice(0, 60)}`);
   });
   ok(cwdImports.length === 0, `airgap-4i: python -c, -m and stdin scripts run from the home folder, not the current one (found ${JSON.stringify(cwdImports)})`);
+  // An audit of someone else's repository keeps its runners and results outside that repository: a `.audit/` the
+  // repository planted as a link would take the writes elsewhere. And a block that clears a folder does it without a
+  // glob, which zsh ends with "no matches found" on an empty folder (a `set -e` block stops there).
+  const amSkill = fs.readFileSync(path.join(root, 'skills', 'audit-mock', 'SKILL.md'), 'utf8');
+  const lspSkill = fs.readFileSync(path.join(root, 'skills', 'setup-lsp', 'SKILL.md'), 'utf8');
+  ok(!/gitignored `\.audit\/`/.test(amSkill) && /감사 대상 저장소 밖의 작업 폴더/.test(amSkill)
+     && !/rm -rf "\$\{TARGET:\?\}"\/\*/.test(lspSkill) && /find "\$\{TARGET:\?\}" -mindepth 1 -delete/.test(lspSkill),
+     'airgap-4j: audit-mock keeps its work folder outside the audited repository, and setup-lsp clears its folder without a glob');
   // setup-mcp: `npx -y` and `uvx` ask the registry for a version at every start (offline: about 70 s, then a failure, each
   // session); the offline path registers pinned, installed executables and leaves out the servers that are a network service.
   const mcpSkill = fs.readFileSync(path.join(root, 'skills', 'setup-mcp', 'SKILL.md'), 'utf8');
