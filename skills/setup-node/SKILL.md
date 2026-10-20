@@ -50,17 +50,20 @@ command -v curl >/dev/null && command -v git >/dev/null || sudo apt install -y c
 ## nvm 공통 설치 (Rocky8·Ubuntu·Debian·macOS)
 ```bash
 # 최신 nvm 릴리스 태그 자동확인(하드코딩 회피). 실패 시 수동 확인 안내
-NVM_LATEST=$(curl -fsSL https://api.github.com/repos/nvm-sh/nvm/releases/latest \
+NVM_LATEST=$(curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/nvm-sh/nvm/releases/latest \
   | grep -m1 '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
 if [ -z "$NVM_LATEST" ]; then
-  echo "⚠️ 최신 태그 자동확인 실패. https://github.com/nvm-sh/nvm/releases 에서 수동 확인 후 <TAG> 치환"
-  NVM_LATEST="<TAG>"
+  echo "nvm 최신 태그를 받지 못했습니다. 설치하지 않습니다(https://github.com/nvm-sh/nvm/releases 에서 태그를 확인해 다시 실행)."
+else
+  T=$(mktemp -d)
+  curl -fsSL --connect-timeout 10 --max-time 120 -o "$T/install.sh" \
+    "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh" && bash "$T/install.sh"
+  rm -rf "$T"
 fi
-curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_LATEST}/install.sh" | bash
 
-# 설치 스크립트가 rc 파일을 자동 갱신하나, 컨테이너 등 미반영 환경 대비 idempotent 마커도 병행
+# 설치 스크립트가 rc 파일을 자동 갱신하나, 컨테이너 등 미반영 환경 대비 idempotent 마커도 병행(nvm 이 깔렸을 때만)
 RC_FILE="$HOME/.bashrc"    # macOS는 $HOME/.zshrc
-grep -q '### BANKER_NODE_BEGIN ###' "$RC_FILE" || cat >> "$RC_FILE" <<'EOF'
+[ -s "$HOME/.nvm/nvm.sh" ] && { grep -q '### BANKER_NODE_BEGIN ###' "$RC_FILE" || cat >> "$RC_FILE"; } <<'EOF'
 
 ### BANKER_NODE_BEGIN ###
 export NVM_DIR="$HOME/.nvm"

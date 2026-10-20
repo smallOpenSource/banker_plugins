@@ -43,18 +43,25 @@ Apple Silicon(`/opt/homebrew`)·Intel(`/usr/local`) 차이는 `brew` 가 자동 
 
 ### Linux — Ubuntu / Debian
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
+T=$(mktemp -d)
+curl -fsSL --connect-timeout 10 --max-time 120 -o "$T/nodesource.sh" https://deb.nodesource.com/setup_22.x \
+  && sudo -E bash "$T/nodesource.sh" && sudo apt-get install -y nodejs
+rm -rf "$T"
 node -v
 ```
+설치 스크립트는 파일로 받고, 받았을 때만 실행한다. 받기에 실패하면 그 뒤 단계는 돌지 않는다(셸에 바로 넘기면 받기가 실패해도 종료 0 이 된다).
 배포 기본 apt 저장소의 `nodejs` 는 버전이 낮은 경우가 많아 NodeSource 22.x 저장소를 사용한다.
 
 ### Linux — RHEL8 / Rocky8
 ⚠️ dnf AppStream 모듈의 `nodejs` 스트림은 미러 구성에 따라 22 미만일 수 있다 — 사전 확인: `dnf module list nodejs`.
 ```bash
 sudo dnf module reset -y nodejs
-sudo dnf module enable -y nodejs:22 2>/dev/null || \
-  curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash -
+sudo dnf module enable -y nodejs:22 2>/dev/null || {
+  T=$(mktemp -d)
+  curl -fsSL --connect-timeout 10 --max-time 120 -o "$T/nodesource.sh" https://rpm.nodesource.com/setup_22.x \
+    && sudo -E bash "$T/nodesource.sh"
+  rm -rf "$T"
+}
 sudo dnf install -y nodejs
 node -v
 ```

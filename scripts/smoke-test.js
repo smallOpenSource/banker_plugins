@@ -867,6 +867,16 @@ try {
      && /레지스트리에 닿지 못하면\(`npm ping` 의 종료 코드가 0 이 아님\) .* 어느 채널도 바꾸지 않고 멈춘다/.test(ubStep0)
      && (ubSkill.match(/npm view @kaydash9999\/banker-plugins version(?! --fetch-retries=0)/g) || []).length === 0,
      'airgap-1: update-banker checks the registry is reachable before npm view, stops when it is not, and npm view never waits on retries');
+  // A script piped from a download into a shell exits 0 when the download fails (the pipe's code is the shell's):
+  // every SKILL and command saves the script first and runs it only when it came.
+  const mdDocs = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
+    ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
+    .filter((f) => fs.existsSync(path.join(root, f)));
+  const piped = mdDocs.flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').split(/\r?\n/)
+    .filter((l) => /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+(?:-E\s+)?)?(?:ba|z)?sh\b/.test(l)
+      || /\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b[^|\n]*\|\s*(?:iex|Invoke-Expression)\b/i.test(l))
+    .map((l) => `${f}: ${l.trim().slice(0, 60)}`));
+  ok(piped.length === 0, `airgap-3: no SKILL or command pipes a download into a shell (found ${JSON.stringify(piped)})`);
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

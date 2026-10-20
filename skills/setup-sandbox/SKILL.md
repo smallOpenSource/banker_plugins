@@ -87,7 +87,12 @@ command -v sandbox-exec >/dev/null && echo "Seatbelt 내장 OK"
 
 ## 4. 폴드인 - rust/cargo
 ```bash
-command -v cargo >/dev/null || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+command -v cargo >/dev/null || {
+  T=$(mktemp -d)
+  curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 120 -o "$T/rustup-init.sh" https://sh.rustup.rs \
+    && sh "$T/rustup-init.sh" -y                    # 받았을 때만 실행
+  rm -rf "$T"
+}
 source "$HOME/.cargo/env" 2>/dev/null
 cargo --version
 ```

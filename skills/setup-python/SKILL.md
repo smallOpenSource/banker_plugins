@@ -86,7 +86,9 @@ esac
 command -v pipx >/dev/null && pipx ensurepath || "$PY" -m pipx ensurepath
 # macOS 대안: brew install pipx && pipx ensurepath
 
-curl -LsSf https://astral.sh/uv/install.sh | sh     # macOS/Linux 공통, 항상 최신 fetch(버전 고정 불필요)
+T=$(mktemp -d)                                      # uv: macOS/Linux 공통, 항상 최신 fetch(버전 고정 불필요)
+curl -LsSf --connect-timeout 10 --max-time 120 -o "$T/uv-install.sh" https://astral.sh/uv/install.sh && sh "$T/uv-install.sh"
+rm -rf "$T"                                         # 받았을 때만 실행(셸에 바로 넘기면 받기 실패도 종료 0)
 
 RC_FILE="$HOME/.bashrc"   # macOS는 $HOME/.zshrc
 grep -q '### BANKER_PYTHON_BEGIN ###' "$RC_FILE" || cat >> "$RC_FILE" <<'EOF'
@@ -100,7 +102,11 @@ source "$RC_FILE"
 ```powershell
 python -m pip install --user pipx
 python -m pipx ensurepath
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+$T = Join-Path $env:TEMP "uv-install-$PID.ps1"
+try {
+  Invoke-RestMethod -TimeoutSec 60 -OutFile $T -ErrorAction Stop https://astral.sh/uv/install.ps1
+  powershell -ExecutionPolicy ByPass -File $T
+} catch { "uv 설치 스크립트를 받지 못했습니다: $($_.Exception.Message)" } finally { Remove-Item -ErrorAction SilentlyContinue $T }
 ```
 
 ## 검증 (보고 의무)
