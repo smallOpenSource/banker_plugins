@@ -1174,3 +1174,26 @@ test('generateClip: a WAN key held back because an env proxy would carry it over
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
+
+const buildSkill = () => fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+
+test('SKILL: a FAILED task sent to the next key rests on a premise the docs do not confirm, with its worst case', () => {
+  const line = buildSkill().split('\n').find((l) => l.includes('같은 leg 를 두 번 과금하지 않는다'));
+  assert.match(line, /FAILED\/CANCELED task 가 과금되지 않는다는 것은 전제/);
+  assert.match(line, /키 수 x 4 \+ 2/);
+  assert.doesNotMatch(line, /task 를 만들지 않은 게 확실할 때뿐/);
+  const head = fs.readFileSync(new URL('./video-pool.mjs', import.meta.url), 'utf8').split('\n').slice(0, 40).join(' ');
+  assert.match(head, /an assumption the official docs do not confirm/);
+  assert.match(head, /keys x 4 \+ 2/);
+  assert.doesNotMatch(head, /provably did/);
+});
+
+test('SKILL: the cost approval says the Sora estimate applies whenever no WAN key can take the leg, not only when keys run out', () => {
+  const line = buildSkill().split('\n').find((l) => l.includes('이 Sora 추정이 적용된다'));
+  assert.match(line, /소진, 2분 넘는 쿨다운, 시도 한도/);
+});
+
+test('SKILL: a task_lost leg whose task the console still shows is finished with resumeClip, not submitted again', () => {
+  const row = buildSkill().split('\n').find((l) => l.trim().startsWith('|') && l.includes("'task_lost'"));
+  assert.match(row, /`task_lost` 인데 콘솔에 task 가 있으면 `resumeClip` 으로 마저 받음\(새 제출 없음\)/);
+});

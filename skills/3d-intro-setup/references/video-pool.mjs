@@ -18,11 +18,13 @@
  *   WAN_EXHAUSTED_TTL_HOURS              how long an exhausted key rests before one retry (default 24)
  *   VIDEO_PROVIDER_ORDER                 comma list of wan,sora (default wan,sora)
  *
- * Billing rule: a leg is submitted to a second key ONLY when the first submission provably did
- * not start a task (the server rejected it, the connection failed before the request was sent, or
- * the task ended FAILED/CANCELED with a known key, capacity or transient code). Every other outcome
- * throws, with the taskId when a task exists, so the caller can resume (resumeClip) instead of
- * paying twice. A config error (every WAN entry malformed, ModelNotFound) never falls back to Sora.
+ * Billing rule: a leg is submitted to a second key ONLY when the first submission is taken not to
+ * have billed (the server rejected it, the connection failed before the request was sent, or the
+ * task ended FAILED/CANCELED with a known key, capacity or transient code). That a FAILED/CANCELED
+ * task is not billed is an assumption the official docs do not confirm; if it is wrong, one leg can
+ * be submitted up to (keys x 4 + 2) times. Every other outcome throws, with the taskId when a task
+ * exists, so the caller can resume (resumeClip) instead of paying twice. A config error (every WAN
+ * entry malformed, ModelNotFound) never falls back to Sora.
  *
  * Pool state lives in ~/.config/banker/3d-intro/video-pool-state.json (0600). It holds
  * FINGERPRINTS (sha256 of endpoint+key+model), never a key, so a rotated key or a changed model
