@@ -19,8 +19,8 @@
  *   - per-model usage badge (fable:0%(1h31m)) -> Fa:0%/1h31m, after the rate windows.
  *   - PL:<MB, 1 decimal>M always shown before se. It reads payload-mon's module
  *     copy next to this file (hud/payload-mon/payload-size.mjs; when the
- *     statusLine path is a link, next to the file it points at first); without
- *     it PL is left out.
+ *     statusLine path is a link, next to the file it points at first, and in
+ *     the config folder's hud/ last); without it PL is left out.
  *   - cwd group split on "|"; branch shown without "branch:" after the account.
  *   - OMC#X.Y.Z label no longer shown, nor OMC's update hint lines
  *     ("[!] omc X - paste: ! ...", "[!] claude X - paste: ! claude update").
@@ -69,9 +69,9 @@
  *    We wait for the first complete line instead.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -94,13 +94,19 @@ function hereDirs() {
   return dirs;
 }
 const HERE = hereDirs();
-// The first of these folders (each once, in this order) that holds the file; the first one's path
-// when none does.
+const isFile = (p) => {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+// The first of these folders (each once, in this order) that holds the file, as a regular file; the
+// first one's path when none does.
 function findSibling(dirs, ...parts) {
   const paths = [...new Set(dirs.filter(Boolean))].map((d) => join(d, ...parts));
-  return paths.find((p) => existsSync(p)) ?? paths[0];
+  return paths.find(isFile) ?? paths[0];
 }
-const HUD = findSibling([HERE.named, HERE.real, HERE.self], "omc-hud.mjs");
 
 const STDIN_TIMEOUT_MS = 2000; // Claude Code pipes the payload immediately
 const RENDER_TIMEOUT_MS = 10000; // see timer discipline note above
@@ -147,11 +153,31 @@ function emit(s) {
 // that file in $CLAUDE_CONFIG_DIR when set, otherwise in the home folder.
 function claudeJsonDir() {
   const v = (process.env.CLAUDE_CONFIG_DIR || "").trim();
-  if (!v) return homedir();
+  return v ? expandDir(v) : homedir();
+}
+// Where Claude Code was started (the statusline JSON's workspace.project_dir, else the working
+// folder): Claude Code reads a relative CLAUDE_CONFIG_DIR from there, so this does too.
+function startDir() {
+  try {
+    const d = JSON.parse(input)?.workspace?.project_dir;
+    if (typeof d === "string" && isAbsolute(d)) return d;
+  } catch {
+    /* no or bad stdin JSON */
+  }
+  return process.cwd();
+}
+function expandDir(v) {
   if (v === "~") return homedir();
   if (v.startsWith("~/") || v.startsWith("~\\")) return join(homedir(), v.slice(2));
-  return v;
+  return resolve(startDir(), v);
 }
+// Claude Code's config folder. Its hud/ is where the installer puts the loader: the third place
+// siblings are looked for, as when another script imported this file through a link.
+function configDir() {
+  const v = (process.env.CLAUDE_CONFIG_DIR || "").trim();
+  return v ? expandDir(v) : join(homedir(), ".claude");
+}
+const configHud = () => join(configDir(), "hud");
 function loginAccount() {
   try {
     const raw = readFileSync(join(claudeJsonDir(), ".claude.json"), "utf8");
@@ -200,6 +226,7 @@ function readStdinBounded(ms) {
 }
 
 const input = await readStdinBounded(STDIN_TIMEOUT_MS);
+const HUD = findSibling([HERE.named, HERE.real, configHud(), HERE.self], "omc-hud.mjs");
 
 // Current reasoning effort level (low/medium/high/xhigh) from the statusline
 // payload (effort.level) — shown next to the model. Empty if absent.
@@ -507,7 +534,7 @@ try {
   try {
     const transcript = JSON.parse(input)?.transcript_path;
     if (transcript) {
-      const copy = findSibling([HERE.real, HERE.named, HERE.self], "payload-mon", "payload-size.mjs");
+      const copy = findSibling([HERE.real, HERE.named, configHud(), HERE.self], "payload-mon", "payload-size.mjs");
       const { estimatePayloadBytes, REQUEST_LIMIT_BYTES } = await import(pathToFileURL(copy).href);
       const bytes = estimatePayloadBytes(transcript);
       if (Number.isFinite(bytes)) {

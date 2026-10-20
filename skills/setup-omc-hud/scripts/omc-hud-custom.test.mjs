@@ -254,3 +254,65 @@ test("다른 스크립트가 불러와도 이 파일 옆의 로더를 씀", () =
   assert.doesNotMatch(r.stdout, /DECOY/);
   assert.equal(firstLine(r.stdout), firstLine(renderWith()));
 });
+
+// Renders the wrapper at `file` as the test laid it out (no layHud), from `cwd` when given.
+function renderAt(file, { stdin = { effort: { level: "high" } }, env = {}, cwd } = {}) {
+  const dir = join(root, `r-${++seq}`);
+  mkdirSync(dir, { recursive: true });
+  const r = spawnSync(process.execPath, [file], {
+    input: JSON.stringify(stdin), env: renderEnv(dir, env), encoding: "utf8", timeout: 30000, cwd,
+  });
+  return r.stdout;
+}
+
+test("명령 경로 옆의 omc-hud.mjs 가 폴더면 실제 파일 옆의 로더를 씀", posixOnly, () => {
+  const { link } = linkedLayout();
+  rmSync(join(link, "omc-hud.mjs"));
+  mkdirSync(join(link, "omc-hud.mjs"));
+  assert.equal(firstLine(renderAt(join(link, "omc-hud-custom.mjs"))), firstLine(renderWith()));
+});
+
+test("다른 스크립트가 링크 경로로 불러와도 설정 폴더 hud 의 로더를 씀", posixOnly, () => {
+  const dir = join(root, `r-${++seq}`);
+  const real = join(dir, "real");
+  mkdirSync(real, { recursive: true });
+  writeFileSync(join(real, "omc-hud-custom.mjs"), WRAPPER);
+  const env = renderEnv(dir, {});
+  const cfgHud = join(env.CLAUDE_CONFIG_DIR, "hud");
+  mkdirSync(cfgHud, { recursive: true });
+  writeFileSync(join(cfgHud, "omc-hud.mjs"), FAKE_OMC);
+  writeFileSync(join(cfgHud, "omc-out.txt"), omcOut());
+  symlinkSync(join(real, "omc-hud-custom.mjs"), join(cfgHud, "omc-hud-custom.mjs"));
+  const outer = join(dir, "outer");
+  mkdirSync(outer);
+  writeFileSync(join(outer, "run.mjs"), `await import(${JSON.stringify(pathToFileURL(join(cfgHud, "omc-hud-custom.mjs")).href)});\n`);
+  const r = spawnSync(process.execPath, [join(outer, "run.mjs")], {
+    input: JSON.stringify({ effort: { level: "high" } }), env, encoding: "utf8", timeout: 30000,
+  });
+  assert.equal(firstLine(r.stdout), firstLine(renderWith()));
+});
+
+// A project folder holding a config folder named relatively, `rel`, with its own account.
+function relativeConfig() {
+  const dir = join(root, `r-${++seq}`);
+  const hud = layHud(dir, { omc: omcOut() });
+  const proj = join(dir, "proj");
+  mkdirSync(join(proj, "rel"), { recursive: true });
+  writeFileSync(join(proj, "rel", ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "relacct@example.com" } }));
+  const elsewhere = join(dir, "elsewhere");
+  mkdirSync(elsewhere);
+  return { wrapper: join(hud, "omc-hud-custom.mjs"), proj, elsewhere };
+}
+
+test("상대경로 CLAUDE_CONFIG_DIR 는 Claude Code 를 시작한 폴더 기준으로 계정을 읽음", () => {
+  const { wrapper, proj, elsewhere } = relativeConfig();
+  const out = renderAt(wrapper, {
+    stdin: { effort: { level: "high" }, workspace: { project_dir: proj } }, env: { CLAUDE_CONFIG_DIR: "rel" }, cwd: elsewhere,
+  });
+  assert.match(firstLine(out), /relacct/);
+});
+
+test("상대경로 CLAUDE_CONFIG_DIR 인데 project_dir 이 없으면 작업 폴더 기준", () => {
+  const { wrapper, proj } = relativeConfig();
+  assert.match(firstLine(renderAt(wrapper, { env: { CLAUDE_CONFIG_DIR: "rel" }, cwd: proj })), /relacct/);
+});
