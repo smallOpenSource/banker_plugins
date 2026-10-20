@@ -53,7 +53,9 @@ I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
 I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보는 뗌
 printf 'url = "%s"\n' "$I/pip/" | curl -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # py 서버(pipx)
 curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://download.eclipse.org   # jdtls
-curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com             # Spring Boot LS, lsp-mcp
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com             # lsp-mcp
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://vmware.gallery.vsassets.io   # Spring Boot LS(VSIX)
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://marketplace.visualstudio.com # Spring Boot LS(VSIX 대체 원천. 둘 중 하나만 닿아도 받을 수 있다)
 ```
 
 - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.

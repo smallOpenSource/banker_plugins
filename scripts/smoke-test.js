@@ -878,9 +878,13 @@ try {
   const mdDocs = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
     ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
     .filter((f) => fs.existsSync(path.join(root, f)));
-  const piped = mdDocs.flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').split(/\r?\n/)
+  // Lines joined at a trailing backslash first; a download fed to a shell through `<(…)` or `"$(…)"`, or to iex in
+  // PowerShell, is the same pipe.
+  const piped = mdDocs.flatMap((f) => fs.readFileSync(path.join(root, f), 'utf8').replace(/\\\r?\n\s*/g, ' ').split(/\r?\n/)
     .filter((l) => /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+(?:-E\s+)?)?(?:ba|z)?sh\b/.test(l)
-      || /\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b[^|\n]*\|\s*(?:iex|Invoke-Expression)\b/i.test(l))
+      || /\b(?:ba|z)?sh\s+(?:-c\s+)?["']?(?:<\(|\$\()\s*(?:curl|wget)\b/.test(l) || /\beval\s+["']?\$\(\s*(?:curl|wget)\b/.test(l)
+      || /\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b[^|\n]*\|\s*(?:iex|Invoke-Expression)\b/i.test(l)
+      || /\b(?:iex|Invoke-Expression)\b\s*\(+\s*(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|New-Object)\b/i.test(l))
     .map((l) => `${f}: ${l.trim().slice(0, 60)}`));
   ok(piped.length === 0, `airgap-3: no SKILL or command pipes a download into a shell (found ${JSON.stringify(piped)})`);
   // A skill that downloads first sees whether its sources answer within 10 s and reports "오프라인이라 설치하지 않음"
@@ -894,6 +898,7 @@ try {
   // Code blocks only (a sentence that quotes a command runs nothing), trailing comments cut.
   const codeBlocks = (text) => [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
     .map((m) => ({ at: m.index, lines: m[1].split('\n').map((l) => l.replace(/\s#\s.*$/, '')).filter((l) => !/^\s*#/.test(l)) }));
+  const joinedLines = (text) => codeBlocks(text).flatMap((b) => b.lines.join('\n').replace(/\\\n\s*/g, ' ').split('\n'));
   const firstBlockAt = (text, pick) => (codeBlocks(text).find((b) => b.lines.some(pick)) || { at: Infinity }).at;
   const isNetCheck = (l) => NET_CHECK.test(l);
   const isDownload = (l) => !isNetCheck(l) && !/\bcommand -v\b/.test(l) && DOWNLOADS.test(l);
@@ -914,10 +919,14 @@ try {
   // skips only what comes from the web, and the OS package manager steps are tried (they use their own mirrors).
   const npmDocs = DL_DOCS.filter((f) => f !== path.join('commands', 'setup.md') && codeBlocks(fs.readFileSync(path.join(root, f), 'utf8'))
     .some((b) => b.lines.some((l) => /\(cd ~ && npm ping\b/.test(l))));
+  // The package asked for is one the skill installs (npm i, npm install, npx, in a code block or a quoted command).
+  const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  const installsPkg = (t, pkg) => [...joinedLines(t), ...[...t.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map((m) => m[1])]
+    .some((l) => /\bnpm (?:i|install)\b|\bnpx\b/.test(l) && !/\bnpm view\b/.test(l) && new RegExp(`(?:^|\\s)${reEsc(pkg)}(?:@|\\s|\\)|$)`).test(l));
   const noFallback = npmDocs.filter((f) => {
     const t = fs.readFileSync(path.join(root, f), 'utf8');
-    return !/`\(cd ~ && T=\$\(mktemp -d\) && \{ npm view (\S+) version --fetch-retries=0 --fetch-timeout=10000 --cache "\$T"; r=\$\?; rm -rf "\$T"; exit \$r; \}\)` 도 실패해야 오프라인으로 본다\. 이 스킬이 설치할 패키지\(`\1`\)/.test(t)
-      || !/`npm` 이 없으면\(명령 없음\) 오프라인이 아니라 확인하지 못한 것이다/.test(t);
+    const m = /`\(cd ~ && T=\$\(mktemp -d\) && \{ npm view (\S+) version --fetch-retries=0 --fetch-timeout=10000 --cache "\$T"; r=\$\?; rm -rf "\$T"; exit \$r; \}\)` 도 실패해야 오프라인으로 본다\. 이 스킬이 설치할 패키지\(`\1`\)/.exec(t);
+    return !m || !installsPkg(t, m[1]) || !/`npm` 이 없으면\(명령 없음\) 오프라인이 아니라 확인하지 못한 것이다/.test(t);
   });
   const setupCmd = fs.readFileSync(path.join(root, 'commands', 'setup.md'), 'utf8');
   ok(npmDocs.length >= 8 && noFallback.length === 0
@@ -927,16 +936,58 @@ try {
      && /OS 패키지 관리자\(dnf, apt, brew, winget\)만 쓰는 단계는 .*이 확인과 관계없이 각 스킬의 규칙대로 시도한다/.test(setupCmd),
      `airgap-4d: a mirror without ping and a PC without npm are not read as offline, /banker:setup skips nothing on its own check, and the OS package manager steps are tried (npm docs ${npmDocs.length}, no fallback: ${JSON.stringify(noFallback)})`);
   ok(unchecked.length === 0, `airgap-4: each downloading skill and /banker:setup checks its sources before the first download (unchecked: ${JSON.stringify(unchecked)})`);
-  const unlimited = DL_DOCS.flatMap((f) => [...fs.readFileSync(path.join(root, f), 'utf8').matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
-    .flatMap((m) => m[1].split('\n')).map((l) => l.replace(/\s#\s.*$/, '')).filter((l) => !/^\s*#/.test(l))
-    .filter((l) => (/\bcurl(?:\.exe)? -/.test(l) && !/--max-time \d+|--speed-time \d+/.test(l)) || (/\bwget -/.test(l) && !/--timeout=\d+/.test(l))
-      || (/\bgit\b.*\bclone\b/.test(l) && !/http\.lowSpeedTime=\d+/.test(l)))
+  // Each web source a skill downloads from has its own check line: the host of every address a curl, wget, git clone
+  // or PowerShell download reads (variables set to an address in the same document resolved), npm for npm and npx,
+  // PyPI for pip, pipx and uv, nodejs.org for nvm, GitHub for Claude Code plugin marketplaces. OS package managers keep
+  // their own mirrors and are not checked (the documents say so).
+  const hostOf = (u) => { const m = /^https?:\/\/(?:[^/@\s]*@)?([^/:"'$\s]+)/.exec(u); return m ? m[1].toLowerCase() : null; };
+  const URLS = /https?:\/\/[^\s"'`)<>]+/g;
+  const sourcesOf = (lines) => {
+    const vars = {};
+    for (const l of lines) for (const m of l.matchAll(/\b(\w+)=["']?(https?:\/\/[^"'\s]+)/g)) vars[m[1]] = m[2];
+    const out = new Set();
+    for (const l of lines.filter((x) => !isNetCheck(x) && !/\bcommand -v\b|Get-Command\b/.test(x))) {
+      if (/\b(?:curl|wget)\b|\bgit\b.*\bclone\b|\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b/i.test(l)) {
+        for (const m of l.matchAll(URLS)) out.add(hostOf(m[0]));
+        for (const m of l.matchAll(/"\$\{?(\w+)\}?"/g)) if (vars[m[1]]) out.add(hostOf(vars[m[1]]));
+      }
+      if (/\bnpm (?:i|install)\b|\bnpx\b/.test(l) && !/\bnpm view\b/.test(l)) out.add('npm');
+      if (/\bpip3? install\b|\bpipx install\b|\buv tool install\b|\buvx\b|-m pip install\b/.test(l)) out.add('pypi');
+      if (/\bnvm install\b/.test(l)) out.add('nodejs.org');
+      if (/\bclaude plugin (?:marketplace add|install)\b|\bomc update\b/.test(l)) out.add('github.com');
+    }
+    out.delete(null);
+    return out;
+  };
+  const checksOf = (lines) => {
+    const out = new Set();
+    for (const l of lines.filter(isNetCheck)) {
+      if (/\bnpm ping\b/.test(l)) out.add('npm');
+      else if (/"\$I\/pip\/"/.test(l)) out.add('pypi');
+      else for (const m of l.matchAll(URLS)) out.add(hostOf(m[0]));
+    }
+    return out;
+  };
+  const uncovered = DL_DOCS.flatMap((f) => {
+    const lines = joinedLines(fs.readFileSync(path.join(root, f), 'utf8'));
+    const checked = checksOf(lines);
+    return [...sourcesOf(lines)].filter((h) => !checked.has(h)).map((h) => `${f}: ${h}`);
+  });
+  ok(uncovered.length === 0, `airgap-4k: every web source a downloading skill reads has a check line of its own (unchecked: ${JSON.stringify(uncovered)})`);
+
+  // Every curl call (with flags or a bare address, but `curl --version` and detection lines), wget, git clone, and the
+  // PowerShell downloads, with continued lines joined.
+  const unlimited = DL_DOCS.flatMap((f) => joinedLines(fs.readFileSync(path.join(root, f), 'utf8'))
+    .filter((l) => !/\bcommand -v\b|Get-Command\b/.test(l))
+    .filter((l) => (/\bcurl(?:\.exe)?\s+(?:-(?!-version\b|V\b)\S|https?:\/\/|["']?\$)/.test(l) && !/--max-time \d+|--speed-time \d+/.test(l))
+      || (/\bwget\s+(?:-\S|https?:\/\/|["']?\$)/.test(l) && !/--timeout=\d+/.test(l))
+      || (/\bgit\b.*\bclone\b/.test(l) && !/http\.lowSpeedTime=\d+/.test(l))
+      || (/\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\s/i.test(l) && !/-TimeoutSec \d+/i.test(l)))
     .map((l) => `${f}: ${l.trim().slice(0, 50)}`));
   ok(unlimited.length === 0, `airgap-4b: the curl, wget and git clone calls of those skills have time limits (found ${JSON.stringify(unlimited)})`);
   // A download to a fixed /tmp name can be taken over by another user (a file planted there first is unpacked, built or
   // run, some of it as root): the skills download into a private folder (mktemp -d). The large files use stall detection,
   // not a total limit that cuts a slow line still receiving, and a cut download leaves no file that looks installed.
-  const joinedLines = (text) => codeBlocks(text).flatMap((b) => b.lines.join('\n').replace(/\\\n\s*/g, ' ').split('\n'));
   const fixedTmp = DL_DOCS.flatMap((f) => joinedLines(fs.readFileSync(path.join(root, f), 'utf8'))
     .filter((l) => /\bcd \/(?:var\/)?tmp\b|(?:-o|-O|--output|--output-dir|--destdir|-C|>)[= ]?\s*"?\/(?:var\/)?tmp\b|\b\w+=\/(?:var\/)?tmp\//.test(l)).map((l) => `${f}: ${l.trim().slice(0, 60)}`));
   const BIG = /jdt-language-server-latest|"\$VSIX_URL"|"\$FALLBACK"|LibreOffice_\$\{V\}_(?:Linux|MacOS)|releases\/latest\/download\/plantuml\.jar/;
@@ -945,7 +996,8 @@ try {
   const noStall = bigLines.filter(([, l]) => !/--speed-limit 1000 --speed-time 30/.test(l) || /--max-time/.test(l)).map(([f, l]) => `${f}: ${l.trim().slice(0, 60)}`);
   const docsSetup = fs.readFileSync(path.join(root, 'skills', 'docs-setup', 'SKILL.md'), 'utf8');
   ok(fixedTmp.length === 0 && bigLines.length >= 5 && noStall.length === 0
-     && /-o ~\/bin\/plantuml\.jar\.part .*&& mv ~\/bin\/plantuml\.jar\.part ~\/bin\/plantuml\.jar;/s.test(docsSetup),
+     && /-o ~\/bin\/plantuml\.jar\.part .*&& mv ~\/bin\/plantuml\.jar\.part ~\/bin\/plantuml\.jar;/s.test(docsSetup)
+     && /^rm -f ~\/bin\/plantuml\.jar\.part\s/m.test(docsSetup),
      `airgap-4e: downloads go to a private folder, the large ones use stall detection, and plantuml.jar gets its name only when complete (fixed /tmp: ${JSON.stringify(fixedTmp)}, large ${bigLines.length}, no stall detection: ${JSON.stringify(noStall)})`);
   // PowerShell: a script saved under a name another user can guess ($PID) in a shared TEMP can be swapped before it runs;
   // it goes into a new folder with a GUID name, removed afterwards.
@@ -1032,8 +1084,10 @@ try {
   // skills point FFMPEG_PATH at an ffmpeg brought in beforehand.
   const ffDocs = ['3d-intro-setup', 'motion-graphic-setup'].map((d) => [d, fs.readFileSync(path.join(root, 'skills', d, 'SKILL.md'), 'utf8')]);
   // Wrong: offline among the cases of the ffmpeg-static fallback, or "오프라인이면" leading to ffmpeg-static as the way.
-  const ffWrong = ffDocs.flatMap(([d, t]) => t.split(/\r?\n/).filter((l) => /ffmpeg-static/.test(l)
-    && ((/폴백/.test(l) && /오프라인(?!이면 미리 받)/.test(l) && !/(?:받을|쓸) 수 없다/.test(l)) || (/오프라인이면[^.]*ffmpeg-static/.test(l) && !/받을 수 없다/.test(l))))
+  // Judged sentence by sentence: an exemption in one sentence does not cover another on the same line.
+  const ffExempt = (x) => /(?:받을|쓸) 수 없다/.test(x) || /오프라인이 아니면/.test(x) || /오프라인이면 미리 받/.test(x);
+  const ffWrong = ffDocs.flatMap(([d, t]) => t.split(/\r?\n/).flatMap((l) => l.split(/(?<=\.)\s+/)).filter((l) => /ffmpeg-static/.test(l)
+    && ((/폴백/.test(l) && /오프라인/.test(l)) || /오프라인이면[^.]*ffmpeg-static/.test(l)) && !ffExempt(l))
     .map((l) => `${d}: ${l.trim().slice(0, 60)}`));
   ok(ffWrong.length === 0 && ffDocs.every(([, t]) => /오프라인이면 `ffmpeg-static` 도 받을 수 없다/.test(t) && /미리 받아 둔 ffmpeg 실행 파일의 절대 경로/.test(t)),
      `airgap-7: ffmpeg-static is not offered as the offline fallback; offline, FFMPEG_PATH points at an ffmpeg brought in beforehand (found ${JSON.stringify(ffWrong)})`);
@@ -1056,8 +1110,8 @@ try {
   // zsh does not split an unquoted variable into words: `X="a b"` then `$X ...` runs a command named "a b" there.
   const splitVars = [...DL_DOCS, path.join('skills', 'update-banker', 'SKILL.md')].flatMap((f) => codeBlocks(fs.readFileSync(path.join(root, f), 'utf8'))
     .flatMap((b) => {
-      const names = b.lines.flatMap((l) => [...l.matchAll(/(?:^|[;&|]\s*)(\w+)="[^"$]* [^"]*"/g)].map((m) => m[1]));
-      return b.lines.filter((l) => names.some((n) => new RegExp(`(?:^|[;&|]\\s*)\\$\\{?${n}\\b(?!\\})?(?!")`).test(l.trim())));
+      const names = b.lines.flatMap((l) => [...l.matchAll(/(?:^|[;&|]\s*)(?:export\s+|local\s+|readonly\s+)?(\w+)=(["'])[^"'$]*\s[^"'$]*\2/g)].map((m) => m[1]));
+      return b.lines.filter((l) => names.some((n) => new RegExp(`(?:^|[;&|(]\\s*|\\b(?:if|then|else|do|while|until|exec)\\s+|!\\s*)\\$\\{?${n}\\b\\}?(?!")`).test(l.trim())));
     }).map((l) => `${f}: ${l.trim().slice(0, 60)}`));
   ok(splitVars.length === 0, `airgap-9c: no code block runs a command from an unquoted variable holding words (zsh does not split it) (found ${JSON.stringify(splitVars)})`);
   // audit-security: offline, npm audit exits 1 with only an error in its JSON and osv-scanner exits 127 with an empty

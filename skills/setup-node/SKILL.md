@@ -33,6 +33,7 @@ if (Get-Command nvm  -ErrorAction SilentlyContinue) { nvm version } else { "nvm-
 이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
 
 ```bash
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://api.github.com              # nvm 최신 판 조회(GitHub API)
 curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://raw.githubusercontent.com   # nvm 설치 스크립트(GitHub)
 curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://nodejs.org/dist/            # nvm 이 받는 Node
 ```
