@@ -165,10 +165,20 @@ test("both limits end a worker that outlives TERM after its entry point exits", 
 });
 
 // The two spellings of the base folder step 6 prints before it reads opencode's session list.
-const BASES = (BLOCK.match(/^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"$/m) || [])[0] || "";
+const BASES = (BLOCK.match(/^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"\nif command -v cygpath > \/dev\/null; then cygpath -w "\$\(dirname "\$d"\)"; fi$/m) || [])[0] || "";
 test("step 6 prints the base folder as written and as resolved, the way opencode records a session's folder", { skip: SKIP }, (t) => {
-  assert.ok(BASES, "no base-folder line in step 6");
+  assert.ok(BASES, "no base-folder lines in step 6");
   const dir = scratch(t);
+  if (process.platform === "win32") {
+    // Git Bash (a forced run): opencode writes C:\...\ralph-qa.<id>\opencode, the third line cygpath -w prints
+    const seatWin = join(dir, "T", "ralph-qa.abc123", "opencode");
+    mkdirSync(seatWin, { recursive: true });
+    const cwd = spawnSync(process.execPath, ["-e", "console.log(process.cwd())"], { cwd: seatWin, encoding: "utf8" }).stdout.trim();
+    const w = spawnSync("bash", ["-c", `d='${join(dir, "T", "ralph-qa.abc123").replaceAll("\\", "/")}'\n${BASES}`], { encoding: "utf8" });
+    assert.equal(w.status, 0, w.stderr);
+    assert.equal(cwd.toLowerCase(), join(w.stdout.trim().split("\n")[2], "ralph-qa.abc123", "opencode").toLowerCase());
+    return;
+  }
   mkdirSync(join(dir, "private", "var", "T", "ralph-qa.abc123", "opencode"), { recursive: true });
   symlinkSync(join(dir, "private", "var"), join(dir, "var"));
   const seat = join(dir, "var", "T", "ralph-qa.abc123", "opencode");

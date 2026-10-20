@@ -767,7 +767,8 @@ try {
      && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 좌석 프로세스 트리 전체가 멈춘다/.test(rqSkill)
      && /셸에서 프로세스 그룹을 죽여서는 좌석 서브셸이 멈추지 않는다/.test(rqSkill) && /Codex 는 그 exec 세션이 끝날 때까지 기다린다/.test(rqSkill)
      && /`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `timeout -s KILL 600` 을, 없으면\(macOS 기본\) 블록 주석의 `perl` 명령을 넣는다\./.test(rqSkill) && /둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다\(exit 137\)/.test(rqSkill) && !/<상한> 은 5단계: timeout 이 있으면 timeout -k/.test(seatBlock)
-     && /^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"$/m.test(seatCode) && /기준 폴더는 6단계가 찍는 두 줄\(적은 경로와 `pwd -P` 로 푼 경로\) 모두와 견준다/.test(rqSkill)
+     && /^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"$/m.test(seatCode) && /^if command -v cygpath > \/dev\/null; then cygpath -w "\$\(dirname "\$d"\)"; fi$/m.test(seatCode)
+     && /기준 폴더는 6단계가 찍는 줄\(적은 경로, `pwd -P` 로 푼 경로, Git Bash 면 `cygpath -w` 꼴\) 모두와 견준다/.test(rqSkill)
      && seatBlock.includes("perl -e 'setpgrp; $SIG{ALRM} = sub { $SIG{TERM} = \"IGNORE\"; kill TERM => -$$; sleep 10; kill KILL => -$$ }; alarm shift; system @ARGV;")
      && !/alarm shift; exec @ARGV/.test(rqSkill) && /^  <상한> opencode debug agent /m.test(ocCmd)
      && /^\( cd "\$d\/codex" && <상한> codex exec /m.test(seatCode) && / <상한> gemini --skip-trust /.test(gmCmd) && /^  <상한> opencode run /m.test(ocCmd)
@@ -823,7 +824,8 @@ try {
   // written without a BOM, the encoding set in every call; a stderr redirect cannot take -LiteralPath, so it goes to a
   // relative path, and the UTF-16 err file of 5.1 is read with Select-String.
   ok(/`\[IO\.File\]::WriteAllLines\("\$d\\unsent\.md", \[string\[\]\]\$u\)`/.test(psStep2)
-     && /닫는 표지는 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '<\/review-data id="<id>">' \+ "`n"\)` 로 붙인다/.test(psStep2)
+     && /닫는 표지는 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '<\/review-data id="<id>">' \+ \[char\]10\)` 로 붙인다/.test(psStep2)
+     && !rqSkill.includes('"`n"')
      && /기준 파일과 게이트 원문 출력은 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", \[IO\.File\]::ReadAllText\('<기준 파일>'\)\)`/.test(psStep2)
      && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
      && /`2>` 재지정은 `-LiteralPath` 를 받지 못해/.test(rqSkill) && !/`2> "\$o\\err-gemini\.md"`/.test(rqSkill)

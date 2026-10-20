@@ -354,7 +354,12 @@ test("a new file whose name holds a newline stops the chain, since the list chec
   put(ctx, "a.txt", "two\n");
   put(ctx, "scratch/p", "intended\n");
   put(ctx, "q", "intended q\n");
-  put(ctx, "scratch/p\nq", "NOT-LISTED\n");
+  try {
+    put(ctx, "scratch/p\nq", "NOT-LISTED\n");
+  } catch (e) {
+    t.skip(`this file system takes no newline in a name (${e.code})`);
+    return;
+  }
   const r = step2(ctx, { list: "scratch/p\nq\nscratch\n" });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /줄바꿈/);
@@ -407,7 +412,12 @@ test("a long listing folds each wholly new folder to one line and opens the one 
 
 test("a name the listing quotes goes out written as itself; the quoted line or a ./ line is no stop for a folder", { skip: SKIP }, (t) => {
   const ctx = repo(t);
-  put(ctx, 'q"uote.txt', "q\n");
+  try {
+    put(ctx, 'q"uote.txt', "q\n");
+  } catch (e) {
+    t.skip(`this file system takes no " in a name (${e.code})`);
+    return;
+  }
   put(ctx, "plain.txt", "p\n");
   const listed = spawnSync("bash", ["-c", LISTING.replaceAll("<저장소>", ctx.repo)], { encoding: "utf8", env: ctx.env }).stdout;
   assert.ok(listed.split("\n").includes('"q\\"uote.txt"'), listed);
