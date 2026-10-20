@@ -1211,7 +1211,8 @@ def _read_text(path):
 
 
 def _read_cached(p):
-    """The summary cached at p, else at the same name with .txt, which 3.0.2 and earlier wrote.
+    """The summary cached at p, else at the same name with .txt, the name 3.0.2 and earlier wrote (their digests
+    carry summarizer version 2 or 3, so since version 4 no file of theirs is found).
     None when neither holds one: missing, bytes that are not UTF-8 (a DRM encrypted them), or
     nothing a person can see (a write that stopped early, or only blank-looking letters); the
     turn is then summarized again (3.0.4, 3.0.5)."""
@@ -2006,7 +2007,8 @@ def _pack_turn(n, t, tid, why, session_id, args, counts):
     """One turn of the pack under its final id `tid` (the text as the page shows it, the rules'
     decision, the reviewer's slot), and the reviewer's view of it. The cached decision keys on
     the text with the page's patterns only (`llm_key`), as 3.0.1 did, its split secrets joined first: a key
-    found only once joined keys anew, so no decision cached before 3.0.8 joined it is read for it."""
+    found only once joined keys anew, so no decision 3.0.8 or earlier cached for such a turn is read (it is
+    reviewed once more)."""
     red, found = page_redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)
     for k, v in found.items():
         counts[k] = counts.get(k, 0) + v
@@ -2028,6 +2030,8 @@ def _pack_turn(n, t, tid, why, session_id, args, counts):
             "llm": dict(cached, cached=True) if cached else {"keep": None, "summary": None}}
     if t.get("meta"):
         turn["meta"] = True
+    if t["role"] == "user" and _bang_output(t["text"]):
+        turn["bang_output"] = True               # for the dropped-turn WARN only: no part file carries it
     for k in ("session", "session_name", "agent_from"):
         if t.get(k):
             turn[k] = t[k] if k == "session" else page_redact(t[k], args.redact_extra, args.redact_mode)[0]
@@ -2096,7 +2100,8 @@ def _sheet(k, of, part_path, group, args):
     turns = []
     for x, view in group:
         y = {key: v for key, v in x.items()
-             if key not in ("text", "session", "session_name", "agent_from", "redactions", "llm_key")}
+             if key not in ("text", "session", "session_name", "agent_from", "redactions", "llm_key",
+                            "bang_output")}
         y["rule"] = {k: v for k, v in x["rule"].items() if k != "review_summary"}
         y["rule"]["summary"] = view["summary"]
         y["tools"] = {_hide_keywords(name, args.redact_extra): n for name, n in x["tools"].items()}
@@ -2373,16 +2378,21 @@ def _kept_by_flag(pack, x):
     return pack.get("keep_tool_only") is True and tool_only
 
 
+def _bang_output(text):
+    """Whether `text` is the record Claude Code writes after a `!` command and nothing else (2.1.304, no isMeta): a
+    <bash-stdout> block then a <bash-stderr> block, or one <bash-stderr> block when the command failed. String checks
+    only, linear in the text: a pattern repeating the blocks could take exponential time on many closing tags."""
+    if text.startswith("<bash-stdout>"):
+        return "</bash-stdout><bash-stderr>" in text and text.endswith("</bash-stderr>")
+    return text.startswith("<bash-stderr>") and text.endswith("</bash-stderr>")
+
+
 def _typed_by_user(x):
     """Whether pack turn `x` holds words the user typed: a user turn the rules keep that is neither a body the
-    harness injected (meta) nor the output Claude Code writes after a `!` command (only <bash-stdout> and
-    <bash-stderr> blocks, no isMeta). Only the ends of the text (stripped when the pack was made) are looked at: a
-    pattern repeating the blocks could take exponential time on a text of many closing tags."""
-    if x["role"] != "user" or not x["rule"]["keep"] or x.get("meta"):
-        return False
-    t = x["text"]
-    output = t.startswith(("<bash-stdout>", "<bash-stderr>")) and t.endswith(("</bash-stdout>", "</bash-stderr>"))
-    return not output
+    harness injected (meta) nor what Claude Code writes after a `!` command (bang_output, judged on the text before
+    redaction: a hidden value at the end of the output takes the closing tags with it)."""
+    return (x["role"] == "user" and x["rule"]["keep"] and not x.get("meta")
+            and x.get("bang_output") is not True)
 
 
 def _review_result(pack, merged, args):

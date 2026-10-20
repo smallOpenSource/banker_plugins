@@ -2255,6 +2255,25 @@ class TestLlmReviewGateReruns(_ReviewCase):
         self.assertEqual(rc, 0)
         self.assertIn("reviewers dropped 3 typed user turn(s): u1, b1, p1;", err)
 
+    def test_only_the_two_records_claude_code_writes_for_a_bang_command_are_left_uncounted(self):
+        # judged on the text before redaction: a hidden value at the end of the output takes the closing tags with it
+        shapes = {"o3": "<bash-stdout>pass" "word: " + "Abc12345" + "xyz</bash-stdout><bash-stderr></bash-stderr>",
+                  "q1": "이 출력은 무슨 뜻인가요 <bash-stdout>total 0</bash-stdout>",
+                  "q2": "<bash-stdout>total 0</bash-stdout> 무슨 뜻인가요 <bash-stderr></bash-stderr>",
+                  "q3": "<bash-stdout>total 0</bash-stdout>",               # Claude Code always adds the stderr block
+                  "q4": "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr> 이건 무슨 뜻인가요",
+                  "q5": "이건 무슨 뜻인가요 <bash-stderr>Command failed: exit 2</bash-stderr>",
+                  "q6": "<bash-stderr>Command failed: exit 2</bash-stderr> 이건 무슨 뜻인가요"}
+        recs = [_rec("user", text, ts="2026-08-09T10:0%d:00Z" % (3 + k), uuid=i)
+                for k, (i, text) in enumerate(shapes.items())]
+        self._write(self._records() + recs)
+        _quiet(self._emit)
+        with open(os.path.join(self.d, "review.part-1.json"), encoding="utf-8") as f:
+            self.assertFalse(any("bang_output" in x for x in json.load(f)["turns"]), "the reviewers read no new field")
+        (rc, _text), err = _quiet(self._apply, [{"id": i, "keep": False} for i in shapes])
+        self.assertEqual(rc, 0)
+        self.assertIn("reviewers dropped 6 typed user turn(s): q1, q2, q3, q4, q5, q6;", err)
+
 
 class TestPatternsForPages(_ReviewCase):
     """3.0.2: the reviewer patterns redact pages too, so what they hide by mistake shows to
@@ -2516,7 +2535,7 @@ class TestPageRedaction(_ReviewCase):
 
     def test_a_decision_cached_before_a_split_key_was_joined_is_not_reused(self):
         # 3.0.8 keyed a decision on the text as it stands, as 3.0.7 did when no reviewer pattern found the split key
-        key = "sk-proj-" + "Q7wErTy9UiOpAsDfGhJkLzXc"
+        key = "sk-proj-" + "Q7wErTy9" + "UiOpAsDf" + "GhJkLzXc"        # pieces: no secret scanner reads one whole
         text = "새 키 " + key[:12] + self.ZW + key[12:] + " 를 설정했고 배포가 통과합니다."
         self._write([_rec("user", "키를 바꿔 주세요", uuid="u1"), self._asst(text, "a1")])
         digest = L._llm_digest(L.redact(text)[0], L._decision_context(None, {}))
@@ -2631,7 +2650,7 @@ class TestHasVisible(unittest.TestCase):
 
 class TestCacheFileNames(_ReviewCase):
     """Summaries are cached as .md, which a DRM that encrypts .txt leaves readable (3.0.3).
-    A summary cached as .txt by 3.0.2 or earlier is still read."""
+    The .txt name 3.0.2 and earlier wrote is still read; since summarizer version 4 no file of theirs matches."""
 
     TEXT = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
 

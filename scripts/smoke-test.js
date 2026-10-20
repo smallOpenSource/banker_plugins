@@ -151,8 +151,8 @@ try {
     ['skills/audit-security/SKILL.md', '<requirements>.txt', 'the same name in a command template'],
     ['skills/rfp-author/references/research-provenance.md', '/tmp/rfp_pdf.txt', 'a record of past research, not a step'],
     ['skills/rfp-author/references/research-provenance.md', '/tmp/nist6001.txt', 'a record of past research, not a step'],
-    ['skills/lineage/lineage.py', '.txt', 'reads a summary cached by lineage 3.0.2 or earlier; writes .md'],
-    ['skills/lineage/SKILL.md', '.txt', 'says the cache of 3.0.2 or earlier is still read'],
+    ['skills/lineage/lineage.py', '.txt', 'reads the .txt name lineage 3.0.2 and earlier wrote (none matches since summarizer version 4); writes .md'],
+    ['skills/lineage/SKILL.md', '.txt', 'names the .txt of lineage 3.0.2 and earlier, not used since summarizer version 4'],
     ['skills/ultra-chain/SKILL.md', '05-baseline.txt', 'the baseline of a run begun before the change, read when resuming'],
     ['commands/front-qa.md', 'docs/note.txt', 'the old default spec, read only when docs/note.md is missing'],
     ['commands/front-qa.md', 'progress.txt', "OMC's checkpoint file, named by OMC"],
@@ -371,7 +371,7 @@ try {
      && /`idx` 가 든 객체가 하나라도 있는 JSON 배열/.test(linSkill)
      && /같은 파트를 두 번 다시 검토해도 턴이 빠지거나 배열이 없으면 더 띄우지 않는다/.test(linSkill) && /그 파트의 결정 파일을 쓰지 않는다/.test(linSkill)
      && /`reviewers dropped N typed user turn\(s\)`/.test(linSkill)
-     && /`!` 명령 뒤 하네스가 쓴 출력 턴\(`<bash-stdout>`, `<bash-stderr>` 만 있는 턴\)은 세지 않는다/.test(linSkill)
+     && /`!` 명령 뒤 하네스가 쓴 출력 턴\(`<bash-stdout>` 블록 뒤 `<bash-stderr>` 블록, 실패하면 `<bash-stderr>` 블록 하나만 있는 턴\. 가리기 전 글로 본다\)은 세지 않는다/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
      && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.9$/m.test(linSkill)
@@ -414,7 +414,7 @@ try {
     const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
     // the failing tests by name (Class.test): unittest writes `FAIL: test (module.Class)` before 3.11 and
     // `FAIL: test (module.Class.test)` from 3.11 on
-    const failed = `${pyRes.stdout || ''}${pyRes.stderr || ''}`.split('\n')
+    const failed = `${pyRes.stdout || ''}${pyRes.stderr || ''}`.split(/\r?\n/)
       .map((l) => /^(?:FAIL|ERROR): (\S+) \((\S+)\)$/.exec(l)).filter(Boolean)
       .map(([, name, where]) => {
         const parts = where.split('.');
