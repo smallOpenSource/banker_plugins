@@ -3250,3 +3250,10 @@ test("a hook patched by the previous helper is still seen as patched and its rev
   assert.equal(r.code, 0, r.out);
   for (const n of ["foo", "stopper"]) assert.equal(read(join(plug, "scripts", `${n}.mjs`)), SCRIPT(n), `${n} is its original again`);
 });
+
+// 0.20.4 B2 Task 9: the SKILL's search for other names and the temp tar (B2-21)
+test("the SKILL's search for another name is bounded and the temp tar comes from mktemp", () => {
+  const skill = read(join(dirname(TOOL), "..", "SKILL.md"));
+  assert.match(skill, /mktemp/, "a temp tar name the agent does not pick by itself");
+  assert.doesNotMatch(skill, /둘째 줄의 마지막 칸/, "no df column parsing that breaks on a mount point with spaces");
+});

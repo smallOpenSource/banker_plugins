@@ -51,12 +51,28 @@ OMC(oh-my-claudecode)가 새 버전으로 자동 업데이트되면 로컬 훅 �
 - 판정은 출력 문구로 한다. 종료 코드 0 만으로 완료라고 보고하지 않는다.
 - 캐시에는 정션이나 심볼릭 링크로 이어진 버전 폴더가 있을 수 있다(예: 옛 버전 폴더가 새 버전을 가리킴). 이때 한 번의 변경이 두 버전 폴더에 함께 보인다. 정상이다.
 - 도구는 `os.homedir()/.claude` 를 쓴다. `CLAUDE_CONFIG_DIR` 로 설정 폴더를 옮겼다면 이 도구는 그 폴더를 보지 않는다.
-- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//` 뒤부터 마지막 `@` 까지를 `***` 로 가린다(도구와 같은 범위). 출력을 그대로 보고하라는 단계에서도 이 가림은 지킨다. 옛 판의 도구가 만든 `PINNED` 에는 그 URL 이 남아 있을 수 있다. `--check` 는 그 칸을 `[!] 고정 기록(PINNED)에 옛 URL 칸이 남아 있음 (적용하면 지움)` 으로 알리고 모두 적용된 상태로 보지 않는다. 적용(`--check` 가 아닌 실행)은 그 칸을 지우고 권한을 0600 으로 맞춘다(POSIX. Windows 는 chmod 가 쓰기 비트만 다뤄 폴더의 상속 권한을 따른다). 이 도구가 다 지울 수 없으면(칸이 든 기록이 링크, JSON 이 아님, 폴더에 쓰지 못함, 읽지 못함, 같은 파일의 다른 이름이 있음) `[!] 고정 기록(PINNED)의 옛 URL 칸을 ...` 줄로 알리고 적용은 실패로 센다(종료 1). 다른 이름이 있으면 적용은 이 이름에서만 지우고 다른 이름에는 남긴다. 링크는 따라가 쓰지 않으며, 링크 너머에 그 칸이 없으면 알리지 않는다. 되돌리기는 `PINNED` 를 지운다. 링크 너머에 그 칸이 있거나 링크 너머를 읽지 못하거나, 지우지 못하거나, 같은 파일의 다른 이름이 있을 때만 실패로 세고, 링크가 아닌 기록은 JSON 이 아니거나 읽지 못해도 그냥 지운다. `PINNED` 는 기록일 뿐이라 지워도 고정과 되돌리기에 영향이 없다. 알린 줄은 아래 `PINNED` 줄 다루기대로 묻는다. 기록 파일의 내용은 읽어 보이지 않는다(인증 정보가 들 수 있음).
+- 출력의 origin 에 `https://사용자:토큰@...` 처럼 자격증명이 들어 있으면, 보고할 때 `//` 뒤부터 마지막 `@` 까지를 `***` 로 가린다(도구와 같은 범위). 출력을 그대로 보고하라는 단계에서도 이 가림은 지킨다.
+- 옛 판의 도구가 만든 `PINNED` 에는 그 URL 이 남아 있을 수 있다.
+  - `--check` 는 그 칸을 `[!] 고정 기록(PINNED)에 옛 URL 칸이 남아 있음 (적용하면 지움)` 으로 알리고 모두 적용된 상태로 보지 않는다.
+  - 적용(`--check` 가 아닌 실행)은 그 칸을 지우고 권한을 0600 으로 맞춘다(POSIX. Windows 는 chmod 가 쓰기 비트만 다뤄 폴더의 상속 권한을 따른다).
+  - 이 도구가 다 지울 수 없으면(칸이 든 기록이 링크, JSON 이 아님, 폴더에 쓰지 못함, 읽지 못함, 같은 파일의 다른 이름이 있음) `[!] 고정 기록(PINNED)의 옛 URL 칸을 ...` 줄로 알리고 적용은 실패로 센다(종료 1).
+  - 다른 이름이 있으면 적용은 이 이름에서만 지우고 다른 이름에는 남긴다. 링크는 따라가 쓰지 않으며, 링크 너머에 그 칸이 없으면 알리지 않는다.
+  - 되돌리기는 `PINNED` 를 지운다. 링크 너머에 그 칸이 있거나 링크 너머를 읽지 못하거나, 지우지 못하거나, 같은 파일의 다른 이름이 있을 때만 실패로 센다.
+  - 링크가 아닌 기록은 JSON 이 아니거나 읽지 못해도 그냥 지운다. `PINNED` 는 기록일 뿐이라 지워도 고정과 되돌리기에 영향이 없다.
+  - 알린 줄은 아래 `PINNED` 줄 다루기대로 묻는다. 기록 파일의 내용은 읽어 보이지 않는다(인증 정보가 들 수 있음).
 - `PINNED` 줄 다루기. `[!] 고정 기록(PINNED)의 옛 URL 칸을 ...` 줄이 나오면 그 줄의 경로를 사용자에게 보이고 그 기록을 지울지 남길지 묻는다. `--check` 에서 나온 줄은 2단계 승인 질문에서 함께 묻는다. 적용이나 되돌리기에서 처음 나온 줄은 멈추고 보고한 뒤 묻는다. 이때도 기록의 내용은 읽지 않고 경로만 보인다.
   - 폴더 권한이 원인(`쓰지 못함`)이면 권한을 고칠지도 묻는다.
   - 링크면 URL 칸은 링크가 가리키는 파일에 있다. 그 파일의 경로도 보인다. 경로는 `node -e "console.log(require('fs').realpathSync(process.argv[1]))" "<링크 경로>"` 로 구한다(bash, PowerShell 같음). 그 파일이 `PINNED` 기록이 맞는지는 사용자가 직접 열어 확인한 뒤 답하게 한다(링크는 글자만 보고 막으므로 무관한 파일일 수 있다).
-  - 같은 파일의 다른 이름이 있다는 줄이면 그 아래 `다른 이름은 ... 로 찾습니다.` 줄의 번호로 다른 이름을 찾아 경로를 보인다. 찾은 이름 중 `PINNED` 가 아닌 것이 다른 이름이다. POSIX 는 `find "<맨 위 폴더>" -xdev -inum <번호> 2>/dev/null` 이고, 맨 위 폴더는 `df -P "<PINNED 가 든 폴더>"` 둘째 줄의 마지막 칸이다. Windows 는 `fsutil file queryFileNameById <드라이브>\ <번호>` 이다(관리자 셸에서만 확인함). 찾지 못하면(권한으로 못 본 폴더 등) 번호를 그대로 사용자에게 알린다.
-  - 사용자가 지우기를 고르면 그것이 승인이다. 보인 경로만 지운다. 링크면 링크와 그것이 가리키는 파일을, 다른 이름이 있으면 `PINNED` 와 찾은 다른 이름을 모두 지운다. 하나라도 남기면 그 안에 URL 이 남는다. 링크가 가리키는 파일이 `PINNED` 기록이 아니라고 사용자가 답하면 그 파일은 지우지 않고 링크만 지울지 묻는다.
+  - 같은 파일의 다른 이름이 있다는 줄이면 그 아래 `다른 이름은 ... 로 찾습니다.` 줄의 번호로 다른 이름을 찾아 경로를 보인다. 찾은 이름 중 `PINNED` 가 아닌 것이 다른 이름이다.
+    - POSIX 는 먼저 홈 폴더에서 찾는다: `find "$HOME" -xdev -inum <번호> 2>/dev/null`.
+    - 못 찾으면 번호를 사용자에게 알리고, `PINNED` 가 든 파일 시스템 전체에서 찾을지 묻는다. 오래 걸릴 수 있다.
+    - 그 파일 시스템의 맨 위 폴더는 Linux 는 `stat -c %m "<PINNED 가 든 폴더>"` 이다. macOS 는 `df -P "<PINNED 가 든 폴더>" | awk 'NR==2{for(i=6;i<=NF;i++) printf "%s%s",$i,(i<NF?" ":"\n")}'` 이다(공백 든 마운트 지점도 읽음). 그 폴더에서 같은 `find` 를 돌린다.
+    - 찾은 경로가 같은 파일인지 확인한다. 적용 전이면 `[ "<찾은 경로>" -ef "<PINNED>" ]` 가 참이어야 한다. 적용 뒤에는 `PINNED` 가 새 파일이다. 그래서 찾은 경로의 장치 번호가 `PINNED` 가 든 폴더의 것과 같아야 한다(Linux `stat -c %d`, macOS `stat -f %d`).
+    - Windows 는 적용 전이면 `fsutil hardlink list "<PINNED 경로>"` 가 모든 이름을 보인다. 볼륨 루트 기준 경로라 앞에 드라이브를 붙인다. 적용 뒤에는 `fsutil file queryFileNameById <드라이브>\ <번호>` 이다. 둘 다 관리자 셸에서만 확인했다.
+    - 찾은 경로마다 번호를 붙여 보이고, 지울 것을 사용자가 고르게 한다.
+    - 찾은 경로가 git 작업 트리 안이면(`git -C "<그 폴더>" rev-parse --is-inside-work-tree` 가 `true`) 지워도 git 이력에는 남는다고 알린다.
+    - 찾지 못하면(권한으로 못 본 폴더 등) 번호를 그대로 사용자에게 알린다.
+  - 사용자가 지우기를 고르면 그것이 승인이다. 고른 경로만 지운다. 링크면 링크와 그것이 가리키는 파일을, 다른 이름이 있으면 `PINNED` 와 고른 다른 이름을 지운다. 하나라도 남기면 그 안에 URL 이 남는다. 링크가 가리키는 파일이 `PINNED` 기록이 아니라고 사용자가 답하면 그 파일은 지우지 않고 링크만 지울지 묻는다.
   - 남기기로 하면 그 줄은 예상된 실패다. 적용에서는 3단계 2 의 예외, 검증에서는 4단계 1 의 예외를 따른다. 다른 이름이 있는 기록을 남기고 적용하면 적용은 `PINNED` 의 칸만 지운다. 그 뒤 `--check` 는 다른 이름을 보지 못하니 5단계 보고에 그 경로를 적는다.
 
 ## 절차
@@ -69,9 +85,13 @@ bash:
 R=$(node -e 'const j=require(require("path").join(require("os").homedir(),".claude/plugins/installed_plugins.json"));console.log(j.plugins["oh-my-claudecode@omc"][0].installPath)')
 ```
 
-PowerShell:
+PowerShell(Windows PowerShell 5.1 과 PowerShell 7 에서 같다):
+- `installed_plugins.json` 은 `-Encoding UTF8` 로 읽는다. 5.1 은 BOM 없는 파일을 시스템 코드 페이지(예: 949)로 읽어, 경로에 한글이 있으면 `$r` 이 빈 값이 된다.
+- 도구 출력을 변수나 파이프로 받아 판정할 때는 먼저 `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` 을 실행한다. 5.1 은 node 의 UTF-8 출력을 콘솔 코드 페이지로 읽어 한글 문구가 깨진다. 출력을 그대로 흘려 보는 것은 괜찮다.
+- Git Bash 가 있으면 bash 블록을 먼저 쓴다.
+
 ```powershell
-$r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+$r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
 ```
 
 ### 1. 진단
@@ -123,13 +143,17 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
    node "<이 스킬 디렉터리 절대경로>\scripts\omc-patch.mjs" --revert --root $r
    ```
 
    - `되돌림  <훅 이름>` 줄과 `되돌리기 완료.` 를 확인한다. 끝의 `재시작해야 반영됩니다` 는 이 중간 단계에서는 무시한다. 2 에서 바로 다시 패치한다.
    - `되돌리기를 끝내지 못했습니다.` 가 나오면 멈추고 위의 `[!]` 줄을 그대로 보고한다. 종료 코드는 1 이다. 끝 줄의 `실패 N건` 은 쓰기를 거부한 파일, `되돌리지 못한 것 N건` 은 백업이 없거나 수동 백업 후보를 쓸 수 없어 남은 파일이다. 끝 줄은 링크로 같은 폴더를 가리키는 판이 여럿이어도 파일마다 한 번 센다.
-   - `[!]` 줄에 `패치는 있는데 백업이 없어 되돌리지 못했습니다 — <이름>` 이 있으면 그 파일에 `.omcbak` 백업이 없는 것이다. 이 도구로는 되돌릴 원본이 없으니 멈추고 보고한다. 원본은 같은 버전의 OMC 저장소에서 다시 받아야 한다. 파이프 대신 파일을 거친다(Windows PowerShell 5.1 의 파이프는 바이너리를 텍스트로 바꿔 파일을 깨뜨린다): `git -C "<마켓플레이스 폴더>" archive -o "<임시 tar>" v<버전> scripts/<이름>.mjs` 뒤 `tar -xf "<임시 tar>" -C "<활성 폴더>"`. 이 명령은 사용자 승인 뒤에만 실행한다.
+   - `[!]` 줄에 `패치는 있는데 백업이 없어 되돌리지 못했습니다 — <이름>` 이 있으면 그 파일에 `.omcbak` 백업이 없는 것이다. 이 도구로는 되돌릴 원본이 없으니 멈추고 보고한다.
+     - 원본은 같은 버전의 OMC 저장소에서 다시 받아야 한다. 이 명령은 사용자 승인 뒤에만 실행한다.
+     - 파이프 대신 새 임시 폴더의 파일을 거친다. Windows PowerShell 5.1 의 파이프는 바이너리를 텍스트로 바꿔 파일을 깨뜨린다.
+     - bash: `T=$(mktemp -d)` 로 폴더를 만들고, `git -C "<마켓플레이스 폴더>" archive -o "$T/src.tar" v<버전> scripts/<이름>.mjs` 와 `tar -xf "$T/src.tar" -C "<활성 폴더>"` 를 실행한 뒤 `rm -rf "$T"` 로 지운다.
+     - PowerShell: `$T = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName()); New-Item -ItemType Directory $T | Out-Null` 로 폴더를 만들고, 같은 두 명령을 `"$T\src.tar"` 로 실행한 뒤 `Remove-Item -Recurse -Force $T` 로 지운다.
 
 2. 적용한다.
 
@@ -161,7 +185,8 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
    $f = @(Get-ChildItem "$r\scripts\*.omcbak" | % { $_.FullName -replace '\.omcbak$','' })
    $f | % { node --check $_; "{0} syntax={1}" -f (Split-Path $_ -Leaf), $LASTEXITCODE }
    (node "<이 스킬 디렉터리 절대경로>\scripts\omc-patch.mjs" --scan @f | ConvertFrom-Json) | % { "{0} depth={1}" -f (Split-Path $_.file -Leaf), (@($_.helperDecls | % depth) -join ',') }
@@ -178,7 +203,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
    $env:CLAUDE_PLUGIN_ROOT = $r; $env:OMC_NOTIFY = '0'
    '{"session_id":"smoke-test","cwd":"C:\\nonexistent","hook_event_name":"Stop"}' | node "$r\scripts\run.cjs" "$r\scripts\persistent-mode.mjs"; "exit=$LASTEXITCODE"
    Remove-Item Env:CLAUDE_PLUGIN_ROOT, Env:OMC_NOTIFY
@@ -195,7 +220,7 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --check --no
 
    PowerShell:
    ```powershell
-   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
+   $r = (Get-Content "$env:USERPROFILE\.claude\plugins\installed_plugins.json" -Raw -Encoding UTF8 | ConvertFrom-Json).plugins.'oh-my-claudecode@omc'[0].installPath
    node "<이 스킬 디렉터리 절대경로>\scripts\probe-pm.mjs" --plugin $r
    ```
 
@@ -248,7 +273,13 @@ node "<이 스킬 디렉터리 절대경로>/scripts/omc-patch.mjs" --revert
 - 헬퍼 자리 결함이 남은 채 `revert` 없이 적용을 다시 돌려도 바뀌는 것이 없다. 이미 감싼 파일은 건너뛰기 때문이다.
 - `--root` 와 `--revert --root` 는 그 폴더만 다룬다. 고정 해제까지 하려면 인자 없는 `--revert` 를 쓴다.
 - 고정을 풀지 않고 OMC 를 올리려면 먼저 `revert` 한다. 그렇지 않으면 마켓플레이스 fetch 가 계속 실패한다.
-- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다. 고정한 시각, 판, 기기 이름만 담고 URL 은 담지 않는다. 옛 판의 기록에 URL 칸이 있으면 `--check` 가 알리고 다음 적용 때 지운다. 지우지 못하면 `[!]` 로 알리고 실패로 센다(링크는 따라가 쓰지 않음). 하드 링크로 이어진 다른 이름에는 그 칸이 남는다. 도구는 그 이름을 찾을 번호를 알린다. POSIX 에서는 이 계정만 읽을 수 있다(0600). Windows 에서는 폴더의 상속 권한을 따른다. 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다. `revert` 는 origin 값에서만 원래 URL 을 되찾는다. 다른 기기의 기록이면 알리기만 한다.
+- 고정 기록(`PINNED`)은 `~/.claude/omc-local-patches/PINNED` 에 생긴다.
+  - 고정한 시각, 패치한 판, 기기 이름만 담고 URL 은 담지 않는다.
+  - 옛 판의 기록에 URL 칸이 있으면 `--check` 가 알리고 다음 적용 때 지운다. 지우지 못하면 `[!]` 로 알리고 실패로 센다(링크는 따라가 쓰지 않음).
+  - 하드 링크로 이어진 다른 이름에는 그 칸이 남는다. 기록을 읽지 못했거나 JSON 이 아니면 남았을 수 있다고 알린다. 도구는 그 이름을 찾을 번호를 알린다.
+  - POSIX 에서는 이 계정만 읽을 수 있다(0600). 기록 폴더는 처음 만들 때 이 계정만 쓰게(0700) 만든다. Windows 에서는 폴더의 상속 권한을 따른다.
+  - 기록일 뿐이라 지워도 고정은 풀리지 않고, 이미 고정된 상태에서는 다시 만들어지지 않는다.
+  - `revert` 는 origin 값에서만 원래 URL 을 되찾는다. 다른 기기의 기록이면 알리기만 한다.
 - `--check` 와 `--revert` 를 함께 주면 도구는 아무것도 하지 않고 종료 코드 1 로 멈춘다. 진단만 하려면 `--check` 만 준다.
 - 도구는 git 을 부를 때 저장소를 고르는 변수(`GIT_DIR`, `GIT_WORK_TREE` 등 `git rev-parse --local-env-vars` 목록)를 지운다. git 훅 안에서 불러도 마켓플레이스 저장소만 다룬다.
 - 마켓플레이스의 `.git` 이 깨졌으면(중단된 clone 등) git 이 위쪽 저장소로 올라가지 못하게 막는다. 그때 `[4/4]` 는 `origin remote 없음` 으로 끝나고 고정하지 않는다.

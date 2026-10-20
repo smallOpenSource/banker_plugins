@@ -1473,6 +1473,7 @@ function reportNoBackup(v, list, what) {
   else {
     log(`      git -C "${oneLine(MARKET)}" archive -o "<임시 tar>" v${oneLine(v)} scripts/<이름>.mjs`);
     log(`      tar -xf "<임시 tar>" -C "${oneLine(join(CACHE, v))}"`);
+    log("      <임시 tar> 는 새로 만든 임시 폴더(bash: mktemp -d) 안의 파일로 정하고, 다 쓴 뒤 폴더째 지우십시오.");
   }
 }
 for (const [v, list] of Object.entries(foreignBy)) reportNoBackup(v, list, "이 도구가 만들지 않은 수정이 남아 있습니다");
