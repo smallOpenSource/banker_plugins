@@ -1797,12 +1797,12 @@ test('a task id or state the pane does not know is drawn cleaned, never as a fun
   const eng = engine();
   await eng.tool({ tool: 'TaskList' }, { result: { tasks: [
     { id: '1', subject: '상태가 이상함', status: 'constructor' },
-    { id: '2\u001b[31m‮', status: 'in_progress' },
+    { id: '2\u001b[31m\u202e', status: 'in_progress' },
   ] } });
   const tree = await eng.draw();
   const children = walk(tree).filter((n) => n.type === 'Text').flatMap((n) => n.props.children);
   assert.ok(children.every((c) => typeof c === 'string'), 'every word drawn is text');
-  assert.ok(labels(tree).every((l) => !/[\u0000-\u001f\u007f‪-‮]/.test(l)), JSON.stringify(labels(tree)));
+  assert.ok(labels(tree).every((l) => !/[\u0000-\u001f\u007f\u202a-\u202e]/.test(l)), JSON.stringify(labels(tree)));
   button(tree, '상태가 이상함').props.onPress({});
   assert.doesNotMatch(textOf(about(await eng.draw())), /function|native code/);
 });
