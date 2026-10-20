@@ -888,3 +888,57 @@ test("off on a wrapper link that leads nowhere says there is nothing to turn off
   assert.equal(off.ok, true, off.message);
   assert.match(off.message, /HUD 래퍼가 없어 끌 것이 없습니다/);
 });
+
+// A preload for the CLI that plays a second program racing payload-mon: right before payload-mon writes
+// its temporary copy, the copy folder becomes a link to `outside`. With `after`, that program also puts
+// its own file there once payload-mon has renamed its copy in.
+function swapPreload(outside, after = null) {
+  const file = join(root, `swap-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs, { rmSync, symlinkSync, writeFileSync as write0 } from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'import { dirname } from "node:path";',
+    "const write = fs.writeFileSync;",
+    "const rename = fs.renameSync;",
+    "let swapped = false;",
+    "fs.writeFileSync = function (p, ...rest) {",
+    "  if (!swapped && typeof p === \"string\" && /payload-mon[\\\\/]payload-size\\.mjs\\.\\d+\\.tmp$/.test(p)) {",
+    "    swapped = true;",
+    "    rmSync(dirname(p), { recursive: true, force: true });",
+    `    symlinkSync(${JSON.stringify(outside)}, dirname(p));`,
+    "  }",
+    "  return write.call(this, p, ...rest);",
+    "};",
+    "fs.renameSync = function (from, to) {",
+    "  rename.call(this, from, to);",
+    after === null ? "" : `  if (swapped && /payload-size\\.mjs$/.test(to)) write0(to, ${JSON.stringify(after)});`,
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+const onWith = (c, preload) =>
+  spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, CLI, "on"], { encoding: "utf8", env: cliEnv(c) });
+
+test("on refuses and takes back its copy when the copy folder turns into a link while it writes", posixOnly, () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  const before = readFileSync(c.hudFile);
+  const r = onWith(c, swapPreload(outside));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 쓰는 동안 바뀌었습니다/);
+  assert.equal(existsSync(join(outside, "payload-size.mjs")), false, "the copy written through the link was taken back");
+  assert.ok(readFileSync(c.hudFile).equals(before));
+});
+
+test("the take-back leaves a different file in the swapped folder alone", posixOnly, () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  const r = onWith(c, swapPreload(outside, "// a file of someone else's\n"));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 쓰는 동안 바뀌었습니다/);
+  assert.equal(readFileSync(join(outside, "payload-size.mjs"), "utf8"), "// a file of someone else's\n");
+});
