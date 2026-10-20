@@ -942,19 +942,24 @@ try {
   // their own mirrors and are not checked (the documents say so).
   const hostOf = (u) => { const m = /^https?:\/\/(?:[^/@\s]*@)?([^/:"'$\s]+)/.exec(u); return m ? m[1].toLowerCase() : null; };
   const URLS = /https?:\/\/[^\s"'`)<>]+/g;
+  // An installer command and the source it reads (`npm view` only asks for a version: no npm download).
+  const INSTALLERS = [
+    [/\bnpm (?:i|install)\b|\bnpx\b/, 'npm', /\bnpm view\b/],
+    [/\bpip3? install\b|\bpipx install\b|\buv tool install\b|\buvx\b|-m pip install\b/, 'pypi'],
+    [/\bnvm install\b/, 'nodejs.org'],
+    [/\bclaude plugin (?:marketplace add|install)\b|\bomc update\b/, 'github.com'],
+  ];
+  // The hosts a download line reads: its addresses, and the variables it quotes that are set to an address.
+  const urlHosts = (l, vars) => (/\b(?:curl|wget)\b|\bgit\b.*\bclone\b|\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b/i.test(l)
+    ? [...[...l.matchAll(URLS)].map((m) => m[0]), ...[...l.matchAll(/"\$\{?(\w+)\}?"/g)].map((m) => vars[m[1]]).filter(Boolean)].map(hostOf)
+    : []);
   const sourcesOf = (lines) => {
     const vars = {};
     for (const l of lines) for (const m of l.matchAll(/\b(\w+)=["']?(https?:\/\/[^"'\s]+)/g)) vars[m[1]] = m[2];
     const out = new Set();
     for (const l of lines.filter((x) => !isNetCheck(x) && !/\bcommand -v\b|Get-Command\b/.test(x))) {
-      if (/\b(?:curl|wget)\b|\bgit\b.*\bclone\b|\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b/i.test(l)) {
-        for (const m of l.matchAll(URLS)) out.add(hostOf(m[0]));
-        for (const m of l.matchAll(/"\$\{?(\w+)\}?"/g)) if (vars[m[1]]) out.add(hostOf(vars[m[1]]));
-      }
-      if (/\bnpm (?:i|install)\b|\bnpx\b/.test(l) && !/\bnpm view\b/.test(l)) out.add('npm');
-      if (/\bpip3? install\b|\bpipx install\b|\buv tool install\b|\buvx\b|-m pip install\b/.test(l)) out.add('pypi');
-      if (/\bnvm install\b/.test(l)) out.add('nodejs.org');
-      if (/\bclaude plugin (?:marketplace add|install)\b|\bomc update\b/.test(l)) out.add('github.com');
+      for (const h of urlHosts(l, vars)) out.add(h);
+      for (const [re, src, not] of INSTALLERS) if (re.test(l) && !(not && not.test(l))) out.add(src);
     }
     out.delete(null);
     return out;
