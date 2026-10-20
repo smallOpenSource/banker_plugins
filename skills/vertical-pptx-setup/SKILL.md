@@ -41,13 +41,19 @@ python-pptx 는 그보다 높은 버전을 요구하므로 `python3` 을 그대�
 이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
 
 ```bash
-npm ping --fetch-retries=0 --fetch-timeout=10000                                                  # pptxgenjs
-curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/                  # python-pptx
-curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://download.documentfoundation.org   # LibreOffice
+(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)                                         # pptxgenjs
+I="${PIP_INDEX_URL:-$(pip config get global.index-url 2>/dev/null)}"; curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "${I:-https://pypi.org/simple}/pip/"   # python-pptx
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://download.documentfoundation.org   # LibreOffice
 ```
 
-- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
-- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+- `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
+- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && npm view pptxgenjs version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r)` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`pptxgenjs`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다.
+- `npm` 이 없으면(명령 없음) 오프라인이 아니라 확인하지 못한 것이다. Node 를 먼저 갖춘다(`setup-node`).
+- `npm ping` 은 npm 의 프록시 설정(`proxy`, `https-proxy`)을 따른다. 사내 미러만 열린 망이면 그 미러가 쓰이는지 npm 설정을 본다.
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config` 의 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~` 뒤에 부른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 - OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
 
 ## 1. 빌더 설치 (둘 중 하나면 충분하다)
@@ -105,8 +111,8 @@ oosplash: /lib64/libc.so.6: version `GLIBC_2.33' not found
 배포판 빌드는 그 배포판의 glibc 에 맞춰져 있으므로 이게 정답이다. `dnf download` 는 root 가 필요 없다.
 
 ```bash
-SP=/tmp/lo-distro; PREFIX=$HOME/.local/lo-distro
-mkdir -p $SP $PREFIX
+SP=$(mktemp -d); PREFIX=$HOME/.local/lo-distro     # SP: 받은 RPM 을 둘 개인 임시 폴더(끝나면 지운다)
+mkdir -p $PREFIX
 dnf -q -y --disablerepo='*' --enablerepo='appstream,baseos,powertools' \
   download --resolve --alldeps --destdir=$SP libreoffice-impress libreoffice-writer
 cd $PREFIX
@@ -117,6 +123,7 @@ done
 export LD_LIBRARY_PATH=$PREFIX/usr/lib64:$PREFIX/usr/lib64/libreoffice/program:$LD_LIBRARY_PATH
 SOFFICE=$PREFIX/usr/lib64/libreoffice/program/soffice
 $SOFFICE --version          # 6.4.7.2 처럼 배포판 버전이 찍히면 성공이다
+cd ~; rm -rf "$SP"
 ```
 
 ★ **`LD_LIBRARY_PATH` 를 반드시 걸어라.** 추출본은 시스템 경로에 없으므로 링커가 자기 라이브러리를 못 찾는다.
@@ -132,18 +139,21 @@ $SOFFICE --version          # 6.4.7.2 처럼 배포판 버전이 찍히면 성�
 **glibc 2.29 이상: 업스트림 tarball 도 쓸 수 있다.** 자체 라이브러리를 번들해 배포판과 안 싸운다.
 
 ```bash
-V=$(curl -s --connect-timeout 10 --max-time 30 https://download.documentfoundation.org/libreoffice/stable/ \
+V=$(curl -fsS --connect-timeout 10 --max-time 30 https://download.documentfoundation.org/libreoffice/stable/ \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+/' | sort -V | tail -1 | tr -d '/')
 A=$(uname -m)          # x86_64 또는 aarch64. 업스트림이 둘 다 제공한다
-curl -sL --connect-timeout 10 --max-time 1800 -o /tmp/lo.tar.gz \
-  "https://download.documentfoundation.org/libreoffice/stable/$V/rpm/$A/LibreOffice_${V}_Linux_${A/x86_64/x86-64}_rpm.tar.gz"
+T=$(mktemp -d)
+[ -n "$V" ] && curl -fsSL --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o "$T/lo.tar.gz" \
+  "https://download.documentfoundation.org/libreoffice/stable/$V/rpm/$A/LibreOffice_${V}_Linux_${A/x86_64/x86-64}_rpm.tar.gz" \
+  || { echo "받지 못함(판: ${V:-알 수 없음})"; rm -rf "$T"; }
 ```
 
-이후는 위와 같은 추출 절차이고 `chmod` 주의도 동일하다.
+이후는 위와 같은 추출 절차이고 `chmod` 주의도 동일하다. 받은 tarball 은 `$T` 안에서 풀고, 추출이 끝나면 `rm -rf "$T"` 로 지운다.
+판을 알 수 없으면(목록 페이지에 닿지 못함, 페이지 모양이 바뀜) 받지 않고 그렇게 보고한다.
 deb 계열은 `rpm/` 대신 `deb/` 를 받아 `dpkg-deb -x` 로 편다.
 `rpm2cpio` 와 `cpio` 가 없으면 이 경로는 못 쓴다. 그때는 root 를 얻거나 시각 검증을 건너뛴다.
 
-다운로드가 250~320MB 다. 느린 회선에서는 백그라운드로 돌린다.
+다운로드가 250~320MB 다. 느린 회선에서는 백그라운드로 돌린다. 총 시간 제한 대신 정체 감지(`--speed-limit 1000 --speed-time 30`: 30초 동안 초당 1000바이트 미만이면 끊음)를 쓰므로 느려도 받는 중이면 끊지 않는다.
 
 ### 2-c. macOS
 
@@ -155,10 +165,13 @@ brew 가 없으면 업스트림 dmg 를 받는다. 아키텍처 이름이 `aarch
 
 ```bash
 V=<위와 동일하게 조회>
-curl -sL --connect-timeout 10 --max-time 1800 -o /tmp/lo.dmg "https://download.documentfoundation.org/libreoffice/stable/$V/mac/aarch64/LibreOffice_${V}_MacOS_aarch64.dmg"
-hdiutil attach /tmp/lo.dmg -nobrowse -quiet
-cp -R "/Volumes/LibreOffice/LibreOffice.app" /Applications/     # root 또는 쓰기 권한 필요
-hdiutil detach "/Volumes/LibreOffice" -quiet
+T=$(mktemp -d)
+if [ -n "$V" ] && curl -fsSL --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o "$T/lo.dmg" "https://download.documentfoundation.org/libreoffice/stable/$V/mac/aarch64/LibreOffice_${V}_MacOS_aarch64.dmg"; then
+  hdiutil attach "$T/lo.dmg" -nobrowse -quiet
+  cp -R "/Volumes/LibreOffice/LibreOffice.app" /Applications/     # root 또는 쓰기 권한 필요
+  hdiutil detach "/Volumes/LibreOffice" -quiet
+fi
+rm -rf "$T"
 /Applications/LibreOffice.app/Contents/MacOS/soffice --version
 ```
 

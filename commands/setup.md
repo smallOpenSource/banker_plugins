@@ -12,12 +12,16 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
 
 0. **네트워크 확인**: 항목을 고르기 전에 원천에 닿는지 한 번 본다(각 10초 안).
    ```bash
-   npm ping --fetch-retries=0 --fetch-timeout=10000
-   curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com
+   if command -v npm >/dev/null; then (cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000); else echo "npm 없음(확인하지 못함)"; fi
+   curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com
    ```
-   - 둘 다 실패하면 오프라인이다. 내려받는 항목은 시도하지 않고 "오프라인이라 설치하지 않음(필요한 것: <항목>)" 으로 보고한다. 내려받기가 없는 항목(`setup-omc-hud`)과 이미 설치된 것의 확인만 진행한다.
-   - 하나만 되면(예: 사내 npm 미러만 열린 망) 그 원천을 쓰는 항목만 진행한다. 항목마다의 확인은 각 스킬의 0단계가 다시 한다.
-   - Windows PowerShell 에서는 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 https://github.com` 의 `$LASTEXITCODE` 로 본다.
+   - `npm` 이 아직 없으면(새 PC) npm 쪽은 오프라인이 아니라 확인하지 못한 것이다. npm 기반 항목을 건너뛰지 않는다. `setup-node` 가 npm 을 깐 뒤 각 스킬의 0단계가 다시 확인한다.
+   - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다. `npm ping` 에 답하지 않는 사내 미러는 각 스킬의 0단계가 그 스킬의 패키지로 다시 본다.
+   - 둘 다 실패하면 웹 원천에 닿지 않는 것이다. 웹 원천에서 받는 항목만 시도하지 않고 "오프라인이라 설치하지 않음(필요한 것: <항목>)" 으로 보고한다.
+   - OS 패키지 관리자(dnf, apt, brew, winget)만 쓰는 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 각 스킬의 규칙대로 시도한다.
+   - 내려받기가 없는 항목(`setup-omc-hud`)과 이미 설치된 것의 확인은 그대로 진행한다.
+   - 하나만 되면(예: 사내 npm 미러만 열린 망) 그 원천을 쓰는 항목은 진행한다. 항목마다의 확인은 각 스킬의 0단계가 다시 한다.
+   - Windows PowerShell 에서는 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 https://github.com` 의 `$LASTEXITCODE` 로 본다. `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~` 뒤에 부른다.
 1. **선택 받기**: `$ARGUMENTS` 에 컴포넌트명이 명시돼 있으면 그것만 실행(질문 생략).
    비어 있으면 아래를 `AskUserQuestion`(**multiSelect: true**)으로 제시한다(**Codex 런타임엔 AskUserQuestion 이 없으므로 목록을 제시하고 설치할 항목을 사용자에게 물어 받는다**). 항목은 **계층/의존 순서**로 묶여 있으니, 뒤 계층을 고르면 앞 계층 전제를 먼저 채운다:
    - 질문 하나에 선택지는 4개까지다. 5개 이상인 묶음은 두 질문으로 나눈다.

@@ -70,20 +70,23 @@ banker 는 서로 다른 메커니즘의 채널 3개로 설치되고, 그 채널
 여기서 찍은 값이 4단계 검증의 before 다. 먼저 어떤 채널이 이 머신에 실재하는지 판정한다.
 
 ```bash
-npm ping --fetch-retries=0 --fetch-timeout=10000   # 레지스트리 도달 확인(네트워크가 없으면 1초 안에 실패)
+(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)   # 레지스트리 도달 확인(이름 풀이가 실패하면 1초 안에, 응답이 없으면 약 10초 뒤 실패)
 command -v claude >/dev/null && echo "claude: present" || echo "claude: absent (Claude 채널 스킵)"
 command -v codex  >/dev/null && echo "codex: present"  || echo "codex: absent (Codex 채널 스킵)"
 command -v banker >/dev/null && banker --version || echo "banker: absent"
-npm view @kaydash9999/banker-plugins version --fetch-retries=0
+(cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 
 레지스트리에 닿지 못하면(`npm ping` 의 종료 코드가 0 이 아님) "레지스트리에 닿지 못함. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고, 어느 채널도 바꾸지 않고 멈춘다. `--check` 도 드리프트를 판정하지 않고 같은 보고로 끝낸다.
+
+- `npm` 이 없으면(명령 없음, 종료 코드 127) 레지스트리 문제가 아니다. "npm 없음. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고 같은 이유로 멈춘다.
+- `npm ping` 과 `npm view` 는 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다. Windows PowerShell 에서는 `Push-Location ~` 뒤에 부르고 `Pop-Location` 으로 돌아온다.
 
 - **`npm view` 는 이 확인을 대신하지 못한다.** npm 캐시에 옛 값이 있으면 레지스트리에 닿지 못해도 그 값을 종료 0 으로, 경고 없이 낸다(`--prefer-online`, `--offline` 도 같다). `--fetch-retries=0` 은 실패까지의 약 70초 대기만 없앤다.
 - 사내 미러가 `npm ping` 에 답하지 않으면, 빈 임시 캐시로 한 번 더 묻고 그 값으로 판정한다. 캐시가 비어 있어 옛 값이 나올 수 없다. 이것도 실패하면 위처럼 멈춘다.
 
 ```bash
-T=$(mktemp -d) && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --cache "$T"; rm -rf "$T"
+(cd ~ && T=$(mktemp -d) && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r)
 ```
 
 부재한 채널은 그 자리에서 "스킵" 으로 확정한다. 없는 채널을 되살리려 들지 마라(그건 설치지 갱신이 아니다).
@@ -94,7 +97,7 @@ T=$(mktemp -d) && npm view @kaydash9999/banker-plugins version --fetch-retries=0
 ```bash
 npm i -g @kaydash9999/banker-plugins@latest
 banker --version
-npm view @kaydash9999/banker-plugins version --fetch-retries=0
+(cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 
 두 값이 **일치할 때만** 다음 단계로 간다. 불일치면 **즉시 중단**하고 보고한다. 우회하지 마라.
@@ -176,7 +179,7 @@ console.log(e&&e[0]?e[0].version:'absent (Claude 채널 미설치 -> 스킵)')"
 프로브 2, npm(두 값이 같아야 한다):
 ```bash
 banker --version
-npm view @kaydash9999/banker-plugins version --fetch-retries=0
+(cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 
 프로브 3, Codex. **축이 둘이다**(skills, prompts). 각각 설치분과 매니페스트를 대조한다. 스킬만 세면 프롬프트 소실을 못 본다:

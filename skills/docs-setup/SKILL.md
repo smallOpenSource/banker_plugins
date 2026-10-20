@@ -30,12 +30,14 @@ conda env list 2>/dev/null
 이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
 
 ```bash
-curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/   # python-pptx, pymupdf
-curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com         # plantuml.jar
+I="${PIP_INDEX_URL:-$(pip config get global.index-url 2>/dev/null)}"; curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "${I:-https://pypi.org/simple}/pip/"   # python-pptx, pymupdf
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://github.com   # plantuml.jar
 ```
 
-- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
-- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config` 의 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 
 ## 1. python 환경 선택 (질문 또는 자동)
 - **`--python <path>`**: 주어진 인터프리터 사용.
@@ -59,8 +61,9 @@ curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com      
 java 필요(`java -version`). plantuml.jar + 래퍼:
 ```bash
 mkdir -p ~/bin
-[ -f ~/bin/plantuml.jar ] || curl -fsSL --connect-timeout 10 --max-time 300 -o ~/bin/plantuml.jar \
-  https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar
+[ -f ~/bin/plantuml.jar ] || { curl -fsSL --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o ~/bin/plantuml.jar.part \
+  https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar && mv ~/bin/plantuml.jar.part ~/bin/plantuml.jar; }
+rm -f ~/bin/plantuml.jar.part     # 받다가 끊긴 조각(완성본만 plantuml.jar 이름을 얻는다)
 cat > ~/bin/plantuml <<'EOF'
 #!/bin/bash
 exec java -jar "$HOME/bin/plantuml.jar" "$@"

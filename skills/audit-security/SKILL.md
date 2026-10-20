@@ -56,17 +56,31 @@ consensus는 고신뢰, 단일툴은 needs-review. 산출물은 방안·권고 �
 | **pip-audit** | `-r <requirements>.txt` | (PyPI+OSV) | ⚠️ 일부 env에서 실패 가능 → Python은 osv로 커버 |
 
 #### 결과로 읽는 조건 (네트워크 없음과 0건을 가른다)
-SCA 도구는 advisory DB 나 레지스트리를 네트워크에서 받는다. 네트워크가 없으면 결과 JSON 을 그대로 셀 때 0건이 된다(실측: 오프라인 `npm audit --json` 은 1.6초에 rc 1, 본문은 `message` 와 `error` 뿐. `osv-scanner scan source` 는 20초 뒤 rc 127, stdout 이 빔. `--offline` 에 로컬 DB 가 없으면 rc 127 과 `{"results": []}`).
+SCA 도구는 advisory DB 나 레지스트리를 네트워크에서 받는다. 네트워크가 없으면 결과 JSON 을 그대로 셀 때 0건이 된다.
+실측(osv-scanner 2.4.0, npm 11, 네트워크 없음):
+- 오프라인 `npm audit --json` 은 rc 1 이고, 본문은 `message` 와 `error` 뿐이다.
+- `osv-scanner scan source` 는 20초 뒤 rc 127 이고, stdout 이 빈다.
+- `--offline-vulnerabilities` 에 로컬 DB 가 없으면 rc 127 과 `{"results": []}` 이다.
+- 로컬 DB 가 비어 있으면 rc 0 과 `{"results": []}` 다. 문제없음과 모양이 같다.
+- 패키지 소스가 없으면 rc 128 이다. 네트워크가 아니라 대상이 없는 것이다.
 
-| 도구 | 결과로 읽는 조건 | 아니면 |
+도구마다 stdout 은 `$OUT/<도구>.json`, stderr 는 `$OUT/<도구>.err` 로 따로 남기고 종료 코드를 적는다. 아래 조건은 이 셋으로 본다. 조건을 모두 채워야 결과로 읽는다.
+
+| 도구 | 결과로 읽는 조건 | 실측 |
 |---|---|---|
-| npm audit | 본문에 `error` 키가 없고 `metadata.vulnerabilities` 가 있음 | 미커버 |
-| osv-scanner | 종료 코드 0 이나 1 | 127, 128 은 오류. stderr 의 "no offline version of the OSV database" 도 오류 |
-| trivy, grype | stderr 에 DB 내려받기 실패가 없음 | 미커버 |
-| semgrep | stderr 에 `p/...` 규칙 내려받기 실패가 없음 | 미커버 |
-| pip-audit | 종료 코드 0 이나 1 이고 stderr 에 연결 오류가 없음 | 미커버 |
+| npm audit | 종료 코드 0 이나 1. 본문이 JSON 이고 `error` 키가 없음. `metadata.dependencies.total` 이 0 보다 큼 | 실측 |
+| osv-scanner | 종료 코드 0 이나 1. 본문이 JSON. stderr 의 `Scanned <파일> file and found <N> package` 의 N 합이 0 보다 큼 | 실측 |
+| osv-scanner 오프라인 DB | 위 조건에 더해, stderr 의 `Loaded <생태계> local db from <경로>` 가 가리키는 파일이 항목을 1개 이상 가짐 | 실측 |
+| trivy | 종료 코드 0. 본문이 JSON 이고 `Results` 가 1개 이상 | 미실측 |
+| grype | 종료 코드 0 이나 1. 본문이 JSON 이고 `matches` 키가 있음. stderr 에 DB 오류가 없음 | 미실측 |
+| semgrep | 종료 코드 0 이나 1. 본문이 JSON 이고 `paths.scanned` 가 1개 이상. `errors` 에 규칙 내려받기 실패가 없음 | 미실측 |
+| pip-audit | 종료 코드 0 이나 1. 본문이 JSON 이고 `dependencies` 가 1개 이상 | 미실측 |
 
-- 조건을 못 채운 도구는 0건으로 세지 않고 리포트 Unknown 에 "미커버(네트워크 없음)" 로 적는다. 한 축의 도구가 모두 미커버면 그 축 전체를 미커버로 적는다.
+- 조건을 하나라도 못 채운 도구는 0건으로 세지 않는다. 리포트 Unknown 에 "미커버(네트워크 없음 또는 대상 없음): <도구>, 종료 <코드>, <stderr 첫 줄>" 로 적는다.
+- 이유를 짐작해 하나로 정하지 않는다. osv-scanner 의 128 은 패키지 소스 없음이고, npm audit 의 `ENOLOCK` 은 잠금 파일 없음이다.
+- 미실측 행은 이 머신에 도구가 없어 출력 모양을 재지 못한 조건이다. 실제 출력이 조건과 달라 판단이 서지 않으면 미커버로 적는다.
+- 오프라인 DB 로 돌렸으면 DB 의 기준일(파일 수정 시각)을 Evidence 에 적는다. 그 뒤에 나온 advisory 는 Unknown 에 미커버로 적는다.
+- 한 축의 도구가 모두 미커버면 그 축 전체를 미커버로 적는다.
 - Secrets 축(gitleaks, detect-secrets)은 로컬이라 네트워크와 관계없다.
 - 오프라인에서 돌리는 길: osv-scanner `--offline-vulnerabilities`(미리 받은 DB), trivy `--skip-db-update --offline-scan`(DB 사본), grype `GRYPE_DB_AUTO_UPDATE=false`(가져온 DB), semgrep 은 로컬 규칙 파일(`--config <파일>`). 판마다 이름이 다를 수 있어 `--help` 로 확인한다.
 

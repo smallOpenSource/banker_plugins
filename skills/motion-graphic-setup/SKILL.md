@@ -28,19 +28,26 @@ winget --version
 if (Get-Command node -ErrorAction SilentlyContinue) { node -v } else { "node: 미설치" }
 if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { (ffmpeg -version)[0] } else { "ffmpeg: 미설치" }
 ```
-**이미 설치 확인**: `node -v` 가 22 이상 **이고** `ffmpeg` 가 존재 **이고** `npx hyperframes doctor` 가 통과하면, 아래 §1~§3 은 건너뛰고 §4 검증만 수행한다.
+**이미 설치 확인**: `node -v` 가 22 이상 **이고** `ffmpeg` 가 존재 **이고** hyperframes 진단이 통과하면, 아래 §1~§3 은 건너뛰고 §4 검증만 수행한다.
+- 진단은 전역 설치가 있으면 `hyperframes doctor` 다. 없으면 아래 네트워크 확인이 통과한 뒤에만 `npx hyperframes doctor` 를 부른다. 깔린 것이 없는 `npx` 는 패키지를 받으려 해, 오프라인이면 약 70초 뒤 실패하고 그 실패가 "미설치" 로 읽힌다.
+- 전역 설치가 없고 네트워크 확인이 실패하면 진단하지 않는다. hyperframes 는 "오프라인이라 확인하지 못함" 으로 둔다.
 
 ### 네트워크 확인 (내려받기 전)
 
 이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
 
 ```bash
-npm ping --fetch-retries=0 --fetch-timeout=10000                                     # hyperframes(npx), ffmpeg-static
-curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://deb.nodesource.com   # Ubuntu, Debian 의 NodeSource 저장소
+(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)                            # hyperframes(npx), ffmpeg-static
+curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://deb.nodesource.com   # Ubuntu, Debian 의 NodeSource 저장소
 ```
 
-- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
-- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+- `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
+- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && npm view hyperframes version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r)` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`hyperframes`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다.
+- `npm` 이 없으면(명령 없음) 오프라인이 아니라 확인하지 못한 것이다. Node 를 먼저 갖춘다(`setup-node`).
+- `npm ping` 은 npm 의 프록시 설정(`proxy`, `https-proxy`)을 따른다. 사내 미러만 열린 망이면 그 미러가 쓰이는지 npm 설정을 본다.
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~` 뒤에 부른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 - OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
 
 ## 1. Node ≥22 확보
@@ -131,14 +138,15 @@ export FFMPEG_PATH="$(node -e "console.log(require('ffmpeg-static'))")"
 "$FFMPEG_PATH" -version | head -1
 ```
 - `--no-save`: 전역이 아니라 **현재 프로젝트의 `node_modules`** 에만 받는다 — 사용자 워크스페이스 소관이며 banker 플러그인 소관이 아니다.
-- hyperframes 가 이 바이너리를 인식하는지는 §3 의 `npx hyperframes doctor` 로 확인한다.
+- hyperframes 가 이 바이너리를 인식하는지는 §3 의 `doctor` 로 확인한다.
 - 재강조: 이 폴백은 사용자 프로젝트에 설치되는 npm 의존성일 뿐, banker 플러그인 저장소(`skills/`)나 배포 아티팩트에는 어떤 ffmpeg 바이너리도 포함되지 않는다.
 
 ## 3. hyperframes 설치 · 최신화
 ```bash
-npx hyperframes init
-npx hyperframes skills update
-npx hyperframes doctor
+HF="npx hyperframes"; command -v hyperframes >/dev/null && HF=hyperframes   # 전역 설치가 있으면 그것을 부른다
+$HF init
+$HF skills update
+$HF doctor
 ```
 - `init`: 최초 실행 시 스캐폴딩과 함께 전역 스킬셋(라우터 `/hyperframes` + `hyperframes-*` 도메인 스킬 + `media-use`)을 설치하고, 이미 있으면 최신 여부만 GitHub 기준으로 확인한다.
 - `skills update`: 코어 스킬만 골라 최신화한다(비대화형 환경 권장 경로) — 이미 최신이면 no-op.
@@ -149,8 +157,9 @@ npx hyperframes doctor
 ```bash
 node -v                                                    # v22.x.x 이상 기대
 command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffmpeg 없음 — ffmpeg-static 폴백 확인"
-npx hyperframes doctor                                     # 종합 진단(node/ffmpeg/스킬셋)
+if command -v hyperframes >/dev/null; then hyperframes doctor; else npx hyperframes doctor; fi   # 종합 진단(node/ffmpeg/스킬셋)
 ```
+- 전역 설치가 없고 0단계 확인이 오프라인이면 진단을 부르지 않는다. Unknown 에 "오프라인이라 hyperframes 진단을 하지 못함" 으로 적는다.
 4-field 보고: 변경(설치 경로·ffmpeg 확보 방식) / Evidence(위 출력) / 검증(`node -v`≥22 + `hyperframes doctor` 통과) / Unknown(권한·네트워크 제약으로 시스템 ffmpeg 불가 등, 가짜 성공 금지).
 
 ## 함정

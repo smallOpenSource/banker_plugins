@@ -31,12 +31,18 @@ command -v codex >/dev/null && codex mcp list 2>/dev/null
 이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
 
 ```bash
-npm ping --fetch-retries=0 --fetch-timeout=10000                                   # npx 서버
-curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/   # uvx 서버
+(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)   # npx 서버
+I="${PIP_INDEX_URL:-$(pip config get global.index-url 2>/dev/null)}"; curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 "${I:-https://pypi.org/simple}/pip/"   # uvx 서버
 ```
 
-- Windows PowerShell 에서는 같은 주소를 `curl.exe -sS -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `npm ping` 은 그대로 쓴다.
-- `npm ping` 과 `curl` 은 각자의 프록시 설정(npm 설정, `HTTPS_PROXY`)을 따른다. 사내 미러만 열린 망이면 그 미러 주소로 본다.
+- `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
+- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && npm view @modelcontextprotocol/server-sequential-thinking version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r)` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`@modelcontextprotocol/server-sequential-thinking`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다.
+- `npm` 이 없으면(명령 없음) 오프라인이 아니라 확인하지 못한 것이다. Node 를 먼저 갖춘다(`setup-node`).
+- `npm ping` 은 npm 의 프록시 설정(`proxy`, `https-proxy`)을 따른다. 사내 미러만 열린 망이면 그 미러가 쓰이는지 npm 설정을 본다.
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config` 의 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
+- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~` 뒤에 부른다.
+- 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 
 ## 1. Preflight
 - **npx 없음** → Node 미설치 → `setup-node` 스킬로 먼저 설치.
@@ -58,23 +64,33 @@ curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://pypi.org/simple/
 
 ### 네트워크가 없는 곳 (오프라인 경로)
 
-`npx -y <패키지>` 와 `uvx <패키지>` 는 서버를 띄울 때마다 레지스트리에서 판을 정한다. 네트워크가 없으면 이미 받은 패키지가 있어도 세션마다 약 70초 뒤 실패한다(Codex 는 아래 `startup_timeout_sec = 300` 까지 기다릴 수 있다).
+`npx -y <패키지>` 는 서버를 띄울 때마다 레지스트리에서 판을 정한다. 네트워크가 없으면 이미 받은 패키지가 있어도 세션마다 약 70초 뒤 실패한다(실측. Codex 는 아래 `startup_timeout_sec = 300` 까지 기다릴 수 있다). `uvx <패키지>` 가 오프라인에서 어떻게 끝나는지는 재지 못했다(미실측). 그래서 오프라인 경로는 두 경우 모두 설치한 실행 파일을 직접 등록한다.
 0단계 확인이 실패하면 3절, 4절 대신 이렇게 한다.
 
 - 네트워크가 필요한 서버(context7, fetch, tavily)는 등록하지 않고 "네트워크가 필요한 서버라 등록하지 않음" 으로 보고한다. 서비스 자체가 원격이라 깔아 두어도 쓸 수 없다.
+  - 온라인에서 등록해 둔 것이 있으면 세션마다 실패한다. 그대로 둘지 지울지 사용자에게 묻는다. 지우기로 하면 `claude mcp remove <이름> -s user`(Codex 는 `codex mcp remove <이름>`)로 지운다.
 - 로컬에서 도는 서버(sequential-thinking, filesystem, git)는 판을 고정해 설치하고, 그 실행 파일을 직접 등록한다. 설치는 네트워크가 되는 곳(또는 사내 npm, PyPI 미러)에서 한 번 한다. 깔린 뒤에는 실행 파일을 바로 부르므로 레지스트리를 묻지 않는다.
-- `<판>` 은 네트워크가 되는 곳에서 `npm view <패키지> version` 으로 정한다.
+- `<판>` 은 패키지마다 따로 정한다(두 npm 패키지의 판은 서로 다르다). npm 패키지는 네트워크가 되는 곳에서 `npm view <패키지> version` 으로 본다.
+- 이미 같은 이름으로 등록돼 있으면(온라인에서 `npx` 로 등록해 둔 것) `claude mcp add` 가 "already exists" 로 실패한다. 3절처럼 먼저 지우고 등록한다.
 
 ```bash
 npm i -g @modelcontextprotocol/server-sequential-thinking@<판> @modelcontextprotocol/server-filesystem@<판>
 uv tool install mcp-server-git==<판>       # uv 가 없으면 pipx install mcp-server-git==<판>
 
 FS_DIR="${FS_DIR:-$HOME/projects}"
+claude mcp remove sequential-thinking -s user 2>/dev/null
 claude mcp add sequential-thinking -s user -- mcp-server-sequential-thinking
+claude mcp remove filesystem -s user 2>/dev/null
 claude mcp add filesystem -s user -- mcp-server-filesystem "$FS_DIR"
+claude mcp remove git -s user 2>/dev/null
 claude mcp add git -s user -- mcp-server-git
 ```
-Codex 는 같은 실행 파일로 등록한다: `codex mcp add sequential-thinking -- mcp-server-sequential-thinking`, `codex mcp add filesystem -- mcp-server-filesystem "$FS_DIR"`, `codex mcp add git -- mcp-server-git`. 다운로드가 없으므로 `startup_timeout_sec` 패치는 필요 없다.
+Codex 는 같은 실행 파일로 등록한다. 다운로드가 없으므로 `startup_timeout_sec` 패치는 필요 없다.
+```bash
+codex mcp remove sequential-thinking 2>/dev/null; codex mcp add sequential-thinking -- mcp-server-sequential-thinking
+codex mcp remove filesystem 2>/dev/null;          codex mcp add filesystem -- mcp-server-filesystem "$FS_DIR"
+codex mcp remove git 2>/dev/null;                 codex mcp add git -- mcp-server-git
+```
 
 ## 3. Claude Code 배선
 ```bash
