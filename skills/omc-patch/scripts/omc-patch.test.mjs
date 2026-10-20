@@ -3035,6 +3035,8 @@ test("an apply refuses a backup slot that is a FIFO or a folder: named, counted,
   const r = runBy(bareHome(), ["--root", plug]);
   assert.equal(r.error, undefined, "the apply ended before its deadline");
   assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /쓰지 않음: foo \(백업 자리가 일반 파일이 아님\)/, "refused before anything is read or written");
+  assert.match(r.out, /쓰지 않음: stopper \(백업 자리가 일반 파일이 아님\)/);
   assert.equal(read(join(s, "foo.mjs")), SCRIPT("foo"), "foo is left unpatched");
   assert.equal(read(join(s, "stopper.mjs")), SCRIPT("stopper"), "stopper is left unpatched");
 });
@@ -3044,6 +3046,7 @@ test("an apply refuses a hooks.json backup slot that is a folder", () => {
   mkdirSync(join(plug, "hooks", "hooks.json.omcbak"));
   const r = run(bareHome(), ["--root", plug]);
   assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 을 건드리지 않음 \(백업 자리가 일반 파일이 아님\)/, r.out);
   assert.match(read(join(plug, "hooks", "hooks.json")), /PostToolUse/, "PostToolUse is kept while there is no backup");
 });
 
