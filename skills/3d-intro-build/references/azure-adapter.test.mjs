@@ -1359,6 +1359,36 @@ test('persistCreds: a project key file that is a link is refused with nothing wr
   assert.equal(fs.readFileSync(kept, 'utf8'), 'A=2\n', 'a dotfiles link of the home key file is written where it points');
 });
 
+test('3d-intro-setup: the .gitignore line and the key file line write nothing through a link a repository planted', { skip: process.platform === 'win32' && 'the bash lines are run where bash is' }, () => {
+  const setup = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8').split('\n');
+  const ignoreLine = setup.find((l) => l.includes("'.env.3d-intro.local*'") && l.includes('>> .gitignore'));
+  const keyLine = setup.find((l) => l.includes('touch .env.3d-intro.local'));
+  assert.ok(ignoreLine && keyLine, 'the two lines are in the setup skill');
+  const root = mkTmp('gitignore-link-');
+  const dir = path.join(root, 'proj');
+  fs.mkdirSync(dir);
+  const env = { PATH: process.env.PATH, HOME: path.join(root, 'home'), GIT_CONFIG_NOSYSTEM: '1' };
+  fs.mkdirSync(env.HOME);
+  cp.execFileSync('git', ['init', '-q'], { cwd: dir, env });
+  const victim = path.join(root, 'victim.txt');
+  fs.writeFileSync(victim, 'keep\n');
+  fs.symlinkSync(victim, path.join(dir, '.gitignore'));
+  const r = cp.spawnSync('bash', ['-c', ignoreLine], { cwd: dir, env, encoding: 'utf8' });
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'keep\n', 'nothing is added through the link');
+  assert.match(r.stdout + r.stderr, /링크라 쓰지 않음/);
+  const config = path.join(dir, '.git', 'config');
+  const before = fs.readFileSync(config, 'utf8');
+  fs.rmSync(path.join(dir, '.gitignore'));
+  fs.symlinkSync(path.join('.git', 'config'), path.join(dir, '.gitignore'));
+  cp.spawnSync('bash', ['-c', ignoreLine], { cwd: dir, env });
+  assert.equal(fs.readFileSync(config, 'utf8'), before, 'the repository config is left as it was');
+  const gone = path.join(root, 'made-by-touch');
+  fs.symlinkSync(gone, path.join(dir, '.env.3d-intro.local'));
+  const k = cp.spawnSync('bash', ['-c', keyLine], { cwd: dir, env, encoding: 'utf8' });
+  assert.ok(!fs.existsSync(gone), 'a dangling key file link does not get a file made where it points');
+  assert.match(k.stdout + k.stderr, /링크라 쓰지 않음/);
+});
+
 test('persistCreds: a file system whose fsync says EINVAL or ENOTSUP still gets the new file whole; another fsync error still stops it', () => {
   for (const [code, ok] of [['EINVAL', true], ['ENOTSUP', true], ['EIO', false]]) {
     const dir = mkTmp('persist-fsync-');
@@ -1388,7 +1418,7 @@ test('azFetch: a request refused for its header value gives back an error withou
 
 test('3d-intro-setup: the .gitignore line covers the key file and its temp copy, and does not glue onto a last line without a line end', { skip: process.platform === 'win32' && 'the bash line is run where bash is' }, () => {
   const setup = fs.readFileSync(path.join(HERE, '..', '..', '3d-intro-setup', 'SKILL.md'), 'utf8');
-  const line = setup.split('\n').find((l) => /^grep -q.*\.gitignore/.test(l));
+  const line = setup.split('\n').find((l) => l.includes("'.env.3d-intro.local*'") && l.includes('>> .gitignore'));
   assert.ok(line, 'no .gitignore line in the setup skill');
   for (const before of [null, '.env.3d-intro.local\n', '.env.*.local\n', 'node_modules\n.env']) {
     const dir = mkTmp('gitignore-');

@@ -1039,7 +1039,7 @@ try {
   // in someone else's repository, its `pip/`, `json.py` or `pptx.py` runs as the user. The docs run them from the home
   // folder (absolute paths for the files they read), or in PowerShell between Push-Location ~ and Pop-Location.
   // Kept: lineage's own test run in its own skill folder.
-  const PY_RUN = /(?:^|[\s;&|(`])(?:python[0-9.]*|"?\$\{?PY(?:_BASE)?\}?"?|~?[\w./-]*\/bin\/python[0-9.]*)\s+(?:-[A-HJ-Za-z]+\s+)*(?:-c\b|-m\b|-\s*<<)/;
+  const PY_RUN = /(?:^|[\s;&|(`])(?:python[0-9.]*|"?\$\{?PY(?:_BASE)?\}?"?|~?[\w./-]*\/bin\/python[0-9.]*)\s+(?:-[A-HJ-Za-z]+\s+)*(?:-c\b|-m\b|-\s*<<|<<|<(?!<|[^\s<>]+>))/;   // a stdin script with or without -, not a <placeholder>
   const pyDocsAll = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
     ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
     .filter((f) => fs.existsSync(path.join(root, f)));

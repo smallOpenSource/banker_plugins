@@ -162,7 +162,7 @@ PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"
 (cd ~ && "$PY" -c "import tomllib") 2>/dev/null || echo "⚠ tomllib 없음 - Python 3.11+ 설치 후 재시도(setup-python 참고)"   # 홈에서: -c, -m, 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 ```
 ```bash
-"$PY" <<'EOF'
+(cd ~ && "$PY" <<'EOF'   # 홈에서: 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 import re
 from pathlib import Path
 import tomllib
@@ -187,6 +187,7 @@ tomllib.loads(new_text)  # 패치 후 재검증
 CFG.write_text(new_text, encoding="utf-8")
 print("patched:", [n for n in NAMES if f"[mcp_servers.{n}]" in new_text])
 EOF
+)
 ```
 
 ## 검증 (보고 의무)

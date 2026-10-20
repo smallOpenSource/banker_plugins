@@ -3639,6 +3639,20 @@ test("a bare apply whose origin never answers cuts the fetch at its time limit a
   }
 });
 
+// Final batch: git's message can quote a piece of an origin's password (curl reads a raw "/" in it as the end of the
+// host: "Port number ended with 'Q'"). With credentials in the origin, the cause line keeps no quoted piece.
+test("a bare apply over an origin with credentials keeps no quoted piece of git's message in its cause line", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const pass = ["Qz", "Xy"].join("/");
+  assert.equal(runGit(["remote", "set-url", "origin", `http://u:${pass}@127.0.0.1:9/omc.git`], f.market).status, 0);
+  const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "5000" });
+  assert.equal(r.code, 1, r.out);
+  const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+  assert.ok(cause, r.out);
+  assert.ok(!cause.replace(/'\*\*\*'/g, "").includes("'"), `a quoted piece is left: ${cause}`);
+  for (const piece of ["Qz", "Xy", "'Q'"]) assert.ok(!cause.includes(piece), `${piece} in ${cause}`);
+});
+
 // B7 item 10, same line: an origin this tool pinned cannot be fetched; the bare apply says so instead of git's remote-helper error.
 test("a bare apply over an origin this tool pinned says the pin is why it got no tag", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);

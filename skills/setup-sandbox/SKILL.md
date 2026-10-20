@@ -146,7 +146,7 @@ PY="$(command -v python3.12 || command -v python3.11 || command -v python3)"
 그 `$PY` 로 패치한다. `sandbox_mode` 치환은 **첫 `[` 테이블 헤더 이전(root 영역)만** 대상으로 삼아
 `[profiles.*]` 하위의 같은 이름 override(예: 프로필별 `read-only` 강제)를 절대 건드리지 않는다(멱등):
 ```bash
-"$PY" <<'EOF'
+(cd ~ && "$PY" <<'EOF'   # 홈에서: 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 import re
 from pathlib import Path
 import tomllib
@@ -175,6 +175,7 @@ tomllib.loads(text)  # 패치 후 재검증
 CFG.write_text(text, encoding="utf-8")
 print("✓ sandbox_mode=workspace-write, network_access=true")
 EOF
+)
 ```
 
 ## 검증 (보고 의무)

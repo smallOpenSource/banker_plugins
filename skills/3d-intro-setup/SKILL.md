@@ -126,16 +126,16 @@ FLUX.2-pro(대체 이미지 생성)는 **opt-in**: 필요 없으면 완전히 �
 키 파일은 먼저 비공개로 만든다(이미 있으면 그대로 둔다). `echo >>` 로 새 파일을 만들면 0644 로 남는다.
 홈 키 파일(아래 fallback)이 이미 있으면 프로젝트 파일을 만들지 않는다. 빈 프로젝트 파일이 먼저 읽혀 홈의 키가 가려진다.
 ```bash
-[ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local)
+if [ -L .env.3d-intro.local ]; then echo ".env.3d-intro.local 이 링크라 쓰지 않음(persistCreds 도 쓰지 않는다). 링크를 지우고 다시 만든다"; else [ -e ~/.config/banker/3d-intro/env ] || (umask 077 && touch .env.3d-intro.local); fi
 ls -l .env.3d-intro.local ~/.config/banker/3d-intro/env 2>/dev/null || true   # 있는 파일이 -rw------- 면 된다
 ```
 여러 프로젝트에서 재사용하려면 프로젝트 파일 대신 홈 폴더 fallback 을 쓴다. `resolveCreds` 가 project-local 다음으로 찾는 경로다.
 ```bash
 mkdir -p ~/.config/banker/3d-intro && chmod 700 ~/.config/banker/3d-intro && (umask 077 && touch ~/.config/banker/3d-intro/env)
 ```
-그 프로젝트의 `.gitignore` 에 `.env.3d-intro.local*` 줄이 있는지 확인하고 없으면 추가한다. 키 파일과, 쓰다가 강제로 끊기면 남는 키 사본(`.env.3d-intro.local.<16자리 hex>.tmp`)을 함께 무시한다. `.env.3d-intro.local`, `.env.*.local` 줄은 그 사본을 무시하지 못한다. 마지막 줄에 줄 끝이 없으면 먼저 줄을 바꾼다. 그대로 붙이면 마지막 줄의 규칙(예: `.env`)이 깨진다:
+그 프로젝트의 `.gitignore` 에 `.env.3d-intro.local*` 줄이 있는지 확인하고 없으면 추가한다. 키 파일과, 쓰다가 강제로 끊기면 남는 키 사본(`.env.3d-intro.local.<16자리 hex>.tmp`)을 함께 무시한다. `.env.3d-intro.local`, `.env.*.local` 줄은 그 사본을 무시하지 못한다. 마지막 줄에 줄 끝이 없으면 먼저 줄을 바꾼다. 그대로 붙이면 마지막 줄의 규칙(예: `.env`)이 깨진다. `.gitignore` 가 링크면 쓰지 않는다(저장소가 심은 링크로 그 저장소의 `.git/config` 같은 파일에 줄이 붙지 않게):
 ```bash
-grep -qxF '.env.3d-intro.local*' .gitignore 2>/dev/null || { [ -s .gitignore ] && [ -n "$(tail -c 1 .gitignore)" ] && echo; echo '.env.3d-intro.local*'; } >> .gitignore
+if [ -L .gitignore ]; then echo ".gitignore 가 링크라 쓰지 않음. 가리키는 파일이 맞는지 보고 손으로 더한다"; else grep -qxF '.env.3d-intro.local*' .gitignore 2>/dev/null || { [ -s .gitignore ] && [ -n "$(tail -c 1 .gitignore)" ] && echo; echo '.env.3d-intro.local*'; } >> .gitignore; fi
 ```
 
 ### 모드 (a) — 직접 입력
