@@ -4,7 +4,7 @@
  *
  * TWO TIERS, and the difference is deliberate.
  *
- *   Tier 1 (standing).  U1..U19. node:test + node:assert + node stdlib, nothing else. CI installs
+ *   Tier 1 (standing).  U1..U20. node:test + node:assert + node stdlib, nothing else. CI installs
  *     neither pptxgenjs nor python-pptx, so anything that needs a builder cannot be a regression
  *     gate. Everything here calls layout()/mdToDeck() out of build_a4p.js and the verifier's
  *     exported functions directly, against fixtures this file builds byte by byte.
@@ -16,7 +16,8 @@
  *
  *     Builder discovery: pptxgenjs through build_a4p.js's own moduleSearchPaths() (so NODE_PATH
  *     works), python through $A4P_PYTHON, then $PYTHON, then python3 / python / python3.12, taking
- *     the first interpreter that can `import pptx` (PYTHONPATH is inherited).
+ *     the first interpreter that is python 3.9 or newer (build_a4p.py's MIN_PYTHON) and can
+ *     `import pptx` (PYTHONPATH is inherited). An older one would only exit 2.
  *
  * THE FIXTURE WRITER IS INDEPENDENT ON PURPOSE.
  *   verify_a4p.mjs exports writeZip() and crc32(). Neither is used to build a fixture here. If the
@@ -103,53 +104,65 @@ function makeZip(entries) {
     const method = e.store ? 0 : 8;
     const body = method === 0 ? data : zlib.deflateRawSync(data);
     const name = Buffer.from(e.name, 'utf8');
-    const crc = crc32(data);
-
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(LOC_SIG, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0, 6); // no data descriptor: sizes are known here
-    local.writeUInt16LE(method, 8);
-    local.writeUInt16LE(0, 10);
-    local.writeUInt16LE(0x0021, 12); // 1980-01-01
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(body.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    local.writeUInt16LE(0, 28);
-    chunks.push(local, name, body);
-
-    const cen = Buffer.alloc(46);
-    cen.writeUInt32LE(CEN_SIG, 0);
-    cen.writeUInt16LE(20, 4);
-    cen.writeUInt16LE(20, 6);
-    cen.writeUInt16LE(0, 8);
-    cen.writeUInt16LE(method, 10);
-    cen.writeUInt16LE(0, 12);
-    cen.writeUInt16LE(0x0021, 14);
-    cen.writeUInt32LE(crc, 16);
-    cen.writeUInt32LE(body.length, 20);
-    cen.writeUInt32LE(data.length, 24);
-    cen.writeUInt16LE(name.length, 28);
-    cen.writeUInt16LE(0, 30);
-    cen.writeUInt16LE(0, 32);
-    cen.writeUInt16LE(0, 34);
-    cen.writeUInt16LE(0, 36);
-    cen.writeUInt32LE(0, 38);
-    cen.writeUInt32LE(offset, 42);
-    central.push(cen, name);
-
+    const f = { method, crc: crc32(data), packed: body.length, size: data.length, nameLength: name.length };
+    chunks.push(localHeader(f), name, body);
+    central.push(centralHeader(f, offset), name);
     offset += 30 + name.length + body.length;
   }
 
   const cd = Buffer.concat(central);
+  return Buffer.concat([...chunks, cd, endOfCentral(entries.length, cd.length, offset)]);
+}
+
+// The 30-byte local file header of one entry (`f`: method, crc, packed and plain sizes, name length).
+function localHeader(f) {
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(LOC_SIG, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0, 6); // no data descriptor: sizes are known here
+  local.writeUInt16LE(f.method, 8);
+  local.writeUInt16LE(0, 10);
+  local.writeUInt16LE(0x0021, 12); // 1980-01-01
+  local.writeUInt32LE(f.crc, 14);
+  local.writeUInt32LE(f.packed, 18);
+  local.writeUInt32LE(f.size, 22);
+  local.writeUInt16LE(f.nameLength, 26);
+  local.writeUInt16LE(0, 28);
+  return local;
+}
+
+// The 46-byte central directory record of one entry whose local header sits at `offset`.
+function centralHeader(f, offset) {
+  const cen = Buffer.alloc(46);
+  cen.writeUInt32LE(CEN_SIG, 0);
+  cen.writeUInt16LE(20, 4);
+  cen.writeUInt16LE(20, 6);
+  cen.writeUInt16LE(0, 8);
+  cen.writeUInt16LE(f.method, 10);
+  cen.writeUInt16LE(0, 12);
+  cen.writeUInt16LE(0x0021, 14);
+  cen.writeUInt32LE(f.crc, 16);
+  cen.writeUInt32LE(f.packed, 20);
+  cen.writeUInt32LE(f.size, 24);
+  cen.writeUInt16LE(f.nameLength, 28);
+  cen.writeUInt16LE(0, 30);
+  cen.writeUInt16LE(0, 32);
+  cen.writeUInt16LE(0, 34);
+  cen.writeUInt16LE(0, 36);
+  cen.writeUInt32LE(0, 38);
+  cen.writeUInt32LE(offset, 42);
+  return cen;
+}
+
+// The 22-byte end of central directory: entry counts, the directory's length and where it starts.
+function endOfCentral(count, cdLength, cdOffset) {
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(EOCD_SIG, 0);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(cd.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...chunks, cd, eocd]);
+  eocd.writeUInt16LE(count, 8);
+  eocd.writeUInt16LE(count, 10);
+  eocd.writeUInt32LE(cdLength, 12);
+  eocd.writeUInt32LE(cdOffset, 16);
+  return eocd;
 }
 
 /**
@@ -398,44 +411,60 @@ function cmapTable(subs) {
  * which is what makes a ttcf possible: table offsets are absolute, never face-relative.
  */
 function buildSfnt(spec, baseOffset = 0) {
-  const { unitsPerEm, numGlyphs, advances, subs, family, fullName } = spec;
+  const { family, fullName } = spec;
+  const tables = new Map([
+    ['cmap', cmapTable(spec.subs)],
+    ['head', headTable(spec)],
+    ['hhea', hheaTable(spec)],
+    ['hmtx', hmtxTable(spec)],
+    ['maxp', maxpTable(spec)],
+    ['name', nameTable([{ nameID: 1, value: family }, { nameID: 4, value: fullName || family }])],
+  ]);
+  return tableDirectory(tables, baseOffset);
+}
 
+function headTable(spec) {
   const head = Buffer.alloc(54);
   head.writeUInt32BE(0x00010000, 0);
   head.writeUInt32BE(0x00010000, 4);
   head.writeUInt32BE(0x5f0f3cf5, 12); // magic
   head.writeUInt16BE(3, 16);
-  head.writeUInt16BE(unitsPerEm, 18);
+  head.writeUInt16BE(spec.unitsPerEm, 18);
   head.writeUInt16BE(spec.macStyle || 0, 44);
   head.writeUInt16BE(8, 46);
   head.writeInt16BE(2, 48);
+  return head;
+}
 
+function hheaTable(spec) {
   const hhea = Buffer.alloc(36);
   hhea.writeUInt32BE(0x00010000, 0);
   hhea.writeInt16BE(spec.ascender, 4);
   hhea.writeInt16BE(spec.descender, 6);
   hhea.writeInt16BE(spec.lineGap || 0, 8);
-  hhea.writeUInt16BE(advances.length, 34); // numberOfHMetrics
+  hhea.writeUInt16BE(spec.advances.length, 34); // numberOfHMetrics
+  return hhea;
+}
 
+function maxpTable(spec) {
   const maxp = Buffer.alloc(6);
   maxp.writeUInt32BE(0x00005000, 0);
-  maxp.writeUInt16BE(numGlyphs, 4);
+  maxp.writeUInt16BE(spec.numGlyphs, 4);
+  return maxp;
+}
 
+function hmtxTable({ advances, numGlyphs }) {
   const hmtx = Buffer.alloc(advances.length * 4 + Math.max(0, numGlyphs - advances.length) * 2);
   advances.forEach((a, i) => {
     hmtx.writeUInt16BE(a, i * 4);
     hmtx.writeInt16BE(0, i * 4 + 2);
   });
+  return hmtx;
+}
 
-  const tables = new Map([
-    ['cmap', cmapTable(subs)],
-    ['head', head],
-    ['hhea', hhea],
-    ['hmtx', hmtx],
-    ['maxp', maxp],
-    ['name', nameTable([{ nameID: 1, value: family }, { nameID: 4, value: fullName || family }])],
-  ]);
-
+// The face's table directory and the tables after it, each padded to 4 bytes. Offsets are absolute: the
+// directory sits at `baseOffset` in the final file.
+function tableDirectory(tables, baseOffset) {
   const tags = [...tables.keys()].sort();
   const dir = Buffer.alloc(12 + tags.length * 16);
   const es = Math.floor(Math.log2(tags.length));
@@ -1052,7 +1081,7 @@ test('U18 every font-file hint is a substring of the family it belongs to', () =
 // This lives in the standing tier on purpose: E1/E1b compare the builders but are
 // tier 2, so they never run in CI, and this axis would otherwise have no gate at all.
 
-test('U17 meta.title clamps at the core-property limit, identically in both builders', () => {
+test('U17 meta.title clamps at the core-property limit, counted in code points as python counts', () => {
   assert.equal(B.CORE_TITLE_MAX, 255, 'the cap is the python-pptx core property limit');
 
   const under = 'ㄱ'.repeat(255);
@@ -1087,8 +1116,9 @@ test('U17 meta.title clamps at the core-property limit, identically in both buil
   assert.equal(cutAstral.length, 256, 'the reported length is code points, so detail matches python');
   assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(cutAstral.value),
     'a lone high surrogate means the cut split a pair and broke the last character');
+});
 
-
+test('U17b both builders carry the same title cap and warning code', () => {
   // The python side must carry the same constant and the same warning code. Reading the
   // source keeps this in the dependency-free tier: no interpreter required.
   const py = fs.readFileSync(path.join(HERE, 'build_a4p.py'), 'utf8');
@@ -1525,16 +1555,19 @@ const nodeBuilder = (() => {
   return { ok: false, reason: 'pptxgenjs is not installed. `npm i pptxgenjs`, or set NODE_PATH to a node_modules that has it.' };
 })();
 
+// What makes an interpreter the python builder: build_a4p.py refuses anything before 3.9 (exit 2), so an older
+// python that can import pptx is no builder. U20 keeps this floor and the builder's MIN_PYTHON the same.
+const PY_PROBE = 'import sys; sys.exit(3) if sys.version_info < (3, 9) else None; import pptx; print(pptx.__version__)';
 const pythonBuilder = (() => {
   const candidates = [process.env.A4P_PYTHON, process.env.PYTHON, 'python3', 'python', 'python3.12', 'python3.11', 'python3.10'].filter(Boolean);
   for (const bin of candidates) {
-    const r = spawnSync(bin, ['-c', 'import pptx; print(pptx.__version__)'], { encoding: 'utf8' });
+    const r = spawnSync(bin, ['-c', PY_PROBE], { encoding: 'utf8' });
     if (r.status === 0) return { ok: true, bin, version: (r.stdout || '').trim() };
   }
   return {
     ok: false,
-    reason: `no interpreter among [${candidates.join(', ')}] can import python-pptx. `
-      + 'Set A4P_PYTHON to one that can, or PYTHONPATH to a directory holding python-pptx.',
+    reason: `no interpreter among [${candidates.join(', ')}] is python 3.9 or newer and can import python-pptx. `
+      + 'Set A4P_PYTHON to one that is, or PYTHONPATH to a directory holding python-pptx.',
   };
 })();
 
@@ -1833,4 +1866,9 @@ test('U19 verify_a4p answers the same through a linked folder as through its own
     fs.unlinkSync(link);
     fs.rmdirSync(linkDir);
   }
+});
+
+test('U20 the python probe takes only what build_a4p.py runs on: python 3.9 or newer', () => {
+  assert.match(fs.readFileSync(BUILD_PY, 'utf8'), /^MIN_PYTHON = \(3, 9\)$/m, 'the builder floor');
+  assert.match(PY_PROBE, /sys\.exit\(3\) if sys\.version_info < \(3, 9\)/, 'the probe floor is the same');
 });
