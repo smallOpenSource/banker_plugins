@@ -125,7 +125,7 @@ grep -qE '^\.env\.3d-intro\.local$|^\.env\.\*\.local$' .gitignore 2>/dev/null ||
 - **Image(gpt-image 계열)**: endpoint + 배포명(예: `gpt-image-2`, `gpt-image-2.5-sunburst`. 필수 — 생성 호출의 `model` 필드로 그대로 쓰인다).
   AI Foundry 리소스(`https://<resource>.services.ai.azure.com`)도 그대로 쓴다. 콘솔이 `.../models` 를 붙여 보여줘도 저장은 origin 까지만 한다(이미지 경로는 `/openai/v1/images/...` 이고 `/models/images/...` 는 404).
 
-비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일 전체를 새로 쓰되 기존 값, 사람이 적은 키 포함, 은 그대로 둔다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다.
+비밀이 아닌 값은 에이전트가 `persistCreds()` 로 합친다(파일의 줄은 사람이 적은 키, 주석, `export` 줄까지 그대로 두고 바꿀 이름의 줄만 바꾸거나 끝에 더한다. 새 파일로 통째 바꿔 써서 쓰다 끊겨도 원래 파일이 남는다. 0600 자동 적용). 키 칸은 이 명령에 넣지 않는다.
 쓰는 곳은 `resolveCreds` 가 이미 읽는 키 파일(홈 fallback 포함)이고, 없을 때만 프로젝트 파일이다. 홈 파일을 쓰는 사람에게 프로젝트 파일을 새로 만들면 그 파일이 먼저 읽혀 홈의 키가 가려진다:
 ```bash
 node -e "

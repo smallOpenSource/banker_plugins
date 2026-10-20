@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 // Default import (the CJS module.exports object) so ffmpeg helpers can read cp.spawnSync at
 // call time — a destructured `import { spawnSync }` snapshots the binding and cannot be stubbed.
 import cp from 'node:child_process';
@@ -192,15 +193,108 @@ function withoutMachineOnly(creds) {
  * and null/undefined values are skipped. Returns the written path. A name that is not a variable
  * name, or a value with a line break, throws before anything is written: either would add lines of
  * its own (a FFMPEG_PATH, a second endpoint) to the file.
+ * The file's lines stay as a person wrote them (comments, `export` lines, names not set here, line
+ * ends): only the line each set name is read from changes, and a name the file lacks is added at
+ * the end. The new file replaces the old one whole, so a write cut short leaves the old one. A link
+ * is written where it points; a folder, a pipe or a link to nothing is refused.
  */
 export function persistCreds(creds, { target } = {}) {
   if (!target) throw new Error('persistCreds: target path required');
-  const lines = Object.entries(creds || {}).filter(([k, v]) => !k.startsWith('_') && v != null).map(([k, v]) => envLine(k, String(v)));
-  const body = lines.length ? `${lines.join('\n')}\n` : '';
+  const set = Object.entries(creds || {}).filter(([k, v]) => !k.startsWith('_') && v != null).map(([k, v]) => [k, String(v)]);
+  for (const [k, v] of set) envLine(k, v);
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(target, body, { mode: 0o600 });
-  try { fs.chmodSync(target, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
+  const file = keyFileAt(target);
+  writeKeyFile(file, mergedEnv(readIfAny(file), set));
   return target;
+}
+
+// Where the key file's bytes live: the path, or what a link there points to (a plain write would
+// follow it too). Anything but a regular file is refused: a pipe would block the write for good.
+function keyFileAt(target) {
+  let st;
+  try { st = fs.lstatSync(target); } catch (e) { if (e.code === 'ENOENT') return target; throw e; }
+  const file = st.isSymbolicLink() ? linkedFile(target) : target;
+  if (!fs.statSync(file).isFile()) throw new Error(`persistCreds: ${target} is not a regular file; nothing was written`);
+  return file;
+}
+
+function linkedFile(link) {
+  try { return fs.realpathSync(link); } catch (e) {
+    if (e.code === 'ENOENT') throw new Error(`persistCreds: ${link} is a link to nothing; nothing was written`);
+    throw e;
+  }
+}
+
+function readIfAny(file) {
+  try { return fs.readFileSync(file, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
+}
+
+// The file's lines with each set name's value in place. parseEnvFile reads a name's last assignment,
+// so that line is the one replaced, unless it already reads as the new value; a name the file lacks
+// is appended. The file's line end (\n or \r\n) is kept.
+function mergedEnv(text, set) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text ? text.split(/\r?\n/) : [];
+  if (lines[lines.length - 1] === '') lines.pop();
+  const lastAt = new Map(lines.map((line, i) => [assignedName(line), i]).filter(([k]) => k));
+  for (const [k, v] of set) {
+    const i = lastAt.get(k);
+    if (i === undefined) lines.push(envLine(k, v));
+    else if (parseEnvFile(lines[i])[k] !== v) lines[i] = envLine(k, v);
+  }
+  return lines.length ? `${lines.join(eol)}${eol}` : '';
+}
+
+// The name a line assigns, as parseEnvFile reads it (null for a comment, an `export` line, or text).
+function assignedName(line) {
+  const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+  return m ? m[1] : null;
+}
+
+// The new contents go to a fresh random name opened exclusively ('wx') and are renamed over the old
+// file. A file with a second name (a hard link), or one the new copy would give another owner or
+// group, is written in place: a rename would part it from its other name, or hand it to this user.
+function writeKeyFile(file, body) {
+  const old = statIfAny(file);
+  if (old && old.nlink > 1) return writeInPlace(file, body);
+  const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  let moved = false;
+  try {
+    if (fillTemp(fd, body, old)) {
+      fs.renameSync(tmp, file);
+      moved = true;
+    }
+  } finally {
+    if (!moved) fs.rmSync(tmp, { force: true });
+  }
+  return moved ? chmodPrivate(file) : writeInPlace(file, body);
+}
+
+// Fill and close the new file. False, with nothing written, when its owner or group is not the old file's.
+function fillTemp(fd, body, old) {
+  try {
+    const st = fs.fstatSync(fd);
+    if (old && (st.uid !== old.uid || st.gid !== old.gid)) return false;
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);
+    return true;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeInPlace(file, body) {
+  fs.writeFileSync(file, body, { mode: 0o600 });
+  return chmodPrivate(file);
+}
+
+function statIfAny(file) {
+  try { return fs.statSync(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+}
+
+function chmodPrivate(file) {
+  try { fs.chmodSync(file, 0o600); } catch { /* chmod unsupported (e.g. Windows) — best effort */ }
 }
 
 // One KEY=VALUE line for persistCreds, refusing a name or value that would make lines of its own.

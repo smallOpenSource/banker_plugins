@@ -962,3 +962,101 @@ test('pollVideo: polls stop at timeoutMs of wall time, each request limited to w
   assert.equal(st, null);
   assert.ok(took >= 250 && took < 2000, `${took} ms`);
 });
+
+test('persistCreds: a later write keeps the hand-written lines and their order, and changes only the names it sets', () => {
+  const target = path.join(mkTmp('persist-keep-'), 'env');
+  const before = [
+    '# my Sora resource',
+    'export AZURE_SORA_API_KEY=placeholder-exported',
+    'AZURE_SORA_ENDPOINT=https://old.example.com  # old',
+    'OTHER=1  # kept as written',
+    'AZURE_SORA_ENDPOINT=https://older.example.com',
+  ];
+  fs.writeFileSync(target, `${before.join('\n')}\n`);
+  const prev = A.parseEnvFile(fs.readFileSync(target, 'utf8'));
+  A.persistCreds({ ...prev, AZURE_SORA_ENDPOINT: 'https://new.example.com', AZURE_SORA_DEPLOYMENT: 'sora-2' }, { target });
+  const after = [...before.slice(0, 4), 'AZURE_SORA_ENDPOINT=https://new.example.com', 'AZURE_SORA_DEPLOYMENT=sora-2'];
+  assert.equal(fs.readFileSync(target, 'utf8'), `${after.join('\n')}\n`);
+});
+
+test('persistCreds: a CRLF key file stays CRLF, and a last line without a line end gets one', () => {
+  const dir = mkTmp('persist-eol-');
+  const crlf = path.join(dir, 'crlf.env');
+  fs.writeFileSync(crlf, 'A=1\r\nB=2\r\n');
+  A.persistCreds({ A: '1', B: '3', C: '4' }, { target: crlf });
+  assert.equal(fs.readFileSync(crlf, 'utf8'), 'A=1\r\nB=3\r\nC=4\r\n');
+  const open = path.join(dir, 'open.env');
+  fs.writeFileSync(open, '# x\nA=1');
+  A.persistCreds({ A: '2' }, { target: open });
+  assert.equal(fs.readFileSync(open, 'utf8'), '# x\nA=2\n');
+});
+
+test('persistCreds: a write cut short leaves the old key file whole, and no temp file', () => {
+  const dir = mkTmp('persist-atomic-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  const write = fs.writeFileSync;
+  fs.writeFileSync = (f, data, ...rest) => {
+    write(f, String(data).slice(0, 2), ...rest); // part of the bytes reach the disk
+    throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+  };
+  try {
+    assert.throws(() => A.persistCreds({ A: '2' }, { target }), /no space left/);
+  } finally {
+    fs.writeFileSync = write;
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'A=1\n');
+  assert.deepEqual(fs.readdirSync(dir), ['env']);
+});
+
+test('persistCreds: a key file with a second name (a hard link) is written in place, so both names see the change', () => {
+  const dir = mkTmp('persist-hardlink-');
+  const target = path.join(dir, 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  fs.linkSync(target, path.join(dir, 'other-name'));
+  A.persistCreds({ A: '2' }, { target });
+  assert.equal(fs.readFileSync(path.join(dir, 'other-name'), 'utf8'), 'A=2\n');
+  assert.equal(fs.statSync(target).nlink, 2);
+});
+
+test('persistCreds: a key file whose new copy would get another owner or group is written in place', () => {
+  const target = path.join(mkTmp('persist-owner-'), 'env');
+  fs.writeFileSync(target, 'A=1\n');
+  const ino = fs.statSync(target).ino;
+  const fstat = fs.fstatSync;
+  fs.fstatSync = (fd, ...rest) => { const st = fstat(fd, ...rest); return { ...st, uid: st.uid + 1 }; };
+  try {
+    A.persistCreds({ A: '2' }, { target });
+  } finally {
+    fs.fstatSync = fstat;
+  }
+  assert.equal(fs.readFileSync(target, 'utf8'), 'A=2\n');
+  assert.equal(fs.statSync(target).ino, ino, 'the same file, not a new one renamed over it');
+});
+
+test('persistCreds: a key file that is a link is written where it points and stays a link; a link to nothing is refused', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {
+  const dir = mkTmp('persist-symlink-');
+  const real = path.join(dir, 'real.env');
+  fs.writeFileSync(real, '# mine\nA=1\n');
+  const target = path.join(dir, 'env');
+  fs.symlinkSync(real, target);
+  A.persistCreds({ A: '2' }, { target });
+  assert.ok(fs.lstatSync(target).isSymbolicLink());
+  assert.equal(fs.readFileSync(real, 'utf8'), '# mine\nA=2\n');
+  const dangling = path.join(dir, 'dangling');
+  fs.symlinkSync(path.join(dir, 'missing.env'), dangling);
+  assert.throws(() => A.persistCreds({ A: '2' }, { target: dangling }), /nothing was written/);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['dangling', 'env', 'real.env']);
+});
+
+test('persistCreds: a folder or a pipe at the key file path is refused, nothing read or written', { skip: process.platform === 'win32' && 'no mkfifo' }, () => {
+  const dir = mkTmp('persist-special-');
+  const pipe = path.join(dir, 'env');
+  cp.execFileSync('mkfifo', [pipe]);
+  // in a child: opening a pipe with no reader would block this process for good
+  const adapter = JSON.stringify(pathToFileURL(path.join(HERE, 'azure-adapter.mjs')).href);
+  const child = cp.spawnSync(process.execPath, ['--input-type=module', '-e', `const A = await import(${adapter}); try { A.persistCreds({ A: '1' }, { target: process.argv[1] }); console.log('wrote'); } catch (e) { console.log(e.message); }`, pipe], { encoding: 'utf8', timeout: 5000 });
+  assert.match(child.stdout, /not a regular file/, `${child.stdout}${child.stderr}${child.error || ''}`);
+  fs.mkdirSync(path.join(dir, 'folder'));
+  assert.throws(() => A.persistCreds({ A: '1' }, { target: path.join(dir, 'folder') }), /not a regular file/);
+});
