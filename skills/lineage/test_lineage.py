@@ -2491,6 +2491,45 @@ class TestPageRedaction(_ReviewCase):
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Xy7p", page)
 
+    # 3.0.8 joins a split key before hiding it, yet kept the summarizer version: a summary cut through the key by
+    # 3.0.7 stayed in the cache under the same key
+    ZW, KEY = chr(0x200B), "AKIA" + "ABCDEFGHIJKLMNOP"
+    SPLIT_TEXT = "가" * 100 + " " + KEY[:9] + ZW + KEY[9:] + " 를 찾았습니다."
+    CUT_BY_3_0_7 = "가" * 100 + " " + KEY[:9] + ZW + KEY[9:15] + "…"
+
+    def test_a_summary_cached_by_3_0_8_is_not_reused(self):
+        self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst(self.SPLIT_TEXT, "a1")])
+        old = hashlib.sha256((self.SPLIT_TEXT + "\x00s" + "3").encode()).hexdigest()[:8]
+        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(self.CUT_BY_3_0_7, encoding="utf-8")
+        rc, page, err = self._rulebase_page()
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(self.KEY[:9], page.replace(self.ZW, ""))
+
+    def test_a_rule_summary_cached_before_split_secrets_were_joined_is_made_again(self):
+        turn = {"role": "assistant", "text": self.SPLIT_TEXT, "parts": [self.SPLIT_TEXT], "uuid": "a1",
+                "session": "s", "ts": "x", "tools": {}}
+        old = hashlib.sha256((self.SPLIT_TEXT + "\x00s" + "3").encode()).hexdigest()[:8]   # 3.0.2 to 3.0.8
+        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(self.CUT_BY_3_0_7, encoding="utf-8")
+        summary, hit = _quiet(L.read_or_summarize, turn, "s")[0]
+        self.assertFalse(hit)
+        self.assertNotIn(self.KEY[:9], summary.replace(self.ZW, ""))
+
+    def test_a_decision_cached_before_a_split_key_was_joined_is_not_reused(self):
+        # 3.0.8 keyed a decision on the text as it stands, as 3.0.7 did when no reviewer pattern found the split key
+        key = "sk-proj-" + "Q7wErTy9UiOpAsDfGhJkLzXc"
+        text = "새 키 " + key[:12] + self.ZW + key[12:] + " 를 설정했고 배포가 통과합니다."
+        self._write([_rec("user", "키를 바꿔 주세요", uuid="u1"), self._asst(text, "a1")])
+        digest = L._llm_digest(L.redact(text)[0], L._decision_context(None, {}))
+        L._write_private(L._llm_cache_path("a1", "s", digest),
+                         json.dumps({"keep": True, "summary": "키 %s 로 바꿈" % (key[:12] + self.ZW + key[12:16])}))
+        rc, pack = _quiet(self._emit)[0]
+        self.assertEqual(rc, 0)
+        a1 = [x for x in pack["turns"] if x["id"] == "a1"][0]
+        self.assertFalse(a1["llm"].get("cached"), "the turn is reviewed again")
+        rc, page = _quiet(self._apply)[0]
+        self.assertEqual(rc, 0)
+        self.assertNotIn(key[:12], page.replace(self.ZW, ""))
+
     def test_rulebase_gate_samples_hide_reviewer_hits_whole_before_the_cut(self):
         c = "cu" + "rl"
         text = "가" * 480 + " " + c + " -u admin:" + self.PW + " 로 확인했습니다."

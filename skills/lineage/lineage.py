@@ -34,7 +34,8 @@ if sys.version_info < (3, 7):
     sys.exit(2)
 
 SCHEMA_VERSION = 2          # cache dir schema (v2: redacted summaries only)
-SUMMARIZER_VERSION = 3      # bump when summarize_turn logic changes (B-3 cache key); 3: cut from redacted text
+SUMMARIZER_VERSION = 4      # bump when summarize_turn or the page redaction changes (B-3 cache key)
+                            # 3: cut from redacted text (3.0.2); 4: split secrets joined first (3.0.8)
 USER_FOLD = 400             # collapse user messages longer than this (E-1)
 ECHO_ASK = 40               # echo-exchange: user question length ceiling (A-4)
 ECHO_REPLY = 5              # echo-exchange: assistant reply length ceiling (A-4)
@@ -2004,12 +2005,14 @@ def _review_view(t, red, args):
 def _pack_turn(n, t, tid, why, session_id, args, counts):
     """One turn of the pack under its final id `tid` (the text as the page shows it, the rules'
     decision, the reviewer's slot), and the reviewer's view of it. The cached decision keys on
-    the text with the page's patterns only (`llm_key`), as 3.0.1 did."""
+    the text with the page's patterns only (`llm_key`), as 3.0.1 did, its split secrets joined first: a key
+    found only once joined keys anew, so no decision cached before 3.0.8 joined it is read for it."""
     red, found = page_redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)
     for k, v in found.items():
         counts[k] = counts.get(k, 0) + v
     hit = any(name in found for name, _ in REVIEW_SECRET_PATTERNS)
-    key_text = redact(t["text"], extra=args.redact_extra, mode=args.redact_mode)[0] if hit else red
+    key_text = (redact(_rejoin_secrets(t["text"], args.redact_extra), extra=args.redact_extra,
+                       mode=args.redact_mode)[0] if hit else red)
     preview, clipped = _preview(review_redact(t["text"], args.redact_extra)[0])
     session = t.get("session") or session_id
     context = _decision_context(why, _keeps(args))
