@@ -1352,6 +1352,30 @@ test("on with a settings path the save will not write over says to move it or fi
   assert.match(turnOn("codex", s.o).message, /--stdin 이나 --deny, --alt 로 함께 주세요\.$/);
 });
 
+// 0.20.5 review: a settings path that is a link (to a folder, a file past 64 KiB, one it cannot read, or a link loop) is
+// one the save replaces with a file of its own: on asks for the settings, not to move the spot.
+test("on with a link at the settings path asks for the settings, since the save replaces the link", symlinkTest, () => {
+  const cases = [
+    ["to a folder", (f, d) => { mkdirSync(join(d, "a-folder")); symlinkSync(join(d, "a-folder"), f); }],
+    ["to a file past 64 KiB", (f, d) => { writeFileSync(join(d, "big.json"), " ".repeat(64 * 1024 + 1)); symlinkSync(join(d, "big.json"), f); }],
+    ...(process.platform === "win32" ? [] : [["in a loop", (f, d) => { symlinkSync(join(d, "loop-b"), f); symlinkSync(f, join(d, "loop-b")); }]]),
+    ...(process.platform === "win32" || asRoot ? [] : [["to a file it cannot read", (f, d) => { writeFileSync(join(d, "locked.json"), "{}"); chmodSync(join(d, "locked.json"), 0o000); symlinkSync(join(d, "locked.json"), f); }]]),
+  ];
+  for (const [what, make] of cases) {
+    const s = setup();
+    const folder = join(s.o.configFile, "..");
+    mkdirSync(folder, { recursive: true });
+    make(s.o.configFile, folder);
+    const r = turnOn("codex", s.o);
+    assert.equal(r.ok, false, what);
+    assert.match(r.message, /--stdin 이나 --deny, --alt 로 함께 주세요\.$/, `${what}: ${r.message}`);
+    assert.doesNotMatch(r.message, /덮어쓰지 않습니다/, what);
+    assert.ok(configure(s.o, FLAGS).ok, `${what}: giving the settings replaces the link`);
+    assert.ok(!lstatSync(s.o.configFile).isSymbolicLink(), what);
+    try { chmodSync(join(folder, "locked.json"), 0o600); } catch { /* not this case */ }
+  }
+});
+
 // r7 R2: the design reads through a link at the settings path (dotfiles). A link may lead to a file that is not
 // anti-drm's: status names where it leads, and a wrong value from it shows only its type and length.
 test("settings reached through a link: status names where the link leads, and a wrong value shows only its type and length", (t) => {

@@ -11,7 +11,7 @@
 - `setup-omc-hud` SKILL 이 `settings.json` 을 새 파일로 바꿔 넣을 때 손으로 준 ACL, 확장 속성(Windows 는 대체 데이터 스트림), SELinux 라벨이 새 파일에도 백업에도 따라오지 않는다고 적는다(세 OS 실측).
 - `omc-patch` SKILL 은 명령의 자리 표시에 도구 출력이나 `find` 가 낸 값을 넣을 때 bash, PowerShell 모두 작은따옴표로 감싸고, 값에 작은따옴표(PowerShell 은 `‘` `’` `‚` `‛` 도)나 줄바꿈이 있으면 명령을 만들지 않는다고 적는다. 백업 없는 패치의 원본을 임시 tar 로 되찾는 명령은 한 줄로 바꿔, 임시 폴더를 만들지 못하면 git 도 tar 도 돌리지 않고 다 쓴 폴더는 지운다.
 - 유지보수자용: omc-patch 시험의 git 은 https, ssh 전송을 받지 않는다(`GIT_ALLOW_PROTOCOL=file:http`). 고정물의 `example.invalid` origin 으로 이름 서버에 묻는 일이 생기지 않는다. 시험 env 에 커밋 정보(이름, 이메일)를 줘, fetch 의 reflog 가 이 PC 의 호스트 이름을 이름 서버에 묻지 않는다. 태그 받기의 두 KILL(TERM 을 무시하는 git, 스스로 끝난 git 이 남긴 프로세스)을 지키는 시험을 더한다.
-- `anti-drm` 설정 자리가 링크면 `status` 가 설정 줄에 링크가 가리키는 곳을 함께 보이고, 그 파일의 틀린 값은 글 대신 형식과 길이만 보인다(`(string, 12자)`). 링크를 따라 읽는 설계는 그대로다.
+- `anti-drm` 설정 자리가 링크면 `status` 가 설정 줄에 링크가 가리키는 곳을 함께 보이고, 그 파일의 틀린 값은 글 대신 형식과 길이만 보인다(`(string, 12자)`). 링크를 따라 읽는 설계는 그대로다. `on` 의 "이 자리를 덮어쓰지 않습니다" 안내는 링크가 아닌 자리에만 붙는다(링크는 설정을 다시 주면 새 파일로 바뀐다).
 - 유지보수자용: smoke 와 gen-skill-changes 시험이 `Object.hasOwn` 없이 돈다(engines 하한 Node 16.7). 두 시험의 npm 은 임시 HOME 과 로그 자리를 써, 사용자 `.npmrc` 의 `logs-max=0`, `logs-dir` 에서 거짓 FAIL 이 나지 않고 로그가 임시 폴더 밖에 생기지 않는다. smoke 의 표준 입력 판정이 공백 든 자리 표시(`<입력 파일 경로>`)를 재지정으로 보지 않는다.
 - 유지보수자용: 저장소의 글 파일에 날 숨은 글자가 없는지 보는 시험(`scripts/hidden-chars.test.mjs`)을 더하고, 시험 셋의 날 글자 6자를 이스케이프로 바꾼다. PowerShell 을 띄우는 시험은 모두 임시 홈 env 를 준다는 시험을 더하고, 그 env 가 모듈 분석 캐시 자리(`PSModuleAnalysisCachePath`)도 옮긴다.
 - 설치 스킬 17개와 `/banker:setup` 의 네트워크 확인

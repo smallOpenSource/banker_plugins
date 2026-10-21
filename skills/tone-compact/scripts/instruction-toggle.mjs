@@ -463,8 +463,9 @@ function placeState(files) {
 // "off", "on", "stale", "misplaced" (only in AGENTS.md while Codex reads the
 // override, so not applied), "hidden" (in the override with no text of its own,
 // applied but hiding AGENTS.md), "dangling" (nowhere, and AGENTS.md is a link to
-// nothing), "unpaired", "notutf8" or "notregular" (a folder, FIFO, socket or
-// link loop at a file's name). Without rules any block in its place counts as "on".
+// nothing), "unpaired", "notutf8", "toobig" (a file past 32 MiB, left unread) or
+// "notregular" (a folder, FIFO, socket or link loop at a file's name). Without
+// rules any block in its place counts as "on".
 function codexState(t, files, rules) {
   if (files.all.some(special)) return "notregular";
   if (files.all.some(tooBig)) return "toobig";

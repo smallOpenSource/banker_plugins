@@ -169,8 +169,10 @@ const OPEN_ERRORS = new Map([
   ["EPERM", "읽을 권한이 없습니다"],
 ]);
 // What is at the settings path that a save refuses to write over (priorSettings): the person moves it or fixes its
-// permissions first, so `on` says that, not to give the settings again.
+// permissions first, so `on` says that, not to give the settings again. Only for a file or another kind of entry at the
+// path: a link there (to a folder, a big or unreadable file, or in a loop) the save replaces with a file of its own.
 const KEPT_SPOT = new Set([...OPEN_ERRORS.values(), "64KiB 보다 큽니다"]);
+const keptSpot = (file, error) => KEPT_SPOT.has(error) && ["file", "other"].includes(pathKind(file));
 
 // The settings file's text: null when there is none, { error } when it is not a
 // regular file of at most 64 KiB that a trusted owner holds. Opening without
@@ -535,7 +537,7 @@ function savedRules(o) {
   const found = readConfig(o.configFile);
   if (found === null) return { refusal: refuse("설정이 없습니다. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.") };
   if (found.error) {
-    const next = KEPT_SPOT.has(found.error)
+    const next = keptSpot(o.configFile, found.error)
       ? "anti-drm 은 이 자리를 덮어쓰지 않습니다. 옮기거나 권한을 고친 뒤 다시 실행하세요."
       : "금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.";
     return { refusal: refuse(`설정 파일이 올바르지 않습니다 (${found.error}): ${where(o.configFile)}. ${next}`) };
