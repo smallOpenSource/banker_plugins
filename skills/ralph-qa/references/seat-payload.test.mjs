@@ -799,7 +799,10 @@ test("a git folder that borrows another repo's objects (alternates) or links bel
     // a linked worktree's own refs folder (worktree refs such as refs/bisect) as a link
     const wt = join(ctx.dir, "wt-refs");
     git(ctx, "worktree", "add", "-q", "--detach", wt);
-    symlinkSync(join(victim, ".git", "refs"), join(ctx.repo, ".git", "worktrees", "wt-refs", "refs"), "dir");
+    // newer gits (2.50 on macOS, 2.55 on Windows) make that folder at worktree add; 2.43 does not
+    const wtRefs = join(ctx.repo, ".git", "worktrees", "wt-refs", "refs");
+    rmSync(wtRefs, { recursive: true, force: true });
+    symlinkSync(join(victim, ".git", "refs"), wtRefs, "dir");
     r = prep({ ...ctx, repo: wt });
     assert.equal(r.stop, "not-a-repo", r.prompt);
   }
