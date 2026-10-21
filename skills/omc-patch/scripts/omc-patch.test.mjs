@@ -3677,7 +3677,11 @@ test("the SKILL tells what to check first when the active version could only be 
 // B7 item 10: an origin that takes the connection and never answers (a firewall that holds it) does not stall the bare apply.
 test("a bare apply whose origin never answers cuts the fetch at its time limit and says it got no tag", { skip: !HAS_GIT && "git not found", timeout: 60000 }, async () => {
   const held = new Set();
-  const srv = createServer((s) => held.add(s));
+  // The fetch ends git's helpers at its time limit (taskkill /F on Windows resets the connection): a reset is expected.
+  const srv = createServer((s) => {
+    held.add(s);
+    s.on("error", () => {});
+  });
   await new Promise((res) => srv.listen(0, "127.0.0.1", res));
   try {
     const f = fakeHome([{ v: "5.6.1", active: true }]);
@@ -4018,7 +4022,9 @@ test("the SKILL's bash temp tar line runs neither git nor tar when it cannot mak
   mkdirSync(dir, { recursive: true });
   const log = join(dir, "calls.log");
   stubTools(dir, log);
-  spawnSync("sh", ["-c", fillTarLine(line, dir, "foo")], { cwd: dir, encoding: "utf8", env: { ...process.env, TMPDIR: join(dir, "no-such-folder"), PATH: `${dir}${delimiter}${process.env.PATH}` } });
+  // a mktemp that cannot make the folder: macOS's mktemp makes it in the account's own temp folder whatever TMPDIR says
+  writeFileSync(join(dir, "mktemp"), "#!/bin/sh\necho 'mktemp: cannot make the folder' >&2\nexit 1\n", { mode: 0o755 });
+  spawnSync("sh", ["-c", fillTarLine(line, dir, "foo")], { cwd: dir, encoding: "utf8", env: { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH}` } });
   assert.equal(existsSync(log) ? read(log) : "", "", "git or tar ran without a temp folder");
 });
 // Windows PowerShell 5.1 (the Windows box): the same two checks on the PowerShell line. Functions named git and tar come
