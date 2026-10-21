@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
-import { fromMsys, gathered, seatPlan, SEAT_WHY } from "./seat-run.mjs";
+import { fromMsys, gathered, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -161,8 +161,8 @@ test("cleanup's day rule removes only marked folders past a day, never a user's 
 test("cleanup refuses while a send of the folder runs, and goes on past a lock that is stale or forced", { skip: SKIP }, (t) => {
   const w = world(t);
   const lock = (d, pid, old = false) => {
-    const f = join(d, `.running-${pid}.md`);
-    writeFileSync(f, `${pid}\n`);
+    const f = join(d, ".running.md");
+    writeFileSync(f, `${pid} 2026-10-21T00:00:00.000Z\n`);
     if (old) utimesSync(f, (Date.now() - 16 * 60 * 1000) / 1000, (Date.now() - 16 * 60 * 1000) / 1000);
   };
   let j = init(w);
@@ -179,6 +179,66 @@ test("cleanup refuses while a send of the folder runs, and goes on past a lock t
     r = cli(w, ["cleanup", "--dir", j.dir]);
     assert.equal(r.code, 0, `${pid} ${old}: ${r.stdout}`);
   }
+});
+
+// The pid in a folder's send lock (.running.md), or null.
+function lockHolder(d) {
+  try {
+    return Number(readFileSync(join(d, ".running.md"), "utf8").split(" ")[0]) || null;
+  } catch {
+    return null;
+  }
+}
+
+test("the send lock is one file made with wx: a second taker while it lives is busy, a stale one is taken over", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = takeLock(j.dir);
+  assert.equal(lock, join(j.dir, ".running.md"));
+  assert.equal(lockHolder(j.dir), process.pid);
+  // another live process holds it: busy
+  writeFileSync(lock, `${process.ppid} 2026-10-21T00:00:00.000Z\n`);
+  assert.equal(liveLock(j.dir), process.ppid);
+  assert.throws(() => takeLock(j.dir), (e) => e.code === "busy" && new RegExp(`pid ${process.ppid}`).test(e.message));
+  // a dead pid, or a lock untouched for 16 minutes: taken over
+  writeFileSync(lock, `${2 ** 22 + 12345} x\n`);
+  assert.equal(takeLock(j.dir), lock);
+  assert.equal(lockHolder(j.dir), process.pid);
+  writeFileSync(lock, `${process.ppid} x\n`);
+  utimesSync(lock, (Date.now() - 16 * 60 * 1000) / 1000, (Date.now() - 16 * 60 * 1000) / 1000);
+  assert.equal(liveLock(j.dir), null);
+  assert.equal(takeLock(j.dir), lock);
+  rmSync(lock);
+});
+
+test("a send keeps its lock fresh while it runs, so a long split send stays live to cleanup", { skip: SKIP }, async (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = takeLock(j.dir);
+  const old = (Date.now() - 14 * 60 * 1000) / 1000;
+  utimesSync(lock, old, old);
+  const timer = keepFresh(lock, 30);
+  await new Promise((res) => setTimeout(res, 200));
+  clearInterval(timer);
+  assert.ok(Date.now() - statSync(lock).mtimeMs < 5000, "the lock was touched");
+  rmSync(lock);
+});
+
+test("two sends of one folder that start together: one sends, the other is busy", { skip: SKIP }, async (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const { spawn } = await import("node:child_process");
+  const one = () => new Promise((res) => {
+    const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro"],
+      { env: { ...w.env, RQ_STUB_MODE: "slow=1500" }, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    c.stdout.on("data", (b) => { out += b; });
+    c.stderr.resume();
+    c.on("close", (code) => res({ code, out }));
+  });
+  const codes = (await Promise.all([one(), one()])).map((x) => x.code).sort();
+  assert.deepEqual(codes, [0, 5], "one send and one busy");
+  assert.equal(runs(w, "gemini").length, 1, "the payload went out once");
 });
 
 test("cleanup and the other commands refuse a folder init did not make, and remove nothing", { skip: SKIP }, (t) => {
@@ -401,7 +461,7 @@ test("send runs each seat from its own copy in its own folder, with the answers 
     assert.ok(!existsSync(join(p.dir, cli)), `${cli}'s copy is gone after the send`);
   }
   assert.ok(existsSync(join(p.dir, "result-send.md")));
-  assert.ok(!readdirSync(p.dir).some((f) => f.startsWith(".running-")), "the lock is gone");
+  assert.ok(!existsSync(join(p.dir, ".running.md")), "the lock is gone");
   assert.match(r.json.declared, /^외부 전송\(선언\): .*codex.*gemini.*opencode.*prov.*페이로드 \d+B, 비밀 검사 0건, 보내지 않은 새 파일 0/);
 });
 
@@ -638,16 +698,15 @@ test("a SIGKILL to the runner alone still ends every seat, cleans their records 
   for (let k = 0; k < 200 && pidsIn(w).length < 2; k += 1) await new Promise((res) => setTimeout(res, 50));
   const pids = [...pidsIn(w), ...records(w, "gemini").map((x) => x.pid), ...records(w, "opencode").map((x) => x.pid)];
   assert.ok(pids.length >= 4, `the seats started: ${pids}`);
-  const lock = readdirSync(p.dir).find((n) => /^\.running-\d+\.md$/.test(n));
-  assert.ok(lock, "the send's node holds the lock");
-  const worker = Number(lock.match(/\d+/)[0]);
+  const worker = lockHolder(p.dir);
+  assert.ok(worker, "the send's node holds the lock");
   left.more.push(worker);
   c.kill("SIGKILL");
   assert.equal(await exited, "SIGKILL");
   assert.ok(await gone(pids, 10000), `left: ${pids.filter(alive)}`);
   assert.ok(await gone([worker], 40000), "the send's node ended too");
   assert.ok(!existsSync(join(p.dir, "gemini")) && !existsSync(join(p.dir, "opencode")), "the copies are gone");
-  assert.deepEqual(readdirSync(p.dir).filter((n) => n.startsWith(".running-")), [], "no lock is left");
+  assert.ok(!existsSync(join(p.dir, ".running.md")), "no lock is left");
 });
 
 // The send's node killed alone (the runner lives): no result comes, so the runner says so and ends with 2. Its seats
@@ -665,12 +724,12 @@ test("a send whose own node is killed ends with 2 and says it gave no result", {
   c.stdout.resume();
   const closed = new Promise((res) => c.on("close", (code) => res(code)));
   for (let k = 0; k < 200 && pidsIn(w).length < 1; k += 1) await new Promise((res) => setTimeout(res, 50));
-  const lock = readdirSync(p.dir).find((n) => /^\.running-\d+\.md$/.test(n));
-  assert.ok(lock, "the send's node holds the lock");
-  assert.notEqual(Number(lock.match(/\d+/)[0]), c.pid, "the lock is the send's node's, not the runner's");
-  process.kill(Number(lock.match(/\d+/)[0]), "SIGKILL");
+  const worker = lockHolder(p.dir);
+  assert.ok(worker, "the send's node holds the lock");
+  assert.notEqual(worker, c.pid, "the lock is the send's node's, not the runner's");
+  process.kill(worker, "SIGKILL");
   assert.equal(await closed, 2, err);
-  assert.match(err, /send 를 맡은 node 가 결과 없이 끝났다\(SIGKILL\)/);
+  assert.match(err, /send 를 맡은 node 가 결과 없이 끝났다\(SIGKILL\)\. 좌석이 아직 돌 수 있다/);
 });
 
 test("the seat result reasons are the set the skill's table holds", () => {

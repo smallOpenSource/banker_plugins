@@ -19,7 +19,7 @@
  * (the DRM of a closed network encrypts files by their extension, and .md is one it leaves readable).
  */
 import { fork } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,7 +40,8 @@ const STALE_LOCK_MS = 15 * 60 * 1000;
 const RUN_NAME = /^ralph-qa\.[A-Za-z0-9]+$/;
 // A run folder of any version: bash's six characters, PowerShell's 32 of a guid, this runner's six.
 const ANY_RUN = /^ralph-qa(-out)?\.[A-Za-z0-9]+$/;
-const LOCK = /^\.running-(\d+)\.md$/;
+// The lock of a send that runs: one name, made with "wx", holding the pid and the time.
+const LOCK_NAME = ".running.md";
 
 class Usage extends Error {}
 const USAGE = "usage: node seat-run.mjs init | untracked --repo <repo> [--folder <f>] | prepare --dir <d> --repo <repo> --base <base|auto> --id <id>"
@@ -277,15 +278,56 @@ const alive = (pid) => {
   }
 };
 
-// A send of the folder that still runs: a lock of a live process, newer than 15 minutes (a lock left by a send that
-// was killed, or one whose number another process now has, goes stale).
-export function liveLock(d, now = Date.now()) {
-  for (const name of listDir(d)) {
-    const m = LOCK.exec(name);
-    const st = m && lstatOr(join(d, name));
-    if (st && Number(m[1]) !== process.pid && now - st.mtimeMs < STALE_LOCK_MS && alive(Number(m[1]))) return Number(m[1]);
+const lockPid = (d) => {
+  try {
+    return Number(readFileSync(join(d, LOCK_NAME), "utf8").split(" ")[0]) || null;
+  } catch {
+    return null;
   }
-  return null;
+};
+
+// A send of the folder that still runs: the lock of a live process, touched in the last 15 minutes (a send touches
+// it every minute; a lock left by a send that was killed, or one whose number another process now has, goes stale).
+export function liveLock(d, now = Date.now()) {
+  const pid = lockPid(d);
+  const st = pid && lstatOr(join(d, LOCK_NAME));
+  return st && st.isFile() && pid !== process.pid && now - st.mtimeMs < STALE_LOCK_MS && alive(pid) ? pid : null;
+}
+
+// Takes the folder's lock: "wx" lets one of two sends that start together have it. A stale lock is taken over once
+// (two sends that both find the same stale lock is the one gap left). Gives back the lock's path.
+export function takeLock(d, now = Date.now()) {
+  const lock = join(d, LOCK_NAME);
+  for (let tries = 0; tries < 2; tries += 1) {
+    try {
+      writeFileSync(lock, `${process.pid} ${new Date(now).toISOString()}\n`, { flag: "wx", mode: 0o600 });
+      return lock;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+    const pid = liveLock(d, now);
+    if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
+    rmSync(lock, { force: true });
+  }
+  throw new Stop("busy", "이 폴더의 send 가 방금 시작했다");
+}
+
+// Touches the lock every `every` ms while a send runs: a send past 15 minutes (split parts) stays live to cleanup.
+export function keepFresh(lock, every = 60000) {
+  const timer = setInterval(() => {
+    try {
+      utimesSync(lock, new Date(), new Date());
+    } catch {
+      /* the lock is gone: nothing to keep */
+    }
+  }, every);
+  timer.unref();
+  return timer;
+}
+
+// The lock goes back only while it is this process's (a send past 15 minutes without its touches may have lost it).
+function giveBack(lock) {
+  if (lockPid(dirname(lock)) === process.pid) rmSync(lock, { force: true });
 }
 
 // The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker.
@@ -682,16 +724,14 @@ function sendStart(o, ctx, a) {
   if (ctx.env.CODEX_SANDBOX_NETWORK_DISABLED === "1" && !a.dryRun) throw new Stop("sandboxed", "Codex sandbox 가 네트워크를 막는다. 승인을 받아 sandbox 밖에서 send 를 다시 한다");
   const { id } = readRun(d);
   const payload = payloadToSend(d, id, Boolean(o["allow-large"]));
-  const pid = liveLock(d, ctx.now());
-  if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
   return { d, out, id, payload };
 }
 
 async function send(o, ctx) {
   const a = sendArgs(o);
   const { d, out, id, payload } = sendStart(o, ctx, a);
-  const lock = join(d, `.running-${process.pid}.md`);
-  writeFileSync(lock, `${process.pid} ${new Date(ctx.now()).toISOString()}\n`, { mode: 0o600 });
+  const lock = takeLock(d, ctx.now());
+  const touch = keepFresh(lock);
   const signals = watchSignals();
   const run = { ...a, d, o: out, id, signalled: () => signals.code() !== 0 };
   try {
@@ -699,8 +739,9 @@ async function send(o, ctx) {
     const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };
     return [result, signals.code(), a.dryRun ? null : d];
   } finally {
+    clearInterval(touch);
     signals.off();
-    rmSync(lock, { force: true });
+    giveBack(lock);
   }
 }
 
@@ -780,7 +821,7 @@ function sendViaWorker(argv, ctx) {
     // close, not exit: it comes after the channel is closed, so the node's last message is in
     child.on("close", (code, signal) => {
       if (settled) return;
-      if (reported === null) ctx.stderr.write(`ralph-qa: send 를 맡은 node 가 결과 없이 끝났다(${signal || `종료 ${code}`}). 남은 좌석 기록과 사본은 다음 cleanup 이 지운다\n`);
+      if (reported === null) ctx.stderr.write(`ralph-qa: send 를 맡은 node 가 결과 없이 끝났다(${signal || `종료 ${code}`}). 좌석이 아직 돌 수 있다. 남은 좌석 기록과 사본은 다음 cleanup 이 지운다\n`);
       settle(reported === null ? 2 : reported);
     });
   });

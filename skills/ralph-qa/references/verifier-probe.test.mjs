@@ -1,7 +1,7 @@
 // Tests for verifier-probe.mjs. Run from the repo root: node --test skills/ralph-qa/references/verifier-probe.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -820,6 +820,28 @@ test("the command line never runs a CLI from a relative PATH entry such as the c
     const r = spawnSync(process.execPath, [PROBE, "--runtime=claude", "--codex"], { encoding: "utf8", cwd: dir, env: cleanEnv({ PATH: "bin" }) });
     assert.equal(JSON.parse(r.stdout).seats[0].reason, "cli-absent");
     assert.ok(!existsSync(marker));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// npm's .cmd shims run a bare `node` when no node.exe sits beside them, and cmd.exe looks for a bare name in the current
+// folder first: a node.cmd in a repo the session works in would run in place of node.
+test("on Windows a .cmd CLI runs through System32's cmd.exe, and a bare node in it never comes from the current folder", { skip: process.platform !== "win32" && "Windows only" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "probe-cmd-"));
+  try {
+    mkdirSync(join(dir, "bin"));
+    mkdirSync(join(dir, "repo"));
+    const marker = join(dir, "planted-ran");
+    writeFileSync(join(dir, "repo", "node.cmd"), `@echo ran> "${marker}"\r\n@echo codex-cli 9.9.9\r\n`);
+    writeFileSync(join(dir, "repo", "cmd.exe"), readFileSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "whoami.exe")));
+    writeFileSync(join(dir, "bin", "codex.cmd"), `@node -e "console.log('codex-cli 0.144.5')"\r\n`);
+    const env = cleanEnv({ PATH: [join(dir, "bin"), dirname(process.execPath), join(process.env.SystemRoot || "C:\\Windows", "System32")].join(";") });
+    delete env.ComSpec;
+    delete env.COMSPEC;
+    const r = spawnSync(process.execPath, [PROBE, "--runtime=claude", "--codex"], { encoding: "utf8", cwd: join(dir, "repo"), env });
+    assert.equal(JSON.parse(r.stdout).seats[0].version, "codex-cli 0.144.5", r.stdout + r.stderr);
+    assert.ok(!existsSync(marker), "a file of the current folder ran");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

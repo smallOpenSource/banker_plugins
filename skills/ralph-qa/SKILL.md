@@ -178,9 +178,9 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `file` | file, gate, review 줄의 파일이 일반 파일이 아니거나 읽을 수 없다(바이너리, 64 MiB 초과, 링크 폴더 아래) | 경로를 고친다 | 없음 |
 | `markers` | 표지가 두 줄(`short.md` 의 여는 표지 하나와 닫는 표지)이 아니다 | id 를 바꿔 `short.md` 를 다시 쓴다 | 없음 |
 | `spec` | `spec.md` 의 그 줄이 틀렸다(모르는 낱말, 숫자, 절대 경로나 `..`, UTF-8 이 아님). id 가 영문자와 숫자 4~64자가 아니어도 이것이다 | 그 줄이나 id 를 고친다 | 없음 |
-| `not-a-repo` | git 저장소가 아니다 | 저장소 경로를 다시 본다 | 다시 해도 같으면 `cli-call-failed` |
+| `not-a-repo` | git 저장소가 아니다. 또는 git 폴더가 이 저장소의 것이 아니다(`.git` 파일이나 링크, `commondir`, `core.worktree`, 링크인 `refs` 나 `objects` 가 다른 곳을 가리킴. `--separate-git-dir` 저장소도 여기에 듦) | 저장소 경로를 다시 본다. git 폴더가 저장소 밖이면 보내지 않는다고 사용자에게 알린다 | 다시 해도 같으면 `cli-call-failed` |
 | `base-invalid` | 기준을 찾지 못했다 | `<기준>` 을 다시 본다 | 다시 해도 같으면 `cli-call-failed` |
-| `git-failed` | git 이 실패했다(첫 줄이 `message` 와 `detail` 에) | 저장소와 `<기준>` 을 다시 본다 | 다시 해도 같으면 `cli-call-failed` |
+| `git-failed` | git 이 실패했다(첫 줄이 `message` 와 `detail` 에). 저장소 설정의 filter 이름에 `=` 나 줄바꿈이 있어 끌 수 없을 때, 부분 clone 이 없는 객체를 받아야 할 때도 | 저장소와 `<기준>` 을 다시 본다 | 다시 해도 같으면 `cli-call-failed` |
 | `git-timeout` | git 이 120초 안에 끝나지 않았다 | 다시 해 본다 | 다시 해도 같으면 `cli-call-failed` |
 | `scan` | 비밀처럼 보이는 줄이 있다(종료 1) | 4단계대로 가린다 | 끝내 못 가리면 `cli-call-failed` |
 | `too-large` | 512 KiB 를 넘는다(종료 4) | 4단계대로 묻는다 | 못 물으면 `cli-call-failed`, 거절이면 `model-declined` |
@@ -192,7 +192,7 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `base-not-private` | 기준 폴더를 다른 계정도 쓸 수 있다 | 사용자에게 알린다 | 해결 못 하면 `cli-call-failed` |
 | `base-not-writable` | 기준 폴더를 만들거나 쓸 수 없다 | 사용자에게 알린다. Codex 면 sandbox 밖 승인 | 해결 못 하면 `cli-call-failed` |
 | `inside-repo` | 기준 폴더가 git 저장소 안이다 | 사용자에게 알린다 | 해결 못 하면 `cli-call-failed` |
-| `busy` | 이 폴더의 send 가 아직 돈다(종료 5) | 끝난 뒤 다시 한다. 15분 지난 잠금은 낡은 것으로 본다 | 없음 |
+| `busy` | 이 폴더의 send 가 아직 돈다(종료 5) | 끝난 뒤 다시 한다. send 는 잠금을 1분마다 갱신하고, 15분 갱신이 없는 잠금은 낡은 것으로 본다 | 없음 |
 
 - 위 표와 아래 표의 `cli-call-failed`, `model-declined` 는 그 좌석이 아직 판정을 내지 않았을 때다. 첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다(외부 모델 결정 절의 확정 시점).
 

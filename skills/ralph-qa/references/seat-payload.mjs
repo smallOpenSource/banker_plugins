@@ -30,6 +30,7 @@ import { spawnSync } from "node:child_process";
 import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { scan } from "./payload-scan.mjs";
 import { which } from "./seat-spawn.mjs";
 
@@ -132,15 +133,22 @@ export function readSpec(buf) {
 const firstLine = (buf) => String(buf || "").split("\n").find((l) => l.trim()) || "";
 const withoutKeys = (env, re) => Object.fromEntries(Object.entries(env).filter(([k]) => !re.test(k)));
 
-// git by its absolute path, from `cwd`, on `repo`, with the C locale and no context settings.
-// `index` runs it on an index copy, which git then writes whole (no split index in the repo's .git).
-export function gitAt(repo, env = process.env, cwd = homedir()) {
+// A folder under a file: no hook can be there on any system, so core.hooksPath at it leaves the repo's hooks out.
+const NO_HOOKS = join(fileURLToPath(import.meta.url), "no-hooks");
+// The repo may be an archive that came with its .git: git never runs its fsmonitor or hooks and never reaches the
+// network (a partial clone's lazy fetch, a transport's own command).
+const SAFE = ["-c", "core.fsmonitor=false", "-c", `core.hooksPath=${NO_HOOKS}`, "-c", "protocol.allow=never"];
+
+// git by its absolute path, from `cwd`, on `repo`, with the C locale and no context settings; `extra` are more -c
+// settings (the repo's filter drivers left out). `index` runs it on an index copy, which git then writes whole (no
+// split index in the repo's .git).
+export function gitAt(repo, env = process.env, cwd = homedir(), extra = []) {
   const exe = which("git", { env });
   if (!exe) throw new Stop("git-failed", "git 을 PATH 의 절대 경로에서 찾지 못했다");
   const base = { ...withoutKeys(env, /^(GIT_DIFF_OPTS|LC_ALL)$/i), LC_ALL: "C" };
   const onCopy = (index) => ({ ...withoutKeys(base, /^GIT_INDEX_FILE$/i), GIT_INDEX_FILE: index });
   return (args, { index, input, ok = [0] } = {}) => {
-    const pre = ["-C", repo, "-c", "core.fsmonitor=false", ...(index ? ["-c", "core.splitIndex=false"] : [])];
+    const pre = ["-C", repo, ...SAFE, ...extra, ...(index ? ["-c", "core.splitIndex=false"] : [])];
     const r = spawnSync(exe, [...pre, ...args], {
       cwd, env: index ? onCopy(index) : base, input, maxBuffer: 1 << 30, timeout: GIT_TIMEOUT_MS, windowsHide: true,
     });
@@ -153,13 +161,119 @@ export function gitAt(repo, env = process.env, cwd = homedir()) {
 }
 
 const zList = (buf) => String(buf).split("\0").filter(Boolean);
+// `git config --list -z` entries as [key, value]; a key without a value (a boolean true) has null.
+const zEntries = (buf) => zList(buf).map((e) => (e.includes("\n") ? [e.slice(0, e.indexOf("\n")), e.slice(e.indexOf("\n") + 1)] : [e, null]));
 
+// The filter driver keys the repo's own config sets (its config file, its worktree's, what they include).
+function repoFilterKeys(git) {
+  const keys = new Set();
+  for (const scope of ["--local", "--worktree"]) {
+    const r = git(["config", scope, "--includes", "--list", "-z", "--name-only"], { ok: scope === "--local" ? [0] : [0, 1, 128, 129] });
+    if (r.status !== 0) continue;
+    for (const key of zList(r.stdout)) if (/^filter\.[\s\S]+\.(?:clean|smudge|process|required)$/.test(key)) keys.add(key);
+  }
+  return [...keys];
+}
+
+// The user's and the system's values for filter drivers: what git uses with the repo's own config left out.
+function userFilterValues(git, env) {
+  const values = new Map();
+  const scopes = /^(1|true|yes|on)$/i.test(env.GIT_CONFIG_NOSYSTEM || "") ? ["--global"] : ["--system", "--global"];
+  for (const scope of scopes) {
+    const r = git(["config", scope, "--includes", "--list", "-z"], { ok: [0, 1, 128] });
+    if (r.status === 0) for (const [k, v] of zEntries(r.stdout)) if (k.startsWith("filter.")) values.set(k, v);
+  }
+  return values;
+}
+
+// -c settings over each filter key the repo's own config sets: the user's value where the user's config gives one,
+// else empty (no command) or false (not required). Only those keys: an empty process would also turn off the user's
+// clean and smudge of the same driver. A key -c cannot carry (= or a line break in the name) stops.
+function filterOverrides(git, env) {
+  const keys = repoFilterKeys(git);
+  const bad = keys.find((k) => /[=\r\n]/.test(k));
+  if (bad !== undefined) throw new Stop("git-failed", `저장소 설정의 filter 이름을 끌 수 없다(= 나 줄바꿈): ${JSON.stringify(bad).slice(0, 80)}`);
+  const user = keys.length ? userFilterValues(git, env) : new Map();
+  return keys.flatMap((key) => {
+    if (user.has(key)) return ["-c", user.get(key) === null ? key : `${key}=${user.get(key)}`];
+    return ["-c", `${key}=${key.endsWith(".required") ? "false" : ""}`];
+  });
+}
+
+const norm = (p) => (WIN ? p.toLowerCase() : p);
+const realOr = (p) => {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return resolve(p);
+  }
+};
+function kindAt(p) {
+  let st;
+  try {
+    st = lstatSync(p);
+  } catch {
+    return null;
+  }
+  return st.isDirectory() ? "dir" : st.isFile() ? "file" : "other";
+}
+
+// Where a linked worktree's git folder says its worktree's .git file is.
+function backPointer(gitDir) {
+  try {
+    return realOr(resolve(gitDir, readFileSync(join(gitDir, "gitdir"), "utf8").trim()));
+  } catch {
+    return null;
+  }
+}
+
+// The git folders of the repo at `top` as git reads them: its own, the common one (refs, objects) and core.worktree.
+function gitFolders(git, top) {
+  return {
+    gitDir: realOr(String(git(["rev-parse", "--absolute-git-dir"]).stdout).trim()),
+    common: realOr(resolve(top, String(git(["rev-parse", "--git-common-dir"]).stdout).trim())),
+    tree: String(git(["config", "--get", "core.worktree"], { ok: [0, 1] }).stdout).trim(),
+  };
+}
+
+// git's own layouts: <top>/.git, a linked worktree's folder (its gitdir file names <top>/.git) or a submodule's (its
+// core.worktree is <top>).
+function ownLayout(realTop, { gitDir, common, tree }) {
+  const dotGit = join(realTop, ".git");
+  const kind = kindAt(dotGit);
+  if (kind === "dir") return norm(gitDir) === norm(dotGit) && norm(common) === norm(gitDir);
+  if (kind !== "file") return false;
+  if (norm(dirname(gitDir)) === norm(join(common, "worktrees"))) return norm(backPointer(gitDir) || "") === norm(dotGit);
+  return norm(common) === norm(gitDir) && Boolean(tree) && norm(realOr(resolve(gitDir, tree))) === norm(realTop);
+}
+
+// The repo's git folder must be its own (ownLayout) and read its HEAD, refs and objects from itself, not through a
+// link. A .git file or link to another repo, a commondir file, core.worktree set to another folder or a linked refs
+// folder would make the diff carry another repo's files: it stops.
+function ownGitDir(git, top) {
+  const realTop = realOr(top);
+  const f = gitFolders(git, top);
+  const linked = [join(f.gitDir, "HEAD"), ...["refs", "packed-refs", "objects"].map((n) => join(f.common, n))].filter((p) => kindAt(p) === "other");
+  if (!ownLayout(realTop, f) || linked.length) {
+    throw new Stop("not-a-repo", `git 폴더가 이 저장소의 것이 아니다(.git 파일이나 링크, core.worktree, 링크인 refs 나 objects 가 다른 곳을 가리킴): ${f.gitDir}`, linked);
+  }
+}
+
+// The repo's top and a git on it. git from the top must find the repo git found from --repo: core.worktree pointing
+// elsewhere would have it find another repo there (or none).
 function topLevel(repo, env, cwd) {
-  const git = gitAt(repo, env, cwd);
-  const r = git(["rev-parse", "--show-toplevel"], { ok: [0, 128] });
+  const first = gitAt(repo, env, cwd);
+  const r = first(["rev-parse", "--show-toplevel", "--absolute-git-dir"], { ok: [0, 128] });
   if (r.status !== 0) throw new Stop("not-a-repo", `git 저장소가 아니다: ${repo}`, [firstLine(r.stderr)]);
-  const top = resolve(String(r.stdout).trim());
-  return { top, git: gitAt(top, env, cwd) };
+  const [topLine, dirLine] = String(r.stdout).trim().split("\n");
+  const top = resolve(topLine);
+  const git = gitAt(top, env, cwd);
+  const again = git(["rev-parse", "--absolute-git-dir"], { ok: [0, 128] });
+  if (again.status !== 0 || norm(realOr(String(again.stdout).trim())) !== norm(realOr(dirLine || ""))) {
+    throw new Stop("not-a-repo", `git 이 저장소의 맨 위(${top})에서 같은 저장소를 찾지 못한다(core.worktree 가 다른 곳을 가리킴)`);
+  }
+  ownGitDir(git, top);
+  return { top, git: gitAt(top, env, cwd, filterOverrides(git, env)) };
 }
 
 export function untracked({ repo, env = process.env, folder = null, cwd = homedir() }) {
@@ -267,7 +381,8 @@ function addIntent(ctx, { wanted, all }) {
 }
 
 function diffOf(ctx, tree) {
-  const diff = ctx.git(["-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--submodule=short",
+  // --ignore-submodules=dirty: a submodule's dirt would take a git status inside it, with its own hooks and filters
+  const diff = ctx.git(["-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--submodule=short", "--ignore-submodules=dirty",
     "-U3", "--inter-hunk-context=0", tree, "--"], { index: ctx.idx }).stdout;
   const nul = diff.indexOf(0);
   if (nul === -1) return diff;

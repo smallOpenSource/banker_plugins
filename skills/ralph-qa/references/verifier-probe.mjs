@@ -971,13 +971,16 @@ function realWorld() {
       const exe = onPath(cmd);
       if (!exe) return { status: 127, stdout: "" };
       // Windows runs .cmd and .bat shims through cmd.exe; the path is quoted and the arguments are fixed words.
+      // System32's cmd.exe (a bare name is looked for in the current folder first), told not to look there for the
+      // bare `node` an npm shim runs.
       const viaCmd = process.platform === "win32" && /\.(cmd|bat)$/i.test(exe);
+      const shell = viaCmd ? join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe") : false;
       const r = spawnSync(viaCmd ? `"${exe}"` : exe, args, {
         encoding: "utf8",
         timeout: 15000,
         maxBuffer: 64 * 1024 * 1024,
-        shell: viaCmd,
-        env: { ...process.env, ...env },
+        shell,
+        env: { ...process.env, ...(viaCmd ? { NoDefaultCurrentDirectoryInExePath: "1" } : {}), ...env },
       });
       return { status: r.status, stdout: r.stdout ?? "" };
     },

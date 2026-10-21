@@ -587,6 +587,210 @@ test("a fsmonitor hook in the repo's config never runs while the payload is buil
   assert.ok(!existsSync(ran), "the repo's fsmonitor hook ran");
 });
 
+// 0.20.5 security review: a repo that came with its .git (an archive) can name programs in its own hooks and filter
+// drivers, and in a submodule's own .git; none of them runs while the payload is built.
+const marker = (ctx, name) => join(ctx.dir, "marks", name);
+const markerCmd = (ctx, name) => `sh -c 'echo ran >> "${marker(ctx, name).replace(/\\/g, "/")}"; cat'`;
+const hookScript = (ctx, name) => `#!/bin/sh\necho ran >> "${marker(ctx, name).replace(/\\/g, "/")}"\n`;
+
+test("a repo's own hooks and filter drivers never run while the payload is built, and its files go out as they are", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  mkdirSync(join(ctx.dir, "marks"));
+  put(ctx, ".gitattributes", "*.txt filter=pwn\n");
+  git(ctx, "add", ".gitattributes");
+  git(ctx, "commit", "-qm", "attributes");
+  writeFileSync(join(ctx.repo, ".git", "hooks", "post-index-change"), hookScript(ctx, "hook"), { mode: 0o755 });
+  git(ctx, "config", "filter.pwn.clean", markerCmd(ctx, "clean"));
+  git(ctx, "config", "filter.pwn.smudge", markerCmd(ctx, "smudge"));
+  git(ctx, "config", "filter.pwn.required", "true");
+  put(ctx, "a.txt", "two\n");
+  put(ctx, "n.txt", "new\n");
+  const r = prep(ctx, { spec: "new n.txt\n" });
+  assert.equal(r.stop, undefined, r.message);
+  assert.ok(sent(r, "a.txt") && sent(r, "n.txt") && r.prompt.includes("+two\n"), r.prompt);
+  assert.deepEqual(readdirSync(join(ctx.dir, "marks")), [], "a hook or a filter of the repo ran");
+});
+
+test("a filter the user's own config defines stays, when the repo's config names it too", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  mkdirSync(join(ctx.dir, "marks"));
+  git(ctx, "config", "--global", "filter.keep.clean", markerCmd(ctx, "user"));
+  put(ctx, ".gitattributes", "*.txt filter=keep\n");
+  git(ctx, "add", ".gitattributes");
+  git(ctx, "commit", "-qm", "attributes");
+  rmSync(marker(ctx, "user"), { force: true });
+  git(ctx, "config", "filter.keep.clean", markerCmd(ctx, "repo"));
+  put(ctx, "a.txt", "two\n");
+  const r = prep(ctx);
+  assert.equal(r.stop, undefined, r.message);
+  assert.ok(existsSync(marker(ctx, "user")), "the user's filter ran");
+  assert.ok(!existsSync(marker(ctx, "repo")), "the repo's filter ran");
+});
+
+test("a filter name the runner cannot turn off stops before anything runs", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  mkdirSync(join(ctx.dir, "marks"));
+  git(ctx, "config", "filter.a=b.clean", markerCmd(ctx, "eq"));
+  put(ctx, "a.txt", "two\n");
+  const r = prep(ctx);
+  assert.equal(r.stop, "git-failed", r.prompt);
+  assert.match(r.message, /filter/);
+  assert.equal(r.prompt, null);
+  assert.ok(!existsSync(marker(ctx, "eq")));
+});
+
+test("a submodule's own hooks and filters never run: its dirt is not looked into", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  mkdirSync(join(ctx.dir, "marks"));
+  const sub = join(ctx.dir, "sub-src");
+  mkdirSync(sub);
+  const sg = (...a) => assert.equal(spawnSync("git", ["-C", sub, ...a], { encoding: "utf8", env: ctx.env }).status, 0, a.join(" "));
+  sg("-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(sub, "s.txt"), "x\n");
+  writeFileSync(join(sub, ".gitattributes"), "* filter=zzz\n");
+  sg("add", ".");
+  sg("commit", "-qm", "s");
+  git(ctx, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub");
+  git(ctx, "commit", "-qm", "add sub");
+  const modules = join(ctx.repo, ".git", "modules", "sub");
+  assert.equal(spawnSync("git", ["config", "-f", join(modules, "config"), "filter.zzz.clean", markerCmd(ctx, "sub-filter")], { env: ctx.env }).status, 0);
+  mkdirSync(join(modules, "hooks"), { recursive: true });
+  writeFileSync(join(modules, "hooks", "post-index-change"), hookScript(ctx, "sub-hook"), { mode: 0o755 });
+  writeFileSync(join(ctx.repo, "sub", "s.txt"), "x2\n");
+  put(ctx, "a.txt", "two\n");
+  const r = prep(ctx);
+  assert.equal(r.stop, undefined, r.message);
+  assert.ok(sent(r, "a.txt"), r.prompt);
+  assert.deepEqual(readdirSync(join(ctx.dir, "marks")), [], "a submodule's hook or filter ran");
+});
+
+// A .git file, a link or core.worktree in the repo can make git read another repo: its files would go out as
+// deleted lines. Git's own layouts (a linked worktree, a submodule) still work.
+test("a repo whose git folder or work tree is another repo's stops, and git's linked worktree and submodule still go", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  const other = join(ctx.dir, "other");
+  mkdirSync(other);
+  const og = (...a) => assert.equal(spawnSync("git", ["-C", other, ...a], { encoding: "utf8", env: ctx.env }).status, 0, a.join(" "));
+  og("-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(other, "private.txt"), "PRIVATE-ONE\n");
+  og("add", ".");
+  og("commit", "-qm", "private");
+  const archive = join(ctx.dir, "archive");
+  mkdirSync(archive);
+  writeFileSync(join(archive, ".git"), `gitdir: ${join(other, ".git")}\n`);
+  writeFileSync(join(archive, "x.txt"), "x\n");
+  const at = (dir) => prep({ ...ctx, repo: dir });
+  let r = at(archive);
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  assert.equal(r.prompt, null);
+  git(ctx, "config", "core.worktree", other);
+  r = prep(ctx);
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  git(ctx, "config", "--unset", "core.worktree");
+  // a .git file naming another repo's linked worktree folder: its gitdir file names that worktree, not this folder
+  const otherWt = join(ctx.dir, "other-wt");
+  og("worktree", "add", "-q", "-b", "o-side", otherWt);
+  writeFileSync(join(archive, ".git"), `gitdir: ${join(other, ".git", "worktrees", "other-wt")}\n`);
+  r = at(archive);
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  const wt = join(ctx.dir, "wt");
+  git(ctx, "worktree", "add", "-q", "-b", "side", wt);
+  writeFileSync(join(wt, "a.txt"), "three\n");
+  r = at(wt);
+  assert.equal(r.stop, undefined, r.message);
+  assert.ok(r.prompt.includes("+three\n"), r.prompt);
+  for (const x of [r.prompt || "", readFileSync(join(ctx.d, "raw.md"), "utf8")]) assert.ok(!x.includes("PRIVATE"), x);
+});
+
+test("a submodule given as the repo goes: its git folder in the superproject points back to it", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  const sub = join(ctx.dir, "sub-src");
+  mkdirSync(sub);
+  const sg = (...a) => assert.equal(spawnSync("git", ["-C", sub, ...a], { encoding: "utf8", env: ctx.env }).status, 0, a.join(" "));
+  sg("-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(sub, "s.txt"), "x\n");
+  sg("add", ".");
+  sg("commit", "-qm", "s");
+  git(ctx, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub");
+  writeFileSync(join(ctx.repo, "sub", "s.txt"), "x2\n");
+  const r = prep({ ...ctx, repo: join(ctx.repo, "sub") });
+  assert.equal(r.stop, undefined, r.message);
+  assert.ok(sent(r, "s.txt") && r.prompt.includes("+x2\n"), r.prompt);
+});
+
+// The same class through git's other ways of reading a folder elsewhere: a commondir file, core.worktree set above
+// the folder given, a refs or objects folder that is a link. The other repo's HEAD names its files.
+test("a git folder that reads another repo's refs (commondir, linked refs and objects) or a work tree above the folder given stops", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  const other = join(ctx.dir, "other");
+  mkdirSync(other);
+  const og = (...a) => assert.equal(spawnSync("git", ["-C", other, ...a], { encoding: "utf8", env: ctx.env }).status, 0, a.join(" "));
+  og("-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(other, "private.txt"), "PRIVATE-TWO\n");
+  og("add", ".");
+  og("commit", "-qm", "private");
+  // commondir: an archive's own .git that takes refs, objects and config from the other repo
+  const archive = join(ctx.dir, "archive");
+  mkdirSync(join(archive, ".git"), { recursive: true });
+  writeFileSync(join(archive, ".git", "commondir"), `${join(other, ".git")}\n`);
+  writeFileSync(join(archive, ".git", "HEAD"), "ref: refs/heads/main\n");
+  writeFileSync(join(archive, "x.txt"), "x\n");
+  let r = prep({ ...ctx, repo: archive });
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  // core.worktree above the folder given: git's work tree would be the folder holding the repo
+  put(ctx, "sub/s.txt", "s\n");
+  git(ctx, "config", "core.worktree", ctx.dir);
+  r = prep({ ...ctx, repo: join(ctx.repo, "sub") });
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  git(ctx, "config", "--unset", "core.worktree");
+  // an archive inside another repo whose core.worktree is that repo: git from the top would find the other repo
+  const inner = join(other, "inner");
+  mkdirSync(inner);
+  assert.equal(spawnSync("git", ["-C", inner, "-c", "init.defaultBranch=main", "init", "-q"], { env: ctx.env }).status, 0);
+  assert.equal(spawnSync("git", ["-C", inner, "config", "core.worktree", "../.."], { env: ctx.env }).status, 0);
+  writeFileSync(join(other, "private.txt"), "PRIVATE-TWO changed\n");
+  r = prep({ ...ctx, repo: inner });
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  if (canLink) {
+    const linked = join(ctx.dir, "linked");
+    mkdirSync(join(linked, ".git"), { recursive: true });
+    for (const n of ["refs", "objects"]) symlinkSync(join(other, ".git", n), join(linked, ".git", n), "dir");
+    writeFileSync(join(linked, ".git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(linked, "x.txt"), "x\n");
+    r = prep({ ...ctx, repo: linked });
+    assert.equal(r.stop, "not-a-repo", r.prompt);
+    assert.match(r.detail, /refs/);
+  }
+  for (const x of [r.prompt || "", existsSync(join(ctx.d, "raw.md")) ? readFileSync(join(ctx.d, "raw.md"), "utf8") : ""]) assert.ok(!x.includes("PRIVATE"), x);
+});
+
+// A partial clone fetches a missing object from its promisor remote when the diff needs it; the runner's git reaches
+// no remote at all (here a local file:// one, which a real archive would make an https or ssh one).
+test("git never fetches while the payload is built: a partial clone's missing object stops instead", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  git(ctx, "config", "uploadpack.allowFilter", "true");
+  const client = join(ctx.dir, "client");
+  const url = `file://${ctx.repo.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1:")}`;
+  const c = spawnSync("git", ["-c", "protocol.file.allow=always", "clone", "-q", "--no-checkout", "--filter=blob:none", url, client], { encoding: "utf8", env: ctx.env });
+  assert.equal(c.status, 0, c.stderr);
+  // an index from HEAD's trees (they came with the clone) and no files: the diff needs the blobs it never fetched
+  assert.equal(spawnSync("git", ["-C", client, "read-tree", "HEAD"], { env: ctx.env }).status, 0);
+  const r = prep({ ...ctx, repo: client });
+  assert.equal(r.stop, "git-failed", r.prompt);
+  assert.equal(r.prompt, null);
+});
+
+test("a .git link to another repo's git folder stops", { skip: SKIP || (!canLink && "no symlinks here") }, (t) => {
+  const ctx = repo(t);
+  const archive = join(ctx.dir, "archive");
+  mkdirSync(archive);
+  symlinkSync(join(ctx.repo, ".git"), join(archive, ".git"), "dir");
+  writeFileSync(join(archive, "x.txt"), "x\n");
+  const r = prep({ ...ctx, repo: archive });
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  assert.equal(r.prompt, null);
+});
+
 // ---- new with the runner: the checks of what goes out, spec.md errors, the author's encodings, the raw parts, split
 const MARK = '<review-data id="a1b2c3d4">';
 const CLOSE = '</review-data id="a1b2c3d4">';
