@@ -186,12 +186,46 @@ test("cleanup goes on past a leftover it cannot remove and names it; this run's 
   assert.equal(r.code, 0, r.stdout);
   assert.ok(!existsSync(j.dir) && !existsSync(j.out), "this run's folders are gone");
   assert.ok(r.json.left.some((x) => x.path === old && /EACCES|EPERM/.test(x.why)), r.stdout);
+  // the marker goes last: the leftover stays marked, so the next cleanup names it again
+  assert.ok(existsSync(join(old, ".ralph-qa")), "the leftover keeps its marker");
+  j = init(w);
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.ok(r.json.left.some((x) => x.path === old), r.stdout);
   j = init(w);
   hold(j.dir);
   r = cli(w, ["cleanup", "--dir", j.dir]);
   assert.equal(r.code, 3, r.stdout);
   assert.equal(r.json.stop, "cleanup-left");
   assert.ok(r.json.detail.some((x) => x.includes(j.dir)), r.stdout);
+  // and a retry still finds this run's folder
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.json.stop, "cleanup-left", r.stdout);
+});
+
+// Code re-review: the removal took the marker out before it failed (here the folder itself cannot go: its base takes
+// no change), and a retry of cleanup then said not-a-run-folder.
+test("a run folder that cannot be removed keeps its marker, so a retry of cleanup still finds it", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
+  const held = { base: null };
+  t.after(() => {
+    try {
+      if (held.base) chmodSync(held.base, 0o700);
+    } catch {
+      /* gone */
+    }
+  });
+  const w = world(t);
+  const j = init(w);
+  held.base = w.base;
+  chmodSync(w.base, 0o500);
+  let r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.json.stop, "cleanup-left", r.stdout);
+  assert.ok(existsSync(join(j.dir, ".ralph-qa")), "the marker is back");
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.json.stop, "cleanup-left", r.stdout);
+  chmodSync(w.base, 0o700);
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+  assert.ok(!existsSync(j.dir) && !existsSync(j.out));
 });
 
 test("cleanup refuses while a send of the folder runs, and goes on past a lock that is stale or forced", { skip: SKIP }, (t) => {
@@ -695,6 +729,29 @@ test("a seat copy that cannot be removed is a note: every seat's result comes ba
   assert.ok(g.notes.some((n) => /사본을 지우지 못했다/.test(n) && n.includes(join(p.dir, "gemini"))), JSON.stringify(g.notes));
   assert.ok(!existsSync(join(p.dir, ".running.md")), "the lock went back after both seats");
   assert.ok(existsSync(join(p.dir, "result-send.md")));
+});
+
+// Code re-review: any other error in one seat's work (its copy cannot be written: ENOSPC, EACCES, a Windows lock)
+// still ended the send with an internal error, lost the other seats' results and let the lock go while they ran.
+test("an error in one seat's work is that seat's failure: the others' results come back and the lock and stop hold until all end", { skip: SKIP || (WIN && "the no-write bit does not stop a write on Windows") || (asRoot && "root writes anyway") }, (t) => {
+  const held = { dir: null };
+  t.after(() => {
+    try {
+      if (held.dir) chmodSync(join(held.dir, "gemini"), 0o700);
+    } catch {
+      /* gone */
+    }
+  });
+  const w = world(t);
+  const p = prepared(w);
+  held.dir = p.dir;
+  mkdirSync(join(p.dir, "gemini"), { mode: 0o500 });
+  const r = send(w, p, ["gemini=pro", "codex=gpt-5.5"], [], { RQ_STUB_MODE: "codex:slow=1500" });
+  assert.equal(r.code, 0, r.stderr);
+  const [g, c] = [seatOf(r, "gemini"), seatOf(r, "codex")];
+  assert.deepEqual([g.status, g.why, c.status], ["failed", "spawn", "answered"], r.stdout);
+  assert.ok(g.notes.some((n) => /EACCES/.test(n)), JSON.stringify(g.notes));
+  assert.ok(!existsSync(join(p.dir, ".running.md")), "the lock went back after both seats");
 });
 
 test("a split seat gets the whole short part in every part, also with `=== ` lines in it", { skip: SKIP }, (t) => {

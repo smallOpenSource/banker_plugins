@@ -331,6 +331,21 @@ function giveBack(lock) {
 }
 
 // The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker.
+// A marked folder removed; one that cannot be removed gets its marker back if the removal took it, so it stays
+// marked: a later cleanup sweeps it again and cleanup --dir on it still finds a run folder.
+function removeMarked(p) {
+  try {
+    rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+  } catch (e) {
+    try {
+      if (lstatOr(p)?.isDirectory() && !isFile(join(p, ".ralph-qa"))) writeFileSync(join(p, ".ralph-qa"), "", { flag: "wx", mode: 0o600 });
+    } catch {
+      /* the folder takes no marker either */
+    }
+    throw e;
+  }
+}
+
 // One that cannot be removed (a held handle, a folder this account cannot empty) goes to `left` with why; the rest go on.
 function dayRule(base, now, left) {
   const removed = [];
@@ -339,7 +354,7 @@ function dayRule(base, now, left) {
     const st = ANY_RUN.test(name) ? lstatOr(p) : null;
     if (!st?.isDirectory() || now - st.mtimeMs <= DAY_MS || !isFile(join(p, ".ralph-qa"))) continue;
     try {
-      rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+      removeMarked(p);
       removed.push(p);
     } catch (e) {
       left.push({ path: p, why: e.code || e.message });
@@ -353,7 +368,7 @@ function removeOwn(folders) {
   const stayed = [];
   for (const p of folders.filter(Boolean)) {
     try {
-      rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+      removeMarked(p);
     } catch (e) {
       stayed.push(`${p} (${e.code || e.message})`);
     }
@@ -689,10 +704,15 @@ async function sendSeat(ctx, run, seat, payload) {
   const base = { seat: seat.cli, model: seat.model, status: "not-sent", why: null, exit: null, signal: null, secs: 0, answer: null, errors: null, facts: {}, notes: [] };
   const g = guards(ctx, seat, run);
   if (g.why) return { ...base, why: g.why, notes: g.notes || [] };
-  mkdirSync(join(run.d, seat.cli), { recursive: true, mode: 0o700 });
   let result;
   try {
+    mkdirSync(join(run.d, seat.cli), { recursive: true, mode: 0o700 });
     result = await seatWork(ctx, run, seat, g, payload, base);
+  } catch (e) {
+    // the runner's own error in this seat's work (its copy cannot be written: ENOSPC, EACCES, a Windows lock) is this
+    // seat's failure: the other seats go on, and the lock and the stop handlers hold until they end
+    if (e instanceof Stop) throw e;
+    result = { ...base, status: "failed", why: "spawn", notes: [`좌석을 준비하지 못했다(${e.code || e.message})`] };
   } finally {
     const notes = await afterSeat(ctx, run, seat);
     if (result) result.notes = [...(result.notes || []), ...notes];
@@ -764,7 +784,11 @@ async function send(o, ctx) {
   const signals = watchSignals();
   const run = { ...a, d, o: out, id, short, signalled: () => signals.code() !== 0 };
   try {
-    const seats = await Promise.all(a.seats.map((x) => sendSeat(ctx, run, x, payload)));
+    // every seat settles before the lock goes back and the stop handlers go away
+    const settled = await Promise.allSettled(a.seats.map((x) => sendSeat(ctx, run, x, payload)));
+    const thrown = settled.find((x) => x.status === "rejected");
+    if (thrown) throw thrown.reason;
+    const seats = settled.map((x) => x.value);
     const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };
     return [result, signals.code(), a.dryRun ? null : d];
   } finally {
