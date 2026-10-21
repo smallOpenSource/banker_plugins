@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
-import { gathered, seatPlan, SEAT_WHY } from "./seat-run.mjs";
+import { fromMsys, gathered, seatPlan, SEAT_WHY } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -250,6 +250,41 @@ test("cleanup removes this seat folder's gemini records and sweeps those of seat
   assert.equal(r.code, 0, r.stderr);
   assert.ok(!existsSync(mine) && !existsSync(stale) && existsSync(other));
   assert.deepEqual(r.json.gemini.skipped, []);
+});
+
+// Git Bash gives a session's paths as /c/...; it turns them into C:\... for a Windows program only some of the time
+// (not one with Korean and brackets, as the Windows box showed), and git cannot go to /c/...
+test("on Windows a Git Bash path /c/... is read as C:\\...; any other path, and every path elsewhere, stays", () => {
+  assert.equal(fromMsys("/c/Users/김 [b]/저장소 [r]", "win32"), "C:\\Users\\김 [b]\\저장소 [r]");
+  assert.equal(fromMsys("/d", "win32"), "D:\\");
+  assert.equal(fromMsys("/d/", "win32"), "D:\\");
+  for (const p of ["C:\\Users\\x", "C:/Users/x", "/tmp/x", "/cc/x", "//server/share", "rel/x", "\\\\?\\C:\\x"]) assert.equal(fromMsys(p, "win32"), p);
+  assert.equal(fromMsys("/c/Users/x", "linux"), "/c/Users/x");
+  assert.equal(fromMsys("/c/Users/x", "darwin"), "/c/Users/x");
+});
+
+test("on Windows untracked and prepare take the repo and the folder as Git Bash writes them", { skip: SKIP || (!WIN && "Windows only") }, (t) => {
+  const w = world(t);
+  const repo = join(w.dir, "한글 [b]", "저장소 [r]");
+  mkdirSync(repo, { recursive: true });
+  const g = (...a) => spawnSync(GIT, ["-C", repo, ...a], { encoding: "utf8", env: w.env });
+  g("-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(repo, "a.txt"), "one\n");
+  g("add", ".");
+  g("commit", "-qm", "base");
+  writeFileSync(join(repo, "a.txt"), "two\n");
+  writeFileSync(join(repo, "새 [n].txt"), "new\n");
+  const posix = (p) => p.replace(/^([A-Za-z]):[\\/]/, (m, l) => `/${l.toLowerCase()}/`).replace(/\\/g, "/");
+  const listed = cli(w, ["untracked", "--repo", posix(repo)]);
+  assert.equal(listed.code, 0, listed.stdout);
+  assert.deepEqual(listed.json.files, ["새 [n].txt"]);
+  const j = init(w);
+  writeFileSync(join(j.dir, "short.md"), '<review-data id="a1b2c3d4">\nreview\n');
+  writeFileSync(join(j.dir, "spec.md"), "new 새 [n].txt\n");
+  const prep = cli(w, ["prepare", "--dir", posix(j.dir), "--repo", posix(repo), "--base", "HEAD", "--id", "a1b2c3d4"]);
+  assert.equal(prep.code, 0, prep.stdout);
+  assert.ok(readFileSync(join(j.dir, "prompt.md"), "utf8").includes("+++ b/새 [n].txt"));
+  cli(w, ["cleanup", "--dir", j.dir]);
 });
 
 test("put writes short.md or spec.md from its standard input and refuses any other name", { skip: SKIP }, (t) => {
@@ -541,12 +576,38 @@ test("a split seat gets every part in order, each with its part line, and one ga
   assert.equal(bad.code, 2, "a split for a seat not sent to is a usage error");
 });
 
-test("SIGTERM to send ends every seat's group, still cleans their records and copies, and exits 143", { skip: SKIP || (WIN && "POSIX signals") }, async (t) => {
+// What a send test that fails leaves running (the runner, its send's node, hung seats) ends with the test. Made before
+// the world, so it runs before the world's folder (with the seats' pid records) is removed.
+function endAfter(t) {
+  const it = { w: null, c: null };
+  t.after(() => {
+    if (!it.w) return;
+    let pids = [];
+    try {
+      pids = [...pidsIn(it.w), ...["gemini", "opencode", "codex"].flatMap((n) => records(it.w, n).map((x) => x.pid))];
+    } catch {
+      /* no records */
+    }
+    const runner = it.c && it.c.exitCode === null && it.c.signalCode === null ? [it.c.pid] : [];
+    for (const pid of [...runner, ...pids.filter(alive)]) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+    }
+  });
+  return it;
+}
+
+test("SIGTERM to send ends every seat's group, still cleans their records and copies, and exits 143", { skip: SKIP || (WIN && "POSIX signals"), timeout: 90000 }, async (t) => {
+  const left = endAfter(t);
   const w = world(t);
   const p = prepared(w);
   const { spawn } = await import("node:child_process");
-  const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro", "--seat", "opencode=prov/model-x"],
+  const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro", "--seat", "opencode=prov/model-x", "--limit", "60"],
     { env: { ...w.env, RQ_STUB_MODE: "hang" }, stdio: ["ignore", "pipe", "pipe"] });
+  Object.assign(left, { w, c });
   let out = "";
   c.stdout.on("data", (b) => { out += b; });
   const closed = new Promise((res) => c.on("close", (x) => res(x)));
@@ -559,6 +620,54 @@ test("SIGTERM to send ends every seat's group, still cleans their records and co
   assert.ok(!existsSync(join(p.dir, "gemini")) && !existsSync(join(p.dir, "opencode")), "the copies are gone");
   const json = JSON.parse(out);
   assert.ok(json.seats.every((s) => s.status === "failed" && s.why === "signal"), out);
+});
+
+// A kill of the runner alone (kill -9, the OOM killer) runs none of its handlers: the node that does the send sees
+// the runner gone and ends the seats itself. The Windows box measures the same with a taskkill of the runner alone.
+test("a SIGKILL to the runner alone still ends every seat, cleans their records and copies, and leaves no lock", { skip: SKIP || (WIN && "POSIX signals"), timeout: 90000 }, async (t) => {
+  const left = endAfter(t);
+  const w = world(t);
+  const p = prepared(w);
+  const { spawn } = await import("node:child_process");
+  const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro", "--seat", "opencode=prov/model-x", "--limit", "60"],
+    { env: { ...w.env, RQ_STUB_MODE: "hang" }, stdio: ["ignore", "pipe", "pipe"] });
+  Object.assign(left, { w, c });
+  c.stdout.resume();
+  c.stderr.resume();
+  const exited = new Promise((res) => c.on("exit", (...end) => res(end[1])));
+  const closed = new Promise((res) => c.on("close", () => res(true)));
+  for (let k = 0; k < 200 && pidsIn(w).length < 2; k += 1) await new Promise((res) => setTimeout(res, 50));
+  const pids = [...pidsIn(w), ...records(w, "gemini").map((x) => x.pid), ...records(w, "opencode").map((x) => x.pid)];
+  assert.ok(pids.length >= 4, `the seats started: ${pids}`);
+  c.kill("SIGKILL");
+  assert.equal(await exited, "SIGKILL");
+  assert.ok(await gone(pids, 10000), `left: ${pids.filter(alive)}`);
+  assert.equal(await Promise.race([closed, new Promise((res) => setTimeout(() => res(false), 40000))]), true, "the send's node ended too");
+  assert.ok(!existsSync(join(p.dir, "gemini")) && !existsSync(join(p.dir, "opencode")), "the copies are gone");
+  assert.deepEqual(readdirSync(p.dir).filter((n) => n.startsWith(".running-")), [], "no lock is left");
+});
+
+// The send's node killed alone (the runner lives): no result comes, so the runner says so and ends with 2. Its seats
+// are left running, as the skill says (the test ends them).
+test("a send whose own node is killed ends with 2 and says it gave no result", { skip: SKIP || (WIN && "POSIX signals"), timeout: 90000 }, async (t) => {
+  const left = endAfter(t);
+  const w = world(t);
+  const p = prepared(w);
+  const { spawn } = await import("node:child_process");
+  const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro", "--limit", "60"],
+    { env: { ...w.env, RQ_STUB_MODE: "hang" }, stdio: ["ignore", "pipe", "pipe"] });
+  Object.assign(left, { w, c });
+  let err = "";
+  c.stderr.on("data", (b) => { err += b; });
+  c.stdout.resume();
+  const closed = new Promise((res) => c.on("close", (code) => res(code)));
+  for (let k = 0; k < 200 && pidsIn(w).length < 1; k += 1) await new Promise((res) => setTimeout(res, 50));
+  const lock = readdirSync(p.dir).find((n) => /^\.running-\d+\.md$/.test(n));
+  assert.ok(lock, "the send's node holds the lock");
+  assert.notEqual(Number(lock.match(/\d+/)[0]), c.pid, "the lock is the send's node's, not the runner's");
+  process.kill(Number(lock.match(/\d+/)[0]), "SIGKILL");
+  assert.equal(await closed, 2, err);
+  assert.match(err, /send 를 맡은 node 가 결과 없이 끝났다\(SIGKILL\)/);
 });
 
 test("the seat result reasons are the set the skill's table holds", () => {

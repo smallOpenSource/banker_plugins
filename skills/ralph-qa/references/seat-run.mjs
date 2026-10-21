@@ -18,6 +18,7 @@
  * the JSON says which), 4 a payload past 512 KiB, 5 a send of the folder still runs. Every file name ends in .md
  * (the DRM of a closed network encrypts files by their extension, and .md is one it leaves readable).
  */
+import { fork } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -81,6 +82,14 @@ export function parseArgs(argv) {
   for (let i = 0; i < rest.length; ) i = readFlag(spec, rest, i, o);
   for (const r of REQUIRED[command] || []) if (!(r in o)) throw new Usage(`--${r} 가 필요하다`);
   return { command, o };
+}
+
+// A path as Git Bash writes it on Windows (/c/Users/...) as Windows reads it (C:\Users\...). Git Bash turns such a
+// word into C:\... for a Windows program only some of the time (not one with Korean and brackets), and git cannot go
+// to /c/...: the runner does it for --repo and --dir. Any other path, and every path off Windows, stays.
+export function fromMsys(p, platform) {
+  const m = platform === "win32" ? /^\/([A-Za-z])(?:\/([\s\S]*))?$/.exec(String(p)) : null;
+  return m ? `${m[1].toUpperCase()}:\\${(m[2] || "").replace(/\//g, "\\")}` : p;
 }
 
 const lstatOr = (p) => {
@@ -620,18 +629,37 @@ async function sendSeat(ctx, run, seat, payload) {
   return result;
 }
 
+const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+// A stop the runner asks of the send's node over their channel, or the channel closing (the runner is gone): it stops
+// the send as that signal would, also when it comes before the send watches for signals.
+const asked = { sig: null, on: null };
+function askStop(sig) {
+  if (asked.sig) return;
+  asked.sig = sig;
+  if (asked.on) asked.on(sig);
+}
+
 // SIGINT, SIGTERM and SIGHUP end every seat (TERM to its group, KILL 2 s later), the seats' records are still cleaned,
 // and send ends with 128 + the signal's number; past 30 s it ends anyway.
 function watchSignals() {
   let code = 0;
-  const handlers = ["SIGINT", "SIGTERM", "SIGHUP"].map((sig) => [sig, () => {
+  const stop = (sig) => {
     if (code) return;
     code = 128 + (osConstants.signals[sig] || 0);
     stopAll();
     setTimeout(() => process.exit(code), 30000).unref();
-  }]);
+  };
+  const handlers = STOP_SIGNALS.map((sig) => [sig, () => stop(sig)]);
   for (const [sig, h] of handlers) process.on(sig, h);
-  return { code: () => code, off: () => handlers.forEach(([sig, h]) => process.off(sig, h)) };
+  asked.on = stop;
+  if (asked.sig) stop(asked.sig);
+  return {
+    code: () => code,
+    off: () => {
+      asked.on = null;
+      handlers.forEach(([sig, h]) => process.off(sig, h));
+    },
+  };
 }
 
 const DEST = {
@@ -718,23 +746,89 @@ function failed(ctx, { command, o }, e) {
   return report(ctx, command, folderOf(o), result, EXIT_OF[e.code] || 3, stopName(command));
 }
 
-export async function main(argv, io = {}) {
-  const ctx = {
-    env: io.env || process.env, platform: io.platform || process.platform, stdout: io.stdout || process.stdout, stderr: io.stderr || process.stderr,
-    stdin: io.stdin, probe: io.probe, now: io.now || Date.now,
-  };
+// ---- the send's own node ----
+
+// send runs in a second node, started here with a channel to it: a kill of this process alone (kill -9, Task Manager)
+// runs none of its handlers and would leave the seats running past their limit, but closes the channel, and the
+// second node then stops the send itself. A stop signal here goes to it over the channel. Its exit code is the send's.
+function sendViaWorker(argv, ctx) {
+  return new Promise((done) => {
+    let reported = null;
+    let settled = false;
+    const settle = (code) => {
+      if (settled) return;
+      settled = true;
+      forward.forEach(([sig, h]) => process.off(sig, h));
+      done(code);
+    };
+    const child = fork(fileURLToPath(import.meta.url), ["send-worker", ...argv.slice(1)], { env: ctx.env, stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true });
+    const forward = STOP_SIGNALS.map((sig) => [sig, () => child.connected && child.send({ stop: sig }, () => {})]);
+    for (const [sig, h] of forward) process.on(sig, h);
+    child.on("message", (m) => {
+      if (m && Number.isInteger(m.done)) reported = m.done;
+    });
+    child.on("error", (e) => {
+      ctx.stderr.write(`ralph-qa: send 를 맡을 node 를 띄우지 못했다(${e.code || e.message})\n`);
+      settle(2);
+    });
+    // close, not exit: it comes after the channel is closed, so the node's last message is in
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      if (reported === null) ctx.stderr.write(`ralph-qa: send 를 맡은 node 가 결과 없이 끝났다(${signal || `종료 ${code}`}). 남은 좌석 기록과 사본은 다음 cleanup 이 지운다\n`);
+      settle(reported === null ? 2 : reported);
+    });
+  });
+}
+
+// The send's node: a message from the runner is a signal the runner got, the channel closing means the runner is gone.
+// Its output may have no reader left; the send goes on to stop its seats and clean up all the same.
+async function workerMain(argv, ctx) {
+  if (typeof process.send !== "function") {
+    ctx.stderr.write(`ralph-qa: send-worker 는 send 가 띄우는 내부 명령이다\n${USAGE}`);
+    return 2;
+  }
+  process.on("message", (m) => {
+    if (m && STOP_SIGNALS.includes(m.stop)) askStop(m.stop);
+  });
+  process.on("disconnect", () => askStop("SIGTERM"));
+  if (!process.connected) askStop("SIGTERM");
+  for (const s of [process.stdout, process.stderr]) s.on("error", () => {});
+  const code = await runCommand(["send", ...argv.slice(1)], ctx);
+  if (process.connected) process.send({ done: code }, () => process.connected && process.disconnect());
+  return code;
+}
+
+async function runCommand(argv, ctx) {
   let parsed;
   try {
     parsed = parseArgs(argv);
   } catch (e) {
     return failed(ctx, { command: argv[0], o: {} }, e);
   }
+  for (const k of ["repo", "dir"]) if (k in parsed.o) parsed.o[k] = fromMsys(parsed.o[k], ctx.platform);
   try {
     const [result, code, dir] = await COMMANDS[parsed.command](parsed.o, ctx);
     return report(ctx, parsed.command, dir, result, code);
   } catch (e) {
     return failed(ctx, parsed, e);
   }
+}
+
+export async function main(argv, io = {}) {
+  const ctx = {
+    env: io.env || process.env, platform: io.platform || process.platform, stdout: io.stdout || process.stdout, stderr: io.stderr || process.stderr,
+    stdin: io.stdin, probe: io.probe, now: io.now || Date.now,
+  };
+  if (argv[0] === "send-worker") return workerMain(argv, ctx);
+  if (argv[0] === "send") {
+    try {
+      parseArgs(argv);
+    } catch (e) {
+      return failed(ctx, { command: "send", o: {} }, e);
+    }
+    return sendViaWorker(argv, ctx);
+  }
+  return runCommand(argv, ctx);
 }
 
 const invokedDirectly = () => {

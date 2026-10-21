@@ -149,7 +149,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - 512 KiB 를 넘는데 사용자가 보내기로 했으면 `--allow-large` 를 준다.
    - 좌석의 문맥이나 입력 한도로 나눠 보낼 때(아래 함정)는 `--split <cli>=<N>` 을 준다. 실행기가 원문 부분을 파일 경계에서 나누고, 부분마다 같은 짧은 부분과 `부분 <k>/<N>` 줄과 닫는 표지를 둔다. 부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다.
    - 좌석마다 상한은 600 초다. 상한에서 실행기가 좌석의 프로세스 묶음(Windows 는 프로세스 트리)을 끝내고, 좌석이 스스로 끝나도 그 묶음에 남은 프로세스를 끝낸다. 상한에 걸린 좌석, 멈춘 좌석, 빈 답은 `ERROR` 다. 모델 거절로 보고 갈아타지 않는다.
-   - Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다. 끝나지 않는 send 는 그 작업을 백그라운드 작업 중지 도구(`TaskStop`)로 멈춘다. 그러면 실행기와 좌석의 프로세스 트리 전체가 멈춘다(Linux, macOS 실측). 실행기는 SIGINT, SIGTERM 을 받으면 좌석을 끝내고 좌석 기록을 지운 뒤 끝난다(종료 130, 143).
+   - Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다. 끝나지 않는 send 는 그 작업을 백그라운드 작업 중지 도구(`TaskStop`)로 멈춘다. 그러면 실행기와 좌석의 프로세스 트리 전체가 멈춘다(Linux, macOS 실측). 실행기는 SIGINT, SIGTERM 을 받으면 좌석을 끝내고 좌석 기록을 지운 뒤 끝난다(종료 130, 143). send 는 실행기가 띄운 둘째 node 가 맡는다. 실행기 node 만 끝나도(`kill -9`, 작업 관리자, Windows 의 `/T` 없는 `taskkill /F`) 그 node 가 좌석을 끝내고 정리한 뒤 끝난다.
    - 하위 에이전트로 돌면 send 가 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다. 먼저 답을 내면 그 백그라운드 작업도 함께 끝나 정리 없이 사본이 남는다.
 6. 답을 읽은 뒤 `cleanup --dir '<d>'` 를 부른다. 이 좌석들의 gemini 기록, 같은 기준 폴더들에서 하루 지난 끊긴 실행의 폴더와 기록, 이 실행의 opencode 세션과 좌석 폴더가 사라진 세션, `<d>` 와 답 폴더를 지운다. send 가 아직 돌면 종료 5(`busy`)로 멈춘다.
 
@@ -223,7 +223,7 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 - **남는 사본.** codex 는 `--ephemeral` 이라 세션을 남기지 않는다.
   - gemini 0.62.0 은 헤드리스 실행마다 페이로드와 답 전문을 `<홈>/.gemini/tmp/<id>/chats/` 에 기록하고(끄는 설정이 없다, 기본 30일 보존), 좌석 폴더 경로를 `projects.json` 에 남긴다. `<홈>` 은 `$GEMINI_CLI_HOME` 이 있으면 그 폴더다. send 는 좌석이 끝나면 그 좌석 폴더를 가리키는 기록 폴더(`tmp/<id>`, `history/<id>`)를 지운다. `.project_root` 없이 다시 만든 기록 폴더는 `projects.json` 의 좌석 경로로 찾는다. 그 이름을 다른 프로젝트 폴더도 주장하면 지우지 않고 좌석의 `notes` 에 경로를 적는다. 사용자에게 알린다. `projects.json` 항목에는 경로만 있어 남긴다. `--list-sessions` 는 요약을 만들려고 모델을 한 번 더 부르므로 쓰지 않는다.
   - opencode 는 좌석 세션을 사용자 opencode DB 에 남긴다. send 가 이 실행의 세션(제목 `ralph-qa-review-<id>`)을 지운다. cleanup 은 제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa.<영숫자>/opencode` 인데 그 폴더가 없는 세션(끊긴 실행이 남긴 것)도 지운다. opencode 는 `directory` 를 링크를 푼 경로로 적어(macOS 의 `$TMPDIR` 는 `/var` 링크 아래라 `/private/var/...`), 기준 폴더는 적은 경로와 푼 경로 모두와 견준다. 목록에서는 빠지지만 DB 파일의 빈 자리에는 바로 지워지지 않고 남을 수 있다.
-  - send 가 끊기면(세션이 끊김, 실행기가 SIGKILL) 기록과 사본이 남는다. 다음 실행의 cleanup 이 같은 기준 폴더들에서 하루 지난 표지 있는 폴더를 지우고, 좌석 폴더가 사라진 gemini 기록과 opencode 세션을 지운다. 진행 중인 실행은 좌석 폴더가 있고 하루가 지나지 않아 건드리지 않는다.
+  - send 가 끊기면(세션이 끊김, send 를 맡은 node 가 SIGKILL) 기록과 사본이 남고, 돌던 좌석은 상한 없이 남을 수 있다. 실행기가 살아 있으면 `send 를 맡은 node 가 결과 없이 끝났다` 를 알리고 2 로 끝난다. 다음 실행의 cleanup 이 같은 기준 폴더들에서 하루 지난 표지 있는 폴더를 지우고, 좌석 폴더가 사라진 gemini 기록과 opencode 세션을 지운다. 진행 중인 실행은 좌석 폴더가 있고 하루가 지나지 않아 건드리지 않는다.
 - opencode 좌석은 `OPENCODE_CONFIG_CONTENT` 를 덮는다. 사용자가 이 env 로 프로바이더를 정해 두었다면 그 설정을 파일(`$OPENCODE_CONFIG`)로 옮겨야 그 좌석이 같은 프로바이더를 쓴다.
 - 런타임 샌드박스: Codex 의 기본 `workspace-write` 샌드박스는 HOME 쓰기를 막아 gemini, opencode 가 시작부터 실패한다(opencode 는 `EROFS`). Linux 에서는 기준 폴더(`$XDG_RUNTIME_DIR`, `~/.cache`)도 읽기 전용이라 `init` 부터 실패한다(`base-not-writable`).
   - 그래서 Codex 에서는 이 절의 실행기 명령 전부를 샌드박스 밖에서 실행하도록 승인을 요청한다. 1단계의 이유로 기준 폴더를 `/tmp` 로 옮기지 않는다.
