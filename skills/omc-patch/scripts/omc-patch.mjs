@@ -307,7 +307,7 @@ function fetchTags() {
     const ended = `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남`;
     if (hasUserinfo(url) || why.includes("//***@")) return `${ended}(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
     if (proxyMisread()) return `${ended}(프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어 git 의 문구는 싣지 않음)`;
-    return hostsOnly(why);
+    return shownAddresses(why);
   }
 }
 
@@ -1130,11 +1130,37 @@ function redactUrl(url) {
   return s.replace(/([?&][^=&#\s?]*=)[^&#\s]*/g, (m, name) => `${name}***${CLOSING.exec(m)[0]}`);
 }
 
-// git 의 줄에 든 주소마다 scheme 과 host 까지만 남긴다(hostOnly). 경로, 조각, `;` 매개변수에 든 토큰이 실리지 않는다.
-// 주소는 공백 앞까지로 보고, git 이 주소를 닫는 `'` 와 `:` 는 남긴다.
-const hostsOnly = (line) => line.replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/\S*/g, (u) => {
+// 진단 줄의 주소(사용자 결정 2026-10-21): 기본 상류(REPO_URL)는 가린 꼴 그대로, 그 밖은 scheme 과 host 까지만. 미러의
+// 경로, 조각, `;` 매개변수에는 토큰이 들 수 있다. 기본 상류인지는 scheme, 사용자 정보(가렸든 아니든), 쿼리를 빼고 본다.
+const PIN = "omc-pinned://";
+function hostPath(url) {
+  let s = String(url);
+  if (s.startsWith(PIN)) s = s.slice(PIN.length);
+  const at = s.lastIndexOf("@");
+  s = at !== -1 ? s.slice(at + 1) : s.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "");
+  // the query to the end (a line break in it too); with a fragment after it the address is another one (a fragment is not masked)
+  s = s.replace(/\?[^#]*$/, "");
+  // the closing slashes by a loop: `/\/+$/` takes the square of the length on an address of many slashes
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.slice(0, end).replace(/\.git$/i, "").toLowerCase();
+}
+const isUpstream = (url) => hostPath(url) === hostPath(REPO_URL);
+// --check 가 보이는 origin(가리기 전의 글).
+const shownOrigin = (url) => (isUpstream(url) ? redactUrl(url) : hostOnly(url));
+// git 의 줄(gitError 가 가린 뒤)의 주소마다. 고정한 주소는 앞의 `omc-pinned://` 를 남긴다. 가림이 안쪽 scheme 까지 먹은 꼴
+// (`omc-pinned://***@host/...`)은 마지막 `@` 뒤의 host 를 쓴다. 주소는 공백 앞까지로 보고, git 이 주소를 닫는 `'` 와 `:` 는 남긴다.
+function shownAddress(u) {
+  if (isUpstream(u)) return u;
+  const pin = u.startsWith(PIN) ? PIN : "";
+  const inner = u.slice(pin.length);
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(inner)) return `${pin}${hostOnly(inner)}`;
+  const host = hostPath(inner).split("/")[0];
+  return `${pin}${HOST_SHAPE.test(host) ? host : "(호스트를 알아볼 수 없음)"}`;
+}
+const shownAddresses = (line) => line.replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/\S*/g, (u) => {
   const tail = CLOSING.exec(u)[0];
-  return `${hostOnly(u.slice(0, u.length - tail.length))}${tail}`;
+  return `${shownAddress(u.slice(0, u.length - tail.length))}${tail}`;
 });
 
 // URL 의 scheme 과 host 까지만. 비밀은 사용자 정보와 쿼리 밖(경로, 조각, `;` 매개변수)에도 들 수 있어 나머지는 버린다.
@@ -1244,14 +1270,14 @@ function pinMarketplace() {
   if (!existsSync(join(MARKET, ".git"))) return "no-git";
   const url = originUrl();
   if (url === null) return "no-remote";
-  if (typeof url !== "string") { bad(`origin 을 읽지 못함 (${url.unreadable}): ${oneLine(MARKET)}`); return "origin-unreadable"; }
+  if (typeof url !== "string") { bad(`origin 을 읽지 못함 (${shownAddresses(url.unreadable)}): ${oneLine(MARKET)}`); return "origin-unreadable"; }
 
   if (MODE === "revert") return unpinMarketplace(url);
-  if (url.startsWith("omc-pinned://")) return alreadyPinned();
-  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(redactUrl(url))})`); return "needs"; }
+  if (url.startsWith(PIN)) return alreadyPinned();
+  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(shownOrigin(url))})`); return "needs"; }
 
   try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
-  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${gitError(e)})`); return "pin-failed"; }
+  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${shownAddresses(gitError(e))})`); return "pin-failed"; }
   return writePinRecord() ? "pinned" : "record-failed";
 }
 
@@ -1399,7 +1425,7 @@ function unpinMarketplace(url) {
   if (!restored) return "not-pinned";
   try { git(["remote", "set-url", "--", "origin", restored]); }
   catch (e) {
-    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${gitError(e)})`);
+    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${shownAddresses(gitError(e))})`);
     log(`      원래 URL(호스트까지만): ${oneLine(hostOnly(restored))}. 원문은 origin 의 omc-pinned:// 뒤에 그대로 있습니다.`);
     return "unpin-failed";
   }

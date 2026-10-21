@@ -21,6 +21,8 @@ after(() => rmSync(root, { recursive: true, force: true }));
 const HAS_GIT = spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0;
 const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const ORIGIN = "https://example.invalid/omc.git";
+// The default upstream (REPO_URL): the diagnostic lines show it as it is, masked; any other address only to its host.
+const UPSTREAM = "https://github.com/Yeachan-Heo/oh-my-claudecode.git";
 
 // Git run by these tests, and the tool they start, reads neither the developer's global or system config nor a
 // repository the calling shell chose: GIT_DIR and the rest of `git rev-parse --local-env-vars`. A run started
@@ -587,13 +589,13 @@ test("a pin whose PINNED cannot be written is named and counted; origin stays pi
 test("origin's user part is masked whatever it holds: a space, a tab, an @ in the password; so is a token in the query", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   const pw = "S3" + "CRETPW";
-  for (const url of [`https://user name:${pw}@example.invalid/omc.git`, `https://user:pass ${pw}@example.invalid/omc.git`,
-    `https://user:p@${pw}@example.invalid/omc.git`, `https://us\ter:${pw}@example.invalid/omc.git`,
-    `https://example.invalid/omc.git?access_token=${pw}`]) {
+  const repo = "github.com/Yeachan-Heo/oh-my-claudecode.git";
+  for (const url of [`https://user name:${pw}@${repo}`, `https://user:pass ${pw}@${repo}`,
+    `https://user:p@${pw}@${repo}`, `https://us\ter:${pw}@${repo}`, `https://${repo}?access_token=${pw}`]) {
     assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
     assert.ok(!out.includes(pw), `${JSON.stringify(url)}: ${out}`);
-    assert.match(out, /origin=https:\/\/(\*\*\*@)?example\.invalid\/omc\.git/, JSON.stringify(url));
+    assert.match(out, /origin=https:\/\/(\*\*\*@)?github\.com\/Yeachan-Heo\/oh-my-claudecode\.git/, JSON.stringify(url));
   }
 });
 
@@ -913,12 +915,12 @@ test("--check over a hooks.json that is no JSON says it cannot read it, without 
 test("a set-url git refuses (an origin with two URLs) shows git's fatal line, the password masked", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   // put together at run time, so a secret scanner reading this file finds no credential in it
-  const twoUrl = `https://u:${"s3" + "cret"}@example.invalid/two.git`;
+  const twoUrl = `https://u:${"s3" + "cret"}@github.com/Yeachan-Heo/oh-my-claudecode.git`;
   assert.equal(runGit(["remote", "set-url", "--add", "origin", twoUrl], f.market).status, 0);
   const r = run(f.home, ["--no-update"]);
   assert.equal(r.code, 1, r.out);
   // masked from the first // to the last @, so the inner https:// goes with it
-  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/\*\*\*@example\.invalid\/two\.git/);
+  assert.match(r.out, /고정 실패: origin 을 바꾸지 못했습니다 \(fatal: .*omc-pinned:\/\/\*\*\*@github\.com\/Yeachan-Heo\/oh-my-claudecode\.git/);
   assert.ok(!r.out.includes("s3cret"), r.out);
 });
 
@@ -1337,12 +1339,12 @@ test("a linked marketplace with a broken .git does not pin the repository around
 // --check prints the origin it found. A line break stored in the URL must not start a line of its own.
 test("an origin URL with a line break prints on one line in --check", { skip: !HAS_GIT && "git not found" }, (t) => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
-  if (runGit(["config", "remote.origin.url", "https://example.invalid/omc.git\n  [!] injected"], f.market).status !== 0) {
+  if (runGit(["config", "remote.origin.url", `${UPSTREAM}?x=1\n  [!] injected`], f.market).status !== 0) {
     t.skip("this git does not store a line break in a URL");
     return;
   }
   const r = run(f.home, ["--check", "--no-update"]);
-  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/example\.invalid\/omc\.git\?  \[!\] injected\)/);
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?x=\*\*\*\?  \[!\] injected\)/);
   assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
 });
 
@@ -1621,10 +1623,10 @@ test("paths in the output lose line breaks and direction marks: a --root run tha
 test("an origin with a user and password shows only ***, and PINNED keeps no URL and is readable by this account alone", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   // put together at run time, so a secret scanner reading this file finds no credential in it
-  const withPassword = `https://u:${"s3" + "cret"}@example.invalid/omc.git`;
+  const withPassword = `https://u:${"s3" + "cret"}@github.com/Yeachan-Heo/oh-my-claudecode.git`;
   assert.equal(runGit(["remote", "set-url", "origin", withPassword], f.market).status, 0);
   const check = run(f.home, ["--check", "--no-update"]);
-  assert.match(check.out, /origin=https:\/\/\*\*\*@example\.invalid\/omc\.git\)/);
+  assert.match(check.out, /origin=https:\/\/\*\*\*@github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\)/);
   assert.ok(!check.out.includes("s3cret"), check.out);
   const r = run(f.home, ["--no-update"]);
   assert.equal(r.code, 0, r.out);
@@ -1634,8 +1636,9 @@ test("an origin with a user and password shows only ***, and PINNED keeps no URL
   if (process.platform !== "win32") assert.equal(statSync(pinfile).mode & 0o777, 0o600);
   assert.equal(run(f.home, ["--revert"]).code, 0);
   assert.equal(origin(f.market), withPassword, "the revert still restores the whole URL from origin");
-  // An scp-style URL has no // and is left as it is. An @ in a path is taken for the end of a password: from // to that @ is masked.
-  for (const [plain, shown] of [["git@example.invalid:o/omc.git", "git@example.invalid:o/omc.git"], ["https://example.invalid/a@b/omc.git", "https://***@b/omc.git"]]) {
+  // Another address shows only its host: an scp-style URL its host name; an @ in a path is taken for the end of a password,
+  // so no host can be told there.
+  for (const [plain, shown] of [["git@example.invalid:o/omc.git", "example.invalid"], ["https://example.invalid/a@b/omc.git", "(호스트를 알아볼 수 없음)"]]) {
     assert.equal(runGit(["remote", "set-url", "origin", plain], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
     assert.ok(out.includes(`origin=${shown})`), `${plain}: ${out}`);
@@ -2303,11 +2306,11 @@ test("a query value is masked whatever its name", { skip: !HAS_GIT && "git not f
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   const pw = "S3" + "CRETPW";
   for (const name of ["token", "auth_token", "api_key", "apikey", "key", "password", "secret", "sig", "X-Amz-Signature", "Token"]) {
-    const url = `https://example.invalid/omc.git?a=1&${name}=${pw}`;
+    const url = `${UPSTREAM}?a=1&${name}=${pw}`;
     assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
     assert.ok(!out.includes(pw), `${name}: ${out}`);
-    assert.match(out, /origin=https:\/\/example\.invalid\/omc\.git\?a=\*\*\*&/, name);
+    assert.match(out, /origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?a=\*\*\*&/, name);
   }
 });
 
@@ -2317,10 +2320,10 @@ test("an origin of many question marks is masked without stalling --check", { sk
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   // written to the config file, not given to git: a command line this long is more than Windows takes
   const config = join(f.market, ".git", "config");
-  writeFileSync(config, read(config).replace(ORIGIN, `${ORIGIN}?${"?".repeat(300000)}`));
+  writeFileSync(config, read(config).replace(ORIGIN, `${UPSTREAM}?${"?".repeat(300000)}`));
   const r = runBy(f.home, ["--check", "--no-update"]);
   assert.equal(r.error, undefined, "the run ended before its deadline");
-  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/example\.invalid\/omc\.git\?\?\?/);
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?\?\?/);
 });
 
 test("--check names the version whose hooks.json it cannot read; the verdict leaves an idle version out and says so", { skip: !HAS_GIT && "git not found" }, () => {
@@ -3839,15 +3842,37 @@ test("the cause line keeps only scheme and host of the address git names, and th
   }
 });
 
-// Final batch deferred row 16: the query masking took git's closing quote (and colon) along with the value.
-test("a pin failure line over an origin with a query token keeps the quote that closes git's address", { skip: !HAS_GIT && "git not found" }, () => {
-  const f = fakeHome([{ v: "5.6.1", active: true }]);
+// Final batch deferred row 16: the query masking took git's closing quote (and colon) along with the value. And (user
+// decision 2026-10-21) the pin failure line shows a mirror only to its host, the default upstream as it is, masked.
+test("a pin failure line keeps the quote that closes git's address, a mirror to its host and the default upstream masked", { skip: !HAS_GIT && "git not found" }, () => {
   const tok = ["Q1w2", "E3r4"].join("");
-  assert.equal(runGit(["config", "--add", "remote.origin.url", `https://example.invalid/two.git?token=${tok}`], f.market).status, 0);
-  const r = run(f.home, ["--no-update"]);
-  const line = r.out.split("\n").find((l) => l.includes("고정 실패")) ?? "";
-  assert.match(line, /\?token=\*\*\*'\)$/, line);
-  assert.ok(!r.out.includes(tok), r.out);
+  for (const [second, tail] of [[`https://mirror.example/x/${tok}/omc.git?token=${tok}`, "to 'omc-pinned://https://mirror.example')"],
+    // the mask runs from the first // to the last @, so it takes the inner scheme: the host after the @ is shown
+    [`https://u:${tok}@mirror.example/x/omc.git`, "to 'omc-pinned://mirror.example')"],
+    [`${UPSTREAM}?token=${tok}`, `to 'omc-pinned://${UPSTREAM}?token=***')`]]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["config", "--add", "remote.origin.url", second], f.market).status, 0);
+    const r = run(f.home, ["--no-update"]);
+    const line = r.out.split("\n").find((l) => l.includes("고정 실패")) ?? "";
+    assert.ok(line.endsWith(tail), `${second}\n${line}`);
+    assert.ok(!r.out.includes(tok), r.out);
+  }
+});
+
+// User decision 2026-10-21 (R2 2.1): --check, the pin and unpin failure lines and the cause line show the default
+// upstream as it is, masked, and any other address only to its scheme and host: a mirror's path, fragment or `;`
+// parameter can hold a token.
+test("--check shows the default upstream's address masked as it is, and any other address only to its scheme and host", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const tok = ["T0k", "9xQ"].join("");
+  for (const [url, shown] of [[UPSTREAM, UPSTREAM], [`https://u:${tok}@github.com/Yeachan-Heo/oh-my-claudecode.git`, "https://***@github.com/Yeachan-Heo/oh-my-claudecode.git"],
+    [`${UPSTREAM}?token=${tok}`, `${UPSTREAM}?token=***`], [`https://mirror.example/team/${tok}/omc.git`, "https://mirror.example"],
+    [`${UPSTREAM}#${tok}`, "https://github.com"], [`${UPSTREAM}?a=1#${tok}`, "https://github.com"], [`${UPSTREAM};auth=${tok}`, "https://github.com"]]) {
+    assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
+    const out = run(f.home, ["--check", "--no-update"]).out;
+    assert.ok(out.includes(`마켓플레이스 미고정 (origin=${shown})`), `${url}\n${out}`);
+    assert.ok(!out.includes(tok), `${url}\n${out}`);
+  }
 });
 
 // ---- 0.20.5 (final batch deferred row 4): the fetch's time limit used to end git alone. git's helpers (git remote-http and
