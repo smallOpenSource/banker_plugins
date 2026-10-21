@@ -675,7 +675,7 @@ test("기존 statusLine 의 다른 필드는 두고, 다른 명령이었으면 �
   assert.equal(s.padding, 2);
   assert.equal(s.refreshInterval, 30);
   assert.equal(s.command, `node "${slash(cfg)}/hud/omc-hud-custom.mjs"`);
-  assert.match(r.out, /\[\.\.\] statusLine ran "node \/x\/wrap\.mjs"/);
+  assert.match(r.out, /\[\.\.\] statusLine ran "node …" \(16 characters\)/);
 });
 
 test("상대경로 OMC_PLUGIN_ROOT 는 쓰지 않음", () => {
@@ -766,10 +766,10 @@ test("렌더 확인은 PATH 의 따옴표 친 폴더에서도 node 를 찾고 no
 test("이전 statusLine 명령의 보이지 않는 글자는 ? 로 보임", () => {
   const cfg = fresh();
   const rlo = String.fromCharCode(0x202e);
-  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: `node old${rlo}.mjs` } }));
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: `old${rlo}.mjs --x` } }));
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /\[\.\.\] statusLine ran "node old\?\.mjs"/);
+  assert.match(r.out, /\[\.\.\] statusLine ran "old\?\.mjs …"/);
   assert.ok(!r.out.includes(rlo), "the control character is not printed");
 });
 
@@ -1074,25 +1074,28 @@ test("렌더 확인: 모르는 출력도 정화", () => {
   assert.ok(!out.includes(ESC));
 });
 
-// B1-12: settings.json can hold tokens, and the line about the old statusLine command goes into a report.
-test("이전 statusLine 명령의 비밀 꼴은 *** 로 보이고 나머지는 그대로", () => {
+// B1-12: settings.json can hold tokens, and the line about the old statusLine command goes into a report. 0.20.5 review:
+// masking the parts that look like secrets missed every form no rule named (curl -u, sshpass -p, mysql -pPW, a JSON
+// password), so the line shows the command's first word (a variable it sets is skipped) and its length.
+test("이전 statusLine 명령은 첫 낱말(변수 대입은 건너뜀)과 길이만 보임", () => {
   const cfg = fresh();
-  // Made here, so no secret-looking text sits in the repository. One value per masking rule, each too short
-  // or too plain for the others.
-  const long = ["tk", "7".repeat(6), "Q".repeat(18)].join("");
-  const userinfo = ["me", "pw"].join(":");
+  // Made here, so no secret-looking text sits in the repository.
+  const pw = ["hu", "nt3r2"].join("");
+  const userinfo = ["me", pw].join(":");
   const command = [
-    "COLUMNS=120", "API_TOKEN=asg1", 'node "/x/s.mjs"', "--password hunter2", `https://${userinfo}@example.invalid/p?key=qv1`,
-    '-H "Authorization: Bearer bt9"', '-H "X-Api-Key: hk5"', long,
+    "COLUMNS=120", `API_TOKEN=${pw}`, 'node "/x/s.mjs"', `--password ${pw}`, `https://${userinfo}@example.invalid/p?key=${pw}`,
+    `-H "Authorization: ${pw}"`, `curl -u alice:${pw}`, `sshpass -p ${pw}`, `mysql -p${pw}`, `'{"password":"${pw}"}'`,
   ].join(" ");
   writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command } }));
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
   const line = r.out.split("\n").find((l) => l.startsWith("[..] statusLine ran ")) ?? "";
-  for (const kept of ["COLUMNS=120", "API_TOKEN=***", 'node \\"/x/s.mjs\\"', "--password ***", "https://***@example.invalid/p", "?key=***", "Bearer ***", "X-Api-Key: ***"]) {
-    assert.ok(line.includes(kept), `${kept} in ${line}`);
-  }
-  for (const secret of ["asg1", "hunter2", userinfo, "qv1", "bt9", "hk5", long]) assert.ok(!line.includes(secret), `${secret} is not shown: ${line}`);
+  assert.ok(line.includes(`"node …" (${command.length} characters)`), line);
+  assert.ok(!line.includes(pw) && !line.includes("COLUMNS") && !line.includes("/x/s.mjs"), line);
+  // a command of one word shows that word
+  const one = fresh();
+  writeFileSync(join(one, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: "/usr/local/bin/my-hud" } }));
+  assert.match(install({ cfg: one }).out, /\[\.\.\] statusLine ran "\/usr\/local\/bin\/my-hud" \(21 characters\)/);
 });
 
 // Deferred 2: a hard-linked settings.json is written in place (the 2026-10-20 decision), so its other names change too.
