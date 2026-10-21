@@ -568,7 +568,7 @@ test("a split seat gets every part in order, each with its part line, and one ga
   assert.equal(r.code, 0, r.stderr);
   const s = seatOf(r, "gemini");
   assert.deepEqual([s.status, s.facts.verdict, s.parts.length], ["answered", "APPROVE", 2]);
-  const got = runs(w, "gemini").sort((a, b) => a.pid - b.pid).map((x) => readFileSync(join(w.log, `gemini-${x.pid}-stdin.md`), "utf8"));
+  const got = runs(w, "gemini").sort((a, b) => a.at - b.at).map((x) => readFileSync(join(w.log, `gemini-${x.pid}-stdin.md`), "utf8"));
   assert.ok(got[0].includes("부분 1/2") && got[1].includes("부분 2/2"), got.join("\n---\n"));
   assert.ok(got[0].includes("+++ b/a.txt") && got[1].includes("=== file rules.md"), "the parts in order");
   assert.deepEqual([gathered(["APPROVE", "APPROVE"]), gathered(["APPROVE", "ITERATE"]), gathered(["ITERATE", "REJECT"]), gathered(["REJECT", "ERROR"])], ["APPROVE", "ITERATE", "REJECT", "ERROR"]);
@@ -579,7 +579,7 @@ test("a split seat gets every part in order, each with its part line, and one ga
 // What a send test that fails leaves running (the runner, its send's node, hung seats) ends with the test. Made before
 // the world, so it runs before the world's folder (with the seats' pid records) is removed.
 function endAfter(t) {
-  const it = { w: null, c: null };
+  const it = { w: null, c: null, more: [] };
   t.after(() => {
     if (!it.w) return;
     let pids = [];
@@ -589,7 +589,7 @@ function endAfter(t) {
       /* no records */
     }
     const runner = it.c && it.c.exitCode === null && it.c.signalCode === null ? [it.c.pid] : [];
-    for (const pid of [...runner, ...pids.filter(alive)]) {
+    for (const pid of [...runner, ...[...pids, ...it.more].filter(alive)]) {
       try {
         process.kill(pid, "SIGKILL");
       } catch {
@@ -635,14 +635,17 @@ test("a SIGKILL to the runner alone still ends every seat, cleans their records 
   c.stdout.resume();
   c.stderr.resume();
   const exited = new Promise((res) => c.on("exit", (...end) => res(end[1])));
-  const closed = new Promise((res) => c.on("close", () => res(true)));
   for (let k = 0; k < 200 && pidsIn(w).length < 2; k += 1) await new Promise((res) => setTimeout(res, 50));
   const pids = [...pidsIn(w), ...records(w, "gemini").map((x) => x.pid), ...records(w, "opencode").map((x) => x.pid)];
   assert.ok(pids.length >= 4, `the seats started: ${pids}`);
+  const lock = readdirSync(p.dir).find((n) => /^\.running-\d+\.md$/.test(n));
+  assert.ok(lock, "the send's node holds the lock");
+  const worker = Number(lock.match(/\d+/)[0]);
+  left.more.push(worker);
   c.kill("SIGKILL");
   assert.equal(await exited, "SIGKILL");
   assert.ok(await gone(pids, 10000), `left: ${pids.filter(alive)}`);
-  assert.equal(await Promise.race([closed, new Promise((res) => setTimeout(() => res(false), 40000))]), true, "the send's node ended too");
+  assert.ok(await gone([worker], 40000), "the send's node ended too");
   assert.ok(!existsSync(join(p.dir, "gemini")) && !existsSync(join(p.dir, "opencode")), "the copies are gone");
   assert.deepEqual(readdirSync(p.dir).filter((n) => n.startsWith(".running-")), [], "no lock is left");
 });

@@ -56,7 +56,8 @@ function record(name, args, stdin) {
   const at = log(`${name}-${process.pid}.md`);
   if (!at) return;
   const env = Object.fromEntries(Object.keys(process.env).filter((k) => WATCHED.test(k)).map((k) => [k, process.env[k]]));
-  writeFileSync(at, JSON.stringify({ name, args, cwd: process.cwd(), env, stdinBytes: stdin.length, pid: process.pid }));
+  // at: when it ran (Windows gives pids in no order, so the order of runs is the clock's)
+  writeFileSync(at, JSON.stringify({ name, args, cwd: process.cwd(), env, stdinBytes: stdin.length, pid: process.pid, at: Date.now() }));
   writeFileSync(log(`${name}-${process.pid}-stdin.md`), stdin);
 }
 

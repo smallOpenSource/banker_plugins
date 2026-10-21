@@ -750,7 +750,10 @@ function failed(ctx, { command, o }, e) {
 
 // send runs in a second node, started here with a channel to it: a kill of this process alone (kill -9, Task Manager)
 // runs none of its handlers and would leave the seats running past their limit, but closes the channel, and the
-// second node then stops the send itself. A stop signal here goes to it over the channel. Its exit code is the send's.
+// second node then stops the send itself. It is detached: Windows ends the children a node started undetached when
+// that node dies (libuv's job object), and a kill of this process's group does not reach it. It has no output of its
+// own (a detached Windows process has no console): what it prints comes over the channel and is printed here. A stop
+// signal here goes to it over the channel too. Its exit code is the send's.
 function sendViaWorker(argv, ctx) {
   return new Promise((done) => {
     let reported = null;
@@ -761,10 +764,13 @@ function sendViaWorker(argv, ctx) {
       forward.forEach(([sig, h]) => process.off(sig, h));
       done(code);
     };
-    const child = fork(fileURLToPath(import.meta.url), ["send-worker", ...argv.slice(1)], { env: ctx.env, stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true });
+    const child = fork(fileURLToPath(import.meta.url), ["send-worker", ...argv.slice(1)],
+      { env: ctx.env, stdio: ["ignore", "ignore", "ignore", "ipc"], detached: true, windowsHide: true });
     const forward = STOP_SIGNALS.map((sig) => [sig, () => child.connected && child.send({ stop: sig }, () => {})]);
     for (const [sig, h] of forward) process.on(sig, h);
     child.on("message", (m) => {
+      if (m && typeof m.out === "string") ctx.stdout.write(m.out);
+      if (m && typeof m.err === "string") ctx.stderr.write(m.err);
       if (m && Number.isInteger(m.done)) reported = m.done;
     });
     child.on("error", (e) => {
@@ -780,8 +786,11 @@ function sendViaWorker(argv, ctx) {
   });
 }
 
+// What the send's node prints goes to the runner over the channel; with the runner gone it is dropped (the result
+// files in the folder stay).
+const relay = (key) => ({ write: (text) => process.connected && process.send({ [key]: String(text) }, () => {}) });
+
 // The send's node: a message from the runner is a signal the runner got, the channel closing means the runner is gone.
-// Its output may have no reader left; the send goes on to stop its seats and clean up all the same.
 async function workerMain(argv, ctx) {
   if (typeof process.send !== "function") {
     ctx.stderr.write(`ralph-qa: send-worker 는 send 가 띄우는 내부 명령이다\n${USAGE}`);
@@ -792,8 +801,7 @@ async function workerMain(argv, ctx) {
   });
   process.on("disconnect", () => askStop("SIGTERM"));
   if (!process.connected) askStop("SIGTERM");
-  for (const s of [process.stdout, process.stderr]) s.on("error", () => {});
-  const code = await runCommand(["send", ...argv.slice(1)], ctx);
+  const code = await runCommand(["send", ...argv.slice(1)], { ...ctx, stdout: relay("out"), stderr: relay("err") });
   if (process.connected) process.send({ done: code }, () => process.connected && process.disconnect());
   return code;
 }
