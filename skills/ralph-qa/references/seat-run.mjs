@@ -331,18 +331,26 @@ function giveBack(lock) {
 }
 
 // The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker.
-// A marked folder removed; one that cannot be removed gets its marker back if the removal took it, so it stays
-// marked: a later cleanup sweeps it again and cleanup --dir on it still finds a run folder.
+// A marked folder removed. One that cannot be removed gets back its marker (if the removal took it) and its times
+// (what the removal took from it changed them), so it stays a marked folder past a day: a later cleanup sweeps it
+// again, and cleanup --dir on it still finds a run folder.
 function removeMarked(p) {
+  const was = lstatOr(p);
   try {
     rmSync(p, { recursive: true, force: true, maxRetries: 3 });
   } catch (e) {
-    try {
-      if (lstatOr(p)?.isDirectory() && !isFile(join(p, ".ralph-qa"))) writeFileSync(join(p, ".ralph-qa"), "", { flag: "wx", mode: 0o600 });
-    } catch {
-      /* the folder takes no marker either */
-    }
+    keepMarked(p, was);
     throw e;
+  }
+}
+
+function keepMarked(p, was) {
+  try {
+    if (!lstatOr(p)?.isDirectory()) return;
+    if (!isFile(join(p, ".ralph-qa"))) writeFileSync(join(p, ".ralph-qa"), "", { flag: "wx", mode: 0o600 });
+    if (was) utimesSync(p, was.atime, was.mtime);
+  } catch {
+    /* the folder takes no marker or times either */
   }
 }
 

@@ -158,8 +158,9 @@ test("cleanup's day rule removes only marked folders past a day, never a user's 
   assert.ok(!existsSync(j.dir) && !existsSync(j.out), "this run's folders are gone");
 });
 
-// Code review: one leftover that cannot be removed stopped the whole cleanup before this run's folders went.
-test("cleanup goes on past a leftover it cannot remove and names it; this run's own folder that stays is a stop", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
+// Code review: one leftover that cannot be removed stopped the whole cleanup before this run's folders went. The
+// leftover sits in the ~/.cache base, which takes no change: its contents and marker go, the folder itself cannot.
+test("cleanup goes on past a leftover it cannot remove and names it, again next time; this run's own folder that stays is a stop", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
   const stuck = [];
   t.after(() => stuck.forEach((p) => {
     try {
@@ -169,36 +170,36 @@ test("cleanup goes on past a leftover it cannot remove and names it; this run's 
     }
   }));
   const w = world(t);
-  const hold = (dir) => {
-    const keep = join(dir, "keep");
-    mkdirSync(keep, { recursive: true });
-    writeFileSync(join(keep, "held.md"), "held\n");
-    chmodSync(keep, 0o500);
-    stuck.push(keep);
-  };
-  const old = join(w.base, "ralph-qa.old123");
-  mkdirSync(old);
+  const cache = join(w.home, ".cache");
+  const old = join(cache, "ralph-qa.old123");
+  mkdirSync(old, { recursive: true });
   writeFileSync(join(old, ".ralph-qa"), "");
-  hold(old);
+  writeFileSync(join(old, "prompt.md"), "payload\n");
   utimesSync(old, DAY_2, DAY_2);
+  chmodSync(cache, 0o500);
+  stuck.push(cache);
   let j = init(w);
   let r = cli(w, ["cleanup", "--dir", j.dir]);
   assert.equal(r.code, 0, r.stdout);
   assert.ok(!existsSync(j.dir) && !existsSync(j.out), "this run's folders are gone");
   assert.ok(r.json.left.some((x) => x.path === old && /EACCES|EPERM/.test(x.why)), r.stdout);
-  // the marker goes last: the leftover stays marked, so the next cleanup names it again
   assert.ok(existsSync(join(old, ".ralph-qa")), "the leftover keeps its marker");
+  assert.ok(Date.now() - statSync(old).mtimeMs > 86400 * 1000, "and its time past a day");
   j = init(w);
   r = cli(w, ["cleanup", "--dir", j.dir]);
-  assert.ok(r.json.left.some((x) => x.path === old), r.stdout);
-  j = init(w);
-  hold(j.dir);
-  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.ok(r.json.left.some((x) => x.path === old), `named again: ${r.stdout}`);
+  // this run's own folder that stays (a folder in it this account cannot empty) is a stop, and a retry finds it
+  const keep = join(init(w).dir, "keep");
+  const own = dirname(keep);
+  mkdirSync(keep);
+  writeFileSync(join(keep, "held.md"), "held\n");
+  chmodSync(keep, 0o500);
+  stuck.push(keep);
+  r = cli(w, ["cleanup", "--dir", own]);
   assert.equal(r.code, 3, r.stdout);
   assert.equal(r.json.stop, "cleanup-left");
-  assert.ok(r.json.detail.some((x) => x.includes(j.dir)), r.stdout);
-  // and a retry still finds this run's folder
-  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.ok(r.json.detail.some((x) => x.includes(own)), r.stdout);
+  r = cli(w, ["cleanup", "--dir", own]);
   assert.equal(r.json.stop, "cleanup-left", r.stdout);
 });
 
