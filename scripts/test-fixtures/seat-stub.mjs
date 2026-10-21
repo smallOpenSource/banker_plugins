@@ -47,7 +47,9 @@ export function stubBin(dir, names = ["codex", "gemini", "opencode"]) {
   return dir;
 }
 
-const modes = () => String(process.env.RQ_STUB_MODE || "answer").split(",");
+// RQ_STUB_MODE: modes for every stub, or `<name>:<mode>` for one (gemini:stuck-copy).
+const modes = () => String(process.env.RQ_STUB_MODE || "answer").split(",")
+  .filter((x) => !/^[a-z]+:/.test(x) || x.startsWith(`${process.argv[2]}:`)).map((x) => x.replace(/^[a-z]+:/, ""));
 const mode = (m) => modes().includes(m);
 const modeValue = (m) => (modes().find((x) => x.startsWith(`${m}=`)) || "").slice(m.length + 1) || null;
 const log = (file) => (process.env.RQ_STUB_LOG ? join(process.env.RQ_STUB_LOG, file) : null);
@@ -139,6 +141,15 @@ function startWork(name) {
   return mode("hang") || mode("chain") || mode("term-proof") || mode("term-note");
 }
 
+// stuck-copy: leaves a folder in its working folder (the seat's copy) that this account cannot empty (no write bit),
+// as a held handle or a virus scanner can on Windows.
+function stuckCopy() {
+  const keep = join(process.cwd(), "keep");
+  mkdirSync(keep, { recursive: true });
+  writeFileSync(join(keep, "held.md"), "held\n");
+  chmodSync(keep, 0o500);
+}
+
 function finish(name, args) {
   const answer = answerText();
   const out = name === "codex" ? flagValue(args, "-o") : null;
@@ -153,6 +164,7 @@ function finish(name, args) {
 
 function run(name, args) {
   record(name, args, readStdin());
+  if (mode("stuck-copy")) stuckCopy();
   if (name === "opencode") addSession(args);
   if (startWork(name)) return;
   const slow = Number(modeValue("slow") || 0);

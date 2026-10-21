@@ -151,7 +151,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - 좌석마다 상한은 600 초다. 상한에서 실행기가 좌석의 프로세스 묶음(Windows 는 프로세스 트리)을 끝내고, 좌석이 스스로 끝나도 그 묶음에 남은 프로세스를 끝낸다. 상한에 걸린 좌석, 멈춘 좌석, 빈 답은 `ERROR` 다. 모델 거절로 보고 갈아타지 않는다.
    - Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다. 끝나지 않는 send 는 그 작업을 백그라운드 작업 중지 도구(`TaskStop`)로 멈춘다. 그러면 실행기와 좌석의 프로세스 트리 전체가 멈춘다(Linux, macOS 실측). 실행기는 SIGINT, SIGTERM 을 받으면 좌석을 끝내고 좌석 기록을 지운 뒤 끝난다(종료 130, 143). send 는 실행기가 띄운 둘째 node 가 맡는다. 실행기 node 만 끝나도(`kill -9`, 작업 관리자, Windows 의 `/T` 없는 `taskkill /F`) 그 node 가 좌석을 끝내고 정리한 뒤 끝난다.
    - 하위 에이전트로 돌면 send 가 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다. 먼저 답을 내면 그 백그라운드 작업도 함께 끝나 정리 없이 사본이 남는다.
-6. 답을 읽은 뒤 `cleanup --dir '<d>'` 를 부른다. 이 좌석들의 gemini 기록, 같은 기준 폴더들에서 하루 지난 끊긴 실행의 폴더와 기록, 이 실행의 opencode 세션과 좌석 폴더가 사라진 세션, `<d>` 와 답 폴더를 지운다. send 가 아직 돌면 종료 5(`busy`)로 멈춘다.
+6. 답을 읽은 뒤 `cleanup --dir '<d>'` 를 부른다. 이 좌석들의 gemini 기록, 같은 기준 폴더들에서 하루 지난 끊긴 실행의 폴더와 기록, 이 실행의 opencode 세션과 좌석 폴더가 사라진 세션, `<d>` 와 답 폴더를 지운다. send 가 아직 돌면 종료 5(`busy`)로 멈춘다. 지우지 못한 끊긴 실행의 폴더는 JSON 의 `left` 에 경로와 까닭이 있다. 있으면 사용자에게 알린다.
 
 ```bash
 # Claude Code(Linux, macOS, Windows Git Bash). <R> = <이 스킬 디렉터리 절대경로>/references. Codex 는 --runtime codex
@@ -184,7 +184,7 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `git-timeout` | git 이 120초 안에 끝나지 않았다 | 다시 해 본다 | 다시 해도 같으면 `cli-call-failed` |
 | `scan` | 비밀처럼 보이는 줄이 있다(종료 1) | 4단계대로 가린다 | 끝내 못 가리면 `cli-call-failed` |
 | `too-large` | 512 KiB 를 넘는다(종료 4) | 4단계대로 묻는다 | 못 물으면 `cli-call-failed`, 거절이면 `model-declined` |
-| `split` | 나눌 단위가 부분 수보다 적거나, 부분의 표지나 검사가 맞지 않다 | 부분 수를 줄인다 | 없음 |
+| `split` | 나눌 단위가 부분 수보다 적거나, 부분의 표지나 검사가 맞지 않다. prompt.md 의 짧은 부분이 prepare 때와 길이가 다를 때도(짧은 부분 안을 고쳐 가림) | 부분 수를 줄인다. 짧은 부분 안을 가렸으면 short.md 를 고쳐 prepare 를 다시 한다 | 없음 |
 | `sent` | 이미 보낸 폴더다 | `init` 으로 새 폴더를 만든다 | 없음 |
 | `not-prepared` | `prepare` 가 끝난 폴더가 아니다 | `prepare` 를 한다 | 없음 |
 | `not-a-run-folder` | `init` 이 만든 폴더가 아니다 | `init` 이 찍은 경로를 쓴다 | 없음 |
@@ -192,6 +192,7 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `base-not-private` | 기준 폴더를 다른 계정도 쓸 수 있다 | 사용자에게 알린다 | 해결 못 하면 `cli-call-failed` |
 | `base-not-writable` | 기준 폴더를 만들거나 쓸 수 없다 | 사용자에게 알린다. Codex 면 sandbox 밖 승인 | 해결 못 하면 `cli-call-failed` |
 | `inside-repo` | 기준 폴더가 git 저장소 안이다 | 사용자에게 알린다 | 해결 못 하면 `cli-call-failed` |
+| `cleanup-left` | cleanup 이 이 실행의 폴더를 다 지우지 못했다(`detail` 에 경로와 까닭) | 사용자에게 경로를 알리고 손으로 지우게 한다. 페이로드 사본이 디스크에 남아 있다 | 없음 |
 | `busy` | 이 폴더의 send 가 아직 돈다(종료 5) | 끝난 뒤 다시 한다. send 는 잠금을 1분마다 갱신하고, 15분 갱신이 없는 잠금은 낡은 것으로 본다 | 없음 |
 
 - 위 표와 아래 표의 `cli-call-failed`, `model-declined` 는 그 좌석이 아직 판정을 내지 않았을 때다. 첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다(외부 모델 결정 절의 확정 시점).

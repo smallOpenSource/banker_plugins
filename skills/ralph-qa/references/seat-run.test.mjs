@@ -4,7 +4,7 @@
 // Run from the repo root: node --test skills/ralph-qa/references/seat-run.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -156,6 +156,42 @@ test("cleanup's day rule removes only marked folders past a day, never a user's 
   assertLeft(w.base, targets[0]);
   assertLeft(cache, targets[1]);
   assert.ok(!existsSync(j.dir) && !existsSync(j.out), "this run's folders are gone");
+});
+
+// Code review: one leftover that cannot be removed stopped the whole cleanup before this run's folders went.
+test("cleanup goes on past a leftover it cannot remove and names it; this run's own folder that stays is a stop", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
+  const stuck = [];
+  t.after(() => stuck.forEach((p) => {
+    try {
+      chmodSync(p, 0o700);
+    } catch {
+      /* gone */
+    }
+  }));
+  const w = world(t);
+  const hold = (dir) => {
+    const keep = join(dir, "keep");
+    mkdirSync(keep, { recursive: true });
+    writeFileSync(join(keep, "held.md"), "held\n");
+    chmodSync(keep, 0o500);
+    stuck.push(keep);
+  };
+  const old = join(w.base, "ralph-qa.old123");
+  mkdirSync(old);
+  writeFileSync(join(old, ".ralph-qa"), "");
+  hold(old);
+  utimesSync(old, DAY_2, DAY_2);
+  let j = init(w);
+  let r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+  assert.ok(!existsSync(j.dir) && !existsSync(j.out), "this run's folders are gone");
+  assert.ok(r.json.left.some((x) => x.path === old && /EACCES|EPERM/.test(x.why)), r.stdout);
+  j = init(w);
+  hold(j.dir);
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 3, r.stdout);
+  assert.equal(r.json.stop, "cleanup-left");
+  assert.ok(r.json.detail.some((x) => x.includes(j.dir)), r.stdout);
 });
 
 test("cleanup refuses while a send of the folder runs, and goes on past a lock that is stale or forced", { skip: SKIP }, (t) => {
@@ -395,11 +431,11 @@ function repoIn(w) {
   writeFileSync(join(repo, "a.txt"), "two\n");
   return repo;
 }
-function prepared(w, { spec = "", text } = {}) {
+function prepared(w, { spec = "", text, short = "review this\n" } = {}) {
   const repo = repoIn(w);
   if (text) writeFileSync(join(repo, "a.txt"), text);
   const j = init(w);
-  writeFileSync(join(j.dir, "short.md"), `<review-data id="${ID}">\nreview this\n`);
+  writeFileSync(join(j.dir, "short.md"), `<review-data id="${ID}">\n${short}`);
   writeFileSync(join(j.dir, "spec.md"), spec);
   const p = cli(w, ["prepare", "--dir", j.dir, "--repo", repo, "--base", "HEAD", "--id", ID]);
   assert.ok([0, 1, 4].includes(p.code), p.stderr);
@@ -634,6 +670,43 @@ test("a split seat gets every part in order, each with its part line, and one ga
   assert.deepEqual([gathered(["APPROVE", "APPROVE"]), gathered(["APPROVE", "ITERATE"]), gathered(["ITERATE", "REJECT"]), gathered(["REJECT", "ERROR"])], ["APPROVE", "ITERATE", "REJECT", "ERROR"]);
   const bad = send(world(t), p, ["gemini=pro"], ["--split", "codex=2"]);
   assert.equal(bad.code, 2, "a split for a seat not sent to is a usage error");
+});
+
+// Code review: a seat copy that cannot be removed (a held handle, a virus scanner on Windows) threw out of the seat's
+// clean-up, and send ended with an internal error: the seats that had answered were not reported, and the lock went
+// back while another seat still ran.
+test("a seat copy that cannot be removed is a note: every seat's result comes back and the lock stays until all end", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
+  // made before the world, so the folder can be emptied when the world's folder is removed
+  const held = { dir: null };
+  t.after(() => {
+    try {
+      if (held.dir) chmodSync(join(held.dir, "gemini", "keep"), 0o700);
+    } catch {
+      /* gone */
+    }
+  });
+  const w = world(t);
+  const p = prepared(w);
+  held.dir = p.dir;
+  const r = send(w, p, ["gemini=pro", "codex=gpt-5.5"], [], { RQ_STUB_MODE: "gemini:stuck-copy,codex:slow=1500" });
+  assert.equal(r.code, 0, r.stderr);
+  const [g, c] = [seatOf(r, "gemini"), seatOf(r, "codex")];
+  assert.deepEqual([g.status, c.status], ["answered", "answered"], r.stdout);
+  assert.ok(g.notes.some((n) => /사본을 지우지 못했다/.test(n) && n.includes(join(p.dir, "gemini"))), JSON.stringify(g.notes));
+  assert.ok(!existsSync(join(p.dir, ".running.md")), "the lock went back after both seats");
+  assert.ok(existsSync(join(p.dir, "result-send.md")));
+});
+
+test("a split seat gets the whole short part in every part, also with `=== ` lines in it", { skip: SKIP }, (t) => {
+  const w = world(t);
+  writeFileSync(join(w.dir, "rules.md"), "the rules\n");
+  const p = prepared(w, { spec: `file ${join(w.dir, "rules.md")}\n`, short: "review this\n=== 수용 기준\n- 기준 1\n" });
+  assert.match(readFileSync(join(p.dir, "run.md"), "utf8"), /^short \d+$/m);
+  const r = send(w, p, ["gemini=pro"], ["--split", "gemini=2"]);
+  assert.equal(r.code, 0, r.stderr);
+  const got = runs(w, "gemini").sort((a, b) => a.at - b.at).map((x) => readFileSync(join(w.log, `gemini-${x.pid}-stdin.md`), "utf8"));
+  assert.equal(got.length, 2);
+  for (const g of got) assert.ok(g.includes("=== 수용 기준\n- 기준 1\n"), g);
 });
 
 // What a send test that fails leaves running (the runner, its send's node, hung seats) ends with the test. Made before

@@ -32,7 +32,7 @@ import { CLI_DEFAULT, probe as localProbe, safeModel } from "./verifier-probe.mj
 // The stops a command may end with, as `stop` in its JSON; the skill's table of what to do holds the same set.
 export const STOP_CODES = ["index-missing", "no-diff", "list", "binary-diff", "range-source", "range-link", "range-outside", "file", "markers",
   "spec", "not-a-repo", "base-invalid", "git-failed", "git-timeout", "scan", "too-large", "sent", "sandboxed", "base-not-private",
-  "base-not-writable", "inside-repo", "busy", "not-prepared", "not-a-run-folder", "split"];
+  "base-not-writable", "inside-repo", "busy", "not-prepared", "not-a-run-folder", "split", "cleanup-left"];
 const EXIT_OF = { scan: 1, "too-large": 4, busy: 5 };
 
 const DAY_MS = 86400 * 1000;
@@ -331,16 +331,34 @@ function giveBack(lock) {
 }
 
 // The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker.
-function dayRule(base, now) {
+// One that cannot be removed (a held handle, a folder this account cannot empty) goes to `left` with why; the rest go on.
+function dayRule(base, now, left) {
   const removed = [];
   for (const name of listDir(base)) {
     const p = join(base, name);
     const st = ANY_RUN.test(name) ? lstatOr(p) : null;
     if (!st?.isDirectory() || now - st.mtimeMs <= DAY_MS || !isFile(join(p, ".ralph-qa"))) continue;
-    rmSync(p, { recursive: true, force: true });
-    removed.push(p);
+    try {
+      rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+      removed.push(p);
+    } catch (e) {
+      left.push({ path: p, why: e.code || e.message });
+    }
   }
   return removed;
+}
+
+// This run's folders; any that stays is a stop (the payload copy would stay on disk), named with why.
+function removeOwn(folders) {
+  const stayed = [];
+  for (const p of folders.filter(Boolean)) {
+    try {
+      rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+    } catch (e) {
+      stayed.push(`${p} (${e.code || e.message})`);
+    }
+  }
+  if (stayed.length) throw new Stop("cleanup-left", "이 실행의 폴더를 다 지우지 못했다. 사용자에게 경로를 알린다", stayed);
 }
 
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -395,12 +413,13 @@ async function cleanup(o, ctx) {
   const { known } = bases(ctx);
   const all = [...new Set([dirname(d), ...known])];
   const gemini = cleanSeat(join(d, "gemini"), { env: ctx.env, platform: ctx.platform });
-  const swept = all.flatMap((b) => dayRule(b, ctx.now()));
+  const left = [];
+  const swept = all.flatMap((b) => dayRule(b, ctx.now(), left));
   for (const b of all) gemini.skipped.push(...sweepBase(b, { env: ctx.env, platform: ctx.platform }).skipped);
   for (const p of gemini.skipped) ctx.stderr.write(`ralph-qa: gemini 기록 폴더를 남겼다(두 프로젝트가 그 이름을 씀): ${p}\n`);
   const opencode = await opencodeSessions({ ...ctx, d, id: readIdOr(d) }, all);
-  for (const p of [d, out]) if (p) rmSync(p, { recursive: true, force: true });
-  return [{ ok: true, removed: [d, out].filter(Boolean), swept, gemini, opencode }, 0, null];
+  removeOwn([d, out]);
+  return [{ ok: true, removed: [d, out].filter(Boolean), swept, left, gemini, opencode }, 0, null];
 }
 
 // ---- send
@@ -544,8 +563,8 @@ async function cliChecks(ctx, seat, plan, exe) {
 }
 
 // The parts a seat gets: the payload, or its split, each with its two markers and no secret-like line.
-function partsOf(payload, n, id) {
-  const parts = n ? splitPayload(payload, n, id) : [payload];
+function partsOf(payload, n, id, short) {
+  const parts = n ? splitPayload(payload, n, id, short) : [payload];
   parts.forEach((part, k) => {
     if (markerCount(part, id) !== 2 || scan(part.toString("utf8")).count) throw new Stop("split", `부분 ${k + 1}/${parts.length} 의 표지나 검사가 맞지 않는다`);
   });
@@ -632,12 +651,22 @@ async function runParts(ctx, run, seat, g, parts, base) {
 }
 
 // What a seat's run leaves is taken away when it returns: gemini's record of its folder, this run's opencode session,
-// the seat's copy of the payload.
+// the seat's copy of the payload. What cannot be taken away (a held handle, a virus scanner on Windows) is a note of
+// the seat's: the other seats' results still come back, and the lock stays until every seat has ended.
 async function afterSeat(ctx, run, seat) {
   const notes = [];
-  if (seat.cli === "gemini") notes.push(...cleanSeat(join(run.d, "gemini"), { env: ctx.env, platform: ctx.platform }).skipped.map((p) => `gemini 기록 폴더를 남김: ${p}`));
-  if (seat.cli === "opencode") await opencodeSessions({ ...ctx, d: run.d, id: run.id }, []);
-  rmSync(join(run.d, seat.cli), { recursive: true, force: true });
+  const copy = join(run.d, seat.cli);
+  try {
+    if (seat.cli === "gemini") notes.push(...cleanSeat(copy, { env: ctx.env, platform: ctx.platform }).skipped.map((p) => `gemini 기록 폴더를 남김: ${p}`));
+    if (seat.cli === "opencode") await opencodeSessions({ ...ctx, d: run.d, id: run.id }, []);
+  } catch (e) {
+    notes.push(`좌석 기록을 지우지 못했다(${e.code || e.message})`);
+  }
+  try {
+    rmSync(copy, { recursive: true, force: true, maxRetries: 3 });
+  } catch (e) {
+    notes.push(`사본을 지우지 못했다: ${copy} (${e.code || e.message})`);
+  }
   return notes;
 }
 
@@ -647,7 +676,7 @@ async function seatWork(ctx, run, seat, g, payload, base) {
   if (why) return { ...base, why };
   let parts;
   try {
-    parts = partsOf(payload, run.split[seat.cli], run.id);
+    parts = partsOf(payload, run.split[seat.cli], run.id, run.short);
   } catch (e) {
     if (e instanceof Stop) return { ...base, why: "split", notes: [e.message] };
     throw e;
@@ -722,18 +751,18 @@ function sendStart(o, ctx, a) {
   if (!out) throw new Stop("not-a-run-folder", `답 폴더(ralph-qa-out.*)가 없다: ${d}`);
   refuseSent(d);
   if (ctx.env.CODEX_SANDBOX_NETWORK_DISABLED === "1" && !a.dryRun) throw new Stop("sandboxed", "Codex sandbox 가 네트워크를 막는다. 승인을 받아 sandbox 밖에서 send 를 다시 한다");
-  const { id } = readRun(d);
+  const { id, short } = readRun(d);
   const payload = payloadToSend(d, id, Boolean(o["allow-large"]));
-  return { d, out, id, payload };
+  return { d, out, id, payload, short: Number(short) };
 }
 
 async function send(o, ctx) {
   const a = sendArgs(o);
-  const { d, out, id, payload } = sendStart(o, ctx, a);
+  const { d, out, id, payload, short } = sendStart(o, ctx, a);
   const lock = takeLock(d, ctx.now());
   const touch = keepFresh(lock);
   const signals = watchSignals();
-  const run = { ...a, d, o: out, id, signalled: () => signals.code() !== 0 };
+  const run = { ...a, d, o: out, id, short, signalled: () => signals.code() !== 0 };
   try {
     const seats = await Promise.all(a.seats.map((x) => sendSeat(ctx, run, x, payload)));
     const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };

@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { MAX_BYTES, Stop, buildPayload, checkPayload, markerCount, splitPayload, untracked } from "./seat-payload.mjs";
 
@@ -817,7 +817,12 @@ test("git never fetches while the payload is built: a partial clone's missing ob
   assert.equal(c.status, 0, c.stderr);
   // an index from HEAD's trees (they came with the clone) and no files: the diff needs the blobs it never fetched
   assert.equal(spawnSync("git", ["-C", client, "read-tree", "HEAD"], { env: ctx.env }).status, 0);
-  const r = prep({ ...ctx, repo: client });
+  let r = prep({ ...ctx, repo: client });
+  assert.equal(r.stop, "git-failed", r.prompt);
+  assert.equal(r.prompt, null);
+  // code review: the repo's own protocol.<name>.allow outranks -c protocol.allow=never
+  assert.equal(spawnSync("git", ["-C", client, "config", "protocol.file.allow", "always"], { env: ctx.env }).status, 0);
+  r = prep({ ...ctx, repo: client });
   assert.equal(r.stop, "git-failed", r.prompt);
   assert.equal(r.prompt, null);
 });
@@ -955,7 +960,7 @@ test("raw.md holds the diff and the parts alone, for the source-independent seat
 test("split cuts at part starts and gives every part the short part, its part line and the closing marker", () => {
   const units = ["diff --git a/x b/x\n+x1\n", "diff --git a/y b/y\n+y1\n+y2\n", "=== file rules.md\nthe rules\n", "=== z.mjs:1-2\nz1\nz2\n"];
   const text = Buffer.from(`${MARK}\nreview this\n${units.join("")}${CLOSE}\n`);
-  const parts = splitPayload(text, 2, "a1b2c3d4").map(String);
+  const parts = splitPayload(text, 2, "a1b2c3d4", Buffer.byteLength(`${MARK}\nreview this\n`)).map(String);
   assert.equal(parts.length, 2);
   for (const [k, p] of parts.entries()) {
     assert.ok(p.startsWith(`${MARK}\nreview this\n부분 ${k + 1}/2\n`), p);
@@ -965,9 +970,45 @@ test("split cuts at part starts and gives every part the short part, its part li
   const body = (p) => p.slice(`${MARK}\nreview this\n부분 1/2\n`.length, p.length - CLOSE.length - 1);
   assert.equal(parts.map(body).join(""), units.join(""), "every part once, in order");
   assert.ok(parts.every((p) => body(p).length > 0));
-  assert.throws(() => splitPayload(text, 5, "a1b2c3d4"), (e) => e.code === "split" && /4/.test(e.message));
-  assert.throws(() => splitPayload(text, 1, "a1b2c3d4"), (e) => e.code === "split");
-  assert.throws(() => splitPayload(Buffer.from(`${MARK}\nno close\n`), 2, "a1b2c3d4"), (e) => e.code === "split");
+  const short = Buffer.byteLength(`${MARK}\nreview this\n`);
+  assert.throws(() => splitPayload(text, 5, "a1b2c3d4", short), (e) => e.code === "split" && /4/.test(e.message));
+  assert.throws(() => splitPayload(text, 1, "a1b2c3d4", short), (e) => e.code === "split");
+  assert.throws(() => splitPayload(Buffer.from(`${MARK}\nno close\n`), 2, "a1b2c3d4", Buffer.byteLength(`${MARK}\n`)), (e) => e.code === "split");
+});
+
+// Code review: a `=== ` or `diff --git ` line in the author's short part (a heading of the criteria, a pasted hunk)
+// was taken for a part start, and the parts after the first went out without the rest of the short part.
+test("split never cuts inside the short part: its `=== ` and `diff --git ` lines stay in every part", () => {
+  const short = `${MARK}\n요청: x 를 고친다\n=== 수용 기준\n- 기준 1\ndiff --git a/q b/q 는 예시\n`;
+  const units = ["diff --git a/x b/x\n+x1\n", "=== file rules.md\nthe rules\n"];
+  const text = Buffer.from(`${short}${units.join("")}${CLOSE}\n`);
+  const parts = splitPayload(text, 2, "a1b2c3d4", Buffer.byteLength(short)).map(String);
+  for (const p of parts) assert.ok(p.startsWith(short), p);
+  assert.ok(parts[0].includes("+x1") && parts[1].includes("the rules"), parts.join("\n---\n"));
+  // a short length that is no line start any more (prompt.md edited inside the short part) stops
+  assert.throws(() => splitPayload(text, 2, "a1b2c3d4", Buffer.byteLength(short) - 3), (e) => e.code === "split");
+  assert.throws(() => splitPayload(text, 2, "a1b2c3d4", undefined), (e) => e.code === "split");
+});
+
+// Each guard alone stops the lazy fetch above on a git that knows GIT_NO_LAZY_FETCH (2.45, and backports such as
+// 2.43.4): this pins every guard on every git call, for gits that know only some of them.
+test("every git call of prepare carries every guard: no hooks, no fsmonitor, no protocol, no lazy fetch", { skip: SKIP || (WIN && "the stand-in git is a sh script") }, (t) => {
+  const ctx = repo(t);
+  const real = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  const bin = join(ctx.dir, "bin");
+  mkdirSync(bin);
+  const log = join(ctx.dir, "git-calls.md");
+  writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$GIT_ALLOW_PROTOCOL|$GIT_NO_LAZY_FETCH|$*" >> '${log}'\nexec '${real}' "$@"\n`, { mode: 0o755 });
+  put(ctx, "a.txt", "two\n");
+  put(ctx, "n.txt", "new\n");
+  const r = prep(ctx, { spec: "new n.txt\n", env: { PATH: `${bin}${delimiter}${process.env.PATH}` } });
+  assert.equal(r.stop, undefined, r.message);
+  const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+  assert.ok(calls.length >= 8, calls.join("\n"));
+  for (const c of calls) {
+    assert.ok(c.startsWith("ralph-qa-no-protocol|1|"), c);
+    for (const g of ["core.fsmonitor=false", "core.hooksPath=", "protocol.allow=never"]) assert.ok(c.includes(g), `${g}: ${c}`);
+  }
 });
 
 // libuv on Windows looks for a bare program name in the child's working folder before PATH: git starts by the absolute

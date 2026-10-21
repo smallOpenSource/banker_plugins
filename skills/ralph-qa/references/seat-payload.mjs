@@ -17,14 +17,17 @@
  *              `=== ` line, and the closing marker
  *   raw.md     the diff and the parts alone (the source-independent seat's input)
  *   unsent.md  the new files left out, one per line as git lists them
- *   run.md     the id, base and repo of this prepare (send refuses a folder without it)
+ *   run.md     the id, base, repo and short part's byte length of this prepare (send refuses a folder without
+ *              it; split cuts only after the short part)
  * The diff comes from a copy of the real index (its staging, sparse checkout and racy entries as
  * they are, its time kept so racily clean entries stay suspect) with only the listed new files
- * added as intent-to-add. textconv, external drivers, color, submodule contents, the user's
- * context settings and fsmonitor are off; attributes are followed, and a diff with a NUL byte
- * stops. git runs by its absolute path from <d>, never from the repo. A stop is a Stop with the
- * 0.20.4 wording. The secret scan and the size are reported, not stopped on: the author masks
- * prompt.md and runs check.
+ * added as intent-to-add. textconv, external drivers, color, submodule contents and dirt, the
+ * user's context settings, fsmonitor, the repo's hooks and filter drivers and every transport are
+ * off; attributes are followed, and a diff with a NUL byte stops. A git folder that is not this
+ * repo's own (another repo's through a .git file or link, commondir, core.worktree, alternates or
+ * links in refs and objects) stops. git runs by its absolute path from <d>, never from the repo. A
+ * stop is a Stop with the 0.20.4 wording. The secret scan and the size are reported, not stopped
+ * on: the author masks prompt.md and runs check.
  */
 import { spawnSync } from "node:child_process";
 import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -136,8 +139,11 @@ const withoutKeys = (env, re) => Object.fromEntries(Object.entries(env).filter((
 // A folder under a file: no hook can be there on any system, so core.hooksPath at it leaves the repo's hooks out.
 const NO_HOOKS = join(fileURLToPath(import.meta.url), "no-hooks");
 // The repo may be an archive that came with its .git: git never runs its fsmonitor or hooks and never reaches the
-// network (a partial clone's lazy fetch, a transport's own command).
+// network (a partial clone's lazy fetch, a transport's own command such as ext::). The repo's own
+// protocol.<name>.allow outranks -c protocol.allow=never, so the environment also gives git an allow list of no
+// protocol (GIT_ALLOW_PROTOCOL wins over all config) and turns lazy fetching off where git knows the switch.
 const SAFE = ["-c", "core.fsmonitor=false", "-c", `core.hooksPath=${NO_HOOKS}`, "-c", "protocol.allow=never"];
+const NO_FETCH = { GIT_ALLOW_PROTOCOL: "ralph-qa-no-protocol", GIT_NO_LAZY_FETCH: "1" };
 
 // git by its absolute path, from `cwd`, on `repo`, with the C locale and no context settings; `extra` are more -c
 // settings (the repo's filter drivers left out). `index` runs it on an index copy, which git then writes whole (no
@@ -145,7 +151,7 @@ const SAFE = ["-c", "core.fsmonitor=false", "-c", `core.hooksPath=${NO_HOOKS}`, 
 export function gitAt(repo, env = process.env, cwd = homedir(), extra = []) {
   const exe = which("git", { env });
   if (!exe) throw new Stop("git-failed", "git 을 PATH 의 절대 경로에서 찾지 못했다");
-  const base = { ...withoutKeys(env, /^(GIT_DIFF_OPTS|LC_ALL)$/i), LC_ALL: "C" };
+  const base = { ...withoutKeys(env, /^(GIT_DIFF_OPTS|LC_ALL|GIT_ALLOW_PROTOCOL|GIT_NO_LAZY_FETCH)$/i), LC_ALL: "C", ...NO_FETCH };
   const onCopy = (index) => ({ ...withoutKeys(base, /^GIT_INDEX_FILE$/i), GIT_INDEX_FILE: index });
   return (args, { index, input, ok = [0] } = {}) => {
     const pre = ["-C", repo, ...SAFE, ...extra, ...(index ? ["-c", "core.splitIndex=false"] : [])];
@@ -403,7 +409,8 @@ function addIntent(ctx, { wanted, all }) {
     ctx.git(["--literal-pathspecs", "add", "-N", "--", ...wanted.slice(i, i + 100)], { index: ctx.idx });
   }
   const left = zList(ctx.git(["ls-files", "-z", "--others", "--exclude-standard"], { index: ctx.idx }).stdout);
-  const extra = all.filter((f) => !wanted.includes(f) && !left.includes(f));
+  const [want, still] = [new Set(wanted), new Set(left)];
+  const extra = all.filter((f) => !want.has(f) && !still.has(f));
   if (left.length !== all.length - wanted.length || extra.length) {
     throw new Stop("list", "목록에 없는 새 파일이 올라간다", extra.slice(0, 20));
   }
@@ -561,7 +568,7 @@ export function buildPayload({ dir, repo, base, id, env = process.env }) {
     const prompt = Buffer.concat([short, raw, Buffer.from(`</review-data id="${id}">\n`)]);
     const markers = markerCount(prompt, id);
     if (markers !== 2) throw new Stop("markers", `표지가 두 줄이 아니다(${markers}줄). id 를 바꿔 short.md 를 다시 쓴다`);
-    writeOutputs(dir, { prompt, raw, unsent, run: `id ${id}\nbase ${base}\ntree ${tree}\nrepo ${top}\n` });
+    writeOutputs(dir, { prompt, raw, unsent, run: `id ${id}\nbase ${base}\ntree ${tree}\nrepo ${top}\nshort ${short.length}\n` });
     return { bytes: prompt.length, markers, scan: scan(prompt.toString("utf8")), unsent: String(unsent).split("\n").filter(Boolean).length };
   } finally {
     rmSync(ctx.idx, { force: true });
@@ -616,19 +623,21 @@ function balanced(units, n) {
   return groups;
 }
 
-// The payload cut into `n` parts where a part starts (a file's diff, a `=== ` line), between the short part and the
-// closing marker. Each part holds the short part, a `부분 <k>/<n>` line and the closing marker; the parts in order hold
-// every part of the payload once. A line inside a file that starts like a part may become a cut: the parts are still
-// whole together.
-export function splitPayload(buf, n, id) {
+// The payload cut into `n` parts where a part starts (a file's diff, a `=== ` line), between the short part (its
+// first `short` bytes, as prepare wrote it: a `=== ` line of the author's is no cut) and the closing marker. Each part
+// holds the short part, a `부분 <k>/<n>` line and the closing marker; the parts in order hold every part of the payload
+// once. A line inside a file that starts like a part may become a cut: the parts are still whole together.
+export function splitPayload(buf, n, id, short) {
   if (!Number.isInteger(n) || n < 2) throw new Stop("split", `나눌 수는 2 이상의 정수다: ${n}`);
   const at = lineStartsOf(buf);
+  if (!Number.isInteger(short) || !at.includes(short)) throw new Stop("split", "prompt.md 의 짧은 부분이 prepare 때와 다르다. 가림은 짧은 부분 밖에서 하거나 prepare 를 다시 한다");
   const lineAt = (k) => buf.slice(at[k], k + 1 < at.length ? at[k + 1] : buf.length).toString("utf8").replace(/\r?\n$/, "");
   const lines = at.map((_, k) => lineAt(k));
   const open = lines.findIndex((l) => l.includes(`<review-data id="${id}">`));
   const close = lines.lastIndexOf(`</review-data id="${id}">`);
   if (open === -1 || close <= open) throw new Stop("split", "여는 표지와 닫는 표지를 찾지 못했다");
-  const starts = lines.map((l, k) => (k > open && k < close && (l.startsWith("diff --git ") || l.startsWith("=== ")) ? k : -1)).filter((k) => k !== -1);
+  const unitLine = (l, k) => k > open && k < close && at[k] >= short && (l.startsWith("diff --git ") || l.startsWith("=== "));
+  const starts = lines.map((l, k) => (unitLine(l, k) ? k : -1)).filter((k) => k !== -1);
   if (starts.length < n) throw new Stop("split", `나눌 수 있는 단위가 ${starts.length}개라 ${n} 부분으로 나눌 수 없다`);
   const units = starts.map((k, j) => buf.slice(at[k], at[j + 1 < starts.length ? starts[j + 1] : close]));
   const prefix = buf.slice(0, at[starts[0]]);
