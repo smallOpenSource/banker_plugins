@@ -10,6 +10,8 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
+import { CLI_DEFAULT } from "./verifier-probe.mjs";
+import { gathered, seatPlan, SEAT_WHY } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -281,5 +283,287 @@ test("each command prints one JSON object, Korean lines on stderr for a stop, an
     const u = cli(w, args);
     assert.equal(u.code, 2, `${args.join(" ")}: ${u.stdout}`);
     assert.match(u.stderr, /^ralph-qa: /m);
+  }
+});
+
+// ---- send: the seats, their guards and limit, what is learned from their answers, and the cleanup of their records
+
+const ID = "a1b2c3d4";
+function repoIn(w) {
+  const repo = join(w.dir, "repo");
+  mkdirSync(repo);
+  const g = (...a) => assert.equal(spawnSync(GIT, ["-C", repo, ...a], { env: w.env }).status, 0, a.join(" "));
+  g("-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(repo, "a.txt"), "one\n");
+  g("add", ".");
+  g("commit", "-qm", "base");
+  writeFileSync(join(repo, "a.txt"), "two\n");
+  return repo;
+}
+function prepared(w, { spec = "", text } = {}) {
+  const repo = repoIn(w);
+  if (text) writeFileSync(join(repo, "a.txt"), text);
+  const j = init(w);
+  writeFileSync(join(j.dir, "short.md"), `<review-data id="${ID}">\nreview this\n`);
+  writeFileSync(join(j.dir, "spec.md"), spec);
+  const p = cli(w, ["prepare", "--dir", j.dir, "--repo", repo, "--base", "HEAD", "--id", ID]);
+  assert.ok([0, 1, 4].includes(p.code), p.stderr);
+  return { ...j, repo };
+}
+const send = (w, j, seats, extra = [], env = {}) => cli(w, ["send", "--dir", j.dir, "--runtime", "claude", ...seats.flatMap((s) => ["--seat", s]), ...extra], { env });
+const records = (w, name) => readdirSync(w.log).filter((f) => new RegExp(`^${name}-\\d+\\.md$`).test(f)).map((f) => JSON.parse(readFileSync(join(w.log, f), "utf8")));
+const runs = (w, name) => records(w, name).filter((r) => r.stdinBytes > 0 || (name === "codex" ? r.args[0] === "exec" : name === "opencode" ? r.args[0] === "run" : true));
+const seatOf = (r, cli) => r.json.seats.find((s) => s.seat === cli);
+
+test("send refuses a folder prepare did not finish, a folder already sent, and a payload it must not send as it is", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  let r = send(w, j, ["gemini=pro"]);
+  assert.deepEqual([r.code, r.json.stop], [3, "not-prepared"]);
+  const p = prepared(w);
+  writeFileSync(join(p.dir, "prompt.md"), readFileSync(join(p.dir, "prompt.md"), "utf8").replace(`</review-data id="${ID}">`, ""));
+  r = send(w, p, ["gemini=pro"]);
+  assert.deepEqual([r.code, r.json.stop], [3, "markers"]);
+  assert.equal(runs(w, "gemini").length, 0, "no seat ran");
+  writeFileSync(join(j.dir, "result-send.md"), "{}");
+  writeFileSync(join(j.dir, "run.md"), `id ${ID}\n`);
+  r = send(w, j, ["gemini=pro"]);
+  assert.deepEqual([r.code, r.json.stop], [3, "sent"]);
+});
+
+test("a payload with secret-like lines or past 512 KiB goes to no seat; --allow-large lets the size through", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const secret = ["s3", "cr3t", "V4lue"].join("");
+  const p = prepared(w, { text: `password = ${secret}\n` });
+  let r = send(w, p, ["gemini=pro"]);
+  assert.deepEqual([r.code, r.json.stop], [1, "scan"]);
+  const w2 = world(t);
+  const big = prepared(w2, { text: Array.from({ length: 6000 }, (_, i) => `line ${i} ${"y".repeat(90)}`).join("\n") + "\n" });
+  r = send(w2, big, ["gemini=pro"]);
+  assert.deepEqual([r.code, r.json.stop], [4, "too-large"]);
+  assert.ok(!existsSync(join(big.dir, "result-send.md")) && existsSync(join(big.dir, "result-send-stop.md")), "a stopped send leaves the folder unsent");
+  assert.equal(runs(w2, "gemini").length, 0);
+  r = send(w2, big, ["gemini=pro"], ["--allow-large"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(seatOf(r, "gemini").status, "answered");
+  assert.equal(runs(w, "gemini").length, 0, "the seat with hits never ran");
+});
+
+test("send runs each seat from its own copy in its own folder, with the answers in the answer folder", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const r = send(w, p, ["codex=gpt-5.5", "gemini=pro", "opencode=prov/model-x"]);
+  assert.equal(r.code, 0, r.stderr);
+  const prompt = readFileSync(join(p.dir, "prompt.md"));
+  for (const cli of ["codex", "gemini", "opencode"]) {
+    const s = seatOf(r, cli);
+    assert.equal(s.status, "answered", `${cli}: ${JSON.stringify(s)}`);
+    assert.equal(s.facts.verdict, "APPROVE", cli);
+    assert.equal(dirname(s.answer), p.out, cli);
+    const rec = runs(w, cli)[0];
+    assert.equal(rec.cwd, join(realpathSync.native(p.dir), cli), cli);
+    assert.ok(readFileSync(join(w.log, `${cli}-${rec.pid}-stdin.md`)).equals(prompt), `${cli} got prompt.md as it is`);
+    assert.ok(!existsSync(join(p.dir, cli)), `${cli}'s copy is gone after the send`);
+  }
+  assert.ok(existsSync(join(p.dir, "result-send.md")));
+  assert.ok(!readdirSync(p.dir).some((f) => f.startsWith(".running-")), "the lock is gone");
+  assert.match(r.json.declared, /^외부 전송\(선언\): .*codex.*gemini.*opencode.*prov.*페이로드 \d+B, 비밀 검사 0건, 보내지 않은 새 파일 0/);
+});
+
+// The 0.20.4 commands of the skill's bash block, word for word: the read-only guards the mock-server checks proved.
+const D = "/d/ralph-qa.abc123";
+const O = "/d/ralph-qa-out.abc123";
+test("the codex plan is the 0.20.4 command word for word, with one -c per MCP server, -m unless @cli-default and effort only when given", () => {
+  const plan = seatPlan({ cli: "codex", model: "gpt-5.5", mcpServers: ["alpha", "beta-2"], d: D, o: O, id: ID });
+  assert.deepEqual(plan.args, ["exec", "-C", join(D, "codex"), "--ephemeral", "--ignore-rules",
+    "--disable", "multi_agent", "--disable", "hooks", "--disable", "plugins", "--disable", "apps", "--disable", "shell_tool",
+    "-c", "notify=[]", "-c", "analytics.enabled=false", "-c", "web_search=disabled", "-c", "mcp_servers.alpha.enabled=false", "-c", "mcp_servers.beta-2.enabled=false",
+    "-c", 'otel.exporter="none"', "-c", 'otel.trace_exporter="none"', "-c", 'otel.metrics_exporter="none"',
+    "-m", "gpt-5.5", "-s", "read-only", "--skip-git-repo-check", "-o", join(O, "out-codex.md"), "-"]);
+  assert.deepEqual([plan.cwd, plan.stdin, plan.stderr], [join(D, "codex"), join(D, "codex", "prompt.md"), join(O, "err-codex.md")]);
+  const plain = seatPlan({ cli: "codex", model: CLI_DEFAULT, mcpServers: [], d: D, o: O, id: ID, effort: "high" });
+  assert.ok(!plain.args.includes("-m") && !plain.args.some((a) => a.startsWith("mcp_servers.")));
+  assert.deepEqual(plain.args.slice(plain.args.indexOf('otel.metrics_exporter="none"') + 1, plain.args.indexOf("-s")), ["-c", "model_reasoning_effort=high"]);
+  assert.deepEqual(plan.set, {});
+});
+
+test("the gemini plan gives the helper's policy, TMPDIR TEMP TMP in the answer folder, its sandbox and prompt telemetry off and no IDE path", () => {
+  const plan = seatPlan({ cli: "gemini", model: "pro", d: D, o: O, id: ID, policy: "/p/gemini-read-only.toml" });
+  assert.deepEqual(plan.args, ["--skip-trust", "--approval-mode", "default", "--admin-policy", "/p/gemini-read-only.toml",
+    "--allowed-mcp-server-names", "ralph-qa-none", "-e", "none", "-m", "pro", "-p", "첨부한 검토 지시를 따르라"]);
+  assert.deepEqual(plan.set, { TMPDIR: O, TEMP: O, TMP: O, GEMINI_SANDBOX: "false", GEMINI_TELEMETRY_LOG_PROMPTS: "false" });
+  assert.deepEqual(plan.unset, ["GEMINI_CLI_IDE_WORKSPACE_PATH"]);
+  assert.deepEqual([plan.stdout, plan.stderr], [join(O, "out-gemini.md"), join(O, "err-gemini.md")]);
+});
+
+test("the opencode plan checks its per-run deny-all agent first, with the env of its run", () => {
+  const plan = seatPlan({ cli: "opencode", model: "prov/model-x", d: D, o: O, id: ID });
+  const A = `ralph-qa-review-${ID}`;
+  assert.deepEqual(plan.check, ["debug", "agent", A, "--pure"]);
+  assert.deepEqual(plan.args, ["run", "--pure", "--agent", A, "--title", A, "-m", "prov/model-x", "아래 검토 지시를 따르라"]);
+  assert.deepEqual(plan.set, {
+    OPENCODE_PERMISSION: '{"*":"deny"}',
+    OPENCODE_CONFIG_CONTENT: `{"share":"disabled","agent":{"compaction":{"disable":true},"${A}":{"mode":"primary","description":"ralph-qa reviewer","permission":{"*":"deny"}}}}`,
+    OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_SHARE: "1", OPENCODE_DISABLE_CLAUDE_CODE: "1",
+  });
+});
+
+test("the seats get the plans' words and env: MCP servers off by name, gemini's env set and its IDE path gone, a missing opencode agent sends nothing", { skip: SKIP }, (t) => {
+  const w = world(t);
+  mkdirSync(join(w.home, ".codex"), { recursive: true });
+  writeFileSync(join(w.home, ".codex", "config.toml"), '[mcp_servers.alpha]\ncommand = "x"\n\n[mcp_servers.beta-2]\ncommand = "y"\n');
+  const p = prepared(w);
+  let r = send(w, p, ["codex=gpt-5.5", "gemini=pro"], [], { GEMINI_CLI_IDE_WORKSPACE_PATH: "/w" });
+  assert.equal(r.code, 0, r.stderr);
+  const cx = runs(w, "codex")[0];
+  for (const n of ["alpha", "beta-2"]) assert.ok(cx.args.includes(`mcp_servers.${n}.enabled=false`), cx.args.join(" "));
+  const gm = runs(w, "gemini")[0];
+  assert.deepEqual([gm.env.TMPDIR, gm.env.GEMINI_SANDBOX, gm.env.GEMINI_TELEMETRY_LOG_PROMPTS, gm.env.GEMINI_CLI_IDE_WORKSPACE_PATH], [p.out, "false", "false", undefined]);
+  const w2 = world(t);
+  const p2 = prepared(w2);
+  r = send(w2, p2, ["opencode=prov/model-x"], [], { RQ_STUB_MODE: "no-agent" });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([seatOf(r, "opencode").status, seatOf(r, "opencode").why], ["not-sent", "opencode-agent"]);
+  assert.equal(records(w2, "opencode").filter((x) => x.args[0] === "run").length, 0, "nothing was sent");
+});
+
+test("a seat the probe unseats at send time, an unsafe model name or a missing CLI is not sent and says why", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  let r = cli(w, ["send", "--dir", p.dir, "--runtime", "codex", "--seat", "codex=gpt-5.5", "--dry-run"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([seatOf(r, "codex").status, seatOf(r, "codex").why], ["not-sent", "probe:self-runtime"]);
+  r = send(w, p, ["codex=claude-sonnet-4-5", "gemini=$(touch x)"], ["--dry-run"]);
+  assert.deepEqual([seatOf(r, "codex").why, seatOf(r, "gemini").why], ["probe:self-family", "unsafe-model"]);
+  rmSync(join(w.bin, WIN ? "opencode.cmd" : "opencode"));
+  r = send(w, p, ["opencode=prov/model-x"], ["--dry-run"]);
+  assert.equal(seatOf(r, "opencode").why, "cli-absent");
+  // a seat that passes its guards is planned, not run
+  r = send(w, p, ["gemini=pro"], ["--dry-run"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([seatOf(r, "gemini").status, seatOf(r, "gemini").plan.args.slice(-2)], ["planned", ["-p", "첨부한 검토 지시를 따르라"]]);
+  assert.equal(runs(w, "gemini").length, 0, "a dry run starts no seat");
+  assert.ok(!existsSync(join(p.dir, "result-send.md")), "a dry run does not mark the folder sent");
+});
+
+test("a changed gemini policy or a .env above the seat outside the home sends nothing to gemini", { skip: SKIP }, (t) => {
+  const w = world(t);
+  // a copy of the references with a changed policy
+  const refs = join(w.dir, "refs");
+  mkdirSync(refs);
+  const here = dirname(RUNNER);
+  for (const f of readdirSync(here).filter((x) => /\.(mjs|toml)$/.test(x) && !x.endsWith(".test.mjs"))) writeFileSync(join(refs, f), readFileSync(join(here, f)));
+  writeFileSync(join(refs, "gemini-read-only.toml"), readFileSync(join(refs, "gemini-read-only.toml"), "utf8").replace('decision = "deny"', 'decision = "allow"'));
+  const p = prepared(w);
+  const r1 = spawnSync(process.execPath, [join(refs, "seat-run.mjs"), "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro"], { encoding: "utf8", env: w.env });
+  assert.equal(r1.status, 0, r1.stderr);
+  assert.equal(JSON.parse(r1.stdout).seats[0].why, "gemini-policy");
+  const w2 = world(t);
+  writeFileSync(join(w2.dir, ".env"), "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:9\n"); // above the base, outside the home
+  const p2 = prepared(w2);
+  const r2 = send(w2, p2, ["gemini=pro"]);
+  assert.equal(seatOf(r2, "gemini").why, "gemini-env-file");
+  assert.equal(runs(w, "gemini").length + runs(w2, "gemini").length, 0);
+});
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+  try {
+    return !/^\d+ \(.*\) Z/s.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+  } catch {
+    return process.platform !== "linux";
+  }
+};
+const pidsIn = (w) => readdirSync(w.log).filter((f) => f.endsWith("-pids.md")).flatMap((f) => readFileSync(join(w.log, f), "utf8").split("\n").filter(Boolean).map(Number));
+async function gone(pids, ms = 5000) {
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise((res) => setTimeout(res, 50))) if (!pids.some(alive)) return true;
+  return !pids.some(alive);
+}
+
+test("a seat past the limit fails with timeout and its whole tree is gone when send returns", { skip: SKIP }, async (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const r = send(w, p, ["gemini=pro"], ["--limit", "2"], { RQ_STUB_MODE: "chain" });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([seatOf(r, "gemini").status, seatOf(r, "gemini").why], ["failed", "timeout"]);
+  const pids = [...pidsIn(w), ...records(w, "gemini").map((x) => x.pid)];
+  assert.equal(pids.length, 3);
+  assert.ok(await gone(pids), `left: ${pids.filter(alive)}`);
+});
+
+test("a gemini seat that would write its record late is ended with its group, and its record is cleaned", { skip: SKIP || (WIN && "Windows keeps no group") }, async (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const r = send(w, p, ["gemini=pro"], [], { RQ_STUB_MODE: "late-write" });
+  assert.equal(seatOf(r, "gemini").status, "answered", r.stdout);
+  await new Promise((res) => setTimeout(res, 2500));
+  const tmp = join(w.home, ".gemini", "tmp");
+  const left = existsSync(tmp) ? readdirSync(tmp) : [];
+  assert.deepEqual(left, [], "no record is left, not even one written after the run");
+});
+
+test("what the answers say: the codex model line, gemini's policy error and report, opencode's fallback, an empty answer, the VERDICT count", { skip: SKIP }, (t) => {
+  const cases = [
+    ["codex=gpt-5.5", "model-line=o4-mini", "failed", "model-mismatch"], ["gemini=pro", "policy-error", "failed", "policy-file-error"],
+    ["gemini=pro", "full-report", "failed", "exit"], ["gemini=pro", "rejected", "failed", "rejected"], ["opencode=prov/model-x", "fallback", "failed", "fallback-agent"],
+    ["gemini=pro", "empty", "failed", "empty"], ["gemini=pro", "two-verdicts", "failed", "verdict"], ["gemini=pro", "no-verdict", "failed", "verdict"],
+    ["gemini=pro", "exit3", "failed", "exit"], ["codex=gpt-5.5", "answer", "answered", null],
+  ];
+  for (const [seat, mode, status, why] of cases) {
+    const w = world(t);
+    const p = prepared(w);
+    const r = send(w, p, [seat], [], { RQ_STUB_MODE: mode });
+    const s = r.json.seats[0];
+    assert.deepEqual([s.status, s.why], [status, why], `${seat} ${mode}: ${JSON.stringify(s)}`);
+    if (mode === "full-report") assert.equal(s.facts.apiError, true);
+    if (mode === "rejected") assert.match(s.facts.rejectHint, /model_not_found/);
+    if (mode === "model-line=o4-mini") assert.equal(s.facts.ranModel, "o4-mini");
+  }
+});
+
+test("a split seat gets every part in order, each with its part line, and one gathered verdict", { skip: SKIP }, (t) => {
+  const w = world(t);
+  writeFileSync(join(w.dir, "rules.md"), "the rules\n");
+  const p = prepared(w, { spec: `file ${join(w.dir, "rules.md")}\n` });
+  const r = send(w, p, ["gemini=pro"], ["--split", "gemini=2"]);
+  assert.equal(r.code, 0, r.stderr);
+  const s = seatOf(r, "gemini");
+  assert.deepEqual([s.status, s.facts.verdict, s.parts.length], ["answered", "APPROVE", 2]);
+  const got = runs(w, "gemini").sort((a, b) => a.pid - b.pid).map((x) => readFileSync(join(w.log, `gemini-${x.pid}-stdin.md`), "utf8"));
+  assert.ok(got[0].includes("부분 1/2") && got[1].includes("부분 2/2"), got.join("\n---\n"));
+  assert.ok(got[0].includes("+++ b/a.txt") && got[1].includes("=== file rules.md"), "the parts in order");
+  assert.deepEqual([gathered(["APPROVE", "APPROVE"]), gathered(["APPROVE", "ITERATE"]), gathered(["ITERATE", "REJECT"]), gathered(["REJECT", "ERROR"])], ["APPROVE", "ITERATE", "REJECT", "ERROR"]);
+  const bad = send(world(t), p, ["gemini=pro"], ["--split", "codex=2"]);
+  assert.equal(bad.code, 2, "a split for a seat not sent to is a usage error");
+});
+
+test("SIGTERM to send ends every seat's group, still cleans their records and copies, and exits 143", { skip: SKIP || (WIN && "POSIX signals") }, async (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const { spawn } = await import("node:child_process");
+  const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro", "--seat", "opencode=prov/model-x"],
+    { env: { ...w.env, RQ_STUB_MODE: "hang" }, stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  c.stdout.on("data", (b) => { out += b; });
+  const closed = new Promise((res) => c.on("close", (x) => res(x)));
+  for (let k = 0; k < 200 && pidsIn(w).length < 2; k += 1) await new Promise((res) => setTimeout(res, 50));
+  c.kill("SIGTERM");
+  const code = await closed;
+  assert.equal(code, 143, out);
+  const pids = [...pidsIn(w), ...records(w, "gemini").map((x) => x.pid), ...records(w, "opencode").map((x) => x.pid)];
+  assert.ok(await gone(pids), `left: ${pids.filter(alive)}`);
+  assert.ok(!existsSync(join(p.dir, "gemini")) && !existsSync(join(p.dir, "opencode")), "the copies are gone");
+  const json = JSON.parse(out);
+  assert.ok(json.seats.every((s) => s.status === "failed" && s.why === "signal"), out);
+});
+
+test("the seat result reasons are the set the skill's table holds", () => {
+  for (const why of ["rejected", "timeout", "exit", "signal", "spawn", "empty", "verdict", "policy-file-error", "fallback-agent", "model-mismatch",
+    "default-model-family", "probe", "unsafe-model", "cli-absent", "unsafe-word", "gemini-policy", "gemini-env-file", "opencode-agent", "split", "payload"]) {
+    assert.ok(SEAT_WHY.includes(why), why);
   }
 });

@@ -23,6 +23,7 @@
 //   linger        a child that waits for ever; the run exits 0 at once
 //   late-write    answers, exits 0, and a child writes a gemini record 1.5 s later
 //   slow=<ms>     waits <ms> before answering
+//   no-agent      opencode's `debug agent` finds no agent
 import { spawn } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -181,7 +182,7 @@ function debugAgent(args) {
   } catch {
     /* no agents */
   }
-  if (args[2] in agents) return process.exit(0);
+  if (args[2] in agents && !mode("no-agent")) return process.exit(0);
   process.stderr.write(`agent ${args[2]} not found\n`);
   return process.exit(1);
 }

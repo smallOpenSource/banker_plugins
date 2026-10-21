@@ -16,15 +16,17 @@
  * Out: one JSON object on stdout, the same in <d>/result-<command>.md (a PowerShell 5.1 console may garble it), and
  * `ralph-qa: ` lines on stderr. Exit 0 done, 1 secret-like lines, 2 a usage or internal error, 3 a stop (`stop` in
  * the JSON says which), 4 a payload past 512 KiB, 5 a send of the folder still runs. Every file name ends in .md
- * (a DRM of a closed network encrypts .txt or .json files).
+ * (the DRM of a closed network encrypts files by their extension, and .md is one it leaves readable).
  */
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { constants as osConstants, homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanSeat, sweepBase } from "./gemini-seat.mjs";
-import { MAX_BYTES, Stop, buildPayload, checkPayload, gitAt, readRun, untracked } from "./seat-payload.mjs";
-import { runLimited, which } from "./seat-spawn.mjs";
+import { POLICY, cleanSeat, policyIntact, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
+import { scan } from "./payload-scan.mjs";
+import { MAX_BYTES, Stop, buildPayload, checkPayload, gitAt, markerCount, readRun, splitPayload, untracked } from "./seat-payload.mjs";
+import { cmdLine, runLimited, stopAll, which } from "./seat-spawn.mjs";
+import { CLI_DEFAULT, probe as localProbe, safeModel } from "./verifier-probe.mjs";
 
 // The stops a command may end with, as `stop` in its JSON; the skill's table of what to do holds the same set.
 export const STOP_CODES = ["index-missing", "no-diff", "list", "binary-diff", "range-source", "range-link", "range-outside", "file", "markers",
@@ -350,20 +352,340 @@ async function cleanup(o, ctx) {
   return [{ ok: true, removed: [d, out].filter(Boolean), swept, gemini, opencode }, 0, null];
 }
 
-async function send() {
-  throw new Usage("send 는 아직 없다");
+// ---- send
+
+// Why a seat was not sent (`not-sent`) or its run counts for nothing (`failed`); `probe:<reason>` carries the probe's.
+export const SEAT_WHY = ["rejected", "timeout", "exit", "signal", "spawn", "empty", "verdict", "policy-file-error", "fallback-agent",
+  "model-mismatch", "default-model-family", "probe", "unsafe-model", "cli-absent", "unsafe-word", "gemini-policy", "gemini-env-file",
+  "opencode-agent", "split", "payload"];
+const LIMIT_S = 600;
+const CHECK_LIMIT_MS = 120000;
+// Lines of a seat's errors that say the provider refused the model (the author may then seat another, before a first verdict).
+const REJECT_HINT = /\b40[34]\b|model_not_found|model not found|does not exist|PERMISSION_DENIED|permission denied/i;
+const VERDICT_LINE = /^VERDICT: (APPROVE|ITERATE|REJECT|ERROR)\s*$/;
+const RANK = { APPROVE: 0, ITERATE: 1, REJECT: 2, ERROR: 3 };
+
+function seatArg(v) {
+  const m = /^(codex|gemini|opencode)=([\s\S]+)$/.exec(String(v));
+  if (!m) throw new Usage(`--seat 은 <cli>=<모델> 이다(cli 는 codex, gemini, opencode): ${String(v).slice(0, 80)}`);
+  return { cli: m[1], model: m[2] };
+}
+function splitArg(v) {
+  const m = /^(codex|gemini|opencode)=(\d{1,2})$/.exec(String(v));
+  if (!m || Number(m[2]) < 2) throw new Usage(`--split 은 <cli>=<2 이상의 수> 다: ${String(v).slice(0, 80)}`);
+  return [m[1], Number(m[2])];
+}
+function limitOf(o) {
+  const limit = o.limit === undefined ? LIMIT_S : Number(o.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIMIT_S) throw new Usage(`--limit 은 1~600 초다: ${String(o.limit).slice(0, 40)}`);
+  return limit * 1000;
+}
+function sendArgs(o) {
+  if (!["claude", "codex"].includes(o.runtime)) throw new Usage(`--runtime 은 claude 나 codex 다: ${String(o.runtime).slice(0, 40)}`);
+  const seats = o.seat.map(seatArg);
+  if (seats.length > 3 || new Set(seats.map((x) => x.cli)).size !== seats.length) throw new Usage("--seat 는 CLI 마다 한 번, 셋까지다");
+  const split = Object.fromEntries((o.split || []).map(splitArg));
+  for (const cli of Object.keys(split)) if (!seats.some((x) => x.cli === cli)) throw new Usage(`--split 의 ${cli} 는 보내는 좌석이 아니다`);
+  if (o.effort !== undefined && !/^[a-z]{1,16}$/.test(o.effort)) throw new Usage(`--effort 값이 아니다: ${String(o.effort).slice(0, 40)}`);
+  return { seats, split, limitMs: limitOf(o), effort: o.effort, runtime: o.runtime, dryRun: Boolean(o["dry-run"]) };
+}
+
+// What goes out, read once: the same bytes are checked here and copied for every seat.
+function payloadToSend(d, id, allowLarge) {
+  let buf;
+  try {
+    buf = readFileSync(join(d, "prompt.md"));
+  } catch {
+    throw new Stop("not-prepared", `prompt.md 가 없다. prepare 를 먼저 한다: ${d}`);
+  }
+  const markers = markerCount(buf, id);
+  if (markers !== 2) throw new Stop("markers", `표지가 두 줄이 아니다(${markers}줄). 가리다 표지를 지웠으면 prepare 를 다시 한다`);
+  let found;
+  try {
+    found = scan(buf.toString("utf8"));
+  } catch (e) {
+    throw new Stop("scan", `비밀 검사를 끝내지 못해 보내지 않는다(${String(e?.message || e).split("\n")[0]})`);
+  }
+  if (found.count) throw new Stop("scan", `비밀처럼 보이는 줄이 있어 보내지 않는다: ${found.hits.map((h) => h.line).join(", ")}. 가린 뒤 check 를 다시 한다`);
+  if (buf.length > MAX_BYTES && !allowLarge) throw new Stop("too-large", `페이로드가 512 KiB 를 넘는다(${buf.length}바이트). 사용자가 보내기로 하면 --allow-large 로 다시 한다`);
+  return buf;
+}
+
+const modelFlag = (model) => (model === CLI_DEFAULT ? [] : ["-m", model]);
+const OPENCODE_DENY = '{"*":"deny"}';
+// The commands of the 0.20.4 skill's bash block, word for word, as plans: arguments, what is set and unset in the
+// env, and the check run first (opencode). `part` names the files of a split part.
+const PLANS = {
+  codex: (p, f) => ({
+    args: ["exec", "-C", f.cwd, "--ephemeral", "--ignore-rules", ...["multi_agent", "hooks", "plugins", "apps", "shell_tool"].flatMap((x) => ["--disable", x]),
+      "-c", "notify=[]", "-c", "analytics.enabled=false", "-c", "web_search=disabled", ...(p.mcpServers || []).flatMap((n) => ["-c", `mcp_servers.${n}.enabled=false`]),
+      "-c", 'otel.exporter="none"', "-c", 'otel.trace_exporter="none"', "-c", 'otel.metrics_exporter="none"',
+      ...(p.effort ? ["-c", `model_reasoning_effort=${p.effort}`] : []), ...modelFlag(p.model), "-s", "read-only", "--skip-git-repo-check", "-o", f.answer, "-"],
+    stdout: join(p.o, `stdout-codex${f.sfx}.md`), set: {}, unset: [], check: null,
+  }),
+  gemini: (p, f) => ({
+    args: ["--skip-trust", "--approval-mode", "default", "--admin-policy", p.policy, "--allowed-mcp-server-names", "ralph-qa-none", "-e", "none",
+      ...modelFlag(p.model), "-p", "첨부한 검토 지시를 따르라"],
+    stdout: f.answer, set: { TMPDIR: p.o, TEMP: p.o, TMP: p.o, GEMINI_SANDBOX: "false", GEMINI_TELEMETRY_LOG_PROMPTS: "false" }, unset: ["GEMINI_CLI_IDE_WORKSPACE_PATH"], check: null,
+  }),
+  opencode: (p, f) => {
+    const agent = `ralph-qa-review-${p.id}`;
+    const config = { share: "disabled", agent: { compaction: { disable: true }, [agent]: { mode: "primary", description: "ralph-qa reviewer", permission: { "*": "deny" } } } };
+    return {
+      args: ["run", "--pure", "--agent", agent, "--title", agent, ...modelFlag(p.model), "아래 검토 지시를 따르라"], stdout: f.answer, unset: [],
+      set: { OPENCODE_PERMISSION: OPENCODE_DENY, OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_DISABLE_MODELS_FETCH: "1",
+        OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_SHARE: "1", OPENCODE_DISABLE_CLAUDE_CODE: "1" },
+      check: ["debug", "agent", agent, "--pure"],
+    };
+  },
+};
+
+export function seatPlan(p) {
+  const sfx = p.part ? `-${p.part}` : "";
+  const cwd = join(p.d, p.cli);
+  const f = { cwd, sfx, answer: join(p.o, `out-${p.cli}${sfx}.md`) };
+  return { cwd, stdin: join(cwd, `prompt${sfx}.md`), stderr: join(p.o, `err-${p.cli}${sfx}.md`), answer: f.answer, ...PLANS[p.cli](p, f) };
+}
+
+// The seat's env: the runner's, without what the plan unsets (on Windows whatever the case of a name), with what it sets.
+function seatEnv(ctx, plan) {
+  const win = ctx.platform === "win32";
+  const drop = new Set([...plan.unset, ...(win ? Object.keys(plan.set) : [])].map((k) => (win ? k.toUpperCase() : k)));
+  const kept = Object.entries(ctx.env).filter(([k]) => !drop.has(win ? k.toUpperCase() : k));
+  return { ...Object.fromEntries(kept), ...plan.set };
+}
+
+// The probe called again just before the send, with the model chosen: the guards as the config is now, the MCP
+// servers to turn off by name. The model is not chosen again.
+function reprobe(ctx, seat, runtime) {
+  const run = ctx.probe || localProbe;
+  const out = run({ requested: { [seat.cli]: seat.model === CLI_DEFAULT ? null : seat.model }, runtime });
+  return (out.seats || []).find((x) => x.cli === seat.cli) || { decision: "unseated", reason: "cli-call-failed", notes: out.notes };
+}
+
+function guards(ctx, seat, a) {
+  if (seat.model !== CLI_DEFAULT && !safeModel(seat.model)) return { why: "unsafe-model" };
+  const exe = which(seat.cli, { env: ctx.env, platform: ctx.platform });
+  if (!exe) return { why: "cli-absent" };
+  const probed = reprobe(ctx, seat, a.runtime);
+  if (probed.decision === "unseated") return { why: `probe:${probed.reason}`, notes: probed.notes || [] };
+  return { exe, probed };
+}
+
+const policyText = () => {
+  try {
+    return readFileSync(POLICY, "utf8");
+  } catch {
+    return null;
+  }
+};
+
+// The checks a seat must pass in its own folder before anything goes: cmd.exe's words, gemini's policy and a .env
+// above the folder, opencode's per-run agent.
+async function cliChecks(ctx, seat, plan, exe) {
+  const viaCmd = ctx.platform === "win32" && /\.(cmd|bat)$/i.test(exe);
+  if (viaCmd && [plan.check, plan.args].some((args) => args && cmdLine(exe, args) === null)) return "unsafe-word";
+  if (seat.cli === "gemini" && !policyIntact(policyText())) return "gemini-policy";
+  if (seat.cli === "gemini" && strayEnvFiles(plan.cwd, { env: ctx.env, platform: ctx.platform }).length) return "gemini-env-file";
+  if (!plan.check) return null;
+  const r = await runLimited({ exe, args: plan.check, cwd: plan.cwd, env: seatEnv(ctx, plan), stdin: "ignore", stdout: "ignore", stderr: "ignore", limitMs: CHECK_LIMIT_MS });
+  return r.exit === 0 ? null : "opencode-agent";
+}
+
+// The parts a seat gets: the payload, or its split, each with its two markers and no secret-like line.
+function partsOf(payload, n, id) {
+  const parts = n ? splitPayload(payload, n, id) : [payload];
+  parts.forEach((part, k) => {
+    if (markerCount(part, id) !== 2 || scan(part.toString("utf8")).count) throw new Stop("split", `부분 ${k + 1}/${parts.length} 의 표지나 검사가 맞지 않는다`);
+  });
+  return parts;
+}
+
+const readText = (file) => {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+};
+
+// What a seat's answer and errors say.
+function factsOf(cli, plan) {
+  const out = readText(plan.answer);
+  const err = readText(plan.stderr);
+  const facts = { verdicts: out.split(/\r?\n/).map((l) => VERDICT_LINE.exec(l)).filter(Boolean).map((m) => m[1]), empty: !out.trim() };
+  if (cli === "codex") facts.ranModel = (/^model: (\S+)/m.exec(err.split("\n").slice(0, 40).join("\n")) || [])[1] || null;
+  if (cli === "gemini") Object.assign(facts, { policyError: err.includes("Policy file error"), apiError: err.includes("Full report") });
+  if (cli === "opencode") facts.fallback = err.includes("Falling back to default agent");
+  const hint = err.split("\n").find((l) => REJECT_HINT.test(l));
+  if (hint) facts.rejectHint = hint.trim().slice(0, 200);
+  return facts;
+}
+
+// A run that ended without an answer to read: why, or null.
+function processWhy(r) {
+  if (r.error) return "spawn";
+  if (r.timedOut) return "timeout";
+  if (r.stopped || r.signal) return "signal";
+  return null;
+}
+// An answer that cannot count: why, or null.
+function answerWhy(r, f, seat) {
+  if (f.policyError) return "policy-file-error";
+  if (f.fallback) return "fallback-agent";
+  if (r.exit !== 0) return f.rejectHint ? "rejected" : "exit";
+  if (f.empty) return "empty";
+  if (f.verdicts.length !== 1) return "verdict";
+  if (seat.cli === "codex" && seat.model !== CLI_DEFAULT && f.ranModel !== seat.model) return "model-mismatch";
+  return null;
+}
+
+// Run with @cli-default, codex ran what its config names: the author's own family, or one the probe cannot tell, does not count.
+function defaultFamilyWhy(ctx, seat, a, f) {
+  if (seat.cli !== "codex" || seat.model !== CLI_DEFAULT) return null;
+  if (!f.ranModel || !safeModel(f.ranModel)) return "default-model-family";
+  const again = reprobe(ctx, { cli: "codex", model: f.ranModel }, a.runtime);
+  return again.decision === "unseated" || again.familyKnown === false ? "default-model-family" : null;
+}
+
+export const gathered = (verdicts) => verdicts.reduce((worst, v) => (RANK[v] > RANK[worst] ? v : worst), "APPROVE");
+
+async function runPart(ctx, run, seat, g, part, k, count) {
+  const plan = seatPlan({ cli: seat.cli, model: seat.model, effort: run.effort, mcpServers: g.probed.mcpServers || [], d: run.d, o: run.o, id: run.id, policy: POLICY, part: count > 1 ? k + 1 : 0 });
+  writeFileSync(plan.stdin, part, { mode: 0o600 });
+  if (run.signalled()) return { why: "signal", r: { exit: null, signal: null, secs: 0 }, f: {}, plan };
+  const r = await runLimited({ exe: g.exe, args: plan.args, cwd: plan.cwd, env: seatEnv(ctx, plan), stdin: plan.stdin, stdout: plan.stdout, stderr: plan.stderr, limitMs: run.limitMs });
+  const f = processWhy(r) ? {} : factsOf(seat.cli, plan);
+  const why = processWhy(r) || answerWhy(r, f, seat) || defaultFamilyWhy(ctx, seat, run, f);
+  return { why, r, f, plan };
+}
+
+const factsShown = (f) => Object.fromEntries(Object.entries({ verdict: f.verdicts?.length === 1 ? f.verdicts[0] : undefined, ranModel: f.ranModel,
+  apiError: f.apiError || undefined, rejectHint: f.rejectHint }).filter(([, v]) => v !== undefined && v !== null));
+
+// Sends the parts in order; the first that fails ends the seat's run (the seat is ERROR whatever the rest say).
+async function runParts(ctx, run, seat, g, parts, base) {
+  const done = [];
+  for (const [k, part] of parts.entries()) {
+    const one = await runPart(ctx, run, seat, g, part, k, parts.length);
+    done.push(one);
+    if (one.why) break;
+  }
+  const last = done[done.length - 1];
+  const secs = Math.round(done.reduce((t, x) => t + (x.r.secs || 0), 0) * 10) / 10;
+  const result = { ...base, status: last.why ? "failed" : "answered", why: last.why, exit: last.r.exit, signal: last.r.signal, secs,
+    answer: last.plan.answer, errors: last.plan.stderr, facts: factsShown(last.f) };
+  if (!last.why && parts.length > 1) result.facts.verdict = gathered(done.map((x) => x.f.verdicts[0]));
+  if (parts.length > 1) result.parts = done.map((x) => ({ answer: x.plan.answer, errors: x.plan.stderr, why: x.why, facts: factsShown(x.f) }));
+  return result;
+}
+
+// What a seat's run leaves is taken away when it returns: gemini's record of its folder, this run's opencode session,
+// the seat's copy of the payload.
+async function afterSeat(ctx, run, seat) {
+  const notes = [];
+  if (seat.cli === "gemini") notes.push(...cleanSeat(join(run.d, "gemini"), { env: ctx.env, platform: ctx.platform }).skipped.map((p) => `gemini 기록 폴더를 남김: ${p}`));
+  if (seat.cli === "opencode") await opencodeSessions({ ...ctx, d: run.d, id: run.id }, []);
+  rmSync(join(run.d, seat.cli), { recursive: true, force: true });
+  return notes;
+}
+
+async function seatWork(ctx, run, seat, g, payload, base) {
+  const plan = seatPlan({ cli: seat.cli, model: seat.model, effort: run.effort, mcpServers: g.probed.mcpServers || [], d: run.d, o: run.o, id: run.id, policy: POLICY });
+  const why = await cliChecks(ctx, seat, plan, g.exe);
+  if (why) return { ...base, why };
+  let parts;
+  try {
+    parts = partsOf(payload, run.split[seat.cli], run.id);
+  } catch (e) {
+    if (e instanceof Stop) return { ...base, why: "split", notes: [e.message] };
+    throw e;
+  }
+  if (run.dryRun) return { ...base, status: "planned", plan: { exe: g.exe, cwd: plan.cwd, args: plan.args, set: plan.set, unset: plan.unset, check: plan.check, parts: parts.length } };
+  return runParts(ctx, run, seat, g, parts, base);
+}
+
+async function sendSeat(ctx, run, seat, payload) {
+  const base = { seat: seat.cli, model: seat.model, status: "not-sent", why: null, exit: null, signal: null, secs: 0, answer: null, errors: null, facts: {}, notes: [] };
+  const g = guards(ctx, seat, run);
+  if (g.why) return { ...base, why: g.why, notes: g.notes || [] };
+  mkdirSync(join(run.d, seat.cli), { recursive: true, mode: 0o700 });
+  let result;
+  try {
+    result = await seatWork(ctx, run, seat, g, payload, base);
+  } finally {
+    const notes = await afterSeat(ctx, run, seat);
+    if (result) result.notes = [...(result.notes || []), ...notes];
+  }
+  return result;
+}
+
+// SIGINT, SIGTERM and SIGHUP end every seat (TERM to its group, KILL 2 s later), the seats' records are still cleaned,
+// and send ends with 128 + the signal's number; past 30 s it ends anyway.
+function watchSignals() {
+  let code = 0;
+  const handlers = ["SIGINT", "SIGTERM", "SIGHUP"].map((sig) => [sig, () => {
+    if (code) return;
+    code = 128 + (osConstants.signals[sig] || 0);
+    stopAll();
+    setTimeout(() => process.exit(code), 30000).unref();
+  }]);
+  for (const [sig, h] of handlers) process.on(sig, h);
+  return { code: () => code, off: () => handlers.forEach(([sig, h]) => process.off(sig, h)) };
+}
+
+const DEST = {
+  codex: () => "config.toml 이 정한 프로바이더",
+  gemini: () => "사용자 설정의 인증",
+  opencode: (x) => (x.model === CLI_DEFAULT ? "opencode 설정의 프로바이더" : `${x.model.split("/")[0]}(-m 의 프로바이더)`),
+};
+const unsentCount = (d) => readText(join(d, "unsent.md")).split("\n").filter(Boolean).length;
+// The line the report carries: where the payload went, its size, the scan, the new files left out.
+function declared(run, bytes, seats, d) {
+  const went = seats.filter((x) => x.status !== "not-sent").map((x) => `${x.seat} 는 ${DEST[x.seat](x)}`);
+  const head = run.dryRun ? "외부 전송(선언, dry-run 이라 보내지 않음)" : "외부 전송(선언)";
+  return `${head}: ${went.join(", ") || "보낸 좌석 없음"}, 페이로드 ${bytes}B, 비밀 검사 0건, 보내지 않은 새 파일 ${unsentCount(d)}`;
+}
+
+function sendStart(o, ctx, a) {
+  const { d, o: out } = runFolder(o.dir);
+  if (!out) throw new Stop("not-a-run-folder", `답 폴더(ralph-qa-out.*)가 없다: ${d}`);
+  refuseSent(d);
+  if (ctx.env.CODEX_SANDBOX_NETWORK_DISABLED === "1" && !a.dryRun) throw new Stop("sandboxed", "Codex sandbox 가 네트워크를 막는다. 승인을 받아 sandbox 밖에서 send 를 다시 한다");
+  const { id } = readRun(d);
+  const payload = payloadToSend(d, id, Boolean(o["allow-large"]));
+  const pid = liveLock(d, ctx.now());
+  if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
+  return { d, out, id, payload };
+}
+
+async function send(o, ctx) {
+  const a = sendArgs(o);
+  const { d, out, id, payload } = sendStart(o, ctx, a);
+  const lock = join(d, `.running-${process.pid}.md`);
+  writeFileSync(lock, `${process.pid} ${new Date(ctx.now()).toISOString()}\n`, { mode: 0o600 });
+  const signals = watchSignals();
+  const run = { ...a, d, o: out, id, signalled: () => signals.code() !== 0 };
+  try {
+    const seats = await Promise.all(a.seats.map((x) => sendSeat(ctx, run, x, payload)));
+    const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };
+    return [result, signals.code(), a.dryRun ? null : d];
+  } finally {
+    signals.off();
+    rmSync(lock, { force: true });
+  }
 }
 
 const COMMANDS = { init, untracked: listUntracked, prepare, check, send, cleanup, put };
 
 // The JSON on stdout and in <d>/result-<command>.md (not for cleanup: the folder is gone).
-function report(ctx, command, dir, result, code) {
+function report(ctx, command, dir, result, code, name = command) {
   const json = `${JSON.stringify({ command, ...result }, null, 2)}\n`;
   ctx.stdout.write(json);
   if (result.message) ctx.stderr.write(`${result.message}\n`);
   if (dir) {
     try {
-      writeFileSync(join(dir, `result-${command}.md`), json, { mode: 0o600 });
+      writeFileSync(join(dir, `result-${name}.md`), json, { mode: 0o600 });
     } catch {
       /* the JSON on stdout is the answer */
     }
@@ -380,6 +702,9 @@ const folderOf = (o) => {
   }
 };
 
+// A send that stopped goes to result-send-stop.md: result-send.md says the folder was sent, and a stopped send sent nothing.
+const stopName = (command) => (command === "send" ? "send-stop" : command);
+
 function failed(ctx, { command, o }, e) {
   if (e instanceof Usage) {
     ctx.stderr.write(`ralph-qa: ${e.message}\n${USAGE}`);
@@ -390,7 +715,7 @@ function failed(ctx, { command, o }, e) {
     return 2;
   }
   const result = { ok: false, stop: e.code, message: e.message, detail: e.detail };
-  return report(ctx, command, folderOf(o), result, EXIT_OF[e.code] || 3);
+  return report(ctx, command, folderOf(o), result, EXIT_OF[e.code] || 3, stopName(command));
 }
 
 export async function main(argv, io = {}) {
