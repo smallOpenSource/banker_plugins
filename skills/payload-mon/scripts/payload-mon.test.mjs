@@ -934,8 +934,11 @@ function swapPreload(outside, after = null) {
   ].join("\n"));
   return file;
 }
-const onWith = (c, preload) =>
-  spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, CLI, "on"], { encoding: "utf8", env: cliEnv(c) });
+const onWith = (c, ...preloads) =>
+  spawnSync(process.execPath, [...preloads.flatMap((p) => ["--import", pathToFileURL(p).href]), CLI, "on"], {
+    encoding: "utf8",
+    env: cliEnv(c),
+  });
 
 test("on refuses and takes back its copy when the copy folder turns into a link while it writes", () => {
   const c = setup(HUD_V4);
@@ -1015,4 +1018,159 @@ test("off does not delete through the old copy folder beside a linked wrapper wh
   linkDir(outside, join(c.link, "payload-mon"));
   assert.equal(turnOff(c).ok, true);
   assert.ok(existsSync(join(outside, "payload-size.mjs")));
+});
+
+// B1-6: a racing program that puts the folder back. Right before payload-mon writes its temporary copy, the copy
+// folder is moved aside and a link to `outside` takes its name; once payload-mon has renamed its copy in, the link
+// goes and the folder comes back. The folder is then the one payload-mon stamped, without the copy in it.
+function restorePreload(outside) {
+  const file = join(root, `restore-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs, { symlinkSync, unlinkSync, rmdirSync } from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'import { dirname } from "node:path";',
+    "const write = fs.writeFileSync;",
+    "const rename = fs.renameSync;",
+    "let dir = null;",
+    "fs.writeFileSync = function (p, ...rest) {",
+    '  if (dir === null && typeof p === "string" && /payload-mon[\\\\/]payload-size\\.mjs\\.\\d+\\.tmp$/.test(p)) {',
+    "    dir = dirname(p);",
+    '    rename.call(fs, dir, dir + ".aside");',
+    `    symlinkSync(${JSON.stringify(outside)}, dir, process.platform === "win32" ? "junction" : "dir");`,
+    "  }",
+    "  return write.call(this, p, ...rest);",
+    "};",
+    "fs.renameSync = function (from, to) {",
+    "  rename.call(this, from, to);",
+    "  if (dir !== null && /payload-mon[\\\\/]payload-size\\.mjs$/.test(to)) {",
+    '    if (process.platform === "win32") rmdirSync(dir); else unlinkSync(dir);',
+    '    rename.call(fs, dir + ".aside", dir);',
+    "  }",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+
+test("on refuses when the copy folder was swapped and put back while it wrote, leaving no copy in it", () => {
+  const c = setup(HUD_V4);
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  const before = readFileSync(c.hudFile);
+  const r = onWith(c, restorePreload(outside));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 쓰는 동안 바뀌었습니다/);
+  assert.ok(readFileSync(c.hudFile).equals(before));
+});
+
+// B1-7: a racing program that swaps the folder after payload-mon wrote into it. Once payload-mon has renamed its
+// copy in, the copy folder is moved aside and a link to `outside` takes its name.
+function lateSwapPreload(outside) {
+  const file = join(root, `late-swap-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs, { symlinkSync } from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'import { dirname } from "node:path";',
+    "const rename = fs.renameSync;",
+    "let done = false;",
+    "fs.renameSync = function (from, to) {",
+    "  rename.call(this, from, to);",
+    "  if (!done && /payload-mon[\\\\/]payload-size\\.mjs$/.test(to)) {",
+    "    done = true;",
+    '    rename.call(fs, dirname(to), dirname(to) + ".aside");',
+    `    symlinkSync(${JSON.stringify(outside)}, dirname(to), process.platform === "win32" ? "junction" : "dir");`,
+    "  }",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+
+// Deferred 17: a preload under which every file number passes 2^53, as NTFS file IDs do (seen on the Windows test
+// box): the numbers stay apart as BigInt and all read as one Number.
+function highIdPreload() {
+  const file = join(root, `high-id-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const ids = new Map();",
+    "const high = (st) => {",
+    "  const key = `${st.dev}:${st.ino}`;",
+    "  if (!ids.has(key)) ids.set(key, (1n << 60n) + BigInt(ids.size + 1));",
+    "  return ids.get(key);",
+    "};",
+    'for (const name of ["lstatSync", "statSync", "fstatSync"]) {',
+    "  const real = fs[name];",
+    "  fs[name] = function (p, opts) {",
+    "    const st = real.call(this, p, opts);",
+    "    if (st) st.ino = opts?.bigint ? high(st) : Number(high(st));",
+    "    return st;",
+    "  };",
+    "}",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+
+// Another wrapper's copy, current, in the folder the copy folder turns into.
+function otherWrapperCopy(c) {
+  const outside = join(c.dir, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "payload-size.mjs"), readFileSync(MODULE));
+  return outside;
+}
+
+test("the take-back leaves a copy that was already in the folder the copy folder turned into", () => {
+  const c = setup(HUD_V4);
+  const outside = otherWrapperCopy(c);
+  const r = onWith(c, lateSwapPreload(outside));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 쓰는 동안 바뀌었습니다/);
+  assert.ok(existsSync(join(outside, "payload-size.mjs")), "the other wrapper's copy stays");
+});
+
+// Deferred 17: a racing program that puts another real folder in place: once payload-mon has renamed its copy in,
+// the copy folder is moved aside and a new folder holding the same bytes takes its name, so only the folder's
+// number tells the two apart.
+function realSwapPreload(bytesFrom) {
+  const file = join(root, `real-swap-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs, { copyFileSync, mkdirSync } from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'import { dirname } from "node:path";',
+    "const rename = fs.renameSync;",
+    "let done = false;",
+    "fs.renameSync = function (from, to) {",
+    "  rename.call(this, from, to);",
+    "  if (!done && /payload-mon[\\\\/]payload-size\\.mjs$/.test(to)) {",
+    "    done = true;",
+    '    rename.call(fs, dirname(to), dirname(to) + ".aside");',
+    "    mkdirSync(dirname(to));",
+    `    copyFileSync(${JSON.stringify(bytesFrom)}, to);`,
+    "  }",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return file;
+}
+
+test("on refuses a copy folder replaced by another real folder while it writes, also where folder numbers pass 2^53", () => {
+  const c = setup(HUD_V4);
+  const before = readFileSync(c.hudFile);
+  const r = onWith(c, highIdPreload(), realSwapPreload(MODULE));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /사본 폴더가 쓰는 동안 바뀌었습니다/);
+  assert.ok(readFileSync(c.hudFile).equals(before));
+});
+
+test("the take-back tells files apart by their whole number where file numbers pass 2^53", () => {
+  const c = setup(HUD_V4);
+  const outside = otherWrapperCopy(c);
+  const r = onWith(c, highIdPreload(), lateSwapPreload(outside));
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.ok(existsSync(join(outside, "payload-size.mjs")), "the other wrapper's copy stays");
 });

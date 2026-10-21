@@ -211,7 +211,10 @@ export function clearCache(dir = CACHE_DIR) {
 export function estimatePayloadBytes(transcriptPath, cacheDir = CACHE_DIR) {
   const fd = openSync(transcriptPath, "r");
   try {
-    const { size, ino } = fstatSync(fd);
+    // The file number as a string: NTFS file IDs pass 2^53, where a Number loses the low bits, and JSON has no BigInt.
+    const st = fstatSync(fd, { bigint: true });
+    const size = Number(st.size);
+    const ino = String(st.ino);
     const file = cacheFile(cacheDir, transcriptPath);
     const c = loadCache(file);
     // Resume only a cache of these rules, for this file, which has not shrunk since.

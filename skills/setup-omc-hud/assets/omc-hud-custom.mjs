@@ -102,11 +102,10 @@ const isFile = (p) => {
     return false;
   }
 };
-// The first of these folders (each once, in this order) that holds the file, as a regular file; the
-// first one's path when none does.
+// The first of these folders (each once, in this order) that holds the file as a regular file, "" when none
+// does: a folder at that name is no module, and opening a FIFO waits for a writer for good.
 function findSibling(dirs, ...parts) {
-  const paths = [...new Set(dirs.filter(Boolean))].map((d) => join(d, ...parts));
-  return paths.find(isFile) ?? paths[0];
+  return [...new Set(dirs.filter(Boolean))].map((d) => join(d, ...parts)).find(isFile) ?? "";
 }
 
 const STDIN_TIMEOUT_MS = 2000; // Claude Code pipes the payload immediately
@@ -174,12 +173,20 @@ function expandDir(v) {
   return resolve(startDir(), v);
 }
 // Claude Code's config folder. Its hud/ is where the installer puts the loader: the third place
-// siblings are looked for, as when another script imported this file through a link.
+// siblings are looked for, as when another script imported this file through a link. "" when the
+// home folder cannot be told (no HOME and no account entry) or the working folder is gone: the
+// other places still count.
 function configDir() {
   const v = (process.env.CLAUDE_CONFIG_DIR || "").trim();
   return v ? expandDir(v) : join(homedir(), ".claude");
 }
-const configHud = () => join(configDir(), "hud");
+function configHud() {
+  try {
+    return join(configDir(), "hud");
+  } catch {
+    return "";
+  }
+}
 function loginAccount() {
   try {
     const raw = readFileSync(join(claudeJsonDir(), ".claude.json"), "utf8");
@@ -332,13 +339,18 @@ for (const s of [process.stdout, process.stderr]) {
 }
 
 let raw = "";
-try {
-  raw = (await renderInProcess(RENDER_TIMEOUT_MS)).replace(/\r/g, "");
-} catch {
-  raw = ""; // fall through to the child-process path
+if (!HUD) {
+  // No regular file at any place looked in: nothing to run. Named where the installer puts it.
+  emit(`[OMC HUD] omc-hud.mjs not found: ${join(HERE.named || HERE.real, "omc-hud.mjs")}\n`);
+} else {
+  try {
+    raw = (await renderInProcess(RENDER_TIMEOUT_MS)).replace(/\r/g, "");
+  } catch {
+    raw = ""; // fall through to the child-process path
+  }
 }
 
-if (!raw.trim()) {
+if (HUD && !raw.trim()) {
   // In-process rendering produced nothing usable. Fall back to the original
   // out-of-process path: it costs an extra node, but a statusline that renders
   // beats one that does not — e.g. if a future OMC version stops being
@@ -535,8 +547,8 @@ try {
   // without it (payload-mon off) or without a transcript, PL is left out.
   try {
     const transcript = JSON.parse(input)?.transcript_path;
-    if (transcript) {
-      const copy = findSibling([HERE.real, HERE.named, configHud(), HERE.self], "payload-mon", "payload-size.mjs");
+    const copy = transcript ? findSibling([HERE.real, HERE.named, configHud(), HERE.self], "payload-mon", "payload-size.mjs") : "";
+    if (copy) {
       const { estimatePayloadBytes, REQUEST_LIMIT_BYTES } = await import(pathToFileURL(copy).href);
       const bytes = estimatePayloadBytes(transcript);
       if (Number.isFinite(bytes)) {

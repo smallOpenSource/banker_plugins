@@ -73,7 +73,9 @@ node "<이 스킬 디렉터리 절대경로>\assets\apply-hud.mjs"
 
 - `[ok] statusLine -> node "<설정 폴더>/hud/omc-hud-custom.mjs"` 줄을 확인한다.
 - `Render check` 줄을 확인한다. `[ok]` 면 정상이다. `[!!]` 나 `[..]` 면 그 줄을 그대로 보고한다. 이때도 설치는 끝났다(종료 0).
-- 기존 statusLine 이 다른 명령이었으면 `[..] statusLine ran ...` 줄이 나온다. 보고에 그대로 넣는다.
+- 기존 statusLine 이 다른 명령이었으면 `[..] statusLine ran ...` 줄이 나온다. 보고에 그대로 넣는다. 그 명령 속 비밀로 보이는 부분(비밀 이름의 변수, 플래그, 머리글 값, Bearer 와 Basic, URL 의 사용자 정보와 쿼리 값, 긴 키 꼴)은 `***` 로 나온다. 원문은 백업에만 있다.
+- `settings.json` 이 하드 링크면 `[..] settings.json has N other name(s) (a hard link)` 줄이 나온다. 제자리에 써서 다른 이름(스냅샷 등)도 새 내용이 됐다는 뜻이다. 보고에 넣는다.
+- 설치할 자리(`settings.json`, `hud/` 의 파일, `.omc/hud-config.json`)에 일반 파일이 아닌 것(폴더, FIFO, 장치)이 있거나, 써 넣을 폴더 자리에 폴더가 아닌 것이 있으면 `[x] ... nothing changed` 와 종료 1 로 멈춘다. 그 자리를 비운 뒤 다시 실행한다.
 - 종료 코드 1 이면 출력의 `[x]` 줄을 그대로 보고하고 멈춘다. 이때 바뀐 파일은 없다.
   - `settings.json` 이 JSON 문법에 맞지 않거나(주석, 끝 쉼표 포함) 객체가 아니면 사용자가 고친 뒤 다시 실행한다. 빈 파일은 Claude Code 처럼 `{}` 로 읽는다.
   - OMC 가 없으면 OMC 를 먼저 설치한다(`setup-omc` 스킬). 이 스킬은 OMC 를 설치하지 않는다.

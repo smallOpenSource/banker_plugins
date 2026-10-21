@@ -26,9 +26,7 @@ const root = mkdtempSync(join(tmpdir(), "claude-update-last-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
 // Links made without privileges and mode bits are POSIX matters; root ignores mode bits.
-// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
-// tests that make one run only where this account can.
-const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+// A file link needs a privilege on Windows, so the tests that make one run only where this account can.
 const canLinkFiles = (() => {
   const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
   try {
