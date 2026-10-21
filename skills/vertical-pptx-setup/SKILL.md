@@ -38,31 +38,41 @@ python-pptx 는 그보다 높은 버전을 요구하므로 `python3` 을 그대�
 
 ### 네트워크 확인 (내려받기 전)
 
-이 스킬이 내려받는 원천에 10초 안에 닿는지 먼저 본다. 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
+이 스킬이 내려받는 원천에 닿는지 먼저 본다(curl 은 10초, npm 은 15초 안). 닿지 않으면 그 원천에서 받는 단계는 하지 않고, 이미 설치된 것의 확인만 한 뒤 "오프라인이라 설치하지 않음(필요한 것: <못 깐 것>)" 으로 보고한다.
 
 ```bash
-(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)                                         # pptxgenjs
+[ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ] && echo "Codex sandbox 가 네트워크를 막음(아래 실패는 오프라인이 아님)"
+in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) 2>/dev/null & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
+in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'                                         # pptxgenjs
 # pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함)를 홈 폴더에서 읽는다. install 절이 global 절보다 앞선다
-L=$( (cd ~ && { pip config list || pip3 config list || python3 -m pip config list; }) 2>/dev/null) || echo "pip 설정을 읽지 못함(pip 이 없거나 10 미만). 사내 미러를 쓰면 확인 주소를 그 미러로 바꿔 본다"
+L=$( (cd ~ && { pip config list || pip3 config list || python3.13 -m pip config list || python3.12 -m pip config list || python3.11 -m pip config list || python3 -m pip config list; }) 2>/dev/null) || echo "pip 설정을 읽지 못함(pip 이 없거나 10 미만). 사내 미러를 쓰면 확인 주소를 그 미러로 바꿔 본다"
 I="${PIP_INDEX_URL:-$(printf '%s\n' "$L" | sed -n "s/^install\.index-url='\(.*\)'$/\1/p")}"
 I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
 I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보는 뗌
-printf 'url = "%s"\n' "$I/pip/" | curl -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # python-pptx
-curl -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://download.documentfoundation.org   # LibreOffice
+printf 'url = "%s"\n' "$I/pip/" | curl --ssl-no-revoke -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # python-pptx
+curl --ssl-no-revoke -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://download.documentfoundation.org   # LibreOffice
 ```
 
 - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
-- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && { npm view pptxgenjs version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r; })` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`pptxgenjs`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다.
+- `npm ping` 은 15초 감시(`in15`) 안에서 부른다. 패킷을 버리는 망에서 npm 은 연결에 시간 제한을 두지 않아(`--fetch-timeout` 은 받는 중의 쉼만 잰다) OS 의 연결 재시도가 끝날 때까지 기다린다(Rocky 8.10 실측 130초). 15초 안에 끝나지 않으면 `15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)` 과 종료 143 이다. `--no-update-notifier` 는 npm 이 제 판을 묻는 요청을 하나 더 내지 않게 한다.
+- `npm ping` 이 실패하면 ping 에 답하지 않는 사내 미러일 수 있다. `(cd ~ && T=$(mktemp -d) && { npm view pptxgenjs version --fetch-retries=0 --fetch-timeout=10000 --cache "$T" --no-update-notifier; r=$?; rm -rf "$T"; exit $r; })` 도 실패해야 오프라인으로 본다. 이 스킬이 설치할 패키지(`pptxgenjs`)를 빈 캐시로 물으므로 옛 값이 나올 수 없다. ping 이 15초 감시에 걸려 멈췄으면(종료 143) 이 확인은 하지 않는다. 같은 레지스트리라 같은 시간을 또 기다린다.
 - `npm` 이 없으면(명령 없음) 오프라인이 아니라 확인하지 못한 것이다. Node 를 먼저 갖춘다(`setup-node`).
 - `npm ping` 은 npm 의 프록시 설정(`proxy`, `https-proxy`)을 따른다. 사내 미러만 열린 망이면 그 미러가 쓰이는지 npm 설정을 본다.
-- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다.
+- `curl -sSI` 는 머리만 받는다(본문을 받지 않음). 닿지 못하면 종료 코드가 0 이 아니다(HTTP 상태와 관계없음). `curl` 은 `HTTPS_PROXY` 를 따른다. 확인 줄은 `--ssl-no-revoke` 를 준다. Windows 의 Git Bash curl 도 Schannel 이라, 폐지 목록 서버에 닿지 못하는 망에서 폐지 확인이 실패하면 종료 60 이다(Windows 박스 실측). 다른 curl 은 이 깃발을 받고 무시한다(macOS curl 8.7.1, Rocky 8.10 curl 7.61.1 실측).
 - PyPI 는 pip 이 쓰는 색인(`PIP_INDEX_URL`, `pip config list` 의 `install.index-url` 이나 `global.index-url`, 없으면 pypi.org)의 작은 쪽(`<색인>/pip/`)을 본다.
 - `pip config get` 은 `PIP_CONFIG_FILE` 로 준 파일을 읽지 않아(pip 25.0 실측) `pip config list` 를 읽는다.
+- Rocky 8 의 기본 pip(9.0.3, `pip3`)은 `config` 명령이 없고 `pip` 이름은 없다(Rocky 8.10 실측). 그래서 판 붙은 python(3.13, 3.12, 3.11)의 pip 도 차례로 본다.
 - 홈 폴더에서 읽는다. `python3 -m pip` 는 지금 폴더를 import 경로 맨 앞에 두어, 지금 폴더에 있는 남의 저장소의 `pip/` 가 실행될 수 있다.
 - bash 블록은 주소를 명령 인자가 아니라 표준 입력의 curl 설정(`-K -`)으로 넘긴다. 명령 인자는 같은 PC 의 다른 사용자가 `ps` 로 볼 수 있어, 경로나 질의에 든 토큰도 거기 싣지 않는다. 사용자 정보(`사용자:토큰@`)는 떼고 묻는다. 닿는지만 보므로 인증은 필요 없다(401 도 닿은 것이다). Windows 에서도 뗀 주소를 쓴다.
-- Windows PowerShell 에서는 같은 주소를 `curl.exe -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다).
+- Windows PowerShell 에서는 같은 주소를 `curl.exe --ssl-no-revoke -sSI -o NUL --connect-timeout 5 --max-time 10 <주소>` 로 보고 `$LASTEXITCODE` 가 0 인지 본다(PowerShell 5.1 의 `curl` 은 `Invoke-WebRequest` 별칭이다). `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `--ssl-no-revoke` 는 폐지 목록 서버에 닿지 못하는 망에서 Schannel 의 폐지 확인 실패를 오프라인으로 읽지 않게 한다. 닿는지만 보고 받은 내용은 쓰지 않으므로 이 확인에만 준다. `curl.exe` 가 없으면 `$LASTEXITCODE` 에 앞 명령의 값이 남으므로 `Get-Command curl.exe -ErrorAction SilentlyContinue` 로 먼저 보고, 없으면 확인하지 못한 것으로 적는다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다). PowerShell 에는 15초 감시를 두지 않는다(Windows 의 연결 시간 제한은 약 21초로 알려져 있다. 미실측).
 - 사내 미러만 열린 망이면 확인 주소를 그 미러로 바꿔 본다.
 - OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
+  - 패킷을 버리거나 답하지 않는 망에서 dnf 는 저장소마다 약 2분(SYN 을 버리는 망 실측 121초), apt 는 원천마다 약 4분(답하지 않는 원천 실측 247초) 기다린 뒤 실패로 끝난다. 시간 제한은 관리자 설정을 따르므로 이 스킬이 바꾸지 않는다.
+  - `apt-get update` 는 받지 못해도 종료 0 이다. 출력의 `W: Failed to fetch` 가 있으면 그 단계를 실패로 보고한다.
+- Codex sandbox 가 네트워크를 막는 모드(기본 `workspace-write`, `read-only`)에서는 `CODEX_SANDBOX_NETWORK_DISABLED=1` 이 서고 확인이 모두 실패한다(curl 종료 7, npm `EPERM`). 블록의 첫 줄이 그렇다고 알린다. 그때는 '오프라인' 이 아니라 'sandbox 가 네트워크를 막음' 으로 보고하고, 승인을 받아 sandbox 밖에서 확인부터 다시 한다. Claude Code sandbox 안(`SANDBOX_RUNTIME=1`)에서는 허용 목록 밖 주소를 sandbox 프록시가 막는다. Windows PowerShell 에서는 `$env:CODEX_SANDBOX_NETWORK_DISABLED -eq '1'` 로 본다.
+- 확인이 실패하면 보고에 그 명령, 종료 코드, stderr 첫 줄을 붙인다(예: `npm error code ETIMEDOUT`, `curl: (28) ...`). 원인을 '오프라인' 하나로 짐작하지 않는다.
+- curl 의 종료 60(인증서 검증 실패)도 오프라인이 아니다. 망은 열려 있고, TLS 를 가로채는 사내 프록시의 인증서를 OS 가 믿지 않는 것이다. '인증서 문제로 설치하지 않음' 으로 보고한다.
+- curl 은 닿는데 npm 만 인증서 오류(`UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`)로 실패하면 망은 열려 있고 npm 이 사내 인증서를 믿지 않는 것이다(npm 은 OS 인증서 저장소를 쓰지 않는다). '인증서 문제로 설치하지 않음' 으로 보고하고 `NODE_EXTRA_CA_CERTS=<사내 CA 파일>` 을 안내한다. Node 24 는 `NODE_OPTIONS=--use-system-ca` 도 된다.
 
 ## 1. 빌더 설치 (둘 중 하나면 충분하다)
 
@@ -124,9 +134,9 @@ mkdir -p $PREFIX
 dnf -q -y --disablerepo='*' --enablerepo='appstream,baseos,powertools' \
   download --resolve --alldeps --destdir=$SP libreoffice-impress libreoffice-writer
 cd $PREFIX
-for r in $SP/*.rpm; do
+find "$SP" -name '*.rpm' -type f | while read -r r; do   # 글롭 없이(zsh 는 맞는 것이 없으면 멈춤)
   rpm2cpio "$r" | cpio -idmu --quiet 2>/dev/null
-  chmod -R u+rwX $PREFIX/usr 2>/dev/null    # ★ 이 줄이 없으면 중간부터 전부 실패한다
+  chmod -R u+rwX "$PREFIX/usr" 2>/dev/null    # ★ 이 줄이 없으면 중간부터 전부 실패한다
 done
 export LD_LIBRARY_PATH=$PREFIX/usr/lib64:$PREFIX/usr/lib64/libreoffice/program:$LD_LIBRARY_PATH
 SOFFICE=$PREFIX/usr/lib64/libreoffice/program/soffice
@@ -150,13 +160,23 @@ cd ~; rm -rf "$SP"
 V=$(curl -fsS --connect-timeout 10 --max-time 30 https://download.documentfoundation.org/libreoffice/stable/ \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+/' | sort -V | tail -1 | tr -d '/')
 A=$(uname -m)          # x86_64 또는 aarch64. 업스트림이 둘 다 제공한다
-T=$(mktemp -d)
-[ -n "$V" ] && curl -fsSL --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o "$T/lo.tar.gz" \
-  "https://download.documentfoundation.org/libreoffice/stable/$V/rpm/$A/LibreOffice_${V}_Linux_${A/x86_64/x86-64}_rpm.tar.gz" \
-  || { echo "받지 못함(판: ${V:-알 수 없음})"; rm -rf "$T"; }
+PREFIX=$HOME/.local/lo-upstream; T=$(mktemp -d)   # T: 받은 tarball 과 푼 RPM. 끝나면 지운다
+if [ -n "$V" ] && curl -fsSL --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o "$T/lo.tar.gz" \
+     "https://download.documentfoundation.org/libreoffice/stable/$V/rpm/$A/LibreOffice_${V}_Linux_${A/x86_64/x86-64}_rpm.tar.gz" \
+   && tar -xzf "$T/lo.tar.gz" -C "$T" && mkdir -p "$PREFIX" && cd "$PREFIX"; then
+  find "$T" -path '*/RPMS/*.rpm' -type f | while read -r r; do   # 글롭 없이(zsh 는 맞는 것이 없으면 멈춤)
+    rpm2cpio "$r" | cpio -idmu --quiet 2>/dev/null
+    chmod -R u+rwX "$PREFIX" 2>/dev/null    # RPM 마다(위 배포판 경로와 같은 까닭)
+  done
+  cd ~; S=$(find "$PREFIX/opt" -path '*/program/soffice' -type f 2>/dev/null | head -1)
+  [ -n "$S" ] && echo "SOFFICE=$S" || echo "soffice 를 찾지 못함(tarball 의 꼴이 바뀌었을 수 있음)"
+else
+  cd ~; echo "받지 못했거나 풀지 못함(판: ${V:-알 수 없음})"
+fi
+rm -rf "$T"                                  # 성공과 실패 모두 지운다
 ```
 
-이후는 위와 같은 추출 절차이고 `chmod` 주의도 동일하다. 받은 tarball 은 `$T` 안에서 풀고, 추출이 끝나면 `rm -rf "$T"` 로 지운다.
+블록 하나로 받기, 풀기, 추출, 정리까지 끝낸다. 업스트림 RPM 은 `opt/libreoffice<판>/` 아래에 깔린다. 찾지 못하면 그렇다고 알린다(미실측: 내려받기 없이 꼴을 확인하지 못했다).
 판을 알 수 없으면(목록 페이지에 닿지 못함, 페이지 모양이 바뀜) 받지 않고 그렇게 보고한다.
 deb 계열은 `rpm/` 대신 `deb/` 를 받아 `dpkg-deb -x` 로 편다.
 `rpm2cpio` 와 `cpio` 가 없으면 이 경로는 못 쓴다. 그때는 root 를 얻거나 시각 검증을 건너뛴다.

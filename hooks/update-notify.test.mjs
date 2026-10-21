@@ -230,15 +230,30 @@ test('체크인이 실패한 뒤 하루 안의 세션 시작은 다시 시도하
   }
 });
 
-test('캐시 자리가 FIFO 여도 기다리지 않는다', { skip: process.platform === 'win32' && 'Windows 에는 FIFO 가 없다' }, () => {
+test('캐시 자리가 FIFO 여도 기다리지 않는다', { skip: process.platform === 'win32' && 'Windows 에는 FIFO 가 없다' }, async () => {
   const tmp = mkTmp();
   mkdirSync(bankerDir(tmp), { recursive: true });
   assert.equal(spawnSync('mkfifo', [cachePath(tmp)]).status, 0, 'mkfifo');
-  const res = runNotify(tmp, { ...LOOPBACK, timeout: 10_000 });
-  assert.equal(res.signal, null, '훅이 스스로 끝났다');
-  assert.equal(res.status, 0);
-  assert.equal(res.stdout.trim(), '', '캐시를 읽지 못하면 알리지 않는다');
-  assert.equal(lstatSync(cachePath(tmp)).isFIFO(), true, 'FIFO 는 그대로');
+  // The check-in the hook starts replaces the FIFO when it writes the time it tried: a server that holds the
+  // connection keeps it from writing until the FIFO has been looked at.
+  const held = [];
+  const server = net.createServer((sock) => held.push(sock));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const env = { BANKER_TELEMETRY_ENDPOINT: `http://127.0.0.1:${server.address().port}/collect` };
+  try {
+    const res = runNotify(tmp, { env, timeout: 10_000 });
+    assert.equal(res.signal, null, '훅이 스스로 끝났다');
+    assert.equal(res.status, 0);
+    assert.equal(res.stdout.trim(), '', '캐시를 읽지 못하면 알리지 않는다');
+    await until(() => held.length === 1, 10000, '뒤 체크인이 연결해 기다린다');
+    assert.equal(lstatSync(cachePath(tmp)).isFIFO(), true, 'FIFO 는 그대로');
+  } finally {
+    for (const sock of held) sock.destroy();
+    server.close();
+  }
+  // lstat first: reading the FIFO itself would block this process.
+  const triedFile = () => { try { return lstatSync(cachePath(tmp)).isFile() && tried(tmp); } catch { return false; } };
+  await until(triedFile, 10000, '뒤 체크인이 끝나고 시도 시각을 쓴다(지운 폴더에 늦게 쓰지 않게)');
 });
 
 // node:crypto 를 불러오지 못하는 Node 를 흉내 내는 시험 도구(--import). 배포에 들지 않는 scripts/ 아래에 있다.

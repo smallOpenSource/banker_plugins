@@ -360,13 +360,16 @@ pptxgenjs 는 `fontFace` 하나면 되고, python-pptx 는 `a:ea`·`a:cs` 를 �
 런타임 준비 절차는 `docs-setup` 스킬(`/banker:docs-setup`)에 있다.
 
 일회성으로 붙여 볼 때는 프로젝트 트리를 건드리지 않는 스크래치 설치를 쓴다.
+네트워크가 필요한 설치다. 먼저 `vertical-pptx-setup` 의 네트워크 확인을 돌리고, 닿지 않으면 설치하지 않고 "오프라인이라 설치하지 않음(필요한 것: pptxgenjs 또는 python-pptx)" 으로 알린다.
 
 ```bash
-npm i --no-save --no-audit --no-fund pptxgenjs@4
+S=$(mktemp -d)   # 스크래치 폴더: 프로젝트 트리와 그 .npmrc 밖
+(cd "$S" && npm i --no-save --no-audit --no-fund pptxgenjs@4) && echo "NODE_PATH=$S/node_modules"
 (cd ~ && python -m pip install --target <절대 경로> python-pptx fonttools)   # 홈에서: -c, -m, 표준 입력 스크립트는 지금 폴더의 모듈을 먼저 불러온다
 ```
 
-`--target` 으로 받았으면 그 경로를 `PYTHONPATH` 에, npm 쪽은 `NODE_PATH` 에 넣어 부른다.
+`--target` 으로 받았으면 그 경로를 `PYTHONPATH` 에, npm 쪽은 찍힌 `NODE_PATH` 에 넣어 부른다. 다 쓴 스크래치 폴더는 `rm -rf "$S"` 로 지운다.
+npm 을 지금 폴더에서 돌리면 그 폴더에 `node_modules` 를 만들고, 그 폴더의 `.npmrc` 가 정한 레지스트리와 토큰을 따른다. 그래서 스크래치 폴더에서 돌린다.
 
 ## 수리와 변환
 

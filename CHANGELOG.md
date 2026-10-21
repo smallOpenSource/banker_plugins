@@ -14,6 +14,18 @@
 - `anti-drm` 설정 자리가 링크면 `status` 가 설정 줄에 링크가 가리키는 곳을 함께 보이고, 그 파일의 틀린 값은 글 대신 형식과 길이만 보인다(`(string, 12자)`). 링크를 따라 읽는 설계는 그대로다.
 - 유지보수자용: smoke 와 gen-skill-changes 시험이 `Object.hasOwn` 없이 돈다(engines 하한 Node 16.7). 두 시험의 npm 은 임시 HOME 과 로그 자리를 써, 사용자 `.npmrc` 의 `logs-max=0`, `logs-dir` 에서 거짓 FAIL 이 나지 않고 로그가 임시 폴더 밖에 생기지 않는다. smoke 의 표준 입력 판정이 공백 든 자리 표시(`<입력 파일 경로>`)를 재지정으로 보지 않는다.
 - 유지보수자용: 저장소의 글 파일에 날 숨은 글자가 없는지 보는 시험(`scripts/hidden-chars.test.mjs`)을 더하고, 시험 셋의 날 글자 6자를 이스케이프로 바꾼다. PowerShell 을 띄우는 시험은 모두 임시 홈 env 를 준다는 시험을 더하고, 그 env 가 모듈 분석 캐시 자리(`PSModuleAnalysisCachePath`)도 옮긴다.
+- 설치 스킬 17개와 `/banker:setup` 의 네트워크 확인
+  - 확인 블록의 첫 줄이 Codex sandbox 가 네트워크를 막는 때(`CODEX_SANDBOX_NETWORK_DISABLED=1`)를 알리고, 그때는 '오프라인' 이 아니라 'sandbox 가 네트워크를 막음' 으로 보고한다.
+  - `npm ping` 을 15초 감시 함수(`in15`) 안에서 부른다. 패킷을 버리는 망에서 npm 은 OS 의 연결 재시도가 끝날 때까지 약 130초를 기다렸다(`--fetch-timeout` 은 받는 중의 쉼만 잰다). 빈 캐시 대안은 ping 이 감시에 걸렸으면 하지 않는다. 두 npm 확인 모두 `--no-update-notifier` 를 준다.
+  - 확인이 실패하면 명령, 종료 코드, stderr 첫 줄을 보고에 붙인다. curl 의 종료 60 과 npm 의 인증서 오류는 '오프라인' 이 아니라 인증서 문제로 보고하고 `NODE_EXTRA_CA_CERTS` 를 안내한다.
+  - curl 확인 줄은 `--ssl-no-revoke` 를 준다. Windows 의 `curl.exe` 와 Git Bash 의 curl 은 Schannel 이라, 폐지 목록 서버에 닿지 못하는 망에서 종료 60 으로 끝났다(Windows 박스 실측). 다른 curl 은 이 깃발을 받고 무시한다(macOS, Rocky 8 실측). PowerShell 에서는 `Get-Command curl.exe` 로 먼저 찾는다(없으면 앞 명령의 `$LASTEXITCODE` 가 남는다).
+  - dnf 와 apt 가 막힌 망에서 기다리는 시간(실측 121초, 247초)과 `apt-get update` 가 받지 못해도 종료 0 이라는 것을 적는다. 시간 제한은 관리자 설정을 따른다.
+  - pip 설정 읽기가 판 붙은 python(3.13, 3.12, 3.11)의 pip 도 본다. Rocky 8 의 기본 pip(9.0.3)은 `config` 명령이 없다.
+  - `/banker:setup` 이 부르는 스킬은 같은 실행 안에서 이미 돌린 같은 확인 줄의 결과를 다시 쓴다.
+- `setup-mcp` 의 오프라인 등록은 macOS, Linux 에서 설치한 실행 파일을 절대 경로로 등록한다. Windows 는 `cmd /c` 와 이름이다.
+- `setup-node` 확인에 github.com(nvm 의 install.sh 가 git 이 있으면 거기서 clone 한다)을, `setup-playwright` 확인에 브라우저 내려받기 서버(`cdn.playwright.dev`, 미러 변수를 따름)를, `motion-graphic-setup` 확인에 RPM Fusion 을 더한다.
+- `vertical-pptx` 의 스크래치 설치는 새 임시 폴더에서 돌아 프로젝트 트리와 그 `.npmrc` 를 건드리지 않는다. 이 스킬과 `pdf-vision-extract` 는 오프라인이면 설치하지 않는다고 적는다. `audit-security` 1단계에 원천 확인과 Go 도구 받기 꼴을 둔다.
+- 유지보수자용: smoke 가 판 질의(`npx --version`, `curl -V`)를 내려받기로 세지 않는다. 새 단언 airgap-4l, 4m, 4n, 4o, 4p, 4q, 9d, 12 가 위 꼴을 지킨다.
 
 ### Fixed
 - `lineage` 3.0.10: detect-secrets 가 설치된 환경에서 검사용 임시 파일을 쓰다 실패하면(디스크가 가득 참, UTF-8 이 담지 못하는 글자) 그 파일이 임시 폴더에 남던 것. 그 파일에는 detect-secrets 가 가리기 전의 글이 들 수 있었다.
@@ -53,6 +65,12 @@
 - `anti-drm on` 이 설정 자리가 폴더, FIFO, 64KiB 보다 큰 파일, 읽을 수 없는 파일일 때 설정을 다시 주라고 안내하던 것(다시 주어도 거부됨). 이제 옮기거나 권한을 고친 뒤 다시 실행하라고 한다.
 - `banker telemetry status` 가 시도 시각이 지금보다 뒤일 때, 하루가 안 된 마지막 체크가 확인을 쉬게 하는데도 다음 세션에 다시 시도한다고 하던 것. 이제 훅과 같은 규칙으로 말한다.
 - `obsidizer` 가 fsync 를 받지 않는 파일 시스템(`EINVAL`, `ENOTSUP`)에서 실행 전체를 멈추던 것. 이제 그 쪽은 디스크로 내리기를 건너뛰고 rename 으로 통째 바꾼다.
+- `motion-graphic-setup` 의 RHEL8 블록이 Node 22 원천(AppStream 22 스트림, NodeSource)을 둘 다 갖추지 못해도 배포판의 옛 `nodejs` 를 sudo 로 깔던 것.
+- `setup-python` 의 PowerShell 블록이 uv 설치 스크립트의 실패(0 이 아닌 종료)를 알리지 않던 것.
+- `vertical-pptx-setup` 의 업스트림 tarball 블록이 받기만 하고 풀기와 정리는 문장으로 남겨, 수백 MB 의 tarball 이 이름 모를 임시 폴더에 남던 것. 이제 블록 하나가 받기, 풀기, 추출, 정리까지 한다. 배포판 경로의 글롭(`$SP/*.rpm`)은 `find` 로 바꾼다(zsh 는 맞는 것이 없는 글롭에서 멈춘다).
+- `setup-lsp` 의 Spring Boot LS 블록이 셸에 `set -euo pipefail` 과 EXIT trap 을 남겨, 같은 셸의 다음 실패가 셸을 끝내거나 셸이 끝날 때 다른 `T` 를 지우던 것. 이제 블록이 서브셸에서 돈다.
+- `update-banker` 0단계가 `npm ping` 이 실패해도 이어서 `npm view` 로 또 기다리던 것. 이제 ping 이 0 일 때만 부른다.
+- 유지보수자용: update-notify 의 FIFO 캐시 시험이 뒤의 체크인을 기다리지 않아 지연에 따라 실패하고, 이미 지운 임시 폴더를 되살리던 것.
 
 ## [0.20.4] - 2026-10-21
 
