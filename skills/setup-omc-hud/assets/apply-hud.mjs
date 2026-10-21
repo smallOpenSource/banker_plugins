@@ -85,9 +85,10 @@ const shown = (s) => String(s).replace(UNSAFE, "?");
 // its length. settings.json can hold tokens (see step 0) and the line goes into a report; masking the parts that look
 // like secrets missed every form no rule named (curl -u, sshpass -p, mysql -pPW), so the rest stays in the backup.
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
-// Shell words: runs of plain characters and quoted pieces, a quote left open running to the end, so a value in quotes
-// stays one word with its name.
-const WORDS = /(?:"[^"]*"?|'[^']*'?|[^\s"'])+/g;
+// Shell words: runs of plain characters, quoted pieces and backslash escapes (a quote or a space after a backslash
+// stays in its word, inside double quotes too), a quote left open running to the end, so a value in quotes stays one
+// word with its name.
+const WORDS = /(?:"(?:[^"\\]|\\.)*"?|'[^']*'?|\\[\s\S]?|[^\s"'\\])+/g;
 function priorShown(command) {
   const text = String(command).trim();
   const words = text.match(WORDS) || [];

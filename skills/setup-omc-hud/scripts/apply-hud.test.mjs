@@ -1097,7 +1097,9 @@ test("이전 statusLine 명령은 첫 낱말(변수 대입은 건너뜀)과 길�
   const word = ["Secret", "Word"].join("");
   for (const [cmd, shownAs] of [[`PASSWORD="my ${word} pass" node /x/old.mjs --a`, '"node …"'], [`KEY='a ${word}' node x.mjs`, '"node …"'],
     [`TOKEN="ab ${word}"tail node x`, '"node …"'], [`TOKEN="ab ${word} node x`, '"(no program)"'], [`"API_KEY=${word}" node x.mjs`, '"(program hidden) …"'],
-    [`https://u:${word}@example.invalid/hud.sh`, '"(program hidden)"']]) {
+    [`https://u:${word}@example.invalid/hud.sh`, '"(program hidden)"'],
+    // a backslash escapes a quote or a space inside a word (0.20.5 code review r3)
+    [`PASSWORD="a \\" ${word} \\" b" node x`, '"node …"'], [`PASSWORD=a\\ ${word}\\ b node x`, '"node …"']]) {
     const c = fresh();
     writeFileSync(join(c, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: cmd } }));
     const out = install({ cfg: c }).out;

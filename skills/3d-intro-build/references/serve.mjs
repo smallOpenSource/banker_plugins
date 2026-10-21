@@ -95,11 +95,12 @@ async function stopMain(o, dir) {
 const sameSettings = (st, o, dir) => path.resolve(String(st.dir || '')) === dir && (st.csp || null) === cspFrom(o.csp)
   && (st.host || LOOPBACK) === (process.env.PREVIEW_HOST || LOOPBACK) && portMatches(st, o.port);
 
+// A value in one quoted piece, with "?" for what a reader takes for a line end or what changes how text shows.
+const oneLine = (v) => JSON.stringify(String(v)).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?');
+
 // A server already running for this state file: the same settings only report its address; other
 // settings (folder, CSP, host, port) never pass for it, so a check meant to run under a CSP cannot
 // run without one, and a page meant for one folder or port is not checked on another.
-const oneLine = (v) => JSON.stringify(String(v)).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?');
-
 async function reportRunning(recorded, o, dir) {
   if (!(await isRunning(recorded))) return false;
   const st = readState(recorded);
