@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Changed
+- `ralph-qa` 의 외부 좌석 전송을 node 실행기(`references/seat-run.mjs`, 명령 init, untracked, prepare, check, send, cleanup, put)로 옮긴다. SKILL 은 판단(좌석과 모델, 새 파일과 관련 범위 고르기, 짧은 부분, 가림, 512 KiB 질문, 나누기)과 결과 읽기만 남기고, bash 블록과 PowerShell 산문의 좌석 명령, git 사슬, 시간 상한, 정리는 실행기가 한다. 좌석의 인자와 env 는 0.20.4 명령과 글자 그대로 같고 시험이 고정한다.
+  - 사용자에게 달라지는 것: PowerShell 에서도 좌석마다 600초 상한이 서고(전에는 없었다), 상한과 멈춤에 좌석의 프로세스 묶음(Windows 는 트리)이 함께 끝나며, 좌석이 스스로 끝나도 그 묶음에 남은 프로세스를 끝내 늦게 쓰는 gemini 기록이 남지 않는다. send 가 돌아오면 그 좌석의 gemini 기록, opencode 세션, 사본이 지워져 있다.
+  - 보내기 직전 고른 모델로 프로브를 다시 불러 MCP 서버와 관리 설정을 그때의 설정으로 확인한다(모델은 다시 정하지 않는다). 새 파일은 정확한 이름으로 맞춰, 줄바꿈이 든 이름은 멈추지 않고 보내지도 않는다. git 은 PATH 의 절대 경로로 저장소 밖 폴더에서 돌고 fsmonitor 를 끈다. 멈춤과 좌석 결과는 JSON 의 `stop`, `status`, `why` 로 나오고 같은 JSON 이 `<d>/result-<명령>.md` 에 남는다.
+  - 유지보수자용: step2-chain, seat-folders 시험을 seat-payload, seat-run, seat-spawn 시험(가짜 좌석 CLI `scripts/test-fixtures/seat-stub.mjs`)으로 옮긴다. smoke 의 S23 묶음을 S25 묶음(실행기 명령, 멈춤과 결과 집합, 장치, Node 16.7 API, 손으로 짠 명령 없음)으로 바꾼다.
 - `lineage` SKILL 은 `--redact-mode` 나 `--redact-extra` 를 바꿔 `--rulebase` 를 다시 돌릴 때 `--rebuild-summaries` 를 함께 주라고 적는다. 그대로 다시 돌리면 앞서 만든 요약을 다시 써, mask 로 만든 요약이 기본 실행에도 mask 로 남는다.
 - 유지보수자용: lineage 시험의 시간 상한이 CPU 시간을 읽는 까닭을 도우미 하나에 적는다. 파일 시스템 인코딩이 ASCII 인 설정에서도 lineage 시험이 오류 없이 돈다. smoke 는 subTest 로 실패한 시험의 이름도 한 번씩 보인다.
 - `ralph-qa` SKILL 이 `TaskStop` 이 좌석 프로세스 트리를 멈춘다는 문장을 실측한 Linux, macOS 로 좁힌다. Windows(Git Bash)에서는 좌석의 시간 상한이 트리를 끝내고, PowerShell 판에서 트리까지 멈추는지는 재지 못했다고 적는다.

@@ -357,7 +357,7 @@ async function cleanup(o, ctx) {
 // Why a seat was not sent (`not-sent`) or its run counts for nothing (`failed`); `probe:<reason>` carries the probe's.
 export const SEAT_WHY = ["rejected", "timeout", "exit", "signal", "spawn", "empty", "verdict", "policy-file-error", "fallback-agent",
   "model-mismatch", "default-model-family", "probe", "unsafe-model", "cli-absent", "unsafe-word", "gemini-policy", "gemini-env-file",
-  "opencode-agent", "split", "payload"];
+  "opencode-agent", "split"];
 const LIMIT_S = 600;
 const CHECK_LIMIT_MS = 120000;
 // Lines of a seat's errors that say the provider refused the model (the author may then seat another, before a first verdict).

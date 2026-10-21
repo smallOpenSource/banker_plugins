@@ -548,7 +548,7 @@ try {
   const rqFm = rqSkill.slice(0, rqSkill.indexOf('---', 4));
   const rqSurface = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.find((s) => s.name === 'ralph-qa');
-  const rqRefs = ['verifier-probe.mjs', 'payload-scan.mjs', 'gemini-read-only.toml', 'gemini-seat.mjs'];
+  const rqRefs = ['verifier-probe.mjs', 'payload-scan.mjs', 'gemini-read-only.toml', 'gemini-seat.mjs', 'seat-run.mjs', 'seat-payload.mjs', 'seat-spawn.mjs'];
   const probeRel = path.join('skills', 'ralph-qa', 'references', 'verifier-probe.mjs');
   const probeSrc = fs.readFileSync(path.join(root, probeRel), 'utf8');
 
@@ -558,11 +558,11 @@ try {
   const rqTests = rqRefs.filter((f) => f.endsWith('.mjs'))
     .map((f) => path.join('skills', 'ralph-qa', 'references', f.replace(/\.mjs$/, '.test.mjs')));
   ok(rqTests.every((t) => fs.existsSync(path.join(root, t)) && !fs.existsSync(path.join(pkgRoot, t))),
-     'S2-b: the probe, scanner and gemini seat helper tests exist in the repo but are NOT npm-packaged (files[] negation holds)');
+     'S2-b: the probe, scanner, gemini seat helper and seat runner tests exist in the repo but are NOT npm-packaged (files[] negation holds)');
   // SKILL.md runs both scripts from its own references/ folder, so every shipped copy must carry them.
   ok(rqRefs.every((f) => fs.existsSync(path.join(pkgRoot, 'skills', 'ralph-qa', 'references', f))
        && fs.existsSync(path.join(instDir, 'banker-ralph-qa', 'references', f))),
-     'S2-c: the npm package and the Codex install both carry the probe, the scanner, the gemini policy and its seat helper');
+     'S2-c: the npm package and the Codex install both carry the probe, the scanner, the gemini policy, its seat helper and the seat runner');
   // The limitation must stay stated PRECISELY: per-call effort has no path, but agent-DEFINITION
   // frontmatter does. banker ships no agents, which is the real reason the backbone knob is closed.
   ok(/외부 전용 \(codex\)/.test(rqSkill) && /백본에는 전송 경로가 없다/.test(rqSkill)
@@ -673,176 +673,97 @@ try {
      && /모델 부적격은 착석 전에만 갈아탈 수 있다/.test(rqSkill)
      && /물을 수 없는 실행/.test(rqSkill),
      `S22: SKILL.md's model-decision reasons equal the probe's DECISION_REASONS, with the no-one-to-ask fallback and same-model disclosure (${decisionSet.detail})`);
-  // The payload reaches an external CLI from a scanned file in its own folder, never on the command
-  // line (backticks would run in the author's shell).
-  // The seat commands, read from the bash block itself with comment lines dropped: a device that
-  // only a comment still names (or that sits in another section) does not count.
-  const seatBlock = ((rqSkill.split('## 외부 좌석 전송')[1] || '').match(/```bash\n([\s\S]*?)```/) || [])[1] || '';
-  const seatCode = seatBlock.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
-  const seatCmd = (re) => (seatCode.split(/\n(?=\()/).find((c) => re.test(c)) || '');
-  const cxCmd = seatCmd(/codex exec/);
-  const gmCmd = seatCmd(/gemini --skip-trust/);
-  const ocCmd = seatCmd(/opencode run/);
-  ok(/페이로드를 명령줄 인자로 넣지 않는다/.test(rqSkill) && !/"<프롬프트>"/.test(rqSkill)
-     && /references\/payload-scan\.mjs/.test(rqSkill) && /`end` 가 `null` 이면 보내지 않는다/.test(rqSkill)
-     && /검사가 끝나지 않거나 실패해도\(exit 2\) 보내지 않는다/.test(rqSkill)
-     && /XDG_RUNTIME_DIR/.test(seatCode) && /d=\$\(mktemp -d/.test(seatCode) && /o=\$\(mktemp -d/.test(seatCode)
-     && /! git -C "\$d" rev-parse --git-dir > \/dev\/null 2>&1 && echo "d=\$d o=\$o"/.test(seatCode)
-     && /^d='<찍힌 d>' o='<찍힌 o>' R=/m.test(seatCode)
-     && /원문 부분\(diff, 기준 파일, 판정에 필요한 관련 코드 범위, 게이트 원문 출력\)과 닫는 표지는 재지정으로 붙인다/.test(rqSkill)
-     && /exit 0 이고 출력 JSON 의 `count` 가 0 일 때만 0건으로 읽고/.test(rqSkill)
-     && /^i=\$\(git -C '<저장소>' rev-parse --git-path index\) && case \$i in \/\*\|\?:\*\) ;; \*\) i='<저장소>'\/\$i ;; esac && rm -f "\$d\/idx" &&$/m.test(seatCode)
-     && /사본은 실제 인덱스의 수정 시각을 그대로 둔다\(bash 는 `cp -p`, PowerShell 의 `Copy-Item` 은 그대로 둔다\)/.test(rqSkill)
-     && /^  \{ if \[ -f "\$i" \]; then cp -p "\$i" "\$d\/idx"; elif git -C '<저장소>' rev-parse -q --verify HEAD > \/dev\/null; then echo "ralph-qa: 커밋이 있는데 인덱스 파일이 없다: \$i" >&2; false; fi; \} &&$/m.test(seatCode)
-     && !/--path-format/.test(seatCode) && /인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다/.test(rqSkill)
-     && /커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다/.test(rqSkill) && !/경로를 잘못 얻어도 사본 없이 말없이 진행하지 않는다/.test(rqSkill)
-     && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
-     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
-     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" | sed 's|^\./||' > "$d/listed.md" &&`)
-     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄, 겹친 줄, 따옴표를 풀지 않은 줄)' >&2; false; }; } &&`)
-     && seatCode.split('\n').includes(String.raw`  { [ -z "$(git -C '<저장소>' ls-files -z --others --exclude-standard | LC_ALL=C tr -dc '\n' | LC_ALL=C tr '\n' x)" ] || { echo 'ralph-qa: 이름에 줄바꿈이 든 새 파일이 있다(목록 비교가 그 이름을 두 줄로 읽는다)' >&2; false; }; } &&`)
-     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
-     && /^  GIT_DIFF_OPTS= GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 '<기준>' > "\$d\/diff\.md" &&$/m.test(seatCode)
-     && seatCode.split('\n').includes(String.raw`  { LC_ALL=C tr -d '\000' < "$d/diff.md" | cmp -s - "$d/diff.md" || { echo 'ralph-qa: diff 에 바이너리 바이트가 있다(attributes 의 diff 속성이 바이너리 파일을 글로 펼침)' >&2; false; }; } &&`)
-     && seatCode.split('\n').includes(String.raw`  cat "$d/diff.md" >> "$d/prompt.md" && rm -f "$d/idx" "$d/added.md" "$d/listed.md" "$d/diff.md" &&`)
-     && !/core\.attributesFile/.test(rqSkill)
-     && !/'<저장소>'(?: -c \S+)* diff (?!--no-ext-diff --no-textconv --no-color --submodule=short )/.test(seatCode)
-     && / && LC_ALL=C command grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m.test(seatCode) && !/(?<!command )grep -c/.test(seatCode)
-     && !/read-tree/.test(seatCode) && !/git -C '<저장소>' diff HEAD/.test(seatCode) && !/add -N \.(?=[\s`]|$)/m.test(rqSkill)
-     && /이미 커밋한 작업이면 작업 전 커밋, 커밋이 없는 저장소면 빈 트리\(`git -C '<저장소>' hash-object -t tree \/dev\/null`\)다/.test(rqSkill) && !/`git hash-object -t tree/.test(rqSkill)
-     && /grep -c 'review-data id="<id>"' "\$d\/prompt\.md"/.test(seatCode)
-     && /mkdir -m 700 "\$d\/\$s" && cp "\$d\/prompt\.md"/.test(seatCode),
-     'S23: the payload goes from a scanned file in a private folder, raw parts (the listed new files too, via a copy of the real index that only a repo without a commit may start without) by redirection, one copy per seat, answers to another folder');
-  // Which new files go out is the author's list, not every untracked file, and every stop of the
-  // chain names its reason; the chain itself runs in references/step2-chain.test.mjs.
-  ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard$/m.test(seatCode)
-     && /\(`status --short` 는 새 폴더를 한 줄로 접는다\)/.test(rqSkill) && !/`git -C '<저장소>' status --short` 로 `\?\?` 파일을 본다/.test(rqSkill)
-     && /그중 변경에 속한 파일만 파일 도구로 `\$d\/new-files\.md` 에 저장소 루트 기준 경로로 한 줄에 하나씩 쓴다\(없으면 빈 파일\)/.test(rqSkill)
-     && /보내지 않은 새 파일은 `\$d\/unsent\.md` 에 남는다\. 그 수를 `외부 전송\(선언\)` 줄에 적는다/.test(rqSkill)
-     && /`--pathspec-from-file` 은 git 2\.25 이상이 필요하다/.test(rqSkill)
-     && /한 줄에 파일 하나다\. 폴더 줄이나 `\.` 은 그 아래 새 파일을 모두 올린다/.test(rqSkill)
-     && /`목록에 없는 새 파일이 올라간다`: 찍힌 경로를 올린 줄\(폴더 줄, `\.`\)을 보낼 파일 줄로 바꾸고/.test(rqSkill)
-     && /빈 줄의 `empty string is not a valid pathspec`, 하위 저장소 줄의 `does not have a commit checked out`/.test(rqSkill)
-     && /무시되는 파일\(`ignored by`\)은 목록에서 빼고, 검토 대상이면 원문 부분으로 붙인다/.test(rqSkill) && /git 2\.25 미만\(`unknown option`\): 다시 해도 풀리지 않는다/.test(rqSkill)
-     && /저장소 설정의 textconv 와 외부 diff 드라이버는 끈다\(`--no-ext-diff --no-textconv`\)/.test(rqSkill)
-     && /색과 하위 저장소 내용도 사용자 설정과 관계없이 끈다\(`--no-color --submodule=short`\)/.test(rqSkill)
-     && /2 가 찍히지 않으면 보내지 않고 stderr 의 사유를 본다/.test(rqSkill)
-     && /`커밋이 있는데 인덱스 파일이 없다`: 다시 해도 풀리지 않는다\. 사용자에게 알리고 외부 좌석은 `cli-call-failed` 로 적는다/.test(rqSkill)
-     && /`보낼 diff 가 없다`: 검토 대상이 무시되는 폴더\(`\.omc\/plans\/` 등\)나 저장소 밖에 있으면 같은 `\$d` 에서 짧은 부분부터 다시 쓴 뒤, 블록의 `2단계-2 대체` 사슬로/.test(rqSkill)
-     && /512 KiB\(524288 바이트\)를 넘으면 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다\. 사용자가 보내지 않기로 하면 `model-declined` 다/.test(rqSkill)
-     && /아래와 3단계의 `cli-call-failed` 는 그 좌석이 아직 판정을 내지 않았을 때다\. 첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다/.test(rqSkill)
-     && /첫 판정 뒤의 반복에서 페이로드를 만들지 못하거나 사용자가 보내지 않기로 하면 그 좌석은 `ERROR` 다/.test(rqSkill)
-     && /페이로드의 예: 커밋이 있는데 인덱스 파일이 없음, 보낼 diff 도 붙일 대상도 없음, 물을 수 없는 실행에서 512 KiB 초과/.test(rqSkill)
-     && /관련 코드 범위는 바뀐 줄 둘레 3줄 밖에 있는데 판정에 필요한 함수 본문이나 호출부다/.test(rqSkill)
-     && /추적 파일이나 `new-files\.md` 에 적은 새 파일에서만 떼고/.test(rqSkill) && /printf '%s\\n' '=== <파일>:<시작>-<끝>' >> "\$d\/prompt\.md" && sed -n '<시작>,<끝>p' '<저장소>\/<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill)
-     && /이름의 `'` 는 `'\\''` 로 쓴다/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
-     && /파일을 읽는 도구가 없는 외부 좌석\(gemini, opencode, 셸을 끈 codex\)/.test(rqSkill) && !/도구가 없는 gemini, opencode 좌석/.test(rqSkill),
-     'S23-a: only the new files the author lists go out (the rest stay in unsent.md), stops name their reason, a payload over 512 KiB is asked about, related code goes as ranges');
-  // opencode: -f truncates at 50 KB, an unknown --agent falls back to the default agent, and only a
-  // per-run agent defined in CONFIG_CONTENT with the deny-all permission survives user config.
-  ok(/^\( cd "\$d\/opencode" &&/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md"/.test(ocCmd) && !/opencode run[^\n]* -f /.test(ocCmd)
-     && /A='ralph-qa-review-<id>'/.test(seatCode) && /P='\{"\*":"deny"\}'/.test(seatCode)
-     && /OPENCODE_PERMISSION="\$P"/.test(ocCmd)
-     && /OPENCODE_CONFIG_CONTENT="\{\\"share\\":\\"disabled\\",\\"agent\\":\{\\"compaction\\":\{\\"disable\\":true\},\\"\$A\\":\{[^}]*\\"permission\\":\$P\}\}\}"/.test(ocCmd)
-     && /OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1/.test(ocCmd)
-     && /OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_CLAUDE_CODE=1/.test(ocCmd)
-     && /opencode debug agent "\$A" --pure > \/dev\/null 2>&1 &&/.test(ocCmd)
-     && /opencode run --pure --agent "\$A" --title "\$A"/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md" 2> "\$o\/err-opencode\.md" \)/.test(ocCmd)
-     && /\( cd "\$d\/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session list --pure --format json \)/.test(seatCode)
-     && /\( cd "\$d\/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session delete /.test(seatCode),
-     'S23-b: opencode reads the payload from stdin as a per-run deny-all agent it checks first, with compaction, project config, share, title and CLAUDE.md off, and its session is listed and deleted from the seat folder with the refresh off');
-  ok(/codex exec -C "\$d\/codex" --ephemeral --ignore-rules/.test(cxCmd)
-     && ['multi_agent', 'hooks', 'plugins', 'apps', 'shell_tool'].every((f) => cxCmd.includes(`--disable ${f}`))
-     && /-c 'notify=\[\]' -c 'analytics\.enabled=false' -c 'web_search=disabled' <mcp>/.test(cxCmd)
-     && /-c 'otel\.exporter="none"' -c 'otel\.trace_exporter="none"' -c 'otel\.metrics_exporter="none"'/.test(cxCmd)
-     && /-s read-only --skip-git-repo-check -o "\$o\/out-codex\.md" - < prompt\.md 2> "\$o\/err-codex\.md"/.test(cxCmd)
-     && /mcp_servers\.<이름>\.enabled=false/.test(seatBlock) && /`model:` 줄/.test(rqSkill),
-     'S23-c: codex runs rooted in its seat folder with its shell, rules, sub-agents, hooks, plugins, apps, notify, web search, metrics, OpenTelemetry and each MCP server off, read-only');
-  // gemini opens its tools without a word when the policy file is missing or changed, so the helper
-  // checks it (and the folders above the seat) in the same subshell; the file itself is deny-all.
-  const gmPolicyText = fs.readFileSync(path.join(root, 'skills', 'ralph-qa', 'references', 'gemini-read-only.toml'), 'utf8');
+  // 0.20.5 (B3-12): the send runs in references/seat-run.mjs (folders, payload, scan, seats, limits, cleanup). Its tests
+  // pin the seat commands of 0.20.4 word for word and run them against fake CLIs. The doc keeps what the model decides
+  // and reads: these lock that the doc calls the runner, holds its stop and result sets, keeps the decisions, and builds
+  // no seat command or git chain by hand.
+  const rqRef = (f) => fs.readFileSync(path.join(root, 'skills', 'ralph-qa', 'references', f), 'utf8');
+  const runnerFiles = ['seat-run.mjs', 'seat-payload.mjs', 'seat-spawn.mjs'];
+  const runnerSrc = runnerFiles.map(rqRef);
+  const sendSection = (rqSkill.split('## 외부 좌석 전송')[1] || '').split(/\n## /)[0];
+  const exported = (name) => [...(((runnerSrc[0].match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\];`)) || [])[1] || '')
+    .matchAll(/"([^"]+)"/g))].map((m) => m[1]);
+  // The code spans of one column of the rows under a table header of the send section.
+  const tableCells = (header, col) => {
+    const lines = sendSection.split('\n');
+    const at = lines.findIndex((l) => l.startsWith(header));
+    const rows = [];
+    for (let i = at + 2; at >= 0 && i < lines.length && lines[i].startsWith('|'); i++) rows.push(lines[i].split('|')[col + 1] || '');
+    return rows.flatMap((c) => [...c.matchAll(/`([a-z-]+)(?::<[^>]+>)?`/g)].map((m) => m[1]));
+  };
+  const setGap = (a, b) => [...new Set(a)].filter((x) => !b.includes(x));
+  const stopCodes = exported('STOP_CODES');
+  const stopRows = tableCells('| `stop` |', 0);
+  const seatWhy = exported('SEAT_WHY');
+  const whyRows = tableCells('| `status` |', 1);
+  const gaps = [...setGap(stopCodes, stopRows).map((x) => `stop table lacks ${x}`), ...setGap(stopRows, stopCodes).map((x) => `stop table has ${x}`),
+    ...setGap(seatWhy, whyRows).map((x) => `result table lacks ${x}`), ...setGap(whyRows, seatWhy).map((x) => `result table has ${x}`)];
+  ok(['init', 'untracked', 'prepare', 'check', 'send', 'cleanup', 'put'].every((c) => new RegExp(`seat-run\\.mjs['"]? ${c}\\b`).test(sendSection))
+     && /`<R>` 은 `<이 스킬 디렉터리 절대경로>\/references` 다/.test(sendSection)
+     && stopCodes.length >= 20 && seatWhy.length >= 15 && gaps.length === 0,
+     `S25: the send section calls the runner's seven commands, and its stop and seat-result tables hold the runner's sets (stops ${stopCodes.length}, results ${seatWhy.length}${gaps.length ? '; ' + gaps.join('; ') : ''})`);
+  const banned = [[/node:(?:https?|net|tls|dgram|dns)['"]/, 'a network module'], [/\bfetch\(/, 'fetch'], [/shell:\s*true/, 'shell: true'],
+    [/import \{[^}]*\bexec(?:Sync|File|FileSync)?\b[^}]*\} from ["']node:child_process["']/, 'exec'], [/node:crypto/, 'node:crypto'],
+    [/(?:spawn(?:Sync)?|which|runLimited)\(\s*\{?\s*(?:exe:\s*)?["'`](?:[\w./\\-]*[\/\\])?(?:timeout|perl)(?:\.exe)?["'`]/, 'a timeout program']];
+  const bannedHits = runnerFiles.flatMap((f, i) => banned.filter(([re]) => re.test(runnerSrc[i])).map(([, what]) => `${f}: ${what}`));
+  ok(bannedHits.length === 0 && /System32/.test(runnerSrc[2]) && /taskkill\.exe/.test(runnerSrc[2]) && /cmd\.exe/.test(runnerSrc[2]),
+     `S25-b: the runner holds no network module, shell, exec, node:crypto or timeout program, and takes taskkill and cmd.exe from System32${bannedHits.length ? ` (${bannedHits.join('; ')})` : ''}`);
+  // The plans as the runner makes them, from a child node (the runner is ESM): every guard of the device table.
+  const planJs = `import { seatPlan } from ${JSON.stringify(require('url').pathToFileURL(path.join(root, 'skills', 'ralph-qa', 'references', 'seat-run.mjs')).href)};
+const base = { d: '/d/ralph-qa.x', o: '/d/ralph-qa-out.x', id: 'a1b2c3d4', policy: '/p.toml', mcpServers: ['alpha'] };
+console.log(JSON.stringify(['codex', 'gemini', 'opencode'].map((cli) => seatPlan({ ...base, cli, model: cli === 'opencode' ? 'p/m' : 'm1' }))));`;
+  let plans = [];
+  try {
+    plans = JSON.parse(cp.execFileSync(process.execPath, ['--input-type=module', '-e', planJs], { encoding: 'utf8' }));
+  } catch { /* no plans: the assertion below fails */ }
+  const [cxPlan = {}, gmPlan = {}, ocPlan = {}] = plans;
+  const pairs = (args = []) => args.slice(0, -1).map((a, i) => `${a} ${args[i + 1]}`);
+  const cxPairs = pairs(cxPlan.args);
+  const ocConfig = (() => { try { return JSON.parse(ocPlan.set.OPENCODE_CONFIG_CONTENT); } catch { return {}; } })();
+  const gmPolicyText = rqRef('gemini-read-only.toml');
   const gmPolicy = /[^\t\r\n\x20-\x7e]/.test(gmPolicyText) ? ['not ASCII'] : gmPolicyText
     .split(/\r?\n/).map((l) => l.replace(/#.*/, '').replace(/^[ \t]+|[ \t\r]+$/g, '')).filter(Boolean);
-  const cleanAt = seatCode.search(/^node "\$R\/gemini-seat\.mjs" clean "\$d\/gemini"$/m);
-  const findAt = seatCode.search(/^find "\$\(dirname "\$d"\)" -maxdepth 1 -type d \\\( -name 'ralph-qa\.\?\?\?\?\?\?' -o -name 'ralph-qa-out\.\?\?\?\?\?\?' \\\) -mmin \+1440 -exec test -f '\{\}\/\.ralph-qa' \\; -exec rm -rf \{\} \+$/m);
-  const sweepAt = seatCode.search(/^node "\$R\/gemini-seat\.mjs" sweep "\$\(dirname "\$d"\)"$/m);
-  const rmAt = seatCode.search(/^rm -rf "\$d" "\$o"$/m);
-  ok(/^\( cd "\$d\/gemini" && pol=\$\(node "\$R\/gemini-seat\.mjs" check "\$d\/gemini"\) && \[ -n "\$pol" \] && \[ -f "\$pol" \] &&\n  unset GEMINI_CLI_IDE_WORKSPACE_PATH &&/.test(gmCmd)
-     && /TMPDIR="\$o" TEMP="\$o" TMP="\$o" GEMINI_SANDBOX=false GEMINI_TELEMETRY_LOG_PROMPTS=false <상한> gemini --skip-trust --approval-mode default --admin-policy "\$pol"/.test(gmCmd)
-     && /--allowed-mcp-server-names ralph-qa-none -e none/.test(gmCmd)
-     && /-p "첨부한 검토 지시를 따르라" < prompt\.md > "\$o\/out-gemini\.md" 2> "\$o\/err-gemini\.md" \)/.test(gmCmd)
-     && cleanAt >= 0 && findAt > cleanAt && sweepAt > findAt && rmAt > sweepAt
+  ok(['multi_agent', 'hooks', 'plugins', 'apps', 'shell_tool'].every((f) => cxPairs.includes(`--disable ${f}`))
+     && ['notify=[]', 'analytics.enabled=false', 'web_search=disabled', 'mcp_servers.alpha.enabled=false', 'otel.exporter="none"',
+       'otel.trace_exporter="none"', 'otel.metrics_exporter="none"'].every((v) => cxPairs.includes(`-c ${v}`))
+     && ['--ephemeral', '--ignore-rules', '--skip-git-repo-check'].every((f) => (cxPlan.args || []).includes(f)) && cxPairs.includes('-s read-only')
+     && ['--skip-trust', '--approval-mode default', '--allowed-mcp-server-names ralph-qa-none', '-e none', '--admin-policy /p.toml'].every((f) => pairs(gmPlan.args).includes(f) || (gmPlan.args || []).includes(f))
+     && JSON.stringify(gmPlan.set) === JSON.stringify({ TMPDIR: '/d/ralph-qa-out.x', TEMP: '/d/ralph-qa-out.x', TMP: '/d/ralph-qa-out.x', GEMINI_SANDBOX: 'false', GEMINI_TELEMETRY_LOG_PROMPTS: 'false' })
+     && JSON.stringify(gmPlan.unset) === JSON.stringify(['GEMINI_CLI_IDE_WORKSPACE_PATH'])
+     && ['OPENCODE_PERMISSION', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE',
+       'OPENCODE_DISABLE_SHARE', 'OPENCODE_DISABLE_CLAUDE_CODE'].every((k) => k in (ocPlan.set || {}))
+     && ocConfig.share === 'disabled' && ocConfig.agent?.compaction?.disable === true && ocConfig.agent?.['ralph-qa-review-a1b2c3d4']?.permission?.['*'] === 'deny'
+     && JSON.stringify(ocPlan.check) === JSON.stringify(['debug', 'agent', 'ralph-qa-review-a1b2c3d4', '--pure'])
+     && pairs(ocPlan.args).includes('--agent ralph-qa-review-a1b2c3d4') && !(ocPlan.args || []).includes('-f')
      && JSON.stringify(gmPolicy) === JSON.stringify(['[[rule]]', 'toolName = "*"', 'decision = "deny"', 'priority = 100']),
-     'S23-d: gemini runs only after its helper checks the deny-all policy and the folders above, with its own sandbox, MCP servers, extensions and prompt telemetry off, its error report in the answer folder, and its records cleaned and swept before the folders go');
-  // The PowerShell form of step 2 is prose, not a block the chain test can run: each guard of the
-  // bash chain is pinned in its sentence here.
-  const rqLines = rqSkill.split(/\r?\n/);
-  const psStep2 = rqLines.find((l) => l.includes('2단계 원문 붙이기')) || '';
-  const psGemini = rqLines.find((l) => l.includes('gemini 좌석은 같은 호출에서 `$pol')) || '';
-  const pathFormat = rqLines.filter((l) => l.includes('--path-format'));
-  ok(/`git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard` 로 새 파일을 보고, 그중 변경에 속한 것만 파일 도구로 `\$d\\new-files\.md` 에 쓴다\./.test(psStep2)
-     && /`\$i = git -C '<저장소>' rev-parse --git-path index` 로 경로를 얻고, `\$i` 가 문자열 하나가 아니면 멈춘다\./.test(psStep2)
-     && /`\[IO\.Path\]::IsPathRooted\(\$i\)` 가 거짓이면 `\$i = Join-Path '<저장소>' \$i` 로 바꾼다\./.test(psStep2)
-     && /`Remove-Item -LiteralPath "\$d\\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"` 로 실제 인덱스를 복사한다\./.test(psStep2)
-     && /`git -C '<저장소>' rev-parse -q --verify HEAD > \$null` 의 `\$LASTEXITCODE` 가 0 이면\(커밋이 있으면\) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
-     && /`\$added \| Where-Object \{ \$listed -cnotcontains \$_ \}`\)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL`/.test(psStep2)
-     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
-     && /`git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
-     && /`\[IO\.File\]::ReadAllBytes\("\$d\\diff\.md"\) -contains 0` 이 참이면 `diff 에 바이너리 바이트가 있다` 를 찍고 멈춘다/.test(psStep2)
-     && /`Remove-Item Env:GIT_DIFF_OPTS -ErrorAction Ignore`/.test(psStep2)
-     && /`diff --quiet` 는 1 일 때만 계속하고\(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다\), 나머지는 0 이 아니면 멈춘다\./.test(psStep2)
-     && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.md"` 로 치운다/.test(psStep2)
-     && !/read-tree|--path-format|if \(Test-Path \$i\)|add -N \./.test(psStep2)
-     && pathFormat.length === 1
-     && /인덱스 경로는 `rev-parse --git-path index` 로 얻고\(셸의 `GIT_INDEX_FILE` 도 따른다\), 상대 경로면 앞에 `<저장소>\/` 를 붙인다\. `--path-format` 은 쓰지 않는다\./.test(pathFormat[0])
-     && /그 호출에 `Remove-Item Env:GEMINI_CLI_IDE_WORKSPACE_PATH -ErrorAction Ignore`, `\$env:GEMINI_TELEMETRY_LOG_PROMPTS='false'`, `\$env:GEMINI_SANDBOX='false'`, `\$env:TEMP=\$o`, `\$env:TMP=\$o` 를 두고/.test(psGemini),
-     'S23-e: the PowerShell step 2 and gemini entries keep the guards of the bash block');
-  // A Bash call past its time limit goes on in the background (measured), so a seat is stopped or
-  // waited for before the cleanup; records a late seat writes, and copies a cut-short run left, go too.
-  ok(/Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다/.test(rqSkill)
-     && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 좌석 프로세스 트리 전체가 멈춘다\(Linux, macOS 실측\)\. Windows\(Git Bash\)에서는 좌석에 붙인 `<상한>`/.test(rqSkill) && /Windows 의 안전은 `TaskStop` 에 기대지 않는다/.test(rqSkill)
-     && /셸에서 프로세스 그룹을 죽여서는 좌석 서브셸이 멈추지 않는다/.test(rqSkill) && /Codex 는 그 exec 세션이 끝날 때까지 기다린다/.test(rqSkill)
-     && /`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `timeout -s KILL 600` 을, 없으면\(macOS 기본\) 블록 주석의 `perl` 명령을 넣는다\./.test(rqSkill) && /둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다\(exit 137\)/.test(rqSkill) && !/<상한> 은 5단계: timeout 이 있으면 timeout -k/.test(seatBlock)
-     && /^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"$/m.test(seatCode) && /^if command -v cygpath > \/dev\/null; then cygpath -w "\$\(dirname "\$d"\)"; fi$/m.test(seatCode)
-     && /기준 폴더는 6단계가 찍는 줄\(적은 경로, `pwd -P` 로 푼 경로, Git Bash 면 `cygpath -w` 꼴\) 모두와 견준다/.test(rqSkill)
-     && seatBlock.includes("perl -e 'setpgrp; $SIG{ALRM} = sub { $SIG{TERM} = \"IGNORE\"; kill TERM => -$$; sleep 10; kill KILL => -$$ }; alarm shift; system @ARGV;")
-     && !/alarm shift; exec @ARGV/.test(rqSkill) && /^  <상한> opencode debug agent /m.test(ocCmd)
-     && /^\( cd "\$d\/codex" && <상한> codex exec /m.test(seatCode) && / <상한> gemini --skip-trust /.test(gmCmd) && /^  <상한> opencode run /m.test(ocCmd)
-     && /하위 에이전트로 돌면 좌석이 모두 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다/.test(rqSkill)
-     && /PowerShell 에는 `<상한>` 에 넣을 명령이 없다/.test(rqSkill)
-     && /^6\. 좌석 작업이 모두 끝났거나 멈춘 것을 확인한 뒤에 정리한다/m.test(rqSkill)
-     && /`\.project_root` 없이 다시 만든 기록 폴더는 `projects\.json` 의 좌석 경로로 찾는다/.test(rqSkill)
-     && /제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa\.<영숫자>\/opencode` 인데 그 폴더가 없는 세션/.test(rqSkill)
-     && /`\$d = Join-Path \$env:TEMP \('ralph-qa\.' \+ \[guid\]::NewGuid\(\)\.ToString\('N'\)\)`/.test(rqSkill)
-     && /\$_\.Name -match '\^ralph-qa\(-out\)\?\\\.\[A-Za-z0-9\]\+\$' -and -not \(\$_\.Attributes -band \[IO\.FileAttributes\]::ReparsePoint\) -and \$_\.LastWriteTime -lt \(Get-Date\)\.AddDays\(-1\) -and \(Test-Path -LiteralPath \(Join-Path \$_\.FullName '\.ralph-qa'\) -PathType Leaf\)/.test(psGemini)
-     && /^  : > "\$d\/\.ralph-qa" && : > "\$o\/\.ralph-qa" && ! git -C "\$d" rev-parse/m.test(seatCode)
-     && /`New-Item -ItemType File -Path \(Join-Path \$d '\.ralph-qa'\), \(Join-Path \$o '\.ralph-qa'\)`/.test(rqSkill)
-     && /stderr 에 `Policy file error` 가 있으면 정책을 읽지 못해 도구가 열렸을 수 있으므로 그 좌석은 `ERROR` 다\./.test(rqSkill)
-     && !/\(세션 중단, 로그아웃 때/.test(rqSkill) && !/시간 제한을 600000 ms 로 준다/.test(rqSkill),
-     'S23-f: a seat past its time limit is stopped or waited for before the cleanup, which also finds the records a late seat wrote and the copies a cut-short run left');
-  // node's os.tmpdir() reads TEMP and TMP on Windows, where Claude Code runs this bash block in Git
-  // Bash; PowerShell paths are read literally ([ ] are wildcards otherwise); the table and the
-  // source-independent seat say what they send and see.
-  ok(/gemini 좌석은 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더\(`\$o`\)로 두고/.test(rqSkill)
-     && /node 의 `os\.tmpdir\(\)` 는 POSIX 에서 `TMPDIR` 을, Windows 에서 `TEMP` 와 `TMP` 를 읽는다/.test(rqSkill)
-     && /API 오류 보고\(`gemini-client-error-\*\.json`, 요청 전문\)는 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더로 두어 그 폴더에 쓰게 한다/.test(rqSkill)
-     && /좌석 명령이 `TMPDIR`, `TEMP`, `TMP` 를 `\$o` 로 두므로 `\$o` 를 지울 때 함께 지워진다/.test(rqSkill)
-     && /좌석 명령은 `TMPDIR="\$o" TEMP="\$o" TMP="\$o"` 를 준다/.test(rqSkill)
-     && /자체 샌드박스 안에서 다시 뜬다\(docker, podman 컨테이너\. macOS 에서 값이 `true` 면 `sandbox-exec`\)\. 컨테이너 안에는 정책 파일이 없어/.test(rqSkill)
-     && !/docker 나 podman 컨테이너 안에서 다시 뜬다/.test(rqSkill)
+     'S25-c: the runner\'s plans carry every guard of the device table (codex\'s five --disable and its -c set with each MCP server off, gemini\'s policy, env and flags, opencode\'s env, per-run agent and its check) and the shipped gemini policy is deny-all');
+  const tooNew = [[/Object\.hasOwn\(/, 'Object.hasOwn'], [/\bstructuredClone\(/, 'structuredClone'], [/\.findLast(?:Index)?\(/, 'findLast'],
+    [/AbortSignal\.timeout\(/, 'AbortSignal.timeout'], [/\bcause:/, 'Error cause'], [/\.toSorted\(|\.toReversed\(|\.toSpliced\(/, 'change-array-by-copy']];
+  const newHits = runnerFiles.flatMap((f, i) => tooNew.filter(([re]) => re.test(runnerSrc[i])).map(([, what]) => `${f}: ${what}`));
+  ok(newHits.length === 0, `S25-d: the runner uses no API newer than Node 16.7, package.json's engines floor${newHits.length ? ` (${newHits.join('; ')})` : ''}`);
+  const rqBlocks = [...rqSkill.matchAll(/```(?:bash|powershell|sh)\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+  ok(!/codex exec|gemini --skip-trust|opencode run|GIT_INDEX_FILE|add -N|mktemp -d|<상한>/.test(rqBlocks)
+     && !/<상한>|GIT_INDEX_FILE=|cp -p "\$i"|new-files\.md|payload-scan\.mjs" "\$d/.test(rqSkill) && /\*\*좌석 명령과 git 사슬을 손으로 짜지 않는다\.\*\*/.test(sendSection)
+     && /\*\*좌석 명령과 git 사슬을 손으로 짜지 마라\.\*\*/.test(rqSkill),
+     'S25-e: the skill builds no seat command, git chain or time limit by hand, and says so in the section and in the traps');
+  ok(/512 KiB\(524288 바이트\)를 넘는다는 뜻이다\. 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다\. 사용자가 보내지 않기로 하면 `model-declined` 다\. 상한은 나누기 전의 `prompt\.md` 전체에 건다/.test(sendSection)
+     && /첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다/.test(sendSection) && /부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다/.test(sendSection)
+     && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 실행기와 좌석의 프로세스 트리 전체가 멈춘다\(Linux, macOS 실측\)/.test(sendSection)
+     && /Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다/.test(sendSection)
+     && /하위 에이전트로 돌면 send 가 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다/.test(sendSection)
+     && /상한에 걸린 좌석, 멈춘 좌석, 빈 답은 `ERROR` 다\. 모델 거절로 보고 갈아타지 않는다/.test(sendSection)
+     && /node 의 `os\.tmpdir\(\)` 는 POSIX 에서 `TMPDIR` 을, Windows 에서 `TEMP` 와 `TMP` 를 읽는다/.test(sendSection)
+     && /자체 샌드박스 안에서 다시 뜬다\(docker, podman 컨테이너\. macOS 에서 값이 `true` 면 `sandbox-exec`\)\. 컨테이너 안에는 정책 파일이 없어/.test(sendSection)
+     && /<<'RALPHQA_<id>'/.test(sendSection) && !/RALPHQA_EOF/.test(rqSkill) && /`'@` 로 시작하는 줄이 있으면 here-string 으로 쓰지 않고 그 좌석은 `cli-call-failed` 다/.test(sendSection)
+     && /`외부 전송\(선언\)` 줄은 send 출력의 `declared` 를 옮겨 적는다/.test(sendSection)
+     && /`\/tmp` 처럼 여러 계정이 쓰는 폴더 아래에는 만들지 않는다/.test(sendSection) && /0건이 안전의 증명은 아니다/.test(sendSection)
+     && /`end` 가 `null` 이면 보내지 않는다/.test(sendSection) && /보내기 직전 고른 모델로 프로브를 다시 불러/.test(sendSection) && /모델은 다시 정하지 않는다/.test(sendSection)
+     && /모델을 다시 정하는 재프로브 금지/.test(rqSkill) && /`\.project_root` 없이 다시 만든 기록 폴더는 `projects\.json` 의 좌석 경로로 찾는다/.test(sendSection)
+     && /제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa\.<영숫자>\/opencode` 인데 그 폴더가 없는 세션/.test(sendSection)
      && /\| `decision: unseated` \+ `reason` \| 앉을 수 없음 \| 사유와 `notes` 를 좌석 줄에 적는다 \|/.test(rqSkill)
-     && /^입력 = 새 파일을 포함한 diff 원문\(외부 좌석 전송 2단계의 diff 와 같다\. 외부 좌석이 없는 실행도 그 1단계 폴더와 2단계의 git 명령으로 만들고, 판정을 받은 뒤 `rm -rf "\$d" "\$o"` 로 지운다\)/m.test(rqSkill) && !/입력 = `git diff` 원문/.test(rqSkill)
-     && /`apply_patch`\(읽기 전용 샌드박스가 `patch rejected` 로 막는다\)/.test(rqSkill) && !/읽기 전용이라 `aborted`/.test(rqSkill)
-     && /Windows 는 Git Bash 에서 `~\/\.cache`\(아래 `case` 문\), PowerShell 에서 사용자 `TEMP`/.test(rqSkill)
-     && /`\(Select-String -SimpleMatch -Pattern 'review-data id="<id>"' -LiteralPath "\$d\\prompt\.md"\)\.Count`/.test(rqSkill)
-     && /`Get-Content -Raw -Encoding utf8 -LiteralPath "\$d\\<좌석>\\prompt\.md" \|`/.test(rqSkill) && /`Push-Location -LiteralPath "\$d\\<좌석>"`/.test(rqSkill)
-     && /`\| Out-File -Encoding utf8 -LiteralPath "\$o\\out-<좌석>\.md"`/.test(rqSkill)
-     && /`Test-Path -LiteralPath \$pol` 이 참일 때만/.test(psGemini) && !/`Test-Path \$pol`/.test(rqSkill),
-     'S23-g: gemini\'s error report stays in the answer folder on Windows too, PowerShell paths are literal, and the seat table and source-independent input say what is sent and seen');
+     && /`apply_patch`\(읽기 전용 샌드박스가 `patch rejected` 로 막는다\)/.test(rqSkill) && /`model:` 줄/.test(sendSection)
+     && /실행기는 gemini 좌석의 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더로 둔다/.test(rqSkill),
+     'S25-f: the send section keeps the decisions and their reasons: the 512 KiB question on the whole, the seat tokens before and after a first verdict, TaskStop and the sub-agent order, gemini\'s temp and sandbox reasons, the put fallbacks, the declared line, the probe called again without choosing again');
   ok(/`<review-data id="<id>">`/.test(rqSkill) && /실행마다 무작위 id/.test(rqSkill)
      && /파일을 쓰지 않고, 모델 호출/.test(rqSkill) && /게이트 결과/.test(rqSkill),
      'S24: every seat\'s instructions open with a per-run data boundary and the no-write rule, and the author passes gate output');
@@ -853,31 +774,8 @@ try {
      'S22-b: the codex unseat list names a line the probe could not place, an escaped quoted key and a managed file read short');
   ok(/그 시작이 models\.dev 사본\(`~\/\.cache\/opencode\/models\.json`\)을 지우고/.test(rqSkill) && /프로브는 그 경우 `notes` 에 까닭을 적는다/.test(rqSkill),
      'S21-b: the limits say a seat or cleanup start of opencode may empty its models.dev copy, and the probe says so');
-  ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard --directory$/m.test(seatCode)
-     && /목록이 100줄을 넘으면/.test(rqSkill) && /줄은 실제 이름으로 적는다/.test(rqSkill)
-     && /`이름에 줄바꿈이 든 새 파일이 있다`: /.test(rqSkill) && /문맥은 사용자 설정과 관계없이 3줄이다/.test(rqSkill)
-     && /사본을 읽고 쓰는 git 명령마다 `-c core\.splitIndex=false` 를 줘/.test(rqSkill) && /`-diff`, `binary` 로 가려 둔 파일은 가린 채/.test(rqSkill)
-     && /`diff 에 바이너리 바이트가 있다`: /.test(rqSkill) && /Claude Code 는 3만 자/.test(rqSkill),
-     'S23-k: a long listing is folded by folder, list lines are real names (unquoted, no ./), a new name with a newline stops, and the diff keeps its own context and attributes');
-  ok(/\+ 2단계의 `unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill),
-     'S12-b: the source-independent seat also gets the list of new files left out of the diff');
-  // The PowerShell form of step 2 keeps what bash keeps: the unsent list, the parts after the diff and the closing marker,
-  // written without a BOM, the encoding set in every call; a stderr redirect cannot take -LiteralPath, so it goes to a
-  // relative path, and the UTF-16 err file of 5.1 is read with Select-String.
-  ok(/`\[IO\.File\]::WriteAllLines\("\$d\\unsent\.md", \[string\[\]\]\$u\)`/.test(psStep2)
-     && /닫는 표지는 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '<\/review-data id="<id>">' \+ \[char\]10\)` 로 붙인다/.test(psStep2)
-     && !rqSkill.includes('"`n"')
-     && /기준 파일과 게이트 원문 출력은 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", \[IO\.File\]::ReadAllText\('<기준 파일>'\)\)`/.test(psStep2)
-     && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /<<'RALPHQA_<id>'/.test(rqSkill) && !/RALPHQA_EOF/.test(rqSkill) && /`'@` 로 시작하는 줄이 있으면 here-string 으로 쓰지 않고 그 좌석은 `cli-call-failed` 다/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
-     && /`2>` 재지정은 `-LiteralPath` 를 받지 못해/.test(rqSkill) && !/`2> "\$o\\err-gemini\.md"`/.test(rqSkill)
-     && /Select-String -LiteralPath "\$o\\err-<좌석>\.md"/.test(rqSkill) && /gemini 의 `Policy file error` 와 `Full report`/.test(rqSkill) && /호출마다 먼저 `\$OutputEncoding`/.test(rqSkill),
-     'S23-h: the PowerShell step 2 writes unsent.md, the base file and the closing marker like bash, BOM-free, the encoding in every call, and 2> to a path without brackets');
-  ok(/^rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" && cat '<검토 대상 파일>' '<기준 파일>' >> "\$d\/prompt\.md" &&$/m.test(seatCode),
-     'S23-i: the no-diff branch has its own chain in the same $d');
-  ok(/상한은 나누기 전의 `prompt\.md` 전체에 건다/.test(rqSkill) && /부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다/.test(rqSkill),
-     'S23-j: the 512 KiB cap is on the whole payload before any split, and each part is counted and scanned');
-  ok(/Git Bash 에서 `command -v timeout` 이 `\/c\/Windows\/system32\/timeout` 이면/.test(rqSkill) && /`\/usr\/bin\/timeout -s KILL 600`/.test(rqSkill),
-     'S23-l: in Git Bash the limit is GNU timeout, not the Windows timeout a PATH may put first');
+  ok(/\+ `<d>\/unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill) && /`prepare` 가 만든 `<d>\/raw\.md`/.test(rqSkill),
+     'S12-b: the source-independent seat gets the raw parts of prepare and the list of new files left out of the diff');
 
   // 9) airgap (0.20.4 B7): with no network a skill neither waits on every command nor reports a stale or empty result
   // as a success.

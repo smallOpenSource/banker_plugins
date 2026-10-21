@@ -563,7 +563,7 @@ test("SIGTERM to send ends every seat's group, still cleans their records and co
 
 test("the seat result reasons are the set the skill's table holds", () => {
   for (const why of ["rejected", "timeout", "exit", "signal", "spawn", "empty", "verdict", "policy-file-error", "fallback-agent", "model-mismatch",
-    "default-model-family", "probe", "unsafe-model", "cli-absent", "unsafe-word", "gemini-policy", "gemini-env-file", "opencode-agent", "split", "payload"]) {
+    "default-model-family", "probe", "unsafe-model", "cli-absent", "unsafe-word", "gemini-policy", "gemini-env-file", "opencode-agent", "split"]) {
     assert.ok(SEAT_WHY.includes(why), why);
   }
 });
