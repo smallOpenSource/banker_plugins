@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.5] - 2026-10-21
 
 ### Changed
 - `ralph-qa` 의 외부 좌석 전송을 node 실행기(`references/seat-run.mjs`, 명령 init, untracked, prepare, check, send, cleanup, put)로 옮긴다. SKILL 은 판단(좌석과 모델, 새 파일과 관련 범위 고르기, 짧은 부분, 가림, 512 KiB 질문, 나누기)과 결과 읽기만 남기고, bash 블록과 PowerShell 산문의 좌석 명령, git 사슬, 시간 상한, 정리는 실행기가 한다. 좌석의 인자와 env 는 0.20.4 명령과 글자 그대로 같고 시험이 고정한다.
