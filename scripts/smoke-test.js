@@ -374,7 +374,7 @@ try {
      && /`!` 명령 뒤 하네스가 쓴 출력 턴\(`<bash-stdout>` 블록 뒤 `<bash-stderr>` 블록, 실패하면 `<bash-stderr>` 블록 하나만 있는 턴\. 가리기 전 글로 본다\)은 세지 않는다/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.9$/m.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.10$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
      && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && !/공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
@@ -398,6 +398,9 @@ try {
   ok(!/자동 무효화/.test(linSkill)
      && (linSkill.match(/요약기나 가림을 바꾼 판은 요약기 버전\(`SUMMARIZER_VERSION`\)을 올려/g) || []).length === 2,
      'lineage: the SKILL says a release that changes the summarizer or the redaction bumps SUMMARIZER_VERSION, not that the cache invalidates itself');
+  // A --rulebase rerun with other redaction settings reuses the summaries: the SKILL says to rebuild them.
+  ok(/설정을 바꿔 다시 돌릴 때는 `--rebuild-summaries` 를 함께 준다/.test(linSkill),
+     'lineage: the SKILL tells a --rulebase rerun with other redaction settings to rebuild the summaries');
   const bpFm = fs.readFileSync(path.join(root, 'skills', 'setup-bypass-permissions', 'SKILL.md'), 'utf8').split(/\n---/)[0];
   ok(/^disable-model-invocation: true$/m.test(bpFm),
      'setup-bypass-permissions/SKILL.md sets disable-model-invocation: the model cannot start it');
@@ -412,20 +415,26 @@ try {
     const r = cp.spawnSync(cand, ['-c', 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)'], { encoding: 'utf8' });
     if (!r.error && r.status === 0) { py = cand; break; }
   }
+  // The failing tests by name (Class.test), each once: unittest writes `FAIL: test (module.Class)` before 3.11,
+  // `FAIL: test (module.Class.test)` from 3.11 on, and a subTest's `[msg]` and `(k=v)` after either.
+  const failedTestNames = (out) => [...new Set(out.split(/\r?\n/)
+    .map((l) => /^(?:FAIL|ERROR): (\S+) \((\S+)\)(?: \[.*\])?(?: \(.*\))?$/.exec(l)).filter(Boolean)
+    .map(([, name, where]) => {
+      const parts = where.split('.');
+      if (parts[parts.length - 1] === name) parts.pop();
+      return `${parts.pop()}.${name}`;
+    }))];
+  ok(JSON.stringify(failedTestNames('FAIL: test_a (test_lineage.C.test_a) (i=1)\r\nFAIL: test_a (test_lineage.C.test_a) (i=2)\r\n'
+    + 'ERROR: test_b (test_lineage.D) [label (x)] (k=1)\r\nFAIL: test_c (test_lineage.E.test_c) (<subtest>)\r\n'
+    + 'FAIL: test_d (test_lineage.F.test_d)\n[lineage] ERROR: not a test\n'))
+     === JSON.stringify(['C.test_a', 'D.test_b', 'E.test_c', 'F.test_d']),
+     'lineage: the smoke names each failed test once, a subTest\'s too, on either line end');
   if (py) {
     const pyRes = cp.spawnSync(py, ['-B', '-m', 'unittest', 'test_lineage'],
       { cwd: path.join(root, 'skills', 'lineage'), encoding: 'utf8',
         env: { ...process.env, HOME: home, USERPROFILE: home, PYTHONDONTWRITEBYTECODE: '1' } });
     const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
-    // the failing tests by name (Class.test): unittest writes `FAIL: test (module.Class)` before 3.11 and
-    // `FAIL: test (module.Class.test)` from 3.11 on
-    const failed = `${pyRes.stdout || ''}${pyRes.stderr || ''}`.split(/\r?\n/)
-      .map((l) => /^(?:FAIL|ERROR): (\S+) \((\S+)\)$/.exec(l)).filter(Boolean)
-      .map(([, name, where]) => {
-        const parts = where.split('.');
-        if (parts[parts.length - 1] === name) parts.pop();
-        return `${parts.pop()}.${name}`;
-      }).slice(0, 5);
+    const failed = failedTestNames(`${pyRes.stdout || ''}${pyRes.stderr || ''}`).slice(0, 5);
     ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${failed.length ? failed.join(', ') : tail})`);
   } else {
     console.log('SKIP: no python>=3.7 found — lineage.py suite not run (EL8 default python3=3.6 exits at import)');

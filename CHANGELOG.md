@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- `lineage` SKILL 은 `--redact-mode` 나 `--redact-extra` 를 바꿔 `--rulebase` 를 다시 돌릴 때 `--rebuild-summaries` 를 함께 주라고 적는다. 그대로 다시 돌리면 앞서 만든 요약을 다시 써, mask 로 만든 요약이 기본 실행에도 mask 로 남는다.
+- 유지보수자용: lineage 시험의 시간 상한이 CPU 시간을 읽는 까닭을 도우미 하나에 적는다. 파일 시스템 인코딩이 ASCII 인 설정에서도 lineage 시험이 오류 없이 돈다. smoke 는 subTest 로 실패한 시험의 이름도 한 번씩 보인다.
+
+### Fixed
+- `lineage` 3.0.10: detect-secrets 가 설치된 환경에서 검사용 임시 파일을 쓰다 실패하면(디스크가 가득 참, UTF-8 이 담지 못하는 글자) 그 파일이 임시 폴더에 남던 것. 그 파일에는 detect-secrets 가 가리기 전의 글이 들 수 있었다.
+
 ## [0.20.4] - 2026-10-21
 
 ### Changed

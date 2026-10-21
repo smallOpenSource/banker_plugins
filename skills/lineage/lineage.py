@@ -366,15 +366,16 @@ def _hide_patterns(out, mode, sub, counts):
 
 def _scan_detected(held, sub, counts):
     """held[0] with each value detect-secrets finds in it replaced: raises ImportError when it is not installed.
-    held[0] keeps what was replaced before a failure, as one pass over a local did."""
+    held[0] keeps what was replaced before a failure, as one pass over a local did. The scratch file it scans goes
+    whatever happens, a write that fails too (a full disk, a character UTF-8 cannot hold): it holds the text before
+    detect-secrets hid anything."""
     from detect_secrets import SecretsCollection
     from detect_secrets.settings import default_settings
-    import tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
-                                     encoding="utf-8") as tf:
-        tf.write(held[0])
-        tmp = tf.name
+    tf = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+    tmp = tf.name
     try:
+        with tf:
+            tf.write(held[0])
         col = SecretsCollection()
         with default_settings():
             col.scan_file(tmp)
