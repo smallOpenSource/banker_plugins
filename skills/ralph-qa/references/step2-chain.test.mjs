@@ -442,6 +442,26 @@ test("a related range names its file and lines, reads any name, and comes only f
   assert.ok(!/UNSENT|IGNORED/.test(readFileSync(join(ctx.d, "prompt.md"), "utf8")));
 });
 
+// 0.20.5: a related range outside its file (a start past the last line, a start of 0, an end before the start) stops;
+// an end past the file takes the lines there are, as sed does. The PowerShell step does the same (test further down).
+test("a related range outside its file stops, and an end past the file takes the lines there are", { skip: SKIP }, (t) => {
+  assert.ok(RANGE, "no related-range command in step 2");
+  const ctx = repo(t);
+  put(ctx, "three.txt", "l1\nl2\nl3\n");
+  git(ctx, "add", "--", "three.txt");
+  git(ctx, "commit", "-qm", "three");
+  writeFileSync(join(ctx.d, "new-files.md"), "");
+  writeFileSync(join(ctx.d, "prompt.md"), "");
+  const ok = range(ctx, "three.txt", 2, 5);
+  assert.equal(ok.status, 0, ok.stderr);
+  for (const [from, to] of [[5, 9], [0, 2], [3, 2]]) {
+    const r = range(ctx, "three.txt", from, to);
+    assert.notEqual(r.status, 0, `${from}-${to}`);
+    assert.match(r.stderr, /관련 범위가 파일 밖이다: three\.txt/, `${from}-${to}: ${r.stderr}`);
+  }
+  assert.equal(readFileSync(join(ctx.d, "prompt.md"), "utf8"), "=== three.txt:2-5\nl2\nl3\n");
+});
+
 test("a long listing folds each wholly new folder to one line and opens the one asked for", { skip: SKIP }, (t) => {
   assert.ok(FOLDED, "no folded listing in the bash block");
   const ctx = repo(t);
@@ -592,4 +612,23 @@ test("the PowerShell related range finds a link at the file or at a folder above
   symlinkSync(outside, join(repoDir, "sub"), "dir");
   const link = (file) => pwsh(`${posixPs(loop).replaceAll("<저장소>", psq(repoDir)).replaceAll("<파일>", psq(file))}; [string]$link`).stdout.trim();
   assert.deepEqual(["a.txt", "real/b.txt", "link.txt", "sub/s.txt"].map(link), ["False", "False", "True", "True"]);
+});
+
+// 0.20.5: the PowerShell related range reads the file once, stops a range outside it (the bash chain does too) and cuts an
+// end past the file at its last line; an index past the array would add empty lines, a 0 start the last line.
+test("the PowerShell related range stops a range outside its file and cuts an end past it", { skip: !PS && "no pwsh" }, (t) => {
+  const read = psSpan(/`(\$a = \[IO\.File\]::ReadAllLines\('<저장소>\\<파일>'\))`/);
+  const outside = psSpan(/`(<시작> -lt 1 -or <끝> -lt <시작> -or <시작> -gt \$a\.Count)`/);
+  const append = psSpan(/떼는 명령은 `(\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '=== <파일>:<시작>-<끝>'[^`]+)`/);
+  assert.ok(read && outside && append, "no read, range check and append for the related range in the PowerShell step 2");
+  const dir = mkdtempSync(join(tmpdir(), "rq-ps-range-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "three.txt"), "l1\nl2\nl3\n");
+  const run = (from, to) => {
+    const sub = (span) => posixPs(span).replaceAll("<저장소>", psq(dir)).replaceAll("<파일>", "three.txt").replaceAll("<시작>", String(from)).replaceAll("<끝>", String(to));
+    return pwsh(`$d = '${psq(dir)}'; ${sub(read)}; if (${sub(outside)}) { 'outside' } else { ${sub(append)}; 'appended' }`).stdout.trim();
+  };
+  assert.equal(run(2, 5), "appended");
+  for (const [from, to] of [[5, 9], [0, 2], [3, 2]]) assert.equal(run(from, to), "outside", `${from}-${to}`);
+  assert.equal(readFileSync(join(dir, "prompt.md"), "utf8"), "=== three.txt:2-5\nl2\nl3\n");
 });

@@ -5,9 +5,14 @@
 ### Changed
 - `lineage` SKILL 은 `--redact-mode` 나 `--redact-extra` 를 바꿔 `--rulebase` 를 다시 돌릴 때 `--rebuild-summaries` 를 함께 주라고 적는다. 그대로 다시 돌리면 앞서 만든 요약을 다시 써, mask 로 만든 요약이 기본 실행에도 mask 로 남는다.
 - 유지보수자용: lineage 시험의 시간 상한이 CPU 시간을 읽는 까닭을 도우미 하나에 적는다. 파일 시스템 인코딩이 ASCII 인 설정에서도 lineage 시험이 오류 없이 돈다. smoke 는 subTest 로 실패한 시험의 이름도 한 번씩 보인다.
+- `ralph-qa` SKILL 이 `TaskStop` 이 좌석 프로세스 트리를 멈춘다는 문장을 실측한 Linux, macOS 로 좁힌다. Windows(Git Bash)에서는 좌석의 시간 상한이 트리를 끝내고, PowerShell 판에서 트리까지 멈추는지는 재지 못했다고 적는다.
 
 ### Fixed
 - `lineage` 3.0.10: detect-secrets 가 설치된 환경에서 검사용 임시 파일을 쓰다 실패하면(디스크가 가득 참, UTF-8 이 담지 못하는 글자) 그 파일이 임시 폴더에 남던 것. 그 파일에는 detect-secrets 가 가리기 전의 글이 들 수 있었다.
+- `ralph-qa` 3단계 검사기가 `--from-literal=DB_PASSWORD=…`, `--env=…`, `(DB_PASSWORD=… psql)` 의 비밀번호 낱말을 놓치던 것. 셸의 `PWD`, `OLDPWD` 가 경로를 담은 줄을 비밀번호로 가리던 것도 고친다(이름이 PWD 로 끝나기만 하는 키와 경로가 아닌 값은 그대로 잡는다).
+- `ralph-qa` 프로브가 codex 설정의 `[[mcp_servers.<이름>]]`(표 배열, 따옴표 친 꼴 포함)를 MCP 서버가 없는 것으로 읽어 좌석을 세우던 것. codex 는 그 설정을 읽지 못하고 멈춘다. 이제 서버 목록을 못 읽은 것으로 보고 좌석을 세우지 않는다.
+- `ralph-qa` 2단계의 관련 코드 범위가 파일 밖(시작이 마지막 줄을 넘음, 0, 끝이 시작 앞)이면 bash 는 빈 범위를, PowerShell 은 빈 줄이나 엉뚱한 줄을 붙이던 것. 이제 둘 다 `관련 범위가 파일 밖이다` 로 멈추고, PowerShell 도 끝이 파일을 넘으면 있는 줄까지만 붙인다.
+- `ralph-qa` 의 here-document 구분자가 고정 이름(`RALPHQA_EOF`)이라 그 이름의 줄이 든 본문이 거기서 끊기던 것. 이제 실행마다 무작위 id 를 붙인다. PowerShell here-string 은 `'@` 로 시작하는 줄이 있으면 쓰지 않고 그 좌석을 `cli-call-failed` 로 둔다.
 
 ## [0.20.4] - 2026-10-21
 

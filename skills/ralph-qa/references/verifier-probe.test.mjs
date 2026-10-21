@@ -917,3 +917,13 @@ test("the note for a config read short names an escaped quoted key as a cause; t
   const emptied = opencodeWith({ "/home/u/.cache/opencode/version": "21" });
   assert.ok((emptied.notes ?? []).some((n) => n.includes("models.dev copy is missing") && n.includes("offline")), JSON.stringify(emptied));
 });
+
+// 0.20.5: codex refuses an array of tables under mcp_servers ("invalid type: sequence", codex 0.144.5), quoted or not.
+// The probe takes it as a server list it cannot read, so the seat is not taken, rather than as no server at all.
+test("an array of tables under mcp_servers, quoted or not, leaves the server list unread", () => {
+  for (const h of ["[[mcp_servers.x]]", "[['mcp_servers'.x]]", '[["mcp_servers".x]]', "[[mcp_servers]]", "[[ mcp_servers . x ]]", "[[mcp_servers.x.env]]"]) {
+    assert.equal(readToml(`${h}\ncommand = "x"\n`).mcpUnread, true, h);
+  }
+  assert.equal(readToml('[mcp_servers.x]\ncommand = "x"\n').mcpUnread, false);
+  assert.equal(readToml('[[profiles.fast]]\nmodel = "o3"\n').mcpUnread, false);
+});

@@ -383,3 +383,30 @@ test("a [REDACTED] glued to the rest of a value is no mask: the rescan still cat
   }
   assert.equal(scan(`--pass${"word"} ${M}`).count, 0, "a whole mask is no value");
 });
+
+// 0.20.5: a KEY=value password word right after `=` or `(` is caught as well as after a space or a quote
+// (`kubectl ... --from-literal=DB_PASSWORD=...`, `docker run --env=...`, a subshell). A keyword argument still is not.
+test("a password env word after a space, a quote, ( or = is caught", () => {
+  const P = "PASS" + "WORD";
+  const v = "hunter" + "22";
+  for (const line of [`kubectl create secret generic x --from-literal=DB_${P}=${v}`, `docker run --env=DB_${P}=${v} img`, `(DB_${P}=${v} psql)`]) {
+    assert.ok(scan(line).hits.some((h) => h.kind === "env-pass" + "word"), `not caught: ${line}`);
+  }
+  for (const line of [`f(user=u, pass${"word"}=secret_value)`, `f(pass${"word"}=secret_value)`, `PG${P}=$PGPASS psql`, `const DB_${P}=getPw();`]) {
+    assert.equal(scan(line).count, 0, `caught: ${line}`);
+  }
+});
+
+// 0.20.5: the shell's own working folder (PWD, OLDPWD) holding a path is no password, as in lineage. A key that only
+// ends in PWD, or a PWD whose value is no plain path, still is.
+test("the shell's own PWD and OLDPWD with a path are no password; a key that only ends in PWD still is", () => {
+  const W = "P" + "WD", P = "PASS" + "WORD";
+  for (const line of [`${W}=/home/user/project`, `export OLD${W}=/home/user`, `+${W}=/home/u/p`, `declare -x ${W}="/home/user"`,
+    `"${W}": "/home/user/project",`, `${W}: /home/user/project`, `${W}=~/src`, `${W}=/c/Users/me`, `docker run --rm -v $${W}:/workspace img`]) {
+    assert.equal(scan(line).count, 0, `caught: ${line}`);
+  }
+  const pw = ["/hunter", "22xyz"].join(""), odd = ["/S3cr", "3t!x9"].join("");
+  for (const line of [`MYSQL_${W}=${pw}`, `UID=sa;${W}=${pw}`, `${W}=${odd}`, `ENV DB_${P} ${odd}`]) {
+    assert.ok(scan(line).count > 0, `not caught: ${line}`);
+  }
+});

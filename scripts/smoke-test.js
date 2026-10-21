@@ -798,7 +798,7 @@ try {
   // A Bash call past its time limit goes on in the background (measured), so a seat is stopped or
   // waited for before the cleanup; records a late seat writes, and copies a cut-short run left, go too.
   ok(/Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다/.test(rqSkill)
-     && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 좌석 프로세스 트리 전체가 멈춘다/.test(rqSkill)
+     && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 좌석 프로세스 트리 전체가 멈춘다\(Linux, macOS 실측\)\. Windows\(Git Bash\)에서는 좌석에 붙인 `<상한>`/.test(rqSkill) && /Windows 의 안전은 `TaskStop` 에 기대지 않는다/.test(rqSkill)
      && /셸에서 프로세스 그룹을 죽여서는 좌석 서브셸이 멈추지 않는다/.test(rqSkill) && /Codex 는 그 exec 세션이 끝날 때까지 기다린다/.test(rqSkill)
      && /`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `timeout -s KILL 600` 을, 없으면\(macOS 기본\) 블록 주석의 `perl` 명령을 넣는다\./.test(rqSkill) && /둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다\(exit 137\)/.test(rqSkill) && !/<상한> 은 5단계: timeout 이 있으면 timeout -k/.test(seatBlock)
      && /^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"$/m.test(seatCode) && /^if command -v cygpath > \/dev\/null; then cygpath -w "\$\(dirname "\$d"\)"; fi$/m.test(seatCode)
@@ -862,7 +862,7 @@ try {
      && /닫는 표지는 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '<\/review-data id="<id>">' \+ \[char\]10\)` 로 붙인다/.test(psStep2)
      && !rqSkill.includes('"`n"')
      && /기준 파일과 게이트 원문 출력은 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", \[IO\.File\]::ReadAllText\('<기준 파일>'\)\)`/.test(psStep2)
-     && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
+     && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /<<'RALPHQA_<id>'/.test(rqSkill) && !/RALPHQA_EOF/.test(rqSkill) && /`'@` 로 시작하는 줄이 있으면 here-string 으로 쓰지 않고 그 좌석은 `cli-call-failed` 다/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
      && /`2>` 재지정은 `-LiteralPath` 를 받지 못해/.test(rqSkill) && !/`2> "\$o\\err-gemini\.md"`/.test(rqSkill)
      && /Select-String -LiteralPath "\$o\\err-<좌석>\.md"/.test(rqSkill) && /gemini 의 `Policy file error` 와 `Full report`/.test(rqSkill) && /호출마다 먼저 `\$OutputEncoding`/.test(rqSkill),
      'S23-h: the PowerShell step 2 writes unsent.md, the base file and the closing marker like bash, BOM-free, the encoding in every call, and 2> to a path without brackets');
