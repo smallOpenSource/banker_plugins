@@ -124,11 +124,12 @@ const looseStep = () => ({ key: 'loose', title: '작업 목록 밖의 작업', .
 // `planOpen` the ids of its nodes unfolded. `touch` counts the calls that touched a plan file and
 // `taken` is the newest touch whose read was taken in, to tell a read that a newer one overtook (a weak plan's touch does
 // not count). `shown` is the touch, or the read again's count of touches, that the words on the pane came from: a later
-// read of the file shown that began before them does not take their place. `followed` is the step in
+// read of the file shown that began before them does not take their place; `shownOrder` is the order a read again of
+// theirs began in (0 for a touch's read), so of two begun after the same touches the later one stays. `followed` is the step in
 // progress the pane last asked to bring into view.
 export const freshState = () => ({ turns: [], tasks: new Map(), todos: null, loose: looseStep(), open: new Set(), selected: null, seq: 0, rev: 0,
   order: 0, marks: new Map(), listAt: 0, plan: null, planPath: null, planShut: false, planOpen: new Set(), touch: 0, taken: 0,
-  shown: 0, followed: null, reads: [], base: null, folded: 0 });
+  shown: 0, shownOrder: 0, followed: null, reads: [], base: null, folded: 0 });
 
 const tail = (path) => String(path).split(/[\\/]/).filter(Boolean).slice(-2).join('/');
 const seconds = (ms) => {
@@ -269,8 +270,8 @@ const overflow = (items) => items.find((t) => t.status === 'completed') ?? items
 function trimList(items, max) {
   let extra = items.length - max;
   if (extra <= 0) return items;
-  const kept = items.filter((t) => t.status !== 'completed' || extra-- <= 0);
-  return kept.slice(kept.length - max);
+  const left = items.filter((t) => t.status !== 'completed' || extra-- <= 0);
+  return left.slice(left.length - max);
 }
 
 // One item of a TodoWrite list: while its text stays it is the same step (the first unused one of
@@ -298,8 +299,8 @@ function writeTodos(s, e, now) {
 }
 
 // A task's key on the pane: `k-` and its id where the id is a plain one (the store hands out numbers), else its first
-// 1,024 characters as code points, so no two ids share a key and none holds what the engine drops a Box key for (a
-// control character, more than 10,000 characters).
+// 1,024 characters as code points, so ids that differ there never share a key (longer ones alike that far do) and none
+// holds what the engine drops a Box key for (a control character, more than 10,000 characters).
 const taskKey = (id) => (/^[\w.-]{1,64}$/.test(id) ? `k-${id}` : `k~${[...id.slice(0, 1024)].map((c) => c.codePointAt(0).toString(36)).join('.')}`);
 
 // Adds a task or brings it up to date; a task keeps its key, calls and times. One known only by
@@ -521,9 +522,9 @@ function parsed(path, text) {
 // Whether a read may change the plan: a read for a touch newer than the one the plan came from, or a
 // read again of the plan's own file (begun when `since` touches were counted) begun after the words on the pane
 // came in (`shown`), so neither an older touch nor an older read again takes their place.
-function current(s, path, { touch, since }) {
+function current(s, path, { touch, since, order = 0 }) {
   if (touch !== undefined) return touch > s.taken;
-  return path === s.planPath && s.shown <= since;
+  return path === s.planPath && (s.shown < since || (s.shown === since && order >= (s.shownOrder ?? 0)));
 }
 
 // What a read taken in leaves, and whether its words go on the pane. `taken` makes older touches late (a weak plan's
@@ -531,12 +532,12 @@ function current(s, path, { touch, since }) {
 // shown, begun before the read whose words are shown, leaves them.
 function noteTouch(s, read, moving) {
   if (read.touch === undefined) {
-    s.shown = read.since;
+    [s.shown, s.shownOrder] = [read.since, read.order ?? 0];
     return true;
   }
   if (!read.weak) s.taken = read.touch;
   if (!moving && read.touch <= s.shown) return false;
-  s.shown = read.touch;
+  [s.shown, s.shownOrder] = [read.touch, 0];
   return true;
 }
 
@@ -562,7 +563,7 @@ function treeIds(nodes, out = new Set()) {
 }
 
 // The plan as reads leave it: the plan, its path, `taken` and `shown` (see freshState), with nothing of the pane.
-const planOf = (s) => ({ plan: s.plan, planPath: s.planPath, taken: s.taken, shown: s.shown });
+const planOf = (s) => ({ plan: s.plan, planPath: s.planPath, taken: s.taken, shown: s.shown, shownOrder: s.shownOrder });
 
 // What one read leaves of a plan state, as takePlan always did when reads landed in the order their touches came.
 function applyRead(st, e) {
@@ -1000,10 +1001,15 @@ export function progressTurnCompleted(e) {
 
 // The plan file to read again as a turn starts and ends (register.mjs reads it), with the touches
 // counted when the read begins; null without a plan.
+// A read again begins with the touches counted and its place in the order reads begin, so of two begun after the same
+// touches the later one wins, whichever lands last (the file may change between them without a touch: a shell edit).
+export const planTarget = (s) => (s.planPath ? { path: s.planPath, since: s.touch, order: ++s.order } : null);
+export const planRead = (s, target, text) => takePlan(s, target.path, text, { since: target.since, order: target.order });
+
 export function progressPlanTarget() {
-  return ref.s.planPath ? { path: ref.s.planPath, since: ref.s.touch } : null;
+  return planTarget(ref.s);
 }
 
 export function progressPlanRead(target, text) {
-  takePlan(ref.s, target.path, text, { since: target.since });
+  planRead(ref.s, target, text);
 }

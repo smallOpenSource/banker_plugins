@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { TODO_TOOL, callLabel, describe, endTurn, freshState, noteTaskTool, planTouched, readTodos, startTurn, takePlan } from './progress.mjs';
+import { TODO_TOOL, callLabel, describe, endTurn, freshState, noteTaskTool, planRead, planTarget, planTouched, readTodos, startTurn, takePlan } from './progress.mjs';
 import { register } from './register.mjs';
 
 const PANE = 'banker-progress';
@@ -1959,24 +1959,35 @@ const R4_FILES = [
   ['/w/.omc/plans/design-notes.md', '# 설계 메모\n결정만 적음\n'], ['/w/.omc/prd.json', '{"이것은": "계획이 아님"}'],
 ];
 // events: [item, 'start' | 'land'] in the order they happen. A read again reads the plan shown when it starts.
+// What one item's start leaves to land: a read again of the plan shown, or a touch's read of what it wrote.
+function startRead(s, disk, it) {
+  if (it.again) return s.planPath ? { path: s.planPath, text: disk.get(s.planPath) ?? null, read: { since: s.touch, order: ++s.order } } : null;
+  disk.set(it.path, it.text);
+  const r = planTouched(s, { tool: it.tool, file_path: it.path, agentId: it.agentId }, { ok: true });
+  return r ? { path: it.path, text: it.text, read: { touch: r.touch, own: r.own, weak: r.weak } } : null;
+}
 function playReads(items, events) {
   const s = freshState();
   const disk = new Map();
   const pending = [];
   for (const [i, kind] of events) {
-    const it = items[i];
-    if (kind === 'land') {
-      if (pending[i]) takePlan(s, pending[i].path, pending[i].text, pending[i].read);
-    } else if (it.again) {
-      pending[i] = s.planPath ? { path: s.planPath, text: disk.get(s.planPath) ?? null, read: { since: s.touch } } : null;
-    } else {
-      disk.set(it.path, it.text);
-      const r = planTouched(s, { tool: it.tool, file_path: it.path, agentId: it.agentId }, { ok: true });
-      pending[i] = r ? { path: it.path, text: it.text, read: { touch: r.touch, own: r.own, weak: r.weak } } : null;
-    }
+    if (kind !== 'land') pending[i] = startRead(s, disk, items[i]);
+    else if (pending[i]) takePlan(s, pending[i].path, pending[i].text, pending[i].read);
   }
   return `${s.planPath ?? '-'}|${s.plan?.done ?? '-'}|${s.plan?.total ?? '-'}`;
 }
+test('of two reads again begun after the same touches, the one begun later wins whichever lands last', () => {
+  const s = freshState();
+  const r = planTouched(s, { tool: 'Write', file_path: PLAN }, { ok: true });
+  takePlan(s, PLAN, '# 배포 계획\n- [ ] 설계\n- [ ] 구현\n', { touch: r.touch, own: r.own, weak: r.weak });
+  const first = planTarget(s);
+  const second = planTarget(s);
+  assert.ok(second.order > first.order, JSON.stringify([first, second]));
+  planRead(s, second, '# 배포 계획\n- [x] 설계\n- [x] 구현\n- [ ] 배포\n');
+  planRead(s, first, '# 배포 계획\n- [x] 설계\n- [ ] 구현\n');
+  assert.deepEqual([s.plan.done, s.plan.total], [2, 3], 'the words of the read begun later stay');
+});
+
 test('reads that land in any order show the plan the same reads show when each lands at once (2,000 random runs)', () => {
   const MODES = [{ tool: 'Write' }, { tool: 'Read' }, { tool: 'Write', agentId: 'a1' }];
   const TYPES = [...R4_FILES.flatMap(([path, text]) => MODES.map((m) => ({ path, text, ...m }))), { again: true }];
