@@ -1092,6 +1092,19 @@ test("이전 statusLine 명령은 첫 낱말(변수 대입은 건너뜀)과 길�
   const line = r.out.split("\n").find((l) => l.startsWith("[..] statusLine ran ")) ?? "";
   assert.ok(line.includes(`"node …" (${command.length} characters)`), line);
   assert.ok(!line.includes(pw) && !line.includes("COLUMNS") && !line.includes("/x/s.mjs"), line);
+  // a value in quotes is one word with its name, a quote left open runs to the end, and a first word that looks like
+  // a secret (a NAME=value in quotes, an address) is not shown (0.20.5 reviews N3 and d)
+  const word = ["Secret", "Word"].join("");
+  for (const [cmd, shownAs] of [[`PASSWORD="my ${word} pass" node /x/old.mjs --a`, '"node …"'], [`KEY='a ${word}' node x.mjs`, '"node …"'],
+    [`TOKEN="ab ${word}"tail node x`, '"node …"'], [`TOKEN="ab ${word} node x`, '"(no program)"'], [`"API_KEY=${word}" node x.mjs`, '"(program hidden) …"'],
+    [`https://u:${word}@example.invalid/hud.sh`, '"(program hidden)"']]) {
+    const c = fresh();
+    writeFileSync(join(c, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: cmd } }));
+    const out = install({ cfg: c }).out;
+    const l = out.split("\n").find((x) => x.startsWith("[..] statusLine ran ")) ?? "";
+    assert.ok(l.includes(`${shownAs} (${cmd.length} characters)`), `${cmd}\n${l}`);
+    assert.ok(!l.includes(word) && !l.includes("tail"), l);
+  }
   // a command of one word shows that word
   const one = fresh();
   writeFileSync(join(one, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: "/usr/local/bin/my-hud" } }));

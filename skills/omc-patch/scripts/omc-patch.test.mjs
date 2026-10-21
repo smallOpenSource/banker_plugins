@@ -2349,7 +2349,8 @@ test("an origin of many question marks and a fragment after them does not stall 
 test("the default upstream's query is shown masked whole, a value with no name too", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   const tok = ["SECRET", "BARE"].join("");
-  for (const query of [`?${tok}`, `?a=1&${tok}`, `?${tok}&b=2`]) {
+  // an @ in the query too: the mask of the user information runs to the last @, so the query is cut before it (N1)
+  for (const query of [`?${tok}`, `?a=1&${tok}`, `?${tok}&b=2`, `?a=x@${tok}`, `?@${tok}`]) {
     assert.equal(runGit(["remote", "set-url", "origin", `${UPSTREAM}${query}`], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
     assert.ok(!out.includes(tok), `${query}\n${out}`);
@@ -3828,8 +3829,11 @@ test("with credentials in the origin the cause line drops git's words even when 
   const alice = ["al", "ice"].join("");
   const dir = join(root, `gitwrap${seq++}`);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$1" = fetch ]; then', `  echo "fatal: Could not resolve host: ${alice}" >&2; exit 128`,
-    "fi", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  // git runs as `git -C <market> fetch ...`: the stub takes the fetch wherever it sits, so the real git never fetches
+  // (its curl would look the misread host up in DNS)
+  const fetched = join(dir, "fetched");
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'case " $* " in *" fetch --tags "*)', `  : > '${fetched}'`, `  echo "fatal: Could not resolve host: ${alice}" >&2; exit 128;;`,
+    "esac", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   assert.equal(runGit(["remote", "set-url", "origin", `http://${alice}:${["", "Kx7Yp"].join("/")}@127.0.0.1:9/omc.git`], f.market).status, 0);
   const r = run(f.home, [], { PATH: `${dir}${delimiter}${process.env.PATH}` });
@@ -3837,6 +3841,7 @@ test("with credentials in the origin the cause line drops git's words even when 
   const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
   assert.match(cause, NO_WORDS, cause);
   assert.ok(!r.out.includes(alice), r.out);
+  assert.ok(existsSync(fetched), "the stub took the fetch");
 });
 
 // Final batch: the fetch never asks for credentials on a terminal (GIT_TERMINAL_PROMPT=0): an origin that wants a login
@@ -3892,18 +3897,38 @@ test("the cause line keeps only scheme and host of the address git names, and th
 test("a pin failure line keeps the quote that closes git's address, a mirror to its host and the default upstream masked", { skip: !HAS_GIT && "git not found" }, () => {
   const tok = ["Q1w2", "E3r4"].join("");
   for (const [second, tail] of [[`https://mirror.example/x/${tok}/omc.git?token=${tok}`, "to 'omc-pinned://https://mirror.example')"],
-    // the mask runs from the first // to the last @, so it takes the inner scheme: the host after the @ is shown
-    [`https://u:${tok}@mirror.example/x/omc.git`, "to 'omc-pinned://mirror.example')"],
+    // user information: the address git printed is read before the mask, so its scheme and host show
+    [`https://u:${tok}@mirror.example/x/omc.git`, "to 'omc-pinned://https://mirror.example')"],
     [`${UPSTREAM}?token=${tok}`, `to 'omc-pinned://${UPSTREAM}?***')`],
     // a token with no name: the default upstream's query is masked whole on git's lines too
-    [`${UPSTREAM}?${tok}`, `to 'omc-pinned://${UPSTREAM}?***')`]]) {
+    [`${UPSTREAM}?${tok}`, `to 'omc-pinned://${UPSTREAM}?***')`],
+    // an @ in a mirror's path: the address shows as git printed it is read, not as the mask leaves it (the text after
+    // the last @ would pass for a host), and an @ in the upstream's query
+    [`https://mirror.example/x/omc.git@${tok}`, "to 'omc-pinned://(호스트를 알아볼 수 없음)')"], [`${UPSTREAM}?a=x@${tok}`, `to 'omc-pinned://${UPSTREAM}?***')`]]) {
     const f = fakeHome([{ v: "5.6.1", active: true }]);
     assert.equal(runGit(["config", "--add", "remote.origin.url", second], f.market).status, 0);
     const r = run(f.home, ["--no-update"]);
     const line = r.out.split("\n").find((l) => l.includes("고정 실패")) ?? "";
     assert.ok(line.endsWith(tail), `${second}\n${line}`);
-    assert.ok(!r.out.includes(tok), r.out);
+    assert.ok(!r.out.toLowerCase().includes(tok.toLowerCase()), r.out);
   }
+});
+
+// 0.20.5 review: the addresses in git's line are shown as git printed them is read, and what is left of the line is
+// still masked (a `//user:token@` with no scheme, a `?key=value` outside an address).
+test("a pin failure line masks the user information and query values git's words hold outside an address", posixGit, (t) => {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) return t.skip("git not found on PATH");
+  const tok = ["Zq8", "Wn4"].join("");
+  const dir = join(root, `wordygit${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$3" = remote ] && [ "$4" = set-url ]; then',
+    `  echo "error: could not set //u:${tok}@mirror.example with ?key=${tok} in it" >&2; exit 1`, "fi", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const r = run(f.home, ["--no-update"], { PATH: `${dir}${delimiter}${process.env.PATH}` });
+  const line = r.out.split("\n").find((l) => l.includes("고정 실패")) ?? "";
+  assert.ok(line.includes("//***@mirror.example") && line.includes("?key=***"), line);
+  assert.ok(!r.out.includes(tok), r.out);
 });
 
 // User decision 2026-10-21 (R2 2.1): --check, the pin and unpin failure lines and the cause line show the default
@@ -3914,7 +3939,10 @@ test("--check shows the default upstream's address masked as it is, and any othe
   const tok = ["T0k", "9xQ"].join("");
   for (const [url, shown] of [[UPSTREAM, UPSTREAM], [`https://u:${tok}@github.com/Yeachan-Heo/oh-my-claudecode.git`, "https://***@github.com/Yeachan-Heo/oh-my-claudecode.git"],
     [`${UPSTREAM}?token=${tok}`, `${UPSTREAM}?***`], [`https://mirror.example/team/${tok}/omc.git`, "https://mirror.example"],
-    [`${UPSTREAM}#${tok}`, "https://github.com"], [`${UPSTREAM}?a=1#${tok}`, "https://github.com"], [`${UPSTREAM};auth=${tok}`, "https://github.com"]]) {
+    [`${UPSTREAM}#${tok}`, "https://github.com"], [`${UPSTREAM}?a=1#${tok}`, "https://github.com"], [`${UPSTREAM};auth=${tok}`, "https://github.com"],
+    // no scheme: git reads `user:<token>@github.com/...` as an scp-like address on host `user`; it is no upstream, and the
+    // mask (from a //) would not reach its user information
+    [`user:${tok}@github.com/Yeachan-Heo/oh-my-claudecode.git`, "(호스트가 없는 URL 또는 로컬 경로)"]]) {
     assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
     assert.ok(out.includes(`마켓플레이스 미고정 (origin=${shown})`), `${url}\n${out}`);

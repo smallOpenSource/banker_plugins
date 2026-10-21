@@ -85,11 +85,16 @@ const shown = (s) => String(s).replace(UNSAFE, "?");
 // its length. settings.json can hold tokens (see step 0) and the line goes into a report; masking the parts that look
 // like secrets missed every form no rule named (curl -u, sshpass -p, mysql -pPW), so the rest stays in the backup.
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+// Shell words: runs of plain characters and quoted pieces, a quote left open running to the end, so a value in quotes
+// stays one word with its name.
+const WORDS = /(?:"[^"]*"?|'[^']*'?|[^\s"'])+/g;
 function priorShown(command) {
   const text = String(command).trim();
-  const words = text.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  const words = text.match(WORDS) || [];
   const first = words.findIndex((w) => !ASSIGN.test(w));
-  const head = first === -1 ? "(no program)" : `${words[first]}${first < words.length - 1 ? " …" : ""}`;
+  // a first word that looks like a setting or an address may hold a secret itself
+  const name = first === -1 ? "(no program)" : /[=@]|:\/\//.test(words[first]) ? "(program hidden)" : words[first];
+  const head = `${name}${first !== -1 && first < words.length - 1 ? " …" : ""}`;
   return `${JSON.stringify(shown(head))} (${text.length} characters)`;
 }
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");

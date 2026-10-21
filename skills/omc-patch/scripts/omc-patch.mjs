@@ -299,7 +299,7 @@ function canInstallTarget({ tar = true } = {}) {
 // 부르지 않고 그렇다고 한다(git 은 "remote helper" 오류만 낸다). curl 은 비밀번호 안의 `/` 를 호스트의 끝으로 읽어 사용자
 // 정보 조각을 문구에 싣는다("Port number ended with 'Q'", "Could not resolve host: alice"). 그래서 다음이면 문구는 싣지
 // 않고 git 이 어떻게 끝났는지만 댄다: origin 에 사용자 정보가 있음, git 의 오류 줄에 사용자 정보가 든 주소가 남음(전역
-// insteadOf 가 더한 것. gitError 가 가린 자리 `//***@` 로 안다), 프록시 주소를 curl 이 잘못 읽을 수 있음(proxyMisread).
+// insteadOf 가 더한 것. 그 줄을 가린 자리 `//***@` 로 안다), 프록시 주소를 curl 이 잘못 읽을 수 있음(proxyMisread).
 // 바른 꼴의 사용자 정보는 git 이 줄에서 떼고 curl 도 제대로 읽어, 그 줄은 그대로 싣는다.
 function fetchTags() {
   const url = originUrl();
@@ -307,11 +307,12 @@ function fetchTags() {
   try { gitFetch(["fetch", "--tags", "--quiet", "origin"]); return null; }
   catch (e) {
     if (e.code === "ETIMEDOUT") return `${FETCH_TIMEOUT_MS / 1000}초 안에 끝나지 않아 끊음(응답하지 않는 망일 수 있음)`;
-    const why = gitError(e);
+    const line = gitLine(e);
+    const why = redactUrl(line);
     const ended = `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남`;
     if (hasUserinfo(url) || why.includes("//***@")) return `${ended}(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
     if (proxyMisread()) return `${ended}(프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어 git 의 문구는 싣지 않음)`;
-    return shownAddresses(why);
+    return shownGit(line);
   }
 }
 
@@ -1156,18 +1157,23 @@ function hostPath(url) {
   while (end > 0 && s[end - 1] === "/") end--;
   return s.slice(0, end).replace(/\.git$/i, "").toLowerCase();
 }
-const isUpstream = (url) => hostPath(url) === hostPath(REPO_URL);
-// 기본 상류의 쿼리는 통째로 가린다. redactUrl 은 `이름=값` 만 가려, 이름 없는 토큰(`?<토큰>`)이 남는다.
-const maskQuery = (u) => {
+// 기본 상류는 scheme 이 있는 주소만이다. scheme 없는 `user:<토큰>@github.com/...` 은 git 이 scp 꼴(host 가 `user`)로 읽고,
+// 가림(처음 `//` 부터)도 그 사용자 정보에 닿지 않는다.
+const isUpstream = (url) => SCHEME.test(String(url).startsWith(PIN) ? String(url).slice(PIN.length) : String(url)) && hostPath(url) === hostPath(REPO_URL);
+// 기본 상류의 보이는 꼴: 쿼리는 이름 없는 토큰까지 통째로 `?***`(redactUrl 은 `이름=값` 만 가린다). 쿼리를 가림보다 먼저
+// 잘라, 쿼리 속 `@` 까지 가린 사용자 정보가 쿼리의 `?` 를 먹지 않게 한다. 기본 상류의 첫 `?` 는 쿼리다: host 앞에 날 `?` 가
+// 있으면 hostPath 가 거기서 잘라 기본 상류가 아니다.
+function upstreamShown(u) {
   const q = u.indexOf("?");
-  return q === -1 ? u : `${u.slice(0, q)}?***`;
-};
+  return q === -1 ? redactUrl(u) : `${redactUrl(u.slice(0, q))}?***`;
+}
 // --check 가 보이는 origin(가리기 전의 글).
-const shownOrigin = (url) => (isUpstream(url) ? maskQuery(redactUrl(url)) : hostOnly(url));
-// git 의 줄(gitError 가 가린 뒤)의 주소마다. 고정한 주소는 앞의 `omc-pinned://` 를 남긴다. 가림이 안쪽 scheme 까지 먹은 꼴
-// (`omc-pinned://***@host/...`)은 마지막 `@` 뒤의 host 를 쓴다. 주소는 공백 앞까지로 보고, git 이 주소를 닫는 `'` 와 `:` 는 남긴다.
+const shownOrigin = (url) => (isUpstream(url) ? upstreamShown(String(url)) : hostOnly(url));
+// git 의 줄에 든 주소마다, git 이 찍은 그대로의 주소로 정한 꼴. 가린 뒤에 정하면 마지막 `@` 까지 먹은 가림 뒤의 글(경로나
+// 쿼리 속 `@` 뒤의 토큰)이 host 로 보였다. 고정한 주소는 앞의 `omc-pinned://` 를 남긴다. 주소는 공백 앞까지로 보고, git 이
+// 주소를 닫는 `'` 와 `:` 는 남긴다.
 function shownAddress(u) {
-  if (isUpstream(u)) return maskQuery(u);
+  if (isUpstream(u)) return upstreamShown(u);
   const pin = u.startsWith(PIN) ? PIN : "";
   const inner = u.slice(pin.length);
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(inner)) return `${pin}${hostOnly(inner)}`;
@@ -1263,20 +1269,21 @@ function removePostToolUse(hj, why) {
 // 고정과 되돌리기가 하지 않은 일을 했다고 끝난다.
 function originUrl() {
   try { return git(["config", "--get", "remote.origin.url"]); }
-  catch (e) { return e.status === 1 ? null : { unreadable: gitError(e) }; }
+  catch (e) { return e.status === 1 ? null : { unreadable: gitLine(e) }; }
 }
 
-// git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다).
-// 정화하고 URL 의 인증 정보를 가린다. git 이 오류 문구 없이 끝나면 Node 의 문구(명령 줄 전체, 곧 URL 전체가 든다)를
-// 쓰지 않고 어떻게 끝났는지만 댄다.
-const gitError = (e) => {
+// git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다), 정화하고
+// 200자까지, 아직 가리지 않은 글. git 이 오류 문구 없이 끝나면 Node 의 문구(명령 줄 전체, 곧 URL 전체가 든다)를 쓰지 않고
+// 어떻게 끝났는지만 댄다.
+const gitLine = (e) => {
   const lines = String(e.stderr || "").split("\n").filter((l) => l.trim());
   if (!lines.length) {
     return e.status == null && !e.signal && e.code ? `git 을 실행하지 못함 (${oneLine(e.code)})` : `git 이 오류 문구 없이 끝남 (${oneLine(e.signal || e.status)})`;
   }
-  const line = lines.find((l) => /^(fatal|error):/.test(l)) || lines[0];
-  return oneLine(redactUrl(line)).slice(0, 200);
+  return oneLine(lines.find((l) => /^(fatal|error):/.test(l)) || lines[0]).slice(0, 200);
 };
+// 출력에 싣는 꼴: 주소마다 git 이 찍은 주소로 정한 꼴(shownAddress), 나머지는 가림.
+const shownGit = (line) => redactUrl(shownAddresses(line));
 
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
@@ -1286,14 +1293,14 @@ function pinMarketplace() {
   if (!existsSync(join(MARKET, ".git"))) return "no-git";
   const url = originUrl();
   if (url === null) return "no-remote";
-  if (typeof url !== "string") { bad(`origin 을 읽지 못함 (${shownAddresses(url.unreadable)}): ${oneLine(MARKET)}`); return "origin-unreadable"; }
+  if (typeof url !== "string") { bad(`origin 을 읽지 못함 (${shownGit(url.unreadable)}): ${oneLine(MARKET)}`); return "origin-unreadable"; }
 
   if (MODE === "revert") return unpinMarketplace(url);
   if (url.startsWith(PIN)) return alreadyPinned();
   if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(shownOrigin(url))})`); return "needs"; }
 
   try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
-  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${shownAddresses(gitError(e))})`); return "pin-failed"; }
+  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${shownGit(gitLine(e))})`); return "pin-failed"; }
   return writePinRecord() ? "pinned" : "record-failed";
 }
 
@@ -1441,7 +1448,7 @@ function unpinMarketplace(url) {
   if (!restored) return "not-pinned";
   try { git(["remote", "set-url", "--", "origin", restored]); }
   catch (e) {
-    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${shownAddresses(gitError(e))})`);
+    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${shownGit(gitLine(e))})`);
     log(`      원래 URL(호스트까지만): ${oneLine(hostOnly(restored))}. 원문은 origin 의 omc-pinned:// 뒤에 그대로 있습니다.`);
     return "unpin-failed";
   }

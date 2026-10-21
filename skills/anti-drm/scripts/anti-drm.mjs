@@ -172,7 +172,15 @@ const OPEN_ERRORS = new Map([
 // permissions first, so `on` says that, not to give the settings again. Only for a file or another kind of entry at the
 // path: a link there (to a folder, a big or unreadable file, or in a loop) the save replaces with a file of its own.
 const KEPT_SPOT = new Set([...OPEN_ERRORS.values(), "64KiB 보다 큽니다"]);
-const keptSpot = (file, error) => KEPT_SPOT.has(error) && ["file", "other"].includes(pathKind(file));
+// A path its lstat cannot look at (a folder this account cannot enter) the save refuses too.
+function keptSpot(file, error) {
+  if (!KEPT_SPOT.has(error)) return false;
+  try {
+    return ["file", "other"].includes(pathKind(file));
+  } catch {
+    return true;
+  }
+}
 
 // The settings file's text: null when there is none, { error } when it is not a
 // regular file of at most 64 KiB that a trusted owner holds. Opening without

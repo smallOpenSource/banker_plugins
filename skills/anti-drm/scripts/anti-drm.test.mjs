@@ -652,6 +652,12 @@ test("hardening: a settings folder this account cannot enter is a refusal, not a
     assert.match(r.message, /쓸 권한이 없어 설정을 저장하지 못했습니다 \(EACCES\)/);
     const c = cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
     assert.equal(c.code, 1, c.out);
+    // 0.20.5 review (N2): on with no settings looks at what is at the settings path too; a folder it cannot enter is
+    // the same refusal there, not a crash with exit 2
+    const on = cli(["on", "--runtime", "codex"], cliEnv(s));
+    assert.equal(on.code, 1, on.out);
+    assert.match(on.out, /읽을 권한이 없습니다[\s\S]*anti-drm 은 이 자리를 덮어쓰지 않습니다/);
+    assert.doesNotMatch(on.out, /예기치 못한 오류/);
   } finally {
     chmodSync(folder, 0o755);
   }
