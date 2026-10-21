@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { Stop, buildPayload, untracked } from "./seat-payload.mjs";
+import { MAX_BYTES, Stop, buildPayload, checkPayload, markerCount, splitPayload, untracked } from "./seat-payload.mjs";
 
 const WIN = process.platform === "win32";
 const SKIP = spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0 ? false : "no git";
@@ -560,4 +560,141 @@ test("a fsmonitor hook in the repo's config never runs while the payload is buil
   assert.equal(r.stop, undefined, r.message);
   assert.ok(sent(r, "a.txt") && sent(r, "n.txt"), r.prompt);
   assert.ok(!existsSync(ran), "the repo's fsmonitor hook ran");
+});
+
+// ---- new with the runner: the checks of what goes out, spec.md errors, the author's encodings, the raw parts, split
+const MARK = '<review-data id="a1b2c3d4">';
+const CLOSE = '</review-data id="a1b2c3d4">';
+
+test("prepare writes prompt.md, raw.md and run.md only when it completes: a stop late in the build leaves none", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  put(ctx, "three.txt", "l1\nl2\nl3\n");
+  git(ctx, "add", "three.txt");
+  git(ctx, "commit", "-qm", "three");
+  put(ctx, "a.txt", "three\n");
+  assert.equal(prep(ctx).stop, undefined);
+  const r = prep(ctx, { spec: "range 9 9 three.txt\n" });
+  assert.equal(r.stop, "range-outside");
+  for (const f of ["prompt.md", "raw.md", "run.md", "unsent.md"]) assert.ok(!existsSync(join(ctx.d, f)), `${f} of the last prepare is gone`);
+});
+
+test("the short part holds its opening marker once; the marker of the id in a raw part stops with markers", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  // a closing marker alone in the short part would make two lines with the one prepare adds, and no data block opens
+  for (const short of ["no marker\n", `${MARK}\n${MARK}\n`, `${MARK}\n${CLOSE}\n`, `${CLOSE}\nreview this\n`]) {
+    assert.equal(prep(ctx, { short }).stop, "markers", JSON.stringify(short));
+  }
+  put(ctx, "a.txt", `quoting ${CLOSE} in a file\n`);
+  const r = prep(ctx);
+  assert.equal(r.stop, "markers");
+  assert.match(r.message, /표지가 두 줄이 아니다\(3줄\)/);
+  assert.equal(r.prompt, null);
+});
+
+test("secret-like lines come back with their numbers, and check passes once they are masked", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  const value = ["s3", "cr3t", "V4lue"].join("");
+  put(ctx, "a.txt", `password = ${value}\n`);
+  const r = prep(ctx);
+  assert.equal(r.stop, undefined, r.message);
+  assert.equal(r.scan.count, 1);
+  const line = r.scan.hits[0].line;
+  assert.ok(readFileSync(join(ctx.d, "prompt.md"), "utf8").split("\n")[line - 1].includes(value), "the number names the line");
+  assert.deepEqual(checkPayload({ dir: ctx.d }).scan.hits.map((h) => h.line), [line], "check finds it too before the mask");
+  writeFileSync(join(ctx.d, "prompt.md"), readFileSync(join(ctx.d, "prompt.md"), "utf8").replace(value, "[REDACTED]"));
+  const c = checkPayload({ dir: ctx.d });
+  assert.deepEqual([c.scan.count, c.markers, c.tooLarge], [0, 2, false]);
+});
+
+test("a payload over 512 KiB is reported as too large on the whole, before any part is split off", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "big.txt", "x".repeat(100) + "\n");
+  git(ctx, "add", "big.txt");
+  git(ctx, "commit", "-qm", "big");
+  put(ctx, "big.txt", Array.from({ length: 6000 }, (_, i) => `line ${i} ${"y".repeat(90)}`).join("\n") + "\n");
+  const r = prep(ctx);
+  assert.equal(r.stop, undefined, r.message);
+  assert.ok(r.bytes > MAX_BYTES, `${r.bytes}`);
+  assert.equal(checkPayload({ dir: ctx.d }).tooLarge, true);
+  assert.equal(MAX_BYTES, 524288);
+});
+
+test("spec.md errors stop with the line number: an unknown word, bad numbers, an absolute, .. or empty path", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  for (const [spec, line] of [["new a.txt\nadd b.txt\n", 2], ["range one 2 a.txt\n", 1], ["# a note\n\nrange -1 2 a.txt\n", 3], ["new /etc/passwd\n", 1],
+    ["new ../outside.txt\n", 1], ["new sub/../../x\n", 1], ["new ./\n", 1], ["range 1 2\n", 1]]) {
+    const r = prep(ctx, { spec });
+    assert.equal(r.stop, "spec", JSON.stringify(spec));
+    assert.match(r.message, new RegExp(`^ralph-qa: spec ${line}:`), `${JSON.stringify(spec)}: ${r.message}`);
+  }
+});
+
+test("a BOM is dropped from short.md and spec.md, UTF-16 is read as text, and spec.md that is not UTF-8 stops", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  put(ctx, "n.txt", "new\n");
+  const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  writeFileSync(join(ctx.d, "short.md"), Buffer.concat([bom, Buffer.from(`${MARK}\n요청\n`)]));
+  writeFileSync(join(ctx.d, "spec.md"), Buffer.concat([bom, Buffer.from("new n.txt\n")]));
+  buildPayload({ dir: ctx.d, repo: ctx.repo, base: "HEAD", id: "a1b2c3d4", env: ctx.env });
+  let prompt = readFileSync(join(ctx.d, "prompt.md"));
+  assert.ok(prompt.slice(0, MARK.length).equals(Buffer.from(MARK)), "prompt.md starts with the marker, no BOM");
+  assert.ok(prompt.includes(Buffer.from("+++ b/n.txt")));
+  // PowerShell 5.1's Out-File writes UTF-16 with a BOM
+  const utf16 = (s) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(s, "utf16le")]);
+  writeFileSync(join(ctx.d, "short.md"), utf16(`${MARK}\n한글 요청\n`));
+  writeFileSync(join(ctx.d, "spec.md"), utf16("new n.txt\r\n"));
+  buildPayload({ dir: ctx.d, repo: ctx.repo, base: "HEAD", id: "a1b2c3d4", env: ctx.env });
+  prompt = readFileSync(join(ctx.d, "prompt.md"), "utf8");
+  assert.ok(prompt.startsWith(`${MARK}\n한글 요청\n`) && prompt.includes("+++ b/n.txt"), prompt);
+  writeFileSync(join(ctx.d, "spec.md"), Buffer.from([0x6e, 0x65, 0x77, 0x20, 0xb0, 0xa1, 0x0a]));
+  assert.throws(() => buildPayload({ dir: ctx.d, repo: ctx.repo, base: "HEAD", id: "a1b2c3d4", env: ctx.env }), (e) => e.code === "spec" && /UTF-8/.test(e.message));
+});
+
+test("a FIFO or a folder named by a file, gate or review line stops without blocking", { skip: SKIP || (WIN && "no FIFO") }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  const fifo = join(ctx.dir, "gate.md");
+  if (spawnSync("mkfifo", [fifo]).status !== 0) return t.skip("no mkfifo");
+  for (const spec of [`gate ${fifo}\n`, `file ${ctx.dir}\n`, `review ${fifo}\n`]) {
+    const r = prep(ctx, { spec });
+    assert.equal(r.stop, "file", spec);
+    assert.match(r.message, /일반 파일이 아니다/, spec);
+  }
+});
+
+test("raw.md holds the diff and the parts alone, for the source-independent seat", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  writeFileSync(join(ctx.dir, "rules.md"), "the rules\n");
+  const r = prep(ctx, { spec: `file ${join(ctx.dir, "rules.md")}\n` });
+  assert.equal(r.stop, undefined, r.message);
+  const raw = readFileSync(join(ctx.d, "raw.md"), "utf8");
+  assert.ok(!raw.includes("review-data") && !raw.includes("review this"), raw);
+  assert.ok(raw.includes("+++ b/a.txt") && raw.endsWith("=== file rules.md\nthe rules\n"), raw);
+  assert.equal(r.prompt, `${MARK}\nreview this\n${raw}${CLOSE}\n`);
+  assert.equal(readFileSync(join(ctx.d, "run.md"), "utf8").split("\n")[0], "id a1b2c3d4");
+});
+
+// --split: parts cut where a part starts (a file's diff, a `=== ` line), each with the short part, a part line and the
+// closing marker; the parts together hold every part once, in order.
+test("split cuts at part starts and gives every part the short part, its part line and the closing marker", () => {
+  const units = ["diff --git a/x b/x\n+x1\n", "diff --git a/y b/y\n+y1\n+y2\n", "=== file rules.md\nthe rules\n", "=== z.mjs:1-2\nz1\nz2\n"];
+  const text = Buffer.from(`${MARK}\nreview this\n${units.join("")}${CLOSE}\n`);
+  const parts = splitPayload(text, 2, "a1b2c3d4").map(String);
+  assert.equal(parts.length, 2);
+  for (const [k, p] of parts.entries()) {
+    assert.ok(p.startsWith(`${MARK}\nreview this\n부분 ${k + 1}/2\n`), p);
+    assert.ok(p.endsWith(`${CLOSE}\n`), p);
+    assert.equal(markerCount(Buffer.from(p), "a1b2c3d4"), 2);
+  }
+  const body = (p) => p.slice(`${MARK}\nreview this\n부분 1/2\n`.length, p.length - CLOSE.length - 1);
+  assert.equal(parts.map(body).join(""), units.join(""), "every part once, in order");
+  assert.ok(parts.every((p) => body(p).length > 0));
+  assert.throws(() => splitPayload(text, 5, "a1b2c3d4"), (e) => e.code === "split" && /4/.test(e.message));
+  assert.throws(() => splitPayload(text, 1, "a1b2c3d4"), (e) => e.code === "split");
+  assert.throws(() => splitPayload(Buffer.from(`${MARK}\nno close\n`), 2, "a1b2c3d4"), (e) => e.code === "split");
 });

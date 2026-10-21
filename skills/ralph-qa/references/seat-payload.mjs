@@ -398,3 +398,70 @@ export function buildPayload({ dir, repo, base, id, env = process.env }) {
     rmSync(`${ctx.idx}.lock`, { force: true });
   }
 }
+// What run.md says of the last prepare in `dir`: its id, base, tree and repo. A folder without one was never prepared
+// (or its prepare stopped): nothing in it goes out.
+export function readRun(dir) {
+  let text;
+  try {
+    text = readFileSync(join(dir, "run.md"), "utf8");
+  } catch {
+    throw new Stop("not-prepared", `prepare 가 끝난 폴더가 아니다(run.md 없음): ${dir}`);
+  }
+  const run = Object.fromEntries(text.split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf(" ")), l.slice(l.indexOf(" ") + 1)]));
+  checkId(run.id);
+  return run;
+}
+
+// The payload as it would go out now (after the author masked it): its size, the lines with the marker of the id,
+// the secret scan, and whether it is past 512 KiB.
+export function checkPayload({ dir, id = readRun(dir).id }) {
+  let buf;
+  try {
+    buf = readFileSync(join(dir, "prompt.md"));
+  } catch {
+    throw new Stop("not-prepared", `prompt.md 가 없다. prepare 를 먼저 한다: ${dir}`);
+  }
+  return { bytes: buf.length, markers: markerCount(buf, id), scan: scan(buf.toString("utf8")), tooLarge: buf.length > MAX_BYTES };
+}
+
+// Where each line of `buf` starts, and the end.
+function lineStartsOf(buf) {
+  const starts = [0];
+  for (let i = buf.indexOf(10); i !== -1 && i + 1 < buf.length; i = buf.indexOf(10, i + 1)) starts.push(i + 1);
+  return starts;
+}
+
+// Groups of the parts, in order, as even in size as they can be, `n` groups each holding one part at least.
+function balanced(units, n) {
+  const total = units.reduce((a, u) => a + u.length, 0);
+  const groups = [[]];
+  let acc = 0;
+  units.forEach((u, i) => {
+    const left = units.length - i;
+    const toOpen = n - groups.length;
+    if (groups[groups.length - 1].length && (left <= toOpen || acc >= (total * groups.length) / n)) groups.push([]);
+    groups[groups.length - 1].push(u);
+    acc += u.length;
+  });
+  return groups;
+}
+
+// The payload cut into `n` parts where a part starts (a file's diff, a `=== ` line), between the short part and the
+// closing marker. Each part holds the short part, a `부분 <k>/<n>` line and the closing marker; the parts in order hold
+// every part of the payload once. A line inside a file that starts like a part may become a cut: the parts are still
+// whole together.
+export function splitPayload(buf, n, id) {
+  if (!Number.isInteger(n) || n < 2) throw new Stop("split", `나눌 수는 2 이상의 정수다: ${n}`);
+  const at = lineStartsOf(buf);
+  const lineAt = (k) => buf.slice(at[k], k + 1 < at.length ? at[k + 1] : buf.length).toString("utf8").replace(/\r?\n$/, "");
+  const lines = at.map((_, k) => lineAt(k));
+  const open = lines.findIndex((l) => l.includes(`<review-data id="${id}">`));
+  const close = lines.lastIndexOf(`</review-data id="${id}">`);
+  if (open === -1 || close <= open) throw new Stop("split", "여는 표지와 닫는 표지를 찾지 못했다");
+  const starts = lines.map((l, k) => (k > open && k < close && (l.startsWith("diff --git ") || l.startsWith("=== ")) ? k : -1)).filter((k) => k !== -1);
+  if (starts.length < n) throw new Stop("split", `나눌 수 있는 단위가 ${starts.length}개라 ${n} 부분으로 나눌 수 없다`);
+  const units = starts.map((k, j) => buf.slice(at[k], at[j + 1 < starts.length ? starts[j + 1] : close]));
+  const prefix = buf.slice(0, at[starts[0]]);
+  const closing = buf.slice(at[close]);
+  return balanced(units, n).map((g, k) => Buffer.concat([prefix, Buffer.from(`부분 ${k + 1}/${n}\n`), ...g, closing]));
+}
