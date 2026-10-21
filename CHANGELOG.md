@@ -8,6 +8,7 @@
 - `ralph-qa` SKILL 이 `TaskStop` 이 좌석 프로세스 트리를 멈춘다는 문장을 실측한 Linux, macOS 로 좁힌다. Windows(Git Bash)에서는 좌석의 시간 상한이 트리를 끝내고, PowerShell 판에서 트리까지 멈추는지는 재지 못했다고 적는다.
 - 유지보수자용: setup-omc-hud 시험의 쓰지 않는 도우미 셋을 지우고 설치 스크립트의 가져오기 순서를 맞춘다. 중간에 멈추는 설치의 시험은 쓰기 오류를 일으키는 preload 로 돈다.
 - 유지보수자용: azure-adapter 와 video-pool 이 따로 들던 시간 상수와 오류 도우미를 adapter 하나에 둔다. 임시 파일의 `wx` 지킴을 고정하는 시험을 더한다.
+- `setup-omc-hud` SKILL 이 `settings.json` 을 새 파일로 바꿔 넣을 때 손으로 준 ACL, 확장 속성(Windows 는 대체 데이터 스트림), SELinux 라벨이 새 파일에도 백업에도 따라오지 않는다고 적는다(세 OS 실측).
 
 ### Fixed
 - `lineage` 3.0.10: detect-secrets 가 설치된 환경에서 검사용 임시 파일을 쓰다 실패하면(디스크가 가득 참, UTF-8 이 담지 못하는 글자) 그 파일이 임시 폴더에 남던 것. 그 파일에는 detect-secrets 가 가리기 전의 글이 들 수 있었다.
