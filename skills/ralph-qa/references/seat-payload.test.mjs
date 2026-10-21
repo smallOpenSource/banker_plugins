@@ -698,3 +698,26 @@ test("split cuts at part starts and gives every part the short part, its part li
   assert.throws(() => splitPayload(text, 1, "a1b2c3d4"), (e) => e.code === "split");
   assert.throws(() => splitPayload(Buffer.from(`${MARK}\nno close\n`), 2, "a1b2c3d4"), (e) => e.code === "split");
 });
+
+// libuv on Windows looks for a bare program name in the child's working folder before PATH: git starts by the absolute
+// path which() gives, from the payload folder, so a git.exe the repo ships never runs.
+test("git starts by its absolute path: no git by name anywhere in the runner", () => {
+  const src = ["seat-payload.mjs", "seat-run.mjs"].map((f) => readFileSync(new URL(`./${f}`, import.meta.url), "utf8")).join("\n");
+  assert.ok(!/spawn(?:Sync)?\(\s*["'`]git["'`]/.test(src), "git by name");
+  assert.match(readFileSync(new URL("./seat-payload.mjs", import.meta.url), "utf8"), /const exe = which\("git", \{ env \}\);/);
+});
+
+test("a git.exe in the repo never runs on Windows, even with the repo as the working folder", { skip: SKIP || (!WIN && "Windows looks in the working folder first") }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  writeFileSync(join(ctx.repo, "git.exe"), readFileSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "whoami.exe")));
+  const prev = process.cwd();
+  process.chdir(ctx.repo);
+  try {
+    const r = prep(ctx);
+    assert.equal(r.stop, undefined, r.message);
+    assert.ok(sent(r, "a.txt"), r.prompt);
+  } finally {
+    process.chdir(prev);
+  }
+});
