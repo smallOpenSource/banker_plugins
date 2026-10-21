@@ -12,6 +12,7 @@ import { hostname, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
+import { pwshEnv } from "../../../scripts/test-fixtures/pwsh-env.mjs";
 
 const TOOL = fileURLToPath(new URL("./omc-patch.mjs", import.meta.url));
 const root = mkdtempSync(join(tmpdir(), "omc-patch-test-"));
@@ -30,7 +31,8 @@ const GIT_REPO_VARS = new Set(["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG",
 // HOME and XDG_CONFIG_HOME cover git older than 2.32, which ignores GIT_CONFIG_GLOBAL. An empty template folder
 // keeps the developer's template hooks out of the fixture repositories. The developer's ceiling is dropped too, so a
 // fixture that relies on git walking up still does. The developer's askpass helpers (GIT_ASKPASS, SSH_ASKPASS: an editor's
-// terminal sets one) are dropped as well: GIT_TERMINAL_PROMPT=0 does not stop git from calling them.
+// terminal sets one) are dropped as well: GIT_TERMINAL_PROMPT=0 does not stop git from calling them. GIT_ALLOW_PROTOCOL
+// keeps git, the tool's too, to local paths and the loopback http servers below: a fixture's https origin never asks a name server.
 const NO_GITCONFIG = join(root, "empty.gitconfig");
 const NO_TEMPLATES = join(root, "empty-templates");
 writeFileSync(NO_GITCONFIG, "");
@@ -39,7 +41,7 @@ function cleanEnv(extra = {}) {
   const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || /^(GIT_CEILING_DIRECTORIES|GIT_ASKPASS|SSH_ASKPASS)$/i.test(k);
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
   return { ...env, GIT_CONFIG_GLOBAL: NO_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1", GIT_TEMPLATE_DIR: NO_TEMPLATES,
-    HOME: root, XDG_CONFIG_HOME: root, ...extra };
+    HOME: root, XDG_CONFIG_HOME: root, GIT_ALLOW_PROTOCOL: "file:http", ...extra };
 }
 const runGit = (args, cwd, extra) => spawnSync("git", args, { cwd, encoding: "utf8", env: cleanEnv(extra) });
 
@@ -54,8 +56,9 @@ const LIB = "export const x = () => 1;\n";
 
 let seq = 0;
 // versions: [{ v, active }]. Builds ~/.claude/plugins with installed_plugins.json, cache folders and a git marketplace.
-function fakeHome(versions, { git = true } = {}) {
-  const home = join(root, `home${seq++}`);
+// name: the home folder's own name (a test may want a quote or a $ in it).
+function fakeHome(versions, { git = true, name = `home${seq++}` } = {}) {
+  const home = join(root, name);
   const plugins = join(home, ".claude", "plugins");
   const cache = join(plugins, "cache", "omc", "oh-my-claudecode");
   for (const { v } of versions) {
@@ -108,6 +111,14 @@ function bundle() {
   writeFileSync(join(plug, "scripts", "lib.mjs"), LIB);
   return plug;
 }
+
+// 0.20.5 (B2 deferred row 13): "No network" above holds for git too. git refuses https and ssh before it asks a name
+// server, so a test whose fetch reaches the fixtures' example.invalid origin fails here instead of asking one.
+test("the tests' git takes no https transport, so a fixture's example.invalid origin never asks a name server", { skip: !HAS_GIT && "git not found" }, () => {
+  const r = runGit(["ls-remote", ORIGIN], root);
+  assert.equal(r.status, 128, r.stderr);
+  assert.match(r.stderr, /transport 'https' not allowed/);
+});
 
 test("check reports the active version from installed_plugins.json, not the TARGET folder", () => {
   const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }], { git: false });
@@ -535,6 +546,31 @@ test("a bare apply that cannot write installed_plugins.json stops with its name,
   assert.match(r.out, /버전 확보 실패 — 중단/);
   assert.doesNotMatch(r.out, /\n\s+at |Error:/, "no stack trace");
   assert.equal(read(installed), before);
+});
+
+// 0.20.5 (B2 deferred row 2): the copy that fails when the backup exists ends with EEXIST on a folder, a FIFO or a link too,
+// and would read as "the backup is there already": the bare apply would switch with no backup and say all went well.
+const spotKind = (p) => {
+  const st = lstatSync(p);
+  return st.isSymbolicLink() ? "link" : st.isDirectory() ? "folder" : st.isFIFO() ? "FIFO" : st.isFile() ? "file" : "other";
+};
+test("a bare apply does not switch versions when the backup spot of installed_plugins.json is a folder, a FIFO or a link, and says why", { skip: !HAS_GIT && "git not found" }, (t) => {
+  const shapes = { folder: (p) => mkdirSync(p), "dangling link": (p) => symlinkSync(join(root, `no-such${seq++}.json`), p) };
+  if (process.platform !== "win32") shapes.FIFO = (p) => assert.equal(spawnSync("mkfifo", [p]).status, 0, "mkfifo");
+  for (const [what, make] of Object.entries(shapes)) {
+    const { f, target } = bareApplyFixture();
+    const bak = join(f.plugins, "installed_plugins.json.omcbak");
+    try { make(bak); } catch (e) { t.diagnostic(`${what}: not made here (${e.code ?? e.message})`); continue; }
+    const kind = spotKind(bak);
+    const r = run(f.home, []);
+    assert.equal(r.code, 1, `${what}\n${r.out}`);
+    assert.match(r.out, /\[!\] installed_plugins\.json 을 바꾸지 않음 \(백업 자리가 (링크|일반 파일이 아님)\): .*installed_plugins\.json\.omcbak\n/, `${what}\n${r.out}`);
+    assert.match(r.out, /버전 확보 실패 — 중단/, what);
+    assert.doesNotMatch(r.out, /완료\. 실패 0건/, what);
+    assert.equal(JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0].version, "5.6.1", `${what}: nothing switched`);
+    assert.equal(spotKind(bak), kind, `${what}: the spot is left as it was`);
+    assert.ok(!existsSync(join(f.cache, target)), `${what}: ${target} is not unpacked`);
+  }
 });
 
 test("a pin whose PINNED cannot be written is named and counted; origin stays pinned and no stack trace", { skip: !HAS_GIT && "git not found" }, () => {
@@ -2079,6 +2115,26 @@ test("every file the tool replaces is flushed to disk before the rename", () => 
   for (const [l, i] of renames) assert.equal(lines[i - 1], "fsync", `${l} follows an fsync`);
 });
 
+// 0.20.5 (final batch deferred row 8): a file system that does not flush on request (fsync says EINVAL or ENOTSUP) still gets
+// the patch, as in azure-adapter: the rename still swaps the whole file in. Any other fsync error still stops that file.
+const FSYNC_FAILS = (code) => [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  `fs.fsyncSync = () => { throw Object.assign(new Error("${code}: fsync"), { code: "${code}" }); };`,
+  "syncBuiltinESMExports();",
+].join("\n");
+test("a file system whose fsync says EINVAL or ENOTSUP still gets the patch; any other fsync error still stops that file", () => {
+  for (const [code, patched] of [["EINVAL", true], ["ENOTSUP", true], ["EIO", false]]) {
+    const plug = bundle();
+    const pre = join(root, `fsync-${code}${seq++}.mjs`);
+    writeFileSync(pre, `${FSYNC_FAILS(code)}\n`);
+    const r = runImport(pre, bareHome(), ["--root", plug]);
+    assert.equal(r.code, patched ? 0 : 1, `${code}\n${r.out}`);
+    assert.equal(/__omcRaceImport\(import\(/.test(read(join(plug, "scripts", "foo.mjs"))), patched, `${code}\n${r.out}`);
+    if (!patched) assert.match(r.out, new RegExp(`쓰지 못함: foo \\(${code}\\)`), r.out);
+  }
+});
+
 // A git and a tar that write down the folder each call runs in, then run the real one.
 function pwdWrappers(t) {
   const real = Object.fromEntries(["git", "tar"].map((c) => [c, spawnSync("sh", ["-c", `command -v ${c}`], { encoding: "utf8" }).stdout.trim()]));
@@ -2284,7 +2340,7 @@ test("the hint for a patch with no backup goes through a temp tar file, never a 
   assert.equal(run(f.home, ["--no-update"]).code, 0);
   rmSync(join(f.cache, "5.6.1", "scripts", "foo.mjs.omcbak"));
   const r = run(f.home, ["--revert"]);
-  assert.match(r.out, /git -C ".*" archive -o "<임시 tar>" v5\.6\.1 scripts\/<이름>\.mjs\n\s+tar -xf "<임시 tar>" -C ".*5\.6\.1"/);
+  assert.match(r.out, /git -C '.*' archive -o "<임시 tar>" 'v5\.6\.1' 'scripts\/<이름>\.mjs'\n\s+tar -xf "<임시 tar>" -C '.*5\.6\.1'/);
   assert.match(r.out, /<임시 tar> 는 새로 만든 임시 폴더\(bash: mktemp -d\) 안의 파일로 정하고, 다 쓴 뒤 폴더째 지우십시오\./, "the temp file is not a name picked by hand");
   assert.doesNotMatch(r.out, /archive v5\.6\.1 .*\|/);
 });
@@ -3764,4 +3820,208 @@ test("a bare apply over an origin this tool pinned says the pin is why it got no
   assert.match(r.out, /태그 v.* 를 마켓플레이스에서 찾을 수 없음/);
   assert.match(r.out, /origin 에서 태그를 받지 못함: origin 이 고정되어 있음\(omc-pinned:\/\/\)\. 받으려면 먼저 --revert 로 고정을 푸십시오/);
   assert.doesNotMatch(r.out, /remote helper|Broken pipe/);
+});
+
+// ---- 0.20.5 (R2): git's address in the cause line and the pin failure line
+// Final batch deferred row 15: a token can sit in the path, the fragment or a `;` parameter, where the masking of user info
+// and query values does not reach. The cause line keeps only the scheme and host of each address git names, and the quote
+// and colon that close it. Port 9 on 127.0.0.1 is closed, so git fails at once and no name server is asked.
+test("the cause line keeps only scheme and host of the address git names, and the quote and colon that close it", { skip: !HAS_GIT && "git not found" }, () => {
+  const tok = ["P9x8", "Y7z6"].join("");
+  for (const url of [`http://127.0.0.1:9/${tok}/omc.git`, `http://127.0.0.1:9/omc.git#${tok}`, `http://127.0.0.1:9/omc.git;auth=${tok}`, `http://127.0.0.1:9/omc.git?token=${tok}`]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
+    const r = run(f.home, [], { OMC_PATCH_FETCH_TIMEOUT_MS: "20000", ...NO_PROXY_ENV });
+    assert.equal(r.code, 1, r.out);
+    const cause = r.out.split("\n").find((l) => l.includes("origin 에서 태그를 받지 못함:")) ?? "";
+    assert.match(cause, /'http:\/\/127\.0\.0\.1:9': /, `${url}\n${cause}`);
+    assert.ok(!r.out.includes(tok), `${url}\n${r.out}`);
+  }
+});
+
+// Final batch deferred row 16: the query masking took git's closing quote (and colon) along with the value.
+test("a pin failure line over an origin with a query token keeps the quote that closes git's address", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const tok = ["Q1w2", "E3r4"].join("");
+  assert.equal(runGit(["config", "--add", "remote.origin.url", `https://example.invalid/two.git?token=${tok}`], f.market).status, 0);
+  const r = run(f.home, ["--no-update"]);
+  const line = r.out.split("\n").find((l) => l.includes("고정 실패")) ?? "";
+  assert.match(line, /\?token=\*\*\*'\)$/, line);
+  assert.ok(!r.out.includes(tok), r.out);
+});
+
+// ---- 0.20.5 (final batch deferred row 4): the fetch's time limit used to end git alone. git's helpers (git remote-http and
+// git-remote-http) were left to hold the connection for up to 30 s (http, curl's low speed limit) or 300 s (TLS, curl's
+// connect limit). The fetch now runs git under a small node process that ends git and its children together.
+// A loopback server that takes each connection, reads what comes and never answers. closedAll(ms) waits until the client
+// side of every held connection has closed (the helper that held it ended) or ms pass.
+async function holdingServer() {
+  const held = [];
+  const srv = createServer((s) => {
+    const e = { s, closed: false };
+    held.push(e);
+    s.on("close", () => { e.closed = true; });
+    s.on("error", () => {});
+    s.resume();
+  });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  const closedAll = async (ms) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until && !held.every((e) => e.closed)) await new Promise((res) => setTimeout(res, 50));
+    return held.every((e) => e.closed);
+  };
+  const end = () => { for (const e of held) e.s.destroy(); srv.close(); };
+  return { url: `http://127.0.0.1:${srv.address().port}/omc.git`, held, closedAll, end };
+}
+const toolEnv = (home, extra = {}) => {
+  const env = cleanEnv({ HOME: home, USERPROFILE: home, ...NO_PROXY_ENV, ...extra });
+  delete env.OMC_PATCH_INSTALLED;
+  return env;
+};
+const runAsync = (home, extra) => new Promise((res) => {
+  execFile(process.execPath, [TOOL], { env: toolEnv(home, extra), encoding: "utf8", timeout: 30000 }, (e, so, se) => res({ code: e ? e.code : 0, out: `${so}${se}` }));
+});
+
+test("a bare apply whose fetch hits its time limit ends git's helpers with it: the held connection closes", { skip: !HAS_GIT && "git not found", timeout: 60000 }, async () => {
+  const srv = await holdingServer();
+  try {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", srv.url], f.market).status, 0);
+    const r = await runAsync(f.home, { OMC_PATCH_FETCH_TIMEOUT_MS: "1000" });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /origin 에서 태그를 받지 못함: 1초 안에 끝나지 않아 끊음/, r.out);
+    assert.ok(srv.held.length > 0, "git reached the server");
+    assert.ok(await srv.closedAll(3000), "a git helper still holds the connection 3 s after the tool ended");
+  } finally {
+    srv.end();
+  }
+});
+
+test("Ctrl+C during the bare apply's fetch ends git's helpers too", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "POSIX signals to a process group"), timeout: 60000 }, async () => {
+  const srv = await holdingServer();
+  try {
+    const f = fakeHome([{ v: "5.6.1", active: true }]);
+    assert.equal(runGit(["remote", "set-url", "origin", srv.url], f.market).status, 0);
+    // a terminal sends Ctrl+C to the whole foreground process group: the tool starts as one here
+    const c = spawn(process.execPath, [TOOL], { env: toolEnv(f.home, { OMC_PATCH_FETCH_TIMEOUT_MS: "20000" }), stdio: "ignore", detached: true });
+    const until = Date.now() + 15000;
+    while (Date.now() < until && !srv.held.length) await new Promise((res) => setTimeout(res, 50));
+    assert.ok(srv.held.length > 0, "git reached the server");
+    process.kill(-c.pid, "SIGINT");
+    await new Promise((res) => c.on("close", res));
+    assert.ok(await srv.closedAll(3000), "a git helper still holds the connection 3 s after Ctrl+C");
+  } finally {
+    srv.end();
+  }
+});
+
+// git removes its ref lock files on SIGTERM; a SIGKILL first could leave a .lock that stops the next fetch.
+test("at its time limit the fetch asks git to stop first, so git can remove its lock files", posixGit, async (t) => {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  if (!realGit) return t.skip("git not found on PATH");
+  const dir = join(root, `termgit${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  const mark = join(dir, "mark");
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$1" = fetch ]; then', `  trap 'echo TERM > "${mark}"; exit 143' TERM`, "  sleep 30 &", "  wait",
+    "  exit 0", "fi", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", join(root, `nowhere${seq++}.git`)], f.market).status, 0);
+  const r = await runAsync(f.home, { OMC_PATCH_FETCH_TIMEOUT_MS: "1000", PATH: `${dir}${delimiter}${process.env.PATH}` });
+  assert.match(r.out, /1초 안에 끝나지 않아 끊음/, r.out);
+  const until = Date.now() + 3000;
+  while (Date.now() < until && !existsSync(mark)) await new Promise((res) => setTimeout(res, 50));
+  assert.equal(existsSync(mark) ? read(mark).trim() : "(no mark)", "TERM", "git got SIGTERM before any SIGKILL");
+});
+
+test("a bare apply fetches the target tag from an origin that has it, and switches to it", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target } = bareApplyFixture();
+  // the tag moves to a local origin: the marketplace has to fetch it
+  const src = join(root, `origin${seq++}.git`);
+  assert.equal(runGit(["clone", "-q", "--bare", f.market, src], root).status, 0);
+  assert.equal(runGit(["tag", "-d", `v${target}`], f.market).status, 0);
+  assert.equal(runGit(["remote", "set-url", "origin", src], f.market).status, 0);
+  const r = run(f.home, []);
+  assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.out, /태그를 받지 못함/);
+  assert.equal(runGit(["tag", "-l", `v${target}`], f.market).stdout.trim(), `v${target}`, "the tag came from origin");
+  assert.equal(JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0].version, target);
+});
+
+// ---- 0.20.5 (B2 deferred row 4): values put into a command keep to quotes neither shell reads into.
+// A home folder's name may hold a $ (PowerShell's double quotes read `$b` as a variable) or a quote. The no-backup hint
+// puts each path in single quotes, in double quotes when it has a single quote, and gives no command when it has both.
+test("the no-backup hint quotes its paths so that neither bash nor PowerShell reads a $ or a quote in them", { skip: !HAS_GIT && "git not found" }, () => {
+  for (const [name, shape] of [[`dollar$HOME${seq++}`, "single"], [`o'brien${seq++}`, "double"], [`o'brien$x${seq++}`, "none"]]) {
+    const f = fakeHome([{ v: "5.6.1", active: true }], { name });
+    assert.equal(run(f.home, ["--no-update"]).code, 0, name);
+    rmSync(join(f.cache, "5.6.1", "scripts", "foo.mjs.omcbak"));
+    const r = run(f.home, ["--revert"]);
+    const line = r.out.split("\n").find((l) => l.includes(" archive -o ")) ?? "";
+    if (shape === "single") assert.ok(line.includes(` -C '${f.market}' archive`), `${name}\n${r.out}`);
+    if (shape === "double") assert.ok(line.includes(` -C "${f.market}" archive`), `${name}\n${r.out}`);
+    if (shape === "none") {
+      assert.equal(line, "", `${name}: no command\n${r.out}`);
+      assert.match(r.out, /폴더 경로를 셸 명령에 그대로 넣을 수 없어 명령을 싣지 않습니다\./, r.out);
+      assert.ok(r.out.includes(`마켓플레이스 폴더 ${f.market} 의 태그 v5.6.1 에서 scripts/<이름>.mjs 를 꺼내 ${join(f.cache, "5.6.1")} 에 푸십시오.`), r.out);
+    }
+  }
+});
+
+// The SKILL's hand restore lines, filled in as an agent would: with a hook name that is a command, with git and tar stubs
+// that write down how they were called, and with a temp folder that cannot be made.
+const tarLine = (shell) => (shell === "bash" ? /`(T=\$\(mktemp -d\)[^`]*archive[^`]*)`/ : /`(\$T = Join-Path[^`]*archive[^`]*)`/).exec(SKILL_TEXT())?.[1];
+const fillTarLine = (line, dir, name) => line.replaceAll("<마켓플레이스 폴더>", dir).replaceAll("<버전>", "5.6.1").replaceAll("<이름>", name).replaceAll("<활성 폴더>", dir);
+function stubTools(dir, log) {
+  for (const n of ["git", "tar"]) writeFileSync(join(dir, n), `#!/bin/sh\necho "${n} $*" >> '${log}'\n`, { mode: 0o755 });
+}
+test("the SKILL's bash temp tar line keeps a hook name inside quotes and removes its temp folder", { skip: process.platform === "win32" && "a POSIX shell command" }, () => {
+  const line = tarLine("bash");
+  assert.ok(line, "the SKILL makes the temp folder and uses it in one bash line");
+  const dir = join(root, `tarline${seq++}`), tmp = join(dir, "tmp");
+  mkdirSync(tmp, { recursive: true });
+  const log = join(dir, "calls.log");
+  stubTools(dir, log);
+  const r = spawnSync("sh", ["-c", fillTarLine(line, dir, "x$(touch PWNED)")], { cwd: dir, encoding: "utf8", env: { ...process.env, TMPDIR: tmp, PATH: `${dir}${delimiter}${process.env.PATH}` } });
+  assert.ok(!existsSync(join(dir, "PWNED")), `the hook name ran as a command:\n${line}\n${r.stderr}`);
+  assert.match(existsSync(log) ? read(log) : "", /^git -C .* archive -o .*\/src\.tar v5\.6\.1 scripts\/x\$\(touch PWNED\)\.mjs\ntar -xf /, "git got the name as it was");
+  assert.deepEqual(readdirSync(tmp), [], "the temp folder is gone");
+});
+test("the SKILL's bash temp tar line runs neither git nor tar when it cannot make the temp folder", { skip: process.platform === "win32" && "a POSIX shell command" }, () => {
+  const line = tarLine("bash");
+  assert.ok(line, "the SKILL makes the temp folder and uses it in one bash line");
+  const dir = join(root, `tarline${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  const log = join(dir, "calls.log");
+  stubTools(dir, log);
+  spawnSync("sh", ["-c", fillTarLine(line, dir, "foo")], { cwd: dir, encoding: "utf8", env: { ...process.env, TMPDIR: join(dir, "no-such-folder"), PATH: `${dir}${delimiter}${process.env.PATH}` } });
+  assert.equal(existsSync(log) ? read(log) : "", "", "git or tar ran without a temp folder");
+});
+// Windows PowerShell 5.1 (the Windows box): the same two checks on the PowerShell line. Functions named git and tar come
+// before the real commands. PowerShell runs with a temp home and the opt-outs (scripts/test-fixtures/pwsh-env.mjs).
+test("the SKILL's PowerShell temp tar line keeps a hook name inside quotes and runs nothing without a temp folder", { skip: process.platform !== "win32" && "Windows PowerShell" }, () => {
+  const line = tarLine("powershell");
+  assert.ok(line, "the SKILL makes the temp folder and uses it in one PowerShell line");
+  for (const [tmpOk, name] of [[true, "x$(New-Item -ItemType File -Path PWNED)"], [false, "foo"]]) {
+    const dir = join(root, `tarline${seq++}`), tmp = join(dir, "tmp");
+    mkdirSync(tmp, { recursive: true });
+    const log = join(dir, "calls.log");
+    const ps1 = join(dir, "line.ps1");
+    // a function sets no exit code; the real git does, and the line reads it
+    writeFileSync(ps1, [`function git { "git $args" | Out-File -Append -Encoding ascii '${log}'; $global:LASTEXITCODE = 0 }`, `function tar { "tar $args" | Out-File -Append -Encoding ascii '${log}' }`,
+      fillTarLine(line, dir, name), ""].join("\r\n"));
+    const where = tmpOk ? tmp : "Q:\\no-such-folder";
+    const pse = pwshEnv({ ...process.env, TMP: where, TEMP: where });
+    let r;
+    try {
+      r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1], { cwd: dir, encoding: "utf8", env: pse.env });
+    } finally {
+      rmSync(pse.home, { recursive: true, force: true });
+    }
+    assert.ok(!existsSync(join(dir, "PWNED")), `the hook name ran as a command:\n${line}\n${r.stderr}`);
+    const calls = existsSync(log) ? read(log) : "";
+    if (tmpOk) {
+      assert.match(calls, /^git -C .* archive -o .*\\src\.tar v5\.6\.1 scripts\/x\$\(New-Item -ItemType File -Path PWNED\)\.mjs\r?\ntar -xf /, `${r.stdout}${r.stderr}`);
+      assert.deepEqual(readdirSync(tmp), [], "the temp folder is gone");
+    } else assert.equal(calls, "", "git or tar ran without a temp folder");
+  }
 });
