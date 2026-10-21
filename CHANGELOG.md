@@ -10,7 +10,7 @@
 - 유지보수자용: azure-adapter 와 video-pool 이 따로 들던 시간 상수와 오류 도우미를 adapter 하나에 둔다. 임시 파일의 `wx` 지킴을 고정하는 시험을 더한다.
 - `setup-omc-hud` SKILL 이 `settings.json` 을 새 파일로 바꿔 넣을 때 손으로 준 ACL, 확장 속성(Windows 는 대체 데이터 스트림), SELinux 라벨이 새 파일에도 백업에도 따라오지 않는다고 적는다(세 OS 실측).
 - `omc-patch` SKILL 은 명령의 자리 표시에 도구 출력이나 `find` 가 낸 값을 넣을 때 bash, PowerShell 모두 작은따옴표로 감싸고, 값에 작은따옴표(PowerShell 은 `‘` `’` `‚` `‛` 도)나 줄바꿈이 있으면 명령을 만들지 않는다고 적는다. 백업 없는 패치의 원본을 임시 tar 로 되찾는 명령은 한 줄로 바꿔, 임시 폴더를 만들지 못하면 git 도 tar 도 돌리지 않고 다 쓴 폴더는 지운다.
-- 유지보수자용: omc-patch 시험의 git 은 https, ssh 전송을 받지 않는다(`GIT_ALLOW_PROTOCOL=file:http`). 고정물의 `example.invalid` origin 으로 이름 서버에 묻는 일이 생기지 않는다.
+- 유지보수자용: omc-patch 시험의 git 은 https, ssh 전송을 받지 않는다(`GIT_ALLOW_PROTOCOL=file:http`). 고정물의 `example.invalid` origin 으로 이름 서버에 묻는 일이 생기지 않는다. 시험 env 에 커밋 정보(이름, 이메일)를 줘, fetch 의 reflog 가 이 PC 의 호스트 이름을 이름 서버에 묻지 않는다. 태그 받기의 두 KILL(TERM 을 무시하는 git, 스스로 끝난 git 이 남긴 프로세스)을 지키는 시험을 더한다.
 - `anti-drm` 설정 자리가 링크면 `status` 가 설정 줄에 링크가 가리키는 곳을 함께 보이고, 그 파일의 틀린 값은 글 대신 형식과 길이만 보인다(`(string, 12자)`). 링크를 따라 읽는 설계는 그대로다.
 - 유지보수자용: smoke 와 gen-skill-changes 시험이 `Object.hasOwn` 없이 돈다(engines 하한 Node 16.7). 두 시험의 npm 은 임시 HOME 과 로그 자리를 써, 사용자 `.npmrc` 의 `logs-max=0`, `logs-dir` 에서 거짓 FAIL 이 나지 않고 로그가 임시 폴더 밖에 생기지 않는다. smoke 의 표준 입력 판정이 공백 든 자리 표시(`<입력 파일 경로>`)를 재지정으로 보지 않는다.
 - 유지보수자용: 저장소의 글 파일에 날 숨은 글자가 없는지 보는 시험(`scripts/hidden-chars.test.mjs`)을 더하고, 시험 셋의 날 글자 6자를 이스케이프로 바꾼다. PowerShell 을 띄우는 시험은 모두 임시 홈 env 를 준다는 시험을 더하고, 그 env 가 모듈 분석 캐시 자리(`PSModuleAnalysisCachePath`)도 옮긴다.
@@ -52,7 +52,8 @@
 - `omc-patch` 인자 없는 apply 의 태그 받기가 시간 제한(120초)에 git 하나만 끝내, git 이 띄운 보조 프로세스(`git remote-http` 등)가 연결을 http 는 30초, TLS 는 300초까지 더 붙들던 것. 이제 시간 제한이나 Ctrl+C 에 그 보조 프로세스까지 함께 끝낸다.
 - 인자 없는 apply 가 `installed_plugins.json.omcbak` 자리가 폴더, FIFO, 링크일 때 백업 없이 판을 바꾸고 `완료. 실패 0건.` 이라 하던 것. 이제 판을 바꾸지 않고 `installed_plugins.json 을 바꾸지 않음` 으로 멈춘다.
 - fsync 를 받지 않는 파일 시스템(`EINVAL`, `ENOTSUP`)에서 훅을 하나도 패치하지 못하던 것. 이제 디스크로 내리기만 건너뛰고 rename 으로 바꾼다(azure-adapter 와 같은 규칙).
-- 태그를 받지 못한 까닭 줄과 `--check` 의 origin 줄, 고정 실패, 고정 해제 실패, origin 을 읽지 못함 줄이 주소의 경로, 조각, `;` 매개변수를 그대로 싣던 것. 이제 기본 상류(GitHub 의 OMC 저장소)는 가린 꼴 그대로, 그 밖의 주소(미러)는 scheme 과 host 까지만 싣는다.
+- 태그를 받지 못한 까닭 줄과 `--check` 의 origin 줄, 고정 실패, 고정 해제 실패, origin 을 읽지 못함 줄이 주소의 경로, 조각, `;` 매개변수를 그대로 싣던 것. 이제 기본 상류(GitHub 의 OMC 저장소)는 가린 꼴 그대로(쿼리는 이름 없는 토큰까지 통째로 `?***`), 그 밖의 주소(미러)는 scheme 과 host 까지만 싣는다.
+- Windows 에서 마켓플레이스 폴더(남의 저장소 사본)에 든 `git.exe` 가 git 대신 돌 수 있던 것. Windows 는 이름만 준 프로그램을 일하는 폴더에서 먼저 찾는다. 이제 모든 git 을 홈 폴더에서 `-C <마켓플레이스>` 로 돌린다.
 - 쿼리 값 가림이 git 이 주소를 닫는 `'` 와 `:` 까지 먹어 고정 실패 줄과 까닭 줄이 깨져 보이던 것.
 - 백업 없는 패치를 되돌리는 안내가 판과 이름을 따옴표 밖에, 폴더 경로를 큰따옴표 안에 넣어 `$` 가 든 홈 폴더(PowerShell)에서 다른 경로가 되던 것. 이제 작은따옴표로 감싸고, 작은따옴표가 든 경로는 큰따옴표로, 둘 다 맞지 않으면 명령 없이 경로만 보인다.
 - `/progress` 패널이 늦게 온 계획 읽기의 도착 순서에 따라 다른 계획을 보이던 것(검토 문서 둘을 나란히 쓰면 둘째 것이 보이는 등). 이제 읽기를 손댄 순서의 자리에 끼워, 손댄 순서대로 왔을 때와 같은 계획을 보인다. 끝내 오지 않는 읽기는 16개까지만 기다린다.

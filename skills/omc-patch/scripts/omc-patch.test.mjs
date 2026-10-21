@@ -3,7 +3,7 @@
 import { strict as assert } from "node:assert";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import {
-  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync,
+  chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { createServer as httpServer } from "node:http";
@@ -43,7 +43,9 @@ function cleanEnv(extra = {}) {
   const drop = (k) => GIT_REPO_VARS.has(k.toUpperCase()) || /^(GIT_CEILING_DIRECTORIES|GIT_ASKPASS|SSH_ASKPASS)$/i.test(k);
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop(k)));
   return { ...env, GIT_CONFIG_GLOBAL: NO_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1", GIT_TEMPLATE_DIR: NO_TEMPLATES,
-    HOME: root, XDG_CONFIG_HOME: root, GIT_ALLOW_PROTOCOL: "file:http", ...extra };
+    HOME: root, XDG_CONFIG_HOME: root, GIT_ALLOW_PROTOCOL: "file:http",
+    // an ident: without one git looks this host's full name up in DNS for the fetch's reflog
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", ...extra };
 }
 const runGit = (args, cwd, extra) => spawnSync("git", args, { cwd, encoding: "utf8", env: cleanEnv(extra) });
 
@@ -1344,7 +1346,7 @@ test("an origin URL with a line break prints on one line in --check", { skip: !H
     return;
   }
   const r = run(f.home, ["--check", "--no-update"]);
-  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?x=\*\*\*\?  \[!\] injected\)/);
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?\*\*\*\)/);
   assert.ok(!r.out.split("\n").some((l) => l.startsWith("  [!] injected")), r.out);
 });
 
@@ -1787,7 +1789,8 @@ function loggingGit(t) {
   const log = join(dir, "calls.log");
   writeFileSync(join(dir, "git"), [
     "#!/bin/sh",
-    `printf '%s|' "$*" >> '${log}'`,
+    // the marketplace's git takes -C <market> first: the log gives the rest
+    `printf '%s|' "$*" | sed 's|^-C [^ ]* ||' >> '${log}'`,
     `env | sed 's/=.*//' | grep -E '^(GIT_|FAKE_)' | sort | tr '\\n' ' ' >> '${log}'`,
     `env | grep -E '^GIT_CONFIG_KEY_[0-9]+=' | sort | tr '\\n' ' ' >> '${log}'`,
     `echo >> '${log}'`,
@@ -2153,7 +2156,9 @@ function pwdWrappers(t) {
   }
   return { PATH: `${dir}${delimiter}${process.env.PATH}`, log };
 }
-test("the git and tar the tool starts by name run in the home folder, and the repository's git in the marketplace", posixGit, (t) => {
+// 0.20.5 review: Windows looks for a bare program name in the working folder first, so a git.exe in the marketplace (a
+// clone of another's repository) would run. Every git and tar runs in the home folder; the marketplace's git takes -C.
+test("every git and tar the tool starts runs in the home folder, and the marketplace's git names it with -C", posixGit, (t) => {
   const { f } = bareApplyFixture();
   const w = pwdWrappers(t);
   if (!w) return;
@@ -2162,7 +2167,9 @@ test("the git and tar the tool starts by name run in the home folder, and the re
   const calls = read(w.log).trim().split("\n").map((l) => { const [cmd, args, pwd] = l.split("|"); return { cmd, args, pwd }; });
   const byName = (c) => c.cmd === "tar" || /^--version/.test(c.args) || /^rev-parse --local-env-vars/.test(c.args);
   assert.ok(calls.filter(byName).length >= 4, JSON.stringify(calls));
-  for (const c of calls) assert.equal(c.pwd, realpathSync(byName(c) ? f.home : f.market), `${c.cmd} ${c.args}`);
+  for (const c of calls) assert.equal(c.pwd, realpathSync(f.home), `${c.cmd} ${c.args}`);
+  const onMarket = calls.filter((c) => c.cmd === "git" && !byName(c));
+  assert.ok(onMarket.length >= 3 && onMarket.every((c) => c.args.startsWith(`-C ${f.market} `)), JSON.stringify(onMarket));
 });
 
 // Hands back text that already holds the helper on the second read of foo.mjs, as a run that came first would leave it.
@@ -2247,7 +2254,7 @@ test("a set-url that ends with no error text does not print the command line, fo
   }
   const dir = join(root, `quietgit${seq++}`);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$1" = remote ] && [ "$2" = set-url ]; then exit 1; fi', `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$3" = remote ] && [ "$4" = set-url ]; then exit 1; fi', `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
   const PATH = `${dir}${delimiter}${process.env.PATH}`;
   const mark = "PATH" + "MARK7";
   const url = `https://u:${"s3" + "cret"}@example.invalid/${mark}/omc.git;p=${mark}?token=x#${mark}`;
@@ -2280,7 +2287,7 @@ test("an origin git cannot read is named and counted: the revert does not say it
   const dir = join(root, `refusinggit${seq++}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "git"), ["#!/bin/sh",
-    'if [ "$1" = config ] && [ "$2" = --get ]; then echo "fatal: detected dubious ownership in repository at \'/x\'" >&2; exit 128; fi',
+    'if [ "$3" = config ] && [ "$4" = --get ]; then echo "fatal: detected dubious ownership in repository at \'/x\'" >&2; exit 128; fi',
     `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
   const noGit = join(root, `nogit${seq++}`);
   mkdirSync(noGit, { recursive: true });
@@ -2310,7 +2317,7 @@ test("a query value is masked whatever its name", { skip: !HAS_GIT && "git not f
     assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
     assert.ok(!out.includes(pw), `${name}: ${out}`);
-    assert.match(out, /origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?a=\*\*\*&/, name);
+    assert.match(out, /origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?\*\*\*\)/, name);
   }
 });
 
@@ -2323,7 +2330,41 @@ test("an origin of many question marks is masked without stalling --check", { sk
   writeFileSync(config, read(config).replace(ORIGIN, `${UPSTREAM}?${"?".repeat(300000)}`));
   const r = runBy(f.home, ["--check", "--no-update"]);
   assert.equal(r.error, undefined, "the run ended before its deadline");
-  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?\?\?/);
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode\.git\?\*\*\*\)/);
+});
+
+// 0.20.5 review (B1): the query is cut by position. A pattern that reads from each "?" to the end took the square of the
+// length when a "#" came after them (40,000 of them, 1.8 s).
+test("an origin of many question marks and a fragment after them does not stall --check", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const config = join(f.market, ".git", "config");
+  // in quotes: git's config reads a # outside them as a comment
+  writeFileSync(config, read(config).replace(ORIGIN, `"${UPSTREAM}?${"?".repeat(300000)}#x"`));
+  const r = runBy(f.home, ["--check", "--no-update"]);
+  assert.equal(r.error, undefined, "the run ended before its deadline");
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/github\.com\)/, "a fragment makes it another address");
+});
+
+// 0.20.5 review: the mask covers name=value pairs; a token with no name (`?<token>`) is masked too, the query whole.
+test("the default upstream's query is shown masked whole, a value with no name too", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const tok = ["SECRET", "BARE"].join("");
+  for (const query of [`?${tok}`, `?a=1&${tok}`, `?${tok}&b=2`]) {
+    assert.equal(runGit(["remote", "set-url", "origin", `${UPSTREAM}${query}`], f.market).status, 0);
+    const out = run(f.home, ["--check", "--no-update"]).out;
+    assert.ok(!out.includes(tok), `${query}\n${out}`);
+    assert.ok(out.includes(`마켓플레이스 미고정 (origin=${UPSTREAM}?***)`), `${query}\n${out}`);
+  }
+});
+
+// 0.20.5 review: only an @ in the authority ends user information. An address on another host with "@github.com/..." in its
+// path was taken for the upstream and shown as `https://***@github.com/...`, a host it does not reach.
+test("an @ in the path is no user information: an address that names the upstream after it is another one", { skip: !HAS_GIT && "git not found" }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", "https://other.example/a@github.com/Yeachan-Heo/oh-my-claudecode.git"], f.market).status, 0);
+  const out = run(f.home, ["--check", "--no-update"]).out;
+  assert.ok(out.includes("마켓플레이스 미고정 (origin=(호스트를 알아볼 수 없음))"), out);
+  assert.ok(!out.includes("Yeachan-Heo"), out);
 });
 
 test("--check names the version whose hooks.json it cannot read; the verdict leaves an idle version out and says so", { skip: !HAS_GIT && "git not found" }, () => {
@@ -3853,7 +3894,9 @@ test("a pin failure line keeps the quote that closes git's address, a mirror to 
   for (const [second, tail] of [[`https://mirror.example/x/${tok}/omc.git?token=${tok}`, "to 'omc-pinned://https://mirror.example')"],
     // the mask runs from the first // to the last @, so it takes the inner scheme: the host after the @ is shown
     [`https://u:${tok}@mirror.example/x/omc.git`, "to 'omc-pinned://mirror.example')"],
-    [`${UPSTREAM}?token=${tok}`, `to 'omc-pinned://${UPSTREAM}?token=***')`]]) {
+    [`${UPSTREAM}?token=${tok}`, `to 'omc-pinned://${UPSTREAM}?***')`],
+    // a token with no name: the default upstream's query is masked whole on git's lines too
+    [`${UPSTREAM}?${tok}`, `to 'omc-pinned://${UPSTREAM}?***')`]]) {
     const f = fakeHome([{ v: "5.6.1", active: true }]);
     assert.equal(runGit(["config", "--add", "remote.origin.url", second], f.market).status, 0);
     const r = run(f.home, ["--no-update"]);
@@ -3870,7 +3913,7 @@ test("--check shows the default upstream's address masked as it is, and any othe
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   const tok = ["T0k", "9xQ"].join("");
   for (const [url, shown] of [[UPSTREAM, UPSTREAM], [`https://u:${tok}@github.com/Yeachan-Heo/oh-my-claudecode.git`, "https://***@github.com/Yeachan-Heo/oh-my-claudecode.git"],
-    [`${UPSTREAM}?token=${tok}`, `${UPSTREAM}?token=***`], [`https://mirror.example/team/${tok}/omc.git`, "https://mirror.example"],
+    [`${UPSTREAM}?token=${tok}`, `${UPSTREAM}?***`], [`https://mirror.example/team/${tok}/omc.git`, "https://mirror.example"],
     [`${UPSTREAM}#${tok}`, "https://github.com"], [`${UPSTREAM}?a=1#${tok}`, "https://github.com"], [`${UPSTREAM};auth=${tok}`, "https://github.com"]]) {
     assert.equal(runGit(["remote", "set-url", "origin", url], f.market).status, 0);
     const out = run(f.home, ["--check", "--no-update"]).out;
@@ -3951,8 +3994,8 @@ test("at its time limit the fetch asks git to stop first, so git can remove its 
   const dir = join(root, `termgit${seq++}`);
   mkdirSync(dir, { recursive: true });
   const mark = join(dir, "mark");
-  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'if [ "$1" = fetch ]; then', `  trap 'echo TERM > "${mark}"; exit 143' TERM`, "  sleep 30 &", "  wait",
-    "  exit 0", "fi", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'case " $* " in *" fetch --tags "*)', `  trap 'echo TERM > "${mark}"; exit 143' TERM`, "  sleep 30 &", "  wait",
+    "  exit 0;;", "esac", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   assert.equal(runGit(["remote", "set-url", "origin", join(root, `nowhere${seq++}.git`)], f.market).status, 0);
   const r = await runAsync(f.home, { OMC_PATCH_FETCH_TIMEOUT_MS: "1000", PATH: `${dir}${delimiter}${process.env.PATH}` });
@@ -3960,6 +4003,63 @@ test("at its time limit the fetch asks git to stop first, so git can remove its 
   const until = Date.now() + 3000;
   while (Date.now() < until && !existsSync(mark)) await new Promise((res) => setTimeout(res, 50));
   assert.equal(existsSync(mark) ? read(mark).trim() : "(no mark)", "TERM", "git got SIGTERM before any SIGKILL");
+});
+
+// 0.20.5 review (S4): the reaper's two KILLs. A git that ignores TERM goes with the KILL 2 s later, and what a git that ends
+// on its own leaves in its group goes with it.
+const aliveOrZombie = (pid) => {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  try {
+    return !/^\d+ \(.*\) Z/s.test(read(`/proc/${pid}/stat`));
+  } catch {
+    return process.platform !== "linux";
+  }
+};
+async function goneSoon(pid, ms = 4000) {
+  for (const until = Date.now() + ms; Date.now() < until; await new Promise((res) => setTimeout(res, 50))) if (!aliveOrZombie(pid)) return true;
+  return !aliveOrZombie(pid);
+}
+function fetchStub(body) {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  const dir = join(root, `fetchstub${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  const pid = join(dir, "pid");
+  writeFileSync(join(dir, "git"), ["#!/bin/sh", 'case " $* " in *" fetch --tags "*)', ...body(pid), ";;", "esac", `exec '${realGit}' "$@"`, ""].join("\n"), { mode: 0o755 });
+  return { PATH: `${dir}${delimiter}${process.env.PATH}`, pid };
+}
+test("at its time limit the fetch ends a git that ignores TERM with the KILL that follows", posixGit, async (t) => {
+  const stub = fetchStub((pid) => [`  echo $$ > "${pid}"`, "  trap '' TERM", "  while :; do sleep 1; done"]);
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", join(root, `nowhere${seq++}.git`)], f.market).status, 0);
+  const r = await runAsync(f.home, { OMC_PATCH_FETCH_TIMEOUT_MS: "1000", PATH: stub.PATH });
+  assert.match(r.out, /1초 안에 끝나지 않아 끊음/, r.out);
+  const pid = Number(read(stub.pid));
+  t.after(() => { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } });
+  assert.ok(await goneSoon(pid), "the git that ignored TERM outlived the fetch");
+});
+test("what a fetch leaves in its group when it ends on its own is ended with it", posixGit, async (t) => {
+  const stub = fetchStub((pid) => [`  sleep 30 > /dev/null 2>&1 & echo $! > "${pid}"`, "  echo 'fatal: stub fetch failed' >&2", "  exit 1"]);
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  assert.equal(runGit(["remote", "set-url", "origin", join(root, `nowhere${seq++}.git`)], f.market).status, 0);
+  const r = await runAsync(f.home, { PATH: stub.PATH });
+  assert.match(r.out, /stub fetch failed/, r.out);
+  const pid = Number(read(stub.pid));
+  t.after(() => { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } });
+  assert.ok(await goneSoon(pid), "the child the fetch left is still running");
+});
+
+// 0.20.5 review: libuv on Windows looks for a bare program name in the child's working folder before PATH. A git.exe in
+// the marketplace (a copy of node here, which would fail on git's arguments) must never run.
+test("a git.exe in the marketplace folder never runs on Windows", { skip: (!HAS_GIT && "git not found") || (process.platform !== "win32" && "Windows looks in the working folder first") }, () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  copyFileSync(process.execPath, join(f.market, "git.exe"));
+  const r = run(f.home, ["--check", "--no-update"]);
+  assert.ok(!/node:internal|Cannot find module|bad option/i.test(r.out), r.out);
+  assert.match(r.out, /마켓플레이스 미고정 \(origin=https:\/\/example\.invalid\)/, r.out);
 });
 
 test("a bare apply fetches the target tag from an origin that has it, and switches to it", { skip: !HAS_GIT && "git not found" }, () => {

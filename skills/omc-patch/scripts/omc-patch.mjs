@@ -197,21 +197,25 @@ const gitEnv = ({ network = false } = {}) => {
   return env;
 };
 
-function git(args, cwd = MARKET, opts = {}) {
-  return execFileSync("git", args, { cwd, env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: opts.timeout }).trim();
+// 저장소의 git 도 홈 폴더에서 돌리고 저장소는 -C 로 준다. Windows 는 이름만 준 프로그램을 일하는 폴더에서 PATH 보다 먼저
+// 찾아, 마켓플레이스(남의 저장소 사본)에 든 git.exe 가 돌 수 있다.
+function git(args, dir = MARKET, opts = {}) {
+  return execFileSync("git", ["-C", dir, ...args], { cwd: homedir(), env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: opts.timeout }).trim();
 }
 
 // 태그 받기를 띄우는 작은 node 프로세스. execFileSync 의 timeout 은 git 하나만 끝내, git 이 띄운 git remote-http 와
 // git-remote-http 가 연결을 붙든 채 남는다(실측: http 는 curl 의 정체 감지 30초, TLS 는 curl 의 연결 제한 300초까지). 흐름은
 // 동기 그대로 두고 이 프로세스가 git 을 띄워, 시간이 다 되거나 Ctrl+C(SIGINT), SIGTERM, SIGHUP 을 받으면 git 과 그 자식을 함께
 // 끝낸다. POSIX 는 git 을 새 프로세스 묶음으로 띄워 묶음에 SIGTERM(git 이 ref 잠금 파일을 지움), git 이 끝나거나 2초가 지나면
-// SIGKILL. Windows 는 git 이 살아 있을 때 taskkill /T /F 로 트리째 끝낸다. 시간이 다 되면 종료 124 다.
+// SIGKILL. Windows 는 git 이 살아 있을 때 taskkill /T /F 로 트리째 끝낸다. 시간이 다 되면 종료 124 다. git 은 홈 폴더에서
+// -C 로 돈다(git 함수와 같은 까닭). 알려진 한계: 바깥에서 이 도구의 프로세스 묶음에 SIGKILL 을 보내면(`timeout -s KILL` 등)
+// 이 프로세스가 먼저 끝나 새 묶음의 git 이 남는다. Ctrl+C, SIGTERM, Claude Code 의 작업 중지는 git 까지 끝낸다.
 const FETCH_REAPER = `
 const { spawn, spawnSync } = require("node:child_process");
 const { constants } = require("node:os");
-const [, ms, cwd, ...args] = process.argv;
+const [, ms, dir, ...args] = process.argv;
 const win = process.platform === "win32";
-const c = spawn("git", args, { cwd, stdio: "inherit", detached: !win, windowsHide: true });
+const c = spawn("git", ["-C", dir, ...args], { cwd: require("node:os").homedir(), stdio: "inherit", detached: !win, windowsHide: true });
 const group = (sig) => { try { process.kill(-c.pid, sig); } catch { /* the group is gone */ } };
 const taskkill = \`\${process.env.SystemRoot || "C:\\\\Windows"}\\\\System32\\\\taskkill.exe\`;
 const tree = () => spawnSync(taskkill, ["/T", "/F", "/PID", String(c.pid)], { stdio: "ignore", windowsHide: true });
@@ -1133,25 +1137,37 @@ function redactUrl(url) {
 // 진단 줄의 주소(사용자 결정 2026-10-21): 기본 상류(REPO_URL)는 가린 꼴 그대로, 그 밖은 scheme 과 host 까지만. 미러의
 // 경로, 조각, `;` 매개변수에는 토큰이 들 수 있다. 기본 상류인지는 scheme, 사용자 정보(가렸든 아니든), 쿼리를 빼고 본다.
 const PIN = "omc-pinned://";
+const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 function hostPath(url) {
   let s = String(url);
   if (s.startsWith(PIN)) s = s.slice(PIN.length);
-  const at = s.lastIndexOf("@");
-  s = at !== -1 ? s.slice(at + 1) : s.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "");
-  // the query to the end (a line break in it too); with a fragment after it the address is another one (a fragment is not masked)
-  s = s.replace(/\?[^#]*$/, "");
+  const scheme = SCHEME.exec(s);
+  if (scheme) s = s.slice(scheme[0].length);
+  // user information ends at an @ before the first / (and ? # \ in a URL): an @ further on is in the path
+  const cut = s.search(scheme ? /[/?#\\]/ : /\//);
+  const at = s.lastIndexOf("@", cut === -1 ? s.length : cut);
+  if (at !== -1) s = s.slice(at + 1);
+  // the query to the end, found by position (a pattern from each "?" took the square of the length with a "#" after
+  // them); with a fragment after it the address is another one (a fragment is not masked)
+  const q = s.indexOf("?", s.lastIndexOf("#") + 1);
+  if (q !== -1) s = s.slice(0, q);
   // the closing slashes by a loop: `/\/+$/` takes the square of the length on an address of many slashes
   let end = s.length;
   while (end > 0 && s[end - 1] === "/") end--;
   return s.slice(0, end).replace(/\.git$/i, "").toLowerCase();
 }
 const isUpstream = (url) => hostPath(url) === hostPath(REPO_URL);
+// 기본 상류의 쿼리는 통째로 가린다. redactUrl 은 `이름=값` 만 가려, 이름 없는 토큰(`?<토큰>`)이 남는다.
+const maskQuery = (u) => {
+  const q = u.indexOf("?");
+  return q === -1 ? u : `${u.slice(0, q)}?***`;
+};
 // --check 가 보이는 origin(가리기 전의 글).
-const shownOrigin = (url) => (isUpstream(url) ? redactUrl(url) : hostOnly(url));
+const shownOrigin = (url) => (isUpstream(url) ? maskQuery(redactUrl(url)) : hostOnly(url));
 // git 의 줄(gitError 가 가린 뒤)의 주소마다. 고정한 주소는 앞의 `omc-pinned://` 를 남긴다. 가림이 안쪽 scheme 까지 먹은 꼴
 // (`omc-pinned://***@host/...`)은 마지막 `@` 뒤의 host 를 쓴다. 주소는 공백 앞까지로 보고, git 이 주소를 닫는 `'` 와 `:` 는 남긴다.
 function shownAddress(u) {
-  if (isUpstream(u)) return u;
+  if (isUpstream(u)) return maskQuery(u);
   const pin = u.startsWith(PIN) ? PIN : "";
   const inner = u.slice(pin.length);
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(inner)) return `${pin}${hostOnly(inner)}`;
