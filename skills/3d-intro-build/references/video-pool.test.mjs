@@ -153,7 +153,7 @@ test('classifyWanError: documented codes map to pool actions; HTTP status is the
     [{ status: 400, code: 'DataInspectionFailed' }, 'content'],
     [{ status: 500, code: 'InternalError.Timeout' }, 'transient'],
     [{ status: 500, code: 'InvalidParameter' }, 'invalid_request'],
-    [{ status: 401 }, 'unusable'],
+    [{ status: 401 }, 'denied'],
     [{ status: 403 }, 'denied'],
     [{ status: 429 }, 'rate'],
     [{ status: 0 }, 'transient'],
@@ -907,7 +907,7 @@ test('generateClip: a Sora 429 on submit waits with the injected sleep and retri
 test('generateClip: a Sora 429 that never clears stops after five requests', async () => {
   let posts = 0;
   installFetch({ sora: () => { posts++; return json(429, { error: { code: 'too_many_requests' } }); } });
-  const err = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async () => {} }).then(() => null, (e) => e);
+  const err = await run({ creds: soraOnly(), statePath: tmpState(), maxRateWaitMs: 240_000, sleep: async () => {} }).then(() => null, (e) => e);
   assert.equal(posts, 5);
   assert.equal(err.provider, 'sora');
   assert.equal(err.status, 429);

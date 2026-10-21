@@ -121,9 +121,11 @@ export function readDecisions(dir) {
 }
 
 // Written whole or not at all: a crash mid-write leaves the previous file.
+// The temp name is random and opened exclusively: a link a repository put at a guessable name is never written through.
 function writeJson(file, value) {
-  fs.writeFileSync(`${file}.tmp`, JSON.stringify(value, null, 2) + '\n');
-  fs.renameSync(`${file}.tmp`, file);
+  const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
+  try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
 }
 
 const writeDecisions = (dir, all) => writeJson(path.join(dir, DECISIONS), all);
@@ -265,20 +267,26 @@ export function archiveRejected(dir, { now = new Date() } = {}) {
 // path turns into one after the first check).
 const hashes = new Map();
 const notRegular = () => new Error('일반 파일 아님');
+// A file changed within this long of a hash may change again in the same timestamp step (2 s on FAT):
+// its hash is not kept, so the next view reads it again.
+const RACY_MS = 3000n;
+const keyOf = (fp, st) => `${fp}:${st.dev}:${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
+const racy = (st, startedNs) => startedNs - (st.ctimeNs > st.mtimeNs ? st.ctimeNs : st.mtimeNs) < RACY_MS * 1_000_000n;
 export async function hashFile(fp) {
   if (!(await fs.promises.stat(fp)).isFile()) throw notRegular();
   const fh = await fs.promises.open(fp, READ_FLAGS);
   let done;
   try {
-    const st = await fh.stat();
+    const startedNs = BigInt(Date.now()) * 1_000_000n;
+    const st = await fh.stat({ bigint: true });
     if (!st.isFile()) throw notRegular();
-    const key = `${fp}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+    const key = keyOf(fp, st);
     done = hashes.get(key);
     if (done) return done;
-    done = sha256Of(fh, st.size);
-    done.catch(() => hashes.delete(key));
+    done = sha256Of(fh, Number(st.size));
     hashes.set(key, done);
     await done.catch(() => {});
+    if (racy(st, startedNs) || !(await done.then(() => true, () => false))) hashes.delete(key);
   } finally {
     await fh.close();
   }
@@ -305,7 +313,10 @@ async function hashText(dir, file) {
 
 // The hash text of every listed take by file, four files at a time per call (a long list must not
 // run out of file handles), before the page is drawn.
-async function takeHashes(input, dir) {
+// A take not hashed within waitMs shows that its read goes on; the next view shows its hash.
+const HASH_WAIT_MS = 5000;
+const STILL_READING = '읽는 중(새로 고치면 보임)';
+async function takeHashes(input, dir, waitMs = HASH_WAIT_MS) {
   const files = [...new Set(input.scenes.flatMap((s) => s.takes.map((t) => t.file)))];
   const out = new Map();
   let next = 0;
@@ -315,8 +326,12 @@ async function takeHashes(input, dir) {
       out.set(f, await hashText(dir, f));
     }
   };
-  await Promise.all(Array.from({ length: Math.min(4, files.length) }, worker));
-  return out;
+  const all = Promise.all(Array.from({ length: Math.min(4, files.length) }, worker));
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(resolve, waitMs); });
+  await Promise.race([all, late]);
+  clearTimeout(timer);
+  return new Map(files.map((f) => [f, out.has(f) ? out.get(f) : STILL_READING]));
 }
 
 function media(t, dir) {
@@ -384,11 +399,11 @@ function summary(input, entries) {
 }
 
 /** The review page for `input`. Resolves once every listed take is hashed. */
-export async function renderPage(input, decisions, { dir }) {
+export async function renderPage(input, decisions, { dir, hashWaitMs }) {
   const stage = decisions[input.stage] || { scenes: [] };
   const entries = new Map(stage.scenes.map((e) => [e.id, { ...e, rejected: e.rejected || [] }]));
   const promptLabel = input.promptLabel || (INSTRUCTION_STAGES.has(input.stage) ? '구성 지시문' : '프롬프트');
-  const ctx = { dir, promptLabel, entries, hashes: await takeHashes(input, dir) };
+  const ctx = { dir, promptLabel, entries, hashes: await takeHashes(input, dir, hashWaitMs) };
   const body = input.scenes.map((s, i) => sceneBlock(s, i, ctx)).join('\n') || '<p class="empty">curate-input.json 에 장면이 없습니다.</p>';
   return `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -565,7 +580,7 @@ export async function startCurate(dir, { port, host = process.env.PREVIEW_HOST |
 // Starts hashing the listed takes, so the first view of the page does not wait for a large render.
 // An input that cannot be read hashes nothing here; the page reports it.
 function warmHashes(dir) {
-  try { return takeHashes(readInput(dir), dir).catch(() => new Map()); } catch { return Promise.resolve(new Map()); }
+  try { return takeHashes(readInput(dir), dir, 2 ** 31 - 1).catch(() => new Map()); } catch { return Promise.resolve(new Map()); }
 }
 
 // ---- CLI ------------------------------------------------------------------------

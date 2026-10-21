@@ -55,6 +55,7 @@ if (creds._ignored) console.log('프로젝트 키 파일에서 쓰지 않는 값
 ```
 
 - `creds._source` 가 `null` 이면 크리덴셜이 없다. `3d-intro-setup` 으로 보낸다.
+- `creds._tracked` 가 참이면 프로젝트 키 파일을 git 이 추적한다. 멈추고 사람에게 알린다. 그 값은 저장소에서 왔을 수 있고(endpoint 가 프롬프트와 프레임을 받는 곳이다), 키를 적으면 다음 커밋에 실린다. `git rm --cached .env.3d-intro.local` 로 추적을 풀거나 홈 키 파일을 쓴다.
 - `creds._ignored` 가 있으면 프로젝트 키 파일의 `FFMPEG_PATH` 를 쓰지 않은 것이다. 저장소와 함께 온 파일이 실행할 프로그램을 정하지 못하게 막은 것이다. 값은 출력하지 않으니 사람이 파일을 열어 확인하고, 그 경로가 필요하면 `3d-intro-setup` §2 로 홈 설정 파일에 남긴다.
   Claude Code: `/banker:setup` 에서 3d-intro-setup / Codex: `banker-3d-intro-setup`.
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다. 같은 `3d-intro-setup` 으로 보낸다.
@@ -225,7 +226,7 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 
 - **클립 검토**: `curate-input.json` 을 `"stage": "clips"` 로 다시 쓴다. 테이크마다 클립 파일, 프롬프트, 모델, 길이(`seconds`), 비행이면 `firstFrame`, `lastFrame`, 비용을 적고 같은 검토 페이지로 판정받는다(클립은 무음 반복 재생된다). 재생성은 지적받은 클립만 한다.
 - **키 풀 동작** - WAN 키는 가장 오래전에 쓴 것부터 고른다. 할당량 소진(`AllocationQuota.*`, `Arrearage`, `BudgetLimitExceeded` 등)과 모델 권한 없음(`*AccessDenied`)은 그 키를 24시간 쉬게 하고 다음 키로 다시 제출한다.
-  요청 속도 429(`Throttling.RateQuota` 등)는 `Retry-After` 만큼 그 키만 쉬게 할 뿐 퇴출하지 않는다. `Throttling.AllocationQuota` 만 연속 3회면 1시간 쉬게 한다. `InvalidApiKey` 키는 키를 바꿀 때까지 제외한다.
+  요청 속도 429(`Throttling.RateQuota` 등)는 `Retry-After` 만큼 그 키만 쉬게 할 뿐 퇴출하지 않는다. `Throttling.AllocationQuota` 만 연속 3회면 1시간 쉬게 한다. `InvalidApiKey` 키는 키를 바꿀 때까지 제외한다. 코드 없는 401 은 403 처럼 24시간(`WAN_EXHAUSTED_TTL_HOURS`) 쉬게 한다. 게이트웨이나 일시 오류의 401 하나로 쓸 수 있는 키를 영구히 빼지 않기 위해서다.
   상태는 `~/.config/banker/3d-intro/video-pool-state.json` 에 지문(엔드포인트, 키, 모델)으로만 남는다.
 - **같은 leg 를 두 번 과금하지 않는다** - 다른 키로 다시 제출하는 것은 첫 제출이 과금되지 않았다고 볼 때뿐이다(서버가 거절, 요청을 보내기 전 연결 실패, task 가 키 할당량이나 알려진 일시 오류로 FAILED/CANCELED). FAILED/CANCELED task 가 과금되지 않는다는 것은 전제이고 공식 문서에서 확인하지 못했다. 그 전제가 틀리면 한 leg 가 최대 (키 수 x 4 + 2)번 제출된다.
 - **폴백(chain 모드)** - 쓸 수 있는 WAN 키가 없으면 그 leg 부터 Sora 로 만든다. 체인 도중에 provider 가 바뀌면 화풍이 달라질 수 있으니 leg 마다 `r.provider` 를 기록하고 바뀐 지점을 알린다.
@@ -238,7 +239,7 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
   | `kind: 'timeout'` / `'download'` | task 는 있음(과금됐을 수 있음) | `resumeClip({ creds, provider: err.provider, label: err.label, taskId: err.taskId, seconds: err.seconds })` |
   | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음 | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함. `task_lost` 인데 콘솔에 task 가 있으면 `resumeClip` 으로 마저 받음(새 제출 없음) |
   | `kind: 'unreachable'` | Sora 연결 거부(아무것도 보내지 않음) | 네트워크를 확인한 뒤 다시 부름 |
-  | `kind: 'rate'` | Sora 가 다섯 번 제출 모두 429 로 거절함, 또는 `maxRateWaitMs`(기본 120초)보다 긴 `Retry-After` 로 거절함(만든 job 없음, 과금 없음) | 잠시(`err.retryAfterMs` 가 있으면 그만큼) 기다린 뒤 다시 부름 |
+  | `kind: 'rate'` | Sora 가 다섯 번 제출 모두 429 로 거절함, 또는 다음 기다림이 `maxRateWaitMs`(기본 120초)보다 김(서버의 `Retry-After`, 없으면 30초부터 두 배로 늘린 값. 만든 job 없음, 과금 없음) | 잠시(`err.retryAfterMs` 가 있으면 그만큼) 기다린 뒤 다시 부름 |
   | `kind` 가 없는 오류 | 예상하지 못한 실패 | 원인을 확인하기 전에는 다시 부르지 않음 |
 
 - 클립 해상도는 WAN 과 Sora 가 조금 다를 수 있다. `concatClips` 와 엔진이 크기를 맞춘다.
@@ -270,6 +271,8 @@ node references/serve.mjs --stop <projectDir>/site           # 끝나면 종료
 - `intro-fixes.css` 는 항상 붙는다. 엔진의 인라인 transform 이 덮는 패널 세로 가운데 맞춤(`translate`), 860px 이하에서 장면 점과 겹치지 않는 오른쪽 여백과 아래 안내 위로 올린 문구, 높이 500px 이하 가로 화면의 두 단 배치, 어두운 테마에서도 읽히는 주 버튼과 상단 CTA 글자, 고정 헤더를 깨는 `overflow-x: hidden` 대신 `clip` 을 담는다.
 - 기존 사이트에 붙이는 미리보기는 반드시 운영과 같은 CSP 헤더로 서빙한다. 일반 정적 서버에서는 CSP 오류가 보이지 않는다.
 - 상태 파일은 `serve.mjs` 가 서빙 폴더 밖(`<site>.server.json`)에, `curate.mjs` 가 프로젝트 폴더(`curate.server.json`)에 둔다. 검토 서버는 입력에 적힌 테이크와 프레임 가운데 이미지와 영상만, 링크를 따라가도 프로젝트 안의 이미지나 영상일 때만 내준다. 그래서 이 파일과 `.env` 키 파일은 입력에 잘못 적혀도 내려가지 않는다. 읽을 수 없는 파일은 403 으로 답하고 서버는 계속 돈다. 두 서버 모두 Host 가 localhost 나 IP 주소가 아니면 거절한다(DNS 재바인딩 방지). 종료는 `--stop` 으로 한다. 상태 파일의 PID 가 1보다 큰 정수가 아니면 끄지 않는다. 명령줄 패턴으로 `pkill -f` 하지 않는다. 이미 떠 있는 서버를 같은 설정으로 다시 띄우면 그 주소만 알려 준다. CSP, 바인드 주소, 포트가 다르면 `--stop` 으로 먼저 끄라며 멈춘다(exit 1). 검토 페이지의 sha256 은 파일을 나눠 읽어 크기 제한이 없고, 서버를 띄울 때 미리 계산한다.
+- 상태 파일의 PID 가 1보다 큰 정수가 아니거나 기록된 주소가 이 기기가 아니면 그 서버를 끄지 않는다(`--stop` 은 종료 1, 파일은 사람이 보도록 남긴다). 상태 파일은 남의 저장소 안에 있을 수 있기 때문이다.
+- 검토 페이지는 테이크의 sha256 을 5초까지 기다린다. 그 안에 읽기가 끝나지 않은 테이크는 sha256 자리에 `읽는 중(새로 고치면 보임)` 이 보이고, 다음 화면에 그 값이 나온다. 방금 바뀐 파일(3초 안)은 화면마다 다시 읽는다.
 - 휴대폰 실기기로 볼 때만 `PREVIEW_HOST=0.0.0.0` 을 쓴다. 같은 네트워크에 미공개 산출물이 보인다는 경고가 나온다.
 - 프로젝트 관례상 **claude.ai 아티팩트를 만들지 않는다** - 로컬 페이지를 포트로 서빙해 사용자가 브라우저로 확인한다.
 - 사용자 검토를 받는다. 지적이 있으면 카피, 매니페스트, 해당 클립만 고치고 다시 조립한다.

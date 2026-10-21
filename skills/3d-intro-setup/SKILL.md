@@ -101,7 +101,8 @@ node -e "
   const c = resolveCreds({ projectDir: process.cwd() });
   const need = ['AZURE_SORA_ENDPOINT','AZURE_SORA_API_KEY','AZURE_IMAGE_OPENAI_ENDPOINT','AZURE_IMAGE_API_KEY','AZURE_GPT_IMAGE_DEPLOYMENT'];
   const missing = need.filter(k => !c[k]);
-  if (c._source && missing.length === 0) {
+  if (c._tracked) console.log('주의: 이 프로젝트 키 파일은 git 이 추적한다(' + c._source + '). 키를 적으면 커밋에 실린다. git rm --cached 로 추적을 풀거나 홈 키 파일을 쓴다');
+if (c._source && missing.length === 0) {
     console.log('기존 크레덴셜 발견:', c._source, '| Sora key', redact(c.AZURE_SORA_API_KEY), '| Image key', redact(c.AZURE_IMAGE_API_KEY));
     process.exit(0);
   }
@@ -161,6 +162,7 @@ node -e "
 })();
 "
 ```
+`persistCreds` 가 `is tracked by git` 으로 멈추면 그 키 파일을 git 이 추적한다. 키를 적으면 커밋에 실리므로 사람에게 알리고, `git rm --cached .env.3d-intro.local` 로 추적을 풀거나 홈 키 파일(`~/.config/banker/3d-intro/env`)에 쓴다.
 그다음 사람에게 키 파일을 편집기로 열어 키 줄을 직접 적어 달라고 한다(값은 대화에 붙이지 않는다):
 ```
 AZURE_SORA_API_KEY=<Sora 리소스 키>

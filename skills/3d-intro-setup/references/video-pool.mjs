@@ -39,7 +39,10 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
-import { createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey, keyHeldBack } from './azure-adapter.mjs';
+import {
+  createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey, keyHeldBack,
+  API_TIMEOUT_MS, DOWNLOAD_TIMEOUT_MS, HELD_KEY, errnoOf, timeLeft,
+} from './azure-adapter.mjs';
 
 export const WAN_DEFAULT_MODEL = 'wan3.0-video-prime';
 const WAN_CREATE_PATH = '/api/v1/services/aigc/video-generation/video-synthesis';
@@ -58,10 +61,10 @@ const QUOTA_STRIKES_TO_EXHAUST = 3;
 const QUOTA_STRIKE_TTL_MS = 3_600_000;
 const TRANSIENT_BASE_MS = 15_000;
 const UNKNOWN_POLLS_TO_FAIL = 5;
-const API_TIMEOUT_MS = 120_000;
-const DOWNLOAD_TIMEOUT_MS = 600_000;
 
-const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A real wait is at least 1 s: an interval of 0 must not poll a paid API in a busy loop.
+const MIN_REAL_WAIT_MS = 1000;
+const realSleep = (ms) => new Promise((r) => setTimeout(r, Math.max(MIN_REAL_WAIT_MS, ms)));
 
 // ---------------------------------------------------------------------------
 // Error classification
@@ -94,8 +97,7 @@ const PRE_SEND_ERRORS = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOS
 export function classifyWanError({ status, code } = {}) {
   const kind = codeKind(code);
   if (kind) return kind;
-  if (status === 401) return 'unusable';
-  if (status === 403) return 'denied';
+  if (status === 403 || status === 401) return 'denied';
   if (status === 429) return 'rate';
   return !status || status >= 500 ? 'transient' : 'invalid_request';
 }
@@ -305,8 +307,6 @@ async function wanFetch(url, opts = {}) {
   }
 }
 
-// A poll request's limit: the usual one, or less when the poll deadline is nearer (whole ms for AbortSignal.timeout).
-const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, Math.ceil(end - t)));
 
 function wanHeaders({ key, body }) {
   const headers = {};
@@ -315,8 +315,6 @@ function wanHeaders({ key, body }) {
   return headers;
 }
 
-// AbortSignal.timeout rejects with a DOMException whose numeric code means nothing to a reader
-const errnoOf = (e) => (e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.code || e?.code || null);
 
 // A fetch that threw. Its message can quote a request header in full (undici names an invalid
 // header value, Authorization included), so only the error code travels on, never the text.
@@ -445,7 +443,6 @@ function answerOutcome(body, seen, onTick, i) {
 
 // A 4xx other than 429 on the poll itself ends it; 429/5xx/network keep polling — the task is still running.
 // So does a key held back before sending (EINSECURE, EPROXYKEY): no later poll could send it either.
-const HELD_KEY = new Set(['EINSECURE', 'EPROXYKEY']);
 function refusedPoll(r) {
   if (r.status >= 400 && r.status < 500 && r.status !== 429) return { state: 'HTTP', output: { code: r.code, message: r.message }, status: r.status };
   if (r.status === 0 && HELD_KEY.has(r.errno)) return { state: 'HTTP', output: { code: r.errno, message: r.message }, status: 0 };
@@ -595,7 +592,7 @@ function lostTask(ctx, e, taskId, p, seconds) {
     return stopError('timeout', `WAN task ${taskId} (${e.label}) still running after polling for ${p.elapsedMs} ms; resume with resumeClip`, { provider: 'wan', taskId, label: e.label, seconds });
   }
   if (p.state === 'HTTP') {
-    if (p.status === 401) applyFailure(ctx.statePath, e, 'unusable', { code: p.output.code, status: p.status }, ctx.now(), ctx.creds, ctx.emit);
+    if (p.status === 401) applyFailure(ctx.statePath, e, classifyWanError({ status: 401, code: p.output.code }), { code: p.output.code, status: p.status }, ctx.now(), ctx.creds, ctx.emit);
     return stopError('task_lost', `WAN poll for task ${taskId} (${e.label}) failed: HTTP ${p.status} ${p.output.code || ''}; check the Model Studio console before resubmitting`, { provider: 'wan', taskId, label: e.label, status: p.status, code: p.output.code });
   }
   return stopError('task_lost', `WAN task ${taskId} (${e.label}) reports UNKNOWN (expired or not found); check the console before resubmitting`, { provider: 'wan', taskId, label: e.label });
@@ -797,8 +794,9 @@ async function submitSora(ctx, conn, secs) {
       });
     } catch (e) {
       if (e.status !== 429 || i >= SORA_SUBMIT_TRIES - 1) throw soraSubmitError(e);
-      if (e.retryAfterMs != null && e.retryAfterMs > ctx.maxRateWaitMs) throw soraRateStop(e.retryAfterMs, ctx.maxRateWaitMs);
-      const ms = Math.min(RATE_MAX_MS, Math.max(RETRY_MIN_MS, e.retryAfterMs ?? RATE_BASE_MS * 2 ** i));
+      const want = e.retryAfterMs ?? RATE_BASE_MS * 2 ** i;
+      if (want > ctx.maxRateWaitMs) throw soraRateStop(want, ctx.maxRateWaitMs, e.retryAfterMs != null);
+      const ms = Math.min(RATE_MAX_MS, Math.max(RETRY_MIN_MS, want));
       ctx.emit({ type: 'wait', provider: 'sora', ms, reason: 'HTTP 429' });
       await ctx.sleep(ms);
     }
@@ -806,8 +804,9 @@ async function submitSora(ctx, conn, secs) {
 }
 
 // The stop for a Sora 429 that asks for a longer wait than the caller allows; no job was made.
-function soraRateStop(retryAfterMs, maxRateWaitMs) {
-  return stopError('rate', `Sora answered HTTP 429 with a Retry-After of ${Math.ceil(retryAfterMs / 1000)} s, past maxRateWaitMs (${maxRateWaitMs} ms); no job was made; wait, then generate the leg again`, { provider: 'sora', status: 429, retryAfterMs });
+function soraRateStop(waitMs, maxRateWaitMs, asked) {
+  const wait = asked ? `with a Retry-After of ${Math.ceil(waitMs / 1000)} s` : `again, and its next wait (${Math.ceil(waitMs / 1000)} s) is`;
+  return stopError('rate', `Sora answered HTTP 429 ${wait}, past maxRateWaitMs (${maxRateWaitMs} ms); no job was made; wait, then generate the leg again`, { provider: 'sora', status: 429, retryAfterMs: asked ? waitMs : null });
 }
 
 // The stop for a Sora submit that made no job, or may have made one.
