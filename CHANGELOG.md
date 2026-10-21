@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.4] - 2026-10-21
 
 ### Changed
 - 유지보수자용: setup-omc-hud 와 payload-mon 의 링크 시험이 Windows 에서도 돈다(폴더는 정션, 파일 링크는 만들 수 있는 계정에서). 시험 빈틈 6묶음을 메운다.
