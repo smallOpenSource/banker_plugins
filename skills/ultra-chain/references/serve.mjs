@@ -105,7 +105,8 @@ async function reportRunning(recorded, o, dir) {
     console.log(`PREVIEW ${st.url} (already running, pid ${st.pid})`);
     return true;
   }
-  console.error(`serve: the state file records a server running with different settings (folder: ${st.dir}, `
+  // the folder in one quoted piece: a line break in it would add a line of its own to what an agent reads
+  console.error(`serve: the state file records a server running with different settings (folder: ${JSON.stringify(st.dir)}, `
     + `csp: ${st.csp ? 'on' : 'off'}, host: ${st.host}, port: ${st.port}); stop it with --stop and start again`);
   process.exit(1);
 }

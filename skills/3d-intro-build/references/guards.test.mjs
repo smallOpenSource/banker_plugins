@@ -70,12 +70,15 @@ test('a state file naming a host other than this machine is left alone: nothing 
   http.get = (o, cb) => { asked.push(o.host); const req = new EventEmitter(); req.destroy = () => {}; const res = new EventEmitter(); process.nextTick(() => { cb(res); res.emit('data', '{"pid":4242}'); res.emit('end'); }); return req; };
   net.connect = (o) => { asked.push(o.host); const s = new EventEmitter(); s.destroy = () => {}; process.nextTick(() => s.emit('error', Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }))); return s; };
   process.kill = (pid, sig) => { killed.push([pid, sig]); };
-  const file = path.join(tmp('r4-state-'), 'curate.server.json');
-  fs.writeFileSync(file, JSON.stringify({ pid: 4242, port: 8080, host: '192.0.2.10' }));
-  assert.equal(await isRunning(file), false);
-  assert.deepEqual(await stopServer(file, { timeoutMs: 300 }), { stopped: false, reason: 'invalid-state' });
-  assert.deepEqual([asked, killed], [[], []]);
-  assert.ok(fs.existsSync(file), 'left for a person to look at');
+  // 0.20.5 review: a DNS name that starts like a loopback address is a name, resolved anywhere
+  for (const host of ['192.0.2.10', '127.evil.test', '127.0.0.1.evil.test', '127.0.0.1x']) {
+    const file = path.join(tmp('r4-state-'), 'curate.server.json');
+    fs.writeFileSync(file, JSON.stringify({ pid: 4242, port: 8080, host }));
+    assert.equal(await isRunning(file), false, host);
+    assert.deepEqual(await stopServer(file, { timeoutMs: 300 }), { stopped: false, reason: 'invalid-state' }, host);
+    assert.deepEqual([asked, killed], [[], []], host);
+    assert.ok(fs.existsSync(file), 'left for a person to look at');
+  }
 });
 
 // N1 (new): review files a repository ships as links

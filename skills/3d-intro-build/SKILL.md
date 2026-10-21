@@ -52,6 +52,7 @@ import { resolveCreds, resolveFfmpeg } from './references/azure-adapter.mjs';
 const creds = resolveCreds({ projectDir });     // _source === null 이면 미설정
 // ffmpeg 경로는 resolveFfmpeg 가 셸의 FFMPEG_PATH 와 홈의 설정 파일, 키 파일에서만 찾는다. 프로젝트 키 파일의 값은 쓰지 않는다.
 if (creds._ignored) console.log('프로젝트 키 파일에서 쓰지 않는 값:', Object.keys(creds._ignored).join(', '));   // 값은 출력하지 않는다
+if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적한다: ${creds._source}`);   // 아래 첫 항목. generateClip 도 거부한다
 ```
 
 - `creds._source` 가 `null` 이면 크리덴셜이 없다. `3d-intro-setup` 으로 보낸다.

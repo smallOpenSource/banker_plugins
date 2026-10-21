@@ -842,8 +842,9 @@ const DEFAULTS = { size: '720x1280', seconds: 5, pollIntervalMs: 15_000, pollTim
  *
  * Throws (never resubmitting the leg) when retrying could pay twice or cannot help:
  *   ContentRejectedError                moderation — change the prompt/frame
- *   kind 'invalid_request'              malformed request, ModelNotFound, every WAN entry malformed or a
- *                                       Sora endpoint that is not https (config)
+ *   kind 'invalid_request'              malformed request, ModelNotFound, every WAN entry malformed, a
+ *                                       Sora endpoint that is not https, or creds from a project key file
+ *                                       git tracks (config; nothing is sent)
  *   kind 'timeout' | 'download'         the task exists — call resumeClip({ ..., provider, label, taskId })
  *   kind 'submit_unknown' | 'task_lost' | 'no_video' | 'failed'  outcome unknown — check the console
  *                                       ('failed': the task ended for a reason the pool does not know)
@@ -855,6 +856,10 @@ const DEFAULTS = { size: '720x1280', seconds: 5, pollIntervalMs: 15_000, pollTim
 export async function generateClip(opts = {}) {
   const o = { ...DEFAULTS, statePath: defaultStatePath(), sleep: realSleep, now: Date.now, ...defined(opts) };
   if (!o.creds) throw new Error('generateClip: creds required (resolveCreds())');
+  // a project key file git tracks may have come with the repository: its endpoint would get the prompt and the frames
+  if (o.creds._tracked) {
+    throw stopError('invalid_request', `generateClip: the project key file is tracked by git (${o.creds._source}); untrack it (git rm --cached) or use the home key file`);
+  }
   if (!o.prompt) throw new Error('generateClip: prompt required');
   const ctx = makeCtx(o);
   const tried = [];

@@ -249,8 +249,10 @@ const validPid = (pid) => Number.isInteger(pid) && pid > 1;
 // A record a stop or a start may act on: a PID that is a process id, on this machine.
 const recordedHere = (st) => validPid(st.pid) && thisMachine(st.host);
 
+// No host is the default loopback one. A loopback address counts only as a whole one: `127.evil.test` is a DNS
+// name, resolved anywhere.
 export function thisMachine(host) {
-  if (!host || ['0.0.0.0', '::', '::1', 'localhost'].includes(host) || /^127\./.test(host)) return true;
+  if (!host || ['0.0.0.0', '::', '::1', 'localhost'].includes(host) || /^127(\.\d{1,3}){3}$/.test(host)) return true;
   return Object.values(os.networkInterfaces()).flat().some((a) => a && a.address === host);
 }
 

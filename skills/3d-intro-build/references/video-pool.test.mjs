@@ -197,6 +197,15 @@ test('generateClip: WAN success sends an async Bearer request with the first fra
   assert.ok(!raw.includes('placeholder-wan-key'), 'state file never holds a key');
 });
 
+// 0.20.5 review: creds from a project key file git tracks may have come with the repository (its endpoint receives the
+// prompt and the frames). The build stops on them in code, not only by the skill's words.
+test('generateClip: creds from a key file git tracks are refused before anything is sent', async () => {
+  const calls = installFetch();
+  await assert.rejects(run({ creds: { ...creds(), _tracked: true, _source: '/repo/.env.3d-intro.local' }, statePath: tmpState() }),
+    (e) => e.kind === 'invalid_request' && /tracked by git/.test(e.message) && e.message.includes('/repo/.env.3d-intro.local'));
+  assert.deepEqual(calls, []);
+});
+
 test('generateClip: requests rotate least-recently-used across the pool', async () => {
   const calls = installFetch();
   const statePath = tmpState();
