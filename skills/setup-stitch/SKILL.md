@@ -18,7 +18,7 @@ Stitch(withgoogle) 디자인 생성 MCP 를 프록시로 Claude Code 에 붙인�
 
 ```bash
 [ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ] && echo "Codex sandbox 가 네트워크를 막음(아래 실패는 오프라인이 아님)"
-in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) 2>/dev/null & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
+in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
 in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'   # npx 프록시
 ```
 

@@ -1055,7 +1055,7 @@ try {
   const setE = DL_DOCS.flatMap((f) => codeBlocks(docText(f)).filter((b) => b.lines.some((l) => /^\s*set -e|\btrap '[^']*' EXIT\b/.test(l)))
     .filter((b) => { const ls = b.lines.filter((l) => l.trim()); return ls[0].trim() !== '(' || ls[ls.length - 1].trim() !== ')'; }).map(() => f));
   ok(setE.length === 0, `airgap-4p: a block that sets -e or an EXIT trap runs in a subshell of its own, so neither stays in the shell after it (found ${JSON.stringify(setE)})`);
-  const IN15 = 'in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) 2>/dev/null & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }';
+  const IN15 = 'in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }';
   const ubDoc = path.join('skills', 'update-banker', 'SKILL.md');
   const unwatched = [...DL_DOCS, ubDoc].flatMap((f) => codeBlocks(docText(f)).filter((b) => b.lines.some((l) => /\bnpm ping\b/.test(l))).filter((b) => {
     const def = b.lines.findIndex((l) => l.trim() === IN15);
@@ -1067,6 +1067,12 @@ try {
   const noWatchWords = npmSkills.filter((f) => !/`npm ping` 은 15초 감시\(`in15`\) 안에서 부른다/.test(docText(f)));
   ok(unwatched.length === 0 && psPing.length === 0 && npmSkills.length >= 9 && noWatchWords.length === 0,
      `airgap-4q: npm ping runs under the 15 s watchdog defined in its block, with no update check, and the docs say why (unwatched: ${JSON.stringify(unwatched)}, PowerShell: ${JSON.stringify(psPing)}, npm docs ${npmSkills.length}, unexplained: ${JSON.stringify(noWatchWords)})`);
+  // 0.20.5 review: ffmpeg comes from PLAYWRIGHT_DOWNLOAD_HOST or the default server, never from the chromium mirror
+  // variable, so a check of the chromium host alone passed a closed network the ffmpeg download then waited out.
+  const pwDoc = docText(path.join('skills', 'setup-playwright', 'SKILL.md'));
+  ok(/^F="\$\{PLAYWRIGHT_DOWNLOAD_HOST:-https:\/\/cdn\.playwright\.dev\}"/m.test(pwDoc)
+     && /^\[ "\$F" = "\$H" \] \|\| printf 'url = "%s\/"\\n' "\$F" \| curl --ssl-no-revoke -K - -sSI /m.test(pwDoc),
+     'airgap-4r: setup-playwright checks the ffmpeg download server too when only the chromium mirror is given');
   // B7-11: with neither source of Node 22, the RHEL block installs no older nodejs of the distribution with sudo.
   const mgDoc = docText(path.join('skills', 'motion-graphic-setup', 'SKILL.md'));
   ok(!/^sudo dnf install -y nodejs\s*$/m.test(mgDoc) && /^if \[ "\$ok" = 1 \]; then sudo dnf install -y nodejs; else echo "Node 22 저장소/m.test(mgDoc),

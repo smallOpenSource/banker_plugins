@@ -42,7 +42,7 @@ POOL="$SKILL_DIR/references/video-pool.mjs"
 
 ```bash
 [ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ] && echo "Codex sandbox 가 네트워크를 막음(아래 실패는 오프라인이 아님)"
-in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) 2>/dev/null & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
+in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
 in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'                          # ffmpeg-static
 curl --ssl-no-revoke -sSI -o /dev/null --connect-timeout 5 --max-time 10 https://nodejs.org/dist/   # nvm 이 받는 Node
 ```
@@ -111,7 +111,7 @@ node -e "
   const need = ['AZURE_SORA_ENDPOINT','AZURE_SORA_API_KEY','AZURE_IMAGE_OPENAI_ENDPOINT','AZURE_IMAGE_API_KEY','AZURE_GPT_IMAGE_DEPLOYMENT'];
   const missing = need.filter(k => !c[k]);
   if (c._tracked) console.log('주의: 이 프로젝트 키 파일은 git 이 추적한다(' + c._source + '). 키를 적으면 커밋에 실린다. git rm --cached 로 추적을 풀거나 홈 키 파일을 쓴다');
-if (c._source && missing.length === 0) {
+  if (c._source && missing.length === 0) {
     console.log('기존 크레덴셜 발견:', c._source, '| Sora key', redact(c.AZURE_SORA_API_KEY), '| Image key', redact(c.AZURE_IMAGE_API_KEY));
     process.exit(0);
   }

@@ -32,7 +32,7 @@ command -v codex >/dev/null && codex mcp list 2>/dev/null
 
 ```bash
 [ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ] && echo "Codex sandbox 가 네트워크를 막음(아래 실패는 오프라인이 아님)"
-in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) 2>/dev/null & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
+in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
 in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'   # npx 서버
 # pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함)를 홈 폴더에서 읽는다. install 절이 global 절보다 앞선다
 L=$( (cd ~ && { pip config list || pip3 config list || python3.13 -m pip config list || python3.12 -m pip config list || python3.11 -m pip config list || python3 -m pip config list; }) 2>/dev/null) || echo "pip 설정을 읽지 못함(pip 이 없거나 10 미만). 사내 미러를 쓰면 확인 주소를 그 미러로 바꿔 본다"
@@ -108,7 +108,8 @@ ST=$(command -v mcp-server-sequential-thinking); FB=$(command -v mcp-server-file
 [ -n "$FB" ] && { codex mcp remove filesystem 2>/dev/null;          codex mcp add filesystem -- "$FB" "$FS_DIR"; }
 [ -n "$GT" ] && { codex mcp remove git 2>/dev/null;                 codex mcp add git -- "$GT"; }
 ```
-- macOS, Linux 는 설치한 실행 파일을 절대 경로로 등록한다. 서버를 띄우는 런타임의 PATH(GUI 나 IDE 에서 띄우면 nvm 의 PATH 가 없을 수 있다)와 PATH 앞쪽의 같은 이름이 등록에 끼어들지 못한다. 그 Node 판을 nvm 으로 지우면 경로가 끊기므로 다시 등록한다.
+- macOS, Linux 는 설치한 실행 파일을 절대 경로로 등록한다. PATH 앞쪽의 같은 이름이 등록에 끼어들지 못한다. 그 Node 판을 nvm 으로 지우면 경로가 끊기므로 다시 등록한다.
+- npm 전역 실행 파일은 `#!/usr/bin/env node` 로 node 를 PATH 에서 찾는다. 서버를 띄우는 런타임의 PATH 에 node 가 없으면(GUI 나 IDE 에서 띄우면 nvm 의 PATH 가 없을 수 있다) 절대 경로로 등록해도 `env: 'node': No such file or directory` 로 뜨지 않는다. 그때는 그 런타임의 PATH 에 node 를 두거나, node 도 절대 경로로 등록한다(예: `codex mcp add sequential-thinking -- "$(command -v node)" "$ST"`).
 - Windows 는 이름으로 등록하고 `cmd /c` 를 앞에 둔다(npm 전역 설치는 `.cmd` 를 만든다). 예: `claude mcp add sequential-thinking -s user -- cmd /c mcp-server-sequential-thinking`. Git Bash 의 `command -v` 는 Windows 런타임이 실행하지 못하는 `/c/Users/...` 꼴의 셸 스크립트 경로를 낸다.
 
 ## 3. Claude Code 배선

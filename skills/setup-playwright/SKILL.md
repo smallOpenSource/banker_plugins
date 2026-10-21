@@ -25,7 +25,7 @@ for t in conda node npx python3 Xvfb xvfb-run; do command -v $t >/dev/null && ec
 
 ```bash
 [ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ] && echo "Codex sandbox 가 네트워크를 막음(아래 실패는 오프라인이 아님)"
-in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) 2>/dev/null & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
+in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
 in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'   # npx playwright
 # pip 이 읽는 설정 전부(PIP_CONFIG_FILE 포함)를 홈 폴더에서 읽는다. install 절이 global 절보다 앞선다
 L=$( (cd ~ && { pip config list || pip3 config list || python3.13 -m pip config list || python3.12 -m pip config list || python3.11 -m pip config list || python3 -m pip config list; }) 2>/dev/null) || echo "pip 설정을 읽지 못함(pip 이 없거나 10 미만). 사내 미러를 쓰면 확인 주소를 그 미러로 바꿔 본다"
@@ -33,9 +33,11 @@ I="${PIP_INDEX_URL:-$(printf '%s\n' "$L" | sed -n "s/^install\.index-url='\(.*\)
 I="${I:-$(printf '%s\n' "$L" | sed -n "s/^global\.index-url='\(.*\)'$/\1/p")}"
 I=$(printf %s "${I:-https://pypi.org/simple}" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보는 뗌
 printf 'url = "%s"\n' "$I/pip/" | curl --ssl-no-revoke -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # Python playwright
-H="${PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST:-${PLAYWRIGHT_DOWNLOAD_HOST:-https://cdn.playwright.dev}}"   # 브라우저 내려받기 서버(설치본 playwright-core 1.58.2~1.64 의 기본값)
-H=$(printf %s "$H" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 주소의 사용자 정보는 뗌
-printf 'url = "%s/"\n' "$H" | curl --ssl-no-revoke -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # 브라우저(chromium, headless shell, ffmpeg)
+H="${PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST:-${PLAYWRIGHT_DOWNLOAD_HOST:-https://cdn.playwright.dev}}"   # chromium 내려받기 서버(설치본 playwright-core 1.58.2~1.64 의 기본값)
+F="${PLAYWRIGHT_DOWNLOAD_HOST:-https://cdn.playwright.dev}"   # ffmpeg 내려받기 서버(chromium 미러 변수를 따르지 않음)
+H=$(printf %s "$H" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##'); F=$(printf %s "$F" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/]*@#\1#; s#/$##')   # 사용자 정보는 뗌
+printf 'url = "%s/"\n' "$H" | curl --ssl-no-revoke -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # 브라우저(chromium, headless shell)
+[ "$F" = "$H" ] || printf 'url = "%s/"\n' "$F" | curl --ssl-no-revoke -K - -sSI -o /dev/null --connect-timeout 5 --max-time 10   # ffmpeg
 ```
 
 - `npm ping` 은 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다.
@@ -54,7 +56,7 @@ printf 'url = "%s/"\n' "$H" | curl --ssl-no-revoke -K - -sSI -o /dev/null --conn
 - OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 시도하고, 실패하면 그 단계를 실패로 보고한다.
   - 패킷을 버리거나 답하지 않는 망에서 dnf 는 저장소마다 약 2분(SYN 을 버리는 망 실측 121초), apt 는 원천마다 약 4분(답하지 않는 원천 실측 247초) 기다린 뒤 실패로 끝난다. 시간 제한은 관리자 설정을 따르므로 이 스킬이 바꾸지 않는다.
   - `apt-get update` 는 받지 못해도 종료 0 이다. 출력의 `W: Failed to fetch` 가 있으면 그 단계를 실패로 보고한다.
-- 브라우저(chromium, chromium headless shell, ffmpeg)는 Playwright 의 내려받기 서버에서 받는다(이 PC 의 설치본 playwright-core 1.58.2 에서 1.64 까지 기본값 `https://cdn.playwright.dev`). 막힌 망에서는 `PLAYWRIGHT_DOWNLOAD_HOST` 로 사내 미러를 준다. chromium 만 사내 미러(`PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST`)로 바꾸면 ffmpeg 는 기본 서버에서 받는다. 둘 다 바꾸려면 `PLAYWRIGHT_DOWNLOAD_HOST` 를 준다. 확인 없이 받으면 패킷을 버리는 망에서 약 11분(실측 658초) 뒤에 실패한다. Windows 에서도 같은 주소(사용자 정보를 뗀 것)를 본다.
+- 브라우저(chromium, chromium headless shell, ffmpeg)는 Playwright 의 내려받기 서버에서 받는다(이 PC 의 설치본 playwright-core 1.58.2 에서 1.64 까지 기본값 `https://cdn.playwright.dev`). 막힌 망에서는 `PLAYWRIGHT_DOWNLOAD_HOST` 로 사내 미러를 준다. chromium 만 사내 미러(`PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST`)로 바꾸면 ffmpeg 는 기본 서버에서 받는다. 그래서 확인도 두 서버를 본다(같으면 한 번). 둘 다 바꾸려면 `PLAYWRIGHT_DOWNLOAD_HOST` 를 준다. 확인 없이 받으면 패킷을 버리는 망에서 약 11분(실측 658초) 뒤에 실패한다. Windows 에서도 같은 두 주소(사용자 정보를 뗀 것)를 본다.
 - Codex sandbox 가 네트워크를 막는 모드(기본 `workspace-write`, `read-only`)에서는 `CODEX_SANDBOX_NETWORK_DISABLED=1` 이 서고 확인이 모두 실패한다(curl 종료 7, npm `EPERM`). 블록의 첫 줄이 그렇다고 알린다. 그때는 '오프라인' 이 아니라 'sandbox 가 네트워크를 막음' 으로 보고하고, 승인을 받아 sandbox 밖에서 확인부터 다시 한다. Claude Code sandbox 안(`SANDBOX_RUNTIME=1`)에서는 허용 목록 밖 주소를 sandbox 프록시가 막는다. Windows PowerShell 에서는 `$env:CODEX_SANDBOX_NETWORK_DISABLED -eq '1'` 로 본다.
 - 확인이 실패하면 보고에 그 명령, 종료 코드, stderr 첫 줄을 붙인다(예: `npm error code ETIMEDOUT`, `curl: (28) ...`). 원인을 '오프라인' 하나로 짐작하지 않는다.
 - curl 의 종료 60(인증서 검증 실패)도 오프라인이 아니다. 망은 열려 있고, TLS 를 가로채는 사내 프록시의 인증서를 OS 가 믿지 않는 것이다. '인증서 문제로 설치하지 않음' 으로 보고한다.

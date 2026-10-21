@@ -70,7 +70,7 @@ banker 는 서로 다른 메커니즘의 채널 3개로 설치되고, 그 채널
 여기서 찍은 값이 4단계 검증의 before 다. 먼저 어떤 채널이 이 머신에 실재하는지 판정한다.
 
 ```bash
-in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) 2>/dev/null & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
+in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
 in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'; P=$?   # 레지스트리 도달 확인(이름 풀이가 실패하면 1초 안에, 패킷을 버리는 망이면 15초 감시에서 멈춤)
 command -v claude >/dev/null && echo "claude: present" || echo "claude: absent (Claude 채널 스킵)"
 command -v codex  >/dev/null && echo "codex: present"  || echo "codex: absent (Codex 채널 스킵)"

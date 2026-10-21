@@ -54,11 +54,11 @@ printf 'url = "%s"\n' "$I/pip/" | curl --ssl-no-revoke -K - -sSI -o /dev/null --
 - 확인이 실패하면 보고에 그 명령, 종료 코드, stderr 첫 줄을 붙인다(예: `npm error code ETIMEDOUT`, `curl: (28) ...`). 원인을 '오프라인' 하나로 짐작하지 않는다.
 - curl 의 종료 60(인증서 검증 실패)도 오프라인이 아니다. 망은 열려 있고, TLS 를 가로채는 사내 프록시의 인증서를 OS 가 믿지 않는 것이다. '인증서 문제로 설치하지 않음' 으로 보고한다.
 
-Go 도구의 release asset 은 새 임시 폴더에 받아 풀고, 그 폴더는 끝나면 지운다(받다 끊긴 파일이 실행 파일 이름으로 남지 않는다). 받는 속도가 초당 1000바이트 밑으로 30초 이어지면 끊는다.
+Go 도구의 release asset 은 새 임시 폴더에 받아 풀고, 그 폴더는 끝나면 지운다(받다 끊긴 파일이 실행 파일 이름으로 남지 않는다). 받는 속도가 초당 1000바이트 밑으로 30초 이어지면 끊는다. https 만 받는다(되돌림 주소도 https 만). 받은 파일의 체크섬은 그 release 의 체크섬 파일과 사람이 견준다(이 블록은 견주지 않는다).
 
 ```bash
-T=$(mktemp -d) && curl -fL --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o "$T/<asset>" "https://github.com/<저장소>/releases/download/<판>/<asset>" \
-  && tar -xzf "$T/<asset>" -C "$T" && mv "$T/<실행 파일>" ~/.local/bin/; [ -n "$T" ] && rm -rf "$T"
+T=$(mktemp -d) && curl -fL --proto '=https' --proto-redir '=https' --connect-timeout 10 --speed-limit 1000 --speed-time 30 -o "$T/<asset>" "https://github.com/<저장소>/releases/download/<판>/<asset>" \
+  && tar -xzf "$T/<asset>" -C "$T" && mkdir -p ~/.local/bin && mv "$T/<실행 파일>" ~/.local/bin/; [ -n "$T" ] && rm -rf "$T"
 ```
 
 ### 도구 (예시 조합 — 검증된 stack, 대상 박스에 맞게)
