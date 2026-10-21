@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { POLICY, policyIntact, sessionFolders, staleSessionFolders, strayEnvFiles } from "./gemini-seat.mjs";
+import { POLICY, cleanSeat, policyIntact, sessionFolders, staleSessionFolders, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
 
 const SEAT = fileURLToPath(new URL("./gemini-seat.mjs", import.meta.url));
 
@@ -330,4 +330,31 @@ test("clean and sweep name the unmarked folder they leave because two project fo
     assert.ok(r.stderr.includes(kept) && /two project folders/.test(r.stderr), `${args[0]} says what it left: ${r.stderr}`);
   }
   assert.ok(left.every((p) => existsSync(p)), "the folders stay");
+});
+
+// 0.20.5 (B3-12): the runner cleans in its own process, so clean and sweep are exports that give back what they removed
+// and what they left, as the command line prints them.
+test("cleanSeat and sweepBase remove what clean and sweep remove and give back the folders they left", (t) => {
+  const dir = scratch(t);
+  const home = join(dir, "gh");
+  const base = join(dir, "base");
+  const seat = join(base, "ralph-qa.aaaaaa", "gemini");
+  const gone = join(base, "ralph-qa.bbbbbb", "gemini");
+  const work = join(dir, "work", "gemini");
+  for (const d of [seat, work]) mkdirSync(d, { recursive: true });
+  projectsJson(home, { [work]: "gemini", [seat]: "gemini", [join(dir, "w2")]: "gemini-1", [gone]: "gemini-1" });
+  const left = [unmarked(home, "tmp", "gemini"), unmarked(home, "tmp", "gemini-1")];
+  const marked = (name, owner) => {
+    const p = join(home, ".gemini", "tmp", name);
+    mkdirSync(join(p, "chats"), { recursive: true });
+    writeFileSync(join(p, ".project_root"), owner);
+    return p;
+  };
+  const mine = marked("mine", seat);
+  const stale = marked("stale", gone);
+  const other = marked("other", work);
+  const env = { GEMINI_CLI_HOME: home };
+  assert.deepEqual(cleanSeat(seat, { env }), { removed: [mine], skipped: [left[0]] });
+  assert.deepEqual(sweepBase(base, { env }), { removed: [stale], skipped: [left[1]] });
+  assert.ok(!existsSync(mine) && !existsSync(stale) && existsSync(other) && left.every((p) => existsSync(p)));
 });
