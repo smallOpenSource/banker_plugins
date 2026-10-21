@@ -83,6 +83,16 @@ async function voidLateRequest($, late) {
   $.ui.log(late.log);
 }
 
+// Asks the engine to draw the pane again. The engine sends the call on and catches its own failure (2.1.305); an engine
+// that throws instead still runs the hooks beneath, so the session and the turn go on.
+function redraw($) {
+  try {
+    $.ui.invalidate('ui.render');
+  } catch {
+    /* nothing to redraw now; the next event draws the pane */
+  }
+}
+
 export const register = (on) => {
   registerGracefulPause(on);
   registerProgress(on);
@@ -97,7 +107,7 @@ export const register = (on) => {
   on('session.end', async ($, e, next) => {
     pauseReset();
     progressReset();
-    $.ui.invalidate('ui.render'); // the pane shows at once what /clear emptied
+    redraw($); // the pane shows at once what /clear emptied
     return next(e);
   });
 
@@ -105,7 +115,7 @@ export const register = (on) => {
     pauseTurnStarted(e);
     progressTurnStarted(e);
     await rereadPlan($);
-    $.ui.invalidate('ui.render');
+    redraw($);
     return next(e);
   });
 
@@ -114,7 +124,7 @@ export const register = (on) => {
     if (late) await voidLateRequest($, late);
     progressTurnCompleted(e);
     await rereadPlan($);
-    $.ui.invalidate('ui.render');
+    redraw($);
     return next(e);
   });
 };

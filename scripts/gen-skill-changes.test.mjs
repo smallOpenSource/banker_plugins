@@ -107,15 +107,18 @@ test("without --to the working tree is compared, uncommitted edits included", ne
 
 // npm reaches no registry from this test: update_notifier=false stops the weekly update check, the one request
 // npm pack made; offline keeps any other lookup off the network, and audit and fund are off for any npm that adds one.
-// Its cache and logs go to this test's folder, not the real ~/.npm.
+// Its cache and logs go to this test's folder, not the real ~/.npm. npm runs with a HOME of its own there too, so a user
+// .npmrc that moves the logs (logs-dir) or turns them off changes nothing here.
 const NPM_OFFLINE = { npm_config_update_notifier: "false", npm_config_offline: "true", npm_config_audit: "false", npm_config_fund: "false",
-  npm_config_cache: join(root, "npm-cache") };
+  npm_config_cache: join(root, "npm-cache"), npm_config_logs_dir: join(root, "npm-cache", "_logs") };
+const NPM_HOME = join(root, "npm-home");
+mkdirSync(NPM_HOME, { recursive: true });
 // npm reads npm_config_* names whatever their case and the last spelling wins, so the caller's own NPM_CONFIG_OFFLINE
 // (after our npm_config_offline in the environment's order) would undo it: drop every spelling of the keys set here.
 function npmOfflineEnv(base) {
   const env = { ...base };
-  for (const key of Object.keys(env)) if (Object.hasOwn(NPM_OFFLINE, key.toLowerCase())) delete env[key];
-  return { ...env, ...NPM_OFFLINE };
+  for (const key of Object.keys(env)) if (Object.prototype.hasOwnProperty.call(NPM_OFFLINE, key.toLowerCase())) delete env[key];
+  return { ...env, ...NPM_OFFLINE, HOME: NPM_HOME, USERPROFILE: NPM_HOME };
 }
 // npm decides what the tarball holds; isShipped must agree with it for every file git tracks under skills/.
 function npmCli() {
@@ -272,4 +275,21 @@ test("npm's environment drops every spelling of the keys it sets, keeps a name a
   assert.equal(env.Npm_Config_Cache, undefined);
   assert.equal(env.npm_config_offline, "true");
   assert.ok(env.npm_config_cache?.startsWith(root), `npm_config_cache ${env.npm_config_cache} is under the test folder`);
+});
+
+// 0.20.5 (B5 row 4): engines.node is >=16.7.0 and Object.hasOwn came in Node 16.9: this test's npm environment, and the
+// smoke's, are built without it, so neither dies on 16.7 or 16.8.
+test("npm's environment is built where Object.hasOwn is missing (Node 16.7, 16.8), here and in the smoke", () => {
+  const hasOwn = Object.hasOwn;
+  delete Object.hasOwn;
+  let env;
+  try {
+    env = npmOfflineEnv({ NPM_CONFIG_OFFLINE: "false", constructor: "kept", PATH: "/bin" });
+  } finally {
+    Object.hasOwn = hasOwn;
+  }
+  assert.equal(env.npm_config_offline, "true");
+  assert.equal(env.NPM_CONFIG_OFFLINE, undefined);
+  assert.equal(env.constructor, "kept");
+  assert.doesNotMatch(readFileSync(join(REPO, "scripts", "smoke-test.js"), "utf8"), /\bObject\.hasOwn\(/);
 });

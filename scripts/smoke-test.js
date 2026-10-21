@@ -20,15 +20,21 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
 // npm pack and a local tarball's install made; offline keeps any other lookup off the network. Its cache and logs go
 // to the temp folder, not the real ~/.npm.
 const OFFLINE_SETTINGS = { npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false',
-  npm_config_cache: path.join(tmp, 'npm-cache') };
+  npm_config_cache: path.join(tmp, 'npm-cache'), npm_config_logs_dir: path.join(tmp, 'npm-cache', '_logs') };
+// npm runs with a HOME of its own in the temp folder: a user .npmrc that moves the logs (logs-dir) or turns them off
+// (logs-max=0) changes nothing here, and whatever npm would put under HOME shows as a file in that folder.
+const npmHome = path.join(tmp, 'npm-home');
 // npm reads npm_config_* names whatever their case and the last spelling wins: drop every spelling of the settings set
 // here (an own key only: a variable named like `constructor` is no setting).
-const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !Object.hasOwn(OFFLINE_SETTINGS, k.toLowerCase()))), ...OFFLINE_SETTINGS };
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k); // Object.hasOwn is Node 16.9 on; engines says 16.7
+const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !own(OFFLINE_SETTINGS, k.toLowerCase()))), ...OFFLINE_SETTINGS,
+  HOME: npmHome, USERPROFILE: npmHome };
 
 const prefix = path.join(tmp, 'prefix');
 const home = path.join(tmp, 'home');
 fs.mkdirSync(prefix, { recursive: true });
 fs.mkdirSync(home, { recursive: true });
+fs.mkdirSync(npmHome, { recursive: true });
 
 try {
   // 1) pack
@@ -36,7 +42,7 @@ try {
   const tarball = packOut.trim().split('\n').filter(Boolean).pop().trim();
   const tarPath = path.join(tmp, tarball);
   ok(fs.existsSync(tarPath), `npm pack produced ${tarball}`);
-  ok(fs.existsSync(path.join(tmp, 'npm-cache', '_logs')), 'npm kept its cache and logs in the temp folder (not ~/.npm)');
+  ok(fs.readdirSync(npmHome).length === 0, 'npm put nothing under its HOME: its cache and logs stay in the temp folder (not ~/.npm)');
 
   // 2) global install into temp prefix (offline; no deps)
   run('npm', ['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
@@ -1048,7 +1054,14 @@ try {
   // in someone else's repository, its `pip/`, `json.py` or `pptx.py` runs as the user. The docs run them from the home
   // folder (absolute paths for the files they read), or in PowerShell between Push-Location ~ and Pop-Location.
   // Kept: lineage's own test run in its own skill folder.
-  const PY_RUN = /(?:^|[\s;&|(`])(?:python[0-9.]*|py(?:\s+-[0-9][0-9.]*)?|"?\$\{?PY(?:_BASE)?\}?"?|~?[\w./-]*\/bin\/python[0-9.]*)\s+(?:-[A-HJ-Za-z]+\s+)*(?:-c\b|-m\b|-\s*<<|<<|<(?!<|[^\s<>]+>))/;   // a stdin script with or without -, not a <placeholder>
+  const PY_RUN = /(?:^|[\s;&|(`])(?:python[0-9.]*|py(?:\s+-[0-9][0-9.]*)?|"?\$\{?PY(?:_BASE)?\}?"?|~?[\w./-]*\/bin\/python[0-9.]*)\s+(?:-[A-HJ-Za-z]+\s+)*(?:-c\b|-m\b|-\s*<<|<<|<(?!<|[^\s<>]+>|[^\s<>][^<>\n;&|]*[^\s<>\d;&|]>))/;   // a stdin script with or without -, not a <placeholder>
+  // A <placeholder> may hold spaces (<입력 파일 경로>); a redirect does not pass for one: a space just inside the bracket
+  // (<in.py >out), a file descriptor or & before > (<in.py 2>err, <in.py &>log), or a shell operator inside.
+  const PY_RUN_CATCH = ['python3 <in.py >out', 'python3 <in.py 2>err', 'python3 <in.py &>log', 'python3 <in.py', 'python3 < in.py',
+    'python3 <in.py && cat>out', 'python3 - <<EOF', 'py -3 <in.py >out'];
+  const PY_RUN_PASS = ['python3 <입력 파일 경로>', 'python3 <파일>', 'python3 <스크립트 경로> --flag', 'python3 -I <in.py >out'];
+  ok(PY_RUN_CATCH.every((l) => PY_RUN.test(l)) && !PY_RUN_PASS.some((l) => PY_RUN.test(l)),
+    `airgap-4i: the stdin check tells a redirect from a <placeholder>, spaces in it or not (missed ${JSON.stringify(PY_RUN_CATCH.filter((l) => !PY_RUN.test(l)))}, taken ${JSON.stringify(PY_RUN_PASS.filter((l) => PY_RUN.test(l)))})`);
   const pyDocsAll = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
     ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
     .filter((f) => fs.existsSync(path.join(root, f)));

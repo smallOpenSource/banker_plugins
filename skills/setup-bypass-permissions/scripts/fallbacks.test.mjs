@@ -24,7 +24,9 @@ const python = ['python3', 'python'].find((bin) => works(bin, ['-c', 'import sys
 const PSE = pwshEnv();
 after(() => rmSync(PSE.home, { recursive: true, force: true }));
 const psWorks = (bin, args) => spawnSync(bin, args, { encoding: 'utf8', env: PSE.env }).status === 0;
-const powershell = ['powershell', 'pwsh'].find((bin) => psWorks(bin, ['-NoProfile', '-Command', 'exit 0']));
+// Windows PowerShell 5.1 by its own path on Windows: a bare name is looked up in the current folder first there.
+const PS51 = process.platform === 'win32' ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : 'powershell';
+const powershell = [PS51, 'pwsh'].find((bin) => psWorks(bin, ['-NoProfile', '-Command', 'exit 0']));
 const asRoot = process.platform !== 'win32' && process.getuid?.() === 0;
 const posix = process.platform !== 'win32';
 // PowerShell sets a file mode on macOS and Linux only where .NET has SetUnixFileMode (PowerShell 7.3+).
@@ -61,7 +63,7 @@ const env = (c, extra = {}) => ({
   ...extra,
 });
 const run = (shell, c, args, extra) => spawnSync(shell.bin, shell.args(...args), { encoding: 'utf8', env: env(c, extra) });
-const read = (c) => JSON.parse(readFileSync(c.settingsFile, 'utf8').replace(/^﻿/, ''));
+const read = (c) => JSON.parse(readFileSync(c.settingsFile, 'utf8').replace(/^\u{FEFF}/u, ''));
 const raw = (c) => readFileSync(c.settingsFile, 'utf8');
 
 test('the PowerShell fallback is ASCII only: Windows PowerShell 5.1 reads a script without a BOM in the ANSI code page', () => {
@@ -146,7 +148,7 @@ for (const shell of SHELLS) {
     assert.equal(res.status, 1);
     assert.match(res.stderr, /20-lock\.json/);
     rmSync(join(c.policyHome, 'managed-settings.d'), { recursive: true });
-    writeFileSync(join(c.policyHome, 'managed-settings.json'), '﻿' + JSON.stringify({ permissions: { disableBypassPermissionsMode: true } }));
+    writeFileSync(join(c.policyHome, 'managed-settings.json'), '\u{FEFF}' + JSON.stringify({ permissions: { disableBypassPermissionsMode: true } }));
     assert.equal(run(shell, c, ['on', '--yes']).status, 1, 'a BOM before the policy JSON does not hide it');
   });
 
@@ -165,9 +167,9 @@ for (const shell of SHELLS) {
   });
 
   t('a BOM before the settings JSON is read and kept', {}, () => {
-    const c = setup('﻿' + JSON.stringify({ model: 'opus' }));
+    const c = setup('\u{FEFF}' + JSON.stringify({ model: 'opus' }));
     assert.equal(run(shell, c, ['on', '--yes']).status, 0);
-    assert.ok(raw(c).startsWith('﻿'));
+    assert.ok(raw(c).startsWith('\u{FEFF}'));
     assert.deepEqual(read(c), { model: 'opus', permissions: { defaultMode: 'bypassPermissions' } });
   });
 

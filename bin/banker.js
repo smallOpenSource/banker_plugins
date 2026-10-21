@@ -364,7 +364,7 @@ function printUpdateCheckStatus(tc) {
   const installed = tc.installedVersion();
   log('[업데이트 체크] 새 버전 알림 (기본값: 켜짐)');
   log(`  opt-out(BANKER_NO_UPDATE_CHECK/config.updateCheck=false): ${tc.noUpdateCheck() ? '적용됨' : '미적용'}`);
-  printLastChecks(cache);
+  printLastChecks(tc, cache);
   log(`  캐시된 최신 버전: ${cache.latest || '없음'} / 설치된 버전: ${installed || '알 수 없음'}`);
   log(versionVerdict(tc, cache, installed));
 }
@@ -379,13 +379,18 @@ function readUpdateCacheFile(tc) {
   }
 }
 
-// 마지막 확인 시각, 그리고 그 뒤에 실패한 시도가 있으면 그 시각. 지금보다 뒤의 시도 시각은 쉼으로 세지 않는다(updateCheckDue).
-function printLastChecks(cache) {
+// 마지막 확인 시각, 그리고 그 뒤에 실패한 시도가 있으면 그 시각과 다음 시도. 다음 시도는 훅이 쓰는 updateCheckDue 로
+// 정한다: 지금보다 뒤의 시도 시각은 쉼으로 세지 않지만, 하루가 안 된 마지막 체크는 여전히 쉬게 한다.
+function printLastChecks(tc, cache) {
   log(`  마지막 체크: ${isoTime(cache.checkedAt) || '없음'}`);
-  if (isoTime(cache.triedAt) && !(cache.triedAt <= cache.checkedAt)) {
-    const rest = cache.triedAt > Date.now() ? '시각이 지금보다 뒤라 다음 세션 시작에 다시 시도합니다' : '그 뒤 24시간은 다시 시도하지 않습니다';
-    log(`  마지막 시도: ${isoTime(cache.triedAt)} (실패. ${rest})`);
-  }
+  if (isoTime(cache.triedAt) && !(cache.triedAt <= cache.checkedAt)) log(`  마지막 시도: ${isoTime(cache.triedAt)} (실패. ${nextTry(tc, cache)})`);
+}
+
+// 실패한 시도 뒤 다음 시도가 언제인지, 훅이 쓰는 updateCheckDue 와 같은 규칙으로.
+function nextTry(tc, cache) {
+  if (!(cache.triedAt > Date.now())) return '그 뒤 24시간은 다시 시도하지 않습니다';
+  return tc.updateCheckDue(cache) ? '시각이 지금보다 뒤라 다음 세션 시작에 다시 시도합니다'
+    : '시각이 지금보다 뒤라 쉼으로 세지 않지만, 마지막 체크에서 24시간이 지나야 다시 시도합니다';
 }
 
 // 캐시의 최신 버전과 설치 버전을 견준 한 줄.

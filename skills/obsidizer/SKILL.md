@@ -156,7 +156,7 @@ vault에서도 문서 안에 출처가 없는 값이라 쓰면 **날조**가 된
 - **기본 = dry-run.** `--apply` 전까지 아무것도 쓰지 않는다. 미리보기 없는 자동 변형은 금지(위
   한계 섹션에서 hook 경로를 거부하는 이유이기도 하다).
 - **`--apply` 전 필수 스냅샷**: `cp -r <vault> <vault>.bak-<ts>` (compact-wiki와 동일 선례).
-- **모든 쓰기는 원자적**: 유니크 temp(`randomUUID`) + `wx`(배타 생성) + `fsync` + `rename`. 절대
+- **모든 쓰기는 원자적**: 유니크 temp(`randomUUID`) + `wx`(배타 생성) + `fsync`(파일 시스템이 받으면. `EINVAL`, `ENOTSUP` 이면 건너뜀) + `rename`. 절대
   in-place bare write가 아니다 — OMC 자신의 `atomicWriteFileSync`와 같은 형태를, 빌려 쓰지 않고
   독립 구현한다. **read-back CAS는 hook이 아니라 캐노니컬라이저에 있고, 두 진입점(bare 실행·armed
   hook)이 함께 상속**한다: temp를 먼저 다 쓰고 → 재읽어 바뀌었으면 skip → `rename`.

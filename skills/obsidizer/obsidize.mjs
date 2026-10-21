@@ -413,6 +413,13 @@ function discardTemp(tmp) {
  * `wx` so the open fails instead of truncating a temp file somebody else created, fsync
  * so a rename cannot publish a short write (NFS).
  */
+// fsync where the file system does it. One that does not (EINVAL, ENOTSUP) still gets the whole page by the rename;
+// only its safety across a crash is less. The same codes as the 3d-intro and motion-graphic key files' syncIfAble.
+const NO_FSYNC = new Set(['EINVAL', 'ENOTSUP']);
+function syncIfAble(fd) {
+  try { fs.fsyncSync(fd); } catch (e) { if (!NO_FSYNC.has(e.code)) throw e; }
+}
+
 function writeTemp(file, text) {
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}${TMP_SUFFIX}.${crypto.randomUUID()}`);
   // A failed `wx` open either found somebody else's file or created nothing, so there is
@@ -420,7 +427,7 @@ function writeTemp(file, text) {
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
     fs.writeFileSync(fd, text, 'utf8');
-    fs.fsyncSync(fd);
+    syncIfAble(fd);
   } catch (err) {
     fs.closeSync(fd);
     discardTemp(tmp);

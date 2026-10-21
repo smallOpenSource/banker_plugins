@@ -325,7 +325,7 @@ test("a line the probe cannot place keeps the config from being read as whole", 
   for (const text of ['[mcp_servers.작성기]\ncommand = "x"\n', 'mcp_servers.작성기.command = "x"\n', 'model = "gpt-5.5"\nwhat is this\n']) {
     assert.equal(readToml(text).broken, true, text);
   }
-  const real = ['﻿model = "gpt-5.5"', 'model_reasoning_effort = "high"\r', "", "# a comment", "\t[profiles.fast]", '\tmodel = "o3"',
+  const real = ['\u{FEFF}model = "gpt-5.5"', 'model_reasoning_effort = "high"\r', "", "# a comment", "\t[profiles.fast]", '\tmodel = "o3"',
     "[[skills.config]]", 'path = "/x"', 'notes = """', "line [not a header]", '"""', "[mcp_servers.docs]", 'command = "npx"',
     "args = [", '  "-y", # flag', '  "pkg",', "]", 'env = { A = "1", B = "2" }', "[tui]", 'theme = { name = "x",', "  dark = true }"].join("\n");
   const read = readToml(real);
