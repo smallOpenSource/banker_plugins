@@ -10,7 +10,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { after, test } from "node:test";
+import { pwshEnv } from "./test-fixtures/pwsh-env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const FENCE = /^(\s*)```(powershell|pwsh|ps1)\s*$/;
@@ -61,6 +62,9 @@ function docs() {
 // Windows PowerShell 5.1 by its own path: a bare name would be looked up in the current folder first on Windows.
 const POWERSHELL = join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 const TIMEOUT_MS = 120_000;
+// PowerShell runs with a temp home and the opt-outs (test-fixtures/pwsh-env.mjs), as every pwsh a test starts does.
+const PSE = pwshEnv();
+after(() => rmSync(PSE.home, { recursive: true, force: true }));
 
 // ASCII only: Windows PowerShell 5.1 reads a script without a BOM in the ANSI code page. The results go to a UTF-8
 // file, since 5.1 writes the console code page (949 on Korean Windows) into a pipe. Stop makes a failure exit 1.
@@ -83,7 +87,7 @@ function parse51(codes) {
     codes.forEach((c, i) => writeFileSync(join(dir, `b${String(i).padStart(4, "0")}.ps1`), `${BOM}${c.replace(/\n/g, "\r\n")}\r\n`));
     writeFileSync(join(dir, "parse.ps1"), PARSE);
     const r = spawnSync(POWERSHELL, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-      join(dir, "parse.ps1"), dir], { encoding: "utf8", timeout: TIMEOUT_MS });
+      join(dir, "parse.ps1"), dir], { encoding: "utf8", timeout: TIMEOUT_MS, env: PSE.env });
     const result = join(dir, "result.tsv");
     assert.ok(r.status === 0 && existsSync(result), `the parse did not finish (status ${r.status}): ${r.stdout}${r.stderr}`);
     return readFileSync(result, "utf8").split(/\r?\n/).filter(Boolean).map((l) => {
@@ -122,7 +126,7 @@ test("the skills and commands hold PowerShell blocks to check", () => {
 
 // Windows always has 5.1, so there a missing one is a failure, not a skip.
 test("every PowerShell block parses in Windows PowerShell 5.1", { skip: process.platform !== "win32" && "Windows PowerShell 5.1 is only on Windows (only it can judge 5.1 syntax)" }, () => {
-  const v = spawnSync(POWERSHELL, ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"], { encoding: "utf8", timeout: TIMEOUT_MS });
+  const v = spawnSync(POWERSHELL, ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"], { encoding: "utf8", timeout: TIMEOUT_MS, env: PSE.env });
   assert.equal(String(v.stdout).trim(), "5", `Windows PowerShell 5.1 at ${POWERSHELL}: ${v.stdout}${v.stderr}${v.error ?? ""}`);
   const blocks = docs().flatMap((f) => psBlocks(readFileSync(f, "utf8")).map((b) => ({ ...b, file: relative(ROOT, f) })));
   assert.deepEqual(blocks.filter((b) => loadsCodeAtParse(b.code)).map((b) => `${b.file}:${b.line}`), [],

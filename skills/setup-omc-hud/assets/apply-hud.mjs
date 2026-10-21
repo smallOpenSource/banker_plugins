@@ -41,8 +41,8 @@ import {
   constants,
   copyFileSync,
   existsSync,
-  mkdirSync,
   lstatSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -81,6 +81,23 @@ const log = (m) => process.stdout.write(m + "\n");
 // omc-patch.mjs (UNSAFE_CH) shows file values in output an agent reads.
 const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu;
 const shown = (s) => String(s).replace(UNSAFE, "?");
+// The old statusLine command as the report shows it: its first word (the program; a NAME=value it sets is skipped) and
+// its length. settings.json can hold tokens (see step 0) and the line goes into a report; masking the parts that look
+// like secrets missed every form no rule named (curl -u, sshpass -p, mysql -pPW), so the rest stays in the backup.
+const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+// Shell words: runs of plain characters, quoted pieces and backslash escapes (a quote or a space after a backslash
+// stays in its word, inside double quotes too), a quote left open running to the end, so a value in quotes stays one
+// word with its name.
+const WORDS = /(?:"(?:[^"\\]|\\.)*"?|'[^']*'?|\\[\s\S]?|[^\s"'\\])+/g;
+function priorShown(command) {
+  const text = String(command).trim();
+  const words = text.match(WORDS) || [];
+  const first = words.findIndex((w) => !ASSIGN.test(w));
+  // a first word that looks like a setting or an address may hold a secret itself
+  const name = first === -1 ? "(no program)" : /[=@]|:\/\//.test(words[first]) ? "(program hidden)" : words[first];
+  const head = `${name}${first !== -1 && first < words.length - 1 ? " …" : ""}`;
+  return `${JSON.stringify(shown(head))} (${text.length} characters)`;
+}
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const refuse = (lines) => {
   for (const l of lines) log(l);
@@ -119,6 +136,30 @@ function readSettings(raw) {
   if (value && typeof value === "object" && !Array.isArray(value)) return { settings: value, empty: false };
   return { refusal: `[x] settings.json holds ${kindOf(value)}, not a JSON object; nothing changed. Fix it and re-run.` };
 }
+// A target that is there but no regular file (a folder, a FIFO, a device), or a folder the install writes into that
+// is there but no folder, is refused before anything is read or written: reading or writing a FIFO waits for good,
+// and the others stopped the install half-way. Links are followed, as the reads and writes follow them; a target
+// that is not there (a broken link too) is written new.
+function oddTarget() {
+  for (const p of [settingsPath, loaderDst, libDst, wrapperDst, configDst]) {
+    try {
+      if (!statSync(p).isFile()) return `${shown(p)} is not a regular file (a folder, a FIFO or a device)`;
+    } catch {
+      /* not there: written new */
+    }
+  }
+  for (const d of [CONFIG_DIR, HUD_DIR, join(HUD_DIR, "lib"), OMC_DIR]) {
+    try {
+      if (!statSync(d).isDirectory()) return `${shown(d)} is not a folder`;
+    } catch {
+      /* not there: made */
+    }
+  }
+  return "";
+}
+const odd = oddTarget();
+if (odd) refuse([`[x] ${odd}; nothing changed. Move it aside and re-run.`]);
+
 let settings = {};
 let settingsRaw = null;
 if (existsSync(settingsPath)) {
@@ -378,6 +419,16 @@ function writeSettings(file, text) {
   writeFileSync(file, text);
 }
 
+// How many other names settings.json has (a hard link, a `cp -al` snapshot, say), 0 when it cannot be read.
+// writeSettings writes such a file in place, so those names show the new text too.
+function otherNames(file) {
+  try {
+    return statSync(file).nlink - 1;
+  } catch {
+    return 0;
+  }
+}
+
 // 4. Point settings.json statusLine at the custom formatter; its other fields (padding, ...) stay.
 //    A settings.json that already says exactly this is neither backed up nor written.
 const objectOr = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
@@ -386,7 +437,7 @@ function pointStatusLine() {
   const command = `node "${cmdPath}"`;
   const prior = objectOr(settings.statusLine);
   if (typeof prior.command === "string" && prior.command && prior.command !== command) {
-    log(`[..] statusLine ran ${shown(JSON.stringify(prior.command))}; it now runs the custom HUD (the old value is in the backup)`);
+    log(`[..] statusLine ran ${priorShown(prior.command)}; it now runs the custom HUD (the old value is in the backup)`);
   }
   settings.statusLine = { ...prior, type: "command", command };
   const next = JSON.stringify(settings, null, 2) + "\n";
@@ -399,8 +450,12 @@ function pointStatusLine() {
     copyFileSync(settingsPath, backup); // the original bytes and mode
     log("[ok] Backed up settings.json -> " + backup);
   }
+  const others = otherNames(settingsPath);
   writeSettings(settingsPath, next);
   log("[ok] statusLine -> " + command);
+  if (others > 0) {
+    log(`[..] settings.json has ${others} other name${others > 1 ? "s" : ""} (a hard link); it was written in place, so they show the new text too (the old text is in the backup)`);
+  }
 }
 
 // 5. Render check: run the installed formatter once with no input, as the statusLine command does,

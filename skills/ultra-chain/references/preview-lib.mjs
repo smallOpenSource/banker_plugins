@@ -16,9 +16,11 @@
  *
  * Runtime: Node >=18 builtins only (node:fs / node:http / node:net / node:path). No shell.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { Transform, pipeline } from 'node:stream';
 
@@ -98,8 +100,9 @@ const sameFile = (st, expect) => !expect || (st.dev === expect.dev && st.ino ===
 // Sends the bytes `start`..`end` of an open file (what the headers declared, even if the file grows
 // meanwhile) and closes it, also when the browser drops the download midway (a pipe would keep the
 // file open). Nothing to send closes the file and ends the response.
-function stream(res, fp, { fd, start, end }) {
-  if (end < start) {
+// A HEAD request gets the headers only: the file is closed unread.
+function stream(res, fp, { fd, start, end, head }) {
+  if (head || end < start) {
     fs.closeSync(fd);
     return void res.end();
   }
@@ -123,12 +126,13 @@ function declaredLength(want) {
 export function sendFile(req, res, fp, headers = {}, { expect } = {}) {
   const f = openRegular(fp, expect);
   if (f.status) return send(res, f.status, String(f.status), headers);
+  f.head = req.method === 'HEAD';
   const type = MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream';
   const base = { ...headers, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };
   const range = type.startsWith('video/') ? /bytes=(\d+)-(\d*)/.exec(req.headers.range || '') : null;
   if (range) return sendRange(res, fp, f, range, base, headers);
   res.writeHead(200, { ...base, 'Content-Length': f.size });
-  stream(res, fp, { fd: f.fd, start: 0, end: f.size - 1 });
+  stream(res, fp, { fd: f.fd, start: 0, end: f.size - 1, head: f.head });
 }
 
 function sendRange(res, fp, f, range, base, headers) {
@@ -140,7 +144,7 @@ function sendRange(res, fp, f, range, base, headers) {
     return void res.end();
   }
   res.writeHead(206, { ...base, 'Content-Range': `bytes ${start}-${end}/${f.size}`, 'Content-Length': end - start + 1 });
-  stream(res, fp, { fd: f.fd, start, end });
+  stream(res, fp, { fd: f.fd, start, end, head: f.head });
 }
 
 // True when the request was the PID question, which this answers.
@@ -185,8 +189,12 @@ export const portMatches = (st, port) => !port || st.port === port || st.request
 // The state file of a server for `dir`: beside the folder, so a deployed folder never carries it.
 export const siblingState = (dir) => path.join(path.dirname(dir), `${path.basename(dir)}.server.json`);
 
+// Through a fresh random name opened exclusively, then renamed over the old file: a link at the state
+// file's name (one a repository can bring) is replaced, never written through.
 export function writeState(file, info) {
-  fs.writeFileSync(file, JSON.stringify(info, null, 2) + '\n');
+  const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(info, null, 2) + '\n', { flag: 'wx' });
+  try { fs.renameSync(tmp, file); } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
 }
 
 export function readState(file) {
@@ -236,10 +244,22 @@ async function waitClosed(port, timeoutMs, host) {
 // A PID a state file may name: a whole number above 1 (never a process group, never init).
 const validPid = (pid) => Number.isInteger(pid) && pid > 1;
 
+// A host a state file may name: this machine (loopback, a wildcard, an address of its own). A state file
+// can come with a repository: its host must not send a request elsewhere, nor pick the PID a signal goes to.
+// A record a stop or a start may act on: a PID that is a process id, on this machine.
+const recordedHere = (st) => validPid(st.pid) && thisMachine(st.host);
+
+// No host is the default loopback one. A loopback address counts only as an IPv4 address of 127/8: `127.evil.test`
+// or `127.256.0.1` is a DNS name, resolved anywhere (a resolver's search domain may answer it).
+export function thisMachine(host) {
+  if (!host || ['0.0.0.0', '::', '::1', 'localhost'].includes(host) || (net.isIPv4(String(host)) && String(host).startsWith('127.'))) return true;
+  return Object.values(os.networkInterfaces()).flat().some((a) => a && a.address === host);
+}
+
 /** True when the server a state file records still answers on its port with its PID. */
 export async function isRunning(stateFile) {
   const st = readState(stateFile);
-  return Boolean(st && st.port) && validPid(st.pid) && (await askPid(st.port, 1500, st.host)) === st.pid;
+  return Boolean(st && st.port) && recordedHere(st) && (await askPid(st.port, 1500, st.host)) === st.pid;
 }
 
 function signal(pid, sig) {
@@ -252,7 +272,7 @@ function signal(pid, sig) {
 export async function stopServer(stateFile, { timeoutMs = 3000 } = {}) {
   const st = readState(stateFile);
   if (!st || !st.port) return { stopped: false, reason: 'no-state' };
-  if (!validPid(st.pid)) return { stopped: false, reason: 'invalid-state' };
+  if (!recordedHere(st)) return { stopped: false, reason: 'invalid-state' };
   const who = await askPid(st.port, Math.min(timeoutMs, 1500), st.host);
   if (who === NONE) {
     dropState(stateFile);

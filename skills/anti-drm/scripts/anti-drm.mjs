@@ -46,6 +46,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  readlinkSync,
   realpathSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -97,6 +98,9 @@ const RUNTIME_NAME = { claude: "Claude Code", codex: "Codex" };
 // forge a line or reorder the text), at most 40 characters stay, and a value
 // that is not a string shows only its type.
 const shown = (value) => (typeof value === "string" ? value.replace(/[^ -~]/g, "?").slice(0, 40) : `(${typeof value})`);
+// A value read through a link at the settings path, as a message shows it: its type and length only. The link may lead
+// to a file that is not anti-drm's (the design reads through it, for dotfiles), so none of its words show.
+const sized = (value) => (typeof value === "string" ? `(string, ${[...value].length}자)` : `(${typeof value})`);
 
 // ---- settings ----
 
@@ -118,25 +122,25 @@ function normalExt(word) {
   return EXT.test(ext) ? ext : null;
 }
 
-// The extensions in words, normalized and each once, or why they are not a list.
-function extList(words, what) {
+// The extensions in words, normalized and each once, or why they are not a list. quote shows a wrong word.
+function extList(words, what, quote) {
   if (!Array.isArray(words)) return { error: `${what}가 목록이 아닙니다` };
   if (words.length === 0) return { error: `${what}가 비어 있습니다` };
   if (words.length > MAX_EXTS) return { error: `${what}는 ${MAX_EXTS}개까지 쓸 수 있습니다` };
   const list = new Set();
   for (const word of words) {
     const ext = normalExt(word);
-    if (ext === null) return { error: `${what}로 쓸 수 없는 값입니다: ${shown(word)}` };
+    if (ext === null) return { error: `${what}로 쓸 수 없는 값입니다: ${quote(word)}` };
     list.add(ext);
   }
   return { list: [...list] };
 }
 
-/** Settings from their parts, normalized: { config } or { error }. */
-export function checkConfig({ deny, alt, tsvDelimiter = "tab" }) {
-  const d = extList(deny, "금지 확장자");
+/** Settings from their parts, normalized: { config } or { error }. quote shows a wrong value in the error. */
+export function checkConfig({ deny, alt, tsvDelimiter = "tab" }, quote = shown) {
+  const d = extList(deny, "금지 확장자", quote);
   if (d.error) return d;
-  const a = extList(alt, "대체 확장자");
+  const a = extList(alt, "대체 확장자", quote);
   if (a.error) return a;
   const reserved = d.list.filter((x) => RESERVED.includes(x));
   if (reserved.length > 0) return { error: `anti-drm 이 쓰는 형식이라 금지할 수 없습니다: ${reserved.join(" ")}` };
@@ -145,7 +149,7 @@ export function checkConfig({ deny, alt, tsvDelimiter = "tab" }) {
   // In any letter case, as the --tsv flag takes it; kept lower-cased.
   const tsv = typeof tsvDelimiter === "string" ? tsvDelimiter.toLowerCase() : tsvDelimiter;
   if (tsv !== "tab" && tsv !== "comma") {
-    return { error: `TSV 구분자는 tab 이나 comma 여야 합니다: ${shown(tsvDelimiter)}` };
+    return { error: `TSV 구분자는 tab 이나 comma 여야 합니다: ${quote(tsvDelimiter)}` };
   }
   return { config: { version: 1, deny: d.list, alt: a.list, tsvDelimiter: tsv } };
 }
@@ -164,6 +168,19 @@ const OPEN_ERRORS = new Map([
   ["EACCES", "읽을 권한이 없습니다"],
   ["EPERM", "읽을 권한이 없습니다"],
 ]);
+// What is at the settings path that a save refuses to write over (priorSettings): the person moves it or fixes its
+// permissions first, so `on` says that, not to give the settings again. Only for a file or another kind of entry at the
+// path: a link there (to a folder, a big or unreadable file, or in a loop) the save replaces with a file of its own.
+const KEPT_SPOT = new Set([...OPEN_ERRORS.values(), "64KiB 보다 큽니다"]);
+// A path its lstat cannot look at (a folder this account cannot enter) the save refuses too.
+function keptSpot(file, error) {
+  if (!KEPT_SPOT.has(error)) return false;
+  try {
+    return ["file", "other"].includes(pathKind(file));
+  } catch {
+    return true;
+  }
+}
 
 // The settings file's text: null when there is none, { error } when it is not a
 // regular file of at most 64 KiB that a trusted owner holds. Opening without
@@ -201,7 +218,24 @@ export function readConfig(file) {
     return { error: "JSON 이 아닙니다" };
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { error: "JSON 객체가 아닙니다" };
-  return checkConfig({ deny: raw.deny, alt: raw.alt, tsvDelimiter: raw.tsvDelimiter ?? "tab" });
+  return checkConfig({ deny: raw.deny, alt: raw.alt, tsvDelimiter: raw.tsvDelimiter ?? "tab" }, linkAt(file) ? sized : shown);
+}
+
+// Whether the settings name is a link (wherever it leads).
+const linkAt = (file) => {
+  try {
+    return lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+// Where a link at the settings path leads, as status shows it after the path; nothing for a name that is no link.
+function leadsTo(file) {
+  try {
+    return linkAt(file) ? ` (링크: ${where(readlinkSync(file))})` : "";
+  } catch {
+    return " (링크)";
+  }
 }
 
 // What sits at the settings path: "none", "file" (a regular file with this one name), "link" (a link, wherever it
@@ -399,10 +433,10 @@ const USAGE =
 // The settings as `status` shows them.
 function configLines(o, found) {
   if (found === null) return ["- 설정: 없음 (on 이나 config 로 만듦)"];
-  if (found.error) return [`- 설정: 올바르지 않음 (${found.error}): ${where(o.configFile)}`];
+  if (found.error) return [`- 설정: 올바르지 않음 (${found.error}): ${where(o.configFile)}${leadsTo(o.configFile)}`];
   const { deny, alt, tsvDelimiter } = found.config;
   const lines = [
-    `- 설정: ${where(o.configFile)}`,
+    `- 설정: ${where(o.configFile)}${leadsTo(o.configFile)}`,
     `  - 금지 확장자 ${deny.length}개: ${deny.join(" ")}`,
     `  - 대체 확장자 ${alt.length}개: ${alt.join(" ")}`,
   ];
@@ -511,7 +545,10 @@ function savedRules(o) {
   const found = readConfig(o.configFile);
   if (found === null) return { refusal: refuse("설정이 없습니다. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.") };
   if (found.error) {
-    return { refusal: refuse(`설정 파일이 올바르지 않습니다 (${found.error}): ${where(o.configFile)}. 금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.`) };
+    const next = keptSpot(o.configFile, found.error)
+      ? "anti-drm 은 이 자리를 덮어쓰지 않습니다. 옮기거나 권한을 고친 뒤 다시 실행하세요."
+      : "금지 확장자와 대체 확장자를 --stdin 이나 --deny, --alt 로 함께 주세요.";
+    return { refusal: refuse(`설정 파일이 올바르지 않습니다 (${found.error}): ${where(o.configFile)}. ${next}`) };
   }
   return { rules: renderRules(loadTemplate(o), found.config), lines: [], ok: true };
 }

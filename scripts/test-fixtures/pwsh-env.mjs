@@ -8,9 +8,11 @@ import { join } from "node:path";
 
 export const PWSH_OPTOUT = { POWERSHELL_TELEMETRY_OPTOUT: "1", POWERSHELL_UPDATECHECK: "Off", DOTNET_CLI_TELEMETRY_OPTOUT: "1" };
 
-// The XDG folders and the opt-outs for a pwsh whose HOME is `home`.
+// The XDG folders and the opt-outs for a pwsh whose HOME is `home`. PSModuleAnalysisCachePath moves the module analysis
+// cache of pwsh 7 and of Windows PowerShell 5.1, which otherwise sits under %LOCALAPPDATA% whatever HOME says.
 export const pwshVars = (home) => ({
   XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local", "share"), XDG_CONFIG_HOME: join(home, ".config"),
+  PSModuleAnalysisCachePath: join(home, "ModuleAnalysisCache"),
   ...PWSH_OPTOUT,
 });
 

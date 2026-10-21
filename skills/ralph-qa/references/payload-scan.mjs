@@ -11,7 +11,8 @@
  * printed, so the report cannot become the leak. The patterns cover common key and token
  * formats, private key blocks (PGP too), secret assignments (quoted, or unquoted with letters
  * and digits), passwords (quoted, with a symbol, alone on a config or env-file line, a KEY=value
- * word after a space or a quote as in `env` or `docker -e`, or after a Dockerfile `ENV KEY value`),
+ * word after a space, a quote, `(` or `=` as in `env`, `docker -e`, `--from-literal=`, or after a Dockerfile
+ * `ENV KEY value`; the shell's own PWD or OLDPWD holding a path is no password),
  * secrets given as command-line flags, curl's user and password flag,
  * hex keys, Basic and Bearer credentials, credentials in URLs and
  * long high-entropy strings (a lockfile's sha512- integrity hash and a Go or Terraform h1: hash
@@ -59,8 +60,9 @@ export const PATTERNS = [
   ["assigned-secret", new RegExp(SECRET_KEY + String.raw`["'](?:[^"'\s]{12,256}|(?=[^"'\s]{0,10}\d)[^"'\s]{8,11})["']`, "i")],
   ["assigned-secret-bare", new RegExp(SECRET_KEY + String.raw`(?=[^\s"']{0,256}\d)(?=[^\s"']{0,256}[A-Za-z])[^\s"'(\[{]{12,256}`, "i")],
   ["assigned-password", new RegExp(PASSWORD_KEY + String.raw`(?:["'][^"'\s]{6,256}["']|(?=${BARE}{0,256}[^\w\s;,"'().\[\]{}$<>])${BARE}{6,256})`, "i")],
-  // at the head of a line, or as a word after a space or a quote (env, docker -e), its value ending the word
-  ["env-password", new RegExp(String.raw`^[+\- ]?\s*(?:export\s+)?${ENV_KEY}[^\s"']{6,256}|(?<=[\s"'])${ENV_KEY}[^\s"',;()\[\]{}]{6,256}(?=[\s"']|$)`, "i")],
+  // at the head of a line, or as a word after a space, a quote, `(` or `=` (env, docker -e, --from-literal=, a subshell),
+  // its value ending the word
+  ["env-password", new RegExp(String.raw`^[+\- ]?\s*(?:export\s+)?${ENV_KEY}[^\s"']{6,256}|(?<=[\s"'(=])${ENV_KEY}[^\s"',;()\[\]{}]{6,256}(?=[\s"']|$)`, "i")],
   // a password alone on a config line: YAML, compose lists, .properties, Dockerfile ENV, diff marks
   ["config-password", new RegExp(String.raw`^[+\- ]?\s*(?:-\s+|export\s+|ENV\s+)?[\w.-]{0,64}${PASS_WORD}[\w.-]{0,64}["']?\s*[:=]\s*["']?(?![-$<{%])[^\s"',;()\[\]{}]{6,256}["']?\s*(?:#.*)?$`, "i")],
   // a Dockerfile's legacy `ENV KEY value` form, the value alone after the space
@@ -100,6 +102,10 @@ const highEntropy = (line) => [...line.matchAll(LONG_RUN)].some((m) => !publicHa
 // not that password: the kinds that read a value after a key name see a `-` there instead. The
 // other kinds still read the line as it is, so a key's own format shows wherever it sits.
 const SECRET_FILE_PATH = /(?<![\w.-])([\w.-]{0,128}_FILE["']?(?:[ \t]*[:=][ \t]*|[ \t]+)["']?)\/[\w.@-]{1,128}(?:\/[\w.@-]{1,128}){0,32}(?=["']?(?:[\s,;#]|$))/gi;
+// The shell's own working folder (PWD, OLDPWD, as `env`, `declare -x` or a JSON dump shows it) holding a plain path:
+// no password, though PWD reads like one. A key that only ends in PWD (MYSQL_PWD) and a value that is no plain path
+// stay. Taken out before the keyed patterns read the line, as lineage does.
+const SHELL_DIR = /(?<=^[+\- ]?|[\s"'$])((?:OLD)?PWD["']?[ \t]*[:=][ \t]*["']?)(?:~|\/|[A-Za-z]:[\\/])[^\s"'!#$%&*;|<>()[\]{}`^?=]{0,4096}(?=["']?(?:[\s,]|$))/g;
 const KEYED = new Set(["assigned-secret", "assigned-secret-bare", "assigned-password", "env-password", "config-password",
   "dockerfile-env-password"]);
 
@@ -118,7 +124,7 @@ export function scan(text) {
   lines.forEach((line, i) => {
     while (next < ends.length && ends[next] < i + 1) next += 1;
     const plain = line.replace(WHOLE_MASK, "-");
-    const keyed = plain.replace(SECRET_FILE_PATH, "$1-");
+    const keyed = plain.replace(SECRET_FILE_PATH, "$1-").replace(SHELL_DIR, "$1-");
     for (const [kind, re] of PATTERNS) {
       if (!re.test(KEYED.has(kind) ? keyed : plain)) continue;
       hits.push(kind === "private-key" ? { line: i + 1, kind, end: ends[next] ?? null } : { line: i + 1, kind });

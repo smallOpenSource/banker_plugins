@@ -20,15 +20,21 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
 // npm pack and a local tarball's install made; offline keeps any other lookup off the network. Its cache and logs go
 // to the temp folder, not the real ~/.npm.
 const OFFLINE_SETTINGS = { npm_config_update_notifier: 'false', npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false',
-  npm_config_cache: path.join(tmp, 'npm-cache') };
+  npm_config_cache: path.join(tmp, 'npm-cache'), npm_config_logs_dir: path.join(tmp, 'npm-cache', '_logs') };
+// npm runs with a HOME of its own in the temp folder: a user .npmrc that moves the logs (logs-dir) or turns them off
+// (logs-max=0) changes nothing here, and whatever npm would put under HOME shows as a file in that folder.
+const npmHome = path.join(tmp, 'npm-home');
 // npm reads npm_config_* names whatever their case and the last spelling wins: drop every spelling of the settings set
 // here (an own key only: a variable named like `constructor` is no setting).
-const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !Object.hasOwn(OFFLINE_SETTINGS, k.toLowerCase()))), ...OFFLINE_SETTINGS };
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k); // Object.hasOwn is Node 16.9 on; engines says 16.7
+const NPM_OFFLINE = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !own(OFFLINE_SETTINGS, k.toLowerCase()))), ...OFFLINE_SETTINGS,
+  HOME: npmHome, USERPROFILE: npmHome };
 
 const prefix = path.join(tmp, 'prefix');
 const home = path.join(tmp, 'home');
 fs.mkdirSync(prefix, { recursive: true });
 fs.mkdirSync(home, { recursive: true });
+fs.mkdirSync(npmHome, { recursive: true });
 
 try {
   // 1) pack
@@ -36,7 +42,7 @@ try {
   const tarball = packOut.trim().split('\n').filter(Boolean).pop().trim();
   const tarPath = path.join(tmp, tarball);
   ok(fs.existsSync(tarPath), `npm pack produced ${tarball}`);
-  ok(fs.existsSync(path.join(tmp, 'npm-cache', '_logs')), 'npm kept its cache and logs in the temp folder (not ~/.npm)');
+  ok(fs.readdirSync(npmHome).length === 0, 'npm put nothing under its HOME: its cache and logs stay in the temp folder (not ~/.npm)');
 
   // 2) global install into temp prefix (offline; no deps)
   run('npm', ['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
@@ -374,7 +380,7 @@ try {
      && /`!` 명령 뒤 하네스가 쓴 출력 턴\(`<bash-stdout>` 블록 뒤 `<bash-stderr>` 블록, 실패하면 `<bash-stderr>` 블록 하나만 있는 턴\. 가리기 전 글로 본다\)은 세지 않는다/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.9$/m.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.10$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
      && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && !/공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
@@ -398,6 +404,9 @@ try {
   ok(!/자동 무효화/.test(linSkill)
      && (linSkill.match(/요약기나 가림을 바꾼 판은 요약기 버전\(`SUMMARIZER_VERSION`\)을 올려/g) || []).length === 2,
      'lineage: the SKILL says a release that changes the summarizer or the redaction bumps SUMMARIZER_VERSION, not that the cache invalidates itself');
+  // A --rulebase rerun with other redaction settings reuses the summaries: the SKILL says to rebuild them.
+  ok(/설정을 바꿔 다시 돌릴 때는 `--rebuild-summaries` 를 함께 준다/.test(linSkill),
+     'lineage: the SKILL tells a --rulebase rerun with other redaction settings to rebuild the summaries');
   const bpFm = fs.readFileSync(path.join(root, 'skills', 'setup-bypass-permissions', 'SKILL.md'), 'utf8').split(/\n---/)[0];
   ok(/^disable-model-invocation: true$/m.test(bpFm),
      'setup-bypass-permissions/SKILL.md sets disable-model-invocation: the model cannot start it');
@@ -412,20 +421,26 @@ try {
     const r = cp.spawnSync(cand, ['-c', 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)'], { encoding: 'utf8' });
     if (!r.error && r.status === 0) { py = cand; break; }
   }
+  // The failing tests by name (Class.test), each once: unittest writes `FAIL: test (module.Class)` before 3.11,
+  // `FAIL: test (module.Class.test)` from 3.11 on, and a subTest's `[msg]` and `(k=v)` after either.
+  const failedTestNames = (out) => [...new Set(out.split(/\r?\n/)
+    .map((l) => /^(?:FAIL|ERROR): (\S+) \((\S+)\)(?: \[.*\])?(?: \(.*\))?$/.exec(l)).filter(Boolean)
+    .map(([, name, where]) => {
+      const parts = where.split('.');
+      if (parts[parts.length - 1] === name) parts.pop();
+      return `${parts.pop()}.${name}`;
+    }))];
+  ok(JSON.stringify(failedTestNames('FAIL: test_a (test_lineage.C.test_a) (i=1)\r\nFAIL: test_a (test_lineage.C.test_a) (i=2)\r\n'
+    + 'ERROR: test_b (test_lineage.D) [label (x)] (k=1)\r\nFAIL: test_c (test_lineage.E.test_c) (<subtest>)\r\n'
+    + 'FAIL: test_d (test_lineage.F.test_d)\n[lineage] ERROR: not a test\n'))
+     === JSON.stringify(['C.test_a', 'D.test_b', 'E.test_c', 'F.test_d']),
+     'lineage: the smoke names each failed test once, a subTest\'s too, on either line end');
   if (py) {
     const pyRes = cp.spawnSync(py, ['-B', '-m', 'unittest', 'test_lineage'],
       { cwd: path.join(root, 'skills', 'lineage'), encoding: 'utf8',
         env: { ...process.env, HOME: home, USERPROFILE: home, PYTHONDONTWRITEBYTECODE: '1' } });
     const tail = ((pyRes.stderr || pyRes.stdout || '').trim().split('\n').pop() || '').slice(0, 80);
-    // the failing tests by name (Class.test): unittest writes `FAIL: test (module.Class)` before 3.11 and
-    // `FAIL: test (module.Class.test)` from 3.11 on
-    const failed = `${pyRes.stdout || ''}${pyRes.stderr || ''}`.split(/\r?\n/)
-      .map((l) => /^(?:FAIL|ERROR): (\S+) \((\S+)\)$/.exec(l)).filter(Boolean)
-      .map(([, name, where]) => {
-        const parts = where.split('.');
-        if (parts[parts.length - 1] === name) parts.pop();
-        return `${parts.pop()}.${name}`;
-      }).slice(0, 5);
+    const failed = failedTestNames(`${pyRes.stdout || ''}${pyRes.stderr || ''}`).slice(0, 5);
     ok(pyRes.status === 0, `lineage.py regression suite passes under ${py} (${failed.length ? failed.join(', ') : tail})`);
   } else {
     console.log('SKIP: no python>=3.7 found — lineage.py suite not run (EL8 default python3=3.6 exits at import)');
@@ -533,7 +548,7 @@ try {
   const rqFm = rqSkill.slice(0, rqSkill.indexOf('---', 4));
   const rqSurface = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.find((s) => s.name === 'ralph-qa');
-  const rqRefs = ['verifier-probe.mjs', 'payload-scan.mjs', 'gemini-read-only.toml', 'gemini-seat.mjs'];
+  const rqRefs = ['verifier-probe.mjs', 'payload-scan.mjs', 'gemini-read-only.toml', 'gemini-seat.mjs', 'seat-run.mjs', 'seat-payload.mjs', 'seat-spawn.mjs'];
   const probeRel = path.join('skills', 'ralph-qa', 'references', 'verifier-probe.mjs');
   const probeSrc = fs.readFileSync(path.join(root, probeRel), 'utf8');
 
@@ -543,11 +558,11 @@ try {
   const rqTests = rqRefs.filter((f) => f.endsWith('.mjs'))
     .map((f) => path.join('skills', 'ralph-qa', 'references', f.replace(/\.mjs$/, '.test.mjs')));
   ok(rqTests.every((t) => fs.existsSync(path.join(root, t)) && !fs.existsSync(path.join(pkgRoot, t))),
-     'S2-b: the probe, scanner and gemini seat helper tests exist in the repo but are NOT npm-packaged (files[] negation holds)');
+     'S2-b: the probe, scanner, gemini seat helper and seat runner tests exist in the repo but are NOT npm-packaged (files[] negation holds)');
   // SKILL.md runs both scripts from its own references/ folder, so every shipped copy must carry them.
   ok(rqRefs.every((f) => fs.existsSync(path.join(pkgRoot, 'skills', 'ralph-qa', 'references', f))
        && fs.existsSync(path.join(instDir, 'banker-ralph-qa', 'references', f))),
-     'S2-c: the npm package and the Codex install both carry the probe, the scanner, the gemini policy and its seat helper');
+     'S2-c: the npm package and the Codex install both carry the probe, the scanner, the gemini policy, its seat helper and the seat runner');
   // The limitation must stay stated PRECISELY: per-call effort has no path, but agent-DEFINITION
   // frontmatter does. banker ships no agents, which is the real reason the backbone knob is closed.
   ok(/외부 전용 \(codex\)/.test(rqSkill) && /백본에는 전송 경로가 없다/.test(rqSkill)
@@ -658,176 +673,97 @@ try {
      && /모델 부적격은 착석 전에만 갈아탈 수 있다/.test(rqSkill)
      && /물을 수 없는 실행/.test(rqSkill),
      `S22: SKILL.md's model-decision reasons equal the probe's DECISION_REASONS, with the no-one-to-ask fallback and same-model disclosure (${decisionSet.detail})`);
-  // The payload reaches an external CLI from a scanned file in its own folder, never on the command
-  // line (backticks would run in the author's shell).
-  // The seat commands, read from the bash block itself with comment lines dropped: a device that
-  // only a comment still names (or that sits in another section) does not count.
-  const seatBlock = ((rqSkill.split('## 외부 좌석 전송')[1] || '').match(/```bash\n([\s\S]*?)```/) || [])[1] || '';
-  const seatCode = seatBlock.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
-  const seatCmd = (re) => (seatCode.split(/\n(?=\()/).find((c) => re.test(c)) || '');
-  const cxCmd = seatCmd(/codex exec/);
-  const gmCmd = seatCmd(/gemini --skip-trust/);
-  const ocCmd = seatCmd(/opencode run/);
-  ok(/페이로드를 명령줄 인자로 넣지 않는다/.test(rqSkill) && !/"<프롬프트>"/.test(rqSkill)
-     && /references\/payload-scan\.mjs/.test(rqSkill) && /`end` 가 `null` 이면 보내지 않는다/.test(rqSkill)
-     && /검사가 끝나지 않거나 실패해도\(exit 2\) 보내지 않는다/.test(rqSkill)
-     && /XDG_RUNTIME_DIR/.test(seatCode) && /d=\$\(mktemp -d/.test(seatCode) && /o=\$\(mktemp -d/.test(seatCode)
-     && /! git -C "\$d" rev-parse --git-dir > \/dev\/null 2>&1 && echo "d=\$d o=\$o"/.test(seatCode)
-     && /^d='<찍힌 d>' o='<찍힌 o>' R=/m.test(seatCode)
-     && /원문 부분\(diff, 기준 파일, 판정에 필요한 관련 코드 범위, 게이트 원문 출력\)과 닫는 표지는 재지정으로 붙인다/.test(rqSkill)
-     && /exit 0 이고 출력 JSON 의 `count` 가 0 일 때만 0건으로 읽고/.test(rqSkill)
-     && /^i=\$\(git -C '<저장소>' rev-parse --git-path index\) && case \$i in \/\*\|\?:\*\) ;; \*\) i='<저장소>'\/\$i ;; esac && rm -f "\$d\/idx" &&$/m.test(seatCode)
-     && /사본은 실제 인덱스의 수정 시각을 그대로 둔다\(bash 는 `cp -p`, PowerShell 의 `Copy-Item` 은 그대로 둔다\)/.test(rqSkill)
-     && /^  \{ if \[ -f "\$i" \]; then cp -p "\$i" "\$d\/idx"; elif git -C '<저장소>' rev-parse -q --verify HEAD > \/dev\/null; then echo "ralph-qa: 커밋이 있는데 인덱스 파일이 없다: \$i" >&2; false; fi; \} &&$/m.test(seatCode)
-     && !/--path-format/.test(seatCode) && /인덱스 파일이 없을 때 빈 인덱스로 시작하는 것은 커밋이 없는 저장소뿐이다/.test(rqSkill)
-     && /커밋이 있는 저장소에서는 경로를 잘못 얻어도 사본 없이 진행하지 않는다/.test(rqSkill) && !/경로를 잘못 얻어도 사본 없이 말없이 진행하지 않는다/.test(rqSkill)
-     && /`Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"`/.test(rqSkill) && !/if \(Test-Path \$i\)/.test(rqSkill)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\/new-files\.md" &&$/m.test(seatCode)
-     && /^  GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false ls-files --others --exclude-standard > "\$d\/unsent\.md" &&$/m.test(seatCode)
-     && /^  LC_ALL=C GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\/new-files\.md" > "\$d\/added\.md" &&$/m.test(seatCode)
-     && seatCode.split('\n').includes(String.raw`  tr -d '\r' < "$d/new-files.md" | sed 's|^\./||' > "$d/listed.md" &&`)
-     && seatCode.split('\n').includes(String.raw`  { sed -e "s/^add '//" -e "s/'\$//" "$d/added.md" | LC_ALL=C command grep -Fxv -f "$d/listed.md" >&2; [ $? -eq 1 ] || { echo 'ralph-qa: 목록에 없는 새 파일이 올라간다(위 경로. 폴더 줄, 겹친 줄, 따옴표를 풀지 않은 줄)' >&2; false; }; } &&`)
-     && seatCode.split('\n').includes(String.raw`  { [ -z "$(git -C '<저장소>' ls-files -z --others --exclude-standard | LC_ALL=C tr -dc '\n' | LC_ALL=C tr '\n' x)" ] || { echo 'ralph-qa: 이름에 줄바꿈이 든 새 파일이 있다(목록 비교가 그 이름을 두 줄로 읽는다)' >&2; false; }; } &&`)
-     && /^  \{ ! GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>' \|\| \{ echo 'ralph-qa: 보낼 diff 가 없다' >&2; false; \}; \} &&$/m.test(seatCode)
-     && /^  GIT_DIFF_OPTS= GIT_INDEX_FILE="\$d\/idx" git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 '<기준>' > "\$d\/diff\.md" &&$/m.test(seatCode)
-     && seatCode.split('\n').includes(String.raw`  { LC_ALL=C tr -d '\000' < "$d/diff.md" | cmp -s - "$d/diff.md" || { echo 'ralph-qa: diff 에 바이너리 바이트가 있다(attributes 의 diff 속성이 바이너리 파일을 글로 펼침)' >&2; false; }; } &&`)
-     && seatCode.split('\n').includes(String.raw`  cat "$d/diff.md" >> "$d/prompt.md" && rm -f "$d/idx" "$d/added.md" "$d/listed.md" "$d/diff.md" &&`)
-     && !/core\.attributesFile/.test(rqSkill)
-     && !/'<저장소>'(?: -c \S+)* diff (?!--no-ext-diff --no-textconv --no-color --submodule=short )/.test(seatCode)
-     && / && LC_ALL=C command grep -c 'review-data id="<id>"' "\$d\/prompt\.md"$/m.test(seatCode) && !/(?<!command )grep -c/.test(seatCode)
-     && !/read-tree/.test(seatCode) && !/git -C '<저장소>' diff HEAD/.test(seatCode) && !/add -N \.(?=[\s`]|$)/m.test(rqSkill)
-     && /이미 커밋한 작업이면 작업 전 커밋, 커밋이 없는 저장소면 빈 트리\(`git -C '<저장소>' hash-object -t tree \/dev\/null`\)다/.test(rqSkill) && !/`git hash-object -t tree/.test(rqSkill)
-     && /grep -c 'review-data id="<id>"' "\$d\/prompt\.md"/.test(seatCode)
-     && /mkdir -m 700 "\$d\/\$s" && cp "\$d\/prompt\.md"/.test(seatCode),
-     'S23: the payload goes from a scanned file in a private folder, raw parts (the listed new files too, via a copy of the real index that only a repo without a commit may start without) by redirection, one copy per seat, answers to another folder');
-  // Which new files go out is the author's list, not every untracked file, and every stop of the
-  // chain names its reason; the chain itself runs in references/step2-chain.test.mjs.
-  ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard$/m.test(seatCode)
-     && /\(`status --short` 는 새 폴더를 한 줄로 접는다\)/.test(rqSkill) && !/`git -C '<저장소>' status --short` 로 `\?\?` 파일을 본다/.test(rqSkill)
-     && /그중 변경에 속한 파일만 파일 도구로 `\$d\/new-files\.md` 에 저장소 루트 기준 경로로 한 줄에 하나씩 쓴다\(없으면 빈 파일\)/.test(rqSkill)
-     && /보내지 않은 새 파일은 `\$d\/unsent\.md` 에 남는다\. 그 수를 `외부 전송\(선언\)` 줄에 적는다/.test(rqSkill)
-     && /`--pathspec-from-file` 은 git 2\.25 이상이 필요하다/.test(rqSkill)
-     && /한 줄에 파일 하나다\. 폴더 줄이나 `\.` 은 그 아래 새 파일을 모두 올린다/.test(rqSkill)
-     && /`목록에 없는 새 파일이 올라간다`: 찍힌 경로를 올린 줄\(폴더 줄, `\.`\)을 보낼 파일 줄로 바꾸고/.test(rqSkill)
-     && /빈 줄의 `empty string is not a valid pathspec`, 하위 저장소 줄의 `does not have a commit checked out`/.test(rqSkill)
-     && /무시되는 파일\(`ignored by`\)은 목록에서 빼고, 검토 대상이면 원문 부분으로 붙인다/.test(rqSkill) && /git 2\.25 미만\(`unknown option`\): 다시 해도 풀리지 않는다/.test(rqSkill)
-     && /저장소 설정의 textconv 와 외부 diff 드라이버는 끈다\(`--no-ext-diff --no-textconv`\)/.test(rqSkill)
-     && /색과 하위 저장소 내용도 사용자 설정과 관계없이 끈다\(`--no-color --submodule=short`\)/.test(rqSkill)
-     && /2 가 찍히지 않으면 보내지 않고 stderr 의 사유를 본다/.test(rqSkill)
-     && /`커밋이 있는데 인덱스 파일이 없다`: 다시 해도 풀리지 않는다\. 사용자에게 알리고 외부 좌석은 `cli-call-failed` 로 적는다/.test(rqSkill)
-     && /`보낼 diff 가 없다`: 검토 대상이 무시되는 폴더\(`\.omc\/plans\/` 등\)나 저장소 밖에 있으면 같은 `\$d` 에서 짧은 부분부터 다시 쓴 뒤, 블록의 `2단계-2 대체` 사슬로/.test(rqSkill)
-     && /512 KiB\(524288 바이트\)를 넘으면 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다\. 사용자가 보내지 않기로 하면 `model-declined` 다/.test(rqSkill)
-     && /아래와 3단계의 `cli-call-failed` 는 그 좌석이 아직 판정을 내지 않았을 때다\. 첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다/.test(rqSkill)
-     && /첫 판정 뒤의 반복에서 페이로드를 만들지 못하거나 사용자가 보내지 않기로 하면 그 좌석은 `ERROR` 다/.test(rqSkill)
-     && /페이로드의 예: 커밋이 있는데 인덱스 파일이 없음, 보낼 diff 도 붙일 대상도 없음, 물을 수 없는 실행에서 512 KiB 초과/.test(rqSkill)
-     && /관련 코드 범위는 바뀐 줄 둘레 3줄 밖에 있는데 판정에 필요한 함수 본문이나 호출부다/.test(rqSkill)
-     && /추적 파일이나 `new-files\.md` 에 적은 새 파일에서만 떼고/.test(rqSkill) && /printf '%s\\n' '=== <파일>:<시작>-<끝>' >> "\$d\/prompt\.md" && sed -n '<시작>,<끝>p' '<저장소>\/<파일>' >> "\$d\/prompt\.md" &&`/.test(rqSkill)
-     && /이름의 `'` 는 `'\\''` 로 쓴다/.test(rqSkill) && /diff 의 `-W` 는 파일 전문에 가까운 양을 실어 쓰지 않는다/.test(rqSkill)
-     && /파일을 읽는 도구가 없는 외부 좌석\(gemini, opencode, 셸을 끈 codex\)/.test(rqSkill) && !/도구가 없는 gemini, opencode 좌석/.test(rqSkill),
-     'S23-a: only the new files the author lists go out (the rest stay in unsent.md), stops name their reason, a payload over 512 KiB is asked about, related code goes as ranges');
-  // opencode: -f truncates at 50 KB, an unknown --agent falls back to the default agent, and only a
-  // per-run agent defined in CONFIG_CONTENT with the deny-all permission survives user config.
-  ok(/^\( cd "\$d\/opencode" &&/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md"/.test(ocCmd) && !/opencode run[^\n]* -f /.test(ocCmd)
-     && /A='ralph-qa-review-<id>'/.test(seatCode) && /P='\{"\*":"deny"\}'/.test(seatCode)
-     && /OPENCODE_PERMISSION="\$P"/.test(ocCmd)
-     && /OPENCODE_CONFIG_CONTENT="\{\\"share\\":\\"disabled\\",\\"agent\\":\{\\"compaction\\":\{\\"disable\\":true\},\\"\$A\\":\{[^}]*\\"permission\\":\$P\}\}\}"/.test(ocCmd)
-     && /OPENCODE_DISABLE_PROJECT_CONFIG=1 OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1/.test(ocCmd)
-     && /OPENCODE_DISABLE_SHARE=1 OPENCODE_DISABLE_CLAUDE_CODE=1/.test(ocCmd)
-     && /opencode debug agent "\$A" --pure > \/dev\/null 2>&1 &&/.test(ocCmd)
-     && /opencode run --pure --agent "\$A" --title "\$A"/.test(ocCmd) && /< prompt\.md > "\$o\/out-opencode\.md" 2> "\$o\/err-opencode\.md" \)/.test(ocCmd)
-     && /\( cd "\$d\/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session list --pure --format json \)/.test(seatCode)
-     && /\( cd "\$d\/opencode" && OPENCODE_DISABLE_MODELS_FETCH=1 OPENCODE_DISABLE_AUTOUPDATE=1 opencode session delete /.test(seatCode),
-     'S23-b: opencode reads the payload from stdin as a per-run deny-all agent it checks first, with compaction, project config, share, title and CLAUDE.md off, and its session is listed and deleted from the seat folder with the refresh off');
-  ok(/codex exec -C "\$d\/codex" --ephemeral --ignore-rules/.test(cxCmd)
-     && ['multi_agent', 'hooks', 'plugins', 'apps', 'shell_tool'].every((f) => cxCmd.includes(`--disable ${f}`))
-     && /-c 'notify=\[\]' -c 'analytics\.enabled=false' -c 'web_search=disabled' <mcp>/.test(cxCmd)
-     && /-c 'otel\.exporter="none"' -c 'otel\.trace_exporter="none"' -c 'otel\.metrics_exporter="none"'/.test(cxCmd)
-     && /-s read-only --skip-git-repo-check -o "\$o\/out-codex\.md" - < prompt\.md 2> "\$o\/err-codex\.md"/.test(cxCmd)
-     && /mcp_servers\.<이름>\.enabled=false/.test(seatBlock) && /`model:` 줄/.test(rqSkill),
-     'S23-c: codex runs rooted in its seat folder with its shell, rules, sub-agents, hooks, plugins, apps, notify, web search, metrics, OpenTelemetry and each MCP server off, read-only');
-  // gemini opens its tools without a word when the policy file is missing or changed, so the helper
-  // checks it (and the folders above the seat) in the same subshell; the file itself is deny-all.
-  const gmPolicyText = fs.readFileSync(path.join(root, 'skills', 'ralph-qa', 'references', 'gemini-read-only.toml'), 'utf8');
+  // 0.20.5 (B3-12): the send runs in references/seat-run.mjs (folders, payload, scan, seats, limits, cleanup). Its tests
+  // pin the seat commands of 0.20.4 word for word and run them against fake CLIs. The doc keeps what the model decides
+  // and reads: these lock that the doc calls the runner, holds its stop and result sets, keeps the decisions, and builds
+  // no seat command or git chain by hand.
+  const rqRef = (f) => fs.readFileSync(path.join(root, 'skills', 'ralph-qa', 'references', f), 'utf8');
+  const runnerFiles = ['seat-run.mjs', 'seat-payload.mjs', 'seat-spawn.mjs'];
+  const runnerSrc = runnerFiles.map(rqRef);
+  const sendSection = (rqSkill.split('## 외부 좌석 전송')[1] || '').split(/\n## /)[0];
+  const exported = (name) => [...(((runnerSrc[0].match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\];`)) || [])[1] || '')
+    .matchAll(/"([^"]+)"/g))].map((m) => m[1]);
+  // The code spans of one column of the rows under a table header of the send section.
+  const tableCells = (header, col) => {
+    const lines = sendSection.split('\n');
+    const at = lines.findIndex((l) => l.startsWith(header));
+    const rows = [];
+    for (let i = at + 2; at >= 0 && i < lines.length && lines[i].startsWith('|'); i++) rows.push(lines[i].split('|')[col + 1] || '');
+    return rows.flatMap((c) => [...c.matchAll(/`([a-z-]+)(?::<[^>]+>)?`/g)].map((m) => m[1]));
+  };
+  const setGap = (a, b) => [...new Set(a)].filter((x) => !b.includes(x));
+  const stopCodes = exported('STOP_CODES');
+  const stopRows = tableCells('| `stop` |', 0);
+  const seatWhy = exported('SEAT_WHY');
+  const whyRows = tableCells('| `status` |', 1);
+  const gaps = [...setGap(stopCodes, stopRows).map((x) => `stop table lacks ${x}`), ...setGap(stopRows, stopCodes).map((x) => `stop table has ${x}`),
+    ...setGap(seatWhy, whyRows).map((x) => `result table lacks ${x}`), ...setGap(whyRows, seatWhy).map((x) => `result table has ${x}`)];
+  ok(['init', 'untracked', 'prepare', 'check', 'send', 'cleanup', 'put'].every((c) => new RegExp(`seat-run\\.mjs['"]? ${c}\\b`).test(sendSection))
+     && /`<R>` 은 `<이 스킬 디렉터리 절대경로>\/references` 다/.test(sendSection)
+     && stopCodes.length >= 20 && seatWhy.length >= 15 && gaps.length === 0,
+     `S25: the send section calls the runner's seven commands, and its stop and seat-result tables hold the runner's sets (stops ${stopCodes.length}, results ${seatWhy.length}${gaps.length ? '; ' + gaps.join('; ') : ''})`);
+  const banned = [[/node:(?:https?|net|tls|dgram|dns)['"]/, 'a network module'], [/\bfetch\(/, 'fetch'], [/shell:\s*true/, 'shell: true'],
+    [/import \{[^}]*\bexec(?:Sync|File|FileSync)?\b[^}]*\} from ["']node:child_process["']/, 'exec'], [/node:crypto/, 'node:crypto'],
+    [/(?:spawn(?:Sync)?|which|runLimited)\(\s*\{?\s*(?:exe:\s*)?["'`](?:[\w./\\-]*[\/\\])?(?:timeout|perl)(?:\.exe)?["'`]/, 'a timeout program']];
+  const bannedHits = runnerFiles.flatMap((f, i) => banned.filter(([re]) => re.test(runnerSrc[i])).map(([, what]) => `${f}: ${what}`));
+  ok(bannedHits.length === 0 && /System32/.test(runnerSrc[2]) && /taskkill\.exe/.test(runnerSrc[2]) && /cmd\.exe/.test(runnerSrc[2]),
+     `S25-b: the runner holds no network module, shell, exec, node:crypto or timeout program, and takes taskkill and cmd.exe from System32${bannedHits.length ? ` (${bannedHits.join('; ')})` : ''}`);
+  // The plans as the runner makes them, from a child node (the runner is ESM): every guard of the device table.
+  const planJs = `import { seatPlan } from ${JSON.stringify(require('url').pathToFileURL(path.join(root, 'skills', 'ralph-qa', 'references', 'seat-run.mjs')).href)};
+const base = { d: '/d/ralph-qa.x', o: '/d/ralph-qa-out.x', id: 'a1b2c3d4', policy: '/p.toml', mcpServers: ['alpha'] };
+console.log(JSON.stringify(['codex', 'gemini', 'opencode'].map((cli) => seatPlan({ ...base, cli, model: cli === 'opencode' ? 'p/m' : 'm1' }))));`;
+  let plans = [];
+  try {
+    plans = JSON.parse(cp.execFileSync(process.execPath, ['--input-type=module', '-e', planJs], { encoding: 'utf8' }));
+  } catch { /* no plans: the assertion below fails */ }
+  const [cxPlan = {}, gmPlan = {}, ocPlan = {}] = plans;
+  const pairs = (args = []) => args.slice(0, -1).map((a, i) => `${a} ${args[i + 1]}`);
+  const cxPairs = pairs(cxPlan.args);
+  const ocConfig = (() => { try { return JSON.parse(ocPlan.set.OPENCODE_CONFIG_CONTENT); } catch { return {}; } })();
+  const gmPolicyText = rqRef('gemini-read-only.toml');
   const gmPolicy = /[^\t\r\n\x20-\x7e]/.test(gmPolicyText) ? ['not ASCII'] : gmPolicyText
     .split(/\r?\n/).map((l) => l.replace(/#.*/, '').replace(/^[ \t]+|[ \t\r]+$/g, '')).filter(Boolean);
-  const cleanAt = seatCode.search(/^node "\$R\/gemini-seat\.mjs" clean "\$d\/gemini"$/m);
-  const findAt = seatCode.search(/^find "\$\(dirname "\$d"\)" -maxdepth 1 -type d \\\( -name 'ralph-qa\.\?\?\?\?\?\?' -o -name 'ralph-qa-out\.\?\?\?\?\?\?' \\\) -mmin \+1440 -exec test -f '\{\}\/\.ralph-qa' \\; -exec rm -rf \{\} \+$/m);
-  const sweepAt = seatCode.search(/^node "\$R\/gemini-seat\.mjs" sweep "\$\(dirname "\$d"\)"$/m);
-  const rmAt = seatCode.search(/^rm -rf "\$d" "\$o"$/m);
-  ok(/^\( cd "\$d\/gemini" && pol=\$\(node "\$R\/gemini-seat\.mjs" check "\$d\/gemini"\) && \[ -n "\$pol" \] && \[ -f "\$pol" \] &&\n  unset GEMINI_CLI_IDE_WORKSPACE_PATH &&/.test(gmCmd)
-     && /TMPDIR="\$o" TEMP="\$o" TMP="\$o" GEMINI_SANDBOX=false GEMINI_TELEMETRY_LOG_PROMPTS=false <상한> gemini --skip-trust --approval-mode default --admin-policy "\$pol"/.test(gmCmd)
-     && /--allowed-mcp-server-names ralph-qa-none -e none/.test(gmCmd)
-     && /-p "첨부한 검토 지시를 따르라" < prompt\.md > "\$o\/out-gemini\.md" 2> "\$o\/err-gemini\.md" \)/.test(gmCmd)
-     && cleanAt >= 0 && findAt > cleanAt && sweepAt > findAt && rmAt > sweepAt
+  ok(['multi_agent', 'hooks', 'plugins', 'apps', 'shell_tool'].every((f) => cxPairs.includes(`--disable ${f}`))
+     && ['notify=[]', 'analytics.enabled=false', 'web_search=disabled', 'mcp_servers.alpha.enabled=false', 'otel.exporter="none"',
+       'otel.trace_exporter="none"', 'otel.metrics_exporter="none"'].every((v) => cxPairs.includes(`-c ${v}`))
+     && ['--ephemeral', '--ignore-rules', '--skip-git-repo-check'].every((f) => (cxPlan.args || []).includes(f)) && cxPairs.includes('-s read-only')
+     && ['--skip-trust', '--approval-mode default', '--allowed-mcp-server-names ralph-qa-none', '-e none', '--admin-policy /p.toml'].every((f) => pairs(gmPlan.args).includes(f) || (gmPlan.args || []).includes(f))
+     && JSON.stringify(gmPlan.set) === JSON.stringify({ TMPDIR: '/d/ralph-qa-out.x', TEMP: '/d/ralph-qa-out.x', TMP: '/d/ralph-qa-out.x', GEMINI_SANDBOX: 'false', GEMINI_TELEMETRY_LOG_PROMPTS: 'false' })
+     && JSON.stringify(gmPlan.unset) === JSON.stringify(['GEMINI_CLI_IDE_WORKSPACE_PATH'])
+     && ['OPENCODE_PERMISSION', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE',
+       'OPENCODE_DISABLE_SHARE', 'OPENCODE_DISABLE_CLAUDE_CODE'].every((k) => k in (ocPlan.set || {}))
+     && ocConfig.share === 'disabled' && ocConfig.agent?.compaction?.disable === true && ocConfig.agent?.['ralph-qa-review-a1b2c3d4']?.permission?.['*'] === 'deny'
+     && JSON.stringify(ocPlan.check) === JSON.stringify(['debug', 'agent', 'ralph-qa-review-a1b2c3d4', '--pure'])
+     && pairs(ocPlan.args).includes('--agent ralph-qa-review-a1b2c3d4') && !(ocPlan.args || []).includes('-f')
      && JSON.stringify(gmPolicy) === JSON.stringify(['[[rule]]', 'toolName = "*"', 'decision = "deny"', 'priority = 100']),
-     'S23-d: gemini runs only after its helper checks the deny-all policy and the folders above, with its own sandbox, MCP servers, extensions and prompt telemetry off, its error report in the answer folder, and its records cleaned and swept before the folders go');
-  // The PowerShell form of step 2 is prose, not a block the chain test can run: each guard of the
-  // bash chain is pinned in its sentence here.
-  const rqLines = rqSkill.split(/\r?\n/);
-  const psStep2 = rqLines.find((l) => l.includes('2단계 원문 붙이기')) || '';
-  const psGemini = rqLines.find((l) => l.includes('gemini 좌석은 같은 호출에서 `$pol')) || '';
-  const pathFormat = rqLines.filter((l) => l.includes('--path-format'));
-  ok(/`git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard` 로 새 파일을 보고, 그중 변경에 속한 것만 파일 도구로 `\$d\\new-files\.md` 에 쓴다\./.test(psStep2)
-     && /`\$i = git -C '<저장소>' rev-parse --git-path index` 로 경로를 얻고, `\$i` 가 문자열 하나가 아니면 멈춘다\./.test(psStep2)
-     && /`\[IO\.Path\]::IsPathRooted\(\$i\)` 가 거짓이면 `\$i = Join-Path '<저장소>' \$i` 로 바꾼다\./.test(psStep2)
-     && /`Remove-Item -LiteralPath "\$d\\idx" -ErrorAction Ignore` 뒤 `Test-Path -LiteralPath \$i` 가 참이면 `Copy-Item -LiteralPath \$i "\$d\\idx"` 로 실제 인덱스를 복사한다\./.test(psStep2)
-     && /`git -C '<저장소>' rev-parse -q --verify HEAD > \$null` 의 `\$LASTEXITCODE` 가 0 이면\(커밋이 있으면\) `커밋이 있는데 인덱스 파일이 없다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`\$env:GIT_INDEX_FILE="\$d\\idx"` 와 `\$env:LC_ALL='C'` 를 두고, 먼저 `\$added = @\(git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --dry-run --pathspec-from-file="\$d\\new-files\.md" \| ForEach-Object \{ \$_ -replace "\^add '\(\.\*\)'\$", '\$1' \}\)` 로 올라갈 파일을 얻는다\./.test(psStep2)
-     && /`\$added \| Where-Object \{ \$listed -cnotcontains \$_ \}`\)이 있으면 그 경로와 `목록에 없는 새 파일이 올라간다` 를 찍고 멈춘다\./.test(psStep2)
-     && /`Remove-Item Env:GIT_INDEX_FILE, Env:LC_ALL`/.test(psStep2)
-     && /그다음 `git -C '<저장소>' --literal-pathspecs -c advice\.addEmptyPathspec=false -c core\.splitIndex=false add -N --pathspec-from-file="\$d\\new-files\.md"`/.test(psStep2)
-     && /`git -C '<저장소>' -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short --quiet '<기준>'`, `git -C '<저장소>' -c core\.quotePath=false -c core\.splitIndex=false diff --no-ext-diff --no-textconv --no-color --submodule=short -U3 --inter-hunk-context=0 --output="\$d\\diff\.md" '<기준>'` 를 차례로 실행한다\./.test(psStep2)
-     && /`\[IO\.File\]::ReadAllBytes\("\$d\\diff\.md"\) -contains 0` 이 참이면 `diff 에 바이너리 바이트가 있다` 를 찍고 멈춘다/.test(psStep2)
-     && /`Remove-Item Env:GIT_DIFF_OPTS -ErrorAction Ignore`/.test(psStep2)
-     && /`diff --quiet` 는 1 일 때만 계속하고\(0 이면 `보낼 diff 가 없다` 를 찍고 멈춘다\), 나머지는 0 이 아니면 멈춘다\./.test(psStep2)
-     && /`Remove-Item -LiteralPath "\$d\\idx", "\$d\\diff\.md"` 로 치운다/.test(psStep2)
-     && !/read-tree|--path-format|if \(Test-Path \$i\)|add -N \./.test(psStep2)
-     && pathFormat.length === 1
-     && /인덱스 경로는 `rev-parse --git-path index` 로 얻고\(셸의 `GIT_INDEX_FILE` 도 따른다\), 상대 경로면 앞에 `<저장소>\/` 를 붙인다\. `--path-format` 은 쓰지 않는다\./.test(pathFormat[0])
-     && /그 호출에 `Remove-Item Env:GEMINI_CLI_IDE_WORKSPACE_PATH -ErrorAction Ignore`, `\$env:GEMINI_TELEMETRY_LOG_PROMPTS='false'`, `\$env:GEMINI_SANDBOX='false'`, `\$env:TEMP=\$o`, `\$env:TMP=\$o` 를 두고/.test(psGemini),
-     'S23-e: the PowerShell step 2 and gemini entries keep the guards of the bash block');
-  // A Bash call past its time limit goes on in the background (measured), so a seat is stopped or
-  // waited for before the cleanup; records a late seat writes, and copies a cut-short run left, go too.
-  ok(/Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다/.test(rqSkill)
-     && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 좌석 프로세스 트리 전체가 멈춘다/.test(rqSkill)
-     && /셸에서 프로세스 그룹을 죽여서는 좌석 서브셸이 멈추지 않는다/.test(rqSkill) && /Codex 는 그 exec 세션이 끝날 때까지 기다린다/.test(rqSkill)
-     && /`<상한>` 자리에 `timeout` 이 있으면\(Linux, Git Bash\) `timeout -s KILL 600` 을, 없으면\(macOS 기본\) 블록 주석의 `perl` 명령을 넣는다\./.test(rqSkill) && /둘 다 상한에서 좌석의 프로세스 그룹 전체를 끝낸다\(exit 137\)/.test(rqSkill) && !/<상한> 은 5단계: timeout 이 있으면 timeout -k/.test(seatBlock)
-     && /^printf '%s\\n' "\$\(dirname "\$d"\)" "\$\(cd "\$\(dirname "\$d"\)" && pwd -P\)"$/m.test(seatCode) && /^if command -v cygpath > \/dev\/null; then cygpath -w "\$\(dirname "\$d"\)"; fi$/m.test(seatCode)
-     && /기준 폴더는 6단계가 찍는 줄\(적은 경로, `pwd -P` 로 푼 경로, Git Bash 면 `cygpath -w` 꼴\) 모두와 견준다/.test(rqSkill)
-     && seatBlock.includes("perl -e 'setpgrp; $SIG{ALRM} = sub { $SIG{TERM} = \"IGNORE\"; kill TERM => -$$; sleep 10; kill KILL => -$$ }; alarm shift; system @ARGV;")
-     && !/alarm shift; exec @ARGV/.test(rqSkill) && /^  <상한> opencode debug agent /m.test(ocCmd)
-     && /^\( cd "\$d\/codex" && <상한> codex exec /m.test(seatCode) && / <상한> gemini --skip-trust /.test(gmCmd) && /^  <상한> opencode run /m.test(ocCmd)
-     && /하위 에이전트로 돌면 좌석이 모두 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다/.test(rqSkill)
-     && /PowerShell 에는 `<상한>` 에 넣을 명령이 없다/.test(rqSkill)
-     && /^6\. 좌석 작업이 모두 끝났거나 멈춘 것을 확인한 뒤에 정리한다/m.test(rqSkill)
-     && /`\.project_root` 없이 다시 만든 기록 폴더는 `projects\.json` 의 좌석 경로로 찾는다/.test(rqSkill)
-     && /제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa\.<영숫자>\/opencode` 인데 그 폴더가 없는 세션/.test(rqSkill)
-     && /`\$d = Join-Path \$env:TEMP \('ralph-qa\.' \+ \[guid\]::NewGuid\(\)\.ToString\('N'\)\)`/.test(rqSkill)
-     && /\$_\.Name -match '\^ralph-qa\(-out\)\?\\\.\[A-Za-z0-9\]\+\$' -and -not \(\$_\.Attributes -band \[IO\.FileAttributes\]::ReparsePoint\) -and \$_\.LastWriteTime -lt \(Get-Date\)\.AddDays\(-1\) -and \(Test-Path -LiteralPath \(Join-Path \$_\.FullName '\.ralph-qa'\) -PathType Leaf\)/.test(psGemini)
-     && /^  : > "\$d\/\.ralph-qa" && : > "\$o\/\.ralph-qa" && ! git -C "\$d" rev-parse/m.test(seatCode)
-     && /`New-Item -ItemType File -Path \(Join-Path \$d '\.ralph-qa'\), \(Join-Path \$o '\.ralph-qa'\)`/.test(rqSkill)
-     && /stderr 에 `Policy file error` 가 있으면 정책을 읽지 못해 도구가 열렸을 수 있으므로 그 좌석은 `ERROR` 다\./.test(rqSkill)
-     && !/\(세션 중단, 로그아웃 때/.test(rqSkill) && !/시간 제한을 600000 ms 로 준다/.test(rqSkill),
-     'S23-f: a seat past its time limit is stopped or waited for before the cleanup, which also finds the records a late seat wrote and the copies a cut-short run left');
-  // node's os.tmpdir() reads TEMP and TMP on Windows, where Claude Code runs this bash block in Git
-  // Bash; PowerShell paths are read literally ([ ] are wildcards otherwise); the table and the
-  // source-independent seat say what they send and see.
-  ok(/gemini 좌석은 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더\(`\$o`\)로 두고/.test(rqSkill)
-     && /node 의 `os\.tmpdir\(\)` 는 POSIX 에서 `TMPDIR` 을, Windows 에서 `TEMP` 와 `TMP` 를 읽는다/.test(rqSkill)
-     && /API 오류 보고\(`gemini-client-error-\*\.json`, 요청 전문\)는 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더로 두어 그 폴더에 쓰게 한다/.test(rqSkill)
-     && /좌석 명령이 `TMPDIR`, `TEMP`, `TMP` 를 `\$o` 로 두므로 `\$o` 를 지울 때 함께 지워진다/.test(rqSkill)
-     && /좌석 명령은 `TMPDIR="\$o" TEMP="\$o" TMP="\$o"` 를 준다/.test(rqSkill)
-     && /자체 샌드박스 안에서 다시 뜬다\(docker, podman 컨테이너\. macOS 에서 값이 `true` 면 `sandbox-exec`\)\. 컨테이너 안에는 정책 파일이 없어/.test(rqSkill)
-     && !/docker 나 podman 컨테이너 안에서 다시 뜬다/.test(rqSkill)
+     'S25-c: the runner\'s plans carry every guard of the device table (codex\'s five --disable and its -c set with each MCP server off, gemini\'s policy, env and flags, opencode\'s env, per-run agent and its check) and the shipped gemini policy is deny-all');
+  const tooNew = [[/Object\.hasOwn\(/, 'Object.hasOwn'], [/\bstructuredClone\(/, 'structuredClone'], [/\.findLast(?:Index)?\(/, 'findLast'],
+    [/AbortSignal\.timeout\(/, 'AbortSignal.timeout'], [/\bcause:/, 'Error cause'], [/\.toSorted\(|\.toReversed\(|\.toSpliced\(/, 'change-array-by-copy']];
+  const newHits = runnerFiles.flatMap((f, i) => tooNew.filter(([re]) => re.test(runnerSrc[i])).map(([, what]) => `${f}: ${what}`));
+  ok(newHits.length === 0, `S25-d: the runner uses no API newer than Node 16.7, package.json's engines floor${newHits.length ? ` (${newHits.join('; ')})` : ''}`);
+  const rqBlocks = [...rqSkill.matchAll(/```(?:bash|powershell|sh)\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+  ok(!/codex exec|gemini --skip-trust|opencode run|GIT_INDEX_FILE|add -N|mktemp -d|<상한>/.test(rqBlocks)
+     && !/<상한>|GIT_INDEX_FILE=|cp -p "\$i"|new-files\.md|payload-scan\.mjs" "\$d/.test(rqSkill) && /\*\*좌석 명령과 git 사슬을 손으로 짜지 않는다\.\*\*/.test(sendSection)
+     && /\*\*좌석 명령과 git 사슬을 손으로 짜지 마라\.\*\*/.test(rqSkill),
+     'S25-e: the skill builds no seat command, git chain or time limit by hand, and says so in the section and in the traps');
+  ok(/512 KiB\(524288 바이트\)를 넘는다는 뜻이다\. 보내기 전에 사용자에게 묻는다\. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다\. 사용자가 보내지 않기로 하면 `model-declined` 다\. 상한은 나누기 전의 `prompt\.md` 전체에 건다/.test(sendSection)
+     && /첫 판정 뒤의 반복이면 그 좌석은 `ERROR` 다/.test(sendSection) && /부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다/.test(sendSection)
+     && /백그라운드 작업 중지 도구\(`TaskStop`\)로 멈춘다\. 그러면 실행기와 좌석의 프로세스 트리 전체가 멈춘다\(Linux, macOS 실측\)/.test(sendSection)
+     && /Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다/.test(sendSection)
+     && /하위 에이전트로 돌면 send 가 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다/.test(sendSection)
+     && /상한에 걸린 좌석, 멈춘 좌석, 빈 답은 `ERROR` 다\. 모델 거절로 보고 갈아타지 않는다/.test(sendSection)
+     && /node 의 `os\.tmpdir\(\)` 는 POSIX 에서 `TMPDIR` 을, Windows 에서 `TEMP` 와 `TMP` 를 읽는다/.test(sendSection)
+     && /자체 샌드박스 안에서 다시 뜬다\(docker, podman 컨테이너\. macOS 에서 값이 `true` 면 `sandbox-exec`\)\. 컨테이너 안에는 정책 파일이 없어/.test(sendSection)
+     && /<<'RALPHQA_<id>'/.test(sendSection) && !/RALPHQA_EOF/.test(rqSkill) && /`'@` 로 시작하는 줄이 있으면 here-string 으로 쓰지 않고 그 좌석은 `cli-call-failed` 다/.test(sendSection)
+     && /`외부 전송\(선언\)` 줄은 send 출력의 `declared` 를 옮겨 적는다/.test(sendSection)
+     && /`\/tmp` 처럼 여러 계정이 쓰는 폴더 아래에는 만들지 않는다/.test(sendSection) && /0건이 안전의 증명은 아니다/.test(sendSection)
+     && /`end` 가 `null` 이면 보내지 않는다/.test(sendSection) && /보내기 직전 고른 모델로 프로브를 다시 불러/.test(sendSection) && /모델은 다시 정하지 않는다/.test(sendSection)
+     && /모델을 다시 정하는 재프로브 금지/.test(rqSkill) && /`\.project_root` 없이 다시 만든 기록 폴더는 `projects\.json` 의 좌석 경로로 찾는다/.test(sendSection)
+     && /제목이 `ralph-qa-review-` 로 시작하고 `directory` 가 같은 기준 폴더의 `ralph-qa\.<영숫자>\/opencode` 인데 그 폴더가 없는 세션/.test(sendSection)
      && /\| `decision: unseated` \+ `reason` \| 앉을 수 없음 \| 사유와 `notes` 를 좌석 줄에 적는다 \|/.test(rqSkill)
-     && /^입력 = 새 파일을 포함한 diff 원문\(외부 좌석 전송 2단계의 diff 와 같다\. 외부 좌석이 없는 실행도 그 1단계 폴더와 2단계의 git 명령으로 만들고, 판정을 받은 뒤 `rm -rf "\$d" "\$o"` 로 지운다\)/m.test(rqSkill) && !/입력 = `git diff` 원문/.test(rqSkill)
-     && /`apply_patch`\(읽기 전용 샌드박스가 `patch rejected` 로 막는다\)/.test(rqSkill) && !/읽기 전용이라 `aborted`/.test(rqSkill)
-     && /Windows 는 Git Bash 에서 `~\/\.cache`\(아래 `case` 문\), PowerShell 에서 사용자 `TEMP`/.test(rqSkill)
-     && /`\(Select-String -SimpleMatch -Pattern 'review-data id="<id>"' -LiteralPath "\$d\\prompt\.md"\)\.Count`/.test(rqSkill)
-     && /`Get-Content -Raw -Encoding utf8 -LiteralPath "\$d\\<좌석>\\prompt\.md" \|`/.test(rqSkill) && /`Push-Location -LiteralPath "\$d\\<좌석>"`/.test(rqSkill)
-     && /`\| Out-File -Encoding utf8 -LiteralPath "\$o\\out-<좌석>\.md"`/.test(rqSkill)
-     && /`Test-Path -LiteralPath \$pol` 이 참일 때만/.test(psGemini) && !/`Test-Path \$pol`/.test(rqSkill),
-     'S23-g: gemini\'s error report stays in the answer folder on Windows too, PowerShell paths are literal, and the seat table and source-independent input say what is sent and seen');
+     && /`apply_patch`\(읽기 전용 샌드박스가 `patch rejected` 로 막는다\)/.test(rqSkill) && /`model:` 줄/.test(sendSection)
+     && /실행기는 gemini 좌석의 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더로 둔다/.test(rqSkill),
+     'S25-f: the send section keeps the decisions and their reasons: the 512 KiB question on the whole, the seat tokens before and after a first verdict, TaskStop and the sub-agent order, gemini\'s temp and sandbox reasons, the put fallbacks, the declared line, the probe called again without choosing again');
   ok(/`<review-data id="<id>">`/.test(rqSkill) && /실행마다 무작위 id/.test(rqSkill)
      && /파일을 쓰지 않고, 모델 호출/.test(rqSkill) && /게이트 결과/.test(rqSkill),
      'S24: every seat\'s instructions open with a per-run data boundary and the no-write rule, and the author passes gate output');
@@ -838,37 +774,16 @@ try {
      'S22-b: the codex unseat list names a line the probe could not place, an escaped quoted key and a managed file read short');
   ok(/그 시작이 models\.dev 사본\(`~\/\.cache\/opencode\/models\.json`\)을 지우고/.test(rqSkill) && /프로브는 그 경우 `notes` 에 까닭을 적는다/.test(rqSkill),
      'S21-b: the limits say a seat or cleanup start of opencode may empty its models.dev copy, and the probe says so');
-  ok(/^git -C '<저장소>' -c core\.quotePath=false ls-files --others --exclude-standard --directory$/m.test(seatCode)
-     && /목록이 100줄을 넘으면/.test(rqSkill) && /줄은 실제 이름으로 적는다/.test(rqSkill)
-     && /`이름에 줄바꿈이 든 새 파일이 있다`: /.test(rqSkill) && /문맥은 사용자 설정과 관계없이 3줄이다/.test(rqSkill)
-     && /사본을 읽고 쓰는 git 명령마다 `-c core\.splitIndex=false` 를 줘/.test(rqSkill) && /`-diff`, `binary` 로 가려 둔 파일은 가린 채/.test(rqSkill)
-     && /`diff 에 바이너리 바이트가 있다`: /.test(rqSkill) && /Claude Code 는 3만 자/.test(rqSkill),
-     'S23-k: a long listing is folded by folder, list lines are real names (unquoted, no ./), a new name with a newline stops, and the diff keeps its own context and attributes');
-  ok(/\+ 2단계의 `unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill),
-     'S12-b: the source-independent seat also gets the list of new files left out of the diff');
-  // The PowerShell form of step 2 keeps what bash keeps: the unsent list, the parts after the diff and the closing marker,
-  // written without a BOM, the encoding set in every call; a stderr redirect cannot take -LiteralPath, so it goes to a
-  // relative path, and the UTF-16 err file of 5.1 is read with Select-String.
-  ok(/`\[IO\.File\]::WriteAllLines\("\$d\\unsent\.md", \[string\[\]\]\$u\)`/.test(psStep2)
-     && /닫는 표지는 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", '<\/review-data id="<id>">' \+ \[char\]10\)` 로 붙인다/.test(psStep2)
-     && !rqSkill.includes('"`n"')
-     && /기준 파일과 게이트 원문 출력은 `\[IO\.File\]::AppendAllText\("\$d\\prompt\.md", \[IO\.File\]::ReadAllText\('<기준 파일>'\)\)`/.test(psStep2)
-     && /짧은 부분과 `new-files\.md` 는 따옴표 친 here-document/.test(rqSkill) && /New-Object Text\.UTF8Encoding \$false/.test(rqSkill)
-     && /`2>` 재지정은 `-LiteralPath` 를 받지 못해/.test(rqSkill) && !/`2> "\$o\\err-gemini\.md"`/.test(rqSkill)
-     && /Select-String -LiteralPath "\$o\\err-<좌석>\.md"/.test(rqSkill) && /gemini 의 `Policy file error` 와 `Full report`/.test(rqSkill) && /호출마다 먼저 `\$OutputEncoding`/.test(rqSkill),
-     'S23-h: the PowerShell step 2 writes unsent.md, the base file and the closing marker like bash, BOM-free, the encoding in every call, and 2> to a path without brackets');
-  ok(/^rm -f "\$d\/idx" "\$d\/added\.md" "\$d\/listed\.md" && cat '<검토 대상 파일>' '<기준 파일>' >> "\$d\/prompt\.md" &&$/m.test(seatCode),
-     'S23-i: the no-diff branch has its own chain in the same $d');
-  ok(/상한은 나누기 전의 `prompt\.md` 전체에 건다/.test(rqSkill) && /부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다/.test(rqSkill),
-     'S23-j: the 512 KiB cap is on the whole payload before any split, and each part is counted and scanned');
-  ok(/Git Bash 에서 `command -v timeout` 이 `\/c\/Windows\/system32\/timeout` 이면/.test(rqSkill) && /`\/usr\/bin\/timeout -s KILL 600`/.test(rqSkill),
-     'S23-l: in Git Bash the limit is GNU timeout, not the Windows timeout a PATH may put first');
+  ok(/\+ `<d>\/unsent\.md`\(diff 에 싣지 않은 새 파일 목록/.test(rqSkill) && /`prepare` 가 만든 `<d>\/raw\.md`/.test(rqSkill),
+     'S12-b: the source-independent seat gets the raw parts of prepare and the list of new files left out of the diff');
 
   // 9) airgap (0.20.4 B7): with no network a skill neither waits on every command nor reports a stale or empty result
   // as a success.
   const ubSkill = fs.readFileSync(path.join(root, 'skills', 'update-banker', 'SKILL.md'), 'utf8');
   const ubStep0 = ubSkill.slice(ubSkill.indexOf('### 0. 관측'), ubSkill.indexOf('### 1. npm 먼저'));
-  ok(/\(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000\)/.test(ubStep0) && ubStep0.indexOf('npm ping') < ubStep0.indexOf('npm view')
+  ok(/^in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'; P=\$\?/m.test(ubStep0) && ubStep0.indexOf('npm ping') < ubStep0.indexOf('npm view')
+     && /^\[ "\$P" = 0 \] && \(cd ~ && npm view @kaydash9999\/banker-plugins version --fetch-retries=0 --fetch-timeout=10000\)$/m.test(ubStep0)
+     && /--cache "\$T" --no-update-notifier; r=\$\?/.test(ubStep0) && /ping 이 15초 감시에 걸려 멈췄으면\(종료 143\) 이 확인은 하지 않는다/.test(ubStep0)
      && /레지스트리에 닿지 못하면\(`npm ping` 의 종료 코드가 0 이 아님\) .* 어느 채널도 바꾸지 않고 멈춘다/.test(ubStep0)
      && /`npm` 이 없으면\(명령 없음, 종료 코드 127\) 레지스트리 문제가 아니다/.test(ubStep0)
      && ubSkill.split(/\r?\n/).filter((l) => /npm view @kaydash9999\/banker-plugins version/.test(l)).every((l) => /--fetch-retries=0/.test(l)),
@@ -891,9 +806,9 @@ try {
   // instead of waiting on every command (npm 70 s, curl and git without end); the curl, wget and git calls left have limits.
   const DL_DOCS = ['setup-node', 'setup-python', 'setup-java', 'setup-lsp', 'setup-playwright', 'setup-mcp', 'setup-stitch',
     'setup-tmux', 'setup-pwsh', 'setup-sandbox', 'setup-omc', 'setup-harness-factory', 'setup-insane-search', 'docs-setup',
-    'vertical-pptx-setup', 'motion-graphic-setup', '3d-intro-setup'].map((d) => path.join('skills', d, 'SKILL.md'))
+    'vertical-pptx-setup', 'motion-graphic-setup', '3d-intro-setup', 'audit-security'].map((d) => path.join('skills', d, 'SKILL.md'))
     .concat(path.join('commands', 'setup.md'));
-  const NET_CHECK = /\(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000\)|curl(?:\.exe)? (?:-K - )?-sSI -o (?:\/dev\/null|NUL) --connect-timeout 5 --max-time 10\b/;
+  const NET_CHECK = /\bin15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'|\(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000\)|curl(?:\.exe)?(?: --ssl-no-revoke)? (?:-K - )?-sSI -o (?:\/dev\/null|NUL) --connect-timeout 5 --max-time 10\b/;
   const DOWNLOADS = /\b(?:curl|wget|git(?: -c \S+)* clone|npx|npm (?:i|install)\b|pip3? install|pipx install|uv tool install|uvx|dnf (?:-y )?install|apt(?:-get)? (?:-y )?install|brew install|winget install|Invoke-RestMethod|Invoke-WebRequest|nvm install|playwright install|claude plugin (?:marketplace add|install)|omc update)\b/;
   // Code blocks only (a sentence that quotes a command runs nothing), trailing comments cut.
   const codeBlocks = (text) => [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
@@ -901,7 +816,9 @@ try {
   const joinedLines = (text) => codeBlocks(text).flatMap((b) => b.lines.join('\n').replace(/\\\n\s*/g, ' ').split('\n'));
   const firstBlockAt = (text, pick) => (codeBlocks(text).find((b) => b.lines.some(pick)) || { at: Infinity }).at;
   const isNetCheck = (l) => NET_CHECK.test(l);
-  const isDownload = (l) => !isNetCheck(l) && !/\bcommand -v\b/.test(l) && DOWNLOADS.test(l);
+  // A version query downloads nothing (`npx --version`, `curl -V`); `curl -v` is verbose and still downloads.
+  const VERSION_QUERY = /\b(?:npx|uvx|pipx)\s+--version\b|\b(?:curl|wget)\s+(?:--version|-V)\b/g;
+  const isDownload = (l) => !isNetCheck(l) && !/\bcommand -v\b/.test(l) && DOWNLOADS.test(l.replace(VERSION_QUERY, ''));
   const unchecked = DL_DOCS.filter((f) => {
     const t = fs.readFileSync(path.join(root, f), 'utf8');
     const at = firstBlockAt(t, isNetCheck);
@@ -910,7 +827,7 @@ try {
   // The npm check runs in the home folder (a project's .npmrc must not pick the registry or a token), and a web check
   // asks for the head only (a body of tens of MB must not decide "offline" on a slow line).
   const leaky = [...DL_DOCS, path.join('skills', 'update-banker', 'SKILL.md')].flatMap((f) => codeBlocks(fs.readFileSync(path.join(root, f), 'utf8'))
-    .flatMap((b) => b.lines).filter((l) => (/\bnpm (?:ping|view)\b/.test(l) && !/\(cd ~ && (?:T=\$\(mktemp -d\) && \{ )?npm (?:ping|view)\b/.test(l))
+    .flatMap((b) => b.lines).filter((l) => (/\bnpm (?:ping|view)\b/.test(l) && !/\(cd ~ && (?:T=\$\(mktemp -d\) && \{ )?npm (?:ping|view)\b|\bin15 sh -c 'cd ~ && exec npm ping\b/.test(l))
       || /curl(?:\.exe)? -sS -o (?:\/dev\/null|NUL) --connect-timeout/.test(l) || /pypi\.org\/simple\/(?:\s|$)/.test(l))
     .map((l) => `${f}: ${l.trim().slice(0, 60)}`));
   ok(leaky.length === 0, `airgap-4c: the npm checks run in the home folder and the web checks ask for the head of a small page (found ${JSON.stringify(leaky)})`);
@@ -918,14 +835,14 @@ try {
   // package with an empty cache (no stale value can come). A PC with no npm yet is unchecked, not offline. /banker:setup
   // skips only what comes from the web, and the OS package manager steps are tried (they use their own mirrors).
   const npmDocs = DL_DOCS.filter((f) => f !== path.join('commands', 'setup.md') && codeBlocks(fs.readFileSync(path.join(root, f), 'utf8'))
-    .some((b) => b.lines.some((l) => /\(cd ~ && npm ping\b/.test(l))));
+    .some((b) => b.lines.some((l) => /\(cd ~ && npm ping\b|\bin15 sh -c 'cd ~ && exec npm ping\b/.test(l))));
   // The package asked for is one the skill installs (npm i, npm install, npx, in a code block or a quoted command).
   const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
   const installsPkg = (t, pkg) => [...joinedLines(t), ...[...t.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map((m) => m[1])]
     .some((l) => /\bnpm (?:i|install)\b|\bnpx\b/.test(l) && !/\bnpm view\b/.test(l) && new RegExp(`(?:^|\\s)${reEsc(pkg)}(?:@|\\s|\\)|$)`).test(l));
   const noFallback = npmDocs.filter((f) => {
     const t = fs.readFileSync(path.join(root, f), 'utf8');
-    const m = /`\(cd ~ && T=\$\(mktemp -d\) && \{ npm view (\S+) version --fetch-retries=0 --fetch-timeout=10000 --cache "\$T"; r=\$\?; rm -rf "\$T"; exit \$r; \}\)` 도 실패해야 오프라인으로 본다\. 이 스킬이 설치할 패키지\(`\1`\)/.exec(t);
+    const m = /`\(cd ~ && T=\$\(mktemp -d\) && \{ npm view (\S+) version --fetch-retries=0 --fetch-timeout=10000 --cache "\$T" --no-update-notifier; r=\$\?; rm -rf "\$T"; exit \$r; \}\)` 도 실패해야 오프라인으로 본다\. 이 스킬이 설치할 패키지\(`\1`\)를 빈 캐시로 물으므로 옛 값이 나올 수 없다\. ping 이 15초 감시에 걸려 멈췄으면\(종료 143\) 이 확인은 하지 않는다\./.exec(t);
     return !m || !installsPkg(t, m[1]) || !/`npm` 이 없으면\(명령 없음\) 오프라인이 아니라 확인하지 못한 것이다/.test(t);
   });
   const setupCmd = fs.readFileSync(path.join(root, 'commands', 'setup.md'), 'utf8');
@@ -933,7 +850,9 @@ try {
      && /`npm` 이 아직 없으면\(새 PC\) npm 쪽은 오프라인이 아니라 확인하지 못한 것이다/.test(setupCmd)
      && /결과는 알림으로만 쓰고, 이것만으로 항목을 건너뛰지 않는다/.test(setupCmd)
      && /항목을 건너뛸지는 각 스킬의 0단계가 그 스킬의 원천으로 정한다/.test(setupCmd) && !/웹 원천에서 받는 항목만 시도하지 않고/.test(setupCmd)
-     && /OS 패키지 관리자\(dnf, apt, brew, winget\)만 쓰는 단계는 .*이 확인과 관계없이 각 스킬의 규칙대로 시도한다/.test(setupCmd),
+     && /OS 패키지 관리자\(dnf, apt, brew, winget\)만 쓰는 단계는 .*이 확인과 관계없이 각 스킬의 규칙대로 시도한다/.test(setupCmd)
+     && /이 실행에서 부르는 스킬의 0단계는 \/banker:setup 0단계와 앞 스킬이 이미 돌린 같은 확인 줄\(같은 명령과 같은 주소\)의 결과를 쓰고 다시 돌리지 않는다\. 처음 보는 원천만 새로 본다\. 결과는 이 실행 안에서만 쓴다/.test(setupCmd)
+     && /원천에 닿는지 한 번 본다\(curl 은 10초, npm 은 15초 안\)/.test(setupCmd) && !/각 10초 안/.test(setupCmd),
      `airgap-4d: a mirror without ping and a PC without npm are not read as offline, /banker:setup skips nothing on its own check, and the OS package manager steps are tried (npm docs ${npmDocs.length}, no fallback: ${JSON.stringify(noFallback)})`);
   ok(unchecked.length === 0, `airgap-4: each downloading skill and /banker:setup checks its sources before the first download (unchecked: ${JSON.stringify(unchecked)})`);
   // Each web source a skill downloads from has its own check line: the host of every address a curl, wget, git clone
@@ -948,9 +867,11 @@ try {
     [/\bpip3? install\b|\bpipx install\b|\buv tool install\b|\buvx\b|-m pip install\b/, 'pypi'],
     [/\bnvm install\b/, 'nodejs.org'],
     [/\bclaude plugin (?:marketplace add|install)\b|\bomc update\b/, 'github.com'],
+    [/nvm-sh\/nvm\/\S*\/install\.sh/, 'github.com'],   // nvm's install.sh clones from github.com when git is there
+    [/\bplaywright install\b/, 'cdn.playwright.dev'],   // the browser download server (playwright-core 1.58 to 1.64)
   ];
   // The hosts a download line reads: its addresses, and the variables it quotes that are set to an address.
-  const urlHosts = (l, vars) => (/\b(?:curl|wget)\b|\bgit\b.*\bclone\b|\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b/i.test(l)
+  const urlHosts = (l, vars) => (/\b(?:curl|wget)\b|\bgit\b.*\bclone\b|\b(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest)\b|\bdnf (?:-y )?install -y https?:\/\//i.test(l)
     ? [...[...l.matchAll(URLS)].map((m) => m[0]), ...[...l.matchAll(/"\$\{?(\w+)\}?"/g)].map((m) => vars[m[1]]).filter(Boolean)].map(hostOf)
     : []);
   const sourcesOf = (lines) => {
@@ -959,16 +880,21 @@ try {
     const out = new Set();
     for (const l of lines.filter((x) => !isNetCheck(x) && !/\bcommand -v\b|Get-Command\b/.test(x))) {
       for (const h of urlHosts(l, vars)) out.add(h);
-      for (const [re, src, not] of INSTALLERS) if (re.test(l) && !(not && not.test(l))) out.add(src);
+      for (const [re, src, not] of INSTALLERS) if (re.test(l.replace(VERSION_QUERY, '')) && !(not && not.test(l))) out.add(src);
     }
     out.delete(null);
     return out;
   };
   const checksOf = (lines) => {
     const out = new Set();
+    // A check fed `printf 'url = …' "$V…"` reads the address the document gives V as its default (`V="${…:-https://host}"`).
+    const defaults = {};
+    for (const l of lines) { const m = /^(\w+)="\$\{[^"]*:-(https?:\/\/[^}"]+)\}+"/.exec(l); if (m) defaults[m[1]] = m[2]; }
     for (const l of lines.filter(isNetCheck)) {
+      const fed = /^printf 'url = [^|]*"\$\{?(\w+)\}?[\/"]/.exec(l);
       if (/\bnpm ping\b/.test(l)) out.add('npm');
       else if (/"\$I\/pip\/"/.test(l)) out.add('pypi');
+      else if (fed && defaults[fed[1]]) out.add(hostOf(defaults[fed[1]]));
       else for (const m of l.matchAll(URLS)) out.add(hostOf(m[0]));
     }
     return out;
@@ -979,6 +905,83 @@ try {
     return [...sourcesOf(lines)].filter((h) => !checked.has(h)).map((h) => `${f}: ${h}`);
   });
   ok(uncovered.length === 0, `airgap-4k: every web source a downloading skill reads has a check line of its own (unchecked: ${JSON.stringify(uncovered)})`);
+
+  // 0.20.5 (R7): the checks say what stops them. A Codex sandbox that blocks the network is no offline network: the
+  // check block says so on its first line. npm waits on a network that drops packets as long as the OS retries (about
+  // 130 s; its fetch-timeout only times the pauses), so the ping runs under a 15 s watchdog. A failed check is reported
+  // with its command, exit code and first stderr line, and a certificate failure is not read as offline. Windows
+  // curl.exe skips the revocation check and is looked for first. The waits of dnf and apt, and apt's exit 0, are written down.
+  const SANDBOX_BASH = '[ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" = 1 ] && echo "Codex sandbox 가 네트워크를 막음(아래 실패는 오프라인이 아님)"';
+  const SANDBOX_PS = "if ($env:CODEX_SANDBOX_NETWORK_DISABLED -eq '1') { 'Codex sandbox 가 네트워크를 막음(아래 실패는 오프라인이 아님)' }";
+  const docText = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+  const noSandbox = DL_DOCS.filter((f) => {
+    const t = docText(f);
+    const b = codeBlocks(t).find((x) => x.lines.some(isNetCheck));
+    const first = b ? b.lines.find((l) => l.trim()).trim() : '';
+    return (first !== SANDBOX_BASH && first !== SANDBOX_PS) || !/'sandbox 가 네트워크를 막음' 으로 보고하고, 승인을 받아 sandbox 밖에서 확인부터 다시 한다/.test(t);
+  });
+  ok(noSandbox.length === 0, `airgap-4l: each check block first says when a Codex sandbox blocks the network, and the doc says to report that, not "offline" (missing: ${JSON.stringify(noSandbox)})`);
+  const CERT_WORDS = ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'NODE_EXTRA_CA_CERTS=<사내 CA 파일>'];
+  const noReport = DL_DOCS.filter((f) => {
+    const t = docText(f);
+    const code = joinedLines(t).join('\n');
+    return !/확인이 실패하면 보고에 그 명령, 종료 코드, stderr 첫 줄을 붙인다/.test(t) || !/원인을 '오프라인' 하나로 짐작하지 않는다/.test(t)
+      || (/\bnpm ping\b/.test(code) && !CERT_WORDS.every((w) => t.includes(w)))
+      || (/\bcurl(?:\.exe)?(?: --ssl-no-revoke)? (?:-K - )?-sSI\b/.test(code) && !/curl 의 종료 60\(인증서 검증 실패\)도 오프라인이 아니다/.test(t));
+  });
+  ok(noReport.length === 0, `airgap-4m: a failed check is reported with its command, exit code and first stderr line, and a certificate failure is not read as offline (missing: ${JSON.stringify(noReport)})`);
+  // Git Bash's curl is Schannel too (the Windows box): the bash check lines skip the revocation check as well, and the
+  // other curls take the flag and ignore it (macOS curl 8.7.1, Rocky 8.10 curl 7.61.1).
+  const noRevoke = DL_DOCS.filter((f) => {
+    const t = docText(f);
+    return /curl\.exe -sSI\b/.test(t) || (/curl\.exe/.test(t) && !/Get-Command curl\.exe -ErrorAction SilentlyContinue/.test(t))
+      || joinedLines(t).some((l) => isNetCheck(l) && /\bcurl\b/.test(l) && !/\bcurl(?:\.exe)? --ssl-no-revoke\b/.test(l))
+      || (joinedLines(t).some((l) => isNetCheck(l) && /\bcurl /.test(l)) && !/Windows 의 Git Bash curl 도 Schannel 이라/.test(t));
+  });
+  const pwshDoc = docText(path.join('skills', 'setup-pwsh', 'SKILL.md'));
+  ok(noRevoke.length === 0 && /^if \(Get-Command curl\.exe -ErrorAction SilentlyContinue\) \{$/m.test(pwshDoc)
+     && /^\s+curl\.exe --ssl-no-revoke -sSI -o NUL --connect-timeout 5 --max-time 10 https:\/\/cdn\.winget\.microsoft\.com\/cache\b/m.test(pwshDoc),
+     `airgap-4n: Windows curl.exe checks skip the revocation check and look for curl.exe first, so an earlier command's 0 is not read as reached (wrong: ${JSON.stringify(noRevoke)})`);
+  const PKG_CODE = /\b(?:dnf|apt-get|apt)\s+(?:-\S+\s+)*(?:install|update|upgrade|module|makecache|download)\b/;
+  const pkgDocs = DL_DOCS.filter((f) => joinedLines(docText(f)).some((l) => PKG_CODE.test(l)));
+  const noPkgWords = pkgDocs.filter((f) => {
+    const t = docText(f);
+    return !/dnf 는 저장소마다 약 2분\(SYN 을 버리는 망 실측 121초\), apt 는 원천마다 약 4분\(답하지 않는 원천 실측 247초\) 기다린 뒤 실패로 끝난다\. 시간 제한은 관리자 설정을 따르므로 이 스킬이 바꾸지 않는다/.test(t)
+      || !/`apt-get update` 는 받지 못해도 종료 0 이다\. 출력의 `W: Failed to fetch` 가 있으면 그 단계를 실패로 보고한다/.test(t);
+  });
+  ok(pkgDocs.length >= 6 && noPkgWords.length === 0, `airgap-4o: the docs with dnf or apt steps say how long those wait on a closed network and that apt-get update ends 0 without its lists (docs ${pkgDocs.length}, missing: ${JSON.stringify(noPkgWords)})`);
+  const setE = DL_DOCS.flatMap((f) => codeBlocks(docText(f)).filter((b) => b.lines.some((l) => /^\s*set -e|\btrap '[^']*' EXIT\b/.test(l)))
+    .filter((b) => { const ls = b.lines.filter((l) => l.trim()); return ls[0].trim() !== '(' || ls[ls.length - 1].trim() !== ')'; }).map(() => f));
+  ok(setE.length === 0, `airgap-4p: a block that sets -e or an EXIT trap runs in a subshell of its own, so neither stays in the shell after it (found ${JSON.stringify(setE)})`);
+  const IN15 = 'in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }';
+  const ubDoc = path.join('skills', 'update-banker', 'SKILL.md');
+  const unwatched = [...DL_DOCS, ubDoc].flatMap((f) => codeBlocks(docText(f)).filter((b) => b.lines.some((l) => /\bnpm ping\b/.test(l))).filter((b) => {
+    const def = b.lines.findIndex((l) => l.trim() === IN15);
+    const at = b.lines.findIndex((l) => /\bnpm ping\b/.test(l));
+    return def < 0 || def > at || b.lines.some((l) => /\bnpm ping\b/.test(l) && !l.includes("in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'"));
+  }).map(() => f));
+  const psPing = [...DL_DOCS, ubDoc].flatMap((f) => [...docText(f).matchAll(/`Push-Location ~; npm ping[^`]*`/g)].map((m) => m[0]).filter((c) => !c.includes('--no-update-notifier')).map(() => f));
+  const npmSkills = DL_DOCS.filter((f) => /\bnpm ping\b/.test(joinedLines(docText(f)).join('\n')));
+  const noWatchWords = npmSkills.filter((f) => !/`npm ping` 은 15초 감시\(`in15`\) 안에서 부른다/.test(docText(f)));
+  ok(unwatched.length === 0 && psPing.length === 0 && npmSkills.length >= 9 && noWatchWords.length === 0,
+     `airgap-4q: npm ping runs under the 15 s watchdog defined in its block, with no update check, and the docs say why (unwatched: ${JSON.stringify(unwatched)}, PowerShell: ${JSON.stringify(psPing)}, npm docs ${npmSkills.length}, unexplained: ${JSON.stringify(noWatchWords)})`);
+  // 0.20.5 review: ffmpeg comes from PLAYWRIGHT_DOWNLOAD_HOST or the default server, never from the chromium mirror
+  // variable, so a check of the chromium host alone passed a closed network the ffmpeg download then waited out.
+  const pwDoc = docText(path.join('skills', 'setup-playwright', 'SKILL.md'));
+  ok(/^F="\$\{PLAYWRIGHT_DOWNLOAD_HOST:-https:\/\/cdn\.playwright\.dev\}"/m.test(pwDoc)
+     && /^\[ "\$F" = "\$H" \] \|\| printf 'url = "%s\/"\\n' "\$F" \| curl --ssl-no-revoke -K - -sSI /m.test(pwDoc),
+     'airgap-4r: setup-playwright checks the ffmpeg download server too when only the chromium mirror is given');
+  // B7-11: with neither source of Node 22, the RHEL block installs no older nodejs of the distribution with sudo.
+  const mgDoc = docText(path.join('skills', 'motion-graphic-setup', 'SKILL.md'));
+  ok(!/^sudo dnf install -y nodejs\s*$/m.test(mgDoc) && /^if \[ "\$ok" = 1 \]; then sudo dnf install -y nodejs; else echo "Node 22 저장소/m.test(mgDoc),
+     'airgap-9d: the motion-graphic-setup RHEL block installs nodejs only when a Node 22 source is set up');
+  // B7-13: the installs outside the setup skills check first and keep out of the project's tree and its .npmrc.
+  const vpDoc = docText(path.join('skills', 'vertical-pptx', 'SKILL.md'));
+  const pveDoc = docText(path.join('skills', 'pdf-vision-extract', 'SKILL.md'));
+  ok(/^\(cd "\$S" && npm i --no-save --no-audit --no-fund pptxgenjs@4\) && echo "NODE_PATH=\$S\/node_modules"$/m.test(vpDoc) && !/^npm i --no-save/m.test(vpDoc)
+     && /"오프라인이라 설치하지 않음\(필요한 것: pptxgenjs 또는 python-pptx\)" 으로 알린다/.test(vpDoc)
+     && /Offline \(no network\): do not install; look for the fallback tools of section 4 \(`pdftoppm`, ImageMagick\)/.test(pveDoc),
+     'airgap-12: vertical-pptx and pdf-vision-extract say what to do offline, and the scratch npm install runs outside the project tree');
 
   // Every curl call (with flags or a bare address, but `curl --version` and detection lines), wget, git clone, and the
   // PowerShell downloads, with continued lines joined.
@@ -1000,17 +1003,27 @@ try {
     .filter((l) => /\bcurl -/.test(l) && BIG.test(l)).map((l) => [f, l]));
   const noStall = bigLines.filter(([, l]) => !/--speed-limit 1000 --speed-time 30/.test(l) || /--max-time/.test(l)).map(([f, l]) => `${f}: ${l.trim().slice(0, 60)}`);
   const docsSetup = fs.readFileSync(path.join(root, 'skills', 'docs-setup', 'SKILL.md'), 'utf8');
+  // The upstream tarball of LibreOffice is unpacked, its RPMs taken out and its folder removed in the block that got
+  // it: a sentence after a block is no step a shell keeps $T for (the next block is a new shell).
+  const loBlockDone = (t) => {
+    const b = codeBlocks(t).find((x) => x.lines.some((l) => /LibreOffice_\$\{V\}_Linux/.test(l)));
+    const ls = b ? b.lines.filter((l) => l.trim()) : [];
+    return ls.some((l) => /tar -xzf "\$T\/lo\.tar\.gz" -C "\$T"/.test(l)) && ls.length > 0 && ls[ls.length - 1].trim().startsWith('rm -rf "$T"')
+      && !/받은 tarball 은 `\$T` 안에서 풀고/.test(t) && !/^for r in \$SP\/\*\.rpm/m.test(t);
+  };
   ok(fixedTmp.length === 0 && bigLines.length >= 5 && noStall.length === 0
      && /-o ~\/bin\/plantuml\.jar\.part .*&& mv ~\/bin\/plantuml\.jar\.part ~\/bin\/plantuml\.jar;/s.test(docsSetup)
-     && /^rm -f ~\/bin\/plantuml\.jar\.part\s/m.test(docsSetup),
-     `airgap-4e: downloads go to a private folder, the large ones use stall detection, and plantuml.jar gets its name only when complete (fixed /tmp: ${JSON.stringify(fixedTmp)}, large ${bigLines.length}, no stall detection: ${JSON.stringify(noStall)})`);
+     && /^rm -f ~\/bin\/plantuml\.jar\.part\s/m.test(docsSetup)
+     && loBlockDone(fs.readFileSync(path.join(root, 'skills', 'vertical-pptx-setup', 'SKILL.md'), 'utf8')),
+     `airgap-4e: downloads go to a private folder, the large ones use stall detection, plantuml.jar gets its name only when complete, and the LibreOffice tarball is unpacked and removed in its own block (fixed /tmp: ${JSON.stringify(fixedTmp)}, large ${bigLines.length}, no stall detection: ${JSON.stringify(noStall)})`);
   // PowerShell: a script saved under a name another user can guess ($PID) in a shared TEMP can be swapped before it runs;
   // it goes into a new folder with a GUID name, removed afterwards.
   const psGuess = DL_DOCS.flatMap((f) => joinedLines(fs.readFileSync(path.join(root, f), 'utf8'))
     .filter((l) => /\$env:TEMP\b/.test(l) && !/\[guid\]::NewGuid\(\)/.test(l)).map((l) => `${f}: ${l.trim().slice(0, 60)}`));
   const pySkill = fs.readFileSync(path.join(root, 'skills', 'setup-python', 'SKILL.md'), 'utf8');
   ok(psGuess.length === 0 && /\$D = Join-Path \$env:TEMP \(\[guid\]::NewGuid\(\)\)/.test(pySkill)
-     && /New-Item -ItemType Directory -ErrorAction Stop \$D/.test(pySkill) && /finally \{ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue \$D \}/.test(pySkill),
+     && /New-Item -ItemType Directory -ErrorAction Stop \$D/.test(pySkill) && /finally \{ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue \$D \}/.test(pySkill)
+     && /-File \$T\n\s*if \(\$LASTEXITCODE -ne 0\) \{ "uv 설치 스크립트가 실패했습니다\(종료 \$LASTEXITCODE\)" \}/.test(pySkill),
      `airgap-4f: a PowerShell download goes into a new folder with a GUID name that is removed afterwards (guessable: ${JSON.stringify(psGuess)})`);
   // The pip index check: pip's own settings (`pip config get` does not read PIP_CONFIG_FILE, `pip config list` does;
   // install before global, the env first), and the user info of the index URL is cut before curl: a secret in a
@@ -1019,15 +1032,15 @@ try {
   const pyBad = pyDocs.filter((f) => {
     const lines = joinedLines(fs.readFileSync(path.join(root, f), 'utf8'));
     const at = (re) => lines.findIndex((l) => re.test(l));
-    const li = at(/^L=\$\( \(cd ~ && \{ pip config list \|\| pip3 config list \|\| python3 -m pip config list; \}\) 2>\/dev\/null\) \|\| echo "pip 설정을 읽지 못함/), ins = at(/^I="\$\{PIP_INDEX_URL:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^install\\\.index-url=/);
+    const li = at(/^L=\$\( \(cd ~ && \{ pip config list \|\| pip3 config list \|\| python3\.13 -m pip config list \|\| python3\.12 -m pip config list \|\| python3\.11 -m pip config list \|\| python3 -m pip config list; \}\) 2>\/dev\/null\) \|\| echo "pip 설정을 읽지 못함/), ins = at(/^I="\$\{PIP_INDEX_URL:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^install\\\.index-url=/);
     const glo = at(/^I="\$\{I:-\$\(printf '%s\\n' "\$L" \| sed -n "s\/\^global\\\.index-url=/);
     const cut = at(/^I=\$\(printf %s "\$\{I:-https:\/\/pypi\.org\/simple\}" \| sed -E 's#\^\(\[A-Za-z\]\[A-Za-z0-9\+\.-\]\*:\/\/\)\[\^\/\]\*@#\\1#; s#\/\$##'\)/);
-    const get = at(/^printf 'url = "%s"\\n' "\$I\/pip\/" \| curl -K - -sSI -o \/dev\/null --connect-timeout 5 --max-time 10\b/);
+    const get = at(/^printf 'url = "%s"\\n' "\$I\/pip\/" \| curl --ssl-no-revoke -K - -sSI -o \/dev\/null --connect-timeout 5 --max-time 10\b/);
     return !(li >= 0 && li < ins && ins < glo && glo < cut && cut < get) || lines.some((l) => /\bcurl\b/.test(l) && /PIP_INDEX_URL|pip config|\$\{I:-/.test(l))
       || lines.some((l) => /\bcurl\b[^|]*"\$I\b/.test(l))
       || lines.some((l) => /\bpython3? -m pip config\b/.test(l) && !/\(cd ~ && \{/.test(l));
   });
-  ok(pyDocs.length === 6 && pyBad.length === 0,
+  ok(pyDocs.length === 7 && pyBad.length === 0 && pyDocs.every((f) => /Rocky 8 의 기본 pip\(9\.0\.3, `pip3`\)은 `config` 명령이 없고 `pip` 이름은 없다/.test(fs.readFileSync(path.join(root, f), 'utf8'))),
      `airgap-4g: the pip index check reads pip's settings (says so when it cannot), cuts the user info and gives curl the URL on its standard input, not in its arguments (docs ${pyDocs.length}, wrong: ${JSON.stringify(pyBad)})`);
   // LibreOffice run with a profile under a guessable /tmp name can start from a profile another user made first
   // (macro settings included): the profile goes into a private folder.
@@ -1039,7 +1052,14 @@ try {
   // in someone else's repository, its `pip/`, `json.py` or `pptx.py` runs as the user. The docs run them from the home
   // folder (absolute paths for the files they read), or in PowerShell between Push-Location ~ and Pop-Location.
   // Kept: lineage's own test run in its own skill folder.
-  const PY_RUN = /(?:^|[\s;&|(`])(?:python[0-9.]*|py(?:\s+-[0-9][0-9.]*)?|"?\$\{?PY(?:_BASE)?\}?"?|~?[\w./-]*\/bin\/python[0-9.]*)\s+(?:-[A-HJ-Za-z]+\s+)*(?:-c\b|-m\b|-\s*<<|<<|<(?!<|[^\s<>]+>))/;   // a stdin script with or without -, not a <placeholder>
+  const PY_RUN = /(?:^|[\s;&|(`])(?:python[0-9.]*|py(?:\s+-[0-9][0-9.]*)?|"?\$\{?PY(?:_BASE)?\}?"?|~?[\w./-]*\/bin\/python[0-9.]*)\s+(?:-[A-HJ-Za-z]+\s+)*(?:-c\b|-m\b|-\s*<<|<<|<(?!<|[^\s<>]+>|[^\s<>][^<>\n;&|]*[^\s<>\d;&|]>))/;   // a stdin script with or without -, not a <placeholder>
+  // A <placeholder> may hold spaces (<입력 파일 경로>); a redirect does not pass for one: a space just inside the bracket
+  // (<in.py >out), a file descriptor or & before > (<in.py 2>err, <in.py &>log), or a shell operator inside.
+  const PY_RUN_CATCH = ['python3 <in.py >out', 'python3 <in.py 2>err', 'python3 <in.py &>log', 'python3 <in.py', 'python3 < in.py',
+    'python3 <in.py && cat>out', 'python3 - <<EOF', 'py -3 <in.py >out'];
+  const PY_RUN_PASS = ['python3 <입력 파일 경로>', 'python3 <파일>', 'python3 <스크립트 경로> --flag', 'python3 -I <in.py >out'];
+  ok(PY_RUN_CATCH.every((l) => PY_RUN.test(l)) && !PY_RUN_PASS.some((l) => PY_RUN.test(l)),
+    `airgap-4i: the stdin check tells a redirect from a <placeholder>, spaces in it or not (missed ${JSON.stringify(PY_RUN_CATCH.filter((l) => !PY_RUN.test(l)))}, taken ${JSON.stringify(PY_RUN_PASS.filter((l) => PY_RUN.test(l)))})`);
   const pyDocsAll = [...fs.readdirSync(path.join(root, 'skills')).map((d) => path.join('skills', d, 'SKILL.md')),
     ...fs.readdirSync(path.join(root, 'commands')).filter((f) => f.endsWith('.md')).map((f) => path.join('commands', f))]
     .filter((f) => fs.existsSync(path.join(root, f)));
@@ -1063,18 +1083,20 @@ try {
   // session); the offline path registers pinned, installed executables and leaves out the servers that are a network service.
   const mcpSkill = fs.readFileSync(path.join(root, 'skills', 'setup-mcp', 'SKILL.md'), 'utf8');
   ok(/npm i -g @modelcontextprotocol\/server-sequential-thinking@<판> @modelcontextprotocol\/server-filesystem@<판>/.test(mcpSkill)
-     && /claude mcp add sequential-thinking -s user -- mcp-server-sequential-thinking/.test(mcpSkill)
-     && /claude mcp add git -s user -- mcp-server-git/.test(mcpSkill)
+     && /^ST=\$\(command -v mcp-server-sequential-thinking\); FB=\$\(command -v mcp-server-filesystem\); GT=\$\(command -v mcp-server-git\)$/m.test(mcpSkill)
+     && /claude mcp add sequential-thinking -s user -- "\$ST"; \}/.test(mcpSkill) && /claude mcp add filesystem -s user -- "\$FB" "\$FS_DIR"; \}/.test(mcpSkill)
+     && /claude mcp add git -s user -- "\$GT"; \}/.test(mcpSkill) && !/-- mcp-server-(?:git|sequential-thinking|filesystem)\b/.test(mcpSkill.slice(mcpSkill.indexOf('### 네트워크가 없는 곳'), mcpSkill.indexOf('## 3. Claude Code 배선')).replace(/`[^`\n]*cmd \/c[^`\n]*`/g, ''))
+     && /Windows 는 이름으로 등록하고 `cmd \/c` 를 앞에 둔다/.test(mcpSkill)
      && /네트워크가 필요한 서버\(context7, fetch, tavily\)는 등록하지 않/.test(mcpSkill),
      'airgap-5: setup-mcp registers pinned installed executables offline and leaves out the network-service servers');
   // A server registered online under the same name makes `claude mcp add` fail ("already exists"): the offline block
   // removes each name first, as the online sections do, for Claude Code and Codex.
   const mcpOffline = mcpSkill.slice(mcpSkill.indexOf('### 네트워크가 없는 곳 (오프라인 경로)'), mcpSkill.indexOf('## 3. Claude Code 배선'));
   const removedFirst = (rm, add) => { const r = mcpOffline.indexOf(rm); return r >= 0 && mcpOffline.indexOf(add, r) > r; };
-  ok(['sequential-thinking', 'filesystem', 'git'].every((n) => removedFirst(`claude mcp remove ${n} -s user 2>/dev/null\n`, `claude mcp add ${n} -s user --`)
+  ok(['sequential-thinking', 'filesystem', 'git'].every((n) => removedFirst(`claude mcp remove ${n} -s user 2>/dev/null;`, `claude mcp add ${n} -s user --`)
        && removedFirst(`codex mcp remove ${n} 2>/dev/null;`, `codex mcp add ${n} --`))
      && /`uvx <패키지>` 가 오프라인에서 어떻게 끝나는지는 재지 못했다\(미실측\)/.test(mcpOffline) && !/`uvx <패키지>` 는 서버를 띄울 때마다/.test(mcpOffline)
-     && /```bash\nFS_DIR="\$\{FS_DIR:-\$HOME\/projects\}"\ncodex mcp remove sequential-thinking/.test(mcpOffline),
+     && /```bash\nFS_DIR="\$\{FS_DIR:-\$HOME\/projects\}"\nST=\$\(command -v mcp-server-sequential-thinking\);[^\n]*\n\[ -n "\$ST" \] && \{ codex mcp remove sequential-thinking/.test(mcpOffline),
      'airgap-5b: the setup-mcp offline block removes an earlier registration before each add, and does not claim a measured uvx failure');
   // A command quoted in a sentence is run as written: an npm view or ping there runs in the home folder too.
   const npmSpans = [...DL_DOCS, path.join('skills', 'update-banker', 'SKILL.md')].flatMap((f) => [...fs.readFileSync(path.join(root, f), 'utf8')

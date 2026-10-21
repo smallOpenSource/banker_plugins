@@ -68,6 +68,8 @@ PY
 
 Install if missing: `(cd ~ && python3 -m pip install --user pymupdf)`
 
+Offline (no network): do not install; look for the fallback tools of section 4 (`pdftoppm`, ImageMagick) instead and say "오프라인이라 설치하지 않음(필요한 것: pymupdf)". pip retries 5 times with a 15 s timeout by default before it fails.
+
 ### 4. Fallback toolchain
 
 If Python/PyMuPDF unavailable:
@@ -114,6 +116,8 @@ For a hybrid pipeline (visual + searchable text), also extract markdown:
 (cd ~ && python3 -m pip install --user pymupdf4llm)
 (cd ~ && python3 -c "import pymupdf4llm; print(pymupdf4llm.to_markdown('<absolute-pdf-path>'))") > <OUT>/text.md
 ```
+
+The install needs the network too; offline, leave the markdown companion out and say so.
 
 Then `grep` the `.md` for labels and cross-reference with the PNGs.
 

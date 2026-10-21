@@ -95,3 +95,14 @@ test('register.mjs hands $ to no imported function, in any place of the call: ol
   const passed = imported.filter((name) => callArgs(src, name).some((args) => bare.test(args)));
   assert.deepEqual(passed, []);
 });
+
+// 0.20.5 (B5 plan row "session.end"): the engine sends the redraw on and catches its own failure (2.1.305); one that
+// throws instead still runs the hooks beneath, so the session and the turn go on.
+test('an engine whose redraw throws still runs the hooks beneath session.end, turn.start and turn.complete', async () => {
+  const { hooks } = engine();
+  const $ = { ui: { log: () => {}, invalidate: () => { throw new Error('no surface'); } }, fs: {} };
+  for (const [event, e] of [['session.end', { reason: 'clear' }], ['turn.start', { turnId: 't1', text: 'x' }], ['turn.complete', { turnId: 't1', reason: 'answer' }]]) {
+    const answer = await hooks.get(`${event} null`)($, e, async () => ({ passed: event }));
+    assert.deepEqual(answer, { passed: event }, event);
+  }
+});

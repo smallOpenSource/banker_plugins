@@ -652,6 +652,12 @@ test("hardening: a settings folder this account cannot enter is a refusal, not a
     assert.match(r.message, /쓸 권한이 없어 설정을 저장하지 못했습니다 \(EACCES\)/);
     const c = cli(["config", "--deny", ".txt", "--alt", ".md"], cliEnv(s));
     assert.equal(c.code, 1, c.out);
+    // 0.20.5 review (N2): on with no settings looks at what is at the settings path too; a folder it cannot enter is
+    // the same refusal there, not a crash with exit 2
+    const on = cli(["on", "--runtime", "codex"], cliEnv(s));
+    assert.equal(on.code, 1, on.out);
+    assert.match(on.out, /읽을 권한이 없습니다[\s\S]*anti-drm 은 이 자리를 덮어쓰지 않습니다/);
+    assert.doesNotMatch(on.out, /예기치 못한 오류/);
   } finally {
     chmodSync(folder, 0o755);
   }
@@ -1318,4 +1324,82 @@ test("Claude Code: a rules-file link to someone else's file is refused with no l
   assert.doesNotMatch(r.message, /링크였던 자리/);
   assert.ok(lstatSync(s.rulesFile).isSymbolicLink(), "the link stays");
   assert.equal(read(theirs), "# someone's own rules\n", "the file it leads to is untouched");
+});
+
+// ---- 0.20.5 (B5 row 7, B5 plan row r7 R2)
+// B5 row 7: a settings path the save will not write over (a folder, a FIFO, a file past 64 KiB, one it cannot read): on
+// says to move it or fix it, not to give the settings again, which only meets the save's refusal.
+test("on with a settings path the save will not write over says to move it or fix it first, and the guided on with settings is refused the same", () => {
+  const cases = [
+    ["folder", (f) => mkdirSync(f)],
+    ["past 64 KiB", (f) => writeFileSync(f, " ".repeat(64 * 1024 + 1))],
+    ...(process.platform === "win32" ? [] : [["FIFO", (f) => assert.equal(spawnSync("mkfifo", [f]).status, 0, "mkfifo")]]),
+    ...(process.platform === "win32" || process.getuid?.() === 0 ? [] : [["unreadable", (f) => { writeFileSync(f, "{}"); chmodSync(f, 0o000); }]]),
+  ];
+  for (const [what, make] of cases) {
+    const s = setup();
+    mkdirSync(join(s.o.configFile, ".."), { recursive: true });
+    make(s.o.configFile);
+    const r = turnOn("codex", s.o);
+    assert.equal(r.ok, false, what);
+    assert.match(r.message, /anti-drm 은 이 자리를 덮어쓰지 않습니다\. 옮기거나 권한을 고친 뒤 다시 실행하세요\.$/, `${what}: ${r.message}`);
+    assert.doesNotMatch(r.message, /--stdin 이나 --deny, --alt 로 함께 주세요/, what);
+    assert.equal(turnOn("codex", s.o, FLAGS).ok, false, `${what}: the settings given on the command line meet the save's refusal`);
+    try { chmodSync(s.o.configFile, 0o600); } catch { /* a folder or a FIFO */ }
+  }
+  // the SKILL tells the two apart: the on table does not ask for the settings again, the troubleshooting row says what to do
+  const text = read(SKILL);
+  assert.match(text.split("\n").find((l) => l.trim().startsWith("| `올바르지 않음`")), /면 설정을 다시 묻지 않음\. 그 자리가 무엇인지 보이고 옮길지 권한을 고칠지 물은 뒤 다시 실행 \|$/);
+  assert.match(text.split("## 문제 해결")[1], /\| 설정 파일이 올바르지 않습니다 \(뒤에 `anti-drm 은 이 자리를 덮어쓰지 않습니다` 가 붙음\) \| [^\n]*옮길지 권한을 고칠지/);
+  // what is wrong inside a file that can be read is still fixed by giving the settings again
+  const s = setup();
+  mkdirSync(join(s.o.configFile, ".."), { recursive: true });
+  writeFileSync(s.o.configFile, "{");
+  assert.match(turnOn("codex", s.o).message, /--stdin 이나 --deny, --alt 로 함께 주세요\.$/);
+});
+
+// 0.20.5 review: a settings path that is a link (to a folder, a file past 64 KiB, one it cannot read, or a link loop) is
+// one the save replaces with a file of its own: on asks for the settings, not to move the spot.
+test("on with a link at the settings path asks for the settings, since the save replaces the link", symlinkTest, () => {
+  const cases = [
+    ["to a folder", (f, d) => { mkdirSync(join(d, "a-folder")); symlinkSync(join(d, "a-folder"), f); }],
+    ["to a file past 64 KiB", (f, d) => { writeFileSync(join(d, "big.json"), " ".repeat(64 * 1024 + 1)); symlinkSync(join(d, "big.json"), f); }],
+    ...(process.platform === "win32" ? [] : [["in a loop", (f, d) => { symlinkSync(join(d, "loop-b"), f); symlinkSync(f, join(d, "loop-b")); }]]),
+    ...(process.platform === "win32" || asRoot ? [] : [["to a file it cannot read", (f, d) => { writeFileSync(join(d, "locked.json"), "{}"); chmodSync(join(d, "locked.json"), 0o000); symlinkSync(join(d, "locked.json"), f); }]]),
+  ];
+  for (const [what, make] of cases) {
+    const s = setup();
+    const folder = join(s.o.configFile, "..");
+    mkdirSync(folder, { recursive: true });
+    make(s.o.configFile, folder);
+    const r = turnOn("codex", s.o);
+    assert.equal(r.ok, false, what);
+    assert.match(r.message, /--stdin 이나 --deny, --alt 로 함께 주세요\.$/, `${what}: ${r.message}`);
+    assert.doesNotMatch(r.message, /덮어쓰지 않습니다/, what);
+    assert.ok(configure(s.o, FLAGS).ok, `${what}: giving the settings replaces the link`);
+    assert.ok(!lstatSync(s.o.configFile).isSymbolicLink(), what);
+    try { chmodSync(join(folder, "locked.json"), 0o600); } catch { /* not this case */ }
+  }
+});
+
+// r7 R2: the design reads through a link at the settings path (dotfiles). A link may lead to a file that is not
+// anti-drm's: status names where it leads, and a wrong value from it shows only its type and length.
+test("settings reached through a link: status names where the link leads, and a wrong value shows only its type and length", (t) => {
+  const s = setup();
+  mkdirSync(join(s.o.configFile, ".."), { recursive: true });
+  const elsewhere = join(s.dir, "elsewhere.json");
+  const word = ["s3cr", "3t-wordx"].join("");
+  writeFileSync(elsewhere, JSON.stringify({ deny: [word], alt: [".md"] }));
+  try { symlinkSync(elsewhere, s.o.configFile); } catch (e) { t.skip(`no symlink here (${e.code})`); return; }
+  const st = status(s.o).message;
+  assert.ok(st.includes(`(링크: ${elsewhere})`), st);
+  assert.match(st, /금지 확장자로 쓸 수 없는 값입니다: \(string, 12자\)/, st);
+  const on = turnOn("codex", s.o);
+  assert.equal(on.ok, false);
+  for (const text of [st, on.message]) assert.ok(!text.includes(word.slice(0, 4)), text);
+  // the same value in a regular file is quoted as before, so a typo can be seen
+  rmSync(s.o.configFile);
+  writeFileSync(s.o.configFile, JSON.stringify({ deny: ["tx t"], alt: [".md"] }));
+  assert.match(status(s.o).message, /금지 확장자로 쓸 수 없는 값입니다: tx t/);
+  assert.match(read(SKILL), /설정 자리가 링크면 `status` 는 설정 줄에 링크가 가리키는 곳을 함께 보이고, 그 파일의 틀린 값은 글 대신 형식과 길이만 보임/);
 });

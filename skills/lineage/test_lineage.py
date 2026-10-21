@@ -38,6 +38,13 @@ def tearDownModule():
     shutil.rmtree(_CACHE_FOR_ALL, ignore_errors=True)
 
 
+def _cpu_now():
+    """CPU seconds this process has used: what the time bounds of the tests read. They time work done here (a
+    pattern, a parse, a page), and wall time on a busy machine swings past them (load 17 on 4 cores took 8.47 s and
+    9.43 s on a 5 s bound, 0.20.4). A test that times a wait (a sleep, a child, a poll) reads time.monotonic."""
+    return time.process_time()
+
+
 def _turn(role, text, ts="2026-08-09T10:00:00Z", uuid="u", tools=None,
           session="s", parts=None):
     return {"role": role, "text": text, "ts": ts, "uuid": uuid,
@@ -1544,16 +1551,15 @@ class TestLlmReviewHardening(_ReviewCase):
     def test_reviewer_patterns_take_linear_time_on_long_runs(self):
         # the reviewer patterns alone: the page's redaction (detect-secrets, when installed)
         # is no part of this claim and takes its own time
-        import time
         text = ("a." * 30000 + " " + "key" * 20000 + " " + "a-" * 30000 + " " + "token" * 12000
                 + " x://u:" + "a" * 200000 + " " + "-u a" * 30000 + " " + "authorization: basic " * 10000
                 + " -u\n" + "=" * 50000 + " --user" + "=" * 50000 + " -u " + "1" * 50000
                 + " " + '-u"' * 30000 + " " + '"-u", "' * 20000 + " " + 'authorization", ' * 20000
                 + " " + " -abcdefu" * 20000 + " " + 'authorization"]' * 20000)
-        start = time.process_time()
+        start = _cpu_now()
         for _, pat in L.REVIEW_SECRET_PATTERNS:
             pat.sub("[R]", text)
-        self.assertLess(time.process_time() - start, 5)
+        self.assertLess(_cpu_now() - start, 5)
 
     def test_a_rule_summary_cut_through_a_secret_leaves_no_half_for_the_reviewer(self):
         token = "gh" + "p_" + "Q8z" * 12          # cut at 58 characters, no pattern matches the half
@@ -1945,7 +1951,6 @@ class TestLlmReviewHardening(_ReviewCase):
             self.assertEqual(L.review_redact(keep)[0], keep)
 
     def test_curl_user_takes_linear_time_on_runs_of_its_pieces(self):
-        import time
         pat = dict(L.REVIEW_SECRET_PATTERNS)["CurlUser"]
         bs = chr(92)
         pieces = ("(-u", "`-u", "'-u", "(-u(", "`-u`", "-u${a:(", " -u ${a:", " -u $(", "'-uo'b", " -4u ",
@@ -1956,9 +1961,9 @@ class TestLlmReviewHardening(_ReviewCase):
                   '"-xu","a', '"--user","a', "'-xu','a", "'--user','a", '"-u","', '","-u',
                   bs + '"-u' + bs + '",' + bs + '"')
         for piece in pieces:
-            start = time.process_time()
+            start = _cpu_now()
             pat.sub("[R]", piece * 40000)
-            self.assertLess(time.process_time() - start, 2, repr(piece))
+            self.assertLess(_cpu_now() - start, 2, repr(piece))
 
     def test_a_quote_of_the_parts_turns_is_not_read_as_decisions(self):
         answer = [{"id": "a%d" % k, "keep": True, "summary": "요약 %d" % k} for k in range(2)]
@@ -1985,15 +1990,14 @@ class TestLlmReviewHardening(_ReviewCase):
     def test_a_deeply_nested_answer_is_a_broken_decisions_file(self):
         self._write(self._records())
         _quiet(self._emit)
-        import time
         dec = os.path.join(self.d, "review.part-1.decisions.json")
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here is my answer: " + "[" * 100000)
-        start = time.process_time()
+        start = _cpu_now()
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "o.html"), "--skip-reviewer"])
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
-        self.assertLess(time.process_time() - start, 5, "a run of brackets is tried once, not at each one")
+        self.assertLess(_cpu_now() - start, 5, "a run of brackets is tried once, not at each one")
         # deep enough that no Python's json parses it whole (3.12 reads 1,200 levels, 3.11 does not)
         self.assertEqual(L._decisions_text("[" * 100000 + "]" * 100000), [], "nested empty lists hold an empty one")
 
@@ -2147,7 +2151,7 @@ class TestLlmReviewGateReruns(_ReviewCase):
         verdict = os.path.join(self.d, "verdict.json")
         _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack, "--reviewer-output", verdict])
         out = os.path.join(self.d, "o.html")
-        start = time.monotonic()
+        start = time.monotonic()                 # a wait, not work done here: the wall clock (see _cpu_now)
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", out])
         self.assertEqual(rc, 2)
         # well under the 60 s the reviewed flow once waited; detect-secrets, when installed, takes its time
@@ -2182,18 +2186,17 @@ class TestLlmReviewGateReruns(_ReviewCase):
         self.assertTrue(os.path.exists(path + ".used"), "read and set aside: it counts as a failed gate run")
 
     def test_a_wrapped_answer_of_nested_lists_is_refused_in_bounded_time(self):
-        import time
         self._write(self._records())
         _quiet(self._emit)
         dec = os.path.join(self.d, "dec-nested.json")
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here: " + '[{"id":"a"},' * 25000)
-        start = time.process_time()
+        start = _cpu_now()
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"),
                                   "--skip-reviewer", "--decisions", dec])
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
-        self.assertLess(time.process_time() - start, 5)
+        self.assertLess(_cpu_now() - start, 5)
 
     def test_a_decisions_file_over_the_size_cap_is_not_read(self):
         # a good answer padded past the cap: only the size check refuses it
@@ -2326,13 +2329,12 @@ class TestPatternsForPages(_ReviewCase):
                 self.assertNotIn("Hunter22", red, text)
 
     def test_password_bare_takes_linear_time_on_runs_of_its_pieces(self):
-        import time
         pat = dict(L.REVIEW_SECRET_PATTERNS)["PasswordBare"]
         for piece in ("Password=****;", "pwd=ab****;", "password:****,", "암호=****&", "password=*****",
                       "password=||||||", "pwd=", "암호=", "password:e.x,", "password ", "$password=abcdef", "비밀 번호:"):
-            start = time.process_time()
+            start = _cpu_now()
             pat.sub("[R]", piece * 40000 + "****")
-            self.assertLess(time.process_time() - start, 2, repr(piece))
+            self.assertLess(_cpu_now() - start, 2, repr(piece))
 
     def test_extra_keywords_leave_marker_names_whole(self):
         red, counts = L.redact("[REDACTED:CurlUser] 와 user 와 [REDACTED]", extra="user,redacted")
@@ -2466,7 +2468,6 @@ class TestPageRedaction(_ReviewCase):
 
     def test_a_long_page_of_secrets_renders_in_linear_time_and_leaves_none(self):
         import importlib.util
-        import time
         c = "cu" + "rl"
         recs = []
         for k in range(150):
@@ -2475,9 +2476,9 @@ class TestPageRedaction(_ReviewCase):
             recs.append(self._asst("실행했습니다.\n\n%s -u svc%d:%s https://x 로 확인했습니다." % (c, k, self.PW),
                                    "a%d" % k, ts=ts.replace(":00Z", ":30Z")))
         self._write(recs)
-        start = time.process_time()
+        start = _cpu_now()
         rc, page, err = self._rulebase_page()
-        took = time.process_time() - start
+        took = _cpu_now() - start
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Hunter22", page)
         self.assertNotIn("still holds", err)
@@ -2798,7 +2799,7 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
         return done.stdout.strip()
 
     def _summarize_in_child(self):
-        return self._in_child("s, hit = L.read_or_summarize({'role': 'assistant', 'text': %r, 'parts': [%r], "
+        return self._in_child("s, hit = L.read_or_summarize({'role': 'assistant', 'text': %a, 'parts': [%a], "
                               "'uuid': 'a1', 'session': 's', 'ts': 'x', 'tools': {}}, 's'); print(hit)" % (self.TEXT, self.TEXT))
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
@@ -3481,10 +3482,10 @@ class TestSplitSecrets(unittest.TestCase):
     def test_many_emoji_joiners_do_not_slow_the_redaction(self):
         key = "AKIA" "ABCDEFGHIJKLMNOP"
         text = (chr(0x1F468) + self.ZWJ + chr(0x1F469) + " ") * 200000 + " " + key
-        start = time.process_time()
+        start = _cpu_now()
         red, _ = L.page_redact(text)
         if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
-            self.assertLess(time.process_time() - start, 5.0)
+            self.assertLess(_cpu_now() - start, 5.0)
         self.assertNotIn(key, red)
 
     # Values whose only separator is one invisible character: 3.0.7 hid each, and joining them would glue the
@@ -3660,10 +3661,10 @@ class TestSplitSecrets(unittest.TestCase):
 
     def test_many_values_next_to_invisible_characters_do_not_slow_the_redaction(self):
         text = (self.AKIA_KEY + self.ZW + " ") * 5000
-        start = time.process_time()
+        start = _cpu_now()
         red, counts = L.page_redact(text)
         if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
-            self.assertLess(time.process_time() - start, 3.0)
+            self.assertLess(_cpu_now() - start, 3.0)
         self.assertEqual(counts, {"AKIA": 5000})
 
     def test_an_invisible_character_with_nothing_to_join_costs_one_pass_as_in_3_0_7(self):
@@ -3781,6 +3782,18 @@ class TestRedactLayers(unittest.TestCase):
             got = _quiet(L.redact, "token s3cr3tvalue here")[0]
         self.assertEqual(got, ("token [REDACTED:ds] here", {"ds:detect-secrets": 1}))
         self.assertFalse(os.path.exists(fake.seen[0]), "the scratch file detect-secrets read is removed")
+
+    def test_a_scratch_file_whose_write_fails_goes_too(self):
+        from unittest import mock
+        scratch = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, scratch, True)
+        text = "token s3cr3tvalue " + chr(0xD800) + " here"            # UTF-8 cannot hold a lone surrogate
+        with mock.patch.dict(sys.modules, _FakeDetectSecrets(["s3cr3tvalue"]).modules()), \
+                mock.patch.object(tempfile, "tempdir", scratch):
+            got, err = _quiet(L.redact, text)
+        self.assertEqual(os.listdir(scratch), [], "no scratch file is left behind")
+        self.assertEqual(got, (text, {}))
+        self.assertIn("[lineage] WARN: detect-secrets error (", err)
 
 
 class TestMarkdownBlocks(unittest.TestCase):
@@ -4077,6 +4090,20 @@ def _split_main_cases(root, jf, marker, many):
     ], page
 
 
+_SPLIT_ENV_EXTRA = ("acme, 스크립트", "토큰")      # LINEAGE_REDACT_EXTRA of the two runs that read it
+
+
+def _env_holds(*values):
+    """Whether os.environ can hold `values`: not where the file system encoding lacks their letters (ASCII under
+    LC_ALL=C with PYTHONCOERCECLOCALE=0 and PYTHONUTF8=0, or Latin-1)."""
+    try:
+        for v in values:
+            os.fsencode(v)
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _split_main_corpus(root):
     """(exit code of each run, sha256 of each page written) for main over the cases above and the sources that need
     the environment, stdin or the project folder. stderr is left out: it names temporary paths."""
@@ -4095,9 +4122,9 @@ def _split_main_corpus(root):
     with mock.patch.dict(os.environ):
         os.environ.pop("LINEAGE_REDACT_EXTRA", None)
         codes = [rc(argv) for argv in cases]
-        os.environ["LINEAGE_REDACT_EXTRA"] = "acme, 스크립트"
+        os.environ["LINEAGE_REDACT_EXTRA"] = _SPLIT_ENV_EXTRA[0]
         codes.append(rc(["--session", str(jf)] + rb + ["--output", page("e1")]))
-        os.environ["LINEAGE_REDACT_EXTRA"] = "토큰"
+        os.environ["LINEAGE_REDACT_EXTRA"] = _SPLIT_ENV_EXTRA[1]
         codes.append(rc(["--session", str(jf)] + rb + ["--redact-extra", "배포", "--output", page("e2")]))
         os.environ.pop("LINEAGE_REDACT_EXTRA", None)
         with mock.patch.object(sys, "stdin", io.StringIO(jf.read_text(encoding="utf-8"))):
@@ -4154,6 +4181,7 @@ class TestSplitGoldens(unittest.TestCase):
         L.CACHE_BASE = self.d / "cache"
         self._same("render_rows", _split_rows_corpus)
 
+    @unittest.skipUnless(_env_holds(*_SPLIT_ENV_EXTRA), "the environment cannot hold the corpus keywords here")
     def test_main(self):
         self._same("main", _split_main_corpus, self.d)
 

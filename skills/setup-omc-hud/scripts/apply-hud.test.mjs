@@ -35,9 +35,7 @@ after(() => rmSync(root, { recursive: true, force: true }));
 const POSIX = process.platform !== "win32";
 const posixModes = { skip: !POSIX && "Windows has no POSIX mode bits" };
 const posixSignals = { skip: !POSIX && "Windows has no POSIX signals" };
-// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
-// tests that make one run only where this account can.
-const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+// A file link needs a privilege on Windows, so the tests that make one run only where this account can.
 const canLinkFiles = (() => {
   const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
   try {
@@ -107,7 +105,7 @@ function install(opts) {
   const childEnv = { ...base, HOME: o.home, USERPROFILE: o.home, ...o.env };
   if (o.value !== null) childEnv.CLAUDE_CONFIG_DIR = o.value;
   const [cmd, ...args] = [...o.wrap, process.execPath, ...o.nodeArgs, o.apply];
-  const r = spawnSync(cmd, args, { cwd: o.cwd, env: childEnv, encoding: "utf8" });
+  const r = spawnSync(cmd, args, { cwd: o.cwd, env: childEnv, encoding: "utf8", timeout: o.timeout });
   return { status: r.status, out: `${r.stdout}${r.stderr}`, err: r.stderr, home: o.home };
 }
 const settingsOf = (cfg) => JSON.parse(readFileSync(join(cfg, "settings.json"), "utf8"));
@@ -641,10 +639,27 @@ test("config-dir.mjs 가 없는 OMC 루트와 판 폴더는 쓰지 않음", () =
   assert.ok(existsSync(join(cfg, "hud", "lib", "config-dir.mjs")));
 });
 
+// A write that fails for a reason the install cannot see coming (an I/O error), after the loader and the wrapper
+// went in. A folder where a file goes was this test's way in before 0.20.5; that is now refused before anything.
+function failingWritePreload(suffix) {
+  const file = join(root, `fail-write-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import fs from "node:fs";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    "const write = fs.writeFileSync;",
+    "fs.writeFileSync = function (p, ...rest) {",
+    `  if (typeof p === "string" && p.endsWith(${JSON.stringify(suffix)})) throw Object.assign(new Error("i/o error"), { code: "EIO" });`,
+    "  return write.call(this, p, ...rest);",
+    "};",
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return ["--import", pathToFileURL(file).href];
+}
+
 test("예기치 못한 오류로 중간에 멈추면 종료 2 와 [x] 줄, 스택 없음", () => {
   const cfg = fresh();
-  mkdirSync(join(cfg, ".omc", "hud-config.json"), { recursive: true }); // a folder where the HUD config goes
-  const r = install({ cfg });
+  const r = install({ cfg, nodeArgs: failingWritePreload("hud-config.json") });
   assert.equal(r.status, 2, r.out);
   assert.match(r.out, /\[x\] Stopped partway/);
   assert.equal(r.err, "", "no stack trace");
@@ -660,7 +675,7 @@ test("기존 statusLine 의 다른 필드는 두고, 다른 명령이었으면 �
   assert.equal(s.padding, 2);
   assert.equal(s.refreshInterval, 30);
   assert.equal(s.command, `node "${slash(cfg)}/hud/omc-hud-custom.mjs"`);
-  assert.match(r.out, /\[\.\.\] statusLine ran "node \/x\/wrap\.mjs"/);
+  assert.match(r.out, /\[\.\.\] statusLine ran "node …" \(16 characters\)/);
 });
 
 test("상대경로 OMC_PLUGIN_ROOT 는 쓰지 않음", () => {
@@ -751,10 +766,10 @@ test("렌더 확인은 PATH 의 따옴표 친 폴더에서도 node 를 찾고 no
 test("이전 statusLine 명령의 보이지 않는 글자는 ? 로 보임", () => {
   const cfg = fresh();
   const rlo = String.fromCharCode(0x202e);
-  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: `node old${rlo}.mjs` } }));
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: `old${rlo}.mjs --x` } }));
   const r = install({ cfg });
   assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /\[\.\.\] statusLine ran "node old\?\.mjs"/);
+  assert.match(r.out, /\[\.\.\] statusLine ran "old\?\.mjs …"/);
   assert.ok(!r.out.includes(rlo), "the control character is not printed");
 });
 
@@ -973,8 +988,21 @@ const newFileGroup = (() => {
     rmSync(probe);
   }
 })();
-const otherGroup = POSIX ? process.getgroups().find((g) => g !== newFileGroup) : undefined;
-const otherGroupOpts = { skip: (!POSIX && "Windows has no POSIX groups") || (otherGroup === undefined && "this account is in one group only") };
+// Only a group a file here can be given: in a user namespace a group that is not mapped shows as 65534 and cannot.
+const canGive = (gid) => {
+  const probe = join(root, "group-probe");
+  writeFileSync(probe, "");
+  try {
+    chownSync(probe, process.getuid(), gid);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe);
+  }
+};
+const otherGroup = POSIX ? process.getgroups().find((g) => g !== newFileGroup && canGive(g)) : undefined;
+const otherGroupOpts = { skip: (!POSIX && "Windows has no POSIX groups") || (otherGroup === undefined && "this account has no other group a file here can be given") };
 
 test("새 파일이면 그룹이 바뀔 settings.json 은 제자리에 써 그룹과 권한이 그대로", otherGroupOpts, () => {
   const cfg = fresh();
@@ -1057,4 +1085,93 @@ test("렌더 확인: 모르는 출력도 정화", () => {
   const { out } = renderWith(`console.log(${JSON.stringify(`hello${ESC}x`)});\n`);
   assert.match(out, /unrecognized output: hello\?x/);
   assert.ok(!out.includes(ESC));
+});
+
+// B1-12: settings.json can hold tokens, and the line about the old statusLine command goes into a report. 0.20.5 review:
+// masking the parts that look like secrets missed every form no rule named (curl -u, sshpass -p, mysql -pPW, a JSON
+// password), so the line shows the command's first word (a variable it sets is skipped) and its length.
+test("이전 statusLine 명령은 첫 낱말(변수 대입은 건너뜀)과 길이만 보임", () => {
+  const cfg = fresh();
+  // Made here, so no secret-looking text sits in the repository.
+  const pw = ["hu", "nt3r2"].join("");
+  const userinfo = ["me", pw].join(":");
+  const command = [
+    "COLUMNS=120", `API_TOKEN=${pw}`, 'node "/x/s.mjs"', `--password ${pw}`, `https://${userinfo}@example.invalid/p?key=${pw}`,
+    `-H "Authorization: ${pw}"`, `curl -u alice:${pw}`, `sshpass -p ${pw}`, `mysql -p${pw}`, `'{"password":"${pw}"}'`,
+  ].join(" ");
+  writeFileSync(join(cfg, "settings.json"), JSON.stringify({ statusLine: { type: "command", command } }));
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  const line = r.out.split("\n").find((l) => l.startsWith("[..] statusLine ran ")) ?? "";
+  assert.ok(line.includes(`"node …" (${command.length} characters)`), line);
+  assert.ok(!line.includes(pw) && !line.includes("COLUMNS") && !line.includes("/x/s.mjs"), line);
+  // a value in quotes is one word with its name, a quote left open runs to the end, and a first word that looks like
+  // a secret (a NAME=value in quotes, an address) is not shown (0.20.5 reviews N3 and d)
+  const word = ["Secret", "Word"].join("");
+  for (const [cmd, shownAs] of [[`PASSWORD="my ${word} pass" node /x/old.mjs --a`, '"node …"'], [`KEY='a ${word}' node x.mjs`, '"node …"'],
+    [`TOKEN="ab ${word}"tail node x`, '"node …"'], [`TOKEN="ab ${word} node x`, '"(no program)"'], [`"API_KEY=${word}" node x.mjs`, '"(program hidden) …"'],
+    [`https://u:${word}@example.invalid/hud.sh`, '"(program hidden)"'],
+    // a backslash escapes a quote or a space inside a word (0.20.5 code review r3)
+    [`PASSWORD="a \\" ${word} \\" b" node x`, '"node …"'], [`PASSWORD=a\\ ${word}\\ b node x`, '"node …"']]) {
+    const c = fresh();
+    writeFileSync(join(c, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: cmd } }));
+    const out = install({ cfg: c }).out;
+    const l = out.split("\n").find((x) => x.startsWith("[..] statusLine ran ")) ?? "";
+    assert.ok(l.includes(`${shownAs} (${cmd.length} characters)`), `${cmd}\n${l}`);
+    assert.ok(!l.includes(word) && !l.includes("tail"), l);
+  }
+  // a command of one word shows that word
+  const one = fresh();
+  writeFileSync(join(one, "settings.json"), JSON.stringify({ statusLine: { type: "command", command: "/usr/local/bin/my-hud" } }));
+  assert.match(install({ cfg: one }).out, /\[\.\.\] statusLine ran "\/usr\/local\/bin\/my-hud" \(21 characters\)/);
+});
+
+// Deferred 2: a hard-linked settings.json is written in place (the 2026-10-20 decision), so its other names change too.
+test("하드 링크인 settings.json 은 다른 이름도 바뀐다고 알리고, 이름이 하나면 알리지 않음", () => {
+  const cfg = fresh();
+  const file = join(cfg, "settings.json");
+  writeFileSync(file, JSON.stringify({ theme: "dark" }));
+  linkSync(file, join(fresh("snapshot"), "settings.json"));
+  const r = install({ cfg });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /\[\.\.\] settings\.json has 1 other name \(a hard link\); it was written in place/);
+  const plain = fresh();
+  writeFileSync(join(plain, "settings.json"), JSON.stringify({ theme: "dark" }));
+  assert.doesNotMatch(install({ cfg: plain }).out, /other name/);
+});
+
+// 0.20.5: a target that is there but no regular file stops the install before it reads or writes anything. Reading or
+// writing a FIFO waits for good, and a folder stopped the install half-way, after the loader was written.
+const NOT_REGULAR = /is not a regular file \(a folder, a FIFO or a device\); nothing changed/;
+function assertUntouched(cfg, rel) {
+  for (const f of [join("hud", "omc-hud.mjs"), join("hud", "omc-hud-custom.mjs"), "settings.json"]) {
+    if (f !== rel) assert.ok(!existsSync(join(cfg, f)), `${rel}: ${f} was written`);
+  }
+}
+test("설치 대상 자리에 FIFO 가 있으면 기다리지 않고 아무것도 바꾸지 않은 채 멈춤", { skip: !POSIX && "Windows has no FIFO" }, () => {
+  for (const rel of ["settings.json", join("hud", "omc-hud.mjs"), join(".omc", "hud-config.json")]) {
+    const cfg = fresh();
+    mkdirSync(dirname(join(cfg, rel)), { recursive: true });
+    assert.equal(spawnSync("mkfifo", [join(cfg, rel)]).status, 0);
+    const r = install({ cfg, timeout: 20000 });
+    assert.equal(r.status, 1, `${rel}: ${r.out}`);
+    assert.match(r.out, NOT_REGULAR, rel);
+    assertUntouched(cfg, rel);
+  }
+});
+
+test("설치 대상 자리에 폴더가 있으면 반쯤 쓰지 않고 아무것도 바꾸지 않은 채 멈춤", () => {
+  const cfg = fresh();
+  const rel = join("hud", "omc-hud-custom.mjs");
+  mkdirSync(join(cfg, rel), { recursive: true });
+  const r = install({ cfg, timeout: 20000 });
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, NOT_REGULAR);
+  assertUntouched(cfg, rel);
+  const other = fresh();
+  writeFileSync(join(other, ".omc"), "a file where the HUD config folder goes\n");
+  const f = install({ cfg: other, timeout: 20000 });
+  assert.equal(f.status, 1, f.out);
+  assert.match(f.out, /\.omc is not a folder; nothing changed/);
+  assertUntouched(other, "");
 });

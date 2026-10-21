@@ -197,8 +197,55 @@ const gitEnv = ({ network = false } = {}) => {
   return env;
 };
 
-function git(args, cwd = MARKET, opts = {}) {
-  return execFileSync("git", args, { cwd, env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: opts.timeout }).trim();
+// 저장소의 git 도 홈 폴더에서 돌리고 저장소는 -C 로 준다. Windows 는 이름만 준 프로그램을 일하는 폴더에서 PATH 보다 먼저
+// 찾아, 마켓플레이스(남의 저장소 사본)에 든 git.exe 가 돌 수 있다.
+function git(args, dir = MARKET, opts = {}) {
+  return execFileSync("git", ["-C", dir, ...args], { cwd: homedir(), env: gitEnv(opts), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: opts.timeout }).trim();
+}
+
+// 태그 받기를 띄우는 작은 node 프로세스. execFileSync 의 timeout 은 git 하나만 끝내, git 이 띄운 git remote-http 와
+// git-remote-http 가 연결을 붙든 채 남는다(실측: http 는 curl 의 정체 감지 30초, TLS 는 curl 의 연결 제한 300초까지). 흐름은
+// 동기 그대로 두고 이 프로세스가 git 을 띄워, 시간이 다 되거나 Ctrl+C(SIGINT), SIGTERM, SIGHUP 을 받으면 git 과 그 자식을 함께
+// 끝낸다. POSIX 는 git 을 새 프로세스 묶음으로 띄워 묶음에 SIGTERM(git 이 ref 잠금 파일을 지움), git 이 끝나거나 2초가 지나면
+// SIGKILL. Windows 는 git 이 살아 있을 때 taskkill /T /F 로 트리째 끝낸다. 시간이 다 되면 종료 124 다. git 은 홈 폴더에서
+// -C 로 돈다(git 함수와 같은 까닭). 알려진 한계: 바깥에서 이 도구의 프로세스 묶음에 SIGKILL 을 보내면(`timeout -s KILL` 등)
+// 이 프로세스가 먼저 끝나 새 묶음의 git 이 남는다. Ctrl+C, SIGTERM, Claude Code 의 작업 중지는 git 까지 끝낸다.
+const FETCH_REAPER = `
+const { spawn, spawnSync } = require("node:child_process");
+const { constants } = require("node:os");
+const [, ms, dir, ...args] = process.argv;
+const win = process.platform === "win32";
+const c = spawn("git", ["-C", dir, ...args], { cwd: require("node:os").homedir(), stdio: "inherit", detached: !win, windowsHide: true });
+const group = (sig) => { try { process.kill(-c.pid, sig); } catch { /* the group is gone */ } };
+const taskkill = \`\${process.env.SystemRoot || "C:\\\\Windows"}\\\\System32\\\\taskkill.exe\`;
+const tree = () => spawnSync(taskkill, ["/T", "/F", "/PID", String(c.pid)], { stdio: "ignore", windowsHide: true });
+let code = null;
+const stop = (why) => {
+  if (code !== null) return;
+  code = why;
+  if (win) { tree(); process.exit(code); }
+  group("SIGTERM");
+  setTimeout(() => { group("SIGKILL"); process.exit(code); }, 2000);
+};
+const t = setTimeout(() => stop(124), Number(ms));
+for (const s of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(s, () => stop(130));
+c.on("error", (e) => { clearTimeout(t); process.stderr.write("error: cannot run git (" + e.code + ")\\n"); process.exit(127); });
+c.on("exit", (status, sig) => {
+  clearTimeout(t);
+  if (!win) group("SIGKILL");
+  process.exit(code ?? status ?? 128 + (constants.signals[sig] || 0));
+});
+`;
+// 바깥 시간 제한은 위 프로세스가 끝내지 못할 때만 쓴다(node 를 띄우는 시간, SIGTERM 뒤 2초, taskkill).
+const REAPER_GRACE_MS = 10000;
+function gitFetch(args) {
+  try {
+    execFileSync(process.execPath, ["--input-type=commonjs", "-e", FETCH_REAPER, String(FETCH_TIMEOUT_MS), MARKET, ...args],
+      { cwd: homedir(), env: gitEnv({ network: true }), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: FETCH_TIMEOUT_MS + REAPER_GRACE_MS });
+  } catch (e) {
+    if (e.status === 124) e.code = "ETIMEDOUT";
+    throw e;
+  }
 }
 
 // ── 1. 업데이트 ──────────────────────────────────────────────────────────────
@@ -232,6 +279,10 @@ function useCached() {
 function canInstallTarget({ tar = true } = {}) {
   if (!existsSync(MARKET)) { bad(`마켓플레이스 없음: ${oneLine(MARKET)}\n      Claude Code 에서 marketplace 를 먼저 추가하십시오: ${REPO_URL}`); return false; }
   if (!existsSync(join(MARKET, ".git"))) { bad(`마켓플레이스 폴더가 git 저장소가 아님: ${oneLine(MARKET)}`); return false; }
+  // 판을 바꾸기 전에 installed_plugins.json 의 백업 자리를 본다. 링크나 일반 파일이 아닌 자리면 있으면 실패하는 복사가
+  // EEXIST 로 끝나 이미 있는 백업으로 보여, 백업 없이 바꾸게 된다. 풀기 전에 멈춘다.
+  const spot = backupSpotWhy(`${INSTALLED}.omcbak`);
+  if (spot) { bad(`installed_plugins.json 을 바꾸지 않음 (${spot}): ${oneLine(INSTALLED)}.omcbak`); return false; }
 
   // git 과 tar 에 의존한다. Windows 10+ / macOS / 대부분의 Linux 배포판에는 둘 다 있지만,
   // 최소 설치 컨테이너나 tar 없는 환경에서는 없을 수 있다. 여기서 못 찾으면 아래에서
@@ -248,19 +299,20 @@ function canInstallTarget({ tar = true } = {}) {
 // 부르지 않고 그렇다고 한다(git 은 "remote helper" 오류만 낸다). curl 은 비밀번호 안의 `/` 를 호스트의 끝으로 읽어 사용자
 // 정보 조각을 문구에 싣는다("Port number ended with 'Q'", "Could not resolve host: alice"). 그래서 다음이면 문구는 싣지
 // 않고 git 이 어떻게 끝났는지만 댄다: origin 에 사용자 정보가 있음, git 의 오류 줄에 사용자 정보가 든 주소가 남음(전역
-// insteadOf 가 더한 것. gitError 가 가린 자리 `//***@` 로 안다), 프록시 주소를 curl 이 잘못 읽을 수 있음(proxyMisread).
+// insteadOf 가 더한 것. 그 줄을 가린 자리 `//***@` 로 안다), 프록시 주소를 curl 이 잘못 읽을 수 있음(proxyMisread).
 // 바른 꼴의 사용자 정보는 git 이 줄에서 떼고 curl 도 제대로 읽어, 그 줄은 그대로 싣는다.
 function fetchTags() {
   const url = originUrl();
   if (typeof url === "string" && url.startsWith("omc-pinned://")) return "origin 이 고정되어 있음(omc-pinned://). 받으려면 먼저 --revert 로 고정을 푸십시오";
-  try { git(["fetch", "--tags", "--quiet", "origin"], MARKET, { network: true, timeout: FETCH_TIMEOUT_MS }); return null; }
+  try { gitFetch(["fetch", "--tags", "--quiet", "origin"]); return null; }
   catch (e) {
     if (e.code === "ETIMEDOUT") return `${FETCH_TIMEOUT_MS / 1000}초 안에 끝나지 않아 끊음(응답하지 않는 망일 수 있음)`;
-    const why = gitError(e);
+    const line = gitLine(e);
+    const why = redactUrl(line);
     const ended = `git 이 종료 ${oneLine(e.status ?? e.signal)} 로 끝남`;
     if (hasUserinfo(url) || why.includes("//***@")) return `${ended}(주소에 사용자 정보가 있어 git 의 문구는 싣지 않음)`;
     if (proxyMisread()) return `${ended}(프록시 주소의 사용자 정보를 curl 이 잘못 읽을 수 있어 git 의 문구는 싣지 않음)`;
-    return why;
+    return shownGit(line);
   }
 }
 
@@ -389,10 +441,17 @@ function writeSynced(tmp, data, mode) {
   const fd = openSync(tmp, "wx", mode);
   try {
     writeFileSync(fd, data);
-    fsyncSync(fd);
+    syncIfAble(fd);
   } finally {
     closeSync(fd);
   }
+}
+
+// fsync 를 하지 않는 파일 시스템(EINVAL, ENOTSUP)에서도 새 파일은 rename 으로 통째로 바뀐다. 잃는 것은 정전 때의 안전뿐이다.
+// 그 밖의 오류는 그대로 던진다(쓰지 못함으로 알림). azure-adapter 의 syncIfAble 과 같은 꼴이다.
+const NO_FSYNC = new Set(["EINVAL", "ENOTSUP"]);
+function syncIfAble(fd) {
+  try { fsyncSync(fd); } catch (e) { if (!NO_FSYNC.has(e.code)) throw e; }
 }
 
 // 파일의 권한 비트. 읽을 수 없으면 0644.
@@ -930,10 +989,16 @@ const OUTSIDE = "파일이 플러그인 폴더 밖에 있음";
 // 폴더)이면 그 이유를, 아니면 null. 백업 자리가 깨진 링크면 existsSync 는 false 라, 복사가 링크가 가리키는 곳에 쓴다.
 // 일반 파일이 아닌 백업 자리는 있으면 실패하는 복사가 EEXIST 로 끝나 "처음 백업" 으로 보이므로, 백업 없이 패치하게 된다.
 function whyNotWrite(root, file, bak) {
-  if (isLink(bak)) return "백업 자리가 링크";
-  if (notRegularAt(bak)) return "백업 자리가 일반 파일이 아님";
+  const spot = backupSpotWhy(bak);
+  if (spot) return spot;
   if (!insideRoot(root, file)) return OUTSIDE;
   return notWritable(file);
+}
+
+// 백업 자리가 링크이거나 일반 파일이 아닌 것(FIFO, 폴더)이면 그 이유, 아니면 null.
+function backupSpotWhy(bak) {
+  if (isLink(bak)) return "백업 자리가 링크";
+  return notRegularAt(bak) ? "백업 자리가 일반 파일이 아님" : null;
 }
 
 // 그 자리에 일반 파일도 링크도 아닌 것(FIFO, 폴더, 장치)이 있으면 true. 없는 자리는 false.
@@ -1055,18 +1120,70 @@ process.on("uncaughtException", (e) => {
   if (!e?.code) for (const l of String(e?.stack ?? "").split("\n").filter((x) => /^\s+at /.test(x)).slice(0, 3)) log(`      ${oneLine(l.trim())}`);
   process.exit(1);
 });
+// git 이 줄에서 주소를 닫는 글자(`'...':` 의 끝).
+const CLOSING = /'?:?$/;
 // URL 의 사용자 정보와 쿼리의 값(이름과 상관없이)을 가린다. 출력과 기록에 비밀이 남지 않는다. 사용자 정보는 처음 `//` 뒤부터
 // 마지막 `@` 까지다(공백, 탭, 비밀번호 안의 `/` `?` `#` `@` 도). 경로나 쿼리에 `@` 가 든 URL 은 호스트까지 가려진다 — 비밀번호를
 // 놓치는 것보다 낫다. `//` 가 없는 ssh 꼴(`git@host:`)은 그대로다. 위치로 찾아 길이에 비례해 끝난다(`//.*@` 꼴 정규식은 `@` 없이
 // `/` 가 많은 글에서 길이의 제곱만큼 걸린다). 쿼리의 이름 칸은 `?` 를 받지 않는다. 받으면 `=` 없는 `?` 가 많은 origin 에서
-// 시작 자리마다 끝까지 읽어 길이의 제곱만큼 걸린다.
+// 시작 자리마다 끝까지 읽어 길이의 제곱만큼 걸린다. 값 끝에 git 이 주소를 닫는 `'` 와 `:` 가 붙으면 그 둘은 남긴다.
 function redactUrl(url) {
   let s = String(url);
   const i = s.indexOf("//");
   const at = s.lastIndexOf("@");
   if (i !== -1 && at > i + 1) s = `${s.slice(0, i + 2)}***${s.slice(at)}`;
-  return s.replace(/([?&][^=&#\s?]*=)[^&#\s]*/g, "$1***");
+  return s.replace(/([?&][^=&#\s?]*=)[^&#\s]*/g, (m, name) => `${name}***${CLOSING.exec(m)[0]}`);
 }
+
+// 진단 줄의 주소(사용자 결정 2026-10-21): 기본 상류(REPO_URL)는 가린 꼴 그대로, 그 밖은 scheme 과 host 까지만. 미러의
+// 경로, 조각, `;` 매개변수에는 토큰이 들 수 있다. 기본 상류인지는 scheme, 사용자 정보(가렸든 아니든), 쿼리를 빼고 본다.
+const PIN = "omc-pinned://";
+const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+function hostPath(url) {
+  let s = String(url);
+  if (s.startsWith(PIN)) s = s.slice(PIN.length);
+  const scheme = SCHEME.exec(s);
+  if (scheme) s = s.slice(scheme[0].length);
+  // user information ends at an @ before the first / (and ? # \ in a URL): an @ further on is in the path
+  const cut = s.search(scheme ? /[/?#\\]/ : /\//);
+  const at = s.lastIndexOf("@", cut === -1 ? s.length : cut);
+  if (at !== -1) s = s.slice(at + 1);
+  // the query to the end, found by position (a pattern from each "?" took the square of the length with a "#" after
+  // them); with a fragment after it the address is another one (a fragment is not masked)
+  const q = s.indexOf("?", s.lastIndexOf("#") + 1);
+  if (q !== -1) s = s.slice(0, q);
+  // the closing slashes by a loop: `/\/+$/` takes the square of the length on an address of many slashes
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.slice(0, end).replace(/\.git$/i, "").toLowerCase();
+}
+// 기본 상류는 scheme 이 있는 주소만이다. scheme 없는 `user:<토큰>@github.com/...` 은 git 이 scp 꼴(host 가 `user`)로 읽고,
+// 가림(처음 `//` 부터)도 그 사용자 정보에 닿지 않는다.
+const isUpstream = (url) => SCHEME.test(String(url).startsWith(PIN) ? String(url).slice(PIN.length) : String(url)) && hostPath(url) === hostPath(REPO_URL);
+// 기본 상류의 보이는 꼴: 쿼리는 이름 없는 토큰까지 통째로 `?***`(redactUrl 은 `이름=값` 만 가린다). 쿼리를 가림보다 먼저
+// 잘라, 쿼리 속 `@` 까지 가린 사용자 정보가 쿼리의 `?` 를 먹지 않게 한다. 기본 상류의 첫 `?` 는 쿼리다: host 앞에 날 `?` 가
+// 있으면 hostPath 가 거기서 잘라 기본 상류가 아니다.
+function upstreamShown(u) {
+  const q = u.indexOf("?");
+  return q === -1 ? redactUrl(u) : `${redactUrl(u.slice(0, q))}?***`;
+}
+// --check 가 보이는 origin(가리기 전의 글).
+const shownOrigin = (url) => (isUpstream(url) ? upstreamShown(String(url)) : hostOnly(url));
+// git 의 줄에 든 주소마다, git 이 찍은 그대로의 주소로 정한 꼴. 가린 뒤에 정하면 마지막 `@` 까지 먹은 가림 뒤의 글(경로나
+// 쿼리 속 `@` 뒤의 토큰)이 host 로 보였다. 고정한 주소는 앞의 `omc-pinned://` 를 남긴다. 주소는 공백 앞까지로 보고, git 이
+// 주소를 닫는 `'` 와 `:` 는 남긴다.
+function shownAddress(u) {
+  if (isUpstream(u)) return upstreamShown(u);
+  const pin = u.startsWith(PIN) ? PIN : "";
+  const inner = u.slice(pin.length);
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(inner)) return `${pin}${hostOnly(inner)}`;
+  const host = hostPath(inner).split("/")[0];
+  return `${pin}${HOST_SHAPE.test(host) ? host : "(호스트를 알아볼 수 없음)"}`;
+}
+const shownAddresses = (line) => line.replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/\S*/g, (u) => {
+  const tail = CLOSING.exec(u)[0];
+  return `${shownAddress(u.slice(0, u.length - tail.length))}${tail}`;
+});
 
 // URL 의 scheme 과 host 까지만. 비밀은 사용자 정보와 쿼리 밖(경로, 조각, `;` 매개변수)에도 들 수 있어 나머지는 버린다.
 // scp 꼴(`git@host:org/repo.git`)은 host 만이다. 파서가 host 로 읽어도 host 모양(이름이나 [IPv6], 선택 포트)이 아니면
@@ -1152,20 +1269,21 @@ function removePostToolUse(hj, why) {
 // 고정과 되돌리기가 하지 않은 일을 했다고 끝난다.
 function originUrl() {
   try { return git(["config", "--get", "remote.origin.url"]); }
-  catch (e) { return e.status === 1 ? null : { unreadable: gitError(e) }; }
+  catch (e) { return e.status === 1 ? null : { unreadable: gitLine(e) }; }
 }
 
-// git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다).
-// 정화하고 URL 의 인증 정보를 가린다. git 이 오류 문구 없이 끝나면 Node 의 문구(명령 줄 전체, 곧 URL 전체가 든다)를
-// 쓰지 않고 어떻게 끝났는지만 댄다.
-const gitError = (e) => {
+// git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다), 정화하고
+// 200자까지, 아직 가리지 않은 글. git 이 오류 문구 없이 끝나면 Node 의 문구(명령 줄 전체, 곧 URL 전체가 든다)를 쓰지 않고
+// 어떻게 끝났는지만 댄다.
+const gitLine = (e) => {
   const lines = String(e.stderr || "").split("\n").filter((l) => l.trim());
   if (!lines.length) {
     return e.status == null && !e.signal && e.code ? `git 을 실행하지 못함 (${oneLine(e.code)})` : `git 이 오류 문구 없이 끝남 (${oneLine(e.signal || e.status)})`;
   }
-  const line = lines.find((l) => /^(fatal|error):/.test(l)) || lines[0];
-  return oneLine(redactUrl(line)).slice(0, 200);
+  return oneLine(lines.find((l) => /^(fatal|error):/.test(l)) || lines[0]).slice(0, 200);
 };
+// 출력에 싣는 꼴: 주소마다 git 이 찍은 주소로 정한 꼴(shownAddress), 나머지는 가림.
+const shownGit = (line) => redactUrl(shownAddresses(line));
 
 function pinMarketplace() {
   if (!existsSync(MARKET)) return "no-marketplace";
@@ -1175,14 +1293,14 @@ function pinMarketplace() {
   if (!existsSync(join(MARKET, ".git"))) return "no-git";
   const url = originUrl();
   if (url === null) return "no-remote";
-  if (typeof url !== "string") { bad(`origin 을 읽지 못함 (${url.unreadable}): ${oneLine(MARKET)}`); return "origin-unreadable"; }
+  if (typeof url !== "string") { bad(`origin 을 읽지 못함 (${shownGit(url.unreadable)}): ${oneLine(MARKET)}`); return "origin-unreadable"; }
 
   if (MODE === "revert") return unpinMarketplace(url);
-  if (url.startsWith("omc-pinned://")) return alreadyPinned();
-  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(redactUrl(url))})`); return "needs"; }
+  if (url.startsWith(PIN)) return alreadyPinned();
+  if (MODE === "check") { bad(`마켓플레이스 미고정 (origin=${oneLine(shownOrigin(url))})`); return "needs"; }
 
   try { git(["remote", "set-url", "--", "origin", `omc-pinned://${url}`]); }
-  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${gitError(e)})`); return "pin-failed"; }
+  catch (e) { bad(`고정 실패: origin 을 바꾸지 못했습니다 (${shownGit(gitLine(e))})`); return "pin-failed"; }
   return writePinRecord() ? "pinned" : "record-failed";
 }
 
@@ -1330,7 +1448,7 @@ function unpinMarketplace(url) {
   if (!restored) return "not-pinned";
   try { git(["remote", "set-url", "--", "origin", restored]); }
   catch (e) {
-    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${gitError(e)})`);
+    bad(`고정 해제 실패: origin 을 되돌리지 못했습니다 (${shownGit(gitLine(e))})`);
     log(`      원래 URL(호스트까지만): ${oneLine(hostOnly(restored))}. 원문은 origin 의 omc-pinned:// 뒤에 그대로 있습니다.`);
     return "unpin-failed";
   }
@@ -1538,13 +1656,19 @@ log(`  ${MODE === "check" ? `패치 필요 ${r.need}건` : MODE === "revert" ? `
 function reportNoBackup(v, list, what) {
   bad(`${oneLine(v)}: ${what} — ${list.map(shown).join(", ")}`);
   log(`      백업(.omcbak)이 없어 되돌릴 원본이 디스크에 없습니다. 원본이 필요하면:`);
-  if (ROOT) log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`);
-  else {
-    log(`      git -C "${oneLine(MARKET)}" archive -o "<임시 tar>" v${oneLine(v)} scripts/<이름>.mjs`);
-    log(`      tar -xf "<임시 tar>" -C "${oneLine(join(CACHE, v))}"`);
-    log("      <임시 tar> 는 새로 만든 임시 폴더(bash: mktemp -d) 안의 파일로 정하고, 다 쓴 뒤 폴더째 지우십시오.");
+  if (ROOT) { log(`      같은 판의 상류 원본에서 scripts/<이름>.mjs 를 다시 가져오십시오.`); return; }
+  const [market, dest] = [MARKET, join(CACHE, v)].map((p) => (oneLine(p) === p ? shellArg(p) : null));
+  if (!market || !dest) {
+    log(`      폴더 경로를 셸 명령에 그대로 넣을 수 없어 명령을 싣지 않습니다. 마켓플레이스 폴더 ${oneLine(MARKET)} 의 태그 v${oneLine(v)} 에서 scripts/<이름>.mjs 를 꺼내 ${oneLine(join(CACHE, v))} 에 푸십시오.`);
+    return;
   }
+  log(`      git -C ${market} archive -o "<임시 tar>" 'v${oneLine(v)}' 'scripts/<이름>.mjs'`);
+  log(`      tar -xf "<임시 tar>" -C ${dest}`);
+  log("      <임시 tar> 는 새로 만든 임시 폴더(bash: mktemp -d) 안의 파일로 정하고, 다 쓴 뒤 폴더째 지우십시오.");
 }
+// 손으로 칠 명령에 넣는 값. bash 와 PowerShell 모두 작은따옴표 안의 글은 그대로 읽는다(PowerShell 은 ‘ ’ ‚ ‛ 도 작은따옴표로
+// 읽는다). 그런 글자가 든 값은 큰따옴표로 감싸되, 두 셸이 큰따옴표 안에서 달리 읽는 글자($ ` " ! 와 “ ” „)도 들면 null 이다.
+const shellArg = (v) => (!/['\u{2018}-\u{201B}]/u.test(v) ? `'${v}'` : /[$`"!\u{201C}-\u{201E}]/u.test(v) ? null : `"${v}"`);
 for (const [v, list] of Object.entries(foreignBy)) reportNoBackup(v, list, "이 도구가 만들지 않은 수정이 남아 있습니다");
 for (const [v, list] of Object.entries(orphanBy)) reportNoBackup(v, list, "패치는 있는데 백업이 없어 되돌리지 못했습니다");
 

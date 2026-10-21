@@ -60,6 +60,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -102,6 +103,10 @@ const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const SPECIAL = Object.freeze({ bytes: null, text: null, special: true });
 // What sits at a name that is a link to nothing: Codex finds no file there, and writing would follow the link.
 const DANGLING = Object.freeze({ bytes: null, text: null, dangling: true });
+// An instructions file past this is no file of hand-written instructions: it is not read, so no .bak doubles it and a
+// file past what Node reads at once (2 GiB) is a refusal, not a crash.
+const MAX_FILE_BYTES = 32 * 1024 * 1024;
+const TOO_BIG = Object.freeze({ bytes: null, text: null, tooBig: true });
 // What opening a name fails with when no regular file can be there: links that loop (ELOOP) or a socket (ENXIO,
 // EOPNOTSUPP). macOS answers a socket with errno 102, which Node 22 does not name ("Unknown system error -102"), so
 // the kind of what is there decides too.
@@ -136,7 +141,9 @@ function readFile(path) {
     return openFailure(path, e);
   }
   try {
-    if (!fstatSync(fd).isFile()) return SPECIAL;
+    const st = fstatSync(fd);
+    if (!st.isFile()) return SPECIAL;
+    if (st.size > MAX_FILE_BYTES) return TOO_BIG;
     const bytes = readFileSync(fd);
     try {
       return { bytes, text: UTF8.decode(bytes) };
@@ -180,10 +187,22 @@ export function writeFresh(file, data, mode = 0o644) {
   rmSync(tmp, { force: true });
   try {
     writeFileSync(tmp, data, { flag: "wx", mode });
-    renameSync(tmp, file);
+    renameOver(tmp, file);
   } catch (e) {
     rmSync(tmp, { force: true });
     throw e;
+  }
+}
+
+// Windows does not rename a file over a link to a folder: there the link goes first, and the folder it
+// leads to stays.
+function renameOver(tmp, file) {
+  try {
+    renameSync(tmp, file);
+  } catch (e) {
+    if (process.platform !== "win32" || !lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) throw e;
+    unlinkSync(file);
+    renameSync(tmp, file);
   }
 }
 
@@ -198,8 +217,12 @@ export const denied = (e) => e.code === "EACCES" || e.code === "EPERM" || e.code
  * So do letters that print as nothing (default-ignorable ones such as U+3164),
  * the braille blank and spaces other than the ASCII one, which hide text as blanks.
  */
+// Marks drawn over or around the letter before them (a stroke, a slash, a ring), which make a name look like another.
+// U+0338 stays after a sign it makes another of in a decomposed name (= and U+0338 are ≠ in NFD, as macOS may keep it).
+const OVERLAY = /[\p{Me}\u{0334}-\u{0337}\u{20d2}\u{20d3}\u{20d8}-\u{20da}\u{20e5}\u{20e6}\u{20ea}\u{20eb}]|(?<![<=>\u{2190}\u{2192}\u{2194}\u{21d0}\u{21d2}\u{21d4}\u{2203}\u{2208}\u{220b}\u{2223}\u{2225}\u{223c}\u{2243}\u{2245}\u{2248}\u{224d}\u{2261}\u{2264}\u{2265}\u{2272}\u{2273}\u{2276}\u{2277}\u{227a}-\u{227d}\u{2282}\u{2283}\u{2286}\u{2287}\u{2291}\u{2292}\u{22a2}\u{22a8}\u{22a9}\u{22ab}\u{22b2}-\u{22b5}\u{2add}])\u{0338}/gu;
+
 export const where = (value) =>
-  String(value).replace(
+  String(value).replace(OVERLAY, "?").replace(
     /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}\p{Variation_Selector}\p{Default_Ignorable_Code_Point}\u{2800}\u{a0}\u{1680}\u{2000}-\u{200a}\u{202f}\u{205f}\u{3000}]/gu,
     "?",
   );
@@ -375,6 +398,7 @@ const otherBlocks = (t, text) =>
   });
 
 const special = (f) => f.special === true;
+const tooBig = (f) => f.tooBig === true;
 const binary = (f) => f.bytes !== null && f.text === null;
 const unpaired = (f) => f.spans === null;
 const hasBlock = (f) => f.spans !== null && f.spans.length > 0;
@@ -404,8 +428,8 @@ function codexFiles(t, o) {
   const read = (name) => {
     const path = join(o.codexDir, name);
     const file = readFile(path);
-    if (file === null || file.special || file.dangling) {
-      return { path, bytes: null, text: null, spans: [], special: file?.special === true, dangling: file?.dangling === true };
+    if (file === null || file.special || file.dangling || file.tooBig) {
+      return { path, bytes: null, text: null, spans: [], special: file?.special === true, dangling: file?.dangling === true, tooBig: file?.tooBig === true };
     }
     return { path, ...file, spans: file.text === null ? null : blockSpansOf(file.text, t.open, t.close) };
   };
@@ -452,10 +476,12 @@ function placeState(files) {
 // "off", "on", "stale", "misplaced" (only in AGENTS.md while Codex reads the
 // override, so not applied), "hidden" (in the override with no text of its own,
 // applied but hiding AGENTS.md), "dangling" (nowhere, and AGENTS.md is a link to
-// nothing), "unpaired", "notutf8" or "notregular" (a folder, FIFO, socket or
-// link loop at a file's name). Without rules any block in its place counts as "on".
+// nothing), "unpaired", "notutf8", "toobig" (a file past 32 MiB, left unread) or
+// "notregular" (a folder, FIFO, socket or link loop at a file's name). Without
+// rules any block in its place counts as "on".
 function codexState(t, files, rules) {
   if (files.all.some(special)) return "notregular";
+  if (files.all.some(tooBig)) return "toobig";
   if (files.all.some(binary)) return "notutf8";
   if (files.all.some(unpaired)) return "unpaired";
   if (!hasBlock(files.target)) return placeState(files);
@@ -552,7 +578,7 @@ function tryLock(path, token) {
   }
   const failed = writeToken(fd, token);
   if (failed === null) return "taken";
-  const gone = dropMade(path, failed.made);
+  const gone = dropMade(path, failed.made, token);
   if (failed.error.code !== "ESTALE") throw failed.error;
   return gone ? "stale" : "left";
 }
@@ -579,14 +605,21 @@ function writeToken(fd, token) {
 // Removes the lock file a failed try made, only while the name still holds it (one device and one inode): true when
 // that file is not there any more, false when it may be (the share could not say, or gives no inode number; such a
 // lock goes stale in a minute).
-function dropMade(path, made) {
+function dropMade(path, made, token) {
   if (made === null || made.ino === 0n) return false;
   try {
-    if (sameInode(made, lstatSync(path, { bigint: true }))) rmSync(path, { force: true });
+    if (sameInode(made, lstatSync(path, { bigint: true })) && heldWords(path, token)) rmSync(path, { force: true });
     return true;
   } catch (e) {
     return e.code === "ENOENT";
   }
+}
+
+// Whether the lock file holds no words but a start of this run's token (none, or a write cut short): a lock another
+// run made at the name in between can get the very inode number, but it holds that run's own token, so it stays.
+function heldWords(path, token) {
+  const text = readFile(path)?.text;
+  return typeof text === "string" && token.startsWith(text);
 }
 
 // Removes a lock a dead run left. The name itself is looked at, not where it leads: a link to nothing or a link loop
@@ -678,7 +711,7 @@ const shadowNote = (files) =>
 // The file a refused state is about: the folder or FIFO, the file that is not UTF-8, or the one whose markers do
 // not pair up; null in any other state.
 function problemFile(files, state) {
-  const which = { notregular: special, notutf8: binary, unpaired }[state];
+  const which = { notregular: special, toobig: tooBig, notutf8: binary, unpaired }[state];
   return which ? files.all.find(which) : null;
 }
 
@@ -688,6 +721,7 @@ function codexRefusal(t, files, state) {
   if (!file) return null;
   const why = {
     notregular: "일반 파일이 아니라 그대로 두었습니다",
+    toobig: "32MiB 보다 큰 파일이라 그대로 두었습니다",
     notutf8: "UTF-8 이 아닌 파일이라 그대로 두었습니다",
     unpaired: `${t.slug} 표시의 짝이 맞지 않아 그대로 두었습니다`,
   }[state];
@@ -760,6 +794,7 @@ const STATE_TEXT = {
   hiddenbroken: "켜짐, 단 AGENTS.override.md 에 블록만 있고 AGENTS.md 가 끊어진 링크라 on 이 블록을 옮기지 못함 (링크 확인 필요)",
   notutf8: "UTF-8 이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   notregular: "일반 파일이 아닌 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
+  toobig: "32MiB 보다 큰 지침 파일이 있어 손대지 않음 (on, off 모두 거부)",
   unpaired: "표시의 짝이 맞지 않음 (on, off 모두 거부. 남은 표시 줄 정리 필요)",
   dangling: "꺼짐, 단 AGENTS.md 가 끊어진 링크라 on 이 거부함 (링크 확인 필요)",
 };
@@ -810,7 +845,7 @@ export function stateLines(t, o, rules) {
  */
 export function present(t, runtime, o) {
   if (runtime === "claude") return isDir(o.claudeDir) && claudeState(t, readFile(claudeFile(t, o))) === "ours";
-  return isDir(o.codexDir) && !["off", "notutf8", "notregular", "dangling"].includes(codexState(t, codexFiles(t, o)));
+  return isDir(o.codexDir) && !["off", "notutf8", "notregular", "toobig", "dangling"].includes(codexState(t, codexFiles(t, o)));
 }
 
 const knownRuntime = (runtime) => {

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { TODO_TOOL, callLabel, describe, endTurn, freshState, noteTaskTool, readTodos, startTurn } from './progress.mjs';
+import { TODO_TOOL, callLabel, describe, endTurn, freshState, noteTaskTool, planRead, planTarget, planTouched, readTodos, startTurn, takePlan } from './progress.mjs';
 import { register } from './register.mjs';
 
 const PANE = 'banker-progress';
@@ -1832,4 +1832,179 @@ test('the mark cap, reached while a late TaskList is taken in, keeps the marks o
   noteTaskTool(s, { tool: 'TaskList' }, late, 0, since, order);
   assert.equal(s.tasks.get('1')?.status, 'completed', 'the list begun before the task was completed does not bring it back');
   assert.ok(s.marks.size <= 1000, `${s.marks.size} marks`);
+});
+
+// ---- 0.20.5 (B5 plan rows R4, D-S4, B5 rows 5, 6)
+// B5-01 R4: reads land in any order, and the pane shows the plan the touches would leave in their order. A later touch's
+// read that landed first used to make the earlier touch's read late, so the plan shown hung on which read came first.
+test('two review rounds written side by side keep the first one on the pane when the second one\'s read lands first', async () => {
+  const second = '/w/.omc/plans/deploy-architect-review-r1.md';
+  const eng = engine({ files: new Map([[REVIEW, REVIEW_MD], [second, '# 다른 검토\n- [ ] 다른 것\n']]), held: new Set([REVIEW]) });
+  const first = eng.tool({ tool: 'Write', file_path: REVIEW, agentId: 'critic' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await eng.tool({ tool: 'Write', file_path: second, agentId: 'architect' });
+  await eng.release(REVIEW);
+  await first;
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 검토 의견'], 'as when the reads land in the order the rounds were written');
+});
+
+test('a plan read that lands last still takes the place a file with no steps took from a review round', async () => {
+  const notes = '/w/.omc/plans/design-notes.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [REVIEW, REVIEW_MD], [notes, '# 설계 메모\n결정만 적음\n']]), held: new Set([PLAN]) });
+  await eng.tool({ tool: 'Write', file_path: REVIEW });
+  const plan = eng.tool({ tool: 'Read', file_path: PLAN });
+  await new Promise((resolve) => setImmediate(resolve));
+  await eng.tool({ tool: 'Read', file_path: notes });
+  await eng.release(PLAN);
+  await plan;
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 배포 계획'], 'in touch order the plan is shown, and a note the session only read does not push it away');
+});
+
+test('a note the session wrote, read last, stays when the plan read before it lands late', async () => {
+  const notes = '/w/.omc/plans/design-notes.md';
+  const eng = engine({ files: new Map([[PLAN, PLAN_MD], [REVIEW, REVIEW_MD], [notes, '# 설계 메모\n결정만 적음\n']]), held: new Set([PLAN, notes]) });
+  await eng.tool({ tool: 'Write', file_path: REVIEW });
+  const plan = eng.tool({ tool: 'Write', file_path: PLAN });
+  await new Promise((resolve) => setImmediate(resolve));
+  const wrote = eng.tool({ tool: 'Write', file_path: notes });
+  await new Promise((resolve) => setImmediate(resolve));
+  await eng.tool({ tool: 'Read', file_path: notes });
+  await eng.release(PLAN);
+  await plan;
+  await eng.release(notes);
+  await wrote;
+  assert.deepEqual(labels(await eng.draw()).slice(1, 2), ['계획: 설계 메모']);
+});
+
+test('a touch whose read never lands holds back no later plan, and the reads kept for it stay bounded', () => {
+  const s = freshState();
+  const lost = '/w/.omc/plans/lost.md';
+  planTouched(s, { tool: 'Write', file_path: lost }, { ok: true }); // its read never comes
+  const write = (text) => {
+    const r = planTouched(s, { tool: 'Write', file_path: PLAN }, { ok: true });
+    takePlan(s, PLAN, text, { touch: r.touch, own: r.own, weak: r.weak });
+  };
+  let most = 0;
+  for (let i = 0; i < 100; i++) {
+    write(`# 배포 계획\n- [x] 하나\n${'- [ ] 다음\n'.repeat(i % 3)}`);
+    most = Math.max(most, s.reads.length);
+  }
+  assert.equal(s.planPath, PLAN, 'the plan written last is on the pane');
+  assert.equal(s.plan.total, 1 + (99 % 3), 'with the words of its last write');
+  assert.ok(most <= 16, `${most} reads kept`);
+  takePlan(s, lost, '# 잃어버린 계획\n- [ ] x\n', { touch: 1, own: true, weak: false }); // it lands at last, past its place
+  for (let i = 0; i < 100; i++) write('# 배포 계획\n- [x] 하나\n');
+  assert.equal(s.planPath, PLAN);
+  assert.equal(s.reads.length, 0, 'no read piles up behind the lost one');
+});
+
+// B5 plan row D-S4: a long TodoWrite list is cut in one pass; one item at a time took the square of its length.
+const oneByOne = (items, max) => {
+  const out = [...items];
+  while (out.length > max) out.splice(out.indexOf(out.find((t) => t.status === 'completed') ?? out[0]), 1);
+  return out;
+};
+test('a TodoWrite list of 20,000 items is cut to the pane\'s 50 in well under the hooks worker\'s patience, as one cut at a time would leave it', () => {
+  const STATES = ['pending', 'in_progress', 'completed'];
+  const next = seeded(7);
+  const rand = (n) => Math.floor(next() * n);
+  for (let run = 0; run < 300; run++) {
+    const todos = Array.from({ length: rand(140) }, (_, i) => ({ content: `할 일 ${i}`, status: STATES[rand(3)] }));
+    const s = freshState();
+    noteTaskTool(s, { tool: 'TodoWrite', todos }, {}, 0);
+    assert.deepEqual(s.todos.map((t) => t.description), oneByOne(todos, 50).map((t) => t.content), `run ${run}`);
+  }
+  const s = freshState();
+  const big = Array.from({ length: 20000 }, (_, i) => ({ content: `할 일 ${i}`, status: STATES[i % 3] }));
+  const t0 = performance.now();
+  noteTaskTool(s, { tool: 'TodoWrite', todos: big }, {}, 0);
+  assert.ok(performance.now() - t0 < 1000, `${Math.round(performance.now() - t0)} ms`);
+  assert.equal(s.todos.length, 50);
+});
+
+// B5 row 6: the state keeps a task's words no longer than any description reads of them.
+test('a task\'s description and its words in progress are kept no longer than a description reads, and the pane says the same', () => {
+  const s = freshState();
+  const long = `${'설명 '.repeat(100)}${'x'.repeat(5_000_000)}`;
+  noteTaskTool(s, { tool: 'TaskCreate', subject: '구현', description: long, activeForm: long }, created('1', '구현'), 0);
+  noteTaskTool(s, { tool: 'TodoWrite', todos: [{ content: long, status: 'in_progress', activeForm: long }] }, {}, 0);
+  const held = s.tasks.get('1');
+  assert.ok(held.description.length <= 4096 && held.activeForm.length <= 4096, `${held.description.length}, ${held.activeForm.length}`);
+  assert.ok(s.todos[0].description.length <= 4096 && s.todos[0].activeForm.length <= 4096);
+  const shown = describe({ ...freshState(), tasks: new Map([['1', { ...held, description: long, activeForm: long }]]), selected: held.key }, 0);
+  assert.equal(describe({ ...s, todos: null, selected: held.key }, 0), shown, 'what the pane says of the task is the same');
+});
+
+// B5 row 5: the engine drops a Box key that holds a control character or runs past 10,000 characters (2.1.305).
+test('a task id that holds a control character or runs past 10,000 characters gets a key the engine keeps; a plain id keeps k-<id>', async () => {
+  const eng = engine();
+  await eng.tool({ tool: 'TaskList' }, { result: { tasks: [
+    { id: '1', subject: '보통', status: 'in_progress' },
+    { id: '2\u{1b}[31m', subject: '제어 글자', status: 'pending' },
+    { id: 'x'.repeat(20000), subject: '긴 id', status: 'pending' },
+  ] } });
+  const tree = await eng.draw();
+  const keys = walk(tree).filter((n) => n.type === 'Box' && n.props?.key).map((n) => String(n.props.key));
+  assert.ok(keys.includes('row-k-1'), keys.join(' ').slice(0, 200));
+  const bad = keys.filter((k) => /[\u{0}-\u{1f}\u{7f}-\u{9f}]/u.test(k) || k.length > 10000);
+  assert.deepEqual(bad.map((k) => k.slice(0, 20)), []);
+  assert.equal(new Set(keys).size, keys.length, 'no two rows share a key');
+});
+
+// B5-01 R4, at large: random runs of plan touches (writes and reads, by the session or an agent) and reads again at a
+// turn's edge, each read landing any time after it began, show what the same reads show when each lands at once.
+const R4_FILES = [
+  [REVIEW, REVIEW_MD], [REVIEW, '# 검토 의견\n- [x] 고칠 것\n'], ['/w/.omc/plans/deploy-architect-review-r1.md', '# 다른 검토\n- [ ] 다른 것\n'],
+  ['/w/.omc/plans/open-questions.md', '# 열린 질문\n- [ ] 질문 하나\n'], [PLAN, PLAN_MD], [PLAN, '# 배포 계획\n- [x] 설계\n- [ ] 구현\n'],
+  ['/w/.omc/plans/design-notes.md', '# 설계 메모\n결정만 적음\n'], ['/w/.omc/prd.json', '{"이것은": "계획이 아님"}'],
+];
+// events: [item, 'start' | 'land'] in the order they happen. A read again reads the plan shown when it starts.
+// What one item's start leaves to land: a read again of the plan shown, or a touch's read of what it wrote.
+function startRead(s, disk, it) {
+  if (it.again) return s.planPath ? { path: s.planPath, text: disk.get(s.planPath) ?? null, read: { since: s.touch, order: ++s.order } } : null;
+  disk.set(it.path, it.text);
+  const r = planTouched(s, { tool: it.tool, file_path: it.path, agentId: it.agentId }, { ok: true });
+  return r ? { path: it.path, text: it.text, read: { touch: r.touch, own: r.own, weak: r.weak } } : null;
+}
+function playReads(items, events) {
+  const s = freshState();
+  const disk = new Map();
+  const pending = [];
+  for (const [i, kind] of events) {
+    if (kind !== 'land') pending[i] = startRead(s, disk, items[i]);
+    else if (pending[i]) takePlan(s, pending[i].path, pending[i].text, pending[i].read);
+  }
+  return `${s.planPath ?? '-'}|${s.plan?.done ?? '-'}|${s.plan?.total ?? '-'}`;
+}
+test('of two reads again begun after the same touches, the one begun later wins whichever lands last', () => {
+  const s = freshState();
+  const r = planTouched(s, { tool: 'Write', file_path: PLAN }, { ok: true });
+  takePlan(s, PLAN, '# 배포 계획\n- [ ] 설계\n- [ ] 구현\n', { touch: r.touch, own: r.own, weak: r.weak });
+  const first = planTarget(s);
+  const second = planTarget(s);
+  assert.ok(second.order > first.order, JSON.stringify([first, second]));
+  planRead(s, second, '# 배포 계획\n- [x] 설계\n- [x] 구현\n- [ ] 배포\n');
+  planRead(s, first, '# 배포 계획\n- [x] 설계\n- [ ] 구현\n');
+  assert.deepEqual([s.plan.done, s.plan.total], [2, 3], 'the words of the read begun later stay');
+});
+
+test('reads that land in any order show the plan the same reads show when each lands at once (2,000 random runs)', () => {
+  const MODES = [{ tool: 'Write' }, { tool: 'Read' }, { tool: 'Write', agentId: 'a1' }];
+  const TYPES = [...R4_FILES.flatMap(([path, text]) => MODES.map((m) => ({ path, text, ...m }))), { again: true }];
+  const next = seeded(11);
+  const rand = (n) => Math.floor(next() * n);
+  for (let run = 0; run < 2000; run++) {
+    const items = Array.from({ length: 1 + rand(4) }, () => TYPES[rand(TYPES.length)]);
+    const atOnce = items.flatMap((_, i) => [[i, 'start'], [i, 'land']]);
+    const events = [];
+    const open = [];
+    for (let next = 0; events.length < 2 * items.length;) {
+      if (next < items.length && (!open.length || rand(2))) {
+        events.push([next, 'start']);
+        open.push(next++);
+      } else events.push([open.splice(rand(open.length), 1)[0], 'land']);
+    }
+    const what = () => JSON.stringify({ items: items.map((t) => (t.again ? 'again' : `${t.tool}${t.agentId ? '(agent)' : ''} ${t.path.split('/').at(-1)}`)), events });
+    assert.equal(playReads(items, events), playReads(items, atOnce), what());
+  }
 });

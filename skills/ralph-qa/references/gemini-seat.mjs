@@ -205,13 +205,27 @@ function check(seat) {
   return 0;
 }
 
-// Removes `dirs` and says which folders it left (`skipped`), on stdout as JSON and one line each on stderr.
-function remove({ dirs, skipped }) {
+// Removes `dirs`; gives back what it removed and the folders it left because their name is another project's too.
+function removeFolders({ dirs, skipped }) {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  return { removed: dirs, skipped };
+}
+
+// clean and sweep for a caller in the same process (the ralph-qa runner, seat-run.mjs).
+export function cleanSeat(seat, { env = process.env, platform = process.platform } = {}) {
+  return removeFolders(folderPlan(env, seatOwner(seat, platform)));
+}
+export function sweepBase(base, { env = process.env, platform = process.platform, exists = existsSync } = {}) {
+  return removeFolders(folderPlan(env, staleOwner(base, platform, exists)));
+}
+
+// Removes `dirs` and says which folders it left (`skipped`), on stdout as JSON and one line each on stderr.
+function remove(plan) {
+  const { removed, skipped } = removeFolders(plan);
   for (const dir of skipped) {
     process.stderr.write(`gemini-seat: left ${dir}: two project folders in projects.json claim its name, so it may hold another project's sessions; remove it by hand if they are the seat's\n`);
   }
-  process.stdout.write(JSON.stringify({ removed: dirs, skipped }) + "\n");
+  process.stdout.write(JSON.stringify({ removed, skipped }) + "\n");
   return 0;
 }
 

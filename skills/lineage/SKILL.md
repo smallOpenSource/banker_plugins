@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.0.9
+version: 3.0.10
 schema_version: 1
 ---
 
@@ -329,7 +329,7 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 - Claude Code 검토자(`Plan`)는 Write·Edit 가 도구로 막혀 있지만 Bash 는 있다. 셸로 쓰지 않는 것은 지시로 선다. banker 는 에이전트 정의를 배포하지 않아(모든 표면이 두 런타임 대상) 도구를 더 막을 수 없다.
 - Codex 의 `workspace-write` 샌드박스에서는 `~/.cache` 에 쓸 수 없어 이번 실행의 검토 결정을 캐시에 쓰지 못한다(WARN 한 번). 앞선 실행이 남긴 결정은 읽으므로, 그 결정이 없는 턴만 다시 검토한다.
 - 규칙 요약은 가린 본문에서 자른다(요약기 버전 4). lineage 3.0.8 까지 만든 요약 캐시는 쓰지 않는다. 그 캐시에는 평문 조각이 남아 있을 수 있어 `--purge-cache` 로 지운다.
-- 규칙 요약 캐시는 본문만으로 키를 잡는다. `--redact-mode` 나 `--redact-extra` 를 바꿔 다시 돌린 `--rulebase` 는 앞선 실행의 요약을 쓸 수 있다(2.x 동작 그대로). 기본 흐름의 묶음은 요약을 매번 새로 만든다. 묶음 형식은 `lineage-review/2` 라 0.15.1 이 만든 묶음은 `--emit-review` 부터 다시 한다.
+- 규칙 요약 캐시는 본문만으로 키를 잡는다. `--redact-mode` 나 `--redact-extra` 를 바꿔 다시 돌린 `--rulebase` 는 앞선 실행의 요약을 쓸 수 있다(2.x 동작 그대로). `--redact-mode mask` 로 만든 요약은 뒤의 기본 실행에서도 mask(페이지 패턴이 찾은 값의 앞뒤 4글자)를 그대로 보인다. 키워드를 나중에 준 실행은 요약 끝에서 잘린 키워드 조각을 보일 수 있다. 설정을 바꿔 다시 돌릴 때는 `--rebuild-summaries` 를 함께 준다. 기본 흐름의 묶음은 요약을 매번 새로 만든다. 묶음 형식은 `lineage-review/2` 라 0.15.1 이 만든 묶음은 `--emit-review` 부터 다시 한다.
 - 검토자는 긴 턴의 앞뒤만 본다(`clipped: true`). 가운데에만 있는 결론은 놓칠 수 있다.
 - 검토자 패턴은 흔한 모양만 가린다. `/` 가 든 URL 비밀번호와 키 이름이 100자를 넘는 16진 키는 가리지 못한다(값이 길고 무작위면 엔트로피 규칙이 가릴 수 있다). curl `-u` 패턴은 값 전체가 `docker -u 1000:1000` 같은 uid:gid, `rsync -u host:/path`, `date -u +%H:%M` 같은 날짜 형식(`+%` 뒤에 글자가 오면 나머지는 보지 않는다), 양쪽 모두 변수인 꼴(`$UID:$GID`, `${UID}:${GID}`, `%USER%:%PASS%`, `$(id -u):$(id -g)`), 기본값이 콜론 없는 경로(`/`, `~`, `.` 로 시작)인 변수(`mktemp -u "${TMPDIR:-/tmp}/x"`), 앞선 가림이 남긴 표식(`-u [REDACTED:JWT]`)일 때만 둔다. 이스케이프한 따옴표 안에서도 같다. 다른 명령의 `-u 이름:값`(`-u root:root`, `ps -u postgres:postgres`, `rsync -avu host:dir/`, `ls -lu a:bcd`), 기본값이 경로가 아닌 변수(`${UID:-1000}:${GID:-1000}`, `${API_KEY:-…}`)는 가린다. 숫자만으로 된 이름과 비밀번호, `/` 로 시작하는 비밀번호, `$` 로 시작해 변수처럼 보이는 비밀번호(`$USER:$ecret`), `-U` 와 `--proxy-user`, 붙여 쓴 묶음(`-suUSER:PW`), `-u=USER:PW`, 공백이 든 비밀번호의 둘째 낱말부터, 인자 목록에서 다른 종류의 따옴표가 든 비밀번호(`'-u', "USER:P'W"`), 사용자 안에서 따옴표 뒤에 `-eu`, `--user` 같은 플래그 꼴과 따옴표가 오는 꼴(`"$USER"-eu":PW"`), requests 의 `auth=(...)`, value 가 name 보다 앞에 온 HAR 은 가리지 못한다. 백틱 명령 치환(`` `id -u`:`id -g` ``)과 `\$(id -u):\$(id -g)` 는 가운데 일부가 가려진다(3.0.0 과 같다). 값이 `/`, `~`, `$` 로 시작하는 password 값(`$PWD:/workspace`, `OLDPWD=/home/...`, `password=$DB_PASSWORD`), 이미 가린 표식, 값 전체가 마스크 꼴(`abcd****wxyz`, `****`)인 값은 두고, `PGPASSWORD=`, `MYSQL_PWD=` 의 값은 가린다. `password=os.environ[...]`, `암호: AES-256-GCM` 처럼 코드나 이름인 값과 `sk-` 로 시작하는 긴 세션 이름은 지나치게 가린다. Basic 인증 패턴은 `HTTP_AUTHORIZATION` 처럼 앞에 `_` 가 붙은 이름, 구분자 없는 `Authorization Basic …`, 백틱이나 대괄호(`["Basic …"]`) 안의 값을 가리지 못한다.
 - 쪼갠 값 가운데 detect-secrets 만 찾는 값은 찾지 못한다. 키 바로 앞이 글자나 숫자이고 그 사이와 키 안에 쪼개는 글자가 있으면, 앞 글자 조건이 있는 검토자 패턴(Anthropic, OpenAI, Google 키, Bearer, Basic 인증)은 값 꼬리를 놓칠 수 있다. 태그 글자로 통째로 적거나 base64 로 감싼 값처럼 일부러 숨긴 값은 풀어 보지 않는다. ANSI 색 코드처럼 ESC 뒤에 `[01;31m` 같은 글자가 붙는 열은 ESC 만 쪼개는 글자라 다시 잇지 못한다. 3.0.7 한 번의 결과에서 이어 갈 때는 3.0.7 이 앞부분만 가린 키의 나머지가 남을 수 있다(3.0.7 과 같다). `--redact-mode mask` 의 앞뒤 4글자에는 쪼개는 글자도 한 글자로 든다. 쪼개는 글자가 있는 글은 이을 곳을 찾느라 3.0.7 의 약 3배 걸리고, 이은 곳이 있으면 가림을 몇 번 더 돌아 약 6배 걸린다(5MB 한 글에서 잼).

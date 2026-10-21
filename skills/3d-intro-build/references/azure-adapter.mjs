@@ -28,6 +28,9 @@ import cp from 'node:child_process';
 // ---------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A real wait between polls is at least 1 s: an interval of 0 must not poll a paid API in a busy loop.
+const MIN_POLL_WAIT_MS = 1000;
+const pollSleep = (ms) => sleep(Math.max(MIN_POLL_WAIT_MS, ms));
 const round2 = (x) => Math.round(x * 100) / 100;
 
 // Scheme+host of a URL, dropping any path/query — Azure endpoints are the origin only.
@@ -56,7 +59,7 @@ function truncate(x, n = 300) {
 // error's code or name only, never its text: fetch can quote a header value, a key included.
 const why = (r) => (r.error ? ` (${r.errno || r.error.name})` : '');
 // AbortSignal.timeout rejects with a DOMException whose numeric code (23) means nothing to a reader
-const errnoOf = (e) => (e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.code || e?.code || null);
+export const errnoOf = (e) => (e?.name === 'TimeoutError' ? 'TimeoutError' : e?.cause?.code || e?.code || null);
 
 // Last n chars of ffmpeg stderr (the useful part) for error messages.
 const tail = (s, n = 400) => { const str = String(s || ''); return str.length > n ? str.slice(-n) : str; };
@@ -119,7 +122,7 @@ export function parseConsoleSample(text) {
  */
 export function parseEnvFile(text) {
   const env = {};
-  for (const line of String(text || '').split(/\r?\n/)) {
+  for (const line of String(text || '').split(/\r\n|\r|\n/)) {
     if (line.trimStart().startsWith('#')) continue;
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=([^\n]*)$/);
     if (m) env[m[1]] = envValue(m[2]);
@@ -179,7 +182,8 @@ export function resolveCreds({ projectDir } = {}) {
   const p = candidates.find((c) => fs.existsSync(c));
   if (!p) return { _source: null };
   const creds = { ...parseEnvFile(fs.readFileSync(p, 'utf8')), _source: p };
-  return p === home ? creds : withoutMachineOnly(creds);
+  if (p === home) return creds;
+  return trackedByGit(p) ? { ...withoutMachineOnly(creds), _tracked: true } : withoutMachineOnly(creds);
 }
 
 function withoutMachineOnly(creds) {
@@ -206,6 +210,7 @@ export function persistCreds(creds, { target } = {}) {
   const set = Object.entries(creds || {}).filter(([k, v]) => !k.startsWith('_') && v != null).map(([k, v]) => [k, String(v)]);
   for (const [k, v] of set) envLine(k, v);
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+  refuseTracked(target);
   const file = keyFileAt(target);
   writeKeyFile(file, mergedEnv(readIfAny(file), set));
   return target;
@@ -220,6 +225,22 @@ function keyFileAt(target) {
   if (!fs.statSync(file).isFile()) throw new Error(`persistCreds: ${target} is not a regular file; nothing was written`);
   if (file !== target) refuseProjectLink(target);
   return file;
+}
+
+// A project key file git tracks would carry a key into the next commit (.gitignore does not untrack it).
+function refuseTracked(target) {
+  if ([homeCredsPath(), homeSettingsPath()].includes(path.resolve(target)) || !trackedByGit(target)) return;
+  throw new Error(`persistCreds: ${target} is tracked by git, so a key written there would go into a commit; nothing was written. Untrack it (git rm --cached) and keep it in .gitignore, or use the home key file`);
+}
+
+// Whether git tracks `file`: true, or false when it does not or cannot say (no git, no repository).
+// git runs from the home folder with -C: Windows looks for a program in the folder it starts in first,
+// and a repository can bring a git.exe. fsmonitor is off, so a repository's config starts no hook.
+function trackedByGit(file) {
+  const r = cp.spawnSync('git', ['-C', path.dirname(path.resolve(file)), '-c', 'core.fsmonitor=false', 'ls-files', '--error-unmatch', '--', path.basename(file)], {
+    cwd: os.homedir(), stdio: 'ignore', timeout: 5000, windowsHide: true,
+  });
+  return r.status === 0;
 }
 
 // A project's key file can come with a repository, and a link there can lead to a file of the user's (a
@@ -248,7 +269,7 @@ function readIfAny(file) {
 // is appended. Every line keeps its own end; an added one takes \r\n when the file has any. New text
 // goes in as UTF-8.
 function mergedEnv(text, set) {
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const eol = eolOf(text);
   const lines = splitLines(text, eol);
   const lastAt = new Map(lines.map((l, i) => [assignedName(l.body), i]).filter(([k]) => k));
   for (const [k, v] of set) {
@@ -261,9 +282,12 @@ function mergedEnv(text, set) {
 }
 
 // Each line with its own end; a last line without one gets `eol`.
+// The line end an added line takes: \r\n when the file has any, else a lone \r when it has one, else \n.
+const eolOf = (text) => (text.includes('\r\n') ? '\r\n' : text.includes('\r') ? '\r' : '\n');
+
 function splitLines(text, eol) {
-  return (text.match(/[^\n]*\n|[^\n]+$/g) || []).map((l) => {
-    const m = /\r?\n$/.exec(l);
+  return (text.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) || []).map((l) => {
+    const m = /(?:\r\n|\r|\n)$/.exec(l);
     return m ? { body: l.slice(0, m.index), end: m[0] } : { body: l, end: eol };
   });
 }
@@ -502,8 +526,8 @@ function retryAfterMsOf(headers) {
 
 // Each request ends within its limit. Without one, a server that takes the connection and never
 // answers holds a request for undici's 300 s, and a poll of 180 requests for hours.
-const API_TIMEOUT_MS = 120_000;
-const DOWNLOAD_TIMEOUT_MS = 600_000;
+export const API_TIMEOUT_MS = 120_000;
+export const DOWNLOAD_TIMEOUT_MS = 600_000;
 // An image is made while its request waits, and is billed: it keeps the 300 s undici gave it.
 const IMAGE_TIMEOUT_MS = 300_000;
 
@@ -701,7 +725,7 @@ const withoutUndefined = (obj) => Object.fromEntries(Object.entries(obj).filter(
  * @returns the last status object seen.
  */
 export async function pollVideo(opts = {}) {
-  const o = { ...POLL_DEFAULTS, sleep, ...withoutUndefined(opts) };
+  const o = { ...POLL_DEFAULTS, sleep: pollSleep, ...withoutUndefined(opts) };
   const url = `${o.endpoint}/openai/v1/videos/${o.id}?api-version=${o.apiVersion}`;
   const end = o.now() + (o.timeoutMs ?? Math.max(o.intervalMs * o.maxTicks, API_TIMEOUT_MS));
   let st = null;
@@ -719,10 +743,10 @@ export async function pollVideo(opts = {}) {
 }
 
 // A poll request's limit: the usual one, or less when the deadline is nearer (azFetch rounds it up to whole ms).
-const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, end - t));
+export const timeLeft = (end, t) => Math.min(API_TIMEOUT_MS, Math.max(1, Math.ceil(end - t)));
 const settled = (st) => Boolean(st) && TERMINAL_STATUS.has(st.status);
 
-const HELD_KEY = new Set(['EINSECURE', 'EPROXYKEY']);
+export const HELD_KEY = new Set(['EINSECURE', 'EPROXYKEY']);
 function throwIfHeldBack(r, id) {
   if (r.status !== 0 || !HELD_KEY.has(r.errno)) return;
   throw Object.assign(new Error(`pollVideo: job ${id}: the key was held back (${r.errno}); nothing was sent`), { status: 0, code: r.errno });

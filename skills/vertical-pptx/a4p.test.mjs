@@ -1666,7 +1666,7 @@ function normalizePptx(file) {
     .filter((s) => localTag(s.tag) === 'sp')
     .map((s) => ({
       box: { x: s.x, y: s.y, cx: s.cx, cy: s.cy },
-      text: s.paragraphs.map((lines) => lines.map((runs) => runs.map((r) => r.text).join('')).join(' ')).join('\n'),
+      text: s.paragraphs.map((lines) => lines.map((runs) => runs.map((r) => r.text).join('')).join('\u{2028}')).join('\n'),
       slots: s.paragraphs.flatMap((lines) => lines.flatMap((runs) => runs.map((r) => [r.latin, r.ea, r.cs]))),
       body: s.body === null ? null : { wrap: s.body.wrap, autofit: s.body.autofit },
     })));

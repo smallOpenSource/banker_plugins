@@ -220,3 +220,22 @@ test('starRepo: PUT non-zero 인데 stderr 없으면 reason=`gh exited N`', () =
   assert.strictEqual(r.ok, false);
   assert.match(r.reason, /gh exited 7/);
 });
+
+// 0.20.5 (final batch deferred row 13): a try time ahead of now does not count as rest, but a last check less than a day
+// old still makes the hook rest (updateCheckDue). status says when the next try comes by that same rule.
+test('status: 시도 시각이 지금보다 뒤여도 하루가 안 된 마지막 체크가 쉬게 하면 다음 세션에 다시 시도한다고 하지 않는다', async () => {
+  const { updateCheckDue } = await import('./lib/telemetry-config.mjs');
+  const hour = 3600000;
+  for (const checkedAt of [undefined, Date.now() - hour, Date.now() - 25 * hour]) {
+    withXdg((dir) => {
+      const cache = { latest: '999.0.0', checkedAt, triedAt: Date.now() + 10 * 24 * hour };
+      writeUpdateCacheFixture(dir, cache);
+      const { out, code } = run(['telemetry', 'status'], dir);
+      assert.equal(code, 0);
+      assert.equal(/다음 세션 시작에 다시 시도합니다/.test(out), updateCheckDue(cache), `${checkedAt}: ${out}`);
+      if (!updateCheckDue(cache)) {
+        assert.match(out, /마지막 시도: [^\n]*\(실패\. 시각이 지금보다 뒤라 쉼으로 세지 않지만, 마지막 체크에서 24시간이 지나야 다시 시도합니다\)/, out);
+      }
+    });
+  }
+});

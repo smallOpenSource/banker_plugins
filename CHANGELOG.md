@@ -1,5 +1,84 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- `ralph-qa` 의 외부 좌석 전송을 node 실행기(`references/seat-run.mjs`, 명령 init, untracked, prepare, check, send, cleanup, put)로 옮긴다. SKILL 은 판단(좌석과 모델, 새 파일과 관련 범위 고르기, 짧은 부분, 가림, 512 KiB 질문, 나누기)과 결과 읽기만 남기고, bash 블록과 PowerShell 산문의 좌석 명령, git 사슬, 시간 상한, 정리는 실행기가 한다. 좌석의 인자와 env 는 0.20.4 명령과 글자 그대로 같고 시험이 고정한다.
+  - 사용자에게 달라지는 것: PowerShell 에서도 좌석마다 600초 상한이 서고(전에는 없었다), 상한과 멈춤에 좌석의 프로세스 묶음(Windows 는 트리)이 함께 끝나며, 좌석이 스스로 끝나도 그 묶음에 남은 프로세스를 끝내 늦게 쓰는 gemini 기록이 남지 않는다. send 가 돌아오면 그 좌석의 gemini 기록, opencode 세션, 사본이 지워져 있다. send 는 실행기가 띄운 둘째 node 가 맡아, 실행기 node 만 끝나도(`kill -9`, 작업 관리자) 좌석을 끝내고 정리한다. Windows Git Bash 의 `/c/...` 꼴 경로도 `--repo`, `--dir` 로 받는다.
+  - 남의 저장소(압축본에 딸려 온 `.git`)를 볼 때: 2단계의 git 은 저장소의 훅, 저장소 설정의 filter, 하위 모듈 안의 git status 를 돌리지 않고 망에 닿지 않는다(부분 clone 의 지연 받기 포함). 사용자 설정의 filter(예: git-lfs)는 그대로 쓴다. git 폴더가 이 저장소의 것이 아니면(`.git` 파일이나 링크, `commondir`, `core.worktree`, `refs` 나 `objects` 안의 링크, `objects/info/alternates` 가 다른 저장소를 가리킴) 다른 저장소의 파일이 실리지 않게 `not-a-repo` 로 멈춘다. 그래서 `clone --shared`, `--reference`, `--separate-git-dir` 저장소는 보내지 않는다. 하위 모듈의 더러움(`-dirty`)은 보이지 않는다. 같은 폴더의 send 둘은 하나만 보낸다. Windows 프로브는 `.cmd` CLI 를 System32 의 cmd.exe 로 돌리고 지금 폴더의 `node` 를 찾지 않는다.
+  - 보내기 직전 고른 모델로 프로브를 다시 불러 MCP 서버와 관리 설정을 그때의 설정으로 확인한다(모델은 다시 정하지 않는다). 새 파일은 정확한 이름으로 맞춰, 줄바꿈이 든 이름은 멈추지 않고 보내지도 않는다. git 은 PATH 의 절대 경로로 저장소 밖 폴더에서 돌고 fsmonitor 를 끈다. 멈춤과 좌석 결과는 JSON 의 `stop`, `status`, `why` 로 나오고 같은 JSON 이 `<d>/result-<명령>.md` 에 남는다.
+  - 유지보수자용: step2-chain, seat-folders 시험을 seat-payload, seat-run, seat-spawn 시험(가짜 좌석 CLI `scripts/test-fixtures/seat-stub.mjs`)으로 옮긴다. smoke 의 S23 묶음을 S25 묶음(실행기 명령, 멈춤과 결과 집합, 장치, Node 16.7 API, 손으로 짠 명령 없음)으로 바꾼다.
+- `lineage` SKILL 은 `--redact-mode` 나 `--redact-extra` 를 바꿔 `--rulebase` 를 다시 돌릴 때 `--rebuild-summaries` 를 함께 주라고 적는다. 그대로 다시 돌리면 앞서 만든 요약을 다시 써, mask 로 만든 요약이 기본 실행에도 mask 로 남는다.
+- 유지보수자용: lineage 시험의 시간 상한이 CPU 시간을 읽는 까닭을 도우미 하나에 적는다. 파일 시스템 인코딩이 ASCII 인 설정에서도 lineage 시험이 오류 없이 돈다. smoke 는 subTest 로 실패한 시험의 이름도 한 번씩 보인다.
+- `ralph-qa` SKILL 이 `TaskStop` 이 좌석 프로세스 트리를 멈춘다는 문장을 실측한 Linux, macOS 로 좁힌다. Windows(Git Bash)에서는 좌석의 시간 상한이 트리를 끝내고, PowerShell 판에서 트리까지 멈추는지는 재지 못했다고 적는다.
+- 유지보수자용: setup-omc-hud 시험의 쓰지 않는 도우미 셋을 지우고 설치 스크립트의 가져오기 순서를 맞춘다. 중간에 멈추는 설치의 시험은 쓰기 오류를 일으키는 preload 로 돈다.
+- 유지보수자용: azure-adapter 와 video-pool 이 따로 들던 시간 상수와 오류 도우미를 adapter 하나에 둔다. 임시 파일의 `wx` 지킴을 고정하는 시험을 더한다.
+- `setup-omc-hud` SKILL 이 `settings.json` 을 새 파일로 바꿔 넣을 때 손으로 준 ACL, 확장 속성(Windows 는 대체 데이터 스트림), SELinux 라벨이 새 파일에도 백업에도 따라오지 않는다고 적는다(세 OS 실측).
+- `omc-patch` SKILL 은 명령의 자리 표시에 도구 출력이나 `find` 가 낸 값을 넣을 때 bash, PowerShell 모두 작은따옴표로 감싸고, 값에 작은따옴표(PowerShell 은 `‘` `’` `‚` `‛` 도)나 줄바꿈이 있으면 명령을 만들지 않는다고 적는다. 백업 없는 패치의 원본을 임시 tar 로 되찾는 명령은 한 줄로 바꿔, 임시 폴더를 만들지 못하면 git 도 tar 도 돌리지 않고 다 쓴 폴더는 지운다.
+- 유지보수자용: omc-patch 시험의 git 은 https, ssh 전송을 받지 않는다(`GIT_ALLOW_PROTOCOL=file:http`). 고정물의 `example.invalid` origin 으로 이름 서버에 묻는 일이 생기지 않는다. 시험 env 에 커밋 정보(이름, 이메일)를 줘, fetch 의 reflog 가 이 PC 의 호스트 이름을 이름 서버에 묻지 않는다. 태그 받기의 두 KILL(TERM 을 무시하는 git, 스스로 끝난 git 이 남긴 프로세스)을 지키는 시험을 더한다.
+- `anti-drm` 설정 자리가 링크면 `status` 가 설정 줄에 링크가 가리키는 곳을 함께 보이고, 그 파일의 틀린 값은 글 대신 형식과 길이만 보인다(`(string, 12자)`). 링크를 따라 읽는 설계는 그대로다. `on` 의 "이 자리를 덮어쓰지 않습니다" 안내는 링크가 아닌 자리에만 붙는다(링크는 설정을 다시 주면 새 파일로 바뀐다).
+- 유지보수자용: smoke 와 gen-skill-changes 시험이 `Object.hasOwn` 없이 돈다(engines 하한 Node 16.7). 두 시험의 npm 은 임시 HOME 과 로그 자리를 써, 사용자 `.npmrc` 의 `logs-max=0`, `logs-dir` 에서 거짓 FAIL 이 나지 않고 로그가 임시 폴더 밖에 생기지 않는다. smoke 의 표준 입력 판정이 공백 든 자리 표시(`<입력 파일 경로>`)를 재지정으로 보지 않는다.
+- 유지보수자용: 저장소의 글 파일에 날 숨은 글자가 없는지 보는 시험(`scripts/hidden-chars.test.mjs`)을 더하고, 시험 셋의 날 글자 6자를 이스케이프로 바꾼다. PowerShell 을 띄우는 시험은 모두 임시 홈 env 를 준다는 시험을 더하고, 그 env 가 모듈 분석 캐시 자리(`PSModuleAnalysisCachePath`)도 옮긴다.
+- 설치 스킬과 확인 블록을 둔 스킬 18개, `/banker:setup` 의 네트워크 확인
+  - 확인 블록의 첫 줄이 Codex sandbox 가 네트워크를 막는 때(`CODEX_SANDBOX_NETWORK_DISABLED=1`)를 알리고, 그때는 '오프라인' 이 아니라 'sandbox 가 네트워크를 막음' 으로 보고한다.
+  - `npm ping` 을 15초 감시 함수(`in15`) 안에서 부른다. 감시는 호출자의 출력을 쥐지 않아, 확인이 끝나면 바로 돌아온다. 패킷을 버리는 망에서 npm 은 OS 의 연결 재시도가 끝날 때까지 약 130초를 기다렸다(`--fetch-timeout` 은 받는 중의 쉼만 잰다). 빈 캐시 대안은 ping 이 감시에 걸렸으면 하지 않는다. 두 npm 확인 모두 `--no-update-notifier` 를 준다.
+  - 확인이 실패하면 명령, 종료 코드, stderr 첫 줄을 보고에 붙인다. curl 의 종료 60 과 npm 의 인증서 오류는 '오프라인' 이 아니라 인증서 문제로 보고하고 `NODE_EXTRA_CA_CERTS` 를 안내한다.
+  - curl 확인 줄은 `--ssl-no-revoke` 를 준다. Windows 의 `curl.exe` 와 Git Bash 의 curl 은 Schannel 이라, 폐지 목록 서버에 닿지 못하는 망에서 종료 60 으로 끝났다(Windows 박스 실측). 다른 curl 은 이 깃발을 받고 무시한다(macOS, Rocky 8 실측). PowerShell 에서는 `Get-Command curl.exe` 로 먼저 찾는다(없으면 앞 명령의 `$LASTEXITCODE` 가 남는다).
+  - dnf 와 apt 가 막힌 망에서 기다리는 시간(실측 121초, 247초)과 `apt-get update` 가 받지 못해도 종료 0 이라는 것을 적는다. 시간 제한은 관리자 설정을 따른다.
+  - pip 설정 읽기가 판 붙은 python(3.13, 3.12, 3.11)의 pip 도 본다. Rocky 8 의 기본 pip(9.0.3)은 `config` 명령이 없다.
+  - `/banker:setup` 이 부르는 스킬은 같은 실행 안에서 이미 돌린 같은 확인 줄의 결과를 다시 쓴다.
+- `setup-mcp` 의 오프라인 등록은 macOS, Linux 에서 설치한 실행 파일을 절대 경로로 등록한다. Windows 는 `cmd /c` 와 이름이다. 서버를 띄우는 런타임의 PATH 에 node 가 없을 때(GUI, IDE)는 node 도 절대 경로로 등록하라고 적는다.
+- `setup-node` 확인에 github.com(nvm 의 install.sh 가 git 이 있으면 거기서 clone 한다)을, `setup-playwright` 확인에 브라우저 내려받기 서버(`cdn.playwright.dev`, 미러 변수를 따름. chromium 미러만 주면 ffmpeg 의 기본 서버도)를, `motion-graphic-setup` 확인에 RPM Fusion 을 더한다.
+- `vertical-pptx` 의 스크래치 설치는 새 임시 폴더에서 돌아 프로젝트 트리와 그 `.npmrc` 를 건드리지 않는다. 이 스킬과 `pdf-vision-extract` 는 오프라인이면 설치하지 않는다고 적는다. `audit-security` 1단계에 원천 확인과 Go 도구 받기 꼴(https 만, `~/.local/bin` 을 만듦)을 둔다.
+- 유지보수자용: smoke 가 판 질의(`npx --version`, `curl -V`)를 내려받기로 세지 않는다. 새 단언 airgap-4l, 4m, 4n, 4o, 4p, 4q, 9d, 12 가 위 꼴을 지킨다.
+
+### Fixed
+- `lineage` 3.0.10: detect-secrets 가 설치된 환경에서 검사용 임시 파일을 쓰다 실패하면(디스크가 가득 참, UTF-8 이 담지 못하는 글자) 그 파일이 임시 폴더에 남던 것. 그 파일에는 detect-secrets 가 가리기 전의 글이 들 수 있었다.
+- `ralph-qa` 3단계 검사기가 `--from-literal=DB_PASSWORD=…`, `--env=…`, `(DB_PASSWORD=… psql)` 의 비밀번호 낱말을 놓치던 것. 셸의 `PWD`, `OLDPWD` 가 경로를 담은 줄을 비밀번호로 가리던 것도 고친다(이름이 PWD 로 끝나기만 하는 키와 경로가 아닌 값은 그대로 잡는다).
+- `ralph-qa` 프로브가 codex 설정의 `[[mcp_servers.<이름>]]`(표 배열, 따옴표 친 꼴 포함)를 MCP 서버가 없는 것으로 읽어 좌석을 세우던 것. codex 는 그 설정을 읽지 못하고 멈춘다. 이제 서버 목록을 못 읽은 것으로 보고 좌석을 세우지 않는다.
+- `ralph-qa` 2단계의 관련 코드 범위가 파일 밖(시작이 마지막 줄을 넘음, 0, 끝이 시작 앞)이면 bash 는 빈 범위를, PowerShell 은 빈 줄이나 엉뚱한 줄을 붙이던 것. 이제 둘 다 `관련 범위가 파일 밖이다` 로 멈추고, PowerShell 도 끝이 파일을 넘으면 있는 줄까지만 붙인다.
+- `ralph-qa` 의 here-document 구분자가 고정 이름(`RALPHQA_EOF`)이라 그 이름의 줄이 든 본문이 거기서 끊기던 것. 이제 실행마다 무작위 id 를 붙인다. PowerShell here-string 은 `'@` 로 시작하는 줄이 있으면 쓰지 않고 그 좌석을 `cli-call-failed` 로 둔다.
+- `setup-omc-hud` 래퍼가 홈 폴더를 알 수 없으면(HOME 도 계정 항목도 없음) 상태표시줄 없이 끝나던 것. 이제 래퍼 옆의 로더로 그리고 계정 칸만 뺀다.
+- 래퍼가 로더나 `payload-mon` 사본 자리에 일반 파일이 없을 때 첫 자리를 불러, FIFO 면 끝나지 않고 폴더면 Node 오류 여러 줄을 내던 것. 이제 로더가 없으면 `[OMC HUD] omc-hud.mjs not found: <경로>` 한 줄을 내고, PL 사본이 없으면 PL 칸만 뺀다.
+- 설치 스크립트가 설치할 자리의 FIFO 에서 끝없이 기다리거나, 파일 자리의 폴더(폴더 자리의 파일)에서 로더를 쓴 뒤 중간에 멈추던 것. 이제 아무것도 읽거나 쓰기 전에 그 자리를 알리고 멈춘다.
+- 설치 스크립트가 이전 statusLine 명령을 알리는 줄에 그 명령 속 토큰과 비밀번호를 그대로 찍던 것. 이제 그 명령의 첫 낱말(앞의 변수 대입은 건너뜀)과 길이만 보인다(원문은 백업에만).
+- 하드 링크인 `settings.json` 을 제자리에 쓸 때 다른 이름(스냅샷 등)도 바뀐다는 것을 알리지 않던 것. 이제 `[..] settings.json has N other name(s)` 줄로 알린다.
+- `payload-mon` 이 모듈 사본을 쓰는 사이 사본 폴더가 바뀌었다 돌아오면 사본이 없는데도 켰다고 하던 것, 바뀐 자리에 원래 있던 다른 래퍼의 사본을 거두며 지우던 것, Windows 에서 파일 ID 가 2^53 을 넘어 다른 폴더를 같은 폴더로 볼 수 있던 것.
+- `payload-mon` 의 기록 캐시가 Windows 에서 파일 ID 를 Number 로 견줘, 바뀐 기록을 옛 위치부터 이어 셀 수 있던 것.
+- `3d-intro-build` 미리보기와 검토 서버가 HEAD 요청에도 파일을 끝까지 읽고, 선언보다 짧아진 파일이면 헤더 없이 연결만 닫던 것. 이제 HEAD 는 헤더만 보낸다.
+- 남의 저장소가 추적하는 프로젝트 키 파일(`.env.3d-intro.local`)에 셋업이 사용자의 키를 쓰던 것(다음 커밋에 실림). 이제 `persistCreds` 가 거부하고, `resolveCreds` 는 `_tracked` 로 알려 빌드가 멈춘다(빌드 0단계의 코드와 `generateClip` 이 그 값으로는 아무것도 보내지 않고 멈춘다).
+- 코드 없는 WAN 401 하나로 키를 영구히 빼던 것. 이제 403 처럼 24시간 쉰다(`InvalidApiKey` 는 그대로 뺀다).
+- `pollVideo`, `wanPollTask`, `generateClip` 을 폴링 간격 0 으로 부르면 쉬지 않고 요청하던 것(30분에 약 140만 회). 이제 실제 타이머의 기다림은 1초 아래로 내려가지 않는다.
+- Sora 가 `Retry-After` 없이 429 를 낼 때 `maxRateWaitMs` 를 넘는 240초를 기다리던 것. 이제 다음 기다림이 상한을 넘으면 `rate` 로 멈춘다.
+- 읽기가 멈춘 테이크 하나가 검토 페이지 전체를 붙잡던 것. 이제 5초까지 기다리고 그 테이크는 `읽는 중` 으로 보인다. 같은 크기로 금방 다시 쓴 파일이나 Windows 에서 파일 ID 가 Number 로 겹치는 파일의 sha256 이 옛 값으로 나오던 것도 고친다.
+- 상태 파일에 적힌 주소와 PID 만 믿고 그 호스트에 묻고 이 기기의 그 PID 에 신호를 보내던 것. 이제 기록된 주소가 이 기기일 때만 묻고 끈다(`127.` 로 시작하는 DNS 이름은 이 기기가 아니다). 다른 설정으로 도는 서버를 알리는 줄은 그 폴더를 따옴표 친 한 조각으로 보인다.
+- 키 파일의 줄 끝이 CR 뿐이면 한 줄로 읽혀 키가 다른 값(endpoint)에 들어가고, 쓸 때 다른 키 줄이 사라지던 것. 이제 CR, LF, CRLF 를 모두 줄 끝으로 읽고 그 파일의 줄 끝을 지킨다.
+- 프로젝트가 `decisions.json.tmp`, `curate.server.json` 자리에 심은 링크를 따라 프로젝트 밖 파일을 쓰던 것. 이제 무작위 이름의 새 파일에 쓴 뒤 바꿔 넣는다.
+- `omc-patch` 인자 없는 apply 의 태그 받기가 시간 제한(120초)에 git 하나만 끝내, git 이 띄운 보조 프로세스(`git remote-http` 등)가 연결을 http 는 30초, TLS 는 300초까지 더 붙들던 것. 이제 시간 제한이나 Ctrl+C 에 그 보조 프로세스까지 함께 끝낸다.
+- 인자 없는 apply 가 `installed_plugins.json.omcbak` 자리가 폴더, FIFO, 링크일 때 백업 없이 판을 바꾸고 `완료. 실패 0건.` 이라 하던 것. 이제 판을 바꾸지 않고 `installed_plugins.json 을 바꾸지 않음` 으로 멈춘다.
+- fsync 를 받지 않는 파일 시스템(`EINVAL`, `ENOTSUP`)에서 훅을 하나도 패치하지 못하던 것. 이제 디스크로 내리기만 건너뛰고 rename 으로 바꾼다(azure-adapter 와 같은 규칙).
+- 태그를 받지 못한 까닭 줄과 `--check` 의 origin 줄, 고정 실패, 고정 해제 실패, origin 을 읽지 못함 줄이 주소의 경로, 조각, `;` 매개변수를 그대로 싣던 것. 이제 기본 상류(GitHub 의 OMC 저장소, scheme 이 있는 주소)는 가린 꼴 그대로(쿼리는 이름 없는 토큰까지 통째로 `?***`), 그 밖의 주소(미러)는 scheme 과 host 까지만 싣는다. git 의 줄에 든 주소는 가리기 전의 주소로 꼴을 정해, 경로나 쿼리 속 `@` 뒤의 글이 host 로 보이지 않는다.
+- Windows 에서 마켓플레이스 폴더(남의 저장소 사본)에 든 `git.exe` 가 git 대신 돌 수 있던 것. Windows 는 이름만 준 프로그램을 일하는 폴더에서 먼저 찾는다. 이제 모든 git 을 홈 폴더에서 `-C <마켓플레이스>` 로 돌린다.
+- 쿼리 값 가림이 git 이 주소를 닫는 `'` 와 `:` 까지 먹어 고정 실패 줄과 까닭 줄이 깨져 보이던 것.
+- 백업 없는 패치를 되돌리는 안내가 판과 이름을 따옴표 밖에, 폴더 경로를 큰따옴표 안에 넣어 `$` 가 든 홈 폴더(PowerShell)에서 다른 경로가 되던 것. 이제 작은따옴표로 감싸고, 작은따옴표가 든 경로는 큰따옴표로, 둘 다 맞지 않으면 명령 없이 경로만 보인다.
+- `/progress` 패널이 늦게 온 계획 읽기의 도착 순서에 따라 다른 계획을 보이던 것(검토 문서 둘을 나란히 쓰면 둘째 것이 보이는 등). 이제 읽기를 손댄 순서의 자리에 끼워, 손댄 순서대로 왔을 때와 같은 계획을 보인다. 끝내 오지 않는 읽기는 16개까지만 기다린다. 같은 닿음 뒤에 시작한 다시 읽기 둘(셸 명령으로 계획 파일을 고친 턴)은 늦게 와도 나중에 시작한 쪽이 남는다.
+- `/progress` 패널이 TodoWrite 목록을 하나씩 지워 잘라, 2만 개에 3.7초 걸리던 것. 이제 결과가 같은 한 번 자르기다.
+- 작업 id 에 제어 글자가 있거나 1만 자를 넘으면 엔진이 그 줄의 key 를 버리던 것. 이제 그런 id 는 엔진이 받는 key 로 바꾼다(보통 id 는 그대로 `k-<id>`). 작업 설명과 진행 문구는 패널이 읽는 4,096자까지만 상태에 둔다(5MB 설명을 그대로 두던 것).
+- 엔진의 다시 그리기가 던지면 session.end, turn.start, turn.complete 아래의 훅이 돌지 않을 수 있던 것.
+- `tone-compact`, `anti-drm` 의 잠금이 쓰기 실패 뒤, 그 사이 같은 inode 번호를 받은 다른 실행의 잠금을 지울 수 있던 것. 이제 이 실행의 토큰만 든 잠금만 지운다.
+- 경로 표시가 글자 위나 둘레에 그리는 표지(취소선, 빗금, 동그라미)를 그대로 두어 `AGENTS.md` 가 다른 이름처럼 보일 수 있던 것. 분해된 이름에서 기호를 만드는 U+0338 은 그대로 둔다.
+- 32MiB 를 넘는 AGENTS.md 를 읽어 같은 크기의 `.bak` 를 만들고, 2GiB 를 넘으면 오류로 멈추던 것. 이제 읽지 않고 `32MiB 보다 큰 파일이라 그대로 두었습니다` 로 거부하고 status 도 그렇게 알린다.
+- `anti-drm on` 이 설정 자리가 폴더, FIFO, 64KiB 보다 큰 파일, 읽을 수 없는 파일일 때 설정을 다시 주라고 안내하던 것(다시 주어도 거부됨). 이제 옮기거나 권한을 고친 뒤 다시 실행하라고 한다.
+- Windows 에서 `tone-compact`, `anti-drm` 이 규칙 파일이나 설정 파일 자리의 폴더로 가는 링크를 새 파일로 바꾸지 못하던 것(Windows 는 그런 링크 위로 이름을 바꾸지 않음). 이제 그 링크를 지운 뒤 바꿔 넣는다. 링크가 가리키던 폴더는 그대로다.
+- `banker telemetry status` 가 시도 시각이 지금보다 뒤일 때, 하루가 안 된 마지막 체크가 확인을 쉬게 하는데도 다음 세션에 다시 시도한다고 하던 것. 이제 훅과 같은 규칙으로 말한다.
+- `obsidizer` 가 fsync 를 받지 않는 파일 시스템(`EINVAL`, `ENOTSUP`)에서 실행 전체를 멈추던 것. 이제 그 쪽은 디스크로 내리기를 건너뛰고 rename 으로 통째 바꾼다.
+- `motion-graphic-setup` 의 RHEL8 블록이 Node 22 원천(AppStream 22 스트림, NodeSource)을 둘 다 갖추지 못해도 배포판의 옛 `nodejs` 를 sudo 로 깔던 것.
+- `setup-python` 의 PowerShell 블록이 uv 설치 스크립트의 실패(0 이 아닌 종료)를 알리지 않던 것.
+- `vertical-pptx-setup` 의 업스트림 tarball 블록이 받기만 하고 풀기와 정리는 문장으로 남겨, 수백 MB 의 tarball 이 이름 모를 임시 폴더에 남던 것. 이제 블록 하나가 받기, 풀기, 추출, 정리까지 한다. 배포판 경로의 글롭(`$SP/*.rpm`)은 `find` 로 바꾼다(zsh 는 맞는 것이 없는 글롭에서 멈춘다).
+- `setup-lsp` 의 Spring Boot LS 블록이 셸에 `set -euo pipefail` 과 EXIT trap 을 남겨, 같은 셸의 다음 실패가 셸을 끝내거나 셸이 끝날 때 다른 `T` 를 지우던 것. 이제 블록이 서브셸에서 돈다.
+- `update-banker` 0단계가 `npm ping` 이 실패해도 이어서 `npm view` 로 또 기다리던 것. 이제 ping 이 0 일 때만 부른다.
+- 유지보수자용: update-notify 의 FIFO 캐시 시험이 뒤의 체크인을 기다리지 않아 지연에 따라 실패하고, 이미 지운 임시 폴더를 되살리던 것.
+
 ## [0.20.4] - 2026-10-21
 
 ### Changed

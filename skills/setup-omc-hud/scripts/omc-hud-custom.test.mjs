@@ -204,9 +204,7 @@ test("래퍼에 절대경로가 없음", () => {
   assert.doesNotMatch(WRAPPER.toString("utf8"), /\/home\/|\/Users\/|(?<![A-Za-z0-9])[A-Za-z]:[\\/]/);
 });
 
-// A folder link is a junction on Windows, which needs no privilege; a file link needs one there, so the
-// tests that make one run only where this account can.
-const linkDir = (target, path) => symlinkSync(target, path, process.platform === "win32" ? "junction" : "dir");
+// A file link needs a privilege on Windows, so the tests that make one run only where this account can.
 const canLinkFiles = (() => {
   const probe = mkdtempSync(join(tmpdir(), "link-probe-"));
   try {
@@ -352,4 +350,59 @@ test("사본이 명령 경로 옆에만 있어도 PL 칸이 보임", fileLinks, 
   mkdirSync(join(link, "payload-mon"), { recursive: true });
   writeFileSync(join(link, "payload-mon", "payload-size.mjs"), FAKE_PAYLOAD);
   assert.match(firstLine(renderWith({ hud: link, payloadBytes: MB9 })), /PL:9\.0M/);
+});
+
+// B1-3: a preload under which the home folder cannot be told, as for an account with no HOME and no entry in
+// the account list: os.homedir() throws.
+function noHomePreload() {
+  const file = join(root, `nohome-${++seq}.mjs`);
+  writeFileSync(file, [
+    'import os from "node:os";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'os.homedir = () => { throw Object.assign(new Error("uv_os_homedir returned ENOENT (test)"), { code: "ENOENT" }); };',
+    "syncBuiltinESMExports();",
+    "",
+  ].join("\n"));
+  return `--import=${pathToFileURL(file).href}`;
+}
+
+test("홈 폴더를 알 수 없어도 래퍼 옆의 로더로 그리고 계정만 빠짐", () => {
+  const line = firstLine(renderWith({ env: { CLAUDE_CONFIG_DIR: null, NODE_OPTIONS: noHomePreload() } }));
+  assert.equal(line, firstLine(renderWith()).replace("|user|", "|"));
+});
+
+// B1-4: a FIFO where a module is looked for. Opening one waits for a writer, so importing it would keep the
+// statusline from ending. Windows cannot make one in a folder.
+const fifos = { skip: process.platform === "win32" && "Windows cannot make a FIFO in a folder" };
+const mkfifo = (p) => assert.equal(spawnSync("mkfifo", [p]).status, 0, `mkfifo ${p}`);
+const renderBounded = (hud, dir, stdin) =>
+  spawnSync(process.execPath, [join(hud, "omc-hud-custom.mjs")], {
+    input: JSON.stringify(stdin), env: renderEnv(dir, {}), encoding: "utf8", timeout: 15000,
+  });
+
+test("PL 사본 자리가 FIFO 뿐이면 기다리지 않고 PL 칸만 뺌", fifos, () => {
+  const dir = join(root, `r-${++seq}`);
+  const hud = layHud(dir, { omc: omcOut() });
+  mkfifo(join(hud, "payload-mon", "payload-size.mjs"));
+  const r = renderBounded(hud, dir, { effort: { level: "high" }, transcript_path: join(dir, "t.jsonl") });
+  assert.equal(r.status, 0, `ended by ${r.signal ?? r.status}`);
+  assert.equal(firstLine(r.stdout), firstLine(renderWith()));
+});
+
+test("로더 자리가 FIFO 뿐이면 기다리지 않고 [OMC HUD] 한 줄", fifos, () => {
+  const dir = join(root, `r-${++seq}`);
+  const hud = layHud(dir, { omc: omcOut() });
+  rmSync(join(hud, "omc-hud.mjs"));
+  mkfifo(join(hud, "omc-hud.mjs"));
+  const r = renderBounded(hud, dir, { effort: { level: "high" } });
+  assert.equal(r.status, 0, `ended by ${r.signal ?? r.status}`);
+  assert.equal(r.stdout, `[OMC HUD] omc-hud.mjs not found: ${join(hud, "omc-hud.mjs")}\n`);
+});
+
+test("로더 자리가 폴더뿐이면 Node 오류 대신 [OMC HUD] 한 줄", () => {
+  const dir = join(root, `r-${++seq}`);
+  const hud = layHud(dir, { omc: omcOut() });
+  rmSync(join(hud, "omc-hud.mjs"));
+  mkdirSync(join(hud, "omc-hud.mjs"));
+  assert.equal(renderAt(join(hud, "omc-hud-custom.mjs")), `[OMC HUD] omc-hud.mjs not found: ${join(hud, "omc-hud.mjs")}\n`);
 });

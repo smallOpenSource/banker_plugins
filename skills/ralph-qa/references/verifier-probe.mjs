@@ -312,10 +312,14 @@ function assignment(state, path, value) {
   if (str) state.values[path[0]] = str[1] ?? str[2];
 }
 
-// A table header: the table later keys go in, and the MCP server a [mcp_servers.<name>...] names.
+// A table header: the table later keys go in, and the MCP server a [mcp_servers.<name>...] names. An array of tables
+// under mcp_servers ([[mcp_servers.<name>]], quoted or not) is a server list the probe cannot read: codex refuses it
+// ("invalid type: sequence", 0.144.5), so a seat on it would fail later for no reason the probe gave.
 function enterTable(state, header) {
-  state.roots.add(keyPath(header[2])[0]);
-  state.table = header[1] ? ["[[]]"] : keyPath(header[2]);
+  const path = keyPath(header[2]);
+  state.roots.add(path[0]);
+  state.table = header[1] ? ["[[]]"] : path;
+  if (header[1] && path[0] === "mcp_servers") state.mcpUnread = true;
   if (state.table[0] === "mcp_servers" && state.table.length > 1) state.mcpServers.add(state.table[1]);
 }
 
@@ -540,7 +544,7 @@ function mcpBlockedSeat(seat, conf, notes) {
   const bad = conf.mcpServers.filter((n) => !MCP_NAME.test(n)).length;
   if (!bad && !conf.mcpUnread && !conf.broken) return null;
   if (bad) notes.push(`${bad} MCP server name(s) hold characters \`-c mcp_servers.<name>.enabled=false\` cannot address: rename them to letters, digits, _ and -`);
-  if (conf.mcpUnread) notes.push("the probe could not list every MCP server the codex config defines (one inline mcp_servers table, or a name its walk did not place): write each server as its own [mcp_servers.<name>] table");
+  if (conf.mcpUnread) notes.push("the probe could not list every MCP server the codex config defines (one inline mcp_servers table, an array of tables under mcp_servers, or a name its walk did not place): write each server as its own [mcp_servers.<name>] table");
   if (conf.broken) notes.push(`the probe could not read the codex config to its end at ${conf.brokenAt.join(", ")} (a multi-line string, array or inline table left open, or a line it could not place, such as a quoted key with a \\ escape that codex reads as another key), so its list of MCP servers may be short`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
@@ -967,13 +971,16 @@ function realWorld() {
       const exe = onPath(cmd);
       if (!exe) return { status: 127, stdout: "" };
       // Windows runs .cmd and .bat shims through cmd.exe; the path is quoted and the arguments are fixed words.
+      // System32's cmd.exe (a bare name is looked for in the current folder first), told not to look there for the
+      // bare `node` an npm shim runs.
       const viaCmd = process.platform === "win32" && /\.(cmd|bat)$/i.test(exe);
+      const shell = viaCmd ? join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe") : false;
       const r = spawnSync(viaCmd ? `"${exe}"` : exe, args, {
         encoding: "utf8",
         timeout: 15000,
         maxBuffer: 64 * 1024 * 1024,
-        shell: viaCmd,
-        env: { ...process.env, ...env },
+        shell,
+        env: { ...process.env, ...(viaCmd ? { NoDefaultCurrentDirectoryInExePath: "1" } : {}), ...env },
       });
       return { status: r.status, stdout: r.stdout ?? "" };
     },

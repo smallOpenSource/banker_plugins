@@ -634,3 +634,24 @@ test('obsidize answers the same through a linked folder as through its own path'
     fs.rmdirSync(linkDir);
   }
 });
+
+// 0.20.5 (final batch deferred row 8): a file system that does not flush on request (fsync says EINVAL or ENOTSUP) still
+// gets each page whole by the rename, as the 3d-intro key files do. Any other fsync error still stops the run, the page as it was.
+test('write path: a file system whose fsync says EINVAL or ENOTSUP still gets the page whole; another fsync error stops it, the page as it was', (t) => {
+  for (const code of ['EINVAL', 'ENOTSUP', 'EIO']) {
+    const dir = makeVault({ 'index.md': '# I\n', 'log.md': '# L\n', 'p-one.md': omcPage({ tags: ['#x'] }) });
+    const file = path.join(dir, 'p-one.md');
+    const before = fs.readFileSync(file, 'utf8');
+    const fsync = t.mock.method(fs, 'fsyncSync', () => { throw Object.assign(new Error(`${code}: fsync`), { code }); });
+    if (code === 'EIO') {
+      assert.throws(() => run(dir, { profile: 'omc', now: NOW }), (e) => e.code === 'EIO');
+      assert.equal(fs.readFileSync(file, 'utf8'), before, 'EIO: the page as it was');
+    } else {
+      const report = run(dir, { profile: 'omc', now: NOW });
+      assert.deepEqual(report.changed, ['p-one.md'], code);
+      assert.notEqual(fs.readFileSync(file, 'utf8'), before, `${code}: the page was normalized`);
+    }
+    fsync.mock.restore();
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.obsidizer.tmp')), [], `${code}: no temp file stays`);
+  }
+});

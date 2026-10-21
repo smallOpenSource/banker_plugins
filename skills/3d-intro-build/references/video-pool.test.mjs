@@ -153,7 +153,7 @@ test('classifyWanError: documented codes map to pool actions; HTTP status is the
     [{ status: 400, code: 'DataInspectionFailed' }, 'content'],
     [{ status: 500, code: 'InternalError.Timeout' }, 'transient'],
     [{ status: 500, code: 'InvalidParameter' }, 'invalid_request'],
-    [{ status: 401 }, 'unusable'],
+    [{ status: 401 }, 'denied'],
     [{ status: 403 }, 'denied'],
     [{ status: 429 }, 'rate'],
     [{ status: 0 }, 'transient'],
@@ -195,6 +195,15 @@ test('generateClip: WAN success sends an async Bearer request with the first fra
   assert.equal(P.poolSummary({ creds: creds(), statePath })[0].okCount, 1);
   const raw = fs.readFileSync(statePath, 'utf8');
   assert.ok(!raw.includes('placeholder-wan-key'), 'state file never holds a key');
+});
+
+// 0.20.5 review: creds from a project key file git tracks may have come with the repository (its endpoint receives the
+// prompt and the frames). The build stops on them in code, not only by the skill's words.
+test('generateClip: creds from a key file git tracks are refused before anything is sent', async () => {
+  const calls = installFetch();
+  await assert.rejects(run({ creds: { ...creds(), _tracked: true, _source: '/repo/.env.3d-intro.local' }, statePath: tmpState() }),
+    (e) => e.kind === 'invalid_request' && /tracked by git/.test(e.message) && e.message.includes('/repo/.env.3d-intro.local'));
+  assert.deepEqual(calls, []);
 });
 
 test('generateClip: requests rotate least-recently-used across the pool', async () => {
@@ -907,7 +916,7 @@ test('generateClip: a Sora 429 on submit waits with the injected sleep and retri
 test('generateClip: a Sora 429 that never clears stops after five requests', async () => {
   let posts = 0;
   installFetch({ sora: () => { posts++; return json(429, { error: { code: 'too_many_requests' } }); } });
-  const err = await run({ creds: soraOnly(), statePath: tmpState(), sleep: async () => {} }).then(() => null, (e) => e);
+  const err = await run({ creds: soraOnly(), statePath: tmpState(), maxRateWaitMs: 240_000, sleep: async () => {} }).then(() => null, (e) => e);
   assert.equal(posts, 5);
   assert.equal(err.provider, 'sora');
   assert.equal(err.status, 429);

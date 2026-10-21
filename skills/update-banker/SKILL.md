@@ -70,23 +70,25 @@ banker 는 서로 다른 메커니즘의 채널 3개로 설치되고, 그 채널
 여기서 찍은 값이 4단계 검증의 before 다. 먼저 어떤 채널이 이 머신에 실재하는지 판정한다.
 
 ```bash
-(cd ~ && npm ping --fetch-retries=0 --fetch-timeout=10000)   # 레지스트리 도달 확인(이름 풀이가 실패하면 1초 안에, 응답이 없으면 약 10초 뒤 실패)
+in15() { "$@" & p=$!; ( sleep 15 && kill "$p" ) > /dev/null 2>&1 & k=$!; wait "$p" 2>/dev/null; r=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null; [ "$r" = 143 ] && echo "15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)"; return "$r"; }
+in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier'; P=$?   # 레지스트리 도달 확인(이름 풀이가 실패하면 1초 안에, 패킷을 버리는 망이면 15초 감시에서 멈춤)
 command -v claude >/dev/null && echo "claude: present" || echo "claude: absent (Claude 채널 스킵)"
 command -v codex  >/dev/null && echo "codex: present"  || echo "codex: absent (Codex 채널 스킵)"
 command -v banker >/dev/null && banker --version || echo "banker: absent"
-(cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
+[ "$P" = 0 ] && (cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 
 레지스트리에 닿지 못하면(`npm ping` 의 종료 코드가 0 이 아님) "레지스트리에 닿지 못함. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고, 어느 채널도 바꾸지 않고 멈춘다. `--check` 도 드리프트를 판정하지 않고 같은 보고로 끝낸다.
 
 - `npm` 이 없으면(명령 없음, 종료 코드 127) 레지스트리 문제가 아니다. "npm 없음. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고 같은 이유로 멈춘다.
 - `npm ping` 과 `npm view` 는 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다. Windows PowerShell 에서는 `Push-Location ~` 뒤에 부르고 `Pop-Location` 으로 돌아온다.
+- `npm ping` 은 15초 감시(`in15`) 안에서 부르고, `npm view` 는 ping 이 0 으로 끝났을 때만 부른다. 패킷을 버리는 망에서 npm 은 연결에 시간 제한을 두지 않아(`--fetch-timeout` 은 받는 중의 쉼만 잰다) OS 의 연결 재시도가 끝날 때까지 기다린다(Rocky 8.10 실측 130초). 15초 안에 끝나지 않으면 `15초 안에 끝나지 않아 멈춤(패킷을 버리는 망일 수 있음)` 과 종료 143 이다. PowerShell 에는 감시를 두지 않는다(Windows 의 연결 시간 제한은 약 21초로 알려져 있다. 미실측).
 
 - **`npm view` 는 이 확인을 대신하지 못한다.** npm 캐시에 옛 값이 있으면 레지스트리에 닿지 못해도 그 값을 종료 0 으로, 경고 없이 낸다(`--prefer-online`, `--offline` 도 같다). `--fetch-retries=0` 은 실패까지의 약 70초 대기만 없앤다.
-- 사내 미러가 `npm ping` 에 답하지 않으면, 빈 임시 캐시로 한 번 더 묻고 그 값으로 판정한다. 캐시가 비어 있어 옛 값이 나올 수 없다. 이것도 실패하면 위처럼 멈춘다.
+- 사내 미러가 `npm ping` 에 답하지 않으면, 빈 임시 캐시로 한 번 더 묻고 그 값으로 판정한다. 캐시가 비어 있어 옛 값이 나올 수 없다. 이것도 실패하면 위처럼 멈춘다. ping 이 15초 감시에 걸려 멈췄으면(종료 143) 이 확인은 하지 않는다. 같은 레지스트리라 같은 시간을 또 기다린다.
 
 ```bash
-(cd ~ && T=$(mktemp -d) && { npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000 --cache "$T"; r=$?; rm -rf "$T"; exit $r; })
+(cd ~ && T=$(mktemp -d) && { npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000 --cache "$T" --no-update-notifier; r=$?; rm -rf "$T"; exit $r; })
 ```
 
 부재한 채널은 그 자리에서 "스킵" 으로 확정한다. 없는 채널을 되살리려 들지 마라(그건 설치지 갱신이 아니다).

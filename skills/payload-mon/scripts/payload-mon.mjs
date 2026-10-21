@@ -219,27 +219,38 @@ function writeFresh(file, data, mode) {
   rmSync(tmp, { force: true });
   try {
     writeFileSync(tmp, data, { flag: "wx", mode });
+    const id = fileId(tmp);
     renameSync(tmp, file);
+    return id;
   } catch (e) {
     rmSync(tmp, { force: true });
     throw e;
   }
 }
 
+// A file's identity, exact: NTFS file IDs pass 2^53, where a Number loses the low bits.
+const fileId = (p) => {
+  const s = lstatSync(p, { bigint: true });
+  return `${s.dev}:${s.ino}`;
+};
 // The copy folder's identity, to tell afterwards whether it is still the folder that was written into.
 const folderStamp = (dir) => {
-  const s = lstatSync(dir);
+  const s = lstatSync(dir, { bigint: true });
   return `${s.dev}:${s.ino}:${s.isSymbolicLink()}`;
 };
-// After the write: when the copy folder is no longer the one stamped before (another program swapped it,
-// for a link say), the copy went wherever it now leads. It is taken back from there only when it is ours
-// byte for byte, and the write is refused. Node has no openat, so a swap after this check goes unseen.
-function checkFolder(copy, stamp, data) {
+// After the write: the copy folder must still be the one stamped before, holding these bytes. Another program
+// may have swapped it (for a link, say), so the copy went wherever it led, or put it back after the write, so
+// the copy is not in it. Then the write is refused, and the copy is taken back from where the folder now leads
+// when the file there is the one written (`written`, from writeFresh) and still ours byte for byte: a copy that
+// was there before, or one another program wrote over, stays.
+// Node has no openat, so a copy that went elsewhere through a swap that was put back stays where it went, and
+// a swap after this check goes unseen.
+function checkFolder(copy, stamp, data, written) {
   const dir = dirname(copy);
-  if (folderStamp(dir) === stamp) return;
+  if (folderStamp(dir) === stamp && readBytes(copy)?.equals(data)) return;
   try {
     const landed = join(realpathSync(dir), basename(copy));
-    if (readFileSync(landed).equals(data)) rmSync(landed, { force: true });
+    if (fileId(landed) === written && readFileSync(landed).equals(data)) rmSync(landed, { force: true });
   } catch {
     /* nothing there to take back */
   }
@@ -262,8 +273,8 @@ function syncModule(o) {
     const stamp = folderStamp(dirname(copy));
     // From the same lstat: a folder that became a link since the check above is refused before the write.
     if (stamp.endsWith(":true")) throw new Error(`사본 폴더가 링크입니다: ${dirname(copy)}`);
-    writeFresh(copy, data, 0o644);
-    checkFolder(copy, stamp, data);
+    const written = writeFresh(copy, data, 0o644);
+    checkFolder(copy, stamp, data, written);
   } catch (e) {
     if (made) {
       try {

@@ -1,7 +1,7 @@
 // Tests for verifier-probe.mjs. Run from the repo root: node --test skills/ralph-qa/references/verifier-probe.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -325,7 +325,7 @@ test("a line the probe cannot place keeps the config from being read as whole", 
   for (const text of ['[mcp_servers.작성기]\ncommand = "x"\n', 'mcp_servers.작성기.command = "x"\n', 'model = "gpt-5.5"\nwhat is this\n']) {
     assert.equal(readToml(text).broken, true, text);
   }
-  const real = ['﻿model = "gpt-5.5"', 'model_reasoning_effort = "high"\r', "", "# a comment", "\t[profiles.fast]", '\tmodel = "o3"',
+  const real = ['\u{FEFF}model = "gpt-5.5"', 'model_reasoning_effort = "high"\r', "", "# a comment", "\t[profiles.fast]", '\tmodel = "o3"',
     "[[skills.config]]", 'path = "/x"', 'notes = """', "line [not a header]", '"""', "[mcp_servers.docs]", 'command = "npx"',
     "args = [", '  "-y", # flag', '  "pkg",', "]", 'env = { A = "1", B = "2" }', "[tui]", 'theme = { name = "x",', "  dark = true }"].join("\n");
   const read = readToml(real);
@@ -825,6 +825,31 @@ test("the command line never runs a CLI from a relative PATH entry such as the c
   }
 });
 
+// npm's .cmd shims run a bare `node` when no node.exe sits beside them, and cmd.exe looks for a bare name in the current
+// folder first: a node.cmd in a repo the session works in would run in place of node.
+test("on Windows a .cmd CLI runs through System32's cmd.exe, and a bare node in it never comes from the current folder", { skip: process.platform !== "win32" && "Windows only" }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "probe-cmd-"));
+  try {
+    mkdirSync(join(dir, "bin"));
+    mkdirSync(join(dir, "repo"));
+    const marker = join(dir, "planted-ran");
+    writeFileSync(join(dir, "repo", "node.cmd"), `@echo ran> "${marker}"\r\n@echo codex-cli 9.9.9\r\n`);
+    writeFileSync(join(dir, "repo", "cmd.exe"), readFileSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "whoami.exe")));
+    writeFileSync(join(dir, "bin", "codex.cmd"), `@node -e "console.log('codex-cli 0.144.5')"\r\n`);
+    mkdirSync(join(dir, "home"));
+    const home = join(dir, "home");
+    const env = cleanEnv({ PATH: [join(dir, "bin"), dirname(process.execPath), join(process.env.SystemRoot || "C:\\Windows", "System32")].join(";"),
+      HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex") });
+    delete env.ComSpec;
+    delete env.COMSPEC;
+    const r = spawnSync(process.execPath, [PROBE, "--runtime=claude", "--codex"], { encoding: "utf8", cwd: join(dir, "repo"), env });
+    assert.equal(JSON.parse(r.stdout).seats[0].version, "codex-cli 0.144.5", r.stdout + r.stderr);
+    assert.ok(!existsSync(marker), "a file of the current folder ran");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("every reason the probe gives is one SKILL.md lists, and the two lists do not overlap", () => {
   const anyBin = (w) => ({ ...w, which: (n) => `/usr/bin/${n}` });
   const scenarios = [
@@ -916,4 +941,14 @@ test("the note for a config read short names an escaped quoted key as a cause; t
   assert.ok(s.notes.some((n) => n.includes("config.toml line 2") && n.includes("escape")), s.notes.join("; "));
   const emptied = opencodeWith({ "/home/u/.cache/opencode/version": "21" });
   assert.ok((emptied.notes ?? []).some((n) => n.includes("models.dev copy is missing") && n.includes("offline")), JSON.stringify(emptied));
+});
+
+// 0.20.5: codex refuses an array of tables under mcp_servers ("invalid type: sequence", codex 0.144.5), quoted or not.
+// The probe takes it as a server list it cannot read, so the seat is not taken, rather than as no server at all.
+test("an array of tables under mcp_servers, quoted or not, leaves the server list unread", () => {
+  for (const h of ["[[mcp_servers.x]]", "[['mcp_servers'.x]]", '[["mcp_servers".x]]', "[[mcp_servers]]", "[[ mcp_servers . x ]]", "[[mcp_servers.x.env]]"]) {
+    assert.equal(readToml(`${h}\ncommand = "x"\n`).mcpUnread, true, h);
+  }
+  assert.equal(readToml('[mcp_servers.x]\ncommand = "x"\n').mcpUnread, false);
+  assert.equal(readToml('[[profiles.fast]]\nmodel = "o3"\n').mcpUnread, false);
 });

@@ -1610,3 +1610,100 @@ test("Codex: a lock made but not written because of another error (EIO) is taken
   assert.equal(existsSync(lock), false, "the lock this run made is gone");
   assert.equal(read(s.agents), "# base\n");
 });
+
+// ---- 0.20.5 (B5 row 3, B5 plan rows r7 R1 and R3)
+// B5 row 3: a lock another run made at the name after this run's write failed can get the very inode number this run's
+// had (ext4 gives a freed number out again at once). It holds that run's token, so it stays and the wait ends in a refusal.
+test("Codex: after a lock write that failed, another run's lock at the name with the inode number this run's had is left alone", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const other = "4242 1700000000000 0.5";
+  const made = new Set();
+  let ino = null;
+  let swapped = 0;
+  const r = onWithFakes(s, {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock && a[0] === "wx" && ino === null) {
+        made.add(fd);
+        ino = fs.fstatSync(fd, { bigint: true }).ino;
+      }
+      return fd;
+    },
+    writeFileSync: (real) => (p, data, ...a) => {
+      if (!made.has(p) || swapped > 0) return real(p, data, ...a);
+      swapped++;
+      fs.unlinkSync(lock); // another run took the lock away as stale and made its own
+      real(lock, other);
+      throw estale("write");
+    },
+    lstatSync: (real) => (p, ...a) => {
+      const st = real(p, ...a);
+      if (String(p) !== lock || swapped === 0 || typeof st.ino !== "bigint") return st;
+      return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { ino });
+    },
+  });
+  assert.equal(swapped, 1);
+  assert.equal(r.ok, false, r.message);
+  assert.match(r.message, /다른 banker 지침 작업이 끝나지 않아 그대로 두었습니다/);
+  assert.equal(read(lock), other, "the other run's lock stays");
+  assert.equal(read(s.agents), "# base\n");
+});
+
+// The share took the token and only the close answered ESTALE: the lock holds this run's whole token, so it goes.
+test("Codex: a lock whose close answers ESTALE after the token reached the share is taken away, and on goes on", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  const made = new Set();
+  let stale = 0;
+  const r = onWithFakes(s, {
+    openSync: (real) => (p, ...a) => {
+      const fd = real(p, ...a);
+      if (String(p) === lock && a[0] === "wx") made.add(fd);
+      return fd;
+    },
+    closeSync: (real) => (fd) => {
+      real(fd);
+      if (!made.delete(fd) || stale > 0) return;
+      stale++;
+      throw estale("close");
+    },
+  });
+  assert.equal(stale, 1);
+  assert.ok(r.ok, r.message);
+  assert.equal(existsSync(lock), false, "no lock outlives the run");
+});
+
+// r7 R1: marks drawn over or around a letter (a stroke, a slash, a ring) make AGENTS.md look like another name.
+// U+0338 stays after a sign a decomposed name holds it with (= and U+0338 are U+2260 in NFD, as macOS may keep a name).
+test("paths lose the marks drawn over or around a letter, but keep U+0338 where it makes a sign of a decomposed name", () => {
+  const SLASH = "\u{338}";
+  assert.equal(where(`/h/AGENTS.md\u{336}\u{336}x\u{20d2}y${SLASH}`), "/h/AGENTS.md??x?y?");
+  assert.equal(where("/h/a\u{20dd}"), "/h/a?", "an enclosing ring");
+  const signs = [];
+  for (let cp = 0x20; cp < 0x30000; cp++) {
+    const d = String.fromCodePoint(cp).normalize("NFD");
+    if (d.length > 1 && d.endsWith(SLASH)) signs.push(d.slice(0, -1));
+  }
+  assert.ok(signs.length >= 40, `${signs.length} signs made with U+0338`);
+  for (const b of signs) assert.equal(where(`a${b}${SLASH}z`), `a${b}${SLASH}z`, `U+${b.codePointAt(0).toString(16)}`);
+  const nfd = "/home/사용자/가が/José".normalize("NFD");
+  assert.equal(where(nfd), nfd, "a decomposed name keeps its accents and its Hangul");
+});
+
+// r7 R3: an AGENTS.md past 32 MiB is no file of hand-written instructions. on and off leave it unread and say why, and
+// status names it, instead of a .bak as big or, past 2 GiB, a crash. The file is sparse: the test writes nothing that big.
+test("Codex: an AGENTS.md past 32 MiB is refused by on and off, unread, with no .bak, and status says so", () => {
+  const s = setup();
+  writeFileSync(s.agents, "");
+  fs.truncateSync(s.agents, 32 * 1024 * 1024 + 1);
+  for (const r of [turnOn("codex", s.o), turnOff("codex", s.o)]) {
+    assert.equal(r.ok, false, r.message);
+    assert.match(r.message, /32MiB 보다 큰 파일이라 그대로 두었습니다: .*AGENTS\.md$/);
+  }
+  assert.equal(statSync(s.agents).size, 32 * 1024 * 1024 + 1);
+  assert.equal(readdirSync(s.o.codexDir).filter((f) => f.endsWith(".bak")).length, 0, "no .bak");
+  assert.match(status(s.o).message, /32MiB 보다 큰 지침 파일이 있어 손대지 않음/);
+});
