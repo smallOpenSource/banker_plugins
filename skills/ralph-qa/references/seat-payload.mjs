@@ -29,7 +29,7 @@
 import { spawnSync } from "node:child_process";
 import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { scan } from "./payload-scan.mjs";
 import { which } from "./seat-spawn.mjs";
 
@@ -341,12 +341,38 @@ function rangeUnit(ctx, u) {
   return Buffer.concat([Buffer.from(`=== ${u.path}:${u.from}-${u.to}\n`), withNewline(body)]);
 }
 
+// The path of `full` from the repo root, or null outside the repo. A folder above `full` that is the
+// repo by another spelling (a link above the repo, as /var and /private/var on macOS) counts too.
+function repoRel(top, full) {
+  const from = (base) => {
+    const rel = relative(base, full).split(sep).join("/");
+    return rel !== "" && rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel) ? rel : null;
+  };
+  const direct = from(top);
+  if (direct !== null) return direct;
+  const norm = (p) => (WIN ? p.toLowerCase() : p);
+  let real;
+  try {
+    real = norm(realpathSync.native(top));
+  } catch {
+    return null;
+  }
+  for (let base = dirname(full); base !== dirname(base); base = dirname(base)) {
+    try {
+      if (norm(realpathSync.native(base)) === real) return from(base);
+    } catch {
+      // a folder that is not there: look higher
+    }
+  }
+  return null;
+}
+
 // A file, gate or review part under its `=== <kind> <name>` line: the path from the repo root
 // when it is inside the repo, else its file name alone.
 function fileUnit(ctx, u) {
   const full = resolve(ctx.top, u.path);
-  const rel = relative(ctx.top, full).split(sep).join("/");
-  const inside = rel !== "" && rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel);
+  const rel = repoRel(ctx.top, full);
+  const inside = rel !== null;
   if (inside && throughLink(ctx.top, rel)) throw new Stop("file", `${u.kind} 의 파일이 링크이거나 링크 폴더 아래에 있다: ${u.path}`);
   const buf = readPart(full, (why) => new Stop("file", why ? `${u.kind} 의 파일을 읽을 수 없다(${why}): ${u.path}` : `${u.kind} 의 파일이 일반 파일이 아니다: ${u.path}`));
   if (buf.includes(0)) throw new Stop("file", `${u.kind} 의 파일이 바이너리다: ${u.path}`);

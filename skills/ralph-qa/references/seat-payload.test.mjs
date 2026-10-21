@@ -537,6 +537,31 @@ test("a related range is not read through a link: a tracked or listed link, or a
   }
 });
 
+// macOS gives the temp folder as /var/... where git gives the repo as /private/var/...: a review or file line
+// that reaches the repo by another spelling (a link above it) is a file in the repo all the same.
+test("a review line that reaches the repo through a link above it names the file from the repo root and stops at a link inside", { skip: SKIP || (!canLink && "no symlinks here") }, (t) => {
+  const ctx = repo(t);
+  put(ctx, ".gitignore", "*.log\n.omc/\n");
+  git(ctx, "add", ".gitignore");
+  git(ctx, "commit", "-qm", "ignore .omc");
+  put(ctx, ".omc/plans/p.md", "the plan\n");
+  const other = mkdtempSync(join(tmpdir(), "rq-alias-"));
+  t.after(() => rmSync(other, { recursive: true, force: true }));
+  const alias = join(other, "to");
+  symlinkSync(ctx.dir, alias, "dir");
+  let r = prep(ctx, { spec: `review ${join(alias, "repo", ".omc", "plans", "p.md")}\n` });
+  assert.equal(r.stop, undefined, r.message);
+  assert.ok(r.prompt.includes("=== review .omc/plans/p.md\nthe plan\n"), r.prompt);
+  const outside = join(ctx.dir, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "x.md"), "OUTSIDE\n");
+  symlinkSync(outside, join(ctx.repo, ".omc", "inner"), "dir");
+  r = prep(ctx, { spec: `review ${join(alias, "repo", ".omc", "inner", "x.md")}\n` });
+  assert.equal(r.stop, "file", r.prompt);
+  assert.match(r.message, /링크이거나 링크 폴더 아래에 있다/);
+  assert.equal(r.prompt, null);
+});
+
 test("a ./ line in spec names its file, for the list and for a related range", { skip: SKIP }, (t) => {
   const ctx = repo(t);
   put(ctx, "plain.txt", "p1\np2\n");

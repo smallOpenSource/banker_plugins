@@ -249,10 +249,14 @@ test("on Windows a .cmd seat gets its words as planned and the limit ends its tr
   const ctx = scratch(t);
   const exe = stub(ctx, "codex");
   assert.match(exe, /\.cmd$/);
-  const words = WORDS;
+  // the stub writes its answer at -o, so that one word names a folder that is there, with a space in it
+  mkdirSync(join(ctx.dir, "out dir"));
+  const words = WORDS.map((w) => (w.endsWith("out-codex.md") ? join(ctx.dir, "out dir", "out-codex.md") : w));
+  assert.notDeepEqual(words, WORDS);
   let r = await runLimited({ exe, args: words, cwd: ctx.dir, env: seatEnv(ctx), stdin: "ignore", stdout: ctx.out, stderr: ctx.err, limitMs: 60000 });
   assert.equal(r.exit, 0, readFileSync(ctx.err, "utf8"));
   assert.deepEqual(recordOf(ctx, "codex").args, words);
+  assert.ok(existsSync(join(ctx.dir, "out dir", "out-codex.md")), "the answer is at the -o path");
   rmSync(ctx.log, { recursive: true });
   mkdirSync(ctx.log);
   r = await runLimited({ exe, args: ["exec"], cwd: ctx.dir, env: seatEnv(ctx, { RQ_STUB_MODE: "chain" }), stdin: "ignore", stdout: ctx.out, stderr: ctx.err, limitMs: 3000 });

@@ -988,8 +988,21 @@ const newFileGroup = (() => {
     rmSync(probe);
   }
 })();
-const otherGroup = POSIX ? process.getgroups().find((g) => g !== newFileGroup) : undefined;
-const otherGroupOpts = { skip: (!POSIX && "Windows has no POSIX groups") || (otherGroup === undefined && "this account is in one group only") };
+// Only a group a file here can be given: in a user namespace a group that is not mapped shows as 65534 and cannot.
+const canGive = (gid) => {
+  const probe = join(root, "group-probe");
+  writeFileSync(probe, "");
+  try {
+    chownSync(probe, process.getuid(), gid);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe);
+  }
+};
+const otherGroup = POSIX ? process.getgroups().find((g) => g !== newFileGroup && canGive(g)) : undefined;
+const otherGroupOpts = { skip: (!POSIX && "Windows has no POSIX groups") || (otherGroup === undefined && "this account has no other group a file here can be given") };
 
 test("새 파일이면 그룹이 바뀔 settings.json 은 제자리에 써 그룹과 권한이 그대로", otherGroupOpts, () => {
   const cfg = fresh();

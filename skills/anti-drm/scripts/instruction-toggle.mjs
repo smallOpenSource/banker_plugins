@@ -60,6 +60,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -186,10 +187,22 @@ export function writeFresh(file, data, mode = 0o644) {
   rmSync(tmp, { force: true });
   try {
     writeFileSync(tmp, data, { flag: "wx", mode });
-    renameSync(tmp, file);
+    renameOver(tmp, file);
   } catch (e) {
     rmSync(tmp, { force: true });
     throw e;
+  }
+}
+
+// Windows does not rename a file over a link to a folder: there the link goes first, and the folder it
+// leads to stays.
+function renameOver(tmp, file) {
+  try {
+    renameSync(tmp, file);
+  } catch (e) {
+    if (process.platform !== "win32" || !lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) throw e;
+    unlinkSync(file);
+    renameSync(tmp, file);
   }
 }
 
