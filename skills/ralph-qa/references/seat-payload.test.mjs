@@ -764,6 +764,38 @@ test("a git folder that reads another repo's refs (commondir, linked refs and ob
   for (const x of [r.prompt || "", existsSync(join(ctx.d, "raw.md")) ? readFileSync(join(ctx.d, "raw.md"), "utf8") : ""]) assert.ok(!x.includes("PRIVATE"), x);
 });
 
+// The second security review: a real .git that borrows another repo's objects (objects/info/alternates, a plain
+// file) and its refs below the top folders (refs/heads a link) names that repo's tip without its sha.
+test("a git folder that borrows another repo's objects (alternates) or links below refs or objects stops", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  const victim = join(ctx.dir, "victim");
+  mkdirSync(victim);
+  const vg = (...a) => assert.equal(spawnSync("git", ["-C", victim, ...a], { encoding: "utf8", env: ctx.env }).status, 0, a.join(" "));
+  vg("-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(victim, "secret.c"), "VICTIM-SECRET\n");
+  vg("add", ".");
+  vg("commit", "-qm", "v");
+  const sha = spawnSync("git", ["-C", victim, "rev-parse", "HEAD"], { encoding: "utf8", env: ctx.env }).stdout.trim();
+  // alternates and a packed-refs line naming the victim's commit
+  writeFileSync(join(ctx.repo, ".git", "objects", "info", "alternates"), `${join(victim, ".git", "objects")}\n`);
+  writeFileSync(join(ctx.repo, ".git", "packed-refs"), `${sha} refs/heads/borrowed\n`);
+  let r = prep(ctx, { base: "borrowed" });
+  assert.equal(r.stop, "not-a-repo", r.prompt);
+  assert.match(r.detail, /alternates/);
+  rmSync(join(ctx.repo, ".git", "objects", "info", "alternates"));
+  rmSync(join(ctx.repo, ".git", "packed-refs"));
+  if (canLink) {
+    // refs/heads a link to the victim's: HEAD names the victim's tip; objects/pack a link the same way
+    const heads = join(ctx.repo, ".git", "refs", "heads");
+    rmSync(heads, { recursive: true });
+    symlinkSync(join(victim, ".git", "refs", "heads"), heads, "dir");
+    r = prep(ctx);
+    assert.equal(r.stop, "not-a-repo", r.prompt);
+    assert.match(r.detail, /refs/);
+  }
+  for (const x of [r.prompt || "", existsSync(join(ctx.d, "raw.md")) ? readFileSync(join(ctx.d, "raw.md"), "utf8") : ""]) assert.ok(!x.includes("VICTIM"), x);
+});
+
 // A partial clone fetches a missing object from its promisor remote when the diff needs it; the runner's git reaches
 // no remote at all (here a local file:// one, which a real archive would make an https or ssh one).
 test("git never fetches while the payload is built: a partial clone's missing object stops instead", { skip: SKIP }, (t) => {

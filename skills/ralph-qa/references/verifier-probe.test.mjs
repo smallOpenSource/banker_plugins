@@ -836,7 +836,10 @@ test("on Windows a .cmd CLI runs through System32's cmd.exe, and a bare node in 
     writeFileSync(join(dir, "repo", "node.cmd"), `@echo ran> "${marker}"\r\n@echo codex-cli 9.9.9\r\n`);
     writeFileSync(join(dir, "repo", "cmd.exe"), readFileSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "whoami.exe")));
     writeFileSync(join(dir, "bin", "codex.cmd"), `@node -e "console.log('codex-cli 0.144.5')"\r\n`);
-    const env = cleanEnv({ PATH: [join(dir, "bin"), dirname(process.execPath), join(process.env.SystemRoot || "C:\\Windows", "System32")].join(";") });
+    mkdirSync(join(dir, "home"));
+    const home = join(dir, "home");
+    const env = cleanEnv({ PATH: [join(dir, "bin"), dirname(process.execPath), join(process.env.SystemRoot || "C:\\Windows", "System32")].join(";"),
+      HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex") });
     delete env.ComSpec;
     delete env.COMSPEC;
     const r = spawnSync(process.execPath, [PROBE, "--runtime=claude", "--codex"], { encoding: "utf8", cwd: join(dir, "repo"), env });

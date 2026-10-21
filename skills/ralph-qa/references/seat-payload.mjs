@@ -27,7 +27,7 @@
  * prompt.md and runs check.
  */
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -247,15 +247,43 @@ function ownLayout(realTop, { gitDir, common, tree }) {
   return norm(common) === norm(gitDir) && Boolean(tree) && norm(realOr(resolve(gitDir, tree))) === norm(realTop);
 }
 
-// The repo's git folder must be its own (ownLayout) and read its HEAD, refs and objects from itself, not through a
-// link. A .git file or link to another repo, a commondir file, core.worktree set to another folder or a linked refs
-// folder would make the diff carry another repo's files: it stops.
+// The first link at or below `root`: git would read another repo's objects or refs through it.
+function linkUnder(root) {
+  const folders = [root];
+  while (folders.length) {
+    const dir = folders.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.isSymbolicLink()) return join(dir, e.name);
+      if (e.isDirectory()) folders.push(join(dir, e.name));
+    }
+  }
+  return null;
+}
+
+// What makes git read another repo's HEAD, refs or objects: a link at HEAD, refs, packed-refs or objects or anywhere
+// below refs and objects, and objects/info/alternates (another object store, whose tip a linked ref or a known sha names).
+function borrowed(f) {
+  const tops = [join(f.gitDir, "HEAD"), ...["refs", "packed-refs", "objects"].map((n) => join(f.common, n))].filter((p) => kindAt(p) === "other");
+  const below = [join(f.common, "refs"), join(f.common, "objects"), join(f.gitDir, "refs")].map(linkUnder).filter(Boolean);
+  const alternates = join(f.common, "objects", "info", "alternates");
+  return [...tops, ...below, ...(kindAt(alternates) ? [alternates] : [])];
+}
+
+// The repo's git folder must be its own (ownLayout) and read its HEAD, refs and objects from itself (borrowed). A .git
+// file or link to another repo, a commondir file, core.worktree set to another folder, a link in refs or objects or
+// an alternates file would make the diff carry another repo's files: it stops.
 function ownGitDir(git, top) {
   const realTop = realOr(top);
   const f = gitFolders(git, top);
-  const linked = [join(f.gitDir, "HEAD"), ...["refs", "packed-refs", "objects"].map((n) => join(f.common, n))].filter((p) => kindAt(p) === "other");
-  if (!ownLayout(realTop, f) || linked.length) {
-    throw new Stop("not-a-repo", `git 폴더가 이 저장소의 것이 아니다(.git 파일이나 링크, core.worktree, 링크인 refs 나 objects 가 다른 곳을 가리킴): ${f.gitDir}`, linked);
+  const found = borrowed(f);
+  if (!ownLayout(realTop, f) || found.length) {
+    throw new Stop("not-a-repo", `git 폴더가 이 저장소의 것이 아니다(.git 파일이나 링크, core.worktree, refs 나 objects 의 링크, alternates 가 다른 곳을 가리킴): ${f.gitDir}`, found);
   }
 }
 

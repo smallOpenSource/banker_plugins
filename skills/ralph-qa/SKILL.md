@@ -178,7 +178,7 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `file` | file, gate, review 줄의 파일이 일반 파일이 아니거나 읽을 수 없다(바이너리, 64 MiB 초과, 링크 폴더 아래) | 경로를 고친다 | 없음 |
 | `markers` | 표지가 두 줄(`short.md` 의 여는 표지 하나와 닫는 표지)이 아니다 | id 를 바꿔 `short.md` 를 다시 쓴다 | 없음 |
 | `spec` | `spec.md` 의 그 줄이 틀렸다(모르는 낱말, 숫자, 절대 경로나 `..`, UTF-8 이 아님). id 가 영문자와 숫자 4~64자가 아니어도 이것이다 | 그 줄이나 id 를 고친다 | 없음 |
-| `not-a-repo` | git 저장소가 아니다. 또는 git 폴더가 이 저장소의 것이 아니다(`.git` 파일이나 링크, `commondir`, `core.worktree`, 링크인 `refs` 나 `objects` 가 다른 곳을 가리킴. `--separate-git-dir` 저장소도 여기에 듦) | 저장소 경로를 다시 본다. git 폴더가 저장소 밖이면 보내지 않는다고 사용자에게 알린다 | 다시 해도 같으면 `cli-call-failed` |
+| `not-a-repo` | git 저장소가 아니다. 또는 git 폴더가 이 저장소의 것이 아니다(`.git` 파일이나 링크, `commondir`, `core.worktree`, `refs` 나 `objects` 안의 링크, `objects/info/alternates` 가 다른 곳을 가리킴. `--separate-git-dir`, `clone --shared`, `--reference` 저장소도 여기에 듦) | 저장소 경로를 다시 본다. git 폴더가 저장소 밖이면 보내지 않는다고 사용자에게 알린다 | 다시 해도 같으면 `cli-call-failed` |
 | `base-invalid` | 기준을 찾지 못했다 | `<기준>` 을 다시 본다 | 다시 해도 같으면 `cli-call-failed` |
 | `git-failed` | git 이 실패했다(첫 줄이 `message` 와 `detail` 에). 저장소 설정의 filter 이름에 `=` 나 줄바꿈이 있어 끌 수 없을 때, 부분 clone 이 없는 객체를 받아야 할 때도 | 저장소와 `<기준>` 을 다시 본다 | 다시 해도 같으면 `cli-call-failed` |
 | `git-timeout` | git 이 120초 안에 끝나지 않았다 | 다시 해 본다 | 다시 해도 같으면 `cli-call-failed` |
