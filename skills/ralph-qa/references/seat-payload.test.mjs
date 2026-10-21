@@ -786,12 +786,22 @@ test("a git folder that borrows another repo's objects (alternates) or links bel
   rmSync(join(ctx.repo, ".git", "packed-refs"));
   if (canLink) {
     // refs/heads a link to the victim's: HEAD names the victim's tip; objects/pack a link the same way
+    const own = git(ctx, "rev-parse", "HEAD").trim();
     const heads = join(ctx.repo, ".git", "refs", "heads");
     rmSync(heads, { recursive: true });
     symlinkSync(join(victim, ".git", "refs", "heads"), heads, "dir");
     r = prep(ctx);
     assert.equal(r.stop, "not-a-repo", r.prompt);
     assert.match(r.detail, /refs/);
+    rmSync(heads);
+    mkdirSync(heads);
+    git(ctx, "update-ref", "refs/heads/main", own);
+    // a linked worktree's own refs folder (worktree refs such as refs/bisect) as a link
+    const wt = join(ctx.dir, "wt-refs");
+    git(ctx, "worktree", "add", "-q", "--detach", wt);
+    symlinkSync(join(victim, ".git", "refs"), join(ctx.repo, ".git", "worktrees", "wt-refs", "refs"), "dir");
+    r = prep({ ...ctx, repo: wt });
+    assert.equal(r.stop, "not-a-repo", r.prompt);
   }
   for (const x of [r.prompt || "", existsSync(join(ctx.d, "raw.md")) ? readFileSync(join(ctx.d, "raw.md"), "utf8") : ""]) assert.ok(!x.includes("VICTIM"), x);
 });

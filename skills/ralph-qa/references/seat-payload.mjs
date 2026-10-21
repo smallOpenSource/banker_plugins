@@ -266,10 +266,11 @@ function linkUnder(root) {
   return null;
 }
 
-// What makes git read another repo's HEAD, refs or objects: a link at HEAD, refs, packed-refs or objects or anywhere
-// below refs and objects, and objects/info/alternates (another object store, whose tip a linked ref or a known sha names).
+// What makes git read another repo's HEAD, refs or objects: a link at HEAD, refs (the shared ones and a worktree's
+// own), packed-refs or objects or anywhere below refs and objects, and objects/info/alternates (another object store,
+// whose tip a linked ref or a known sha names).
 function borrowed(f) {
-  const tops = [join(f.gitDir, "HEAD"), ...["refs", "packed-refs", "objects"].map((n) => join(f.common, n))].filter((p) => kindAt(p) === "other");
+  const tops = [join(f.gitDir, "HEAD"), join(f.gitDir, "refs"), ...["refs", "packed-refs", "objects"].map((n) => join(f.common, n))].filter((p) => kindAt(p) === "other");
   const below = [join(f.common, "refs"), join(f.common, "objects"), join(f.gitDir, "refs")].map(linkUnder).filter(Boolean);
   const alternates = join(f.common, "objects", "info", "alternates");
   return [...tops, ...below, ...(kindAt(alternates) ? [alternates] : [])];
