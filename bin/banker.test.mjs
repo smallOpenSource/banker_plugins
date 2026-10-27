@@ -252,4 +252,8 @@ test('doctor: the newest Codex record is checked for what banker reads, and a sh
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
   assert.match(out, /rollout-b\.jsonl\): turn start MISSING, user text MISSING/);
   assert.match(out, /banker may not read this Codex version's records/);
+  fs.writeFileSync(path.join(day, 'rollout-c.jsonl'), `${meta}\n`);
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
+  assert.match(out, /rollout-c\.jsonl holds no turn yet/);
+  assert.doesNotMatch(out, /may not read/, 'a session just opened is no shape change');
 }));

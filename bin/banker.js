@@ -249,7 +249,9 @@ function codexShapeReport(file) {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) return null;
     const read = (start, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, start); return b.toString('utf8'); };
-    const head = read(0, Math.min(st.size, 1 << 20)).split('\n')[0];
+    const first = read(0, Math.min(st.size, 8 << 20)); // session_meta carries the instructions and can be large
+    const head = first.split('\n')[0];
+    if (!first.slice(head.length).trim()) return { version: 'new', fresh: true };
     const body = read(Math.max(0, st.size - (32 << 20)), Math.min(st.size, 32 << 20));
     let version = '';
     try { const m = JSON.parse(head); version = m.type === 'session_meta' ? String((m.payload || {}).cli_version || '?') : ''; } catch {}
@@ -266,6 +268,7 @@ function doctorCodexShape(base) {
   const file = newestRollout(base);
   if (!file) { log('  Codex record shape: no session record yet (run one Codex session, then doctor again)'); return; }
   const r = codexShapeReport(file);
+  if (r && r.fresh) { log(`  Codex record shape: ${path.basename(file)} holds no turn yet (run one Codex turn, then doctor again)`); return; }
   if (!r || !r.version) { log(`  ⚠ Codex record shape: ${path.basename(file)} does not open with session_meta - lineage, progress and usage counting cannot read it`); return; }
   const mark = (ok) => (ok ? 'ok' : 'MISSING');
   log(`  Codex record shape (Codex ${r.version}, ${path.basename(file)}): turn start ${mark(r.turnStart)}, user text ${mark(r.userText)}, tool calls ${mark(r.toolCall)}`);

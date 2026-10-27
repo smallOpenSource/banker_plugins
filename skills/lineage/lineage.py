@@ -2863,6 +2863,7 @@ def _read_all_sessions(args):
         if meta is not None and not any(t["role"] == "user" for t in part):
             print(f"[lineage] WARN: {p.name}: no user turn read from this Codex {meta.get('cli_version', '?')} "
                   "record (a new record shape?); left out", file=sys.stderr)
+            continue
         fill_missing_ts(part)
         for t in part:
             t["session_ts"] = starts[p] or "9999"

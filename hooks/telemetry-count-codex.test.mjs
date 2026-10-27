@@ -77,7 +77,7 @@ test('only this turn\'s tool calls count: earlier turns and what the user typed 
   const tmp = mkTmp();
   const f = rollout(tmp, [started('t0'), cat('old'), started('t1'), said('see skills/banker-typed/SKILL.md'), cat('ralph-qa'), cat('ralph-qa'), cat('lineage')]);
   assert.deepEqual(turnSkills(f, 't1').sort(), ['banker:lineage', 'banker:ralph-qa']);
-  assert.equal(turnSkills(f, 'nope'), null, 'a whole record with no start for this turn is a shape this hook does not read');
+  assert.deepEqual(turnSkills(f, 'nope'), [], 'other turns started: this one alone is no shape change');
   assert.deepEqual(turnSkills(f, 't1', 64), [], 'a turn start past the read cap is not guessed');
 });
 
@@ -185,4 +185,13 @@ test('a Codex version whose record has no turn start is noted once for the next 
   assert.equal(spawnSync(process.execPath, [notify, '--codex'], { input: '{}', encoding: 'utf8', env }).stdout, '', 'once');
   run(tmp, stop(rollout(tmp, [{ type: 'session_meta', payload: { id: 's1', cli_version: '9.9.9' } }, started('t1'), cat('lineage')])));
   assert.equal(JSON.parse(readFileSync(miss, 'utf8')).notified, true, 'a readable record leaves the note as it was');
+});
+
+test('a turn whose start alone is missing is no shape change, and nothing is noted', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const f = rollout(tmp, [{ type: 'session_meta', payload: { id: 's1', cli_version: '0.144.5' } }, started('t0'), cat('lineage')]);
+  assert.deepEqual(turnSkills(f, 't1'), []);
+  run(tmp, stop(f));
+  assert.ok(!existsSync(join(bankerDir(tmp), 'codex-shape-miss.json')));
 });

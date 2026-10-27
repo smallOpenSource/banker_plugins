@@ -3953,6 +3953,26 @@ class TestMainPaths(_ReviewCase):
         self.assertIn("Codex 9.9.9 session record, but no user turn was read", err)
         self.assertEqual(self._page(), "", "no empty page")
 
+    def test_all_sessions_leaves_out_a_codex_record_it_cannot_read(self):
+        from unittest import mock
+        home = os.path.join(self.d, "codex")
+        day = os.path.join(home, "sessions", "2026", "10", "27")
+        os.makedirs(day)
+        good = [{"type": "session_meta", "payload": {"id": "g", "cwd": os.getcwd(), "cli_version": "0.144.5"}},
+                {"timestamp": "2026-10-27T10:00:01Z", "type": "event_msg", "payload": {"type": "user_message", "message": "GOOD-ASK"}}]
+        bad = [{"type": "session_meta", "payload": {"id": "b", "cwd": os.getcwd(), "cli_version": "9.9.9"}},
+               {"timestamp": "2026-10-27T10:00:02Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "BAD-ANSWER"}}]
+        for name, recs in (("rollout-a-01a17e65-99ef-7521-afab-678084f9edb2.jsonl", good), ("rollout-b-01a17e65-0000-7521-afab-678084f9edb2.jsonl", bad)):
+            with open(os.path.join(day, name), "w", encoding="utf-8") as f:
+                f.write("\n".join(json.dumps(r) for r in recs) + "\n")
+        env = {"CODEX_HOME": home, "CODEX_THREAD_ID": "01a17e65-99ef-7521-afab-678084f9edb2"}
+        with mock.patch.dict(os.environ, env):
+            rc, err = _quiet(L.main, ["--all-sessions", "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])
+        self.assertEqual(rc, 0)
+        self.assertIn("left out", err)
+        self.assertIn("GOOD-ASK", self._page())
+        self.assertNotIn("BAD-ANSWER", self._page())
+
     def test_a_claude_transcript_with_no_turns_still_renders(self):
         self._write([{"type": "summary", "summary": "x"}])
         self.assertEqual(self._rulebase()[0], 0)

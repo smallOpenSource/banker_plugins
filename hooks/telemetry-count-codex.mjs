@@ -79,13 +79,14 @@ function injectedPath(rec) {
 
 // 이번 턴(turn_id 의 task_started 뒤)의 도구 호출과 넣은 스킬 머리에서 읽은 banker 스킬 이름. 사용자 글과 모델 답은 세지 않는다.
 // 턴 시작은 대개 기록 끝 가까이에 있으므로 끝 1 MB 부터 읽고, 못 찾으면 두 배씩 max 까지 넓힌다.
-// 기록 전체를 읽고도 이 턴의 시작이 없으면 null: Codex 는 턴마다 task_started 를 쓰므로 기록 형식이 바뀐 것이다.
+// 기록 전체를 읽고도 task_started 가 하나도 없으면 null: Codex 는 턴마다 task_started 를 쓰므로 기록 형식이 바뀐 것이다.
+// 이 턴의 것만 없을 때(시작이 기록되지 않는 턴)는 형식 변경으로 보지 않는다.
 export function turnSkills(file, turnId, max = MAX_READ) {
   for (let size = Math.min(FIRST_READ, max); ; size = Math.min(size * 2, max)) {
     const { lines, whole } = tailLines(file, size);
     const start = turnStart(lines, turnId);
     if (start >= 0) return skillsAfter(lines, start);
-    if (whole) return lines.some((l) => l.trim()) ? null : [];
+    if (whole) return lines.some((l) => l.trim()) && !lines.some((l) => l.includes('"task_started"')) ? null : [];
     if (size >= max) return [];
   }
 }
@@ -96,7 +97,7 @@ export function codexVersionOf(file) {
     const fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
     try {
       if (!fstatSync(fd).isFile()) return '';
-      const buf = Buffer.alloc(Math.min(fstatSync(fd).size, 1 << 20));
+      const buf = Buffer.alloc(Math.min(fstatSync(fd).size, 8 << 20)); // session_meta 는 지침을 품어 클 수 있다
       readSync(fd, buf, 0, buf.length, 0);
       const rec = JSON.parse(buf.toString('utf8').split('\n')[0]);
       return rec?.type === 'session_meta' ? String(rec.payload?.cli_version ?? '?').slice(0, 40) : '';
