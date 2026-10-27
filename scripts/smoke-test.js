@@ -309,6 +309,12 @@ try {
   const toggleTc = fs.readFileSync(path.join(root, 'skills', 'tone-compact', 'scripts', 'instruction-toggle.mjs'));
   const toggleAd = fs.readFileSync(path.join(root, 'skills', 'anti-drm', 'scripts', 'instruction-toggle.mjs'));
   ok(toggleTc.equals(toggleAd), 'instruction-toggle.mjs is byte-identical across tone-compact and anti-drm');
+  const cfgBp = fs.readFileSync(path.join(root, 'skills', 'setup-bypass-permissions', 'scripts', 'codex-config.mjs'));
+  const cfgHud = fs.readFileSync(path.join(root, 'skills', 'setup-omc-hud', 'assets', 'codex-config.mjs'));
+  ok(cfgBp.equals(cfgHud), 'codex-config.mjs is byte-identical across setup-bypass-permissions and setup-omc-hud');
+  ok(['scripts/codex-bypass.mjs', 'scripts/codex-config.mjs'].every((f) => fs.existsSync(path.join(instDir, 'banker-setup-bypass-permissions', ...f.split('/'))))
+     && ['assets/codex-status-line.mjs', 'assets/codex-config.mjs'].every((f) => fs.existsSync(path.join(instDir, 'banker-setup-omc-hud', ...f.split('/')))),
+     'the Codex install carries the Codex config scripts of setup-bypass-permissions and setup-omc-hud');
   const tcSkill = fs.readFileSync(path.join(tcDir, 'SKILL.md'), 'utf8');
   ok(/^---\nname: banker-tone-compact\n/.test(tcSkill) && tcSkill.includes('<!-- tone-compact:rules:start -->') && tcSkill.includes('<!-- tone-compact:rules:end -->'),
      'Codex copy of tone-compact keeps its rule markers after the name rewrite');

@@ -45,3 +45,16 @@ test('a line OMX or the user set is left alone by on and off; a config with no [
   assert.equal(readFileSync(f, 'utf8'), `model = "x"\n\n[tui]\n${MARK}\nstatus_line = ["model-with-reasoning", "git-branch"]\n`);
   assert.equal(turnOn({ file: file(BASE), preset: 'huge' }).code, 1);
 });
+
+test('a config that sets tui with a dotted key or an inline table is refused, and off leaves a marked line whose value the user changed', () => {
+  for (const text of ['tui.theme = "dark"\n', 'tui = { theme = "dark" }\n']) {
+    const f = file(text);
+    assert.equal(turnOn({ file: f }).code, 1, text);
+    assert.equal(readFileSync(f, 'utf8'), text);
+  }
+  const edited = `[tui]\n${MARK}\nstatus_line = ["model-with-reasoning", "my-field"]\n`;
+  const f = file(edited);
+  assert.match(turnOff({ file: f }).msg, /사용자가 값을 고친/);
+  assert.equal(readFileSync(f, 'utf8'), edited);
+  assert.equal(turnOn({ file: file(BASE), preset: '__proto__' }).code, 1);
+});

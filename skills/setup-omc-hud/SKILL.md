@@ -24,7 +24,7 @@ Codex 에서 실행했고 요청이 대상을 말하지 않으면, 설치 전에
 - Claude Code 쪽 설치는 `~/.claude` 에 쓴다. Codex 의 `workspace-write` 샌드박스가 이 쓰기를 막으므로, `apply-hud.mjs` 와 `payload-mon on` 은 샌드박스 밖 실행으로 승인을 요청해 돌린다. 승인한 실행은 Codex 0.144.5 에서 확인했다. 승인을 요청할 수 없거나(승인 정책 `never`) 거부되면, 같은 명령을 Codex 입력창에서 `!` 를 붙여 사용자가 직접 실행하게 안내한다(예: `!node "<이 스킬 디렉터리 절대경로>/assets/apply-hud.mjs"`). 사용자가 친 `!` 명령은 샌드박스 밖에서 돈다(Codex 0.144.5, `-a never` 에서 실측). `codex exec` 처럼 사람이 없는 실행이면 그 명령을 보고하고 멈춘다. `--add-dir ~/.claude` 처럼 설정 폴더를 통째로 여는 방법은 쓰지 않는다. 그 세션이 훅과 설정을 고칠 수 있게 되어 샌드박스가 무력해진다.
 - OMX 의 `omx hud --tmux` 는 지금 tmux 창을 나눠 HUD 칸을 새로 띄운다. 사용자가 그 칸을 원한다고 했을 때만 실행한다.
 
-**인자가 `off` 또는 `status` 일 때:** 0~3단계를 건너뛰고 "인자 off, status" 절만 실행한다.
+**인자가 `off` 또는 `status` 일 때:** 대상이 Claude Code 면 0~3단계를 건너뛰고 "인자 off, status" 절만 실행한다. 대상이 Codex 면 아래 "Codex 상태표시줄" 절의 `off`, `status` 만 실행하고 그 밖의 절(`claude-update-last` 포함)은 하지 않는다.
 
 ### Codex 상태표시줄
 

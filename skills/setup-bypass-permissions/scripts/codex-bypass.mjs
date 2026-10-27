@@ -28,11 +28,16 @@ const backupOf = (file) => `${file}.bypass-permissions.bak`;
 const valueOf = (text, key) => findKey(text, '', key)?.raw ?? null;
 const isOn = (text) => KEYS.every((k) => valueOf(text, k) === WANT[k]);
 
-// 조직 정책이 이 값을 막으면 그 이유, 아니면 ''.
+// 조직 정책이 이 값을 막거나 정책 파일을 읽을 수 없으면 그 이유, 아니면 ''.
 export function policyBlock(files = POLICY_FILES) {
   for (const f of files) {
     let text = '';
-    try { text = fs.readFileSync(f, 'utf8'); } catch { continue; }
+    try {
+      text = fs.readFileSync(f, 'utf8');
+    } catch (e) {
+      if (e.code === 'ENOENT') continue;
+      return `조직 정책 파일을 읽을 수 없음(${e.code}): ${f}`;
+    }
     for (const [key, want] of [['allowed_approval_policies', 'never'], ['allowed_sandbox_modes', 'danger-full-access']]) {
       const hit = findKey(text, '', key);
       if (hit && !hit.raw.includes(`"${want}"`)) return `${f} 의 ${key} 가 ${want} 를 허용하지 않음`;
@@ -41,10 +46,20 @@ export function policyBlock(files = POLICY_FILES) {
   return '';
 }
 
+// 최상위 profile 이 고른 기본 프로필이 두 키를 따로 정하면 그 값이 이긴다. 그 프로필 이름, 없으면 ''.
+export function overridingProfile(text) {
+  const raw = findKey(text, '', 'profile')?.raw ?? '';
+  const name = /^"([^"]+)"$|^'([^']+)'$/.exec(raw);
+  const prof = name && `profiles.${name[1] ?? name[2]}`;
+  return prof && KEYS.some((k) => findKey(text, prof, k)) ? prof : '';
+}
+
 export function turnOn({ file = codexConfigFile(), policies = POLICY_FILES } = {}) {
   const why = policyBlock(policies);
   if (why) return { code: 1, msg: `켜지 않음: ${why}` };
   const { text, mode, exists } = readToml(file);
+  const prof = overridingProfile(text);
+  if (prof) return { code: 1, msg: `켜지 않음: 기본 프로필 ${prof} 가 approval_policy 나 sandbox_mode 를 정해 최상위 값이 적용되지 않음. 그 프로필의 값을 직접 바꾸십시오` };
   if (isOn(text)) return { code: 0, msg: '이미 켜져 있음' };
   const before = Object.fromEntries(KEYS.map((k) => [k, valueOf(text, k)]));
   let next = text;
@@ -73,6 +88,8 @@ export function turnOff({ file = codexConfigFile() } = {}) {
 export function status({ file = codexConfigFile(), policies = POLICY_FILES } = {}) {
   const { text } = readToml(file);
   const out = [`${isOn(text) ? '켜짐' : '꺼짐'}: approval_policy = ${valueOf(text, 'approval_policy') ?? '(없음)'}, sandbox_mode = ${valueOf(text, 'sandbox_mode') ?? '(없음)'}`];
+  const prof = overridingProfile(text);
+  if (prof) out.push(`기본 프로필 ${prof} 가 값을 정해 최상위 값이 적용되지 않음`);
   const profiles = [...new Set(KEYS.flatMap((k) => tablesSetting(text, 'profiles.', k)))];
   if (profiles.length) out.push(`프로필이 따로 정함(그 프로필로 시작하면 그 값): ${profiles.join(', ')}`);
   const why = policyBlock(policies);

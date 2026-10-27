@@ -7,8 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
 
-import { findKey, removeKey, setKey, tablesSetting } from './codex-config.mjs';
-import { policyBlock, status, turnOff, turnOn } from './codex-bypass.mjs';
+import { definedInline, findKey, removeKey, setKey, tablesSetting } from './codex-config.mjs';
+import { overridingProfile, policyBlock, status, turnOff, turnOn } from './codex-bypass.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'codex-bypass.mjs');
 const root = mkdtempSync(join(tmpdir(), 'codex-bypass-'));
@@ -93,3 +93,33 @@ test('a folder this account cannot write ends with 3', { skip: (process.platform
   }
 });
 
+
+test('lines inside multi-line strings and arrays are no table headers or keys; quoted keys, comments after values and CRLF are kept', () => {
+  const tricky = 'note = """\n[tui]\napproval_policy = "x"\n"""\nlist = [\n  "a",\n  [1, 2],\n]\n"approval_policy" = "on-request" # mine\nname = "a # b"\n\r\n[real]\nk = 1\n';
+  assert.equal(findKey(tricky, '', 'approval_policy').raw, '"on-request"', 'quoted key, comment cut');
+  assert.equal(findKey(tricky, '', 'name').raw, '"a # b"', 'a # in a string is no comment');
+  assert.equal(findKey(tricky, 'tui', 'approval_policy'), null, 'a [tui] line in a string is no table');
+  assert.equal(findKey(tricky, 'real', 'k').raw, '1');
+  const set = setKey(tricky, '', 'approval_policy', '"never"');
+  assert.equal(set.match(/approval_policy/g).length, 2, 'the quoted key is replaced, not added again (one more in the string)');
+  assert.ok(set.indexOf('approval_policy = "never"') < set.indexOf('[real]'));
+  const crlf = setKey('a = 1\r\n', 'tui', 'k', '2');
+  assert.equal(crlf, 'a = 1\r\n\r\n[tui]\r\nk = 2\r\n');
+  assert.equal(definedInline('tui.theme = "x"\n', 'tui'), true);
+  assert.equal(definedInline('tui = { theme = "x" }\n', 'tui'), true);
+  assert.equal(definedInline('[tui]\ntheme = "x"\n', 'tui'), false);
+});
+
+test('a default profile that sets the keys makes on refuse instead of reporting a mode that does not apply; an unreadable policy refuses', () => {
+  const text = 'profile = "work"\n[profiles.work]\napproval_policy = "on-request"\n';
+  const file = home(text);
+  const r = turnOn({ file, policies: [] });
+  assert.equal(r.code, 1);
+  assert.match(r.msg, /기본 프로필 profiles\.work/);
+  assert.equal(readFileSync(file, 'utf8'), text);
+  assert.equal(overridingProfile('profile = "work"\n[profiles.work]\nmodel = "x"\n'), '');
+  assert.match(policyBlock([join(root, 'no-such-dir-file', 'x')]), /^$/);
+  const pol = join(root, 'requirements2.toml');
+  writeFileSync(pol, 'allowed_approval_policies = ["on-request"] # "never" is not here\n');
+  assert.match(policyBlock([pol]), /allowed_approval_policies/, 'a "never" in a comment is not an allowed value');
+});

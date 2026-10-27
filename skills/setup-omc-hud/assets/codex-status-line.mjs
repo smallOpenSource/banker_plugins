@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { codexConfigFile, denied, findKey, readToml, Refused, removeKey, setKey, writeToml } from './codex-config.mjs';
+import { codexConfigFile, definedInline, denied, findKey, readToml, Refused, removeKey, setKey, writeToml } from './codex-config.mjs';
 
 export const MARK = '# banker:status-line';
 const OMX_MARK = '# omx:managed-status-line';
@@ -34,15 +34,19 @@ export function owner(text) {
   return { owner: above === MARK ? 'banker' : above === OMX_MARK ? 'omx' : 'user', raw: hit.raw };
 }
 
+const presetValue = (fields) => `[${fields.map((f) => `"${f}"`).join(', ')}]`;
+const sameValue = (a, b) => a.replace(/\s+/g, '').replace(/,\]$/, ']') === b.replace(/\s+/g, '');
+
 export function turnOn({ file = codexConfigFile(), preset = 'focused' } = {}) {
-  const fields = PRESETS[preset];
-  if (!fields) return { code: 1, msg: `프리셋은 ${Object.keys(PRESETS).join(', ')} 중 하나` };
+  if (!Object.prototype.hasOwnProperty.call(PRESETS, preset)) return { code: 1, msg: `프리셋은 ${Object.keys(PRESETS).join(', ')} 중 하나` };
   const { text, mode, exists } = readToml(file);
+  // 최상위의 `tui.x = ` 나 `tui = { }` 가 있는 파일에 [tui] 를 더하면 키가 겹쳐 Codex 가 시작하지 못한다.
+  if (definedInline(text, 'tui')) return { code: 1, msg: '거부: 최상위에서 tui 를 점 키나 인라인 표로 정한 설정이라 [tui] 를 더하지 않음. status_line 을 직접 넣으십시오' };
   const now = owner(text);
   if (now.owner === 'omx') return { code: 0, msg: '이미 있음: OMX 가 관리하는 상태표시줄(바꾸려면 omx setup)' };
   if (now.owner === 'user') return { code: 0, msg: '이미 있음: 사용자가 둔 상태표시줄이라 그대로 둠' };
   if (!fs.existsSync(path.dirname(file))) return { code: 1, msg: `Codex 설정 폴더가 없음: ${path.dirname(file)}` };
-  const next = setKey(text, 'tui', 'status_line', `[${fields.map((f) => `"${f}"`).join(', ')}]`, MARK);
+  const next = setKey(text, 'tui', 'status_line', presetValue(PRESETS[preset]), MARK);
   if (next === text) return { code: 0, msg: '이미 켜져 있음' };
   writeToml(file, next, { mode, backup: exists ? `${file}.banker-hud.bak` : null });
   return { code: 0, msg: `켬: [tui] status_line(${preset}). Codex 를 다시 열면 보임` };
@@ -52,6 +56,8 @@ export function turnOff({ file = codexConfigFile() } = {}) {
   const { text, mode } = readToml(file);
   const now = owner(text);
   if (now.owner !== 'banker') return { code: 0, msg: now.owner ? `banker 가 둔 줄이 아님(${now.owner}): 그대로 둠` : '이미 꺼져 있음' };
+  // 표시는 남았지만 값을 사용자가 고쳤으면 사용자의 줄로 본다.
+  if (!Object.values(PRESETS).some((f) => sameValue(now.raw, presetValue(f)))) return { code: 0, msg: '사용자가 값을 고친 줄이라 그대로 둠(banker 표시만 남음)' };
   writeToml(file, removeKey(text, 'tui', 'status_line', MARK), { mode });
   return { code: 0, msg: '끔: banker 가 둔 status_line 을 뺌' };
 }

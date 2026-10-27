@@ -3,10 +3,11 @@
  * assets/ 에 같은 사본을 둔다(scripts/sync-adapter.js 가 지킴).
  *
  * TOML 전체를 다시 쓰지 않는다. 바꾸는 키의 줄만 고쳐 주석, 순서, 다른 표는 그대로 둔다.
- * - 최상위 키는 첫 표 머리([...]) 앞의 줄만 본다. 표 안의 키는 그 표 머리 다음부터 다음 표 머리 전까지만 본다.
- * - 값이 여러 줄 배열이면 괄호가 닫히는 줄까지를 한 값으로 본다(문자열 안의 괄호는 센다고 보지 않는다).
- * - 파일이 링크이거나 일반 파일이 아니면 고치지 않는다. 쓰기 전 원본을 백업하고, 새 파일에 쓴 뒤 바꿔 넣으며 파일
- *   모드를 지킨다.
+ * - 줄을 훑으며 문자열(한 줄, 여러 줄)과 괄호 깊이를 따라가, 여러 줄 문자열이나 배열 안의 줄을 표 머리나 키로 보지 않는다.
+ * - 키 이름은 따옴표를 벗겨 비교한다(`"approval_policy"` 도 approval_policy). 값 끝의 주석은 값으로 보지 않는다.
+ * - 최상위가 표를 점 키나 인라인 표로 정했는지(definedInline) 알려, 그런 파일에 같은 표를 더하지 않게 한다.
+ * - 파일이 링크이거나 일반 파일이 아니면 고치지 않는다. 쓰기 전 원본을 백업(이 계정만 읽음)하고, 새 파일에 쓴 뒤
+ *   바꿔 넣으며 파일 모드를 지킨다.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,7 +36,10 @@ export function readToml(file) {
 
 // 원본을 backup 에 복사한 뒤(원본이 있을 때) 새 파일에 써서 바꿔 넣는다.
 export function writeToml(file, text, { mode = null, backup = null } = {}) {
-  if (backup && fs.existsSync(file)) fs.copyFileSync(file, backup);
+  if (backup && fs.existsSync(file)) {
+    fs.copyFileSync(file, backup);
+    fs.chmodSync(backup, 0o600); // 원본에 비밀 값이 있을 수 있다
+  }
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.writeFileSync(tmp, text, { flag: 'wx', mode: mode ?? 0o600 });
@@ -47,60 +51,120 @@ export function writeToml(file, text, { mode = null, backup = null } = {}) {
   }
 }
 
-const HEADER_RE = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/;
 const lines = (text) => text.split(/\r?\n/);
 const eol = (text) => (text.includes('\r\n') ? '\r\n' : '\n');
-const keyRe = (key) => new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=`);
-const depth = (s) => [...s.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '')].reduce((d, c) => d + (c === '[' ? 1 : c === ']' ? -1 : 0), 0);
+const TRIPLE = ['"""', "'''"];
 
-// 표의 줄 범위 [from, to). table '' 은 최상위. 표가 없으면 null.
-function tableRange(ls, table) {
-  let from = table ? -1 : 0;
-  for (let i = 0; i < ls.length; i++) {
-    const m = HEADER_RE.exec(ls[i]);
-    if (!m) continue;
-    if (from >= 0) return [from, i];
-    if (m[1] === table) from = i + 1;
+// 따옴표 친 낱말의 따옴표를 벗긴 이름. `"a".b` 는 a.b.
+const plainName = (s) => s.split('.').map((p) => p.trim().replace(/^"(.*)"$|^'(.*)'$/, '$1$2')).join('.');
+
+// 한 줄을 문자열 밖에서 훑는다. { d: 괄호 깊이 변화, multi: 줄 끝에 열려 있는 여러 줄 문자열 구분자, cut: 주석 시작 위치 }.
+function scanLine(s, multi = '') {
+  let d = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (multi) {
+      if (s.startsWith(multi, i)) { i += 2; multi = ''; } else if (multi === TRIPLE[0] && s[i] === '\\') i++;
+      continue;
+    }
+    const c = s[i];
+    if (TRIPLE.some((t) => s.startsWith(t, i))) { multi = s.slice(i, i + 3); i += 2; }
+    else if (c === '"') { for (i++; i < s.length && s[i] !== '"'; i++) if (s[i] === '\\') i++; }
+    else if (c === "'") { const k = s.indexOf("'", i + 1); i = k < 0 ? s.length : k; }
+    else if (c === '#') return { d, multi, cut: i };
+    else if (c === '[' || c === '{') d++;
+    else if (c === ']' || c === '}') d--;
   }
-  return from >= 0 ? [from, ls.length] : null;
+  return { d, multi, cut: s.length };
 }
 
-// 키의 줄 범위 { at, end, raw } (end 는 값이 끝나는 줄 다음). 없으면 null.
-export function findKey(text, table, key) {
+const HEADER_RE = /^\s*\[\[?([^\]]+)\]\]?\s*(#.*)?$/;
+const KEY_RE = /^\s*((?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+))*)\s*=(.*)$/;
+
+// 줄마다 { kind: 'header'|'key'|'inside'|'other', name, end }. header 의 name 은 표 이름, key 의 name 은 키 이름이고
+// end 는 값이 끝나는 줄 다음. 여러 줄 문자열이나 배열 안의 줄은 inside.
+export function scan(text) {
   const ls = lines(text);
-  const range = tableRange(ls, table);
-  if (!range) return null;
-  for (let i = range[0]; i < range[1]; i++) {
-    if (!keyRe(key).test(ls[i])) continue;
-    let end = i + 1;
-    let d = depth(ls[i].slice(ls[i].indexOf('=') + 1).replace(/#.*$/, ''));
-    while (d > 0 && end < range[1]) d += depth(ls[end++].replace(/#.*$/, ''));
-    const raw = ls.slice(i, end).join('\n').replace(keyRe(key), '').trim();
-    return { at: i, end, raw };
+  const out = ls.map(() => ({ kind: 'other' }));
+  for (let i = 0; i < ls.length; i++) {
+    const header = HEADER_RE.exec(ls[i]);
+    if (header) { out[i] = { kind: 'header', name: plainName(header[1]) }; continue; }
+    const key = KEY_RE.exec(ls[i]);
+    if (!key) continue;
+    let { d, multi } = scanLine(key[2]);
+    let j = i + 1;
+    for (; (d > 0 || multi) && j < ls.length; j++) {
+      out[j] = { kind: 'inside' };
+      const r = scanLine(ls[j], multi);
+      d += r.d;
+      multi = r.multi;
+    }
+    out[i] = { kind: 'key', name: plainName(key[1]), end: j };
+    i = j - 1;
   }
-  return null;
+  return out;
+}
+
+// 표의 줄 범위 [from, to). table '' 은 최상위. 표가 없으면 null.
+function tableRange(info, table) {
+  let from = table ? -1 : 0;
+  for (let i = 0; i < info.length; i++) {
+    if (info[i].kind !== 'header') continue;
+    if (from >= 0) return [from, i];
+    if (info[i].name === table) from = i + 1;
+  }
+  return from >= 0 ? [from, info.length] : null;
+}
+
+function keysOf(text, table) {
+  const info = scan(text);
+  const range = tableRange(info, table);
+  if (!range) return [];
+  const keys = [];
+  for (let i = range[0]; i < range[1]; i++) if (info[i].kind === 'key') keys.push({ at: i, end: info[i].end, name: info[i].name });
+  return keys;
+}
+
+// 키의 { at, end, raw }. raw 는 값 끝의 주석을 뺀 글. 없으면 null.
+export function findKey(text, table, key) {
+  const hit = keysOf(text, table).find((k) => k.name === key);
+  if (!hit) return null;
+  const ls = lines(text).slice(hit.at, hit.end);
+  const parts = [ls[0].slice(ls[0].indexOf('=') + 1), ...ls.slice(1)];
+  let multi = '';
+  for (const part of parts.slice(0, -1)) multi = scanLine(part, multi).multi;
+  const last = parts.length - 1;
+  parts[last] = parts[last].slice(0, scanLine(parts[last], multi).cut); // 마지막 줄의 주석을 뗀다
+  const raw = parts.join('\n');
+  return { at: hit.at, end: hit.end, raw: raw.trim() };
+}
+
+// 최상위가 이 표를 점 키나 인라인 표로 정했는지(`tui.x = 1`, `tui = { ... }`). 그런 파일에 [표] 를 더하면 키가 겹쳐
+// Codex 가 설정을 읽지 못한다.
+export function definedInline(text, table) {
+  return keysOf(text, '').some((k) => k.name === table || k.name.startsWith(`${table}.`));
 }
 
 // 키를 rawValue 로 둔다. 있으면 그 줄을 바꾸고, 없으면 표 끝(최상위는 첫 표 머리 앞)에 넣는다. 표가 없으면 끝에 만든다.
 // comment 가 있으면 키 바로 위에 그 주석 줄을 둔다.
 export function setKey(text, table, key, rawValue, comment = '') {
   const ls = lines(text);
+  const nl = eol(text);
   const line = [...(comment ? [comment] : []), `${key} = ${rawValue}`];
   const hit = findKey(text, table, key);
   if (hit) {
     const above = comment && ls[hit.at - 1] === comment ? 1 : 0;
     ls.splice(hit.at - above, hit.end - hit.at + above, ...line);
-    return ls.join(eol(text));
+    return ls.join(nl);
   }
-  const range = tableRange(ls, table);
+  const range = tableRange(scan(text), table);
   if (!range) {
     while (ls.length && ls[ls.length - 1] === '') ls.pop();
-    return [...ls, ...(ls.length ? [''] : []), `[${table}]`, ...line, ''].join(eol(text));
+    return [...ls, ...(ls.length ? [''] : []), `[${table}]`, ...line, ''].join(nl);
   }
   let at = range[1];
   while (at > range[0] && ls[at - 1].trim() === '') at--;
   ls.splice(at, 0, ...line);
-  return ls.join(eol(text));
+  return ls.join(nl);
 }
 
 // 키를 뺀다. comment 와 같은 주석 줄이 바로 위에 있으면 그것도 뺀다.
@@ -115,7 +179,7 @@ export function removeKey(text, table, key, comment = '') {
 
 // 이름이 prefix 로 시작하는 표들 중 key 를 정한 표 이름(예: profiles.* 의 approval_policy).
 export function tablesSetting(text, prefix, key) {
-  const names = lines(text).map((l) => HEADER_RE.exec(l)?.[1]).filter((n) => n && n.startsWith(prefix));
+  const names = scan(text).filter((x) => x.kind === 'header' && x.name.startsWith(prefix)).map((x) => x.name);
   return [...new Set(names)].filter((n) => findKey(text, n, key));
 }
 
