@@ -14,11 +14,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// 훅마다 이벤트, 스크립트(패키지 기준 경로), 인자.
+// 훅마다 이벤트, 스크립트(패키지 기준 경로), 인자, 도구 이름 matcher(있으면 그 도구 호출 뒤에만 돈다).
 export const HOOKS = {
   update: { event: 'SessionStart', script: 'hooks/update-notify.mjs', args: ['--codex'] },
   count: { event: 'Stop', script: 'hooks/telemetry-count-codex.mjs', args: [] },
-  obsidize: { event: 'PostToolUse', script: 'hooks/obsidize-hook.mjs', args: ['--codex'] },
+  obsidize: { event: 'PostToolUse', script: 'hooks/obsidize-hook.mjs', args: ['--codex'], matcher: 'Bash' },
 };
 // 사본으로 옮길 파일(훅 스크립트와 그 의존 파일). 상대 경로를 그대로 둬 '../bin/lib/...' 가져오기가 맞는다.
 export const PAYLOAD = [
@@ -29,6 +29,7 @@ export const PAYLOAD = [
   'hooks/update-checkin.mjs',
   'hooks/telemetry-count-codex.mjs',
   'hooks/obsidize-hook.mjs',
+  'skills/obsidizer/obsidize.mjs',
 ];
 export const DEFAULT_HOOKS = ['update', 'count'];
 
@@ -149,7 +150,7 @@ function place(doc, id, command) {
   const at = findOurs(groups, id);
   if (at && groups[at[0]].hooks[at[1]].command === command) return false;
   if (at) groups[at[0]].hooks[at[1]] = { ...groups[at[0]].hooks[at[1]], command, timeout: 5 };
-  else groups.push({ hooks: [{ type: 'command', command, timeout: 5 }] });
+  else groups.push({ ...(HOOKS[id].matcher ? { matcher: HOOKS[id].matcher } : {}), hooks: [{ type: 'command', command, timeout: 5 }] });
   doc.hooks[ev] = groups;
   return true;
 }

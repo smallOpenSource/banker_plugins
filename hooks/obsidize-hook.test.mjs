@@ -559,3 +559,49 @@ test('log: a pipe at the log place does not stop the hook', { skip: process.plat
   assert.equal(res.status, 0);
   assert.ok(lstatSync(join(tree.wikiDir, '.obsidizer-hook.log')).isFIFO(), 'the pipe stays a pipe');
 });
+
+// Codex (--codex): the wiki is omx_wiki/ under the session cwd, written by the `omx wiki` CLI through a shell call.
+// The payload is what Codex 0.144.5 sends after that call: tool_name Bash, the command, and its stdout.
+function codexTree() {
+  const tree = makeTree();
+  tree.wikiDir = join(tree.project, 'omx_wiki');
+  mkdirSync(tree.wikiDir);
+  writeFileSync(join(tree.wikiDir, 'test-page.md'), PAGE_BEFORE);
+  writeFileSync(join(tree.wikiDir, 'index.md'), INDEX_BEFORE);
+  return tree;
+}
+const codexPayload = (tree, command, stdout = '{"created":[],"updated":["test-page.md"],"totalAffected":1}\n') => ({
+  session_id: 's', turn_id: 't', cwd: tree.project, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command }, tool_response: stdout,
+});
+const runCodex = (tree, payload) => spawnSync(process.execPath, [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs'), '--codex'], {
+  input: JSON.stringify(payload), encoding: 'utf8', cwd: tree.tmp, env: { ...process.env, STUB_ARGV_LOG: tree.argvLog, STUB_FAIL: '0' },
+});
+
+test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wiki/ of the session cwd', () => {
+  const tree = codexTree();
+  arm(tree);
+  const ingest = `omx wiki wiki_ingest --input '{"title":"Test Page","content":"x","tags":[],"category":"reference"}' --json`;
+  assert.equal(runCodex(tree, codexPayload(tree, ingest)).status, 0);
+  assert.deepEqual(readArgv(tree), [[join(tree.wikiDir, 'test-page.md'), '--profile=omc', '--json']]);
+  for (const form of ['omx.cmd wiki add --input x', 'cd w && omx wiki ingest --input x']) {
+    writeFileSync(tree.argvLog, '');
+    runCodex(tree, codexPayload(tree, form));
+    assert.equal(readArgv(tree).length, 1, form);
+  }
+});
+
+test('codex: other shell calls, other omx wiki tools, and an armed .omc/wiki change nothing', () => {
+  const tree = codexTree();
+  arm(tree);
+  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud']) {
+    runCodex(tree, codexPayload(tree, command));
+  }
+  runCodex(tree, { ...codexPayload(tree, 'omx wiki ingest'), tool_input: {} });
+  assert.equal(readArgv(tree).length, 0);
+  assert.equal(page(tree), PAGE_BEFORE);
+  rmSync(join(tree.wikiDir, '.obsidizer'));
+  writeFileSync(join(tree.project, '.omc', 'wiki', '.obsidizer'), '');
+  runCodex(tree, codexPayload(tree, 'omx wiki ingest --input x'));
+  assert.equal(readArgv(tree).length, 0, 'Codex looks at omx_wiki/ only');
+  assert.deepEqual(logLines(tree), []);
+});

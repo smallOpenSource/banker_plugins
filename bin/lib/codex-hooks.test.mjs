@@ -115,3 +115,14 @@ test('command text per platform and node location rules', () => {
   assert.equal(safeNode('/home/u/.nvm/node', { win: false, cwd: '/home/u', codex: true }), false);
   assert.equal(safeNode('/home/u/.nvm/node', { win: false, cwd: '/home/u', codex: false }), true);
 });
+
+test('obsidize goes after shell calls only and brings its canonicalizer along', () => {
+  const p = home();
+  assert.deepEqual(enableHooks(p, ['obsidize'], PKG).changed, ['obsidize']);
+  const g = read(p).PostToolUse;
+  assert.deepEqual([g.length, g[0].matcher], [1, 'Bash']);
+  assert.match(g[0].hooks[0].command, /obsidize-hook\.mjs["'] --codex$/);
+  assert.ok(existsSync(join(p.dir, 'skills', 'obsidizer', 'obsidize.mjs')));
+  assert.deepEqual(disableHooks(p, ['obsidize']).changed, ['obsidize']);
+  assert.equal(read(p).PostToolUse, undefined);
+});

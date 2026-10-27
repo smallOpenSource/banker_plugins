@@ -19,6 +19,13 @@
  *    stderr too, so that log is the only channel by which a permanently broken hook is
  *    discoverable rather than silently doing nothing forever. Only a regular file there is
  *    written: a link (a cloned repository can carry one) or a pipe gets no line.
+ *
+ * Codex (`--codex`): Codex has no wiki MCP, so a wiki write is a shell call to the `omx wiki` CLI, and Codex fires
+ * PostToolUse with tool_name Bash, tool_input.command and the command's stdout as tool_response (Codex 0.144.5).
+ * Only a command that runs `omx wiki` ingest or add goes on; every other shell call ends before any file is read. The
+ * vault is omx_wiki/ under the session cwd (the CLI writes under the cwd it runs in), and the page names come from the
+ * CLI's JSON (`{"created":["a.md"],...}`), which the same name pattern reads. The OMX wiki keeps the OMC page schema
+ * and reserved files, so the canonicalizer runs with the same profile.
  */
 import { spawnSync } from 'node:child_process';
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, statSync, writeSync } from 'node:fs';
@@ -40,6 +47,9 @@ const RESERVED = new Set(['index.md', 'log.md', 'environment.md']);
 const RECENT_MS = 10_000;
 // Stay inside the `timeout: 5` declared in hooks.json.
 const CANONICALIZE_TIMEOUT_MS = 4000;
+const CODEX = process.argv.includes('--codex');
+// `omx wiki ingest|add`, with or without the wiki_ prefix the CLI also takes, and omx.cmd/omx.ps1 on Windows.
+const OMX_WIKI_WRITE_RE = /(?:^|[\s;&|(])omx(?:\.cmd|\.ps1)?\s+wiki\s+(?:wiki_)?(?:ingest|add)\b/;
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -78,6 +88,7 @@ function isDir(path) {
 }
 
 function wikiDirCandidates(root) {
+  if (CODEX) return root ? [join(root, 'omx_wiki')] : [];
   const dirs = [];
   // OMC relocates state to <OMC_STATE_DIR>/<projectId>/wiki. projectId is an OMC internal
   // we must not reimplement, so enumerate the candidates instead of deriving the name.
@@ -156,11 +167,19 @@ function canonicalize(wikiDir, tool, page) {
 
 // A write can be redirected with workingDirectory; fall back to the session cwd.
 function writeRoot(payload) {
+  if (CODEX) return payload?.cwd || process.cwd();
   return payload?.tool_input?.workingDirectory || payload?.cwd || process.cwd();
+}
+
+// Codex fires this after every shell call; only an `omx wiki` write is ours.
+function codexWikiWrite(payload) {
+  const command = payload?.tool_input?.command;
+  return typeof command === 'string' && OMX_WIKI_WRITE_RE.test(command);
 }
 
 async function main() {
   const { payload, error } = await readPayload();
+  if (CODEX && !error && !codexWikiWrite(payload)) return;
   const wikiDir = findArmedWikiDir(writeRoot(payload));
   if (!wikiDir) return; // Not armed: change nothing, log nothing.
 

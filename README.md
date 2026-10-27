@@ -120,7 +120,8 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 
 > `obsidizer` 는 banker 최초의 플러그인 선언 hook(`hooks/hooks.json`)을 함께 설치합니다.\
 > banker가 활성화되어 있으면 이 hook은 **항상 등록**되어 위키 쓰기(`wiki_ingest`/`wiki_add`)마다 node 프로세스를 띄웁니다(플래그 확인이 그 안에서 일어나므로 `--enable` 전에도 쓰기당 약 30ms).\
-> `--enable` 전에는 아무것도 쓰지 않는 순수 no-op입니다.
+> `--enable` 전에는 아무것도 쓰지 않는 순수 no-op입니다.\
+> Codex 에는 위키 MCP 가 없어 `--enable` 이 `omx_wiki/.obsidizer` 를 쓰고 Codex 사용자 범위에 `PostToolUse`(matcher `Bash`) 훅을 설치합니다(`banker hooks enable obsidize`, 샌드박스 밖 실행 승인 필요). 이 훅은 `--enable` 한 때만 설치되고, 설치된 동안 셸 호출마다 node 프로세스를 띄워 `omx wiki` 의 ingest, add 일 때만 정규화합니다.
 
 ### 스킬: 워크플로 · 유틸
 
@@ -262,7 +263,7 @@ banker uninstall        # 제거
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
 | `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | Codex 에서 실행해도 같은 머신의 Claude Code 설정을 바꿈 (Codex 승인 정책은 미변경) |
 
-`obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다.
+`obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다. Codex 는 `omx_wiki/.obsidizer` 플래그에 더해 `~/.codex/hooks.json` 에 훅 묶음 1개를 더합니다.
 
 ## 요구사항
 
