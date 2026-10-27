@@ -56,8 +56,9 @@ function starRepo(spawn = cp.spawnSync) {
 function parseArgs(argv) {
   const a = { cmd: null, sub: null, claude: false, codex: false, scope: 'user', scopeExplicit: false, dryRun: false, help: false, version: false };
   for (const t of argv) {
-    if (t === 'setup' || t === 'doctor' || t === 'uninstall' || t === 'help' || t === 'telemetry') { if (!a.cmd) a.cmd = t; }
-    else if (t === 'on' || t === 'off' || t === 'status') { if (!a.sub) a.sub = t; } // telemetry subcommand
+    if (t === 'setup' || t === 'doctor' || t === 'uninstall' || t === 'help' || t === 'telemetry' || t === 'hooks') { if (!a.cmd) a.cmd = t; }
+    else if (t === 'on' || t === 'off' || t === 'status' || t === 'enable' || t === 'disable') { if (!a.sub) a.sub = t; } // telemetry, hooks subcommand
+    else if (a.cmd === 'hooks' && /^[a-z]+$/.test(t)) (a.hookIds = a.hookIds || []).push(t);
     else if (t === '--claude') a.claude = true;
     else if (t === '--codex') a.codex = true;
     else if (t === '--dry-run' || t === '-n') a.dryRun = true;
@@ -277,6 +278,54 @@ function uninstallCodex(dryRun, scopes) {
   }
 }
 
+/* ---------- Codex hooks ---------- */
+// bin/lib/codex-hooks.mjs is ESM; loaded lazily like telemetry-config. Hooks go into the same Codex home as the skills.
+async function loadCodexHooks() {
+  return import(require('url').pathToFileURL(path.join(__dirname, 'lib', 'codex-hooks.mjs')).href);
+}
+function codexHookPaths(ch) { return ch.codexPaths({ CODEX_HOME: codexBase('user') }); }
+
+// Update notice and usage counting on Codex, as the Claude plugin's hooks.json gives them to Claude Code. User scope
+// only: a project-scope copy would sit in a workspace, and Codex runs trusted hooks outside the sandbox.
+async function setupCodexHooks(dryRun, scope) {
+  if (scope !== 'user') { log('  → Codex hooks (update notice, usage counting) are user-scope only; skipped for scope=project.'); return; }
+  const ch = await loadCodexHooks();
+  if (dryRun) { log(`  [dry-run] Codex hooks: ${ch.DEFAULT_HOOKS.join(', ')} -> ${codexHookPaths(ch).hooks}`); return; }
+  const r = ch.enableHooks(codexHookPaths(ch), ch.DEFAULT_HOOKS, PKG_ROOT);
+  if (r.code) { warn(`  Codex hooks not changed: ${r.msg}`); return; }
+  log(`  → Codex hooks ${ch.DEFAULT_HOOKS.join(', ')} in ${codexHookPaths(ch).hooks}${r.changed.length ? ` (changed: ${r.changed.join(', ')})` : ' (already in place)'}.`);
+  if (r.changed.length) log(`  → ${ch.TRUST_NOTE}`);
+}
+
+async function uninstallCodexHooks(dryRun) {
+  const ch = await loadCodexHooks();
+  if (dryRun) { log(`  [dry-run] remove banker Codex hooks from ${codexHookPaths(ch).hooks}`); return; }
+  const r = ch.removeAll(codexHookPaths(ch));
+  if (r.code) warn(`  Codex hooks not changed: ${r.msg}`);
+  else if (r.changed.length) log(`  removed banker Codex hooks: ${r.changed.join(', ')}${r.shifted.length ? ` (later ${r.shifted.join(', ')} hooks may need trusting again in /hooks)` : ''}`);
+}
+
+// banker hooks <status|enable|disable> [ids]: status of all, or turn named hooks on or off (obsidizer --enable on Codex).
+async function hooksCmd(sub, ids) {
+  const ch = await loadCodexHooks();
+  const p = codexHookPaths(ch);
+  const all = Object.keys(ch.HOOKS);
+  const want = ids && ids.length ? ids : all;
+  const unknown = want.filter((id) => !all.includes(id));
+  if (unknown.length || (sub !== 'status' && !(ids && ids.length))) { warn(`usage: banker hooks <status|enable|disable> [${all.join('|')}]`); process.exitCode = 1; return; }
+  if (sub === 'status' || !sub) {
+    const s = ch.hookStatus(p, want, PKG_ROOT);
+    if (s.why) { warn(`banker hooks: ${s.why}`); process.exitCode = 1; return; }
+    for (const id of want) log(`${id}: ${s.status[id]}`);
+    return;
+  }
+  const r = sub === 'enable' ? ch.enableHooks(p, want, PKG_ROOT) : ch.disableHooks(p, want);
+  if (r.code) { warn(`banker hooks: not changed: ${r.msg}`); process.exitCode = 1; return; }
+  log(`banker hooks ${sub}: ${r.changed.length ? r.changed.join(', ') : 'nothing to change'}`);
+  if (sub === 'enable' && r.changed.length) log(ch.TRUST_NOTE);
+  if (r.shifted && r.shifted.length) log(`later ${r.shifted.join(', ')} hooks may need trusting again in /hooks.`);
+}
+
 /* ---------- telemetry config bridge ---------- */
 // bin/banker.js is CommonJS; telemetry-config is ESM (.mjs). Load it lazily via dynamic import
 // (pathToFileURL keeps the specifier valid on Windows). Only the interactive setup path and the
@@ -426,6 +475,7 @@ Usage:
   banker setup [--claude] [--codex] [--scope user|project] [--dry-run]
   banker uninstall [--claude] [--codex] [--scope user|project] [--dry-run]
   banker telemetry <on|off|status>
+  banker hooks <status|enable|disable> [update|count|obsidize]   (Codex hooks in ~/.codex/hooks.json)
   banker doctor
   banker help
 
@@ -442,11 +492,12 @@ async function main() {
   if (a.help || a.cmd === 'help' || !a.cmd) { log(HELP); return; }
   if (a.cmd === 'doctor') { doctor(); return; }
   if (a.cmd === 'telemetry') { await telemetryCmd(a.sub); return; }
+  if (a.cmd === 'hooks') { assertNotRoot(); await hooksCmd(a.sub, a.hookIds); return; }
   assertNotRoot();
   if (a.cmd === 'setup') {
     log(`banker setup${a.dryRun ? ' (dry-run)' : ''}: claude=${a.claude} codex=${a.codex}`);
     if (a.claude) setupClaude(a.dryRun);
-    if (a.codex) setupCodex(a.dryRun, a.scope);
+    if (a.codex && setupCodex(a.dryRun, a.scope)) await setupCodexHooks(a.dryRun, a.scope);
     // Best-effort first-run prompts (interactive TTY only). A prompt failure must never fail setup.
     try { await maybeFirstRunPrompts(a); } catch { /* non-fatal */ }
     log('done.');
@@ -454,7 +505,10 @@ async function main() {
   }
   if (a.cmd === 'uninstall') {
     if (a.claude) uninstallClaude(a.dryRun);
-    if (a.codex) uninstallCodex(a.dryRun, a.scopeExplicit ? [a.scope] : ['user', 'project']);
+    if (a.codex) {
+      uninstallCodex(a.dryRun, a.scopeExplicit ? [a.scope] : ['user', 'project']);
+      if (!a.scopeExplicit || a.scope === 'user') await uninstallCodexHooks(a.dryRun);
+    }
     log('done.');
     return;
   }

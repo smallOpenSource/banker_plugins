@@ -493,6 +493,7 @@ try {
     path.join('hooks', 'telemetry-count.test.mjs'), path.join('hooks', 'telemetry-count-skill.test.mjs'),
     path.join('hooks', 'update-fetch.test.mjs'), path.join('hooks', 'update-notify.test.mjs'),
     path.join('hooks', 'update-checkin.test.mjs'),
+    path.join('hooks', 'telemetry-count-codex.test.mjs'), path.join('bin', 'lib', 'codex-hooks.test.mjs'),
     path.join('skills', '3d-intro-build', 'references', 'azure-adapter.test.mjs'),
     path.join('skills', '3d-intro-build', 'references', 'video-pool.test.mjs'),
     ...['preview-lib', 'curate', 'assemble', 'step-nav', 'verify-intro', 'intro-e2e']
