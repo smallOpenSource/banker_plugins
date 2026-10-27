@@ -679,3 +679,15 @@ test('--page: only a plain page is rewritten, a link or a hard link in its place
   const pages = buildVaultModel(vault, true).pages;
   assert.ok(pages.has('own.md') && !pages.has('soft.md') && !pages.has('hard.md'), 'the vault model reads plain pages only');
 });
+
+test('--page refuses a path instead of a bare name, and a cwd that is not the vault folder it was given', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'obsidize-vault-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmp, 'p.md'), '# P\n');
+  const st = fs.statSync(tmp, { bigint: true });
+  const cli = (args) => spawnSync(process.execPath, [fileURLToPath(new URL('./obsidize.mjs', import.meta.url)), ...args], { cwd: tmp, encoding: 'utf8' });
+  assert.equal(cli(['p.md', '--page', `--vault=${st.dev}:${st.ino}`, '--profile=generic', '--json']).status, 0);
+  assert.equal(cli([path.join(tmp, 'p.md'), '--page', `--vault=${st.dev}:${st.ino}`]).status, 2);
+  assert.equal(cli(['p.md', '--page', '--vault=1:2']).status, 2);
+  assert.equal(cli(['p.md', '--page']).status, 2);
+});

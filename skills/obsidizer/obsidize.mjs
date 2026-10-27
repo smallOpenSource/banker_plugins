@@ -18,6 +18,9 @@
  * Usage: node obsidize.mjs <path> [--profile=auto|omc|generic] [--dry-run] [--json] [--page]
  *   --page: <path> must be one plain page (a regular file with one name, judged without following a link), and the
  *   vault model reads only plain pages. The Codex hook passes it, since Codex runs that hook outside its sandbox.
+ *   With --page, <path> is a bare page name, the process runs in the vault folder, and --vault=<dev>:<ino> must name
+ *   that folder: every read and write then goes by a name relative to a cwd fixed on the checked folder, so a folder
+ *   swapped for a link after the check cannot lead outside it.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -300,6 +303,13 @@ export function detectProfile(target) {
 const read = (p) => fs.readFileSync(p, 'utf8');
 
 /** Sorted explicitly — readdir order is not deterministic across filesystems. */
+// Why a --page run may not go on: the page must be a bare name and the cwd the vault folder the caller checked.
+export function pageRunRefusal(name, vault) {
+  if (!name || /[\\/]/.test(name) || name === '.' || name === '..') return `--page takes a bare page name: ${name}`;
+  const here = fs.statSync('.', { bigint: true });
+  return vault === `${here.dev}:${here.ino}` ? '' : '--page runs in the vault folder named by --vault=<dev>:<ino>';
+}
+
 // A regular file with one name: not a link, a hard link or a pipe.
 function plain(file) {
   try {
@@ -550,7 +560,14 @@ function main(argv) {
     console.error(`unknown profile: ${profile}`);
     return 2;
   }
-  const report = run(path.resolve(args[0]), { profile, dryRun: flag('dry-run'), page: flag('page') });
+  if (flag('page')) {
+    const why = pageRunRefusal(args[0], opt('vault', ''));
+    if (why) {
+      console.error(why);
+      return 2;
+    }
+  }
+  const report = run(flag('page') ? args[0] : path.resolve(args[0]), { profile, dryRun: flag('dry-run'), page: flag('page') });
   if (flag('json')) {
     console.log(JSON.stringify(report));
   } else {

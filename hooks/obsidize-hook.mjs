@@ -207,9 +207,19 @@ function runFailure(run) {
   }
 }
 
+// Codex: the canonicalizer runs in the vault folder on a bare page name, after it checks the folder is the one
+// looked at here (dev:ino), so swapping omx_wiki/ for a link after the check cannot lead it outside.
+function codexArgs(wikiDir, page) {
+  const st = lstatSync(wikiDir, { bigint: true });
+  if (!st.isDirectory()) throw new Error('omx_wiki is no folder');
+  return { args: [basename(page), '--page', `--vault=${st.dev}:${st.ino}`], cwd: wikiDir };
+}
+
 // Canonicalizes one page; a failure appends its one log line.
 function canonicalize(wikiDir, tool, page) {
-  const run = spawnSync(process.execPath, [CANONICALIZER, page, '--profile=omc', '--json', ...(CODEX ? ['--page'] : [])], {
+  const at = CODEX ? codexArgs(wikiDir, page) : { args: [page], cwd: undefined };
+  const run = spawnSync(process.execPath, [CANONICALIZER, ...at.args, '--profile=omc', '--json'], {
+    cwd: at.cwd,
     encoding: 'utf8',
     timeout: CANONICALIZE_TIMEOUT_MS,
     windowsHide: true,

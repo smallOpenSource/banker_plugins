@@ -582,7 +582,10 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
   arm(tree);
   const ingest = `omx wiki wiki_ingest --input '{"title":"Test Page","content":"x","tags":[],"category":"reference"}' --json`;
   assert.equal(runCodex(tree, codexPayload(tree, ingest)).status, 0);
-  assert.deepEqual(readArgv(tree), [[join(tree.wikiDir, 'test-page.md'), '--profile=omc', '--json', '--page']]);
+  const [argv] = readArgv(tree);
+  assert.deepEqual([argv.length, argv[0], argv[1], argv[3], argv[4]], [5, 'test-page.md', '--page', '--profile=omc', '--json']);
+  assert.match(argv[2], /^--vault=\d+:\d+$/, 'a bare page name, run in the vault folder it names by dev:ino');
+  assert.notEqual(page(tree), PAGE_BEFORE, 'the page in omx_wiki/ was rewritten through the relative name');
   for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x", "$j = '{}'; omx wiki wiki_ingest --input $j --json"]) {
     writeFileSync(tree.argvLog, '');
     runCodex(tree, codexPayload(tree, form));
