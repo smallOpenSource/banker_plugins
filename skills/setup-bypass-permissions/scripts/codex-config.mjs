@@ -55,8 +55,10 @@ const lines = (text) => text.split(/\r?\n/);
 const eol = (text) => (text.includes('\r\n') ? '\r\n' : '\n');
 const TRIPLE = ['"""', "'''"];
 
-// 따옴표 친 낱말의 따옴표를 벗긴 이름. `"a".b` 는 a.b.
-const plainName = (s) => s.split('.').map((p) => p.trim().replace(/^"(.*)"$|^'(.*)'$/, '$1$2')).join('.');
+// 키나 표 이름을 낱말 배열로. 따옴표 안의 점은 나누지 않는다(`profiles."a.b"` 는 ['profiles', 'a.b']).
+export const nameParts = (s) => (s.match(/"[^"]*"|'[^']*'|[^.\s]+/g) ?? []).map((p) => p.replace(/^"(.*)"$|^'(.*)'$/, '$1$2'));
+// 비교용 이름. 낱말 사이를 \u0000 으로 이어, 점이 든 낱말과 점으로 나뉜 낱말을 구분한다.
+const plainName = (s) => nameParts(s).join('\u0000');
 
 // 한 줄을 문자열 밖에서 훑는다. { d: 괄호 깊이 변화, multi: 줄 끝에 열려 있는 여러 줄 문자열 구분자, cut: 주석 시작 위치 }.
 function scanLine(s, multi = '') {
@@ -106,6 +108,7 @@ export function scan(text) {
 
 // 표의 줄 범위 [from, to). table '' 은 최상위. 표가 없으면 null.
 function tableRange(info, table) {
+  table = table.includes('\u0000') || !table ? table : plainName(table);
   let from = table ? -1 : 0;
   for (let i = 0; i < info.length; i++) {
     if (info[i].kind !== 'header') continue;
@@ -126,7 +129,8 @@ function keysOf(text, table) {
 
 // 키의 { at, end, raw }. raw 는 값 끝의 주석을 뺀 글. 없으면 null.
 export function findKey(text, table, key) {
-  const hit = keysOf(text, table).find((k) => k.name === key);
+  const want = nameParts(key).join('\u0000');
+  const hit = keysOf(text, plainName(table)).find((k) => k.name === want);
   if (!hit) return null;
   const ls = lines(text).slice(hit.at, hit.end);
   const parts = [ls[0].slice(ls[0].indexOf('=') + 1), ...ls.slice(1)];
@@ -141,7 +145,8 @@ export function findKey(text, table, key) {
 // 최상위가 이 표를 점 키나 인라인 표로 정했는지(`tui.x = 1`, `tui = { ... }`). 그런 파일에 [표] 를 더하면 키가 겹쳐
 // Codex 가 설정을 읽지 못한다.
 export function definedInline(text, table) {
-  return keysOf(text, '').some((k) => k.name === table || k.name.startsWith(`${table}.`));
+  const t = plainName(table);
+  return keysOf(text, '').some((k) => k.name === t || k.name.startsWith(`${t}\u0000`));
 }
 
 // 키를 rawValue 로 둔다. 있으면 그 줄을 바꾸고, 없으면 표 끝(최상위는 첫 표 머리 앞)에 넣는다. 표가 없으면 끝에 만든다.
@@ -179,8 +184,9 @@ export function removeKey(text, table, key, comment = '') {
 
 // 이름이 prefix 로 시작하는 표들 중 key 를 정한 표 이름(예: profiles.* 의 approval_policy).
 export function tablesSetting(text, prefix, key) {
-  const names = scan(text).filter((x) => x.kind === 'header' && x.name.startsWith(prefix)).map((x) => x.name);
-  return [...new Set(names)].filter((n) => findKey(text, n, key));
+  const p = plainName(prefix);
+  const names = scan(text).filter((x) => x.kind === 'header' && x.name.startsWith(`${p}\u0000`)).map((x) => x.name);
+  return [...new Set(names)].filter((n) => findKey(text, n, key)).map((n) => n.split('\u0000').join('.'));
 }
 
 // 쓰기 실패가 이 계정의 권한(샌드박스, 읽기 전용, 다른 소유자) 때문인지.

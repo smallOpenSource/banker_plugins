@@ -49,9 +49,13 @@ export function policyBlock(files = POLICY_FILES) {
 // 최상위 profile 이 고른 기본 프로필이 두 키를 따로 정하면 그 값이 이긴다. 그 프로필 이름, 없으면 ''.
 export function overridingProfile(text) {
   const raw = findKey(text, '', 'profile')?.raw ?? '';
-  const name = /^"([^"]+)"$|^'([^']+)'$/.exec(raw);
-  const prof = name && `profiles.${name[1] ?? name[2]}`;
-  return prof && KEYS.some((k) => findKey(text, prof, k)) ? prof : '';
+  const m = /^"([^"]+)"$|^'([^']+)'$/.exec(raw);
+  if (!m) return '';
+  const name = m[1] ?? m[2];
+  const table = `profiles."${name}"`;
+  // [profiles.<이름>] 표의 키, 또는 최상위의 점 키 profiles.<이름>.<키>.
+  const sets = KEYS.some((k) => findKey(text, table, k) || findKey(text, '', `${table}.${k}`));
+  return sets ? `profiles.${name}` : '';
 }
 
 export function turnOn({ file = codexConfigFile(), policies = POLICY_FILES } = {}) {
@@ -90,7 +94,7 @@ export function status({ file = codexConfigFile(), policies = POLICY_FILES } = {
   const out = [`${isOn(text) ? '켜짐' : '꺼짐'}: approval_policy = ${valueOf(text, 'approval_policy') ?? '(없음)'}, sandbox_mode = ${valueOf(text, 'sandbox_mode') ?? '(없음)'}`];
   const prof = overridingProfile(text);
   if (prof) out.push(`기본 프로필 ${prof} 가 값을 정해 최상위 값이 적용되지 않음`);
-  const profiles = [...new Set(KEYS.flatMap((k) => tablesSetting(text, 'profiles.', k)))];
+  const profiles = [...new Set(KEYS.flatMap((k) => tablesSetting(text, 'profiles', k)))];
   if (profiles.length) out.push(`프로필이 따로 정함(그 프로필로 시작하면 그 값): ${profiles.join(', ')}`);
   const why = policyBlock(policies);
   if (why) out.push(`조직 정책: ${why}`);

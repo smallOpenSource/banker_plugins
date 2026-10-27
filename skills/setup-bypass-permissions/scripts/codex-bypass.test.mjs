@@ -123,3 +123,12 @@ test('a default profile that sets the keys makes on refuse instead of reporting 
   writeFileSync(pol, 'allowed_approval_policies = ["on-request"] # "never" is not here\n');
   assert.match(policyBlock([pol]), /allowed_approval_policies/, 'a "never" in a comment is not an allowed value');
 });
+
+test('a default profile named with a dot, or set by top-level dotted keys, is seen too', () => {
+  for (const text of ["profile = 'a.b'\n[profiles.\"a.b\"]\nsandbox_mode = \"read-only\"\n", 'profile = "s"\nprofiles.s.approval_policy = "on-request"\n']) {
+    assert.notEqual(overridingProfile(text), '', text);
+    assert.equal(turnOn({ file: home(text), policies: [] }).code, 1, text);
+  }
+  assert.equal(findKey('[profiles."a.b"]\nk = 1\n', 'profiles."a.b"', 'k').raw, '1');
+  assert.equal(findKey('[profiles.a.b]\nk = 1\n', 'profiles."a.b"', 'k'), null, 'a.b split by a dot is another table');
+});
