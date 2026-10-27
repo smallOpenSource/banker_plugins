@@ -2755,9 +2755,37 @@ def _read_discovered(args):
     return None, turns, f.stem, f
 
 
+def _codex_rollout(path):
+    """Whether a file is a Codex session record (rollout): its first record is a session_meta with a payload. Only a
+    regular file is opened again: a named pipe already read would wait for another writer."""
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return False
+        with _open_stream(path) as stream:
+            for raw in stream:
+                if raw.strip():
+                    obj = json.loads(raw)
+                    return (isinstance(obj, dict) and obj.get("type") == "session_meta"
+                            and isinstance(obj.get("payload"), dict))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        pass
+    return False
+
+
 def _read_input(args):
     """(exit code or None, raw turns, session id, jsonl path) from the source the flags name. The code is 2 when
-    there is no source, or the code a schema marker stopped the read with."""
+    there is no source, or the code a schema marker stopped the read with. A Codex session record gives no turns
+    and stops with 2 too, so no empty page or pack is written as if it were a session."""
+    rc, turns, session_id, jsonl_path = _read_source(args)
+    if rc is None and not turns and jsonl_path is not None and _codex_rollout(jsonl_path):
+        print(f"[lineage] ERROR: {jsonl_path.name} is a Codex session record; lineage reads Claude Code "
+              "transcripts only (nothing written)", file=sys.stderr)
+        return 2, [], session_id, None
+    return rc, turns, session_id, jsonl_path
+
+
+def _read_source(args):
+    """(exit code or None, raw turns, session id, jsonl path) as read, before the Codex check."""
     try:
         if args.all_sessions:
             return _read_all_sessions(args)

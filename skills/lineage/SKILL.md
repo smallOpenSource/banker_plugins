@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.0.10
+version: 3.0.11
 schema_version: 1
 ---
 
@@ -322,12 +322,13 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 ## 한계
 
 - 자동탐색은 Claude Code 의 `~/.claude/projects/` 레이아웃을 가정 — 비-ASCII cwd 는 `--session` / `--from-transcript` 로 쓴다.
-- 읽을 수 있는 기록은 Claude Code 형식뿐이다. Codex 의 rollout 은 0턴으로 읽히므로, Codex 에서는 Claude Code 기록을 내보낼 때만 쓴다.
+- 읽을 수 있는 기록은 Claude Code 형식뿐이다. Codex 의 기록(rollout)을 파일 경로(`--session`, `--from-transcript <파일>`)로 주면 빈 페이지나 묶음을 만들지 않고 exit 2(`is a Codex session record`)로 멈춘다. 표준 입력으로 주면 이 확인을 하지 않아 빈 페이지가 된다. Codex 에서는 Claude Code 기록을 내보낼 때만 쓴다.
 - 기본 흐름은 redact 된 세션 본문을 세션 모델의 프로바이더로 보낸다. 모델에 보내지 않으려면 `--rulebase` 를 쓴다.
 - `--rulebase` 요약은 추출식(head+tail) — 말미 정리 문장을 결론 대신 고르는 경우가 있다. 기본 흐름은 검토자가 이를 고쳐 쓴다.
 - 기본 흐름은 파트(40턴 이하, 고르게 나눔)마다 검토 에이전트 1개가 돈다. 이 저장소 실측은 40턴 파트 하나에 약 11만 토큰과 7분이었다. 긴 세션은 `--last N` 으로 범위를 줄이거나 `--rulebase` 를 쓴다.
 - Claude Code 검토자(`Plan`)는 Write·Edit 가 도구로 막혀 있지만 Bash 는 있다. 셸로 쓰지 않는 것은 지시로 선다. banker 는 에이전트 정의를 배포하지 않아(모든 표면이 두 런타임 대상) 도구를 더 막을 수 없다.
 - Codex 의 `workspace-write` 샌드박스에서는 `~/.cache` 에 쓸 수 없어 이번 실행의 검토 결정을 캐시에 쓰지 못한다(WARN 한 번). 앞선 실행이 남긴 결정은 읽으므로, 그 결정이 없는 턴만 다시 검토한다.
+  - 캐시를 쓰려면 4단계(`--apply-review`) 명령을 샌드박스 밖 실행으로 승인을 요청하거나, Codex 를 `--add-dir ~/.cache/lineage` 로 시작한다(설정으로는 `sandbox_workspace_write.writable_roots`). 폴더가 없으면 샌드박스 밖에서 먼저 만든다. 쓰기 허용 폴더로 캐시가 저장되는 것은 Codex 0.144.5 에서 확인했다.
 - 규칙 요약은 가린 본문에서 자른다(요약기 버전 4). lineage 3.0.8 까지 만든 요약 캐시는 쓰지 않는다. 그 캐시에는 평문 조각이 남아 있을 수 있어 `--purge-cache` 로 지운다.
 - 규칙 요약 캐시는 본문만으로 키를 잡는다. `--redact-mode` 나 `--redact-extra` 를 바꿔 다시 돌린 `--rulebase` 는 앞선 실행의 요약을 쓸 수 있다(2.x 동작 그대로). `--redact-mode mask` 로 만든 요약은 뒤의 기본 실행에서도 mask(페이지 패턴이 찾은 값의 앞뒤 4글자)를 그대로 보인다. 키워드를 나중에 준 실행은 요약 끝에서 잘린 키워드 조각을 보일 수 있다. 설정을 바꿔 다시 돌릴 때는 `--rebuild-summaries` 를 함께 준다. 기본 흐름의 묶음은 요약을 매번 새로 만든다. 묶음 형식은 `lineage-review/2` 라 0.15.1 이 만든 묶음은 `--emit-review` 부터 다시 한다.
 - 검토자는 긴 턴의 앞뒤만 본다(`clipped: true`). 가운데에만 있는 결론은 놓칠 수 있다.
