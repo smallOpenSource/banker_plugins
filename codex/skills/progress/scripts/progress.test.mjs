@@ -70,3 +70,16 @@ test('with no update_plan the requests are the steps, and no rollout found stops
   delete env.CODEX_THREAD_ID;
   assert.equal(spawnSync(process.execPath, [SCRIPT], { env, encoding: 'utf8' }).status, 2);
 });
+
+test('Codex 0.160: requests from completed UserMessage items, and a shell call made from code shows its command', () => {
+  const user = (text) => ({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text }] } } });
+  const code = (src) => ({ type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', input: src } });
+  const w = join(root, 'w4');
+  mkdirSync(join(w, '.omx', 'plans'), { recursive: true });
+  writeFileSync(join(w, '.omx', 'plans', 'q.md'), '# Q\n\n- [x] 하나\n');
+  const f = write('r4.jsonl', [meta(w), user('계획 읽어'), said('계획 읽어'), code(`text(await tools.exec_command({cmd:'cat ${join(w, '.omx', 'plans', 'q.md').replaceAll('\\', '\\\\')}'}))`)]);
+  const text = render(f);
+  assert.match(text, /계획: .*q\.md/);
+  assert.match(text, /\[>\] 계획 읽어\n {6}- exec_command: cat /);
+  assert.equal(text.match(/계획 읽어/g).length, 1, 'the same request written in both forms shows once');
+});

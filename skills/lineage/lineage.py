@@ -965,11 +965,36 @@ def _is_codex_meta(obj):
     return obj.get("type") == "session_meta" and isinstance(obj.get("payload"), dict)
 
 
+_CODEX_ITEM_ROLE = {"UserMessage": "user", "AgentMessage": "assistant"}
+_CODEX_INNER_TOOL_RE = re.compile(r"\btools\.([A-Za-z_][A-Za-z0-9_]{0,63})\(")
+
+
+def _codex_item_text(item):
+    """The text parts of a completed item (Codex 0.160: content [{type: text|Text, text}])."""
+    content = item.get("content")
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(c["text"] for c in content if isinstance(c, dict) and isinstance(c.get("text"), str))
+
+
+def _codex_tools(p, pt):
+    """Tool counts of one call record. Codex 0.160 runs tools from code (`exec` with `tools.exec_command(...)` in its
+    input), so the inner tool names count, not the wrapper."""
+    name = p.get("name")
+    name = name if isinstance(name, str) and name else pt[:-5]
+    inner = _CODEX_INNER_TOOL_RE.findall(p.get("input")) if isinstance(p.get("input"), str) else []
+    counts = {}
+    for n in inner or [name]:
+        counts[n] = counts.get(n, 0) + 1
+    return counts
+
+
 def _codex_record(obj):
     """(role, text, tools) a Codex rollout record shows as a turn, else None. What the user typed and what the
-    model said come from the event records (user_message, agent_message), so what Codex puts into the model input
-    (environment, instructions, an injected skill body) is not a turn; a tool call is an assistant record with no
-    text, merged into the turn around it like a Claude Code tool_use; a compaction is a divider."""
+    model said come from the event records (0.144: user_message, agent_message; 0.160: item_completed with a
+    UserMessage or AgentMessage item), so what Codex puts into the model input (environment, instructions, an
+    injected skill body) is not a turn; a tool call is an assistant record with no text, merged into the turn around
+    it like a Claude Code tool_use; a compaction is a divider."""
     p = obj.get("payload")
     kind = obj.get("type")
     if kind == "compacted":
@@ -980,9 +1005,11 @@ def _codex_record(obj):
     if kind == "event_msg" and pt in ("user_message", "agent_message"):
         msg = p.get("message")
         return ("user" if pt == "user_message" else "assistant"), (msg if isinstance(msg, str) else ""), {}
+    item = p.get("item")
+    if kind == "event_msg" and pt == "item_completed" and isinstance(item, dict) and item.get("type") in _CODEX_ITEM_ROLE:
+        return _CODEX_ITEM_ROLE[item["type"]], _codex_item_text(item), {}
     if kind == "response_item" and isinstance(pt, str) and pt.endswith("_call"):
-        name = p.get("name")
-        return "assistant", "", {(name if isinstance(name, str) and name else pt[:-5]): 1}
+        return "assistant", "", _codex_tools(p, pt)
     return None
 
 
@@ -1012,6 +1039,7 @@ def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
     """
     seen_unknown_type = set()
     codex = None                                    # set by the first record: a Codex rollout or a Claude transcript
+    last_said = None                                # Codex: (role, text) of the last message, so one said twice counts once
     for line_no, raw in enumerate(stream, 1):
         raw = raw.strip()
         if not raw:
@@ -1021,8 +1049,11 @@ def parse_turns(stream, unsafe_schema: bool = False, session_id=None,
             codex = _is_codex_meta(obj)
         if obj is not None and codex:
             turn = _codex_turn(obj, line_no, session_id, session_name)
-            if turn:
+            said = (turn["role"], turn["text"]) if turn and turn["text"] else None
+            if turn and not (said and said == last_said):
                 yield turn
+            if said:
+                last_said = said
             continue
         if obj is None or not _is_turn_record(obj, seen_unknown_type, unsafe_schema, line_no):
             continue

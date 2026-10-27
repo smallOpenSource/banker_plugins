@@ -78,15 +78,23 @@ const json = (text) => { try { return JSON.parse(text); } catch { return null; }
 export function records(lines) {
   const out = { cwd: '', prompts: [], calls: [], plan: null, planAt: -1 };
   for (const line of lines) {
-    if (!line.includes('"session_meta"') && !line.includes('"user_message"') && !line.includes('_call"')) continue;
+    if (!line.includes('"session_meta"') && !line.includes('"user_message"') && !line.includes('"UserMessage"') && !line.includes('_call"')) continue;
     const rec = json(line);
     const p = rec?.payload;
     if (!p || typeof p !== 'object') continue;
     if (rec.type === 'session_meta' && typeof p.cwd === 'string') out.cwd = p.cwd;
-    else if (rec.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') out.prompts.push({ text: p.message, at: out.calls.length });
+    else if (rec.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') takePrompt(out, p.message);
+    else if (rec.type === 'event_msg' && p.type === 'item_completed' && p.item?.type === 'UserMessage') takePrompt(out, itemText(p.item));
     else if (rec.type === 'response_item' && /_call$/.test(String(p.type))) takeCall(out, p);
   }
   return out;
+}
+
+// Codex 0.160 은 사용자 글을 item_completed 의 UserMessage 로 쓴다. 두 형식이 함께 오면 같은 글은 한 번만.
+const itemText = (item) => (Array.isArray(item.content) ? item.content.map((c) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '');
+function takePrompt(out, text) {
+  const last = out.prompts.at(-1);
+  if (text && !(last && last.text === text && last.at === out.calls.length)) out.prompts.push({ text, at: out.calls.length });
 }
 
 function takeCall(out, p) {
@@ -101,9 +109,10 @@ function takeCall(out, p) {
   out.calls.push({ name, cmd: typeof args.cmd === 'string' ? args.cmd : '', workdir: typeof args.workdir === 'string' ? args.workdir : '', input });
 }
 
-// 한 도구 호출이 다룬 파일 경로들(명령의 낱말, apply_patch 의 파일 머리).
+// 한 도구 호출이 다룬 파일 경로들(명령의 낱말, apply_patch 의 파일 머리). Codex 0.160 은 도구를 코드로 부르므로
+// (`exec` 의 입력 `tools.exec_command({cmd:'...'})`) 그 입력의 낱말도 본다.
 export function pathsOf(call, cwd) {
-  const words = call.cmd.match(/[^\s'"`;|&<>()]+\.(?:md|json)\b/g) ?? [];
+  const words = `${call.cmd} ${call.name === 'apply_patch' ? '' : call.input}`.match(/[^\s'"`;|&<>(){},]+\.(?:md|json)\b/g) ?? [];
   const heads = [...call.input.matchAll(/^\*\*\* (?:Add|Update) File: (.+)$/gm)].map((m) => m[1].trim());
   const base = call.workdir || cwd;
   return [...words, ...heads].map((w) => (w.startsWith('~/') ? join(homedir(), w.slice(2)) : isAbsolute(w) || !base ? w : resolve(base, w)));
@@ -157,7 +166,13 @@ export function renderTree(nodes, depth, out = [], level = 0) {
   return out;
 }
 
-const callLine = (c) => `      - ${c.name}${c.cmd ? `: ${one(c.cmd, 80)}` : c.input ? `: ${one(c.input.match(/^\*\*\* \w+ File: .+$/m)?.[0] ?? '', 80)}` : ''}`;
+// 한 도구 호출의 한 줄. 코드로 부른 도구는 그 안의 도구 이름과 cmd 를 보인다.
+function callLine(c) {
+  const inner = c.input.match(/\btools\.(\w+)\(\{\s*cmd:\s*(['"`])((?:\\.|(?!\2).){0,200})/);
+  const name = inner ? inner[1] : c.name;
+  const what = c.cmd || (inner ? inner[3].replace(/\\(.)/g, '$1') : c.input.match(/^\*\*\* \w+ File: .+$/m)?.[0] ?? '');
+  return `      - ${name}${what ? `: ${one(what, 80)}` : ''}`;
+}
 
 function stepLines(r) {
   const out = [];

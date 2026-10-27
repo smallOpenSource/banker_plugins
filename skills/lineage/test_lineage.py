@@ -3894,6 +3894,22 @@ class TestMainPaths(_ReviewCase):
                           ("assistant", "목록은 a, b 입니다.", {}), ("mark", "compaction", {}),
                           ("assistant", "이어서 합니다.", {})])
 
+    def test_a_codex_0_160_record_reads_its_completed_items_and_inner_tools(self):
+        item = lambda kind, text: {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "t",
+                                                                     "item": {"type": kind, "content": [{"type": "text", "text": text}]}}}
+        self._write([{"type": "session_meta", "payload": {"id": "x", "cwd": "/w"}},
+                     {"type": "response_item", "payload": {"type": "message", "role": "user",
+                                                           "content": [{"type": "input_text", "text": "<environment_context>"}]}},
+                     item("UserMessage", "목록"),
+                     {"type": "event_msg", "payload": {"type": "user_message", "message": "목록"}},
+                     {"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec",
+                                                           "input": "text(await tools.exec_command({cmd:'ls'}))"}},
+                     item("Reasoning", "생각"), item("AgentMessage", "a, b")])
+        with open(self.jf, encoding="utf-8") as f:
+            turns = list(L.parse_turns(f, session_id="s"))
+        self.assertEqual([(t["role"], t["text"], t["tools"]) for t in turns],
+                         [("user", "목록", {}), ("assistant", "", {"exec_command": 1}), ("assistant", "a, b", {})])
+
     def test_a_codex_session_record_renders_a_page_without_the_model_input(self):
         self._codex_rollout()
         rc, _ = self._rulebase()
