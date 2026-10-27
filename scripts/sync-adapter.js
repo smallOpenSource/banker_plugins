@@ -7,6 +7,8 @@
  *   3d-intro-build/references: preview-lib.mjs, serve.mjs, curate.mjs -> motion-graphic-make (local servers, review page)
  *   3d-intro-build/references: preview-lib.mjs, serve.mjs             -> ultra-chain         (local server for the mock and the report)
  *   tone-compact/scripts: instruction-toggle.mjs                      -> anti-drm            (rules on and off for Claude Code and Codex)
+ *   hooks: progress-plan.mjs (repo root)                              -> codex/skills/progress/scripts (plan tree for the Codex progress skill)
+ * A pair without a root is under skills/; one with `root: true` names repo-root paths.
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
  *   node scripts/sync-adapter.js --check  # exit 1 if any pair differs
@@ -20,14 +22,16 @@ const MIRRORS = [
   { from: '3d-intro-build/references', to: 'motion-graphic-make/references', files: ['preview-lib.mjs', 'serve.mjs', 'curate.mjs'] },
   { from: '3d-intro-build/references', to: 'ultra-chain/references', files: ['preview-lib.mjs', 'serve.mjs'] },
   { from: 'tone-compact/scripts', to: 'anti-drm/scripts', files: ['instruction-toggle.mjs'] },
+  { from: 'hooks', to: 'codex/skills/progress/scripts', files: ['progress-plan.mjs'], root: true },
 ];
 const check = process.argv.includes('--check');
 
 let failed = false;
-for (const { from, to, file } of MIRRORS.flatMap((m) => m.files.map((f) => ({ from: m.from, to: m.to, file: f })))) {
-  const skill = to.split('/')[0];
-  const canonicalPath = path.join(root, 'skills', ...from.split('/'), file);
-  const mirrorPath = path.join(root, 'skills', ...to.split('/'), file);
+for (const { from, to, file, atRoot } of MIRRORS.flatMap((m) => m.files.map((f) => ({ from: m.from, to: m.to, file: f, atRoot: m.root })))) {
+  const base = atRoot ? root : path.join(root, 'skills');
+  const skill = atRoot ? to : to.split('/')[0];
+  const canonicalPath = path.join(base, ...from.split('/'), file);
+  const mirrorPath = path.join(base, ...to.split('/'), file);
 
   if (!fs.existsSync(canonicalPath)) {
     console.error(`ADAPTER SOURCE MISSING: ${path.relative(root, canonicalPath)} (source of truth).`);

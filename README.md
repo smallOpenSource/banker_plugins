@@ -83,7 +83,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 | `/banker:front-qa` | 스펙(note) 기반 프론트엔드 구현 + parity QA |
 | `/banker:setup` | 구성요소·의존성 설치 오케스트레이터 (multi-select) |
 | `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, mod. Codex 는 작업 중에 `$banker-graceful-pause` 를 보내면 실행 중인 도구 호출이 끝난 뒤 멈춤) |
-| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 맨 위는 이 세션이 쓰거나 읽은 마지막 계획 파일(`.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json`) 전체. Notion 토글 목록처럼 제목이 그 아래 내용을, 목록 항목이 하위 항목을, 표와 코드 블록이 행과 줄을 품고, 처음에는 큰 제목만 접힌 채 보임. 체크박스는 완료와 대기, 제목은 그 아래 체크 수(`2/5`). 그 아래 단계는 할 일 목록(Claude 의 작업 목록이나 `mcp__banker__todo`), 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 미지원) |
+| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 맨 위는 이 세션이 쓰거나 읽은 마지막 계획 파일(`.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json`) 전체. Notion 토글 목록처럼 제목이 그 아래 내용을, 목록 항목이 하위 항목을, 표와 코드 블록이 행과 줄을 품고, 처음에는 큰 제목만 접힌 채 보임. 체크박스는 완료와 대기, 제목은 그 아래 체크 수(`2/5`). 그 아래 단계는 할 일 목록(Claude 의 작업 목록이나 `mcp__banker__todo`), 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 는 `$banker-progress` 스킬이 지금 세션의 계획 트리, `update_plan` 단계, 최근 도구 호출을 텍스트로 보이고, tmux 안이면 `--pane` 으로 오른쪽 칸에 갱신) |
 
 Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(TaskCreate, TodoWrite)를 주지 않습니다. 그래서 `/progress` 를 켜면 모델에게 할 일 도구 `mcp__banker__todo` 를 줍니다(다음 요청부터). 모델이 여러 단계 작업을 시작할 때 할 일 목록을 보내면 그 목록이 단계가 됩니다. 한 단계로 끝나는 일에는 쓰지 않으므로 그때는 요청이 단계입니다. 내장 작업 목록 도구가 있는 세션(옛 모델, `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`)에는 이 도구를 더하지 않습니다. 도구는 `/progress off` 뒤에도 세션이 끝날 때까지 남고, 그동안 부르면 패널이 꺼져 있다고 답합니다.
 
@@ -206,7 +206,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 63개와 Codex 전용 스킬 `graceful-pause` 가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 63개와 Codex 전용 스킬 2개(`graceful-pause`, `progress`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
@@ -277,7 +277,7 @@ banker uninstall        # 제거
   - `remains`: 테스트박스를 쓰려면 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 와 시험에 필요한 런타임(예: Node)이 있어야 하고, SSH 키로 암호 없이 접속돼야 합니다.
   - `ultra-chain`: 위 OMC(Codex 는 OMX), 웹 조사 수단, 시각 검토의 캡처에는 Node 용 playwright 패키지와 Chromium, OS 시험에는 `remains` 와 같은 테스트박스 조건.
   - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알립니다. Codex 는 스킬 `$banker-graceful-pause` 입니다(0.144.5 에서 확인).
-  - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 에는 이 명령이 없습니다.
+  - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 는 스킬 `$banker-progress` 입니다(상시 패널이 아니라 부를 때마다 보임, tmux 칸은 선택).
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
