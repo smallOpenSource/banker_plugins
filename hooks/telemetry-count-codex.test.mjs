@@ -136,3 +136,13 @@ test('a name that is no installed banker skill is not counted, so a command cann
   run(tmp, stop(rollout(tmp, [started('t1'), call('echo skills/banker-secret-data-here/SKILL.md'), cat('lineage')])));
   assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]), ['banker:lineage']);
 });
+
+test('a pipe given as the transcript is not waited on', { skip: process.platform === 'win32' && 'POSIX pipes' }, () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const fifo = join(tmp, 'p.jsonl');
+  spawnSync('mkfifo', [fifo]);
+  const res = run(tmp, stop(fifo));
+  assert.deepEqual([res.status, res.signal], [0, null]);
+  assert.equal(read(tmp).length, 0);
+});

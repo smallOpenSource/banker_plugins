@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
-import { codexPaths, disableHooks, enableHooks, formatCommand, hookStatus, removeAll, safeNode } from './codex-hooks.mjs';
+import { spawnSync } from 'node:child_process';
+import { codexPaths, disableHooks, enableHooks, formatCommand, HOOKS, hookStatus, removeAll, safeNode } from './codex-hooks.mjs';
 
 const PKG = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = mkdtempSync(join(tmpdir(), 'codex-hooks-test-'));
@@ -125,4 +126,17 @@ test('obsidize goes after shell calls only and brings its canonicalizer along', 
   assert.ok(existsSync(join(p.dir, 'skills', 'obsidizer', 'obsidize.mjs')));
   assert.deepEqual(disableHooks(p, ['obsidize']).changed, ['obsidize']);
   assert.equal(read(p).PostToolUse, undefined);
+});
+
+test('every hook copy loads from the copy folder alone (no import left behind in the package)', () => {
+  const p = home();
+  enableHooks(p, ['update', 'count', 'obsidize'], PKG);
+  const cfg = join(root, `cfg${n++}`);
+  for (const id of ['update', 'count', 'obsidize']) {
+    const script = join(p.dir, ...HOOKS[id].script.split('/'));
+    const env = { ...process.env, XDG_CONFIG_HOME: cfg, APPDATA: cfg, BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1', CODEX_HOME: p.home };
+    const r = spawnSync(process.execPath, [script, ...HOOKS[id].args], { input: '{}', encoding: 'utf8', env, cwd: root, timeout: 15000 });
+    assert.equal(r.status, 0, `${id}: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /ERR_MODULE_NOT_FOUND|Cannot find/, id);
+  }
 });

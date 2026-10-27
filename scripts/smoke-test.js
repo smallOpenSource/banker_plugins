@@ -50,6 +50,7 @@ try {
   ok(fs.existsSync(binPath), `installed banker bin (${path.relative(tmp, binPath)})`);
 
   const env = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.CODEX_HOME; // the installer follows CODEX_HOME; the tests install under the temp HOME only
 
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
@@ -233,6 +234,7 @@ try {
   fs.mkdirSync(removedPauseDir, { recursive: true });
   fs.writeFileSync(path.join(removedPauseDir, 'SKILL.md'), '---\nname: banker-graceful_pause\n---\n');
   const env2 = { ...process.env, HOME: home2, USERPROFILE: home2 };
+  delete env2.CODEX_HOME;
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
@@ -240,6 +242,13 @@ try {
   ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 63 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
+  // Codex reads skills and hooks from $CODEX_HOME when it is set, so user scope installs there and not in ~/.codex.
+  const home3 = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-codexhome-'));
+  const codexHome3 = path.join(home3, 'custom-codex');
+  run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home3, env: { ...env2, HOME: home3, USERPROFILE: home3, CODEX_HOME: codexHome3 } });
+  ok(fs.existsSync(path.join(codexHome3, 'skills', 'banker-lineage', 'SKILL.md')) && fs.existsSync(path.join(codexHome3, 'hooks.json'))
+     && !fs.existsSync(path.join(home3, '.codex')), 'setup --codex follows CODEX_HOME for the skills and the hooks');
+  fs.rmSync(home3, { recursive: true, force: true });
   const setupSkill = fs.readFileSync(path.join(instDir, 'banker-setup', 'SKILL.md'), 'utf8');
   ok(/^---\nname: banker-setup\ndescription: "/.test(setupSkill) && setupSkill.includes('$ARGUMENTS'),
      'the setup command skill has its own name and description and keeps the command body');

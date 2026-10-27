@@ -13,7 +13,7 @@
  * 사용: node progress.mjs [--depth N] [--rollout FILE] [--follow] [--pane on|off]
  */
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,10 +47,18 @@ function list(dir) {
   try { return readdirSync(dir).sort(); } catch { return []; }
 }
 
-// 일반 파일의 끝 max 바이트를 줄로. 앞에서 잘린 첫 줄은 버린다. FIFO 는 열기 전에 거른다.
+// 일반 파일만 연다: 기다리지 않게 O_NONBLOCK 으로 열고, 연 것이 일반 파일인지 fstat 으로 본다. 아니면 null.
+function openRegular(file) {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  if (fstatSync(fd).isFile()) return fd;
+  closeSync(fd);
+  return null;
+}
+
+// 일반 파일의 끝 max 바이트를 줄로. 앞에서 잘린 첫 줄은 버린다.
 export function tail(file, max = MAX_READ) {
-  if (!statSync(file).isFile()) return [];
-  const fd = openSync(file, 'r');
+  const fd = openRegular(file);
+  if (fd === null) return [];
   try {
     const size = fstatSync(fd).size;
     const start = Math.max(0, size - max);
@@ -116,8 +124,8 @@ export function lastPlan(calls, cwd) {
 
 function readPlan(path) {
   try {
-    if (!statSync(path).isFile()) return null;
-    const fd = openSync(path, 'r');
+    const fd = openRegular(path);
+    if (fd === null) return null;
     try {
       const buf = Buffer.alloc(Math.min(fstatSync(fd).size, PLAN_READ));
       readSync(fd, buf, 0, buf.length, 0);
@@ -233,7 +241,9 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+// 직접 실행일 때만 main. 경로에 링크가 있어도(~/.codex 가 링크인 경우) 같은 파일로 본다.
+const same = (a, b) => { try { return realpathSync(a) === realpathSync(b); } catch { return false; } };
+if (process.argv[1] && same(fileURLToPath(import.meta.url), resolve(process.argv[1]))) {
   const code = main(process.argv.slice(2));
   if (typeof code === 'number') process.exitCode = code;
 }

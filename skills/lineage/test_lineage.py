@@ -3915,9 +3915,16 @@ class TestMainPaths(_ReviewCase):
         for f in (mine, other):
             shutil.copyfile(self.jf, f)
         env = {"CODEX_HOME": home, "CODEX_THREAD_ID": "01a17e65-99ef-7521-afab-678084f9edb2"}
+        sub = os.path.join(day, "rollout-2026-10-27T12-00-00-01a17e65-1111-7521-afab-678084f9edb2.jsonl")
+        with open(self.jf, encoding="utf-8") as f, open(sub, "w", encoding="utf-8") as g:
+            first = json.loads(f.readline())
+            first["payload"]["source"] = {"subagent": {"thread_spawn": {"parent_thread_id": "p", "depth": 1}}}
+            g.write(json.dumps(first) + "\n" + f.read())
         with mock.patch.dict(os.environ, env):
             self.assertEqual(str(L.auto_discover_jsonl()), mine)
-            self.assertEqual(sorted(map(str, L.project_jsonl_files())), sorted([mine, other]))
+            self.assertEqual(sorted(map(str, L.project_jsonl_files())), sorted([mine, other]), "a subagent is no session")
+        with mock.patch.dict(os.environ, dict(env, CODEX_THREAD_ID="01a17e65-2222-7521-afab-678084f9edb2")):
+            self.assertIsNone(L.auto_discover_jsonl(), "inside Codex a missing rollout is not replaced by a Claude one")
         with mock.patch.dict(os.environ, dict(env, CODEX_THREAD_ID="../x")):
             self.assertNotEqual(str(L.auto_discover_jsonl()), mine)
 

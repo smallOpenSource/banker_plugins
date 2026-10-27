@@ -736,29 +736,42 @@ def _codex_thread():
     return tid if re.fullmatch(r"[0-9A-Za-z-]{8,64}", tid) else None
 
 
+def _mtime(path):
+    """A file's change time, or 0 for one that went away between the listing and the look."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0
+
+
 def _codex_rollouts(pattern):
     try:
-        return sorted(codex_sessions_dir().glob(f"*/*/*/{pattern}"), key=lambda p: p.stat().st_mtime)
+        found = list(codex_sessions_dir().glob(f"*/*/*/{pattern}"))
     except OSError:
         return []
+    return sorted(found, key=_mtime)
 
 
 def _codex_cwd(path):
-    """The cwd a rollout's first record (session_meta) names, else None."""
+    """The cwd a rollout's first record (session_meta) names, else None. A subagent's rollout (its source names
+    the parent thread) gives None: what the parent handed it reads as a user turn, so it is no session of the user."""
     try:
         with open(path, encoding="utf-8") as f:
             obj = json.loads(f.readline())
-        return obj["payload"]["cwd"] if obj.get("type") == "session_meta" else None
+        meta = obj["payload"] if obj.get("type") == "session_meta" else {}
+        source = meta.get("source")
+        if isinstance(source, dict) and "subagent" in source:
+            return None
+        return meta.get("cwd")
     except (OSError, UnicodeDecodeError, ValueError, RecursionError, KeyError, TypeError, AttributeError):
         return None
 
 
 def auto_discover_jsonl():
     tid = _codex_thread()
-    if tid:
+    if tid:                                         # inside Codex: this session or nothing, never a Claude Code one
         found = _codex_rollouts(f"rollout-*-{tid}.jsonl")
-        if found:
-            return found[-1]
+        return found[-1] if found else None
     projdir = pathlib.Path.home() / ".claude" / "projects" / encode_cwd(
         pathlib.Path.cwd())
     if not projdir.exists():

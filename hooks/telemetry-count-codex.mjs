@@ -17,7 +17,7 @@
  *    모델이 `echo skills/banker-<아무 글>/SKILL.md` 를 돌려 체크인의 이름 칸으로 글을 내보내지 못하게 한다. 턴 키 파일은 일반 파일만 읽고, 링크 자리에 쓰지 않는다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 도구 호출을 절대 막지 않는다. 표준 출력은 비운다.
  */
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -48,11 +48,11 @@ export function namesIn(text, names = new Set()) {
   return names;
 }
 
-// rollout 끝에서 max 바이트(일반 파일만, FIFO 를 열지 않게 열기 전에 확인). 앞에서 잘린 첫 줄은 버린다.
+// rollout 끝에서 max 바이트. 일반 파일만: 기다리지 않게 O_NONBLOCK 으로 열고 연 것을 fstat 으로 본다. 앞에서 잘린 첫 줄은 버린다.
 function tailLines(file, max) {
-  if (!statSync(file).isFile()) return [];
-  const fd = openSync(file, 'r');
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   try {
+    if (!fstatSync(fd).isFile()) return [];
     const size = fstatSync(fd).size;
     const start = Math.max(0, size - max);
     const buf = Buffer.alloc(size - start);

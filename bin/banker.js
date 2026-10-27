@@ -89,7 +89,12 @@ function skillSource(s) { return s.target === 'codex-only' ? path.join(PKG_ROOT,
 
 function homeDir() { return os.homedir(); }
 function claudePluginsDir() { return path.join(homeDir(), '.claude', 'plugins'); }
-function codexBase(scope) { return scope === 'project' ? path.join(process.cwd(), '.codex') : path.join(homeDir(), '.codex'); }
+// User scope is where Codex itself reads skills and hooks: $CODEX_HOME when set (an absolute path), else ~/.codex.
+function codexBase(scope) {
+  if (scope === 'project') return path.join(process.cwd(), '.codex');
+  const ch = process.env.CODEX_HOME;
+  return ch && path.isAbsolute(ch) ? ch : path.join(homeDir(), '.codex');
+}
 
 function have(bin) {
   // PATH scan — no shell (avoids DEP0190 + injection). Cross-OS.
@@ -475,14 +480,15 @@ Usage:
   banker setup [--claude] [--codex] [--scope user|project] [--dry-run]
   banker uninstall [--claude] [--codex] [--scope user|project] [--dry-run]
   banker telemetry <on|off|status>
-  banker hooks <status|enable|disable> [update|count|obsidize]   (Codex hooks in ~/.codex/hooks.json)
+  banker hooks <status|enable|disable> [update|count|obsidize]   (Codex hooks in $CODEX_HOME/hooks.json, default ~/.codex)
   banker doctor
   banker help
 
 Notes:
   - setup/uninstall with no target flag applies to BOTH tools.
   - --claude registers the marketplace + installs banker@banker-plugins (skills as /banker:*).
-  - --codex copies codex-eligible skills -> ~/.codex/skills/banker-* and commands -> ~/.codex/prompts/banker-*.md.
+  - --codex copies codex-eligible skills -> ~/.codex/skills/banker-* and commands -> ~/.codex/prompts/banker-*.md
+    ($CODEX_HOME instead of ~/.codex when it is set).
   - telemetry on|off toggles anonymous usage counting opt-out (default-on; config only); status prints counting + update-check state. See PRIVACY.md.
   - Never runs as root. --dry-run prints planned actions without writing.`;
 
