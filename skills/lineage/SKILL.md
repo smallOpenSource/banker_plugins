@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.0.11
+version: 3.1.0
 schema_version: 1
 ---
 
@@ -84,7 +84,7 @@ Python 은 3.7 이상을 쓴다(EL8 기본 `python3` 는 3.6 이라 `python3.11`
    python3 "<스킬 폴더>/lineage.py" <사용자 인자> --emit-review work/.lineage-review.json
    ```
    - stderr 의 `part K/N: <파트 파일> (to review: X) -> <결정 파일>` 한 줄이 검토 1건이다.
-   - 자동 탐색이 고른 기록(stderr 의 `auto-discovered session:`)을 사용자에게 알린다. Codex 에서는 같은 폴더의 Claude Code 기록이 골라진다.
+   - 자동 탐색이 고른 기록(stderr 의 `auto-discovered session:`)을 사용자에게 알린다. Codex 에서는 지금 Codex 세션의 기록(rollout)이 골라진다.
    - 검토할 파트가 6개를 넘으면 진행 전에 묻는다. Claude Code 는 `AskUserQuestion` 으로 진행, `--last N`, `--rulebase` 중에서 고르게 한다. 물을 수 없는 실행이면 파트 수를 알리고 진행한다. 물을 때는 비용도 알린다: 파트 하나에 검토 에이전트 1개가 돌고, 이 저장소 실측은 40턴 파트 하나에 약 11만 토큰과 7분이었다.
    - 묶음의 본문은 이미 redact 되어 있다. 검토자가 읽는 파트 파일은 `--redact-mode` 와 관계없이 전부 가린다(Cache & Secret Hygiene).
    - 규칙이 확실한 노이즈(래퍼 블록, 훅 피드백, 중단 표시, 주입된 스킬과 워크플로 본문, 하네스 오류, 조작 명령)는 이미 빠져 있다. `--keep-trivia` 를 주면 규칙이 주입 본문, 하네스 오류, 조작 명령, 에코 교환을 남기고(래퍼 블록, 훅 피드백, 중단 표시는 그래도 빠진다), 파트 파일의 `keep_trivia: true` 가 검토자에게 턴을 빼지 말라고 알린다.
@@ -176,8 +176,10 @@ Python 은 3.7 이상을 쓴다(EL8 기본 `python3` 는 3.6 이라 `python3.11`
 
 ```
 --all-sessions          → 프로젝트 폴더의 모든 *.jsonl (레코드단위 시간순 병합)
+                           Codex 안이면 첫 기록(session_meta)의 cwd 가 지금 폴더인 rollout 전부
   또는 단일 세션:
-auto-discover (~/.claude/projects/<encoded-cwd>/*.jsonl most-recent)
+auto-discover: Codex 안이면(CODEX_THREAD_ID) <CODEX_HOME>/sessions/*/*/*/rollout-*-<그 id>.jsonl,
+               아니면 (~/.claude/projects/<encoded-cwd>/*.jsonl most-recent)
   → --session FILE 명시
   → --from-transcript - stdin paste
   → 모두 실패 시 exit 2 + 옵션 안내
@@ -186,6 +188,12 @@ auto-discover (~/.claude/projects/<encoded-cwd>/*.jsonl most-recent)
 경로 인코딩: cwd 의 **모든 비영숫자 문자**(`/` `_` `.` `:` `\` 등)를 `-` 로 바꾼다
 (Claude Code 의 실제 project-dir 명명과 일치 — `_` 도 `-` 로). 비-ASCII cwd(한글 등)는
 자동탐색이 빗나갈 수 있으니 `--session` 을 쓴다.
+
+기록 형식은 첫 레코드로 가린다. 첫 레코드가 `session_meta` 이면 Codex rollout 으로 읽는다.
+- 사용자 턴: `event_msg` 의 `user_message`(사용자가 입력한 글). 모델 입력에 들어간 환경, 지침, 주입된 스킬 본문(`response_item` 의 사용자 메시지)은 턴이 아니다.
+- 모델 턴: `event_msg` 의 `agent_message`.
+- 도구 호출: `response_item` 의 `*_call`(이름은 `name`, 없으면 종류). 본문 없는 모델 레코드라 Claude Code 의 `tool_use` 처럼 앞뒤 모델 턴에 합쳐진다. 도구 결과(`*_call_output`)는 읽지 않는다.
+- `compacted` 는 compaction 구분선이다.
 
 Schema-tolerant 파서: 미지 record type → stderr WARN + 다음 line. `v1`/`v2` 같은 schema marker
 발견 시 `--unsafe-schema` 명시 없으면 exit 2. UTF-8 디코드 실패 파일은 그 파일만 건너뛴다(전체 실패 X).
@@ -322,7 +330,7 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 ## 한계
 
 - 자동탐색은 Claude Code 의 `~/.claude/projects/` 레이아웃을 가정 — 비-ASCII cwd 는 `--session` / `--from-transcript` 로 쓴다.
-- 읽을 수 있는 기록은 Claude Code 형식뿐이다. Codex 의 기록(rollout)을 파일 경로(`--session`, `--from-transcript <파일>`)로 주면 빈 페이지나 묶음을 만들지 않고 exit 2(`is a Codex session record`)로 멈춘다. 표준 입력으로 주면 이 확인을 하지 않아 빈 페이지가 된다. Codex 에서는 Claude Code 기록을 내보낼 때만 쓴다.
+- 읽는 기록은 Claude Code 형식과 Codex rollout 이다. Codex rollout 에서는 사용자가 입력한 글, 모델의 답, 도구 호출 이름만 읽는다. 모델의 추론 요약과 도구 결과는 페이지에 없다.
 - 기본 흐름은 redact 된 세션 본문을 세션 모델의 프로바이더로 보낸다. 모델에 보내지 않으려면 `--rulebase` 를 쓴다.
 - `--rulebase` 요약은 추출식(head+tail) — 말미 정리 문장을 결론 대신 고르는 경우가 있다. 기본 흐름은 검토자가 이를 고쳐 쓴다.
 - 기본 흐름은 파트(40턴 이하, 고르게 나눔)마다 검토 에이전트 1개가 돈다. 이 저장소 실측은 40턴 파트 하나에 약 11만 토큰과 7분이었다. 긴 세션은 `--last N` 으로 범위를 줄이거나 `--rulebase` 를 쓴다.

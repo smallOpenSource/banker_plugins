@@ -3865,26 +3865,61 @@ class TestMainPaths(_ReviewCase):
         self.assertIn("[REDACTED] 와 [REDACTED] 를 점검", self._page())
         self.assertIn("custom:alpha=1, custom:beta=1", err)
 
-    def _codex_rollout(self):
+    def _codex_rollout(self, cwd="/w"):
+        """A rollout as Codex 0.144.5 writes it: session_meta first, what the user typed and what the model said as
+        event records, the model input (environment, an injected skill body) and tool calls as response_item."""
         self._write([{"timestamp": "2026-10-27T10:00:00Z", "type": "session_meta",
-                      "payload": {"id": "019f", "cwd": "/w", "originator": "codex_exec"}},
+                      "payload": {"id": "019f", "cwd": cwd, "originator": "codex_exec"}},
                      {"timestamp": "2026-10-27T10:00:01Z", "type": "response_item",
-                      "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}},
-                     {"timestamp": "2026-10-27T10:00:02Z", "type": "event_msg",
-                      "payload": {"type": "agent_message", "message": "ok"}}])
+                      "payload": {"type": "message", "role": "user",
+                                  "content": [{"type": "input_text", "text": "<skill>\n<name>banker-x</name>\nBODY-SECRET"}]}},
+                     {"timestamp": "2026-10-27T10:00:01Z", "type": "event_msg",
+                      "payload": {"type": "user_message", "message": "목록을 보여 줘"}},
+                     {"timestamp": "2026-10-27T10:00:02Z", "type": "response_item",
+                      "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"}},
+                     {"timestamp": "2026-10-27T10:00:03Z", "type": "response_item",
+                      "payload": {"type": "function_call_output", "output": "OUTPUT-NOT-A-TURN"}},
+                     {"timestamp": "2026-10-27T10:00:04Z", "type": "event_msg",
+                      "payload": {"type": "agent_message", "message": "목록은 a, b 입니다."}},
+                     {"timestamp": "2026-10-27T10:00:05Z", "type": "compacted", "payload": {"message": ""}},
+                     {"timestamp": "2026-10-27T10:00:06Z", "type": "event_msg",
+                      "payload": {"type": "agent_message", "message": "이어서 합니다."}}])
 
-    def test_a_codex_session_record_stops_with_no_page(self):
+    def test_a_codex_session_record_reads_as_turns(self):
         self._codex_rollout()
-        rc, err = self._rulebase()
-        self.assertEqual(rc, 2)
-        self.assertIn("is a Codex session record", err)
-        self.assertEqual(self._page(), "", "no empty page is written")
+        with open(self.jf, encoding="utf-8") as f:
+            turns = list(L.parse_turns(f, session_id="s"))
+        self.assertEqual([(t["role"], t["text"], t["tools"]) for t in turns],
+                         [("user", "목록을 보여 줘", {}), ("assistant", "", {"exec_command": 1}),
+                          ("assistant", "목록은 a, b 입니다.", {}), ("mark", "compaction", {}),
+                          ("assistant", "이어서 합니다.", {})])
 
-    def test_a_codex_session_record_stops_before_a_review_pack(self):
+    def test_a_codex_session_record_renders_a_page_without_the_model_input(self):
         self._codex_rollout()
-        rc, err = _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack])
-        self.assertEqual((rc, os.path.exists(self.pack)), (2, False))
-        self.assertIn("Claude Code transcripts only", err)
+        rc, _ = self._rulebase()
+        page = self._page()
+        self.assertEqual(rc, 0)
+        self.assertIn("목록을 보여 줘", page)
+        self.assertIn("exec_command", page)
+        self.assertNotIn("BODY-SECRET", page)
+        self.assertNotIn("OUTPUT-NOT-A-TURN", page)
+
+    def test_inside_codex_the_session_is_found_by_its_thread_id(self):
+        from unittest import mock
+        home = os.path.join(self.d, "codex")
+        day = os.path.join(home, "sessions", "2026", "10", "27")
+        os.makedirs(day)
+        self._codex_rollout(cwd=os.getcwd())
+        mine = os.path.join(day, "rollout-2026-10-27T10-00-00-01a17e65-99ef-7521-afab-678084f9edb2.jsonl")
+        other = os.path.join(day, "rollout-2026-10-27T11-00-00-01a17e65-0000-7521-afab-678084f9edb2.jsonl")
+        for f in (mine, other):
+            shutil.copyfile(self.jf, f)
+        env = {"CODEX_HOME": home, "CODEX_THREAD_ID": "01a17e65-99ef-7521-afab-678084f9edb2"}
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(str(L.auto_discover_jsonl()), mine)
+            self.assertEqual(sorted(map(str, L.project_jsonl_files())), sorted([mine, other]))
+        with mock.patch.dict(os.environ, dict(env, CODEX_THREAD_ID="../x")):
+            self.assertNotEqual(str(L.auto_discover_jsonl()), mine)
 
     def test_a_claude_transcript_with_no_turns_still_renders(self):
         self._write([{"type": "summary", "summary": "x"}])
