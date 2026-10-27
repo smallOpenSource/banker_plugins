@@ -53,6 +53,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 항목 | Claude Code (OMC) | Codex (OMX) |
 |---|---|---|
 | 1 자료 조사 | `Skill("banker:deep-research")` | `$banker-deep-research` |
+| 1 전문가 작업 방식 | `Skill("banker:lfm")` | `$banker-lfm` |
 | 2 모호성 제거 | `Skill("banker:ultra-interview")` | `$banker-ultra-interview` |
 | 3 합의 계획 | `Skill("oh-my-claudecode:ralplan")` `--deliberate`, 이어서 `Skill("banker:ralph-qa")` | `$ralplan --deliberate`, 이어서 `$banker-ralph-qa` |
 | 5 구현 | `Skill("oh-my-claudecode:ralph")` `--critic=critic` | `$ralph` 뒤 이 스킬의 critic 루프(OMX `ralph` 에는 `--critic` 이 없다) |
@@ -190,16 +191,18 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
 
 ## 1. 자료 조사
 
-- deep-research 를 부른다. 넘기는 질문은 미리 좁히고, 인자에 "추가 질문 금지" 를 적는다. 범위 질문은 2단계가 맡는다. 질문은 공개 웹 검색어가 되므로 저장소 코드, 내부 이름, 비밀값을 넣지 않는다.
+- deep-research 를 부른다. 넘기는 질문은 미리 좁히고, 인자에 "추가 질문 금지" 와 "전문가 작업 방식은 lfm 이 맡음" 을 적는다. 범위 질문은 2단계가 맡는다. 질문은 공개 웹 검색어가 되므로 저장소 코드, 내부 이름, 비밀값을 넣지 않는다.
 - 저장소 사실(구조, 시험 명령과 시험 도구, 빌드 방법, 관련 코드 위치, CI)은 읽기 전용 탐색으로 모은다.
 - 둘을 `<run>/01-research.md` 하나로 저장한다. 조사 보고, 그다음 `## 저장소 사실` 절이다. 조사 스킬은 보고를 대화에만 내므로 연쇄가 파일로 남긴다. 수동 경로였다면 충실도 한계를 그대로 옮긴다.
+- 같은 단계에서 `lfm` 을 요청의 분야로 부른다. 인자는 `--no-questions --out <run>/01-masters.md` 다. 그 분야 최고 전문가 그룹이 이 일을 어떻게 하는지와 계획 적용 항목(`M-1` …)이 남는다. 검색어 규칙은 deep-research 와 같다(저장소 코드, 내부 이름, 비밀값을 넣지 않는다).
+- `lfm` 이 "웹 조사 불가" 로 끝나면 `01-masters.md` 에 그 사실만 적고 진행한다. 3단계는 "전문가 작업 방식 없음" 으로 계획한다.
 - 게이트: 살아남은 주장마다 출처가 있고, 폐기된 주장과 한계가 적혀 있다. 주장이 0개면 게이트를 지나지 않은 것이다.
 - deep-research 가 "웹 조사 불가" 로 끝나면(네트워크 없음) 이 단계를 `skipped` 와 이유 "네트워크 없음" 으로 기록하고, 저장소 사실만 `01-research.md` 에 남긴 채 2단계로 간다. 사용자에게는 웹 조사를 하지 못했다고 알린다.
 - `--skip=research` 면 이 단계를 `skipped` 로 기록한다. 2단계의 ultra-interview 가 자기 조사를 한다.
 
 ## 2. 모호성 제거
 
-- ultra-interview 를 부른다. `01-research.md` 를 근거로 넘기고, 거기서 답하지 못한 항목만 더 조사하게 한다.
+- ultra-interview 를 부른다. `01-research.md` 와 `01-masters.md` 를 근거로 넘기고, 거기서 답하지 못한 항목만 더 조사하게 한다. `01-masters.md` 가 있으면 `lfm` 을 다시 부르지 말라고 적는다.
 - `--auto` 면 인자에 "사람에게 묻지 않는다. P 항목은 보수적 가정으로 답하고 가정임을 표시한다" 를 넣는다. 이 지시는 ultra-interview 의 "가정을 사람이 훑기 전에는 판정하지 않는다" 규칙보다 앞선다. 사용자가 `--auto` 로 묻지 말라고 명시했기 때문이다. 그래서 이 결과는 통과가 아니라 "사람 확인 없음" 으로 기록한다. 보수적인 쪽이 없는 핵심 P(기능의 뜻 자체를 정하는 항목)가 남으면 멈추고 보고한다.
 - 결과를 `<run>/02-spec.md` 로 저장한다.
   - 번호 붙은 항목과 E, I, P 분류, 근거(URL, 파일 경로), 답, 가정
@@ -213,7 +216,8 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
 ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의하고, 검토자를 늘리는 옵션이 없다. 그래서 ralplan 합의 뒤 ralph-qa 의 독립 검토자 3명 이상이 같은 계획을 다시 판정한다. Architect 와 Critic 은 이 3명에 세지 않는다.
 
 1. ralplan 을 `--deliberate` 로 부른다. `--interactive` 는 주지 않는다. 인자에 아래를 함께 넘긴다.
-   - 요청 원문, `02-spec.md` 경로와 수용 기준, `01-research.md` 경로
+   - 요청 원문, `02-spec.md` 경로와 수용 기준, `01-research.md` 와 `01-masters.md` 경로
+   - 계획에 `## 전문가 작업 방식 적용` 절을 두라는 지시. `01-masters.md` 의 `M-n` 마다 판정(적용, 조정, 제외)과 계획의 어느 단계에 넣었는지, 조정과 제외는 그 이유를 적는다. 판정을 바꾸면(예: `lfm` 이 적용인데 계획은 제외) 이유를 적는다
    - 계획 저장 경로: Claude Code 는 `.omc/plans/ultra-chain-<run id>.md`. Codex 는 OMX 규칙대로 `.omx/plans/` 에 쓴다
    - Codex: 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라는 말
    - 계획에 넣을 것
@@ -233,7 +237,7 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
    - Claude Code: 1 에서 지정한 경로, 또는 ralplan 이 보고한 계획 경로다. 둘 다 없으면 이 단계가 시작된 뒤 `.omc/plans/` 에 쓰였고 `pending approval` 표지가 있는 파일을 고른다. 검토 문서(이름이 `-critic.md`, `-architect.md`, `-review.md` 로 끝남)와 `open-questions.md` 는 고르지 않는다. 원본 경로는 `summary` 에 적는다.
    - Codex: 이번에 쓰인 `.omx/plans/prd-*.md` 와 `test-spec-*.md` 를 차례로 붙이고, 원본 경로를 맨 위에 적는다.
 4. ralph-qa 를 `--lens=plan --agents=<agents> --max=<max>` 로 부른다. 외부 좌석 플래그(`--codex`, `--gemini`, `--opencode`)는 사용자가 준 것만 넘긴다.
-   - 검증 대상: `03-plan.md`(구현 전이라 `<base>` 대비 diff 가 없으니 원문으로 붙인다). 수용 기준: `02-spec.md` 의 AC 와 deliberate 필수 항목(사전 부검, 확장 시험 계획).
+   - 검증 대상: `03-plan.md`(구현 전이라 `<base>` 대비 diff 가 없으니 원문으로 붙인다). 수용 기준: `02-spec.md` 의 AC 와 deliberate 필수 항목(사전 부검, 확장 시험 계획), 그리고 `01-masters.md` 의 `M-n` 이 모두 `## 전문가 작업 방식 적용` 절에 판정과 함께 있는지(조정과 제외에 이유가 있는지).
    - 모든 좌석의 지시에 "저자의 주장이 틀렸다는 증거를 먼저 찾는 적대적 검토자로 판정한다" 를 넣는다. 렌즈 배정은 ralph-qa 그대로다. ralph-qa 의 기본 배정에서는 적대적 반증 렌즈가 한 좌석뿐이라, 이 문장이 있어야 검토자 모두가 적대적이다.
    - 출처-독립 검토자에게 줄 "사용자 원 요청" 은 `task.md` 와 `02-spec.md` 의 사용자 답변 원문이다.
    - ralph-qa 가 외부 모델을 물으면 여기서 한 번만 고르게 하고, 고른 모델을 기록한다. 6단계에는 `--gemini=<그 모델>` 처럼 값을 박아 넘긴다.

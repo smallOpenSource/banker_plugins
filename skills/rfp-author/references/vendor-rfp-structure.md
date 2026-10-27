@@ -32,7 +32,7 @@
 - 전수 상세(인벤토리·카탈로그·시나리오)는 **착수 후 제공 자료**(§10) — 기밀은 격리망/마스킹.
 
 ## 4. ★노출 게이트 (벤더 발송본 = 깨끗)
-**절대 비포함**(검수 lane grep): 내부 SoT `file:LINE`(`<spec/wiki 경로:NN>`) · 실제 호스트/포트(`<internal-host>`·`<:port>`) · 내부식별자(보안필터 제품명·내부 테이블 prefix·내부 데이터셋명·모델ID) · `.env.*` 값 · "deep-research"/provenance/"추적박스" · em-dash(`—`→`-`). 내부 추적은 본 `references/`에만.
+**절대 비포함**(검수 lane grep): 내부 SoT `file:LINE`(`<spec/wiki 경로:NN>`) · 실제 호스트/포트(`<internal-host>`·`<:port>`) · 내부식별자(보안필터 제품명·내부 테이블 prefix·내부 데이터셋명·모델ID) · `.env.*` 값 · "deep-research"/"lfm"/provenance/"추적박스"/전문가 그룹 이름과 출처 · em-dash(`—`→`-`). 내부 추적은 본 `references/`에만.
 
 ## 5. 쪽번호·인용 의무
 디자인/문서 인용 시 **page-NNN/쪽번호 직접 기록**. 디자인 SoT(예: 디자인 PDF/이미지, 인용키 `<DesignRef(page-section)>`)는 페이지 번호를 직접 박는다. "정합 OK" 같은 빈말 금지.

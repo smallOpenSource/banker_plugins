@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 63개 + 커맨드 2개**(총 65개 구성요소)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 64개 + 커맨드 2개**(총 66개 구성요소)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -137,6 +137,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `ralph-qa` | 세션 모델로 띄운 독립 검토 에이전트 3개 이상이 합의할 때까지 검증 반복. `--codex`·`--gemini`·`--opencode` 를 주면 그 CLI 에서 가장 뛰어난 모델이 좌석으로 합류 |
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
+| `lfm` | learn from master. 그 분야 최고 전문가 그룹이 일하는 방식을 1차 자료로 조사해 계획 적용 항목으로 정리(ultra-interview, ultra-chain, deep-research, rfp-author 의 리서치에서도 씀) |
 | `ultra-interview` | 리서치 선행으로 사람 질문 최소화, 모호성 3% 이하까지 인터뷰 |
 | `interval-report` | 장기 수행 중간 보고를 `docs/intermission.md` 로 갱신(경과·잔여·단일 표) |
 | `summary-wiki` | 위키를 `docs/` 단일 파일 개조식으로 요약(지식 동기화 검토용, 읽기 전용) |
@@ -206,7 +207,7 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 63개와 Codex 전용 스킬 2개(`graceful-pause`, `progress`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 64개와 Codex 전용 스킬 2개(`graceful-pause`, `progress`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
   `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
@@ -381,7 +382,7 @@ banker setup
   - 내려받는 설치 스킬(`setup-omc-hud`, `setup-bypass-permissions` 를 뺀 `setup-*`, `docs-setup`, `vertical-pptx-setup`, `motion-graphic-setup`, `3d-intro-setup`): 웹 원천(npm, PyPI, GitHub 등)은 먼저 닿는지 보고, 닿지 못하면 받지 않고 "오프라인이라 설치하지 않음" 으로 알립니다. OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 그 관리자의 미러 설정을 따르므로 미리 판정하지 않고 시도합니다. 단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다.
   - `update-banker`: 레지스트리에 닿지 못하면 어느 채널도 바꾸지 않고 멈춥니다.
   - `audit-security` 의 의존성 취약점 조회: 결과로 읽을 수 없는 도구는 0건이 아니라 "미커버" 로 적습니다.
-  - `deep-research`, 이를 부르는 `ultra-chain` 1단계, `ultra-interview` 의 조사: 웹 도구가 모두 실패하면 조사하지 못했다고 알립니다.
+  - `deep-research`, `lfm`, 이를 부르는 `ultra-chain` 1단계, `ultra-interview` 와 `rfp-author` 의 조사: 웹 도구가 모두 실패하면 조사하지 못했다고 알립니다. `lfm` 은 모델이 아는 관행으로 표를 채우지 않고 "웹 조사 불가" 로 끝납니다.
   - `npx` 로 부르는 도구(`motion-graphic-make` 의 hyperframes 등): 전역 설치가 없으면 패키지를 받으려 해, 네트워크가 없으면 약 70초 뒤 실패합니다. 오프라인에서는 전역 설치한 실행 파일을 부릅니다.
   - 유료 API 를 부르는 `3d-intro-build`(요청마다 시간 제한), `ralph-qa` 의 외부 좌석(codex, gemini, opencode, 좌석마다 600초)
   - `vertical-pptx`, `pdf-vision-extract` 가 빠진 도구를 설치하라고 안내할 때, `nothing-design` 의 글꼴(Google Fonts. 받지 못하면 대체 글꼴로 보임)
