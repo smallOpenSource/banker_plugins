@@ -247,10 +247,10 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex는 OMX `hud`) |
+| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex 자신은 OMX `hud`. Codex 에서 Claude Code 쪽 설치를 고르면 왼쪽과 같음) |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
-| `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `~/.codex/` 대응 |
+| `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `hooks.json` 의 `UserPromptSubmit` 맨 뒤에 훅 묶음 1개 + `smart-compact.json`(임계값), `smart-compact-state.json`(세션 상태). 훅 사본 `hooks-custom/banker-smart-compact-gate.mjs`. `hooks.json` 을 바꿀 때마다 직전 내용을 `hooks.json.smart-compact.bak` 에 백업, 멱등. `off` 는 이 훅과 사본, 설정만 지움. 새 훅은 `/hooks` 에서 신뢰해야 돎 |
 | `payload-mon` | `hud/omc-hud-custom.mjs` 에 표시 블록 1개 삽입(`.payload-mon.bak` 백업·멱등·`node --check` 검증) + 래퍼 옆 `hud/payload-mon/` 에 모듈 사본 (`off` 로 원복) | — (Codex에서 실행해도 Claude Code HUD 만 다룸) |
 | `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
 | `anti-drm` | `rules/banker-anti-drm.md` 생성 (`off` 로 삭제) + 설정 `~/.config/banker/anti-drm.json`(두 런타임 공용, `off` 뒤에도 남음, anti-drm 이 쓰지 않은 파일이 있었으면 `.bak`) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.anti-drm.bak` 백업·멱등, `off` 로 원복) |

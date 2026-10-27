@@ -1,13 +1,14 @@
 ---
 name: compact-wiki
-description: "`.omc/wiki` 페이지를 무손실로 정리. 중복은 지우고, 낡은 내용은 새 내용으로 대체하고, 겹치는 페이지는 병합. 'compact-wiki'/'위키 정리'/'위키 압축'/'wiki 중복 제거'/'위키 병합' 시 사용."
+description: "`.omc/wiki`(Codex 는 `omx_wiki/`) 페이지를 무손실로 정리. 중복은 지우고, 낡은 내용은 새 내용으로 대체하고, 겹치는 페이지는 병합. 'compact-wiki'/'위키 정리'/'위키 압축'/'wiki 중복 제거'/'위키 병합' 시 사용."
 ---
 
 # compact-wiki — wiki 정리·압축 (무손실)
 
 `append-wiki` 가 `.omc/wiki/` 에 누적한 지식을 **중복 제거·supersede·병합**으로 압축한다.
-append-wiki 가 "쌓기"라면 이 스킬은 "정리"다. 두 스킬 모두 OMC `wiki_*` MCP 도구를 쓰고,
-답변·설명은 한글(도구명·슬러그·경로 등 기술 토큰은 영문).
+append-wiki 가 "쌓기"라면 이 스킬은 "정리"다. 두 스킬 모두 Claude Code 는 OMC `wiki_*` MCP 도구로 `.omc/wiki/` 를,
+Codex 는 OMX 의 `omx wiki` CLI 로 `omx_wiki/` 를 다룬다. 답변·설명은 한글(도구명·슬러그·경로 등 기술 토큰은 영문).
+아래의 `.omc/wiki` 는 Codex 에서 `omx_wiki` 로 읽는다.
 
 > ★**불변식 — 지식 무손실**: 이 스킬의 모든 destructive 동작(병합 후 삭제·supersede)은
 > **스냅샷 → 병합본 작성 → 병합본이 원본의 모든 고유 사실을 담았는지 검증 → 그 다음에만 삭제**
@@ -25,17 +26,47 @@ append-wiki 가 "쌓기"라면 이 스킬은 "정리"다. 두 스킬 모두 OMC 
 
 ## 워크플로우
 
-### 0) wiki 도구 로드 (deferred — 먼저)
-`wiki_*` 는 deferred MCP 도구다. 호출 전 ToolSearch로 스키마 로드:
+### 0) wiki 도구 준비 (런타임마다 다름 — 먼저)
+**Claude Code:** `wiki_*` 는 deferred MCP 도구다. 호출 전 ToolSearch로 스키마 로드:
 ```
 ToolSearch(query="select:mcp__plugin_oh-my-claudecode_t__wiki_list,mcp__plugin_oh-my-claudecode_t__wiki_query,mcp__plugin_oh-my-claudecode_t__wiki_read,mcp__plugin_oh-my-claudecode_t__wiki_ingest,mcp__plugin_oh-my-claudecode_t__wiki_delete,mcp__plugin_oh-my-claudecode_t__wiki_lint")
 ```
+
+**Codex:** `wiki_*` MCP 도 ToolSearch 도 없다. `omx wiki` CLI 가 같은 도구 이름과 입력을 받는다(`wiki_list`, `wiki_query`, `wiki_read`, `wiki_ingest`, `wiki_delete`, `wiki_lint`).
+```bash
+omx wiki wiki_list --json
+omx wiki wiki_read --input '{"page":"<slug>"}' --json
+omx wiki wiki_ingest --input "$(cat <JSON 파일>)" --json
+omx wiki wiki_delete --input '{"page":"<slug>"}' --json
+```
+- 아래 단계의 `wiki_xxx({...})` 는 Codex 에서 `omx wiki wiki_xxx --input '<같은 JSON>' --json` 이다. `page` 는 슬러그나 파일 이름(`<slug>.md`)을 받는다.
+- 병합본처럼 긴 본문은 JSON 을 파일로 쓰고 `--input "$(cat <파일>)"` 로 넘긴다. 셸 인용이 깨지지 않게 하기 위해서다(bash).
+- Windows 에서 PowerShell 로 `omx` 를 부를 때: Windows PowerShell 5.1 은 `omx.cmd` 에 넘기는 인자에서 큰따옴표를 지우고,
+  공백에서 인자를 나누고, 한글을 깨뜨린다(Windows 박스 실측). 그래서 JSON 을 아래 `Arg` 로 바꿔 넘긴다.
+  본문 속 큰따옴표와 공백, ASCII 밖 글자, cmd 가 읽는 `% & | < > ^ !` 는 `\uXXXX` 로, JSON 구조의 큰따옴표는 `\"` 로 바꾼다.
+  따옴표(홀수 개 포함), 역슬래시, `%TEMP%`, `&`, 한글, 줄바꿈이 든 본문도 그대로 왕복하고 명령으로 읽히지 않는다(박스 실측).
+  ```powershell
+  function Arg([string]$s) {
+    $a = [regex]::Replace($s, '(?<!\\)((?:\\\\)*)\\"', '$1\u0022')
+    $a = [regex]::Replace($a, '[^\x21-\x7E]|[%&|<>^!]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+    $a -replace '(\\*)"', '$1$1\"'
+  }
+  $j = @{ title = "<영문 제목>"; content = "<본문>"; tags = @("<태그>"); category = "pattern" } | ConvertTo-Json -Compress
+  omx wiki wiki_ingest --input (Arg $j) --json
+  omx wiki wiki_query --input (Arg '{"query":"<키워드>"}') --json
+  ```
+- 인자 하나는 Linux 에서 128KB 를 넘지 못한다. 본문이 그보다 크면 페이지를 나눈다.
+- `omx` 가 없으면 멈추고 OMX 설치를 안내한다. 위키 파일을 손으로 지우거나 쓰지 않는다(목차와 이력이 어긋난다).
+- `omx wiki` 와 스냅샷은 작업 폴더에만 쓰므로 샌드박스 승인이 필요 없다(Codex 0.144.5, OMX 0.20.2 에서 확인).
 
 ### 1) 스냅샷 (★안전망 — 가장 먼저)
 삭제·치환 전에 wiki 디렉터리를 통째로 백업해 복구 가능 상태를 만든다:
 ```bash
 ts=$(date +%Y%m%d-%H%M%S); cp -r .omc/wiki ".omc/wiki.bak-$ts" && echo "backup: .omc/wiki.bak-$ts"
 ```
+Codex 는 `omx_wiki/` 를 `.omx/` 아래로 떠 둔다(`mkdir -p .omx && cp -r omx_wiki ".omx/wiki.bak-$ts"`).
+프로젝트 루트에 두지 않는 것은 OMX 가 `omx_wiki/` 를 커밋 대상으로 보아 옆의 백업 폴더가 커밋에 섞일 수 있기 때문이다.
+`omx_wiki/` 가 없으면 정리할 위키가 없으니 그 사실을 알리고 멈춘다.
 작업 완료·사용자 확인 전까지 백업을 지우지 않는다(보고에 위치 명시).
 
 ### 2) 인벤토리 + 현재 상태 채증
@@ -71,7 +102,7 @@ ts=$(date +%Y%m%d-%H%M%S); cp -r .omc/wiki ".omc/wiki.bak-$ts" && echo "backup: 
 ### 8) 보고 (한글)
 - 병합/supersede 매핑(어느 페이지 → 어느 정본), 삭제된 슬러그, 리포인트한 링크.
 - before→after: 페이지 수·총 크기·lint 결과.
-- **백업 위치**(`.omc/wiki.bak-*`)와 "이상 없으면 삭제해도 됨" 안내.
+- **백업 위치**(Claude Code `.omc/wiki.bak-*`, Codex `.omx/wiki.bak-*`, 실제로 만든 경로)와 "이상 없으면 삭제해도 됨" 안내.
 
 ## 작성 원칙 (append-wiki 와 정합)
 - **보존 > 압축.** 압축은 중복·잡음 제거지 지식 삭제가 아니다. 고유 사실은 1건도 잃지 않는다.

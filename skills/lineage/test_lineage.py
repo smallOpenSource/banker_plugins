@@ -3865,6 +3865,56 @@ class TestMainPaths(_ReviewCase):
         self.assertIn("[REDACTED] 와 [REDACTED] 를 점검", self._page())
         self.assertIn("custom:alpha=1, custom:beta=1", err)
 
+    def _codex_rollout(self):
+        self._write([{"timestamp": "2026-10-27T10:00:00Z", "type": "session_meta",
+                      "payload": {"id": "019f", "cwd": "/w", "originator": "codex_exec"}},
+                     {"timestamp": "2026-10-27T10:00:01Z", "type": "response_item",
+                      "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}},
+                     {"timestamp": "2026-10-27T10:00:02Z", "type": "event_msg",
+                      "payload": {"type": "agent_message", "message": "ok"}}])
+
+    def test_a_codex_session_record_stops_with_no_page(self):
+        self._codex_rollout()
+        rc, err = self._rulebase()
+        self.assertEqual(rc, 2)
+        self.assertIn("is a Codex session record", err)
+        self.assertEqual(self._page(), "", "no empty page is written")
+
+    def test_a_codex_session_record_stops_before_a_review_pack(self):
+        self._codex_rollout()
+        rc, err = _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack])
+        self.assertEqual((rc, os.path.exists(self.pack)), (2, False))
+        self.assertIn("Claude Code transcripts only", err)
+
+    def test_a_claude_transcript_with_no_turns_still_renders(self):
+        self._write([{"type": "summary", "summary": "x"}])
+        self.assertEqual(self._rulebase()[0], 0)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "named pipes are POSIX")
+    def test_a_pipe_with_no_turns_renders_without_opening_it_again(self):
+        import threading
+        fifo = os.path.join(self.d, "p.jsonl")
+        os.mkfifo(fifo)
+
+        def feed():
+            with open(fifo, "w", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "summary", "summary": "x"}) + "\n")
+        writer = threading.Thread(target=feed, daemon=True)
+        writer.start()
+        done = []
+        runner = threading.Thread(target=lambda: done.append(_quiet(L.main, [
+            "--session", fifo, "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])[0]),
+            daemon=True)
+        runner.start()
+        runner.join(10)
+        stalled = runner.is_alive()
+        if stalled:   # unblock the second open so the test run can end
+            with open(fifo, "w", encoding="utf-8"):
+                pass
+            runner.join(5)
+        self.assertFalse(stalled, "a pipe is read once; a second open waits for another writer")
+        self.assertEqual(done, [0])
+
     def test_purge_cache_removes_the_cache_then_finds_none(self):
         os.makedirs(os.path.join(self.cache, "2", "s"))
         self.assertEqual(_quiet(L.main, ["--purge-cache"]), (0, "[lineage] cache purged: %s\n" % self.cache))
