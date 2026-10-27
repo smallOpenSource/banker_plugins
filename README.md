@@ -253,7 +253,7 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex 자신은 OMX `hud`. Codex 에서 Claude Code 쪽 설치를 고르면 왼쪽과 같음) |
+| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | 대상이 Codex 면 `~/.codex/config.toml` 의 `[tui] status_line` 이 없을 때만 OMX 프리셋으로 넣고 `# banker:status-line` 표시(`config.toml.banker-hud.bak` 백업). OMX 나 사용자가 둔 줄은 그대로, `off` 는 banker 줄만 뺌. Claude Code 쪽을 고르면 왼쪽과 같음 |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `hooks.json` 의 `UserPromptSubmit` 맨 뒤에 훅 묶음 1개 + `smart-compact.json`(임계값), `smart-compact-state.json`(세션 상태). 훅 사본 `hooks-custom/banker-smart-compact-gate.mjs`. `hooks.json` 을 바꿀 때마다 직전 내용을 `hooks.json.smart-compact.bak` 에 백업, 멱등. `off` 는 이 훅과 사본, 설정만 지움. 새 훅은 `/hooks` 에서 신뢰해야 돎 |
@@ -264,7 +264,7 @@ banker uninstall        # 제거
 | `remains` | 설정 파일 미변경. `~/.config/banker/test-boxes.json` 은 읽기만 함(사용자가 만들거나, 사용자가 준 정보로 확인받고 만듦). 처음 접속하는 박스의 호스트 키가 `~/.ssh/known_hosts` 에 더해짐. 테스트박스에는 임시 폴더를 만들고 끝나면 지움(시간 초과나 중단 때는 시작한 프로세스를 먼저 끝냄, 못 지우면 결과에 표시) | 동일 |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
-| `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | Codex 에서 실행해도 같은 머신의 Claude Code 설정을 바꿈 (Codex 승인 정책은 미변경) |
+| `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | 대상 `codex` 면 `~/.codex/config.toml` 최상위의 `approval_policy` = `"never"`, `sandbox_mode` = `"danger-full-access"` (켜기 전 원본 `config.toml.bypass-permissions.bak`, 되돌리기 기록 `config.toml.bypass-permissions.json`, `off` 로 원복. 조직 정책이 막으면 거부). 대상 `claude` 면 Codex 에서 실행해도 Claude Code 설정을 바꿈 |
 
 `obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다. Codex 는 `omx_wiki/.obsidizer` 플래그에 더해 `~/.codex/hooks.json` 에 훅 묶음 1개를 더합니다.
 
@@ -311,7 +311,7 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 > 0.19.5 이하의 `setup-omc-hud` 가 옛 래퍼에 넣은 Claude 갱신 안내 블록은 제거 전에 `/banker:setup-omc-hud off` 로 뺄 수 있습니다.\
 > 이미 지웠다면 HUD를 재설치하거나, `// >>> claude-update-last >>>` 부터 `// <<< claude-update-last <<<` 까지 지우면 됩니다. 블록을 남겨 두어도 상태표시줄은 깨지지 않습니다.
 
-> `setup-bypass-permissions` 로 바꾼 권한 모드는 `settings.json` 에 남아, 플러그인을 지워도 모든 세션에서 확인 없이 도구가 실행됩니다. 제거 전에 `/banker:setup-bypass-permissions off` 를 실행하세요.\
+> `setup-bypass-permissions` 로 바꾼 권한 모드는 `settings.json`(Codex 대상은 `~/.codex/config.toml`)에 남아, 플러그인을 지워도 모든 세션에서 확인 없이 도구가 실행됩니다. 제거 전에 `/banker:setup-bypass-permissions off` 를 실행하세요(Codex 는 `$banker-setup-bypass-permissions off codex`).\
 > 이미 지웠다면 설정 폴더(`$CLAUDE_CONFIG_DIR`, 없으면 `~/.claude`)의 `settings.json` 에서 `permissions.defaultMode` 를 지우거나 원래 값으로 되돌리면 됩니다. 옆의 `settings.json.bypass-permissions.bak` 과 `settings.json.bypass-permissions.json` 도 지우세요. 백업에는 설정의 비밀 값이 들어 있을 수 있습니다.\
 > root 계정에서 이 모드 때문에 Claude Code 가 시작되지 않으면 `claude --permission-mode default` 로 시작한 뒤 `off` 를 실행하세요.
 

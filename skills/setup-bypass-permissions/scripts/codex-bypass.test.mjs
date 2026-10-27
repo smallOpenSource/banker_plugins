@@ -1,0 +1,95 @@
+// Tests for codex-config.mjs and codex-bypass.mjs. Run: node --test skills/setup-bypass-permissions/scripts/codex-bypass.test.mjs
+import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { after, test } from 'node:test';
+
+import { findKey, removeKey, setKey, tablesSetting } from './codex-config.mjs';
+import { policyBlock, status, turnOff, turnOn } from './codex-bypass.mjs';
+
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'codex-bypass.mjs');
+const root = mkdtempSync(join(tmpdir(), 'codex-bypass-'));
+after(() => rmSync(root, { recursive: true, force: true }));
+let n = 0;
+const home = (text) => {
+  const d = join(root, `h${n++}`);
+  mkdirSync(d);
+  const file = join(d, 'config.toml');
+  if (text !== undefined) writeFileSync(file, text);
+  return file;
+};
+const CONFIG = '# mine\nmodel = "gpt-x"\napproval_policy = "on-request"\n\n[tui]\nstatus_line = [\n  "a",\n  "b",\n]\n\n[profiles.fast]\nsandbox_mode = "read-only"\n';
+
+test('keys are read and changed line by line: top level before the first table, multi-line arrays, tables made at the end', () => {
+  assert.equal(findKey(CONFIG, '', 'approval_policy').raw, '"on-request"');
+  assert.equal(findKey(CONFIG, '', 'sandbox_mode'), null, 'a key inside a table is not a top-level key');
+  assert.equal(findKey(CONFIG, 'tui', 'status_line').raw.replace(/\s/g, ''), '["a","b",]');
+  const set = setKey(CONFIG, '', 'sandbox_mode', '"x"');
+  assert.ok(set.indexOf('sandbox_mode = "x"') < set.indexOf('[tui]'), 'a new top-level key goes before the first table');
+  assert.equal(removeKey(setKey(CONFIG, 'tui', 'status_line', '["c"]'), 'tui', 'status_line'), removeKey(CONFIG, 'tui', 'status_line'));
+  assert.match(setKey('a = 1\n', 'tui', 'k', '2', '# m'), /a = 1\n\n\[tui\]\n# m\nk = 2\n/);
+  assert.deepEqual(tablesSetting(CONFIG, 'profiles.', 'sandbox_mode'), ['profiles.fast']);
+});
+
+test('on records the values before, off puts them back, and everything else stays byte for byte', () => {
+  const file = home(CONFIG);
+  assert.equal(turnOn({ file, policies: [] }).code, 0);
+  const on = readFileSync(file, 'utf8');
+  assert.equal(findKey(on, '', 'approval_policy').raw, '"never"');
+  assert.equal(findKey(on, '', 'sandbox_mode').raw, '"danger-full-access"');
+  assert.equal(readFileSync(`${file}.bypass-permissions.bak`, 'utf8'), CONFIG);
+  assert.equal(turnOn({ file, policies: [] }).msg, '이미 켜져 있음');
+  assert.equal(turnOff({ file }).code, 0);
+  assert.equal(readFileSync(file, 'utf8'), CONFIG);
+  assert.ok(!existsSync(`${file}.bypass-permissions.json`));
+  assert.match(status({ file, policies: [] }).msg, /꺼짐: approval_policy = "on-request", sandbox_mode = \(없음\)\n프로필이 따로 정함.*profiles\.fast/);
+});
+
+test('with no record, off takes away only keys holding this script\'s values; a missing config is created and its mode is kept', () => {
+  const file = home('approval_policy = "never"\nsandbox_mode = "workspace-write"\n');
+  turnOff({ file });
+  assert.equal(readFileSync(file, 'utf8'), 'sandbox_mode = "workspace-write"\n');
+  const fresh = home();
+  turnOn({ file: fresh, policies: [] });
+  if (process.platform !== 'win32') assert.equal(statSync(fresh).mode & 0o777, 0o600);
+  turnOff({ file: fresh });
+  assert.equal(readFileSync(fresh, 'utf8').trim(), '');
+});
+
+test('an organization policy that does not allow the values, a linked config, and a missing --yes change nothing', (t) => {
+  const pol = join(root, 'requirements.toml');
+  writeFileSync(pol, 'allowed_approval_policies = ["on-request", "untrusted"]\n');
+  assert.match(policyBlock([pol]), /allowed_approval_policies/);
+  const file = home(CONFIG);
+  assert.equal(turnOn({ file, policies: [pol] }).code, 1);
+  assert.equal(readFileSync(file, 'utf8'), CONFIG);
+  const env = { ...process.env, CODEX_HOME: dirname(file) };
+  assert.equal(spawnSync(process.execPath, [SCRIPT, 'on'], { env, encoding: 'utf8' }).status, 1);
+  const linked = home();
+  const real = join(root, `real${n++}`);
+  writeFileSync(real, CONFIG);
+  try {
+    symlinkSync(real, linked);
+  } catch {
+    return t.skip('no file links');
+  }
+  const r = spawnSync(process.execPath, [SCRIPT, 'on', '--yes'], { env: { ...process.env, CODEX_HOME: dirname(linked) }, encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(readFileSync(real, 'utf8'), CONFIG);
+});
+
+test('a folder this account cannot write ends with 3', { skip: (process.platform === 'win32' || process.getuid?.() === 0) && 'POSIX modes as a non-root user' }, () => {
+  const file = home(CONFIG);
+  chmodSync(dirname(file), 0o500);
+  try {
+    const r = spawnSync(process.execPath, [SCRIPT, 'on', '--yes'], { env: { ...process.env, CODEX_HOME: dirname(file) }, encoding: 'utf8' });
+    assert.equal(r.status, 3, r.stdout);
+    assert.equal(readFileSync(file, 'utf8'), CONFIG);
+  } finally {
+    chmodSync(dirname(file), 0o700);
+  }
+});
+
