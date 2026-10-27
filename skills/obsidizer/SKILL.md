@@ -1,6 +1,6 @@
 ---
 name: obsidizer
-description: "AI 가 만든 마크다운 위키를, 의미를 보존한 채 Obsidian 지식 그래프로 정규화하며, 링크와 백링크를 연결. `--enable`, `--disable` 로 위키를 만들 때마다 자동 정규화할지 켜고 끔(Claude Code 만). 'obsidizer'/'옵시디언화'/'obsidian 최적화'/'위키 그래프 정리' 시 사용."
+description: "AI 가 만든 마크다운 위키를, 의미를 보존한 채 Obsidian 지식 그래프로 정규화하며, 링크와 백링크를 연결. `--enable`, `--disable` 로 위키를 만들 때마다 자동 정규화할지 켜고 끔(Codex 는 훅 설치에 승인 필요). 'obsidizer'/'옵시디언화'/'obsidian 최적화'/'위키 그래프 정리' 시 사용."
 ---
 
 # obsidizer — AI 위키를 Obsidian 지식그래프로 정규화
@@ -23,9 +23,11 @@ AI가 생성한 마크다운 위키를 **의미 보존**한 채 그래프 관점
   경로를 **품질 근거로 거부한다**(불가능이 아니라 선택): (1) soft·assistant-honored일 뿐 강제가
   아님, (2) 미리보기 없는 자동 변형 → dry-run-기본 원칙과 정면 충돌, (3) 자동 경로에 LLM 판단이
   들어가 결정성 축이 깨짐, (4) 세션을 가로챔(저장만 요청했는데 그래프 큐레이션이 끼어듦).
-- **런타임 — Claude 전용.** Codex CLI엔 MCP 도구 hook 자체가 없다(PostToolUse=Bash·apply_patch
-  만). `--enable`/`--disable`은 Codex에서 **정직한 no-op**: 명확한 메시지만 내고, 아무도 읽지
-  않을 플래그를 쓰지 않으며, 성공을 보고하지도 않는다.
+- **런타임 — Codex 는 `omx wiki` 셸 호출에 건다.** Codex 에는 위키 MCP 가 없고 위키 쓰기는 `omx wiki`
+  CLI 셸 호출이다. 그래서 Codex 의 hook 은 `PostToolUse`(matcher `Bash`)로 걸려, 명령이 `omx wiki`
+  의 ingest 나 add 일 때만 그 출력 JSON 이 가리키는 `omx_wiki/` 페이지를 정규화한다. 다른 셸 호출은
+  입력만 읽고 끝난다. 이 hook 은 Codex 사용자 범위(`~/.codex/hooks.json`)에 설치되어 모든 프로젝트의
+  셸 호출 뒤에 node 하나를 띄우므로, `--enable` 한 때만 설치한다.
 - **🔴 커버리지 — session-log 페이지는 절대 걸리지 않는다.** `session-hooks.ts:133`이 MCP 도구
   없이 `writePageUnsafe`를 직접 호출 → `PostToolUse` 이벤트 자체가 없다 → hook이 **영원히 안
   켜진다**. session-log는 이 vault에서 **가장 흔한 페이지 유형**(오늘 12개 중 3개, 세션마다 +1).
@@ -42,20 +44,21 @@ AI가 생성한 마크다운 위키를 **의미 보존**한 채 그래프 관점
 - **엔진은 동일**: Claude·Codex 모두 LLM이 파일을 직접 편집(Read/Glob/Edit/Write)하고, 마지막에
   `obsidize.mjs`(zero-dep 순수 Node 스크립트)가 기계적 패스로 마무리한다. `wiki_*` 쓰기 의존이
   없어 두 런타임에 동형으로 동작한다 — `target:both`가 정직한 이유.
-- **기본 타깃이 다르다**: Claude → 감지된 `.omc/wiki/`. Codex/OMX → 사용자가 지정한 vault 경로
-  (자동 감지 대상이 없음).
+- **기본 타깃이 다르다**: Claude → 감지된 `.omc/wiki/`. Codex/OMX → 작업 폴더의 `omx_wiki/`
+  (OMX 위키 CLI 가 쓰는 곳. OMC 와 같은 9-필드 프론트매터와 reserved files). 없으면 사용자가 지정한
+  vault 경로.
 - **제약 프로파일이 조직 축이다.** 타깃을 감지 즉시 **OMC-managed 위키**(`index.md`+`log.md`+
   9-필드 프론트매터 시그니처)와 **일반 Obsidian vault**로 분류하고, 이 분류가 이후 전부를
   게이팅한다: 프론트매터 envelope(9-key 한정 vs 자유) · 위키링크 형식(bare-only vs piped 허용) ·
   reserved files · no-rename · `aliases`(OMC=거부, 일반=작성).
 - **검증은 읽기 전용**: OMC-managed일 때만 `wiki_lint`를 ToolSearch로 로드해 before/after 베이스라인
-  대조에 쓴다. **쓰기 의존은 없다** — `wiki_ingest`/`wiki_add`를 호출하지 않고 파일을 직접
+  대조에 쓴다. Codex 는 `omx wiki wiki_lint --input '{}' --json`. **쓰기 의존은 없다** — `wiki_ingest`/`wiki_add`를 호출하지 않고 파일을 직접
   정규화한다.
 
 ## 모드
 
 **1) bare `obsidizer [path]` — 리뷰 & 수정 (기본 = dry-run)**
-1. **Phase 0 — 타깃 감지**: 경로 인자 우선, 없으면 `.omc/wiki/` 감지, 둘 다 없으면 중단. 프로파일
+1. **Phase 0 — 타깃 감지**: 경로 인자 우선, 없으면 `.omc/wiki/`(Codex 는 `omx_wiki/`) 감지, 둘 다 없으면 중단. 프로파일
    분류(위 참조). OMC-managed면 `wiki_lint` 베이스라인 기록 + `<wikiDir>/.obsidizer-hook.log` 존재
    시 읽음.
 2. **Phase 1 — 전체 vault 스캔(읽기 전용)**: 모든 `.md` glob(reserved 파일은 개념맵용으로만 읽고
@@ -72,12 +75,28 @@ AI가 생성한 마크다운 위키를 **의미 보존**한 채 그래프 관점
    불변 확인, OMC 프로파일이면 bare-form 전용 grep + PM-1 프론트매터 grep, 캐노니컬라이저 멱등
    자가검사.
 
-**2) `obsidizer --enable` / `--disable` — 지속 정규화 (Claude 전용, structural)**
+**2) `obsidizer --enable` / `--disable` — 지속 정규화 (structural)**
 banker의 **첫 플러그인 선언 hook**(`hooks/hooks.json`)이 OMC 위키 쓰기 도구(`wiki_ingest`/
 `wiki_add`)에 `PostToolUse`로 걸려 항상 등록되어 있다. **`<wikiDir>/.obsidizer` 플래그 파일이
 스위치**다 — `--enable`은 이 파일을 쓰고 `--disable`은 지운다, 그게 전부다(`settings.json` 변경
 없음). 플래그가 없으면 hook은 즉시 exit 0. 방금 banker를 설치/갱신한 세션이면 완료 보고에
-**`/reload-plugins`** 실행을 안내한다(hot-reload 경로). Codex에서는 위 한계 섹션대로 정직한 no-op.
+**`/reload-plugins`** 실행을 안내한다(hot-reload 경로).
+
+Codex 에서는 플래그 자리가 `omx_wiki/.obsidizer` 이고, hook 은 banker 가 Codex 사용자 범위에 따로 설치한다.
+
+- `--enable`
+  1. 작업 폴더에 `omx_wiki/` 가 없으면 만들고 `omx_wiki/.obsidizer` 를 쓴다. `omx_wiki/` 는 저장소에
+     넣는 폴더라 이 플래그도 커밋 대상이 될 수 있음을 보고에 적는다.
+  2. `banker hooks status obsidize` 로 hook 상태를 본다. `on` 이면 3을 건너뛴다.
+  3. `banker hooks enable obsidize` 를 실행한다. 이 명령은 `~/.codex/hooks.json` 과
+     `~/.codex/hooks-custom/banker/` 에 쓰므로 `workspace-write` 샌드박스 밖에서 돌아야 한다. 그 한 명령만
+     샌드박스 밖 실행 승인을 요청한다. `--add-dir ~/.codex` 는 권하지 않는다(세션이 훅과 신뢰 기록을 고칠 수
+     있게 됨). 승인을 요청할 수 없으면(`codex exec`, 승인 정책 `never`) 실행하지 않고, 사용자가 입력창에
+     `! banker hooks enable obsidize` 로 직접 실행하도록 안내한 뒤 멈춘다.
+  4. Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 banker obsidize hook 을 신뢰해야
+     돈다고 보고한다. 신뢰 전에는 플래그가 있어도 정규화되지 않는다.
+- `--disable`: `omx_wiki/.obsidizer` 를 지운다. hook 은 다른 프로젝트의 플래그도 보므로 남겨 두고, 어느
+  프로젝트에서도 쓰지 않으면 `banker hooks disable obsidize` 로 뺄 수 있다고 안내한다(같은 승인 규칙).
 
 ## 변환 규칙
 

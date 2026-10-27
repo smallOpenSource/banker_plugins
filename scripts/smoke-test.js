@@ -50,11 +50,19 @@ try {
   ok(fs.existsSync(binPath), `installed banker bin (${path.relative(tmp, binPath)})`);
 
   const env = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.CODEX_HOME; // the installer follows CODEX_HOME; the tests install under the temp HOME only
 
   // 3) codex dry-run (project scope)
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
   ok(copies === 63, `codex dry-run plans 63 skill copies (got ${copies})`);
+  const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
+    .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
+  const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
+  ok(coCopies === codexOnlyNames.length && codexOnlyNames.includes('graceful-pause'),
+     `codex dry-run plans the codex-only skills from codex/skills/ (got ${coCopies} of ${codexOnlyNames.length})`);
+  const cmdSkills = (codexOut.match(/\[dry-run\] write command skill commands\//g) || []).length;
+  ok(cmdSkills === 2, `codex dry-run also writes the 2 commands as skills, Codex 0.144+ having no custom prompts (got ${cmdSkills})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -80,8 +88,16 @@ try {
   // covers the reverse direction (a skill on disk but absent from the manifest ships to Claude and
   // never to Codex, a silent claude-only skill), which nothing else checked. Keep this assertion
   // instead of appending another per-release hardcoded name array.
-  const mfSkillSurfaces = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
+  const mfAllSkills = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.type === 'skill');
+  // codex-only skills (Codex counterparts of Claude Code mods) live in codex/skills/, never in skills/: the Claude
+  // plugin loads skills/ as a whole, so one there would show up twice in Claude Code.
+  const mfCodexOnly = mfAllSkills.filter((s) => s.target === 'codex-only').map((s) => s.name).sort();
+  const diskCodexOnly = fs.readdirSync(path.join(root, 'codex', 'skills'))
+    .filter((d) => fs.existsSync(path.join(root, 'codex', 'skills', d, 'SKILL.md'))).sort();
+  ok(JSON.stringify(mfCodexOnly) === JSON.stringify(diskCodexOnly),
+     `manifest codex-only == codex/skills/ ([${mfCodexOnly.join(', ')}] vs [${diskCodexOnly.join(', ')}])`);
+  const mfSkillSurfaces = mfAllSkills.filter((s) => s.target !== 'codex-only');
   const mfSkills = mfSkillSurfaces.map((s) => s.name).sort();
   const diskSkills = fs.readdirSync(path.join(root, 'skills'))
     .filter((d) => fs.existsSync(path.join(root, 'skills', d, 'SKILL.md'))).sort();
@@ -218,10 +234,24 @@ try {
   fs.mkdirSync(removedPauseDir, { recursive: true });
   fs.writeFileSync(path.join(removedPauseDir, 'SKILL.md'), '---\nname: banker-graceful_pause\n---\n');
   const env2 = { ...process.env, HOME: home2, USERPROFILE: home2 };
+  delete env2.CODEX_HOME;
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 63, `real codex install has 63 banker-* skills (got ${installed.length})`);
+  const wantSkills = 63 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 63 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
+     'the commands and the codex-only skills are installed as Codex skills');
+  // Codex reads skills and hooks from $CODEX_HOME when it is set, so user scope installs there and not in ~/.codex.
+  const home3 = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-codexhome-'));
+  const codexHome3 = path.join(home3, 'custom-codex');
+  run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home3, env: { ...env2, HOME: home3, USERPROFILE: home3, CODEX_HOME: codexHome3 } });
+  ok(fs.existsSync(path.join(codexHome3, 'skills', 'banker-lineage', 'SKILL.md')) && fs.existsSync(path.join(codexHome3, 'hooks.json'))
+     && !fs.existsSync(path.join(home3, '.codex')), 'setup --codex follows CODEX_HOME for the skills and the hooks');
+  fs.rmSync(home3, { recursive: true, force: true });
+  const setupSkill = fs.readFileSync(path.join(instDir, 'banker-setup', 'SKILL.md'), 'utf8');
+  ok(/^---\nname: banker-setup\ndescription: "/.test(setupSkill) && setupSkill.includes('$ARGUMENTS'),
+     'the setup command skill has its own name and description and keeps the command body');
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');
@@ -380,7 +410,7 @@ try {
      && /`!` 명령 뒤 하네스가 쓴 출력 턴\(`<bash-stdout>` 블록 뒤 `<bash-stderr>` 블록, 실패하면 `<bash-stderr>` 블록 하나만 있는 턴\. 가리기 전 글로 본다\)은 세지 않는다/.test(linSkill)
      && /1,000,000 바이트/.test(linSkill)
      && /첨자 대입/.test(linSkill) && /빈 사용자나 빈 비밀번호/.test(linSkill) && /`date -u \+%H:%M`/.test(linSkill)
-     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.0\.11$/m.test(linSkill)
+     && /`\/` 로 시작하는 비밀번호/.test(linSkill) && /^version: 3\.1\.0$/m.test(linSkill)
      && /따로 감싼 `"USER":"PW"`, 따옴표 친 명령 속의 이스케이프한 따옴표\(`\\"USER:PW\\"`, 여러 겹 JSON\), bash 의 `'\\''` 와 `shlex\.quote` 의 `'"'"'`, cmd 의 `\^"`, PowerShell 의 `` `" ``, bash 의 `\$'…'`, `\$\{API_USER\}` 같은 변수 사용자와 변수에 이은 사용자\(`"\$USER"@corp\.com`, `"\$\{ENV\}"-deployer`\), 인라인 코드나 괄호 안/.test(linSkill)
      && !/선형 시간과 맞바꿈/.test(linSkill) && /`\+%` 뒤에 글자가 오면 나머지는 보지 않는다/.test(linSkill)
      && /인자 목록에서 다른 종류의 따옴표가 든 비밀번호/.test(linSkill) && /플래그 꼴과 따옴표가 오는 꼴\(`"\$USER"-eu":PW"`\)/.test(linSkill) && !/공백 없는 인자 목록\(`\["docker","run","-u","1000:1000","img"\]`\)/.test(linSkill)
@@ -472,6 +502,7 @@ try {
     path.join('hooks', 'telemetry-count.test.mjs'), path.join('hooks', 'telemetry-count-skill.test.mjs'),
     path.join('hooks', 'update-fetch.test.mjs'), path.join('hooks', 'update-notify.test.mjs'),
     path.join('hooks', 'update-checkin.test.mjs'),
+    path.join('hooks', 'telemetry-count-codex.test.mjs'), path.join('bin', 'lib', 'codex-hooks.test.mjs'),
     path.join('skills', '3d-intro-build', 'references', 'azure-adapter.test.mjs'),
     path.join('skills', '3d-intro-build', 'references', 'video-pool.test.mjs'),
     ...['preview-lib', 'curate', 'assemble', 'step-nav', 'verify-intro', 'intro-e2e']

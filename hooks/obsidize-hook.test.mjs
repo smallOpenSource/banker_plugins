@@ -12,7 +12,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -558,4 +558,80 @@ test('log: a pipe at the log place does not stop the hook', { skip: process.plat
   assert.equal(res.error?.code, undefined, 'the hook ended before its deadline');
   assert.equal(res.status, 0);
   assert.ok(lstatSync(join(tree.wikiDir, '.obsidizer-hook.log')).isFIFO(), 'the pipe stays a pipe');
+});
+
+// Codex (--codex): the wiki is omx_wiki/ under the session cwd, written by the `omx wiki` CLI through a shell call.
+// The payload is what Codex 0.144.5 sends after that call: tool_name Bash, the command, and its stdout.
+function codexTree() {
+  const tree = makeTree();
+  tree.wikiDir = join(tree.project, 'omx_wiki');
+  mkdirSync(tree.wikiDir);
+  writeFileSync(join(tree.wikiDir, 'test-page.md'), PAGE_BEFORE);
+  writeFileSync(join(tree.wikiDir, 'index.md'), INDEX_BEFORE);
+  return tree;
+}
+const codexPayload = (tree, command, stdout = 'Wrote:\n{"created":[],"updated":["test-page.md"],"totalAffected":1}\n') => ({
+  session_id: 's', turn_id: 't', cwd: tree.project, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command }, tool_response: stdout,
+});
+const runCodex = (tree, payload) => spawnSync(process.execPath, [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs'), '--codex'], {
+  input: JSON.stringify(payload), encoding: 'utf8', cwd: tree.tmp, env: { ...process.env, STUB_ARGV_LOG: tree.argvLog, STUB_FAIL: '0' },
+});
+
+test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wiki/ of the session cwd', () => {
+  const tree = codexTree();
+  arm(tree);
+  const ingest = `omx wiki wiki_ingest --input '{"title":"Test Page","content":"x","tags":[],"category":"reference"}' --json`;
+  assert.equal(runCodex(tree, codexPayload(tree, ingest)).status, 0);
+  const [argv] = readArgv(tree);
+  assert.deepEqual([argv.length, argv[0], argv[1], argv[3], argv[4]], [5, 'test-page.md', '--page', '--profile=omc', '--json']);
+  assert.match(argv[2], /^--vault=\d+:\d+$/, 'a bare page name, run in the vault folder it names by dev:ino');
+  assert.notEqual(page(tree), PAGE_BEFORE, 'the page in omx_wiki/ was rewritten through the relative name');
+  for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x", "$j = '{}'; omx wiki wiki_ingest --input $j --json"]) {
+    writeFileSync(tree.argvLog, '');
+    runCodex(tree, codexPayload(tree, form));
+    assert.equal(readArgv(tree).length, 1, form);
+  }
+});
+
+test('codex: other shell calls, other omx wiki tools, and an armed .omc/wiki change nothing', () => {
+  const tree = codexTree();
+  arm(tree);
+  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud', 'echo omx wiki add']) {
+    runCodex(tree, codexPayload(tree, command));
+  }
+  runCodex(tree, { ...codexPayload(tree, 'omx wiki ingest'), tool_input: {} });
+  assert.equal(readArgv(tree).length, 0);
+  assert.equal(page(tree), PAGE_BEFORE);
+  rmSync(join(tree.wikiDir, '.obsidizer'));
+  writeFileSync(join(tree.project, '.omc', 'wiki', '.obsidizer'), '');
+  runCodex(tree, codexPayload(tree, 'omx wiki ingest --input x'));
+  assert.equal(readArgv(tree).length, 0, 'Codex looks at omx_wiki/ only');
+  assert.deepEqual(logLines(tree), []);
+});
+
+test('codex: a linked vault, linked or hard-linked pages, and names outside the CLI JSON are not rewritten', (t) => {
+  const tree = codexTree();
+  arm(tree);
+  const ingest = 'omx wiki ingest --input x';
+  runCodex(tree, codexPayload(tree, ingest, 'Created test-page.md\n'));
+  runCodex(tree, codexPayload(tree, ingest, '{"created":["../test-page.md","a b.md"],"updated":[]}'));
+  runCodex(tree, codexPayload(tree, ingest, 'note\n{"other":["test-page.md"]}\n'));
+  assert.equal(readArgv(tree).length, 0, 'names come only from the JSON lists, as plain page names');
+  const outside = join(tree.tmp, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'other.md'), PAGE_BEFORE);
+  try {
+    symlinkSync(join(outside, 'other.md'), join(tree.wikiDir, 'linked.md'));
+  } catch {
+    return t.skip('no file links');
+  }
+  linkSync(join(outside, 'other.md'), join(tree.wikiDir, 'hard.md'));
+  runCodex(tree, codexPayload(tree, ingest, '{"created":["linked.md","hard.md"],"updated":[]}'));
+  assert.equal(readArgv(tree).length, 0, 'a link or a hard link is not a page the hook rewrites');
+  rmSync(tree.wikiDir, { recursive: true });
+  writeFileSync(join(outside, '.obsidizer'), '');
+  symlinkSync(outside, tree.wikiDir, 'dir');
+  runCodex(tree, codexPayload(tree, ingest, '{"created":["other.md"],"updated":[]}'));
+  assert.equal(readArgv(tree).length, 0, 'omx_wiki as a link to another folder is not the vault');
+  assert.equal(readFileSync(join(outside, 'other.md'), 'utf8'), PAGE_BEFORE);
 });

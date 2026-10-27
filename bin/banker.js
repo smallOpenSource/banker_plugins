@@ -56,8 +56,9 @@ function starRepo(spawn = cp.spawnSync) {
 function parseArgs(argv) {
   const a = { cmd: null, sub: null, claude: false, codex: false, scope: 'user', scopeExplicit: false, dryRun: false, help: false, version: false };
   for (const t of argv) {
-    if (t === 'setup' || t === 'doctor' || t === 'uninstall' || t === 'help' || t === 'telemetry') { if (!a.cmd) a.cmd = t; }
-    else if (t === 'on' || t === 'off' || t === 'status') { if (!a.sub) a.sub = t; } // telemetry subcommand
+    if (t === 'setup' || t === 'doctor' || t === 'uninstall' || t === 'help' || t === 'telemetry' || t === 'hooks') { if (!a.cmd) a.cmd = t; }
+    else if (t === 'on' || t === 'off' || t === 'status' || t === 'enable' || t === 'disable') { if (!a.sub) a.sub = t; } // telemetry, hooks subcommand
+    else if (a.cmd === 'hooks' && /^[a-z]+$/.test(t)) (a.hookIds = a.hookIds || []).push(t);
     else if (t === '--claude') a.claude = true;
     else if (t === '--codex') a.codex = true;
     else if (t === '--dry-run' || t === '-n') a.dryRun = true;
@@ -81,11 +82,19 @@ function assertNotRoot() {
 }
 
 function readManifest() { return JSON.parse(fs.readFileSync(MANIFEST, 'utf8')); }
-function eligible(m) { return m.surfaces.filter(s => s.target === 'both'); }
+// Codex gets every 'both' surface and the 'codex-only' ones (their source lives in codex/skills/, which the Claude
+// plugin never loads: Claude Code has its own surface for them, e.g. the /graceful-pause and /progress mods).
+function eligible(m) { return m.surfaces.filter(s => s.target === 'both' || s.target === 'codex-only'); }
+function skillSource(s) { return s.target === 'codex-only' ? path.join(PKG_ROOT, 'codex', 'skills', s.name) : path.join(PKG_ROOT, 'skills', s.name); }
 
 function homeDir() { return os.homedir(); }
 function claudePluginsDir() { return path.join(homeDir(), '.claude', 'plugins'); }
-function codexBase(scope) { return scope === 'project' ? path.join(process.cwd(), '.codex') : path.join(homeDir(), '.codex'); }
+// User scope is where Codex itself reads skills and hooks: $CODEX_HOME when set (an absolute path), else ~/.codex.
+function codexBase(scope) {
+  if (scope === 'project') return path.join(process.cwd(), '.codex');
+  const ch = process.env.CODEX_HOME;
+  return ch && path.isAbsolute(ch) ? ch : path.join(homeDir(), '.codex');
+}
 
 function have(bin) {
   // PATH scan — no shell (avoids DEP0190 + injection). Cross-OS.
@@ -153,6 +162,19 @@ function setCodexSkillName(skillMd, newName, dryRun) {
   fs.writeFileSync(skillMd, src.slice(0, fm.index) + `---\n${block}\n---` + src.slice(fm.index + fm[0].length));
 }
 
+// A command as a Codex skill: the command's description becomes the skill's, under name: <name>. Codex skills get
+// no $ARGUMENTS substitution, so a note says where the arguments come from.
+function writeCommandSkill(src, destDir, name, dryRun) {
+  if (dryRun) { log(`  [dry-run] write command skill ${path.relative(PKG_ROOT, src)} -> ${destDir}`); return; }
+  const text = fs.readFileSync(src, 'utf8');
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  const desc = fm && fm[1].match(/^description:\s*(.*)$/m);
+  const body = fm ? text.slice(fm[0].length) : text;
+  const note = '> Codex: 이 명령은 스킬로 설치됐다. 본문의 `$ARGUMENTS`, `$1` 은 사용자가 `$' + name + '` 뒤에 쓴 글이다.\n\n';
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.writeFileSync(path.join(destDir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc ? desc[1] : '""'}\n---\n\n${note}${body}`);
+}
+
 /* ---------- Claude Code target ---------- */
 function setupClaude(dryRun) {
   log('• Claude Code:');
@@ -185,15 +207,18 @@ function setupCodex(dryRun, scope) {
   for (const s of eligible(m)) {
     if (s.type === 'skill') {
       const dest = path.join(skillsDir, `banker-${s.name}`);
-      copyDir(path.join(PKG_ROOT, 'skills', s.name), dest, dryRun);
+      copyDir(skillSource(s), dest, dryRun);
       setCodexSkillName(path.join(dest, 'SKILL.md'), `banker-${s.name}`, dryRun); // dir==name (Codex discovery)
       nSkill++;
     } else if (s.type === 'command') {
-      copyFile(path.join(PKG_ROOT, 'commands', `${s.name}.md`), path.join(promptsDir, `banker-${s.name}.md`), dryRun);
+      const src = path.join(PKG_ROOT, 'commands', `${s.name}.md`);
+      copyFile(src, path.join(promptsDir, `banker-${s.name}.md`), dryRun);
+      writeCommandSkill(src, path.join(skillsDir, `banker-${s.name}`), `banker-${s.name}`, dryRun);
       nCmd++;
     }
   }
-  log(`  → ${nSkill} skills -> ${path.join(base, 'skills', 'banker-*')}, ${nCmd} prompts -> ${path.join(base, 'prompts', 'banker-*.md')}`);
+  log(`  → ${nSkill} skills -> ${path.join(base, 'skills', 'banker-*')}, ${nCmd} commands -> skills banker-* and prompts ${path.join(base, 'prompts', 'banker-*.md')}`);
+  log('  → Codex 0.144+ has no custom prompts, so each command is also a skill: invoke it as $banker-<name>.');
   log('  → skills are invoked as `banker-<name>` (frontmatter name rewritten to match the dir).');
   log('  → ~/.codex/AGENTS.md is NOT modified (omx regenerates it); skills auto-discovered from ~/.codex/skills/.');
   return true;
@@ -256,6 +281,54 @@ function uninstallCodex(dryRun, scopes) {
     }
     if (!removedAny) log(`  (nothing in ${base})`);
   }
+}
+
+/* ---------- Codex hooks ---------- */
+// bin/lib/codex-hooks.mjs is ESM; loaded lazily like telemetry-config. Hooks go into the same Codex home as the skills.
+async function loadCodexHooks() {
+  return import(require('url').pathToFileURL(path.join(__dirname, 'lib', 'codex-hooks.mjs')).href);
+}
+function codexHookPaths(ch) { return ch.codexPaths({ CODEX_HOME: codexBase('user') }); }
+
+// Update notice and usage counting on Codex, as the Claude plugin's hooks.json gives them to Claude Code. User scope
+// only: a project-scope copy would sit in a workspace, and Codex runs trusted hooks outside the sandbox.
+async function setupCodexHooks(dryRun, scope) {
+  if (scope !== 'user') { log('  → Codex hooks (update notice, usage counting) are user-scope only; skipped for scope=project.'); return; }
+  const ch = await loadCodexHooks();
+  if (dryRun) { log(`  [dry-run] Codex hooks: ${ch.DEFAULT_HOOKS.join(', ')} -> ${codexHookPaths(ch).hooks}`); return; }
+  const r = ch.enableHooks(codexHookPaths(ch), ch.DEFAULT_HOOKS, PKG_ROOT);
+  if (r.code) { warn(`  Codex hooks not changed: ${r.msg}`); return; }
+  log(`  → Codex hooks ${ch.DEFAULT_HOOKS.join(', ')} in ${codexHookPaths(ch).hooks}${r.changed.length ? ` (changed: ${r.changed.join(', ')})` : ' (already in place)'}.`);
+  if (r.changed.length) log(`  → ${ch.TRUST_NOTE}`);
+}
+
+async function uninstallCodexHooks(dryRun) {
+  const ch = await loadCodexHooks();
+  if (dryRun) { log(`  [dry-run] remove banker Codex hooks from ${codexHookPaths(ch).hooks}`); return; }
+  const r = ch.removeAll(codexHookPaths(ch));
+  if (r.code) warn(`  Codex hooks not changed: ${r.msg}`);
+  else if (r.changed.length) log(`  removed banker Codex hooks: ${r.changed.join(', ')}${r.shifted.length ? ` (later ${r.shifted.join(', ')} hooks may need trusting again in /hooks)` : ''}`);
+}
+
+// banker hooks <status|enable|disable> [ids]: status of all, or turn named hooks on or off (obsidizer --enable on Codex).
+async function hooksCmd(sub, ids) {
+  const ch = await loadCodexHooks();
+  const p = codexHookPaths(ch);
+  const all = Object.keys(ch.HOOKS);
+  const want = ids && ids.length ? ids : all;
+  const unknown = want.filter((id) => !all.includes(id));
+  if (unknown.length || (sub !== 'status' && !(ids && ids.length))) { warn(`usage: banker hooks <status|enable|disable> [${all.join('|')}]`); process.exitCode = 1; return; }
+  if (sub === 'status' || !sub) {
+    const s = ch.hookStatus(p, want, PKG_ROOT);
+    if (s.why) { warn(`banker hooks: ${s.why}`); process.exitCode = 1; return; }
+    for (const id of want) log(`${id}: ${s.status[id]}`);
+    return;
+  }
+  const r = sub === 'enable' ? ch.enableHooks(p, want, PKG_ROOT) : ch.disableHooks(p, want);
+  if (r.code) { warn(`banker hooks: not changed: ${r.msg}`); process.exitCode = 1; return; }
+  log(`banker hooks ${sub}: ${r.changed.length ? r.changed.join(', ') : 'nothing to change'}`);
+  if (sub === 'enable' && r.changed.length) log(ch.TRUST_NOTE);
+  if (r.shifted && r.shifted.length) log(`later ${r.shifted.join(', ')} hooks may need trusting again in /hooks.`);
 }
 
 /* ---------- telemetry config bridge ---------- */
@@ -407,13 +480,15 @@ Usage:
   banker setup [--claude] [--codex] [--scope user|project] [--dry-run]
   banker uninstall [--claude] [--codex] [--scope user|project] [--dry-run]
   banker telemetry <on|off|status>
+  banker hooks <status|enable|disable> [update|count|obsidize]   (Codex hooks in $CODEX_HOME/hooks.json, default ~/.codex)
   banker doctor
   banker help
 
 Notes:
   - setup/uninstall with no target flag applies to BOTH tools.
   - --claude registers the marketplace + installs banker@banker-plugins (skills as /banker:*).
-  - --codex copies codex-eligible skills -> ~/.codex/skills/banker-* and commands -> ~/.codex/prompts/banker-*.md.
+  - --codex copies codex-eligible skills -> ~/.codex/skills/banker-* and commands -> ~/.codex/prompts/banker-*.md
+    ($CODEX_HOME instead of ~/.codex when it is set).
   - telemetry on|off toggles anonymous usage counting opt-out (default-on; config only); status prints counting + update-check state. See PRIVACY.md.
   - Never runs as root. --dry-run prints planned actions without writing.`;
 
@@ -423,11 +498,12 @@ async function main() {
   if (a.help || a.cmd === 'help' || !a.cmd) { log(HELP); return; }
   if (a.cmd === 'doctor') { doctor(); return; }
   if (a.cmd === 'telemetry') { await telemetryCmd(a.sub); return; }
+  if (a.cmd === 'hooks') { assertNotRoot(); await hooksCmd(a.sub, a.hookIds); return; }
   assertNotRoot();
   if (a.cmd === 'setup') {
     log(`banker setup${a.dryRun ? ' (dry-run)' : ''}: claude=${a.claude} codex=${a.codex}`);
     if (a.claude) setupClaude(a.dryRun);
-    if (a.codex) setupCodex(a.dryRun, a.scope);
+    if (a.codex && setupCodex(a.dryRun, a.scope)) await setupCodexHooks(a.dryRun, a.scope);
     // Best-effort first-run prompts (interactive TTY only). A prompt failure must never fail setup.
     try { await maybeFirstRunPrompts(a); } catch { /* non-fatal */ }
     log('done.');
@@ -435,7 +511,10 @@ async function main() {
   }
   if (a.cmd === 'uninstall') {
     if (a.claude) uninstallClaude(a.dryRun);
-    if (a.codex) uninstallCodex(a.dryRun, a.scopeExplicit ? [a.scope] : ['user', 'project']);
+    if (a.codex) {
+      uninstallCodex(a.dryRun, a.scopeExplicit ? [a.scope] : ['user', 'project']);
+      if (!a.scopeExplicit || a.scope === 'user') await uninstallCodexHooks(a.dryRun);
+    }
     log('done.');
     return;
   }

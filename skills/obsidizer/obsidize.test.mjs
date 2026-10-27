@@ -655,3 +655,39 @@ test('write path: a file system whose fsync says EINVAL or ENOTSUP still gets th
     assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.obsidizer.tmp')), [], `${code}: no temp file stays`);
   }
 });
+
+test('--page: only a plain page is rewritten, a link or a hard link in its place is refused, not followed', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'obsidize-page-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const vault = path.join(tmp, 'omx_wiki');
+  const outside = path.join(tmp, 'outside');
+  fs.mkdirSync(vault);
+  fs.mkdirSync(outside);
+  const page = '---\ntitle: "P"\ntags: ["#P"]\n---\n\n# P\n\nx\n';
+  fs.writeFileSync(path.join(outside, 'victim.md'), page);
+  fs.writeFileSync(path.join(vault, 'own.md'), page);
+  assert.equal(run(path.join(vault, 'own.md'), { profile: 'generic', page: true, now: NOW }).changed.length, 1);
+  fs.linkSync(path.join(outside, 'victim.md'), path.join(vault, 'hard.md'));
+  assert.throws(() => run(path.join(vault, 'hard.md'), { profile: 'generic', page: true }), /not a plain page/);
+  try {
+    fs.symlinkSync(path.join(outside, 'victim.md'), path.join(vault, 'soft.md'));
+  } catch {
+    return t.skip('no file links');
+  }
+  assert.throws(() => run(path.join(vault, 'soft.md'), { profile: 'generic', page: true }), /not a plain page/);
+  assert.equal(fs.readFileSync(path.join(outside, 'victim.md'), 'utf8'), page);
+  const pages = buildVaultModel(vault, true).pages;
+  assert.ok(pages.has('own.md') && !pages.has('soft.md') && !pages.has('hard.md'), 'the vault model reads plain pages only');
+});
+
+test('--page refuses a path instead of a bare name, and a cwd that is not the vault folder it was given', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'obsidize-vault-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmp, 'p.md'), '# P\n');
+  const st = fs.statSync(tmp, { bigint: true });
+  const cli = (args) => spawnSync(process.execPath, [fileURLToPath(new URL('./obsidize.mjs', import.meta.url)), ...args], { cwd: tmp, encoding: 'utf8' });
+  assert.equal(cli(['p.md', '--page', `--vault=${st.dev}:${st.ino}`, '--profile=generic', '--json']).status, 0);
+  assert.equal(cli([path.join(tmp, 'p.md'), '--page', `--vault=${st.dev}:${st.ino}`]).status, 2);
+  assert.equal(cli(['p.md', '--page', '--vault=1:2']).status, 2);
+  assert.equal(cli(['p.md', '--page']).status, 2);
+});

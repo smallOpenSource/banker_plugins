@@ -82,8 +82,8 @@ Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합�
 |---|---|
 | `/banker:front-qa` | 스펙(note) 기반 프론트엔드 구현 + parity QA |
 | `/banker:setup` | 구성요소·의존성 설치 오케스트레이터 (multi-select) |
-| `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, mod. Codex 미지원) |
-| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 맨 위는 이 세션이 쓰거나 읽은 마지막 계획 파일(`.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json`) 전체. Notion 토글 목록처럼 제목이 그 아래 내용을, 목록 항목이 하위 항목을, 표와 코드 블록이 행과 줄을 품고, 처음에는 큰 제목만 접힌 채 보임. 체크박스는 완료와 대기, 제목은 그 아래 체크 수(`2/5`). 그 아래 단계는 할 일 목록(Claude 의 작업 목록이나 `mcp__banker__todo`), 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 미지원) |
+| `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, mod. Codex 는 작업 중에 `$banker-graceful-pause` 를 보내면 실행 중인 도구 호출이 끝난 뒤 멈춤) |
+| `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 맨 위는 이 세션이 쓰거나 읽은 마지막 계획 파일(`.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json`) 전체. Notion 토글 목록처럼 제목이 그 아래 내용을, 목록 항목이 하위 항목을, 표와 코드 블록이 행과 줄을 품고, 처음에는 큰 제목만 접힌 채 보임. 체크박스는 완료와 대기, 제목은 그 아래 체크 수(`2/5`). 그 아래 단계는 할 일 목록(Claude 의 작업 목록이나 `mcp__banker__todo`), 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 는 `$banker-progress` 스킬이 지금 세션의 계획 트리, `update_plan` 단계, 최근 도구 호출을 텍스트로 보이고, tmux 안이면 `--pane` 으로 오른쪽 칸에 갱신) |
 
 Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(TaskCreate, TodoWrite)를 주지 않습니다. 그래서 `/progress` 를 켜면 모델에게 할 일 도구 `mcp__banker__todo` 를 줍니다(다음 요청부터). 모델이 여러 단계 작업을 시작할 때 할 일 목록을 보내면 그 목록이 단계가 됩니다. 한 단계로 끝나는 일에는 쓰지 않으므로 그때는 요청이 단계입니다. 내장 작업 목록 도구가 있는 세션(옛 모델, `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`)에는 이 도구를 더하지 않습니다. 도구는 `/progress off` 뒤에도 세션이 끝날 때까지 남고, 그동안 부르면 패널이 꺼져 있다고 답합니다.
 
@@ -120,7 +120,8 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 
 > `obsidizer` 는 banker 최초의 플러그인 선언 hook(`hooks/hooks.json`)을 함께 설치합니다.\
 > banker가 활성화되어 있으면 이 hook은 **항상 등록**되어 위키 쓰기(`wiki_ingest`/`wiki_add`)마다 node 프로세스를 띄웁니다(플래그 확인이 그 안에서 일어나므로 `--enable` 전에도 쓰기당 약 30ms).\
-> `--enable` 전에는 아무것도 쓰지 않는 순수 no-op입니다.
+> `--enable` 전에는 아무것도 쓰지 않는 순수 no-op입니다.\
+> Codex 에는 위키 MCP 가 없어 `--enable` 이 `omx_wiki/.obsidizer` 를 쓰고 Codex 사용자 범위에 `PostToolUse`(matcher `Bash`) 훅을 설치합니다(`banker hooks enable obsidize`, 샌드박스 밖 실행 승인 필요). 이 훅은 `--enable` 한 때만 설치되고, 설치된 동안 셸 호출마다 node 프로세스를 띄워 `omx wiki` 의 ingest, add 일 때만 정규화합니다.
 
 ### 스킬: 워크플로 · 유틸
 
@@ -205,7 +206,9 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 63개가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 63개와 Codex 전용 스킬 2개(`graceful-pause`, `progress`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+  `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
+  Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
@@ -228,6 +231,7 @@ banker uninstall        # 제거
 |---|---|---|
 | Claude Code | 플러그인 레지스트리 | `claude plugin marketplace add` + 설치 → `/banker:*` (`settings.json` 직접수정 없음) |
 | Codex CLI | `~/.codex/skills/banker-*/`, `~/.codex/prompts/banker-*.md` | 기존 `banker-*` 정리 후 복사(멱등). `AGENTS.md`·`config.toml` 미변경 |
+| Codex CLI | `~/.codex/hooks.json`, `~/.codex/hooks-custom/banker/` | 업데이트 알림(`SessionStart`)과 사용량 카운팅(`Stop`) 훅. 사본은 작업 폴더 밖에 두고, 이벤트마다 맨 뒤에 묶음 1개를 더하며, 쓰기 전 `hooks.json.banker.bak` 백업. `banker hooks status`, `banker hooks enable <이름>`, `banker hooks disable <이름>` 으로 확인하고 켜고 끔. Codex 를 다시 열 때 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돎 |
 
 **플러그인 자체 훅 — `hooks/hooks.json` (설치 시 Claude Code에서 자동 발화)**
 
@@ -260,7 +264,7 @@ banker uninstall        # 제거
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
 | `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | Codex 에서 실행해도 같은 머신의 Claude Code 설정을 바꿈 (Codex 승인 정책은 미변경) |
 
-`obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다.
+`obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다. Codex 는 `omx_wiki/.obsidizer` 플래그에 더해 `~/.codex/hooks.json` 에 훅 묶음 1개를 더합니다.
 
 ## 요구사항
 
@@ -273,8 +277,8 @@ banker uninstall        # 제거
   - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).
   - `remains`: 테스트박스를 쓰려면 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 와 시험에 필요한 런타임(예: Node)이 있어야 하고, SSH 키로 암호 없이 접속돼야 합니다.
   - `ultra-chain`: 위 OMC(Codex 는 OMX), 웹 조사 수단, 시각 검토의 캡처에는 Node 용 playwright 패키지와 Chromium, OS 시험에는 `remains` 와 같은 테스트박스 조건.
-  - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알리며, Codex 에는 이 명령이 없습니다.
-  - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 에는 이 명령이 없습니다.
+  - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알립니다. Codex 는 스킬 `$banker-graceful-pause` 입니다(0.144.5 에서 확인).
+  - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 는 스킬 `$banker-progress` 입니다(상시 패널이 아니라 부를 때마다 보임, tmux 칸은 선택).
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
@@ -343,7 +347,8 @@ export BANKER_NO_TELEMETRY=1      # 사용량 카운팅만 끄기
 
 카운팅은 `banker telemetry off` 로도 끌 수 있습니다.\
 플러그인은 기본 카운팅 엔드포인트(`banker.banker-plugins.workers.dev`)를 내장하므로 count-default-on 이라 설치 즉시 활성이며, `BANKER_TELEMETRY_ENDPOINT` 환경변수로 자가호스팅/override 할 수 있습니다.\
-Codex CLI는 샌드박스가 네트워크를 차단하므로 알림·카운팅 둘 다 동작하지 않습니다.
+Codex CLI 에서는 `banker setup --codex` 가 같은 일을 Codex 훅 `SessionStart`(알림 확인)와 `Stop`(턴이 끝날 때 이번 턴에 쓴 banker 스킬 집계)으로 설치합니다. 도구 호출마다 돌지 않고 턴마다 한 번 돕니다. \
+Codex 를 다시 열 때 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돌고, 훅은 Codex 샌드박스 밖에서 돌므로 샌드박스가 네트워크를 막아도 동작합니다. 끄는 방법은 같습니다.
 
 무엇을 수집하고 누가 수신하는지는 [PRIVACY.md](PRIVACY.md)에 정리했습니다.
 

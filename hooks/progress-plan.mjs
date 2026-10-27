@@ -222,7 +222,7 @@ const step = (title, text, status) => ({
 
 const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
 // A map's own entry: a key like `constructor` finds nothing.
-export const pick = (map, key) => (Object.hasOwn(map, key) ? map[key] : undefined);
+export const pick = (map, key) => (Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined);
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 // ultragoal's states, and the ones like them; one it does not know shows no state.
 const GOAL_STATUS = { complete: 'completed', completed: 'completed', in_progress: 'in_progress', active: 'in_progress',

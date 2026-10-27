@@ -19,9 +19,16 @@
  *    stderr too, so that log is the only channel by which a permanently broken hook is
  *    discoverable rather than silently doing nothing forever. Only a regular file there is
  *    written: a link (a cloned repository can carry one) or a pipe gets no line.
+ *
+ * Codex (`--codex`): Codex has no wiki MCP, so a wiki write is a shell call to the `omx wiki` CLI, and Codex fires
+ * PostToolUse with tool_name Bash, tool_input.command and the command's stdout as tool_response (Codex 0.144.5).
+ * Only a command that runs `omx wiki` ingest or add goes on; every other shell call ends before any file is read. The
+ * vault is omx_wiki/ under the session cwd (the CLI writes under the cwd it runs in), and the page names come from the
+ * CLI's JSON (`{"created":["a.md"],...}`), which the same name pattern reads. The OMX wiki keeps the OMC page schema
+ * and reserved files, so the canonicalizer runs with the same profile.
  */
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, statSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, realpathSync, statSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,6 +47,16 @@ const RESERVED = new Set(['index.md', 'log.md', 'environment.md']);
 const RECENT_MS = 10_000;
 // Stay inside the `timeout: 5` declared in hooks.json.
 const CANONICALIZE_TIMEOUT_MS = 4000;
+const CODEX = process.argv.includes('--codex');
+// A statement that IS `omx wiki ingest|add` (omx its first word, PowerShell's `&` allowed before it), with or without
+// the wiki_ prefix the CLI also takes, and omx.cmd/omx.ps1 on Windows. A command may set the JSON up first
+// (`$j = '...'; omx wiki <ingest> --input $j`, as models write it for PowerShell), so each statement split at
+// `;`, `&&`, `||` and line ends is looked at. `echo omx wiki add` is not one. The split ignores quotes, so a quoted
+// `;` can wake the hook too: what keeps a woken hook inside the vault is the rest (the CLI's JSON names, regular
+// single-name pages in a real omx_wiki/ of the session folder).
+const OMX_WIKI_WRITE_RE = /^\s*(?:&\s*)?['"]?omx(?:\.cmd|\.ps1)?['"]?\s+wiki\s+(?:wiki_)?(?:ingest|add)\b/;
+const STATEMENT_END = /;|&&|\|\||\r?\n/;
+const PAGE_NAME_RE = /^[\w.-]+\.md$/;
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -60,7 +77,8 @@ function log(wikiDir, tool, reason) {
     if (!NO_FOLLOW && isLink(at)) return;
     const fd = openSync(at, LOG_FLAGS, 0o600);
     try {
-      if (fstatSync(fd).isFile()) writeSync(fd, line);
+      const st = fstatSync(fd);
+      if (st.isFile() && st.nlink === 1) writeSync(fd, line); // a hard link to a file elsewhere gets no line
     } finally {
       closeSync(fd);
     }
@@ -78,6 +96,7 @@ function isDir(path) {
 }
 
 function wikiDirCandidates(root) {
+  if (CODEX) return root ? [join(root, 'omx_wiki')] : [];
   const dirs = [];
   // OMC relocates state to <OMC_STATE_DIR>/<projectId>/wiki. projectId is an OMC internal
   // we must not reimplement, so enumerate the candidates instead of deriving the name.
@@ -95,7 +114,49 @@ function wikiDirCandidates(root) {
 
 // The flag both arms the hook and identifies which vault it may touch.
 function findArmedWikiDir(root) {
-  return wikiDirCandidates(root).find((dir) => isDir(dir) && existsSync(join(dir, FLAG))) ?? null;
+  return wikiDirCandidates(root).find((dir) => isDir(dir) && existsSync(join(dir, FLAG)) && (!CODEX || ownDir(root, dir))) ?? null;
+}
+
+// Codex runs this hook outside its sandbox, so the vault must really be omx_wiki/ inside the session folder: not a
+// link (nor under one) that a sandboxed session or a cloned repository could point at another project's wiki.
+function ownDir(root, dir) {
+  try {
+    return !lstatSync(dir).isSymbolicLink() && realpathSync(dir) === join(realpathSync(root), basename(dir));
+  } catch {
+    return false;
+  }
+}
+
+// Codex: only a regular page with one name, so a link or a hard link cannot carry the rewrite out of the vault,
+// and a pipe cannot hold the hook.
+function plainPage(path) {
+  try {
+    const st = lstatSync(path);
+    return st.isFile() && st.nlink === 1;
+  } catch {
+    return false;
+  }
+}
+
+// Codex: the pages the `omx wiki` CLI's JSON says it wrote ({"created":[..],"updated":[..]}); else none. Other
+// output may come before it, so the whole output and then each line from the end is tried.
+function cliResult(stdout) {
+  const text = String(stdout ?? '');
+  for (const part of [text, ...text.split(/\r?\n/).reverse()]) {
+    try {
+      const out = JSON.parse(part);
+      if (out && typeof out === 'object' && (Array.isArray(out.created) || Array.isArray(out.updated))) return out;
+    } catch {
+      // not this one
+    }
+  }
+  return null;
+}
+
+function namesFromCli(stdout) {
+  const out = cliResult(stdout);
+  const list = [out?.created, out?.updated].filter(Array.isArray).flat();
+  return [...new Set(list.filter((n) => typeof n === 'string' && PAGE_NAME_RE.test(n)))];
 }
 
 function namesFromResponse(toolResponse) {
@@ -115,6 +176,9 @@ function namesFromScan(wikiDir) {
 }
 
 function resolvePages(wikiDir, toolResponse) {
+  if (CODEX) {
+    return namesFromCli(toolResponse).filter((name) => !RESERVED.has(name)).map((name) => join(wikiDir, name)).filter(plainPage);
+  }
   const names = namesFromResponse(toolResponse);
   return (names.length > 0 ? names : namesFromScan(wikiDir))
     .filter((name) => !RESERVED.has(name))
@@ -143,9 +207,19 @@ function runFailure(run) {
   }
 }
 
+// Codex: the canonicalizer runs in the vault folder on a bare page name, after it checks the folder is the one
+// looked at here (dev:ino), so swapping omx_wiki/ for a link after the check cannot lead it outside.
+function codexArgs(wikiDir, page) {
+  const st = lstatSync(wikiDir, { bigint: true });
+  if (!st.isDirectory()) throw new Error('omx_wiki is no folder');
+  return { args: [basename(page), '--page', `--vault=${st.dev}:${st.ino}`], cwd: wikiDir };
+}
+
 // Canonicalizes one page; a failure appends its one log line.
 function canonicalize(wikiDir, tool, page) {
-  const run = spawnSync(process.execPath, [CANONICALIZER, page, '--profile=omc', '--json'], {
+  const at = CODEX ? codexArgs(wikiDir, page) : { args: [page], cwd: undefined };
+  const run = spawnSync(process.execPath, [CANONICALIZER, ...at.args, '--profile=omc', '--json'], {
+    cwd: at.cwd,
     encoding: 'utf8',
     timeout: CANONICALIZE_TIMEOUT_MS,
     windowsHide: true,
@@ -156,11 +230,19 @@ function canonicalize(wikiDir, tool, page) {
 
 // A write can be redirected with workingDirectory; fall back to the session cwd.
 function writeRoot(payload) {
+  if (CODEX) return payload?.cwd || process.cwd();
   return payload?.tool_input?.workingDirectory || payload?.cwd || process.cwd();
+}
+
+// Codex fires this after every shell call; only an `omx wiki` write is ours.
+function codexWikiWrite(payload) {
+  const command = payload?.tool_input?.command;
+  return typeof command === 'string' && command.split(STATEMENT_END).some((part) => OMX_WIKI_WRITE_RE.test(part));
 }
 
 async function main() {
   const { payload, error } = await readPayload();
+  if (CODEX && !error && !codexWikiWrite(payload)) return;
   const wikiDir = findArmedWikiDir(writeRoot(payload));
   if (!wikiDir) return; // Not armed: change nothing, log nothing.
 

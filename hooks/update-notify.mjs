@@ -65,7 +65,11 @@ function personalizedSkills(cached) {
 // (기존 동작). banker: 접두는 떼서 짧게. 이모지/em-dash 없음(사용자 가시 채널).
 function buildMessage(latest, installed, cached) {
   const head = `banker ${latest} 사용 가능 (현재 ${installed}).`;
-  const tail = `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
+  // Codex 의 훅은 --codex 를 받는다(banker setup --codex 가 설치). Codex 에는 /banker: 명령이 없어 스킬 이름과
+  // npm 뒤의 Codex 설치 명령을 안내한다.
+  const tail = process.argv.includes('--codex')
+    ? `업데이트: $banker-update-banker 또는 npm i -g ${NPM_PKG} 뒤 banker setup --codex`
+    : `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
   const hits = personalizedSkills(cached);
   if (hits.length) {
     const names = hits.slice(0, 5).map((s) => s.replace(/^banker:/, '')).join(', ');

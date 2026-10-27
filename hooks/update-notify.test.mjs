@@ -59,13 +59,13 @@ const readCache = (tmp) => JSON.parse(readFileSync(cachePath(tmp), 'utf8'));
 // 훅을 자식으로 spawn. XDG 격리 + BANKER_* 정리 후 overrides 적용(마지막에 이겨 opt-out 주입 가능).
 // input 으로 SessionStart payload 를 흘려 stdin EOF 를 보장(비TTY 안전·드레인 검증).
 // timeout 은 FIFO 에서 멈추는지 보는 시험용(지나면 죽인다). pre 는 훅보다 먼저 --import 로 불러올 모듈 경로.
-function runNotify(tmp, { input = '{}', env: overrides = {}, timeout, pre } = {}) {
+function runNotify(tmp, { input = '{}', env: overrides = {}, timeout, pre, argv = [] } = {}) {
   const env = { ...process.env, XDG_CONFIG_HOME: tmp };
   delete env.BANKER_NO_UPDATE_CHECK;
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
   Object.assign(env, overrides);
-  const args = pre ? ['--import', pathToFileURL(pre).href, NOTIFY_HOOK] : [NOTIFY_HOOK];
+  const args = [...(pre ? ['--import', pathToFileURL(pre).href, NOTIFY_HOOK] : [NOTIFY_HOOK]), ...argv];
   return spawnSync(process.execPath, args, { input, encoding: 'utf8', env, timeout });
 }
 
@@ -135,6 +135,16 @@ test('신버전 캐시(latest > 설치)면 systemMessage 고지 + notified 병�
   assert.equal(c.notified, '99.0.0', '재고지 방지: notified=latest 기록');
   assert.equal(c.latest, '99.0.0', '형제 필드 latest 보존');
   assert.equal(c.checkedAt, t0, '형제 필드 checkedAt 보존');
+});
+
+test('Codex 훅(--codex)은 Codex 의 갱신 방법을 안내한다', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW() });
+  const out = JSON.parse(runNotify(tmp, { argv: ['--codex'] }).stdout.trim());
+  assert.match(out.systemMessage, /banker 99\.0\.0 사용 가능/);
+  assert.match(out.systemMessage, /\$banker-update-banker/);
+  assert.match(out.systemMessage, /banker setup --codex/);
+  assert.ok(!out.systemMessage.includes('/banker:'), 'Codex 에는 /banker: 명령이 없다');
 });
 
 test('동일 latest 재호출(notified==latest)이면 무고지(dedupe)', () => {
