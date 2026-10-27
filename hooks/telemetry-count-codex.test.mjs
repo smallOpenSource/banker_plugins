@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { skillNames, turnKey } from './telemetry-count-codex.mjs';
+import { namesIn, turnKey, turnSkills } from './telemetry-count-codex.mjs';
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'telemetry-count-codex.mjs');
 const tmps = [];
@@ -35,31 +35,47 @@ function run(tmp, input, overrides = {}) {
   return spawnSync(process.execPath, [HOOK], { input: typeof input === 'string' ? input : JSON.stringify(input), encoding: 'utf8', env });
 }
 const read = (tmp) => (existsSync(usageLog(tmp)) ? readFileSync(usageLog(tmp), 'utf8').split('\n').filter(Boolean) : []);
-const cat = (name, turn = 't1') => ({
-  session_id: 's1', turn_id: turn, hook_event_name: 'PreToolUse', tool_name: 'Bash',
-  tool_input: { command: `cat /home/u/.codex/skills/banker-${name}/SKILL.md` },
-});
+// A rollout as Codex 0.144.5 writes it: task_started opens a turn, tool calls are response_item *_call records.
+const started = (turn) => ({ type: 'event_msg', payload: { type: 'task_started', turn_id: turn } });
+const call = (cmd) => ({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd }) } });
+const said = (text) => ({ type: 'event_msg', payload: { type: 'user_message', message: text } });
+let r = 0;
+function rollout(tmp, recs) {
+  const f = join(tmp, `r${r++}.jsonl`);
+  writeFileSync(f, `${recs.map((x) => JSON.stringify(x)).join('\n')}\n`);
+  return f;
+}
+const stop = (file, turn = 't1') => ({ session_id: 's1', turn_id: turn, hook_event_name: 'Stop', transcript_path: file });
+const cat = (name) => call(`cat /home/u/.codex/skills/banker-${name}/SKILL.md`);
 
 test('skill names come from SKILL.md paths of banker skills only', () => {
-  assert.deepEqual(skillNames(cat('ralph-qa')), ['banker:ralph-qa']);
-  assert.deepEqual(skillNames({ tool_input: { path: 'C:\\Users\\u\\.codex\\skills\\banker-lineage\\SKILL.md' } }), ['banker:lineage']);
-  assert.deepEqual(skillNames({ tool_input: { command: 'sed -n 1,5p skills/banker-a/SKILL.md skills/banker-a/SKILL.md skills/banker-b/SKILL.md' } }),
-    ['banker:a', 'banker:b']);
-  for (const other of ['cat ~/.codex/skills/hud/SKILL.md', 'cat skills/banker-x/README.md', 'cat skills/banker-a\tb/SKILL.md']) {
-    assert.deepEqual(skillNames({ tool_input: { command: other } }), [], other);
+  assert.deepEqual([...namesIn('cat /h/.codex/skills/banker-ralph-qa/SKILL.md')], ['banker:ralph-qa']);
+  assert.deepEqual([...namesIn('C:\\Users\\u\\.codex\\skills\\banker-lineage\\SKILL.md')], ['banker:lineage']);
+  assert.deepEqual([...namesIn('sed -n 1,5p skills/banker-a/SKILL.md skills/banker-a/SKILL.md skills/banker-b/SKILL.md')], ['banker:a', 'banker:b']);
+  for (const other of ['cat ~/.codex/skills/hud/SKILL.md', 'cat skills/banker-x/README.md', 'cat skills/banker-a\\tb/SKILL.md']) {
+    assert.deepEqual([...namesIn(other)], [], other);
   }
   assert.equal(turnKey({ session_id: 's', turn_id: 't' }), 's:t');
   assert.equal(turnKey({ session_id: 's\tx', turn_id: 't' }), null);
 });
 
-test('a skill read once per turn is counted once, and again in a new turn', () => {
+test('only this turn\'s tool calls count: earlier turns and what the user typed do not', () => {
+  const tmp = mkTmp();
+  const f = rollout(tmp, [started('t0'), cat('old'), started('t1'), said('see skills/banker-typed/SKILL.md'), cat('ralph-qa'), cat('ralph-qa'), cat('lineage')]);
+  assert.deepEqual(turnSkills(f, 't1').sort(), ['banker:lineage', 'banker:ralph-qa']);
+  assert.deepEqual(turnSkills(f, 'nope'), []);
+  assert.deepEqual(turnSkills(f, 't1', 64), [], 'a turn start past the read cap is not guessed');
+});
+
+test('a turn is counted once even when Stop comes twice, and a new turn counts again', () => {
   const tmp = mkTmp();
   enable(tmp);
-  assert.equal(run(tmp, cat('ralph-qa')).status, 0);
-  run(tmp, cat('ralph-qa'));
-  assert.equal(read(tmp).length, 1, 'two reads in one turn count once');
+  const f = rollout(tmp, [started('t1'), cat('ralph-qa'), cat('ralph-qa'), started('t2'), cat('ralph-qa')]);
+  assert.equal(run(tmp, stop(f)).status, 0);
+  run(tmp, stop(f));
+  assert.equal(read(tmp).length, 1, 'two reads and two Stops in one turn count once');
   assert.match(read(tmp)[0], /^banker:ralph-qa\t\d{1,2}$/);
-  run(tmp, cat('ralph-qa', 't2'));
+  run(tmp, stop(f, 't2'));
   assert.equal(read(tmp).length, 2);
   assert.ok(readFileSync(join(bankerDir(tmp), 'used-skills.json'), 'utf8').includes('banker:ralph-qa'));
 });
@@ -67,12 +83,14 @@ test('a skill read once per turn is counted once, and again in a new turn', () =
 test('opt-out, no endpoint state, odd input and other tools write nothing', () => {
   const tmp = mkTmp();
   enable(tmp);
-  run(tmp, cat('ralph-qa'), { BANKER_NO_TELEMETRY: '1' });
+  const f = rollout(tmp, [started('t1'), cat('ralph-qa')]);
+  run(tmp, stop(f), { BANKER_NO_TELEMETRY: '1' });
   run(tmp, '{not json');
-  run(tmp, { session_id: 's', turn_id: 't', tool_input: { command: 'ls' } });
-  run(tmp, { tool_input: { command: 'cat skills/banker-a/SKILL.md' } });
+  run(tmp, { session_id: 's1', turn_id: 't1' });
+  run(tmp, { transcript_path: f, turn_id: 't1' });
+  run(tmp, stop(join(tmp, 'missing')));
   assert.equal(read(tmp).length, 0);
-  const res = run(tmp, cat('x'));
+  const res = run(tmp, stop(f));
   assert.deepEqual([res.status, res.stdout], [0, ''], 'never blocks or prints');
 });
 
@@ -87,6 +105,6 @@ test('a link in place of the turn file is not written through', (t) => {
     t.skip('this account cannot make file links');
     return;
   }
-  run(tmp, cat('a'));
+  run(tmp, stop(rollout(tmp, [started('t1'), cat('a')])));
   assert.equal(readFileSync(victim, 'utf8'), 'keep');
 });

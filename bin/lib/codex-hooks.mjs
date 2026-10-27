@@ -17,7 +17,7 @@ import path from 'node:path';
 // 훅마다 이벤트, 스크립트(패키지 기준 경로), 인자.
 export const HOOKS = {
   update: { event: 'SessionStart', script: 'hooks/update-notify.mjs', args: ['--codex'] },
-  count: { event: 'PreToolUse', script: 'hooks/telemetry-count-codex.mjs', args: [] },
+  count: { event: 'Stop', script: 'hooks/telemetry-count-codex.mjs', args: [] },
   obsidize: { event: 'PostToolUse', script: 'hooks/obsidize-hook.mjs', args: ['--codex'] },
 };
 // 사본으로 옮길 파일(훅 스크립트와 그 의존 파일). 상대 경로를 그대로 둬 '../bin/lib/...' 가져오기가 맞는다.

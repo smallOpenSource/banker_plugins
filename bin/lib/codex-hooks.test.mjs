@@ -29,7 +29,7 @@ test('enable copies the payload and appends after the existing groups; a second 
   const h = read(p);
   assert.deepEqual(h.SessionStart[0].hooks[0], omx, 'OMX keeps index 0');
   assert.equal(h.SessionStart[1].hooks[0].command, formatCommand(process.execPath, join(p.dir, 'hooks', 'update-notify.mjs'), ['--codex']));
-  assert.equal(h.PreToolUse.length, 1);
+  assert.equal(h.Stop.length, 1);
   assert.ok(existsSync(join(p.dir, 'bin', 'lib', 'telemetry-config.mjs')) && existsSync(join(p.dir, '.claude-plugin', 'plugin.json')));
   assert.deepEqual(enableHooks(p, ['update', 'count'], PKG).changed, []);
   assert.deepEqual(hookStatus(p, ['update', 'count', 'obsidize'], PKG).status, { update: 'on', count: 'on', obsidize: 'off' });
@@ -53,14 +53,14 @@ test('disable removes only our handler, keeps a shared group, backs up, and repo
   enableHooks(p, ['update'], PKG);
   const doc = JSON.parse(readFileSync(p.hooks, 'utf8'));
   doc.hooks.SessionStart[1].hooks.push({ type: 'command', command: 'other' });
-  doc.hooks.PreToolUse = [{ hooks: [{ type: 'command', command: `x /hooks-custom/banker/hooks/telemetry-count-codex.mjs` }] }, { hooks: [{ type: 'command', command: 'later' }] }];
+  doc.hooks.Stop = [{ hooks: [{ type: 'command', command: `x /hooks-custom/banker/hooks/telemetry-count-codex.mjs` }] }, { hooks: [{ type: 'command', command: 'later' }] }];
   writeFileSync(p.hooks, JSON.stringify(doc));
   const before = readFileSync(p.hooks, 'utf8');
   const r = disableHooks(p, ['update', 'count']);
-  assert.deepEqual([r.changed, r.shifted], [['update', 'count'], ['PreToolUse']]);
+  assert.deepEqual([r.changed, r.shifted], [['update', 'count'], ['Stop']]);
   const h = read(p);
   assert.deepEqual(h.SessionStart, [{ hooks: [omx] }, { hooks: [{ type: 'command', command: 'other' }] }]);
-  assert.deepEqual(h.PreToolUse, [{ hooks: [{ type: 'command', command: 'later' }] }]);
+  assert.deepEqual(h.Stop, [{ hooks: [{ type: 'command', command: 'later' }] }]);
   assert.equal(readFileSync(p.backup, 'utf8'), before);
 });
 
@@ -75,7 +75,7 @@ test('removeAll takes every banker hook and the copy folder away', () => {
 
 test('hooks files of the wrong shape, links, and unreadable ones change nothing', (t) => {
   const p = home();
-  for (const body of ['[]', '{"hooks":[]}', '{"hooks":{"PreToolUse":{}}}']) {
+  for (const body of ['[]', '{"hooks":[]}', '{"hooks":{"Stop":{}}}']) {
     writeFileSync(p.hooks, body);
     assert.equal(enableHooks(p, ['count'], PKG).code, 1, body);
     assert.equal(readFileSync(p.hooks, 'utf8'), body);
