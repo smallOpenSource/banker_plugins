@@ -3,10 +3,12 @@
  * banker 텔레메트리 count 훅 (Codex Stop) - Codex 세션이 banker 스킬을 쓴 턴이 끝날 때 로컬 usage-log 에
  * `banker:<name>\t<hour>` 한 줄을 남긴다. Claude Code 의 telemetry-count(.mjs, -skill.mjs)에 해당한다.
  *
- * Codex 는 스킬을 쓸 때(사용자가 $banker-<name> 으로 부르든 모델이 고르든) 도구 호출로 그 SKILL.md 를 읽는다
- * (Codex 0.144.5 실측: Bash `cat <CODEX_HOME>/skills/banker-<name>/SKILL.md`). 도구 호출마다 도는 PreToolUse 대신
- * 턴마다 한 번 도는 Stop 에서, 훅 입력의 transcript_path(rollout) 중 이번 턴(task_started 의 turn_id 뒤)의 도구 호출
- * 기록에 `skills/banker-<name>/SKILL.md` 가 있으면 센다. 나눠 읽어도 한 번이고, Stop 이 한 턴에 두 번 와도
+ * Codex 0.144.5 실측으로 스킬이 쓰이는 길은 둘이다.
+ *  - 모델이 고른 스킬: 도구 호출로 SKILL.md 를 읽는다(Bash `cat <CODEX_HOME>/skills/banker-<name>/SKILL.md`).
+ *  - 사용자가 $banker-<name> 으로 부른 스킬: Codex 가 도구 호출 없이 `<skill>\n<name>..</name>\n<path>..</path>` 로
+ *    시작하는 사용자 역할 메시지로 본문을 넣는다. 이때는 머리의 <path> 줄만 보고 본문은 보지 않는다.
+ * 도구 호출마다 도는 PreToolUse 대신 턴마다 한 번 도는 Stop 에서, 훅 입력의 transcript_path(rollout) 중
+ * 이번 턴(task_started 의 turn_id 뒤)의 두 기록에 `skills/banker-<name>/SKILL.md` 가 있으면 센다. 나눠 읽어도 한 번이고, Stop 이 한 턴에 두 번 와도
  * 최근 턴 키(configDir 의 codex-count-turns)로 한 번만 센다. 기록은 끝에서부터 32 MB 까지만 읽는다.
  *
  * fail-closed 규약은 Claude 쪽과 같다(telemetry-count-codex.test.mjs 가 검증):
@@ -62,8 +64,17 @@ function tailLines(file, max) {
 }
 
 const isCall = (rec) => rec?.type === 'response_item' && /_call$/.test(String(rec?.payload?.type ?? ''));
+const SKILL_HEAD_RE = /^<skill>\n<name>[^\n<]{1,80}<\/name>\n<path>([^\n<]{1,4096})<\/path>\n/;
 
-// 이번 턴(turn_id 의 task_started 뒤)의 도구 호출 기록에서 읽은 banker 스킬 이름. 사용자 글과 모델 답은 세지 않는다.
+// $banker-<name> 으로 부른 스킬을 Codex 가 넣은 메시지의 <path>. 그 밖의 기록은 ''.
+function injectedPath(rec) {
+  const p = rec?.payload;
+  if (rec?.type !== 'response_item' || p?.type !== 'message' || p.role !== 'user' || !Array.isArray(p.content)) return '';
+  const text = p.content[0]?.text;
+  return typeof text === 'string' ? (SKILL_HEAD_RE.exec(text)?.[1] ?? '') : '';
+}
+
+// 이번 턴(turn_id 의 task_started 뒤)의 도구 호출과 넣은 스킬 머리에서 읽은 banker 스킬 이름. 사용자 글과 모델 답은 세지 않는다.
 export function turnSkills(file, turnId, max = MAX_READ) {
   const lines = tailLines(file, max);
   let start = lines.length - 1;
@@ -75,6 +86,7 @@ export function turnSkills(file, turnId, max = MAX_READ) {
     let rec;
     try { rec = JSON.parse(line); } catch { continue; }
     if (isCall(rec)) namesIn(JSON.stringify(rec.payload), names);
+    else namesIn(injectedPath(rec), names);
   }
   return [...names];
 }

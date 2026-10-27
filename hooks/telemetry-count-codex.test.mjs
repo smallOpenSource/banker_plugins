@@ -47,6 +47,11 @@ function rollout(tmp, recs) {
 }
 const stop = (file, turn = 't1') => ({ session_id: 's1', turn_id: turn, hook_event_name: 'Stop', transcript_path: file });
 const cat = (name) => call(`cat /home/u/.codex/skills/banker-${name}/SKILL.md`);
+// What Codex 0.144.5 puts in the rollout when the user names a skill with $banker-<name>: no tool call, a user-role message.
+const injected = (name, body = '') => ({
+  type: 'response_item',
+  payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `<skill>\n<name>banker-${name}</name>\n<path>/h/.codex/skills/banker-${name}/SKILL.md</path>\n---\n${body}` }] },
+});
 
 test('skill names come from SKILL.md paths of banker skills only', () => {
   assert.deepEqual([...namesIn('cat /h/.codex/skills/banker-ralph-qa/SKILL.md')], ['banker:ralph-qa']);
@@ -107,4 +112,11 @@ test('a link in place of the turn file is not written through', (t) => {
   }
   run(tmp, stop(rollout(tmp, [started('t1'), cat('a')])));
   assert.equal(readFileSync(victim, 'utf8'), 'keep');
+});
+
+test('a skill the user named with $ counts from the injected head only, not from paths in its body', () => {
+  const tmp = mkTmp();
+  const typed = { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'read skills/banker-typed/SKILL.md' }] } };
+  const f = rollout(tmp, [started('t1'), typed, injected('setup', 'see ~/.codex/skills/banker-lineage/SKILL.md')]);
+  assert.deepEqual(turnSkills(f, 't1'), ['banker:setup']);
 });
