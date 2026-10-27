@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
-import { codexPlanKind, lastPlan, records, render, rolloutFor } from './progress.mjs';
+import { codexPlanKind, lastPlan, pathsOf, records, render, rolloutFor } from './progress.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'progress.mjs');
 const root = mkdtempSync(join(tmpdir(), 'progress-codex-'));
@@ -69,6 +69,13 @@ test('with no update_plan the requests are the steps, and no rollout found stops
   const env = { ...process.env, CODEX_HOME: home };
   delete env.CODEX_THREAD_ID;
   assert.equal(spawnSync(process.execPath, [SCRIPT], { env, encoding: 'utf8' }).status, 2);
+});
+
+test('a Windows path written in JS source (backslashes doubled) is found as the plan', () => {
+  const r = records([meta('C:\\w'), JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec',
+    input: "text(await tools.exec_command({cmd:'Get-Content C:\\\\w\\\\.omx\\\\plans\\\\a.md'}))" } })].map((x) => (typeof x === 'string' ? x : JSON.stringify(x))));
+  assert.ok(pathsOf(r.calls[0], r.cwd).some((x) => x.replaceAll('\\', '/').endsWith('w/.omx/plans/a.md')), 'one backslash between the parts');
+  assert.equal(codexPlanKind(pathsOf(r.calls[0], r.cwd).find((x) => x.endsWith('a.md'))), 'plan');
 });
 
 test('Codex 0.160: requests from completed UserMessage items, and a shell call made from code shows its command', () => {

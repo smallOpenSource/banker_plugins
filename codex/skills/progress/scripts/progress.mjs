@@ -112,7 +112,9 @@ function takeCall(out, p) {
 // 한 도구 호출이 다룬 파일 경로들(명령의 낱말, apply_patch 의 파일 머리). Codex 0.160 은 도구를 코드로 부르므로
 // (`exec` 의 입력 `tools.exec_command({cmd:'...'})`) 그 입력의 낱말도 본다.
 export function pathsOf(call, cwd) {
-  const words = `${call.cmd} ${call.name === 'apply_patch' ? '' : call.input}`.match(/[^\s'"`;|&<>(){},]+\.(?:md|json)\b/g) ?? [];
+  // The code input is JS source, so a Windows path in it has each backslash written twice.
+  const code = call.name === 'apply_patch' ? '' : call.input.replace(/\\\\/g, '\\');
+  const words = `${call.cmd} ${code}`.match(/[^\s'"`;|&<>(){},]+\.(?:md|json)\b/g) ?? [];
   const heads = [...call.input.matchAll(/^\*\*\* (?:Add|Update) File: (.+)$/gm)].map((m) => m[1].trim());
   const base = call.workdir || cwd;
   return [...words, ...heads].map((w) => (w.startsWith('~/') ? join(homedir(), w.slice(2)) : isAbsolute(w) || !base ? w : resolve(base, w)));
