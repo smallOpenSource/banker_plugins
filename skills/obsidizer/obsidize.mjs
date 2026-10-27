@@ -15,7 +15,9 @@
  * the torn read outright; the CAS only narrows the lost-update window to that
  * one syscall — a residual race remains, and is accepted (see writeIfUnchanged).
  *
- * Usage: node obsidize.mjs <path> [--profile=auto|omc|generic] [--dry-run] [--json]
+ * Usage: node obsidize.mjs <path> [--profile=auto|omc|generic] [--dry-run] [--json] [--page]
+ *   --page: <path> must be one plain page (a regular file with one name, judged without following a link), and the
+ *   vault model reads only plain pages. The Codex hook passes it, since Codex runs that hook outside its sandbox.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -298,15 +300,25 @@ export function detectProfile(target) {
 const read = (p) => fs.readFileSync(p, 'utf8');
 
 /** Sorted explicitly — readdir order is not deterministic across filesystems. */
-function listMarkdown(dir) {
+// A regular file with one name: not a link, a hard link or a pipe.
+function plain(file) {
+  try {
+    const st = fs.lstatSync(file);
+    return st.isFile() && st.nlink === 1;
+  } catch {
+    return false;
+  }
+}
+
+function listMarkdown(dir, plainOnly = false) {
   return fs.readdirSync(dir)
-    .filter((f) => f.endsWith('.md') && !f.endsWith('.excalidraw.md'))
+    .filter((f) => f.endsWith('.md') && !f.endsWith('.excalidraw.md') && (!plainOnly || plain(path.join(dir, f))))
     .sort(byCodeUnit);
 }
 
 /** Slug index + H1 index for the whole vault: alias uniqueness and footer resolvability need both. */
-export function buildVaultModel(dir) {
-  const files = listMarkdown(dir);
+export function buildVaultModel(dir, plainOnly = false) {
+  const files = listMarkdown(dir, plainOnly);
   const basenames = new Set(files);
   const pages = new Map();
   const h1Counts = new Map();
@@ -473,12 +485,14 @@ function writeIfUnchanged(file, baseline, text) {
   }
 }
 
-export function run(target, { profile = 'auto', dryRun = false, now = null } = {}) {
-  if (!fs.existsSync(target)) throw new Error(`path not found: ${target}`);
-  const isFile = fs.statSync(target).isFile();
+export function run(target, { profile = 'auto', dryRun = false, now = null, page = false } = {}) {
+  if (!fs.existsSync(target) && !page) throw new Error(`path not found: ${target}`);
+  // --page judges with one lstat, so a page swapped for a link after the caller looked is refused, not followed.
+  if (page && !plain(target)) throw new Error(`not a plain page: ${target}`);
+  const isFile = page || fs.statSync(target).isFile();
   const dir = isFile ? path.dirname(target) : target;
   const resolved = profile === 'auto' ? detectProfile(target) : profile;
-  const model = buildVaultModel(dir);
+  const model = buildVaultModel(dir, page);
   const aliases = computeAliases(model, resolved);
   const stamp = now || new Date().toISOString();
 
@@ -528,7 +542,7 @@ function main(argv) {
     return hit ? hit.slice(name.length + 3) : def;
   };
   if (args.length !== 1) {
-    console.error('usage: obsidize.mjs <path> [--profile=auto|omc|generic] [--dry-run] [--json]');
+    console.error('usage: obsidize.mjs <path> [--profile=auto|omc|generic] [--dry-run] [--json] [--page]');
     return 2;
   }
   const profile = opt('profile', 'auto');
@@ -536,7 +550,7 @@ function main(argv) {
     console.error(`unknown profile: ${profile}`);
     return 2;
   }
-  const report = run(path.resolve(args[0]), { profile, dryRun: flag('dry-run') });
+  const report = run(path.resolve(args[0]), { profile, dryRun: flag('dry-run'), page: flag('page') });
   if (flag('json')) {
     console.log(JSON.stringify(report));
   } else {

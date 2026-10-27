@@ -209,7 +209,7 @@ function runFailure(run) {
 
 // Canonicalizes one page; a failure appends its one log line.
 function canonicalize(wikiDir, tool, page) {
-  const run = spawnSync(process.execPath, [CANONICALIZER, page, '--profile=omc', '--json'], {
+  const run = spawnSync(process.execPath, [CANONICALIZER, page, '--profile=omc', '--json', ...(CODEX ? ['--page'] : [])], {
     encoding: 'utf8',
     timeout: CANONICALIZE_TIMEOUT_MS,
     windowsHide: true,
