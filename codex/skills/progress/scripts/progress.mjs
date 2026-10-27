@@ -179,7 +179,7 @@ export function render(file, depth = 2) {
   const planPath = lastPlan(r.calls, r.cwd);
   const plan = planPath && readPlan(planPath);
   if (plan) {
-    out.push(`계획: ${planPath}${plan.hasStates ? `  ${plan.done}/${plan.total}` : ''}`);
+    out.push(`계획: ${clip(planPath, 200)}${plan.hasStates ? `  ${plan.done}/${plan.total}` : ''}`);
     out.push(...renderTree(plan.tree, depth));
     if (plan.treeCut) out.push('  (계획이 길어 일부만 보임)');
   } else out.push('계획 파일 없음');

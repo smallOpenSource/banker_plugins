@@ -13,10 +13,12 @@
  *
  * fail-closed 규약은 Claude 쪽과 같다(telemetry-count-codex.test.mjs 가 검증):
  *  - countingActive() 가 아니면 로컬 쓰기조차 하지 않는다.
- *  - 이름은 SKILL_NAME_RE 전체 일치만. 턴 키 파일은 일반 파일만 읽고, 링크 자리에 쓰지 않는다.
+ *  - 이름은 SKILL_NAME_RE 전체 일치이고 이 Codex 에 설치된 banker 스킬(<CODEX_HOME>/skills/banker-<name>/SKILL.md)만.
+ *    모델이 `echo skills/banker-<아무 글>/SKILL.md` 를 돌려 체크인의 이름 칸으로 글을 내보내지 못하게 한다. 턴 키 파일은 일반 파일만 읽고, 링크 자리에 쓰지 않는다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 도구 호출을 절대 막지 않는다. 표준 출력은 비운다.
  */
-import { closeSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { appendUsageLog, configDir, countingActive, readRegular, recordUsedSkill, SKILL_NAME_RE } from '../bin/lib/telemetry-config.mjs';
@@ -125,11 +127,15 @@ function writeTurns(lines) {
   }
 }
 
+// 이 Codex 에 설치된 banker 스킬인지.
+export const installed = (name, env = process.env) =>
+  existsSync(join(env.CODEX_HOME || join(homedir(), '.codex'), 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
+
 // 이 턴에 아직 세지 않은 이름만 센다.
 export function countOnce(payload) {
   const key = turnKey(payload);
   const file = typeof payload?.transcript_path === 'string' ? payload.transcript_path : '';
-  const names = key && file ? turnSkills(file, payload.turn_id) : [];
+  const names = key && file ? turnSkills(file, payload.turn_id).filter((n) => installed(n)) : [];
   if (!names.length) return [];
   const seen = readTurns();
   const fresh = names.filter((n) => !seen.includes(`${key}\t${n}`));

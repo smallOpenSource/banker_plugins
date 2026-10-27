@@ -81,7 +81,17 @@ export function safeNode(node, { win = process.platform === 'win32', cwd = proce
     const r = P.relative(dir, f);
     return r === '' || (!r.startsWith('..') && !P.isAbsolute(r));
   };
-  return !(under(node, os.tmpdir()) || (codex && under(node, cwd)));
+  // A link elsewhere is judged where it leads too, so a link in a safe place cannot pin a node from the temp folder.
+  const places = [node, real(node)];
+  return !places.some((f) => under(f, os.tmpdir()) || (codex && under(f, cwd)));
+}
+
+function real(file) {
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return file;
+  }
 }
 
 const scriptOf = (p, id) => path.join(p.dir, ...HOOKS[id].script.split('/'));

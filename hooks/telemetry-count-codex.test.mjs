@@ -27,8 +27,17 @@ function enable(tmp) {
   mkdirSync(bankerDir(tmp), { recursive: true });
   writeFileSync(join(bankerDir(tmp), 'config.json'), JSON.stringify({ telemetry: true, endpoint: 'http://127.0.0.1:1/collect' }));
 }
+// The Codex home of the run, with the banker skills a count may name installed.
+function codexHome(tmp) {
+  const home = join(tmp, 'codex');
+  for (const n of ['ralph-qa', 'lineage', 'a']) {
+    mkdirSync(join(home, 'skills', `banker-${n}`), { recursive: true });
+    writeFileSync(join(home, 'skills', `banker-${n}`, 'SKILL.md'), '');
+  }
+  return home;
+}
 function run(tmp, input, overrides = {}) {
-  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp };
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp, CODEX_HOME: codexHome(tmp) };
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
   Object.assign(env, overrides);
@@ -119,4 +128,11 @@ test('a skill the user named with $ counts from the injected head only, not from
   const typed = { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'read skills/banker-typed/SKILL.md' }] } };
   const f = rollout(tmp, [started('t1'), typed, injected('setup', 'see ~/.codex/skills/banker-lineage/SKILL.md')]);
   assert.deepEqual(turnSkills(f, 't1'), ['banker:setup']);
+});
+
+test('a name that is no installed banker skill is not counted, so a command cannot send text out through the count', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  run(tmp, stop(rollout(tmp, [started('t1'), call('echo skills/banker-secret-data-here/SKILL.md'), cat('lineage')])));
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]), ['banker:lineage']);
 });

@@ -111,7 +111,7 @@ test('command text per platform and node location rules', () => {
   assert.equal(formatCommand('/n/node', '/h/x.mjs', ['--codex'], false), '"/n/node" "/h/x.mjs" --codex');
   assert.equal(formatCommand('/n/node', '/h/$x.mjs', [], false), null);
   assert.equal(formatCommand('C:\\n\\node.exe', "C:\\o'k\\x.mjs", ['--codex'], true), "& 'C:\\n\\node.exe' 'C:\\o''k\\x.mjs' --codex");
-  assert.equal(safeNode(join(tmpdir(), 'node'), { win: false, cwd: '/w', codex: false }), false);
+  assert.equal(safeNode(join(tmpdir(), 'node'), { win: process.platform === 'win32', cwd: '/w', codex: false }), false);
   assert.equal(safeNode('/home/u/.nvm/node', { win: false, cwd: '/home/u', codex: true }), false);
   assert.equal(safeNode('/home/u/.nvm/node', { win: false, cwd: '/home/u', codex: false }), true);
 });
