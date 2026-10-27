@@ -76,13 +76,13 @@ const json = (text) => { try { return JSON.parse(text); } catch { return null; }
 
 // rollout 줄에서 이 도구가 쓰는 기록만: 세션 머리, 사용자 요청, 도구 호출.
 export function records(lines) {
-  const out = { cwd: '', prompts: [], calls: [], plan: null, planAt: -1 };
+  const out = { cwd: '', version: '', prompts: [], calls: [], plan: null, planAt: -1 };
   for (const line of lines) {
     if (!line.includes('"session_meta"') && !line.includes('"user_message"') && !line.includes('"UserMessage"') && !line.includes('_call"')) continue;
     const rec = json(line);
     const p = rec?.payload;
     if (!p || typeof p !== 'object') continue;
-    if (rec.type === 'session_meta' && typeof p.cwd === 'string') out.cwd = p.cwd;
+    if (rec.type === 'session_meta') [out.cwd, out.version] = [String(p.cwd ?? ''), String(p.cli_version ?? '?')];
     else if (rec.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') takePrompt(out, p.message);
     else if (rec.type === 'event_msg' && p.type === 'item_completed' && p.item?.type === 'UserMessage') takePrompt(out, itemText(p.item));
     else if (rec.type === 'response_item' && /_call$/.test(String(p.type))) takeCall(out, p);
@@ -209,6 +209,10 @@ export function render(file, depth = 2) {
     if (plan.treeCut) out.push('  (계획이 길어 일부만 보임)');
   } else out.push('계획 파일 없음');
   out.push('', ...stepLines(r));
+  // Codex 세션은 언제나 사용자 글로 시작한다. 하나도 못 읽었으면 이 Codex 판의 기록 형식이 바뀐 것이라 빈 결과로 넘기지 않는다.
+  if (r.version && !r.prompts.length) {
+    out.push('', `경고: 이 Codex ${r.version} 기록에서 사용자 요청을 하나도 읽지 못함. 기록 형식이 바뀌었을 수 있음(banker 업데이트 확인)`);
+  }
   return out.join('\n');
 }
 

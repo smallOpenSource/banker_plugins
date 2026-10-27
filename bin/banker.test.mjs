@@ -239,3 +239,17 @@ test('status: 시도 시각이 지금보다 뒤여도 하루가 안 된 마지�
     });
   }
 });
+
+test('doctor: the newest Codex record is checked for what banker reads, and a shape it cannot read is flagged', () => withXdg((dir) => {
+  const day = path.join(dir, 'codex', 'sessions', '2026', '10', '28');
+  fs.mkdirSync(day, { recursive: true });
+  const meta = JSON.stringify({ type: 'session_meta', payload: { id: 'x', cli_version: '9.9.9' } });
+  fs.writeFileSync(path.join(day, 'rollout-a.jsonl'), `${meta}\n{"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}\n{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}\n`);
+  let { out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') });
+  assert.match(out, /Codex record shape \(Codex 9\.9\.9, rollout-a\.jsonl\): turn start ok, user text ok, tool calls MISSING/);
+  assert.doesNotMatch(out, /may not read/);
+  fs.writeFileSync(path.join(day, 'rollout-b.jsonl'), `${meta}\n{"type":"event_msg","payload":{"type":"turn_begun_v2"}}\n`);
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
+  assert.match(out, /rollout-b\.jsonl\): turn start MISSING, user text MISSING/);
+  assert.match(out, /banker may not read this Codex version's records/);
+}));

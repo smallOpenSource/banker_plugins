@@ -77,7 +77,7 @@ test('only this turn\'s tool calls count: earlier turns and what the user typed 
   const tmp = mkTmp();
   const f = rollout(tmp, [started('t0'), cat('old'), started('t1'), said('see skills/banker-typed/SKILL.md'), cat('ralph-qa'), cat('ralph-qa'), cat('lineage')]);
   assert.deepEqual(turnSkills(f, 't1').sort(), ['banker:lineage', 'banker:ralph-qa']);
-  assert.deepEqual(turnSkills(f, 'nope'), []);
+  assert.equal(turnSkills(f, 'nope'), null, 'a whole record with no start for this turn is a shape this hook does not read');
   assert.deepEqual(turnSkills(f, 't1', 64), [], 'a turn start past the read cap is not guessed');
 });
 
@@ -166,4 +166,23 @@ test('a turn that started far from the end is still found by widening the read',
   const pad = { type: 'event_msg', payload: { type: 'token_count', pad: 'x'.repeat(4000) } };
   const f = rollout(tmp, [started('t1'), cat('lineage'), ...Array(600).fill(pad)]);
   assert.deepEqual(turnSkills(f, 't1'), ['banker:lineage'], 'about 2.4 MB after the turn start, past the first 1 MB read');
+});
+
+test('a Codex version whose record has no turn start is noted once for the next session start', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const meta = { type: 'session_meta', payload: { id: 's1', cli_version: '9.9.9' } };
+  const f = rollout(tmp, [meta, { type: 'event_msg', payload: { type: 'turn_begun_v2', id: 't1' } }, cat('lineage')]);
+  run(tmp, stop(f));
+  const miss = join(bankerDir(tmp), 'codex-shape-miss.json');
+  assert.deepEqual(JSON.parse(readFileSync(miss, 'utf8')), { version: '9.9.9', notified: false });
+  assert.equal(read(tmp).length, 0);
+  const notify = join(dirname(HOOK), 'update-notify.mjs');
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp, BANKER_NO_UPDATE_CHECK: '1' };
+  assert.equal(spawnSync(process.execPath, [notify], { input: '{}', encoding: 'utf8', env }).stdout, '', 'Claude Code never shows it');
+  const first = spawnSync(process.execPath, [notify, '--codex'], { input: '{}', encoding: 'utf8', env });
+  assert.match(JSON.parse(first.stdout).systemMessage, /Codex 9\.9\.9 의 기록 형식을 읽지 못함/);
+  assert.equal(spawnSync(process.execPath, [notify, '--codex'], { input: '{}', encoding: 'utf8', env }).stdout, '', 'once');
+  run(tmp, stop(rollout(tmp, [{ type: 'session_meta', payload: { id: 's1', cli_version: '9.9.9' } }, started('t1'), cat('lineage')])));
+  assert.equal(JSON.parse(readFileSync(miss, 'utf8')).notified, true, 'a readable record leaves the note as it was');
 });

@@ -98,6 +98,7 @@ Codex 카운팅이 읽는 것과 남기는 것은 다음과 같습니다.
 - 읽는 것: 훅 입력이 알려 주는 이 세션의 Codex 기록 파일(rollout)에서 이번 턴 부분만. 그중 도구 호출 기록과, `$banker-<이름>` 으로 부른 스킬을 Codex 가 넣은 머리 줄의 `skills/banker-<이름>/SKILL.md` 경로만 봅니다. 이 Codex 에 설치된 banker 스킬 이름만 셉니다.
 - 보지 않는 것: 사용자가 입력한 글, 모델의 답, 도구 결과, 스킬 본문.
 - 로컬에 남기는 것: Claude Code 와 같은 `usage-log`, `used-skills.json` 의 스킬 이름과 시간대, 같은 턴을 두 번 세지 않게 하는 최근 턴 키(`codex-count-turns`, Codex 세션 ID 와 턴 ID, 최근 100개).
+- 로컬에 남기는 것(추가): 이 훅이 기록 형식을 읽지 못한 Codex 버전(`codex-shape-miss.json`, 버전과 알림 여부만). 다음 세션 시작 때 경고를 한 번 보이는 데만 쓰고 전송하지 않습니다.
 - 전송하는 것: Claude Code 와 같은 체크인 `{version, os, counts}` 입니다. 세션 ID 와 턴 ID 는 전송하지 않습니다.
 
 Codex 훅은 Codex 샌드박스 밖에서 돌므로, 샌드박스가 네트워크를 막아도 업데이트 조회와 체크인은 Claude Code 와 같이 나갑니다.\

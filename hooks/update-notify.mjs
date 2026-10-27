@@ -22,6 +22,7 @@ import {
   UPDATE_CHECK_PATH, updateCheckDue,
   noUpdateCheck, countingActive, endpoint,
   installedVersion, compareVersions, writeUpdateCache, readUsedSkills, readRegular,
+  CODEX_SHAPE_MISS_PATH, writeByRename,
 } from '../bin/lib/telemetry-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -83,14 +84,26 @@ function buildMessage(latest, installed, cached) {
 // compareVersions null(미확정·malformed)·구버전·동일 → 무고지. 고지 후 notified 를 기록해 재고지를 막는다.
 // 고지 문구는 buildMessage 가 만든다(로컬 changedSkills∩써본스킬이 있으면 개인화, 없으면 일반).
 function maybeNotify(cached) {
-  if (!cached) return;
+  if (!cached) return '';
   const installed = installedVersion();
   const cmp = compareVersions(cached.latest, installed);
-  if (cmp === null || cmp <= 0) return;          // 미확정/구/동일 → 무고지
-  if (cached.notified === cached.latest) return;  // 이미 고지한 버전 → dedupe
-  const msg = buildMessage(cached.latest, installed, cached);
-  process.stdout.write(JSON.stringify({ systemMessage: msg }));
+  if (cmp === null || cmp <= 0) return '';          // 미확정/구/동일 → 무고지
+  if (cached.notified === cached.latest) return '';  // 이미 고지한 버전 → dedupe
   writeUpdateCache({ notified: cached.latest }); // 형제 필드(latest/checkedAt/changedSkills) 보존하며 notified 만 병합.
+  return buildMessage(cached.latest, installed, cached);
+}
+
+// Codex: 사용량 카운팅 훅이 이 Codex 판의 기록 형식을 읽지 못했으면(codex-shape-miss.json) 한 번 알린다.
+// 카운트가 조용히 0 으로 남지 않게 하려는 것이다. 업데이트 확인을 끈 사용자에게도 알린다.
+export function shapeMissNotice() {
+  try {
+    const miss = JSON.parse(readRegular(CODEX_SHAPE_MISS_PATH));
+    if (!miss || typeof miss.version !== 'string' || miss.notified) return '';
+    writeByRename(CODEX_SHAPE_MISS_PATH, JSON.stringify({ version: miss.version, notified: true }));
+    return `banker 사용량 카운팅이 Codex ${miss.version.slice(0, 40)} 의 기록 형식을 읽지 못함. $banker-update-banker 로 banker 를 업데이트하고, 그래도 같으면 알려 주십시오`;
+  } catch {
+    return '';
+  }
 }
 
 // 갱신 fetcher 절대경로 결정: count-default-on 활성(countingActive) + 엔드포인트 설정 시
@@ -114,11 +127,14 @@ async function main() {
   // SessionStart payload 를 드레인(파이프 위생). 내용을 쓰지 않으므로 파싱 실패해도 무해.
   try { await readStdin(); } catch { /* stdin 없음/오류 무해 */ }
 
-  if (noUpdateCheck()) return; // opt-out - 무동작.
-
-  const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
-  maybeNotify(cached);
-  if (updateCheckDue(cached)) spawnFetcher(); // 갱신은 백그라운드로 위임. 실패한 시도(triedAt)에서도 하루를 쉰다.
+  const notes = process.argv.includes('--codex') ? [shapeMissNotice()] : [];
+  if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.
+    const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
+    notes.unshift(maybeNotify(cached));
+    if (updateCheckDue(cached)) spawnFetcher(); // 갱신은 백그라운드로 위임. 실패한 시도(triedAt)에서도 하루를 쉰다.
+  }
+  const msg = notes.filter(Boolean).join('\n');
+  if (msg) process.stdout.write(JSON.stringify({ systemMessage: msg }));
 }
 
 // 직접 실행(훅)일 때만 main() 을 돌린다. import(테스트)시엔 chooseFetcher 만 노출하고 main 은 미실행.

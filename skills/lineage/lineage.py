@@ -752,6 +752,19 @@ def _codex_rollouts(pattern):
     return sorted(found, key=_mtime)
 
 
+def _codex_meta(path):
+    """The session_meta payload a rollout opens with, else None (not a Codex rollout, or unreadable). Only a regular
+    file is opened, so a named pipe is not waited on."""
+    try:
+        if not stat.S_ISREG(os.stat(str(path)).st_mode):
+            return None
+        with open(path, encoding="utf-8") as f:
+            obj = json.loads(f.readline())
+        return obj["payload"] if obj.get("type") == "session_meta" and isinstance(obj.get("payload"), dict) else None
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError, KeyError, TypeError, AttributeError):
+        return None
+
+
 def _codex_cwd(path):
     """The cwd a rollout's first record (session_meta) names, else None. A subagent's rollout (its source names
     the parent thread) gives None: what the parent handed it reads as a user turn, so it is no session of the user."""
@@ -2846,6 +2859,10 @@ def _read_all_sessions(args):
     for p in files:
         name = discover_session_name(p) or (p.stem[-36:] if p.stem.startswith("rollout-") else p.stem)[:8]
         part = _load_turns_from(p, args.unsafe_schema, p.stem, name)
+        meta = _codex_meta(p)
+        if meta is not None and not any(t["role"] == "user" for t in part):
+            print(f"[lineage] WARN: {p.name}: no user turn read from this Codex {meta.get('cli_version', '?')} "
+                  "record (a new record shape?); left out", file=sys.stderr)
         fill_missing_ts(part)
         for t in part:
             t["session_ts"] = starts[p] or "9999"
@@ -2889,7 +2906,21 @@ def _read_discovered(args):
 def _read_input(args):
     """(exit code or None, raw turns, session id, jsonl path) from the source the flags name: a Claude Code
     transcript or a Codex session record (rollout), told apart by its first record. The code is 2 when there is no
-    source, or the code a schema marker stopped the read with."""
+    source, or the code a schema marker stopped the read with. A Codex rollout that gives no user turn stops with 2
+    too: every Codex session starts with what the user typed, so none means this Codex version writes its record in a
+    shape lineage does not read, and an empty page would hide that."""
+    rc, turns, session_id, jsonl_path = _read_source(args)
+    meta = _codex_meta(jsonl_path) if rc is None and jsonl_path is not None else None
+    if meta is not None and not any(t["role"] == "user" for t in turns):
+        print(f"[lineage] ERROR: {jsonl_path.name} is a Codex {meta.get('cli_version', '?')} session record, but no "
+              "user turn was read from it; this Codex version may write its record in a new shape "
+              "(nothing written; update banker or report it)", file=sys.stderr)
+        return 2, [], session_id, None
+    return rc, turns, session_id, jsonl_path
+
+
+def _read_source(args):
+    """(exit code or None, raw turns, session id, jsonl path) as read, before the Codex shape check."""
     try:
         if args.all_sessions:
             return _read_all_sessions(args)

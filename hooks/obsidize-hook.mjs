@@ -80,7 +80,9 @@ function statements(command) {
       if (two === '&&' || two === '||') i++;
     } else cur += c;
   }
-  return [...out, cur];
+  // A lone quote (an apostrophe in a here-string or a comment) leaves the scan inside quotes to the end; then the plain
+  // split is taken too, so such a command is not missed.
+  return quote ? [...out, cur, ...command.split(/;|&&|\|\||\r?\n/)] : [...out, cur];
 }
 const PAGE_NAME_RE = /^[\w.-]+\.md$/;
 

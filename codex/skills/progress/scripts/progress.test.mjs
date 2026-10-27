@@ -103,3 +103,9 @@ test('run through a linked folder, the script still prints (the main check compa
   assert.equal(r.status, 0);
   assert.match(r.stdout, /\[>\] 링크로 실행/);
 });
+
+test('a rollout whose requests cannot be read says so instead of an empty view', () => {
+  const f = write('r6.jsonl', [{ type: 'session_meta', payload: { id: ID, cwd: '/w', cli_version: '9.9.9' } }, { type: 'event_msg', payload: { type: 'user_said_v2', text: 'x' } }]);
+  assert.match(render(f), /경고: 이 Codex 9\.9\.9 기록에서 사용자 요청을 하나도 읽지 못함/);
+  assert.doesNotMatch(render(write('r7.jsonl', [meta('/w'), said('요청')])), /경고/);
+});

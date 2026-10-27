@@ -3944,6 +3944,15 @@ class TestMainPaths(_ReviewCase):
         with mock.patch.dict(os.environ, dict(env, CODEX_THREAD_ID="../x")):
             self.assertNotEqual(str(L.auto_discover_jsonl()), mine)
 
+    def test_a_codex_record_in_an_unknown_shape_stops_instead_of_an_empty_page(self):
+        self._write([{"type": "session_meta", "payload": {"id": "x", "cwd": "/w", "cli_version": "9.9.9"}},
+                     {"type": "event_msg", "payload": {"type": "user_said_v2", "text": "hi"}},
+                     {"type": "event_msg", "payload": {"type": "agent_message", "message": "ok"}}])
+        rc, err = self._rulebase()
+        self.assertEqual(rc, 2)
+        self.assertIn("Codex 9.9.9 session record, but no user turn was read", err)
+        self.assertEqual(self._page(), "", "no empty page")
+
     def test_a_claude_transcript_with_no_turns_still_renders(self):
         self._write([{"type": "summary", "summary": "x"}])
         self.assertEqual(self._rulebase()[0], 0)

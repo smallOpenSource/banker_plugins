@@ -225,6 +225,54 @@ function setupCodex(dryRun, scope) {
 }
 
 /* ---------- doctor ---------- */
+// The newest Codex session record (rollout) under <base>/sessions/YYYY/MM/DD/, or null.
+function newestRollout(base) {
+  let at = path.join(base, 'sessions');
+  for (let depth = 0; depth < 3; depth++) {
+    let names = [];
+    try { names = fs.readdirSync(at).filter(n => /^\d+$/.test(n)).sort(); } catch { return null; }
+    if (!names.length) return null;
+    at = path.join(at, names[names.length - 1]);
+  }
+  try {
+    const files = fs.readdirSync(at).filter(n => /^rollout-.*\.jsonl$/.test(n)).sort();
+    return files.length ? path.join(at, files[files.length - 1]) : null;
+  } catch { return null; }
+}
+
+// What lineage, progress and the usage-count hook look for in a rollout. Codex does not promise its record shape,
+// so after a Codex update this tells whether banker still reads it (a miss would otherwise leave empty results).
+function codexShapeReport(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return null;
+    const read = (start, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, start); return b.toString('utf8'); };
+    const head = read(0, Math.min(st.size, 1 << 20)).split('\n')[0];
+    const body = read(Math.max(0, st.size - (32 << 20)), Math.min(st.size, 32 << 20));
+    let version = '';
+    try { const m = JSON.parse(head); version = m.type === 'session_meta' ? String((m.payload || {}).cli_version || '?') : ''; } catch {}
+    return {
+      version,
+      turnStart: /"task_started"[^\n]*"turn_id"|"turn_id"[^\n]*"task_started"/.test(body),
+      userText: /"(user_message|UserMessage)"/.test(body),
+      toolCall: /"type":"[a-z_]+_call"/.test(body),
+    };
+  } catch { return null; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
+}
+
+function doctorCodexShape(base) {
+  const file = newestRollout(base);
+  if (!file) { log('  Codex record shape: no session record yet (run one Codex session, then doctor again)'); return; }
+  const r = codexShapeReport(file);
+  if (!r || !r.version) { log(`  ⚠ Codex record shape: ${path.basename(file)} does not open with session_meta - lineage, progress and usage counting cannot read it`); return; }
+  const mark = (ok) => (ok ? 'ok' : 'MISSING');
+  log(`  Codex record shape (Codex ${r.version}, ${path.basename(file)}): turn start ${mark(r.turnStart)}, user text ${mark(r.userText)}, tool calls ${mark(r.toolCall)}`);
+  if (!r.turnStart || !r.userText) log('  ⚠ banker may not read this Codex version\'s records (lineage stops, progress warns, usage counting misses); update banker');
+  else if (!r.toolCall) log('    (no tool calls: fine for a session that used no tools)');
+}
+
 function doctor() {
   log(`banker v${version()}  (pkg: ${PKG_ROOT})`);
   log(`plugin.json version: ${(() => { try { return require(PLUGIN_JSON).version; } catch { return '?'; } })()}`);
@@ -236,7 +284,8 @@ function doctor() {
   let installed = [];
   try { installed = fs.readdirSync(sdir).filter(d => d.startsWith('banker-')); } catch {}
   log(`  codex CLI: ${have('codex') ? 'found' : 'NOT found'}`);
-  log(`  installed banker skills in ~/.codex/skills: ${installed.length}`);
+  log(`  installed banker skills in ${sdir}: ${installed.length}`);
+  doctorCodexShape(base);
   // Codex only discovers a skill when its dir name equals the SKILL.md `name:` — flag any mismatch.
   const mismatched = installed
     .map(d => ({ d, name: readSkillName(path.join(sdir, d, 'SKILL.md')) }))
