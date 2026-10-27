@@ -89,11 +89,11 @@ function skillSource(s) { return s.target === 'codex-only' ? path.join(PKG_ROOT,
 
 function homeDir() { return os.homedir(); }
 function claudePluginsDir() { return path.join(homeDir(), '.claude', 'plugins'); }
-// User scope is where Codex itself reads skills and hooks: $CODEX_HOME when set (an absolute path), else ~/.codex.
+// User scope is where Codex itself reads skills and hooks: $CODEX_HOME when set, else ~/.codex.
 function codexBase(scope) {
   if (scope === 'project') return path.join(process.cwd(), '.codex');
   const ch = process.env.CODEX_HOME;
-  return ch && path.isAbsolute(ch) ? ch : path.join(homeDir(), '.codex');
+  return ch ? path.resolve(ch) : path.join(homeDir(), '.codex'); // a relative one from here, as Codex reads it
 }
 
 function have(bin) {

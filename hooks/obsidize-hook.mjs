@@ -51,11 +51,37 @@ const CODEX = process.argv.includes('--codex');
 // A statement that IS `omx wiki ingest|add` (omx its first word, PowerShell's `&` allowed before it), with or without
 // the wiki_ prefix the CLI also takes, and omx.cmd/omx.ps1 on Windows. A command may set the JSON up first
 // (`$j = '...'; omx wiki <ingest> --input $j`, as models write it for PowerShell), so each statement split at
-// `;`, `&&`, `||` and line ends is looked at. `echo omx wiki add` is not one. The split ignores quotes, so a quoted
-// `;` can wake the hook too: what keeps a woken hook inside the vault is the rest (the CLI's JSON names, regular
-// single-name pages in a real omx_wiki/ of the session folder).
+// `;`, `&&`, `||` and line ends outside quotes is looked at. `echo omx wiki add` and `echo "x; omx wiki add"` are
+// not one. This only spares the hook needless runs: what keeps a woken hook inside the vault is the rest (the CLI's
+// JSON names, regular single-name pages, a canonicalizer pinned to the checked omx_wiki/ of the session folder).
 const OMX_WIKI_WRITE_RE = /^\s*(?:&\s*)?['"]?omx(?:\.cmd|\.ps1)?['"]?\s+wiki\s+(?:wiki_)?(?:ingest|add)\b/;
-const STATEMENT_END = /;|&&|\|\||\r?\n/;
+
+// A command's statements, split at `;`, `&&`, `||` and line ends outside quotes. A backslash (sh) or a backtick
+// (PowerShell) keeps the next character; inside single quotes nothing is special.
+function statements(command) {
+  const out = [];
+  let cur = '';
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    const two = command.slice(i, i + 2);
+    if (quote !== "'" && (c === '\\' || c === '`')) {
+      cur += command.slice(i, i + 2);
+      i++;
+    } else if (quote) {
+      if (c === quote) quote = '';
+      cur += c;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      cur += c;
+    } else if (c === ';' || c === '\n' || c === '\r' || two === '&&' || two === '||') {
+      out.push(cur);
+      cur = '';
+      if (two === '&&' || two === '||') i++;
+    } else cur += c;
+  }
+  return [...out, cur];
+}
 const PAGE_NAME_RE = /^[\w.-]+\.md$/;
 
 function readStdin() {
@@ -237,7 +263,7 @@ function writeRoot(payload) {
 // Codex fires this after every shell call; only an `omx wiki` write is ours.
 function codexWikiWrite(payload) {
   const command = payload?.tool_input?.command;
-  return typeof command === 'string' && command.split(STATEMENT_END).some((part) => OMX_WIKI_WRITE_RE.test(part));
+  return typeof command === 'string' && statements(command).some((part) => OMX_WIKI_WRITE_RE.test(part));
 }
 
 async function main() {

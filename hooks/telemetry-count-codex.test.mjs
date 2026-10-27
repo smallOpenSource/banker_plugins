@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { namesIn, turnKey, turnSkills } from './telemetry-count-codex.mjs';
+import { codexHomeOf, namesIn, turnKey, turnSkills } from './telemetry-count-codex.mjs';
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'telemetry-count-codex.mjs');
 const tmps = [];
@@ -145,4 +145,25 @@ test('a pipe given as the transcript is not waited on', { skip: process.platform
   const res = run(tmp, stop(fifo));
   assert.deepEqual([res.status, res.signal], [0, null]);
   assert.equal(read(tmp).length, 0);
+});
+
+test('the Codex home comes from where the rollout sits, so a relative CODEX_HOME does not matter', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const home = codexHome(tmp);
+  const day = join(home, 'sessions', '2026', '10', '28');
+  mkdirSync(day, { recursive: true });
+  const f = join(day, 'rollout-x.jsonl');
+  writeFileSync(f, `${[started('t1'), cat('lineage')].map((x) => JSON.stringify(x)).join('\n')}\n`);
+  assert.equal(codexHomeOf(f, {}), home);
+  assert.equal(codexHomeOf('rel/x.jsonl', { CODEX_HOME: '/c' }), '/c');
+  run(tmp, stop(f), { CODEX_HOME: 'not-here' });
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]), ['banker:lineage']);
+});
+
+test('a turn that started far from the end is still found by widening the read', () => {
+  const tmp = mkTmp();
+  const pad = { type: 'event_msg', payload: { type: 'token_count', pad: 'x'.repeat(4000) } };
+  const f = rollout(tmp, [started('t1'), cat('lineage'), ...Array(600).fill(pad)]);
+  assert.deepEqual(turnSkills(f, 't1'), ['banker:lineage'], 'about 2.4 MB after the turn start, past the first 1 MB read');
 });

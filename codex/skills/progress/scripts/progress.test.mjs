@@ -1,7 +1,7 @@
 // Tests for the Codex progress script. Run from the repo root: node --test codex/skills/progress/scripts/progress.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,4 +89,17 @@ test('Codex 0.160: requests from completed UserMessage items, and a shell call m
   assert.match(text, /계획: .*q\.md/);
   assert.match(text, /\[>\] 계획 읽어\n {6}- exec_command: cat /);
   assert.equal(text.match(/계획 읽어/g).length, 1, 'the same request written in both forms shows once');
+});
+
+test('run through a linked folder, the script still prints (the main check compares real paths)', (t) => {
+  const link = join(root, 'linked-scripts');
+  try {
+    symlinkSync(dirname(SCRIPT), link, 'dir');
+  } catch {
+    return t.skip('no folder links');
+  }
+  const f = write('r5.jsonl', [meta('/nowhere'), said('링크로 실행')]);
+  const r = spawnSync(process.execPath, [join(link, 'progress.mjs'), '--rollout', f], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /\[>\] 링크로 실행/);
 });

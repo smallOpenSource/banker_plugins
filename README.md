@@ -231,7 +231,7 @@ banker uninstall        # 제거
 |---|---|---|
 | Claude Code | 플러그인 레지스트리 | `claude plugin marketplace add` + 설치 → `/banker:*` (`settings.json` 직접수정 없음) |
 | Codex CLI | `~/.codex/skills/banker-*/`, `~/.codex/prompts/banker-*.md` | 기존 `banker-*` 정리 후 복사(멱등). `AGENTS.md`·`config.toml` 미변경 |
-| Codex CLI | `~/.codex/hooks.json`, `~/.codex/hooks-custom/banker/` | 업데이트 알림(`SessionStart`)과 사용량 카운팅(`Stop`) 훅. 사본은 작업 폴더 밖에 두고, 이벤트마다 맨 뒤에 묶음 1개를 더하며, 쓰기 전 `hooks.json.banker.bak` 백업. `banker hooks status`, `banker hooks enable <이름>`, `banker hooks disable <이름>` 으로 확인하고 켜고 끔. Codex 를 다시 열 때 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돎 |
+| Codex CLI | `~/.codex/hooks.json`, `~/.codex/hooks-custom/banker/` | 업데이트 알림(`SessionStart`)과 사용량 카운팅(`Stop`) 훅. 사본은 작업 폴더 밖에 두고, 이벤트마다 맨 뒤에 묶음 1개를 더하며, 쓰기 전 `hooks.json.banker.bak` 백업. `banker hooks status`, `banker hooks enable <이름>`, `banker hooks disable <이름>` 으로 확인하고 켜고 끔. Codex 를 다시 열 때 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돎. Codex 홈(`CODEX_HOME`)이 지금 폴더나 그 저장소 안이면 샌드박스가 고칠 수 있어 훅을 설치하지 않음 |
 
 **플러그인 자체 훅 — `hooks/hooks.json` (설치 시 Claude Code에서 자동 발화)**
 

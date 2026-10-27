@@ -13,7 +13,7 @@
  * 사용: node progress.mjs [--depth N] [--rollout FILE] [--follow] [--pane on|off]
  */
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -231,8 +231,14 @@ function pane(mode, file, depth) {
   return 'progress 칸을 오른쪽에 엶(2초마다 갱신). 닫기: --pane off';
 }
 
+// 기록 크기, 바뀐 시각, 칸 폭이 그대로면 다시 읽지 않는다(2초마다 32 MB 를 읽지 않게).
 function follow(file, depth) {
+  let seen = '';
   const draw = () => {
+    let key = '';
+    try { const st = statSync(file); key = `${st.size}:${st.mtimeMs}:${process.stdout.columns}`; } catch { key = 'gone'; }
+    if (key === seen) return;
+    seen = key;
     let text;
     try { text = render(file, depth); } catch (e) { text = `읽지 못함: ${e.message}`; }
     const width = process.stdout.columns || 80;

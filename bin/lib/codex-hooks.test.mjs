@@ -1,12 +1,12 @@
 // Tests for codex-hooks.mjs. Run from the repo root: node --test bin/lib/codex-hooks.test.mjs
 import { strict as assert } from 'node:assert';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join, posix as P } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { codexPaths, disableHooks, enableHooks, formatCommand, HOOKS, hookStatus, removeAll, safeNode } from './codex-hooks.mjs';
+import { codexPaths, disableHooks, enableHooks, formatCommand, homeInWorkspace, HOOKS, hookStatus, PAYLOAD, removeAll, safeNode } from './codex-hooks.mjs';
 
 const PKG = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = mkdtempSync(join(tmpdir(), 'codex-hooks-test-'));
@@ -138,5 +138,34 @@ test('every hook copy loads from the copy folder alone (no import left behind in
     const r = spawnSync(process.execPath, [script, ...HOOKS[id].args], { input: '{}', encoding: 'utf8', env, cwd: root, timeout: 15000 });
     assert.equal(r.status, 0, `${id}: ${r.stderr}`);
     assert.doesNotMatch(r.stderr, /ERR_MODULE_NOT_FOUND|Cannot find/, id);
+  }
+});
+
+test('a Codex home inside the working folder or its repository gets no hooks; the home folder itself is no workspace', () => {
+  const repo = join(root, `repo${n++}`);
+  mkdirSync(join(repo, 'sub'), { recursive: true });
+  spawnSync('git', ['init', '-q', repo]);
+  const p = codexPaths({ CODEX_HOME: join(repo, '.codex') });
+  mkdirSync(p.home);
+  const r = enableHooks(p, ['count'], PKG, process.execPath, join(repo, 'sub'));
+  assert.equal(r.code, 1);
+  assert.match(r.msg, /작업 폴더 안/);
+  assert.ok(!existsSync(p.hooks) && !existsSync(p.dir), 'nothing written');
+  assert.equal(homeInWorkspace(join(repo, '.codex'), repo), true);
+  assert.equal(homeInWorkspace(join(homedir(), '.codex'), homedir()), false);
+  assert.equal(homeInWorkspace(join(root, 'elsewhere'), join(repo, 'sub')), false);
+  assert.equal(codexPaths({ CODEX_HOME: 'rel' }).home, join(process.cwd(), 'rel'), 'a relative CODEX_HOME is read from here, as Codex reads it');
+});
+
+test('the copy carries everything the hooks import or start: relative imports and the scripts they name resolve inside it', () => {
+  const inCopy = new Set(PAYLOAD);
+  const names = new Set(PAYLOAD.map((f) => basename(f)));
+  for (const rel of PAYLOAD.filter((f) => f.endsWith('.mjs'))) {
+    const src = readFileSync(join(PKG, ...rel.split('/')), 'utf8');
+    for (const m of src.matchAll(/(?:from\s+|import\(\s*)'(\.{1,2}\/[^']+)'/g)) {
+      const target = P.normalize(P.join(P.dirname(rel), m[1]));
+      assert.ok(inCopy.has(target), `${rel} imports ${target}, which the copy lacks`);
+    }
+    for (const m of src.matchAll(/'([\w.-]+\.mjs)'/g)) assert.ok(names.has(m[1]), `${rel} names ${m[1]}, which the copy lacks`);
   }
 });
