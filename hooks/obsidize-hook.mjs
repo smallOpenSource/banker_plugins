@@ -48,9 +48,14 @@ const RECENT_MS = 10_000;
 // Stay inside the `timeout: 5` declared in hooks.json.
 const CANONICALIZE_TIMEOUT_MS = 4000;
 const CODEX = process.argv.includes('--codex');
-// A command that IS `omx wiki ingest|add` (omx the first word, PowerShell's `&` allowed before it), with or without
-// the wiki_ prefix the CLI also takes, and omx.cmd/omx.ps1 on Windows. `echo omx wiki add` is not one.
+// A statement that IS `omx wiki ingest|add` (omx its first word, PowerShell's `&` allowed before it), with or without
+// the wiki_ prefix the CLI also takes, and omx.cmd/omx.ps1 on Windows. A command may set the JSON up first
+// (`$j = '...'; omx wiki <ingest> --input $j`, as models write it for PowerShell), so each statement split at
+// `;`, `&&`, `||` and line ends is looked at. `echo omx wiki add` is not one. The split ignores quotes, so a quoted
+// `;` can wake the hook too: what keeps a woken hook inside the vault is the rest (the CLI's JSON names, regular
+// single-name pages in a real omx_wiki/ of the session folder).
 const OMX_WIKI_WRITE_RE = /^\s*(?:&\s*)?['"]?omx(?:\.cmd|\.ps1)?['"]?\s+wiki\s+(?:wiki_)?(?:ingest|add)\b/;
+const STATEMENT_END = /;|&&|\|\||\r?\n/;
 const PAGE_NAME_RE = /^[\w.-]+\.md$/;
 
 function readStdin() {
@@ -133,10 +138,23 @@ function plainPage(path) {
   }
 }
 
-// Codex: the pages the `omx wiki` CLI's JSON says it wrote ({"created":[..],"updated":[..]}); else none.
+// Codex: the pages the `omx wiki` CLI's JSON says it wrote ({"created":[..],"updated":[..]}); else none. Other
+// output may come before it, so the whole output and then each line from the end is tried.
+function cliResult(stdout) {
+  const text = String(stdout ?? '');
+  for (const part of [text, ...text.split(/\r?\n/).reverse()]) {
+    try {
+      const out = JSON.parse(part);
+      if (out && typeof out === 'object' && (Array.isArray(out.created) || Array.isArray(out.updated))) return out;
+    } catch {
+      // not this one
+    }
+  }
+  return null;
+}
+
 function namesFromCli(stdout) {
-  let out;
-  try { out = JSON.parse(String(stdout ?? '')); } catch { return []; }
+  const out = cliResult(stdout);
   const list = [out?.created, out?.updated].filter(Array.isArray).flat();
   return [...new Set(list.filter((n) => typeof n === 'string' && PAGE_NAME_RE.test(n)))];
 }
@@ -209,7 +227,7 @@ function writeRoot(payload) {
 // Codex fires this after every shell call; only an `omx wiki` write is ours.
 function codexWikiWrite(payload) {
   const command = payload?.tool_input?.command;
-  return typeof command === 'string' && OMX_WIKI_WRITE_RE.test(command);
+  return typeof command === 'string' && command.split(STATEMENT_END).some((part) => OMX_WIKI_WRITE_RE.test(part));
 }
 
 async function main() {

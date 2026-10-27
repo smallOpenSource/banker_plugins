@@ -570,7 +570,7 @@ function codexTree() {
   writeFileSync(join(tree.wikiDir, 'index.md'), INDEX_BEFORE);
   return tree;
 }
-const codexPayload = (tree, command, stdout = '{"created":[],"updated":["test-page.md"],"totalAffected":1}\n') => ({
+const codexPayload = (tree, command, stdout = 'Wrote:\n{"created":[],"updated":["test-page.md"],"totalAffected":1}\n') => ({
   session_id: 's', turn_id: 't', cwd: tree.project, hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command }, tool_response: stdout,
 });
 const runCodex = (tree, payload) => spawnSync(process.execPath, [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs'), '--codex'], {
@@ -583,7 +583,7 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
   const ingest = `omx wiki wiki_ingest --input '{"title":"Test Page","content":"x","tags":[],"category":"reference"}' --json`;
   assert.equal(runCodex(tree, codexPayload(tree, ingest)).status, 0);
   assert.deepEqual(readArgv(tree), [[join(tree.wikiDir, 'test-page.md'), '--profile=omc', '--json']]);
-  for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x"]) {
+  for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x", "$j = '{}'; omx wiki wiki_ingest --input $j --json"]) {
     writeFileSync(tree.argvLog, '');
     runCodex(tree, codexPayload(tree, form));
     assert.equal(readArgv(tree).length, 1, form);
@@ -593,7 +593,7 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
 test('codex: other shell calls, other omx wiki tools, and an armed .omc/wiki change nothing', () => {
   const tree = codexTree();
   arm(tree);
-  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud', 'echo omx wiki add', 'cd w && omx wiki ingest']) {
+  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud', 'echo omx wiki add']) {
     runCodex(tree, codexPayload(tree, command));
   }
   runCodex(tree, { ...codexPayload(tree, 'omx wiki ingest'), tool_input: {} });
@@ -612,6 +612,7 @@ test('codex: a linked vault, linked or hard-linked pages, and names outside the 
   const ingest = 'omx wiki ingest --input x';
   runCodex(tree, codexPayload(tree, ingest, 'Created test-page.md\n'));
   runCodex(tree, codexPayload(tree, ingest, '{"created":["../test-page.md","a b.md"],"updated":[]}'));
+  runCodex(tree, codexPayload(tree, ingest, 'note\n{"other":["test-page.md"]}\n'));
   assert.equal(readArgv(tree).length, 0, 'names come only from the JSON lists, as plain page names');
   const outside = join(tree.tmp, 'outside');
   mkdirSync(outside);
