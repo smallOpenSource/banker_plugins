@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
-import { decide, hookCommand, lastUsage, paths, status, turnOff, turnOn } from "./codex-gate.mjs";
+import { decide, formatCommand, hookCommand, lastUsage, paths, status, turnOff, turnOn } from "./codex-gate.mjs";
 
 const CLI = fileURLToPath(new URL("./codex-gate.mjs", import.meta.url));
 const root = mkdtempSync(join(tmpdir(), "codex-gate-test-"));
@@ -121,7 +121,7 @@ test("on copies the hook into CODEX_HOME and appends one group pointing at the c
   const groups = ups(p);
   assert.equal(groups.length, 2);
   assert.deepEqual(groups[0].hooks[0], omx, "OMX keeps index 0, so its trust record still matches");
-  assert.ok(groups[1].hooks[0].command.endsWith(`"${p.copy}" hook`));
+  assert.equal(groups[1].hooks[0].command, formatCommand(process.execPath, p.copy));
   assert.equal(groups[1].hooks[0].timeout, 5);
   assert.deepEqual(readFileSync(p.copy), readFileSync(CLI), "the hook runs from a copy outside any workspace");
   assert.deepEqual(read(p.hooks).hooks.SessionStart, [{ hooks: [omx] }]);
@@ -144,7 +144,7 @@ test("on again moves only the threshold; a stale command is fixed in place", () 
   assert.match(status(p).msg, /이 판과 다름.*on 을 다시 실행/);
   assert.match(turnOn(p, 60).msg, /훅 명령을 고쳤습니다/);
   assert.equal(ups(p).length, 2, "fixed at the same index");
-  assert.ok(ups(p)[1].hooks[0].command.endsWith(`"${p.copy}" hook`));
+  assert.equal(ups(p)[1].hooks[0].command, formatCommand(process.execPath, p.copy));
   writeFileSync(p.copy, "// an older copy\n");
   assert.match(status(p).msg, /이 판과 다름/);
   turnOn(p, 60);
@@ -253,16 +253,44 @@ test("rewriting hooks.json keeps its mode", posix, () => {
   assert.equal(statSync(p.hooks).mode & 0o777, 0o600);
 });
 
-test("the hook command quotes for the platform shell and refuses unsafe paths", () => {
-  const cwd = "/work/repo";
-  assert.equal(hookCommand("/n/node", "/h/.codex/hooks-custom/g.mjs", false, cwd), "\"/n/node\" \"/h/.codex/hooks-custom/g.mjs\" hook");
-  for (const bad of ["/a$HOME/x.mjs", "/a`x`/x.mjs", "/a\"b/x.mjs", "/a\\b/x.mjs", "/a\nb/x.mjs"]) {
-    assert.equal(hookCommand("/n/node", bad, false, cwd), null, JSON.stringify(bad));
+test("the command text quotes for the platform shell", () => {
+  assert.equal(formatCommand("/n/node", "/h/.codex/hooks-custom/g.mjs", false), "\"/n/node\" \"/h/.codex/hooks-custom/g.mjs\" hook");
+  for (const bad of ["/a$HOME/x.mjs", "/a`x`/x.mjs", "/a\"b/x.mjs", "/a\\b/x.mjs", "/a\nb/x.mjs", "/a\0b/x.mjs"]) {
+    assert.equal(formatCommand("/n/node", bad, false), null, JSON.stringify(bad));
   }
-  assert.equal(hookCommand("/work/repo/bin/node", "/h/g.mjs", false, cwd), null, "a node inside the workspace");
-  assert.equal(hookCommand(join(tmpdir(), "node"), "/h/g.mjs", false, cwd), null, "a node in the temp folder");
-  assert.equal(hookCommand("C:\\Program Files\\nodejs\\node.exe", "C:\\Users\\o'k\\.codex\\g.mjs", true, "D:\\w"),
+  assert.equal(formatCommand("C:\\Program Files\\nodejs\\node.exe", "C:\\Users\\o'k\\.codex\\g.mjs", true),
     "& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\o''k\\.codex\\g.mjs' hook", "PowerShell call operator, a quote doubled");
+  assert.equal(formatCommand("C:\\n\\node.exe", "C:\\Users\\a\u2019; calc; \u2019\\g.mjs", true),
+    "& 'C:\\n\\node.exe' 'C:\\Users\\a\u2019\u2019; calc; \u2019\u2019\\g.mjs' hook", "PowerShell also reads U+2018-U+201B as quotes");
+});
+
+test("the hook command refuses a node in the temp folder, and inside Codex a node or source in the workspace", () => {
+  const ok = "/home/u/.nvm/bin/node";
+  assert.equal(hookCommand(join(tmpdir(), "node"), "/h/g.mjs", { win: false, cwd: "/w", codex: false }), null);
+  assert.notEqual(hookCommand(ok, "/h/g.mjs", { win: false, cwd: "/home/u", codex: false }), null, "a terminal at home is fine");
+  assert.equal(hookCommand(ok, "/h/g.mjs", { win: false, cwd: "/home/u", codex: true }), null, "Codex opened at home: node is in its workspace");
+  assert.equal(hookCommand(ok, "/h/g.mjs", { win: false, cwd: "/", codex: true }), null, "the source script is in that workspace too");
+  assert.notEqual(hookCommand(ok, "/h/g.mjs", { win: false, cwd: "/srv/project", codex: true }), null);
+  assert.notEqual(hookCommand("C:\\Program Files\\nodejs\\node.exe", "C:\\h\\g.mjs", { win: true, cwd: "D:\\w", codex: true }), null,
+    "Windows paths are judged by Windows rules wherever the test runs");
+  assert.equal(hookCommand("D:\\w\\node.exe", "C:\\h\\g.mjs", { win: true, cwd: "d:\\W", codex: true }), null);
+});
+
+test("status does not call a hook stale just because on would refuse to write it here", () => {
+  const p = home();
+  seed(p);
+  turnOn(p, 50);
+  const was = process.env.CODEX_THREAD_ID;
+  const cwd = process.cwd();
+  process.env.CODEX_THREAD_ID = "t";
+  process.chdir("/");
+  try {
+    assert.match(status(p).msg, /켜짐\(임계 50%\)/);
+  } finally {
+    process.chdir(cwd);
+    if (was === undefined) delete process.env.CODEX_THREAD_ID;
+    else process.env.CODEX_THREAD_ID = was;
+  }
 });
 
 function cli(p, args, input) {

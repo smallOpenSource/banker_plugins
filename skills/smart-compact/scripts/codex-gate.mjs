@@ -28,7 +28,7 @@ import {
   renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -190,19 +190,31 @@ async function runHook(p) {
   return 0;
 }
 
-const under = (p, dir) => {
-  const r = relative(dir, p);
-  return r === "" || (!r.startsWith("..") && !isAbsolute(r));
-};
-
-// The hook command, or null when a path makes it unsafe. POSIX: both paths in double quotes, refusing what a shell
-// still reads there. Windows: PowerShell's call operator with single-quoted paths, a quote doubled. A node inside
-// the workspace or the temp folder is refused too: a sandboxed session could change it and Codex would run it
-// outside the sandbox.
-export function hookCommand(node, script, win = process.platform === "win32", cwd = process.cwd()) {
-  if (/[\r\n]/.test(node + script) || [cwd, tmpdir()].some((d) => under(node, d))) return null;
-  if (win) return `& '${node.replace(/'/g, "''")}' '${script.replace(/'/g, "''")}' hook`;
+// The command text, or null for a path the platform shell would still read into. POSIX: both paths in double
+// quotes, refusing $, `, " and backslashes. Windows: PowerShell's call operator with single-quoted paths, every
+// character PowerShell takes for a single quote (' and U+2018-U+201B) doubled.
+export function formatCommand(node, script, win = process.platform === "win32") {
+  if (/[\r\n\0]/.test(node + script)) return null;
+  if (win) {
+    const q = (s) => s.replace(/['\u2018-\u201B]/g, "$&$&");
+    return `& '${q(node)}' '${q(script)}' hook`;
+  }
   return /["$`\\]/.test(node + script) ? null : `"${node}" "${script}" hook`;
+}
+
+// The command `on` writes, or null when a location makes it unsafe. Codex runs a trusted hook outside the sandbox,
+// so a node in the temp folder is refused, and when `on` itself runs inside Codex (CODEX_THREAD_ID), a node or a
+// source script inside the workspace is refused too: the sandboxed session could change it first. Paths are judged
+// by the target platform's rules.
+export function hookCommand(node, script, opts = {}) {
+  const { win = process.platform === "win32", cwd = process.cwd(), codex = Boolean(process.env.CODEX_THREAD_ID) } = opts;
+  const P = win ? win32 : posix;
+  const under = (f, dir) => {
+    const r = P.relative(dir, f);
+    return r === "" || (!r.startsWith("..") && !P.isAbsolute(r));
+  };
+  if (under(node, tmpdir()) || (codex && [node, SELF].some((f) => under(f, cwd)))) return null;
+  return formatCommand(node, script, win);
 }
 
 const COPY_RE = new RegExp(`[/\\\\]${COPY_NAME.replace(/\./g, "\\.")}["']? hook$`);
@@ -276,7 +288,7 @@ export function turnOn(p, threshold, node = process.execPath) {
   const { doc, groups, why } = loadHooks(p.hooks);
   if (why) return { code: 1, msg: `바꾸지 않음: ${why}` };
   const command = hookCommand(node, p.copy);
-  if (!command) return { code: 1, msg: "바꾸지 않음: node 나 훅 경로가 안전하지 않음(셸이 읽는 글자, 작업 폴더나 임시 폴더의 node)" };
+  if (!command) return { code: 1, msg: "바꾸지 않음: node 나 훅 경로가 안전하지 않음(셸이 읽는 글자, 임시 폴더의 node, Codex 작업 폴더 안의 node 나 스크립트). Codex 밖 터미널에서 실행하십시오" };
   const bad = installCopy(p);
   if (bad) return { code: 1, msg: `바꾸지 않음: ${bad}` };
   const done = placeHook(p, doc, groups, command);
@@ -308,7 +320,7 @@ export function turnOff(p) {
 function staleness(p, groups, node) {
   const at = findOurs(groups);
   if (!at) return "no-hook";
-  if (groups[at[0]].hooks[at[1]].command !== hookCommand(node, p.copy)) return "stale";
+  if (groups[at[0]].hooks[at[1]].command !== formatCommand(node, p.copy)) return "stale";
   try {
     return readFileSync(p.copy).equals(readFileSync(SELF)) ? "" : "stale";
   } catch {

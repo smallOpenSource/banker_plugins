@@ -43,10 +43,12 @@ omx wiki wiki_delete --input '{"page":"<slug>"}' --json
 - 병합본처럼 긴 본문은 JSON 을 파일로 쓰고 `--input "$(cat <파일>)"` 로 넘긴다. 셸 인용이 깨지지 않게 하기 위해서다(bash).
 - Windows 에서 PowerShell 로 `omx` 를 부를 때: Windows PowerShell 5.1 은 `omx.cmd` 에 넘기는 인자에서 큰따옴표를 지우고,
   공백에서 인자를 나누고, 한글을 깨뜨린다(Windows 박스 실측). 그래서 JSON 을 아래 `Arg` 로 바꿔 넘긴다.
-  공백과 ASCII 밖 글자는 `\uXXXX` 로, 큰따옴표는 `\"` 로 바꾼다. 따옴표, 역슬래시, 한글, 줄바꿈이 든 본문도 그대로 왕복한다.
+  본문 속 큰따옴표와 공백, ASCII 밖 글자, cmd 가 읽는 `% & | < > ^ !` 는 `\uXXXX` 로, JSON 구조의 큰따옴표는 `\"` 로 바꾼다.
+  따옴표(홀수 개 포함), 역슬래시, `%TEMP%`, `&`, 한글, 줄바꿈이 든 본문도 그대로 왕복하고 명령으로 읽히지 않는다(박스 실측).
   ```powershell
   function Arg([string]$s) {
-    $a = [regex]::Replace($s, '[^\x21-\x7E]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+    $a = [regex]::Replace($s, '(?<!\\)((?:\\\\)*)\\"', '$1\u0022')
+    $a = [regex]::Replace($a, '[^\x21-\x7E]|[%&|<>^!]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
     $a -replace '(\\*)"', '$1$1\"'
   }
   $j = @{ title = "<영문 제목>"; content = "<본문>"; tags = @("<태그>"); category = "pattern" } | ConvertTo-Json -Compress
