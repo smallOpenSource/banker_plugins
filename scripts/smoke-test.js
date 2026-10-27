@@ -55,6 +55,13 @@ try {
   const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
   ok(copies === 63, `codex dry-run plans 63 skill copies (got ${copies})`);
+  const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
+    .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
+  const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
+  ok(coCopies === codexOnlyNames.length && codexOnlyNames.includes('graceful-pause'),
+     `codex dry-run plans the codex-only skills from codex/skills/ (got ${coCopies} of ${codexOnlyNames.length})`);
+  const cmdSkills = (codexOut.match(/\[dry-run\] write command skill commands\//g) || []).length;
+  ok(cmdSkills === 2, `codex dry-run also writes the 2 commands as skills, Codex 0.144+ having no custom prompts (got ${cmdSkills})`);
   ok(codexOut.includes('copy skills/obsidizer '), 'codex dry-run includes the new 0.6.0 obsidizer skill (target both)');
   ok(!codexOut.includes('copy skills/deep-interview '), 'deep-interview NOT bundled (already native in OMC+OMX)');
   const cmdCopies = (codexOut.match(/\[dry-run\] copy commands\//g) || []).length;
@@ -80,8 +87,16 @@ try {
   // covers the reverse direction (a skill on disk but absent from the manifest ships to Claude and
   // never to Codex, a silent claude-only skill), which nothing else checked. Keep this assertion
   // instead of appending another per-release hardcoded name array.
-  const mfSkillSurfaces = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
+  const mfAllSkills = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.type === 'skill');
+  // codex-only skills (Codex counterparts of Claude Code mods) live in codex/skills/, never in skills/: the Claude
+  // plugin loads skills/ as a whole, so one there would show up twice in Claude Code.
+  const mfCodexOnly = mfAllSkills.filter((s) => s.target === 'codex-only').map((s) => s.name).sort();
+  const diskCodexOnly = fs.readdirSync(path.join(root, 'codex', 'skills'))
+    .filter((d) => fs.existsSync(path.join(root, 'codex', 'skills', d, 'SKILL.md'))).sort();
+  ok(JSON.stringify(mfCodexOnly) === JSON.stringify(diskCodexOnly),
+     `manifest codex-only == codex/skills/ ([${mfCodexOnly.join(', ')}] vs [${diskCodexOnly.join(', ')}])`);
+  const mfSkillSurfaces = mfAllSkills.filter((s) => s.target !== 'codex-only');
   const mfSkills = mfSkillSurfaces.map((s) => s.name).sort();
   const diskSkills = fs.readdirSync(path.join(root, 'skills'))
     .filter((d) => fs.existsSync(path.join(root, 'skills', d, 'SKILL.md'))).sort();
@@ -221,7 +236,13 @@ try {
   run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  ok(installed.length === 63, `real codex install has 63 banker-* skills (got ${installed.length})`);
+  const wantSkills = 63 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 63 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
+     'the commands and the codex-only skills are installed as Codex skills');
+  const setupSkill = fs.readFileSync(path.join(instDir, 'banker-setup', 'SKILL.md'), 'utf8');
+  ok(/^---\nname: banker-setup\ndescription: "/.test(setupSkill) && setupSkill.includes('$ARGUMENTS'),
+     'the setup command skill has its own name and description and keeps the command body');
   ok(!fs.existsSync(staleDir), 'stale banker-* swept on reinstall (no leftover duplicate)');
   ok(!fs.existsSync(renamedAwayDir), 'renamed-away banker-game-qa swept on update (replaced by play-qa)');
   ok(installed.includes('banker-play-qa'), 'renamed skill installed as banker-play-qa');

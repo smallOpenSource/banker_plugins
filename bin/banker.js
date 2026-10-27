@@ -81,7 +81,10 @@ function assertNotRoot() {
 }
 
 function readManifest() { return JSON.parse(fs.readFileSync(MANIFEST, 'utf8')); }
-function eligible(m) { return m.surfaces.filter(s => s.target === 'both'); }
+// Codex gets every 'both' surface and the 'codex-only' ones (their source lives in codex/skills/, which the Claude
+// plugin never loads: Claude Code has its own surface for them, e.g. the /graceful-pause and /progress mods).
+function eligible(m) { return m.surfaces.filter(s => s.target === 'both' || s.target === 'codex-only'); }
+function skillSource(s) { return s.target === 'codex-only' ? path.join(PKG_ROOT, 'codex', 'skills', s.name) : path.join(PKG_ROOT, 'skills', s.name); }
 
 function homeDir() { return os.homedir(); }
 function claudePluginsDir() { return path.join(homeDir(), '.claude', 'plugins'); }
@@ -153,6 +156,19 @@ function setCodexSkillName(skillMd, newName, dryRun) {
   fs.writeFileSync(skillMd, src.slice(0, fm.index) + `---\n${block}\n---` + src.slice(fm.index + fm[0].length));
 }
 
+// A command as a Codex skill: the command's description becomes the skill's, under name: <name>. Codex skills get
+// no $ARGUMENTS substitution, so a note says where the arguments come from.
+function writeCommandSkill(src, destDir, name, dryRun) {
+  if (dryRun) { log(`  [dry-run] write command skill ${path.relative(PKG_ROOT, src)} -> ${destDir}`); return; }
+  const text = fs.readFileSync(src, 'utf8');
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  const desc = fm && fm[1].match(/^description:\s*(.*)$/m);
+  const body = fm ? text.slice(fm[0].length) : text;
+  const note = '> Codex: 이 명령은 스킬로 설치됐다. 본문의 `$ARGUMENTS`, `$1` 은 사용자가 `$' + name + '` 뒤에 쓴 글이다.\n\n';
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.writeFileSync(path.join(destDir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc ? desc[1] : '""'}\n---\n\n${note}${body}`);
+}
+
 /* ---------- Claude Code target ---------- */
 function setupClaude(dryRun) {
   log('• Claude Code:');
@@ -185,15 +201,18 @@ function setupCodex(dryRun, scope) {
   for (const s of eligible(m)) {
     if (s.type === 'skill') {
       const dest = path.join(skillsDir, `banker-${s.name}`);
-      copyDir(path.join(PKG_ROOT, 'skills', s.name), dest, dryRun);
+      copyDir(skillSource(s), dest, dryRun);
       setCodexSkillName(path.join(dest, 'SKILL.md'), `banker-${s.name}`, dryRun); // dir==name (Codex discovery)
       nSkill++;
     } else if (s.type === 'command') {
-      copyFile(path.join(PKG_ROOT, 'commands', `${s.name}.md`), path.join(promptsDir, `banker-${s.name}.md`), dryRun);
+      const src = path.join(PKG_ROOT, 'commands', `${s.name}.md`);
+      copyFile(src, path.join(promptsDir, `banker-${s.name}.md`), dryRun);
+      writeCommandSkill(src, path.join(skillsDir, `banker-${s.name}`), `banker-${s.name}`, dryRun);
       nCmd++;
     }
   }
-  log(`  → ${nSkill} skills -> ${path.join(base, 'skills', 'banker-*')}, ${nCmd} prompts -> ${path.join(base, 'prompts', 'banker-*.md')}`);
+  log(`  → ${nSkill} skills -> ${path.join(base, 'skills', 'banker-*')}, ${nCmd} commands -> skills banker-* and prompts ${path.join(base, 'prompts', 'banker-*.md')}`);
+  log('  → Codex 0.144+ has no custom prompts, so each command is also a skill: invoke it as $banker-<name>.');
   log('  → skills are invoked as `banker-<name>` (frontmatter name rewritten to match the dir).');
   log('  → ~/.codex/AGENTS.md is NOT modified (omx regenerates it); skills auto-discovered from ~/.codex/skills/.');
   return true;
