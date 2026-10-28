@@ -22,6 +22,7 @@ import {
   stripJsonc,
   topLevelToml,
 } from "./verifier-probe.mjs";
+import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const PROBE = fileURLToPath(new URL("./verifier-probe.mjs", import.meta.url));
 
@@ -798,7 +799,7 @@ test("the command line prints the probe's JSON and reads the runtime from the en
   assert.equal(JSON.parse(clash.stdout).runtime, "unknown");
 });
 
-test("the command line still prints when node keeps the symlink it was started through", { skip: process.platform === "win32" && "symlinks need privileges" }, () => {
+test("the command line still prints when node keeps the symlink it was started through", { skip: symlinkSkip }, () => {
   const dir = mkdtempSync(join(tmpdir(), "probe-link-"));
   try {
     symlinkSync(dirname(PROBE), join(dir, "refs"));

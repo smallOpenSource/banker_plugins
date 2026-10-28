@@ -16,6 +16,7 @@ import * as P from './video-pool.mjs';
 import { hashFile, readDecisions, readInput, recordDecision, renderPage, startCurate } from './curate.mjs';
 import { isRunning, stopServer } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
+import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 
 const made = [];
 process.on('exit', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
@@ -82,7 +83,7 @@ test('a state file naming a host other than this machine is left alone: nothing 
 });
 
 // N1 (new): review files a repository ships as links
-test('a link a project ships at a review file name is never written through', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, async () => {
+test('a link a project ships at a review file name is never written through', { skip: symlinkSkip }, async () => {
   const dir = project();
   const victim = path.join(tmp('r4-victim-'), 'bashrc');
   fs.writeFileSync(victim, 'untouched');

@@ -7,6 +7,7 @@ import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { POLICY, cleanSeat, policyIntact, sessionFolders, staleSessionFolders, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
+import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const SEAT = fileURLToPath(new URL("./gemini-seat.mjs", import.meta.url));
 
@@ -172,7 +173,7 @@ test("on Windows the seat folder and the homes are compared by their long names"
     "without the long names the same file is outside the home");
 });
 
-test("the command line still prints the policy when node keeps the symlink it was started through", { skip: process.platform === "win32" && "symlinks need privileges" }, (t) => {
+test("the command line still prints the policy when node keeps the symlink it was started through", { skip: symlinkSkip }, (t) => {
   const dir = scratch(t);
   symlinkSync(dirname(SEAT), join(dir, "refs"));
   mkdirSync(join(dir, "gemini"));
@@ -263,7 +264,7 @@ test("sweep leaves the records of gone folders that are not a ralph-qa seat fold
   assert.ok(kept.every((p) => existsSync(p)));
 });
 
-test("clean finds a gone seat folder's records when a link sits above it", { skip: process.platform === "win32" && "symlinks need privileges" }, (t) => {
+test("clean finds a gone seat folder's records when a link sits above it", { skip: symlinkSkip }, (t) => {
   // macOS: $TMPDIR is under /var, a link to /private/var, and gemini records the resolved folder.
   const dir = scratch(t);
   const home = join(dir, "gh");
