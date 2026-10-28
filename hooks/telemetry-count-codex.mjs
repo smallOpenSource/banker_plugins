@@ -21,7 +21,7 @@
  *    모델이 `echo skills/banker-<아무 글>/SKILL.md` 를 돌려 체크인의 이름 칸으로 글을 내보내지 못하게 한다. 턴 키 파일은 일반 파일만 읽고, 링크 자리에 쓰지 않는다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 도구 호출을 절대 막지 않는다. 표준 출력은 비운다.
  */
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { codexHomeOf, pluginRoutes } from '../bin/lib/codex-routes.mjs';
@@ -206,15 +206,50 @@ export function countOnce(payload) {
   const routes = got.some((n) => n.includes('\t')) ? pluginRoutes(home) : []; // config.toml 은 한 번만 읽는다
   const names = [...new Set(got.filter((n) => installed(n, home, routes)).map((n) => n.split('\t')[0]))];
   if (!names.length) return [];
-  const seen = readTurns();
-  const fresh = names.filter((n) => !seen.includes(`${key}\t${n}`));
-  if (!fresh.length) return [];
-  for (const n of fresh) {
-    appendUsageLog(n);
-    recordUsedSkill(n);
+  return withTurnsLock(() => {
+    const seen = readTurns();
+    const fresh = names.filter((n) => !seen.includes(`${key}\t${n}`));
+    if (!fresh.length) return [];
+    for (const n of fresh) {
+      appendUsageLog(n);
+      recordUsedSkill(n);
+    }
+    writeTurns([...seen, ...fresh.map((n) => `${key}\t${n}`)]);
+    return fresh;
+  });
+}
+
+// npm 길과 플러그인 길의 Stop 훅이 같은 턴에 함께 돌면 둘 다 턴 키를 읽고 셀 수 있다. 턴 키를 읽고 쓰는 동안
+// codex-count-turns.lock 폴더를 잡는다(mkdir 은 이미 있으면 실패하고 링크를 따라가지 않아 둘 중 하나만 잡음).
+// 2초 안에 못 잡으면 잡은 쪽이 이 턴을 세므로 세지 않는다. 훅 시간 제한(5초)의 두 배인 10초가 지난 잠금은 죽은 훅의
+// 것이라 지운다. 폴더를 만들 수 없는 다른 오류면 잠금 없이 전처럼 센다.
+const LOCK_WAIT_MS = 2000;
+const LOCK_STALE_MS = 10000;
+export function withTurnsLock(fn, { wait = LOCK_WAIT_MS } = {}) {
+  const lock = `${TURNS_FILE()}.lock`;
+  const end = Date.now() + wait;
+  for (;;) {
+    try {
+      mkdirSync(configDir(), { recursive: true });
+      mkdirSync(lock);
+      break;
+    } catch (e) {
+      if (e?.code !== 'EEXIST') return fn();
+    }
+    try {
+      if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+        rmdirSync(lock);
+        continue;
+      }
+    } catch { /* 방금 풀림: 다시 잡아 본다 */ }
+    if (Date.now() >= end) return [];
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
-  writeTurns([...seen, ...fresh.map((n) => `${key}\t${n}`)]);
-  return fresh;
+  try {
+    return fn();
+  } finally {
+    try { rmdirSync(lock); } catch { /* 이미 없음 */ }
+  }
 }
 
 async function main() {

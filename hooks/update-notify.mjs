@@ -14,7 +14,7 @@
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션을 절대 막지 않는다. 비TTY 안전.
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, rmdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -133,24 +133,39 @@ function spawnFetcher() {
   }
 }
 
-// Codex: npm 길과 플러그인 길이 함께 있으면 알린다. 두 길의 훅이 모두 신뢰돼 같은 세션에서 둘 다 돌 수 있으므로
-// 세션마다 한 번만(configDir 의 codex-dual-notified 에 세션 id). 세션 id 가 없으면 알리기만 한다.
-const SESSION_RE = /^[A-Za-z0-9._-]{1,80}$/;
+// Codex: npm 길과 플러그인 길이 함께 있으면 알린다. 세션마다 한 번만 알리는 일은 claimSession 이 맡는다.
 export function dualNotice(payload, env = process.env) {
   try {
     const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
-    const note = dualInstallNote(codexHomeOf(payload?.transcript_path, env), cwd);
-    if (!note) return '';
-    const sid = typeof payload?.session_id === 'string' && SESSION_RE.test(payload.session_id) ? payload.session_id : '';
-    if (!sid) return note;
-    const file = join(configDir(), 'codex-dual-notified');
-    if (readRegular(file).trim() === sid) return '';
-    mkdirSync(configDir(), { recursive: true });
-    writeByRename(file, `${sid}\n`);
-    return note;
+    return dualInstallNote(codexHomeOf(payload?.transcript_path, env), cwd);
   } catch {
     return '';
   }
+}
+
+// Codex: 두 길의 SessionStart 훅이 모두 신뢰돼 같은 세션에서 함께 돌면 같은 알림이 두 번 나간다. 세션 id 이름의
+// 폴더를 configDir 의 codex-sessions 에 만든 훅만 알린다. mkdir 은 이미 있으면 실패하므로(링크도 따라가지 않음) 둘이
+// 동시에 와도 하나만 만든다. 세션 id 가 없거나 폴더를 만들 수 없으면 전처럼 알린다. 이틀 지난 폴더는 지운다.
+const SESSION_RE = /^[A-Za-z0-9._-]{1,80}$/;
+const CLAIM_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
+export function claimSession(payload, now = Date.now()) {
+  const sid = typeof payload?.session_id === 'string' && SESSION_RE.test(payload.session_id) && !/^\.+$/.test(payload.session_id) ? payload.session_id : '';
+  if (!sid) return true;
+  const dir = join(configDir(), 'codex-sessions');
+  try {
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(join(dir, sid));
+  } catch (e) {
+    return e?.code !== 'EEXIST';
+  }
+  try {
+    for (const d of readdirSync(dir)) {
+      try {
+        if (d !== sid && now - statSync(join(dir, d)).mtimeMs > CLAIM_KEEP_MS) rmdirSync(join(dir, d));
+      } catch { /* 다른 훅이 먼저 지움 */ }
+    }
+  } catch { /* 정리는 다음 세션에 */ }
+  return true;
 }
 
 async function main() {
@@ -158,6 +173,7 @@ async function main() {
   let payload = null;
   try { payload = JSON.parse(await readStdin()); } catch { /* stdin 없음/오류 무해 */ }
 
+  if (CODEX && !claimSession(payload)) return; // 같은 세션의 다른 길 훅이 이미 알렸다
   const notes = CODEX ? [shapeMissNotice(), dualNotice(payload)] : [];
   if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.
     const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).

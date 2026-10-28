@@ -165,7 +165,7 @@ test('Codex 의 두 설치 길이 함께 있으면 세션마다 한 번 알린�
   writeFileSync(join(ch, 'skills', 'banker-lineage', 'SKILL.md'), '');
   const env = { CODEX_HOME: ch };
   const start = (sid) => JSON.stringify({ session_id: sid, hook_event_name: 'SessionStart' });
-  assert.equal(runNotify(tmp, { argv: ['--codex'], env, input: start('s1') }).stdout, '', 'npm 길만');
+  assert.equal(runNotify(tmp, { argv: ['--codex'], env, input: start('s0') }).stdout, '', 'npm 길만');
   writeFileSync(join(ch, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
   const first = JSON.parse(runNotify(tmp, { argv: ['--codex', '--plugin'], env, input: start('s1') }).stdout.trim());
   assert.match(first.systemMessage, /두 번 설치됨/);
@@ -173,6 +173,51 @@ test('Codex 의 두 설치 길이 함께 있으면 세션마다 한 번 알린�
   assert.equal(runNotify(tmp, { argv: ['--codex'], env, input: start('s1') }).stdout, '', '같은 세션의 다른 길 훅은 다시 알리지 않음');
   assert.match(runNotify(tmp, { argv: ['--codex'], env, input: start('s2') }).stdout, /두 번 설치됨/, '새 세션');
   assert.equal(runNotify(tmp, { env, input: start('s3') }).stdout, '', 'Claude Code 훅은 Codex 설치를 보지 않음');
+});
+
+// 두 길의 SessionStart 훅이 같은 세션에서 동시에 돌아도 업데이트 알림과 두 길 알림은 한 번만 나간다.
+test('Codex 두 길의 SessionStart 훅이 동시에 돌아도 알림은 한 번', async () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW() });
+  const ch = join(tmp, 'ch');
+  mkdirSync(join(ch, 'skills', 'banker-lineage'), { recursive: true });
+  writeFileSync(join(ch, 'skills', 'banker-lineage', 'SKILL.md'), '');
+  writeFileSync(join(ch, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
+  const { spawn } = await import('node:child_process');
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, CODEX_HOME: ch, BANKER_TELEMETRY_ENDPOINT: 'http://127.0.0.1:9/' };
+  for (const k of ['BANKER_NO_UPDATE_CHECK', 'BANKER_NO_TELEMETRY']) delete env[k];
+  for (let round = 0; round < 10; round++) {
+    const input = JSON.stringify({ session_id: `race-${round}`, hook_event_name: 'SessionStart' });
+    const outs = await Promise.all([['--codex'], ['--codex', '--plugin'], ['--codex']].map((argv) => new Promise((res) => {
+      const c = spawn(process.execPath, [NOTIFY_HOOK, ...argv], { env, stdio: ['pipe', 'pipe', 'ignore'] });
+      let out = '';
+      c.stdout.on('data', (b) => { out += b; });
+      c.on('close', () => res(out));
+      c.stdin.end(input);
+    })));
+    const said = outs.filter((o) => o.includes('두 번 설치됨'));
+    assert.equal(said.length, 1, `round ${round}: ${JSON.stringify(outs)}`);
+  }
+  const claims = readdirSync(join(bankerDir(tmp), 'codex-sessions'));
+  assert.equal(claims.length, 10, '세션마다 폴더 하나');
+});
+
+test('codex-sessions 의 이틀 지난 세션 폴더는 지우고, 세션 id 가 아닌 이름은 만들지 않는다', async () => {
+  const tmp = mkTmp();
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = tmp;
+  try {
+    const { claimSession } = await import(`./update-notify.mjs?claim=${Date.now()}`);
+    const dir = join(bankerDir(tmp), 'codex-sessions');
+    assert.equal(claimSession({ session_id: 'old' }, Date.now()), true);
+    assert.equal(claimSession({ session_id: 'old' }), false, '같은 세션은 한 번');
+    assert.equal(claimSession({ session_id: 'new' }, Date.now() + 3 * 24 * 60 * 60 * 1000), true);
+    assert.deepEqual(readdirSync(dir).sort(), ['new'], '이틀 지난 폴더를 지움');
+    for (const sid of ['..', '.', 'a/b', '', undefined]) assert.equal(claimSession({ session_id: sid }), true, `${sid}: 알리기만`);
+    assert.deepEqual(readdirSync(dir).sort(), ['new']);
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+  }
 });
 
 test('동일 latest 재호출(notified==latest)이면 무고지(dedupe)', () => {

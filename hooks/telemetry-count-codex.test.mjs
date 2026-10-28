@@ -5,12 +5,12 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { codexHomeOf, namesIn, turnKey, turnSkills } from './telemetry-count-codex.mjs';
+import { codexHomeOf, namesIn, turnKey, turnSkills, withTurnsLock } from './telemetry-count-codex.mjs';
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'telemetry-count-codex.mjs');
 const tmps = [];
@@ -241,4 +241,48 @@ test('a plugin hook finds the Codex home from PLUGIN_ROOT when the rollout is el
   const lfm = pluginSkill(home, 'skills', 'lfm');
   run(tmp, stop(rollout(tmp, [started('t1'), call(`cat ${lfm}`)])), { CODEX_HOME: 'not-here', PLUGIN_ROOT: join(home, 'plugins', 'cache', 'banker-plugins', 'banker', '0.22.0') });
   assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]), ['banker:lfm']);
+});
+
+// The npm hook and the plugin hook both run at Stop when both routes are installed. They count one turn once.
+test('Stop hooks that run at once for one turn count it once', async () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const { spawn } = await import('node:child_process');
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp, CODEX_HOME: codexHome(tmp) };
+  delete env.BANKER_NO_TELEMETRY;
+  delete env.BANKER_TELEMETRY_ENDPOINT;
+  for (let round = 0; round < 10; round++) {
+    const input = JSON.stringify(stop(rollout(tmp, [started(`t${round}`), cat('ralph-qa')]), `t${round}`));
+    await Promise.all([0, 1, 2].map(() => new Promise((res) => {
+      const c = spawn(process.execPath, [HOOK], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+      c.on('close', res);
+      c.stdin.end(input);
+    })));
+    assert.equal(read(tmp).length, round + 1, `round ${round}: ${read(tmp).join(' | ')}`);
+  }
+  assert.ok(!existsSync(`${turnsFile(tmp)}.lock`), 'the lock is let go');
+});
+
+test('the turn lock waits for a live holder, then leaves the turn to it; a dead holder\'s lock is taken over', () => {
+  const tmp = mkTmp();
+  const prev = process.env.XDG_CONFIG_HOME;
+  const prevApp = process.env.APPDATA;
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  try {
+    const lock = `${turnsFile(tmp)}.lock`;
+    mkdirSync(lock, { recursive: true });
+    let ran = false;
+    const t0 = Date.now();
+    assert.deepEqual(withTurnsLock(() => { ran = true; return ['x']; }, { wait: 200 }), []);
+    assert.ok(!ran && Date.now() - t0 >= 200, 'a held lock is waited on, then the turn is left to its holder');
+    assert.ok(existsSync(lock), 'another hook\'s lock stays');
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lock, old, old);
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), ['counted'], 'a lock older than a hook can live is taken over');
+    assert.ok(!existsSync(lock));
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
 });
