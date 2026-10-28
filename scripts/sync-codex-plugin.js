@@ -65,7 +65,7 @@ function psCommand(script, args, viaRun) {
     + '$n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; '
     + "$r = [IO.Path]::GetFullPath($n.Source); if ($r -notlike '*.exe') { exit 0 }; "
     + "foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; "
-    + 'Set-Location -LiteralPath $env:PLUGIN_ROOT; '
+    + 'if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { exit 0 }; '
     + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 

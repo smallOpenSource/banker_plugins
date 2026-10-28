@@ -85,7 +85,9 @@ banker의 **첫 플러그인 선언 hook**(`hooks/hooks.json`)이 OMC 위키 쓰
 Codex 에서는 플래그 자리가 `omx_wiki/.obsidizer` 이고, hook 은 `--enable` 할 때만 Codex 사용자 범위에 따로 설치한다.
 hook 이 셸 호출마다 node 를 띄우므로 쓰지 않는 사람에게는 넣지 않는다. 설치 길과 관계없이 같다.
 아래 `<banker>` 는 npm 설치면 `banker` 명령, Codex 플러그인 설치(`codex plugin add`, 이 SKILL.md 가 `plugins/cache/` 아래)면
-`node "<이 SKILL.md 가 있는 폴더>/../../bin/banker.js"` 다(플러그인 폴더의 같은 프로그램. 절대경로로 쓴다).
+`"<node>" "<이 SKILL.md 가 있는 폴더>/../../bin/banker.js"` 다(플러그인 폴더의 같은 프로그램. 절대경로로 쓴다).
+`<node>` 는 샌드박스 안에서 `node -p "require('fs').realpathSync(process.execPath)"` 로 얻은 실제 경로다. 그 경로가 임시 폴더나
+작업 폴더 안이면(샌드박스가 바꿀 수 있는 곳) 샌드박스 밖 실행을 요청하지 않고 그 이유를 보고한 뒤 멈춘다.
 
 - `--enable`
   1. 작업 폴더에 `omx_wiki/` 가 없으면 만들고 `omx_wiki/.obsidizer` 를 쓴다. `omx_wiki/` 는 저장소에
