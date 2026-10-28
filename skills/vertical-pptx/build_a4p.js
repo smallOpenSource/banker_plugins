@@ -584,7 +584,13 @@ function globFontFile(name) {
  */
 function findFontFile(name) {
   const want = normName(name);
-  if (!want) return null; // ASCII 글자가 없는 이름은 대조할 것이 없다. 비교하면 어떤 파일이든 통과한다
+  if (!want) {
+    // ASCII 글자가 없는 이름(예: 나눔고딕)은 정리한 형태로 대조할 수 없다. 빈 문자열은 어떤 family 에나 들어 있다.
+    // fc-match 가 돌려준 family 원문과 정확히 같을 때만 찾은 것으로 본다. 파일명 탐색은 하지 않는다.
+    const exact = String(name).trim().toLowerCase();
+    const hit = fcMatch(escFc(name));
+    return hit && hit.families.some((f) => f.toLowerCase() === exact) && fs.existsSync(hit.file) ? hit.file : null;
+  }
   // 한 방향(family 가 요청 이름을 품는가)만 본다. 반대 방향까지 허용하면
   // "Noto Sans CJK KR" 을 요청했는데 "Noto Sans" 가 통과해 한글 없는 폰트에 그 이름이 붙는다.
   const hit = fcMatch(escFc(name));

@@ -1107,6 +1107,8 @@ latin = os.path.join(main, 'NotoSans-Regular.ttf')
 b.fc_match = lambda pattern: {'file': latin, 'families': ['Noto Sans']}
 out['cjkFromLatin'] = b.find_font_file('Noto Sans CJK KR')
 out['noAscii'] = b.find_font_file('맑은 고딕')
+b.fc_match = lambda pattern: {'file': latin, 'families': ['NanumGothic', '나눔고딕']}
+out['koreanFamily'] = [b.find_font_file('나눔고딕') == latin, b.find_font_file('맑은 고딕')]
 b.fc_match = lambda pattern: None
 out['kr'] = os.path.basename(b.find_font_file('Noto Sans KR') or '')
 os.environ.pop('BANKER_PPTX_FONT', None)
@@ -1115,7 +1117,7 @@ r = b.resolve_font(' Noto "Sans<> KR\x01 ', 'auto')
 out['explicit'] = [r['name'], r['from']]
 r = b.resolve_font('없는폰트', 'auto')
 out['notFound'] = [r['name'], [w['code'] for w in r['warnings']]]
-out['trim'] = b.sanitize_font_name('﻿ Noto Sans KR\x85 ')
+out['trim'] = b.sanitize_font_name('\ufeff Noto Sans KR\x85 ')
 b.font_search_dirs = lambda: [folder('ties', ('NotoSansKR-VF.ttf', 'NotoSansKR.ttf'))]
 out['shorter'] = os.path.basename(b.find_font_file('Noto Sans KR') or '')
 first, second = folder('first', ('NotoSansKR-Bold.ttf',)), folder('second', ('NotoSansKR-Regular.ttf',))
@@ -1138,6 +1140,7 @@ test('U18b the python builder carries the node chain and hints, checks a family 
   assert.deepEqual(got.hints, B.FONT_FILE_HINTS, 'the same file hints');
   assert.equal(got.cjkFromLatin, null, 'fc-match answering "Noto Sans" for "Noto Sans CJK KR" is a substitute, not a hit');
   assert.equal(got.noAscii, null, 'a name with no ASCII letter has nothing to compare, so nothing matches it');
+  assert.deepEqual(got.koreanFamily, [true, null], 'a Korean name matches only a family fc-match spells the same way');
   assert.equal(got.kr, 'NotoSansKR-VF.ttf', 'the regular cut before the bold one, though the folder lists the bold one first');
   assert.equal(got.shorter, 'NotoSansKR.ttf', 'between two of one rank, the shorter name');
   assert.equal(got.firstFolder, path.join('first', 'NotoSansKR-Bold.ttf'), 'a hit in an earlier font folder wins');
@@ -1153,6 +1156,20 @@ test('U18c the node builder finds nothing for a name with no ASCII letter, and a
     const r = B.resolveFont({ fontArg: name, metaFont: 'auto' });
     assert.deepEqual(r.warnings[0], { code: 'FONT_NOT_FOUND', from: '--font', detail: name });
   }
+});
+
+// A Korean family name has no ASCII letter to compare, so fc-match's answer must spell it exactly. The stand-in
+// fc-match answers every pattern with one file whose families are NanumGothic and 나눔고딕.
+test('U18d the node builder takes a Korean name only when fc-match returns that family', { skip: process.platform === 'win32' && 'the stand-in fc-match is a sh script' }, () => {
+  const bin = fs.mkdtempSync(path.join(TMP, 'u18d-'));
+  const font = path.join(bin, 'NanumGothic.ttf');
+  fs.writeFileSync(font, '');
+  fs.writeFileSync(path.join(bin, 'fc-match'), `#!/bin/sh\nprintf '%s|NanumGothic,나눔고딕' '${font}'\n`, { mode: 0o755 });
+  const probe = `const B = require(${JSON.stringify(BUILD_JS)});
+    console.log(JSON.stringify([B.findFontFile('나눔고딕'), B.findFontFile('맑은 고딕')]));`;
+  const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), [font, null]);
 });
 
 // ===========================================================================
