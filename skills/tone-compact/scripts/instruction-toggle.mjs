@@ -186,11 +186,53 @@ export function writeFresh(file, data, mode = 0o644) {
   const tmp = `${file}.${process.pid}.tmp`;
   rmSync(tmp, { force: true });
   try {
-    writeFileSync(tmp, data, { flag: "wx", mode });
+    writeNew(tmp, data, mode);
     renameOver(tmp, file);
   } catch (e) {
     rmSync(tmp, { force: true });
     throw e;
+  }
+}
+
+// Opens a file that is not there yet, as "wx" does, and makes sure the name is the file made. macOS and Linux refuse
+// any name that is there, a link to nothing among them (EEXIST). Windows follows a link to nothing and makes the file
+// it leads to: then that file is removed again when it is still the empty one made, and the open is refused with
+// EEXIST as elsewhere. A look before the open catches such a link; this catches one planted between the look and the
+// open. A look that fails after the open leaves the file to the caller, as a plain "wx" would.
+export function openNew(path, mode) {
+  const fd = openSync(path, "wx", mode);
+  let made = null;
+  let st;
+  try {
+    made = fstatSync(fd, { bigint: true });
+    st = lstatSync(path, { bigint: true });
+  } catch {
+    return fd;
+  }
+  if (!st.isSymbolicLink() && (made.ino === 0n || sameInode(made, st))) return fd;
+  closeSync(fd);
+  if (st.isSymbolicLink()) dropFollowed(path, made);
+  throw Object.assign(new Error(`EEXIST: file already exists, open '${path}'`), { code: "EEXIST", syscall: "open", path });
+}
+
+// Removes the file a "wx" open made through the link at path, when it is still the empty file that open made.
+function dropFollowed(path, made) {
+  try {
+    const target = realpathSync(path);
+    const st = statSync(target, { bigint: true });
+    if (sameInode(made, st) && st.size === 0n) rmSync(target, { force: true });
+  } catch {
+    // gone already, or the link changed again: nothing of ours to take back
+  }
+}
+
+// Writes data to a file that is not there yet (openNew) and closes it.
+function writeNew(path, data, mode) {
+  const fd = openNew(path, mode);
+  try {
+    writeFileSync(fd, data);
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -510,13 +552,14 @@ function writeBlocked(changes) {
 // whatever the umask allows more. A file left empty is removed, unless it is a
 // link or has other names (a hard link), whose other names would keep the old
 // text: it is emptied instead. Codex skips an empty file anyway.
-// A file that was not there when it was read is created only if it still is not ("wx"): a name that appeared in
+// A file that was not there when it was read is created only if it still is not (openNew): a name that appeared in
 // between, a link planted there among them, is not written through.
 function apply(t, changes) {
   for (const { file, after } of changes) {
     if (file.bytes !== null) writeFresh(`${file.path}.${t.slug}.bak`, file.bytes, 0o600);
     if (after === "" && !isLink(file.path) && !hasOtherNames(file.path)) rmSync(file.path, { force: true });
-    else writeFileSync(file.path, after, { mode: 0o644, flag: file.bytes === null ? "wx" : "w" });
+    else if (file.bytes === null) writeNew(file.path, after, 0o644);
+    else writeFileSync(file.path, after, { mode: 0o644, flag: "w" });
   }
 }
 
@@ -569,7 +612,8 @@ const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 // Any other error (permissions, EIO) throws, after the same taking away.
 function tryLock(path, token) {
   // A name that is there in any form is held. Windows opens "wx" through a link to nothing and makes the file it leads
-  // to; macOS and Linux answer EEXIST for it below. A look that fails leaves the answer to the open, as before.
+  // to; macOS and Linux answer EEXIST for it below, and openNew takes back a file Windows made through a link planted
+  // after this look. A look that fails leaves the answer to the open, as before.
   let there = false;
   try {
     there = lstatSync(path, { throwIfNoEntry: false }) !== undefined;
@@ -579,7 +623,7 @@ function tryLock(path, token) {
   if (there) return "held";
   let fd;
   try {
-    fd = openSync(path, "wx", 0o600);
+    fd = openNew(path, 0o600);
   } catch (e) {
     if (e.code === "EEXIST") return "held";
     if (e.code === "ESTALE") return "stale";

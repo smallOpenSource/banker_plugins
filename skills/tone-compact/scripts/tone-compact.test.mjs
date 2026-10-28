@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { parseArgs, rulesOf, status, turnOff, turnOn } from "./tone-compact.mjs";
-import { count, done, lf, noBom, refuse, sameInode, where } from "./instruction-toggle.mjs";
+import { count, done, lf, noBom, openNew, refuse, sameInode, where } from "./instruction-toggle.mjs";
 import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const CLI = fileURLToPath(new URL("./tone-compact.mjs", import.meta.url));
@@ -1218,6 +1218,37 @@ test("Codex: a link planted where a new AGENTS.md goes, after on looked, is refu
   assert.match(r.out, /쓰는 사이에 같은 이름이 생겨 그대로 두었습니다: .*AGENTS\.md/);
   assert.equal(read(victim), "someone's notes\n", "the file the link leads to is untouched");
   assert.ok(lstatSync(s.agents).isSymbolicLink(), "the planted link stays");
+});
+
+// Windows opens "wx" through a link to nothing and makes the file it leads to. A link planted after on looked, before
+// it made AGENTS.md, is refused as on macOS and Linux, and the place it leads to is left without a file.
+test("Codex: a link to nothing planted where a new AGENTS.md goes, after on looked, is refused and makes no file where it leads", { skip: symlinkSkip }, () => {
+  const s = setup();
+  const victim = join(s.dir, "victim.md");
+  const pre = [...FS_HOOK, "const real = fs.accessSync;", "let done = false;",
+    `fs.accessSync = (p, ...a) => { if (!done && String(p) === ${JSON.stringify(s.o.codexDir)}) { done = true; fs.symlinkSync(${JSON.stringify(victim)}, ${JSON.stringify(s.agents)}, "file"); } return real(p, ...a); };`,
+    "syncBuiltinESMExports();"].join("\n");
+  const r = cliWith(s, pre, ["on", "--runtime", "codex"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /쓰는 사이에 같은 이름이 생겨 그대로 두었습니다: .*AGENTS\.md/);
+  assert.ok(!existsSync(victim), "no file where the link leads");
+  assert.ok(lstatSync(s.agents).isSymbolicLink(), "the planted link stays");
+});
+
+test("openNew refuses a link to nothing with EEXIST on every system and leaves no file where it leads", { skip: symlinkSkip }, () => {
+  const s = setup();
+  const target = join(s.dir, "led-to");
+  const link = join(s.dir, "new-file");
+  symlinkSync(target, link, "file");
+  assert.throws(() => openNew(link, 0o600), (e) => e.code === "EEXIST");
+  assert.ok(!existsSync(target), "nothing made where the link leads");
+  assert.ok(lstatSync(link).isSymbolicLink());
+  const plain = join(s.dir, "plain");
+  const fd = openNew(plain, 0o600);
+  fs.writeSync(fd, "x");
+  fs.closeSync(fd);
+  assert.equal(read(plain), "x");
+  assert.throws(() => openNew(plain, 0o600), (e) => e.code === "EEXIST");
 });
 
 test("Codex: a write a sandbox refuses after access() allowed it is a refusal with exit 1, for on and off", () => {
