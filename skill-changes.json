@@ -247,5 +247,21 @@
     "banker:update-banker",
     "banker:vertical-pptx",
     "banker:vertical-pptx-setup"
+  ],
+  "0.21.0": [
+    "banker:append_wiki",
+    "banker:compact-wiki",
+    "banker:deep-research",
+    "banker:lfm",
+    "banker:lineage",
+    "banker:obsidizer",
+    "banker:omc-patch",
+    "banker:payload-mon",
+    "banker:rfp-author",
+    "banker:setup-bypass-permissions",
+    "banker:setup-omc-hud",
+    "banker:smart-compact",
+    "banker:ultra-chain",
+    "banker:ultra-interview"
   ]
 }

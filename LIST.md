@@ -3,12 +3,12 @@
 banker 구성요소의 이력표입니다.
 릴리스마다 갱신합니다.
 
-- 기준: 0.20.5 (2026-10-21)
-- 구성: 스킬 63개, 커맨드 2개, 즉시명령 2개 (모두 67개)
+- 기준: 0.21.0 (2026-10-28)
+- 구성: 스킬 64개, 커맨드 2개, 즉시명령 2개 (모두 68개)
 - 0.18.1 은 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.18.0 다음이 0.19.0 입니다.
 - 0.20.3 과 0.20.4 도 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.20.2 다음이 0.20.5 입니다.
 - 스킬과 커맨드: Claude Code 와 Codex 에서 씁니다.
-- 즉시명령: Claude Code 에서만 씁니다.
+- 즉시명령: Claude Code 에서 씁니다. Codex 에는 같은 이름의 Codex 전용 스킬 `graceful-pause` 와 `progress` 가 있습니다.
 
 즉시명령은 작업 중에 입력해도 턴이 끝나기를 기다리지 않고 바로 실행되는 명령입니다.
 Claude Code 의 mod 로 `hooks/register.mjs` 가 등록합니다.
@@ -78,13 +78,13 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 |---|---|---|---|---|---|---|---|
 | 1 | `/banker:front-qa` | 2026-06-25 | 0.1.0 | 2026-10-14 | 0.18.0 | 커맨드 |  |
 | 2 | `all-in-one` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
-| 3 | `append_wiki` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
+| 3 | `append_wiki` | 2026-06-25 | 0.1.0 | 2026-10-27 | 0.21.0 | 스킬 |  |
 | 4 | `arch-diagram` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(59개 동시): 설명 앞의 (banker) 중복 제거 |
 | 5 | `audit-mock` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.4 | 스킬 |  |
 | 6 | `audit-security` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 7 | `audit-web-page` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 8 | `humanizer` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(59개 동시): 설명 앞의 (banker) 중복 제거 |
-| 9 | `lineage` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
+| 9 | `lineage` | 2026-06-25 | 0.1.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 | 10 | `make-notion-guide` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(59개 동시): 설명 앞의 (banker) 중복 제거 |
 | 11 | `nothing-design` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 12 | `omc-reference` | 2026-06-25 | 0.1.0 | 2026-10-14 | 0.18.0 | 스킬 |  |
@@ -92,23 +92,23 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 | 14 | `play-qa` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 옛 이름 `game-qa`, 0.3.0 (2026-07-02)에 개명; 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 15 | `ready-compact` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 16 | `refresh-git-ignore` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
-| 17 | `rfp-author` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
+| 17 | `rfp-author` | 2026-06-25 | 0.1.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 | 18 | `ultra-init` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 19 | `ultra-ui-qa` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 20 | `/banker:setup` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 커맨드 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
-| 21 | `compact-wiki` | 2026-06-25 | 0.1.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
+| 21 | `compact-wiki` | 2026-06-25 | 0.1.0 | 2026-10-27 | 0.21.0 | 스킬 |  |
 | 22 | `setup-insane-search` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
-| 23 | `setup-omc-hud` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
+| 23 | `setup-omc-hud` | 2026-06-25 | 0.1.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 | 24 | `setup-playwright` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 25 | `setup-stitch` | 2026-06-25 | 0.1.0 | 2026-10-21 | 0.20.5 | 스킬 | 옛 이름 `setup-stitch-proxy`, 0.4.0 (2026-07-15)에 개명; 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 26 | `compact-copy` | 2026-06-28 | 0.1.2 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 27 | `setup-omc` | 2026-07-02 | 0.2.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 28 | `curation` | 2026-07-15 | 0.4.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 29 | `deep-init` | 2026-07-15 | 0.4.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
-| 30 | `deep-research` | 2026-07-15 | 0.4.0 | 2026-10-21 | 0.20.4 | 스킬 |  |
+| 30 | `deep-research` | 2026-07-15 | 0.4.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 | 31 | `docs-setup` | 2026-07-15 | 0.4.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
 | 32 | `ralph-qa` | 2026-07-15 | 0.4.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
-| 33 | `smart-compact` | 2026-07-15 | 0.4.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
+| 33 | `smart-compact` | 2026-07-15 | 0.4.0 | 2026-10-27 | 0.21.0 | 스킬 |  |
 | 34 | `visual-ralph` | 2026-07-15 | 0.4.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 35 | `setup-harness-factory` | 2026-07-15 | 0.5.0 | 2026-10-21 | 0.20.5 | 스킬 | 옛 이름 `harness-factory`, 0.15.0 (2026-10-05)에 개명; 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
 | 36 | `setup-java` | 2026-07-15 | 0.5.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
@@ -119,12 +119,12 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 | 41 | `setup-python` | 2026-07-15 | 0.5.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
 | 42 | `setup-sandbox` | 2026-07-15 | 0.5.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
 | 43 | `setup-tmux` | 2026-07-15 | 0.5.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
-| 44 | `obsidizer` | 2026-07-15 | 0.6.0 | 2026-10-21 | 0.20.5 | 스킬 | 훅 `hooks/obsidize-hook.mjs` 의 변경(0.18.1 함수 분리, 0.19.1 로그 쓰기)은 세지 않음 |
+| 44 | `obsidizer` | 2026-07-15 | 0.6.0 | 2026-10-28 | 0.21.0 | 스킬 | 훅 `hooks/obsidize-hook.mjs` 의 변경(0.18.1 함수 분리, 0.19.1 로그 쓰기)은 세지 않음 |
 | 45 | `cleansing-memory` | 2026-07-16 | 0.7.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 46 | `interval-report` | 2026-07-16 | 0.7.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 47 | `refresh-readme` | 2026-07-16 | 0.7.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
 | 48 | `summary-wiki` | 2026-07-16 | 0.7.0 | 2026-10-05 | 0.15.0 | 스킬 | 마지막 업데이트는 일괄 수정(54개 동시): 스킬과 명령 설명을 tone-compact 문체 규칙에 맞춤 |
-| 49 | `ultra-interview` | 2026-07-16 | 0.7.0 | 2026-10-21 | 0.20.4 | 스킬 | 마지막 업데이트는 일괄 수정(14개 동시): fix: 재검토 반영 F8, F9 - pip 색인 주소의 비밀을 curl 인자에 싣지 않음, /banker:setup 0단계는 알림만, 미러 대안의 rm 은 && 사슬 안, zsh 에서 도는 hyperframes 함수, Pop-Location, 작업 폴더 OUT |
+| 49 | `ultra-interview` | 2026-07-16 | 0.7.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 | 50 | `update-banker` | 2026-07-16 | 0.7.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 51 | `3d-intro-build` | 2026-08-09 | 0.12.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
 | 52 | `3d-intro-setup` | 2026-08-09 | 0.12.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
@@ -132,17 +132,18 @@ npm 묶음에서 빠지는 시험 파일 등은 세지 않습니다.
 | 54 | `motion-graphic-setup` | 2026-08-09 | 0.12.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
 | 55 | `vertical-pptx` | 2026-08-09 | 0.12.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(22개 동시): fix(설치 스킬 airgap): 확인 블록이 Codex sandbox 의 막힘을 먼저 알림, npm ping 은 15초 감시와 업데이트 알림 없이, 실패 보고에 명령과 종료 코드와 stderr, 인증서 오류는 오프라인이 아님, curl 확인은 --ssl-no-revoke(Git Bash 도 Schannel)와 curl.exe 먼저 찾기, dnf 와 apt 의 기다림과 apt-get update 의 종료 0, 판 붙은 python 의 pip 설정, /banker:setup 은 같은 확인 결과를 다시 씀, setup-mcp 는 절대 경로로 등록, nvm 과 Playwright 와 RPM Fusion 원천 확인, RHEL 블록은 옛 nodejs 를 깔지 않음, uv 실패 알림, LibreOffice tarball 은 블록 하나로 정리, Spring 블록은 서브셸, 설치 스킬 밖 설치 안내도 확인, FIFO 캐시 시험이 체크인을 기다림(0.20.5 remains R7) |
 | 56 | `vertical-pptx-setup` | 2026-08-09 | 0.12.0 | 2026-10-21 | 0.20.5 | 스킬 | 마지막 업데이트는 일괄 수정(11개 동시): fix(설치 스킬 airgap): in15 의 감시가 호출자의 출력을 15초 쥐던 것(10곳과 smoke 상수, 동작 시험 scripts/in15.test.mjs), setup-playwright 는 chromium 미러만 주면 ffmpeg 의 서버도 확인(airgap-4r), audit-security 받기는 https 만과 ~/.local/bin 만들기, setup-mcp 는 절대 경로가 막는 것과 못 막는 것(node 가 PATH 에 없음)을 바로 적음, 3d-intro-setup 들여쓰기, CHANGELOG 개수(0.20.5 검토 M2, M3, S10~S13, 보안 INFO 9) |
-| 57 | `payload-mon` | 2026-10-04 | 0.14.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
+| 57 | `payload-mon` | 2026-10-04 | 0.14.0 | 2026-10-27 | 0.21.0 | 스킬 |  |
 | 58 | `tone-compact` | 2026-10-04 | 0.14.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
-| 59 | `/graceful-pause` | 2026-10-05 | 0.15.0 | 2026-10-21 | 0.20.5 | 즉시명령 | 스킬 `graceful_pause`(0.14.0)를 대체; Codex 대응 없음 |
-| 60 | `setup-bypass-permissions` | 2026-10-05 | 0.15.0 | 2026-10-06 | 0.15.0 | 스킬 |  |
-| 61 | `omc-patch` | 2026-10-10 | 0.16.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
+| 59 | `/graceful-pause` | 2026-10-05 | 0.15.0 | 2026-10-21 | 0.20.5 | 즉시명령 | 스킬 `graceful_pause`(0.14.0)를 대체; Codex 에는 같은 이름의 Codex 전용 스킬이 있음 |
+| 60 | `setup-bypass-permissions` | 2026-10-05 | 0.15.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
+| 61 | `omc-patch` | 2026-10-10 | 0.16.0 | 2026-10-27 | 0.21.0 | 스킬 |  |
 | 62 | `remains` | 2026-10-10 | 0.16.0 | 2026-10-10 | 0.16.0 | 스킬 |  |
 | 63 | `trouble-shooting` | 2026-10-10 | 0.16.0 | 2026-10-10 | 0.16.0 | 스킬 |  |
-| 64 | `/progress` | 2026-10-10 | 0.16.0 | 2026-10-21 | 0.20.5 | 즉시명령 | mod 가 없는 Claude Code 용 대체 파일 `commands/progress.md` 가 따로 있음; Codex 대응 없음 |
-| 65 | `ultra-chain` | 2026-10-13 | 0.17.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
+| 64 | `/progress` | 2026-10-10 | 0.16.0 | 2026-10-28 | 0.21.0 | 즉시명령 | mod 가 없는 Claude Code 용 대체 파일 `commands/progress.md` 가 따로 있음; Codex 에는 같은 이름의 Codex 전용 스킬이 있음 |
+| 65 | `ultra-chain` | 2026-10-13 | 0.17.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 | 66 | `anti-drm` | 2026-10-14 | 0.18.0 | 2026-10-21 | 0.20.5 | 스킬 |  |
 | 67 | `theme-selection` | 2026-10-15 | 0.19.0 | 2026-10-15 | 0.19.0 | 스킬 |  |
+| 68 | `lfm` | 2026-10-28 | 0.21.0 | 2026-10-28 | 0.21.0 | 스킬 |  |
 
 ## 삭제와 개명 이력
 

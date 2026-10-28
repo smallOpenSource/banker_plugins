@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.21.0] - 2026-10-28
+
+### Added
+- 새 스킬 `lfm`(learn from master): 어떤 분야의 최고 전문가 그룹이 실제로 일하는 방식을 그들이 공개한 1차 자료로 조사한다. 근거 있는 그룹 3~5곳, 관점별 자료(작업 순서, 역할, 품질 기준, 검토, 도구, 실패와 대응), 공통 관행과 반대 근거, 계획 적용 항목(`M-1` …의 적용, 조정, 제외와 이유)을 낸다. 웹 조사를 못 하면 모델 지식으로 채우지 않고 "웹 조사 불가" 로 끝난다. Claude Code 와 Codex(Linux 0.144.5, Windows 0.160.1)에서 실제로 불러 확인했다.
+- `ultra-interview`, `ultra-chain`, `deep-research`, `rfp-author` 의 리서치가 그 분야 전문가 그룹의 작업 방식도 조사해 계획에 쓴다. ultra-chain 은 1단계에서 `01-masters.md` 를 남기고, 3단계 계획이 `M-n` 마다 판정과 이유를 적으며 계획 검토자가 이를 본다. rfp-author 는 조사 결과를 내부 추적용 `references/expert-practices.md` 에만 두고 벤더 발송본에는 넣지 않는다.
+- Codex 에서 모든 구성요소가 동작한다.
+  - 명령 `front-qa`, `setup` 이 Codex 스킬(`$banker-front-qa`, `$banker-setup`)로도 설치된다. Codex 0.144 이상에는 사용자 프롬프트가 없다.
+  - Codex 전용 스킬 `graceful-pause`(작업 중 보내면 실행 중인 도구 호출이 끝난 뒤 멈춤)와 `progress`(지금 세션의 계획 파일 트리, `update_plan` 단계, 최근 도구 호출. tmux 안이면 `--pane` 으로 오른쪽 칸 갱신).
+  - `banker setup --codex` 가 Codex 훅을 설치한다: 업데이트 알림(`SessionStart`), 사용량 카운팅(`Stop`, 턴마다 한 번). 사본은 `$CODEX_HOME/hooks-custom/banker/`, 묶음은 이벤트 맨 뒤, Windows 는 PowerShell 형식. `banker hooks status|enable|disable`, `banker uninstall --codex`. Codex 를 다시 열 때 Hooks need review 나 `/hooks` 에서 신뢰해야 돈다.
+  - `obsidizer --enable` 이 Codex 에서 `omx_wiki/.obsidizer` 와 `PostToolUse`(matcher `Bash`) 훅으로 동작한다. `omx wiki` 의 ingest, add 셸 호출 뒤에만, CLI 출력 JSON 이 이름 붙인 일반 페이지만, 검사한 `omx_wiki/` 를 cwd 로 고정한 정규화기(`--page --vault=<dev>:<ino>`)로 고친다.
+  - `lineage` 3.1.1 이 Codex 기록(rollout)을 읽는다(0.144 와 0.160 형식). Codex 안에서는 `CODEX_THREAD_ID` 로 지금 세션을 찾고, `--all-sessions` 는 이 폴더의 rollout 을 하위 에이전트 기록을 빼고 합친다.
+  - `setup-bypass-permissions` 에 대상 `codex`(`config.toml` 의 `approval_policy = "never"`, `sandbox_mode = "danger-full-access"`, 켜기 전 값 기록과 `off` 원복, 조직 정책과 기본 프로필 확인).
+  - `setup-omc-hud` 의 Codex 대상이 `[tui] status_line` 을 OMX 프리셋으로 켜고 끈다(없을 때만 넣고 banker 가 넣은 줄만 뺌).
+- Codex 기록 형식이 바뀌어도 결과가 조용히 비지 않는다: lineage 는 사용자 턴 0 이면 Codex 버전과 함께 exit 2, progress 는 경고 줄, 카운팅 훅은 다음 세션 시작 때 경고 한 번. `banker doctor` 가 최신 rollout 의 형식을 점검한다(Codex 를 업데이트한 뒤 확인용).
+
+### Changed
+- `banker setup --codex` 가 `CODEX_HOME` 을 따른다(상대 경로는 Codex 처럼 지금 폴더 기준). Codex 홈이 지금 폴더나 그 저장소 안이면 샌드박스가 고칠 수 있어 훅을 설치하지 않는다.
+- Codex 사용량 카운팅은 이 Codex 에 설치된 banker 스킬 이름만 센다. 체크인 형식 `{version, os, counts}` 는 그대로이고 세션 id 와 턴 id 는 보내지 않는다(PRIVACY.md 에 Codex 절).
+- 위키(`append_wiki`, `compact-wiki`)는 Codex 에서 `omx wiki` CLI 와 `omx_wiki/` 를 쓰고, Windows PowerShell 5.1 의 인자 전달을 맞춘다. `smart-compact` 는 Codex 에서 토큰 사용량을 rollout 으로 재는 훅을 쓴다. `payload-mon`, `omc-patch`, `setup-omc-hud`, `smart-compact` 는 `~/.codex` 나 `~/.claude` 쓰기를 명령별 승인이나 사용자의 `!` 명령으로 하고, 설정 폴더를 통째로 여는 `--add-dir` 은 권하지 않는다.
+
+### Notes
+- Codex 에서 지금도 Claude Code 와 다른 것: `payload-mon` 은 Codex 자신의 요청 크기를 재지 않고, `omc-patch` 는 OMX 를 패치하지 않으며, `progress` 는 상시 패널이 아니고(Windows 는 옆 칸 없음), `graceful-pause` 는 실행 중인 도구 호출이 끝난 뒤 멈춘다.
+- Windows 에서 SSH 로 접속한 세션은 Codex 샌드박스가 어떤 명령도 실행하지 못한다(Codex 쪽 제약). 데스크톱 세션에서는 샌드박스를 켠 채 확인했다.
+
 ## [0.20.5] - 2026-10-21
 
 ### Changed
