@@ -75,9 +75,10 @@ export function turnOn({ file = codexConfigFile(), policies = POLICY_FILES } = {
   for (const k of KEYS) next = setKey(next, '', k, WANT[k]);
   if (!fs.existsSync(path.dirname(file))) return { code: 1, msg: `Codex 설정 폴더가 없음: ${path.dirname(file)}` };
   // 켜져 있지 않은 상태에서 켜므로 지금 값이 되돌릴 값이다. 예전 기록이 남아 있어도(켬, 손으로 바꿈, 다시 켬) 지금 값으로 바꾼다.
-  writeToml(recordOf(file), `${JSON.stringify({ before, existed: exists })}\n`);
+  // 설정을 먼저 쓰고 기록을 쓴다. 설정 쓰기가 실패하면 앞선 기록이 그대로 남는다.
   const nl = eolOf(text);
   writeToml(file, next.endsWith(nl) || !next ? next : `${next}${nl}`, { mode, backup: exists ? backupOf(file) : null });
+  writeToml(recordOf(file), `${JSON.stringify({ before, existed: exists })}\n`);
   return { code: 0, msg: '켬: approval_policy = "never", sandbox_mode = "danger-full-access"' };
 }
 

@@ -44,7 +44,7 @@ disable-model-invocation: true
 | 항목 | 내용 |
 |---|---|
 | 바꾸는 파일 | `$CODEX_HOME/config.toml`(기본 `~/.codex/config.toml`) 최상위의 `approval_policy` = `"never"`, `sandbox_mode` = `"danger-full-access"`. 바꾸는 줄만 고치고 주석과 다른 표는 그대로 |
-| 남기는 파일 | `config.toml.bypass-permissions.bak`(켜기 전 원본), `config.toml.bypass-permissions.json`(되돌리기 기록) |
+| 남기는 파일 | `config.toml.bypass-permissions.bak`(켜기 전 원본), `config.toml.bypass-permissions.json`(되돌리기 기록). 꺼진 상태에서 켤 때마다 그때 값을 기록하므로, `off` 는 마지막 `on` 직전의 값으로 되돌린다 |
 | 우선하는 설정 | `--profile` 로 고른 프로필의 값, 실행 플래그(`-a`, `-s`), 신뢰한 프로젝트의 `.codex/config.toml`. `status` 가 값을 정한 프로필을 알린다 |
 | 거부 | `/etc/codex/requirements.toml` 이나 옛 `managed_config.toml` 의 `allowed_approval_policies`, `allowed_sandbox_modes` 가 이 값을 허용하지 않을 때, `managed_config.toml` 이 두 키를 다른 값으로 정할 때, 정책 파일을 읽을 수 없을 때, 기본 프로필(`profile`)이 두 키를 따로 정할 때, 설정 파일이 링크이거나 일반 파일이 아닐 때 |
 | 보지 않는 것 | Windows 와 macOS 의 조직 정책 위치(레지스트리, 프로필 등). 그런 정책이 있으면 켰다고 보고해도 Codex 가 다른 값으로 시작할 수 있으니 시작 줄로 확인한다 |

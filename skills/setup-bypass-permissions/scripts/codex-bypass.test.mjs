@@ -159,3 +159,9 @@ test('a quoted table name holding ] is a table, and a new top-level key goes abo
   assert.equal(findKey('[projects."/a]b"]\nk = 1\n', '', 'k'), null);
   assert.equal(setKey('a = 1\n\n# MCP servers\n[mcp]\nx = 1\n', '', 'b', '2'), 'a = 1\nb = 2\n\n# MCP servers\n[mcp]\nx = 1\n');
 });
+
+test('a long line opening with [ and no ] is read at once (no backtracking blow-up)', () => {
+  const started = Date.now();
+  findKey(`[${' '.repeat(20000)}\nk = 1\n`, '', 'k');
+  assert.ok(Date.now() - started < 1000);
+});

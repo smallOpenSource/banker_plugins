@@ -259,4 +259,7 @@ test('doctor: the newest Codex record is checked for what banker reads, and a sh
   fs.writeFileSync(path.join(day, 'rollout-d.jsonl'), 'x'.repeat((8 << 20) + 10));
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
   assert.match(out, /rollout-d\.jsonl opens with a line over 8 MB, not checked/);
+  fs.writeFileSync(path.join(day, 'rollout-e.jsonl'), '가'.repeat(2 << 20));
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
+  assert.doesNotMatch(out, /rollout-e\.jsonl opens with a line over 8 MB/, '6 MB of bytes in 2 M characters is under 8 MB');
 }));

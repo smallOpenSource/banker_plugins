@@ -251,7 +251,7 @@ function codexShapeReport(file) {
     const read = (start, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, start); return b.toString('utf8'); };
     const first = read(0, Math.min(st.size, 8 << 20)); // session_meta carries the instructions and can be large
     const head = first.split('\n')[0];
-    if (!first.includes('\n') && st.size > first.length) return { version: '', tooLong: true }; // the first line is past 8 MB
+    if (!first.includes('\n') && st.size > (8 << 20)) return { version: '', tooLong: true }; // the first line is past 8 MB (bytes)
     if (!first.slice(head.length).trim()) return { version: 'new', fresh: true };
     const body = read(Math.max(0, st.size - (32 << 20)), Math.min(st.size, 32 << 20));
     let version = '';

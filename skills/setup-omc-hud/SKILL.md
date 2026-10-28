@@ -44,7 +44,7 @@ node "<이 스킬 디렉터리 절대경로>/assets/codex-status-line.mjs" statu
 - OMX 의 별도 HUD 칸(`omx hud --tmux`)은 지금 tmux 창을 나눈다. 사용자가 그 칸을 원한다고 했을 때만 실행한다.
 - `omx setup` 은 `[tui]` 를 다시 쓰며 주석을 버릴 수 있다. 그러면 banker 표시가 사라져 그 줄은 사용자의 줄로 보이고, `off` 는 건드리지 않는다. `omx setup --force` 는 OMX 프리셋으로 바꿔 넣는다. 둘 다 설정은 깨지지 않는다.
 - Codex 의 `/statusline` 으로 항목을 바꾸면, 표시가 사라졌거나 값이 프리셋과 다를 때 `off` 는 그 줄을 사용자의 것으로 보고 남긴다.
-- banker 가 `[tui]` 표를 새로 만들었으면 `off` 는 비게 된 `[tui]` 머리도 뺀다.
+- `off` 뒤 `[tui]` 표에 키도 주석도 남지 않으면 그 머리도 뺀다.
 
 ## 표시 형식
 
