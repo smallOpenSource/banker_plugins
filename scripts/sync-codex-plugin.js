@@ -48,7 +48,8 @@ const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@b
 // - node from PATH, absolute, resolved to its real path (no realpath or readlink -f: refuse).
 // - A real path named node (nvm, fnm, Homebrew, system, an asdf shim script) runs as it is. Another name is a multicall
 //   shim that reads its argv0 (Volta, mise, snap): it is asked, from the plugin folder, for the node binary it runs, and
-//   that binary runs. Every path run or asked must be outside the real /tmp, TMPDIR and the session folder (pwd -P),
+//   that binary runs (the asking runs that node once before its own path is checked; the shim and its link are checked
+//   first). Every path run or asked must be outside the real /tmp, TMPDIR and the session folder (pwd -P),
 //   which the sandbox can write; a session folder that is the home folder itself is no workspace here (nvm keeps node
 //   under ~/.nvm, and a sandbox writing the home can already change the shell's rc files and that node).
 // - From the plugin folder, so a version manager reads no version file of the session folder; the hook scripts take
@@ -57,7 +58,7 @@ const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@b
 function shCommand(script, args, viaRun, notice = false) {
   const run = viaRun ? ' "$PLUGIN_ROOT/hooks/run.cjs"' : '';
   const say = notice
-    ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | tr -d '"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
+    ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | tr -d '\000-\037"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
     : String.raw`printf '%s\n' "banker hooks skipped: $1" >&2`;
   return String.raw`[ -n "$PLUGIN_ROOT" ] || exit 0; x() { ${say}; exit 0; }; `
     + String.raw`n=$(command -v node) || x "node is not on PATH"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
@@ -67,7 +68,7 @@ function shCommand(script, args, viaRun, notice = false) {
     + String.raw`h=; case "$HOME" in /?*) h=$(cd "$HOME" 2>/dev/null && pwd -P);; esac; `
     + String.raw`k() { case "$1" in /*) ;; *) x "node path is not absolute ($1)";; esac; for d in "$u" "$t"; do [ -n "$d" ] && case "$1" in "$d"/*) x "node is in a temp folder ($1)";; esac; done; `
     + String.raw`[ "$p" = "$h" ] || case "$1" in "$p"/*) x "node is in the session folder ($1)";; esac; }; `
-    + String.raw`cd "$PLUGIN_ROOT" || exit 0; `
+    + String.raw`cd "$PLUGIN_ROOT" || x "cannot enter the plugin folder"; `
     + `case "\${r##*/}" in node) k "$r"; e=$r;; *) k "$n"; k "$r"; e=$("$n" -p 'require("fs").realpathSync(process.execPath)' 2>/dev/null) || x "the node shim $n did not name its node"; k "$e";; esac; `
     + `"$e"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
@@ -87,7 +88,7 @@ function psCommand(script, args, viaRun, notice = false) {
     + "if (-not $n) { x 'node.exe is not on PATH' }; $r = [IO.Path]::GetFullPath($n.Source); "
     + "$ds = @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\Temp\"); if ($PWD.Path.TrimEnd('\\') -ne ([string]$env:USERPROFILE).TrimEnd('\\')) { $ds += $PWD.Path }; "
     + "foreach ($d in $ds) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { x \"node is in a temp folder or the session folder ($r)\" } }; "
-    + 'if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { exit 0 }; '
+    + "if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
     + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
