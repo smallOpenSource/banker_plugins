@@ -1150,12 +1150,59 @@ test('U18b the python builder carries the node chain and hints, checks a family 
   assert.equal(got.trim, B.sanitizeFontName('\ufeff Noto Sans KR\x85 '), 'the ends are trimmed as JavaScript trims them');
 });
 
+// U18c runs the lookups with no fc-match on PATH, so a machine whose fc-match knows 맑은 고딕 cannot answer for it, and
+// checks the hint table rather than the disk, so a font whose file name holds "proto" cannot either.
 test('U18c the node builder finds nothing for a name with no ASCII letter, and a hint lookup reads no inherited key', () => {
-  assert.equal(B.findFontFile('\ub9d1\uc740 \uace0\ub515'), null);
-  for (const name of ['constructor', '__proto__', 'toString']) {
-    const r = B.resolveFont({ fontArg: name, metaFont: 'auto' });
-    assert.deepEqual(r.warnings[0], { code: 'FONT_NOT_FOUND', from: '--font', detail: name });
+  const probe = `const B = require(${JSON.stringify(BUILD_JS)});
+    const names = ['constructor', '__proto__', 'toString'];
+    console.log(JSON.stringify({
+      korean: B.findFontFile('\\ub9d1\\uc740 \\uace0\\ub515'),
+      hints: names.map((n) => [n, B.fontHints(n)]),
+      resolved: names.map((n) => [n, typeof B.resolveFont({ fontArg: n, metaFont: 'auto' }).name]),
+    }));`;
+  const empty = fs.mkdtempSync(path.join(TMP, 'u18c-'));
+  const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env: { ...process.env, PATH: empty } });
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout.trim());
+  assert.equal(got.korean, null, 'no fc-match to spell the family, and no file name to compare: nothing');
+  assert.deepEqual(got.hints, [['constructor', ['constructor']], ['__proto__', ['proto']], ['toString', ['tostring']]], 'the name itself, not what Object carries');
+  assert.deepEqual(got.resolved, [['constructor', 'string'], ['__proto__', 'string'], ['toString', 'string']], 'resolveFont answers for each, and does not throw');
+});
+
+// The node builder's Dirent calls a linked folder a link, a Windows junction too, and does not enter it. python before
+// 3.12 calls a junction a folder, so the python builder checks for a reparse point itself. The link here is a junction
+// on Windows (no admin rights needed); elsewhere 'junction' is ignored and it is a folder symlink.
+const PY_LINKED_PROBE = String.raw`
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import build_a4p as b
+b.fc_match = lambda pattern: None
+b.font_search_dirs = lambda: [sys.argv[2]]
+linked = b.find_font_file('Noto Sans KR')
+b.font_search_dirs = lambda: [sys.argv[3]]
+print(json.dumps([linked, b.find_font_file('Noto Sans KR')]))
+`;
+test('U18e the python builder does not enter a linked font folder, a Windows junction among them, and does enter a real one', (t) => {
+  if (!pythonModule.ok) {
+    if (process.env.A4P_REQUIRE_BUILDERS === '1') assert.fail(`${pythonModule.reason} (A4P_REQUIRE_BUILDERS=1)`);
+    t.skip(pythonModule.reason);
+    return;
   }
+  const dir = fs.mkdtempSync(path.join(TMP, 'u18e-'));
+  const elsewhere = path.join(dir, 'elsewhere');
+  fs.mkdirSync(elsewhere);
+  fs.writeFileSync(path.join(elsewhere, 'NotoSansKR-Regular.ttf'), '');
+  const linkedRoot = path.join(dir, 'linked');
+  fs.mkdirSync(linkedRoot);
+  fs.symlinkSync(elsewhere, path.join(linkedRoot, 'sub'), 'junction');
+  const realRoot = path.join(dir, 'real');
+  fs.mkdirSync(path.join(realRoot, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(realRoot, 'sub', 'NotoSansKR-Regular.ttf'), '');
+  const r = spawnSync(pythonModule.bin, ['-B', '-c', PY_LINKED_PROBE, HERE, linkedRoot, realRoot], { encoding: 'utf8', cwd: TMP });
+  assert.equal(r.status, 0, r.stderr);
+  const [linked, real] = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.equal(linked, null, 'a font behind a linked folder is not found');
+  assert.equal(real, path.join(realRoot, 'sub', 'NotoSansKR-Regular.ttf'), 'a font in a real subfolder is');
 });
 
 // A Korean family name has no ASCII letter to compare, so fc-match's answer must spell it exactly. The stand-in
@@ -1164,7 +1211,8 @@ test('U18d the node builder takes a Korean name only when fc-match returns that 
   const bin = fs.mkdtempSync(path.join(TMP, 'u18d-'));
   const font = path.join(bin, 'NanumGothic.ttf');
   fs.writeFileSync(font, '');
-  fs.writeFileSync(path.join(bin, 'fc-match'), `#!/bin/sh\nprintf '%s|NanumGothic,나눔고딕' '${font}'\n`, { mode: 0o755 });
+  const shQuoted = `'${font.replace(/'/g, `'\\''`)}'`;
+  fs.writeFileSync(path.join(bin, 'fc-match'), `#!/bin/sh\nprintf '%s|NanumGothic,나눔고딕' ${shQuoted}\n`, { mode: 0o755 });
   const probe = `const B = require(${JSON.stringify(BUILD_JS)});
     console.log(JSON.stringify([B.findFontFile('나눔고딕'), B.findFontFile('맑은 고딕')]));`;
   const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } });
@@ -1227,7 +1275,7 @@ test('U17b both builders carry the same title cap and warning code', () => {
   // source keeps this in the dependency-free tier: no interpreter required.
   const py = fs.readFileSync(path.join(HERE, 'build_a4p.py'), 'utf8');
   assert.match(py, /CORE_TITLE_MAX\s*=\s*255/, 'python must clamp at the same length');
-  assert.match(py, /'code':\s*'TITLE_TRUNCATED'/, 'python must emit the same warning code');
+  assert.match(py, /(['"])code\1:\s*(['"])TITLE_TRUNCATED\2/, 'python must emit the same warning code');
   assert.match(py, /except ValueError as err:\s*\n\s*raise UsageError/,
     'a library refusal must become UsageError (exit 3), never a raw traceback');
 

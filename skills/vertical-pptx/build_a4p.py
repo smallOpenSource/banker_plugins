@@ -526,8 +526,12 @@ def glob_font_file(name):
                 return
             full = os.path.join(directory, ent.name)
             try:
-                if ent.is_dir(follow_symlinks=False):  # node 의 Dirent 처럼 링크 폴더는 따라가지 않는다
-                    subdirs.append(full)
+                # node 의 Dirent 처럼 링크 폴더는 따라가지 않는다. Windows junction 은 python 3.12 전까지
+                # 링크로 보지 않으므로 재분석 지점(0x400)인지 따로 본다. node 는 재분석 지점을 링크로 본다
+                if ent.is_dir(follow_symlinks=False):
+                    attrs = getattr(ent.stat(follow_symlinks=False), "st_file_attributes", 0)
+                    if not attrs & 0x400:
+                        subdirs.append(full)
                     continue
             except OSError:
                 continue

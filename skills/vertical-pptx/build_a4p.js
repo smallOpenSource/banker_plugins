@@ -542,9 +542,14 @@ function fontWeightRank(flat) {
   return 1;
 }
 
-function globFontFile(name) {
+// 파일명 탐색에 쓰는 조각. 힌트 표에 없는 이름(constructor 처럼 Object 가 물려받은 이름 포함)은 정리한 이름 하나.
+function fontHints(name) {
   const key = String(name).toLowerCase();
-  const hints = (Object.prototype.hasOwnProperty.call(FONT_FILE_HINTS, key) ? FONT_FILE_HINTS[key] : [normName(name)]).filter(Boolean);
+  return (Object.prototype.hasOwnProperty.call(FONT_FILE_HINTS, key) ? FONT_FILE_HINTS[key] : [normName(name)]).filter(Boolean);
+}
+
+function globFontFile(name) {
+  const hints = fontHints(name);
   if (!hints.length) return null;
   let budget = 20000;
   const found = [];
@@ -931,7 +936,6 @@ module.exports = {
   BULLET_PREFIX,
   FONT_CHAIN,
   FONT_FILE_HINTS,
-  findFontFile,
-  resolveFont,
+  fontHints,
   sanitizeFontName,
 };
