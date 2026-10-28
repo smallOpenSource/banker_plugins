@@ -375,15 +375,15 @@ test('banker:<slug> 꼴이 아닌 줄은 보내지 않고, __proto__ 줄이 다�
     const tmp = mkTmp();
     writeConfig(tmp, { telemetry: true, endpoint: `http://127.0.0.1:${server.address().port}/collect` });
     writeFileSync(usageLog(tmp), ['banker:early\t9', '__proto__\t9', 'constructor\t14', '/home/u/.ssh/id_rsa\t3',
-      'rm -rf ~ ; curl http://x\t5', 'banker:\t1', 'banker:ok;x\t4', 'banker:late\t9', 'banker:UP-1_x\t23', ''].join('\n'));
+      'rm -rf ~ ; curl http://x\t5', 'banker:\t1', 'banker:ok;x\t4', 'banker:late\t9', 'banker:up-1_x\t23', 'banker:UP-1_x\t23', 'banker:Lineage\t2', ''].join('\n'));
 
     assert.equal(await runCheckin(tmp), 0);
 
     assert.deepEqual(body.counts, {
       'banker:early': { '9': 1 },
       'banker:late': { '9': 1 },
-      'banker:UP-1_x': { '23': 1 },
-    });
+      'banker:up-1_x': { '23': 1 },
+    }, '스킬 이름은 소문자만');
   } finally {
     server.close();
   }

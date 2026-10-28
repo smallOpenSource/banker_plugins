@@ -286,6 +286,7 @@ test('netDeadlineMs: 시험용 값은 마감을 줄이기만 한다(30초보다 
 test('SKILL_NAME_RE: banker:<이름> 의 이름은 64자까지이고 실제 스킬과 명령의 이름은 모두 맞는다', () => {
   assert.ok(SKILL_NAME_RE.test(`banker:${'a'.repeat(64)}`));
   assert.ok(!SKILL_NAME_RE.test(`banker:${'a'.repeat(65)}`), '긴 이름은 사용 기록과 체크인에 싣지 않는다');
+  assert.ok(!SKILL_NAME_RE.test('banker:FRONT-QA'), '대문자 이름은 실제 스킬 이름이 아니다');
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const names = [
     ...fs.readdirSync(path.join(root, 'skills')).filter((d) => fs.existsSync(path.join(root, 'skills', d, 'SKILL.md'))),
