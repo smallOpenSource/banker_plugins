@@ -1,0 +1,5 @@
+# ruff for the Python files under skills/. The lowest Python one of them supports is 3.6 (the fallback of
+# setup-bypass-permissions runs on EL8's system python3). ruff's lowest target is 3.7, and what its formatter writes
+# for 3.7 parses on 3.6 too. A higher target lets the formatter write parenthesized context managers, which python
+# before 3.9 cannot parse.
+target-version = "py37"

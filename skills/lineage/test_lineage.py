@@ -5,6 +5,7 @@ Run with Python 3.7+:  python3.12 -m unittest test_lineage -v
 Five suites map to the change-request defects (A/B/C/D/E/F). Inputs use RAW
 `<...>` tags (as JSONL carries), NOT the display-escaped `&lt;` from the spec.
 """
+
 import contextlib
 import hashlib
 import html
@@ -45,12 +46,20 @@ def _cpu_now():
     return time.process_time()
 
 
-def _turn(role, text, ts="2026-08-09T10:00:00Z", uuid="u", tools=None,
-          session="s", parts=None):
-    return {"role": role, "text": text, "ts": ts, "uuid": uuid,
-            "tools": tools or {}, "line_no": 1,
-            "parts": parts if parts is not None else ([text] if text else []),
-            "session": session, "session_name": session}
+def _turn(
+    role, text, ts="2026-08-09T10:00:00Z", uuid="u", tools=None, session="s", parts=None
+):
+    return {
+        "role": role,
+        "text": text,
+        "ts": ts,
+        "uuid": uuid,
+        "tools": tools or {},
+        "line_no": 1,
+        "parts": parts if parts is not None else ([text] if text else []),
+        "session": session,
+        "session_name": session,
+    }
 
 
 def _parse(lines):
@@ -60,8 +69,12 @@ def _parse(lines):
 
 
 def _rec(role, text, ts="2026-08-09T10:00:00Z", uuid=None):
-    return {"type": role, "uuid": uuid or (role + text[:4]), "timestamp": ts,
-            "message": {"role": role, "content": text}}
+    return {
+        "type": role,
+        "uuid": uuid or (role + text[:4]),
+        "timestamp": ts,
+        "message": {"role": role, "content": text},
+    }
 
 
 # ============================================================ Suite 1: classify/summary
@@ -78,9 +91,15 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertEqual(turns[0]["session"], "s")
 
     def test_parse_tool_only_has_empty_parts(self):
-        rec = {"type": "assistant", "uuid": "a1", "timestamp": "t",
-               "message": {"role": "assistant",
-                           "content": [{"type": "tool_use", "name": "Bash"}]}}
+        rec = {
+            "type": "assistant",
+            "uuid": "a1",
+            "timestamp": "t",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "name": "Bash"}],
+            },
+        }
         turns = _parse([rec])
         self.assertEqual(turns[0]["parts"], [])
         self.assertEqual(turns[0]["tools"], {"Bash": 1})
@@ -88,13 +107,27 @@ class TestClassificationAndSummary(unittest.TestCase):
     # ---- R1/B-1: merge_assistant_runs from parse output — no KeyError ----
     def test_merge_no_keyerror_from_parse(self):
         recs = [
-            {"type": "assistant", "uuid": "a1", "timestamp": "t",
-             "message": {"role": "assistant",
-                         "content": [{"type": "text", "text": "body"}]}},
-            {"type": "assistant", "uuid": "a2", "timestamp": "t2",
-             "message": {"role": "assistant",
-                         "content": [{"type": "tool_use", "name": "Bash"},
-                                     {"type": "tool_use", "name": "Read"}]}},
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "timestamp": "t",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "body"}],
+                },
+            },
+            {
+                "type": "assistant",
+                "uuid": "a2",
+                "timestamp": "t2",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "name": "Bash"},
+                        {"type": "tool_use", "name": "Read"},
+                    ],
+                },
+            },
         ]
         turns = _parse(recs)
         merged = L.merge_assistant_runs(turns)  # must not raise
@@ -102,40 +135,49 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertEqual(merged[0]["tools"], {"Bash": 1, "Read": 1})
 
     def test_merge_keeps_first_timestamp(self):
-        turns = [_turn("assistant", "a", ts="2026-01-01T00:00:00Z", uuid="x"),
-                 _turn("assistant", "b", ts="2026-01-01T05:00:00Z", uuid="y")]
+        turns = [
+            _turn("assistant", "a", ts="2026-01-01T00:00:00Z", uuid="x"),
+            _turn("assistant", "b", ts="2026-01-01T05:00:00Z", uuid="y"),
+        ]
         merged = L.merge_assistant_runs(turns)
         self.assertEqual(merged[0]["ts"], "2026-01-01T00:00:00Z")
 
     def test_merge_sums_tools(self):
-        turns = [_turn("assistant", "", uuid="x", tools={"Bash": 2}),
-                 _turn("assistant", "", uuid="y", tools={"Bash": 1, "Read": 3})]
+        turns = [
+            _turn("assistant", "", uuid="x", tools={"Bash": 2}),
+            _turn("assistant", "", uuid="y", tools={"Bash": 1, "Read": 3}),
+        ]
         merged = L.merge_assistant_runs(turns)
         self.assertEqual(merged[0]["tools"], {"Bash": 3, "Read": 3})
 
     def test_merge_is_pure(self):
-        turns = [_turn("assistant", "a", uuid="x", tools={"Bash": 1}),
-                 _turn("assistant", "b", uuid="y", tools={"Bash": 1})]
+        turns = [
+            _turn("assistant", "a", uuid="x", tools={"Bash": 1}),
+            _turn("assistant", "b", uuid="y", tools={"Bash": 1}),
+        ]
         L.merge_assistant_runs(turns)
         L.merge_assistant_runs(turns)  # twice
         self.assertEqual(turns[0]["tools"], {"Bash": 1})  # input unmutated
 
     def test_merge_session_guard(self):
-        turns = [_turn("assistant", "a", uuid="x", session="s1"),
-                 _turn("assistant", "b", uuid="y", session="s2")]
+        turns = [
+            _turn("assistant", "a", uuid="x", session="s1"),
+            _turn("assistant", "b", uuid="y", session="s2"),
+        ]
         merged = L.merge_assistant_runs(turns)
         self.assertEqual(len(merged), 2)  # different sessions don't merge
 
     def test_merge_user_between_splits(self):
-        turns = [_turn("assistant", "a", uuid="x"),
-                 _turn("user", "q", uuid="u"),
-                 _turn("assistant", "b", uuid="y")]
+        turns = [
+            _turn("assistant", "a", uuid="x"),
+            _turn("user", "q", uuid="u"),
+            _turn("assistant", "b", uuid="y"),
+        ]
         merged = L.merge_assistant_runs(turns)
         self.assertEqual(len(merged), 3)
 
     def test_merge_parts_accumulate(self):
-        turns = [_turn("assistant", "a", uuid="x"),
-                 _turn("assistant", "b", uuid="y")]
+        turns = [_turn("assistant", "a", uuid="x"), _turn("assistant", "b", uuid="y")]
         merged = L.merge_assistant_runs(turns)
         self.assertEqual(merged[0]["parts"], ["a", "b"])
 
@@ -154,7 +196,9 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertIn("why show", out)
 
     def test_clean_command_record_harness_dropped(self):
-        txt = "<command-name>/copy</command-name><command-message>copy</command-message>"
+        txt = (
+            "<command-name>/copy</command-name><command-message>copy</command-message>"
+        )
         self.assertEqual(L.clean_user_text(txt), "")
 
     def test_clean_command_record_plugin_kept(self):
@@ -162,16 +206,20 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertEqual(L.clean_user_text(txt), "/banker:append_wiki")
 
     def test_clean_command_with_args(self):
-        txt = ("<command-name>/model</command-name>"
-               "<command-args>opus</command-args>")
+        txt = (
+            "<command-name>/model</command-name>" + "<command-args>opus</command-args>"
+        )
         # /model is harness → dropped even with args
         self.assertEqual(L.clean_user_text(txt), "")
 
     def test_clean_plugin_command_with_args(self):
-        txt = ("<command-name>/banker:all-in-one</command-name>"
-               "<command-args>--critic=critic go</command-args>")
-        self.assertEqual(L.clean_user_text(txt),
-                         "/banker:all-in-one --critic=critic go")
+        txt = (
+            "<command-name>/banker:all-in-one</command-name>"
+            "<command-args>--critic=critic go</command-args>"
+        )
+        self.assertEqual(
+            L.clean_user_text(txt), "/banker:all-in-one --critic=critic go"
+        )
 
     def test_clean_keep_trivia_preserves_command(self):
         self.assertEqual(L.clean_user_text("/copy", drop_harness=False), "/copy")
@@ -181,8 +229,9 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertEqual(L.clean_user_text("<system-reminder>partial only"), "")
 
     def test_clean_plain_message_untouched(self):
-        self.assertEqual(L.clean_user_text("just a normal message"),
-                         "just a normal message")
+        self.assertEqual(
+            L.clean_user_text("just a normal message"), "just a normal message"
+        )
 
     def test_noise_open_re_defined(self):
         self.assertTrue(L._NOISE_OPEN_RE.match("<task-notification foo"))
@@ -190,27 +239,35 @@ class TestClassificationAndSummary(unittest.TestCase):
 
     # ---- A-2: split_agent_message ----
     def test_agent_extract(self):
-        who, body = L.split_agent_message('<agent-message from="planner">done</agent-message>')
+        who, body = L.split_agent_message(
+            '<agent-message from="planner">done</agent-message>'
+        )
         self.assertEqual(who, "planner")
         self.assertEqual(body, "done")
 
     def test_agent_teammate_id(self):
-        who, body = L.split_agent_message('<teammate-message teammate_id="w2">ok</teammate-message>')
+        who, body = L.split_agent_message(
+            '<teammate-message teammate_id="w2">ok</teammate-message>'
+        )
         self.assertEqual(who, "w2")
 
     def test_agent_idle_json_dropped(self):
-        who, body = L.split_agent_message('<agent-message from="x">{"type":"idle"}</agent-message>')
+        who, body = L.split_agent_message(
+            '<agent-message from="x">{"type":"idle"}</agent-message>'
+        )
         self.assertEqual(body, "")
 
     def test_agent_trailing_harness_note_excluded(self):
         who, body = L.split_agent_message(
             '<agent-message from="x">real report</agent-message>\n'
-            'agentId: abc (use SendMessage...)')
+            "agentId: abc (use SendMessage...)"
+        )
         self.assertEqual(body, "real report")
 
     def test_agent_peer_lead_stripped(self):
         who, body = L.split_agent_message(
-            'Another Claude session sent a message: <agent-message from="p">hi</agent-message>')
+            'Another Claude session sent a message: <agent-message from="p">hi</agent-message>'
+        )
         self.assertEqual(who, "p")
 
     def test_user_quoting_agent_tag_not_reclassified(self):
@@ -223,21 +280,33 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertIn("짧은", L.summarize_turn(t))
 
     def test_summary_intent_only_uses_tail(self):
-        t = _turn("assistant", "확인합니다.",
-                  parts=["확인합니다.",
-                         "결과: 테스트 42개가 모두 통과했고 빌드도 정상입니다."])
+        t = _turn(
+            "assistant",
+            "확인합니다.",
+            parts=[
+                "확인합니다.",
+                "결과: 테스트 42개가 모두 통과했고 빌드도 정상입니다.",
+            ],
+        )
         s = L.summarize_turn(t)
         self.assertIn("통과", s)
 
     def test_summary_head_plus_tail(self):
-        t = _turn("assistant", "x",
-                  parts=["먼저 파일을 분석했습니다. 세부 내용을 살펴봅니다.",
-                         "최종적으로 세 곳을 수정하여 문제를 해결했습니다."])
+        t = _turn(
+            "assistant",
+            "x",
+            parts=[
+                "먼저 파일을 분석했습니다. 세부 내용을 살펴봅니다.",
+                "최종적으로 세 곳을 수정하여 문제를 해결했습니다.",
+            ],
+        )
         s = L.summarize_turn(t)
         self.assertTrue("…" in s or "해결" in s)
 
     def test_sent_split_decimal_guard(self):
-        parts = [p for p in L._SENT_SPLIT.split("Spring 5.3 is out. Ready.") if p.strip()]
+        parts = [
+            p for p in L._SENT_SPLIT.split("Spring 5.3 is out. Ready.") if p.strip()
+        ]
         self.assertEqual(len(parts), 2)
 
     def test_sent_split_date_guard(self):
@@ -265,12 +334,21 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertEqual(len(L.classify_turns(turns)), 0)
 
     def test_classify_compaction_becomes_mark(self):
-        turns = [_turn("user", "This session is being continued from a previous conversation. Summary:")]
+        turns = [
+            _turn(
+                "user",
+                "This session is being continued from a previous conversation. Summary:",
+            )
+        ]
         out = L.classify_turns(turns)
         self.assertEqual(out[0]["role"], "mark")
 
     def test_classify_image_note_replaced(self):
-        turns = [_turn("user", "[Image: original 3000x480, displayed at 2000x320. Multiply...")]
+        turns = [
+            _turn(
+                "user", "[Image: original 3000x480, displayed at 2000x320. Multiply..."
+            )
+        ]
         out = L.classify_turns(turns)
         self.assertEqual(out[0]["text"], "🖼 이미지 첨부")
 
@@ -283,7 +361,9 @@ class TestClassificationAndSummary(unittest.TestCase):
         self.assertEqual(len(L.classify_turns(turns, drop_trivia=False)), 0)
 
     def test_classify_agent_becomes_agent_role(self):
-        turns = [_turn("user", '<agent-message from="p">report body here</agent-message>')]
+        turns = [
+            _turn("user", '<agent-message from="p">report body here</agent-message>')
+        ]
         out = L.classify_turns(turns)
         self.assertEqual(out[0]["role"], "agent")
         self.assertEqual(out[0]["agent_from"], "p")
@@ -372,7 +452,7 @@ class TestMarkdown(unittest.TestCase):
     def test_no_double_break_pre_wrap(self):
         # N5: paragraph lines joined with <br>, no literal newline within <p>
         out = L.render_markdown("aaa\nbbb")
-        p = out[out.index("<p>"):out.index("</p>")]
+        p = out[out.index("<p>") : out.index("</p>")]
         self.assertNotIn("\n", p)
 
     def test_hr(self):
@@ -416,11 +496,11 @@ class TestInjectionAndEscape(unittest.TestCase):
         self.assertIn('href="https://x.io/a**b"', out)
         self.assertEqual(out.count("<strong>"), 1)
         self.assertEqual(out.count("</strong>"), 1)
-        self.assertNotIn("<strong>", out[:out.index("</a>")])  # none inside href
+        self.assertNotIn("<strong>", out[: out.index("</a>")])  # none inside href
 
     def test_c2_no_strong_inside_href(self):
         out = L.render_markdown("[a](https://x/**y**z) then **real**")
-        a_seg = out[out.index("<a "):out.index("</a>")]
+        a_seg = out[out.index("<a ") : out.index("</a>")]
         self.assertNotIn("<strong>", a_seg)
 
     def test_sentinel_collision_guard(self):
@@ -455,29 +535,36 @@ class TestTriviaFilter(unittest.TestCase):
         self.assertNotIn("init", L._HARNESS_CMDS)
 
     def test_echo_drops_one_char_reply(self):
-        turns = [_turn("user", "1이라고 말해", uuid="u"),
-                 _turn("assistant", "1", uuid="a")]
+        turns = [
+            _turn("user", "1이라고 말해", uuid="u"),
+            _turn("assistant", "1", uuid="a"),
+        ]
         self.assertEqual(len(L.drop_echo_exchanges(turns)), 0)
 
     def test_echo_keeps_real_short_confirm(self):
         # "네, 맞습니다." is 8 chars > ECHO_REPLY(5) → kept
-        turns = [_turn("user", "맞아?", uuid="u"),
-                 _turn("assistant", "네, 맞습니다.", uuid="a")]
+        turns = [
+            _turn("user", "맞아?", uuid="u"),
+            _turn("assistant", "네, 맞습니다.", uuid="a"),
+        ]
         self.assertEqual(len(L.drop_echo_exchanges(turns)), 2)
 
     def test_echo_keeps_long_question(self):
-        turns = [_turn("user", "x" * 100, uuid="u"),
-                 _turn("assistant", "1", uuid="a")]
+        turns = [_turn("user", "x" * 100, uuid="u"), _turn("assistant", "1", uuid="a")]
         self.assertEqual(len(L.drop_echo_exchanges(turns)), 2)
 
     def test_echo_not_dropped_when_tools(self):
-        turns = [_turn("user", "go", uuid="u"),
-                 _turn("assistant", "ok", uuid="a", tools={"Bash": 1})]
+        turns = [
+            _turn("user", "go", uuid="u"),
+            _turn("assistant", "ok", uuid="a", tools={"Bash": 1}),
+        ]
         self.assertEqual(len(L.drop_echo_exchanges(turns)), 2)
 
     def test_echo_session_guard(self):
-        turns = [_turn("user", "go", uuid="u", session="s1"),
-                 _turn("assistant", "ok", uuid="a", session="s2")]
+        turns = [
+            _turn("user", "go", uuid="u", session="s1"),
+            _turn("assistant", "ok", uuid="a", session="s2"),
+        ]
         self.assertEqual(len(L.drop_echo_exchanges(turns)), 2)
 
     def test_echo_drops_question_with_reply(self):
@@ -499,8 +586,10 @@ class TestTriviaFilter(unittest.TestCase):
 class TestSessionDefaultsPath(unittest.TestCase):
     # ---- D-2 path encoding (the demonstrated underscore bug) ----
     def test_encode_underscore(self):
-        self.assertEqual(L.encode_cwd("/app/poc/build_plugin/banker_plugins"),
-                         "-app-poc-build-plugin-banker-plugins")
+        self.assertEqual(
+            L.encode_cwd("/app/poc/build_plugin/banker_plugins"),
+            "-app-poc-build-plugin-banker-plugins",
+        )
 
     def test_encode_slash(self):
         self.assertEqual(L.encode_cwd("/a/b/c"), "-a-b-c")
@@ -518,7 +607,7 @@ class TestSessionDefaultsPath(unittest.TestCase):
     # ---- D-3 UnicodeDecodeError isolation ----
     def test_bad_utf8_file_isolated(self):
         with tempfile.NamedTemporaryFile("wb", suffix=".jsonl", delete=False) as f:
-            f.write(b'\xff\xfe not valid utf8')
+            f.write(b"\xff\xfe not valid utf8")
             bad = f.name
         try:
             turns = L._load_turns_from(pathlib.Path(bad), False, "s", "s")
@@ -528,15 +617,19 @@ class TestSessionDefaultsPath(unittest.TestCase):
 
     # ---- D-1 all-sessions record-level sort (via merge/echo session guards) ----
     def test_record_level_chrono_order(self):
-        turns = [_turn("user", "a", ts="2026-01-01T02:00:00Z", uuid="1", session="A"),
-                 _turn("user", "b", ts="2026-01-01T01:00:00Z", uuid="2", session="B")]
+        turns = [
+            _turn("user", "a", ts="2026-01-01T02:00:00Z", uuid="1", session="A"),
+            _turn("user", "b", ts="2026-01-01T01:00:00Z", uuid="2", session="B"),
+        ]
         turns.sort(key=lambda t: t.get("ts") or "9999")
         self.assertEqual(turns[0]["uuid"], "2")  # earlier ts first, cross-session
 
     def test_fill_missing_ts(self):
-        turns = [_turn("user", "a", ts="2026-01-01T01:00:00Z"),
-                 _turn("user", "b", ts=None),
-                 _turn("assistant", "c", ts="2026-01-01T02:00:00Z")]
+        turns = [
+            _turn("user", "a", ts="2026-01-01T01:00:00Z"),
+            _turn("user", "b", ts=None),
+            _turn("assistant", "c", ts="2026-01-01T02:00:00Z"),
+        ]
         L.fill_missing_ts(turns)
         self.assertEqual(turns[1]["ts"], "2026-01-01T01:00:00Z")  # inherits predecessor
 
@@ -571,10 +664,16 @@ class TestSessionDefaultsPath(unittest.TestCase):
 
     # ---- F-1 self_verify void-aware ----
     def test_self_verify_clean_template(self):
-        doc = (L.HTML_TEMPLATE.replace("{{TITLE}}", "t")
-               .replace("{{HEADER_TITLE}}", "t").replace("{{DATE_RANGE}}", "d")
-               .replace("{{TURNS}}", '<div class="row me"><div class="bubble">'
-                        '<div class="plain">hi</div></div></div>'))
+        doc = (
+            L.HTML_TEMPLATE.replace("{{TITLE}}", "t")
+            .replace("{{HEADER_TITLE}}", "t")
+            .replace("{{DATE_RANGE}}", "d")
+            .replace(
+                "{{TURNS}}",
+                '<div class="row me"><div class="bubble">'
+                '<div class="plain">hi</div></div></div>',
+            )
+        )
         self.assertEqual(L.self_verify(doc), [])
 
     def test_self_verify_void_no_false_positive(self):
@@ -596,7 +695,7 @@ class TestSessionDefaultsPath(unittest.TestCase):
 
     def test_self_verify_ignores_script_body(self):
         # inline JS like `top<a-8` must not be counted as an <a> tag
-        doc = '<div><script>var x = top<a-8;</script></div>'
+        doc = "<div><script>var x = top<a-8;</script></div>"
         errs = L.self_verify(doc)
         self.assertFalse(any("<a>" in e for e in errs))
 
@@ -622,8 +721,9 @@ class TestRenderIntegration(unittest.TestCase):
         self.assertIn("<details", out)
 
     def test_default_collapsed_no_open_attr(self):
-        out = self._render([_turn("assistant", "a", tools={"Bash": 1})],
-                           open_details=False)
+        out = self._render(
+            [_turn("assistant", "a", tools={"Bash": 1})], open_details=False
+        )
         self.assertNotIn("<details open>", out)
         self.assertIn("<details>", out)
 
@@ -644,8 +744,10 @@ class TestRenderIntegration(unittest.TestCase):
 
     def test_prewrap_on_block_elements(self):
         # C-3: pre-wrap bound to p/li/blockquote (not the bubble)
-        self.assertIn(".detail p,.detail li,.detail blockquote{white-space:pre-wrap",
-                      L.HTML_TEMPLATE)
+        self.assertIn(
+            ".detail p,.detail li,.detail blockquote{white-space:pre-wrap",
+            L.HTML_TEMPLATE,
+        )
 
     def test_keyboard_ecode_and_composing(self):
         # E-2: e.code priority + isComposing guard present
@@ -666,14 +768,20 @@ class TestRenderIntegration(unittest.TestCase):
         # e2e: build a doc through main()'s render path and self_verify it
         turns = [
             _turn("user", "질문입니다 **강조** 포함"),
-            _turn("assistant", "## 답\n- 항목1\n- 항목2\n\n`code` and [link](https://x.io)",
-                  tools={"Read": 1}),
+            _turn(
+                "assistant",
+                "## 답\n- 항목1\n- 항목2\n\n`code` and [link](https://x.io)",
+                tools={"Read": 1},
+            ),
         ]
         turns = L.merge_assistant_runs(turns)
         rows, *_ = L.render_rows(turns, "s", None, "full", False)
-        doc = (L.HTML_TEMPLATE.replace("{{TITLE}}", "t")
-               .replace("{{HEADER_TITLE}}", "t").replace("{{DATE_RANGE}}", "d")
-               .replace("{{TURNS}}", "\n".join(rows)))
+        doc = (
+            L.HTML_TEMPLATE.replace("{{TITLE}}", "t")
+            .replace("{{HEADER_TITLE}}", "t")
+            .replace("{{DATE_RANGE}}", "d")
+            .replace("{{TURNS}}", "\n".join(rows))
+        )
         self.assertEqual(L.self_verify(doc), [])
 
     def test_compaction_mark_renders_divider(self):
@@ -691,9 +799,19 @@ class TestRangeFiltersE2E(unittest.TestCase):
         with open(jf, "w", encoding="utf-8") as f:
             for r in records:
                 f.write(json.dumps(r) + "\n")
-        rc = L.main(["--session", jf, "--output", os.path.join(d, "out.html"),
-                     "--skip-reviewer"] + extra_args)
-        htmls = [p for p in os.listdir(d) if p.startswith("out") and p.endswith(".html")]
+        rc = L.main(
+            [
+                "--session",
+                jf,
+                "--output",
+                os.path.join(d, "out.html"),
+                "--skip-reviewer",
+            ]
+            + extra_args
+        )
+        htmls = [
+            p for p in os.listdir(d) if p.startswith("out") and p.endswith(".html")
+        ]
         text = ""
         if htmls:
             with open(os.path.join(d, htmls[0]), encoding="utf-8") as f:
@@ -702,47 +820,56 @@ class TestRangeFiltersE2E(unittest.TestCase):
 
     def test_to_date_inclusive_end_day(self):
         # THE --to regression: a bare end date must include the whole end day
-        recs = [_rec("user", "day8msg", ts="2026-08-08T10:00:00Z", uuid="u8"),
-                _rec("user", "day9msg", ts="2026-08-09T10:00:00Z", uuid="u9")]
+        recs = [
+            _rec("user", "day8msg", ts="2026-08-08T10:00:00Z", uuid="u8"),
+            _rec("user", "day9msg", ts="2026-08-09T10:00:00Z", uuid="u9"),
+        ]
         rc, text = self._run(recs, ["--to", "2026-08-09"])
         self.assertEqual(rc, 0)
-        self.assertIn("day9msg", text)   # end day INCLUDED (was silently dropped)
+        self.assertIn("day9msg", text)  # end day INCLUDED (was silently dropped)
         self.assertIn("day8msg", text)
 
     def test_to_date_excludes_next_day(self):
-        recs = [_rec("user", "day9msg", ts="2026-08-09T10:00:00Z", uuid="u9"),
-                _rec("user", "day10msg", ts="2026-08-10T10:00:00Z", uuid="u10")]
+        recs = [
+            _rec("user", "day9msg", ts="2026-08-09T10:00:00Z", uuid="u9"),
+            _rec("user", "day10msg", ts="2026-08-10T10:00:00Z", uuid="u10"),
+        ]
         rc, text = self._run(recs, ["--to", "2026-08-09"])
         self.assertIn("day9msg", text)
         self.assertNotIn("day10msg", text)
 
     def test_from_date_inclusive_start_day(self):
-        recs = [_rec("user", "day8msg", ts="2026-08-08T10:00:00Z", uuid="u8"),
-                _rec("user", "day9msg", ts="2026-08-09T10:00:00Z", uuid="u9")]
+        recs = [
+            _rec("user", "day8msg", ts="2026-08-08T10:00:00Z", uuid="u8"),
+            _rec("user", "day9msg", ts="2026-08-09T10:00:00Z", uuid="u9"),
+        ]
         rc, text = self._run(recs, ["--from", "2026-08-09"])
         self.assertIn("day9msg", text)
         self.assertNotIn("day8msg", text)
 
     def test_last_n(self):
-        recs = [_rec("user", "msg%d" % i, ts="2026-08-09T10:0%d:00Z" % i, uuid="u%d" % i)
-                for i in range(5)]
+        recs = [
+            _rec("user", "msg%d" % i, ts="2026-08-09T10:0%d:00Z" % i, uuid="u%d" % i)
+            for i in range(5)
+        ]
         rc, text = self._run(recs, ["--last", "2"])
         self.assertIn("msg4", text)
         self.assertNotIn("msg0", text)
 
     def test_turns_range_1indexed(self):
-        recs = [_rec("user", "msg%d" % i, ts="2026-08-09T10:0%d:00Z" % i, uuid="u%d" % i)
-                for i in range(5)]
+        recs = [
+            _rec("user", "msg%d" % i, ts="2026-08-09T10:0%d:00Z" % i, uuid="u%d" % i)
+            for i in range(5)
+        ]
         rc, text = self._run(recs, ["--turns", "2-3"])
-        self.assertIn("msg1", text)      # turn 2 == msg1 (1-indexed)
-        self.assertNotIn("msg0", text)   # turn 1 excluded
-        self.assertNotIn("msg4", text)   # turn 5 excluded
+        self.assertIn("msg1", text)  # turn 2 == msg1 (1-indexed)
+        self.assertNotIn("msg0", text)  # turn 1 excluded
+        self.assertNotIn("msg4", text)  # turn 5 excluded
 
     def test_last_zero_no_crash(self):
         recs = [_rec("user", "only", ts="2026-08-09T10:00:00Z", uuid="u")]
         rc, text = self._run(recs, ["--last", "0"])
-        self.assertEqual(rc, 0)          # --last 0 must not crash
-
+        self.assertEqual(rc, 0)  # --last 0 must not crash
 
 
 # ============================================================ LLM review mode (emit -> decisions -> apply)
@@ -769,10 +896,14 @@ class _ReviewCase(unittest.TestCase):
 
     def _asst(self, text, uuid, ts="2026-08-09T10:00:01Z", tools=None):
         content = [{"type": "text", "text": text}] if text else []
-        for name in (tools or []):
+        for name in tools or []:
             content.append({"type": "tool_use", "name": name, "input": {}})
-        return {"type": "assistant", "uuid": uuid, "timestamp": ts,
-                "message": {"role": "assistant", "content": content}}
+        return {
+            "type": "assistant",
+            "uuid": uuid,
+            "timestamp": ts,
+            "message": {"role": "assistant", "content": content},
+        }
 
     def _emit(self, extra=()):
         rc = L.main(["--session", self.jf, "--emit-review", self.pack] + list(extra))
@@ -780,14 +911,22 @@ class _ReviewCase(unittest.TestCase):
             return rc, json.load(f)
 
     def _apply(self, decisions=None, extra=()):
-        args = ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"), "--skip-reviewer"]
+        args = [
+            "--apply-review",
+            self.pack,
+            "--output",
+            os.path.join(self.d, "out.html"),
+            "--skip-reviewer",
+        ]
         if decisions is not None:
             dec = os.path.join(self.d, "dec-%d.json" % len(os.listdir(self.d)))
             with open(dec, "w", encoding="utf-8") as f:
                 json.dump(decisions, f, ensure_ascii=False)
             args += ["--decisions", dec]
         rc = L.main(args + list(extra))
-        htmls = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")]
+        htmls = [
+            p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")
+        ]
         text = ""
         if htmls:
             with open(os.path.join(self.d, htmls[0]), encoding="utf-8") as f:
@@ -796,14 +935,27 @@ class _ReviewCase(unittest.TestCase):
 
     def _records(self):
         return [
-            _rec("user", "배포 스크립트를 고쳐 주세요", ts="2026-08-09T10:00:00Z", uuid="u1"),
-            self._asst("먼저 스크립트를 읽겠습니다.\n\n고친 결과 배포가 끝까지 통과합니다.", "a1", tools=["Read"]),
+            _rec(
+                "user",
+                "배포 스크립트를 고쳐 주세요",
+                ts="2026-08-09T10:00:00Z",
+                uuid="u1",
+            ),
+            self._asst(
+                "먼저 스크립트를 읽겠습니다.\n\n고친 결과 배포가 끝까지 통과합니다.",
+                "a1",
+                tools=["Read"],
+            ),
             _rec("user", "ok", ts="2026-08-09T10:01:00Z", uuid="u2"),
             self._asst("ok", "a2", ts="2026-08-09T10:01:01Z"),
-            _rec("user", "토큰은 AKIA" "IOSFODNN7EXAMPLE 입니다", ts="2026-08-09T10:02:00Z", uuid="u3"),
+            _rec(
+                "user",
+                ("토큰은 AKIA" + "IOSFODNN7EXAMPLE 입니다"),
+                ts="2026-08-09T10:02:00Z",
+                uuid="u3",
+            ),
             self._asst("", "a3", ts="2026-08-09T10:02:01Z", tools=["Bash"]),
         ]
-
 
 
 class TestLlmReview(_ReviewCase):
@@ -823,9 +975,15 @@ class TestLlmReview(_ReviewCase):
         self.assertEqual(by["a1"]["llm"], {"keep": None, "summary": None})
         self.assertEqual(by["a1"]["tools"], {"Read": 1})
         # judgement calls the rules made are offered back, not hidden
-        self.assertEqual((by["u2"]["rule"]["keep"], by["u2"]["rule"]["why"]), (False, "echo"))
-        self.assertEqual((by["a2"]["rule"]["keep"], by["a2"]["rule"]["why"]), (False, "echo"))
-        self.assertEqual((by["a3"]["rule"]["keep"], by["a3"]["rule"]["why"]), (False, "tool-only"))
+        self.assertEqual(
+            (by["u2"]["rule"]["keep"], by["u2"]["rule"]["why"]), (False, "echo")
+        )
+        self.assertEqual(
+            (by["a2"]["rule"]["keep"], by["a2"]["rule"]["why"]), (False, "echo")
+        )
+        self.assertEqual(
+            (by["a3"]["rule"]["keep"], by["a3"]["rule"]["why"]), (False, "tool-only")
+        )
         self.assertTrue(by["a1"]["rule"]["summary"])
 
     def test_emit_writes_no_plain_secret_and_keeps_the_pack_private(self):
@@ -833,18 +991,23 @@ class TestLlmReview(_ReviewCase):
         self._emit()
         with open(self.pack, encoding="utf-8") as f:
             raw = f.read()
-        self.assertNotIn("AKIA" "IOSFODNN7EXAMPLE", raw)
+        self.assertNotIn(("AKIA" + "IOSFODNN7EXAMPLE"), raw)
         if os.name == "posix":
             self.assertEqual(os.stat(self.pack).st_mode & 0o777, 0o600)
 
     def test_emit_previews_long_text_for_the_reviewer(self):
         long = "가" * 3000 + "결론 문장입니다."
-        self._write([_rec("user", "길게 설명해 주세요", uuid="u1"), self._asst(long, "a1")])
+        self._write(
+            [_rec("user", "길게 설명해 주세요", uuid="u1"), self._asst(long, "a1")]
+        )
         _, pack = self._emit()
         a1 = pack["turns"][1]
         self.assertTrue(a1["clipped"])
         self.assertLess(len(a1["preview"]), len(a1["text"]))
-        self.assertTrue(a1["preview"].endswith("결론 문장입니다."), "the preview keeps the tail, where conclusions sit")
+        self.assertTrue(
+            a1["preview"].endswith("결론 문장입니다."),
+            "the preview keeps the tail, where conclusions sit",
+        )
 
     def test_apply_without_decisions_renders_what_the_rules_decided(self):
         self._write(self._records())
@@ -857,12 +1020,18 @@ class TestLlmReview(_ReviewCase):
     def test_apply_uses_the_reviewers_summary_and_keep_decisions(self):
         self._write(self._records())
         self._emit()
-        rc, text = self._apply([
-            {"id": "a1", "keep": True, "summary": "배포 스크립트 수정 완료, 끝까지 통과"},
-            {"id": "u3", "keep": False},
-            {"id": "u2", "keep": True},
-            {"id": "a2", "keep": True, "summary": "확인 응답"},
-        ])
+        rc, text = self._apply(
+            [
+                {
+                    "id": "a1",
+                    "keep": True,
+                    "summary": "배포 스크립트 수정 완료, 끝까지 통과",
+                },
+                {"id": "u3", "keep": False},
+                {"id": "u2", "keep": True},
+                {"id": "a2", "keep": True, "summary": "확인 응답"},
+            ]
+        )
         self.assertEqual(rc, 0)
         self.assertIn("배포 스크립트 수정 완료, 끝까지 통과", text)
         self.assertNotIn("토큰은", text, "a turn the reviewer dropped is gone")
@@ -871,10 +1040,22 @@ class TestLlmReview(_ReviewCase):
     def test_apply_cuts_long_summaries_and_redacts_them(self):
         self._write(self._records())
         self._emit()
-        rc, text = self._apply([{"id": "a1", "keep": True, "summary": "AKIA" "IOSFODNN7EXAMPLE " + "요약" * 100}])
+        rc, text = self._apply(
+            [
+                {
+                    "id": "a1",
+                    "keep": True,
+                    "summary": ("AKIA" + "IOSFODNN7EXAMPLE ") + "요약" * 100,
+                }
+            ]
+        )
         self.assertEqual(rc, 0)
-        self.assertNotIn("AKIA" "IOSFODNN7EXAMPLE", text)
-        sums = [s for s in text.split('<span class="sum">')[1:] if s.startswith("[REDACTED") or "요약요약" in s]
+        self.assertNotIn(("AKIA" + "IOSFODNN7EXAMPLE"), text)
+        sums = [
+            s
+            for s in text.split('<span class="sum">')[1:]
+            if s.startswith("[REDACTED") or "요약요약" in s
+        ]
         self.assertTrue(sums)
         self.assertLessEqual(len(html.unescape(sums[0].split("</span>")[0])), 120)
 
@@ -913,21 +1094,42 @@ class TestLlmReview(_ReviewCase):
         self.assertTrue(a1["llm"]["cached"])
 
     def test_emit_respects_the_selection_flags(self):
-        recs = [_rec("user", "msg%d" % i, ts="2026-08-09T10:0%d:00Z" % i, uuid="u%d" % i) for i in range(5)]
+        recs = [
+            _rec("user", "msg%d" % i, ts="2026-08-09T10:0%d:00Z" % i, uuid="u%d" % i)
+            for i in range(5)
+        ]
         self._write(recs)
         _, pack = self._emit(["--last", "2"])
         self.assertEqual([t["id"] for t in pack["turns"]], ["u3", "u4"])
 
     def test_rulebase_is_the_one_pass_run(self):
         self._write(self._records())
-        a = L.main(["--session", self.jf, "--output", os.path.join(self.d, "plain.html"), "--skip-reviewer"])
-        b = L.main(["--session", self.jf, "--output", os.path.join(self.d, "rule.html"), "--skip-reviewer", "--rulebase"])
+        a = L.main(
+            [
+                "--session",
+                self.jf,
+                "--output",
+                os.path.join(self.d, "plain.html"),
+                "--skip-reviewer",
+            ]
+        )
+        b = L.main(
+            [
+                "--session",
+                self.jf,
+                "--output",
+                os.path.join(self.d, "rule.html"),
+                "--skip-reviewer",
+                "--rulebase",
+            ]
+        )
         self.assertEqual((a, b), (0, 0))
 
         def read(prefix):
             name = [p for p in os.listdir(self.d) if p.startswith(prefix)][0]
             with open(os.path.join(self.d, name), encoding="utf-8") as f:
                 return f.read()
+
         self.assertEqual(read("plain"), read("rule"))
 
 
@@ -938,14 +1140,29 @@ class TestLlmReviewParts(_ReviewCase):
     def _long_session(self, n):
         recs = []
         for i in range(n):
-            recs.append(_rec("user", "질문 %d 입니다" % i, ts="2026-08-09T10:%02d:00Z" % i, uuid="u%d" % i))
-            recs.append(self._asst("답변 %d 입니다. 결과는 통과입니다." % i, "a%d" % i,
-                                   ts="2026-08-09T10:%02d:01Z" % i))
+            recs.append(
+                _rec(
+                    "user",
+                    "질문 %d 입니다" % i,
+                    ts="2026-08-09T10:%02d:00Z" % i,
+                    uuid="u%d" % i,
+                )
+            )
+            recs.append(
+                self._asst(
+                    "답변 %d 입니다. 결과는 통과입니다." % i,
+                    "a%d" % i,
+                    ts="2026-08-09T10:%02d:01Z" % i,
+                )
+            )
         return recs
 
     def _parts(self):
-        return sorted(p for p in os.listdir(self.d)
-                      if p.startswith("review.part-") and not p.endswith(".decisions.json"))
+        return sorted(
+            p
+            for p in os.listdir(self.d)
+            if p.startswith("review.part-") and not p.endswith(".decisions.json")
+        )
 
     def test_emit_splits_the_pack_into_parts_without_the_full_text(self):
         self._write(self._long_session(30))
@@ -962,13 +1179,22 @@ class TestLlmReviewParts(_ReviewCase):
         self.assertNotIn("text", part["turns"][0], "a reviewer reads the preview")
         self.assertEqual([p["ids"][0] for p in pack["parts"]], ["u0", "u15"])
         if os.name == "posix":
-            self.assertEqual(os.stat(os.path.join(self.d, "review.part-1.json")).st_mode & 0o777, 0o600)
+            self.assertEqual(
+                os.stat(os.path.join(self.d, "review.part-1.json")).st_mode & 0o777,
+                0o600,
+            )
 
     def test_apply_picks_up_the_decisions_written_beside_the_parts(self):
         self._write(self._records())
         self._emit()
-        with open(os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8") as f:
-            json.dump([{"id": "a1", "keep": True, "summary": "파트 결정 요약"}], f, ensure_ascii=False)
+        with open(
+            os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8"
+        ) as f:
+            json.dump(
+                [{"id": "a1", "keep": True, "summary": "파트 결정 요약"}],
+                f,
+                ensure_ascii=False,
+            )
         rc, text = self._apply()
         self.assertEqual(rc, 0)
         self.assertIn("파트 결정 요약", text)
@@ -982,12 +1208,16 @@ class TestLlmReviewParts(_ReviewCase):
         self._write(self._records())
         self._emit()
         self.assertEqual(self._parts(), ["review.part-1.json"])
-        self.assertFalse(os.path.exists(stale), "an old decisions file must not reach the new pack")
+        self.assertFalse(
+            os.path.exists(stale), "an old decisions file must not reach the new pack"
+        )
 
     def test_apply_names_every_part_with_undecided_turns(self):
         self._write(self._long_session(30))
         self._emit()
-        with open(os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump([{"id": "a0", "keep": True}], f)
         err = io.StringIO()
         old = sys.stderr
@@ -997,21 +1227,29 @@ class TestLlmReviewParts(_ReviewCase):
         finally:
             sys.stderr = old
         self.assertEqual(rc, 0)
-        self.assertIn("part 1: 29/30 turns undecided", err.getvalue(), "a partial answer is not silent")
+        self.assertIn(
+            "part 1: 29/30 turns undecided",
+            err.getvalue(),
+            "a partial answer is not silent",
+        )
         self.assertIn("part 2: 30/30 turns undecided", err.getvalue())
 
     def test_a_broken_decisions_file_beside_a_part_stops_the_run(self):
         self._write(self._records())
         self._emit()
-        with open(os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8"
+        ) as f:
             f.write("not json")
         self.assertEqual(self._apply()[0], 2)
 
     def test_review_flags_that_cannot_go_together(self):
         self._write(self._records())
-        for argv in (["--emit-review", self.pack, "--apply-review", self.pack],
-                     ["--rulebase", "--emit-review", self.pack],
-                     ["--decisions", "x.json"]):
+        for argv in (
+            ["--emit-review", self.pack, "--apply-review", self.pack],
+            ["--rulebase", "--emit-review", self.pack],
+            ["--decisions", "x.json"],
+        ):
             self.assertEqual(L.main(["--session", self.jf] + argv), 2, argv)
 
     def test_last_counts_the_turns_the_rules_keep_and_carries_the_dropped_between(self):
@@ -1019,7 +1257,9 @@ class TestLlmReviewParts(_ReviewCase):
         _, pack = self._emit(["--last", "2"])
         # the rules keep u1, a1, u3; the last two of those are a1 and u3, so the echo
         # pair between them comes along, and the tool-only turn after the end too
-        self.assertEqual([t["id"] for t in pack["turns"]], ["a1", "u2", "a2", "u3", "a3"])
+        self.assertEqual(
+            [t["id"] for t in pack["turns"]], ["a1", "u2", "a2", "u3", "a3"]
+        )
 
     def test_reviewed_keep_decisions_are_cached_too(self):
         self._write(self._records())
@@ -1052,10 +1292,25 @@ class TestLlmReviewParts(_ReviewCase):
             json.dump([{"idx": 0, "recoverable": False, "reason": "vague"}], f)
         dec = os.path.join(self.d, "dec.json")
         with open(dec, "w", encoding="utf-8") as f:
-            json.dump([{"id": "a1", "keep": True, "summary": "모호한 요약"}], f, ensure_ascii=False)
-        rc = L.main(["--apply-review", self.pack, "--decisions", dec,
-                     "--output", os.path.join(self.d, "out.html"),
-                     "--reviewer-output", verdict, "--reviewer-timeout", "1"])
+            json.dump(
+                [{"id": "a1", "keep": True, "summary": "모호한 요약"}],
+                f,
+                ensure_ascii=False,
+            )
+        rc = L.main(
+            [
+                "--apply-review",
+                self.pack,
+                "--decisions",
+                dec,
+                "--output",
+                os.path.join(self.d, "out.html"),
+                "--reviewer-output",
+                verdict,
+                "--reviewer-timeout",
+                "1",
+            ]
+        )
         self.assertEqual(rc, 2)
         _, pack = self._emit()
         a1 = [t for t in pack["turns"] if t["id"] == "a1"][0]
@@ -1071,10 +1326,14 @@ class TestLlmReviewParts(_ReviewCase):
 
     def test_a_long_user_turn_takes_the_reviewers_summary(self):
         long_ask = "배경 설명입니다. " * 60 + "요청: 배포를 고쳐 주세요."
-        self._write([_rec("user", long_ask, uuid="u1"), self._asst("고쳤습니다.", "a1")])
+        self._write(
+            [_rec("user", long_ask, uuid="u1"), self._asst("고쳤습니다.", "a1")]
+        )
         _, pack = self._emit()
         self.assertTrue(pack["turns"][0]["rule"]["summary"])
-        rc, text = self._apply([{"id": "u1", "keep": True, "summary": "배포 수정 요청"}])
+        rc, text = self._apply(
+            [{"id": "u1", "keep": True, "summary": "배포 수정 요청"}]
+        )
         self.assertEqual(rc, 0)
         self.assertIn('<span class="sum">배포 수정 요청</span>', text)
 
@@ -1083,10 +1342,12 @@ class TestLlmReviewSources(_ReviewCase):
     """The pack across input sources: stdin transcripts and --all-sessions."""
 
     def test_stdin_turns_with_the_same_text_get_distinct_ids(self):
-        recs = [_rec("user", "같은 질문입니다", ts="2026-08-09T10:00:00Z"),
-                self._asst("첫 번째 답변을 드립니다.", "x1", ts="2026-08-09T10:00:01Z"),
-                _rec("user", "같은 질문입니다", ts="2026-08-09T10:01:00Z"),
-                self._asst("두 번째 답변을 드립니다.", "x2", ts="2026-08-09T10:01:01Z")]
+        recs = [
+            _rec("user", "같은 질문입니다", ts="2026-08-09T10:00:00Z"),
+            self._asst("첫 번째 답변을 드립니다.", "x1", ts="2026-08-09T10:00:01Z"),
+            _rec("user", "같은 질문입니다", ts="2026-08-09T10:01:00Z"),
+            self._asst("두 번째 답변을 드립니다.", "x2", ts="2026-08-09T10:01:01Z"),
+        ]
         old = sys.stdin
         sys.stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in recs))
         try:
@@ -1101,22 +1362,32 @@ class TestLlmReviewSources(_ReviewCase):
         self.assertEqual(len(users), 1, "the repeated question gets the #2 id")
         rc, text = self._apply([{"id": users[0], "keep": False}])
         self.assertEqual(rc, 0)
-        self.assertEqual(text.count("같은 질문입니다"), 1, "only the decided twin is dropped")
+        self.assertEqual(
+            text.count("같은 질문입니다"), 1, "only the decided twin is dropped"
+        )
 
     def test_stdin_turn_ids_give_no_hash_of_the_text(self):
         text = "password=" + "Hunter22" + "pw"
-        recs = [_rec("user", text, ts="2026-08-09T10:00:00Z"),
-                self._asst("확인했습니다.", "x1", ts="2026-08-09T10:00:01Z")]
+        recs = [
+            _rec("user", text, ts="2026-08-09T10:00:00Z"),
+            self._asst("확인했습니다.", "x1", ts="2026-08-09T10:00:01Z"),
+        ]
         old = sys.stdin
         sys.stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in recs))
         try:
-            rc = _quiet(L.main, ["--from-transcript", "-", "--emit-review", self.pack])[0]
+            rc = _quiet(L.main, ["--from-transcript", "-", "--emit-review", self.pack])[
+                0
+            ]
         finally:
             sys.stdin = old
         self.assertEqual(rc, 0)
         with open(self.pack, encoding="utf-8") as f:
             ids = [x["id"] for x in json.load(f)["turns"]]
-        self.assertNotIn(hashlib.sha256(text.encode()).hexdigest()[:16], ids, "a reader could test guesses on it")
+        self.assertNotIn(
+            hashlib.sha256(text.encode()).hexdigest()[:16],
+            ids,
+            "a reader could test guesses on it",
+        )
         key = pathlib.Path(self.cache) / "stdin-id.key"
         self.assertTrue(key.exists())
         if os.name == "posix":
@@ -1124,12 +1395,17 @@ class TestLlmReviewSources(_ReviewCase):
 
     def test_the_stdin_id_key_is_written_in_binary_mode(self):
         seen = []
-        real_open, had, old = os.open, hasattr(os, "O_BINARY"), getattr(os, "O_BINARY", None)
-        os.O_BINARY = 0x8000                      # the Windows value; posix has no text mode
+        real_open, had, old = (
+            os.open,
+            hasattr(os, "O_BINARY"),
+            getattr(os, "O_BINARY", None),
+        )
+        os.O_BINARY = 0x8000  # the Windows value; posix has no text mode
 
         def spy(path, flag, mode=0o777):
             seen.append(flag)
             return real_open(path, flag & ~0x8000, mode)
+
         os.open = spy
         try:
             L._stdin_id_key()
@@ -1139,7 +1415,10 @@ class TestLlmReviewSources(_ReviewCase):
                 os.O_BINARY = old
             else:
                 del os.O_BINARY
-        self.assertTrue(seen and all(f & 0x8000 for f in seen), "in text mode Windows writes a 0x0A as two bytes")
+        self.assertTrue(
+            seen and all(f & 0x8000 for f in seen),
+            "in text mode Windows writes a 0x0A as two bytes",
+        )
 
     def test_a_stdin_id_key_lasts_one_run_when_the_cache_folder_cannot_be_made(self):
         blocker = os.path.join(self.d, "not-a-folder")
@@ -1147,7 +1426,9 @@ class TestLlmReviewSources(_ReviewCase):
         L.CACHE_BASE = pathlib.Path(blocker) / "lineage"
         first, second = L._stdin_id_key(), L._stdin_id_key()
         self.assertEqual(len(first), 32)
-        self.assertNotEqual(first, second, "nothing stored: each run has a key of its own")
+        self.assertNotEqual(
+            first, second, "nothing stored: each run has a key of its own"
+        )
 
     def test_a_link_at_the_keys_temporary_name_is_not_written_through(self):
         os.makedirs(self.cache, exist_ok=True)
@@ -1155,20 +1436,40 @@ class TestLlmReviewSources(_ReviewCase):
         with open(victim, "wb") as f:
             f.write(b"someone's file\n")
         try:
-            os.symlink(victim, os.path.join(self.cache, "stdin-id.key.%d" % os.getpid()))
+            os.symlink(
+                victim, os.path.join(self.cache, "stdin-id.key.%d" % os.getpid())
+            )
         except (OSError, NotImplementedError):
             self.skipTest("no symbolic links here")
         self.assertEqual(len(L._stdin_id_key()), 32)
         with open(victim, "rb") as f:
-            self.assertEqual(f.read(), b"someone's file\n", "the file the link leads to is untouched")
+            self.assertEqual(
+                f.read(), b"someone's file\n", "the file the link leads to is untouched"
+            )
 
     def test_all_sessions_keeps_each_turns_session_for_the_dividers(self):
         a = os.path.join(self.d, "aaaa1111.jsonl")
         b = os.path.join(self.d, "bbbb2222.jsonl")
-        for path, recs in ((a, [_rec("user", "첫 세션 질문", ts="2026-08-09T09:00:00Z", uuid="ua"),
-                                self._asst("첫 세션 답변입니다.", "aa", ts="2026-08-09T09:00:01Z")]),
-                           (b, [_rec("user", "둘째 세션 질문", ts="2026-08-09T11:00:00Z", uuid="ub"),
-                                self._asst("둘째 세션 답변입니다.", "ab", ts="2026-08-09T11:00:01Z")])):
+        for path, recs in (
+            (
+                a,
+                [
+                    _rec("user", "첫 세션 질문", ts="2026-08-09T09:00:00Z", uuid="ua"),
+                    self._asst("첫 세션 답변입니다.", "aa", ts="2026-08-09T09:00:01Z"),
+                ],
+            ),
+            (
+                b,
+                [
+                    _rec(
+                        "user", "둘째 세션 질문", ts="2026-08-09T11:00:00Z", uuid="ub"
+                    ),
+                    self._asst(
+                        "둘째 세션 답변입니다.", "ab", ts="2026-08-09T11:00:01Z"
+                    ),
+                ],
+            ),
+        ):
             with open(path, "w", encoding="utf-8") as f:
                 for r in recs:
                     f.write(json.dumps(r) + "\n")
@@ -1182,12 +1483,15 @@ class TestLlmReviewSources(_ReviewCase):
         with open(self.pack, encoding="utf-8") as f:
             pack = json.load(f)
         self.assertTrue(pack["all_sessions"])
-        self.assertEqual([x["session"] for x in pack["turns"]],
-                         ["aaaa1111", "aaaa1111", "bbbb2222", "bbbb2222"])
+        self.assertEqual(
+            [x["session"] for x in pack["turns"]],
+            ["aaaa1111", "aaaa1111", "bbbb2222", "bbbb2222"],
+        )
         rc, text = self._apply()
         self.assertEqual(rc, 0)
-        self.assertEqual(text.count('class="pill pill-session"'), 2, "one divider per session")
-
+        self.assertEqual(
+            text.count('class="pill pill-session"'), 2, "one divider per session"
+        )
 
 
 def _random_run(seed, n=48):
@@ -1195,6 +1499,7 @@ def _random_run(seed, n=48):
     run time so this file holds no secret-like string for a scanner to flag."""
     import random
     import string
+
     rng = random.Random(seed)
     return "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(n))
 
@@ -1212,46 +1517,76 @@ class TestLlmReviewHardening(_ReviewCase):
     flags survive the two runs, and what is left on disk."""
 
     def _part(self, k=1):
-        with open(os.path.join(self.d, "review.part-%d.json" % k), encoding="utf-8") as f:
+        with open(
+            os.path.join(self.d, "review.part-%d.json" % k), encoding="utf-8"
+        ) as f:
             return json.load(f)
 
     def test_a_cached_rule_summary_is_redacted_again_with_this_runs_keywords(self):
-        self._write([_rec("user", "점검해 주세요", uuid="u1"),
-                     self._asst("PROJECTX 배포 점검 결과를 정리했습니다.", "a1")])
-        _quiet(L.main, ["--session", self.jf, "--output", os.path.join(self.d, "r.html"),
-                        "--skip-reviewer", "--rulebase"])          # fills the summary cache
+        self._write(
+            [
+                _rec("user", "점검해 주세요", uuid="u1"),
+                self._asst("PROJECTX 배포 점검 결과를 정리했습니다.", "a1"),
+            ]
+        )
+        _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--output",
+                os.path.join(self.d, "r.html"),
+                "--skip-reviewer",
+                "--rulebase",
+            ],
+        )  # fills the summary cache
         rc, pack = _quiet(self._emit, ["--redact-extra", "projectx"])[0]
         self.assertEqual(rc, 0)
         files = [self.pack, os.path.join(self.d, "review.part-1.json")]
         for path in files:
             with open(path, encoding="utf-8") as f:
                 self.assertNotIn("PROJECTX", f.read().upper(), path)
-        self.assertEqual(pack["redactions"].get("custom"), 1, "counted once, as `custom`")
-        self.assertFalse([k for k in pack["redactions"] if ":" in k and k.startswith("custom")],
-                         "the keyword itself is not a key in the pack")
+        self.assertEqual(
+            pack["redactions"].get("custom"), 1, "counted once, as `custom`"
+        )
+        self.assertFalse(
+            [k for k in pack["redactions"] if ":" in k and k.startswith("custom")],
+            "the keyword itself is not a key in the pack",
+        )
 
     def test_a_cached_reviewer_summary_is_redacted_again_with_this_runs_keywords(self):
         # the keyword given at emit and left out at apply (a WARN): the reviewer's summary is
         # cached with it, and the next emit hides it again in the part a reviewer reads (the
         # pack keeps the cached summary as the page would; the page redacts it at apply)
-        self._write([_rec("user", "점검해 주세요", uuid="u1"),
-                     self._asst("배포 점검 결과를 정리했습니다.", "a1")])
+        self._write(
+            [
+                _rec("user", "점검해 주세요", uuid="u1"),
+                self._asst("배포 점검 결과를 정리했습니다.", "a1"),
+            ]
+        )
         self.assertEqual(_quiet(self._emit, ["--redact-extra", "projectx"])[0][0], 0)
         tid = [x["id"] for x in self._part()["turns"] if x["role"] == "assistant"][0]
-        (rc, _), err = _quiet(self._apply, [{"id": tid, "keep": None, "summary": "PROJECTX 배포 점검을 마쳤다"}])
+        (rc, _), err = _quiet(
+            self._apply,
+            [{"id": tid, "keep": None, "summary": "PROJECTX 배포 점검을 마쳤다"}],
+        )
         self.assertEqual(rc, 0, err)
         self.assertEqual(_quiet(self._emit, ["--redact-extra", "projectx"])[0][0], 0)
         llm = [x["llm"] for x in self._part()["turns"] if x["id"] == tid][0]
         self.assertTrue(llm.get("cached"), llm)
         self.assertIn("[REDACTED]", llm["summary"])
         with open(os.path.join(self.d, "review.part-1.json"), encoding="utf-8") as f:
-            self.assertNotIn("PROJECTX", f.read().upper(), "the part file a reviewer reads")
+            self.assertNotIn(
+                "PROJECTX", f.read().upper(), "the part file a reviewer reads"
+            )
 
     def test_stdin_twins_keep_their_own_decisions_across_runs(self):
-        recs = [_rec("user", "같은 질문입니다", ts="2026-08-09T10:00:00Z"),
-                self._asst("첫 번째 답변을 드립니다.", "x1", ts="2026-08-09T10:00:01Z"),
-                _rec("user", "같은 질문입니다", ts="2026-08-09T10:01:00Z"),
-                self._asst("두 번째 답변을 드립니다.", "x2", ts="2026-08-09T10:01:01Z")]
+        recs = [
+            _rec("user", "같은 질문입니다", ts="2026-08-09T10:00:00Z"),
+            self._asst("첫 번째 답변을 드립니다.", "x1", ts="2026-08-09T10:00:01Z"),
+            _rec("user", "같은 질문입니다", ts="2026-08-09T10:01:00Z"),
+            self._asst("두 번째 답변을 드립니다.", "x2", ts="2026-08-09T10:01:01Z"),
+        ]
         feed = "".join(json.dumps(r) + "\n" for r in recs)
 
         def emit():
@@ -1263,16 +1598,23 @@ class TestLlmReviewHardening(_ReviewCase):
                 sys.stdin = old
             with open(self.pack, encoding="utf-8") as f:
                 return json.load(f)
+
         pack = emit()
         twin = [x["id"] for x in pack["turns"] if x["id"].endswith("#2")][0]
         first = twin[:-2]
-        rc, text = _quiet(self._apply, [{"id": first, "keep": None}, {"id": twin, "keep": False}])[0]
+        rc, text = _quiet(
+            self._apply, [{"id": first, "keep": None}, {"id": twin, "keep": False}]
+        )[0]
         self.assertEqual((rc, text.count("같은 질문입니다")), (0, 1))
         again = {x["id"]: x["llm"] for x in emit()["turns"]}
         self.assertEqual(again[twin], {"keep": False, "summary": None, "cached": True})
         self.assertEqual(again[first], {"keep": None, "summary": None, "cached": True})
         rc, text = _quiet(self._apply)[0]
-        self.assertEqual((rc, text.count("같은 질문입니다")), (0, 1), "the second run renders the same page")
+        self.assertEqual(
+            (rc, text.count("같은 질문입니다")),
+            (0, 1),
+            "the second run renders the same page",
+        )
 
     def test_gate_flags_given_at_emit_hold_at_apply(self):
         self._write(self._records())
@@ -1280,53 +1622,98 @@ class TestLlmReviewHardening(_ReviewCase):
         with open(verdict, "w", encoding="utf-8") as f:
             json.dump([{"idx": 0, "recoverable": False, "reason": "vague"}], f)
         _quiet(self._emit, ["--reviewer-output", verdict, "--reviewer-timeout", "1"])
-        rc = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html")])[0]
-        self.assertEqual(rc, 2, "the gate given at --emit-review is enforced at --apply-review")
+        rc = _quiet(
+            L.main,
+            ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html")],
+        )[0]
+        self.assertEqual(
+            rc, 2, "the gate given at --emit-review is enforced at --apply-review"
+        )
         _quiet(self._emit, ["--skip-reviewer"])
-        rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "second.html")])
+        rc, err = _quiet(
+            L.main,
+            [
+                "--apply-review",
+                self.pack,
+                "--output",
+                os.path.join(self.d, "second.html"),
+            ],
+        )
         self.assertEqual(rc, 0)
         self.assertIn("--skip-reviewer", err)
-        self.assertFalse([p for p in os.listdir(self.d) if p.startswith(".second")], "no gate samples")
+        self.assertFalse(
+            [p for p in os.listdir(self.d) if p.startswith(".second")],
+            "no gate samples",
+        )
 
     def test_purge_cache_and_empty_pack_paths_do_not_go_with_the_review_flow(self):
         self._write(self._records())
-        for argv in (["--purge-cache", "--emit-review", self.pack],
-                     ["--purge-cache", "--apply-review", self.pack],
-                     ["--emit-review", ""], ["--apply-review", ""]):
+        for argv in (
+            ["--purge-cache", "--emit-review", self.pack],
+            ["--purge-cache", "--apply-review", self.pack],
+            ["--emit-review", ""],
+            ["--apply-review", ""],
+        ):
             self.assertEqual(_quiet(L.main, ["--session", self.jf] + argv)[0], 2, argv)
 
     def test_parts_are_split_evenly(self):
         self.assertEqual([len(g) for g in L._split_even(list(range(41)), 40)], [21, 20])
         self.assertEqual([len(g) for g in L._split_even(list(range(80)), 40)], [40, 40])
-        self.assertEqual([len(g) for g in L._split_even(list(range(81)), 40)], [27, 27, 27])
+        self.assertEqual(
+            [len(g) for g in L._split_even(list(range(81)), 40)], [27, 27, 27]
+        )
         self.assertEqual(L._split_even([], 40), [])
 
     def test_a_reviewer_reads_fully_redacted_text_even_in_mask_mode(self):
         ant = "sk-" + "ant-api03-" + "b" * 24
-        self._write([_rec("user", "키 확인", uuid="u1"),
-                     self._asst("키는 AKIA" "IOSFODNN7EXAMPLE 와 %s 입니다." % ant, "a1")])
+        self._write(
+            [
+                _rec("user", "키 확인", uuid="u1"),
+                self._asst(
+                    ("키는 AKIA" + "IOSFODNN7EXAMPLE 와 %s 입니다.") % ant, "a1"
+                ),
+            ]
+        )
         _quiet(self._emit, ["--redact-mode", "mask"])
         raw = json.dumps(self._part(), ensure_ascii=False)
-        self.assertNotIn("AKIA****", raw, "mask mode keeps 4+4 characters; a reviewer gets none")
+        self.assertNotIn(
+            "AKIA****", raw, "mask mode keeps 4+4 characters; a reviewer gets none"
+        )
         self.assertNotIn("MPLE", raw)
-        self.assertNotIn("sk-ant-", raw, "reviewer-only patterns apply to the part file")
+        self.assertNotIn(
+            "sk-ant-", raw, "reviewer-only patterns apply to the part file"
+        )
         with open(self.pack, encoding="utf-8") as f:
             self.assertIn("AKIA****", f.read(), "the page keeps --redact-mode mask")
 
     def test_the_rulebase_page_hides_reviewer_only_keys(self):
         ant = "sk-" + "ant-api03-" + "b" * 24
-        self._write([_rec("user", "키 확인", uuid="u1"), self._asst("키는 %s 입니다." % ant, "a1")])
+        self._write(
+            [
+                _rec("user", "키 확인", uuid="u1"),
+                self._asst("키는 %s 입니다." % ant, "a1"),
+            ]
+        )
         out = os.path.join(self.d, "r.html")
-        _quiet(L.main, ["--session", self.jf, "--output", out, "--skip-reviewer", "--rulebase"])
+        _quiet(
+            L.main,
+            ["--session", self.jf, "--output", out, "--skip-reviewer", "--rulebase"],
+        )
         name = [p for p in os.listdir(self.d) if p.startswith("r_")][0]
         with open(os.path.join(self.d, name), encoding="utf-8") as f:
-            self.assertNotIn(ant, f.read(), "3.0.2: every page runs the reviewer patterns")
+            self.assertNotIn(
+                ant, f.read(), "3.0.2: every page runs the reviewer patterns"
+            )
 
     def test_decisions_wrapped_in_a_code_fence_are_read(self):
         self._write(self._records())
         _quiet(self._emit)
-        with open(os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8") as f:
-            f.write('```json\n[{"id": "a1", "keep": true, "summary": "펜스 안의 요약"}]\n```\n')
+        with open(
+            os.path.join(self.d, "review.part-1.decisions.json"), "w", encoding="utf-8"
+        ) as f:
+            f.write(
+                '```json\n[{"id": "a1", "keep": true, "summary": "펜스 안의 요약"}]\n```\n'
+            )
         rc, text = _quiet(self._apply)[0]
         self.assertEqual(rc, 0)
         self.assertIn("펜스 안의 요약", text)
@@ -1352,11 +1739,15 @@ class TestLlmReviewHardening(_ReviewCase):
         rc, err = self._gate_apply(self._verdict(False))
         self.assertEqual(rc, 2)
         self.assertIn("FAIL: quality gate", err)
-        self.assertTrue(os.path.exists(self.pack) and os.path.exists(dec), "kept for the retry")
+        self.assertTrue(
+            os.path.exists(self.pack) and os.path.exists(dec), "kept for the retry"
+        )
         rc = _quiet(self._apply)[0][0]
         self.assertEqual(rc, 0)
         left = [p for p in os.listdir(self.d) if p.startswith("review")]
-        self.assertEqual(left, [], "pack, parts and decisions hold the redacted session")
+        self.assertEqual(
+            left, [], "pack, parts and decisions hold the redacted session"
+        )
 
     def test_a_write_that_fails_leaves_no_temporary_file_and_no_traceback(self):
         target = os.path.join(self.d, "adir")
@@ -1372,20 +1763,38 @@ class TestLlmReviewHardening(_ReviewCase):
     def test_a_summary_holding_a_secret_is_redacted_counted_and_named(self):
         self._write(self._records())
         _quiet(self._emit)
-        (rc, text), err = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": "키 AKIA" "IOSFODNN7EXAMPLE 확인"}])
+        (rc, text), err = _quiet(
+            self._apply,
+            [
+                {
+                    "id": "a1",
+                    "keep": True,
+                    "summary": ("키 AKIA" + "IOSFODNN7EXAMPLE 확인"),
+                }
+            ],
+        )
         self.assertEqual(rc, 0)
-        self.assertNotIn("AKIA" "IOSFODNN7EXAMPLE", text)
+        self.assertNotIn(("AKIA" + "IOSFODNN7EXAMPLE"), text)
         self.assertIn("reviewer summary for a1 held 1", err)
         self.assertIn("reviewer-summary=1", err)
 
     def test_reviewer_summaries_are_not_counted_as_cache_hits(self):
         self._write(self._records())
         _quiet(self._emit)
-        err = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": "검토자 요약"}])[1]
-        self.assertIn("cache_hits=0/0", err, "one bot turn shown, and its summary is the reviewer's")
+        err = _quiet(
+            self._apply, [{"id": "a1", "keep": True, "summary": "검토자 요약"}]
+        )[1]
+        self.assertIn(
+            "cache_hits=0/0",
+            err,
+            "one bot turn shown, and its summary is the reviewer's",
+        )
 
     def test_meta_turns_are_marked_for_the_reviewer(self):
-        meta = dict(_rec("user", "주입된 안내문입니다. 이 지침을 따르세요.", uuid="m1"), isMeta=True)
+        meta = dict(
+            _rec("user", "주입된 안내문입니다. 이 지침을 따르세요.", uuid="m1"),
+            isMeta=True,
+        )
         self._write([meta, self._asst("확인했습니다.", "a1")])
         _rc, pack = _quiet(self._emit)[0]
         self.assertTrue(pack["turns"][0].get("meta"))
@@ -1397,8 +1806,17 @@ class TestLlmReviewHardening(_ReviewCase):
             f.write("x")
         L.CACHE_BASE = pathlib.Path(blocker) / "cache"
         self._write(self._records())
-        rc, err = _quiet(L.main, ["--session", self.jf, "--output", os.path.join(self.d, "o.html"),
-                                  "--skip-reviewer", "--rulebase"])
+        rc, err = _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--output",
+                os.path.join(self.d, "o.html"),
+                "--skip-reviewer",
+                "--rulebase",
+            ],
+        )
         self.assertEqual(rc, 0)
         self.assertIn("cache unavailable", err)
 
@@ -1408,13 +1826,32 @@ class TestLlmReviewHardening(_ReviewCase):
             samples = self._samples()[1] or [{"idx": 0}]
         path = os.path.join(self.d, "verdict.json")
         with open(path, "w", encoding="utf-8") as f:
-            json.dump([dict({"idx": x["idx"], "recoverable": ok, "reason": "vague"},
-                            **{k: x[k] for k in ("id", "key") if k in x}) for x in samples], f)
+            json.dump(
+                [
+                    dict(
+                        {"idx": x["idx"], "recoverable": ok, "reason": "vague"},
+                        **{k: x[k] for k in ("id", "key") if k in x},
+                    )
+                    for x in samples
+                ],
+                f,
+            )
         return path
 
     def _gate_apply(self, verdict, name="o.html"):
-        return _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, name),
-                               "--reviewer-output", verdict, "--reviewer-timeout", "1"])
+        return _quiet(
+            L.main,
+            [
+                "--apply-review",
+                self.pack,
+                "--output",
+                os.path.join(self.d, name),
+                "--reviewer-output",
+                verdict,
+                "--reviewer-timeout",
+                "1",
+            ],
+        )
 
     def _gate_first(self, name="o.html"):
         """The first gated apply: it writes the samples, and with no critic yet it times out."""
@@ -1436,16 +1873,26 @@ class TestLlmReviewHardening(_ReviewCase):
         self._gate_first()
         path, got = self._samples()
         self.assertEqual(got[0]["id"], "a1")
-        self.assertTrue(got[0]["original_detail"].endswith("결론: 배포가 통과합니다."), "the tail the reviewer saw")
+        self.assertTrue(
+            got[0]["original_detail"].endswith("결론: 배포가 통과합니다."),
+            "the tail the reviewer saw",
+        )
         if os.name == "posix":
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
     def test_the_reviewed_flow_samples_only_for_a_gate_it_enforces(self):
         self._write(self._records())
         _quiet(self._emit)
-        rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "o.html")])
+        rc, err = _quiet(
+            L.main,
+            ["--apply-review", self.pack, "--output", os.path.join(self.d, "o.html")],
+        )
         self.assertEqual(rc, 0)
-        self.assertEqual(self._samples(), (None, None), "no critic is waiting: nothing is left in work/")
+        self.assertEqual(
+            self._samples(),
+            (None, None),
+            "no critic is waiting: nothing is left in work/",
+        )
         self.assertNotIn("oh-my-claudecode:critic", err)
         self.assertNotIn("reviewer samples", err)
 
@@ -1453,7 +1900,7 @@ class TestLlmReviewHardening(_ReviewCase):
         self._write(self._records())
         _quiet(self._emit)
         self._gate_first()
-        verdict = self._verdict(False)            # the critic's answer to those samples
+        verdict = self._verdict(False)  # the critic's answer to those samples
         rc, err = self._gate_apply(verdict)
         self.assertEqual(rc, 2)
         self.assertIn("FAIL: quality gate", err)
@@ -1468,13 +1915,29 @@ class TestLlmReviewHardening(_ReviewCase):
         self.assertEqual(len(first), 1)
         used = os.path.join(self.d, "verdict.json.used")
         with open(used, encoding="utf-8") as f:
-            self.assertTrue(all(v["recoverable"] is True for v in json.load(f)), "the later verdict takes the earlier one's place")
-        self.assertFalse(os.path.exists(used + ".1"), "verdicts do not pile up as .used.1, .used.2")
+            self.assertTrue(
+                all(v["recoverable"] is True for v in json.load(f)),
+                "the later verdict takes the earlier one's place",
+            )
+        self.assertFalse(
+            os.path.exists(used + ".1"), "verdicts do not pile up as .used.1, .used.2"
+        )
 
     def test_gate_samples_are_the_same_on_a_rerun(self):
-        recs = [_rec("user", "질문 %d" % k, ts="2026-08-09T10:%02d:00Z" % k, uuid="u%d" % k) for k in range(8)]
-        recs = [r for k, u in enumerate(recs) for r in (u, self._asst("답변 %d 입니다." % k, "a%d" % k,
-                                                                      ts="2026-08-09T10:%02d:01Z" % k))]
+        recs = [
+            _rec("user", "질문 %d" % k, ts="2026-08-09T10:%02d:00Z" % k, uuid="u%d" % k)
+            for k in range(8)
+        ]
+        recs = [
+            r
+            for k, u in enumerate(recs)
+            for r in (
+                u,
+                self._asst(
+                    "답변 %d 입니다." % k, "a%d" % k, ts="2026-08-09T10:%02d:01Z" % k
+                ),
+            )
+        ]
         self._write(recs)
         _quiet(self._emit)
         picks = []
@@ -1485,8 +1948,14 @@ class TestLlmReviewHardening(_ReviewCase):
 
     def test_gate_samples_are_redacted_as_the_reviewer_read_them(self):
         ant = "sk-" + "ant-api03-" + "Q" * 30
-        self._write([_rec("user", "키 확인", uuid="u1"),
-                     self._asst("키는 AKIA" "IOSFODNN7EXAMPLE 와 %s 입니다." % ant, "a1")])
+        self._write(
+            [
+                _rec("user", "키 확인", uuid="u1"),
+                self._asst(
+                    ("키는 AKIA" + "IOSFODNN7EXAMPLE 와 %s 입니다.") % ant, "a1"
+                ),
+            ]
+        )
         _quiet(self._emit, ["--redact-mode", "mask"])
         self._gate_apply(self._verdict(False))
         raw = json.dumps(self._samples()[1], ensure_ascii=False)
@@ -1494,9 +1963,17 @@ class TestLlmReviewHardening(_ReviewCase):
             self.assertNotIn(bit, raw)
 
     def test_keep_trivia_and_keep_tool_only_outrank_a_reviewers_false(self):
-        skill = dict(_rec("user", "Base directory for this skill: /x\n\n# 안내문", uuid="m1"), isMeta=True)
-        self._write([skill, self._asst("안내를 읽었습니다.", "a1"),
-                     self._asst("", "a2", ts="2026-08-09T10:00:05Z", tools=["Bash"])])
+        skill = dict(
+            _rec("user", "Base directory for this skill: /x\n\n# 안내문", uuid="m1"),
+            isMeta=True,
+        )
+        self._write(
+            [
+                skill,
+                self._asst("안내를 읽었습니다.", "a1"),
+                self._asst("", "a2", ts="2026-08-09T10:00:05Z", tools=["Bash"]),
+            ]
+        )
         rc, pack = _quiet(self._emit, ["--keep-trivia", "--keep-tool-only"])[0]
         self.assertTrue(pack["keep_trivia"] and pack["keep_tool_only"])
         self.assertTrue(self._part()["keep_trivia"], "the reviewer is told")
@@ -1507,27 +1984,50 @@ class TestLlmReviewHardening(_ReviewCase):
         self.assertIn("as --keep-trivia or --keep-tool-only asked", err)
 
     def test_keep_tool_only_alone_keeps_only_tool_only_turns(self):
-        self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst("점검 결과를 정리했습니다.", "a1"),
-                     _rec("user", "다음 단계도 해 주세요", ts="2026-08-09T10:00:04Z", uuid="u2"),
-                     self._asst("", "a2", ts="2026-08-09T10:00:05Z", tools=["Bash"])])
+        self._write(
+            [
+                _rec("user", "점검해 주세요", uuid="u1"),
+                self._asst("점검 결과를 정리했습니다.", "a1"),
+                _rec(
+                    "user",
+                    "다음 단계도 해 주세요",
+                    ts="2026-08-09T10:00:04Z",
+                    uuid="u2",
+                ),
+                self._asst("", "a2", ts="2026-08-09T10:00:05Z", tools=["Bash"]),
+            ]
+        )
         _quiet(self._emit, ["--keep-tool-only"])
-        rc, text = _quiet(self._apply, [{"id": "a1", "keep": False}, {"id": "a2", "keep": False}])[0]
+        rc, text = _quiet(
+            self._apply, [{"id": "a1", "keep": False}, {"id": "a2", "keep": False}]
+        )[0]
         self.assertEqual(rc, 0)
-        self.assertNotIn("점검 결과를 정리했습니다", text, "the reviewer still drops other turns")
+        self.assertNotIn(
+            "점검 결과를 정리했습니다", text, "the reviewer still drops other turns"
+        )
         self.assertIn("Bash×1", text)
 
     def test_wrapped_decisions_are_read_past_other_brackets(self):
         good = '[{"id": "a1", "keep": true, "summary": "둘러싼 답의 요약"}]'
-        for text in ("Note turn a1 had [REDACTED:entropy] values.\n```json\n%s\n```" % good,
-                     "%s\n\n### Critical Files\n- [part-1](work/.lineage-review.part-1.json)" % good):
+        for text in (
+            "Note turn a1 had [REDACTED:entropy] values.\n```json\n%s\n```" % good,
+            "%s\n\n### Critical Files\n- [part-1](work/.lineage-review.part-1.json)"
+            % good,
+        ):
             self.assertEqual(L._decisions_text(text)[0]["summary"], "둘러싼 답의 요약")
         example = 'Format: [{"id": "<turn id>", "keep": null}]\n\n' + good
-        self.assertEqual(L._decisions_text(example)[0]["id"], "a1", "the example quoted first loses")
-        self.assertEqual(L._decisions_text("All cached, nothing to change:\n```json\n[]\n```"), [])
+        self.assertEqual(
+            L._decisions_text(example)[0]["id"], "a1", "the example quoted first loses"
+        )
+        self.assertEqual(
+            L._decisions_text("All cached, nothing to change:\n```json\n[]\n```"), []
+        )
         with self.assertRaises(ValueError):
             L._decisions_text("no list here [1, 2]")
 
-    def test_a_reviewer_timeout_given_at_apply_beats_the_packs_even_at_its_default(self):
+    def test_a_reviewer_timeout_given_at_apply_beats_the_packs_even_at_its_default(
+        self,
+    ):
         args = L.build_arg_parser().parse_args(["--reviewer-timeout", "60"])
         L._gate_from_pack(args, {"gate": {"reviewer_timeout": 3}})
         self.assertEqual(args.reviewer_timeout, 60)
@@ -1537,56 +2037,116 @@ class TestLlmReviewHardening(_ReviewCase):
 
     def test_real_looking_keys_are_hidden_whole_from_a_reviewer(self):
         seg, tail = _random_run(11), _random_run(12, 30)
-        self.assertGreaterEqual(L.shannon_entropy(seg), 4.5, "a run the entropy rule would cut")
+        self.assertGreaterEqual(
+            L.shannon_entropy(seg), 4.5, "a run the entropy rule would cut"
+        )
         ant = "sk-" + "ant-api03-" + "Zq2_" + seg + "-" + tail + "AA"
-        text = ("키 " + ant + " 와 sk-" + "proj-" + seg
-                + " , DB postgres://admin:" + "Hunter22" + "@db.local/app 와 redis://:"
-                + "R3disPassw0rd" + "@cache:6379/0 와 Authorization: Bear" + "er " + seg
-                + " , 비밀번호: " + "한글비번1234")
+        text = (
+            "키 "
+            + ant
+            + " 와 sk-"
+            + "proj-"
+            + seg
+            + " , DB postgres://admin:"
+            + "Hunter22"
+            + "@db.local/app 와 redis://:"
+            + "R3disPassw0rd"
+            + "@cache:6379/0 와 Authorization: Bear"
+            + "er "
+            + seg
+            + " , 비밀번호: "
+            + "한글비번1234"
+        )
         red = L.review_redact(text)[0]
-        self.assertFalse([k for k in range(len(ant) - 7) if ant[k:k + 8] in red], red)
+        self.assertFalse([k for k in range(len(ant) - 7) if ant[k : k + 8] in red], red)
         for bit in (seg[:8], seg[-8:], "Hunter22", "R3disPassw0rd", "한글비번1234"):
             self.assertNotIn(bit, red)
 
     def test_reviewer_patterns_take_linear_time_on_long_runs(self):
         # the reviewer patterns alone: the page's redaction (detect-secrets, when installed)
         # is no part of this claim and takes its own time
-        text = ("a." * 30000 + " " + "key" * 20000 + " " + "a-" * 30000 + " " + "token" * 12000
-                + " x://u:" + "a" * 200000 + " " + "-u a" * 30000 + " " + "authorization: basic " * 10000
-                + " -u\n" + "=" * 50000 + " --user" + "=" * 50000 + " -u " + "1" * 50000
-                + " " + '-u"' * 30000 + " " + '"-u", "' * 20000 + " " + 'authorization", ' * 20000
-                + " " + " -abcdefu" * 20000 + " " + 'authorization"]' * 20000)
+        text = (
+            "a." * 30000
+            + " "
+            + "key" * 20000
+            + " "
+            + "a-" * 30000
+            + " "
+            + "token" * 12000
+            + " x://u:"
+            + "a" * 200000
+            + " "
+            + "-u a" * 30000
+            + " "
+            + "authorization: basic " * 10000
+            + " -u\n"
+            + "=" * 50000
+            + " --user"
+            + "=" * 50000
+            + " -u "
+            + "1" * 50000
+            + " "
+            + '-u"' * 30000
+            + " "
+            + '"-u", "' * 20000
+            + " "
+            + 'authorization", ' * 20000
+            + " "
+            + " -abcdefu" * 20000
+            + " "
+            + 'authorization"]' * 20000
+        )
         start = _cpu_now()
         for _, pat in L.REVIEW_SECRET_PATTERNS:
             pat.sub("[R]", text)
         self.assertLess(_cpu_now() - start, 5)
 
     def test_a_rule_summary_cut_through_a_secret_leaves_no_half_for_the_reviewer(self):
-        token = "gh" + "p_" + "Q8z" * 12          # cut at 58 characters, no pattern matches the half
+        token = (
+            "gh" + "p_" + "Q8z" * 12
+        )  # cut at 58 characters, no pattern matches the half
         lead = "가" * 36 + " " + token + " 입니다"
-        self._write([_rec("user", "정리해 주세요", uuid="u1"),
-                     self._asst(lead + "\n\n" + "중간 설명입니다. " * 40 + "\n\n끝으로 확인했습니다.", "a1")])
+        self._write(
+            [
+                _rec("user", "정리해 주세요", uuid="u1"),
+                self._asst(
+                    lead
+                    + "\n\n"
+                    + "중간 설명입니다. " * 40
+                    + "\n\n끝으로 확인했습니다.",
+                    "a1",
+                ),
+            ]
+        )
         _quiet(self._emit)
         raw = json.dumps(self._part(), ensure_ascii=False)
-        self.assertNotIn("ghp_", raw)
+        self.assertNotIn(("gh" + "p_"), raw)
         self.assertNotIn("Q8zQ8z", raw)
 
     def test_stdin_twins_keep_their_ids_when_the_range_changes(self):
         recs = []
         for k in range(3):
-            recs += [_rec("user", "같은 질문입니다", ts="2026-08-09T10:0%d:00Z" % k),
-                     self._asst("답변 %d 입니다." % k, "x%d" % k, ts="2026-08-09T10:0%d:01Z" % k)]
+            recs += [
+                _rec("user", "같은 질문입니다", ts="2026-08-09T10:0%d:00Z" % k),
+                self._asst(
+                    "답변 %d 입니다." % k, "x%d" % k, ts="2026-08-09T10:0%d:01Z" % k
+                ),
+            ]
         feed = "".join(json.dumps(r) + "\n" for r in recs)
 
         def ids(extra):
             old = sys.stdin
             sys.stdin = io.StringIO(feed)
             try:
-                _quiet(L.main, ["--from-transcript", "-", "--emit-review", self.pack] + extra)
+                _quiet(
+                    L.main,
+                    ["--from-transcript", "-", "--emit-review", self.pack] + extra,
+                )
             finally:
                 sys.stdin = old
             with open(self.pack, encoding="utf-8") as f:
                 return [x["id"] for x in json.load(f)["turns"] if x["role"] == "user"]
+
         every = ids([])
         self.assertEqual(ids(["--last", "2"]), every[-1:], "the last twin keeps #3")
 
@@ -1594,9 +2154,20 @@ class TestLlmReviewHardening(_ReviewCase):
         out_dir = os.path.join(self.d, "escape")
         os.mkdir(out_dir)
         evil = "../" * 12 + out_dir.lstrip("/") + "/evil"
-        self._write([_rec("user", "질문", uuid="u1"), self._asst("답변을 정리했습니다.", evil)])
-        _quiet(L.main, ["--session", self.jf, "--output", os.path.join(self.d, "o.html"),
-                        "--skip-reviewer", "--rulebase"])
+        self._write(
+            [_rec("user", "질문", uuid="u1"), self._asst("답변을 정리했습니다.", evil)]
+        )
+        _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--output",
+                os.path.join(self.d, "o.html"),
+                "--skip-reviewer",
+                "--rulebase",
+            ],
+        )
         self.assertEqual(os.listdir(out_dir), [])
 
     def test_a_cache_that_cannot_keep_decisions_says_so_once(self):
@@ -1608,29 +2179,58 @@ class TestLlmReviewHardening(_ReviewCase):
         with open(blocker, "w") as f:
             f.write("x")
         L.CACHE_BASE = pathlib.Path(blocker) / "cache"
-        (rc, _), err = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": "요약"}])
+        (rc, _), err = _quiet(
+            self._apply, [{"id": "a1", "keep": True, "summary": "요약"}]
+        )
         self.assertEqual(rc, 0)
         self.assertEqual(err.count("reviewer decisions not cached"), 1)
         self.assertIn("decisions cached before still apply", err)
 
-    def test_tool_names_and_cached_summaries_in_a_part_are_redacted_for_the_reviewer(self):
-        self._write([_rec("user", "점검", uuid="u1"),
-                     self._asst("점검했습니다.", "a1", tools=["mcp__projectx_db__query"])])
+    def test_tool_names_and_cached_summaries_in_a_part_are_redacted_for_the_reviewer(
+        self,
+    ):
+        self._write(
+            [
+                _rec("user", "점검", uuid="u1"),
+                self._asst("점검했습니다.", "a1", tools=["mcp__projectx_db__query"]),
+            ]
+        )
         _quiet(self._emit, ["--redact-extra", "projectx", "--redact-mode", "mask"])
-        _quiet(self._apply, [{"id": "a1", "keep": True, "summary": "키 AKIA" "IOSFODNN7EXAMPLE 확인"}],
-               ["--redact-extra", "projectx"])
+        _quiet(
+            self._apply,
+            [
+                {
+                    "id": "a1",
+                    "keep": True,
+                    "summary": ("키 AKIA" + "IOSFODNN7EXAMPLE 확인"),
+                }
+            ],
+            ["--redact-extra", "projectx"],
+        )
         _quiet(self._emit, ["--redact-extra", "projectx", "--redact-mode", "mask"])
         raw = json.dumps(self._part(), ensure_ascii=False)
         self.assertNotIn("projectx", raw.lower())
         self.assertNotIn("AKIA****", raw)
 
-    def test_a_cached_reviewer_summary_leaves_no_part_of_a_key_for_the_next_reviewer(self):
+    def test_a_cached_reviewer_summary_leaves_no_part_of_a_key_for_the_next_reviewer(
+        self,
+    ):
         seg = _random_run(21)
         ant = "sk-" + "ant-api03-" + seg + "-" + _random_run(22, 20) + "AA"
-        self._write([_rec("user", "점검", uuid="u1"), self._asst("점검했습니다.", "a1")])
+        self._write(
+            [_rec("user", "점검", uuid="u1"), self._asst("점검했습니다.", "a1")]
+        )
         _quiet(self._emit, ["--redact-mode", "mask"])
-        _quiet(self._apply, [{"id": "a1", "keep": True,
-                              "summary": "키 AKIA" "IOSFODNN7EXAMPLE 와 " + ant + " 확인"}])
+        _quiet(
+            self._apply,
+            [
+                {
+                    "id": "a1",
+                    "keep": True,
+                    "summary": ("키 AKIA" + "IOSFODNN7EXAMPLE 와 ") + ant + " 확인",
+                }
+            ],
+        )
         _quiet(self._emit, ["--redact-mode", "mask"])
         raw = json.dumps(self._part(), ensure_ascii=False)
         for bit in ("AKIA****", "MPLE", "sk-ant-", seg[:8], seg[-8:]):
@@ -1640,7 +2240,10 @@ class TestLlmReviewHardening(_ReviewCase):
         self._write(self._records())
         _rc, pack = _quiet(self._emit, ["--keep-trivia"])[0]
         # as the guideline says for keep_trivia: every keep is null
-        _quiet(self._apply, [{"id": x["id"], "keep": None, "summary": None} for x in pack["turns"]])
+        _quiet(
+            self._apply,
+            [{"id": x["id"], "keep": None, "summary": None} for x in pack["turns"]],
+        )
         (_rc, pack), err = _quiet(self._emit)
         self.assertEqual([x["id"] for x in pack["turns"] if x["llm"].get("cached")], [])
         self.assertNotIn("(to review: 0)", err)
@@ -1648,10 +2251,31 @@ class TestLlmReviewHardening(_ReviewCase):
     def test_a_decision_is_not_reused_when_the_rules_call_the_turn_differently(self):
         a = os.path.join(self.d, "aaaa1111.jsonl")
         b = os.path.join(self.d, "bbbb2222.jsonl")
-        for path, recs in ((a, [_rec("user", "prod 에 배포해", ts="2026-08-09T10:00:00Z", uuid="ua"),
-                                self._asst("네", "aa", ts="2026-08-09T10:00:30Z")]),
-                           (b, [_rec("user", "다른 세션의 질문입니다", ts="2026-08-09T10:00:10Z", uuid="ub"),
-                                self._asst("다른 세션의 답변입니다.", "ab", ts="2026-08-09T10:00:15Z")])):
+        for path, recs in (
+            (
+                a,
+                [
+                    _rec(
+                        "user", "prod 에 배포해", ts="2026-08-09T10:00:00Z", uuid="ua"
+                    ),
+                    self._asst("네", "aa", ts="2026-08-09T10:00:30Z"),
+                ],
+            ),
+            (
+                b,
+                [
+                    _rec(
+                        "user",
+                        "다른 세션의 질문입니다",
+                        ts="2026-08-09T10:00:10Z",
+                        uuid="ub",
+                    ),
+                    self._asst(
+                        "다른 세션의 답변입니다.", "ab", ts="2026-08-09T10:00:15Z"
+                    ),
+                ],
+            ),
+        ):
             with open(path, "w", encoding="utf-8") as f:
                 f.writelines(json.dumps(r) + "\n" for r in recs)
         saved = L.project_jsonl_files
@@ -1664,40 +2288,74 @@ class TestLlmReviewHardening(_ReviewCase):
         def ua():
             with open(self.pack, encoding="utf-8") as f:
                 return [x for x in json.load(f)["turns"] if x["id"] == "ua"][0]
-        self.assertTrue(ua()["rule"]["keep"], "another session's turn sits between: no echo")
+
+        self.assertTrue(
+            ua()["rule"]["keep"], "another session's turn sits between: no echo"
+        )
         _quiet(self._apply, [{"id": "ua", "keep": None, "summary": None}])
         _quiet(L.main, ["--session", a, "--emit-review", self.pack])
         self.assertEqual(ua()["rule"]["why"], "echo")
-        self.assertFalse(ua()["llm"].get("cached"), "that null deferred to a rule that kept the turn")
+        self.assertFalse(
+            ua()["llm"].get("cached"), "that null deferred to a rule that kept the turn"
+        )
 
     def test_keep_trivia_alone_counts_only_the_turns_it_keeps(self):
-        self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst("점검 결과를 정리했습니다.", "a1"),
-                     _rec("user", "다음 단계도 해 주세요", ts="2026-08-09T10:00:04Z", uuid="u2"),
-                     self._asst("", "a2", ts="2026-08-09T10:00:05Z", tools=["Bash"])])
+        self._write(
+            [
+                _rec("user", "점검해 주세요", uuid="u1"),
+                self._asst("점검 결과를 정리했습니다.", "a1"),
+                _rec(
+                    "user",
+                    "다음 단계도 해 주세요",
+                    ts="2026-08-09T10:00:04Z",
+                    uuid="u2",
+                ),
+                self._asst("", "a2", ts="2026-08-09T10:00:05Z", tools=["Bash"]),
+            ]
+        )
         _quiet(self._emit, ["--keep-trivia"])
-        (rc, text), err = _quiet(self._apply, [{"id": i, "keep": False} for i in ("u1", "a1", "u2", "a2")])
+        (rc, text), err = _quiet(
+            self._apply, [{"id": i, "keep": False} for i in ("u1", "a1", "u2", "a2")]
+        )
         self.assertEqual(rc, 0)
-        self.assertNotIn("Bash×1", text, "a tool-only turn stays only with --keep-tool-only")
+        self.assertNotIn(
+            "Bash×1", text, "a tool-only turn stays only with --keep-tool-only"
+        )
         self.assertIn("note: 3 turn(s)", err)
 
     def test_gate_samples_take_the_rule_summary_cut_from_redacted_text(self):
-        token = "gh" + "p_" + "Q8z" * 12          # cut at 58 characters, no pattern matches the half
+        token = (
+            "gh" + "p_" + "Q8z" * 12
+        )  # cut at 58 characters, no pattern matches the half
         cred = "postgres://admin:" + "Hunter22secretpw" + "@db.local/app"
         body = "\n\n" + "중간 설명입니다. " * 40 + "\n\n끝으로 확인했습니다."
-        self._write([_rec("user", "정리해 주세요", uuid="u1"),
-                     self._asst("가" * 36 + " " + token + " 입니다" + body, "a1"),
-                     _rec("user", "하나 더 정리해 주세요", ts="2026-08-09T10:01:00Z", uuid="u2"),
-                     self._asst("가" * 30 + " " + cred + " 입니다" + body, "a2", ts="2026-08-09T10:01:01Z")])
+        self._write(
+            [
+                _rec("user", "정리해 주세요", uuid="u1"),
+                self._asst("가" * 36 + " " + token + " 입니다" + body, "a1"),
+                _rec(
+                    "user",
+                    "하나 더 정리해 주세요",
+                    ts="2026-08-09T10:01:00Z",
+                    uuid="u2",
+                ),
+                self._asst(
+                    "가" * 30 + " " + cred + " 입니다" + body,
+                    "a2",
+                    ts="2026-08-09T10:01:01Z",
+                ),
+            ]
+        )
         _quiet(self._emit)
         self._gate_first()
         raw = json.dumps(self._samples()[1], ensure_ascii=False)
-        for bit in ("ghp_", "Q8zQ8z", "Hunter22"):
+        for bit in (("gh" + "p_"), "Q8zQ8z", "Hunter22"):
             self.assertNotIn(bit, raw)
 
     def test_a_verdict_from_before_the_samples_is_not_read(self):
         self._write(self._records())
         _quiet(self._emit)
-        verdict = self._verdict(True)             # left by a --rulebase gate, say
+        verdict = self._verdict(True)  # left by a --rulebase gate, say
         rc, err = self._gate_apply(verdict)
         self.assertEqual(rc, 2)
         self.assertIn("predates these samples", err)
@@ -1722,31 +2380,43 @@ class TestLlmReviewHardening(_ReviewCase):
             f.write('{"name": "x"}')
         data = os.path.join(self.d, "data.json")
         with open(data, "w", encoding="utf-8") as f:
-            f.write("[1, 2, 3]")                  # a list, but no verdict
+            f.write("[1, 2, 3]")  # a list, but no verdict
         for order in ((folder, other, data), (data, other, folder)):
             for path in order:
                 samples = self._samples()[0]
                 if samples:
-                    os.remove(samples)            # new samples each time: the path that moves files
+                    os.remove(
+                        samples
+                    )  # new samples each time: the path that moves files
                 rc, err = self._gate_apply(path)
                 self.assertEqual(rc, 2)
-                self.assertTrue(os.path.exists(path) and not os.path.exists(path + ".used"), path)
+                self.assertTrue(
+                    os.path.exists(path) and not os.path.exists(path + ".used"), path
+                )
                 self.assertIn("is not a verdict list", err)
-                self.assertNotIn("reviewer samples", err, "nothing for a critic before the path is fixed")
-                self.assertNotIn("next:", err, "and no instruction to write over that path")
+                self.assertNotIn(
+                    "reviewer samples",
+                    err,
+                    "nothing for a critic before the path is fixed",
+                )
+                self.assertNotIn(
+                    "next:", err, "and no instruction to write over that path"
+                )
         with open(other, encoding="utf-8") as f:
             self.assertEqual(f.read(), '{"name": "x"}')
         with open(data, encoding="utf-8") as f:
             self.assertEqual(f.read(), "[1, 2, 3]")
 
-    def test_a_refused_verdict_path_leaves_the_file_whole_through_a_pass_on_another(self):
+    def test_a_refused_verdict_path_leaves_the_file_whole_through_a_pass_on_another(
+        self,
+    ):
         self._write(self._records())
         _quiet(self._emit)
         other = os.path.join(self.d, "package.json")
         with open(other, "w", encoding="utf-8") as f:
             f.write('{"name": "x"}')
         self.assertEqual(self._gate_apply(other)[0], 2)
-        self._gate_first()                        # another path: samples, then no verdict yet
+        self._gate_first()  # another path: samples, then no verdict yet
         self.assertEqual(self._gate_apply(self._verdict(True), "p.html")[0], 0)
         with open(other, encoding="utf-8") as f:
             self.assertEqual(f.read(), '{"name": "x"}')
@@ -1758,7 +2428,9 @@ class TestLlmReviewHardening(_ReviewCase):
         rc, err = self._gate_apply(os.path.join(self.d, "verdict.json"))
         self.assertEqual(rc, 2)
         self.assertIn("cannot write the gate samples", err)
-        self.assertNotIn("not found within", err, "no wait for a verdict nobody can give")
+        self.assertNotIn(
+            "not found within", err, "no wait for a verdict nobody can give"
+        )
 
     def test_a_read_verdict_never_replaces_a_used_file_that_is_not_one(self):
         self._write(self._records())
@@ -1771,7 +2443,9 @@ class TestLlmReviewHardening(_ReviewCase):
         self.assertEqual(rc, 0, err)
         with open(kept, encoding="utf-8") as f:
             self.assertEqual(f.read(), "older user file")
-        self.assertTrue(os.path.exists(kept + ".1"), "the verdict went to the first free name")
+        self.assertTrue(
+            os.path.exists(kept + ".1"), "the verdict went to the first free name"
+        )
 
     def test_a_used_list_with_one_verdict_like_entry_among_other_data_is_kept(self):
         # a verdict to read only needs one entry with an idx; one to write over must be all verdict
@@ -1786,13 +2460,26 @@ class TestLlmReviewHardening(_ReviewCase):
         self.assertEqual(rc, 0, err)
         with open(kept, encoding="utf-8") as f:
             self.assertEqual(f.read(), mine)
-        self.assertTrue(os.path.exists(kept + ".1"), "the verdict went to the first free name")
+        self.assertTrue(
+            os.path.exists(kept + ".1"), "the verdict went to the first free name"
+        )
 
     def test_a_verdict_must_answer_each_sample_of_this_run(self):
         recs = []
         for k in range(3):
-            recs += [_rec("user", "%d번 작업을 해 주세요" % k, ts="2026-08-09T10:0%d:00Z" % k, uuid="u%d" % k),
-                     self._asst("%d번 작업을 마쳤고 검사가 통과합니다." % k, "a%d" % k, ts="2026-08-09T10:0%d:01Z" % k)]
+            recs += [
+                _rec(
+                    "user",
+                    "%d번 작업을 해 주세요" % k,
+                    ts="2026-08-09T10:0%d:00Z" % k,
+                    uuid="u%d" % k,
+                ),
+                self._asst(
+                    "%d번 작업을 마쳤고 검사가 통과합니다." % k,
+                    "a%d" % k,
+                    ts="2026-08-09T10:0%d:01Z" % k,
+                ),
+            ]
         self._write(recs)
         _quiet(self._emit)
         self._gate_first()
@@ -1802,31 +2489,57 @@ class TestLlmReviewHardening(_ReviewCase):
         self.assertEqual(rc, 2)
         self.assertIn("does not answer", err)
         self.assertNotIn("PASS: quality gate", err)
-        for bad in ([dict(x, id="another-turn") if x["idx"] == 0 else x for x in samples],
-                    [dict(x, key="000000000000") if x["idx"] == 0 else x for x in samples],
-                    samples + samples[:1], samples + [dict(samples[0], idx=99)],
-                    [{"idx": x["idx"], "id": x["id"]} for x in samples]):
+        for bad in (
+            [dict(x, id="another-turn") if x["idx"] == 0 else x for x in samples],
+            [dict(x, key="000000000000") if x["idx"] == 0 else x for x in samples],
+            samples + samples[:1],
+            samples + [dict(samples[0], idx=99)],
+            [{"idx": x["idx"], "id": x["id"]} for x in samples],
+        ):
             rc, err = self._gate_apply(self._verdict(True, bad))
-            self.assertEqual(rc, 2, "another turn, another content, a repeat, an unknown idx or no key")
+            self.assertEqual(
+                rc,
+                2,
+                "another turn, another content, a repeat, an unknown idx or no key",
+            )
             self.assertIn("does not answer", err)
         rc, err = self._gate_apply(self._verdict(False, samples[:1]))
         self.assertEqual(rc, 2, "a verdict that names only the samples it fails")
-        self.assertIn("not recoverable in it: idx=0: vague", err, "its reasons show beside the coverage error")
+        self.assertIn(
+            "not recoverable in it: idx=0: vague",
+            err,
+            "its reasons show beside the coverage error",
+        )
         self.assertEqual(self._gate_apply(self._verdict(True), "p.html")[0], 0)
 
     def test_a_verdict_on_the_samples_before_a_fix_does_not_pass(self):
         recs = []
         for k in range(3):
-            recs += [_rec("user", "%d번 작업을 해 주세요" % k, ts="2026-08-09T10:0%d:00Z" % k, uuid="u%d" % k),
-                     self._asst("%d번 작업을 마쳤고 검사가 통과합니다." % k, "a%d" % k, ts="2026-08-09T10:0%d:01Z" % k)]
+            recs += [
+                _rec(
+                    "user",
+                    "%d번 작업을 해 주세요" % k,
+                    ts="2026-08-09T10:0%d:00Z" % k,
+                    uuid="u%d" % k,
+                ),
+                self._asst(
+                    "%d번 작업을 마쳤고 검사가 통과합니다." % k,
+                    "a%d" % k,
+                    ts="2026-08-09T10:0%d:01Z" % k,
+                ),
+            ]
         self._write(recs)
         _quiet(self._emit)
         self._gate_first()
         _, before = self._samples()
         dec = os.path.join(self.d, "review.part-1.decisions.json")
         with open(dec, "w", encoding="utf-8") as f:
-            json.dump([{"id": "a0", "keep": True, "summary": "고친 요약"}], f, ensure_ascii=False)
-        self._gate_first()                        # the fix changes a sample's content, not its turn
+            json.dump(
+                [{"id": "a0", "keep": True, "summary": "고친 요약"}],
+                f,
+                ensure_ascii=False,
+            )
+        self._gate_first()  # the fix changes a sample's content, not its turn
         _, after = self._samples()
         self.assertEqual([x["id"] for x in before], [x["id"] for x in after])
         self.assertNotEqual([x["key"] for x in before], [x["key"] for x in after])
@@ -1836,69 +2549,136 @@ class TestLlmReviewHardening(_ReviewCase):
 
     def test_each_reviewer_pattern_hides_a_shape_it_names(self):
         # names and values assembled at run time, so a secret scanner reading this file sees no pair
-        cases = dict([
-            ("AnthropicKey", "sk-" + "ant-" + "abcd" * 6),
-            ("OpenAIKey", "sk-" + "proj-" + "abcd" * 6),
-            ("GoogleKey", "AI" + "za" + "abcde" * 7),
-            ("HexKey", "deploy_key_" + "x" * 60 + "=" + "0123456789abcdef" * 3),
-            ("Pass" + "wordBare", "pw" + "d=" + "abc123xyz"),
-            ("Url" + "Cred" + "ential", "mongodb+srv://" + "app:" + "p@ss" + "word1@db.example.com/x"),
-            ("Bearer", "Authorization: Bear" + "er " + "abcd" * 5),
-            ("BasicAuth", "Authorization: Bas" + "ic " + "YWRtaW46" + "SHVudGVyMjI="),
-            ("CurlUser", "curl -u admin:" + "Hunter22pw https://x"),
-        ])
+        cases = dict(
+            [
+                ("AnthropicKey", "sk-" + "ant-" + "abcd" * 6),
+                ("OpenAIKey", "sk-" + "proj-" + "abcd" * 6),
+                ("GoogleKey", "AI" + "za" + "abcde" * 7),
+                ("HexKey", "deploy_key_" + "x" * 60 + "=" + "0123456789abcdef" * 3),
+                ("Pass" + "wordBare", "pw" + "d=" + "abc123xyz"),
+                (
+                    "Url" + "Cred" + "ential",
+                    "mongodb+srv://" + "app:" + "p@ss" + "word1@db.example.com/x",
+                ),
+                ("Bearer", "Authorization: Bear" + "er " + "abcd" * 5),
+                (
+                    "BasicAuth",
+                    "Authorization: Bas" + "ic " + "YWRtaW46" + "SHVudGVyMjI=",
+                ),
+                ("CurlUser", "curl -u admin:" + "Hunter22pw https://x"),
+            ]
+        )
         self.assertEqual(sorted(cases), sorted(n for n, _ in L.REVIEW_SECRET_PATTERNS))
         for name, text in cases.items():
             red = L.review_redact(text)[0]
             self.assertIn("[REDACTED:%s]" % name, red, text)
-        for bit in ("abcdabcd", "0123456789abcdef", "abc123xyz", "p@ss", "YWRtaW46", "Hunter22"):
+        for bit in (
+            "abcdabcd",
+            "0123456789abcdef",
+            "abc123xyz",
+            "p@ss",
+            "YWRtaW46",
+            "Hunter22",
+        ):
             self.assertNotIn(bit, L.review_redact(" ".join(cases.values()))[0])
         basic = "Bas" + "ic YWRtaW46SHVudGVyMjI="
-        for shape in ("curl -uadmin:" + "Hunter22pw https://x", "curl --user=admin:" + "pw123456 x",
-                      "com.example.platform.internal.svc.jdbc+postgresql://admin:" + "Hunter22pw@db/app",
-                      'headers = {"Authorization": "' + basic + '"}',
-                      "fetch(u, {headers: {Authorization: '" + basic + "'}})",
-                      'headers["Authorization"] = "' + basic + '"', "headers['Authorization'] = '" + basic + "'",
-                      'xhr.setRequestHeader("Authorization", "' + basic + '")',
-                      '{"name": "Authorization", "value": "' + basic + '"}', '"Authorization" => "' + basic + '"',
-                      'proxy_set_header Authorization "' + basic + '";',
-                      "curl -su admin:" + "Hunter22pw https://x", "curl -vu admin:" + "Hunter22pw https://x",
-                      '["curl", "-u", "admin:' + 'Hunter22pw", url]', "subprocess.run(['curl', '--user=admin:" + "Hunter22pw', url])",
-                      "curl -u :" + "Hunter22pw https://x", "curl -u 1000:1000:" + "Hunter22pw https://x"):
+        for shape in (
+            "curl -uadmin:" + "Hunter22pw https://x",
+            "curl --user=admin:" + "pw123456 x",
+            "com.example.platform.internal.svc.jdbc+postgresql://admin:"
+            + "Hunter22pw@db/app",
+            'headers = {"Authorization": "' + basic + '"}',
+            "fetch(u, {headers: {Authorization: '" + basic + "'}})",
+            'headers["Authorization"] = "' + basic + '"',
+            "headers['Authorization'] = '" + basic + "'",
+            'xhr.setRequestHeader("Authorization", "' + basic + '")',
+            '{"name": "Authorization", "value": "' + basic + '"}',
+            '"Authorization" => "' + basic + '"',
+            'proxy_set_header Authorization "' + basic + '";',
+            "curl -su admin:" + "Hunter22pw https://x",
+            "curl -vu admin:" + "Hunter22pw https://x",
+            '[("cu" + "rl"), "-u", "admin:' + 'Hunter22pw", url]',
+            "subprocess.run(['curl', '--user=admin:" + "Hunter22pw', url])",
+            "curl -u :" + "Hunter22pw https://x",
+            "curl -u 1000:1000:" + "Hunter22pw https://x",
+        ):
             self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
             self.assertNotIn("YWRtaW46", L.review_redact(shape)[0], shape)
-        stripe = "curl https://api.example.com/v1/charges -u sk" + "_test_" + "Q8z" * 8 + ": -d amount=1"
-        self.assertNotIn("Q8zQ8z", L.review_redact(stripe)[0], "a key given as the user, the password left empty")
-        for keep in ("see the basic configuration guide", "sort -u a.txt", "git log -u",
-                     "docker run -u 1000:1000 app", "rsync -u host:/srv/app .", "`docker run -u 1000:1000`",
-                     "date -u +%H:%M:%S", 'date -u "+%H:%M:%S"', "docker run -u $(id -u):$(id -g) img",
-                     'docker run -u "1000:1000" img', 'mktemp -u "${TMPDIR:-/tmp}/x"', "docker run -u ${UID}:${GID} img",
-                     "sudo -u postgres psql", "ping6 -u ::1", "rsync -avu host:/srv/app .", "link -out:Program.exe a.obj",
-                     "Authorization, Basic authentication and tokens are covered below"):
+        stripe = (
+            "curl https://api.example.com/v1/charges -u sk"
+            + "_test_"
+            + "Q8z" * 8
+            + ": -d amount=1"
+        )
+        self.assertNotIn(
+            "Q8zQ8z",
+            L.review_redact(stripe)[0],
+            "a key given as the user, the password left empty",
+        )
+        for keep in (
+            "see the basic configuration guide",
+            "sort -u a.txt",
+            "git log -u",
+            "docker run -u 1000:1000 app",
+            "rsync -u host:/srv/app .",
+            "`docker run -u 1000:1000`",
+            "date -u +%H:%M:%S",
+            'date -u "+%H:%M:%S"',
+            "docker run -u $(id -u):$(id -g) img",
+            'docker run -u "1000:1000" img',
+            'mktemp -u "${TMPDIR:-/tmp}/x"',
+            "docker run -u ${UID}:${GID} img",
+            "sudo -u postgres psql",
+            "ping6 -u ::1",
+            "rsync -avu host:/srv/app .",
+            "link -out:Program.exe a.obj",
+            "Authorization, Basic authentication and tokens are covered below",
+        ):
             self.assertEqual(L.review_redact(keep)[0], keep)
 
     def test_curl_user_hides_quoted_templated_and_odd_users(self):
         # 3.0.0 hid each of these; a user may be a template, quoted apart from the password,
         # start with + or %, or sit in inline code or parentheses
         pw = "Hunter22" + "pw"
-        c = "cu" + "rl"                         # assembled, so a secret scanner reading this file sees no command
+        c = (
+            "cu" + "rl"
+        )  # assembled, so a secret scanner reading this file sees no command
         key = "sk" + "_test_" + "Q8z" * 8
-        for shape in (c + ' -u "${API_USER}:' + pw + '" https://x', c + " -u ${API_USER}:" + pw + " https://x",
-                      c + " -u %API_USER%:" + pw + " https://x", c + " -u %40admin:" + pw + " https://x",
-                      c + " -u {svc}:" + pw + " https://x", c + " -u '{user}:" + pw + "' https://x",
-                      c + " -u +bot:" + pw + " https://x", c + " -u +15551234567:" + pw + " https://x",
-                      c + ' -u "admin":"' + pw + '" https://x', c + " -u 'admin':'" + pw + "' https://x",
-                      c + ' --user "admin":"' + pw + '" https://x', c + " --user='admin':'" + pw + "' https://x",
-                      c + ' -u "admin:' + pw + '" https://x', c + " -u '':" + pw + " https://x",
-                      c + " -4u admin:" + pw + " https://x", c + " -u 1000:1000-" + pw + " https://x",
-                      c + " -u $(whoami):" + pw + " https://x", c + " -u `whoami`:" + pw + " https://x",
-                      c + " -u $(id -u):" + pw + " https://x", c + " -u o'brien:" + pw + " https://x",
-                      "pass `-u admin:" + pw + "` to it", "(-u admin:" + pw + ")",
-                      c + ' -u "${USER}:${PASS:-' + pw + '}" https://x', c + ' -u "${CREDS:-admin:' + pw + '}" https://x',
-                      c + ' -u "${USER:-admin}:' + pw + '" https://x',
-                      '["' + c + '", "-u", "${API_USER}:' + pw + '", url]', '["' + c + '", "-4u", "admin:' + pw + '", url]'):
+        for shape in (
+            c + ' -u "${API_USER}:' + pw + '" https://x',
+            c + " -u ${API_USER}:" + pw + " https://x",
+            c + " -u %API_USER%:" + pw + " https://x",
+            c + " -u %40admin:" + pw + " https://x",
+            c + " -u {svc}:" + pw + " https://x",
+            c + " -u '{user}:" + pw + "' https://x",
+            c + " -u +bot:" + pw + " https://x",
+            c + " -u +15551234567:" + pw + " https://x",
+            c + ' -u "admin":"' + pw + '" https://x',
+            c + " -u 'admin':'" + pw + "' https://x",
+            c + ' --user "admin":"' + pw + '" https://x',
+            c + " --user='admin':'" + pw + "' https://x",
+            c + ' -u "admin:' + pw + '" https://x',
+            c + " -u '':" + pw + " https://x",
+            c + " -4u admin:" + pw + " https://x",
+            c + " -u 1000:1000-" + pw + " https://x",
+            c + " -u $(whoami):" + pw + " https://x",
+            c + " -u `whoami`:" + pw + " https://x",
+            c + " -u $(id -u):" + pw + " https://x",
+            c + " -u o'brien:" + pw + " https://x",
+            "pass `-u admin:" + pw + "` to it",
+            "(-u admin:" + pw + ")",
+            c + ' -u "${USER}:${PASS:-' + pw + '}" https://x',
+            c + ' -u "${CREDS:-admin:' + pw + '}" https://x',
+            c + ' -u "${USER:-admin}:' + pw + '" https://x',
+            '["' + c + '", "-u", "${API_USER}:' + pw + '", url]',
+            '["' + c + '", "-4u", "admin:' + pw + '", url]',
+        ):
             self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
-        for shape in (c + " -u '" + key + ":' https://x", "use `-u " + key + ":` here", c + ' -u "${API_KEY:-' + key + '}" https://x'):
+        for shape in (
+            c + " -u '" + key + ":' https://x",
+            "use `-u " + key + ":` here",
+            c + ' -u "${API_KEY:-' + key + '}" https://x',
+        ):
             self.assertNotIn("Q8zQ8z", L.review_redact(shape)[0], shape)
 
     def test_curl_user_hides_escaped_and_doubled_quotes(self):
@@ -1908,68 +2688,196 @@ class TestLlmReviewHardening(_ReviewCase):
         c = "cu" + "rl"
         q = '"'
         bs = chr(92)
-        for shape in ("ssh host " + q + c + " -u " + bs + q + "admin:" + pw + bs + q + " http://localhost:9200" + q,
-                      '["CMD-SHELL", "' + c + ' -s -u ' + bs + q + "elastic:" + pw + bs + q + ' http://localhost:9200"]',
-                      '{"scripts": {"x": "' + c + ' -u ' + bs + q + "admin:" + pw + bs + q + ' https://x"}}',
-                      c + " -u " + bs * 3 + q + "admin:" + pw + bs * 3 + q + " https://x",
-                      c + " -u $'admin:" + pw + "' https://x", c + " -u ^" + q + "admin:" + pw + "^" + q + " https://x",
-                      c + ".exe -u `" + q + "admin:" + pw + "`" + q + " https://x",
-                      c + ' -u "$USER"' + "':" + pw + "' https://x", c + " -u 'admin'" + '":' + pw + '" https://x',
-                      c + " -u +%40admin:" + pw + " https://x",
-                      # bash's '\'' inside single quotes (set -x prints it), Python's shlex.quote, a user
-                      # joined to a variable, JSON wrapped three times, CSV and YAML doubled quotes
-                      "bash -c '" + c + " -s -u '" + bs + "''admin:" + pw + "'" + bs + "'' https://x'",
-                      "sh -c '" + c + " -s -u '" + q + "'" + q + "'admin:" + pw + "'" + q + "'" + q + "' https://x'",
-                      c + ' -s -u "$USER"@corp.com:' + pw + " https://x",
-                      c + " -u " + bs * 7 + q + "admin:" + pw + bs * 7 + q + " https://x",
-                      c + " -u 'admin'" + '"":' + pw + '"" https://x', c + ' -u "admin"' + "'':" + pw + "'' https://x"):
+        for shape in (
+            "ssh host "
+            + q
+            + c
+            + " -u "
+            + bs
+            + q
+            + "admin:"
+            + pw
+            + bs
+            + q
+            + " http://localhost:9200"
+            + q,
+            '["CMD-SHELL", "'
+            + c
+            + " -s -u "
+            + bs
+            + q
+            + "elastic:"
+            + pw
+            + bs
+            + q
+            + ' http://localhost:9200"]',
+            '{"scripts": {"x": "'
+            + c
+            + " -u "
+            + bs
+            + q
+            + "admin:"
+            + pw
+            + bs
+            + q
+            + ' https://x"}}',
+            c + " -u " + bs * 3 + q + "admin:" + pw + bs * 3 + q + " https://x",
+            c + " -u $'admin:" + pw + "' https://x",
+            c + " -u ^" + q + "admin:" + pw + "^" + q + " https://x",
+            c + ".exe -u `" + q + "admin:" + pw + "`" + q + " https://x",
+            c + ' -u "$USER"' + "':" + pw + "' https://x",
+            c + " -u 'admin'" + '":' + pw + '" https://x',
+            c + " -u +%40admin:" + pw + " https://x",
+            # bash's '\'' inside single quotes (set -x prints it), Python's shlex.quote, a user
+            # joined to a variable, JSON wrapped three times, CSV and YAML doubled quotes
+            "bash -c '"
+            + c
+            + " -s -u '"
+            + bs
+            + "''admin:"
+            + pw
+            + "'"
+            + bs
+            + "'' https://x'",
+            "sh -c '"
+            + c
+            + " -s -u '"
+            + q
+            + "'"
+            + q
+            + "'admin:"
+            + pw
+            + "'"
+            + q
+            + "'"
+            + q
+            + "' https://x'",
+            c + ' -s -u "$USER"@corp.com:' + pw + " https://x",
+            c + " -u " + bs * 7 + q + "admin:" + pw + bs * 7 + q + " https://x",
+            c + " -u 'admin'" + '"":' + pw + '"" https://x',
+            c + ' -u "admin"' + "'':" + pw + "'' https://x",
+        ):
             self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
 
     def test_curl_user_hides_users_joined_to_a_reference_by_a_dash(self):
         # 3.0.0 hid these: a user that joins a variable, a command substitution or a quoted part
         # with a -, and a user that starts with a - after quotes, alone or in JSON and bash -c
         import shlex
+
         pw = "Hunter22" + "pw"
         c = "cu" + "rl"
-        for cmd in (c + ' -u "${ENV}"-deployer:' + pw + " https://x", c + ' -u "$USER"-bot:' + pw + " https://x",
-                    c + ' -u "$(whoami)"-ci:' + pw + " https://x", c + " -u `hostname`-agent:" + pw + " https://x",
-                    c + " -u '$USER'-bot:" + pw + " https://x", c + " -u '-admin:" + pw + "' https://x",
-                    c + " -u" + chr(9) + '"-admin:' + pw + '" https://x'):
-            for shape in (cmd, json.dumps(cmd), "bash -c " + shlex.quote(cmd),
-                          "sh -c " + shlex.quote("bash -c " + shlex.quote(cmd))):
+        for cmd in (
+            c + ' -u "${ENV}"-deployer:' + pw + " https://x",
+            c + ' -u "$USER"-bot:' + pw + " https://x",
+            c + ' -u "$(whoami)"-ci:' + pw + " https://x",
+            c + " -u `hostname`-agent:" + pw + " https://x",
+            c + " -u '$USER'-bot:" + pw + " https://x",
+            c + " -u '-admin:" + pw + "' https://x",
+            c + " -u" + chr(9) + '"-admin:' + pw + '" https://x',
+        ):
+            for shape in (
+                cmd,
+                json.dumps(cmd),
+                "bash -c " + shlex.quote(cmd),
+                "sh -c " + shlex.quote("bash -c " + shlex.quote(cmd)),
+            ):
                 self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
 
     def test_curl_user_keeps_ids_references_and_dates(self):
-        for keep in ("docker run -u $UID:$GID img", 'docker run -u "$USER:$PASS" img', "set -u %USER%:%PASS% x",
-                     'docker run -u "${UID}:${GID}" img', "docker run -u $(id -un):$(id -gn) img",
-                     "(docker run -u 1000:1000)", "use `-u 1000:1000` here", '["docker", "run", "-u", "1000:1000", "img"]',
-                     'subprocess.run(["date", "-u", "+%H:%M:%S"])', "date -u '+%Y-%m-%dT%H:%M:%SZ'",
-                     'mktemp -u "${TMPDIR:-/tmp}/x.XXXX")', 'ssh host "docker run -u ' + chr(92) + '"1000:1000' + chr(92) + '" img"',
-                     'ssh host "docker run -u ' + chr(92) + '"$UID:$GID' + chr(92) + '" img"', "date -u +%-H:%M:%S",
-                     'cmd /c "docker run -u ^"1000:1000^" img"', "bash -c 'docker run -u '" + chr(92) + "''1000:1000'" + chr(92) + "'' img'",
-                     "bash -c 'docker run -u $(id -u):$(id -g) img'", 'date -u +"%H:%M:%S"'):
+        for keep in (
+            "docker run -u $UID:$GID img",
+            'docker run -u "$USER:$PASS" img',
+            "set -u %USER%:%PASS% x",
+            'docker run -u "${UID}:${GID}" img',
+            "docker run -u $(id -un):$(id -gn) img",
+            "(docker run -u 1000:1000)",
+            "use `-u 1000:1000` here",
+            '["docker", "run", "-u", "1000:1000", "img"]',
+            'subprocess.run(["date", "-u", "+%H:%M:%S"])',
+            "date -u '+%Y-%m-%dT%H:%M:%SZ'",
+            'mktemp -u "${TMPDIR:-/tmp}/x.XXXX")',
+            'ssh host "docker run -u ' + chr(92) + '"1000:1000' + chr(92) + '" img"',
+            'ssh host "docker run -u ' + chr(92) + '"$UID:$GID' + chr(92) + '" img"',
+            "date -u +%-H:%M:%S",
+            'cmd /c "docker run -u ^"1000:1000^" img"',
+            "bash -c 'docker run -u '" + chr(92) + "''1000:1000'" + chr(92) + "'' img'",
+            "bash -c 'docker run -u $(id -u):$(id -g) img'",
+            'date -u +"%H:%M:%S"',
+        ):
             self.assertEqual(L.review_redact(keep)[0], keep)
 
     def test_curl_user_takes_linear_time_on_runs_of_its_pieces(self):
         pat = dict(L.REVIEW_SECRET_PATTERNS)["CurlUser"]
         bs = chr(92)
-        pieces = ("(-u", "`-u", "'-u", "(-u(", "`-u`", "-u${a:(", " -u ${a:", " -u $(", "'-uo'b", " -4u ",
-                  " -u):$(", "(-u$(a", "'-u", '"-u", "', " -u %a%:", " -u 1:1", "(-u a`",
-                  " -u " + bs + '"', '"-u' + bs + '"', " -u ^" + '"', " -u $'", " -u " + bs * 3 + "'", '"-u""', " -u a" + bs + '"',
-                  " -ua$" + '"', "'-u'" + bs + "''", " -u '" + '"' + "'" + '"', '"-u"a', " -u " + bs * 8 + '"', "`-u`a",
-                  '"-a', ' -u "-a', '"-a"-u', "(-xu ", '"--user"',
-                  '"-xu","a', '"--user","a', "'-xu','a", "'--user','a", '"-u","', '","-u',
-                  bs + '"-u' + bs + '",' + bs + '"')
+        pieces = (
+            "(-u",
+            "`-u",
+            "'-u",
+            "(-u(",
+            "`-u`",
+            "-u${a:(",
+            " -u ${a:",
+            " -u $(",
+            "'-uo'b",
+            " -4u ",
+            " -u):$(",
+            "(-u$(a",
+            "'-u",
+            '"-u", "',
+            " -u %a%:",
+            " -u 1:1",
+            "(-u a`",
+            " -u " + bs + '"',
+            '"-u' + bs + '"',
+            " -u ^" + '"',
+            " -u $'",
+            " -u " + bs * 3 + "'",
+            '"-u""',
+            " -u a" + bs + '"',
+            " -ua$" + '"',
+            "'-u'" + bs + "''",
+            " -u '" + '"' + "'" + '"',
+            '"-u"a',
+            " -u " + bs * 8 + '"',
+            "`-u`a",
+            '"-a',
+            ' -u "-a',
+            '"-a"-u',
+            "(-xu ",
+            '"--user"',
+            '"-xu","a',
+            '"--user","a',
+            "'-xu','a",
+            "'--user','a",
+            '"-u","',
+            '","-u',
+            bs + '"-u' + bs + '",' + bs + '"',
+        )
         for piece in pieces:
             start = _cpu_now()
             pat.sub("[R]", piece * 40000)
             self.assertLess(_cpu_now() - start, 2, repr(piece))
 
     def test_a_quote_of_the_parts_turns_is_not_read_as_decisions(self):
-        answer = [{"id": "a%d" % k, "keep": True, "summary": "요약 %d" % k} for k in range(2)]
-        quote = [{"id": "a%d" % k, "n": k, "role": "assistant", "preview": "본문",
-                  "rule": {"keep": True}, "llm": {"keep": None, "summary": None}} for k in range(4)]
-        text = json.dumps(answer, ensure_ascii=False) + "\n\nTurns I reviewed:\n" + json.dumps(quote)
+        answer = [
+            {"id": "a%d" % k, "keep": True, "summary": "요약 %d" % k} for k in range(2)
+        ]
+        quote = [
+            {
+                "id": "a%d" % k,
+                "n": k,
+                "role": "assistant",
+                "preview": "본문",
+                "rule": {"keep": True},
+                "llm": {"keep": None, "summary": None},
+            }
+            for k in range(4)
+        ]
+        text = (
+            json.dumps(answer, ensure_ascii=False)
+            + "\n\nTurns I reviewed:\n"
+            + json.dumps(quote)
+        )
         self.assertEqual(L._decisions_text(text), answer)
         path = os.path.join(self.d, "quote.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -1982,8 +2890,16 @@ class TestLlmReviewHardening(_ReviewCase):
         self._write(self._records())
         _quiet(self._emit)
         for extra in ({"n": 1}, {"role": "assistant"}, {"meta": True}):
-            _quiet(self._emit)                    # a rendered pack is removed: one per apply
-            (rc, text), err = _quiet(self._apply, [dict({"id": "a1", "keep": True, "summary": "덧붙인 키가 있는 답"}, **extra)])
+            _quiet(self._emit)  # a rendered pack is removed: one per apply
+            (rc, text), err = _quiet(
+                self._apply,
+                [
+                    dict(
+                        {"id": "a1", "keep": True, "summary": "덧붙인 키가 있는 답"},
+                        **extra,
+                    )
+                ],
+            )
             self.assertEqual(rc, 0, err)
             self.assertIn("덧붙인 키가 있는 답", text)
 
@@ -1994,34 +2910,67 @@ class TestLlmReviewHardening(_ReviewCase):
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here is my answer: " + "[" * 100000)
         start = _cpu_now()
-        rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "o.html"), "--skip-reviewer"])
+        rc, err = _quiet(
+            L.main,
+            [
+                "--apply-review",
+                self.pack,
+                "--output",
+                os.path.join(self.d, "o.html"),
+                "--skip-reviewer",
+            ],
+        )
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
-        self.assertLess(_cpu_now() - start, 5, "a run of brackets is tried once, not at each one")
+        self.assertLess(
+            _cpu_now() - start, 5, "a run of brackets is tried once, not at each one"
+        )
         # deep enough that no Python's json parses it whole (3.12 reads 1,200 levels, 3.11 does not)
-        self.assertEqual(L._decisions_text("[" * 100000 + "]" * 100000), [], "nested empty lists hold an empty one")
+        self.assertEqual(
+            L._decisions_text("[" * 100000 + "]" * 100000),
+            [],
+            "nested empty lists hold an empty one",
+        )
 
     def test_the_page_name_is_fixed_when_the_pack_is_written(self):
         self._write(self._records())
-        rc, pack = _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack])[0], None
+        _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack])
         with open(self.pack, encoding="utf-8") as f:
             pack = json.load(f)
-        self.assertRegex(pack["output"], r"_\d{6}\+\d{4}\.html$", "reruns of the gate write one page")
+        self.assertRegex(
+            pack["output"], r"_\d{6}\+\d{4}\.html$", "reruns of the gate write one page"
+        )
 
     def test_a_decisions_file_of_nulls_is_read_with_a_warn(self):
         self._write(self._records())
         _quiet(self._emit)
-        (rc, _), err = _quiet(self._apply, [{"id": "a1", "keep": None, "summary": None}])
+        (rc, _), err = _quiet(
+            self._apply, [{"id": "a1", "keep": None, "summary": None}]
+        )
         self.assertEqual(rc, 0)
         self.assertIn("decisions are null", err)
 
     def test_a_summary_cached_unredacted_is_hidden_when_a_part_is_written(self):
-        self._write([_rec("user", "점검", uuid="u1"), self._asst("점검했습니다.", "a1")])
+        self._write(
+            [_rec("user", "점검", uuid="u1"), self._asst("점검했습니다.", "a1")]
+        )
         _quiet(self._emit)
         clean = L._clean_summary
-        L._clean_summary = lambda s, extra, mode: (s, 0)     # a cache an older lineage wrote
+        L._clean_summary = lambda s, extra, mode: (
+            s,
+            0,
+        )  # a cache an older lineage wrote
         try:
-            _quiet(self._apply, [{"id": "a1", "keep": True, "summary": "키 AKIA" "IOSFODNN7EXAMPLE 확인"}])
+            _quiet(
+                self._apply,
+                [
+                    {
+                        "id": "a1",
+                        "keep": True,
+                        "summary": ("키 AKIA" + "IOSFODNN7EXAMPLE 확인"),
+                    }
+                ],
+            )
         finally:
             L._clean_summary = clean
         _quiet(self._emit)
@@ -2032,25 +2981,42 @@ class TestLlmReviewHardening(_ReviewCase):
 
 # ============================================================ 2.x output, pinned
 def _g_rec(role, text, ts, uuid):
-    return {"type": role, "uuid": uuid, "timestamp": ts, "message": {"role": role, "content": text}}
+    return {
+        "type": role,
+        "uuid": uuid,
+        "timestamp": ts,
+        "message": {"role": role, "content": text},
+    }
 
 
 def _g_asst(text, uuid, ts, tools=()):
     content = [{"type": "text", "text": text}] if text else []
     content += [{"type": "tool_use", "name": n, "input": {}} for n in tools]
-    return {"type": "assistant", "uuid": uuid, "timestamp": ts,
-            "message": {"role": "assistant", "content": content}}
+    return {
+        "type": "assistant",
+        "uuid": uuid,
+        "timestamp": ts,
+        "message": {"role": "assistant", "content": content},
+    }
 
 
-_GOLDEN_MD = ("먼저 스크립트를 읽겠습니다.\n\n## 결과\n\n- 첫째 수정\n- 둘째 수정\n\n| 항목 | 값 |\n|---|---|\n"
-              "| 통과 | 12 |\n\n```bash\nnode scripts/smoke-test.js\n```\n\n**고친 결과** 배포가 끝까지 통과합니다. "
-              "키는 AKIA" "IOSFODNN7EXAMPLE 입니다.")
+_GOLDEN_MD = (
+    "먼저 스크립트를 읽겠습니다.\n\n## 결과\n\n- 첫째 수정\n- 둘째 수정\n\n| 항목 | 값 |\n|---|---|\n"
+    "| 통과 | 12 |\n\n```bash\nnode scripts/smoke-test.js\n```\n\n**고친 결과** 배포가 끝까지 통과합니다. "
+    "키는 AKIA"
+    "IOSFODNN7EXAMPLE 입니다."
+)
 _GOLDEN_RECORDS = [
     _g_rec("user", "배포 스크립트를 고쳐 주세요", "2026-08-09T10:00:00Z", "g1"),
     _g_asst(_GOLDEN_MD, "g2", "2026-08-09T10:00:05Z", ["Read", "Edit"]),
     _g_rec("user", "ok", "2026-08-09T10:01:00Z", "g3"),
     _g_asst("ok", "g4", "2026-08-09T10:01:01Z"),
-    _g_rec("user", "배경 설명입니다. " * 60 + "요청: 롤백도 넣어 주세요.", "2026-08-09T10:02:00Z", "g5"),
+    _g_rec(
+        "user",
+        "배경 설명입니다. " * 60 + "요청: 롤백도 넣어 주세요.",
+        "2026-08-09T10:02:00Z",
+        "g5",
+    ),
     _g_asst("", "g6", "2026-08-09T10:02:01Z", ["Bash"]),
     _g_asst("롤백 단계를 넣었고 테스트가 통과합니다.", "g7", "2026-08-09T10:02:30Z"),
     _g_rec("user", "/copy", "2026-08-09T10:03:00Z", "g8"),
@@ -2060,9 +3026,18 @@ _GOLDEN_RECORDS = [
 # update a value only when that is the intent.
 _GOLDEN_2X = {
     (): "6c49e1dac908dd5d8ddf969fa2817d8596704126d559037c8ac0a0bf44fb38d1",  # pragma: allowlist secret
-    ("--open", "--no-markdown"): "5388c8c294e1ff748f37529c6f23caf47311a8892cff4cc8b7724bee07d6161a",  # pragma: allowlist secret
-    ("--keep-trivia", "--keep-tool-only"): "b58abd7b02102c263fccf0c353f21fa2e0763870681ed65a035bda2c9a00b17e",  # pragma: allowlist secret
-    ("--redact-mode", "mask"): "2abc87b671c96b5c0610649c94599dd3a8857393b31f5e0422f15ae57038b28a",  # pragma: allowlist secret
+    (
+        "--open",
+        "--no-markdown",
+    ): "5388c8c294e1ff748f37529c6f23caf47311a8892cff4cc8b7724bee07d6161a",  # pragma: allowlist secret
+    (
+        "--keep-trivia",
+        "--keep-tool-only",
+    ): "b58abd7b02102c263fccf0c353f21fa2e0763870681ed65a035bda2c9a00b17e",  # pragma: allowlist secret
+    (
+        "--redact-mode",
+        "mask",
+    ): "2abc87b671c96b5c0610649c94599dd3a8857393b31f5e0422f15ae57038b28a",  # pragma: allowlist secret
 }
 
 
@@ -2095,7 +3070,11 @@ class TestLlmReviewGateReruns(_ReviewCase):
             f.write("Here is my verdict: [")
         rc, err = self._gate_apply(path)
         self.assertEqual(rc, 2)
-        self.assertIn("write it again as a bare JSON array", err, "step 7: a broken file is written again")
+        self.assertIn(
+            "write it again as a bare JSON array",
+            err,
+            "step 7: a broken file is written again",
+        )
 
     def test_an_output_given_at_apply_keeps_the_packs_stamp(self):
         # a critic takes minutes: the gate's two runs fall in different minutes, and an --output
@@ -2109,19 +3088,28 @@ class TestLlmReviewGateReruns(_ReviewCase):
             json.dump(pack, f, ensure_ascii=False)
         self._gate_first("mine.html")
         self.assertEqual(self._gate_apply(self._verdict(True), "mine.html")[0], 0)
-        self.assertEqual(sorted(p for p in os.listdir(self.d) if p.endswith(".html")), ["mine_260101+0000.html"])
+        self.assertEqual(
+            sorted(p for p in os.listdir(self.d) if p.endswith(".html")),
+            ["mine_260101+0000.html"],
+        )
 
     def test_a_rerun_without_the_gate_path_does_not_pass_over_its_samples(self):
         self._write(self._records())
-        _quiet(self._emit)                        # step 1 gave no --reviewer-output
-        self._gate_first()                        # step 4 did: its samples wait beside the pack
+        _quiet(self._emit)  # step 1 gave no --reviewer-output
+        self._gate_first()  # step 4 did: its samples wait beside the pack
         verdict = self._verdict(False)
         out = os.path.join(self.d, "o.html")
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", out])
         self.assertEqual(rc, 2, "the FAIL verdict is not passed over in silence")
         self.assertIn("left by a gated run", err)
         self.assertTrue(os.path.exists(verdict))
-        self.assertEqual(_quiet(L.main, ["--apply-review", self.pack, "--output", out, "--skip-reviewer"])[0], 0)
+        self.assertEqual(
+            _quiet(
+                L.main,
+                ["--apply-review", self.pack, "--output", out, "--skip-reviewer"],
+            )[0],
+            0,
+        )
 
     def test_a_new_pack_removes_an_earlier_gates_samples(self):
         self._write(self._records())
@@ -2137,25 +3125,56 @@ class TestLlmReviewGateReruns(_ReviewCase):
         body = '{"name": "app", "version": "1.0.0"}\n'
         with open(user_file, "w", encoding="utf-8") as f:
             f.write(body)
-        rc, err = _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack, "--reviewer-output", user_file])
+        rc, err = _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--emit-review",
+                self.pack,
+                "--reviewer-output",
+                user_file,
+            ],
+        )
         self.assertEqual(rc, 2, "stopped before any reviewer runs")
         self.assertIn("is not a verdict list", err)
-        self.assertNotIn("write it again", err, "nothing leads the session to write over the user's file")
+        self.assertNotIn(
+            "write it again",
+            err,
+            "nothing leads the session to write over the user's file",
+        )
         self.assertEqual([p for p in os.listdir(self.d) if p.startswith("review")], [])
         with open(user_file, encoding="utf-8") as f:
             self.assertEqual(f.read(), body)
 
     def test_the_reviewed_flow_does_not_wait_unless_asked(self):
         import time
+
         self._write(self._records())
         verdict = os.path.join(self.d, "verdict.json")
-        _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack, "--reviewer-output", verdict])
+        _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--emit-review",
+                self.pack,
+                "--reviewer-output",
+                verdict,
+            ],
+        )
         out = os.path.join(self.d, "o.html")
-        start = time.monotonic()                 # a wait, not work done here: the wall clock (see _cpu_now)
+        start = (
+            time.monotonic()
+        )  # a wait, not work done here: the wall clock (see _cpu_now)
         rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", out])
         self.assertEqual(rc, 2)
         # well under the 60 s the reviewed flow once waited; detect-secrets, when installed, takes its time
-        self.assertLess(time.monotonic() - start, 30, "no wait for a critic that cannot have run yet")
+        self.assertLess(
+            time.monotonic() - start,
+            30,
+            "no wait for a critic that cannot have run yet",
+        )
         self.assertIn("next:", err)
         self.assertIn("no verdict at", err)
         self._verdict(False)
@@ -2167,8 +3186,19 @@ class TestLlmReviewGateReruns(_ReviewCase):
     def test_a_verdict_entry_without_idx_does_not_answer(self):
         recs = []
         for k in range(3):
-            recs += [_rec("user", "%d번 작업을 해 주세요" % k, ts="2026-08-09T10:0%d:00Z" % k, uuid="u%d" % k),
-                     self._asst("%d번 작업을 마쳤고 검사가 통과합니다." % k, "a%d" % k, ts="2026-08-09T10:0%d:01Z" % k)]
+            recs += [
+                _rec(
+                    "user",
+                    "%d번 작업을 해 주세요" % k,
+                    ts="2026-08-09T10:0%d:00Z" % k,
+                    uuid="u%d" % k,
+                ),
+                self._asst(
+                    "%d번 작업을 마쳤고 검사가 통과합니다." % k,
+                    "a%d" % k,
+                    ts="2026-08-09T10:0%d:01Z" % k,
+                ),
+            ]
         self._write(recs)
         _quiet(self._emit)
         self._gate_first()
@@ -2183,7 +3213,10 @@ class TestLlmReviewGateReruns(_ReviewCase):
         rc, err = self._gate_apply(path)
         self.assertEqual(rc, 2)
         self.assertIn("does not answer", err)
-        self.assertTrue(os.path.exists(path + ".used"), "read and set aside: it counts as a failed gate run")
+        self.assertTrue(
+            os.path.exists(path + ".used"),
+            "read and set aside: it counts as a failed gate run",
+        )
 
     def test_a_wrapped_answer_of_nested_lists_is_refused_in_bounded_time(self):
         self._write(self._records())
@@ -2192,8 +3225,18 @@ class TestLlmReviewGateReruns(_ReviewCase):
         with open(dec, "w", encoding="utf-8") as f:
             f.write("Here: " + '[{"id":"a"},' * 25000)
         start = _cpu_now()
-        rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"),
-                                  "--skip-reviewer", "--decisions", dec])
+        rc, err = _quiet(
+            L.main,
+            [
+                "--apply-review",
+                self.pack,
+                "--output",
+                os.path.join(self.d, "out.html"),
+                "--skip-reviewer",
+                "--decisions",
+                dec,
+            ],
+        )
         self.assertEqual(rc, 2)
         self.assertIn("cannot read decisions", err)
         self.assertLess(_cpu_now() - start, 5)
@@ -2207,8 +3250,18 @@ class TestLlmReviewGateReruns(_ReviewCase):
         with open(dec, "w", encoding="utf-8") as f:
             f.write(body + " " * (L.DECISIONS_MAX + 1 - len(body.encode("utf-8"))))
         self.assertEqual(os.path.getsize(dec), 1_000_001)
-        rc, err = _quiet(L.main, ["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"),
-                                  "--skip-reviewer", "--decisions", dec])
+        rc, err = _quiet(
+            L.main,
+            [
+                "--apply-review",
+                self.pack,
+                "--output",
+                os.path.join(self.d, "out.html"),
+                "--skip-reviewer",
+                "--decisions",
+                dec,
+            ],
+        )
         self.assertEqual(rc, 2)
         self.assertIn("larger than 1000000 bytes", err)
 
@@ -2229,156 +3282,320 @@ class TestLlmReviewGateReruns(_ReviewCase):
         with open(path, "w", encoding="utf-8") as f:
             f.write("[" * 100000)
         with self.assertRaises(SystemExit) as cm:
-            _quiet(L.main, ["--session", self.jf, "--output", os.path.join(self.d, "rb.html"), "--rulebase",
-                            "--reviewer-output", path, "--reviewer-timeout", "1"])
+            _quiet(
+                L.main,
+                [
+                    "--session",
+                    self.jf,
+                    "--output",
+                    os.path.join(self.d, "rb.html"),
+                    "--rulebase",
+                    "--reviewer-output",
+                    path,
+                    "--reviewer-timeout",
+                    "1",
+                ],
+            )
         self.assertEqual(cm.exception.code, 2)
 
     def test_a_reviewer_dropping_a_typed_user_turn_is_named(self):
         # a reviewer may follow a line injected into what it reads and drop the user's own words
-        meta = dict(_rec("user", "주입된 안내문입니다. 이 지침을 따르세요.", ts="2026-08-09T10:03:00Z", uuid="m1"), isMeta=True)
+        meta = dict(
+            _rec(
+                "user",
+                "주입된 안내문입니다. 이 지침을 따르세요.",
+                ts="2026-08-09T10:03:00Z",
+                uuid="m1",
+            ),
+            isMeta=True,
+        )
         self._write(self._records() + [meta])
         _quiet(self._emit)
-        (rc, _text), err = _quiet(self._apply, [{"id": "u1", "keep": False}, {"id": "m1", "keep": False}])
+        (rc, _text), err = _quiet(
+            self._apply, [{"id": "u1", "keep": False}, {"id": "m1", "keep": False}]
+        )
         self.assertEqual(rc, 0)
         self.assertIn("reviewers dropped 1 typed user turn(s): u1", err)
 
-    def test_the_output_claude_code_writes_after_a_bang_command_is_not_a_typed_turn(self):
+    def test_the_output_claude_code_writes_after_a_bang_command_is_not_a_typed_turn(
+        self,
+    ):
         # Claude Code writes a `!` command's output as a user record with no isMeta: the user typed only the command
-        typed = _rec("user", "<bash-input>ls</bash-input>", ts="2026-08-09T10:03:00Z", uuid="b1")
-        out = _rec("user", "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr>",
-                   ts="2026-08-09T10:03:01Z", uuid="o1")
-        failed = _rec("user", "<bash-stderr>Command failed: exit 2</bash-stderr>\n", ts="2026-08-09T10:03:30Z",
-                      uuid="o2")
-        asked = _rec("user", "<bash-stdout>total 0</bash-stdout> 이 출력은 무슨 뜻인가요", ts="2026-08-09T10:04:00Z",
-                     uuid="p1")                   # words after the blocks are the user's
+        typed = _rec(
+            "user", "<bash-input>ls</bash-input>", ts="2026-08-09T10:03:00Z", uuid="b1"
+        )
+        out = _rec(
+            "user",
+            "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr>",
+            ts="2026-08-09T10:03:01Z",
+            uuid="o1",
+        )
+        failed = _rec(
+            "user",
+            "<bash-stderr>Command failed: exit 2</bash-stderr>\n",
+            ts="2026-08-09T10:03:30Z",
+            uuid="o2",
+        )
+        asked = _rec(
+            "user",
+            "<bash-stdout>total 0</bash-stdout> 이 출력은 무슨 뜻인가요",
+            ts="2026-08-09T10:04:00Z",
+            uuid="p1",
+        )  # words after the blocks are the user's
         self._write(self._records() + [typed, out, failed, asked])
         _quiet(self._emit)
-        dropped = ("u1", "a1", "b1", "o1", "o2", "p1")          # a1 is the assistant's: never typed by the user
-        (rc, _text), err = _quiet(self._apply, [{"id": i, "keep": False} for i in dropped])
+        dropped = (
+            "u1",
+            "a1",
+            "b1",
+            "o1",
+            "o2",
+            "p1",
+        )  # a1 is the assistant's: never typed by the user
+        (rc, _text), err = _quiet(
+            self._apply, [{"id": i, "keep": False} for i in dropped]
+        )
         self.assertEqual(rc, 0)
         self.assertIn("reviewers dropped 3 typed user turn(s): u1, b1, p1;", err)
 
-    def test_only_the_two_records_claude_code_writes_for_a_bang_command_are_left_uncounted(self):
+    def test_only_the_two_records_claude_code_writes_for_a_bang_command_are_left_uncounted(
+        self,
+    ):
         # judged on the text before redaction: a hidden value at the end of the output takes the closing tags with it
-        shapes = {"o3": "<bash-stdout>pass" "word: " + "Abc12345" + "xyz</bash-stdout><bash-stderr></bash-stderr>",
-                  "q1": "이 출력은 무슨 뜻인가요 <bash-stdout>total 0</bash-stdout>",
-                  "q2": "<bash-stdout>total 0</bash-stdout> 무슨 뜻인가요 <bash-stderr></bash-stderr>",
-                  "q3": "<bash-stdout>total 0</bash-stdout>",               # Claude Code always adds the stderr block
-                  "q4": "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr> 이건 무슨 뜻인가요",
-                  "q5": "이건 무슨 뜻인가요 <bash-stderr>Command failed: exit 2</bash-stderr>",
-                  "q6": "<bash-stderr>Command failed: exit 2</bash-stderr> 이건 무슨 뜻인가요"}
-        recs = [_rec("user", text, ts="2026-08-09T10:0%d:00Z" % (3 + k), uuid=i)
-                for k, (i, text) in enumerate(shapes.items())]
+        shapes = {
+            "o3": "<bash-stdout>pass"
+            "word: " + "Abc12345" + "xyz</bash-stdout><bash-stderr></bash-stderr>",
+            "q1": "이 출력은 무슨 뜻인가요 <bash-stdout>total 0</bash-stdout>",
+            "q2": "<bash-stdout>total 0</bash-stdout> 무슨 뜻인가요 <bash-stderr></bash-stderr>",
+            "q3": "<bash-stdout>total 0</bash-stdout>",  # Claude Code always adds the stderr block
+            "q4": "<bash-stdout>total 0</bash-stdout><bash-stderr></bash-stderr> 이건 무슨 뜻인가요",
+            "q5": "이건 무슨 뜻인가요 <bash-stderr>Command failed: exit 2</bash-stderr>",
+            "q6": "<bash-stderr>Command failed: exit 2</bash-stderr> 이건 무슨 뜻인가요",
+        }
+        recs = [
+            _rec("user", text, ts="2026-08-09T10:0%d:00Z" % (3 + k), uuid=i)
+            for k, (i, text) in enumerate(shapes.items())
+        ]
         self._write(self._records() + recs)
         _quiet(self._emit)
         with open(os.path.join(self.d, "review.part-1.json"), encoding="utf-8") as f:
-            self.assertFalse(any("bang_output" in x for x in json.load(f)["turns"]), "the reviewers read no new field")
-        (rc, _text), err = _quiet(self._apply, [{"id": i, "keep": False} for i in shapes])
+            self.assertFalse(
+                any("bang_output" in x for x in json.load(f)["turns"]),
+                "the reviewers read no new field",
+            )
+        (rc, _text), err = _quiet(
+            self._apply, [{"id": i, "keep": False} for i in shapes]
+        )
         self.assertEqual(rc, 0)
-        self.assertIn("reviewers dropped 6 typed user turn(s): q1, q2, q3, q4, q5, q6;", err)
+        self.assertIn(
+            "reviewers dropped 6 typed user turn(s): q1, q2, q3, q4, q5, q6;", err
+        )
 
 
 class TestPatternsForPages(_ReviewCase):
     """3.0.2: the reviewer patterns redact pages too, so what they hide by mistake shows to
     people; a second pass over redacted text must change nothing."""
+
     PW = "Hunter22" + "pw"
 
     def test_password_bare_leaves_paths_variables_and_markdown(self):
         pw = self.PW
-        for keep in ("docker run --rm -v $PWD:/workspace img", "export OLDPWD=/home/user",
-                     "password=$DB_PASSWORD ./run", "PWD=~/src make", "password: ******"):
+        for keep in (
+            "docker run --rm -v $PWD:/workspace img",
+            "export OLDPWD=/home/user",
+            "password=$DB_PASSWORD ./run",
+            "PWD=~/src make",
+            "password: ******",
+        ):
             self.assertEqual(L.review_redact(keep)[0], keep, keep)
-        self.assertEqual(L.review_redact("**password: " + pw + "**")[0], "**[REDACTED:PasswordBare]**")
-        self.assertEqual(L.review_redact("`PGPASSWORD=" + pw + "`")[0], "`PG[REDACTED:PasswordBare]`")
-        self.assertEqual(L.review_redact("(passwd=" + pw + ")")[0], "([REDACTED:PasswordBare])")
+        self.assertEqual(
+            L.review_redact("**password: " + pw + "**")[0],
+            "**[REDACTED:PasswordBare]**",
+        )
+        self.assertEqual(
+            L.review_redact("`PGPASSWORD=" + pw + "`")[0], "`PG[REDACTED:PasswordBare]`"
+        )
+        self.assertEqual(
+            L.review_redact("(passwd=" + pw + ")")[0], "([REDACTED:PasswordBare])"
+        )
 
     def test_password_bare_still_hides_env_style_names(self):
         pw = self.PW
-        for shape in ("PGPASSWORD=" + pw + " psql -h db", "MYSQL_PWD=" + pw, "DB_PASSWORD=" + pw,
-                      "SPRING_DATASOURCE_PASSWORD=" + pw, "password: " + pw, "| 암호: " + pw + " |"):
+        for shape in (
+            "PGPASSWORD=" + pw + " psql -h db",
+            "MYSQL_PWD=" + pw,
+            "DB_PASSWORD=" + pw,
+            "SPRING_DATASOURCE_PASSWORD=" + pw,
+            "password: " + pw,
+            "| 암호: " + pw + " |",
+        ):
             self.assertNotIn("Hunter22", L.review_redact(shape)[0], shape)
         self.assertNotIn("한글비번", L.review_redact("비밀번호: 한글비번1234")[0])
 
     def test_password_bare_skips_markers_and_masks(self):
-        for done in ('암호: ****h12"', "password: [REDACTED]", "pwd=[REDACTED:entropy]",
-                     "**password: ab****cd**", "(pwd=********)", "password=abcd****wxyz", "password=********",
-                     "password=****1234**", "`DB_PASSWORD=abcd****wxyz`.", "(password: abcd****wxyz)."):
+        for done in (
+            '암호: ****h12"',
+            "password: [REDACTED]",
+            "pwd=[REDACTED:entropy]",
+            "**password: ab****cd**",
+            "(pwd=********)",
+            "password=abcd****wxyz",
+            "password=********",
+            "password=****1234**",
+            "`DB_PASSWORD=abcd****wxyz`.",
+            "(password: abcd****wxyz).",
+        ):
             self.assertEqual(L.review_redact(done)[0], done, done)
 
     def test_password_bare_hides_a_value_that_is_more_than_a_mask(self):
         pw = self.PW
-        for shape in ("Password=" + pw + ";Server=db;Key=****", "user=bob,password=" + pw + ",card=****4242",
-                      "Password=****;Server=db;Key=" + pw, "DB_PASSWORD=" + "Hunter" + "****" + "22pw",
-                      "password=" + pw + "****", "Server=db;User Id=sa;Password=********;ApiKey=" + pw,
-                      "user=bob&password=********&token=" + pw, "password=*****" + pw, "password=****)" + pw,
-                      "password=****|" + pw, "password=****." + pw, "password=****`;" + pw):
+        for shape in (
+            "Password=" + pw + ";Server=db;Key=****",
+            "user=bob,password=" + pw + ",card=****4242",
+            "Password=****;Server=db;Key=" + pw,
+            "DB_PASSWORD=" + "Hunter" + "****" + "22pw",
+            "password=" + pw + "****",
+            "Server=db;User Id=sa;Password=********;ApiKey=" + pw,
+            "user=bob&password=********&token=" + pw,
+            "password=*****" + pw,
+            "password=****)" + pw,
+            "password=****|" + pw,
+            "password=****." + pw,
+            "password=****`;" + pw,
+        ):
             self.assertNotIn("Hunter", L.review_redact(shape)[0], shape)
 
     def test_a_password_after_a_key_shaped_user_is_hidden(self):
         c = "cu" + "rl"
         pw = self.PW
-        for key in ("sk-" + "proj-" + "a1B2c3D4e5F6g7H8i9J0k1", "sk-" + "ant-api03-" + "b" * 24, "AI" + "za" + "c" * 35):
-            for text in (c + " -u " + key + ":" + pw + " https://x", c + " --user=" + key + ":" + pw + " https://x",
-                         c + " -u '" + key + ":" + pw + "' https://x", "https://" + key + ":" + pw + "@host.io/a",
-                         json.dumps([c, "-u", key + ":" + pw, "https://x"], separators=(",", ":"))):
-                for red in (L.review_redact(text)[0], L.page_redact(text, None, "mask")[0]):
+        for key in (
+            "sk-" + "proj-" + "a1B2c3D4e5F6g7H8i9J0k1",
+            "sk-" + "ant-api03-" + "b" * 24,
+            "AI" + "za" + "c" * 35,
+        ):
+            for text in (
+                c + " -u " + key + ":" + pw + " https://x",
+                c + " --user=" + key + ":" + pw + " https://x",
+                c + " -u '" + key + ":" + pw + "' https://x",
+                "https://" + key + ":" + pw + "@host.io/a",
+                json.dumps(
+                    [c, "-u", key + ":" + pw, "https://x"], separators=(",", ":")
+                ),
+            ):
+                for red in (
+                    L.review_redact(text)[0],
+                    L.page_redact(text, None, "mask")[0],
+                ):
                     self.assertNotIn("Hunter22", red, text)
-        for text in ("postgresql://sk-analytics-readonly-user:" + pw + "@10.0.0.5:5432/dw",
-                     c + " -u sk-batch-operator-service:" + pw + " https://api.internal/v1/jobs"):
+        for text in (
+            "postgresql://sk-analytics-readonly-user:" + pw + "@10.0.0.5:5432/dw",
+            c + " -u sk-batch-operator-service:" + pw + " https://api.internal/v1/jobs",
+        ):
             for red in (L.review_redact(text)[0], L.page_redact(text, None, "full")[0]):
                 self.assertNotIn("Hunter22", red, text)
 
     def test_password_bare_takes_linear_time_on_runs_of_its_pieces(self):
         pat = dict(L.REVIEW_SECRET_PATTERNS)["PasswordBare"]
-        for piece in ("Password=****;", "pwd=ab****;", "password:****,", "암호=****&", "password=*****",
-                      "password=||||||", "pwd=", "암호=", "password:e.x,", "password ", "$password=abcdef", "비밀 번호:"):
+        for piece in (
+            "Password=****;",
+            "pwd=ab****;",
+            "password:****,",
+            "암호=****&",
+            "password=*****",
+            "password=||||||",
+            "pwd=",
+            "암호=",
+            "password:e.x,",
+            "password ",
+            "$password=abcdef",
+            "비밀 번호:",
+        ):
             start = _cpu_now()
             pat.sub("[R]", piece * 40000 + "****")
             self.assertLess(_cpu_now() - start, 2, repr(piece))
 
     def test_extra_keywords_leave_marker_names_whole(self):
-        red, counts = L.redact("[REDACTED:CurlUser] 와 user 와 [REDACTED]", extra="user,redacted")
+        red, counts = L.redact(
+            "[REDACTED:CurlUser] 와 user 와 [REDACTED]", extra="user,redacted"
+        )
         self.assertEqual(red, "[REDACTED:CurlUser] 와 [REDACTED] 와 [REDACTED]")
         self.assertEqual(counts, {"custom:user": 1})
 
     def test_curl_user_keeps_compact_argument_lists(self):
-        for cmd in (["docker", "run", "-u", "1000:1000", "img"], ["date", "-u", "+%H:%M:%S"],
-                    ["sort", "-u", "-o", "out.txt", "a:b"], ["docker", "exec", "-u", "root", "c", "sh", "-c", "a:b"],
-                    ["ps", "-u", "1000", "-o", "pid:10"], ["rsync", "-avu", "host:/srv/app", "."],
-                    ["mktemp", "-u", "${TMPDIR:-/tmp}/x"]):
-            for text in (json.dumps(cmd, separators=(",", ":")), json.dumps({"command": cmd}, separators=(",", ":")),
-                         json.dumps(cmd), repr(cmd), repr(cmd).replace(" ", "")):
+        for cmd in (
+            ["docker", "run", "-u", "1000:1000", "img"],
+            ["date", "-u", "+%H:%M:%S"],
+            ["sort", "-u", "-o", "out.txt", "a:b"],
+            ["docker", "exec", "-u", "root", "c", "sh", "-c", "a:b"],
+            ["ps", "-u", "1000", "-o", "pid:10"],
+            ["rsync", "-avu", "host:/srv/app", "."],
+            ["mktemp", "-u", "${TMPDIR:-/tmp}/x"],
+        ):
+            for text in (
+                json.dumps(cmd, separators=(",", ":")),
+                json.dumps({"command": cmd}, separators=(",", ":")),
+                json.dumps(cmd),
+                repr(cmd),
+                repr(cmd).replace(" ", ""),
+            ):
                 self.assertEqual(L.review_redact(text)[0], text, text)
 
     def test_curl_user_hides_compact_and_escaped_argument_lists(self):
         c = "cu" + "rl"
         cmd = [c, "-s", "-u", "admin:" + self.PW, "https://x"]
-        for text in (json.dumps(cmd, separators=(",", ":")), json.dumps(cmd), repr(cmd), repr(cmd).replace(" ", ""),
-                     json.dumps(json.dumps(cmd, separators=(",", ":"))),
-                     json.dumps({"command": cmd}, separators=(",", ":"))):
+        for text in (
+            json.dumps(cmd, separators=(",", ":")),
+            json.dumps(cmd),
+            repr(cmd),
+            repr(cmd).replace(" ", ""),
+            json.dumps(json.dumps(cmd, separators=(",", ":"))),
+            json.dumps({"command": cmd}, separators=(",", ":")),
+        ):
             self.assertNotIn("Hunter22", L.review_redact(text)[0], text)
 
 
 class TestPageRedaction(_ReviewCase):
     """3.0.2: every page (the default flow and --rulebase) hides what the reviewer patterns
     find, whole; the page's own patterns keep --redact-mode."""
+
     PW = "Hunter22" + "pw"
 
     def _secret_records(self):
         c = "cu" + "rl"
-        return [_rec("user", "배포 때 " + c + " -u admin:" + self.PW + " https://x 를 썼어요", uuid="u1"),
-                self._asst("확인했습니다.\n\n" + c + " -u deploy:" + self.PW + " 로 배포가 끝났습니다. 암호: Xy7pQ2mZ9k", "a1")]
+        return [
+            _rec(
+                "user",
+                "배포 때 " + c + " -u admin:" + self.PW + " https://x 를 썼어요",
+                uuid="u1",
+            ),
+            self._asst(
+                "확인했습니다.\n\n"
+                + c
+                + " -u deploy:"
+                + self.PW
+                + " 로 배포가 끝났습니다. 암호: Xy7pQ2mZ9k",
+                "a1",
+            ),
+        ]
 
     def _rulebase_page(self, extra=()):
         out = os.path.join(self.d, "r.html")
-        rc, err = _quiet(L.main, ["--session", self.jf, "--output", out, "--skip-reviewer", "--rulebase"] + list(extra))
-        name = [p for p in os.listdir(self.d) if p.startswith("r_") and p.endswith(".html")][0]
+        rc, err = _quiet(
+            L.main,
+            ["--session", self.jf, "--output", out, "--skip-reviewer", "--rulebase"]
+            + list(extra),
+        )
+        name = [
+            p for p in os.listdir(self.d) if p.startswith("r_") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, name), encoding="utf-8") as f:
             return rc, f.read(), err
 
     def test_page_redact_runs_the_reviewer_patterns_then_the_page(self):
         c = "cu" + "rl"
-        red, counts = L.page_redact(c + " -u admin:" + self.PW + " 키 AKIA" "IOSFODNN7EXAMPLE", None, "mask")
+        red, counts = L.page_redact(
+            c + " -u admin:" + self.PW + (" 키 AKIA" + "IOSFODNN7EXAMPLE"), None, "mask"
+        )
         self.assertNotIn("Hunter22", red)
         self.assertIn("[REDACTED:CurlUser]", red)
         self.assertIn("AKIA****MPLE", red)
@@ -2386,8 +3603,14 @@ class TestPageRedaction(_ReviewCase):
 
     def test_a_second_pass_changes_nothing(self):
         c = "cu" + "rl"
-        text = (c + " -u admin:" + self.PW + " 와 암호: Xy7pQ2mZ9k, password: \"abcdefgh12\", "
-                "키 AKIA" "IOSFODNN7EXAMPLE, " + "Bear" + "er " + "Q8zQ8z" * 4)
+        text = (
+            c
+            + " -u admin:"
+            + self.PW
+            + ' 와 암호: Xy7pQ2mZ9k, password: "abcdefgh12", '
+            "키 AKIA"
+            "IOSFODNN7EXAMPLE, " + "Bear" + "er " + "Q8zQ8z" * 4
+        )
         for mode in ("full", "mask"):
             once = L.page_redact(text, "acme", mode)[0]
             self.assertEqual(L.page_redact(once, "acme", mode), (once, {}), mode)
@@ -2397,7 +3620,9 @@ class TestPageRedaction(_ReviewCase):
         rc, page, err = self._rulebase_page()
         self.assertEqual(rc, 0, err)
         _quiet(self._emit)
-        rc2, page2 = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": None}])[0]
+        rc2, page2 = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": None}])[
+            0
+        ]
         self.assertEqual(rc2, 0)
         for p in (page, page2):
             self.assertNotIn("Hunter22", p)
@@ -2406,8 +3631,16 @@ class TestPageRedaction(_ReviewCase):
 
     def test_mask_mode_masks_page_patterns_and_hides_reviewer_hits_whole(self):
         c = "cu" + "rl"
-        self._write([_rec("user", "점검", uuid="u1"),
-                     self._asst(c + " -u admin:" + self.PW + " 와 키 AKIA" "IOSFODNN7EXAMPLE 를 썼습니다.", "a1")])
+        self._write(
+            [
+                _rec("user", "점검", uuid="u1"),
+                self._asst(
+                    c + " -u admin:" + self.PW + " 와 키 AKIA"
+                    "IOSFODNN7EXAMPLE 를 썼습니다.",
+                    "a1",
+                ),
+            ]
+        )
         rc, page, err = self._rulebase_page(["--redact-mode", "mask"])
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Hunt", page)
@@ -2420,9 +3653,17 @@ class TestPageRedaction(_ReviewCase):
         ant = "sk-" + "ant-api03-" + "b" * 24
         t1 = _turn("user", "안녕하세요", session="s1")
         t1["session_name"] = "keys-" + ant
-        t2 = _turn("agent", "결과를 정리했습니다.", uuid="g1", session="s1", tools={"deploy-acme": 2})
+        t2 = _turn(
+            "agent",
+            "결과를 정리했습니다.",
+            uuid="g1",
+            session="s1",
+            tools={"deploy-acme": 2},
+        )
         t2["agent_from"] = "runner " + ant
-        rows, counts, _, _ = L.render_rows([t1, t2], "s1", "acme", "full", False, all_sessions=True)
+        rows, counts, _, _ = L.render_rows(
+            [t1, t2], "s1", "acme", "full", False, all_sessions=True
+        )
         page = "\n".join(rows)
         self.assertNotIn("ant-api03", page)
         self.assertNotIn("acme", page)
@@ -2430,35 +3671,66 @@ class TestPageRedaction(_ReviewCase):
 
     def test_the_residual_check_names_what_a_page_still_holds(self):
         c = "cu" + "rl"
-        self.assertEqual(L._residual_secrets("<div>" + c + " -u admin:" + self.PW + "</div><p>ok</p>"),
-                         {"CurlUser": 1})
-        self.assertEqual(L._residual_secrets("<div>[REDACTED:CurlUser] &amp; ok</div>"), {})
+        self.assertEqual(
+            L._residual_secrets(
+                "<div>" + c + " -u admin:" + self.PW + "</div><p>ok</p>"
+            ),
+            {"CurlUser": 1},
+        )
+        self.assertEqual(
+            L._residual_secrets("<div>[REDACTED:CurlUser] &amp; ok</div>"), {}
+        )
 
     def test_a_second_pass_leaves_page_pattern_markers_after_curl_and_in_urls(self):
         c = "cu" + "rl"
         pat = "gh" + "p_" + "aB3dE5fG7h" * 3 + "aB3dE5"
-        for text in (c + " -u " + pat + " https://x", c + " --user=AKIA" "IOSFODNN7EXAMPLE https://x",
-                     c + " -u x" + pat + " https://x", json.dumps([c, "-u", pat, "https://x"], separators=(",", ":")),
-                     "git remote add origin https://" + pat + "@github.com/o/r.git"):
+        for text in (
+            c + " -u " + pat + " https://x",
+            c + (" --user=AKIA" + "IOSFODNN7EXAMPLE https://x"),
+            c + " -u x" + pat + " https://x",
+            json.dumps([c, "-u", pat, "https://x"], separators=(",", ":")),
+            "git remote add origin https://" + pat + "@github.com/o/r.git",
+        ):
             for mode in ("full", "mask"):
                 once = L.page_redact(text, None, mode)[0]
                 self.assertNotIn(pat[4:], once)
-                self.assertEqual(L.page_redact(once, None, mode), (once, {}), (mode, text))
+                self.assertEqual(
+                    L.page_redact(once, None, mode), (once, {}), (mode, text)
+                )
 
     def test_a_token_only_remote_url_raises_no_residual_warn(self):
         c = "cu" + "rl"
         pat = "gh" + "p_" + "aB3dE5fG7h" * 3 + "aB3dE5"
-        self._write([_rec("user", "원격 주소를 바꿔 주세요", uuid="u1"),
-                     self._asst("git remote set-url origin https://" + pat + "@github.com/o/r.git 로 바꾸고 "
-                                + c + " -u " + pat + " https://api.github.com 으로 확인했습니다.", "a1")])
+        self._write(
+            [
+                _rec("user", "원격 주소를 바꿔 주세요", uuid="u1"),
+                self._asst(
+                    "git remote set-url origin https://"
+                    + pat
+                    + "@github.com/o/r.git 로 바꾸고 "
+                    + c
+                    + " -u "
+                    + pat
+                    + " https://api.github.com 으로 확인했습니다.",
+                    "a1",
+                ),
+            ]
+        )
         rc, page, err = self._rulebase_page()
         self.assertEqual(rc, 0, err)
         self.assertNotIn(pat[4:], page)
         self.assertNotIn("still holds", err)
 
     def test_the_residual_warn_asks_to_check_the_page(self):
-        self._write([_rec("user", "접속 정보를 정리해 주세요", uuid="u1"),
-                     self._asst("접속 정보입니다.\n\n- **Password**: " + self.PW + "\n- 호스트: db", "a1")])
+        self._write(
+            [
+                _rec("user", "접속 정보를 정리해 주세요", uuid="u1"),
+                self._asst(
+                    "접속 정보입니다.\n\n- **Password**: " + self.PW + "\n- 호스트: db",
+                    "a1",
+                ),
+            ]
+        )
         rc, page, err = self._rulebase_page()
         self.assertEqual(rc, 0, err)
         self.assertRegex(err, r"still holds secret-like text \([^)]*PasswordBare=\d")
@@ -2468,13 +3740,22 @@ class TestPageRedaction(_ReviewCase):
 
     def test_a_long_page_of_secrets_renders_in_linear_time_and_leaves_none(self):
         import importlib.util
+
         c = "cu" + "rl"
         recs = []
         for k in range(150):
             ts = "2026-08-09T%02d:%02d:00Z" % (10 + k // 60, k % 60)
-            recs.append(_rec("user", "단계 %d 를 실행해 주세요" % k, ts=ts, uuid="u%d" % k))
-            recs.append(self._asst("실행했습니다.\n\n%s -u svc%d:%s https://x 로 확인했습니다." % (c, k, self.PW),
-                                   "a%d" % k, ts=ts.replace(":00Z", ":30Z")))
+            recs.append(
+                _rec("user", "단계 %d 를 실행해 주세요" % k, ts=ts, uuid="u%d" % k)
+            )
+            recs.append(
+                self._asst(
+                    "실행했습니다.\n\n%s -u svc%d:%s https://x 로 확인했습니다."
+                    % (c, k, self.PW),
+                    "a%d" % k,
+                    ts=ts.replace(":00Z", ":30Z"),
+                )
+            )
         self._write(recs)
         start = _cpu_now()
         rc, page, err = self._rulebase_page()
@@ -2482,31 +3763,48 @@ class TestPageRedaction(_ReviewCase):
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Hunter22", page)
         self.assertNotIn("still holds", err)
-        if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets scans a temp file per call
+        if (
+            importlib.util.find_spec("detect_secrets") is None
+        ):  # detect-secrets scans a temp file per call
             self.assertLess(took, 30)
 
     def test_a_summary_never_keeps_part_of_a_secret(self):
         c = "cu" + "rl"
         head = "배포 스크립트를 점검했고 환경 변수와 인증서 경로를 확인했습니다."
         for k in range(0, 90, 3):
-            tail = "마지막으로 " + "가" * k + " " + c + " -u admin:" + self.PW + " 로 응답을 받았습니다."
-            t = _turn("assistant", head + "\n\n" + tail, uuid="a%d" % k, parts=[head, tail])
+            tail = (
+                "마지막으로 "
+                + "가" * k
+                + " "
+                + c
+                + " -u admin:"
+                + self.PW
+                + " 로 응답을 받았습니다."
+            )
+            t = _turn(
+                "assistant", head + "\n\n" + tail, uuid="a%d" % k, parts=[head, tail]
+            )
             summary, _ = L.read_or_summarize(t, "s", rebuild=True)
             self.assertNotIn("Hunt", summary, k)
             self.assertNotIn("admi", summary, k)
 
     def test_a_cut_never_splits_a_marker(self):
         import re
+
         s = "가" * 50 + " [REDACTED:CurlUser] 끝까지 이어지는 문장"
         for n in range(40, 80):
             cut = L._cut(s, n)
-            self.assertIsNone(re.search(r"\[REDACTED[^\]]*$", cut.rstrip("…")), (n, cut))
+            self.assertIsNone(
+                re.search(r"\[REDACTED[^\]]*$", cut.rstrip("…")), (n, cut)
+            )
 
     def test_a_summary_cached_by_3_0_1_is_not_reused(self):
         text = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
         self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst(text, "a1")])
         old = hashlib.sha256((text + "\x00s" + "2").encode()).hexdigest()[:8]
-        (L.cache_dir("s") / ("a1-%s.txt" % old)).write_text("…가가가암호: Xy7p… 추가로", encoding="utf-8")
+        (L.cache_dir("s") / ("a1-%s.txt" % old)).write_text(
+            "…가가가암호: Xy7p… 추가로", encoding="utf-8"
+        )
         rc, page, err = self._rulebase_page()
         self.assertEqual(rc, 0, err)
         self.assertNotIn("Xy7p", page)
@@ -2518,30 +3816,61 @@ class TestPageRedaction(_ReviewCase):
     CUT_BY_3_0_7 = "가" * 100 + " " + KEY[:9] + ZW + KEY[9:15] + "…"
 
     def test_a_summary_cached_by_3_0_8_is_not_reused(self):
-        self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst(self.SPLIT_TEXT, "a1")])
+        self._write(
+            [
+                _rec("user", "점검해 주세요", uuid="u1"),
+                self._asst(self.SPLIT_TEXT, "a1"),
+            ]
+        )
         old = hashlib.sha256((self.SPLIT_TEXT + "\x00s" + "3").encode()).hexdigest()[:8]
-        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(self.CUT_BY_3_0_7, encoding="utf-8")
+        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(
+            self.CUT_BY_3_0_7, encoding="utf-8"
+        )
         rc, page, err = self._rulebase_page()
         self.assertEqual(rc, 0, err)
         self.assertNotIn(self.KEY[:9], page.replace(self.ZW, ""))
 
     def test_a_rule_summary_cached_before_split_secrets_were_joined_is_made_again(self):
-        turn = {"role": "assistant", "text": self.SPLIT_TEXT, "parts": [self.SPLIT_TEXT], "uuid": "a1",
-                "session": "s", "ts": "x", "tools": {}}
-        old = hashlib.sha256((self.SPLIT_TEXT + "\x00s" + "3").encode()).hexdigest()[:8]   # 3.0.2 to 3.0.8
-        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(self.CUT_BY_3_0_7, encoding="utf-8")
+        turn = {
+            "role": "assistant",
+            "text": self.SPLIT_TEXT,
+            "parts": [self.SPLIT_TEXT],
+            "uuid": "a1",
+            "session": "s",
+            "ts": "x",
+            "tools": {},
+        }
+        old = hashlib.sha256((self.SPLIT_TEXT + "\x00s" + "3").encode()).hexdigest()[
+            :8
+        ]  # 3.0.2 to 3.0.8
+        (L.cache_dir("s") / ("a1-%s.md" % old)).write_text(
+            self.CUT_BY_3_0_7, encoding="utf-8"
+        )
         summary, hit = _quiet(L.read_or_summarize, turn, "s")[0]
         self.assertFalse(hit)
         self.assertNotIn(self.KEY[:9], summary.replace(self.ZW, ""))
 
     def test_a_decision_cached_before_a_split_key_was_joined_is_not_reused(self):
         # 3.0.8 keyed a decision on the text as it stands, as 3.0.7 did when no reviewer pattern found the split key
-        key = "sk-proj-" + "Q7wErTy9" + "UiOpAsDf" + "GhJkLzXc"        # pieces: no secret scanner reads one whole
-        text = "새 키 " + key[:12] + self.ZW + key[12:] + " 를 설정했고 배포가 통과합니다."
-        self._write([_rec("user", "키를 바꿔 주세요", uuid="u1"), self._asst(text, "a1")])
+        key = (
+            "sk-proj-" + "Q7wErTy9" + "UiOpAsDf" + "GhJkLzXc"
+        )  # pieces: no secret scanner reads one whole
+        text = (
+            "새 키 " + key[:12] + self.ZW + key[12:] + " 를 설정했고 배포가 통과합니다."
+        )
+        self._write(
+            [_rec("user", "키를 바꿔 주세요", uuid="u1"), self._asst(text, "a1")]
+        )
         digest = L._llm_digest(L.redact(text)[0], L._decision_context(None, {}))
-        L._write_private(L._llm_cache_path("a1", "s", digest),
-                         json.dumps({"keep": True, "summary": "키 %s 로 바꿈" % (key[:12] + self.ZW + key[12:16])}))
+        L._write_private(
+            L._llm_cache_path("a1", "s", digest),
+            json.dumps(
+                {
+                    "keep": True,
+                    "summary": "키 %s 로 바꿈" % (key[:12] + self.ZW + key[12:16]),
+                }
+            ),
+        )
         rc, pack = _quiet(self._emit)[0]
         self.assertEqual(rc, 0)
         a1 = [x for x in pack["turns"] if x["id"] == "a1"][0]
@@ -2555,9 +3884,24 @@ class TestPageRedaction(_ReviewCase):
         text = "가" * 480 + " " + c + " -u admin:" + self.PW + " 로 확인했습니다."
         self._write([_rec("user", "점검해 주세요", uuid="u1"), self._asst(text, "a1")])
         out = os.path.join(self.d, "g.html")
-        rc, err = _quiet(L.main, ["--session", self.jf, "--output", out, "--rulebase", "--redact-mode", "mask"])
+        rc, err = _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--output",
+                out,
+                "--rulebase",
+                "--redact-mode",
+                "mask",
+            ],
+        )
         self.assertEqual(rc, 0, err)
-        name = [p for p in os.listdir(self.d) if p.startswith(".g_") and p.endswith("reviewer-input.json")][0]
+        name = [
+            p
+            for p in os.listdir(self.d)
+            if p.startswith(".g_") and p.endswith("reviewer-input.json")
+        ][0]
         with open(os.path.join(self.d, name), encoding="utf-8") as f:
             raw = f.read()
         self.assertNotIn("Hunt", raw)
@@ -2576,15 +3920,23 @@ class TestPageRedaction(_ReviewCase):
         self._write(self._secret_records())
         rc, pack = _quiet(self._emit)[0]
         self.assertEqual(rc, 0)
-        self.assertTrue(all(t.get("llm_key") for t in pack["turns"]), "the pack keeps the key")
-        parts = [p for p in os.listdir(self.d) if p.startswith("review.part-") and not p.endswith(".decisions.json")]
+        self.assertTrue(
+            all(t.get("llm_key") for t in pack["turns"]), "the pack keeps the key"
+        )
+        parts = [
+            p
+            for p in os.listdir(self.d)
+            if p.startswith("review.part-") and not p.endswith(".decisions.json")
+        ]
         self.assertTrue(parts)
         for name in parts:
             with open(os.path.join(self.d, name), encoding="utf-8") as f:
                 turns = json.load(f)["turns"]
             self.assertTrue(turns)
             for t in turns:
-                self.assertNotIn("llm_key", t, "a hash of text that only the page patterns redacted")
+                self.assertNotIn(
+                    "llm_key", t, "a hash of text that only the page patterns redacted"
+                )
 
     def test_the_decision_cache_keys_on_the_3_0_1_text(self):
         self._write(self._secret_records())
@@ -2592,13 +3944,17 @@ class TestPageRedaction(_ReviewCase):
         x = [t for t in pack["turns"] if t["id"] == "a1"][0]
         raw = self._secret_records()[1]["message"]["content"][0]["text"]
         context = L._decision_context(x["rule"].get("why"), pack)
-        want = hashlib.sha256((L.redact(raw)[0] + "\x00llm" + "1" + "\x00" + context).encode()).hexdigest()[:12]
+        want = hashlib.sha256(
+            (L.redact(raw)[0] + "\x00llm" + "1" + "\x00" + context).encode()
+        ).hexdigest()[:12]
         self.assertEqual(x.get("llm_key"), want)
 
     def test_a_decision_made_once_is_reused_on_the_next_emit(self):
         self._write(self._secret_records())
         _quiet(self._emit)
-        rc, _ = _quiet(self._apply, [{"id": "a1", "keep": True, "summary": "배포를 마쳤다"}])[0]
+        rc, _ = _quiet(
+            self._apply, [{"id": "a1", "keep": True, "summary": "배포를 마쳤다"}]
+        )[0]
         self.assertEqual(rc, 0)
         pack = _quiet(self._emit)[0][1]
         x = [t for t in pack["turns"] if t["id"] == "a1"][0]
@@ -2617,10 +3973,14 @@ class TestPageRedaction(_ReviewCase):
 
     def test_a_title_holding_a_key_names_the_file_by_session_id(self):
         import types
+
         ant = "sk-" + "ant-api03-" + "b" * 24
         jf = os.path.join(self.d, "t.jsonl")
         with open(jf, "w", encoding="utf-8") as f:
-            f.write(json.dumps({"type": "custom-title", "customTitle": "keys " + ant}) + "\n")
+            f.write(
+                json.dumps({"type": "custom-title", "customTitle": "keys " + ant})
+                + "\n"
+            )
         args = types.SimpleNamespace(output=None, all_sessions=False)
         out, err = _quiet(L.default_output, args, jf, "0123456789abcdef")
         self.assertEqual(out, "work/lineage-01234567.html")
@@ -2631,13 +3991,31 @@ class TestHasVisible(unittest.TestCase):
     """What counts as a summary a person can see (3.0.5): blank-looking letters alone do not."""
 
     BLANK = [
-        "", chr(0) * 8, chr(0xFEFF), chr(0x200B) + chr(0x200D), chr(0x3164), chr(0x115F) + chr(0x1160), chr(0xFFA0),
-        chr(0x2800), chr(0xA0) + chr(0x2028), chr(0xFE0F), chr(0xE0100), chr(0xE000), chr(0x0378),
+        "",
+        chr(0) * 8,
+        chr(0xFEFF),
+        chr(0x200B) + chr(0x200D),
+        chr(0x3164),
+        chr(0x115F) + chr(0x1160),
+        chr(0xFFA0),
+        chr(0x2800),
+        chr(0xA0) + chr(0x2028),
+        chr(0xFE0F),
+        chr(0xE0100),
+        chr(0xE000),
+        chr(0x0378),
         "".join(map(chr, (0x034F, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180F))),
     ]
     VISIBLE = [
-        "a", "요약", "e" + chr(0x301), chr(0x1F44D), chr(0x1F468) + chr(0x200D) + chr(0x1F469), chr(0x1100),
-        chr(0x3131), chr(0x263A) + chr(0xFE0F), chr(0x845B) + chr(0xE0100),
+        "a",
+        "요약",
+        "e" + chr(0x301),
+        chr(0x1F44D),
+        chr(0x1F468) + chr(0x200D) + chr(0x1F469),
+        chr(0x1100),
+        chr(0x3131),
+        chr(0x263A) + chr(0xFE0F),
+        chr(0x845B) + chr(0xE0100),
     ]
 
     def test_blank_looking_text_holds_nothing_visible(self):
@@ -2656,12 +4034,16 @@ class TestCacheFileNames(_ReviewCase):
     TEXT = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
 
     def _digest(self):
-        return hashlib.sha256((self.TEXT + chr(0) + "s" + str(L.SUMMARIZER_VERSION)).encode()).hexdigest()[:8]
+        return hashlib.sha256(
+            (self.TEXT + chr(0) + "s" + str(L.SUMMARIZER_VERSION)).encode()
+        ).hexdigest()[:8]
 
     def test_a_new_summary_is_cached_as_md(self):
         _, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
         self.assertFalse(hit)
-        self.assertEqual(sorted(os.listdir(L.cache_dir("s"))), ["a1-%s.md" % self._digest()])
+        self.assertEqual(
+            sorted(os.listdir(L.cache_dir("s"))), ["a1-%s.md" % self._digest()]
+        )
 
     @unittest.skipUnless(os.name == "posix", "POSIX file modes")
     def test_a_new_summary_is_cached_private_to_the_user(self):
@@ -2670,49 +4052,71 @@ class TestCacheFileNames(_ReviewCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_a_summary_cached_as_txt_by_3_0_2_is_reused(self):
-        (L.cache_dir("s") / ("a1-%s.txt" % self._digest())).write_text("옛 캐시의 요약", encoding="utf-8")
-        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        (L.cache_dir("s") / ("a1-%s.txt" % self._digest())).write_text(
+            "옛 캐시의 요약", encoding="utf-8"
+        )
+        summary, hit = L.read_or_summarize(
+            _turn("assistant", self.TEXT, uuid="a1"), "s"
+        )
         self.assertTrue(hit)
         self.assertEqual(summary, "옛 캐시의 요약")
 
     def test_an_unreadable_cache_file_is_summarized_again(self):
-        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_bytes(bytes([0xFF, 0xFE, 0x00]) + b"encrypted")
-        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_bytes(
+            bytes([0xFF, 0xFE, 0x00]) + b"encrypted"
+        )
+        summary, hit = L.read_or_summarize(
+            _turn("assistant", self.TEXT, uuid="a1"), "s"
+        )
         self.assertFalse(hit)
         self.assertTrue(summary)
 
     def test_an_empty_cache_file_is_summarized_again(self):
         path = L.cache_dir("s") / ("a1-%s.md" % self._digest())
         path.write_text(" \n", encoding="utf-8")
-        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        summary, hit = L.read_or_summarize(
+            _turn("assistant", self.TEXT, uuid="a1"), "s"
+        )
         self.assertFalse(hit)
         self.assertTrue(summary)
         self.assertEqual(path.read_text(encoding="utf-8"), summary)
 
     def test_a_cache_of_only_blank_looking_letters_is_summarized_again(self):
         path = L.cache_dir("s") / ("a1-%s.md" % self._digest())
-        path.write_text("".join(map(chr, (0xFEFF, 0x200B, 0x3164, 0x2800, 0x3000))) + "\n", encoding="utf-8")
-        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        path.write_text(
+            "".join(map(chr, (0xFEFF, 0x200B, 0x3164, 0x2800, 0x3000))) + "\n",
+            encoding="utf-8",
+        )
+        summary, hit = L.read_or_summarize(
+            _turn("assistant", self.TEXT, uuid="a1"), "s"
+        )
         self.assertFalse(hit)
         self.assertTrue(summary)
         self.assertEqual(path.read_text(encoding="utf-8"), summary)
 
     def test_a_cache_with_a_visible_letter_among_blank_ones_is_a_hit(self):
         cached = chr(0x200B) + "요약" + chr(0x3164)
-        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_text(cached, encoding="utf-8")
-        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_text(
+            cached, encoding="utf-8"
+        )
+        summary, hit = L.read_or_summarize(
+            _turn("assistant", self.TEXT, uuid="a1"), "s"
+        )
         self.assertTrue(hit)
         self.assertEqual(summary, cached)
 
     def test_a_cache_of_nul_bytes_is_summarized_again(self):
         (L.cache_dir("s") / ("a1-%s.md" % self._digest())).write_bytes(bytes(64))
-        summary, hit = L.read_or_summarize(_turn("assistant", self.TEXT, uuid="a1"), "s")
+        summary, hit = L.read_or_summarize(
+            _turn("assistant", self.TEXT, uuid="a1"), "s"
+        )
         self.assertFalse(hit)
         self.assertTrue(summary)
 
     def test_detect_secrets_scans_a_temp_file_that_is_not_txt(self):
         import types
         from unittest import mock
+
         seen = []
 
         class Collection:
@@ -2725,17 +4129,21 @@ class TestCacheFileNames(_ReviewCase):
         ds.SecretsCollection = Collection
         settings = types.ModuleType("detect_secrets.settings")
         settings.default_settings = contextlib.nullcontext
-        with mock.patch.dict(sys.modules, {"detect_secrets": ds, "detect_secrets.settings": settings}):
+        with mock.patch.dict(
+            sys.modules, {"detect_secrets": ds, "detect_secrets.settings": settings}
+        ):
             L.redact("평범한 글")
         self.assertEqual(len(seen), 1)
         self.assertTrue(seen[0].endswith(".md"), seen[0])
 
     def test_detect_secrets_finds_the_same_in_md_as_in_txt(self):
         import importlib.util
+
         if importlib.util.find_spec("detect_secrets") is None:
             self.skipTest("detect-secrets is not installed")
         from detect_secrets import SecretsCollection
         from detect_secrets.settings import default_settings
+
         chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         key = "".join(chars[(i * 37 + 11) % 55] for i in range(40))
         body = "pass" + 'word = "' + key[:16] + '"\napi_' + 'key = "' + key + '"\n'
@@ -2747,7 +4155,9 @@ class TestCacheFileNames(_ReviewCase):
             col = SecretsCollection()
             with default_settings():
                 col.scan_file(path)
-            found[suffix] = sorted((s.type, s.secret_value) for name in col.files for s in col[name])
+            found[suffix] = sorted(
+                (s.type, s.secret_value) for name in col.files for s in col[name]
+            )
         self.assertTrue(found[".md"], "the sample holds findings")
         self.assertEqual(found[".txt"], found[".md"])
 
@@ -2755,7 +4165,9 @@ class TestCacheFileNames(_ReviewCase):
 class TestCacheIsPrivateToTheTests(unittest.TestCase):
     def test_the_cache_is_not_the_users_own(self):
         self.assertNotEqual(L.CACHE_BASE, _REAL_CACHE_BASE)
-        self.assertTrue(str(L.CACHE_BASE).startswith(tempfile.gettempdir()), L.CACHE_BASE)
+        self.assertTrue(
+            str(L.CACHE_BASE).startswith(tempfile.gettempdir()), L.CACHE_BASE
+        )
 
 
 class TestBlankReviewerSummary(_ReviewCase):
@@ -2769,10 +4181,20 @@ class TestBlankReviewerSummary(_ReviewCase):
         return [s.split("</span>")[0] for s in text.split('<span class="sum">')[1:]]
 
     def test_summaries_of_invisible_letters_only_use_the_rules_summary(self):
-        for blank in (chr(0x200B) * 3, chr(0x3164) * 2, chr(0xFEFF) + chr(0x2060), " \n\t ", chr(0x200B) + " " + chr(0x180B)):
+        for blank in (
+            chr(0x200B) * 3,
+            chr(0x3164) * 2,
+            chr(0xFEFF) + chr(0x2060),
+            " \n\t ",
+            chr(0x200B) + " " + chr(0x180B),
+        ):
             sums = self._page_summaries(blank)
-            self.assertTrue(any("스크립트" in s for s in sums), [hex(ord(c)) for c in blank])
-            self.assertFalse(any(not L._has_visible(s) for s in sums), [hex(ord(c)) for c in blank])
+            self.assertTrue(
+                any("스크립트" in s for s in sums), [hex(ord(c)) for c in blank]
+            )
+            self.assertFalse(
+                any(not L._has_visible(s) for s in sums), [hex(ord(c)) for c in blank]
+            )
 
     def test_a_summary_with_a_visible_letter_among_blank_ones_is_kept(self):
         kept = chr(0x200B) + "배포 통과" + chr(0x3164)
@@ -2786,28 +4208,44 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
     TEXT = "점검 결과를 정리했습니다. 접속 정보도 확인했습니다."
 
     def _place(self):
-        digest = hashlib.sha256((self.TEXT + chr(0) + "s" + str(L.SUMMARIZER_VERSION)).encode()).hexdigest()[:8]
+        digest = hashlib.sha256(
+            (self.TEXT + chr(0) + "s" + str(L.SUMMARIZER_VERSION)).encode()
+        ).hexdigest()[:8]
         return L.cache_dir("s") / ("a1-%s.md" % digest)
 
     def _in_child(self, call):
         """`call` (python source using L) in another process: a pipe can stop a process for good. Its stdout."""
         import subprocess
-        code = ("import sys, pathlib; sys.path.insert(0, %r); import lineage as L; L.CACHE_BASE = pathlib.Path(%r); %s"
-                % (os.path.dirname(os.path.abspath(L.__file__)), self.cache, call))
-        done = subprocess.run([sys.executable, "-B", "-c", code], capture_output=True, text=True, timeout=30)
+
+        code = (
+            "import sys, pathlib; sys.path.insert(0, %r); import lineage as L; L.CACHE_BASE = pathlib.Path(%r); %s"
+            % (os.path.dirname(os.path.abspath(L.__file__)), self.cache, call)
+        )
+        done = subprocess.run(
+            [sys.executable, "-B", "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         self.assertEqual(done.returncode, 0, done.stderr)
         return done.stdout.strip()
 
     def _summarize_in_child(self):
-        return self._in_child("s, hit = L.read_or_summarize({'role': 'assistant', 'text': %a, 'parts': [%a], "
-                              "'uuid': 'a1', 'session': 's', 'ts': 'x', 'tools': {}}, 's'); print(hit)" % (self.TEXT, self.TEXT))
+        return self._in_child(
+            "s, hit = L.read_or_summarize({'role': 'assistant', 'text': %a, 'parts': [%a], "
+            "'uuid': 'a1', 'session': 's', 'ts': 'x', 'tools': {}}, 's'); print(hit)"
+            % (self.TEXT, self.TEXT)
+        )
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
     def test_a_pipe_nobody_writes_to_does_not_stop_the_run(self):
         place = self._place()
         os.mkfifo(str(place))
         self.assertEqual(self._summarize_in_child(), "False")
-        self.assertTrue(place.is_file() and not place.is_symlink(), "the pipe was replaced by the summary")
+        self.assertTrue(
+            place.is_file() and not place.is_symlink(),
+            "the pipe was replaced by the summary",
+        )
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
     def test_a_line_waiting_in_a_pipe_is_not_read_as_a_summary(self):
@@ -2829,9 +4267,11 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
         check): only the checks made on the opened file can save the run. In another process: a pipe can stop it."""
         decoy = pathlib.Path(self.d) / "decoy.md"
         decoy.write_text("x", encoding="utf-8")
-        return self._in_child("import os; real = os.lstat; decoy = real(%r); "
-                              "os.lstat = lambda p, *a, **k: decoy if str(p) == %r else real(p, *a, **k); "
-                              "print(L._read_small(%r))" % (str(decoy), str(place), str(place)))
+        return self._in_child(
+            "import os; real = os.lstat; decoy = real(%r); "
+            "os.lstat = lambda p, *a, **k: decoy if str(p) == %r else real(p, *a, **k); "
+            "print(L._read_small(%r))" % (str(decoy), str(place), str(place))
+        )
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes here")
     def test_a_pipe_swapped_in_after_the_check_is_not_waited_for_or_read(self):
@@ -2851,6 +4291,7 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
 
     def test_a_socket_at_the_cache_place_is_summarized_again(self):
         import socket
+
         if not hasattr(socket, "AF_UNIX"):
             self.skipTest("no unix sockets here")
         place = self._place()
@@ -2860,8 +4301,18 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
             sock.bind(str(place))
         except OSError as e:
             self.skipTest("cannot make a socket here: %s" % e)
-        summary, hit = L.read_or_summarize({"role": "assistant", "text": self.TEXT, "parts": [self.TEXT], "uuid": "a1",
-                                            "session": "s", "ts": "x", "tools": {}}, "s")
+        summary, hit = L.read_or_summarize(
+            {
+                "role": "assistant",
+                "text": self.TEXT,
+                "parts": [self.TEXT],
+                "uuid": "a1",
+                "session": "s",
+                "ts": "x",
+                "tools": {},
+            },
+            "s",
+        )
         self.assertFalse(hit)
         self.assertTrue(summary)
 
@@ -2872,8 +4323,18 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
             place.symlink_to(victim)
         except (OSError, NotImplementedError):
             self.skipTest("cannot make a link here")
-        summary, hit = L.read_or_summarize({"role": "assistant", "text": self.TEXT, "parts": [self.TEXT], "uuid": "a1",
-                                            "session": "s", "ts": "x", "tools": {}}, "s")
+        summary, hit = L.read_or_summarize(
+            {
+                "role": "assistant",
+                "text": self.TEXT,
+                "parts": [self.TEXT],
+                "uuid": "a1",
+                "session": "s",
+                "ts": "x",
+                "tools": {},
+            },
+            "s",
+        )
         self.assertFalse(hit)
         self.assertNotEqual(summary, "다른 파일의 내용")
         self.assertEqual(victim.read_text(encoding="utf-8"), "다른 파일의 내용")
@@ -2882,48 +4343,81 @@ class TestOddFilesAtCachePlaces(_ReviewCase):
 
     def test_a_link_is_not_followed_where_the_os_has_no_o_nofollow(self):
         from unittest import mock
+
         place, victim = self._place(), pathlib.Path(self.d) / "victim.md"
         victim.write_text("다른 파일의 내용", encoding="utf-8")
         try:
             place.symlink_to(victim)
         except (OSError, NotImplementedError):
             self.skipTest("cannot make a link here")
-        with mock.patch.object(os, "O_NOFOLLOW", 0, create=True):      # Windows has none: lstat has to refuse the link
+        with mock.patch.object(
+            os, "O_NOFOLLOW", 0, create=True
+        ):  # Windows has none: lstat has to refuse the link
             self.assertIsNone(L._read_small(place))
 
     def test_an_oversize_cache_file_is_summarized_again(self):
         place = self._place()
         place.write_text("summary " * (L.CACHE_READ_MAX // 4), encoding="utf-8")
         self.assertGreater(place.stat().st_size, L.CACHE_READ_MAX)
-        summary, hit = L.read_or_summarize({"role": "assistant", "text": self.TEXT, "parts": [self.TEXT], "uuid": "a1",
-                                            "session": "s", "ts": "x", "tools": {}}, "s")
+        summary, hit = L.read_or_summarize(
+            {
+                "role": "assistant",
+                "text": self.TEXT,
+                "parts": [self.TEXT],
+                "uuid": "a1",
+                "session": "s",
+                "ts": "x",
+                "tools": {},
+            },
+            "s",
+        )
         self.assertFalse(hit)
         self.assertLess(len(summary), 200)
 
-    def test_a_decision_cache_that_is_not_small_or_is_nested_too_deep_reads_as_none(self):
+    def test_a_decision_cache_that_is_not_small_or_is_nested_too_deep_reads_as_none(
+        self,
+    ):
         path = L._llm_cache_path("a1", "s", "abc123abc123")
-        for body in ("[" * 100000, "[" * 5000, '{"keep": null, "summary": "' + "가" * L.CACHE_READ_MAX + '"}'):
+        for body in (
+            "[" * 100000,
+            "[" * 5000,
+            '{"keep": null, "summary": "' + "가" * L.CACHE_READ_MAX + '"}',
+        ):
             path.write_text(body, encoding="utf-8")
             self.assertIsNone(L.read_llm_cache("a1", "s", "abc123abc123"))
         path.write_text('{"keep": true, "summary": "통과"}', encoding="utf-8")
-        self.assertEqual(L.read_llm_cache("a1", "s", "abc123abc123"), {"keep": True, "summary": "통과"})
+        self.assertEqual(
+            L.read_llm_cache("a1", "s", "abc123abc123"),
+            {"keep": True, "summary": "통과"},
+        )
 
     def test_a_cache_file_of_exactly_64_kib_is_read_and_one_byte_more_is_not(self):
-        self.assertEqual(L.CACHE_READ_MAX, 64 * 1024, "SKILL.md and CHANGELOG 0.19.1 promise 64KiB")
+        self.assertEqual(
+            L.CACHE_READ_MAX, 64 * 1024, "SKILL.md and CHANGELOG 0.19.1 promise 64KiB"
+        )
         place = pathlib.Path(self.d) / "summary.md"
-        body = ("요약 " + "x" * (64 * 1024 - len("요약 ".encode("utf-8")))).encode("utf-8")
+        body = ("요약 " + "x" * (64 * 1024 - len("요약 ".encode("utf-8")))).encode(
+            "utf-8"
+        )
         place.write_bytes(body)
         self.assertEqual(L._read_small(place), body)
         place.write_bytes(body + b"x")
         self.assertIsNone(L._read_small(place))
 
-    def test_pages_and_caches_are_written_with_lf_where_text_mode_would_write_crlf(self):
+    def test_pages_and_caches_are_written_with_lf_where_text_mode_would_write_crlf(
+        self,
+    ):
         import _pyio
         from unittest import mock
-        page, cache = pathlib.Path(self.d) / "page.html", pathlib.Path(self.d) / "c" / "s.md"
+
+        page, cache = (
+            pathlib.Path(self.d) / "page.html",
+            pathlib.Path(self.d) / "c" / "s.md",
+        )
         # Windows text mode, played on any OS: the pure-Python io writes os.linesep for each \n unless newline="\n"
-        with mock.patch.object(os, "linesep", "\r\n"), mock.patch("builtins.open", _pyio.open), \
-                mock.patch("io.open", _pyio.open):
+        with mock.patch.object(os, "linesep", "\r\n"), mock.patch(
+            "builtins.open", _pyio.open
+        ), mock.patch("io.open", _pyio.open):
             L._write_text_lf(page, "a\nb\n")
             L._write_private(cache, "c\nd\n")
         self.assertEqual(page.read_bytes(), b"a\nb\n")
@@ -2939,17 +4433,43 @@ class TestBidiControlsOnThePage(_ReviewCase):
     def _records(self):
         spoof = "점검 결과 " + self.RLO + "txt.exe" + self.PDF + " 파일을 확인했습니다."
         return [
-            _rec("user", "파일 " + self.RLO + "gpj.exe" + self.PDF + " 점검", uuid="u1"),
-            self._asst(spoof + " " + self.LRI + "추가" + self.PDI + "\n\n```\nrun " + self.RLO + "cod" + self.PDF + "\n```", "a1"),
+            _rec(
+                "user", "파일 " + self.RLO + "gpj.exe" + self.PDF + " 점검", uuid="u1"
+            ),
+            self._asst(
+                spoof
+                + " "
+                + self.LRI
+                + "추가"
+                + self.PDI
+                + "\n\n```\nrun "
+                + self.RLO
+                + "cod"
+                + self.PDF
+                + "\n```",
+                "a1",
+            ),
         ]
 
     def _controls_in(self, text):
-        return [c for c in text if ord(c) in (*range(0x202A, 0x202F), *range(0x2066, 0x206A))]
+        return [
+            c
+            for c in text
+            if ord(c) in (*range(0x202A, 0x202F), *range(0x2066, 0x206A))
+        ]
 
     def test_no_direction_control_reaches_the_page_and_each_is_shown_as_text(self):
         self._write(self._records())
         self._emit()
-        rc, text = self._apply([{"id": "a1", "keep": True, "summary": "요약 " + self.RLO + "txt.exe" + self.PDF}])
+        rc, text = self._apply(
+            [
+                {
+                    "id": "a1",
+                    "keep": True,
+                    "summary": "요약 " + self.RLO + "txt.exe" + self.PDF,
+                }
+            ]
+        )
         self.assertEqual(rc, 0)
         self.assertEqual(self._controls_in(text), [])
         self.assertIn("[U+202E]txt.exe[U+202C]", text)
@@ -2957,28 +4477,58 @@ class TestBidiControlsOnThePage(_ReviewCase):
 
     def test_the_rules_summary_and_a_cache_hit_are_clean_too(self):
         self._write(self._records())
-        for _ in range(2):                                     # the second run reads the summary cache
-            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])
+        for _ in range(2):  # the second run reads the summary cache
+            rc = L.main(
+                [
+                    "--session",
+                    self.jf,
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--output",
+                    os.path.join(self.d, "out.html"),
+                ]
+            )
             self.assertEqual(rc, 0)
-            page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+            page = [
+                p
+                for p in os.listdir(self.d)
+                if p.startswith("out") and p.endswith(".html")
+            ][0]
             with open(os.path.join(self.d, page), encoding="utf-8") as f:
                 self.assertEqual(self._controls_in(f.read()), [])
             os.unlink(os.path.join(self.d, page))
 
     def test_letters_of_right_to_left_scripts_and_direction_marks_are_left_alone(self):
-        arabic, hebrew = "".join(map(chr, range(0x627, 0x62D))), "".join(map(chr, range(0x5D0, 0x5D4)))
-        marks = chr(0x200F) + chr(0x200E) + chr(0x61C)          # direction marks order neighbours, they do not override
+        arabic, hebrew = (
+            "".join(map(chr, range(0x627, 0x62D))),
+            "".join(map(chr, range(0x5D0, 0x5D4))),
+        )
+        marks = (
+            chr(0x200F) + chr(0x200E) + chr(0x61C)
+        )  # direction marks order neighbours, they do not override
         self._write([_rec("user", "בדיקה " + arabic + marks + " " + hebrew, uuid="u1")])
         self._emit()
         _, text = self._apply()
         self.assertIn(arabic + marks + " " + hebrew, text)
 
-    def test_each_of_the_nine_controls_is_shown_and_the_code_points_beside_them_are_left_alone(self):
+    def test_each_of_the_nine_controls_is_shown_and_the_code_points_beside_them_are_left_alone(
+        self,
+    ):
         controls = [chr(c) for c in (*range(0x202A, 0x202F), *range(0x2066, 0x206A))]
         self.assertEqual(len(controls), 9)
-        beside = chr(0x202F) + chr(0x206A)                     # just outside the two ranges
-        self._write([_rec("user", "점검 " + " ".join("%d%s" % (i, c) for i, c in enumerate(controls)) + " 끝" + beside,
-                          uuid="u1")])
+        beside = chr(0x202F) + chr(0x206A)  # just outside the two ranges
+        self._write(
+            [
+                _rec(
+                    "user",
+                    "점검 "
+                    + " ".join("%d%s" % (i, c) for i, c in enumerate(controls))
+                    + " 끝"
+                    + beside,
+                    uuid="u1",
+                )
+            ]
+        )
         self._emit()
         _, text = self._apply()
         self.assertEqual(self._controls_in(text), [])
@@ -2987,10 +4537,23 @@ class TestBidiControlsOnThePage(_ReviewCase):
         self.assertIn(beside, text)
 
     def test_a_control_in_a_timestamp_is_shown_in_the_date_range_too(self):
-        self._write([_rec("user", "점검", ts=self.RLO + "2026-08-09T10:00:00Z", uuid="u1")])
-        rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])
+        self._write(
+            [_rec("user", "점검", ts=self.RLO + "2026-08-09T10:00:00Z", uuid="u1")]
+        )
+        rc = L.main(
+            [
+                "--session",
+                self.jf,
+                "--rulebase",
+                "--skip-reviewer",
+                "--output",
+                os.path.join(self.d, "out.html"),
+            ]
+        )
         self.assertEqual(rc, 0)
-        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        page = [
+            p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, page), encoding="utf-8") as f:
             text = f.read()
         self.assertEqual(self._controls_in(text), [])
@@ -2998,10 +4561,23 @@ class TestBidiControlsOnThePage(_ReviewCase):
 
     def test_a_control_in_the_title_is_shown_in_the_title_and_the_header(self):
         self._write([_rec("user", "점검", uuid="u1")])
-        rc = _quiet(L.main, ["--session", self.jf, "--rulebase", "--skip-reviewer", "--title",
-                             "회고 " + self.RLO + "gpj.exe" + self.PDF, "--output", os.path.join(self.d, "out.html")])[0]
+        rc = _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--rulebase",
+                "--skip-reviewer",
+                "--title",
+                "회고 " + self.RLO + "gpj.exe" + self.PDF,
+                "--output",
+                os.path.join(self.d, "out.html"),
+            ],
+        )[0]
         self.assertEqual(rc, 0)
-        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        page = [
+            p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, page), encoding="utf-8") as f:
             text = f.read()
         self.assertEqual(self._controls_in(text), [])
@@ -3026,17 +4602,30 @@ class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
             f.write("\n".join(lines) + "\n")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output",
-                         os.path.join(self.d, "out.html")] + list(extra))
+            rc = L.main(
+                [
+                    "--session",
+                    self.jf,
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--output",
+                    os.path.join(self.d, "out.html"),
+                ]
+                + list(extra)
+            )
         return rc, err.getvalue()
 
     def test_lines_that_are_not_objects_or_nest_too_deep_are_skipped(self):
-        good = lambda n: json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
+        def good(n):
+            return json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
+
         bad = ["null", "[1, 2]", "5", '"text"', "[" * 100000]
         rc, err = self._run([good(1)] + bad + [good(2)])
         self.assertEqual(rc, 0)
         self.assertEqual(err.count("skipped"), len(bad))
-        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        page = [
+            p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, page), encoding="utf-8") as f:
             text = f.read()
         self.assertIn("안녕하세요 1", text)
@@ -3056,33 +4645,62 @@ class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
             f.write("[" * 100000)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            rc = L.main(["--apply-review", self.pack, "--output", os.path.join(self.d, "out.html"), "--skip-reviewer"])
+            rc = L.main(
+                [
+                    "--apply-review",
+                    self.pack,
+                    "--output",
+                    os.path.join(self.d, "out.html"),
+                    "--skip-reviewer",
+                ]
+            )
         self.assertNotEqual(rc, 0)
         self.assertIn("cannot read review pack", err.getvalue())
 
     def test_an_export_with_odd_shaped_records_finishes(self):
-        good = lambda n: json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
-        odd = [json.dumps({"type": 5}), json.dumps({"type": "user", "message": "hello"}),
-               json.dumps({"type": "assistant", "uuid": "o", "message": {"content": [{"type": "text", "text": 5}]}})]
+        def good(n):
+            return json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
+
+        odd = [
+            json.dumps({"type": 5}),
+            json.dumps({"type": "user", "message": "hello"}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "uuid": "o",
+                    "message": {"content": [{"type": "text", "text": 5}]},
+                }
+            ),
+        ]
         rc, err = self._run([good(1)] + odd + [good(2)])
         self.assertEqual(rc, 0)
         self.assertEqual(err.count("of an unknown shape skipped"), 3)
-        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        page = [
+            p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, page), encoding="utf-8") as f:
             text = f.read()
         self.assertIn("안녕하세요 1", text)
         self.assertIn("안녕하세요 2", text)
 
     def _page(self):
-        page = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")][0]
+        page = [
+            p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, page), encoding="utf-8") as f:
             return f.read()
 
     def test_a_number_longer_than_the_parser_reads_is_skipped(self):
-        good = lambda n: json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
-        rc, err = self._run([good(1), '{"type": "user", "n": ' + "9" * 5000 + "}", good(2)])
+        def good(n):
+            return json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="g%d" % n))
+
+        rc, err = self._run(
+            [good(1), '{"type": "user", "n": ' + "9" * 5000 + "}", good(2)]
+        )
         self.assertEqual(rc, 0, err)
-        if hasattr(sys, "get_int_max_str_digits"):            # 3.11, and 3.7 to 3.10 from their 2022 security releases
+        if hasattr(
+            sys, "get_int_max_str_digits"
+        ):  # 3.11, and 3.7 to 3.10 from their 2022 security releases
             self.assertIn("line 2: invalid JSON skipped", err)
         text = self._page()
         self.assertIn("안녕하세요 1", text)
@@ -3090,20 +4708,42 @@ class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
 
     def test_a_timestamp_that_is_not_text_reads_as_missing(self):
         stamps = [5, 1.5, True, ["2026"], {"a": 1}, "2026-08-09T10:00:00Z"]
-        rc, err = self._run([json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="t%d" % n, ts=ts))
-                             for n, ts in enumerate(stamps)])
+        rc, err = self._run(
+            [
+                json.dumps(_rec("user", "안녕하세요 %d" % n, uuid="t%d" % n, ts=ts))
+                for n, ts in enumerate(stamps)
+            ]
+        )
         self.assertEqual(rc, 0, err)
         text = self._page()
         for n in range(len(stamps)):
             self.assertIn("안녕하세요 %d" % n, text)
 
     def test_a_null_tool_name_beside_named_tools_reads_as_unknown(self):
-        recs = [_rec("user", "점검해 주세요", uuid="u1"),
-                {"type": "assistant", "uuid": "a1", "timestamp": "2026-08-09T10:00:01Z",
-                 "message": {"role": "assistant", "content": [{"type": "text", "text": "확인합니다"},
-                                                              {"type": "tool_use", "name": None, "input": {}}]}},
-                {"type": "assistant", "uuid": "a2", "timestamp": "2026-08-09T10:00:02Z",
-                 "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read", "input": {}}]}}]
+        recs = [
+            _rec("user", "점검해 주세요", uuid="u1"),
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "timestamp": "2026-08-09T10:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "확인합니다"},
+                        {"type": "tool_use", "name": None, "input": {}},
+                    ],
+                },
+            },
+            {
+                "type": "assistant",
+                "uuid": "a2",
+                "timestamp": "2026-08-09T10:00:02Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Read", "input": {}}],
+                },
+            },
+        ]
         for extra in ((), ("--redact-extra", "secretword")):
             rc, err = self._run([json.dumps(r) for r in recs], extra)
             self.assertEqual(rc, 0, err)
@@ -3115,12 +4755,19 @@ class TestUnreadableJsonIsSkippedNotFatal(_ReviewCase):
                     os.unlink(os.path.join(self.d, p))
 
     def test_a_record_type_with_control_characters_is_named_escaped(self):
-        rc, err = self._run([json.dumps({"type": "x\x1b[31m\n[lineage] ERROR: forged"}),
-                             json.dumps(_rec("user", "안녕하세요", uuid="g1"))])
+        rc, err = self._run(
+            [
+                json.dumps({"type": "x\x1b[31m\n[lineage] ERROR: forged"}),
+                json.dumps(_rec("user", "안녕하세요", uuid="g1")),
+            ]
+        )
         self.assertEqual(rc, 0, err)
         self.assertIn("unknown record type", err)
         self.assertNotIn("\x1b", err)
-        self.assertFalse([l for l in err.splitlines() if l.startswith("[lineage] ERROR")], err)
+        self.assertFalse(
+            [line for line in err.splitlines() if line.startswith("[lineage] ERROR")],
+            err,
+        )
         stream = io.StringIO(json.dumps({"type": "v9\x1b[2J\nfake"}) + "\n")
         err = io.StringIO()
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
@@ -3136,7 +4783,9 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
 
     def _records_with_a_lone_surrogate(self):
         recs = self._records()
-        recs[1] = self._asst("고친 결과 " + chr(0xD800) + " 통과합니다.", "a1", tools=["Read"])
+        recs[1] = self._asst(
+            "고친 결과 " + chr(0xD800) + " 통과합니다.", "a1", tools=["Read"]
+        )
         recs[2] = dict(recs[2], uuid=["not", "text"])
         return recs
 
@@ -3144,10 +4793,20 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
         self._write(self._records_with_a_lone_surrogate())
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--output",
-                         os.path.join(self.d, "rb.html")])
+            rc = L.main(
+                [
+                    "--session",
+                    self.jf,
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--output",
+                    os.path.join(self.d, "rb.html"),
+                ]
+            )
         self.assertEqual(rc, 0, err.getvalue())
-        page = [p for p in os.listdir(self.d) if p.startswith("rb") and p.endswith(".html")][0]
+        page = [
+            p for p in os.listdir(self.d) if p.startswith("rb") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, page), encoding="utf-8") as f:
             self.assertIn("고친 결과 " + chr(0xFFFD) + " 통과합니다.", f.read())
 
@@ -3158,18 +4817,34 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
         self.assertEqual(rc, 0)
         self.assertTrue(pack["turns"])
 
-    def test_a_reviewers_summary_with_a_lone_surrogate_is_shown_with_the_replacement_character(self):
+    def test_a_reviewers_summary_with_a_lone_surrogate_is_shown_with_the_replacement_character(
+        self,
+    ):
         self._write(self._records())
         dec = os.path.join(self.d, "dec-lone.json")
-        with open(dec, "w", encoding="utf-8") as f:              # json.dumps escapes it, as a model's JSON would
-            f.write(json.dumps([{"id": "a1", "keep": True, "summary": "요약 " + chr(0xD800) + " 끝"}]))
+        with open(
+            dec, "w", encoding="utf-8"
+        ) as f:  # json.dumps escapes it, as a model's JSON would
+            f.write(
+                json.dumps(
+                    [
+                        {
+                            "id": "a1",
+                            "keep": True,
+                            "summary": "요약 " + chr(0xD800) + " 끝",
+                        }
+                    ]
+                )
+            )
         with contextlib.redirect_stderr(io.StringIO()):
             self._emit()
             rc, text = self._apply(extra=["--decisions", dec])
         self.assertEqual(rc, 0)
         self.assertIn("요약 " + chr(0xFFFD) + " 끝", text)
 
-    def test_a_pack_holding_a_lone_surrogate_escape_is_applied_with_the_replacement_character(self):
+    def test_a_pack_holding_a_lone_surrogate_escape_is_applied_with_the_replacement_character(
+        self,
+    ):
         self._write(self._records())
         with contextlib.redirect_stderr(io.StringIO()):
             self._emit()
@@ -3178,7 +4853,7 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
         pack["turns"][1]["text"] += " 끝" + chr(0xD800)
         pack["turns"][1]["tools"] = {"Bash" + chr(0xD800): 1}
         with open(self.pack, "w", encoding="utf-8") as f:
-            f.write(json.dumps(pack))                      # json.dumps escapes it, as a model's JSON would
+            f.write(json.dumps(pack))  # json.dumps escapes it, as a model's JSON would
         with contextlib.redirect_stderr(io.StringIO()):
             rc, text = self._apply()
         self.assertEqual(rc, 0)
@@ -3202,10 +4877,18 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
 
     def test_a_cached_decision_is_read_back_with_the_replacement_character(self):
         p = L._llm_cache_path("t1", "s", "d")
-        p.write_text(json.dumps({"keep": True, "summary": "요약 " + chr(0xD800)}), encoding="utf-8")
-        self.assertEqual(L.read_llm_cache("t1", "s", "d"), {"keep": True, "summary": "요약 " + chr(0xFFFD)})
+        p.write_text(
+            json.dumps({"keep": True, "summary": "요약 " + chr(0xD800)}),
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            L.read_llm_cache("t1", "s", "d"),
+            {"keep": True, "summary": "요약 " + chr(0xFFFD)},
+        )
 
-    def test_a_cached_decision_holding_a_lone_surrogate_escape_does_not_stop_the_next_pack(self):
+    def test_a_cached_decision_holding_a_lone_surrogate_escape_does_not_stop_the_next_pack(
+        self,
+    ):
         self._write(self._records())
         with contextlib.redirect_stderr(io.StringIO()):
             self._emit()
@@ -3213,7 +4896,10 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
         cached = list(pathlib.Path(self.cache).rglob("*-llm.json"))
         self.assertTrue(cached)
         for p in cached:
-            p.write_text(json.dumps({"keep": True, "summary": "요약 " + chr(0xD800)}), encoding="utf-8")
+            p.write_text(
+                json.dumps({"keep": True, "summary": "요약 " + chr(0xD800)}),
+                encoding="utf-8",
+            )
         with contextlib.redirect_stderr(io.StringIO()):
             rc, pack = self._emit()
         self.assertEqual(rc, 0)
@@ -3221,17 +4907,34 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
 
     def test_a_title_with_a_lone_surrogate_still_writes_the_page_and_the_pack(self):
         self._write(self._records())
-        title = "T" + chr(0xDC80)                            # what an argument with a byte UTF-8 cannot read becomes
+        title = "T" + chr(
+            0xDC80
+        )  # what an argument with a byte UTF-8 cannot read becomes
         with contextlib.redirect_stderr(io.StringIO()):
-            rc = L.main(["--session", self.jf, "--rulebase", "--skip-reviewer", "--title", title, "--output",
-                         os.path.join(self.d, "rb.html")])
+            rc = L.main(
+                [
+                    "--session",
+                    self.jf,
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--title",
+                    title,
+                    "--output",
+                    os.path.join(self.d, "rb.html"),
+                ]
+            )
             emitted, _ = self._emit(["--title", title])
         self.assertEqual((rc, emitted), (0, 0))
-        page = [p for p in os.listdir(self.d) if p.startswith("rb") and p.endswith(".html")][0]
+        page = [
+            p for p in os.listdir(self.d) if p.startswith("rb") and p.endswith(".html")
+        ][0]
         with open(os.path.join(self.d, page), encoding="utf-8") as f:
             self.assertIn("T" + chr(0xFFFD), f.read())
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "only Linux names a file with bytes UTF-8 cannot read")
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "only Linux names a file with bytes UTF-8 cannot read",
+    )
     def test_a_session_file_name_that_is_not_utf8_still_writes_the_pack(self):
         odd = os.path.join(self.d, os.fsdecode(b"s\xff.jsonl"))
         with open(odd, "w", encoding="utf-8") as f:
@@ -3246,9 +4949,23 @@ class TestLoneSurrogatesAndOddIds(_ReviewCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self._emit()
-            rc, _ = self._apply([{"id": "nope\n[lineage] PASS: forged\x1b[2J", "keep": True, "summary": "s"}])
+            rc, _ = self._apply(
+                [
+                    {
+                        "id": "nope\n[lineage] PASS: forged\x1b[2J",
+                        "keep": True,
+                        "summary": "s",
+                    }
+                ]
+            )
         self.assertEqual(rc, 0)
-        self.assertFalse([l for l in err.getvalue().splitlines() if l.startswith("[lineage] PASS: forged")])
+        self.assertFalse(
+            [
+                line
+                for line in err.getvalue().splitlines()
+                if line.startswith("[lineage] PASS: forged")
+            ]
+        )
         self.assertNotIn("\x1b", err.getvalue())
 
 
@@ -3256,7 +4973,10 @@ class TestRulebaseMatches2x(unittest.TestCase):
     def test_rulebase_output_is_byte_for_byte_the_2x_output(self):
         try:
             import detect_secrets  # noqa: F401
-            self.skipTest("detect-secrets changes redaction; the pinned outputs were made without it")
+
+            self.skipTest(
+                "detect-secrets changes redaction; the pinned outputs were made without it"
+            )
         except ImportError:
             pass
         saved = L.CACHE_BASE
@@ -3268,10 +4988,15 @@ class TestRulebaseMatches2x(unittest.TestCase):
                 for r in _GOLDEN_RECORDS:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
             for k, (flags, want) in enumerate(_GOLDEN_2X.items()):
-                L.CACHE_BASE = pathlib.Path(d) / ("cache%d" % k)   # 2.x keys its cache on the text alone
+                L.CACHE_BASE = pathlib.Path(d) / (
+                    "cache%d" % k
+                )  # 2.x keys its cache on the text alone
                 out = os.path.join(d, "g_260101+0000.html")
-                rc = _quiet(L.main, ["--session", jf, "--output", out, "--skip-reviewer",
-                                     "--rulebase"] + list(flags))[0]
+                rc = _quiet(
+                    L.main,
+                    ["--session", jf, "--output", out, "--skip-reviewer", "--rulebase"]
+                    + list(flags),
+                )[0]
                 self.assertEqual(rc, 0, flags)
                 with open(out, "rb") as f:
                     self.assertEqual(hashlib.sha256(f.read()).hexdigest(), want, flags)
@@ -3292,21 +5017,35 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         turns = []
         with contextlib.redirect_stderr(err):
             try:
-                turns = list(L.parse_turns(stream, unsafe_schema=unsafe, session_id="s", session_name="s"))
+                turns = list(
+                    L.parse_turns(
+                        stream, unsafe_schema=unsafe, session_id="s", session_name="s"
+                    )
+                )
             except SystemExit as e:
                 code = e.code
         return turns, err.getvalue(), code
 
     def test_side_chain_team_and_agent_records_are_not_turns(self):
         keep = _rec("user", "keep this one")
-        skipped = [dict(_rec("user", "side"), isSidechain=True), dict(_rec("assistant", "team"), teamName="t"),
-                   dict(_rec("assistant", "agent"), agentName="a")]
+        skipped = [
+            dict(_rec("user", "side"), isSidechain=True),
+            dict(_rec("assistant", "team"), teamName="t"),
+            dict(_rec("assistant", "agent"), agentName="a"),
+        ]
         turns, err, code = self._read(skipped + [keep])
         self.assertEqual([t["text"] for t in turns], ["keep this one"])
         self.assertEqual((err, code), ("", None))
 
     def test_a_type_nobody_knows_is_named_once_and_the_known_ones_are_silent(self):
-        other = [{"type": "summary"}, {"type": "agent-setting"}, {"type": "permission-mode"}, {"type": "foo"}, {"type": "foo"}, {}]
+        other = [
+            {"type": "summary"},
+            {"type": "agent-setting"},
+            {"type": "permission-mode"},
+            {"type": "foo"},
+            {"type": "foo"},
+            {},
+        ]
         turns, err, code = self._read(other + [_rec("assistant", "after")])
         self.assertEqual([t["text"] for t in turns], ["after"])
         self.assertEqual(err, "[WARN] unknown record type 'foo' skipped\n")
@@ -3316,7 +5055,9 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         lines = [_rec("user", "before"), {"type": "v2"}, _rec("user", "after")]
         turns, err, code = self._read(lines)
         self.assertEqual(code, 2)
-        self.assertEqual([t["text"] for t in turns], [])   # the generator ends at the marker; nothing is returned
+        self.assertEqual(
+            [t["text"] for t in turns], []
+        )  # the generator ends at the marker; nothing is returned
         self.assertIn("[ERROR] schema marker 'v2' unrecognized", err)
         self.assertIn("--unsafe-schema", err)
         turns, err, code = self._read(lines, unsafe=True)
@@ -3324,137 +5065,309 @@ class TestTranscriptRecordsKeepOrSkip(unittest.TestCase):
         self.assertEqual([t["text"] for t in turns], ["before", "after"])
         self.assertEqual(err, "[WARN] unknown record type 'v2' skipped\n")
 
-    def test_content_items_become_text_and_tool_counts_and_only_unknown_types_are_named(self):
-        items = [{"type": "text", "text": "one"}, {"type": "tool_use", "name": "Bash"}, {"type": "tool_use", "name": "Bash"},
-                 {"type": "tool_use"}, {"type": "tool_result"}, {"type": "thinking"}, {"type": "image"}, "stray", 5,
-                 {"type": "text", "text": None}, {"type": "text", "text": "two"}]
-        turns, err, code = self._read([{"type": "assistant", "uuid": "a", "timestamp": "t", "message": {"content": items}}])
+    def test_content_items_become_text_and_tool_counts_and_only_unknown_types_are_named(
+        self,
+    ):
+        items = [
+            {"type": "text", "text": "one"},
+            {"type": "tool_use", "name": "Bash"},
+            {"type": "tool_use", "name": "Bash"},
+            {"type": "tool_use"},
+            {"type": "tool_result"},
+            {"type": "thinking"},
+            {"type": "image"},
+            "stray",
+            5,
+            {"type": "text", "text": None},
+            {"type": "text", "text": "two"},
+        ]
+        turns, err, code = self._read(
+            [
+                {
+                    "type": "assistant",
+                    "uuid": "a",
+                    "timestamp": "t",
+                    "message": {"content": items},
+                }
+            ]
+        )
         self.assertEqual(len(turns), 1)
-        self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("one\ntwo", {"Bash": 2, "?": 1}))
+        self.assertEqual(
+            (turns[0]["text"], turns[0]["tools"]), ("one\ntwo", {"Bash": 2, "?": 1})
+        )
         self.assertEqual(err, "[WARN] line 1: unknown content type 'image' skipped\n")
 
     def test_content_of_a_shape_nobody_knows_is_named_unless_it_is_missing(self):
-        lines = [{"type": "user", "uuid": "a", "message": {"content": 5}}, {"type": "user", "uuid": "b", "message": {}},
-                 {"type": "user", "uuid": "c", "message": {"content": {"type": "text"}}}]
+        lines = [
+            {"type": "user", "uuid": "a", "message": {"content": 5}},
+            {"type": "user", "uuid": "b", "message": {}},
+            {"type": "user", "uuid": "c", "message": {"content": {"type": "text"}}},
+        ]
         turns, err, code = self._read(lines)
         self.assertEqual(turns, [])
-        self.assertEqual(err, "[WARN] line 1: unknown content shape (int)\n[WARN] line 3: unknown content shape (dict)\n")
+        self.assertEqual(
+            err,
+            "[WARN] line 1: unknown content shape (int)\n[WARN] line 3: unknown content shape (dict)\n",
+        )
 
-    def test_a_missing_role_is_the_record_type_a_missing_id_comes_from_the_line_and_a_tool_only_turn_stays(self):
-        lines = [{"type": "user", "timestamp": "t1", "message": {"content": "hello"}},
-                 {"type": "assistant", "uuid": "keep", "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Read"}]}},
-                 {"type": "assistant", "uuid": "empty", "message": {"content": [{"type": "tool_result"}, {"type": "text", "text": ""}]}}]
+    def test_a_missing_role_is_the_record_type_a_missing_id_comes_from_the_line_and_a_tool_only_turn_stays(
+        self,
+    ):
+        lines = [
+            {"type": "user", "timestamp": "t1", "message": {"content": "hello"}},
+            {
+                "type": "assistant",
+                "uuid": "keep",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Read"}],
+                },
+            },
+            {
+                "type": "assistant",
+                "uuid": "empty",
+                "message": {
+                    "content": [{"type": "tool_result"}, {"type": "text", "text": ""}]
+                },
+            },
+        ]
         turns, err, code = self._read(lines)
         self.assertEqual([t["role"] for t in turns], ["user", "assistant"])
         self.assertEqual(turns[0]["uuid"], hashlib.sha256(b"1:t1").hexdigest()[:16])
-        self.assertEqual((turns[1]["text"], turns[1]["parts"], turns[1]["tools"]), ("", [], {"Read": 1}))
+        self.assertEqual(
+            (turns[1]["text"], turns[1]["parts"], turns[1]["tools"]),
+            ("", [], {"Read": 1}),
+        )
         self.assertEqual(err, "")
 
-
-    def test_a_record_whose_type_or_message_has_an_odd_shape_is_skipped_with_a_warning(self):
-        odd = [{"type": 5}, {"type": ["user"]}, {"type": {"a": 1}},
-               {"type": "user", "message": "hello"}, {"type": "assistant", "message": ["x"]}]
+    def test_a_record_whose_type_or_message_has_an_odd_shape_is_skipped_with_a_warning(
+        self,
+    ):
+        odd = [
+            {"type": 5},
+            {"type": ["user"]},
+            {"type": {"a": 1}},
+            {"type": "user", "message": "hello"},
+            {"type": "assistant", "message": ["x"]},
+        ]
         turns, err, code = self._read(odd + [_rec("user", "kept")])
         self.assertIsNone(code)
         self.assertEqual([t["text"] for t in turns], ["kept"])
-        self.assertEqual(err, "".join("[WARN] line %d: record of an unknown shape skipped\n" % n for n in range(1, 6)))
+        self.assertEqual(
+            err,
+            "".join(
+                "[WARN] line %d: record of an unknown shape skipped\n" % n
+                for n in range(1, 6)
+            ),
+        )
 
-    def test_a_content_item_whose_type_text_or_tool_name_has_an_odd_shape_is_skipped(self):
-        items = [{"type": "tool_use", "name": ["Bash"]}, {"type": ["text"]}, {"type": {"t": 1}},
-                 {"type": "text", "text": 5}, {"type": "text", "text": "kept"}, {"type": "tool_use", "name": "Read"}]
-        turns, err, code = self._read([{"type": "assistant", "uuid": "a", "message": {"content": items}}])
+    def test_a_content_item_whose_type_text_or_tool_name_has_an_odd_shape_is_skipped(
+        self,
+    ):
+        items = [
+            {"type": "tool_use", "name": ["Bash"]},
+            {"type": ["text"]},
+            {"type": {"t": 1}},
+            {"type": "text", "text": 5},
+            {"type": "text", "text": "kept"},
+            {"type": "tool_use", "name": "Read"},
+        ]
+        turns, err, code = self._read(
+            [{"type": "assistant", "uuid": "a", "message": {"content": items}}]
+        )
         self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
-        self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 4)
+        self.assertEqual(
+            err, "[WARN] line 1: content item of an unknown shape skipped\n" * 4
+        )
 
-    def test_a_numeric_tool_name_or_item_type_is_skipped_with_the_odd_shape_warning(self):
+    def test_a_numeric_tool_name_or_item_type_is_skipped_with_the_odd_shape_warning(
+        self,
+    ):
         # 0.19.1 turned a numeric name's `5×1` and a numeric type's unknown-type line into this warning
-        items = [{"type": "tool_use", "name": 5}, {"type": 5}, {"type": "text", "text": "kept"},
-                 {"type": "tool_use", "name": "Read"}]
-        turns, err, code = self._read([{"type": "assistant", "uuid": "a", "message": {"content": items}}])
+        items = [
+            {"type": "tool_use", "name": 5},
+            {"type": 5},
+            {"type": "text", "text": "kept"},
+            {"type": "tool_use", "name": "Read"},
+        ]
+        turns, err, code = self._read(
+            [{"type": "assistant", "uuid": "a", "message": {"content": items}}]
+        )
         self.assertIsNone(code)
         self.assertEqual((turns[0]["text"], turns[0]["tools"]), ("kept", {"Read": 1}))
-        self.assertEqual(err, "[WARN] line 1: content item of an unknown shape skipped\n" * 2)
+        self.assertEqual(
+            err, "[WARN] line 1: content item of an unknown shape skipped\n" * 2
+        )
 
-    def test_a_lone_surrogate_in_a_record_becomes_the_replacement_character_with_one_warning(self):
+    def test_a_lone_surrogate_in_a_record_becomes_the_replacement_character_with_one_warning(
+        self,
+    ):
         lone, fffd = chr(0xD800), chr(0xFFFD)
-        rec = {"type": "assistant", "uuid": "a" + lone, "timestamp": "t" + lone,
-               "message": {"role": "assistant" + lone, "content": [{"type": "text", "text": "x " + lone + " y"},
-                                                                     {"type": "tool_use", "name": "Bash" + lone}]}}
+        rec = {
+            "type": "assistant",
+            "uuid": "a" + lone,
+            "timestamp": "t" + lone,
+            "message": {
+                "role": "assistant" + lone,
+                "content": [
+                    {"type": "text", "text": "x " + lone + " y"},
+                    {"type": "tool_use", "name": "Bash" + lone},
+                ],
+            },
+        }
         turns, err, code = self._read([rec, _rec("user", "plain")])
         self.assertIsNone(code)
         t = turns[0]
-        self.assertEqual((t["role"], t["text"], t["uuid"], t["ts"], t["tools"]),
-                         ("assistant", "x " + fffd + " y", "a" + fffd, "t" + fffd, {"Bash" + fffd: 1}))
+        self.assertEqual(
+            (t["role"], t["text"], t["uuid"], t["ts"], t["tools"]),
+            (
+                "assistant",
+                "x " + fffd + " y",
+                "a" + fffd,
+                "t" + fffd,
+                {"Bash" + fffd: 1},
+            ),
+        )
         self.assertEqual(turns[1]["text"], "plain")
         self.assertEqual(err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n")
 
     @staticmethod
     def _asst_rec(name="Read", ts="t", uuid="a"):
-        return {"type": "assistant", "uuid": uuid, "timestamp": ts,
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "x"},
-                                                              {"type": "tool_use", "name": name}]}}
+        return {
+            "type": "assistant",
+            "uuid": uuid,
+            "timestamp": ts,
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "x"},
+                    {"type": "tool_use", "name": name},
+                ],
+            },
+        }
 
     def test_a_lone_surrogate_in_one_field_alone_is_replaced_with_one_warning(self):
         lone = chr(0xD800)
-        one = {"tool name": self._asst_rec(name="Bash" + lone), "timestamp": self._asst_rec(ts="t" + lone),
-               "uuid": self._asst_rec(uuid="a" + lone)}
+        one = {
+            "tool name": self._asst_rec(name="Bash" + lone),
+            "timestamp": self._asst_rec(ts="t" + lone),
+            "uuid": self._asst_rec(uuid="a" + lone),
+        }
         for field, rec in one.items():
             turns, err, code = self._read([rec])
-            self.assertEqual(err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n", field)
+            self.assertEqual(
+                err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n", field
+            )
             self.assertNotIn(lone, json.dumps(turns[0], ensure_ascii=False), field)
 
-    def test_tool_names_that_read_the_same_after_the_replacement_are_counted_together(self):
+    def test_tool_names_that_read_the_same_after_the_replacement_are_counted_together(
+        self,
+    ):
         rec = self._asst_rec()
-        rec["message"]["content"] = [{"type": "tool_use", "name": "Bash" + chr(0xD800)},
-                                     {"type": "tool_use", "name": "Bash" + chr(0xD801)}]
+        rec["message"]["content"] = [
+            {"type": "tool_use", "name": "Bash" + chr(0xD800)},
+            {"type": "tool_use", "name": "Bash" + chr(0xD801)},
+        ]
         turns, err, code = self._read([rec])
         self.assertEqual(turns[0]["tools"], {"Bash" + chr(0xFFFD): 2})
 
     def test_a_role_that_is_not_one_of_the_two_reads_as_the_record_type(self):
-        for role in (["x" + chr(0xD800)], {"k": 1}, 5, True, "assistant" + chr(0xD800), "system"):
-            rec = {"type": "assistant", "uuid": "a", "message": {"role": role, "content": "hi"}}
+        for role in (
+            ["x" + chr(0xD800)],
+            {"k": 1},
+            5,
+            True,
+            "assistant" + chr(0xD800),
+            "system",
+        ):
+            rec = {
+                "type": "assistant",
+                "uuid": "a",
+                "message": {"role": role, "content": "hi"},
+            }
             turns, err, code = self._read([rec])
             self.assertEqual(turns[0]["role"], "assistant", repr(role))
 
-    def test_a_deeply_nested_uuid_beside_a_lone_surrogate_is_dropped_without_recursing(self):
+    def test_a_deeply_nested_uuid_beside_a_lone_surrogate_is_dropped_without_recursing(
+        self,
+    ):
         deep = "x"
         for _ in range(700):
             deep = [deep]
-        rec = {"type": "user", "uuid": deep, "timestamp": "t1", "message": {"content": "hi " + chr(0xD800)}}
+        rec = {
+            "type": "user",
+            "uuid": deep,
+            "timestamp": "t1",
+            "message": {"content": "hi " + chr(0xD800)},
+        }
         turns, err, code = self._read([rec])
         self.assertIsNone(code)
         self.assertEqual(turns[0]["uuid"], hashlib.sha256(b"1:t1").hexdigest()[:16])
         self.assertEqual(turns[0]["text"], "hi " + chr(0xFFFD))
-        self.assertEqual(err, "[WARN] line 1: lone surrogate replaced with U+FFFD\n"
-                              "[WARN] line 1: uuid that is not text replaced by an id from the line\n")
+        self.assertEqual(
+            err,
+            "[WARN] line 1: lone surrogate replaced with U+FFFD\n"
+            "[WARN] line 1: uuid that is not text replaced by an id from the line\n",
+        )
 
     def test_a_uuid_that_is_not_text_gets_an_id_from_the_line_with_a_warning(self):
         odd = (["a", "b"], {"k": 1}, 5, True)
-        lines = [{"type": "user", "uuid": u, "timestamp": "t%d" % n, "message": {"content": "hi %d" % n}}
-                 for n, u in enumerate(odd, 1)]
-        lines.append({"type": "user", "uuid": "", "timestamp": "t5", "message": {"content": "hi 5"}})
+        lines = [
+            {
+                "type": "user",
+                "uuid": u,
+                "timestamp": "t%d" % n,
+                "message": {"content": "hi %d" % n},
+            }
+            for n, u in enumerate(odd, 1)
+        ]
+        lines.append(
+            {
+                "type": "user",
+                "uuid": "",
+                "timestamp": "t5",
+                "message": {"content": "hi 5"},
+            }
+        )
         turns, err, code = self._read(lines)
         self.assertIsNone(code)
-        self.assertEqual([t["uuid"] for t in turns],
-                         [hashlib.sha256(("%d:t%d" % (n, n)).encode()).hexdigest()[:16] for n in range(1, 6)])
-        self.assertEqual(err, "".join("[WARN] line %d: uuid that is not text replaced by an id from the line\n" % n
-                                      for n in range(1, 5)))
+        self.assertEqual(
+            [t["uuid"] for t in turns],
+            [
+                hashlib.sha256(("%d:t%d" % (n, n)).encode()).hexdigest()[:16]
+                for n in range(1, 6)
+            ],
+        )
+        self.assertEqual(
+            err,
+            "".join(
+                "[WARN] line %d: uuid that is not text replaced by an id from the line\n"
+                % n
+                for n in range(1, 5)
+            ),
+        )
 
 
 class TestSplitSecrets(unittest.TestCase):
     """A secret cut by a character that prints as nothing (or by U+FFFD, which a lone surrogate became) is hidden
     whole, and the text around it is left as it was (3.0.8)."""
+
     ZW, SHY, FFFD, ZWJ = chr(0x200B), chr(0x00AD), chr(0xFFFD), chr(0x200D)
 
     def test_a_key_split_by_a_zero_width_space_is_hidden_whole_on_the_page(self):
-        tail = "Kp2LmN8vR4tY6u" "W1eB3nH5jC9dF0gA"  # in pieces, so no secret scanner reads this file as holding a key
+        tail = (
+            "Kp2LmN8vR4tY6u"
+            "W1eB3nH5jC9dF0gA"
+        )  # in pieces, so no secret scanner reads this file as holding a key
         red, _ = L.page_redact("key sk-ant-api03-Zq7x" + self.ZW + tail + " end")
         self.assertIn("[REDACTED:AnthropicKey]", red)
         self.assertNotIn(tail, red)
         self.assertNotIn(self.ZW, red)
         self.assertTrue(red.startswith("key ") and red.endswith(" end"), red)
 
-    def test_a_key_split_by_a_replacement_character_is_hidden_whole_for_the_reviewer(self):
+    def test_a_key_split_by_a_replacement_character_is_hidden_whole_for_the_reviewer(
+        self,
+    ):
         red, n = L.review_redact("id AKIAABCDEFGH" + self.FFFD + "IJKLMNOP ok")
         self.assertGreaterEqual(n, 1)
         self.assertNotIn("IJKLMNOP", red)
@@ -3475,29 +5388,46 @@ class TestSplitSecrets(unittest.TestCase):
         self.assertNotIn(self.ZW, red)
 
     def test_invisible_characters_outside_a_secret_are_left_as_they_are(self):
-        text = "a" + self.ZW + "b 안녕" + self.SHY + "하세요 " + chr(0x1F468) + self.ZWJ + chr(0x1F469)
+        text = (
+            "a"
+            + self.ZW
+            + "b 안녕"
+            + self.SHY
+            + "하세요 "
+            + chr(0x1F468)
+            + self.ZWJ
+            + chr(0x1F469)
+        )
         self.assertEqual(L.page_redact(text), (text, {}))
         self.assertEqual(L.review_redact(text), (text, 0))
 
     def test_many_emoji_joiners_do_not_slow_the_redaction(self):
-        key = "AKIA" "ABCDEFGHIJKLMNOP"
+        key = "AKIA" + "ABCDEFGHIJKLMNOP"
         text = (chr(0x1F468) + self.ZWJ + chr(0x1F469) + " ") * 200000 + " " + key
         start = _cpu_now()
         red, _ = L.page_redact(text)
-        if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
+        if (
+            importlib.util.find_spec("detect_secrets") is None
+        ):  # detect-secrets alone takes seconds on this text
             self.assertLess(_cpu_now() - start, 5.0)
         self.assertNotIn(key, red)
 
     # Values whose only separator is one invisible character: 3.0.7 hid each, and joining them would glue the
     # second to the first (a lookbehind fails, or a greedy class eats the next keyword).
-    AKIA_KEY = "AKIA" "ABCDEFGHIJKLMNOP"
-    OPENAI_KEY = "sk-" "proj-" "Ab3dE6gH9jK2mN5p" "Q8sT1vW4yZ7bC0eF"
-    HEX32 = "0123456789abcdef" "0123456789abcdef"
-    B64 = "QWxhZGRpbjpvcGVu" "c2VzYW1l=="
+    AKIA_KEY = "AKIA" + "ABCDEFGHIJKLMNOP"
+    OPENAI_KEY = "sk-" + "proj-" + "Ab3dE6gH9jK2mN5p" + "Q8sT1vW4yZ7bC0eF"
+    HEX32 = "0123456789abcdef" + "0123456789abcdef"
+    B64 = "QWxhZGRpbjpvcGVu" + "c2VzYW1l=="
 
-    def test_a_key_right_after_another_across_one_invisible_character_stays_hidden(self):
-        red, counts = L.page_redact("x " + self.AKIA_KEY + self.ZW + self.OPENAI_KEY + " end")
-        self.assertEqual(red, "x [REDACTED:AKIA]" + self.ZW + "[REDACTED:OpenAIKey] end")
+    def test_a_key_right_after_another_across_one_invisible_character_stays_hidden(
+        self,
+    ):
+        red, counts = L.page_redact(
+            "x " + self.AKIA_KEY + self.ZW + self.OPENAI_KEY + " end"
+        )
+        self.assertEqual(
+            red, "x [REDACTED:AKIA]" + self.ZW + "[REDACTED:OpenAIKey] end"
+        )
         self.assertEqual(counts, {"OpenAIKey": 1, "AKIA": 1})
 
     def test_an_invisible_character_between_a_word_and_a_key_stays(self):
@@ -3511,27 +5441,52 @@ class TestSplitSecrets(unittest.TestCase):
 
     def test_a_basic_auth_header_after_a_key_and_a_byte_order_mark_stays_hidden(self):
         bom = chr(0xFEFF)
-        red, _ = L.page_redact(self.OPENAI_KEY + bom + "Authorization: Basic " + self.B64)
+        red, _ = L.page_redact(
+            self.OPENAI_KEY + bom + "Authorization: Basic " + self.B64
+        )
         self.assertEqual(red, "[REDACTED:OpenAIKey]" + bom + "[REDACTED:BasicAuth]")
 
     def test_a_second_pass_over_neighbouring_keys_finds_nothing(self):
         bom = chr(0xFEFF)
-        for text in ("x " + self.AKIA_KEY + self.ZW + self.OPENAI_KEY + " end",
-                     # joined, the key and the next word are one high-entropy run; once the key is a marker
-                     # the header has a word boundary again, and only another pass finds it
-                     '"' + "AKIA" "X4BJIGZG" "2Y6Y3QLN" + chr(0x3164) + "Authorization: Basic " + "Tzr9nKMk" "ZNDS7Nyvg9oy==" + "`",
-                     self.OPENAI_KEY + bom + "api_key=" + self.HEX32,
-                     self.OPENAI_KEY + bom + "Authorization: Basic " + self.B64):
+        for text in (
+            "x " + self.AKIA_KEY + self.ZW + self.OPENAI_KEY + " end",
+            # joined, the key and the next word are one high-entropy run; once the key is a marker
+            # the header has a word boundary again, and only another pass finds it
+            '"' + "AKIA"
+            "X4BJIGZG"
+            "2Y6Y3QLN" + chr(0x3164) + "Authorization: Basic " + "Tzr9nKMk"
+            "ZNDS7Nyvg9oy==" + "`",
+            self.OPENAI_KEY + bom + "api_key=" + self.HEX32,
+            self.OPENAI_KEY + bom + "Authorization: Basic " + self.B64,
+        ):
             once = L.page_redact(text)[0]
             self.assertEqual(L.page_redact(once), (once, {}), text)
             twice = L.review_redact(text)[0]
             self.assertEqual(L.review_redact(twice), (twice, 0), text)
 
     def test_controls_spaces_private_use_and_blank_letters_cut_a_key_too(self):
-        for cp in (0x0000, 0x001B, 0x007F, 0x009F, 0x00A0, 0x2009, 0x202F, 0x3000, 0x2800, 0xE000, 0xF8FF,
-                   0xFFF9, 0xFFFC, 0x110BD, 0xF0000, 0x10FFFD):
+        for cp in (
+            0x0000,
+            0x001B,
+            0x007F,
+            0x009F,
+            0x00A0,
+            0x2009,
+            0x202F,
+            0x3000,
+            0x2800,
+            0xE000,
+            0xF8FF,
+            0xFFF9,
+            0xFFFC,
+            0x110BD,
+            0xF0000,
+            0x10FFFD,
+        ):
             key = self.AKIA_KEY[:8] + chr(cp) + self.AKIA_KEY[8:]
-            self.assertEqual(L.page_redact("k " + key + " e")[0], "k [REDACTED:AKIA] e", hex(cp))
+            self.assertEqual(
+                L.page_redact("k " + key + " e")[0], "k [REDACTED:AKIA] e", hex(cp)
+            )
 
     def test_a_space_a_tab_or_a_line_break_in_a_key_is_no_split(self):
         for sep in (" ", "\t", "\n", chr(0x2028), chr(0x85), chr(0x1C)):
@@ -3539,49 +5494,85 @@ class TestSplitSecrets(unittest.TestCase):
             self.assertEqual(L.page_redact(text), (text, {}), repr(sep))
 
     # From the code review of 3.0.8 (each fails when one part of the joining is broken).
-    def test_invisible_characters_far_from_a_split_secret_stay_when_that_secret_is_hidden(self):
+    def test_invisible_characters_far_from_a_split_secret_stay_when_that_secret_is_hidden(
+        self,
+    ):
         split = self.AKIA_KEY[:9] + self.ZW + self.AKIA_KEY[9:]
         text = "a" + self.ZW + "b " + split + " c" + self.SHY + "d"
-        self.assertEqual(L.page_redact(text)[0], "a" + self.ZW + "b [REDACTED:AKIA] c" + self.SHY + "d")
-        self.assertEqual(L.review_redact(text)[0], "a" + self.ZW + "b [REDACTED:AKIA] c" + self.SHY + "d")
+        self.assertEqual(
+            L.page_redact(text)[0],
+            "a" + self.ZW + "b [REDACTED:AKIA] c" + self.SHY + "d",
+        )
+        self.assertEqual(
+            L.review_redact(text)[0],
+            "a" + self.ZW + "b [REDACTED:AKIA] c" + self.SHY + "d",
+        )
 
     def test_every_split_secret_of_a_text_is_hidden_not_only_the_first(self):
         a = self.AKIA_KEY[:9] + self.ZW + self.AKIA_KEY[9:]
-        b = "ASIA" "ABCDEFGHIJKLMNOP"
+        b = "ASIA" + "ABCDEFGHIJKLMNOP"
         b = b[:11] + self.SHY + b[11:]
         red, counts = L.page_redact(a + " and " + b)
         self.assertEqual(red, "[REDACTED:AKIA] and [REDACTED:ASIA]")
         self.assertEqual(counts, {"AKIA": 1, "ASIA": 1})
 
-    def test_a_value_only_a_reviewer_pattern_knows_is_hidden_whole_when_it_is_split(self):
-        openai = "sk-" "proj-" "A1b2C3d4E5f6G7h8I9j0"
-        bearer = "Bearer " "abcdefghij" "klmnopqrst"
-        url = "https://bob:" "p4ssw0rdx" "@db.example.com/x"
-        for name, value in (("OpenAIKey", openai), ("Bearer", bearer), ("UrlCredential", url)):
+    def test_a_value_only_a_reviewer_pattern_knows_is_hidden_whole_when_it_is_split(
+        self,
+    ):
+        openai = "sk-" + "proj-" + "A1b2C3d4E5f6G7h8I9j0"
+        bearer = "Bearer " + "abcdefghij" + "klmnopqrst"
+        url = "https://bob:" + "p4ssw0rdx" + "@db.example.com/x"
+        for name, value in (
+            ("OpenAIKey", openai),
+            ("Bearer", bearer),
+            ("UrlCredential", url),
+        ):
             cut = len(value) // 2
             red, _ = L.review_redact("x " + value[:cut] + self.ZW + value[cut:] + " y")
             self.assertIn("[REDACTED:%s]" % name, red, name)
-            self.assertNotIn(value[cut:cut + 6], red, name)
+            self.assertNotIn(value[cut : cut + 6], red, name)
             self.assertNotIn(self.ZW, red, name)
 
     def test_a_high_entropy_blob_cut_by_an_invisible_character_is_hidden(self):
-        blob = "Zq7xKp2LmN8vR4tY6" "uW1eB3nH5jC9dF0gA" "Qs5Xc7Vb2Nm4Lk8J"
+        blob = "Zq7xKp2LmN8vR4tY6" + "uW1eB3nH5jC9dF0gA" + "Qs5Xc7Vb2Nm4Lk8J"
         red, counts = L.page_redact("v=" + blob[:25] + self.ZW + blob[25:] + ";")
         self.assertNotIn(blob[25:35], red)
         self.assertEqual(counts, {"entropy": 1})
 
     def test_each_default_ignorable_range_cuts_a_key_at_both_ends_of_the_range(self):
-        for lo, hi in ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5),
-                       (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164),
-                       (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0xFFFD, 0xFFFD),
-                       (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF)):
+        for lo, hi in (
+            (0x00AD, 0x00AD),
+            (0x034F, 0x034F),
+            (0x061C, 0x061C),
+            (0x115F, 0x1160),
+            (0x17B4, 0x17B5),
+            (0x180B, 0x180F),
+            (0x200B, 0x200F),
+            (0x202A, 0x202E),
+            (0x2060, 0x206F),
+            (0x3164, 0x3164),
+            (0xFE00, 0xFE0F),
+            (0xFEFF, 0xFEFF),
+            (0xFFA0, 0xFFA0),
+            (0xFFF0, 0xFFF8),
+            (0xFFFD, 0xFFFD),
+            (0x1BCA0, 0x1BCA3),
+            (0x1D173, 0x1D17A),
+            (0xE0000, 0xE0FFF),
+        ):
             for cp in (lo, hi):
                 key = self.AKIA_KEY[:8] + chr(cp) + self.AKIA_KEY[8:]
-                self.assertEqual(L.page_redact("k " + key + " e")[0], "k [REDACTED:AKIA] e", hex(cp))
+                self.assertEqual(
+                    L.page_redact("k " + key + " e")[0], "k [REDACTED:AKIA] e", hex(cp)
+                )
 
-    def test_an_invisible_character_that_breaks_the_flag_of_a_curl_user_is_removed_with_it(self):
-        cmd = "cu" "rl"
-        red, _ = L.page_redact(cmd + " " + self.ZW + "-u svc:" + "P4ssw0rdXY" + " https://x.example")
+    def test_an_invisible_character_that_breaks_the_flag_of_a_curl_user_is_removed_with_it(
+        self,
+    ):
+        cmd = "cu" + "rl"
+        red, _ = L.page_redact(
+            cmd + " " + self.ZW + "-u svc:" + "P4ssw0rdXY" + " https://x.example"
+        )
         self.assertNotIn("P4ssw0rdXY", red)
         self.assertEqual(red, cmd + " [REDACTED:CurlUser] https://x.example")
 
@@ -3592,7 +5583,11 @@ class TestSplitSecrets(unittest.TestCase):
 
     def test_a_long_key_split_in_the_middle_is_hidden_whole(self):
         # the head alone is a key to the patterns as it stands; joining must take the tail in with it
-        key = "sk-" "ant-api03-" + ("Zq7xKp2LmN8vR4tY6" "uW1eB3nH5jC9dF0gA") * 2 + "Qs5Xc7Vb2" "Nm4Lk8Jw9" + "AA"
+        key = (
+            "sk-"
+            "ant-api03-" + ("Zq7xKp2LmN8vR4tY6" + "uW1eB3nH5jC9dF0gA") * 2 + "Qs5Xc7Vb2"
+            "Nm4Lk8Jw9" + "AA"
+        )
         cut = len(key) // 2
         red, counts = L.page_redact("k " + key[:cut] + self.ZW + key[cut:] + " e")
         self.assertEqual(red, "k [REDACTED:AnthropicKey] e")
@@ -3600,12 +5595,14 @@ class TestSplitSecrets(unittest.TestCase):
 
     # From the second security review of 3.0.8: neighbours packed tight, where a joined run or a greedy class takes
     # in the next value's keyword; 3.0.7 hid each of these values.
-    ASIA_KEY = "ASIA" "QZXKWJ7Y8RN5TB2M"
+    ASIA_KEY = "ASIA" + "QZXKWJ7Y8RN5TB2M"
 
     def test_a_key_after_a_hex_key_across_one_invisible_character_stays_hidden(self):
         for sep in (chr(0x200C), chr(0x00A0)):
             red, _ = L.page_redact("api_key=" + self.HEX32 + sep + self.ASIA_KEY)
-            self.assertEqual(red, "api_[REDACTED:HexKey]" + sep + "[REDACTED:ASIA]", hex(ord(sep)))
+            self.assertEqual(
+                red, "api_[REDACTED:HexKey]" + sep + "[REDACTED:ASIA]", hex(ord(sep))
+            )
 
     def test_a_hex_key_after_a_split_key_keeps_its_keyword(self):
         cut = len(self.OPENAI_KEY) // 2
@@ -3617,24 +5614,46 @@ class TestSplitSecrets(unittest.TestCase):
     def test_a_url_password_after_a_split_key_stays_hidden(self):
         cut = len(self.OPENAI_KEY) // 2
         key = self.OPENAI_KEY[:cut] + self.ZW + self.OPENAI_KEY[cut:]
-        cred = "Pw7q" "Lz9xRt"
-        red, _ = L.page_redact(key + chr(0xFEFF) + "https://user:" + cred + "@db.example.com/x")
+        cred = "Pw7q" + "Lz9xRt"
+        red, _ = L.page_redact(
+            key + chr(0xFEFF) + "https://user:" + cred + "@db.example.com/x"
+        )
         self.assertNotIn(cred, red)
 
     # From the mask-mode measurement of 3.0.8: a value 3.0.7 hid only by the entropy rule, which a neighbour's
     # pattern takes a part of once the neighbours are joined.
-    def test_a_token_only_the_entropy_rule_hides_stays_hidden_when_a_url_after_it_is_joined(self):
-        head = "gh" "p_" + "a1B2c3D4e5F6g7H8i" "9J0k1L2m3N4o5P6q7R"   # no token pattern, only the entropy rule
-        text = (head + self.FFFD + "8" + chr(0x1B) + "https" + chr(0xE000) + "://user:" + "s3cr3t" "Pw99"
-                + "@host.example")
+    def test_a_token_only_the_entropy_rule_hides_stays_hidden_when_a_url_after_it_is_joined(
+        self,
+    ):
+        head = ("gh" + "p_") + (
+            "a1B2c3D4e5F6g7H8i" + "9J0k1L2m3N4o5P6q7R"
+        )  # no token pattern, only the entropy rule
+        text = (
+            head
+            + self.FFFD
+            + "8"
+            + chr(0x1B)
+            + "https"
+            + chr(0xE000)
+            + "://user:"
+            + "s3cr3t"
+            "Pw99" + "@host.example"
+        )
         for mode in ("full", "mask"):
             self.assertNotIn("c3D4e5", L.page_redact(text, None, mode)[0], mode)
         self.assertNotIn("c3D4e5", L.review_redact(text)[0])
 
-    def test_a_bearer_value_only_the_entropy_rule_hides_stays_hidden_when_its_neighbours_are_joined(self):
-        value = "Zq7xKp2LmN8vR4tY" "6uW1eB3n"   # 24 characters: the entropy rule finds it only with the word after it
-        text = ("api_key=" + self.HEX32 + chr(0x3164) + "Bearer " + value + "pass" "word" + chr(0x200C)
-                + ": hunter22xyz")
+    def test_a_bearer_value_only_the_entropy_rule_hides_stays_hidden_when_its_neighbours_are_joined(
+        self,
+    ):
+        value = (
+            "Zq7xKp2LmN8vR4tY"
+            "6uW1eB3n"
+        )  # 24 characters: the entropy rule finds it only with the word after it
+        text = (
+            "api_key=" + self.HEX32 + chr(0x3164) + "Bearer " + value + "pass"
+            "word" + chr(0x200C) + ": hunter22xyz"
+        )
         for mode in ("full", "mask"):
             self.assertNotIn(value[4:12], L.page_redact(text, None, mode)[0], mode)
         self.assertNotIn(value[4:12], L.review_redact(text)[0])
@@ -3642,7 +5661,7 @@ class TestSplitSecrets(unittest.TestCase):
     def test_a_split_key_after_a_name_the_entropy_rule_takes_in_is_hidden_whole(self):
         # 3.0.7 hid `x=` with the key's head in one entropy run and left the tail; joined, the key's own pattern
         # hides it all, and `x=` stays hidden as 3.0.7 hid it
-        key = "AI" "za" + "9LuG7o1xz6oO1n5Hu" "bdh1ep6oYWeer65T" "hY"
+        key = ("AI" + "za") + ("9LuG7o1xz6oO1n5Hu" + "bdh1ep6oYWeer65T" + "hY")
         text = "x=" + key[:-4] + chr(0xFFA0) + key[-4:] + ";"
         for mode in ("full", "mask"):
             red, counts = L.page_redact(text, None, mode)
@@ -3651,10 +5670,22 @@ class TestSplitSecrets(unittest.TestCase):
             self.assertEqual(counts.get("GoogleKey"), 1, mode)
             self.assertEqual(L.page_redact(red, None, mode), (red, {}), mode)
 
-    def test_the_trail_of_a_pass_shows_what_a_mask_keeps_and_nothing_a_marker_hides(self):
+    def test_the_trail_of_a_pass_shows_what_a_mask_keeps_and_nothing_a_marker_hides(
+        self,
+    ):
         text = "x " + self.AKIA_KEY + " y " + self.HEX32[:8]
-        for mode, red, shown in (("mask", "x AKIA****MNOP y " + self.HEX32[:8], [1] * 6 + [0] * 12 + [1] * 15),
-                                 ("full", "x [REDACTED:AKIA] y " + self.HEX32[:8], [1] * 2 + [0] * 20 + [1] * 11)):
+        for mode, red, shown in (
+            (
+                "mask",
+                "x AKIA****MNOP y " + self.HEX32[:8],
+                [1] * 6 + [0] * 12 + [1] * 15,
+            ),
+            (
+                "full",
+                "x [REDACTED:AKIA] y " + self.HEX32[:8],
+                [1] * 2 + [0] * 20 + [1] * 11,
+            ),
+        ):
             trail = L._Trail(len(text))
             self.assertEqual(L._page_pass(text, None, mode, trail)[0], red, mode)
             self.assertEqual(list(trail.shown()), shown, mode)
@@ -3663,13 +5694,20 @@ class TestSplitSecrets(unittest.TestCase):
         text = (self.AKIA_KEY + self.ZW + " ") * 5000
         start = _cpu_now()
         red, counts = L.page_redact(text)
-        if importlib.util.find_spec("detect_secrets") is None:   # detect-secrets alone takes seconds on this text
+        if (
+            importlib.util.find_spec("detect_secrets") is None
+        ):  # detect-secrets alone takes seconds on this text
             self.assertLess(_cpu_now() - start, 3.0)
         self.assertEqual(counts, {"AKIA": 5000})
 
-    def test_an_invisible_character_with_nothing_to_join_costs_one_pass_as_in_3_0_7(self):
+    def test_an_invisible_character_with_nothing_to_join_costs_one_pass_as_in_3_0_7(
+        self,
+    ):
         smile = chr(0x263A) + chr(0xFE0F)
-        for name, call in (("_page_pass", L.page_redact), ("_review_pass", L.review_redact)):
+        for name, call in (
+            ("_page_pass", L.page_redact),
+            ("_review_pass", L.review_redact),
+        ):
             real, calls = getattr(L, name), []
             setattr(L, name, lambda *a, real=real: calls.append(1) or real(*a))
             try:
@@ -3680,7 +5718,9 @@ class TestSplitSecrets(unittest.TestCase):
             self.assertEqual(red, "smile " + smile + " and [REDACTED:AKIA] end", name)
 
     def test_a_second_pass_changes_nothing(self):
-        text = "id " + self.AKIA_KEY[:7] + self.FFFD + self.AKIA_KEY[7:] + " ok" + self.ZW
+        text = (
+            "id " + self.AKIA_KEY[:7] + self.FFFD + self.AKIA_KEY[7:] + " ok" + self.ZW
+        )
         once, _ = L.page_redact(text)
         self.assertEqual(L.page_redact(once), (once, {}))
 
@@ -3694,6 +5734,7 @@ class TestSplitSecrets(unittest.TestCase):
 def _no_detect_secrets():
     """detect-secrets absent whatever is installed: the fallback path, the same on every machine."""
     from unittest import mock
+
     return mock.patch.dict(sys.modules, {"detect_secrets": None})
 
 
@@ -3710,6 +5751,7 @@ def _forget_ds_warnings():
                 delattr(L.redact, a)
         for a, v in saved.items():
             setattr(L.redact, a, v)
+
     return restore
 
 
@@ -3721,7 +5763,11 @@ class _FakeDetectSecrets:
 
     def modules(self):
         import types
-        mod, settings = types.ModuleType("detect_secrets"), types.ModuleType("detect_secrets.settings")
+
+        mod, settings = (
+            types.ModuleType("detect_secrets"),
+            types.ModuleType("detect_secrets.settings"),
+        )
         findings, boom_at, seen = self.findings, self.boom_at, []
         self.seen = seen
 
@@ -3738,6 +5784,7 @@ class _FakeDetectSecrets:
                     if boom_at is not None and k == boom_at:
                         raise RuntimeError("boom")
                     yield types.SimpleNamespace(secret_value=v)
+
         mod.SecretsCollection, settings.default_settings = Col, contextlib.nullcontext
         return {"detect_secrets": mod, "detect_secrets.settings": settings}
 
@@ -3749,47 +5796,76 @@ class TestRedactLayers(unittest.TestCase):
     def test_a_run_without_detect_secrets_warns_once(self):
         with _no_detect_secrets():
             err = _quiet(lambda: (L.redact("a"), L.redact("b")))[1]
-        self.assertEqual(err, "[lineage] WARN: detect-secrets unavailable, using fallback "
-                              "(pip install 'detect-secrets>=1.5')\n")
+        self.assertEqual(
+            err,
+            "[lineage] WARN: detect-secrets unavailable, using fallback "
+            "(pip install 'detect-secrets>=1.5')\n",
+        )
 
     def test_an_import_error_inside_the_scan_is_the_unavailable_warning(self):
         import types
         from unittest import mock
-        mod, settings = types.ModuleType("detect_secrets"), types.ModuleType("detect_secrets.settings")
+
+        mod, settings = (
+            types.ModuleType("detect_secrets"),
+            types.ModuleType("detect_secrets.settings"),
+        )
 
         class Col:
             files = []
 
             def scan_file(self, p):
                 raise ImportError("lazy plugin import failed")
+
         mod.SecretsCollection, settings.default_settings = Col, contextlib.nullcontext
-        with mock.patch.dict(sys.modules, {"detect_secrets": mod, "detect_secrets.settings": settings}):
+        with mock.patch.dict(
+            sys.modules, {"detect_secrets": mod, "detect_secrets.settings": settings}
+        ):
             got = _quiet(L.redact, "text")
-        self.assertEqual(got, (("text", {}), "[lineage] WARN: detect-secrets unavailable, using fallback "
-                                             "(pip install 'detect-secrets>=1.5')\n"))
+        self.assertEqual(
+            got,
+            (
+                ("text", {}),
+                "[lineage] WARN: detect-secrets unavailable, using fallback "
+                "(pip install 'detect-secrets>=1.5')\n",
+            ),
+        )
 
     def test_the_entropy_rule_hides_a_run_of_exactly_4_5_bits(self):
-        at, under = "ABCDEFGH" * 2 + "IJKLMNOPQRSTUVWX", "ABCDEFGHI" * 2 + "JKLMNOPQRSTUVW"
-        self.assertEqual((L.shannon_entropy(at), L.shannon_entropy(under)), (4.5, 4.4375))
+        at, under = (
+            "ABCDEFGH" * 2 + "IJKLMNOPQRSTUVWX",
+            "ABCDEFGHI" * 2 + "JKLMNOPQRSTUVW",
+        )
+        self.assertEqual(
+            (L.shannon_entropy(at), L.shannon_entropy(under)), (4.5, 4.4375)
+        )
         with _no_detect_secrets():
             got = _quiet(lambda: (L.redact(at), L.redact(under)))[0]
         self.assertEqual(got, (("[REDACTED:entropy]", {"entropy": 1}), (under, {})))
 
     def test_detect_secrets_finds_are_hidden_and_its_scratch_file_goes(self):
         from unittest import mock
+
         fake = _FakeDetectSecrets(["s3cr3tvalue", ""])
         with mock.patch.dict(sys.modules, fake.modules()):
             got = _quiet(L.redact, "token s3cr3tvalue here")[0]
         self.assertEqual(got, ("token [REDACTED:ds] here", {"ds:detect-secrets": 1}))
-        self.assertFalse(os.path.exists(fake.seen[0]), "the scratch file detect-secrets read is removed")
+        self.assertFalse(
+            os.path.exists(fake.seen[0]),
+            "the scratch file detect-secrets read is removed",
+        )
 
     def test_a_scratch_file_whose_write_fails_goes_too(self):
         from unittest import mock
+
         scratch = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, scratch, True)
-        text = "token s3cr3tvalue " + chr(0xD800) + " here"            # UTF-8 cannot hold a lone surrogate
-        with mock.patch.dict(sys.modules, _FakeDetectSecrets(["s3cr3tvalue"]).modules()), \
-                mock.patch.object(tempfile, "tempdir", scratch):
+        text = (
+            "token s3cr3tvalue " + chr(0xD800) + " here"
+        )  # UTF-8 cannot hold a lone surrogate
+        with mock.patch.dict(
+            sys.modules, _FakeDetectSecrets(["s3cr3tvalue"]).modules()
+        ), mock.patch.object(tempfile, "tempdir", scratch):
             got, err = _quiet(L.redact, text)
         self.assertEqual(os.listdir(scratch), [], "no scratch file is left behind")
         self.assertEqual(got, (text, {}))
@@ -3798,7 +5874,9 @@ class TestRedactLayers(unittest.TestCase):
 
 class TestMarkdownBlocks(unittest.TestCase):
     def test_a_quote_line_loses_one_space_after_its_marker(self):
-        self.assertEqual(L.render_markdown("> a\n>  b"), "<blockquote><p>a<br> b</p></blockquote>")
+        self.assertEqual(
+            L.render_markdown("> a\n>  b"), "<blockquote><p>a<br> b</p></blockquote>"
+        )
 
     def test_quotes_nest_33_deep_and_the_rest_is_text(self):
         out = L.render_markdown(">" * 34 + " x")
@@ -3806,22 +5884,32 @@ class TestMarkdownBlocks(unittest.TestCase):
         self.assertIn("<p>&gt; x</p>", out)
 
     def test_a_delimiter_row_without_a_dash_is_no_table(self):
-        self.assertEqual(L.render_markdown("| a | b |\n| : | : |\n| 1 | 2 |"),
-                         "<p>| a | b |<br>| : | : |<br>| 1 | 2 |</p>")
+        self.assertEqual(
+            L.render_markdown("| a | b |\n| : | : |\n| 1 | 2 |"),
+            "<p>| a | b |<br>| : | : |<br>| 1 | 2 |</p>",
+        )
 
     def test_a_heading_drops_the_spaces_after_it(self):
-        self.assertEqual(L.render_markdown("# spaced title   "), "<h3>spaced title</h3>")
+        self.assertEqual(
+            L.render_markdown("# spaced title   "), "<h3>spaced title</h3>"
+        )
 
     def test_a_code_block_keeps_its_blank_lines(self):
-        self.assertEqual(L.render_markdown("```\n\ncode\n\n```"), "<pre><code>\ncode\n</code></pre>")
+        self.assertEqual(
+            L.render_markdown("```\n\ncode\n\n```"), "<pre><code>\ncode\n</code></pre>"
+        )
 
     def test_list_lines_of_either_kind_make_one_list_named_by_the_first(self):
-        self.assertEqual(L.render_markdown("1. a\n- b"), "<ol><li>a</li><li>b</li></ol>")
+        self.assertEqual(
+            L.render_markdown("1. a\n- b"), "<ol><li>a</li><li>b</li></ol>"
+        )
 
     def test_a_table_is_judged_before_a_list(self):
-        self.assertEqual(L.render_markdown("- a | b\n|---|---|\n| 1 | 2 |"),
-                         "<table><thead><tr><th>- a</th><th>b</th></tr></thead>"
-                         "<tbody><tr><td>1</td><td>2</td></tr></tbody></table>")
+        self.assertEqual(
+            L.render_markdown("- a | b\n|---|---|\n| 1 | 2 |"),
+            "<table><thead><tr><th>- a</th><th>b</th></tr></thead>"
+            "<tbody><tr><td>1</td><td>2</td></tr></tbody></table>",
+        )
 
 
 class TestRowsAcrossTurns(_ReviewCase):
@@ -3829,14 +5917,27 @@ class TestRowsAcrossTurns(_ReviewCase):
         return _quiet(L.render_rows, turns, "s", None, "full", False, **kw)[0]
 
     def test_a_user_turn_folds_past_400_characters_not_at_400(self):
-        rows = self._rows([_turn("user", "x" * 400, uuid="a"), _turn("user", "y" * 401, uuid="b")])[0]
-        self.assertEqual(['class="plain"' in r for r in rows if 'class="row me"' in r], [True, False])
+        rows = self._rows(
+            [_turn("user", "x" * 400, uuid="a"), _turn("user", "y" * 401, uuid="b")]
+        )[0]
+        self.assertEqual(
+            ['class="plain"' in r for r in rows if 'class="row me"' in r], [True, False]
+        )
 
     def test_the_date_pill_comes_again_after_a_session_pill(self):
-        turns = [_turn("user", "a", uuid="a", session="s1"), _turn("user", "b", uuid="b", session="s2")]
+        turns = [
+            _turn("user", "a", uuid="a", session="s1"),
+            _turn("user", "b", uuid="b", session="s2"),
+        ]
         rows = self._rows(turns, all_sessions=True)[0]
-        self.assertEqual([("pill-session" in r, "pill-date" in r) for r in rows if 'class="day"' in r],
-                         [(True, False), (False, True), (True, False), (False, True)])
+        self.assertEqual(
+            [
+                ("pill-session" in r, "pill-date" in r)
+                for r in rows
+                if 'class="day"' in r
+            ],
+            [(True, False), (False, True), (True, False), (False, True)],
+        )
 
     def test_cache_hits_count_only_summaries_read_from_the_cache(self):
         turns = [_turn("assistant", "첫 답입니다. 결과가 나왔습니다.", uuid="a1")]
@@ -3846,18 +5947,31 @@ class TestRowsAcrossTurns(_ReviewCase):
 
 class TestMainPaths(_ReviewCase):
     def _page(self):
-        pages = [p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")]
+        pages = [
+            p for p in os.listdir(self.d) if p.startswith("out") and p.endswith(".html")
+        ]
         if not pages:
             return ""
         with open(os.path.join(self.d, pages[0]), encoding="utf-8") as f:
             return f.read()
 
     def _rulebase(self, *extra):
-        return _quiet(L.main, ["--session", self.jf, "--rulebase", "--skip-reviewer",
-                               "--output", os.path.join(self.d, "out.html")] + list(extra))
+        return _quiet(
+            L.main,
+            [
+                "--session",
+                self.jf,
+                "--rulebase",
+                "--skip-reviewer",
+                "--output",
+                os.path.join(self.d, "out.html"),
+            ]
+            + list(extra),
+        )
 
     def test_keywords_from_the_environment_join_those_of_the_flag(self):
         from unittest import mock
+
         self._write([_rec("user", "alpha 와 beta 를 점검", uuid="u1")])
         with mock.patch.dict(os.environ, {"LINEAGE_REDACT_EXTRA": " beta "}):
             rc, err = self._rulebase("--redact-extra", "alpha")
@@ -3868,47 +5982,136 @@ class TestMainPaths(_ReviewCase):
     def _codex_rollout(self, cwd="/w"):
         """A rollout as Codex 0.144.5 writes it: session_meta first, what the user typed and what the model said as
         event records, the model input (environment, an injected skill body) and tool calls as response_item."""
-        self._write([{"timestamp": "2026-10-27T10:00:00Z", "type": "session_meta",
-                      "payload": {"id": "019f", "cwd": cwd, "originator": "codex_exec"}},
-                     {"timestamp": "2026-10-27T10:00:01Z", "type": "response_item",
-                      "payload": {"type": "message", "role": "user",
-                                  "content": [{"type": "input_text", "text": "<skill>\n<name>banker-x</name>\nBODY-SECRET"}]}},
-                     {"timestamp": "2026-10-27T10:00:01Z", "type": "event_msg",
-                      "payload": {"type": "user_message", "message": "목록을 보여 줘"}},
-                     {"timestamp": "2026-10-27T10:00:02Z", "type": "response_item",
-                      "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"}},
-                     {"timestamp": "2026-10-27T10:00:03Z", "type": "response_item",
-                      "payload": {"type": "function_call_output", "output": "OUTPUT-NOT-A-TURN"}},
-                     {"timestamp": "2026-10-27T10:00:04Z", "type": "event_msg",
-                      "payload": {"type": "agent_message", "message": "목록은 a, b 입니다."}},
-                     {"timestamp": "2026-10-27T10:00:05Z", "type": "compacted", "payload": {"message": ""}},
-                     {"timestamp": "2026-10-27T10:00:06Z", "type": "event_msg",
-                      "payload": {"type": "agent_message", "message": "이어서 합니다."}}])
+        self._write(
+            [
+                {
+                    "timestamp": "2026-10-27T10:00:00Z",
+                    "type": "session_meta",
+                    "payload": {"id": "019f", "cwd": cwd, "originator": "codex_exec"},
+                },
+                {
+                    "timestamp": "2026-10-27T10:00:01Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "<skill>\n<name>banker-x</name>\nBODY-SECRET",
+                            }
+                        ],
+                    },
+                },
+                {
+                    "timestamp": "2026-10-27T10:00:01Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "목록을 보여 줘"},
+                },
+                {
+                    "timestamp": "2026-10-27T10:00:02Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": '{"cmd":"ls"}',
+                    },
+                },
+                {
+                    "timestamp": "2026-10-27T10:00:03Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "output": "OUTPUT-NOT-A-TURN",
+                    },
+                },
+                {
+                    "timestamp": "2026-10-27T10:00:04Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "목록은 a, b 입니다.",
+                    },
+                },
+                {
+                    "timestamp": "2026-10-27T10:00:05Z",
+                    "type": "compacted",
+                    "payload": {"message": ""},
+                },
+                {
+                    "timestamp": "2026-10-27T10:00:06Z",
+                    "type": "event_msg",
+                    "payload": {"type": "agent_message", "message": "이어서 합니다."},
+                },
+            ]
+        )
 
     def test_a_codex_session_record_reads_as_turns(self):
         self._codex_rollout()
         with open(self.jf, encoding="utf-8") as f:
             turns = list(L.parse_turns(f, session_id="s"))
-        self.assertEqual([(t["role"], t["text"], t["tools"]) for t in turns],
-                         [("user", "목록을 보여 줘", {}), ("assistant", "", {"exec_command": 1}),
-                          ("assistant", "목록은 a, b 입니다.", {}), ("mark", "compaction", {}),
-                          ("assistant", "이어서 합니다.", {})])
+        self.assertEqual(
+            [(t["role"], t["text"], t["tools"]) for t in turns],
+            [
+                ("user", "목록을 보여 줘", {}),
+                ("assistant", "", {"exec_command": 1}),
+                ("assistant", "목록은 a, b 입니다.", {}),
+                ("mark", "compaction", {}),
+                ("assistant", "이어서 합니다.", {}),
+            ],
+        )
 
     def test_a_codex_0_160_record_reads_its_completed_items_and_inner_tools(self):
-        item = lambda kind, text: {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "t",
-                                                                     "item": {"type": kind, "content": [{"type": "text", "text": text}]}}}
-        self._write([{"type": "session_meta", "payload": {"id": "x", "cwd": "/w"}},
-                     {"type": "response_item", "payload": {"type": "message", "role": "user",
-                                                           "content": [{"type": "input_text", "text": "<environment_context>"}]}},
-                     item("UserMessage", "목록"),
-                     {"type": "event_msg", "payload": {"type": "user_message", "message": "목록"}},
-                     {"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec",
-                                                           "input": "text(await tools.exec_command({cmd:'ls'}))"}},
-                     item("Reasoning", "생각"), item("AgentMessage", "a, b")])
+        def item(kind, text):
+            return {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "turn_id": "t",
+                    "item": {"type": kind, "content": [{"type": "text", "text": text}]},
+                },
+            }
+
+        self._write(
+            [
+                {"type": "session_meta", "payload": {"id": "x", "cwd": "/w"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "<environment_context>"}
+                        ],
+                    },
+                },
+                item("UserMessage", "목록"),
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "목록"},
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "exec",
+                        "input": "text(await tools.exec_command({cmd:'ls'}))",
+                    },
+                },
+                item("Reasoning", "생각"),
+                item("AgentMessage", "a, b"),
+            ]
+        )
         with open(self.jf, encoding="utf-8") as f:
             turns = list(L.parse_turns(f, session_id="s"))
-        self.assertEqual([(t["role"], t["text"], t["tools"]) for t in turns],
-                         [("user", "목록", {}), ("assistant", "", {"exec_command": 1}), ("assistant", "a, b", {})])
+        self.assertEqual(
+            [(t["role"], t["text"], t["tools"]) for t in turns],
+            [
+                ("user", "목록", {}),
+                ("assistant", "", {"exec_command": 1}),
+                ("assistant", "a, b", {}),
+            ],
+        )
 
     def test_a_codex_session_record_renders_a_page_without_the_model_input(self):
         self._codex_rollout()
@@ -3922,32 +6125,72 @@ class TestMainPaths(_ReviewCase):
 
     def test_inside_codex_the_session_is_found_by_its_thread_id(self):
         from unittest import mock
+
         home = os.path.join(self.d, "codex")
         day = os.path.join(home, "sessions", "2026", "10", "27")
         os.makedirs(day)
         self._codex_rollout(cwd=os.getcwd())
-        mine = os.path.join(day, "rollout-2026-10-27T10-00-00-01a17e65-99ef-7521-afab-678084f9edb2.jsonl")
-        other = os.path.join(day, "rollout-2026-10-27T11-00-00-01a17e65-0000-7521-afab-678084f9edb2.jsonl")
+        mine = os.path.join(
+            day,
+            "rollout-2026-10-27T10-00-00-01a17e65-99ef-7521-afab-678084f9edb2.jsonl",
+        )
+        other = os.path.join(
+            day,
+            "rollout-2026-10-27T11-00-00-01a17e65-0000-7521-afab-678084f9edb2.jsonl",
+        )
         for f in (mine, other):
             shutil.copyfile(self.jf, f)
-        env = {"CODEX_HOME": home, "CODEX_THREAD_ID": "01a17e65-99ef-7521-afab-678084f9edb2"}
-        sub = os.path.join(day, "rollout-2026-10-27T12-00-00-01a17e65-1111-7521-afab-678084f9edb2.jsonl")
-        with open(self.jf, encoding="utf-8") as f, open(sub, "w", encoding="utf-8") as g:
+        env = {
+            "CODEX_HOME": home,
+            "CODEX_THREAD_ID": "01a17e65-99ef-7521-afab-678084f9edb2",
+        }
+        sub = os.path.join(
+            day,
+            "rollout-2026-10-27T12-00-00-01a17e65-1111-7521-afab-678084f9edb2.jsonl",
+        )
+        with open(self.jf, encoding="utf-8") as f, open(
+            sub, "w", encoding="utf-8"
+        ) as g:
             first = json.loads(f.readline())
-            first["payload"]["source"] = {"subagent": {"thread_spawn": {"parent_thread_id": "p", "depth": 1}}}
+            first["payload"]["source"] = {
+                "subagent": {"thread_spawn": {"parent_thread_id": "p", "depth": 1}}
+            }
             g.write(json.dumps(first) + "\n" + f.read())
         with mock.patch.dict(os.environ, env):
             self.assertEqual(str(L.auto_discover_jsonl()), mine)
-            self.assertEqual(sorted(map(str, L.project_jsonl_files())), sorted([mine, other]), "a subagent is no session")
-        with mock.patch.dict(os.environ, dict(env, CODEX_THREAD_ID="01a17e65-2222-7521-afab-678084f9edb2")):
-            self.assertIsNone(L.auto_discover_jsonl(), "inside Codex a missing rollout is not replaced by a Claude one")
+            self.assertEqual(
+                sorted(map(str, L.project_jsonl_files())),
+                sorted([mine, other]),
+                "a subagent is no session",
+            )
+        with mock.patch.dict(
+            os.environ,
+            dict(env, CODEX_THREAD_ID="01a17e65-2222-7521-afab-678084f9edb2"),
+        ):
+            self.assertIsNone(
+                L.auto_discover_jsonl(),
+                "inside Codex a missing rollout is not replaced by a Claude one",
+            )
         with mock.patch.dict(os.environ, dict(env, CODEX_THREAD_ID="../x")):
             self.assertNotEqual(str(L.auto_discover_jsonl()), mine)
 
     def test_a_codex_record_in_an_unknown_shape_stops_instead_of_an_empty_page(self):
-        self._write([{"type": "session_meta", "payload": {"id": "x", "cwd": "/w", "cli_version": "9.9.9"}},
-                     {"type": "event_msg", "payload": {"type": "user_said_v2", "text": "hi"}},
-                     {"type": "event_msg", "payload": {"type": "agent_message", "message": "ok"}}])
+        self._write(
+            [
+                {
+                    "type": "session_meta",
+                    "payload": {"id": "x", "cwd": "/w", "cli_version": "9.9.9"},
+                },
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "user_said_v2", "text": "hi"},
+                },
+                {
+                    "type": "event_msg",
+                    "payload": {"type": "agent_message", "message": "ok"},
+                },
+            ]
+        )
         rc, err = self._rulebase()
         self.assertEqual(rc, 2)
         self.assertIn("Codex 9.9.9 session record, but no user turn was read", err)
@@ -3955,19 +6198,53 @@ class TestMainPaths(_ReviewCase):
 
     def test_all_sessions_leaves_out_a_codex_record_it_cannot_read(self):
         from unittest import mock
+
         home = os.path.join(self.d, "codex")
         day = os.path.join(home, "sessions", "2026", "10", "27")
         os.makedirs(day)
-        good = [{"type": "session_meta", "payload": {"id": "g", "cwd": os.getcwd(), "cli_version": "0.144.5"}},
-                {"timestamp": "2026-10-27T10:00:01Z", "type": "event_msg", "payload": {"type": "user_message", "message": "GOOD-ASK"}}]
-        bad = [{"type": "session_meta", "payload": {"id": "b", "cwd": os.getcwd(), "cli_version": "9.9.9"}},
-               {"timestamp": "2026-10-27T10:00:02Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "BAD-ANSWER"}}]
-        for name, recs in (("rollout-a-01a17e65-99ef-7521-afab-678084f9edb2.jsonl", good), ("rollout-b-01a17e65-0000-7521-afab-678084f9edb2.jsonl", bad)):
+        good = [
+            {
+                "type": "session_meta",
+                "payload": {"id": "g", "cwd": os.getcwd(), "cli_version": "0.144.5"},
+            },
+            {
+                "timestamp": "2026-10-27T10:00:01Z",
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "GOOD-ASK"},
+            },
+        ]
+        bad = [
+            {
+                "type": "session_meta",
+                "payload": {"id": "b", "cwd": os.getcwd(), "cli_version": "9.9.9"},
+            },
+            {
+                "timestamp": "2026-10-27T10:00:02Z",
+                "type": "event_msg",
+                "payload": {"type": "agent_message", "message": "BAD-ANSWER"},
+            },
+        ]
+        for name, recs in (
+            ("rollout-a-01a17e65-99ef-7521-afab-678084f9edb2.jsonl", good),
+            ("rollout-b-01a17e65-0000-7521-afab-678084f9edb2.jsonl", bad),
+        ):
             with open(os.path.join(day, name), "w", encoding="utf-8") as f:
                 f.write("\n".join(json.dumps(r) for r in recs) + "\n")
-        env = {"CODEX_HOME": home, "CODEX_THREAD_ID": "01a17e65-99ef-7521-afab-678084f9edb2"}
+        env = {
+            "CODEX_HOME": home,
+            "CODEX_THREAD_ID": "01a17e65-99ef-7521-afab-678084f9edb2",
+        }
         with mock.patch.dict(os.environ, env):
-            rc, err = _quiet(L.main, ["--all-sessions", "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])
+            rc, err = _quiet(
+                L.main,
+                [
+                    "--all-sessions",
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--output",
+                    os.path.join(self.d, "out.html"),
+                ],
+            )
         self.assertEqual(rc, 0)
         self.assertIn("left out", err)
         self.assertIn("GOOD-ASK", self._page())
@@ -3980,85 +6257,174 @@ class TestMainPaths(_ReviewCase):
     @unittest.skipUnless(hasattr(os, "mkfifo"), "named pipes are POSIX")
     def test_a_pipe_with_no_turns_renders_without_opening_it_again(self):
         import threading
+
         fifo = os.path.join(self.d, "p.jsonl")
         os.mkfifo(fifo)
 
         def feed():
             with open(fifo, "w", encoding="utf-8") as f:
                 f.write(json.dumps({"type": "summary", "summary": "x"}) + "\n")
+
         writer = threading.Thread(target=feed, daemon=True)
         writer.start()
         done = []
-        runner = threading.Thread(target=lambda: done.append(_quiet(L.main, [
-            "--session", fifo, "--rulebase", "--skip-reviewer", "--output", os.path.join(self.d, "out.html")])[0]),
-            daemon=True)
+        runner = threading.Thread(
+            target=lambda: done.append(
+                _quiet(
+                    L.main,
+                    [
+                        "--session",
+                        fifo,
+                        "--rulebase",
+                        "--skip-reviewer",
+                        "--output",
+                        os.path.join(self.d, "out.html"),
+                    ],
+                )[0]
+            ),
+            daemon=True,
+        )
         runner.start()
         runner.join(10)
         stalled = runner.is_alive()
-        if stalled:   # unblock the second open so the test run can end
+        if stalled:  # unblock the second open so the test run can end
             with open(fifo, "w", encoding="utf-8"):
                 pass
             runner.join(5)
-        self.assertFalse(stalled, "a pipe is read once; a second open waits for another writer")
+        self.assertFalse(
+            stalled, "a pipe is read once; a second open waits for another writer"
+        )
         self.assertEqual(done, [0])
 
     def test_purge_cache_removes_the_cache_then_finds_none(self):
         os.makedirs(os.path.join(self.cache, "2", "s"))
-        self.assertEqual(_quiet(L.main, ["--purge-cache"]), (0, "[lineage] cache purged: %s\n" % self.cache))
+        self.assertEqual(
+            _quiet(L.main, ["--purge-cache"]),
+            (0, "[lineage] cache purged: %s\n" % self.cache),
+        )
         self.assertFalse(os.path.exists(self.cache))
-        self.assertEqual(_quiet(L.main, ["--purge-cache"]), (0, "[lineage] no cache to purge\n"))
+        self.assertEqual(
+            _quiet(L.main, ["--purge-cache"]), (0, "[lineage] no cache to purge\n")
+        )
 
     def test_apply_review_names_the_source_and_range_flags_it_does_not_use(self):
-        rc, err = _quiet(L.main, ["--apply-review", os.path.join(self.d, "none.json"), "--last", "3"])
+        rc, err = _quiet(
+            L.main, ["--apply-review", os.path.join(self.d, "none.json"), "--last", "3"]
+        )
         self.assertEqual(rc, 2)
-        self.assertTrue(err.startswith("[lineage] note: --apply-review renders the pack; source and range flags were "
-                                       "applied at --emit-review\n"), err)
+        self.assertTrue(
+            err.startswith(
+                "[lineage] note: --apply-review renders the pack; source and range flags were "
+                "applied at --emit-review\n"
+            ),
+            err,
+        )
 
     def test_all_sessions_with_no_session_and_no_source_at_all_exit_2(self):
         from unittest import mock
+
         with mock.patch.object(L, "project_jsonl_files", lambda: []):
-            self.assertEqual(_quiet(L.main, ["--all-sessions", "--rulebase"]),
-                             (2, "[lineage] --all-sessions: no jsonl found in project dir\n"))
+            self.assertEqual(
+                _quiet(L.main, ["--all-sessions", "--rulebase"]),
+                (2, "[lineage] --all-sessions: no jsonl found in project dir\n"),
+            )
         with mock.patch.object(L, "auto_discover_jsonl", lambda: None):
             rc, err = _quiet(L.main, ["--rulebase"])
         self.assertEqual(rc, 2)
         self.assertTrue(err.startswith("[lineage] No jsonl found. Use one of:"), err)
 
     def test_a_transcript_file_keeps_its_cache_under_file_and_its_name(self):
-        self._write([_rec("user", "점검", uuid="u1"), self._asst("점검했고 결과가 나왔습니다.", "a1")])
-        rc = _quiet(L.main, ["--from-transcript", self.jf, "--rulebase", "--skip-reviewer",
-                             "--output", os.path.join(self.d, "out.html")])[0]
+        self._write(
+            [
+                _rec("user", "점검", uuid="u1"),
+                self._asst("점검했고 결과가 나왔습니다.", "a1"),
+            ]
+        )
+        rc = _quiet(
+            L.main,
+            [
+                "--from-transcript",
+                self.jf,
+                "--rulebase",
+                "--skip-reviewer",
+                "--output",
+                os.path.join(self.d, "out.html"),
+            ],
+        )[0]
         self.assertEqual(rc, 0)
         self.assertEqual(os.listdir(os.path.join(self.cache, "2")), ["file-s"])
 
     def test_a_schema_marker_through_main_exits_2(self):
         self._write([_rec("user", "before", uuid="u1"), {"type": "v9"}])
         self.assertEqual(self._rulebase()[0], 2)
-        self.assertEqual(_quiet(L.main, ["--from-transcript", self.jf, "--rulebase", "--skip-reviewer",
-                                         "--output", os.path.join(self.d, "out.html")])[0], 2)
+        self.assertEqual(
+            _quiet(
+                L.main,
+                [
+                    "--from-transcript",
+                    self.jf,
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--output",
+                    os.path.join(self.d, "out.html"),
+                ],
+            )[0],
+            2,
+        )
 
     def test_an_invalid_turns_range_exits_2_in_both_flows(self):
         self._write(self._records())
-        self.assertEqual(self._rulebase("--turns", "x-y"), (2, "[lineage] invalid --turns 'x-y'\n"))
-        rc = _quiet(L.main, ["--session", self.jf, "--emit-review", self.pack, "--turns", "bad"])[0]
+        self.assertEqual(
+            self._rulebase("--turns", "x-y"), (2, "[lineage] invalid --turns 'x-y'\n")
+        )
+        rc = _quiet(
+            L.main, ["--session", self.jf, "--emit-review", self.pack, "--turns", "bad"]
+        )[0]
         self.assertEqual(rc, 2)
         self.assertFalse(os.path.exists(self.pack))
 
     def test_an_empty_stdin_still_gets_its_id_key(self):
         from unittest import mock
+
         with mock.patch.object(sys, "stdin", io.StringIO("")):
-            rc = _quiet(L.main, ["--from-transcript", "-", "--rulebase", "--skip-reviewer",
-                                 "--output", os.path.join(self.d, "out.html")])[0]
+            rc = _quiet(
+                L.main,
+                [
+                    "--from-transcript",
+                    "-",
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--output",
+                    os.path.join(self.d, "out.html"),
+                ],
+            )[0]
         self.assertEqual(rc, 0)
         self.assertTrue(os.path.isfile(os.path.join(self.cache, "stdin-id.key")))
 
     def test_a_bad_turns_range_fails_before_the_output_name_is_chosen(self):
         self._write([{"type": "summary", "customTitle": "my-title"}] + self._records())
-        self.assertEqual(_quiet(L.main, ["--session", self.jf, "--rulebase", "--skip-reviewer", "--turns", "bad"]),
-                         (2, "[lineage] invalid --turns 'bad'\n"))
+        self.assertEqual(
+            _quiet(
+                L.main,
+                [
+                    "--session",
+                    self.jf,
+                    "--rulebase",
+                    "--skip-reviewer",
+                    "--turns",
+                    "bad",
+                ],
+            ),
+            (2, "[lineage] invalid --turns 'bad'\n"),
+        )
 
     def test_a_tool_only_turn_is_left_out_unless_kept(self):
-        self._write([_rec("user", "실행해 주세요", uuid="u1"), self._asst("", "a1", tools=["Bash"])])
+        self._write(
+            [
+                _rec("user", "실행해 주세요", uuid="u1"),
+                self._asst("", "a1", tools=["Bash"]),
+            ]
+        )
         self._rulebase()
         self.assertNotIn("도구 1건", self._page())
         for p in os.listdir(self.d):
@@ -4069,32 +6435,73 @@ class TestMainPaths(_ReviewCase):
 
 
 _SPLIT_TEXTS = [
-    "", "plain words only", "AKIA" "IOSFODNN7EXAMPLE and ASIA" "IOSFODNN7EXAMPLE",
-    "ghp_" + "a" * 36, "xoxb-" + "1234567890-abc", "eyJ" "hbGciOi.eyJzdWIiOi.c2lnbmF0dXJl",
-    "-----BEGIN RSA " "PRIVATE KEY-----\nMIIabc\n-----END RSA " "PRIVATE KEY-----",
-    'password: "hunter' '2024" and 암호 = \'비밀번호값\'', "Zq8XvB3nK9pL2mR7" "tY4wE6sA1dF5gH0j" * 2,
-    "a" * 36, "acme-corp deploy with ACME key; act now",
-    "[REDACTED:Password] and acme inside [REDACTED:acme] marker", "red slack [REDACTED:Slack]",
-    "key " + "AKIA" + "ABCDE" + chr(0x200B) + "FGHIJKLMNOP", "multi\nline\ttext with tab",
+    "",
+    "plain words only",
+    ("AKIA" + "IOSFODNN7EXAMPLE and ASIA" + "IOSFODNN7EXAMPLE"),
+    ("gh" + "p_") + "a" * 36,
+    "xoxb-" + "1234567890-abc",
+    ("eyJ" + "hbGciOi.eyJzdWIiOi.c2lnbmF0dXJl"),
+    (
+        "-----BEGIN RSA "
+        + "PRIVATE KEY-----\nMIIabc\n-----END RSA "
+        + "PRIVATE KEY-----"
+    ),
+    ('password: "hunter' + "2024\" and 암호 = '비밀번호값'"),
+    ("Zq8XvB3nK9pL2mR7" + "tY4wE6sA1dF5gH0j") * 2,
+    "a" * 36,
+    "acme-corp deploy with ACME key; act now",
+    "[REDACTED:Password] and acme inside [REDACTED:acme] marker",
+    "red slack [REDACTED:Slack]",
+    "key " + "AKIA" + "ABCDE" + chr(0x200B) + "FGHIJKLMNOP",
+    "multi\nline\ttext with tab",
 ]
 
 _SPLIT_MARKDOWN = [
-    "", "   ", "# h1\n## h2\n### h3\n#### h4\n##### h5\n###### h6\n####### seven", "#nospace", "# spaced title   ",
-    "```\ncode\n```", "```py\nx = 1\n````", "````\n```\nstill\n````\nafter", "```\nunclosed\nto the end",
-    "  ```\nindented fence\n  ```", "```\n<b>raw</b>\n```",
-    "---\n***\n___\n- - -", "> q1\n> q2\n>q3\n\nafter", "> > nested\n> back", ">" * 40 + " deep", ">" * 33 + " cap",
-    "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 |", "| a | b |\n| : | : |\n| 1 | 2 |",
+    "",
+    "   ",
+    "# h1\n## h2\n### h3\n#### h4\n##### h5\n###### h6\n####### seven",
+    "#nospace",
+    "# spaced title   ",
+    "```\ncode\n```",
+    "```py\nx = 1\n````",
+    "````\n```\nstill\n````\nafter",
+    "```\nunclosed\nto the end",
+    "  ```\nindented fence\n  ```",
+    "```\n<b>raw</b>\n```",
+    "---\n***\n___\n- - -",
+    "> q1\n> q2\n>q3\n\nafter",
+    "> > nested\n> back",
+    ">" * 40 + " deep",
+    ">" * 33 + " cap",
+    "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 |",
+    "| a | b |\n| : | : |\n| 1 | 2 |",
     "intro\n| a | b |\n|---|---|\n| 1 | 2 |",
-    "| a |\nno delim", "- one\n- two\n* three\n+ four\n1. five\n2) six", "1. a\n- b", "  - indented\n    - nested",
-    "line1\nline2\n\n\nline3", "para\n# heading right after", "para\n```\ncode\n```", "para\n> quote", "para\n- item",
-    "a\x07b\x00c", "**b** *i* ~~d~~ `c` [l](https://x.io) [j](javascript:x)", "<script>alert(1)</script>",
-    "line with trailing spaces   \n  leading", "\r\nwindows\r\nlines\r\n", "- \n- x", "1.\n2. y",
-    "| x |\n|---|\n", "text | pipe\n---\nnot table", "```\n\ncode\n\n```",
+    "| a |\nno delim",
+    "- one\n- two\n* three\n+ four\n1. five\n2) six",
+    "1. a\n- b",
+    "  - indented\n    - nested",
+    "line1\nline2\n\n\nline3",
+    "para\n# heading right after",
+    "para\n```\ncode\n```",
+    "para\n> quote",
+    "para\n- item",
+    "a\x07b\x00c",
+    "**b** *i* ~~d~~ `c` [l](https://x.io) [j](javascript:x)",
+    "<script>alert(1)</script>",
+    "line with trailing spaces   \n  leading",
+    "\r\nwindows\r\nlines\r\n",
+    "- \n- x",
+    "1.\n2. y",
+    "| x |\n|---|\n",
+    "text | pipe\n---\nnot table",
+    "```\n\ncode\n\n```",
 ]
 
 
 def _split_digest(value):
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _split_redact_corpus():
@@ -4105,17 +6512,30 @@ def _split_redact_corpus():
                 for with_trail in (False, True):
                     trail = L._Trail(len(t)) if with_trail else None
                     got = L.redact(t, extra, mode, trail)
-                    out.append([t, mode, extra, with_trail, got, None if trail is None or trail.pos is None
-                                else list(trail.pos)])
+                    out.append(
+                        [
+                            t,
+                            mode,
+                            extra,
+                            with_trail,
+                            got,
+                            None
+                            if trail is None or trail.pos is None
+                            else list(trail.pos),
+                        ]
+                    )
     return out
 
 
 def _split_detect_secrets_corpus():
     from unittest import mock
+
     out = []
-    for name, fake in (("finds", _FakeDetectSecrets(["s3cr3tvalue", "missing", ""])),
-                       ("boom-after-one", _FakeDetectSecrets(["s3cr3tvalue", "x"], boom_at=1)),
-                       ("boom-first", _FakeDetectSecrets(["s3cr3tvalue"], boom_at=0))):
+    for name, fake in (
+        ("finds", _FakeDetectSecrets(["s3cr3tvalue", "missing", ""])),
+        ("boom-after-one", _FakeDetectSecrets(["s3cr3tvalue", "x"], boom_at=1)),
+        ("boom-first", _FakeDetectSecrets(["s3cr3tvalue"], boom_at=0)),
+    ):
         with mock.patch.dict(sys.modules, fake.modules()):
             for t in ("token s3cr3tvalue here", "nothing"):
                 out.append([name, t, L.redact(t, "acme", "full")])
@@ -4123,13 +6543,23 @@ def _split_detect_secrets_corpus():
 
 
 def _split_markdown_corpus():
-    return ([[m, L.render_markdown(m)] for m in _SPLIT_MARKDOWN]
-            + [[d, L.render_markdown("> x", d)] for d in range(30, 35)])
+    return [[m, L.render_markdown(m)] for m in _SPLIT_MARKDOWN] + [
+        [d, L.render_markdown("> x", d)] for d in range(30, 35)
+    ]
 
 
 def _split_turn(role, text, ts, uuid, tools=None, session="s", name=None, **kw):
-    t = {"role": role, "text": text, "ts": ts, "uuid": uuid, "tools": tools or {}, "line_no": 1,
-         "parts": [text] if text else [], "session": session, "session_name": session if name is None else name}
+    t = {
+        "role": role,
+        "text": text,
+        "ts": ts,
+        "uuid": uuid,
+        "tools": tools or {},
+        "line_no": 1,
+        "parts": [text] if text else [],
+        "session": session,
+        "session_name": session if name is None else name,
+    }
     t.update(kw)
     return t
 
@@ -4137,25 +6567,68 @@ def _split_turn(role, text, ts, uuid, tools=None, session="s", name=None, **kw):
 def _split_rows_turns():
     rlo, pdf = chr(0x202E), chr(0x202C)
     return [
-        _split_turn("user", "질문 acme", "2026-08-09T10:00:00Z", "u1", session="s1", name="acme-session"),
-        _split_turn("assistant", "## 답\n- 하나\n\n고쳤습니다. AKIA" "IOSFODNN7EXAMPLE", "2026-08-09T10:00:05Z", "a1",
-                    tools={"Read": 2, "acme_tool": 1, "Bash": 1}, session="s1", name="acme-session"),
+        _split_turn(
+            "user",
+            "질문 acme",
+            "2026-08-09T10:00:00Z",
+            "u1",
+            session="s1",
+            name="acme-session",
+        ),
+        _split_turn(
+            "assistant",
+            ("## 답\n- 하나\n\n고쳤습니다. AKIA" + "IOSFODNN7EXAMPLE"),
+            "2026-08-09T10:00:05Z",
+            "a1",
+            tools={"Read": 2, "acme_tool": 1, "Bash": 1},
+            session="s1",
+            name="acme-session",
+        ),
         _split_turn("mark", "compaction", "2026-08-09T10:01:00Z", "m1", session="s1"),
-        _split_turn("user", "배경 설명입니다. " * 50 + "acme 요청", "2026-08-10T09:00:00Z", "u2", session="s1"),
-        _split_turn("agent", "보고: 끝났습니다", "2026-08-10T09:00:30Z", "g1", session="s2", name="",
-                    agent_from="acme-bot"),
+        _split_turn(
+            "user",
+            "배경 설명입니다. " * 50 + "acme 요청",
+            "2026-08-10T09:00:00Z",
+            "u2",
+            session="s1",
+        ),
+        _split_turn(
+            "agent",
+            "보고: 끝났습니다",
+            "2026-08-10T09:00:30Z",
+            "g1",
+            session="s2",
+            name="",
+            agent_from="acme-bot",
+        ),
         _split_turn("agent", "익명 보고", None, "g2", session="s2", agent_from=None),
         _split_turn("user", "x" * 400, "", "u3", session="s2"),
         _split_turn("user", "y" * 401, "2026-08-10T09:05:00Z", "u4", session=None),
-        _split_turn("assistant", "", "2026-08-10T09:06:00Z", "a2", tools={"Edit": 1}, session=None),
-        _split_turn("assistant", 'password: "hunter' '2024" ' + rlo + "x" + pdf, "2026-08-11T00:00:00Z", "a3",
-                    session="s3"),
+        _split_turn(
+            "assistant",
+            "",
+            "2026-08-10T09:06:00Z",
+            "a2",
+            tools={"Edit": 1},
+            session=None,
+        ),
+        _split_turn(
+            "assistant",
+            ('password: "hunter' + '2024" ') + rlo + "x" + pdf,
+            "2026-08-11T00:00:00Z",
+            "a3",
+            session="s3",
+        ),
     ]
 
 
 def _split_rows_corpus():
     """render_rows over the turns above for every setting, the summary cache starting empty (a hit counts)."""
-    reviewed = {"a1": "검토자 요약 acme", "u2": "긴 질문 요약 AKIA" "IOSFODNN7EXAMPLE", "g1": "에이전트 요약"}
+    reviewed = {
+        "a1": "검토자 요약 acme",
+        "u2": ("긴 질문 요약 AKIA" + "IOSFODNN7EXAMPLE"),
+        "g1": "에이전트 요약",
+    }
     out = []
     for extra in (None, "acme"):
         for mode in ("full", "mask"):
@@ -4163,11 +6636,29 @@ def _split_rows_corpus():
                 for summaries in (None, reviewed):
                     for open_details, markdown in ((False, True), (True, False)):
                         for rebuild in (False, True):
-                            got = L.render_rows(_split_rows_turns(), "sid", extra, mode, rebuild,
-                                                open_details=open_details, markdown=markdown,
-                                                all_sessions=all_sessions, summaries=summaries)
-                            out.append([extra, mode, all_sessions, bool(summaries), open_details, markdown, rebuild,
-                                        got])
+                            got = L.render_rows(
+                                _split_rows_turns(),
+                                "sid",
+                                extra,
+                                mode,
+                                rebuild,
+                                open_details=open_details,
+                                markdown=markdown,
+                                all_sessions=all_sessions,
+                                summaries=summaries,
+                            )
+                            out.append(
+                                [
+                                    extra,
+                                    mode,
+                                    all_sessions,
+                                    bool(summaries),
+                                    open_details,
+                                    markdown,
+                                    rebuild,
+                                    got,
+                                ]
+                            )
     return out
 
 
@@ -4178,47 +6669,128 @@ def _split_jsonl(path, records):
 
 
 def _split_rec(role, content, uuid, ts):
-    return {"type": role, "uuid": uuid, "timestamp": ts, "message": {"role": role, "content": content}}
+    return {
+        "type": role,
+        "uuid": uuid,
+        "timestamp": ts,
+        "message": {"role": role, "content": content},
+    }
 
 
 def _split_sources(root):
     """The transcripts main reads in the main corpus: a session, a second one, one with a schema marker, a long one."""
+
     def asst(text, uuid, ts, tools=()):
-        return _split_rec("assistant", [{"type": "text", "text": text}]
-                          + [{"type": "tool_use", "name": n} for n in tools], uuid, ts)
+        return _split_rec(
+            "assistant",
+            [{"type": "text", "text": text}]
+            + [{"type": "tool_use", "name": n} for n in tools],
+            uuid,
+            ts,
+        )
+
     files = [root / n for n in ("s.jsonl", "t.jsonl", "m.jsonl", "many.jsonl")]
-    _split_jsonl(files[0], [_split_rec("user", "배포 스크립트를 고쳐 주세요", "u1", "2026-08-09T10:00:00Z"),
-                            asst("먼저 읽겠습니다.\n\n고쳤고 배포가 통과합니다.", "a1", "2026-08-09T10:00:05Z", ["Read"]),
-                            _split_rec("user", "ok", "u2", "2026-08-09T10:01:00Z"),
-                            asst("ok", "a2", "2026-08-09T10:01:01Z"),
-                            asst("", "a3", "2026-08-09T10:01:05Z", ["Bash"]),
-                            _split_rec("user", "토큰은 AKIA" "IOSFODNN7EXAMPLE 입니다", "u3", "2026-08-09T10:02:00Z"),
-                            {"type": "summary", "customTitle": "배포 회고"}])
-    _split_jsonl(files[1], [_split_rec("user", "두 번째 세션", "v1", "2026-08-08T09:00:00Z"),
-                            asst("답입니다.", "b1", "2026-08-08T09:00:10Z")])
-    _split_jsonl(files[2], [_split_rec("user", "before", "w1", "2026-08-09T10:00:00Z"), {"type": "v9"}])
-    _split_jsonl(files[3], [_split_rec("user", "질문 %d" % k, "q%d" % k, "2026-08-09T10:%02d:00Z" % (k % 60))
-                            for k in range(105)])
+    _split_jsonl(
+        files[0],
+        [
+            _split_rec(
+                "user", "배포 스크립트를 고쳐 주세요", "u1", "2026-08-09T10:00:00Z"
+            ),
+            asst(
+                "먼저 읽겠습니다.\n\n고쳤고 배포가 통과합니다.",
+                "a1",
+                "2026-08-09T10:00:05Z",
+                ["Read"],
+            ),
+            _split_rec("user", "ok", "u2", "2026-08-09T10:01:00Z"),
+            asst("ok", "a2", "2026-08-09T10:01:01Z"),
+            asst("", "a3", "2026-08-09T10:01:05Z", ["Bash"]),
+            _split_rec(
+                "user",
+                ("토큰은 AKIA" + "IOSFODNN7EXAMPLE 입니다"),
+                "u3",
+                "2026-08-09T10:02:00Z",
+            ),
+            {"type": "summary", "customTitle": "배포 회고"},
+        ],
+    )
+    _split_jsonl(
+        files[1],
+        [
+            _split_rec("user", "두 번째 세션", "v1", "2026-08-08T09:00:00Z"),
+            asst("답입니다.", "b1", "2026-08-08T09:00:10Z"),
+        ],
+    )
+    _split_jsonl(
+        files[2],
+        [_split_rec("user", "before", "w1", "2026-08-09T10:00:00Z"), {"type": "v9"}],
+    )
+    _split_jsonl(
+        files[3],
+        [
+            _split_rec(
+                "user", "질문 %d" % k, "q%d" % k, "2026-08-09T10:%02d:00Z" % (k % 60)
+            )
+            for k in range(105)
+        ],
+    )
     return files
 
 
 def _split_main_cases(root, jf, marker, many):
-    page = lambda n: str(root / (n + "_260101+0000.html"))   # a name with its stamp: no clock in the name
+    def page(n):  # a name with its stamp: no clock in the name
+        return str(root / (n + "_260101+0000.html"))
+
     rb = ["--rulebase", "--skip-reviewer"]
     return [
-        ["--purge-cache"], ["--purge-cache"],
-        ["--emit-review", ""], ["--apply-review", ""], ["--purge-cache", "--emit-review", "p.json"],
-        ["--emit-review", "a.json", "--apply-review", "b.json"], ["--rulebase", "--emit-review", "p.json"],
-        ["--rulebase", "--apply-review", "p.json"], ["--decisions", "d.json"],
+        ["--purge-cache"],
+        ["--purge-cache"],
+        ["--emit-review", ""],
+        ["--apply-review", ""],
+        ["--purge-cache", "--emit-review", "p.json"],
+        ["--emit-review", "a.json", "--apply-review", "b.json"],
+        ["--rulebase", "--emit-review", "p.json"],
+        ["--rulebase", "--apply-review", "p.json"],
+        ["--decisions", "d.json"],
         ["--apply-review", str(root / "missing.json"), "--last", "3"],
         ["--session", jf] + rb + ["--output", page("r1")],
-        ["--session", jf, "--skip-reviewer", "--output", page("r2"), "--keep-trivia", "--keep-tool-only", "--open",
-         "--no-markdown"],
+        [
+            "--session",
+            jf,
+            "--skip-reviewer",
+            "--output",
+            page("r2"),
+            "--keep-trivia",
+            "--keep-tool-only",
+            "--open",
+            "--no-markdown",
+        ],
         ["--session", jf] + rb + ["--output", page("r3"), "--turns", "x-y"],
-        ["--session", jf] + rb + ["--output", page("r4"), "--turns", "2-3", "--last", "1"],
-        ["--session", jf, "--emit-review", str(root / "pk.json"), "--turns", "bad", "--output", page("pk")],
-        ["--session", jf, "--emit-review", str(root / "pk.json"), "--last", "2", "--redact-extra", "배포",
-         "--output", page("pk")],
+        ["--session", jf]
+        + rb
+        + ["--output", page("r4"), "--turns", "2-3", "--last", "1"],
+        [
+            "--session",
+            jf,
+            "--emit-review",
+            str(root / "pk.json"),
+            "--turns",
+            "bad",
+            "--output",
+            page("pk"),
+        ],
+        [
+            "--session",
+            jf,
+            "--emit-review",
+            str(root / "pk.json"),
+            "--last",
+            "2",
+            "--redact-extra",
+            "배포",
+            "--output",
+            page("pk"),
+        ],
         ["--session", marker] + rb + ["--output", page("r5")],
         ["--session", marker] + rb + ["--output", page("r6"), "--unsafe-schema"],
         ["--from-transcript", jf] + rb + ["--output", page("r7")],
@@ -4227,7 +6799,10 @@ def _split_main_cases(root, jf, marker, many):
     ], page
 
 
-_SPLIT_ENV_EXTRA = ("acme, 스크립트", "토큰")      # LINEAGE_REDACT_EXTRA of the two runs that read it
+_SPLIT_ENV_EXTRA = (
+    "acme, 스크립트",
+    "토큰",
+)  # LINEAGE_REDACT_EXTRA of the two runs that read it
 
 
 def _env_holds(*values):
@@ -4245,8 +6820,11 @@ def _split_main_corpus(root):
     """(exit code of each run, sha256 of each page written) for main over the cases above and the sources that need
     the environment, stdin or the project folder. stderr is left out: it names temporary paths."""
     from unittest import mock
+
     L.CACHE_BASE = root / "cache"
-    (root / "cache" / "2" / "s").mkdir(parents=True)        # the first --purge-cache finds a cache
+    (root / "cache" / "2" / "s").mkdir(
+        parents=True
+    )  # the first --purge-cache finds a cache
     jf, jf2, marker, many = _split_sources(root)
     cases, page = _split_main_cases(root, str(jf), str(marker), str(many))
 
@@ -4255,6 +6833,7 @@ def _split_main_corpus(root):
             return L.main(argv)
         except SystemExit as e:
             return "exit %s" % e.code
+
     rb = ["--rulebase", "--skip-reviewer"]
     with mock.patch.dict(os.environ):
         os.environ.pop("LINEAGE_REDACT_EXTRA", None)
@@ -4262,9 +6841,17 @@ def _split_main_corpus(root):
         os.environ["LINEAGE_REDACT_EXTRA"] = _SPLIT_ENV_EXTRA[0]
         codes.append(rc(["--session", str(jf)] + rb + ["--output", page("e1")]))
         os.environ["LINEAGE_REDACT_EXTRA"] = _SPLIT_ENV_EXTRA[1]
-        codes.append(rc(["--session", str(jf)] + rb + ["--redact-extra", "배포", "--output", page("e2")]))
+        codes.append(
+            rc(
+                ["--session", str(jf)]
+                + rb
+                + ["--redact-extra", "배포", "--output", page("e2")]
+            )
+        )
         os.environ.pop("LINEAGE_REDACT_EXTRA", None)
-        with mock.patch.object(sys, "stdin", io.StringIO(jf.read_text(encoding="utf-8"))):
+        with mock.patch.object(
+            sys, "stdin", io.StringIO(jf.read_text(encoding="utf-8"))
+        ):
             codes.append(rc(["--from-transcript", "-"] + rb + ["--output", page("s1")]))
         with mock.patch.object(L, "auto_discover_jsonl", lambda: None):
             codes.append(rc(["--rulebase"]))
@@ -4274,10 +6861,23 @@ def _split_main_corpus(root):
             codes.append(rc(["--all-sessions", "--rulebase"]))
         with mock.patch.object(L, "project_jsonl_files", lambda: [jf, jf2]):
             codes.append(rc(["--all-sessions"] + rb + ["--output", page("all")]))
-            codes.append(rc(["--all-sessions", "--emit-review", str(root / "pk2.json"), "--output", page("pk2")]))
+            codes.append(
+                rc(
+                    [
+                        "--all-sessions",
+                        "--emit-review",
+                        str(root / "pk2.json"),
+                        "--output",
+                        page("pk2"),
+                    ]
+                )
+            )
         with mock.patch.object(L, "project_jsonl_files", lambda: [jf, marker]):
             codes.append(rc(["--all-sessions"] + rb + ["--output", page("am")]))
-    pages = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.glob("*.html"))}
+    pages = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(root.glob("*.html"))
+    }
     return codes, pages
 
 
@@ -4308,7 +6908,9 @@ class TestSplitGoldens(unittest.TestCase):
 
     def test_redact(self):
         self._same("redact", _split_redact_corpus)
-        value = _quiet(_split_detect_secrets_corpus)[0]          # each fake is put in for its own runs
+        value = _quiet(_split_detect_secrets_corpus)[
+            0
+        ]  # each fake is put in for its own runs
         self.assertEqual(_split_digest(value), _GOLDEN_SPLIT["redact-ds"], "redact-ds")
 
     def test_render_markdown(self):
@@ -4318,7 +6920,10 @@ class TestSplitGoldens(unittest.TestCase):
         L.CACHE_BASE = self.d / "cache"
         self._same("render_rows", _split_rows_corpus)
 
-    @unittest.skipUnless(_env_holds(*_SPLIT_ENV_EXTRA), "the environment cannot hold the corpus keywords here")
+    @unittest.skipUnless(
+        _env_holds(*_SPLIT_ENV_EXTRA),
+        "the environment cannot hold the corpus keywords here",
+    )
     def test_main(self):
         self._same("main", _split_main_corpus, self.d)
 
