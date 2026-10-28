@@ -39,7 +39,9 @@ Claude Code 세션 안에서 입력합니다.
 
 **Codex CLI:** 두 방법 중 하나를 고릅니다.
 
-Codex 플러그인으로 설치 (npm 불필요)
+1) Codex 플러그인 마켓플레이스로 설치 (권장, npm 불필요)
+
+터미널 셸에서 입력합니다. 첫 줄은 이 GitHub 저장소를 Codex 의 플러그인 마켓플레이스 `banker-plugins` 로 등록하고, 둘째 줄은 그 마켓플레이스에서 banker 플러그인을 설치합니다.
 
 ```bash
 codex plugin marketplace add smallOpenSource/banker_plugins
@@ -47,9 +49,10 @@ codex plugin add banker@banker-plugins
 ```
 
 스킬을 `$banker:audit-security` 처럼 `$banker:<name>` 으로 호출합니다.\
-훅(업데이트 알림, 사용량 카운팅)은 Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돕니다.
+훅(업데이트 알림, 사용량 카운팅)은 Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돕니다.\
+Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 받습니다. 바로 올리려면 `codex plugin marketplace upgrade banker-plugins` 를 실행합니다.
 
-npm 전역 설치 후 `banker setup`
+2) npm 전역 설치 후 `banker setup`
 
 ```bash
 npm i -g @kaydash9999/banker-plugins
@@ -208,7 +211,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 ## 설치 상세 (npm · Codex)
 
 마켓플레이스 대신 npm으로 전역 설치할 수 있고, Codex CLI에도 스킬을 설치할 수 있습니다.\
-Codex 설치는 npm 전역 설치가 선행되어야 합니다.
+Codex CLI 에는 두 길이 있습니다. Codex 플러그인 마켓플레이스 길(`codex plugin marketplace add` 뒤 `codex plugin add`, npm 불필요, 아래 목록의 Codex 플러그인 항목)과 npm 길(`banker setup --codex`, npm 전역 설치가 먼저)입니다. 둘 중 하나만 씁니다.
 
 ```bash
 npm i -g @kaydash9999/banker-plugins
@@ -229,10 +232,11 @@ banker uninstall        # 제거
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
   스킬 64개, Codex 전용 스킬 2개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
-  Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 신뢰는 명령 글에 묶여 있어 판이 바뀌어도 그대로이고, 훅 명령이 바뀐 판에서만 `/hooks` 가 다시 신뢰를 묻습니다. \
+  Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. \
-  Volta, mise, snap 처럼 이름을 보고 동작하는 node 는 그 도구가 고른 node 를 씁니다. 훅은 플러그인 폴더에서 돌므로 asdf, nodenv 는 전역 버전(`asdf set -u nodejs <판>`, asdf 0.16 미만은 `asdf global nodejs <판>`, `nodenv global <판>`)이 있어야 합니다. \
+  node 를 찾은 뒤에는 PATH 에서 임시 폴더와 작업 폴더 아래 항목을 빼므로, 프로젝트의 `.venv/bin` 이나 `node_modules/.bin` 에 있는 프로그램은 훅에서 돌지 않습니다. macOS 데스크톱에서 연 Codex 처럼 PATH 에 node 가 없으면 Homebrew(`/opt/homebrew/bin`)와 공식 설치(`/usr/local/bin`)의 node 를 씁니다. \
+  Volta, mise, snap 처럼 이름을 보고 동작하는 node 와 Windows 의 `node.cmd` shim(mise)은 그 도구가 고른 node 를 씁니다. 훅은 플러그인 폴더에서 돌므로 asdf, nodenv 는 전역 버전(`asdf set -u nodejs <판>`, asdf 0.16 미만은 `asdf global nodejs <판>`, `nodenv global <판>`)이 있어야 합니다. \
   이 설치에는 `banker` 명령이 없습니다. `banker doctor`, `banker telemetry` 가 필요하면 npm 으로도 설치하되 `banker setup`(인자 없음)과 `banker setup --codex` 는 돌리지 않습니다(Codex 에 npm 길이 함께 설치됨). Claude Code 에 넣으려면 `banker setup --claude` 만 씁니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
