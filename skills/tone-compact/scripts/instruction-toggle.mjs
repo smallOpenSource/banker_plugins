@@ -568,6 +568,15 @@ const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 // when it may still be there (no stats or no inode number to prove it is that file, or the share could not say).
 // Any other error (permissions, EIO) throws, after the same taking away.
 function tryLock(path, token) {
+  // A name that is there in any form is held. Windows opens "wx" through a link to nothing and makes the file it leads
+  // to; macOS and Linux answer EEXIST for it below. A look that fails leaves the answer to the open, as before.
+  let there = false;
+  try {
+    there = lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    // ESTALE and the like: the open below answers
+  }
+  if (there) return "held";
   let fd;
   try {
     fd = openSync(path, "wx", 0o600);
