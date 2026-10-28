@@ -150,7 +150,8 @@ function outside(t) {
 test('sh: with no node on PATH, a node in the known install folders runs the hook; none there says so', homeCase, (t) => {
   const c = setup();
   const o = outside(t);
-  const env = { PATH: `/usr/bin${delimiter}/bin`, PLUGIN_ROOT: c.plugin, TMPDIR: '/nonexistent', HOME: c.d };
+  // A PATH with no node on it (Rocky has /usr/bin/node, so not /usr/bin); the command needs no other program to run.
+  const env = { PATH: join(c.d, 'empty'), PLUGIN_ROOT: c.plugin, TMPDIR: '/nonexistent', HOME: c.d };
   let r = spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true, false, '', [join(c.d, 'none'), dirname(o.node)])], { cwd: c.work, encoding: 'utf8', env });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stderr, '');
@@ -219,7 +220,7 @@ test('sh: a realpath, readlink or tr planted on a PATH entry in the session fold
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
   // A refusal notice goes through tr: the planted one is not it.
-  r = spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true, true, '', [join(c.d, 'none')])], { cwd: c.work, encoding: 'utf8', env: { ...env, PATH: `${venv}${delimiter}/usr/bin${delimiter}/bin` } });
+  r = spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true, true, '', [join(c.d, 'none')])], { cwd: c.work, encoding: 'utf8', env: { ...env, PATH: `${venv}${delimiter}${join(c.d, 'empty')}` } });
   assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: node is not on PATH/);
   // A multicall shim's own children get the cleaned PATH too.
   const shims = join(o.d, 'shims');
