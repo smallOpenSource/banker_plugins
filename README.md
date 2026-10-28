@@ -229,7 +229,7 @@ banker uninstall        # 제거
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
   스킬 64개, Codex 전용 스킬 2개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
-  Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 신뢰는 명령 글에 묶여 있어 판이 바뀌어도 그대로입니다. \
+  Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 신뢰는 명령 글에 묶여 있어 판이 바뀌어도 그대로이고, 훅 명령이 바뀐 판에서만 `/hooks` 가 다시 신뢰를 묻습니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. \
   Volta, mise, snap 처럼 이름을 보고 동작하는 node 는 그 도구가 고른 node 를 씁니다. 훅은 플러그인 폴더에서 돌므로 asdf, nodenv 는 전역 버전(`asdf set -u nodejs <판>`, asdf 0.16 미만은 `asdf global nodejs <판>`, `nodenv global <판>`)이 있어야 합니다. \
