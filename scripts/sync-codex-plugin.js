@@ -51,7 +51,10 @@ function shCommand(script, args, viaRun) {
     + 'r=$(realpath "$n" 2>/dev/null || readlink -f "$n" 2>/dev/null) || exit 0; '
     // Compared as real paths: on macOS /tmp and TMPDIR are links into /private.
     + 'u=$(cd /tmp && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || t=$u; p=$(pwd -P); '
-    + '[ "$p" != / ] || exit 0; case "$r" in "$u"/*|"$t"/*|"$p"/*) exit 0;; /*) ;; *) exit 0;; esac; '
+    + '[ -n "$p" ] && [ "$p" != / ] || exit 0; case "$r" in "$u"/*|"$t"/*) exit 0;; /*) ;; *) exit 0;; esac; '
+    // A session opened in the home folder is no workspace to judge node by (as homeInWorkspace in codex-hooks.mjs):
+    // nvm keeps node under ~/.nvm, and a sandbox writing the home can already change ~/.codex itself.
+    + 'h=$(cd "$HOME" 2>/dev/null && pwd -P); if [ "$p" != "$h" ]; then case "$r" in "$p"/*) exit 0;; esac; fi; '
     // From the plugin folder: an asdf or mise shim picks the node binary from a .tool-versions it finds from the cwd up.
     + 'cd "$PLUGIN_ROOT" || exit 0; '
     + `"$r"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
@@ -64,7 +67,9 @@ function psCommand(script, args, viaRun) {
   return 'if (-not $env:PLUGIN_ROOT) { exit 0 }; '
     + '$n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; '
     + "$r = [IO.Path]::GetFullPath($n.Source); if ($r -notlike '*.exe') { exit 0 }; "
-    + "foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; "
+    // The session folder is judged too, unless it is the home folder (nvm-windows and Volta keep node under it).
+    + "$ds = @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\Temp\"); if ($PWD.Path.TrimEnd('\\') -ne ([string]$env:USERPROFILE).TrimEnd('\\')) { $ds += $PWD.Path }; "
+    + "foreach ($d in $ds) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; "
     + 'if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { exit 0 }; '
     + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }

@@ -104,3 +104,57 @@ test('PowerShell: the node PATH names runs the hook; one under TEMP or the sessi
     assert.ok(!existsSync(c.marker), `${dir}\\${file}: nothing ran`);
   }
 });
+
+// A session opened in the home folder: a node kept under home (nvm) still runs the hook; a project under home is still
+// a session folder. The base must sit outside the temp folders the commands refuse, so the home rule alone decides:
+// /var/tmp on Linux, and on macOS the per-user TMPDIR while the command is told TMPDIR=/tmp.
+const homeBase = process.platform === 'darwin' ? tmpdir() : '/var/tmp';
+const homeCase = { skip: process.platform === 'win32' ? 'sh commands' : !existsSync(homeBase) && `no ${homeBase}` };
+test('sh: a session in the home folder runs a node kept under home; a project session under home refuses a node inside it', homeCase, () => {
+  const d = realpathSync(mkdtempSync(join(homeBase, 'codex-plugin-home-')));
+  try {
+    const c = setup();
+    const home = join(d, 'home');
+    const bin = join(home, '.nvm', 'bin');
+    mkdirSync(bin, { recursive: true });
+    const projBin = join(home, 'proj', 'bin');
+    mkdirSync(projBin, { recursive: true });
+    for (const b of [bin, projBin]) {
+      writeFileSync(join(b, 'node'), `#!/bin/sh\nexec "${realpathSync(process.execPath)}" "$@"\n`);
+      chmodSync(join(b, 'node'), 0o755);
+    }
+    const run = (cwd, b = bin) => spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true)], { cwd, encoding: 'utf8', env: { PATH: `${b}${delimiter}/usr/bin${delimiter}/bin`, PLUGIN_ROOT: c.plugin, TMPDIR: '/tmp', HOME: home } });
+    let r = run(home);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
+    rmSync(c.marker);
+    r = run(join(home, 'proj'), projBin);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!existsSync(c.marker), 'a project under home is a session folder');
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('PowerShell: a session in USERPROFILE runs a node.exe kept under it; a project session under it refuses a node.exe inside it', windows, () => {
+  const c = setup();
+  const home = join(c.d, 'home');
+  const bin = join(home, 'nvm');
+  mkdirSync(bin, { recursive: true });
+  const projBin = join(home, 'proj', 'bin');
+  mkdirSync(projBin, { recursive: true });
+  copyFileSync(process.execPath, join(bin, 'node.exe'));
+  copyFileSync(process.execPath, join(projBin, 'node.exe'));
+  // The base is under the real TEMP: the command is told other temp folders so the home rule alone decides.
+  const run = (cwd, b = bin) => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], {
+    cwd, encoding: 'utf8',
+    env: { ...process.env, PATH: `${b}${delimiter}${sysPath()}`, PLUGIN_ROOT: c.plugin, TEMP: join(c.d, 't1'), TMP: join(c.d, 't2'), LOCALAPPDATA: join(c.d, 'la'), USERPROFILE: home },
+  });
+  let r = run(home);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
+  rmSync(c.marker);
+  r = run(join(home, 'proj'), projBin);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!existsSync(c.marker), 'a project under USERPROFILE is a session folder');
+});

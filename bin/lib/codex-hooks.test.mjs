@@ -115,6 +115,10 @@ test('command text per platform and node location rules', () => {
   assert.equal(safeNode(join(tmpdir(), 'node'), { win: process.platform === 'win32', cwd: '/w', codex: false }), false);
   assert.equal(safeNode('/home/u/.nvm/node', { win: false, cwd: '/home/u', codex: true }), false);
   assert.equal(safeNode('/home/u/.nvm/node', { win: false, cwd: '/home/u', codex: false }), true);
+  // A Codex session opened in the home folder itself: nvm's node under ~/.nvm stays usable; a project under home does not.
+  const w = process.platform === 'win32';
+  assert.equal(safeNode(join(homedir(), '.nvm', 'node'), { win: w, cwd: homedir(), codex: true }), true);
+  assert.equal(safeNode(join(homedir(), 'proj', 'node'), { win: w, cwd: join(homedir(), 'proj'), codex: true }), false);
 });
 
 test('obsidize goes after shell calls only and brings its canonicalizer along', () => {
