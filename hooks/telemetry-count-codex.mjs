@@ -187,9 +187,9 @@ function writeTurns(lines) {
 
 // 이 Codex 에 설치된 banker 스킬인지. 플러그인 길은 그 홈의 config.toml 에 켜져 있는 banker@<마켓플레이스> 의 것이고,
 // 기록의 경로 그대로 plugins/cache 아래에 있어야 한다(지운 플러그인이 남긴 폴더나 다른 마켓플레이스의 banker 는 세지 않음).
-export function installed(entry, home) {
+export function installed(entry, home, routes = pluginRoutes(home)) {
   const [name, rel] = entry.split('\t');
-  if (rel) return pluginRoutes(home).includes(`banker@${rel.split('/')[2]}`) && existsSync(join(home, ...rel.split('/')));
+  if (rel) return routes.includes(`banker@${rel.split('/')[2]}`) && existsSync(join(home, ...rel.split('/')));
   return existsSync(join(home, 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
 }
 
@@ -203,7 +203,8 @@ export function countOnce(payload) {
     noteShapeMiss(file);
     return [];
   }
-  const names = [...new Set(got.filter((n) => installed(n, home)).map((n) => n.split('\t')[0]))];
+  const routes = got.some((n) => n.includes('\t')) ? pluginRoutes(home) : []; // config.toml 은 한 번만 읽는다
+  const names = [...new Set(got.filter((n) => installed(n, home, routes)).map((n) => n.split('\t')[0]))];
   if (!names.length) return [];
   const seen = readTurns();
   const fresh = names.filter((n) => !seen.includes(`${key}\t${n}`));

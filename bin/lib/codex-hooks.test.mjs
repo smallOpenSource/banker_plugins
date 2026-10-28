@@ -122,6 +122,8 @@ test('command text per platform and node location rules', () => {
   const J = w ? P.win32.join : P.join;
   assert.equal(safeNode(J(h, '.nvm', 'node'), { win: w, cwd: h, codex: true, home: h }), true);
   assert.equal(safeNode(J(h, 'proj', 'node'), { win: w, cwd: J(h, 'proj'), codex: true, home: h }), false);
+  assert.equal(safeNode('/w/.nvm/node', { win: false, cwd: '/w', codex: true, home: '.' }), false, 'a relative home names no home folder');
+  assert.equal(safeNode('C:\\Users\\U\\nvm\\node.exe', { win: true, cwd: 'C:\\Users\\U', codex: true, home: 'c:\\users\\u' }), true, 'Windows compares without case');
 });
 
 test('obsidize goes after shell calls only and brings its canonicalizer along', () => {

@@ -2,15 +2,16 @@
 // Run from the repo root: node --test scripts/sync-codex-plugin.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { after, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { hooksText, psCommand, shCommand, HOOKS_FILE } = require('./sync-codex-plugin.js');
-const ROOT = join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'codex-plugin-hooks-')));
 after(() => rmSync(base, { recursive: true, force: true }));
@@ -68,6 +69,20 @@ test('sh: a node in the temp folder, the session folder, or a relative PATH entr
   }
 });
 
+test('sh: a refusal says why: on stderr, and at session start as a systemMessage', posix, () => {
+  const c = setup();
+  let r = sh(c, shCommand('probe.mjs', [], true), join(c.d, 'empty'));
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /^banker hooks skipped: node is not on PATH/);
+  const dir = join(c.d, 'bin');
+  fakeNode(c, dir);
+  r = sh(c, shCommand('probe.mjs', [], true, true), `${dir}${delimiter}/usr/bin${delimiter}/bin`);
+  assert.equal(r.status, 0);
+  assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: node is in a temp folder/);
+  assert.ok(!existsSync(c.marker));
+});
+
 test('sh: no PLUGIN_ROOT or no node runs nothing and exits 0', posix, () => {
   const c = setup();
   const cmd = shCommand('probe.mjs', [], true);
@@ -94,15 +109,27 @@ test('PowerShell: the node PATH names runs the hook; one under TEMP or the sessi
   assert.equal(readFileSync(c.marker, 'utf8'), 'ran --codex');
   assert.equal(readFileSync(`${c.marker}.cwd`, 'utf8').toLowerCase(), c.plugin.toLowerCase());
   rmSync(c.marker);
-  // A real node.exe copied under TEMP or into the session folder, and a .cmd shim, run nothing.
-  for (const [dir, file] of [[join(c.d, 'bin'), 'node.exe'], [join(c.work, 'bin'), 'node.exe'], [join(c.d, 'cmd'), 'node.cmd']]) {
+  // A real node.exe copied under TEMP or into the session folder runs nothing and says why on stderr.
+  for (const dir of [join(c.d, 'bin'), join(c.work, 'bin')]) {
     mkdirSync(dir, { recursive: true });
-    if (file === 'node.exe') copyFileSync(process.execPath, join(dir, file));
-    else writeFileSync(join(dir, file), `@echo evil> "${c.marker}"\r\n`);
+    copyFileSync(process.execPath, join(dir, 'node.exe'));
     r = ps(c, psCommand('probe.mjs', [], true), `${dir}${delimiter}${nodeDir}${delimiter}${sysPath()}`);
     assert.equal(r.status, 0, r.stderr);
-    assert.ok(!existsSync(c.marker), `${dir}\\${file}: nothing ran`);
+    assert.ok(!existsSync(c.marker), `${dir}: nothing ran`);
+    assert.match(r.stderr, /banker hooks skipped: node is in a temp folder or the session folder/);
   }
+  // A node.cmd shim first on PATH is passed over for the first node.exe after it (the .cmd itself never runs).
+  const cmd = join(c.d, 'cmd');
+  mkdirSync(cmd);
+  writeFileSync(join(cmd, 'node.cmd'), `@echo evil> "${c.marker}"\r\n`);
+  r = ps(c, psCommand('probe.mjs', [], true), `${cmd}${delimiter}${nodeDir}${delimiter}${sysPath()}`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
+  rmSync(c.marker);
+  // At session start a refusal is a systemMessage the TUI shows.
+  r = ps(c, psCommand('probe.mjs', [], true, true), sysPath());
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: node\.exe is not on PATH/);
 });
 
 // A session opened in the home folder: a node kept under home (nvm) still runs the hook; a project under home is still
@@ -131,6 +158,10 @@ test('sh: a session in the home folder runs a node kept under home; a project se
     r = run(join(home, 'proj'), projBin);
     assert.equal(r.status, 0, r.stderr);
     assert.ok(!existsSync(c.marker), 'a project under home is a session folder');
+    // A HOME that is not an absolute path names no home folder: the session folder rule holds.
+    r = spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true)], { cwd: home, encoding: 'utf8', env: { PATH: `${bin}${delimiter}/usr/bin${delimiter}/bin`, PLUGIN_ROOT: c.plugin, TMPDIR: '/tmp', HOME: '.' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!existsSync(c.marker), 'HOME=. is no home folder');
   } finally {
     rmSync(d, { recursive: true, force: true });
   }
@@ -157,4 +188,26 @@ test('PowerShell: a session in USERPROFILE runs a node.exe kept under it; a proj
   r = run(join(home, 'proj'), projBin);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(!existsSync(c.marker), 'a project under USERPROFILE is a session folder');
+});
+
+// A multicall shim (Volta, mise, snap): PATH's node is a link to a program that reads its argv0. Run by its real path it
+// fails; the command asks it, as node, for the node binary and runs that.
+test('sh: a multicall shim on PATH runs the node binary it names', homeCase, () => {
+  const d = realpathSync(mkdtempSync(join(homeBase, 'codex-plugin-shim-')));
+  try {
+    const c = setup();
+    const shims = join(d, 'shims');
+    const real = join(d, 'real');
+    mkdirSync(shims);
+    mkdirSync(real);
+    writeFileSync(join(real, 'multicall'), `#!/bin/sh\ncase "$(basename "$0")" in node) exec "${realpathSync(process.execPath)}" "$@";; *) echo "multicall: should not be called directly" >&2; exit 2;; esac\n`);
+    chmodSync(join(real, 'multicall'), 0o755);
+    symlinkSync(join(real, 'multicall'), join(shims, 'node'));
+    const r = spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', ['--codex'], true)], { cwd: c.work, encoding: 'utf8', env: { PATH: `${shims}${delimiter}/usr/bin${delimiter}/bin`, PLUGIN_ROOT: c.plugin, TMPDIR: '/tmp', HOME: d } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, '');
+    assert.equal(readFileSync(c.marker, 'utf8'), 'ran --codex');
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });

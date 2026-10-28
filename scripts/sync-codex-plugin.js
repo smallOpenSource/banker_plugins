@@ -39,37 +39,54 @@ const HOOKS = [
 const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@banker-plugins), written by scripts/sync-codex-plugin.js. '
   + 'Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out '
   + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY). The obsidizer hook is installed only by obsidizer --enable. '
-  + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names only when its real '
-  + 'path is absolute and outside the temp folder and the session folder, and runs it from the plugin folder (a version manager shim '
-  + 'then reads no version file from the session folder; the hook scripts take that folder from their input). command is for sh, commandWindows for PowerShell; PLUGIN_ROOT is '
-  + 'the installed plugin folder.';
+  + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names (a multicall shim '
+  + 'such as Volta or mise: the node binary it names) only when its real path is absolute and outside the temp folder and the session '
+  + 'folder (a session in the home folder itself excepted), from the plugin folder, and otherwise says why it skipped. command is for sh, '
+  + 'commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.';
 
-// sh: node from PATH, resolved (no realpath or readlink -f: run nothing), then refused when relative or in a sandbox-writable place.
-function shCommand(script, args, viaRun) {
+// sh. Which node runs, outside the sandbox:
+// - node from PATH, absolute, resolved to its real path (no realpath or readlink -f: refuse).
+// - A real path named node (nvm, fnm, Homebrew, system, an asdf shim script) runs as it is. Another name is a multicall
+//   shim that reads its argv0 (Volta, mise, snap): it is asked, from the plugin folder, for the node binary it runs, and
+//   that binary runs. Every path run or asked must be outside the real /tmp, TMPDIR and the session folder (pwd -P),
+//   which the sandbox can write; a session folder that is the home folder itself is no workspace here (nvm keeps node
+//   under ~/.nvm, and a sandbox writing the home can already change the shell's rc files and that node).
+// - From the plugin folder, so a version manager reads no version file of the session folder; the hook scripts take
+//   that folder from their input.
+// A refusal says why and exits 0: as a systemMessage for SessionStart (shown in the TUI), on stderr otherwise.
+function shCommand(script, args, viaRun, notice = false) {
   const run = viaRun ? ' "$PLUGIN_ROOT/hooks/run.cjs"' : '';
-  return '[ -n "$PLUGIN_ROOT" ] || exit 0; n=$(command -v node) || exit 0; '
-    + 'r=$(realpath "$n" 2>/dev/null || readlink -f "$n" 2>/dev/null) || exit 0; '
-    // Compared as real paths: on macOS /tmp and TMPDIR are links into /private.
-    + 'u=$(cd /tmp && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || t=$u; p=$(pwd -P); '
-    + '[ -n "$p" ] && [ "$p" != / ] || exit 0; case "$r" in "$u"/*|"$t"/*) exit 0;; /*) ;; *) exit 0;; esac; '
-    // A session opened in the home folder is no workspace to judge node by (as homeInWorkspace in codex-hooks.mjs):
-    // nvm keeps node under ~/.nvm, and a sandbox writing the home can already change ~/.codex itself.
-    + 'h=$(cd "$HOME" 2>/dev/null && pwd -P); if [ "$p" != "$h" ]; then case "$r" in "$p"/*) exit 0;; esac; fi; '
-    // From the plugin folder: an asdf or mise shim picks the node binary from a .tool-versions it finds from the cwd up.
-    + 'cd "$PLUGIN_ROOT" || exit 0; '
-    + `"$r"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
+  const say = notice
+    ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | tr -d '"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
+    : String.raw`printf '%s\n' "banker hooks skipped: $1" >&2`;
+  return String.raw`[ -n "$PLUGIN_ROOT" ] || exit 0; x() { ${say}; exit 0; }; `
+    + String.raw`n=$(command -v node) || x "node is not on PATH"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
+    + String.raw`r=$(realpath "$n" 2>/dev/null || readlink -f "$n" 2>/dev/null) || x "no realpath or readlink -f to resolve $n"; `
+    + String.raw`p=$(pwd -P); [ -n "$p" ] && [ "$p" != / ] || x "the session folder is /"; `
+    + 'u=$(cd /tmp 2>/dev/null && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P); '
+    + String.raw`h=; case "$HOME" in /?*) h=$(cd "$HOME" 2>/dev/null && pwd -P);; esac; `
+    + String.raw`k() { case "$1" in /*) ;; *) x "node path is not absolute ($1)";; esac; for d in "$u" "$t"; do [ -n "$d" ] && case "$1" in "$d"/*) x "node is in a temp folder ($1)";; esac; done; `
+    + String.raw`[ "$p" = "$h" ] || case "$1" in "$p"/*) x "node is in the session folder ($1)";; esac; }; `
+    + String.raw`cd "$PLUGIN_ROOT" || exit 0; `
+    + `case "\${r##*/}" in node) k "$r"; e=$r;; *) k "$n"; k "$r"; e=$("$n" -p 'require("fs").realpathSync(process.execPath)' 2>/dev/null) || x "the node shim $n did not name its node"; k "$e";; esac; `
+    + `"$e"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
-// PowerShell (Windows): the node.exe PATH names (a .cmd shim would run node by bare name, found in the current folder
-// first), refused under TEMP, TMP or the session folder, run from the plugin folder.
-function psCommand(script, args, viaRun) {
+// PowerShell (Windows): the first node.exe on PATH (a .cmd shim would run node by bare name, found in the current folder
+// first), refused under TEMP, TMP, LOCALAPPDATA\Temp or the session folder (unless that is USERPROFILE itself: nvm-windows
+// and Volta keep node under it), run from the plugin folder. A refusal says why, as for sh (English: Windows PowerShell
+// 5.1 garbles other letters in a command line).
+function psCommand(script, args, viaRun, notice = false) {
   const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
+  const say = notice
+    ? 'Write-Output (ConvertTo-Json -Compress @{ systemMessage = "banker hooks skipped: $m" })'
+    : '[Console]::Error.WriteLine("banker hooks skipped: $m")';
   return 'if (-not $env:PLUGIN_ROOT) { exit 0 }; '
-    + '$n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; '
-    + "$r = [IO.Path]::GetFullPath($n.Source); if ($r -notlike '*.exe') { exit 0 }; "
-    // The session folder is judged too, unless it is the home folder (nvm-windows and Volta keep node under it).
+    + `function x($m) { ${say}; exit 0 }; `
+    + "$n = Get-Command node -CommandType Application -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -like '*.exe' } | Select-Object -First 1; "
+    + "if (-not $n) { x 'node.exe is not on PATH' }; $r = [IO.Path]::GetFullPath($n.Source); "
     + "$ds = @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\Temp\"); if ($PWD.Path.TrimEnd('\\') -ne ([string]$env:USERPROFILE).TrimEnd('\\')) { $ds += $PWD.Path }; "
-    + "foreach ($d in $ds) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; "
+    + "foreach ($d in $ds) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { x \"node is in a temp folder or the session folder ($r)\" } }; "
     + 'if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { exit 0 }; '
     + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
@@ -78,7 +95,7 @@ function hooksText() {
   const doc = { description: HOOKS_NOTE, hooks: {} };
   for (const [ev, matcher, script, args, viaRun] of HOOKS) {
     doc.hooks[ev] = [{ ...(matcher ? { matcher } : {}), hooks: [{
-      type: 'command', command: shCommand(script, args, viaRun), commandWindows: psCommand(script, args, viaRun), timeout: 5,
+      type: 'command', command: shCommand(script, args, viaRun, ev === 'SessionStart'), commandWindows: psCommand(script, args, viaRun, ev === 'SessionStart'), timeout: 5,
     }] }];
   }
   return `${JSON.stringify(doc, null, 2)}\n`;

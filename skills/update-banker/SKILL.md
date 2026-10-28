@@ -80,7 +80,7 @@ in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-u
 command -v claude >/dev/null && echo "claude: present" || echo "claude: absent (Claude 채널 스킵)"
 command -v codex  >/dev/null && echo "codex: present"  || echo "codex: absent (Codex 채널 스킵)"
 command -v banker >/dev/null && banker --version || echo "banker: absent"
-command -v codex  >/dev/null && codex plugin list 2>/dev/null | grep -E '^banker@[^ ]+ +installed, enabled' || echo "codex plugin: absent (플러그인 길 스킵)"   # 켜진 banker@<마켓플레이스>와 판
+command -v codex  >/dev/null && in15 codex plugin list 2>/dev/null | grep -E '^banker@[^ ]+ +installed, enabled' || echo "codex plugin: absent (플러그인 길 스킵)"   # 켜진 banker@<마켓플레이스>와 판
 [ "$P" = 0 ] && (cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 

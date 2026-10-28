@@ -15,7 +15,7 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 
 2. **버전 올리기** — `.claude-plugin/plugin.json` 의 `version` 을 새 semver 로 바꾼다(단일 출처).
 
-3. **버전 동기화** — `npm run sync-version` 으로 `package.json`, `marketplace.json`, Codex 플러그인의 `.codex-plugin/plugin.json` 을 `plugin.json` 에 맞춘다. `commands/` 를 바꿨으면 `node scripts/sync-codex-plugin.js` 로 Codex 플러그인의 `codex/command-skills/` 도 다시 만든다(스모크가 `--check` 로 확인).
+3. **버전 동기화** — `npm run sync-version` 으로 `package.json`, `marketplace.json`, Codex 플러그인의 `.codex-plugin/plugin.json` 을 `plugin.json` 에 맞춘다. `commands/` 나 Codex 플러그인 훅(`scripts/sync-codex-plugin.js` 의 `HOOKS`, `shCommand`, `psCommand`)을 바꿨으면 `node scripts/sync-codex-plugin.js` 로 `codex/command-skills/` 와 `codex/hooks.json` 을 다시 만든다(스모크가 `--check` 로 확인).
 
 4. **바뀐 스킬 매니페스트 갱신 (← 잊기 쉬운 단계).** `node scripts/gen-skill-changes.js` 를 **버전 bump 후·릴리스 커밋 전**에 실행한다.
    - 이 타이밍이 핵심이다. 이때 `from` = 직전 릴리스 커밋(plugin.json 을 마지막으로 바꾼 커밋), `to` = 작업트리(방금 올린 새 버전)로 잡혀 diff 가 정확하다. 커밋 뒤에 실행하면 `from` 이 방금 만든 릴리스 커밋이 되어 diff 가 비어버린다.

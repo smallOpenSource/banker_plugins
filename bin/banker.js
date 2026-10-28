@@ -318,8 +318,8 @@ async function doctor() {
   const plugins = await codexPluginInstalls(base);
   log(`  Codex plugin (codex plugin add): ${plugins.length ? plugins.join(', ') : 'not installed'}`);
   // A project-scope npm install (banker setup --codex --scope project) in this folder doubles the skills here too.
-  const projectNpm = (await loadCodexRoutes()).npmRoute(codexBase('project'));
-  if (plugins.length && (installed.length || projectNpm)) log(`  ⚠ banker is installed both ways${projectNpm && !installed.length ? ` (npm in ${codexBase('project')})` : ''}: skills show twice ($banker-<name> and $banker:<name>). Keep one: banker uninstall --codex, or codex plugin remove ${plugins[0].split(' ')[0]}`);
+  const projectNpm = (await loadCodexRoutes()).projectNpmRoot(process.cwd());
+  if (plugins.length && (installed.length || projectNpm)) log(`  ⚠ banker is installed both ways${projectNpm && !installed.length ? ` (npm in ${path.join(projectNpm, '.codex')})` : ''}: skills show twice ($banker-<name> and $banker:<name>). Keep one: banker uninstall --codex, or codex plugin remove ${plugins[0].split(' ')[0]}`);
   if (have('codex') && installed.length === 0 && !plugins.length) log('  ⚠ codex found but 0 banker skills installed — run: banker setup --codex, or codex plugin add banker@banker-plugins');
   const m = readManifest();
   const nSkills = eligible(m).filter(s => s.type === 'skill').length;

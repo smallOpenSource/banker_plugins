@@ -80,11 +80,32 @@ export function pluginRoutes(home) {
   return out;
 }
 
-// 두 길이 함께 있으면 알림 글, 아니면 ''. npm 길은 사용자 범위(<홈>/skills)와, cwd 가 있으면 프로젝트 범위
-// (`banker setup --codex --scope project` 의 <cwd>/.codex/skills)도 본다.
+// 프로젝트 범위 npm 설치(`banker setup --codex --scope project` 의 <폴더>/.codex/skills/banker-*)가 있는 폴더. cwd 에서
+// 저장소 최상위(.git 이 있는 폴더)까지 올라가며 찾는다(저장소 밖이면 cwd 만). 없으면 ''.
+export function projectNpmRoot(cwd) {
+  if (!cwd || !path.isAbsolute(cwd)) return '';
+  let dir = path.resolve(cwd);
+  const top = (() => {
+    for (let d = dir, i = 0; i < 64; i++) {
+      if (fs.existsSync(path.join(d, '.git'))) return d;
+      const up = path.dirname(d);
+      if (up === d) return '';
+      d = up;
+    }
+    return '';
+  })();
+  for (let i = 0; i < 64; i++) {
+    if (npmRoute(path.join(dir, '.codex'))) return dir;
+    if (!top || dir === top) return '';
+    dir = path.dirname(dir);
+  }
+  return '';
+}
+
+// 두 길이 함께 있으면 알림 글, 아니면 ''. npm 길은 사용자 범위(<홈>/skills)와, cwd 가 있으면 프로젝트 범위도 본다.
 export function dualInstallNote(home, cwd = '') {
   const plugins = pluginRoutes(home);
-  if (!plugins.length || !(npmRoute(home) || (cwd && path.isAbsolute(cwd) && npmRoute(path.join(cwd, '.codex'))))) return '';
+  if (!plugins.length || !(npmRoute(home) || projectNpmRoot(cwd))) return '';
   return `banker 가 Codex 에 두 번 설치됨: npm 의 banker setup --codex 와 Codex 플러그인 ${plugins.join(', ')}. `
     + '스킬이 $banker-<이름> 과 $banker:<이름> 으로 겹칩니다. 하나만 두십시오: '
     + `npm 쪽을 빼려면 banker uninstall --codex, 플러그인을 빼려면 codex plugin remove ${plugins[0]}`;

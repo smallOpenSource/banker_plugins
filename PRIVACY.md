@@ -91,7 +91,7 @@ opt-out 하더라도 훅의 등록 자체는 남고, 각 스크립트 내부의 
 `banker uninstall --codex` 가 둘 다 지우고, `banker hooks disable update` 나 `banker hooks disable count` 로 하나씩 끌 수 있습니다.
 
 Codex 플러그인으로 설치하면 같은 두 훅이 플러그인의 `codex/hooks.json` 에서 오고, 설치된 플러그인 폴더(`~/.codex/plugins/cache/banker-plugins/banker/<판>/`)에서 돕니다.\
-역시 `/hooks` 에서 신뢰해야 돌고, 신뢰하지 않거나 `/hooks` 에서 끄면 돌지 않습니다. `codex plugin remove banker@banker-plugins` 가 훅을 함께 지웁니다.
+역시 `/hooks` 에서 신뢰해야 돌고, 신뢰하지 않거나 `/hooks` 에서 끄면 돌지 않습니다. `codex plugin remove banker@banker-plugins` 가 이 두 훅을 함께 지웁니다. `obsidizer --enable` 로 따로 설치한 obsidizer 훅은 사용자 범위에 있어 남습니다(README 의 제거 절).
 
 - `SessionStart`: 세션 시작 시 1회, Claude Code 와 같은 캐시로 업데이트 알림을 확인합니다. 알림은 TUI 에 경고 줄로 보입니다.
 - `Stop`: 턴이 끝날 때 1회, 이번 턴에 쓴 banker 스킬 이름을 셉니다. 도구 호출마다 돌지 않습니다.

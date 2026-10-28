@@ -86,8 +86,10 @@ export function safeNode(node, { win = process.platform === 'win32', cwd = proce
   };
   // A link elsewhere is judged where it leads too, so a link in a safe place cannot pin a node from the temp folder.
   const places = [node, real(node)];
-  // A session in the home folder is no workspace to judge by (as homeInWorkspace): nvm keeps node under ~/.nvm.
-  const inWork = codex && real(cwd) !== real(home);
+  // A session in the home folder is no workspace to judge by (as homeInWorkspace): nvm keeps node under ~/.nvm. Only an
+  // absolute home names one (HOME=. would make every folder the home); path.relative compares as the OS does (case on Windows).
+  const isHome = P.isAbsolute(home) && P.relative(real(home), real(cwd)) === '';
+  const inWork = codex && !isHome;
   return !places.some((f) => under(f, os.tmpdir()) || (inWork && under(f, cwd)));
 }
 

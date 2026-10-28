@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { after, test } from 'node:test';
 
-import { codexHomeOf, dualInstallNote, npmRoute, pluginRootInfo, pluginRoutes } from './codex-routes.mjs';
+import { codexHomeOf, dualInstallNote, npmRoute, pluginRootInfo, pluginRoutes, projectNpmRoot } from './codex-routes.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'codex-routes-test-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -92,4 +92,16 @@ test('the dual install note names both ways out only when both routes are there'
   npmSkill(join(work, '.codex'), 'lineage');
   assert.match(dualInstallNote(p, work), /두 번 설치됨/, 'a project-scope npm install in the session folder');
   assert.equal(dualInstallNote(p, 'rel'), '', 'a relative cwd is not looked at');
+  // From a subfolder of a repository whose top holds the project-scope install.
+  const repo = home();
+  mkdirSync(join(repo, '.git'));
+  npmSkill(join(repo, '.codex'), 'lineage');
+  mkdirSync(join(repo, 'src', 'deep'), { recursive: true });
+  assert.equal(projectNpmRoot(join(repo, 'src', 'deep')), repo);
+  assert.match(dualInstallNote(p, join(repo, 'src', 'deep')), /두 번 설치됨/);
+  // Outside a repository only the folder itself counts: a parent's install is not looked at.
+  const loose = home();
+  npmSkill(join(loose, '.codex'), 'lineage');
+  mkdirSync(join(loose, 'sub'));
+  assert.equal(projectNpmRoot(join(loose, 'sub')), '');
 });
