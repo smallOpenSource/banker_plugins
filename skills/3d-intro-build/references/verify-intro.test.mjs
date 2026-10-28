@@ -8,7 +8,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import {
   TEXT_PARTS, VIEWPORTS, colorAlpha, contrastRatio, fillContrast, insideViewport, intersects, judge, loadPlaywright, parseArgs, parseColor,
-  parseViewport, relLuminance, worstContrast,
+  parseViewport, relLuminance, screenshot, worstContrast,
 } from './verify-intro.mjs';
 
 test('the default screens are the ones the guide lists and a phone on its side, touch where a phone is', () => {
@@ -165,4 +165,17 @@ test('playwright comes from the project only when asked, and npm never runs from
     fs.rmSync(npmDir, { recursive: true, force: true });
     fs.rmSync(proj, { recursive: true, force: true });
   }
+});
+
+test('screenshot tries again only after Chromium\'s "Unable to capture screenshot", up to three times', async () => {
+  const page = (errors) => ({ calls: 0, async screenshot() { this.calls++; const e = errors.shift(); if (e) throw new Error(e); return 'png'; } });
+  let p = page(['Protocol error (Page.captureScreenshot): Unable to capture screenshot', 'Unable to capture screenshot']);
+  assert.equal(await screenshot(p, {}, { waitMs: 1 }), 'png');
+  assert.equal(p.calls, 3);
+  p = page(['Unable to capture screenshot', 'Unable to capture screenshot', 'Unable to capture screenshot']);
+  await assert.rejects(screenshot(p, {}, { waitMs: 1 }), /Unable to capture screenshot/);
+  assert.equal(p.calls, 3, 'gives up after three');
+  p = page(['Target page, context or browser has been closed']);
+  await assert.rejects(screenshot(p, {}, { waitMs: 1 }), /has been closed/);
+  assert.equal(p.calls, 1, 'any other error is thrown at once');
 });
