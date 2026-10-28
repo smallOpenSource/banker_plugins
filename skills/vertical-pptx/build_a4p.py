@@ -59,6 +59,7 @@ python-pptx 특유의 함정 셋. 전부 이 저장소에서 실측한 것이고
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 
@@ -89,12 +90,19 @@ EXIT_ENV = 2
 EXIT_USAGE = 3
 
 # 폰트 체인. --font → BANKER_PPTX_FONT → meta.font → 아래 목록 → 시스템 한국어 sans.
-FONT_CHAIN = ('Noto Sans CJK KR', 'Malgun Gothic', 'Apple SD Gothic Neo', 'NanumGothic')
+# build_a4p.js 의 FONT_CHAIN, FONT_FILE_HINTS 와 같아야 한다(a4p.test.mjs U18b).
+# "Noto Sans KR" 은 "Noto Sans CJK KR" 의 별칭이 아니라 다른 패밀리다. Windows 의 NotoSansKR-VF.ttf 가 그것이다.
+# CJK 항목의 힌트로 묶으면 그 머신에 없는 이름 "Noto Sans CJK KR" 을 pptx 에 적게 된다.
+# AppleGothic 도 Apple SD Gothic Neo 와 다른 폰트다.
+FONT_CHAIN = ('Noto Sans CJK KR', 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', 'AppleGothic', 'NanumGothic')
 # fc-match 가 없는 환경에서 파일명으로 찾기 위한 힌트(정규화된 소문자 조각).
+# 힌트는 그 항목의 패밀리보다 느슨하면 안 된다. 파일명 탐색에는 패밀리 대조가 없다.
 FONT_FILE_HINTS = {
-    'noto sans cjk kr': ('notosanscjkkr', 'notosanscjk', 'notosanskr'),
+    'noto sans cjk kr': ('notosanscjkkr', 'notosanscjk'),
+    'noto sans kr': ('notosanskr',),
     'malgun gothic': ('malgun',),
-    'apple sd gothic neo': ('applesdgothicneo', 'applegothic'),
+    'apple sd gothic neo': ('applesdgothicneo',),
+    'applegothic': ('applegothic',),
     'nanumgothic': ('nanumgothic',),
 }
 FONT_EXT = frozenset(('.ttf', '.ttc', '.otf', '.otc'))
@@ -421,6 +429,13 @@ def norm_name(s):
     return ''.join(ch for ch in str(s).lower() if ch.isalnum() and ch.isascii())
 
 
+def sanitize_font_name(s):
+    """build_a4p.js 의 sanitizeFontName 과 같은 정리. 두 빌더가 같은 이름을 적게 한다."""
+    if not isinstance(s, str):
+        return ''
+    return re.sub(r'[\x00-\x1f\x7f]', '', re.sub(r'["\'<>&]', '', s)).strip()
+
+
 def esc_fc(s):
     out = []
     for ch in str(s):
@@ -476,23 +491,33 @@ def font_search_dirs():
     ]
 
 
+def font_weight_rank(flat):
+    """같은 패밀리의 Bold 나 Black 이 먼저 걸리면 검증기가 다른 굵기의 메트릭으로 폭을 잰다. Regular 를 우선한다."""
+    if 'regular' in flat or 'normal' in flat:
+        return 0
+    if re.search(r'bold|black|light|thin|medium|semi|extra|heavy|demi|italic|oblique', flat):
+        return 2
+    return 1
+
+
 def glob_font_file(name):
-    """fc-match 가 없는 환경용 파일명 탐색. 깊이·개수 예산을 둬서 병적인 트리에서도 끝난다."""
+    """fc-match 가 없는 환경용 파일명 탐색. 깊이·개수 예산을 둬서 병적인 트리에서도 끝난다. 순위는 결정론적이다."""
     hints = FONT_FILE_HINTS.get(str(name).lower(), (norm_name(name),))
     budget = [20000]
+    found = []
 
     def walk(directory, depth):
         if depth > 6 or budget[0] <= 0:
-            return None
+            return
         try:
             entries = list(os.scandir(directory))
         except OSError:
-            return None
+            return
         subdirs = []
         for ent in entries:
             budget[0] -= 1
             if budget[0] <= 0:
-                return None
+                return
             full = os.path.join(directory, ent.name)
             try:
                 if ent.is_dir():
@@ -505,20 +530,19 @@ def glob_font_file(name):
                 continue
             flat = norm_name(stem)
             if any(h in flat for h in hints):
-                return full
+                found.append((font_weight_rank(flat), len(ent.name), full))
         for sub in subdirs:
-            hit = walk(sub, depth + 1)
-            if hit:
-                return hit
-        return None
+            walk(sub, depth + 1)
 
     for directory in font_search_dirs():
         if not os.path.exists(directory):
             continue
-        hit = walk(directory, 0)
-        if hit:
-            return hit
-    return None
+        walk(directory, 0)
+        if found:
+            break  # 검색 경로는 우선순위 순서다. 앞선 경로에서 찾으면 거기서 고른다
+    if not found:
+        return None
+    return sorted(found)[0][2]
 
 
 def find_font_file(name):
@@ -528,14 +552,12 @@ def find_font_file(name):
     돌려받은 family 가 요청한 이름과 실제로 맞는지 대조해야 한다. 안 그러면 이름이 거짓말이 된다.
     """
     want = norm_name(name)
+    # 한 방향(family 가 요청 이름을 품는가)만 본다. 반대 방향까지 허용하면
+    # "Noto Sans CJK KR" 을 요청했는데 "Noto Sans" 가 통과해 한글 없는 폰트에 그 이름이 붙는다.
     hit = fc_match(esc_fc(name))
-    if hit:
-        for fam in hit['families']:
-            n = norm_name(fam)
-            if n == want or want in n or n in want:
-                if os.path.exists(hit['file']):
-                    return hit['file']
-                break
+    if hit and any(norm_name(f) == want or want in norm_name(f) for f in hit['families']):
+        if os.path.exists(hit['file']):
+            return hit['file']
     globbed = glob_font_file(name)
     if globbed and os.path.exists(globbed):
         return globbed
@@ -550,14 +572,14 @@ def resolve_font(font_arg, meta_font):
     """
     warnings = []
     candidates = [
-        {'name': font_arg, 'from': '--font'},
-        {'name': os.environ.get('BANKER_PPTX_FONT'), 'from': 'BANKER_PPTX_FONT'},
-        {'name': meta_font if (meta_font and meta_font != 'auto') else '', 'from': 'meta.font'},
+        {'name': sanitize_font_name(font_arg), 'from': '--font'},
+        {'name': sanitize_font_name(os.environ.get('BANKER_PPTX_FONT')), 'from': 'BANKER_PPTX_FONT'},
+        {'name': '' if meta_font == 'auto' else sanitize_font_name(meta_font), 'from': 'meta.font'},
     ]
-    explicit = [c for c in candidates if isinstance(c['name'], str) and c['name'].strip() != '']
+    explicit = [c for c in candidates if c['name'] != '']
 
     for c in explicit:
-        name = c['name'].strip()
+        name = c['name']
         file_path = find_font_file(name)
         if file_path:
             return {'name': name, 'file': file_path, 'from': c['from'], 'warnings': warnings}
@@ -573,7 +595,7 @@ def resolve_font(font_arg, meta_font):
         return {'name': sys_hit['families'][0], 'file': sys_hit['file'],
                 'from': 'system', 'warnings': warnings}
 
-    fallback = explicit[0]['name'].strip() if explicit else FONT_CHAIN[0]
+    fallback = explicit[0]['name'] if explicit else FONT_CHAIN[0]
     warnings.append({'code': 'FONT_FILE_UNRESOLVED', 'from': 'chain', 'detail': fallback})
     return {'name': fallback, 'file': None, 'from': 'unresolved', 'warnings': warnings}
 
@@ -820,8 +842,8 @@ USAGE = '\n'.join([
     '  --in <deck.json>   deck JSON 입력 (두 빌더의 유일한 계약)',
     '  --out <경로>       .pptx 출력 경로',
     '  --font <이름>      폰트 이름을 직접 지정. 체인: --font → BANKER_PPTX_FONT → meta.font',
-    '                     → Noto Sans CJK KR → Malgun Gothic → Apple SD Gothic Neo → NanumGothic'
-    ' → 시스템 한국어 sans',
+    '                     → Noto Sans CJK KR → Noto Sans KR → Malgun Gothic → Apple SD Gothic Neo'
+    ' → AppleGothic → NanumGothic → 시스템 한국어 sans',
     '  -h, --help         이 도움말',
     '',
     '입력은 deck JSON 뿐이다. 마크다운 변환 플래그는 이 빌더에 없다 —',

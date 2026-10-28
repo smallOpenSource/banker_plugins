@@ -1076,6 +1076,55 @@ test('U18 every font-file hint is a substring of the family it belongs to', () =
   assert.ok(B.FONT_CHAIN.includes('Noto Sans KR'));
 });
 
+// U18b: the python builder picks a font the way the node builder does. The fix above went into build_a4p.js only, so on
+// a Windows box with NotoSansKR-VF.ttf and no CJK font the python builder still wrote "Noto Sans CJK KR" (E1 measured
+// it, 2026-10-28). build_a4p.py loads without python-pptx, so this needs python 3.9 or newer and nothing else.
+const PY_MODULE_PROBE = 'import sys; sys.exit(3) if sys.version_info < (3, 9) else None';
+const pythonModule = (() => {
+  const candidates = [process.env.A4P_PYTHON, process.env.PYTHON, 'python3', 'python', 'python3.12', 'python3.11', 'python3.10'].filter(Boolean);
+  const bin = candidates.find((c) => spawnSync(c, ['-c', PY_MODULE_PROBE], { encoding: 'utf8' }).status === 0);
+  return bin ? { ok: true, bin } : { ok: false, reason: `no interpreter among [${candidates.join(', ')}] is python 3.9 or newer` };
+})();
+
+const PY_FONT_PROBE = String.raw`
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import build_a4p as b
+d = sys.argv[2]
+out = {'chain': list(b.FONT_CHAIN), 'hints': {k: list(v) for k, v in b.FONT_FILE_HINTS.items()}}
+for n in ('NotoSans-Regular.ttf', 'NotoSansKR-Bold.ttf', 'NotoSansKR-VF.ttf'):
+    open(os.path.join(d, n), 'wb').close()
+b.font_search_dirs = lambda: [d]
+latin = os.path.join(d, 'NotoSans-Regular.ttf')
+b.fc_match = lambda pattern: {'file': latin, 'families': ['Noto Sans']}
+out['cjkFromLatin'] = b.find_font_file('Noto Sans CJK KR')
+b.fc_match = lambda pattern: None
+out['kr'] = os.path.basename(b.find_font_file('Noto Sans KR') or '')
+os.environ.pop('BANKER_PPTX_FONT', None)
+out['auto'] = b.resolve_font(None, 'auto')['name']
+r = b.resolve_font(' Noto "Sans<> KR\x01 ', 'auto')
+out['explicit'] = [r['name'], r['from']]
+print(json.dumps(out))
+`;
+
+test('U18b the python builder carries the node chain and hints, checks a family one way, and prefers the regular file', (t) => {
+  if (!pythonModule.ok) {
+    if (process.env.A4P_REQUIRE_BUILDERS === '1') assert.fail(`${pythonModule.reason} (A4P_REQUIRE_BUILDERS=1)`);
+    t.skip(pythonModule.reason);
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(TMP, 'u18b-'));
+  const r = spawnSync(pythonModule.bin, ['-c', PY_FONT_PROBE, HERE, dir], { encoding: 'utf8', cwd: TMP });
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.deepEqual(got.chain, B.FONT_CHAIN, 'the same chain, in the same order');
+  assert.deepEqual(got.hints, B.FONT_FILE_HINTS, 'the same file hints');
+  assert.equal(got.cjkFromLatin, null, 'fc-match answering "Noto Sans" for "Noto Sans CJK KR" is a substitute, not a hit');
+  assert.equal(got.kr, 'NotoSansKR-VF.ttf', 'the regular cut before the bold one');
+  assert.equal(got.auto, 'Noto Sans KR', 'a box with only NotoSansKR-VF.ttf gets the name that is installed');
+  assert.deepEqual(got.explicit, ['Noto Sans KR', '--font'], 'a --font name is cleaned as the node builder cleans it');
+});
+
 // ===========================================================================
 // U17 — meta.title length: the two builders must agree
 // ===========================================================================
