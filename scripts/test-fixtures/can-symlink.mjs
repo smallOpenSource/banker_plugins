@@ -6,15 +6,16 @@ import { join } from "node:path";
 
 export function probeSymlink(platform = process.platform) {
   if (platform !== "win32") return true;
-  const dir = mkdtempSync(join(tmpdir(), "can-symlink-"));
+  let dir;
   try {
+    dir = mkdtempSync(join(tmpdir(), "can-symlink-"));
     writeFileSync(join(dir, "target"), "");
     symlinkSync(join(dir, "target"), join(dir, "link"), "file");
     return true;
   } catch {
     return false;
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync(dir, { recursive: true, force: true });
   }
 }
 

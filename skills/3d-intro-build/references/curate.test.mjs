@@ -14,7 +14,7 @@ import {
   archiveRejected, hashFile, readDecisions, readInput, recordDecision, renderPage, startCurate,
 } from './curate.mjs';
 import { readState, stopServer } from './preview-lib.mjs';
-import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
+import { canSymlink, symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const NOW = new Date('2026-10-10T03:00:00Z');
@@ -92,7 +92,7 @@ test('a listed file that is not an image or a video, or that links out of the pr
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-out-'));
   made.push(outside);
   fs.writeFileSync(path.join(outside, 'leak.png'), 'from outside');
-  const links = process.platform !== 'win32';
+  const links = canSymlink;
   if (links) {
     fs.symlinkSync(path.join(outside, 'leak.png'), path.join(dir, 'stills', 'link.png'));
     fs.symlinkSync(path.join(dir, '.env.3d-intro.local'), path.join(dir, 'stills', 'inner.png'));

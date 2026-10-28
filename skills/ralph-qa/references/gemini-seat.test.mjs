@@ -7,7 +7,7 @@ import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { POLICY, cleanSeat, policyIntact, sessionFolders, staleSessionFolders, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
-import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
+import { canSymlink, symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const SEAT = fileURLToPath(new URL("./gemini-seat.mjs", import.meta.url));
 
@@ -103,7 +103,7 @@ test("clean removes only the gemini session folders that name the seat folder", 
     project([".cache", ".gemini", "tmp"], "gemini-1", seat)];
   const other = project([".gemini", "tmp"], "work", join(dir, "work"));
   assert.deepEqual(sessionFolders(seat, { env: { GEMINI_CLI_HOME: home } }).sort(), [...mine].sort());
-  if (process.platform !== "win32") {
+  if (canSymlink) {
     symlinkSync(other, join(home, ".gemini", "tmp", "link"));
   }
   const out = run(SEAT, ["clean", seat], { GEMINI_CLI_HOME: home });
@@ -111,7 +111,7 @@ test("clean removes only the gemini session folders that name the seat folder", 
   assert.deepEqual(JSON.parse(out.stdout).removed.sort(), [...mine].sort());
   assert.ok(mine.every((p) => !existsSync(p)));
   assert.ok(existsSync(join(other, "chats", "session-1.jsonl")), "another project's sessions stay");
-  if (process.platform !== "win32") assert.ok(existsSync(join(home, ".gemini", "tmp", "link")), "a link is left alone");
+  if (canSymlink) assert.ok(existsSync(join(home, ".gemini", "tmp", "link")), "a link is left alone");
   assert.deepEqual(JSON.parse(run(SEAT, ["clean", seat], { GEMINI_CLI_HOME: home }).stdout).removed, []);
 });
 
@@ -228,7 +228,7 @@ test("projects.json leads clean only to a real folder under tmp/ or history/ tha
   const marked = unmarked(home, "tmp", "marked");
   writeFileSync(join(marked, ".project_root"), join(dir, "other"));
   const bare = unmarked(home, "tmp", "gemini");
-  if (process.platform !== "win32") symlinkSync(join(dir, "keep"), join(home, ".gemini", "tmp", "link"));
+  if (canSymlink) symlinkSync(join(dir, "keep"), join(home, ".gemini", "tmp", "link"));
   // One seat, spelt several ways, each pointing at a name that must not reach outside tmp/ or history/.
   projectsJson(home, { [seat]: "../../keep", [seat + "/"]: "..", [join(seat, ".")]: ".", [join(seat, "..", "gemini")]: "",
     [join(seat, "x", "..")]: "a/b", [seat + "//"]: 42, [join(dir, "d", ".", "gemini")]: "marked", [join(dir, "d", "x", "..", "gemini")]: "link" });

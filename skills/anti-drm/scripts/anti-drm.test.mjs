@@ -1221,7 +1221,7 @@ test("config says where a file anti-drm did not write went, and says so when it 
 
 test("config does not call a folder or a link at .bak a file kept before: it says something that is not a regular file is there", () => {
   const places = [["a folder", (bak) => { mkdirSync(bak); return true; }]];
-  if (process.platform !== "win32") places.push(["a link to nothing", (bak) => { symlinkSync(join(bak, "..", "nowhere"), bak); return true; }]);
+  if (symlinks) places.push(["a link to nothing", (bak) => { symlinkSync(join(bak, "..", "nowhere"), bak); return true; }]);
   for (const [what, make] of places) {
     const s = setup();
     mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
@@ -1364,7 +1364,7 @@ test("on with a link at the settings path asks for the settings, since the save 
   const cases = [
     ["to a folder", (f, d) => { mkdirSync(join(d, "a-folder")); symlinkSync(join(d, "a-folder"), f); }],
     ["to a file past 64 KiB", (f, d) => { writeFileSync(join(d, "big.json"), " ".repeat(64 * 1024 + 1)); symlinkSync(join(d, "big.json"), f); }],
-    ...(process.platform === "win32" ? [] : [["in a loop", (f, d) => { symlinkSync(join(d, "loop-b"), f); symlinkSync(f, join(d, "loop-b")); }]]),
+    ...(symlinks ? [["in a loop", (f, d) => { symlinkSync(join(d, "loop-b"), f); symlinkSync(f, join(d, "loop-b")); }]] : []),
     ...(process.platform === "win32" || asRoot ? [] : [["to a file it cannot read", (f, d) => { writeFileSync(join(d, "locked.json"), "{}"); chmodSync(join(d, "locked.json"), 0o000); symlinkSync(join(d, "locked.json"), f); }]]),
   ];
   for (const [what, make] of cases) {

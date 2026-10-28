@@ -271,7 +271,7 @@ test('a project key file the repository tracks is never written, and resolveCred
 });
 
 // 범위 밖 1 (and the same guard in persistCreds)
-test('a link at the temp name a write draws is refused (wx), not written through', { skip: process.platform === 'win32' && 'POSIX links' }, () => {
+test('a link at the temp name a write draws is refused (wx), not written through', { skip: symlinkSkip }, () => {
   const d = tmp('r4-wx-');
   const victim = path.join(d, 'victim.md');
   fs.writeFileSync(victim, 'untouched');
