@@ -83,8 +83,10 @@ function hooksRev(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
 //   under ~/.nvm, and a sandbox writing the home can already change the shell's rc files and that node).
 // - Nothing else the command runs is found in those folders either: once node is found, PATH keeps only absolute
 //   entries outside them, so realpath, readlink, and whatever a shim starts come from elsewhere (a project .venv/bin
-//   or node_modules/.bin on PATH would otherwise lend a planted realpath). Before that only shell builtins run, and the
-//   refusal notice takes tr from the system's default PATH (command -p).
+//   or node_modules/.bin on PATH would otherwise lend a planted realpath). A PATH left empty becomes /usr/bin:/bin (bash
+//   reads an empty PATH as the current folder), and the command moves to the plugin folder before running anything
+//   found on it. Before that only shell builtins run, and the refusal notice takes tr from the system's default PATH
+//   (command -p).
 // - From the plugin folder, so a version manager reads no version file of the session folder; the hook scripts take
 //   that folder from their input.
 // - The real path comes from realpath, else readlink -f, else (macOS before 12.3 has neither) by following the links
@@ -108,14 +110,14 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
     + `n=$(command -v node) || for d in ${nodeDirs.join(' ')}; do [ -x "$d/node" ] && n=$d/node && break; done; `
     + String.raw`[ -n "$n" ] || x "node is not on PATH (a Codex started from the desktop may not have the shell's PATH)"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
     + 'set -f; o=$IFS; IFS=:; q=; for v in $PATH; do case "$v" in /*) ;; *) continue;; esac; y=$(cd "$v" 2>/dev/null && pwd -P) || continue; '
-    + 'w "$y" || q=$q${q:+:}$v; done; IFS=$o; set +f; PATH=$q; export PATH; '
+    + 'w "$y" || q=$q${q:+:}$v; done; IFS=$o; set +f; PATH=${q:-/usr/bin:/bin}; export PATH; '
+    + String.raw`cd "$PLUGIN_ROOT" || x "cannot enter the plugin folder"; `
     + String.raw`rp() { realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null || { f=$1; i=0; while [ -L "$f" ]; do i=$((i+1)); [ "$i" -le 40 ] || return 1; `
     + 'l=$(readlink "$f") || return 1; case "$l" in /*) f=$l;; *) f=${f%/*}/$l;; esac; done; [ -e "$f" ] || return 1; '
     + 'd=$(cd -P "${f%/*}/" 2>/dev/null && pwd -P) || return 1; printf \'%s\\n\' "${d%/}/${f##*/}"; }; }; '
     + String.raw`r=$(rp "$n") || x "cannot resolve the real path of $n"; `
     + String.raw`k() { case "$1" in /*) ;; *) x "node path is not absolute ($1)";; esac; for d in "$u" "$t"; do [ -n "$d" ] && case "$1" in "$d"/*) x "node is in a temp folder ($1)";; esac; done; `
     + String.raw`[ "$p" = "$h" ] || case "$1" in "$p"/*) x "node is in the session folder ($1)";; esac; }; `
-    + String.raw`cd "$PLUGIN_ROOT" || x "cannot enter the plugin folder"; `
     + `case "\${r##*/}" in node) k "$r"; e=$r;; *) k "$n"; k "$r"; e=$("$n" -p 'require("fs").realpathSync(process.execPath)' 2>/dev/null) || x "the node shim $n did not name its node"; k "$e";; esac; `
     + `"$e"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
@@ -125,8 +127,8 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
 // asked is refused under TEMP, TMP, LOCALAPPDATA\Temp or the session folder (unless that is USERPROFILE itself: nvm-windows
 // and Volta keep node under it). Once node is found, PATH keeps only absolute entries outside those folders, so what a
 // shim starts by name (cmd.exe looks mise up on PATH) comes from elsewhere. Paths are compared in their long form
-// (Get-Item, so an 8.3 name such as C:\Users\LONGNA~1 in TEMP still matches) with links and junctions on the way
-// followed, as the sh command compares real paths. A refusal says why, as for sh (English: Windows PowerShell 5.1
+// (Get-Item, so an 8.3 name such as C:\Users\LONGNA~1 in TEMP still matches) with symbolic links and junctions on the
+// way followed, as the sh command compares real paths. A hard link is not followed: its other name is the same file. A refusal says why, as for sh (English: Windows PowerShell 5.1
 // garbles other letters in a command line).
 function psCommand(script, args, viaRun, notice = false, rev = '') {
   const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
@@ -137,7 +139,7 @@ function psCommand(script, args, viaRun, notice = false, rev = '') {
     + `function x($m) { ${say}; exit 0 }; if (-not $env:PLUGIN_ROOT) { x 'PLUGIN_ROOT is not set' }; `
     + String.raw`function G($p) { try { (Get-Item -LiteralPath $p -Force -ErrorAction Stop).FullName } catch { try { [IO.Path]::GetFullPath($p) } catch { $p } } }; `
     + String.raw`function L($p) { if (-not $p) { return '' }; $p = G $p; for ($i = 0; $i -lt 32; $i++) { $c = $p; $t = $null; `
-    + String.raw`while ($c) { $it = Get-Item -LiteralPath $c -Force -ErrorAction SilentlyContinue; if ($it -and $it.LinkType -and @($it.Target)[0]) { $t = [string]@($it.Target)[0]; break }; $c = Split-Path -LiteralPath $c }; `
+    + String.raw`while ($c) { $it = Get-Item -LiteralPath $c -Force -ErrorAction SilentlyContinue; if ($it -and $it.LinkType -in 'SymbolicLink', 'Junction' -and @($it.Target)[0]) { $t = [string]@($it.Target)[0]; break }; $c = Split-Path -LiteralPath $c }; `
     + String.raw`if (-not $t) { break }; if (-not [IO.Path]::IsPathRooted($t)) { $t = Join-Path (Split-Path -LiteralPath $c) $t }; $p = G ($t.TrimEnd('\') + $p.Substring($c.Length)) }; $p.TrimEnd('\') }; `
     + String.raw`$ds = @($env:TEMP, $env:TMP); if ($env:LOCALAPPDATA) { $ds += "$env:LOCALAPPDATA\Temp" }; $w = L $PWD.Path; if ($w -ne (L $env:USERPROFILE)) { $ds += $w }; `
     + String.raw`$ds = @($ds | Where-Object { $_ } | ForEach-Object { L $_ } | Where-Object { $_ }); `

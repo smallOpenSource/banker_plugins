@@ -232,6 +232,18 @@ test('sh: a realpath, readlink or tr planted on a PATH entry in the session fold
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
   assert.ok(!existsSync(join(c.d, 'planted')), `planted helpers ran: ${existsSync(join(c.d, 'planted')) ? readFileSync(join(c.d, 'planted'), 'utf8') : ''}`);
+  // A PATH of nothing but the session folder cleans to nothing; bash would read that as the current folder.
+  rmSync(c.marker);
+  for (const sh of ['/bin/sh', '/bin/bash'].filter((f) => existsSync(f))) {
+    r = spawnSync(sh, ['-c', shCommand('probe.mjs', [], true, false, '', [dirname(o.node)])], { cwd: c.work, encoding: 'utf8', env: { ...env, PATH: venv } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', sh);
+    rmSync(c.marker);
+  }
+  for (const f of ['realpath', 'readlink']) writeFileSync(join(c.work, f), `#!/bin/sh\necho ${f} >> "${c.d}/planted"\nexit 1\n`, { mode: 0o755 });
+  r = spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true, false, '', [dirname(o.node)])], { cwd: c.work, encoding: 'utf8', env: { ...env, PATH: c.work } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!existsSync(join(c.d, 'planted')), 'an empty cleaned PATH does not become the session folder');
 });
 
 function ps(c, cmd, path) {
