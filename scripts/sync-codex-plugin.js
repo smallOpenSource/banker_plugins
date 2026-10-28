@@ -11,10 +11,13 @@
  * codex/hooks.json is written here too. Codex runs a trusted hook outside its sandbox, so each command finds node on
  * PATH, resolves its real path, and runs nothing when that is relative or under the temp folder or the session folder
  * (both writable from the sandbox): the rule `banker setup --codex` applies with safeNode() in bin/lib/codex-hooks.mjs.
+ * Codex keeps a hook's trust by the hash of its command, so each command carries a hash of the files the hooks run
+ * (hooksRev): a change to those files changes the command, and Codex asks again in /hooks before it runs the new code.
  * Usage:
  *   node scripts/sync-codex-plugin.js          # write codex/command-skills from commands/, and codex/hooks.json
  *   node scripts/sync-codex-plugin.js --check  # exit 1 if a command skill, the hooks file, or the plugin's skill set drifts
  */
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { commandSkillText } = require('../bin/lib/command-skill.cjs');
@@ -40,9 +43,35 @@ const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@b
   + 'Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out '
   + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY). The obsidizer hook is installed only by obsidizer --enable. '
   + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names (a multicall shim '
-  + 'such as Volta or mise: the node binary it names) only when its real path is absolute and outside the temp folder and the session '
-  + 'folder (a session in the home folder itself excepted), from the plugin folder, and otherwise says why it skipped. command is for sh, '
-  + 'commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.';
+  + 'such as Volta or mise, or a .cmd shim on Windows: the node binary it names) only when its real path is absolute and outside the temp '
+  + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder, and otherwise says why it '
+  + 'skipped. Each command starts with a hash of the hook files (banker-hooks-rev), so new hook code asks for trust again. command is '
+  + 'for sh, commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.';
+
+// The files a hook runs: the scripts HOOKS names, run.cjs, and what they load or start, found by following relative
+// imports and requires and the sibling script names they spell (update-notify starts update-fetch.mjs or
+// update-checkin.mjs by name). Repo-relative, with forward slashes, sorted.
+function hookFiles(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8')) {
+  const seen = new Set();
+  const visit = (rel) => {
+    if (seen.has(rel) || !fs.existsSync(path.join(root, rel))) return;
+    seen.add(rel);
+    const text = read(rel);
+    const dir = path.posix.dirname(rel);
+    for (const m of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/g)) visit(path.posix.normalize(path.posix.join(dir, m[1])));
+    for (const m of text.matchAll(/['"]([A-Za-z0-9_-]+\.(?:mjs|cjs|js))['"]/g)) visit(path.posix.join(dir, m[1]));
+  };
+  visit('hooks/run.cjs');
+  for (const [, , script] of HOOKS) visit(`hooks/${script}`);
+  return [...seen].sort();
+}
+
+// The hash the commands carry: of each hook file's path and text, line ends made LF so a Windows checkout agrees.
+function hooksRev(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8')) {
+  const h = crypto.createHash('sha256');
+  for (const rel of hookFiles(read)) h.update(`${rel}\0${read(rel).replace(/\r\n/g, '\n')}\0`);
+  return h.digest('hex').slice(0, 12);
+}
 
 // sh. Which node runs, outside the sandbox:
 // - node from PATH, absolute, resolved to its real path (no realpath or readlink -f: refuse).
@@ -54,15 +83,26 @@ const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@b
 //   under ~/.nvm, and a sandbox writing the home can already change the shell's rc files and that node).
 // - From the plugin folder, so a version manager reads no version file of the session folder; the hook scripts take
 //   that folder from their input.
+// - The real path comes from realpath, else readlink -f, else (macOS before 12.3 has neither) by following the links
+//   one readlink at a time, at most 40.
+// - A Codex started from the macOS desktop gets launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), without the shell's.
+//   With no node on PATH, the node Homebrew (/opt/homebrew/bin) or the nodejs.org installer (/usr/local/bin) puts there
+//   is taken, under the same checks. A node kept elsewhere (nvm) is not guessed: the refusal names the likely cause.
 // A refusal says why and exits 0: as a systemMessage for SessionStart (shown in the TUI), on stderr otherwise.
-function shCommand(script, args, viaRun, notice = false) {
+const NODE_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
+function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NODE_DIRS) {
   const run = viaRun ? ' "$PLUGIN_ROOT/hooks/run.cjs"' : '';
   const say = notice
     ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | tr -d '\000-\037"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
     : String.raw`printf '%s\n' "banker hooks skipped: $1" >&2`;
-  return String.raw`[ -n "$PLUGIN_ROOT" ] || exit 0; x() { ${say}; exit 0; }; `
-    + String.raw`n=$(command -v node) || x "node is not on PATH"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
-    + String.raw`r=$(realpath "$n" 2>/dev/null || readlink -f "$n" 2>/dev/null) || x "no realpath or readlink -f to resolve $n"; `
+  return (rev ? `: banker-hooks-rev ${rev}; ` : '')
+    + String.raw`x() { ${say}; exit 0; }; [ -n "$PLUGIN_ROOT" ] || x "PLUGIN_ROOT is not set"; `
+    + `n=$(command -v node) || for d in ${nodeDirs.join(' ')}; do [ -x "$d/node" ] && n=$d/node && break; done; `
+    + String.raw`[ -n "$n" ] || x "node is not on PATH (a Codex started from the desktop may not have the shell's PATH)"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
+    + String.raw`rp() { realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null || { f=$1; i=0; while [ -L "$f" ]; do i=$((i+1)); [ "$i" -le 40 ] || return 1; `
+    + 'l=$(readlink "$f") || return 1; case "$l" in /*) f=$l;; *) f=${f%/*}/$l;; esac; done; [ -e "$f" ] || return 1; '
+    + 'd=$(cd -P "${f%/*}/" 2>/dev/null && pwd -P) || return 1; printf \'%s\\n\' "${d%/}/${f##*/}"; }; }; '
+    + String.raw`r=$(rp "$n") || x "cannot resolve the real path of $n"; `
     + String.raw`p=$(pwd -P); [ -n "$p" ] && [ "$p" != / ] || x "the session folder is /"; `
     + 'u=$(cd /tmp 2>/dev/null && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P); '
     + String.raw`h=; case "$HOME" in /?*) h=$(cd "$HOME" 2>/dev/null && pwd -P);; esac; `
@@ -73,30 +113,38 @@ function shCommand(script, args, viaRun, notice = false) {
     + `"$e"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
-// PowerShell (Windows): the first node.exe on PATH (a .cmd shim would run node by bare name, found in the current folder
-// first), refused under TEMP, TMP, LOCALAPPDATA\Temp or the session folder (unless that is USERPROFILE itself: nvm-windows
-// and Volta keep node under it), run from the plugin folder. A refusal says why, as for sh (English: Windows PowerShell
-// 5.1 garbles other letters in a command line).
-function psCommand(script, args, viaRun, notice = false) {
+// PowerShell (Windows): the first node.exe, node.cmd or node.bat on PATH. A .cmd or .bat shim (mise) is asked, from the
+// plugin folder, for the node.exe it runs, and that runs, as the sh command asks a multicall shim. Every path run or
+// asked is refused under TEMP, TMP, LOCALAPPDATA\Temp or the session folder (unless that is USERPROFILE itself: nvm-windows
+// and Volta keep node under it). Paths are compared in their long form (Get-Item), so an 8.3 name such as
+// C:\Users\LONGNA~1 in TEMP still matches. A refusal says why, as for sh (English: Windows PowerShell 5.1 garbles other
+// letters in a command line).
+function psCommand(script, args, viaRun, notice = false, rev = '') {
   const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
   const say = notice
     ? 'Write-Output (ConvertTo-Json -Compress @{ systemMessage = "banker hooks skipped: $m" })'
     : '[Console]::Error.WriteLine("banker hooks skipped: $m")';
-  return 'if (-not $env:PLUGIN_ROOT) { exit 0 }; '
-    + `function x($m) { ${say}; exit 0 }; `
-    + "$n = Get-Command node -CommandType Application -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -like '*.exe' } | Select-Object -First 1; "
-    + "if (-not $n) { x 'node.exe is not on PATH' }; $r = [IO.Path]::GetFullPath($n.Source); "
-    + "$ds = @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\Temp\"); if ($PWD.Path.TrimEnd('\\') -ne ([string]$env:USERPROFILE).TrimEnd('\\')) { $ds += $PWD.Path }; "
-    + "foreach ($d in $ds) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { x \"node is in a temp folder or the session folder ($r)\" } }; "
+  return (rev ? `$null = 'banker-hooks-rev ${rev}'; ` : '')
+    + `function x($m) { ${say}; exit 0 }; if (-not $env:PLUGIN_ROOT) { x 'PLUGIN_ROOT is not set' }; `
+    + "$n = Get-Command node -CommandType Application -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\\.(exe|cmd|bat)$' } | Select-Object -First 1; "
+    + "if (-not $n) { x 'node is not on PATH' }; "
+    + "function L($p) { if (-not $p) { return '' }; try { (Get-Item -LiteralPath $p -Force -ErrorAction Stop).FullName } catch { try { [IO.Path]::GetFullPath($p) } catch { $p } } }; "
+    + "$ds = @($env:TEMP, $env:TMP); if ($env:LOCALAPPDATA) { $ds += \"$env:LOCALAPPDATA\\Temp\" }; "
+    + "if ((L $PWD.Path).TrimEnd('\\') -ne (L $env:USERPROFILE).TrimEnd('\\')) { $ds += $PWD.Path }; "
+    + "function k($f) { $f = L $f; foreach ($d in $ds) { $d = L $d; if ($d -and $f.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { x \"node is in a temp folder or the session folder ($f)\" } }; $f }; "
+    + "$r = k $n.Source; "
     + "if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
+    + "if ($r -notmatch '\\.exe$') { $e = & $r -p process.execPath 2>$null | Select-Object -Last 1; "
+    + "if (-not $e -or $e -notmatch '\\.exe$' -or -not (Test-Path -LiteralPath $e -PathType Leaf)) { x \"the node shim $r did not name its node\" }; $r = k $e }; "
     + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
 function hooksText() {
   const doc = { description: HOOKS_NOTE, hooks: {} };
+  const rev = hooksRev();
   for (const [ev, matcher, script, args, viaRun] of HOOKS) {
     doc.hooks[ev] = [{ ...(matcher ? { matcher } : {}), hooks: [{
-      type: 'command', command: shCommand(script, args, viaRun, ev === 'SessionStart'), commandWindows: psCommand(script, args, viaRun, ev === 'SessionStart'), timeout: 5,
+      type: 'command', command: shCommand(script, args, viaRun, ev === 'SessionStart', rev), commandWindows: psCommand(script, args, viaRun, ev === 'SessionStart', rev), timeout: 5,
     }] }];
   }
   return `${JSON.stringify(doc, null, 2)}\n`;
@@ -182,4 +230,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { commandSkills, pluginProblems, hooksText, shCommand, psCommand, SKILL_DIRS, HOOKS_FILE };
+module.exports = { commandSkills, pluginProblems, hooksText, hookFiles, hooksRev, shCommand, psCommand, SKILL_DIRS, HOOKS_FILE };
