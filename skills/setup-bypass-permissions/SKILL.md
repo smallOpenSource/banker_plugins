@@ -28,7 +28,7 @@ disable-model-invocation: true
 (대상 codex) 확인만 줄이고 샌드박스는 남기려면 이 스킬 대신 `approval_policy = "never"` 만 두는 방법이 있습니다. 그때 작업 폴더 밖 쓰기와 네트워크는 실패합니다.
 대상이 `claude` 면 Codex 에서 실행해도 바뀌는 것은 같은 머신의 Claude Code 설정입니다.
 대상이 `codex` 면 이 계정의 모든 Codex 세션이 명령을 묻지 않고 샌드박스 없이 실행합니다(`codex --dangerously-bypass-approvals-and-sandbox` 와 같음). `codex exec` 같은 비대화형 실행도 같습니다. 샌드박스가 꺼져 작업 폴더 밖 파일과 네트워크에도 제한이 없습니다.
-되돌리려면 `/banker:setup-bypass-permissions off` 를 실행하십시오. Codex 대상은 `$banker-setup-bypass-permissions off codex` 입니다.
+되돌리려면 `/banker:setup-bypass-permissions off` 를 실행하십시오. Codex 대상은 `$banker-setup-bypass-permissions off codex`(플러그인 설치면 `$banker:setup-bypass-permissions off codex`) 입니다.
 
 ## 대상
 

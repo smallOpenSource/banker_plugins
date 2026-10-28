@@ -16,7 +16,7 @@ Claude Code 는 요청 본문이 32MB 를 넘으면 "Request too large (max 32MB
 ## 실행
 
 이 SKILL.md 가 있는 디렉터리의 절대경로로 스크립트를 실행하고, 출력 내용을 짧게 전한다.
-Claude Code 는 그 경로를 스킬 맨 위 "Base directory for this skill:" 로 보여 주고, Codex 는 `~/.codex/skills/banker-payload-mon/` 이다(프로젝트 범위 설치면 `./.codex/skills/banker-payload-mon/`).
+Claude Code 는 그 경로를 스킬 맨 위 "Base directory for this skill:" 로 보여 주고, Codex 는 스킬 목록의 이 SKILL.md 경로(file)로 보여 준다. npm 설치는 `~/.codex/skills/banker-payload-mon/`(프로젝트 범위 설치면 `./.codex/skills/banker-payload-mon/`), 플러그인 설치(`codex plugin add`)는 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/payload-mon/` 이다.
 `~` 는 따옴표 안에서 펼쳐지지 않으니 절대경로를 쓴다.
 
 ```bash

@@ -195,3 +195,48 @@ test('a turn whose start alone is missing is no shape change, and nothing is not
   run(tmp, stop(f));
   assert.ok(!existsSync(join(bankerDir(tmp), 'codex-shape-miss.json')));
 });
+
+// Codex plugin install (codex plugin add banker@<marketplace>): the skills sit in the plugin cache under three folders.
+function pluginSkill(home, folder, name, mkt = 'banker-plugins', ver = '0.22.0') {
+  const dir = join(home, 'plugins', 'cache', mkt, 'banker', ver, ...folder.split('/'), name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'SKILL.md'), '');
+  return join(dir, 'SKILL.md');
+}
+// What Codex puts in the rollout for $banker:<name>.
+const injectedPlugin = (path, name) => ({
+  type: 'response_item',
+  payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `<skill>\n<name>banker:${name}</name>\n<path>${path}</path>\n---\n` }] },
+});
+
+test('plugin skill paths name the skill and the file that proves it is installed', () => {
+  const p = '/h/.codex/plugins/cache/banker-plugins/banker/0.22.0';
+  assert.deepEqual([...namesIn(`cat ${p}/skills/lfm/SKILL.md`)], ['banker:lfm\tplugins/cache/banker-plugins/banker/0.22.0/skills/lfm/SKILL.md']);
+  assert.deepEqual([...namesIn(`cat ${p}/codex/skills/progress/SKILL.md`)], ['banker:progress\tplugins/cache/banker-plugins/banker/0.22.0/codex/skills/progress/SKILL.md']);
+  assert.deepEqual([...namesIn('C:\\Users\\u\\.codex\\plugins\\cache\\m\\banker\\1.0\\codex\\command-skills\\setup\\SKILL.md')], ['banker:setup\tplugins/cache/m/banker/1.0/codex/command-skills/setup/SKILL.md']);
+  for (const other of [`cat ${p}/hooks/x/SKILL.md`, 'cat /h/.codex/plugins/cache/m/other/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/../banker/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/m/banker/../skills/lfm/SKILL.md', `cat ${p}/command-skills/setup/SKILL.md`]) {
+    assert.deepEqual([...namesIn(other)], [], other);
+  }
+});
+
+test('a plugin skill counts by its name when its SKILL.md is in this home\'s plugin cache, once per turn', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const home = codexHome(tmp);
+  const lfm = pluginSkill(home, 'skills', 'lfm');
+  const setup = pluginSkill(home, 'codex/command-skills', 'setup');
+  const f = rollout(tmp, [started('t1'), injectedPlugin(lfm, 'lfm'), call(`cat ${lfm}`), call(`cat ${setup}`),
+    call(`cat ${home}/plugins/cache/banker-plugins/banker/0.21.0/skills/lfm/SKILL.md`),
+    call('cat /x/.codex/plugins/cache/banker-plugins/banker/0.22.0/skills/secret-here/SKILL.md')]);
+  run(tmp, stop(f));
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]).sort(), ['banker:lfm', 'banker:setup']);
+});
+
+test('a plugin hook finds the Codex home from PLUGIN_ROOT when the rollout is elsewhere', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const home = codexHome(tmp);
+  const lfm = pluginSkill(home, 'skills', 'lfm');
+  run(tmp, stop(rollout(tmp, [started('t1'), call(`cat ${lfm}`)])), { CODEX_HOME: 'not-here', PLUGIN_ROOT: join(home, 'plugins', 'cache', 'banker-plugins', 'banker', '0.22.0') });
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]), ['banker:lfm']);
+});

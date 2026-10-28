@@ -14,7 +14,7 @@
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션을 절대 막지 않는다. 비TTY 안전.
  */
 import { spawn } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,12 +22,19 @@ import {
   UPDATE_CHECK_PATH, updateCheckDue,
   noUpdateCheck, countingActive, endpoint,
   installedVersion, compareVersions, writeUpdateCache, readUsedSkills, readRegular,
-  CODEX_SHAPE_MISS_PATH, writeByRename,
+  CODEX_SHAPE_MISS_PATH, writeByRename, configDir,
 } from '../bin/lib/telemetry-config.mjs';
+import { codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, pluginRootInfo } from '../bin/lib/codex-routes.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // 업데이트 안내에 쓰는 npm 패키지 이름(고지 문구·이모지/em-dash 없음).
 const NPM_PKG = '@kaydash9999/banker-plugins';
+// Codex 의 훅은 --codex 를 받는다. 그중 Codex 플러그인(codex/hooks.json)의 훅은 --plugin 도 받는다. npm 길의 훅은
+// banker setup --codex 가 <CODEX_HOME>/hooks.json 에 넣는다.
+const CODEX = process.argv.includes('--codex');
+const PLUGIN = CODEX && process.argv.includes('--plugin');
+// Codex 에서 banker 스킬을 부르는 이름: npm 길은 $banker-<이름>, 플러그인은 $banker:<이름>.
+const skillCall = (name) => (PLUGIN ? `$banker:${name}` : `$banker-${name}`);
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -66,11 +73,14 @@ function personalizedSkills(cached) {
 // (기존 동작). banker: 접두는 떼서 짧게. 이모지/em-dash 없음(사용자 가시 채널).
 function buildMessage(latest, installed, cached) {
   const head = `banker ${latest} 사용 가능 (현재 ${installed}).`;
-  // Codex 의 훅은 --codex 를 받는다(banker setup --codex 가 설치). Codex 에는 /banker: 명령이 없어 스킬 이름과
-  // npm 뒤의 Codex 설치 명령을 안내한다.
-  const tail = process.argv.includes('--codex')
-    ? `업데이트: $banker-update-banker 또는 npm i -g ${NPM_PKG} 뒤 banker setup --codex`
-    : `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
+  // Codex 에는 /banker: 명령이 없어 스킬 이름과 그 설치 길의 갱신 명령을 안내한다. 플러그인은 마켓플레이스를 올리면
+  // 설치된 플러그인도 새 판으로 바뀌고, Codex 는 세션을 시작할 때 git 마켓플레이스를 스스로 올린다(0.144.5 실측).
+  const mkt = pluginRootInfo(process.env.PLUGIN_ROOT)?.marketplace ?? DEFAULT_MARKETPLACE;
+  const tail = PLUGIN
+    ? `업데이트: Codex 가 세션을 시작할 때 마켓플레이스와 함께 올립니다. 바로 올리려면 codex plugin marketplace upgrade ${mkt} 뒤 Codex 를 다시 여십시오`
+    : CODEX
+      ? `업데이트: ${skillCall('update-banker')} 또는 npm i -g ${NPM_PKG} 뒤 banker setup --codex`
+      : `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
   const hits = personalizedSkills(cached);
   if (hits.length) {
     const names = hits.slice(0, 5).map((s) => s.replace(/^banker:/, '')).join(', ');
@@ -100,7 +110,7 @@ export function shapeMissNotice() {
     const miss = JSON.parse(readRegular(CODEX_SHAPE_MISS_PATH));
     if (!miss || typeof miss.version !== 'string' || miss.notified) return '';
     writeByRename(CODEX_SHAPE_MISS_PATH, JSON.stringify({ version: miss.version, notified: true }));
-    return `banker 사용량 카운팅이 Codex ${miss.version.slice(0, 40)} 의 기록 형식을 읽지 못함. $banker-update-banker 로 banker 를 업데이트하고, 그래도 같으면 알려 주십시오`;
+    return `banker 사용량 카운팅이 Codex ${miss.version.slice(0, 40)} 의 기록 형식을 읽지 못함. ${skillCall('update-banker')} 로 banker 를 업데이트하고, 그래도 같으면 알려 주십시오`;
   } catch {
     return '';
   }
@@ -123,11 +133,31 @@ function spawnFetcher() {
   }
 }
 
-async function main() {
-  // SessionStart payload 를 드레인(파이프 위생). 내용을 쓰지 않으므로 파싱 실패해도 무해.
-  try { await readStdin(); } catch { /* stdin 없음/오류 무해 */ }
+// Codex: npm 길과 플러그인 길이 함께 있으면 알린다. 두 길의 훅이 모두 신뢰돼 같은 세션에서 둘 다 돌 수 있으므로
+// 세션마다 한 번만(configDir 의 codex-dual-notified 에 세션 id). 세션 id 가 없으면 알리기만 한다.
+const SESSION_RE = /^[A-Za-z0-9._-]{1,80}$/;
+export function dualNotice(payload, env = process.env) {
+  try {
+    const note = dualInstallNote(codexHomeOf(payload?.transcript_path, env));
+    if (!note) return '';
+    const sid = typeof payload?.session_id === 'string' && SESSION_RE.test(payload.session_id) ? payload.session_id : '';
+    if (!sid) return note;
+    const file = join(configDir(), 'codex-dual-notified');
+    if (readRegular(file).trim() === sid) return '';
+    mkdirSync(configDir(), { recursive: true });
+    writeByRename(file, `${sid}\n`);
+    return note;
+  } catch {
+    return '';
+  }
+}
 
-  const notes = process.argv.includes('--codex') ? [shapeMissNotice()] : [];
+async function main() {
+  // SessionStart payload. Codex 는 두 길 알림에 transcript_path, session_id 를 쓴다. 파싱 실패해도 무해.
+  let payload = null;
+  try { payload = JSON.parse(await readStdin()); } catch { /* stdin 없음/오류 무해 */ }
+
+  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload)] : [];
   if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.
     const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
     notes.unshift(maybeNotify(cached));

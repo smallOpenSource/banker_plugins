@@ -138,7 +138,8 @@ export const percent = (u) => Math.round((u.used * 100) / u.window);
 export function nudge(pct, threshold) {
   return `smart-compact: 컨텍스트 사용률 ${pct}% (임계 ${threshold}%). 이번 응답에서 위생 체인을 실행한다: `
     + "$banker-append_wiki, 그다음 한 줄 안내(다음 메시지가 resume 프롬프트이고 그 뒤 /copy, /compact, 붙여 넣기 순서), "
-    + "마지막으로 $banker-ready-compact. /copy, /compact, 붙여 넣기는 사용자가 한다.";
+    + "마지막으로 $banker-ready-compact. banker 를 Codex 플러그인으로 설치했으면 $banker:append_wiki, $banker:ready-compact 다. "
+    + "/copy, /compact, 붙여 넣기는 사용자가 한다.";
 }
 
 const text = (o, key) => (o && typeof o[key] === "string" ? o[key] : "");

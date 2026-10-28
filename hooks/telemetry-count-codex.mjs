@@ -7,23 +7,31 @@
  *  - 모델이 고른 스킬: 도구 호출로 SKILL.md 를 읽는다(Bash `cat <CODEX_HOME>/skills/banker-<name>/SKILL.md`).
  *  - 사용자가 $banker-<name> 으로 부른 스킬: Codex 가 도구 호출 없이 `<skill>\n<name>..</name>\n<path>..</path>` 로
  *    시작하는 사용자 역할 메시지로 본문을 넣는다. 이때는 머리의 <path> 줄만 보고 본문은 보지 않는다.
+ * Codex 플러그인으로 설치한 banker(codex plugin add, $banker:<name>)는 SKILL.md 가
+ * `<CODEX_HOME>/plugins/cache/<마켓플레이스>/banker/<판>/{skills,codex/skills,codex/command-skills}/<name>/` 에 있다.
+ * 두 길의 경로를 모두 센다.
  * 도구 호출마다 도는 PreToolUse 대신 턴마다 한 번 도는 Stop 에서, 훅 입력의 transcript_path(rollout) 중
  * 이번 턴(task_started 의 turn_id 뒤)의 두 기록에 `skills/banker-<name>/SKILL.md` 가 있으면 센다. 나눠 읽어도 한 번이고, Stop 이 한 턴에 두 번 와도
  * 최근 턴 키(configDir 의 codex-count-turns)로 한 번만 센다. 기록은 끝에서부터 32 MB 까지만 읽는다.
  *
  * fail-closed 규약은 Claude 쪽과 같다(telemetry-count-codex.test.mjs 가 검증):
  *  - countingActive() 가 아니면 로컬 쓰기조차 하지 않는다.
- *  - 이름은 SKILL_NAME_RE 전체 일치이고 이 Codex 에 설치된 banker 스킬(<CODEX_HOME>/skills/banker-<name>/SKILL.md)만.
+ *  - 이름은 SKILL_NAME_RE 전체 일치이고 이 Codex 에 설치된 banker 스킬(<CODEX_HOME>/skills/banker-<name>/SKILL.md, 또는
+ *    기록의 경로 그대로 <CODEX_HOME>/plugins/cache/ 아래에 있는 플러그인의 SKILL.md)만.
  *    모델이 `echo skills/banker-<아무 글>/SKILL.md` 를 돌려 체크인의 이름 칸으로 글을 내보내지 못하게 한다. 턴 키 파일은 일반 파일만 읽고, 링크 자리에 쓰지 않는다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 도구 호출을 절대 막지 않는다. 표준 출력은 비운다.
  */
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 
+import { codexHomeOf } from '../bin/lib/codex-routes.mjs';
 import { appendUsageLog, CODEX_SHAPE_MISS_PATH, configDir, countingActive, readRegular, recordUsedSkill, SKILL_NAME_RE, writeByRename } from '../bin/lib/telemetry-config.mjs';
 
+export { codexHomeOf };
+
 const SKILL_PATH_RE = /skills[\\/]+banker-([a-z0-9_-]{1,64})[\\/]+SKILL\.md/gi;
+// 플러그인 길: plugins/cache/<마켓플레이스>/banker/<판>/<스킬 폴더>/<name>/SKILL.md. 1 마켓플레이스, 2 판, 3 스킬 폴더, 4 이름.
+const PLUGIN_PATH_RE = /plugins[\\/]+cache[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+banker[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+(skills|codex[\\/]+skills|codex[\\/]+command-skills)[\\/]+([a-z0-9_-]{1,64})[\\/]+SKILL\.md/gi;
 const KEEP_TURNS = 100;
 export const TURNS_FILE = () => join(configDir(), 'codex-count-turns');
 
@@ -40,11 +48,17 @@ function readStdin() {
 const MAX_READ = 32 << 20;
 const FIRST_READ = 1 << 20;
 
-// 글에 나오는 banker 스킬 이름(banker:<name>), 중복 없이.
+// 글에 나오는 banker 스킬, 중복 없이. npm 길은 'banker:<name>', 플러그인 길은 'banker:<name>\t<홈 기준 SKILL.md 상대 경로>'
+// (설치 확인에 쓰고, 셀 때는 이름만 남긴다).
 export function namesIn(text, names = new Set()) {
   for (const m of text.matchAll(SKILL_PATH_RE)) {
     const name = `banker:${m[1]}`;
     if (SKILL_NAME_RE.test(name)) names.add(name);
+  }
+  for (const m of text.matchAll(PLUGIN_PATH_RE)) {
+    const name = `banker:${m[4]}`;
+    if (m[1] === '.' || m[1] === '..' || m[2] === '.' || m[2] === '..' || !SKILL_NAME_RE.test(name)) continue;
+    names.add(`${name}\t${['plugins', 'cache', m[1], 'banker', m[2], ...m[3].split(/[\\/]+/), m[4], 'SKILL.md'].join('/')}`);
   }
   return names;
 }
@@ -170,16 +184,12 @@ function writeTurns(lines) {
   }
 }
 
-// 이 세션의 Codex 홈: rollout 이 <홈>/sessions/YYYY/MM/DD/ 에 있으면 그 홈(상대 경로 CODEX_HOME 도 Codex 가 푼 그대로),
-// 아니면 CODEX_HOME, 그것도 없으면 ~/.codex.
-export function codexHomeOf(transcript, env = process.env) {
-  const sessions = dirname(dirname(dirname(dirname(String(transcript)))));
-  if (isAbsolute(String(transcript)) && basename(sessions) === 'sessions') return dirname(sessions);
-  return env.CODEX_HOME || join(homedir(), '.codex');
+// 이 Codex 에 설치된 banker 스킬인지. 플러그인 길은 기록의 경로 그대로 그 홈의 plugins/cache 아래에 있어야 한다.
+export function installed(entry, home) {
+  const [name, rel] = entry.split('\t');
+  if (rel) return existsSync(join(home, ...rel.split('/')));
+  return existsSync(join(home, 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
 }
-
-// 이 Codex 에 설치된 banker 스킬인지.
-export const installed = (name, home) => existsSync(join(home, 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
 
 // 이 턴에 아직 세지 않은 이름만 센다.
 export function countOnce(payload) {
@@ -191,7 +201,7 @@ export function countOnce(payload) {
     noteShapeMiss(file);
     return [];
   }
-  const names = got.filter((n) => installed(n, home));
+  const names = [...new Set(got.filter((n) => installed(n, home)).map((n) => n.split('\t')[0]))];
   if (!names.length) return [];
   const seen = readTurns();
   const fresh = names.filter((n) => !seen.includes(`${key}\t${n}`));

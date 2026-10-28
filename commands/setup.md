@@ -67,10 +67,10 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    - **setup-bypass-permissions** — Claude Code 의 기본 권한 모드를 `bypassPermissions` 로 바꿔 모든 세션에서 도구 실행 확인을 끔.
      - 위 묶음과 섞지 않고 단일 선택 질문 하나로 따로 묻는다(`multiSelect: false`). 선택지는 `넣지 않음 (권장)`, `넣기 (위험)` 순서다.
      - 사용자가 이 항목을 직접 고를 때만 넣는다. "전부" 같은 묶음 선택이나 번호 범위에는 들어가지 않는다.
-     - 이 스킬은 모델이 호출할 수 없다(`disable-model-invocation`). `넣기` 를 고르면 실행하지 말고, 사용자에게 `/banker:setup-bypass-permissions on` 을 직접 입력하라고 안내한다. Codex 는 `$banker-setup-bypass-permissions` 를 직접 부르라고 안내한다.
+     - 이 스킬은 모델이 호출할 수 없다(`disable-model-invocation`). `넣기` 를 고르면 실행하지 말고, 사용자에게 `/banker:setup-bypass-permissions on` 을 직접 입력하라고 안내한다. Codex 는 `$banker-setup-bypass-permissions`(플러그인 설치면 `$banker:setup-bypass-permissions`)를 직접 부르라고 안내한다.
      - 입력하면 그 스킬이 위험 경고를 보여 주고 한 번 더 확인받는다. 되돌리기는 `off`.
 
-2. **실행**: 선택된 각 항목을 호출한다(미선택은 건드리지 않음). 단 `setup-bypass-permissions` 는 호출하지 않는다(위 권한 항목의 안내만). Claude Code는 `Skill("banker:<name>")`, **Codex 런타임에선 설치된 `banker-<name>` 스킬을 적용**한다(예: `Skill("banker:setup-node")`).
+2. **실행**: 선택된 각 항목을 호출한다(미선택은 건드리지 않음). 단 `setup-bypass-permissions` 는 호출하지 않는다(위 권한 항목의 안내만). Claude Code는 `Skill("banker:<name>")`, **Codex 런타임에선 설치된 `banker-<name>` 스킬(플러그인 설치면 `banker:<name>`)을 적용**한다(예: `Skill("banker:setup-node")`).
    - **의존 순서 강제**: 뒤 계층을 고르면 전제 스킬을 먼저 실행한다 — `setup-lsp` 전에 setup-node·setup-python·setup-java; `setup-mcp` 전에 setup-node·setup-python; `docs-setup` 전에 setup-python. 이미 설치돼 있으면 각 스킬이 감지해 skip(멱등).
    - 각 스킬이 OS를 감지해 알맞은 절차로 설치하고 끝에 검증한다. 한 항목이 실패해도 정직히 보고하고 다음 항목 진행.
 

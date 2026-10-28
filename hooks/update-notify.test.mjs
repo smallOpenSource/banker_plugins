@@ -147,6 +147,34 @@ test('Codex 훅(--codex)은 Codex 의 갱신 방법을 안내한다', () => {
   assert.ok(!out.systemMessage.includes('/banker:'), 'Codex 에는 /banker: 명령이 없다');
 });
 
+test('Codex 플러그인 훅(--codex --plugin)은 마켓플레이스 갱신을 안내한다', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW() });
+  const root = join(tmp, 'ch', 'plugins', 'cache', 'my-mkt', 'banker', '0.21.0');
+  const out = JSON.parse(runNotify(tmp, { argv: ['--codex', '--plugin'], env: { PLUGIN_ROOT: root } }).stdout.trim());
+  assert.match(out.systemMessage, /codex plugin marketplace upgrade my-mkt/);
+  assert.ok(!out.systemMessage.includes('$banker-'), '플러그인 길의 스킬 이름은 $banker:');
+  assert.ok(!out.systemMessage.includes('banker setup --codex'), '플러그인 길에는 npm 설치가 없을 수 있다');
+});
+
+test('Codex 의 두 설치 길이 함께 있으면 세션마다 한 번 알린다', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '0.0.1', checkedAt: NOW() });
+  const ch = join(tmp, 'ch');
+  mkdirSync(join(ch, 'skills', 'banker-lineage'), { recursive: true });
+  writeFileSync(join(ch, 'skills', 'banker-lineage', 'SKILL.md'), '');
+  const env = { CODEX_HOME: ch };
+  const start = (sid) => JSON.stringify({ session_id: sid, hook_event_name: 'SessionStart' });
+  assert.equal(runNotify(tmp, { argv: ['--codex'], env, input: start('s1') }).stdout, '', 'npm 길만');
+  writeFileSync(join(ch, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
+  const first = JSON.parse(runNotify(tmp, { argv: ['--codex', '--plugin'], env, input: start('s1') }).stdout.trim());
+  assert.match(first.systemMessage, /두 번 설치됨/);
+  assert.match(first.systemMessage, /codex plugin remove banker@banker-plugins/);
+  assert.equal(runNotify(tmp, { argv: ['--codex'], env, input: start('s1') }).stdout, '', '같은 세션의 다른 길 훅은 다시 알리지 않음');
+  assert.match(runNotify(tmp, { argv: ['--codex'], env, input: start('s2') }).stdout, /두 번 설치됨/, '새 세션');
+  assert.equal(runNotify(tmp, { env, input: start('s3') }).stdout, '', 'Claude Code 훅은 Codex 설치를 보지 않음');
+});
+
 test('동일 latest 재호출(notified==latest)이면 무고지(dedupe)', () => {
   const tmp = mkTmp();
   writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), notified: '99.0.0' });

@@ -37,21 +37,35 @@ Claude Code 세션 안에서 입력합니다.
 
 스킬과 커맨드를 `/banker:audit-security` 처럼 `/banker:` 로 호출합니다.
 
-**Codex CLI:** npm 전역 설치 후 `banker setup`
+**Codex CLI:** 두 방법 중 하나를 고릅니다.
+
+Codex 플러그인으로 설치 (npm 불필요)
+
+```bash
+codex plugin marketplace add smallOpenSource/banker_plugins
+codex plugin add banker@banker-plugins
+```
+
+스킬을 `$banker:audit-security` 처럼 `$banker:<name>` 으로 호출합니다.\
+훅(업데이트 알림, 사용량 카운팅, obsidizer 정규화)은 Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돕니다.
+
+npm 전역 설치 후 `banker setup`
 
 ```bash
 npm i -g @kaydash9999/banker-plugins
 banker setup --codex
 ```
 
-스킬을 `banker-audit-security` 처럼 `banker-<name>` 으로 호출합니다.
+스킬을 `$banker-audit-security` 처럼 `$banker-<name>` 으로 호출합니다.
+
+두 방법을 함께 쓰지 않습니다. 함께 두면 스킬과 훅이 두 벌이 되고, banker 가 세션 시작과 `banker doctor` 에서 알립니다.
 
 playwright(브라우저 QA)나 oh-my-claudecode(OMC/OMX)처럼 별도 의존성이 필요한 스킬은 실행 전에 설치부터 안내합니다(Claude Code는 `/banker:setup`).
 
 ## 워크플로 사용 예시
 
 무엇부터 써야 할지 막막할 때, 상황별로 골라 쓰는 대표 워크플로입니다.\
-Claude Code는 `/banker:<이름>`, Codex는 `banker-<이름>` 으로 호출합니다.
+Claude Code는 `/banker:<이름>`, Codex는 `$banker-<이름>`(플러그인 설치면 `$banker:<이름>`)으로 호출합니다.
 
 | 워크플로 | 언제 쓰나 | 하는 일 |
 |---|---|---|
@@ -213,6 +227,11 @@ banker uninstall        # 제거
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
+- Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
+  스킬 64개, Codex 전용 스킬 2개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 훅 3개는 `codex/hooks.json` 에서 옵니다. \
+  Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 신뢰는 명령 글에 묶여 있어 판이 바뀌어도 그대로입니다. \
+  obsidizer 훅은 셸 호출마다 node 를 한 번 띄웁니다. obsidizer 를 쓰지 않으면 이 훅만 신뢰하지 않아도 됩니다. \
+  이 설치에는 `banker` 명령이 없습니다. `banker doctor`, `banker hooks`, `banker telemetry` 가 필요하면 npm 으로도 설치하되 `banker setup --codex` 는 돌리지 않습니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
   32MB 요청 한도는 Claude Code 의 것이라 Codex 자신의 요청 크기는 재지 않습니다.
@@ -304,6 +323,13 @@ banker uninstall                        # 제거
 
 Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛 버전이 중복으로 남지 않습니다.
 
+**Codex 플러그인:**
+
+```bash
+codex plugin marketplace upgrade banker-plugins   # 최신화 (Codex 가 세션 시작 때도 스스로 올림, 다시 열면 적용)
+codex plugin remove banker@banker-plugins         # 제거
+```
+
 > `payload-mon` 을 켰다면 제거 전에 `/banker:payload-mon off`(Codex는 `banker-payload-mon` 에 `off`)를 실행하세요.\
 > 표시 블록과 모듈 사본은 플러그인 밖(`~/.claude/hud/`)에 있어서, 플러그인을 지워도 남아 계속 표시됩니다.\
 > 이미 지웠다면 HUD를 재설치하거나, `omc-hud-custom.mjs` 에서 `// >>> payload-mon >>>` 부터 `// <<< payload-mon <<<` 까지 지우면 됩니다.
@@ -376,6 +402,7 @@ npm i -g ./kaydash9999-banker-plugins-<판>.tgz     # 옮긴 뒤
 banker setup
 ```
 
+- Codex 플러그인 설치(`codex plugin add`)는 GitHub 에서 저장소를 받으므로 네트워크가 필요합니다. 오프라인에서는 위의 npm 묶음으로 `banker setup --codex` 를 씁니다.
 - 세션 시작 훅의 업데이트 조회와 체크인은 따로 돌아 세션을 기다리게 하지 않습니다. 실패하면 24시간 동안 다시 시도하지 않고, 아예 시도하지 않게 하려면 `BANKER_NO_UPDATE_CHECK=1` 을 둡니다.
 - 훅은 `HTTPS_PROXY`, `HTTP_PROXY` 를 따르지 않습니다(Node 가 `NODE_USE_ENV_PROXY=1` 일 때만 따름). 프록시를 거쳐야만 밖에 닿는 망에서는 훅의 확인이 실패로 기록됩니다(`banker telemetry status` 의 "마지막 시도").
 - 네트워크가 필요한 스킬과 네트워크 없이 끝나는 모습

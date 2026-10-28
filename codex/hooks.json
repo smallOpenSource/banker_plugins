@@ -1,0 +1,42 @@
+{
+  "description": "banker hooks for the Codex plugin (codex plugin add banker@banker-plugins). Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY), obsidizer wiki canonicalization (PostToolUse Bash, inert until obsidizer --enable writes omx_wiki/.obsidizer). obsidize runs node once per shell call (no run.cjs) and only a shell call that ran `omx wiki` ingest or add does more; leave it untrusted if you do not use obsidizer. Codex runs them only after you trust them in /hooks. command is for sh, commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/hooks/run.cjs\" \"$PLUGIN_ROOT/hooks/update-notify.mjs\" --codex --plugin",
+            "commandWindows": "& node \"$env:PLUGIN_ROOT\\hooks\\run.cjs\" \"$env:PLUGIN_ROOT\\hooks\\update-notify.mjs\" --codex --plugin",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/hooks/run.cjs\" \"$PLUGIN_ROOT/hooks/telemetry-count-codex.mjs\"",
+            "commandWindows": "& node \"$env:PLUGIN_ROOT\\hooks\\run.cjs\" \"$env:PLUGIN_ROOT\\hooks\\telemetry-count-codex.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/hooks/obsidize-hook.mjs\" --codex",
+            "commandWindows": "& node \"$env:PLUGIN_ROOT\\hooks\\obsidize-hook.mjs\" --codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

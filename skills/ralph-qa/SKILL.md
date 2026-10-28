@@ -112,7 +112,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
 외부 좌석 CLI 는 에이전트다. 읽기 도구로 읽은 파일도 그 프로바이더로 간다. 그래서 좌석마다 페이로드 사본 하나만 든 폴더에서 띄우고, 답은 좌석 폴더 밖의 다른 폴더로 받는다.
 
 폴더, 페이로드, 비밀 검사, 좌석 명령, 시간 상한, 정리는 실행기 `references/seat-run.mjs` 가 한다. **좌석 명령과 git 사슬을 손으로 짜지 않는다.** 실행기가 멈추면 출력 JSON 의 `stop` 을 아래 멈춤 표대로 처리한다.
-`<R>` 은 `<이 스킬 디렉터리 절대경로>/references` 다(Codex 설치본은 `~/.codex/skills/banker-ralph-qa/references`, `CODEX_HOME` 이 있으면 그 아래 `skills/banker-ralph-qa/references`). 호출 사이에 셸 변수가 남지 않으므로 호출마다 실제 경로를 적는다.
+`<R>` 은 `<이 스킬 디렉터리 절대경로>/references` 다(Codex 의 npm 설치본은 `~/.codex/skills/banker-ralph-qa/references`, 플러그인 설치본은 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/ralph-qa/references`. `CODEX_HOME` 이 있으면 `~/.codex` 대신 그 폴더). 호출 사이에 셸 변수가 남지 않으므로 호출마다 실제 경로를 적는다.
 명령마다 stdout 에 JSON 하나를 내고, 같은 JSON 을 `<d>/result-<명령>.md` 에도 쓴다(멈춘 send 는 `result-send-stop.md`). 종료 코드는 0 끝남, 1 비밀처럼 보이는 줄, 2 인자나 실행기 오류, 3 멈춤, 4 512 KiB 초과, 5 send 가 아직 돎이다.
 반복마다 새 폴더를 만든다.
 

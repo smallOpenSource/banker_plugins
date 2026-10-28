@@ -8,7 +8,7 @@
 하나는 새 버전이 나왔을 때 알려주는 **업데이트 알림**이고, 다른 하나는 유지보수자가 사용량을 파악하기 위한 **익명 사용량 카운팅**입니다.\
 두 기능 모두 기본값은 켜짐(default-on)이며, 따로 끌 수 있습니다.\
 다만 사용량 체크인은 업데이트 확인과 함께 보내므로, 업데이트 알림을 끄면(`BANKER_NO_UPDATE_CHECK`) 체크인 전송도 멈춥니다. 그때 카운팅 기록은 이 기기에만 쌓이다가 5,000줄에서 멈춥니다.\
-Claude Code 와 Codex CLI 모두에서 동작합니다. Codex 에서는 `banker setup --codex` 가 Codex 훅으로 설치하며, 수집 범위는 아래 "Codex CLI" 절에 있습니다.
+Claude Code 와 Codex CLI 모두에서 동작합니다. Codex 에서는 `banker setup --codex` 가 Codex 훅으로 설치하거나, Codex 플러그인(`codex plugin add banker@banker-plugins`)이 훅을 함께 가져옵니다. 수집 범위는 아래 "Codex CLI" 절에 있습니다.
 
 ## 현재 상태
 
@@ -90,14 +90,18 @@ opt-out 하더라도 훅의 등록 자체는 남고, 각 스크립트 내부의 
 훅 스크립트는 `~/.codex/hooks-custom/banker/` 사본에서 돌고, Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 사용자가 신뢰해야 돌기 시작합니다.\
 `banker uninstall --codex` 가 둘 다 지우고, `banker hooks disable update` 나 `banker hooks disable count` 로 하나씩 끌 수 있습니다.
 
+Codex 플러그인으로 설치하면 같은 두 훅(과 obsidizer 훅)이 플러그인의 `codex/hooks.json` 에서 오고, 설치된 플러그인 폴더(`~/.codex/plugins/cache/banker-plugins/banker/<판>/`)에서 돕니다.\
+역시 `/hooks` 에서 신뢰해야 돌고, 신뢰하지 않거나 `/hooks` 에서 끄면 돌지 않습니다. `codex plugin remove banker@banker-plugins` 가 훅을 함께 지웁니다.
+
 - `SessionStart`: 세션 시작 시 1회, Claude Code 와 같은 캐시로 업데이트 알림을 확인합니다. 알림은 TUI 에 경고 줄로 보입니다.
 - `Stop`: 턴이 끝날 때 1회, 이번 턴에 쓴 banker 스킬 이름을 셉니다. 도구 호출마다 돌지 않습니다.
 
 Codex 카운팅이 읽는 것과 남기는 것은 다음과 같습니다.
 
-- 읽는 것: 훅 입력이 알려 주는 이 세션의 Codex 기록 파일(rollout)에서 이번 턴 부분만. 그중 도구 호출 기록과, `$banker-<이름>` 으로 부른 스킬을 Codex 가 넣은 머리 줄의 `skills/banker-<이름>/SKILL.md` 경로만 봅니다. 이 Codex 에 설치된 banker 스킬 이름만 셉니다.
+- 읽는 것: 훅 입력이 알려 주는 이 세션의 Codex 기록 파일(rollout)에서 이번 턴 부분만. 그중 도구 호출 기록과, `$banker-<이름>`(플러그인은 `$banker:<이름>`)으로 부른 스킬을 Codex 가 넣은 머리 줄의 `skills/banker-<이름>/SKILL.md`(플러그인은 `plugins/cache/<마켓플레이스>/banker/<판>/.../<이름>/SKILL.md`) 경로만 봅니다. 이 Codex 에 설치된 banker 스킬 이름만 셉니다.
 - 보지 않는 것: 사용자가 입력한 글, 모델의 답, 도구 결과, 스킬 본문.
 - 로컬에 남기는 것: Claude Code 와 같은 `usage-log`, `used-skills.json` 의 스킬 이름과 시간대, 같은 턴을 두 번 세지 않게 하는 최근 턴 키(`codex-count-turns`, Codex 세션 ID 와 턴 ID, 최근 100개).
+- 로컬에 남기는 것(추가): npm 설치와 플러그인 설치가 함께 있다는 알림을 보인 마지막 Codex 세션 ID(`codex-dual-notified`). 같은 세션에서 두 번 알리지 않는 데만 쓰고 전송하지 않습니다.
 - 로컬에 남기는 것(추가): 이 훅이 기록 형식을 읽지 못한 Codex 버전(`codex-shape-miss.json`, 버전과 알림 여부만). 다음 세션 시작 때 경고를 한 번 보이는 데만 쓰고 전송하지 않습니다.
 - 전송하는 것: Claude Code 와 같은 체크인 `{version, os, counts}` 입니다. 세션 ID 와 턴 ID 는 전송하지 않습니다.
 

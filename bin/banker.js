@@ -12,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const cp = require('child_process');
 const { pathToFileURL } = require('url');
+const { commandSkillText } = require('./lib/command-skill.cjs');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const MANIFEST = path.join(PKG_ROOT, 'codex', 'manifest.json');
@@ -162,17 +163,11 @@ function setCodexSkillName(skillMd, newName, dryRun) {
   fs.writeFileSync(skillMd, src.slice(0, fm.index) + `---\n${block}\n---` + src.slice(fm.index + fm[0].length));
 }
 
-// A command as a Codex skill: the command's description becomes the skill's, under name: <name>. Codex skills get
-// no $ARGUMENTS substitution, so a note says where the arguments come from.
+// A command as a Codex skill (bin/lib/command-skill.cjs, shared with the Codex plugin's codex/command-skills/).
 function writeCommandSkill(src, destDir, name, dryRun) {
   if (dryRun) { log(`  [dry-run] write command skill ${path.relative(PKG_ROOT, src)} -> ${destDir}`); return; }
-  const text = fs.readFileSync(src, 'utf8');
-  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  const desc = fm && fm[1].match(/^description:\s*(.*)$/m);
-  const body = fm ? text.slice(fm[0].length) : text;
-  const note = '> Codex: 이 명령은 스킬로 설치됐다. 본문의 `$ARGUMENTS`, `$1` 은 사용자가 `$' + name + '` 뒤에 쓴 글이다.\n\n';
   fs.mkdirSync(destDir, { recursive: true });
-  fs.writeFileSync(path.join(destDir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc ? desc[1] : '""'}\n---\n\n${note}${body}`);
+  fs.writeFileSync(path.join(destDir, 'SKILL.md'), commandSkillText(fs.readFileSync(src, 'utf8'), name, `$${name}`));
 }
 
 /* ---------- Claude Code target ---------- */
@@ -278,7 +273,28 @@ function doctorCodexShape(base) {
   else if (!r.toolCall) log('    (no tool calls: fine for a session that used no tools)');
 }
 
-function doctor() {
+// bin/lib/codex-routes.mjs is ESM: the two ways banker gets into Codex (this npm install, and the Codex plugin).
+async function loadCodexRoutes() {
+  return import(pathToFileURL(path.join(__dirname, 'lib', 'codex-routes.mjs')).href);
+}
+// Codex plugin installs of banker in <base> as 'banker@<marketplace> (<versions in the plugin cache>)'.
+async function codexPluginInstalls(base) {
+  const r = await loadCodexRoutes();
+  return r.pluginRoutes(base).map((id) => {
+    let vers = [];
+    try { vers = fs.readdirSync(path.join(base, 'plugins', 'cache', id.slice(id.indexOf('@') + 1), PLUGIN_NAME)); } catch {}
+    return `${id}${vers.length ? ` (${vers.join(', ')})` : ''}`;
+  });
+}
+// Beside the Codex plugin, this npm install shows every skill twice and runs every hook twice. Say so; remove nothing.
+async function warnCodexPlugin(base) {
+  const ids = await codexPluginInstalls(base);
+  if (!ids.length) return;
+  warn(`  ⚠ banker is also installed as a Codex plugin here: ${ids.join(', ')}. Skills show twice ($banker-<name> and $banker:<name>) and the hooks run twice.`);
+  warn(`    Keep one: codex plugin remove ${ids[0].split(' ')[0]}, or banker uninstall --codex.`);
+}
+
+async function doctor() {
   log(`banker v${version()}  (pkg: ${PKG_ROOT})`);
   log(`plugin.json version: ${(() => { try { return require(PLUGIN_JSON).version; } catch { return '?'; } })()}`);
   log('Claude Code:');
@@ -299,7 +315,10 @@ function doctor() {
     log(`  ⚠ dir/name mismatch (Codex will NOT list these) — reinstall with this version:`);
     for (const x of mismatched) log(`      ${x.d}/  has  name: ${x.name}`);
   }
-  if (have('codex') && installed.length === 0) log('  ⚠ codex found but 0 banker skills installed — run: banker setup --codex');
+  const plugins = await codexPluginInstalls(base);
+  log(`  Codex plugin (codex plugin add): ${plugins.length ? plugins.join(', ') : 'not installed'}`);
+  if (plugins.length && installed.length) log(`  ⚠ banker is installed both ways: skills show twice ($banker-<name> and $banker:<name>). Keep one: banker uninstall --codex, or codex plugin remove ${plugins[0].split(' ')[0]}`);
+  if (have('codex') && installed.length === 0 && !plugins.length) log('  ⚠ codex found but 0 banker skills installed — run: banker setup --codex, or codex plugin add banker@banker-plugins');
   const m = readManifest();
   const nSkills = eligible(m).filter(s => s.type === 'skill').length;
   log(`  manifest: ${eligible(m).length} codex-eligible surfaces (${nSkills} skills) of ${m.surfaces.length}.`);
@@ -543,6 +562,8 @@ Notes:
   - --claude registers the marketplace + installs banker@banker-plugins (skills as /banker:*).
   - --codex copies codex-eligible skills -> ~/.codex/skills/banker-* and commands -> ~/.codex/prompts/banker-*.md
     ($CODEX_HOME instead of ~/.codex when it is set).
+  - Codex can also take banker as a plugin (codex plugin marketplace add smallOpenSource/banker_plugins, then
+    codex plugin add banker@banker-plugins; skills as $banker:<name>). Keep one of the two ways in.
   - telemetry on|off toggles anonymous usage counting opt-out (default-on; config only); status prints counting + update-check state. See PRIVACY.md.
   - Never runs as root. --dry-run prints planned actions without writing.`;
 
@@ -550,14 +571,17 @@ async function main() {
   const a = parseArgs(process.argv.slice(2));
   if (a.version) { log(version()); return; }
   if (a.help || a.cmd === 'help' || !a.cmd) { log(HELP); return; }
-  if (a.cmd === 'doctor') { doctor(); return; }
+  if (a.cmd === 'doctor') { await doctor(); return; }
   if (a.cmd === 'telemetry') { await telemetryCmd(a.sub); return; }
   if (a.cmd === 'hooks') { assertNotRoot(); await hooksCmd(a.sub, a.hookIds); return; }
   assertNotRoot();
   if (a.cmd === 'setup') {
     log(`banker setup${a.dryRun ? ' (dry-run)' : ''}: claude=${a.claude} codex=${a.codex}`);
     if (a.claude) setupClaude(a.dryRun);
-    if (a.codex && setupCodex(a.dryRun, a.scope)) await setupCodexHooks(a.dryRun, a.scope);
+    if (a.codex && setupCodex(a.dryRun, a.scope)) {
+      await setupCodexHooks(a.dryRun, a.scope);
+      if (a.scope === 'user') await warnCodexPlugin(codexBase('user'));
+    }
     // Best-effort first-run prompts (interactive TTY only). A prompt failure must never fail setup.
     try { await maybeFirstRunPrompts(a); } catch { /* non-fatal */ }
     log('done.');

@@ -30,7 +30,7 @@ argument-hint: "on | off | status | config"
    | 런타임 | `--runtime` | 스킬 디렉터리 |
    |---|---|---|
    | Claude Code | `claude` | 스킬 맨 위 "Base directory for this skill:" 경로 |
-   | Codex | `codex` | `~/.codex/skills/banker-anti-drm/` 의 절대경로. 프로젝트 범위 설치면 `./.codex/skills/banker-anti-drm/` |
+   | Codex | `codex` | Codex 스킬 목록이 보이는 이 SKILL.md 경로(file)의 폴더. npm 설치는 `~/.codex/skills/banker-anti-drm/`(프로젝트 범위 설치면 `./.codex/skills/banker-anti-drm/`), 플러그인 설치(`codex plugin add`)는 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/anti-drm/`. 절대경로로 씀 |
 
 3. 아래 인자별 절차를 따름
 

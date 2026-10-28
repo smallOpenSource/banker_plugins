@@ -82,21 +82,25 @@ banker의 **첫 플러그인 선언 hook**(`hooks/hooks.json`)이 OMC 위키 쓰
 없음). 플래그가 없으면 hook은 즉시 exit 0. 방금 banker를 설치/갱신한 세션이면 완료 보고에
 **`/reload-plugins`** 실행을 안내한다(hot-reload 경로).
 
-Codex 에서는 플래그 자리가 `omx_wiki/.obsidizer` 이고, hook 은 banker 가 Codex 사용자 범위에 따로 설치한다.
+Codex 에서는 플래그 자리가 `omx_wiki/.obsidizer` 다. hook 은 설치 길에 따라 다르다.
+npm 설치(`banker setup --codex`)는 banker 가 Codex 사용자 범위에 따로 설치하고, Codex 플러그인 설치(`codex plugin add`, 이 SKILL.md 가
+`plugins/cache/` 아래)는 플러그인의 `codex/hooks.json` 에 이미 들어 있다.
 
 - `--enable`
   1. 작업 폴더에 `omx_wiki/` 가 없으면 만들고 `omx_wiki/.obsidizer` 를 쓴다. `omx_wiki/` 는 저장소에
      넣는 폴더라 이 플래그도 커밋 대상이 될 수 있음을 보고에 적는다.
-  2. `banker hooks status obsidize` 로 hook 상태를 본다. `on` 이면 3을 건너뛴다.
+  2. Codex 플러그인 설치면 3을 건너뛴다. 플러그인의 obsidize hook 이 늘 등록돼 있고, `banker` 명령은 없을 수 있다.
+     npm 설치면 `banker hooks status obsidize` 로 hook 상태를 본다. `on` 이면 3을 건너뛴다.
   3. `banker hooks enable obsidize` 를 실행한다. 이 명령은 `~/.codex/hooks.json` 과
      `~/.codex/hooks-custom/banker/` 에 쓰므로 `workspace-write` 샌드박스 밖에서 돌아야 한다. 그 한 명령만
      샌드박스 밖 실행 승인을 요청한다. `--add-dir ~/.codex` 는 권하지 않는다(세션이 훅과 신뢰 기록을 고칠 수
      있게 됨). 승인을 요청할 수 없으면(`codex exec`, 승인 정책 `never`) 실행하지 않고, 사용자가 입력창에
      `! banker hooks enable obsidize` 로 직접 실행하도록 안내한 뒤 멈춘다.
   4. Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 banker obsidize hook 을 신뢰해야
-     돈다고 보고한다. 신뢰 전에는 플래그가 있어도 정규화되지 않는다.
+     돈다고 보고한다(플러그인 설치는 `banker@<마켓플레이스>` 의 PostToolUse hook). 신뢰 전에는 플래그가 있어도 정규화되지 않는다.
 - `--disable`: `omx_wiki/.obsidizer` 를 지운다. hook 은 다른 프로젝트의 플래그도 보므로 남겨 두고, 어느
-  프로젝트에서도 쓰지 않으면 `banker hooks disable obsidize` 로 뺄 수 있다고 안내한다(같은 승인 규칙).
+  프로젝트에서도 쓰지 않으면 `banker hooks disable obsidize` 로 뺄 수 있다고 안내한다(같은 승인 규칙). 플러그인 설치의
+  hook 은 플래그가 없으면 바로 끝나므로 그대로 둔다.
 
 ## 변환 규칙
 
