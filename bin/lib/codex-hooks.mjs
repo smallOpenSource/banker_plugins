@@ -78,7 +78,7 @@ export function formatCommand(node, script, args, win = process.platform === 'wi
 }
 
 // 임시 폴더의 node 는 거부한다. Codex 안에서 돌 때는 작업 폴더 안의 node 도(샌드박스 안 세션이 고칠 수 있다).
-export function safeNode(node, { win = process.platform === 'win32', cwd = process.cwd(), codex = Boolean(process.env.CODEX_THREAD_ID) } = {}) {
+export function safeNode(node, { win = process.platform === 'win32', cwd = process.cwd(), codex = Boolean(process.env.CODEX_THREAD_ID), home = os.homedir() } = {}) {
   const P = win ? path.win32 : path.posix;
   const under = (f, dir) => {
     const r = P.relative(dir, f);
@@ -87,7 +87,7 @@ export function safeNode(node, { win = process.platform === 'win32', cwd = proce
   // A link elsewhere is judged where it leads too, so a link in a safe place cannot pin a node from the temp folder.
   const places = [node, real(node)];
   // A session in the home folder is no workspace to judge by (as homeInWorkspace): nvm keeps node under ~/.nvm.
-  const inWork = codex && real(cwd) !== real(os.homedir());
+  const inWork = codex && real(cwd) !== real(home);
   return !places.some((f) => under(f, os.tmpdir()) || (inWork && under(f, cwd)));
 }
 
