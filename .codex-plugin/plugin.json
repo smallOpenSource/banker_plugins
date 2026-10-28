@@ -1,7 +1,7 @@
 {
   "name": "banker",
   "version": "0.21.0",
-  "description": "Codex CLI plugin: QA, audit, docs, architecture, setup, media, and wiki skills, with an update notice, usage counting, and wiki canonicalization hooks.",
+  "description": "Codex CLI plugin: QA, audit, docs, architecture, setup, media, and wiki skills, with an update notice and usage counting hooks.",
   "author": {
     "name": "smallOpenSource",
     "url": "https://github.com/smallOpenSource"
@@ -27,7 +27,7 @@
   "interface": {
     "displayName": "banker",
     "shortDescription": "QA, audit, docs, setup, and wiki skills",
-    "longDescription": "The banker skills for Codex: QA and verification loops, security and web audits, docs and architecture diagrams, dependency setup, media, and wiki upkeep. Invoke a skill as $banker:<name>. Hooks give an update notice, local usage counting, and wiki canonicalization after you trust them in /hooks.",
+    "longDescription": "The banker skills for Codex: QA and verification loops, security and web audits, docs and architecture diagrams, dependency setup, media, and wiki upkeep. Invoke a skill as $banker:<name>. Hooks give an update notice and local usage counting after you trust them in /hooks.",
     "developerName": "smallOpenSource",
     "category": "Developer Tools",
     "capabilities": [

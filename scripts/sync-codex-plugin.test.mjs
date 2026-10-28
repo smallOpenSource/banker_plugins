@@ -2,7 +2,7 @@
 // Run from the repo root: node --test scripts/sync-codex-plugin.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -23,7 +23,7 @@ function setup() {
   mkdirSync(join(plugin, 'hooks'), { recursive: true });
   mkdirSync(work);
   const marker = join(d, 'marker');
-  writeFileSync(join(plugin, 'hooks', 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\n`);
+  writeFileSync(join(plugin, 'hooks', 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\nwriteFileSync(${JSON.stringify(marker + '.cwd')}, process.cwd());\n`);
   writeFileSync(join(plugin, 'hooks', 'run.cjs'), readFileSync(join(ROOT, 'hooks', 'run.cjs')));
   return { d, plugin, work, marker };
 }
@@ -50,6 +50,7 @@ test('sh: the node PATH names runs the hook, with and without run.cjs', posix, (
   const r = sh(c, shCommand('probe.mjs', ['--codex', '--plugin'], true), `${nodeDir}${delimiter}/usr/bin${delimiter}/bin`);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(c.marker, 'utf8'), 'ran --codex --plugin');
+  assert.equal(readFileSync(`${c.marker}.cwd`, 'utf8'), c.plugin, 'runs from the plugin folder, so a shim reads no version file of the session folder');
   rmSync(c.marker);
   sh(c, shCommand('probe.mjs', [], false), `${nodeDir}${delimiter}/usr/bin${delimiter}/bin`);
   assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
@@ -75,6 +76,9 @@ test('sh: no PLUGIN_ROOT or no node runs nothing and exits 0', posix, () => {
   r = sh(c, cmd, join(c.d, 'empty'));
   assert.equal(r.status, 0);
   assert.ok(!existsSync(c.marker));
+  r = spawnSync('/bin/sh', ['-c', cmd], { cwd: '/', encoding: 'utf8', env: { PATH: `${nodeDir}${delimiter}/usr/bin${delimiter}/bin`, PLUGIN_ROOT: c.plugin } });
+  assert.equal(r.status, 0);
+  assert.ok(!existsSync(c.marker), 'a session folder of / runs nothing');
 });
 
 function ps(c, cmd, path) {
@@ -88,12 +92,15 @@ test('PowerShell: the node PATH names runs the hook; one under TEMP or the sessi
   let r = ps(c, psCommand('probe.mjs', ['--codex'], true), `${nodeDir}${delimiter}${sysPath()}`);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(c.marker, 'utf8'), 'ran --codex');
+  assert.equal(readFileSync(`${c.marker}.cwd`, 'utf8').toLowerCase(), c.plugin.toLowerCase());
   rmSync(c.marker);
-  for (const dir of [join(c.d, 'bin'), join(c.work, 'bin')]) {
+  // A real node.exe copied under TEMP or into the session folder, and a .cmd shim, run nothing.
+  for (const [dir, file] of [[join(c.d, 'bin'), 'node.exe'], [join(c.work, 'bin'), 'node.exe'], [join(c.d, 'cmd'), 'node.cmd']]) {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'node.cmd'), `@echo evil> "${c.marker}"\r\n`);
+    if (file === 'node.exe') copyFileSync(process.execPath, join(dir, file));
+    else writeFileSync(join(dir, file), `@echo evil> "${c.marker}"\r\n`);
     r = ps(c, psCommand('probe.mjs', [], true), `${dir}${delimiter}${nodeDir}${delimiter}${sysPath()}`);
     assert.equal(r.status, 0, r.stderr);
-    assert.ok(!existsSync(c.marker), `${dir}: nothing ran`);
+    assert.ok(!existsSync(c.marker), `${dir}\\${file}: nothing ran`);
   }
 });

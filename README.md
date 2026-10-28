@@ -47,7 +47,7 @@ codex plugin add banker@banker-plugins
 ```
 
 스킬을 `$banker:audit-security` 처럼 `$banker:<name>` 으로 호출합니다.\
-훅(업데이트 알림, 사용량 카운팅, obsidizer 정규화)은 Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돕니다.
+훅(업데이트 알림, 사용량 카운팅)은 Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돕니다.
 
 npm 전역 설치 후 `banker setup`
 
@@ -228,9 +228,9 @@ banker uninstall        # 제거
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
-  스킬 64개, Codex 전용 스킬 2개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 훅 3개는 `codex/hooks.json` 에서 옵니다. \
+  스킬 64개, Codex 전용 스킬 2개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 신뢰는 명령 글에 묶여 있어 판이 바뀌어도 그대로입니다. \
-  obsidizer 훅은 셸 호출마다 node 를 한 번 띄웁니다. obsidizer 를 쓰지 않으면 이 훅만 신뢰하지 않아도 됩니다. \
+  obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않습니다. 그런 환경은 npm 설치를 씁니다. \
   이 설치에는 `banker` 명령이 없습니다. `banker doctor`, `banker telemetry` 가 필요하면 npm 으로도 설치하되 `banker setup`(인자 없음)과 `banker setup --codex` 는 돌리지 않습니다(Codex 에 npm 길이 함께 설치됨). Claude Code 에 넣으려면 `banker setup --claude` 만 씁니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.

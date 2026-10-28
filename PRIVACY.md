@@ -90,7 +90,7 @@ opt-out 하더라도 훅의 등록 자체는 남고, 각 스크립트 내부의 
 훅 스크립트는 `~/.codex/hooks-custom/banker/` 사본에서 돌고, Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 사용자가 신뢰해야 돌기 시작합니다.\
 `banker uninstall --codex` 가 둘 다 지우고, `banker hooks disable update` 나 `banker hooks disable count` 로 하나씩 끌 수 있습니다.
 
-Codex 플러그인으로 설치하면 같은 두 훅(과 obsidizer 훅)이 플러그인의 `codex/hooks.json` 에서 오고, 설치된 플러그인 폴더(`~/.codex/plugins/cache/banker-plugins/banker/<판>/`)에서 돕니다.\
+Codex 플러그인으로 설치하면 같은 두 훅이 플러그인의 `codex/hooks.json` 에서 오고, 설치된 플러그인 폴더(`~/.codex/plugins/cache/banker-plugins/banker/<판>/`)에서 돕니다.\
 역시 `/hooks` 에서 신뢰해야 돌고, 신뢰하지 않거나 `/hooks` 에서 끄면 돌지 않습니다. `codex plugin remove banker@banker-plugins` 가 훅을 함께 지웁니다.
 
 - `SessionStart`: 세션 시작 시 1회, Claude Code 와 같은 캐시로 업데이트 알림을 확인합니다. 알림은 TUI 에 경고 줄로 보입니다.

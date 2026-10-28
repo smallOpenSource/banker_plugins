@@ -29,19 +29,19 @@ const manifest = () => JSON.parse(read('codex/manifest.json'));
 const eligible = (m) => m.surfaces.filter((s) => s.target === 'both' || s.target === 'codex-only');
 const skillDirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((d) => fs.existsSync(path.join(dir, d, 'SKILL.md'))) : []);
 
-// The plugin's hooks: [event, tool matcher, script under hooks/, args, through run.cjs]. obsidize runs on every shell
-// call, so it skips run.cjs (one node process instead of two).
+// The plugin's hooks: [event, tool matcher, script under hooks/, args, through run.cjs]. The obsidizer hook is not here:
+// it would start node on every shell call for everyone, so `obsidizer --enable` installs it on its own, in the user
+// scope, as the npm install does (bin/banker.js hooks enable obsidize, run from the plugin folder).
 const HOOKS = [
   ['SessionStart', null, 'update-notify.mjs', ['--codex', '--plugin'], true],
   ['Stop', null, 'telemetry-count-codex.mjs', [], true],
-  ['PostToolUse', 'Bash', 'obsidize-hook.mjs', ['--codex'], false],
 ];
 const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@banker-plugins), written by scripts/sync-codex-plugin.js. '
   + 'Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out '
-  + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY), obsidizer wiki canonicalization (PostToolUse Bash, inert '
-  + 'until obsidizer --enable writes omx_wiki/.obsidizer; it runs node once per shell call, so leave it untrusted if you do not use obsidizer). '
+  + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY). The obsidizer hook is installed only by obsidizer --enable. '
   + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names only when its real '
-  + 'path is absolute and outside the temp folder and the session folder. command is for sh, commandWindows for PowerShell; PLUGIN_ROOT is '
+  + 'path is absolute and outside the temp folder and the session folder, and runs it from the plugin folder (a version manager shim '
+  + 'then reads no version file from the session folder; the hook scripts take that folder from their input). command is for sh, commandWindows for PowerShell; PLUGIN_ROOT is '
   + 'the installed plugin folder.';
 
 // sh: node from PATH, resolved (no realpath or readlink -f: run nothing), then refused when relative or in a sandbox-writable place.
@@ -51,17 +51,21 @@ function shCommand(script, args, viaRun) {
     + 'r=$(realpath "$n" 2>/dev/null || readlink -f "$n" 2>/dev/null) || exit 0; '
     // Compared as real paths: on macOS /tmp and TMPDIR are links into /private.
     + 'u=$(cd /tmp && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || t=$u; p=$(pwd -P); '
-    + 'case "$r" in "$u"/*|"$t"/*|"$p"/*) exit 0;; /*) ;; *) exit 0;; esac; '
+    + '[ "$p" != / ] || exit 0; case "$r" in "$u"/*|"$t"/*|"$p"/*) exit 0;; /*) ;; *) exit 0;; esac; '
+    // From the plugin folder: an asdf or mise shim picks the node binary from a .tool-versions it finds from the cwd up.
+    + 'cd "$PLUGIN_ROOT" || exit 0; '
     + `"$r"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
-// PowerShell (Windows): the node application PATH names, refused under TEMP, TMP or the session folder.
+// PowerShell (Windows): the node.exe PATH names (a .cmd shim would run node by bare name, found in the current folder
+// first), refused under TEMP, TMP or the session folder, run from the plugin folder.
 function psCommand(script, args, viaRun) {
   const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
   return 'if (-not $env:PLUGIN_ROOT) { exit 0 }; '
     + '$n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; '
-    + '$r = [IO.Path]::GetFullPath($n.Source); '
-    + "foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; "
+    + "$r = [IO.Path]::GetFullPath($n.Source); if ($r -notlike '*.exe') { exit 0 }; "
+    + "foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; "
+    + 'Set-Location -LiteralPath $env:PLUGIN_ROOT; '
     + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
