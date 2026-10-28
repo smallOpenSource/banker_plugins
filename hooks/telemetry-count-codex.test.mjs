@@ -198,6 +198,7 @@ test('a turn whose start alone is missing is no shape change, and nothing is not
 
 // Codex plugin install (codex plugin add banker@<marketplace>): the skills sit in the plugin cache under three folders.
 function pluginSkill(home, folder, name, mkt = 'banker-plugins', ver = '0.22.0') {
+  writeFileSync(join(home, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
   const dir = join(home, 'plugins', 'cache', mkt, 'banker', ver, ...folder.split('/'), name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'SKILL.md'), '');
@@ -214,7 +215,7 @@ test('plugin skill paths name the skill and the file that proves it is installed
   assert.deepEqual([...namesIn(`cat ${p}/skills/lfm/SKILL.md`)], ['banker:lfm\tplugins/cache/banker-plugins/banker/0.22.0/skills/lfm/SKILL.md']);
   assert.deepEqual([...namesIn(`cat ${p}/codex/skills/progress/SKILL.md`)], ['banker:progress\tplugins/cache/banker-plugins/banker/0.22.0/codex/skills/progress/SKILL.md']);
   assert.deepEqual([...namesIn('C:\\Users\\u\\.codex\\plugins\\cache\\m\\banker\\1.0\\codex\\command-skills\\setup\\SKILL.md')], ['banker:setup\tplugins/cache/m/banker/1.0/codex/command-skills/setup/SKILL.md']);
-  for (const other of [`cat ${p}/hooks/x/SKILL.md`, 'cat /h/.codex/plugins/cache/m/other/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/../banker/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/m/banker/../skills/lfm/SKILL.md', `cat ${p}/command-skills/setup/SKILL.md`]) {
+  for (const other of [`cat ${p}/hooks/x/SKILL.md`, `cat ${p}/skills/LFM/SKILL.md`, 'cat /h/.codex/plugins/cache/m/other/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/../banker/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/m/banker/../skills/lfm/SKILL.md', `cat ${p}/command-skills/setup/SKILL.md`]) {
     assert.deepEqual([...namesIn(other)], [], other);
   }
 });
@@ -227,6 +228,7 @@ test('a plugin skill counts by its name when its SKILL.md is in this home\'s plu
   const setup = pluginSkill(home, 'codex/command-skills', 'setup');
   const f = rollout(tmp, [started('t1'), injectedPlugin(lfm, 'lfm'), call(`cat ${lfm}`), call(`cat ${setup}`),
     call(`cat ${home}/plugins/cache/banker-plugins/banker/0.21.0/skills/lfm/SKILL.md`),
+    call(`cat ${pluginSkill(home, 'skills', 'lineage', 'other-mkt')}`),
     call('cat /x/.codex/plugins/cache/banker-plugins/banker/0.22.0/skills/secret-here/SKILL.md')]);
   run(tmp, stop(f));
   assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]).sort(), ['banker:lfm', 'banker:setup']);

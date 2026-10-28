@@ -52,7 +52,7 @@ disable-model-invocation: true
 ## 절차
 
 `<스킬 폴더>` 는 이 SKILL.md 가 있는 폴더의 절대경로다.
-Codex 에서는 설치된 `banker-setup-bypass-permissions` 폴더다.
+Codex 에서는 설치된 `banker-setup-bypass-permissions` 폴더다(플러그인 설치면 스킬 목록의 이 SKILL.md 경로가 든 폴더).
 
 1. 확인 (`on` 일 때만)
    - 위 경고 전부를 일반 출력으로 먼저 보여 준다.

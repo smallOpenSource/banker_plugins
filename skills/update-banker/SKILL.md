@@ -80,7 +80,7 @@ in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-u
 command -v claude >/dev/null && echo "claude: present" || echo "claude: absent (Claude 채널 스킵)"
 command -v codex  >/dev/null && echo "codex: present"  || echo "codex: absent (Codex 채널 스킵)"
 command -v banker >/dev/null && banker --version || echo "banker: absent"
-command -v codex  >/dev/null && { grep -q '^\[plugins\."banker@' "${CODEX_HOME:-$HOME/.codex}/config.toml" 2>/dev/null && echo "codex plugin: present" || echo "codex plugin: absent (플러그인 길 스킵)"; }
+command -v codex  >/dev/null && codex plugin list 2>/dev/null | grep -E '^banker@[^ ]+ +installed, enabled' || echo "codex plugin: absent (플러그인 길 스킵)"   # 켜진 banker@<마켓플레이스>와 판
 [ "$P" = 0 ] && (cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 
@@ -169,7 +169,7 @@ banker setup --codex --dry-run | grep -E '→ [0-9]+ skills'                    
 - 스킬은 `~/.codex/skills/banker-<name>/` 으로, 커맨드는 `~/.codex/prompts/banker-<name>.md` 로 설치된다. 스킬은 프론트매터 name 이 디렉터리명과 일치하도록 재작성된다. `~/.codex/AGENTS.md` 는 건드리지 않는다.
 
 ### 3b. Codex 플러그인 길
-`codex plugin: absent` 면 스킵이다. 이 길은 npm 게이트를 받지 않는다(상류가 GitHub 다). 지우고 다시 복사하지 않으므로 dry-run 단계가 없다.
+`codex plugin: absent` 면 스킵이다. 0단계가 보인 `banker@<마켓플레이스>` 의 마켓플레이스 이름을 아래 `banker-plugins` 자리에 쓴다. 이 길은 npm 게이트를 받지 않는다(상류가 GitHub 다). 지우고 다시 복사하지 않으므로 dry-run 단계가 없다.
 
 ```bash
 codex plugin marketplace upgrade banker-plugins

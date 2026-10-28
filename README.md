@@ -231,7 +231,8 @@ banker uninstall        # 제거
   스킬 64개, Codex 전용 스킬 2개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 훅 3개는 `codex/hooks.json` 에서 옵니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 신뢰는 명령 글에 묶여 있어 판이 바뀌어도 그대로입니다. \
   obsidizer 훅은 셸 호출마다 node 를 한 번 띄웁니다. obsidizer 를 쓰지 않으면 이 훅만 신뢰하지 않아도 됩니다. \
-  이 설치에는 `banker` 명령이 없습니다. `banker doctor`, `banker hooks`, `banker telemetry` 가 필요하면 npm 으로도 설치하되 `banker setup --codex` 는 돌리지 않습니다.
+  훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않습니다. 그런 환경은 npm 설치를 씁니다. \
+  이 설치에는 `banker` 명령이 없습니다. `banker doctor`, `banker telemetry` 가 필요하면 npm 으로도 설치하되 `banker setup`(인자 없음)과 `banker setup --codex` 는 돌리지 않습니다(Codex 에 npm 길이 함께 설치됨). Claude Code 에 넣으려면 `banker setup --claude` 만 씁니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
   32MB 요청 한도는 Claude Code 의 것이라 Codex 자신의 요청 크기는 재지 않습니다.

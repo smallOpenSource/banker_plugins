@@ -138,7 +138,8 @@ function spawnFetcher() {
 const SESSION_RE = /^[A-Za-z0-9._-]{1,80}$/;
 export function dualNotice(payload, env = process.env) {
   try {
-    const note = dualInstallNote(codexHomeOf(payload?.transcript_path, env));
+    const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
+    const note = dualInstallNote(codexHomeOf(payload?.transcript_path, env), cwd);
     if (!note) return '';
     const sid = typeof payload?.session_id === 'string' && SESSION_RE.test(payload.session_id) ? payload.session_id : '';
     if (!sid) return note;

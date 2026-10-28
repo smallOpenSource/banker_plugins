@@ -15,12 +15,14 @@ export const PLUGIN = 'banker';
 export const DEFAULT_MARKETPLACE = 'banker-plugins';
 const NAME_RE = /^[A-Za-z0-9._-]{1,80}$/;
 
-// 일반 파일만 읽는다(FIFO 를 기다리지 않음). 없거나 읽지 못하면 ''.
+const MAX_CONFIG = 4 << 20;
+// 4 MB 까지의 일반 파일만 읽는다(FIFO 를 기다리지 않음, 훅의 5초 안에 끝남). 없거나 읽지 못하면 ''.
 function readRegular(file) {
   let fd;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
-    return fs.fstatSync(fd).isFile() ? fs.readFileSync(fd, 'utf8') : '';
+    const st = fs.fstatSync(fd);
+    return st.isFile() && st.size <= MAX_CONFIG ? fs.readFileSync(fd, 'utf8') : '';
   } catch {
     return '';
   } finally {
@@ -78,10 +80,11 @@ export function pluginRoutes(home) {
   return out;
 }
 
-// 두 길이 함께 있으면 알림 글, 아니면 ''.
-export function dualInstallNote(home) {
+// 두 길이 함께 있으면 알림 글, 아니면 ''. npm 길은 사용자 범위(<홈>/skills)와, cwd 가 있으면 프로젝트 범위
+// (`banker setup --codex --scope project` 의 <cwd>/.codex/skills)도 본다.
+export function dualInstallNote(home, cwd = '') {
   const plugins = pluginRoutes(home);
-  if (!plugins.length || !npmRoute(home)) return '';
+  if (!plugins.length || !(npmRoute(home) || (cwd && path.isAbsolute(cwd) && npmRoute(path.join(cwd, '.codex'))))) return '';
   return `banker 가 Codex 에 두 번 설치됨: npm 의 banker setup --codex 와 Codex 플러그인 ${plugins.join(', ')}. `
     + '스킬이 $banker-<이름> 과 $banker:<이름> 으로 겹칩니다. 하나만 두십시오: '
     + `npm 쪽을 빼려면 banker uninstall --codex, 플러그인을 빼려면 codex plugin remove ${plugins[0]}`;

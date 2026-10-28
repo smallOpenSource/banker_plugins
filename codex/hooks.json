@@ -1,13 +1,13 @@
 {
-  "description": "banker hooks for the Codex plugin (codex plugin add banker@banker-plugins). Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY), obsidizer wiki canonicalization (PostToolUse Bash, inert until obsidizer --enable writes omx_wiki/.obsidizer). obsidize runs node once per shell call (no run.cjs) and only a shell call that ran `omx wiki` ingest or add does more; leave it untrusted if you do not use obsidizer. Codex runs them only after you trust them in /hooks. command is for sh, commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.",
+  "description": "banker hooks for the Codex plugin (codex plugin add banker@banker-plugins), written by scripts/sync-codex-plugin.js. Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY), obsidizer wiki canonicalization (PostToolUse Bash, inert until obsidizer --enable writes omx_wiki/.obsidizer; it runs node once per shell call, so leave it untrusted if you do not use obsidizer). Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names only when its real path is absolute and outside the temp folder and the session folder. command is for sh, commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/hooks/run.cjs\" \"$PLUGIN_ROOT/hooks/update-notify.mjs\" --codex --plugin",
-            "commandWindows": "& node \"$env:PLUGIN_ROOT\\hooks\\run.cjs\" \"$env:PLUGIN_ROOT\\hooks\\update-notify.mjs\" --codex --plugin",
+            "command": "[ -n \"$PLUGIN_ROOT\" ] || exit 0; n=$(command -v node) || exit 0; r=$(realpath \"$n\" 2>/dev/null || readlink -f \"$n\" 2>/dev/null) || exit 0; u=$(cd /tmp && pwd -P); t=$(cd \"${TMPDIR:-/tmp}\" 2>/dev/null && pwd -P) || t=$u; p=$(pwd -P); case \"$r\" in \"$u\"/*|\"$t\"/*|\"$p\"/*) exit 0;; /*) ;; *) exit 0;; esac; \"$r\" \"$PLUGIN_ROOT/hooks/run.cjs\" \"$PLUGIN_ROOT/hooks/update-notify.mjs\" --codex --plugin",
+            "commandWindows": "if (-not $env:PLUGIN_ROOT) { exit 0 }; $n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; $r = [IO.Path]::GetFullPath($n.Source); foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; & $r \"$env:PLUGIN_ROOT\\hooks\\run.cjs\" \"$env:PLUGIN_ROOT\\hooks\\update-notify.mjs\" --codex --plugin",
             "timeout": 5
           }
         ]
@@ -18,8 +18,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/hooks/run.cjs\" \"$PLUGIN_ROOT/hooks/telemetry-count-codex.mjs\"",
-            "commandWindows": "& node \"$env:PLUGIN_ROOT\\hooks\\run.cjs\" \"$env:PLUGIN_ROOT\\hooks\\telemetry-count-codex.mjs\"",
+            "command": "[ -n \"$PLUGIN_ROOT\" ] || exit 0; n=$(command -v node) || exit 0; r=$(realpath \"$n\" 2>/dev/null || readlink -f \"$n\" 2>/dev/null) || exit 0; u=$(cd /tmp && pwd -P); t=$(cd \"${TMPDIR:-/tmp}\" 2>/dev/null && pwd -P) || t=$u; p=$(pwd -P); case \"$r\" in \"$u\"/*|\"$t\"/*|\"$p\"/*) exit 0;; /*) ;; *) exit 0;; esac; \"$r\" \"$PLUGIN_ROOT/hooks/run.cjs\" \"$PLUGIN_ROOT/hooks/telemetry-count-codex.mjs\"",
+            "commandWindows": "if (-not $env:PLUGIN_ROOT) { exit 0 }; $n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; $r = [IO.Path]::GetFullPath($n.Source); foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; & $r \"$env:PLUGIN_ROOT\\hooks\\run.cjs\" \"$env:PLUGIN_ROOT\\hooks\\telemetry-count-codex.mjs\"",
             "timeout": 5
           }
         ]
@@ -31,8 +31,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/hooks/obsidize-hook.mjs\" --codex",
-            "commandWindows": "& node \"$env:PLUGIN_ROOT\\hooks\\obsidize-hook.mjs\" --codex",
+            "command": "[ -n \"$PLUGIN_ROOT\" ] || exit 0; n=$(command -v node) || exit 0; r=$(realpath \"$n\" 2>/dev/null || readlink -f \"$n\" 2>/dev/null) || exit 0; u=$(cd /tmp && pwd -P); t=$(cd \"${TMPDIR:-/tmp}\" 2>/dev/null && pwd -P) || t=$u; p=$(pwd -P); case \"$r\" in \"$u\"/*|\"$t\"/*|\"$p\"/*) exit 0;; /*) ;; *) exit 0;; esac; \"$r\" \"$PLUGIN_ROOT/hooks/obsidize-hook.mjs\" --codex",
+            "commandWindows": "if (-not $env:PLUGIN_ROOT) { exit 0 }; $n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; $r = [IO.Path]::GetFullPath($n.Source); foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; & $r \"$env:PLUGIN_ROOT\\hooks\\obsidize-hook.mjs\" --codex",
             "timeout": 5
           }
         ]

@@ -88,4 +88,8 @@ test('the dual install note names both ways out only when both routes are there'
   const p = home();
   config(p, '[plugins."banker@banker-plugins"]\nenabled = true\n');
   assert.equal(dualInstallNote(p), '', 'plugin only');
+  const work = home();
+  npmSkill(join(work, '.codex'), 'lineage');
+  assert.match(dualInstallNote(p, work), /두 번 설치됨/, 'a project-scope npm install in the session folder');
+  assert.equal(dualInstallNote(p, 'rel'), '', 'a relative cwd is not looked at');
 });

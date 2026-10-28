@@ -106,7 +106,7 @@ Codex 카운팅이 읽는 것과 남기는 것은 다음과 같습니다.
 - 전송하는 것: Claude Code 와 같은 체크인 `{version, os, counts}` 입니다. 세션 ID 와 턴 ID 는 전송하지 않습니다.
 
 Codex 훅은 Codex 샌드박스 밖에서 돌므로, 샌드박스가 네트워크를 막아도 업데이트 조회와 체크인은 Claude Code 와 같이 나갑니다.\
-끄는 방법(`BANKER_NO_TELEMETRY`, `BANKER_NO_UPDATE_CHECK`, `banker telemetry off`)도 같습니다.
+끄는 방법(`BANKER_NO_TELEMETRY`, `BANKER_NO_UPDATE_CHECK`, `banker telemetry off`)도 같습니다. 플러그인만 설치해 `banker` 명령이 없으면 두 환경 변수를 쓰거나 `/hooks` 에서 banker 훅을 끕니다.
 
 ## 전송 안전
 

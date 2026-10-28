@@ -24,14 +24,15 @@
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { codexHomeOf } from '../bin/lib/codex-routes.mjs';
+import { codexHomeOf, pluginRoutes } from '../bin/lib/codex-routes.mjs';
 import { appendUsageLog, CODEX_SHAPE_MISS_PATH, configDir, countingActive, readRegular, recordUsedSkill, SKILL_NAME_RE, writeByRename } from '../bin/lib/telemetry-config.mjs';
 
 export { codexHomeOf };
 
-const SKILL_PATH_RE = /skills[\\/]+banker-([a-z0-9_-]{1,64})[\\/]+SKILL\.md/gi;
+const SKILL_PATH_RE = /skills[\\/]+banker-([a-z0-9_-]{1,64})[\\/]+SKILL\.md/g;
 // 플러그인 길: plugins/cache/<마켓플레이스>/banker/<판>/<스킬 폴더>/<name>/SKILL.md. 1 마켓플레이스, 2 판, 3 스킬 폴더, 4 이름.
-const PLUGIN_PATH_RE = /plugins[\\/]+cache[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+banker[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+(skills|codex[\\/]+skills|codex[\\/]+command-skills)[\\/]+([a-z0-9_-]{1,64})[\\/]+SKILL\.md/gi;
+// 대소문자를 가리지 않는 파일 시스템에서 `FRONT-QA` 같은 변형이 다른 이름으로 세어지지 않게 i 를 두지 않는다.
+const PLUGIN_PATH_RE = /plugins[\\/]+cache[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+banker[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+(skills|codex[\\/]+skills|codex[\\/]+command-skills)[\\/]+([a-z0-9_-]{1,64})[\\/]+SKILL\.md/g;
 const KEEP_TURNS = 100;
 export const TURNS_FILE = () => join(configDir(), 'codex-count-turns');
 
@@ -184,10 +185,11 @@ function writeTurns(lines) {
   }
 }
 
-// 이 Codex 에 설치된 banker 스킬인지. 플러그인 길은 기록의 경로 그대로 그 홈의 plugins/cache 아래에 있어야 한다.
+// 이 Codex 에 설치된 banker 스킬인지. 플러그인 길은 그 홈의 config.toml 에 켜져 있는 banker@<마켓플레이스> 의 것이고,
+// 기록의 경로 그대로 plugins/cache 아래에 있어야 한다(지운 플러그인이 남긴 폴더나 다른 마켓플레이스의 banker 는 세지 않음).
 export function installed(entry, home) {
   const [name, rel] = entry.split('\t');
-  if (rel) return existsSync(join(home, ...rel.split('/')));
+  if (rel) return pluginRoutes(home).includes(`banker@${rel.split('/')[2]}`) && existsSync(join(home, ...rel.split('/')));
   return existsSync(join(home, 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
 }
 

@@ -8,9 +8,12 @@
  *   codex/command-skills/    commands/<name>.md as skills (Codex 0.144+ has no custom prompts), written here
  * so the plugin offers what `banker setup --codex` installs (codex/manifest.json: target both and codex-only).
  * `commands: []` keeps Codex 0.160+ from also turning commands/ (Claude Code commands) into source-command-* skills.
+ * codex/hooks.json is written here too. Codex runs a trusted hook outside its sandbox, so each command finds node on
+ * PATH, resolves its real path, and runs nothing when that is relative or under the temp folder or the session folder
+ * (both writable from the sandbox): the rule `banker setup --codex` applies with safeNode() in bin/lib/codex-hooks.mjs.
  * Usage:
- *   node scripts/sync-codex-plugin.js          # write codex/command-skills from commands/
- *   node scripts/sync-codex-plugin.js --check  # exit 1 if a command skill drifts or the plugin's skill set or hooks drift
+ *   node scripts/sync-codex-plugin.js          # write codex/command-skills from commands/, and codex/hooks.json
+ *   node scripts/sync-codex-plugin.js --check  # exit 1 if a command skill, the hooks file, or the plugin's skill set drifts
  */
 const fs = require('fs');
 const path = require('path');
@@ -25,6 +28,52 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 const manifest = () => JSON.parse(read('codex/manifest.json'));
 const eligible = (m) => m.surfaces.filter((s) => s.target === 'both' || s.target === 'codex-only');
 const skillDirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((d) => fs.existsSync(path.join(dir, d, 'SKILL.md'))) : []);
+
+// The plugin's hooks: [event, tool matcher, script under hooks/, args, through run.cjs]. obsidize runs on every shell
+// call, so it skips run.cjs (one node process instead of two).
+const HOOKS = [
+  ['SessionStart', null, 'update-notify.mjs', ['--codex', '--plugin'], true],
+  ['Stop', null, 'telemetry-count-codex.mjs', [], true],
+  ['PostToolUse', 'Bash', 'obsidize-hook.mjs', ['--codex'], false],
+];
+const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@banker-plugins), written by scripts/sync-codex-plugin.js. '
+  + 'Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out '
+  + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY), obsidizer wiki canonicalization (PostToolUse Bash, inert '
+  + 'until obsidizer --enable writes omx_wiki/.obsidizer; it runs node once per shell call, so leave it untrusted if you do not use obsidizer). '
+  + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names only when its real '
+  + 'path is absolute and outside the temp folder and the session folder. command is for sh, commandWindows for PowerShell; PLUGIN_ROOT is '
+  + 'the installed plugin folder.';
+
+// sh: node from PATH, resolved (no realpath or readlink -f: run nothing), then refused when relative or in a sandbox-writable place.
+function shCommand(script, args, viaRun) {
+  const run = viaRun ? ' "$PLUGIN_ROOT/hooks/run.cjs"' : '';
+  return '[ -n "$PLUGIN_ROOT" ] || exit 0; n=$(command -v node) || exit 0; '
+    + 'r=$(realpath "$n" 2>/dev/null || readlink -f "$n" 2>/dev/null) || exit 0; '
+    // Compared as real paths: on macOS /tmp and TMPDIR are links into /private.
+    + 'u=$(cd /tmp && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P) || t=$u; p=$(pwd -P); '
+    + 'case "$r" in "$u"/*|"$t"/*|"$p"/*) exit 0;; /*) ;; *) exit 0;; esac; '
+    + `"$r"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
+}
+
+// PowerShell (Windows): the node application PATH names, refused under TEMP, TMP or the session folder.
+function psCommand(script, args, viaRun) {
+  const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
+  return 'if (-not $env:PLUGIN_ROOT) { exit 0 }; '
+    + '$n = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $n) { exit 0 }; '
+    + '$r = [IO.Path]::GetFullPath($n.Source); '
+    + "foreach ($d in @($env:TEMP, $env:TMP, \"$env:LOCALAPPDATA\\\\Temp\", $PWD.Path)) { if ($d -and $r.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { exit 0 } }; "
+    + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
+}
+
+function hooksText() {
+  const doc = { description: HOOKS_NOTE, hooks: {} };
+  for (const [ev, matcher, script, args, viaRun] of HOOKS) {
+    doc.hooks[ev] = [{ ...(matcher ? { matcher } : {}), hooks: [{
+      type: 'command', command: shCommand(script, args, viaRun), commandWindows: psCommand(script, args, viaRun), timeout: 5,
+    }] }];
+  }
+  return `${JSON.stringify(doc, null, 2)}\n`;
+}
 
 // The command skills the plugin carries: { name, file, text }.
 function commandSkills(m = manifest()) {
@@ -95,10 +144,15 @@ function main() {
     if (check) { console.error(`STALE COMMAND SKILL: codex/command-skills/${d}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
     else { fs.rmSync(path.join(CMD_DIR, d), { recursive: true, force: true }); console.log(`removed codex/command-skills/${d}`); }
   }
+  const hooksFile = path.join(root, ...HOOKS_FILE.split('/'));
+  if ((fs.existsSync(hooksFile) ? fs.readFileSync(hooksFile, 'utf8') : null) !== hooksText()) {
+    if (check) { console.error(`HOOKS MISMATCH: ${HOOKS_FILE}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
+    else { fs.writeFileSync(hooksFile, hooksText()); console.log(`wrote ${HOOKS_FILE}`); }
+  } else console.log(`${HOOKS_FILE} in sync`);
   for (const p of pluginProblems(m)) { console.error(`CODEX PLUGIN: ${p}`); failed = true; }
   if (failed) process.exit(1);
 }
 
 if (require.main === module) main();
 
-module.exports = { commandSkills, pluginProblems, SKILL_DIRS, HOOKS_FILE };
+module.exports = { commandSkills, pluginProblems, hooksText, shCommand, psCommand, SKILL_DIRS, HOOKS_FILE };
