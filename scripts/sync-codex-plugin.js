@@ -74,13 +74,17 @@ function hooksRev(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
 }
 
 // sh. Which node runs, outside the sandbox:
-// - node from PATH, absolute, resolved to its real path (no realpath or readlink -f: refuse).
+// - node from PATH, absolute, resolved to its real path.
 // - A real path named node (nvm, fnm, Homebrew, system, an asdf shim script) runs as it is. Another name is a multicall
 //   shim that reads its argv0 (Volta, mise, snap): it is asked, from the plugin folder, for the node binary it runs, and
 //   that binary runs (the asking runs that node once before its own path is checked; the shim and its link are checked
 //   first). Every path run or asked must be outside the real /tmp, TMPDIR and the session folder (pwd -P),
 //   which the sandbox can write; a session folder that is the home folder itself is no workspace here (nvm keeps node
 //   under ~/.nvm, and a sandbox writing the home can already change the shell's rc files and that node).
+// - Nothing else the command runs is found in those folders either: once node is found, PATH keeps only absolute
+//   entries outside them, so realpath, readlink, and whatever a shim starts come from elsewhere (a project .venv/bin
+//   or node_modules/.bin on PATH would otherwise lend a planted realpath). Before that only shell builtins run, and the
+//   refusal notice takes tr from the system's default PATH (command -p).
 // - From the plugin folder, so a version manager reads no version file of the session folder; the hook scripts take
 //   that folder from their input.
 // - The real path comes from realpath, else readlink -f, else (macOS before 12.3 has neither) by following the links
@@ -93,19 +97,22 @@ const NODE_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
 function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NODE_DIRS) {
   const run = viaRun ? ' "$PLUGIN_ROOT/hooks/run.cjs"' : '';
   const say = notice
-    ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | tr -d '\000-\037"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
+    ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | command -p tr -d '\000-\037"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
     : String.raw`printf '%s\n' "banker hooks skipped: $1" >&2`;
   return (rev ? `: banker-hooks-rev ${rev}; ` : '')
     + String.raw`x() { ${say}; exit 0; }; [ -n "$PLUGIN_ROOT" ] || x "PLUGIN_ROOT is not set"; `
+    + String.raw`p=$(pwd -P); [ -n "$p" ] && [ "$p" != / ] || x "the session folder is /"; `
+    + 'u=$(cd /tmp 2>/dev/null && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P); '
+    + String.raw`h=; case "$HOME" in /?*) h=$(cd "$HOME" 2>/dev/null && pwd -P);; esac; `
+    + String.raw`w() { for z in "$u" "$t"; do [ -n "$z" ] && case "$1/" in "$z"/*) return 0;; esac; done; [ "$p" = "$h" ] && return 1; case "$1/" in "$p"/*) return 0;; esac; return 1; }; `
     + `n=$(command -v node) || for d in ${nodeDirs.join(' ')}; do [ -x "$d/node" ] && n=$d/node && break; done; `
     + String.raw`[ -n "$n" ] || x "node is not on PATH (a Codex started from the desktop may not have the shell's PATH)"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
+    + 'set -f; o=$IFS; IFS=:; q=; for v in $PATH; do case "$v" in /*) ;; *) continue;; esac; y=$(cd "$v" 2>/dev/null && pwd -P) || continue; '
+    + 'w "$y" || q=$q${q:+:}$v; done; IFS=$o; set +f; PATH=$q; export PATH; '
     + String.raw`rp() { realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null || { f=$1; i=0; while [ -L "$f" ]; do i=$((i+1)); [ "$i" -le 40 ] || return 1; `
     + 'l=$(readlink "$f") || return 1; case "$l" in /*) f=$l;; *) f=${f%/*}/$l;; esac; done; [ -e "$f" ] || return 1; '
     + 'd=$(cd -P "${f%/*}/" 2>/dev/null && pwd -P) || return 1; printf \'%s\\n\' "${d%/}/${f##*/}"; }; }; '
     + String.raw`r=$(rp "$n") || x "cannot resolve the real path of $n"; `
-    + String.raw`p=$(pwd -P); [ -n "$p" ] && [ "$p" != / ] || x "the session folder is /"; `
-    + 'u=$(cd /tmp 2>/dev/null && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P); '
-    + String.raw`h=; case "$HOME" in /?*) h=$(cd "$HOME" 2>/dev/null && pwd -P);; esac; `
     + String.raw`k() { case "$1" in /*) ;; *) x "node path is not absolute ($1)";; esac; for d in "$u" "$t"; do [ -n "$d" ] && case "$1" in "$d"/*) x "node is in a temp folder ($1)";; esac; done; `
     + String.raw`[ "$p" = "$h" ] || case "$1" in "$p"/*) x "node is in the session folder ($1)";; esac; }; `
     + String.raw`cd "$PLUGIN_ROOT" || x "cannot enter the plugin folder"; `
@@ -116,9 +123,11 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
 // PowerShell (Windows): the first node.exe, node.cmd or node.bat on PATH. A .cmd or .bat shim (mise) is asked, from the
 // plugin folder, for the node.exe it runs, and that runs, as the sh command asks a multicall shim. Every path run or
 // asked is refused under TEMP, TMP, LOCALAPPDATA\Temp or the session folder (unless that is USERPROFILE itself: nvm-windows
-// and Volta keep node under it). Paths are compared in their long form (Get-Item), so an 8.3 name such as
-// C:\Users\LONGNA~1 in TEMP still matches. A refusal says why, as for sh (English: Windows PowerShell 5.1 garbles other
-// letters in a command line).
+// and Volta keep node under it). Once node is found, PATH keeps only absolute entries outside those folders, so what a
+// shim starts by name (cmd.exe looks mise up on PATH) comes from elsewhere. Paths are compared in their long form
+// (Get-Item, so an 8.3 name such as C:\Users\LONGNA~1 in TEMP still matches) with links and junctions on the way
+// followed, as the sh command compares real paths. A refusal says why, as for sh (English: Windows PowerShell 5.1
+// garbles other letters in a command line).
 function psCommand(script, args, viaRun, notice = false, rev = '') {
   const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
   const say = notice
@@ -126,16 +135,21 @@ function psCommand(script, args, viaRun, notice = false, rev = '') {
     : '[Console]::Error.WriteLine("banker hooks skipped: $m")';
   return (rev ? `$null = 'banker-hooks-rev ${rev}'; ` : '')
     + `function x($m) { ${say}; exit 0 }; if (-not $env:PLUGIN_ROOT) { x 'PLUGIN_ROOT is not set' }; `
-    + "$n = Get-Command node -CommandType Application -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\\.(exe|cmd|bat)$' } | Select-Object -First 1; "
+    + String.raw`function G($p) { try { (Get-Item -LiteralPath $p -Force -ErrorAction Stop).FullName } catch { try { [IO.Path]::GetFullPath($p) } catch { $p } } }; `
+    + String.raw`function L($p) { if (-not $p) { return '' }; $p = G $p; for ($i = 0; $i -lt 32; $i++) { $c = $p; $t = $null; `
+    + String.raw`while ($c) { $it = Get-Item -LiteralPath $c -Force -ErrorAction SilentlyContinue; if ($it -and $it.LinkType -and @($it.Target)[0]) { $t = [string]@($it.Target)[0]; break }; $c = Split-Path -LiteralPath $c }; `
+    + String.raw`if (-not $t) { break }; if (-not [IO.Path]::IsPathRooted($t)) { $t = Join-Path (Split-Path -LiteralPath $c) $t }; $p = G ($t.TrimEnd('\') + $p.Substring($c.Length)) }; $p.TrimEnd('\') }; `
+    + String.raw`$ds = @($env:TEMP, $env:TMP); if ($env:LOCALAPPDATA) { $ds += "$env:LOCALAPPDATA\Temp" }; $w = L $PWD.Path; if ($w -ne (L $env:USERPROFILE)) { $ds += $w }; `
+    + String.raw`$ds = @($ds | Where-Object { $_ } | ForEach-Object { L $_ } | Where-Object { $_ }); `
+    + String.raw`function u($f) { $f = L $f; foreach ($d in $ds) { if ($f -eq $d -or $f.StartsWith($d + '\', 'OrdinalIgnoreCase')) { return $true } }; $false }; `
+    + String.raw`function k($f) { if (u $f) { x "node is in a temp folder or the session folder ($(L $f))" }; L $f }; `
+    + String.raw`$n = Get-Command node -CommandType Application -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\.(exe|cmd|bat)$' } | Select-Object -First 1; `
     + "if (-not $n) { x 'node is not on PATH' }; "
-    + "function L($p) { if (-not $p) { return '' }; try { (Get-Item -LiteralPath $p -Force -ErrorAction Stop).FullName } catch { try { [IO.Path]::GetFullPath($p) } catch { $p } } }; "
-    + "$ds = @($env:TEMP, $env:TMP); if ($env:LOCALAPPDATA) { $ds += \"$env:LOCALAPPDATA\\Temp\" }; "
-    + "if ((L $PWD.Path).TrimEnd('\\') -ne (L $env:USERPROFILE).TrimEnd('\\')) { $ds += $PWD.Path }; "
-    + "function k($f) { $f = L $f; foreach ($d in $ds) { $d = L $d; if ($d -and $f.StartsWith($d.TrimEnd('\\') + '\\', 'OrdinalIgnoreCase')) { x \"node is in a temp folder or the session folder ($f)\" } }; $f }; "
+    + String.raw`$env:PATH = (@($env:PATH -split ';') | Where-Object { $_ -match '^([A-Za-z]:\\|\\\\)' -and -not (u $_) }) -join ';'; `
     + "$r = k $n.Source; "
     + "if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
-    + "if ($r -notmatch '\\.exe$') { $e = & $r -p process.execPath 2>$null | Select-Object -Last 1; "
-    + "if (-not $e -or $e -notmatch '\\.exe$' -or -not (Test-Path -LiteralPath $e -PathType Leaf)) { x \"the node shim $r did not name its node\" }; $r = k $e }; "
+    + String.raw`if ($r -notmatch '\.exe$') { $e = & $r -p process.execPath 2>$null | Select-Object -Last 1; `
+    + String.raw`if (-not $e -or $e -notmatch '\.exe$' -or -not (Test-Path -LiteralPath $e -PathType Leaf)) { x "the node shim $r did not name its node" }; $r = k $e }; `
     + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 

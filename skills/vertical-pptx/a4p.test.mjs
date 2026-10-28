@@ -1158,7 +1158,11 @@ test('U18c the node builder finds nothing for a name with no ASCII letter, and a
     console.log(JSON.stringify({
       korean: B.findFontFile('\\ub9d1\\uc740 \\uace0\\ub515'),
       hints: names.map((n) => [n, B.fontHints(n)]),
-      resolved: names.map((n) => [n, typeof B.resolveFont({ fontArg: n, metaFont: 'auto' }).name]),
+      resolved: names.map((n) => {
+        const r = B.resolveFont({ fontArg: n, metaFont: 'auto' });
+        // A machine may hold a font whose file name has the hint in it; the answer must then agree with the lookup.
+        return [n, B.findFontFile(n) ? r.from === '--font' : r.from !== '--font' && r.warnings[0]?.code === 'FONT_NOT_FOUND' && r.warnings[0]?.detail === n];
+      }),
     }));`;
   const empty = fs.mkdtempSync(path.join(TMP, 'u18c-'));
   const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env: { ...process.env, PATH: empty } });
@@ -1166,7 +1170,7 @@ test('U18c the node builder finds nothing for a name with no ASCII letter, and a
   const got = JSON.parse(r.stdout.trim());
   assert.equal(got.korean, null, 'no fc-match to spell the family, and no file name to compare: nothing');
   assert.deepEqual(got.hints, [['constructor', ['constructor']], ['__proto__', ['proto']], ['toString', ['tostring']]], 'the name itself, not what Object carries');
-  assert.deepEqual(got.resolved, [['constructor', 'string'], ['__proto__', 'string'], ['toString', 'string']], 'resolveFont answers for each, and does not throw');
+  assert.deepEqual(got.resolved, [['constructor', true], ['__proto__', true], ['toString', true]], 'resolveFont takes the name only when the lookup found it, and says FONT_NOT_FOUND otherwise');
 });
 
 // The node builder's Dirent calls a linked folder a link, a Windows junction too, and does not enter it. python before

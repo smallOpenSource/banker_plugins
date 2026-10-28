@@ -1251,6 +1251,50 @@ test("openNew refuses a link to nothing with EEXIST on every system and leaves n
   assert.throws(() => openNew(plain, 0o600), (e) => e.code === "EEXIST");
 });
 
+// macOS and Linux refuse the open itself, so the check after it runs only on Windows. Here an open that behaves as
+// Windows does (it follows a link planted at the name and makes the file the link leads to) takes it on every system.
+test("openNew takes back a file an open made through a link, and refuses with EEXIST, on every system", { skip: symlinkSkip }, () => {
+  const s = setup();
+  const target = join(s.dir, "led-to");
+  const name = join(s.dir, "new-file");
+  const real = fs.openSync;
+  fs.openSync = (p, flags, mode) => {
+    if (String(p) === name && flags === "wx") {
+      fs.symlinkSync(target, name, "file");
+      return real(target, "wx", mode);
+    }
+    return real(p, flags, mode);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => openNew(name, 0o600), (e) => e.code === "EEXIST" && e.path === name);
+  } finally {
+    fs.openSync = real;
+    syncBuiltinESMExports();
+  }
+  assert.ok(!existsSync(target), "the file made through the link is gone");
+  assert.ok(lstatSync(name).isSymbolicLink(), "the planted link stays");
+  // A file someone else put where the link leads, between the open and the check, is not ours to remove.
+  rmSync(name);
+  fs.openSync = (p, flags, mode) => {
+    if (String(p) === name && flags === "wx") {
+      fs.symlinkSync(target, name, "file");
+      const fd = real(target, "wx", mode);
+      fs.writeFileSync(target, "someone's");
+      return fd;
+    }
+    return real(p, flags, mode);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => openNew(name, 0o600), (e) => e.code === "EEXIST");
+  } finally {
+    fs.openSync = real;
+    syncBuiltinESMExports();
+  }
+  assert.equal(read(target), "someone's", "a file that is not the empty one made stays");
+});
+
 test("Codex: a write a sandbox refuses after access() allowed it is a refusal with exit 1, for on and off", () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");

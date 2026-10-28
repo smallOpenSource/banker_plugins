@@ -5,7 +5,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -281,6 +281,19 @@ test('the turn lock waits for a live holder, then leaves the turn to it; a dead 
     utimesSync(lock, old, old);
     assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), ['counted'], 'a lock older than a hook can live is taken over');
     assert.ok(!existsSync(lock));
+    const seven = (Date.now() - 7000) / 1000;
+    mkdirSync(lock);
+    utimesSync(lock, seven, seven);
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), ['counted'], 'a holder the 5 s hook limit killed does not cost the next turn');
+    assert.deepEqual(readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock')), [], 'nothing of the old lock is left');
+    // A file where the config folder goes: counting goes on without the lock instead of waiting at every Stop.
+    const other = mkTmp();
+    writeFileSync(join(other, 'banker'), '');
+    process.env.XDG_CONFIG_HOME = other;
+    process.env.APPDATA = other;
+    const t1 = Date.now();
+    assert.deepEqual(withTurnsLock(() => ['ran'], { wait: 2000 }), ['ran']);
+    assert.ok(Date.now() - t1 < 1000, 'no wait');
   } finally {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
     if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;

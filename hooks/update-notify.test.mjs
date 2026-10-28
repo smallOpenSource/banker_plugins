@@ -197,24 +197,35 @@ test('Codex 두 길의 SessionStart 훅이 동시에 돌아도 알림은 한 번
     })));
     const said = outs.filter((o) => o.includes('두 번 설치됨'));
     assert.equal(said.length, 1, `round ${round}: ${JSON.stringify(outs)}`);
+    assert.equal(outs.filter((o) => o.includes('99.0.0')).length, round === 0 ? 1 : 0, `round ${round}: 업데이트 알림은 버전마다 한 번`);
   }
   const claims = readdirSync(join(bankerDir(tmp), 'codex-sessions'));
   assert.equal(claims.length, 10, '세션마다 폴더 하나');
 });
 
-test('codex-sessions 의 이틀 지난 세션 폴더는 지우고, 세션 id 가 아닌 이름은 만들지 않는다', async () => {
+test('codex-sessions: 이어 연 세션은 다시 알리고, 이틀 지난 폴더는 지우며, 세션 id 가 아닌 이름은 만들지 않는다', async () => {
   const tmp = mkTmp();
   const prev = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = tmp;
   try {
     const { claimSession } = await import(`./update-notify.mjs?claim=${Date.now()}`);
     const dir = join(bankerDir(tmp), 'codex-sessions');
+    mkdirSync(bankerDir(tmp), { recursive: true });
+    writeFileSync(join(bankerDir(tmp), 'codex-dual-notified'), 'last-session\n');
     assert.equal(claimSession({ session_id: 'old' }, Date.now()), true);
-    assert.equal(claimSession({ session_id: 'old' }), false, '같은 세션은 한 번');
+    assert.ok(!existsSync(join(bankerDir(tmp), 'codex-dual-notified')), '예전 판의 세션 id 파일을 지움');
+    assert.equal(claimSession({ session_id: 'old' }), false, '함께 도는 다른 길 훅은 알리지 않음');
+    assert.equal(claimSession({ session_id: 'old' }, Date.now() + 31 * 1000), true, '30초 넘어 같은 세션을 이어 열면 다시 알림');
+    assert.equal(claimSession({ session_id: 'old' }), false, '이어 연 세션의 짝 훅은 알리지 않음(방금 다시 만든 폴더)');
+    assert.deepEqual(readdirSync(dir).sort(), ['old']);
     assert.equal(claimSession({ session_id: 'new' }, Date.now() + 3 * 24 * 60 * 60 * 1000), true);
     assert.deepEqual(readdirSync(dir).sort(), ['new'], '이틀 지난 폴더를 지움');
     for (const sid of ['..', '.', 'a/b', '', undefined]) assert.equal(claimSession({ session_id: sid }), true, `${sid}: 알리기만`);
     assert.deepEqual(readdirSync(dir).sort(), ['new']);
+    rmSync(dir, { recursive: true });
+    writeFileSync(dir, '');
+    assert.equal(claimSession({ session_id: 'x' }), true, '폴더 자리에 파일이 있어도 알림은 꺼지지 않음');
+    assert.equal(claimSession({ session_id: 'x' }), true);
   } finally {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
   }

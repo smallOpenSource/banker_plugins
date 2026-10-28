@@ -86,8 +86,10 @@ Codex 에서는 플래그 자리가 `omx_wiki/.obsidizer` 이고, hook 은 `--en
 hook 이 셸 호출마다 node 를 띄우므로 쓰지 않는 사람에게는 넣지 않는다. 설치 길과 관계없이 같다.
 아래 `<banker>` 는 `"<node>" "<banker.js>"` 다. 샌드박스 밖에서 도는 명령이므로 PATH 의 `banker` 를 이름으로 부르지 않고 두 절대경로로 쓴다.
 - `<banker.js>`: Codex 플러그인 설치(`codex plugin add`, 이 SKILL.md 가 `plugins/cache/` 아래)면 `<이 SKILL.md 가 있는 폴더>/../../bin/banker.js`
-  (플러그인 폴더의 같은 프로그램). npm 설치면 `node -p "require('fs').realpathSync(require('path').join(require('child_process').execSync('npm root -g').toString().trim(), '@kaydash9999/banker-plugins/bin/banker.js'))"`
-  로 얻은 실제 경로
+  (플러그인 폴더의 같은 프로그램). npm 설치면 PATH 의 `banker` 가 가리키는 파일의 실제 경로
+  - macOS, Linux: `node -p "require('fs').realpathSync(process.argv[1])" "$(command -v banker)"`(npm 이 만든 링크가 `bin/banker.js` 로 풀림)
+  - Windows: `Join-Path (Split-Path (Get-Command banker.cmd).Source) 'node_modules\@kaydash9999\banker-plugins\bin\banker.js'`
+  - 그 파일이 없거나 이름이 `banker.js` 가 아니면 샌드박스 밖 실행을 요청하지 않고 그 이유를 보고한 뒤 멈춘다
 - `<node>`: 샌드박스 안에서 `node -p "require('fs').realpathSync(process.execPath)"` 로 얻은 실제 경로
 - 두 경로 중 하나라도 임시 폴더나 작업 폴더 안이면(샌드박스가 바꿀 수 있는 곳) 샌드박스 밖 실행을 요청하지 않고 그 이유를 보고한 뒤 멈춘다. 작업 폴더가 홈 폴더
   자체이면 작업 폴더 규칙은 적용하지 않는다(nvm 처럼 홈 아래 둔 node)
