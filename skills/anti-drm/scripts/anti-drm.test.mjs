@@ -41,7 +41,7 @@ const FLAGS = { deny: DENY, alt: ".md,.html,.tsv" };
 const CONFIG = checkConfig({ deny: splitList(DENY), alt: splitList(FLAGS.alt) }).config;
 const RULES = renderRules(TEMPLATE, CONFIG);
 
-const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
+const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits, owners, FIFOs, sockets or line breaks in names" };
 const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const permTest = { skip: process.platform === "win32" ? "Windows has no POSIX mode bits" : asRoot && "root ignores mode bits" };
 
@@ -706,7 +706,7 @@ test("hardening: an unreadable settings file is refused with the right words, on
   }
 });
 
-test("hardening: a settings link that loops is replaced by config, and on refuses it with exit 1", posixOnly, () => {
+test("hardening: a settings link that loops is replaced by config, and on refuses it with exit 1", symlinkTest, () => {
   const s = setup();
   const folder = join(s.dir, "config", "banker");
   mkdirSync(folder, { recursive: true });
@@ -1142,7 +1142,7 @@ test("config replaces a hard link to a file it cannot read instead of refusing, 
 });
 
 // With O_NOFOLLOW stripped from every open, as on Windows, the look before the open alone keeps a planted link unread.
-test("without O_NOFOLLOW (as on Windows) a planted settings link is still neither read nor kept", posixOnly, () => {
+test("without O_NOFOLLOW (as on Windows) a planted settings link is still neither read nor kept", symlinkTest, () => {
   const s = setup();
   mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
   const secret = join(s.dir, "id_key");
@@ -1163,7 +1163,7 @@ test("without O_NOFOLLOW (as on Windows) a planted settings link is still neithe
 
 // The first look sees a regular file; a link put there before the open is not followed (O_NOFOLLOW), so what it
 // leads to is neither read nor kept. Windows has no O_NOFOLLOW: the look before the open stands in.
-test("config does not read what a link swapped in after the first look leads to", posixOnly, () => {
+test("config does not read what a link swapped in after the first look leads to", symlinkTest, () => {
   const s = setup();
   mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
   writeFileSync(s.o.configFile, '{"theme":"dark"}\n');

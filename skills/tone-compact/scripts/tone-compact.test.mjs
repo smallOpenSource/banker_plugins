@@ -25,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { parseArgs, rulesOf, status, turnOff, turnOn } from "./tone-compact.mjs";
 import { count, done, lf, noBom, refuse, sameInode, where } from "./instruction-toggle.mjs";
+import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const CLI = fileURLToPath(new URL("./tone-compact.mjs", import.meta.url));
 const SKILL = fileURLToPath(new URL("../SKILL.md", import.meta.url));
@@ -37,7 +38,7 @@ const KEEP_OPEN = "<!-- USER:OMX:POLICY:START -->";
 const KEEP_CLOSE = "<!-- USER:OMX:POLICY:END -->";
 
 // Links made without privileges and mode bits are POSIX matters; root ignores mode bits.
-const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
+const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits, owners, FIFOs or sockets" };
 // Whether this account can make a symlink: Windows needs Developer Mode or an elevated prompt for one.
 function canSymlink() {
   const probe = join(root, "symlink-probe");
@@ -382,7 +383,7 @@ test("a marker quoted inside a sentence makes on and off refuse instead of cutti
   }
 });
 
-test("off on a symlinked AGENTS.md that held only the block keeps the link and empties the target", posixOnly, () => {
+test("off on a symlinked AGENTS.md that held only the block keeps the link and empties the target", { skip: symlinkSkip }, () => {
   const s = setup();
   const real = join(s.dir, "dotfiles-AGENTS.md");
   writeFileSync(real, "");
@@ -394,7 +395,7 @@ test("off on a symlinked AGENTS.md that held only the block keeps the link and e
   assert.equal(read(real), "", "the target no longer holds the block");
 });
 
-test("a symlinked AGENTS.md stays a link and its target gets the block", posixOnly, () => {
+test("a symlinked AGENTS.md stays a link and its target gets the block", { skip: symlinkSkip }, () => {
   const s = setup();
   const real = join(s.dir, "dotfiles-AGENTS.md");
   writeFileSync(real, "# linked\n");
@@ -917,7 +918,7 @@ test("same-file checks trust an inode only where the file system gives one", () 
   assert.equal(sameInode(st(1, 0), st(1, 0)), false, "inode 0 says nothing");
 });
 
-test("an override that is a link to nothing counts as no override", posixOnly, () => {
+test("an override that is a link to nothing counts as no override", { skip: symlinkSkip }, () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");
   symlinkSync("gone.md", s.override);
@@ -993,7 +994,7 @@ function refusesNotRegular(s, what) {
   }
 }
 
-test("a link loop where AGENTS.md goes is no regular file: status says so, on and off refuse with exit 1", posixOnly, () => {
+test("a link loop where AGENTS.md goes is no regular file: status says so, on and off refuse with exit 1", { skip: symlinkSkip }, () => {
   const s = setup();
   symlinkSync("loop-b", s.agents);
   symlinkSync("AGENTS.md", join(s.o.codexDir, "loop-b"));
@@ -1018,7 +1019,7 @@ test("a socket where AGENTS.md goes is no regular file: status says so, on and o
   }
 });
 
-test("AGENTS.md that is a link to nothing: on refuses and makes no file where it points; an override with text still works", posixOnly, () => {
+test("AGENTS.md that is a link to nothing: on refuses and makes no file where it points; an override with text still works", { skip: symlinkSkip }, () => {
   const s = setup();
   symlinkSync("gone.md", s.agents);
   const on = cli(["on", "--runtime", "codex"], cliEnv(s));
@@ -1035,7 +1036,7 @@ test("AGENTS.md that is a link to nothing: on refuses and makes no file where it
   assert.equal(read(s.override), "# mine\n");
 });
 
-test("Claude Code: a link to nothing where the rules file goes is replaced by on, never written through", posixOnly, () => {
+test("Claude Code: a link to nothing where the rules file goes is replaced by on, never written through", { skip: symlinkSkip }, () => {
   const s = setup();
   mkdirSync(join(s.o.claudeDir, "rules"));
   symlinkSync("gone.md", s.rulesFile);
@@ -1103,7 +1104,7 @@ const lexists = (p) => {
   }
 };
 
-test("Codex: a link to nothing or a link loop where the lock goes ends the wait at its deadline, and one a minute old is taken over", posixOnly, () => {
+test("Codex: a link to nothing or a link loop where the lock goes ends the wait at its deadline, and one a minute old is taken over", { skip: symlinkSkip }, () => {
   const on = `const { turnOn } = await import(${JSON.stringify(new URL("./tone-compact.mjs", import.meta.url).href)});
 console.log(JSON.stringify(turnOn("codex", JSON.parse(process.argv[1]))));`;
   for (const [name, target] of [["link to nothing", "gone"], ["link loop", ".banker-agents.lock"]]) {
@@ -1205,7 +1206,7 @@ function cliWith(s, pre, args) {
 }
 const FS_HOOK = ['import fs from "node:fs";', 'import { syncBuiltinESMExports } from "node:module";'];
 
-test("Codex: a link planted where a new AGENTS.md goes, after on looked, is refused and the file it leads to is untouched", posixOnly, () => {
+test("Codex: a link planted where a new AGENTS.md goes, after on looked, is refused and the file it leads to is untouched", { skip: symlinkSkip }, () => {
   const s = setup();
   const victim = join(s.dir, "victim.md");
   writeFileSync(victim, "someone's notes\n");
@@ -1308,7 +1309,7 @@ test("Codex: a lock spot that keeps answering ESTALE is waited on with rests, th
   assert.equal(read(s.agents), "# base\n");
 });
 
-test("an override holding only our block over AGENTS.md that is a link to nothing: status says on cannot move it, as on refuses", posixOnly, () => {
+test("an override holding only our block over AGENTS.md that is a link to nothing: status says on cannot move it, as on refuses", { skip: symlinkSkip }, () => {
   const s = setup();
   writeFileSync(s.override, "# override\n");
   assert.ok(turnOn("codex", s.o).ok);
