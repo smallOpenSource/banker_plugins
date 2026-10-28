@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { codexConfigFile, definedInline, denied, findKey, readToml, Refused, removeKey, setKey, writeToml } from './codex-config.mjs';
+import { codexConfigFile, definedInline, denied, dropEmptyTable, findKey, readToml, Refused, removeKey, setKey, writeToml } from './codex-config.mjs';
 
 export const MARK = '# banker:status-line';
 const OMX_MARK = '# omx:managed-status-line';
@@ -58,7 +58,7 @@ export function turnOff({ file = codexConfigFile() } = {}) {
   if (now.owner !== 'banker') return { code: 0, msg: now.owner ? `banker 가 둔 줄이 아님(${now.owner}): 그대로 둠` : '이미 꺼져 있음' };
   // 표시는 남았지만 값을 사용자가 고쳤으면 사용자의 줄로 본다.
   if (!Object.values(PRESETS).some((f) => sameValue(now.raw, presetValue(f)))) return { code: 0, msg: '사용자가 값을 고친 줄이라 그대로 둠(banker 표시만 남음)' };
-  writeToml(file, removeKey(text, 'tui', 'status_line', MARK), { mode });
+  writeToml(file, dropEmptyTable(removeKey(text, 'tui', 'status_line', MARK), 'tui'), { mode });
   return { code: 0, msg: '끔: banker 가 둔 status_line 을 뺌' };
 }
 
@@ -80,7 +80,7 @@ function main(argv) {
   try {
     r = run(argv);
   } catch (e) {
-    r = e instanceof Refused ? { code: 1, msg: `거부: ${e.message}` } : denied(e) ? { code: 3, msg: `쓸 수 없음(${e.code}): ${e.path ?? ''}` } : { code: 2, msg: `오류: ${e.message}` };
+    r = e instanceof Refused ? { code: 1, msg: `거부: ${e.message}` } : denied(e) ? { code: 3, msg: `쓸 수 없음(${e.code}): ${e.path ?? ''}${e.code === 'EPERM' && process.platform === 'win32' ? '. 다른 프로그램(Codex, 편집기)이 파일을 잡고 있을 수 있음' : ''}` } : { code: 2, msg: `오류: ${e.message}` };
   }
   console.log(`${r.msg}\n설정 파일: ${codexConfigFile()}`);
   return r.code;

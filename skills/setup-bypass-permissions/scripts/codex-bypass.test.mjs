@@ -48,10 +48,13 @@ test('on records the values before, off puts them back, and everything else stay
   assert.match(status({ file, policies: [] }).msg, /꺼짐: approval_policy = "on-request", sandbox_mode = \(없음\)\n프로필이 따로 정함.*profiles\.fast/);
 });
 
-test('with no record, off takes away only keys holding this script\'s values; a missing config is created and its mode is kept', () => {
+test('with no record, off takes the keys away only when both hold this script\'s values; a missing config is created and its mode is kept', () => {
   const file = home('approval_policy = "never"\nsandbox_mode = "workspace-write"\n');
   turnOff({ file });
-  assert.equal(readFileSync(file, 'utf8'), 'sandbox_mode = "workspace-write"\n');
+  assert.equal(readFileSync(file, 'utf8'), 'approval_policy = "never"\nsandbox_mode = "workspace-write"\n', 'a never the user set alone stays');
+  const both = home('a = 1\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n');
+  turnOff({ file: both });
+  assert.equal(readFileSync(both, 'utf8'), 'a = 1\n');
   const fresh = home();
   turnOn({ file: fresh, policies: [] });
   if (process.platform !== 'win32') assert.equal(statSync(fresh).mode & 0o777, 0o600);
@@ -131,4 +134,28 @@ test('a default profile named with a dot, or set by top-level dotted keys, is se
   }
   assert.equal(findKey('[profiles."a.b"]\nk = 1\n', 'profiles."a.b"', 'k').raw, '1');
   assert.equal(findKey('[profiles.a.b]\nk = 1\n', 'profiles."a.b"', 'k'), null, 'a.b split by a dot is another table');
+});
+
+test('turning on again after a hand edit records the hand-edited values; a managed config forcing other values refuses; CRLF stays CRLF', () => {
+  const file = home('approval_policy = "on-request"\n');
+  turnOn({ file, policies: [] });
+  writeFileSync(file, 'approval_policy = "untrusted"\n');
+  turnOn({ file, policies: [] });
+  turnOff({ file });
+  assert.equal(readFileSync(file, 'utf8'), 'approval_policy = "untrusted"\n', 'off brings back what was there right before the last on');
+  const managed = join(root, 'managed_config.toml');
+  writeFileSync(managed, "sandbox_mode = 'workspace-write'\n");
+  assert.match(policyBlock([managed]), /sandbox_mode/);
+  writeFileSync(managed, "allowed_approval_policies = ['never', 'on-request']\n");
+  assert.equal(policyBlock([managed]), '', 'single-quoted values count');
+  const crlf = home('a = 1');
+  writeFileSync(crlf, 'a = 1\r\nb = 2');
+  turnOn({ file: crlf, policies: [] });
+  assert.ok(!/[^\r]\n/.test(readFileSync(crlf, 'utf8')), 'no bare LF in a CRLF file');
+});
+
+test('a quoted table name holding ] is a table, and a new top-level key goes above the comment that belongs to the next table', () => {
+  assert.equal(findKey('[projects."/a]b"]\nk = 1\n', 'projects."/a]b"', 'k').raw, '1');
+  assert.equal(findKey('[projects."/a]b"]\nk = 1\n', '', 'k'), null);
+  assert.equal(setKey('a = 1\n\n# MCP servers\n[mcp]\nx = 1\n', '', 'b', '2'), 'a = 1\nb = 2\n\n# MCP servers\n[mcp]\nx = 1\n');
 });

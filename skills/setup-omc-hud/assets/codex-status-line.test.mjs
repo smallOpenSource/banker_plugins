@@ -58,3 +58,12 @@ test('a config that sets tui with a dotted key or an inline table is refused, an
   assert.equal(readFileSync(f, 'utf8'), edited);
   assert.equal(turnOn({ file: file(BASE), preset: '__proto__' }).code, 1);
 });
+
+test('off after on leaves no empty [tui] behind when banker made it, and keeps a [tui] that has other keys', () => {
+  for (const text of ['model = "x"\n', 'model = "x"\n\n[other]\nk = 1\n']) {
+    const f = file(text);
+    turnOn({ file: f });
+    turnOff({ file: f });
+    assert.equal(readFileSync(f, 'utf8'), text, JSON.stringify(text));
+  }
+});

@@ -588,7 +588,7 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
   assert.notEqual(page(tree), PAGE_BEFORE, 'the page in omx_wiki/ was rewritten through the relative name');
   for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x", "$j = '{}'; omx wiki wiki_ingest --input $j --json",
     "$j = 'a;b'\nomx wiki add --input $j", 'git status && omx wiki ingest --input "{\\"a\\":1}"',
-    "# it's the page\nomx wiki ingest --input x", "$t = @'\ndon't\n'@\nomx wiki add --input $t"]) {
+    "# it's the page\nomx wiki ingest --input x", "$t = @'\ndon't\n'@\nomx wiki add --input $t", 'echo `date`;omx wiki add --input x']) {
     writeFileSync(tree.argvLog, '');
     runCodex(tree, codexPayload(tree, form));
     assert.equal(readArgv(tree).length, 1, form);

@@ -46,7 +46,8 @@ disable-model-invocation: true
 | 바꾸는 파일 | `$CODEX_HOME/config.toml`(기본 `~/.codex/config.toml`) 최상위의 `approval_policy` = `"never"`, `sandbox_mode` = `"danger-full-access"`. 바꾸는 줄만 고치고 주석과 다른 표는 그대로 |
 | 남기는 파일 | `config.toml.bypass-permissions.bak`(켜기 전 원본), `config.toml.bypass-permissions.json`(되돌리기 기록) |
 | 우선하는 설정 | `--profile` 로 고른 프로필의 값, 실행 플래그(`-a`, `-s`), 신뢰한 프로젝트의 `.codex/config.toml`. `status` 가 값을 정한 프로필을 알린다 |
-| 거부 | `/etc/codex/requirements.toml` 이나 옛 `managed_config.toml` 의 `allowed_approval_policies`, `allowed_sandbox_modes` 가 이 값을 허용하지 않을 때, 설정 파일이 링크이거나 일반 파일이 아닐 때 |
+| 거부 | `/etc/codex/requirements.toml` 이나 옛 `managed_config.toml` 의 `allowed_approval_policies`, `allowed_sandbox_modes` 가 이 값을 허용하지 않을 때, `managed_config.toml` 이 두 키를 다른 값으로 정할 때, 정책 파일을 읽을 수 없을 때, 기본 프로필(`profile`)이 두 키를 따로 정할 때, 설정 파일이 링크이거나 일반 파일이 아닐 때 |
+| 보지 않는 것 | Windows 와 macOS 의 조직 정책 위치(레지스트리, 프로필 등). 그런 정책이 있으면 켰다고 보고해도 Codex 가 다른 값으로 시작할 수 있으니 시작 줄로 확인한다 |
 
 ## 절차
 
@@ -110,14 +111,15 @@ Codex 에서는 설치된 `banker-setup-bypass-permissions` 폴더다.
      - 고치기 전에 파일을 복사해 두게 한다. 기존 `defaultMode` 값이 있으면 적어 두게 한다.
      - `permissions` 객체(없으면 새로 만듦)에 `"defaultMode": "bypassPermissions"` 를 넣게 한다.
      - 저장한 뒤 새 세션에서 `/status` 로 설정이 읽혔는지 확인하게 한다. JSON 이 깨지면 파일 전체가 무시되어 `permissions.deny` 도 사라진다고 알린다.
-   - 새 터미널에 `CLAUDE_CONFIG_DIR` 가 있는지 실행 전에 확인하라고 알린다. Claude Code 와 다른 설정 폴더를 바꾸지 않기 위해서다.
+   - 새 터미널에 `CLAUDE_CONFIG_DIR` 가 있는지 실행 전에 확인하라고 알린다. Claude Code 와 다른 설정 폴더를 바꾸지 않기 위해서다. 대상 `codex` 면 `CODEX_HOME` 이 Codex 를 띄우는 셸과 같은지 확인하라고 알린다.
    - 파일 소유자가 다른 계정이면, 관리자나 조직이 일부러 잠근 것이 아닌지 먼저 확인하라고 알린다. 잠근 것이면 여기서 끝낸다.
    - 사고로 바뀐 것(`sudo claude` 로 만든 파일 등)일 때만, 스크립트가 출력한 경로로 `ls -l <경로>` 를 확인하고 `sudo chown "$USER" <경로>` 로 소유자를 바꾸게 안내한다. Windows 의 읽기 전용 파일은 `attrib -r <경로>`.
    - 직접 만든 파일은 실행한 뒤 지우라고 알린다.
 5. 보고
    - 적용 결과 한 줄과 설정 파일 경로. 모든 결과 끝에 스크립트는 `설정 파일: <경로>`, 폴백은 `settings file: <경로>` 를 적는다.
    - 그 경로가 `$CLAUDE_CONFIG_DIR` 이나 `~/.claude` 아래가 아니면, 엉뚱한 파일을 바꿨을 수 있다고 경고하고 멈춘다.
-   - 대상 `codex` 면 그 경로가 `$CODEX_HOME` 이나 `~/.codex` 아래인지 본다. 다음 Codex 세션부터 적용되고, 시작할 때 찍히는 `approval:`, `sandbox:` 줄이나 `/status` 로 확인하라고 알린다.
+   - 대상 `codex` 면 그 경로가 `$CODEX_HOME` 이나 `~/.codex` 아래인지 본다. 아니면 엉뚱한 파일을 바꿨을 수 있다고 경고하고 멈춘다. 다음 Codex 세션부터 적용되고, 시작할 때 찍히는 `approval:`, `sandbox:` 줄이나 `/status` 로 확인하라고 알린다.
+   - 대상 `codex` 의 켜기 전 원본 `config.toml.bypass-permissions.bak` 은 이 계정만 읽게 만든다. MCP 서버의 `env` 토큰 같은 비밀 값이 들어 있을 수 있으니 필요 없으면 지워도 된다고 알린다.
    - 다음 세션부터 적용된다. 새 세션에서 `/status` 로 실제 권한 모드를 확인하라고 알린다.
    - 켜기 전 원본 `settings.json.bypass-permissions.bak` 은 `off` 뒤에도 남는다. 설정의 비밀 값이 들어 있을 수 있으니 필요 없으면 지워도 된다고 알린다.
    - 첫 시작 때 Claude Code 가 이 모드를 확인하는 창을 띄울 수 있다. 받아들이면 Claude Code 가 `skipDangerousModePermissionPrompt` 를 설정에 쓴다. 스크립트의 `off` 는 켜기 전에 없던 이 키도 지운다.

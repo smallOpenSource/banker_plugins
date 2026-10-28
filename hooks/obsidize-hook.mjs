@@ -56,8 +56,10 @@ const CODEX = process.argv.includes('--codex');
 // JSON names, regular single-name pages, a canonicalizer pinned to the checked omx_wiki/ of the session folder).
 const OMX_WIKI_WRITE_RE = /^\s*(?:&\s*)?['"]?omx(?:\.cmd|\.ps1)?['"]?\s+wiki\s+(?:wiki_)?(?:ingest|add)\b/;
 
-// A command's statements, split at `;`, `&&`, `||` and line ends outside quotes. A backslash (sh) or a backtick
-// (PowerShell) keeps the next character; inside single quotes nothing is special.
+// A command's statements, split at `;`, `&&`, `||` and line ends outside quotes. A backslash keeps the next character
+// outside quotes and inside double quotes; a backtick does so only inside double quotes (PowerShell's escape there; in
+// sh a backtick starts a command substitution, so outside quotes it is an ordinary character here). Inside single
+// quotes nothing is special.
 function statements(command) {
   const out = [];
   let cur = '';
@@ -65,7 +67,7 @@ function statements(command) {
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     const two = command.slice(i, i + 2);
-    if (quote !== "'" && (c === '\\' || c === '`')) {
+    if ((c === '\\' && quote !== "'") || (c === '`' && quote === '"')) {
       cur += command.slice(i, i + 2);
       i++;
     } else if (quote) {

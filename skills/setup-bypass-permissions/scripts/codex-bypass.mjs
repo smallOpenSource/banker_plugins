@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { codexConfigFile, denied, findKey, readToml, Refused, removeKey, setKey, tablesSetting, writeToml } from './codex-config.mjs';
+import { codexConfigFile, denied, eolOf, findKey, readToml, Refused, removeKey, setKey, tablesSetting, writeToml } from './codex-config.mjs';
 
 const WANT = { approval_policy: '"never"', sandbox_mode: '"danger-full-access"' };
 const KEYS = Object.keys(WANT);
@@ -40,7 +40,12 @@ export function policyBlock(files = POLICY_FILES) {
     }
     for (const [key, want] of [['allowed_approval_policies', 'never'], ['allowed_sandbox_modes', 'danger-full-access']]) {
       const hit = findKey(text, '', key);
-      if (hit && !hit.raw.includes(`"${want}"`)) return `${f} 의 ${key} 가 ${want} 를 허용하지 않음`;
+      if (hit && !new RegExp(`["']${want}["']`).test(hit.raw)) return `${f} 의 ${key} 가 ${want} 를 허용하지 않음`;
+    }
+    // 옛 managed_config.toml 은 값 자체를 덮어쓴다. 다른 값이면 사용자 설정이 적용되지 않는다.
+    for (const k of KEYS) {
+      const forced = findKey(text, '', k)?.raw;
+      if (forced && forced.replace(/'/g, '"') !== WANT[k]) return `${f} 가 ${k} 를 ${forced} 로 정함`;
     }
   }
   return '';
@@ -69,8 +74,10 @@ export function turnOn({ file = codexConfigFile(), policies = POLICY_FILES } = {
   let next = text;
   for (const k of KEYS) next = setKey(next, '', k, WANT[k]);
   if (!fs.existsSync(path.dirname(file))) return { code: 1, msg: `Codex 설정 폴더가 없음: ${path.dirname(file)}` };
-  if (!fs.existsSync(recordOf(file))) writeToml(recordOf(file), `${JSON.stringify({ before, existed: exists })}\n`);
-  writeToml(file, next.endsWith('\n') || !next ? next : `${next}\n`, { mode, backup: exists ? backupOf(file) : null });
+  // 켜져 있지 않은 상태에서 켜므로 지금 값이 되돌릴 값이다. 예전 기록이 남아 있어도(켬, 손으로 바꿈, 다시 켬) 지금 값으로 바꾼다.
+  writeToml(recordOf(file), `${JSON.stringify({ before, existed: exists })}\n`);
+  const nl = eolOf(text);
+  writeToml(file, next.endsWith(nl) || !next ? next : `${next}${nl}`, { mode, backup: exists ? backupOf(file) : null });
   return { code: 0, msg: '켬: approval_policy = "never", sandbox_mode = "danger-full-access"' };
 }
 
@@ -79,14 +86,16 @@ export function turnOff({ file = codexConfigFile() } = {}) {
   let record = null;
   try { record = JSON.parse(fs.readFileSync(recordOf(file), 'utf8')); } catch { /* 기록 없음 */ }
   let next = text;
+  // 기록이 없으면 두 키가 모두 이 스크립트의 값일 때만 뺀다. 사용자가 스스로 둔 approval_policy = "never" 하나는 남긴다.
+  const ours = record || isOn(text);
   for (const k of KEYS) {
     const was = record?.before?.[k];
     if (typeof was === 'string') next = setKey(next, '', k, was);
-    else if (record || valueOf(next, k) === WANT[k]) next = removeKey(next, '', k);
+    else if (ours) next = removeKey(next, '', k);
   }
   if (next !== text && exists) writeToml(file, next, { mode });
   fs.rmSync(recordOf(file), { force: true });
-  return { code: 0, msg: next === text ? '이미 꺼져 있음' : record ? '끔: 켜기 전 값으로 되돌림' : '끔: 이 스크립트가 쓰는 값의 키를 뺌' };
+  return { code: 0, msg: next === text ? '이미 꺼져 있음' : record ? '끔: 켜기 전 값으로 되돌림' : '끔: 이 스크립트가 쓰는 두 값의 키를 뺌' };
 }
 
 export function status({ file = codexConfigFile(), policies = POLICY_FILES } = {}) {
@@ -115,7 +124,7 @@ function main(argv) {
   try {
     r = run(argv);
   } catch (e) {
-    r = e instanceof Refused ? { code: 1, msg: `거부: ${e.message}` } : denied(e) ? { code: 3, msg: `쓸 수 없음(${e.code}): ${e.path ?? ''}` } : { code: 2, msg: `오류: ${e.message}` };
+    r = e instanceof Refused ? { code: 1, msg: `거부: ${e.message}` } : denied(e) ? { code: 3, msg: `쓸 수 없음(${e.code}): ${e.path ?? ''}${e.code === 'EPERM' && process.platform === 'win32' ? '. 다른 프로그램(Codex, 편집기)이 파일을 잡고 있을 수 있음' : ''}` } : { code: 2, msg: `오류: ${e.message}` };
   }
   console.log(`${r.msg}\n설정 파일: ${codexConfigFile()}`);
   return r.code;

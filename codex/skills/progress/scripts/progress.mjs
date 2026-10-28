@@ -66,7 +66,22 @@ export function tail(file, max = MAX_READ) {
     readSync(fd, buf, 0, buf.length, start);
     const lines = buf.toString('utf8').split('\n');
     if (start > 0) lines.shift();
+    lines.cut = start > 0; // 앞쪽을 읽지 않았는지
     return lines;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// 기록 첫 줄(session_meta)의 Codex 판. 끝만 읽은 기록에서도 판을 알기 위해 앞에서 따로 읽는다.
+function headVersion(file) {
+  const fd = openRegular(file);
+  if (fd === null) return '';
+  try {
+    const buf = Buffer.alloc(Math.min(fstatSync(fd).size, 8 << 20));
+    readSync(fd, buf, 0, buf.length, 0);
+    const rec = json(buf.toString('utf8').split('\n')[0]);
+    return rec?.type === 'session_meta' ? String(rec.payload?.cli_version ?? '?') : '';
   } finally {
     closeSync(fd);
   }
@@ -198,8 +213,10 @@ function stepLines(r) {
 }
 
 // rollout 하나를 진행 상황 글로.
-export function render(file, depth = 2) {
-  const r = records(tail(file));
+export function render(file, depth = 2, max = MAX_READ) {
+  const lines = tail(file, max);
+  const r = records(lines);
+  if (lines.cut) r.version = headVersion(file);
   const out = [`진행 상황 (${file.split(/[\\/]/).at(-1).slice(-42, -6)})`];
   const planPath = lastPlan(r.calls, r.cwd);
   const plan = planPath && readPlan(planPath);
@@ -210,7 +227,8 @@ export function render(file, depth = 2) {
   } else out.push('계획 파일 없음');
   out.push('', ...stepLines(r));
   // Codex 세션은 언제나 사용자 글로 시작한다. 하나도 못 읽었으면 이 Codex 판의 기록 형식이 바뀐 것이라 빈 결과로 넘기지 않는다.
-  if (r.version && !r.prompts.length) {
+  if (r.version && !r.prompts.length && lines.cut) out.push('', '참고: 기록이 32 MB 를 넘어 끝부분만 읽었고, 그 안에는 사용자 요청이 없음');
+  else if (r.version && !r.prompts.length) {
     out.push('', `경고: 이 Codex ${r.version} 기록에서 사용자 요청을 하나도 읽지 못함. 기록 형식이 바뀌었을 수 있음(banker 업데이트 확인)`);
   }
   return out.join('\n');
@@ -240,7 +258,8 @@ function follow(file, depth) {
   let seen = '';
   const draw = () => {
     let key = '';
-    try { const st = statSync(file); key = `${st.size}:${st.mtimeMs}:${process.stdout.columns}`; } catch { key = 'gone'; }
+    // 10초마다는 다시 그린다: 계획 파일만 바뀐 것은 기록 크기로 알 수 없다.
+    try { const st = statSync(file); key = `${st.size}:${st.mtimeMs}:${process.stdout.columns}:${Math.floor(Date.now() / 10000)}`; } catch { key = 'gone'; }
     if (key === seen) return;
     seen = key;
     let text;

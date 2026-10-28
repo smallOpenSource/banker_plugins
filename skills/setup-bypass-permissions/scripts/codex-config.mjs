@@ -53,6 +53,8 @@ export function writeToml(file, text, { mode = null, backup = null } = {}) {
 
 const lines = (text) => text.split(/\r?\n/);
 const eol = (text) => (text.includes('\r\n') ? '\r\n' : '\n');
+// 파일이 쓰는 줄바꿈(CRLF 가 하나라도 있으면 CRLF).
+export const eolOf = eol;
 const TRIPLE = ['"""', "'''"];
 
 // 키나 표 이름을 낱말 배열로. 따옴표 안의 점은 나누지 않는다(`profiles."a.b"` 는 ['profiles', 'a.b']).
@@ -79,7 +81,8 @@ function scanLine(s, multi = '') {
   return { d, multi, cut: s.length };
 }
 
-const HEADER_RE = /^\s*\[\[?([^\]]+)\]\]?\s*(#.*)?$/;
+// 표 머리. 이름 안의 따옴표 친 낱말에는 ] 가 들어갈 수 있다(`[projects."/a]b"]`).
+const HEADER_RE = /^\s*\[\[?\s*((?:"[^"]*"|'[^']*'|[^\]"'])+?)\s*\]\]?\s*(#.*)?$/;
 const KEY_RE = /^\s*((?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+))*)\s*=(.*)$/;
 
 // 줄마다 { kind: 'header'|'key'|'inside'|'other', name, end }. header 의 name 은 표 이름, key 의 name 은 키 이름이고
@@ -166,7 +169,9 @@ export function setKey(text, table, key, rawValue, comment = '') {
     while (ls.length && ls[ls.length - 1] === '') ls.pop();
     return [...ls, ...(ls.length ? [''] : []), `[${table}]`, ...line, ''].join(nl);
   }
+  // 다음 표 머리에 붙은 주석(`# MCP servers` 처럼 머리 바로 위의 주석 줄)과 그 앞 빈 줄은 건너뛰고 넣는다.
   let at = range[1];
+  if (range[1] < ls.length) while (at > range[0] && ls[at - 1].trim().startsWith('#')) at--;
   while (at > range[0] && ls[at - 1].trim() === '') at--;
   ls.splice(at, 0, ...line);
   return ls.join(nl);
@@ -179,6 +184,17 @@ export function removeKey(text, table, key, comment = '') {
   const ls = lines(text);
   const above = comment && ls[hit.at - 1] === comment ? 1 : 0;
   ls.splice(hit.at - above, hit.end - hit.at + above);
+  return ls.join(eol(text));
+}
+
+// 표에 키도 주석도 없으면 그 머리와 뒤의 빈 줄을 뺀다.
+export function dropEmptyTable(text, table) {
+  const info = scan(text);
+  const range = tableRange(info, table);
+  if (!range) return text;
+  const ls = lines(text);
+  if (ls.slice(range[0], range[1]).some((l) => l.trim())) return text;
+  ls.splice(range[0] - 1, range[1] - range[0] + 1);
   return ls.join(eol(text));
 }
 

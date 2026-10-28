@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
-import { codexPlanKind, lastPlan, pathsOf, records, render, rolloutFor } from './progress.mjs';
+import { codexPlanKind, lastPlan, pathsOf, records, render, rolloutFor, tail } from './progress.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'progress.mjs');
 const root = mkdtempSync(join(tmpdir(), 'progress-codex-'));
@@ -108,4 +108,15 @@ test('a rollout whose requests cannot be read says so instead of an empty view',
   const f = write('r6.jsonl', [{ type: 'session_meta', payload: { id: ID, cwd: '/w', cli_version: '9.9.9' } }, { type: 'event_msg', payload: { type: 'user_said_v2', text: 'x' } }]);
   assert.match(render(f), /경고: 이 Codex 9\.9\.9 기록에서 사용자 요청을 하나도 읽지 못함/);
   assert.doesNotMatch(render(write('r7.jsonl', [meta('/w'), said('요청')])), /경고/);
+});
+
+test('a record read only from its end says the early part was not read, instead of the shape warning', () => {
+  const pad = { type: 'event_msg', payload: { type: 'token_count', pad: 'x'.repeat(1000) } };
+  const f = write('r8.jsonl', [{ type: 'session_meta', payload: { id: ID, cwd: '/w', cli_version: '0.144.5' } }, said('맨 앞 요청'), ...Array(50).fill(pad)]);
+  const lines = tail(f, 10000);
+  assert.equal(lines.cut, true);
+  assert.equal(records(lines).prompts.length, 0);
+  const text = render(f, 2, 10000);
+  assert.match(text, /참고: 기록이 32 MB 를 넘어/);
+  assert.doesNotMatch(text, /경고:/);
 });
