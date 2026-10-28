@@ -543,13 +543,16 @@ function fontWeightRank(flat) {
 }
 
 function globFontFile(name) {
-  const hints = FONT_FILE_HINTS[String(name).toLowerCase()] || [normName(name)];
+  const key = String(name).toLowerCase();
+  const hints = (Object.prototype.hasOwnProperty.call(FONT_FILE_HINTS, key) ? FONT_FILE_HINTS[key] : [normName(name)]).filter(Boolean);
+  if (!hints.length) return null;
   let budget = 20000;
   const found = [];
   const walk = (dir, depth) => {
     if (depth > 6 || budget <= 0) return;
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)); // 어느 OS 에서나 이름순
     const subdirs = [];
     for (const ent of entries) {
       budget -= 1;
@@ -581,6 +584,7 @@ function globFontFile(name) {
  */
 function findFontFile(name) {
   const want = normName(name);
+  if (!want) return null; // ASCII 글자가 없는 이름은 대조할 것이 없다. 비교하면 어떤 파일이든 통과한다
   // 한 방향(family 가 요청 이름을 품는가)만 본다. 반대 방향까지 허용하면
   // "Noto Sans CJK KR" 을 요청했는데 "Noto Sans" 가 통과해 한글 없는 폰트에 그 이름이 붙는다.
   const hit = fcMatch(escFc(name));
@@ -921,4 +925,7 @@ module.exports = {
   BULLET_PREFIX,
   FONT_CHAIN,
   FONT_FILE_HINTS,
+  findFontFile,
+  resolveFont,
+  sanitizeFontName,
 };

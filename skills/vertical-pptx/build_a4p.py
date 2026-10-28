@@ -429,11 +429,15 @@ def norm_name(s):
     return ''.join(ch for ch in str(s).lower() if ch.isalnum() and ch.isascii())
 
 
+# JavaScript String.prototype.trim() 이 지우는 문자. python 의 strip() 은 BOM 을 남기고 NEL 을 지워서 다르다.
+JS_TRIM = ' \t\n\v\f\r\xa0\u1680' + ''.join(chr(c) for c in range(0x2000, 0x200b)) + '\u2028\u2029\u202f\u205f\u3000\ufeff'
+
+
 def sanitize_font_name(s):
     """build_a4p.js 의 sanitizeFontName 과 같은 정리. 두 빌더가 같은 이름을 적게 한다."""
     if not isinstance(s, str):
         return ''
-    return re.sub(r'[\x00-\x1f\x7f]', '', re.sub(r'["\'<>&]', '', s)).strip()
+    return re.sub(r'[\x00-\x1f\x7f]', '', re.sub(r'["\'<>&]', '', s)).strip(JS_TRIM)
 
 
 def esc_fc(s):
@@ -502,7 +506,9 @@ def font_weight_rank(flat):
 
 def glob_font_file(name):
     """fc-match 가 없는 환경용 파일명 탐색. 깊이·개수 예산을 둬서 병적인 트리에서도 끝난다. 순위는 결정론적이다."""
-    hints = FONT_FILE_HINTS.get(str(name).lower(), (norm_name(name),))
+    hints = [h for h in FONT_FILE_HINTS.get(str(name).lower(), (norm_name(name),)) if h]
+    if not hints:
+        return None
     budget = [20000]
     found = []
 
@@ -510,7 +516,7 @@ def glob_font_file(name):
         if depth > 6 or budget[0] <= 0:
             return
         try:
-            entries = list(os.scandir(directory))
+            entries = sorted(os.scandir(directory), key=lambda e: e.name)  # node 처럼 이름순
         except OSError:
             return
         subdirs = []
@@ -520,7 +526,7 @@ def glob_font_file(name):
                 return
             full = os.path.join(directory, ent.name)
             try:
-                if ent.is_dir():
+                if ent.is_dir(follow_symlinks=False):  # node 의 Dirent 처럼 링크 폴더는 따라가지 않는다
                     subdirs.append(full)
                     continue
             except OSError:
@@ -552,6 +558,8 @@ def find_font_file(name):
     돌려받은 family 가 요청한 이름과 실제로 맞는지 대조해야 한다. 안 그러면 이름이 거짓말이 된다.
     """
     want = norm_name(name)
+    if not want:
+        return None  # ASCII 글자가 없는 이름은 대조할 것이 없다. 비교하면 어떤 파일이든 통과한다
     # 한 방향(family 가 요청 이름을 품는가)만 본다. 반대 방향까지 허용하면
     # "Noto Sans CJK KR" 을 요청했는데 "Noto Sans" 가 통과해 한글 없는 폰트에 그 이름이 붙는다.
     hit = fc_match(esc_fc(name))

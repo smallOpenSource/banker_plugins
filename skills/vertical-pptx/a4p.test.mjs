@@ -59,8 +59,8 @@ const tmp = (name) => path.join(TMP, name);
 const XDG_CACHE_HOME = process.env.XDG_CACHE_HOME;
 process.env.XDG_CACHE_HOME = tmp('xdg-cache');
 
-// A python run can leave a __pycache__ beside the script it imported from. build_a4p.py imports
-// nothing local so this should stay empty, but the repo has to come out of a test run unchanged.
+// A python run can leave a __pycache__ beside the script it imported from. U18b imports build_a4p.py, with -B so no
+// bytecode is written, but the repo has to come out of a test run unchanged.
 // Only a directory this run created is removed; one that was already there is left alone.
 const PYCACHE = path.join(HERE, '__pycache__');
 const PYCACHE_PREEXISTING = fs.existsSync(PYCACHE);
@@ -1090,20 +1090,37 @@ const PY_FONT_PROBE = String.raw`
 import json, os, sys
 sys.path.insert(0, sys.argv[1])
 import build_a4p as b
-d = sys.argv[2]
+base = sys.argv[2]
+def folder(name, files):
+    d = os.path.join(base, name)
+    os.makedirs(d)
+    for n in files:
+        open(os.path.join(d, n), 'wb').close()
+    return d
+# A file system that lists the bold cut first, so a first-hit search would take it whatever the real disk does.
+real_scandir = os.scandir
+os.scandir = lambda p: iter(sorted(real_scandir(p), key=lambda e: ('bold' not in e.name.lower(), e.name)))
+main = folder('main', ('NotoSans-Regular.ttf', 'NotoSansKR-Bold.ttf', 'NotoSansKR-VF.ttf'))
 out = {'chain': list(b.FONT_CHAIN), 'hints': {k: list(v) for k, v in b.FONT_FILE_HINTS.items()}}
-for n in ('NotoSans-Regular.ttf', 'NotoSansKR-Bold.ttf', 'NotoSansKR-VF.ttf'):
-    open(os.path.join(d, n), 'wb').close()
-b.font_search_dirs = lambda: [d]
-latin = os.path.join(d, 'NotoSans-Regular.ttf')
+b.font_search_dirs = lambda: [main]
+latin = os.path.join(main, 'NotoSans-Regular.ttf')
 b.fc_match = lambda pattern: {'file': latin, 'families': ['Noto Sans']}
 out['cjkFromLatin'] = b.find_font_file('Noto Sans CJK KR')
+out['noAscii'] = b.find_font_file('맑은 고딕')
 b.fc_match = lambda pattern: None
 out['kr'] = os.path.basename(b.find_font_file('Noto Sans KR') or '')
 os.environ.pop('BANKER_PPTX_FONT', None)
 out['auto'] = b.resolve_font(None, 'auto')['name']
 r = b.resolve_font(' Noto "Sans<> KR\x01 ', 'auto')
 out['explicit'] = [r['name'], r['from']]
+r = b.resolve_font('없는폰트', 'auto')
+out['notFound'] = [r['name'], [w['code'] for w in r['warnings']]]
+out['trim'] = b.sanitize_font_name('﻿ Noto Sans KR\x85 ')
+b.font_search_dirs = lambda: [folder('ties', ('NotoSansKR-VF.ttf', 'NotoSansKR.ttf'))]
+out['shorter'] = os.path.basename(b.find_font_file('Noto Sans KR') or '')
+first, second = folder('first', ('NotoSansKR-Bold.ttf',)), folder('second', ('NotoSansKR-Regular.ttf',))
+b.font_search_dirs = lambda: [first, second]
+out['firstFolder'] = os.path.relpath(b.find_font_file('Noto Sans KR') or '', base)
 print(json.dumps(out))
 `;
 
@@ -1114,15 +1131,28 @@ test('U18b the python builder carries the node chain and hints, checks a family 
     return;
   }
   const dir = fs.mkdtempSync(path.join(TMP, 'u18b-'));
-  const r = spawnSync(pythonModule.bin, ['-c', PY_FONT_PROBE, HERE, dir], { encoding: 'utf8', cwd: TMP });
+  const r = spawnSync(pythonModule.bin, ['-B', '-c', PY_FONT_PROBE, HERE, dir], { encoding: 'utf8', cwd: TMP });
   assert.equal(r.status, 0, r.stderr);
   const got = JSON.parse(r.stdout.trim().split('\n').pop());
   assert.deepEqual(got.chain, B.FONT_CHAIN, 'the same chain, in the same order');
   assert.deepEqual(got.hints, B.FONT_FILE_HINTS, 'the same file hints');
   assert.equal(got.cjkFromLatin, null, 'fc-match answering "Noto Sans" for "Noto Sans CJK KR" is a substitute, not a hit');
-  assert.equal(got.kr, 'NotoSansKR-VF.ttf', 'the regular cut before the bold one');
+  assert.equal(got.noAscii, null, 'a name with no ASCII letter has nothing to compare, so nothing matches it');
+  assert.equal(got.kr, 'NotoSansKR-VF.ttf', 'the regular cut before the bold one, though the folder lists the bold one first');
+  assert.equal(got.shorter, 'NotoSansKR.ttf', 'between two of one rank, the shorter name');
+  assert.equal(got.firstFolder, path.join('first', 'NotoSansKR-Bold.ttf'), 'a hit in an earlier font folder wins');
   assert.equal(got.auto, 'Noto Sans KR', 'a box with only NotoSansKR-VF.ttf gets the name that is installed');
   assert.deepEqual(got.explicit, ['Noto Sans KR', '--font'], 'a --font name is cleaned as the node builder cleans it');
+  assert.deepEqual(got.notFound, ['Noto Sans KR', ['FONT_NOT_FOUND']], 'a name that is not there is reported, then the chain decides');
+  assert.equal(got.trim, B.sanitizeFontName('\ufeff Noto Sans KR\x85 '), 'the ends are trimmed as JavaScript trims them');
+});
+
+test('U18c the node builder finds nothing for a name with no ASCII letter, and a hint lookup reads no inherited key', () => {
+  assert.equal(B.findFontFile('\ub9d1\uc740 \uace0\ub515'), null);
+  for (const name of ['constructor', '__proto__', 'toString']) {
+    const r = B.resolveFont({ fontArg: name, metaFont: 'auto' });
+    assert.deepEqual(r.warnings[0], { code: 'FONT_NOT_FOUND', from: '--font', detail: name });
+  }
 });
 
 // ===========================================================================
