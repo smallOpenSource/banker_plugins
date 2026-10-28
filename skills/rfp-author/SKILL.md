@@ -23,7 +23,7 @@ description: "소프트웨어 외주 제안요청서(RFP)를 작성. 한국 공�
 5. **OPEN 정직 표기**: 미검증 항목(예: 망분리/PIPA 조문 현행 호수·LLM 계약문구·LLM eval binary 임계·SoT 전달방식)은 RFP에 **〈OPEN〉**으로 명시하고 추가 리서치/법무 검토 표시. "정합 OK"/"아마도" 금지.
 6. **verify-before-claim**: 모든 수치·조문·배점은 `references/`로 추적(인용 동반). 완료 전 4-field(① 변경 ② Evidence ③ 검증 ④ Unknown), ⏳=0일 때만 "완료". 커밋/푸시는 사용자 명시 시만.
 7. **쪽번호·인용 의무**: 디자인/문서 SoT(예: 디자인 데크 PDF의 N쪽, 인용키 `<DesignRef(page-section)>`) 인용 시 **page-NNN/쪽번호 직접 기록**. file:LINE/page 없는 "정합 OK" 금지.
-8. **벤더 노출 게이트**: 발송본엔 현황(As-Is)·내부 SoT file:LINE·실제 호스트/포트·내부식별자(보안필터 제품명/내부 테이블 prefix/모델ID)·"deep-research"/추적박스·em-dash(`—`→`-`) 비포함. 내부 추적은 `references/`에만.
+8. **벤더 노출 게이트**: 발송본엔 현황(As-Is)·내부 SoT file:LINE·실제 호스트/포트·내부식별자(보안필터 제품명/내부 테이블 prefix/모델ID)·"deep-research"·"lfm"/추적박스·em-dash(`—`→`-`) 비포함. 내부 추적은 `references/`에만.
 
 ## 번들 구성
 | 파일 | 내용 | 신뢰도 |
@@ -39,8 +39,9 @@ description: "소프트웨어 외주 제안요청서(RFP)를 작성. 한국 공�
 ## 워크플로우 (도구 오케스트레이션)
 RFP 저작은 **저작 lane과 검수 lane을 분리**(자기승인 금지). 권장 순서:
 
+0. **전문가 작업 방식 조사** — `lfm` 을 두 분야로 부른다(`--no-questions`). ① 과업의 분야(그 종류의 시스템을 잘 만드는 그룹이 어떤 단계, 산출물, 품질 기준, 검수로 일하는지) ② 소프트웨어 외주 발주와 제안 평가(공공 SW 사업 관리 지침을 내는 기관, 조달 기관 등). 결과는 `references/expert-practices.md` 에 내부 추적용으로 둔다. ①의 계획 적용 항목은 기능, 기술, 보안, 비기능 요건과 산출물, 검수 기준 후보가 되고, ②는 평가 기준, 마일스톤, 검수 절차 후보가 된다. 2단계 합의에서 `M-n` 마다 적용, 조정, 제외를 정한다. 벤더 발송본에는 그룹 이름, 출처, `lfm` 이라는 말을 넣지 않는다(노출 게이트). "웹 조사 불가" 면 그 사실을 `references/expert-practices.md` 에 적고 진행한다.
 1. **과업내용 추출** — 현 코드/spec → 요구사항. `research`(OMC 5 에서 삭제된 `deep-dive` 의 대체) 또는 agent `feature-dev:code-explorer` 로 화면·API·데이터·외부연계를 SFR/INR/DAR로 도출 → `references/this-project-scope.md` 채움(file:LINE 동반). 디자인은 PDF/이미지 추출 도구로 `<DesignRef(page-section)>` 형태 인용키 추출.
-2. **구조·범위·배점 합의** — `ralplan --deliberate`로 RFP 구조·15유형 범위·평가 정성/정량 배점을 Planner→Architect→Critic 합의(Planner는 SoT word-for-word 인용 의무). broad/risky 결정만.
+2. **구조·범위·배점 합의** — `ralplan --deliberate`로 RFP 구조·15유형 범위·평가 정성/정량 배점을 Planner→Architect→Critic 합의(Planner는 SoT word-for-word 인용 의무). broad/risky 결정만. `references/expert-practices.md` 의 `M-n` 마다 판정(적용, 조정, 제외)과 이유를 합의에 포함한다.
 3. **섹션 병렬 작성** — 5+ 섹션이면 `team`(워커별 절 담당), 소규모는 agent `oh-my-claudecode:writer`. 각 절은 `templates/rfp-skeleton.md`를 채우고 `references/`를 인용.
 4. **미검증 보강** — OPEN 항목(특히 망분리/PIPA/보안성심의/secure-coding)은 `autoresearch`/`deep-research` 또는 agent `document-specialist`로 **추가 리서치 후** SER에 반영. 미보강 시 〈OPEN〉 유지.
 5. **검수(별도 lane)** — agent `oh-my-claudecode:critic` 또는 `verify`로 ① 반증 항목 미혼입 ② currency(2020 진흥법) ③ 인용 추적성 ④ 기밀 누출 0 ⑤ 배점 합(80+20 또는 채택 배점) 검증.
@@ -48,6 +49,7 @@ RFP 저작은 **저작 lane과 검수 lane을 분리**(자기승인 금지). 권
 
 | 작업 | 권장 도구 |
 |---|---|
+| 전문가 작업 방식(과업 분야, 외주 발주) | `lfm` |
 | 과업내용 추출(코드→요구) | `research`(구 `deep-dive`) / `feature-dev:code-explorer` / PDF·이미지 추출 도구 |
 | 구조·배점 합의 | `ralplan --deliberate` |
 | 섹션 병렬 저작 | `team` / `oh-my-claudecode:writer` |
@@ -67,7 +69,7 @@ RFP 저작은 **저작 lane과 검수 lane을 분리**(자기승인 금지). 권
 - **source-strength 혼동**: 한국 규제·NIST=primary, 국제 계약절=template+법무 secondary(한국법 검토 전 mandate처럼 단정 금지). IP-assignment default는 반대.
 - **OPEN을 채운 척**: 미검증 항목을 합성으로 메우지 말 것. 〈OPEN〉 + 추가 리서치 경로 표기.
 - **배포 환경 혼동**: 운영 타깃 구성(웹서버/WAS/HTTP 버전 등)을 ECR로, dev simple-run divergence는 참고로만(this-project §운영/dev 구분).
-- **벤더 문서 내부누출**: 요건 발의형 벤더 RFP에 내부 SoT `file:LINE`·실제 호스트/포트·내부식별자(보안필터 제품명·내부 테이블 prefix·모델ID)·"deep-research"/추적박스 **절대 비포함**. 내부 추적은 `references/`에만(검수 lane grep).
+- **벤더 문서 내부누출**: 요건 발의형 벤더 RFP에 내부 SoT `file:LINE`·실제 호스트/포트·내부식별자(보안필터 제품명·내부 테이블 prefix·모델ID)·"deep-research"·"lfm"/추적박스 **절대 비포함**. 내부 추적은 `references/`에만(검수 lane grep).
 - **md→docx 표 균등폭**: §산출물 gridCol 함정 — `cell.width`만 set 시 표가 균등폭으로 렌더. `w:gridCol@w:w` 직접 set.
 
 References: `references/*` (5종 — vendor-rfp-structure 포함) · `templates/rfp-skeleton.md` · `scripts/md2docx.py`.

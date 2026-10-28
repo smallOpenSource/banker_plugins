@@ -19,9 +19,9 @@
  */
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
-import { appendUsageLog, configDir, countingActive, readRegular, recordUsedSkill, SKILL_NAME_RE } from '../bin/lib/telemetry-config.mjs';
+import { appendUsageLog, CODEX_SHAPE_MISS_PATH, configDir, countingActive, readRegular, recordUsedSkill, SKILL_NAME_RE, writeByRename } from '../bin/lib/telemetry-config.mjs';
 
 const SKILL_PATH_RE = /skills[\\/]+banker-([a-z0-9_-]{1,64})[\\/]+SKILL\.md/gi;
 const KEEP_TURNS = 100;
@@ -38,6 +38,7 @@ function readStdin() {
 }
 
 const MAX_READ = 32 << 20;
+const FIRST_READ = 1 << 20;
 
 // 글에 나오는 banker 스킬 이름(banker:<name>), 중복 없이.
 export function namesIn(text, names = new Set()) {
@@ -48,18 +49,18 @@ export function namesIn(text, names = new Set()) {
   return names;
 }
 
-// rollout 끝에서 max 바이트. 일반 파일만: 기다리지 않게 O_NONBLOCK 으로 열고 연 것을 fstat 으로 본다. 앞에서 잘린 첫 줄은 버린다.
+// rollout 끝에서 max 바이트의 줄과, 파일 전체를 읽었는지. 일반 파일만: 기다리지 않게 O_NONBLOCK 으로 열고 연 것을 fstat 으로 본다. 앞에서 잘린 첫 줄은 버린다.
 function tailLines(file, max) {
   const fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   try {
-    if (!fstatSync(fd).isFile()) return [];
+    if (!fstatSync(fd).isFile()) return { lines: [], whole: true };
     const size = fstatSync(fd).size;
     const start = Math.max(0, size - max);
     const buf = Buffer.alloc(size - start);
     readSync(fd, buf, 0, buf.length, start);
     const lines = buf.toString('utf8').split('\n');
     if (start > 0) lines.shift();
-    return lines;
+    return { lines, whole: start === 0 };
   } finally {
     closeSync(fd);
   }
@@ -77,11 +78,53 @@ function injectedPath(rec) {
 }
 
 // 이번 턴(turn_id 의 task_started 뒤)의 도구 호출과 넣은 스킬 머리에서 읽은 banker 스킬 이름. 사용자 글과 모델 답은 세지 않는다.
+// 턴 시작은 대개 기록 끝 가까이에 있으므로 끝 1 MB 부터 읽고, 못 찾으면 두 배씩 max 까지 넓힌다.
+// 기록 전체를 읽고도 task_started 가 하나도 없으면 null: Codex 는 턴마다 task_started 를 쓰므로 기록 형식이 바뀐 것이다.
+// 이 턴의 것만 없을 때(시작이 기록되지 않는 턴)는 형식 변경으로 보지 않는다.
 export function turnSkills(file, turnId, max = MAX_READ) {
-  const lines = tailLines(file, max);
+  for (let size = Math.min(FIRST_READ, max); ; size = Math.min(size * 2, max)) {
+    const { lines, whole } = tailLines(file, size);
+    const start = turnStart(lines, turnId);
+    if (start >= 0) return skillsAfter(lines, start);
+    if (whole) return lines.some((l) => l.trim()) && !lines.some((l) => l.includes('"task_started"')) ? null : [];
+    if (size >= max) return [];
+  }
+}
+
+// rollout 첫 기록(session_meta)의 Codex 판. Codex 기록이 아니면 ''.
+export function codexVersionOf(file) {
+  try {
+    const fd = openSync(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    try {
+      if (!fstatSync(fd).isFile()) return '';
+      const buf = Buffer.alloc(Math.min(fstatSync(fd).size, 8 << 20)); // session_meta 는 지침을 품어 클 수 있다
+      readSync(fd, buf, 0, buf.length, 0);
+      const rec = JSON.parse(buf.toString('utf8').split('\n')[0]);
+      return rec?.type === 'session_meta' ? String(rec.payload?.cli_version ?? '?').slice(0, 40) : '';
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
+}
+
+// 이 Codex 판의 기록을 읽지 못했음을 남긴다(같은 판은 한 번만). 다음 세션 시작 때 update-notify --codex 가 알린다.
+function noteShapeMiss(file) {
+  const version = codexVersionOf(file);
+  if (!version) return;
+  let prev = {};
+  try { prev = JSON.parse(readRegular(CODEX_SHAPE_MISS_PATH)); } catch { /* 없음 */ }
+  if (prev?.version !== version) writeByRename(CODEX_SHAPE_MISS_PATH, JSON.stringify({ version, notified: false }));
+}
+
+function turnStart(lines, turnId) {
   let start = lines.length - 1;
   while (start >= 0 && !(lines[start].includes('"task_started"') && lines[start].includes(turnId))) start--;
-  if (start < 0) return [];
+  return start;
+}
+
+function skillsAfter(lines, start) {
   const names = new Set();
   for (const line of lines.slice(start + 1)) {
     if (!line.includes('SKILL.md')) continue;
@@ -127,15 +170,28 @@ function writeTurns(lines) {
   }
 }
 
+// 이 세션의 Codex 홈: rollout 이 <홈>/sessions/YYYY/MM/DD/ 에 있으면 그 홈(상대 경로 CODEX_HOME 도 Codex 가 푼 그대로),
+// 아니면 CODEX_HOME, 그것도 없으면 ~/.codex.
+export function codexHomeOf(transcript, env = process.env) {
+  const sessions = dirname(dirname(dirname(dirname(String(transcript)))));
+  if (isAbsolute(String(transcript)) && basename(sessions) === 'sessions') return dirname(sessions);
+  return env.CODEX_HOME || join(homedir(), '.codex');
+}
+
 // 이 Codex 에 설치된 banker 스킬인지.
-export const installed = (name, env = process.env) =>
-  existsSync(join(env.CODEX_HOME || join(homedir(), '.codex'), 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
+export const installed = (name, home) => existsSync(join(home, 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
 
 // 이 턴에 아직 세지 않은 이름만 센다.
 export function countOnce(payload) {
   const key = turnKey(payload);
   const file = typeof payload?.transcript_path === 'string' ? payload.transcript_path : '';
-  const names = key && file ? turnSkills(file, payload.turn_id).filter((n) => installed(n)) : [];
+  const home = codexHomeOf(file);
+  const got = key && file ? turnSkills(file, payload.turn_id) : [];
+  if (got === null) {
+    noteShapeMiss(file);
+    return [];
+  }
+  const names = got.filter((n) => installed(n, home));
   if (!names.length) return [];
   const seen = readTurns();
   const fresh = names.filter((n) => !seen.includes(`${key}\t${n}`));

@@ -586,7 +586,9 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
   assert.deepEqual([argv.length, argv[0], argv[1], argv[3], argv[4]], [5, 'test-page.md', '--page', '--profile=omc', '--json']);
   assert.match(argv[2], /^--vault=\d+:\d+$/, 'a bare page name, run in the vault folder it names by dev:ino');
   assert.notEqual(page(tree), PAGE_BEFORE, 'the page in omx_wiki/ was rewritten through the relative name');
-  for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x", "$j = '{}'; omx wiki wiki_ingest --input $j --json"]) {
+  for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x", "$j = '{}'; omx wiki wiki_ingest --input $j --json",
+    "$j = 'a;b'\nomx wiki add --input $j", 'git status && omx wiki ingest --input "{\\"a\\":1}"',
+    "# it's the page\nomx wiki ingest --input x", "$t = @'\ndon't\n'@\nomx wiki add --input $t"]) {
     writeFileSync(tree.argvLog, '');
     runCodex(tree, codexPayload(tree, form));
     assert.equal(readArgv(tree).length, 1, form);
@@ -596,7 +598,7 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
 test('codex: other shell calls, other omx wiki tools, and an armed .omc/wiki change nothing', () => {
   const tree = codexTree();
   arm(tree);
-  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud', 'echo omx wiki add']) {
+  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud', 'echo omx wiki add', 'echo "x; omx wiki add"', "echo 'a && omx wiki ingest'", 'echo x\\; omx wiki add']) {
     runCodex(tree, codexPayload(tree, command));
   }
   runCodex(tree, { ...codexPayload(tree, 'omx wiki ingest'), tool_input: {} });

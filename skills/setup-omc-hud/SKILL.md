@@ -1,6 +1,6 @@
 ---
 name: setup-omc-hud
-description: "Claude Code 상태표시줄 omc_hud 래퍼를 스킬에 든 파일로 설치. 내려받지 않고 오프라인에서 모든 OS 같은 명령으로 동작하며, PL 칸에 쓰는 payload-mon 모듈도 켬. Codex 는 OMX 의 `hud` 스킬을 씀. 'setup-omc-hud'/'omc_hud 설치'/'상태표시줄 설치' 또는 `/banker:setup` 시 사용."
+description: "Claude Code 상태표시줄 omc_hud 래퍼를 스킬에 든 파일로 설치. 내려받지 않고 오프라인에서 모든 OS 같은 명령으로 동작하며, PL 칸에 쓰는 payload-mon 모듈도 켬. Codex 는 TUI 상태표시줄(`[tui] status_line`)을 OMX 프리셋으로 켜고 끔. 'setup-omc-hud'/'omc_hud 설치'/'상태표시줄 설치' 또는 `/banker:setup` 시 사용."
 argument-hint: "[off|status]"
 ---
 
@@ -17,14 +17,31 @@ Codex 에서 실행했고 요청이 대상을 말하지 않으면, 설치 전에
 
 | 대상 | 할 일 |
 |---|---|
-| Codex 자신의 상태표시줄 | 이 스킬 대신 oh-my-codex(OMX)의 `hud` 스킬을 쓴다. OMX 는 상태표시줄을 `~/.codex/config.toml` 의 `[tui]` `status_line` 으로 이미 관리한다 |
+| Codex 자신의 상태표시줄 | 아래 "Codex 상태표시줄" 절을 한다 |
 | 같은 머신의 Claude Code 상태표시줄 | 아래 0~3단계를 그대로 한다 |
 
 - 물을 수 없는 실행(`codex exec` 등)이고 대상이 없으면 아무것도 설치하지 않고 두 선택지를 알린다. 시험한 두 모델이 대상 없는 요청에 서로 다른 쪽을 설치했다.
 - Claude Code 쪽 설치는 `~/.claude` 에 쓴다. Codex 의 `workspace-write` 샌드박스가 이 쓰기를 막으므로, `apply-hud.mjs` 와 `payload-mon on` 은 샌드박스 밖 실행으로 승인을 요청해 돌린다. 승인한 실행은 Codex 0.144.5 에서 확인했다. 승인을 요청할 수 없거나(승인 정책 `never`) 거부되면, 같은 명령을 Codex 입력창에서 `!` 를 붙여 사용자가 직접 실행하게 안내한다(예: `!node "<이 스킬 디렉터리 절대경로>/assets/apply-hud.mjs"`). 사용자가 친 `!` 명령은 샌드박스 밖에서 돈다(Codex 0.144.5, `-a never` 에서 실측). `codex exec` 처럼 사람이 없는 실행이면 그 명령을 보고하고 멈춘다. `--add-dir ~/.claude` 처럼 설정 폴더를 통째로 여는 방법은 쓰지 않는다. 그 세션이 훅과 설정을 고칠 수 있게 되어 샌드박스가 무력해진다.
 - OMX 의 `omx hud --tmux` 는 지금 tmux 창을 나눠 HUD 칸을 새로 띄운다. 사용자가 그 칸을 원한다고 했을 때만 실행한다.
 
-**인자가 `off` 또는 `status` 일 때:** 0~3단계를 건너뛰고 "인자 off, status" 절만 실행한다.
+**인자가 `off` 또는 `status` 일 때:** 대상이 Claude Code 면 0~3단계를 건너뛰고 "인자 off, status" 절만 실행한다. 대상이 Codex 면 아래 "Codex 상태표시줄" 절의 `off`, `status` 만 실행하고 그 밖의 절(`claude-update-last` 포함)은 하지 않는다.
+
+### Codex 상태표시줄
+
+Codex TUI 의 상태표시줄은 `$CODEX_HOME/config.toml`(기본 `~/.codex/config.toml`)의 `[tui]` `status_line` 이다. OMX 는 `omx setup` 에서 이 줄을 `# omx:managed-status-line` 표시와 함께 관리한다.
+
+```bash
+node "<이 스킬 디렉터리 절대경로>/assets/codex-status-line.mjs" on [--preset focused|minimal]
+node "<이 스킬 디렉터리 절대경로>/assets/codex-status-line.mjs" off
+node "<이 스킬 디렉터리 절대경로>/assets/codex-status-line.mjs" status
+```
+
+- `on` 은 `status_line` 이 없을 때만 OMX 프리셋 항목(기본 `focused`: 모델과 추론 강도, git 브랜치, 남은 컨텍스트, 입력과 출력 토큰, 5시간과 주간 한도)으로 넣고 `# banker:status-line` 표시를 붙인다. OMX 나 사용자가 둔 줄은 바꾸지 않고 누가 둔 것인지 알린다.
+- `off` 는 banker 표시가 붙은 줄만 뺀다. 쓰기 전 원본은 `config.toml.banker-hud.bak` 에 있다.
+- 종료 코드: 0 완료 또는 이미 그 상태, 1 거부(설정 파일이 링크이거나 일반 파일이 아님, 설정 폴더 없음, 모르는 프리셋), 2 예기치 못한 오류, 3 이 계정이 쓸 수 없음.
+- `~/.codex` 쓰기라 Codex 의 `workspace-write` 샌드박스에서는 종료 3 이 된다. 그 명령만 샌드박스 밖 실행 승인을 요청한다. 승인을 요청할 수 없거나 거부되면 사용자가 입력창에서 `!` 를 붙여 직접 실행하게 안내한다. `--add-dir ~/.codex` 는 쓰지 않는다.
+- 결과를 보고하고 Codex 를 다시 열어야 보인다고 알린다. 이 경로에서는 위 0~3단계를 하지 않는다.
+- OMX 의 별도 HUD 칸(`omx hud --tmux`)은 지금 tmux 창을 나눈다. 사용자가 그 칸을 원한다고 했을 때만 실행한다.
 
 ## 표시 형식
 

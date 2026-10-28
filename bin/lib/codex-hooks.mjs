@@ -10,6 +10,7 @@
  * - hooks.json 이 링크이거나 JSON 객체가 아니거나 "없음" 말고 다른 이유로 확인할 수 없으면 바꾸지 않는다. 바꿀 때마다
  *   직전 내용을 hooks.json.banker.bak 에 둔다. smart-compact 의 codex-gate.mjs 와 같은 규칙이다.
  */
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,8 +34,9 @@ export const PAYLOAD = [
 ];
 export const DEFAULT_HOOKS = ['update', 'count'];
 
+// Codex 처럼 상대 경로 CODEX_HOME 은 지금 폴더 기준으로 푼다.
 export function codexPaths(env = process.env) {
-  const home = env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const home = env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(os.homedir(), '.codex');
   return { home, hooks: path.join(home, 'hooks.json'), backup: path.join(home, 'hooks.json.banker.bak'), dir: path.join(home, 'hooks-custom', 'banker') };
 }
 
@@ -165,9 +167,20 @@ function place(doc, id, command) {
   return true;
 }
 
+// Codex 홈이 지금 폴더나 그 저장소 안이면(예: 저장소의 .envrc 가 CODEX_HOME=./.codex) 훅 사본도 작업 폴더 안에 놓여,
+// 샌드박스 안의 세션이 샌드박스 밖에서 도는 훅을 고칠 수 있다. 홈 폴더와 파일 시스템 루트는 작업 폴더로 보지 않는다.
+export function homeInWorkspace(home, cwd = process.cwd()) {
+  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', windowsHide: true });
+  const roots = [cwd, top.status === 0 ? top.stdout.trim() : ''].filter(Boolean).map(real);
+  const skip = new Set([real(os.homedir()), path.parse(real(cwd)).root]);
+  const h = real(home);
+  return roots.some((r) => !skip.has(r) && (h === r || h.startsWith(r.endsWith(path.sep) ? r : r + path.sep)));
+}
+
 // ids 를 켠다. { code, changed:[id], msg }. code 1 이면 아무것도 바꾸지 않았다.
-export function enableHooks(p, ids, pkgRoot, node = process.execPath) {
+export function enableHooks(p, ids, pkgRoot, node = process.execPath, cwd = process.cwd()) {
   if (!safeNode(node)) return { code: 1, changed: [], msg: `node 가 안전하지 않은 곳에 있음(${node})` };
+  if (homeInWorkspace(p.home, cwd)) return { code: 1, changed: [], msg: `Codex 홈(${p.home})이 작업 폴더 안이라 훅을 설치하지 않음. 샌드박스가 고칠 수 있는 곳임` };
   const { doc, why } = loadHooks(p.hooks, ids.map((id) => HOOKS[id].event));
   if (why) return { code: 1, changed: [], msg: why };
   const cmds = ids.map((id) => [id, formatCommand(node, scriptOf(p, id), HOOKS[id].args)]);

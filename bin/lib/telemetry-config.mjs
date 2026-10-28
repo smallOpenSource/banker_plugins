@@ -40,6 +40,8 @@ export const USED_SKILLS_MAX = 300;
 // import 시점 resolver 결과를 캡처한다(단명 hook 프로세스용). writeUpdateCache 는 테스트 격리를 위해
 // configDir() 를 매 호출 재계산하므로 이 상수에 의존하지 않는다.
 export const UPDATE_CHECK_PATH = path.join(configDir(), 'update-check.json');
+// Codex 카운팅 훅이 턴 시작을 못 찾은 Codex 판({version, notified}). 다음 Codex 세션 시작 때 한 번 알린다.
+export const CODEX_SHAPE_MISS_PATH = path.join(configDir(), 'codex-shape-miss.json');
 // 업데이트 체크/체크인 스로틀 창(24h). 이 간격 미경과면 재조회하지 않는다.
 export const UPDATE_THROTTLE_MS = 24 * 60 * 60 * 1000;
 

@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 63개 + 커맨드 2개**(총 65개 구성요소)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 64개 + 커맨드 2개**(총 66개 구성요소)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -137,6 +137,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `ralph-qa` | 세션 모델로 띄운 독립 검토 에이전트 3개 이상이 합의할 때까지 검증 반복. `--codex`·`--gemini`·`--opencode` 를 주면 그 CLI 에서 가장 뛰어난 모델이 좌석으로 합류 |
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
+| `lfm` | learn from master. 그 분야 최고 전문가 그룹이 일하는 방식을 1차 자료로 조사해 계획 적용 항목으로 정리(ultra-interview, ultra-chain, deep-research, rfp-author 의 리서치에서도 씀) |
 | `ultra-interview` | 리서치 선행으로 사람 질문 최소화, 모호성 3% 이하까지 인터뷰 |
 | `interval-report` | 장기 수행 중간 보고를 `docs/intermission.md` 로 갱신(경과·잔여·단일 표) |
 | `summary-wiki` | 위키를 `docs/` 단일 파일 개조식으로 요약(지식 동기화 검토용, 읽기 전용) |
@@ -206,8 +207,10 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 63개와 Codex 전용 스킬 2개(`graceful-pause`, `progress`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 64개와 Codex 전용 스킬 2개(`graceful-pause`, `progress`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
+  `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
+  Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
@@ -231,7 +234,7 @@ banker uninstall        # 제거
 |---|---|---|
 | Claude Code | 플러그인 레지스트리 | `claude plugin marketplace add` + 설치 → `/banker:*` (`settings.json` 직접수정 없음) |
 | Codex CLI | `~/.codex/skills/banker-*/`, `~/.codex/prompts/banker-*.md` | 기존 `banker-*` 정리 후 복사(멱등). `AGENTS.md`·`config.toml` 미변경 |
-| Codex CLI | `~/.codex/hooks.json`, `~/.codex/hooks-custom/banker/` | 업데이트 알림(`SessionStart`)과 사용량 카운팅(`Stop`) 훅. 사본은 작업 폴더 밖에 두고, 이벤트마다 맨 뒤에 묶음 1개를 더하며, 쓰기 전 `hooks.json.banker.bak` 백업. `banker hooks status`, `banker hooks enable <이름>`, `banker hooks disable <이름>` 으로 확인하고 켜고 끔. Codex 를 다시 열 때 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돎 |
+| Codex CLI | `~/.codex/hooks.json`, `~/.codex/hooks-custom/banker/` | 업데이트 알림(`SessionStart`)과 사용량 카운팅(`Stop`) 훅. 사본은 작업 폴더 밖에 두고, 이벤트마다 맨 뒤에 묶음 1개를 더하며, 쓰기 전 `hooks.json.banker.bak` 백업. `banker hooks status`, `banker hooks enable <이름>`, `banker hooks disable <이름>` 으로 확인하고 켜고 끔. Codex 를 다시 열 때 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돎. Codex 홈(`CODEX_HOME`)이 지금 폴더나 그 저장소 안이면 샌드박스가 고칠 수 있어 훅을 설치하지 않음 |
 
 **플러그인 자체 훅 — `hooks/hooks.json` (설치 시 Claude Code에서 자동 발화)**
 
@@ -251,7 +254,7 @@ banker uninstall        # 제거
 | `setup-mcp` | `claude mcp add` (context7·seq-thinking·filesystem·git·fetch) | `[mcp_servers.*]` |
 | `setup-lsp` | LSP MCP 등록 | `[mcp_servers.lsp_bridge]` |
 | `setup-stitch` | `claude mcp add stitch` | `codex mcp add stitch` |
-| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | — (Codex 자신은 OMX `hud`. Codex 에서 Claude Code 쪽 설치를 고르면 왼쪽과 같음) |
+| `setup-omc-hud` | `statusLine`(바뀔 때 `settings.json` 백업) + `hud/omc-hud-custom.mjs`, `hud/omc-hud.mjs`, `.omc/hud-config.json`(바뀐 파일은 `.backup.<시각>` 백업) + payload-mon 켜기. 옛 판이 넣은 갱신 안내 블록은 `off` 로 원복 | 대상이 Codex 면 `~/.codex/config.toml` 의 `[tui] status_line` 이 없을 때만 OMX 프리셋으로 넣고 `# banker:status-line` 표시(`config.toml.banker-hud.bak` 백업). OMX 나 사용자가 둔 줄은 그대로, `off` 는 banker 줄만 뺌. Claude Code 쪽을 고르면 왼쪽과 같음 |
 | `setup-pwsh` | `env.CLAUDE_CODE_GIT_BASH_PATH` (병합) | — (네이티브 셸, 배선 불필요) |
 | `setup-harness-factory` | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env 영속) | — |
 | `smart-compact` | `statusLine.command` 래핑 + `UserPromptSubmit` 훅 추가 (백업·멱등) | `hooks.json` 의 `UserPromptSubmit` 맨 뒤에 훅 묶음 1개 + `smart-compact.json`(임계값), `smart-compact-state.json`(세션 상태). 훅 사본 `hooks-custom/banker-smart-compact-gate.mjs`. `hooks.json` 을 바꿀 때마다 직전 내용을 `hooks.json.smart-compact.bak` 에 백업, 멱등. `off` 는 이 훅과 사본, 설정만 지움. 새 훅은 `/hooks` 에서 신뢰해야 돎 |
@@ -262,7 +265,7 @@ banker uninstall        # 제거
 | `remains` | 설정 파일 미변경. `~/.config/banker/test-boxes.json` 은 읽기만 함(사용자가 만들거나, 사용자가 준 정보로 확인받고 만듦). 처음 접속하는 박스의 호스트 키가 `~/.ssh/known_hosts` 에 더해짐. 테스트박스에는 임시 폴더를 만들고 끝나면 지움(시간 초과나 중단 때는 시작한 프로세스를 먼저 끝냄, 못 지우면 결과에 표시) | 동일 |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
-| `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | Codex 에서 실행해도 같은 머신의 Claude Code 설정을 바꿈 (Codex 승인 정책은 미변경) |
+| `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | 대상 `codex` 면 `~/.codex/config.toml` 최상위의 `approval_policy` = `"never"`, `sandbox_mode` = `"danger-full-access"` (켜기 전 원본 `config.toml.bypass-permissions.bak`, 되돌리기 기록 `config.toml.bypass-permissions.json`, `off` 로 원복. 조직 정책이 막으면 거부). 대상 `claude` 면 Codex 에서 실행해도 Claude Code 설정을 바꿈 |
 
 `obsidizer` 는 `settings.json` 대신 `<위키디렉터리>/.obsidizer` 플래그 파일로만 켜고 끕니다. Codex 는 `omx_wiki/.obsidizer` 플래그에 더해 `~/.codex/hooks.json` 에 훅 묶음 1개를 더합니다.
 
@@ -309,7 +312,7 @@ Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛
 > 0.19.5 이하의 `setup-omc-hud` 가 옛 래퍼에 넣은 Claude 갱신 안내 블록은 제거 전에 `/banker:setup-omc-hud off` 로 뺄 수 있습니다.\
 > 이미 지웠다면 HUD를 재설치하거나, `// >>> claude-update-last >>>` 부터 `// <<< claude-update-last <<<` 까지 지우면 됩니다. 블록을 남겨 두어도 상태표시줄은 깨지지 않습니다.
 
-> `setup-bypass-permissions` 로 바꾼 권한 모드는 `settings.json` 에 남아, 플러그인을 지워도 모든 세션에서 확인 없이 도구가 실행됩니다. 제거 전에 `/banker:setup-bypass-permissions off` 를 실행하세요.\
+> `setup-bypass-permissions` 로 바꾼 권한 모드는 `settings.json`(Codex 대상은 `~/.codex/config.toml`)에 남아, 플러그인을 지워도 모든 세션에서 확인 없이 도구가 실행됩니다. 제거 전에 `/banker:setup-bypass-permissions off` 를 실행하세요(Codex 는 `$banker-setup-bypass-permissions off codex`).\
 > 이미 지웠다면 설정 폴더(`$CLAUDE_CONFIG_DIR`, 없으면 `~/.claude`)의 `settings.json` 에서 `permissions.defaultMode` 를 지우거나 원래 값으로 되돌리면 됩니다. 옆의 `settings.json.bypass-permissions.bak` 과 `settings.json.bypass-permissions.json` 도 지우세요. 백업에는 설정의 비밀 값이 들어 있을 수 있습니다.\
 > root 계정에서 이 모드 때문에 Claude Code 가 시작되지 않으면 `claude --permission-mode default` 로 시작한 뒤 `off` 를 실행하세요.
 
@@ -379,7 +382,7 @@ banker setup
   - 내려받는 설치 스킬(`setup-omc-hud`, `setup-bypass-permissions` 를 뺀 `setup-*`, `docs-setup`, `vertical-pptx-setup`, `motion-graphic-setup`, `3d-intro-setup`): 웹 원천(npm, PyPI, GitHub 등)은 먼저 닿는지 보고, 닿지 못하면 받지 않고 "오프라인이라 설치하지 않음" 으로 알립니다. OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 그 관리자의 미러 설정을 따르므로 미리 판정하지 않고 시도합니다. 단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다.
   - `update-banker`: 레지스트리에 닿지 못하면 어느 채널도 바꾸지 않고 멈춥니다.
   - `audit-security` 의 의존성 취약점 조회: 결과로 읽을 수 없는 도구는 0건이 아니라 "미커버" 로 적습니다.
-  - `deep-research`, 이를 부르는 `ultra-chain` 1단계, `ultra-interview` 의 조사: 웹 도구가 모두 실패하면 조사하지 못했다고 알립니다.
+  - `deep-research`, `lfm`, 이를 부르는 `ultra-chain` 1단계, `ultra-interview` 와 `rfp-author` 의 조사: 웹 도구가 모두 실패하면 조사하지 못했다고 알립니다. `lfm` 은 모델이 아는 관행으로 표를 채우지 않고 "웹 조사 불가" 로 끝납니다.
   - `npx` 로 부르는 도구(`motion-graphic-make` 의 hyperframes 등): 전역 설치가 없으면 패키지를 받으려 해, 네트워크가 없으면 약 70초 뒤 실패합니다. 오프라인에서는 전역 설치한 실행 파일을 부릅니다.
   - 유료 API 를 부르는 `3d-intro-build`(요청마다 시간 제한), `ralph-qa` 의 외부 좌석(codex, gemini, opencode, 좌석마다 600초)
   - `vertical-pptx`, `pdf-vision-extract` 가 빠진 도구를 설치하라고 안내할 때, `nothing-design` 의 글꼴(Google Fonts. 받지 못하면 대체 글꼴로 보임)

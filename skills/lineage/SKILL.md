@@ -2,7 +2,7 @@
 name: lineage
 description: "현재 세션 대화를 카카오톡 스타일의 단일 HTML 로 내보냄. Claude 답변은 한 줄 요약 아래에 원문을 접어 두고, 펼치면 마크다운으로 렌더해 보여 줌. 기본은 세션 모델이 요약을 쓰고 노이즈 턴을 걸러 내며, `--rulebase` 는 모델 없이 규칙만 씀. 여러 세션을 합칠 수 있음. 'lineage'/'대화 export'/'카톡 스타일 html' 시 사용."
 invocation: /lineage
-version: 3.1.0
+version: 3.1.1
 schema_version: 1
 ---
 
@@ -331,6 +331,7 @@ pip install 'detect-secrets>=1.5'   # (선택) 강한 redaction
 
 - 자동탐색은 Claude Code 의 `~/.claude/projects/` 레이아웃을 가정 — 비-ASCII cwd 는 `--session` / `--from-transcript` 로 쓴다.
 - 읽는 기록은 Claude Code 형식과 Codex rollout 이다. Codex rollout 에서는 사용자가 입력한 글, 모델의 답, 도구 호출 이름만 읽는다. 모델의 추론 요약과 도구 결과는 페이지에 없다.
+- Codex 는 rollout 형식을 공개 약속으로 내놓지 않는다. 사용자 턴을 하나도 읽지 못한 rollout 은 빈 페이지 대신 exit 2(`no user turn was read`, Codex 버전 표시)로 멈춘다. 이 오류가 나면 사용자에게 banker 업데이트를 권하고, Codex 를 업데이트했다면 `banker doctor` 의 기록 형식 점검 결과를 함께 보인다. `--all-sessions` 는 그런 rollout 을 WARN 과 함께 뺀다.
 - 기본 흐름은 redact 된 세션 본문을 세션 모델의 프로바이더로 보낸다. 모델에 보내지 않으려면 `--rulebase` 를 쓴다.
 - `--rulebase` 요약은 추출식(head+tail) — 말미 정리 문장을 결론 대신 고르는 경우가 있다. 기본 흐름은 검토자가 이를 고쳐 쓴다.
 - 기본 흐름은 파트(40턴 이하, 고르게 나눔)마다 검토 에이전트 1개가 돈다. 이 저장소 실측은 40턴 파트 하나에 약 11만 토큰과 7분이었다. 긴 세션은 `--last N` 으로 범위를 줄이거나 `--rulebase` 를 쓴다.

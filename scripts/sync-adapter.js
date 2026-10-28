@@ -7,6 +7,7 @@
  *   3d-intro-build/references: preview-lib.mjs, serve.mjs, curate.mjs -> motion-graphic-make (local servers, review page)
  *   3d-intro-build/references: preview-lib.mjs, serve.mjs             -> ultra-chain         (local server for the mock and the report)
  *   tone-compact/scripts: instruction-toggle.mjs                      -> anti-drm            (rules on and off for Claude Code and Codex)
+ *   setup-bypass-permissions/scripts: codex-config.mjs                -> setup-omc-hud/assets (Codex config.toml line edits)
  *   hooks: progress-plan.mjs (repo root)                              -> codex/skills/progress/scripts (plan tree for the Codex progress skill)
  * A pair without a root is under skills/; one with `root: true` names repo-root paths.
  * Usage:
@@ -22,6 +23,7 @@ const MIRRORS = [
   { from: '3d-intro-build/references', to: 'motion-graphic-make/references', files: ['preview-lib.mjs', 'serve.mjs', 'curate.mjs'] },
   { from: '3d-intro-build/references', to: 'ultra-chain/references', files: ['preview-lib.mjs', 'serve.mjs'] },
   { from: 'tone-compact/scripts', to: 'anti-drm/scripts', files: ['instruction-toggle.mjs'] },
+  { from: 'setup-bypass-permissions/scripts', to: 'setup-omc-hud/assets', files: ['codex-config.mjs'] },
   { from: 'hooks', to: 'codex/skills/progress/scripts', files: ['progress-plan.mjs'], root: true },
 ];
 const check = process.argv.includes('--check');
