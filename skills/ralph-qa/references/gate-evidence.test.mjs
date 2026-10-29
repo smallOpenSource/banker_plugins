@@ -4,13 +4,13 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { makeRunFolder } from "./run-folder.mjs";
-import { shellFor } from "./gate-evidence.mjs";
+import { outputText, shellFor } from "./gate-evidence.mjs";
 
 const TOOL = fileURLToPath(new URL("./gate-evidence.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -28,13 +28,13 @@ function world(t) {
   mkdirSync(base, { recursive: true, mode: 0o700 });
   const env = { ...process.env, HOME: home, USERPROFILE: home, ...(WIN ? { TEMP: base, TMP: base } : process.platform === "darwin" ? { TMPDIR: base } : { XDG_RUNTIME_DIR: base }),
     GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
-  const d = makeRunFolder({ env, platform: process.platform }, "ralph-qa").dir;
+  const d = makeRunFolder({ env, platform: process.platform }, "ralph-qa-gates").dir;
   const repo = join(dir, "repo");
   mkdirSync(repo);
   if (HAS_GIT) {
     for (const a of [["-c", "init.defaultBranch=main", "init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]]) spawnSync("git", ["-C", repo, ...a], { env });
   }
-  return { dir, env, d, repo };
+  return { dir, env, d, repo, base };
 }
 
 function cli(w, args) {
@@ -181,4 +181,76 @@ test("a folder that is no run folder is a stop; a bad argument is a usage error 
     assert.equal(r.code, 2, args.join(" "));
   }
   assert.equal(existsSync(marker), false, "nothing ran");
+});
+
+// H1: one gate folder for the whole run, made by init before the baseline, kept across the iterations, removed once.
+test("init makes the gate folder once; its records span the iterations, so a lucky pass after a failure stays flaky; cleanup removes it alone", { skip: !HAS_GIT && "no git" }, (t) => {
+  const w = world(t);
+  const made = cli(w, ["init"]);
+  assert.equal(made.code, 0, made.stderr);
+  const g = made.json.dir;
+  assert.match(g, /[\\/]ralph-qa-gates\.[A-Za-z0-9]+$/);
+  assert.ok(existsSync(join(g, ".ralph-qa-gates")));
+  const gateRun = (iter, code) => cli(w, ["run", "--dir", g, "--id", "tests", "--cmd", nodeCmd("-e", `console.log('not ok ${iter}'); process.exit(${code})`), "--timeout", "30", "--iter", String(iter), "--cwd", w.repo]);
+  gateRun(0, 0);
+  gateRun(1, 1);
+  gateRun(2, 0);
+  let r = cli(w, ["gate", "--dir", g, "--gates", "tests", "--iter", "2", "--cwd", w.repo]);
+  assert.deepEqual([r.code, r.json.gates[0].state, r.json.gates[0].need], [1, "flaky", 2], "the failure of iteration 1 is in the same folder");
+  for (let i = 0; i < 2; i += 1) gateRun(2, 0);
+  r = cli(w, ["gate", "--dir", g, "--gates", "tests", "--iter", "2", "--cwd", w.repo]);
+  assert.deepEqual([r.code, r.json.gates[0].state], [0, "pass"]);
+  assert.equal(cli(w, ["cleanup", "--dir", w.d]).json.removed, w.d);
+  assert.ok(existsSync(g), "another gate folder stays");
+  r = cli(w, ["cleanup", "--dir", g]);
+  assert.deepEqual([r.code, r.json.removed, existsSync(g)], [0, g, false]);
+  const old = makeRunFolder({ env: w.env, platform: process.platform }, "ralph-qa").dir;
+  assert.equal(cli(w, ["cleanup", "--dir", old]).json.stop, "not-a-run-folder", "an older ralph-qa.* folder goes with seat-run cleanup, which knows its answer folder");
+});
+
+// L3: each seq is claimed with a file of its own, so two runs at once in one folder never share a seq or a name.
+test("two runs at once in one gate folder get two seqs and two output files", { skip: !HAS_GIT && "no git" }, async (t) => {
+  const w = world(t);
+  const { spawn } = await import("node:child_process");
+  const one = (id) => new Promise((done) => {
+    const c = spawn(NODE, [TOOL, "run", "--dir", w.d, "--id", id, "--cmd", nodeCmd("-e", "setTimeout(() => console.log('ok'), 300)"), "--timeout", "30", "--cwd", w.repo], { env: w.env, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    c.stdout.on("data", (b) => (out += b));
+    c.on("close", (code) => done({ code, json: JSON.parse(out || "null") }));
+  });
+  const runs = await Promise.all([one("tests"), one("tests"), one("lint")]);
+  assert.deepEqual(runs.map((x) => x.code), [0, 0, 0]);
+  const seqs = evidence(w).map((x) => x.seq).sort();
+  assert.deepEqual([new Set(seqs).size, new Set(runs.map((x) => x.json.output)).size], [3, 3]);
+  writeFileSync(join(w.d, "gate-tests-0-5.md"), "an output left by a run cut short before its record");
+  writeFileSync(join(w.d, ".seq-4.md"), "");
+  const r = run(w, "tests", nodeCmd("-e", "0"));
+  assert.equal(r.json.seq, 6, "past the claimed seq 4 and the output file of seq 5 left behind");
+});
+
+// Security 5: an output past 2 GiB is hashed in pieces and read for the verdict by its ends; a pass is then misleading.
+test("an output too large to read whole is hashed in pieces and its verdict, read by its ends, is misleading, not a pass", { skip: !HAS_GIT && "no git" }, (t) => {
+  const w = world(t);
+  const p = join(w.dir, "big.md");
+  writeFileSync(p, `head\n${"x".repeat(5000)}\nℹ fail 1\n`);
+  const cut = outputText(p, 1000);
+  assert.deepEqual([cut.cut, cut.size, cut.text.startsWith("head"), cut.text.endsWith("ℹ fail 1\n"), cut.text.length < 1100], [true, 5017, true, true, true]);
+  assert.deepEqual([outputText(p).cut, Buffer.byteLength(outputText(p).text)], [false, 5017]);
+  if (WIN) return;
+  // A sparse file of 2.1 GiB: fd 1 is the output file, so the child sets its length without writing it.
+  const r = run(w, "huge", nodeCmd("-e", "require('fs').ftruncateSync(1, 2254857830)"));
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual([r.json.verdict, r.json.bytes, /넘어 앞뒤만 봄/.test(r.json.why)], ["misleading", 2254857830, true]);
+  assert.equal(cli(w, ["verify", "--dir", w.d]).code, 0, "verify hashes it in pieces too");
+});
+
+// Security 6: a tree with no git gives one fingerprint whatever changes, so its record never holds the conjunct.
+test("a gate run on a folder with no git is unverifiable in the conjunct", (t) => {
+  const w = world(t);
+  const plain = join(w.dir, "plain");
+  mkdirSync(plain);
+  const rec = cli(w, ["run", "--dir", w.d, "--id", "tests", "--cmd", nodeCmd("-e", "0"), "--timeout", "30", "--iter", "1", "--cwd", plain]).json;
+  assert.deepEqual([rec.git, rec.verdict], [false, "pass"]);
+  const r = cli(w, ["gate", "--dir", w.d, "--gates", "tests", "--iter", "1", "--cwd", plain]);
+  assert.deepEqual([r.code, r.json.gates[0].state], [1, "unverifiable"]);
 });

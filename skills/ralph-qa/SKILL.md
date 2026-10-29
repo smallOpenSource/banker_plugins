@@ -118,7 +118,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
 폴더, 페이로드, 비밀 검사, 좌석 명령, 시간 상한, 정리는 실행기 `references/seat-run.mjs` 가 한다. **좌석 명령과 git 사슬을 손으로 짜지 않는다.** 실행기가 멈추면 출력 JSON 의 `stop` 을 아래 멈춤 표대로 처리한다.
 `<R>` 은 `<이 스킬 디렉터리 절대경로>/references` 다(Codex 의 npm 설치본은 `~/.codex/skills/banker-ralph-qa/references`, 플러그인 설치본은 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/ralph-qa/references`. `CODEX_HOME` 이 있으면 `~/.codex` 대신 그 폴더). 호출 사이에 셸 변수가 남지 않으므로 호출마다 실제 경로를 적는다.
 명령마다 stdout 에 JSON 하나를 내고, 같은 JSON 을 `<d>/result-<명령>.md` 에도 쓴다(멈춘 send 는 `result-send-stop.md`). 종료 코드는 0 끝남, 1 비밀처럼 보이는 줄, 2 인자나 실행기 오류, 3 멈춤, 4 512 KiB 초과, 5 send 가 아직 돎이다.
-반복마다 새 폴더를 만든다.
+페이로드 폴더는 반복마다 새로 만든다. `--gates` 의 게이트 기록 폴더 `<g>` 는 이것과 따로, 실행 내내 하나다(게이트 증거 절).
 
 1. `init` 으로 폴더 둘을 만든다. 출력의 `dir` 이 페이로드 폴더 `<d>`, `out` 이 답 폴더다.
    - 기준 폴더는 이 계정만 쓰는 곳이다. Linux 는 이 계정의 `$XDG_RUNTIME_DIR`(아니면 `~/.cache`. `/tmp` 처럼 모든 계정이 쓰는 폴더 아래의 `$XDG_RUNTIME_DIR` 는 홈도 그 아래일 때만 쓴다. 그래서 쓰기 범위를 피하려고 `XDG_RUNTIME_DIR` 를 `/tmp` 아래로 바꿔도 `~/.cache` 로 돌아간다), macOS 는 `$TMPDIR`, Windows 는 홈 안의 `%TEMP%`(아니면 `~/.cache`)다. `/tmp` 처럼 여러 계정이 쓰는 폴더 아래에는 만들지 않는다. gemini 는 작업 폴더에서 루트까지 올라가며 `.gemini/.env` 와 `.env` 를 읽어, 다른 계정이 `/tmp/.env` 에 둔 `GOOGLE_GEMINI_BASE_URL` 로 페이로드를 보낸다(0.62.0 번들 모의 실험 재현).
@@ -136,7 +136,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
      수용 기준: <기준 목록>
      ```
 
-   - `spec.md` 에는 아래 표의 다섯 낱말로 시작하는 줄만 쓴다. 요청 문장이나 설명을 쓰면 `spec` 으로 멈춘다(예: `file package.json`, `gate <d>/gate-tests-1-2.md`).
+   - `spec.md` 에는 아래 표의 다섯 낱말로 시작하는 줄만 쓴다. 요청 문장이나 설명을 쓰면 `spec` 으로 멈춘다(예: `file package.json`, `gate <g>/gate-tests-1-2.md`).
    - `spec.md` 는 한 줄에 하나다. 빈 줄과 `#` 줄은 건너뛴다. 경로는 줄 끝까지 읽는다. 상대 경로는 저장소 루트 기준이다.
 
    | 줄 | 뜻 |
@@ -166,7 +166,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다. 끝나지 않는 send 는 그 작업을 백그라운드 작업 중지 도구(`TaskStop`)로 멈춘다. 그러면 실행기와 좌석의 프로세스 트리 전체가 멈춘다(Linux, macOS 실측). 실행기는 SIGINT, SIGTERM 을 받으면 좌석을 끝내고 좌석 기록을 지운 뒤 끝난다(종료 130, 143). send 는 실행기가 띄운 둘째 node 가 맡는다. 실행기 node 만 끝나도(`kill -9`, 작업 관리자, Windows 의 `/T` 없는 `taskkill /F`) 그 node 가 좌석을 끝내고 정리한 뒤 끝난다.
    - send 는 보낸 좌석마다 CLI 판을 `run.md` 에 `cli-<cli> <판>` 줄로 적고, 출력 `seats` 의 `cliVersion` 에도 둔다. codex 는 프로브의 `codex --version`, gemini 와 opencode 는 띄우지 않고 설치 정보(npm 패키지의 `package.json`, opencode 설치 폴더의 `@opencode-ai/plugin` 판)에서 읽는다. 못 읽으면 `알 수 없음`. 좌석 장치는 판을 고정하지 않으므로 보고에 그 판을 옮겨 적는다.
    - 하위 에이전트로 돌면 send 가 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다. 먼저 답을 내면 그 백그라운드 작업도 함께 끝나 정리 없이 사본이 남는다.
-6. 답을 읽은 뒤 `cleanup --dir '<d>'` 를 부른다. 이 좌석들의 gemini 기록, 같은 기준 폴더들에서 하루 지난 끊긴 실행의 폴더와 기록, 이 실행의 opencode 세션과 좌석 폴더가 사라진 세션, `<d>` 와 답 폴더를 지운다. send 가 아직 돌면 종료 5(`busy`)로 멈춘다. 지우지 못한 끊긴 실행의 폴더는 JSON 의 `left` 에 경로와 까닭이 있다. 있으면 사용자에게 알린다.
+6. 답을 읽은 뒤 `cleanup --dir '<d>'` 를 부른다. 이 좌석들의 gemini 기록, 같은 기준 폴더들에서 하루 지난 끊긴 실행의 폴더와 기록, 이 실행의 opencode 세션과 좌석 폴더가 사라진 세션, `<d>` 와 답 폴더를 지운다. 게이트 기록 폴더 `<g>` 는 지우지 않는다(이름과 표지가 달라 하루 규칙에도 들지 않는다). send 가 아직 돌면 종료 5(`busy`)로 멈춘다. 지우지 못한 끊긴 실행의 폴더는 JSON 의 `left` 에 경로와 까닭이 있다. 있으면 사용자에게 알린다.
 
 ```bash
 # Claude Code(Linux, macOS, Windows Git Bash). <R> = <이 스킬 디렉터리 절대경로>/references. Codex 는 --runtime codex
@@ -334,7 +334,7 @@ INCONCLUSIVE 소비 규칙 — 통과가 아니다
 | `--gemini[=<model>]` | 외부 | gemini 좌석. 값이 있으면 그 모델 | 없음 | 같은 절의 gemini 명령 | 모의 서버 확인(0.62.0 npm 번들) / 설치본과 실모델 호출 미검증 |
 | `--opencode[=<provider/model>]` | 외부 | opencode 좌석. 값이 있으면 그 모델 | 없음 | 같은 절의 opencode 명령 | 모의 서버 확인 / 실모델 호출 미검증 |
 | `--effort <v>` | **외부 전용 (codex)** | 추론 강도. 백본에는 전송 경로가 없다. gemini 에는 경로가 없고, opencode 는 `--variant` 가 있으나 값 체계가 프로바이더마다 달라 넘기지 않는다 | 미지정 | `codex exec -c model_reasoning_effort=` | **전송 확인 / 적용 미확인** |
-| `--gates=<목록>` | 루프 | 정족수에 게이트 연언항을 더함. 목록은 `tests`, `build`, `lint`, `typecheck`, `custom:<명령>`, `scenarios` 를 쉼표로. 게이트마다 반복마다 `gate-evidence.mjs run` 의 `observed` 기록이 증거다. 주지 않으면 이 항이 없고 보고에 `게이트: 선언 없음(<까닭>)` | 없음 | 실행기(`references/gate-evidence.mjs`) | 실행기 시험(`gate-evidence.test.mjs`, `gate-quorum.test.mjs`) |
+| `--gates=<목록>` | 루프 | 정족수에 게이트 연언항을 더함. 목록은 `tests`, `build`, `lint`, `typecheck`, `custom:<명령>`(게이트 id `custom`), `scenarios` 를 쉼표로. 게이트마다 반복마다 `gate-evidence.mjs run` 의 `observed` 기록이 증거다. 주지 않으면 이 항이 없고 보고에 `게이트: 선언 없음(<까닭>)` | 없음 | 실행기(`references/gate-evidence.mjs`) | 실행기 시험(`gate-evidence.test.mjs`, `gate-quorum.test.mjs`) |
 | `--lens=critic\|plan\|both` | 전 좌석 | 적용 렌즈. 렌즈는 좌석 식별자의 구성요소다 | both | 프롬프트 | 전달 확인 |
 | `--max=N` | 루프 | 최대 반복. 소진은 항상 종결이며 갈래가 둘이다 | 5 | — | — |
 
@@ -358,32 +358,47 @@ INCONCLUSIVE 소비 규칙 — 통과가 아니다
 
 ### 게이트 증거 (`--gates`)
 
-`<R>` 은 이 스킬의 `references` 다. `<d>` 는 외부 좌석 전송의 `init` 이 만든 실행 폴더다(외부 좌석이 없어도 같다).
+`<R>` 은 이 스킬의 `references` 다. `<g>` 는 게이트 기록 폴더다.
 
-1. 기준선: 고치기 전에 게이트마다 한 번 `run --iter 0` 을 돌린다. 기준선에서 실패한 게이트는 실패 서명이 같고 명령이 같으면 이 변경의 실패가 아닌 것으로 분리된다.
+**게이트 기록 폴더의 수명.** 기준선, 흔들림, 같은 실패 3회는 모두 한 폴더의 `evidence.md` 에 쌓인 반복 0 부터 지금까지의 기록을 읽는다. 그래서 `<g>` 는 외부 좌석 전송의 페이로드 폴더 `<d>`(반복마다 새로 만들고 판정마다 지움)와 따로 둔다.
+- 만들기: 기준선 전에 한 번 `node '<R>/gate-evidence.mjs' init` 을 부른다. 출력의 `dir`(`ralph-qa-gates.<영숫자>`, 페이로드 폴더와 같은 비공개 기준 폴더 아래)이 `<g>` 다.
+- 유지: 반복 사이에 지우지 않고 다시 만들지 않는다. seat-run 의 `cleanup` 과 하루 규칙은 이 폴더를 지우지 않는다(이름과 표지 `.ralph-qa-gates` 가 다름). 기준선 뒤 하루가 넘어 이어 해도 기준선이 남는다.
+- 정리: 종결어(`APPROVE`, `ITERATE`, `INCONCLUSIVE`)를 낸 뒤에만 한 번 `node '<R>/gate-evidence.mjs' cleanup --dir '<g>'` 를 부른다.
+- 호출자가 준 `<g>`: all-in-one, ultra-init, ultra-chain 처럼 호출자가 반복 0 을 이미 돌린 `<g>` 를 넘기면 그 폴더를 쓴다. 반복 0 을 다시 돌리지 않고 지우지도 않는다(호출자가 끝난 뒤 지운다).
+- 이 판보다 먼저 `seat-run.mjs init` 으로 만든 `ralph-qa.<영숫자>` 게이트 폴더도 실행기가 그대로 읽는다. 그 폴더는 `seat-run.mjs cleanup --dir` 로 지운다(답 폴더가 함께 있다).
+- 끊긴 실행의 `<g>` 는 저절로 지워지지 않는다. 이어 할 수 없으면 보고에 경로를 적는다.
+
+1. 기준선: 고치기 전에 게이트마다 한 번 `run --iter 0` 을 돌린다. 기준선에서 실패한 게이트는 실패 서명이 같고 명령이 같으면 이 변경의 실패가 아닌 것으로 분리된다. 그런 실패는 같은 실패 3회에도 세지 않는다. 서명은 명령을 돌린 폴더를 `<repo>` 로 바꿔 계산해, 작업 트리에 변경이 있어 깨끗한 사본(`git worktree`)에서 잡은 기준선도 저장소의 같은 실패와 같은 서명이 된다.
 2. 반복 k 마다 게이트마다 `run --iter <k>` 를 돌리고, 좌석에 보내기 직전 `gate --iter <k>` 로 연언항을 계산한다. 게이트 하나에 명령 하나만 준다(`&&` 나 `;` 로 묶지 않는다). 모든 명령에 `--timeout` 을 준다.
-3. 좌석 입력에는 `evidence.md` 의 이번 반복 `observed` 줄과 그 출력 파일을 넣는다. 좌석은 `verify --dir '<d>'` 결과(출력 파일과 기록의 sha256 대조)를 함께 보고, `misleading`(종료 0 인데 실패나 건너뜀 수가 있는 출력)을 판단한다. 기계는 `misleading` 을 막지 않는다.
+3. 좌석 입력에는 `<g>/evidence.md` 의 이번 반복 `observed` 줄과 그 출력 파일을 넣는다. 좌석은 `verify --dir '<g>'` 결과(출력 파일과 기록의 sha256 대조)를 함께 보고, `misleading`(종료 0 인데 실패나 건너뜀 수가 있는 출력)을 판단한다. 기계는 `misleading` 을 막지 않는다.
 4. `scenarios` 를 주면 저자가 9분류마다 시나리오 행을 쓰거나 해당 없음의 까닭을 적고, 행마다 `run --id scenario-<번호>` 로 돌린다. 까닭 없이 빈 분류는 좌석이 blocker 로 낸다.
-5. 하네스(임시 시험, 스크립트, 자료)는 `<d>` 안에만 만들고, 저장소 루트를 절대 경로로 가리킨다. 본문에 백틱이나 `${...}` 가 든 파일은 셸 치환 없는 방법(파일 쓰기 도구, 따옴표 친 here-document)으로 쓴다. 반복마다 `fingerprint --cwd '<저장소>'` 로 작업 트리를 찍어, 좌석이 기준선보다 늘어난 추적하지 않는 파일(하네스 잔해)이 0 인지 확인한다. 하네스 준비 실패는 제품 결함으로 세지 않고 잔해로 따로 센다.
+5. 하네스(임시 시험, 스크립트, 자료)는 `<g>` 안에만 만들고(반복마다 다시 돌리므로 반복마다 지워지는 `<d>` 에 두지 않는다), 저장소 루트를 절대 경로로 가리킨다. 본문에 백틱이나 `${...}` 가 든 파일은 셸 치환 없는 방법(파일 쓰기 도구, 따옴표 친 here-document)으로 쓴다. 반복마다 `fingerprint --cwd '<저장소>'` 로 작업 트리를 찍어, 좌석이 기준선보다 늘어난 추적하지 않는 파일(하네스 잔해)이 0 인지 확인한다. 하네스 준비 실패는 제품 결함으로 세지 않고 잔해로 따로 센다.
 
 ```bash
-node '<R>/gate-evidence.mjs' run --dir '<d>' --id tests --cmd 'npm test' --timeout 600 --iter 0 --cwd '<저장소>'
-node '<R>/gate-evidence.mjs' gate --dir '<d>' --gates tests,lint --iter <k> --cwd '<저장소>'
-node '<R>/gate-evidence.mjs' verify --dir '<d>'
+node '<R>/gate-evidence.mjs' init
+node '<R>/gate-evidence.mjs' run --dir '<g>' --id tests --cmd 'npm test' --timeout 600 --iter 0 --cwd '<저장소>'
+node '<R>/gate-evidence.mjs' gate --dir '<g>' --gates tests,lint --iter <k> --cwd '<저장소>'
+node '<R>/gate-evidence.mjs' verify --dir '<g>'
 node '<R>/gate-evidence.mjs' fingerprint --cwd '<저장소>'
-node '<R>/gate-evidence.mjs' note --dir '<d>' --id tests --iter <k> --exit 0 --text '<누가 무엇을 말했나>'
+node '<R>/gate-evidence.mjs' note --dir '<g>' --id tests --iter <k> --exit 0 --text '<누가 무엇을 말했나>'
+node '<R>/gate-evidence.mjs' cleanup --dir '<g>'
 ```
+
+- `gate` 의 `--gates` 에는 게이트 id 만 쉼표로 적는다. `custom:<명령>` 은 id `custom` 이고, `run --id custom --cmd '<명령>'` 으로 돌린다. custom 게이트가 둘 이상이면 id 를 `custom-<이름>`(영소문자, 숫자, `-`)으로 나눠 각각 돌리고 그 id 들을 적는다. 명령은 `--gates` 에 넣지 않는다(명령 안의 쉼표가 목록을 깨뜨린다).
 
 | 규칙 | 기계 판정(`gateConjunct`) |
 |---|---|
 | 선언한 게이트마다 이번 반복의 `observed` 기록 | 없으면 `missing` |
 | 기록의 작업 트리 지문 = 판정 시점 지문 | 다르면 `stale`. 지문은 HEAD, `git status --porcelain=v1 -z`, `git diff HEAD --binary`, 추적하지 않는 파일의 내용 해시 |
+| git 저장소에서 돈 기록 | git 이 없는 폴더의 기록(`git: false`)은 `unverifiable`. 지문이 변경을 보지 못한다. git 저장소에서 돌리거나 `--gates` 없이 돈다 |
 | `pass`, 또는 기준선과 같은 실패 | 기준선 분리는 `baseline` |
 | 흔들림 | 실패 뒤 통과는 같은 지문에서 2회 더 `pass` 해야 함(`flaky`) |
 | `reported` | 판정에 쓰지 않음 |
 
-- Windows 는 PowerShell 7(`pwsh`)이 PATH 에 있으면 그것, 없으면 5.1 이 돌린다. 명령 뒤에 종료 코드를 지키는 줄을 붙이고, 출력은 Node 파이프로 받는다. 시간 초과 때 POSIX 는 프로세스 묶음, Windows 는 `taskkill /T /F` 로 트리 전체를 끝낸다.
-- Codex 에서 `<d>` 가 샌드박스 쓰기 범위 밖이면 `run` 에 승인이 필요하다. 승인을 받을 수 없으면 게이트 증거를 만들 수 없다고 보고하고 `--gates` 없이 돌지 않는다.
+- Windows 는 PowerShell 7(`pwsh`)이 PATH 에 있으면 그것, 없으면 5.1 이 돌린다. 명령 뒤에 종료 코드를 지키는 줄을 붙인다. 출력은 Node 파이프로 받지 않고, 자식이 실행 폴더의 새 출력 파일에 직접 쓴다(Codex 샌드박스에서 파이프 출력이 사라짐). 시간 초과 때 POSIX 는 프로세스 묶음, Windows 는 `taskkill /T /F` 로 트리 전체를 끝낸다.
+- 출력 파일과 추적하지 않는 파일은 조각으로 읽어 해시한다(2 GiB 를 넘어도 멈추지 않음). 판정과 서명은 출력의 64 MiB 까지만 읽고, 넘으면 앞뒤 32 MiB 를 읽어 종료 0 이어도 `misleading` 으로 둔다(좌석이 판단).
+- git 이 무시하는 파일(빌드 결과, 캐시)은 지문에 들지 않는다. 게이트를 돌릴 때마다 새로 생겨 지문이 늘 바뀌기 때문이다. 그래서 무시 파일만 바꾼 고침은 같은 반복 안의 옛 기록을 `stale` 로 만들지 않는다. 고친 뒤에는 늘 게이트를 다시 돌린다(4단계).
+- Codex 에서 `<g>` 가 샌드박스 쓰기 범위 밖이면 `init`, `run`, `cleanup` 에 승인이 필요하다. 승인을 받을 수 없으면 게이트 증거를 만들 수 없다고 보고하고 `--gates` 없이 돌지 않는다.
 
 ### 2. 좌석 착석
 외부 플래그가 있으면 프로브를 **호출당 1회** 돌린다(루프 반복에서 모델을 다시 정하는 재프로브 금지. send 가 보내기 직전 고른 모델로 장치만 다시 확인하는 것은 재프로브가 아니다). 플래그가 없으면 프로브도 외부 좌석도 없다(`no-flag`).
@@ -462,7 +477,7 @@ Codex 에서 역할을 지정했다면 백본 줄에 `type=<역할> · model=<�
               연언항 = 참
 게이트(신고): tests 종료 0(OMX ultraqa 보고서) — 판정에 쓰지 않음
 시나리오 커버리지(선언): 9분류 가운데 행 7, 해당 없음 2(까닭: 취소와 재개, 낡은 상태 — 상태 파일 없음)
-정리(관측): 하네스 잔해 0(기준선 대비 추적하지 않는 파일 증감 없음), 실행 폴더 정리 완료
+정리(관측): 하네스 잔해 0(기준선 대비 추적하지 않는 파일 증감 없음), 게이트 기록 폴더와 페이로드 폴더 정리 완료
 ```
 
 - `게이트(관측)` 은 `gate` 와 `verify` 의 출력을 옮긴다. 축약하지 않는다.

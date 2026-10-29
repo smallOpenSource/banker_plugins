@@ -82,7 +82,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 박스 시험(`boxes.mjs run`) | ssh, scp 네트워크와 `git stash create` 의 `.git` 쓰기 |
 | `npm ci` 같은 의존성 설치, 웹 조사, 외부 좌석 | 네트워크 |
 | 미리보기 서버, Chromium | 포트와 브라우저 실행 |
-| ralph-qa 좌석 폴더, 게이트 기록 폴더 `<g>`(`seat-run.mjs init`, `gate-evidence.mjs run`) | 작업 폴더 밖 쓰기 |
+| ralph-qa 좌석 폴더(`seat-run.mjs init`), 게이트 기록 폴더 `<g>`(`gate-evidence.mjs` 의 init, run, cleanup) | 작업 폴더 밖 쓰기 |
 
 - 모든 박스가 같은 권한 오류로 실패하면 접속 실패로 판정하지 않는다. 승인을 받아 다시 돌린 뒤 판정한다.
 - 스테이징을 못 하면 새 시험 파일은 박스로 가지 않는다. 그 시험은 박스에서 미검증으로 적는다.
@@ -98,7 +98,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | `<boxes>` | Claude Code `<S>/../remains/scripts/boxes.mjs`, Codex `<S>/../banker-remains/scripts/boxes.mjs` |
 | `<scan>` | Claude Code `<S>/../ralph-qa/references/payload-scan.mjs`, Codex `<S>/../banker-ralph-qa/references/payload-scan.mjs` |
 | `<rq>` | ralph-qa 의 `references` 폴더. Claude Code `<S>/../ralph-qa/references`, Codex npm 설치 `<S>/../banker-ralph-qa/references`, Codex 플러그인 설치 `<S>/../ralph-qa/references`. 게이트 실행기 `gate-evidence.mjs` 와 실행 폴더 도구 `seat-run.mjs` 가 여기 있다 |
-| `<g>` | 게이트 기록 폴더. 5단계 1에서 `node "<rq>/seat-run.mjs" init` 이 낸 `dir` 다. 경로는 `05-baseline.md` 첫 줄에 있다 |
+| `<g>` | 게이트 기록 폴더. 5단계 1에서 `node "<rq>/gate-evidence.mjs" init` 이 낸 `dir`(`ralph-qa-gates.<영숫자>`)다. 경로는 `05-baseline.md` 첫 줄에 있다. 9단계까지 남고, 어느 cleanup 의 하루 규칙도 지우지 않는다 |
 | `<run>` | 0단계에서 만든 실행 폴더 절대경로 |
 | `<base>` | 0단계에서 기록한 기준 커밋. 깨끗한 트리면 `HEAD`, 기존 변경을 두고 진행하면 `git stash create` 가 낸 커밋. ralph-qa 와 critic 이 만드는 diff 의 기준이다 |
 | `<agents>`, `<max>` | `--agents`, `--max` 값(기본 3, 5) |
@@ -294,10 +294,10 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
 ## 5. 구현
 
 1. 기준선: 바꾸기 전에 계획의 로컬 게이트마다 명령을 실행기로 한 번 돌린다. 0단계에서 기존 변경을 두고 진행했으면 지금 트리를 기준선으로 쓴다.
-   - `node "<rq>/seat-run.mjs" init` 으로 게이트 기록 폴더를 만든다. 출력의 `dir` 가 `<g>` 다. 이어 하기 메모에 `<g>` 를 덧붙인다.
+   - `node "<rq>/gate-evidence.mjs" init` 으로 게이트 기록 폴더를 만든다. 출력의 `dir` 가 `<g>` 다. 이어 하기 메모에 `<g>` 를 덧붙인다.
    - 게이트마다 `node "<rq>/gate-evidence.mjs" run --dir "<g>" --id <게이트> --cmd "<명령>" --timeout <초> --iter 0 --cwd "<저장소>"` 를 돌린다. 반복 0 이 기준선이다. 6단계 ralph-qa 는 같은 명령, 같은 실패 서명의 실패를 이번 변경의 실패가 아닌 것으로 가른다.
    - `<run>/05-baseline.md` 첫 줄에 `<g>` 경로를 쓴다. 그 아래에 게이트마다 출력 JSON 의 `verdict`, `signature`, `output` 과 이미 실패하는 항목을 옮긴다.
-   - 깨끗한 사본이 필요하면 저장소 밖 임시 폴더에 `git worktree add --detach <임시> HEAD` 로 만들고 `--cwd` 를 그 폴더로 준다. 의존성을 링크하거나 설치한 뒤 돌리고, 명령이 실제로 돌았는지 확인한다. "명령 없음" 오류뿐인 기록은 기준선이 아니다. 끝나면 `git worktree remove --force <임시>` 로 지운다.
+   - 깨끗한 사본이 필요하면 저장소 밖 임시 폴더에 `git worktree add --detach <임시> HEAD` 로 만들고 `--cwd` 를 그 폴더로 준다. 의존성을 링크하거나 설치한 뒤 돌리고, 명령이 실제로 돌았는지 확인한다. "명령 없음" 오류뿐인 기록은 기준선이 아니다. 끝나면 `git worktree remove --force <임시>` 로 지운다. 실행기는 명령을 돌린 폴더를 실패 서명에서 `<repo>` 로 바꾼다. 그래서 사본의 실패와 저장소의 같은 실패가 같은 서명이 된다.
    - `git stash`, `git reset` 은 쓰지 않는다.
 2. Claude Code: ralph 를 `--critic=critic` 으로 부른다. 인자에 아래를 넘긴다.
    - `03-plan.md` 경로. 계획은 합의가 끝났으니 다시 계획하지 말고 PRD 이야기로 나눠 구현하라는 말
@@ -339,7 +339,7 @@ ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 이 머신의 �
    - 이어서 `node "<S>/references/chain-ledger.mjs" gates "<run>" --file "<g>/evidence.md" --round <k>` 로 기록한다. 반복 `<k>` 의 `observed` 기록만 `tests`(`where: "local:<게이트>"`)로 옮기고, 보기 `<run>/qa/local-r<k>.md` 를 만든다.
    - `status` 는 기록의 판정에서 온다. `pass` 는 통과, `fail` 과 `timeout` 은 실패, `misleading` 과 출력 파일 sha256 불일치는 미검증이다. 기준선과 같은 실패는 실패로 두고 `note` 에 적힌다.
    - `reported`(모델이 적은 결과)는 받지 않는다. 시험 결과를 손으로 `tests` 에 적지 않는다.
-   - `<g>` 가 없으면(하루 넘게 지나 정리됨) 새로 `init` 하고 반복 0 없이 돈다. 그러면 기존 실패도 이번 변경의 실패로 셈해진다. 그 사실을 `checklist` 에 넣고 `05-baseline.md` 를 검토 입력에 넣는다.
+   - `<g>` 가 없으면(로그아웃이나 재부팅으로 `$XDG_RUNTIME_DIR` 가 비워짐, 지워짐, 이 판보다 먼저 `seat-run.mjs init` 으로 만든 `ralph-qa.*` 폴더가 하루 규칙으로 정리됨) `gate-evidence.mjs init` 으로 새로 만들고 반복 0 없이 돈다. 그러면 기존 실패도 이번 변경의 실패로 셈해진다. 그 사실을 `checklist` 에 넣고 `05-baseline.md` 를 검토 입력에 넣는다.
 3. 박스에서 같은 시험을 돌린다. 고른 박스마다 `--box <이름>` 을 붙인다. 오래 도는 명령으로 돌리고, 끝난 뒤에 기록한다.
 
    ```bash
@@ -418,7 +418,7 @@ node "<S>/references/chain-report.mjs" "<run>"
    - 커밋 메시지와 PR 본문 초안 파일을 실행 폴더에 만들기
    - 커밋, push, PR 생성, 외부 게시: 사용자가 명시적으로 요청할 때만
 3. 밖으로 나가는 파일은 보내기 전에 하나씩 `node "<scan>" "<파일>"` 로 비밀처럼 보이는 문자열을 찾는다. 출력 JSON 의 `count` 가 0 이고 종료 코드가 0 일 때만 내보낸다. 이미지(캡처 PNG)는 이 검사로 볼 수 없으니, 화면에 비밀이 찍히지 않았는지 사용자에게 확인받는다.
-4. 서버는 사용자가 볼 수 있게 남겨 두고 끄는 명령을 알린다: `node "<S>/references/serve.mjs" --stop "<run>"`. Codex 는 세션을 닫으면 서버가 끝날 수 있으니, 사용자 터미널에서 다시 띄우는 명령(`node "<S>/references/serve.mjs" "<run>"`)도 알린다. 앱 서버처럼 연쇄가 띄운 다른 작업은 모두 멈춘다. 게이트 기록 폴더는 `node "<rq>/seat-run.mjs" cleanup --dir "<g>"` 로 지운다. 기록의 보기는 `qa/local-r<k>.md` 에 남아 있다.
+4. 서버는 사용자가 볼 수 있게 남겨 두고 끄는 명령을 알린다: `node "<S>/references/serve.mjs" --stop "<run>"`. Codex 는 세션을 닫으면 서버가 끝날 수 있으니, 사용자 터미널에서 다시 띄우는 명령(`node "<S>/references/serve.mjs" "<run>"`)도 알린다. 앱 서버처럼 연쇄가 띄운 다른 작업은 모두 멈춘다. 게이트 기록 폴더는 `node "<rq>/gate-evidence.mjs" cleanup --dir "<g>"` 로 지운다(이 판보다 먼저 만든 `ralph-qa.*` 이름의 `<g>` 는 `node "<rq>/seat-run.mjs" cleanup --dir "<g>"`). 기록의 보기는 `qa/local-r<k>.md` 에 남아 있다.
 5. `share` 의 끝을 기록하고 보고서를 마지막으로 다시 만든다.
 
 ## 최종 보고

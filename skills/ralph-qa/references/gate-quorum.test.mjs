@@ -64,10 +64,34 @@ test("scenarios stands for every scenario-* gate, and with none recorded it is m
 });
 
 test("the same failure is a signature seen in three different iterations; repeats within one iteration do not add up", () => {
-  const ev = [obs("tests", 0, "fail"), obs("tests", 1, "fail"), obs("tests", 1, "fail")];
+  const ev = [obs("tests", 1, "fail"), obs("tests", 2, "fail"), obs("tests", 2, "fail")];
   assert.deepEqual(repeatedFailures(ev), []);
-  assert.deepEqual(repeatedFailures([...ev, obs("tests", 2, "fail")]), ["tests:sig-a"]);
-  assert.deepEqual(repeatedFailures([...ev, { kind: "reported", id: "tests", iter: 2, signature: "tests:sig-a" }]), [], "reported lines do not count");
+  assert.deepEqual(repeatedFailures([...ev, obs("tests", 3, "fail")]), ["tests:sig-a"]);
+  assert.deepEqual(repeatedFailures([...ev, { kind: "reported", id: "tests", iter: 3, signature: "tests:sig-a" }]), [], "reported lines do not count");
+});
+
+test("a failure the baseline had is no same failure: left as it was in iterations 0, 1, 2 and 3 it neither repeats nor holds the conjunct", () => {
+  const kept = [0, 1, 2, 3].map((i) => obs("lint", i, "fail"));
+  assert.deepEqual(repeatedFailures(kept), [], "the baseline's own failure, never this change's to fix");
+  assert.deepEqual([gateConjunct(kept, ["lint"], FP, 3).ok, states(gateConjunct(kept, ["lint"], FP, 3)).lint], [true, "baseline"]);
+  assert.deepEqual(repeatedFailures([obs("lint", 0, "fail"), ...[1, 2, 3].map((i) => obs("lint", i, "fail", { signature: "lint:sig-new" }))]), ["lint:sig-new"],
+    "a new failure of the same gate still counts");
+  assert.deepEqual(repeatedFailures([obs("lint", 0, "fail"), ...[1, 2, 3].map((i) => obs("lint", i, "fail", { cmd: "other" }))]), ["lint:sig-a"],
+    "another command is no baseline");
+  assert.deepEqual(repeatedFailures([obs("tests", 0, "fail"), obs("tests", 1, "fail", { cmd: "x" }), obs("tests", 2, "fail", { cmd: "x" })]), [],
+    "iteration 0 is no review iteration");
+});
+
+test("one gate folder across the iterations: a lucky pass after earlier failures is flaky, not a pass", () => {
+  const ev = [obs("tests", 0, "pass"), obs("tests", 1, "fail", { signature: "tests:new" }), obs("tests", 2, "pass")];
+  assert.deepEqual([gateConjunct(ev, ["tests"], FP, 2).ok, gateConjunct(ev, ["tests"], FP, 2).gates[0].state], [false, "flaky"]);
+  assert.equal(gateConjunct(ev.slice(2), ["tests"], FP, 2).ok, true, "a folder that lost iteration 1 would wrongly pass: the folder is kept");
+});
+
+test("a record of a tree with no git is unverifiable: its fingerprint does not see the changes", () => {
+  const r = gateConjunct([obs("tests", 1, "pass", { git: false })], ["tests"], FP, 1);
+  assert.deepEqual([r.ok, r.gates[0].state], [false, "unverifiable"]);
+  assert.equal(gateConjunct([obs("tests", 1, "pass", { git: true })], ["tests"], FP, 1).ok, true);
 });
 
 test("the same issue is (seat, cited path or criterion, title) with the title's case and punctuation normalized", () => {
@@ -108,6 +132,17 @@ test("a failure signature ignores times, numbers and temporary folders, and tell
   assert.notEqual(a, c);
   assert.match(a, /^tests:[0-9a-f]{16}$/);
   assert.notEqual(signatureOf("tests", "fail", "x\n"), signatureOf("tests", "timeout", "x\n"), "the verdict is part of it");
+});
+
+test("a failure signature does not depend on where the repo is: the repo and a clean worktree copy of it give one", () => {
+  const at = (root) => `✖ reads (2ms)\n  Error: ENOENT: no such file or directory, open '${root}/missing.txt'\n at file://${root}/a.test.mjs:4:1\n`;
+  const repo = signatureOf("tests", "fail", at("/app/proj/repo"), ["/app/proj/repo"]);
+  assert.equal(repo, signatureOf("tests", "fail", at("/home/u/wt-copy"), ["/home/u/wt-copy"]));
+  assert.equal(repo, signatureOf("tests", "fail", at("/tmp/wt-9"), ["/tmp/wt-9"]), "a copy under /tmp too");
+  assert.notEqual(signatureOf("tests", "fail", at("/app/proj/repo")), signatureOf("tests", "fail", at("/home/u/wt-copy")), "without the roots they differ");
+  const win = (root) => `Error: open '${root}\\missing.txt' at file:///${root.replace(/\\/g, "/")}/a.mjs`;
+  assert.equal(signatureOf("t", "fail", win("C:\\src\\repo"), ["C:\\src\\repo"]), signatureOf("t", "fail", win("D:\\wt"), ["D:\\wt"]));
+  assert.equal(signatureOf("t", "fail", "Error: /x\n", ["/"]), signatureOf("t", "fail", "Error: /x\n"), "a file system root is never taken");
 });
 
 test("the nine adversarial classes are OMX ultraqa's, each with an id and a Korean name", () => {

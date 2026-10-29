@@ -158,6 +158,20 @@ test("cleanup's day rule removes only marked folders past a day, never a user's 
   assert.ok(!existsSync(j.dir) && !existsSync(j.out), "this run's folders are gone");
 });
 
+// S11 M5: a gate folder (gate-evidence.mjs init) lives the whole run and may wait past a day for Stage 3 or a resume:
+// the day rule of any ralph-qa cleanup in the same base never takes it.
+test("cleanup's day rule leaves a gate folder past a day: another name and marker than a payload folder", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const gates = join(w.base, "ralph-qa-gates.abc123");
+  mkdirSync(gates);
+  writeFileSync(join(gates, ".ralph-qa-gates"), "");
+  writeFileSync(join(gates, "evidence.md"), "{}\n");
+  utimesSync(gates, DAY_2, DAY_2);
+  const r = cli(w, ["cleanup", "--dir", init(w).dir]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(existsSync(join(gates, "evidence.md")) && !r.json.swept.includes(gates), "the baseline of a run that goes on stays");
+});
+
 // Code review: one leftover that cannot be removed stopped the whole cleanup before this run's folders went. The
 // leftover sits in the ~/.cache base, which takes no change: its contents and marker go, the folder itself cannot.
 test("cleanup goes on past a leftover it cannot remove and names it, again next time; this run's own folder that stays is a stop", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {

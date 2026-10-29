@@ -5,13 +5,18 @@
  * skills/ralph-qa/references/gate-evidence.mjs; skills/ultraqa/references holds a byte-identical copy
  * (scripts/sync-adapter.js).
  *
+ *   node gate-evidence.mjs init      the gate folder <g> of one ralph-qa run (ralph-qa-gates.<letters and digits>): made
+ *        once before the baseline, kept across the iterations, apart from the payload folder seat-run.mjs makes anew
+ *        each iteration; seat-run's day rule never takes it (another name, another marker)
+ *   node gate-evidence.mjs cleanup --dir <g>     that gate folder alone, once the run has its end word
  *   node gate-evidence.mjs run --dir <d> --id <id> --cmd <command> --timeout <s> [--iter <n>] [--cwd <repo>]
  *        one command (one gate, never several joined), POSIX `sh -c`, Windows PowerShell 7 (pwsh) when on PATH,
  *        else 5.1, with an exit that keeps the command's code; its output on the descriptor of a new file
  *        <d>/gate-<id>-<iter>-<seq>.md (no Node pipes); past the limit its whole tree ends (POSIX: its process group, TERM then
  *        KILL; Windows: taskkill /T /F); after it ends on its own the group is sent KILL too (POSIX). One
  *        `observed` line goes to <d>/evidence.md: the command, folder, times, exit or signal, timedOut, the output
- *        file and its sha256, the work tree fingerprint after it, the verdict and the failure signature.
+ *        file and its sha256, the work tree fingerprint after it, the verdict and the failure signature. Each seq is
+ *        claimed with a file of its own (<d>/.seq-<n>.md, made with "wx"), so two runs at once never share one.
  *   node gate-evidence.mjs note --dir <d> --id <id> --text <what> [--iter <n>] [--exit <code>]
  *        a `reported` line: what someone said (a model, an OMX report). Never a verdict's evidence.
  *   node gate-evidence.mjs gate --dir <d> --gates <a,b,...> --iter <n> [--cwd <repo>]
@@ -19,20 +24,24 @@
  *   node gate-evidence.mjs verify --dir <d>     each observed output file against its recorded sha256; 1 on a mismatch
  *   node gate-evidence.mjs fingerprint [--cwd <repo>]
  *
- * <d> is a run folder (run-folder.mjs) of ralph-qa or ultraqa. Iteration 0 is the baseline, before any fix. Out: one
+ * <d> is a gate folder (init), an ultraqa run folder, or a ralph-qa folder an older version made with seat-run.mjs init
+ * (run-folder.mjs). Iteration 0 is the baseline, before any fix. Out: one
  * JSON object on stdout; exit 2 for a usage or internal error, 3 for a stop. Every file name ends in .md (a closed
  * network's DRM encrypts files by their extension and leaves .md readable).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { delimiter, join, resolve, win32 } from "node:path";
+import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import { delimiter, dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Stop, runFolder, snapshot } from "./run-folder.mjs";
+import { Stop, hashFile, makeRunFolder, removeRunFolder, runFolder, snapshot } from "./run-folder.mjs";
 
-const KINDS = ["ralph-qa", "ultraqa"];
+const GATES_KIND = "ralph-qa-gates";
+const KINDS = [GATES_KIND, "ralph-qa", "ultraqa"];
 const EVIDENCE = "evidence.md";
 const GRACE_MS = 2000;
+// The output text the verdict and the signature read: whole up to 64 MiB, past that its first and last 32 MiB.
+const TEXT_MAX = 64 << 20;
 const sha256 = (b) => createHash("sha256").update(b).digest("hex");
 
 // The nine adversarial classes (OMX ultraqa's), the lens of ralph-qa's adversarial seat and the rows of ultraqa's matrix.
@@ -65,11 +74,23 @@ const FAILURE_LINE = /(?:^|[\s(])(?:not ok|✖|FAIL(?:ED)?|Error|ERROR|error|[Ff
 const normalized = (line) => line.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/(?:\/tmp|\/var\/folders|\\Temp|\/private\/var)[^\s'"]*/gi, "<tmp>")
   .replace(/\b[0-9a-f]{8,}\b/gi, "<hex>").replace(/\d+(?:\.\d+)?/g, "#").replace(/\s+/g, " ").trim();
 
+// Where the command ran, as <repo>: the same failure in the repo and in a clean worktree copy of it (the baseline of a
+// tree with changes) names two folders. Each root (never a file system root) in its own form and with / (a Windows
+// file URL), longest first, as one pattern.
+function rootsOut(roots) {
+  const forms = [...new Set(roots.filter((r) => r && dirname(r) !== r).flatMap((r) => [r, r.replace(/\\/g, "/")]))].sort((x, y) => y.length - x.length);
+  if (!forms.length) return (line) => line;
+  const re = new RegExp(forms.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+  return (line) => line.replace(re, "<repo>");
+}
+
 // The id with the sha256 (16 hex) of the normalized failure lines, or of the last 20 lines when none reads as one.
-export function signatureOf(id, verdict, text) {
+// `roots` are the folders the command ran in (its cwd, the repo root): written as <repo>.
+export function signatureOf(id, verdict, text, roots = []) {
   const lines = String(text).split(/\r?\n/);
   const failing = lines.filter((l) => FAILURE_LINE.test(l));
-  const picked = (failing.length ? failing : lines.filter((l) => l.trim()).slice(-20)).map(normalized);
+  const out = rootsOut(roots);
+  const picked = (failing.length ? failing : lines.filter((l) => l.trim()).slice(-20)).map((l) => normalized(out(l)));
   return `${id}:${sha256(`${verdict}\n${[...new Set(picked)].slice(0, 200).join("\n")}`).slice(0, 16)}`;
 }
 
@@ -92,10 +113,12 @@ function afterFailure(recs, last, fingerprint) {
   return passes >= PASSES_AFTER_FAIL ? { state: "pass", seq: last.seq } : { state: "flaky", seq: last.seq, need: PASSES_AFTER_FAIL - passes };
 }
 
+// The baseline record (iteration 0 of the gate) failed the same way: the same command and failure signature.
+const sameAsBaseline = (base, r) => Boolean(base) && base.verdict !== "pass" && base.cmd === r.cmd && base.signature === r.signature;
+
 // A failure the baseline (iteration 0, the same command) had with the same signature is not this change's.
 function failed(recs, last) {
-  const base = recs.find((r) => r.iter === 0);
-  const same = base && base.verdict !== "pass" && base.cmd === last.cmd && base.signature === last.signature;
+  const same = sameAsBaseline(recs.find((r) => r.iter === 0), last);
   return same ? { state: "baseline", seq: last.seq, signature: last.signature } : { state: last.verdict, seq: last.seq, signature: last.signature };
 }
 
@@ -103,6 +126,8 @@ function gateState(recs, id, fingerprint, iter) {
   const now = recs.filter((r) => r.iter === iter);
   if (!now.length) return { id, state: "missing" };
   const last = now[now.length - 1];
+  // A tree with no git has one fingerprint whatever changes: no record of it shows the tree it was judged on.
+  if (last.git === false) return { id, state: "unverifiable", seq: last.seq, why: "git 저장소가 아니라 작업 트리 변경을 볼 수 없다" };
   if (last.fingerprint !== fingerprint) return { id, state: "stale", seq: last.seq };
   if (last.verdict === "misleading") return { id, state: "misleading", seq: last.seq, why: last.why };
   return { id, ...(last.verdict === "pass" ? afterFailure(recs, last, fingerprint) : failed(recs, last)) };
@@ -122,8 +147,13 @@ export function repeated(items, n = 3) {
   for (const { key, iter } of items) iters.set(key, (iters.get(key) || new Set()).add(iter));
   return [...iters].filter(([, s]) => s.size >= n).map(([key]) => key);
 }
-export const repeatedFailures = (evidence, n = 3) => repeated(evidence.filter((r) => r?.kind === "observed" && r.signature)
-  .map((r) => ({ key: r.signature, iter: r.iter })), n);
+// A gate's same failure, from iteration 1 on: the baseline (iteration 0) is no review iteration, and a failure the
+// baseline had (same command, same signature; `baseline` in the conjunct, never this change's to fix) is not counted.
+export function repeatedFailures(evidence, n = 3) {
+  const observed = evidence.filter((r) => r?.kind === "observed");
+  const own = observed.filter((r) => r.signature && r.iter !== 0 && !sameAsBaseline(observed.find((b) => b.id === r.id && b.iter === 0), r));
+  return repeated(own.map((r) => ({ key: r.signature, iter: r.iter })), n);
+}
 
 // ralph-qa's same issue: (seat id, the path or criterion ID it cites, its title normalized).
 export const issueKey = (seat, cite, title) => [seat, cite, String(title).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()].join("\u0000");
@@ -170,12 +200,11 @@ function endTree(ctx, child) {
   setTimeout(() => killGroup(child.pid, "SIGKILL"), GRACE_MS).unref();
 }
 
-// Runs `cmd` with its output into `output`; resolves { exit, signal, timedOut, secs, shell }. The child writes to the
-// output file's descriptor itself, not through Node's pipes: those are AF_UNIX socket pairs, and in the Codex Linux
-// sandbox their output can be lost (zero bytes recorded for a command that printed).
-export function execute({ cmd, cwd, limitMs, output }, ctx) {
+// Runs `cmd` with its output on `fd` (a new output file, closed here); resolves { exit, signal, timedOut, secs, shell }.
+// The child writes to the output file's descriptor itself, not through Node's pipes: those are AF_UNIX socket pairs,
+// and in the Codex Linux sandbox their output can be lost (zero bytes recorded for a command that printed).
+export function execute({ cmd, cwd, limitMs, fd }, ctx) {
   const sh = shellFor(cmd, ctx);
-  const fd = openOutput(output);
   const t0 = Date.now();
   return new Promise((done) => {
     const child = spawn(sh.exe, sh.args, { cwd, env: ctx.env, stdio: ["ignore", fd, fd], detached: ctx.platform !== "win32", windowsHide: true });
@@ -202,24 +231,70 @@ export function execute({ cmd, cwd, limitMs, output }, ctx) {
   });
 }
 
-// A new output file (never one already there); a folder the sandbox does not let it write is a stop with what to do.
-function openOutput(output) {
+// A new file (never one already there): its descriptor, or null when one is there; a folder the sandbox does not let
+// it write is a stop with what to do.
+function openNew(p) {
   try {
-    return openSync(output, "wx", 0o600);
+    return openSync(p, "wx", 0o600);
   } catch (e) {
+    if (e.code === "EEXIST") return null;
     if (!["EACCES", "EPERM", "EROFS"].includes(e.code)) throw e;
-    throw new Stop("no-write", `게이트 출력 파일을 만들지 못했다(${e.code}): ${output}. 실행 폴더가 샌드박스 쓰기 범위 밖이면 이 명령을 승인으로 다시 실행한다`, [output]);
+    throw new Stop("no-write", `게이트 기록 파일을 만들지 못했다(${e.code}): ${p}. 실행 폴더가 샌드박스 쓰기 범위 밖이면 이 명령을 승인으로 다시 실행한다`, [p]);
   }
+}
+
+// The next seq: past every recorded one (a record cut short leaves no line) and claimed by its own file made with
+// "wx", so two runs in one folder at once never share one.
+function claimSeq(d) {
+  const recorded = readEvidence(d).map((r) => (Number.isInteger(r?.seq) ? r.seq : 0));
+  for (let seq = Math.max(recorded.length, ...recorded) + 1; ; seq += 1) {
+    const fd = openNew(join(d, `.seq-${seq}.md`));
+    if (fd !== null) return (closeSync(fd), seq);
+  }
+}
+
+// A claimed seq whose output file is new (one a run of an older version left behind takes the next seq).
+function newOutput(d, id, iter) {
+  for (;;) {
+    const seq = claimSeq(d);
+    const output = join(d, `gate-${id}-${iter}-${seq}.md`);
+    const fd = openNew(output);
+    if (fd !== null) return { seq, output, fd };
+  }
+}
+
+// What the verdict and the signature read: the whole output up to TEXT_MAX, past it the first and last half (a
+// test runner's counts are at its end) with `cut`.
+export function outputText(p, max = TEXT_MAX) {
+  const fd = openSync(p, "r");
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= max) return { text: readFileSync(fd).toString("utf8"), size, cut: false };
+    const part = (at, n) => {
+      const b = Buffer.alloc(n);
+      return b.subarray(0, readSync(fd, b, 0, n, at));
+    };
+    return { text: Buffer.concat([part(0, max / 2), Buffer.from("\n"), part(size - max / 2, max / 2)]).toString("utf8"), size, cut: true };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// The verdict of one run; a pass whose output was too large to read whole is misleading (the seats judge it).
+function verdictOf(r, out) {
+  if (r.error) return { verdict: "fail", why: `시작 실패(${r.error})` };
+  const v = judge({ ...r, text: out.text });
+  return v.verdict === "pass" && out.cut ? { verdict: "misleading", why: `출력 ${out.size} 바이트가 ${TEXT_MAX} 바이트를 넘어 앞뒤만 봄` } : v;
 }
 
 // ---- commands
 
 class Usage extends Error {}
 const FLAGS = {
-  run: ["dir", "id", "cmd", "timeout", "iter", "cwd"], note: ["dir", "id", "text", "iter", "exit"], gate: ["dir", "gates", "iter", "cwd"],
-  verify: ["dir"], fingerprint: ["cwd"],
+  init: [], cleanup: ["dir"], run: ["dir", "id", "cmd", "timeout", "iter", "cwd"], note: ["dir", "id", "text", "iter", "exit"],
+  gate: ["dir", "gates", "iter", "cwd"], verify: ["dir"], fingerprint: ["cwd"],
 };
-const REQUIRED = { run: ["dir", "id", "cmd", "timeout"], note: ["dir", "id", "text"], gate: ["dir", "gates", "iter"], verify: ["dir"], fingerprint: [] };
+const REQUIRED = { init: [], cleanup: ["dir"], run: ["dir", "id", "cmd", "timeout"], note: ["dir", "id", "text"], gate: ["dir", "gates", "iter"], verify: ["dir"], fingerprint: [] };
 
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -268,23 +343,32 @@ export function readEvidence(d) {
 }
 const append = (d, record) => appendFileSync(join(d, EVIDENCE), `${JSON.stringify(record)}\n`, { mode: 0o600 });
 
+function init(_o, ctx) {
+  const { dir, base } = makeRunFolder(ctx, GATES_KIND);
+  return [{ ok: true, dir, base }, 0];
+}
+
+// The gate folder alone (an older ralph-qa.* folder goes with seat-run.mjs cleanup, which knows its answer folder).
+function cleanup(o, ctx) {
+  return [{ ok: true, ...removeRunFolder(o.dir, ctx, [GATES_KIND]) }, 0];
+}
+
 async function run(o, ctx) {
   const { d } = runFolder(o.dir, ctx, KINDS);
   const [id, iter, limit] = [gateId(o.id), whole(o.iter ?? 0, "iter", 0, 999), whole(o.timeout, "timeout", 1, 86400)];
   const cwd = resolve(o.cwd || process.cwd());
   if (!existsSync(cwd)) throw new Stop("no-cwd", `--cwd 폴더가 없다: ${cwd}`);
-  let seq = readEvidence(d).length + 1;
-  while (existsSync(join(d, `gate-${id}-${iter}-${seq}.md`))) seq += 1;
-  const output = join(d, `gate-${id}-${iter}-${seq}.md`);
+  const { seq, output, fd } = newOutput(d, id, iter);
   const startedAt = new Date().toISOString();
-  const r = await execute({ cmd: o.cmd, cwd, limitMs: limit * 1000, output }, ctx);
-  const text = readFileSync(output);
+  const r = await execute({ cmd: o.cmd, cwd, limitMs: limit * 1000, fd }, ctx);
+  const out = outputText(output);
   const snap = await snapshot(cwd, ctx.env);
-  const v = r.error ? { verdict: "fail", why: `시작 실패(${r.error})` } : judge({ ...r, text: text.toString("utf8") });
+  const v = verdictOf(r, out);
   const record = {
     kind: "observed", id, iter, seq, cmd: o.cmd, cwd, shell: r.shell, startedAt, endedAt: new Date().toISOString(), secs: r.secs,
-    exit: r.exit, signal: r.signal, timedOut: r.timedOut, timeout: limit, output, outputSha256: sha256(text), bytes: text.length,
-    git: snap.git, fingerprint: snap.fingerprint, verdict: v.verdict, why: v.why, signature: v.verdict === "pass" ? null : signatureOf(id, v.verdict, text),
+    exit: r.exit, signal: r.signal, timedOut: r.timedOut, timeout: limit, output, outputSha256: hashFile(createHash, output), bytes: out.size,
+    git: snap.git, fingerprint: snap.fingerprint, verdict: v.verdict, why: v.why,
+    signature: v.verdict === "pass" ? null : signatureOf(id, v.verdict, out.text, [cwd, snap.root]),
   };
   append(d, record);
   return [record, 0];
@@ -293,7 +377,7 @@ async function run(o, ctx) {
 function note(o, ctx) {
   const { d } = runFolder(o.dir, ctx, KINDS);
   const record = { kind: "reported", id: gateId(o.id), iter: whole(o.iter ?? 0, "iter", 0, 999), exit: o.exit === undefined ? null : Number(o.exit),
-    text: String(o.text).slice(0, 4000), at: new Date().toISOString(), seq: readEvidence(d).length + 1 };
+    text: String(o.text).slice(0, 4000), at: new Date().toISOString(), seq: claimSeq(d) };
   append(d, record);
   return [record, 0];
 }
@@ -312,7 +396,7 @@ function verify(o, ctx) {
   const checked = readEvidence(d).filter((r) => r.kind === "observed").map((r) => {
     let now = null;
     try {
-      now = sha256(readFileSync(r.output));
+      now = hashFile(createHash, r.output);
     } catch {
       /* gone */
     }
@@ -327,7 +411,7 @@ async function fingerprint(o, ctx) {
   return [snap, 0];
 }
 
-const COMMANDS = { run, note, gate, verify, fingerprint };
+const COMMANDS = { init, cleanup, run, note, gate, verify, fingerprint };
 
 // A usage error and an internal one on stderr (2), a stop as JSON on stdout (3).
 function failure(e, out, err) {

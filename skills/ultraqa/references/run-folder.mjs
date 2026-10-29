@@ -13,12 +13,13 @@
  *   removeRunFolder(dir, ctx, kinds)  one run folder, checked as runFolder checks it; nothing outside it
  *   snapshot(repo, env)               (async) HEAD, the status, the untracked files' content hashes, one fingerprint
  *   spawnFiles(exe, args, opts)       spawnSync with files, not pipes, for the child's input and output
+ *   hashFile(createHash, p)           a file's sha256 read in pieces (a file past 2 GiB is no Buffer)
  *
  * ctx is { env, platform }. A base is never /tmp: another account may put files there (gemini, a ralph-qa seat, reads
  * a .env it finds walking up from its folder). No shell and no network: git runs as a program with its arguments.
  */
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
@@ -70,29 +71,30 @@ export function privateDir(p) {
 const insideHome = (ctx, p) => norm(ctx, realOr(p)).startsWith(norm(ctx, realOr(homeOf(ctx))) + sep);
 
 // The base for this run's folders, and every base a run of any version may have used, for the day rule. Linux: an
-// XDG_RUNTIME_DIR of this account's own and not below a shared folder (/tmp) the home is not below, else ~/.cache; macOS: $TMPDIR (its own per account); Windows: %TEMP% when it
-// is inside the home, else ~/.cache (the old Git Bash runs used ~/.cache).
+// XDG_RUNTIME_DIR, macOS: a $TMPDIR (its own per account by default), of this account's own and not below a shared
+// folder (/tmp) the home is not below, else ~/.cache; Windows: %TEMP% when it is inside the home, else ~/.cache (the
+// old Git Bash runs used ~/.cache).
+const OWN_TEMP = { linux: "XDG_RUNTIME_DIR", darwin: "TMPDIR" };
 export function bases(ctx) {
   const cache = join(homeOf(ctx), ".cache");
   const base = baseOn(ctx, cache);
-  const xdg = ctx.platform === "linux" && ctx.env.XDG_RUNTIME_DIR ? [resolve(ctx.env.XDG_RUNTIME_DIR)] : [];
-  return { base, known: [...new Set([base, cache, ...xdg])] };
+  const own = ctx.env[OWN_TEMP[ctx.platform]];
+  return { base, known: [...new Set([base, cache, ...(own ? [resolve(own)] : [])])] };
 }
 
 function baseOn(ctx, cache) {
   const { env } = ctx;
   if (ctx.platform === "win32") return env.TEMP && insideHome(ctx, env.TEMP) ? resolve(env.TEMP) : cache;
-  if (ctx.platform === "darwin") return env.TMPDIR ? resolve(env.TMPDIR) : cache;
-  const xdg = env.XDG_RUNTIME_DIR;
-  return xdg && isAbsolute(xdg) && privateDir(xdg) && !belowSharedAlone(ctx, xdg) ? resolve(xdg) : cache;
+  const own = env[OWN_TEMP[ctx.platform]];
+  return own && isAbsolute(own) && privateDir(own) && !belowSharedAlone(ctx, own) ? resolve(own) : cache;
 }
 
 const belowSharedAlone = (ctx, p) => Boolean(sharedAbove(p)) && !sharedAbove(homeOf(ctx));
 
 // The nearest folder above p, by its real path, that every account may write in (/tmp, /var/tmp, /dev/shm), or null.
 // A private folder there is still a folder whose parents another account fills: gemini reads the .env it finds
-// walking up to the root. An XDG_RUNTIME_DIR below one is refused unless the home is below one too (a test box's
-// account under /tmp): then ~/.cache is no better. POSIX only.
+// walking up to the root. An XDG_RUNTIME_DIR or $TMPDIR below one is refused unless the home is below one too (a test
+// box's account under /tmp): then ~/.cache is no better. POSIX only.
 export function sharedAbove(p) {
   for (let d = dirname(realOr(resolve(p))); ; d = dirname(d)) {
     try {
@@ -189,13 +191,16 @@ export function removeRunFolder(dir, ctx, kinds) {
 // spawnSync with the child's stdin, stdout and stderr on files in a private temporary folder, read back into
 // r.stdout and r.stderr (Buffers) and removed. Node's own pipes are AF_UNIX socket pairs, and the Codex Linux sandbox
 // refuses their setsockopt: a pipe child's output can be lost and spawnSync reports EPERM though the program ran.
-// A file descriptor works there. Without a temporary folder it falls back to the pipes.
-export function spawnFiles(exe, args, { input, ...opts } = {}) {
+// A file descriptor works there. Without a temporary folder it falls back to the pipes. With `digest` (a function
+// of the stdout file's path, or of the Buffer on the pipe fallback) r.stdout is what it gives, and the output, which
+// may pass 2 GiB, is never read whole.
+export function spawnFiles(exe, args, { input, digest, ...opts } = {}) {
   let t;
   try {
     t = mkdtempSync(join(tmpdir(), "rq-io-"));
   } catch {
-    return spawnSync(exe, args, { ...opts, input });
+    const r = spawnSync(exe, args, { ...opts, input });
+    return digest && r.stdout ? { ...r, stdout: digest(r.stdout) } : r;
   }
   const fds = [];
   const open = (name, flags) => (fds.push(openSync(join(t, name), flags, 0o600)), fds[fds.length - 1]);
@@ -203,11 +208,25 @@ export function spawnFiles(exe, args, { input, ...opts } = {}) {
     if (input !== undefined) writeFileSync(join(t, "in"), input, { mode: 0o600 });
     const stdio = [input === undefined ? "ignore" : open("in", "r"), open("out", "wx"), open("err", "wx")];
     const r = spawnSync(exe, args, { ...opts, stdio });
-    return { ...r, stdout: readFileSync(join(t, "out")), stderr: readFileSync(join(t, "err")) };
+    return { ...r, stdout: (digest || readFileSync)(join(t, "out")), stderr: readFileSync(join(t, "err")) };
   } finally {
     for (const fd of fds) closeSync(fd);
     rmSync(t, { recursive: true, force: true });
   }
+}
+
+// A file's sha256 in pieces of 1 MiB: readFileSync stops at 2 GiB (ERR_FS_FILE_TOO_LARGE). `createHash` comes from
+// the caller (this module loads node:crypto only inside snapshot).
+export function hashFile(createHash, p) {
+  const h = createHash("sha256");
+  const fd = openSync(p, "r");
+  try {
+    const buf = Buffer.alloc(1 << 20);
+    for (let n = readSync(fd, buf, 0, buf.length, null); n > 0; n = readSync(fd, buf, 0, buf.length, null)) h.update(buf.subarray(0, n));
+  } finally {
+    closeSync(fd);
+  }
+  return h.digest("hex");
 }
 
 // ---- the work tree snapshot
@@ -215,9 +234,9 @@ export function spawnFiles(exe, args, { input, ...opts } = {}) {
 // git as a program, from the home folder (Windows looks in the working folder first for a bare name; a home that is
 // not there, as in a test's env, gives the temporary folder), with no fsmonitor program and no external diff or text
 // conversion.
-function git(repo, env, args) {
+function git(repo, env, args, digest) {
   const cwd = existsSync(homedir()) ? homedir() : tmpdir();
-  const r = spawnFiles("git", ["-c", "core.fsmonitor=false", "-C", repo, ...args], { cwd, env, maxBuffer: 1 << 30, windowsHide: true });
+  const r = spawnFiles("git", ["-c", "core.fsmonitor=false", "-C", repo, ...args], { cwd, env, maxBuffer: 1 << 30, windowsHide: true, digest });
   return { ok: r.status === 0, out: r.stdout || Buffer.alloc(0), err: String(r.stderr || r.error?.code || "") };
 }
 
@@ -233,30 +252,34 @@ function untrackedOf(raw) {
   return out.sort();
 }
 
-function contentOf(root, rel) {
+// An untracked entry's content hash: a link's target, a file's bytes (in pieces), or what it is when it is neither.
+function contentHash(root, rel, hash, createHash) {
   const p = join(root, rel);
   const st = lstatOr(p);
-  if (st?.isSymbolicLink()) return Buffer.from(`link\0${readlinkSync(p)}`);
-  if (st?.isFile()) return readFileSync(p);
-  return Buffer.from(st ? "other" : "gone");
+  if (st?.isSymbolicLink()) return hash(Buffer.from(`link\0${readlinkSync(p)}`));
+  if (st?.isFile()) return hashFile(createHash, p);
+  return hash(Buffer.from(st ? "other" : "gone"));
 }
 
 // What a gate's result was judged on: HEAD, the status, the diff against HEAD (the index and the work tree) and every
-// untracked file's content, hashed together. A tree with no git has one fingerprint per folder: changes go unseen.
+// untracked file's content, hashed together; the diffs and the files are hashed in pieces, never read whole. A tree
+// with no git has one fingerprint per folder: changes go unseen (`git: false`, which the gate conjunct does not take).
+// Files git ignores are outside it: a build or a test run makes them anew every time.
 export async function snapshot(repo, env = process.env) {
   const { createHash } = await import("node:crypto");
   const hash = (b) => createHash("sha256").update(b).digest("hex");
+  const digest = (src) => (Buffer.isBuffer(src) ? hash(src) : hashFile(createHash, src));
   const top = git(resolve(repo), env, ["rev-parse", "--show-toplevel"]);
   if (!top.ok) return { git: false, head: null, untracked: [], fingerprint: hash(`no-git\0${resolve(repo)}`) };
   const root = String(top.out).trim();
   const head = git(root, env, ["rev-parse", "--verify", "-q", "HEAD"]);
   const status = git(root, env, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
   const diffArgs = ["--binary", "--no-ext-diff", "--no-textconv"];
-  const diffs = head.ok ? [git(root, env, ["diff", "HEAD", ...diffArgs])] : [git(root, env, ["diff", "--cached", ...diffArgs]), git(root, env, ["diff", ...diffArgs])];
+  const diffs = (head.ok ? [["diff", "HEAD"]] : [["diff", "--cached"], ["diff"]]).map((a) => git(root, env, [...a, ...diffArgs], digest));
   const failed = [status, ...diffs].find((r) => !r.ok);
   if (failed) throw new Stop("git-failed", `작업 트리를 읽지 못했다: ${failed.err.split("\n")[0]}`);
-  const untracked = untrackedOf(status.out).map((path) => ({ path, sha256: hash(contentOf(root, path)) }));
+  const untracked = untrackedOf(status.out).map((path) => ({ path, sha256: contentHash(root, path, hash, createHash) }));
   const headId = head.ok ? String(head.out).trim() : null;
-  const parts = [`head\0${headId}`, `status\0${hash(status.out)}`, ...diffs.map((r) => `diff\0${hash(r.out)}`), ...untracked.map((u) => `new\0${u.path}\0${u.sha256}`)];
+  const parts = [`head\0${headId}`, `status\0${hash(status.out)}`, ...diffs.map((r) => `diff\0${r.out}`), ...untracked.map((u) => `new\0${u.path}\0${u.sha256}`)];
   return { git: true, root, head: headId, untracked, fingerprint: hash(parts.join("\n")) };
 }

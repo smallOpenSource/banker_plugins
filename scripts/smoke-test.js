@@ -841,6 +841,17 @@ try {
      && /닫는 표지 `<\/review-data id="<id>">` 는 쓰지 않는다\(실행기가 붙인다\. 쓰면 `markers`\)/.test(rqSkill) && /`spec\.md` 에는 아래 표의 다섯 낱말로 시작하는 줄만 쓴다/.test(rqSkill)
      && /`prepare` 가 `git-failed` 로 멈추면 `INCONCLUSIVE` 로 흐리지 않는다/.test(rqSkill) && /`멈춤: prepare git-failed\(<message>\)`/.test(rqSkill),
      'rq-tools: ralph-qa seats write a missing tool as 도구 없음 and raise it as a blocker only when the criteria need it, roles that ask for no missing tool come first, the quorum block is byte for byte the same, and a Codex prepare git-failed is a named stop');
+  // S11 H1, M5: one gate folder <g> per run, made by gate-evidence.mjs init before the baseline, kept across the iterations
+  // (another name than a payload folder, so no day rule takes it), removed once after the end word; a <g> a caller gives
+  // is used as it is. ralph-qa and the three chains that hand one say the same.
+  const lifeDocs = ['all-in-one', 'ultra-init', 'ultra-chain'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);
+  const lifeBad = lifeDocs.filter(([, t]) => !/gate-evidence\.mjs['"] init/.test(t) || !/gate-evidence\.mjs['"] cleanup --dir ['"]<g>['"]/.test(t)
+    || /seat-run\.mjs['"] init[^\n]*(?:gate folder|게이트 기록 폴더)/.test(t) || !/(?:If `<g>` is gone|`<g>` 가 없으면)/.test(t)).map(([n]) => n)
+    .concat(/\*\*게이트 기록 폴더의 수명\.\*\*/.test(rqSkill) && /seat-run 의 `cleanup` 과 하루 규칙은 이 폴더를 지우지 않는다/.test(rqSkill)
+      && /종결어\(`APPROVE`, `ITERATE`, `INCONCLUSIVE`\)를 낸 뒤에만 한 번 `node '<R>\/gate-evidence\.mjs' cleanup --dir '<g>'`/.test(rqSkill)
+      && /호출자가 반복 0 을 이미 돌린 `<g>` 를 넘기면 그 폴더를 쓴다/.test(rqSkill) && !/gate-evidence\.mjs' (?:run|gate|verify|note) --dir '<d>'/.test(rqSkill)
+      && /const GATES_KIND = "ralph-qa-gates"/.test(gateSrc) ? [] : ['ralph-qa']);
+  ok(lifeBad.length === 0, `gate-life: ralph-qa keeps one gate folder per run (init before the baseline, no day rule, cleanup after the end word, a caller's <g> used as given) and all-in-one, ultra-init and ultra-chain make and remove it with gate-evidence.mjs and say what to do when it is gone${lifeBad.length ? ` (${lifeBad.join(', ')})` : ''}`);
   // S11 H2, M2: an ultraqa pass row rests on a passing scenario record of this cycle, and --interactive is the drives' records.
   const tmuxDrive = fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'references', 'tmux-drive.md'), 'utf8');
   ok(/이번 순환에 그 행을 돌린 `scenario-<번호>` 기록 가운데 `pass` 인 것의 번호/.test(uqaSkill) && /게이트 `interactive` 는 그 기록 모두다/.test(uqaSkill)

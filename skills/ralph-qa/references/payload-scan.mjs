@@ -78,8 +78,9 @@ export const PATTERNS = [
   // .netrc: `machine <host> ... password <value>` on one line, or a `password <value>` line of its own (the file's
   // other layout, one token pair a line); a value that is a reference or a placeholder is none
   ["netrc-password", /^[+\- ]?\s*(?:(?:machine\s+\S{1,256}|default)(?:\s+\S{1,256}){0,16}?\s+password\s+(?![$<{%])\S|password\s+(?![$<{%])\S{1,256}\s*$)/],
-  // .pgpass: host:port:database:user:password, the port a number or *, no empty field
-  ["pgpass-line", /^[+\- ]?[^\s:#]{1,256}:(?:\d{1,5}|\*):[^\s:]{1,256}:[^\s:]{1,256}:(?!\*?$)\S{1,256}$/],
+  // .pgpass: host:port:database:user:password, the port a number or *, no empty field. The host is not digits alone
+  // and the password holds no colon but an escaped one (\:), so a MAC of digits or a time (12:30:45:00) is no hit.
+  ["pgpass-line", /^[+\- ]?(?=[^\s:#]*[^\d\s:#])[^\s:#+\-][^\s:#]{0,255}:(?:\d{1,5}|\*):[^\s:]{1,256}:[^\s:]{1,256}:(?!\*?$)(?:\\.|[^\s:\\]){1,256}$/],
   // docker's config.json: "auth" holds base64 of user:password (checked by decoding it, below)
   ["docker-auth", /"auth"\s*:\s*"[A-Za-z0-9+/]{4,65536}={0,2}"/],
 ];

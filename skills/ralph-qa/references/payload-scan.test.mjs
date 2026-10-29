@@ -421,8 +421,8 @@ test("a .netrc password, a .pgpass line and docker's config.json auth are caught
   const pw = "pass" + "word";
   const netrcLines = ["machine git.example.com", "  login bob", `  ${pw} ` + "Netrc-V4lue", "default login anon " + pw + " An0n-V4lue account x"].join("\n");
   assert.deepEqual(scan(netrcLines).hits.map((h) => [h.line, h.kind]), [[3, "netrc-pass" + "word"], [4, "netrc-pass" + "word"]]);
-  const pgpass = ["# host:port:db:user:" + pw, "localhost:*:*:bob:" + "Pg-V4lue", "+db.internal:6432:app:svc:" + "Pg-0ther"].join("\n");
-  assert.deepEqual(scan(pgpass).hits.map((h) => [h.line, h.kind]), [[2, "pgpass-line"], [3, "pgpass-line"]]);
+  const pgpass = ["# host:port:db:user:" + pw, "localhost:*:*:bob:" + "Pg-V4lue", "+db.internal:6432:app:svc:" + "Pg-0ther", "10.0.0.5:5432:app:bob:" + "Pg\\:c0lon"].join("\n");
+  assert.deepEqual(scan(pgpass).hits.map((h) => [h.line, h.kind]), [[2, "pgpass-line"], [3, "pgpass-line"], [4, "pgpass-line"]], "an escaped colon in the password too");
   const auth = Buffer.from("svc:" + "Dock3r-V4lue").toString("base64");
   const docker = ["{", '  "auths": {', '    "ghcr.io": {', `      "au` + `th": "${auth}"`, "    }", "  }", "}"].join("\n");
   assert.deepEqual(scan(docker).hits.map((h) => [h.line, h.kind]), [[4, "docker-auth"]]);
@@ -434,6 +434,8 @@ test("files shaped like a .netrc, a .pgpass or a docker config.json with no secr
     "machine git.example.com", "  login bob", "machine h login u", "default login anonymous", `  ${pw}`, `  ${pw} $NETRC_PASS`,
     `the ${pw} is required here`, `${pw} must be 12 characters or more`,
     "localhost:5432:*:*:*", "root:x:0:0:root:/root:/bin/bash", "12:30:45", "a:b:c:d:e", "ports: 8080:80",
+    // S11 L10: a MAC of digits, a time with frames, a MAC with a letter in its first group (the password would hold a colon)
+    "+00:11:22:33:44:55", "+12:30:45:00:01", "0a:11:22:33:44:55",
     '{"auths": {}}', '{"auths": {"ghcr.io": {"au' + 'th": ""}}}', '"credsStore": "desktop"', '"au' + 'th": "none"',
     '"au' + 'th": "' + Buffer.from("no colon here").toString("base64") + '"',
   ].join("\n");

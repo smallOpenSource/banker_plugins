@@ -158,7 +158,7 @@ Make the gate folder and run each `--qa` goal's command once on the unchanged
 tree, through ralph-qa's runner, as iteration 0:
 
 ```bash
-node '<RQ>/seat-run.mjs' init        # its "dir" is the gate folder <g>
+node '<RQ>/gate-evidence.mjs' init   # its "dir" is the gate folder <g>
 node '<RQ>/gate-evidence.mjs' run --dir '<g>' --id tests --cmd '<the tests command>' --timeout 600 --iter 0 --cwd '<repo>'
 ```
 
@@ -174,9 +174,13 @@ the tree already has changes, take the record from a clean copy of HEAD
 `git worktree remove <tmp>`). A fresh worktree has no installed dependencies
 (`node_modules`, a venv): link or install them there first, and confirm the
 commands really ran — a record made only of "command not found" errors is no
-baseline. On Codex the runner writes outside the workspace: ask for approval to
+baseline. The runner writes the folder a command ran in as `<repo>` in the
+failure signature, so a failure in the copy and the same failure in the repo
+match. On Codex the runner writes outside the workspace: ask for approval to
 run it outside the sandbox. The record lives in `<g>`; if the session may
 compact or end before Stage 3, put the `<g>` path in the `ready-compact` note.
+The gate folder lives until Stage 3 has its end word: no cleanup's day rule
+takes it (ralph-qa's gate folder rule).
 
 ### Stage 2 — Implement: `/ralph`
 
@@ -245,7 +249,8 @@ Invoke ralph-qa (Claude Code `Skill("banker:ralph-qa")`; Codex
 - **What to judge:** the change since `HEAD` as Stage 2 began (commits ralph
   made count as part of it), the plan path from Stage 1, and the plan's
   acceptance criteria.
-- **Gate evidence:** the gate folder `<g>` with its iteration-0 baseline, and
+- **Gate evidence:** the gate folder `<g>` with its iteration-0 baseline (ralph-qa
+  uses it, runs no iteration 0 of its own and does not remove it), and
   for each goal the one command and timeout the baseline ran. Add the
   acceptance criterion "each `--qa` goal's real command ran through the runner
   (`gate-evidence.mjs run`) on the tree being judged, as an `observed` record";
@@ -259,11 +264,18 @@ Invoke ralph-qa (Claude Code `Skill("banker:ralph-qa")`; Codex
 - **Baseline rule:** never fix a baseline failure; report it apart. A baseline
   failure whose failing lines point at a file the change touched counts as new
   (as in ralph): the seats raise it as a blocker.
+- **If `<g>` is gone** (the runner stops with `not-a-run-folder`: a logout or
+  reboot emptied `$XDG_RUNTIME_DIR`, or it was removed): make a new one with
+  `gate-evidence.mjs init` and hand that, with no iteration 0. Never run
+  iteration 0 on the changed tree. Failures that were there before then count
+  as this change's: put the line `gate baseline: none (<g> was gone)` in the
+  report, with Stage 2's ralph baseline list beside it.
 
 ralph-qa owns the loop: its seats judge, the author fixes, it runs the gates
 again and the same seats judge again, up to its `--max` (5). all-in-one adds no
-cycle of its own. When it ends, run `node '<RQ>/seat-run.mjs' cleanup --dir '<g>'`
-unless ralph-qa already removed the folder.
+cycle of its own. When it has its end word, run
+`node '<RQ>/gate-evidence.mjs' cleanup --dir '<g>'` (a `<g>` named `ralph-qa.*`,
+made before this version, goes with `node '<RQ>/seat-run.mjs' cleanup --dir '<g>'`).
 
 Report the real outcome by ralph-qa's end word (the word before any parenthesis):
 - **`APPROVE`** → "ALL-IN-ONE COMPLETE" with ralph-qa's verdict line, its

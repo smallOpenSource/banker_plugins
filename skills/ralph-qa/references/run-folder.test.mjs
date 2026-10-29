@@ -1,11 +1,12 @@
 // Tests for run-folder.mjs. Run: node --test skills/ralph-qa/references/run-folder.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { Stop, bases, makeRunFolder, sharedAbove, removeMarked, removeRunFolder, runFolder, snapshot, spawnFiles } from "./run-folder.mjs";
+import { Stop, bases, hashFile, makeRunFolder, sharedAbove, removeMarked, removeRunFolder, runFolder, snapshot, spawnFiles } from "./run-folder.mjs";
 
 const WIN = process.platform === "win32";
 const MAC = process.platform === "darwin";
@@ -25,7 +26,9 @@ function world(t) {
 
 test("bases: XDG_RUNTIME_DIR only when private, macOS TMPDIR, Windows TEMP only inside the home, ~/.cache always known", () => {
   const home = WIN ? "C:\\Users\\u" : "/home/u";
-  assert.equal(bases({ platform: "darwin", env: { HOME: home, TMPDIR: "/var/folders/x/T" } }).base, resolve("/var/folders/x/T"));
+  const mac = bases({ platform: "darwin", env: { HOME: home, TMPDIR: join(tmpdir(), "rq-no-such-folder") } });
+  assert.equal(mac.base, join(home, ".cache"), "a TMPDIR that is not this account's private folder");
+  assert.ok(mac.known.includes(resolve(join(tmpdir(), "rq-no-such-folder"))), "the TMPDIR stays known for the day rule");
   const win = bases({ platform: "win32", env: { USERPROFILE: "C:\\Users\\u", TEMP: "D:\\temp" } });
   assert.equal(win.base, join("C:\\Users\\u", ".cache"), "a TEMP outside the home is not used");
   const linux = bases({ platform: "linux", env: { HOME: home, XDG_RUNTIME_DIR: join(tmpdir(), "rq-no-such-folder") } });
@@ -160,6 +163,54 @@ test("spawnFiles gives the child files, not pipes: input, stdout and stderr arri
   const none = spawnFiles(process.execPath, ["-e", "process.stdin.on('data',()=>process.exit(9)).on('end',()=>process.exit(0))"]);
   assert.deepEqual([none.status, none.stdout.length], [0, 0]);
   assert.deepEqual(readdirSync(own), []);
+});
+
+test("macOS: a private TMPDIR is the base, one below a shared folder (TMPDIR=/tmp or under it) is not and ~/.cache is", { skip: WIN && "POSIX mode bits" }, (t) => {
+  const w = world(t);
+  assert.equal(bases({ platform: "darwin", env: { HOME: w.home, TMPDIR: w.base } }).base, resolve(w.base));
+  const dir = realpathSync.native(mkdtempSync(join("/tmp", "rq-rf-mac-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  chmodSync(dir, 0o700);
+  const away = "/rq-no-such-home";
+  assert.equal(bases({ platform: "darwin", env: { HOME: away, TMPDIR: dir } }).base, join(away, ".cache"), "a private folder under /tmp");
+  assert.equal(bases({ platform: "darwin", env: { HOME: away, TMPDIR: "/tmp" } }).base, join(away, ".cache"), "TMPDIR=/tmp itself");
+});
+
+test("hashFile hashes in pieces what createHash gives for the whole; snapshot hashes an untracked file past 2 GiB", { skip: !HAS_GIT && "no git" }, async (t) => {
+  const w = world(t);
+  const p = join(w.dir, "x.md");
+  const body = "abc\n".repeat(700000);
+  writeFileSync(p, body);
+  assert.equal(hashFile(createHash, p), createHash("sha256").update(body).digest("hex"));
+  const r = spawnFiles(process.execPath, ["-e", "process.stdout.write('digest me')"], { digest: (src) => (Buffer.isBuffer(src) ? "buffer" : hashFile(createHash, src)) });
+  assert.equal(r.stdout, createHash("sha256").update("digest me").digest("hex"), "with digest, stdout is what it gives for the output file");
+  if (WIN) return;
+  const repo = join(w.dir, "repo");
+  mkdirSync(repo);
+  git(repo, "-c", "init.defaultBranch=main", "init", "-q");
+  git(repo, "commit", "-q", "--allow-empty", "-m", "base");
+  writeFileSync(join(repo, "huge.bin"), "");
+  truncateSync(join(repo, "huge.bin"), 2254857830);
+  const snap = await snapshot(repo);
+  assert.deepEqual(snap.untracked.map((u) => u.path), ["huge.bin"], "no ERR_FS_FILE_TOO_LARGE");
+});
+
+test("the fingerprint is the value earlier versions gave: hashing in pieces changed no fingerprint", { skip: !HAS_GIT && "no git" }, async (t) => {
+  const w = world(t);
+  const repo = join(w.dir, "repo");
+  mkdirSync(repo);
+  git(repo, "-c", "init.defaultBranch=main", "init", "-q");
+  writeFileSync(join(repo, "a.txt"), "one\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "base");
+  writeFileSync(join(repo, "a.txt"), "two\n");
+  writeFileSync(join(repo, "new.txt"), "new\n");
+  const h = (b) => createHash("sha256").update(b).digest("hex");
+  const out = (...a) => spawnSync("git", ["-c", "core.fsmonitor=false", "-C", repo, ...a]).stdout;
+  const head = String(out("rev-parse", "--verify", "-q", "HEAD")).trim();
+  const parts = [`head\0${head}`, `status\0${h(out("status", "--porcelain=v1", "-z", "--untracked-files=all"))}`,
+    `diff\0${h(out("diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv"))}`, `new\0new.txt\0${h("new\n")}`];
+  assert.equal((await snapshot(repo)).fingerprint, h(parts.join("\n")));
 });
 
 test("an XDG_RUNTIME_DIR below a shared folder (/tmp) is no base unless the home is below one too", { skip: WIN && "POSIX mode bits" }, (t) => {
