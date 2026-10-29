@@ -2,15 +2,14 @@
  * Clip post-processing for 3d-intro-build (this skill only; no mirror). FREE: ffmpeg on this machine.
  *
  *   ENCODE        the one set of encoder arguments every output uses: H.264 yuv420p, a keyframe every
- *                 8 frames, faststart, no audio (what the scrub engine seeks well)
- *   postClip      one clip's steps (reverse, tone, zoom, landing) as ONE filter graph: one re-encode
- *   reverseClip, matchClipTone, zoomBoost, landOnStill   postClip with one step
+ *                 8 frames, faststart, no audio (what the scrub engine seeks well). Each output also
+ *                 carries its source clip's colour tags (colourParams; bt709 when the source has none)
+ *   postClip      one clip's steps (reverse, zoom, landing) as ONE filter graph: one re-encode
+ *   reverseClip, zoomBoost, landOnStill   postClip with one step
  *   probeClip, frameStats, solidPlate, resizePng, ssimFrames, seamSsim, cameraMotion, seamReport   measures and plates
  *
- * matchClipTone moves a clip's first-frame channel means and spreads onto the seed frame's and lets
- * the correction go over rampSec. When the corrected first frame matches the seed worse than the
- * original (SSIM), the tone step is dropped: the clip is kept as it was (copied), or encoded without
- * that step. The seed frame itself is never changed.
+ * There is no tone step: on the sora-2 clips measured, a new clip's first frame was within 2.6/255 of
+ * its seed in every channel mean, and a correction only added a re-encode.
  * cameraMotion is a roll approximation: for each pair of frames `step` s apart it finds the rotation
  * about the centre and the zoom that best map one frame onto the next. Pan is not measured.
  *
@@ -34,7 +33,6 @@ export const MOTION_SEARCH = { degrees: [-8, 8, 1], zooms: [0.9, 1.25, 0.01], fi
 const binOf = async (opts) => opts?.ffmpeg || resolveFfmpeg();
 const tail = (s, n = 400) => { const str = String(s || ''); return str.length > n ? str.slice(-n) : str; };
 const n4 = (x) => String(Math.round(x * 10_000) / 10_000);
-const signed = (x) => (x < 0 ? `-${n4(-x)}` : `+${n4(x)}`);
 
 // Run ffmpeg with an argument array. stdout is a Buffer when `raw`.
 function ff(bin, args, raw = false) {
@@ -61,15 +59,44 @@ export async function probeClip(mp4, opts = {}) {
   return parseBanner(r.stderr, path.basename(String(mp4)));
 }
 
-/** The banner fields probeClip reads. Throws when the text names no video stream. */
+/** The banner fields probeClip reads, the colour tags included. Throws when the text names no video stream. */
 export function parseBanner(text, name = 'clip') {
   const d = text.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
   const v = text.match(/Stream #[^\n]*Video:[^\n]*/);
   const size = v && v[0].match(/,\s*(\d{2,5})x(\d{2,5})[\s,[]/);
   const fps = v && (v[0].match(/([\d.]+) fps/) || v[0].match(/([\d.]+) tbr/));
   if (!d || !size || !fps) throw new Error(`probeClip: ${name} is not a video ffmpeg can read`);
-  return { width: +size[1], height: +size[2], fps: +fps[1], duration: +d[1] * 3600 + +d[2] * 60 + +d[3] };
+  return { width: +size[1], height: +size[2], fps: +fps[1], duration: +d[1] * 3600 + +d[2] * 60 + +d[3], color: colourOf(v[0]) };
 }
+
+/** What an untagged source is taken to be: HD video, limited range, bt709. */
+export const COLOUR_DEFAULT = { range: 'tv', space: 'bt709', primaries: 'bt709', trc: 'bt709' };
+
+/**
+ * The colour tags of a banner's video line: `yuv420p(tv, bt709, progressive)` names all three at once,
+ * `yuv420p(tv, bt470bg/bt709/iec61966-2-1)` space/primaries/transfer. A tag left out or `unknown` is COLOUR_DEFAULT's.
+ */
+export function colourOf(videoLine) {
+  const m = /,\s*[a-z0-9]+\(([^)]*)\)/.exec(String(videoLine || ''));
+  const c = { ...COLOUR_DEFAULT };
+  for (const part of m ? m[1].split(/,\s*/) : []) {
+    if (part === 'tv' || part === 'pc') c.range = part;
+    else if (/\d/.test(part) && /^[\w.-]+(\/[\w.-]+){0,2}$/.test(part)) Object.assign(c, colourNames(part));
+  }
+  return c;
+}
+
+// `bt709` (all three) or `space/primaries/transfer`; an `unknown` name is left out.
+function colourNames(part) {
+  const [space, primaries = space, trc = space] = part.split('/');
+  return Object.fromEntries(Object.entries({ space, primaries, trc }).filter(([, v]) => v !== 'unknown'));
+}
+
+/**
+ * The filter that tags the output frames with the source's colours (the encoder takes the tags from the
+ * frames; the -colorspace style output options alone leave primaries and transfer unknown in ffmpeg 8).
+ */
+export const colourParams = (c = COLOUR_DEFAULT) => `setparams=range=${c.range}:color_primaries=${c.primaries}:color_trc=${c.trc}:colorspace=${c.space}`;
 
 // Frames as raw bytes (rgb24 or gray), read once.
 function rawFrames(bin, inputArgs, vf, pixFmt) {
@@ -130,14 +157,18 @@ export async function resizePng(png, size, out, opts = {}) {
   return out;
 }
 
+// A clip frame as RGB the way a browser shows it: the clip's own tags, bt709 when it has none
+// (Chromium reads an untagged clip as bt709; ffmpeg alone would take bt601).
+const asShown = (bin, mp4) => ['-vf', colourParams(colourOf(ff(bin, ['-i', mp4]).stderr.match(/Stream #[^\n]*Video:[^\n]*/)?.[0]))];
+
 function firstFramePng(bin, mp4, out) {
-  must(ff(bin, ['-y', '-i', mp4, '-frames:v', '1', out]), 'first frame');
+  must(ff(bin, ['-y', '-i', mp4, ...asShown(bin, mp4), '-frames:v', '1', out]), 'first frame');
   return out;
 }
 
 // The last frame: seek near the end and keep overwriting one picture.
 function lastFramePng(bin, mp4, out) {
-  must(ff(bin, ['-y', '-sseof', '-1', '-i', mp4, '-update', '1', out]), 'last frame');
+  must(ff(bin, ['-y', '-sseof', '-1', '-i', mp4, ...asShown(bin, mp4), '-update', '1', out]), 'last frame');
   return out;
 }
 
@@ -173,27 +204,22 @@ export async function seamSsim(aMp4, bMp4, opts = {}) {
 /**
  * Encode `clip` to `out` with the steps given, in this order, in one filter graph:
  *   reverse: true            play backwards (at most REVERSE_MAX_SEC and 1280x720)
- *   tone: { seedPng, rampSec = 1 }   first-frame tone onto the seed, eased off over rampSec; dropped
- *                            when it makes the first frame match the seed worse
  *   zoom: { to = 1.15 }      digital push-in from 1 to `to` over the clip, about the centre, at the clip's size
  *   land: { png, sec = 0.6 } the last `sec` fade onto the PNG (a plate or a still), the length kept;
  *                            the last frames are the PNG itself
- * Returns { out, encoded, steps, tone? } where tone is { kept, ssimBefore, ssimAfter, gain, offset }; when
- * no step is left (only a tone step, dropped), out is a copy of the clip and `encoded` is false.
+ * The output carries the clip's colour tags. Returns { out, encoded, steps }; with no step, out is a
+ * copy of the clip and `encoded` is false.
  */
 export async function postClip(clip, out, steps = {}, opts = {}) {
   const bin = await binOf(opts);
   const info = await probeClip(clip, { ffmpeg: bin });
   if (steps.reverse) refuseLongReverse(info);
-  const tone = steps.tone ? await toneDecision(bin, clip, info, steps) : null;
-  const use = tone && !tone.kept ? Object.fromEntries(Object.entries(steps).filter(([k]) => k !== 'tone')) : steps;
-  const report = tone ? { tone: { kept: tone.kept, ssimBefore: tone.ssimBefore, ssimAfter: tone.ssimAfter, gain: tone.gain, offset: tone.offset } } : {};
-  if (!Object.keys(use).length) {
-    fs.copyFileSync(clip, out);   // nothing left to do: the clip as it was, not one more encode
-    return { out, encoded: false, steps: [], ...report };
+  if (!Object.keys(steps).length) {
+    fs.copyFileSync(clip, out);   // nothing to do: the clip as it was, not one more encode
+    return { out, encoded: false, steps: [] };
   }
-  encode(bin, clip, out, info, { ...use, ...(use.tone ? { tone } : {}) });
-  return { out, encoded: true, steps: Object.keys(use), ...report };
+  encode(bin, clip, out, info, steps);
+  return { out, encoded: true, steps: Object.keys(steps) };
 }
 
 function refuseLongReverse(info) {
@@ -215,20 +241,10 @@ const landSec = (land) => Number(land.sec ?? 0.6);
 export function filterGraph(info, steps) {
   const segs = [`[0:v]setsar=1,fps=${info.fps}${steps.reverse ? ',reverse' : ''}[s0]`];
   let at = 's0';
-  if (steps.tone) { segs.push(toneSeg(at, steps.tone)); at = 'st'; }
   if (steps.zoom) { segs.push(`[${at}]${zoomFilter(info, Number(steps.zoom.to ?? 1.15))}[sz]`); at = 'sz'; }
   if (steps.land) { segs.push(...landSegs(at, info, landSec(steps.land))); at = 'sl'; }
-  segs.push(`[${at}]format=yuv420p[out]`);
+  segs.push(`[${at}]format=yuv420p,${colourParams(info.color)}[out]`);
   return segs.join(';');
-}
-
-// Per-channel val*gain+offset on a copy, blended back to the original over rampSec (T is seconds).
-const lutOf = (gain, offset) => ['r', 'g', 'b'].map((c, i) => `${c}='clip(val*${n4(gain[i])}${signed(offset[i])},0,255)'`).join(':');
-
-function toneSeg(at, t) {
-  const lut = lutOf(t.gain, t.offset);
-  const ramp = n4(Math.max(0.04, t.rampSec));
-  return `[${at}]format=gbrp,split[to][tt];[tt]lutrgb=${lut}[tc];[tc][to]blend=all_expr='A*max(0,1-T/${ramp})+B*min(1,T/${ramp})'[st]`;
 }
 
 // A centred push-in at the clip's own size: each frame's centre 1/z of the picture is drawn to the
@@ -253,32 +269,8 @@ function landSegs(at, info, sec) {
   ];
 }
 
-// The tone step's gain and offset per channel (the clip's opening frame moved onto the seed's means
-// and spreads), and whether it helps: the corrected opening frame must match the seed better (SSIM)
-// than the frame as it is. Decided on that one frame, before the clip's single encode.
-async function toneDecision(bin, clip, info, steps) {
-  const { seedPng, rampSec = 1 } = steps.tone;
-  const dir = tmpDir();
-  try {
-    const src = path.join(dir, 'src.png');
-    if (steps.reverse) lastFramePng(bin, clip, src); else firstFramePng(bin, clip, src);
-    const [seed, first] = [await frameStats(seedPng, { ffmpeg: bin }), await frameStats(src, { ffmpeg: bin })];
-    const gain = first.std.map((s, c) => (s < 1 ? 1 : Math.min(2, Math.max(0.5, seed.std[c] / s))));
-    const offset = gain.map((g, c) => seed.mean[c] - g * first.mean[c]);
-    const toned = path.join(dir, 'toned.png');
-    must(ff(bin, ['-y', '-i', src, '-vf', `format=rgb24,lutrgb=${lutOf(gain, offset)}`, toned]), 'tone');
-    const ssimBefore = ssimPng(bin, seedPng, src);
-    const ssimAfter = ssimPng(bin, seedPng, toned);
-    return { seedPng, rampSec, gain, offset, ssimBefore, ssimAfter, kept: ssimAfter > ssimBefore };
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
-
 /** Play a clip backwards (at most REVERSE_MAX_SEC, 1280x720). */
 export const reverseClip = (clip, out, opts = {}) => postClip(clip, out, { reverse: true }, opts);
-/** Ease the clip's opening tone onto the seed frame; dropped when it does not help. */
-export const matchClipTone = (clip, seedPng, out, { rampSec = 1, ...opts } = {}) => postClip(clip, out, { tone: { seedPng, rampSec } }, opts);
 /** Digital push-in from 1 to `to` (off unless asked for). */
 export const zoomBoost = (clip, out, { to = 1.15, ...opts } = {}) => postClip(clip, out, { zoom: { to } }, opts);
 /** Land the clip's last `sec` on a PNG (a background plate, or the closing still), the length kept. */

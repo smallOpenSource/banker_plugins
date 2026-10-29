@@ -159,7 +159,7 @@ async function keepShown(ctx, leg) {
 }
 
 function report(ctx, name, r) {
-  ctx.emit({ type: 'post', clip: name, fn: r.steps, encoded: r.encoded, ...(r.tone ? { tone: { kept: r.tone.kept, ssimBefore: r.tone.ssimBefore, ssimAfter: r.tone.ssimAfter } } : {}) });
+  ctx.emit({ type: 'post', clip: name, fn: r.steps, encoded: r.encoded });
   return r;
 }
 
@@ -183,7 +183,7 @@ async function finishGap(ctx, i) {
   if (!ctx.o.exit) { await placeOrPost(ctx, `dive-${i + 1}`, ctx.shown[`dive-${i + 1}`], dive, land ? { land } : {}); return; }
   fs.copyFileSync(ctx.shown[`dive-${i + 1}`], dive);
   const exit = path.join(ctx.dir, `exit-${i + 1}.mp4`);
-  await placeOrPost(ctx, `exit-${i + 1}`, ctx.raw[`exit-${i + 1}`], exit, { tone: { seedPng: ctx.exitSeed[`exit-${i + 1}`] }, ...(land ? { land } : {}) });
+  await placeOrPost(ctx, `exit-${i + 1}`, ctx.raw[`exit-${i + 1}`], exit, land ? { land } : {});
   await extractFirstFrame(exit, path.join(ctx.dir, `exit-${i + 1}-first.png`), { ffmpeg: ctx.bin });
 }
 
@@ -234,7 +234,7 @@ async function firstPair(ctx) {
   const dive = path.join(gate, 'dive-1.mp4');
   fs.copyFileSync(ctx.shown['dive-1'], dive);
   const exit = path.join(gate, 'exit-1.mp4');
-  await placeOrPost(ctx, 'exit-1', ctx.raw['exit-1'], exit, { tone: { seedPng: ctx.exitSeed['exit-1'] }, ...(land ? { land } : {}) });
+  await placeOrPost(ctx, 'exit-1', ctx.raw['exit-1'], exit, land ? { land } : {});
   const motion = await cameraMotion(ctx.shown['dive-1'], { ffmpeg: ctx.bin });
   return {
     stage: 'first-pair', seam: ctx.seams[0],

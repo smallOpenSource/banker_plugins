@@ -69,7 +69,7 @@ curl --ssl-no-revoke -sSI -o /dev/null --connect-timeout 5 --max-time 10 https:/
 OS별 상세 설치 절차(Ubuntu NodeSource·RHEL8/Rocky8 dnf 모듈·Windows winget·PATH 충돌 등)는 반복하지 않고 **`setup-node` 스킬로 위임**한다 — 이 스킬은 결과(`node -v` ≥18)만 확인한다.
 
 ## 2. ffmpeg 확보
-어댑터의 프레임 추출·크로스페이드·이어붙이기(`extractLastFrame`·`crossfade`·`concatClips`, forward-chaining 이음새 처리)와 build 의 클립 후처리(`clip-post.mjs` 의 `matchClipTone`·`reverseClip`·`landOnStill`·`cameraMotion`)가 `ffmpeg` 바이너리를 요구한다.
+어댑터의 프레임 추출·크로스페이드·이어붙이기(`extractLastFrame`·`crossfade`·`concatClips`, forward-chaining 이음새 처리)와 build 의 클립 후처리(`clip-post.mjs` 의 `reverseClip`·`landOnStill`·`cameraMotion`)가 `ffmpeg` 바이너리를 요구한다.
 설치 절차는 `motion-graphic-setup` §2 와 같으므로 반복하지 않고 요약만 남긴다(전체 함정은 그 스킬 참조. 마지막 폴백의 설치 위치만 다르다):
 - macOS: `brew install ffmpeg`
 - Ubuntu/Debian: `sudo apt-get install -y ffmpeg`

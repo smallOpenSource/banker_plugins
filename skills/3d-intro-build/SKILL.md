@@ -15,7 +15,7 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 | 파일 | 맡은 일 |
 |---|---|
 | `references/azure-adapter.mjs` | Azure 호출, ffmpeg 처리(`stillToClip` 포함), 비용 추정 |
-| `references/clip-post.mjs` | 클립 후처리(톤 맞춤, 역재생, 판 착지, 디지털 줌)와 측정(이음매 SSIM, 회전과 줌, `seamReport`). 출력은 모두 같은 인코딩 인자(`ENCODE`) |
+| `references/clip-post.mjs` | 클립 후처리(역재생, 판 착지, 디지털 줌)와 측정(이음매 SSIM, 회전과 줌, `seamReport`). 출력은 모두 같은 인코딩 인자(`ENCODE`)와 원본의 색 표시(없으면 bt709) |
 | `references/dive-mode.mjs` | dive 모드의 leg 계획과 실행, 첫 쌍 게이트, `intro.json` 작성 |
 | `references/video-pool.mjs` | 영상 provider 선택, WAN 키 풀, 폴백 |
 | `references/curate.mjs` | 검토 페이지(스틸, 클립)와 판정 기록 |
@@ -216,7 +216,7 @@ node references/curate.mjs --stop <projectDir>   # 끝나면 종료
 
 연속성은 **forward-chaining** 으로 만든다. 직전 클립의 **실제 마지막 프레임을 톤 변형 없이 그대로** 다음 클립의 첫 프레임으로 넣는다.
 (시드 프레임에 histeq 톤 정합을 걸면 시작 톤이 바뀌어 연속성이 **오히려 나빠진다**. e2e 실측 raw-시드 SSIM ~0.59 대 histeq-시드 0.46.)
-톤 정합은 생성된 클립 쪽에서 한다. `clip-post.mjs` 의 `matchClipTone(clip_i, 시드, out)` 이 클립 첫 프레임의 채널 평균과 퍼짐을 시드에 맞추고 1초 동안 풀어 준다. 시드는 그대로 둔다. 보정한 첫 프레임이 시드와 SSIM 으로 더 멀어지면 보정을 버리고 원본을 쓴다(`tone.kept: false`). 효과는 유료 실측 전이라 **미검증**이다.
+톤 정합은 하지 않는다. sora-2 실측 10곳에서 시드와 새 클립 첫 프레임의 채널 평균 차이가 최대 2.6/255 라 고칠 톤이 없었고, 보정은 재인코딩 손실만 남겼다. WAN 은 재지 않았다.
 이음매 디졸브는 엔진의 `crossfade`(매니페스트 `crossfade`, 기본 0.12 vh)가 하고, dive 모드의 배경 이음매는 `landOnStill` 이 한다(4C).
 
 ```js
@@ -234,14 +234,6 @@ r = await generateClip({ creds, prompt: legi, size: ORIENTATION, seconds, firstF
 ```
 
 - 각 leg 렌더 직후, 다음 leg 전에 마지막 프레임을 확인한다. 잔잔한 전진 활공 컷이 아니면 그 leg 를 재생성한다(나쁜 핸드오프 프레임이 뒤 leg 를 오염시킨다).
-- leg i(i >= 1)는 렌더 뒤 `matchClipTone` 을 건다. 보정을 버렸는지(`tone.kept`)와 SSIM 전후를 기록해 Step 8 에 보고한다.
-
-  ```js
-  import { matchClipTone } from './references/clip-post.mjs';
-  const t = await matchClipTone('dive-i.raw.mp4', 'last-(i-1).png', 'dive-i.mp4');   // t.tone = { kept, ssimBefore, ssimAfter }
-  // 다음 leg 의 시드는 보정 전 원본(dive-i.raw.mp4)의 마지막 프레임에서 뽑는다(재인코딩한 클립은 바이트가 다르다)
-  ```
-
 - 포스터: 씬 1 = 씬 1 스틸, 씬 i>=2 = `extractFirstFrame(clip_i)`(로딩 시 플래시 없음).
 - `intro.json` 의 `connectors` 를 전부 `null` 로 두면 엔진이 인접 dive 를 직접 crossfade 한다.
 
@@ -275,7 +267,7 @@ sora-2(2025-12-08) 유료 실측(장면 한 세트)에서 dive 는 장면마다 
 | 순서 | 클립 | 첫 프레임 | 길이 | 후처리 | 매니페스트 자리 |
 |---|---|---|---|---|---|
 | 장면 i(마지막 제외) | dive_i | 장면 i 스틸 | 8초 | `zoomBoost`(선택, 장면의 `zoom`). 나가기가 없고 배경 이음매가 켜졌으면 끝 0.6초 배경 판 착지 | `sections[i].clip` |
-| 장면 i 와 i+1 사이(선택) | exit_i | dive_i 마지막 프레임 | 4초 | `matchClipTone`, 배경 이음매가 켜졌으면 끝 0.6초 배경 판 착지 | `connectors[i]`, 포스터는 `connectorStills[i]`(그 클립 첫 프레임) |
+| 장면 i 와 i+1 사이(선택) | exit_i | dive_i 마지막 프레임 | 4초 | 배경 이음매가 켜졌으면 끝 0.6초 배경 판 착지 | `connectors[i]`, 포스터는 `connectorStills[i]`(그 클립 첫 프레임) |
 | 마지막 장면 | finale | 결론 스틸 | 8초 | `reverseClip`, 끝 0.4초 결론 스틸 착지 | `sections[n-1].clip`, 포스터는 finale 첫 프레임 |
 
 - **배경 이음매 판정(무료, 장면마다)** - 다음 장면 스틸의 가장자리 4% 띠를 재서 채널별 표준편차가 모두 `bgThreshold`(기본 6) 이하면 켠다. 화풍 이름이 아니라 실제 스틸로 정한다. 꺼진 이음매는 엔진 디졸브만 쓰고, 그 사실과 잰 값(`seam`, `note` 이벤트의 `std`)을 Step 4 에서 알린다. 실제 스틸로 보정이 필요하면 `bgThreshold` 를 인자로 바꾼다.
@@ -404,7 +396,6 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
   - chain: 실측 원본 이음매 SSIM 0.63~0.95. 후반이 높았던 것은 같은 흐린 근접 화면이 이어졌기 때문이라, 수치와 함께 장면이 실제로 바뀌었는지 눈 검토 결과를 쓴다.
   - holdFlight: 비행 클립의 첫과 끝 프레임이 장면 스틸과 맞으면 이음매가 없다. 이 스킬에서는 미검증 경로이므로 실제로 확인한 결과만 쓴다.
   - dive: 배경 이음매가 켜진 곳은 판 착지로 맞춘다. 꺼진 곳(테두리가 한 색이 아님)은 엔진 디졸브다. `seamReport` 의 이음매 SSIM, 클립별 roll 근사와 줌, `--seams` 결과를 그대로 쓴다. 실측 범위: 빈 화면 0건, 원본 이음매 SSIM 나가기 없음 0.43~0.60, 나가기 있음 0.59~0.81, 판 착지 뒤 0.89, finale 착지 뒤 결론 스틸 SSIM 0.985. 움직임과 회전이 chain 보다 나아졌다는 말은 같은 스틸의 chain 대조군 수치가 있을 때만 한다.
-  - chain 톤 맞춤: leg 마다 `tone.kept` 와 SSIM 전후를 쓴다. 효과는 미검증이다.
   - 수용 기준은 조립, 서빙된 페이지의 실제 스크럽 경험이다.
 - 재생성한 스틸이나 클립이 있으면 그 사유.
 

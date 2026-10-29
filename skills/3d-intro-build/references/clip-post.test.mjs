@@ -56,24 +56,29 @@ test('ENCODE is the one encoder setting: H.264 yuv420p, a keyframe every 8 frame
 
 test('filterGraph: one graph for every step, in order, with no file path in it', () => {
   const info = { width: 720, height: 1280, fps: 24, duration: 8 };
-  const g = C.filterGraph(info, { reverse: true, tone: { gain: [1.1, 1, 0.9], offset: [-3, 0, 4.5], rampSec: 1 }, zoom: { to: 1.2 }, land: { png: '/x y/plate.png', sec: 0.6 } });
-  assert.ok(g.indexOf('reverse') < g.indexOf('lutrgb') && g.indexOf('lutrgb') < g.indexOf('perspective') && g.indexOf('perspective') < g.indexOf('xfade'));
+  const g = C.filterGraph(info, { reverse: true, zoom: { to: 1.2 }, land: { png: '/x y/plate.png', sec: 0.6 } });
+  assert.ok(g.indexOf('reverse') < g.indexOf('perspective') && g.indexOf('perspective') < g.indexOf('xfade'));
   assert.ok(!g.includes('plate.png'), 'the plate goes in as an -i input');
-  assert.match(g, /r='clip\(val\*1\.1-3,0,255\)'/);
+  assert.ok(!/lutrgb|gbrp/.test(g), 'no RGB round trip: the clip stays in YUV');
+  assert.match(g, /format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709\[out\]$/, 'an untagged clip comes out tagged bt709');
   assert.match(g, /xfade=transition=fade:duration=0\.5167:offset=7\.4/);
   assert.match(g, /\[out\]$/);
-  assert.equal(C.filterGraph(info, {}), '[0:v]setsar=1,fps=24[s0];[s0]format=yuv420p[out]');
+  assert.equal(C.filterGraph(info, {}), `[0:v]setsar=1,fps=24[s0];[s0]format=yuv420p,${C.colourParams()}[out]`);
 });
 
 test('parseBanner: size, rate and length from the banner; no video stream throws', () => {
   const text = 'Duration: 00:00:08.04, start: 0.000000\n  Stream #0:0[0x1](und): Video: h264 (High), yuv420p(progressive), 720x1280 [SAR 1:1 DAR 9:16], 30 fps, 30 tbr';
-  assert.deepEqual(C.parseBanner(text), { width: 720, height: 1280, fps: 30, duration: 8.04 });
+  assert.deepEqual(C.parseBanner(text), { width: 720, height: 1280, fps: 30, duration: 8.04, color: C.COLOUR_DEFAULT });
+  assert.deepEqual(C.colourOf('Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1280x720'), { range: 'tv', space: 'bt709', primaries: 'bt709', trc: 'bt709' });
+  assert.deepEqual(C.colourOf('Video: h264 (High), yuvj420p(pc, bt470bg/unknown/iec61966-2-1), 720x1280'), { range: 'pc', space: 'bt470bg', primaries: 'bt709', trc: 'iec61966-2-1' });
+  assert.equal(C.colourParams(), 'setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709');
   assert.throws(() => C.parseBanner('Duration: 00:00:01.00\n Stream #0:0: Audio: aac'), /not a video/);
 });
 
 test('reverseClip: output frame k is input frame N-1-k; a 13 s clip is refused', { skip: needFf, timeout: 120_000 }, async (t) => {
   const d = work(t);
-  const src = mk(['-f', 'lavfi', '-i', 'testsrc2=s=320x568:r=24:d=2', ...enc, path.join(d, 'moving.mp4')]);
+  // tagged bt709 like the output, so that the test's own frame grabs decode both alike
+  const src = mk(['-f', 'lavfi', '-i', 'testsrc2=s=320x568:r=24:d=2', '-vf', C.colourParams(), ...enc, path.join(d, 'moving.mp4')]);
   const out = path.join(d, 'rev.mp4');
   await C.reverseClip(src, out, { ffmpeg: FF });
   const info = await assertEngineReady(out);
@@ -99,27 +104,6 @@ test('landOnStill: 24 and 30 fps clips keep their length and end on the plate', 
     const s = await C.ssimFrames(lastOf(out, path.join(d, `last${fps}.png`)), plate, { ffmpeg: FF });
     assert.ok(s >= 0.99, `${fps} fps: last frame against the plate SSIM ${s}`);
   }
-});
-
-test('matchClipTone: a drifted opening is pulled onto the seed and eased off; a correction that hurts is dropped', { skip: needFf, timeout: 120_000 }, async (t) => {
-  const d = work(t);
-  const seed = still(d);
-  const drifted = loop(seed, path.join(d, 'drift.mp4'), "lutrgb=r='val*0.8+30':g='val*0.9':b='val*0.85+20'", { sec: 3 });
-  const out = path.join(d, 'toned.mp4');
-  const r = await C.matchClipTone(drifted, seed, out, { rampSec: 1, ffmpeg: FF });
-  await assertEngineReady(out);
-  assert.equal(r.tone.kept, true);
-  assert.ok(r.tone.ssimAfter > r.tone.ssimBefore, JSON.stringify(r.tone));
-  const [first, ref] = await Promise.all([C.frameStats(frameAt(out, 0, path.join(d, 'f0.png')), { ffmpeg: FF }), C.frameStats(seed, { ffmpeg: FF })]);
-  assert.ok(first.mean.every((m, c) => Math.abs(m - ref.mean[c]) <= 3), `first-frame means ${first.mean} against ${ref.mean}`);
-  const late = await C.ssimFrames(frameAt(out, 36, path.join(d, 'f36.png')), frameAt(drifted, 36, path.join(d, 'd36.png')), { ffmpeg: FF });
-  assert.ok(late >= 0.99, `after rampSec the clip is the original (SSIM ${late})`);
-  // the seed with a white block: moving the whole frame's means onto the seed's makes the rest worse
-  const blocked = loop(seed, path.join(d, 'blocked.mp4'), 'drawbox=x=0:y=0:w=320:h=330:color=white:t=fill', { sec: 2 });
-  const kept = path.join(d, 'kept.mp4');
-  const back = await C.matchClipTone(blocked, seed, kept, { ffmpeg: FF });
-  assert.deepEqual([back.tone.kept, back.encoded], [false, false], JSON.stringify(back.tone));
-  assert.ok(fs.readFileSync(kept).equals(fs.readFileSync(blocked)), 'the original clip is kept as it was');
 });
 
 test('frameStats: a one-colour border reads as uniform, a patterned one does not', { skip: needFf, timeout: 60_000 }, async (t) => {
@@ -160,14 +144,18 @@ test('zoomBoost: a centred push-in at the clip size that cameraMotion reads back
   assert.ok(m.zoom > 1.1 && Math.abs(m.rollDeg) <= 0.5, `zoom ${m.zoom}, roll ${m.rollDeg}`);
 });
 
-test('postClip: tone, zoom and landing run as one graph, one encode; seamReport gives seams and motion in playing order', { skip: needFf, timeout: 180_000 }, async (t) => {
+test('postClip: zoom and landing run as one graph, one encode, tagged with the source colours; seamReport gives seams and motion in playing order', { skip: needFf, timeout: 180_000 }, async (t) => {
   const d = work(t);
   const seed = still(d, 's1.png');
   const plate = await C.solidPlate([20, 20, 20], '320x568', path.join(d, 'plate.png'), { ffmpeg: FF });
-  const drift = loop(seed, path.join(d, 'a.mp4'), "lutrgb=r='val*0.85+20'", { sec: 3 });
-  const r = await C.postClip(drift, path.join(d, 'a-post.mp4'), { tone: { seedPng: seed }, zoom: { to: 1.1 }, land: { png: plate } }, { ffmpeg: FF });
-  assert.deepEqual([r.encoded, r.steps, r.tone.kept], [true, ['tone', 'zoom', 'land'], true]);
+  const drift = loop(seed, path.join(d, 'a.mp4'), null, { sec: 3 });
+  const r = await C.postClip(drift, path.join(d, 'a-post.mp4'), { zoom: { to: 1.1 }, land: { png: plate } }, { ffmpeg: FF });
+  assert.deepEqual([r.encoded, r.steps], [true, ['zoom', 'land']]);
   await assertEngineReady(r.out);
+  assert.deepEqual((await C.probeClip(r.out, { ffmpeg: FF })).color, C.COLOUR_DEFAULT, 'an untagged source comes out tagged bt709');
+  const pc = mk(['-f', 'lavfi', '-i', 'testsrc2=s=320x568:r=24:d=1', ...enc, '-vf', 'setparams=range=pc:color_primaries=bt470bg:color_trc=smpte170m:colorspace=bt470bg', path.join(d, 'pc.mp4')]);
+  const rp = await C.reverseClip(pc, path.join(d, 'pc-rev.mp4'), { ffmpeg: FF });
+  assert.deepEqual((await C.probeClip(rp.out, { ffmpeg: FF })).color, { range: 'pc', space: 'bt470bg', primaries: 'bt470bg', trc: 'smpte170m' }, 'a tagged source keeps its tags');
   loop(plate, path.join(d, 'b.mp4'), null, { sec: 2 });
   fs.writeFileSync(path.join(d, 'intro.json'), JSON.stringify({ sections: [{ clip: 'a-post.mp4' }, { clip: 'b.mp4' }], connectors: [null] }));
   const rep = await C.seamReport(d, { ffmpeg: FF });

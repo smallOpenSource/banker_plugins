@@ -110,7 +110,7 @@ in, the roof and upper structure gently lift and open away to reveal the warm in
 여닫을 건물이 없는 씬(들판·광장·도로)이면 지붕 절을 "the camera flies low across [the scene] toward [focal point]." 로 바꾼다.
 
 **Leg i (i ≥ 1) — 체이닝된 프레임에서 다음 씬으로:**
-`firstFramePng = extractLastFrame(clip[i-1])` (직전 클립의 **raw** 마지막 프레임. 시드에 톤 정합을 걸면 연속성이 나빠진다: 실측 raw SSIM ~0.59, histeq 0.46. 톤 맞춤은 시드가 아니라 만들어진 클립 쪽에서 한다: `clip-post.mjs` 의 `matchClipTone`, 시드와 SSIM 이 나빠지면 원본 유지. 효과는 유료 실측 전이라 미검증).
+`firstFramePng = extractLastFrame(clip[i-1])` (직전 클립의 **raw** 마지막 프레임. 시드에 톤 정합을 걸면 연속성이 나빠진다: 실측 raw SSIM ~0.59, histeq 0.46. 클립 쪽 톤 맞춤도 하지 않는다: sora-2 실측에서 새 클립 첫 프레임이 시드와 채널 평균 2.6/255 안이었다).
 
 ```
 Single continuous cinematic camera move, no cuts. Continue the same continuous camera flight

@@ -302,17 +302,19 @@ test('SKILL: the tone and seam lines in build Step 4A and setup §2 name functio
   const exported = new Set([...Object.keys(A), ...Object.keys(C), ...Object.keys(D)]);
   const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
   const build = read('../SKILL.md');
-  const tone = build.split('\n').find((l) => l.startsWith('톤 정합은 생성된 클립 쪽에서 한다'));
+  const tone = build.split('\n').find((l) => l.startsWith('톤 정합은 하지 않는다'));
   const seam = build.split('\n').find((l) => l.startsWith('이음매 디졸브는 엔진의 `crossfade`'));
-  assert.ok(tone && seam, 'build Step 4A says where tone and seams are handled');
+  assert.ok(tone && seam, 'build Step 4A says there is no tone step and where seams are handled');
+  assert.match(tone, /WAN 은 재지 않았다/);
+  assert.doesNotMatch(build, new RegExp(`${'match'}ClipTone|tone\\.kept`));
   assert.doesNotMatch(build, /톤 정합은 조립, 재생 계층에서 처리한다/);
   const setupLine = read('../../3d-intro-setup/SKILL.md').split('\n').find((l) => l.includes('`ffmpeg` 바이너리를 요구한다'));
-  for (const line of [tone, seam, setupLine]) {
+  for (const line of [seam, setupLine]) {
     const names = [...line.matchAll(/`([a-z][A-Za-z]+)[`(]/g)].map((m) => m[1]).filter((n) => /^[a-z]+[A-Z]/.test(n));
     assert.ok(names.length >= 1, line);
     for (const n of names) assert.ok(exported.has(n), `${n} is exported (${line.slice(0, 40)}...)`);
   }
-  assert.doesNotMatch(setupLine, /colorMatch/);
+  assert.doesNotMatch(setupLine, new RegExp(`colorMatch|${'match'}ClipTone`));
 });
 
 // 8-e: creds without values (what resolveCreds gives from a tracked project key file) send nothing, with a clear error.

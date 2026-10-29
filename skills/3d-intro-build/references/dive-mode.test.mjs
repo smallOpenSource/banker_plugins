@@ -100,7 +100,8 @@ test('runDiveLegs: dives, exits and the finale make an intro.json that assembles
   assert.ok(events.some((e) => e.type === 'note' && e.gap === 2 && /no one-colour border/.test(e.message)));
   const plate = events.find((e) => e.type === 'plate' && e.gap === 1);
   assert.ok(Math.abs(plate.rgb[1] - 0x55) <= 6 && Math.abs(plate.rgb[2] - 0x22) <= 6, `plate ${plate.rgb} is scene 2's background`);
-  assert.ok(events.some((e) => e.type === 'post' && e.clip === 'exit-1' && e.tone && typeof e.tone.ssimBefore === 'number'));
+  assert.ok(events.some((e) => e.type === 'post' && e.clip === 'exit-1' && e.fn.join() === 'land'), 'exit-1: the landing only, no tone step');
+  assert.ok(!events.some((e) => 'tone' in e), 'no tone step on any clip');
   assert.ok(!JSON.stringify(events).includes(FAKE_KEY), 'no key in any event');
   assert.deepEqual(r.manifest.connectors, ['clips/exit-1.mp4', 'clips/exit-2.mp4']);
   assert.deepEqual(r.manifest.connectorStills, ['clips/exit-1-first.png', 'clips/exit-2-first.png']);

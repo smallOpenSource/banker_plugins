@@ -308,8 +308,9 @@ test('estimateCost: dive bills 8 s per scene (dives and the finale) plus a 4 s e
 // ffmpeg helpers: ARG ARRAY (not a shell string), flags
 // =====================================================================
 
-test('colorMatch is gone: tone continuity is matchClipTone in clip-post.mjs (the clip is corrected, the seed frame never)', () => {
+test('colorMatch is gone: no tone step on seeds or clips (sora-2 measured: a new first frame within 2.6/255 of its seed)', async () => {
   assert.equal(A.colorMatch, undefined);
+  assert.equal((await import('./clip-post.mjs'))['match' + 'ClipTone'], undefined);
 });
 
 test('stillToClip: repeats the still for the hold, encoded as the engine wants, as an arg ARRAY', async () => {
