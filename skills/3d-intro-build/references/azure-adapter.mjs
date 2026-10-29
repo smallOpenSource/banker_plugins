@@ -801,13 +801,15 @@ const RETIRED_LIFECYCLE = new Set(['retired', 'removed']);
  * check is two GETs:
  *   GET /openai/deployments/<name>?api-version=2022-12-01   200 {model, status}, or 404 when there is none
  *   GET /openai/v1/models?api-version=preview                 the model's lifecycle_status and deprecation.inference
- * state: deployed | no_deployment | retired | auth | unreachable | unknown. `retired` means the
+ * state: deployed | no_deployment | retired | auth | unreachable | unknown | unset (no endpoint or key: nothing sent). `retired` means the
  * deployment answered 410, the model list calls the model retired, or its inference retirement date
  * has passed. `retiresAt` (ms) and `daysLeft` come from the model list; when the deployment names the
  * model without its version, the newest dated version is taken (`versionInferred`). `soon` is true
  * within RETIRE_SOON_DAYS. The result holds no key and no URL.
  */
 export async function probeSoraDeployment({ endpoint, key, deployment = 'sora-2', now = Date.now } = {}) {
+  // no endpoint or key (unset, or creds from a key file git tracks, which give no values): nothing is sent
+  if (!endpoint || !key) return { deployment, status: null, code: null, errno: null, state: 'unset' };
   const d = await azFetch(`${endpoint}/openai/deployments/${encodeURIComponent(deployment)}?api-version=${DEPLOYMENT_API_VERSION}`, { key, method: 'GET' });
   const base = { deployment, status: d.status, code: errorCodeOf(d), errno: d.errno || null };
   if (d.status !== 200) return { ...base, state: deploymentState(d.status) };

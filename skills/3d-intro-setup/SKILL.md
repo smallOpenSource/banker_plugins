@@ -300,7 +300,7 @@ node -e "
 ```bash
 node -v                      # 18 이상 기대
 command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffmpeg 없음 -- resolveFfmpeg() 폴백 확인(§2)"
-# 위 §4 프리플라이트를 재실행해 PASS 문자열 + 두 status 코드를 그대로 증거로 남긴다
+# 위 §4 프리플라이트를 재실행해 출력한 확인 줄 전부(listVideos, sora.deploy, images.badreq, wan)를 그대로 증거로 남긴다
 ```
 4-field 보고: 변경(Node/ffmpeg 확보 방식 · 크레덴셜 저장 경로 — 파일 내용 아님) / Evidence(§0 감지 출력 · §4 status 코드 전부) / 검증(`listVideos`=200 **AND** `sora.deploy`=`deployed`(WAN 이 있으면 `retired` 도 경고와 함께 허용) **AND** `images.badreq`=400 **AND** WAN 항목 전부 200 이어야 PASS) / Unknown(FLUX 미검증 · WAN 키별 남은 할당량(조회 API 없음 — 소진은 첫 생성에서 드러나고 풀이 자동으로 다음 키·Sora 로 넘어감) · Sora 배포가 실제로 생성하는지(배포 GET 은 있음과 퇴역일까지만 알려 줌)는 첫 실제 생성 시점에만 드러남 · 관리자 권한 제약으로 ffmpeg 시스템 설치 불가 등, 가짜 성공 금지).
 크레덴셜은 어떤 필드도 원문으로 보고하지 않고 항상 `redact()` 출력(길이만)만 남긴다.

@@ -1501,3 +1501,13 @@ test('downloadVideo and createVideo: a failure carries the HTTP status, and a su
   installFetch(() => mockJson({ error: 'not an object' }, 404));
   await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 404 && e.code === null);
 });
+
+test('probeSoraDeployment: no endpoint or key (creds from a tracked key file give none) is unset, and nothing is sent', async () => {
+  const orig = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches++; throw new Error('no fetch expected'); };
+  try {
+    for (const c of [{}, { endpoint: 'https://x.example.com' }, { key: 'k' }]) assert.equal((await A.probeSoraDeployment(c)).state, 'unset');
+    assert.equal(fetches, 0);
+  } finally { globalThis.fetch = orig; }
+});
