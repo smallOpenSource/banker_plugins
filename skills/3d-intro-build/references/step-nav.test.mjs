@@ -6,18 +6,9 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { DEFAULTS, belongsToIntro, createNavigator, createWheelGesture, keyInput, moveDuration, postersReady, stopPositions, totalWeight, wheelIgnored } = require('./step-nav.js');
+const { DEFAULTS, belongsToIntro, createNavigator, createWheelGesture, dirOf, gridOf, keyInput, moveDuration, postersReady, sceneAt, settleTarget, stepFrom, stopPositions, totalWeight, wheelIgnored, wheelNotches } = require('./step-nav.js');
 
 const CONFIG = { diveScroll: 1.3, connScroll: 0.9, sections: [{}, {}, {}], connectors: ['c1.mp4', null] };
-
-test('stops follow the engine layout: first at 0, middle scenes mid-hold, the last at its end, then the body', () => {
-  // dive0 0-1300, conn0 1300-2200, dive1 2200-3500 (no connector after it), dive2 3500-4800
-  assert.deepEqual(stopPositions(CONFIG, 1000, null), [0, 2850, 4800]);
-  assert.deepEqual(stopPositions(CONFIG, 1000, 5200), [0, 2850, 4800, 5200]);
-  const paced = { ...CONFIG, sections: [{}, { scroll: 2 }, {}] };
-  assert.deepEqual(stopPositions(paced, 1000, null), [0, 3200, 5500]);
-  assert.deepEqual(stopPositions({ sections: [{}] }, 800, null), [0]);
-});
 
 test('a move takes 2.6 s plus 0.76 s per screen height, at most 5.6 s, and none with reduced motion', () => {
   assert.equal(moveDuration(1000, 1000, DEFAULTS, false), 3360);
@@ -47,81 +38,12 @@ test('a pause over 220 ms or a turn of direction starts a new gesture; tiny, zoo
 });
 
 // A navigator over 4 stops (3 scenes and the body) with a fake clock and a move driver the test ends.
-function nav(stops = [0, 1000, 2000, 2500], lastScene = 2) {
+function nav(stops = [0, 1000, 2000, 2500], lastStop = 2) {
   const moves = [];
-  let t = 0;
-  const n = createNavigator({ stops: () => stops, lastScene, guardMs: 250, now: () => t,
-    move: (from, to, done) => moves.push({ from, to, done }) });
-  return { n, moves, tick: (ms) => { t += ms; }, arrive: () => moves.at(-1).done() };
+  let where = 0;
+  const n = createNavigator({ stops: () => stops, lastStop, where: () => where, move: (from, to, done) => moves.push({ from, to, done }) });
+  return { n, moves, at: (y) => { where = y; }, arrive: () => moves.at(-1).done() };
 }
-
-test('down and up move one stop; a dot goes straight to its scene', () => {
-  const { n, moves, arrive } = nav();
-  n.input('down');
-  assert.deepEqual([moves[0].from, moves[0].to], [0, 1000]);
-  arrive();
-  n.input({ to: 0 });
-  assert.equal(moves[1].to, 0);
-  arrive();
-  n.input('up');
-  assert.equal(moves.length, 2, 'nothing above the first scene');
-});
-
-test('inputs during a move keep only the latest, run when the move ends', () => {
-  const { n, moves, arrive } = nav();
-  n.input('down');
-  n.input('down');
-  n.input('up');
-  assert.equal(moves.length, 1);
-  arrive();
-  assert.deepEqual([moves[1].from, moves[1].to], [1000, 0], 'the queued up ran, the earlier down was replaced');
-});
-
-test('the last scene drops a down queued on the way in and ignores down for 250 ms after arriving', () => {
-  const { n, moves, arrive, tick } = nav();
-  n.sync(1000);
-  n.input('down');
-  n.input('down');
-  arrive();
-  assert.equal(moves.length, 1, 'the down queued while moving into the last scene was dropped');
-  n.input('down');
-  assert.equal(moves.length, 1, 'down right after arriving is ignored');
-  n.input('up');
-  assert.equal(moves[1].to, 1000, 'up still runs inside the guard');
-  arrive();
-  n.input('down');
-  arrive();
-  tick(300);
-  n.input('down');
-  assert.equal(moves.at(-1).to, 2500, 'after the guard a down goes on to the body');
-  arrive();
-  n.input('up');
-  assert.equal(moves.at(-1).to, 2000, 'up from the body top returns to the last scene');
-});
-
-test('sync places the navigator at the nearest stop with a 1 px tolerance', () => {
-  const { n } = nav();
-  n.sync(1999.4);
-  assert.equal(n.state().index, 2);
-  n.sync(2499.2);
-  assert.equal(n.state().index, 3);
-  assert.equal(n.state().atBody, true);
-});
-
-test('a move starts from where the page stands, so a stop just above the body is never a dead end', () => {
-  const { n, moves } = nav();
-  n.sync(2470);
-  n.input('down');
-  assert.deepEqual([moves[0].from, moves[0].to], [2470, 2500], '30 px above the body top, down reaches it');
-  const up = nav();
-  up.n.sync(2470);
-  up.n.input('up');
-  assert.deepEqual([up.moves[0].from, up.moves[0].to], [2470, 2000]);
-  const mid = nav();
-  mid.n.sync(1500);
-  mid.n.input('down');
-  assert.equal(mid.moves[0].to, 2000, 'between stops, down goes to the next one below');
-});
 
 test('the intro takes an input only above the body top, or an up input at it; without a body it never traps', () => {
   assert.equal(belongsToIntro(4000, 'down', 4800, 5200), true);
@@ -134,39 +56,12 @@ test('the intro takes an input only above the body top, or an up input at it; wi
   assert.equal(belongsToIntro(100, 'down', 4800, null), true);
 });
 
-test('Space stays with a focused button or link; arrows and page keys still move; fields keep every key', () => {
-  const el = (tagName, role = null) => ({ tagName, getAttribute: (k) => (k === 'role' ? role : null) });
-  const key = (k, target, extra = {}) => keyInput({ key: k, target, ...extra });
-  assert.equal(key(' ', el('BODY')), 'down');
-  assert.equal(key(' ', el('BODY'), { shiftKey: true }), 'up');
-  assert.equal(key(' ', el('BUTTON')), null);
-  assert.equal(key(' ', el('DIV', 'button')), null);
-  assert.equal(key('ArrowDown', el('BUTTON')), 'down');
-  assert.equal(key('ArrowDown', el('INPUT')), null);
-  assert.equal(key('ArrowDown', el('DIV', 'listbox')), null);
-  assert.equal(key('PageUp', el('BODY')), 'up');
-  assert.equal(key('ArrowDown', el('BODY'), { ctrlKey: true }), null);
-});
-
 test('zoom and sideways wheels stay with the browser; a tiny wheel is held but moves nothing', () => {
   assert.equal(wheelIgnored({ deltaY: 40, ctrlKey: true }), true);
   assert.equal(wheelIgnored({ deltaY: 5, deltaX: 40 }), true);
   assert.equal(wheelIgnored({ deltaY: 1 }), false, 'held, or an inertia tail nudges the page off its stop');
   assert.equal(createWheelGesture(DEFAULTS).feed({ deltaY: 1 }, 0), 'ignore', 'and it starts no gesture');
   assert.equal(wheelIgnored({ deltaY: 40 }), false);
-});
-
-test('a move can be cancelled: it forgets its target and queue, and takes the next input from where the page stands', () => {
-  const { n, moves } = nav();
-  n.input('down');
-  n.input('down');
-  n.cancel();
-  assert.deepEqual([n.state().moving, n.state().queued], [false, null]);
-  moves[0].done();
-  assert.equal(moves.length, 1, 'the cancelled move\'s end starts nothing');
-  n.sync(2500);
-  n.input('up');
-  assert.deepEqual([moves[1].from, moves[1].to], [2500, 2000]);
 });
 
 test('the scroll length matches the engine: dives and the connectors that exist, plus one screen', () => {
@@ -185,4 +80,99 @@ test('a move waits for every poster to decode (the engine paints a newly shown s
   await new Promise((r) => postersReady(world(() => Promise.reject(new Error('broken'))), 5000, () => { ran++; r(); }));
   await new Promise((r) => setTimeout(r, 150));
   assert.equal(ran, 3, 'a failed decode still goes, once');
+});
+
+test('stops are each scene\'s start (an exit belongs to the way to the next scene), the last scene\'s end, then the body', () => {
+  // dive0 0-1300, conn0 1300-2200, dive1 2200-3500 (no connector after it), dive2 3500-4800
+  assert.deepEqual(stopPositions(CONFIG, 1000, null), [0, 2200, 3500, 4800]);
+  assert.deepEqual(stopPositions(CONFIG, 1000, 5200), [0, 2200, 3500, 4800, 5200]);
+  assert.deepEqual(stopPositions({ ...CONFIG, sections: [{}, { scroll: 2 }, {}] }, 1000, null), [0, 2200, 4200, 5500]);
+  assert.deepEqual(stopPositions({ sections: [{}] }, 800, null), [0, 1040]);
+  assert.deepEqual(gridOf([0, 2200, 3500]), [0, 1100, 2200, 2850, 3500]);
+});
+
+test('a notch or an arrow moves to the next grid point (a half point or a stop); off the grid the first goes to the next one that way', () => {
+  const g = gridOf([0, 2200, 3500, 4800]);
+  assert.equal(stepFrom(g, 0, 1), 1100);
+  assert.equal(stepFrom(g, 0, 2), 2200, 'two notches: the next scene');
+  assert.equal(stepFrom(g, 2200, -1), 1100);
+  assert.equal(stepFrom(g, 1500, 1), 2200, 'from between points: the next point down');
+  assert.equal(stepFrom(g, 1500, -1), 1100);
+  assert.equal(stepFrom(g, 4800, 1), null, 'nothing below the last');
+  assert.equal(stepFrom(g, 0, -1), null);
+  assert.equal(stepFrom(g, 4000, 9), 4800, 'clamped to the last point');
+  assert.equal(stepFrom([0, 2200, 3500], 1100, 1), 2200, 'a scene step from a half point is the next stop');
+});
+
+test('wheel deltas add up to notches: pixels, lines and pages, and a touchpad\'s small deltas over several events', () => {
+  const o = DEFAULTS;
+  assert.deepEqual(wheelNotches({ deltaY: 100, deltaMode: 0 }, 0, o), { n: 1, carry: 0 });
+  assert.deepEqual(wheelNotches({ deltaY: 120, deltaMode: 0 }, 0, o), { n: 1, carry: 20 });
+  assert.deepEqual(wheelNotches({ deltaY: 3, deltaMode: 1 }, 0, o), { n: 1, carry: 20 }, '3 lines of 40 px');
+  assert.deepEqual(wheelNotches({ deltaY: 1, deltaMode: 2 }, 0, o), { n: 2, carry: 0 }, 'a page is a scene');
+  assert.deepEqual(wheelNotches({ deltaY: -100, deltaMode: 0 }, 0, o), { n: -1, carry: 0 });
+  let carry = 0;
+  let total = 0;
+  for (let k = 0; k < 12; k++) { const w = wheelNotches({ deltaY: 9, deltaMode: 0 }, carry, o); carry = w.carry; total += w.n; }
+  assert.equal(total, 1, '12 touchpad deltas of 9 px: one notch');
+  assert.equal(o.maxNotches, 2, 'a gesture moves at most a scene');
+});
+
+test('keys: arrows (and left/right) as the wheel, page keys, Space and swipes a scene, Home and End the ends; fields keep every key', () => {
+  const el = (tagName, role = null) => ({ tagName, getAttribute: (k) => (k === 'role' ? role : null) });
+  const key = (k, target, extra = {}) => keyInput({ key: k, target, ...extra });
+  assert.deepEqual(key('ArrowDown', el('BODY')), { steps: 1 });
+  assert.deepEqual(key('ArrowRight', el('BODY')), { steps: 1 });
+  assert.deepEqual(key('ArrowUp', el('BUTTON')), { steps: -1 });
+  assert.deepEqual(key('ArrowLeft', el('BODY')), { steps: -1 });
+  assert.deepEqual(key('PageDown', el('BODY')), { scenes: 1 });
+  assert.deepEqual(key('PageUp', el('BODY')), { scenes: -1 });
+  assert.deepEqual(key(' ', el('BODY')), { scenes: 1 });
+  assert.deepEqual(key(' ', el('BODY'), { shiftKey: true }), { scenes: -1 });
+  assert.deepEqual(key('Home', el('BODY')), { to: 0 });
+  assert.deepEqual(key('End', el('BODY')), { to: 'last' });
+  assert.equal(key(' ', el('BUTTON')), null);
+  assert.equal(key('ArrowDown', el('INPUT')), null);
+  assert.equal(key('Home', el('DIV', 'textbox')), null);
+  assert.equal(key('ArrowDown', el('DIV', 'listbox')), null);
+  assert.equal(key('ArrowDown', el('BODY'), { ctrlKey: true }), null);
+  assert.equal(dirOf([0, 2200, 3500], 0, { steps: -1 }), null, 'nothing above the first scene');
+  assert.equal(dirOf([0, 2200, 3500], 2200, { to: 0 }), 'up');
+});
+
+test('the navigator moves to stops and half points; an input during a move retargets from where it was going; cancel drops the move', () => {
+  const { n, moves, at, arrive } = nav([0, 2200, 3500, 4800]);
+  n.input({ steps: 1 });
+  assert.deepEqual([moves[0].from, moves[0].to], [0, 1100]);
+  at(500);
+  n.input({ steps: 1 });
+  assert.deepEqual([moves[1].from, moves[1].to], [500, 2200], 'the second notch: from where the page is, to the next scene');
+  moves[0].done();
+  assert.equal(n.state().moving, true, 'the first move\'s end does nothing');
+  arrive();
+  assert.deepEqual([n.state().index, n.state().onStop, n.state().moving], [1, true, false]);
+  n.input({ scenes: 1 });
+  n.cancel();
+  moves.at(-1).done();
+  assert.equal(n.state().moving, false);
+  n.sync(3510);
+  n.input({ to: 0 });
+  assert.equal(moves.at(-1).to, 0);
+});
+
+test('the body is reached only from the last scene\'s end; a page at rest off the grid settles on the nearest stop', () => {
+  const { n, arrive } = nav([0, 2200, 3500, 4800, 5600], 3);
+  n.sync(4800);
+  n.input({ scenes: 1 });
+  arrive();
+  assert.equal(n.state().atBody, true);
+  assert.equal(settleTarget([0, 2200, 3500, 4800], 3, 1500), 1);
+  assert.equal(settleTarget([0, 2200, 3500, 4800], 3, 1100), -1, 'a half point stays');
+  assert.equal(settleTarget([0, 2200, 3500, 4800], 3, 2200.5), -1, 'a stop stays');
+  assert.equal(settleTarget([0, 2200, 3500, 4800, 5600], 3, 5300), 3, 'never onto the body from above it');
+});
+
+test('the copy in view: the dive holding the place, across an exit the nearer scene', () => {
+  // dive0 0-1300, conn0 1300-2200, dive1 2200-3500, dive2 3500-4800
+  assert.deepEqual([0, 1100, 1700, 1800, 2200, 2850, 3500, 4800].map((y) => sceneAt(CONFIG, 1000, y)), [0, 0, 0, 1, 1, 1, 2, 2]);
 });

@@ -1,6 +1,6 @@
 ---
 name: 3d-intro-build
-description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이는 브랜드 인트로를 만듦. Azure gpt-image 로 스틸을, WAN 키 풀(소진되면 Sora-2)로 영상을 만들며 비용 승인과 단계별 검토 페이지 판정 뒤에만 유료 생성을 진행. 결과는 엄격한 CSP 에서도 도는 페이지이고, 장면 단위 이동과 기존 사이트 통합은 선택. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
+description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이는 브랜드 인트로를 만듦. Azure gpt-image 로 스틸을, WAN 키 풀(소진되면 Sora-2)로 영상을 만들며 비용 승인과 단계별 검토 페이지 판정 뒤에만 유료 생성을 진행. 결과는 엄격한 CSP 에서도 도는 페이지이고, 장면 단위 이동은 기본(끌 수 있음), 기존 사이트 통합은 선택. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
 ---
 
 # 3d-intro-build - 스크롤-스크럽 3D 인트로 제작 (Azure 이미지 + WAN/Sora 영상)
@@ -21,7 +21,7 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 | `references/curate.mjs` | 검토 페이지(스틸, 클립)와 판정 기록 |
 | `references/serve.mjs`, `references/preview-lib.mjs` | 미리보기 서버(빈 포트, 상태 파일, 종료, CSP 헤더) |
 | `references/assemble.mjs` | 인트로 페이지 조립(인라인 script, style 없음) |
-| `references/intro-fixes.css`, `panel-glass.css`, `step-nav.js`, `step-nav.css` | 엔진 덧씌움(수정 파일은 항상, 나머지는 선택) |
+| `references/intro-fixes.css`, `panel-glass.css`, `step-nav.js`, `step-nav.css` | 엔진 덧씌움(수정 파일과 장면 단위 이동은 기본, 유리 패널은 선택) |
 | `references/verify-intro.mjs`, `references/verify.md` | 실제 브라우저 측정과 검증 목록 |
 
 엔진(`references/scrub-engine.js`)과 템플릿(`references/index-template.html`)은 벤더링본이라 **수정하지 않는다**(출처는 `references/NOTICE.md`). 엔진의 결함은 사이트 CSS 와 JS 로 덧씌운다.
@@ -118,7 +118,7 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 | `CAMERA_FEEL` | CLIP_MODE 를 따름. dive 면 "장면마다 바깥에서 들어감"(장면별 MOVE, 나가기 있음), chain 과 holdFlight 면 잔잔한 전진 활공(fly-through, walkthrough, locked-iso 중 고름) | 카메라 움직임 |
 | `MOBILE` | no | yes 면 약 2배 비용(세로 체인 추가) |
 | `STILLS_SOURCE` | gpt-image-2 | 코히전 강화가 필요하면 FLUX 옵트인 |
-| `STEP_NAV` | no | yes 면 휠 1칸, 키, 스와이프가 정확히 한 장면을 이동(`step-nav.js`). 스크롤 동작을 가로채므로 사이트 성격을 보고 고른다 |
+| `STEP_NAV` | yes | 장면 단위 이동(`step-nav.js`). 멈춤 자리는 장면마다 시작점(dive 첫 프레임, 나가기는 다음 장면으로 잇는 구간), 마지막 장면 끝, 본문 시작. 휠 1칸과 방향키(위아래, 좌우) 1번은 다음 멈춤 자리까지 절반, 2번이면 한 장면. PageUp/PageDown, Space, 스와이프는 한 장면, Home 은 첫 장면 시작, End 는 마지막 장면 끝. 멈춤 자리나 절반 지점이 아닌 곳에 멈추면 잠시 뒤 가까운 장면 시작점으로 붙는다. 멈춘 자리에서는 그 장면 문구를 보인다. 스크롤 동작을 가로채므로 원하지 않으면 매니페스트 `"stepNav": false` 로 끈다 |
 | `PANEL` | 없음 | `glass` 면 흐린 유리 문구 패널(`panel-glass.css`) |
 
 ---
@@ -322,7 +322,7 @@ const done = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds,
 | `lang` | `<html lang>` |
 | `panel: "glass"` | 흐린 유리 문구 패널(흰 글자). 알파는 조립이 정한다: 패널 글자색과 accent 로 만든 라벨색이 흰 픽셀 위에서도 대비 4.5 를 넘는 최소값(accent 가 없으면 0.64). 조립이 그 값을 알린다 |
 | `panelAlpha: 0.7` | 사람이 정한 유리 패널 알파(0~1). 계산값보다 이긴다. Step 6 의 대비 실패 줄은 그 줄에 필요한 최소 알파(`needs --intro-panel-alpha >= …`)를 함께 알린다 |
-| `stepNav: { "end": "#main" }` | 장면 단위 이동. `end` 는 기존 사이트의 본문 시작(단독 페이지면 생략). 나머지 옵션은 `step-nav.js` 머리말 |
+| `stepNav: { "end": "#main" }` | 장면 단위 이동(기본 켬, `false` 면 끔). `end` 는 기존 사이트의 본문 시작(단독 페이지면 생략). 나머지 옵션은 `step-nav.js` 머리말 |
 | `connectorStills: ["clips/exit-1-first.png", ...]` | 커넥터마다 포스터로 쓸 그 클립의 실제 첫 프레임(dive 모드의 나가기, `runDiveLegs` 가 채움). 없으면 엔진이 다음 장면 스틸을 포스터로 둔다 |
 
 ```bash
@@ -358,7 +358,7 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 
 - 화면 크기마다 새 브라우저 컨텍스트로 잰다(재빌드 뒤 재사용 컨텍스트는 예전 CSS 를 캐시에서 준다). 기본 화면은 1280x800, 1920x1080, 860x900, 390x844 터치, 375x667 터치, 844x390 터치(가로로 든 휴대폰)다. 다른 크기를 지원하면 `--viewports` 에 더한다. 지원 언어마다 그 언어 페이지 주소로 다시 돌린다.
 - 장면마다 패널이 화면 안, 헤더 아래에 있는지, 안내, 건너뛰기, 버튼, 장면 점과 겹치지 않는지, 가로 넘침, 콘솔 오류, 글자 줄 단위 대비(CTA 버튼 글자 포함, 글자를 숨긴 채 가장 나쁜 배경 픽셀 기준, 4.5 이상)를 잰다. 상단 CTA 는 제 바탕색과의 대비를 잰다. 바탕이 단색이 아니면 잴 수 없어 실패로 남고, 검증자가 눈으로 보고 판정에 적는다. 두 번째 장면부터는 클립이 있는데 5초 안에 그려지지 않으면 실패다(첫 장면은 첫 이동 전까지 스틸, 움직임 줄이기는 클립 없음).
-- 장면 단위 이동이면 입력도 잰다: 직전 장면에서 휠 1칸과 관성 1회가 마지막 장면에 멈추는지, 마지막 장면에서 입력 방식별 본문 도착과 위 입력 복귀, 메인화면 버튼과 건너뛰기 링크. 움직임 줄이기 설정은 `--viewports 1280x800r` 로 따로 잰다.
+- 장면 단위 이동이면 입력도 잰다: 직전 장면에서 휠 1칸과 관성 1회(한 동작)가 한 장면만 가서 마지막 장면 시작에 멈추는지, 마지막 장면 끝에서 입력 방식별 본문 도착과 위 입력 복귀(휠과 방향키는 2번), 메인화면 버튼과 건너뛰기 링크. 움직임 줄이기 설정은 `--viewports 1280x800r` 로 따로 잰다.
 - 이음매 탐침: `--seams` 를 더하면 첫 화면 크기에서 클립 사이 경계마다 앞뒤를 스크롤하며 잰다. 빈 화면(색과 관계없이 거의 한 색) 길이가 한도를 넘거나, 느린 망(`--slow-clips 4000`)에서 포스터가 클립과 크게 다르면 실패다. dive 모드면 반드시 돌린다. 도착할 때 클립이 이미 있던 경계는 포스터를 재지 못한다(`posterUnmeasured`, 통과로 세지 않음: 실패가 없어도 종료 코드 3). `--seam-reload` 를 더하면 경계마다 페이지를 새로 불러 모든 경계를 잰다.
 
   ```bash

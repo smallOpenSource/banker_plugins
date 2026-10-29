@@ -40,7 +40,7 @@ test('the page carries no inline script or style, so a strict CSP runs it', () =
   assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i, 'every script has a src');
   assert.doesNotMatch(html, /\son[a-z]+=/i, 'no inline event handlers');
   for (const f of ['scrub-engine.css', 'theme.css', 'intro-fixes.css']) assert.match(html, new RegExp(`<link rel="stylesheet" href="${f}"`));
-  assert.match(html, /<script src="scrub-engine\.js"><\/script>\s*<script src="intro\.js"><\/script>/);
+  assert.match(html, /<script src="scrub-engine\.js"><\/script>\s*<script src="step-nav\.js"><\/script>\s*<script src="intro\.js"><\/script>/);
   const intro = read(dir, 'intro.js');
   assert.match(intro, /var world = document\.getElementById\('world'\);[\s\S]*mountScrollWorld\(world, config\);/);
   assert.match(intro, /"connectors": \[\s*"assets\/vid\/conn1\.mp4"\s*\]/);
@@ -72,8 +72,8 @@ test('the engine and the template stay as shipped', () => {
   assert.ok(fs.readFileSync(path.join(HERE, 'index-template.html')).equals(before));
 });
 
-test('the engine fixes always ship; the glass panel and scene steps only when asked', () => {
-  const plain = project();
+test('the engine fixes always ship; the glass panel only when asked; scene steps by default, off with stepNav false', () => {
+  const plain = project({ stepNav: false });
   assemble({ projectDir: plain });
   assert.match(read(plain, 'intro-fixes.css'), /translate:\s*0 -50%/);
   assert.match(read(plain, 'intro-fixes.css'), /overflow-x:\s*clip/);
@@ -83,8 +83,14 @@ test('the engine fixes always ship; the glass panel and scene steps only when as
   assert.ok(!fs.existsSync(path.join(plain, 'site', 'panel-glass.css')));
   assert.ok(!fs.existsSync(path.join(plain, 'site', 'step-nav.js')));
   assert.doesNotMatch(read(plain, 'intro.js'), /IntroStepNav/);
+  const byDefault = project();
+  assemble({ projectDir: byDefault });
+  assert.ok(fs.existsSync(path.join(byDefault, 'site', 'step-nav.js')), 'on without a stepNav entry');
+  assert.match(read(byDefault, 'intro.js'), /var nav = \{\};[\s\S]*IntroStepNav\.attach\(world, config, nav\)/);
+  assert.match(read(byDefault, 'step-nav.css'), /\.isn-on \.sw-copy\.isn-copy \{ opacity: 1 !important;/);
+  assert.match(read(byDefault, 'step-nav.css'), /prefers-reduced-motion: reduce\)\s*\{\s*\.isn-on \.sw-copy \{ transition: none; \}/);
 
-  const full = project({ panel: 'glass', stepNav: { end: '#main', lastGuardMs: 250 }, lang: 'ko' });
+  const full = project({ panel: 'glass', stepNav: { end: '#main' }, lang: 'ko' });
   assemble({ projectDir: full });
   const html = read(full, 'index.html');
   assert.match(html, /<html lang="ko">/);

@@ -196,7 +196,7 @@ export async function loadPlaywright({ fromProject = false, importBeside = () =>
 
 const navInfo = (page) => page.evaluate(() => {
   const c = window.IntroStepNav && window.IntroStepNav.current;
-  return c ? { last: c.lastScene, stops: c.stops(), state: c.state(), end: c.end } : null;
+  return c ? { last: c.lastScene, lastStop: c.lastStop ?? c.lastScene, stops: c.stops(), state: c.state(), end: c.end } : null;
 });
 
 // Waits until no move runs and the scroll position has held still for 250 ms.
@@ -378,6 +378,8 @@ function panelNeed(l, rgb, w, panelBg, minContrast) {
 
 async function measureScene(page, i, o) {
   await goToScene(page, i);
+  // with step navigation the copy of the scene at its stop fades in (step-nav.css, 0.35 s)
+  if (await page.evaluate(() => document.documentElement.classList.contains('isn-on'))) await page.waitForTimeout(450);
   const clip = await clipState(page, i, o.reduce);
   const g = geometry(await page.evaluate(rawGeometry, { i, header: o.header, covers: COVERS }));
   const contrast = o.contrast && g.opacity > 0.5 ? await lineContrast(page, i, g.panel, o.minContrast) : [];
@@ -417,15 +419,21 @@ async function notchWithInertia(page, vp) {
   }
 }
 
-async function bodyRoundTrip(page, vp, how, last) {
-  await goToScene(page, last);
+// A wheel notch and an arrow key go half way: two of them make the step from the last scene's end to the body.
+const HALF = new Set(['wheel', 'ArrowDown']);
+async function sendStep(page, vp, how, dir) {
+  for (let k = HALF.has(how) ? 2 : 1; k > 0; k--) await send(page, vp, how, dir);
+}
+
+async function bodyRoundTrip(page, vp, how, lastStop) {
+  await goToScene(page, lastStop);
   await page.waitForTimeout(400);
-  await send(page, vp, how, 'down');
+  await sendStep(page, vp, how, 'down');
   await settle(page);
   const reachesBody = (await navInfo(page)).state.atBody;
-  await send(page, vp, how, 'up');
+  await sendStep(page, vp, how, 'up');
   await settle(page);
-  return { reachesBody, upReturns: (await navInfo(page)).state.index === last };
+  return { reachesBody, upReturns: (await navInfo(page)).state.index === lastStop };
 }
 
 const ready = (page) => page.evaluate(() => {
@@ -437,9 +445,9 @@ const bodyFocused = (page, end) => page.evaluate((sel) => document.activeElement
 // The main button: hidden before the last scene, shown once its clip has played to the end (at
 // once under reduced motion), and a press goes to the body with the focus. The skip link likewise.
 async function checkButtons(page, info) {
-  await goToScene(page, info.last - 1);
+  await goToScene(page, info.lastStop - 1);
   const hiddenBefore = !(await ready(page));
-  await goToScene(page, info.last);
+  await goToScene(page, info.lastStop);
   const shownAtLast = await ready(page);
   await page.click('.isn-main');
   await settle(page);
@@ -460,8 +468,8 @@ async function checkInput(page, vp) {
     await settle(page);
     out.inertiaStopsAtLast = (await navInfo(page)).state.index === info.last;
   }
-  if (info.stops.length - 1 > info.last) {
-    for (const how of vp.touch ? ['swipe'] : ['wheel', 'ArrowDown', 'PageDown', 'Space']) out[how] = await bodyRoundTrip(page, vp, how, info.last);
+  if (info.stops.length - 1 > info.lastStop) {
+    for (const how of vp.touch ? ['swipe'] : ['wheel', 'ArrowDown', 'PageDown', 'Space']) out[how] = await bodyRoundTrip(page, vp, how, info.lastStop);
     Object.assign(out, await checkButtons(page, info));
   }
   return out;
@@ -701,6 +709,8 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
 async function openIntro(page, url) {
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForSelector('.sw-scene');
+  // the probe parks the page between stops: step navigation must not settle it on one
+  await page.evaluate(() => window.IntroStepNav?.current?.hold(true));
   await page.evaluate((sels) => { for (const el of document.querySelectorAll(sels.join(','))) el.style.visibility = 'hidden'; }, OVERLAYS);
 }
 

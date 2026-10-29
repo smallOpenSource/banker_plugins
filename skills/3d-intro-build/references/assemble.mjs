@@ -13,7 +13,7 @@
  *     intro-fixes.css       (layout, button text and overflow fixes for the engine, every page)
  *     intro.js              (the mountScrollWorld config and call)
  *     panel-glass.css       (only with "panel": "glass")
- *     step-nav.js/.css      (only with "stepNav": scene-by-scene navigation)
+ *     step-nav.js/.css      (scene-by-scene navigation; on unless "stepNav": false)
  *     assets/<id>.<ext>     (scene posters/stills)
  *     assets/vid/<id>.mp4   (per-scene clips: dives, or the short holds of the hold-and-flight mode)
  *     assets/vid/connN.mp4  (optional connectors: the flights between scenes, or dive mode's exits)
@@ -42,7 +42,7 @@
  *     "nav": true, "atmosphere": true,                 // optional (only false is emitted)
  *     "panel": "glass",                                 // optional frosted-glass copy panel
  *     "panelAlpha": 0.7,                                // optional glass alpha; default: panelAlpha() below
- *     "stepNav": { "end": "#main", ... },              // optional, see step-nav.js for the options
+ *     "stepNav": { "end": "#main", ... },              // optional, default on ({}); false turns it off; options in step-nav.js
  *     "sections": [                                     // required, >= 1, in order
  *       { "id":"sceneA", "label":"Scene A",
  *         "still":"still-1.png",  "clip":"dive-1.mp4",       // required (relative to projectDir)
@@ -179,6 +179,9 @@ function buildConfig(manifest, projectDir, outDir) {
 
 const PANELS = { glass: 'panel-glass.css' };
 
+/** The step navigation options: on by default ({}), off only with "stepNav": false. */
+export const navOf = (manifest) => (manifest.stepNav === false ? null : (manifest.stepNav && typeof manifest.stepNav === 'object' ? manifest.stepNav : {}));
+
 // ---- glass panel alpha ---------------------------------------------------------
 
 const lin = (c) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
@@ -244,7 +247,7 @@ function themeCss(styleInner, theme = {}) {
 
 function stylesheets(manifest) {
   return ['scrub-engine.css', 'theme.css', 'intro-fixes.css', manifest.panel ? PANELS[manifest.panel] : null,
-    manifest.stepNav ? 'step-nav.css' : null].filter(Boolean);
+    navOf(manifest) ? 'step-nav.css' : null].filter(Boolean);
 }
 
 /**
@@ -277,7 +280,7 @@ function renderIndexHtml(template, manifest, config = {}) {
   const links = [...stylesheets(manifest).map((f) => `  <link rel="stylesheet" href="${f}" />`),
     ...firstPosters(config).map((f) => `  <link rel="preload" as="image" href="${escAttr(f)}" />`)].join('\n');
   head = head.replace(/[ \t]*<style>[\s\S]*?<\/style>\n?/, `${links}\n`);
-  const scripts = ['scrub-engine.js', manifest.stepNav ? 'step-nav.js' : null, 'intro.js'].filter(Boolean)
+  const scripts = ['scrub-engine.js', navOf(manifest) ? 'step-nav.js' : null, 'intro.js'].filter(Boolean)
     .map((f) => `  <script src="${f}"></script>`).join('\n');
   return `${head}${scripts}\n</body>\n</html>\n`;
 }
@@ -325,7 +328,7 @@ function writeStatic(out, manifest, template) {
   const style = /<style>([\s\S]*?)<\/style>/.exec(template);
   fs.writeFileSync(path.join(out, 'theme.css'), themeCss(style ? style[1] : '', manifest.theme));
   const copies = ['intro-fixes.css', manifest.panel ? PANELS[manifest.panel] : null,
-    manifest.stepNav ? 'step-nav.css' : null, manifest.stepNav ? 'step-nav.js' : null].filter(Boolean);
+    navOf(manifest) ? 'step-nav.css' : null, navOf(manifest) ? 'step-nav.js' : null].filter(Boolean);
   for (const f of copies) fs.copyFileSync(path.join(HERE, f), path.join(out, f));
   if (manifest.panel === 'glass') {
     const css = path.join(out, PANELS.glass);
@@ -357,7 +360,7 @@ export function assemble({ projectDir, outDir, manifestPath } = {}) {
   const { config, copied } = buildConfig(manifest, proj, out);
   const template = fs.readFileSync(path.join(HERE, 'index-template.html'), 'utf8');
   const styleHash = writeStatic(out, manifest, template);
-  fs.writeFileSync(path.join(out, 'intro.js'), introJs(config, manifest.stepNav));
+  fs.writeFileSync(path.join(out, 'intro.js'), introJs(config, navOf(manifest)));
   const indexPath = path.join(out, 'index.html');
   fs.writeFileSync(indexPath, renderIndexHtml(template, manifest, config));
 

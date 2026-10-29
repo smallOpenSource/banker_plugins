@@ -1,13 +1,23 @@
 /*
- * Scene-by-scene navigation for the scroll-world intro (opt-in: intro.json "stepNav").
+ * Scene-by-scene navigation for the scroll-world intro (on by default; intro.json "stepNav": false
+ * turns it off).
  *
  * The vendored engine maps the window's scroll position to clip time and stays as shipped; this
- * script only moves the scroll position. One wheel gesture, arrow key, PageDown/PageUp, Space or a
- * swipe of more than 30 px moves exactly one scene; a route dot goes to its scene. Inputs during a
- * move keep the latest one, run when the move ends. Stops: the first scene at 0, middle scenes in
- * the middle of their hold, the last scene at the end of its clip, then the top of the page body
- * (`end`, when the intro sits on top of a site). Below the body top the browser scrolls as usual;
- * one up input at the body top returns to the last scene. A move starts from where the page stands.
+ * script only moves the scroll position. Stops: each scene's start (its dive's first frame; an exit
+ * clip is the way to the next scene), the end of the last scene, then the top of the page body
+ * (`end`, when the intro sits on top of a site). Between two stops lies a half point.
+ *   wheel          one notch moves half way to the next stop, two notches a whole scene. Pixel, line
+ *                  and page deltas, and a touchpad's small ones, add up to notches (notchPx, linePx);
+ *                  one gesture moves at most maxNotches
+ *   arrow keys     up/down and left/right as the wheel (up and left go back)
+ *   PageUp/PageDown, Space (shift goes back), a swipe over swipePx   one scene
+ *   Home, End      the first scene's start, the last scene's end
+ *   a route dot    its scene's start
+ * Fields and editable places keep their keys. An input during a move retargets it from where that
+ * move was going. When the page comes to rest anywhere else above the body (a scrollbar, a touchpad,
+ * an anchor), it settles on the nearest stop after snapMs. Below the body top the browser scrolls as
+ * usual. At a stop or a half point, the copy of the scene in view is shown (class isn-copy, faded by
+ * step-nav.css; the engine's own fade takes over again when a move starts).
  *
  * Options (intro.json "stepNav", all optional; values are the defaults below):
  *   end            selector of the body start; omit on a standalone intro page. It is looked up at
@@ -18,8 +28,9 @@
  *   swipePx        a touch swipe longer than this is one step
  *   durBaseMs, durPerVhMs, durMaxMs   a move takes min(durMax, durBase + distance in screen heights
  *                  x durPerVh) ms with a cosine ease; 0 under prefers-reduced-motion
- *   lastGuardMs    PROVISIONAL (still being verified where it came from): a down input queued on the
- *                  way into the last scene is dropped, and down is ignored this long after arriving
+ *   notchPx, linePx, maxNotches   wheel pixels to a notch, pixels in a line delta, notches per gesture
+ *   snapMs         how long the page must rest off the stops before it settles on the nearest one
+ *   decodeCapMs    the longest wait for the posters to decode before a move
  *   prefetch       download the clips at load so the first move already plays video; on a phone or
  *                  with Save-Data only the first three in playback order
  *   hintLabel, skipLabel, mainLabel   texts of the mouse hint, the skip link and the main button
@@ -37,7 +48,8 @@
 
   const DEFAULTS = Object.freeze({
     end: null, gestureGapMs: 220, minWheel: 2, swipePx: 30,
-    durBaseMs: 2600, durPerVhMs: 760, durMaxMs: 5600, lastGuardMs: 250, decodeCapMs: 300, prefetch: true,
+    durBaseMs: 2600, durPerVhMs: 760, durMaxMs: 5600, decodeCapMs: 300, prefetch: true,
+    notchPx: 100, linePx: 40, maxNotches: 2, snapMs: 400,
     hintLabel: 'Scroll or press the down key', skipLabel: 'Skip intro', mainLabel: 'Go to main content',
   });
 
@@ -63,14 +75,59 @@
   /** The scroll length of the segments in screen heights (the engine's track adds one screen). */
   function totalWeight(config) { return spansOf(config).total; }
 
-  /** Stop positions in px: the first scene at 0, middle scenes mid-dive, the last at its end, then the body. */
+  /** Stop positions in px: each scene's start, the last scene's end, then the body. */
   function stopPositions(config, vh, endTop) {
     const spans = spansOf(config).spans;
-    const stops = spans.map(function (span, i) {
-      if (i === 0) return 0;
-      return Math.round((i === spans.length - 1 ? span[1] : (span[0] + span[1]) / 2) * vh);
-    });
+    const stops = spans.map(function (span) { return Math.round(span[0] * vh); });
+    if (spans.length) stops.push(Math.round(spans[spans.length - 1][1] * vh));
     return endTop == null ? stops : stops.concat([endTop]);
+  }
+
+  /** The stops with the half point between each two: where a wheel notch or an arrow key can land. */
+  function gridOf(stops) {
+    const g = [];
+    stops.forEach(function (v, i) { if (i) g.push(Math.round((stops[i - 1] + v) / 2)); g.push(v); });
+    return g;
+  }
+
+  /**
+   * Where n points of `list` (signed: + goes down) take the page from `base`; from a place between
+   * points the first one is the next point that way. null when there is none that way.
+   */
+  function stepFrom(list, base, n) {
+    if (!n) return null;
+    let i;
+    if (n > 0) i = list.findIndex(function (v) { return v > base + 1; });
+    else for (i = list.length - 1; i >= 0 && !(list[i] < base - 1); i--);
+    if (i < 0) return null;
+    return list[Math.max(0, Math.min(list.length - 1, i + (n > 0 ? n - 1 : n + 1)))];
+  }
+
+  /** The scene whose copy is in view at y: the dive holding it, or across an exit the nearer scene. */
+  function sceneAt(config, vh, y) {
+    const spans = spansOf(config).spans;
+    for (let i = spans.length - 1; i >= 0; i--) {
+      if (y >= spans[i][0] * vh - 1) {
+        const end = spans[i][1] * vh;
+        const next = spans[i + 1];
+        return y <= end + 1 || !next ? i : (y - end > (next[0] * vh - end) / 2 ? i + 1 : i);
+      }
+    }
+    return 0;
+  }
+
+  /** The stop a page resting at y settles on (the nearest up to the last scene's end); -1 at a stop or a half point. */
+  function settleTarget(stops, lastStop, y) {
+    if (gridOf(stops).some(function (v) { return Math.abs(v - y) <= 1; })) return -1;
+    return nearest(stops.slice(0, lastStop + 1), y);
+  }
+
+  /** Wheel notches in one event: pixel, line and page deltas in pixels, added to the gesture's remainder. */
+  function wheelNotches(e, carry, o) {
+    const unit = e.deltaMode === 1 ? o.linePx : e.deltaMode === 2 ? 2 * o.notchPx : 1;
+    const total = carry + (e.deltaY || 0) * unit;
+    const n = Math.trunc(total / o.notchPx);
+    return { n: n, carry: total - n * o.notchPx };
   }
 
   function moveDuration(distance, vh, o, reduce) {
@@ -133,67 +190,47 @@
     return best;
   };
 
-  // The stop an input asks for from position `pos`: a dot's scene, the next stop below for down, the
-  // next above for up; -1 when there is none.
-  function targetOf(stops, pos, input) {
-    if (typeof input === 'object') return Math.max(0, Math.min(stops.length - 1, input.to));
-    if (input === 'down') return stops.findIndex(function (v) { return v > pos + 1; });
-    for (let i = stops.length - 1; i >= 0; i--) if (stops[i] < pos - 1) return i;
-    return -1;
+  // Where an input asks to go from `base`: { to: i } a stop, { steps: n } n grid points, { scenes: n } the
+  // next stop that way (n is +1 or -1). null when there is nothing that way.
+  function targetOf(stops, base, input) {
+    if (input.to != null) return stops[Math.max(0, Math.min(stops.length - 1, input.to))];
+    if (input.steps) return stepFrom(gridOf(stops), base, input.steps);
+    return stepFrom(stops, base, input.scenes);
   }
 
   /**
-   * Moves between stops. input('down' | 'up' | { to }) while idle starts a move from where the page
-   * stands (sync(y)); during a move it replaces the queued input. move(fromY, toY, done) animates;
-   * onArrive(index) runs after each move.
+   * Moves between stops and half points. input(spec) starts a move from where the page stands (sync(y)),
+   * or during a move retargets it from where it was going. move(fromY, toY, done) animates from the
+   * page's place (where()); onArrive(y) runs when a move ends; onLeave() when one starts.
    */
   function createNavigator(opt) {
-    let index = 0;
     let pos = 0;
-    let target = -1;
-    let queued = null;
-    let guardUntil = -Infinity;
+    let target = null;
     let generation = 0;
     const list = function () { return opt.stops(); };
-    function arrive(from, to) {
-      index = to;
-      pos = list()[to];
-      target = -1;
-      if (to === opt.lastScene && from < to) guardUntil = opt.now() + opt.guardMs;
-      if (opt.onArrive) opt.onArrive(to);
-      const next = queued;
-      queued = null;
-      if (next) go(next);
-    }
-    function go(input) {
-      const to = targetOf(list(), pos, input);
-      if (to < 0 || Math.abs(list()[to] - pos) <= 1) return;
-      if (input === 'down' && index === opt.lastScene && opt.now() < guardUntil) return;
-      const from = index;
-      const gen = generation;
-      target = to;
-      opt.move(pos, list()[to], function () { if (gen === generation) arrive(from, to); });
+    function go(y) {
+      if (y == null || Math.abs(y - (target == null ? pos : target)) <= 1) return;
+      const gen = ++generation;
+      if (target == null && opt.onLeave) opt.onLeave();
+      target = y;
+      opt.move(opt.where ? opt.where() : pos, y, function () {
+        if (gen !== generation) return;
+        pos = y;
+        target = null;
+        if (opt.onArrive) opt.onArrive(y);
+      });
     }
     return {
-      input: function (input) {
-        if (target === -1) return go(input);
-        if (input === 'down' && target === opt.lastScene && target > index) return;
-        queued = input;
-      },
-      sync: function (y) {
-        if (target !== -1) return;
-        pos = y;
-        index = nearest(list(), y);
-      },
-      // Drops the move in flight and the queued input; the move's end, when it comes, starts nothing.
-      cancel: function () {
-        generation++;
-        target = -1;
-        queued = null;
-      },
+      input: function (spec) { go(targetOf(list(), target == null ? pos : target, spec)); },
+      sync: function (y) { if (target == null) pos = y; },
+      // Drops the move in flight; its end, when it comes, does nothing.
+      cancel: function () { generation++; target = null; },
       state: function () {
-        const n = list().length;
-        return { index: index, moving: target !== -1, queued: queued, atBody: n - 1 > opt.lastScene && index === n - 1 };
+        const stops = list();
+        const at = target == null ? pos : target;
+        const index = nearest(stops, at);
+        return { index: index, y: at, moving: target != null, onStop: Math.abs(stops[index] - at) <= 1,
+          atBody: stops.length - 1 > opt.lastStop && index === stops.length - 1 && Math.abs(stops[index] - at) <= 1 };
       },
     };
   }
@@ -207,13 +244,20 @@
   const pressable = function (t) {
     return Boolean(t) && (/^(BUTTON|A|SUMMARY)$/.test(t.tagName || '') || /^(button|link|checkbox|switch|menuitem|tab|option)$/.test(role(t)));
   };
-  const KEYS = { ArrowDown: 'down', PageDown: 'down', ArrowUp: 'up', PageUp: 'up' };
+  const KEYS = { ArrowDown: { steps: 1 }, ArrowRight: { steps: 1 }, ArrowUp: { steps: -1 }, ArrowLeft: { steps: -1 },
+    PageDown: { scenes: 1 }, PageUp: { scenes: -1 }, Home: { to: 0 }, End: { to: 'last' } };
 
-  /** The step a key asks for, or null when the key is not the intro's. */
+  /** What a key asks for ({ steps }, { scenes }, { to }; End's to is 'last'), or null when the key is not the intro's. */
   function keyInput(e) {
     if (e.altKey || e.ctrlKey || e.metaKey || editable(e.target)) return null;
-    if (e.key === ' ') return pressable(e.target) ? null : (e.shiftKey ? 'up' : 'down');
+    if (e.key === ' ') return pressable(e.target) ? null : { scenes: e.shiftKey ? -1 : 1 };
     return KEYS[e.key] || null;
+  }
+
+  /** The direction of an input from `base`: 'down', 'up', or null when it asks for no move. */
+  function dirOf(stops, base, input) {
+    const y = targetOf(stops, base, input);
+    return y == null || Math.abs(y - base) <= 1 ? null : (y > base ? 'down' : 'up');
   }
 
   // ---- browser wiring -----------------------------------------------------------
@@ -335,7 +379,10 @@
     return { hint: hint, skip: skip, main: main };
   }
 
-  /** Wires the navigation to the page. Returns { goTo(i), state(), stops(), lastScene, end }. */
+  /**
+   * Wires the navigation to the page. Returns { goTo(i), hold(on), state(), stops(), lastScene, lastStop, end };
+   * hold(true) stops the settling on a stop (a measuring script that parks the page between stops).
+   */
   function attach(world, config, options) {
     const o = Object.assign({}, DEFAULTS, options || {});
     const ctx = makeContext(world, config, o);
@@ -346,9 +393,9 @@
     listenClicks(ctx);
     listenScroll(ctx);
     ctx.nav.sync(window.scrollY);
-    ctx.mark(ctx.nav.state().index);
-    const handle = { goTo: function (i) { ctx.nav.sync(window.scrollY); ctx.nav.input({ to: i }); },
-      state: function () { return ctx.nav.state(); }, stops: ctx.stops, lastScene: ctx.lastScene, end: o.end };
+    ctx.mark();
+    const handle = { goTo: function (i) { step(ctx, { to: i }); }, hold: function (on) { ctx.held = Boolean(on); },
+      state: function () { return ctx.nav.state(); }, stops: ctx.stops, lastScene: ctx.lastScene, lastStop: ctx.lastStop, end: o.end };
     // The navigation on this page, for scripts and for verify-intro.mjs.
     window.IntroStepNav.current = handle;
     return handle;
@@ -357,7 +404,7 @@
   function makeContext(world, config, o) {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const lastScene = (config.sections || []).length - 1;
-    const ctx = { o: o, world: world, lastScene: lastScene, focusEnd: false, warned: false };
+    const ctx = { o: o, world: world, config: config, lastScene: lastScene, lastStop: lastScene + 1, focusEnd: false, warned: false };
     ctx.endEl = function () { return endElement(ctx); };
     ctx.endTop = function () { const e = ctx.endEl(); return e ? Math.round(e.getBoundingClientRect().top + window.scrollY) : null; };
     // The engine sizes its track (segments + one screen) from the height it last laid out at, so the
@@ -368,10 +415,10 @@
       return h > 0 ? h / (totalWeight(config) + 1) : window.innerHeight;
     };
     ctx.stops = function () { return stopPositions(config, ctx.vh(), ctx.endTop()); };
-    ctx.ours = function (y, dir) { return belongsToIntro(y, dir, ctx.stops()[lastScene], ctx.endTop()); };
-    ctx.mark = function (i) { mark(ctx, i); };
-    ctx.nav = createNavigator({ stops: ctx.stops, lastScene: lastScene, guardMs: o.lastGuardMs,
-      now: function () { return performance.now(); }, onArrive: ctx.mark,
+    ctx.ours = function (y, dir) { return belongsToIntro(y, dir, ctx.stops()[ctx.lastStop], ctx.endTop()); };
+    ctx.mark = function () { mark(ctx); };
+    ctx.nav = createNavigator({ stops: ctx.stops, lastStop: ctx.lastStop, where: function () { return window.scrollY; },
+      onLeave: function () { showCopy(ctx, -1); }, onArrive: ctx.mark,
       move: function (from, to, done) {
         const mine = ++pending;
         postersReady(world, o.decodeCapMs, function () { if (mine === pending) animate(from, to, moveDuration(to - from, ctx.vh(), o, reduce), done); });
@@ -401,44 +448,72 @@
     e.focus({ preventScroll: true });
   }
 
-  // Classes the CSS reads: isn-last at the last scene; isn-ready once its clip has played to the end
-  // (the page stands at the last stop; under reduced motion that stop is reached at once and the
-  // engine plays no clip); isn-body at or below the body top. Moves the focus to the body after the
-  // main button.
-  function mark(ctx, i) {
-    const c = document.documentElement.classList;
-    const atEnd = Math.abs(window.scrollY - ctx.stops()[ctx.lastScene]) <= 1;
-    c.toggle('isn-last', i === ctx.lastScene);
-    c.toggle('isn-ready', Boolean(ctx.endEl()) && i === ctx.lastScene && atEnd);
-    c.toggle('isn-body', i > ctx.lastScene);
-    if (ctx.focusEnd && i > ctx.lastScene) focusBody(ctx);
+  // The copy of scene k shows over the engine's own fade (class isn-copy, see step-nav.css); -1 shows none.
+  // The same element: nothing is copied, so a screen reader and the focus meet each text once.
+  function showCopy(ctx, k) {
+    ctx.world.querySelectorAll('.sw-copy').forEach(function (c, i) { c.classList.toggle('isn-copy', i === k); });
   }
 
-  function step(ctx, dir) {
-    ctx.nav.sync(window.scrollY);
-    ctx.nav.input(dir);
+  // Classes the CSS reads: isn-last at the last scene's end; isn-ready there once its clip has played
+  // to the end (under reduced motion that stop is reached at once and the engine plays no clip);
+  // isn-body at or below the body top. At a stop or a half point the copy in view shows. Moves the
+  // focus to the body after the main button.
+  function mark(ctx) {
+    const c = document.documentElement.classList;
+    const y = window.scrollY;
+    const stops = ctx.stops();
+    const atLast = Math.abs(y - stops[ctx.lastStop]) <= 1;
+    const body = stops.length - 1 > ctx.lastStop && y >= stops[stops.length - 1] - 1;
+    c.toggle('isn-last', atLast);
+    c.toggle('isn-ready', Boolean(ctx.endEl()) && atLast);
+    c.toggle('isn-body', body);
+    const onGrid = gridOf(stops).some(function (v) { return Math.abs(v - y) <= 1; });
+    showCopy(ctx, onGrid && !body ? sceneAt(ctx.config, ctx.vh(), y) : -1);
+    if (ctx.focusEnd && body) focusBody(ctx);
   }
+
+  // An input ({ steps }, { scenes }, { to }, End's { to: 'last' }) from where the page stands.
+  function step(ctx, input) {
+    ctx.nav.sync(window.scrollY);
+    ctx.nav.input(input.to === 'last' ? { to: ctx.lastStop } : input);
+  }
+
+  // The direction an input takes from where the page (or the move in flight) is going.
+  const dirFrom = function (ctx, input) {
+    const st = ctx.nav.state();
+    return dirOf(ctx.stops(), st.moving ? st.y : window.scrollY, input.to === 'last' ? { to: ctx.lastStop } : input);
+  };
 
   function listenWheel(ctx) {
     const gesture = createWheelGesture(ctx.o);
+    let carry = 0;
+    let used = 0;
     window.addEventListener('wheel', function (e) {
       if (wheelIgnored(e)) return;
-      const dir = e.deltaY > 0 ? 'down' : 'up';
-      if (!ctx.ours(window.scrollY, dir)) return;
+      if (!ctx.ours(window.scrollY, e.deltaY > 0 ? 'down' : 'up')) return;
       e.preventDefault();
-      if (gesture.feed(e, e.timeStamp) === 'new') step(ctx, dir);
+      const kind = gesture.feed(e, e.timeStamp);
+      if (kind === 'ignore') return;
+      if (kind === 'new') { carry = 0; used = 0; }
+      const w = wheelNotches(e, carry, ctx.o);
+      carry = w.carry;
+      const n = Math.sign(w.n) * Math.min(Math.abs(w.n), ctx.o.maxNotches - used);
+      if (!n) return;
+      used += Math.abs(n);
+      step(ctx, { steps: n });
     }, { passive: false });
   }
 
   function listenKeys(ctx) {
     window.addEventListener('keydown', function (e) {
-      const dir = keyInput(e);
+      const input = keyInput(e);
+      if (!input) return;
+      const dir = dirFrom(ctx, input);
       if (!dir || !ctx.ours(window.scrollY, dir)) return;
       e.preventDefault();
-      if (!e.repeat) step(ctx, dir);
+      if (!e.repeat) step(ctx, input);
     });
   }
-
   function listenTouch(ctx) {
     let y0 = null;
     window.addEventListener('touchstart', function (e) { y0 = e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });
@@ -452,7 +527,7 @@
       const dy = y0 - e.changedTouches[0].clientY;
       const dir = dy > 0 ? 'down' : 'up';
       y0 = null;
-      if (Math.abs(dy) > ctx.o.swipePx && ctx.ours(window.scrollY, dir)) step(ctx, dir);
+      if (Math.abs(dy) > ctx.o.swipePx && ctx.ours(window.scrollY, dir)) step(ctx, { scenes: dir === 'down' ? 1 : -1 });
     }, { passive: true });
   }
 
@@ -462,9 +537,9 @@
     ctx.nav.cancel();
     stopAnimation();
     const top = ctx.endTop();
-    jump(top == null ? ctx.stops()[ctx.lastScene] : top);
+    jump(top == null ? ctx.stops()[ctx.lastStop] : top);
     ctx.nav.sync(window.scrollY);
-    ctx.mark(ctx.nav.state().index);
+    ctx.mark();
     focusBody(ctx);
   }
 
@@ -492,25 +567,38 @@
     }, true);
   }
 
-  // Scrolling by other means (scrollbar, find in page, links) moves the navigator's place too.
+  // Scrolling by other means (scrollbar, a touchpad, find in page, an anchor) moves the navigator's place
+  // too; a page that comes to rest off the stops and half points, above the body, settles on the nearest stop.
   function listenScroll(ctx) {
     let queued = false;
+    let rest = 0;
     window.addEventListener('scroll', function () {
-      if (queued || ctx.nav.state().moving) return;
+      if (ctx.nav.state().moving) return;
+      clearTimeout(rest);
+      rest = setTimeout(function () { settle(ctx); }, ctx.o.snapMs);
+      if (queued) return;
       queued = true;
       requestAnimationFrame(function () {
         queued = false;
         if (ctx.nav.state().moving) return;
         ctx.nav.sync(window.scrollY);
-        ctx.mark(ctx.nav.state().index);
+        ctx.mark();
       });
     }, { passive: true });
+  }
+
+  function settle(ctx) {
+    const y = window.scrollY;
+    if (ctx.held || ctx.nav.state().moving || !ctx.ours(y, 'down')) return;
+    const to = settleTarget(ctx.stops(), ctx.lastStop, y);
+    if (to >= 0) step(ctx, { to: to });
   }
 
   const api = {
     DEFAULTS: DEFAULTS, stopPositions: stopPositions, totalWeight: totalWeight, moveDuration: moveDuration,
     wheelIgnored: wheelIgnored, createWheelGesture: createWheelGesture, belongsToIntro: belongsToIntro,
     createNavigator: createNavigator, keyInput: keyInput, prefetch: prefetch, attach: attach, postersReady: postersReady,
+    gridOf: gridOf, stepFrom: stepFrom, sceneAt: sceneAt, wheelNotches: wheelNotches, dirOf: dirOf, settleTarget: settleTarget,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else window.IntroStepNav = api;

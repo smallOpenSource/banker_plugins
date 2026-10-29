@@ -57,3 +57,12 @@ html.isn-ready .isn-main { display: inline-flex; }
 /* The last scene keeps the main button alone; the body shows none of these. */
 html.isn-last .isn-hint, html.isn-last .sw-hint, html.isn-last .isn-skip,
 html.isn-body .isn-hint, html.isn-body .sw-hint, html.isn-body .isn-skip, html.isn-body .isn-main { display: none !important; }
+
+/* At a stop or a half point step-nav.js marks the copy of the scene in view (isn-copy): it shows over the
+   engine's own fade, which leaves a middle scene's copy hidden at its start. When a move starts the mark
+   goes and the engine's fade takes over; both ways the opacity eases, at once under reduced motion. */
+.isn-on .sw-copy { transition: opacity .35s ease; }
+.isn-on .sw-copy.isn-copy { opacity: 1 !important; pointer-events: auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  .isn-on .sw-copy { transition: none; }
+}

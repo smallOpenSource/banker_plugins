@@ -33,7 +33,7 @@ Higgsfield·Monid 같은 외부 CLI 플래그는 쓰지 않는다 — 크기·�
 - `STILLS_SOURCE` — 기본 `gpt-image-2`(`generateImage`). 씬 간 코히전을 더 강하게 원하면 `FLUX.2-pro`(`generateImageFlux`) 옵트인.
 - `CLIP_MODE` — 기본은 `defaultClipMode(creds)`(SKILL Step 1)가 정한다. 영상이 Sora 로 돌면 `dive`(장면마다 그 승인 스틸에서 들어가는 클립, 장면 사이는 나가기(기본 있음)와 배경 판 착지, 결론은 역재생 착지. 8절), WAN 으로 돌면 `chain`(4절). `holdFlight`(장면마다 정지 클립, 장면 사이 첫과 끝 프레임을 지정한 비행 클립. WAN 필요, 이 스킬에서 미검증)는 선택. dive 기본의 근거는 sora-2(2025-12-08) 실측이고, WAN 에서 dive 는 미측정이다.
 - `SITE` — 단독 인트로 페이지 또는 기존 사이트 위에 붙임. 붙이면 그 사이트의 CSP, 본문 시작 선택자, 고정 헤더 선택자, 지원 언어를 받는다.
-- `STEP_NAV` — yes 면 휠 1칸, 키, 스와이프가 정확히 한 장면을 이동한다. 스크롤 동작을 가로채므로 사이트 성격을 보고 고른다.
+- `STEP_NAV` — 기본 yes. 장면 시작점에 멈추는 장면 단위 이동이다(휠 1칸과 방향키 1번은 절반, 2번이면 한 장면, PageDown 과 Space 는 한 장면). 스크롤 동작을 가로채므로 원하지 않으면 no(매니페스트 `"stepNav": false`).
 - `PANEL` — `glass` 면 흐린 유리 문구 패널. 기본값은 어두운 장면용이다. 밝은 장면이 많으면 대비 기준(4.5)을 지키도록 패널을 덜 투명하게(`--intro-panel-alpha` .6 이상) 한다.
 
 ---
