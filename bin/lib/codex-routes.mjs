@@ -59,7 +59,8 @@ export function codexHomeOf(transcript, env = process.env) {
 // 샌드박스 안의 세션이 고칠 수 있다(설정, 훅 사본, 플러그인). 세션 시작 알림과 banker doctor 가 쓴다.
 export function homeInSession(home, cwd) {
   if (!home || !cwd || !path.isAbsolute(cwd)) return false;
-  const real = (f) => { try { return fs.realpathSync(f); } catch { return path.resolve(f); } };
+  // 아직 없는 경로는 있는 조상까지만 풀고 나머지를 붙인다(macOS 의 /var 는 /private/var 로 가는 링크).
+  const real = (f) => { try { return fs.realpathSync(f); } catch { const up = path.dirname(f); return up === f ? f : path.join(real(up), path.basename(f)); } };
   const rel = path.relative(real(cwd), real(home));
   if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
   return rel !== '.codex';

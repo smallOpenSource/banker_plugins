@@ -120,11 +120,14 @@ export function safeNode(node, { win = process.platform === 'win32', cwd = proce
   return !places.some((f) => under(f, os.tmpdir()) || (inWork && under(f, cwd)));
 }
 
+// 실제 경로. 아직 없는 절대 경로는 있는 조상까지만 풀고 나머지를 붙인다(macOS 의 /var 는 /private/var 로 가는 링크라,
+// 풀지 않으면 링크 아래의 없는 Codex 홈이 풀린 작업 폴더 밖으로 보인다).
 function real(file) {
   try {
     return fs.realpathSync(file);
   } catch {
-    return file;
+    const up = path.dirname(file);
+    return path.isAbsolute(file) && up !== file ? path.join(real(up), path.basename(file)) : file;
   }
 }
 

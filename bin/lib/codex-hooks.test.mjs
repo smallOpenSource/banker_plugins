@@ -178,10 +178,11 @@ test('the repository above a Codex home is found by walking up for .git, without
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import { repoAbove } from ${JSON.stringify(pathToFileURL(join(PKG, 'bin', 'lib', 'codex-hooks.mjs')).href)}; process.stdout.write(repoAbove(process.argv[1], process.argv[2]))`, home, join(top, 'a')], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
   assert.equal(r.stdout, '', `no .git anywhere above: ${r.stderr}`);
   writeFileSync(join(top, '.git'), 'gitdir: elsewhere\n'); // a worktree's .git is a file
-  assert.equal(repoAbove(home), top);
+  const realTop = realpathSync(top); // repoAbove 는 실제 경로를 돌려준다(macOS 의 임시 폴더는 /private/var 아래)
+  assert.equal(repoAbove(home), realTop);
   mkdirSync(join(top, 'a', '.git'));
-  assert.equal(repoAbove(home), join(top, 'a'));
-  assert.equal(repoAbove(home, join(top, 'a')), top, 'the user home folder\'s own .git (dotfiles) is not counted');
+  assert.equal(repoAbove(home), join(realTop, 'a'));
+  assert.equal(repoAbove(home, join(top, 'a')), realTop, 'the user home folder\'s own .git (dotfiles) is not counted');
 });
 
 test('a Codex home in the session folder, other than its top .codex, is one the sandbox can change', () => {
@@ -193,6 +194,18 @@ test('a Codex home in the session folder, other than its top .codex, is one the 
   assert.equal(homeInSession(w, w), true);
   assert.equal(homeInSession(join(root, 'other'), w), false);
   assert.equal(homeInSession(join(w, 'deep', '.codex'), ''), false, 'no session folder, nothing to say');
+});
+
+test('a Codex home that does not exist yet under a linked session folder is judged by the real path (macOS /var is a link)', () => {
+  const w = join(root, `sessreal${n++}`);
+  const link = join(root, `sesslink${n++}`);
+  mkdirSync(w);
+  symlinkSync(w, link, 'junction'); // 폴더 연결은 Windows 에서도 권한 없이 만들어진다
+  assert.equal(homeInSession(join(link, 'codexhome'), link), true, 'a missing home under the link is still in the session folder');
+  assert.equal(homeInSession(join(link, 'a', 'b', '.codex'), w), true);
+  assert.equal(homeInSession(join(link, '.codex'), w), false);
+  assert.equal(homeInWorkspace(join(link, 'not', 'yet', '.codex'), link), true, 'a missing home under a linked work folder is inside it');
+  assert.equal(homeInWorkspace(join(root, 'elsewhere-missing', '.codex'), link), false);
 });
 
 // The npm hook commands check where the hook script really is before they run it, as the Codex plugin's commands do:
