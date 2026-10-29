@@ -75,7 +75,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `$banker-<이름>`(플러그인 설�
 | `ultra-interview` | 처음 프로젝트 아이디어를 구체화할 때 | 최신 정보를 반영한 소크라테스식 인터뷰 |
 | `ultra-init` | 프로젝트 기획이 충분히 구체적일 때 | 데모를 구현 |
 | `curation` | 질문에 답하기 어렵거나 의사결정이 어려울 때 | 합리적 선택지 제공 (`--perf` = 품질 우선, `--deep` = 확신 0.80 초과까지 추가 조사) |
-| `all-in-one` | 요건이 명확한 단계에서 | 계획 → 구현 → 검증 |
+| `all-in-one` | 요건이 명확한 단계에서 | 계획 → 구현 → `ralph-qa` 검증 |
 | `ralph-qa` | 검증이 충분하지 않을 때 | 세션 모델로 띄운 독립 검토 에이전트 3개 이상의 합의 루프 (+ 플래그로 고른 CLI 좌석) |
 | `smart-compact` | 컨텍스트 임계 초과로 맥락 단절이 걱정될 때 | 맥락을 더 잘 이어서 진행 |
 | `refresh-readme` | 프로젝트 배포 전 | README 최신화 |
@@ -144,8 +144,8 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 
 | 스킬 | 설명 |
 |---|---|
-| `all-in-one` | 계획→구현→검증 end-to-end 오케스트레이터 |
-| `ultra-init` | 아이디어→빌드→테스트 원샷 자동 실행 |
+| `all-in-one` | 계획→구현→검증 end-to-end 오케스트레이터. 마지막 QA 는 두 런타임 모두 `ralph-qa` |
+| `ultra-init` | 아이디어→빌드→테스트 원샷 자동 실행. 마지막 QA 는 두 런타임 모두 `ralph-qa` |
 | `ready-compact` | 이어가기 상태 저장 + resume 프롬프트만 출력(`--hand-off` = 새 세션용 자급식 노트·프롬프트) |
 | `compact-copy` | 설명·코드펜스가 섞인 resume 프롬프트 출력에서 본문만 추출(지금의 ready-compact 는 처음부터 프롬프트만 출력) |
 | `refresh-git-ignore` | `.gitignore` 비파괴·반복가능 갱신 |
@@ -260,8 +260,8 @@ banker uninstall        # 제거
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
   32MB 요청 한도는 Claude Code 의 것이라 Codex 자신의 요청 크기는 재지 않습니다.
 - `omc-patch` 도 Codex에서 실행하면 같은 머신의 Claude Code OMC 플러그인 캐시(`~/.claude/plugins/`)만 다룹니다. Codex 의 OMX 는 건드리지 않습니다.
-- Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·ultraqa·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
-- OMC 5 는 `ultraqa` 를 삭제했습니다. 그래서 Claude Code 의 `all-in-one`·`ultra-init` QA 게이트는 `verify` 순환으로 돌고, Codex 는 OMX `ultraqa` 를 그대로 씁니다.
+- Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
+- `all-in-one`·`ultra-init` 의 마지막 QA 게이트는 두 런타임 모두 banker `ralph-qa` 입니다. 독립 검토자 3명 이상이 실행기가 돌린 `--qa` 목표의 게이트 기록으로 판정합니다.
 - 설치기는 `~/.codex/AGENTS.md` 를 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존). \
   예외는 사용자가 켠 `tone-compact` 와 `anti-drm` 입니다. 각각 그 파일 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개를 넣고, `off` 로 뺍니다. \
   `omx setup --merge-agents` 와 기본 `omx setup` 은 이 블록을 남깁니다. `--force` 나 team 모드를 끈 `omx setup` 처럼 AGENTS.md 를 새로 만들면 사라지므로, 그 뒤 `on` 을 다시 실행합니다.
@@ -317,7 +317,7 @@ banker uninstall        # 제거
 - Claude Code (마켓플레이스 경로): 스킬이 `/banker:*` 로 동작.
 - 또는 Node.js ≥ 16.7 (npm 전역 설치 경로): `banker` CLI 제공.
 - 일부 스킬은 별도 의존성이 필요하며 `/banker:setup` 으로 설치합니다. 의존성이 없으면 각 스킬이 실행 전에 설치부터 안내합니다.
-  - `all-in-one`, `ultra-chain`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX.
+  - `all-in-one`, `ultra-chain`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX. 마지막 QA 의 `ralph-qa` 는 banker 에 들어 있습니다.
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright. `3d-intro-build` 의 독립 검증(`verify-intro.mjs`)도 Node 용 playwright 패키지와 Chromium 을 씁니다(`npm i -g playwright && npx playwright install chromium`).
   - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
   - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).

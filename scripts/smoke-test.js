@@ -703,7 +703,7 @@ try {
   ok(/\| 전송 경로 \| 확인 수준 \|/.test(rqSkill) && !/전달 메커니즘/.test(rqSkill),
      'S6: flag table uses the 전송 경로/확인 수준 columns (old 전달 메커니즘 header gone)');
   const rqReadmeRows = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
-    .split(/\r?\n/).filter((l) => /^\|/.test(l) && /ralph-qa/.test(l));   // the two table rows, not prose mentions
+    .split(/\r?\n/).filter((l) => /^\| `ralph-qa` \|/.test(l));   // its two table rows, not prose or other rows that name it
   ok(rqReadmeRows.length === 2 && rqReadmeRows.every((l) => !/폴백|최후/.test(l) && /세션 모델/.test(l)),
      `S7: both README ralph-qa rows describe the session-model backbone without fallback wording (rows: ${rqReadmeRows.length})`);
   // Anchor each trigger to its position in the disjunction list (`⟸`/`∨`), not to a bare mention.
@@ -807,6 +807,26 @@ try {
      && (ucDoc.match(/`\$banker-ralph-qa`\(플러그인 길 `\$banker:ralph-qa`\)/g) || []).length === 2
      && /Codex 플러그인 설치 `<S>\/\.\.\/ralph-qa\/references`/.test(ucDoc),
      'uc-gates: ultra-chain stage 3 gives ralph-qa no --gates and keeps its no-gate line, stage 5 runs the iteration-0 baseline, stage 6 runs the local gates through gate-evidence, records them with chain-ledger gates and passes --gates, and both Codex names are given');
+  // Plan 18 S12, 19.10 U6: all-in-one and ultra-init end with banker ralph-qa on both runtimes: the --qa goals go as
+  // --gates over an iteration-0 baseline the runner took before the build; no OMX ultraqa and no verify cycle of their own.
+  const s12Docs = ['all-in-one', 'ultra-init'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);
+  const s12Reasons = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8')).surfaces
+    .filter((x) => x.name === 'all-in-one' || x.name === 'ultra-init');
+  const s12Readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const s12Bad = s12Docs.flatMap(([n, t]) => {
+    const fm = t.split(/\r?\n---/)[0];
+    const why = [];
+    if (/\$ultraqa|OMX ultraqa|oh-my-claudecode:verifier|bounded (?:verify|cycle)|verify → fix|verify 순환/i.test(t)) why.push('old QA gate wording');
+    if (!/`ralph-qa`/.test(fm) || /ultraqa|verify/.test(fm)) why.push('description');
+    if (!/Skill\("banker:ralph-qa"\)/.test(t) || !/`\$banker-ralph-qa`/.test(t) || !/`\$banker:ralph-qa`/.test(t)
+        || !/<S>\/\.\.\/banker-ralph-qa\/SKILL\.md/.test(t) || !/<S>\/\.\.\/ralph-qa\/SKILL\.md/.test(t)) why.push('ralph-qa names and Codex paths');
+    if (!/--gates=</.test(t) || !/gate-evidence\.mjs' run --dir '<g>'[^\n]*--iter 0/.test(t) || !/`scenarios`/.test(t)
+        || !/\(`reported`\) is not evidence/.test(t) || !/never fix a baseline failure/i.test(t)) why.push('gates, baseline, scenarios');
+    return why.map((w) => `${n}: ${w}`);
+  }).concat(s12Reasons.filter((x) => /ultraqa|verify cycle/.test(x.reason) || !/QA gate is banker ralph-qa on both runtimes/.test(x.reason)).map((x) => `manifest reason of ${x.name}`))
+    .concat(/QA 게이트는 `verify` 순환|Codex 는 OMX `ultraqa` 를 그대로/.test(s12Readme) ? ['README'] : []);
+  ok(s12Docs.length === 2 && s12Reasons.length === 2 && s12Bad.length === 0,
+     `aio-qa: all-in-one and ultra-init end with banker ralph-qa on both runtimes (--gates from --qa, an iteration-0 gate-evidence baseline, scenarios, observed records only), with no OMX ultraqa or verify cycle wording in the skills, their manifest reasons or the README${s12Bad.length ? ` (${s12Bad.join('; ')})` : ''}`);
   const sendSection = (rqSkill.split('## 외부 좌석 전송')[1] || '').split(/\n## /)[0];
   const exported = (name) => [...(((runnerSrc[0].match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\];`)) || [])[1] || '')
     .matchAll(/"([^"]+)"/g))].map((m) => m[1]);
