@@ -71,7 +71,8 @@ test("the child writes the output file itself: its bytes and sha256 are what it 
   const w = world(t);
   const text = "line one\nline two\n".repeat(300);
   writeFileSync(join(w.d, "gate-tests-0-1.md"), "left by a run that stopped");
-  const r = run(w, "tests", nodeCmd("-e", `process.stdout.write(${JSON.stringify(text)})`));
+  // 큰따옴표는 Windows PowerShell 5.1 이 외부 프로그램 인자에서 지우므로, 작은따옴표 JS 문자열로 넘긴다
+  const r = run(w, "tests", nodeCmd("-e", "process.stdout.write('line one\\nline two\\n'.repeat(300))"));
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.json.output, /gate-tests-0-2\.md$/);
   assert.equal(readFileSync(r.json.output, "utf8"), text);
