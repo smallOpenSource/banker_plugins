@@ -13,13 +13,13 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { chooseFetcher } from './update-notify.mjs';
+import { chooseFetcher, claimSteps } from './update-notify.mjs';
 import { installedVersion } from '../bin/lib/telemetry-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -521,5 +521,51 @@ test('codex-sessions: 넘겨받는 사이 짝 훅이 새로 만든 폴더를 옮
     assert.equal(readdirSync(join(bankerDir(tmp), 'codex-sessions')).filter((n) => n.startsWith('sid.old-')).length, 1, '옮긴 폴더는 돌려놓지 않고 이틀 뒤 정리에 맡김');
   } finally {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+  }
+});
+
+// Codex 의 SessionStart 입력에는 두 길의 훅이 함께 받고 시작마다 다른 값이 없다(update-notify.mjs 의 claimSession 주석).
+// 그래서 두 훅이 파일 시스템 동작 사이사이로 끼어드는 모든 순서를 claimSteps 로 돌려, 어느 순서에서도 알림이 한 번
+// 이하임을 본다. 시작 상태: 폴더 없음(새 세션), 방금 만든 폴더(짝 훅이 알림), 30초 넘게 지난 폴더(이어 연 세션).
+function interleavings(prepare) {
+  const outcomes = [];
+  const todo = [[]];
+  while (todo.length) {
+    const prefix = todo.pop();
+    const { mine, now } = prepare();
+    const hooks = [claimSteps(mine, now), claimSteps(mine, now)];
+    const got = [null, null];
+    const trace = [];
+    while (got.includes(null)) {
+      let pick = got[0] === null ? 0 : 1;
+      if (got[0] === null && got[1] === null) {
+        if (trace.length < prefix.length) pick = prefix[trace.length];
+        else todo.push([...trace, 1]);
+        trace.push(pick);
+      }
+      const step = hooks[pick].next();
+      if (step.done) got[pick] = step.value;
+    }
+    outcomes.push({ trace: trace.join(''), notified: got.filter(Boolean).length });
+  }
+  return outcomes;
+}
+
+test('codex-sessions: 두 훅의 모든 끼어들기 순서에서 알림은 한 번 이하, 새 세션과 이어 연 세션은 꼭 한 번', () => {
+  const root = mkTmp();
+  let n = 0;
+  const at = (age) => () => {
+    const mine = join(root, `c${n++}`, 'sid');
+    const now = Date.now();
+    if (age !== null) {
+      mkdirSync(mine, { recursive: true });
+      utimesSync(mine, (now - age) / 1000, (now - age) / 1000);
+    } else mkdirSync(dirname(mine));
+    return { mine, now };
+  };
+  for (const [what, age, want] of [['새 세션', null, 1], ['방금 짝 훅이 만든 폴더', 0, 0], ['이어 연 세션', 60_000, 1]]) {
+    const outcomes = interleavings(at(age));
+    assert.ok(outcomes.length >= 6, `${what}: ${outcomes.length} 순서`);
+    for (const o of outcomes) assert.equal(o.notified, want, `${what}, 순서 ${o.trace}`);
   }
 });

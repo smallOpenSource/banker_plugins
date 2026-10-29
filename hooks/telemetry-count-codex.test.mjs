@@ -4,13 +4,14 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { codexHomeOf, namesIn, turnKey, turnSkills, withTurnsLock } from './telemetry-count-codex.mjs';
+import { codexHomeOf, countOnce, namesIn, turnKey, turnSkills, withTurnsLock } from './telemetry-count-codex.mjs';
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'telemetry-count-codex.mjs');
 const tmps = [];
@@ -78,7 +79,8 @@ test('only this turn\'s tool calls count: earlier turns and what the user typed 
   const f = rollout(tmp, [started('t0'), cat('old'), started('t1'), said('see skills/banker-typed/SKILL.md'), cat('ralph-qa'), cat('ralph-qa'), cat('lineage')]);
   assert.deepEqual(turnSkills(f, 't1').sort(), ['banker:lineage', 'banker:ralph-qa']);
   assert.deepEqual(turnSkills(f, 'nope'), [], 'other turns started: this one alone is no shape change');
-  assert.deepEqual(turnSkills(f, 't1', 64), [], 'a turn start past the read cap is not guessed');
+  assert.deepEqual(turnSkills(f, 't1', 64).sort(), ['banker:lineage', 'banker:ralph-qa'], 'a turn start before the line window is found by bytes');
+  assert.deepEqual([...turnSkills(f, 't1', 64, { cap: 64 })], [], 'a turn start past the read cap is not guessed');
 });
 
 test('a turn is counted once even when Stop comes twice, and a new turn counts again', () => {
@@ -274,8 +276,8 @@ test('the turn lock waits for a live holder, then leaves the turn to it; a dead 
     mkdirSync(lock, { recursive: true });
     let ran = false;
     const t0 = Date.now();
-    assert.deepEqual(withTurnsLock(() => { ran = true; return ['x']; }, { wait: 200 }), []);
-    assert.ok(!ran && Date.now() - t0 >= 200, 'a held lock is waited on, then the turn is left to its holder');
+    assert.deepEqual(withTurnsLock(() => { ran = true; return ['x']; }, { wait: 200 }), ['x']);
+    assert.ok(ran && Date.now() - t0 >= 200, 'a held lock is waited on, then the turn marks decide without it');
     assert.ok(existsSync(lock), 'another hook\'s lock stays');
     const old = (Date.now() - 60_000) / 1000;
     utimesSync(lock, old, old);
@@ -371,4 +373,161 @@ test('a hook lets go only of a lock that holds its own owner mark', () => {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
     if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
   }
+});
+
+// A turn that wrote more than 32 MB after it started: the start is found by bytes before the 32 MB window.
+function bigRollout(tmp, mb) {
+  const f = join(tmp, `big${r++}.jsonl`);
+  const fd = openSync(f, 'w');
+  try {
+    writeSync(fd, `${JSON.stringify(started('t1'))}\n${JSON.stringify(injected('lineage'))}\n`);
+    const pad = `${JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: '한글 기록 채움 '.repeat(4000) } })}\n`;
+    const line = Buffer.from(pad);
+    for (let n = 0; n < (mb << 20); n += line.length) writeSync(fd, line);
+    writeSync(fd, `${JSON.stringify(cat('ralph-qa'))}\n`);
+  } finally {
+    closeSync(fd);
+  }
+  return f;
+}
+
+test('a turn start more than 32 MB from the end is found by bytes, and a start past the cap is noted, not guessed', () => {
+  const tmp = mkTmp();
+  const f = bigRollout(tmp, 40);
+  assert.deepEqual(turnSkills(f, 't1').sort(), ['banker:lineage', 'banker:ralph-qa'], '40 MB of Korean text after the start');
+  const miss = turnSkills(f, 't1', 1 << 20, { cap: 8 << 20 });
+  assert.deepEqual([...miss], []);
+  assert.equal(miss.far, true);
+  enable(tmp);
+  const res = run(tmp, stop(f));
+  assert.equal(res.status, 0);
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]).sort(), ['banker:lineage', 'banker:ralph-qa']);
+});
+
+test('a turn start past the read cap leaves a one-line note and counts nothing', () => {
+  const tmp = mkTmp();
+  const f = bigRollout(tmp, 3);
+  const prev = [process.env.XDG_CONFIG_HOME, process.env.APPDATA];
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  try {
+    enable(tmp);
+    assert.equal(turnSkills(f, 't1', 1 << 20, { cap: 2 << 20 }).far, true);
+    assert.deepEqual(countOnce(stop(f), { max: 1 << 20, cap: 2 << 20 }), []);
+  } finally {
+    [process.env.XDG_CONFIG_HOME, process.env.APPDATA] = prev;
+    if (prev[0] === undefined) delete process.env.XDG_CONFIG_HOME;
+    if (prev[1] === undefined) delete process.env.APPDATA;
+  }
+  const note = readFileSync(join(bankerDir(tmp), 'codex-count-note'), 'utf8');
+  assert.match(note, /^\S+\ts1:t1\t턴 시작이 기록 끝 256 MB 밖, 이 턴은 세지 않음\n$/);
+  assert.equal(read(tmp).length, 0);
+});
+
+test('the byte search finds a turn id that straddles a chunk border', () => {
+  const tmp = mkTmp();
+  const f = bigRollout(tmp, 1);
+  const size = readFileSync(f).length;
+  const off = readFileSync(f).indexOf('"t1"');
+  const max = 64 << 10;
+  for (const into of [1, 2, 3]) {
+    const chunk = size - max - off - into; // the first chunk starts inside "t1"
+    assert.deepEqual(turnSkills(f, 't1', max, { chunk }).sort(), ['banker:lineage', 'banker:ralph-qa'], `border ${into} bytes into the id`);
+  }
+});
+
+const markOf = (key) => createHash('sha256').update(key).digest('hex').slice(0, 32);
+const marksDir = (tmp) => join(bankerDir(tmp), 'codex-count-turns.d');
+function hookEnv(tmp) {
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp, CODEX_HOME: codexHome(tmp) };
+  delete env.BANKER_NO_TELEMETRY;
+  delete env.BANKER_TELEMETRY_ENDPOINT;
+  return env;
+}
+const OLD_HOOK = join(dirname(HOOK), '..', 'scripts', 'test-fixtures', 'count-codex-0.22.0', 'telemetry-count-codex.mjs');
+const runAsync = (hook, env, input) => new Promise((res) => {
+  const c = spawn(process.execPath, [hook], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+  c.on('close', res);
+  c.stdin.end(input);
+});
+
+for (const [what, hooks] of [['two hooks of this version', [HOOK, HOOK]], ['a 0.22.0 hook and a hook of this version', [OLD_HOOK, HOOK]]]) {
+  test(`${what} that run at once for one turn count it once, 100 times`, async () => {
+    const tmp = mkTmp();
+    enable(tmp);
+    const env = hookEnv(tmp);
+    for (let round = 0; round < 100; round++) {
+      const input = JSON.stringify(stop(rollout(tmp, [started(`t${round}`), cat('ralph-qa')]), `t${round}`));
+      await Promise.all(hooks.map((h) => runAsync(h, env, input)));
+      assert.equal(read(tmp).length, round + 1, `round ${round}: ${read(tmp).join(' | ')}`);
+    }
+  });
+}
+
+test('with the lock held by a live hook, hooks that run at once still count a turn once by the marks', async () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  mkdirSync(`${turnsFile(tmp)}.lock`, { recursive: true }); // a live holder: fresh, so not taken over
+  const env = hookEnv(tmp);
+  const rounds = [...Array(10).keys()];
+  await Promise.all(rounds.map((n) => {
+    const input = JSON.stringify(stop(rollout(tmp, [started(`t${n}`), cat('lineage')]), `t${n}`));
+    return Promise.all([runAsync(HOOK, env, input), runAsync(HOOK, env, input)]);
+  }));
+  assert.equal(read(tmp).length, 10, read(tmp).join(' | '));
+  assert.equal(readdirSync(marksDir(tmp)).length, 10);
+});
+
+test('a turn already in the old turn file is marked but not counted again', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  writeFileSync(turnsFile(tmp), 's1:t1\tbanker:a\n');
+  run(tmp, stop(rollout(tmp, [started('t1'), cat('a')])));
+  assert.equal(read(tmp).length, 0);
+  assert.ok(existsSync(join(marksDir(tmp), markOf('s1:t1\tbanker:a'))), 'the mark keeps later hooks of this version from counting it');
+});
+
+test('a link for the marks folder, a link in place of a mark, and old marks', (t) => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const elsewhere = join(tmp, 'elsewhere');
+  mkdirSync(elsewhere);
+  try {
+    symlinkSync(elsewhere, marksDir(tmp), 'dir');
+  } catch {
+    t.skip('this account cannot make links');
+    return;
+  }
+  run(tmp, stop(rollout(tmp, [started('t1'), cat('a')])));
+  assert.equal(read(tmp).length, 0, 'a linked marks folder is not trusted');
+  assert.deepEqual(readdirSync(elsewhere), [], 'nothing is made through the link');
+  rmSync(marksDir(tmp));
+  mkdirSync(marksDir(tmp));
+  symlinkSync(join(tmp, 'gone'), join(marksDir(tmp), markOf('s1:t2\tbanker:a')));
+  run(tmp, stop(rollout(tmp, [started('t2'), cat('a')]), 't2'));
+  assert.equal(read(tmp).length, 0, 'a broken link where the mark goes is no mark of this hook');
+  assert.ok(!existsSync(join(tmp, 'gone')), 'and the link is not followed');
+  const stale = join(marksDir(tmp), 'f'.repeat(32));
+  writeFileSync(stale, '');
+  const days = (Date.now() - 3 * 24 * 3600 * 1000) / 1000;
+  utimesSync(stale, days, days);
+  run(tmp, stop(rollout(tmp, [started('t3'), cat('a')]), 't3'));
+  assert.equal(read(tmp).length, 1);
+  assert.ok(!existsSync(stale), 'marks older than two days are cleared');
+});
+
+// node:crypto 없이 빌드한 Node 를 흉내 내는 시험 도구(--import). 표지 이름은 그때도 만들어지고 한 번만 센다.
+test('without node:crypto the marks still decide, once per turn', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const env = { ...hookEnv(tmp), NO_CRYPTO_ONLY: '1', NO_CRYPTO_MARK: join(tmp, 'crypto-mark') };
+  const pre = pathToFileURL(join(dirname(HOOK), '..', 'scripts', 'test-fixtures', 'no-crypto.mjs')).href;
+  const input = JSON.stringify(stop(rollout(tmp, [started('t1'), cat('a')])));
+  for (let i = 0; i < 2; i++) {
+    const res = spawnSync(process.execPath, ['--import', pre, HOOK], { input, encoding: 'utf8', env });
+    assert.equal(res.status, 0, res.stderr);
+  }
+  assert.equal(read(tmp).length, 1);
+  assert.match(readFileSync(join(tmp, 'crypto-mark'), 'utf8'), /crypto/, 'the hook did try node:crypto and went on without it');
+  assert.equal(readdirSync(marksDir(tmp)).length, 1);
 });

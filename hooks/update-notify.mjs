@@ -149,6 +149,11 @@ export function dualNotice(payload, env = process.env) {
 // 의 것이다: 고유 이름으로 옮겨(rename 은 하나만 성공) 다시 만든 훅이 알린다. 옮긴 것이 새것이면(그사이 짝 훅이
 // 넘겨받아 만든 것) 알리지 않는다. 세션 id 가 없거나 폴더를 만들 수 없으면
 // 전처럼 알린다. 이틀 지난 폴더와 예전 판의 codex-dual-notified 는 지운다.
+// 시작마다 다른 값으로 표지를 나누지 않는 까닭: Codex 0.165.0 의 SessionStart 입력(훅 스키마
+// session-start.command.input)은 cwd, hook_event_name, model, permission_mode, session_id, source(startup, resume,
+// clear, compact, fork), transcript_path 뿐이라 두 길의 훅이 함께 받고 시작마다 달라지는 값이 없다(source 는 resume 을
+// 두 번 해도 같음). 그래서 30초 넘게 늦은 짝 훅은 알림을 한 번 더 낼 수 있다(알림만). 두 훅의 모든 끼어들기 순서에서
+// 알림이 한 번 이하임은 update-notify.test.mjs 가 claimSteps 로 돌려 본다.
 const SESSION_RE = /^[A-Za-z0-9._-]{1,80}$/;
 const CLAIM_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
 const CLAIM_TWIN_MS = 30 * 1000;
@@ -161,26 +166,43 @@ export function claimSession(payload, now = Date.now()) {
   } catch {
     return true; // 폴더 자리에 다른 것이 있음: 중복을 막지 못해도 알림은 낸다
   }
-  const mine = join(dir, sid);
+  const steps = claimSteps(join(dir, sid), now);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  if (step.value) dropOldClaims(dir, sid, now);
+  return step.value;
+}
+
+// 세션 폴더를 이 훅이 잡았는지(true 면 알림). 파일 시스템 동작 하나 앞마다 yield 해, 시험이 짝 훅과의 끼어들기를 정한다.
+export function* claimSteps(mine, now) {
+  yield;
   try {
     mkdirSync(mine);
+    return true;
   } catch (e) {
     if (e?.code !== 'EEXIST') return true;
-    try {
-      if (now - statSync(mine).mtimeMs < CLAIM_TWIN_MS) return false; // 같은 세션의 다른 길 훅이 방금 알렸다
-      const old = `${mine}.old-${process.pid}-${randomHex()}`;
-      renameSync(mine, old);
-      if (now - statSync(old).mtimeMs < CLAIM_TWIN_MS) {
-        // 본 것과 옮긴 것 사이에 짝 훅이 넘겨받아 새로 만든 폴더였다: 그 훅이 알리므로 알리지 않는다. 돌려놓지 않고
-        // (그사이 다른 훅이 만든 폴더를 덮을 수 있다) 옮긴 폴더는 이틀 뒤 정리에서 지운다.
-        return false;
-      }
-      rmdirSync(old);
-      mkdirSync(mine);
-    } catch {
-      return false; // 함께 온 다른 훅이 먼저 옮기거나 만들었다
-    }
   }
+  try {
+    yield;
+    if (now - statSync(mine).mtimeMs < CLAIM_TWIN_MS) return false; // 같은 세션의 다른 길 훅이 방금 알렸다
+    const old = `${mine}.old-${process.pid}-${randomHex()}`;
+    yield;
+    renameSync(mine, old);
+    yield;
+    // 본 것과 옮긴 것 사이에 짝 훅이 넘겨받아 새로 만든 폴더였다: 그 훅이 알리므로 알리지 않는다. 돌려놓지 않고
+    // (그사이 다른 훅이 만든 폴더를 덮을 수 있다) 옮긴 폴더는 이틀 뒤 정리에서 지운다.
+    if (now - statSync(old).mtimeMs < CLAIM_TWIN_MS) return false;
+    yield;
+    rmdirSync(old);
+    yield;
+    mkdirSync(mine);
+    return true;
+  } catch {
+    return false; // 함께 온 다른 훅이 먼저 옮기거나 만들었다
+  }
+}
+
+function dropOldClaims(dir, sid, now) {
   try {
     rmSync(join(configDir(), 'codex-dual-notified'), { force: true });
     for (const d of readdirSync(dir)) {
@@ -189,7 +211,6 @@ export function claimSession(payload, now = Date.now()) {
       } catch { /* 다른 훅이 먼저 지움 */ }
     }
   } catch { /* 정리는 다음 세션에 */ }
-  return true;
 }
 
 async function main() {
