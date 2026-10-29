@@ -37,7 +37,7 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 **유료 호출은 일곱 개다:** `generateImage`, `generateImageFlux`, `editImage`, `generateClip`(영상의 기본 진입점), `wanCreateTask`, `createVideo`, `createVideoTwoImage`.
 `resumeClip` 은 새로 제출하지 않고 이미 만든 task 를 마저 받기만 한다.
 이 중 **어느 것도 Step 2 의 명시적 승인 이전에는 실행하지 않는다.**
-`resolveCreds`, `resolveFfmpeg`, `detectTwoImageSupport`, `estimateCost`, `poolSummary`, `probeWanPool`, `stillToClip` 은 과금이 없다.
+`resolveCreds`, `resolveFfmpeg`, `detectTwoImageSupport`, `estimateCost`, `poolSummary`, `probeWanPool`, `probeSoraDeployment`, `stillToClip` 은 과금이 없다.
 가장 비싼 영상 호출은 **Step 3 에서 모든 장면의 스틸이 승인되기 전에는 실행하지 않는다**.
 
 ---
@@ -62,8 +62,19 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다. 같은 `3d-intro-setup` 으로 보낸다.
 - 둘 다 통과해야 다음 단계로 간다.
 - 영상 provider 상태를 무료로 확인해 둔다.
-  `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)를 키 원문 없이 돌려준다.
+  `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)와 마지막 줄의 Sora 상태(`label: 'AZURE_SORA'`, `ok`, `retired`, `unset`, `malformed`)를 키 원문 없이 돌려준다. WAN 줄은 `provider: 'wan'`, Sora 줄은 `provider: 'sora'` 다.
   쉬는 키를 바로 다시 쓰려면 `resetPoolState({ creds, labels: ['WAN_2'] })` 로 그 키의 기록을 지운다(`labels` 를 빼면 전체). 서버의 `Retry-After` 는 1초에서 10분 사이로만 받는다.
+  Sora 배포는 `probeSoraDeployment` 의 GET 두 번으로 확인한다(과금 없음, 아래 코드). 배포 GET 이 있음과 없음(404)을 가르고, 리소스의 모델 목록이 퇴역일을 알려 준다. Sora 는 프롬프트 없는 POST 로는 배포를 가르지 못한다(2026-10-29 실측, 없는 배포명에도 같은 400).
+
+  ```js
+  import { probeSoraDeployment } from './references/azure-adapter.mjs';
+  const dep = await probeSoraDeployment({ endpoint: creds.AZURE_SORA_ENDPOINT, key: creds.AZURE_SORA_API_KEY, deployment: creds.AZURE_SORA_DEPLOYMENT || 'sora-2' });
+  // dep.state: deployed | no_deployment | retired | auth | unreachable | unknown, dep.retiresAt(ms), dep.daysLeft, dep.soon(14일 안)
+  ```
+
+  - `dep.state` 가 `retired` 이거나 `poolSummary` 의 Sora 줄이 `retired` 인데 WAN 항목이 없으면, 유료 스틸을 만들기 전에 멈춘다. 영상을 만들 provider 가 없다. 사용자에게 알리고 WAN 키를 넣거나(`3d-intro-setup`) 새 Sora 모델을 배포하게 한다.
+  - `dep.soon` 이면 퇴역일(`dep.retiresAt`)과 남은 날 수를 사용자에게 알린다. 그날 뒤로 Sora 는 410 을 준다(Foundry 모델 수명 문서: 서비스에서 빠진 모델은 410 Gone). 2026-10-29 실측: 이 리소스의 `sora-2` 는 2026-11-02 퇴역.
+  - `dep.state` 가 `no_deployment` 면 `AZURE_SORA_DEPLOYMENT` 이름이 틀렸거나 퇴역 뒤 배포가 지워진 것이다. `3d-intro-setup` §4 로 보낸다.
   `malformed` 는 endpoint 가 https URL 이 아니거나(http 는 이 기기의 localhost 만 허용) 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
   Azure 호출도 같다. 키는 https 로만 보내고, `http://` endpoint 는 보내기 전에 막는다(Sora 영상 단계는 `invalid_request`, 이미지 생성 같은 그 밖의 호출은 `HTTP 0 (EINSECURE)` 오류).
   이 기기의 `http://` 로 키를 보낼 때도 Node 가 env 프록시(`NODE_USE_ENV_PROXY=1`, `--use-env-proxy`)로 http 를 보내면 보내기 전에 막는다(`EPROXYKEY`). `NO_PROXY` 에 그 호스트나 `호스트:포트` 를 그대로 적으면(`no_proxy` 도 있으면 그쪽에도) 직접 보낸다. 영상 단계는 그런 WAN 항목을 보내기 전에 건너뛰고, 모든 항목이 그렇거나 Sora endpoint 가 그렇다면 Sora 로 넘어가지 않고 `invalid_request` 로 멈춘다.
@@ -236,10 +247,11 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
   | 오류 | 뜻 | 다음 행동 |
   |---|---|---|
   | `ContentRejectedError` | 검열(`DataInspectionFailed` 등) | 프롬프트나 프레임을 고쳐 다시 부름 |
-  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`, 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume, env 프록시가 키를 막는 http endpoint(`EPROXYKEY`) | 설정을 고침(task 는 생기지 않음. resume 이면 고친 뒤 다시 resume) |
+  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`, 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume, env 프록시가 키를 막는 http endpoint(`EPROXYKEY`), Sora 제출 404(배포명이 틀렸거나 퇴역 뒤 배포가 지워짐. 기록은 남기지 않음) | 설정을 고침(task 는 생기지 않음. resume 이면 고친 뒤 다시 resume) |
   | `kind: 'timeout'` / `'download'` | task 는 있음(과금됐을 수 있음) | `resumeClip({ creds, provider: err.provider, label: err.label, taskId: err.taskId, seconds: err.seconds })` |
   | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음 | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함. `task_lost` 인데 콘솔에 task 가 있으면 `resumeClip` 으로 마저 받음(새 제출 없음) |
   | `kind: 'unreachable'` | Sora 연결 거부(아무것도 보내지 않음) | 네트워크를 확인한 뒤 다시 부름 |
+  | `kind: 'retired'` | Sora 배포가 410 으로 답함(제출 410 은 바로, 폴링과 내려받기 410 은 무료 배포 확인이 퇴역이라고 할 때만). 그 배포는 24시간 기록되고, 그동안 Sora 에 보내지 않음. WAN 키가 있으면 다음 leg 는 WAN 으로 감. 폴링이나 내려받기에서 났으면 job 이 과금됐을 수 있음(`err.taskId`) | 유료 생성을 멈추고 사용자에게 알림. WAN 키를 넣거나 새 Sora 모델을 배포한 뒤 `resetPoolState({ labels: ['AZURE_SORA'] })` 로 기록을 지움 |
   | `kind: 'rate'` | Sora 가 다섯 번 제출 모두 429 로 거절함, 또는 다음 기다림이 `maxRateWaitMs`(기본 120초)보다 김(서버의 `Retry-After`, 없으면 30초부터 두 배로 늘린 값. 만든 job 없음, 과금 없음) | 잠시(`err.retryAfterMs` 가 있으면 그만큼) 기다린 뒤 다시 부름 |
   | `kind` 가 없는 오류 | 예상하지 못한 실패 | 원인을 확인하기 전에는 다시 부르지 않음 |
 

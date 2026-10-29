@@ -243,11 +243,11 @@ FLUX 는 이 스킬의 §4 프리플라이트 대상이 아니다(무과금으�
 
 ## 4. 프리플라이트 (무과금)
 **여기서는 어떤 유료 생성도 실행하지 않는다** — 이미지 생성, Sora-2·WAN 영상 생성 어느 쪽도 호출하지 않는다.
-아래 세 가지만 수행한다: (1) Sora `listVideos` GET(목록 조회는 무료) (2) Image 는 `azFetch` 로 **body `{model:<배포명>}` (프롬프트 누락) POST** — 배포로 라우팅된 뒤 프롬프트 누락으로 생성 전 `400 missing_required_parameter` 로 거부되므로 과금 0이고, 엔드포인트·인증에 더해 **배포명까지** 무료로 검증된다. (빈 `{}` 는 model 이 없어 `404 DeploymentNotFound` 로 갈려 배포명을 확인하지 못한다.) (3) WAN 은 키마다 존재하지 않는 task 를 GET(`probeWanPool`) — 맞는 키는 200(`task_status: UNKNOWN`), 틀린 키는 `401 InvalidApiKey` 다(2026-10-09 실측).
+아래 네 가지만 수행한다: (1) Sora `listVideos` GET(목록 조회는 무료) (2) Image 는 `azFetch` 로 **body `{model:<배포명>}` (프롬프트 누락) POST** — 배포로 라우팅된 뒤 프롬프트 누락으로 생성 전 `400 missing_required_parameter` 로 거부되므로 과금 0이고, 엔드포인트·인증에 더해 **배포명까지** 무료로 검증된다. (빈 `{}` 는 model 이 없어 `404 DeploymentNotFound` 로 갈려 배포명을 확인하지 못한다.) (3) WAN 은 키마다 존재하지 않는 task 를 GET(`probeWanPool`) — 맞는 키는 200(`task_status: UNKNOWN`), 틀린 키는 `401 InvalidApiKey` 다(2026-10-09 실측). (4) Sora 배포는 `probeSoraDeployment` 의 GET 두 번 — `GET /openai/deployments/<배포명>?api-version=2022-12-01`(있으면 200 과 `status`, 없으면 404 `notFound`)과 `GET /openai/v1/models?api-version=preview` 의 그 모델 항목(`lifecycle_status`, `deprecation.inference` 퇴역일). Sora 는 이미지와 달리 프롬프트 없는 POST 로 배포를 가르지 못한다. `/openai/v1/videos` 는 모든 인자를 배포 확인보다 먼저 검사해, 없는 배포명에도 같은 400 을 준다(2026-10-29 실측). 인자 검사를 통과하는 POST 는 실제 생성(과금)이다.
 ```bash
 node -e "
 (async () => {
-  const { resolveCreds, listVideos, azFetch, redact } = await import('$ADAPTER');
+  const { resolveCreds, listVideos, azFetch, redact, probeSoraDeployment } = await import('$ADAPTER');
   const c = resolveCreds({ projectDir: process.cwd() });
   if (!c._source) { console.log('크레덴셜 없음 -- §3 먼저 실행'); process.exit(2); }
   const how = (r) => (r.error ? r.errno || r.error.name : r.authStyle);   // status 0 이면 이유(ENOTFOUND, TimeoutError 등)
@@ -261,7 +261,13 @@ node -e "
   const wan = await probeWanPool({ creds: c });
   for (const w of wan) console.log('wan.probe', w.label, w.host, w.model, '->', w.status, w.code || '', '| key', w.key);
   if (!wan.length) console.log('wan.probe -> WAN 항목 없음 (영상은 Sora 만 사용)');
-  const pass = sora.status === 200 && img.status === 400 && wan.every((w) => w.authOk);
+  const dep = await probeSoraDeployment({ endpoint: c.AZURE_SORA_ENDPOINT, key: c.AZURE_SORA_API_KEY, deployment: c.AZURE_SORA_DEPLOYMENT || 'sora-2' });
+  const until = dep.retiresAt ? new Date(dep.retiresAt).toISOString().slice(0, 10) : '-';
+  console.log('sora.deploy ->', dep.status, dep.state, '| model', dep.modelVersion || dep.model || '-', dep.versionInferred ? '(판 추정)' : '', '| 퇴역', until);
+  if (dep.state === 'retired') console.log('경고: Sora 퇴역 -- 영상은 WAN 키로만 만든다(§3 WAN 영상 풀)');
+  if (dep.soon) console.log('안내: Sora 모델이 ' + until + ' 에 퇴역 예정(' + dep.daysLeft + '일 남음) -- 그 뒤에는 WAN 키나 새 Sora 배포가 필요');
+  const soraOk = dep.state === 'deployed' || (dep.state === 'retired' && wan.length > 0);
+  const pass = sora.status === 200 && soraOk && img.status === 400 && wan.every((w) => w.authOk);
   console.log(pass ? 'PREFLIGHT PASS -- \$0 과금' : 'PREFLIGHT FAIL');
   console.log('source:', c._source, '| Sora key', redact(c.AZURE_SORA_API_KEY), '| Image key', redact(c.AZURE_IMAGE_API_KEY));
   process.exit(pass ? 0 : 1);
@@ -272,6 +278,10 @@ node -e "
 | 체크 | 기대 | 의미 |
 |---|---|---|
 | `sora.listVideos` | HTTP 200 | Sora 엔드포인트 살아있음 + 키 인증됨 |
+| `sora.deploy` | HTTP 200, `deployed` | 그 배포명이 이 리소스에 있음(GET 이라 과금 0). 모델 판과 퇴역일을 함께 보인다. 배포가 모델 이름만 알려 주면 가장 새 판을 쓴다고 보고 `(판 추정)` 을 붙인다 |
+| `sora.deploy` 가 404 `no_deployment` | - | 배포명이 틀렸거나, 모델 퇴역 뒤 배포가 지워짐 — Azure 포털의 배포 목록과 `AZURE_SORA_DEPLOYMENT` 를 대조 |
+| `sora.deploy` 가 `retired` | - | 배포가 410 으로 답했거나 퇴역일이 지남. WAN 항목이 있으면 경고만 하고 통과(영상은 WAN 으로), 없으면 FAIL. 새 Sora 배포를 만들거나 WAN 키를 넣는다 |
+| `안내: ... 퇴역 예정` | - | 퇴역일이 14일 안. 그 날짜 뒤에는 Sora 가 410 을 준다(Foundry 모델 수명 문서: 서비스에서 빠진 모델은 410 Gone). 2026-10-29 실측: `sora-2` 는 2026-11-02 |
 | `images.badreq` | HTTP 400 (`missing_required_parameter`) | Image 엔드포인트 살아있음 + 키 인증됨 + **배포명 라우팅됨**(프롬프트 누락이라 생성 전 거부) |
 | `wan.probe` (항목마다) | HTTP 200 | WAN workspace 엔드포인트 + 키 인증됨. 남은 할당량은 이 방법으로 알 수 없다 |
 | `wan.probe` 가 401 `InvalidApiKey` | - | 키가 틀렸거나 엔드포인트와 리전이 다름 — 그 `WAN_<n>` 을 재입력 |
@@ -289,7 +299,7 @@ node -v                      # 18 이상 기대
 command -v ffmpeg >/dev/null && ffmpeg -version | head -1 || echo "시스템 ffmpeg 없음 -- resolveFfmpeg() 폴백 확인(§2)"
 # 위 §4 프리플라이트를 재실행해 PASS 문자열 + 두 status 코드를 그대로 증거로 남긴다
 ```
-4-field 보고: 변경(Node/ffmpeg 확보 방식 · 크레덴셜 저장 경로 — 파일 내용 아님) / Evidence(§0 감지 출력 · §4 status 코드 전부) / 검증(`listVideos`=200 **AND** `images.badreq`=400 **AND** WAN 항목 전부 200 이어야 PASS) / Unknown(FLUX 미검증 · WAN 키별 남은 할당량(조회 API 없음 — 소진은 첫 생성에서 드러나고 풀이 자동으로 다음 키·Sora 로 넘어감) · 배포명이 실제 존재하는지는 이 무과금 프리플라이트로 확인 불가하며 첫 실제 생성 시점에만 드러남 · 관리자 권한 제약으로 ffmpeg 시스템 설치 불가 등, 가짜 성공 금지).
+4-field 보고: 변경(Node/ffmpeg 확보 방식 · 크레덴셜 저장 경로 — 파일 내용 아님) / Evidence(§0 감지 출력 · §4 status 코드 전부) / 검증(`listVideos`=200 **AND** `sora.deploy`=`deployed`(WAN 이 있으면 `retired` 도 경고와 함께 허용) **AND** `images.badreq`=400 **AND** WAN 항목 전부 200 이어야 PASS) / Unknown(FLUX 미검증 · WAN 키별 남은 할당량(조회 API 없음 — 소진은 첫 생성에서 드러나고 풀이 자동으로 다음 키·Sora 로 넘어감) · Sora 배포가 실제로 생성하는지(배포 GET 은 있음과 퇴역일까지만 알려 줌)는 첫 실제 생성 시점에만 드러남 · 관리자 권한 제약으로 ffmpeg 시스템 설치 불가 등, 가짜 성공 금지).
 크레덴셜은 어떤 필드도 원문으로 보고하지 않고 항상 `redact()` 출력(길이만)만 남긴다.
 
 ## 함정

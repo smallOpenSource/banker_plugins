@@ -704,10 +704,13 @@ function videoForm({ model, prompt, size, seconds, inputReferencePng }) {
 
 // status 0 = network error; errno tells a refused connection (nothing sent) from a lost one.
 // retryAfterMs is the server's wait for a 429.
+// code is the answer's error.code (DeploymentNotFound and the like), for a 404 or 410 the caller reads.
 function createVideoError(r) {
   const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return Object.assign(err, { status: r.status, errno: r.errno || null, retryAfterMs: r.retryAfterMs ?? null });
+  return Object.assign(err, { status: r.status, errno: r.errno || null, retryAfterMs: r.retryAfterMs ?? null, code: errorCodeOf(r) });
 }
+
+const errorCodeOf = (r) => (typeof r.body?.error?.code === 'string' ? r.body.error.code : null);
 
 const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180, now: Date.now };
 const POLL_RETRY_4XX = new Set([408, 429]);
@@ -758,13 +761,83 @@ function throwIfRefused(r, id) {
   throw Object.assign(new Error(`pollVideo: job ${id} answered HTTP ${r.status}${code ? ` ${code}` : ''}`), { status: r.status, code });
 }
 
-/** Download finished video bytes. Returns an mp4 Buffer; throws on non-200 / empty body. */
+/** Download finished video bytes. Returns an mp4 Buffer; throws on non-200 / empty body, with err.status. */
 export async function downloadVideo({ endpoint, key, id, apiVersion = 'preview' } = {}) {
   const r = await azFetch(`${endpoint}/openai/v1/videos/${id}/content?api-version=${apiVersion}`, {
     key, method: 'GET', binary: true,
   });
-  if (!(r.status === 200 && r.body?.length)) throw new Error(`downloadVideo failed: HTTP ${r.status}${why(r)}`);
+  if (!(r.status === 200 && r.body?.length)) throw Object.assign(new Error(`downloadVideo failed: HTTP ${r.status}${why(r)}`), { status: r.status });
   return r.body;
+}
+
+// ---------------------------------------------------------------------------
+// Sora deployment probe (FREE: two GETs, nothing is generated)
+// ---------------------------------------------------------------------------
+
+const DEPLOYMENT_API_VERSION = '2022-12-01';
+/** A retirement date this many days away or nearer is reported (`soon`). */
+export const RETIRE_SOON_DAYS = 14;
+const DAY_MS = 86_400_000;
+const RETIRED_LIFECYCLE = new Set(['retired', 'removed']);
+
+/**
+ * FREE check of a Sora deployment that makes no job. POST /openai/v1/videos checks every parameter
+ * before it looks the deployment up (a deployment that does not exist answers the same 400 as one
+ * that does, measured 2026-10-29), and a POST that passes the checks is a paid generation. So the
+ * check is two GETs:
+ *   GET /openai/deployments/<name>?api-version=2022-12-01   200 {model, status}, or 404 when there is none
+ *   GET /openai/v1/models?api-version=preview                 the model's lifecycle_status and deprecation.inference
+ * state: deployed | no_deployment | retired | auth | unreachable | unknown. `retired` means the
+ * deployment answered 410, the model list calls the model retired, or its inference retirement date
+ * has passed. `retiresAt` (ms) and `daysLeft` come from the model list; when the deployment names the
+ * model without its version, the newest dated version is taken (`versionInferred`). `soon` is true
+ * within RETIRE_SOON_DAYS. The result holds no key and no URL.
+ */
+export async function probeSoraDeployment({ endpoint, key, deployment = 'sora-2', now = Date.now } = {}) {
+  const d = await azFetch(`${endpoint}/openai/deployments/${encodeURIComponent(deployment)}?api-version=${DEPLOYMENT_API_VERSION}`, { key, method: 'GET' });
+  const base = { deployment, status: d.status, code: errorCodeOf(d), errno: d.errno || null };
+  if (d.status !== 200) return { ...base, state: deploymentState(d.status) };
+  const { model, deploymentStatus } = deploymentOf(d.body);
+  const life = model ? await modelLifecycle(endpoint, key, model) : {};
+  return withSchedule({ ...base, deploymentStatus, model, ...life }, now());
+}
+
+const deploymentOf = (b) => ({ model: typeof b?.model === 'string' ? b.model : null, deploymentStatus: b?.status ?? null });
+
+const DEPLOYMENT_STATE = new Map([[404, 'no_deployment'], [410, 'retired'], [401, 'auth'], [403, 'auth'], [0, 'unreachable']]);
+const deploymentState = (status) => DEPLOYMENT_STATE.get(status) || 'unknown';
+
+// The model's entry in the resource's model list: its lifecycle and inference retirement date.
+async function modelLifecycle(endpoint, key, model) {
+  const r = await azFetch(`${endpoint}/openai/v1/models?api-version=preview`, { key, method: 'GET' });
+  const m = r.ok ? modelEntry(r.body?.data, model) : null;
+  if (!m) return { modelVersion: null, lifecycle: null, retiresAt: null };
+  return { modelVersion: m.entry.id, versionInferred: m.inferred, lifecycle: m.entry.lifecycle_status ?? null, retiresAt: msOf(m.entry.deprecation?.inference) };
+}
+
+// The entry named exactly `model`, else the newest `<model>-YYYY-MM-DD` one (a deployment names only the model).
+function modelEntry(list, model) {
+  if (!Array.isArray(list)) return null;
+  const exact = list.find((x) => x?.id === model);
+  if (exact) return { entry: exact, inferred: false };
+  const dated = (id) => typeof id === 'string' && id.startsWith(`${model}-`) && /^\d{4}-\d{2}-\d{2}$/.test(id.slice(model.length + 1));
+  const versions = list.filter((x) => dated(x?.id)).sort((a, b) => b.id.localeCompare(a.id));
+  return versions.length ? { entry: versions[0], inferred: true } : null;
+}
+
+// deprecation.inference is unix seconds; an ISO date is read too.
+function msOf(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) return v * 1000;
+  const t = typeof v === 'string' ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+
+function withSchedule(r, t) {
+  const daysLeft = r.retiresAt == null ? null : Math.ceil((r.retiresAt - t) / DAY_MS);
+  const gone = (r.retiresAt != null && r.retiresAt <= t) || RETIRED_LIFECYCLE.has(r.lifecycle);
+  const ready = !r.deploymentStatus || r.deploymentStatus === 'succeeded';
+  const state = gone ? 'retired' : ready ? 'deployed' : 'unknown';
+  return { ...r, state, daysLeft, soon: !gone && daysLeft != null && daysLeft <= RETIRE_SOON_DAYS };
 }
 
 /**

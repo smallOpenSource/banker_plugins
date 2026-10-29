@@ -28,7 +28,9 @@
  *
  * Pool state lives in ~/.config/banker/3d-intro/video-pool-state.json (0600). It holds
  * FINGERPRINTS (sha256 of endpoint+key+model), never a key, so a rotated key or a changed model
- * starts with a clean record. State is advisory: a failed write is reported, never fatal.
+ * starts with a clean record. A Sora deployment that answered 410 (retired) is recorded under the
+ * fingerprint of its endpoint origin and deployment name, and Sora is skipped for 24 h.
+ * State is advisory: a failed write is reported, never fatal.
  * Concurrent processes share the file last-write-wins; the per-key in-flight limit is per process.
  *
  * Runtime: Node >=18 builtins only. globalThis.fetch and cp.spawnSync are read at call time so
@@ -40,7 +42,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import cp from 'node:child_process';
 import {
-  createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey, keyHeldBack,
+  createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey, keyHeldBack, probeSoraDeployment,
   API_TIMEOUT_MS, DOWNLOAD_TIMEOUT_MS, HELD_KEY, errnoOf, timeLeft,
 } from './azure-adapter.mjs';
 
@@ -213,13 +215,17 @@ function updateEntry(file, entry, fn, emit) {
   }
 }
 
-/** Clear recorded state for all entries, or only for the given labels (e.g. ['WAN_2']). */
+/**
+ * Clear recorded state for all entries, or only for the given labels (e.g. ['WAN_2']). 'AZURE_SORA'
+ * clears the Sora retirement record (every Sora deployment's, so creds are not needed for it).
+ */
 export function resetPoolState({ statePath = defaultStatePath(), creds, labels } = {}) {
   const state = loadPoolState(statePath);
   if (!labels) state.entries = {};
   else {
     const fps = new Set(loadWanPool(creds).filter((e) => labels.includes(e.label)).map((e) => e.fp));
-    for (const fp of Object.keys(state.entries)) if (fps.has(fp)) delete state.entries[fp];
+    const sora = labels.includes(SORA_LABEL);
+    for (const [fp, st] of Object.entries(state.entries)) if (fps.has(fp) || (sora && st?.label === SORA_LABEL)) delete state.entries[fp];
   }
   return savePoolState(state, statePath);
 }
@@ -235,14 +241,30 @@ function entryStatus(st, t) {
   return { status: 'ok' };
 }
 
-/** Per-entry availability for reporting. Never includes a key, nor a malformed endpoint or model. */
+/**
+ * Per-entry availability for reporting: one row per WAN entry (provider 'wan'), then one Sora row
+ * (label AZURE_SORA, provider 'sora', status ok | retired | unset | malformed). Never includes a key,
+ * nor a malformed endpoint or model.
+ */
 export function poolSummary({ creds = {}, statePath = defaultStatePath(), now = Date.now() } = {}) {
   const state = loadPoolState(statePath);
-  return loadWanPool(creds).map((e) => {
+  const wan = loadWanPool(creds).map((e) => {
     const st = state.entries[e.fp];
     const field = malformedField(e);
-    return { ...shownEntry(e), okCount: st?.okCount || 0, ...(field ? { status: 'malformed', reason: field } : entryStatus(st, now)) };
+    return { ...shownEntry(e), provider: 'wan', okCount: st?.okCount || 0, ...(field ? { status: 'malformed', reason: field } : entryStatus(st, now)) };
   });
+  return [...wan, soraSummary(creds, state, now)];
+}
+
+// The Sora row of poolSummary.
+function soraSummary(creds, state, t) {
+  const conn = soraConn(creds);
+  const base = { label: SORA_LABEL, provider: 'sora', model: isModelId(conn.model) ? conn.model : '(invalid model)' };
+  if (!conn.endpoint || !conn.key) return { ...base, host: null, status: 'unset' };
+  if (!originOf(conn.endpoint)) return { ...base, host: '(invalid endpoint)', status: 'malformed', reason: 'endpoint' };
+  const rec = retiredIn(state, conn, t);
+  const status = rec ? { status: 'retired', reason: rec.reason, retiredAt: rec.retiredAt, until: rec.retiredAt + SORA_RETIRED_TTL_MS } : { status: 'ok' };
+  return { ...base, host: hostOf(originOf(conn.endpoint)), ...status };
 }
 
 // In-process in-flight counter per fingerprint (the documented limit is per key).
@@ -728,6 +750,60 @@ function soraConn(creds) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Sora retirement (HTTP 410). A 410 on the submit is the model's retirement at once. A 410 on a poll
+// or a download may also be a job that expired, so it counts only when the free deployment probe says
+// retired. The record keeps Sora from being sent the next legs for 24 h.
+// ---------------------------------------------------------------------------
+
+const SORA_LABEL = 'AZURE_SORA';
+const SORA_RETIRED_TTL_MS = 24 * 3_600_000;
+// The Sora record's name in the state file: endpoint origin and deployment, never the key.
+const soraFp = (conn) => `sora:${crypto.createHash('sha256').update(`${originOf(conn.endpoint)}\n${conn.model}`).digest('hex').slice(0, 16)}`;
+
+function retiredIn(state, conn, t) {
+  const st = state.entries[soraFp(conn)];
+  return st?.status === 'retired' && t - st.retiredAt < SORA_RETIRED_TTL_MS ? st : null;
+}
+
+function recordSoraRetired(ctx, conn, stage) {
+  const t = ctx.now();
+  updateEntry(ctx.statePath, { fp: soraFp(conn), label: SORA_LABEL }, (st) => ({ ...st, status: 'retired', retiredAt: t, reason: `HTTP 410 (${stage})` }), ctx.emit);
+  ctx.emit({ type: 'fail', provider: 'sora', label: SORA_LABEL, kind: 'retired', status: 410, stage });
+}
+
+const soraWhere = (conn) => `Sora deployment ${isModelId(conn.model) ? conn.model : '(invalid model)'} on ${hostOf(originOf(conn.endpoint))}`;
+const SORA_RETIRED_NEXT = "add a WAN key (3d-intro-setup), or deploy a newer Sora model and clear the record with resetPoolState({ labels: ['AZURE_SORA'] })";
+
+function soraRetiredStop(conn, stage, taskId) {
+  const job = taskId ? `job ${taskId} may have billed` : 'no job was made';
+  return stopError('retired', `${soraWhere(conn)} is retired (HTTP 410 on the ${stage}); ${job}; Sora is skipped for 24 h — ${SORA_RETIRED_NEXT}`, { provider: 'sora', label: SORA_LABEL, status: 410, ...(taskId ? { taskId } : {}) });
+}
+
+// Sora was skipped for its record, and no other provider took the leg.
+function soraSkippedStop(conn, rec) {
+  return stopError('retired', `${soraWhere(conn)} was recorded retired (${rec.reason}) at ${new Date(rec.retiredAt).toISOString()}, and no WAN key could take the leg; nothing was sent — ${SORA_RETIRED_NEXT}`, { provider: 'sora', label: SORA_LABEL, retiredAt: rec.retiredAt });
+}
+
+// One free probe per process and deployment.
+const soraProbes = new Map();
+function probeSoraOnce(conn, now) {
+  const fp = soraFp(conn);
+  if (!soraProbes.has(fp)) {
+    soraProbes.set(fp, probeSoraDeployment({ endpoint: conn.endpoint, key: conn.key, deployment: conn.model, now }).catch(() => ({ state: 'unknown', status: null })));
+  }
+  return soraProbes.get(fp);
+}
+
+// The retired stop for a 410 on a poll or a download when the probe confirms it, else null.
+async function confirmRetired(ctx, conn, stage, jobId) {
+  const p = await probeSoraOnce(conn, ctx.now);
+  ctx.emit({ type: 'probe', provider: 'sora', label: SORA_LABEL, stage, state: p.state, status: p.status ?? null });
+  if (p.state !== 'retired') return null;
+  recordSoraRetired(ctx, conn, stage);
+  return soraRetiredStop(conn, stage, jobId);
+}
+
 // Poll an accepted Sora job to a downloaded clip; same stop rules as finishWanTask.
 async function finishSoraJob(ctx, jobId, secs) {
   const conn = soraConn(ctx.creds);
@@ -737,13 +813,14 @@ async function finishSoraJob(ctx, jobId, secs) {
   if (!st || !SORA_DONE.has(st.status)) {
     throw stopError('timeout', `Sora job ${jobId} still ${st?.status ?? 'unknown'} after polling for ${ctx.now() - t0} ms; resume with resumeClip`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', seconds: secs });
   }
-  const mp4 = await downloadSoraClip(conn, jobId, secs);
+  const mp4 = await downloadSoraClip(ctx, conn, jobId, secs);
   ctx.emit({ type: 'done', provider: 'sora', label: 'AZURE_SORA', taskId: jobId });
   return { mp4, provider: 'sora', label: 'AZURE_SORA', model: conn.model, seconds: secs, taskId: jobId, usage: null };
 }
 
 // pollVideo throws on a 4xx other than 408/429 (the job is gone, or the key is refused): such a job
-// never turns terminal, so the leg ends at once as task_lost instead of polling to the deadline.
+// never turns terminal, so the leg ends at once as task_lost instead of polling to the deadline. A 410
+// the deployment probe calls retired ends it as retired.
 async function pollSoraJob(ctx, conn, jobId) {
   const interval = Math.max(0, ctx.pollIntervalMs);
   try {
@@ -754,6 +831,8 @@ async function pollSoraJob(ctx, conn, jobId) {
     });
   } catch (e) {
     if (!e.status) throw e;
+    const retired = e.status === 410 && await confirmRetired(ctx, conn, 'poll', jobId);
+    if (retired) throw retired;
     throw stopError('task_lost', `Sora poll for job ${jobId} failed: HTTP ${e.status}${e.code ? ` ${e.code}` : ''}; check the job in Azure before resubmitting`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', status: e.status, code: e.code });
   }
 }
@@ -764,10 +843,12 @@ function soraFailure(st, jobId) {
   return stopError('failed', `Sora job ${jobId} ended ${st.status}: ${JSON.stringify(st.error || '')}`, { provider: 'sora', taskId: jobId, code });
 }
 
-async function downloadSoraClip(conn, jobId, secs) {
+async function downloadSoraClip(ctx, conn, jobId, secs) {
   try {
     return await downloadVideo({ endpoint: conn.endpoint, key: conn.key, id: jobId, apiVersion: conn.apiVersion });
   } catch (err) {
+    const retired = err.status === 410 && await confirmRetired(ctx, conn, 'download', jobId);
+    if (retired) throw retired;
     throw stopError('download', `${err.message} for Sora job ${jobId}; resume with resumeClip`, { provider: 'sora', taskId: jobId, label: 'AZURE_SORA', seconds: secs });
   }
 }
@@ -784,7 +865,8 @@ const SORA_SUBMIT_TRIES = 5;
 
 // A 429 is a refusal, so retrying it cannot double-bill; a lost connection or a bare 5xx can. Each
 // wait is the server's Retry-After, else 30 s doubling, from 1 s to 10 min. A Retry-After longer
-// than maxRateWaitMs is not waited out: the leg stops as `rate` at once, as WAN's waits do.
+// than maxRateWaitMs is not waited out: the leg stops as `rate` at once, as WAN's waits do. A 410 is
+// the deployment's retirement: recorded, and the leg stops as `retired`.
 async function submitSora(ctx, conn, secs) {
   for (let i = 0; ; i++) {
     try {
@@ -793,6 +875,7 @@ async function submitSora(ctx, conn, secs) {
         endpoint: conn.endpoint, key: conn.key, model: conn.model, prompt: ctx.prompt, size: ctx.size, seconds: secs, inputReferencePng: ctx.firstFramePng, apiVersion: conn.apiVersion,
       });
     } catch (e) {
+      if (e.status === 410) { recordSoraRetired(ctx, conn, 'submit'); throw soraRetiredStop(conn, 'submit'); }
       if (e.status !== 429 || i >= SORA_SUBMIT_TRIES - 1) throw soraSubmitError(e);
       const want = e.retryAfterMs ?? RATE_BASE_MS * 2 ** i;
       if (want > ctx.maxRateWaitMs) throw soraRateStop(want, ctx.maxRateWaitMs, e.retryAfterMs != null);
@@ -814,6 +897,10 @@ function soraSubmitError(e) {
   if (/moderation|content_policy|safety/i.test(e.message)) return new ContentRejectedError('sora', 'moderation', e.message);
   if (e.status === 429) {
     return stopError('rate', `Sora still answered HTTP 429 after ${SORA_SUBMIT_TRIES} tries; no job was made — wait, then generate the leg again`, { provider: 'sora', status: 429 });
+  }
+  if (e.status === 404) {
+    // only the status and the code field are read: a message is no contract
+    return stopError('invalid_request', `${e.message}; the deployment name may be wrong, or the deployment was removed after its model retired — check AZURE_SORA_DEPLOYMENT (3d-intro-setup §4 checks it for free)`, { provider: 'sora', status: 404, code: e.code || null });
   }
   if (soraMayHaveJob(e)) {
     const answer = e.status === 0 ? e.errno || 'network' : `HTTP ${e.status}`;
@@ -851,6 +938,10 @@ const DEFAULTS = { size: '720x1280', seconds: 5, pollIntervalMs: 15_000, pollTim
  *   kind 'unreachable'                  Sora host refused the connection (nothing was sent)
  *   kind 'rate'                         Sora kept answering 429, or asked (Retry-After, err.retryAfterMs) for a
  *                                       wait past maxRateWaitMs (no job was made); wait, then call again
+ *   kind 'retired'                      the Sora deployment answered 410 (on the submit, or on a poll or a
+ *                                       download the free deployment probe confirmed), or was recorded so in
+ *                                       the last 24 h and no WAN key could take the leg; add a WAN key, or
+ *                                       deploy a newer model and resetPoolState({ labels: ['AZURE_SORA'] })
  * @returns {Promise<{mp4:Buffer, provider:'wan'|'sora', label:string, model:string, seconds:number, taskId:string, usage:object|null}>}
  */
 export async function generateClip(opts = {}) {
@@ -867,17 +958,24 @@ export async function generateClip(opts = {}) {
     const clip = await tryProvider(ctx, p, tried);
     if (clip) return clip;
   }
+  if (ctx.soraRetired) throw soraSkippedStop(soraConn(o.creds), ctx.soraRetired);
   throw new Error(`generateClip: no video provider available (tried: ${tried.join(', ') || 'none'})`);
 }
 
 // One provider's go at the leg: the clip, or null to go on to the next. Sora, once it runs, ends the
-// leg (with a clip or a throw).
+// leg (with a clip or a throw). A Sora deployment recorded retired is skipped before anything is sent.
 async function tryProvider(ctx, p, tried) {
   if (p === 'wan') {
     tried.push('wan');
     return runWan(ctx);
   }
   if (p !== 'sora' || !soraReady(ctx)) return null;
+  const rec = retiredIn(loadPoolState(ctx.statePath), soraConn(ctx.creds), ctx.now());
+  if (rec) {
+    ctx.emit({ type: 'skip', provider: 'sora', label: SORA_LABEL, reason: 'retired', retiredAt: rec.retiredAt });
+    ctx.soraRetired = rec;
+    return null;
+  }
   tried.push('sora');
   ctx.emit({ type: 'fallback', provider: 'sora', from: tried.slice(0, -1) });
   return runSora(ctx);

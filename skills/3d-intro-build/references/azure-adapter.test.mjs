@@ -1435,3 +1435,67 @@ test('3d-intro-setup: the .gitignore line covers the key file and its temp copy,
     if (before?.endsWith('.env')) assert.ok(ignored('.env'), 'the last line before still ignores .env');
   }
 });
+
+// =====================================================================
+// Sora retirement: free deployment probe (two GETs), 410 and 404 details
+// =====================================================================
+
+const NOV2 = Date.UTC(2026, 10, 2) / 1000;   // sora-2-2025-12-08's inference retirement as the resource gave it (2026-10-29)
+const MODELS = [
+  { id: 'sora-2-2025-10-06', lifecycle_status: 'preview', deprecation: { inference: Date.UTC(2026, 6, 15) / 1000 } },
+  { id: 'sora-2-2025-12-08', lifecycle_status: 'deprecated', deprecation: { inference: NOV2 } },
+  { id: 'sora-2025-05-02', lifecycle_status: 'deprecated', deprecation: { inference: Date.UTC(2026, 1, 28) / 1000 } },
+];
+function probeFetch({ deployment = mockJson({ model: 'sora-2', status: 'succeeded' }), models = MODELS } = {}) {
+  return installFetch((url) => (url.includes('/openai/deployments/') ? deployment : mockJson({ data: models })));
+}
+
+test('probeSoraDeployment: two GETs without a body; a deployed model names its retirement date, and near dates are flagged', async () => {
+  const calls = probeFetch();
+  const r = await A.probeSoraDeployment({ endpoint: EP, key: KEY, deployment: 'sora 2', now: () => Date.UTC(2026, 9, 29, 7) });
+  assert.deepEqual(calls.map((c) => [c.opts.method, c.opts.body]), [['GET', undefined], ['GET', undefined]]);
+  assert.match(calls[0].url, /\/openai\/deployments\/sora%202\?api-version=2022-12-01$/);
+  assert.match(calls[1].url, /\/openai\/v1\/models\?api-version=preview$/);
+  assert.ok(!calls.some((c) => c.url.includes('/videos')), 'nothing is posted to the paid path');
+  assert.deepEqual([r.state, r.model, r.modelVersion, r.versionInferred, r.lifecycle, r.daysLeft, r.soon], ['deployed', 'sora-2', 'sora-2-2025-12-08', true, 'deprecated', 4, true]);
+  assert.equal(r.retiresAt, NOV2 * 1000);
+  assert.ok(!JSON.stringify(r).includes(KEY) && !JSON.stringify(r).includes(EP), 'no key, no URL');
+  const far = await A.probeSoraDeployment({ endpoint: EP, key: KEY, now: () => Date.UTC(2026, 8, 1) });
+  assert.deepEqual([far.state, far.soon], ['deployed', false]);
+});
+
+test('probeSoraDeployment: an exact model entry wins; a passed date or a retired lifecycle is retired; no entry has no date', async () => {
+  probeFetch({ models: [...MODELS, { id: 'sora-2', lifecycle_status: 'generally-available', deprecation: { inference: '2027-01-01T00:00:00Z' } }] });
+  const exact = await A.probeSoraDeployment({ endpoint: EP, key: KEY, now: () => Date.UTC(2026, 9, 29) });
+  assert.deepEqual([exact.modelVersion, exact.versionInferred, exact.retiresAt], ['sora-2', false, Date.UTC(2027, 0, 1)]);
+  probeFetch();
+  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY, now: () => Date.UTC(2026, 10, 3) })).state, 'retired');
+  probeFetch({ models: [{ id: 'sora-2', lifecycle_status: 'retired' }] });
+  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY })).state, 'retired');
+  probeFetch({ models: [] });
+  const none = await A.probeSoraDeployment({ endpoint: EP, key: KEY });
+  assert.deepEqual([none.state, none.retiresAt, none.daysLeft, none.soon], ['deployed', null, null, false]);
+  probeFetch({ deployment: mockJson({ model: 'sora-2', status: 'creating' }) });
+  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY })).state, 'unknown');
+});
+
+test('probeSoraDeployment: 404, 410, 401/403, network and other answers map to their states without reading the model list', async () => {
+  for (const [answer, state] of [[mockJson({ error: { code: 'notFound' } }, 404), 'no_deployment'], [mockJson({}, 410), 'retired'], [mockJson({}, 401), 'auth'], [mockJson({}, 403), 'auth'], [mockJson({}, 500), 'unknown']]) {
+    const calls = probeFetch({ deployment: answer });
+    const r = await A.probeSoraDeployment({ endpoint: EP, key: KEY });
+    assert.equal(r.state, state, String(answer.status));
+    assert.ok(calls.every((c) => c.url.includes('/openai/deployments/')), 'only the deployment GET');
+    if (answer.status === 404) assert.equal(r.code, 'notFound');
+  }
+  installFetch(() => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); });
+  const off = await A.probeSoraDeployment({ endpoint: EP, key: KEY });
+  assert.deepEqual([off.state, off.status, off.errno], ['unreachable', 0, 'ENOTFOUND']);
+});
+
+test('downloadVideo and createVideo: a failure carries the HTTP status, and a submit error the answer\'s error code', async () => {
+  installFetch(() => mockJson({ error: { code: 'ModelDeprecated' } }, 410));
+  await assert.rejects(() => A.downloadVideo({ endpoint: EP, key: KEY, id: 'v' }), (e) => e.status === 410 && /HTTP 410/.test(e.message));
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 410 && e.code === 'ModelDeprecated');
+  installFetch(() => mockJson({ error: 'not an object' }, 404));
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 404 && e.code === null);
+});

@@ -98,6 +98,8 @@ function installFetch({ wanCreate, wanTask, sora = 'ok' } = {}) {
 }
 
 const creates = (calls) => calls.filter((c) => c.url.endsWith(CREATE));
+// poolSummary's WAN rows (its last row is Sora's)
+const wanRows = (summary) => summary.filter((e) => e.provider === 'wan');
 const createdOn = (calls) => creates(calls).map((c) => Number(c.url.match(/ws-unit(\d)/)[1]));
 
 function clock(start = 1_000_000) {
@@ -266,7 +268,7 @@ test('generateClip: a provider-wide ServiceOverloaded never retires keys', async
   const c = clock();
   const r = await run({ creds: creds(), statePath, clock: c, maxRateWaitMs: 0 });
   assert.equal(r.provider, 'sora');
-  assert.ok(P.poolSummary({ creds: creds(), statePath, now: c.now() }).every((e) => e.status === 'cooldown'));
+  assert.ok(wanRows(P.poolSummary({ creds: creds(), statePath, now: c.now() })).every((e) => e.status === 'cooldown'));
   assert.ok(P.poolSummary({ creds: creds(), statePath, now: c.now() + 3_600_000 }).every((e) => e.status === 'ok'));
 });
 
@@ -292,7 +294,7 @@ test('generateClip: when every WAN key is exhausted, Sora renders with the first
   const post = calls.find((c) => c.url.startsWith(`${SORA}/openai/v1/videos?`) && c.opts.method === 'POST');
   assert.equal(post.body.get('seconds'), '4');
   assert.ok(post.body.get('input_reference'), 'first frame forwarded as input_reference');
-  assert.ok(P.poolSummary({ creds: creds(), statePath, now: c.now() }).every((e) => e.status === 'exhausted'));
+  assert.ok(wanRows(P.poolSummary({ creds: creds(), statePath, now: c.now() })).every((e) => e.status === 'exhausted'));
 });
 
 test('generateClip: a quota code on a FAILED task retires the key and resubmits on the next one', async () => {
@@ -368,7 +370,7 @@ test('resetPoolState: clears one label or the whole pool', async () => {
   const c = clock();
   await run({ creds: creds(), statePath, clock: c });
   P.resetPoolState({ statePath, creds: creds(), labels: ['WAN_1'] });
-  assert.deepEqual(P.poolSummary({ creds: creds(), statePath, now: c.now() }).map((e) => e.status), ['ok', 'exhausted', 'ok']);
+  assert.deepEqual(wanRows(P.poolSummary({ creds: creds(), statePath, now: c.now() })).map((e) => e.status), ['ok', 'exhausted', 'ok']);
   P.resetPoolState({ statePath });
   assert.ok(P.poolSummary({ creds: creds(), statePath, now: c.now() }).every((e) => e.status === 'ok'));
 });
@@ -722,7 +724,7 @@ test('loadWanPool / poolSummary / probeWanPool: a key pasted into the model fiel
 });
 
 test('poolSummary: a malformed entry is reported as malformed, so the free Step 0 check catches it', () => {
-  const s = P.poolSummary({ creds: creds({ WAN_1_ENDPOINT: 'ws-unit1.example.com', WAN_2_MODEL: 'wan3.0 video' }), statePath: tmpState() });
+  const s = wanRows(P.poolSummary({ creds: creds({ WAN_1_ENDPOINT: 'ws-unit1.example.com', WAN_2_MODEL: 'wan3.0 video' }), statePath: tmpState() }));
   assert.deepEqual(s.map((e) => [e.label, e.status, e.reason ?? null]), [['WAN_1', 'malformed', 'endpoint'], ['WAN_2', 'malformed', 'model'], ['WAN_3', 'ok', null]]);
 });
 
@@ -1310,4 +1312,140 @@ test('wanPollTask: a key held back before sending (EINSECURE) ends the poll at o
   let ticks = 0;
   const p = await P.wanPollTask({ entry: { endpoint: 'http://example.invalid', key: creds().WAN_1_API_KEY, label: 'WAN_1' }, taskId: 't', sleep: async () => { ticks++; } });
   assert.deepEqual([p.state, p.status, p.output.code, ticks, calls.length], ['HTTP', 0, 'EINSECURE', 0, 0]);
+});
+
+// ---------------------------------------------------------------------------
+// Sora retirement (HTTP 410)
+
+// Sora routes on top of installFetch: `route(url, opts)` answers first (null passes the call on).
+// Each test names its own deployment, since the free probe runs once per process and deployment.
+function soraRoutes(route, opts = {}) {
+  const calls = installFetch(opts);
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (url, o = {}) => {
+    const r = await route(String(url), o);
+    if (!r) return routed(url, o);
+    calls.push({ url: String(url), opts: o, body: o.body });
+    return r;
+  };
+  return calls;
+}
+const soraGone = () => json(410, { error: { code: 'ModelDeprecated', message: 'The model has been retired.' } });
+const isProbe = (u) => u.includes('/openai/deployments/') || u.includes('/openai/v1/models?');
+const deploymentAnswer = (gone) => (u) => (u.includes('/openai/deployments/') ? (gone ? soraGone() : json(200, { model: 'sora-2', status: 'succeeded' })) : null);
+const soraKey = () => creds().AZURE_SORA_API_KEY;
+
+test('generateClip: a Sora submit answered 410 stops as retired at once, records it, and sends Sora nothing for 24 h', async () => {
+  const c = clock();
+  const statePath = tmpState();
+  const events = [];
+  const cr = soraOnly({ AZURE_SORA_DEPLOYMENT: 'sora-r410a' });
+  const calls = soraRoutes((u, o) => (u.startsWith(`${SORA}/openai/v1/videos?`) && o.method === 'POST' ? soraGone() : null));
+  const err = await run({ creds: cr, statePath, clock: c, onEvent: (e) => events.push(e) }).then(() => null, (e) => e);
+  assert.deepEqual([err?.kind, err?.provider, err?.status, soraPosts(calls).length], ['retired', 'sora', 410, 1]);
+  assert.match(err.message, /no job was made/);
+  const rec = Object.values(JSON.parse(fs.readFileSync(statePath, 'utf8')).entries).find((e) => e.label === 'AZURE_SORA');
+  assert.deepEqual([rec.status, rec.retiredAt], ['retired', c.now()]);
+  assert.ok(!calls.some((x) => isProbe(x.url)), 'a submit 410 needs no probe');
+  const again = await run({ creds: cr, statePath, clock: c, onEvent: (e) => events.push(e) }).then(() => null, (e) => e);
+  assert.deepEqual([again?.kind, soraPosts(calls).length], ['retired', 1], 'the second leg sends Sora nothing');
+  assert.match(again.message, /nothing was sent/);
+  assert.ok(events.some((e) => e.type === 'skip' && e.provider === 'sora' && e.reason === 'retired'));
+  const sora = P.poolSummary({ creds: cr, statePath, now: c.now() }).at(-1);
+  assert.deepEqual([sora.label, sora.provider, sora.status, sora.until], ['AZURE_SORA', 'sora', 'retired', c.now() + 86_400_000]);
+  const out = `${err.message} ${again.message} ${JSON.stringify(events)} ${fs.readFileSync(statePath, 'utf8')}`;
+  assert.ok(!out.includes(soraKey()), 'no key in errors, events or the state file');
+});
+
+test('generateClip: a Sora retirement record ends after 24 h or with resetPoolState AZURE_SORA', async () => {
+  const c = clock();
+  const statePath = tmpState();
+  const cr = soraOnly({ AZURE_SORA_DEPLOYMENT: 'sora-r410b' });
+  let gone = true;
+  const calls = soraRoutes((u, o) => (gone && u.startsWith(`${SORA}/openai/v1/videos?`) && o.method === 'POST' ? soraGone() : null));
+  await assert.rejects(() => run({ creds: cr, statePath, clock: c }), (e) => e.kind === 'retired');
+  gone = false;
+  c.advance(86_400_000);
+  assert.equal((await run({ creds: cr, statePath, clock: c })).provider, 'sora', 'sent again after 24 h');
+  gone = true;
+  await assert.rejects(() => run({ creds: cr, statePath, clock: c }), (e) => e.kind === 'retired');
+  gone = false;
+  P.resetPoolState({ statePath, labels: ['WAN_1'] });
+  await assert.rejects(() => run({ creds: cr, statePath, clock: c }), (e) => e.kind === 'retired', 'clearing a WAN label keeps the Sora record');
+  P.resetPoolState({ statePath, labels: ['AZURE_SORA'] });
+  assert.equal(P.poolSummary({ creds: cr, statePath, now: c.now() }).at(-1).status, 'ok');
+  assert.equal((await run({ creds: cr, statePath, clock: c })).provider, 'sora');
+  assert.equal(soraPosts(calls).length, 4);
+});
+
+test('generateClip: with a usable WAN key a Sora retirement record changes nothing', async () => {
+  const c = clock();
+  const statePath = tmpState();
+  const cr = creds({ AZURE_SORA_DEPLOYMENT: 'sora-r410c' });
+  soraRoutes((u, o) => (u.startsWith(`${SORA}/openai/v1/videos?`) && o.method === 'POST' ? soraGone() : null));
+  await assert.rejects(() => run({ creds: { ...cr, VIDEO_PROVIDER_ORDER: 'sora' }, statePath, clock: c }), (e) => e.kind === 'retired');
+  const r = await run({ creds: cr, statePath, clock: c });
+  assert.equal(r.provider, 'wan');
+});
+
+test('generateClip: a Sora poll answered 410 is retired only when the free probe says so; else task_lost, nothing recorded', async () => {
+  for (const [gone, kind] of [[false, 'task_lost'], [true, 'retired']]) {
+    const statePath = tmpState();
+    const events = [];
+    const cr = soraOnly({ AZURE_SORA_DEPLOYMENT: `sora-poll-${gone}` });
+    const calls = soraRoutes((u) => deploymentAnswer(gone)(u) || (u.startsWith(`${SORA}/openai/v1/videos/sora-job-1?`) ? soraGone() : null));
+    const err = await run({ creds: cr, statePath, onEvent: (e) => events.push(e) }).then(() => null, (e) => e);
+    assert.deepEqual([err?.kind, err?.taskId, soraPosts(calls).length], [kind, 'sora-job-1', 1]);
+    const probes = calls.filter((x) => isProbe(x.url));
+    assert.ok(probes.length >= 1 && probes.every((x) => (x.opts.method || 'GET') === 'GET' && x.opts.body === undefined), 'the probe is GETs without a body');
+    assert.ok(events.some((e) => e.type === 'probe' && e.stage === 'poll' && e.state === (gone ? 'retired' : 'deployed')));
+    const st = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : { entries: {} };
+    assert.equal(Object.values(st.entries).some((e) => e.label === 'AZURE_SORA' && e.retiredAt), gone);
+    if (gone) assert.match(err.message, /job sora-job-1 may have billed/);
+  }
+});
+
+test('generateClip: a Sora download answered 410 is checked the same way; the probe runs once per process', async () => {
+  for (const [gone, kind] of [[false, 'download'], [true, 'retired']]) {
+    const cr = soraOnly({ AZURE_SORA_DEPLOYMENT: `sora-dl-${gone}` });
+    const calls = soraRoutes((u) => deploymentAnswer(gone)(u) || (u.startsWith(`${SORA}/openai/v1/videos/sora-job-1/content`) ? soraGone() : null));
+    const err = await run({ creds: cr, statePath: tmpState(), seconds: 8 }).then(() => null, (e) => e);
+    assert.deepEqual([err?.kind, err?.taskId], [kind, 'sora-job-1']);
+    if (!gone) {
+      assert.equal(err.seconds, 8, 'still resumable');
+      await assert.rejects(() => run({ creds: cr, statePath: tmpState() }), (e) => e.kind === 'download');
+      assert.equal(calls.filter((x) => x.url.includes('/openai/deployments/')).length, 1, 'a second 410 in this process reuses the probe');
+    }
+  }
+});
+
+test('generateClip: a Sora 400 that names a deprecated api-version is not retirement; a 404 is invalid_request with a hint, unrecorded', async () => {
+  for (const [status, body] of [[400, { error: { code: 'BadRequest', message: 'api-version 2024-01-01 is deprecated' } }], [404, { error: { code: 'DeploymentNotFound', message: 'x' } }]]) {
+    const statePath = tmpState();
+    const calls = soraRoutes((u, o) => (u.startsWith(`${SORA}/openai/v1/videos?`) && o.method === 'POST' ? json(status, body) : null));
+    const err = await run({ creds: soraOnly(), statePath }).then(() => null, (e) => e);
+    assert.deepEqual([err?.kind, err?.status, soraPosts(calls).length], ['invalid_request', status, 1]);
+    assert.ok(!fs.existsSync(statePath) || !fs.readFileSync(statePath, 'utf8').includes('AZURE_SORA'), 'nothing recorded');
+    assert.ok(!calls.some((x) => isProbe(x.url)));
+    if (status === 404) assert.deepEqual([err.code, /removed after its model retired/.test(err.message)], ['DeploymentNotFound', true]);
+  }
+});
+
+test('poolSummary: the Sora row says unset without creds and never shows a malformed endpoint', () => {
+  const unset = P.poolSummary({ creds: { WAN_1_ENDPOINT: WAN(1), WAN_1_API_KEY: 'k' }, statePath: tmpState() });
+  assert.deepEqual(unset.map((e) => [e.label, e.provider, e.status]), [['WAN_1', 'wan', 'ok'], ['AZURE_SORA', 'sora', 'unset']]);
+  const bad = P.poolSummary({ creds: creds({ AZURE_SORA_ENDPOINT: 'sk-PASTEDSORAKEY123' }), statePath: tmpState() }).at(-1);
+  assert.deepEqual([bad.status, bad.reason, bad.host], ['malformed', 'endpoint', '(invalid endpoint)']);
+  assert.ok(!JSON.stringify(bad).includes('PASTEDSORAKEY'));
+});
+
+test('SKILL: Step 0 and setup §4 check the Sora deployment with the free GET probe, and a retired Sora without WAN stops before paid stills', () => {
+  const build = buildSkill();
+  const setup = fs.readFileSync(new URL('../../3d-intro-setup/SKILL.md', import.meta.url), 'utf8');
+  assert.match(build, /probeSoraDeployment\(\{ endpoint: creds\.AZURE_SORA_ENDPOINT/);
+  assert.match(build, /WAN 항목이 없으면, 유료 스틸을 만들기 전에 멈춘다/);
+  assert.match(build, /\| `kind: 'retired'` \|/);
+  assert.match(setup, /const dep = await probeSoraDeployment\(/);
+  assert.match(setup, /\| `sora\.deploy` 가 `retired` \|/);
+  assert.doesNotMatch(setup, /배포명이 실제 존재하는지는 이 무과금 프리플라이트로 확인 불가/);
 });
