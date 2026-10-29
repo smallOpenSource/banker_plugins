@@ -1,6 +1,6 @@
 ---
 name: play-qa
-description: "Godot 로 만든 HTML5 웹 게임을 실제 브라우저에서 Playwright 로 직접 플레이하며 렌더, 입력, 시작 결함을 찾음. 'play-qa'/'게임 직접 qa'/'네가 직접 플레이해봐'/'in-browser 플레이테스트' 시 사용."
+description: "웹 기반 동작 컨텐츠(예: HTML5 웹 게임)를 실제 브라우저에서 Playwright 로 직접 플레이하며 렌더, 입력, 시작 결함을 찾음. 'play-qa'/'게임 직접 qa'/'네가 직접 플레이해봐'/'in-browser 플레이테스트' 시 사용."
 ---
 
 # play-qa: 에이전트가 직접 브라우저에서 게임을 플레이·QA
@@ -36,13 +36,15 @@ description: "Godot 로 만든 HTML5 웹 게임을 실제 브라우저에서 Pla
 6. 주관 항목 → 플레이테스트 체크리스트로 오너에게.
 
 ## ★입력 함정 (하드-원 교훈 — 모르면 멀쩡한 게임을 '고장'으로 오판)
-- **시작은 HELD click**: `mouse.move(x,y); mouse.down(); wait(~250ms); mouse.up()`. **instant `click()` 금지** — ①폴링형 입력(예: onebutton의 `Input.is_mouse_button_pressed`)은 instant down+up을 프레임 사이에서 놓침 ②Godot 캔버스 포커스.
-- **타이틀 `mouse_filter=STOP` 버그류 (실제 적발된 결함):** 타이틀 풀스크린 `ColorRect`/`Label`은 Godot 기본 `mouse_filter=STOP`이라 클릭/탭을 *삼켜* `_unhandled_input` 시작핸들러에 도달 못 함 → **키보드 Space만 시작**(터치기기엔 Space 없음 = 데드엔드). **증상: click/tap엔 시작 안 되고 Space엔 시작되면 이 버그.** 수정 = `_show_title()` 끝에 타이틀 Control(단 `Button` 제외)을 `MOUSE_FILTER_IGNORE`로.
+- **시작은 HELD click**: `mouse.move(x,y); mouse.down(); wait(~250ms); mouse.up()`. **instant `click()` 금지** — ①폴링형 입력(예: onebutton의 `Input.is_mouse_button_pressed`)은 instant down+up을 프레임 사이에서 놓침 ②캔버스 포커스(예: Godot 웹 빌드).
 - **드롭/드로우/조준은 DRAG**(down+move+up), bare click 아님(머지 '드롭'=상단 드래그). 드래그는 인게임에서 잘 먹지만 bare click은 안 먹을 수 있다.
 - **시작 후 맹목 Space 금지**: Space가 일부 게임을 **PAUSE**시킨다(타이틀=시작, 인게임=일시정지일 수 있음 — 화면 우상단 `❚❚` 확인).
 - **헤드리스 맹점**: env-게이트 오토데모는 `_start_game()`를 *직접 호출* → 입력-시작 경로 우회 → 헤드리스는 시작/입력 버그를 **구조적으로 못 봄**. in-browser만이 잡는다.
-- **헤드리스 desktop Godot AUTOSHOTS는 일부 env서 GL 크래시**(rc139/segfault) → 웹빌드 in-browser로 대체.
 - 캔버스는 DOM이 아니라 canvas 렌더 → 점수/HUD는 DOM 스크랩 불가, **스크린샷 판독**으로만 평가.
+
+### 엔진별 예시: Godot 웹 빌드
+- **타이틀 `mouse_filter=STOP` 버그류 (실제 적발된 결함):** 타이틀 풀스크린 `ColorRect`/`Label`은 Godot 기본 `mouse_filter=STOP`이라 클릭/탭을 *삼켜* `_unhandled_input` 시작핸들러에 도달 못 함 → **키보드 Space만 시작**(터치기기엔 Space 없음 = 데드엔드). **증상: click/tap엔 시작 안 되고 Space엔 시작되면 이 버그.** 수정 = `_show_title()` 끝에 타이틀 Control(단 `Button` 제외)을 `MOUSE_FILTER_IGNORE`로.
+- **헤드리스 desktop Godot AUTOSHOTS는 일부 env서 GL 크래시**(rc139/segfault) → 웹빌드 in-browser로 대체.
 
 ## 게임별 구동 제스처 (장르별 예시)
 bullet-heaven=드래그 이동(자동사격)·merge=상단 DRAG 드롭·onebutton=held click/Space 패리(타이밍 정밀=합성한계)·driver=←/→ 키·stacker=탭/Space 드롭·slingshot=당겨 DRAG-릴리즈(정밀조준=합성한계)·gridfit=트레이→격자 DRAG(픽업=합성한계)·ward=가로 DRAG 잉크배리어.

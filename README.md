@@ -113,7 +113,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `audit-security` | 보안 취약점(CVE·SAST·시크릿) 진단 (read-only) |
 | `audit-mock` | 하드코딩·mock/stub·열거형 정적 검출 (read-only) |
 | `audit-web-page` | 라이브 웹 페이지 점검 (playwright·WebGL 캔버스) |
-| `play-qa` | Godot HTML5까지 포함한 웹 환경 직접 플레이 QA |
+| `play-qa` | 웹 기반 동작 컨텐츠를 실제 브라우저에서 직접 플레이하는 QA |
 | `ultra-ui-qa` | UI를 기준(디자인 PDF/스펙)과 1:1 대조 QA |
 | `visual-ralph` | 레퍼런스(생성/정적/URL) 기준 프론트 UI를 Visual Verdict(≥90)로 측정 빌드 |
 
