@@ -301,8 +301,9 @@ test('the turn lock waits for a live holder, then leaves the turn to it; a dead 
 });
 
 // Two hooks take over one dead holder's lock: B looks (old), A moves it away and takes the lock anew, B then moves A's
-// fresh lock. B must see that what it moved is fresh, put it back, and leave the turn to A.
-test('a hook that moved away a lock another hook had just taken puts it back and does not count', async () => {
+// fresh lock. B must see that what it moved is fresh and leave the turn to A, without putting it back (a third hook
+// may have taken the name meanwhile).
+test('a hook that moved away a lock another hook had just taken backs off and does not count', async () => {
   const tmp = mkTmp();
   const fs = (await import('node:fs')).default;
   const { syncBuiltinESMExports } = await import('node:module');
@@ -330,6 +331,18 @@ test('a hook that moved away a lock another hook had just taken puts it back and
     if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
   }
   assert.ok(raced);
-  assert.ok(existsSync(lock), 'the other hook keeps its lock');
-  assert.deepEqual(readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock.')), [], 'nothing moved aside is left');
+  const moved = readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock.stale-'));
+  assert.equal(moved.length, 1, 'the fresh lock it moved stays aside, not put back over the name');
+  // The next hook that takes the lock clears what was moved aside once it is old.
+  const aged = (Date.now() - 60_000) / 1000;
+  utimesSync(join(tmp, 'banker', moved[0]), aged, aged);
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  try {
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), ['counted']);
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
+  assert.deepEqual(readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock')), [], 'nothing of the locks is left');
 });

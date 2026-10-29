@@ -21,7 +21,7 @@
  *    모델이 `echo skills/banker-<아무 글>/SKILL.md` 를 돌려 체크인의 이름 칸으로 글을 내보내지 못하게 한다. 턴 키 파일은 일반 파일만 읽고, 링크 자리에 쓰지 않는다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 도구 호출을 절대 막지 않는다. 표준 출력은 비운다.
  */
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { codexHomeOf, pluginRoutes } from '../bin/lib/codex-routes.mjs';
@@ -223,7 +223,7 @@ export function countOnce(payload) {
 // codex-count-turns.lock 폴더를 잡는다(mkdir 은 이미 있으면 실패하고 링크를 따라가지 않아 둘 중 하나만 잡음).
 // 2초 안에 못 잡으면 잡은 쪽이 이 턴을 세므로 세지 않는다. 잠금은 몇 ms 만 잡으므로 훅 시간 제한(5초)보다 조금 긴
 // 6초가 지난 잠금은 죽은 훅의 것이다: 고유 이름으로 옮겨(rename 은 하나만 성공) 지운 뒤 다시 잡는다. 옮긴 것이
-// 새것이면(그사이 다른 훅이 넘겨받아 잡은 것) 돌려놓는다.
+// 새것이면(그사이 다른 훅이 넘겨받아 잡은 것) 그 훅에 이 턴을 맡기고 물러난다.
 // configDir 을 만들 수 없거나 잠금 폴더를 만들 수 없는 다른 오류면 잠금 없이 전처럼 센다.
 const LOCK_WAIT_MS = 2000;
 const LOCK_STALE_MS = 6000;
@@ -246,10 +246,11 @@ export function withTurnsLock(fn, { wait = LOCK_WAIT_MS } = {}) {
       if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
         const old = `${lock}.stale-${process.pid}-${randomHex()}`;
         renameSync(lock, old);
-        // 본 것과 옮긴 것 사이에 다른 훅이 낡은 잠금을 치우고 새로 잡았을 수 있다. 옮긴 것이 새것이면 그 훅의
-        // 잠금이므로 돌려놓고 기다린다(그 이름은 비어 있다: 잡은 훅만 지운다).
-        if (Date.now() - statSync(old).mtimeMs <= LOCK_STALE_MS) renameSync(old, lock);
-        else rmdirSync(old);
+        // 본 것과 옮긴 것 사이에 다른 훅이 낡은 잠금을 치우고 새로 잡았을 수 있다. 옮긴 것이 새것이면 그 훅이 이
+        // 턴을 세는 중이므로 세지 않고 물러난다. 돌려놓지 않는다(그사이 세 번째 훅이 잡은 잠금을 덮을 수 있다).
+        // 옮긴 폴더는 다음에 잠금을 잡은 훅이 치운다.
+        if (Date.now() - statSync(old).mtimeMs <= LOCK_STALE_MS) return [];
+        rmdirSync(old);
         continue;
       }
     } catch { /* 방금 풀렸거나 다른 훅이 먼저 치움: 다시 잡아 본다 */ }
@@ -257,10 +258,25 @@ export function withTurnsLock(fn, { wait = LOCK_WAIT_MS } = {}) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
   try {
+    dropMovedLocks(lock);
     return fn();
   } finally {
     try { rmdirSync(lock); } catch { /* 이미 없음 */ }
   }
+}
+
+// 넘겨받다 물러난 훅이 남긴 옮긴 잠금(<잠금>.stale-*) 가운데 오래된 것을 지운다.
+function dropMovedLocks(lock) {
+  const dir = configDir();
+  const prefix = `${lock.slice(dir.length + 1)}.stale-`;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(prefix)) continue;
+      try {
+        if (Date.now() - statSync(join(dir, name)).mtimeMs > LOCK_STALE_MS) rmdirSync(join(dir, name));
+      } catch { /* 다른 훅이 먼저 지움 */ }
+    }
+  } catch { /* 다음에 */ }
 }
 
 async function main() {

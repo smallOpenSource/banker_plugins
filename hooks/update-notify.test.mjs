@@ -489,8 +489,8 @@ test('chooseFetcher: BANKER_TELEMETRY_ENDPOINT(env)만으로도 countingActive �
 });
 
 // Two hooks of one resumed session: B looks (old folder), A moves it away and makes it anew, B then moves A's fresh
-// folder. B must see that, put it back, and stay quiet.
-test('codex-sessions: 넘겨받는 사이 짝 훅이 새로 만든 폴더를 옮겼으면 돌려놓고 알리지 않는다', async () => {
+// folder. B must see that and stay quiet, without putting it back over the name.
+test('codex-sessions: 넘겨받는 사이 짝 훅이 새로 만든 폴더를 옮겼으면 돌려놓지 않고 알리지 않는다', async () => {
   const tmp = mkTmp();
   const fs = (await import('node:fs')).default;
   const { syncBuiltinESMExports } = await import('node:module');
@@ -518,8 +518,7 @@ test('codex-sessions: 넘겨받는 사이 짝 훅이 새로 만든 폴더를 옮
     }
     assert.ok(raced);
     assert.equal(got, false, '짝 훅이 알린다');
-    assert.ok(existsSync(mine));
-    assert.deepEqual(readdirSync(join(bankerDir(tmp), 'codex-sessions')), ['sid'], '옮긴 폴더가 남지 않음');
+    assert.equal(readdirSync(join(bankerDir(tmp), 'codex-sessions')).filter((n) => n.startsWith('sid.old-')).length, 1, '옮긴 폴더는 돌려놓지 않고 이틀 뒤 정리에 맡김');
   } finally {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
   }
