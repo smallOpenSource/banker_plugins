@@ -87,6 +87,8 @@ function copyAsset(projectDir, outDir, srcRel, destPosix) {
   const real = fs.realpathSync(src);
   if (real !== root && !real.startsWith(root + path.sep)) throw Object.assign(new Error(`assemble: asset outside the project folder: ${srcRel} (resolves to ${real}); copy it into ${root} first`), { code: 'EOUTSIDE' });
   const dest = osPath(outDir, destPosix);
+  const out = path.resolve(outDir);
+  if (!path.resolve(dest).startsWith(out + path.sep)) throw Object.assign(new Error(`assemble: asset would be written outside the output folder: ${destPosix}`), { code: 'EOUTSIDE' });
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
   return destPosix;
@@ -107,8 +109,12 @@ const MEDIA = [
   ['clipMobile', (id, src) => `assets/vid/${id}-m${extOf(src) || '.mp4'}`],
 ];
 
+// A section id becomes a file name under assets/, so it is letters, digits, '-' and '_' only (no ../ or a separator).
+const SECTION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
 function requireFields(s, i) {
   if (!s || !s.id) throw new Error(`assemble: section[${i}] missing "id"`);
+  if (!SECTION_ID_RE.test(String(s.id))) throw new Error(`assemble: section[${i}] id ${JSON.stringify(String(s.id)).slice(0, 80)} must be letters, digits, '-' or '_' (it names files under assets/)`);
   for (const k of ['still', 'clip']) if (!s[k]) throw new Error(`assemble: section[${i}] (${s.id}) missing "${k}"`);
 }
 

@@ -143,3 +143,12 @@ test('an asset outside the project folder (../ or a link out) is refused with a 
   assert.throws(() => assemble({ projectDir: linked }), (e) => e.code === 'EOUTSIDE');
   assert.ok(!fs.existsSync(path.join(linked, 'site', 'assets', 'a.png')), 'nothing copied from outside');
 });
+
+test('a section id that would leave assets/ (../, a separator, a dot name) is refused before anything is written', () => {
+  for (const id of ['../../pwned', 'a/b', 'a\\b', '..', '.hidden', 'x'.repeat(65)]) {
+    const dir = project({ sections: [{ id, still: 's1.png', clip: 'hold-1.mp4' }, { id: 'b', still: 's2.png', clip: 'hold-2.mp4' }] });
+    assert.throws(() => assemble({ projectDir: dir }), /id .* must be letters, digits, '-' or '_'/, id);
+    assert.ok(!fs.existsSync(path.join(dir, 'pwned')) && !fs.existsSync(path.join(path.dirname(dir), 'pwned')), `${id}: nothing written outside`);
+  }
+  assert.doesNotThrow(() => assemble({ projectDir: project({ sections: [{ id: 'dive-s1_push-in', still: 's1.png', clip: 'hold-1.mp4' }, { id: 'B2', still: 's2.png', clip: 'hold-2.mp4' }] }) }));
+});
