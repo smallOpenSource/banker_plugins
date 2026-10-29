@@ -94,10 +94,11 @@ const isCall = (rec) => rec?.type === 'response_item' && /_call$/.test(String(re
 const SKILL_HEAD_RE = /^<skill>\n<name>[^\n<]{1,80}<\/name>\n<path>([^\n<]{1,4096})<\/path>\n/;
 
 // $banker-<name> 으로 부른 스킬을 Codex 가 넣은 메시지의 <path>. 그 밖의 기록은 ''.
+const isUserMessage = (rec) => rec?.type === 'response_item' && rec.payload?.type === 'message' && rec.payload.role === 'user';
+
 function injectedPath(rec) {
-  const p = rec?.payload;
-  if (rec?.type !== 'response_item' || p?.type !== 'message' || p.role !== 'user' || !Array.isArray(p.content)) return '';
-  const text = p.content[0]?.text;
+  if (!isUserMessage(rec) || !Array.isArray(rec.payload.content)) return '';
+  const text = rec.payload.content[0]?.text;
   return typeof text === 'string' ? (SKILL_HEAD_RE.exec(text)?.[1] ?? '') : '';
 }
 
@@ -288,7 +289,7 @@ export function countOnce(payload, far = {}) {
   const key = turnKey(payload);
   const file = typeof payload?.transcript_path === 'string' ? payload.transcript_path : '';
   const home = codexHomeOf(file);
-  const got = key && file ? turnSkills(file, payload.turn_id, far.max ?? MAX_READ, far) : [];
+  const got = readTurn(key, file, payload, far);
   if (got === null) {
     noteShapeMiss(file);
     return [];
@@ -298,6 +299,10 @@ export function countOnce(payload, far = {}) {
   const names = [...new Set(got.filter((n) => installed(n, home, routes)).map((n) => claudeName(n.split('\t')[0])))];
   if (!names.length) return [];
   return withTurnsLock(() => countFresh(key, names));
+}
+
+function readTurn(key, file, payload, far) {
+  return key && file ? turnSkills(file, payload.turn_id, far.max ?? MAX_READ, far) : [];
 }
 
 // 옛 판(0.22.0 까지)은 codex-count-turns 만 보고, 이 판은 (턴, 이름)마다 표지 파일을 wx 로 만든 훅만 센다.
@@ -316,6 +321,7 @@ function countFresh(key, names) {
 
 // (턴, 이름)의 표지를 이 훅이 만들었는지. 만들기는 wx(이미 있으면 실패, 링크도 따라가지 않음)라 함께 도는 훅 가운데
 // 하나만 성공한다. 표지 폴더가 링크이거나 남의 폴더이면, 또 Windows 의 wx 가 끊어진 링크를 따라가 만든 것이면 세지 않는다.
+// Windows 의 wx 는 끊어진 링크를 따라가 그 대상을 만들므로, 그 자리에 무엇이든(끊어진 링크 포함) 있으면 열지 않는다.
 function markTurn(key, name) {
   const dir = MARKS_DIR();
   const file = join(dir, markName(`${key}\t${name}`));
@@ -323,10 +329,20 @@ function markTurn(key, name) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const st = lstatSync(dir);
     if (!st.isDirectory() || (typeof process.getuid === 'function' && st.uid !== process.getuid())) return false;
+    if (taken(file)) return false;
     closeSync(openSync(file, 'wx', 0o600));
     return lstatSync(file).isFile();
   } catch {
     return false;
+  }
+}
+
+function taken(file) {
+  try {
+    lstatSync(file);
+    return true;
+  } catch (e) {
+    return e.code !== 'ENOENT';
   }
 }
 
