@@ -210,7 +210,9 @@ test('a Codex home that does not exist yet under a linked session folder is judg
 
 // The npm hook commands check where the hook script really is before they run it, as the Codex plugin's commands do:
 // a copy in the temp folder or the session folder (a Codex home deep in it) runs nothing and says why.
+// 임시 폴더 밖의 시험 자리. Windows 는 저장소의 git 무시 폴더 work/(새 체크아웃에는 없으니 만든다)
 const outsideBase = process.platform === 'win32' ? join(PKG, 'work') : '/var/tmp';
+if (process.platform === 'win32') mkdirSync(outsideBase, { recursive: true });
 const runCmd = (cmd, cwd, env) => (process.platform === 'win32'
   ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd, encoding: 'utf8', env })
   : spawnSync('/bin/sh', ['-c', cmd], { cwd, encoding: 'utf8', env }));
