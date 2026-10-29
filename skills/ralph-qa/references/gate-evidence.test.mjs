@@ -3,6 +3,7 @@
 // Run: node --test skills/ralph-qa/references/gate-evidence.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,13 +58,28 @@ test("run executes the command itself and records what it saw: exit, output file
   assert.deepEqual([rec.kind, rec.id, rec.iter, rec.seq, rec.exit, rec.verdict, rec.timedOut], ["observed", "tests", 0, 1, 0, "pass", false]);
   assert.equal(rec.shell, WIN ? (rec.shell === "pwsh" ? "pwsh" : "powershell") : "sh");
   const out = readFileSync(rec.output, "utf8");
-  assert.ok(out.includes("ok 1") && out.includes("to stderr"), "stdout and stderr both through the pipes");
+  assert.ok(out.includes("ok 1") && out.includes("to stderr"), "stdout and stderr both on the output file");
   assert.match(rec.output, /gate-tests-0-1\.md$/);
   assert.ok(rec.git && /^[0-9a-f]{64}$/.test(rec.fingerprint) && /^[0-9a-f]{64}$/.test(rec.outputSha256));
   r = run(w, "tests", nodeCmd("-e", "console.log('not ok 1 - adds'); process.exit(7)"), ["--iter", "1"]);
   assert.deepEqual([r.json.exit, r.json.verdict, r.json.iter, r.json.seq], [7, "fail", 1, 2]);
   assert.match(r.json.signature, /^tests:[0-9a-f]{16}$/);
   assert.deepEqual(evidence(w).map((x) => x.seq), [1, 2]);
+});
+
+test("the child writes the output file itself: its bytes and sha256 are what it printed, and a file already there is never reused", { skip: !HAS_GIT && "no git" }, (t) => {
+  const w = world(t);
+  const text = "line one\nline two\n".repeat(300);
+  writeFileSync(join(w.d, "gate-tests-0-1.md"), "left by a run that stopped");
+  const r = run(w, "tests", nodeCmd("-e", `process.stdout.write(${JSON.stringify(text)})`));
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.json.output, /gate-tests-0-2\.md$/);
+  assert.equal(readFileSync(r.json.output, "utf8"), text);
+  assert.equal(r.json.bytes, Buffer.byteLength(text));
+  assert.equal(r.json.outputSha256, createHash("sha256").update(text).digest("hex"));
+  assert.equal(readFileSync(join(w.d, "gate-tests-0-1.md"), "utf8"), "left by a run that stopped");
+  const src = readFileSync(TOOL, "utf8");
+  assert.ok(!/stdio:\s*\[\s*"ignore",\s*"pipe"/.test(src) && !/\.on\("data"/.test(src), "no Node pipes for the gate's output");
 });
 
 test("exit 0 with a failure or skip count in the output is misleading, not a pass", { skip: !HAS_GIT && "no git" }, (t) => {

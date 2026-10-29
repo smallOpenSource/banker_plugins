@@ -29,13 +29,12 @@
  * stop is a Stop with the 0.20.4 wording. The secret scan and the size are reported, not stopped
  * on: the author masks prompt.md and runs check.
  */
-import { spawnSync } from "node:child_process";
 import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scan } from "./payload-scan.mjs";
-import { Stop as RunStop } from "./run-folder.mjs";
+import { Stop as RunStop, spawnFiles } from "./run-folder.mjs";
 import { which } from "./seat-spawn.mjs";
 
 export const MAX_BYTES = 524288;
@@ -154,7 +153,7 @@ export function gitAt(repo, env = process.env, cwd = homedir(), extra = []) {
   const onCopy = (index) => ({ ...withoutKeys(base, /^GIT_INDEX_FILE$/i), GIT_INDEX_FILE: index });
   return (args, { index, input, ok = [0] } = {}) => {
     const pre = ["-C", repo, ...SAFE, ...extra, ...(index ? ["-c", "core.splitIndex=false"] : [])];
-    const r = spawnSync(exe, [...pre, ...args], {
+    const r = spawnFiles(exe, [...pre, ...args], {
       cwd, env: index ? onCopy(index) : base, input, maxBuffer: 1 << 30, timeout: GIT_TIMEOUT_MS, windowsHide: true,
     });
     const what = `git ${args.filter((a) => a.startsWith("-") || /^[a-z-]+$/.test(a)).slice(0, 4).join(" ")}`;

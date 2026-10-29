@@ -1,11 +1,11 @@
 // Tests for run-folder.mjs. Run: node --test skills/ralph-qa/references/run-folder.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { Stop, bases, makeRunFolder, removeMarked, removeRunFolder, runFolder, snapshot } from "./run-folder.mjs";
+import { Stop, bases, makeRunFolder, removeMarked, removeRunFolder, runFolder, snapshot, spawnFiles } from "./run-folder.mjs";
 
 const WIN = process.platform === "win32";
 const MAC = process.platform === "darwin";
@@ -141,4 +141,16 @@ test("snapshot's fingerprint holds still on an unchanged tree and moves with an 
   const plain = join(w.dir, "plain");
   mkdirSync(plain);
   assert.equal((await snapshot(plain)).git, false);
+});
+
+test("spawnFiles gives the child files, not pipes: input, stdout and stderr arrive whole, the status holds and no file stays", () => {
+  const before = readdirSync(tmpdir()).filter((n) => n.startsWith("rq-io-")).length;
+  const big = "x".repeat(300000);
+  const code = "let s='';process.stdin.on('data',(b)=>s+=b).on('end',()=>{process.stdout.write(s.toUpperCase());process.stderr.write('e:'+s.length);process.exit(3)})";
+  const r = spawnFiles(process.execPath, ["-e", code], { input: big, windowsHide: true });
+  assert.equal(r.error, undefined);
+  assert.deepEqual([r.status, String(r.stdout), String(r.stderr)], [3, big.toUpperCase(), `e:${big.length}`]);
+  const none = spawnFiles(process.execPath, ["-e", "process.stdin.on('data',()=>process.exit(9)).on('end',()=>process.exit(0))"]);
+  assert.deepEqual([none.status, none.stdout.length], [0, 0]);
+  assert.equal(readdirSync(tmpdir()).filter((n) => n.startsWith("rq-io-")).length, before);
 });

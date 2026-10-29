@@ -7,8 +7,8 @@
  *
  *   node gate-evidence.mjs run --dir <d> --id <id> --cmd <command> --timeout <s> [--iter <n>] [--cwd <repo>]
  *        one command (one gate, never several joined), POSIX `sh -c`, Windows PowerShell 7 (pwsh) when on PATH,
- *        else 5.1, with an exit that keeps the command's code; its output through Node's pipes into
- *        <d>/gate-<id>-<iter>-<seq>.md; past the limit its whole tree ends (POSIX: its process group, TERM then
+ *        else 5.1, with an exit that keeps the command's code; its output on the descriptor of a new file
+ *        <d>/gate-<id>-<iter>-<seq>.md (no Node pipes); past the limit its whole tree ends (POSIX: its process group, TERM then
  *        KILL; Windows: taskkill /T /F); after it ends on its own the group is sent KILL too (POSIX). One
  *        `observed` line goes to <d>/evidence.md: the command, folder, times, exit or signal, timedOut, the output
  *        file and its sha256, the work tree fingerprint after it, the verdict and the failure signature.
@@ -25,7 +25,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, realpathSync, statSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Stop, runFolder, snapshot } from "./run-folder.mjs";
@@ -33,7 +33,6 @@ import { Stop, runFolder, snapshot } from "./run-folder.mjs";
 const KINDS = ["ralph-qa", "ultraqa"];
 const EVIDENCE = "evidence.md";
 const GRACE_MS = 2000;
-const DRAIN_MS = 2000;
 const sha256 = (b) => createHash("sha256").update(b).digest("hex");
 
 // The nine adversarial classes (OMX ultraqa's), the lens of ralph-qa's adversarial seat and the rows of ultraqa's matrix.
@@ -171,53 +170,46 @@ function endTree(ctx, child) {
   setTimeout(() => killGroup(child.pid, "SIGKILL"), GRACE_MS).unref();
 }
 
-// Runs `cmd` with its output into `output`; resolves { exit, signal, timedOut, secs, shell }.
+// Runs `cmd` with its output into `output`; resolves { exit, signal, timedOut, secs, shell }. The child writes to the
+// output file's descriptor itself, not through Node's pipes: those are AF_UNIX socket pairs, and in the Codex Linux
+// sandbox their output can be lost (zero bytes recorded for a command that printed).
 export function execute({ cmd, cwd, limitMs, output }, ctx) {
   const sh = shellFor(cmd, ctx);
-  const fd = openSync(output, "w", 0o600);
+  const fd = openOutput(output);
   const t0 = Date.now();
   return new Promise((done) => {
-    const child = spawn(sh.exe, sh.args, { cwd, env: ctx.env, stdio: ["ignore", "pipe", "pipe"], detached: ctx.platform !== "win32", windowsHide: true });
+    const child = spawn(sh.exe, sh.args, { cwd, env: ctx.env, stdio: ["ignore", fd, fd], detached: ctx.platform !== "win32", windowsHide: true });
     let timedOut = false;
-    let exited = null;
     let settled = false;
-    const finish = (error) => {
+    const finish = (status, error) => {
       if (settled) return;
       settled = true;
       clearTimeout(limit);
-      try {
-        closeSync(fd);
-      } catch {
-        /* closed */
-      }
-      const { code = null, signal = null } = exited || {};
+      closeSync(fd);
+      const { code = null, signal = null } = status || {};
       done({ exit: error ? null : code, signal, timedOut, secs: Math.round((Date.now() - t0) / 100) / 10, shell: sh.name, error: error || null });
     };
     const limit = setTimeout(() => {
       timedOut = true;
       endTree(ctx, child);
     }, limitMs);
-    for (const s of [child.stdout, child.stderr]) s.on("data", (b) => writeSync(fd, b));
-    child.on("error", (e) => (child.pid === undefined ? finish(e.code || "spawn") : null));
-    child.on("exit", (code, signal) => afterExit(ctx, child, { code, signal }, (x) => (exited = x), finish));
+    child.on("error", (e) => (child.pid === undefined ? finish(null, e.code || "spawn") : null));
+    // After the shell ends, what it left in its group ends too (POSIX).
+    child.on("exit", (code, signal) => {
+      if (ctx.platform !== "win32") killGroup(child.pid, "SIGKILL");
+      finish({ code, signal });
+    });
   });
 }
 
-// After the shell ends: what it left in its group ends too (POSIX), and output still in the pipes is read for a while.
-function afterExit(ctx, child, status, keep, finish) {
-  keep(status);
-  if (ctx.platform !== "win32") killGroup(child.pid, "SIGKILL");
-  let closed = false;
-  child.on("close", () => {
-    if (!closed) finish();
-    closed = true;
-  });
-  setTimeout(() => {
-    if (closed) return;
-    closed = true;
-    for (const s of [child.stdout, child.stderr]) s.destroy();
-    finish();
-  }, DRAIN_MS).unref();
+// A new output file (never one already there); a folder the sandbox does not let it write is a stop with what to do.
+function openOutput(output) {
+  try {
+    return openSync(output, "wx", 0o600);
+  } catch (e) {
+    if (!["EACCES", "EPERM", "EROFS"].includes(e.code)) throw e;
+    throw new Stop("no-write", `게이트 출력 파일을 만들지 못했다(${e.code}): ${output}. 실행 폴더가 샌드박스 쓰기 범위 밖이면 이 명령을 승인으로 다시 실행한다`, [output]);
+  }
 }
 
 // ---- commands
@@ -281,7 +273,8 @@ async function run(o, ctx) {
   const [id, iter, limit] = [gateId(o.id), whole(o.iter ?? 0, "iter", 0, 999), whole(o.timeout, "timeout", 1, 86400)];
   const cwd = resolve(o.cwd || process.cwd());
   if (!existsSync(cwd)) throw new Stop("no-cwd", `--cwd 폴더가 없다: ${cwd}`);
-  const seq = readEvidence(d).length + 1;
+  let seq = readEvidence(d).length + 1;
+  while (existsSync(join(d, `gate-${id}-${iter}-${seq}.md`))) seq += 1;
   const output = join(d, `gate-${id}-${iter}-${seq}.md`);
   const startedAt = new Date().toISOString();
   const r = await execute({ cmd: o.cmd, cwd, limitMs: limit * 1000, output }, ctx);

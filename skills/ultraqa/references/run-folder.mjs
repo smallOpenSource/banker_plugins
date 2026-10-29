@@ -11,12 +11,13 @@
  *   removeMarked(p, marker)           the folder's contents, then its marker, then the folder
  *   removeRunFolder(dir, ctx, kinds)  one run folder, checked as runFolder checks it; nothing outside it
  *   snapshot(repo, env)               (async) HEAD, the status, the untracked files' content hashes, one fingerprint
+ *   spawnFiles(exe, args, opts)       spawnSync with files, not pipes, for the child's input and output
  *
  * ctx is { env, platform }. A base is never /tmp: another account may put files there (gemini, a ralph-qa seat, reads
  * a .env it finds walking up from its folder). No shell and no network: git runs as a program with its arguments.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
@@ -165,6 +166,32 @@ export function removeRunFolder(dir, ctx, kinds) {
   return { removed: d };
 }
 
+// ---- a program with files for its input and output
+
+// spawnSync with the child's stdin, stdout and stderr on files in a private temporary folder, read back into
+// r.stdout and r.stderr (Buffers) and removed. Node's own pipes are AF_UNIX socket pairs, and the Codex Linux sandbox
+// refuses their setsockopt: a pipe child's output can be lost and spawnSync reports EPERM though the program ran.
+// A file descriptor works there. Without a temporary folder it falls back to the pipes.
+export function spawnFiles(exe, args, { input, ...opts } = {}) {
+  let t;
+  try {
+    t = mkdtempSync(join(tmpdir(), "rq-io-"));
+  } catch {
+    return spawnSync(exe, args, { ...opts, input });
+  }
+  const fds = [];
+  const open = (name, flags) => (fds.push(openSync(join(t, name), flags, 0o600)), fds[fds.length - 1]);
+  try {
+    if (input !== undefined) writeFileSync(join(t, "in"), input, { mode: 0o600 });
+    const stdio = [input === undefined ? "ignore" : open("in", "r"), open("out", "wx"), open("err", "wx")];
+    const r = spawnSync(exe, args, { ...opts, stdio });
+    return { ...r, stdout: readFileSync(join(t, "out")), stderr: readFileSync(join(t, "err")) };
+  } finally {
+    for (const fd of fds) closeSync(fd);
+    rmSync(t, { recursive: true, force: true });
+  }
+}
+
 // ---- the work tree snapshot
 
 // git as a program, from the home folder (Windows looks in the working folder first for a bare name; a home that is
@@ -172,7 +199,7 @@ export function removeRunFolder(dir, ctx, kinds) {
 // conversion.
 function git(repo, env, args) {
   const cwd = existsSync(homedir()) ? homedir() : tmpdir();
-  const r = spawnSync("git", ["-c", "core.fsmonitor=false", "-C", repo, ...args], { cwd, env, maxBuffer: 1 << 30, windowsHide: true });
+  const r = spawnFiles("git", ["-c", "core.fsmonitor=false", "-C", repo, ...args], { cwd, env, maxBuffer: 1 << 30, windowsHide: true });
   return { ok: r.status === 0, out: r.stdout || Buffer.alloc(0), err: String(r.stderr || r.error?.code || "") };
 }
 
