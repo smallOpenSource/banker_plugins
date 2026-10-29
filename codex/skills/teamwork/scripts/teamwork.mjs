@@ -195,8 +195,10 @@ function tool(name) {
 }
 
 // codex.js 는 `#!/usr/bin/env node` 라 PATH 로 node 를 찾는다. 기록한 node 의 폴더와 시스템 폴더만 둔다
-function safeEnv(node) {
-  const env = { ...process.env, PATH: [path.dirname(node), '/usr/bin', '/bin'].join(path.delimiter) };
+function safeEnv(node) { return { ...cleanEnv(), PATH: [path.dirname(node), '/usr/bin', '/bin'].join(path.delimiter) }; }
+
+function cleanEnv() {
+  const env = { ...process.env };
   for (const k of ['NODE_OPTIONS', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES']) delete env[k];
   return env;
 }
@@ -561,7 +563,8 @@ function delegateIfNewer(args) {
   const self = realOr(fileURLToPath(import.meta.url));
   if (!v || self === realOr(ENGINE) || cmpVer(verOf(v), verOf(VERSION)) <= 0) return;
   const node = tool('node') || realOr(process.execPath);
-  const r = spawnSync(node, [ENGINE, ...args], { stdio: 'inherit', env: safeEnv(node) });
+  // PATH 는 그대로 넘긴다. 그 엔진이 on 에서 codex 를 찾을 때 같은 거부 규칙을 다시 쓴다
+  const r = spawnSync(node, [ENGINE, ...args], { stdio: 'inherit', env: cleanEnv() });
   process.exit(r.status ?? EXIT.ENV);
 }
 
