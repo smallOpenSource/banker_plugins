@@ -750,9 +750,33 @@ function nextRid(id) {
   return `${id ? shortId(id) : 'u' + crypto.randomBytes(3).toString('hex')}-${n}`;
 }
 
-// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다. 전각 괄호 같은 호환 문자는 NFKC 로 풀고, 폭 없는 문자는 지운 뒤 본다
+// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다. 찾을 때만 글자마다 NFKC 로 풀고 폭 없는 문자를 건너뛰며(전각 괄호,
+// [\u200bteamwork 도 잡음), 바꾸는 것은 가짜 머리말 자리뿐이다. 나머지 본문은 글자 그대로 보낸다(x², 한글 자모, 이모지 보존)
+const ZERO_WIDTH = /[\u200b-\u200f\u2060\ufeff]/;
+const fold = (c) => c.normalize('NFKC').toLowerCase();
+
 function sanitize(text) {
-  return String(text).normalize('NFKC').replace(/[\u200b-\u200f\u2060\ufeff]/g, '').replace(/\[\s*teamwork/gi, '[인용 teamwork');
+  const cs = Array.from(String(text));
+  let out = '';
+  for (let i = 0; i < cs.length; i++) {
+    const end = fakeHeadEnd(cs, i);
+    if (end < 0) out += cs[i];
+    else { out += '[인용 teamwork'; i = end - 1; }
+  }
+  return out;
+}
+
+// cs[i] 에서 [teamwork 꼴(사이 공백과 폭 없는 문자 허용)이 시작하면 그 끝 다음 위치, 아니면 -1
+function fakeHeadEnd(cs, i) {
+  if (fold(cs[i]) !== '[') return -1;
+  let j = i + 1;
+  while (j < cs.length && (ZERO_WIDTH.test(cs[j]) || /^\s$/.test(fold(cs[j])))) j++;
+  let word = '';
+  while (j < cs.length && word.length < 8) {
+    if (!ZERO_WIDTH.test(cs[j])) word += fold(cs[j]);
+    j++;
+  }
+  return word === 'teamwork' ? j : -1;
 }
 
 function usageExit(msg) { err(msg); process.exit(EXIT.USAGE); }

@@ -819,6 +819,17 @@ ptest('폭 없는 문자와 전각 괄호로 만든 머리말도 인용으로 �
   assert.doesNotMatch(sent, /[\u200b\ufeff\uff3b]/);
 });
 
+ptest('머리말이 아닌 본문은 글자 그대로 보낸다(NFKC 로 바꾸지 않음)', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', B);
+  fs.rmSync(QUEUE_LOG, { force: true });
+  const body = 'x\u00b2 \u00bd \u3147\u3147 \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 [team] \uff08a\uff09';
+  const r = run(h, ['send', B.slice(-6), body], { threadId: A });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(fs.readFileSync(QUEUE_LOG, 'utf8').includes(body), '본문이 바뀌지 않음');
+});
+
 test('codex 가 시간 안에 끝나지 않으면 멈췄다고 밝힌다', () => {
   assert.match(engine.failWhy({ error: { code: 'ETIMEDOUT' }, stderr: '' }), /15초 안에 끝나지 않아 멈췄습니다\(app-server 무응답\)/);
   assert.equal(engine.failWhy({ stderr: 'a\nError: boom\n' }), 'Error: boom');
