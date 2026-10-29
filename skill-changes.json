@@ -263,5 +263,27 @@
     "banker:smart-compact",
     "banker:ultra-chain",
     "banker:ultra-interview"
+  ],
+  "0.22.0": [
+    "banker:3d-intro-build",
+    "banker:anti-drm",
+    "banker:arch-diagram",
+    "banker:audit-web-page",
+    "banker:lineage",
+    "banker:motion-graphic-make",
+    "banker:obsidizer",
+    "banker:payload-mon",
+    "banker:play-qa",
+    "banker:ralph-qa",
+    "banker:remains",
+    "banker:rfp-author",
+    "banker:setup-bypass-permissions",
+    "banker:smart-compact",
+    "banker:theme-selection",
+    "banker:tone-compact",
+    "banker:ultra-chain",
+    "banker:ultra-ui-qa",
+    "banker:update-banker",
+    "banker:vertical-pptx"
   ]
 }

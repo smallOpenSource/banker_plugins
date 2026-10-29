@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.22.0] - 2026-10-29
+
+### Added
+- Codex 의 plugin 명령으로도 설치할 수 있다: `codex plugin marketplace add smallOpenSource/banker_plugins` 뒤 `codex plugin add banker@banker-plugins`. 스킬은 `$banker:<이름>` 으로 부른다. npm 길(`banker setup --codex`, `$banker-<이름>`)과 같은 구성요소가 들어간다.
+  - Codex 플러그인 매니페스트 `.codex-plugin/plugin.json`: 스킬 폴더 셋(`skills/`, Codex 전용 `codex/skills/`, 명령을 스킬로 바꾼 `codex/command-skills/`), 훅 파일 `codex/hooks.json`, `commands: []`(Codex 0.160 이 Claude 명령을 `source-command-*` 스킬로 바꾸지 않게).
+  - 훅: 업데이트 알림(`SessionStart`)과 사용량 카운팅(`Stop`). `/hooks` 에서 신뢰한 뒤에 돈다. obsidizer 훅은 `obsidizer --enable` 할 때만 사용자 범위에 따로 설치한다.
+  - 두 길을 함께 두면 스킬이 두 이름으로 겹친다. 세션 시작 알림, `banker setup --codex`, `banker doctor` 가 알리고, 지우지는 않는다(프로젝트 범위 npm 설치도 본다).
+  - 스킬 본문의 Codex 경로 안내가 두 길을 모두 적는다.
+
+### Changed
+- Codex 플러그인 훅이 샌드박스 밖에서 돌리는 node 를 고르는 규칙: PATH 의 node 를 실제 경로로 풀어, 임시 폴더나 작업 폴더 안이면 돌리지 않고 이유를 알린다(작업 폴더가 홈 자체면 작업 폴더 규칙은 쓰지 않음). 플러그인 폴더에서 돈다. npm 길 훅도 홈 폴더에서 연 세션의 nvm node 를 받는다.
+  - multicall shim(Volta, mise, snap)과 Windows 의 `node.cmd` shim 은 그 shim 에 실제 node 를 물어 그 node 로 돈다.
+  - node 를 찾은 뒤에는 PATH 에서 임시 폴더와 작업 폴더 아래 항목을 빼, `realpath`, `readlink` 와 shim 이 부르는 프로그램을 프로젝트의 `.venv/bin`, `node_modules/.bin` 같은 곳에서 가져오지 않는다. Windows 는 경로를 비교할 때 링크, junction, subst 드라이브를 풀고 8.3 짧은 이름도 긴 경로로 비교하며, node 를 찾을 때부터 네트워크 드라이브와 UNC PATH 항목은 읽지 않는다(Windows PowerShell 5.1 과 pwsh 7 에서 시험).
+  - macOS 데스크톱에서 연 Codex 처럼 PATH 에 node 가 없으면 Homebrew(`/opt/homebrew/bin`)와 공식 설치(`/usr/local/bin`) 위치를 본다. realpath 와 `readlink -f` 가 없는 macOS 12.3 미만도 링크를 따라가 판단한다.
+- Codex 플러그인 훅 명령 앞에 훅이 실행하는 파일의 해시(`banker-hooks-rev`)가 붙는다. 훅 코드가 바뀐 판은 Codex 가 `/hooks` 에서 신뢰를 다시 묻고, 신뢰하기 전에는 돌지 않는다(0.144.5, 0.160.1 실측).
+- 두 길의 훅이 같은 세션에서 함께 돌아도 세션 시작 알림과 사용 횟수는 한 번이다(세션 id 폴더 `codex-sessions/`, 턴 키 잠금. PRIVACY.md). 30초 넘게 지나 같은 세션을 이어 열면(resume) 알림을 다시 확인한다.
+- 사용 기록과 체크인의 스킬 이름은 소문자만 받는다.
+- `vertical-pptx` python 빌더가 node 빌더와 같은 글꼴 체인과 대조로 글꼴을 고른다. Windows 에 `NotoSansKR-VF.ttf` 만 있을 때 없는 이름 `Noto Sans CJK KR` 을 적던 것, ASCII 글자 없는 이름(예: 나눔고딕)을 아무 파일로 찾던 것, Windows junction 글꼴 폴더로 들어가던 것을 고친다. node 빌더는 `--font constructor` 에서 멈추지 않는다.
+- `tone-compact`, `anti-drm` 의 Codex 지침 쓰기가 Windows 에서 끊어진 링크를 따라가 그 너머에 파일을 만들던 것을 고친다(잠금, 새 `AGENTS.md`, 임시 파일).
+- `obsidizer --enable` 의 Codex 훅 설치 절차는 설치 길과 관계없이 실제 node 와 `banker.js` 의 절대경로를 확인한 뒤 샌드박스 밖 실행을 요청한다.
+- `3d-intro-build` 의 측정(`verify-intro`)이 Chromium 의 일시적 `Unable to capture screenshot` 에서 멈추지 않고 세 번까지 다시 찍는다.
+- README 의 Codex CLI 설치 안내가 플러그인 마켓플레이스 길(`codex plugin marketplace add smallOpenSource/banker_plugins` 뒤 `codex plugin add banker@banker-plugins`)을 권장으로 적는다.
+
+### Notes
+- main 에 push 한 커밋은 다음 Codex 세션에서 플러그인 사용자에게 바로 간다(Codex 가 세션 시작 때 git 마켓플레이스를 올림). RELEASING.md 9번에 적었다.
+- 유지보수자용: Windows 에서 늘 건너뛰던 링크 시험 29건이 링크를 만들 수 있는 계정이면 돈다(`scripts/test-fixtures/can-symlink.mjs`). 파이썬 파일은 `ruff format` 을 따르고 `ruff.toml` 의 대상 판은 3.7 이다(3.6 에서도 파싱).
+- 실측: 실제 Codex 0.144.5(Linux), 0.160.1(Linux, macOS, Windows), 0.165.0(macOS, Rocky Linux 8). vertical-pptx 결과는 Windows 에서 LibreOffice 26.8 로 렌더해 Noto Sans KR 과 맑은 고딕이 대체 글꼴 없이 그려짐을 확인했다. PowerPoint 로는 렌더하지 않았다.
+
 ## [0.21.0] - 2026-10-28
 
 ### Added
