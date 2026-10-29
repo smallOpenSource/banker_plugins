@@ -222,7 +222,8 @@ export function countOnce(payload) {
 // npm 길과 플러그인 길의 Stop 훅이 같은 턴에 함께 돌면 둘 다 턴 키를 읽고 셀 수 있다. 턴 키를 읽고 쓰는 동안
 // codex-count-turns.lock 폴더를 잡는다(mkdir 은 이미 있으면 실패하고 링크를 따라가지 않아 둘 중 하나만 잡음).
 // 2초 안에 못 잡으면 잡은 쪽이 이 턴을 세므로 세지 않는다. 잠금은 몇 ms 만 잡으므로 훅 시간 제한(5초)보다 조금 긴
-// 6초가 지난 잠금은 죽은 훅의 것이다: 고유 이름으로 옮겨(rename 은 하나만 성공) 지운 뒤 다시 잡는다.
+// 6초가 지난 잠금은 죽은 훅의 것이다: 고유 이름으로 옮겨(rename 은 하나만 성공) 지운 뒤 다시 잡는다. 옮긴 것이
+// 새것이면(그사이 다른 훅이 넘겨받아 잡은 것) 돌려놓는다.
 // configDir 을 만들 수 없거나 잠금 폴더를 만들 수 없는 다른 오류면 잠금 없이 전처럼 센다.
 const LOCK_WAIT_MS = 2000;
 const LOCK_STALE_MS = 6000;
@@ -245,7 +246,10 @@ export function withTurnsLock(fn, { wait = LOCK_WAIT_MS } = {}) {
       if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
         const old = `${lock}.stale-${process.pid}-${randomHex()}`;
         renameSync(lock, old);
-        rmdirSync(old);
+        // 본 것과 옮긴 것 사이에 다른 훅이 낡은 잠금을 치우고 새로 잡았을 수 있다. 옮긴 것이 새것이면 그 훅의
+        // 잠금이므로 돌려놓고 기다린다(그 이름은 비어 있다: 잡은 훅만 지운다).
+        if (Date.now() - statSync(old).mtimeMs <= LOCK_STALE_MS) renameSync(old, lock);
+        else rmdirSync(old);
         continue;
       }
     } catch { /* 방금 풀렸거나 다른 훅이 먼저 치움: 다시 잡아 본다 */ }

@@ -299,3 +299,37 @@ test('the turn lock waits for a live holder, then leaves the turn to it; a dead 
     if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
   }
 });
+
+// Two hooks take over one dead holder's lock: B looks (old), A moves it away and takes the lock anew, B then moves A's
+// fresh lock. B must see that what it moved is fresh, put it back, and leave the turn to A.
+test('a hook that moved away a lock another hook had just taken puts it back and does not count', async () => {
+  const tmp = mkTmp();
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const prev = process.env.XDG_CONFIG_HOME;
+  const prevApp = process.env.APPDATA;
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  const lock = `${turnsFile(tmp)}.lock`;
+  mkdirSync(lock, { recursive: true });
+  const old = (Date.now() - 60_000) / 1000;
+  utimesSync(lock, old, old);
+  const real = fs.renameSync;
+  let raced = false;
+  fs.renameSync = (from, to) => {
+    if (!raced && String(from) === lock) { raced = true; fs.rmdirSync(lock); fs.mkdirSync(lock); }
+    return real(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), [], 'the turn is left to the hook that holds the lock');
+  } finally {
+    fs.renameSync = real;
+    syncBuiltinESMExports();
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
+  assert.ok(raced);
+  assert.ok(existsSync(lock), 'the other hook keeps its lock');
+  assert.deepEqual(readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock.')), [], 'nothing moved aside is left');
+});

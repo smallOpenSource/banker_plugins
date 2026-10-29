@@ -247,9 +247,12 @@ test('sh: a realpath, readlink or tr planted on a PATH entry in the session fold
   assert.ok(!existsSync(join(c.d, 'planted')), 'an empty cleaned PATH does not become the session folder');
 });
 
+// The PowerShell the commands run in: Windows PowerShell 5.1, or another (pwsh 7) named by BANKER_TEST_PS. Codex runs
+// a hook's commandWindows with the PowerShell it finds, so the box suite runs these once more under pwsh 7.
+const PS = process.env.BANKER_TEST_PS || 'powershell.exe';
 function ps(c, cmd, path) {
   const env = { ...process.env, PATH: path, PLUGIN_ROOT: c.plugin };
-  return spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: c.work, encoding: 'utf8', env });
+  return spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: c.work, encoding: 'utf8', env });
 }
 const sysPath = () => [join(process.env.SystemRoot || 'C:\\Windows', 'System32'), join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0')].join(delimiter);
 
@@ -283,14 +286,14 @@ test('PowerShell: the node PATH names runs the hook; one under TEMP or the sessi
   assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: node is not on PATH/);
   const env = { ...process.env, PATH: `${nodeDir}${delimiter}${sysPath()}` };
   delete env.PLUGIN_ROOT;
-  r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true, true)], { cwd: c.work, encoding: 'utf8', env });
+  r = spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true, true)], { cwd: c.work, encoding: 'utf8', env });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout.trim()).systemMessage, 'banker hooks skipped: PLUGIN_ROOT is not set');
 });
 
 // The temp folders a Windows test may use are moved aside, so a folder under the real TEMP stands for a safe place.
 const asideEnv = (c, extra) => ({ ...process.env, PLUGIN_ROOT: c.plugin, TEMP: join(c.d, 't1'), TMP: join(c.d, 't2'), LOCALAPPDATA: join(c.d, 'la'), ...extra });
-const psRun = (c, cmd, env) => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: c.work, encoding: 'utf8', env });
+const psRun = (c, cmd, env) => spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: c.work, encoding: 'utf8', env });
 
 // mise's file mode puts node.cmd first on PATH. The command asks it, from the plugin folder, for the node.exe it runs
 // and runs that, so the hook gets the node the user picked rather than the first node.exe after the shim.
@@ -346,12 +349,35 @@ test('PowerShell: a session folder opened through a junction still refuses a nod
   mkdirSync(join(proj, 'bin'), { recursive: true });
   copyFileSync(process.execPath, join(proj, 'bin', 'node.exe'));
   symlinkSync(real, join(c.d, 'jn'), 'junction');
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], {
+  const r = spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], {
     cwd: join(c.d, 'jn', 'proj'), encoding: 'utf8', env: asideEnv(c, { PATH: `${join(proj, 'bin')}${delimiter}${sysPath()}` }),
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /banker hooks skipped: node is in a temp folder or the session folder/);
   assert.ok(!existsSync(c.marker));
+});
+
+// A session opened on a subst drive is the folder the drive stands for.
+test('PowerShell: a session folder opened on a subst drive still refuses a node.exe inside it', windows, (t) => {
+  const c = setup();
+  const real = join(c.d, 'real');
+  const proj = join(real, 'proj');
+  mkdirSync(join(proj, 'bin'), { recursive: true });
+  copyFileSync(process.execPath, join(proj, 'bin', 'node.exe'));
+  const letter = 'ZYXWVUTSRQ'.split('').find((l) => !existsSync(`${l}:\\`));
+  if (!letter) { t.skip('no free drive letter'); return; }
+  const subst = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'subst.exe');
+  assert.equal(spawnSync(subst, [`${letter}:`, real]).status, 0);
+  try {
+    const r = spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], {
+      cwd: `${letter}:\\proj`, encoding: 'utf8', env: asideEnv(c, { PATH: `${join(proj, 'bin')}${delimiter}${sysPath()}` }),
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /banker hooks skipped: node is in a temp folder or the session folder/);
+    assert.ok(!existsSync(c.marker));
+  } finally {
+    spawnSync(subst, [`${letter}:`, '/d']);
+  }
 });
 
 // A TEMP in 8.3 form (C:\Users\LONGNA~1\...) names the same folder as the long path a node.exe is found under.
@@ -415,7 +441,7 @@ test('PowerShell: a session in USERPROFILE runs a node.exe kept under it; a proj
   copyFileSync(process.execPath, join(bin, 'node.exe'));
   copyFileSync(process.execPath, join(projBin, 'node.exe'));
   // The base is under the real TEMP: the command is told other temp folders so the home rule alone decides.
-  const run = (cwd, b = bin) => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], {
+  const run = (cwd, b = bin) => spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], {
     cwd, encoding: 'utf8',
     env: { ...process.env, PATH: `${b}${delimiter}${sysPath()}`, PLUGIN_ROOT: c.plugin, TEMP: join(c.d, 't1'), TMP: join(c.d, 't2'), LOCALAPPDATA: join(c.d, 'la'), USERPROFILE: home },
   });

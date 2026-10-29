@@ -146,7 +146,8 @@ export function dualNotice(payload, env = process.env) {
 // Codex: 두 길의 SessionStart 훅이 모두 신뢰돼 같은 세션에서 함께 돌면 같은 알림이 두 번 나간다. 세션 id 이름의
 // 폴더를 configDir 의 codex-sessions 에 만든 훅만 알린다. mkdir 은 이미 있으면 실패하고 링크를 따라가지 않아 둘이
 // 동시에 와도 하나만 만든다. 함께 도는 훅은 훅 시간 제한(5초) 안에 오므로, 30초 넘게 지난 폴더는 이어 연 세션(resume)
-// 의 것이다: 고유 이름으로 옮겨(rename 은 하나만 성공) 다시 만든 훅이 알린다. 세션 id 가 없거나 폴더를 만들 수 없으면
+// 의 것이다: 고유 이름으로 옮겨(rename 은 하나만 성공) 다시 만든 훅이 알린다. 옮긴 것이 새것이면(그사이 짝 훅이
+// 넘겨받아 만든 것) 돌려놓고 알리지 않는다. 세션 id 가 없거나 폴더를 만들 수 없으면
 // 전처럼 알린다. 이틀 지난 폴더와 예전 판의 codex-dual-notified 는 지운다.
 const SESSION_RE = /^[A-Za-z0-9._-]{1,80}$/;
 const CLAIM_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
@@ -169,6 +170,11 @@ export function claimSession(payload, now = Date.now()) {
       if (now - statSync(mine).mtimeMs < CLAIM_TWIN_MS) return false; // 같은 세션의 다른 길 훅이 방금 알렸다
       const old = `${mine}.old-${process.pid}-${randomHex()}`;
       renameSync(mine, old);
+      if (now - statSync(old).mtimeMs < CLAIM_TWIN_MS) {
+        // 본 것과 옮긴 것 사이에 짝 훅이 넘겨받아 새로 만든 폴더였다: 돌려놓고 알리지 않는다.
+        renameSync(old, mine);
+        return false;
+      }
       rmdirSync(old);
       mkdirSync(mine);
     } catch {

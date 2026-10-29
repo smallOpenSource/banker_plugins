@@ -128,7 +128,9 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
 // and Volta keep node under it). Once node is found, PATH keeps only absolute entries outside those folders, so what a
 // shim starts by name (cmd.exe looks mise up on PATH) comes from elsewhere. Paths are compared in their long form
 // (Get-Item, so an 8.3 name such as C:\Users\LONGNA~1 in TEMP still matches) with symbolic links and junctions on the
-// way followed, as the sh command compares real paths. A hard link is not followed: its other name is the same file. A refusal says why, as for sh (English: Windows PowerShell 5.1
+// way followed, and a subst drive written as the folder it stands for, as the sh command compares real paths. A hard
+// link is not followed: its other name is the same file. Network entries (a mapped network drive, \\server\share) are
+// dropped from PATH without being read, so a share that does not answer cannot hold the hook past Codex's limit. A refusal says why, as for sh (English: Windows PowerShell 5.1
 // garbles other letters in a command line).
 function psCommand(script, args, viaRun, notice = false, rev = '') {
   const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
@@ -138,7 +140,8 @@ function psCommand(script, args, viaRun, notice = false, rev = '') {
   return (rev ? `$null = 'banker-hooks-rev ${rev}'; ` : '')
     + `function x($m) { ${say}; exit 0 }; if (-not $env:PLUGIN_ROOT) { x 'PLUGIN_ROOT is not set' }; `
     + String.raw`function G($p) { try { (Get-Item -LiteralPath $p -Force -ErrorAction Stop).FullName } catch { try { [IO.Path]::GetFullPath($p) } catch { $p } } }; `
-    + String.raw`function L($p) { if (-not $p) { return '' }; $p = G $p; for ($i = 0; $i -lt 32; $i++) { $c = $p; $t = $null; `
+    + String.raw`$sb = @{}; foreach ($l in @(& "$env:SystemRoot\System32\subst.exe" 2>$null)) { if ($l -match '^([A-Za-z]:)\\: => (.+)$') { $sb[$matches[1].ToUpper()] = $matches[2] } }; `
+    + String.raw`function L($p) { if (-not $p) { return '' }; $p = G $p; for ($i = 0; $i -lt 32; $i++) { $d2 = if ($p.Length -ge 2) { $p.Substring(0, 2).ToUpper() } else { '' }; if ($sb.Contains($d2)) { $p = G ($sb[$d2].TrimEnd('\') + $p.Substring(2)); continue }; $c = $p; $t = $null; `
     + String.raw`while ($c) { $it = Get-Item -LiteralPath $c -Force -ErrorAction SilentlyContinue; if ($it -and $it.LinkType -in 'SymbolicLink', 'Junction' -and @($it.Target)[0]) { $t = [string]@($it.Target)[0]; break }; $c = Split-Path -LiteralPath $c }; `
     + String.raw`if (-not $t) { break }; if (-not [IO.Path]::IsPathRooted($t)) { $t = Join-Path (Split-Path -LiteralPath $c) $t }; $p = G ($t.TrimEnd('\') + $p.Substring($c.Length)) }; $p.TrimEnd('\') }; `
     + String.raw`$ds = @($env:TEMP, $env:TMP); if ($env:LOCALAPPDATA) { $ds += "$env:LOCALAPPDATA\Temp" }; $w = L $PWD.Path; if ($w -ne (L $env:USERPROFILE)) { $ds += $w }; `
@@ -147,7 +150,7 @@ function psCommand(script, args, viaRun, notice = false, rev = '') {
     + String.raw`function k($f) { if (u $f) { x "node is in a temp folder or the session folder ($(L $f))" }; L $f }; `
     + String.raw`$n = Get-Command node -CommandType Application -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\.(exe|cmd|bat)$' } | Select-Object -First 1; `
     + "if (-not $n) { x 'node is not on PATH' }; "
-    + String.raw`$env:PATH = (@($env:PATH -split ';') | Where-Object { $_ -match '^([A-Za-z]:\\|\\\\)' -and -not (u $_) }) -join ';'; `
+    + String.raw`$env:PATH = (@($env:PATH -split ';') | Where-Object { $_ -match '^[A-Za-z]:\\' -and ([IO.DriveInfo]::new($_.Substring(0, 1))).DriveType -ne 'Network' -and -not (u $_) }) -join ';'; `
     + "$r = k $n.Source; "
     + "if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
     + String.raw`if ($r -notmatch '\.exe$') { $e = & $r -p process.execPath 2>$null | Select-Object -Last 1; `
