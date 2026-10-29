@@ -827,6 +827,14 @@ try {
     .concat(/QA 게이트는 `verify` 순환|Codex 는 OMX `ultraqa` 를 그대로/.test(s12Readme) ? ['README'] : []);
   ok(s12Docs.length === 2 && s12Reasons.length === 2 && s12Bad.length === 0,
      `aio-qa: all-in-one and ultra-init end with banker ralph-qa on both runtimes (--gates from --qa, an iteration-0 gate-evidence baseline, scenarios, observed records only), with no OMX ultraqa or verify cycle wording in the skills, their manifest reasons or the README${s12Bad.length ? ` (${s12Bad.join('; ')})` : ''}`);
+  // Plan 27.1 (3), (2): a seat writes a missing tool as `도구 없음` (a blocker only when the criteria need it), the quorum
+  // block stays byte for byte, and a prepare git-failed under Codex is a named stop, not INCONCLUSIVE.
+  const rqQuorum = ((rqSkill.split('\n## 정족수\n')[1] || '').split(/\n## /)[0].split('```')[1]) || '';
+  ok(require('crypto').createHash('sha256').update(rqQuorum).digest('hex') === '471765e68a623f2d670e94e91ee8a10d70420205736f44ab74c09177d9a75f2f'
+     && /"역할 체크리스트 가운데 이 환경에 없는 도구는 쓰지 않고, 판정에 `도구 없음: <이름>` 으로 적는다\. 그 도구 없이도 수용 기준을 판정할 수 있으면 판정한다\. 수용 기준 검증에 그 도구가 꼭 필요하면 그 기준을 blocker 로 낸다\."/.test(rqSkill)
+     && /쓸 수 없는 도구\(예: MCP 를 끈 홈의 `lsp_diagnostics`\)를 체크리스트에 요구하지 않는 역할을 먼저 고른다/.test(rqSkill)
+     && /`prepare` 가 `git-failed` 로 멈추면 `INCONCLUSIVE` 로 흐리지 않는다/.test(rqSkill) && /`멈춤: prepare git-failed\(<message>\)`/.test(rqSkill),
+     'rq-tools: ralph-qa seats write a missing tool as 도구 없음 and raise it as a blocker only when the criteria need it, roles that ask for no missing tool come first, the quorum block is byte for byte the same, and a Codex prepare git-failed is a named stop');
   // Plan 27.1 (4): after STOPPED no file changes, not even a one-line fix, in all three chains; nothing allows one.
   const stopDocs = ['all-in-one', 'ultra-init', 'ultra-chain'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);
   const stopBad = stopDocs.filter(([, t]) => !/After STOPPED, change no file, not even a one-line fix: report only, until the user gives a new instruction\./.test(t)

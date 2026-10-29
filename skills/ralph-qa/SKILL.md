@@ -42,6 +42,8 @@ description: "작업 결과를 자기 채점하지 않도록 독립 검증과 �
     - 정의가 모델을 고정한 유형(예: OMC 의 critic·verifier)은 세션 모델과 다를 수 있으므로 백본으로 쓰지 않는다.
     - Codex: `spawn_agent` 를 `agent_type` 과 `model` 없이 부른다. 자식은 현재 모델을 물려받는다. 저자 대화는 넘기지 않는다: multi-agent v2 는 `fork_turns="none"`, v1 은 `fork_context` 를 주지 않는다.
     - Codex 환경 지시가 역할(`agent_type`)을 요구하면, 역할은 정의에 고정된 모델과 강도로 돈다. 고정 모델이 세션 모델과 같은 역할을 고른다. 그런 역할이 없으면 그 좌석은 세션 모델 좌석이 아니다. 정족수의 `내부 좌석 ≥ 3` 과 과반에 세지 않고(그 좌석의 blocker 는 센다), 선언 블록과 판정 줄에 그 역할의 모델과 강도를 적는다. 세션 모델 좌석이 3 미만이면 `INCONCLUSIVE` 다.
+    - 역할을 고를 때는 고정 모델이 세션 모델과 같은 역할 가운데, 이 환경에서 쓸 수 없는 도구(예: MCP 를 끈 홈의 `lsp_diagnostics`)를 체크리스트에 요구하지 않는 역할을 먼저 고른다.
+    - 모든 좌석의 지시에 아래 문단을 넣는다(Codex 좌석에는 꼭): "역할 체크리스트 가운데 이 환경에 없는 도구는 쓰지 않고, 판정에 `도구 없음: <이름>` 으로 적는다. 그 도구 없이도 수용 기준을 판정할 수 있으면 판정한다. 수용 기준 검증에 그 도구가 꼭 필요하면 그 기준을 blocker 로 낸다." 도구가 없다는 사실만으로는 `ITERATE` 도 `INCONCLUSIVE` 도 아니다.
   - **읽기 전용은 지시로 선다.** `Plan` 은 Write·Edit 가 없지만 Bash 가 있고, Codex 자식은 부모와 같은 도구와 샌드박스를 받는다. 그래서 모든 좌석의 지시 앞머리에 쓰기 금지를 고정한다(워크플로 1단계). 고치는 것은 반복 루프의 저자 몫이다.
   - **게이트는 저자가 돌린다.** `Plan` 지시는 임시 파일 생성과 상태를 바꾸는 명령을 막아, 검토자가 테스트·smoke 를 직접 돌리지 못한다. 저자가 게이트를 돌려 명령과 원문 출력을 입력에 넣고, 검토자는 그 출력을 명령과 코드에 대조한다.
   - **`--gates` 를 주면 게이트는 실행기가 돌린다.** `references/gate-evidence.mjs run` 이 명령을 직접 실행하고 종료 코드, 출력 파일과 sha256, 작업 트리 지문을 `observed` 기록으로 남긴다(게이트 증거 절). 모델이 적은 종료 코드는 `reported` 이고 판정에 쓰지 않는다.
@@ -230,6 +232,8 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 - opencode 좌석은 `OPENCODE_CONFIG_CONTENT` 를 덮는다. 사용자가 이 env 로 프로바이더를 정해 두었다면 그 설정을 파일(`$OPENCODE_CONFIG`)로 옮겨야 그 좌석이 같은 프로바이더를 쓴다.
 - 런타임 샌드박스: Codex 의 기본 `workspace-write` 샌드박스는 HOME 쓰기를 막아 gemini, opencode 가 시작부터 실패한다(opencode 는 `EROFS`). Linux 에서는 기준 폴더(`$XDG_RUNTIME_DIR`, `~/.cache`)도 읽기 전용이라 `init` 부터 실패한다(`base-not-writable`).
   - 그래서 Codex 에서는 이 절의 실행기 명령 전부를 샌드박스 밖에서 실행하도록 승인을 요청한다. 1단계의 이유로 기준 폴더를 `/tmp` 로 옮기지 않는다.
+  - 외부 좌석 플래그가 없는 실행도 출처-독립 좌석의 `raw.md` 를 만들려고 `init`, `prepare` 를 부른다(1단계). 실행기는 자식의 입출력을 파일로 주고받는다. Node 의 pipe 는 Codex Linux 샌드박스에서 출력이 사라지거나 프로그램이 돌았는데도 `EPERM` 이 난다(seccomp 가 socketpair 의 setsockopt 를 막음, 0.165.0 실측). 그래서 기준 폴더가 쓰기 범위 안이면 샌드박스 안에서도 돈다.
+  - `prepare` 가 `git-failed` 로 멈추면 `INCONCLUSIVE` 로 흐리지 않는다. 멈춤 토큰과 `message` 를 보고하고, 샌드박스 밖 실행 승인으로 한 번 다시 실행한다. 승인할 수 없거나 다시 해도 같으면 출처-독립 좌석을 `raw.md` 없이 앉히지 않고 거기서 멈춘다. 보고에는 `멈춤: prepare git-failed(<message>)` 와 고칠 방법(샌드박스 밖 실행 승인, git 확인)을 적는다.
   - 파일 도구가 `<d>` 에 쓰지 못하면 짧은 부분과 `spec.md` 는 `put` 으로 쓴다. bash 는 따옴표 친 here-document(`node '<R>/seat-run.mjs' put --dir '<d>' --name short.md <<'RALPHQA_<id>'`, 마지막 줄은 `RALPHQA_<id>`)로 넘긴다. 구분자에 따옴표를 치면 셸이 본문을 해석하지 않는다. 구분자에는 1단계의 무작위 id 를 붙인다. 그러면 본문에 `RALPHQA_` 로 시작하는 줄이 있어도 본문이 거기서 끊기지 않는다.
   - PowerShell 은 `$OutputEncoding = New-Object Text.UTF8Encoding $false` 를 두고 작은따옴표 here-string(`@'` 과 `'@` 를 각각 줄 머리에 둔다)을 `| node "<R>\seat-run.mjs" put --dir '<d>' --name short.md` 로 넘긴다. 본문에 `'@` 로 시작하는 줄이 있으면 here-string 으로 쓰지 않고 그 좌석은 `cli-call-failed` 다(`'@` 는 문법이라 구분자에 id 를 붙일 수 없다).
   - 승인할 수 없는 실행(`codex exec` 등)이면 모델을 갈아타지 않고 `cli-call-failed` 로 보고한다. Claude Code 의 샌드박스를 켠 경우도 같은 규칙이다(미검증).
