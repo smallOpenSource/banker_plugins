@@ -84,11 +84,12 @@ test('a move waits for every poster to decode (the engine paints a newly shown s
 
 test('stops are each scene\'s start (an exit belongs to the way to the next scene), the last scene\'s end, then the body', () => {
   // dive0 0-1300, conn0 1300-2200, dive1 2200-3500 (no connector after it), dive2 3500-4800
-  assert.deepEqual(stopPositions(CONFIG, 1000, null), [0, 2200, 3500, 4800]);
-  assert.deepEqual(stopPositions(CONFIG, 1000, 5200), [0, 2200, 3500, 4800, 5200]);
-  assert.deepEqual(stopPositions({ ...CONFIG, sections: [{}, { scroll: 2 }, {}] }, 1000, null), [0, 2200, 4200, 5500]);
+  assert.deepEqual(stopPositions(CONFIG, 1000, null), [0, 2201, 3501, 4800], 'scene starts one pixel inside the scene');
+  assert.deepEqual(stopPositions(CONFIG, 1000, 5200), [0, 2201, 3501, 4800, 5200]);
+  assert.deepEqual(stopPositions({ ...CONFIG, sections: [{}, { scroll: 2 }, {}] }, 1000, null), [0, 2201, 4201, 5500]);
   assert.deepEqual(stopPositions({ sections: [{}] }, 800, null), [0, 1040]);
   assert.deepEqual(gridOf([0, 2200, 3500]), [0, 1100, 2200, 2850, 3500]);
+  assert.deepEqual(stopPositions(CONFIG, 800, null).slice(0, 3), [0, 1761, 2801], 'past the engine start 1760.0000000000002 (2.2 x 800 in floats)');
 });
 
 test('a notch or an arrow moves to the next grid point (a half point or a stop); off the grid the first goes to the next one that way', () => {

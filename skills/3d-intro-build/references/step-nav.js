@@ -78,7 +78,10 @@
   /** Stop positions in px: each scene's start, the last scene's end, then the body. */
   function stopPositions(config, vh, endTop) {
     const spans = spansOf(config).spans;
-    const stops = spans.map(function (span) { return Math.round(span[0] * vh); });
+    // one pixel into the scene: the engine's current segment is the last whose start is at or above the
+    // page, and its starts carry float error (2.2 x 800 = 1760.0000000000002), so a stop at the rounded
+    // start would leave the segment before on top; an exit ending on a background plate showed the plate
+    const stops = spans.map(function (span, i) { return i ? Math.floor(span[0] * vh) + 1 : 0; });
     if (spans.length) stops.push(Math.round(spans[spans.length - 1][1] * vh));
     return endTop == null ? stops : stops.concat([endTop]);
   }
