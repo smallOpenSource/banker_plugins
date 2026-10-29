@@ -88,8 +88,10 @@ export function markerCount(buf, id) {
 
 function readShort(dir, id) {
   const short = withNewline(readAuthor(dir, "short.md"));
-  if (markerCount(short, id) !== 1 || !short.includes(Buffer.from(`<review-data id="${id}">`))) {
-    throw new Stop("markers", `short.md 에 여는 표지 <review-data id="${id}"> 가 한 줄에 한 번만 있어야 한다`);
+  const count = markerCount(short, id);
+  if (count !== 1 || !short.includes(Buffer.from(`<review-data id="${id}">`))) {
+    const fix = count > 1 ? "닫는 표지와 원문은 실행기가 붙이므로 short.md 에는 여는 표지 한 줄만 둔다" : "고정 앞머리 다음에 여는 표지 한 줄, 그 아래 사용자 요청 문장과 수용 기준을 둔다";
+    throw new Stop("markers", `short.md 에 여는 표지 <review-data id="${id}"> 가 한 줄에 한 번만 있어야 한다(지금 표지 ${count}줄). ${fix}`);
   }
   return short;
 }
@@ -105,7 +107,7 @@ function repoPath(raw, n) {
 
 function specLine(line, n) {
   const m = /^(new|range|file|gate|review) (.+)$/.exec(line);
-  if (!m) throw new Stop("spec", `spec ${n}: new, range, file, gate, review 로 시작하는 줄이 아니다: ${line.slice(0, 200)}`);
+  if (!m) throw new Stop("spec", `spec ${n}: new, range, file, gate, review 로 시작하는 줄이 아니다: ${line.slice(0, 200)}. 요청 문장과 수용 기준은 spec.md 가 아니라 short.md 에 쓴다`);
   if (m[1] === "new") return { kind: "new", path: repoPath(m[2], n), line: n };
   if (m[1] !== "range") {
     if (m[2].includes("\0")) throw new Stop("spec", `spec ${n}: 경로에 NUL 이 있다`);

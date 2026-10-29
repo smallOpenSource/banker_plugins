@@ -1037,6 +1037,21 @@ test("every git call of prepare carries every guard: no hooks, no fsmonitor, no 
   }
 });
 
+// S19: the two first-try mistakes a Codex author made, each with a stop that says what to write instead.
+test("short.md with the closing marker, without any marker, and a spec line of prose each stop with how to fix it", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  const both = prep(ctx, { short: '<review-data id="a1b2c3d4">\nreview this\n</review-data id="a1b2c3d4">\n' });
+  assert.equal(both.stop, "markers", both.message);
+  assert.match(both.message, /표지 2줄\)\. 닫는 표지와 원문은 실행기가 붙이므로 short\.md 에는 여는 표지 한 줄만 둔다/);
+  const none = prep(ctx, { short: "review this\n" });
+  assert.equal(none.stop, "markers", none.message);
+  assert.match(none.message, /표지 0줄\)\. 고정 앞머리 다음에 여는 표지 한 줄/);
+  const prose = prep(ctx, { spec: "User request: add sub\n" });
+  assert.equal(prose.stop, "spec", prose.message);
+  assert.match(prose.message, /요청 문장과 수용 기준은 spec\.md 가 아니라 short\.md 에 쓴다/);
+});
+
 // S19 (2): a git that cannot be started (in the Codex sandbox, node's pipes gave EPERM) is a named stop, not a guess;
 // git runs on files, so a git that did run gives prepare its output whole.
 test("a git that cannot start is the git-failed stop with the start error, and git's output arrives through files", { skip: SKIP || (WIN && "the stand-in git is a sh script") }, (t) => {

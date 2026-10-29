@@ -835,6 +835,8 @@ try {
      && /고정 앞머리는 번역하거나 줄이거나 바꿔 쓰지 않고 글자 그대로 넣는다/.test(rqSkill)
      && /`\$CODEX_HOME\/agents\/<역할>\.toml`[^\n]*둘이 같으면 그 역할 좌석은 세션 모델 좌석이고 정족수의 `내부 좌석 ≥ 3` 과 과반에 센다/.test(rqSkill)
      && /쓸 수 없는 도구\(예: MCP 를 끈 홈의 `lsp_diagnostics`\)를 체크리스트에 요구하지 않는 역할을 먼저 고른다/.test(rqSkill)
+     && /역할 정의 파일\(`agents\/<역할>\.toml`\)에 저자의 도구 목록에 없는 도구 이름이 나오면 그 역할은 고르지 않는다/.test(rqSkill)
+     && /닫는 표지 `<\/review-data id="<id>">` 는 쓰지 않는다\(실행기가 붙인다\. 쓰면 `markers`\)/.test(rqSkill) && /`spec\.md` 에는 아래 표의 다섯 낱말로 시작하는 줄만 쓴다/.test(rqSkill)
      && /`prepare` 가 `git-failed` 로 멈추면 `INCONCLUSIVE` 로 흐리지 않는다/.test(rqSkill) && /`멈춤: prepare git-failed\(<message>\)`/.test(rqSkill),
      'rq-tools: ralph-qa seats write a missing tool as 도구 없음 and raise it as a blocker only when the criteria need it, roles that ask for no missing tool come first, the quorum block is byte for byte the same, and a Codex prepare git-failed is a named stop');
   // Plan 27.1 (4): after STOPPED no file changes, not even a one-line fix, in all three chains; nothing allows one.
