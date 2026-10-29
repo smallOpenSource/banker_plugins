@@ -18,7 +18,6 @@
 """
 
 import os
-import time
 from playwright.sync_api import sync_playwright
 
 URL = os.environ.get("AUDIT_URL", "https://127.0.0.1:33006/")

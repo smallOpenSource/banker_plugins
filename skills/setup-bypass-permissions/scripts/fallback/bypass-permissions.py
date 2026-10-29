@@ -21,6 +21,7 @@ Exit status: 0 done, or nothing to do. 1 refused. 2 unexpected error. 3 this acc
 the file or its folder. Every result ends with the line `settings file: <path>` on stdout.
 Python 3.6 or later.
 """
+
 import errno
 import json
 import os
@@ -43,7 +44,9 @@ def settings_path():
 
 def policy_home():
     # The override exists for this skill's tests alone.
-    if os.environ.get("BANKER_BYPASS_TEST") == "1" and os.environ.get("BANKER_BYPASS_POLICY_HOME"):
+    if os.environ.get("BANKER_BYPASS_TEST") == "1" and os.environ.get(
+        "BANKER_BYPASS_POLICY_HOME"
+    ):
         return os.environ["BANKER_BYPASS_POLICY_HOME"]
     return POLICY_HOMES.get(sys.platform, "/etc/claude-code")
 
@@ -59,7 +62,11 @@ ABSENT = (errno.ENOENT, errno.ENOTDIR, errno.EISDIR)
 
 
 def unreadable_policy(path):
-    return Refused("this machine's managed policy cannot be read (" + path + "); ask the administrator whether it allows the mode")
+    return Refused(
+        "this machine's managed policy cannot be read ("
+        + path
+        + "); ask the administrator whether it allows the mode"
+    )
 
 
 def policy_files():
@@ -73,7 +80,12 @@ def policy_files():
         if e.errno not in ABSENT:
             raise unreadable_policy(drop)
         names = []
-    files += [os.path.join(drop, n) for n in sorted(n for n in names if n.endswith(".json") and not n.startswith("."))]
+    files += [
+        os.path.join(drop, n)
+        for n in sorted(
+            n for n in names if n.endswith(".json") and not n.startswith(".")
+        )
+    ]
     return files
 
 
@@ -108,6 +120,7 @@ def load(path):
         raise Refused("settings.json is not valid UTF-8")
     if not text.strip():
         return {}, raw
+
     def reject(token):
         raise ValueError("the constant " + token + " is not JSON")
 
@@ -134,7 +147,9 @@ def replace(path, data, mode):
         except OSError as e:
             if e.errno not in (errno.EBUSY, errno.EXDEV):
                 raise
-            with open(path, "wb") as target:  # a bind-mounted single file refuses the rename: write in place
+            with open(
+                path, "wb"
+            ) as target:  # a bind-mounted single file refuses the rename: write in place
                 target.write(data)
             os.remove(tmp)
     except BaseException:
@@ -148,21 +163,34 @@ def save(path, data, raw):
     real = os.path.realpath(path)
     mode = os.stat(real).st_mode & 0o777 if os.path.exists(real) else 0o600
     bom = BOM if raw is not None and raw.startswith(BOM) else b""
-    replace(real, bom + (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"), mode)
+    replace(
+        real,
+        bom + (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"),
+        mode,
+    )
 
 
 def check_on(path, data):
     # Claude Code lets root use the mode inside a sandbox it recognises: IS_SANDBOX exactly "1", or
     # CLAUDE_CODE_BUBBLEWRAP set to a true value (2.1.289 reads 1, true, yes, on; 0 or false is not one).
-    bubblewrap = os.environ.get("CLAUDE_CODE_BUBBLEWRAP", "").strip().lower() in ("1", "true", "yes", "on")
+    bubblewrap = os.environ.get("CLAUDE_CODE_BUBBLEWRAP", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     sandboxed = os.environ.get("IS_SANDBOX") == "1" or bubblewrap
     if hasattr(os, "geteuid") and os.geteuid() == 0 and not sandboxed:
-        raise Refused("Claude Code will not start in bypassPermissions as root; IS_SANDBOX=1 marks a real sandbox")
+        raise Refused(
+            "Claude Code will not start in bypassPermissions as root; IS_SANDBOX=1 marks a real sandbox"
+        )
     blocked = policy_block()
     if blocked:
         raise Refused("managed policy forbids bypassPermissions: " + blocked)
     if forbids(data):
-        raise Refused("settings.json itself sets permissions.disableBypassPermissionsMode")
+        raise Refused(
+            "settings.json itself sets permissions.disableBypassPermissionsMode"
+        )
 
 
 def forget_record(path):
@@ -176,7 +204,9 @@ def forget_record(path):
 
 def turn_on(path):
     if not os.path.isdir(os.path.dirname(path)):
-        raise Refused("there is no Claude Code config folder at " + os.path.dirname(path))
+        raise Refused(
+            "there is no Claude Code config folder at " + os.path.dirname(path)
+        )
     data, raw = load(path)
     check_on(path, data)
     if data.get("permissions", {}).get("defaultMode") == MODE:
@@ -197,13 +227,21 @@ def turn_off(path):
     data, raw = load(path)
     current = data.get("permissions", {}).get("defaultMode")
     if current != MODE:
-        print("defaultMode = " + str(current) + " (not bypassPermissions, nothing changed)")
+        print(
+            "defaultMode = "
+            + str(current)
+            + " (not bypassPermissions, nothing changed)"
+        )
         return 0
-    if not os.access(path, os.W_OK):  # a read-only settings file is a lock: off honours it as on does
+    if not os.access(
+        path, os.W_OK
+    ):  # a read-only settings file is a lock: off honours it as on does
         raise PermissionError(errno.EACCES, "this account may not write", path)
     del data["permissions"]["defaultMode"]
     save(path, data, raw)
-    forget_record(path)  # only after the write: if it failed, the record is still the way back
+    forget_record(
+        path
+    )  # only after the write: if it failed, the record is still the way back
     print("defaultMode removed (Claude Code's default start mode)")
     return 0
 
@@ -212,7 +250,10 @@ def outcome(argv, path):
     actions = {("on", "--yes"): turn_on, ("off",): turn_off}
     action = actions.get(tuple(argv[1:]))
     if action is None:
-        print("refused: usage is `bypass-permissions.py on --yes` or `bypass-permissions.py off`", file=sys.stderr)
+        print(
+            "refused: usage is `bypass-permissions.py on --yes` or `bypass-permissions.py off`",
+            file=sys.stderr,
+        )
         return 1
     try:
         return action(path)
@@ -221,12 +262,22 @@ def outcome(argv, path):
         return 1
     except OSError as e:
         if e.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
-            print("write blocked: " + str(e) + "; settings.json left as it was", file=sys.stderr)
+            print(
+                "write blocked: " + str(e) + "; settings.json left as it was",
+                file=sys.stderr,
+            )
             return 3
         print("unexpected error: " + str(e) + "; check settings.json", file=sys.stderr)
         return 2
     except Exception as e:  # anything else stopped it partway too
-        print("unexpected error: " + type(e).__name__ + ": " + str(e) + "; check settings.json", file=sys.stderr)
+        print(
+            "unexpected error: "
+            + type(e).__name__
+            + ": "
+            + str(e)
+            + "; check settings.json",
+            file=sys.stderr,
+        )
         return 2
 
 

@@ -2,7 +2,8 @@
 'use strict';
 /*
  * Version sync guard. Single source of truth = .claude-plugin/plugin.json `version`.
- * Propagates to package.json `version` and .claude-plugin/marketplace.json `metadata.version`.
+ * Propagates to package.json `version`, .claude-plugin/marketplace.json `metadata.version` and the Codex plugin's
+ * .codex-plugin/plugin.json `version`.
  * Usage:
  *   node scripts/sync-version.js          # sync the targets <- plugin.json
  *   node scripts/sync-version.js --check  # exit 1 if any target drifts (used by prepublishOnly)
@@ -14,18 +15,21 @@ const root = path.resolve(__dirname, '..');
 const pluginPath = path.join(root, '.claude-plugin', 'plugin.json');
 const pkgPath = path.join(root, 'package.json');
 const marketplacePath = path.join(root, '.claude-plugin', 'marketplace.json');
+const codexPluginPath = path.join(root, '.codex-plugin', 'plugin.json');
 
 const sot = JSON.parse(fs.readFileSync(pluginPath, 'utf8')).version; // authoritative
 const check = process.argv.includes('--check');
 
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 const market = JSON.parse(fs.readFileSync(marketplacePath, 'utf8'));
+const codexPlugin = JSON.parse(fs.readFileSync(codexPluginPath, 'utf8'));
 
 const targets = [
   { name: 'package.json', path: pkgPath, obj: pkg, get: (o) => o.version, set: (o, v) => { o.version = v; } },
   { name: 'marketplace.json', path: marketplacePath, obj: market,
     get: (o) => o.metadata && o.metadata.version,
     set: (o, v) => { o.metadata = o.metadata || {}; o.metadata.version = v; } },
+  { name: '.codex-plugin/plugin.json', path: codexPluginPath, obj: codexPlugin, get: (o) => o.version, set: (o, v) => { o.version = v; } },
 ];
 
 const drift = targets.filter((t) => t.get(t.obj) !== sot);

@@ -15,7 +15,7 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 
 2. **버전 올리기** — `.claude-plugin/plugin.json` 의 `version` 을 새 semver 로 바꾼다(단일 출처).
 
-3. **버전 동기화** — `npm run sync-version` 으로 `package.json` 을 `plugin.json` 에 맞춘다.
+3. **버전 동기화** — `npm run sync-version` 으로 `package.json`, `marketplace.json`, Codex 플러그인의 `.codex-plugin/plugin.json` 을 `plugin.json` 에 맞춘다. `commands/` 나 Codex 플러그인 훅(`scripts/sync-codex-plugin.js` 의 `HOOKS`, `shCommand`, `psCommand`), 또는 훅이 실행하는 파일(`hooks/`, `bin/lib/` 중 `hookFiles()` 가 찾는 것)을 바꿨으면 `node scripts/sync-codex-plugin.js` 로 `codex/command-skills/` 와 `codex/hooks.json` 을 다시 만든다(스모크가 `--check` 로 확인). 훅 명령 앞의 `banker-hooks-rev` 해시가 바뀌므로 Codex 플러그인 사용자는 다음 세션에서 `/hooks` 신뢰를 다시 묻는 화면을 본다. 바뀐 훅 코드는 사용자가 신뢰한 뒤에만 돈다.
 
 4. **바뀐 스킬 매니페스트 갱신 (← 잊기 쉬운 단계).** `node scripts/gen-skill-changes.js` 를 **버전 bump 후·릴리스 커밋 전**에 실행한다.
    - 이 타이밍이 핵심이다. 이때 `from` = 직전 릴리스 커밋(plugin.json 을 마지막으로 바꾼 커밋), `to` = 작업트리(방금 올린 새 버전)로 잡혀 diff 가 정확하다. 커밋 뒤에 실행하면 `from` 이 방금 만든 릴리스 커밋이 되어 diff 가 비어버린다.
@@ -56,6 +56,8 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 8. **커밋** — 위 변경(`plugin.json` · `package.json` · `skill-changes.json` · `marketplace.json` · `CHANGELOG.md` · `LIST.md` · 코드)을 **한 릴리스 커밋**으로 묶는다.
 
 9. **push** — `git push` 로 main 에 올린다. GitHub 채널이 전진하고, `skill-changes.json` 의 GitHub raw 도 이때 반영된다(개인화 알림이 읽는 소스).
+   - **main push 는 곧 배포다.** Codex 는 세션을 시작할 때 git 마켓플레이스를 스스로 올리므로, main 에 올린 커밋은 다음 Codex 세션에서 플러그인 사용자에게 바로 간다(Claude Code 마켓플레이스도 갱신 때 main 을 읽는다). 작업 중인 커밋은 브랜치에 두고, main 에는 1~8번을 마친 릴리스만 올린다.
+   - 훅 코드가 바뀐 릴리스는 3번의 해시 덕분에 Codex 가 신뢰를 다시 묻는다. 훅이 아닌 스킬 파일은 신뢰 확인 없이 바로 바뀐다.
 
 10. **npm 게시** — `./scripts/publish_npm.sh` 를 **대화형 터미널**에서 실행한다(웹 패스키 인증. 백그라운드/비대화 실행은 EOTP 로 실패한다). npm 은 같은 버전 재게시가 불가하니 앞 단계를 먼저 끝낸다.
 

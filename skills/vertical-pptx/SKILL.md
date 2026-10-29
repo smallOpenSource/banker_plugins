@@ -215,7 +215,7 @@ macOS 와 Linux 에서는 대체 폰트로 치환되고, 치환되면 글자 폭
 
 ```
 --font <이름>  →  BANKER_PPTX_FONT  →  meta.font  →
-Noto Sans CJK KR  →  Malgun Gothic  →  Apple SD Gothic Neo  →  NanumGothic  →  시스템 한국어 sans
+Noto Sans CJK KR  →  Noto Sans KR  →  Malgun Gothic  →  Apple SD Gothic Neo  →  AppleGothic  →  NanumGothic  →  시스템 한국어 sans
 ```
 
 명시한 이름(`--font`·환경변수·`meta.font`)이 해석되지 않으면 `FONT_NOT_FOUND` 경고를 남기고 다음으로 내려간다. 조용히 바꾸지 않는다.

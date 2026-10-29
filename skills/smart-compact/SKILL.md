@@ -98,7 +98,7 @@ description: "컨텍스트 사용률이 임계(기본 50%)를 넘으면 `append_
 
 1~3은 어시스턴트가 자동 수행. 4는 유저가 실행한다. 안내는 2에서 끝내고 3 뒤에는 아무것도 붙이지 않는다.
 (Claude=`/banker:append_wiki`·`/banker:ready-compact`,
-Codex=`$banker-append_wiki`·`$banker-ready-compact`; `/copy`·compaction은 양쪽 TUI 내장.)
+Codex=`$banker-append_wiki`·`$banker-ready-compact`, 플러그인 설치면 `$banker:append_wiki`·`$banker:ready-compact`; `/copy`·compaction은 양쪽 TUI 내장.)
 
 ## 활성화 (idempotent · compose-safe)
 `smart-compact [--threshold N]` (기본 N=50). 아래는 Claude Code 절차이고, Codex 는 위 Codex 절의 `codex-gate.mjs on` 으로 대신한다:

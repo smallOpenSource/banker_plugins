@@ -147,6 +147,90 @@ test('Codex 훅(--codex)은 Codex 의 갱신 방법을 안내한다', () => {
   assert.ok(!out.systemMessage.includes('/banker:'), 'Codex 에는 /banker: 명령이 없다');
 });
 
+test('Codex 플러그인 훅(--codex --plugin)은 마켓플레이스 갱신을 안내한다', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW() });
+  const root = join(tmp, 'ch', 'plugins', 'cache', 'my-mkt', 'banker', '0.21.0');
+  const out = JSON.parse(runNotify(tmp, { argv: ['--codex', '--plugin'], env: { PLUGIN_ROOT: root } }).stdout.trim());
+  assert.match(out.systemMessage, /codex plugin marketplace upgrade my-mkt/);
+  assert.ok(!out.systemMessage.includes('$banker-'), '플러그인 길의 스킬 이름은 $banker:');
+  assert.ok(!out.systemMessage.includes('banker setup --codex'), '플러그인 길에는 npm 설치가 없을 수 있다');
+});
+
+test('Codex 의 두 설치 길이 함께 있으면 세션마다 한 번 알린다', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '0.0.1', checkedAt: NOW() });
+  const ch = join(tmp, 'ch');
+  mkdirSync(join(ch, 'skills', 'banker-lineage'), { recursive: true });
+  writeFileSync(join(ch, 'skills', 'banker-lineage', 'SKILL.md'), '');
+  const env = { CODEX_HOME: ch };
+  const start = (sid) => JSON.stringify({ session_id: sid, hook_event_name: 'SessionStart' });
+  assert.equal(runNotify(tmp, { argv: ['--codex'], env, input: start('s0') }).stdout, '', 'npm 길만');
+  writeFileSync(join(ch, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
+  const first = JSON.parse(runNotify(tmp, { argv: ['--codex', '--plugin'], env, input: start('s1') }).stdout.trim());
+  assert.match(first.systemMessage, /두 번 설치됨/);
+  assert.match(first.systemMessage, /codex plugin remove banker@banker-plugins/);
+  assert.equal(runNotify(tmp, { argv: ['--codex'], env, input: start('s1') }).stdout, '', '같은 세션의 다른 길 훅은 다시 알리지 않음');
+  assert.match(runNotify(tmp, { argv: ['--codex'], env, input: start('s2') }).stdout, /두 번 설치됨/, '새 세션');
+  assert.equal(runNotify(tmp, { env, input: start('s3') }).stdout, '', 'Claude Code 훅은 Codex 설치를 보지 않음');
+});
+
+// 두 길의 SessionStart 훅이 같은 세션에서 동시에 돌아도 업데이트 알림과 두 길 알림은 한 번만 나간다.
+test('Codex 두 길의 SessionStart 훅이 동시에 돌아도 알림은 한 번', async () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW() });
+  const ch = join(tmp, 'ch');
+  mkdirSync(join(ch, 'skills', 'banker-lineage'), { recursive: true });
+  writeFileSync(join(ch, 'skills', 'banker-lineage', 'SKILL.md'), '');
+  writeFileSync(join(ch, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
+  const { spawn } = await import('node:child_process');
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, CODEX_HOME: ch, BANKER_TELEMETRY_ENDPOINT: 'http://127.0.0.1:9/' };
+  for (const k of ['BANKER_NO_UPDATE_CHECK', 'BANKER_NO_TELEMETRY']) delete env[k];
+  for (let round = 0; round < 10; round++) {
+    const input = JSON.stringify({ session_id: `race-${round}`, hook_event_name: 'SessionStart' });
+    const outs = await Promise.all([['--codex'], ['--codex', '--plugin'], ['--codex']].map((argv) => new Promise((res) => {
+      const c = spawn(process.execPath, [NOTIFY_HOOK, ...argv], { env, stdio: ['pipe', 'pipe', 'ignore'] });
+      let out = '';
+      c.stdout.on('data', (b) => { out += b; });
+      c.on('close', () => res(out));
+      c.stdin.end(input);
+    })));
+    const said = outs.filter((o) => o.includes('두 번 설치됨'));
+    assert.equal(said.length, 1, `round ${round}: ${JSON.stringify(outs)}`);
+    assert.equal(outs.filter((o) => o.includes('99.0.0')).length, round === 0 ? 1 : 0, `round ${round}: 업데이트 알림은 버전마다 한 번`);
+  }
+  const claims = readdirSync(join(bankerDir(tmp), 'codex-sessions'));
+  assert.equal(claims.length, 10, '세션마다 폴더 하나');
+});
+
+test('codex-sessions: 이어 연 세션은 다시 알리고, 이틀 지난 폴더는 지우며, 세션 id 가 아닌 이름은 만들지 않는다', async () => {
+  const tmp = mkTmp();
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = tmp;
+  try {
+    const { claimSession } = await import(`./update-notify.mjs?claim=${Date.now()}`);
+    const dir = join(bankerDir(tmp), 'codex-sessions');
+    mkdirSync(bankerDir(tmp), { recursive: true });
+    writeFileSync(join(bankerDir(tmp), 'codex-dual-notified'), 'last-session\n');
+    assert.equal(claimSession({ session_id: 'old' }, Date.now()), true);
+    assert.ok(!existsSync(join(bankerDir(tmp), 'codex-dual-notified')), '예전 판의 세션 id 파일을 지움');
+    assert.equal(claimSession({ session_id: 'old' }), false, '함께 도는 다른 길 훅은 알리지 않음');
+    assert.equal(claimSession({ session_id: 'old' }, Date.now() + 31 * 1000), true, '30초 넘어 같은 세션을 이어 열면 다시 알림');
+    assert.equal(claimSession({ session_id: 'old' }), false, '이어 연 세션의 짝 훅은 알리지 않음(방금 다시 만든 폴더)');
+    assert.deepEqual(readdirSync(dir).sort(), ['old']);
+    assert.equal(claimSession({ session_id: 'new' }, Date.now() + 3 * 24 * 60 * 60 * 1000), true);
+    assert.deepEqual(readdirSync(dir).sort(), ['new'], '이틀 지난 폴더를 지움');
+    for (const sid of ['..', '.', 'a/b', '', undefined]) assert.equal(claimSession({ session_id: sid }), true, `${sid}: 알리기만`);
+    assert.deepEqual(readdirSync(dir).sort(), ['new']);
+    rmSync(dir, { recursive: true });
+    writeFileSync(dir, '');
+    assert.equal(claimSession({ session_id: 'x' }), true, '폴더 자리에 파일이 있어도 알림은 꺼지지 않음');
+    assert.equal(claimSession({ session_id: 'x' }), true);
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+  }
+});
+
 test('동일 latest 재호출(notified==latest)이면 무고지(dedupe)', () => {
   const tmp = mkTmp();
   writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), notified: '99.0.0' });
@@ -402,4 +486,40 @@ test('chooseFetcher: BANKER_TELEMETRY_ENDPOINT(env)만으로도 countingActive �
   withConfig(null, { BANKER_TELEMETRY_ENDPOINT: 'https://env.test/collect' }, () => {
     assert.ok(chooseFetcher().endsWith('update-checkin.mjs'));
   });
+});
+
+// Two hooks of one resumed session: B looks (old folder), A moves it away and makes it anew, B then moves A's fresh
+// folder. B must see that and stay quiet, without putting it back over the name.
+test('codex-sessions: 넘겨받는 사이 짝 훅이 새로 만든 폴더를 옮겼으면 돌려놓지 않고 알리지 않는다', async () => {
+  const tmp = mkTmp();
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = tmp;
+  try {
+    const { claimSession } = await import(`./update-notify.mjs?race=${Date.now()}`);
+    const mine = join(bankerDir(tmp), 'codex-sessions', 'sid');
+    mkdirSync(mine, { recursive: true });
+    const old = (Date.now() - 60_000) / 1000;
+    fs.utimesSync(mine, old, old);
+    const real = fs.renameSync;
+    let raced = false;
+    fs.renameSync = (from, to) => {
+      if (!raced && String(from) === mine) { raced = true; fs.rmdirSync(mine); fs.mkdirSync(mine); }
+      return real(from, to);
+    };
+    syncBuiltinESMExports();
+    let got;
+    try {
+      got = claimSession({ session_id: 'sid' });
+    } finally {
+      fs.renameSync = real;
+      syncBuiltinESMExports();
+    }
+    assert.ok(raced);
+    assert.equal(got, false, '짝 훅이 알린다');
+    assert.equal(readdirSync(join(bankerDir(tmp), 'codex-sessions')).filter((n) => n.startsWith('sid.old-')).length, 1, '옮긴 폴더는 돌려놓지 않고 이틀 뒤 정리에 맡김');
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+  }
 });

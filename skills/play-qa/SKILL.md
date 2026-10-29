@@ -10,7 +10,7 @@ description: "Godot 로 만든 HTML5 웹 게임을 실제 브라우저에서 Pla
 ## 0. 전제조건: playwright (없으면 설치부터)
 이 스킬은 playwright 브라우저가 있어야 동작한다. **진행 전 설치 여부를 먼저 확인**하고, 없으면 **설치부터 안내**한다(추정·임의 재설치 금지):
 - 확인: `ls "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}" 2>/dev/null | grep -qi chromium && echo ok`
-- 미설치면 먼저 `setup-playwright` 스킬로 설치(Claude Code: `/banker:setup` → setup-playwright / Codex: `banker-setup-playwright`). 설치·검증 후 이 스킬을 이어서 진행한다.
+- 미설치면 먼저 `setup-playwright` 스킬로 설치(Claude Code: `/banker:setup` → setup-playwright / Codex: `banker-setup-playwright`, 플러그인 설치면 `banker:setup-playwright`). 설치·검증 후 이 스킬을 이어서 진행한다.
 
 ## 언제
 - 오너가 "네가 직접 플레이/qa해봐", "게임 테스트해봐" 류로 위임.

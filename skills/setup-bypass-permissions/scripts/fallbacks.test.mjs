@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { pwshEnv, pwshVars } from '../../../scripts/test-fixtures/pwsh-env.mjs';
+import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PY = join(HERE, 'fallback', 'bypass-permissions.py');
@@ -214,7 +215,7 @@ for (const shell of SHELLS) {
     assert.equal(raw(c), c.text);
   });
 
-  t('a settings file reached through a link is changed where it lives, and the link stays', { skip: !posix && 'plain symlinks need POSIX' }, () => {
+  t('a settings file reached through a link is changed where it lives, and the link stays', { skip: symlinkSkip }, () => {
     const c = setup(null);
     const real = join(c.dir, 'dotfiles-settings.json');
     writeFileSync(real, JSON.stringify({ model: 'opus' }));
@@ -224,7 +225,7 @@ for (const shell of SHELLS) {
     assert.deepEqual(JSON.parse(readFileSync(real, 'utf8')), { model: 'opus', permissions: { defaultMode: 'bypassPermissions' } });
   });
 
-  t('a link planted at the backup name is replaced, not written through', { skip: !posix && 'plain symlinks need POSIX' }, () => {
+  t('a link planted at the backup name is replaced, not written through', { skip: symlinkSkip }, () => {
     const c = setup();
     const victim = join(c.dir, 'victim.txt');
     writeFileSync(victim, 'keep me\n');
@@ -356,7 +357,7 @@ test('python: on refuses under root unless IS_SANDBOX=1 says this is a sandbox',
 for (const shell of SHELLS) {
   const t = (title, opts, fn) => test(`${shell.name}: ${title}`, { ...opts, skip: shell.skip || opts.skip }, fn);
 
-  t('a chain of links is followed to the file at its end, and every link stays', { skip: !posix && 'plain symlinks need POSIX' }, () => {
+  t('a chain of links is followed to the file at its end, and every link stays', { skip: symlinkSkip }, () => {
     const c = setup(null);
     const real = join(c.dir, 'real.json');
     const mid = join(c.dir, 'mid.json');
@@ -369,7 +370,7 @@ for (const shell of SHELLS) {
     assert.deepEqual(JSON.parse(readFileSync(real, 'utf8')), { model: 'opus', permissions: { defaultMode: 'bypassPermissions' } });
   });
 
-  t('a settings file that is one of two hard links is still changed under its own name', { skip: !posix && 'hard links are checked on POSIX' }, () => {
+  t('a settings file that is one of two hard links is still changed under its own name', () => {
     const c = setup({ permissions: { defaultMode: 'bypassPermissions' }, model: 'opus' });
     linkSync(c.settingsFile, join(c.config, 'other-name.json'));
     const res = run(shell, c, ['off']);

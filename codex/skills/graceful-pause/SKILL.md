@@ -1,6 +1,6 @@
 ---
 name: graceful-pause
-description: "Codex 에서 작업 중에 보내면 지금 하던 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림. 작업이 도는 동안 입력창에 `$banker-graceful-pause` 를 쓰고 Enter 하면, 실행 중인 도구 호출이 끝난 뒤 그 턴에 전달됨. 'graceful-pause'/'멈춰'/'지금 단계만 끝내고 멈춤' 시 사용."
+description: "Codex 에서 작업 중에 보내면 지금 하던 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림. 작업이 도는 동안 입력창에 `$banker-graceful-pause`(플러그인 설치면 `$banker:graceful-pause`)를 쓰고 Enter 하면, 실행 중인 도구 호출이 끝난 뒤 그 턴에 전달됨. 'graceful-pause'/'멈춰'/'지금 단계만 끝내고 멈춤' 시 사용."
 ---
 
 # graceful-pause (Codex)
@@ -23,7 +23,7 @@ Codex 는 작업 중에 Enter 로 보낸 글을 "Messages to be submitted after 
 
 ## 사용자가 쓰는 법
 
-- 작업이 도는 동안 입력창에 `$banker-graceful-pause` 를 쓰고 Enter 한다. 새 지시를 뒤에 붙여도 된다.
+- 작업이 도는 동안 입력창에 `$banker-graceful-pause` 를 쓰고 Enter 한다. Codex 플러그인으로 설치했으면 `$banker:graceful-pause` 다. 새 지시를 뒤에 붙여도 된다.
 - 지금 도구 호출까지 바로 끊으려면 Esc 를 누른다. 그때는 이 스킬이 필요 없다.
 - 작업이 없을 때 쓰면 멈출 작업이 없다고 답한다.
 - 스킬 이름을 치면 자동 완성 창이 뜬다. 첫 Enter 는 그 선택이고, 둘째 Enter 가 보낸다. 보낸 글은 입력창 위에

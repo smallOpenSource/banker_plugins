@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as A from './azure-adapter.mjs';
+import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 
 // An inode number read as BigInt: NTFS file IDs pass 2^53 (seen on the Windows test box), and a Number loses the low bits.
 const inoOf = (p) => fs.statSync(p, { bigint: true }).ino;
@@ -1042,7 +1043,7 @@ test('persistCreds: a key file whose new copy would get another owner or group i
   assert.equal(inoOf(target), ino, 'the same file, not a new one renamed over it');
 });
 
-test('persistCreds: the home key file that is a link is written where it points and stays a link; a link to nothing is refused', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {
+test('persistCreds: the home key file that is a link is written where it points and stays a link; a link to nothing is refused', { skip: symlinkSkip }, () => {
   const dir = mkTmp('persist-symlink-');
   process.env.HOME = path.join(dir, 'home');
   process.env.USERPROFILE = process.env.HOME;
@@ -1332,7 +1333,7 @@ test('pollVideo: a key held back before sending (EINSECURE, EPROXYKEY) ends the 
   assert.equal(calls.length, 0, 'nothing reached fetch');
 });
 
-test('persistCreds: a project key file that is a link is refused with nothing written, out of its folder or in it; the home key file still follows its link', { skip: process.platform === 'win32' && 'a symlink needs a privilege on Windows' }, () => {
+test('persistCreds: a project key file that is a link is refused with nothing written, out of its folder or in it; the home key file still follows its link', { skip: symlinkSkip }, () => {
   const root = mkTmp('persist-linkout-');
   const home = path.join(root, 'home');
   const proj = path.join(root, 'proj');

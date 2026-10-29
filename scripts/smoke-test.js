@@ -97,6 +97,14 @@ try {
     .filter((d) => fs.existsSync(path.join(root, 'codex', 'skills', d, 'SKILL.md'))).sort();
   ok(JSON.stringify(mfCodexOnly) === JSON.stringify(diskCodexOnly),
      `manifest codex-only == codex/skills/ ([${mfCodexOnly.join(', ')}] vs [${diskCodexOnly.join(', ')}])`);
+  // The Codex plugin (codex plugin add banker@banker-plugins) reads .codex-plugin/plugin.json: same version as the
+  // Claude plugin, its three skill folders == the manifest's Codex surfaces, codex/command-skills in step with
+  // commands/, and every script codex/hooks.json runs present (scripts/sync-codex-plugin.js --check).
+  const cxp = cp.spawnSync(process.execPath, [path.join(root, 'scripts', 'sync-codex-plugin.js'), '--check'], { encoding: 'utf8' });
+  ok(cxp.status === 0, `Codex plugin in sync (sync-codex-plugin --check)${cxp.status ? `: ${String(cxp.stderr).trim()}` : ''}`);
+  const verOf = (rel) => JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8')).version;
+  ok(verOf('.codex-plugin/plugin.json') === verOf('.claude-plugin/plugin.json'),
+     `.codex-plugin/plugin.json version == .claude-plugin/plugin.json (${verOf('.codex-plugin/plugin.json')})`);
   const mfSkillSurfaces = mfAllSkills.filter((s) => s.target !== 'codex-only');
   const mfSkills = mfSkillSurfaces.map((s) => s.name).sort();
   const diskSkills = fs.readdirSync(path.join(root, 'skills'))

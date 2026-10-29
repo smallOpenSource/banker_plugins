@@ -24,7 +24,7 @@ argument-hint: "list | css | json | widget | check [--design-md PATH] [--only SL
    | 런타임 | 스킬 디렉터리 |
    |---|---|
    | Claude Code | 이 파일 맨 위에 넣어 준 "Base directory for this skill:" 줄의 경로 |
-   | Codex | `~/.codex/skills/banker-theme-selection/` 의 절대경로. 프로젝트 범위 설치면 `./.codex/skills/banker-theme-selection/` |
+   | Codex | Codex 스킬 목록이 보이는 이 SKILL.md 경로(file)의 폴더. npm 설치는 `~/.codex/skills/banker-theme-selection/`(프로젝트 범위 설치면 `./.codex/skills/banker-theme-selection/`), 플러그인 설치(`codex plugin add`)는 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/theme-selection/`. 절대경로로 씀 |
 
    - `~` 는 따옴표 안에서 펼쳐지지 않으니 절대경로를 쓴다.
 2. 프로젝트에 `DESIGN.md` 가 있으면 `--design-md` 로 함께 먹인다. 없으면 번들 74종만 쓴다.

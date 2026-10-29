@@ -62,7 +62,8 @@ export const SKILL_CHANGES_URL = 'https://raw.githubusercontent.com/smallOpenSou
 
 // usage-log 와 체크인 본문에 실리는 스킬/커맨드 이름 꼴. 쓰는 훅 둘과 보내는 훅이 같은 규칙을 쓴다.
 // 이름은 64자까지다(가장 긴 실제 이름은 24자). 모델이 지어낸 긴 이름이 기록과 체크인에 실리지 않게 한다.
-export const SKILL_NAME_RE = /^banker:[a-z0-9_-]{1,64}$/i;
+// 스킬 폴더 이름은 모두 소문자라 대문자는 받지 않는다(`banker:FRONT-QA` 가 다른 이름으로 세어지지 않게).
+export const SKILL_NAME_RE = /^banker:[a-z0-9_-]{1,64}$/;
 
 // 갱신 확인 요청 하나의 전체 마감(ms). 시험이 줄일 수 있게 BANKER_NET_DEADLINE_MS 를 받되 줄이기만 한다: 30초보다
 // 길면 30초다. setTimeout 이 1ms 로 바꿔 버리는 값(0 이하, 숫자 아님)도 버리고 30초를 쓴다. 문서에 적지 않는 시험용 장치다.

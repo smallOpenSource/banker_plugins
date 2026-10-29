@@ -41,7 +41,7 @@ argument-hint: "[기준 커밋] [--no-boxes]"
 
 ## 4. 테스트박스 (등록돼 있으면)
 
-박스 작업은 이 스킬 폴더의 `scripts/boxes.mjs` 가 한다(Codex 에서는 `~/.codex/skills/banker-remains/scripts/boxes.mjs`). Node 만 쓰고, 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 가 있어야 한다. `--no-boxes` 를 받으면 이 단계를 건너뛰고 확인 범위에 그렇게 적는다.
+박스 작업은 이 스킬 폴더의 `scripts/boxes.mjs` 가 한다(Codex 의 npm 설치는 `~/.codex/skills/banker-remains/scripts/boxes.mjs`, 플러그인 설치는 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/remains/scripts/boxes.mjs`). Node 만 쓰고, 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 가 있어야 한다. `--no-boxes` 를 받으면 이 단계를 건너뛰고 확인 범위에 그렇게 적는다.
 
 1. `node <스킬 폴더>/scripts/boxes.mjs list` 로 등록을 본다. 등록 파일이 없으면 확인 범위에 "테스트박스 미등록" 이라 적고 넘어간다.
 2. `node <스킬 폴더>/scripts/boxes.mjs probe` 로 접속을 확인한다.

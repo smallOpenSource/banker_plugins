@@ -304,11 +304,25 @@ async function pixels(context, png) {
   return { width: img.width, height: img.height, data: Uint8ClampedArray.from(img.data) };
 }
 
+// Chromium now and then answers a screenshot with "Unable to capture screenshot" while it is busy (seen once in three
+// full runs on a loaded Linux box). That error alone is tried again, up to three times with a short wait; any other
+// error is the page's and is thrown at once.
+export async function screenshot(page, opts, { tries = 3, waitMs = 150 } = {}) {
+  for (let n = 1; ; n++) {
+    try {
+      return await page.screenshot(opts);
+    } catch (e) {
+      if (n >= tries || !/Unable to capture screenshot/i.test(String(e?.message))) throw e;
+      await new Promise((r) => setTimeout(r, waitMs * n));
+    }
+  }
+}
+
 async function lineContrast(page, i, panel) {
   const clip = { x: Math.max(0, Math.floor(panel.x)), y: Math.max(0, Math.floor(panel.y)), width: Math.ceil(panel.width), height: Math.ceil(panel.height) };
   const lines = await page.evaluate(hideTextLines, { i, parts: TEXT_PARTS });
   await page.waitForTimeout(80);
-  const png = await page.screenshot({ type: 'png', clip });
+  const png = await screenshot(page, { type: 'png', clip });
   await page.evaluate(showText, { i, parts: TEXT_PARTS });
   const img = await pixels(page.context(), png);
   return lines.map((l) => {

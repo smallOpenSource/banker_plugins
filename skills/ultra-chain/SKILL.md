@@ -65,7 +65,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 이어 하기 메모 | OMC 작업 노트에 덧붙이기(`notepad_write_working`). 우선 노트는 통째로 바뀌므로 쓰지 않음 | `.omx/notepad.md` 에 한 줄 덧붙이기 |
 | 실행 기록 기본 폴더 | `.omc/ultra-chain/` | `.omx/ultra-chain/` |
 
-- Codex 에는 Skill 도구가 없다. 위 표의 `$이름` 은 그 스킬의 `SKILL.md` 를 읽고 그대로 따른다는 뜻이다. banker 스킬은 `<S>/../banker-<이름>/SKILL.md`, OMX 스킬은 `~/.codex/skills/<이름>/SKILL.md` 다. 그 스킬이 상태 기록을 요구하면 그 지시대로 직접 기록한다. 큰 `SKILL.md`(ralph-qa 는 약 71KB)는 셸 출력 한도에서 잘리니 나눠 읽는다.
+- Codex 에는 Skill 도구가 없다. 위 표의 `$이름` 은 그 스킬의 `SKILL.md` 를 읽고 그대로 따른다는 뜻이다. banker 스킬은 npm 설치면 `<S>/../banker-<이름>/SKILL.md`, Codex 플러그인 설치(`<S>` 가 `plugins/cache/` 아래, 스킬 이름 `banker:<이름>`)면 `<S>/../<이름>/SKILL.md` 다. 표의 `$banker-<이름>` 은 플러그인 설치에서 `$banker:<이름>` 이다. OMX 스킬은 `~/.codex/skills/<이름>/SKILL.md` 다. 그 스킬이 상태 기록을 요구하면 그 지시대로 직접 기록한다. 큰 `SKILL.md`(ralph-qa 는 약 71KB)는 셸 출력 한도에서 잘리니 나눠 읽는다.
 - Codex 의 하위 에이전트(critic, 시각 판정)는 저자 대화를 넘기지 않는다. multi-agent v2 는 `fork_turns="none"` 을 주고, v1 은 `fork_context` 를 주지 않는다. 판정을 받으면 `close_agent` 로 닫는다.
 - Codex 환경 지시가 역할(`agent_type`)을 요구하면, 고정 모델이 세션 모델과 같은 역할을 쓰고 지시 앞머리에 파일 쓰기 금지를 적는다. 그런 역할이 없으면 역할 없이 띄운다. 쓴 역할과 모델, 강도를 판정 기록의 `note` 에 적는다.
 - Codex 의 오래 도는 명령은 기다리는 시간을 박스 `--timeout` 보다 길게 둔다. 기다리다 끊기면 박스 정리와 결과 JSON 이 남지 않는다.
@@ -424,7 +424,7 @@ node "<S>/references/chain-report.mjs" "<run>"
 
 압축(compaction)이나 중단 뒤에는 다음 순서로 잇는다.
 
-1. 이 스킬을 다시 부른다: `--run=<실행 폴더> --from=<단계>`(Claude Code `Skill("banker:ultra-chain")`, Codex `$banker-ultra-chain`). 지시와 `<S>` 를 되찾기 위해서다. 실행 폴더는 이어 하기 메모나 압축 요약에서 찾는다.
+1. 이 스킬을 다시 부른다: `--run=<실행 폴더> --from=<단계>`(Claude Code `Skill("banker:ultra-chain")`, Codex `$banker-ultra-chain`, 플러그인 설치면 `$banker:ultra-chain`). 지시와 `<S>` 를 되찾기 위해서다. 실행 폴더는 이어 하기 메모나 압축 요약에서 찾는다.
 2. `node "<S>/references/chain-ledger.mjs" show "<run>"` 로 `current`(다시 시작할 단계), 단계별 `lastVerdict`(마지막 판정과 blocker), `maxRound` 를 본다. 멈추거나 실패한 실행은 그 단계가 `current` 다. 원래 플래그는 `task.md` 첫 줄과 `preflight` 기록에 있다.
 3. 끊길 때 돌던 작업(박스 시험, 검토 좌석, 서버)이 끝났는지 확인한다. 끝나지 않았으면 알림을 기다리거나 멈춘다. 끊기기 전 실행의 늦은 판정은 쓰지 않는다.
 4. 돌던 ralph-qa 실행은 되살리지 않는다. 좌석과 끈끈한 반대는 한 실행 안에서만 유지되기 때문이다.

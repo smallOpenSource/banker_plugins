@@ -5,12 +5,12 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { codexHomeOf, namesIn, turnKey, turnSkills } from './telemetry-count-codex.mjs';
+import { codexHomeOf, namesIn, turnKey, turnSkills, withTurnsLock } from './telemetry-count-codex.mjs';
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'telemetry-count-codex.mjs');
 const tmps = [];
@@ -194,4 +194,181 @@ test('a turn whose start alone is missing is no shape change, and nothing is not
   assert.deepEqual(turnSkills(f, 't1'), []);
   run(tmp, stop(f));
   assert.ok(!existsSync(join(bankerDir(tmp), 'codex-shape-miss.json')));
+});
+
+// Codex plugin install (codex plugin add banker@<marketplace>): the skills sit in the plugin cache under three folders.
+function pluginSkill(home, folder, name, mkt = 'banker-plugins', ver = '0.22.0') {
+  writeFileSync(join(home, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
+  const dir = join(home, 'plugins', 'cache', mkt, 'banker', ver, ...folder.split('/'), name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'SKILL.md'), '');
+  return join(dir, 'SKILL.md');
+}
+// What Codex puts in the rollout for $banker:<name>.
+const injectedPlugin = (path, name) => ({
+  type: 'response_item',
+  payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `<skill>\n<name>banker:${name}</name>\n<path>${path}</path>\n---\n` }] },
+});
+
+test('plugin skill paths name the skill and the file that proves it is installed', () => {
+  const p = '/h/.codex/plugins/cache/banker-plugins/banker/0.22.0';
+  assert.deepEqual([...namesIn(`cat ${p}/skills/lfm/SKILL.md`)], ['banker:lfm\tplugins/cache/banker-plugins/banker/0.22.0/skills/lfm/SKILL.md']);
+  assert.deepEqual([...namesIn(`cat ${p}/codex/skills/progress/SKILL.md`)], ['banker:progress\tplugins/cache/banker-plugins/banker/0.22.0/codex/skills/progress/SKILL.md']);
+  assert.deepEqual([...namesIn('C:\\Users\\u\\.codex\\plugins\\cache\\m\\banker\\1.0\\codex\\command-skills\\setup\\SKILL.md')], ['banker:setup\tplugins/cache/m/banker/1.0/codex/command-skills/setup/SKILL.md']);
+  for (const other of [`cat ${p}/hooks/x/SKILL.md`, `cat ${p}/skills/LFM/SKILL.md`, 'cat /h/.codex/plugins/cache/m/other/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/../banker/1/skills/lfm/SKILL.md', 'cat /h/.codex/plugins/cache/m/banker/../skills/lfm/SKILL.md', `cat ${p}/command-skills/setup/SKILL.md`]) {
+    assert.deepEqual([...namesIn(other)], [], other);
+  }
+});
+
+test('a plugin skill counts by its name when its SKILL.md is in this home\'s plugin cache, once per turn', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const home = codexHome(tmp);
+  const lfm = pluginSkill(home, 'skills', 'lfm');
+  const setup = pluginSkill(home, 'codex/command-skills', 'setup');
+  const f = rollout(tmp, [started('t1'), injectedPlugin(lfm, 'lfm'), call(`cat ${lfm}`), call(`cat ${setup}`),
+    call(`cat ${home}/plugins/cache/banker-plugins/banker/0.21.0/skills/lfm/SKILL.md`),
+    call(`cat ${pluginSkill(home, 'skills', 'lineage', 'other-mkt')}`),
+    call('cat /x/.codex/plugins/cache/banker-plugins/banker/0.22.0/skills/secret-here/SKILL.md')]);
+  run(tmp, stop(f));
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]).sort(), ['banker:lfm', 'banker:setup']);
+});
+
+test('a plugin hook finds the Codex home from PLUGIN_ROOT when the rollout is elsewhere', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const home = codexHome(tmp);
+  const lfm = pluginSkill(home, 'skills', 'lfm');
+  run(tmp, stop(rollout(tmp, [started('t1'), call(`cat ${lfm}`)])), { CODEX_HOME: 'not-here', PLUGIN_ROOT: join(home, 'plugins', 'cache', 'banker-plugins', 'banker', '0.22.0') });
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]), ['banker:lfm']);
+});
+
+// The npm hook and the plugin hook both run at Stop when both routes are installed. They count one turn once.
+test('Stop hooks that run at once for one turn count it once', async () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const { spawn } = await import('node:child_process');
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp, CODEX_HOME: codexHome(tmp) };
+  delete env.BANKER_NO_TELEMETRY;
+  delete env.BANKER_TELEMETRY_ENDPOINT;
+  for (let round = 0; round < 10; round++) {
+    const input = JSON.stringify(stop(rollout(tmp, [started(`t${round}`), cat('ralph-qa')]), `t${round}`));
+    await Promise.all([0, 1, 2].map(() => new Promise((res) => {
+      const c = spawn(process.execPath, [HOOK], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+      c.on('close', res);
+      c.stdin.end(input);
+    })));
+    assert.equal(read(tmp).length, round + 1, `round ${round}: ${read(tmp).join(' | ')}`);
+  }
+  assert.ok(!existsSync(`${turnsFile(tmp)}.lock`), 'the lock is let go');
+});
+
+test('the turn lock waits for a live holder, then leaves the turn to it; a dead holder\'s lock is taken over', () => {
+  const tmp = mkTmp();
+  const prev = process.env.XDG_CONFIG_HOME;
+  const prevApp = process.env.APPDATA;
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  try {
+    const lock = `${turnsFile(tmp)}.lock`;
+    mkdirSync(lock, { recursive: true });
+    let ran = false;
+    const t0 = Date.now();
+    assert.deepEqual(withTurnsLock(() => { ran = true; return ['x']; }, { wait: 200 }), []);
+    assert.ok(!ran && Date.now() - t0 >= 200, 'a held lock is waited on, then the turn is left to its holder');
+    assert.ok(existsSync(lock), 'another hook\'s lock stays');
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lock, old, old);
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), ['counted'], 'a lock older than a hook can live is taken over');
+    assert.ok(!existsSync(lock));
+    const seven = (Date.now() - 7000) / 1000;
+    mkdirSync(lock);
+    utimesSync(lock, seven, seven);
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), ['counted'], 'a holder the 5 s hook limit killed does not cost the next turn');
+    assert.deepEqual(readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock')), [], 'nothing of the old lock is left');
+    // A file where the config folder goes: counting goes on without the lock instead of waiting at every Stop.
+    const other = mkTmp();
+    writeFileSync(join(other, 'banker'), '');
+    process.env.XDG_CONFIG_HOME = other;
+    process.env.APPDATA = other;
+    const t1 = Date.now();
+    assert.deepEqual(withTurnsLock(() => ['ran'], { wait: 2000 }), ['ran']);
+    assert.ok(Date.now() - t1 < 1000, 'no wait');
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
+});
+
+// Two hooks take over one dead holder's lock: B looks (old), A moves it away and takes the lock anew, B then moves A's
+// fresh lock. B must see that what it moved is fresh and leave the turn to A, without putting it back (a third hook
+// may have taken the name meanwhile).
+test('a hook that moved away a lock another hook had just taken backs off and does not count', async () => {
+  const tmp = mkTmp();
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const prev = process.env.XDG_CONFIG_HOME;
+  const prevApp = process.env.APPDATA;
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  const lock = `${turnsFile(tmp)}.lock`;
+  mkdirSync(lock, { recursive: true });
+  const old = (Date.now() - 60_000) / 1000;
+  utimesSync(lock, old, old);
+  const real = fs.renameSync;
+  let raced = false;
+  fs.renameSync = (from, to) => {
+    if (!raced && String(from) === lock) { raced = true; fs.rmdirSync(lock); fs.mkdirSync(lock); }
+    return real(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), [], 'the turn is left to the hook that holds the lock');
+  } finally {
+    fs.renameSync = real;
+    syncBuiltinESMExports();
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
+  assert.ok(raced);
+  const moved = readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock.stale-'));
+  assert.equal(moved.length, 1, 'the fresh lock it moved stays aside, not put back over the name');
+  // The next hook that takes the lock clears what was moved aside once it is old.
+  const aged = (Date.now() - 60_000) / 1000;
+  utimesSync(join(tmp, 'banker', moved[0]), aged, aged);
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  try {
+    assert.deepEqual(withTurnsLock(() => ['counted'], { wait: 200 }), ['counted']);
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
+  assert.deepEqual(readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock')), [], 'nothing of the locks is left');
+});
+
+// A hook lets go only of its own lock: if its lock was moved away and another hook took the name meanwhile, that lock stays.
+test('a hook lets go only of a lock that holds its own owner mark', () => {
+  const tmp = mkTmp();
+  const prev = process.env.XDG_CONFIG_HOME;
+  const prevApp = process.env.APPDATA;
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  const lock = `${turnsFile(tmp)}.lock`;
+  try {
+    assert.deepEqual(withTurnsLock(() => {
+      assert.ok(existsSync(join(lock, 'owner')), 'the lock carries an owner mark while held');
+      rmSync(lock, { recursive: true });
+      mkdirSync(lock);
+      writeFileSync(join(lock, 'owner'), 'another hook');
+      return ['counted'];
+    }), ['counted']);
+    assert.equal(readFileSync(join(lock, 'owner'), 'utf8'), 'another hook', "the other hook's lock is not let go");
+    rmSync(lock, { recursive: true });
+    withTurnsLock(() => []);
+    assert.ok(!existsSync(lock), 'its own lock is let go');
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
 });

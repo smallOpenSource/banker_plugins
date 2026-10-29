@@ -13,6 +13,7 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { pwshEnv } from "../../../scripts/test-fixtures/pwsh-env.mjs";
+import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const TOOL = fileURLToPath(new URL("./omc-patch.mjs", import.meta.url));
 const root = mkdtempSync(join(tmpdir(), "omc-patch-test-"));
@@ -2569,7 +2570,7 @@ test("an apply after a revert that kept a linked PINNED does not write through t
   assert.equal(again.code, 1, again.out);
 });
 
-test("a PINNED swapped for a link between the check and the write is replaced, never written through", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "file symlinks need privileges") }, () => {
+test("a PINNED swapped for a link between the check and the write is replaced, never written through", { skip: (!HAS_GIT && "git not found") || (symlinkSkip) }, () => {
   const { f, record, pinfile } = olderPin();
   writeFileSync(pinfile, record);
   const victim = join(root, `victim${seq++}.txt`);
@@ -2586,7 +2587,7 @@ test("a PINNED swapped for a link between the check and the write is replaced, n
   assert.equal(read(victim), "IMPORTANT USER DATA\n");
 });
 
-test("a link planted at PINNED after the check of a first pin is replaced, never written through", { skip: (!HAS_GIT && "git not found") || (process.platform === "win32" && "file symlinks need privileges") }, () => {
+test("a link planted at PINNED after the check of a first pin is replaced, never written through", { skip: (!HAS_GIT && "git not found") || (symlinkSkip) }, () => {
   const f = fakeHome([{ v: "5.6.1", active: true }]);
   const victim = join(root, `victim${seq++}.txt`);
   writeFileSync(victim, "IMPORTANT USER DATA\n");

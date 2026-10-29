@@ -59,8 +59,8 @@ const tmp = (name) => path.join(TMP, name);
 const XDG_CACHE_HOME = process.env.XDG_CACHE_HOME;
 process.env.XDG_CACHE_HOME = tmp('xdg-cache');
 
-// A python run can leave a __pycache__ beside the script it imported from. build_a4p.py imports
-// nothing local so this should stay empty, but the repo has to come out of a test run unchanged.
+// A python run can leave a __pycache__ beside the script it imported from. U18b imports build_a4p.py, with -B so no
+// bytecode is written, but the repo has to come out of a test run unchanged.
 // Only a directory this run created is removed; one that was already there is left alone.
 const PYCACHE = path.join(HERE, '__pycache__');
 const PYCACHE_PREEXISTING = fs.existsSync(PYCACHE);
@@ -1076,6 +1076,154 @@ test('U18 every font-file hint is a substring of the family it belongs to', () =
   assert.ok(B.FONT_CHAIN.includes('Noto Sans KR'));
 });
 
+// U18b: the python builder picks a font the way the node builder does. The fix above went into build_a4p.js only, so on
+// a Windows box with NotoSansKR-VF.ttf and no CJK font the python builder still wrote "Noto Sans CJK KR" (E1 measured
+// it, 2026-10-28). build_a4p.py loads without python-pptx, so this needs python 3.9 or newer and nothing else.
+const PY_MODULE_PROBE = 'import sys; sys.exit(3) if sys.version_info < (3, 9) else None';
+const pythonModule = (() => {
+  const candidates = [process.env.A4P_PYTHON, process.env.PYTHON, 'python3', 'python', 'python3.12', 'python3.11', 'python3.10'].filter(Boolean);
+  const bin = candidates.find((c) => spawnSync(c, ['-c', PY_MODULE_PROBE], { encoding: 'utf8' }).status === 0);
+  return bin ? { ok: true, bin } : { ok: false, reason: `no interpreter among [${candidates.join(', ')}] is python 3.9 or newer` };
+})();
+
+const PY_FONT_PROBE = String.raw`
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import build_a4p as b
+base = sys.argv[2]
+def folder(name, files):
+    d = os.path.join(base, name)
+    os.makedirs(d)
+    for n in files:
+        open(os.path.join(d, n), 'wb').close()
+    return d
+# A file system that lists the bold cut first, so a first-hit search would take it whatever the real disk does.
+real_scandir = os.scandir
+os.scandir = lambda p: iter(sorted(real_scandir(p), key=lambda e: ('bold' not in e.name.lower(), e.name)))
+main = folder('main', ('NotoSans-Regular.ttf', 'NotoSansKR-Bold.ttf', 'NotoSansKR-VF.ttf'))
+out = {'chain': list(b.FONT_CHAIN), 'hints': {k: list(v) for k, v in b.FONT_FILE_HINTS.items()}}
+b.font_search_dirs = lambda: [main]
+latin = os.path.join(main, 'NotoSans-Regular.ttf')
+b.fc_match = lambda pattern: {'file': latin, 'families': ['Noto Sans']}
+out['cjkFromLatin'] = b.find_font_file('Noto Sans CJK KR')
+out['noAscii'] = b.find_font_file('맑은 고딕')
+b.fc_match = lambda pattern: {'file': latin, 'families': ['NanumGothic', '나눔고딕']}
+out['koreanFamily'] = [b.find_font_file('나눔고딕') == latin, b.find_font_file('맑은 고딕')]
+b.fc_match = lambda pattern: None
+out['kr'] = os.path.basename(b.find_font_file('Noto Sans KR') or '')
+os.environ.pop('BANKER_PPTX_FONT', None)
+out['auto'] = b.resolve_font(None, 'auto')['name']
+r = b.resolve_font(' Noto "Sans<> KR\x01 ', 'auto')
+out['explicit'] = [r['name'], r['from']]
+r = b.resolve_font('없는폰트', 'auto')
+out['notFound'] = [r['name'], [w['code'] for w in r['warnings']]]
+out['trim'] = b.sanitize_font_name('\ufeff Noto Sans KR\x85 ')
+b.font_search_dirs = lambda: [folder('ties', ('NotoSansKR-VF.ttf', 'NotoSansKR.ttf'))]
+out['shorter'] = os.path.basename(b.find_font_file('Noto Sans KR') or '')
+first, second = folder('first', ('NotoSansKR-Bold.ttf',)), folder('second', ('NotoSansKR-Regular.ttf',))
+b.font_search_dirs = lambda: [first, second]
+out['firstFolder'] = os.path.relpath(b.find_font_file('Noto Sans KR') or '', base)
+print(json.dumps(out))
+`;
+
+test('U18b the python builder carries the node chain and hints, checks a family one way, and prefers the regular file', (t) => {
+  if (!pythonModule.ok) {
+    if (process.env.A4P_REQUIRE_BUILDERS === '1') assert.fail(`${pythonModule.reason} (A4P_REQUIRE_BUILDERS=1)`);
+    t.skip(pythonModule.reason);
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(TMP, 'u18b-'));
+  const r = spawnSync(pythonModule.bin, ['-B', '-c', PY_FONT_PROBE, HERE, dir], { encoding: 'utf8', cwd: TMP });
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.deepEqual(got.chain, B.FONT_CHAIN, 'the same chain, in the same order');
+  assert.deepEqual(got.hints, B.FONT_FILE_HINTS, 'the same file hints');
+  assert.equal(got.cjkFromLatin, null, 'fc-match answering "Noto Sans" for "Noto Sans CJK KR" is a substitute, not a hit');
+  assert.equal(got.noAscii, null, 'a name with no ASCII letter has nothing to compare, so nothing matches it');
+  assert.deepEqual(got.koreanFamily, [true, null], 'a Korean name matches only a family fc-match spells the same way');
+  assert.equal(got.kr, 'NotoSansKR-VF.ttf', 'the regular cut before the bold one, though the folder lists the bold one first');
+  assert.equal(got.shorter, 'NotoSansKR.ttf', 'between two of one rank, the shorter name');
+  assert.equal(got.firstFolder, path.join('first', 'NotoSansKR-Bold.ttf'), 'a hit in an earlier font folder wins');
+  assert.equal(got.auto, 'Noto Sans KR', 'a box with only NotoSansKR-VF.ttf gets the name that is installed');
+  assert.deepEqual(got.explicit, ['Noto Sans KR', '--font'], 'a --font name is cleaned as the node builder cleans it');
+  assert.deepEqual(got.notFound, ['Noto Sans KR', ['FONT_NOT_FOUND']], 'a name that is not there is reported, then the chain decides');
+  assert.equal(got.trim, B.sanitizeFontName('\ufeff Noto Sans KR\x85 '), 'the ends are trimmed as JavaScript trims them');
+});
+
+// U18c runs the lookups with no fc-match on PATH, so a machine whose fc-match knows 맑은 고딕 cannot answer for it, and
+// checks the hint table rather than the disk, so a font whose file name holds "proto" cannot either.
+test('U18c the node builder finds nothing for a name with no ASCII letter, and a hint lookup reads no inherited key', () => {
+  const probe = `const B = require(${JSON.stringify(BUILD_JS)});
+    const names = ['constructor', '__proto__', 'toString'];
+    console.log(JSON.stringify({
+      korean: B.findFontFile('\\ub9d1\\uc740 \\uace0\\ub515'),
+      hints: names.map((n) => [n, B.fontHints(n)]),
+      resolved: names.map((n) => {
+        const r = B.resolveFont({ fontArg: n, metaFont: 'auto' });
+        // A machine may hold a font whose file name has the hint in it; the answer must then agree with the lookup.
+        return [n, B.findFontFile(n) ? r.from === '--font' : r.from !== '--font' && r.warnings[0]?.code === 'FONT_NOT_FOUND' && r.warnings[0]?.detail === n];
+      }),
+    }));`;
+  const empty = fs.mkdtempSync(path.join(TMP, 'u18c-'));
+  const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env: { ...process.env, PATH: empty } });
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout.trim());
+  assert.equal(got.korean, null, 'no fc-match to spell the family, and no file name to compare: nothing');
+  assert.deepEqual(got.hints, [['constructor', ['constructor']], ['__proto__', ['proto']], ['toString', ['tostring']]], 'the name itself, not what Object carries');
+  assert.deepEqual(got.resolved, [['constructor', true], ['__proto__', true], ['toString', true]], 'resolveFont takes the name only when the lookup found it, and says FONT_NOT_FOUND otherwise');
+});
+
+// The node builder's Dirent calls a linked folder a link, a Windows junction too, and does not enter it. python before
+// 3.12 calls a junction a folder, so the python builder checks for a reparse point itself. The link here is a junction
+// on Windows (no admin rights needed); elsewhere 'junction' is ignored and it is a folder symlink.
+const PY_LINKED_PROBE = String.raw`
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import build_a4p as b
+b.fc_match = lambda pattern: None
+b.font_search_dirs = lambda: [sys.argv[2]]
+linked = b.find_font_file('Noto Sans KR')
+b.font_search_dirs = lambda: [sys.argv[3]]
+print(json.dumps([linked, b.find_font_file('Noto Sans KR')]))
+`;
+test('U18e the python builder does not enter a linked font folder, a Windows junction among them, and does enter a real one', (t) => {
+  if (!pythonModule.ok) {
+    if (process.env.A4P_REQUIRE_BUILDERS === '1') assert.fail(`${pythonModule.reason} (A4P_REQUIRE_BUILDERS=1)`);
+    t.skip(pythonModule.reason);
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(TMP, 'u18e-'));
+  const elsewhere = path.join(dir, 'elsewhere');
+  fs.mkdirSync(elsewhere);
+  fs.writeFileSync(path.join(elsewhere, 'NotoSansKR-Regular.ttf'), '');
+  const linkedRoot = path.join(dir, 'linked');
+  fs.mkdirSync(linkedRoot);
+  fs.symlinkSync(elsewhere, path.join(linkedRoot, 'sub'), 'junction');
+  const realRoot = path.join(dir, 'real');
+  fs.mkdirSync(path.join(realRoot, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(realRoot, 'sub', 'NotoSansKR-Regular.ttf'), '');
+  const r = spawnSync(pythonModule.bin, ['-B', '-c', PY_LINKED_PROBE, HERE, linkedRoot, realRoot], { encoding: 'utf8', cwd: TMP });
+  assert.equal(r.status, 0, r.stderr);
+  const [linked, real] = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.equal(linked, null, 'a font behind a linked folder is not found');
+  assert.equal(real, path.join(realRoot, 'sub', 'NotoSansKR-Regular.ttf'), 'a font in a real subfolder is');
+});
+
+// A Korean family name has no ASCII letter to compare, so fc-match's answer must spell it exactly. The stand-in
+// fc-match answers every pattern with one file whose families are NanumGothic and 나눔고딕.
+test('U18d the node builder takes a Korean name only when fc-match returns that family', { skip: process.platform === 'win32' && 'the stand-in fc-match is a sh script' }, () => {
+  const bin = fs.mkdtempSync(path.join(TMP, 'u18d-'));
+  const font = path.join(bin, 'NanumGothic.ttf');
+  fs.writeFileSync(font, '');
+  const shQuoted = `'${font.replace(/'/g, `'\\''`)}'`;
+  fs.writeFileSync(path.join(bin, 'fc-match'), `#!/bin/sh\nprintf '%s|NanumGothic,나눔고딕' ${shQuoted}\n`, { mode: 0o755 });
+  const probe = `const B = require(${JSON.stringify(BUILD_JS)});
+    console.log(JSON.stringify([B.findFontFile('나눔고딕'), B.findFontFile('맑은 고딕')]));`;
+  const r = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), [font, null]);
+});
+
 // ===========================================================================
 // U17 — meta.title length: the two builders must agree
 // ===========================================================================
@@ -1131,7 +1279,7 @@ test('U17b both builders carry the same title cap and warning code', () => {
   // source keeps this in the dependency-free tier: no interpreter required.
   const py = fs.readFileSync(path.join(HERE, 'build_a4p.py'), 'utf8');
   assert.match(py, /CORE_TITLE_MAX\s*=\s*255/, 'python must clamp at the same length');
-  assert.match(py, /'code':\s*'TITLE_TRUNCATED'/, 'python must emit the same warning code');
+  assert.match(py, /(['"])code\1:\s*(['"])TITLE_TRUNCATED\2/, 'python must emit the same warning code');
   assert.match(py, /except ValueError as err:\s*\n\s*raise UsageError/,
     'a library refusal must become UsageError (exit 3), never a raw traceback');
 

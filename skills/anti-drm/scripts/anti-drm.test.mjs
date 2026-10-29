@@ -41,7 +41,7 @@ const FLAGS = { deny: DENY, alt: ".md,.html,.tsv" };
 const CONFIG = checkConfig({ deny: splitList(DENY), alt: splitList(FLAGS.alt) }).config;
 const RULES = renderRules(TEMPLATE, CONFIG);
 
-const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits or plain symlinks" };
+const posixOnly = { skip: process.platform === "win32" && "Windows has no POSIX mode bits, owners, FIFOs, sockets or line breaks in names" };
 const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
 const permTest = { skip: process.platform === "win32" ? "Windows has no POSIX mode bits" : asRoot && "root ignores mode bits" };
 
@@ -706,7 +706,7 @@ test("hardening: an unreadable settings file is refused with the right words, on
   }
 });
 
-test("hardening: a settings link that loops is replaced by config, and on refuses it with exit 1", posixOnly, () => {
+test("hardening: a settings link that loops is replaced by config, and on refuses it with exit 1", symlinkTest, () => {
   const s = setup();
   const folder = join(s.dir, "config", "banker");
   mkdirSync(folder, { recursive: true });
@@ -1142,7 +1142,7 @@ test("config replaces a hard link to a file it cannot read instead of refusing, 
 });
 
 // With O_NOFOLLOW stripped from every open, as on Windows, the look before the open alone keeps a planted link unread.
-test("without O_NOFOLLOW (as on Windows) a planted settings link is still neither read nor kept", posixOnly, () => {
+test("without O_NOFOLLOW (as on Windows) a planted settings link is still neither read nor kept", symlinkTest, () => {
   const s = setup();
   mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
   const secret = join(s.dir, "id_key");
@@ -1163,7 +1163,7 @@ test("without O_NOFOLLOW (as on Windows) a planted settings link is still neithe
 
 // The first look sees a regular file; a link put there before the open is not followed (O_NOFOLLOW), so what it
 // leads to is neither read nor kept. Windows has no O_NOFOLLOW: the look before the open stands in.
-test("config does not read what a link swapped in after the first look leads to", posixOnly, () => {
+test("config does not read what a link swapped in after the first look leads to", symlinkTest, () => {
   const s = setup();
   mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
   writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
@@ -1221,7 +1221,7 @@ test("config says where a file anti-drm did not write went, and says so when it 
 
 test("config does not call a folder or a link at .bak a file kept before: it says something that is not a regular file is there", () => {
   const places = [["a folder", (bak) => { mkdirSync(bak); return true; }]];
-  if (process.platform !== "win32") places.push(["a link to nothing", (bak) => { symlinkSync(join(bak, "..", "nowhere"), bak); return true; }]);
+  if (symlinks) places.push(["a link to nothing", (bak) => { symlinkSync(join(bak, "..", "nowhere"), bak); return true; }]);
   for (const [what, make] of places) {
     const s = setup();
     mkdirSync(join(s.dir, "config", "banker"), { recursive: true });
@@ -1364,7 +1364,7 @@ test("on with a link at the settings path asks for the settings, since the save 
   const cases = [
     ["to a folder", (f, d) => { mkdirSync(join(d, "a-folder")); symlinkSync(join(d, "a-folder"), f); }],
     ["to a file past 64 KiB", (f, d) => { writeFileSync(join(d, "big.json"), " ".repeat(64 * 1024 + 1)); symlinkSync(join(d, "big.json"), f); }],
-    ...(process.platform === "win32" ? [] : [["in a loop", (f, d) => { symlinkSync(join(d, "loop-b"), f); symlinkSync(f, join(d, "loop-b")); }]]),
+    ...(symlinks ? [["in a loop", (f, d) => { symlinkSync(join(d, "loop-b"), f); symlinkSync(f, join(d, "loop-b")); }]] : []),
     ...(process.platform === "win32" || asRoot ? [] : [["to a file it cannot read", (f, d) => { writeFileSync(join(d, "locked.json"), "{}"); chmodSync(join(d, "locked.json"), 0o000); symlinkSync(join(d, "locked.json"), f); }]]),
   ];
   for (const [what, make] of cases) {

@@ -542,14 +542,22 @@ function fontWeightRank(flat) {
   return 1;
 }
 
+// 파일명 탐색에 쓰는 조각. 힌트 표에 없는 이름(constructor 처럼 Object 가 물려받은 이름 포함)은 정리한 이름 하나.
+function fontHints(name) {
+  const key = String(name).toLowerCase();
+  return (Object.prototype.hasOwnProperty.call(FONT_FILE_HINTS, key) ? FONT_FILE_HINTS[key] : [normName(name)]).filter(Boolean);
+}
+
 function globFontFile(name) {
-  const hints = FONT_FILE_HINTS[String(name).toLowerCase()] || [normName(name)];
+  const hints = fontHints(name);
+  if (!hints.length) return null;
   let budget = 20000;
   const found = [];
   const walk = (dir, depth) => {
     if (depth > 6 || budget <= 0) return;
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)); // 어느 OS 에서나 이름순
     const subdirs = [];
     for (const ent of entries) {
       budget -= 1;
@@ -581,6 +589,13 @@ function globFontFile(name) {
  */
 function findFontFile(name) {
   const want = normName(name);
+  if (!want) {
+    // ASCII 글자가 없는 이름(예: 나눔고딕)은 정리한 형태로 대조할 수 없다. 빈 문자열은 어떤 family 에나 들어 있다.
+    // fc-match 가 돌려준 family 원문과 정확히 같을 때만 찾은 것으로 본다. 파일명 탐색은 하지 않는다.
+    const exact = String(name).trim().toLowerCase();
+    const hit = fcMatch(escFc(name));
+    return hit && hit.families.some((f) => f.toLowerCase() === exact) && fs.existsSync(hit.file) ? hit.file : null;
+  }
   // 한 방향(family 가 요청 이름을 품는가)만 본다. 반대 방향까지 허용하면
   // "Noto Sans CJK KR" 을 요청했는데 "Noto Sans" 가 통과해 한글 없는 폰트에 그 이름이 붙는다.
   const hit = fcMatch(escFc(name));
@@ -785,7 +800,8 @@ const USAGE = [
   '                     사람이 읽는 표와 상태 JSON 은 stderr 로 간다(리다이렉트 안전).',
   '  --out <경로>       .pptx 출력 경로 (--emit-json 과 함께 쓰면 deck JSON 출력 경로)',
   '  --font <이름>      폰트 이름을 직접 지정. 체인: --font → BANKER_PPTX_FONT → meta.font',
-  '                     → Noto Sans CJK KR → Malgun Gothic → Apple SD Gothic Neo → NanumGothic → 시스템 한국어 sans',
+  '                     → Noto Sans CJK KR → Noto Sans KR → Malgun Gothic → Apple SD Gothic Neo → AppleGothic',
+  '                     → NanumGothic → 시스템 한국어 sans',
   '  -h, --help         이 도움말',
   '',
   '종료 코드: 0 통과 · 1 검증 실패 · 2 환경 미비(pptxgenjs 없음) · 3 사용법 오류',
@@ -920,4 +936,6 @@ module.exports = {
   BULLET_PREFIX,
   FONT_CHAIN,
   FONT_FILE_HINTS,
+  fontHints,
+  sanitizeFontName,
 };

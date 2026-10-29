@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { PATTERNS, entropy, scan } from "./payload-scan.mjs";
+import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const SCAN = fileURLToPath(new URL("./payload-scan.mjs", import.meta.url));
 
@@ -281,7 +282,7 @@ test("an Anthropic key is reported once, not also as an OpenAI key", () => {
   assert.deepEqual(kinds, ["anthropic-key"]);
 });
 
-test("the command line still reports when node keeps the symlink it was started through", { skip: process.platform === "win32" && "symlinks need privileges" }, () => {
+test("the command line still reports when node keeps the symlink it was started through", { skip: symlinkSkip }, () => {
   const dir = mkdtempSync(join(tmpdir(), "payload-scan-link-"));
   try {
     symlinkSync(dirname(SCAN), join(dir, "refs"));

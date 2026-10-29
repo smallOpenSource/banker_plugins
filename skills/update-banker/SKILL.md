@@ -13,8 +13,10 @@ banker 는 서로 다른 메커니즘의 채널 3개로 설치되고, 그 채널
 **런타임:** 축은 OS 가 아니라 **채널**이다. banker 는 dependencies 0 이고 설치가 파일 복사라 OS 분기가 사실상 없다.
 
 - **Claude Code**: 플러그인 채널이 있다. 갱신 동사는 `claude plugin update`, 관측 지점은 `~/.claude/plugins/installed_plugins.json`.
-- **Codex CLI**: `codex plugin` 에 update 동사가 **없다.** 유일한 경로는 npm 갱신 후 `banker setup --codex` 이고, 이건 파괴적이다.
-- **양쪽 공통**: npm 전역 CLI 채널. 이게 Codex 채널의 **상류**라 언제나 먼저다.
+- **Codex CLI**: 설치 길이 둘이다. 갱신 방법이 다르다.
+  - npm 길(`banker setup --codex`, 스킬 `$banker-<이름>`): npm 갱신 후 `banker setup --codex` 를 다시 돌린다. 이건 파괴적이다.
+  - 플러그인 길(`codex plugin add banker@banker-plugins`, 스킬 `$banker:<이름>`): `codex plugin` 에 update 동사는 없지만 `codex plugin marketplace upgrade banker-plugins` 가 GitHub 의 새 판을 받아 설치된 플러그인도 바꾼다. Codex 는 세션을 시작할 때도 스스로 올린다(0.144.5 실측). 파괴적이지 않고 npm 과 무관하다.
+- **양쪽 공통**: npm 전역 CLI 채널. 이게 Codex npm 길의 **상류**라 언제나 먼저다. Codex 플러그인 길의 상류는 GitHub 저장소라 npm 게이트를 받지 않는다.
 - 이 스킬은 `target: both` 다. Codex 런타임에 `claude` 가 없거나 Claude 런타임에 `codex` 가 없는 것은 **정상 경로**다. 채널 부재는 스킵이지 에러가 아니다.
 - **"채널 부재" 는 두 가지다.** (a) 런타임이 없다(`command -v claude` 실패), (b) 런타임은 있는데 **banker 플러그인이 설치돼 있지 않다.** `command -v` 는 (a) 만 잡는다. Codex 주력 + Claude Code 설치됨 + banker 플러그인 미설치인 머신이 실재하고, 거기서 (b) 를 스킵으로 처리하지 않으면 프로브가 예외로 죽는다. 둘 다 스킵이다.
 
@@ -37,7 +39,10 @@ banker 는 서로 다른 메커니즘의 채널 3개로 설치되고, 그 채널
 |---|---|---|---|
 | Claude 플러그인 | 마켓플레이스 등록 후 플러그인 설치 | `claude plugin update banker@banker-plugins` | `~/.claude/plugins/installed_plugins.json` |
 | npm 전역 CLI | npm 레지스트리에서 전역 prefix 로 설치 | `npm i -g @kaydash9999/banker-plugins@latest` | `banker --version` |
-| Codex | npm 패키지에서 `~/.codex/skills` **와 `~/.codex/prompts`** 로 복사 | `banker setup --codex` | `ls ~/.codex/skills` **와** `ls ~/.codex/prompts` |
+| Codex (npm 길) | npm 패키지에서 `~/.codex/skills` **와 `~/.codex/prompts`** 로 복사 | `banker setup --codex` | `ls ~/.codex/skills` **와** `ls ~/.codex/prompts` |
+| Codex (플러그인 길) | GitHub 마켓플레이스 스냅샷을 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 둠 | `codex plugin marketplace upgrade banker-plugins` | `ls ~/.codex/plugins/cache/banker-plugins/banker/` |
+
+`CODEX_HOME` 이 있으면 `~/.codex` 대신 그 폴더다. Codex 의 두 길을 함께 두면 스킬이 `$banker-<이름>` 과 `$banker:<이름>` 으로 겹치고 훅도 두 번 돈다. 둘 다 보이면 보고에 적고 하나만 두라고 안내한다(npm 길 빼기 `banker uninstall --codex`, 플러그인 빼기 `codex plugin remove banker@banker-plugins`). 이 스킬이 대신 지우지는 않는다.
 
 세 채널은 다른 갱신 동사를 쓰고 각자의 값을 가진다. 한 채널을 갱신해도 나머지는 그대로다. 실제로 세 값이 모두 다른 상태가 관측된다.
 
@@ -75,6 +80,7 @@ in15 sh -c 'cd ~ && exec npm ping --fetch-retries=0 --fetch-timeout=10000 --no-u
 command -v claude >/dev/null && echo "claude: present" || echo "claude: absent (Claude 채널 스킵)"
 command -v codex  >/dev/null && echo "codex: present"  || echo "codex: absent (Codex 채널 스킵)"
 command -v banker >/dev/null && banker --version || echo "banker: absent"
+command -v codex  >/dev/null && in15 codex plugin list 2>/dev/null | grep -E '^banker@[^ ]+ +installed, enabled' || echo "codex plugin: absent (플러그인 길 스킵)"   # 켜진 banker@<마켓플레이스>와 판
 [ "$P" = 0 ] && (cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 
@@ -162,6 +168,18 @@ banker setup --codex --dry-run | grep -E '→ [0-9]+ skills'                    
 - `--scope project` 는 `./.codex` 를 대상으로 한다. 기본은 `user`(`~/.codex`).
 - 스킬은 `~/.codex/skills/banker-<name>/` 으로, 커맨드는 `~/.codex/prompts/banker-<name>.md` 로 설치된다. 스킬은 프론트매터 name 이 디렉터리명과 일치하도록 재작성된다. `~/.codex/AGENTS.md` 는 건드리지 않는다.
 
+### 3b. Codex 플러그인 길
+`codex plugin: absent` 면 스킵이다. 0단계가 보인 `banker@<마켓플레이스>` 의 마켓플레이스 이름을 아래 `banker-plugins` 자리에 쓴다. 이 길은 npm 게이트를 받지 않는다(상류가 GitHub 다). 지우고 다시 복사하지 않으므로 dry-run 단계가 없다.
+
+```bash
+codex plugin marketplace upgrade banker-plugins
+ls "${CODEX_HOME:-$HOME/.codex}/plugins/cache/banker-plugins/banker/"
+```
+
+- 설치된 플러그인 폴더가 새 판 이름으로 바뀌면 전진이다(옛 판 폴더는 Codex 가 지운다). 반영은 Codex 를 다시 연 뒤다.
+- 마켓플레이스 이름이 다르면(`codex plugin marketplace list` 로 확인) 그 이름을 쓴다.
+- 훅 신뢰는 명령 글에 묶여 있어 판이 바뀌어도 대개 그대로다. `/hooks` 에 banker 훅이 신뢰 필요로 보이면 그 사실만 보고한다.
+
 ### 4. 검증 (보고 의무)
 **exit code 로 판정하지 마라.** `claude plugin install` 이 아무것도 안 하고 exit 0 을 주는 것이 정확히 그 이유다.
 판정은 0단계와 **동일한 3-프로브를 재실행**해 before/after 를 비교하는 것으로만 한다.
@@ -195,9 +213,15 @@ console.log('manifest skills:',n('skill'));console.log('manifest commands:',n('c
 
 보조로 `banker doctor` 가 디스크 카운트와 매니페스트 카운트를 나란히 찍어준다. **다만 프롬프트 카운트가 없어 프로브 3 을 대체하지 못한다.** 스킬 축의 교차 확인용으로만 쓴다.
 
+프로브 4, Codex 플러그인 길(판 폴더 이름이 설치된 판이다):
+```bash
+ls "${CODEX_HOME:-$HOME/.codex}/plugins/cache/banker-plugins/banker/" 2>/dev/null || echo "absent (플러그인 길 미설치 -> 스킵)"
+```
+
 보조 프로브(디스크 상태가 아니라 런타임이 실제로 발견한 표면을 본다. 인증 불필요):
 ```bash
-codex debug prompt-input </dev/null | grep -oE 'banker-[a-z0-9_-]+' | sort -u | wc -l
+codex debug prompt-input </dev/null | grep -oE 'banker-[a-z0-9_-]+' | sort -u | wc -l   # npm 길
+codex debug prompt-input </dev/null | grep -oE 'banker:[a-z0-9_-]+' | sort -u | wc -l   # 플러그인 길
 ```
 
 보고 형식(채널별 before 에서 after 로. 아래는 예시):
@@ -206,6 +230,7 @@ Claude 플러그인 : 0.6.0 -> 0.7.0             전진
 npm 전역 CLI    : 0.2.0 -> 0.7.0             전진
 Codex skills    : 41 -> 48 (매니페스트 48)   전진
 Codex prompts   : 2 -> 2   (매니페스트 2)    유지
+Codex 플러그인  : 0.6.0 -> 0.7.0             전진
 ```
 
 - **Codex 는 skills 와 prompts 를 반드시 두 줄로 적는다.** 한 줄로 뭉개면 프롬프트 소실이 보고에서 사라진다.
@@ -248,5 +273,5 @@ Codex prompts   : 2 -> 2   (매니페스트 2)    유지
 
 ARGUMENTS: [--check] [--claude|--npm|--codex] (없으면 3채널 전부: 관측 → npm 게이트 → 나머지 채널 → 3-프로브 검증)
 - `--check`: 아무것도 변경하지 않는다. 0단계 관측 + 4단계 프로브만 돌려 채널별 드리프트를 보고한다.
-- `--claude` / `--npm` / `--codex`: 해당 채널만 갱신한다.
-- 단 `--codex` 단독이어도 1단계 게이트(`banker --version` == `npm view ...`)는 **반드시** 확인한다. 불일치면 npm 갱신을 먼저 제안하고 확인받는다. 게이트 없는 `--codex` 는 없다.
+- `--claude` / `--npm` / `--codex`: 해당 채널만 갱신한다. `--codex` 는 Codex 의 두 길 중 설치된 것을 모두 갱신한다.
+- 단 `--codex` 단독이어도 npm 길을 갱신하기 전에는 1단계 게이트(`banker --version` == `npm view ...`)를 **반드시** 확인한다. 불일치면 npm 갱신을 먼저 제안하고 확인받는다. 게이트 없는 npm 길 갱신은 없다. 플러그인 길만 설치돼 있으면 게이트 없이 3b 만 한다.

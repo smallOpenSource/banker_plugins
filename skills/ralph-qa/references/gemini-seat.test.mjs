@@ -7,6 +7,7 @@ import { dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { POLICY, cleanSeat, policyIntact, sessionFolders, staleSessionFolders, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
+import { canSymlink, symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const SEAT = fileURLToPath(new URL("./gemini-seat.mjs", import.meta.url));
 
@@ -102,7 +103,7 @@ test("clean removes only the gemini session folders that name the seat folder", 
     project([".cache", ".gemini", "tmp"], "gemini-1", seat)];
   const other = project([".gemini", "tmp"], "work", join(dir, "work"));
   assert.deepEqual(sessionFolders(seat, { env: { GEMINI_CLI_HOME: home } }).sort(), [...mine].sort());
-  if (process.platform !== "win32") {
+  if (canSymlink) {
     symlinkSync(other, join(home, ".gemini", "tmp", "link"));
   }
   const out = run(SEAT, ["clean", seat], { GEMINI_CLI_HOME: home });
@@ -110,7 +111,7 @@ test("clean removes only the gemini session folders that name the seat folder", 
   assert.deepEqual(JSON.parse(out.stdout).removed.sort(), [...mine].sort());
   assert.ok(mine.every((p) => !existsSync(p)));
   assert.ok(existsSync(join(other, "chats", "session-1.jsonl")), "another project's sessions stay");
-  if (process.platform !== "win32") assert.ok(existsSync(join(home, ".gemini", "tmp", "link")), "a link is left alone");
+  if (canSymlink) assert.ok(existsSync(join(home, ".gemini", "tmp", "link")), "a link is left alone");
   assert.deepEqual(JSON.parse(run(SEAT, ["clean", seat], { GEMINI_CLI_HOME: home }).stdout).removed, []);
 });
 
@@ -172,7 +173,7 @@ test("on Windows the seat folder and the homes are compared by their long names"
     "without the long names the same file is outside the home");
 });
 
-test("the command line still prints the policy when node keeps the symlink it was started through", { skip: process.platform === "win32" && "symlinks need privileges" }, (t) => {
+test("the command line still prints the policy when node keeps the symlink it was started through", { skip: symlinkSkip }, (t) => {
   const dir = scratch(t);
   symlinkSync(dirname(SEAT), join(dir, "refs"));
   mkdirSync(join(dir, "gemini"));
@@ -227,7 +228,7 @@ test("projects.json leads clean only to a real folder under tmp/ or history/ tha
   const marked = unmarked(home, "tmp", "marked");
   writeFileSync(join(marked, ".project_root"), join(dir, "other"));
   const bare = unmarked(home, "tmp", "gemini");
-  if (process.platform !== "win32") symlinkSync(join(dir, "keep"), join(home, ".gemini", "tmp", "link"));
+  if (canSymlink) symlinkSync(join(dir, "keep"), join(home, ".gemini", "tmp", "link"));
   // One seat, spelt several ways, each pointing at a name that must not reach outside tmp/ or history/.
   projectsJson(home, { [seat]: "../../keep", [seat + "/"]: "..", [join(seat, ".")]: ".", [join(seat, "..", "gemini")]: "",
     [join(seat, "x", "..")]: "a/b", [seat + "//"]: 42, [join(dir, "d", ".", "gemini")]: "marked", [join(dir, "d", "x", "..", "gemini")]: "link" });
@@ -263,7 +264,7 @@ test("sweep leaves the records of gone folders that are not a ralph-qa seat fold
   assert.ok(kept.every((p) => existsSync(p)));
 });
 
-test("clean finds a gone seat folder's records when a link sits above it", { skip: process.platform === "win32" && "symlinks need privileges" }, (t) => {
+test("clean finds a gone seat folder's records when a link sits above it", { skip: symlinkSkip }, (t) => {
   // macOS: $TMPDIR is under /var, a link to /private/var, and gemini records the resolved folder.
   const dir = scratch(t);
   const home = join(dir, "gh");

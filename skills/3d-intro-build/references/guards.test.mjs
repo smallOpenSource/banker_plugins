@@ -16,6 +16,7 @@ import * as P from './video-pool.mjs';
 import { hashFile, readDecisions, readInput, recordDecision, renderPage, startCurate } from './curate.mjs';
 import { isRunning, stopServer } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
+import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 
 const made = [];
 process.on('exit', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
@@ -82,7 +83,7 @@ test('a state file naming a host other than this machine is left alone: nothing 
 });
 
 // N1 (new): review files a repository ships as links
-test('a link a project ships at a review file name is never written through', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, async () => {
+test('a link a project ships at a review file name is never written through', { skip: symlinkSkip }, async () => {
   const dir = project();
   const victim = path.join(tmp('r4-victim-'), 'bashrc');
   fs.writeFileSync(victim, 'untouched');
@@ -270,7 +271,7 @@ test('a project key file the repository tracks is never written, and resolveCred
 });
 
 // 범위 밖 1 (and the same guard in persistCreds)
-test('a link at the temp name a write draws is refused (wx), not written through', { skip: process.platform === 'win32' && 'POSIX links' }, () => {
+test('a link at the temp name a write draws is refused (wx), not written through', { skip: symlinkSkip }, () => {
   const d = tmp('r4-wx-');
   const victim = path.join(d, 'victim.md');
   fs.writeFileSync(victim, 'untouched');

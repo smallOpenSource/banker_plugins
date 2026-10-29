@@ -14,6 +14,7 @@ import {
   archiveRejected, hashFile, readDecisions, readInput, recordDecision, renderPage, startCurate,
 } from './curate.mjs';
 import { readState, stopServer } from './preview-lib.mjs';
+import { canSymlink, symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const NOW = new Date('2026-10-10T03:00:00Z');
@@ -74,7 +75,7 @@ test('a take is hashed in chunks, hashed anew once its file changes, and a folde
   await assert.rejects(hashFile(path.join(dir, 'missing.mp4')), { code: 'ENOENT' });
 });
 
-test('a device is never read for a hash, and a take linked to one is refused before that', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows', timeout: 10_000 }, async () => {
+test('a device is never read for a hash, and a take linked to one is refused before that', { skip: process.platform === 'win32' && '/dev/zero is a POSIX device', timeout: 10_000 }, async () => {
   await assert.rejects(hashFile('/dev/zero'), /일반 파일 아님/);
   const dir = project();
   fs.symlinkSync('/dev/zero', path.join(dir, 'clips/zero.mp4'));
@@ -91,7 +92,7 @@ test('a listed file that is not an image or a video, or that links out of the pr
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-out-'));
   made.push(outside);
   fs.writeFileSync(path.join(outside, 'leak.png'), 'from outside');
-  const links = process.platform !== 'win32';
+  const links = canSymlink;
   if (links) {
     fs.symlinkSync(path.join(outside, 'leak.png'), path.join(dir, 'stills', 'link.png'));
     fs.symlinkSync(path.join(dir, '.env.3d-intro.local'), path.join(dir, 'stills', 'inner.png'));
@@ -143,7 +144,7 @@ test('a request body with control characters reaches the server log escaped', as
   assert.ok(logged.length > 0 && logged.every((l) => !/[\u001b\u007f\u009b\u0085\u202e]/.test(l)), JSON.stringify(logged));
 });
 
-test('archiving moves no file that a folder link leads out of the project', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, () => {
+test('archiving moves no file that a folder link leads out of the project', { skip: symlinkSkip }, () => {
   const dir = project();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-out-'));
   made.push(outside);
@@ -491,7 +492,7 @@ test('an archived take lands inside the dated folder whatever the spelling of it
   assert.ok(fs.existsSync(path.join(dir, ...move.to.split('/'))));
 });
 
-test('a listed file swapped for a link after its check is not served from where the link leads', { skip: process.platform === 'win32' && 'symlinks need a privilege on Windows' }, async (t) => {
+test('a listed file swapped for a link after its check is not served from where the link leads', { skip: symlinkSkip }, async (t) => {
   const dir = project();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'curate-out-'));
   made.push(outside);

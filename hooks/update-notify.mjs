@@ -14,7 +14,7 @@
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션을 절대 막지 않는다. 비TTY 안전.
  */
 import { spawn } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, renameSync, rmdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,12 +22,19 @@ import {
   UPDATE_CHECK_PATH, updateCheckDue,
   noUpdateCheck, countingActive, endpoint,
   installedVersion, compareVersions, writeUpdateCache, readUsedSkills, readRegular,
-  CODEX_SHAPE_MISS_PATH, writeByRename,
+  CODEX_SHAPE_MISS_PATH, writeByRename, configDir, randomHex,
 } from '../bin/lib/telemetry-config.mjs';
+import { codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, pluginRootInfo } from '../bin/lib/codex-routes.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // 업데이트 안내에 쓰는 npm 패키지 이름(고지 문구·이모지/em-dash 없음).
 const NPM_PKG = '@kaydash9999/banker-plugins';
+// Codex 의 훅은 --codex 를 받는다. 그중 Codex 플러그인(codex/hooks.json)의 훅은 --plugin 도 받는다. npm 길의 훅은
+// banker setup --codex 가 <CODEX_HOME>/hooks.json 에 넣는다.
+const CODEX = process.argv.includes('--codex');
+const PLUGIN = CODEX && process.argv.includes('--plugin');
+// Codex 에서 banker 스킬을 부르는 이름: npm 길은 $banker-<이름>, 플러그인은 $banker:<이름>.
+const skillCall = (name) => (PLUGIN ? `$banker:${name}` : `$banker-${name}`);
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -66,11 +73,14 @@ function personalizedSkills(cached) {
 // (기존 동작). banker: 접두는 떼서 짧게. 이모지/em-dash 없음(사용자 가시 채널).
 function buildMessage(latest, installed, cached) {
   const head = `banker ${latest} 사용 가능 (현재 ${installed}).`;
-  // Codex 의 훅은 --codex 를 받는다(banker setup --codex 가 설치). Codex 에는 /banker: 명령이 없어 스킬 이름과
-  // npm 뒤의 Codex 설치 명령을 안내한다.
-  const tail = process.argv.includes('--codex')
-    ? `업데이트: $banker-update-banker 또는 npm i -g ${NPM_PKG} 뒤 banker setup --codex`
-    : `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
+  // Codex 에는 /banker: 명령이 없어 스킬 이름과 그 설치 길의 갱신 명령을 안내한다. 플러그인은 마켓플레이스를 올리면
+  // 설치된 플러그인도 새 판으로 바뀌고, Codex 는 세션을 시작할 때 git 마켓플레이스를 스스로 올린다(0.144.5 실측).
+  const mkt = pluginRootInfo(process.env.PLUGIN_ROOT)?.marketplace ?? DEFAULT_MARKETPLACE;
+  const tail = PLUGIN
+    ? `업데이트: Codex 가 세션을 시작할 때 마켓플레이스와 함께 올립니다. 바로 올리려면 codex plugin marketplace upgrade ${mkt} 뒤 Codex 를 다시 여십시오`
+    : CODEX
+      ? `업데이트: ${skillCall('update-banker')} 또는 npm i -g ${NPM_PKG} 뒤 banker setup --codex`
+      : `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
   const hits = personalizedSkills(cached);
   if (hits.length) {
     const names = hits.slice(0, 5).map((s) => s.replace(/^banker:/, '')).join(', ');
@@ -100,7 +110,7 @@ export function shapeMissNotice() {
     const miss = JSON.parse(readRegular(CODEX_SHAPE_MISS_PATH));
     if (!miss || typeof miss.version !== 'string' || miss.notified) return '';
     writeByRename(CODEX_SHAPE_MISS_PATH, JSON.stringify({ version: miss.version, notified: true }));
-    return `banker 사용량 카운팅이 Codex ${miss.version.slice(0, 40)} 의 기록 형식을 읽지 못함. $banker-update-banker 로 banker 를 업데이트하고, 그래도 같으면 알려 주십시오`;
+    return `banker 사용량 카운팅이 Codex ${miss.version.slice(0, 40)} 의 기록 형식을 읽지 못함. ${skillCall('update-banker')} 로 banker 를 업데이트하고, 그래도 같으면 알려 주십시오`;
   } catch {
     return '';
   }
@@ -123,11 +133,72 @@ function spawnFetcher() {
   }
 }
 
-async function main() {
-  // SessionStart payload 를 드레인(파이프 위생). 내용을 쓰지 않으므로 파싱 실패해도 무해.
-  try { await readStdin(); } catch { /* stdin 없음/오류 무해 */ }
+// Codex: npm 길과 플러그인 길이 함께 있으면 알린다. 세션마다 한 번만 알리는 일은 claimSession 이 맡는다.
+export function dualNotice(payload, env = process.env) {
+  try {
+    const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
+    return dualInstallNote(codexHomeOf(payload?.transcript_path, env), cwd);
+  } catch {
+    return '';
+  }
+}
 
-  const notes = process.argv.includes('--codex') ? [shapeMissNotice()] : [];
+// Codex: 두 길의 SessionStart 훅이 모두 신뢰돼 같은 세션에서 함께 돌면 같은 알림이 두 번 나간다. 세션 id 이름의
+// 폴더를 configDir 의 codex-sessions 에 만든 훅만 알린다. mkdir 은 이미 있으면 실패하고 링크를 따라가지 않아 둘이
+// 동시에 와도 하나만 만든다. 함께 도는 훅은 훅 시간 제한(5초) 안에 오므로, 30초 넘게 지난 폴더는 이어 연 세션(resume)
+// 의 것이다: 고유 이름으로 옮겨(rename 은 하나만 성공) 다시 만든 훅이 알린다. 옮긴 것이 새것이면(그사이 짝 훅이
+// 넘겨받아 만든 것) 알리지 않는다. 세션 id 가 없거나 폴더를 만들 수 없으면
+// 전처럼 알린다. 이틀 지난 폴더와 예전 판의 codex-dual-notified 는 지운다.
+const SESSION_RE = /^[A-Za-z0-9._-]{1,80}$/;
+const CLAIM_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
+const CLAIM_TWIN_MS = 30 * 1000;
+export function claimSession(payload, now = Date.now()) {
+  const sid = typeof payload?.session_id === 'string' && SESSION_RE.test(payload.session_id) && !/^\.+$/.test(payload.session_id) ? payload.session_id : '';
+  if (!sid) return true;
+  const dir = join(configDir(), 'codex-sessions');
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {
+    return true; // 폴더 자리에 다른 것이 있음: 중복을 막지 못해도 알림은 낸다
+  }
+  const mine = join(dir, sid);
+  try {
+    mkdirSync(mine);
+  } catch (e) {
+    if (e?.code !== 'EEXIST') return true;
+    try {
+      if (now - statSync(mine).mtimeMs < CLAIM_TWIN_MS) return false; // 같은 세션의 다른 길 훅이 방금 알렸다
+      const old = `${mine}.old-${process.pid}-${randomHex()}`;
+      renameSync(mine, old);
+      if (now - statSync(old).mtimeMs < CLAIM_TWIN_MS) {
+        // 본 것과 옮긴 것 사이에 짝 훅이 넘겨받아 새로 만든 폴더였다: 그 훅이 알리므로 알리지 않는다. 돌려놓지 않고
+        // (그사이 다른 훅이 만든 폴더를 덮을 수 있다) 옮긴 폴더는 이틀 뒤 정리에서 지운다.
+        return false;
+      }
+      rmdirSync(old);
+      mkdirSync(mine);
+    } catch {
+      return false; // 함께 온 다른 훅이 먼저 옮기거나 만들었다
+    }
+  }
+  try {
+    rmSync(join(configDir(), 'codex-dual-notified'), { force: true });
+    for (const d of readdirSync(dir)) {
+      try {
+        if (d !== sid && now - statSync(join(dir, d)).mtimeMs > CLAIM_KEEP_MS) rmdirSync(join(dir, d));
+      } catch { /* 다른 훅이 먼저 지움 */ }
+    }
+  } catch { /* 정리는 다음 세션에 */ }
+  return true;
+}
+
+async function main() {
+  // SessionStart payload. Codex 는 두 길 알림에 transcript_path, session_id 를 쓴다. 파싱 실패해도 무해.
+  let payload = null;
+  try { payload = JSON.parse(await readStdin()); } catch { /* stdin 없음/오류 무해 */ }
+
+  if (CODEX && !claimSession(payload)) return; // 같은 세션의 다른 길 훅이 이미 알렸다
+  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload)] : [];
   if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.
     const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
     notes.unshift(maybeNotify(cached));
