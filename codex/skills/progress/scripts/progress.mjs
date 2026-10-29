@@ -214,11 +214,21 @@ function stepLines(r) {
 
 // rollout 하나를 진행 상황 글로.
 export function render(file, depth = 2, max = MAX_READ) {
+  const rec = readRecord(file, max);
+  return renderRecord(file, rec, lastPlan(rec.calls, rec.cwd), depth);
+}
+
+// 기록에서 이 도구가 쓰는 것(records)과, 끝만 읽었는지(cut).
+export function readRecord(file, max = MAX_READ) {
   const lines = tail(file, max);
   const r = records(lines);
-  if (lines.cut) r.version = headVersion(file);
+  r.cut = Boolean(lines.cut);
+  if (r.cut) r.version = headVersion(file);
+  return r;
+}
+
+export function renderRecord(file, r, planPath, depth) {
   const out = [`진행 상황 (${file.split(/[\\/]/).at(-1).slice(-42, -6)})`];
-  const planPath = lastPlan(r.calls, r.cwd);
   const plan = planPath && readPlan(planPath);
   if (plan) {
     out.push(`계획: ${clip(planPath, 200)}${plan.hasStates ? `  ${plan.done}/${plan.total}` : ''}`);
@@ -227,7 +237,7 @@ export function render(file, depth = 2, max = MAX_READ) {
   } else out.push('계획 파일 없음');
   out.push('', ...stepLines(r));
   // Codex 세션은 언제나 사용자 글로 시작한다. 하나도 못 읽었으면 이 Codex 판의 기록 형식이 바뀐 것이라 빈 결과로 넘기지 않는다.
-  if (r.version && !r.prompts.length && lines.cut) out.push('', '참고: 기록이 32 MB 를 넘어 끝부분만 읽었고, 그 안에는 사용자 요청이 없음');
+  if (r.version && !r.prompts.length && r.cut) out.push('', '참고: 기록이 32 MB 를 넘어 끝부분만 읽었고, 그 안에는 사용자 요청이 없음');
   else if (r.version && !r.prompts.length) {
     out.push('', `경고: 이 Codex ${r.version} 기록에서 사용자 요청을 하나도 읽지 못함. 기록 형식이 바뀌었을 수 있음(banker 업데이트 확인)`);
   }
@@ -253,20 +263,40 @@ function pane(mode, file, depth) {
   return 'progress 칸을 오른쪽에 엶(2초마다 갱신). 닫기: --pane off';
 }
 
-// 기록 크기, 바뀐 시각, 칸 폭이 그대로면 다시 읽지 않는다(2초마다 32 MB 를 읽지 않게).
-function follow(file, depth) {
+// --follow 의 한 번 그리기. 기록(크기, 바뀐 시각)이 그대로면 기록을 다시 읽지 않고(2초마다 32 MB 를 읽지 않게),
+// 계획 파일의 바뀐 시각과 칸 폭까지 그대로면 다시 그리지도 않는다. 계획 파일만 바뀌어도 다음 2초 안에 다시 그린다.
+// read 는 기록 읽기(시험이 횟수를 셈), write 는 화면 쓰기.
+export function follower(file, depth, { read = readRecord, write = (t) => process.stdout.write(t), columns = () => process.stdout.columns } = {}) {
   let seen = '';
-  const draw = () => {
-    let key = '';
-    // 10초마다는 다시 그린다: 계획 파일만 바뀐 것은 기록 크기로 알 수 없다.
-    try { const st = statSync(file); key = `${st.size}:${st.mtimeMs}:${process.stdout.columns}:${Math.floor(Date.now() / 10000)}`; } catch { key = 'gone'; }
-    if (key === seen) return;
-    seen = key;
+  let recKey = null;
+  let rec = null;
+  return () => {
+    const now = statKey(file);
     let text;
-    try { text = render(file, depth); } catch (e) { text = `읽지 못함: ${e.message}`; }
-    const width = process.stdout.columns || 80;
-    process.stdout.write(`\x1b[2J\x1b[H${text.split('\n').map((l) => fit(l, width)).join('\n')}\n`);
+    try {
+      if (now !== recKey) [rec, recKey] = [read(file), now];
+      const planPath = lastPlan(rec.calls, rec.cwd);
+      const key = `${now}|${planPath}|${statKey(planPath)}|${columns()}`;
+      if (key === seen) return false;
+      seen = key;
+      text = renderRecord(file, rec, planPath, depth);
+    } catch (e) {
+      [recKey, seen] = [null, ''];
+      text = `읽지 못함: ${e.message}`;
+    }
+    const width = columns() || 80;
+    write(`\x1b[2J\x1b[H${text.split('\n').map((l) => fit(l, width)).join('\n')}\n`);
+    return true;
   };
+}
+
+function statKey(path) {
+  if (!path) return '';
+  try { const st = statSync(path); return `${st.size}:${st.mtimeMs}`; } catch { return 'gone'; }
+}
+
+function follow(file, depth) {
+  const draw = follower(file, depth);
   draw();
   setInterval(draw, 2000);
 }

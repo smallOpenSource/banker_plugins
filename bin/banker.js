@@ -264,11 +264,25 @@ function doctorCodexShape(base) {
   const file = newestRollout(base);
   if (!file) { log('  Codex record shape: no session record yet (run one Codex session, then doctor again)'); return; }
   const r = codexShapeReport(file);
-  if (r && r.tooLong) { log(`  Codex record shape: ${path.basename(file)} opens with a line over 8 MB, not checked`); return; }
-  if (r && r.fresh) { log(`  Codex record shape: ${path.basename(file)} holds no turn yet (run one Codex turn, then doctor again)`); return; }
-  if (!r || !r.version) { log(`  ⚠ Codex record shape: ${path.basename(file)} does not open with session_meta - lineage, progress and usage counting cannot read it`); return; }
+  const early = shapeEarlyNote(r, path.basename(file));
+  if (early) { log(early); return; }
   const mark = (ok) => (ok ? 'ok' : 'MISSING');
   log(`  Codex record shape (Codex ${r.version}, ${path.basename(file)}): turn start ${mark(r.turnStart)}, user text ${mark(r.userText)}, tool calls ${mark(r.toolCall)}`);
+  doctorShapeVerdict(r);
+}
+
+// What doctor says before the three checks: the first line is too long, no turn yet, or not a Codex record.
+function shapeEarlyNote(r, name) {
+  const unread = `  ⚠ Codex record shape: ${name} does not open with session_meta - lineage, progress and usage counting cannot read it`;
+  if (!r) return unread;
+  if (r.tooLong) return `  Codex record shape: ${name} opens with a line over 8 MB, not checked`;
+  if (r.fresh || (r.version && !(r.turnStart || r.userText || r.toolCall))) return `  Codex record shape: ${name} holds no turn yet (run one Codex turn, then doctor again)`;
+  return r.version ? '' : unread;
+}
+
+// A turn opens with task_started, then the user's text. Text or tool calls with no turn start, or a turn start with no
+// text, is a record shape banker does not know. Neither one is a session whose first turn has not begun.
+function doctorShapeVerdict(r) {
   if (!r.turnStart || !r.userText) log('  ⚠ banker may not read this Codex version\'s records (lineage stops, progress warns, usage counting misses); update banker');
   else if (!r.toolCall) log('    (no tool calls: fine for a session that used no tools)');
 }

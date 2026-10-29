@@ -1,12 +1,12 @@
 // Tests for the Codex progress script. Run from the repo root: node --test codex/skills/progress/scripts/progress.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
-import { codexPlanKind, lastPlan, pathsOf, records, render, rolloutFor, tail } from './progress.mjs';
+import { codexPlanKind, follower, lastPlan, pathsOf, readRecord, records, render, rolloutFor, tail } from './progress.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'progress.mjs');
 const root = mkdtempSync(join(tmpdir(), 'progress-codex-'));
@@ -119,4 +119,28 @@ test('a record read only from its end says the early part was not read, instead 
   const text = render(f, 2, 10000);
   assert.match(text, /참고: 기록이 32 MB 를 넘어/);
   assert.doesNotMatch(text, /경고:/);
+});
+
+test('--follow redraws at the next tick when only the plan file changed, without reading the record again', () => {
+  const w = join(root, 'wf');
+  mkdirSync(join(w, '.omx', 'plans'), { recursive: true });
+  const planFile = join(w, '.omx', 'plans', 'p.md');
+  writeFileSync(planFile, '# P\n\n- [ ] one\n- [ ] two\n');
+  const f = write(`rollout-2026-10-29T00-00-00-${ID}.jsonl`, [meta(w), said('go'), sh(`cat ${planFile}`, w)]);
+  let reads = 0;
+  const shown = [];
+  const draw = follower(f, 2, { read: (file) => { reads++; return readRecord(file); }, write: (t) => shown.push(t), columns: () => 100 });
+  assert.equal(draw(), true);
+  assert.equal(draw(), false, 'nothing changed: no redraw');
+  assert.equal(reads, 1);
+  writeFileSync(planFile, '# P\n\n- [x] one\n- [ ] two\n');
+  const later = Date.now() / 1000 + 5;
+  utimesSync(planFile, later, later);
+  assert.equal(draw(), true, 'the plan file alone changed: redrawn at the next tick');
+  assert.equal(reads, 1, 'the record was not read again');
+  assert.match(shown.at(-1), /1\/2/);
+  writeFileSync(f, `${JSON.stringify(meta(w))}\n${JSON.stringify(said('go'))}\n${JSON.stringify(said('more'))}\n${JSON.stringify(sh(`cat ${planFile}`, w))}\n`);
+  assert.equal(draw(), true);
+  assert.equal(reads, 2, 'a grown record is read again');
+  assert.match(shown.at(-1), /more/);
 });
