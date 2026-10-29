@@ -848,6 +848,9 @@ try {
       && /`<단계>: tmux 밖 대체 실행\(OMX 런타임 없음\)`/.test(t) && /`STOPPED\(omx-runtime-unavailable\)`/.test(t));
   });
   ok(tmuxBad.length === 0, `tmux-fallback: all-in-one, ultra-init and ultra-chain run an OMX stage outside tmux as a recorded fallback and stop only when that cannot run${tmuxBad.length ? ` (${tmuxBad.join(', ')})` : ''}`);
+  // On Codex the plan and the ralph record live under .omx (OMX), not .omc: the S19 live run wrote .omc/plans/ on Codex.
+  const omxPathBad = ['all-in-one', 'ultra-init'].filter((n) => !/\*\*Codex 의 계획과 상태 경로\.\*\*[^\n]*`\.omx\/plans\/`[^\n]*`\.omx\/state\/<scope>\/ralph-progress\.json`[^\n]*Codex 에서 `\.omc\/` 아래에 계획을 쓰지 않는다/.test(fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')));
+  ok(omxPathBad.length === 0, `omx-plan-path: all-in-one and ultra-init send the Codex plan to .omx/plans/ and the ralph record to .omx/state, not .omc${omxPathBad.length ? ` (${omxPathBad.join(', ')})` : ''}`);
   // Plan 27.1 (4): after STOPPED no file changes, not even a one-line fix, in all three chains; nothing allows one.
   const stopDocs = ['all-in-one', 'ultra-init', 'ultra-chain'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);
   const stopBad = stopDocs.filter(([, t]) => !/After STOPPED, change no file, not even a one-line fix: report only, until the user gives a new instruction\./.test(t)
