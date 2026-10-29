@@ -115,6 +115,7 @@ test('the first posters are preloaded (the engine loads posters lazily), and eve
   assert.deepEqual(firstPosters({ sections: [{ still: 'a' }, { still: 'b' }, { still: 'c' }], connectors: ['x', null], connectorStills: ['cs1', null] }), ['a', 'cs1', 'b']);
   assert.deepEqual(firstPosters({ sections: [{ still: 'a' }, { still: 'b' }], connectors: [null], connectorStills: ['cs1'] }), ['a', 'b'], 'a connector poster counts only with its connector');
   assert.match(read(dir, 'intro-fixes.css'), /\.sw-scene__still \{ transform: none !important; \}/);
+  assert.match(read(dir, 'intro-fixes.css'), /\.sw-scene\.has-clip \.sw-scene__still \{ transition: opacity 0s linear \.15s; \}/, 'the poster is hidden 0.15 s after the clip shows');
 });
 
 test('glass panel alpha: the lowest that keeps 4.5 over a white pixel for every panel text and accent label; a person\'s panelAlpha wins', () => {
@@ -151,4 +152,15 @@ test('a section id that would leave assets/ (../, a separator, a dot name) is re
     assert.ok(!fs.existsSync(path.join(dir, 'pwned')) && !fs.existsSync(path.join(path.dirname(dir), 'pwned')), `${id}: nothing written outside`);
   }
   assert.doesNotThrow(() => assemble({ projectDir: project({ sections: [{ id: 'dive-s1_push-in', still: 's1.png', clip: 'hold-1.mp4' }, { id: 'B2', still: 's2.png', clip: 'hold-2.mp4' }] }) }));
+});
+
+test('intro.js decodes every poster at load and after scrolling stops (a jump would otherwise paint an empty scene), with and without step navigation', () => {
+  for (const extra of [{}, { stepNav: {} }]) {
+    const dir = project(extra);
+    assemble({ projectDir: dir });
+    const intro = read(dir, 'intro.js');
+    assert.match(intro, /mountScrollWorld\(world, config\);[\s\S]*var warm = function \(\) \{ \[\]\.forEach\.call\(world\.querySelectorAll\('\.sw-scene__still'\)[\s\S]*i\.decode\(\)/);
+    assert.match(intro, /warm\(\); window\.addEventListener\('load', warm\);/);
+    assert.match(intro, /addEventListener\('scroll', [\s\S]*setTimeout\(warm, 400\)/);
+  }
 });

@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { DEFAULTS, belongsToIntro, createNavigator, createWheelGesture, keyInput, moveDuration, stopPositions, totalWeight, wheelIgnored } = require('./step-nav.js');
+const { DEFAULTS, belongsToIntro, createNavigator, createWheelGesture, keyInput, moveDuration, postersReady, stopPositions, totalWeight, wheelIgnored } = require('./step-nav.js');
 
 const CONFIG = { diveScroll: 1.3, connScroll: 0.9, sections: [{}, {}, {}], connectors: ['c1.mp4', null] };
 
@@ -171,4 +171,18 @@ test('a move can be cancelled: it forgets its target and queue, and takes the ne
 
 test('the scroll length matches the engine: dives and the connectors that exist, plus one screen', () => {
   assert.equal(totalWeight(CONFIG), 1.3 + 0.9 + 1.3 + 1.3);
+});
+
+test('a move waits for every poster to decode (the engine paints a newly shown scene empty until then), at most decodeCapMs', async () => {
+  assert.equal(DEFAULTS.decodeCapMs, 300);
+  const world = (decode) => ({ querySelectorAll: () => [{ decode }, { decode }, {}] });
+  let ran = 0;
+  await new Promise((r) => postersReady(world(() => Promise.resolve()), 5000, () => { ran++; r(); }));
+  assert.equal(ran, 1, 'decoded: goes at once');
+  const t0 = Date.now();
+  await new Promise((r) => postersReady(world(() => new Promise(() => {})), 120, () => { ran++; r(); }));
+  assert.ok(Date.now() - t0 >= 110 && ran === 2, 'a decode that never ends waits only the cap');
+  await new Promise((r) => postersReady(world(() => Promise.reject(new Error('broken'))), 5000, () => { ran++; r(); }));
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(ran, 3, 'a failed decode still goes, once');
 });

@@ -37,7 +37,7 @@
 
   const DEFAULTS = Object.freeze({
     end: null, gestureGapMs: 220, minWheel: 2, swipePx: 30,
-    durBaseMs: 2600, durPerVhMs: 760, durMaxMs: 5600, lastGuardMs: 250, prefetch: true,
+    durBaseMs: 2600, durPerVhMs: 760, durMaxMs: 5600, lastGuardMs: 250, decodeCapMs: 300, prefetch: true,
     hintLabel: 'Scroll or press the down key', skipLabel: 'Skip intro', mainLabel: 'Go to main content',
   });
 
@@ -226,9 +226,20 @@
     try { window.scrollTo({ top: y, behavior: 'instant' }); } catch (e) { window.scrollTo(0, y); }
   }
 
+  // A scene a move shows paints nothing until its poster is decoded (the engine's posters decode async):
+  // a jump showed an empty background for 0.1-0.35 s. Decode every poster first, waiting at most capMs.
+  function postersReady(world, capMs, then) {
+    let fired = false;
+    const go = function () { if (!fired) { fired = true; then(); } };
+    const stills = Array.prototype.slice.call(world.querySelectorAll('.sw-scene__still'));
+    Promise.all(stills.map(function (i) { return i.decode ? i.decode().catch(function () {}) : null; })).then(go);
+    setTimeout(go, capMs);
+  }
+
   // The running animation; a newer one, or stopAnimation(), ends it between frames.
   let animation = 0;
-  function stopAnimation() { animation++; }
+  let pending = 0;   // a move waiting for its posters; a newer move or stopAnimation() drops it
+  function stopAnimation() { animation++; pending++; }
 
   function animate(from, to, duration, done) {
     const mine = ++animation;
@@ -361,7 +372,10 @@
     ctx.mark = function (i) { mark(ctx, i); };
     ctx.nav = createNavigator({ stops: ctx.stops, lastScene: lastScene, guardMs: o.lastGuardMs,
       now: function () { return performance.now(); }, onArrive: ctx.mark,
-      move: function (from, to, done) { animate(from, to, moveDuration(to - from, ctx.vh(), o, reduce), done); } });
+      move: function (from, to, done) {
+        const mine = ++pending;
+        postersReady(world, o.decodeCapMs, function () { if (mine === pending) animate(from, to, moveDuration(to - from, ctx.vh(), o, reduce), done); });
+      } });
     const fine = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
     document.documentElement.classList.add('isn-on', fine ? 'isn-mouse' : 'isn-touch');
     return ctx;
@@ -496,7 +510,7 @@
   const api = {
     DEFAULTS: DEFAULTS, stopPositions: stopPositions, totalWeight: totalWeight, moveDuration: moveDuration,
     wheelIgnored: wheelIgnored, createWheelGesture: createWheelGesture, belongsToIntro: belongsToIntro,
-    createNavigator: createNavigator, keyInput: keyInput, prefetch: prefetch, attach: attach,
+    createNavigator: createNavigator, keyInput: keyInput, prefetch: prefetch, attach: attach, postersReady: postersReady,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else window.IntroStepNav = api;
