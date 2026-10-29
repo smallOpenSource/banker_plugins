@@ -5,9 +5,10 @@
  * is entered from outside, with a MOVE: push-in, arc or crane). An optional exit clip leaves the
  * scene from the dive's last frame. The last scene is the finale: a clip that pulls back from the
  * closing still, played reversed, so it ends on that still. The seam to the next scene does not
- * rely on the model: when the next scene's still has a one-colour border (its band's channel
- * standard deviations all at or under `bgThreshold`), the seam side (the exit, or the dive without
- * one) lands on a plate of the next clip's actual first-frame border colour (clip-post landOnStill).
+ * rely on the model: when the next clip's actual first frame has a background border (at least
+ * `bgShare` of its border band within `bgTolerance` of the band's most common colour, so a roof or a
+ * plume touching the edge does not count), the seam side (the exit, or the dive without one) lands on
+ * a plate of that background colour (clip-post landOnStill). One frame decides and gives the colour.
  *
  *   planDiveLegs   the legs in order (pure)
  *   runDiveLegs    makes them with generateClip (injectable), post-processes, writes intro.json;
@@ -22,9 +23,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { extractFirstFrame, extractLastFrame, probeDims, resolveFfmpeg } from './azure-adapter.mjs';
 import { generateClip } from './video-pool.mjs';
-import { cameraMotion, frameStats, postClip, resizePng, seamSsim, solidPlate } from './clip-post.mjs';
+import { borderColour, cameraMotion, postClip, resizePng, seamSsim, solidPlate } from './clip-post.mjs';
 
-export const DIVE_DEFAULTS = { diveSeconds: 8, exitSeconds: 4, finaleSeconds: 8, border: 0.04, bgThreshold: 6, landSec: 0.6, finaleLandSec: 0.4 };
+export const DIVE_DEFAULTS = { diveSeconds: 8, exitSeconds: 4, finaleSeconds: 8, border: 0.04, bgShare: 0.85, bgTolerance: 12, landSec: 0.6, finaleLandSec: 0.4 };
 export const MOVES = ['push-in', 'arc', 'crane'];
 
 function moveOf(scene, i) {
@@ -51,14 +52,14 @@ export function planDiveLegs({ scenes, exit = true, diveSeconds = DIVE_DEFAULTS.
 }
 
 /**
- * Whether a gap's seam lands on a background plate: the band along the next still's edges
- * (`border` of each side) must be one colour, every channel's standard deviation at or under
- * `bgThreshold`. Returns the measured values either way.
+ * Whether a frame has a background border to land a seam on: at least `bgShare` of the band along its
+ * edges (`border` of each side) within `bgTolerance` of the band's most common colour. `rgb` is that
+ * background colour (the plate's). Returns the measured share either way.
  */
-export async function judgeBackground(stillPng, { border = DIVE_DEFAULTS.border, bgThreshold = DIVE_DEFAULTS.bgThreshold, ffmpeg } = {}) {
-  const s = await frameStats(stillPng, { border, ffmpeg });
-  const r1 = (a) => a.map((x) => Math.round(x * 10) / 10);
-  return { on: s.std.every((x) => x <= bgThreshold), std: r1(s.std), mean: r1(s.mean), threshold: bgThreshold };
+export async function judgeBackground(png, { border = DIVE_DEFAULTS.border, bgShare = DIVE_DEFAULTS.bgShare, bgTolerance = DIVE_DEFAULTS.bgTolerance, ffmpeg } = {}) {
+  const m = await borderColour(png, { border, tolerance: bgTolerance, ffmpeg });
+  const share = Math.round(m.share * 1000) / 1000;
+  return { on: m.share >= bgShare, share, rgb: m.rgb.map((x) => Math.round(x * 10) / 10), threshold: bgShare, tolerance: bgTolerance };
 }
 
 // ---------------------------------------------------------------------------
@@ -74,8 +75,8 @@ export async function judgeBackground(stillPng, { border = DIVE_DEFAULTS.border,
  *   exit         make exit clips (connectors); default true
  *   only         'first': scene 1's dive and exit, the two gate versions, then stop
  *   generate     the clip maker (default generateClip); creds and clipOptions are passed on
- *   bgThreshold, border, landSec, finaleLandSec, diveSeconds, exitSeconds, finaleSeconds, reuse (default true), ffmpeg, onEvent
- * Returns { stage: 'first-pair', ... } at the gate, else { stage: 'done', manifest, file, seams }.
+ *   bgShare, bgTolerance, border, landSec, finaleLandSec, diveSeconds, exitSeconds, finaleSeconds, reuse (default true), ffmpeg, onEvent
+ * Returns { stage: 'first-pair', ... } at the gate, else { stage: 'done', manifest, file, seams } (seams: each gap's judgeBackground).
  */
 export async function runDiveLegs(opts = {}) {
   const o = { ...DIVE_DEFAULTS, exit: true, reuse: true, generate: generateClip, clipsDir: 'clips', ...opts };
@@ -96,7 +97,6 @@ async function prepare(o) {
   const bin = o.ffmpeg || await resolveFfmpeg();
   const ctx = { o, emit, dir, bin, n: o.manifest.sections.length, seeds: [], seams: [], raw: {}, shown: {}, exitSeed: {} };
   for (let i = 0; i < ctx.n; i++) ctx.seeds.push(await sizedStill(ctx, i));
-  for (let i = 0; i < ctx.n - 1; i++) ctx.seams.push(await seamPlan(ctx, i));
   return ctx;
 }
 
@@ -114,13 +114,15 @@ async function sizedStill(ctx, i) {
   return resizePng(still, ctx.o.size, path.join(ctx.dir, `still-${i + 1}.sized.png`), { ffmpeg: ctx.bin });
 }
 
-async function seamPlan(ctx, gap) {
-  const j = await judgeBackground(ctx.seeds[gap + 1], { border: ctx.o.border, bgThreshold: ctx.o.bgThreshold, ffmpeg: ctx.bin });
-  ctx.emit({ type: 'seam', gap: gap + 1, background: j.on, std: j.std, threshold: j.threshold });
+// Judge gap i on `png` (the frame the seam meets) and keep the result; `what` names that frame in the events.
+async function seamPlan(ctx, i, png, what) {
+  const j = await judgeBackground(png, { border: ctx.o.border, bgShare: ctx.o.bgShare, bgTolerance: ctx.o.bgTolerance, ffmpeg: ctx.bin });
+  ctx.emit({ type: 'seam', gap: i + 1, background: j.on, share: j.share, threshold: j.threshold, frame: what });
   if (!j.on) {
-    ctx.emit({ type: 'note', gap: gap + 1, message: `scene ${gap + 2}'s still has no one-colour border (band std ${j.std.join('/')} > ${j.threshold}): this seam is the engine's dissolve, no background plate` });
+    ctx.emit({ type: 'note', gap: i + 1, message: `${what} has no background border (${j.share} of the band near its most common colour, under ${j.threshold}): this seam is the engine's dissolve, no background plate` });
   }
-  return { gap: gap + 1, ...j };
+  ctx.seams[i] = { gap: i + 1, frame: what, ...j };
+  return ctx.seams[i];
 }
 
 // Generate one leg unless its raw clip is already there (reuse), then keep the version the next leg sees.
@@ -178,7 +180,7 @@ async function finish(ctx) {
 const nextClip = (ctx, i) => (i + 1 < ctx.n - 1 ? ctx.shown[`dive-${i + 2}`] : ctx.finale);
 
 async function finishGap(ctx, i) {
-  const land = ctx.seams[i].on ? await plateLanding(ctx, i, nextClip(ctx, i)) : null;
+  const land = await plateLanding(ctx, i, nextClip(ctx, i));
   const dive = path.join(ctx.dir, `dive-${i + 1}.mp4`);
   if (!ctx.o.exit) { await placeOrPost(ctx, `dive-${i + 1}`, ctx.shown[`dive-${i + 1}`], dive, land ? { land } : {}); return; }
   fs.copyFileSync(ctx.shown[`dive-${i + 1}`], dive);
@@ -192,16 +194,17 @@ async function placeOrPost(ctx, name, src, out, steps) {
   report(ctx, name, await postClip(src, out, steps, { ffmpeg: ctx.bin }));
 }
 
-// A plate of the next clip's actual first-frame border colour, and the landing step onto it.
+// The next clip's actual first frame decides the seam and gives the plate colour; null when it has no background border.
 async function plateLanding(ctx, i, next) {
   const first = await extractFirstFrame(next, path.join(ctx.dir, `next-${i + 1}-first.png`), { ffmpeg: ctx.bin });
-  return plateFrom(ctx, i, first);
+  return plateFrom(ctx, i, first, `the first frame of ${relOf(ctx, next)}`);
 }
 
-async function plateFrom(ctx, i, png) {
-  const { mean } = await frameStats(png, { border: ctx.o.border, ffmpeg: ctx.bin });
-  const plate = await solidPlate(mean, ctx.o.size, path.join(ctx.dir, `plate-${i + 1}.png`), { ffmpeg: ctx.bin });
-  ctx.emit({ type: 'plate', gap: i + 1, rgb: mean.map(Math.round) });
+async function plateFrom(ctx, i, png, what) {
+  const j = await seamPlan(ctx, i, png, what);
+  if (!j.on) return null;
+  const plate = await solidPlate(j.rgb, ctx.o.size, path.join(ctx.dir, `plate-${i + 1}.png`), { ffmpeg: ctx.bin });
+  ctx.emit({ type: 'plate', gap: i + 1, rgb: j.rgb.map(Math.round) });
   return { png: plate, sec: ctx.o.landSec };
 }
 
@@ -227,8 +230,8 @@ function writeManifest(ctx) {
 async function firstPair(ctx) {
   const gate = path.join(ctx.dir, 'gate');
   fs.mkdirSync(gate, { recursive: true });
-  // the next clip does not exist yet: the plate takes the next still's border colour (the next dive starts from that still)
-  const land = ctx.seams[0].on ? await plateFrom(ctx, 0, ctx.seeds[1]) : null;
+  // the next clip does not exist yet: the next still decides and gives the colour (the next dive starts from that still)
+  const land = await plateFrom(ctx, 0, ctx.seeds[1], 'the next scene\'s still');
   const noExit = path.join(gate, 'dive-1.noexit.mp4');
   await placeOrPost(ctx, 'dive-1', ctx.shown['dive-1'], noExit, land ? { land } : {});
   const dive = path.join(gate, 'dive-1.mp4');
@@ -237,9 +240,16 @@ async function firstPair(ctx) {
   await placeOrPost(ctx, 'exit-1', ctx.raw['exit-1'], exit, land ? { land } : {});
   const motion = await cameraMotion(ctx.shown['dive-1'], { ffmpeg: ctx.bin });
   return {
-    stage: 'first-pair', seam: ctx.seams[0],
+    stage: 'first-pair', seam: ctx.seams[0], exitEnd: await exitEnd(ctx),
     withoutExit: [relOf(ctx, noExit)], withExit: [relOf(ctx, dive), relOf(ctx, exit)],
     diveExitSsim: await seamSsim(dive, exit, { ffmpeg: ctx.bin }),
     motion: { rollDeg: motion.rollDeg, zoom: motion.zoom, method: motion.method },
   };
+}
+
+// Whether the exit as generated reached the background by its end (the same measure), for the gate to show.
+async function exitEnd(ctx) {
+  const end = await extractLastFrame(ctx.raw['exit-1'], path.join(ctx.dir, 'gate', 'exit-1-end.png'), { ffmpeg: ctx.bin });
+  const j = await judgeBackground(end, { border: ctx.o.border, bgShare: ctx.o.bgShare, bgTolerance: ctx.o.bgTolerance, ffmpeg: ctx.bin });
+  return { reached: j.on, share: j.share, threshold: j.threshold };
 }

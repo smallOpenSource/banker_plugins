@@ -138,6 +138,43 @@ function addSpan(acc, buf, start, count) {
   acc.n += count;
 }
 
+/**
+ * The most common colour of a picture's border band (`border` of each side) and how much of the band is
+ * near it: rgb24 pixels are grouped into colour bins `bin` wide, the fullest bin's mean is the reference,
+ * and `share` is the part of the band within `tolerance` (every channel) of it. `rgb` is the mean of those
+ * near pixels: the background colour, small objects on the edge left out.
+ */
+export function borderMode(buf, width, height, { border = 0.04, tolerance = 12, bin = 8 } = {}) {
+  const px = bandPixels(buf, width, height, border);
+  const counts = new Map();
+  for (const i of px) { const k = binKey(buf, i, bin); counts.set(k, (counts.get(k) || 0) + 1); }
+  const top = [...counts.entries()].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+  const ref = meanOf(buf, px.filter((i) => binKey(buf, i, bin) === top));
+  const near = px.filter((i) => [0, 1, 2].every((c) => Math.abs(buf[i + c] - ref[c]) <= tolerance));
+  return { share: near.length / px.length, rgb: meanOf(buf, near), pixels: px.length };
+}
+
+// Byte offsets of the rgb24 pixels in the border band.
+function bandPixels(buf, width, height, border) {
+  const bx = Math.max(1, Math.round(width * border));
+  const by = Math.max(1, Math.round(height * border));
+  const out = [];
+  for (let y = 0; y < height; y++) {
+    const full = y < by || y >= height - by;
+    for (let x = 0; x < width; x++) if (full || x < bx || x >= width - bx) out.push((y * width + x) * 3);
+  }
+  return out;
+}
+
+const binKey = (buf, i, bin) => ((buf[i] / bin) | 0) * 65536 + ((buf[i + 1] / bin) | 0) * 256 + ((buf[i + 2] / bin) | 0);
+const meanOf = (buf, px) => [0, 1, 2].map((c) => px.reduce((s, i) => s + buf[i + c], 0) / Math.max(1, px.length));
+
+/** borderMode of a PNG. */
+export async function borderColour(png, { ffmpeg, ...o } = {}) {
+  const { width, height } = probeDims(png);
+  return borderMode(rawFrames(await binOf({ ffmpeg }), ['-i', png], 'format=rgb24', 'rgb24'), width, height, o);
+}
+
 const sizeOf = (size) => (typeof size === 'string' ? size.split('x').map(Number) : [size.width, size.height]);
 
 /** A one-colour PNG of `size` ('720x1280' or {width, height}) from an [r, g, b] colour. Returns out. */

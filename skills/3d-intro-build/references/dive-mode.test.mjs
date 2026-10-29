@@ -70,13 +70,14 @@ test('planDiveLegs: six scenes make five dives, five exits and the finale, seede
   assert.throws(() => D.planDiveLegs({ scenes: [{}] }), /two scenes or more/);
 });
 
-test('judgeBackground: a one-colour border lands on a plate, a patterned one does not; the threshold is an argument', { skip: needFf }, async (t) => {
+test('judgeBackground: a background border lands on a plate, a patterned one does not; the share is an argument', { skip: needFf }, async (t) => {
   const { dir } = project(t);
   const on = await D.judgeBackground(path.join(dir, 's1.png'), { ffmpeg: FF });
   const off = await D.judgeBackground(path.join(dir, 's3.png'), { ffmpeg: FF });
-  assert.deepEqual([on.on, off.on, on.threshold], [true, false, 6]);
-  assert.ok(off.std.some((s) => s > 6), JSON.stringify(off));
-  assert.equal((await D.judgeBackground(path.join(dir, 's3.png'), { bgThreshold: 1000, ffmpeg: FF })).on, true);
+  assert.deepEqual([on.on, off.on, on.threshold, on.tolerance], [true, false, 0.85, 12]);
+  assert.ok(on.share >= 0.99 && off.share < 0.85, JSON.stringify([on, off]));
+  assert.ok(on.rgb.every((v, c) => Math.abs(v - [0x22, 0x33, 0x55][c]) <= 3), `the plate colour is the background: ${on.rgb}`);
+  assert.equal((await D.judgeBackground(path.join(dir, 's3.png'), { bgShare: 0, ffmpeg: FF })).on, true);
 });
 
 test('runDiveLegs: dives, exits and the finale make an intro.json that assembles; seams land on the next clip\'s border colour', { skip: needFf, timeout: 180_000 }, async (t) => {
@@ -92,12 +93,15 @@ test('runDiveLegs: dives, exits and the finale make an intro.json that assembles
   // exit seeds are the dives' own last frames, taken before any landing
   const ref = await extractLastFrame(path.join(dir, 'clips', 'dive-1.raw.mp4'), path.join(dir, 'ref.png'), { ffmpeg: FF });
   assert.ok(fs.readFileSync(path.join(dir, 'clips', 'seed-exit-1.png')).equals(fs.readFileSync(ref)));
-  // gap 1 (scene 2 has a one-colour border): exit-1 ends on the plate; gap 2 (scene 3 patterned): no plate, a note
+  // each gap is judged on the next clip's actual first frame: gap 1 (dive 2 starts on scene 2's
+  // one-colour background) lands exit-1 on the plate; gap 2 (the finale starts patterned): no plate, a note
   assert.deepEqual(r.seams.map((s) => s.on), [true, false]);
+  assert.deepEqual(r.seams.map((s) => s.frame), ['the first frame of clips/dive-2.raw.mp4', 'the first frame of clips/finale.mp4']);
+  assert.ok(events.filter((e) => e.type === 'seam').every((e) => typeof e.share === 'number' && e.threshold === 0.85));
   const end = await extractLastFrame(path.join(dir, 'clips', 'exit-1.mp4'), path.join(dir, 'end.png'), { ffmpeg: FF });
   assert.ok(await ssimFrames(end, path.join(dir, 'clips', 'plate-1.png'), { ffmpeg: FF }) >= 0.99);
   assert.ok(!fs.existsSync(path.join(dir, 'clips', 'plate-2.png')));
-  assert.ok(events.some((e) => e.type === 'note' && e.gap === 2 && /no one-colour border/.test(e.message)));
+  assert.ok(events.some((e) => e.type === 'note' && e.gap === 2 && /no background border \([\d.]+ of the band near its most common colour, under 0\.85\)/.test(e.message)));
   const plate = events.find((e) => e.type === 'plate' && e.gap === 1);
   assert.ok(Math.abs(plate.rgb[1] - 0x55) <= 6 && Math.abs(plate.rgb[2] - 0x22) <= 6, `plate ${plate.rgb} is scene 2's background`);
   assert.ok(events.some((e) => e.type === 'post' && e.clip === 'exit-1' && e.fn.join() === 'land'), 'exit-1: the landing only, no tone step');
@@ -127,6 +131,8 @@ test('runDiveLegs: first pair gate makes scene 1\'s dive and exit only, two vers
   assert.deepEqual(calls.map((c) => c.prompt), ['dive push-in', 'exit'], 'the gate shows the exit version even when exits are off');
   assert.deepEqual([gate.withoutExit, gate.withExit], [['clips/gate/dive-1.noexit.mp4'], ['clips/gate/dive-1.mp4', 'clips/gate/exit-1.mp4']]);
   assert.ok(typeof gate.diveExitSsim === 'number' && typeof gate.motion.zoom === 'number');
+  assert.equal(gate.seam.frame, 'the next scene\'s still');
+  assert.deepEqual(Object.keys(gate.exitEnd), ['reached', 'share', 'threshold'], 'the gate shows whether the exit reached the background, with the value');
   assert.ok(!fs.existsSync(path.join(dir, 'intro.json')), 'nothing past the gate');
   const end = await extractLastFrame(path.join(dir, gate.withoutExit[0]), path.join(dir, 'g.png'), { ffmpeg: FF });
   assert.ok(await ssimFrames(end, path.join(dir, 'clips', 'plate-1.png'), { ffmpeg: FF }) >= 0.99, 'the version without the exit lands the dive on the plate');

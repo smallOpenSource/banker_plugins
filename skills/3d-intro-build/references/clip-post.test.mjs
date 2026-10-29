@@ -118,6 +118,21 @@ test('frameStats: a one-colour border reads as uniform, a patterned one does not
   assert.ok(a.pixels < 320 * 568 / 4, 'only the band is read');
 });
 
+test('borderMode: an island touching the top edge on one colour is a background; a checker, grass noise and a full-bleed picture are not', { skip: needFf, timeout: 60_000 }, async (t) => {
+  const d = work(t);
+  const touching = still(d, 'touch.png', 'color=c=0xF3E9DC:s=320x568,drawbox=x=120:y=0:w=60:h=200:color=0x704020:t=fill');
+  const checker = still(d, 'checker.png', "color=c=white:s=320x568,geq=lum='if(mod(floor(X/16)+floor(Y/16),2),40,220)':cb=128:cr=128");
+  const grass = still(d, 'grass.png', 'color=c=0x4A7A30:s=320x568,noise=alls=60:allf=u');
+  const photo = still(d, 'photo.png', 'testsrc2=s=320x568');
+  const m = await C.borderColour(touching, { ffmpeg: FF });
+  assert.ok(m.share >= 0.85, `touching: ${m.share}`);
+  assert.ok(m.rgb.every((v, c) => Math.abs(v - [0xF3, 0xE9, 0xDC][c]) <= 3), `the colour is the background, not the roof: ${m.rgb}`);
+  for (const [name, png] of [['checker', checker], ['grass', grass], ['photo', photo]]) {
+    const r = await C.borderColour(png, { ffmpeg: FF });
+    assert.ok(r.share < 0.85, `${name}: ${r.share}`);
+  }
+});
+
 test('cameraMotion: 3 degrees a second of roll, 1.03 a second of zoom, and a still clip read as such', { skip: needFf, timeout: 120_000 }, async (t) => {
   const d = work(t);
   const png = still(d, 'still.png', 'testsrc2=s=360x640');

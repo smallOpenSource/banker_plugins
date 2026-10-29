@@ -200,6 +200,8 @@ no captions.
 장면마다 그 장면의 승인 스틸에서 시작한다(`firstFramePng = 장면 i 스틸`). 장면 사이 이음매는 Sora 가 배경까지 물러나는지에 기대지 않는다. 다음 장면 스틸의 테두리가 한 색이면 이음매 쪽 끝 0.6초를 그 색의 판으로 착지시킨다(`landOnStill`, 무료). 실행 순서와 첫 쌍 게이트는 SKILL Step 4C.
 chain 프롬프트(4절)는 바꾸지 않았다. 아래는 dive 모드에만 쓴다.
 
+**dive 모드의 스틸(선택, 미검증):** dive 모드에서만 스타일 서문 바로 뒤에 `Generous empty margin of plain background on every side; nothing touches the frame edges.` 를 붙일 수 있다. 가장자리에 닿는 지붕이나 연기를 줄여 배경 이음매가 켜질 몫을 늘리려는 문장이다. 효과는 재지 않았고, chain 과 holdFlight 의 스틸에는 붙이지 않는다(스타일 서문은 모든 장면에 글자 그대로 같아야 한다).
+
 **dive (장면 i, 마지막 장면 제외, 8초):**
 
 ```
