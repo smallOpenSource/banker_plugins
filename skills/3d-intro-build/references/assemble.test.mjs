@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { assemble, engineCss } from './assemble.mjs';
+import { assemble, engineCss, firstPosters, panelAlpha } from './assemble.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -104,4 +104,29 @@ test('an unknown panel style or a missing asset stops the build with the reason'
   const dir = project();
   fs.rmSync(path.join(dir, 'hold-2.mp4'));
   assert.throws(() => assemble({ projectDir: dir }), /asset not found: hold-2\.mp4/);
+});
+
+test('the first posters are preloaded (the engine loads posters lazily), and every poster drops the engine\'s zoom', () => {
+  const dir = project();
+  assemble({ projectDir: dir });
+  const html = read(dir, 'index.html');
+  assert.match(html, /<link rel="preload" as="image" href="assets\/a\.png" \/>\s*<link rel="preload" as="image" href="assets\/b\.png" \/>/);
+  assert.equal((html.match(/rel="preload"/g) || []).length, 2, 'two sections: two posters');
+  assert.deepEqual(firstPosters({ sections: [{ still: 'a' }, { still: 'b' }, { still: 'c' }], connectors: ['x', null], connectorStills: ['cs1', null] }), ['a', 'cs1', 'b']);
+  assert.deepEqual(firstPosters({ sections: [{ still: 'a' }, { still: 'b' }], connectors: [null], connectorStills: ['cs1'] }), ['a', 'b'], 'a connector poster counts only with its connector');
+  assert.match(read(dir, 'intro-fixes.css'), /\.sw-scene__still \{ transform: none !important; \}/);
+});
+
+test('glass panel alpha: the lowest that keeps 4.5 over a white pixel for every panel text and accent label; a person\'s panelAlpha wins', () => {
+  assert.equal(panelAlpha([]), 0.64);
+  assert.ok(panelAlpha(['#C68B59']) >= panelAlpha([]), 'an accent label counts');
+  const alphaIn = (dir) => Number(/--intro-panel-alpha:\s*([\d.]+);/.exec(read(dir, 'panel-glass.css'))[1]);
+  const auto = project({ panel: 'glass', theme: { bg: '#F3E9DC', ink: '#3B2A20', accent: '#C68B59' } });
+  const r = assemble({ projectDir: auto });
+  assert.deepEqual(r.panelAlpha, { alpha: panelAlpha(['#C68B59', undefined, undefined]), from: 'computed' });
+  assert.equal(alphaIn(auto), r.panelAlpha.alpha);
+  const mine = project({ panel: 'glass', panelAlpha: 0.5 });
+  assert.deepEqual(assemble({ projectDir: mine }).panelAlpha, { alpha: 0.5, from: 'manifest' });
+  assert.equal(alphaIn(mine), 0.5);
+  assert.equal(assemble({ projectDir: project() }).panelAlpha, undefined, 'no glass panel: nothing to set');
 });

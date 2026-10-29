@@ -320,7 +320,8 @@ const done = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds,
 | 매니페스트 항목 | 쓰임 |
 |---|---|
 | `lang` | `<html lang>` |
-| `panel: "glass"` | 흐린 유리 문구 패널. 기본값(알파 .36, 흰 글자)은 어두운 장면용이다. 밝은 장면(기본 화풍 clay diorama 등)은 `--intro-panel-alpha` 를 .6 이상으로 올리고 Step 6 대비로 확인한다 |
+| `panel: "glass"` | 흐린 유리 문구 패널(흰 글자). 알파는 조립이 정한다: 패널 글자색과 accent 로 만든 라벨색이 흰 픽셀 위에서도 대비 4.5 를 넘는 최소값(accent 가 없으면 0.64). 조립이 그 값을 알린다 |
+| `panelAlpha: 0.7` | 사람이 정한 유리 패널 알파(0~1). 계산값보다 이긴다. Step 6 의 대비 실패 줄은 그 줄에 필요한 최소 알파(`needs --intro-panel-alpha >= …`)를 함께 알린다 |
 | `stepNav: { "end": "#main" }` | 장면 단위 이동. `end` 는 기존 사이트의 본문 시작(단독 페이지면 생략). 나머지 옵션은 `step-nav.js` 머리말 |
 | `connectorStills: ["clips/exit-1-first.png", ...]` | 커넥터마다 포스터로 쓸 그 클립의 실제 첫 프레임(dive 모드의 나가기, `runDiveLegs` 가 채움). 없으면 엔진이 다음 장면 스틸을 포스터로 둔다 |
 
@@ -332,10 +333,10 @@ node references/serve.mjs --stop <projectDir>/site           # 끝나면 종료
 
 - 사이트에 CSP 가 있으면 처음부터 `--csp "<운영 정책>"`(정책을 모르면 `--csp strict`)을 붙여 띄운다. 같은 폴더에 설정이 다른 서버가 떠 있으면 시작이 실패한다(exit 1). 그때는 `--stop` 뒤 다시 띄운다. 같은 설정이면 떠 있는 서버의 주소만 알려 준다.
 
-- 페이지에는 인라인 script, style 이 없다. 설정은 `intro.js`, 테마는 `theme.css`, 엔진 CSS 는 `scrub-engine.css` 다.
+- 페이지에는 인라인 script, style 이 없다. 설정은 `intro.js`, 테마는 `theme.css`, 엔진 CSS 는 `scrub-engine.css` 다. 엔진은 포스터를 늦게 불러오므로(`loading=lazy`) 조립이 처음 세 구간의 포스터를 `<link rel="preload" as="image">` 로 미리 받는다.
   엔진은 여전히 `<style>` 하나를 주입하려 한다. CSP 가 있는 사이트는 조립이 알려 준 `styleHash` 를 `style-src` 에 더하면 콘솔 오류가 남지 않는다(더하지 않아도 같은 규칙이 `scrub-engine.css` 로 적용된다).
 - 엔진은 클립을 `fetch` 로 받아 `blob:` 으로 재생한다. CSP 에 `connect-src 'self'`(클립을 다른 출처에서 받으면 그 출처)와 `media-src 'self' blob:` 이 필요하다.
-- `intro-fixes.css` 는 항상 붙는다. 엔진의 인라인 transform 이 덮는 패널 세로 가운데 맞춤(`translate`), 860px 이하에서 장면 점과 겹치지 않는 오른쪽 여백과 아래 안내 위로 올린 문구, 높이 500px 이하 가로 화면의 두 단 배치, 어두운 테마에서도 읽히는 주 버튼과 상단 CTA 글자, 고정 헤더를 깨는 `overflow-x: hidden` 대신 `clip` 을 담는다.
+- `intro-fixes.css` 는 항상 붙는다. 클립이 준비되기 전 포스터에 엔진이 주는 확대와 이동을 끄는 규칙(클립이 나타날 때 화면이 튀지 않게), 엔진의 인라인 transform 이 덮는 패널 세로 가운데 맞춤(`translate`), 860px 이하에서 장면 점과 겹치지 않는 오른쪽 여백과 아래 안내 위로 올린 문구, 높이 500px 이하 가로 화면의 두 단 배치, 어두운 테마에서도 읽히는 주 버튼과 상단 CTA 글자, 고정 헤더를 깨는 `overflow-x: hidden` 대신 `clip` 을 담는다.
 - 기존 사이트에 붙이는 미리보기는 반드시 운영과 같은 CSP 헤더로 서빙한다. 일반 정적 서버에서는 CSP 오류가 보이지 않는다.
 - 상태 파일은 `serve.mjs` 가 서빙 폴더 밖(`<site>.server.json`)에, `curate.mjs` 가 프로젝트 폴더(`curate.server.json`)에 둔다. 검토 서버는 입력에 적힌 테이크와 프레임 가운데 이미지와 영상만, 링크를 따라가도 프로젝트 안의 이미지나 영상일 때만 내준다. 그래서 이 파일과 `.env` 키 파일은 입력에 잘못 적혀도 내려가지 않는다. 읽을 수 없는 파일은 403 으로 답하고 서버는 계속 돈다. 두 서버 모두 Host 가 localhost 나 IP 주소가 아니면 거절한다(DNS 재바인딩 방지). 종료는 `--stop` 으로 한다. 상태 파일의 PID 가 1보다 큰 정수가 아니면 끄지 않는다. 명령줄 패턴으로 `pkill -f` 하지 않는다. 이미 떠 있는 서버를 같은 설정으로 다시 띄우면 그 주소만 알려 준다. CSP, 바인드 주소, 포트가 다르면 `--stop` 으로 먼저 끄라며 멈춘다(exit 1). 검토 페이지의 sha256 은 파일을 나눠 읽어 크기 제한이 없고, 서버를 띄울 때 미리 계산한다.
 - 상태 파일의 PID 가 1보다 큰 정수가 아니거나 기록된 주소가 이 기기가 아니면 그 서버를 끄지 않는다(`--stop` 은 종료 1, 파일은 사람이 보도록 남긴다). 상태 파일은 남의 저장소 안에 있을 수 있기 때문이다.
@@ -358,10 +359,10 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 - 화면 크기마다 새 브라우저 컨텍스트로 잰다(재빌드 뒤 재사용 컨텍스트는 예전 CSS 를 캐시에서 준다). 기본 화면은 1280x800, 1920x1080, 860x900, 390x844 터치, 375x667 터치, 844x390 터치(가로로 든 휴대폰)다. 다른 크기를 지원하면 `--viewports` 에 더한다. 지원 언어마다 그 언어 페이지 주소로 다시 돌린다.
 - 장면마다 패널이 화면 안, 헤더 아래에 있는지, 안내, 건너뛰기, 버튼, 장면 점과 겹치지 않는지, 가로 넘침, 콘솔 오류, 글자 줄 단위 대비(CTA 버튼 글자 포함, 글자를 숨긴 채 가장 나쁜 배경 픽셀 기준, 4.5 이상)를 잰다. 상단 CTA 는 제 바탕색과의 대비를 잰다. 바탕이 단색이 아니면 잴 수 없어 실패로 남고, 검증자가 눈으로 보고 판정에 적는다. 두 번째 장면부터는 클립이 있는데 5초 안에 그려지지 않으면 실패다(첫 장면은 첫 이동 전까지 스틸, 움직임 줄이기는 클립 없음).
 - 장면 단위 이동이면 입력도 잰다: 직전 장면에서 휠 1칸과 관성 1회가 마지막 장면에 멈추는지, 마지막 장면에서 입력 방식별 본문 도착과 위 입력 복귀, 메인화면 버튼과 건너뛰기 링크. 움직임 줄이기 설정은 `--viewports 1280x800r` 로 따로 잰다.
-- 이음매 탐침: `--seams` 를 더하면 첫 화면 크기에서 클립 사이 경계마다 앞뒤를 스크롤하며 잰다. 빈 화면(색과 관계없이 거의 한 색) 길이가 한도를 넘거나, 느린 망(`--slow-clips 4000`)에서 포스터가 클립과 크게 다르면 실패다. dive 모드면 반드시 돌린다.
+- 이음매 탐침: `--seams` 를 더하면 첫 화면 크기에서 클립 사이 경계마다 앞뒤를 스크롤하며 잰다. 빈 화면(색과 관계없이 거의 한 색) 길이가 한도를 넘거나, 느린 망(`--slow-clips 4000`)에서 포스터가 클립과 크게 다르면 실패다. dive 모드면 반드시 돌린다. 도착할 때 클립이 이미 있던 경계는 포스터를 재지 못한다(`posterUnmeasured`, 통과로 세지 않음). `--seam-reload` 를 더하면 경계마다 페이지를 새로 불러 모든 경계를 잰다.
 
   ```bash
-  node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800 --no-input --seams --slow-clips 4000 --out <projectDir>/verify-seams.json
+  node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800 --no-input --seams --slow-clips 4000 --seam-reload --out <projectDir>/verify-seams.json
   ```
 
 - 눈으로 볼 항목은 `references/verify.md` 에 있다(dive 는 회전, 배경 이음매, 결론 착지).

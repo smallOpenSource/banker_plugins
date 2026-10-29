@@ -243,3 +243,17 @@ test('decodePng reads an 8-bit RGB PNG with every row filter, as zlib wrote it',
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) assert.deepEqual([...out.data.subarray((y * w + x) * 4, (y * w + x) * 4 + 4)], [...px(x, y), 255], `${x},${y}`);
   assert.throws(() => decodePng(Buffer.from('not a png at all')), /not a PNG/);
 });
+
+test('alphaNeeded: the panel alpha a failed line needs, from its captured worst pixel; the failure line names it', async () => {
+  const V = await import('./verify-intro.mjs');
+  const panel = [11, 18, 32];
+  const white = [255, 255, 255];
+  const capturedOverWhite = panel.map((c) => 0.36 * c + 0.64 * 255);
+  assert.equal(V.alphaNeeded([241, 245, 249], 1, capturedOverWhite, panel, 0.36, 4.5), 0.61, 'the body colour over white (assemble takes the darkest panel text, 0.64)');
+  assert.equal(V.alphaNeeded([241, 245, 249], 1, panel.map((c) => 0.36 * c + 0.64 * 120), panel, 0.36, 4.5) < 0.36, true, 'over a mid grey: less than now');
+  assert.equal(V.alphaNeeded([250, 250, 250], 1, white, [240, 240, 240], 0.5, 4.5), null, 'a light panel never gets there');
+  const s = { inViewport: true, belowHeader: true, overlaps: [], hOverflow: false, clip: 'shown',
+    contrast: [{ el: 'body', line: 1, min: 3.1, needAlpha: 0.64 }, { el: 'title', line: 1, min: 2, needAlpha: null }, { el: 'cta', line: 1, min: 3 }] };
+  assert.deepEqual(V.judge(s, { minContrast: 4.5 }), ['contrast body line 1: 3.1 (needs --intro-panel-alpha >= 0.64)',
+    'contrast title line 1: 2 (no panel alpha reaches it)', 'contrast cta line 1: 3']);
+});

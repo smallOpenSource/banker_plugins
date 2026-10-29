@@ -19,6 +19,7 @@
  *        [--seams] [--slow-clips <ms>]
  *     --seams      also probe every seam between clips at the first screen size (seamProbe below)
  *     --slow-clips hold each clip request this many ms first (a slow network), to catch a poster flicker
+ *     --seam-reload  load the page afresh before each seam, so that every seam meets its clip still on the way
  *     --viewports  a trailing t marks a touch screen, r reduced motion (default: the six below)
  *     --header     the site's fixed header (default: the engine's .sw-topbar)
  *     --playwright-from-project  also look in the current folder's node_modules, before the global npm root (your own project only)
@@ -83,17 +84,37 @@ function pixelContrast(textRgb, alpha, bg) {
  * image `width` wide. NaN when the rect holds no pixel, so it never passes as a contrast.
  */
 export function worstContrast(textRgb, px, width, rect, alpha = 1) {
+  return worstPixel(textRgb, px, width, rect, alpha).min;
+}
+
+/** worstContrast and the pixel that gives it: { min, bg } (bg null when the rect holds no pixel). */
+export function worstPixel(textRgb, px, width, rect, alpha = 1) {
   const seen = new Map();
-  let worst = NaN;
+  let worst = { min: NaN, bg: null };
   for (let y = rect.y; y < rect.y + rect.height; y++) {
     for (let x = rect.x; x < rect.x + rect.width; x++) {
       const i = (y * width + x) * 4;
       const key = (px[i] << 16) | (px[i + 1] << 8) | px[i + 2];
       if (!seen.has(key)) seen.set(key, pixelContrast(textRgb, alpha, [px[i], px[i + 1], px[i + 2]]));
-      worst = Number.isNaN(worst) ? seen.get(key) : Math.min(worst, seen.get(key));
+      if (Number.isNaN(worst.min) || seen.get(key) < worst.min) worst = { min: seen.get(key), bg: [px[i], px[i + 1], px[i + 2]] };
     }
   }
   return worst;
+}
+
+/**
+ * The lowest panel alpha (0.01 steps) at which text keeps `min` contrast over one captured pixel: the
+ * scene pixel under the panel is recovered from the capture (panel colour at `panelAlpha` over it), then
+ * covered again at each alpha. null when no alpha reaches `min`.
+ */
+export function alphaNeeded(textRgb, textAlpha, captured, panelRgb, panelAlpha, min) {
+  const a = Math.min(0.99, Math.max(0, panelAlpha));
+  const scene = captured.map((c, k) => Math.min(255, Math.max(0, (c - a * panelRgb[k]) / (1 - a))));
+  for (let n = 0; n <= 100; n++) {
+    const bg = scene.map((c, k) => (n / 100) * panelRgb[k] + (1 - n / 100) * c);
+    if (pixelContrast(textRgb, textAlpha, bg) >= min) return n / 100;
+  }
+  return null;
 }
 
 /**
@@ -112,6 +133,9 @@ export const intersects = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width &
 // Layout positions are fractional (81.3 against 81): one pixel of slack.
 export const insideViewport = (r, vw, vh, slack = 1) => r.x >= -slack && r.y >= -slack && r.x + r.width <= vw + slack && r.y + r.height <= vh + slack;
 
+// What a failed panel line needs: the lowest --intro-panel-alpha that lifts its worst pixel to the floor.
+const needs = (c) => (c.needAlpha === undefined ? '' : c.needAlpha === null ? ' (no panel alpha reaches it)' : ` (needs --intro-panel-alpha >= ${c.needAlpha})`);
+
 /** The failures of one measured scene, in a fixed order. */
 export function judge(s, { minContrast }) {
   const out = [];
@@ -121,7 +145,7 @@ export function judge(s, { minContrast }) {
   if (s.hOverflow) out.push('horizontal overflow');
   for (const c of s.contrast) {
     if (c.min === null) out.push(`contrast ${c.el} line ${c.line}: not measured (${c.why})`);
-    else if (!(c.min >= minContrast)) out.push(`contrast ${c.el} line ${c.line}: ${c.min}`);
+    else if (!(c.min >= minContrast)) out.push(`contrast ${c.el} line ${c.line}: ${c.min}${needs(c)}`);
   }
   if (s.clip === 'not shown') out.push('clip not shown');
   return out;
@@ -322,9 +346,10 @@ export async function screenshot(page, opts, { tries = 3, waitMs = 150 } = {}) {
   }
 }
 
-async function lineContrast(page, i, panel) {
+async function lineContrast(page, i, panel, minContrast = 4.5) {
   const clip = { x: Math.max(0, Math.floor(panel.x)), y: Math.max(0, Math.floor(panel.y)), width: Math.ceil(panel.width), height: Math.ceil(panel.height) };
   const lines = await page.evaluate(hideTextLines, { i, parts: TEXT_PARTS });
+  const panelBg = await page.evaluate((k) => getComputedStyle(document.querySelectorAll('.sw-copy')[k]).backgroundColor, i);
   await page.waitForTimeout(80);
   const png = await screenshot(page, { type: 'png', clip });
   await page.evaluate(showText, { i, parts: TEXT_PARTS });
@@ -336,15 +361,24 @@ async function lineContrast(page, i, panel) {
     const rgb = parseColor(l.color);
     if (!rgb) return { el: l.el, line: l.line, min: null, why: `colour ${l.color}` };
     if (rect.width < 1 || rect.height < 1) return { el: l.el, line: l.line, min: null, why: 'line outside the panel' };
-    return { el: l.el, line: l.line, min: Number(worstContrast(rgb, img.data, img.width, rect, colorAlpha(l.color)).toFixed(2)) };
+    const w = worstPixel(rgb, img.data, img.width, rect, colorAlpha(l.color));
+    return { el: l.el, line: l.line, min: Number(w.min.toFixed(2)), ...panelNeed(l, rgb, w, panelBg, minContrast) };
   });
+}
+
+// For a panel line (not a CTA button with its own fill) on a see-through panel: the alpha it needs.
+function panelNeed(l, rgb, w, panelBg, minContrast) {
+  const panel = parseColor(panelBg);
+  const a = colorAlpha(panelBg);
+  if (l.el === 'cta' || !panel || !w.bg || a <= 0 || a >= 1) return {};
+  return { needAlpha: alphaNeeded(rgb, colorAlpha(l.color), w.bg, panel, a, minContrast) };
 }
 
 async function measureScene(page, i, o) {
   await goToScene(page, i);
   const clip = await clipState(page, i, o.reduce);
   const g = geometry(await page.evaluate(rawGeometry, { i, header: o.header, covers: COVERS }));
-  const contrast = o.contrast && g.opacity > 0.5 ? await lineContrast(page, i, g.panel) : [];
+  const contrast = o.contrast && g.opacity > 0.5 ? await lineContrast(page, i, g.panel, o.minContrast) : [];
   const scene = { scene: i + 1, clip, ...g, contrast };
   return { ...scene, failures: g.opacity > 0.5 ? judge(scene, o) : ['panel not visible at its stop'] };
 }
@@ -459,7 +493,7 @@ async function measureViewport(browser, url, vp, o) {
  * Measures `url` at every viewport. Resolves to { url, viewports: [...], failures }; with `seams`,
  * also { seams } from seamProbe at the first viewport, its failures counted in.
  */
-const VERIFY_DEFAULTS = { viewports: VIEWPORTS, header: '.sw-topbar', minContrast: 4.5, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0 };
+const VERIFY_DEFAULTS = { viewports: VIEWPORTS, header: '.sw-topbar', minContrast: 4.5, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0, seamReload: false };
 
 export async function verifyIntro(url, opts = {}) {
   const o = { ...VERIFY_DEFAULTS, ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
@@ -468,7 +502,7 @@ export async function verifyIntro(url, opts = {}) {
   try {
     const results = [];
     for (const vp of o.viewports) results.push(await measureViewport(browser, url, vp, { header: o.header, minContrast: o.minContrast, input: o.input, contrast: o.contrast }));
-    const seam = o.seams ? await seamProbe(browser, url, { viewport: o.viewports[0], slowClipsMs: Number(o.slowClipsMs) || 0 }) : null;
+    const seam = o.seams ? await seamProbe(browser, url, { viewport: o.viewports[0], slowClipsMs: Number(o.slowClipsMs) || 0, reload: Boolean(o.seamReload) }) : null;
     const failures = results.reduce((a, r) => a + r.failures, 0) + (seam ? seam.failures.length : 0);
     return { url, viewports: results, ...(seam ? { seams: seam } : {}), failures };
   } finally {
@@ -648,15 +682,35 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
   const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   if (slowClipsMs) await page.route(/\.mp4(\?|$)/, async (route) => { await new Promise((r) => setTimeout(r, slowClipsMs)); await route.continue(); });
+  await openIntro(page, url);
+  const segs = segmentsOf(config);
+  const boundaries = [];
+  for (let k = 1; k < segs.length; k++) {
+    if (opts.reload && k > 1) await openIntro(page, url);
+    boundaries.push(await probeSeam(page, segs, k, opts));
+  }
+  await context.close();
+  // a seam whose clip was there on arrival showed no poster: not measured, so not counted as a pass
+  const posterUnmeasured = boundaries.filter((b) => b.posterDiff === null).length;
+  return { viewport: `${viewport.width}x${viewport.height}`, slowClipsMs, reload: Boolean(opts.reload), posterMeasured: boundaries.length - posterUnmeasured, posterUnmeasured, boundaries, failures: boundaries.flatMap((b) => b.failures) };
+}
+
+// Routing (the slow clips) turns the browser's HTTP cache off, so a fresh load fetches every clip again.
+async function openIntro(page, url) {
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForSelector('.sw-scene');
   await page.evaluate((sels) => { for (const el of document.querySelectorAll(sels.join(','))) el.style.visibility = 'hidden'; }, OVERLAYS);
-  const segs = segmentsOf(config);
-  const boundaries = [];
-  for (let k = 1; k < segs.length; k++) boundaries.push(await probeSeam(page, segs, k, opts));
-  await context.close();
-  return { viewport: `${viewport.width}x${viewport.height}`, slowClipsMs, boundaries, failures: boundaries.flatMap((b) => b.failures) };
 }
+
+// The scenes in view: whether each shows its clip, its poster's load state and transform, its video's frame.
+const sceneStates = (page) => page.evaluate(() => [...document.querySelectorAll('.sw-scene')].map((e, scene) => ({ e, scene }))
+  .filter(({ e }) => Number(getComputedStyle(e).opacity) > 0.5).map(({ e, scene }) => {
+    const img = e.querySelector('.sw-scene__still');
+    const v = e.querySelector('video');
+    return { scene, hasClip: e.classList.contains('has-clip'),
+      poster: img ? { complete: img.complete, naturalWidth: img.naturalWidth, transform: getComputedStyle(img).transform } : null,
+      video: v ? { readyState: v.readyState, currentTime: Number(v.currentTime.toFixed(3)) } : null };
+  }));
 
 async function probeSeam(page, segs, k, o) {
   const at = segs[k].start;
@@ -681,20 +735,21 @@ async function probeSeam(page, segs, k, o) {
     ...blank.map((b) => `seam ${prev.label} -> ${segs[k].label}: a near one-colour screen for ${b.lengthVh} vh (limit ${Math.round(limit * 100) / 100} vh)`),
     ...(arrival.flicker ? [`seam ${prev.label} -> ${segs[k].label}: the poster differs from the clip by ${arrival.diff} (limit ${o.flickerDiff})`] : []),
   ];
-  return { from: prev.label, to: segs[k].label, atVh: at, maxDiff, blank, blankLimitVh: Math.round(limit * 100) / 100, posterDiff: arrival.diff, failures };
+  return { from: prev.label, to: segs[k].label, atVh: at, maxDiff, blank, blankLimitVh: Math.round(limit * 100) / 100, posterDiff: arrival.diff, arrival: arrival.states, failures };
 }
 
 // Jump just past the seam, where the entering clip is at its first frames; when a poster shows there,
 // compare it with the clip once it paints. A poster that is the clip's own first frame barely differs.
 async function arrive(page, vh, o) {
   await scrollToVh(page, vh);
-  if (!(await posterShown(page))) { await settleClips(page, o.settleMs); return { diff: null, flicker: false }; }
+  const before = await sceneStates(page);
+  if (!(await posterShown(page))) { await settleClips(page, o.settleMs); return { diff: null, flicker: false, states: { before } }; }
   const early = await capture(page);
   await page.waitForFunction(() => [...document.querySelectorAll('.sw-scene')]
     .every((e) => Number(getComputedStyle(e).opacity) <= 0.5 || e.classList.contains('has-clip')), null, { timeout: o.settleMs }).catch(() => {});
   await settleClips(page, o.settleMs);
   const diff = meanAbsDiff(early, await capture(page));
-  return { diff, flicker: diff > o.flickerDiff };
+  return { diff, flicker: diff > o.flickerDiff, states: { before, after: await sceneStates(page) } };
 }
 
 // '390x844t' is a touch screen, '1280x800r' reduced motion; the flags may combine ('390x844tr').
@@ -705,11 +760,11 @@ export function parseViewport(v) {
 }
 
 const FLAGS = { '--out': 'out', '--header': 'header', '--min-contrast': 'minContrast', '--viewports': 'viewports', '--slow-clips': 'slowClipsMs' };
-const SWITCHES = { '--no-input': ['input', false], '--no-contrast': ['contrast', false], '--playwright-from-project': ['playwrightFromProject', true], '--seams': ['seams', true] };
+const SWITCHES = { '--no-input': ['input', false], '--no-contrast': ['contrast', false], '--playwright-from-project': ['playwrightFromProject', true], '--seams': ['seams', true], '--seam-reload': ['seamReload', true] };
 
 /** The command line: a URL, --flag value or --flag=value, and the switches. */
 export function parseArgs(argv) {
-  const o = { url: null, out: null, header: '.sw-topbar', minContrast: 4.5, viewports: VIEWPORTS, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0 };
+  const o = { url: null, out: null, header: '.sw-topbar', minContrast: 4.5, viewports: VIEWPORTS, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0, seamReload: false };
   for (let i = 0; i < argv.length; i++) {
     const [flag, inline] = argv[i].includes('=') ? [argv[i].slice(0, argv[i].indexOf('=')), argv[i].slice(argv[i].indexOf('=') + 1)] : [argv[i], null];
     if (SWITCHES[flag]) o[SWITCHES[flag][0]] = SWITCHES[flag][1];
@@ -736,7 +791,7 @@ if (invokedDirectly()) {
   let o;
   try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
   if (!o.url) {
-    console.error('usage: node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5] [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project] [--seams] [--slow-clips <ms>]');
+    console.error('usage: node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5] [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project] [--seams] [--slow-clips <ms>] [--seam-reload]');
     process.exit(2);
   }
   verifyIntro(o.url, o).then((r) => {

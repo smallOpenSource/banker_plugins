@@ -5,7 +5,7 @@
  * Takes a project directory that already holds the generated stills + clips (+ an intro.json
  * manifest describing them) and produces the intro page:
  *   <outDir>/
- *     index.html            (head of index-template.html; no inline script or style)
+ *     index.html            (head of index-template.html; no inline script or style; preloads the first posters)
  *     scrub-engine.js       (copied verbatim from references/)
  *     scrub-engine.css      (the CSS the engine injects, taken from scrub-engine.js unchanged)
  *     scrub-engine.LICENSE.md (scroll-world's MIT notice, which ships with the engine files)
@@ -41,6 +41,7 @@
  *     "diveScroll": 1.3, "connScroll": 0.9, "crossfade": 0.12, // optional
  *     "nav": true, "atmosphere": true,                 // optional (only false is emitted)
  *     "panel": "glass",                                 // optional frosted-glass copy panel
+ *     "panelAlpha": 0.7,                                // optional glass alpha; default: panelAlpha() below
  *     "stepNav": { "end": "#main", ... },              // optional, see step-nav.js for the options
  *     "sections": [                                     // required, >= 1, in order
  *       { "id":"sceneA", "label":"Scene A",
@@ -167,6 +168,38 @@ function buildConfig(manifest, projectDir, outDir) {
 
 const PANELS = { glass: 'panel-glass.css' };
 
+// ---- glass panel alpha ---------------------------------------------------------
+
+const lin = (c) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+const hexRgb = (h) => { const m = /^#?([\da-f]{6})$/i.exec(String(h || '').trim()); return m ? [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)) : null; };
+// The glass panel's colours (panel-glass.css): its shade, and its text (title, body, number); the
+// label line mixes 30% of the accent into white.
+export const GLASS = { panel: [11, 18, 32], text: ['#ffffff', '#F1F5F9', '#E2E8F0'].map(hexRgb), alpha: 0.36 };
+
+/**
+ * The lowest glass alpha (0.01 steps) at which every panel text colour keeps `min` contrast even over a
+ * white pixel (the worst a scene can put behind the panel), the label colour from each accent included.
+ */
+export function panelAlpha(accents = [], { min = 4.5, panel = GLASS.panel } = {}) {
+  const labels = accents.map(hexRgb).filter(Boolean).map((a) => a.map((c) => 0.3 * c + 0.7 * 255));
+  const texts = [...GLASS.text, ...labels];
+  for (let k = 0; k <= 100; k++) {
+    const bg = panel.map((c) => (k / 100) * c + (1 - k / 100) * 255);
+    if (texts.every((t) => ratio(t, bg) >= min)) return k / 100;
+  }
+  return 1;
+}
+
+// The alpha the page gets: the manifest's panelAlpha (a person's choice) wins, else panelAlpha().
+function glassAlpha(manifest) {
+  const given = Number(manifest.panelAlpha);
+  if (manifest.panelAlpha != null && given >= 0 && given <= 1) return { alpha: given, from: 'manifest' };
+  const accents = [manifest.theme?.accent, ...(manifest.sections || []).map((s) => s.accent)];
+  return { alpha: panelAlpha(accents), from: 'computed' };
+}
+
 /**
  * The CSS the engine injects into <head>, exactly: the `css` template literal wrapped in @layer sw.
  * A template literal turns CRLF and CR into LF, so a checkout with CRLF line ends (git on Windows)
@@ -203,8 +236,22 @@ function stylesheets(manifest) {
     manifest.stepNav ? 'step-nav.css' : null].filter(Boolean);
 }
 
+/**
+ * The posters of the first `n` segments in scroll order (scene still, then the connector's own poster
+ * when it has one): the engine makes its posters loading=lazy, so on a fast first scroll the first
+ * seams could show a poster not yet loaded. A preload link fetches them with the page.
+ */
+export function firstPosters(config, n = 3) {
+  const out = [];
+  (config.sections || []).forEach((s, i) => {
+    out.push(s.still);
+    if (config.connectors?.[i] && config.connectorStills?.[i]) out.push(config.connectorStills[i]);
+  });
+  return [...new Set(out.filter(Boolean))].slice(0, n);
+}
+
 /** index.html from the template's head: title, description and lang set, its inline style replaced by links. */
-function renderIndexHtml(template, manifest) {
+function renderIndexHtml(template, manifest, config = {}) {
   const brandName = manifest.brand?.name || 'BRAND';
   const subject = manifest.subject || 'SUBJECT';
   const title = manifest.pageTitle || `${brandName} - the world of ${subject}`;
@@ -216,7 +263,8 @@ function renderIndexHtml(template, manifest) {
   head = head.replace(/<title>[^<]*<\/title>/, `<title>${escHtml(title)}</title>`);
   head = head.replace(/(<meta name="description" content=")[^"]*(")/, `$1${escAttr(desc)}$2`);
   if (manifest.lang) head = head.replace(/<html lang="[^"]*">/, `<html lang="${escAttr(manifest.lang)}">`);
-  const links = stylesheets(manifest).map((f) => `  <link rel="stylesheet" href="${f}" />`).join('\n');
+  const links = [...stylesheets(manifest).map((f) => `  <link rel="stylesheet" href="${f}" />`),
+    ...firstPosters(config).map((f) => `  <link rel="preload" as="image" href="${escAttr(f)}" />`)].join('\n');
   head = head.replace(/[ \t]*<style>[\s\S]*?<\/style>\n?/, `${links}\n`);
   const scripts = ['scrub-engine.js', manifest.stepNav ? 'step-nav.js' : null, 'intro.js'].filter(Boolean)
     .map((f) => `  <script src="${f}"></script>`).join('\n');
@@ -258,6 +306,10 @@ function writeStatic(out, manifest, template) {
   const copies = ['intro-fixes.css', manifest.panel ? PANELS[manifest.panel] : null,
     manifest.stepNav ? 'step-nav.css' : null, manifest.stepNav ? 'step-nav.js' : null].filter(Boolean);
   for (const f of copies) fs.copyFileSync(path.join(HERE, f), path.join(out, f));
+  if (manifest.panel === 'glass') {
+    const css = path.join(out, PANELS.glass);
+    fs.writeFileSync(css, fs.readFileSync(css, 'utf8').replace(/(--intro-panel-alpha:\s*)[\d.]+;/, `$1${glassAlpha(manifest).alpha};`));
+  }
   return `'sha256-${crypto.createHash('sha256').update(css).digest('base64')}'`;
 }
 
@@ -266,7 +318,7 @@ function writeStatic(out, manifest, template) {
 /**
  * Assemble the intro page. Copies the engine, its fixes and all referenced assets into outDir and
  * writes index.html, intro.js and the stylesheets (see the header).
- * @returns {{ outDir:string, index:string, engine:string, assets:string[], styleHash:string }}
+ * @returns {{ outDir:string, index:string, engine:string, assets:string[], styleHash:string, panelAlpha?:{alpha,from} }}
  */
 export function assemble({ projectDir, outDir, manifestPath } = {}) {
   if (!projectDir) throw new Error('assemble: projectDir is required');
@@ -286,9 +338,9 @@ export function assemble({ projectDir, outDir, manifestPath } = {}) {
   const styleHash = writeStatic(out, manifest, template);
   fs.writeFileSync(path.join(out, 'intro.js'), introJs(config, manifest.stepNav));
   const indexPath = path.join(out, 'index.html');
-  fs.writeFileSync(indexPath, renderIndexHtml(template, manifest));
+  fs.writeFileSync(indexPath, renderIndexHtml(template, manifest, config));
 
-  return { outDir: out, index: indexPath, engine: path.join(out, 'scrub-engine.js'), assets: copied, styleHash };
+  return { outDir: out, index: indexPath, engine: path.join(out, 'scrub-engine.js'), assets: copied, styleHash, ...(manifest.panel === 'glass' ? { panelAlpha: glassAlpha(manifest) } : {}) };
 }
 
 // ---- CLI --------------------------------------------------------------------
@@ -321,6 +373,7 @@ if (invokedDirectly()) {
     console.log(`assembled ${r.assets.length} asset(s) -> ${r.outDir}`);
     console.log(`index:  ${r.index}`);
     console.log(`engine: ${r.engine}`);
+    if (r.panelAlpha) console.log(`glass panel alpha: ${r.panelAlpha.alpha} (${r.panelAlpha.from === 'manifest' ? 'the manifest\'s panelAlpha' : 'computed: contrast 4.5 even over white'})`);
     console.log(`CSP: the engine injects one <style>; to allow it add ${r.styleHash} to style-src (scrub-engine.css carries the same rules)`);
     console.log(`\npreview:  node ${path.join(HERE, 'serve.mjs')} ${r.outDir} [--csp strict]`);
   } catch (e) {
