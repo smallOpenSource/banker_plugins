@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { CLASSES } from "./gate-evidence.mjs";
-import { MAX_CYCLES, endAllowed, matrixCheck, staleCheck, statusOf } from "./uqa-run.mjs";
+import { MAX_CYCLES, endAllowed, goalGates, matrixCheck, staleCheck, statusOf } from "./uqa-run.mjs";
 
 const RUN = fileURLToPath(new URL("./uqa-run.mjs", import.meta.url));
 const GATE = fileURLToPath(new URL("./gate-evidence.mjs", import.meta.url));
@@ -22,21 +22,52 @@ const nodeCmd = (...args) => `${WIN ? "& " : ""}${[NODE, ...args].map(q).join(" 
 
 const FP = "fp";
 const obs = (id, iter, verdict, seq, extra = {}) => ({ kind: "observed", id, iter, seq, cmd: id, fingerprint: FP, verdict, signature: verdict === "pass" ? null : `${id}:s`, ...extra });
-const fullMatrix = (seqOf = () => 2) => CLASSES.map(([c], i) => ({ id: `ADV-${i + 1}`, class: c, status: "pass", evidenceRef: seqOf(i) }));
+// Nine passing scenario records of one cycle (seq from, from + 1, ...) and the nine rows that rest on them.
+const scenarios = (iter, from = 10) => CLASSES.map((_, i) => obs(`scenario-${i + 1}`, iter, "pass", from + i));
+const fullMatrix = (from = 10) => CLASSES.map(([c], i) => ({ id: `ADV-${i + 1}`, class: c, status: "pass", evidenceRef: from + i }));
 
 test("matrix-incomplete: a class with no row, an excluded row without a reason, a pass with no record, an open row", () => {
-  assert.equal(matrixCheck(fullMatrix()).ok, true);
-  assert.deepEqual(matrixCheck(fullMatrix().slice(1)).missing, ["malformed-input"]);
+  const ev = scenarios(1);
+  assert.equal(matrixCheck(fullMatrix(), ev, 1).ok, true);
+  assert.deepEqual(matrixCheck(fullMatrix().slice(1), ev, 1).missing, ["malformed-input"]);
   const rows = fullMatrix();
   rows[0] = { id: "ADV-1", class: "malformed-input", status: "excluded", excludeReason: " " };
-  assert.deepEqual(matrixCheck(rows).missing, ["malformed-input"]);
+  assert.deepEqual(matrixCheck(rows, ev, 1).missing, ["malformed-input"]);
   rows[0].excludeReason = "입력을 받는 곳이 없다";
-  assert.equal(matrixCheck(rows).ok, true, "excluded with a reason covers the class");
+  assert.equal(matrixCheck(rows, ev, 1).ok, true, "excluded with a reason covers the class");
   rows[1] = { ...rows[1], evidenceRef: undefined };
-  assert.deepEqual(matrixCheck(rows).bad, ["ADV-2"]);
+  assert.deepEqual(matrixCheck(rows, ev, 1).bad, ["ADV-2"]);
   rows[1] = { ...rows[1], status: "blocked" };
-  assert.deepEqual(matrixCheck(rows).open, ["ADV-2"]);
-  assert.equal(matrixCheck([]).ok, false);
+  assert.deepEqual(matrixCheck(rows, ev, 1).open, ["ADV-2"]);
+  assert.equal(matrixCheck([], ev, 1).ok, false);
+});
+
+// S11 H2: a passed row rests on a scenario record of this cycle that passed, never on whatever record number it gives.
+test("matrix: a pass row citing a failed scenario, a goal gate's record, a record of an earlier cycle or a reported line is bad", () => {
+  const ev = [obs("tests", 2, "pass", 1), obs("scenario-1", 2, "fail", 2), obs("scenario-2", 1, "pass", 3), { kind: "reported", id: "scenario-3", iter: 2, seq: 4, verdict: "pass" },
+    ...scenarios(2)];
+  const rows = fullMatrix();
+  rows[0].evidenceRef = 1;
+  rows[1].evidenceRef = 2;
+  rows[2].evidenceRef = 3;
+  rows[3].evidenceRef = 4;
+  assert.deepEqual(matrixCheck(rows, ev, 2).bad, ["ADV-1", "ADV-2", "ADV-3", "ADV-4"]);
+  const st = statusOf({ evidence: ev, rows: fullMatrix().map((r) => ({ ...r, evidenceRef: 2 })), gates: ["tests"], fingerprint: FP });
+  assert.deepEqual([st.complete, st.checks.matrix.ok], [false, false], "nine rows resting on one failed scenario record give no COMPLETE");
+  assert.equal(statusOf({ evidence: ev, rows: fullMatrix(), gates: ["tests"], fingerprint: FP }).complete, true);
+});
+
+// S11 M2: --interactive is the drive scripts' scenario-* records, not a record with the id `interactive`.
+test("the interactive goal is the scenario records of the drives: all passing gives COMPLETE, none recorded is unrun", () => {
+  const ev = scenarios(1);
+  assert.deepEqual(goalGates(["tests", "interactive"], ev), ["tests", ...CLASSES.map((_, i) => `scenario-${i + 1}`)]);
+  let st = statusOf({ evidence: ev, rows: fullMatrix(), gates: ["interactive"], fingerprint: FP });
+  assert.deepEqual([st.complete, st.checks.staleEvidence.ok, st.checks.gates.ok], [true, true, true]);
+  ev[3] = obs("scenario-4", 1, "fail", 13);
+  st = statusOf({ evidence: ev, rows: fullMatrix(), gates: ["interactive"], fingerprint: FP });
+  assert.deepEqual([st.complete, st.checks.gates.ok], [false, false], "a drive that failed holds the goal");
+  st = statusOf({ evidence: [obs("tests", 1, "pass", 1)], rows: [], gates: ["interactive"], fingerprint: FP });
+  assert.deepEqual([st.checks.staleEvidence.unrun, st.checks.gates.gates[0].state], [["interactive"], "missing"]);
 });
 
 test("stale-evidence: a goal gate's last record or a cited record made on another tree, or a goal gate never run", () => {
@@ -49,7 +80,7 @@ test("stale-evidence: a goal gate's last record or a cited record made on anothe
 });
 
 test("status allows COMPLETE only when all hold, and names the end line otherwise", () => {
-  const ev = [obs("tests", 1, "fail", 1), obs("tests", 2, "pass", 2), obs("tests", 2, "pass", 3), obs("tests", 2, "pass", 4)];
+  const ev = [obs("tests", 1, "fail", 1), obs("tests", 2, "pass", 2), obs("tests", 2, "pass", 3), obs("tests", 2, "pass", 4), ...scenarios(2)];
   let st = statusOf({ evidence: ev, rows: fullMatrix(), gates: ["tests"], fingerprint: FP });
   assert.deepEqual([st.complete, st.cycle, st.next], [true, 2, "ULTRAQA COMPLETE: Goal met after 2 cycles"]);
   st = statusOf({ evidence: ev, rows: fullMatrix().slice(2), gates: ["tests"], fingerprint: FP });
@@ -67,7 +98,7 @@ test("status allows COMPLETE only when all hold, and names the end line otherwis
 });
 
 test("finish: COMPLETE is refused while any check fails; the STOPPED lines need what status says; BLOCKED and ERROR a reason", () => {
-  const ok = statusOf({ evidence: [obs("tests", 1, "pass", 1)], rows: fullMatrix(() => 1), gates: ["tests"], fingerprint: FP });
+  const ok = statusOf({ evidence: [obs("tests", 1, "pass", 1), ...scenarios(1)], rows: fullMatrix(), gates: ["tests"], fingerprint: FP });
   assert.equal(endAllowed("complete", ok), null);
   for (const [name, st] of [["matrix", { ...ok, complete: false, checks: { ...ok.checks, matrix: { ok: false } } }],
     ["stale", { ...ok, complete: false, checks: { ...ok.checks, staleEvidence: { ok: false } } }]]) {
@@ -117,20 +148,25 @@ test("a whole run: init, gates through gate-evidence, rows, a refused COMPLETE, 
   let r = call(w, RUN, ["finish", "--dir", d, "--end", "complete"]);
   assert.equal(r.code, 1);
   assert.match(r.json.refused, /COMPLETE 를 거부한다: .*matrix/);
-  const rows = (seq) => CLASSES.forEach(([c], i) => {
-    const row = { id: `ADV-${i + 1}`, class: c, intent: "x", model: "적대적 사용자", status: i === 0 ? "excluded" : "pass", evidenceRef: seq, excludeReason: i === 0 ? "입력 없음" : undefined };
+  // One scenario record per row, run through gate-evidence in the cycle, each row resting on its own.
+  const scen = (iter) => CLASSES.map((_, i) => call(w, GATE, ["run", "--dir", d, "--id", `scenario-${i + 1}`, "--cmd", nodeCmd("-e", "0"), "--timeout", "30", "--iter", String(iter), "--cwd", w.repo]).json.seq);
+  const rows = (seqs) => CLASSES.forEach(([c], i) => {
+    const row = { id: `ADV-${i + 1}`, class: c, intent: "x", model: "적대적 사용자", status: i === 0 ? "excluded" : "pass", evidenceRef: seqs[i], excludeReason: i === 0 ? "입력 없음" : undefined };
     assert.equal(call(w, RUN, ["row", "--dir", d], JSON.stringify(row)).code, 0);
   });
-  rows(rec.seq);
+  assert.equal(rec.seq, 1);
+  rows(CLASSES.map(() => rec.seq));
+  assert.deepEqual(call(w, RUN, ["status", "--dir", d]).json.checks.matrix.bad.length, 8, "rows resting on the tests gate's record are bad");
+  rows(scen(1));
   assert.equal(call(w, RUN, ["row", "--dir", d], '{"id":"x","class":"nope","status":"pass"}').code, 2, "an unknown class");
   assert.equal(call(w, RUN, ["status", "--dir", d]).json.complete, true);
   writeFileSync(join(w.repo, "fix.mjs"), "export {};\n");
   r = call(w, RUN, ["status", "--dir", d]);
   assert.deepEqual([r.code, r.json.checks.staleEvidence.ok], [1, false], "a change after the gate ran");
-  const rec2 = gate(2);
+  gate(2);
   r = call(w, RUN, ["status", "--dir", d]);
   assert.equal(r.json.checks.staleEvidence.ok, false, "the rows still cite the record of the old tree");
-  rows(rec2.seq);
+  rows(scen(2));
   r = call(w, RUN, ["finish", "--dir", d, "--end", "complete"]);
   assert.deepEqual([r.code, r.json.line], [0, "ULTRAQA COMPLETE: Goal met after 2 cycles"], r.stdout);
   const md = call(w, RUN, ["report", "--dir", d]).stdout;

@@ -42,7 +42,7 @@ argument-hint: "--tests | --build | --lint | --typecheck | --custom \"<명령이
 | `--lint` | `lint` | 린트 통과, 만든 하네스가 저장소 위생을 어기지 않음 |
 | `--typecheck` | `typecheck` | 타입 검사 통과, 만든 하네스도 컴파일됨 |
 | `--custom "<명령이나 패턴>"` | `custom` | 성공 문구만 믿지 않고 종료 코드와 실패 표지까지 |
-| `--interactive` | `interactive` | CLI 나 서비스의 정상, 적대, 경계 상호작용(`references/tmux-drive.md`) |
+| `--interactive` | `interactive` | CLI 나 서비스의 정상, 적대, 경계 상호작용(`references/tmux-drive.md`). 기록은 몰기 스크립트마다의 `scenario-<번호>` 이고, 게이트 `interactive` 는 그 기록 모두다 |
 
 - 구조화된 목표가 없으면 인자를 행동 목표로 읽고, 저장소에서 실행 가능한 e2e 방법을 찾는다.
 - 목표 명령은 저장소에서 찾는다(`package.json` 의 `scripts`, CI 시험 단계, `Makefile`, pytest 설정). 찾은 근거를 보고에 적는다.
@@ -51,7 +51,8 @@ argument-hint: "--tests | --build | --lint | --typecheck | --custom \"<명령이
 
 - 실행 폴더의 `matrix.md` 에 행마다 JSON 한 줄. `uqa-run.mjs row --dir '<d>'` 에 표준 입력으로 넘겨 쓴다(같은 id 는 바꿈).
 - 필드: `id`, `class`, `intent`, `model`(사용자나 공격자 모델), `setup`, `command`, `expected`, `status`, `evidenceRef`, `excludeReason`, `cleanup`
-- `status` 는 `pass`, `fail`, `blocked`, `excluded` 가운데 하나다. `pass` 는 `evidenceRef` 에 근거 `observed` 기록 번호(`seq`)를 둔다. `excluded` 는 `excludeReason` 을 둔다.
+- `status` 는 `pass`, `fail`, `blocked`, `excluded` 가운데 하나다. `excluded` 는 `excludeReason` 을 둔다.
+- `pass` 는 `evidenceRef` 에 이번 순환에 그 행을 돌린 `scenario-<번호>` 기록 가운데 `pass` 인 것의 번호(`seq`)를 둔다. 목표 게이트의 기록, 실패한 기록, 지난 순환의 기록은 근거가 아니다(`status` 의 `matrix` 가 `bad` 로 셈).
 - `class` 는 아래 9분류의 id, 또는 정상 경로 행의 `normal` 이다. 9분류마다 행이 하나 이상 있거나 까닭 있는 `excluded` 가 있어야 한다.
 
 | id | 분류 | 예 |
@@ -116,9 +117,9 @@ node '<R>/uqa-run.mjs' cleanup --dir '<d>'
 |---|---|
 | `sameFailure` | 같은 실패 서명이 서로 다른 순환 3번 |
 | `maxCycles` | 기록이 5번째 순환을 넘음 |
-| `matrix` | 9분류 가운데 행도 까닭 있는 제외도 없는 분류, 증거 없는 `pass`, 남은 `fail`, `blocked` |
+| `matrix` | 9분류 가운데 행도 까닭 있는 제외도 없는 분류, 이번 순환에 통과한 시나리오 기록을 근거로 들지 않은 `pass`, 남은 `fail`, `blocked` |
 | `staleEvidence` | 목표 게이트의 마지막 기록이나 행이 근거로 든 기록의 작업 트리 지문이 지금과 다름, 돌리지 않은 목표 게이트 |
-| `gates` | 이번 순환 목표 게이트의 연언항 거짓(실패, 시간 초과, 흔들림, 기록 없음) |
+| `gates` | 이번 순환 목표 게이트의 연언항 거짓(실패, 시간 초과, 흔들림, 기록 없음, git 없는 폴더의 기록 `unverifiable`). `interactive` 는 몰기 시나리오 기록 모두 |
 
 - 다섯이 모두 통과일 때만 COMPLETE 를 허용한다. 작업 트리 지문은 HEAD, 상태, diff, 추적하지 않는 파일 내용의 해시다.
 

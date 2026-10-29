@@ -37,6 +37,7 @@ node '<R>/gate-evidence.mjs' run --dir '<d>' --id scenario-3 --cmd "sh '<d>/driv
 - 입력은 `send-keys -l`(글자 그대로)로 보내고, 키는 따로 보낸다(`Enter`, `C-c`).
 - 화면 확인은 `capture-pane -p` 를 정해진 횟수만 되풀이한다. 끝없이 기다리지 않는다.
 - 판정은 스크립트의 종료 코드다. 화면에 성공 문구가 보여도 종료 코드가 0 이 아니면 실패다.
+- 목표 게이트 `interactive` 는 몰기 스크립트의 `scenario-<번호>` 기록 모두다. `--id interactive` 로 따로 돌리지 않는다. 순환마다 몰기 스크립트를 모두 다시 돌리고, 행의 `evidenceRef` 를 그 순환의 기록으로 바꾼다.
 - 시간 제한은 `run --timeout` 이 건다. 넘으면 실행기가 프로세스 묶음을 끝낸다. 스크립트의 `trap` 이 tmux 세션을 끝낸다.
 - 정리 단계에서 `tmux -S '<d>/tmux.sock' kill-server` 를 한 번 더 부르고, 남은 세션이 없는지 `ls` 로 확인한다.
 - 비밀값을 입력하거나 화면 출력에 싣지 않는다.

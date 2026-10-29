@@ -68,11 +68,19 @@ const gatesOf = (v) => String(v || "").split(",").map((g) => g.trim()).filter(Bo
 
 // ---- the checks (pure)
 
+// A passed row rests on a scenario record of this cycle that passed: observed, its id scenario-*, verdict pass. A goal
+// gate's record, a failed one or one of an earlier cycle is no ground for it (staleCheck adds the tree).
+function restsOn(r, observed, cycle) {
+  const rec = Number.isInteger(r.evidenceRef) ? observed.find((x) => x.seq === r.evidenceRef) : null;
+  return Boolean(rec) && String(rec.id).startsWith("scenario-") && rec.verdict === "pass" && rec.iter === cycle;
+}
+
 // The matrix: every class has a row or is excluded with a reason; a row's status is one of four; a passed row names
-// the observed record it rests on; a failed or blocked row is still open.
-export function matrixCheck(rows) {
+// the passing scenario record of this cycle it rests on; a failed or blocked row is still open.
+export function matrixCheck(rows, evidence = [], cycle = 0) {
+  const observed = evidence.filter((r) => r?.kind === "observed");
   const missing = CLASSES.map(([id]) => id).filter((c) => !rows.some((r) => r.class === c && (r.status !== "excluded" || String(r.excludeReason || "").trim())));
-  const bad = rows.filter((r) => !STATUSES.includes(r.status) || (r.status === "pass" && !Number.isInteger(r.evidenceRef))).map((r) => r.id);
+  const bad = rows.filter((r) => !STATUSES.includes(r.status) || (r.status === "pass" && !restsOn(r, observed, cycle))).map((r) => r.id);
   const open = rows.filter((r) => r.status === "fail" || r.status === "blocked").map((r) => r.id);
   return { ok: rows.length > 0 && !missing.length && !bad.length && !open.length, missing, bad, open };
 }
@@ -86,15 +94,24 @@ export function staleCheck(evidence, gates, rows, fingerprint) {
   return { ok: stale.length === 0 && last.length === gates.length, stale, unrun: gates.filter((g) => !observed.some((r) => r.id === g)) };
 }
 
+// The goal gates as records: `interactive` is the drive scripts' scenario-* records (references/tmux-drive.md), as
+// ralph-qa's `scenarios` is; with none it stays `interactive` (never run).
+export function goalGates(gates, evidence) {
+  const scenarios = [...new Set(evidence.filter((r) => r?.kind === "observed" && String(r.id).startsWith("scenario-")).map((r) => r.id))];
+  return gates.flatMap((g) => (g !== "interactive" ? [g] : scenarios.length ? scenarios : [g]));
+}
+
 export function statusOf({ evidence, rows, gates, fingerprint }) {
-  const cycle = Math.max(0, ...evidence.filter((r) => r.kind === "observed").map((r) => r.iter));
+  const observed = evidence.filter((r) => r.kind === "observed");
+  const cycle = Math.max(0, ...observed.map((r) => r.iter));
   const same = repeatedFailures(evidence);
+  const goal = goalGates(gates, evidence);
   const checks = {
     sameFailure: { ok: same.length === 0, signatures: same },
     maxCycles: { ok: cycle <= MAX_CYCLES, cycle, max: MAX_CYCLES },
-    matrix: matrixCheck(rows),
-    staleEvidence: staleCheck(evidence, gates, rows, fingerprint),
-    gates: gateConjunct(evidence, gates, fingerprint, cycle),
+    matrix: matrixCheck(rows, evidence, cycle),
+    staleEvidence: staleCheck(evidence, goal, rows, fingerprint),
+    gates: gateConjunct(evidence, goal, fingerprint, cycle),
   };
   const complete = Object.values(checks).every((c) => c.ok);
   return { complete, cycle, checks, next: nextLine(complete, checks, cycle) };

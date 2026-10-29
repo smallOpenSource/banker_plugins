@@ -841,6 +841,11 @@ try {
      && /닫는 표지 `<\/review-data id="<id>">` 는 쓰지 않는다\(실행기가 붙인다\. 쓰면 `markers`\)/.test(rqSkill) && /`spec\.md` 에는 아래 표의 다섯 낱말로 시작하는 줄만 쓴다/.test(rqSkill)
      && /`prepare` 가 `git-failed` 로 멈추면 `INCONCLUSIVE` 로 흐리지 않는다/.test(rqSkill) && /`멈춤: prepare git-failed\(<message>\)`/.test(rqSkill),
      'rq-tools: ralph-qa seats write a missing tool as 도구 없음 and raise it as a blocker only when the criteria need it, roles that ask for no missing tool come first, the quorum block is byte for byte the same, and a Codex prepare git-failed is a named stop');
+  // S11 H2, M2: an ultraqa pass row rests on a passing scenario record of this cycle, and --interactive is the drives' records.
+  const tmuxDrive = fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'references', 'tmux-drive.md'), 'utf8');
+  ok(/이번 순환에 그 행을 돌린 `scenario-<번호>` 기록 가운데 `pass` 인 것의 번호/.test(uqaSkill) && /게이트 `interactive` 는 그 기록 모두다/.test(uqaSkill)
+     && /`--id interactive` 로 따로 돌리지 않는다/.test(tmuxDrive),
+     'uqa-rows: an ultraqa pass row rests on a passing scenario record of this cycle, and the interactive goal is the drive scripts\' scenario records');
   // S19: outside OMX's tmux runtime an OMX stage runs as a recorded fallback, never a stop by itself, in all three chains.
   const tmuxBad = ['all-in-one', 'ultra-init', 'ultra-chain'].filter((n) => {
     const t = fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8');
