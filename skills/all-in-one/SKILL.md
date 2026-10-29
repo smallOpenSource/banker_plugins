@@ -183,8 +183,10 @@ The gate folder lives until Stage 3 has its end word: no cleanup's day rule
 takes it (ralph-qa's gate folder rule).
 
 **Not a git repo.** If `init` (or `run`) stops with `not-a-git-tree` (exit 3,
-nothing made or run), the gates cannot have evidence: the work tree fingerprint
-sees no change. Take no baseline, and in Stage 3 hand ralph-qa no `--gates`; it
+nothing made or run), first check that the folder the stop names (`checked` in
+its JSON, an absolute path) is the target repo; if not, call it again with
+`--cwd '<repo>'`. Only when the target really is no git repo: the gates cannot
+have evidence (the work tree fingerprint sees no change). Take no baseline, and in Stage 3 hand ralph-qa no `--gates`; it
 then writes `게이트: 선언 없음(git 저장소 아님)` in its report and seat
 instructions. Never run `git init` yourself: tell the user that `git init` and a
 first commit make the gates work next time. The same on both runtimes (Claude

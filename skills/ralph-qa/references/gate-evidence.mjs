@@ -416,10 +416,13 @@ async function fingerprint(o, ctx) {
 
 const COMMANDS = { init, cleanup, run, note, gate, verify, fingerprint };
 
+// A stop as JSON: what it is, its line, its paths, and for not-a-git-tree the folder it checked.
+const stopJson = (e) => ({ ok: false, stop: e.code, message: `gate-evidence: ${e.message}`, detail: e.detail, ...(e.checked ? { checked: e.checked } : {}) });
+
 // A usage error and an internal one on stderr (2), a stop as JSON on stdout (3).
 function failure(e, out, err) {
   if (e instanceof Stop) {
-    out.write(`${JSON.stringify({ ok: false, stop: e.code, message: `gate-evidence: ${e.message}`, detail: e.detail }, null, 2)}\n`);
+    out.write(`${JSON.stringify(stopJson(e), null, 2)}\n`);
     return 3;
   }
   err.write(e instanceof Usage ? `gate-evidence: ${e.message}\n` : `gate-evidence: 내부 오류(${e?.code || e?.name || "error"}): ${String(e?.message || e).split("\n")[0]}\n`);

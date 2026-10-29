@@ -83,7 +83,8 @@ test("init on a folder with no git stops with not-a-git-tree and makes no run fo
   const plain = join(w.dir, "plain");
   mkdirSync(plain);
   const r = call(w, RUN, ["init", "--repo", plain, "--gates", "tests"]);
-  assert.deepEqual([r.code, r.json.stop], [3, "not-a-git-tree"]);
+  assert.deepEqual([r.code, r.json.stop, r.json.checked], [3, "not-a-git-tree", plain]);
+  assert.ok(r.json.message.includes(`검사한 폴더: ${plain}`) && r.json.message.includes("검사할 저장소를 --repo 로 주십시오"), r.json.message);
   assert.equal(call(w, RUN, ["init", "--repo", plain, "--gates", "tests", "--resume"]).json.stop, "not-a-git-tree");
 });
 

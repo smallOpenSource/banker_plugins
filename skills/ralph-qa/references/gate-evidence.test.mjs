@@ -258,3 +258,21 @@ test("init and run on a folder with no git stop with not-a-git-tree before anyth
   r = cli(w, ["init", "--cwd", plain]);
   assert.deepEqual([r.code, r.json.stop, readdirSync(w.base).length], [3, "not-a-git-tree", before], "no gate folder made");
 });
+
+// A call from outside the repo without --cwd checks the wrong folder: the stop names it and says to give --cwd, and the
+// same call with --cwd on the repo works, so the gates are never turned off by a wrong folder.
+test("init from a folder outside the repo: without --cwd the stop names the folder and asks for --cwd; with --cwd on the repo it works", { skip: !HAS_GIT && "no git" }, (t) => {
+  const w = world(t);
+  const outside = join(w.dir, "outside");
+  mkdirSync(outside);
+  const at = (args) => {
+    const r = spawnSync(NODE, [TOOL, ...args], { encoding: "utf8", env: w.env, cwd: outside, timeout: 120000 });
+    return { code: r.status, json: JSON.parse(r.stdout) };
+  };
+  let r = at(["init"]);
+  assert.deepEqual([r.code, r.json.stop, r.json.checked, r.json.detail], [3, "not-a-git-tree", outside, [outside]]);
+  assert.ok(r.json.message.includes(`검사한 폴더: ${outside}`) && r.json.message.includes("검사할 저장소를 --cwd 로 주십시오"), r.json.message);
+  r = at(["init", "--cwd", w.repo]);
+  assert.equal(r.code, 0);
+  assert.match(r.json.dir, /ralph-qa-gates\.[A-Za-z0-9]+$/);
+});

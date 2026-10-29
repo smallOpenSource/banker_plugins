@@ -854,8 +854,9 @@ try {
   // S11 R3: a folder with no git is a named stop (not-a-git-tree) at the start, never a spent loop, in all five docs.
   const noGitBad = ['ralph-qa', 'ultraqa', 'all-in-one', 'ultra-init', 'ultra-chain'].filter((n) => !/`not-a-git-tree`/.test(fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')))
     .concat(/export function requireGitTree/.test(rfSrc) && /requireGitTree\(cwd, ctx\.env\)/.test(gateSrc) && /`ULTRAQA BLOCKED: git 저장소가 아님`/.test(uqaSkill)
-      && /`게이트: 선언 없음\(git 저장소 아님\)`/.test(rqSkill) ? [] : ['runner or end lines']);
-  ok(noGitBad.length === 0, `no-git: gate-evidence init and run and uqa-run init stop with not-a-git-tree at the start, and ralph-qa, ultraqa, all-in-one, ultra-init and ultra-chain say what to do${noGitBad.length ? ` (${noGitBad.join(', ')})` : ''}`);
+      && /`게이트: 선언 없음\(git 저장소 아님\)`/.test(rqSkill) && /검사한 폴더: \$\{checked\}\)\. 이 폴더가 대상 저장소가 아니면 검사할 저장소를 \$\{flag\} 로 주십시오/.test(rfSrc) ? [] : ['runner or end lines'])
+    .concat(['ralph-qa', 'ultraqa', 'all-in-one', 'ultra-init', 'ultra-chain'].filter((n) => !/`checked`/.test(fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8'))).map((n) => `${n}: no check of the stop's folder`));
+  ok(noGitBad.length === 0, `no-git: gate-evidence init and run and uqa-run init stop with not-a-git-tree at the start naming the folder they checked and asking for --cwd, and ralph-qa, ultraqa, all-in-one, ultra-init and ultra-chain check that folder before going on without gates${noGitBad.length ? ` (${noGitBad.join(', ')})` : ''}`);
   ok(lifeBad.length === 0, `gate-life: ralph-qa keeps one gate folder per run (init before the baseline, no day rule, cleanup after the end word, a caller's <g> used as given) and all-in-one, ultra-init and ultra-chain make and remove it with gate-evidence.mjs and say what to do when it is gone${lifeBad.length ? ` (${lifeBad.join(', ')})` : ''}`);
   // S11 H2, M2: an ultraqa pass row rests on a passing scenario record of this cycle, and --interactive is the drives' records.
   const tmuxDrive = fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'references', 'tmux-drive.md'), 'utf8');

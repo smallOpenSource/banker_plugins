@@ -161,7 +161,7 @@ async function init(o, ctx) {
   const repo = realRepo(o.repo);
   const gates = gatesOf(o.gates);
   if (!gates.length) throw new Usage("--gates 에 목표 게이트를 하나 이상 준다(tests, build, lint, typecheck, custom, interactive)");
-  requireGitTree(repo, ctx.env);
+  requireGitTree(repo, ctx.env, "--repo");
   if (o.resume) return resume(repo, ctx);
   const snap = await snapshot(repo, ctx.env);
   const { dir } = makeRunFolder(ctx, "ultraqa");
@@ -299,9 +299,12 @@ export function parseArgs(argv) {
 
 const COMMANDS = { init, row, status, finish, report, cleanup };
 
+// A stop as JSON: what it is, its line, its paths, and for not-a-git-tree the folder it checked.
+const stopJson = (e) => ({ ok: false, stop: e.code, message: `ultraqa: ${e.message}`, detail: e.detail, ...(e.checked ? { checked: e.checked } : {}) });
+
 function failure(e, out, err) {
   if (e instanceof Stop) {
-    out.write(`${JSON.stringify({ ok: false, stop: e.code, message: `ultraqa: ${e.message}`, detail: e.detail }, null, 2)}\n`);
+    out.write(`${JSON.stringify(stopJson(e), null, 2)}\n`);
     return 3;
   }
   err.write(e instanceof Usage || e instanceof SyntaxError ? `ultraqa: ${e.message}\n` : `ultraqa: 내부 오류(${e?.code || e?.name || "error"}): ${String(e?.message || e).split("\n")[0]}\n`);
