@@ -101,6 +101,7 @@ argument-hint: "on | off | status"
   - Codex 홈이나 `teamwork/bin` 이 그런 곳이면 설치하지 않고(6), 훅도 돌지 않음
   - 래퍼는 `NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` 를 지우고 PATH 를 기록한 node 의 폴더와 `/usr/bin`, `/bin` 으로, `CODEX_HOME` 을 고정함
 - 훅 명령 끝의 `--rev <해시>` 는 엔진과 래퍼의 해시. 판이 오르면 Codex 가 신뢰를 다시 물음 (갱신에 대한 사용자 동의)
+- Codex 의 훅 신뢰 키는 `hooks.json` 안의 위치(이벤트, 묶음 번호)라, banker 훅을 끄고 켜서 같은 이벤트의 묶음 순서가 바뀌면 teamwork 훅이 그대로여도 다시 물음 (0.165.0 실측)
 - `hooks.json` 은 banker 훅 설치와 같은 잠금(`hooks.json.lock`)을 잡고 고침. 우리 항목만 같은 자리에서 고치고 시간 제한은 5초
 - 상태 폴더는 `0700`, 파일은 `0600`
 
