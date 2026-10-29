@@ -19,7 +19,7 @@
  * (the DRM of a closed network encrypts files by their extension, and .md is one it leaves readable).
  */
 import { fork } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,13 +109,14 @@ const listDir = (dir) => {
   }
 };
 
-// A folder init made: named ralph-qa.<letters and digits>, a folder and no link, with its marker. Its answer folder
-// is the sibling ralph-qa-out.<the same>.
-export function runFolder(dir) {
+// A folder init made: named ralph-qa.<letters and digits>, a folder and no link, with its marker, right under one of
+// the known bases that only this account may write in. Its answer folder is the sibling ralph-qa-out.<the same>.
+export function runFolder(dir, ctx) {
   const d = resolve(String(dir));
   if (!RUN_NAME.test(basename(d)) || !lstatOr(d)?.isDirectory() || !isFile(join(d, ".ralph-qa"))) {
     throw new Stop("not-a-run-folder", `init 이 만든 폴더가 아니다: ${d}`);
   }
+  if (!underBase(ctx, d)) throw new Stop("not-a-run-folder", `알려진 기준 폴더 바로 아래의 실행 폴더가 아니다: ${d}`);
   const o = join(dirname(d), basename(d).replace(/^ralph-qa\./, "ralph-qa-out."));
   const answers = lstatOr(o);
   return { d, o: answers?.isDirectory() && isFile(join(o, ".ralph-qa")) ? o : null };
@@ -139,6 +140,13 @@ function privateDir(p) {
   } catch {
     return false;
   }
+}
+// The folder's parent, by its real path, is one of the known bases by theirs (macOS's /var is a link to /private/var:
+// either form names the same base), and only this account may write in it (POSIX).
+function underBase(ctx, d) {
+  const parent = norm(ctx, realOr(dirname(d)));
+  const known = bases(ctx).known.some((b) => norm(ctx, realOr(b)) === parent);
+  return known && (ctx.platform === "win32" || privateDir(dirname(d)));
 }
 const insideHome = (ctx, p) => norm(ctx, realOr(p)).startsWith(norm(ctx, realOr(homeOf(ctx))) + sep);
 
@@ -235,15 +243,15 @@ function verdict(result) {
 }
 
 function prepare(o, ctx) {
-  const { d } = runFolder(o.dir);
+  const { d } = runFolder(o.dir, ctx);
   refuseSent(d);
   const built = buildPayload({ dir: d, repo: o.repo, base: o.base, id: o.id, env: ctx.env });
   const [result, code] = verdict({ dir: d, prompt: join(d, "prompt.md"), raw: join(d, "raw.md"), unsentFile: join(d, "unsent.md"), ...built });
   return [result, code, d];
 }
 
-function check(o) {
-  const { d } = runFolder(o.dir);
+function check(o, ctx) {
+  const { d } = runFolder(o.dir, ctx);
   const id = readRun(d).id;
   const c = checkPayload({ dir: d, id });
   if (c.markers !== 2) throw new Stop("markers", `표지가 두 줄이 아니다(${c.markers}줄). 가리다 표지를 지웠으면 prepare 를 다시 한다`);
@@ -262,7 +270,7 @@ const readStdin = (ctx) => {
 
 function put(o, ctx) {
   if (!["short.md", "spec.md"].includes(o.name)) throw new Usage(`--name 은 short.md 나 spec.md 다: ${String(o.name).slice(0, 80)}`);
-  const { d } = runFolder(o.dir);
+  const { d } = runFolder(o.dir, ctx);
   refuseSent(d);
   const data = readStdin(ctx);
   writeFileSync(join(d, o.name), data, { mode: 0o600 });
@@ -337,6 +345,8 @@ function giveBack(lock) {
 function removeMarked(p) {
   const was = lstatOr(p);
   try {
+    // the marker last: a removal that stops part way leaves a folder cleanup still knows as a run folder
+    for (const name of listDir(p).filter((n) => n !== ".ralph-qa")) rmSync(join(p, name), { recursive: true, force: true, maxRetries: 3 });
     rmSync(p, { recursive: true, force: true, maxRetries: 3 });
   } catch (e) {
     keepMarked(p, was);
@@ -430,7 +440,7 @@ const readIdOr = (d) => {
 };
 
 async function cleanup(o, ctx) {
-  const { d, o: out } = runFolder(o.dir);
+  const { d, o: out } = runFolder(o.dir, ctx);
   const pid = o.force ? null : liveLock(d, ctx.now());
   if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid}). 끝난 뒤 다시 한다`);
   const { known } = bases(ctx);
@@ -586,8 +596,8 @@ async function cliChecks(ctx, seat, plan, exe) {
 }
 
 // The parts a seat gets: the payload, or its split, each with its two markers and no secret-like line.
-function partsOf(payload, n, id, short) {
-  const parts = n ? splitPayload(payload, n, id, short) : [payload];
+function partsOf(payload, n, { id, short, shortSha }) {
+  const parts = n ? splitPayload(payload, n, id, short, shortSha) : [payload];
   parts.forEach((part, k) => {
     if (markerCount(part, id) !== 2 || scan(part.toString("utf8")).count) throw new Stop("split", `부분 ${k + 1}/${parts.length} 의 표지나 검사가 맞지 않는다`);
   });
@@ -699,7 +709,7 @@ async function seatWork(ctx, run, seat, g, payload, base) {
   if (why) return { ...base, why };
   let parts;
   try {
-    parts = partsOf(payload, run.split[seat.cli], run.id, run.short);
+    parts = partsOf(payload, run.split[seat.cli], run);
   } catch (e) {
     if (e instanceof Stop) return { ...base, why: "split", notes: [e.message] };
     throw e;
@@ -708,10 +718,37 @@ async function seatWork(ctx, run, seat, g, payload, base) {
   return runParts(ctx, run, seat, g, parts, base);
 }
 
+// The seat CLI's version, read without starting gemini or opencode: codex's from the probe's `codex --version`, the
+// others' from the package.json of their npm package (beside the entry point, above its real path, or under the
+// prefix's lib/node_modules), opencode's own installer folder holding the plugin package of its version.
+const PACKAGES = { codex: "@openai/codex", gemini: "@google/gemini-cli", opencode: "opencode-ai" };
+const readJson = (p) => {
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+};
+function installedVersion(cli, exe) {
+  const real = realOr(exe);
+  const pkg = PACKAGES[cli].split("/");
+  const tries = [join(dirname(exe), "node_modules", ...pkg, "package.json"), join(dirname(dirname(exe)), "lib", "node_modules", ...pkg, "package.json")];
+  for (let dir = dirname(real), k = 0; k < 5; k += 1, dir = dirname(dir)) tries.push(join(dir, "package.json"));
+  const found = tries.map(readJson).find((j) => j?.name === PACKAGES[cli] && typeof j.version === "string");
+  if (found) return found.version;
+  const own = cli === "opencode" ? readJson(join(dirname(dirname(real)), "package.json"))?.dependencies?.["@opencode-ai/plugin"] : null;
+  return typeof own === "string" ? `${own} (설치 폴더의 @opencode-ai/plugin)` : null;
+}
+export function cliVersion(cli, exe, probed) {
+  if (cli === "codex" && probed?.version) return String(probed.version).slice(0, 80);
+  return installedVersion(cli, exe) || "알 수 없음";
+}
+
 async function sendSeat(ctx, run, seat, payload) {
-  const base = { seat: seat.cli, model: seat.model, status: "not-sent", why: null, exit: null, signal: null, secs: 0, answer: null, errors: null, facts: {}, notes: [] };
+  const none = { seat: seat.cli, model: seat.model, status: "not-sent", why: null, exit: null, signal: null, secs: 0, answer: null, errors: null, facts: {}, notes: [] };
   const g = guards(ctx, seat, run);
-  if (g.why) return { ...base, why: g.why, notes: g.notes || [] };
+  if (g.why) return { ...none, why: g.why, notes: g.notes || [] };
+  const base = { ...none, cliVersion: cliVersion(seat.cli, g.exe, g.probed) };
   let result;
   try {
     mkdirSync(join(run.d, seat.cli), { recursive: true, mode: 0o700 });
@@ -775,28 +812,29 @@ function declared(run, bytes, seats, d) {
 }
 
 function sendStart(o, ctx, a) {
-  const { d, o: out } = runFolder(o.dir);
+  const { d, o: out } = runFolder(o.dir, ctx);
   if (!out) throw new Stop("not-a-run-folder", `답 폴더(ralph-qa-out.*)가 없다: ${d}`);
   refuseSent(d);
   if (ctx.env.CODEX_SANDBOX_NETWORK_DISABLED === "1" && !a.dryRun) throw new Stop("sandboxed", "Codex sandbox 가 네트워크를 막는다. 승인을 받아 sandbox 밖에서 send 를 다시 한다");
-  const { id, short } = readRun(d);
+  const { id, short, shortsha } = readRun(d);
   const payload = payloadToSend(d, id, Boolean(o["allow-large"]));
-  return { d, out, id, payload, short: Number(short) };
+  return { d, out, id, payload, short: Number(short), shortSha: shortsha || null };
 }
 
 async function send(o, ctx) {
   const a = sendArgs(o);
-  const { d, out, id, payload, short } = sendStart(o, ctx, a);
+  const { d, out, id, payload, short, shortSha } = sendStart(o, ctx, a);
   const lock = takeLock(d, ctx.now());
   const touch = keepFresh(lock);
   const signals = watchSignals();
-  const run = { ...a, d, o: out, id, short, signalled: () => signals.code() !== 0 };
+  const run = { ...a, d, o: out, id, short, shortSha, signalled: () => signals.code() !== 0 };
   try {
     // every seat settles before the lock goes back and the stop handlers go away
     const settled = await Promise.allSettled(a.seats.map((x) => sendSeat(ctx, run, x, payload)));
     const thrown = settled.find((x) => x.status === "rejected");
     if (thrown) throw thrown.reason;
     const seats = settled.map((x) => x.value);
+    if (!a.dryRun) appendFileSync(join(d, "run.md"), seats.filter((x) => x.cliVersion).map((x) => `cli-${x.seat} ${x.cliVersion}\n`).join(""), { mode: 0o600 });
     const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };
     return [result, signals.code(), a.dryRun ? null : d];
   } finally {
@@ -824,9 +862,9 @@ function report(ctx, command, dir, result, code, name = command) {
 }
 
 // A stop in the folder it concerns, when that is a run folder.
-const folderOf = (o) => {
+const folderOf = (o, ctx) => {
   try {
-    return o.dir ? runFolder(o.dir).d : null;
+    return o.dir ? runFolder(o.dir, ctx).d : null;
   } catch {
     return null;
   }
@@ -845,7 +883,7 @@ function failed(ctx, { command, o }, e) {
     return 2;
   }
   const result = { ok: false, stop: e.code, message: e.message, detail: e.detail };
-  return report(ctx, command, folderOf(o), result, EXIT_OF[e.code] || 3, stopName(command));
+  return report(ctx, command, folderOf(o, ctx), result, EXIT_OF[e.code] || 3, stopName(command));
 }
 
 // ---- the send's own node ----

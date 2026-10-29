@@ -139,7 +139,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - diff 는 실제 인덱스의 사본에 목록의 새 파일만 올려 만든다. 스테이징(`git add -f` 한 파일 포함)과 sparse checkout 상태가 그대로 남고, 저장소의 실제 인덱스와 `.git` 은 바뀌지 않는다. 저장소 설정의 textconv 와 외부 diff 드라이버, 색, 하위 저장소 내용, fsmonitor 는 끄고, 문맥은 사용자 설정과 관계없이 3줄이다. attributes 는 그대로 따른다. 그래서 `-diff`, `binary` 로 가려 둔 파일은 가린 채 `Binary files` 줄로 실린다. git 은 PATH 의 절대 경로로, 저장소 밖 폴더에서 돈다.
    - 종료 1 은 비밀처럼 보이는 줄이 있다는 뜻이다. 출력의 `scan.hits` 에 줄 번호와 종류가 있다. `<d>/prompt.md` 에서 그 값을 `[REDACTED]` 로 가린 뒤 `check --dir '<d>'` 를 다시 하고, 0건이 될 때까지 보내지 않는다.
      - `private-key`(PGP 블록 포함)는 그 줄부터 `end` 줄까지 블록 전체를 가린다. `end` 가 `null` 이면 보내지 않는다.
-     - 검사기는 흔한 형식만 본다. 0건이 안전의 증명은 아니다. curl `-u` 의 값 전체가 숫자:숫자면(따옴표 포함) uid:gid 로 보고 잡지 않는다.
+     - 검사기는 흔한 형식만 본다. `.netrc` 의 password(machine 줄이나 한 줄에 한 쌍), `.pgpass` 줄, docker `config.json` 의 `"auth"`(user:password 의 base64)도 본다. 0건이 안전의 증명은 아니다. curl `-u` 의 값 전체가 숫자:숫자면(따옴표 포함) uid:gid 로 보고 잡지 않는다.
    - 종료 4 는 512 KiB(524288 바이트)를 넘는다는 뜻이다. 보내기 전에 사용자에게 묻는다. 물을 수 없는 실행이면 보내지 않고 그 좌석은 `cli-call-failed` 다. 사용자가 보내지 않기로 하면 `model-declined` 다. 상한은 나누기 전의 `prompt.md` 전체에 건다. 나눠 보낼 때도 부분마다 재지 않고 전체 크기로 묻는다.
    - 종료 3 은 멈춤이다(아래 멈춤 표).
    - `prompt.md` 는 끝까지 만들었을 때만 생긴다. `raw.md` 는 짧은 부분과 표지를 뺀 원문 부분, `unsent.md` 는 보내지 않은 새 파일이다(출처-독립 좌석의 입력).
@@ -150,6 +150,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
    - 좌석의 문맥이나 입력 한도로 나눠 보낼 때(아래 함정)는 `--split <cli>=<N>` 을 준다. 실행기가 원문 부분을 파일 경계에서 나누고, 부분마다 같은 짧은 부분과 `부분 <k>/<N>` 줄과 닫는 표지를 둔다. 부분마다 표지를 세고 3단계 검사를 다시 해 0건일 때만 보낸다.
    - 좌석마다 상한은 600 초다. 상한에서 실행기가 좌석의 프로세스 묶음(Windows 는 프로세스 트리)을 끝내고, 좌석이 스스로 끝나도 그 묶음에 남은 프로세스를 끝낸다. 상한에 걸린 좌석, 멈춘 좌석, 빈 답은 `ERROR` 다. 모델 거절로 보고 갈아타지 않는다.
    - Claude Code 의 Bash 도구는 시간 제한을 넘긴 명령을 죽이지 않고 백그라운드로 넘겨 계속 돌린다. 끝나지 않는 send 는 그 작업을 백그라운드 작업 중지 도구(`TaskStop`)로 멈춘다. 그러면 실행기와 좌석의 프로세스 트리 전체가 멈춘다(Linux, macOS 실측). 실행기는 SIGINT, SIGTERM 을 받으면 좌석을 끝내고 좌석 기록을 지운 뒤 끝난다(종료 130, 143). send 는 실행기가 띄운 둘째 node 가 맡는다. 실행기 node 만 끝나도(`kill -9`, 작업 관리자, Windows 의 `/T` 없는 `taskkill /F`) 그 node 가 좌석을 끝내고 정리한 뒤 끝난다.
+   - send 는 보낸 좌석마다 CLI 판을 `run.md` 에 `cli-<cli> <판>` 줄로 적고, 출력 `seats` 의 `cliVersion` 에도 둔다. codex 는 프로브의 `codex --version`, gemini 와 opencode 는 띄우지 않고 설치 정보(npm 패키지의 `package.json`, opencode 설치 폴더의 `@opencode-ai/plugin` 판)에서 읽는다. 못 읽으면 `알 수 없음`. 좌석 장치는 판을 고정하지 않으므로 보고에 그 판을 옮겨 적는다.
    - 하위 에이전트로 돌면 send 가 끝나고 6단계 정리를 마친 뒤에 최종 답을 낸다. 먼저 답을 내면 그 백그라운드 작업도 함께 끝나 정리 없이 사본이 남는다.
 6. 답을 읽은 뒤 `cleanup --dir '<d>'` 를 부른다. 이 좌석들의 gemini 기록, 같은 기준 폴더들에서 하루 지난 끊긴 실행의 폴더와 기록, 이 실행의 opencode 세션과 좌석 폴더가 사라진 세션, `<d>` 와 답 폴더를 지운다. send 가 아직 돌면 종료 5(`busy`)로 멈춘다. 지우지 못한 끊긴 실행의 폴더는 JSON 의 `left` 에 경로와 까닭이 있다. 있으면 사용자에게 알린다.
 
@@ -184,10 +185,10 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `git-timeout` | git 이 120초 안에 끝나지 않았다 | 다시 해 본다 | 다시 해도 같으면 `cli-call-failed` |
 | `scan` | 비밀처럼 보이는 줄이 있다(종료 1) | 4단계대로 가린다 | 끝내 못 가리면 `cli-call-failed` |
 | `too-large` | 512 KiB 를 넘는다(종료 4) | 4단계대로 묻는다 | 못 물으면 `cli-call-failed`, 거절이면 `model-declined` |
-| `split` | 나눌 단위가 부분 수보다 적거나, 부분의 표지나 검사가 맞지 않다. prompt.md 의 짧은 부분이 prepare 때와 길이가 다를 때도(짧은 부분 안을 고쳐 가림) | 부분 수를 줄인다. 짧은 부분 안을 가렸으면 short.md 를 고쳐 prepare 를 다시 한다 | 없음 |
+| `split` | 나눌 단위가 부분 수보다 적거나, 부분의 표지나 검사가 맞지 않다. prompt.md 의 짧은 부분이 prepare 때와 다를 때도(짧은 부분 안을 고쳐 가림. 길이가 같아도 `run.md` 의 sha256 과 견줌) | 부분 수를 줄인다. 짧은 부분 안을 가렸으면 short.md 를 고쳐 prepare 를 다시 한다 | 없음 |
 | `sent` | 이미 보낸 폴더다 | `init` 으로 새 폴더를 만든다 | 없음 |
 | `not-prepared` | `prepare` 가 끝난 폴더가 아니다 | `prepare` 를 한다 | 없음 |
-| `not-a-run-folder` | `init` 이 만든 폴더가 아니다 | `init` 이 찍은 경로를 쓴다 | 없음 |
+| `not-a-run-folder` | `init` 이 만든 폴더가 아니다. 이름과 표지가 맞아도 알려진 기준 폴더(실제 경로로 견줌) 바로 아래가 아니거나 그 기준 폴더를 다른 계정도 쓸 수 있으면 이것이다 | `init` 이 찍은 경로를 쓴다 | 없음 |
 | `sandboxed` | Codex sandbox 가 네트워크를 막는다 | 승인을 받아 sandbox 밖에서 다시 한다 | 승인할 수 없으면 `cli-call-failed` |
 | `base-not-private` | 기준 폴더를 다른 계정도 쓸 수 있다 | 사용자에게 알린다 | 해결 못 하면 `cli-call-failed` |
 | `base-not-writable` | 기준 폴더를 만들거나 쓸 수 없다 | 사용자에게 알린다. Codex 면 sandbox 밖 승인 | 해결 못 하면 `cli-call-failed` |
@@ -211,7 +212,7 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 
 | 좌석 | 읽기 전용 장치 | 보내는 곳 | 확인 수준 |
 |---|---|---|---|
-| codex | `-s read-only` 샌드박스는 셸 명령의 쓰기와 네트워크를 막을 뿐 읽기는 막지 않는다. 셸로 읽은 좌석 폴더 밖 파일은 비밀 검사 없이 프로바이더로 가므로 셸 도구(`shell_tool`)를 끈다. 샌드박스 밖에서 도는 것도 모두 끈다: 사용자 실행 정책 규칙(`rules/*.rules`, 맞는 명령은 승인 없이 샌드박스 밖에서 돈다), 설정의 MCP 서버(하나씩), 하위 에이전트, 훅, 플러그인, 앱, 알림 프로그램(`notify`, 페이로드 전문을 인자로 받는다). 웹 검색 도구, 사용량 지표 전송(`ab.chatgpt.com`), OpenTelemetry 내보내기(`otel`, 설정이 켜면 프롬프트를 수집기로 보낸다)도 끈다. 관리 설정이 이 키를 정하거나 요구 파일이 좌석 값을 허용하지 않으면 플래그가 듣지 않아 좌석을 세우지 않는다(외부 모델 결정 절). 남는 읽기 도구는 이미지를 여는 `view_image` 하나다 | `config.toml` 의 프로바이더 | 모의 서버 확인(0.144.5: 도구는 `update_plan`, `request_user_input`, `apply_patch`(읽기 전용 샌드박스가 `patch rejected` 로 막는다), `view_image` 뿐, MCP 서버가 뜨지 않음, 허용 규칙과 `notify` 와 훅이 돌지 않음, OpenTelemetry 수집기 요청 0건, 프로바이더 밖 접속 0건. `--disable shell_tool` 이 없으면 `exec_command` 가 좌석 폴더 밖 파일을 읽어 그 내용이 다음 요청에 실렸다. 이 플래그들이 없으면 `ab.chatgpt.com`(사용량 지표)과 `chatgpt.com`, `github.com`(플러그인)에 접속한다) / 실모델 호출 미검증 |
+| codex | `-s read-only` 샌드박스는 셸 명령의 쓰기와 네트워크를 막을 뿐 읽기는 막지 않는다. 셸로 읽은 좌석 폴더 밖 파일은 비밀 검사 없이 프로바이더로 가므로 셸 도구(`shell_tool`)를 끈다. 샌드박스 밖에서 도는 것도 모두 끈다: 사용자 실행 정책 규칙(`rules/*.rules`, 맞는 명령은 승인 없이 샌드박스 밖에서 돈다), 설정의 MCP 서버(하나씩), 하위 에이전트, 훅, 플러그인, 앱, 알림 프로그램(`notify`, 페이로드 전문을 인자로 받는다). 웹 검색 도구, 사용량 지표 전송(`ab.chatgpt.com`), OpenTelemetry 내보내기(`otel`, 설정이 켜면 프롬프트를 수집기로 보낸다)도 끈다. 관리 설정이 이 키를 정하거나 요구 파일이 좌석 값을 허용하지 않으면 플래그가 듣지 않아 좌석을 세우지 않는다(외부 모델 결정 절). 남는 읽기 도구는 이미지를 여는 `view_image` 하나다 | `config.toml` 의 프로바이더 | 모의 서버 확인(0.144.5: 도구는 `update_plan`, `request_user_input`, `apply_patch`(읽기 전용 샌드박스가 `patch rejected` 로 막는다), `view_image` 뿐, MCP 서버가 뜨지 않음, 허용 규칙과 `notify` 와 훅이 돌지 않음, OpenTelemetry 수집기 요청 0건, 프로바이더 밖 접속 0건. `--disable shell_tool` 이 없으면 `exec_command` 가 좌석 폴더 밖 파일을 읽어 그 내용이 다음 요청에 실렸다. 이 플래그들이 없으면 `ab.chatgpt.com`(사용량 지표)과 `chatgpt.com`, `github.com`(플러그인)에 접속한다. 0.165.0 재실측(2026-10-29, 같은 명령): 도구는 `request_user_input`, `view_image`, `get_goal`, `create_goal`, `update_goal` 뿐이고 셸과 패치 도구 없음, 요청은 프로바이더 1건, 다른 호스트 접속 0건(프록시로 확인), MCP 서버 안 뜸, `notify` 안 돎, 좌석 폴더 밖 파일 내용이 요청에 없음) / 실모델 호출 미검증 |
 | gemini | 관리자 계층 정책(`references/gemini-read-only.toml`)이 모든 도구를 막는다. 페이로드는 표준 입력으로 받아 도구가 필요 없다. 이 계층은 사용자 정책 파일, 설정의 `tools.allowed`, `trust` 를 켠 MCP 서버, 승인 모드보다 앞선다. gemini 는 정책 파일이 없거나 바뀌어도 말없이 도구를 열어, 실행기가 보내기 전에 내용을 확인한다(`gemini-seat.mjs` 의 검사). MCP 서버는 띄우지 않고(목록에 없는 이름만 허용), 확장도 끈다. 새로 만든 폴더라 신뢰 확인(헤드리스는 신뢰하지 않은 폴더에서 exit 55)을 `--skip-trust` 로 넘긴다. 작업 공간을 넓히는 설정(`context.includeDirectories`, IDE 모드)이 있으면 좌석을 세우지 않고, IDE 가 넣는 작업 공간 env 는 뺀다. 텔레메트리의 프롬프트 기록(`GEMINI_TELEMETRY_LOG_PROMPTS=false`)을 끈다. API 오류 보고(`gemini-client-error-*.json`, 요청 전문)는 `TMPDIR`, `TEMP`, `TMP` 를 답 폴더로 두어 그 폴더에 쓰게 한다. 자체 샌드박스(`tools.sandbox`)는 `GEMINI_SANDBOX=false` 로 끈다(컨테이너 안에는 정책 파일이 없다) | 사용자 설정의 인증. 사용 통계(모델과 세션 메타데이터, 페이로드 없음)는 `play.googleapis.com` 으로 가며 설정(`privacy.usageStatisticsEnabled`)으로만 꺼진다 | 모의 서버 확인(0.62.0 npm 번들: 사용자 설정의 셸 허용, 저장된 허용 정책, `trust` MCP 서버를 둔 채 도구 0, MCP 서버 안 뜸, 텔레메트리를 켠 설정에서 수집기로 간 페이로드 0건) / 설치본과 실모델 호출 미검증 |
 | opencode | 실행마다 이름이 다른 전용 검토 에이전트가 모든 도구를 막는다. 페이로드는 표준 입력으로 받아 도구가 필요 없다. 에이전트 수준 권한은 사용자 설정보다 뒤에 합쳐지고, 이름이 실행마다 달라 사용자 설정이 같은 이름으로 풀지 못한다. 공유와 제목 생성 호출을 끄고, `~/.claude/CLAUDE.md` 를 시스템 프롬프트에 넣지 않는다. 자동 압축 에이전트(`compaction`)를 끈다. 켜 두면 문맥을 넘친 페이로드를 사용자 설정이 그 에이전트에 정한 다른 프로바이더 모델로 보낸다. 사용자 설정의 MCP 서버 프로세스는 뜬다 | `-m` 의 프로바이더 하나 | 모의 서버 확인(1.3.10: 사용자 설정의 bash 허용, `default_agent`, MCP 서버, `share: "auto"`, `small_model` 을 둔 채 도구 0, 요청 1건, 3,000줄 페이로드가 끝까지 감. 문맥을 넘쳐도 다른 프로바이더 요청 0건) / 실모델 호출 미검증 |
 

@@ -253,7 +253,9 @@ function ownLayout(realTop, { gitDir, common, tree }) {
   return norm(common) === norm(gitDir) && Boolean(tree) && norm(realOr(resolve(gitDir, tree))) === norm(realTop);
 }
 
-// The first link at or below `root`: git would read another repo's objects or refs through it.
+// The first link at or below `root`: git would read another repo's objects or refs through it. A whole walk of a
+// git folder with 100,000 loose objects and 10,000 refs (objects and refs, 21 runs, 2026-10-29) took p95 206 ms on
+// Linux (Rocky 8, Node 24.13) and 76 ms on the Windows test box (Node 24.19): well under the 1 s that would call for streaming.
 function linkUnder(root) {
   const folders = [root];
   while (folders.length) {
@@ -568,7 +570,7 @@ export function buildPayload({ dir, repo, base, id, env = process.env }) {
     const prompt = Buffer.concat([short, raw, Buffer.from(`</review-data id="${id}">\n`)]);
     const markers = markerCount(prompt, id);
     if (markers !== 2) throw new Stop("markers", `표지가 두 줄이 아니다(${markers}줄). id 를 바꿔 short.md 를 다시 쓴다`);
-    writeOutputs(dir, { prompt, raw, unsent, run: `id ${id}\nbase ${base}\ntree ${tree}\nrepo ${top}\nshort ${short.length}\n` });
+    writeOutputs(dir, { prompt, raw, unsent, run: `id ${id}\nbase ${base}\ntree ${tree}\nrepo ${top}\nshort ${short.length}\nshortsha ${sha256(short)}\n` });
     return { bytes: prompt.length, markers, scan: scan(prompt.toString("utf8")), unsent: String(unsent).split("\n").filter(Boolean).length };
   } finally {
     rmSync(ctx.idx, { force: true });
@@ -623,14 +625,59 @@ function balanced(units, n) {
   return groups;
 }
 
+// SHA-256 (FIPS 180-4) in plain JavaScript: the runner loads no crypto module (a Node built without it still runs the
+// send). Only the short part goes through it, a few KiB.
+const K256 = Array.from({ length: 64 }, (_, i) => {
+  const primes = [];
+  for (let n = 2; primes.length < 64; n += 1) if (primes.every((q) => n % q)) primes.push(n);
+  return (Math.cbrt(primes[i]) % 1) * 2 ** 32 >>> 0;
+});
+const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+function sha256Block(h, w) {
+  for (let t = 16; t < 64; t += 1) {
+    const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+    const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+    w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
+  }
+  let [a, b, c, d, e, f, g, k] = h;
+  for (let t = 0; t < 64; t += 1) {
+    const t1 = (k + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K256[t] + w[t]) >>> 0;
+    const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+    [k, g, f, e, d, c, b, a] = [g, f, e, (d + t1) >>> 0, c, b, a, (t1 + t2) >>> 0];
+  }
+  return h.map((x, i) => (x + [a, b, c, d, e, f, g, k][i]) >>> 0);
+}
+export function sha256(data) {
+  const msg = Buffer.from(data);
+  const padded = Buffer.alloc(Math.ceil((msg.length + 9) / 64) * 64);
+  msg.copy(padded);
+  padded[msg.length] = 0x80;
+  padded.writeUInt32BE(Math.floor((msg.length * 8) / 2 ** 32), padded.length - 8);
+  padded.writeUInt32BE((msg.length * 8) >>> 0, padded.length - 4);
+  let h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  for (let off = 0; off < padded.length; off += 64) {
+    const w = new Array(64).fill(0);
+    for (let t = 0; t < 16; t += 1) w[t] = padded.readUInt32BE(off + t * 4);
+    h = sha256Block(h, w);
+  }
+  return h.map((x) => x.toString(16).padStart(8, "0")).join("");
+}
+
+// The short part as prepare wrote it: its length is a line start and, when run.md holds its sha256, the same bytes (a
+// change of the same length inside it, a masked word, moved no line start). A run.md of an older prepare has no hash.
+function shortIntact(buf, at, short, shortSha) {
+  if (!Number.isInteger(short) || !at.includes(short)) return false;
+  return !shortSha || sha256(buf.subarray(0, short)) === shortSha;
+}
+
 // The payload cut into `n` parts where a part starts (a file's diff, a `=== ` line), between the short part (its
 // first `short` bytes, as prepare wrote it: a `=== ` line of the author's is no cut) and the closing marker. Each part
 // holds the short part, a `부분 <k>/<n>` line and the closing marker; the parts in order hold every part of the payload
 // once. A line inside a file that starts like a part may become a cut: the parts are still whole together.
-export function splitPayload(buf, n, id, short) {
+export function splitPayload(buf, n, id, short, shortSha = null) {
   if (!Number.isInteger(n) || n < 2) throw new Stop("split", `나눌 수는 2 이상의 정수다: ${n}`);
   const at = lineStartsOf(buf);
-  if (!Number.isInteger(short) || !at.includes(short)) throw new Stop("split", "prompt.md 의 짧은 부분이 prepare 때와 다르다. 가림은 짧은 부분 밖에서 하거나 prepare 를 다시 한다");
+  if (!shortIntact(buf, at, short, shortSha)) throw new Stop("split", "prompt.md 의 짧은 부분이 prepare 때와 다르다. 가림은 짧은 부분 밖에서 하거나 prepare 를 다시 한다");
   const lineAt = (k) => buf.slice(at[k], k + 1 < at.length ? at[k + 1] : buf.length).toString("utf8").replace(/\r?\n$/, "");
   const lines = at.map((_, k) => lineAt(k));
   const open = lines.findIndex((l) => l.includes(`<review-data id="${id}">`));

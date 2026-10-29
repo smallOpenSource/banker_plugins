@@ -4,14 +4,14 @@
 // Run from the repo root: node --test skills/ralph-qa/references/seat-run.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
-import { fromMsys, gathered, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock } from "./seat-run.mjs";
+import { cliVersion, fromMsys, gathered, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -336,6 +336,71 @@ test("cleanup and the other commands refuse a folder init did not make, and remo
   assert.ok(existsSync(join(plain, "keep.md")) && existsSync(join(named, ".ralph-qa")));
 });
 
+// remains 8-1: cleanup --dir removed any marked ralph-qa.* folder it was given, wherever it sat.
+test("cleanup takes a run folder only right under a known base, by real path either way, and only while the base is private", { skip: SKIP }, (t) => {
+  const w = world(t);
+  // a run folder moved out of the base keeps its name and marker, and is still no run folder
+  const j = init(w);
+  const away = join(w.dir, "away");
+  mkdirSync(away);
+  const moved = join(away, j.dir.split(/[\\/]/).pop());
+  cpSync(j.dir, moved, { recursive: true });
+  let r = cli(w, ["cleanup", "--dir", moved]);
+  assert.deepEqual([r.code, r.json.stop], [3, "not-a-run-folder"], r.stdout);
+  assert.match(r.json.message, /기준 폴더/);
+  assert.ok(existsSync(join(moved, ".ralph-qa")), "nothing removed");
+  // nested one level below the base is not right under it
+  const nested = join(w.base, "deeper", "ralph-qa.nest12");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(nested, ".ralph-qa"), "");
+  r = cli(w, ["cleanup", "--dir", nested]);
+  assert.equal(r.json.stop, "not-a-run-folder", r.stdout);
+  assert.ok(existsSync(nested));
+  if (!WIN) {
+    // the base through a link (macOS's /var and /private/var): the folder named by either path is the run folder
+    const via = join(w.dir, "via");
+    symlinkSync(w.base, via);
+    const env = MAC ? { TMPDIR: via } : { XDG_RUNTIME_DIR: via };
+    for (const pick of [(d) => d, (d) => join(realpathSync.native(w.base), d.split("/").pop())]) {
+      const k = init(w, env);
+      r = cli(w, ["cleanup", "--dir", pick(k.dir)], { env });
+      assert.equal(r.code, 0, r.stdout);
+      assert.ok(!existsSync(k.dir) && !existsSync(k.out));
+    }
+  }
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+});
+
+test("a base others may write in holds no run folder for cleanup", { skip: SKIP || (WIN && "POSIX mode bits") || (asRoot && "root owns every folder here") }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  chmodSync(w.base, 0o777);
+  let r = cli(w, ["cleanup", "--dir", j.dir]);
+  chmodSync(w.base, 0o700);
+  assert.equal(r.json.stop, "not-a-run-folder", r.stdout);
+  assert.ok(existsSync(join(j.dir, ".ralph-qa")));
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+});
+
+test("cleanup removes the marker last: a removal that stops part way leaves the same marker, and a retry ends it", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const keep = join(j.dir, "keep");
+  mkdirSync(keep);
+  writeFileSync(join(keep, "held.md"), "held\n");
+  chmodSync(keep, 0o500);
+  const marker = statSync(join(j.dir, ".ralph-qa")).ino;
+  let r = cli(w, ["cleanup", "--dir", j.dir]);
+  chmodSync(keep, 0o700);
+  assert.equal(r.json.stop, "cleanup-left", r.stdout);
+  assert.equal(statSync(join(j.dir, ".ralph-qa")).ino, marker, "the marker was never taken");
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+  assert.ok(!existsSync(j.dir) && !existsSync(j.out));
+});
+
 test("cleanup deletes this run's opencode session and those of seat folders that are gone, by the base as written and resolved", { skip: SKIP || (WIN && "the base link is a POSIX case; Windows runs the rest in the next test") }, (t) => {
   const w = world(t);
   // the base reached through a link, as macOS's TMPDIR under /var is: opencode records the resolved folder
@@ -534,6 +599,45 @@ test("send runs each seat from its own copy in its own folder, with the answers 
   assert.ok(existsSync(join(p.dir, "result-send.md")));
   assert.ok(!existsSync(join(p.dir, ".running.md")), "the lock is gone");
   assert.match(r.json.declared, /^외부 전송\(선언\): .*codex.*gemini.*opencode.*prov.*페이로드 \d+B, 비밀 검사 0건, 보내지 않은 새 파일 0/);
+});
+
+// D7: the seat CLI's version goes to run.md, read without starting gemini or opencode.
+test("send writes each sent seat's CLI version to run.md: codex's from --version, the others' from their install", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const r = send(w, p, ["codex=gpt-5.5", "gemini=pro"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(seatOf(r, "codex").cliVersion, "codex-cli 0.144.5");
+  assert.equal(seatOf(r, "gemini").cliVersion, "알 수 없음", "a stub with no package.json above it");
+  const run = readFileSync(join(p.dir, "run.md"), "utf8");
+  assert.match(run, /^cli-codex codex-cli 0\.144\.5$/m);
+  assert.match(run, /^cli-gemini 알 수 없음$/m);
+  assert.ok(runs(w, "gemini").every((x) => x.args[0] !== "--version"), "gemini was not started for its version");
+});
+
+test("the version of an npm install is read from its package.json, and opencode's installer folder from its plugin package", () => {
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "rq-ver-")));
+  try {
+    const pkg = join(dir, "npm", "lib", "node_modules", "@google", "gemini-cli");
+    mkdirSync(join(pkg, "dist"), { recursive: true });
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@google/gemini-cli", version: "0.99.1" }));
+    writeFileSync(join(pkg, "dist", "index.js"), "");
+    mkdirSync(join(dir, "npm", "bin"));
+    assert.equal(cliVersion("gemini", join(pkg, "dist", "index.js"), null), "0.99.1", "above the real path");
+    assert.equal(cliVersion("gemini", join(dir, "npm", "bin", "gemini"), null), "0.99.1", "under the prefix's lib/node_modules");
+    const win = join(dir, "appdata", "npm");
+    mkdirSync(join(win, "node_modules", "opencode-ai"), { recursive: true });
+    writeFileSync(join(win, "node_modules", "opencode-ai", "package.json"), JSON.stringify({ name: "opencode-ai", version: "1.4.0" }));
+    assert.equal(cliVersion("opencode", join(win, "opencode.cmd"), null), "1.4.0", "beside a Windows shim");
+    const own = join(dir, "home", ".opencode");
+    mkdirSync(join(own, "bin"), { recursive: true });
+    writeFileSync(join(own, "package.json"), JSON.stringify({ dependencies: { "@opencode-ai/plugin": "1.3.10" } }));
+    assert.equal(cliVersion("opencode", join(own, "bin", "opencode"), null), "1.3.10 (설치 폴더의 @opencode-ai/plugin)");
+    assert.equal(cliVersion("codex", join(dir, "nowhere", "codex"), { version: "codex-cli 0.165.0" }), "codex-cli 0.165.0");
+    assert.equal(cliVersion("codex", join(dir, "nowhere", "codex"), {}), "알 수 없음");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // The 0.20.4 commands of the skill's bash block, word for word: the read-only guards the mock-server checks proved.
@@ -765,6 +869,19 @@ test("a split seat gets the whole short part in every part, also with `=== ` lin
   const got = runs(w, "gemini").sort((a, b) => a.at - b.at).map((x) => readFileSync(join(w.log, `gemini-${x.pid}-stdin.md`), "utf8"));
   assert.equal(got.length, 2);
   for (const g of got) assert.ok(g.includes("=== 수용 기준\n- 기준 1\n"), g);
+});
+
+// remains 8-5: a change of the same length inside the short part kept every line start, and the split went out.
+test("a split send stops when the short part changed after prepare, also by one character of the same length", { skip: SKIP }, (t) => {
+  const w = world(t);
+  writeFileSync(join(w.dir, "rules.md"), "the rules\n");
+  const p = prepared(w, { spec: `file ${join(w.dir, "rules.md")}\n`, short: "review this\n" });
+  assert.match(readFileSync(join(p.dir, "run.md"), "utf8"), /^shortsha [0-9a-f]{64}$/m);
+  const prompt = join(p.dir, "prompt.md");
+  writeFileSync(prompt, readFileSync(prompt, "utf8").replace("review this", "review thiz"));
+  const r = send(w, p, ["gemini=pro"], ["--split", "gemini=2"]);
+  assert.equal(seatOf(r, "gemini").why, "split", r.stdout);
+  assert.equal(runs(w, "gemini").length, 0, "no part went out");
 });
 
 // What a send test that fails leaves running (the runner, its send's node, hung seats) ends with the test. Made before
