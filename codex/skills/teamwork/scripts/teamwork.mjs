@@ -258,7 +258,7 @@ function register(id, fields) {
   const peer = {
     id,
     role: prev.role || '',
-    cwd: fields.cwd || prev.cwd || '',
+    cwd: typeof fields.cwd === 'string' && fields.cwd ? fields.cwd : prev.cwd || '',
     pid: fields.pid || prev.pid || null,
     startedAt: prev.startedAt || now,
     seenAt: now,
@@ -298,11 +298,17 @@ function roster() {
   return list.sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
 }
 
-function label(p) { return p.role ? `${p.role}(${shortId(p.id)})` : shortId(p.id); }
+// 역할 이름: 머리말과 목록의 줄을 흉내 내지 못하게 공백, 제어 문자, 괄호와 따옴표를 바꾼다. 기록할 때와 보일 때 모두 쓴다
+function roleName(s) { return String(s || '').normalize('NFKC').trim().replace(/[\s\u0000-\u001f\u007f[\]()#:'"`$\\]+/g, '-').slice(0, 32); }
+
+function label(p) { const r = roleName(p.role); return r ? `${r}(${shortId(p.id)})` : shortId(p.id); }
+
+// 폴더는 그 세션의 훅 입력(cwd)에서 온다. 줄을 나눠 지시처럼 보이지 못하게 제어 문자를 바꾸고 200자로 자른 뒤 JSON 문자열로 감싼다
+function showCwd(s) { return sanitize(JSON.stringify(String(s).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, '?').slice(0, 200))); }
 
 function rosterText(list, selfId) {
   if (!list.length) return '등록된 세션 없음';
-  return list.map((p) => `- ${shortId(p.id)} 역할:${p.role || '미정'} 폴더:${p.cwd || '?'}${p.id === selfId ? ' (이 세션)' : ''}`).join('\n');
+  return list.map((p) => `- ${shortId(p.id)} 역할:${roleName(p.role) || '미정'} 폴더:${p.cwd ? showCwd(p.cwd) : '?'}${p.id === selfId ? ' (이 세션)' : ''}`).join('\n');
 }
 
 function resolveTargets(to, selfId) {
@@ -321,7 +327,7 @@ function protocolText(selfId, list) {
   const me = selfId ? readJson(peerFile(selfId), {}) : {};
   return [
     '[teamwork 켜짐] 이 기기의 Codex 세션들이 피어로 협업한다.',
-    `이 세션: ${selfId ? shortId(selfId) : '?'} 역할:${me.role || '미정'}`,
+    `이 세션: ${selfId ? shortId(selfId) : '?'} 역할:${roleName(me.role) || '미정'}`,
     '피어 목록:',
     rosterText(list, selfId),
     '규칙:',
@@ -409,10 +415,22 @@ function orphanContext() {
   return orphanText();
 }
 
-// 훅을 돌리지 않을 까닭: 세션이 아님, 하위 에이전트, Codex 홈이 이 세션의 샌드박스가 쓸 수 있는 곳
+// on 때 기록한 프로그램을 지금 세션 기준으로 다시 본다. on 뒤에 연 세션의 폴더가 그 프로그램을 품을 수 있다
+function toolsCheck(cwds) {
+  const tools = state().tools;
+  if (!tools) return '';
+  for (const c of new Set(cwds.filter(Boolean))) {
+    const why = toolsProblem(tools, sandboxCtx(c));
+    if (why) return why;
+  }
+  return '';
+}
+
+// 훅을 돌리지 않을 까닭: 세션이 아님, 하위 에이전트, Codex 홈이나 기록한 프로그램이 이 세션의 샌드박스가 쓸 수 있는 곳
 function skipHook(input) {
   if (!isUuid(input.session_id) || isSubagent(input)) return true;
-  const bad = homeProblem(sandboxCtx(input.cwd || process.cwd()));
+  const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+  const bad = homeProblem(sandboxCtx(cwd)) || toolsCheck([cwd]);
   if (bad) err(`teamwork 훅을 건너뜁니다: ${bad}`);
   return Boolean(bad);
 }
@@ -455,14 +473,28 @@ function hook(kind) {
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-// hooks.json 옆의 잠금 폴더. 10초 넘은 잠금은 죽은 쓰기로 보고 치운다. 5초 안에 못 얻으면 바꾸지 않는다
+const LOCK_GONE = 'gone';
+
+// 10초 넘은 잠금은 죽은 쓰기로 보고 치운다. LOCK_GONE: 치웠거나 그사이 풀림, '': 아직 살아 있음, 그 밖: 지우지 못한 오류 코드
+function clearStale(lock) {
+  let st;
+  try { st = fs.lstatSync(lock); } catch { return LOCK_GONE; }
+  if (Date.now() - st.mtimeMs <= 10000) return '';
+  try { fs.rmdirSync(lock); return LOCK_GONE; } catch (e) { return e.code === 'ENOENT' ? LOCK_GONE : String(e.code || e); }
+}
+
+// hooks.json 옆의 잠금 폴더. 치우지 못한 낡은 잠금(파일, 비지 않은 폴더, 권한)도 기다림과 횟수 상한을 거친다.
+// 5초 안에 못 얻으면 바꾸지 않고 까닭과 6 으로 끝난다. 끝 메시지는 banker 의 bin/lib/codex-hooks.mjs 와 같다
 export function withHooksLock(file, fn) {
   const lock = `${file}.lock`;
+  let stuck = '';
   for (let i = 0; ; i++) {
     try { fs.mkdirSync(lock); break; } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.rmdirSync(lock); continue; } } catch { continue; }
-      if (i > 200) fail(`${file} 의 잠금(${lock})을 얻지 못해 고치지 않았습니다.`);
+      if (i > 200) fail(stuck ? `${file} 의 낡은 잠금 ${lock} 을 지우지 못해 고치지 않았습니다(${stuck}). 다른 banker 나 teamwork 가 돌고 있지 않으면 직접 지우십시오.` : `${file} 의 잠금(${lock})을 얻지 못해 고치지 않았습니다.`);
+      const s = clearStale(lock);
+      if (s === LOCK_GONE) continue;
+      if (s) stuck = s;
       sleep(25);
     }
   }
@@ -478,15 +510,20 @@ function isOurHook(h, arg) {
   return h.command === base || h.command.startsWith(`${base} --rev `);
 }
 
-// 한 이벤트의 묶음들: 우리 항목은 처음 것만 같은 자리에서 고치고 나머지는 뺀다. 없으면 맨 뒤 묶음으로 더한다
+const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
+// 한 이벤트의 묶음들: 우리 항목은 처음 것만 같은 자리에서 고치고 나머지는 뺀다. 없으면 맨 뒤 묶음으로 더한다.
+// hooks 배열이 없는 모르는 꼴의 묶음은 그대로 둔다
 function placeEvent(groups, ev, command) {
   let found = !command;
-  const next = groups.map((g) => ({ ...g, hooks: (g.hooks || []).flatMap((h) => {
+  const fix = (h) => {
     if (!isOurHook(h, HOOK_ARGS[ev])) return [h];
     if (found) return [];
     found = true;
     return [{ ...h, type: 'command', command, timeout: 5 }];
-  }) })).filter((g) => g.hooks.length);
+  };
+  const next = groups.map((g) => (isObj(g) && Array.isArray(g.hooks) ? { ...g, hooks: g.hooks.flatMap(fix) } : g))
+    .filter((g) => !isObj(g) || !Array.isArray(g.hooks) || g.hooks.length);
   if (!found) next.push({ ...(ev === 'SessionStart' ? { matcher: 'startup|resume|clear' } : {}), hooks: [{ type: 'command', command, timeout: 5 }] });
   return next;
 }
@@ -501,38 +538,56 @@ function desiredHooks(cfg, rev, remove) {
   return next;
 }
 
+// hooks.json 을 객체로, 또는 바꾸지 않을 까닭. banker 의 bin/lib/codex-hooks.mjs loadHooks 와 같은 규칙:
+// 링크나 일반 파일이 아니면, JSON 객체가 아니면, hooks 가 객체가 아니면, 우리 이벤트 값이 배열이 아니면 바꾸지 않는다
+function loadHooks() {
+  let st = null;
+  try { st = fs.lstatSync(HOOKS); } catch (e) { if (e.code !== 'ENOENT') return { why: `${HOOKS} 을 확인하지 못함(${e.code})` }; }
+  if (!st) return { cfg: { hooks: {} }, exists: false };
+  if (!st.isFile()) return { why: `${HOOKS} 이 일반 파일이 아님(링크나 폴더)` };
+  const cfg = readJson(HOOKS, null);
+  if (!isObj(cfg)) return { why: `${HOOKS} 이 JSON 객체가 아님` };
+  if (cfg.hooks !== undefined && !isObj(cfg.hooks)) return { why: `${HOOKS} 의 hooks 가 객체가 아님` };
+  const bad = Object.keys(HOOK_ARGS).find((ev) => cfg.hooks?.[ev] !== undefined && !Array.isArray(cfg.hooks[ev]));
+  return bad ? { why: `${HOOKS} 의 ${bad} 가 배열이 아님` } : { cfg, exists: true, mode: st.mode & 0o777 };
+}
+
+const hooksRefusal = (why) => `${why}. 훅을 바꾸지 않았습니다. 그 파일을 고친 뒤 다시 실행하세요.`;
+
 // 훅 파일이 바뀌면 Codex 가 다시 신뢰를 묻는다. 이미 같으면 손대지 않는다
 function mergeHooks(rev, remove = false) {
   return withHooksLock(HOOKS, () => {
-    const exists = fs.existsSync(HOOKS);
-    const cfg = exists ? readJson(HOOKS, null) : { hooks: {} };
-    if (!cfg || typeof cfg !== 'object') fail(`${HOOKS} 를 JSON 으로 읽을 수 없어 고치지 않았습니다.`);
+    const { cfg, exists, mode, why } = loadHooks();
+    if (why) fail(hooksRefusal(why));
     const next = desiredHooks(cfg, rev, remove);
     if (JSON.stringify(next) === JSON.stringify({ ...cfg, hooks: cfg.hooks || {} })) return false;
-    // 심볼릭 링크면 대상 파일을 고친다. 권한은 그대로 둔다
-    const target = exists ? fs.realpathSync(HOOKS) : HOOKS;
-    writeAtomic(target, JSON.stringify(next, null, 2) + '\n', exists ? fs.statSync(target).mode & 0o777 : 0o600);
+    writeAtomic(HOOKS, JSON.stringify(next, null, 2) + '\n', exists ? mode : 0o600);
     return true;
   });
 }
 
 // ---------- 설치 ----------
 
+// codex 가 답하지 않을 때(예: 응답을 멈춘 app-server) 명령이 멈추지 않게 한다
+const CODEX_TIMEOUT = 15000;
+
 function codexVersion(tools) {
-  const r = spawnSync(tools.codex, ['--version'], { encoding: 'utf8', env: safeEnv(tools.node) });
+  const r = spawnSync(tools.codex, ['--version'], { encoding: 'utf8', env: safeEnv(tools.node), timeout: CODEX_TIMEOUT });
   const m = `${r.stdout || ''}${r.stderr || ''}`.match(/(\d+)\.(\d+)\.(\d+)/);
   return m ? m.slice(1, 4).map(Number) : null;
 }
 
-// 래퍼: 기록한 node 와 엔진만 쓴다. 없으면 훅은 빈 응답과 한 줄 안내, 명령은 6. PATH 는 기록한 node 의 폴더와 시스템 폴더만
+// 래퍼: 기록한 node 와 엔진만 쓴다. 없으면 훅은 빈 응답과 한 줄 안내, 명령은 6. PATH 는 기록한 node 의 폴더와 시스템 폴더만.
+// 지금 폴더(세션 폴더)가 기록한 node 를 품으면 샌드박스가 그 node 를 바꿔 둘 수 있어, 엔진의 검사보다 먼저 같은 꼴로 멈춘다(홈 자체와 루트는 예외)
 function wrapperText(tools) {
   const miss = 'teamwork 엔진이나 기록한 node 가 없습니다. 스킬로 on 을 다시 실행하세요.';
+  const inCwd = `기록한 node(${tools.node})가 지금 폴더 아래에 있어 샌드박스가 바꿀 수 있습니다. 다른 폴더에서 실행하세요.`;
   return [
     `#!${tools.sh}`,
-    `if [ ! -f ${shq(ENGINE)} ] || [ ! -x ${shq(tools.node)} ]; then`,
-    `  if [ "$1" = hook ]; then echo ${shq(`teamwork 훅을 건너뜁니다: ${miss}`)} >&2; echo '{}'; exit 0; fi`,
-    `  echo ${shq(miss)} >&2; exit 6`,
-    'fi',
+    'skip() { if [ "$1" = hook ]; then echo "teamwork 훅을 건너뜁니다: $2" >&2; echo \'{}\'; exit 0; fi; echo "$2" >&2; exit 6; }',
+    `if [ ! -f ${shq(ENGINE)} ] || [ ! -x ${shq(tools.node)} ]; then skip "$1" ${shq(miss)}; fi`,
+    'd=$(pwd -P 2>/dev/null) || d=/',
+    `case "$d" in /|${shq(realOr(os.homedir()))}) ;; *) case ${shq(tools.node)} in "$d"/*) skip "$1" ${shq(inCwd)} ;; esac ;; esac`,
     `exec /usr/bin/env -u NODE_OPTIONS -u LD_PRELOAD -u DYLD_INSERT_LIBRARIES PATH=${shq(safeEnv(tools.node).PATH)} CODEX_HOME=${shq(CODEX_HOME)} ${shq(tools.node)} ${shq(ENGINE)} "$@"`,
     '',
   ].join('\n');
@@ -557,14 +612,17 @@ function installedVersion() {
   return m ? m[1] : null;
 }
 
-// 더 높은 판의 엔진이 이미 있으면 그 엔진에 맡긴다 (두 설치 길이 서로 판을 내리지 않게)
+// 더 높은 판의 엔진이 이미 있으면 그 엔진에 맡긴다 (두 설치 길이 서로 판을 내리지 않게).
+// 맡기기 전에 Codex 홈과 그 엔진이 샌드박스가 쓸 수 있는 곳인지 먼저 본다. 그런 곳이면 맡기지 않고 이 엔진의 흐름(on 은 6)으로 간다.
+// node 는 state.json 의 기록 대신 지금 돌고 있는 node 를 쓴다 (기록은 샌드박스가 심었을 수 있다)
 function delegateIfNewer(args) {
   const v = installedVersion();
   const self = realOr(fileURLToPath(import.meta.url));
   if (!v || self === realOr(ENGINE) || cmpVer(verOf(v), verOf(VERSION)) <= 0) return;
-  const node = tool('node') || realOr(process.execPath);
+  const ctx = sandboxCtx();
+  if (homeProblem(ctx) || placeProblem(ENGINE, ctx)) return;
   // PATH 는 그대로 넘긴다. 그 엔진이 on 에서 codex 를 찾을 때 같은 거부 규칙을 다시 쓴다
-  const r = spawnSync(node, [ENGINE, ...args], { stdio: 'inherit', env: cleanEnv() });
+  const r = spawnSync(realOr(process.execPath), [ENGINE, ...args], { stdio: 'inherit', env: cleanEnv() });
   process.exit(r.status ?? EXIT.ENV);
 }
 
@@ -573,6 +631,8 @@ function checkInstallable() {
   const ctx = sandboxCtx();
   const home = homeProblem(ctx);
   if (home) fail(`${home}. 샌드박스 안 세션이 승인 규칙과 래퍼를 바꿀 수 있어 설치하지 않습니다.`);
+  const hooks = loadHooks().why;
+  if (hooks) fail(hooksRefusal(hooks));
   const tools = findTools(ctx);
   const bad = toolsProblem(tools, ctx);
   if (bad) fail(bad);
@@ -628,7 +688,8 @@ function cmdOn() {
   writeJson(STATE, { enabled: true, since: new Date().toISOString(), version: VERSION, tools: r.tools, source: r.source });
   fs.rmSync(ORPHAN, { force: true });
   const id = selfId();
-  if (id) register(id, { cwd: process.cwd(), pid: findCodexPid(process.ppid) });
+  // 명령의 지금 폴더는 기록하지 않는다(샌드박스 안 모델이 고를 수 있음). 세션 폴더는 훅 입력(cwd)만 기록한다
+  if (id) register(id, { pid: findCodexPid(process.ppid) });
   const list = roster();
   if (id) writeText(seenFile(id), digest(id, list));
   out(`teamwork 켜짐 (teamwork ${VERSION}, Codex ${r.v.join('.')}, ${CODEX_HOME})`);
@@ -660,9 +721,9 @@ function cmdRole(role) {
   const id = selfId();
   if (!id) fail('CODEX_THREAD_ID 가 없습니다. Codex 세션 안에서 실행하세요.');
   if (!state().enabled) { err('teamwork 가 꺼져 있습니다.'); process.exit(EXIT.OFF); }
-  const name = String(role || '').trim().replace(/[\s\[\]()#:'"`$\\]+/g, '-').slice(0, 32);
+  const name = roleName(role);
   if (!name) { err('역할 이름이 비어 있습니다.'); process.exit(EXIT.USAGE); }
-  register(id, { cwd: process.cwd(), pid: findCodexPid(process.ppid), role: name });
+  register(id, { pid: findCodexPid(process.ppid), role: name });
   out(`이 세션(${shortId(id)}) 역할: ${name}`);
 }
 
@@ -689,18 +750,47 @@ function nextRid(id) {
   return `${id ? shortId(id) : 'u' + crypto.randomBytes(3).toString('hex')}-${n}`;
 }
 
-// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다
-function sanitize(text) { return String(text).replace(/\[\s*teamwork/gi, '[인용 teamwork'); }
+// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다. 전각 괄호 같은 호환 문자는 NFKC 로 풀고, 폭 없는 문자는 지운 뒤 본다
+function sanitize(text) {
+  return String(text).normalize('NFKC').replace(/[\u200b-\u200f\u2060\ufeff]/g, '').replace(/\[\s*teamwork/gi, '[인용 teamwork');
+}
 
 function usageExit(msg) { err(msg); process.exit(EXIT.USAGE); }
 
-// 래퍼는 샌드박스 밖에서 돈다. 작업 폴더와 임시 폴더 안의 파일만 보낸다
+// 이 세션의 작업 폴더: 훅이 기록한 세션 cwd. 명령의 지금 폴더는 샌드박스 안 모델이 고를 수 있어 쓰지 않는다.
+// Codex 밖(CODEX_THREAD_ID 없음)에서 사람이 부른 때만 지금 폴더
+function sessionCwd() {
+  const id = selfId();
+  return id ? readJson(peerFile(id), {}).cwd || '' : process.cwd();
+}
+
+// 연 파일의 실제 경로. Linux 는 /proc/self/fd 로 연 그 파일을 바로 본다. 없으면(macOS) ''
+function openedPath(fd) { try { return fs.readlinkSync(`/proc/self/fd/${fd}`); } catch { return ''; } }
+
+// 연 파일이 확인한 파일과 같은지: 마지막 이름은 O_NOFOLLOW 로 링크를 따라가지 않고(Windows 는 그 플래그가 없어 lstat 으로 링크가 아님을 봄),
+// 연 파일의 dev, ino 를 실제 경로의 lstat 과 비교한다. Linux 는 연 파일의 경로도 경계 안인지 다시 봐 그사이 바뀐 폴더를 거부한다
+function readChecked(real, roots) {
+  const before = fs.lstatSync(real);
+  const fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const st = fs.fstatSync(fd);
+    const opened = openedPath(fd);
+    const moved = !st.isFile() || !before.isFile() || st.dev !== before.dev || st.ino !== before.ino;
+    if (moved || (opened && !roots.some((r) => under(opened, r)))) throw new Error(`확인한 뒤 바뀌었거나 일반 파일이 아님: ${real}`);
+    return fs.readFileSync(fd, 'utf8').trim();
+  } finally { fs.closeSync(fd); }
+}
+
+// 래퍼는 샌드박스 밖에서 돈다. 이 세션의 작업 폴더와 임시 폴더 안의 파일만 보낸다
 function readFileBody(file) {
   let real;
   try { real = fs.realpathSync(path.resolve(file)); } catch (e) { usageExit(`파일을 읽지 못했습니다: ${e.message}`); }
-  const roots = [process.cwd(), os.tmpdir()].map(realOr);
-  if (!roots.some((r) => under(real, r))) usageExit(`작업 폴더(${roots[0]})나 임시 폴더 안의 파일만 보낼 수 있습니다: ${real}`);
-  try { return fs.readFileSync(real, 'utf8').trim(); } catch (e) { usageExit(`파일을 읽지 못했습니다: ${e.message}`); }
+  const base = sessionCwd();
+  const roots = [base, os.tmpdir()].filter(Boolean).map(realOr);
+  if (!roots.some((r) => under(real, r))) {
+    usageExit(base ? `이 세션의 작업 폴더(${roots[0]})나 임시 폴더 안의 파일만 보낼 수 있습니다: ${real}` : `이 세션의 작업 폴더가 아직 기록되지 않아(다음 입력 때 훅이 기록) 임시 폴더 안의 파일만 보낼 수 있습니다: ${real}`);
+  }
+  try { return readChecked(real, roots); } catch (e) { usageExit(`파일을 읽지 못했습니다: ${e.message}`); }
   return '';
 }
 
@@ -709,7 +799,9 @@ function readBody(args) {
   return args[1] ? readFileBody(args[1]) : null;
 }
 
-function failWhy(r) {
+// 시간 초과(응답을 멈춘 app-server)면 그렇다고 밝힌다. 그 세션에 들어갔는지는 알 수 없다
+export function failWhy(r) {
+  if (r.error?.code === 'ETIMEDOUT') return `codex queue 가 ${CODEX_TIMEOUT / 1000}초 안에 끝나지 않아 멈췄습니다(app-server 무응답). 도착했는지 알 수 없으니 다시 보내기 전에 그 세션 사용자에게 확인하세요.`;
   return (r.stderr || r.stdout || '').trim().split('\n').filter((l) => !/PATH aliases|bubblewrap/.test(l)).pop() || r.error?.message || '';
 }
 
@@ -717,10 +809,12 @@ function deliver(targets, message, entry) {
   const bin = tool('codex');
   const node = tool('node');
   if (!bin || !node) fail('설치 때 기록한 codex 나 node 가 없습니다. 스킬로 on 을 다시 실행하세요.');
+  const bad = toolsCheck([sessionCwd(), process.cwd()]);
+  if (bad) fail(`${bad} 보내지 않았습니다.`);
   const sent = [];
   const failed = [];
   for (const t of targets) {
-    const r = spawnSync(bin, ['queue', '--thread', t.id, '--message', message], { encoding: 'utf8', env: safeEnv(node) });
+    const r = spawnSync(bin, ['queue', '--thread', t.id, '--message', message], { encoding: 'utf8', env: safeEnv(node), timeout: CODEX_TIMEOUT });
     const ok = r.status === 0;
     appendLog({ at: new Date().toISOString(), to: t.id, ok, ...entry });
     if (ok) { sent.push(t); out(`${entry.rid} ${label(t)} 보냄`); continue; }
@@ -736,7 +830,7 @@ function deliver(targets, message, entry) {
 function sender() {
   if (!state().enabled) { err('teamwork 가 꺼져 있어 보내지 않았습니다.'); process.exit(EXIT.OFF); }
   const id = selfId();
-  if (id) register(id, { cwd: process.cwd(), pid: findCodexPid(process.ppid) });
+  if (id) register(id, { pid: findCodexPid(process.ppid) });
   const me = id ? readJson(peerFile(id), {}) : {};
   return { id, from: id ? label({ id, role: me.role }) : '사용자' };
 }
