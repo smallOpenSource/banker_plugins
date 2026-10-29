@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { Stop, bases, makeRunFolder, removeMarked, removeRunFolder, runFolder, snapshot } from "./run-folder.mjs";
 
@@ -25,7 +25,7 @@ function world(t) {
 
 test("bases: XDG_RUNTIME_DIR only when private, macOS TMPDIR, Windows TEMP only inside the home, ~/.cache always known", () => {
   const home = WIN ? "C:\\Users\\u" : "/home/u";
-  assert.equal(bases({ platform: "darwin", env: { HOME: home, TMPDIR: "/var/folders/x/T" } }).base, "/var/folders/x/T");
+  assert.equal(bases({ platform: "darwin", env: { HOME: home, TMPDIR: "/var/folders/x/T" } }).base, resolve("/var/folders/x/T"));
   const win = bases({ platform: "win32", env: { USERPROFILE: "C:\\Users\\u", TEMP: "D:\\temp" } });
   assert.equal(win.base, join("C:\\Users\\u", ".cache"), "a TEMP outside the home is not used");
   const linux = bases({ platform: "linux", env: { HOME: home, XDG_RUNTIME_DIR: join(tmpdir(), "rq-no-such-folder") } });
