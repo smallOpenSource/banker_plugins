@@ -296,19 +296,8 @@ test('estimateCost: hold-and-flight bills only the flights between scenes; the h
 // ffmpeg helpers: ARG ARRAY (not a shell string), flags
 // =====================================================================
 
-test('colorMatch: builds an ffmpeg arg ARRAY (never a shell string) with the expected flags', async () => {
-  const seen = [];
-  cp.spawnSync = (bin, args) => { seen.push({ bin, args }); return { status: 0, stdout: '', stderr: '' }; };
-  const out = await A.colorMatch('/in/src.png', '/in/ref.png', '/out/matched.png', { ffmpeg: '/fake/ffmpeg' });
-  assert.equal(out, '/out/matched.png');
-  assert.equal(seen.length, 1);
-  const { bin, args } = seen[0];
-  assert.equal(bin, '/fake/ffmpeg');
-  assert.ok(Array.isArray(args), 'args is an ARRAY');
-  assert.ok(!args.some((a) => typeof a === 'string' && /\s-\w/.test(a)), 'no arg smuggles a shell-joined command');
-  assert.ok(args.includes('-i') && args.includes('/in/src.png'), 'discrete -i <src>');
-  assert.ok(args.includes('/out/matched.png'), 'discrete output argv entry');
-  assert.match(args[args.indexOf('-vf') + 1], /histeq/, 'uses histeq histogram normalization');
+test('colorMatch is gone: tone continuity is matchClipTone in clip-post.mjs (the clip is corrected, the seed frame never)', () => {
+  assert.equal(A.colorMatch, undefined);
 });
 
 test('stillToClip: repeats the still for the hold, encoded as the engine wants, as an arg ARRAY', async () => {

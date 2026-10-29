@@ -974,21 +974,6 @@ export async function extractFirstFrame(mp4, out, { ffmpeg } = {}) {
 }
 
 /**
- * Tone/color continuity pass on srcPng. Stock ffmpeg has no true "match A's histogram to B"
- * filter, so this uses histeq — per-channel histogram equalization — the simplest robust
- * histogram normalization, which keeps a chained clip's first frame from drifting in
- * contrast/tone. refPng is accepted for API symmetry and a future CLUT-based exact match; it
- * is not fed to ffmpeg today (an unmapped extra input would make ffmpeg error). Returns out.
- */
-export async function colorMatch(srcPng, refPng, out, { ffmpeg } = {}) {
-  const bin = ffmpeg || await resolveFfmpeg();
-  void refPng; // reserved (see doc comment)
-  const r = runFf(bin, ['-y', '-i', srcPng, '-vf', 'format=rgb24,histeq', '-frames:v', '1', out]);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`colorMatch failed: ${tail(r.stderr)}`);
-  return out;
-}
-
-/**
  * Crossfade clip A into clip B with an `xfade` transition of `sec` seconds. `offset` (opts) is
  * where the fade starts in A; when omitted it is derived from A's probed duration (dur - sec).
  * Returns out.
