@@ -16,6 +16,7 @@ import { chmodSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mk
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { statements } from './obsidize-hook.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REAL_HOOK = join(HERE, 'obsidize-hook.mjs');
@@ -577,6 +578,32 @@ const runCodex = (tree, payload) => spawnSync(process.execPath, [join(tree.plugi
   input: JSON.stringify(payload), encoding: 'utf8', cwd: tree.tmp, env: { ...process.env, STUB_ARGV_LOG: tree.argvLog, STUB_FAIL: '0' },
 });
 
+// Codex runs a shell call in PowerShell on Windows and in sh elsewhere; the hook splits it by that shell's rules.
+const HOST_WRITES = process.platform === 'win32' ? ['cd C:\\work\\; omx wiki add --input x'] : ['echo `date`;omx wiki add --input x'];
+const HOST_OTHERS = process.platform === 'win32' ? ['echo x`; omx wiki add'] : ['echo x\\; omx wiki add', 'x=`a; omx wiki add`'];
+
+test('codex: statements split by the rules of sh and of PowerShell', () => {
+  const sh = (c) => statements(c, 'sh');
+  const ps = (c) => statements(c, 'powershell');
+  assert.deepEqual(sh('cd /w; omx wiki add --input x'), ['cd /w', ' omx wiki add --input x']);
+  assert.deepEqual(sh('x=`a; omx wiki add`'), ['x=`a; omx wiki add`'], 'a command substitution is part of the statement around it');
+  assert.deepEqual(sh('echo `date`;omx wiki add --input x'), ['echo `date`', 'omx wiki add --input x']);
+  assert.deepEqual(sh('echo x\\; omx wiki add'), ['echo x\\; omx wiki add'], 'a backslash keeps the ;');
+  assert.deepEqual(sh('echo "a\\" ; omx wiki add"'), ['echo "a\\" ; omx wiki add"']);
+  assert.deepEqual(sh('cd C:\\work\\; omx wiki add'), ['cd C:\\work\\; omx wiki add'], 'sh reads the backslash as an escape');
+  assert.ok(sh('echo `x; omx wiki add --input y').includes(' omx wiki add --input y'), 'an unclosed backtick takes the plain split too');
+  assert.deepEqual(sh("echo 'a\\'; omx wiki add"), ["echo 'a\\'", ' omx wiki add'], 'inside single quotes a backslash is a character');
+  assert.deepEqual(sh('a\r\nomx wiki add'), ['a', '', 'omx wiki add'], 'a Windows line end ends the statement too');
+  assert.deepEqual(ps('cd C:\\work\\; omx wiki add --input x'), ['cd C:\\work\\', ' omx wiki add --input x'], 'a backslash is no escape in PowerShell');
+  assert.deepEqual(ps('echo x`; omx wiki add'), ['echo x`; omx wiki add'], 'a backtick keeps the ;');
+  assert.deepEqual(ps('echo "a`" ; omx wiki add"'), ['echo "a`" ; omx wiki add"']);
+  assert.deepEqual(ps("echo 'a`'; omx wiki add"), ["echo 'a`'", ' omx wiki add'], 'inside single quotes a backtick is a character');
+  assert.deepEqual(ps('echo "C:\\x\\"; omx wiki add'), ['echo "C:\\x\\"', ' omx wiki add'], 'a backslash before a closing quote does not keep it open');
+  assert.deepEqual(ps('omx wiki add --input x`'), ['omx wiki add --input x`'], 'a backtick at the end');
+  assert.deepEqual(ps("$j = 'a;b'; omx wiki add && x || y"), ["$j = 'a;b'", ' omx wiki add ', ' x ', ' y']);
+  assert.deepEqual(statements('a; b'), statements('a; b', process.platform === 'win32' ? 'powershell' : 'sh'), 'the shell defaults by platform');
+});
+
 test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wiki/ of the session cwd', () => {
   const tree = codexTree();
   arm(tree);
@@ -588,7 +615,7 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
   assert.notEqual(page(tree), PAGE_BEFORE, 'the page in omx_wiki/ was rewritten through the relative name');
   for (const form of ['omx.cmd wiki add --input x', "& 'omx' wiki ingest --input x", "$j = '{}'; omx wiki wiki_ingest --input $j --json",
     "$j = 'a;b'\nomx wiki add --input $j", 'git status && omx wiki ingest --input "{\\"a\\":1}"',
-    "# it's the page\nomx wiki ingest --input x", "$t = @'\ndon't\n'@\nomx wiki add --input $t", 'echo `date`;omx wiki add --input x']) {
+    "# it's the page\nomx wiki ingest --input x", "$t = @'\ndon't\n'@\nomx wiki add --input $t", ...HOST_WRITES]) {
     writeFileSync(tree.argvLog, '');
     runCodex(tree, codexPayload(tree, form));
     assert.equal(readArgv(tree).length, 1, form);
@@ -598,7 +625,7 @@ test('codex: an omx wiki write canonicalizes the page its JSON names, in omx_wik
 test('codex: other shell calls, other omx wiki tools, and an armed .omc/wiki change nothing', () => {
   const tree = codexTree();
   arm(tree);
-  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud', 'echo omx wiki add', 'echo "x; omx wiki add"', "echo 'a && omx wiki ingest'", 'echo x\\; omx wiki add']) {
+  for (const command of ['ls -la', 'omx wiki query --input x', 'node romx wiki ingest', 'omx hud', 'echo omx wiki add', 'echo "x; omx wiki add"', "echo 'a && omx wiki ingest'", ...HOST_OTHERS]) {
     runCodex(tree, codexPayload(tree, command));
   }
   runCodex(tree, { ...codexPayload(tree, 'omx wiki ingest'), tool_input: {} });

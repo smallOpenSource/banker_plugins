@@ -160,6 +160,17 @@ test('a quoted table name holding ] is a table, and a new top-level key goes abo
   assert.equal(setKey('a = 1\n\n# MCP servers\n[mcp]\nx = 1\n', '', 'b', '2'), 'a = 1\nb = 2\n\n# MCP servers\n[mcp]\nx = 1\n');
 });
 
+test('a new top-level key goes after a head comment that runs from the first line to the first table, a blank line before the table', () => {
+  assert.equal(setKey('# my Codex config\n# kept in dotfiles\n[tui]\nx = 1\n', '', 'b', '2'), '# my Codex config\n# kept in dotfiles\nb = 2\n\n[tui]\nx = 1\n');
+  assert.equal(setKey('# head\r\n[tui]\r\nx = 1\r\n', '', 'b', '2'), '# head\r\nb = 2\r\n\r\n[tui]\r\nx = 1\r\n', 'CRLF kept');
+  assert.equal(setKey('# head\n\n# tui\n[tui]\n', '', 'b', '2'), '# head\nb = 2\n\n# tui\n[tui]\n', 'a blank line between: the comment above the table stays with it');
+  assert.equal(setKey('\n[tui]\n', '', 'b', '2'), 'b = 2\n\n[tui]\n', 'no comment: as before');
+  assert.equal(setKey('[a]\n# about b\n[b]\n', 'a', 'k', '1'), '[a]\nk = 1\n# about b\n[b]\n', 'inside a table the comment of the next one is skipped as before');
+  const parsed = setKey('# head\n[tui]\nx = 1\n', '', 'b', '2');
+  assert.equal(findKey(parsed, '', 'b').raw, '2');
+  assert.equal(findKey(parsed, 'tui', 'x').raw, '1');
+});
+
 test('a long line opening with [ and no ] is read at once (no backtracking blow-up)', () => {
   const started = Date.now();
   findKey(`[${' '.repeat(20000)}\nk = 1\n`, '', 'k');
