@@ -813,17 +813,18 @@ try {
   const s12Reasons = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8')).surfaces
     .filter((x) => x.name === 'all-in-one' || x.name === 'ultra-init');
   const s12Readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-  const s12Bad = s12Docs.flatMap(([n, t]) => {
-    const fm = t.split(/\r?\n---/)[0];
-    const why = [];
-    if (/\$ultraqa|OMX ultraqa|oh-my-claudecode:verifier|bounded (?:verify|cycle)|verify → fix|verify 순환/i.test(t)) why.push('old QA gate wording');
-    if (!/`ralph-qa`/.test(fm) || /ultraqa|verify/.test(fm)) why.push('description');
-    if (!/Skill\("banker:ralph-qa"\)/.test(t) || !/`\$banker-ralph-qa`/.test(t) || !/`\$banker:ralph-qa`/.test(t)
-        || !/<S>\/\.\.\/banker-ralph-qa\/SKILL\.md/.test(t) || !/<S>\/\.\.\/ralph-qa\/SKILL\.md/.test(t)) why.push('ralph-qa names and Codex paths');
-    if (!/--gates=</.test(t) || !/gate-evidence\.mjs' run --dir '<g>'[^\n]*--iter 0/.test(t) || !/`scenarios`/.test(t)
-        || !/\(`reported`\) is not evidence/.test(t) || !/never fix a baseline failure/i.test(t)) why.push('gates, baseline, scenarios');
-    return why.map((w) => `${n}: ${w}`);
-  }).concat(s12Reasons.filter((x) => /ultraqa|verify cycle/.test(x.reason) || !/QA gate is banker ralph-qa on both runtimes/.test(x.reason)).map((x) => `manifest reason of ${x.name}`))
+  // [틀린 까닭, 틀렸는지]: 하나라도 맞지 않는 정규식이 있거나(must) 있으면 안 되는 문구가 있으면(never) 그 까닭
+  const s12Checks = [
+    ['old QA gate wording', { never: [/\$ultraqa|OMX ultraqa|oh-my-claudecode:verifier|bounded (?:verify|cycle)|verify → fix|verify 순환/i] }],
+    ['description', { head: true, must: [/`ralph-qa`/], never: [/ultraqa|verify/] }],
+    ['ralph-qa names and Codex paths', { must: [/Skill\("banker:ralph-qa"\)/, /`\$banker-ralph-qa`/, /`\$banker:ralph-qa`/, /<S>\/\.\.\/banker-ralph-qa\/SKILL\.md/, /<S>\/\.\.\/ralph-qa\/SKILL\.md/] }],
+    ['gates, baseline, scenarios', { must: [/--gates=</, /gate-evidence\.mjs' run --dir '<g>'[^\n]*--iter 0/, /`scenarios`/, /\(`reported`\) is not evidence/, /never fix a baseline failure/i] }],
+  ];
+  const s12Fails = (t, c) => {
+    const x = c.head ? t.split(/\r?\n---/)[0] : t;
+    return (c.must || []).some((re) => !re.test(x)) || (c.never || []).some((re) => re.test(x));
+  };
+  const s12Bad = s12Docs.flatMap(([n, t]) => s12Checks.filter(([, c]) => s12Fails(t, c)).map(([w]) => `${n}: ${w}`)).concat(s12Reasons.filter((x) => /ultraqa|verify cycle/.test(x.reason) || !/QA gate is banker ralph-qa on both runtimes/.test(x.reason)).map((x) => `manifest reason of ${x.name}`))
     .concat(/QA 게이트는 `verify` 순환|Codex 는 OMX `ultraqa` 를 그대로/.test(s12Readme) ? ['README'] : []);
   ok(s12Docs.length === 2 && s12Reasons.length === 2 && s12Bad.length === 0,
      `aio-qa: all-in-one and ultra-init end with banker ralph-qa on both runtimes (--gates from --qa, an iteration-0 gate-evidence baseline, scenarios, observed records only), with no OMX ultraqa or verify cycle wording in the skills, their manifest reasons or the README${s12Bad.length ? ` (${s12Bad.join('; ')})` : ''}`);
