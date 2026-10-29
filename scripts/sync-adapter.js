@@ -9,6 +9,7 @@
  *   tone-compact/scripts: instruction-toggle.mjs                      -> anti-drm            (rules on and off for Claude Code and Codex)
  *   setup-bypass-permissions/scripts: codex-config.mjs                -> setup-omc-hud/assets (Codex config.toml line edits)
  *   hooks: progress-plan.mjs (repo root)                              -> codex/skills/progress/scripts (plan tree for the Codex progress skill)
+ *   ralph-qa/references: gate-evidence.mjs, run-folder.mjs           -> ultraqa             (gate evidence, run folders; tests at the source)
  * A pair without a root is under skills/; one with `root: true` names repo-root paths.
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
@@ -25,6 +26,7 @@ const MIRRORS = [
   { from: 'tone-compact/scripts', to: 'anti-drm/scripts', files: ['instruction-toggle.mjs'] },
   { from: 'setup-bypass-permissions/scripts', to: 'setup-omc-hud/assets', files: ['codex-config.mjs'] },
   { from: 'hooks', to: 'codex/skills/progress/scripts', files: ['progress-plan.mjs'], root: true },
+  { from: 'ralph-qa/references', to: 'ultraqa/references', files: ['gate-evidence.mjs', 'run-folder.mjs'] },
 ];
 const check = process.argv.includes('--check');
 

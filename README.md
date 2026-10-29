@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 64개 + 커맨드 2개**(총 66개 구성요소)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 65개 + 커맨드 2개**(총 67개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 64개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -152,6 +152,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `omc-reference` | OMC/OMX 에이전트·툴·스킬 레퍼런스(양 런타임 병기) |
 | `curation` | 의사결정을 선택지·권고·확신수준으로 큐레이션(--perf=품질 우선, --deep=확신 0.80 이하는 추가 조사·검토 후 제시) |
 | `ralph-qa` | 세션 모델로 띄운 독립 검토 에이전트 3개 이상이 합의할 때까지 검증 반복. `--codex`·`--gemini`·`--opencode` 를 주면 그 CLI 에서 가장 뛰어난 모델이 좌석으로 합류 |
+| `ultraqa` | Claude Code 전용(`/banker:ultraqa`). OMX ultraqa 를 본뜬 적대적 동적 e2e QA 순환. 9분류 시나리오 행렬과 실행기가 돌린 게이트 증거로 최대 5회 진단, 고침, 재시험. Codex 는 OMX `$ultraqa` 를 그대로 씀 |
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
 | `lfm` | learn from master. 그 분야 최고 전문가 그룹이 일하는 방식을 1차 자료로 조사해 계획 적용 항목으로 정리(ultra-interview, ultra-chain, deep-research, rfp-author 의 리서치에서도 씀) |
@@ -478,7 +479,7 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 
 | 분류 | 항목 | 라이선스 | 사용/설치 스킬 |
 |---|---|---|---|
-| 프레임워크 | oh-my-claudecode(OMC)·oh-my-codex(OMX), by [Yeachan-Heo](https://github.com/Yeachan-Heo) | MIT | `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa`·`setup-omc` |
+| 프레임워크 | oh-my-claudecode(OMC)·oh-my-codex(OMX), by [Yeachan-Heo](https://github.com/Yeachan-Heo) | MIT | `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa`·`setup-omc`·`ultraqa`(OMX ultraqa 를 본뜸, `skills/ultraqa/NOTICE.md`) |
 | 플러그인 | insane-search (© fivetaku, [fivetaku/gptaku_plugins](https://github.com/fivetaku/gptaku_plugins)) | MIT | `setup-insane-search` |
 | 팀 아키텍처 팩토리 | revfactory/harness (© Minho Hwang, [revfactory/harness](https://github.com/revfactory/harness)) · Codex 포트 SaehwanPark/meta-harness | Apache-2.0 | `setup-harness-factory`(설치·구성만 안내) |
 | 서비스(독점·상표) | Notion | 독점 | `make-notion-guide` |

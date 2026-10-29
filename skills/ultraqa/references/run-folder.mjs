@@ -1,0 +1,217 @@
+#!/usr/bin/env node
+/**
+ * run-folder: the private run folders of ralph-qa and ultraqa, and the work tree snapshot their gate evidence is judged
+ * against. The source of truth is skills/ralph-qa/references/run-folder.mjs; skills/ultraqa/references holds a
+ * byte-identical copy (scripts/sync-adapter.js).
+ *
+ *   bases(ctx)                        { base, known }: this run's base, and every base a run of any version used
+ *   readyBase(ctx, base)              makes the base, private (POSIX), or stops
+ *   makeRunFolder(ctx, kind)          <base>/<kind>.<six letters and digits>, private, with its marker .<kind>
+ *   runFolder(dir, ctx, kinds)        { d, kind } for such a folder right under a known private base, else a stop
+ *   removeMarked(p, marker)           the folder's contents, then its marker, then the folder
+ *   removeRunFolder(dir, ctx, kinds)  one run folder, checked as runFolder checks it; nothing outside it
+ *   snapshot(repo, env)               (async) HEAD, the status, the untracked files' content hashes, one fingerprint
+ *
+ * ctx is { env, platform }. A base is never /tmp: another account may put files there (gemini, a ralph-qa seat, reads
+ * a .env it finds walking up from its folder). No shell and no network: git runs as a program with its arguments.
+ */
+import { spawnSync } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+
+// A stop: `code` names it, the message is a Korean line (the caller puts its name before it), `detail` the paths or
+// lines it concerns.
+export class Stop extends Error {
+  constructor(code, message, detail = []) {
+    super(message);
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+const lstatOr = (p) => {
+  try {
+    return lstatSync(p);
+  } catch {
+    return null;
+  }
+};
+const isFile = (p) => Boolean(lstatOr(p)?.isFile());
+const listDir = (dir) => {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+};
+
+const homeOf = (ctx) => (ctx.platform === "win32" ? ctx.env.USERPROFILE : ctx.env.HOME) || homedir();
+const norm = (ctx, p) => (ctx.platform === "win32" ? p.toLowerCase() : p);
+const realOr = (p) => {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return p;
+  }
+};
+
+// A folder only this account may write in (POSIX: its own, no group or other write bit).
+export function privateDir(p) {
+  try {
+    const st = statSync(p);
+    return st.isDirectory() && st.uid === process.getuid() && (st.mode & 0o022) === 0;
+  } catch {
+    return false;
+  }
+}
+const insideHome = (ctx, p) => norm(ctx, realOr(p)).startsWith(norm(ctx, realOr(homeOf(ctx))) + sep);
+
+// The base for this run's folders, and every base a run of any version may have used, for the day rule. Linux: an
+// XDG_RUNTIME_DIR of this account's own, else ~/.cache; macOS: $TMPDIR (its own per account); Windows: %TEMP% when it
+// is inside the home, else ~/.cache (the old Git Bash runs used ~/.cache).
+export function bases(ctx) {
+  const cache = join(homeOf(ctx), ".cache");
+  const base = baseOn(ctx, cache);
+  const xdg = ctx.platform === "linux" && ctx.env.XDG_RUNTIME_DIR ? [resolve(ctx.env.XDG_RUNTIME_DIR)] : [];
+  return { base, known: [...new Set([base, cache, ...xdg])] };
+}
+
+function baseOn(ctx, cache) {
+  const { env } = ctx;
+  if (ctx.platform === "win32") return env.TEMP && insideHome(ctx, env.TEMP) ? resolve(env.TEMP) : cache;
+  if (ctx.platform === "darwin") return env.TMPDIR ? resolve(env.TMPDIR) : cache;
+  const xdg = env.XDG_RUNTIME_DIR;
+  return xdg && isAbsolute(xdg) && privateDir(xdg) ? resolve(xdg) : cache;
+}
+
+export function readyBase(ctx, base) {
+  try {
+    mkdirSync(base, { recursive: true, mode: 0o700 });
+  } catch (e) {
+    throw new Stop("base-not-writable", `기준 폴더를 만들 수 없다(${e.code}): ${base}`);
+  }
+  if (ctx.platform !== "win32" && !privateDir(base)) throw new Stop("base-not-private", `기준 폴더를 다른 계정도 쓸 수 있다: ${base}`);
+}
+
+// One folder by mkdtemp under the base, with its marker.
+export function makeRunFolder(ctx, kind) {
+  const { base } = bases(ctx);
+  readyBase(ctx, base);
+  let d;
+  try {
+    d = mkdtempSync(join(base, `${kind}.`));
+    writeFileSync(join(d, `.${kind}`), "", { mode: 0o600 });
+  } catch (e) {
+    if (d) rmSync(d, { recursive: true, force: true });
+    throw new Stop("base-not-writable", `기준 폴더에 쓸 수 없다(${e.code}): ${base}`);
+  }
+  return { dir: d, base };
+}
+
+// The folder's parent, by its real path, is one of the known bases by theirs (macOS's /var is a link to /private/var:
+// either form names the same base), and only this account may write in it (POSIX).
+export function underBase(ctx, d) {
+  const parent = norm(ctx, realOr(dirname(d)));
+  const known = bases(ctx).known.some((b) => norm(ctx, realOr(b)) === parent);
+  return known && (ctx.platform === "win32" || privateDir(dirname(d)));
+}
+
+const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// A folder made as makeRunFolder makes one, of one of `kinds`: named <kind>.<letters and digits>, a folder and no link,
+// with its marker, right under a known base that only this account may write in.
+export function runFolder(dir, ctx, kinds) {
+  const d = resolve(String(dir));
+  const kind = kinds.find((k) => new RegExp(`^${escaped(k)}\\.[A-Za-z0-9]+$`).test(basename(d)));
+  if (!kind || !lstatOr(d)?.isDirectory() || !isFile(join(d, `.${kind}`))) {
+    throw new Stop("not-a-run-folder", `init 이 만든 폴더가 아니다: ${d}`);
+  }
+  if (!underBase(ctx, d)) throw new Stop("not-a-run-folder", `알려진 기준 폴더 바로 아래의 실행 폴더가 아니다: ${d}`);
+  return { d, kind };
+}
+
+// A marked folder removed, its marker last: a removal that stops part way leaves a folder the next cleanup still knows.
+// One that cannot be removed gets back its marker (if the removal reached it) and its times, so it stays a marked folder.
+export function removeMarked(p, marker) {
+  const was = lstatOr(p);
+  try {
+    for (const name of listDir(p).filter((n) => n !== marker)) rmSync(join(p, name), { recursive: true, force: true, maxRetries: 3 });
+    rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+  } catch (e) {
+    keepMarked(p, marker, was);
+    throw e;
+  }
+}
+
+function keepMarked(p, marker, was) {
+  try {
+    if (!lstatOr(p)?.isDirectory()) return;
+    if (!isFile(join(p, marker))) writeFileSync(join(p, marker), "", { flag: "wx", mode: 0o600 });
+    if (was) utimesSync(p, was.atime, was.mtime);
+  } catch {
+    /* the folder takes no marker or times either */
+  }
+}
+
+// One run folder and nothing else: a path a record names outside it is the caller's to report, never to remove.
+export function removeRunFolder(dir, ctx, kinds) {
+  const { d, kind } = runFolder(dir, ctx, kinds);
+  try {
+    removeMarked(d, `.${kind}`);
+  } catch (e) {
+    throw new Stop("cleanup-left", "실행 폴더를 다 지우지 못했다. 사용자에게 경로를 알린다", [`${d} (${e.code || e.message})`]);
+  }
+  return { removed: d };
+}
+
+// ---- the work tree snapshot
+
+// git as a program, from the home folder (Windows looks in the working folder first for a bare name; a home that is
+// not there, as in a test's env, gives the temporary folder), with no fsmonitor program and no external diff or text
+// conversion.
+function git(repo, env, args) {
+  const cwd = existsSync(homedir()) ? homedir() : tmpdir();
+  const r = spawnSync("git", ["-c", "core.fsmonitor=false", "-C", repo, ...args], { cwd, env, maxBuffer: 1 << 30, windowsHide: true });
+  return { ok: r.status === 0, out: r.stdout || Buffer.alloc(0), err: String(r.stderr || r.error?.code || "") };
+}
+
+// The untracked entries of `git status --porcelain=v1 -z` (a rename or copy entry carries its old name next).
+function untrackedOf(raw) {
+  const parts = String(raw).split("\0");
+  const out = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const e = parts[i];
+    if (e.startsWith("?? ")) out.push(e.slice(3));
+    else if (/^[RC]/.test(e)) i += 1;
+  }
+  return out.sort();
+}
+
+function contentOf(root, rel) {
+  const p = join(root, rel);
+  const st = lstatOr(p);
+  if (st?.isSymbolicLink()) return Buffer.from(`link\0${readlinkSync(p)}`);
+  if (st?.isFile()) return readFileSync(p);
+  return Buffer.from(st ? "other" : "gone");
+}
+
+// What a gate's result was judged on: HEAD, the status, the diff against HEAD (the index and the work tree) and every
+// untracked file's content, hashed together. A tree with no git has one fingerprint per folder: changes go unseen.
+export async function snapshot(repo, env = process.env) {
+  const { createHash } = await import("node:crypto");
+  const hash = (b) => createHash("sha256").update(b).digest("hex");
+  const top = git(resolve(repo), env, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok) return { git: false, head: null, untracked: [], fingerprint: hash(`no-git\0${resolve(repo)}`) };
+  const root = String(top.out).trim();
+  const head = git(root, env, ["rev-parse", "--verify", "-q", "HEAD"]);
+  const status = git(root, env, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const diffArgs = ["--binary", "--no-ext-diff", "--no-textconv"];
+  const diffs = head.ok ? [git(root, env, ["diff", "HEAD", ...diffArgs])] : [git(root, env, ["diff", "--cached", ...diffArgs]), git(root, env, ["diff", ...diffArgs])];
+  const failed = [status, ...diffs].find((r) => !r.ok);
+  if (failed) throw new Stop("git-failed", `작업 트리를 읽지 못했다: ${failed.err.split("\n")[0]}`);
+  const untracked = untrackedOf(status.out).map((path) => ({ path, sha256: hash(contentOf(root, path)) }));
+  const headId = head.ok ? String(head.out).trim() : null;
+  const parts = [`head\0${headId}`, `status\0${hash(status.out)}`, ...diffs.map((r) => `diff\0${hash(r.out)}`), ...untracked.map((u) => `new\0${u.path}\0${u.sha256}`)];
+  return { git: true, root, head: headId, untracked, fingerprint: hash(parts.join("\n")) };
+}
