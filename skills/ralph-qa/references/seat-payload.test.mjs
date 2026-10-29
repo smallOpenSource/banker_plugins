@@ -1037,6 +1037,22 @@ test("every git call of prepare carries every guard: no hooks, no fsmonitor, no 
   }
 });
 
+// S19 (2): a git that cannot be started (in the Codex sandbox, node's pipes gave EPERM) is a named stop, not a guess;
+// git runs on files, so a git that did run gives prepare its output whole.
+test("a git that cannot start is the git-failed stop with the start error, and git's output arrives through files", { skip: SKIP || (WIN && "the stand-in git is a sh script") }, (t) => {
+  const ctx = repo(t);
+  const bin = join(ctx.dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "git"), "#!/nonexistent/interpreter\n", { mode: 0o755 });
+  put(ctx, "a.txt", "two\n");
+  const r = prep(ctx, { env: { PATH: `${bin}${delimiter}${process.env.PATH}` } });
+  assert.equal(r.stop, "git-failed", r.message);
+  assert.match(r.message, /git rev-parse[^\n]*를 띄우지 못했다\((?:ENOENT|EACCES|ENOEXEC)\)/);
+  const ok = prep(ctx, {});
+  assert.equal(ok.stop, undefined, ok.message);
+  assert.match(ok.prompt, /two/);
+});
+
 // libuv on Windows looks for a bare program name in the child's working folder before PATH: git starts by the absolute
 // path which() gives, from the payload folder, so a git.exe the repo ships never runs.
 test("git starts by its absolute path: no git by name anywhere in the runner", () => {

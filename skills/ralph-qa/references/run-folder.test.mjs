@@ -143,8 +143,15 @@ test("snapshot's fingerprint holds still on an unchanged tree and moves with an 
   assert.equal((await snapshot(plain)).git, false);
 });
 
-test("spawnFiles gives the child files, not pipes: input, stdout and stderr arrive whole, the status holds and no file stays", () => {
-  const before = readdirSync(tmpdir()).filter((n) => n.startsWith("rq-io-")).length;
+test("spawnFiles gives the child files, not pipes: input, stdout and stderr arrive whole, the status holds and no file stays", (t) => {
+  const own = mkdtempSync(join(tmpdir(), "rq-rf-io-"));
+  const keys = ["TMPDIR", "TEMP", "TMP"];
+  const saved = keys.map((k) => process.env[k]);
+  for (const k of keys) process.env[k] = own;
+  t.after(() => {
+    keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
+    rmSync(own, { recursive: true, force: true });
+  });
   const big = "x".repeat(300000);
   const code = "let s='';process.stdin.on('data',(b)=>s+=b).on('end',()=>{process.stdout.write(s.toUpperCase());process.stderr.write('e:'+s.length);process.exit(3)})";
   const r = spawnFiles(process.execPath, ["-e", code], { input: big, windowsHide: true });
@@ -152,5 +159,5 @@ test("spawnFiles gives the child files, not pipes: input, stdout and stderr arri
   assert.deepEqual([r.status, String(r.stdout), String(r.stderr)], [3, big.toUpperCase(), `e:${big.length}`]);
   const none = spawnFiles(process.execPath, ["-e", "process.stdin.on('data',()=>process.exit(9)).on('end',()=>process.exit(0))"]);
   assert.deepEqual([none.status, none.stdout.length], [0, 0]);
-  assert.equal(readdirSync(tmpdir()).filter((n) => n.startsWith("rq-io-")).length, before);
+  assert.deepEqual(readdirSync(own), []);
 });
