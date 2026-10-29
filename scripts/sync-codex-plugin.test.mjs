@@ -561,7 +561,10 @@ test('sh: a plugin folder in the session folder (however deep, or through a link
   const deep = pluginAt(c, join(work, 'deep', 'codexhome', 'plugins', 'cache', 'm', 'banker', '1.0'));
   const link = join(o.d, 'link');
   symlinkSync(deep, link);
-  const inTmp = pluginAt(c, join(c.d, 'tmp-plugin'));
+  // 진짜 /tmp 아래(명령이 늘 검사하는 곳). macOS 의 os.tmpdir() 은 /var/folders 라 TMPDIR=/tmp 로 부르면 임시 폴더가 아니다
+  const tmpRoot = mkdtempSync('/tmp/codex-plugin-tmp-');
+  t.after(() => rmSync(tmpRoot, { recursive: true, force: true }));
+  const inTmp = pluginAt(c, join(tmpRoot, 'tmp-plugin'));
   const run = (cwd, root, home = o.d) => spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true, true)], { cwd, encoding: 'utf8', env: { PATH: `${dirname(o.node)}${delimiter}/usr/bin${delimiter}/bin`, PLUGIN_ROOT: root, TMPDIR: '/tmp', HOME: home } });
   for (const root of [deep, link, inTmp]) {
     const r = run(work, root);
