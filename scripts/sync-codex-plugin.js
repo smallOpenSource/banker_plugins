@@ -44,8 +44,8 @@ const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@b
   + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY). The obsidizer hook is installed only by obsidizer --enable. '
   + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names (a multicall shim '
   + 'such as Volta or mise, or a .cmd shim on Windows: the node binary it names) only when its real path is absolute and outside the temp '
-  + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder, and otherwise says why it '
-  + 'skipped. Each command starts with a hash of the hook files (banker-hooks-rev), so new hook code asks for trust again. command is '
+  + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder when that is outside them too, '
+  + 'and otherwise says why it skipped. PATH entries under a network mount outside the home folder are not read. Each command starts with a hash of the hook files (banker-hooks-rev), so new hook code asks for trust again. command is '
   + 'for sh, commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.';
 
 // The files a hook runs: the scripts HOOKS names, run.cjs, and what they load or start, found by following relative
@@ -81,6 +81,13 @@ function hooksRev(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
 //   first). Every path run or asked must be outside the real /tmp, TMPDIR and the session folder (pwd -P),
 //   which the sandbox can write; a session folder that is the home folder itself is no workspace here (nvm keeps node
 //   under ~/.nvm, and a sandbox writing the home can already change the shell's rc files and that node).
+// - The plugin folder (PLUGIN_ROOT) is judged first, by its real path, as node is: a Codex home in the session folder
+//   (CODEX_HOME=<session>/deep/.codex) would let the sandbox write the scripts the hook runs. The hook scripts run from
+//   that real path.
+// - PATH entries under a network mount (NET_TYPES, MOUNTS) outside the home folder are neither looked at nor kept: one
+//   that does not answer would hold the hook. node is looked for on the other entries; an entry under the home folder
+//   is checked as any other (a home that does not answer has held the hook already). A link elsewhere that leads to a
+//   network mount is not seen.
 // - Nothing else the command runs is found in those folders either: once node is found, PATH keeps only absolute
 //   entries outside them, so realpath, readlink, and whatever a shim starts come from elsewhere (a project .venv/bin
 //   or node_modules/.bin on PATH would otherwise lend a planted realpath). A PATH left empty becomes /usr/bin:/bin (bash
@@ -96,8 +103,23 @@ function hooksRev(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
 //   is taken, under the same checks. A node kept elsewhere (nvm) is not guessed: the refusal names the likely cause.
 // A refusal says why and exits 0: as a systemMessage for SessionStart (shown in the TUI), on stderr otherwise.
 const NODE_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
-function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NODE_DIRS) {
-  const run = viaRun ? ' "$PLUGIN_ROOT/hooks/run.cjs"' : '';
+// Network mounts: a PATH entry under one may not answer and would hold the hook until Codex's limit ends it, so the
+// mount table is read once (awk from the system's default PATH) for the mount points of network file systems, before
+// anything looks at PATH. Linux reads /proc/self/mounts (a mount point's space is written \040); elsewhere (macOS)
+// /sbin/mount prints `<device> on <mount point> (<type>, ...)` without waiting on any mount (getfsstat MNT_NOWAIT). A
+// mount point with a colon is left out: no PATH entry can be under it. Points are printed with a colon after each. awk
+// runs in the C locale so it reads bytes.
+const NET_TYPES = 'nfs|nfs4|cifs|smbfs|smb3|afpfs|webdav|davfs|autofs|ceph|glusterfs|lustre|9p';
+const MOUNTS = { table: '/proc/self/mounts', command: '/sbin/mount' };
+const MOUNT_AWK = [
+  'function dec(s,  o, i, c) { o = ""; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1);',
+  ' if (c == "\\\\" && substr(s, i + 1, 3) ~ /^[0-7][0-7][0-7]$/) { o = o sprintf("%c", substr(s, i + 1, 1) * 64 + substr(s, i + 2, 1) * 8 + substr(s, i + 3, 1)); i += 3 } else o = o c }; return o }',
+  ' mac { i = index($0, " on "); j = 0; for (k = length($0); k > i; k--) if (substr($0, k, 2) == " (") { j = k; break };',
+  ' if (!i || !j) next; m = substr($0, i + 4, j - i - 4); t = substr($0, j + 2); sub(/[,)].*/, "", t) }',
+  ` !mac { m = dec($2); t = $3 } (t ~ /^(${NET_TYPES})$/ || t ~ /^fuse\\./) && m !~ /:/ { printf "%s:", m }`,
+].join('');
+function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NODE_DIRS, mounts = MOUNTS) {
+  const run = viaRun ? ' "$pr/hooks/run.cjs"' : '';
   const say = notice
     ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | command -p tr -d '\000-\037"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
     : String.raw`printf '%s\n' "banker hooks skipped: $1" >&2`;
@@ -107,11 +129,16 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
     + 'u=$(cd /tmp 2>/dev/null && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P); '
     + String.raw`h=; case "$HOME" in /?*) h=$(cd "$HOME" 2>/dev/null && pwd -P);; esac; `
     + String.raw`w() { for z in "$u" "$t"; do [ -n "$z" ] && case "$1/" in "$z"/*) return 0;; esac; done; [ "$p" = "$h" ] && return 1; case "$1/" in "$p"/*) return 0;; esac; return 1; }; `
-    + `n=$(command -v node) || for d in ${nodeDirs.join(' ')}; do [ -x "$d/node" ] && n=$d/node && break; done; `
+    + String.raw`pr=$(cd -P "$PLUGIN_ROOT" 2>/dev/null && pwd -P) || x "cannot enter the plugin folder"; w "$pr" && x "the plugin folder is in a temp folder or the session folder ($pr)"; `
+    + `A='${MOUNT_AWK}'; if [ -r '${mounts.table}' ]; then M=$(LC_ALL=C command -p awk "$A" '${mounts.table}' 2>/dev/null); else M=$('${mounts.command}' 2>/dev/null | LC_ALL=C command -p awk -v mac=1 "$A" 2>/dev/null); fi; `
+    + String.raw`nm() { for z in $M; do case "$1/" in "$z"/*) return 0;; esac; done; return 1; }; `
+    + String.raw`hm() { for z in "$h" "$HOME"; do case "$z" in /?*) case "$1/" in "$z"/*) return 0;; esac;; esac; done; return 1; }; `
+    + 'set -f; o=$IFS; IFS=:; a=; q=; for v in $PATH; do case "$v" in /*) ;; *) a=$a${a:+:}$v; continue;; esac; nm "$v" && ! hm "$v" && continue; a=$a${a:+:}$v; '
+    + 'y=$(cd "$v" 2>/dev/null && pwd -P) || continue; w "$y" || q=$q${q:+:}$v; done; '
+    + `n=; [ -n "$a" ] && n=$(PATH=$a; command -v node) || for d in ${nodeDirs.join(' ')}; do nm "$d" && continue; [ -x "$d/node" ] && n=$d/node && break; done; IFS=$o; set +f; `
     + String.raw`[ -n "$n" ] || x "node is not on PATH (a Codex started from the desktop may not have the shell's PATH)"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
-    + 'set -f; o=$IFS; IFS=:; q=; for v in $PATH; do case "$v" in /*) ;; *) continue;; esac; y=$(cd "$v" 2>/dev/null && pwd -P) || continue; '
-    + 'w "$y" || q=$q${q:+:}$v; done; IFS=$o; set +f; PATH=${q:-/usr/bin:/bin}; export PATH; '
-    + String.raw`cd "$PLUGIN_ROOT" || x "cannot enter the plugin folder"; `
+    + 'PATH=${q:-/usr/bin:/bin}; export PATH; '
+    + String.raw`cd "$pr" || x "cannot enter the plugin folder"; `
     + String.raw`rp() { realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null || { f=$1; i=0; while [ -L "$f" ]; do i=$((i+1)); [ "$i" -le 40 ] || return 1; `
     + 'l=$(readlink "$f") || return 1; case "$l" in /*) f=$l;; *) f=${f%/*}/$l;; esac; done; [ -e "$f" ] || return 1; '
     + 'd=$(cd -P "${f%/*}/" 2>/dev/null && pwd -P) || return 1; printf \'%s\\n\' "${d%/}/${f##*/}"; }; }; '
@@ -119,7 +146,7 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
     + String.raw`k() { case "$1" in /*) ;; *) x "node path is not absolute ($1)";; esac; for d in "$u" "$t"; do [ -n "$d" ] && case "$1" in "$d"/*) x "node is in a temp folder ($1)";; esac; done; `
     + String.raw`[ "$p" = "$h" ] || case "$1" in "$p"/*) x "node is in the session folder ($1)";; esac; }; `
     + `case "\${r##*/}" in node) k "$r"; e=$r;; *) k "$n"; k "$r"; e=$("$n" -p 'require("fs").realpathSync(process.execPath)' 2>/dev/null) || x "the node shim $n did not name its node"; k "$e";; esac; `
-    + `"$e"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
+    + `"$e"${run} "$pr/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
 // PowerShell (Windows): the first node.exe, node.bat or node.cmd on PATH (in PATHEXT's order within a folder), looked
@@ -132,11 +159,12 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
 // way followed, and a subst drive written as the folder it stands for, as the sh command compares real paths. A hard
 // link is not followed: its other name is the same file. Network entries (a mapped network drive, \\server\share) are
 // never read, so a share that does not answer cannot hold the hook past Codex's limit; subst.exe is found through the
-// system folder the API names, not an environment variable. (The sh command reads every PATH entry as the shell itself
-// does when it looks up a command; a mount that does not answer holds it until Codex's limit ends the hook.) A refusal says why, as for sh (English: Windows PowerShell 5.1
-// garbles other letters in a command line).
+// system folder the API names, not an environment variable. (The sh command reads the mount table instead and leaves
+// out entries under a network mount outside the home folder.) The plugin folder is judged as node is, before the
+// command enters it, and the hook scripts run from its real path. A refusal says why, as for sh (English: Windows
+// PowerShell 5.1 garbles other letters in a command line).
 function psCommand(script, args, viaRun, notice = false, rev = '') {
-  const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
+  const run = viaRun ? ' "$pr\\hooks\\run.cjs"' : '';
   const say = notice
     ? 'Write-Output (ConvertTo-Json -Compress @{ systemMessage = "banker hooks skipped: $m" })'
     : '[Console]::Error.WriteLine("banker hooks skipped: $m")';
@@ -151,15 +179,16 @@ function psCommand(script, args, viaRun, notice = false, rev = '') {
     + String.raw`$ds = @($ds | Where-Object { $_ } | ForEach-Object { L $_ } | Where-Object { $_ }); `
     + String.raw`function u($f) { $f = L $f; foreach ($d in $ds) { if ($f -eq $d -or $f.StartsWith($d + '\', 'OrdinalIgnoreCase')) { return $true } }; $false }; `
     + String.raw`function k($f) { if (u $f) { x "node is in a temp folder or the session folder ($(L $f))" }; L $f }; `
+    + String.raw`$pr = L $env:PLUGIN_ROOT; if (u $pr) { x "the plugin folder is in a temp folder or the session folder ($pr)" }; `
     + String.raw`$nd = @(@($env:PATH -split ';') | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"')) } | Where-Object { $_ -match '^[A-Za-z]:\\' -and ([IO.DriveInfo]::new($_.Substring(0, 1))).DriveType -ne 'Network' }); `
     + String.raw`$n = $null; foreach ($d in $nd) { foreach ($e in 'node.exe', 'node.bat', 'node.cmd') { $f = Join-Path $d $e; if (Test-Path -LiteralPath $f -PathType Leaf) { $n = $f; break } }; if ($n) { break } }; `
     + "if (-not $n) { x 'node is not on PATH' }; "
     + String.raw`$env:PATH = ($nd | Where-Object { -not (u $_) }) -join ';'; `
     + "$r = k $n; "
-    + "if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
+    + "if (-not (Set-Location -LiteralPath $pr -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
     + String.raw`if ($r -notmatch '\.exe$') { $e = & $r -p process.execPath 2>$null | Select-Object -Last 1; `
     + String.raw`if (-not $e -or $e -notmatch '\.exe$' -or -not (Test-Path -LiteralPath $e -PathType Leaf)) { x "the node shim $r did not name its node" }; $r = k $e }; `
-    + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
+    + `& $r${run} "$pr\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
 function hooksText() {

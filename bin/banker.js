@@ -308,6 +308,13 @@ async function warnCodexPlugin(base) {
   warn(`    Keep one: codex plugin remove ${ids[0].split(' ')[0]}, or banker uninstall --codex.`);
 }
 
+// A Codex home inside the folder doctor runs in (not its top .codex, which Codex's sandbox keeps read-only) is one a
+// Codex session opened here can change from the sandbox: its config, the hook copies, the plugins.
+async function warnCodexHomeHere(base) {
+  if (!(await loadCodexRoutes()).homeInSession(base, process.cwd())) return;
+  log(`  ⚠ the Codex home ${base} is inside this folder (not its top .codex): a Codex session opened here can change its config and hooks from the sandbox; use a Codex home outside the folders you open Codex in`);
+}
+
 async function doctor() {
   log(`banker v${version()}  (pkg: ${PKG_ROOT})`);
   log(`plugin.json version: ${(() => { try { return require(PLUGIN_JSON).version; } catch { return '?'; } })()}`);
@@ -320,6 +327,7 @@ async function doctor() {
   try { installed = fs.readdirSync(sdir).filter(d => d.startsWith('banker-')); } catch {}
   log(`  codex CLI: ${have('codex') ? 'found' : 'NOT found'}`);
   log(`  installed banker skills in ${sdir}: ${installed.length}`);
+  await warnCodexHomeHere(base);
   doctorCodexShape(base);
   // Codex only discovers a skill when its dir name equals the SKILL.md `name:` — flag any mismatch.
   const mismatched = installed
@@ -388,6 +396,7 @@ async function setupCodexHooks(dryRun, scope) {
   const r = ch.enableHooks(codexHookPaths(ch), ch.DEFAULT_HOOKS, PKG_ROOT);
   if (r.code) { warn(`  Codex hooks not changed: ${r.msg}`); return; }
   log(`  → Codex hooks ${ch.DEFAULT_HOOKS.join(', ')} in ${codexHookPaths(ch).hooks}${r.changed.length ? ` (changed: ${r.changed.join(', ')})` : ' (already in place)'}.`);
+  if (r.note) log(`  → ${r.note}`);
   if (r.changed.length) log(`  → ${ch.TRUST_NOTE}`);
 }
 
@@ -415,7 +424,12 @@ async function hooksCmd(sub, ids) {
   }
   const r = sub === 'enable' ? ch.enableHooks(p, want, PKG_ROOT) : ch.disableHooks(p, want);
   if (r.code) { warn(`banker hooks: not changed: ${r.msg}`); process.exitCode = 1; return; }
+  reportHooks(sub, r, ch);
+}
+
+function reportHooks(sub, r, ch) {
   log(`banker hooks ${sub}: ${r.changed.length ? r.changed.join(', ') : 'nothing to change'}`);
+  if (r.note) log(r.note);
   if (sub === 'enable' && r.changed.length) log(ch.TRUST_NOTE);
   if (r.shifted && r.shifted.length) log(`later ${r.shifted.join(', ')} hooks may need trusting again in /hooks.`);
 }

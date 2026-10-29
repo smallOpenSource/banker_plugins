@@ -54,6 +54,17 @@ export function codexHomeOf(transcript, env = process.env) {
   return env.CODEX_HOME || path.join(os.homedir(), '.codex');
 }
 
+// Codex 홈의 실제 경로가 세션 폴더(cwd) 아래인데 그 맨 위의 .codex 가 아닌지. Codex 0.165.0 샌드박스는 세션 폴더 맨 위의
+// .git, .codex, .agents 만 읽기 전용으로 두므로, 그 밖(CODEX_HOME=<세션>/deep/.codex, <세션>/codexhome)의 Codex 홈은
+// 샌드박스 안의 세션이 고칠 수 있다(설정, 훅 사본, 플러그인). 세션 시작 알림과 banker doctor 가 쓴다.
+export function homeInSession(home, cwd) {
+  if (!home || !cwd || !path.isAbsolute(cwd)) return false;
+  const real = (f) => { try { return fs.realpathSync(f); } catch { return path.resolve(f); } };
+  const rel = path.relative(real(cwd), real(home));
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  return rel !== '.codex';
+}
+
 // npm 길로 설치된 banker 스킬이 있는지(<홈>/skills/banker-*/SKILL.md).
 export function npmRoute(home) {
   try {

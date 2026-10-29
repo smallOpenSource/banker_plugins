@@ -24,7 +24,7 @@ import {
   installedVersion, compareVersions, writeUpdateCache, readUsedSkills, readRegular,
   CODEX_SHAPE_MISS_PATH, writeByRename, configDir, randomHex,
 } from '../bin/lib/telemetry-config.mjs';
-import { codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, pluginRootInfo } from '../bin/lib/codex-routes.mjs';
+import { codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, homeInSession, pluginRootInfo } from '../bin/lib/codex-routes.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // 업데이트 안내에 쓰는 npm 패키지 이름(고지 문구·이모지/em-dash 없음).
@@ -143,6 +143,19 @@ export function dualNotice(payload, env = process.env) {
   }
 }
 
+// Codex: Codex 홈이 이 세션 폴더 안(맨 위 .codex 말고)이면 알린다. 샌드박스 안의 세션이 설정과 훅을 고칠 수 있는 곳이다.
+// SessionStart 는 모델이 움직이기 전에 돈다.
+export function sessionHomeNotice(payload, env = process.env) {
+  try {
+    const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
+    const home = codexHomeOf(payload?.transcript_path, env);
+    if (!homeInSession(home, cwd)) return '';
+    return `banker: Codex 홈(${home})이 이 세션 폴더 안에 있어 샌드박스가 그 설정과 훅을 고칠 수 있습니다. 세션 폴더 밖의 Codex 홈(CODEX_HOME)을 쓰십시오`;
+  } catch {
+    return '';
+  }
+}
+
 // Codex: 두 길의 SessionStart 훅이 모두 신뢰돼 같은 세션에서 함께 돌면 같은 알림이 두 번 나간다. 세션 id 이름의
 // 폴더를 configDir 의 codex-sessions 에 만든 훅만 알린다. mkdir 은 이미 있으면 실패하고 링크를 따라가지 않아 둘이
 // 동시에 와도 하나만 만든다. 함께 도는 훅은 훅 시간 제한(5초) 안에 오므로, 30초 넘게 지난 폴더는 이어 연 세션(resume)
@@ -219,7 +232,7 @@ async function main() {
   try { payload = JSON.parse(await readStdin()); } catch { /* stdin 없음/오류 무해 */ }
 
   if (CODEX && !claimSession(payload)) return; // 같은 세션의 다른 길 훅이 이미 알렸다
-  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload)] : [];
+  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload), sessionHomeNotice(payload)] : [];
   if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.
     const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
     notes.unshift(maybeNotify(cached));

@@ -569,3 +569,20 @@ test('codex-sessions: 두 훅의 모든 끼어들기 순서에서 알림은 한 
     for (const o of outcomes) assert.equal(o.notified, want, `${what}, 순서 ${o.trace}`);
   }
 });
+
+// Codex 홈이 세션 폴더 안(맨 위 .codex 말고)이면 샌드박스가 그 설정과 훅을 고칠 수 있다. 세션 시작에 알린다.
+test('Codex: Codex 홈이 세션 폴더 깊은 곳이면 세션 시작에 알리고, 맨 위 .codex 나 밖이면 알리지 않는다', () => {
+  const tmp = mkTmp();
+  const work = join(tmp, 'work');
+  const rollout = (home) => {
+    const day = join(home, 'sessions', '2026', '10', '29');
+    mkdirSync(day, { recursive: true });
+    return join(day, 'rollout-x.jsonl');
+  };
+  const env = { BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1', PLUGIN_ROOT: '' };
+  const say = (home, sid) => runNotify(tmp, { argv: ['--codex'], env, input: JSON.stringify({ session_id: sid, cwd: work, transcript_path: rollout(home) }) }).stdout;
+  const deep = join(work, 'deep', '.codex');
+  assert.match(JSON.parse(say(deep, 'h1')).systemMessage, /Codex 홈\(.*deep.*\)이 이 세션 폴더 안에 있어 샌드박스가 그 설정과 훅을 고칠 수 있습니다/);
+  assert.equal(say(join(work, '.codex'), 'h2'), '', '맨 위 .codex 는 샌드박스가 읽기만 함');
+  assert.equal(say(join(tmp, 'elsewhere', '.codex'), 'h3'), '');
+});

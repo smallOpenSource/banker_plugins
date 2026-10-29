@@ -6,11 +6,11 @@
  *   돌린다. Codex 는 신뢰한 훅을 샌드박스 밖에서 돌리므로, 작업 폴더 안의 파일을 가리키지 않게 하기 위해서다.
  * - 묶음은 각 이벤트의 맨 뒤에 더한다. Codex 는 신뢰를 <hooks.json>:<이벤트>:<묶음 번호>:<항목 번호> 로 기록해, 앞에
  *   끼우면 OMX 훅의 번호가 밀려 다시 신뢰해야 한다. 빼기는 우리 항목만, 낡은 명령은 같은 자리에서 고친다.
- * - Windows 의 Codex 는 훅 명령을 PowerShell 로 돌린다(Codex 0.160.1 실측): `& '<node>' '<스크립트>' 인자`.
+ * - Windows 의 Codex 는 훅 명령을 PowerShell 로 돌린다(Codex 0.160.1 실측): `& '<node>' -e '<검사>' '<스크립트>' 인자`.
+ *   검사(hookGuard)는 스크립트의 실제 경로가 임시 폴더나 세션 폴더 아래면 돌리지 않는다.
  * - hooks.json 이 링크이거나 JSON 객체가 아니거나 "없음" 말고 다른 이유로 확인할 수 없으면 바꾸지 않는다. 바꿀 때마다
  *   직전 내용을 hooks.json.banker.bak 에 둔다. smart-compact 의 codex-gate.mjs 와 같은 규칙이다.
  */
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -66,16 +66,40 @@ function modeOf(file) {
 }
 
 // 명령 글. POSIX 는 큰따옴표, 셸이 그 안에서 읽는 글자는 거부. Windows 는 PowerShell 호출 연산자와 작은따옴표.
-export function formatCommand(node, script, args, win = process.platform === 'win32') {
+// guard 가 있으면 node -e <guard> <스크립트> 인자 꼴(guard 는 큰따옴표, $, 백틱, 백슬래시가 없는 고정 글).
+export function formatCommand(node, script, args, win = process.platform === 'win32', guard = '') {
   const all = [node, script, ...args].join('');
   if (/[\r\n\0]/.test(all)) return null;
+  const pre = guard ? ['-e'] : [];
   if (win) {
     const q = (s) => `'${s.replace(/['‘-‛]/g, '$&$&')}'`;
-    return ['&', q(node), q(script), ...args].join(' ');
+    return ['&', q(node), ...pre, ...(guard ? [q(guard)] : []), q(script), ...args].join(' ');
   }
   if (/["$`\\]/.test(all)) return null;
-  return [`"${node}"`, `"${script}"`, ...args].join(' ');
+  return [`"${node}"`, ...pre, ...(guard ? [`"${guard}"`] : []), `"${script}"`, ...args].join(' ');
 }
+
+// npm 길 훅 명령이 스크립트를 부르기 전에 하는 검사(Codex 플러그인 훅의 래퍼와 같은 규칙): 스크립트의 실제 경로가 임시
+// 폴더나 세션 폴더(Codex 가 훅을 도는 폴더) 아래면 돌리지 않고 까닭을 알린다. 세션 폴더가 홈 폴더 자체면 세션 폴더
+// 규칙은 쓰지 않는다. Codex 홈이 세션 폴더 깊은 곳(CODEX_HOME=<세션>/deep/.codex)이면 샌드박스가 그 사본을 고칠 수
+// 있기 때문이다. 검사는 신뢰 해시에 묶인 명령 글에 있다. 세션 시작 훅은 systemMessage 로, 다른 훅은 stderr 로 알린다.
+export function hookGuard(notice) {
+  const say = notice
+    ? 'process.stdout.write(JSON.stringify({systemMessage:m}))'
+    : 'process.stderr.write(m+String.fromCharCode(10))';
+  return [
+    "const f=require('fs'),p=require('path'),o=require('os');",
+    'const r=(x)=>{try{return f.realpathSync(x)}catch{return x}};',
+    'const s=r(process.argv[1]),w=r(process.cwd()),h=r(o.homedir());',
+    "const u=(d)=>{const q=p.relative(d,s);return q===''||!(q.startsWith('..')||p.isAbsolute(q))};",
+    "if([o.tmpdir()].concat(process.platform==='win32'?[]:['/tmp']).map(r).some(u)||(w!==h&&u(w))){",
+    "const m='banker hooks skipped: the hook script is in a temp folder or the session folder ('+s+')';",
+    `${say};process.exit(0)}`,
+    "import(require('url').pathToFileURL(s).href)",
+  ].join('');
+}
+
+const hookCommand = (p, id, node, win = process.platform === 'win32') => formatCommand(node, scriptOf(p, id), HOOKS[id].args, win, hookGuard(HOOKS[id].event === 'SessionStart'));
 
 // 임시 폴더의 node 는 거부한다. Codex 안에서 돌 때는 작업 폴더 안의 node 도(샌드박스 안 세션이 고칠 수 있다).
 export function safeNode(node, { win = process.platform === 'win32', cwd = process.cwd(), codex = Boolean(process.env.CODEX_THREAD_ID), home = os.homedir() } = {}) {
@@ -172,29 +196,40 @@ function place(doc, id, command) {
   return true;
 }
 
-// Codex 홈이 지금 폴더나 그 저장소 안이면(예: 저장소의 .envrc 가 CODEX_HOME=./.codex) 훅 사본도 작업 폴더 안에 놓여,
-// 샌드박스 안의 세션이 샌드박스 밖에서 도는 훅을 고칠 수 있다. 홈 폴더와 파일 시스템 루트는 작업 폴더로 보지 않는다.
+// Codex 홈이 지금 폴더 안이면(예: 폴더의 .envrc 가 CODEX_HOME=./.codex) 훅 사본도 작업 폴더 안에 놓여, 샌드박스 안의
+// 세션이 샌드박스 밖에서 도는 훅을 고칠 수 있다. 홈 폴더와 파일 시스템 루트는 작업 폴더로 보지 않는다.
 export function homeInWorkspace(home, cwd = process.cwd()) {
-  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', windowsHide: true });
-  const roots = [cwd, top.status === 0 ? top.stdout.trim() : ''].filter(Boolean).map(real);
-  const skip = new Set([real(os.homedir()), path.parse(real(cwd)).root]);
+  const r = real(cwd);
+  if (r === real(os.homedir()) || r === path.parse(r).root) return false;
   const h = real(home);
-  return roots.some((r) => !skip.has(r) && (h === r || h.startsWith(r.endsWith(path.sep) ? r : r + path.sep)));
+  return h === r || h.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
 }
 
-// ids 를 켠다. { code, changed:[id], msg }. code 1 이면 아무것도 바꾸지 않았다.
+// Codex 홈에서 위로 올라가며 .git(폴더나 파일)이 있는 첫 폴더, 없으면 ''. git 을 실행하지 않는다. 사용자 홈 폴더 자체의
+// .git(dotfiles 저장소)은 보지 않는다.
+export function repoAbove(home, userHome = os.homedir()) {
+  const skip = real(userHome);
+  for (let d = real(home); ; d = path.dirname(d)) {
+    if (d !== skip && fs.existsSync(path.join(d, '.git'))) return d;
+    if (path.dirname(d) === d) return '';
+  }
+}
+
+// ids 를 켠다. { code, changed:[id], msg, note }. code 1 이면 아무것도 바꾸지 않았다. note 는 알릴 것(Codex 홈 위의 저장소).
 export function enableHooks(p, ids, pkgRoot, node = process.execPath, cwd = process.cwd()) {
   if (!safeNode(node)) return { code: 1, changed: [], msg: `node 가 안전하지 않은 곳에 있음(${node})` };
   if (homeInWorkspace(p.home, cwd)) return { code: 1, changed: [], msg: `Codex 홈(${p.home})이 작업 폴더 안이라 훅을 설치하지 않음. 샌드박스가 고칠 수 있는 곳임` };
   const { doc, why } = loadHooks(p.hooks, ids.map((id) => HOOKS[id].event));
   if (why) return { code: 1, changed: [], msg: why };
-  const cmds = ids.map((id) => [id, formatCommand(node, scriptOf(p, id), HOOKS[id].args)]);
+  const cmds = ids.map((id) => [id, hookCommand(p, id, node)]);
   if (cmds.some(([, c]) => !c)) return { code: 1, changed: [], msg: '경로에 셸이 읽는 글자가 있음' };
   const bad = installPayload(p, pkgRoot);
   if (bad) return { code: 1, changed: [], msg: bad };
   const changed = cmds.filter(([id, c]) => place(doc, id, c)).map(([id]) => id);
   if (changed.length) saveHooks(p, doc);
-  return { code: 0, changed, msg: '' };
+  const repo = repoAbove(p.home);
+  const note = repo ? `Codex 홈(${p.home})이 git 저장소(${repo}) 안에 있음. Codex 홈을 품은 폴더에서 Codex 를 열면 banker 훅은 돌지 않고 세션 시작 때 까닭을 알림` : '';
+  return { code: 0, changed, msg: '', note };
 }
 
 // ids 를 끈다: 우리 항목만 빼고, 비는 묶음과 이벤트를 지운다. 뒤 묶음의 번호가 밀리면 shifted 에 이벤트를 적는다.
@@ -231,7 +266,7 @@ export function hookStatus(p, ids, pkgRoot, node = process.execPath) {
     const groups = doc.hooks[HOOKS[id].event] || [];
     const at = findOurs(groups, id);
     if (!at) out[id] = 'off';
-    else out[id] = groups[at[0]].hooks[at[1]].command === formatCommand(node, scriptOf(p, id), HOOKS[id].args) && copyCurrent(p, pkgRoot) ? 'on' : 'stale';
+    else out[id] = groups[at[0]].hooks[at[1]].command === hookCommand(p, id, node) && copyCurrent(p, pkgRoot) ? 'on' : 'stale';
   }
   return { status: out };
 }

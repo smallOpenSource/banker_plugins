@@ -22,7 +22,7 @@ import http from 'node:http';
 import https from 'node:https';
 
 import {
-  UPDATE_CHECK_PATH, NPM_LATEST_URL, writeUpdateCache, collectBody, netDeadlineMs, readRegular, updateCheckDue,
+  UPDATE_CHECK_PATH, NPM_LATEST_URL, writeUpdateCache, collectBody, netDeadlineMs, readRegular, updateCheckDue, noUpdateCheck,
 } from '../bin/lib/telemetry-config.mjs';
 
 const NET_TIMEOUT_MS = 10_000;
@@ -97,6 +97,7 @@ function fetchLatestVersion(url) {
 }
 
 async function main() {
+  if (noUpdateCheck()) return; // 업데이트 확인을 껐으면 직접 실행돼도 조회하지 않는다(update-notify 는 이때 이 파일을 띄우지 않음).
   const cache = readCache();
   if (!updateCheckDue(cache)) return; // 성공이나 실패한 시도에서 하루가 지나지 않음 - no-op.
 

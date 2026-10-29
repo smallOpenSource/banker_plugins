@@ -1,12 +1,13 @@
 // Tests for codex-hooks.mjs. Run from the repo root: node --test bin/lib/codex-hooks.test.mjs
 import { strict as assert } from 'node:assert';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, posix as P } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { codexPaths, disableHooks, enableHooks, formatCommand, homeInWorkspace, HOOKS, hookStatus, PAYLOAD, removeAll, safeNode } from './codex-hooks.mjs';
+import { codexPaths, disableHooks, enableHooks, formatCommand, homeInWorkspace, hookGuard, HOOKS, hookStatus, PAYLOAD, removeAll, repoAbove, safeNode } from './codex-hooks.mjs';
+import { homeInSession } from './codex-routes.mjs';
 
 const PKG = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = mkdtempSync(join(tmpdir(), 'codex-hooks-test-'));
@@ -29,7 +30,8 @@ test('enable copies the payload and appends after the existing groups; a second 
   assert.deepEqual([r.code, r.changed], [0, ['update', 'count']]);
   const h = read(p);
   assert.deepEqual(h.SessionStart[0].hooks[0], omx, 'OMX keeps index 0');
-  assert.equal(h.SessionStart[1].hooks[0].command, formatCommand(process.execPath, join(p.dir, 'hooks', 'update-notify.mjs'), ['--codex']));
+  assert.equal(h.SessionStart[1].hooks[0].command, formatCommand(process.execPath, join(p.dir, 'hooks', 'update-notify.mjs'), ['--codex'], process.platform === 'win32', hookGuard(true)));
+  assert.equal(h.Stop[0].hooks[0].command, formatCommand(process.execPath, join(p.dir, 'hooks', 'telemetry-count-codex.mjs'), [], process.platform === 'win32', hookGuard(false)));
   assert.equal(h.Stop.length, 1);
   assert.ok(existsSync(join(p.dir, 'bin', 'lib', 'telemetry-config.mjs')) && existsSync(join(p.dir, '.claude-plugin', 'plugin.json')));
   assert.deepEqual(enableHooks(p, ['update', 'count'], PKG).changed, []);
@@ -150,20 +152,103 @@ test('every hook copy loads from the copy folder alone (no import left behind in
   }
 });
 
-test('a Codex home inside the working folder or its repository gets no hooks; the home folder itself is no workspace', () => {
+test('a Codex home inside the working folder gets no hooks; one in a repository gets them and a note; the home folder itself is no workspace', () => {
   const repo = join(root, `repo${n++}`);
   mkdirSync(join(repo, 'sub'), { recursive: true });
-  spawnSync('git', ['init', '-q', repo]);
+  mkdirSync(join(repo, '.git'));
   const p = codexPaths({ CODEX_HOME: join(repo, '.codex') });
   mkdirSync(p.home);
-  const r = enableHooks(p, ['count'], PKG, process.execPath, join(repo, 'sub'));
+  let r = enableHooks(p, ['count'], PKG, process.execPath, repo);
   assert.equal(r.code, 1);
   assert.match(r.msg, /작업 폴더 안/);
   assert.ok(!existsSync(p.hooks) && !existsSync(p.dir), 'nothing written');
+  r = enableHooks(p, ['count'], PKG, process.execPath, join(repo, 'sub'));
+  assert.deepEqual([r.code, r.changed], [0, ['count']], 'a repository above the Codex home is no reason to refuse');
+  assert.match(r.note, /git 저장소\(.*repo\d+\) 안에 있음/);
   assert.equal(homeInWorkspace(join(repo, '.codex'), repo), true);
   assert.equal(homeInWorkspace(join(homedir(), '.codex'), homedir()), false);
   assert.equal(homeInWorkspace(join(root, 'elsewhere'), join(repo, 'sub')), false);
   assert.equal(codexPaths({ CODEX_HOME: 'rel' }).home, join(process.cwd(), 'rel'), 'a relative CODEX_HOME is read from here, as Codex reads it');
+});
+
+test('the repository above a Codex home is found by walking up for .git, without git, and not at the home folder itself', () => {
+  const top = join(root, `walk${n++}`);
+  const home = join(top, 'a', 'b', '.codex');
+  mkdirSync(home, { recursive: true });
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import { repoAbove } from ${JSON.stringify(pathToFileURL(join(PKG, 'bin', 'lib', 'codex-hooks.mjs')).href)}; process.stdout.write(repoAbove(process.argv[1], process.argv[2]))`, home, join(top, 'a')], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
+  assert.equal(r.stdout, '', `no .git anywhere above: ${r.stderr}`);
+  writeFileSync(join(top, '.git'), 'gitdir: elsewhere\n'); // a worktree's .git is a file
+  assert.equal(repoAbove(home), top);
+  mkdirSync(join(top, 'a', '.git'));
+  assert.equal(repoAbove(home), join(top, 'a'));
+  assert.equal(repoAbove(home, join(top, 'a')), top, 'the user home folder\'s own .git (dotfiles) is not counted');
+});
+
+test('a Codex home in the session folder, other than its top .codex, is one the sandbox can change', () => {
+  const w = join(root, `sess${n++}`);
+  mkdirSync(join(w, 'deep', '.codex'), { recursive: true });
+  assert.equal(homeInSession(join(w, '.codex'), w), false, 'the top .codex is read-only to the sandbox');
+  assert.equal(homeInSession(join(w, 'deep', '.codex'), w), true);
+  assert.equal(homeInSession(join(w, 'codexhome'), w), true);
+  assert.equal(homeInSession(w, w), true);
+  assert.equal(homeInSession(join(root, 'other'), w), false);
+  assert.equal(homeInSession(join(w, 'deep', '.codex'), ''), false, 'no session folder, nothing to say');
+});
+
+// The npm hook commands check where the hook script really is before they run it, as the Codex plugin's commands do:
+// a copy in the temp folder or the session folder (a Codex home deep in it) runs nothing and says why.
+const outsideBase = process.platform === 'win32' ? join(PKG, 'work') : '/var/tmp';
+const runCmd = (cmd, cwd, env) => (process.platform === 'win32'
+  ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd, encoding: 'utf8', env })
+  : spawnSync('/bin/sh', ['-c', cmd], { cwd, encoding: 'utf8', env }));
+test('the npm hook command runs its script only from outside the temp folder and the session folder', { skip: !existsSync(outsideBase) && `no ${outsideBase}` }, (t) => {
+  const d = realpathSync(mkdtempSync(join(outsideBase, 'codex-hooks-guard-')));
+  t.after(() => rmSync(d, { recursive: true, force: true }));
+  const marker = join(d, 'marker');
+  const probe = (dir) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\n`);
+    return join(dir, 'probe.mjs');
+  };
+  const work = join(d, 'work');
+  const env = { ...process.env, HOME: join(d, 'home'), USERPROFILE: join(d, 'home') };
+  mkdirSync(env.HOME, { recursive: true });
+  const cmd = (script, notice = false) => formatCommand(process.execPath, script, ['--codex'], process.platform === 'win32', hookGuard(notice));
+  let r = runCmd(cmd(probe(join(d, 'safe'))), probe(work) && work, env);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(marker, 'utf8'), 'ran --codex');
+  rmSync(marker);
+  for (const script of [probe(join(work, 'deep', 'codexhome', 'hooks-custom')), probe(mkdtempSync(join(tmpdir(), 'codex-hooks-guard-')))]) {
+    r = runCmd(cmd(script), work, env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^banker hooks skipped: the hook script is in a temp folder or the session folder \(/, script);
+    assert.ok(!existsSync(marker), `${script}: nothing ran`);
+    if (script.startsWith(tmpdir())) rmSync(dirname(script), { recursive: true, force: true });
+  }
+  r = runCmd(cmd(join(work, 'deep', 'codexhome', 'hooks-custom', 'probe.mjs'), true), work, env);
+  assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: the hook script is in a temp folder or the session folder/);
+  r = runCmd(cmd(join(work, 'probe.mjs')), work, { ...env, HOME: work, USERPROFILE: work });
+  assert.equal(readFileSync(marker, 'utf8'), 'ran --codex', `a session in the home folder itself is no workspace here: ${r.stderr}`);
+});
+
+// The copies of what the hooks start (update-fetch, update-checkin) and load (obsidize) are not run by any test above:
+// each is imported from the copy folder with every network call refused, in a temporary home with the opt-outs set.
+const canImport = Number(process.versions.node.split('.')[0]) > 20 || (Number(process.versions.node.split('.')[0]) === 20 && Number(process.versions.node.split('.')[1]) >= 6);
+test('the copies of update-fetch, update-checkin and obsidize load from the copy folder and touch no network', { skip: !canImport && 'node --import needs Node 20.6 or later' }, () => {
+  const p = home();
+  enableHooks(p, ['update', 'count', 'obsidize'], PKG);
+  const tmpHome = join(root, `home${n++}`);
+  mkdirSync(tmpHome);
+  const mark = join(tmpHome, 'network-tries');
+  const env = { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome, CODEX_HOME: p.home, XDG_CONFIG_HOME: join(tmpHome, 'cfg'), APPDATA: join(tmpHome, 'cfg'), BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1', NO_NETWORK_MARK: mark };
+  const pre = pathToFileURL(join(PKG, 'scripts', 'test-fixtures', 'no-network.mjs')).href;
+  for (const rel of ['hooks/update-fetch.mjs', 'hooks/update-checkin.mjs', 'skills/obsidizer/obsidize.mjs']) {
+    const copy = join(p.dir, ...rel.split('/'));
+    const r = spawnSync(process.execPath, ['--import', pre, '--input-type=module', '-e', 'await import(process.argv[1])', pathToFileURL(copy).href], { input: '', encoding: 'utf8', env, cwd: tmpHome, timeout: 15000 });
+    assert.equal(r.status, 0, `${rel}: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /ERR_MODULE_NOT_FOUND|Cannot find/, rel);
+  }
+  assert.equal(existsSync(mark) ? readFileSync(mark, 'utf8') : '', '', 'no network call was tried');
 });
 
 test('the copy carries everything the hooks import or start: relative imports and the scripts they name resolve inside it', () => {

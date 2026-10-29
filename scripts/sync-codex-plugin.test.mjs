@@ -15,16 +15,23 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'codex-plugin-hooks-')));
 after(() => rmSync(base, { recursive: true, force: true }));
+// The commands judge the plugin folder as they judge node, so the test plugin folders sit outside every temp folder and
+// the session folder: /var/tmp on Linux and macOS, the repository's git-ignored work/ on Windows.
+const plugBase = process.platform === 'win32' ? join(ROOT, 'work') : '/var/tmp';
+mkdirSync(plugBase, { recursive: true });
+const plugins = realpathSync(mkdtempSync(join(plugBase, 'codex-plugin-root-')));
+after(() => rmSync(plugins, { recursive: true, force: true }));
 let n = 0;
-// A plugin folder whose hooks/probe.mjs writes `ran <args>` to the marker file, and an empty session folder.
+// A plugin folder whose hooks/probe.mjs writes `ran <args>` to the marker file (and PATH to marker.path), and an empty
+// session folder.
 function setup() {
-  const d = join(base, `c${n++}`);
-  const plugin = join(d, 'plugin');
+  const d = join(base, `c${n}`);
+  const plugin = join(plugins, `c${n++}`);
   const work = join(d, 'work');
   mkdirSync(join(plugin, 'hooks'), { recursive: true });
-  mkdirSync(work);
+  mkdirSync(work, { recursive: true });
   const marker = join(d, 'marker');
-  writeFileSync(join(plugin, 'hooks', 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\nwriteFileSync(${JSON.stringify(marker + '.cwd')}, process.cwd());\n`);
+  writeFileSync(join(plugin, 'hooks', 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\nwriteFileSync(${JSON.stringify(marker + '.cwd')}, process.cwd());\nwriteFileSync(${JSON.stringify(marker + '.path')}, process.env.PATH);\n`);
   writeFileSync(join(plugin, 'hooks', 'run.cjs'), readFileSync(join(ROOT, 'hooks', 'run.cjs')));
   return { d, plugin, work, marker };
 }
@@ -483,4 +490,103 @@ test('sh: a multicall shim on PATH runs the node binary it names', homeCase, () 
   } finally {
     rmSync(d, { recursive: true, force: true });
   }
+});
+
+// A copy of a setup() plugin folder at dir (probe.mjs and run.cjs).
+function pluginAt(c, dir) {
+  mkdirSync(join(dir, 'hooks'), { recursive: true });
+  for (const f of ['probe.mjs', 'run.cjs']) copyFileSync(join(c.plugin, 'hooks', f), join(dir, 'hooks', f));
+  return dir;
+}
+const shells = () => ['/bin/sh', '/bin/bash', '/bin/dash', '/usr/bin/dash'].filter((f) => existsSync(f));
+
+// A PATH entry under a network mount outside the home folder may not answer: the command neither looks for node there
+// nor keeps it. An entry under the home folder is checked as before, even on a network mount.
+test('sh: PATH entries under a network mount outside the home folder are left out; under the home folder they are kept', homeCase, (t) => {
+  const c = setup();
+  const o = outside(t);
+  const home = join(o.d, 'home');
+  const net = join(o.d, 'net');
+  const spaced = join(o.d, 'net 2');
+  const homeNet = join(home, 'nfs');
+  for (const dir of [join(net, 'bin'), join(spaced, 'bin')]) fakeNode(c, dir);
+  mkdirSync(join(homeNet, 'bin'), { recursive: true });
+  const table = join(c.d, 'mounts');
+  writeFileSync(table, [
+    `srv:/x ${net} nfs4 rw 0 0`,
+    `//srv/y ${spaced.replace(/ /g, '\\040')} cifs rw 0 0`,
+    `srv:/h ${homeNet} nfs rw 0 0`,
+    `/dev/sda1 ${o.d} ext4 rw 0 0`,
+  ].join('\n'));
+  const path = [join(net, 'bin'), join(spaced, 'bin'), join(homeNet, 'bin'), dirname(o.node), '/usr/bin', '/bin'].join(delimiter);
+  for (const sh of shells()) {
+    const cmd = shCommand('probe.mjs', [], true, false, '', [join(c.d, 'none')], { table, command: '/nonexistent' });
+    const r = spawnSync(sh, ['-c', cmd], { cwd: c.work, encoding: 'utf8', env: { PATH: path, PLUGIN_ROOT: c.plugin, TMPDIR: '/tmp', HOME: home } });
+    assert.equal(r.status, 0, `${sh}: ${r.stderr}`);
+    assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', `${sh}: the node outside the network mounts ran`);
+    const kept = readFileSync(`${c.marker}.path`, 'utf8').split(delimiter);
+    assert.ok(!kept.includes(join(net, 'bin')) && !kept.includes(join(spaced, 'bin')), `${sh}: ${kept.join(delimiter)}`);
+    assert.ok(kept.includes(join(homeNet, 'bin')), `${sh}: an entry under the home folder is kept after its check`);
+    rmSync(c.marker);
+  }
+  // With node only on the network mount, the command says node is not on PATH rather than reading the mount.
+  const r = sh(c, shCommand('probe.mjs', [], true, false, '', [join(c.d, 'none')], { table, command: '/nonexistent' }), join(net, 'bin'));
+  assert.match(r.stderr, /^banker hooks skipped: node is not on PATH/);
+  assert.ok(!existsSync(c.marker));
+});
+
+// macOS has no /proc: the command reads /sbin/mount's `<device> on <mount point> (<type>, ...)` lines.
+test('sh: on a system without /proc/self/mounts, the mount command\'s lines name the network mounts', homeCase, (t) => {
+  const c = setup();
+  const o = outside(t);
+  const net = join(o.d, 'Volumes', 'My share');
+  fakeNode(c, join(net, 'bin'));
+  const mount = join(o.d, 'mount');
+  writeFileSync(mount, `#!/bin/sh\nprintf '%s\\n' '/dev/disk1s1 on / (apfs, local, journaled)' '//u@srv/share on ${net} (smbfs, nodev, nosuid, mounted by u)' 'map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)'\n`);
+  chmodSync(mount, 0o755);
+  const cmd = shCommand('probe.mjs', [], true, false, '', [join(c.d, 'none')], { table: join(c.d, 'no-such-table'), command: mount });
+  const r = spawnSync('/bin/sh', ['-c', cmd], { cwd: c.work, encoding: 'utf8', env: { PATH: [join(net, 'bin'), dirname(o.node), '/usr/bin', '/bin'].join(delimiter), PLUGIN_ROOT: c.plugin, TMPDIR: '/tmp', HOME: c.d } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
+  assert.ok(!readFileSync(`${c.marker}.path`, 'utf8').split(delimiter).includes(join(net, 'bin')));
+});
+
+// The hook scripts the command runs sit in the plugin folder. One the sandbox can write (a Codex home deep in the
+// session folder, or the temp folder) runs nothing, as a node there would not; a session in the home folder itself is
+// no workspace here either.
+test('sh: a plugin folder in the session folder (however deep, or through a link) or a temp folder runs nothing', homeCase, (t) => {
+  const c = setup();
+  const o = outside(t);
+  const work = join(o.d, 'work');
+  const deep = pluginAt(c, join(work, 'deep', 'codexhome', 'plugins', 'cache', 'm', 'banker', '1.0'));
+  const link = join(o.d, 'link');
+  symlinkSync(deep, link);
+  const inTmp = pluginAt(c, join(c.d, 'tmp-plugin'));
+  const run = (cwd, root, home = o.d) => spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true, true)], { cwd, encoding: 'utf8', env: { PATH: `${dirname(o.node)}${delimiter}/usr/bin${delimiter}/bin`, PLUGIN_ROOT: root, TMPDIR: '/tmp', HOME: home } });
+  for (const root of [deep, link, inTmp]) {
+    const r = run(work, root);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: the plugin folder is in a temp folder or the session folder \(/, root);
+    assert.ok(!existsSync(c.marker), `${root}: nothing ran`);
+  }
+  let r = run(o.d, c.plugin);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', `the setup plugin folder runs: ${r.stdout}${r.stderr}`);
+  rmSync(c.marker);
+  r = run(work, deep, work);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', `a session in the home folder itself: ${r.stdout}${r.stderr}`);
+  assert.equal(readFileSync(`${c.marker}.cwd`, 'utf8'), realpathSync(deep), 'run from the real path of the plugin folder');
+});
+
+test('PowerShell: a plugin folder in the session folder or under TEMP runs nothing', windows, () => {
+  const c = setup();
+  const deep = pluginAt(c, join(c.work, 'deep', 'codexhome', 'plugins', 'cache', 'm', 'banker', '1.0'));
+  let r = psRun(c, psCommand('probe.mjs', [], true, true), asideEnv(c, { PLUGIN_ROOT: deep, PATH: `${nodeDir}${delimiter}${sysPath()}` }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: the plugin folder is in a temp folder or the session folder/);
+  assert.ok(!existsSync(c.marker));
+  const inTemp = pluginAt(c, join(c.d, 'tmp-plugin'));
+  r = ps({ ...c, plugin: inTemp }, psCommand('probe.mjs', [], true), `${nodeDir}${delimiter}${sysPath()}`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /banker hooks skipped: the plugin folder is in a temp folder or the session folder/);
+  assert.ok(!existsSync(c.marker));
 });

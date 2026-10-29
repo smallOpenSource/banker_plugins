@@ -271,3 +271,16 @@ test('doctor: the newest Codex record is checked for what banker reads, and a sh
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
   assert.doesNotMatch(out, /rollout-e\.jsonl opens with a line over 8 MB/, '6 MB of bytes in 2 M characters is under 8 MB');
 }));
+
+test('doctor: a Codex home inside this folder, other than its top .codex, is flagged', () => withXdg((dir) => {
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(path.join(work, 'deep', '.codex'), { recursive: true });
+  const doctorIn = (home) => {
+    const env = { ...process.env, XDG_CONFIG_HOME: dir, CODEX_HOME: home, BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1' };
+    const r = spawnSync(process.execPath, [BANKER, 'doctor'], { cwd: work, encoding: 'utf8', input: '', env, timeout: 20000 });
+    return `${r.stdout || ''}${r.stderr || ''}`;
+  };
+  assert.match(doctorIn(path.join(work, 'deep', '.codex')), /⚠ the Codex home .*deep.* is inside this folder \(not its top \.codex\)/);
+  assert.doesNotMatch(doctorIn(path.join(work, '.codex')), /is inside this folder/);
+  assert.doesNotMatch(doctorIn(path.join(dir, 'other')), /is inside this folder/);
+}));
