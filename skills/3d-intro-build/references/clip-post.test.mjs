@@ -188,9 +188,17 @@ test('postClip: a false step is no step (copied, nothing reported); a landing is
   // sora-2 clips carry audio a little longer than the video (4.1 s for 4.0 s): the container Duration is the audio's
   const av = mk(['-f', 'lavfi', '-i', 'testsrc2=s=320x568:r=30:d=3', '-f', 'lavfi', '-i', 'sine=d=3.6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', path.join(d, 'av.mp4')]);
   const info = await C.probeClip(av, { ffmpeg: FF });
-  assert.deepEqual([info.duration, info.container], [3, 3.6]);
+  assert.deepEqual([info.duration, info.container, info.lengthFrom], [3, 3.6, 'video']);
   const plate = await C.solidPlate([30, 60, 120], '320x568', path.join(d, 'plate.png'), { ffmpeg: FF });
   await C.landOnStill(av, plate, path.join(d, 'land.mp4'), { ffmpeg: FF });
   const s = await C.ssimFrames(lastOf(path.join(d, 'land.mp4'), path.join(d, 'last.png')), plate, { ffmpeg: FF });
   assert.ok(s >= 0.99, `the last frame is the plate: SSIM ${s}`);
+});
+
+test('probeClip: when the video frames cannot be counted, the container length is used and said so', { skip: process.platform === 'win32' && 'a POSIX shell script stands in for ffmpeg' }, async (t) => {
+  const d = work(t);
+  const fake = path.join(d, 'ffmpeg');
+  fs.writeFileSync(fake, "#!/bin/sh\necho 'Duration: 00:00:04.10, start: 0.0' >&2\necho '  Stream #0:0: Video: h264 (High), yuv420p(progressive), 1280x720, 30 fps, 30 tbr' >&2\nexit 1\n", { mode: 0o755 });
+  const info = await C.probeClip(path.join(d, 'x.mp4'), { ffmpeg: fake });
+  assert.deepEqual([info.duration, info.container, info.lengthFrom], [4.1, 4.1, 'container']);
 });

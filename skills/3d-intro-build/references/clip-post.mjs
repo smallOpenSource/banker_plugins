@@ -55,14 +55,16 @@ function tmpDir() {
 
 /**
  * A clip's size, frame rate and length from ffmpeg's banner (no ffprobe). The length is the video
- * stream's (its frames counted by a stream copy): the banner's Duration is the container's, which a
+ * stream's (its frames counted by decoding; lengthFrom 'video', or 'container' when they could not be counted): the banner's Duration is the container's, which a
  * longer audio track stretches (sora-2 clips: 4.1 s for 4.0 s of video), and a landing timed on it misses.
  */
 export async function probeClip(mp4, opts = {}) {
   const bin = await binOf(opts);
   const info = parseBanner(ff(bin, ['-i', mp4]).stderr, path.basename(String(mp4)));   // no output named: exits 1 after the banner
-  const frames = [...ff(bin, ['-i', mp4, '-map', '0:v:0', '-c', 'copy', '-f', 'null', '-']).stderr.matchAll(/frame=\s*(\d+)/g)].at(-1);
-  return frames && +frames[1] > 0 ? { ...info, duration: Math.round((+frames[1] / info.fps) * 10_000) / 10_000, container: info.duration } : info;
+  // decoded, not stream-copied: ffmpeg 7 prints no frame count for a stream copy
+  const frames = [...ff(bin, ['-i', mp4, '-map', '0:v:0', '-f', 'null', '-']).stderr.matchAll(/frame=\s*(\d+)/g)].at(-1);
+  if (!frames || !(+frames[1] > 0)) return { ...info, container: info.duration, lengthFrom: 'container' };   // video length unread: said so
+  return { ...info, duration: Math.round((+frames[1] / info.fps) * 10_000) / 10_000, container: info.duration, lengthFrom: 'video' };
 }
 
 /** The banner fields probeClip reads, the colour tags included. Throws when the text names no video stream. */
