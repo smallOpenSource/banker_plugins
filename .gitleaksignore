@@ -1,0 +1,12 @@
+# Old commits (already on main) whose test files held whole fake keys and auth headers; the tracked files now build
+# them from pieces (scripts/fake-secrets.test.mjs). Pinned to those commits only: a new finding is still reported.
+ab1b5d106a6597b6e5be30162e09536665ee5b00:skills/3d-intro-build/references/azure-adapter.test.mjs:generic-api-key:672
+327309399de0a1b084cb307101a0342fb94f83af:skills/3d-intro-build/references/azure-adapter.test.mjs:curl-auth-header:572
+327309399de0a1b084cb307101a0342fb94f83af:skills/3d-intro-build/references/azure-adapter.test.mjs:curl-auth-header:617
+f6691e642de8fec5def12afbe85e1eccfd5c47c6:skills/3d-intro-build/references/video-pool.test.mjs:generic-api-key:36
+f6691e642de8fec5def12afbe85e1eccfd5c47c6:skills/3d-intro-build/references/video-pool.test.mjs:generic-api-key:37
+f6691e642de8fec5def12afbe85e1eccfd5c47c6:skills/3d-intro-build/references/video-pool.test.mjs:generic-api-key:38
+f6691e642de8fec5def12afbe85e1eccfd5c47c6:skills/3d-intro-build/references/video-pool.test.mjs:generic-api-key:39
+a05a141df2a830c146ac4ad9200317a96d52419a:skills/3d-intro-build/references/azure-adapter.test.mjs:curl-auth-header:78
+a05a141df2a830c146ac4ad9200317a96d52419a:skills/3d-intro-build/references/azure-adapter.test.mjs:generic-api-key:82
+a05a141df2a830c146ac4ad9200317a96d52419a:skills/3d-intro-build/references/azure-adapter.test.mjs:generic-api-key:89

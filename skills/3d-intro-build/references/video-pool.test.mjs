@@ -34,10 +34,10 @@ function tmpState() {
 
 function creds(extra = {}) {
   return {
-    WAN_1_ENDPOINT: WAN(1), WAN_1_API_KEY: 'placeholder-wan-key-1111',
-    WAN_2_ENDPOINT: WAN(2), WAN_2_API_KEY: 'placeholder-wan-key-2222',
-    WAN_3_ENDPOINT: `${WAN(3)}/`, WAN_3_API_KEY: 'placeholder-wan-key-3333',
-    AZURE_SORA_ENDPOINT: SORA, AZURE_SORA_API_KEY: 'placeholder-sora-key-0000',
+    WAN_1_ENDPOINT: WAN(1), WAN_1_API_KEY: ('placeholder-wan' + '-key-1111'),
+    WAN_2_ENDPOINT: WAN(2), WAN_2_API_KEY: ('placeholder-wan' + '-key-2222'),
+    WAN_3_ENDPOINT: `${WAN(3)}/`, WAN_3_API_KEY: ('placeholder-wan' + '-key-3333'),
+    AZURE_SORA_ENDPOINT: SORA, AZURE_SORA_API_KEY: ('placeholder-sora' + '-key-0000'),
     ...extra,
   };
 }
