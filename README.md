@@ -235,7 +235,7 @@ banker uninstall        # 제거
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. \
-  node 를 찾은 뒤에는 PATH 에서 임시 폴더와 작업 폴더 아래 항목을 빼므로, 프로젝트의 `.venv/bin` 이나 `node_modules/.bin` 에 있는 프로그램은 훅에서 돌지 않습니다. macOS 데스크톱에서 연 Codex 처럼 PATH 에 node 가 없으면 Homebrew(`/opt/homebrew/bin`)와 공식 설치(`/usr/local/bin`)의 node 를 씁니다. \
+  node 를 찾은 뒤에는 PATH 에서 임시 폴더와 작업 폴더 아래 항목을 빼므로, 프로젝트의 `.venv/bin` 이나 `node_modules/.bin` 에 있는 프로그램은 훅에서 돌지 않습니다(작업 폴더가 홈 폴더 자체이면 홈 아래 항목은 남깁니다). Windows 는 네트워크 드라이브와 UNC 경로의 PATH 항목을 읽지 않습니다. macOS 데스크톱에서 연 Codex 처럼 PATH 에 node 가 없으면 Homebrew(`/opt/homebrew/bin`)와 공식 설치(`/usr/local/bin`)의 node 를 씁니다. \
   Volta, mise, snap 처럼 이름을 보고 동작하는 node 와 Windows 의 `node.cmd` shim(mise)은 그 도구가 고른 node 를 씁니다. 훅은 플러그인 폴더에서 돌므로 asdf, nodenv 는 전역 버전(`asdf set -u nodejs <판>`, asdf 0.16 미만은 `asdf global nodejs <판>`, `nodenv global <판>`)이 있어야 합니다. \
   이 설치에는 `banker` 명령이 없습니다. `banker doctor`, `banker telemetry` 가 필요하면 npm 으로도 설치하되 `banker setup`(인자 없음)과 `banker setup --codex` 는 돌리지 않습니다(Codex 에 npm 길이 함께 설치됨). Claude Code 에 넣으려면 `banker setup --claude` 만 씁니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
