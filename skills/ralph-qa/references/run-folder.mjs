@@ -5,6 +5,7 @@
  * byte-identical copy (scripts/sync-adapter.js).
  *
  *   bases(ctx)                        { base, known }: this run's base, and every base a run of any version used
+ *   sharedAbove(p)                    the nearest folder above p every account may write in, or null (POSIX)
  *   readyBase(ctx, base)              makes the base, private (POSIX), or stops
  *   makeRunFolder(ctx, kind)          <base>/<kind>.<six letters and digits>, private, with its marker .<kind>
  *   runFolder(dir, ctx, kinds)        { d, kind } for such a folder right under a known private base, else a stop
@@ -69,7 +70,7 @@ export function privateDir(p) {
 const insideHome = (ctx, p) => norm(ctx, realOr(p)).startsWith(norm(ctx, realOr(homeOf(ctx))) + sep);
 
 // The base for this run's folders, and every base a run of any version may have used, for the day rule. Linux: an
-// XDG_RUNTIME_DIR of this account's own, else ~/.cache; macOS: $TMPDIR (its own per account); Windows: %TEMP% when it
+// XDG_RUNTIME_DIR of this account's own and not below a shared folder (/tmp) the home is not below, else ~/.cache; macOS: $TMPDIR (its own per account); Windows: %TEMP% when it
 // is inside the home, else ~/.cache (the old Git Bash runs used ~/.cache).
 export function bases(ctx) {
   const cache = join(homeOf(ctx), ".cache");
@@ -83,7 +84,24 @@ function baseOn(ctx, cache) {
   if (ctx.platform === "win32") return env.TEMP && insideHome(ctx, env.TEMP) ? resolve(env.TEMP) : cache;
   if (ctx.platform === "darwin") return env.TMPDIR ? resolve(env.TMPDIR) : cache;
   const xdg = env.XDG_RUNTIME_DIR;
-  return xdg && isAbsolute(xdg) && privateDir(xdg) ? resolve(xdg) : cache;
+  return xdg && isAbsolute(xdg) && privateDir(xdg) && !belowSharedAlone(ctx, xdg) ? resolve(xdg) : cache;
+}
+
+const belowSharedAlone = (ctx, p) => Boolean(sharedAbove(p)) && !sharedAbove(homeOf(ctx));
+
+// The nearest folder above p, by its real path, that every account may write in (/tmp, /var/tmp, /dev/shm), or null.
+// A private folder there is still a folder whose parents another account fills: gemini reads the .env it finds
+// walking up to the root. An XDG_RUNTIME_DIR below one is refused unless the home is below one too (a test box's
+// account under /tmp): then ~/.cache is no better. POSIX only.
+export function sharedAbove(p) {
+  for (let d = dirname(realOr(resolve(p))); ; d = dirname(d)) {
+    try {
+      if ((statSync(d).mode & 0o002) !== 0) return d;
+    } catch {
+      /* not there or not readable: the next one up */
+    }
+    if (dirname(d) === d) return null;
+  }
 }
 
 export function readyBase(ctx, base) {

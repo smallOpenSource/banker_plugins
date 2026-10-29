@@ -5,7 +5,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { Stop, bases, makeRunFolder, removeMarked, removeRunFolder, runFolder, snapshot, spawnFiles } from "./run-folder.mjs";
+import { Stop, bases, makeRunFolder, sharedAbove, removeMarked, removeRunFolder, runFolder, snapshot, spawnFiles } from "./run-folder.mjs";
 
 const WIN = process.platform === "win32";
 const MAC = process.platform === "darwin";
@@ -160,4 +160,16 @@ test("spawnFiles gives the child files, not pipes: input, stdout and stderr arri
   const none = spawnFiles(process.execPath, ["-e", "process.stdin.on('data',()=>process.exit(9)).on('end',()=>process.exit(0))"]);
   assert.deepEqual([none.status, none.stdout.length], [0, 0]);
   assert.deepEqual(readdirSync(own), []);
+});
+
+test("an XDG_RUNTIME_DIR below a shared folder (/tmp) is no base unless the home is below one too", { skip: WIN && "POSIX mode bits" }, (t) => {
+  const dir = realpathSync.native(mkdtempSync(join("/tmp", "rq-rf-shared-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  chmodSync(dir, 0o700);
+  assert.equal(sharedAbove(dir), realpathSync.native("/tmp"));
+  assert.equal(sharedAbove("/rq-no-such-home"), null);
+  const away = bases({ platform: "linux", env: { HOME: "/rq-no-such-home", XDG_RUNTIME_DIR: dir } });
+  assert.equal(away.base, join("/rq-no-such-home", ".cache"), "a private folder under /tmp is still under /tmp");
+  const along = bases({ platform: "linux", env: { HOME: join(dir, "home"), XDG_RUNTIME_DIR: dir } });
+  assert.equal(along.base, dir, "the home is under the same shared folder: ~/.cache is no better");
 });

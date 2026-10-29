@@ -121,7 +121,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
 반복마다 새 폴더를 만든다.
 
 1. `init` 으로 폴더 둘을 만든다. 출력의 `dir` 이 페이로드 폴더 `<d>`, `out` 이 답 폴더다.
-   - 기준 폴더는 이 계정만 쓰는 곳이다. Linux 는 이 계정의 `$XDG_RUNTIME_DIR`(아니면 `~/.cache`), macOS 는 `$TMPDIR`, Windows 는 홈 안의 `%TEMP%`(아니면 `~/.cache`)다. `/tmp` 처럼 여러 계정이 쓰는 폴더 아래에는 만들지 않는다. gemini 는 작업 폴더에서 루트까지 올라가며 `.gemini/.env` 와 `.env` 를 읽어, 다른 계정이 `/tmp/.env` 에 둔 `GOOGLE_GEMINI_BASE_URL` 로 페이로드를 보낸다(0.62.0 번들 모의 실험 재현).
+   - 기준 폴더는 이 계정만 쓰는 곳이다. Linux 는 이 계정의 `$XDG_RUNTIME_DIR`(아니면 `~/.cache`. `/tmp` 처럼 모든 계정이 쓰는 폴더 아래의 `$XDG_RUNTIME_DIR` 는 홈도 그 아래일 때만 쓴다. 그래서 쓰기 범위를 피하려고 `XDG_RUNTIME_DIR` 를 `/tmp` 아래로 바꿔도 `~/.cache` 로 돌아간다), macOS 는 `$TMPDIR`, Windows 는 홈 안의 `%TEMP%`(아니면 `~/.cache`)다. `/tmp` 처럼 여러 계정이 쓰는 폴더 아래에는 만들지 않는다. gemini 는 작업 폴더에서 루트까지 올라가며 `.gemini/.env` 와 `.env` 를 읽어, 다른 계정이 `/tmp/.env` 에 둔 `GOOGLE_GEMINI_BASE_URL` 로 페이로드를 보낸다(0.62.0 번들 모의 실험 재현).
    - 두 폴더는 0700 이고 빈 표지 파일 `.ralph-qa` 를 둔다. 하루 규칙은 표지가 있는 폴더만 지워, 이름 꼴이 같은 사용자 폴더(`ralph-qa.backup`)와 링크는 남는다. 새 폴더가 git 저장소 안이면 `inside-repo` 로 멈추고 아무것도 남기지 않는다.
 2. 변경에 속한 새 파일을 고른다. `untracked --repo '<저장소>'` 가 추적하지 않는 새 파일을 정확한 이름(JSON 문자열)으로 보인다(`status --short` 는 새 폴더를 한 줄로 접는다).
    - 도구는 긴 출력(Claude Code 는 3만 자)을 잘라 일부만 보인다. 그래서 목록이 100개를 넘으면 실행기가 통째로 새 폴더를 한 줄(`/` 로 끝남)로 접는다(`folded: true`). 변경에 속한 폴더만 `--folder '<폴더>'` 로 펼친다.
