@@ -39,6 +39,8 @@ check below is for Claude Code; on Codex check OMX instead (`omx --version`), wh
 
 **런타임 매핑 (Claude Code ↔ Codex).** Stage 1·2 의 `ralplan`·`ralph` 는 Claude Code에선 OMC 스킬이고 **Codex에선 oh-my-codex(OMX)가 제공하는 동명 스킬**이다. Stage 3 은 두 런타임 모두 banker `ralph-qa` 다: Claude Code `Skill("banker:ralph-qa")`, Codex npm 길 `$banker-ralph-qa`, 플러그인 길 `$banker:ralph-qa`. Codex 에는 Skill 도구가 없으니 그 `SKILL.md` 를 읽고 그대로 따른다(npm 길 `<S>/../banker-ralph-qa/SKILL.md`, 플러그인 길 `<S>/../ralph-qa/SKILL.md`, `<S>` 는 이 스킬 폴더). `<RQ>` 는 ralph-qa 의 `references` 폴더다(Claude Code 와 Codex 플러그인 길 `<S>/../ralph-qa/references`, Codex npm 길 `<S>/../banker-ralph-qa/references`). 아래 `Skill("oh-my-claudecode:<name>")` 표기는 Claude Code 기준이다.
 
+**Codex 의 tmux 밖 실행.** OMX 의 런타임 워크플로(`ralph`, `team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
+
 ## Purpose
 
 Run one substantial coding task through three independent quality gates in a

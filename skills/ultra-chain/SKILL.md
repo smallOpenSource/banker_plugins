@@ -68,6 +68,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 - Codex 에는 Skill 도구가 없다. 위 표의 `$이름` 은 그 스킬의 `SKILL.md` 를 읽고 그대로 따른다는 뜻이다. banker 스킬은 npm 설치면 `<S>/../banker-<이름>/SKILL.md`, Codex 플러그인 설치(`<S>` 가 `plugins/cache/` 아래, 스킬 이름 `banker:<이름>`)면 `<S>/../<이름>/SKILL.md` 다. 표의 `$banker-<이름>` 은 플러그인 설치에서 `$banker:<이름>` 이다. OMX 스킬은 `~/.codex/skills/<이름>/SKILL.md` 다. 그 스킬이 상태 기록을 요구하면 그 지시대로 직접 기록한다. 큰 `SKILL.md`(ralph-qa 는 약 71KB)는 셸 출력 한도에서 잘리니 나눠 읽는다.
 - Codex 의 하위 에이전트(critic, 시각 판정)는 저자 대화를 넘기지 않는다. multi-agent v2 는 `fork_turns="none"` 을 주고, v1 은 `fork_context` 를 주지 않는다. 판정을 받으면 `close_agent` 로 닫는다.
 - Codex 환경 지시가 역할(`agent_type`)을 요구하면, 고정 모델이 세션 모델과 같은 역할을 쓰고 지시 앞머리에 파일 쓰기 금지를 적는다. 그런 역할이 없으면 역할 없이 띄운다. 쓴 역할과 모델, 강도를 판정 기록의 `note` 에 적는다.
+- **Codex 의 tmux 밖 실행.** OMX 의 런타임 워크플로(`ralph`, `team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
 - Codex 의 오래 도는 명령은 기다리는 시간을 박스 `--timeout` 보다 길게 둔다. 기다리다 끊기면 박스 정리와 결과 JSON 이 남지 않는다.
 - Codex 세션을 닫으면 그 세션에서 띄운 서버도 끝날 수 있다. 오래 볼 미리보기는 사용자 터미널에서 띄우게 안내한다(9단계).
 
