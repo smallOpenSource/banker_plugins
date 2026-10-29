@@ -130,3 +130,16 @@ test('glass panel alpha: the lowest that keeps 4.5 over a white pixel for every 
   assert.equal(alphaIn(mine), 0.5);
   assert.equal(assemble({ projectDir: project() }).panelAlpha, undefined, 'no glass panel: nothing to set');
 });
+
+test('an asset outside the project folder (../ or a link out) is refused with a named error, connector posters included', () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'assemble-outside-'));
+  made.push(outside);
+  fs.writeFileSync(path.join(outside, 'secret.png'), 'not for the page');
+  const up = project({ connectorStills: [`../${path.basename(outside)}/secret.png`] });
+  assert.throws(() => assemble({ projectDir: up }), (e) => e.code === 'EOUTSIDE' && /outside the project folder/.test(e.message));
+  const linked = project();
+  fs.rmSync(path.join(linked, 's1.png'));
+  fs.symlinkSync(path.join(outside, 'secret.png'), path.join(linked, 's1.png'));
+  assert.throws(() => assemble({ projectDir: linked }), (e) => e.code === 'EOUTSIDE');
+  assert.ok(!fs.existsSync(path.join(linked, 'site', 'assets', 'a.png')), 'nothing copied from outside');
+});

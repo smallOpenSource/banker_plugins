@@ -78,9 +78,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const osPath = (base, posixRel) => path.join(base, ...posixRel.split('/'));
 
 // Copy one source asset (path relative to projectDir) to a posix dest URL under outDir.
+// Only files inside the project folder (after links) go into assets/: a manifest naming ../ or a link
+// out of the folder would otherwise publish any readable file with the page.
 function copyAsset(projectDir, outDir, srcRel, destPosix) {
   const src = path.join(projectDir, ...String(srcRel).split(/[\\/]/));
   if (!fs.existsSync(src)) throw new Error(`assemble: asset not found: ${srcRel} (looked at ${src})`);
+  const root = fs.realpathSync(projectDir);
+  const real = fs.realpathSync(src);
+  if (real !== root && !real.startsWith(root + path.sep)) throw Object.assign(new Error(`assemble: asset outside the project folder: ${srcRel} (resolves to ${real}); copy it into ${root} first`), { code: 'EOUTSIDE' });
   const dest = osPath(outDir, destPosix);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
