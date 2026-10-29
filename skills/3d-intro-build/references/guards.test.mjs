@@ -258,6 +258,11 @@ test('a project key file the repository tracks is never written, and resolveCred
   assert.throws(() => A.persistCreds({ AZURE_SORA_DEPLOYMENT: 'sora-2' }, { target }), /tracked by git/);
   assert.equal(fs.readFileSync(target, 'utf8'), 'WAN_1_ENDPOINT=https://ws.example.com\n');
   assert.equal(A.resolveCreds({ projectDir: repo })._tracked, true);
+  // 8-e: a tracked file gives names, never values
+  fs.writeFileSync(target, `WAN_1_ENDPOINT=https://ws.example.com\nAZURE_SORA_ENDPOINT=https://repo-sora.example.com\nAZURE_SORA_API_KEY=${'repo' + '-planted-key-01'}\n`);
+  const tracked = A.resolveCreds({ projectDir: repo });
+  assert.deepEqual(tracked, { _source: target, _tracked: true, _names: ['WAN_1_ENDPOINT', 'AZURE_SORA_ENDPOINT', 'AZURE_SORA_API_KEY'] });
+  fs.writeFileSync(target, 'WAN_1_ENDPOINT=https://ws.example.com\n');
   git('rm', '-q', '--cached', '.env.3d-intro.local');
   A.persistCreds({ AZURE_SORA_DEPLOYMENT: 'sora-2' }, { target });
   assert.match(fs.readFileSync(target, 'utf8'), /AZURE_SORA_DEPLOYMENT=sora-2/, 'an untracked one is written as before');
@@ -308,4 +313,22 @@ test('SKILL: the tone and seam lines in build Step 4A and setup §2 name functio
     for (const n of names) assert.ok(exported.has(n), `${n} is exported (${line.slice(0, 40)}...)`);
   }
   assert.doesNotMatch(setupLine, /colorMatch/);
+});
+
+// 8-e: creds without values (what resolveCreds gives from a tracked project key file) send nothing, with a clear error.
+test('creds from a tracked key file reach no network: generateImage, createVideo and generateClip stop before any fetch', async () => {
+  const creds = { _source: '/repo/.env.3d-intro.local', _tracked: true, _names: ['AZURE_SORA_ENDPOINT', 'AZURE_SORA_API_KEY'] };
+  const orig = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches++; throw new Error('no fetch expected'); };
+  try {
+    await assert.rejects(() => A.generateImage({ endpoint: creds.AZURE_IMAGE_OPENAI_ENDPOINT, key: creds.AZURE_IMAGE_API_KEY, deployment: 'd', prompt: 'p' }), /generateImage: endpoint and key are required; nothing was sent/);
+    await assert.rejects(() => A.createVideo({ endpoint: creds.AZURE_SORA_ENDPOINT, key: creds.AZURE_SORA_API_KEY, prompt: 'p' }), /createVideo: endpoint and key are required/);
+    for (const fn of ['editImage', 'generateImageFlux', 'createVideoTwoImage']) await assert.rejects(() => A[fn]({ prompt: 'p' }), new RegExp(`${fn}: endpoint and key are required`));
+    await assert.rejects(() => P.generateClip({ creds, prompt: 'p', statePath: path.join(tmp('r8e-'), 's.json') }), (e) => e.kind === 'invalid_request' && /tracked by git/.test(e.message));
+    await assert.rejects(() => P.generateClip({ creds: { _source: null }, prompt: 'p', statePath: path.join(tmp('r8e-'), 's.json') }), /no video provider available/);
+    assert.equal(fetches, 0);
+  } finally {
+    globalThis.fetch = orig;
+  }
 });

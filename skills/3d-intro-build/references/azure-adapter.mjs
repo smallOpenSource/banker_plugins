@@ -173,6 +173,9 @@ const MACHINE_ONLY = ['FFMPEG_PATH'];
  * Load creds from `.env.3d-intro.local` in projectDir, else `~/.config/banker/3d-intro/env`.
  * Returns the parsed KEY=VALUE map plus `_source` (the file used, or null if none found). From a
  * project file, FFMPEG_PATH is left out and returned under `_ignored` so the caller can say why.
+ * A project file git tracks gives no value at all: only `_source`, `_tracked: true` and `_names`
+ * (the names it sets). It may have come with the repository, so its endpoint would receive the
+ * prompts, the frames and the key; the calls refuse creds without an endpoint and a key.
  */
 export function resolveCreds({ projectDir } = {}) {
   const home = homeCredsPath();
@@ -183,7 +186,14 @@ export function resolveCreds({ projectDir } = {}) {
   if (!p) return { _source: null };
   const creds = { ...parseEnvFile(fs.readFileSync(p, 'utf8')), _source: p };
   if (p === home) return creds;
-  return trackedByGit(p) ? { ...withoutMachineOnly(creds), _tracked: true } : withoutMachineOnly(creds);
+  if (trackedByGit(p)) return { _source: p, _tracked: true, _names: Object.keys(creds).filter((k) => k !== '_source') };
+  return withoutMachineOnly(creds);
+}
+
+// The paid and listing calls need both; resolveCreds gives neither from a project key file git tracks.
+function requireConn(fn, endpoint, key) {
+  if (endpoint && key) return;
+  throw new Error(`${fn}: endpoint and key are required; nothing was sent (resolveCreds gives no value from a project key file git tracks: untrack it with git rm --cached, or use the home key file)`);
 }
 
 function withoutMachineOnly(creds) {
@@ -615,6 +625,7 @@ export async function generateImage({
   endpoint, key, deployment, apiVersion = 'preview',
   prompt, size = '720x1280', quality = 'low', n = 1, onNote, retry429 = 3,
 } = {}) {
+  requireConn('generateImage', endpoint, key);
   const genBody = { model: deployment, prompt, size, quality, n };
   const post = (url, body) => postJsonWith429Retry(url, { key, body: JSON.stringify(body), retries: retry429, onNote });
   let r = await post(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, genBody);
@@ -641,6 +652,7 @@ function pngFrom(r, b64, failed) {
 export async function editImage({
   endpoint, key, deployment, apiVersion = 'preview', prompt, imageBuf, maskBuf, size,
 } = {}) {
+  requireConn('editImage', endpoint, key);
   const r = await azFetch(`${endpoint}/openai/v1/images/edits?api-version=${apiVersion}`, {
     key, method: 'POST', body: editForm({ deployment, prompt, imageBuf, maskBuf, size }), timeoutMs: IMAGE_TIMEOUT_MS,
   });
@@ -659,6 +671,7 @@ function editForm({ deployment, prompt, imageBuf, maskBuf, size }) {
 
 /** Generate a still via the Black Forest Labs FLUX provider path. Returns a PNG Buffer. */
 export async function generateImageFlux({ endpoint, key, prompt, width, height, apiVersion = 'preview' } = {}) {
+  requireConn('generateImageFlux', endpoint, key);
   const r = await azFetch(`${endpoint}/providers/blackforestlabs/v1/flux-2-pro?api-version=${apiVersion}`, {
     key, method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, width, height }), timeoutMs: IMAGE_TIMEOUT_MS,
@@ -684,6 +697,7 @@ export async function listVideos({ endpoint, key, apiVersion = 'preview' } = {})
 export async function createVideo({
   endpoint, key, model = 'sora-2', prompt, size = '720x1280', seconds = 4, inputReferencePng, apiVersion = 'preview',
 } = {}) {
+  requireConn('createVideo', endpoint, key);
   const body = videoForm({ model, prompt, size, seconds, inputReferencePng });
   const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body });
   if (!(r.ok && r.body?.id)) throw createVideoError(r);
@@ -865,6 +879,7 @@ export async function detectTwoImageSupport({ endpoint, key, apiVersion = 'previ
 export async function createVideoTwoImage({
   endpoint, key, model = 'sora-2', prompt = '', firstPng, lastPng, size = '720x1280', seconds = 4, apiVersion = 'preview',
 } = {}) {
+  requireConn('createVideoTwoImage', endpoint, key);
   const r = await azFetch(`${endpoint}/openai/v1/video/generations/jobs?api-version=${apiVersion}`, {
     key, method: 'POST', body: twoImageForm({ model, prompt, firstPng, lastPng, size, seconds }),
   });

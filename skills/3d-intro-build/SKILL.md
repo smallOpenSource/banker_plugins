@@ -59,7 +59,7 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 ```
 
 - `creds._source` 가 `null` 이면 크리덴셜이 없다. `3d-intro-setup` 으로 보낸다.
-- `creds._tracked` 가 참이면 프로젝트 키 파일을 git 이 추적한다. 멈추고 사람에게 알린다. 그 값은 저장소에서 왔을 수 있고(endpoint 가 프롬프트와 프레임을 받는 곳이다), 키를 적으면 다음 커밋에 실린다. `git rm --cached .env.3d-intro.local` 로 추적을 풀거나 홈 키 파일을 쓴다.
+- `creds._tracked` 가 참이면 프로젝트 키 파일을 git 이 추적한다. 멈추고 사람에게 알린다. 그 값은 저장소에서 왔을 수 있고(endpoint 가 프롬프트와 프레임을 받는 곳이다), 키를 적으면 다음 커밋에 실린다. 그래서 `resolveCreds` 는 이때 endpoint, key, 배포명 같은 값을 하나도 내주지 않고 `_source`, `_tracked`, `_names`(적힌 이름 목록)만 준다. 이 creds 로 이미지나 영상 호출을 해도 아무것도 보내지 않고 오류로 멈춘다. `git rm --cached .env.3d-intro.local` 로 추적을 풀거나 홈 키 파일을 쓴다.
 - `creds._ignored` 가 있으면 프로젝트 키 파일의 `FFMPEG_PATH` 를 쓰지 않은 것이다. 저장소와 함께 온 파일이 실행할 프로그램을 정하지 못하게 막은 것이다. 값은 출력하지 않으니 사람이 파일을 열어 확인하고, 그 경로가 필요하면 `3d-intro-setup` §2 로 홈 설정 파일에 남긴다.
   Claude Code: `/banker:setup` 에서 3d-intro-setup / Codex: `banker-3d-intro-setup`.
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다. 같은 `3d-intro-setup` 으로 보낸다.

@@ -110,7 +110,10 @@ node -e "
   const c = resolveCreds({ projectDir: process.cwd() });
   const need = ['AZURE_SORA_ENDPOINT','AZURE_SORA_API_KEY','AZURE_IMAGE_OPENAI_ENDPOINT','AZURE_IMAGE_API_KEY','AZURE_GPT_IMAGE_DEPLOYMENT'];
   const missing = need.filter(k => !c[k]);
-  if (c._tracked) console.log('주의: 이 프로젝트 키 파일은 git 이 추적한다(' + c._source + '). 키를 적으면 커밋에 실린다. git rm --cached 로 추적을 풀거나 홈 키 파일을 쓴다');
+  if (c._tracked) {   // 값을 하나도 내주지 않으므로 '누락' 보다 먼저 알리고 멈춘다
+    console.log('주의: 이 프로젝트 키 파일은 git 이 추적한다(' + c._source + '). 저장소와 함께 온 값일 수 있어 읽지 않았다(적힌 이름: ' + c._names.join(',') + '). 키를 적으면 커밋에도 실린다. git rm --cached 로 추적을 풀거나 홈 키 파일을 쓴다');
+    process.exit(1);
+  }
   if (c._source && missing.length === 0) {
     console.log('기존 크레덴셜 발견:', c._source, '| Sora key', redact(c.AZURE_SORA_API_KEY), '| Image key', redact(c.AZURE_IMAGE_API_KEY));
     process.exit(0);
