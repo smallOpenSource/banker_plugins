@@ -2,13 +2,16 @@
 import { test, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
-  RUN_FOLDERS, STAGE_IDS, UsageError, appendEvent, boxesToTests, checkEvent, decodeText, initRun, main, markUnverified, progressLine, readEvents,
-  runId, runPath, summarize,
+  RUN_FOLDERS, STAGE_IDS, UsageError, appendEvent, boxesToTests, checkEvent, decodeText, gateToTest, initRun, main, markUnverified, observedOf,
+  progressLine, readEvents, runId, runPath, summarize,
 } from "./chain-ledger.mjs";
+import { makeRunFolder } from "../../ralph-qa/references/run-folder.mjs";
 
 const tmp = mkdtempSync(join(tmpdir(), "chain-ledger-test-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -356,4 +359,99 @@ test("a record command hands back the progress line to say and to add to the res
 test("the progress line stays one line and names the stage it cannot place, and a failed verdict keeps its word", () => {
   assert.equal(progressLine({ stage: "nope", status: "done" }), "[ultra-chain] ?/9 nope: 끝");
   assert.equal(progressLine({ stage: "qa", status: "failed", verdict: { by: "ralph\nqa", result: "REJECT" } }), "[ultra-chain] 6/9 OS 시험과 합의 검증: 실패, ralph qa REJECT");
+});
+
+// S15: ultra-chain's local gates run through ralph-qa's gate-evidence.mjs; the ledger reads its records.
+const sha = (s) => createHash("sha256").update(s).digest("hex");
+function evidenceFixture(name) {
+  const g = fresh(name);
+  const out = (file, text) => (writeFileSync(join(g, file), text), { output: join(g, file), outputSha256: sha(text) });
+  const base = { kind: "observed", id: "lint", iter: 0, cmd: "npm run lint", verdict: "fail", exit: 1, signature: "lint:aaaa", ...out("gate-lint-0-1.md", "x\n") };
+  const lint = { kind: "observed", id: "lint", iter: 2, cmd: "npm run lint", cwd: "/repo", verdict: "fail", why: "종료 1", exit: 1, signature: "lint:aaaa", fingerprint: "f1", ...out("gate-lint-2-2.md", "error: no-unused\n") };
+  const testsOld = { kind: "observed", id: "tests", iter: 2, cmd: "npm test", verdict: "fail", exit: 1, signature: "tests:bbbb", ...out("gate-tests-2-3.md", "not ok 1\n") };
+  const tests = { kind: "observed", id: "tests", iter: 2, cmd: "npm test", cwd: "/repo", verdict: "pass", why: null, exit: 0, signature: null, fingerprint: "f1", ...out("gate-tests-2-4.md", "ok 1 ```x```\n") };
+  const typecheck = { kind: "observed", id: "typecheck", iter: 2, cmd: "tsc", verdict: "misleading", why: "node:test 건너뜀", exit: 0, ...out("gate-typecheck-2-5.md", "ℹ skipped 1\n") };
+  const build = { kind: "observed", id: "build", iter: 2, cmd: "npm run build", verdict: "pass", exit: 0, ...out("gate-build-2-6.md", "built\n") };
+  writeFileSync(join(g, "gate-build-2-6.md"), "changed after the run\n");
+  const said = { kind: "reported", id: "scenario-1", iter: 2, exit: 0, text: "모델이 통과라고 함" };
+  const lines = [base, lint, testsOld, tests, typecheck, build, said].map((r) => JSON.stringify(r));
+  writeFileSync(join(g, "evidence.md"), `${lines.join("\n")}\nnot json\n`);
+  return g;
+}
+
+test("gates: observed records of the round become tests with their verdict; reported lines never do", () => {
+  const g = evidenceFixture("gates");
+  const { dir } = initRun({ base: "runs", cwd: fresh("gates-run"), rand: "gggg" });
+  const out = sink();
+  assert.equal(main(["gates", dir, "--file", join(g, "evidence.md"), "--round", "2"], out, sink()), 0);
+  const e = JSON.parse(out.text);
+  const by = Object.fromEntries(e.tests.map((t) => [t.where, t]));
+  assert.deepEqual(Object.keys(by).sort(), ["local:build", "local:lint", "local:tests", "local:typecheck"], "the reported scenario-1 line is not a test");
+  assert.equal(by["local:tests"].status, "pass", "the last record of a gate in the round wins");
+  assert.equal(by["local:lint"].status, "fail");
+  assert.match(by["local:lint"].note, /기준선과 같은 실패/);
+  assert.equal(by["local:typecheck"].status, "unverified", "misleading output is not a pass");
+  assert.equal(by["local:build"].status, "unverified");
+  assert.match(by["local:build"].note, /sha256 이 기록과 다름/);
+  assert.ok(e.tests.every((t) => t.log === "qa/local-r2.md"));
+  assert.match(e.summary, /받지 않은 reported 1건/);
+  assert.equal(e.progress, "[ultra-chain] 6/9 OS 시험과 합의 검증: 기록 2회차");
+  const view = readFileSync(join(dir, "qa", "local-r2.md"), "utf8");
+  assert.match(view, /error: no-unused/);
+  assert.match(view, /````\nok 1 ```x```\n````/, "a fence longer than the output's own backticks");
+  assert.equal(readEvents(dir).events.at(-1).artifacts[0].path, "qa/local-r2.md");
+});
+
+test("gates: a round with only reported lines, a missing file or a bad round is refused", () => {
+  const g = evidenceFixture("gates-bad");
+  const { dir } = initRun({ base: "runs", cwd: fresh("gates-bad-run"), rand: "hhhh" });
+  const err = sink();
+  writeFileSync(join(g, "only-said.md"), `${JSON.stringify({ kind: "reported", id: "tests", iter: 3, exit: 0 })}\n`);
+  assert.equal(main(["gates", dir, "--file", join(g, "only-said.md"), "--round", "3"], sink(), err), 2);
+  assert.match(err.text, /observed 기록이 없습니다\(reported 1건은 받지 않음\)/);
+  assert.equal(main(["gates", dir, "--file", join(g, "nope.md"), "--round", "2"], sink(), sink()), 1);
+  assert.equal(main(["gates", dir, "--file", join(g, "evidence.md")], sink(), sink()), 2);
+  assert.equal(main(["gates", dir, "--file", join(g, "evidence.md"), "--round", "0"], sink(), sink()), 2);
+  assert.equal(readEvents(dir).events.length, 0, "nothing was recorded");
+});
+
+test("observedOf keeps the baseline apart and gateToTest reads a timeout as a failure", () => {
+  const { records, base, reported } = observedOf(readFileSync(join(evidenceFixture("observed"), "evidence.md"), "utf8"), 2);
+  assert.deepEqual([records.length, base.length, reported], [4, 1, 1]);
+  const t = gateToTest({ id: "tests", cmd: "npm test", verdict: "timeout", timedOut: true }, { text: "" }, false, "qa/local-r1.md");
+  assert.deepEqual([t.status, /시간 초과/.test(t.note)], ["fail", true]);
+});
+
+test("a ralph-qa end word with its cause keeps the word before the parenthesis as result and the cause in note", () => {
+  const e = checkEvent({ stage: "qa", status: "note", round: 3, verdict: { by: "ralph-qa", result: "ITERATE", note: "ITERATE(한도 소진, 원인 gate) 게이트(관측): tests = fail" } });
+  assert.equal(e.verdict.result, "ITERATE");
+  assert.match(e.verdict.note, /원인 gate/);
+  assert.throws(() => checkEvent({ stage: "qa", status: "note", verdict: { by: "ralph-qa", result: "ITERATE(한도 소진, 원인 gate)" } }), UsageError);
+  const { dir } = initRun({ base: "runs", cwd: fresh("cause"), rand: "cccc" });
+  appendEvent(dir, e);
+  assert.equal(summarize(readEvents(dir).events).stages.find((s) => s.id === "qa").lastVerdict.result, "ITERATE");
+});
+
+test("gates reads what ralph-qa's real gate-evidence.mjs writes: an observed pass and a reported line", () => {
+  const root = realpathSync.native(fresh("real-gates"));
+  const home = join(root, "home");
+  const base = process.platform === "win32" ? join(home, "AppData", "Local", "Temp") : join(root, "run");
+  mkdirSync(base, { recursive: true, mode: 0o700 });
+  const env = { ...process.env, HOME: home, USERPROFILE: home,
+    ...(process.platform === "win32" ? { TEMP: base, TMP: base } : process.platform === "darwin" ? { TMPDIR: base } : { XDG_RUNTIME_DIR: base }) };
+  const g = makeRunFolder({ env, platform: process.platform }, "ralph-qa").dir;
+  const tool = fileURLToPath(new URL("../../ralph-qa/references/gate-evidence.mjs", import.meta.url));
+  const q = (s) => (process.platform === "win32" ? `'${s.replaceAll("'", "''")}'` : `'${s.replaceAll("'", "'\\''")}'`);
+  const cmd = `${process.platform === "win32" ? "& " : ""}${[process.execPath, "-e", "console.log('ok 1 - real')"].map(q).join(" ")}`;
+  const run = (args) => spawnSync(process.execPath, [tool, ...args], { encoding: "utf8", env, timeout: 120000 });
+  const r = run(["run", "--dir", g, "--id", "tests", "--cmd", cmd, "--timeout", "60", "--iter", "1", "--cwd", root]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(run(["note", "--dir", g, "--id", "tests", "--iter", "1", "--exit", "0", "--text", "model says pass"]).status, 0);
+  const { dir } = initRun({ base: "runs", cwd: fresh("real-gates-run"), rand: "rrrr" });
+  const out = sink();
+  assert.equal(main(["gates", dir, "--file", join(g, "evidence.md"), "--round", "1"], out, sink()), 0);
+  const e = JSON.parse(out.text);
+  assert.deepEqual(e.tests.map((x) => [x.where, x.status]), [["local:tests", "pass"]]);
+  assert.match(e.summary, /받지 않은 reported 1건/);
+  assert.match(readFileSync(join(dir, "qa", "local-r1.md"), "utf8"), /ok 1 - real/);
 });

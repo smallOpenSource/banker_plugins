@@ -795,6 +795,18 @@ try {
   ok(!/^import [^\n]*node:crypto/m.test(rfSrc) && /await import\("node:crypto"\)/.test(rfSrc) && !/node:(?:https?|net|tls|dgram|dns)['"]/.test(rfSrc + gateSrc)
      && !/shell:\s*true/.test(rfSrc + gateSrc) && /from "\.\/run-folder\.mjs"/.test(runnerSrc[0]) && /taskkill\.exe/.test(gateSrc),
      'gates-c: run-folder.mjs loads crypto only inside snapshot (the seat runner imports it), neither shared module holds a network module or a shell option, and the seat runner takes its folders from run-folder.mjs');
+  // Plan 19.6 S15: ultra-chain's plan review declares no gates; its local gates are runner records, the ledger takes the
+  // observed ones only (chain-ledger.test.mjs), and stage 6 hands them to ralph-qa as --gates.
+  const ucDoc = fs.readFileSync(path.join(root, 'skills', 'ultra-chain', 'SKILL.md'), 'utf8');
+  const ucStage = (n) => (ucDoc.split(`\n## ${n}. `)[1] || '').split(/\n## /)[0];
+  ok(/`--gates` 는 주지 않는다/.test(ucStage(3)) && /`게이트: 선언 없음\(계획 검토\)`/.test(ucStage(3))
+     && /gate-evidence\.mjs" run --dir "<g>"[^\n]*--iter 0/.test(ucStage(5)) && /gate-evidence\.mjs" run --dir "<g>"[^\n]*--iter <k>/.test(ucStage(6))
+     && /chain-ledger\.mjs" gates "<run>" --file "<g>\/evidence\.md" --round <k>/.test(ucStage(6))
+     && /`--lens=both --gates=<계획의 로컬 게이트>/.test(ucStage(6)) && /`reported`\(모델이 적은 결과\)는 받지 않는다/.test(ucStage(6))
+     && /`ITERATE\(한도 소진, 원인 gate\)` 면 `result` 는 `ITERATE`/.test(ucStage(6))
+     && (ucDoc.match(/`\$banker-ralph-qa`\(플러그인 길 `\$banker:ralph-qa`\)/g) || []).length === 2
+     && /Codex 플러그인 설치 `<S>\/\.\.\/ralph-qa\/references`/.test(ucDoc),
+     'uc-gates: ultra-chain stage 3 gives ralph-qa no --gates and keeps its no-gate line, stage 5 runs the iteration-0 baseline, stage 6 runs the local gates through gate-evidence, records them with chain-ledger gates and passes --gates, and both Codex names are given');
   const sendSection = (rqSkill.split('## 외부 좌석 전송')[1] || '').split(/\n## /)[0];
   const exported = (name) => [...(((runnerSrc[0].match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\];`)) || [])[1] || '')
     .matchAll(/"([^"]+)"/g))].map((m) => m[1]);
