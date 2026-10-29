@@ -634,10 +634,10 @@ ptest('banker 와 teamwork 가 동시에 20번 hooks.json 을 고쳐도 잃는 �
   }
 });
 
-test('Windows 는 전제 실측 전이라 on 이 까닭을 밝히고 6 으로 끝난다', { skip: POSIX }, () => {
+test('Windows 는 승인 규칙이 PowerShell 호출에 맞지 않아 on 이 까닭을 밝히고 6 으로 끝난다', { skip: POSIX }, () => {
   const r = run(home(false), ['on']);
   assert.equal(r.code, 6);
-  assert.match(r.err, /Windows 는 아직 지원하지 않습니다/);
+  assert.match(r.err, /Windows 는 지원하지 않습니다.*PowerShell/);
 });
 
 ptest('banker uninstall --codex 는 다른 banker 길이 남아 있으면 teamwork 를 두고, 없을 때만 지운다', { skip: !POSIX || process.getuid?.() === 0 }, () => {

@@ -114,7 +114,7 @@ argument-hint: "on | off | status"
 
 ## 제약
 
-- Linux, macOS. Node 18 이상, Codex 0.149.0 이상 (`codex queue`). Windows 는 전제(세션 사이 `codex queue` 왕복, PowerShell 명령의 승인 규칙 판정, `.cmd` 없는 래퍼) 확인 전이라 `on` 이 까닭을 밝히고 6
+- Linux, macOS. Node 18 이상, Codex 0.149.0 이상 (`codex queue`). Windows 는 `on` 이 까닭을 밝히고 6. Codex 0.160.1 Windows 실측에서 승인 규칙 판정(`codex execpolicy check`)이 래퍼를 바로 부르는 꼴에만 맞고 PowerShell 로 부르는 꼴(`& '<래퍼>' send ...`)에는 맞지 않아, 쓸 때마다 승인을 물어야 하기 때문
 - 같은 `CODEX_HOME` 을 쓰는 세션끼리만 통신
 - 세션 이름(`/rename`)으로 보내는 `codex queue` 는 0.165.0 에서 "No active session found" 로 실패. 그래서 UUID(`CODEX_THREAD_ID`)로 등록하고 보냄
 - 받는 세션이 작업 중이면 그 턴이 끝난 뒤 처리. Esc 로 중단하면 큐에 남음

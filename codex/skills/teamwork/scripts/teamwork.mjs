@@ -569,7 +569,7 @@ function delegateIfNewer(args) {
 }
 
 function checkInstallable() {
-  if (process.platform === 'win32') fail('Windows 는 아직 지원하지 않습니다. 세션 사이 codex queue 왕복, PowerShell 명령의 승인 규칙 판정, .cmd 없는 래퍼를 Windows 에서 확인하기 전입니다.');
+  if (process.platform === 'win32') fail('Windows 는 지원하지 않습니다. Codex 0.160.1 의 승인 규칙 판정(codex execpolicy check)이 PowerShell 로 부르는 래퍼(& \'<래퍼>\' send ...)에 맞지 않아, 쓸 때마다 승인을 물어야 합니다(래퍼를 바로 부르는 꼴만 맞음).');
   const ctx = sandboxCtx();
   const home = homeProblem(ctx);
   if (home) fail(`${home}. 샌드박스 안 세션이 승인 규칙과 래퍼를 바꿀 수 있어 설치하지 않습니다.`);
