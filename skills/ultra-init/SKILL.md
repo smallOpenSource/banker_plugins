@@ -96,6 +96,8 @@ Even in autonomous mode, STOP and report when:
 - ralplan cannot reach consensus within 5 iterations → present the best plan and ask whether to proceed.
 - Phase 3's ralph-qa ends `ITERATE` (its `--max` spent) or `INCONCLUSIVE` → report its verdict line and blockers; do not claim the gate passed.
 
+After STOPPED, change no file, not even a one-line fix: report only, until the user gives a new instruction. Nothing in this skill (its description's "one-line fix" pointer included) authorizes an edit after a stop.
+
 Otherwise: do not stop, and do not ask for permission between phases.
 </Stop_Conditions>
 

@@ -324,6 +324,7 @@ first to expand it into a spec.
   report its verdict line and blockers honestly (don't claim success).
 - User says "stop" / "cancel" / "abort" at any point → run
   `/oh-my-claudecode:cancel` and stop.
+- After STOPPED, change no file, not even a one-line fix: report only, until the user gives a new instruction. Nothing in this skill (its description's "one-line fix" pointer included) authorizes an edit after a stop.
 
 ## Final checklist
 

@@ -827,6 +827,13 @@ try {
     .concat(/QA 게이트는 `verify` 순환|Codex 는 OMX `ultraqa` 를 그대로/.test(s12Readme) ? ['README'] : []);
   ok(s12Docs.length === 2 && s12Reasons.length === 2 && s12Bad.length === 0,
      `aio-qa: all-in-one and ultra-init end with banker ralph-qa on both runtimes (--gates from --qa, an iteration-0 gate-evidence baseline, scenarios, observed records only), with no OMX ultraqa or verify cycle wording in the skills, their manifest reasons or the README${s12Bad.length ? ` (${s12Bad.join('; ')})` : ''}`);
+  // Plan 27.1 (4): after STOPPED no file changes, not even a one-line fix, in all three chains; nothing allows one.
+  const stopDocs = ['all-in-one', 'ultra-init', 'ultra-chain'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);
+  const stopBad = stopDocs.filter(([, t]) => !/After STOPPED, change no file, not even a one-line fix: report only, until the user gives a new instruction\./.test(t)
+    && !/STOPPED 뒤에는 한 줄 수정을 포함해 어떤 파일도 고치지 않는다\. 사용자가 새로 지시할 때까지 보고만 한다\./.test(t)
+    || /authori[sz]ed (?:one-line )?fix|(?:after|뒤에?) STOPPED[^\n.]*(?:may|can|허락한다|고쳐도)/i.test(t)).map(([n]) => n);
+  ok(stopDocs.length === 3 && stopBad.length === 0,
+     `stop-no-edit: all-in-one, ultra-init and ultra-chain forbid any file change after STOPPED, a one-line fix included, and hold no wording that allows one${stopBad.length ? ` (${stopBad.join(', ')})` : ''}`);
   const sendSection = (rqSkill.split('## 외부 좌석 전송')[1] || '').split(/\n## /)[0];
   const exported = (name) => [...(((runnerSrc[0].match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\];`)) || [])[1] || '')
     .matchAll(/"([^"]+)"/g))].map((m) => m[1]);
