@@ -19,10 +19,11 @@
  * (the DRM of a closed network encrypts files by their extension, and .md is one it leaves readable).
  */
 import { fork } from "node:child_process";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { constants as osConstants, homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Stop as RunStop, bases, makeRunFolder, removeMarked, runFolder } from "./run-folder.mjs";
 import { POLICY, cleanSeat, policyIntact, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
 import { scan } from "./payload-scan.mjs";
 import { MAX_BYTES, Stop, buildPayload, checkPayload, gitAt, markerCount, readRun, splitPayload, untracked } from "./seat-payload.mjs";
@@ -108,21 +109,6 @@ const listDir = (dir) => {
     return [];
   }
 };
-
-// A folder init made: named ralph-qa.<letters and digits>, a folder and no link, with its marker, right under one of
-// the known bases that only this account may write in. Its answer folder is the sibling ralph-qa-out.<the same>.
-export function runFolder(dir, ctx) {
-  const d = resolve(String(dir));
-  if (!RUN_NAME.test(basename(d)) || !lstatOr(d)?.isDirectory() || !isFile(join(d, ".ralph-qa"))) {
-    throw new Stop("not-a-run-folder", `init 이 만든 폴더가 아니다: ${d}`);
-  }
-  if (!underBase(ctx, d)) throw new Stop("not-a-run-folder", `알려진 기준 폴더 바로 아래의 실행 폴더가 아니다: ${d}`);
-  const o = join(dirname(d), basename(d).replace(/^ralph-qa\./, "ralph-qa-out."));
-  const answers = lstatOr(o);
-  return { d, o: answers?.isDirectory() && isFile(join(o, ".ralph-qa")) ? o : null };
-}
-
-const homeOf = (ctx) => (ctx.platform === "win32" ? ctx.env.USERPROFILE : ctx.env.HOME) || homedir();
 const norm = (ctx, p) => (ctx.platform === "win32" ? p.toLowerCase() : p);
 const realOr = (p) => {
   try {
@@ -132,67 +118,30 @@ const realOr = (p) => {
   }
 };
 
-// A folder only this account may write in (POSIX: its own, no group or other write bit).
-function privateDir(p) {
-  try {
-    const st = statSync(p);
-    return st.isDirectory() && st.uid === process.getuid() && (st.mode & 0o022) === 0;
-  } catch {
-    return false;
-  }
-}
-// The folder's parent, by its real path, is one of the known bases by theirs (macOS's /var is a link to /private/var:
-// either form names the same base), and only this account may write in it (POSIX).
-function underBase(ctx, d) {
-  const parent = norm(ctx, realOr(dirname(d)));
-  const known = bases(ctx).known.some((b) => norm(ctx, realOr(b)) === parent);
-  return known && (ctx.platform === "win32" || privateDir(dirname(d)));
-}
-const insideHome = (ctx, p) => norm(ctx, realOr(p)).startsWith(norm(ctx, realOr(homeOf(ctx))) + sep);
-
-// The base for this run's folders, and every base a run of any version may have used, for the day rule. Linux: an
-// XDG_RUNTIME_DIR of this account's own, else ~/.cache; macOS: $TMPDIR (its own per account); Windows: %TEMP% when it
-// is inside the home, else ~/.cache (the old Git Bash runs used ~/.cache). Never /tmp: gemini reads a .env it finds
-// walking up from its folder, and another account may put one there.
-export function bases(ctx) {
-  const cache = join(homeOf(ctx), ".cache");
-  const base = baseOn(ctx, cache);
-  const xdg = ctx.platform === "linux" && ctx.env.XDG_RUNTIME_DIR ? [resolve(ctx.env.XDG_RUNTIME_DIR)] : [];
-  return { base, known: [...new Set([base, cache, ...xdg])] };
+// A folder init made (run-folder.mjs: its name, its marker, right under a known private base) and its answer folder,
+// the sibling ralph-qa-out.<the same>.
+function runPair(dir, ctx) {
+  const { d } = runFolder(dir, ctx, ["ralph-qa"]);
+  const o = join(dirname(d), basename(d).replace(/^ralph-qa\./, "ralph-qa-out."));
+  const answers = lstatOr(o);
+  return { d, o: answers?.isDirectory() && isFile(join(o, ".ralph-qa")) ? o : null };
 }
 
-function baseOn(ctx, cache) {
-  const { env } = ctx;
-  if (ctx.platform === "win32") return env.TEMP && insideHome(ctx, env.TEMP) ? resolve(env.TEMP) : cache;
-  if (ctx.platform === "darwin") return env.TMPDIR ? resolve(env.TMPDIR) : cache;
-  const xdg = env.XDG_RUNTIME_DIR;
-  return xdg && isAbsolute(xdg) && privateDir(xdg) ? resolve(xdg) : cache;
-}
-
-function readyBase(ctx, base) {
-  try {
-    mkdirSync(base, { recursive: true, mode: 0o700 });
-  } catch (e) {
-    throw new Stop("base-not-writable", `기준 폴더를 만들 수 없다(${e.code}): ${base}`);
-  }
-  if (ctx.platform !== "win32" && !privateDir(base)) throw new Stop("base-not-private", `기준 폴더를 다른 계정도 쓸 수 있다: ${base}`);
-}
-
-// Two folders with the same six characters: the payload one by mkdtemp, its answer folder beside it.
-function makeFolders(base) {
+// Two folders with the same six characters: the payload one by run-folder.mjs, its answer folder beside it.
+function makeFolders(ctx) {
   for (let tries = 0; tries < 20; tries += 1) {
-    const d = mkdtempSync(join(base, "ralph-qa."));
+    const { dir: d, base } = makeRunFolder(ctx, "ralph-qa");
     const o = join(base, basename(d).replace(/^ralph-qa\./, "ralph-qa-out."));
     try {
       mkdirSync(o, { mode: 0o700 });
-      for (const p of [d, o]) writeFileSync(join(p, ".ralph-qa"), "", { mode: 0o600 });
-      return { d, o };
+      writeFileSync(join(o, ".ralph-qa"), "", { mode: 0o600 });
+      return { d, o, base };
     } catch (e) {
       rmSync(d, { recursive: true, force: true });
-      if (e.code !== "EEXIST") throw e;
+      if (e.code !== "EEXIST") throw new Stop("base-not-writable", `기준 폴더에 쓸 수 없다(${e.code}): ${base}`);
     }
   }
-  throw new Stop("base-not-writable", `기준 폴더에 새 폴더 이름을 정하지 못했다: ${base}`);
+  throw new Stop("base-not-writable", `기준 폴더에 새 폴더 이름을 정하지 못했다: ${bases(ctx).base}`);
 }
 
 // Whether `dir` is inside a git work tree: a seat would then read the repo through its tools.
@@ -205,20 +154,12 @@ function insideRepo(ctx, dir) {
 }
 
 function init(_o, ctx) {
-  const { base } = bases(ctx);
-  readyBase(ctx, base);
-  let made;
-  try {
-    made = makeFolders(base);
-  } catch (e) {
-    if (e instanceof Stop) throw e;
-    throw new Stop("base-not-writable", `기준 폴더에 쓸 수 없다(${e.code}): ${base}`);
-  }
+  const made = makeFolders(ctx);
   if (insideRepo(ctx, made.d)) {
     for (const p of [made.d, made.o]) rmSync(p, { recursive: true, force: true });
-    throw new Stop("inside-repo", `기준 폴더가 git 저장소 안이다: ${base}`);
+    throw new Stop("inside-repo", `기준 폴더가 git 저장소 안이다: ${made.base}`);
   }
-  return [{ ok: true, dir: made.d, out: made.o, base }, 0, made.d];
+  return [{ ok: true, dir: made.d, out: made.o, base: made.base }, 0, made.d];
 }
 
 function listUntracked(o, ctx) {
@@ -243,7 +184,7 @@ function verdict(result) {
 }
 
 function prepare(o, ctx) {
-  const { d } = runFolder(o.dir, ctx);
+  const { d } = runPair(o.dir, ctx);
   refuseSent(d);
   const built = buildPayload({ dir: d, repo: o.repo, base: o.base, id: o.id, env: ctx.env });
   const [result, code] = verdict({ dir: d, prompt: join(d, "prompt.md"), raw: join(d, "raw.md"), unsentFile: join(d, "unsent.md"), ...built });
@@ -251,7 +192,7 @@ function prepare(o, ctx) {
 }
 
 function check(o, ctx) {
-  const { d } = runFolder(o.dir, ctx);
+  const { d } = runPair(o.dir, ctx);
   const id = readRun(d).id;
   const c = checkPayload({ dir: d, id });
   if (c.markers !== 2) throw new Stop("markers", `표지가 두 줄이 아니다(${c.markers}줄). 가리다 표지를 지웠으면 prepare 를 다시 한다`);
@@ -270,7 +211,7 @@ const readStdin = (ctx) => {
 
 function put(o, ctx) {
   if (!["short.md", "spec.md"].includes(o.name)) throw new Usage(`--name 은 short.md 나 spec.md 다: ${String(o.name).slice(0, 80)}`);
-  const { d } = runFolder(o.dir, ctx);
+  const { d } = runPair(o.dir, ctx);
   refuseSent(d);
   const data = readStdin(ctx);
   writeFileSync(join(d, o.name), data, { mode: 0o600 });
@@ -338,33 +279,9 @@ function giveBack(lock) {
   if (lockPid(dirname(lock)) === process.pid) rmSync(lock, { force: true });
 }
 
-// The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker.
-// A marked folder removed. One that cannot be removed gets back its marker (if the removal took it) and its times
-// (what the removal took from it changed them), so it stays a marked folder past a day: a later cleanup sweeps it
-// again, and cleanup --dir on it still finds a run folder.
-function removeMarked(p) {
-  const was = lstatOr(p);
-  try {
-    // the marker last: a removal that stops part way leaves a folder cleanup still knows as a run folder
-    for (const name of listDir(p).filter((n) => n !== ".ralph-qa")) rmSync(join(p, name), { recursive: true, force: true, maxRetries: 3 });
-    rmSync(p, { recursive: true, force: true, maxRetries: 3 });
-  } catch (e) {
-    keepMarked(p, was);
-    throw e;
-  }
-}
-
-function keepMarked(p, was) {
-  try {
-    if (!lstatOr(p)?.isDirectory()) return;
-    if (!isFile(join(p, ".ralph-qa"))) writeFileSync(join(p, ".ralph-qa"), "", { flag: "wx", mode: 0o600 });
-    if (was) utimesSync(p, was.atime, was.mtime);
-  } catch {
-    /* the folder takes no marker or times either */
-  }
-}
-
-// One that cannot be removed (a held handle, a folder this account cannot empty) goes to `left` with why; the rest go on.
+// The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker (removed
+// by run-folder.mjs, the marker last). One that cannot be removed (a held handle, a folder this account cannot
+// empty) goes to `left` with why; the rest go on.
 function dayRule(base, now, left) {
   const removed = [];
   for (const name of listDir(base)) {
@@ -372,7 +289,7 @@ function dayRule(base, now, left) {
     const st = ANY_RUN.test(name) ? lstatOr(p) : null;
     if (!st?.isDirectory() || now - st.mtimeMs <= DAY_MS || !isFile(join(p, ".ralph-qa"))) continue;
     try {
-      removeMarked(p);
+      removeMarked(p, ".ralph-qa");
       removed.push(p);
     } catch (e) {
       left.push({ path: p, why: e.code || e.message });
@@ -386,7 +303,7 @@ function removeOwn(folders) {
   const stayed = [];
   for (const p of folders.filter(Boolean)) {
     try {
-      removeMarked(p);
+      removeMarked(p, ".ralph-qa");
     } catch (e) {
       stayed.push(`${p} (${e.code || e.message})`);
     }
@@ -440,7 +357,7 @@ const readIdOr = (d) => {
 };
 
 async function cleanup(o, ctx) {
-  const { d, o: out } = runFolder(o.dir, ctx);
+  const { d, o: out } = runPair(o.dir, ctx);
   const pid = o.force ? null : liveLock(d, ctx.now());
   if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid}). 끝난 뒤 다시 한다`);
   const { known } = bases(ctx);
@@ -756,7 +673,7 @@ async function sendSeat(ctx, run, seat, payload) {
   } catch (e) {
     // the runner's own error in this seat's work (its copy cannot be written: ENOSPC, EACCES, a Windows lock) is this
     // seat's failure: the other seats go on, and the lock and the stop handlers hold until they end
-    if (e instanceof Stop) throw e;
+    if (e instanceof RunStop) throw e;
     result = { ...base, status: "failed", why: "spawn", notes: [`좌석을 준비하지 못했다(${e.code || e.message})`] };
   } finally {
     const notes = await afterSeat(ctx, run, seat);
@@ -812,7 +729,7 @@ function declared(run, bytes, seats, d) {
 }
 
 function sendStart(o, ctx, a) {
-  const { d, o: out } = runFolder(o.dir, ctx);
+  const { d, o: out } = runPair(o.dir, ctx);
   if (!out) throw new Stop("not-a-run-folder", `답 폴더(ralph-qa-out.*)가 없다: ${d}`);
   refuseSent(d);
   if (ctx.env.CODEX_SANDBOX_NETWORK_DISABLED === "1" && !a.dryRun) throw new Stop("sandboxed", "Codex sandbox 가 네트워크를 막는다. 승인을 받아 sandbox 밖에서 send 를 다시 한다");
@@ -864,7 +781,7 @@ function report(ctx, command, dir, result, code, name = command) {
 // A stop in the folder it concerns, when that is a run folder.
 const folderOf = (o, ctx) => {
   try {
-    return o.dir ? runFolder(o.dir, ctx).d : null;
+    return o.dir ? runPair(o.dir, ctx).d : null;
   } catch {
     return null;
   }
@@ -873,16 +790,19 @@ const folderOf = (o, ctx) => {
 // A send that stopped goes to result-send-stop.md: result-send.md says the folder was sent, and a stopped send sent nothing.
 const stopName = (command) => (command === "send" ? "send-stop" : command);
 
+// A stop of run-folder.mjs carries no name: this runner's goes before it.
+const named = (message) => (message.startsWith("ralph-qa: ") ? message : `ralph-qa: ${message}`);
+
 function failed(ctx, { command, o }, e) {
   if (e instanceof Usage) {
     ctx.stderr.write(`ralph-qa: ${e.message}\n${USAGE}`);
     return 2;
   }
-  if (!(e instanceof Stop)) {
+  if (!(e instanceof RunStop)) {
     ctx.stderr.write(`ralph-qa: 실행기 내부 오류(${e?.code || e?.name || "error"}): ${String(e?.message || e).split("\n")[0]}\n`);
     return 2;
   }
-  const result = { ok: false, stop: e.code, message: e.message, detail: e.detail };
+  const result = { ok: false, stop: e.code, message: named(e.message), detail: e.detail };
   return report(ctx, command, folderOf(o, ctx), result, EXIT_OF[e.code] || 3, stopName(command));
 }
 

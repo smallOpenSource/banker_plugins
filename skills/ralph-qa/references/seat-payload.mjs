@@ -35,6 +35,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scan } from "./payload-scan.mjs";
+import { Stop as RunStop } from "./run-folder.mjs";
 import { which } from "./seat-spawn.mjs";
 
 export const MAX_BYTES = 524288;
@@ -44,11 +45,9 @@ const FOLD_PAST = 100;
 const WIN = process.platform === "win32";
 const OUTPUTS = ["prompt.md", "raw.md", "unsent.md", "run.md"];
 
-export class Stop extends Error {
+export class Stop extends RunStop {
   constructor(code, message, detail = []) {
-    super(`ralph-qa: ${message}`);
-    this.code = code;
-    this.detail = detail;
+    super(code, `ralph-qa: ${message}`, detail);
   }
 }
 
