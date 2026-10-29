@@ -11,6 +11,7 @@
  * - hooks.json 이 링크이거나 JSON 객체가 아니거나 "없음" 말고 다른 이유로 확인할 수 없으면 바꾸지 않는다. 바꿀 때마다
  *   직전 내용을 hooks.json.banker.bak 에 둔다. smart-compact 의 codex-gate.mjs 와 같은 규칙이다.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,8 +45,9 @@ export function codexPaths(env = process.env) {
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
+// 임시 파일은 난수 이름과 wx: 남이 미리 심은 같은 이름의 파일이나 링크를 따라가지 않는다.
 function writeAtomic(file, data) {
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
     fs.writeFileSync(tmp, data, { flag: 'wx' });
     const mode = modeOf(file);
@@ -171,6 +173,40 @@ function saveHooks(p, doc) {
   writeAtomic(p.hooks, `${JSON.stringify(doc, null, 2)}\n`);
 }
 
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// hooks.json 을 고치는 쪽(banker 와 Codex 전용 스킬 teamwork 의 엔진)이 함께 쓰는 잠금: hooks.json 옆의 폴더
+// hooks.json.lock. 10초 넘은 잠금은 죽은 쓰기로 보고 치우고, 5초 안에 못 얻으면 바꾸지 않는다(까닭을 돌려줌).
+export function withHooksLock(file, fn, onBusy) {
+  const lock = `${file}.lock`;
+  for (let i = 0; ; i++) {
+    try {
+      fs.mkdirSync(lock);
+      break;
+    } catch (e) {
+      // Codex 홈이 아직 없으면 다툴 파일도 없다. 그 밖에 잠금을 만들 수 없으면 바꾸지 않는다.
+      if (e.code === 'ENOENT') return fn();
+      if (e.code !== 'EEXIST') return onBusy(`잠금 ${lock} 을 확인하지 못함(${e.code})`);
+      if (lockStale(lock)) continue;
+      if (i > 200) return onBusy(`${file} 의 잠금(${lock})을 얻지 못함`);
+      pause(25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+}
+
+function lockStale(lock) {
+  try {
+    if (Date.now() - fs.statSync(lock).mtimeMs <= 10000) return false;
+    fs.rmdirSync(lock);
+  } catch { /* 그사이 풀림 */ }
+  return true;
+}
+
 // 사본 폴더. 링크인 폴더는 거부하고, 파일은 내용이 다를 때만 새로 쓴다.
 export function installPayload(p, pkgRoot) {
   fs.mkdirSync(p.dir, { recursive: true });
@@ -218,6 +254,10 @@ export function repoAbove(home, userHome = os.homedir()) {
 
 // ids 를 켠다. { code, changed:[id], msg, note }. code 1 이면 아무것도 바꾸지 않았다. note 는 알릴 것(Codex 홈 위의 저장소).
 export function enableHooks(p, ids, pkgRoot, node = process.execPath, cwd = process.cwd()) {
+  return withHooksLock(p.hooks, () => enableLocked(p, ids, pkgRoot, node, cwd), (msg) => ({ code: 1, changed: [], msg }));
+}
+
+function enableLocked(p, ids, pkgRoot, node, cwd) {
   if (!safeNode(node)) return { code: 1, changed: [], msg: `node 가 안전하지 않은 곳에 있음(${node})` };
   if (homeInWorkspace(p.home, cwd)) return { code: 1, changed: [], msg: `Codex 홈(${p.home})이 작업 폴더 안이라 훅을 설치하지 않음. 샌드박스가 고칠 수 있는 곳임` };
   const { doc, why } = loadHooks(p.hooks, ids.map((id) => HOOKS[id].event));
@@ -235,6 +275,10 @@ export function enableHooks(p, ids, pkgRoot, node = process.execPath, cwd = proc
 
 // ids 를 끈다: 우리 항목만 빼고, 비는 묶음과 이벤트를 지운다. 뒤 묶음의 번호가 밀리면 shifted 에 이벤트를 적는다.
 export function disableHooks(p, ids) {
+  return withHooksLock(p.hooks, () => disableLocked(p, ids), (msg) => ({ code: 1, changed: [], shifted: [], msg }));
+}
+
+function disableLocked(p, ids) {
   const { doc, why } = loadHooks(p.hooks, ids.map((id) => HOOKS[id].event));
   if (why) return { code: 1, changed: [], shifted: [], msg: why };
   const changed = [];

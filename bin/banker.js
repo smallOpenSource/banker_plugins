@@ -364,6 +364,7 @@ async function doctor() {
   const plugins = await codexPluginInstalls(base);
   log(`  Codex plugin (codex plugin add): ${plugins.length ? plugins.join(', ') : 'not installed'}`);
   await warnOldCodex(plugins);
+  doctorTeamwork(base);
   // A project-scope npm install (banker setup --codex --scope project) in this folder doubles the skills here too.
   const projectNpm = (await loadCodexRoutes()).projectNpmRoot(process.cwd());
   if (plugins.length && (installed.length || projectNpm)) log(`  ⚠ banker is installed both ways${projectNpm && !installed.length ? ` (npm in ${path.join(projectNpm, '.codex')})` : ''}: skills show twice ($banker-<name> and $banker:<name>). Keep one: banker uninstall --codex, or codex plugin remove ${plugins[0].split(' ')[0]}`);
@@ -373,6 +374,18 @@ async function doctor() {
   log(`  manifest: ${eligible(m).length} codex-eligible surfaces (${nSkills} skills) of ${m.surfaces.length}.`);
   log('Dependencies: all-in-one / ultra-chain / ultra-init / front-qa need OMC (Claude) or OMX (Codex); browser skills need playwright.');
   log('  → install via /banker:setup (Claude) or the setup-* skills; skills also guide you if a dependency is missing.');
+}
+
+// The Codex-only teamwork skill keeps its engine, hooks and approval rule in the Codex home: say whether the programs it
+// recorded still exist, and whether a rules/teamwork.rules it did not write sits where its rule goes.
+function doctorTeamwork(base) {
+  let st = null;
+  try { st = JSON.parse(fs.readFileSync(path.join(base, 'teamwork', 'state.json'), 'utf8')); } catch { return; }
+  const missing = ['node', 'codex'].filter((k) => !(st.tools && st.tools[k] && fs.existsSync(st.tools[k])));
+  log(`  teamwork: ${st.enabled ? 'on' : 'off'} (engine ${st.version || '?'})${missing.length ? ` ⚠ recorded ${missing.join(', ')} missing: its hooks stay silent until $banker-teamwork on runs again` : ''}`);
+  let rules = '';
+  try { rules = fs.readFileSync(path.join(base, 'rules', 'teamwork.rules'), 'utf8'); } catch { return; }
+  if (!rules.startsWith('# teamwork ')) log(`  ⚠ ${path.join(base, 'rules', 'teamwork.rules')} was not written by teamwork; teamwork leaves it as it is and asks for approval on every call`);
 }
 
 /* ---------- uninstall ---------- */
@@ -403,6 +416,19 @@ function uninstallCodex(dryRun, scopes) {
     }
     if (!removedAny) log(`  (nothing in ${base})`);
   }
+}
+
+// teamwork (codex-only) goes only when no other way of banker into this Codex home is left: the user-scope npm skills
+// (kept by --scope project) and the Codex plugin. Its own uninstall removes its two hooks, its rule and its state.
+async function uninstallTeamwork(dryRun) {
+  const base = codexBase('user');
+  if (!fs.existsSync(path.join(base, 'teamwork'))) return;
+  const left = [...(fs.existsSync(path.join(base, 'skills', 'banker-teamwork')) ? ['npm skills'] : []), ...(await codexPluginInstalls(base))];
+  if (left.length) { log(`  teamwork kept: banker is still in this Codex home (${left.join(', ')})`); return; }
+  if (dryRun) { log(`  [dry-run] teamwork uninstall in ${base}`); return; }
+  const r = cp.spawnSync(process.execPath, [path.join(PKG_ROOT, 'codex', 'skills', 'teamwork', 'scripts', 'teamwork.mjs'), 'uninstall'], { env: { ...process.env, CODEX_HOME: base }, encoding: 'utf8' });
+  if (r.status === 0) log('  removed teamwork (its hooks, approval rule and state)');
+  else warn(`  teamwork not removed (exit ${r.status}): ${(r.stderr || '').trim()}`);
 }
 
 /* ---------- Codex hooks ---------- */
@@ -646,7 +672,7 @@ async function main() {
     if (a.claude) uninstallClaude(a.dryRun);
     if (a.codex) {
       uninstallCodex(a.dryRun, a.scopeExplicit ? [a.scope] : ['user', 'project']);
-      if (!a.scopeExplicit || a.scope === 'user') await uninstallCodexHooks(a.dryRun);
+      if (!a.scopeExplicit || a.scope === 'user') { await uninstallCodexHooks(a.dryRun); await uninstallTeamwork(a.dryRun); }
     }
     log('done.');
     return;
