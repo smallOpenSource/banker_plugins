@@ -415,6 +415,20 @@ test("gates: a round with only reported lines, a missing file or a bad round is 
   assert.equal(readEvents(dir).events.length, 0, "nothing was recorded");
 });
 
+// S11 Q3: the view is shared in stage 9; a record naming a file outside the gate folder never brings it in.
+test("gates: an output file outside the gate folder is not read into the view, even with its sha256 right", () => {
+  const g = fresh("gates-outside");
+  const away = join(fresh("gates-outside-away"), "secret.md");
+  writeFileSync(away, "SECRET-OUTSIDE\n");
+  writeFileSync(join(g, "evidence.md"), `${JSON.stringify({ kind: "observed", id: "tests", iter: 1, cmd: "npm test", verdict: "pass", exit: 0, output: away, outputSha256: sha("SECRET-OUTSIDE\n") })}\n`);
+  const { dir } = initRun({ base: "runs", cwd: fresh("gates-outside-run"), rand: "oooo" });
+  const out = sink();
+  assert.equal(main(["gates", dir, "--file", join(g, "evidence.md"), "--round", "1"], out, sink()), 0);
+  const e = JSON.parse(out.text);
+  assert.deepEqual([e.tests[0].status, /게이트 기록 폴더 밖/.test(e.tests[0].note)], ["unverified", true]);
+  assert.doesNotMatch(readFileSync(join(dir, "qa", "local-r1.md"), "utf8"), /SECRET-OUTSIDE/);
+});
+
 test("observedOf keeps the baseline apart and gateToTest reads a timeout as a failure", () => {
   const { records, base, reported } = observedOf(readFileSync(join(evidenceFixture("observed"), "evidence.md"), "utf8"), 2);
   assert.deepEqual([records.length, base.length, reported], [4, 1, 1]);

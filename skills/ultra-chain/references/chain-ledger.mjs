@@ -17,7 +17,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const STAGES = [
@@ -384,8 +384,18 @@ export function observedOf(text, iter) {
     reported: recs.filter((r) => r.kind === "reported" && r.iter === iter).length };
 }
 
-// The recorded output file as it is now: its text when its sha256 is the recorded one, else why not.
-function outputOf(rec) {
+// The recorded output file as it is now: its text when its sha256 is the recorded one, else why not. Only a file
+// right in the gate folder (the folder of evidence.md, where gate-evidence.mjs writes them), so the shared view never
+// carries a file from elsewhere a record names.
+const inFolder = (p, dir) => {
+  try {
+    return realpathSync.native(dirname(resolve(p))) === realpathSync.native(dir);
+  } catch {
+    return false;
+  }
+};
+function outputOf(rec, gateDir) {
+  if (!inFolder(String(rec.output), gateDir)) return { why: "출력 파일이 게이트 기록 폴더 밖" };
   try {
     const buf = readFileSync(String(rec.output));
     return sha256(buf) === rec.outputSha256 ? { text: decodeText(buf) } : { why: "출력 파일 sha256 이 기록과 다름" };
@@ -421,12 +431,12 @@ function gateView(round, entries) {
 }
 
 // One tests[] entry per gate of iteration `round` from <g>/evidence.md, and the view they link to.
-export function gatesToTests(text, round, dir) {
+export function gatesToTests(text, round, dir, gateDir) {
   const { records, base, reported } = observedOf(text, round);
   if (!records.length) throw new UsageError(`반복 ${round} 의 observed 기록이 없습니다(reported ${reported}건은 받지 않음)`);
   const log = `qa/local-r${round}.md`;
   const entries = records.slice(0, 60).map((rec) => {
-    const out = outputOf(rec);
+    const out = outputOf(rec, gateDir);
     return { rec, out, test: gateToTest(rec, out, sameAsBaseline(rec, base), log) };
   });
   mkdirSync(join(dir, "qa"), { recursive: true });
@@ -546,7 +556,7 @@ const COMMANDS = {
     } catch (e) {
       throw new Error(`게이트 기록을 읽지 못했습니다(${o.file}): ${e.message}`);
     }
-    const { tests, reported, baseline } = gatesToTests(text, round, dir);
+    const { tests, reported, baseline } = gatesToTests(text, round, dir, dirname(resolve(o.file)));
     const count = (s) => tests.filter((t) => t.status === s).length;
     const summary = `로컬 게이트 ${tests.length}개: 통과 ${count("pass")}, 실패 ${count("fail")}, 미검증 ${count("unverified")}`
       + `, 기준선과 같은 실패 ${baseline}, 받지 않은 reported ${reported}건`;
