@@ -257,3 +257,11 @@ test('alphaNeeded: the panel alpha a failed line needs, from its captured worst 
   assert.deepEqual(V.judge(s, { minContrast: 4.5 }), ['contrast body line 1: 3.1 (needs --intro-panel-alpha >= 0.64)',
     'contrast title line 1: 2 (no panel alpha reaches it)', 'contrast cta line 1: 3']);
 });
+
+test('exitCode: a seam whose poster went unmeasured is not a pass (3), a failure is 1', async () => {
+  const { exitCode } = await import('./verify-intro.mjs');
+  assert.equal(exitCode({ failures: 0 }), 0);
+  assert.equal(exitCode({ failures: 0, seams: { posterUnmeasured: 0 } }), 0);
+  assert.equal(exitCode({ failures: 0, seams: { posterUnmeasured: 2 } }), 3);
+  assert.equal(exitCode({ failures: 1, seams: { posterUnmeasured: 2 } }), 1);
+});

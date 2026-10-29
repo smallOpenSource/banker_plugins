@@ -1,5 +1,7 @@
 /*
- * dive mode for 3d-intro-build (CLIP_MODE = dive). Optional, and not yet confirmed by a paid smoke.
+ * dive mode for 3d-intro-build (CLIP_MODE = dive): the default when the video runs on Sora. Measured on
+ * sora-2 (2025-12-08, one scene set): each scene shows, arc turns little, the finale lands only through
+ * landOnStill. dive on WAN is not measured.
  *
  * Every scene but the last gets a dive that starts from that scene's approved still (so each scene
  * is entered from outside, with a MOVE: push-in, arc or crane). An optional exit clip leaves the
@@ -15,14 +17,19 @@
  *                  { only: 'first' } makes scene 1's dive and exit and stops at the first pair gate
  *                  with two versions to compare: without the exit and with it
  *
- * A generated clip is kept as <name>.raw.mp4 and reused when it is there, so a run after the gate
- * (or after a stop) does not pay for a leg twice. Events go to onEvent; none carries a key.
+ * A generated clip is kept as <name>.raw.mp4 beside <name>.raw.json, the fingerprint of what made it
+ * (prompt, seed frame, seconds, size, MOVE, provider order). A run after the gate (or after a stop) reuses
+ * it only when that fingerprint is the same, so it does not pay for a leg twice; a changed leg (a new MOVE,
+ * length or seed) is made again ('stale' event). A raw clip with no record stops with kind 'reuse_unknown'.
+ * The clip is written to a temporary name and renamed, so a cut-off write leaves no raw clip.
+ * Events go to onEvent; none carries a key.
  * Runtime: Node >=18 builtins and ffmpeg.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { extractFirstFrame, extractLastFrame, probeDims, resolveFfmpeg } from './azure-adapter.mjs';
-import { generateClip } from './video-pool.mjs';
+import { generateClip, parseProviderOrder } from './video-pool.mjs';
 import { borderColour, cameraMotion, postClip, resizePng, seamSsim, solidPlate } from './clip-post.mjs';
 
 export const DIVE_DEFAULTS = { diveSeconds: 8, exitSeconds: 4, finaleSeconds: 8, border: 0.04, bgShare: 0.85, bgTolerance: 12, landSec: 0.6, finaleLandSec: 0.4 };
@@ -129,17 +136,51 @@ async function seamPlan(ctx, i, png, what) {
 async function makeLeg(ctx, leg) {
   const raw = path.join(ctx.dir, `${leg.name}.raw.mp4`);
   ctx.raw[leg.name] = raw;
-  if (!(ctx.o.reuse && fs.existsSync(raw))) {
-    const section = ctx.o.manifest.sections[leg.scene];
-    const seed = await seedFor(ctx, leg);
-    const r = await ctx.o.generate({ creds: ctx.o.creds, prompt: ctx.o.promptFor(leg, section), size: ctx.o.size, seconds: leg.seconds, firstFramePng: fs.readFileSync(seed), onEvent: ctx.emit, ...ctx.o.clipOptions });
-    fs.writeFileSync(raw, r.mp4);
+  const prompt = ctx.o.promptFor(leg, ctx.o.manifest.sections[leg.scene]);
+  const seed = fs.readFileSync(await seedFor(ctx, leg));
+  const fp = legPrint(ctx, leg, prompt, seed);
+  if (ctx.o.reuse && reusable(ctx, leg, raw, fp)) ctx.emit({ type: 'leg', name: leg.name, kind: leg.kind, reused: true });
+  else {
+    const r = await ctx.o.generate({ creds: ctx.o.creds, prompt, size: ctx.o.size, seconds: leg.seconds, firstFramePng: seed, onEvent: ctx.emit, ...ctx.o.clipOptions });
+    writeAtomic(raw, r.mp4);
+    writeAtomic(`${raw.slice(0, -4)}.json`, `${JSON.stringify(fp, null, 2)}\n`);
     ctx.emit({ type: 'leg', name: leg.name, kind: leg.kind, move: leg.move, provider: r.provider, label: r.label, seconds: r.seconds });
-  } else {
-    ctx.emit({ type: 'leg', name: leg.name, kind: leg.kind, reused: true });
-    if (leg.kind === 'exit') await seedFor(ctx, leg);
   }
   if (leg.kind === 'dive') await keepShown(ctx, leg);
+}
+
+const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+
+// What makes a leg's clip: no key, the prompt and the seed as hashes.
+function legPrint(ctx, leg, prompt, seed) {
+  const order = ctx.o.clipOptions?.order || parseProviderOrder(ctx.o.creds?.VIDEO_PROVIDER_ORDER);
+  return { prompt: sha(String(prompt)), seed: sha(seed), seconds: leg.seconds, size: ctx.o.size, move: leg.move || null, order };
+}
+
+// A raw clip is reused only when its record matches; a changed leg is made again, an unrecorded clip stops.
+function reusable(ctx, leg, raw, fp) {
+  if (!fs.existsSync(raw)) return false;
+  const rec = `${raw.slice(0, -4)}.json`;
+  if (!fs.existsSync(rec)) {
+    throw Object.assign(new Error(`runDiveLegs: ${path.basename(raw)} has no record (${path.basename(rec)}) of what made it, so it is not known to fit this leg; delete it to make the leg again, or pass reuse: false`), { kind: 'reuse_unknown', leg: leg.name });
+  }
+  let was = null;
+  try { was = JSON.parse(fs.readFileSync(rec, 'utf8')); } catch { /* unreadable: made again */ }
+  const changed = Object.keys(fp).filter((k) => JSON.stringify(was?.[k]) !== JSON.stringify(fp[k]));
+  if (changed.length) ctx.emit({ type: 'stale', name: leg.name, changed, message: `${leg.name}: ${changed.join(', ')} changed since the clip was made; making it again` });
+  return !changed.length;
+}
+
+// Write to a fresh temporary name, then rename: a write cut off leaves no file under the final name.
+function writeAtomic(file, data) {
+  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(tmp, data, { flag: 'wx' });
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 // A dive or the finale starts from its still; an exit from its dive's last frame, taken from what

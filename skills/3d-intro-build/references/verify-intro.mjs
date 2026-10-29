@@ -23,7 +23,9 @@
  *     --viewports  a trailing t marks a touch screen, r reduced motion (default: the six below)
  *     --header     the site's fixed header (default: the engine's .sw-topbar)
  *     --playwright-from-project  also look in the current folder's node_modules, before the global npm root (your own project only)
- *   Exit 0 when nothing failed, 1 otherwise; the report (JSON) goes to --out or stdout.
+ *   Exit 0 when nothing failed and everything was measured, 1 when something failed, 3 when nothing failed
+ *   but --seams could not measure a poster at some seam (posterUnmeasured: no pass); the report (JSON)
+ *   goes to --out or stdout.
  *
  * Needs Playwright with Chromium (setup-playwright skill: npx playwright install chromium), found
  * beside this script or in the global npm root, and in the project only when asked.
@@ -752,6 +754,9 @@ async function arrive(page, vh, o) {
   return { diff, flicker: diff > o.flickerDiff, states: { before, after: await sceneStates(page) } };
 }
 
+/** The CLI's exit code: 1 on a failure, 3 when none failed but a seam's poster went unmeasured, else 0. */
+export const exitCode = (report) => (report.failures ? 1 : report.seams?.posterUnmeasured ? 3 : 0);
+
 // '390x844t' is a touch screen, '1280x800r' reduced motion; the flags may combine ('390x844tr').
 export function parseViewport(v) {
   const m = /^(\d+)x(\d+)([tr]*)$/.exec(v.trim());
@@ -798,7 +803,8 @@ if (invokedDirectly()) {
     const text = JSON.stringify(r, null, 2);
     if (o.out) fs.writeFileSync(o.out, text + '\n');
     else console.log(text);
-    console.error(`verify-intro: ${r.failures} failure(s) across ${r.viewports.length} screen size(s)`);
-    process.exit(r.failures ? 1 : 0);
+    const unmeasured = r.seams?.posterUnmeasured || 0;
+    console.error(`verify-intro: ${r.failures} failure(s) across ${r.viewports.length} screen size(s)${unmeasured ? `; poster not measured at ${unmeasured} seam(s) (add --slow-clips and --seam-reload)` : ''}`);
+    process.exit(exitCode(r));
   }).catch((e) => { console.error(String(e?.message || e)); process.exit(1); });
 }

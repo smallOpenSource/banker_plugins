@@ -151,3 +151,27 @@ test('runDiveLegs: with zoomBoost the exit seed is the zoomed dive\'s last frame
   const ref = await extractLastFrame(path.join(dir, 'clips', 'dive-1.zoom.mp4'), path.join(dir, 'zref.png'), { ffmpeg: FF });
   assert.ok(fs.readFileSync(path.join(dir, 'clips', 'seed-exit-1.png')).equals(fs.readFileSync(ref)));
 });
+
+test('runDiveLegs: a raw clip is reused only for the same leg; a changed MOVE or length is made again, an unrecorded clip stops', { skip: needFf, timeout: 180_000 }, async (t) => {
+  const { dir, manifest } = project(t);
+  const calls = [];
+  const events = [];
+  const run = (o = {}) => D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, only: 'first', generate: fakeGenerate(dir, calls), ffmpeg: FF, onEvent: (e) => events.push(e), ...o });
+  await run();
+  assert.equal(calls.length, 2);
+  const rec = JSON.parse(fs.readFileSync(path.join(dir, 'clips', 'dive-1.raw.json'), 'utf8'));
+  assert.deepEqual(Object.keys(rec), ['prompt', 'seed', 'seconds', 'size', 'move', 'order']);
+  assert.ok(!JSON.stringify(rec).includes(FAKE_KEY) && !fs.readdirSync(path.join(dir, 'clips')).some((f) => f.endsWith('.tmp')), 'no key in the record, no temporary file left');
+  await run();
+  assert.equal(calls.length, 2, 'the same legs: nothing is paid again');
+  manifest.sections[0].move = 'arc';
+  await run();
+  assert.deepEqual(calls.slice(2).map((c) => c.prompt), ['dive arc'], 'a new MOVE makes the dive again; the exit, from the same last frame here, is kept');
+  assert.ok(events.some((e) => e.type === 'stale' && e.name === 'dive-1' && e.changed.includes('move') && e.changed.includes('prompt')));
+  await run({ diveSeconds: 12 });
+  assert.equal(calls.at(-1).seconds, 12, 'a new length makes the dive again');
+  fs.rmSync(path.join(dir, 'clips', 'exit-1.raw.json'));
+  const n = calls.length;
+  await assert.rejects(() => run({ diveSeconds: 12 }), (e) => e.kind === 'reuse_unknown' && e.leg === 'exit-1');
+  assert.equal(calls.length, n, 'an unrecorded clip stops before any paid call');
+});
