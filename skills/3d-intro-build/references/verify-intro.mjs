@@ -744,6 +744,10 @@ async function probeSeam(page, segs, k, o) {
 // compare it with the clip once it paints. A poster that is the clip's own first frame barely differs.
 async function arrive(page, vh, o) {
   await scrollToVh(page, vh);
+  // a scene shown by the jump paints nothing until its poster is decoded (0.1-0.35 s seen): wait for that, so the
+  // capture is the poster, not the empty frame a jump shows (the empty frame is another matter than the flicker)
+  await page.evaluate(() => Promise.all([...document.querySelectorAll('.sw-scene')].filter((e) => Number(getComputedStyle(e).opacity) > 0.5)
+    .map((e) => e.querySelector('.sw-scene__still')?.decode().catch(() => {}))).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
   const before = await sceneStates(page);
   if (!(await posterShown(page))) { await settleClips(page, o.settleMs); return { diff: null, flicker: false, states: { before } }; }
   const early = await capture(page);
