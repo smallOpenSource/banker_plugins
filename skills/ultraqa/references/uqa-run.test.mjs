@@ -57,6 +57,36 @@ test("matrix: a pass row citing a failed scenario, a goal gate's record, a recor
   assert.equal(statusOf({ evidence: ev, rows: fullMatrix(), gates: ["tests"], fingerprint: FP }).complete, true);
 });
 
+// S11 R1, R2: the ground of a row is its scenario's last record of the cycle, and one record grounds one row only.
+test("matrix: a pass a rerun of the same scenario has since failed, and one record cited by several rows, are bad", () => {
+  const ev = [obs("tests", 1, "pass", 1), ...scenarios(1), obs("scenario-1", 1, "fail", 20)];
+  let st = statusOf({ evidence: ev, rows: fullMatrix(), gates: ["tests"], fingerprint: FP });
+  assert.deepEqual([st.complete, st.checks.matrix.bad], [false, ["ADV-1"]], "the earlier pass of scenario-1 is no ground after its rerun failed");
+  ev.push(obs("scenario-1", 1, "pass", 21));
+  const rows = fullMatrix();
+  rows[0].evidenceRef = 21;
+  assert.equal(statusOf({ evidence: ev, rows, gates: ["tests"], fingerprint: FP }).complete, true, "the rerun's own pass is");
+  const one = fullMatrix().map((r) => ({ ...r, evidenceRef: 11 }));
+  st = statusOf({ evidence: [obs("tests", 1, "pass", 1), ...scenarios(1)], rows: one, gates: ["tests"], fingerprint: FP });
+  assert.deepEqual([st.complete, st.checks.matrix.bad.length], [false, 9], "one scenario run never covers nine classes");
+  const two = fullMatrix();
+  two[1].evidenceRef = 10;
+  assert.deepEqual(matrixCheck(two, scenarios(1), 1).bad, ["ADV-1", "ADV-2"]);
+  const excluded = fullMatrix();
+  excluded[1] = { id: "ADV-2", class: excluded[1].class, status: "excluded", excludeReason: "해당 없음", evidenceRef: 10 };
+  assert.equal(matrixCheck(excluded, scenarios(1), 1).ok, true, "an excluded row cites nothing that counts");
+});
+
+// S11 R3: a folder with no git cannot give gate evidence: init stops at once with a named stop.
+test("init on a folder with no git stops with not-a-git-tree and makes no run folder", { skip: !HAS_GIT && "no git" }, (t) => {
+  const w = world(t);
+  const plain = join(w.dir, "plain");
+  mkdirSync(plain);
+  const r = call(w, RUN, ["init", "--repo", plain, "--gates", "tests"]);
+  assert.deepEqual([r.code, r.json.stop], [3, "not-a-git-tree"]);
+  assert.equal(call(w, RUN, ["init", "--repo", plain, "--gates", "tests", "--resume"]).json.stop, "not-a-git-tree");
+});
+
 // S11 M2: --interactive is the drive scripts' scenario-* records, not a record with the id `interactive`.
 test("the interactive goal is the scenario records of the drives: all passing gives COMPLETE, none recorded is unrun", () => {
   const ev = scenarios(1);

@@ -52,7 +52,9 @@ argument-hint: "--tests | --build | --lint | --typecheck | --custom \"<명령이
 - 실행 폴더의 `matrix.md` 에 행마다 JSON 한 줄. `uqa-run.mjs row --dir '<d>'` 에 표준 입력으로 넘겨 쓴다(같은 id 는 바꿈).
 - 필드: `id`, `class`, `intent`, `model`(사용자나 공격자 모델), `setup`, `command`, `expected`, `status`, `evidenceRef`, `excludeReason`, `cleanup`
 - `status` 는 `pass`, `fail`, `blocked`, `excluded` 가운데 하나다. `excluded` 는 `excludeReason` 을 둔다.
-- `pass` 는 `evidenceRef` 에 이번 순환에 그 행을 돌린 `scenario-<번호>` 기록 가운데 `pass` 인 것의 번호(`seq`)를 둔다. 목표 게이트의 기록, 실패한 기록, 지난 순환의 기록은 근거가 아니다(`status` 의 `matrix` 가 `bad` 로 셈).
+- `pass` 는 `evidenceRef` 에 이번 순환에 그 행을 돌린 `scenario-<번호>` 기록 가운데 `pass` 인 것의 번호(`seq`)를 둔다. 그 기록은 그 시나리오의 이번 순환 마지막 기록이어야 한다(다시 돌려 실패했으면 앞선 통과는 근거가 아님).
+- 행마다 자기 시나리오를 돌린다. 한 기록을 두 행 이상이 근거로 들 수 없다(시나리오 하나로 여러 분류를 덮지 않음).
+- 목표 게이트의 기록, 실패한 기록, 지난 순환의 기록, 다른 행과 함께 든 기록은 근거가 아니다(`status` 의 `matrix` 가 `bad` 로 셈).
 - `class` 는 아래 9분류의 id, 또는 정상 경로 행의 `normal` 이다. 9분류마다 행이 하나 이상 있거나 까닭 있는 `excluded` 가 있어야 한다.
 
 | id | 분류 | 예 |
@@ -85,6 +87,7 @@ argument-hint: "--tests | --build | --lint | --typecheck | --custom \"<명령이
 
 1. 목표 파싱: 목표 게이트, 성공 기준, 안전 경계, 종료 조건을 한 번 말한다.
 2. 실행 폴더: `node '<R>/uqa-run.mjs' init --repo '<저장소>' --gates <목표 게이트>`. 출력의 `dir` 이 `<d>` 다.
+   - `not-a-git-tree` 로 멈추면(종료 3, 실행 폴더 없음) 순환을 시작하지 않고 `ULTRAQA BLOCKED: git 저장소가 아님` 으로 바로 끝낸다. 작업 트리 지문이 변경을 보지 못해 증거가 설 수 없다. 스스로 `git init` 하지 않고, 사용자에게 `git init` 과 첫 커밋 뒤 다시 부르라고 알린다.
 3. 순환 N(1 부터, 최대 5). 매 순환 같은 순서:
    1. 적대 QA 계획: 실행 가능한 면, 시험 명령, 상태 파일, 정리 경로를 보고 행렬을 갱신한다.
    2. 기준 명령: 목표 게이트를 `gate-evidence.mjs run --iter <N>` 으로 돌린다. 게이트 하나에 명령 하나만 준다.
@@ -117,7 +120,7 @@ node '<R>/uqa-run.mjs' cleanup --dir '<d>'
 |---|---|
 | `sameFailure` | 같은 실패 서명이 서로 다른 순환 3번 |
 | `maxCycles` | 기록이 5번째 순환을 넘음 |
-| `matrix` | 9분류 가운데 행도 까닭 있는 제외도 없는 분류, 이번 순환에 통과한 시나리오 기록을 근거로 들지 않은 `pass`, 남은 `fail`, `blocked` |
+| `matrix` | 9분류 가운데 행도 까닭 있는 제외도 없는 분류, 그 시나리오의 이번 순환 마지막 통과 기록을 근거로 들지 않은 `pass`, 다른 `pass` 행과 같은 기록을 든 `pass`, 남은 `fail`, `blocked` |
 | `staleEvidence` | 목표 게이트의 마지막 기록이나 행이 근거로 든 기록의 작업 트리 지문이 지금과 다름, 돌리지 않은 목표 게이트 |
 | `gates` | 이번 순환 목표 게이트의 연언항 거짓(실패, 시간 초과, 흔들림, 기록 없음, git 없는 폴더의 기록 `unverifiable`). `interactive` 는 몰기 시나리오 기록 모두 |
 

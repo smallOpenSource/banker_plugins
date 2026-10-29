@@ -186,7 +186,7 @@ test("a folder that is no run folder is a stop; a bad argument is a usage error 
 // H1: one gate folder for the whole run, made by init before the baseline, kept across the iterations, removed once.
 test("init makes the gate folder once; its records span the iterations, so a lucky pass after a failure stays flaky; cleanup removes it alone", { skip: !HAS_GIT && "no git" }, (t) => {
   const w = world(t);
-  const made = cli(w, ["init"]);
+  const made = cli(w, ["init", "--cwd", w.repo]);
   assert.equal(made.code, 0, made.stderr);
   const g = made.json.dir;
   assert.match(g, /[\\/]ralph-qa-gates\.[A-Za-z0-9]+$/);
@@ -244,13 +244,17 @@ test("an output too large to read whole is hashed in pieces and its verdict, rea
   assert.equal(cli(w, ["verify", "--dir", w.d]).code, 0, "verify hashes it in pieces too");
 });
 
-// Security 6: a tree with no git gives one fingerprint whatever changes, so its record never holds the conjunct.
-test("a gate run on a folder with no git is unverifiable in the conjunct", (t) => {
+// Security 6, S11 R3: a tree with no git gives one fingerprint whatever changes, so no record of it could hold the
+// conjunct; init and run stop at the start with a named stop instead of spending the iterations.
+test("init and run on a folder with no git stop with not-a-git-tree before anything runs or is made", (t) => {
   const w = world(t);
   const plain = join(w.dir, "plain");
   mkdirSync(plain);
-  const rec = cli(w, ["run", "--dir", w.d, "--id", "tests", "--cmd", nodeCmd("-e", "0"), "--timeout", "30", "--iter", "1", "--cwd", plain]).json;
-  assert.deepEqual([rec.git, rec.verdict], [false, "pass"]);
-  const r = cli(w, ["gate", "--dir", w.d, "--gates", "tests", "--iter", "1", "--cwd", plain]);
-  assert.deepEqual([r.code, r.json.gates[0].state], [1, "unverifiable"]);
+  const marker = join(w.dir, "ran.md");
+  let r = cli(w, ["run", "--dir", w.d, "--id", "tests", "--cmd", nodeCmd("-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, '')`), "--timeout", "30", "--iter", "1", "--cwd", plain]);
+  assert.deepEqual([r.code, r.json.stop, /git init/.test(r.json.message)], [3, "not-a-git-tree", true]);
+  assert.deepEqual([existsSync(marker), existsSync(join(w.d, "evidence.md"))], [false, false], "nothing ran, nothing recorded");
+  const before = readdirSync(w.base).length;
+  r = cli(w, ["init", "--cwd", plain]);
+  assert.deepEqual([r.code, r.json.stop, readdirSync(w.base).length], [3, "not-a-git-tree", before], "no gate folder made");
 });

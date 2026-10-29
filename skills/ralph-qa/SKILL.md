@@ -361,12 +361,13 @@ INCONCLUSIVE 소비 규칙 — 통과가 아니다
 `<R>` 은 이 스킬의 `references` 다. `<g>` 는 게이트 기록 폴더다.
 
 **게이트 기록 폴더의 수명.** 기준선, 흔들림, 같은 실패 3회는 모두 한 폴더의 `evidence.md` 에 쌓인 반복 0 부터 지금까지의 기록을 읽는다. 그래서 `<g>` 는 외부 좌석 전송의 페이로드 폴더 `<d>`(반복마다 새로 만들고 판정마다 지움)와 따로 둔다.
-- 만들기: 기준선 전에 한 번 `node '<R>/gate-evidence.mjs' init` 을 부른다. 출력의 `dir`(`ralph-qa-gates.<영숫자>`, 페이로드 폴더와 같은 비공개 기준 폴더 아래)이 `<g>` 다.
+- 만들기: 기준선 전에 한 번 `node '<R>/gate-evidence.mjs' init --cwd '<저장소>'` 를 부른다. 출력의 `dir`(`ralph-qa-gates.<영숫자>`, 페이로드 폴더와 같은 비공개 기준 폴더 아래)이 `<g>` 다.
 - 유지: 반복 사이에 지우지 않고 다시 만들지 않는다. seat-run 의 `cleanup` 과 하루 규칙은 이 폴더를 지우지 않는다(이름과 표지 `.ralph-qa-gates` 가 다름). 기준선 뒤 하루가 넘어 이어 해도 기준선이 남는다.
 - 정리: 종결어(`APPROVE`, `ITERATE`, `INCONCLUSIVE`)를 낸 뒤에만 한 번 `node '<R>/gate-evidence.mjs' cleanup --dir '<g>'` 를 부른다.
 - 호출자가 준 `<g>`: all-in-one, ultra-init, ultra-chain 처럼 호출자가 반복 0 을 이미 돌린 `<g>` 를 넘기면 그 폴더를 쓴다. 반복 0 을 다시 돌리지 않고 지우지도 않는다(호출자가 끝난 뒤 지운다).
 - 이 판보다 먼저 `seat-run.mjs init` 으로 만든 `ralph-qa.<영숫자>` 게이트 폴더도 실행기가 그대로 읽는다. 그 폴더는 `seat-run.mjs cleanup --dir` 로 지운다(답 폴더가 함께 있다).
 - 끊긴 실행의 `<g>` 는 저절로 지워지지 않는다. 이어 할 수 없으면 보고에 경로를 적는다.
+- git 저장소가 아니면: `init` 과 `run` 이 `not-a-git-tree` 로 멈춘다(종료 3, 폴더를 만들거나 명령을 돌리지 않음). 작업 트리 지문이 변경을 보지 못해 어떤 기록도 연언항을 참으로 만들 수 없기 때문이다. 순환을 쓰지 않고 그 자리에서 `--gates` 없이 돌며, 보고와 모든 좌석 지시에 `게이트: 선언 없음(git 저장소 아님)` 을 둔다. 스스로 `git init` 하지 않고, 사용자에게 `git init` 과 첫 커밋을 하면 게이트를 쓸 수 있다고 알린다. Claude Code 와 Codex(npm 길, 플러그인 길)가 같다.
 
 1. 기준선: 고치기 전에 게이트마다 한 번 `run --iter 0` 을 돌린다. 기준선에서 실패한 게이트는 실패 서명이 같고 명령이 같으면 이 변경의 실패가 아닌 것으로 분리된다. 그런 실패는 같은 실패 3회에도 세지 않는다. 서명은 명령을 돌린 폴더를 `<repo>` 로 바꿔 계산해, 작업 트리에 변경이 있어 깨끗한 사본(`git worktree`)에서 잡은 기준선도 저장소의 같은 실패와 같은 서명이 된다.
 2. 반복 k 마다 게이트마다 `run --iter <k>` 를 돌리고, 좌석에 보내기 직전 `gate --iter <k>` 로 연언항을 계산한다. 게이트 하나에 명령 하나만 준다(`&&` 나 `;` 로 묶지 않는다). 모든 명령에 `--timeout` 을 준다.
@@ -375,7 +376,7 @@ INCONCLUSIVE 소비 규칙 — 통과가 아니다
 5. 하네스(임시 시험, 스크립트, 자료)는 `<g>` 안에만 만들고(반복마다 다시 돌리므로 반복마다 지워지는 `<d>` 에 두지 않는다), 저장소 루트를 절대 경로로 가리킨다. 본문에 백틱이나 `${...}` 가 든 파일은 셸 치환 없는 방법(파일 쓰기 도구, 따옴표 친 here-document)으로 쓴다. 반복마다 `fingerprint --cwd '<저장소>'` 로 작업 트리를 찍어, 좌석이 기준선보다 늘어난 추적하지 않는 파일(하네스 잔해)이 0 인지 확인한다. 하네스 준비 실패는 제품 결함으로 세지 않고 잔해로 따로 센다.
 
 ```bash
-node '<R>/gate-evidence.mjs' init
+node '<R>/gate-evidence.mjs' init --cwd '<저장소>'
 node '<R>/gate-evidence.mjs' run --dir '<g>' --id tests --cmd 'npm test' --timeout 600 --iter 0 --cwd '<저장소>'
 node '<R>/gate-evidence.mjs' gate --dir '<g>' --gates tests,lint --iter <k> --cwd '<저장소>'
 node '<R>/gate-evidence.mjs' verify --dir '<g>'
@@ -390,7 +391,7 @@ node '<R>/gate-evidence.mjs' cleanup --dir '<g>'
 |---|---|
 | 선언한 게이트마다 이번 반복의 `observed` 기록 | 없으면 `missing` |
 | 기록의 작업 트리 지문 = 판정 시점 지문 | 다르면 `stale`. 지문은 HEAD, `git status --porcelain=v1 -z`, `git diff HEAD --binary`, 추적하지 않는 파일의 내용 해시 |
-| git 저장소에서 돈 기록 | git 이 없는 폴더의 기록(`git: false`)은 `unverifiable`. 지문이 변경을 보지 못한다. git 저장소에서 돌리거나 `--gates` 없이 돈다 |
+| git 저장소에서 돈 기록 | `init`, `run` 이 git 이 없는 폴더를 `not-a-git-tree` 로 막는다(수명 절). 이 판보다 먼저 남은 그런 기록(`git: false`)은 `unverifiable` |
 | `pass`, 또는 기준선과 같은 실패 | 기준선 분리는 `baseline` |
 | 흔들림 | 실패 뒤 통과는 같은 지문에서 2회 더 `pass` 해야 함(`flaky`) |
 | `reported` | 판정에 쓰지 않음 |

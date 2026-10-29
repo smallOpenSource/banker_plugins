@@ -158,7 +158,7 @@ Make the gate folder and run each `--qa` goal's command once on the unchanged
 tree, through ralph-qa's runner, as iteration 0:
 
 ```bash
-node '<RQ>/gate-evidence.mjs' init   # its "dir" is the gate folder <g>
+node '<RQ>/gate-evidence.mjs' init --cwd '<repo>'   # its "dir" is the gate folder <g>
 node '<RQ>/gate-evidence.mjs' run --dir '<g>' --id tests --cmd '<the tests command>' --timeout 600 --iter 0 --cwd '<repo>'
 ```
 
@@ -181,6 +181,14 @@ run it outside the sandbox. The record lives in `<g>`; if the session may
 compact or end before Stage 3, put the `<g>` path in the `ready-compact` note.
 The gate folder lives until Stage 3 has its end word: no cleanup's day rule
 takes it (ralph-qa's gate folder rule).
+
+**Not a git repo.** If `init` (or `run`) stops with `not-a-git-tree` (exit 3,
+nothing made or run), the gates cannot have evidence: the work tree fingerprint
+sees no change. Take no baseline, and in Stage 3 hand ralph-qa no `--gates`; it
+then writes `게이트: 선언 없음(git 저장소 아님)` in its report and seat
+instructions. Never run `git init` yourself: tell the user that `git init` and a
+first commit make the gates work next time. The same on both runtimes (Claude
+Code, and Codex on the npm and the plugin route).
 
 ### Stage 2 — Implement: `/ralph`
 

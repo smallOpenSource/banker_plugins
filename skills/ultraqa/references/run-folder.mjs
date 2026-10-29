@@ -12,6 +12,7 @@
  *   removeMarked(p, marker)           the folder's contents, then its marker, then the folder
  *   removeRunFolder(dir, ctx, kinds)  one run folder, checked as runFolder checks it; nothing outside it
  *   snapshot(repo, env)               (async) HEAD, the status, the untracked files' content hashes, one fingerprint
+ *   requireGitTree(repo, env)         the work tree's root, or the stop not-a-git-tree (its fingerprint sees no change)
  *   spawnFiles(exe, args, opts)       spawnSync with files, not pipes, for the child's input and output
  *   hashFile(createHash, p)           a file's sha256 read in pieces (a file past 2 GiB is no Buffer)
  *
@@ -250,6 +251,14 @@ function untrackedOf(raw) {
     else if (/^[RC]/.test(e)) i += 1;
   }
   return out.sort();
+}
+
+// A gate's evidence needs a git work tree: in a folder without one the fingerprint sees no change, so no record of
+// it could ever hold (the conjunct's `unverifiable`). Stopped before anything runs, with what to do.
+export function requireGitTree(repo, env = process.env) {
+  const top = git(resolve(repo), env, ["rev-parse", "--show-toplevel"]);
+  if (top.ok) return String(top.out).trim();
+  throw new Stop("not-a-git-tree", `git 저장소가 아니다: ${resolve(repo)}. 작업 트리 지문이 변경을 보지 못해 게이트 증거를 만들 수 없다. 사용자가 git init 과 첫 커밋을 하거나, 게이트 없이 돈다`, [resolve(repo)]);
 }
 
 // An untracked entry's content hash: a link's target, a file's bytes (in pieces), or what it is when it is neither.

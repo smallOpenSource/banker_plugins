@@ -20,7 +20,7 @@ import { readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLASSES, gateConjunct, readEvidence, repeatedFailures } from "./gate-evidence.mjs";
-import { Stop, bases, makeRunFolder, removeRunFolder, runFolder, snapshot } from "./run-folder.mjs";
+import { Stop, bases, makeRunFolder, removeRunFolder, requireGitTree, runFolder, snapshot } from "./run-folder.mjs";
 
 const KIND = ["ultraqa"];
 export const MAX_CYCLES = 5;
@@ -68,19 +68,30 @@ const gatesOf = (v) => String(v || "").split(",").map((g) => g.trim()).filter(Bo
 
 // ---- the checks (pure)
 
-// A passed row rests on a scenario record of this cycle that passed: observed, its id scenario-*, verdict pass. A goal
-// gate's record, a failed one or one of an earlier cycle is no ground for it (staleCheck adds the tree).
+// A passed row rests on a scenario record of this cycle that passed and is that scenario's last record of the cycle:
+// observed, its id scenario-*, verdict pass. A goal gate's record, a failed one, one of an earlier cycle or a pass a
+// rerun of the same scenario has since failed is no ground for it (staleCheck adds the tree).
 function restsOn(r, observed, cycle) {
   const rec = Number.isInteger(r.evidenceRef) ? observed.find((x) => x.seq === r.evidenceRef) : null;
-  return Boolean(rec) && String(rec.id).startsWith("scenario-") && rec.verdict === "pass" && rec.iter === cycle;
+  if (!rec || !String(rec.id).startsWith("scenario-") || rec.verdict !== "pass" || rec.iter !== cycle) return false;
+  return observed.filter((x) => x.id === rec.id && x.iter === cycle).pop() === rec;
 }
 
+// The record numbers two or more passed rows cite: one scenario run covers one row, never several classes at once.
+const sharedRefs = (rows) => {
+  const seen = new Map();
+  for (const r of rows.filter((x) => x.status === "pass")) seen.set(r.evidenceRef, (seen.get(r.evidenceRef) || 0) + 1);
+  return new Set([...seen].filter(([, n]) => n > 1).map(([ref]) => ref));
+};
+
 // The matrix: every class has a row or is excluded with a reason; a row's status is one of four; a passed row names
-// the passing scenario record of this cycle it rests on; a failed or blocked row is still open.
+// the passing scenario record of this cycle it rests on, a record no other passed row cites; a failed or blocked row
+// is still open.
 export function matrixCheck(rows, evidence = [], cycle = 0) {
   const observed = evidence.filter((r) => r?.kind === "observed");
   const missing = CLASSES.map(([id]) => id).filter((c) => !rows.some((r) => r.class === c && (r.status !== "excluded" || String(r.excludeReason || "").trim())));
-  const bad = rows.filter((r) => !STATUSES.includes(r.status) || (r.status === "pass" && !restsOn(r, observed, cycle))).map((r) => r.id);
+  const shared = sharedRefs(rows);
+  const bad = rows.filter((r) => !STATUSES.includes(r.status) || (r.status === "pass" && (shared.has(r.evidenceRef) || !restsOn(r, observed, cycle)))).map((r) => r.id);
   const open = rows.filter((r) => r.status === "fail" || r.status === "blocked").map((r) => r.id);
   return { ok: rows.length > 0 && !missing.length && !bad.length && !open.length, missing, bad, open };
 }
@@ -150,6 +161,7 @@ async function init(o, ctx) {
   const repo = realRepo(o.repo);
   const gates = gatesOf(o.gates);
   if (!gates.length) throw new Usage("--gates 에 목표 게이트를 하나 이상 준다(tests, build, lint, typecheck, custom, interactive)");
+  requireGitTree(repo, ctx.env);
   if (o.resume) return resume(repo, ctx);
   const snap = await snapshot(repo, ctx.env);
   const { dir } = makeRunFolder(ctx, "ultraqa");

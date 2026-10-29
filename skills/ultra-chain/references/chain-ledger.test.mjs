@@ -458,6 +458,7 @@ test("gates reads what ralph-qa's real gate-evidence.mjs writes: an observed pas
   const q = (s) => (process.platform === "win32" ? `'${s.replaceAll("'", "''")}'` : `'${s.replaceAll("'", "'\\''")}'`);
   const cmd = `${process.platform === "win32" ? "& " : ""}${[process.execPath, "-e", "console.log('ok 1 - real')"].map(q).join(" ")}`;
   const run = (args) => spawnSync(process.execPath, [tool, ...args], { encoding: "utf8", env, timeout: 120000 });
+  spawnSync("git", ["-C", root, "init", "-q"], { env });
   const r = run(["run", "--dir", g, "--id", "tests", "--cmd", cmd, "--timeout", "60", "--iter", "1", "--cwd", root]);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(run(["note", "--dir", g, "--id", "tests", "--iter", "1", "--exit", "0", "--text", "model says pass"]).status, 0);

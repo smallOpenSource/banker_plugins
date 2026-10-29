@@ -851,11 +851,17 @@ try {
       && /종결어\(`APPROVE`, `ITERATE`, `INCONCLUSIVE`\)를 낸 뒤에만 한 번 `node '<R>\/gate-evidence\.mjs' cleanup --dir '<g>'`/.test(rqSkill)
       && /호출자가 반복 0 을 이미 돌린 `<g>` 를 넘기면 그 폴더를 쓴다/.test(rqSkill) && !/gate-evidence\.mjs' (?:run|gate|verify|note) --dir '<d>'/.test(rqSkill)
       && /const GATES_KIND = "ralph-qa-gates"/.test(gateSrc) ? [] : ['ralph-qa']);
+  // S11 R3: a folder with no git is a named stop (not-a-git-tree) at the start, never a spent loop, in all five docs.
+  const noGitBad = ['ralph-qa', 'ultraqa', 'all-in-one', 'ultra-init', 'ultra-chain'].filter((n) => !/`not-a-git-tree`/.test(fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')))
+    .concat(/export function requireGitTree/.test(rfSrc) && /requireGitTree\(cwd, ctx\.env\)/.test(gateSrc) && /`ULTRAQA BLOCKED: git 저장소가 아님`/.test(uqaSkill)
+      && /`게이트: 선언 없음\(git 저장소 아님\)`/.test(rqSkill) ? [] : ['runner or end lines']);
+  ok(noGitBad.length === 0, `no-git: gate-evidence init and run and uqa-run init stop with not-a-git-tree at the start, and ralph-qa, ultraqa, all-in-one, ultra-init and ultra-chain say what to do${noGitBad.length ? ` (${noGitBad.join(', ')})` : ''}`);
   ok(lifeBad.length === 0, `gate-life: ralph-qa keeps one gate folder per run (init before the baseline, no day rule, cleanup after the end word, a caller's <g> used as given) and all-in-one, ultra-init and ultra-chain make and remove it with gate-evidence.mjs and say what to do when it is gone${lifeBad.length ? ` (${lifeBad.join(', ')})` : ''}`);
   // S11 H2, M2: an ultraqa pass row rests on a passing scenario record of this cycle, and --interactive is the drives' records.
   const tmuxDrive = fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'references', 'tmux-drive.md'), 'utf8');
   ok(/이번 순환에 그 행을 돌린 `scenario-<번호>` 기록 가운데 `pass` 인 것의 번호/.test(uqaSkill) && /게이트 `interactive` 는 그 기록 모두다/.test(uqaSkill)
-     && /`--id interactive` 로 따로 돌리지 않는다/.test(tmuxDrive),
+     && /`--id interactive` 로 따로 돌리지 않는다/.test(tmuxDrive) && /그 시나리오의 이번 순환 마지막 기록이어야 한다/.test(uqaSkill)
+     && /한 기록을 두 행 이상이 근거로 들 수 없다/.test(uqaSkill),
      'uqa-rows: an ultraqa pass row rests on a passing scenario record of this cycle, and the interactive goal is the drive scripts\' scenario records');
   // S19: outside OMX's tmux runtime an OMX stage runs as a recorded fallback, never a stop by itself, in all three chains.
   const tmuxBad = ['all-in-one', 'ultra-init', 'ultra-chain'].filter((n) => {

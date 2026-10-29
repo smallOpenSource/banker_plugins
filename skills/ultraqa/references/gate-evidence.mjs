@@ -5,9 +5,10 @@
  * skills/ralph-qa/references/gate-evidence.mjs; skills/ultraqa/references holds a byte-identical copy
  * (scripts/sync-adapter.js).
  *
- *   node gate-evidence.mjs init      the gate folder <g> of one ralph-qa run (ralph-qa-gates.<letters and digits>): made
+ *   node gate-evidence.mjs init [--cwd <repo>]   the gate folder <g> of one ralph-qa run (ralph-qa-gates.<letters and digits>): made
  *        once before the baseline, kept across the iterations, apart from the payload folder seat-run.mjs makes anew
- *        each iteration; seat-run's day rule never takes it (another name, another marker)
+ *        each iteration; seat-run's day rule never takes it (another name, another marker). init and run stop with
+ *        not-a-git-tree when the repo (--cwd) is no git work tree: its fingerprint would see no change.
  *   node gate-evidence.mjs cleanup --dir <g>     that gate folder alone, once the run has its end word
  *   node gate-evidence.mjs run --dir <d> --id <id> --cmd <command> --timeout <s> [--iter <n>] [--cwd <repo>]
  *        one command (one gate, never several joined), POSIX `sh -c`, Windows PowerShell 7 (pwsh) when on PATH,
@@ -34,7 +35,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { delimiter, dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Stop, hashFile, makeRunFolder, removeRunFolder, runFolder, snapshot } from "./run-folder.mjs";
+import { Stop, hashFile, makeRunFolder, removeRunFolder, requireGitTree, runFolder, snapshot } from "./run-folder.mjs";
 
 const GATES_KIND = "ralph-qa-gates";
 const KINDS = [GATES_KIND, "ralph-qa", "ultraqa"];
@@ -291,7 +292,7 @@ function verdictOf(r, out) {
 
 class Usage extends Error {}
 const FLAGS = {
-  init: [], cleanup: ["dir"], run: ["dir", "id", "cmd", "timeout", "iter", "cwd"], note: ["dir", "id", "text", "iter", "exit"],
+  init: ["cwd"], cleanup: ["dir"], run: ["dir", "id", "cmd", "timeout", "iter", "cwd"], note: ["dir", "id", "text", "iter", "exit"],
   gate: ["dir", "gates", "iter", "cwd"], verify: ["dir"], fingerprint: ["cwd"],
 };
 const REQUIRED = { init: [], cleanup: ["dir"], run: ["dir", "id", "cmd", "timeout"], note: ["dir", "id", "text"], gate: ["dir", "gates", "iter"], verify: ["dir"], fingerprint: [] };
@@ -343,7 +344,8 @@ export function readEvidence(d) {
 }
 const append = (d, record) => appendFileSync(join(d, EVIDENCE), `${JSON.stringify(record)}\n`, { mode: 0o600 });
 
-function init(_o, ctx) {
+function init(o, ctx) {
+  requireGitTree(o.cwd || process.cwd(), ctx.env);
   const { dir, base } = makeRunFolder(ctx, GATES_KIND);
   return [{ ok: true, dir, base }, 0];
 }
@@ -358,6 +360,7 @@ async function run(o, ctx) {
   const [id, iter, limit] = [gateId(o.id), whole(o.iter ?? 0, "iter", 0, 999), whole(o.timeout, "timeout", 1, 86400)];
   const cwd = resolve(o.cwd || process.cwd());
   if (!existsSync(cwd)) throw new Stop("no-cwd", `--cwd 폴더가 없다: ${cwd}`);
+  requireGitTree(cwd, ctx.env);
   const { seq, output, fd } = newOutput(d, id, iter);
   const startedAt = new Date().toISOString();
   const r = await execute({ cmd: o.cmd, cwd, limitMs: limit * 1000, fd }, ctx);
