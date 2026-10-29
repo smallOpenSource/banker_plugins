@@ -11,6 +11,7 @@ import cp from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import util from 'node:util';
 import * as P from './video-pool.mjs';
 
@@ -355,6 +356,30 @@ test('generateClip: VIDEO_PROVIDER_ORDER=sora skips WAN; missing providers end i
   assert.equal(r.provider, 'sora');
   assert.equal(creates(calls).length, 0);
   await assert.rejects(() => run({ creds: { WAN_1_ENDPOINT: WAN(1) }, statePath: tmpState() }), /no video provider available/);
+});
+
+test('defaultClipMode: the first provider generateClip would use decides (Sora dive, WAN chain); a run that cannot make a leg gets null', () => {
+  const statePath = tmpState();
+  const mode = (c, o = {}) => P.defaultClipMode(c, { statePath, ...o }).mode;
+  const sora = { AZURE_SORA_ENDPOINT: SORA, AZURE_SORA_API_KEY: creds().AZURE_SORA_API_KEY };
+  assert.equal(mode(sora), 'dive', 'no WAN entry: the video runs on Sora');
+  assert.equal(mode(creds()), 'chain', 'WAN entries first (default order wan,sora)');
+  assert.equal(mode(creds({ VIDEO_PROVIDER_ORDER: 'sora' })), 'dive', 'order sora: Sora runs even with WAN keys');
+  assert.equal(mode(creds({ VIDEO_PROVIDER_ORDER: 'wan' })), 'chain');
+  assert.equal(mode({ WAN_1_ENDPOINT: WAN(1), WAN_1_API_KEY: 'k' }), 'chain', 'WAN only');
+  const bad = { WAN_1_ENDPOINT: 'http://ws.example.com', WAN_1_API_KEY: 'k', ...sora };
+  const r = P.defaultClipMode(bad, { statePath });
+  assert.deepEqual([r.mode, r.provider], [null, 'wan'], 'every WAN entry malformed: generateClip stops, Sora is not used');
+  assert.match(r.reason, /does not use Sora/);
+  assert.equal(mode({ ...sora, VIDEO_PROVIDER_ORDER: 'wan' }), null, 'order wan without a WAN entry: nothing runs');
+  assert.equal(mode({ ...sora, AZURE_SORA_ENDPOINT: 'http://sora.example.com' }), null, 'a Sora endpoint that is not https stops the leg');
+  assert.equal(mode({}), null, 'nothing set up');
+  // a Sora deployment recorded retired is skipped as generateClip skips it: a WAN entry after it takes over
+  const fp = `sora:${crypto.createHash('sha256').update(`${SORA}\nsora-2`).digest('hex').slice(0, 16)}`;
+  P.savePoolState({ version: 1, entries: { [fp]: { status: 'retired', retiredAt: Date.now(), label: 'AZURE_SORA' } } }, statePath);
+  assert.equal(mode(sora), null, 'Sora retired, no WAN: stop before any paid still');
+  assert.equal(mode(creds({ VIDEO_PROVIDER_ORDER: 'sora,wan' })), 'chain');
+  assert.equal(mode(sora, { now: Date.now() + 25 * 3_600_000 }), 'dive', 'the record lasts 24 h');
 });
 
 test('generateClip: lastFramePng is sent as last_frame on WAN and needs a first frame', async () => {

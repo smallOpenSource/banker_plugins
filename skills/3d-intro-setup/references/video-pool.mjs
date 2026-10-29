@@ -267,6 +267,37 @@ function soraSummary(creds, state, t) {
   return { ...base, host: hostOf(originOf(conn.endpoint)), ...status };
 }
 
+/**
+ * The CLIP_MODE a run starts with (FREE, nothing is sent): the first provider generateClip would really
+ * use, in VIDEO_PROVIDER_ORDER, decides. Sora gives 'dive' (measured on sora-2 2025-12-08); WAN gives
+ * 'chain' (dive on WAN is not measured). Returns { mode, provider, reason }. mode is null when no leg
+ * could be made: every WAN entry refused (generateClip stops there and does not use Sora), a Sora
+ * endpoint that is not https, or nothing set up (no WAN entry, Sora unset or recorded retired).
+ */
+export function defaultClipMode(creds = {}, { statePath = defaultStatePath(), now = Date.now() } = {}) {
+  for (const p of parseProviderOrder(creds.VIDEO_PROVIDER_ORDER)) {
+    const r = p === 'wan' ? wanMode(creds) : soraMode(creds, loadPoolState(statePath), now);
+    if (r) return r;
+  }
+  return { mode: null, provider: null, reason: 'no video provider: no WAN entry, and Sora is unset or recorded retired' };
+}
+
+function wanMode(creds) {
+  const pool = loadWanPool(creds);
+  if (!pool.length) return null;
+  if (pool.every((e) => entryRefusal(e))) return { mode: null, provider: 'wan', reason: 'every WAN entry is malformed or held back: generateClip stops there and does not use Sora' };
+  return { mode: 'chain', provider: 'wan', reason: 'the video runs on WAN: chain (dive on WAN is not measured)' };
+}
+
+function soraMode(creds, state, t) {
+  const conn = soraConn(creds);
+  if (!conn.endpoint || !conn.key) return null;
+  const origin = originOf(conn.endpoint);
+  if (!origin || proxyHolds(origin)) return { mode: null, provider: 'sora', reason: 'AZURE_SORA_ENDPOINT is not an https URL (or the env proxy holds the key back): the leg stops before sending' };
+  if (retiredIn(state, conn, t)) return null;
+  return { mode: 'dive', provider: 'sora', reason: 'the video runs on Sora: dive (measured on sora-2 2025-12-08)' };
+}
+
 // In-process in-flight counter per fingerprint (the documented limit is per key).
 const inflight = new Map();
 

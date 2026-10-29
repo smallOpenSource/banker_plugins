@@ -332,3 +332,18 @@ test('creds from a tracked key file reach no network: generateImage, createVideo
     globalThis.fetch = orig;
   }
 });
+
+// 24.2: the default CLIP_MODE is the function's (Sora dive, WAN chain), with the evidence and its limits named.
+test('SKILL: Step 1 takes the default CLIP_MODE from defaultClipMode, says dive on WAN is not measured, and fixes no retirement date', async () => {
+  const P2 = await import('./video-pool.mjs');
+  assert.equal(typeof P2.defaultClipMode, 'function');
+  const build = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+  const step1 = build.slice(build.indexOf('## Step 1'), build.indexOf('## Step 2'));
+  assert.match(step1, /defaultClipMode\(creds\)/);
+  assert.match(step1, /Sora 면 `dive`, WAN 이면 `chain`/);
+  assert.match(step1, /sora-2\(2025-12-08\)/);
+  assert.match(step1, /WAN 에서 dive 는 미측정/);
+  assert.match(step1, /`push-in`\(기본/);
+  assert.doesNotMatch(build, /2026-11-02/, 'the retirement date comes from the probe');
+  assert.doesNotMatch(build, /near-seamless\*\* 하되/);
+});

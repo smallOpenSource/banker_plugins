@@ -284,7 +284,7 @@ node -e "
 | `sora.deploy` | HTTP 200, `deployed` | 그 배포명이 이 리소스에 있음(GET 이라 과금 0). 모델 판과 퇴역일을 함께 보인다. 배포가 모델 이름만 알려 주면 가장 새 판을 쓴다고 보고 `(판 추정)` 을 붙인다 |
 | `sora.deploy` 가 404 `no_deployment` | - | 배포명이 틀렸거나, 모델 퇴역 뒤 배포가 지워짐 — Azure 포털의 배포 목록과 `AZURE_SORA_DEPLOYMENT` 를 대조 |
 | `sora.deploy` 가 `retired` | - | 배포가 410 으로 답했거나 퇴역일이 지남. WAN 항목이 있으면 경고만 하고 통과(영상은 WAN 으로), 없으면 FAIL. 새 Sora 배포를 만들거나 WAN 키를 넣는다 |
-| `안내: ... 퇴역 예정` | - | 퇴역일이 14일 안. 그 날짜 뒤에는 Sora 가 410 을 준다(Foundry 모델 수명 문서: 서비스에서 빠진 모델은 410 Gone). 2026-10-29 실측: `sora-2` 는 2026-11-02 |
+| `안내: ... 퇴역 예정` | - | 퇴역일이 14일 안. 그 날짜 뒤에는 Sora 가 410 을 준다(Foundry 모델 수명 문서: 서비스에서 빠진 모델은 410 Gone). 날짜는 리소스마다 다르니 프로브가 준 값만 쓴다 |
 | `images.badreq` | HTTP 400 (`missing_required_parameter`) | Image 엔드포인트 살아있음 + 키 인증됨 + **배포명 라우팅됨**(프롬프트 누락이라 생성 전 거부) |
 | `wan.probe` (항목마다) | HTTP 200 | WAN workspace 엔드포인트 + 키 인증됨. 남은 할당량은 이 방법으로 알 수 없다 |
 | `wan.probe` 가 401 `InvalidApiKey` | - | 키가 틀렸거나 엔드포인트와 리전이 다름 — 그 `WAN_<n>` 을 재입력 |
