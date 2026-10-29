@@ -614,3 +614,25 @@ test('Codex: Codex 홈이 세션 폴더 깊은 곳이면 세션 시작에 알리
   assert.equal(say(join(work, '.codex'), 'h2'), '', '맨 위 .codex 는 샌드박스가 읽기만 함');
   assert.equal(say(join(tmp, 'elsewhere', '.codex'), 'h3'), '');
 });
+
+// Plan S11 B9: a SessionStart hook whose script, folder or node is under a config.toml writable_roots entry does nothing
+// else and says why in one systemMessage; a writable root elsewhere, or no config.toml, changes nothing.
+test('Codex: a hook under a sandbox writable root does nothing but say why', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'banker-notify-wr-'));
+  try {
+    const home = join(tmp, 'codex');
+    mkdirSync(home);
+    writeFileSync(join(home, 'config.toml'), `sandbox_workspace_write.writable_roots = [${JSON.stringify(dirname(HERE))}]\n`);
+    const input = JSON.stringify({ session_id: 'wr-1', cwd: tmp });
+    let r = runNotify(tmp, { input, argv: ['--codex'], env: { CODEX_HOME: home, BANKER_NO_UPDATE_CHECK: '1' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(JSON.parse(r.stdout).systemMessage, /^banker hooks skipped: .*update-notify\.mjs is under the sandbox writable root .* writable_roots\), so a Codex session could change what this hook runs outside the sandbox$/);
+    assert.ok(!existsSync(join(tmp, 'banker', 'codex-sessions', 'wr-1')), 'nothing else ran (no session claim)');
+    writeFileSync(join(home, 'config.toml'), `sandbox_workspace_write.writable_roots = [${JSON.stringify(join(tmp, 'other'))}]\n`);
+    r = runNotify(tmp, { input, argv: ['--codex'], env: { CODEX_HOME: home, BANKER_NO_UPDATE_CHECK: '1' } });
+    assert.doesNotMatch(r.stdout, /banker hooks skipped/);
+    assert.ok(existsSync(join(tmp, 'banker', 'codex-sessions', 'wr-1')), 'the hook ran as before');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

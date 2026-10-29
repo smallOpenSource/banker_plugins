@@ -557,3 +557,22 @@ test('without node:crypto the marks still decide, once per turn', () => {
   assert.match(readFileSync(join(tmp, 'crypto-mark'), 'utf8'), /crypto/, 'the hook did try node:crypto and went on without it');
   assert.equal(readdirSync(marksDir(tmp)).length, 1);
 });
+
+// Plan S11 B9: where the hook runs (this script, its folder, node) under a config.toml writable_roots entry is a place a
+// Codex session can change from the sandbox, and Codex runs the hook outside it: the hook counts nothing and says why.
+test('a hook under a sandbox writable root counts nothing and says why on stderr', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const file = rollout(tmp, [started('t1'), cat('ralph-qa')]);
+  const home = codexHome(tmp);
+  writeFileSync(join(home, 'config.toml'), `[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(dirname(dirname(HOOK)))}]\n`);
+  let res = run(tmp, stop(file), { CODEX_HOME: home });
+  assert.equal(res.status, 0);
+  assert.equal(res.stdout, '');
+  assert.match(res.stderr, /^banker hooks skipped: .* is under the sandbox writable root /);
+  assert.deepEqual(read(tmp), [], 'nothing counted');
+  writeFileSync(join(home, 'config.toml'), `[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(join(tmp, 'other'))}]\n`);
+  res = run(tmp, stop(file), { CODEX_HOME: home });
+  assert.equal(res.stderr, '');
+  assert.equal(read(tmp).length, 1, 'a writable root elsewhere changes nothing');
+});

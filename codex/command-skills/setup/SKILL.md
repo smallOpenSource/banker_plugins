@@ -54,10 +54,10 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    - **setup-sandbox** — OS별 샌드박스(bubblewrap+userns / AppContainer / Seatbelt) + rust + git safe.directory.
 
    **프레임워크·플러그인**
-   - **setup-omx** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa` 의존성.
+   - **setup-omx** — oh-my-codex(OMX) 설치/갱신. `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa` 의존성.
    - **setup-harness-factory** — revfactory/harness(팀 아키텍처 팩토리) 설치+구성+안내(Codex=meta-harness).
    - **setup-insane-search** — insane-search 플러그인(차단 사이트 우회, Claude/Codex 양쪽).
-   - **setup-omx-hud** — omc_hud 상태표시줄(래퍼 v4, 스킬에 든 파일로 오프라인 설치).
+   - **setup-omx-hud** — Codex TUI 상태표시줄(`[tui] status_line`)을 OMX 프리셋으로. 같은 머신의 Claude Code omc_hud 래퍼(v4)를 고르면 스킬에 든 파일로 오프라인 설치.
    - **setup-stitch** — Stitch(디자인 생성) MCP 프록시 등록(RockyLinux8 proxy-script, API key 필요).
 
    **의존성 라이브러리**

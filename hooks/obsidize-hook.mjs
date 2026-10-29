@@ -281,9 +281,29 @@ function codexWikiWrite(payload) {
   return typeof command === 'string' && statements(command).some((part) => OMX_WIKI_WRITE_RE.test(part));
 }
 
+// Codex: when where this hook runs (the script, its plugin or copy folder, node) is under a config.toml writable_roots
+// entry, it does nothing and says why on stderr (the session start hook says it as a systemMessage). Unreadable: runs.
+// Loaded only on Codex, so the Claude Code hook needs nothing beside it.
+async function codexUnsafe(payload) {
+  let why = '';
+  try {
+    const r = await import('../bin/lib/codex-routes.mjs');
+    why = r.writableRootsNote(r.codexHomeOf(payload?.transcript_path), r.hookPlaces(import.meta.url));
+  } catch { /* as before */ }
+  if (why) process.stderr.write(`${why}\n`);
+  return Boolean(why);
+}
+
+// Codex: only an `omx wiki` write goes on (an unreadable payload goes on to be logged), and only from outside the
+// writable roots.
+async function codexSkip(payload, error) {
+  if (!error && !codexWikiWrite(payload)) return true;
+  return codexUnsafe(payload);
+}
+
 async function main() {
   const { payload, error } = await readPayload();
-  if (CODEX && !error && !codexWikiWrite(payload)) return;
+  if (CODEX && await codexSkip(payload, error)) return;
   const wikiDir = findArmedWikiDir(writeRoot(payload));
   if (!wikiDir) return; // Not armed: change nothing, log nothing.
 

@@ -258,8 +258,13 @@ test('doctor: the newest Codex record is checked for what banker reads, and a sh
   assert.match(out, /banker may not read this Codex version's records/, 'tool calls with no turn start');
   fs.writeFileSync(path.join(day, 'rollout-b3.jsonl'), `${meta}\n{"type":"event_msg","payload":{"type":"thread_settings_applied"}}\n{"type":"world_state"}\n`);
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
-  assert.match(out, /rollout-b3\.jsonl holds no turn yet/);
-  assert.doesNotMatch(out, /may not read/, 'several lines but no turn, no text and no tool call yet: no warning');
+  assert.match(out, /⚠ Codex record shape \(Codex 9\.9\.9, rollout-b3\.jsonl\): it has lines after session_meta but no turn start, user text or tool call banker reads - the record shape may have changed/);
+  assert.doesNotMatch(out, /holds no turn yet/, 'lines after session_meta of which banker reads none are not taken for a session with no turn yet');
+  // A Codex update that renamed every record type: one whole turn banker cannot read is flagged, not told to run a turn.
+  fs.writeFileSync(path.join(day, 'rollout-b4.jsonl'), `${meta}\n${['{"type":"event","payload":{"kind":"turn.started"}}', '{"type":"event","payload":{"kind":"user.text"}}', '{"type":"event","payload":{"kind":"tool"}}', '{"type":"event","payload":{"kind":"turn.completed"}}'].join('\n')}\n`);
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
+  assert.match(out, /⚠ Codex record shape \(Codex 9\.9\.9, rollout-b4\.jsonl\): .*the record shape may have changed/);
+  assert.doesNotMatch(out, /holds no turn yet/);
   fs.writeFileSync(path.join(day, 'rollout-c.jsonl'), `${meta}\n`);
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
   assert.match(out, /rollout-c\.jsonl holds no turn yet/);
@@ -315,3 +320,51 @@ test('setup --codex: an update installs the Codex names, says what was renamed, 
   const again = run(['setup', '--codex', '--scope', 'user'], dir, env).out;
   assert.doesNotMatch(again, /이름 바뀜/, 'a second run renames nothing');
 }));
+
+// The dry run of uninstall --codex says what the real run does: the user-scope npm skills go in the same run, so they do
+// not keep teamwork; a Codex plugin install does.
+test('uninstall --codex --dry-run: teamwork goes when only the npm skills it removes are left, and stays beside the plugin', () => withXdg((dir) => {
+  const home = path.join(dir, 'codex');
+  fs.mkdirSync(path.join(home, 'teamwork'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'skills', 'banker-teamwork'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'skills', 'banker-teamwork', 'SKILL.md'), '---\nname: banker-teamwork\n---\n');
+  const env = { CODEX_HOME: home };
+  let { out, code } = run(['uninstall', '--codex', '--dry-run'], dir, env);
+  assert.equal(code, 0, out);
+  assert.match(out, /\[dry-run\] rm .*banker-teamwork/);
+  assert.match(out, /\[dry-run\] teamwork uninstall in /);
+  assert.doesNotMatch(out, /teamwork kept/);
+  assert.ok(fs.existsSync(path.join(home, 'skills', 'banker-teamwork')) && fs.existsSync(path.join(home, 'teamwork')), 'a dry run removes nothing');
+  fs.writeFileSync(path.join(home, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
+  ({ out } = run(['uninstall', '--codex', '--dry-run'], dir, env));
+  assert.match(out, /teamwork kept: banker is still in this Codex home \(banker@banker-plugins\)/);
+}));
+
+// teamwork's hook wrapper needs its engine and node only; send and reply start the recorded codex.
+test('doctor: teamwork says what a missing recorded node or codex stops', () => withXdg((dir) => {
+  const home = path.join(dir, 'codex');
+  fs.mkdirSync(path.join(home, 'teamwork'), { recursive: true });
+  const state = (tools) => fs.writeFileSync(path.join(home, 'teamwork', 'state.json'), JSON.stringify({ enabled: true, version: '1.0.0', tools }));
+  const gone = path.join(dir, 'gone');
+  state({ node: process.execPath, codex: gone });
+  let { out } = run(['doctor'], dir, { CODEX_HOME: home });
+  assert.match(out, /teamwork: on \(engine 1\.0\.0\) ⚠ recorded codex missing: send and reply fail until \$banker-teamwork on runs again/);
+  assert.doesNotMatch(out, /hooks stay silent/, 'the hooks still run without the recorded codex');
+  state({ node: gone, codex: process.execPath });
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: home }));
+  assert.match(out, /⚠ recorded node missing: its hooks stay silent until \$banker-teamwork on runs again/);
+  state({ node: gone, codex: gone });
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: home }));
+  assert.match(out, /⚠ recorded node, codex missing: its hooks stay silent and send and reply fail until/);
+}));
+
+// gh is started by bare name: from the home folder, with Windows' search of the current folder off.
+test('starRepo: gh runs from the home folder with NoDefaultCurrentDirectoryInExePath set', () => {
+  const seen = [];
+  starRepo((_cmd, _args, opts) => { seen.push(opts); return { status: 0 }; });
+  assert.equal(seen.length, 2);
+  for (const o of seen) {
+    assert.equal(o.cwd, os.homedir());
+    assert.equal(o.env.NoDefaultCurrentDirectoryInExePath, '1');
+  }
+});

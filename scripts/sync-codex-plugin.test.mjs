@@ -665,3 +665,18 @@ test('the Codex plugin frontmatter has no OMC but the two kept skills, which say
     else assert.doesNotMatch(fm, /omc/i, f);
   }
 });
+
+// Plan S11 B7: a sentence that says what a renamed skill installs is written for Codex as a whole. A name swap alone
+// made the Codex front-qa and setup send the OMX install skill to install OMC.
+test('the command skills say the Codex install skill installs OMX, and every Codex phrase still occurs in a command', () => {
+  const { CODEX_PHRASES } = require('../bin/lib/command-skill.cjs');
+  const commands = readdirSync(join(ROOT, 'commands')).map((f) => readFileSync(join(ROOT, 'commands', f), 'utf8')).join('\n');
+  for (const [from] of CODEX_PHRASES) assert.ok(commands.includes(from), `no command says: ${from}`);
+  for (const name of ['front-qa', 'setup']) {
+    const text = readFileSync(join(ROOT, 'codex', 'command-skills', name, 'SKILL.md'), 'utf8');
+    for (const line of text.split('\n').filter((l) => /setup-omx/.test(l))) {
+      assert.doesNotMatch(line, /oh-my-claudecode|oh-my-claude-sisyphus|omc_hud 상태표시줄\(/, `${name}: ${line}`);
+    }
+    for (const [from] of CODEX_PHRASES) assert.ok(!text.includes(from), `${name} still says: ${from}`);
+  }
+});

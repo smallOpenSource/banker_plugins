@@ -7,9 +7,17 @@
  *    codex/command-skills/<name>/SKILL.md in the repo, invoked as $banker:<name>.
  * The command's description becomes the skill's, or the manifest's codexDescription when it has one. Skills Codex
  * names apart (codex/manifest.json codexName: setup-omc is setup-omx there) take their Codex name in the body: whole
- * names only, so omc-patch, payload-mon and .omc/ paths stay. Codex skills get no $ARGUMENTS substitution, so a note
- * says where the arguments come from.
+ * names only, so omc-patch, payload-mon and .omc/ paths stay. A phrase that says what the renamed skill installs
+ * (CODEX_PHRASES) is written for Codex as a whole first: the name alone would send an OMX skill to install OMC. Codex
+ * skills get no $ARGUMENTS substitution, so a note says where the arguments come from.
  */
+// [command text, its Codex text]. scripts/sync-codex-plugin.test.mjs checks that each still occurs in commands/.
+const CODEX_PHRASES = [
+  ['oh-my-claudecode(또는 `setup-omc` 스킬 / `npm install -g oh-my-claude-sisyphus@latest`)', 'oh-my-codex(OMX)(또는 `setup-omx` 스킬)'],
+  ['**setup-omc** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX).', '**setup-omx** — oh-my-codex(OMX) 설치/갱신.'],
+  ['**setup-omc-hud** — omc_hud 상태표시줄(래퍼 v4, 스킬에 든 파일로 오프라인 설치).', '**setup-omx-hud** — Codex TUI 상태표시줄(`[tui] status_line`)을 OMX 프리셋으로. 같은 머신의 Claude Code omc_hud 래퍼(v4)를 고르면 스킬에 든 파일로 오프라인 설치.'],
+];
+
 function codexNames(text, rename) {
   const keys = Object.keys(rename || {}).sort((a, b) => b.length - a.length);
   if (!keys.length) return text;
@@ -20,7 +28,8 @@ function codexNames(text, rename) {
 function commandSkillText(text, name, invoke, { description, rename } = {}) {
   const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   const desc = fm && fm[1].match(/^description:\s*(.*)$/m);
-  const body = codexNames(fm ? text.slice(fm[0].length) : text, rename);
+  const raw = fm ? text.slice(fm[0].length) : text;
+  const body = codexNames(rename ? CODEX_PHRASES.reduce((t, [from, to]) => t.split(from).join(to), raw) : raw, rename);
   const note = '> Codex: 이 명령은 스킬로 설치됐다. 본문의 `$ARGUMENTS`, `$1` 은 사용자가 `' + invoke + '` 뒤에 쓴 글이다.\n\n';
   const line = description ? JSON.stringify(description) : (desc ? desc[1] : '""');
   return `---\nname: ${name}\ndescription: ${line}\n---\n\n${note}${body}`;
@@ -38,4 +47,4 @@ function codexFrontmatter(src, name, description) {
   return `${src.slice(0, fm.index)}---${fm[1]}${block}${fm[3]}---${src.slice(fm.index + fm[0].length)}`;
 }
 
-module.exports = { commandSkillText, codexNames, codexFrontmatter };
+module.exports = { commandSkillText, codexNames, codexFrontmatter, CODEX_PHRASES };

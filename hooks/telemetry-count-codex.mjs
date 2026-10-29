@@ -29,7 +29,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import { CLAUDE_NAMES } from '../bin/lib/codex-names.mjs';
-import { codexHomeOf, pluginRoutes } from '../bin/lib/codex-routes.mjs';
+import { codexHomeOf, hookPlaces, pluginRoutes, writableRootsNote } from '../bin/lib/codex-routes.mjs';
 import { appendUsageLog, CODEX_SHAPE_MISS_PATH, configDir, countingActive, randomHex, readRegular, recordUsedSkill, SKILL_NAME_RE, writeByRename } from '../bin/lib/telemetry-config.mjs';
 
 export { codexHomeOf };
@@ -476,6 +476,10 @@ async function main() {
     return;
   }
   if (!countingActive()) return;
+  // 이 훅이 도는 곳이 config.toml 의 writable_roots 아래면 세지 않고 까닭만 stderr 로(세션 시작 훅은 systemMessage 로 알림).
+  let unsafe = '';
+  try { unsafe = writableRootsNote(codexHomeOf(payload?.transcript_path), hookPlaces(import.meta.url)); } catch { /* 읽지 못하면 전처럼 */ }
+  if (unsafe) { process.stderr.write(`${unsafe}\n`); return; }
   countOnce(payload);
 }
 

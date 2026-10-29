@@ -86,13 +86,15 @@ export function formatCommand(node, script, args, win = process.platform === 'wi
 // 폴더나 세션 폴더(Codex 가 훅을 도는 폴더) 아래면 돌리지 않고 까닭을 알린다. 세션 폴더가 홈 폴더 자체면 세션 폴더
 // 규칙은 쓰지 않는다. Codex 홈이 세션 폴더 깊은 곳(CODEX_HOME=<세션>/deep/.codex)이면 샌드박스가 그 사본을 고칠 수
 // 있기 때문이다. 검사는 신뢰 해시에 묶인 명령 글에 있다. 세션 시작 훅은 systemMessage 로, 다른 훅은 stderr 로 알린다.
+// 실제 경로는 realpathSync.native 로 푼다: Windows 의 JS 판은 8.3 짧은 이름의 임시 폴더(TEMP=C:\Users\LONGNA~1\...)를
+// 긴 이름으로 풀지 않아 임시 폴더 규칙이 빗나간다(Windows 박스 실측).
 export function hookGuard(notice) {
   const say = notice
     ? 'process.stdout.write(JSON.stringify({systemMessage:m}))'
     : 'process.stderr.write(m+String.fromCharCode(10))';
   return [
     "const f=require('fs'),p=require('path'),o=require('os');",
-    'const r=(x)=>{try{return f.realpathSync(x)}catch{return x}};',
+    'const r=(x)=>{try{return f.realpathSync.native(x)}catch{try{return f.realpathSync(x)}catch{return x}}};',
     'const s=r(process.argv[1]),w=r(process.cwd()),h=r(o.homedir());',
     "const u=(d)=>{const q=p.relative(d,s);return q===''||!(q.startsWith('..')||p.isAbsolute(q))};",
     "if([o.tmpdir()].concat(process.platform==='win32'?[]:['/tmp']).map(r).some(u)||(w!==h&&u(w))){",
@@ -121,13 +123,17 @@ export function safeNode(node, { win = process.platform === 'win32', cwd = proce
 }
 
 // 실제 경로. 아직 없는 절대 경로는 있는 조상까지만 풀고 나머지를 붙인다(macOS 의 /var 는 /private/var 로 가는 링크라,
-// 풀지 않으면 링크 아래의 없는 Codex 홈이 풀린 작업 폴더 밖으로 보인다).
+// 풀지 않으면 링크 아래의 없는 Codex 홈이 풀린 작업 폴더 밖으로 보인다). native 먼저: Windows 의 8.3 짧은 이름을 푼다.
 function real(file) {
   try {
-    return fs.realpathSync(file);
+    return fs.realpathSync.native(file);
   } catch {
-    const up = path.dirname(file);
-    return path.isAbsolute(file) && up !== file ? path.join(real(up), path.basename(file)) : file;
+    try {
+      return fs.realpathSync(file);
+    } catch {
+      const up = path.dirname(file);
+      return path.isAbsolute(file) && up !== file ? path.join(real(up), path.basename(file)) : file;
+    }
   }
 }
 
@@ -180,8 +186,10 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 // hooks.json 을 고치는 쪽(banker 와 Codex 전용 스킬 teamwork 의 엔진)이 함께 쓰는 잠금: hooks.json 옆의 폴더
 // hooks.json.lock. 10초 넘은 잠금은 죽은 쓰기로 보고 치우고, 5초 안에 못 얻으면 바꾸지 않는다(까닭을 돌려줌).
+// 치우지 못한 낡은 잠금(일반 파일, 비지 않은 폴더, 권한)도 기다림과 횟수에 들어, 끝없이 돌지 않고 그 까닭으로 끝난다.
 export function withHooksLock(file, fn, onBusy) {
   const lock = `${file}.lock`;
+  let stuck = '';
   for (let i = 0; ; i++) {
     try {
       fs.mkdirSync(lock);
@@ -190,9 +198,9 @@ export function withHooksLock(file, fn, onBusy) {
       // Codex 홈이 아직 없으면 다툴 파일도 없다. 그 밖에 잠금을 만들 수 없으면 바꾸지 않는다.
       if (e.code === 'ENOENT') return fn();
       if (e.code !== 'EEXIST') return onBusy(`잠금 ${lock} 을 확인하지 못함(${e.code})`);
-      if (lockStale(lock)) continue;
-      if (i > 200) return onBusy(`${file} 의 잠금(${lock})을 얻지 못함`);
-      pause(25);
+      if (i > 200) return onBusy(stuck ? `${file} 의 낡은 잠금 ${lock} 을 지우지 못함(${stuck}). 다른 banker 나 teamwork 가 돌고 있지 않으면 직접 지우십시오` : `${file} 의 잠금(${lock})을 얻지 못함`);
+      stuck = clearStale(lock);
+      if (stuck !== '') pause(25);
     }
   }
   try {
@@ -202,12 +210,19 @@ export function withHooksLock(file, fn, onBusy) {
   }
 }
 
-function lockStale(lock) {
+// 낡은 잠금 치우기: 치웠거나 그사이 풀렸으면 ''(바로 다시 잡음), 10초가 안 된 잠금이면 null(기다림), 10초 넘었는데
+// 지우지 못했으면 그 오류 코드(기다림, 마지막에 까닭으로 알림).
+function clearStale(lock) {
   try {
-    if (Date.now() - fs.statSync(lock).mtimeMs <= 10000) return false;
+    if (Date.now() - fs.statSync(lock).mtimeMs <= 10000) return null;
     fs.rmdirSync(lock);
-  } catch { /* 그사이 풀림 */ }
-  return true;
+    return '';
+  } catch (e) {
+    // Windows 의 rmdir 은 파일인 잠금에 ENOENT 를 내므로, 정말 없어졌는지는 다시 보고 정한다.
+    let st;
+    try { st = fs.lstatSync(lock); } catch { return ''; }
+    return st.isDirectory() ? String((e && e.code) || e) : 'ENOTDIR';
+  }
 }
 
 // 사본 폴더. 링크인 폴더는 거부하고, 파일은 내용이 다를 때만 새로 쓴다.

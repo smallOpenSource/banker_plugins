@@ -1,6 +1,6 @@
 // Tests for codex-hooks.mjs. Run from the repo root: node --test bin/lib/codex-hooks.test.mjs
 import { strict as assert } from 'node:assert';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, posix as P } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -277,4 +277,60 @@ test('the copy carries everything the hooks import or start: relative imports an
     }
     for (const m of src.matchAll(/'([\w.-]+\.mjs)'/g)) assert.ok(names.has(m[1]), `${rel} names ${m[1]}, which the copy lacks`);
   }
+});
+
+// Plan S11 B1: a stale hooks.json.lock that cannot be removed (a file, a folder with something in it) ends the wait with
+// its reason inside the 5 seconds instead of spinning forever. Run in a child so a regression times out, not the runner.
+test('a stale lock that cannot be removed ends with a named failure, not an endless loop', () => {
+  for (const kind of ['file', 'folder with a file']) {
+    const p = home();
+    const lock = `${p.hooks}.lock`;
+    if (kind === 'file') writeFileSync(lock, 'x');
+    else { mkdirSync(lock); writeFileSync(join(lock, 'f'), 'x'); }
+    const old = new Date(Date.now() - 60000);
+    utimesSync(lock, old, old);
+    const src = `import { enableHooks } from ${JSON.stringify(pathToFileURL(join(PKG, 'bin', 'lib', 'codex-hooks.mjs')).href)};`
+      + `const r = enableHooks(${JSON.stringify(p)}, ['update'], ${JSON.stringify(PKG)}); process.stdout.write(JSON.stringify(r));`;
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.signal, null, `${kind}: the lock wait did not end (${r.stderr})`);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.code, 1, kind);
+    assert.match(out.msg, /의 낡은 잠금 .*hooks\.json\.lock 을 지우지 못함\([A-Z]+\)\. 다른 banker 나 teamwork 가 돌고 있지 않으면 직접 지우십시오/, kind);
+    assert.ok(Date.now() - t0 < 15000, `${kind}: ended within the wait`);
+    assert.ok(!existsSync(p.hooks), `${kind}: hooks.json not written`);
+  }
+});
+
+test('a stale empty lock folder is cleared and the change goes through', () => {
+  const p = home();
+  const lock = `${p.hooks}.lock`;
+  mkdirSync(lock);
+  const old = new Date(Date.now() - 60000);
+  utimesSync(lock, old, old);
+  assert.equal(enableHooks(p, ['update'], PKG).code, 0);
+  assert.ok(!existsSync(lock));
+});
+
+// Plan S11 Q2: Windows' JS realpath keeps an 8.3 short name (TEMP=C:\Users\LONGNA~1\...) as it is; the guard resolves
+// with realpathSync.native, so a hook copy under the long name of a short-named TEMP is still refused.
+test('the npm hook command refuses a script under a TEMP written as an 8.3 short name', { skip: process.platform !== 'win32' && '8.3 short names are Windows only' }, (t) => {
+  const long = realpathSync(mkdtempSync(join(outsideBase, 'codex-hooks a long temp folder ')));
+  t.after(() => rmSync(long, { recursive: true, force: true }));
+  const short = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${long.replace(/'/g, "''")}').ShortPath`], { encoding: 'utf8' }).stdout.trim();
+  if (!short || short.toLowerCase() === long.toLowerCase()) {
+    t.skip('this volume makes no 8.3 names');
+    return;
+  }
+  const marker = join(long, 'marker');
+  mkdirSync(join(long, 'copy'));
+  const script = join(long, 'copy', 'probe.mjs');
+  writeFileSync(script, `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+  const work = join(outsideBase, 'codex-hooks-short-work');
+  mkdirSync(work, { recursive: true });
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const r = runCmd(formatCommand(process.execPath, script, ['--codex'], true, hookGuard(false)), work, { ...process.env, TEMP: short, TMP: short });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /^banker hooks skipped: the hook script is in a temp folder or the session folder/);
+  assert.ok(!existsSync(marker), 'nothing ran');
 });

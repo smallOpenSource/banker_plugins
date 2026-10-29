@@ -58,7 +58,8 @@ const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@b
   + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names (a multicall shim '
   + 'such as Volta or mise, or a .cmd shim on Windows: the node binary it names) only when its real path is absolute and outside the temp '
   + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder when that is outside them too, '
-  + 'and otherwise says why it skipped. PATH entries under a network mount outside the home folder are not read. Each command starts with a hash of the hook files (banker-hooks-rev), so new hook code asks for trust again. command is '
+  + 'and otherwise says why it skipped. A hook whose script, plugin folder or node is under a config.toml [sandbox_workspace_write] writable_roots entry '
+  + '(not that entry\'s top .codex) does nothing but say why. PATH entries under a network mount outside the home folder are not read. Each command starts with a hash of the hook files (banker-hooks-rev), so new hook code asks for trust again. command is '
   + 'for sh, commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.';
 
 // The files a hook runs: the scripts HOOKS names, run.cjs, and what they load or start, found by following relative

@@ -34,15 +34,22 @@ function isoTime(t) {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+// What banker starts by bare name (gh, claude) runs from the home folder with Windows' search of the current folder off:
+// on Windows the program search (cmd, and CreateProcess through libuv) looks in the current folder before PATH, and the
+// current folder may be a project with a planted gh.exe or claude.cmd.
+function bareSpawnOpts() {
+  return { cwd: os.homedir(), env: { ...process.env, NoDefaultCurrentDirectoryInExePath: '1' } };
+}
+
 // GitHub 저장소에 별을 단다 (gh CLI 인증 사용). star 는 repo 쓰기 권한이 필요 없어 인증된 어느 계정으로도
 // 가능하다. gh 미설치/미인증/실패는 {ok:false, reason} 로 반환해 호출부가 URL 안내로 폴백하게 한다.
 // spawn 은 테스트 주입용(기본 cp.spawnSync). 자체 timeout·오류삼킴으로 setup 을 절대 막지 않는다.
 function starRepo(spawn = cp.spawnSync) {
   try {
-    const v = spawn('gh', ['--version'], { stdio: 'ignore', timeout: 3000, windowsHide: true });
+    const v = spawn('gh', ['--version'], { stdio: 'ignore', timeout: 3000, windowsHide: true, ...bareSpawnOpts() });
     if (v.error || v.status !== 0) return { ok: false, reason: 'gh CLI 없음' };
     const r = spawn('gh', ['api', '-X', 'PUT', `/user/starred/${REPO_SLUG}`],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, windowsHide: true });
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, windowsHide: true, ...bareSpawnOpts() });
     if (r.error) return { ok: false, reason: r.error.message };
     if (r.status !== 0) {
       const msg = (`${r.stderr || r.stdout || ''}`).trim().split('\n')[0] || `gh exited ${r.status}`;
@@ -188,7 +195,7 @@ function setupClaude(dryRun) {
   ];
   for (const [bin, args] of steps) {
     if (dryRun) { log(`  [dry-run] ${bin} ${args.join(' ')}`); continue; }
-    try { cp.execFileSync(bin, args, { stdio: 'inherit' }); }
+    try { cp.execFileSync(bin, args, { stdio: 'inherit', ...bareSpawnOpts() }); }
     catch (e) { warn(`  step failed (may already be applied): ${bin} ${args.join(' ')}`); }
   }
   log('  → skills/commands available as /banker:* (reload-plugins or restart to apply).');
@@ -287,12 +294,18 @@ function doctorCodexShape(base) {
   doctorShapeVerdict(r);
 }
 
-// What doctor says before the three checks: the first line is too long, no turn yet, or not a Codex record.
+// What doctor says before the three checks: the first line is too long, no turn yet, or not a Codex record. Lines after
+// session_meta of which banker reads none (no turn start, user text or tool call) are what a Codex update that changed
+// the whole record shape leaves, so they are flagged, not taken for a session with no turn yet.
 function shapeEarlyNote(r, name) {
   const unread = `  ⚠ Codex record shape: ${name} does not open with session_meta - lineage, progress and usage counting cannot read it`;
   if (!r) return unread;
   if (r.tooLong) return `  Codex record shape: ${name} opens with a line over 8 MB, not checked`;
-  if (r.fresh || (r.version && !(r.turnStart || r.userText || r.toolCall))) return `  Codex record shape: ${name} holds no turn yet (run one Codex turn, then doctor again)`;
+  if (r.fresh) return `  Codex record shape: ${name} holds no turn yet (run one Codex turn, then doctor again)`;
+  if (r.version && !(r.turnStart || r.userText || r.toolCall)) {
+    return `  ⚠ Codex record shape (Codex ${r.version}, ${name}): it has lines after session_meta but no turn start, user text or tool call banker reads - `
+      + 'the record shape may have changed (lineage stops, progress warns, usage counting misses); update banker. If this session has run no turn yet, run one and doctor again';
+  }
   return r.version ? '' : unread;
 }
 
@@ -382,7 +395,9 @@ function doctorTeamwork(base) {
   let st = null;
   try { st = JSON.parse(fs.readFileSync(path.join(base, 'teamwork', 'state.json'), 'utf8')); } catch { return; }
   const missing = ['node', 'codex'].filter((k) => !(st.tools && st.tools[k] && fs.existsSync(st.tools[k])));
-  log(`  teamwork: ${st.enabled ? 'on' : 'off'} (engine ${st.version || '?'})${missing.length ? ` ⚠ recorded ${missing.join(', ')} missing: its hooks stay silent until $banker-teamwork on runs again` : ''}`);
+  // The hooks' wrapper needs the engine and node only; send and reply start the recorded codex.
+  const fails = [...(missing.includes('node') ? ['its hooks stay silent'] : []), ...(missing.includes('codex') ? ['send and reply fail'] : [])];
+  log(`  teamwork: ${st.enabled ? 'on' : 'off'} (engine ${st.version || '?'})${missing.length ? ` ⚠ recorded ${missing.join(', ')} missing: ${fails.join(' and ')} until $banker-teamwork on runs again` : ''}`);
   let rules = '';
   try { rules = fs.readFileSync(path.join(base, 'rules', 'teamwork.rules'), 'utf8'); } catch { return; }
   if (!rules.startsWith('# teamwork ')) log(`  ⚠ ${path.join(base, 'rules', 'teamwork.rules')} was not written by teamwork; teamwork leaves it as it is and asks for approval on every call`);
@@ -394,7 +409,7 @@ function uninstallClaude(dryRun) {
   if (!have('claude')) { warn('  claude CLI not found; skipping.'); return; }
   for (const args of [['plugin', 'uninstall', PLUGIN_NAME], ['plugin', 'marketplace', 'remove', MARKETPLACE]]) {
     if (dryRun) { log(`  [dry-run] claude ${args.join(' ')}`); continue; }
-    try { cp.execFileSync('claude', args, { stdio: 'inherit' }); } catch { warn(`  (not present) claude ${args.join(' ')}`); }
+    try { cp.execFileSync('claude', args, { stdio: 'inherit', ...bareSpawnOpts() }); } catch { warn(`  (not present) claude ${args.join(' ')}`); }
   }
 }
 function uninstallCodex(dryRun, scopes) {
@@ -420,10 +435,12 @@ function uninstallCodex(dryRun, scopes) {
 
 // teamwork (codex-only) goes only when no other way of banker into this Codex home is left: the user-scope npm skills
 // (kept by --scope project) and the Codex plugin. Its own uninstall removes its two hooks, its rule and its state.
+// It runs only with the user scope in the sweep, so a dry run counts the npm skills as gone, as the real run finds them.
 async function uninstallTeamwork(dryRun) {
   const base = codexBase('user');
   if (!fs.existsSync(path.join(base, 'teamwork'))) return;
-  const left = [...(fs.existsSync(path.join(base, 'skills', 'banker-teamwork')) ? ['npm skills'] : []), ...(await codexPluginInstalls(base))];
+  const npmLeft = !dryRun && fs.existsSync(path.join(base, 'skills', 'banker-teamwork'));
+  const left = [...(npmLeft ? ['npm skills'] : []), ...(await codexPluginInstalls(base))];
   if (left.length) { log(`  teamwork kept: banker is still in this Codex home (${left.join(', ')})`); return; }
   if (dryRun) { log(`  [dry-run] teamwork uninstall in ${base}`); return; }
   const r = cp.spawnSync(process.execPath, [path.join(PKG_ROOT, 'codex', 'skills', 'teamwork', 'scripts', 'teamwork.mjs'), 'uninstall'], { env: { ...process.env, CODEX_HOME: base }, encoding: 'utf8' });

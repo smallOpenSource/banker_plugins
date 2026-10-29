@@ -25,7 +25,7 @@ import {
   CODEX_SHAPE_MISS_PATH, writeByRename, configDir, randomHex,
 } from '../bin/lib/telemetry-config.mjs';
 import { CODEX_NAMES } from '../bin/lib/codex-names.mjs';
-import { codexCliVersion, codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, homeInSession, pluginRootInfo, pluginVersionNote } from '../bin/lib/codex-routes.mjs';
+import { codexCliVersion, codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, homeInSession, hookPlaces, pluginRootInfo, pluginVersionNote, writableRootsNote } from '../bin/lib/codex-routes.mjs';
 import { codexVersionOf } from './telemetry-count-codex.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -242,11 +242,23 @@ function dropOldClaims(dir, sid, now) {
   } catch { /* 정리는 다음 세션에 */ }
 }
 
+// Codex: 이 훅이 도는 곳(훅 스크립트, 플러그인 폴더나 사본 폴더, node)이 config.toml 의 writable_roots 아래면 그 알림,
+// 아니면 ''. 읽지 못하면 ''(전처럼 돎).
+export function writableNotice(payload, env = process.env, places = hookPlaces(import.meta.url)) {
+  try {
+    return writableRootsNote(codexHomeOf(payload?.transcript_path, env), places);
+  } catch {
+    return '';
+  }
+}
+
 async function main() {
   // SessionStart payload. Codex 는 두 길 알림에 transcript_path, session_id 를 쓴다. 파싱 실패해도 무해.
   let payload = null;
   try { payload = JSON.parse(await readStdin()); } catch { /* stdin 없음/오류 무해 */ }
 
+  const unsafe = CODEX ? writableNotice(payload) : '';
+  if (unsafe) { process.stdout.write(JSON.stringify({ systemMessage: unsafe })); return; } // 그 밖의 일은 하지 않는다
   if (CODEX && !claimSession(payload)) return; // 같은 세션의 다른 길 훅이 이미 알렸다
   const notes = CODEX ? [shapeMissNotice(), dualNotice(payload), sessionHomeNotice(payload), pluginVersionNotice(payload)] : [];
   if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.

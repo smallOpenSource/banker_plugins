@@ -4,12 +4,13 @@
  *  - 플러그인: `codex plugin add banker@<마켓플레이스>` 가 <CODEX_HOME>/plugins/cache/<마켓플레이스>/banker/<판>/ 에
  *    저장소를 두고 config.toml 에 [plugins."banker@<마켓플레이스>"] 를 적는다. 스킬은 $banker:<이름>.
  * 둘을 함께 두면 스킬과 훅이 두 벌이 된다. 지우지는 않고 알리기만 한다(update-notify, banker setup --codex, doctor).
- * 훅(update-notify, telemetry-count-codex)과 bin/banker.js 가 함께 쓰므로 npm 길의 훅 사본(codex-hooks.mjs 의
+ * 훅(update-notify, telemetry-count-codex, obsidize-hook 의 Codex 길)과 bin/banker.js 가 함께 쓰므로 npm 길의 훅 사본(codex-hooks.mjs 의
  * PAYLOAD)에도 들어간다.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const PLUGIN = 'banker';
 export const DEFAULT_MARKETPLACE = 'banker-plugins';
@@ -59,11 +60,59 @@ export function codexHomeOf(transcript, env = process.env) {
 // 샌드박스 안의 세션이 고칠 수 있다(설정, 훅 사본, 플러그인). 세션 시작 알림과 banker doctor 가 쓴다.
 export function homeInSession(home, cwd) {
   if (!home || !cwd || !path.isAbsolute(cwd)) return false;
-  // 아직 없는 경로는 있는 조상까지만 풀고 나머지를 붙인다(macOS 의 /var 는 /private/var 로 가는 링크).
-  const real = (f) => { try { return fs.realpathSync(f); } catch { const up = path.dirname(f); return up === f ? f : path.join(real(up), path.basename(f)); } };
-  const rel = path.relative(real(cwd), real(home));
+  const rel = path.relative(realPath(cwd), realPath(home));
   if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
   return rel !== '.codex';
+}
+
+// 실제 경로. 아직 없는 경로는 있는 조상까지만 풀고 나머지를 붙인다(macOS 의 /var 는 /private/var 로 가는 링크).
+// native 를 먼저 쓴다: Windows 의 JS 판은 8.3 짧은 이름(C:\Users\LONGNA~1)을 긴 이름으로 풀지 않는다(Windows 박스 실측,
+// Node 24.19.0). native 가 못 읽는 드라이브(일부 RAM 디스크)면 JS 판으로.
+export function realPath(f) {
+  try {
+    return fs.realpathSync.native(f);
+  } catch {
+    try {
+      return fs.realpathSync(f);
+    } catch {
+      const up = path.dirname(f);
+      return up === f ? f : path.join(realPath(up), path.basename(f));
+    }
+  }
+}
+
+// config.toml 의 [sandbox_workspace_write] writable_roots(표 안의 키와 점 표기 둘 다). teamwork 엔진과 같은 읽기:
+// 상대 경로는 Codex 홈 기준, ~ 는 홈 폴더, 실제 경로로. config.toml 이 없거나 읽지 못하면 [].
+export function writableRoots(home) {
+  const t = readRegular(path.join(home, 'config.toml'));
+  const sec = /^\[sandbox_workspace_write\][^\n]*\n([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(t);
+  const lists = [sec && /^\s*writable_roots\s*=\s*\[([\s\S]*?)\]/m.exec(sec[1]), /^\s*sandbox_workspace_write\.writable_roots\s*=\s*\[([\s\S]*?)\]/m.exec(t)];
+  const items = lists.filter(Boolean).flatMap((m) => [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g)].map((x) => x[1] ?? x[2]));
+  return items.map((p) => realPath(path.resolve(home, p.replace(/^~(?=[/\\]|$)/, os.homedir()))));
+}
+
+// 훅이 도는 곳: 훅 스크립트(모듈 URL), 그 위의 플러그인 폴더나 npm 길 사본 폴더(<폴더>/hooks/<스크립트>), 실행 중인 node.
+export function hookPlaces(scriptUrl) {
+  const file = fileURLToPath(scriptUrl);
+  return [file, path.dirname(path.dirname(file)), process.execPath];
+}
+
+// 훅이 도는 곳 가운데 writable_roots 항목 아래인 것이 있으면 알림 글, 없으면 ''. Codex 0.165.0 샌드박스는 쓰기 허용
+// 폴더마다 맨 위의 .git, .codex, .agents 를 읽기 전용으로 두므로 그 항목의 맨 위 .codex 아래(기본 ~/.codex)는 뺀다.
+// 그런 곳의 훅 파일과 node 는 샌드박스 안의 세션이 고칠 수 있고, Codex 는 신뢰한 훅을 샌드박스 밖에서 돌린다.
+// 이 검사는 고치기 전의 첫 세션에서 알리고 멈추는 것이다: 이미 고쳐진 파일은 이 검사도 고칠 수 있다.
+export function writableRootsNote(home, places) {
+  const roots = writableRoots(home);
+  if (!roots.length) return '';
+  for (const place of places) {
+    const p = realPath(place);
+    const root = roots.find((d) => {
+      const rel = path.relative(d, p);
+      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel) && rel.split(path.sep)[0] !== '.codex');
+    });
+    if (root) return `banker hooks skipped: ${p} is under the sandbox writable root ${root} (config.toml [sandbox_workspace_write] writable_roots), so a Codex session could change what this hook runs outside the sandbox`;
+  }
+  return '';
 }
 
 // npm 길로 설치된 banker 스킬이 있는지(<홈>/skills/banker-*/SKILL.md).
@@ -140,11 +189,14 @@ export function pluginVersionNote(version) {
     + 'Codex 를 올리거나 npm 길(banker setup --codex)을 쓰십시오';
 }
 
-// `codex --version` 의 판(x.y.z). 없거나 2초 안에 답하지 않으면 ''. Windows 는 codex.cmd 를 cmd 로 부른다.
+// `codex --version` 의 판(x.y.z). 없거나 2초 안에 답하지 않으면 ''. Windows 는 codex.cmd 를 cmd 로 부른다. cmd 는
+// 이름만 준 명령을 PATH 보다 지금 폴더에서 먼저 찾으므로(훅의 지금 폴더는 세션 폴더) 홈 폴더에서 부르고
+// NoDefaultCurrentDirectoryInExePath 로 지금 폴더 찾기를 끈다.
 export function codexCliVersion(spawn) {
   const win = process.platform === 'win32';
   try {
-    const r = spawn(win ? 'codex.cmd --version' : 'codex', win ? [] : ['--version'], { encoding: 'utf8', timeout: 2000, shell: win, input: '', windowsHide: true });
+    const opts = { encoding: 'utf8', timeout: 2000, shell: win, input: '', windowsHide: true, cwd: os.homedir(), env: { ...process.env, NoDefaultCurrentDirectoryInExePath: '1' } };
+    const r = spawn(win ? 'codex.cmd --version' : 'codex', win ? [] : ['--version'], opts);
     return (/(\d+\.\d+\.\d+)/.exec(String(r.stdout || '')) || [])[1] || '';
   } catch {
     return '';
