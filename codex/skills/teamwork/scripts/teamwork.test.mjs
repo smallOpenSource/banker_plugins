@@ -20,6 +20,15 @@ const A = '01a18000-0000-7000-8000-000000aaaaaa';
 const B = '01a18000-0000-7000-8000-000000bbbbbb';
 const POSIX = process.platform !== 'win32';
 
+// 모든 test() 를 등록하기 전에 불러 둔다 (중간의 top-level await 는 옛 Node 에서 after 를 먼저 돌림)
+const engine = await import(pathToFileURL(SCRIPT).href);
+const ch = await import(pathToFileURL(path.join(REPO, 'bin', 'lib', 'codex-hooks.mjs')).href);
+// Windows 에서는 on 이 미지원(6)으로 끝나므로 설치 흐름 시험은 POSIX 에서만 돈다 (OS 고유 조건)
+const ptest = (name, ...rest) => {
+  const opts = rest.length > 1 ? rest[0] : {};
+  return test(name, { ...opts, skip: (!POSIX && 'Windows 는 on 미지원') || opts.skip }, rest.at(-1));
+};
+
 const FIX_ROOT = process.env.TEAMWORK_FIXTURE_ROOT || path.join(REPO, 'work', 'teamwork-fixture');
 fs.mkdirSync(FIX_ROOT, { recursive: true });
 const RUN = fs.mkdtempSync(path.join(FIX_ROOT, `run-${process.pid}-`));
@@ -63,7 +72,7 @@ function hook(codexHome, kind, sessionId, extra = {}) {
   return j.hookSpecificOutput?.additionalContext ?? null;
 }
 
-test('on 은 훅을 기존 훅과 합쳐 설치하고 승인 규칙을 쓴다', () => {
+ptest('on 은 훅을 기존 훅과 합쳐 설치하고 승인 규칙을 쓴다', () => {
   const h = home();
   const r = run(h, ['on'], { threadId: A });
   assert.equal(r.code, 0, r.err);
@@ -80,7 +89,7 @@ test('on 은 훅을 기존 훅과 합쳐 설치하고 승인 규칙을 쓴다', 
   assert.ok(fs.statSync(path.join(h, 'teamwork', 'bin', 'teamwork')).mode & 0o111, '실행 권한');
 });
 
-test('on 을 다시 해도 훅이 늘지 않는다', () => {
+ptest('on 을 다시 해도 훅이 늘지 않는다', () => {
   const h = home();
   run(h, ['on']); run(h, ['off']); run(h, ['on']);
   const hooks = JSON.parse(fs.readFileSync(path.join(h, 'hooks.json'), 'utf8')).hooks;
@@ -90,7 +99,7 @@ test('on 을 다시 해도 훅이 늘지 않는다', () => {
   }
 });
 
-test('설치 뒤 래퍼로 실행된다', () => {
+ptest('설치 뒤 래퍼로 실행된다', () => {
   const h = home();
   run(h, ['on']);
   const r = spawnSync(path.join(h, 'teamwork', 'bin', 'teamwork'), ['version'], { env: { ...process.env, CODEX_HOME: h }, encoding: 'utf8' });
@@ -98,7 +107,7 @@ test('설치 뒤 래퍼로 실행된다', () => {
   assert.match(r.stdout, /^\d+\.\d+\.\d+/);
 });
 
-test('켜져 있으면 새 세션은 등록되고 규칙 전체를 받는다', () => {
+ptest('켜져 있으면 새 세션은 등록되고 규칙 전체를 받는다', () => {
   const h = home();
   run(h, ['on'], { threadId: A });
   const ctx = hook(h, 'session-start', B);
@@ -109,7 +118,7 @@ test('켜져 있으면 새 세션은 등록되고 규칙 전체를 받는다', (
   assert.match(st.out, /켜짐/);
 });
 
-test('UserPromptSubmit 은 처음에 규칙, 이후에는 목록이 바뀔 때만 넣는다', () => {
+ptest('UserPromptSubmit 은 처음에 규칙, 이후에는 목록이 바뀔 때만 넣는다', () => {
   const h = home();
   run(h, ['on']);
   assert.match(hook(h, 'prompt', A), /\[teamwork 켜짐\]/);
@@ -119,7 +128,7 @@ test('UserPromptSubmit 은 처음에 규칙, 이후에는 목록이 바뀔 때�
   assert.equal(hook(h, 'prompt', A), null);
 });
 
-test('off 뒤에는 각 세션이 한 번만 꺼짐 안내를 받는다', () => {
+ptest('off 뒤에는 각 세션이 한 번만 꺼짐 안내를 받는다', () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'prompt', A);
@@ -130,13 +139,13 @@ test('off 뒤에는 각 세션이 한 번만 꺼짐 안내를 받는다', () => 
   assert.doesNotMatch(run(h, ['status']).out, /bbbbbb/);
 });
 
-test('다시 켜면 꺼짐 안내를 받았던 세션도 규칙을 다시 받는다', () => {
+ptest('다시 켜면 꺼짐 안내를 받았던 세션도 규칙을 다시 받는다', () => {
   const h = home();
   run(h, ['on']); hook(h, 'prompt', A); run(h, ['off']); hook(h, 'prompt', A); run(h, ['on']);
   assert.match(hook(h, 'prompt', A), /\[teamwork 켜짐\]/);
 });
 
-test('role 은 이 세션의 역할을 기록하고 목록에 보인다', () => {
+ptest('role 은 이 세션의 역할을 기록하고 목록에 보인다', () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'session-start', A);
@@ -146,14 +155,14 @@ test('role 은 이 세션의 역할을 기록하고 목록에 보인다', () => 
   assert.match(run(h, ['peers']).out, /역할:검토-담당/);
 });
 
-test('꺼져 있으면 send 와 role 은 거절한다', () => {
+ptest('꺼져 있으면 send 와 role 은 거절한다', () => {
   const h = home();
   run(h, ['on']); run(h, ['off']);
   assert.equal(run(h, ['send', 'all', 'x'], { threadId: A }).code, 3);
   assert.equal(run(h, ['role', 'x'], { threadId: A }).code, 3);
 });
 
-test('받을 세션이 없으면 4 로 끝난다', () => {
+ptest('받을 세션이 없으면 4 로 끝난다', () => {
   const h = home();
   run(h, ['on'], { threadId: A });
   const r = run(h, ['send', '없는역할', '내용'], { threadId: A });
@@ -161,7 +170,7 @@ test('받을 세션이 없으면 4 로 끝난다', () => {
   assert.match(r.err, /받을 세션이 없습니다/);
 });
 
-test('죽은 Codex 프로세스의 세션은 목록에서 빠진다', () => {
+ptest('죽은 Codex 프로세스의 세션은 목록에서 빠진다', () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'session-start', B);
@@ -173,7 +182,7 @@ test('죽은 Codex 프로세스의 세션은 목록에서 빠진다', () => {
   assert.ok(!fs.existsSync(f));
 });
 
-test('uninstall 은 우리 훅만 지우고 다른 훅은 남긴다', () => {
+ptest('uninstall 은 우리 훅만 지우고 다른 훅은 남긴다', () => {
   const h = home();
   run(h, ['on']);
   assert.equal(run(h, ['uninstall']).code, 0);
@@ -193,7 +202,7 @@ function seedLog(h, entries, extra = '') {
   fs.writeFileSync(path.join(h, 'teamwork', 'log.jsonl'), entries.map((e) => JSON.stringify(e)).join('\n') + '\n' + extra);
 }
 
-test('reply 는 이 세션이 받은 요청에만 보낼 수 있다', () => {
+ptest('reply 는 이 세션이 받은 요청에만 보낼 수 있다', () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'session-start', A);
@@ -204,7 +213,7 @@ test('reply 는 이 세션이 받은 요청에만 보낼 수 있다', () => {
   assert.equal(run(h, ['reply', 'bbbbbb-1', '결과'], { threadId: B }).code, 4, '나에게 온 요청이 아님');
 });
 
-test('결과 메시지에는 reply 할 수 없다', () => {
+ptest('결과 메시지에는 reply 할 수 없다', () => {
   const h = home();
   run(h, ['on']);
   seedLog(h, [
@@ -216,7 +225,7 @@ test('결과 메시지에는 reply 할 수 없다', () => {
   assert.match(r.err, /결과 메시지에는 회신하지 않습니다/);
 });
 
-test('같은 요청에 결과를 두 번 보낼 수 없다', () => {
+ptest('같은 요청에 결과를 두 번 보낼 수 없다', () => {
   const h = home();
   run(h, ['on']);
   seedLog(h, [
@@ -228,7 +237,7 @@ test('같은 요청에 결과를 두 번 보낼 수 없다', () => {
   assert.match(r.err, /이미 결과를 보냈습니다/);
 });
 
-test('요청한 세션이 닫혔으면 reply 는 4 로 끝난다', () => {
+ptest('요청한 세션이 닫혔으면 reply 는 4 로 끝난다', () => {
   const h = home();
   run(h, ['on']);
   seedLog(h, [{ rid: 'aaaaaa-1', kind: 'request', from: A, to: B, ok: true, text: 'x' }]);
@@ -237,7 +246,7 @@ test('요청한 세션이 닫혔으면 reply 는 4 로 끝난다', () => {
   assert.match(r.err, /닫혔습니다/);
 });
 
-test('기록에 깨진 줄이 있어도 나머지 기록을 읽는다', () => {
+ptest('기록에 깨진 줄이 있어도 나머지 기록을 읽는다', () => {
   const h = home();
   run(h, ['on']);
   seedLog(h, [{ rid: 'aaaaaa-1', kind: 'request', from: A, to: B, ok: true, text: 'x' }], '{"rid":');
@@ -246,7 +255,7 @@ test('기록에 깨진 줄이 있어도 나머지 기록을 읽는다', () => {
   assert.match(r.err, /닫혔습니다/, '요청을 찾은 뒤 다음 단계에서 멈춰야 함');
 });
 
-test('Codex 밖에서 온 요청에는 reply 하지 않는다', () => {
+ptest('Codex 밖에서 온 요청에는 reply 하지 않는다', () => {
   const h = home();
   run(h, ['on']);
   seedLog(h, [{ rid: 'u0a1b2c-1', kind: 'request', from: null, to: B, ok: true, text: 'x' }]);
@@ -255,7 +264,7 @@ test('Codex 밖에서 온 요청에는 reply 하지 않는다', () => {
   assert.match(r.err, /Codex 밖에서 왔습니다/);
 });
 
-test('다시 on 해도 훅 파일은 바뀌지 않는다 (재신뢰 방지)', () => {
+ptest('다시 on 해도 훅 파일은 바뀌지 않는다 (재신뢰 방지)', () => {
   const h = home();
   run(h, ['on']);
   const f = path.join(h, 'hooks.json');
@@ -266,7 +275,7 @@ test('다시 on 해도 훅 파일은 바뀌지 않는다 (재신뢰 방지)', ()
   assert.doesNotMatch(r.out, /훅을 다시 넣었습니다|처음 설치했습니다/);
 });
 
-test('hooks.json 이 심볼릭 링크면 링크를 유지하고 대상 파일을 고친다', () => {
+ptest('hooks.json 이 심볼릭 링크면 링크를 유지하고 대상 파일을 고친다', () => {
   const h = home();
   const real = path.join(h, 'dotfiles-hooks.json');
   fs.renameSync(path.join(h, 'hooks.json'), real);
@@ -278,7 +287,7 @@ test('hooks.json 이 심볼릭 링크면 링크를 유지하고 대상 파일을
   assert.equal(fs.statSync(real).mode & 0o777, 0o640);
 });
 
-test('경로 조각만 같은 다른 도구의 훅은 지우지 않는다', () => {
+ptest('경로 조각만 같은 다른 도구의 훅은 지우지 않는다', () => {
   const h = home();
   const other = '/opt/x/teamwork/bin/teamwork-other notify';
   fs.writeFileSync(path.join(h, 'hooks.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: other }] }] } }));
@@ -288,7 +297,7 @@ test('경로 조각만 같은 다른 도구의 훅은 지우지 않는다', () =
   assert.deepEqual(hooks.SessionStart.flatMap((g) => g.hooks.map((x) => x.command)), [other]);
 });
 
-test('상태 폴더와 파일은 이 사용자만 읽는다', () => {
+ptest('상태 폴더와 파일은 이 사용자만 읽는다', () => {
   const h = home();
   run(h, ['on'], { threadId: A });
   const tw = path.join(h, 'teamwork');
@@ -297,7 +306,7 @@ test('상태 폴더와 파일은 이 사용자만 읽는다', () => {
   assert.equal(fs.statSync(path.join(tw, 'peers', `${A}.json`)).mode & 0o777, 0o600);
 });
 
-test('훅은 내부 오류가 나도 빈 응답과 0 으로 끝난다', () => {
+ptest('훅은 내부 오류가 나도 빈 응답과 0 으로 끝난다', () => {
   const h = home();
   run(h, ['on']);
   fs.writeFileSync(path.join(h, 'teamwork', 'seen'), 'not a dir');
@@ -307,7 +316,7 @@ test('훅은 내부 오류가 나도 빈 응답과 0 으로 끝난다', () => {
   assert.match(r.err, /teamwork 훅 오류/);
 });
 
-test('엔진이 지워져도 래퍼의 훅 호출은 빈 응답으로 끝난다', () => {
+ptest('엔진이 지워져도 래퍼의 훅 호출은 빈 응답으로 끝난다', () => {
   const h = home();
   run(h, ['on']);
   fs.unlinkSync(path.join(h, 'teamwork', 'bin', 'teamwork.mjs'));
@@ -318,7 +327,7 @@ test('엔진이 지워져도 래퍼의 훅 호출은 빈 응답으로 끝난다'
   assert.equal(other.status, 6);
 });
 
-test('하위 에이전트 세션은 피어로 등록하지 않는다', () => {
+ptest('하위 에이전트 세션은 피어로 등록하지 않는다', () => {
   const h = home();
   run(h, ['on']);
   const tp = path.join(h, 'rollout.jsonl');
@@ -327,7 +336,7 @@ test('하위 에이전트 세션은 피어로 등록하지 않는다', () => {
   assert.doesNotMatch(run(h, ['peers']).out, /bbbbbb/);
 });
 
-test('역할 이름의 특수 문자는 바꾼다', () => {
+ptest('역할 이름의 특수 문자는 바꾼다', () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'session-start', A);
@@ -335,7 +344,7 @@ test('역할 이름의 특수 문자는 바꾼다', () => {
   assert.match(r.out, /역할: 검토-teamwork-x/);
 });
 
-test('긴 본문은 거절하고 --file 은 파일을 읽는다', () => {
+ptest('긴 본문은 거절하고 --file 은 파일을 읽는다', () => {
   const h = home();
   run(h, ['on'], { threadId: A });
   const long = run(h, ['send', 'all', 'x'.repeat(8001)], { threadId: A });
@@ -346,7 +355,7 @@ test('긴 본문은 거절하고 --file 은 파일을 읽는다', () => {
   assert.equal(r.code, 4, '피어가 없어 대상 없음까지 진행');
 });
 
-test('쓸 수 없는 상태 폴더면 짧은 안내와 6 으로 끝난다', { skip: process.getuid?.() === 0 }, () => {
+ptest('쓸 수 없는 상태 폴더면 짧은 안내와 6 으로 끝난다', { skip: process.getuid?.() === 0 }, () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'session-start', A);
@@ -360,7 +369,7 @@ test('쓸 수 없는 상태 폴더면 짧은 안내와 6 으로 끝난다', { sk
   } finally { fs.chmodSync(peers, 0o700); }
 });
 
-test('피어 메시지로 시작한 턴에는 send 를 막고, 사용자 입력 턴에는 풀어 준다', () => {
+ptest('피어 메시지로 시작한 턴에는 send 를 막고, 사용자 입력 턴에는 풀어 준다', () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'prompt', A, { prompt: "[teamwork 요청 from:검토(bbbbbb) bbbbbb-1]\n본문" });
@@ -373,21 +382,23 @@ test('피어 메시지로 시작한 턴에는 send 를 막고, 사용자 입력 
   assert.match(run(h, ['send', 'all', 'x'], { threadId: A }).err, /받을 세션이 없습니다/, '사용자 턴에서는 대상 확인 단계까지 감');
 });
 
-test('--file 은 작업 폴더와 임시 폴더 밖의 파일을 거절한다', () => {
+ptest('--file 은 작업 폴더와 임시 폴더 밖의 파일을 거절한다', () => {
   const h = home();
   run(h, ['on'], { threadId: A });
-  const r = run(h, ['send', 'all', '--file', '/etc/hostname'], { threadId: A, cwd: h });
+  const outside = path.join(RUN, `outside${++n}.txt`);
+  fs.writeFileSync(outside, 'x');
+  const r = run(h, ['send', 'all', '--file', outside], { threadId: A, cwd: h });
   assert.equal(r.code, 2);
   assert.match(r.err, /안의 파일만 보낼 수 있습니다/);
 });
 
-test('승인 규칙 파일은 0600 이다', () => {
+ptest('승인 규칙 파일은 0600 이다', () => {
   const h = home();
   run(h, ['on']);
   assert.equal(fs.statSync(path.join(h, 'rules', 'teamwork.rules')).mode & 0o777, 0o600);
 });
 
-test('래퍼에 적힌 node 가 사라지면 PATH 의 node 로 대신하지 않는다', () => {
+ptest('래퍼에 적힌 node 가 사라지면 PATH 의 node 로 대신하지 않는다', () => {
   const h = home();
   run(h, ['on']);
   const w = path.join(h, 'teamwork', 'bin', 'teamwork');
@@ -402,7 +413,7 @@ test('래퍼에 적힌 node 가 사라지면 PATH 의 node 로 대신하지 않�
   assert.match(none.stderr, /훅을 건너뜁니다/);
 });
 
-test('대화 기록 첫 줄이 64KB 를 넘어도 하위 에이전트를 알아본다', () => {
+ptest('대화 기록 첫 줄이 64KB 를 넘어도 하위 에이전트를 알아본다', () => {
   const h = home();
   run(h, ['on']);
   const tp = path.join(h, 'rollout.jsonl');
@@ -414,8 +425,6 @@ test('대화 기록 첫 줄이 64KB 를 넘어도 하위 에이전트를 알아�
 
 // ---------- 0.3.0: 샌드박스 경계, 훅 공유 잠금, 엔진 판 ----------
 
-const engine = await import(pathToFileURL(SCRIPT).href);
-const ch = await import(pathToFileURL(path.join(REPO, 'bin', 'lib', 'codex-hooks.mjs')).href);
 const hooksOf = (h) => JSON.parse(fs.readFileSync(path.join(h, 'hooks.json'), 'utf8')).hooks;
 const cmdsOf = (h, ev) => (hooksOf(h)[ev] || []).flatMap((g) => g.hooks.map((x) => x.command));
 const ours = (h, ev) => cmdsOf(h, ev).filter((c) => c.includes('/teamwork/bin/teamwork'));
@@ -443,7 +452,7 @@ function refused(h, opts) {
   return r.err;
 }
 
-test('Codex 홈이 세션 폴더 안(깊은 폴더, 다른 이름), 임시 폴더, writable_roots 아래면 설치하지 않는다', { skip: !POSIX }, () => {
+ptest('Codex 홈이 세션 폴더 안(깊은 폴더, 다른 이름), 임시 폴더, writable_roots 아래면 설치하지 않는다', { skip: !POSIX }, () => {
   const proj = path.join(RUN, `proj${++n}`);
   for (const sub of ['deep/.codex', 'codexhome']) {
     fs.mkdirSync(path.join(proj, sub), { recursive: true });
@@ -468,7 +477,7 @@ function plant(dir) {
   return path.join(dir, 'MARK');
 }
 
-test('세션 폴더와 임시 폴더에 심은 node, codex, ps, sh 는 on, send, 훅 어디서도 돌지 않는다', { skip: !POSIX }, () => {
+ptest('세션 폴더와 임시 폴더에 심은 node, codex, ps, sh 는 on, send, 훅 어디서도 돌지 않는다', { skip: !POSIX }, () => {
   const h = home();
   const mark = plant(path.join(CWD, 'planted'));
   const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), 'teamwork-plant-'));
@@ -489,12 +498,12 @@ test('세션 폴더와 임시 폴더에 심은 node, codex, ps, sh 는 on, send,
   } finally { fs.rmSync(tmpBin, { recursive: true, force: true }); }
 });
 
-test('PATH 에 안전한 codex 가 없으면 6 으로 끝나고 아무것도 쓰지 않는다', { skip: !POSIX }, () => {
+ptest('PATH 에 안전한 codex 가 없으면 6 으로 끝나고 아무것도 쓰지 않는다', { skip: !POSIX }, () => {
   plant(path.join(CWD, 'only'));
   assert.match(refused(home(), { path: ['only', path.join(CWD, 'only'), '/usr/bin', '/bin'].join(path.delimiter) }), /Codex CLI 를 PATH 에서 찾지 못했습니다/);
 });
 
-test('기록한 codex 가 사라지면 이름으로 대신하지 않고 6 과 on 안내', { skip: !POSIX }, () => {
+ptest('기록한 codex 가 사라지면 이름으로 대신하지 않고 6 과 on 안내', { skip: !POSIX }, () => {
   const h = home();
   run(h, ['on']);
   hook(h, 'session-start', B);
@@ -506,7 +515,7 @@ test('기록한 codex 가 사라지면 이름으로 대신하지 않고 6 과 on
   assert.match(r.err, /on 을 다시/);
 });
 
-test('같은 이름의 사용자 규칙 파일은 덮어쓰지도 지우지도 않는다', { skip: !POSIX }, () => {
+ptest('같은 이름의 사용자 규칙 파일은 덮어쓰지도 지우지도 않는다', { skip: !POSIX }, () => {
   const h = home();
   fs.mkdirSync(path.join(h, 'rules'));
   const f = path.join(h, 'rules', 'teamwork.rules');
@@ -525,7 +534,7 @@ function variant(version, extra = '') {
 }
 const engineVersion = (h) => /^const VERSION = '([^']*)'/m.exec(fs.readFileSync(path.join(h, 'teamwork', 'bin', 'teamwork.mjs'), 'utf8'))[1];
 
-test('낮은 판 스크립트로 on 해도 엔진 판은 그대로다', { skip: !POSIX }, () => {
+ptest('낮은 판 스크립트로 on 해도 엔진 판은 그대로다', { skip: !POSIX }, () => {
   const h = home();
   run(h, ['on'], { script: variant('9.0.0') });
   const r = run(h, ['on'], { script: variant('0.0.1') });
@@ -533,7 +542,7 @@ test('낮은 판 스크립트로 on 해도 엔진 판은 그대로다', { skip: 
   assert.equal(engineVersion(h), '9.0.0');
 });
 
-test('훅 명령에 엔진 표지가 있고, 엔진 판이 오르면 같은 자리에서 고쳐 신뢰를 다시 묻는다', { skip: !POSIX }, () => {
+ptest('훅 명령에 엔진 표지가 있고, 엔진 판이 오르면 같은 자리에서 고쳐 신뢰를 다시 묻는다', { skip: !POSIX }, () => {
   const h = home();
   run(h, ['on']);
   const before = ours(h, 'UserPromptSubmit');
@@ -555,7 +564,7 @@ test('상주 app-server 가 돌린 훅은 pid 를 적지 않는다 (활동 시�
   assert.equal(engine.findCodexPid(10, info, () => 'codex resume --last'), 20);
 });
 
-test('banker 가 지워지면 훅은 멈추고 정리 명령을 한 번 안내한다', { skip: !POSIX }, () => {
+ptest('banker 가 지워지면 훅은 멈추고 정리 명령을 한 번 안내한다', { skip: !POSIX }, () => {
   const h = home();
   const copy = variant('0.3.0');
   run(h, ['on'], { script: copy });
@@ -570,7 +579,7 @@ const P = (h) => ch.codexPaths({ CODEX_HOME: h });
 const bankerOn = (h) => ch.enableHooks(P(h), ['update', 'count'], REPO, process.execPath, CWD);
 const bankerCmds = (h) => ['SessionStart', 'Stop'].flatMap((ev) => cmdsOf(h, ev)).filter((c) => c.includes('/hooks-custom/banker/'));
 
-test('banker 훅과 teamwork 를 어떤 순서로 켜고 꺼도 서로의 항목을 지우지 않는다', { skip: !POSIX }, () => {
+ptest('banker 훅과 teamwork 를 어떤 순서로 켜고 꺼도 서로의 항목을 지우지 않는다', { skip: !POSIX }, () => {
   const h = home();
   assert.equal(bankerOn(h).code, 0);
   assert.equal(run(h, ['on']).code, 0);
@@ -587,7 +596,7 @@ test('banker 훅과 teamwork 를 어떤 순서로 켜고 꺼도 서로의 항목
   assert.equal(hooksOf(h).SessionStart, undefined);
 });
 
-test('잠금 없는 옛 엔진(0.2.1)이 넣은 훅도 새 엔진이 같은 자리에서 고치고 banker 항목은 남긴다', { skip: !POSIX }, () => {
+ptest('잠금 없는 옛 엔진(0.2.1)이 넣은 훅도 새 엔진이 같은 자리에서 고치고 banker 항목은 남긴다', { skip: !POSIX }, () => {
   const h = home();
   const old = path.join(RUN, `old${++n}`, 'teamwork.mjs');
   fs.mkdirSync(path.dirname(old));
@@ -609,7 +618,7 @@ const spawnP = (args, env) => new Promise((resolve) => {
   c.on('close', resolve);
 });
 
-test('banker 와 teamwork 가 동시에 20번 hooks.json 을 고쳐도 잃는 항목이 없다', { skip: !POSIX }, async () => {
+ptest('banker 와 teamwork 가 동시에 20번 hooks.json 을 고쳐도 잃는 항목이 없다', { skip: !POSIX }, async () => {
   const lib = pathToFileURL(path.join(REPO, 'bin', 'lib', 'codex-hooks.mjs')).href;
   for (let round = 0; round < 2; round++) {
     const h = home();
@@ -631,7 +640,7 @@ test('Windows 는 전제 실측 전이라 on 이 까닭을 밝히고 6 으로 �
   assert.match(r.err, /Windows 는 아직 지원하지 않습니다/);
 });
 
-test('banker uninstall --codex 는 다른 banker 길이 남아 있으면 teamwork 를 두고, 없을 때만 지운다', { skip: !POSIX || process.getuid?.() === 0 }, () => {
+ptest('banker uninstall --codex 는 다른 banker 길이 남아 있으면 teamwork 를 두고, 없을 때만 지운다', { skip: !POSIX || process.getuid?.() === 0 }, () => {
   const h = home();
   run(h, ['on']);
   const plugin = path.join(h, 'plugins', 'cache', 'banker-plugins', 'banker', '9.9.9', 'codex', 'skills', 'teamwork');
