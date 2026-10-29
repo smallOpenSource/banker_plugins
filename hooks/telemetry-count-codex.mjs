@@ -21,7 +21,7 @@
  *    모델이 `echo skills/banker-<아무 글>/SKILL.md` 를 돌려 체크인의 이름 칸으로 글을 내보내지 못하게 한다. 턴 키 파일은 일반 파일만 읽고, 링크 자리에 쓰지 않는다.
  *  - 어떤 오류도 삼키고 항상 exit 0. 도구 호출을 절대 막지 않는다. 표준 출력은 비운다.
  */
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { codexHomeOf, pluginRoutes } from '../bin/lib/codex-routes.mjs';
@@ -235,9 +235,11 @@ export function withTurnsLock(fn, { wait = LOCK_WAIT_MS } = {}) {
     return fn();
   }
   const end = Date.now() + wait;
+  const token = `${process.pid}-${randomHex()}`;
   for (;;) {
     try {
       mkdirSync(lock);
+      try { writeFileSync(join(lock, 'owner'), token, { flag: 'wx' }); } catch { /* 표시 없이도 잠금은 잡았다 */ }
       break;
     } catch (e) {
       if (e?.code !== 'EEXIST') return fn();
@@ -250,7 +252,7 @@ export function withTurnsLock(fn, { wait = LOCK_WAIT_MS } = {}) {
         // 턴을 세는 중이므로 세지 않고 물러난다. 돌려놓지 않는다(그사이 세 번째 훅이 잡은 잠금을 덮을 수 있다).
         // 옮긴 폴더는 다음에 잠금을 잡은 훅이 치운다.
         if (Date.now() - statSync(old).mtimeMs <= LOCK_STALE_MS) return [];
-        rmdirSync(old);
+        rmSync(old, { recursive: true, force: true });
         continue;
       }
     } catch { /* 방금 풀렸거나 다른 훅이 먼저 치움: 다시 잡아 본다 */ }
@@ -261,8 +263,18 @@ export function withTurnsLock(fn, { wait = LOCK_WAIT_MS } = {}) {
     dropMovedLocks(lock);
     return fn();
   } finally {
-    try { rmdirSync(lock); } catch { /* 이미 없음 */ }
+    releaseLock(lock, token);
   }
+}
+
+// 잠금 폴더 안의 주인 표시(owner)가 이 훅의 것일 때만 놓는다. 넘겨받던 훅이 이 잠금을 옮기고 다른 훅이 그 이름을
+// 새로 잡았으면, 그 훅의 잠금은 지우지 않는다.
+function releaseLock(lock, token) {
+  try {
+    if (readFileSync(join(lock, 'owner'), 'utf8') !== token) return;
+    rmSync(join(lock, 'owner'), { force: true });
+    rmdirSync(lock);
+  } catch { /* 없거나 남의 것 */ }
 }
 
 // 넘겨받다 물러난 훅이 남긴 옮긴 잠금(<잠금>.stale-*) 가운데 오래된 것을 지운다.
@@ -273,7 +285,7 @@ function dropMovedLocks(lock) {
     for (const name of readdirSync(dir)) {
       if (!name.startsWith(prefix)) continue;
       try {
-        if (Date.now() - statSync(join(dir, name)).mtimeMs > LOCK_STALE_MS) rmdirSync(join(dir, name));
+        if (Date.now() - statSync(join(dir, name)).mtimeMs > LOCK_STALE_MS) rmSync(join(dir, name), { recursive: true, force: true });
       } catch { /* 다른 훅이 먼저 지움 */ }
     }
   } catch { /* 다음에 */ }

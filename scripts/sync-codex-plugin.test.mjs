@@ -280,6 +280,15 @@ test('PowerShell: the node PATH names runs the hook; one under TEMP or the sessi
   assert.equal(r.status, 0, r.stderr);
   assert.ok(!existsSync(c.marker), 'neither the shim nor the node.exe after it ran');
   assert.match(r.stderr, /banker hooks skipped: node is in a temp folder or the session folder/);
+  // A PATH entry an installer wrote in quotes, or with %VAR% in it, is read as the folder it names.
+  r = ps(c, psCommand('probe.mjs', [], true), `"${nodeDir}"${delimiter}${sysPath()}`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', 'a quoted entry');
+  rmSync(c.marker);
+  r = spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], { cwd: c.work, encoding: 'utf8', env: { ...process.env, PLUGIN_ROOT: c.plugin, BANKER_NODE_DIR: nodeDir, PATH: `%BANKER_NODE_DIR%${delimiter}${sysPath()}` } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', 'an entry with %VAR%');
+  rmSync(c.marker);
   // At session start a refusal is a systemMessage the TUI shows.
   r = ps(c, psCommand('probe.mjs', [], true, true), sysPath());
   assert.equal(r.status, 0, r.stderr);

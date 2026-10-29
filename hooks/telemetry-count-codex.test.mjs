@@ -346,3 +346,29 @@ test('a hook that moved away a lock another hook had just taken backs off and do
   }
   assert.deepEqual(readdirSync(join(tmp, 'banker')).filter((n) => n.includes('.lock')), [], 'nothing of the locks is left');
 });
+
+// A hook lets go only of its own lock: if its lock was moved away and another hook took the name meanwhile, that lock stays.
+test('a hook lets go only of a lock that holds its own owner mark', () => {
+  const tmp = mkTmp();
+  const prev = process.env.XDG_CONFIG_HOME;
+  const prevApp = process.env.APPDATA;
+  process.env.XDG_CONFIG_HOME = tmp;
+  process.env.APPDATA = tmp;
+  const lock = `${turnsFile(tmp)}.lock`;
+  try {
+    assert.deepEqual(withTurnsLock(() => {
+      assert.ok(existsSync(join(lock, 'owner')), 'the lock carries an owner mark while held');
+      rmSync(lock, { recursive: true });
+      mkdirSync(lock);
+      writeFileSync(join(lock, 'owner'), 'another hook');
+      return ['counted'];
+    }), ['counted']);
+    assert.equal(readFileSync(join(lock, 'owner'), 'utf8'), 'another hook', "the other hook's lock is not let go");
+    rmSync(lock, { recursive: true });
+    withTurnsLock(() => []);
+    assert.ok(!existsSync(lock), 'its own lock is let go');
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+    if (prevApp === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevApp;
+  }
+});
