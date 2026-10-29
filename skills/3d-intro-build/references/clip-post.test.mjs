@@ -179,3 +179,18 @@ test('postClip: zoom and landing run as one graph, one encode, tagged with the s
   assert.ok(rep.seams[0].ssim >= 0.99, `a landed clip meets the plate clip: ${rep.seams[0].ssim}`);
   assert.ok(rep.clips.every((c) => typeof c.rollDeg === 'number' && typeof c.zoom === 'number'));
 });
+
+test('postClip: a false step is no step (copied, nothing reported); a landing is timed on the video, not on a longer audio track', { skip: needFf, timeout: 120_000 }, async (t) => {
+  const d = work(t);
+  const src = mk(['-f', 'lavfi', '-i', 'testsrc2=s=320x568:r=30:d=2', ...enc, path.join(d, 'v.mp4')]);
+  const r = await C.postClip(src, path.join(d, 'same.mp4'), { reverse: false, zoom: null }, { ffmpeg: FF });
+  assert.deepEqual([r.encoded, r.steps], [false, []]);
+  // sora-2 clips carry audio a little longer than the video (4.1 s for 4.0 s): the container Duration is the audio's
+  const av = mk(['-f', 'lavfi', '-i', 'testsrc2=s=320x568:r=30:d=3', '-f', 'lavfi', '-i', 'sine=d=3.6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', path.join(d, 'av.mp4')]);
+  const info = await C.probeClip(av, { ffmpeg: FF });
+  assert.deepEqual([info.duration, info.container], [3, 3.6]);
+  const plate = await C.solidPlate([30, 60, 120], '320x568', path.join(d, 'plate.png'), { ffmpeg: FF });
+  await C.landOnStill(av, plate, path.join(d, 'land.mp4'), { ffmpeg: FF });
+  const s = await C.ssimFrames(lastOf(path.join(d, 'land.mp4'), path.join(d, 'last.png')), plate, { ffmpeg: FF });
+  assert.ok(s >= 0.99, `the last frame is the plate: SSIM ${s}`);
+});
