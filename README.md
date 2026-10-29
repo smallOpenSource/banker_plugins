@@ -327,9 +327,9 @@ banker uninstall        # 제거
   - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알립니다. Codex 는 스킬 `$banker-graceful-pause` 입니다(0.144.5 에서 확인).
   - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 는 스킬 `$banker-progress` 입니다(상시 패널이 아니라 부를 때마다 보임, tmux 칸은 선택).
   - `teamwork`(Codex 전용): Node 18 이상, Codex 0.149.0 이상(`codex queue`), Linux 와 macOS. Windows 는 `on` 이 까닭을 밝히고 끝납니다. Codex 0.160.1 Windows 에서 승인 규칙 판정(`codex execpolicy check`)이 PowerShell 로 부르는 래퍼에는 맞지 않아(래퍼를 바로 부르는 꼴만 맞음) 쓸 때마다 승인을 물어야 하기 때문입니다. \
-    처음 `on` 뒤 새 세션에서 훅을 한 번 신뢰합니다(Hooks need review). 엔진 판이 오르면 훅 명령의 해시가 바뀌어 한 번 다시 묻습니다. 설치 전부터 열려 있던 세션은 다시 열어야 하고, 훅을 신뢰하기 전에는 `codex exec` 가 멈출 수 있습니다. \
+    처음 `on` 뒤 새 세션에서 훅을 한 번 신뢰합니다(Hooks need review). 엔진 판이 오르면 훅 명령의 해시가 바뀌어 한 번 다시 묻습니다. 설치 전부터 열려 있던 세션(`on` 을 돌린 세션 포함)은 다시 열어야 훅과 승인 규칙이 적용되고(그 전에는 `role`, `send`, `reply` 마다 승인을 물음), 훅을 신뢰하기 전에는 `codex exec` 가 멈출 수 있습니다. \
     승인 규칙은 래퍼의 `peers`, `role`, `send`, `reply`, `status`, `version` 만 허용하고 `on`, `off`, `uninstall` 은 승인을 받습니다. 래퍼와 훅은 샌드박스 밖에서 돌므로 `node`, `codex`, `ps`, `sh` 는 `on` 때 찾은 절대 경로만 쓰고, 임시 폴더, 작업 폴더와 그 git 저장소, `writable_roots` 아래의 프로그램과 Codex 홈은 거부합니다. `hooks.json` 은 banker 훅 설치와 같은 잠금을 잡고 고칩니다. \
-    남은 위험: 샌드박스 안 세션이 저장소 파일의 지시를 받으면 `send` 로 같은 기기의 더 넓은 권한 세션에 사용자 턴을 넣을 수 있습니다. 받는 쪽 방어는 훅이 넣는 규칙(피어 본문은 데이터, 위험 동작은 그 세션 사용자 확인)과 피어 턴의 `send` 금지뿐입니다. 래퍼를 거치지 않은 `codex queue` 직접 호출로 머리말을 위조할 수 있는지는 재지 않았습니다. \
+    남은 위험: 샌드박스 안 세션이 저장소 파일의 지시를 받으면 `send` 로 같은 기기의 더 넓은 권한 세션에 사용자 턴을 넣을 수 있습니다. 받는 쪽 방어는 훅이 넣는 규칙(피어 본문은 데이터, 위험 동작은 그 세션 사용자 확인)과 피어 턴의 `send` 금지뿐입니다. 래퍼를 거치지 않은 `codex queue` 직접 호출로 머리말을 위조할 수 있는지는 재지 않았습니다. Codex 0.165.0 은 TUI 를 `/quit` 으로 닫아도 대화를 상주 서버에서 이어 가므로, 닫은 세션도 피어 목록에 남아 받은 요청을 화면 없이 처리합니다(목록에서 빠지는 것은 24시간 활동이 없을 때). \
     `banker uninstall --codex` 는 다른 banker 설치 길(사용자 범위 npm 스킬, Codex 플러그인)이 남아 있지 않을 때만 teamwork 도 지웁니다. 두 길이 모두 없어지면 훅은 멈추고 정리 명령을 한 번 안내합니다.
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 

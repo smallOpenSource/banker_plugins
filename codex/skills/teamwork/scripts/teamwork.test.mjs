@@ -365,8 +365,27 @@ ptest('쓸 수 없는 상태 폴더면 짧은 안내와 6 으로 끝난다', { s
     const r = run(h, ['role', '검토'], { threadId: A });
     assert.equal(r.code, 6);
     assert.match(r.err, /쓰기 실패 \(EACCES\)/);
+    // 승인 규칙이 생기기 전에 열린 세션도 같은 실패를 낸다(0.165.0 실측). 모델이 권한 상승과 다시 열기를 안내하게
+    assert.match(r.err, /켜기 전에 열린 세션은 승인 규칙을 읽지 않아/);
+    assert.match(r.err, /codex resume --last/);
     assert.doesNotMatch(r.err, /at .*teamwork\.mjs/);
   } finally { fs.chmodSync(peers, 0o700); }
+});
+
+ptest('승인 규칙을 처음 만든 on 은 이 세션도 다시 열어야 규칙이 적용된다고 알리고, 규칙이 이미 있으면 알리지 않는다', () => {
+  const h = home();
+  const later = /승인 규칙은 세션을 열 때 읽습니다\. 이 세션을 포함해/;
+  const first = run(h, ['on'], { threadId: A });
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, later);
+  const again = run(h, ['on'], { threadId: A });
+  assert.doesNotMatch(again.out, later, '규칙이 이미 있으면 알리지 않음');
+  // 규칙 파일만 지워진 뒤의 on: 훅은 그대로라 설치 안내는 없지만 규칙을 새로 만든 것은 알린다
+  fs.rmSync(path.join(h, 'rules', 'teamwork.rules'));
+  const rerule = run(h, ['on'], { threadId: A });
+  assert.doesNotMatch(rerule.out, /훅을 다시 넣었습니다|처음 설치했습니다/);
+  assert.match(rerule.out, later);
+  assert.ok(fs.existsSync(path.join(h, 'rules', 'teamwork.rules')));
 });
 
 ptest('피어 메시지로 시작한 턴에는 send 를 막고, 사용자 입력 턴에는 풀어 준다', () => {

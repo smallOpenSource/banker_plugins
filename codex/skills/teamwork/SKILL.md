@@ -56,6 +56,7 @@ argument-hint: "on | off | status"
    - "처음 설치했습니다" 또는 "훅을 다시 넣었습니다" 안내는 빠짐없이 사용자에게 전달
      - 다음에 여는 세션에서 "Hooks need review" 가 나오면 "Trust all and continue" 를 고름 (한 번)
      - 설치 전부터 열려 있던 다른 세션은 다시 열어야 훅이 적용됨 (`codex resume --last` 로 대화 유지)
+     - 승인 규칙도 세션을 열 때 읽음. `on` 을 돌린 이 세션도 다시 열기 전까지는 `role`, `send`, `reply` 가 샌드박스 안에서 쓰기 실패(6)로 끝나고, 권한 상승으로 다시 부를 때마다 승인을 물음. 출력에 "승인 규칙은 세션을 열 때 읽습니다" 가 있으면 그 안내도 전달
    - `on` 출력 끝의 규칙 문단은 이 세션에 바로 적용 (이 세션은 훅 설치 전에 시작되어 훅 맥락을 받지 못함)
    - `off` 뒤에는 이 세션에서도 피어 전송을 멈춤
 6. 종료 코드
@@ -111,11 +112,13 @@ argument-hint: "on | off | status"
 | 머리말 위조 | 래퍼를 거치지 않은 `codex queue` 직접 호출로 `[teamwork` 머리말을 위조할 수 있는지(샌드박스가 app-server 소켓에 닿는지) 측정하지 않음 |
 | 옛 Codex | `codex queue` 가 없는 판(0.149.0 미만)은 6 |
 | banker 제거 | npm 길과 플러그인 길이 모두 없어지면 훅은 멈추고 정리 명령(`<래퍼> uninstall`, 승인 필요)을 한 번 안내 |
+| 닫은 세션 | Codex 0.165.0 은 TUI 를 `/quit` 으로 닫아도 대화를 상주 서버에서 이어 감("Any running work continues"). 그 세션은 피어 목록에 남고, 받은 요청을 화면 없이 처리해 결과를 보냄(실측). 지켜보는 사용자가 없으므로 확인이 필요한 동작은 멈춘 채 남음. 목록에서 빠지는 것은 24시간 활동이 없을 때 |
 
 ## 제약
 
 - Linux, macOS. Node 18 이상, Codex 0.149.0 이상 (`codex queue`). Windows 는 `on` 이 까닭을 밝히고 6. Codex 0.160.1 Windows 실측에서 승인 규칙 판정(`codex execpolicy check`)이 래퍼를 바로 부르는 꼴에만 맞고 PowerShell 로 부르는 꼴(`& '<래퍼>' send ...`)에는 맞지 않아, 쓸 때마다 승인을 물어야 하기 때문
 - 같은 `CODEX_HOME` 을 쓰는 세션끼리만 통신
+- Codex 0.165.0 은 훅과 명령을 상주 서버(app-server)에서 돌림. 그래서 세션의 pid 를 알 수 없고, 닫은 세션의 정리는 마지막 활동 뒤 24시간 기준
 - 세션 이름(`/rename`)으로 보내는 `codex queue` 는 0.165.0 에서 "No active session found" 로 실패. 그래서 UUID(`CODEX_THREAD_ID`)로 등록하고 보냄
 - 받는 세션이 작업 중이면 그 턴이 끝난 뒤 처리. Esc 로 중단하면 큐에 남음
 - `off` 전에 보낸 요청 중 처리되지 않은 것은 받는 쪽이 처리하지 않음. 보낸 쪽은 알 수 없음

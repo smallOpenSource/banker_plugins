@@ -591,8 +591,10 @@ function install() {
   if (self !== realOr(ENGINE)) writeAtomic(ENGINE, fs.readFileSync(self), 0o600);
   writeAtomic(WRAPPER, wrapperText(tools), 0o700);
   const hooksChanged = mergeHooks(engineRev());
+  const hadRules = fs.existsSync(RULES);
   const rulesNote = writeRules();
-  return { v, tools, hooksChanged, rulesNote, source: self === realOr(ENGINE) ? state().source : self };
+  const rulesCreated = !hadRules && fs.existsSync(RULES);
+  return { v, tools, hooksChanged, rulesNote, rulesCreated, source: self === realOr(ENGINE) ? state().source : self };
 }
 
 function uninstall() {
@@ -606,14 +608,18 @@ function uninstall() {
 
 function selfId() { return isUuid(process.env.CODEX_THREAD_ID) ? process.env.CODEX_THREAD_ID : null; }
 
+// Codex(0.165.0 실측)는 승인 규칙을 세션을 열 때 읽는다. 규칙을 처음 만든 세션은 다시 열기 전까지 래퍼를 샌드박스 안에서 돌려 쓰기에 실패하고 승인을 묻는다
+const RULES_LATER = '- 승인 규칙은 세션을 열 때 읽습니다. 이 세션을 포함해 이미 열려 있던 세션은 `codex resume --last` 처럼 다시 열기 전까지 role, send, reply 를 부를 때마다 승인을 묻습니다.';
+
 function installNotes(fresh, r) {
   if (r.rulesNote) out(r.rulesNote);
-  if (!fresh && !r.hooksChanged) return;
+  if (!fresh && !r.hooksChanged) { if (r.rulesCreated) out(RULES_LATER); return; }
   out(fresh ? '처음 설치했습니다:' : '훅을 다시 넣었습니다:');
   out(`- 훅 2개를 ${HOOKS} 에 추가`);
   if (fresh) out(`- 승인 규칙 ${RULES} (${ALLOWED.join(', ')} 만. on, off, uninstall 은 승인을 묻습니다)`);
   out('- 다음에 여는 Codex 세션에서 "Hooks need review" 가 나오면 "Trust all and continue" 를 고르세요. 엔진 판이 바뀔 때마다 한 번 다시 묻습니다.');
   out('- 이미 열려 있던 다른 세션은 훅이 적용되지 않습니다. 그 세션은 닫고 `codex resume --last` 처럼 다시 여세요.');
+  if (r.rulesCreated) out(RULES_LATER);
 }
 
 function cmdOn() {
@@ -812,12 +818,14 @@ function main(argv) {
   COMMANDS[cmd](rest);
 }
 
-// 샌드박스 안에서 실행되면 $CODEX_HOME 에 쓸 수 없다. 래퍼 앞에 다른 것을 붙이면 승인 규칙에 맞지 않아 이렇게 된다
+// 샌드박스 안에서 실행되면 $CODEX_HOME 에 쓸 수 없다. 래퍼 앞에 다른 것을 붙이면 승인 규칙에 맞지 않아 이렇게 된다.
+// 승인 규칙이 생기기 전에 열린 세션(on 을 돌린 세션 포함)도 규칙을 읽지 않아 이렇게 된다
 function report(e) {
   if (e instanceof EnvError) { err(e.message); process.exit(EXIT.ENV); }
   if (['EROFS', 'EACCES', 'EPERM'].includes(e.code)) {
     err(`쓰기 실패 (${e.code}): ${e.path || CODEX_HOME}`);
     err('샌드박스 안에서 실행된 것으로 보입니다. 래퍼를 앞에 아무것도 붙이지 않고 절대경로 그대로 실행하세요. on, off, uninstall 은 권한 상승으로 실행하세요.');
+    err('teamwork 를 켜기 전에 열린 세션은 승인 규칙을 읽지 않아 이렇게 됩니다. 이번 명령은 권한 상승으로 실행하고, 사용자에게 이 세션을 `codex resume --last` 로 다시 열면 승인 없이 쓸 수 있다고 알리세요.');
     process.exit(EXIT.ENV);
   }
   throw e;
