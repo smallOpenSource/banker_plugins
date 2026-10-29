@@ -14,7 +14,9 @@ import { assemble } from './assemble.mjs';
 import { crossfade, resolveFfmpeg, stillToClip } from './azure-adapter.mjs';
 import { STRICT_CSP } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
-import { loadPlaywright, verifyIntro } from './verify-intro.mjs';
+import { loadPlaywright, seamProbe, verifyIntro } from './verify-intro.mjs';
+import { runDiveLegs } from './dive-mode.mjs';
+import { spawnSync } from 'node:child_process';
 
 const RUN = process.env.INTRO_E2E === '1';
 const SCENES = [['#0B1220', '#1E3A5F'], ['#132A13', '#31572C'], ['#2B0F3A', '#5A189A']];
@@ -128,4 +130,103 @@ test('without the hash the CSP refuses only the engine style, and the page still
   const v = report.viewports[0];
   assert.ok(v.consoleErrors.length >= 1 && v.consoleErrors.every((e) => /inline style/i.test(e)), JSON.stringify(v.consoleErrors));
   for (const s of v.scenes) assert.deepEqual(s.failures, [], `scene ${s.scene}`);
+});
+
+// ---- dive mode: a synthetic dive site (no generation cost) and the seam probe ----
+
+const DIVE_BG = ['0x1E3A5F', '0x5A189A', '0x132A13'];
+
+function ffRun(ffmpeg, args) {
+  const r = spawnSync(ffmpeg, ['-hide_banner', '-y', ...args], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr.slice(-400));
+  return args.at(-1);
+}
+
+// The fake clip maker: the seed frame pushed in over 2 s at 12 fps (what a dive or an exit starts from).
+const fakeClips = (ffmpeg, dir) => {
+  let n = 0;
+  return async (o) => {
+    const seed = path.join(dir, `seed-in-${++n}.png`);
+    fs.writeFileSync(seed, o.firstFramePng);
+    const m = '(1-1/(1+0.08*in/12))/2';
+    const vf = `perspective=x0='W*${m}':y0='H*${m}':x1='W*(1-${m})':y1='H*${m}':x2='W*${m}':y2='H*(1-${m})':x3='W*(1-${m})':y3='H*(1-${m})':eval=frame,format=yuv420p`;
+    const out = ffRun(ffmpeg, ['-loop', '1', '-t', '2', '-framerate', '12', '-i', seed, '-vf', vf, '-c:v', 'libx264', '-g', '8', path.join(dir, `fake-${n}.mp4`)]);
+    return { mp4: fs.readFileSync(out), provider: 'sora', label: 'AZURE_SORA', seconds: o.seconds };
+  };
+};
+
+// Three scenes, each a dark island on its own one-colour background, made into a dive site with exits.
+async function diveProject(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intro-dive-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ffmpeg = await resolveFfmpeg();
+  const size = `${SIZE.width}x${SIZE.height}`;
+  DIVE_BG.forEach((bg, i) => ffRun(ffmpeg, ['-f', 'lavfi', '-i', `color=c=${bg}:s=${size},drawbox=x=380:y=110:w=160:h=140:color=0x2B2B2B:t=fill`, '-frames:v', '1', path.join(dir, `s${i + 1}.png`)]));
+  const manifest = { ...manifest0(), sections: manifest0().sections.map((s) => ({ ...s, clip: undefined })), connectors: undefined, diveScroll: 1.2, connScroll: 0.9 };
+  await runDiveLegs({ projectDir: dir, manifest, size, promptFor: (leg) => leg.kind, generate: fakeClips(ffmpeg, dir), ffmpeg });
+  return { dir, ffmpeg };
+}
+
+// The e2e manifest without step navigation, the glass panel or the CTA: the seams are the subject here.
+const manifest0 = () => {
+  const m = manifest();
+  delete m.stepNav;
+  delete m.panel;
+  return m;
+};
+
+async function serveDive(t, dir, outName = 'site', drop = null) {
+  const mPath = path.join(dir, 'intro.json');
+  const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+  if (drop) delete m[drop];
+  const alt = path.join(dir, `${outName}.json`);
+  fs.writeFileSync(alt, JSON.stringify(m));
+  const built = assemble({ projectDir: dir, outDir: path.join(dir, outName), manifestPath: alt });
+  const server = await startServe(built.outDir, { csp: STRICT_CSP.replace("style-src 'self'", `style-src 'self' ${built.styleHash}`) });
+  t.after(() => server.close());
+  return { server, built };
+}
+
+async function probe(url, opts) {
+  const { chromium } = await loadPlaywright();
+  const browser = await chromium.launch();
+  try { return await seamProbe(browser, url, { viewport: { width: 1280, height: 720 }, ...opts }); } finally { await browser.close(); }
+}
+
+test('a dive site passes the measures under a strict CSP, and its plate seams read as seams, not as blank screens', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 600_000 }, async (t) => {
+  const { dir } = await diveProject(t);
+  const { server } = await serveDive(t, dir);
+  const report = await verifyIntro(server.url, { viewports: [{ width: 1280, height: 720 }], input: false, contrast: false, seams: true });
+  fs.writeFileSync(path.join(os.tmpdir(), 'intro-e2e-dive-report.json'), JSON.stringify(report, null, 2));
+  const v = report.viewports[0];
+  assert.deepEqual(v.consoleErrors, []);
+  for (const s of v.scenes) assert.deepEqual(s.failures, [], `scene ${s.scene}`);
+  assert.deepEqual(report.seams.boundaries.map((b) => `${b.from} -> ${b.to}`), ['dive 1 -> conn 1', 'conn 1 -> dive 2', 'dive 2 -> conn 2', 'conn 2 -> dive 3']);
+  assert.ok(report.seams.boundaries.every((b) => typeof b.maxDiff === 'number' && b.blank.length === 0), JSON.stringify(report.seams.boundaries));
+  assert.deepEqual(report.seams.failures, []);
+  assert.equal(report.failures, 0);
+});
+
+test('the seam probe catches a clip that goes black for its last seconds', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 600_000 }, async (t) => {
+  const { dir, ffmpeg } = await diveProject(t);
+  const { server, built } = await serveDive(t, dir);
+  const clip = path.join(built.outDir, 'assets', 'vid', 's1.mp4');
+  ffRun(ffmpeg, ['-loop', '1', '-t', '4', '-framerate', '12', '-i', path.join(dir, 's1.png'), '-vf', "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='gte(t,1)',format=yuv420p", '-c:v', 'libx264', '-g', '8', clip]);
+  const r = await probe(server.url, {});
+  const first = r.boundaries[0];
+  assert.ok(first.blank.length >= 1, JSON.stringify(first));
+  assert.ok(r.failures.some((f) => /dive 1 -> conn 1: a near one-colour screen/.test(f)), r.failures.join('\n'));
+});
+
+test('on a slow network the exit shows its own first frame as its poster; without connectorStills the next scene flickers in', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 900_000 }, async (t) => {
+  const { dir } = await diveProject(t);
+  const own = await serveDive(t, dir);
+  const upstream = await serveDive(t, dir, 'site-upstream', 'connectorStills');
+  assert.match(fs.readFileSync(path.join(own.built.outDir, 'intro.js'), 'utf8'), /"connectorStills"/);
+  assert.doesNotMatch(fs.readFileSync(path.join(upstream.built.outDir, 'intro.js'), 'utf8'), /"connectorStills"/);
+  const good = await probe(own.server.url, { slowClipsMs: 4000 });
+  assert.deepEqual(good.failures.filter((f) => /poster/.test(f)), [], JSON.stringify(good.boundaries.map((b) => [b.to, b.posterDiff])));
+  assert.ok(good.boundaries.some((b) => b.posterDiff !== null), 'a poster was on screen on arrival, so the comparison ran');
+  const bad = await probe(upstream.server.url, { slowClipsMs: 4000 });
+  assert.ok(bad.failures.some((f) => /dive 1 -> conn 1: the poster differs from the clip/.test(f)), JSON.stringify(bad.boundaries.map((b) => [b.to, b.posterDiff])));
 });

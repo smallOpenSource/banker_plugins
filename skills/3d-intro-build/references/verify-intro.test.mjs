@@ -8,8 +8,9 @@ import path from 'node:path';
 import { test } from 'node:test';
 import {
   TEXT_PARTS, VIEWPORTS, colorAlpha, contrastRatio, fillContrast, insideViewport, intersects, judge, loadPlaywright, parseArgs, parseColor,
-  parseViewport, relLuminance, screenshot, worstContrast,
+  parseViewport, relLuminance, screenshot, worstContrast, blankRuns, configFromIntroJs, decodePng, isBlank, meanAbsDiff, segmentsOf,
 } from './verify-intro.mjs';
+import { assemble } from './assemble.mjs';
 
 test('the default screens are the ones the guide lists and a phone on its side, touch where a phone is', () => {
   assert.deepEqual(VIEWPORTS.map((v) => `${v.width}x${v.height}${v.touch ? ' touch' : ''}`),
@@ -178,4 +179,67 @@ test('screenshot tries again only after Chromium\'s "Unable to capture screensho
   p = page(['Target page, context or browser has been closed']);
   await assert.rejects(screenshot(p, {}, { waitMs: 1 }), /has been closed/);
   assert.equal(p.calls, 1, 'any other error is thrown at once');
+});
+
+// ---- seam probe helpers (--seams; the browser part runs in intro-e2e.test.mjs) ----
+
+const rgba = (n, [r, g, b]) => { const a = new Uint8ClampedArray(n * 4); for (let i = 0; i < a.length; i += 4) a.set([r, g, b, 255], i); return a; };
+
+test('--seams and --slow-clips are read from the command line', () => {
+  const o = parseArgs(['http://x/', '--seams', '--slow-clips', '1500']);
+  assert.deepEqual([o.seams, o.slowClipsMs], [true, 1500]);
+  assert.deepEqual([parseArgs(['http://x/']).seams, parseArgs(['http://x/']).slowClipsMs], [false, 0]);
+});
+
+test('segmentsOf: dives and connectors in scroll order, as the engine lays them out; the config comes from an assembled intro.js', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seams-unit-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const f of ['a.png', 'b.png', 'c.png', 'a.mp4', 'b.mp4', 'c.mp4', 'x.mp4', 'p.png']) fs.writeFileSync(path.join(dir, f), 'x');
+  fs.writeFileSync(path.join(dir, 'intro.json'), JSON.stringify({ diveScroll: 1, connScroll: 0.5, stepNav: {},
+    sections: [{ id: 'a', still: 'a.png', clip: 'a.mp4', scroll: 2 }, { id: 'b', still: 'b.png', clip: 'b.mp4' }, { id: 'c', still: 'c.png', clip: 'c.mp4' }],
+    connectors: ['x.mp4', null], connectorStills: ['p.png', null] }));
+  const built = assemble({ projectDir: dir });
+  const config = configFromIntroJs(fs.readFileSync(path.join(built.outDir, 'intro.js'), 'utf8'));
+  assert.deepEqual(config.connectorStills, ['assets/conn1-poster.png', null]);
+  assert.deepEqual(segmentsOf(config).map((s) => [s.label, s.start, s.end]), [['dive 1', 0, 2], ['conn 1', 2, 2.5], ['dive 2', 2.5, 3.5], ['dive 3', 3.5, 4.5]]);
+  assert.equal(configFromIntroJs('nothing here'), null);
+});
+
+test('isBlank is a near one-colour screen of any colour; meanAbsDiff and blankRuns', () => {
+  assert.equal(isBlank(rgba(100, [0, 0, 0])), true);
+  assert.equal(isBlank(rgba(100, [240, 30, 90])), true, 'a one-colour screen of any colour');
+  const mixed = rgba(100, [20, 20, 20]);
+  for (let i = 0; i < 40; i += 4) mixed.set([200, 200, 200, 255], i * 4);
+  assert.equal(isBlank(mixed), false);
+  assert.equal(meanAbsDiff(rgba(4, [0, 0, 0]), rgba(4, [30, 60, 90])), 60);
+  const ys = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
+  assert.deepEqual(blankRuns([false, true, true, true, true, false, true], ys, 0.3), [{ fromVh: 0.1, toVh: 0.4, lengthVh: 0.4 }]);
+  assert.deepEqual(blankRuns([true, true, false, false, false, false, false], ys, 0.3), [], 'a short run is a plate landing, not a blank');
+});
+
+test('decodePng reads an 8-bit RGB PNG with every row filter, as zlib wrote it', async () => {
+  const zlib = await import('node:zlib');
+  const w = 3; const h = 5;
+  const px = (x, y) => [x * 40 + y, 200 - y * 30, (x * y * 17) & 255];
+  const rows = [];
+  for (let y = 0; y < h; y++) {
+    const line = Buffer.from(Array.from({ length: w }, (_, x) => px(x, y)).flat());
+    const prev = y ? Buffer.from(Array.from({ length: w }, (_, x) => px(x, y - 1)).flat()) : Buffer.alloc(w * 3);
+    const f = y % 5;   // None, Sub, Up, Average, Paeth
+    const enc = Buffer.alloc(w * 3);
+    for (let i = 0; i < w * 3; i++) {
+      const a = i >= 3 ? line[i - 3] : 0; const b = prev[i]; const c = i >= 3 ? prev[i - 3] : 0;
+      const p = a + b - c; const pa = Math.abs(p - a); const pb = Math.abs(p - b); const pc = Math.abs(p - c);
+      const pred = [0, a, b, (a + b) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? b : c][f];
+      enc[i] = (line[i] - pred) & 0xff;
+    }
+    rows.push(Buffer.from([f]), enc);
+  }
+  const chunk = (kind, body) => { const len = Buffer.alloc(4); len.writeUInt32BE(body.length); return Buffer.concat([len, Buffer.from(kind, 'latin1'), body, Buffer.alloc(4)]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+  const out = decodePng(png);
+  assert.deepEqual([out.width, out.height], [w, h]);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) assert.deepEqual([...out.data.subarray((y * w + x) * 4, (y * w + x) * 4 + 4)], [...px(x, y), 255], `${x},${y}`);
+  assert.throws(() => decodePng(Buffer.from('not a png at all')), /not a PNG/);
 });

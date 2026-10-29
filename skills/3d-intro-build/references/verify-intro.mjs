@@ -16,6 +16,9 @@
  * Usage:
  *   node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5]
  *        [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project]
+ *        [--seams] [--slow-clips <ms>]
+ *     --seams      also probe every seam between clips at the first screen size (seamProbe below)
+ *     --slow-clips hold each clip request this many ms first (a slow network), to catch a poster flicker
  *     --viewports  a trailing t marks a touch screen, r reduced motion (default: the six below)
  *     --header     the site's fixed header (default: the engine's .sw-topbar)
  *     --playwright-from-project  also look in the current folder's node_modules, before the global npm root (your own project only)
@@ -29,6 +32,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const VIEWPORTS = [
@@ -451,17 +455,246 @@ async function measureViewport(browser, url, vp, o) {
     buttons, buttonFailures: buttonMisses, consoleErrors, failures };
 }
 
-/** Measures `url` at every viewport. Resolves to { url, viewports: [...], failures }. */
-export async function verifyIntro(url, { viewports = VIEWPORTS, header = '.sw-topbar', minContrast = 4.5, input = true, contrast = true, playwrightFromProject = false } = {}) {
-  const { chromium } = await loadPlaywright({ fromProject: playwrightFromProject });
+/**
+ * Measures `url` at every viewport. Resolves to { url, viewports: [...], failures }; with `seams`,
+ * also { seams } from seamProbe at the first viewport, its failures counted in.
+ */
+const VERIFY_DEFAULTS = { viewports: VIEWPORTS, header: '.sw-topbar', minContrast: 4.5, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0 };
+
+export async function verifyIntro(url, opts = {}) {
+  const o = { ...VERIFY_DEFAULTS, ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
+  const { chromium } = await loadPlaywright({ fromProject: o.playwrightFromProject });
   const browser = await chromium.launch();
   try {
     const results = [];
-    for (const vp of viewports) results.push(await measureViewport(browser, url, vp, { header, minContrast, input, contrast }));
-    return { url, viewports: results, failures: results.reduce((a, r) => a + r.failures, 0) };
+    for (const vp of o.viewports) results.push(await measureViewport(browser, url, vp, { header: o.header, minContrast: o.minContrast, input: o.input, contrast: o.contrast }));
+    const seam = o.seams ? await seamProbe(browser, url, { viewport: o.viewports[0], slowClipsMs: Number(o.slowClipsMs) || 0 }) : null;
+    const failures = results.reduce((a, r) => a + r.failures, 0) + (seam ? seam.failures.length : 0);
+    return { url, viewports: results, ...(seam ? { seams: seam } : {}), failures };
   } finally {
     await browser.close();
   }
+}
+
+// ---- seam probe (--seams) ----------------------------------------------------------
+
+/**
+ * steps: captures per seam. windowVh: how far past the seam the probe looks (before it, at least the
+ * blank limit plus 0.4 vh). blankVh + the plate share: the longest run of a near one-colour screen a
+ * seam may show (a landing on a background plate is one colour for its last frames, so each seam's
+ * limit adds plateSec of the clip before it, in vh). flickerDiff: the mean pixel difference (0-255)
+ * between the poster a scene shows before its clip paints and the clip once it does, past which the
+ * poster is a flicker. settleMs: the longest wait for clips to catch up with the scroll.
+ */
+export const SEAM_DEFAULTS = { steps: 20, windowVh: 0.6, blankVh: 0.3, plateSec: 0.6, flickerDiff: 24, settleMs: 8000 };
+const OVERLAYS = ['.sw-copylayer', '.sw-topbar', '.sw-hint', '.sw-route', '.sw-scrollbar', '.isn-hint', '.isn-skip', '.isn-main'];
+
+/** The mountScrollWorld config in an assembled intro.js; null when it is not one. */
+export function configFromIntroJs(text) {
+  const m = /var config = ([\s\S]*?);\n\s*(?:var nav|mountScrollWorld|if \()/.exec(String(text));
+  try { return m ? JSON.parse(m[1]) : null; } catch { return null; }
+}
+
+/** The engine's segments in scroll order (as scrub-engine.js lays them out), start and end in vh. */
+export function segmentsOf(config) {
+  const out = [];
+  let off = 0;
+  const add = (label, w) => { out.push({ label, start: off, end: off + w }); off += w; };
+  (config.sections || []).forEach((s, i, all) => {
+    add(`dive ${i + 1}`, s.scroll || config.diveScroll || 1.3);
+    if (i < all.length - 1 && (config.connectors || [])[i]) add(`conn ${i + 1}`, config.connScroll || 0.9);
+  });
+  return out;
+}
+
+/** Mean absolute difference of two RGBA pixel arrays over R, G and B (0-255). */
+export function meanAbsDiff(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i += 4) sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+  return Math.round((sum / ((a.length / 4) * 3)) * 100) / 100;
+}
+
+/** A near one-colour screen, whatever the colour: `share` of the pixels within `tolerance` of the most common colour. */
+export function isBlank(data, { tolerance = 10, share = 0.99 } = {}) {
+  const ref = [0, 1, 2].map((c) => modeOf(data, c));
+  let near = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (Math.abs(data[i] - ref[0]) <= tolerance && Math.abs(data[i + 1] - ref[1]) <= tolerance && Math.abs(data[i + 2] - ref[2]) <= tolerance) near++;
+  }
+  return near / (data.length / 4) >= share;
+}
+
+function modeOf(data, c) {
+  const hist = new Uint32Array(256);
+  for (let i = c; i < data.length; i += 4) hist[data[i]]++;
+  return hist.indexOf(Math.max(...hist));
+}
+
+/** Runs of blank captures longer than limitVh: [{ fromVh, toVh, lengthVh }] (ys are the captures' scroll positions in vh). */
+export function blankRuns(flags, ys, limitVh) {
+  const step = ys.length > 1 ? ys[1] - ys[0] : 0;
+  const runs = [];
+  let from = -1;
+  flags.concat(false).forEach((f, i) => {
+    if (f && from < 0) from = i;
+    if (!f && from >= 0) { runs.push({ fromVh: ys[from], toVh: ys[i - 1], lengthVh: ys[i - 1] - ys[from] + step }); from = -1; }
+  });
+  const r2 = (x) => Math.round(x * 100) / 100;
+  return runs.filter((r) => r.lengthVh > limitVh).map((r) => ({ fromVh: r2(r.fromVh), toVh: r2(r.toVh), lengthVh: r2(r.lengthVh) }));
+}
+
+// Waits until the clips of the scenes in view are loaded and not seeking, and their frames hold for six
+// animation frames: the engine eases each clip towards the scroll target over several frames. A scene
+// with no video yet (its clip still on the way) or one that cannot show a frame yet is pending; a loaded
+// clip the engine has not needed to seek (a scene at its very first frame) is not.
+const settleClips = (page, limit) => page.evaluate(async (ms) => {
+  const t0 = performance.now();
+  let last = '';
+  let same = 0;
+  const waiting = (e) => { const v = e.querySelector('video'); return v ? v.seeking || v.readyState < 2 : !e.classList.contains('has-clip'); };
+  while (performance.now() - t0 < ms) {
+    await new Promise((r) => requestAnimationFrame(r));
+    const seen = [...document.querySelectorAll('.sw-scene')].filter((e) => Number(getComputedStyle(e).opacity) > 0.5);
+    const pending = seen.some(waiting);
+    const sig = seen.map((e) => e.querySelector('video')?.currentTime.toFixed(3) ?? '-').join(',');
+    same = !pending && sig === last ? same + 1 : 0;
+    last = sig;
+    if (same >= 6) return true;
+  }
+  return false;
+}, limit);
+
+// Whether a scene in view still shows its poster (no clip painted yet).
+const posterShown = (page) => page.evaluate(() => [...document.querySelectorAll('.sw-scene')]
+  .some((e) => Number(getComputedStyle(e).opacity) > 0.5 && !e.classList.contains('has-clip')));
+
+const scrollToVh = (page, vh) => page.evaluate((y) => { window.scrollTo(0, y * window.innerHeight); return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); }, vh);
+// A seam capture, decoded here: many captures per seam, so not through a browser tab as pixels() does.
+const capture = async (page) => decodePng(await screenshot(page, { type: 'png' })).data;
+
+/**
+ * RGBA pixels of an 8-bit, non-interlaced PNG (grey, grey+alpha, RGB or RGBA: what a browser
+ * screenshot is), decoded with zlib. Throws on any other PNG.
+ */
+export function decodePng(buf) {
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error('decodePng: not a PNG');
+  const { width, height, type, depth, interlace, idat } = pngChunks(buf);
+  const ch = { 0: 1, 2: 3, 4: 2, 6: 4 }[type];
+  if (depth !== 8 || interlace !== 0 || !ch) throw new Error(`decodePng: only 8-bit non-interlaced PNG (got depth ${depth}, type ${type}, interlace ${interlace})`);
+  const raw = unfilter(zlib.inflateSync(idat), width, height, ch);
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0, j = 0; i < width * height; i++, j += ch) {
+    const grey = ch < 3;
+    data.set([raw[j], raw[grey ? j : j + 1], raw[grey ? j : j + 2], ch === 2 || ch === 4 ? raw[j + ch - 1] : 255], i * 4);
+  }
+  return { width, height, data };
+}
+
+function pngChunks(buf) {
+  const out = { idat: [] };
+  for (let at = 8; at < buf.length;) {
+    const len = buf.readUInt32BE(at);
+    const kind = buf.toString('latin1', at + 4, at + 8);
+    const body = buf.subarray(at + 8, at + 8 + len);
+    if (kind === 'IHDR') Object.assign(out, { width: body.readUInt32BE(0), height: body.readUInt32BE(4), depth: body[8], type: body[9], interlace: body[12] });
+    if (kind === 'IDAT') out.idat.push(body);
+    at += 12 + len;
+  }
+  return { ...out, idat: Buffer.concat(out.idat) };
+}
+
+// Undo the PNG row filters (None, Sub, Up, Average, Paeth).
+function unfilter(src, width, height, bpp) {
+  const stride = width * bpp;
+  const out = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) {
+    const f = src[y * (stride + 1)];
+    const row = src.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? out[y * stride + x - bpp] : 0;
+      const b = y > 0 ? out[(y - 1) * stride + x] : 0;
+      const c = x >= bpp && y > 0 ? out[(y - 1) * stride + x - bpp] : 0;
+      out[y * stride + x] = (row[x] + predict(f, a, b, c)) & 0xff;
+    }
+  }
+  return out;
+}
+
+function predict(f, a, b, c) {
+  if (f === 1) return a;
+  if (f === 2) return b;
+  if (f === 3) return (a + b) >> 1;
+  if (f !== 4) return 0;
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
+// The clip length of the segment before a seam, from its video (8 s when it is not loaded).
+const clipSeconds = (page, k) => page.evaluate((i) => document.querySelectorAll('.sw-scene')[i]?.querySelector('video')?.duration || 8, k);
+
+/**
+ * Scrolls across each seam between clips and measures it: the largest difference between successive
+ * captures (maxDiff), runs of a near one-colour screen longer than the seam's limit (blank), and whether
+ * a poster that showed on arrival differs from the clip once it paints (posterFlicker). Overlays (copy,
+ * bars, dots) are hidden while measuring. Each capture waits for the clips to catch up with the scroll.
+ */
+export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowClipsMs = 0, ...o } = {}) {
+  const opts = { ...SEAM_DEFAULTS, ...o };
+  const config = configFromIntroJs(await (await fetch(new URL('intro.js', url))).text());
+  if (!config) return { viewport: `${viewport.width}x${viewport.height}`, boundaries: [], failures: ['seams: intro.js holds no config to read the segments from'] };
+  const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  if (slowClipsMs) await page.route(/\.mp4(\?|$)/, async (route) => { await new Promise((r) => setTimeout(r, slowClipsMs)); await route.continue(); });
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForSelector('.sw-scene');
+  await page.evaluate((sels) => { for (const el of document.querySelectorAll(sels.join(','))) el.style.visibility = 'hidden'; }, OVERLAYS);
+  const segs = segmentsOf(config);
+  const boundaries = [];
+  for (let k = 1; k < segs.length; k++) boundaries.push(await probeSeam(page, segs, k, opts));
+  await context.close();
+  return { viewport: `${viewport.width}x${viewport.height}`, slowClipsMs, boundaries, failures: boundaries.flatMap((b) => b.failures) };
+}
+
+async function probeSeam(page, segs, k, o) {
+  const at = segs[k].start;
+  const prev = segs[k - 1];
+  const before = Math.max(o.windowVh, o.blankVh + 0.4 + (o.plateSec / 2) * (prev.end - prev.start));
+  const arrival = await arrive(page, at + 0.02, o);
+  const limit = o.blankVh + (o.plateSec / (await clipSeconds(page, k - 1))) * (prev.end - prev.start);
+  const ys = Array.from({ length: o.steps + 1 }, (_, i) => at - before + ((before + o.windowVh) * i) / o.steps);
+  const flags = [];
+  let maxDiff = 0;
+  let last = null;
+  for (const y of ys) {
+    await scrollToVh(page, y);
+    await settleClips(page, o.settleMs);
+    const px = await capture(page);
+    if (last) maxDiff = Math.max(maxDiff, meanAbsDiff(last, px));
+    flags.push(isBlank(px));
+    last = px;
+  }
+  const blank = blankRuns(flags, ys, limit);
+  const failures = [
+    ...blank.map((b) => `seam ${prev.label} -> ${segs[k].label}: a near one-colour screen for ${b.lengthVh} vh (limit ${Math.round(limit * 100) / 100} vh)`),
+    ...(arrival.flicker ? [`seam ${prev.label} -> ${segs[k].label}: the poster differs from the clip by ${arrival.diff} (limit ${o.flickerDiff})`] : []),
+  ];
+  return { from: prev.label, to: segs[k].label, atVh: at, maxDiff, blank, blankLimitVh: Math.round(limit * 100) / 100, posterDiff: arrival.diff, failures };
+}
+
+// Jump just past the seam, where the entering clip is at its first frames; when a poster shows there,
+// compare it with the clip once it paints. A poster that is the clip's own first frame barely differs.
+async function arrive(page, vh, o) {
+  await scrollToVh(page, vh);
+  if (!(await posterShown(page))) { await settleClips(page, o.settleMs); return { diff: null, flicker: false }; }
+  const early = await capture(page);
+  await page.waitForFunction(() => [...document.querySelectorAll('.sw-scene')]
+    .every((e) => Number(getComputedStyle(e).opacity) <= 0.5 || e.classList.contains('has-clip')), null, { timeout: o.settleMs }).catch(() => {});
+  await settleClips(page, o.settleMs);
+  const diff = meanAbsDiff(early, await capture(page));
+  return { diff, flicker: diff > o.flickerDiff };
 }
 
 // '390x844t' is a touch screen, '1280x800r' reduced motion; the flags may combine ('390x844tr').
@@ -471,12 +704,12 @@ export function parseViewport(v) {
   return { width: Number(m[1]), height: Number(m[2]), touch: m[3].includes('t'), reduce: m[3].includes('r') };
 }
 
-const FLAGS = { '--out': 'out', '--header': 'header', '--min-contrast': 'minContrast', '--viewports': 'viewports' };
-const SWITCHES = { '--no-input': ['input', false], '--no-contrast': ['contrast', false], '--playwright-from-project': ['playwrightFromProject', true] };
+const FLAGS = { '--out': 'out', '--header': 'header', '--min-contrast': 'minContrast', '--viewports': 'viewports', '--slow-clips': 'slowClipsMs' };
+const SWITCHES = { '--no-input': ['input', false], '--no-contrast': ['contrast', false], '--playwright-from-project': ['playwrightFromProject', true], '--seams': ['seams', true] };
 
 /** The command line: a URL, --flag value or --flag=value, and the switches. */
 export function parseArgs(argv) {
-  const o = { url: null, out: null, header: '.sw-topbar', minContrast: 4.5, viewports: VIEWPORTS, input: true, contrast: true, playwrightFromProject: false };
+  const o = { url: null, out: null, header: '.sw-topbar', minContrast: 4.5, viewports: VIEWPORTS, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0 };
   for (let i = 0; i < argv.length; i++) {
     const [flag, inline] = argv[i].includes('=') ? [argv[i].slice(0, argv[i].indexOf('=')), argv[i].slice(argv[i].indexOf('=') + 1)] : [argv[i], null];
     if (SWITCHES[flag]) o[SWITCHES[flag][0]] = SWITCHES[flag][1];
@@ -485,6 +718,7 @@ export function parseArgs(argv) {
     else o.url = argv[i];
   }
   o.minContrast = Number(o.minContrast);
+  o.slowClipsMs = Number(o.slowClipsMs) || 0;
   if (typeof o.viewports === 'string') o.viewports = o.viewports.split(',').map(parseViewport);
   return o;
 }
@@ -502,7 +736,7 @@ if (invokedDirectly()) {
   let o;
   try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
   if (!o.url) {
-    console.error('usage: node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5] [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project]');
+    console.error('usage: node verify-intro.mjs <url> [--out report.json] [--header <selector>] [--min-contrast 4.5] [--viewports 1280x800,390x844t] [--no-input] [--no-contrast] [--playwright-from-project] [--seams] [--slow-clips <ms>]');
     process.exit(2);
   }
   verifyIntro(o.url, o).then((r) => {
