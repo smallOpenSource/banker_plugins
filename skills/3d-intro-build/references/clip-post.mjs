@@ -5,7 +5,7 @@
  *                 8 frames, faststart, no audio (what the scrub engine seeks well)
  *   postClip      one clip's steps (reverse, tone, zoom, landing) as ONE filter graph: one re-encode
  *   reverseClip, matchClipTone, zoomBoost, landOnStill   postClip with one step
- *   probeClip, frameStats, solidPlate, ssimFrames, seamSsim, cameraMotion, seamReport   measures and plates
+ *   probeClip, frameStats, solidPlate, resizePng, ssimFrames, seamSsim, cameraMotion, seamReport   measures and plates
  *
  * matchClipTone moves a clip's first-frame channel means and spreads onto the seed frame's and lets
  * the correction go over rampSec. When the corrected first frame matches the seed worse than the
@@ -119,6 +119,14 @@ export async function solidPlate(rgb, size, out, opts = {}) {
   const hex = rgb.map((c) => Math.min(255, Math.max(0, Math.round(c))).toString(16).padStart(2, '0')).join('');
   fs.rmSync(out, { force: true });
   must(ff(await binOf(opts), ['-y', '-f', 'lavfi', '-i', `color=c=0x${hex}:s=${w}x${h}`, '-frames:v', '1', out]), 'solidPlate');
+  return out;
+}
+
+/** A PNG scaled to `size` ('720x1280' or {width, height}), e.g. a classic-path still before it seeds a clip. Returns out. */
+export async function resizePng(png, size, out, opts = {}) {
+  const [w, h] = sizeOf(size);
+  fs.rmSync(out, { force: true });
+  must(ff(await binOf(opts), ['-y', '-i', png, '-vf', `scale=${w}:${h}:flags=lanczos,setsar=1,format=rgb24`, '-frames:v', '1', out]), 'resizePng');
   return out;
 }
 

@@ -289,3 +289,23 @@ test('a link at the temp name a write draws is refused (wx), not written through
   assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched');
   assert.equal(fs.readFileSync(keys, 'utf8'), 'A=1\n');
 });
+
+// The tone and seam sentences of both SKILL files name functions that exist (no promise without code).
+test('SKILL: the tone and seam lines in build Step 4A and setup §2 name functions that the modules export', async () => {
+  const C = await import('./clip-post.mjs');
+  const D = await import('./dive-mode.mjs');
+  const exported = new Set([...Object.keys(A), ...Object.keys(C), ...Object.keys(D)]);
+  const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const build = read('../SKILL.md');
+  const tone = build.split('\n').find((l) => l.startsWith('톤 정합은 생성된 클립 쪽에서 한다'));
+  const seam = build.split('\n').find((l) => l.startsWith('이음매 디졸브는 엔진의 `crossfade`'));
+  assert.ok(tone && seam, 'build Step 4A says where tone and seams are handled');
+  assert.doesNotMatch(build, /톤 정합은 조립, 재생 계층에서 처리한다/);
+  const setupLine = read('../../3d-intro-setup/SKILL.md').split('\n').find((l) => l.includes('`ffmpeg` 바이너리를 요구한다'));
+  for (const line of [tone, seam, setupLine]) {
+    const names = [...line.matchAll(/`([a-z][A-Za-z]+)[`(]/g)].map((m) => m[1]).filter((n) => /^[a-z]+[A-Z]/.test(n));
+    assert.ok(names.length >= 1, line);
+    for (const n of names) assert.ok(exported.has(n), `${n} is exported (${line.slice(0, 40)}...)`);
+  }
+  assert.doesNotMatch(setupLine, /colorMatch/);
+});

@@ -1046,15 +1046,26 @@ const IMAGE_USD_EACH = 0.02;
  * Rough budget for an intro of `nScenes` scenes. Video billed at $0.10/sec/clip (the Sora rate:
  * WAN rates cannot be read through an API); one image gen per scene (two per scene in two-image
  * mode). mode 'chain' (default) makes one clip of `seconds` per scene; 'holdFlight' makes one
- * flight of `flightSeconds` between each pair of scenes, the holds being encoded stills (free).
+ * flight of `flightSeconds` between each pair of scenes, the holds being encoded stills (free);
+ * 'dive' makes one clip of `diveSeconds` per scene (the dives and the finale) and, with `exit`, one
+ * exit of `exitSeconds` between each pair of scenes (6 scenes: $6.8 with exits, $4.8 without).
  * Returns per-category USD sub-costs and the total.
  * @returns {{images:number, videos:number, usd:number}}
  */
-export function estimateCost({ nScenes, seconds = 4, twoImage = false, mode = 'chain', flightSeconds = 5 } = {}) {
-  const n = Number(nScenes) || 0;
-  const imageCount = twoImage ? n * 2 : n;
+const COST_DEFAULTS = { seconds: 4, twoImage: false, mode: 'chain', flightSeconds: 5, diveSeconds: 8, exitSeconds: 4, exit: true };
+// The clip seconds an intro bills, by mode.
+const CLIP_SECONDS = {
+  chain: (n, o) => n * o.seconds,
+  holdFlight: (n, o) => Math.max(0, n - 1) * o.flightSeconds,
+  dive: (n, o) => n * o.diveSeconds + (o.exit ? Math.max(0, n - 1) * o.exitSeconds : 0),
+};
+
+export function estimateCost(opts = {}) {
+  const o = { ...COST_DEFAULTS, ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
+  const n = Number(o.nScenes) || 0;
+  const imageCount = o.twoImage ? n * 2 : n;
   const images = round2(imageCount * IMAGE_USD_EACH);
-  const clipSeconds = mode === 'holdFlight' ? Math.max(0, n - 1) * flightSeconds : n * seconds;
+  const clipSeconds = (CLIP_SECONDS[o.mode] || CLIP_SECONDS.chain)(n, o);
   const videos = round2(clipSeconds * VIDEO_USD_PER_SEC);
   const usd = round2(images + videos);
   return { images, videos, usd };

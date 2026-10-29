@@ -11,7 +11,14 @@
 두 파일 모두 **scroll-world**(https://github.com/oso95/scroll-world)에서 **글자 그대로** 가져왔다.
 라이선스: MIT, Copyright (c) 2026 cyw.
 전문은 이 디렉터리의 `LICENSE` 파일에 있으며, MIT 조건에 따라 그 저작권·허가 고지를 함께 배포한다.
-두 파일은 이 스킬에서 **수정하지 않는다**(정본은 상류 scroll-world 다).
+두 파일은 이 스킬에서 **수정하지 않는다**(정본은 상류 scroll-world 다). 예외는 아래 변경 기록 한 건뿐이다.
+
+### 변경 기록 (scrub-engine.js)
+
+- 2026-10-29: 커넥터 구간 포스터를 고를 수 있는 선택 설정 `connectorStills` 를 한 줄 더함(`// banker: opt-in connector poster` 줄).
+  - 동작: `config.connectorStills[i]` 가 있으면 커넥터 `i` 의 포스터를 그 이미지로 둔다. 없으면 상류와 같다(다음 장면 스틸).
+  - 까닭: dive 모드의 나가기 클립은 장면 `i` 실내에서 시작한다. 상류처럼 다음 장면 스틸을 포스터로 두면, 클립 적재가 늦을 때 다음 섬이 잠깐 보였다가 장면 `i` 로 돌아가는 튐이 생긴다. `assemble.mjs` 가 매니페스트의 `connectorStills`(그 클립의 실제 첫 프레임)를 이 설정으로 넘긴다.
+  - 사용자 승인 아래의 예외다(2026-10-29). 그 밖의 상류 코드는 그대로다.
 
 ## 접근을 각색한 것 (ADAPTED, 코드 아님)
 
@@ -28,6 +35,6 @@ scroll-world 의 씬/아트디렉션 **구조**(스타일 서문을 씬마다 �
 
 ## 이 스킬의 자작 파일 (서드파티 아님)
 
-`azure-adapter.mjs`, `video-pool.mjs`, `preview-lib.mjs`, `serve.mjs`, `curate.mjs`, `assemble.mjs`, `intro-fixes.css`, `panel-glass.css`, `step-nav.js`, `step-nav.css`, `verify-intro.mjs`, `verify.md`, `prompts.md`, `SKILL.md` 는 이 스킬의 창작물이다.
+`azure-adapter.mjs`, `video-pool.mjs`, `clip-post.mjs`, `dive-mode.mjs`, `preview-lib.mjs`, `serve.mjs`, `curate.mjs`, `assemble.mjs`, `intro-fixes.css`, `panel-glass.css`, `step-nav.js`, `step-nav.css`, `verify-intro.mjs`, `verify.md`, `prompts.md`, `SKILL.md` 는 이 스킬의 창작물이다.
 이 중 재사용에 해당하는 것은 위에 밝힌 `prompts.md` 의 **구조 각색**뿐이다.
 `intro-fixes.css`, `panel-glass.css`, `step-nav.js` 는 벤더링한 엔진을 고치지 않고 페이지 쪽에서 덧씌우는 파일이다. `assemble.mjs` 가 만드는 `scrub-engine.css` 는 엔진 파일 안의 CSS 를 글자 그대로 옮긴 것이라 엔진과 같은 MIT 고지를 따른다.

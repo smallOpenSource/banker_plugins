@@ -16,7 +16,8 @@
  *     step-nav.js/.css      (only with "stepNav": scene-by-scene navigation)
  *     assets/<id>.<ext>     (scene posters/stills)
  *     assets/vid/<id>.mp4   (per-scene clips: dives, or the short holds of the hold-and-flight mode)
- *     assets/vid/connN.mp4  (optional connectors: the flights between scenes)
+ *     assets/vid/connN.mp4  (optional connectors: the flights between scenes, or dive mode's exits)
+ *     assets/connN-poster.<ext> (optional connectorStills: a connector's own first frame as its poster)
  * Nothing inline, so the page runs under a strict Content-Security-Policy (no 'unsafe-inline';
  * media-src needs blob:). The engine still tries to inject its <style>: a site with a CSP adds the
  * reported `styleHash` to style-src to keep that refusal out of the console (scrub-engine.css
@@ -51,7 +52,10 @@
  *         "cta": { "primary":{"label":"","href":""}, "secondary":{"label":"","href":""} } } // last only
  *     ],
  *     "connectors": ["conn-1.mp4", null, ...],          // optional, len = sections.length-1
- *     "connectorsMobile": ["conn-1-m.mp4", ...]         // optional, same length
+ *     "connectorsMobile": ["conn-1-m.mp4", ...],        // optional, same length
+ *     "connectorStills": ["conn-1-first.png", ...]      // optional, same length: each connector's poster,
+ *                                                       // its clip's actual first frame (dive mode's exits).
+ *                                                       // Without it the engine shows the next scene's still.
  *   }
  *
  * Usage:
@@ -114,13 +118,17 @@ function sectionOut(s, i, copy) {
 
 // Connectors: one per gap between sections, in order; a null entry means "crossfade directly".
 function connectorsOut(list, n, suffix, copy) {
+  return gapsOut(list, n, copy, (i, src) => `assets/vid/conn${i + 1}${suffix}${extOf(src) || '.mp4'}`);
+}
+
+// One copied file (or null) per gap between sections.
+function gapsOut(list, n, copy, dest) {
   const src = Array.isArray(list) ? list : [];
-  return Array.from({ length: Math.max(0, n - 1) }, (_, i) => (src[i]
-    ? copy(src[i], `assets/vid/conn${i + 1}${suffix}${extOf(src[i]) || '.mp4'}`) : null));
+  return Array.from({ length: Math.max(0, n - 1) }, (_, i) => (src[i] ? copy(src[i], dest(i, src[i])) : null));
 }
 
 // The config in the shape mountScrollWorld reads (see scrub-engine.js).
-function engineConfig(m, sections, connectors, connectorsMobile) {
+function engineConfig(m, sections, { connectors, connectorsMobile, connectorStills }) {
   const config = {};
   for (const k of ['brand', 'cta']) if (m[k]) config[k] = m[k];
   config.hint = m.hint || 'scroll to fly in';
@@ -130,9 +138,12 @@ function engineConfig(m, sections, connectors, connectorsMobile) {
   for (const k of ['nav', 'atmosphere']) if (m[k] === false) config[k] = false;
   config.sections = sections;
   config.connectors = connectors;
-  if (connectorsMobile.some(Boolean)) config.connectorsMobile = connectorsMobile;
-  return config;
+  return Object.assign(config, setLists({ connectorsMobile, connectorStills }));
 }
+
+// The per-gap lists that hold at least one file. connectorStills is the engine's opt-in connector
+// poster (see the banker line in scrub-engine.js and NOTICE.md).
+const setLists = (lists) => Object.fromEntries(Object.entries(lists).filter(([, list]) => list.some(Boolean)));
 
 /**
  * Build the exact mountScrollWorld config object from a manifest, copying every referenced
@@ -144,9 +155,12 @@ function buildConfig(manifest, projectDir, outDir) {
   const copied = [];
   const copy = (src, dest) => { copied.push(copyAsset(projectDir, outDir, src, dest)); return dest; };
   const sectionsOut = sections.map((s, i) => sectionOut(s, i, copy));
-  const connectors = connectorsOut(manifest.connectors, sectionsOut.length, '', copy);
-  const connectorsMobile = connectorsOut(manifest.connectorsMobile, sectionsOut.length, '-m', copy);
-  return { config: engineConfig(manifest, sectionsOut, connectors, connectorsMobile), copied };
+  const gaps = {
+    connectors: connectorsOut(manifest.connectors, sectionsOut.length, '', copy),
+    connectorsMobile: connectorsOut(manifest.connectorsMobile, sectionsOut.length, '-m', copy),
+    connectorStills: gapsOut(manifest.connectorStills, sectionsOut.length, copy, (i, src) => `assets/conn${i + 1}-poster${extOf(src)}`),
+  };
+  return { config: engineConfig(manifest, sectionsOut, gaps), copied };
 }
 
 // ---- page generation -------------------------------------------------------

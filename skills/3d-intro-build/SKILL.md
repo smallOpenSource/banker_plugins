@@ -15,6 +15,8 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 | 파일 | 맡은 일 |
 |---|---|
 | `references/azure-adapter.mjs` | Azure 호출, ffmpeg 처리(`stillToClip` 포함), 비용 추정 |
+| `references/clip-post.mjs` | 클립 후처리(톤 맞춤, 역재생, 판 착지, 디지털 줌)와 측정(이음매 SSIM, 회전과 줌, `seamReport`). 출력은 모두 같은 인코딩 인자(`ENCODE`) |
+| `references/dive-mode.mjs` | dive 모드의 leg 계획과 실행, 첫 쌍 게이트, `intro.json` 작성 |
 | `references/video-pool.mjs` | 영상 provider 선택, WAN 키 풀, 폴백 |
 | `references/curate.mjs` | 검토 페이지(스틸, 클립)와 판정 기록 |
 | `references/serve.mjs`, `references/preview-lib.mjs` | 미리보기 서버(빈 포트, 상태 파일, 종료, CSP 헤더) |
@@ -23,6 +25,7 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 | `references/verify-intro.mjs`, `references/verify.md` | 실제 브라우저 측정과 검증 목록 |
 
 엔진(`references/scrub-engine.js`)과 템플릿(`references/index-template.html`)은 벤더링본이라 **수정하지 않는다**(출처는 `references/NOTICE.md`). 엔진의 결함은 사이트 CSS 와 JS 로 덧씌운다.
+예외는 엔진의 선택 설정 `connectorStills` 한 줄뿐이다(사용자 승인, 변경 기록은 `NOTICE.md`). 설정이 없으면 상류와 같다.
 답변은 한글(기술 토큰, 경로, 명령은 영문).
 
 ## 원칙
@@ -37,7 +40,7 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 **유료 호출은 일곱 개다:** `generateImage`, `generateImageFlux`, `editImage`, `generateClip`(영상의 기본 진입점), `wanCreateTask`, `createVideo`, `createVideoTwoImage`.
 `resumeClip` 은 새로 제출하지 않고 이미 만든 task 를 마저 받기만 한다.
 이 중 **어느 것도 Step 2 의 명시적 승인 이전에는 실행하지 않는다.**
-`resolveCreds`, `resolveFfmpeg`, `detectTwoImageSupport`, `estimateCost`, `poolSummary`, `probeWanPool`, `probeSoraDeployment`, `stillToClip` 은 과금이 없다.
+`resolveCreds`, `resolveFfmpeg`, `detectTwoImageSupport`, `estimateCost`, `poolSummary`, `probeWanPool`, `probeSoraDeployment`, `stillToClip`, 그리고 `clip-post.mjs` 의 후처리와 측정은 과금이 없다. `dive-mode.mjs` 의 `runDiveLegs` 는 `generateClip` 을 부르므로 유료다.
 가장 비싼 영상 호출은 **Step 3 에서 모든 장면의 스틸이 승인되기 전에는 실행하지 않는다**.
 
 ---
@@ -92,7 +95,9 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 - **SCENES[] (순서 있는 씬 목록)** - 권장 5~7개. 이야기 순서는 여기서 정한다(예: 문제 제기, 해법, 결론. 식당이나 여행지라면 도착, 경험, 초대처럼 브랜드에 맞게). CTA 는 마지막 장면에만 둔다. 각 씬의 `id`, `label`, `subject`, `eyebrow`, `title`, `body`, `tags[]`.
 - **ORIENTATION** - `720x1280`(세로) 또는 `1280x720`(가로). 스틸과 영상 크기가 이 값으로 통일된다.
 - **BUDGET** - 상한 USD.
-- **CLIP_MODE** - `chain`(기본) 또는 `holdFlight`(선택, WAN 필요). 차이는 Step 4 에 있다.
+- **CLIP_MODE** - `chain`(기본), `holdFlight`(선택, WAN 필요), `dive`(선택, 미검증). 차이는 Step 4 에 있다.
+  dive 는 장면마다 그 승인 스틸에서 들어가는 클립이라 장면 안으로 들어가는 움직임이 분명하다. 유료 실측 전이라 기본으로 두지 않고, 들어가는 움직임이나 회전을 원하는 사용자에게 권한다. CLIP_MODE 와 카메라 느낌은 한 질문으로 묻는다(아래 `CAMERA_FEEL`).
+  dive 면 장면마다 **MOVE** 도 받는다: `push-in`(기본, 밀고 내려감), `arc`(대상 둘레를 돌며 내려감, 제품과 랜드마크), `crane`(위에서 곧게 내려감, 넓은 공간). 문구는 `references/prompts.md` 8절.
 - **SITE** - 단독 인트로 페이지인지, 기존 사이트 위에 붙이는지. 붙인다면 그 사이트의 CSP, 본문 시작 요소의 선택자(`#main` 같은 것), 고정 헤더의 선택자, 지원 언어.
 
 부수 항목(없으면 기본값)
@@ -101,7 +106,7 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 |---|---|---|
 | `PALETTE` | 배경색 하나, accent 하나 | 엔진 테마 색 |
 | `TONE`, `STYLE` | clay diorama | 화풍(prompts.md 2절) |
-| `CAMERA_FEEL` | 잔잔한 전진 활공 | 카메라 움직임 |
+| `CAMERA_FEEL` | CLIP_MODE 를 따름. dive 면 "장면마다 바깥에서 들어감"(장면별 MOVE), chain 과 holdFlight 면 잔잔한 전진 활공(fly-through, walkthrough, locked-iso 중 고름) | 카메라 움직임 |
 | `MOBILE` | no | yes 면 약 2배 비용(세로 체인 추가) |
 | `STILLS_SOURCE` | gpt-image-2 | 코히전 강화가 필요하면 FLUX 옵트인 |
 | `STEP_NAV` | no | yes 면 휠 1칸, 키, 스와이프가 정확히 한 장면을 이동(`step-nav.js`). 스크롤 동작을 가로채므로 사이트 성격을 보고 고른다 |
@@ -121,8 +126,12 @@ import { estimateCost, detectTwoImageSupport } from './references/azure-adapter.
 const twoImage = wantConnectors && await detectTwoImageSupport({ endpoint, key }); // 무료 GET probe
 const cost = CLIP_MODE === 'holdFlight'
   ? estimateCost({ nScenes, mode: 'holdFlight', flightSeconds: 5 })   // 비행 클립 길이(초)
-  : estimateCost({ nScenes, seconds, twoImage });
+  : CLIP_MODE === 'dive'
+    ? estimateCost({ nScenes, mode: 'dive', diveSeconds: 8, exitSeconds: 4, exit })   // 6장면: 나가기 있음 $6.8, 없음 $4.8
+    : estimateCost({ nScenes, seconds, twoImage });
 ```
+
+- dive 는 장면마다 8초(dive, 마지막 장면은 finale)와, 나가기를 쓰면 장면 사이마다 4초다. 나가기 사용은 첫 쌍 게이트에서 정하므로 승인 때는 나가기 있음(큰 쪽)으로 추정한다. 첫 쌍 게이트(장면 1 의 dive 8초 + 나가기 4초, 약 $1.2)는 그 추정 안에 들어간다.
 
 - 사용자에게 `cost.images` / `cost.videos` / `cost.usd` 와 BUDGET 대비를 보여준다.
 - `cost.videos` 는 **Sora 단가($0.10/초) 기준**이다.
@@ -195,7 +204,9 @@ node references/curate.mjs --stop <projectDir>   # 끝나면 종료
 ### 4A. chain (기본, 검증된 경로)
 
 연속성은 **forward-chaining** 으로 만든다. 직전 클립의 **실제 마지막 프레임을 톤 변형 없이 그대로** 다음 클립의 첫 프레임으로 넣는다.
-(시드 프레임에 histeq 톤 정합을 걸면 시작 톤이 바뀌어 연속성이 **오히려 나빠진다**. e2e 실측 raw-시드 SSIM ~0.59 대 histeq-시드 0.46. 톤 정합은 조립, 재생 계층에서 처리한다.)
+(시드 프레임에 histeq 톤 정합을 걸면 시작 톤이 바뀌어 연속성이 **오히려 나빠진다**. e2e 실측 raw-시드 SSIM ~0.59 대 histeq-시드 0.46.)
+톤 정합은 생성된 클립 쪽에서 한다. `clip-post.mjs` 의 `matchClipTone(clip_i, 시드, out)` 이 클립 첫 프레임의 채널 평균과 퍼짐을 시드에 맞추고 1초 동안 풀어 준다. 시드는 그대로 둔다. 보정한 첫 프레임이 시드와 SSIM 으로 더 멀어지면 보정을 버리고 원본을 쓴다(`tone.kept: false`). 효과는 유료 실측 전이라 **미검증**이다.
+이음매 디졸브는 엔진의 `crossfade`(매니페스트 `crossfade`, 기본 0.12 vh)가 하고, dive 모드의 배경 이음매는 `landOnStill` 이 한다(4C).
 
 ```js
 import { extractLastFrame, extractFirstFrame } from './references/azure-adapter.mjs';
@@ -212,6 +223,14 @@ r = await generateClip({ creds, prompt: legi, size: ORIENTATION, seconds, firstF
 ```
 
 - 각 leg 렌더 직후, 다음 leg 전에 마지막 프레임을 확인한다. 잔잔한 전진 활공 컷이 아니면 그 leg 를 재생성한다(나쁜 핸드오프 프레임이 뒤 leg 를 오염시킨다).
+- leg i(i >= 1)는 렌더 뒤 `matchClipTone` 을 건다. 보정을 버렸는지(`tone.kept`)와 SSIM 전후를 기록해 Step 8 에 보고한다.
+
+  ```js
+  import { matchClipTone } from './references/clip-post.mjs';
+  const t = await matchClipTone('dive-i.raw.mp4', 'last-(i-1).png', 'dive-i.mp4');   // t.tone = { kept, ssimBefore, ssimAfter }
+  // 다음 leg 의 시드는 보정 전 원본(dive-i.raw.mp4)의 마지막 프레임에서 뽑는다(재인코딩한 클립은 바이트가 다르다)
+  ```
+
 - 포스터: 씬 1 = 씬 1 스틸, 씬 i>=2 = `extractFirstFrame(clip_i)`(로딩 시 플래시 없음).
 - `intro.json` 의 `connectors` 를 전부 `null` 로 두면 엔진이 인접 dive 를 직접 crossfade 한다.
 
@@ -233,6 +252,33 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 - 쓸 수 있는 WAN 키가 없으면 비행 클립을 만들지 않고 멈춘다. Sora 로 넘기면 끝 프레임이 무시돼 다음 장면과 이어지지 않는다. chain 모드로 바꿀지 사용자에게 묻는다.
 - `intro.json`: `sections[i].clip` 은 정지 클립, `connectors[i]` 는 비행 클립이다. 권장 간격은 `diveScroll: 0.6`, `connScroll: 1.4` 다.
 - 비행 프롬프트는 `references/prompts.md` 5절을 쓴다.
+
+### 4C. dive (선택, 이 스킬에서 미검증)
+
+장면마다 그 장면의 승인 스틸에서 시작한다. 장면 정체성은 첫 프레임이 지키고, 장면 사이 이음매는 무료 후처리가 맞춘다. 유료 실측(움직임 크기, arc 회전, 나가기의 배경 순응, 역재생 finale 화질) 전이라 사용자에게 **미검증**임을 알린다. WAN 키가 있으면(`VIDEO_PROVIDER_ORDER` 기본 `wan,sora`) dive 모드가 WAN 으로 도는데, 그 경로도 **미검증**이다.
+
+| 순서 | 클립 | 첫 프레임 | 길이 | 후처리 | 매니페스트 자리 |
+|---|---|---|---|---|---|
+| 장면 i(마지막 제외) | dive_i | 장면 i 스틸 | 8초 | `zoomBoost`(선택, 장면의 `zoom`). 나가기가 없고 배경 이음매가 켜졌으면 끝 0.6초 배경 판 착지 | `sections[i].clip` |
+| 장면 i 와 i+1 사이(선택) | exit_i | dive_i 마지막 프레임 | 4초 | `matchClipTone`, 배경 이음매가 켜졌으면 끝 0.6초 배경 판 착지 | `connectors[i]`, 포스터는 `connectorStills[i]`(그 클립 첫 프레임) |
+| 마지막 장면 | finale | 결론 스틸 | 8초 | `reverseClip`, 끝 0.4초 결론 스틸 착지 | `sections[n-1].clip`, 포스터는 finale 첫 프레임 |
+
+- **배경 이음매 판정(무료, 장면마다)** - 다음 장면 스틸의 가장자리 4% 띠를 재서 채널별 표준편차가 모두 `bgThreshold`(기본 6) 이하면 켠다. 화풍 이름이 아니라 실제 스틸로 정한다. 꺼진 이음매는 엔진 디졸브만 쓰고, 그 사실과 잰 값(`seam`, `note` 이벤트의 `std`)을 Step 4 에서 알린다. 실제 스틸로 보정이 필요하면 `bgThreshold` 를 인자로 바꾼다.
+- **판 색** - 모든 클립을 만든 뒤 다음 클립의 **실제 첫 프레임** 테두리 평균색으로 판을 만든다(`plate` 이벤트). 첫 쌍 게이트에서는 다음 클립이 아직 없으므로 다음 스틸의 테두리 색을 쓴다.
+- **시드 순서** - exit 시드는 dive 의 원본 마지막 프레임이다. `zoomBoost` 를 썼으면 보이는 프레임이 바뀌므로 줌한 클립에서 뽑는다. 판 착지는 시드를 뽑은 뒤에 한다.
+- **스틸 크기** - 스틸이 ORIENTATION 과 다르면(classic 폴백 1024x1536) `resizePng` 로 맞춘 뒤 넣는다(`resize` 이벤트).
+- **첫 쌍 게이트** - 장면 1 의 dive 와 나가기만 먼저 만든다. 나가기 없는 판(dive 가 판에 착지)과 나가기 있는 판(dive + 판에 착지하는 나가기)을 검토 페이지에 나란히 올리고 `motion`(roll 근사, 줌), `diveExitSsim` 을 함께 보인다. 사람이 MOVE, 나가기 사용, 길이를 정한 뒤 나머지를 만든다. 게이트에서 만든 클립(`*.raw.mp4`)은 다시 쓰므로 두 번 과금하지 않는다.
+
+```js
+import { runDiveLegs } from './references/dive-mode.mjs';
+const promptFor = (leg, section) => buildPrompt(leg.kind, leg.move, section);   // prompts.md 8절의 dive, exit, finale
+const gate = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds, promptFor, only: 'first', onEvent: log });
+// gate.withoutExit, gate.withExit 를 검토 페이지에 나란히 올리고 판정을 받는다
+const done = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds, promptFor, exit: 사람이_고른_값, onEvent: log });
+// done.file = <projectDir>/intro.json (sections[i].clip, connectors, connectorStills, finale 포스터)
+```
+
+- 멈추는 경우는 4A 와 같다(아래 표). `runDiveLegs` 는 `generateClip` 의 오류를 그대로 던진다. 이미 만든 leg 는 `clips/<이름>.raw.mp4` 로 남으니 원인을 고친 뒤 다시 부르면 남은 leg 만 만든다.
 
 ### 클립 공통
 
@@ -269,6 +315,7 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 | `lang` | `<html lang>` |
 | `panel: "glass"` | 흐린 유리 문구 패널. 기본값(알파 .36, 흰 글자)은 어두운 장면용이다. 밝은 장면(기본 화풍 clay diorama 등)은 `--intro-panel-alpha` 를 .6 이상으로 올리고 Step 6 대비로 확인한다 |
 | `stepNav: { "end": "#main" }` | 장면 단위 이동. `end` 는 기존 사이트의 본문 시작(단독 페이지면 생략). 나머지 옵션은 `step-nav.js` 머리말 |
+| `connectorStills: ["clips/exit-1-first.png", ...]` | 커넥터마다 포스터로 쓸 그 클립의 실제 첫 프레임(dive 모드의 나가기, `runDiveLegs` 가 채움). 없으면 엔진이 다음 장면 스틸을 포스터로 둔다 |
 
 ```bash
 node references/assemble.mjs <projectDir>                    # <projectDir>/site 에 페이지를 만들고 styleHash 를 알린다
@@ -289,6 +336,7 @@ node references/serve.mjs --stop <projectDir>/site           # 끝나면 종료
 - 휴대폰 실기기로 볼 때만 `PREVIEW_HOST=0.0.0.0` 을 쓴다. 같은 네트워크에 미공개 산출물이 보인다는 경고가 나온다.
 - 프로젝트 관례상 **claude.ai 아티팩트를 만들지 않는다** - 로컬 페이지를 포트로 서빙해 사용자가 브라우저로 확인한다.
 - 사용자 검토를 받는다. 지적이 있으면 카피, 매니페스트, 해당 클립만 고치고 다시 조립한다.
+- 이음매와 움직임을 무료로 잰다: `seamReport(projectDir)`(`clip-post.mjs`)가 `intro.json` 순서대로 이음매 SSIM 과 클립별 `cameraMotion`(roll 근사의 누적 회전각, 누적 줌)을 JSON 으로 준다. 평행 이동은 재지 않는다. 수치는 Step 8 보고에 그대로 쓴다.
 
 ---
 
@@ -303,7 +351,13 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 - 화면 크기마다 새 브라우저 컨텍스트로 잰다(재빌드 뒤 재사용 컨텍스트는 예전 CSS 를 캐시에서 준다). 기본 화면은 1280x800, 1920x1080, 860x900, 390x844 터치, 375x667 터치, 844x390 터치(가로로 든 휴대폰)다. 다른 크기를 지원하면 `--viewports` 에 더한다. 지원 언어마다 그 언어 페이지 주소로 다시 돌린다.
 - 장면마다 패널이 화면 안, 헤더 아래에 있는지, 안내, 건너뛰기, 버튼, 장면 점과 겹치지 않는지, 가로 넘침, 콘솔 오류, 글자 줄 단위 대비(CTA 버튼 글자 포함, 글자를 숨긴 채 가장 나쁜 배경 픽셀 기준, 4.5 이상)를 잰다. 상단 CTA 는 제 바탕색과의 대비를 잰다. 바탕이 단색이 아니면 잴 수 없어 실패로 남고, 검증자가 눈으로 보고 판정에 적는다. 두 번째 장면부터는 클립이 있는데 5초 안에 그려지지 않으면 실패다(첫 장면은 첫 이동 전까지 스틸, 움직임 줄이기는 클립 없음).
 - 장면 단위 이동이면 입력도 잰다: 직전 장면에서 휠 1칸과 관성 1회가 마지막 장면에 멈추는지, 마지막 장면에서 입력 방식별 본문 도착과 위 입력 복귀, 메인화면 버튼과 건너뛰기 링크. 움직임 줄이기 설정은 `--viewports 1280x800r` 로 따로 잰다.
-- 눈으로 볼 항목은 `references/verify.md` 에 있다.
+- 이음매 탐침: `--seams` 를 더하면 첫 화면 크기에서 클립 사이 경계마다 앞뒤를 스크롤하며 잰다. 빈 화면(색과 관계없이 거의 한 색) 길이가 한도를 넘거나, 느린 망(`--slow-clips 4000`)에서 포스터가 클립과 크게 다르면 실패다. dive 모드면 반드시 돌린다.
+
+  ```bash
+  node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800 --no-input --seams --slow-clips 4000 --out <projectDir>/verify-seams.json
+  ```
+
+- 눈으로 볼 항목은 `references/verify.md` 에 있다(dive 는 회전, 배경 이음매, 결론 착지).
 - 실패가 0 이고 검증자가 APPROVE 해야 Step 7 이나 완료 보고로 간다. 실패가 있으면 고친 뒤 같은 검증자로 다시 잰다.
 
 ---
@@ -334,6 +388,8 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 - 이음매 품질은 경로에 따라 **정직하게** 쓴다. 과장하지 않는다.
   - chain: **near-seamless** 하되 **경미한 톤/디테일 drift** 가 있을 수 있다(pre-composite raw SSIM ~0.59).
   - holdFlight: 비행 클립의 첫과 끝 프레임이 장면 스틸과 맞으면 이음매가 없다. 이 스킬에서는 미검증 경로이므로 실제로 확인한 결과만 쓴다.
+  - dive: 배경 이음매가 켜진 곳은 판 착지로 맞춘다. 꺼진 곳(테두리가 한 색이 아님)은 엔진 디졸브다. `seamReport` 의 이음매 SSIM, 클립별 roll 근사와 줌, `--seams` 결과를 그대로 쓴다. 움직임과 회전이 chain 보다 나아졌다는 말은 같은 스틸의 chain 대조군 수치가 있을 때만 한다.
+  - chain 톤 맞춤: leg 마다 `tone.kept` 와 SSIM 전후를 쓴다. 효과는 미검증이다.
   - 수용 기준은 조립, 서빙된 페이지의 실제 스크럽 경험이다.
 - 재생성한 스틸이나 클립이 있으면 그 사유.
 

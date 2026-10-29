@@ -28,10 +28,10 @@ Higgsfield·Monid 같은 외부 CLI 플래그는 쓰지 않는다 — 크기·�
 - `PALETTE` — 4~6개 명명 hex. 예: `taro #9B7EBD, cream #F5EDE0, caramel #C88A5A, matcha #8FB98A, plum #3A2E48`. 하나를 씬 **배경색**(보통 가장 밝은 색), 하나를 기본 **accent** 로 고른다. 이 배경색을 페이지 테마(`--sw-bg`)에도 그대로 쓴다.
 - `TONE` — 한두 단어(cozy/premium, playful, industrial…).
 - `STYLE` — 아트디렉션(기본은 아래 clay diorama).
-- `CAMERA_FEEL` — fly-through(디오라마를 내려다보다 안으로 급강하) | walkthrough(한 번에 쭉 전진) | locked-iso(고정 아이소메트릭 활공). 느낌으로 제시하고 트레이드오프 한 줄씩 곁들인다.
+- `CAMERA_FEEL` — 기본은 `CLIP_MODE` 를 따른다. dive 면 "장면마다 바깥에서 들어감"(장면별 MOVE: push-in, arc, crane. 8절), chain 이나 holdFlight 면 fly-through(디오라마를 내려다보다 안으로 급강하) | walkthrough(한 번에 쭉 전진) | locked-iso(고정 아이소메트릭 활공). 느낌으로 제시하고 트레이드오프 한 줄씩 곁들인다.
 - `MOBILE` — yes/no. yes 면 세로 9:16 렌더를 별도로 만들어 `clipMobile`/`stillMobile` 로 배선한다(대략 2배 비용, 승인 게이트에 반영).
 - `STILLS_SOURCE` — 기본 `gpt-image-2`(`generateImage`). 씬 간 코히전을 더 강하게 원하면 `FLUX.2-pro`(`generateImageFlux`) 옵트인.
-- `CLIP_MODE` — `chain`(기본, 검증된 경로) 또는 `holdFlight`(장면마다 정지 클립, 장면 사이 첫과 끝 프레임을 지정한 비행 클립. WAN 필요, 이 스킬에서 미검증).
+- `CLIP_MODE` — `chain`(기본, 검증된 경로), `holdFlight`(장면마다 정지 클립, 장면 사이 첫과 끝 프레임을 지정한 비행 클립. WAN 필요, 이 스킬에서 미검증), 또는 `dive`(장면마다 그 승인 스틸에서 들어가는 클립, 장면 사이는 배경 판 착지와 선택 나가기, 결론은 역재생 착지. 유료 실측 전이라 미검증, 8절).
 - `SITE` — 단독 인트로 페이지 또는 기존 사이트 위에 붙임. 붙이면 그 사이트의 CSP, 본문 시작 선택자, 고정 헤더 선택자, 지원 언어를 받는다.
 - `STEP_NAV` — yes 면 휠 1칸, 키, 스와이프가 정확히 한 장면을 이동한다. 스크롤 동작을 가로채므로 사이트 성격을 보고 고른다.
 - `PANEL` — `glass` 면 흐린 유리 문구 패널. 기본값은 어두운 장면용이다. 밝은 장면이 많으면 대비 기준(4.5)을 지키도록 패널을 덜 투명하게(`--intro-panel-alpha` .6 이상) 한다.
@@ -110,7 +110,7 @@ in, the roof and upper structure gently lift and open away to reveal the warm in
 여닫을 건물이 없는 씬(들판·광장·도로)이면 지붕 절을 "the camera flies low across [the scene] toward [focal point]." 로 바꾼다.
 
 **Leg i (i ≥ 1) — 체이닝된 프레임에서 다음 씬으로:**
-`firstFramePng = extractLastFrame(clip[i-1])` (직전 클립의 **raw** 마지막 프레임. 톤 정합을 걸면 연속성이 나빠진다: 실측 raw SSIM ~0.59, histeq 0.46).
+`firstFramePng = extractLastFrame(clip[i-1])` (직전 클립의 **raw** 마지막 프레임. 시드에 톤 정합을 걸면 연속성이 나빠진다: 실측 raw SSIM ~0.59, histeq 0.46. 톤 맞춤은 시드가 아니라 만들어진 클립 쪽에서 한다: `clip-post.mjs` 의 `matchClipTone`, 시드와 SSIM 이 나빠지면 원본 유지. 효과는 유료 실측 전이라 미검증).
 
 ```
 Single continuous cinematic camera move, no cuts. Continue the same continuous camera flight
@@ -192,3 +192,47 @@ no captions.
 - 일이 일어나는 자리가 맞아야 한다. 예: 막는 장면은 이미 뚫린 안쪽이 아니라 바깥 경계에서 막는 모습으로.
 - 화면 속 글자는 깨지기 쉽다. 프롬프트 끝의 "No text, no captions." 를 지키고, 글자가 깨진 결과는 재생성한다.
 - 사물이 엉뚱한 위치에 뜨거나, 강조색이 유리나 다른 물체로 번지면 그 결과만 재생성한다.
+
+---
+
+## 8. dive 모드 프롬프트 (`CLIP_MODE = dive`, 선택, **이 스킬에서 미검증**)
+
+장면마다 그 장면의 승인 스틸에서 시작한다(`firstFramePng = 장면 i 스틸`). 장면 사이 이음매는 Sora 가 배경까지 물러나는지에 기대지 않는다. 다음 장면 스틸의 테두리가 한 색이면 이음매 쪽 끝 0.6초를 그 색의 판으로 착지시킨다(`landOnStill`, 무료). 실행 순서와 첫 쌍 게이트는 SKILL Step 4C.
+chain 프롬프트(4절)는 바꾸지 않았다. 아래는 dive 모드에만 쓴다.
+
+**dive (장면 i, 마지막 장면 제외, 8초):**
+
+```
+Aerial wide shot, slight downward angle, 35 mm virtual lens, of the whole [SCENE i subject]
+as a small island on a plain solid [BG_HEX] background. One continuous camera move, no cuts.
+0-1s: hold the aerial wide shot. 1-7s: [MOVE]. Final second: arrive at a close view of
+[FOCAL POINT]. Only the camera moves. [STYLE tail + PALETTE]. No text, no captions.
+```
+
+| MOVE | 문구 | 쓰는 곳 |
+|---|---|---|
+| `push-in` (기본) | "one steady push-in and descent toward [FOCAL POINT], [the roof and upper structure lift away to reveal the interior / flying low across the scene]" | 대부분의 장면 |
+| `arc` (회전) | "a slow arc in around [FOCAL POINT], about a quarter turn, descending as it circles, keeping [FOCAL POINT] centered" | 제품, 랜드마크, 결론 앞 장면 |
+| `crane` | "a crane down from high above, descending straight toward [FOCAL POINT] as the scene grows to fill the frame" | 넓은 공간, 광장 |
+
+**exit (선택, 장면 i 와 i+1 사이, 4초, dive 의 마지막 프레임에서):**
+
+```
+One continuous camera move, no cuts. The camera pulls straight up and back away from
+[FOCAL POINT], rising out of [SCENE i] until the whole island is small, then keeps receding
+toward the plain solid [BG_HEX] background. Only the camera moves. No text, no captions.
+```
+
+**finale (마지막 장면, 8초, 결론 스틸에서 멀어지게 만든 뒤 뒤집음):**
+
+```
+One continuous camera move, no cuts. Starting from this view of [PRODUCT], the camera pulls
+straight back and slightly up, [PRODUCT] shrinking toward the center of the plain solid
+[BG_HEX] background until it is small. 0-0.5s: hold still. Static: figures hold still,
+no smoke, no water flow, only the camera moves. No text, no captions.
+```
+
+- "figures hold still" 은 finale 에만 둔다. 뒤집으면 사람과 연기의 움직임도 거꾸로 보이기 때문이다.
+- finale 는 `reverseClip` 으로 뒤집고 끝 0.4초를 결론 스틸에 착지시킨다. 그래서 마지막 화면이 결론 스틸 그대로다.
+- arc 의 회전량은 공식 어휘가 "slow arc in" 까지라 결과를 장담하지 못한다. `cameraMotion` 의 roll 근사와 눈 검토(`verify.md`)로 확인한다.
+- WAN 으로 돌면(`VIDEO_PROVIDER_ORDER` 기본 `wan,sora`) 같은 프롬프트를 쓰되 그 경로는 미검증이다. WAN 은 exit 에 `lastFramePng = 배경 판` 을 줄 수 있으나 설계만 했고 유료로 확인하지 않았다.

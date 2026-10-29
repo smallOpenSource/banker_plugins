@@ -292,6 +292,12 @@ test('estimateCost: hold-and-flight bills only the flights between scenes; the h
   assert.deepEqual(A.estimateCost({ nScenes: 1, mode: 'holdFlight' }), { images: 0.02, videos: 0, usd: 0.02 });
 });
 
+test('estimateCost: dive bills 8 s per scene (dives and the finale) plus a 4 s exit between scenes when exits are on', () => {
+  assert.deepEqual(A.estimateCost({ nScenes: 6, mode: 'dive' }), { images: 0.12, videos: 6.8, usd: 6.92 });
+  assert.deepEqual(A.estimateCost({ nScenes: 6, mode: 'dive', exit: false }), { images: 0.12, videos: 4.8, usd: 4.92 });
+  assert.deepEqual(A.estimateCost({ nScenes: 2, mode: 'dive', diveSeconds: 4, exitSeconds: 8 }).videos, 1.6);
+});
+
 // =====================================================================
 // ffmpeg helpers: ARG ARRAY (not a shell string), flags
 // =====================================================================
