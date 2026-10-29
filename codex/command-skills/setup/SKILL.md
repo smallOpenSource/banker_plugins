@@ -1,6 +1,6 @@
 ---
 name: setup
-description: "구성요소와 의존성을 여러 개 골라 설치하는 오케스트레이터. 런타임(Node, Python, Java), LSP, tmux, MCP, 샌드박스, OMC, Playwright 등. 권한 확인 끄기는 따로 묻고 기본으로 고르지 않으며, 골라도 실행하지 않고 직접 입력할 명령만 안내."
+description: "구성요소와 의존성을 여러 개 골라 설치하는 오케스트레이터. 런타임(Node, Python, Java), LSP, tmux, MCP, 샌드박스, OMX, Playwright 등. 권한 확인 끄기는 따로 묻고 기본으로 고르지 않으며, 골라도 실행하지 않고 직접 입력할 명령만 안내."
 ---
 
 > Codex: 이 명령은 스킬로 설치됐다. 본문의 `$ARGUMENTS`, `$1` 은 사용자가 `$banker:setup` 뒤에 쓴 글이다.
@@ -29,7 +29,7 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    - OS 패키지 관리자(dnf, apt, brew, winget)만 쓰는 단계는 자기 설정의 미러를 쓰므로 이 확인과 관계없이 각 스킬의 규칙대로 시도한다.
      - 패킷을 버리거나 답하지 않는 망에서 dnf 는 저장소마다 약 2분(SYN 을 버리는 망 실측 121초), apt 는 원천마다 약 4분(답하지 않는 원천 실측 247초) 기다린 뒤 실패로 끝난다. 시간 제한은 관리자 설정을 따르므로 이 스킬이 바꾸지 않는다.
      - `apt-get update` 는 받지 못해도 종료 0 이다. 출력의 `W: Failed to fetch` 가 있으면 그 단계를 실패로 보고한다.
-   - 내려받기가 없는 항목(`setup-omc-hud`)과 이미 설치된 것의 확인은 그대로 진행한다.
+   - 내려받기가 없는 항목(`setup-omx-hud`)과 이미 설치된 것의 확인은 그대로 진행한다.
    - Windows PowerShell 에서는 `curl.exe --ssl-no-revoke -sSI -o NUL --connect-timeout 5 --max-time 10 https://github.com` 의 `$LASTEXITCODE` 로 본다. `curl.exe` 는 Windows 시스템 프록시를 따르지 않고 `HTTPS_PROXY` 만 따른다. `--ssl-no-revoke` 는 폐지 목록 서버에 닿지 못하는 망에서 Schannel 의 폐지 확인 실패를 오프라인으로 읽지 않게 한다. 닿는지만 보고 받은 내용은 쓰지 않으므로 이 확인에만 준다. `curl.exe` 가 없으면 `$LASTEXITCODE` 에 앞 명령의 값이 남으므로 `Get-Command curl.exe -ErrorAction SilentlyContinue` 로 먼저 보고, 없으면 확인하지 못한 것으로 적는다. `npm ping` 은 `Push-Location ~; npm ping --fetch-retries=0 --fetch-timeout=10000 --no-update-notifier; Pop-Location` 처럼 홈에서 부르고 돌아온다(돌아오지 않으면 뒤 단계가 프로젝트가 아니라 홈에서 돈다). PowerShell 에는 15초 감시를 두지 않는다(Windows 의 연결 시간 제한은 약 21초로 알려져 있다. 미실측).
    - Codex sandbox 가 네트워크를 막는 모드(기본 `workspace-write`, `read-only`)에서는 `CODEX_SANDBOX_NETWORK_DISABLED=1` 이 서고 확인이 모두 실패한다(curl 종료 7, npm `EPERM`). 블록의 첫 줄이 그렇다고 알린다. 그때는 '오프라인' 이 아니라 'sandbox 가 네트워크를 막음' 으로 보고하고, 승인을 받아 sandbox 밖에서 확인부터 다시 한다. Claude Code sandbox 안(`SANDBOX_RUNTIME=1`)에서는 허용 목록 밖 주소를 sandbox 프록시가 막는다. Windows PowerShell 에서는 `$env:CODEX_SANDBOX_NETWORK_DISABLED -eq '1'` 로 본다.
    - 확인이 실패하면 보고에 그 명령, 종료 코드, stderr 첫 줄을 붙인다(예: `npm error code ETIMEDOUT`, `curl: (28) ...`). 원인을 '오프라인' 하나로 짐작하지 않는다.
@@ -54,10 +54,10 @@ banker 플러그인이 제공하는 설치 스킬들을 **multi-select**로 골�
    - **setup-sandbox** — OS별 샌드박스(bubblewrap+userns / AppContainer / Seatbelt) + rust + git safe.directory.
 
    **프레임워크·플러그인**
-   - **setup-omc** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa` 의존성.
+   - **setup-omx** — oh-my-claudecode(OMC) 설치/갱신(Codex는 OMX). `all-in-one`·`ultra-chain`·`ultra-init`·`/banker:front-qa` 의존성.
    - **setup-harness-factory** — revfactory/harness(팀 아키텍처 팩토리) 설치+구성+안내(Codex=meta-harness).
    - **setup-insane-search** — insane-search 플러그인(차단 사이트 우회, Claude/Codex 양쪽).
-   - **setup-omc-hud** — omc_hud 상태표시줄(래퍼 v4, 스킬에 든 파일로 오프라인 설치).
+   - **setup-omx-hud** — omc_hud 상태표시줄(래퍼 v4, 스킬에 든 파일로 오프라인 설치).
    - **setup-stitch** — Stitch(디자인 생성) MCP 프록시 등록(RockyLinux8 proxy-script, API key 필요).
 
    **의존성 라이브러리**

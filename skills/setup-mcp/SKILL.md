@@ -6,7 +6,7 @@ description: "범용 MCP 서버(context7, sequential-thinking, filesystem, git, 
 # setup-mcp: 범용 MCP 서버 설치
 
 context7·sequential-thinking·filesystem·git·fetch - 특정 도구에 종속되지 않는 5종 표준 MCP 서버를
-Claude Code·Codex 양쪽에 배선한다. **`setup-omc`(OMC/OMX 프레임워크 자체 설치, 자기 도구를 따로 들고 옴)와도,
+Claude Code·Codex 양쪽에 배선한다. **`setup-omc`(Codex 는 `setup-omx`. OMC/OMX 프레임워크 자체 설치, 자기 도구를 따로 들고 옴)와도,
 `setup-lsp`(`lsp_bridge` 전용)와도 다르다** - 이 스킬은 그 외 범용 standalone 서버만 다룬다. Serena 는
 프로젝트 스코프(`--project` 가 홈 디렉터리면 인덱싱 과부하)라 여기서 제외한다. 설치는 **멱등**(있으면
 remove 후 재-add). 답변은 한글(기술 토큰 영문).

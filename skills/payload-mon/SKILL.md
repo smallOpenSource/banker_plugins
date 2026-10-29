@@ -1,6 +1,6 @@
 ---
 name: payload-mon
-description: "OMC HUD 상태표시줄에 현재 세션이 보내는 API 요청의 페이로드 추정치를 32MB 한도 대비로 표시하는 기능을 켜고 끔. 래퍼 v4 는 `PL:` 칸으로 늘 보이고, 옛 래퍼는 8MB 부터 `ctx` 옆에 보임. 'payload-mon'/'payload 모니터 켜/꺼'/'상태표시줄 payload 표시'/'요청 크기 경고'/'32MB 한도 경고'/'payload 표시가 안 보여' 시 사용."
+description: "Claude Code 의 OMC 를 다룸(Codex 에서 실행해도 같음). OMC HUD 상태표시줄에 현재 세션이 보내는 API 요청의 페이로드 추정치를 32MB 한도 대비로 표시하는 기능을 켜고 끔. 래퍼 v4 는 `PL:` 칸으로 늘 보이고, 옛 래퍼는 8MB 부터 `ctx` 옆에 보임. 'payload-mon'/'payload 모니터 켜/꺼'/'상태표시줄 payload 표시'/'요청 크기 경고'/'32MB 한도 경고'/'payload 표시가 안 보여' 시 사용."
 argument-hint: "on | off | status"
 ---
 

@@ -13,7 +13,7 @@
  *  - 동일 latest 재고지 방지: 고지 직후 writeUpdateCache({notified: latest}) 로 기록.
  *  - 어떤 오류도 삼키고 항상 exit 0. 세션을 절대 막지 않는다. 비TTY 안전.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readdirSync, realpathSync, renameSync, rmdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,9 @@ import {
   installedVersion, compareVersions, writeUpdateCache, readUsedSkills, readRegular,
   CODEX_SHAPE_MISS_PATH, writeByRename, configDir, randomHex,
 } from '../bin/lib/telemetry-config.mjs';
-import { codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, homeInSession, pluginRootInfo } from '../bin/lib/codex-routes.mjs';
+import { CODEX_NAMES } from '../bin/lib/codex-names.mjs';
+import { codexCliVersion, codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, homeInSession, pluginRootInfo, pluginVersionNote } from '../bin/lib/codex-routes.mjs';
+import { codexVersionOf } from './telemetry-count-codex.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // 업데이트 안내에 쓰는 npm 패키지 이름(고지 문구·이모지/em-dash 없음).
@@ -35,6 +37,8 @@ const CODEX = process.argv.includes('--codex');
 const PLUGIN = CODEX && process.argv.includes('--plugin');
 // Codex 에서 banker 스킬을 부르는 이름: npm 길은 $banker-<이름>, 플러그인은 $banker:<이름>.
 const skillCall = (name) => (PLUGIN ? `$banker:${name}` : `$banker-${name}`);
+// 알림에 보이는 스킬 이름. 바뀐 스킬 목록은 Claude 이름이라 Codex 에서는 Codex 이름으로(setup-omc 는 setup-omx).
+export const shownName = (name, codex = CODEX) => (codex && Object.hasOwn(CODEX_NAMES, name) ? CODEX_NAMES[name] : name);
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -83,7 +87,7 @@ function buildMessage(latest, installed, cached) {
       : `업데이트: /banker:update-banker 또는 npm i -g ${NPM_PKG}`;
   const hits = personalizedSkills(cached);
   if (hits.length) {
-    const names = hits.slice(0, 5).map((s) => s.replace(/^banker:/, '')).join(', ');
+    const names = hits.slice(0, 5).map((s) => shownName(s.replace(/^banker:/, ''))).join(', ');
     const more = hits.length > 5 ? ` 외 ${hits.length - 5}개` : '';
     return `${head} 자주 쓰는 스킬이 이번 업데이트에서 바뀌었습니다: ${names}${more}. ${tail}`;
   }
@@ -138,6 +142,18 @@ export function dualNotice(payload, env = process.env) {
   try {
     const cwd = typeof payload?.cwd === 'string' ? payload.cwd : '';
     return dualInstallNote(codexHomeOf(payload?.transcript_path, env), cwd);
+  } catch {
+    return '';
+  }
+}
+
+// Codex 플러그인 길: Codex 판이 플러그인 스킬 목록을 읽는다고 확인한 판(0.160.1)보다 낮으면 알린다. 판은 기록 첫 줄의
+// cli_version 에서, 없으면 codex --version 에서 읽는다. 판을 모르면 알리지 않는다.
+export function pluginVersionNotice(payload, plugin = PLUGIN, spawnFn = spawnSync) {
+  if (!plugin) return '';
+  try {
+    const file = typeof payload?.transcript_path === 'string' ? payload.transcript_path : '';
+    return pluginVersionNote((file && codexVersionOf(file)) || codexCliVersion(spawnFn));
   } catch {
     return '';
   }
@@ -232,7 +248,7 @@ async function main() {
   try { payload = JSON.parse(await readStdin()); } catch { /* stdin 없음/오류 무해 */ }
 
   if (CODEX && !claimSession(payload)) return; // 같은 세션의 다른 길 훅이 이미 알렸다
-  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload), sessionHomeNotice(payload)] : [];
+  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload), sessionHomeNotice(payload), pluginVersionNotice(payload)] : [];
   if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.
     const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
     notes.unshift(maybeNotify(cached));

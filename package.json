@@ -18,6 +18,8 @@
     "!.claude-plugin/types",
     "!.claude-plugin/types/**",
     "codex",
+    "!codex/renamed-skills",
+    "!codex/renamed-skills/**",
     "hooks",
     "bin",
     "!**/*.test.mjs",

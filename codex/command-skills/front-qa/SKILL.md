@@ -18,7 +18,7 @@ description: "스펙 파일(기본 `docs/note.md`)을 바탕으로 프론트엔�
   ```bash
   omc ralph verify --help 2>&1 | grep -q 'Usage: omc ralph verify' && echo "omc ok" || echo "omc CLI 없음 또는 낡음"
   ```
-- 실패하면 `/banker:setup` → oh-my-claudecode(또는 `setup-omc` 스킬 / `npm install -g oh-my-claude-sisyphus@latest`)로 먼저 구성한 뒤 이어서 진행. 점검을 통과하기 전에는 절차 1을 시작하지 않는다.
+- 실패하면 `/banker:setup` → oh-my-claudecode(또는 `setup-omx` 스킬 / `npm install -g oh-my-claude-sisyphus@latest`)로 먼저 구성한 뒤 이어서 진행. 점검을 통과하기 전에는 절차 1을 시작하지 않는다.
 - **런타임 매핑:** 아래 절차의 `/ralplan`·`/ralph`는 Claude Code에선 OMC 스킬, **Codex에선 oh-my-codex(OMX)의 동명 스킬**이다(Codex는 OMC 대신 OMX 전제). 각 런타임에서 사용 가능한 형태로 호출한다.
 
 ## 절차 (CLAUDE.md: 계획 없는 즉시실행 금지)

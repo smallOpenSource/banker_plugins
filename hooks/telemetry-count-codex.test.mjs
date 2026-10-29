@@ -236,6 +236,32 @@ test('a plugin skill counts by its name when its SKILL.md is in this home\'s plu
   assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]).sort(), ['banker:lfm', 'banker:setup']);
 });
 
+// Codex names three skills apart (codex/manifest.json codexName). Their use counts by the Claude name on both routes,
+// so the personalized notice (skill-changes.json, Claude names) matches what Codex users ran.
+test('a skill Codex names apart counts by its Claude name, on the npm route and the plugin route (codex/renamed-skills)', () => {
+  const tmp = mkTmp();
+  enable(tmp);
+  const home = codexHome(tmp);
+  mkdirSync(join(home, 'skills', 'banker-setup-omx'), { recursive: true });
+  writeFileSync(join(home, 'skills', 'banker-setup-omx', 'SKILL.md'), '');
+  const hud = pluginSkill(home, 'codex/renamed-skills', 'setup-omx-hud');
+  const wiki = pluginSkill(home, 'codex/renamed-skills', 'append_wiki');
+  assert.deepEqual([...namesIn(`cat ${hud}`)], ['banker:setup-omx-hud\tplugins/cache/banker-plugins/banker/0.22.0/codex/renamed-skills/setup-omx-hud/SKILL.md']);
+  const f = rollout(tmp, [started('t1'), injected('setup-omx'), call(`cat ${hud}`), injectedPlugin(wiki, 'append_wiki'),
+    cat('setup-omc'), call(`cat ${home}/plugins/cache/banker-plugins/banker/0.22.0/codex/renamed-skills/omx-reference/SKILL.md`)]);
+  run(tmp, stop(f));
+  assert.deepEqual(read(tmp).map((l) => l.split('\t')[0]).sort(), ['banker:append_wiki', 'banker:setup-omc', 'banker:setup-omc-hud']);
+});
+
+test('the names map the hooks read is the one codex/manifest.json gives', async () => {
+  const { CODEX_NAMES, CLAUDE_NAMES } = await import('../bin/lib/codex-names.mjs');
+  const m = JSON.parse(readFileSync(join(dirname(HOOK), '..', 'codex', 'manifest.json'), 'utf8'));
+  const want = Object.fromEntries(m.surfaces.filter((s) => s.codexName).map((s) => [s.name, s.codexName]));
+  assert.deepEqual({ ...CODEX_NAMES }, want);
+  assert.deepEqual(Object.keys(want).sort(), ['omc-reference', 'setup-omc', 'setup-omc-hud']);
+  for (const [claude, codex] of Object.entries(want)) assert.equal(CLAUDE_NAMES[codex], claude);
+});
+
 test('a plugin hook finds the Codex home from PLUGIN_ROOT when the rollout is elsewhere', () => {
   const tmp = mkTmp();
   enable(tmp);

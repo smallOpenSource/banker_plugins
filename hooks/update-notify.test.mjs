@@ -391,6 +391,34 @@ test('개인화: changedSkills ∩ 써본스킬 이 있으면 그 스킬명을 �
   assert.equal(readCache(tmp).notified, '99.0.0', '개인화 알림도 notified 기록(재고지 방지)');
 });
 
+test('개인화: Codex 에서는 바뀐 스킬을 Codex 이름으로 보인다(setup-omc 는 setup-omx), Claude Code 는 그대로', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:setup-omc', 'banker:lineage'] });
+  writeUsedSkills(tmp, ['banker:setup-omc', 'banker:lineage']);
+  const codex = JSON.parse(runNotify(tmp, { argv: ['--codex'] }).stdout.trim()).systemMessage;
+  assert.match(codex, /바뀌었습니다: setup-omx, lineage\./);
+  writeCache(tmp, { latest: '99.0.1', checkedAt: NOW(), changedSkills: ['banker:setup-omc'] });
+  const claude = JSON.parse(runNotify(tmp).stdout.trim()).systemMessage;
+  assert.match(claude, /바뀌었습니다: setup-omc\./);
+});
+
+test('Codex 플러그인 길: 기록의 Codex 판이 0.160.1 보다 낮으면 한 줄 알리고, 그 이상이거나 npm 길이면 알리지 않는다', async () => {
+  const { pluginVersionNotice } = await import(pathToFileURL(NOTIFY_HOOK).href);
+  const tmp = mkTmp();
+  const rec = (v) => {
+    const f = join(tmp, `r-${v}.jsonl`);
+    writeFileSync(f, `${JSON.stringify({ type: 'session_meta', payload: { cli_version: v } })}\n`);
+    return { transcript_path: f };
+  };
+  const never = () => { throw new Error('codex --version 은 기록에 판이 있으면 부르지 않음'); };
+  assert.match(pluginVersionNotice(rec('0.144.5'), true, never), /Codex 0\.144\.5 은 0\.160\.1 보다 낮아/);
+  assert.equal(pluginVersionNotice(rec('0.160.1'), true, never), '');
+  assert.equal(pluginVersionNotice(rec('0.165.0'), true, never), '');
+  assert.equal(pluginVersionNotice(rec('0.144.5'), false, never), '');
+  assert.match(pluginVersionNotice({}, true, () => ({ stdout: 'codex-cli 0.150.2\n' })), /Codex 0\.150\.2/);
+  assert.equal(pluginVersionNotice({}, true, () => ({ stdout: '' })), '', '판을 모르면 알리지 않는다');
+});
+
 test('개인화 없음: changedSkills 있어도 써본스킬 파일 없으면 일반 알림', () => {
   const tmp = mkTmp();
   writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:foo'] });

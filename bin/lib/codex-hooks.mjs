@@ -26,6 +26,7 @@ export const PAYLOAD = [
   '.claude-plugin/plugin.json',
   'bin/lib/telemetry-config.mjs',
   'bin/lib/codex-routes.mjs',
+  'bin/lib/codex-names.mjs',
   'hooks/update-notify.mjs',
   'hooks/update-fetch.mjs',
   'hooks/update-checkin.mjs',

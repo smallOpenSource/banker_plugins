@@ -284,3 +284,34 @@ test('doctor: a Codex home inside this folder, other than its top .codex, is fla
   assert.doesNotMatch(doctorIn(path.join(work, '.codex')), /is inside this folder/);
   assert.doesNotMatch(doctorIn(path.join(dir, 'other')), /is inside this folder/);
 }));
+
+// Plan 22.5, 22.7: Codex names three skills apart (codex/manifest.json codexName). An update sweeps the old folders,
+// installs the new names, says so, and every installed frontmatter says OMX, not OMC (omc-patch and payload-mon keep
+// their names and say they handle Claude Code's OMC).
+test('setup --codex: an update installs the Codex names, says what was renamed, and no installed frontmatter says OMC', () => withXdg((dir) => {
+  const home = path.join(dir, 'codex');
+  const skills = path.join(home, 'skills');
+  for (const old of ['setup-omc', 'omc-reference', 'setup-omc-hud']) {
+    fs.mkdirSync(path.join(skills, `banker-${old}`), { recursive: true });
+    fs.writeFileSync(path.join(skills, `banker-${old}`, 'SKILL.md'), `---\nname: banker-${old}\n---\n`);
+  }
+  const env = { CODEX_HOME: home, HOME: path.join(dir, 'home'), USERPROFILE: path.join(dir, 'home'), BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1' };
+  const { out, code } = run(['setup', '--codex', '--scope', 'user'], dir, env);
+  assert.equal(code, 0, out);
+  for (const [from, to] of [['setup-omc', 'setup-omx'], ['omc-reference', 'omx-reference'], ['setup-omc-hud', 'setup-omx-hud']]) {
+    assert.match(out, new RegExp(`이름 바뀜: banker-${from} 에서 banker-${to} \\(부를 때는 \\$banker-${to}\\)`));
+    assert.ok(!fs.existsSync(path.join(skills, `banker-${from}`)), `banker-${from} swept`);
+    assert.ok(fs.existsSync(path.join(skills, `banker-${to}`, 'SKILL.md')), `banker-${to} installed`);
+  }
+  assert.match(out, /옛 이름으로 끈 설정\(config\.toml 의 \[\[skills\.config\]\]\)은 새 이름에 닿지 않으니 새 이름으로 다시 적으십시오/);
+  const installed = fs.readdirSync(skills).filter((d) => d.startsWith('banker-'));
+  assert.ok(!installed.includes('banker-ultraqa'));
+  for (const d of installed) {
+    const fm = (/^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(path.join(skills, d, 'SKILL.md'), 'utf8')) || [, ''])[1];
+    assert.match(fm, new RegExp(`^name: ${d}\\r?$`, 'm'), d);
+    if (d === 'banker-omc-patch' || d === 'banker-payload-mon') assert.match(fm, /^description: "Claude Code 의 OMC 를 다룸\(Codex 에서 실행해도 같음\)\. /m, d);
+    else assert.doesNotMatch(fm, /omc/i, d);
+  }
+  const again = run(['setup', '--codex', '--scope', 'user'], dir, env).out;
+  assert.doesNotMatch(again, /이름 바뀜/, 'a second run renames nothing');
+}));

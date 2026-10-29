@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const cp = require('child_process');
 const { pathToFileURL } = require('url');
-const { commandSkillText } = require('./lib/command-skill.cjs');
+const { codexFrontmatter, commandSkillText } = require('./lib/command-skill.cjs');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const MANIFEST = path.join(PKG_ROOT, 'codex', 'manifest.json');
@@ -151,23 +151,31 @@ function readSkillName(skillMd) {
 
 // Codex discovers skills by directory and expects the SKILL.md frontmatter `name:` to equal the
 // directory name. Our Codex dir is `banker-<name>` (prefixed to avoid colliding with omx/system
-// skills), so rewrite ONLY the first `name:` line inside the YAML frontmatter to match.
-function setCodexSkillName(skillMd, newName, dryRun) {
-  if (dryRun) { log(`  [dry-run] set frontmatter name: ${newName}`); return; }
+// skills), so rewrite ONLY the first `name:` line inside the YAML frontmatter to match, and the
+// `description:` line when the manifest gives the skill a Codex one (codexDescription).
+function setCodexSkillName(skillMd, newName, dryRun, description) {
+  if (dryRun) { log(`  [dry-run] set frontmatter name: ${newName}${description ? ' and the Codex description' : ''}`); return; }
   let src;
   try { src = fs.readFileSync(skillMd, 'utf8'); } catch { return; }
-  const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return;                                   // no frontmatter — leave untouched
-  let block = fm[1];
-  block = /^name:.*$/m.test(block) ? block.replace(/^name:.*$/m, `name: ${newName}`) : `name: ${newName}\n${block}`;
-  fs.writeFileSync(skillMd, src.slice(0, fm.index) + `---\n${block}\n---` + src.slice(fm.index + fm[0].length));
+  const out = codexFrontmatter(src, newName, description);  // no frontmatter: left untouched
+  if (out !== src) fs.writeFileSync(skillMd, out);
+}
+
+// The name Codex gives a skill (manifest codexName: setup-omc is setup-omx there), and Claude name to Codex name.
+function codexNameOf(s) { return s.codexName || s.name; }
+function codexRenames(m) { return Object.fromEntries(eligible(m).filter(s => s.codexName).map(s => [s.name, s.codexName])); }
+
+// Installed banker-<old> skill folders whose skill Codex now names apart, as [old, new] folder names (found before the sweep).
+function renamedInstalls(skillsDir, m) {
+  return eligible(m).filter(s => s.codexName && fs.existsSync(path.join(skillsDir, `banker-${s.name}`, 'SKILL.md')))
+    .map(s => [`banker-${s.name}`, `banker-${s.codexName}`]);
 }
 
 // A command as a Codex skill (bin/lib/command-skill.cjs, shared with the Codex plugin's codex/command-skills/).
-function writeCommandSkill(src, destDir, name, dryRun) {
+function writeCommandSkill(src, destDir, name, dryRun, codex = {}) {
   if (dryRun) { log(`  [dry-run] write command skill ${path.relative(PKG_ROOT, src)} -> ${destDir}`); return; }
   fs.mkdirSync(destDir, { recursive: true });
-  fs.writeFileSync(path.join(destDir, 'SKILL.md'), commandSkillText(fs.readFileSync(src, 'utf8'), name, `$${name}`));
+  fs.writeFileSync(path.join(destDir, 'SKILL.md'), commandSkillText(fs.readFileSync(src, 'utf8'), name, `$${name}`, codex));
 }
 
 /* ---------- Claude Code target ---------- */
@@ -195,28 +203,36 @@ function setupCodex(dryRun, scope) {
   const base = codexBase(scope);
   const skillsDir = path.join(base, 'skills');
   const promptsDir = path.join(base, 'prompts');
+  const renames = renamedInstalls(skillsDir, m);
   // Clean reinstall: remove any prior banker-* first so an update never leaves a stale duplicate.
   const swept = sweepCodexArtifacts(base, dryRun);
   if (swept) log(`  swept ${swept} prior banker-* artifact(s) before reinstall.`);
   let nSkill = 0, nCmd = 0;
   for (const s of eligible(m)) {
     if (s.type === 'skill') {
-      const dest = path.join(skillsDir, `banker-${s.name}`);
+      const dest = path.join(skillsDir, `banker-${codexNameOf(s)}`);
       copyDir(skillSource(s), dest, dryRun);
-      setCodexSkillName(path.join(dest, 'SKILL.md'), `banker-${s.name}`, dryRun); // dir==name (Codex discovery)
+      setCodexSkillName(path.join(dest, 'SKILL.md'), `banker-${codexNameOf(s)}`, dryRun, s.codexDescription); // dir==name (Codex discovery)
       nSkill++;
     } else if (s.type === 'command') {
       const src = path.join(PKG_ROOT, 'commands', `${s.name}.md`);
       copyFile(src, path.join(promptsDir, `banker-${s.name}.md`), dryRun);
-      writeCommandSkill(src, path.join(skillsDir, `banker-${s.name}`), `banker-${s.name}`, dryRun);
+      writeCommandSkill(src, path.join(skillsDir, `banker-${s.name}`), `banker-${s.name}`, dryRun, { description: s.codexDescription, rename: codexRenames(m) });
       nCmd++;
     }
   }
   log(`  → ${nSkill} skills -> ${path.join(base, 'skills', 'banker-*')}, ${nCmd} commands -> skills banker-* and prompts ${path.join(base, 'prompts', 'banker-*.md')}`);
+  reportRenames(renames);
   log('  → Codex 0.144+ has no custom prompts, so each command is also a skill: invoke it as $banker-<name>.');
   log('  → skills are invoked as `banker-<name>` (frontmatter name rewritten to match the dir).');
   log('  → ~/.codex/AGENTS.md is NOT modified (omx regenerates it); skills auto-discovered from ~/.codex/skills/.');
   return true;
+}
+
+// The skills an update installed under their new Codex name, and what a user who turned an old name off must do.
+function reportRenames(renames) {
+  for (const [from, to] of renames) log(`  이름 바뀜: ${from} 에서 ${to} (부를 때는 $${to})`);
+  if (renames.length) log('  옛 이름으로 끈 설정(config.toml 의 [[skills.config]])은 새 이름에 닿지 않으니 새 이름으로 다시 적으십시오.');
 }
 
 /* ---------- doctor ---------- */
@@ -308,6 +324,14 @@ async function warnCodexPlugin(base) {
   warn(`    Keep one: codex plugin remove ${ids[0].split(' ')[0]}, or banker uninstall --codex.`);
 }
 
+// The plugin's per-skill list was measured on Codex 0.160.1 and later; below that the banker skills may not show.
+async function warnOldCodex(plugins) {
+  if (!plugins.length) return;
+  const r = await loadCodexRoutes();
+  const note = r.pluginVersionNote(r.codexCliVersion(cp.spawnSync));
+  if (note) log(`  ⚠ ${note}`);
+}
+
 // A Codex home inside the folder doctor runs in (not its top .codex, which Codex's sandbox keeps read-only) is one a
 // Codex session opened here can change from the sandbox: its config, the hook copies, the plugins.
 async function warnCodexHomeHere(base) {
@@ -339,6 +363,7 @@ async function doctor() {
   }
   const plugins = await codexPluginInstalls(base);
   log(`  Codex plugin (codex plugin add): ${plugins.length ? plugins.join(', ') : 'not installed'}`);
+  await warnOldCodex(plugins);
   // A project-scope npm install (banker setup --codex --scope project) in this folder doubles the skills here too.
   const projectNpm = (await loadCodexRoutes()).projectNpmRoot(process.cwd());
   if (plugins.length && (installed.length || projectNpm)) log(`  ⚠ banker is installed both ways${projectNpm && !installed.length ? ` (npm in ${path.join(projectNpm, '.codex')})` : ''}: skills show twice ($banker-<name> and $banker:<name>). Keep one: banker uninstall --codex, or codex plugin remove ${plugins[0].split(' ')[0]}`);

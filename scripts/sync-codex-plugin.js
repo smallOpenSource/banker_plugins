@@ -2,11 +2,17 @@
 'use strict';
 /*
  * Codex plugin sync guard. `codex plugin add banker@banker-plugins` installs this repo as a Codex plugin and reads
- * .codex-plugin/plugin.json (Claude Code reads .claude-plugin/ and ignores it). Its skills come from three folders:
- *   skills/                  the skills both runtimes share
- *   codex/skills/            the codex-only skills (Codex counterparts of Claude Code mods)
- *   codex/command-skills/    commands/<name>.md as skills (Codex 0.144+ has no custom prompts), written here
- * so the plugin offers what `banker setup --codex` installs (codex/manifest.json: target both and codex-only).
+ * .codex-plugin/plugin.json (Claude Code reads .claude-plugin/ and ignores it). Its skills list, written here from
+ * codex/manifest.json, names what `banker setup --codex` installs (target both and codex-only), one path per skill:
+ *   ./skills/<name>/                     a skill both runtimes share as it is
+ *   ./codex/renamed-skills/<codex name>/ a shared skill Codex names or describes apart (manifest codexName,
+ *                                        codexDescription): a copy of skills/<name>/ written here, its frontmatter
+ *                                        name and description changed, without the tests (not in the npm package)
+ *   ./codex/skills/                      the codex-only skills (Codex counterparts of Claude Code mods)
+ *   ./codex/command-skills/              commands/<name>.md as skills (Codex 0.144+ has no custom prompts), written here
+ * A claude-only skill (ultraqa) is in no path, and Codex reads no folder the list does not name (Codex 0.160.1 and
+ * 0.165.0, measured), so it never shows there. bin/lib/codex-names.mjs (Claude name to Codex name, for the usage count
+ * and the update notice) is written here too.
  * `commands: []` keeps Codex 0.160+ from also turning commands/ (Claude Code commands) into source-command-* skills.
  * codex/hooks.json is written here too. Codex runs a trusted hook outside its sandbox, so each command finds node on
  * PATH, resolves its real path, and runs nothing when that is relative or under the temp folder or the session folder
@@ -14,23 +20,30 @@
  * Codex keeps a hook's trust by the hash of its command, so each command carries a hash of the files the hooks run
  * (hooksRev): a change to those files changes the command, and Codex asks again in /hooks before it runs the new code.
  * Usage:
- *   node scripts/sync-codex-plugin.js          # write codex/command-skills from commands/, and codex/hooks.json
- *   node scripts/sync-codex-plugin.js --check  # exit 1 if a command skill, the hooks file, or the plugin's skill set drifts
+ *   node scripts/sync-codex-plugin.js          # write the skills list, the copies, the command skills, the names, the hooks
+ *   node scripts/sync-codex-plugin.js --check  # exit 1 if any of them drifts or the plugin's skill set != the manifest
  */
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { commandSkillText } = require('../bin/lib/command-skill.cjs');
+const { codexFrontmatter, commandSkillText } = require('../bin/lib/command-skill.cjs');
 
 const root = path.resolve(__dirname, '..');
 const CMD_DIR = path.join(root, 'codex', 'command-skills');
-const SKILL_DIRS = ['./skills/', './codex/skills/', './codex/command-skills/'];
+const RENAMED_DIR = 'codex/renamed-skills';
+const BUNDLE_DIRS = ['./codex/skills/', './codex/command-skills/'];
 const HOOKS_FILE = './codex/hooks.json';
+const NAMES_FILE = 'bin/lib/codex-names.mjs';
+// What a generated copy leaves out: what the npm package leaves out (package.json files), tests and their caches.
+const NOT_COPIED = /(?:^|\/)(?:__pycache__|\.omc)(?:\/|$)|\.test\.(?:mjs|ts)$|(?:^|\/)test_[^/]*\.py$/;
 
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 const manifest = () => JSON.parse(read('codex/manifest.json'));
 const eligible = (m) => m.surfaces.filter((s) => s.target === 'both' || s.target === 'codex-only');
 const skillDirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((d) => fs.existsSync(path.join(dir, d, 'SKILL.md'))) : []);
+const codexName = (s) => s.codexName || s.name;
+const renamed = (s) => Boolean(s.codexName || s.codexDescription);
+const sharedSkills = (m) => eligible(m).filter((s) => s.type === 'skill' && s.target === 'both');
 
 // The plugin's hooks: [event, tool matcher, script under hooks/, args, through run.cjs]. The obsidizer hook is not here:
 // it would start node on every shell call for everyone, so `obsidizer --enable` installs it on its own, in the user
@@ -207,79 +220,171 @@ function commandSkills(m = manifest()) {
   return eligible(m).filter((s) => s.type === 'command').map((s) => ({
     name: s.name,
     file: path.join(CMD_DIR, s.name, 'SKILL.md'),
-    text: commandSkillText(read(`commands/${s.name}.md`), s.name, `$banker:${s.name}`),
+    text: commandSkillText(read(`commands/${s.name}.md`), s.name, `$banker:${s.name}`, { description: s.codexDescription, rename: renameMap(m) }),
   }));
+}
+
+// Claude name to Codex name, for the skills Codex names apart.
+function renameMap(m = manifest()) {
+  return Object.fromEntries(sharedSkills(m).filter((s) => s.codexName).map((s) => [s.name, s.codexName]));
+}
+
+// The plugin's skills list: one path per shared skill (a renamed copy when Codex names or describes it apart), then
+// the two bundle folders. Sorted by path so a new skill lands in one place.
+function skillList(m = manifest()) {
+  const one = sharedSkills(m).map((s) => (renamed(s) ? `./${RENAMED_DIR}/${codexName(s)}/` : `./skills/${s.name}/`));
+  return [...one.sort(), ...BUNDLE_DIRS];
+}
+
+// Every file of a skill folder, repo-relative with forward slashes, but what NOT_COPIED names.
+function filesUnder(rel) {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+    const r = `${rel}/${e.name}`;
+    if (NOT_COPIED.test(r)) continue;
+    if (e.isDirectory()) out.push(...filesUnder(r));
+    else if (e.isFile()) out.push(r);
+  }
+  return out;
+}
+
+// The renamed copies as { rel, data }: skills/<name>/ under codex/renamed-skills/<codex name>/, with the SKILL.md
+// frontmatter name and description set (the description as a JSON string, which YAML reads as a double-quoted one).
+function renamedCopies(m = manifest()) {
+  const out = [];
+  for (const s of sharedSkills(m).filter(renamed)) {
+    for (const rel of filesUnder(`skills/${s.name}`)) {
+      const sub = rel.slice(`skills/${s.name}/`.length);
+      const data = fs.readFileSync(path.join(root, rel));
+      out.push({ rel: `${RENAMED_DIR}/${codexName(s)}/${sub}`, data: sub === 'SKILL.md' ? codexFrontmatter(data.toString('utf8'), codexName(s), s.codexDescription) : data });
+    }
+  }
+  return out;
+}
+
+// bin/lib/codex-names.mjs: the hooks count a skill and name it in the update notice by its Claude name.
+function namesText(m = manifest()) {
+  return '// Written by scripts/sync-codex-plugin.js from codex/manifest.json (codexName). Do not edit.\n'
+    + '// CODEX_NAMES: Claude name to Codex name; CLAUDE_NAMES: the other way.\n'
+    + `export const CODEX_NAMES = Object.freeze(${JSON.stringify(renameMap(m))});\n`
+    + 'export const CLAUDE_NAMES = Object.freeze(Object.fromEntries(Object.entries(CODEX_NAMES).map(([a, b]) => [b, a])));\n';
+}
+
+// .codex-plugin/plugin.json with the skills list in place.
+function pluginText(m = manifest()) {
+  return `${JSON.stringify({ ...JSON.parse(read('.codex-plugin/plugin.json')), skills: skillList(m) }, null, 2)}\n`;
+}
+
+// The files this script writes before the hooks file (whose hash covers bin/lib/codex-names.mjs), as { rel, data }.
+function targets(m = manifest()) {
+  return [
+    ...commandSkills(m).map((s) => ({ rel: path.relative(root, s.file).split(path.sep).join('/'), data: s.text })),
+    ...renamedCopies(m),
+    { rel: NAMES_FILE, data: namesText(m) },
+    { rel: '.codex-plugin/plugin.json', data: pluginText(m) },
+  ];
+}
+
+// The files under codex/renamed-skills/ and the folders in codex/command-skills/ no target writes.
+function staleOf(list) {
+  const want = new Set(list.map((x) => x.rel));
+  const files = fs.existsSync(path.join(root, RENAMED_DIR)) ? filesUnder(RENAMED_DIR).filter((r) => !want.has(r)) : [];
+  const cmds = skillDirs(CMD_DIR).map((d) => `codex/command-skills/${d}`).filter((d) => !want.has(`${d}/SKILL.md`));
+  return [...files, ...cmds];
+}
+
+// The skills the plugin's list gives Codex, by the name Codex shows (the folder name), and where each comes from.
+// A path that is no skill folder or bundle folder is a problem; so is a name two paths give (one would shadow the other).
+function listedSkills(list, out) {
+  const seen = new Map();
+  for (const entry of list) {
+    const dir = path.join(root, entry);
+    const names = fs.existsSync(path.join(dir, 'SKILL.md')) ? [path.basename(dir)] : skillDirs(dir);
+    if (!names.length) out.push(`skills list path ${entry} has no skill`);
+    for (const d of names) {
+      if (seen.has(d)) out.push(`skill ${d} is in both ${seen.get(d)} and ${entry}`);
+      seen.set(d, entry);
+    }
+  }
+  return seen;
+}
+
+// Every hook runs a script this repo has.
+function hookProblems(out) {
+  const hooks = JSON.parse(read(HOOKS_FILE)).hooks || {};
+  for (const h of Object.values(hooks).flatMap((groups) => groups.flatMap((g) => g.hooks || []))) {
+    for (const cmd of [h.command, h.commandWindows]) {
+      const scripts = String(cmd).match(/hooks[\\/][a-z-]+\.(?:mjs|cjs)/g) || [];
+      if (!scripts.length) out.push(`hook command runs no hooks/ script: ${cmd}`);
+      for (const s of scripts) if (!fs.existsSync(path.join(root, ...s.split(/[\\/]/)))) out.push(`hook script missing: ${s}`);
+    }
+  }
+}
+
+// The fields of .codex-plugin/plugin.json this script owns or Codex needs as they are.
+function fieldProblems(plugin, m, out) {
+  const claude = JSON.parse(read('.claude-plugin/plugin.json'));
+  if (plugin.name !== claude.name) out.push(`.codex-plugin/plugin.json name ${plugin.name} != ${claude.name}`);
+  if (JSON.stringify(plugin.skills) !== JSON.stringify(skillList(m))) out.push('.codex-plugin/plugin.json skills != the list the manifest gives. Fix: node scripts/sync-codex-plugin.js');
+  if (plugin.hooks !== HOOKS_FILE) out.push(`.codex-plugin/plugin.json hooks must be ${HOOKS_FILE}`);
+  // Codex 0.160 turns a plugin's commands/*.md into skills named source-command-<name> unless the manifest names its
+  // commands. Ours are Claude Code commands (codex/command-skills carries the Codex side), so the list stays empty.
+  if (!Array.isArray(plugin.commands) || plugin.commands.length) out.push('.codex-plugin/plugin.json commands must be [] (keeps Codex 0.160+ from turning commands/ into source-command-* skills)');
 }
 
 // Problems with the plugin manifest, its skill set and its hooks file, as messages.
 function pluginProblems(m = manifest()) {
   const out = [];
   const plugin = JSON.parse(read('.codex-plugin/plugin.json'));
-  const claude = JSON.parse(read('.claude-plugin/plugin.json'));
-  if (plugin.name !== claude.name) out.push(`.codex-plugin/plugin.json name ${plugin.name} != ${claude.name}`);
-  if (JSON.stringify(plugin.skills) !== JSON.stringify(SKILL_DIRS)) out.push(`.codex-plugin/plugin.json skills must be ${JSON.stringify(SKILL_DIRS)}`);
-  if (plugin.hooks !== HOOKS_FILE) out.push(`.codex-plugin/plugin.json hooks must be ${HOOKS_FILE}`);
-  // Codex 0.160 turns a plugin's commands/*.md into skills named source-command-<name> unless the manifest names its
-  // commands. Ours are Claude Code commands (codex/command-skills carries the Codex side), so the list stays empty.
-  if (!Array.isArray(plugin.commands) || plugin.commands.length) out.push('.codex-plugin/plugin.json commands must be [] (keeps Codex 0.160+ from turning commands/ into source-command-* skills)');
-  // Codex names a plugin skill <plugin>:<dir>, so a name in two folders would shadow the other.
-  const seen = new Map();
-  for (const dir of SKILL_DIRS) {
-    for (const d of skillDirs(path.join(root, dir))) {
-      if (seen.has(d)) out.push(`skill ${d} is in both ${seen.get(d)} and ${dir}`);
-      seen.set(d, dir);
-    }
-  }
-  const want = eligible(m).map((s) => s.name).sort();
+  fieldProblems(plugin, m, out);
+  // Codex reads only the folders the list names, so a skill left out is silently missing there.
+  const seen = listedSkills(Array.isArray(plugin.skills) ? plugin.skills : [], out);
+  const want = eligible(m).map(codexName).sort();
   const have = [...seen.keys()].sort();
   if (JSON.stringify(want) !== JSON.stringify(have)) {
     out.push(`plugin skills != manifest (missing: ${want.filter((n) => !seen.has(n)).join(', ') || '-'}; extra: ${have.filter((n) => !want.includes(n)).join(', ') || '-'})`);
   }
-  // Every hook runs a script this repo has.
-  const hooks = JSON.parse(read(HOOKS_FILE)).hooks || {};
-  for (const groups of Object.values(hooks)) {
-    for (const h of groups.flatMap((g) => g.hooks || [])) {
-      for (const cmd of [h.command, h.commandWindows]) {
-        const scripts = String(cmd).match(/hooks[\\/][a-z-]+\.(?:mjs|cjs)/g) || [];
-        if (!scripts.length) out.push(`hook command runs no hooks/ script: ${cmd}`);
-        for (const s of scripts) if (!fs.existsSync(path.join(root, ...s.split(/[\\/]/)))) out.push(`hook script missing: ${s}`);
-      }
-    }
-  }
+  hookProblems(out);
   return out;
+}
+
+// Write or (check) compare one file. True when it drifts under --check.
+function syncOne({ rel, data }, check) {
+  const file = path.join(root, ...rel.split('/'));
+  const now = fs.existsSync(file) ? fs.readFileSync(file) : null;
+  if (now && now.equals(Buffer.from(data))) return false;
+  if (check) { console.error(`OUT OF SYNC: ${rel}. Fix: node scripts/sync-codex-plugin.js`); return true; }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, data);
+  console.log(`wrote ${rel}`);
+  return false;
 }
 
 function main() {
   const check = process.argv.includes('--check');
   const m = manifest();
-  const skills = commandSkills(m);
+  const list = targets(m);
   let failed = false;
-  for (const s of skills) {
-    const now = fs.existsSync(s.file) ? fs.readFileSync(s.file, 'utf8') : null;
-    if (now === s.text) { console.log(`command skill ${s.name} in sync`); continue; }
-    if (check) {
-      console.error(`COMMAND SKILL MISMATCH: ${path.relative(root, s.file)} != commands/${s.name}.md. Fix: node scripts/sync-codex-plugin.js`);
-      failed = true;
-      continue;
-    }
-    fs.mkdirSync(path.dirname(s.file), { recursive: true });
-    fs.writeFileSync(s.file, s.text);
-    console.log(`wrote ${path.relative(root, s.file)}`);
+  for (const x of list) failed = syncOne(x, check) || failed;
+  // A command or a renamed skill dropped from the manifest leaves nothing behind.
+  for (const rel of staleOf(list)) {
+    if (check) { console.error(`STALE: ${rel}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
+    else { fs.rmSync(path.join(root, ...rel.split('/')), { recursive: true, force: true }); console.log(`removed ${rel}`); }
   }
-  // A command dropped from the manifest leaves no stale skill behind.
-  for (const d of skillDirs(CMD_DIR).filter((d) => !skills.some((s) => s.name === d))) {
-    if (check) { console.error(`STALE COMMAND SKILL: codex/command-skills/${d}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
-    else { fs.rmSync(path.join(CMD_DIR, d), { recursive: true, force: true }); console.log(`removed codex/command-skills/${d}`); }
-  }
-  const hooksFile = path.join(root, ...HOOKS_FILE.split('/'));
-  if ((fs.existsSync(hooksFile) ? fs.readFileSync(hooksFile, 'utf8') : null) !== hooksText()) {
-    if (check) { console.error(`HOOKS MISMATCH: ${HOOKS_FILE}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
-    else { fs.writeFileSync(hooksFile, hooksText()); console.log(`wrote ${HOOKS_FILE}`); }
-  } else console.log(`${HOOKS_FILE} in sync`);
+  if (!check) removeEmptyDirs(path.join(root, RENAMED_DIR));
+  failed = syncOne({ rel: HOOKS_FILE.slice(2), data: hooksText() }, check) || failed;
   for (const p of pluginProblems(m)) { console.error(`CODEX PLUGIN: ${p}`); failed = true; }
   if (failed) process.exit(1);
+  console.log(`Codex plugin in sync: ${list.length + 1} files${check ? ' checked' : ''}`);
+}
+
+// Folders a removed file left empty under codex/renamed-skills/.
+function removeEmptyDirs(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) removeEmptyDirs(path.join(dir, e.name));
+  if (!fs.readdirSync(dir).length) fs.rmdirSync(dir);
 }
 
 if (require.main === module) main();
 
-module.exports = { commandSkills, pluginProblems, hooksText, hookFiles, hooksRev, shCommand, psCommand, SKILL_DIRS, HOOKS_FILE };
+module.exports = { commandSkills, pluginProblems, hooksText, hookFiles, hooksRev, shCommand, psCommand, skillList, renamedCopies, renameMap, namesText, targets, staleOf, BUNDLE_DIRS, RENAMED_DIR, NAMES_FILE, HOOKS_FILE };

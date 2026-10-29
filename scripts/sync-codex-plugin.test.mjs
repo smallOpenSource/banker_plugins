@@ -2,7 +2,7 @@
 // Run from the repo root: node --test scripts/sync-codex-plugin.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -589,4 +589,76 @@ test('PowerShell: a plugin folder in the session folder or under TEMP runs nothi
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /banker hooks skipped: the plugin folder is in a temp folder or the session folder/);
   assert.ok(!existsSync(c.marker));
+});
+
+// The skills list (plan 22.3): Codex reads only the folders the list names, so the list is what Codex shows.
+const { renamedCopies, skillList, staleOf, targets, BUNDLE_DIRS, RENAMED_DIR } = require('./sync-codex-plugin.js');
+const MANIFEST = JSON.parse(readFileSync(join(ROOT, 'codex', 'manifest.json'), 'utf8'));
+const frontmatter = (text) => (/^---\r?\n([\s\S]*?)\r?\n---/.exec(text) || [, ''])[1];
+
+test('the skills list names every shared skill once, a renamed copy for the six Codex names or describes apart, no claude-only skill', () => {
+  const list = skillList();
+  assert.deepEqual(JSON.parse(readFileSync(join(ROOT, '.codex-plugin', 'plugin.json'), 'utf8')).skills, list);
+  assert.deepEqual(list.slice(-2), BUNDLE_DIRS);
+  const shared = MANIFEST.surfaces.filter((s) => s.type === 'skill' && s.target === 'both');
+  assert.equal(list.length, shared.length + 2);
+  for (const s of shared) {
+    const want = s.codexName || s.codexDescription ? `./${RENAMED_DIR}/${s.codexName || s.name}/` : `./skills/${s.name}/`;
+    assert.ok(list.includes(want), want);
+  }
+  assert.deepEqual(MANIFEST.surfaces.filter((s) => s.codexName || s.codexDescription).map((s) => s.name).sort(),
+    ['append_wiki', 'compact-wiki', 'omc-reference', 'setup', 'setup-omc', 'setup-omc-hud', 'setup-tmux']);
+  for (const s of MANIFEST.surfaces.filter((x) => x.target === 'claude-only')) assert.ok(!list.some((p) => p.includes(`/${s.name}/`)), s.name);
+  assert.ok(!list.some((p) => p.includes('/ultraqa/')));
+});
+
+test('a renamed copy is its source with only the frontmatter name and description changed, and no tests', () => {
+  const copies = renamedCopies();
+  for (const s of MANIFEST.surfaces.filter((x) => x.type === 'skill' && (x.codexName || x.codexDescription))) {
+    const dir = `${RENAMED_DIR}/${s.codexName || s.name}/`;
+    const mine = copies.filter((c) => c.rel.startsWith(dir));
+    assert.ok(mine.length, dir);
+    for (const c of mine) {
+      assert.doesNotMatch(c.rel, /\.test\.(?:mjs|ts)$|__pycache__|\/test_[^/]*\.py$/);
+      const src = readFileSync(join(ROOT, 'skills', s.name, ...c.rel.slice(dir.length).split('/')));
+      if (!c.rel.endsWith('/SKILL.md')) { assert.ok(src.equals(c.data), c.rel); continue; }
+      const fm = frontmatter(c.data);
+      assert.match(fm, new RegExp(`^name: ${s.codexName || s.name}$`, 'm'));
+      const desc = /^description: (.*)$/m.exec(fm)[1];
+      assert.equal(JSON.parse(desc), s.codexDescription, 'the description reads back as the double-quoted string it was written as');
+      const strip = (t) => String(t).split('\n').filter((l) => !/^(?:name|description):/.test(l)).join('\n');
+      assert.equal(strip(c.data), strip(src), `${c.rel}: nothing but the two lines changed`);
+    }
+  }
+  assert.deepEqual(staleOf(targets()), [], 'nothing stale under codex/renamed-skills or codex/command-skills');
+});
+
+test('no test file sits in codex/renamed-skills, so a run of every *.test.mjs never runs a copy twice', () => {
+  const found = [];
+  const walk = (rel) => {
+    for (const e of readdirSync(join(ROOT, ...rel.split('/')), { withFileTypes: true })) {
+      if (e.isDirectory()) walk(`${rel}/${e.name}`);
+      else if (/\.test\.(?:mjs|ts)$/.test(e.name)) found.push(`${rel}/${e.name}`);
+    }
+  };
+  walk(RENAMED_DIR);
+  assert.deepEqual(found, []);
+});
+
+// Plan 22.7: what Codex shows from the plugin (each listed skill's frontmatter in full) says OMX, not OMC. omc-patch and
+// payload-mon keep their names: their description opens with the line that they act on Claude Code's OMC.
+test('the Codex plugin frontmatter has no OMC but the two kept skills, which say they handle Claude Code\'s OMC', () => {
+  const files = [];
+  for (const entry of skillList()) {
+    const dir = join(ROOT, entry);
+    if (existsSync(join(dir, 'SKILL.md'))) files.push(join(dir, 'SKILL.md'));
+    else for (const d of readdirSync(dir)) if (existsSync(join(dir, d, 'SKILL.md'))) files.push(join(dir, d, 'SKILL.md'));
+  }
+  assert.equal(files.length, MANIFEST.surfaces.filter((s) => s.target !== 'claude-only').length);
+  for (const f of files) {
+    const fm = frontmatter(readFileSync(f, 'utf8'));
+    const name = /^name: (.*)$/m.exec(fm)[1];
+    if (name === 'omc-patch' || name === 'payload-mon') assert.match(fm, /^description: "Claude Code 의 OMC 를 다룸\(Codex 에서 실행해도 같음\)\. /m, f);
+    else assert.doesNotMatch(fm, /omc/i, f);
+  }
 });

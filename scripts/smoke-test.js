@@ -99,10 +99,23 @@ try {
   ok(JSON.stringify(mfCodexOnly) === JSON.stringify(diskCodexOnly),
      `manifest codex-only == codex/skills/ ([${mfCodexOnly.join(', ')}] vs [${diskCodexOnly.join(', ')}])`);
   // The Codex plugin (codex plugin add banker@banker-plugins) reads .codex-plugin/plugin.json: same version as the
-  // Claude plugin, its three skill folders == the manifest's Codex surfaces, codex/command-skills in step with
-  // commands/, and every script codex/hooks.json runs present (scripts/sync-codex-plugin.js --check).
+  // Claude plugin, its skills list (one path per skill, plus codex/skills/ and codex/command-skills/) == the manifest's
+  // Codex surfaces, codex/command-skills and codex/renamed-skills in step with their sources, and every script
+  // codex/hooks.json runs present (scripts/sync-codex-plugin.js --check).
   const cxp = cp.spawnSync(process.execPath, [path.join(root, 'scripts', 'sync-codex-plugin.js'), '--check'], { encoding: 'utf8' });
   ok(cxp.status === 0, `Codex plugin in sync (sync-codex-plugin --check)${cxp.status ? `: ${String(cxp.stderr).trim()}` : ''}`);
+  // Plan 22.3: Codex reads only the folders the list names and skips a missing one without a warning, so the set of
+  // skills the list gives (bundle folders opened) must equal the manifest's Codex skills by their Codex names.
+  const cxList = JSON.parse(fs.readFileSync(path.join(root, '.codex-plugin', 'plugin.json'), 'utf8')).skills;
+  const cxListed = cxList.flatMap((p) => {
+    const d = path.join(root, p);
+    if (fs.existsSync(path.join(d, 'SKILL.md'))) return [path.basename(d)];
+    return fs.existsSync(d) ? fs.readdirSync(d).filter((x) => fs.existsSync(path.join(d, x, 'SKILL.md'))) : [];
+  }).sort();
+  const cxWant = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8')).surfaces
+    .filter((s) => s.target === 'both' || s.target === 'codex-only').map((s) => s.codexName || s.name).sort();
+  ok(JSON.stringify(cxListed) === JSON.stringify(cxWant),
+     `Codex plugin skills list == manifest Codex skills by Codex name (missing: [${cxWant.filter((n) => !cxListed.includes(n)).join(', ')}]; extra: [${cxListed.filter((n) => !cxWant.includes(n)).join(', ')}])`);
   const verOf = (rel) => JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8')).version;
   ok(verOf('.codex-plugin/plugin.json') === verOf('.claude-plugin/plugin.json'),
      `.codex-plugin/plugin.json version == .claude-plugin/plugin.json (${verOf('.codex-plugin/plugin.json')})`);
@@ -152,6 +165,10 @@ try {
     const unclosed = /^"/.test(m ? m[1].trim() : '') && !/"$/.test(m ? m[1].trim() : '');
     return { file: path.relative(root, f), text, multi: unclosed || /^description:.*\r?\n[ \t]+\S/m.test(fm) };
   });
+  // The Codex descriptions the manifest gives (codexDescription) follow the same rules.
+  for (const s of mfAllSkills.concat(JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8')).surfaces.filter((x) => x.type === 'command'))) {
+    if (s.codexDescription) descs.push({ file: `codex/manifest.json codexDescription of ${s.name}`, text: s.codexDescription });
+  }
   const pauseSrc = fs.readFileSync(path.join(root, 'hooks', 'graceful-pause.mjs'), 'utf8');
   descs.push({ file: 'hooks/graceful-pause.mjs', text: (/^  description: '([^']*)',$/m.exec(pauseSrc) || [, ''])[1] });
   const progressSrc = fs.readFileSync(path.join(root, 'hooks', 'progress.mjs'), 'utf8');
@@ -243,6 +260,10 @@ try {
   fs.mkdirSync(renamedFactoryDir, { recursive: true });
   fs.writeFileSync(path.join(renamedFactoryDir, 'SKILL.md'), '---\nname: banker-harness-factory\n---\n');
   // removal guard: graceful_pause left the plugin (replaced by the /graceful-pause function-hooks command)
+  // rename-case guard 4: Codex names setup-omc setup-omx (codex/manifest.json codexName)
+  const renamedOmcDir = path.join(home2, '.codex', 'skills', 'banker-setup-omc');
+  fs.mkdirSync(renamedOmcDir, { recursive: true });
+  fs.writeFileSync(path.join(renamedOmcDir, 'SKILL.md'), '---\nname: banker-setup-omc\n---\n');
   const removedPauseDir = path.join(home2, '.codex', 'skills', 'banker-graceful_pause');
   fs.mkdirSync(removedPauseDir, { recursive: true });
   fs.writeFileSync(path.join(removedPauseDir, 'SKILL.md'), '---\nname: banker-graceful_pause\n---\n');
@@ -273,6 +294,9 @@ try {
   ok(installed.includes('banker-setup-stitch'), 'renamed skill installed as banker-setup-stitch');
   ok(!fs.existsSync(renamedFactoryDir), 'renamed-away banker-harness-factory swept (replaced by setup-harness-factory)');
   ok(installed.includes('banker-setup-harness-factory'), 'renamed skill installed as banker-setup-harness-factory');
+  ok(!fs.existsSync(renamedOmcDir) && ['banker-setup-omx', 'banker-omx-reference', 'banker-setup-omx-hud'].every((d) => installed.includes(d))
+     && !installed.some((d) => /^banker-(setup-omc|omc-reference|setup-omc-hud)$/.test(d)),
+     'Codex names: banker-setup-omc swept, banker-setup-omx, banker-omx-reference and banker-setup-omx-hud installed');
   ok(installed.includes('banker-docs-setup'), 'new docs-setup installed as banker-docs-setup');
   ok(installed.includes('banker-obsidizer'), 'obsidizer installed as banker-obsidizer');
   ok(installed.includes('banker-motion-graphic-setup'), 'new motion-graphic-setup installed as banker-motion-graphic-setup');
@@ -327,7 +351,7 @@ try {
   const cfgHud = fs.readFileSync(path.join(root, 'skills', 'setup-omc-hud', 'assets', 'codex-config.mjs'));
   ok(cfgBp.equals(cfgHud), 'codex-config.mjs is byte-identical across setup-bypass-permissions and setup-omc-hud');
   ok(['scripts/codex-bypass.mjs', 'scripts/codex-config.mjs'].every((f) => fs.existsSync(path.join(instDir, 'banker-setup-bypass-permissions', ...f.split('/'))))
-     && ['assets/codex-status-line.mjs', 'assets/codex-config.mjs'].every((f) => fs.existsSync(path.join(instDir, 'banker-setup-omc-hud', ...f.split('/')))),
+     && ['assets/codex-status-line.mjs', 'assets/codex-config.mjs'].every((f) => fs.existsSync(path.join(instDir, 'banker-setup-omx-hud', ...f.split('/')))),
      'the Codex install carries the Codex config scripts of setup-bypass-permissions and setup-omc-hud');
   const tcSkill = fs.readFileSync(path.join(tcDir, 'SKILL.md'), 'utf8');
   ok(/^---\nname: banker-tone-compact\n/.test(tcSkill) && tcSkill.includes('<!-- tone-compact:rules:start -->') && tcSkill.includes('<!-- tone-compact:rules:end -->'),
@@ -364,11 +388,11 @@ try {
   // off/status arguments run scripts/claude-update-last.mjs; every copy of that folder ships them, Codex's included
   // (there the skill points at OMX's hud, so they sit unused). Run the installed copy's installer once, against a
   // temp config with a stand-in OMC: a copy that has the files but cannot install from them would pass alone.
-  const hudSkillDir = path.join(instDir, 'banker-setup-omc-hud');
+  const hudSkillDir = path.join(instDir, 'banker-setup-omx-hud');
   const hudFiles = ['scripts/claude-update-last.mjs', 'assets/apply-hud.mjs', 'assets/omc-hud-custom.mjs',
     'assets/hud-config.json', 'assets/LICENSE-omc_hud'];
   ok(hudFiles.every((f) => fs.existsSync(path.join(hudSkillDir, ...f.split('/')))),
-     `banker-setup-omc-hud carries ${hudFiles.join(', ')} into the Codex install`);
+     `banker-setup-omx-hud carries ${hudFiles.join(', ')} into the Codex install`);
   const hudCfg = path.join(tmp, 'hud cfg');
   const omcLib = path.join(hudCfg, 'plugins', 'cache', 'omc', 'oh-my-claudecode', '5.7.4', 'scripts', 'lib');
   fs.mkdirSync(omcLib, { recursive: true });

@@ -121,3 +121,31 @@ export function dualInstallNote(home, cwd = '') {
     + '스킬이 $banker-<이름> 과 $banker:<이름> 으로 겹칩니다. 하나만 두십시오: '
     + `npm 쪽을 빼려면 banker uninstall --codex, 플러그인을 빼려면 codex plugin remove ${plugins[0]}`;
 }
+
+// 플러그인 길의 스킬 목록(.codex-plugin/plugin.json skills 의 스킬별 경로)을 읽는다고 확인한 가장 낮은 Codex 판.
+// 0.160.1(Windows), 0.165.0(Linux) 에서 확인했고 0.144.5 는 재지 못했다. 그보다 낮은 판은 banker 스킬이 거의 다 안 보일 수 있다.
+export const MIN_PLUGIN_CODEX = '0.160.1';
+
+const triple = (v) => (/^(\d+)\.(\d+)\.(\d+)/.exec(String(v || '')) || []).slice(1, 4).map(Number);
+
+// 플러그인 길에서 Codex 판이 MIN_PLUGIN_CODEX 보다 낮으면 알림 한 줄, 아니면(판을 모를 때 포함) ''.
+export function pluginVersionNote(version) {
+  const v = triple(version);
+  const min = triple(MIN_PLUGIN_CODEX);
+  if (v.length !== 3) return '';
+  const lower = v[0] !== min[0] ? v[0] < min[0] : v[1] !== min[1] ? v[1] < min[1] : v[2] < min[2];
+  if (!lower) return '';
+  return `banker: Codex ${v.join('.')} 은 ${MIN_PLUGIN_CODEX} 보다 낮아 banker 플러그인 스킬이 안 보일 수 있습니다(${MIN_PLUGIN_CODEX} 이상에서 확인). `
+    + 'Codex 를 올리거나 npm 길(banker setup --codex)을 쓰십시오';
+}
+
+// `codex --version` 의 판(x.y.z). 없거나 2초 안에 답하지 않으면 ''. Windows 는 codex.cmd 를 cmd 로 부른다.
+export function codexCliVersion(spawn) {
+  const win = process.platform === 'win32';
+  try {
+    const r = spawn(win ? 'codex.cmd --version' : 'codex', win ? [] : ['--version'], { encoding: 'utf8', timeout: 2000, shell: win, input: '', windowsHide: true });
+    return (/(\d+\.\d+\.\d+)/.exec(String(r.stdout || '')) || [])[1] || '';
+  } catch {
+    return '';
+  }
+}

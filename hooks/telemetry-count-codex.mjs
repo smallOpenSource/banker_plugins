@@ -8,8 +8,10 @@
  *  - 사용자가 $banker-<name> 으로 부른 스킬: Codex 가 도구 호출 없이 `<skill>\n<name>..</name>\n<path>..</path>` 로
  *    시작하는 사용자 역할 메시지로 본문을 넣는다. 이때는 머리의 <path> 줄만 보고 본문은 보지 않는다.
  * Codex 플러그인으로 설치한 banker(codex plugin add, $banker:<name>)는 SKILL.md 가
- * `<CODEX_HOME>/plugins/cache/<마켓플레이스>/banker/<판>/{skills,codex/skills,codex/command-skills}/<name>/` 에 있다.
- * 두 길의 경로를 모두 센다.
+ * `<CODEX_HOME>/plugins/cache/<마켓플레이스>/banker/<판>/{skills,codex/skills,codex/command-skills,codex/renamed-skills}/<name>/`
+ * 에 있다. 두 길의 경로를 모두 센다. Codex 가 다른 이름으로 부르는 스킬(setup-omc 는 Codex 에서 setup-omx)은 Codex 이름으로
+ * 설치를 확인한 뒤 Claude 이름으로 센다(bin/lib/codex-names.mjs, codex/manifest.json 의 codexName 에서 생성). 개인화 알림의
+ * 바뀐 스킬 목록(skill-changes.json)도 Claude 이름이라 두 런타임의 셈이 한 이름으로 맞는다.
  * 도구 호출마다 도는 PreToolUse 대신 턴마다 한 번 도는 Stop 에서, 훅 입력의 transcript_path(rollout) 중
  * 이번 턴(task_started 의 turn_id 뒤)의 두 기록에 `skills/banker-<name>/SKILL.md` 가 있으면 센다. 나눠 읽어도 한 번이고, Stop 이 한 턴에 두 번 와도
  * (턴, 이름)마다 configDir 의 codex-count-turns.d 에 표지 파일을 만든 훅만 센다(옛 판과는 codex-count-turns 를 함께 봄).
@@ -26,6 +28,7 @@ import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, open
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
+import { CLAUDE_NAMES } from '../bin/lib/codex-names.mjs';
 import { codexHomeOf, pluginRoutes } from '../bin/lib/codex-routes.mjs';
 import { appendUsageLog, CODEX_SHAPE_MISS_PATH, configDir, countingActive, randomHex, readRegular, recordUsedSkill, SKILL_NAME_RE, writeByRename } from '../bin/lib/telemetry-config.mjs';
 
@@ -34,7 +37,7 @@ export { codexHomeOf };
 const SKILL_PATH_RE = /skills[\\/]+banker-([a-z0-9_-]{1,64})[\\/]+SKILL\.md/g;
 // 플러그인 길: plugins/cache/<마켓플레이스>/banker/<판>/<스킬 폴더>/<name>/SKILL.md. 1 마켓플레이스, 2 판, 3 스킬 폴더, 4 이름.
 // 대소문자를 가리지 않는 파일 시스템에서 `FRONT-QA` 같은 변형이 다른 이름으로 세어지지 않게 i 를 두지 않는다.
-const PLUGIN_PATH_RE = /plugins[\\/]+cache[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+banker[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+(skills|codex[\\/]+skills|codex[\\/]+command-skills)[\\/]+([a-z0-9_-]{1,64})[\\/]+SKILL\.md/g;
+const PLUGIN_PATH_RE = /plugins[\\/]+cache[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+banker[\\/]+([A-Za-z0-9._-]{1,80})[\\/]+(skills|codex[\\/]+skills|codex[\\/]+command-skills|codex[\\/]+renamed-skills)[\\/]+([a-z0-9_-]{1,64})[\\/]+SKILL\.md/g;
 const KEEP_TURNS = 100;
 export const TURNS_FILE = () => join(configDir(), 'codex-count-turns');
 // 센 (턴, 이름)마다 하나씩 만드는 표지 파일의 폴더, 기록 끝 256 MB 안에서도 턴 시작을 못 찾은 일을 적는 한 줄 파일.
@@ -274,6 +277,12 @@ export function installed(entry, home, routes = pluginRoutes(home)) {
   return existsSync(join(home, 'skills', `banker-${name.slice('banker:'.length)}`, 'SKILL.md'));
 }
 
+// 'banker:<Codex 이름>' 을 'banker:<Claude 이름>' 으로. 이름이 같은 스킬은 그대로.
+export function claudeName(entry) {
+  const name = entry.slice('banker:'.length);
+  return Object.hasOwn(CLAUDE_NAMES, name) ? `banker:${CLAUDE_NAMES[name]}` : entry;
+}
+
 // 이 턴에 아직 세지 않은 이름만 센다. far 는 기록 읽기 한도(시험이 낮춤): max 줄로 읽는 끝 부분, 그 밖은 farSkills 의 것.
 export function countOnce(payload, far = {}) {
   const key = turnKey(payload);
@@ -286,7 +295,7 @@ export function countOnce(payload, far = {}) {
   }
   if (got.far) noteFar(key);
   const routes = got.some((n) => n.includes('\t')) ? pluginRoutes(home) : []; // config.toml 은 한 번만 읽는다
-  const names = [...new Set(got.filter((n) => installed(n, home, routes)).map((n) => n.split('\t')[0]))];
+  const names = [...new Set(got.filter((n) => installed(n, home, routes)).map((n) => claudeName(n.split('\t')[0])))];
   if (!names.length) return [];
   return withTurnsLock(() => countFresh(key, names));
 }

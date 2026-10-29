@@ -239,6 +239,23 @@ banker uninstall        # 제거
   node 를 찾은 뒤에는 PATH 에서 임시 폴더와 작업 폴더 아래 항목을 빼므로, 프로젝트의 `.venv/bin` 이나 `node_modules/.bin` 에 있는 프로그램은 훅에서 돌지 않습니다(작업 폴더가 홈 폴더 자체이면 홈 아래 항목은 남깁니다). Windows 는 네트워크 드라이브와 UNC 경로의 PATH 항목을 읽지 않습니다. macOS 데스크톱에서 연 Codex 처럼 PATH 에 node 가 없으면 Homebrew(`/opt/homebrew/bin`)와 공식 설치(`/usr/local/bin`)의 node 를 씁니다. \
   Volta, mise, snap 처럼 이름을 보고 동작하는 node 와 Windows 의 `node.cmd` shim(mise)은 그 도구가 고른 node 를 씁니다. 훅은 플러그인 폴더에서 돌므로 asdf, nodenv 는 전역 버전(`asdf set -u nodejs <판>`, asdf 0.16 미만은 `asdf global nodejs <판>`, `nodenv global <판>`)이 있어야 합니다. \
   이 설치에는 `banker` 명령이 없습니다. `banker doctor`, `banker telemetry` 가 필요하면 npm 으로도 설치하되 `banker setup`(인자 없음)과 `banker setup --codex` 는 돌리지 않습니다(Codex 에 npm 길이 함께 설치됨). Claude Code 에 넣으려면 `banker setup --claude` 만 씁니다.
+- Codex 에서는 OMC 를 OMX 로 바꿔 부르거나 설명하는 스킬이 있습니다. npm 길과 플러그인 길의 이름이 같습니다.
+
+  | Claude Code 이름 | Codex 이름 | Codex 에서 바뀐 것 |
+  |---|---|---|
+  | `setup-omc` | `setup-omx` | 이름, 설명 |
+  | `omc-reference` | `omx-reference` | 이름, 설명 |
+  | `setup-omc-hud` | `setup-omx-hud` | 이름, 설명 |
+  | `append_wiki` | `append_wiki` | 설명 |
+  | `compact-wiki` | `compact-wiki` | 설명 |
+  | `setup-tmux` | `setup-tmux` | 설명 |
+  | 커맨드 `setup` | `setup` | 설명 |
+
+  Codex 에서는 npm 길이 `$banker-setup-omx`, 플러그인 길이 `$banker:setup-omx` 처럼 부릅니다. `omc-patch`, `payload-mon` 은 Codex 에서도 이름이 같습니다. 둘 다 Claude Code 의 OMC 를 다룹니다. `ultraqa` 는 Claude Code 전용이라 Codex 에는 없습니다(Codex 는 OMX `$ultraqa`). \
+  npm 길은 갱신할 때 옛 폴더(`banker-setup-omc` 등)를 지우고 새 이름으로 설치한 뒤 `이름 바뀜:` 줄로 알립니다. 플러그인 길은 새 판으로 바뀔 때 옛 이름이 사라집니다. \
+  `config.toml` 의 `[[skills.config]]` 로 옛 이름을 꺼 두었다면 그 설정은 새 이름에 닿지 않습니다. 새 이름으로 다시 적습니다. \
+  플러그인 길의 스킬 목록(`.codex-plugin/plugin.json` 의 `skills`)은 스킬마다 경로를 적습니다. 이 형식은 Codex 0.160.1 이상에서 확인했습니다(0.160.1 Windows, 0.165.0 Linux). 0.144.5 같은 낮은 판은 재지 않았고, banker 스킬이 거의 다 안 보일 수 있습니다. \
+  플러그인 길이고 Codex 가 0.160.1 보다 낮으면 `banker doctor` 와 세션 시작 알림이 한 줄로 알립니다. 세션 시작 알림은 `/hooks` 에서 훅을 신뢰한 뒤에만 나옵니다.
 - OMC/Claude 에 결합됐던 오케스트레이터·설치·유틸 표면(all-in-one·ultra-chain·ultra-init·front-qa·setup·setup-omc·setup-omc-hud·setup-stitch·omc-reference·compact-copy)은 본문이 **런타임 인식**이라 Codex에서도 동작합니다.
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
   32MB 요청 한도는 Claude Code 의 것이라 Codex 자신의 요청 크기는 재지 않습니다.
