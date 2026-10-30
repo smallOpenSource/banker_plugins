@@ -19,11 +19,11 @@
  * (the DRM of a closed network encrypts files by their extension, and .md is one it leaves readable).
  */
 import { fork } from "node:child_process";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Stop as RunStop, bases, makeRunFolder, removeMarked, runFolder } from "./run-folder.mjs";
+import { Stop as RunStop, bases, isFile, listDir, lstatOr, makeRunFolder, norm, realOr, removeMarked, runFolder } from "./run-folder.mjs";
 import { POLICY, cleanSeat, policyIntact, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
 import { scan } from "./payload-scan.mjs";
 import { MAX_BYTES, Stop, buildPayload, checkPayload, gitAt, markerCount, readRun, splitPayload, untracked } from "./seat-payload.mjs";
@@ -93,30 +93,6 @@ export function fromMsys(p, platform) {
   const m = platform === "win32" ? /^\/([A-Za-z])(?:\/([\s\S]*))?$/.exec(String(p)) : null;
   return m ? `${m[1].toUpperCase()}:\\${(m[2] || "").replace(/\//g, "\\")}` : p;
 }
-
-const lstatOr = (p) => {
-  try {
-    return lstatSync(p);
-  } catch {
-    return null;
-  }
-};
-const isFile = (p) => Boolean(lstatOr(p)?.isFile());
-const listDir = (dir) => {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
-  }
-};
-const norm = (ctx, p) => (ctx.platform === "win32" ? p.toLowerCase() : p);
-const realOr = (p) => {
-  try {
-    return realpathSync.native(p);
-  } catch {
-    return p;
-  }
-};
 
 // A folder init made (run-folder.mjs: its name, its marker, right under a known private base) and its answer folder,
 // the sibling ralph-qa-out.<the same>.

@@ -15,6 +15,7 @@
  *   requireGitTree(repo, env, flag)   the work tree's root, or the stop not-a-git-tree naming the folder it checked
  *   spawnFiles(exe, args, opts)       spawnSync with files, not pipes, for the child's input and output
  *   hashFile(createHash, p)           a file's sha256 read in pieces (a file past 2 GiB is no Buffer)
+ *   lstatOr, isFile, listDir, norm(ctx, p), realOr   small fs helpers seat-run.mjs shares (null, [], p on an error)
  *
  * ctx is { env, platform }. A base is never /tmp: another account may put files there (gemini, a ralph-qa seat, reads
  * a .env it finds walking up from its folder). No shell and no network: git runs as a program with its arguments.
@@ -34,15 +35,15 @@ export class Stop extends Error {
   }
 }
 
-const lstatOr = (p) => {
+export const lstatOr = (p) => {
   try {
     return lstatSync(p);
   } catch {
     return null;
   }
 };
-const isFile = (p) => Boolean(lstatOr(p)?.isFile());
-const listDir = (dir) => {
+export const isFile = (p) => Boolean(lstatOr(p)?.isFile());
+export const listDir = (dir) => {
   try {
     return readdirSync(dir);
   } catch {
@@ -51,8 +52,8 @@ const listDir = (dir) => {
 };
 
 const homeOf = (ctx) => (ctx.platform === "win32" ? ctx.env.USERPROFILE : ctx.env.HOME) || homedir();
-const norm = (ctx, p) => (ctx.platform === "win32" ? p.toLowerCase() : p);
-const realOr = (p) => {
+export const norm = (ctx, p) => (ctx.platform === "win32" ? p.toLowerCase() : p);
+export const realOr = (p) => {
   try {
     return realpathSync.native(p);
   } catch {
