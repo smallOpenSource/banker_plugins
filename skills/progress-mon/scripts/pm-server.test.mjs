@@ -436,3 +436,29 @@ test('server.log 가 한도를 넘으면 server.log.1 로 옮기고 새로 씀',
   assert.match(fs.readFileSync(logPath(ctx.dataDir), 'utf8'), /^\S+ 줄 y+\n$/);
   assert.deepEqual(logLinesSince(ctx.dataDir, 0, ['줄']), [`줄 ${'y'.repeat(60)}`]);
 });
+
+test('server.log.1 자리가 폴더라 옮기지 못하면 server.log 를 비우고 계속 기록, 경고는 한 번(status 에도)', T, async () => {
+  const ctx = ctxOf();
+  fs.mkdirSync(`${logPath(ctx.dataDir)}.1`);
+  fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
+  const warns = [];
+  const log = makeLogger(ctx.dataDir, 400, (w) => warns.push(w));
+  for (let i = 0; i < 12; i++) log(`줄 ${i} ${'y'.repeat(40)}`);
+  assert.equal(warns.length, 1, '경고는 한 번');
+  assert.match(warns[0], /server\.log\.1 로 옮기지 못함/);
+  const text = fs.readFileSync(logPath(ctx.dataDir), 'utf8');
+  assert.match(text, /줄 11 y+\n$/, '로그 줄을 버리지 않음');
+  assert.ok(!text.includes('x'.repeat(350)), '한도는 지킴');
+  // 서버: 시작 때 1 MB 넘는 로그를 옮기지 못하면 status 가 경고 줄
+  const c2 = ctxOf();
+  fs.mkdirSync(`${logPath(c2.dataDir)}.1`);
+  fs.writeFileSync(logPath(c2.dataDir), 'x'.repeat(1024 * 1024 + 10));
+  const srv = await serve(c2, defaults(c2.project), { port: await freePort() }, quietIo(), { render: () => '' });
+  try {
+    const io = quietIo();
+    assert.equal(await status(c2, io), 0);
+    assert.ok(io.lines.err.some((l) => /^경고: server\.log 를 server\.log\.1 로 옮기지 못함/.test(l)), io.lines.err.join('\n'));
+  } finally {
+    await srv.close();
+  }
+});

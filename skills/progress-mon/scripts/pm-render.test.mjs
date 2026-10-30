@@ -744,3 +744,37 @@ test('AC-7: 시험이 아닌 스크립트에 S0~S16 꼴 id, pcc, portable-cc 문
     assert.ok(!/portable-cc/i.test(src), `${f}: portable-cc`);
   }
 });
+
+test('agentLabelPattern 시간 상한은 요청마다 하나: 에이전트가 많아도 200 ms 근처에서 이유가 든 오류로 끝남', T, () => {
+  const proj = path.join(ROOT, 'many-agents');
+  const run = path.join(proj, 'wf', 'run1');
+  const ctx = { project: proj, runtime: 'claude', dataDir: path.join(proj, '.omc', 'progress-mon') };
+  fs.mkdirSync(run, { recursive: true });
+  fs.mkdirSync(ctx.dataDir, { recursive: true });
+  // 라벨 하나는 상한 아래(20 ms 이상), 모두 합치면 상한을 크게 넘는 길이와 수를 이 PC 에서 잰다(V8 판과 PC 마다 빠르기가 다름)
+  const re = /(?:a+)+$/;
+  const cost = (k) => {
+    const t = process.hrtime.bigint();
+    re.exec('a'.repeat(k) + '!');
+    return Number(process.hrtime.bigint() - t) / 1e6;
+  };
+  let k = 14;
+  while (k < 40 && Math.min(cost(k), cost(k)) < 20) k++;
+  const each = Math.min(cost(k), cost(k));
+  assert.ok(each < 200, `라벨 하나 ${each} ms`);
+  const many = Math.min(300, Math.ceil(1500 / each));
+  const slow = 'a'.repeat(k) + '!';
+  const lines = [];
+  for (let i = 0; i < many; i++) {
+    lines.push(JSON.stringify({ type: 'started', key: `k${i}`, agentId: `a${i}`, label: slow }));
+    fs.writeFileSync(path.join(run, `agent-a${i}.jsonl`), '{}\n');
+  }
+  fs.writeFileSync(path.join(run, 'journal.jsonl'), lines.join('\n') + '\n');
+  const { config } = validate({ stories: [{ id: 'S1', name: '하나' }], agentLabelPattern: '(?:a+)+$', sources: { git: false, workflowDirs: ['wf'] } }, proj);
+  const t0 = Date.now();
+  assert.throws(() => renderTab(ctx, config, 'history', Date.now()), /agentLabelPattern 가 200 ms 안에 끝나지 않음/);
+  assert.ok(Date.now() - t0 < 3000, `${Date.now() - t0} ms`);
+  const ok = validate({ stories: [{ id: 'S1', name: '하나' }], agentLabelPattern: 'S\\d+', sources: { git: false, workflowDirs: ['wf'] } }, proj).config;
+  fs.writeFileSync(path.join(run, 'journal.jsonl'), JSON.stringify({ type: 'started', key: 'k', agentId: 'a0', label: 'impl-S1-r1' }) + '\n');
+  assert.match(renderTab(ctx, ok, 'history', Date.now()), /진행 중/);
+});

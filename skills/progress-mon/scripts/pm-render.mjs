@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { esc, color, finite, textW, wrap, FAVICON, CSS, TABS, tabsHtml } from './pm-html.mjs';
 import { configOrFail, loadConfig, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
-import { collect, parseTime, storyOfBusyLabel, hiddenAgent } from './pm-sources.mjs';
+import { collect, parseTime, agentJudge } from './pm-sources.mjs';
 
 const two = (n) => String(n).padStart(2, '0');
 const hm = (ms) => (ms == null ? '-' : Math.floor(ms / 3600e3) + ':' + two(Math.floor((ms % 3600e3) / 60000)));
@@ -32,18 +32,20 @@ const LABEL = { done: '완료', doing: '진행 중', todo: '예정' };
 
 // 스토리 상태 판정 함수 묶음. 커밋(제목 판정 또는 storyCommits)이 있으면 완료, 없으면 storyStates, 없으면 진행 중 에이전트.
 function storyJudge(m, config) {
-  const pattern = config.agentLabelPattern;
+  // 에이전트 라벨은 한 묶음으로 판정(사용자 정규식의 시간 상한이 요청마다 하나)
+  const judged = agentJudge(m.agents.map((a) => a.label), m.ids, config.agentLabelPattern);
   const busy = new Map();
-  for (const a of m.agents) {
-    const id = storyOfBusyLabel(a.label, m.ids, pattern);
-    if (id) busy.set(id, a);
-  }
+  const hide = new Set();
+  m.agents.forEach((a, i) => {
+    if (judged[i].id) busy.set(judged[i].id, a);
+    if (judged[i].hidden) hide.add(a.label);
+  });
   const ss = (id) => {
     const v = m.storyStates[id];
     return v && typeof v === 'object' && ['done', 'doing', 'todo'].includes(v.status) ? v : null;
   };
   const state = (id) => (m.commits[id] ? 'done' : ss(id) ? ss(id).status : busy.has(id) ? 'doing' : 'todo');
-  return { busy, ss, state, hidden: (label) => hiddenAgent(label, m.ids, pattern) };
+  return { busy, ss, state, hidden: (label) => hide.has(label) };
 }
 
 function historyBody(m, config, now) {

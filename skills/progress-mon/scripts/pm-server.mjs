@@ -80,11 +80,12 @@ function oddLog(file) {
   }
 }
 
-// 덧붙이기로 연 server.log 의 fd. 링크와 일반 파일 아닌 것은 열지 않는다(POSIX 는 O_NOFOLLOW, 연 뒤 fstat 다시 확인).
-function openLog(file) {
+// server.log 의 fd. 기본은 덧붙이기, append 가 거짓이면 처음부터 다시 쓰기(Windows 의 덧붙이기 fd 는 자를 수 없음).
+// 링크와 일반 파일 아닌 것은 열지 않는다(POSIX 는 O_NOFOLLOW, 연 뒤 fstat 다시 확인).
+function openLog(file, append = true) {
   if (oddLog(file)) throw Object.assign(new Error('server.log 가 일반 파일 아님'), { code: 'EINVAL' });
-  const { O_WRONLY, O_APPEND, O_CREAT } = fs.constants;
-  const fd = fs.openSync(file, O_WRONLY | O_APPEND | O_CREAT | NOFOLLOW | NONBLOCK, 0o600);
+  const { O_WRONLY, O_RDWR, O_APPEND, O_CREAT } = fs.constants;
+  const fd = fs.openSync(file, (append ? O_WRONLY | O_APPEND : O_RDWR) | O_CREAT | NOFOLLOW | NONBLOCK, 0o600);
   if (!fs.fstatSync(fd).isFile()) {
     fs.closeSync(fd);
     throw Object.assign(new Error('server.log 가 일반 파일 아님'), { code: 'EINVAL' });
@@ -92,21 +93,50 @@ function openLog(file) {
   return fd;
 }
 
-// server.log 한 줄 덧붙이기. 덧붙이면 max(1 MB)를 넘을 때 먼저 server.log.1 로 옮긴다(대상을 자르지 않음, rename 은 링크를 따라가지 않음).
-// 링크이거나 일반 파일이 아니면 쓰지 않는다. 실패해도 서버는 계속.
-export function makeLogger(dataDir, max = LOG_MAX) {
+// 한도를 넘은 server.log 를 server.log.1 로 옮기고 새 fd 를 돌려준다(rename 은 링크를 따라가지 않음).
+// 옮기지 못하면(그 자리에 폴더 등) 로그를 버리지 않도록 연 fd(일반 파일로 확인함)를 비우고 계속 쓰며, 그 사실을 onWarn 으로 한 번 알린다.
+function rotateLog(file, fd, warn) {
+  fs.closeSync(fd);
+  try {
+    fs.renameSync(file, `${file}.1`);
+    return openLog(file);
+  } catch (e) {
+    const again = openLog(file, false);
+    try {
+      fs.ftruncateSync(again, 0);
+    } catch (t) {
+      fs.closeSync(again);
+      throw t;
+    }
+    warn(`server.log 를 server.log.1 로 옮기지 못함(${e.code || e.message}). 대신 server.log 를 비우고 계속 기록. server.log.1 자리를 치우면 다시 옮김`);
+    return again;
+  }
+}
+
+// server.log 한 줄 덧붙이기. 덧붙이면 max(1 MB)를 넘을 때 먼저 server.log.1 로 옮긴다(대상을 자르지 않음).
+// 링크이거나 일반 파일이 아니면 쓰지 않는다. 옮기지 못한 일은 onWarn(서버의 status 경고)과 로그의 경고 줄로 한 번 알린다. 실패해도 서버는 계속.
+export function makeLogger(dataDir, max = LOG_MAX, onWarn = () => {}) {
   const file = logPath(dataDir);
+  let warned = false;
+  let pending = ''; // 다음 줄 앞에 남길 경고 한 줄
+  const warn = (w) => {
+    if (warned) return;
+    warned = true;
+    onWarn(w);
+    pending = `${new Date().toISOString()} 경고: ${w}\n`;
+  };
   return (msg) => {
     const line = `${new Date().toISOString()} ${msg}\n`;
     let fd = null;
     try {
       fd = openLog(file);
       if (fs.fstatSync(fd).size + Buffer.byteLength(line) > max) {
-        fs.closeSync(fd);
+        const old = fd;
         fd = null;
-        fs.renameSync(file, `${file}.1`);
-        fd = openLog(file);
+        fd = rotateLog(file, old, warn);
       }
+      if (pending) fs.writeSync(fd, pending);
+      pending = '';
       fs.writeSync(fd, line);
     } catch {
       // 로그를 못 써도 응답은 계속
@@ -141,7 +171,7 @@ export function createHandler(srv) {
     }
     if (pathname === ID_PATH) {
       const body = isLoopbackAddr(req.socket.localAddress)
-        ? { app: APP, pid: process.pid, startedAt: srv.stats.startedAt, requests: srv.stats.requests, lastRequestAt: srv.stats.lastRequestAt, lastErrorAt: srv.stats.lastErrorAt }
+        ? { app: APP, pid: process.pid, startedAt: srv.stats.startedAt, requests: srv.stats.requests, lastRequestAt: srv.stats.lastRequestAt, lastErrorAt: srv.stats.lastErrorAt, logWarning: srv.stats.logWarning }
         : { app: APP };
       return send(req, res, 200, JSON.stringify(body), 'application/json; charset=utf-8');
     }
@@ -311,12 +341,12 @@ async function refuseSecond(dataDir) {
 // opts: { port, portStrict, host }, io: { out(line), err(line) }
 export async function serve(ctx, config, opts, io, { render } = {}) {
   if (opts.host !== undefined && !privateIPv4(opts.host)) throw new UsageError(hostRefusal(opts.host));
-  const log = makeLogger(ctx.dataDir);
+  const stats = { startedAt: iso(Date.now()), requests: 0, lastRequestAt: null, lastErrorAt: null, logWarning: null };
+  const log = makeLogger(ctx.dataDir, LOG_MAX, (w) => (stats.logWarning = w));
   const fail = (e) => {
     log(`오류: ${e.message}`);
     throw e;
   };
-  const stats = { startedAt: iso(Date.now()), requests: 0, lastRequestAt: null, lastErrorAt: null };
   const fixedNow = process.env.PROGRESS_MON_NOW ? Date.parse(process.env.PROGRESS_MON_NOW) : NaN;
   if (!render) {
     const { liveRender } = await import('./pm-render.mjs');
@@ -679,6 +709,7 @@ export async function status(ctx, io) {
   io.out(`탭 자료: ${tabData(ctx.dataDir)}`);
   io.out(`시작: ${info.startedAt || st.startedAt || '알 수 없음'}`);
   io.out(`요청: ${info.requests ?? 0}, 마지막 요청: ${info.lastRequestAt || '없음'}, 마지막 오류: ${info.lastErrorAt || '없음'}`);
+  if (typeof info.logWarning === 'string') io.err(`경고: ${info.logWarning.replace(/[\u0000-\u001f\u007f]/g, '')}`);
   restartWarning(ctx, st, io);
   statusWarnings(ctx, io);
   return 0;

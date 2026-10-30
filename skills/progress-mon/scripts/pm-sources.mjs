@@ -138,6 +138,17 @@ export function storyOfBusyLabel(label, ids, pattern) {
   return null;
 }
 
+// 에이전트 라벨 묶음마다 { id: 진행 중 스토리 또는 null, hidden: 행 숨김 }. 판정은 storyOfBusyLabel, hiddenAgent 와 같다.
+// 패턴이 있으면 regexBatch 를 한 번만 불러 시간 상한(REGEX_MS)이 라벨마다가 아니라 요청마다 하나다(에이전트가 수백이어도).
+export function agentJudge(labels, ids, pattern) {
+  if (!pattern) return labels.map((l) => {
+    const id = storyOfBusyLabel(l, ids, null);
+    return { id, hidden: id !== null };
+  });
+  const hits = regexBatch(pattern, 'agentLabelPattern', labels.map((l) => String(l || '')));
+  return hits.map((m) => ({ id: m && ids.includes(m[0]) ? m[0] : null, hidden: m !== null }));
+}
+
 // 에이전트 행 숨김. 패턴이 있으면 라벨에 일치가 있을 때(스토리가 아니어도). 없으면 진행 중 스토리가 있을 때.
 export function hiddenAgent(label, ids, pattern) {
   if (pattern) return regexBatch(pattern, 'agentLabelPattern', [String(label || '')])[0] !== null;
