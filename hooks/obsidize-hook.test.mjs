@@ -664,3 +664,97 @@ test('codex: a linked vault, linked or hard-linked pages, and names outside the 
   assert.equal(readArgv(tree).length, 0, 'omx_wiki as a link to another folder is not the vault');
   assert.equal(readFileSync(join(outside, 'other.md'), 'utf8'), PAGE_BEFORE);
 });
+
+// Codex: the hook does nothing when where it runs is under a config.toml writable_roots entry (a session in the sandbox
+// could change it), and says why on stderr. The tree gets codex-routes.mjs beside the hook copy, where the hook imports it.
+function codexHomeFor(tree, roots) {
+  mkdirSync(join(tree.pluginRoot, 'bin', 'lib'), { recursive: true });
+  copyFileSync(join(HERE, '..', 'bin', 'lib', 'codex-routes.mjs'), join(tree.pluginRoot, 'bin', 'lib', 'codex-routes.mjs'));
+  const home = mkdtempSync(join(tree.tmp, 'codexhome-'));
+  const list = roots.map((r) => `'${r}'`).join(', ');
+  if (roots.length) writeFileSync(join(home, 'config.toml'), `[sandbox_workspace_write]\nwritable_roots = [${list}]\n`);
+  return home;
+}
+const runCodexAt = (tree, home, payload, cwd = tree.tmp) => {
+  const env = { ...process.env, STUB_ARGV_LOG: tree.argvLog, STUB_FAIL: '0', CODEX_HOME: home };
+  delete env.PLUGIN_ROOT;
+  return spawnSync(process.execPath, [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs'), '--codex'], {
+    input: typeof payload === 'string' ? payload : JSON.stringify(payload), encoding: 'utf8', cwd, env,
+  });
+};
+const transcriptIn = (home) => join(home, 'sessions', '2026', '10', '30', 'rollout-x.jsonl');
+const SKIP_NOTE = /^banker hooks skipped: .+ is under the sandbox writable root .+ \(config\.toml \[sandbox_workspace_write\] writable_roots\)/m;
+
+test('codex: an omx wiki write is skipped with a note when the hook is under a writable root, and runs when it is not', () => {
+  const ingest = 'omx wiki ingest --input x';
+  const cases = [
+    ['no config.toml', () => [], false],
+    ['a writable root elsewhere', (tree) => [join(tree.tmp, 'elsewhere')], false],
+    ['the plugin folder', (tree) => [tree.pluginRoot], true],
+    ['a folder above the plugin', (tree) => [tree.tmp], true],
+    ['the hook script itself', (tree) => [join(tree.pluginRoot, 'hooks', 'obsidize-hook.mjs')], true],
+    ['the folder of the node that runs it', () => [dirname(process.execPath)], true],
+  ];
+  for (const [label, roots, skipped] of cases) {
+    const tree = codexTree();
+    arm(tree);
+    const home = codexHomeFor(tree, roots(tree));
+    const res = runCodexAt(tree, home, { ...codexPayload(tree, ingest), transcript_path: transcriptIn(home) });
+    assert.equal(res.status, 0, label);
+    assert.equal(readArgv(tree).length, skipped ? 0 : 1, `${label}: canonicalizer runs ${skipped ? 'never' : 'once'}`);
+    assert.equal(page(tree) === PAGE_BEFORE, skipped, `${label}: page ${skipped ? 'kept' : 'rewritten'}`);
+    if (skipped) assert.match(res.stderr, SKIP_NOTE, label);
+    else assert.doesNotMatch(res.stderr, /banker hooks skipped/, label);
+  }
+});
+
+test('codex: the writable roots come from the Codex home of the transcript path, and a .codex at a root top is no skip', () => {
+  const tree = codexTree();
+  arm(tree);
+  const home = codexHomeFor(tree, [tree.pluginRoot]);
+  const other = codexHomeFor(tree, []);
+  const payload = (h) => ({ ...codexPayload(tree, 'omx wiki ingest --input x'), transcript_path: transcriptIn(h) });
+  let res = runCodexAt(tree, other, payload(home));
+  assert.equal(readArgv(tree).length, 0, 'the transcript home names the root, whatever CODEX_HOME says');
+  assert.match(res.stderr, SKIP_NOTE);
+  res = runCodexAt(tree, home, payload(other));
+  assert.equal(readArgv(tree).length, 1, 'a transcript home with no roots runs, whatever CODEX_HOME says');
+
+  // The sandbox keeps the top .codex of each writable root read-only, so a hook under <root>/.codex runs.
+  const inner = codexTree();
+  arm(inner);
+  const root = join(inner.tmp, 'root');
+  const moved = join(root, '.codex', 'plugin');
+  mkdirSync(join(root, '.codex'), { recursive: true });
+  copyFileSync(join(inner.pluginRoot, 'hooks', 'obsidize-hook.mjs'), join(inner.tmp, 'hook.mjs'));
+  rmSync(inner.pluginRoot, { recursive: true });
+  mkdirSync(join(moved, 'hooks'), { recursive: true });
+  mkdirSync(join(moved, 'skills', 'obsidizer'), { recursive: true });
+  copyFileSync(join(inner.tmp, 'hook.mjs'), join(moved, 'hooks', 'obsidize-hook.mjs'));
+  writeFileSync(join(moved, 'skills', 'obsidizer', 'obsidize.mjs'), STUB_CANONICALIZER);
+  inner.pluginRoot = moved;
+  const innerHome = codexHomeFor(inner, [root]);
+  res = runCodexAt(inner, innerHome, { ...codexPayload(inner, 'omx wiki ingest --input x'), transcript_path: transcriptIn(innerHome) });
+  assert.equal(readArgv(inner).length, 1, 'under <root>/.codex the hook runs');
+  assert.doesNotMatch(res.stderr, /banker hooks skipped/);
+});
+
+test('codex: an unreadable payload goes on to be logged unless the hook is under a writable root; a non-wiki call never reads the roots', () => {
+  const tree = codexTree();
+  arm(tree);
+  const open = codexHomeFor(tree, []);
+  let res = runCodexAt(tree, open, '{not json', tree.project);
+  assert.equal(res.status, 0);
+  assert.equal(logLines(tree).length, 1, 'an unreadable payload is logged');
+  assert.match(logLines(tree)[0], /unreadable hook payload/);
+
+  rmSync(join(tree.wikiDir, '.obsidizer-hook.log'));
+  const shut = codexHomeFor(tree, [tree.pluginRoot]);
+  res = runCodexAt(tree, shut, '{not json', tree.project);
+  assert.deepEqual(logLines(tree), [], 'under a writable root even the log is not written');
+  assert.match(res.stderr, SKIP_NOTE, 'with no transcript path the roots come from CODEX_HOME');
+
+  res = runCodexAt(tree, shut, { ...codexPayload(tree, 'ls -la'), transcript_path: transcriptIn(shut) });
+  assert.equal(readArgv(tree).length, 0);
+  assert.doesNotMatch(res.stderr, /banker hooks skipped/, 'a shell call that is no omx wiki write ends before the roots are read');
+});

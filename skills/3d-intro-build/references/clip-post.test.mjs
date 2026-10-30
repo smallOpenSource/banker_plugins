@@ -202,3 +202,24 @@ test('probeClip: when the video frames cannot be counted, the container length i
   const info = await C.probeClip(path.join(d, 'x.mp4'), { ffmpeg: fake });
   assert.deepEqual([info.duration, info.container, info.lengthFrom], [4.1, 4.1, 'container']);
 });
+
+test('seamSsim: clip a\'s last frame against clip b\'s first frame, near 1 when they match and low when they differ', { skip: needFf, timeout: 120_000 }, async (t) => {
+  const d = work(t);
+  const p = still(d, 'p.png');
+  const q = still(d, 'q.png', 'smptebars=s=320x568');
+  // pq.mp4 shows p for a second, then q: its first frame is p and its last is q
+  const pq = mk(['-loop', '1', '-t', '1', '-framerate', '24', '-i', p, '-loop', '1', '-t', '1', '-framerate', '24', '-i', q,
+    '-filter_complex', '[0:v][1:v]concat=n=2:v=1[v]', '-map', '[v]', ...enc, path.join(d, 'pq.mp4')]);
+  const qClip = loop(q, path.join(d, 'q.mp4'), null, { sec: 1 });
+  const pClip = loop(p, path.join(d, 'p.mp4'), null, { sec: 1 });
+  const small = loop(q, path.join(d, 'q-small.mp4'), 'scale=160:284', { sec: 1 });
+  const s = async (a, b) => C.seamSsim(a, b, { ffmpeg: FF });
+  const same = await s(pq, qClip);
+  assert.ok(same >= 0.99 && same <= 1, `a ends on q, b starts on q: ${same}`);
+  assert.ok(await s(qClip, qClip) >= 0.99, 'a clip against itself');
+  assert.ok(await s(pq, small) >= 0.9, 'b is scaled to a\'s size before the score');
+  for (const [label, a, b] of [['a ends on q, b starts on p', pq, pClip], ['a ends on q, b (pq) starts on p', qClip, pq]]) {
+    const v = await s(a, b);
+    assert.ok(v < 0.7, `${label}: ${v}`);
+  }
+});
