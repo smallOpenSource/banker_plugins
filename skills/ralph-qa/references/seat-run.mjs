@@ -219,6 +219,13 @@ export function liveLock(d, now = Date.now()) {
   return st && st.isFile() && pid !== process.pid && now - st.mtimeMs < STALE_LOCK_MS && alive(pid) ? pid : null;
 }
 
+// A lock with no number to read (empty: another send made it and has not written its number yet; or broken) touched
+// in the last 15 minutes: taken over, it would let two sends hold the folder.
+function freshUnread(d, now) {
+  const st = lockPid(d) ? null : lstatOr(join(d, LOCK_NAME));
+  return Boolean(st && st.isFile() && now - st.mtimeMs < STALE_LOCK_MS);
+}
+
 // Takes the folder's lock: "wx" lets one of two sends that start together have it. A stale lock is taken over once
 // (two sends that both find the same stale lock is the one gap left). Gives back the lock's path.
 export function takeLock(d, now = Date.now()) {
@@ -232,6 +239,7 @@ export function takeLock(d, now = Date.now()) {
     }
     const pid = liveLock(d, now);
     if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
+    if (freshUnread(d, now)) break;
     rmSync(lock, { force: true });
   }
   throw new Stop("busy", "이 폴더의 send 가 방금 시작했다");

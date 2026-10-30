@@ -296,6 +296,22 @@ test("the send lock is one file made with wx: a second taker while it lives is b
   rmSync(lock);
 });
 
+test("takeLock: a lock with no number yet (another send just made it) or a broken one is busy and stays; a stale one is taken over", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = join(j.dir, ".running.md");
+  const old = (Date.now() - 16 * 60 * 1000) / 1000;
+  for (const [label, text] of [["empty", ""], ["broken", "x y\n"], ["no number", " 2026-10-30T00:00:00.000Z\n"]]) {
+    writeFileSync(lock, text);
+    assert.throws(() => takeLock(j.dir), (e) => e.code === "busy" && /방금 시작했다/.test(e.message), label);
+    assert.equal(readFileSync(lock, "utf8"), text, `${label}: the other send's lock is not removed`);
+    utimesSync(lock, old, old);
+    assert.equal(takeLock(j.dir), lock, `${label}: untouched for 16 minutes, it is taken over`);
+    assert.equal(lockHolder(j.dir), process.pid);
+    rmSync(lock);
+  }
+});
+
 test("a send keeps its lock fresh while it runs, so a long split send stays live to cleanup", { skip: SKIP }, async (t) => {
   const w = world(t);
   const j = init(w);
