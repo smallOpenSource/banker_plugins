@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "title": "수동 기록 예시",
+  "shortName": "manual-app",
+  "refreshSec": 30,
+  "stages": "auto",
+  "stories": [],
+  "sources": {
+    "events": "auto",
+    "git": true,
+    "workflowDirs": []
+  }
+}

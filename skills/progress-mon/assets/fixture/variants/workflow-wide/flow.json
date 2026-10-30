@@ -1,0 +1,35 @@
+{
+  "note": "긴 흐름 변형. 분기 5개 단계 바로 아래 칸 상자에 외부 표가 있음.",
+  "lanes": [
+    {
+      "id": "wide",
+      "title": "긴 흐름 예시",
+      "color": "#6a1b9a",
+      "steps": [
+        { "id": "w1", "label": "시작", "detail": "인자 확인", "actor": "cli.mjs", "refs": [], "planned": false },
+        { "id": "w2", "label": "권한 확인", "detail": "자료 폴더 쓰기 권한", "actor": "cli.mjs", "refs": [], "planned": false },
+        { "id": "w3", "label": "자료 읽기", "detail": "네 자료 파일 읽기", "actor": "sources.mjs", "refs": [], "planned": false },
+        { "id": "w4", "label": "판정", "detail": "단계와 스토리 상태", "actor": "sources.mjs", "refs": [], "planned": false },
+        { "id": "w5", "label": "설정 파일 형식 검사와 보정", "detail": "틀린 키를 기본값으로 바꾸고 경고 줄을 남김. 바꾼 키는 기록에 적음", "actor": "config.mjs", "refs": [], "planned": false },
+        { "id": "w6", "label": "렌더", "detail": "탭 HTML", "actor": "render.mjs", "refs": [], "planned": false },
+        { "id": "w7", "label": "응답", "detail": "브라우저로 보냄", "actor": "server.mjs", "refs": [], "planned": false },
+        { "id": "w8", "label": "알림", "detail": "완료 알림 보냄", "actor": "notify.mjs", "refs": [], "planned": false },
+        { "id": "w9", "label": "결과 알림 보내기", "detail": "알림 결과를 모아 한 번에 보냄. 실패하면 다시 보냄", "actor": "notify.mjs", "refs": [], "planned": true },
+        { "id": "w10", "label": "정리", "detail": "임시 파일 지움", "actor": "cli.mjs", "refs": [], "planned": false }
+      ],
+      "branches": [
+        { "from": "w3", "to": "w1", "when": "형식 오류", "note": "JSON 이 깨짐" },
+        { "from": "w3", "to": "w2", "when": "권한 없음", "note": "읽기 권한 없음" },
+        { "from": "w3", "to": "", "when": "시간 초과", "note": "5초 넘음" },
+        { "from": "w3", "to": "w10", "when": "중복 실행", "note": "다른 쓰기가 진행 중" },
+        { "from": "w3", "to": "", "when": "취소됨", "note": "사용자가 멈춤" }
+      ],
+      "externals": [
+        { "id": "x1", "label": "알림 서버", "linkTo": "w8", "note": "외부 알림 서비스" }
+      ]
+    }
+  ],
+  "scenes": [
+    { "n": 1, "sec": 3, "lane": "wide", "focus": ["w3"], "caption": "분기가 많은 단계" }
+  ]
+}

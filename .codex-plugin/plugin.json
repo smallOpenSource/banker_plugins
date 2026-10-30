@@ -51,6 +51,7 @@
     "./skills/payload-mon/",
     "./skills/pdf-vision-extract/",
     "./skills/play-qa/",
+    "./skills/progress-mon/",
     "./skills/ralph-qa/",
     "./skills/ready-compact/",
     "./skills/refresh-git-ignore/",

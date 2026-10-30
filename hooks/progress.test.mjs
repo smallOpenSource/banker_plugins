@@ -3,7 +3,7 @@
 // (hooks/progress.engine.test.ts runs the same module inside the engine: claude plugin test <copy>.)
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { TODO_TOOL, callLabel, describe, endTurn, freshState, noteTaskTool, planRead, planTarget, planTouched, readTodos, startTurn, takePlan } from './progress.mjs';
@@ -1518,6 +1518,17 @@ test('without mods the fallback hook stops the expansion with the one message, a
   const hooks = JSON.parse(readFileSync(new URL('./hooks.json', import.meta.url), 'utf8'));
   const entry = hooks.hooks.UserPromptExpansion.find((x) => x.matcher === '^banker:progress$');
   assert.match(entry.hooks[0].command, /hooks\/progress-fallback\.mjs"?$/);
+});
+
+test('/banker:progress and the progress-mon skill do not take each other\'s prompt', () => {
+  const hooks = JSON.parse(readFileSync(new URL('./hooks.json', import.meta.url), 'utf8'));
+  const hit = (name) => hooks.hooks.UserPromptExpansion.filter((x) => new RegExp(x.matcher).test(name))
+    .flatMap((x) => x.hooks.map((h) => h.command.match(/hooks\/([\w.-]+\.mjs)"?$/)[1])).sort();
+  assert.deepEqual(hit('banker:progress'), ['progress-fallback.mjs', 'telemetry-count.mjs']);
+  assert.deepEqual(hit('banker:progress-mon'), ['telemetry-count.mjs']);
+  const root = new URL('../', import.meta.url);
+  assert.ok(existsSync(new URL('skills/progress-mon/SKILL.md', root)) && !existsSync(new URL('skills/progress', root)));
+  assert.ok(existsSync(new URL('commands/progress.md', root)) && !existsSync(new URL('commands/progress-mon.md', root)));
 });
 
 const REVIEW = '/w/.omc/plans/deploy-critic-r1.md';

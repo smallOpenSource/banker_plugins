@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 65개 + 커맨드 2개**(총 67개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 64개와 Codex 전용 스킬 3개)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 66개 + 커맨드 2개**(총 68개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 65개와 Codex 전용 스킬 3개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -170,6 +170,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `remains` | 남은 버그, 하자, 미검증 항목을 찾아 표로 보여 줌. 테스트박스(`~/.config/banker/test-boxes.json`)가 등록돼 있으면 각 OS 에서 시험을 돌려 확인(읽기와 시험만, 고치지 않음) |
 | `trouble-shooting` | 문제를 조사해 현상, 문제점, 원인, 해결방법, 조치계획을 표 하나로 간결히 보고(문제마다 한 행, `--no-plan` 은 해결방법까지, 고치지 않고 보고만) |
 | `ultra-chain` | 자료 조사, 모호성 제거, 검토자 3명 이상의 합의 계획, 목업 승인, 비판 검증 구현, 실제 OS 테스트박스 시험과 합의 검증, 시각 검토, 과정 시각화, 결과 공유를 한 명령으로 잇는 9단계 연쇄. 사람이 볼 곳은 인터뷰의 취향 질문과 목업 승인으로 줄임. 실행 기록과 단일 HTML 보고서를 남기고, push 나 외부 게시는 요청할 때만 |
+| `progress-mon` | 프로젝트 진척도를 4탭 웹 화면(진척도, 구현요건, workflow, 구성도)으로 로컬 서버(기본 127.0.0.1)에 띄움. `init` 이 코드를 읽어 탭 자료를 쓰고 프로젝트 메모리에 갱신 규칙 한 줄을 등록, `export` 는 서버 없는 단일 HTML. 세션 작업 목록 패널은 `/progress` |
 
 ### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
 
@@ -226,14 +227,14 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 64개와 Codex 전용 스킬 3개(`graceful-pause`, `progress`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 65개와 Codex 전용 스킬 3개(`graceful-pause`, `progress`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
   `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
-  스킬 64개, Codex 전용 스킬 3개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
+  스킬 65개, Codex 전용 스킬 3개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. 훅 스크립트, 플러그인 폴더, node 가 `config.toml` 의 `[sandbox_workspace_write] writable_roots` 아래(그 항목 맨 위 `.codex` 제외)면 훅은 다른 일을 하지 않고 그 이유를 한 줄로 알립니다. 이 검사는 훅 파일 안에서 하므로, 샌드박스가 이미 그 파일을 고친 뒤에는 막지 못합니다. writable_roots 에 Codex 홈이나 node 가 든 폴더를 넣지 마십시오. \
@@ -322,6 +323,7 @@ banker uninstall        # 제거
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright. `3d-intro-build` 의 독립 검증(`verify-intro.mjs`)도 Node 용 playwright 패키지와 Chromium 을 씁니다(`npm i -g playwright && npx playwright install chromium`).
   - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
   - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).
+  - `progress-mon`: Node 18 이상(npm 의존 없음). 커밋 기록을 보이려면 `git`. 서버는 기본 127.0.0.1 에만 바인드하고, `--host` 는 사설 IPv4 만 받습니다.
   - `remains`: 테스트박스를 쓰려면 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 와 시험에 필요한 런타임(예: Node)이 있어야 하고, SSH 키로 암호 없이 접속돼야 합니다.
   - `ultra-chain`: 위 OMC(Codex 는 OMX), 웹 조사 수단, 시각 검토의 캡처에는 Node 용 playwright 패키지와 Chromium, OS 시험에는 `remains` 와 같은 테스트박스 조건.
   - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알립니다. Codex 는 스킬 `$banker-graceful-pause` 입니다(0.144.5 에서 확인).
