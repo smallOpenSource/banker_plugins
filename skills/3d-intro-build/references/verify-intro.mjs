@@ -725,11 +725,11 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
   return { viewport: `${viewport.width}x${viewport.height}`, slowClipsMs, reload: Boolean(opts.reload), posterMeasured: boundaries.length - posterUnmeasured, posterUnmeasured, boundaries, failures: [...loadMisses, ...boundaries.flatMap((b) => b.failures)] };
 }
 
-// Routing (the slow clips) turns the browser's HTTP cache off, so a fresh load fetches every clip again.
 // Whether the page's load event came within ms (a resource whose answer never comes must not stop a measure).
 const loadedWithin = (page, ms) => page.waitForLoadState('load', { timeout: ms }).then(() => true, () => false);
 
 // Opens the intro for the seam probe; false when its load did not come within loadMs (the caller fails it).
+// Routing (the slow clips) turns the browser's HTTP cache off, so a fresh load fetches every clip again.
 async function openIntro(page, url, loadMs = SEAM_DEFAULTS.loadMs) {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   const loaded = await loadedWithin(page, loadMs);
