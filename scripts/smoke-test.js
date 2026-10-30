@@ -15,6 +15,14 @@ const root = path.resolve(__dirname, '..');
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}: ${msg}`); if (!cond) failures++; };
 const run = (cmd, args, opts = {}) => cp.execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+// npm (and the installed `banker`) is a .cmd on Windows, which execFileSync cannot run since Node 18.20.2 (EINVAL).
+// Run Node on npm's own npm-cli.js instead: no shell, so a temp path with spaces needs no quoting. POSIX falls back to
+// `npm` on PATH when npm-cli.js is not where Node ships it.
+const npmCli = [
+  path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+].find((p) => fs.existsSync(p));
+const npm = (args, opts = {}) => (npmCli ? run(process.execPath, [npmCli, ...args], opts) : run('npm', args, opts));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
 // npm reaches no registry from this harness: update_notifier=false stops the weekly update check, the one request
 // npm pack and a local tarball's install made; offline keeps any other lookup off the network. Its cache and logs go
@@ -38,22 +46,32 @@ fs.mkdirSync(npmHome, { recursive: true });
 
 try {
   // 1) pack
-  const packOut = run('npm', ['pack', '--silent', '--pack-destination', tmp], { cwd: root, env: NPM_OFFLINE });
+  const packOut = npm(['pack', '--silent', '--pack-destination', tmp], { cwd: root, env: NPM_OFFLINE });
   const tarball = packOut.trim().split('\n').filter(Boolean).pop().trim();
   const tarPath = path.join(tmp, tarball);
   ok(fs.existsSync(tarPath), `npm pack produced ${tarball}`);
   ok(fs.readdirSync(npmHome).length === 0, 'npm put nothing under its HOME: its cache and logs stay in the temp folder (not ~/.npm)');
 
   // 2) global install into temp prefix (offline; no deps)
-  run('npm', ['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
+  npm(['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
   const binPath = process.platform === 'win32' ? path.join(prefix, 'banker.cmd') : path.join(prefix, 'bin', 'banker');
   ok(fs.existsSync(binPath), `installed banker bin (${path.relative(tmp, binPath)})`);
+  // The shim above is a .cmd on Windows; run the installed bin JS through Node so no shell is needed (and the temp
+  // prefix path with spaces needs no quoting). Global install puts the package under node_modules/ (Windows) or
+  // lib/node_modules/ (POSIX).
+  const bankerJs = [
+    path.join(prefix, 'node_modules', '@kaydash9999', 'banker-plugins', 'bin', 'banker.js'),
+    path.join(prefix, 'lib', 'node_modules', '@kaydash9999', 'banker-plugins', 'bin', 'banker.js'),
+  ].find((p) => fs.existsSync(p));
+  ok(Boolean(bankerJs), 'installed banker bin JS is present to run through Node');
+  const bankerRun = (args, opts) => run(process.execPath, [bankerJs, ...args], opts);
+  const bankerSpawn = (args, opts) => cp.spawnSync(process.execPath, [bankerJs, ...args], opts);
 
   const env = { ...process.env, HOME: home, USERPROFILE: home };
   delete env.CODEX_HOME; // the installer follows CODEX_HOME; the tests install under the temp HOME only
 
   // 3) codex dry-run (project scope)
-  const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
+  const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
   ok(copies === 65, `codex dry-run plans 65 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
@@ -72,7 +90,7 @@ try {
   ok(codexOut.includes('AGENTS.md is NOT modified'), 'codex states AGENTS.md untouched');
 
   // 4) claude dry-run (capture stdout+stderr; tolerate absent claude, e.g. CI runners)
-  const claudeRes = cp.spawnSync(binPath, ['setup', '--claude', '--dry-run'], { cwd: home, env, encoding: 'utf8' });
+  const claudeRes = bankerSpawn(['setup', '--claude', '--dry-run'], { cwd: home, env, encoding: 'utf8' });
   const claudeOut = `${claudeRes.stdout || ''}${claudeRes.stderr || ''}`;
   ok(/marketplace add/.test(claudeOut) && /plugin install banker@banker-plugins/.test(claudeOut) || /claude CLI not found/.test(claudeOut),
      'claude dry-run prints register commands (or notes missing claude)');
@@ -269,7 +287,7 @@ try {
   fs.writeFileSync(path.join(removedPauseDir, 'SKILL.md'), '---\nname: banker-graceful_pause\n---\n');
   const env2 = { ...process.env, HOME: home2, USERPROFILE: home2 };
   delete env2.CODEX_HOME;
-  run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
+  bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
   const wantSkills = 65 + 2 + codexOnlyNames.length;
@@ -280,7 +298,7 @@ try {
   // Codex reads skills and hooks from $CODEX_HOME when it is set, so user scope installs there and not in ~/.codex.
   const home3 = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-codexhome-'));
   const codexHome3 = path.join(home3, 'custom-codex');
-  run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home3, env: { ...env2, HOME: home3, USERPROFILE: home3, CODEX_HOME: codexHome3 } });
+  bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home3, env: { ...env2, HOME: home3, USERPROFILE: home3, CODEX_HOME: codexHome3 } });
   ok(fs.existsSync(path.join(codexHome3, 'skills', 'banker-lineage', 'SKILL.md')) && fs.existsSync(path.join(codexHome3, 'hooks.json'))
      && !fs.existsSync(path.join(home3, '.codex')), 'setup --codex follows CODEX_HOME for the skills and the hooks');
   fs.rmSync(home3, { recursive: true, force: true });
