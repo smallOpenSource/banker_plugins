@@ -16,6 +16,7 @@ const LOG_MAX = 1024 * 1024;
 const PORT_TRIES = 100;
 const START_WAIT_MS = 5000;
 const ASK_TIMEOUT_MS = 1500;
+const BUSY_WAIT_MS = 10000;
 const STOP_WAIT_MS = 3000;
 
 export const SECURITY_HEADERS = {
@@ -313,10 +314,13 @@ export function askIdentity(port, timeoutMs = ASK_TIMEOUT_MS) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 상태 파일의 서버가 지금 그 포트에서 그 pid 로 답하는지.
+// 신원 응답이 시간을 넘겨도 상태 파일의 pid 가 살아 있으면 렌더가 느린(큰 저장소의 첫 git log 등) 서버로 보고
+// BUSY_WAIT_MS 까지 한 번 더 기다린다. 렌더는 동기라 그동안 신원 요청이 줄을 서기 때문(살아 있는 서버를 없다고 보지 않게).
 async function runningServer(dataDir) {
   const st = readState(dataDir);
   if (!st || st.broken || !validPid(st.pid) || !validPort(st.port)) return null;
-  const r = await askIdentity(st.port);
+  let r = await askIdentity(st.port);
+  if (r.kind === 'timeout' && alive(st.pid)) r = await askIdentity(st.port, BUSY_WAIT_MS);
   return r.kind === 'ok' && r.info.pid === st.pid ? { st, info: r.info } : null;
 }
 
@@ -365,6 +369,7 @@ export async function serve(ctx, config, opts, io, { render } = {}) {
   const strict = Boolean(opts.portStrict || config.portStrict);
   let bound;
   try {
+    await refuseSecond(ctx.dataDir); // 바인드 전에도 본다(다른 서버가 있으면 옆 포트 알림 없이 바로 닫음)
     bound = await bindServers({
       port,
       strict,
@@ -524,7 +529,7 @@ async function takeStartLock(dataDir) {
   const until = Date.now() + START_LOCK_WAIT_MS;
   for (;;) {
     if (makeLockFile(file) || (staleLock(file, Date.now()) && takeOverLock(file, Date.now()))) return file;
-    if (Date.now() >= until) throw new UsageError(`다른 start 가 끝나지 않음(잠금 ${START_LOCK}, pid ${lockPid(file) ?? '알 수 없음'}). 그 start 가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`);
+    if (Date.now() >= until) throw new UsageError(`다른 start 가 끝나지 않음(잠금 ${START_LOCK}, pid ${lockPid(file) ?? '알 수 없음'}). 30초 뒤 다시 실행. 그 start 가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`);
     await sleep(100);
   }
 }

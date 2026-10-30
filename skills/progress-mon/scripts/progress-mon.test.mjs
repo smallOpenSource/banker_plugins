@@ -346,6 +346,57 @@ test('start 잠금: 죽은 프로세스의 잠금과 링크 잠금은 넘겨받�
   }
 });
 
+test('떠 있는 서버의 렌더가 느려 신원 응답이 늦어도 start 는 재사용(거짓 실패와 둘째 서버 없음)', T, async () => {
+  const p = project('.omc/progress-mon');
+  guardData(p);
+  const port = await freePort();
+  // 렌더가 4초 걸리는 serve(같은 모듈, 렌더만 바꿈)를 따로 띄운다. 렌더는 동기라 그동안 신원 요청이 줄을 선다
+  const helper = path.join(ROOT, `slow-serve${++n}.mjs`);
+  const url = (f) => JSON.stringify(new URL(f, `file://${HERE.replaceAll('\\', '/').replace(/^(?=[A-Za-z]:)/, '/')}/`).href);
+  fs.writeFileSync(helper, [
+    `import { serve } from ${url('pm-server.mjs')};`,
+    `import { defaults } from ${url('pm-config.mjs')};`,
+    `const [project, port] = process.argv.slice(2);`,
+    `const ctx = { project, runtime: 'claude', dataDir: project + '/.omc/progress-mon', exists: true, warn: null };`,
+    `await serve(ctx, defaults(project), { port: Number(port) }, { out: () => {}, err: () => {} }, { render: () => { const end = Date.now() + 4000; while (Date.now() < end); return 'slow'; } });`,
+  ].join('\n'));
+  const child = spawn(process.execPath, [helper, p, String(port)], { env: ENV, stdio: 'ignore', windowsHide: true });
+  try {
+    for (let i = 0; i < 100 && !fs.existsSync(path.join(dataOf(p), 'server.json')); i++) await new Promise((r) => setTimeout(r, 50));
+    const busy = http.get({ host: '127.0.0.1', port, path: '/', headers: { host: `127.0.0.1:${port}` }, agent: false });
+    busy.on('error', () => {});
+    await new Promise((r) => setTimeout(r, 200));
+    const a = await cliAsync(['start', '--port', String(port)], p);
+    assert.equal(a.code, 0, a.err);
+    assert.equal(a.out, `이미 실행 중(재사용): http://127.0.0.1:${port}/\n`);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dataOf(p), 'server.json'), 'utf8')).pid, child.pid, '상태 파일은 처음 서버');
+    await assert.rejects(get(port + 1), /ECONNREFUSED/, '옆 포트에 둘째 서버 없음');
+    busy.destroy();
+  } finally {
+    child.kill();
+    cleanup(p);
+  }
+});
+
+test('떠 있는 서버 옆에서 serve 를 띄우면 바인드 전에 닫고 종료 1, 처음 서버는 그대로', T, async () => {
+  const p = project('.omc/progress-mon');
+  guardData(p);
+  const port = await freePort();
+  try {
+    assert.equal(cli(['start', '--port', String(port)], p).code, 0);
+    const first = JSON.parse(fs.readFileSync(path.join(dataOf(p), 'server.json'), 'utf8')).pid;
+    const r = cli(['serve', '--port', String(port)], p);
+    assert.equal(r.code, 1);
+    assert.match(r.err, new RegExp(`이미 실행 중인 서버가 있음: http://127\\.0\\.0\\.1:${port}/ \\(PID ${first}\\)\\. 이 서버는 닫음`));
+    assert.equal(r.out, '', '옆 포트 알림 없이 바로 닫음');
+    assert.ok(alive(first));
+    assert.match(cli(['status'], p).out, new RegExp(`^실행 중: http://127\\.0\\.0\\.1:${port}/ \\(PID ${first}\\)$`, 'm'));
+    await assert.rejects(get(port + 1), /ECONNREFUSED/);
+  } finally {
+    cleanup(p);
+  }
+});
+
 test('포트 점유면 다음 포트와 알림, strict 면 거부', T, async () => {
   const p = project('.omc/progress-mon');
   const holder = http.createServer((q, s) => (s.writeHead(404), s.end()));

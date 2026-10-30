@@ -1609,7 +1609,7 @@ export function liveRender(ctx, initial) {
       return e.code || 'error';
     }
   };
-  let key = keyOf();
+  let key = null; // 첫 요청에서 다시 읽는다(서버가 처음 읽은 뒤 키를 재기 전에 바뀐 config 를 놓치지 않게)
   let cur = { config: initial, errors: [] };
   return (tab, now) => {
     const k = keyOf();
