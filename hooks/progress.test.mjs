@@ -3,10 +3,12 @@
 // (hooks/progress.engine.test.ts runs the same module inside the engine: claude plugin test <copy>.)
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { TODO_TOOL, callLabel, describe, endTurn, freshState, noteTaskTool, planRead, planTarget, planTouched, readTodos, startTurn, takePlan } from './progress.mjs';
+import { planKind } from './progress-plan.mjs';
 import { register } from './register.mjs';
 
 const PANE = 'banker-progress';
@@ -1529,6 +1531,31 @@ test('/banker:progress and the progress-mon skill do not take each other\'s prom
   const root = new URL('../', import.meta.url);
   assert.ok(existsSync(new URL('skills/progress-mon/SKILL.md', root)) && !existsSync(new URL('skills/progress', root)));
   assert.ok(existsSync(new URL('commands/progress.md', root)) && !existsSync(new URL('commands/progress-mon.md', root)));
+});
+
+// /progress writes no file and shows the plan file a session touched; progress-mon keeps its own data folder and a
+// rule line in project memory. Neither file set may become the other's: no progress-mon file is a plan to either
+// runtime's pane, and progress-mon ships no hook, mod or pane and never names the pane's to-do tool.
+test('progress-mon files are never a plan to /progress, and progress-mon takes none of its places', async () => {
+  const { codexPlanKind } = await import('../codex/skills/progress/scripts/progress.mjs');
+  const skill = new URL('../skills/progress-mon/', import.meta.url);
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true })
+    .flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : [join(dir, d.name)]));
+  const skillFiles = walk(fileURLToPath(skill)).map((f) => relative(fileURLToPath(skill), f).replaceAll('\\', '/'));
+  const data = ['state.json', 'server.json', 'server.log', 'inventory.json',
+    ...skillFiles.filter((f) => f.startsWith('assets/fixture/')).map((f) => f.slice('assets/fixture/'.length))];
+  const paths = [
+    ...['.omc', '.omx'].flatMap((d) => data.map((f) => `/w/${d}/progress-mon/${f}`)),
+    '/w/CLAUDE.md', '/w/AGENTS.md', '/w/AGENTS.override.md',
+    '/h/.claude/projects/-w/memory/progress-mon.md', '/h/.claude/projects/-w/memory/MEMORY.md',
+    ...skillFiles.map((f) => `/p/skills/progress-mon/${f}`),
+  ];
+  assert.deepEqual(paths.filter((p) => planKind(p) || codexPlanKind(p)), []);
+  assert.deepEqual(skillFiles.filter((f) => /(^|\/)(hooks\.json|register\.mjs)$/.test(f)), []);
+  const scripts = skillFiles.filter((f) => /^scripts\/[^/]+\.mjs$/.test(f) && !f.endsWith('.test.mjs'));
+  assert.deepEqual(scripts.filter((f) => /mcp__banker__|\btmux\b|command\.register/
+    .test(readFileSync(new URL(f, skill), 'utf8'))), []);
+  assert.equal(TODO_TOOL, 'mcp__banker__todo');
 });
 
 const REVIEW = '/w/.omc/plans/deploy-critic-r1.md';
