@@ -14,7 +14,7 @@ import { assemble } from './assemble.mjs';
 import { crossfade, resolveFfmpeg, stillToClip } from './azure-adapter.mjs';
 import { STRICT_CSP } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
-import { decodePng, isBlank, loadPlaywright, seamProbe, verifyIntro } from './verify-intro.mjs';
+import { configFromIntroJs, decodePng, loadPlaywright, meanAbsDiff, seamProbe, verifyIntro } from './verify-intro.mjs';
 import { runDiveLegs } from './dive-mode.mjs';
 import { spawnSync } from 'node:child_process';
 
@@ -273,39 +273,64 @@ test('step navigation: off the stops the page settles on the nearest scene start
   assert.ok(ys.every((y, i) => i === 0 || y >= ys[i - 1] - 1), 'the page never runs back while retargeting');
 });
 
-test('Home, End and a route dot jump at once: no place in between, the right stop, no blank frame, the copy shown at once', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+// One instant jump, watched: every rAF scroll position and every composited frame from the input on.
+async function instantJump({ page, cdp, release }, name, act, want) {
+  const from = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => { window.__ys = []; (function f() { window.__ys.push(window.scrollY); requestAnimationFrame(f); })(); });
+  const frames = [];
+  const onFrame = (f) => { frames.push({ t: Date.now(), buf: Buffer.from(f.data, 'base64') }); cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); };
+  cdp.on('Page.screencastFrame', onFrame);
+  await cdp.send('Page.startScreencast', { format: 'png', maxWidth: 640, maxHeight: 400 });
+  const tAct = Date.now();
+  release(tAct);
+  await act();
+  await page.waitForTimeout(2200);
+  await cdp.send('Page.stopScreencast');
+  cdp.off('Page.screencastFrame', onFrame);
+  const ys = await page.evaluate(() => window.__ys);
+  assert.ok(Math.abs(ys.at(-1) - want) <= 2, `${name}: at ${ys.at(-1)}, want ${want}`);
+  assert.ok(ys.every((y) => Math.abs(y - from) <= 2 || Math.abs(y - want) <= 2), `${name}: no place in between (${[...new Set(ys.map(Math.round))].join(', ')})`);
+  // every frame is the screen before or the scene arrived at: an empty or half-drawn scene is neither
+  const px = frames.map((f) => decodePng(f.buf).data);
+  const strayAt = frames.filter((f, k) => Math.min(meanAbsDiff(px[k], px[0]), meanAbsDiff(px[k], px.at(-1))) > 12).map((f) => f.t - tAct);
+  assert.ok(frames.length > 1 && !strayAt.length, `${name}: no blank frame in ${frames.length} (a frame neither before nor after at ms after the input: ${strayAt.join(',')})`);
+  const copy = await page.evaluate(() => [...document.querySelectorAll('.sw-copy')].map((c) => Number(getComputedStyle(c).opacity)));
+  assert.ok(Math.max(...copy) > 0.99, `${name}: the copy shows (${copy})`);
+}
+
+test('Home, End and a route dot jump at once, after their late posters have decoded: no place in between, the right stop, no blank frame, the copy shown at once', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
   const server = await servedIntro(t, DARK);
+  const config = configFromIntroJs(await (await fetch(new URL('intro.js', server.url))).text());
+  const first = config.sections[0].still;
   const { chromium } = await loadPlaywright();
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  // every poster but the first is held until 900 ms after the input: longer than a move's 300 ms wait, shorter
+  // than an instant move's 1500 ms. A jump that does not wait for the target poster to decode paints that scene empty.
+  let releaseAt = Infinity;
+  await context.route(/\/assets\/[^/]+\.(png|jpe?g|webp)(\?|$)/, async (route) => {
+    if (!route.request().url().endsWith(`/${first}`)) while (Date.now() < releaseAt) await new Promise((r) => setTimeout(r, 20));
+    await route.continue();
+  });
+  // the clips come later still, so the scene a jump lands on shows its poster, not its clip
+  await context.route(/\.mp4(\?|$)/, async (route) => { await new Promise((r) => setTimeout(r, 4000)); await route.continue(); });
   const page = await context.newPage();
-  await page.goto(server.url, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.IntroStepNav && window.IntroStepNav.current);
-  // start from a painted first scene: a page still decoding its first poster is loading, not jumping
-  await page.evaluate(() => Promise.all([...document.querySelectorAll('.sw-scene__still')].map((i) => i.decode().catch(() => {}))).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
   const cdp = await context.newCDPSession(page);
-  const { stops, lastStop } = await page.evaluate(() => ({ stops: window.IntroStepNav.current.stops(), lastStop: window.IntroStepNav.current.lastStop }));
-  const jumps = [['End', () => page.keyboard.press('End'), stops[lastStop]], ['Home', () => page.keyboard.press('Home'), 0],
-    ['dot 2', () => page.click('.sw-route__dot:nth-child(2)'), stops[1]]];
-  for (const [name, act, want] of jumps) {
-    const from = await page.evaluate(() => window.scrollY);
-    await page.evaluate(() => { window.__ys = []; (function f() { window.__ys.push(window.scrollY); requestAnimationFrame(f); })(); });
-    const frames = [];
-    const onFrame = (f) => { frames.push(Buffer.from(f.data, 'base64')); frames.t = [...(frames.t || []), Date.now()]; cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); };
-    cdp.on('Page.screencastFrame', onFrame);
-    await cdp.send('Page.startScreencast', { format: 'png', maxWidth: 640, maxHeight: 400 });
-    const tAct = Date.now();
-    await act();
-    await page.waitForTimeout(1200);
-    await cdp.send('Page.stopScreencast');
-    cdp.off('Page.screencastFrame', onFrame);
-    const ys = await page.evaluate(() => window.__ys);
-    assert.ok(Math.abs(ys.at(-1) - want) <= 2, `${name}: at ${ys.at(-1)}, want ${want}`);
-    assert.ok(ys.every((y) => Math.abs(y - from) <= 2 || Math.abs(y - want) <= 2), `${name}: no place in between (${[...new Set(ys.map(Math.round))].join(', ')})`);
-    const blankAt = frames.map((b, k) => (isBlank(decodePng(b).data) ? frames.t[k] - tAct : null)).filter((x) => x !== null);
-    assert.ok(frames.length > 0 && !blankAt.length, `${name}: no blank frame in ${frames.length} (blank at ms after the key: ${blankAt.join(',')}; first frame at ${frames.t[0] - tAct})`);
-    const copy = await page.evaluate(() => [...document.querySelectorAll('.sw-copy')].map((c) => Number(getComputedStyle(c).opacity)));
-    assert.ok(Math.max(...copy) > 0.99, `${name}: the copy shows (${copy})`);
-  }
+  const open = async () => {
+    releaseAt = Infinity;
+    await page.goto(server.url, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.IntroStepNav && window.IntroStepNav.current);
+    // the copy, bars and dots hidden (visibility only: their opacity is still read) so an empty scene reads as one
+    await page.evaluate(() => { for (const e of document.querySelectorAll('.sw-copylayer, .sw-topbar, .sw-hint, .sw-route, .sw-scrollbar, .isn-hint, .isn-skip, .isn-main')) e.style.visibility = 'hidden'; });
+    // start from a painted first scene (only its poster): a page still decoding it is loading, not jumping
+    await page.evaluate(() => document.querySelector('.sw-scene__still').decode().catch(() => {}).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+    return page.evaluate(() => ({ stops: window.IntroStepNav.current.stops(), lastStop: window.IntroStepNav.current.lastStop }));
+  };
+  const jump = (name, act, want) => instantJump({ page, cdp, release: (t) => { releaseAt = Math.min(releaseAt, t + 900); } }, name, act, want);
+  let { stops, lastStop } = await open();
+  await jump('End (late poster)', () => page.keyboard.press('End'), stops[lastStop]);
+  await jump('Home', () => page.keyboard.press('Home'), 0);
+  ({ stops, lastStop } = await open());
+  await jump('dot 2 (late poster)', () => page.evaluate(() => document.querySelector('.sw-route__dot:nth-child(2)').click()), stops[1]);
 });
