@@ -4,8 +4,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
-import { eventsPath, stagesFor, isDir, noBom } from './pm-config.mjs';
+import { eventsPath, stagesFor, isDir, noBom, readRegular } from './pm-config.mjs';
 
 // ---------- 시각 ----------
 
@@ -39,7 +40,7 @@ function cached(file, parse) {
   if (hit && hit.parse === parse && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.out;
   let out;
   try {
-    const text = fs.readFileSync(file, 'utf8');
+    const text = readRegular(file);
     out = { value: parse(noBom(text)) };
   } catch (e) {
     out = { error: e instanceof SyntaxError ? 'JSON 아님' : `읽기 실패(${e.code || 'error'})` };
@@ -68,23 +69,46 @@ export const readJsonFile = (file) => cached(file, parseJson);
 // JSONL 파일의 객체 줄 목록. 없거나 못 읽으면 빈 목록.
 export const readLines = (file) => cached(file, parseLines).value || [];
 
+// ---------- 사용자 정규식 ----------
+
+const REGEX_MS = 200;
+const REGEX_INPUT_MAX = 1000;
+const regexCtx = vm.createContext({});
+const regexRun = new vm.Script(
+  '(() => { const re = new RegExp(src); return inputs.map((s) => { const m = re.exec(s); return m ? [m[0], m.groups ? m.groups.id : undefined] : null; }); })()',
+);
+
+// 사용자 정규식(commitRegex, agentLabelPattern)을 입력 묶음에 한 번 돌린다. 돌려줌: 입력마다 [일치, 그룹 id] 또는 null.
+// 역추적이 폭발하는 정규식이 이벤트 루프를 멈추지 않게 vm 의 시간 제한(REGEX_MS) 안에서만 돌리고, 입력은 앞 REGEX_INPUT_MAX 자만 본다.
+// 시간을 넘으면 거짓 판정 대신 예외(서버는 500 과 server.log, 명령은 오류 줄).
+export function regexBatch(src, key, inputs) {
+  regexCtx.src = src;
+  regexCtx.inputs = inputs.map((x) => String(x).slice(0, REGEX_INPUT_MAX));
+  try {
+    return regexRun.runInContext(regexCtx, { timeout: REGEX_MS });
+  } catch (e) {
+    if (e && e.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw new Error(`${key} 가 ${REGEX_MS} ms 안에 끝나지 않음(역추적이 폭발하는 정규식). config.json 의 ${key} 를 고침`);
+    throw e;
+  } finally {
+    regexCtx.inputs = null;
+  }
+}
+
 // ---------- 판정 함수(계획 4.3절) ----------
 
-// 커밋 제목의 스토리. commitRegex 가 있으면 그룹 id 값이 설정 id 일 때. 없으면 설정 id 를 긴 것부터 보아
-// 제목이 id 로 시작하고 뒤가 `:`, `(`, 공백, 또는 소문자 한 자 뒤 `:`, `(`, 공백이면 그 id.
-export function storyOfSubject(subject, ids, commitRegex) {
-  if (!ids.length || typeof subject !== 'string') return null;
+// 커밋 제목마다 스토리(subjectStories 는 묶음, storyOfSubject 는 하나). commitRegex 가 있으면 그룹 id 값이 설정 id 일 때.
+// 없으면 설정 id 를 긴 것부터 보아 제목이 id 로 시작하고 뒤가 `:`, `(`, 공백, 또는 소문자 한 자 뒤 `:`, `(`, 공백이면 그 id.
+export function subjectStories(subjects, ids, commitRegex) {
+  if (!ids.length) return subjects.map(() => null);
   if (commitRegex) {
-    const m = new RegExp(commitRegex).exec(subject);
-    const id = m && m.groups && m.groups.id;
-    return id && ids.includes(id) ? id : null;
+    const hits = regexBatch(commitRegex, 'commitRegex', subjects.map((s) => (typeof s === 'string' ? s : '')));
+    return hits.map((h, i) => (typeof subjects[i] === 'string' && h && h[1] && ids.includes(h[1]) ? h[1] : null));
   }
-  for (const id of [...ids].sort((a, b) => b.length - a.length)) {
-    if (!subject.startsWith(id)) continue;
-    if (/^([:( ]|[a-z][:( ])/.test(subject.slice(id.length))) return id;
-  }
-  return null;
+  const byLength = [...ids].sort((a, b) => b.length - a.length);
+  return subjects.map((s) => (typeof s === 'string' ? byLength.find((id) => s.startsWith(id) && /^([:( ]|[a-z][:( ])/.test(s.slice(id.length))) || null : null));
 }
+
+export const storyOfSubject = (subject, ids, commitRegex) => subjectStories([subject], ids, commitRegex)[0];
 
 // 스토리 시작 시각용: 라벨을 - 로 나눈 토큰을 왼쪽부터 보아 설정 id 와 정확히 같은 첫 토큰.
 export function storyOfStartLabel(label, ids) {
@@ -99,7 +123,7 @@ export function storyOfBusyLabel(label, ids, pattern) {
   if (!ids.length) return null;
   const l = String(label || '');
   if (pattern) {
-    const m = new RegExp(pattern).exec(l);
+    const [m] = regexBatch(pattern, 'agentLabelPattern', [l]);
     return m && ids.includes(m[0]) ? m[0] : null;
   }
   for (const tok of l.split('-')) {
@@ -115,7 +139,7 @@ export function storyOfBusyLabel(label, ids, pattern) {
 
 // 에이전트 행 숨김. 패턴이 있으면 라벨에 일치가 있을 때(스토리가 아니어도). 없으면 진행 중 스토리가 있을 때.
 export function hiddenAgent(label, ids, pattern) {
-  if (pattern) return new RegExp(pattern).test(String(label || ''));
+  if (pattern) return regexBatch(pattern, 'agentLabelPattern', [String(label || '')])[0] !== null;
   return storyOfBusyLabel(label, ids, null) !== null;
 }
 
@@ -146,7 +170,7 @@ const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding:
 
 const readText = (p) => {
   try {
-    return fs.readFileSync(p, 'utf8');
+    return readRegular(p);
   } catch {
     return null;
   }
@@ -237,10 +261,11 @@ const sameHash = (a, b) => a.length >= 4 && b.length >= 4 && (a.startsWith(b) ||
 export function gitInfo(lines, ids, storyCommits = {}, commitRegex = null) {
   const commits = {};
   const rows = (lines || []).map((l) => l.split('|'));
-  for (const [h, t, s] of rows) {
-    const id = s && storyOfSubject(s, ids, commitRegex);
+  const found = subjectStories(rows.map((r) => r[2] || null), ids, commitRegex);
+  rows.forEach(([h, t], i) => {
+    const id = found[i];
     if (id && !commits[id]) commits[id] = { h, t: Date.parse(t) };
-  }
+  });
   for (const [id, v] of Object.entries(storyCommits || {})) {
     if (commits[id]) continue;
     const h = typeof v === 'string' ? v : v && typeof v.hash === 'string' ? v.hash : '';
@@ -269,6 +294,7 @@ export const projectSlug = (project) => path.resolve(project).replace(/[^A-Za-z0
 // "auto": CLAUDE_CONFIG_DIR 또는 ~/.claude 의 projects/<slug>/<세션>/subagents/workflows. slug 는 대소문자 무시.
 export function workflowRoots(config, ctx, env = process.env) {
   const v = config.sources.workflowDirs;
+  // 폴더가 아닌 경로(특수 파일 등)는 listDir 이 빈 목록으로 보고, 그 아래 파일은 readRegular 로만 읽는다
   if (Array.isArray(v)) return v.map((p) => path.resolve(ctx.project, p));
   if (v !== 'auto') return [];
   const base = path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveContext, projectRoot, loadConfig, validate, defaults, stagesFor, eventsPath, dataLabel, privateIPv4, ULTRA_STAGES, UsageError } from './pm-config.mjs';
+import { resolveContext, projectRoot, loadConfig, validate, defaults, stagesFor, eventsPath, dataLabel, privateIPv4, readRegular, ULTRA_STAGES, UsageError } from './pm-config.mjs';
 
 const T = { timeout: 60000 };
 const ROOT = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'progress-mon-test-')));
@@ -164,4 +164,55 @@ test('events 경로: 상대 경로는 프로젝트 기준, auto 는 최신, null
   fs.utimesSync(neu, new Date(2026, 0, 2), new Date(2026, 0, 2));
   assert.equal(eventsPath(cfg, ctx), neu);
   assert.equal(eventsPath(cfg, { project: p, runtime: 'codex' }), null);
+});
+
+// 링크를 만든다. 폴더는 Windows 에서 junction(권한 없이 됨). Windows 에서 파일 링크 권한(개발자 모드)이 없으면 거짓.
+function link(target, p, type = 'file') {
+  try {
+    fs.symlinkSync(target, p, process.platform === 'win32' && type === 'dir' ? 'junction' : type);
+    return true;
+  } catch (e) {
+    if (process.platform === 'win32' && e.code === 'EPERM') return false;
+    throw e;
+  }
+}
+
+test('resolveContext: 자료 폴더나 그 위 .omc, .omx 가 링크면 거부(링크를 따라 밖에 쓰지 않음)', T, () => {
+  const out = path.join(ROOT, `out${++n}`);
+  fs.mkdirSync(path.join(out, 'progress-mon'), { recursive: true });
+  const a = proj();
+  assert.ok(link(out, path.join(a, '.omc'), 'dir'));
+  assert.throws(() => resolveContext({ cwd: a, project: a }), (e) => e instanceof UsageError && /\.omc 가 링크라 거부/.test(e.message));
+  const b = proj('.omx');
+  assert.ok(link(path.join(out, 'progress-mon'), path.join(b, '.omx', 'progress-mon'), 'dir'));
+  assert.throws(() => resolveContext({ cwd: b, project: b, runtime: 'codex' }), /progress-mon 가 링크라 거부/);
+  const c = proj();
+  assert.ok(link(out, path.join(c, 'data'), 'dir'));
+  assert.throws(() => resolveContext({ cwd: c, project: c, data: path.join(c, 'data') }), /링크라 거부/);
+  assert.deepEqual(fs.readdirSync(out), ['progress-mon'], '밖 폴더는 그대로');
+  const d = proj('.omc/progress-mon');
+  assert.equal(resolveContext({ cwd: d, project: d }).exists, true, '링크가 없으면 그대로');
+});
+
+test('readRegular: 일반 파일만 읽고, 폴더와 특수 파일은 EINVAL, 상한을 넘으면 EFBIG', T, (t) => {
+  const p = proj();
+  const f = path.join(p, 'a.json');
+  fs.writeFileSync(f, '{"a":1}');
+  assert.equal(readRegular(f), '{"a":1}');
+  assert.ok(Buffer.isBuffer(readRegular(f, null)));
+  assert.throws(() => readRegular(p), { code: 'EINVAL' });
+  assert.throws(() => readRegular(f, 'utf8', fs, 3), { code: 'EFBIG' });
+  assert.throws(() => readRegular(path.join(p, 'none')), { code: 'ENOENT' });
+  if (process.platform === 'win32') return t.diagnostic('FIFO 와 /dev/zero 는 POSIX 만');
+  const fifo = path.join(p, 'events.jsonl');
+  execFileSync('mkfifo', [fifo]);
+  assert.throws(() => readRegular(fifo), { code: 'EINVAL' }, 'FIFO 는 열지 않음(열면 쓰는 쪽을 기다리며 멈춤)');
+  assert.throws(() => readRegular('/dev/zero'), { code: 'EINVAL' }, '장치는 읽지 않음(끝없이 읽어 메모리를 다 씀)');
+});
+
+test('validate: commitRegex, agentLabelPattern 은 300자까지', T, () => {
+  const long = `^(?<id>S\\d+)${'x'.repeat(300)}`;
+  assert.match(validate({ commitRegex: long }, '/a').errors[0].msg, /300자를 넘음/);
+  assert.match(validate({ agentLabelPattern: 'y'.repeat(301) }, '/a').errors[0].msg, /300자를 넘음/);
+  assert.deepEqual(validate({ agentLabelPattern: 'y'.repeat(300) }, '/a').errors, []);
 });

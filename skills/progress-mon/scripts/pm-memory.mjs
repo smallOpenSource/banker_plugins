@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { git, UsageError } from './pm-config.mjs';
+import { git, readRegular, UsageError } from './pm-config.mjs';
 
 export const MARKER = '<!-- progress-mon:rule -->';
 export const OMX_OPEN = '<!-- USER:OMX:POLICY:START -->';
@@ -52,7 +52,7 @@ export function lineCount(text) {
 export function measureMemory(file) {
   let buf;
   try {
-    buf = fs.readFileSync(file);
+    buf = readRegular(file, null);
   } catch {
     return { lines: 0, bytes: 0, level: null };
   }
@@ -68,7 +68,7 @@ export function codexLimit(env = process.env) {
   const home = env.CODEX_HOME || path.join(os.homedir(), '.codex');
   let text;
   try {
-    text = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
+    text = readRegular(path.join(home, 'config.toml'));
   } catch {
     return { bytes: CODEX_DEFAULT_BYTES, assumed: true };
   }
@@ -88,7 +88,7 @@ export function codexLimit(env = process.env) {
 
 const readText = (file) => {
   try {
-    return fs.readFileSync(file, 'utf8');
+    return readRegular(file);
   } catch {
     return null;
   }
@@ -195,9 +195,16 @@ export function memoryWarnings(memory, project, env = process.env) {
 
 // ---------- 쓰기 ----------
 
-// 덧붙일 수 있는 파일인지. 일반 파일이나 일반 파일을 가리키는 링크만. 없으면 새로 만든다.
+// 경로 b 가 폴더 a 안(같음 포함)인지.
+const within = (a, b) => {
+  const rel = path.relative(a, b);
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
+};
+
+// 덧붙일 수 있는 파일인지. 일반 파일이나, 실제 경로가 base(프로젝트 루트나 --memory-dir) 안인 일반 파일을 가리키는 링크만.
+// 저장소가 심은 링크로 밖의 파일에 덧붙이지 않게 한다. CLAUDE.md -> AGENTS.md 같은 안쪽 링크는 받는다. 없으면 새로 만든다.
 // 돌려줌: { exists, text, eol }. 거부는 UsageError.
-function inspect(file, name) {
+function inspect(file, name, base) {
   let lst;
   try {
     lst = fs.lstatSync(file);
@@ -207,11 +214,14 @@ function inspect(file, name) {
   }
   let st = lst;
   if (lst.isSymbolicLink()) {
+    let real;
     try {
       st = fs.statSync(file);
+      real = fs.realpathSync(file);
     } catch {
       throw new UsageError(`${name} 은 대상이 없는 링크라 거부`);
     }
+    if (!within(fs.realpathSync(base), real)) throw new UsageError(`${name} 은 ${path.basename(base)} 밖을 가리키는 링크라 거부`);
   }
   if (!st.isFile()) throw new UsageError(`${name} 은 일반 파일이 아니라 거부`);
   const buf = fs.readFileSync(file);
@@ -250,8 +260,8 @@ export function planMemory({ kind, memoryDir, project, runtime }) {
       runtime,
       dir,
       steps: [
-        { file: rule, name: '자동 메모리 progress-mon.md', info: inspect(rule, 'progress-mon.md'), what: 'rule-file' },
-        { file: index, name: '자동 메모리 MEMORY.md', info: inspect(index, 'MEMORY.md'), what: 'index' },
+        { file: rule, name: '자동 메모리 progress-mon.md', info: inspect(rule, 'progress-mon.md', dir), what: 'rule-file' },
+        { file: index, name: '자동 메모리 MEMORY.md', info: inspect(index, 'MEMORY.md', dir), what: 'index' },
       ],
       memory: { kind, path: index },
     };
@@ -260,11 +270,11 @@ export function planMemory({ kind, memoryDir, project, runtime }) {
   const root = path.resolve(project);
   if (kind === 'claude-md') {
     const file = path.join(root, 'CLAUDE.md');
-    return { kind, runtime, steps: [{ file, name: 'CLAUDE.md', info: inspect(file, 'CLAUDE.md'), what: 'line' }], memory: { kind, path: file } };
+    return { kind, runtime, steps: [{ file, name: 'CLAUDE.md', info: inspect(file, 'CLAUDE.md', root), what: 'line' }], memory: { kind, path: file } };
   }
   const t = codexTarget(root);
   const name = path.basename(t.file);
-  return { kind, runtime, steps: [{ file: t.file, name, info: inspect(t.file, name), what: 'block' }], memory: { kind, path: t.file } };
+  return { kind, runtime, steps: [{ file: t.file, name, info: inspect(t.file, name, root), what: 'block' }], memory: { kind, path: t.file } };
 }
 
 // 계획대로 쓴다. 돌려줌: 출력 줄 목록(규칙 줄, 경고 줄).

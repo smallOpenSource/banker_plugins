@@ -6,7 +6,7 @@
 // 끝에 `density <탭> ok|low` 4줄. 형식 시험 자료와 옮긴 자료(둘 다 init 기록 없음)는 밀도를 재지 않는다.
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig, noBom, UsageError } from './pm-config.mjs';
+import { loadConfig, noBom, readRegular, UsageError } from './pm-config.mjs';
 import { readItems, storyList, workflowRoots } from './pm-sources.mjs';
 import { ITEM_STATUS, STAGE_STATUS } from './pm-data.mjs';
 import { archLayout, archFlaws, flowLayout, nameFits, FLOW } from './pm-render.mjs';
@@ -34,7 +34,7 @@ const insideRect = (n, z) => n.x >= z.x && n.y >= z.y && n.x + n.w <= z.x + z.w 
 function readJson(file) {
   let text;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = readRegular(file);
   } catch (e) {
     return e.code === 'ENOENT' ? { missing: true } : { error: `읽기 실패(${e.code || 'error'})` };
   }
@@ -494,7 +494,7 @@ export function runCheck(ctx, env = process.env) {
   const inv = checkInventory(ctx, r);
   let state = null;
   try {
-    state = obj(JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'state.json'), 'utf8')));
+    state = obj(JSON.parse(readRegular(path.join(ctx.dataDir, 'state.json'))));
   } catch {
     state = null;
   }

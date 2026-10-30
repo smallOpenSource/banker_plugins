@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { privateIPv4, dataLabel, loadConfig, writeAtomic, UsageError } from './pm-config.mjs';
+import { privateIPv4, dataLabel, loadConfig, writeAtomic, readRegular, UsageError } from './pm-config.mjs';
 import { workflowRoots } from './pm-sources.mjs';
 import { memoryWarnings } from './pm-memory.mjs';
 
@@ -51,7 +51,7 @@ export const logPath = (dataDir) => path.join(dataDir, 'server.log');
 
 export function readState(dataDir) {
   try {
-    return JSON.parse(fs.readFileSync(statePath(dataDir), 'utf8'));
+    return JSON.parse(readRegular(statePath(dataDir)));
   } catch (e) {
     return e.code === 'ENOENT' ? null : { broken: true };
   }
@@ -68,30 +68,50 @@ function dropState(dataDir) {
   }
 }
 
-// server.log 한 줄 덧붙이기. 덧붙이면 max(1 MB)를 넘을 때 먼저 비운다. 크기는 처음 한 번 재고 그 뒤로는 센다.
-// 실패해도 서버는 계속.
+const NOFOLLOW = fs.constants.O_NOFOLLOW || 0; // Windows 에는 없음. 거기서는 lstat 만으로 링크를 거른다
+const NONBLOCK = fs.constants.O_NONBLOCK || 0;
+
+// server.log 가 링크나 일반 파일이 아닌 것(FIFO 등)이면 참. 없으면 거짓.
+function oddLog(file) {
+  try {
+    return !fs.lstatSync(file).isFile();
+  } catch (e) {
+    return e.code !== 'ENOENT';
+  }
+}
+
+// 덧붙이기로 연 server.log 의 fd. 링크와 일반 파일 아닌 것은 열지 않는다(POSIX 는 O_NOFOLLOW, 연 뒤 fstat 다시 확인).
+function openLog(file) {
+  if (oddLog(file)) throw Object.assign(new Error('server.log 가 일반 파일 아님'), { code: 'EINVAL' });
+  const { O_WRONLY, O_APPEND, O_CREAT } = fs.constants;
+  const fd = fs.openSync(file, O_WRONLY | O_APPEND | O_CREAT | NOFOLLOW | NONBLOCK, 0o600);
+  if (!fs.fstatSync(fd).isFile()) {
+    fs.closeSync(fd);
+    throw Object.assign(new Error('server.log 가 일반 파일 아님'), { code: 'EINVAL' });
+  }
+  return fd;
+}
+
+// server.log 한 줄 덧붙이기. 덧붙이면 max(1 MB)를 넘을 때 먼저 server.log.1 로 옮긴다(대상을 자르지 않음, rename 은 링크를 따라가지 않음).
+// 링크이거나 일반 파일이 아니면 쓰지 않는다. 실패해도 서버는 계속.
 export function makeLogger(dataDir, max = LOG_MAX) {
   const file = logPath(dataDir);
-  let size = -1;
   return (msg) => {
     const line = `${new Date().toISOString()} ${msg}\n`;
-    const len = Buffer.byteLength(line);
+    let fd = null;
     try {
-      if (size < 0) {
-        try {
-          size = fs.statSync(file).size;
-        } catch {
-          size = 0;
-        }
+      fd = openLog(file);
+      if (fs.fstatSync(fd).size + Buffer.byteLength(line) > max) {
+        fs.closeSync(fd);
+        fd = null;
+        fs.renameSync(file, `${file}.1`);
+        fd = openLog(file);
       }
-      if (size + len > max) {
-        fs.writeFileSync(file, '');
-        size = 0;
-      }
-      fs.appendFileSync(file, line);
-      size += len;
+      fs.writeSync(fd, line);
     } catch {
       // 로그를 못 써도 응답은 계속
+    } finally {
+      if (fd !== null) fs.closeSync(fd);
     }
   };
 }
@@ -350,10 +370,12 @@ export async function serve(ctx, config, opts, io, { render } = {}) {
 }
 
 // server.log 의 off 바이트 뒤 줄 가운데 머리(오류:, 알림:, 경고:)로 시작하는 것. 시각 칸은 뺀다.
-function logLinesSince(dataDir, off, heads) {
+// 링크이거나 일반 파일이 아니면 읽지 않는다.
+export function logLinesSince(dataDir, off, heads) {
   let text = '';
   try {
-    const buf = fs.readFileSync(logPath(dataDir));
+    if (oddLog(logPath(dataDir))) return [];
+    const buf = readRegular(logPath(dataDir), null);
     text = buf.subarray(buf.length < off ? 0 : off).toString('utf8');
   } catch {
     return [];
@@ -369,7 +391,7 @@ export async function saveHost(ctx, ip, io, fsx = fs) {
   const file = path.join(ctx.dataDir, 'config.json');
   let raw = {};
   try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw = JSON.parse(readRegular(file));
   } catch (e) {
     if (e.code !== 'ENOENT') {
       io.err(`경고: config.json 을 읽지 못해 --host ${ip} 를 저장하지 않음`);
@@ -506,7 +528,7 @@ function tabData(dataDir) {
 function statusWarnings(ctx, io) {
   let memory = null;
   try {
-    memory = JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'state.json'), 'utf8')).memory;
+    memory = JSON.parse(readRegular(path.join(ctx.dataDir, 'state.json'))).memory;
   } catch {
     memory = null;
   }

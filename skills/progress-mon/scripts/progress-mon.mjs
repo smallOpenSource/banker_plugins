@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveContext, configOrFail, dataLabel, writeAtomic, UsageError } from './pm-config.mjs';
+import { resolveContext, configOrFail, dataLabel, writeAtomic, readRegular, UsageError } from './pm-config.mjs';
 import { serve, start, stop, status } from './pm-server.mjs';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
@@ -93,7 +93,7 @@ async function touchState(ctx) {
   const file = path.join(ctx.dataDir, 'state.json');
   let cur = {};
   try {
-    cur = JSON.parse(fs.readFileSync(file, 'utf8'));
+    cur = JSON.parse(readRegular(file));
   } catch {
     cur = {};
   }

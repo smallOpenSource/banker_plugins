@@ -287,3 +287,40 @@ test('CLI: override 에 우리 블록만 남아 AGENTS.md 를 가리면 status, 
   assert.ok(cli(['status'], p).err.includes(SHADOW_WARN));
   assert.ok(cli(['check'], p).out.includes(`WARN state.json memory ${SHADOW_WARN.slice(4)}`));
 });
+
+// 파일 링크. Windows 에서 권한(개발자 모드)이 없어 만들 수 없으면 거짓.
+function fileLink(target, p) {
+  try {
+    fs.symlinkSync(target, p, 'file');
+    return true;
+  } catch (e) {
+    if (process.platform === 'win32' && e.code === 'EPERM') return false;
+    throw e;
+  }
+}
+
+test('메모리 파일이 프로젝트(auto-memory 는 --memory-dir) 밖을 가리키는 링크면 거부, 밖 파일 그대로', T, (t) => {
+  const out = dir('outside');
+  const victim = path.join(out, 'victim.md');
+  fs.writeFileSync(victim, 'keep\n');
+  const p = dir();
+  if (!fileLink(victim, path.join(p, 'CLAUDE.md'))) return t.skip('Windows 에서 파일 링크를 만들 권한이 없음(개발자 모드 꺼짐)');
+  assert.throws(() => planMemory({ kind: 'claude-md', project: p, runtime: 'claude' }), /CLAUDE\.md 은 .+ 밖을 가리키는 링크라 거부/);
+  const q = dir();
+  fileLink(victim, path.join(q, 'AGENTS.md'));
+  assert.throws(() => planMemory({ kind: 'agents-md', project: q, runtime: 'codex' }), /AGENTS\.md 은 .+ 밖을 가리키는 링크라 거부/);
+  const mem = dir('memory');
+  fileLink(victim, path.join(mem, 'MEMORY.md'));
+  assert.throws(() => planMemory({ kind: 'auto-memory', memoryDir: mem, project: p, runtime: 'claude' }), /MEMORY\.md 은 .+ 밖을 가리키는 링크라 거부/);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'keep\n');
+});
+
+test('프로젝트 안을 가리키는 링크(CLAUDE.md -> AGENTS.md)는 그대로 받아 대상 파일에 덧붙임', T, (t) => {
+  const p = dir();
+  fs.writeFileSync(path.join(p, 'AGENTS.md'), '# 지시\n');
+  if (!fileLink('AGENTS.md', path.join(p, 'CLAUDE.md'))) return t.skip('Windows 에서 파일 링크를 만들 권한이 없음(개발자 모드 꺼짐)');
+  const plan = planMemory({ kind: 'claude-md', project: p, runtime: 'claude' });
+  applyMemory(plan, p, ENV);
+  assert.ok(fs.lstatSync(path.join(p, 'CLAUDE.md')).isSymbolicLink());
+  assert.equal(count(fs.readFileSync(path.join(p, 'AGENTS.md'), 'utf8'), MARKER), 1);
+});

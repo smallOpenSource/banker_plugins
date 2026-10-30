@@ -17,6 +17,7 @@ import {
   stop,
   status,
   makeLogger,
+  logLinesSince,
   saveHost,
   readState,
   writeState,
@@ -285,7 +286,7 @@ test('serve: strict 점유면 거부하고 server.log 에 오류 한 줄', T, as
   }
 });
 
-test('serve: 1 MB 넘는 server.log 는 시작 때 비움', T, async () => {
+test('serve: 1 MB 넘는 server.log 는 시작 때 server.log.1 로 옮김', T, async () => {
   const ctx = ctxOf();
   fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(1024 * 1024 + 10));
   const srv = await serve(ctx, defaults(ctx.project), { port: await freePort() }, quietIo(), { render: () => '' });
@@ -293,7 +294,7 @@ test('serve: 1 MB 넘는 server.log 는 시작 때 비움', T, async () => {
   assert.ok(fs.statSync(logPath(ctx.dataDir)).size < 1000);
 });
 
-test('server.log 는 쓸 때마다 크기를 보고 한도를 넘기 전에 비움', T, () => {
+test('server.log 는 쓸 때마다 크기를 보고 한도를 넘기 전에 server.log.1 로 옮김', T, () => {
   const ctx = ctxOf();
   const max = 400;
   fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
@@ -304,8 +305,8 @@ test('server.log 는 쓸 때마다 크기를 보고 한도를 넘기 전에 비�
     sizes.push(fs.statSync(logPath(ctx.dataDir)).size);
   }
   assert.ok(sizes.every((s) => s <= max), `크기 ${Math.max(...sizes)} <= ${max}`);
-  assert.ok(sizes[0] < 350, '처음 한 줄이 한도를 넘기면 먼저 비움');
-  assert.ok(sizes.some((s, i) => i > 0 && s < sizes[i - 1]), '실행 중에도 비움');
+  assert.ok(sizes[0] < 350, '처음 한 줄이 한도를 넘기면 먼저 옮김');
+  assert.ok(sizes.some((s, i) => i > 0 && s < sizes[i - 1]), '실행 중에도 옮김');
   assert.match(fs.readFileSync(logPath(ctx.dataDir), 'utf8'), /줄 39 y+\n$/);
 });
 
@@ -399,4 +400,39 @@ test('status: 자료 폴더 없음, 꺼짐은 종료 3', T, async () => {
   const io2 = quietIo();
   assert.equal(await status(none, io2), 3);
   assert.deepEqual(io2.lines.out, ['꺼짐(자료 폴더 없음: .omx/progress-mon/)']);
+});
+
+// 파일 링크. Windows 에서 권한(개발자 모드)이 없어 만들 수 없으면 거짓.
+function fileLink(target, p) {
+  try {
+    fs.symlinkSync(target, p, 'file');
+    return true;
+  } catch (e) {
+    if (process.platform === 'win32' && e.code === 'EPERM') return false;
+    throw e;
+  }
+}
+
+test('server.log 가 링크면 따라가지 않음: 대상을 쓰지도 비우지도 읽지도 않음', T, (t) => {
+  const ctx = ctxOf();
+  const target = path.join(ROOT, `victim${++n}.txt`);
+  const body = `2026-10-30T00:00:00.000Z 오류: ${'s'.repeat(600)}\n`;
+  fs.writeFileSync(target, body);
+  if (!fileLink(target, logPath(ctx.dataDir))) return t.skip('Windows 에서 파일 링크를 만들 권한이 없음(개발자 모드 꺼짐)');
+  const log = makeLogger(ctx.dataDir, 400);
+  log('한 줄');
+  log('두 줄');
+  assert.equal(fs.readFileSync(target, 'utf8'), body, '대상 그대로(1 MB 넘는 대상을 비우던 결함)');
+  assert.ok(fs.lstatSync(logPath(ctx.dataDir)).isSymbolicLink(), '링크도 그대로');
+  assert.deepEqual(logLinesSince(ctx.dataDir, 0, ['오류:']), [], '링크를 따라 읽지 않음');
+});
+
+test('server.log 가 한도를 넘으면 server.log.1 로 옮기고 새로 씀', T, () => {
+  const ctx = ctxOf();
+  fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
+  const log = makeLogger(ctx.dataDir, 400);
+  log(`줄 ${'y'.repeat(60)}`);
+  assert.equal(fs.readFileSync(`${logPath(ctx.dataDir)}.1`, 'utf8'), 'x'.repeat(350));
+  assert.match(fs.readFileSync(logPath(ctx.dataDir), 'utf8'), /^\S+ 줄 y+\n$/);
+  assert.deepEqual(logLinesSince(ctx.dataDir, 0, ['줄']), [`줄 ${'y'.repeat(60)}`]);
 });

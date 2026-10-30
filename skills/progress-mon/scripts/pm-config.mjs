@@ -39,6 +39,44 @@ export const isDir = (p) => {
 // JSON 글 앞의 BOM 을 뗀다.
 export const noBom = (text) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
 
+// 자료와 출처 파일을 읽는 크기 상한.
+export const READ_MAX = 32 * 1024 * 1024;
+
+// 일반 파일만 읽는다(링크는 따라감). FIFO, 장치 같은 특수 파일은 열지 않는다(열면 멈추거나 끝없이 읽어 메모리를 다 씀).
+// 특수 파일은 EINVAL, max 를 넘는 파일은 EFBIG 예외. encoding 이 null 이면 Buffer.
+export function readRegular(file, encoding = 'utf8', fsx = fs, max = READ_MAX) {
+  const st = fsx.statSync(file);
+  const code = !st.isFile() ? 'EINVAL' : st.size > max ? 'EFBIG' : null;
+  if (code) throw Object.assign(new Error(`${path.basename(file)}: ${code === 'EINVAL' ? '일반 파일 아님' : '크기 상한 초과'}`), { code });
+  return fsx.readFileSync(file, encoding);
+}
+
+// 프로젝트 안 자료 폴더의 경로 가운데 링크인 첫 폴더(.omc, progress-mon 등). 없으면 null.
+// 프로젝트 밖(--data)이면 자료 폴더 자체만 본다. 아직 없는 폴더에서 멈춘다.
+function linkedDir(root, dataDir) {
+  const rel = path.relative(root, dataDir);
+  const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+  const parts = inside ? rel.split(path.sep) : [];
+  const dirs = inside ? parts.map((_, i) => path.join(root, ...parts.slice(0, i + 1))) : [dataDir];
+  for (const d of dirs) {
+    let st;
+    try {
+      st = fs.lstatSync(d);
+    } catch {
+      return null;
+    }
+    if (st.isSymbolicLink()) return d;
+  }
+  return null;
+}
+
+// 자료 폴더나 그 위 폴더가 링크면 거부. 저장소가 심은 링크를 따라 프로젝트 밖의 파일을 쓰거나 지우지 않게.
+function refuseLinkedData(ctx) {
+  const d = linkedDir(ctx.project, ctx.dataDir);
+  if (d) throw new UsageError(`자료 폴더 경로의 ${path.relative(ctx.project, d) || d} 가 링크라 거부. 링크를 지우고 다시 실행`);
+  return ctx;
+}
+
 // 사설 IPv4(10/8, 172.16/12, 192.168/16)만 참. 이름, IPv6, 0.0.0.0, 공인, 링크 로컬, 100.64/10 은 거짓.
 export function privateIPv4(ip) {
   if (typeof ip !== 'string' || !net.isIPv4(ip)) return false;
@@ -61,9 +99,11 @@ export function projectRoot(cwd, project) {
   return path.resolve(cwd);
 }
 
-// 런타임과 자료 폴더 판별(계획 3절). 폴더를 만들지 않는다.
+// 런타임과 자료 폴더 판별(계획 3절). 폴더를 만들지 않는다. 자료 폴더 경로에 링크가 있으면 UsageError.
 // 돌려줌: { project, runtime, dataDir, exists, warn }
-export function resolveContext({ cwd = process.cwd(), project, runtime, data } = {}) {
+export const resolveContext = (opts = {}) => refuseLinkedData(pickContext(opts));
+
+function pickContext({ cwd = process.cwd(), project, runtime, data } = {}) {
   if (runtime !== undefined && !RUNTIMES.includes(runtime)) throw new UsageError(`--runtime 은 claude 또는 codex: ${runtime}`);
   const root = projectRoot(cwd, project);
   if (data) {
@@ -155,8 +195,12 @@ export function defaults(project, runtime = 'claude') {
 const isInt = (v) => Number.isInteger(v);
 const isStr = (v) => typeof v === 'string' && v.length > 0;
 
+// 사용자 정규식(commitRegex, agentLabelPattern)의 길이 상한. 실행 시간 상한은 pm-sources.mjs 의 regexBatch.
+export const REGEX_MAX = 300;
+
 // 정규식 문자열 컴파일. 실패면 이유 문자열.
 function compileError(src, { needId, noGroups }) {
+  if (src.length > REGEX_MAX) return `정규식이 ${REGEX_MAX}자를 넘음(${src.length}자)`;
   try {
     new RegExp(src);
   } catch (e) {
@@ -238,7 +282,7 @@ export function loadConfig(ctx) {
   const file = path.join(ctx.dataDir, 'config.json');
   let text;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = readRegular(file);
   } catch (e) {
     if (e.code === 'ENOENT') return { config: defaults(ctx.project, ctx.runtime), errors: [], found: false };
     return { config: defaults(ctx.project, ctx.runtime), errors: [{ path: '$', msg: `읽기 실패(${e.code || 'error'})` }], found: true };

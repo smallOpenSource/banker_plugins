@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { dataLabel, defaults, loadConfig, eventsPath, writeAtomic, git, noBom, UsageError } from './pm-config.mjs';
+import { dataLabel, defaults, loadConfig, eventsPath, writeAtomic, git, noBom, readRegular, UsageError } from './pm-config.mjs';
 import { stageList } from './pm-sources.mjs';
 import { planMemory, applyMemory } from './pm-memory.mjs';
 
@@ -44,7 +44,7 @@ const sameLock = (a, b) => Boolean(a && b) && a.pid === b.pid && a.token === b.t
 // 잠금 파일 내용. 없으면 null, 읽거나 풀지 못하면 빈 객체(낡았는지 모름, 기다림).
 function readLock(file, fsx) {
   try {
-    return JSON.parse(fsx.readFileSync(file, 'utf8'));
+    return JSON.parse(readRegular(file, 'utf8', fsx));
   } catch (e) {
     return e.code === 'ENOENT' ? null : {};
   }
@@ -65,7 +65,7 @@ function breakStale(file, seen, fsx) {
       // 낡은 정리 잠금: 낡음을 판정한 그 내용(원문)을 기억해 두고, 지우기 직전 다시 읽어 같을 때만 지운다.
       // 두 대기자가 같은 옛 정리 잠금을 낡았다고 봐도 뒤쪽이 그 사이 새로 생긴 정리 잠금을 지우지 않게 한다.
       // 나이는 내용의 createdAt, 읽을 수 없으면 파일 mtime 으로 잰다.
-      const seenRaw = fsx.readFileSync(brk, 'utf8');
+      const seenRaw = readRegular(brk, 'utf8', fsx);
       let born = NaN;
       try {
         born = Date.parse(JSON.parse(seenRaw).createdAt);
@@ -73,7 +73,7 @@ function breakStale(file, seen, fsx) {
         // 깨진 정리 잠금
       }
       if (!Number.isFinite(born)) born = fsx.statSync(brk).mtimeMs;
-      if (Date.now() - born > BREAK_STALE_MS && fsx.readFileSync(brk, 'utf8') === seenRaw) fsx.rmSync(brk, { force: true });
+      if (Date.now() - born > BREAK_STALE_MS && readRegular(brk, 'utf8', fsx) === seenRaw) fsx.rmSync(brk, { force: true });
     } catch {
       // 그 사이 지워짐
     }
@@ -148,7 +148,7 @@ const EMPTY_ITEMS = () => ({ notes: {}, items: [], storyCommits: {}, storyStates
 function readItemsRaw(file, fsx) {
   let text;
   try {
-    text = fsx.readFileSync(file, 'utf8');
+    text = readRegular(file, 'utf8', fsx);
   } catch (e) {
     if (e.code === 'ENOENT') return EMPTY_ITEMS();
     throw new UsageError(`items.json 을 읽지 못함(${e.code || e.message})`);
@@ -348,7 +348,7 @@ async function init(ctx, o, io, skillDir, now) {
   const hadState = fs.existsSync(stFile);
   let st = {};
   try {
-    st = obj(JSON.parse(fs.readFileSync(stFile, 'utf8'))) || {};
+    st = obj(JSON.parse(readRegular(stFile))) || {};
   } catch {
     st = {};
   }

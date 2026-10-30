@@ -515,3 +515,36 @@ test('collect: 자료가 하나도 없어도 오류 없음, git 없음, events �
   const m2 = collect(ctx, { ...cfg, sources: { ...cfg.sources, git: false, workflowDirs: [] } }, 0, { gitLines: ['a1b2c3d|2026-10-28T00:00:00Z|첫 커밋'] });
   assert.equal(m2.head, 'a1b2c3d 첫 커밋', '주입한 git 줄');
 });
+
+test('역추적이 폭발하는 commitRegex, agentLabelPattern 은 이벤트 루프를 멈추지 않고 이유가 든 오류', T, () => {
+  const evil = 'a'.repeat(40) + '!';
+  const t0 = Date.now();
+  assert.throws(() => storyOfSubject(evil, ['S1'], '(?<id>(a+)+)$'), /commitRegex 가 200 ms 안에 끝나지 않음/);
+  assert.throws(() => gitInfo([`a1b2c3d|2026-10-28T00:00:00Z|${evil}`], ['S1'], {}, '(?<id>(a+)+)$'), /commitRegex/);
+  assert.throws(() => storyOfBusyLabel(evil, ['S1'], '(?:a+)+$'), /agentLabelPattern 가 200 ms/);
+  assert.throws(() => hiddenAgent(evil, ['S1'], '(?:a+)+$'), /agentLabelPattern/);
+  assert.ok(Date.now() - t0 < 10000, `${Date.now() - t0} ms`);
+  // 보통 정규식은 그대로 판정, 긴 입력은 앞 1000자만 봄
+  assert.equal(storyOfSubject('S1: x', ['S1'], '^(?<id>S\\d+):'), 'S1');
+  assert.equal(storyOfSubject(`${'x'.repeat(1000)}S1:`, ['S1'], '(?<id>S\\d+):'), null);
+  assert.equal(storyOfBusyLabel('impl-S2-r1', ['S2'], 'S\\d+'), 'S2');
+  assert.equal(hiddenAgent('review', ['S2'], '^rev'), true);
+});
+
+test('events, journal 이 특수 파일(FIFO, /dev/zero)이면 읽지 않고 빈 출처로', T, (t) => {
+  if (process.platform === 'win32') return t.skip('FIFO 와 /dev/zero 는 POSIX 만');
+  const proj = tmp('special');
+  const fifo = path.join(proj, 'events.jsonl');
+  execFileSync('mkfifo', [fifo]);
+  assert.deepEqual(readLines(fifo), [], 'FIFO 는 열지 않음(열면 쓰는 쪽을 기다리며 멈춤)');
+  assert.deepEqual(readLines('/dev/zero'), [], '장치는 읽지 않음');
+  const run = path.join(proj, 'wf', 'run1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.symlinkSync('/dev/zero', path.join(run, 'journal.jsonl'));
+  const ctx = { project: proj, runtime: 'claude', dataDir: path.join(proj, '.omc', 'progress-mon') };
+  fs.mkdirSync(ctx.dataDir, { recursive: true });
+  const cfg = defaults(proj);
+  const m = collect(ctx, { ...cfg, sources: { ...cfg.sources, git: false, events: fifo, workflowDirs: ['wf', '/dev/zero'] } }, Date.now());
+  assert.deepEqual(m.agents, []);
+  assert.deepEqual(m.stageState, {});
+});
