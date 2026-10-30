@@ -1,6 +1,6 @@
 ---
 name: progress-mon
-description: "프로젝트 진척도를 4탭 웹 화면(진척도, 구현요건, workflow, 구성도)으로 로컬 서버(기본 127.0.0.1:30000)에 띄움. 인자 없이 부르면 자료 폴더가 없을 때 init(코드를 읽어 4탭 자료를 쓰고 갱신 규칙 등록), 서버가 꺼져 있으면 start, 켜져 있으면 URL 보고. 하위 명령 init, start, stop, status, export, item, note, stage, story, check. 'progress-mon'/'진척도 화면'/'진척도 서버'/'진행 현황 웹 화면' 시 사용. 세션 작업 목록 패널은 이 스킬 대신 `/banker:progress`."
+description: "프로젝트 진척도를 4탭 웹 화면(진척도, 구현요건, workflow, 구성도)으로 로컬 서버(기본 127.0.0.1:30000)에 띄움. 인자 없이 부르면 자료 폴더가 없을 때 init(코드를 읽어 4탭 자료를 쓰고 갱신 규칙 등록), 서버가 꺼져 있으면 start, 켜져 있으면 URL 보고. 하위 명령 init, start, stop, status, export, item, note, stage, story, check. 'progress-mon'/'진척도 화면'/'진척도 서버'/'진행 현황 웹 화면' 시 사용. 세션 작업 목록 패널은 이 스킬 대신 progress(Claude Code `/banker:progress`, Codex `$banker-progress`)."
 ---
 
 # progress-mon: 프로젝트 진척도 웹 화면
@@ -28,7 +28,7 @@ progress-mon skill body marker v1
 
 ## 쓰지 않을 때
 
-- 지금 세션의 작업 목록만 보고 싶을 때. `/banker:progress`(Claude Mods 패널)를 쓴다
+- 지금 세션의 작업 목록만 보고 싶을 때. progress 를 쓴다(Claude Code `/banker:progress` 의 Claude Mods 패널, Codex `$banker-progress`)
 - 공인 주소나 `0.0.0.0` 으로 화면을 열어야 할 때. 이 스킬은 거부한다
 
 ## 자리 표시

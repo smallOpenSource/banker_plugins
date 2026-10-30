@@ -5,7 +5,7 @@ name: harness-setup-ci
 # Honest scope: setup-harness-factory's full Claude-plugin team-spawn and privileged sysctl writes are NOT
 # testable on hosted runners; those steps are partial/tolerated and labeled as such.
 # obsidizer has no per-OS install, so it gets no OS-toolchain job — it is covered by the structural
-# job (63 · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
+# job (manifest == skills/ · packaging · hook ships), its own unit suites, and the runtime-discovery matrix below.
 
 on:
   push:
@@ -31,16 +31,18 @@ concurrency:
 
 jobs:
   smoke:
-    name: structural (packaging · 63 skills · dir==name)
+    name: structural (packaging · manifest == skills/ · dir==name)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: manifest count == 63 both / 0 claude-only
+      # 수를 박아 두지 않는다(스킬을 더할 때마다 낡음). smoke-test.js 5.5 와 같은 기준: 매니페스트 스킬 집합 ==
+      # skills/ 의 SKILL.md 폴더, codex-only == codex/skills/, both 가 아닌 것은 claude-only ultraqa 하나.
+      - name: manifest skills == skills/ (codex-only == codex/skills/, only ultraqa claude-only)
         run: |
-          node -e "const m=require('./codex/manifest.json');const s=m.surfaces.filter(x=>x.type==='skill');if(s.length!==63||s.filter(x=>x.target!=='both').length!==0){console.error('manifest count wrong',s.length);process.exit(1)}console.log('manifest OK',s.length)"
+          node -e "const fs=require('fs');const dirs=d=>fs.readdirSync(d).filter(x=>fs.existsSync(d+'/'+x+'/SKILL.md')).sort().join();const s=require('./codex/manifest.json').surfaces.filter(x=>x.type==='skill');const n=f=>s.filter(f).map(x=>x.name).sort().join();const bad=[[n(x=>x.target!=='codex-only'),dirs('skills')],[n(x=>x.target==='codex-only'),dirs('codex/skills')],[n(x=>x.target==='claude-only'),'ultraqa'],[n(x=>!['both','claude-only','codex-only'].includes(x.target)),'']].filter(([a,b])=>a!==b);if(bad.length){console.error('manifest != disk',JSON.stringify(bad));process.exit(1)}console.log('manifest OK',s.length)"
       - name: smoke-test (dir==name, dry-run, real codex install)
         run: node scripts/smoke-test.js
       - name: version sync (SoT drift guard — plugin.json == package.json == marketplace.json)
