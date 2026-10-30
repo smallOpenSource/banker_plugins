@@ -18,6 +18,8 @@ import {
   status,
   makeLogger,
   logLinesSince,
+  takeStartLock,
+  giveBackLock,
   saveHost,
   readState,
   writeState,
@@ -460,5 +462,58 @@ test('server.log.1 자리가 폴더라 옮기지 못하면 server.log 를 비우
     assert.ok(io.lines.err.some((l) => /^경고: server\.log 를 server\.log\.1 로 옮기지 못함/.test(l)), io.lines.err.join('\n'));
   } finally {
     await srv.close();
+  }
+});
+
+// fs.writeFileSync 를 잠시 바꿔 server.json.lock 의 wx 를 code 로 times 번 실패시킨다(Windows 의 delete pending 흉내).
+function failLockWrites(code, times) {
+  const real = fs.writeFileSync;
+  let left = times;
+  fs.writeFileSync = (f, data, o) => {
+    if (left > 0 && String(f).endsWith('server.json.lock') && o && o.flag === 'wx') {
+      left--;
+      throw Object.assign(new Error(code), { code });
+    }
+    return real(f, data, o);
+  };
+  return () => (fs.writeFileSync = real);
+}
+
+test('start 잠금: wx 의 EPERM, EACCES, EBUSY 는 잠금이 있는 것처럼 기다렸다 다시(Windows delete pending)', T, async () => {
+  for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
+    const ctx = ctxOf();
+    const restore = failLockWrites(code, 3);
+    try {
+      const lock = await takeStartLock(ctx.dataDir, 5000);
+      assert.equal(fs.readFileSync(lock, 'utf8').split(' ')[0], String(process.pid), code);
+      giveBackLock(lock);
+      assert.equal(fs.existsSync(lock), false);
+    } finally {
+      restore();
+    }
+  }
+  // 끝까지 실패하고 잠금 파일이 없었으면 만들지 못함, 잠금 파일이 보였으면 다른 start
+  const a = ctxOf();
+  let restore = failLockWrites('EPERM', 1e9);
+  try {
+    await assert.rejects(takeStartLock(a.dataDir, 400), /잠금 server\.json\.lock 을 만들지 못함\(EPERM\)/);
+  } finally {
+    restore();
+  }
+  const b = ctxOf();
+  fs.writeFileSync(path.join(b.dataDir, 'server.json.lock'), `${process.pid} ${new Date().toISOString()}\n`);
+  restore = failLockWrites('EPERM', 1e9);
+  try {
+    await assert.rejects(takeStartLock(b.dataDir, 400), /다른 start 가 끝나지 않음/);
+  } finally {
+    restore();
+  }
+  // 그 밖 오류는 바로 실패
+  const c = ctxOf();
+  restore = failLockWrites('EROFS', 1);
+  try {
+    await assert.rejects(takeStartLock(c.dataDir, 5000), /만들지 못함\(EROFS\)/);
+  } finally {
+    restore();
   }
 });

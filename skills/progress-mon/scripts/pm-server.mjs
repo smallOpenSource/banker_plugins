@@ -462,12 +462,17 @@ const START_LOCK = 'server.json.lock';
 const START_LOCK_STALE_MS = 30000;
 const START_LOCK_WAIT_MS = 15000;
 
+// 잠금이 있는 것처럼 기다릴 wx 실패. Windows 는 다른 프로세스가 지우는 중인 파일(delete pending) 자리에 EEXIST 대신
+// EPERM(또는 EACCES, EBUSY)을 낸다. 잠금을 돌려주는 순간과 겹친 start 가 실패하지 않게 한다(items.json 잠금과 같은 규칙).
+const LOCK_BUSY = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
+
+// 돌려줌: 만들었으면 null, 아니면 그 까닭 코드. 그 밖 오류는 UsageError.
 function makeLockFile(file) {
   try {
     fs.writeFileSync(file, `${process.pid} ${iso(Date.now())}\n`, { flag: 'wx', mode: 0o600 });
-    return true;
+    return null;
   } catch (e) {
-    if (e.code === 'EEXIST') return false;
+    if (LOCK_BUSY.has(e.code)) return e.code;
     throw new UsageError(`잠금 ${path.basename(file)} 을 만들지 못함(${e.code || e.message})`);
   }
 }
@@ -505,7 +510,7 @@ function staleLock(file, now) {
 
 function takeOverLock(file, now) {
   const taking = `${file}.taking`;
-  if (!makeLockFile(taking)) {
+  if (makeLockFile(taking) !== null) {
     // 넘겨받던 start 가 죽어 남은 표지는 START_LOCK_STALE_MS 뒤 치운다(이번은 기다리고 다음에 넘겨받음)
     try {
       if (now - fs.lstatSync(taking).mtimeMs > START_LOCK_STALE_MS) fs.rmSync(taking, { force: true });
@@ -517,25 +522,32 @@ function takeOverLock(file, now) {
   try {
     if (!staleLock(file, now)) return false;
     fs.rmSync(file, { force: true });
-    return makeLockFile(file);
+    return makeLockFile(file) === null;
   } finally {
     fs.rmSync(taking, { force: true });
   }
 }
 
-// start 잠금을 잡을 때까지 START_LOCK_WAIT_MS 기다린다. 돌려줌: 잠금 경로. 시간 초과는 UsageError.
-async function takeStartLock(dataDir) {
+// start 잠금을 잡을 때까지 waitMs 기다린다. 돌려줌: 잠금 경로. 시간 초과는 UsageError: 잠금 파일이 한 번이라도 보였으면
+// 다른 start, 끝내 없었으면(EPERM 등이 계속, 권한 등) 만들지 못함.
+export async function takeStartLock(dataDir, waitMs = START_LOCK_WAIT_MS) {
   const file = path.join(dataDir, START_LOCK);
-  const until = Date.now() + START_LOCK_WAIT_MS;
+  const until = Date.now() + waitMs;
+  let seen = false;
   for (;;) {
-    if (makeLockFile(file) || (staleLock(file, Date.now()) && takeOverLock(file, Date.now()))) return file;
-    if (Date.now() >= until) throw new UsageError(`다른 start 가 끝나지 않음(잠금 ${START_LOCK}, pid ${lockPid(file) ?? '알 수 없음'}). 30초 뒤 다시 실행. 그 start 가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`);
+    const code = makeLockFile(file);
+    if (code === null || (staleLock(file, Date.now()) && takeOverLock(file, Date.now()))) return file;
+    seen = seen || code === 'EEXIST' || fs.existsSync(file);
+    if (Date.now() >= until) {
+      if (!seen) throw new UsageError(`잠금 ${START_LOCK} 을 만들지 못함(${code})`);
+      throw new UsageError(`다른 start 가 끝나지 않음(잠금 ${START_LOCK}, pid ${lockPid(file) ?? '알 수 없음'}). 30초 뒤 다시 실행. 그 start 가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`);
+    }
     await sleep(100);
   }
 }
 
 // 잠금은 이 프로세스의 것일 때만 돌려준다.
-function giveBackLock(file) {
+export function giveBackLock(file) {
   if (lockPid(file) === process.pid) fs.rmSync(file, { force: true });
 }
 
