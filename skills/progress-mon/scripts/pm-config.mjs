@@ -47,7 +47,8 @@ export const READ_MAX = 32 * 1024 * 1024;
 export function readRegular(file, encoding = 'utf8', fsx = fs, max = READ_MAX) {
   const st = fsx.statSync(file);
   const code = !st.isFile() ? 'EINVAL' : st.size > max ? 'EFBIG' : null;
-  if (code) throw Object.assign(new Error(`${path.basename(file)}: ${code === 'EINVAL' ? '일반 파일 아님' : '크기 상한 초과'}`), { code });
+  // statSync 는 링크를 따라가므로, EINVAL 은 대상이 폴더나 특수 파일일 때(그것을 가리키는 링크 포함)다. EFBIG 는 32 MB 초과.
+  if (code) throw Object.assign(new Error(`${path.basename(file)}: ${code === 'EINVAL' ? '일반 파일 아님(폴더나 특수 파일, 또는 그것을 가리키는 링크)' : '크기 상한 초과(32 MB)'}`), { code });
   return fsx.readFileSync(file, encoding);
 }
 
@@ -285,7 +286,8 @@ export function loadConfig(ctx) {
     text = readRegular(file);
   } catch (e) {
     if (e.code === 'ENOENT') return { config: defaults(ctx.project, ctx.runtime), errors: [], found: false };
-    return { config: defaults(ctx.project, ctx.runtime), errors: [{ path: '$', msg: `읽기 실패(${e.code || 'error'})` }], found: true };
+    // e.message 는 readRegular 가 지은 구체 문구(일반 파일 아님 / 크기 상한 초과)이거나 그 밖 fs 오류다.
+    return { config: defaults(ctx.project, ctx.runtime), errors: [{ path: '$', msg: `읽기 실패: ${e.message || e.code || 'error'}` }], found: true };
   }
   let raw;
   try {

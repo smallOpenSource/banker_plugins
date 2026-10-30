@@ -517,3 +517,16 @@ test('start 잠금: wx 의 EPERM, EACCES, EBUSY 는 잠금이 있는 것처럼 �
     restore();
   }
 });
+
+test('start 잠금: 잠금 파일이 끝내 안 보이는 진짜 권한 오류는 기본 대기를 다 기다리지 않고 1초대에 실패', T, async () => {
+  const d = ctxOf();
+  const restore = failLockWrites('EACCES', 1e9); // 읽기 전용 폴더처럼 wx 가 늘 EACCES, 잠금 파일은 생기지 않음
+  const begin = Date.now();
+  try {
+    // 기본 대기(15초)를 그대로 쓰되, pendingMs(1초)를 넘기면 바로 끝난다(고치기 전엔 15초를 기다렸음)
+    await assert.rejects(takeStartLock(d.dataDir), /잠금 server\.json\.lock 을 만들지 못함\(EACCES\)/);
+    assert.ok(Date.now() - begin < 3000, `1초대에 실패해야 함(걸린 시간 ${Date.now() - begin}ms)`);
+  } finally {
+    restore();
+  }
+});

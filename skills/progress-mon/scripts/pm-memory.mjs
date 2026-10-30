@@ -167,6 +167,10 @@ export function measureCodex(project, env = process.env) {
 // ---------- 경고 줄 ----------
 
 const MEM_ALT = '대안: --memory claude-md 로 다시 등록(CLAUDE.md 는 한도 없음)';
+// init 의 메모리 대상이 거부될 때 안내하는 종류별 대안.
+const CLAUDE_ALT = '대안: --memory agents-md, 또는 --memory auto-memory --memory-dir <dir>';
+const AGENTS_ALT = '대안: --memory claude-md, 또는 --memory auto-memory --memory-dir <dir>';
+const AUTO_ALT = '대안: 다른 --memory-dir, 또는 --memory claude-md 나 agents-md';
 const CODEX_ALT = '대안: 프로젝트 지시 파일 정리(banker cleansing-memory)';
 export const SHADOW_WARN = '경고: AGENTS.override.md 에 블록만 있어 AGENTS.md 가 가려짐';
 
@@ -204,13 +208,14 @@ const within = (a, b) => {
 // 덧붙일 수 있는 파일인지. 일반 파일이나, 실제 경로가 base(프로젝트 루트나 --memory-dir) 안인 일반 파일을 가리키는 링크만.
 // 저장소가 심은 링크로 밖의 파일에 덧붙이지 않게 한다. CLAUDE.md -> AGENTS.md 같은 안쪽 링크는 받는다. 없으면 새로 만든다.
 // 돌려줌: { exists, text, eol }. 거부는 UsageError.
-function inspect(file, name, base) {
+function inspect(file, name, base, alt = '') {
+  const tail = alt ? `. ${alt}` : '';
   let lst;
   try {
     lst = fs.lstatSync(file);
   } catch (e) {
     if (e.code === 'ENOENT') return { exists: false, text: '', eol: '\n' };
-    throw new UsageError(`${name} 을 읽지 못함(${e.code || e.message})`);
+    throw new UsageError(`${name} 을 읽지 못함(${e.code || e.message})${tail}`);
   }
   let st = lst;
   if (lst.isSymbolicLink()) {
@@ -219,17 +224,17 @@ function inspect(file, name, base) {
       st = fs.statSync(file);
       real = fs.realpathSync(file);
     } catch {
-      throw new UsageError(`${name} 은 대상이 없는 링크라 거부`);
+      throw new UsageError(`${name} 은 대상이 없는 링크라 거부${tail}`);
     }
-    if (!within(fs.realpathSync(base), real)) throw new UsageError(`${name} 은 ${path.basename(base)} 밖을 가리키는 링크라 거부`);
+    if (!within(fs.realpathSync(base), real)) throw new UsageError(`${name} 은 ${path.basename(base)} 밖을 가리키는 링크라 거부${tail}`);
   }
-  if (!st.isFile()) throw new UsageError(`${name} 은 일반 파일이 아니라 거부`);
+  if (!st.isFile()) throw new UsageError(`${name} 은 일반 파일이 아니라 거부${tail}`);
   const buf = fs.readFileSync(file);
   let text;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
   } catch {
-    throw new UsageError(`${name} 이 UTF-8 이 아니라 거부`);
+    throw new UsageError(`${name} 이 UTF-8 이 아니라 거부${tail}`);
   }
   // TextDecoder 는 BOM 을 떼므로 줄 끝 판정만 쓴다. 쓰기는 원본 바이트 뒤에 덧붙인다.
   return { exists: true, text, eol: text.includes('\r\n') ? '\r\n' : '\n' };
@@ -260,8 +265,8 @@ export function planMemory({ kind, memoryDir, project, runtime }) {
       runtime,
       dir,
       steps: [
-        { file: rule, name: '자동 메모리 progress-mon.md', info: inspect(rule, 'progress-mon.md', dir), what: 'rule-file' },
-        { file: index, name: '자동 메모리 MEMORY.md', info: inspect(index, 'MEMORY.md', dir), what: 'index' },
+        { file: rule, name: '자동 메모리 progress-mon.md', info: inspect(rule, 'progress-mon.md', dir, AUTO_ALT), what: 'rule-file' },
+        { file: index, name: '자동 메모리 MEMORY.md', info: inspect(index, 'MEMORY.md', dir, AUTO_ALT), what: 'index' },
       ],
       memory: { kind, path: index },
     };
@@ -270,11 +275,11 @@ export function planMemory({ kind, memoryDir, project, runtime }) {
   const root = path.resolve(project);
   if (kind === 'claude-md') {
     const file = path.join(root, 'CLAUDE.md');
-    return { kind, runtime, steps: [{ file, name: 'CLAUDE.md', info: inspect(file, 'CLAUDE.md', root), what: 'line' }], memory: { kind, path: file } };
+    return { kind, runtime, steps: [{ file, name: 'CLAUDE.md', info: inspect(file, 'CLAUDE.md', root, CLAUDE_ALT), what: 'line' }], memory: { kind, path: file } };
   }
   const t = codexTarget(root);
   const name = path.basename(t.file);
-  return { kind, runtime, steps: [{ file: t.file, name, info: inspect(t.file, name, root), what: 'block' }], memory: { kind, path: t.file } };
+  return { kind, runtime, steps: [{ file: t.file, name, info: inspect(t.file, name, root, AGENTS_ALT), what: 'block' }], memory: { kind, path: t.file } };
 }
 
 // 계획대로 쓴다. 돌려줌: 출력 줄 목록(규칙 줄, 경고 줄).

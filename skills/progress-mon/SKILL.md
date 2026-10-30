@@ -88,7 +88,7 @@ progress-mon skill body marker v1
 | `stop` | 없음 | 상태 파일 PID 가 이 서버일 때만 끔 |
 | `status` | 없음 | 실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무(깨진 JSON 은 깨짐), 시작 시각, 요청 수, 마지막 오류 시각. 서버를 띄운 뒤 `config.json` 의 `port`, `portStrict`, `hosts` 가 바뀌었으면 경고(그 셋만 `stop` 뒤 `start` 해야 적용, 나머지는 다음 응답에 반영) |
 | `export` | `<file> [--now <ISO>]` | 4탭을 한 HTML 파일로. 외부 자원 없음, `file://` 에서 탭 전환. 사용자가 지시할 때만 만든다 |
-| `item` | `--key <k> --status todo\|doing\|done --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]` | 기타 항목. 같은 key 는 대체하고 시작 시각 유지(시작 시각은 `doing` 으로 기록할 때만). `--at` 은 지금 대신 그 시각으로 기록(시간대 필수). `--commit` 은 7~40자 16진 해시(commit Hash 칸에 앞 7자리). 빼면 있던 해시 유지 |
+| `item` | `--key <k> --status todo\|doing\|done --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]` | 기타 항목. 같은 key 는 대체하고 시작 시각 유지(시작 시각은 `doing` 으로 기록할 때만). `--at` 은 지금 대신 그 시각으로 기록(시간대 필수). `--commit` 은 4~40자 16진 해시(commit Hash 칸에 앞 7자리). 빼면 있던 해시 유지 |
 | `note` | `--key <k> [--note <t>] [--issue <t>]` | 단계(`stage:<id>`)나 스토리 행의 비고, 문제점. 빈 값은 그 칸을 지움 |
 | `stage` | `--id <id> --status started\|done\|skipped\|failed\|stopped [--label <t>]` | 단계 상태 기록. 설정에 없는 id 는 새 단계 행 |
 | `story` | `--id <id> (--status todo\|doing\|done \| --commit <hash>) [--name <t>]` | 스토리 상태나 완료 커밋 기록. 설정에 없는 id 는 새 스토리 행 |

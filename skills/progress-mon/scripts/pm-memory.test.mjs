@@ -101,7 +101,11 @@ test('BOM 유지(\\u{FEFF} 로 시작하는 파일)', T, () => {
 test('일반 파일이 아니면 거부, UTF-8 아니면 거부(아무것도 바꾸지 않음)', T, () => {
   const p = dir();
   fs.mkdirSync(path.join(p, 'CLAUDE.md'));
-  assert.throws(() => planMemory({ kind: 'claude-md', project: p, runtime: 'claude' }), /일반 파일이 아니라 거부/);
+  // 거부 문구에 종류별 대안이 붙는다(claude-md 면 agents-md 와 auto-memory)
+  assert.throws(() => planMemory({ kind: 'claude-md', project: p, runtime: 'claude' }), /일반 파일이 아니라 거부\. 대안: --memory agents-md, 또는 --memory auto-memory --memory-dir <dir>/);
+  fs.rmSync(path.join(p, 'CLAUDE.md'), { recursive: true });
+  fs.mkdirSync(path.join(p, 'AGENTS.md'));
+  assert.throws(() => planMemory({ kind: 'agents-md', project: p, runtime: 'codex' }), /대안: --memory claude-md, 또는 --memory auto-memory --memory-dir <dir>/);
   const q = dir();
   const bad = Buffer.from([0xff, 0xfe, 0x41, 0x00]);
   fs.writeFileSync(path.join(q, 'CLAUDE.md'), bad);

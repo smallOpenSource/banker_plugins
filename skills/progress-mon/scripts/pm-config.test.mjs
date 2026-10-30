@@ -69,6 +69,15 @@ test('깨진 JSON 과 BOM', T, () => {
   assert.equal(r.config.port, 31000);
 });
 
+test('config.json 이 폴더(또는 그것을 가리키는 링크)면 읽기 실패 문구가 까닭을 밝힌다', T, () => {
+  const p = proj('.omc/progress-mon');
+  const ctx = resolveContext({ cwd: p, project: p });
+  fs.mkdirSync(path.join(ctx.dataDir, 'config.json')); // 폴더(statSync 는 !isFile 이라 EINVAL)
+  const r = loadConfig(ctx);
+  assert.equal(r.found, true);
+  assert.match(r.errors[0].msg, /읽기 실패: config\.json: 일반 파일 아님\(폴더나 특수 파일, 또는 그것을 가리키는 링크\)/);
+});
+
 test('commitRegex 는 이름 그룹 id, agentLabelPattern 은 그룹 없음', T, () => {
   assert.deepEqual(validate({ commitRegex: '^(?<id>[A-Z]\\d+):' }, '/a').errors, []);
   assert.match(validate({ commitRegex: '^([A-Z]\\d+):' }, '/a').errors[0].msg, /id/);
