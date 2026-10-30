@@ -138,6 +138,15 @@ test('keys: arrows (and left/right) as the wheel, page keys, Space and swipes a 
   assert.equal(key('Home', el('DIV', 'textbox')), null);
   assert.equal(key('ArrowDown', el('DIV', 'listbox')), null);
   assert.equal(key('ArrowDown', el('BODY'), { ctrlKey: true }), null);
+  // Left/Right on a focused button or link in scene content is left to that control; Up/Down still move
+  const btn = { tagName: 'BUTTON', getAttribute: () => null, closest: () => null };
+  assert.equal(key('ArrowRight', btn), null, 'Right on a focused scene button does not move');
+  assert.equal(key('ArrowLeft', btn), null, 'Left on a focused scene button does not move');
+  assert.deepEqual(key('ArrowDown', btn), { steps: 1 }, 'Down still moves even with a button focused');
+  // the intro's own route dot or nav item keeps moving the scene on Left/Right after a click focuses it
+  const dot = { tagName: 'BUTTON', getAttribute: () => null, closest: (sel) => (sel === '.sw-nav, .sw-route' ? {} : null) };
+  assert.deepEqual(key('ArrowRight', dot), { steps: 1 }, 'Right on the route dot still moves');
+  assert.deepEqual(key('ArrowLeft', dot), { steps: -1 }, 'Left on the route dot still moves');
   assert.equal(dirOf([0, 2200, 3500], 0, { steps: -1 }), null, 'nothing above the first scene');
   assert.equal(dirOf([0, 2200, 3500], 2200, { to: 0 }), 'up');
 });

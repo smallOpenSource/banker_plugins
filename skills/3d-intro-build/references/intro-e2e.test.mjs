@@ -358,6 +358,18 @@ test('a press ended without a pointerup (context menu, focus lost) lets the page
     await page.waitForFunction(() => !window.IntroStepNav.current.state().moving, null, { timeout: 20_000 });
     assert.ok(Math.abs((await y()) - stops[1]) <= 2, `after a ${ending} the page settles on the nearest stop (at ${await y()})`);
   }
+  // a focused element inside the page losing focus (capture-phase blur, target !== window) must NOT end a press:
+  // the page stays off the stop until a real release (window blur), then settles.
+  const off = Math.round(stops[1] + 0.3 * (stops[2] - stops[1]));
+  await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await page.evaluate((v) => window.scrollTo(0, v), off);
+  await page.evaluate(() => document.body.dispatchEvent(new FocusEvent('blur', { bubbles: false }))); // target = body, not window
+  await page.waitForTimeout(1200);
+  assert.ok(Math.abs((await y()) - off) <= 2, `an inner element blur does not release the press (still at ${await y()}, off ${off})`);
+  await page.evaluate(() => window.dispatchEvent(new Event('blur'))); // a real window blur releases
+  await page.waitForTimeout(1200);
+  await page.waitForFunction(() => !window.IntroStepNav.current.state().moving, null, { timeout: 20_000 });
+  assert.ok(Math.abs((await y()) - stops[1]) <= 2, `after the window blur the page settles (at ${await y()})`);
   // End while a PageDown move runs: the copy at the end shows at once (isn-instant), not through the 0.35 s fade
   await page.keyboard.press('Home');
   await page.waitForTimeout(1500);

@@ -254,6 +254,9 @@
   const pressable = function (t) {
     return Boolean(t) && (/^(BUTTON|A|SUMMARY)$/.test(t.tagName || '') || /^(button|link|checkbox|switch|menuitem|tab|option)$/.test(role(t)));
   };
+  // The intro's own controls (the route dots and the nav items) keep moving the scene on Left/Right after a click
+  // focuses them; another focused button or link (in scene content) leaves Left/Right to itself.
+  const ownControl = function (t) { return Boolean(t && t.closest && t.closest('.sw-nav, .sw-route')); };
   const KEYS = { ArrowDown: { steps: 1 }, ArrowRight: { steps: 1 }, ArrowUp: { steps: -1 }, ArrowLeft: { steps: -1 },
     PageDown: { scenes: 1 }, PageUp: { scenes: -1 }, Home: { to: 0, instant: true }, End: { to: 'last', instant: true } };
 
@@ -261,6 +264,7 @@
   function keyInput(e) {
     if (e.altKey || e.ctrlKey || e.metaKey || editable(e.target)) return null;
     if (e.key === ' ') return pressable(e.target) ? null : { scenes: e.shiftKey ? -1 : 1 };
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && pressable(e.target) && !ownControl(e.target)) return null;
     return KEYS[e.key] || null;
   }
 
@@ -640,7 +644,10 @@
     window.addEventListener('pointerdown', function () { ctx.pressed = true; clearTimeout(rest); }, true);
     // a press can end without a pointerup: a context menu, a release outside the window, a lost capture, the tab hidden
     const release = function () { if (!ctx.pressed) return; ctx.pressed = false; later(); };
-    ['pointerup', 'pointercancel', 'lostpointercapture', 'contextmenu', 'blur'].forEach(function (k) { window.addEventListener(k, release, true); });
+    ['pointerup', 'pointercancel', 'lostpointercapture', 'contextmenu'].forEach(function (k) { window.addEventListener(k, release, true); });
+    // Capture catches the window losing focus; a focused element inside the page losing focus (its own blur, which
+    // capture also sees) must not end a press, or a click that moves focus would clear `pressed` mid-press.
+    window.addEventListener('blur', function (e) { if (e.target === window) release(); }, true);
     document.addEventListener('visibilitychange', function () { if (document.hidden) release(); });
     window.addEventListener('scroll', function () {
       if (ctx.nav.state().moving) return;
