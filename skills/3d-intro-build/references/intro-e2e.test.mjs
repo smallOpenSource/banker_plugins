@@ -338,3 +338,61 @@ test('Home, End and a route dot jump at once, after their late posters have deco
   ({ stops, lastStop } = await open());
   await jump('dot 2 (late poster)', () => page.evaluate(() => document.querySelector('.sw-route__dot:nth-child(2)').click()), stops[1], true);
 });
+
+test('a press ended without a pointerup (context menu, focus lost) lets the page settle; Home or End during a move swaps the copy at once', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+  const server = await servedIntro(t, DARK);
+  const { chromium } = await loadPlaywright();
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
+  await page.goto(server.url, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.IntroStepNav && window.IntroStepNav.current);
+  const y = () => page.evaluate(() => Math.round(window.scrollY));
+  const stops = await page.evaluate(() => window.IntroStepNav.current.stops());
+  for (const ending of ['contextmenu', 'blur']) {
+    const off = Math.round(stops[1] + 0.3 * (stops[2] - stops[1]));
+    await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+    await page.evaluate((v) => window.scrollTo(0, v), off);
+    await page.evaluate((k) => window.dispatchEvent(new Event(k)), ending);
+    await page.waitForTimeout(1200);
+    await page.waitForFunction(() => !window.IntroStepNav.current.state().moving, null, { timeout: 20_000 });
+    assert.ok(Math.abs((await y()) - stops[1]) <= 2, `after a ${ending} the page settles on the nearest stop (at ${await y()})`);
+  }
+  // End while a PageDown move runs: the copy at the end shows at once (isn-instant), not through the 0.35 s fade
+  await page.keyboard.press('Home');
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => { window.__inst = []; (function f() { window.__inst.push(document.documentElement.classList.contains('isn-instant')); requestAnimationFrame(f); })(); });
+  await page.keyboard.press('PageDown');
+  await page.waitForTimeout(400);
+  await page.keyboard.press('End');
+  await page.waitForFunction(() => !window.IntroStepNav.current.state().moving, null, { timeout: 20_000 });
+  assert.ok((await page.evaluate(() => window.__inst)).some(Boolean), 'the instant move swaps the copy at once');
+});
+
+test('the seam probe gives up on a poster that does not arrive in time: that seam is unmeasured with the reason, and the probe ends', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intro-e2e-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  await makeMedia(dir);
+  fs.writeFileSync(path.join(dir, 'intro.json'), JSON.stringify(manifest()));
+  const built = assemble({ projectDir: dir });
+  const http = await import('node:http');
+  const held = [];
+  // a server that holds scene 2's poster (the first connector's poster too) for 8 s: the probe arrives at the
+  // first seam long before. (Held for ever, the page's load would never come and a screenshot waits for it.)
+  const srv = http.createServer((q, s) => {
+    const f = path.join(built.outDir, decodeURIComponent(q.url.split('?')[0]) === '/' ? 'index.html' : decodeURIComponent(q.url.split('?')[0]).slice(1));
+    if (/\/assets\/s2\.png$/.test(q.url) && !held.length) { held.push(s); setTimeout(() => { s.writeHead(200, { 'content-type': 'image/png' }); s.end(fs.readFileSync(f)); }, 8000); return; }
+    if (!fs.existsSync(f)) { s.writeHead(404); s.end(); return; }
+    s.writeHead(200, { 'content-type': { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.mp4': 'video/mp4' }[path.extname(f)] || 'application/octet-stream' });
+    s.end(fs.readFileSync(f));
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => srv.close());
+  const { chromium } = await loadPlaywright();
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const r = await seamProbe(browser, `http://127.0.0.1:${srv.address().port}/`, { viewport: { width: 1280, height: 800 }, posterDecodeMs: 1000, loadMs: 3000, slowClipsMs: 1500, settleMs: 3000, steps: 4 });
+  const unmeasured = r.boundaries.filter((b) => b.posterDiff === null && /did not decode within 1000 ms/.test(b.posterWhy || ''));
+  assert.ok(unmeasured.length >= 1, JSON.stringify(r.boundaries.map((b) => [b.to, b.posterDiff, b.posterWhy])));
+  assert.equal(r.posterUnmeasured >= unmeasured.length, true, 'counted as unmeasured, not as a pass');
+});

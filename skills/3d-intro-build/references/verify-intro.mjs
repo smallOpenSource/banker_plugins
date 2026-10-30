@@ -528,9 +528,11 @@ export async function verifyIntro(url, opts = {}) {
  * seam may show (a landing on a background plate is one colour for its last frames, so each seam's
  * limit adds plateSec of the clip before it, in vh). flickerDiff: the mean pixel difference (0-255)
  * between the poster a scene shows before its clip paints and the clip once it does, past which the
- * poster is a flicker. settleMs: the longest wait for clips to catch up with the scroll.
+ * poster is a flicker. settleMs: the longest wait for clips to catch up with the scroll. posterDecodeMs: the
+ * longest wait for the posters in view to decode on arrival; past it the seam is unmeasured (posterDiff null, posterWhy).
+ * loadMs: the longest wait for the page's load event (a resource that never answers must not stop the probe).
  */
-export const SEAM_DEFAULTS = { steps: 20, windowVh: 0.6, blankVh: 0.3, plateSec: 0.6, flickerDiff: 24, settleMs: 8000 };
+export const SEAM_DEFAULTS = { steps: 20, windowVh: 0.6, blankVh: 0.3, plateSec: 0.6, flickerDiff: 24, settleMs: 8000, posterDecodeMs: 5000, loadMs: 15000 };
 const OVERLAYS = ['.sw-copylayer', '.sw-topbar', '.sw-hint', '.sw-route', '.sw-scrollbar', '.isn-hint', '.isn-skip', '.isn-main'];
 
 /** The mountScrollWorld config in an assembled intro.js; null when it is not one. */
@@ -692,11 +694,11 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
   const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   if (slowClipsMs) await page.route(/\.mp4(\?|$)/, async (route) => { await new Promise((r) => setTimeout(r, slowClipsMs)); await route.continue(); });
-  await openIntro(page, url);
+  await openIntro(page, url, opts.loadMs);
   const segs = segmentsOf(config);
   const boundaries = [];
   for (let k = 1; k < segs.length; k++) {
-    if (opts.reload && k > 1) await openIntro(page, url);
+    if (opts.reload && k > 1) await openIntro(page, url, opts.loadMs);
     boundaries.push(await probeSeam(page, segs, k, opts));
   }
   await context.close();
@@ -706,8 +708,10 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
 }
 
 // Routing (the slow clips) turns the browser's HTTP cache off, so a fresh load fetches every clip again.
-async function openIntro(page, url) {
-  await page.goto(url, { waitUntil: 'load' });
+async function openIntro(page, url, loadMs = SEAM_DEFAULTS.loadMs) {
+  // the page's load is awaited at most loadMs: a resource whose answer never comes must not stop the probe
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('load', { timeout: loadMs }).catch(() => {});
   await page.waitForSelector('.sw-scene');
   // the probe parks the page between stops: step navigation must not settle it on one
   await page.evaluate(() => window.IntroStepNav?.current?.hold(true));
@@ -747,7 +751,8 @@ async function probeSeam(page, segs, k, o) {
     ...blank.map((b) => `seam ${prev.label} -> ${segs[k].label}: a near one-colour screen for ${b.lengthVh} vh (limit ${Math.round(limit * 100) / 100} vh)`),
     ...(arrival.flicker ? [`seam ${prev.label} -> ${segs[k].label}: the poster differs from the clip by ${arrival.diff} (limit ${o.flickerDiff})`] : []),
   ];
-  return { from: prev.label, to: segs[k].label, atVh: at, maxDiff, blank, blankLimitVh: Math.round(limit * 100) / 100, posterDiff: arrival.diff, arrival: arrival.states, failures };
+  return { from: prev.label, to: segs[k].label, atVh: at, maxDiff, blank, blankLimitVh: Math.round(limit * 100) / 100, posterDiff: arrival.diff,
+    ...(arrival.why ? { posterWhy: arrival.why } : {}), arrival: arrival.states, failures };
 }
 
 // Jump just past the seam, where the entering clip is at its first frames; when a poster shows there,
@@ -756,9 +761,14 @@ async function arrive(page, vh, o) {
   await scrollToVh(page, vh);
   // a scene shown by the jump paints nothing until its poster is decoded (0.1-0.35 s seen): wait for that, so the
   // capture is the poster, not the empty frame a jump shows (the empty frame is another matter than the flicker)
-  await page.evaluate(() => Promise.all([...document.querySelectorAll('.sw-scene')].filter((e) => Number(getComputedStyle(e).opacity) > 0.5)
-    .map((e) => e.querySelector('.sw-scene__still')?.decode().catch(() => {}))).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  // at most posterDecodeMs: a poster whose answer never comes leaves this seam unmeasured, with the reason
+  const decoded = await page.evaluate((ms) => Promise.race([
+    Promise.all([...document.querySelectorAll('.sw-scene')].filter((e) => Number(getComputedStyle(e).opacity) > 0.5)
+      .map((e) => e.querySelector('.sw-scene__still')?.decode().catch(() => {}))).then(() => true),
+    new Promise((r) => setTimeout(() => r(false), ms)),
+  ]).then((ok) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(ok))))), o.posterDecodeMs);
   const before = await sceneStates(page);
+  if (!decoded) return { diff: null, flicker: false, why: `a poster did not decode within ${o.posterDecodeMs} ms`, states: { before } };
   if (!(await posterShown(page))) { await settleClips(page, o.settleMs); return { diff: null, flicker: false, states: { before } }; }
   const early = await capture(page);
   await page.waitForFunction(() => [...document.querySelectorAll('.sw-scene')]

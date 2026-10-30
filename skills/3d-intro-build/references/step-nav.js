@@ -471,6 +471,8 @@
       onArrive: function () { ctx.mark(); requestAnimationFrame(function () { requestAnimationFrame(function () { instantCopy(false); }); }); },
       move: function (from, to, done, instant) {
         const mine = ++pending;
+        // an instant move swaps the copy at once even when it retargets a move already under way (no onLeave then)
+        instantCopy(instant);
         ctx.loader.begin(mine);
         // from where the page is once the posters are ready: an earlier move may have run on while waiting
         postersReady(world, instant ? o.instantDecodeCapMs : o.decodeCapMs, function () {
@@ -636,7 +638,10 @@
     const later = function () { clearTimeout(rest); rest = setTimeout(function () { settle(ctx); }, ctx.o.snapMs); };
     // while a pointer holds the page or its scrollbar, nothing settles; snapMs after it lets go, it may
     window.addEventListener('pointerdown', function () { ctx.pressed = true; clearTimeout(rest); }, true);
-    ['pointerup', 'pointercancel'].forEach(function (k) { window.addEventListener(k, function () { ctx.pressed = false; later(); }, true); });
+    // a press can end without a pointerup: a context menu, a release outside the window, a lost capture, the tab hidden
+    const release = function () { if (!ctx.pressed) return; ctx.pressed = false; later(); };
+    ['pointerup', 'pointercancel', 'lostpointercapture', 'contextmenu', 'blur'].forEach(function (k) { window.addEventListener(k, release, true); });
+    document.addEventListener('visibilitychange', function () { if (document.hidden) release(); });
     window.addEventListener('scroll', function () {
       if (ctx.nav.state().moving) return;
       later();
