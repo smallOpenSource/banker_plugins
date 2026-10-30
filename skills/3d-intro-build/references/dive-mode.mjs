@@ -102,7 +102,7 @@ async function prepare(o) {
   const dir = path.join(o.projectDir, o.clipsDir);
   fs.mkdirSync(dir, { recursive: true });
   const bin = o.ffmpeg || await resolveFfmpeg();
-  const ctx = { o, emit, dir, bin, n: o.manifest.sections.length, seeds: [], seams: [], raw: {}, shown: {}, exitSeed: {} };
+  const ctx = { o, emit, dir, bin, n: o.manifest.sections.length, seeds: [], seams: [], raw: {}, shown: {} };
   for (let i = 0; i < ctx.n; i++) ctx.seeds.push(await sizedStill(ctx, i));
   return ctx;
 }
@@ -189,7 +189,6 @@ async function seedFor(ctx, leg) {
   if (leg.seed.from === 'still') return ctx.seeds[leg.scene];
   const png = path.join(ctx.dir, `seed-${leg.name}.png`);
   await extractLastFrame(ctx.shown[leg.seed.leg], png, { ffmpeg: ctx.bin });
-  ctx.exitSeed[leg.name] = png;
   return png;
 }
 
