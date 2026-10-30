@@ -230,14 +230,29 @@ function freshUnread(d, now) {
 
 const justStarted = () => new Stop("busy", "이 폴더의 send 가 방금 시작했다");
 
+// Windows makes "wx" fail EPERM (or EACCES, EBUSY), not EEXIST, where another process is deleting the file (delete
+// pending: a lock given back that moment). Such a code is tried again for up to a second; then it is the lock there
+// when the file is seen, else this send's error. Any other error fails at once.
+const PENDING = new Set(["EPERM", "EACCES", "EBUSY"]);
+const PENDING_TRIES = 40;
+const PENDING_WAIT_MS = 25;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
 // The lock (or the take-over mark) made with "wx": one of two sends that make it together has it.
 function makeLock(file, now) {
-  try {
-    writeFileSync(file, `${process.pid} ${new Date(now).toISOString()}\n`, { flag: "wx", mode: 0o600 });
-    return true;
-  } catch (e) {
-    if (e.code !== "EEXIST") throw e;
-    return false;
+  for (let tries = 1; ; tries += 1) {
+    try {
+      writeFileSync(file, `${process.pid} ${new Date(now).toISOString()}\n`, { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (e) {
+      if (e.code === "EEXIST") return false;
+      if (!PENDING.has(e.code)) throw e;
+      if (tries >= PENDING_TRIES) {
+        if (existsSync(file)) return false;
+        throw e;
+      }
+    }
+    pause(PENDING_WAIT_MS);
   }
 }
 

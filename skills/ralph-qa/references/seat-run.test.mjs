@@ -5,6 +5,8 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { chmodSync, closeSync, constants, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -344,6 +346,66 @@ test("takeLock: a stale lock is taken over only under .taking.md, judged again t
   }
   staleLock();
   assert.equal(takeOver(j.dir, lock), lock, "still stale under the mark: taken over");
+  assert.equal(lockHolder(j.dir), process.pid);
+  rmSync(lock);
+});
+
+// The next `times` "wx" writes of a file named `name` fail with `code`, as Windows fails one where a file is being
+// deleted. Gives back the count of the writes it failed and a restore.
+function failWx(name, code, times) {
+  const real = fs.writeFileSync;
+  const seen = { failed: 0 };
+  fs.writeFileSync = (f, data, o) => {
+    if (seen.failed < times && String(f).endsWith(name) && o?.flag === "wx") {
+      seen.failed += 1;
+      throw Object.assign(new Error(`${code}: fake`), { code });
+    }
+    return real(f, data, o);
+  };
+  syncBuiltinESMExports();
+  seen.restore = () => {
+    fs.writeFileSync = real;
+    syncBuiltinESMExports();
+  };
+  return seen;
+}
+
+test("takeLock: EPERM, EACCES, EBUSY from wx (a lock being deleted on Windows) are tried again; other errors fail at once", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = join(j.dir, ".running.md");
+  const run = (name, code, times, fn) => {
+    const f = failWx(name, code, times);
+    try {
+      return [fn(), f.failed];
+    } catch (e) {
+      return [e, f.failed];
+    } finally {
+      f.restore();
+    }
+  };
+  for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+    const [got, failed] = run(".running.md", code, 3, () => takeLock(j.dir));
+    assert.equal(got, lock, `${code}: taken once the file is gone`);
+    assert.equal(failed, 3);
+    assert.equal(lockHolder(j.dir), process.pid);
+    rmSync(lock);
+  }
+  // the same code to the end: this send's error with no lock to see, the lock (here a live one) when there is one
+  const started = Date.now();
+  let [got] = run(".running.md", "EPERM", 1e9, () => takeLock(j.dir));
+  assert.equal(got.code, "EPERM", "no lock file: the error");
+  assert.ok(Date.now() - started < 10000, "within its bound");
+  writeFileSync(lock, `${process.ppid} x\n`);
+  [got] = run(".running.md", "EPERM", 1e9, () => takeLock(j.dir));
+  assert.ok(got.code === "busy" && new RegExp(`pid ${process.ppid}`).test(got.message), "a lock to see: busy");
+  rmSync(lock);
+  // another code fails at once, and the take-over mark is made the same way
+  const [rofs, tried] = run(".running.md", "EROFS", 1e9, () => takeLock(j.dir));
+  assert.deepEqual([rofs.code, tried], ["EROFS", 1]);
+  writeFileSync(lock, `${2 ** 22 + 12345} x\n`);
+  const [over, failed] = run(".taking.md", "EPERM", 3, () => takeLock(j.dir));
+  assert.deepEqual([over, failed], [lock, 3], "the mark too is tried again");
   assert.equal(lockHolder(j.dir), process.pid);
   rmSync(lock);
 });
