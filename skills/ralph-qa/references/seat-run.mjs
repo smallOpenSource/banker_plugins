@@ -19,10 +19,11 @@
  * (the DRM of a closed network encrypts files by their extension, and .md is one it leaves readable).
  */
 import { fork } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { constants as osConstants, homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Stop as RunStop, bases, isFile, listDir, lstatOr, makeRunFolder, norm, realOr, removeMarked, runFolder } from "./run-folder.mjs";
 import { POLICY, cleanSeat, policyIntact, strayEnvFiles, sweepBase } from "./gemini-seat.mjs";
 import { scan } from "./payload-scan.mjs";
 import { MAX_BYTES, Stop, buildPayload, checkPayload, gitAt, markerCount, readRun, splitPayload, untracked } from "./seat-payload.mjs";
@@ -42,6 +43,8 @@ const RUN_NAME = /^ralph-qa\.[A-Za-z0-9]+$/;
 const ANY_RUN = /^ralph-qa(-out)?\.[A-Za-z0-9]+$/;
 // The lock of a send that runs: one name, made with "wx", holding the pid and the time.
 const LOCK_NAME = ".running.md";
+const TAKING_NAME = ".taking.md";
+const STALE_TAKING_MS = 60 * 1000;
 
 class Usage extends Error {}
 const USAGE = "usage: node seat-run.mjs init | untracked --repo <repo> [--folder <f>] | prepare --dir <d> --repo <repo> --base <base|auto> --id <id>"
@@ -93,98 +96,30 @@ export function fromMsys(p, platform) {
   return m ? `${m[1].toUpperCase()}:\\${(m[2] || "").replace(/\//g, "\\")}` : p;
 }
 
-const lstatOr = (p) => {
-  try {
-    return lstatSync(p);
-  } catch {
-    return null;
-  }
-};
-const isFile = (p) => Boolean(lstatOr(p)?.isFile());
-const listDir = (dir) => {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
-  }
-};
-
-// A folder init made: named ralph-qa.<letters and digits>, a folder and no link, with its marker. Its answer folder
-// is the sibling ralph-qa-out.<the same>.
-export function runFolder(dir) {
-  const d = resolve(String(dir));
-  if (!RUN_NAME.test(basename(d)) || !lstatOr(d)?.isDirectory() || !isFile(join(d, ".ralph-qa"))) {
-    throw new Stop("not-a-run-folder", `init 이 만든 폴더가 아니다: ${d}`);
-  }
+// A folder init made (run-folder.mjs: its name, its marker, right under a known private base) and its answer folder,
+// the sibling ralph-qa-out.<the same>.
+function runPair(dir, ctx) {
+  const { d } = runFolder(dir, ctx, ["ralph-qa"]);
   const o = join(dirname(d), basename(d).replace(/^ralph-qa\./, "ralph-qa-out."));
   const answers = lstatOr(o);
   return { d, o: answers?.isDirectory() && isFile(join(o, ".ralph-qa")) ? o : null };
 }
 
-const homeOf = (ctx) => (ctx.platform === "win32" ? ctx.env.USERPROFILE : ctx.env.HOME) || homedir();
-const norm = (ctx, p) => (ctx.platform === "win32" ? p.toLowerCase() : p);
-const realOr = (p) => {
-  try {
-    return realpathSync.native(p);
-  } catch {
-    return p;
-  }
-};
-
-// A folder only this account may write in (POSIX: its own, no group or other write bit).
-function privateDir(p) {
-  try {
-    const st = statSync(p);
-    return st.isDirectory() && st.uid === process.getuid() && (st.mode & 0o022) === 0;
-  } catch {
-    return false;
-  }
-}
-const insideHome = (ctx, p) => norm(ctx, realOr(p)).startsWith(norm(ctx, realOr(homeOf(ctx))) + sep);
-
-// The base for this run's folders, and every base a run of any version may have used, for the day rule. Linux: an
-// XDG_RUNTIME_DIR of this account's own, else ~/.cache; macOS: $TMPDIR (its own per account); Windows: %TEMP% when it
-// is inside the home, else ~/.cache (the old Git Bash runs used ~/.cache). Never /tmp: gemini reads a .env it finds
-// walking up from its folder, and another account may put one there.
-export function bases(ctx) {
-  const cache = join(homeOf(ctx), ".cache");
-  const base = baseOn(ctx, cache);
-  const xdg = ctx.platform === "linux" && ctx.env.XDG_RUNTIME_DIR ? [resolve(ctx.env.XDG_RUNTIME_DIR)] : [];
-  return { base, known: [...new Set([base, cache, ...xdg])] };
-}
-
-function baseOn(ctx, cache) {
-  const { env } = ctx;
-  if (ctx.platform === "win32") return env.TEMP && insideHome(ctx, env.TEMP) ? resolve(env.TEMP) : cache;
-  if (ctx.platform === "darwin") return env.TMPDIR ? resolve(env.TMPDIR) : cache;
-  const xdg = env.XDG_RUNTIME_DIR;
-  return xdg && isAbsolute(xdg) && privateDir(xdg) ? resolve(xdg) : cache;
-}
-
-function readyBase(ctx, base) {
-  try {
-    mkdirSync(base, { recursive: true, mode: 0o700 });
-  } catch (e) {
-    throw new Stop("base-not-writable", `기준 폴더를 만들 수 없다(${e.code}): ${base}`);
-  }
-  if (ctx.platform !== "win32" && !privateDir(base)) throw new Stop("base-not-private", `기준 폴더를 다른 계정도 쓸 수 있다: ${base}`);
-}
-
-// Two folders with the same six characters: the payload one by mkdtemp, its answer folder beside it.
-function makeFolders(base) {
+// Two folders with the same six characters: the payload one by run-folder.mjs, its answer folder beside it.
+function makeFolders(ctx) {
   for (let tries = 0; tries < 20; tries += 1) {
-    const d = mkdtempSync(join(base, "ralph-qa."));
+    const { dir: d, base } = makeRunFolder(ctx, "ralph-qa");
     const o = join(base, basename(d).replace(/^ralph-qa\./, "ralph-qa-out."));
     try {
       mkdirSync(o, { mode: 0o700 });
-      for (const p of [d, o]) writeFileSync(join(p, ".ralph-qa"), "", { mode: 0o600 });
-      return { d, o };
+      writeFileSync(join(o, ".ralph-qa"), "", { mode: 0o600 });
+      return { d, o, base };
     } catch (e) {
       rmSync(d, { recursive: true, force: true });
-      if (e.code !== "EEXIST") throw e;
+      if (e.code !== "EEXIST") throw new Stop("base-not-writable", `기준 폴더에 쓸 수 없다(${e.code}): ${base}`);
     }
   }
-  throw new Stop("base-not-writable", `기준 폴더에 새 폴더 이름을 정하지 못했다: ${base}`);
+  throw new Stop("base-not-writable", `기준 폴더에 새 폴더 이름을 정하지 못했다: ${bases(ctx).base}`);
 }
 
 // Whether `dir` is inside a git work tree: a seat would then read the repo through its tools.
@@ -197,20 +132,12 @@ function insideRepo(ctx, dir) {
 }
 
 function init(_o, ctx) {
-  const { base } = bases(ctx);
-  readyBase(ctx, base);
-  let made;
-  try {
-    made = makeFolders(base);
-  } catch (e) {
-    if (e instanceof Stop) throw e;
-    throw new Stop("base-not-writable", `기준 폴더에 쓸 수 없다(${e.code}): ${base}`);
-  }
+  const made = makeFolders(ctx);
   if (insideRepo(ctx, made.d)) {
     for (const p of [made.d, made.o]) rmSync(p, { recursive: true, force: true });
-    throw new Stop("inside-repo", `기준 폴더가 git 저장소 안이다: ${base}`);
+    throw new Stop("inside-repo", `기준 폴더가 git 저장소 안이다: ${made.base}`);
   }
-  return [{ ok: true, dir: made.d, out: made.o, base }, 0, made.d];
+  return [{ ok: true, dir: made.d, out: made.o, base: made.base }, 0, made.d];
 }
 
 function listUntracked(o, ctx) {
@@ -235,15 +162,15 @@ function verdict(result) {
 }
 
 function prepare(o, ctx) {
-  const { d } = runFolder(o.dir);
+  const { d } = runPair(o.dir, ctx);
   refuseSent(d);
   const built = buildPayload({ dir: d, repo: o.repo, base: o.base, id: o.id, env: ctx.env });
   const [result, code] = verdict({ dir: d, prompt: join(d, "prompt.md"), raw: join(d, "raw.md"), unsentFile: join(d, "unsent.md"), ...built });
   return [result, code, d];
 }
 
-function check(o) {
-  const { d } = runFolder(o.dir);
+function check(o, ctx) {
+  const { d } = runPair(o.dir, ctx);
   const id = readRun(d).id;
   const c = checkPayload({ dir: d, id });
   if (c.markers !== 2) throw new Stop("markers", `표지가 두 줄이 아니다(${c.markers}줄). 가리다 표지를 지웠으면 prepare 를 다시 한다`);
@@ -262,7 +189,7 @@ const readStdin = (ctx) => {
 
 function put(o, ctx) {
   if (!["short.md", "spec.md"].includes(o.name)) throw new Usage(`--name 은 short.md 나 spec.md 다: ${String(o.name).slice(0, 80)}`);
-  const { d } = runFolder(o.dir);
+  const { d } = runPair(o.dir, ctx);
   refuseSent(d);
   const data = readStdin(ctx);
   writeFileSync(join(d, o.name), data, { mode: 0o600 });
@@ -294,22 +221,71 @@ export function liveLock(d, now = Date.now()) {
   return st && st.isFile() && pid !== process.pid && now - st.mtimeMs < STALE_LOCK_MS && alive(pid) ? pid : null;
 }
 
-// Takes the folder's lock: "wx" lets one of two sends that start together have it. A stale lock is taken over once
-// (two sends that both find the same stale lock is the one gap left). Gives back the lock's path.
+// A lock with no number to read (empty: another send made it and has not written its number yet; or broken) touched
+// in the last 15 minutes: taken over, it would let two sends hold the folder.
+function freshUnread(d, now) {
+  const st = lockPid(d) ? null : lstatOr(join(d, LOCK_NAME));
+  return Boolean(st && st.isFile() && now - st.mtimeMs < STALE_LOCK_MS);
+}
+
+const justStarted = () => new Stop("busy", "이 폴더의 send 가 방금 시작했다");
+
+// Windows makes "wx" fail EPERM (or EACCES, EBUSY), not EEXIST, where another process is deleting the file (delete
+// pending: a lock given back that moment). Such a code is tried again for up to a second; then it is the lock there
+// when the file is seen, else this send's error. Any other error fails at once.
+const PENDING = new Set(["EPERM", "EACCES", "EBUSY"]);
+const PENDING_TRIES = 40;
+const PENDING_WAIT_MS = 25;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// The lock (or the take-over mark) made with "wx": one of two sends that make it together has it.
+function makeLock(file, now) {
+  for (let tries = 1; ; tries += 1) {
+    try {
+      writeFileSync(file, `${process.pid} ${new Date(now).toISOString()}\n`, { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (e) {
+      if (e.code === "EEXIST") return false;
+      if (!PENDING.has(e.code)) throw e;
+      if (tries >= PENDING_TRIES) {
+        if (existsSync(file)) return false;
+        throw e;
+      }
+    }
+    pause(PENDING_WAIT_MS);
+  }
+}
+
+// A stale lock is taken over only under the take-over mark .taking.md, and judged again under it: of two sends that
+// both found it stale, the second finds the first's new lock live (or with no number yet) and is busy; neither removes
+// a lock that is not stale. A mark left by a send that died taking over is cleared once it is a minute old (that send
+// is busy; the next one goes on), so it holds the folder no longer than that.
+export function takeOver(d, lock, now = Date.now()) {
+  const taking = join(d, TAKING_NAME);
+  if (!makeLock(taking, now)) {
+    const st = lstatOr(taking);
+    if (st?.isFile() && now - st.mtimeMs >= STALE_TAKING_MS) rmSync(taking, { force: true });
+    throw new Stop("busy", "다른 send 가 이 폴더의 낡은 잠금을 넘겨받는 중이다");
+  }
+  try {
+    if (liveLock(d, now) || freshUnread(d, now)) throw justStarted();
+    rmSync(lock, { force: true });
+    if (!makeLock(lock, now)) throw justStarted();
+    return lock;
+  } finally {
+    rmSync(taking, { force: true });
+  }
+}
+
+// Takes the folder's lock: "wx" lets one of two sends that start together have it; a stale one is taken over under
+// the take-over mark. Gives back the lock's path.
 export function takeLock(d, now = Date.now()) {
   const lock = join(d, LOCK_NAME);
-  for (let tries = 0; tries < 2; tries += 1) {
-    try {
-      writeFileSync(lock, `${process.pid} ${new Date(now).toISOString()}\n`, { flag: "wx", mode: 0o600 });
-      return lock;
-    } catch (e) {
-      if (e.code !== "EEXIST") throw e;
-    }
-    const pid = liveLock(d, now);
-    if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
-    rmSync(lock, { force: true });
-  }
-  throw new Stop("busy", "이 폴더의 send 가 방금 시작했다");
+  if (makeLock(lock, now)) return lock;
+  const pid = liveLock(d, now);
+  if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
+  if (freshUnread(d, now)) throw justStarted();
+  return takeOver(d, lock, now);
 }
 
 // Touches the lock every `every` ms while a send runs: a send past 15 minutes (split parts) stays live to cleanup.
@@ -330,31 +306,22 @@ function giveBack(lock) {
   if (lockPid(dirname(lock)) === process.pid) rmSync(lock, { force: true });
 }
 
-// The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker.
-// A marked folder removed. One that cannot be removed gets back its marker (if the removal took it) and its times
-// (what the removal took from it changed them), so it stays a marked folder past a day: a later cleanup sweeps it
-// again, and cleanup --dir on it still finds a run folder.
-function removeMarked(p) {
-  const was = lstatOr(p);
+// The lock, and only then the last look for result-send.md: a send that checked before another gave the lock back
+// finds the folder sent here, not after it sent again. A stop here gives the lock back.
+export function holdFolder(d, now = Date.now()) {
+  const lock = takeLock(d, now);
   try {
-    rmSync(p, { recursive: true, force: true, maxRetries: 3 });
+    refuseSent(d);
   } catch (e) {
-    keepMarked(p, was);
+    giveBack(lock);
     throw e;
   }
+  return lock;
 }
 
-function keepMarked(p, was) {
-  try {
-    if (!lstatOr(p)?.isDirectory()) return;
-    if (!isFile(join(p, ".ralph-qa"))) writeFileSync(join(p, ".ralph-qa"), "", { flag: "wx", mode: 0o600 });
-    if (was) utimesSync(p, was.atime, was.mtime);
-  } catch {
-    /* the folder takes no marker or times either */
-  }
-}
-
-// One that cannot be removed (a held handle, a folder this account cannot empty) goes to `left` with why; the rest go on.
+// The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker (removed
+// by run-folder.mjs, the marker last). One that cannot be removed (a held handle, a folder this account cannot
+// empty) goes to `left` with why; the rest go on.
 function dayRule(base, now, left) {
   const removed = [];
   for (const name of listDir(base)) {
@@ -362,7 +329,7 @@ function dayRule(base, now, left) {
     const st = ANY_RUN.test(name) ? lstatOr(p) : null;
     if (!st?.isDirectory() || now - st.mtimeMs <= DAY_MS || !isFile(join(p, ".ralph-qa"))) continue;
     try {
-      removeMarked(p);
+      removeMarked(p, ".ralph-qa");
       removed.push(p);
     } catch (e) {
       left.push({ path: p, why: e.code || e.message });
@@ -376,7 +343,7 @@ function removeOwn(folders) {
   const stayed = [];
   for (const p of folders.filter(Boolean)) {
     try {
-      removeMarked(p);
+      removeMarked(p, ".ralph-qa");
     } catch (e) {
       stayed.push(`${p} (${e.code || e.message})`);
     }
@@ -430,7 +397,7 @@ const readIdOr = (d) => {
 };
 
 async function cleanup(o, ctx) {
-  const { d, o: out } = runFolder(o.dir);
+  const { d, o: out } = runPair(o.dir, ctx);
   const pid = o.force ? null : liveLock(d, ctx.now());
   if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid}). 끝난 뒤 다시 한다`);
   const { known } = bases(ctx);
@@ -586,8 +553,8 @@ async function cliChecks(ctx, seat, plan, exe) {
 }
 
 // The parts a seat gets: the payload, or its split, each with its two markers and no secret-like line.
-function partsOf(payload, n, id, short) {
-  const parts = n ? splitPayload(payload, n, id, short) : [payload];
+function partsOf(payload, n, { id, short, shortSha }) {
+  const parts = n ? splitPayload(payload, n, id, short, shortSha) : [payload];
   parts.forEach((part, k) => {
     if (markerCount(part, id) !== 2 || scan(part.toString("utf8")).count) throw new Stop("split", `부분 ${k + 1}/${parts.length} 의 표지나 검사가 맞지 않는다`);
   });
@@ -699,7 +666,7 @@ async function seatWork(ctx, run, seat, g, payload, base) {
   if (why) return { ...base, why };
   let parts;
   try {
-    parts = partsOf(payload, run.split[seat.cli], run.id, run.short);
+    parts = partsOf(payload, run.split[seat.cli], run);
   } catch (e) {
     if (e instanceof Stop) return { ...base, why: "split", notes: [e.message] };
     throw e;
@@ -708,10 +675,37 @@ async function seatWork(ctx, run, seat, g, payload, base) {
   return runParts(ctx, run, seat, g, parts, base);
 }
 
+// The seat CLI's version, read without starting gemini or opencode: codex's from the probe's `codex --version`, the
+// others' from the package.json of their npm package (beside the entry point, above its real path, or under the
+// prefix's lib/node_modules), opencode's own installer folder holding the plugin package of its version.
+const PACKAGES = { codex: "@openai/codex", gemini: "@google/gemini-cli", opencode: "opencode-ai" };
+const readJson = (p) => {
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+};
+function installedVersion(cli, exe) {
+  const real = realOr(exe);
+  const pkg = PACKAGES[cli].split("/");
+  const tries = [join(dirname(exe), "node_modules", ...pkg, "package.json"), join(dirname(dirname(exe)), "lib", "node_modules", ...pkg, "package.json")];
+  for (let dir = dirname(real), k = 0; k < 5; k += 1, dir = dirname(dir)) tries.push(join(dir, "package.json"));
+  const found = tries.map(readJson).find((j) => j?.name === PACKAGES[cli] && typeof j.version === "string");
+  if (found) return found.version;
+  const own = cli === "opencode" ? readJson(join(dirname(dirname(real)), "package.json"))?.dependencies?.["@opencode-ai/plugin"] : null;
+  return typeof own === "string" ? `${own} (설치 폴더의 @opencode-ai/plugin)` : null;
+}
+export function cliVersion(cli, exe, probed) {
+  if (cli === "codex" && probed?.version) return String(probed.version).slice(0, 80);
+  return installedVersion(cli, exe) || "알 수 없음";
+}
+
 async function sendSeat(ctx, run, seat, payload) {
-  const base = { seat: seat.cli, model: seat.model, status: "not-sent", why: null, exit: null, signal: null, secs: 0, answer: null, errors: null, facts: {}, notes: [] };
+  const none = { seat: seat.cli, model: seat.model, status: "not-sent", why: null, exit: null, signal: null, secs: 0, answer: null, errors: null, facts: {}, notes: [] };
   const g = guards(ctx, seat, run);
-  if (g.why) return { ...base, why: g.why, notes: g.notes || [] };
+  if (g.why) return { ...none, why: g.why, notes: g.notes || [] };
+  const base = { ...none, cliVersion: cliVersion(seat.cli, g.exe, g.probed) };
   let result;
   try {
     mkdirSync(join(run.d, seat.cli), { recursive: true, mode: 0o700 });
@@ -719,7 +713,7 @@ async function sendSeat(ctx, run, seat, payload) {
   } catch (e) {
     // the runner's own error in this seat's work (its copy cannot be written: ENOSPC, EACCES, a Windows lock) is this
     // seat's failure: the other seats go on, and the lock and the stop handlers hold until they end
-    if (e instanceof Stop) throw e;
+    if (e instanceof RunStop) throw e;
     result = { ...base, status: "failed", why: "spawn", notes: [`좌석을 준비하지 못했다(${e.code || e.message})`] };
   } finally {
     const notes = await afterSeat(ctx, run, seat);
@@ -775,29 +769,42 @@ function declared(run, bytes, seats, d) {
 }
 
 function sendStart(o, ctx, a) {
-  const { d, o: out } = runFolder(o.dir);
+  const { d, o: out } = runPair(o.dir, ctx);
   if (!out) throw new Stop("not-a-run-folder", `답 폴더(ralph-qa-out.*)가 없다: ${d}`);
   refuseSent(d);
   if (ctx.env.CODEX_SANDBOX_NETWORK_DISABLED === "1" && !a.dryRun) throw new Stop("sandboxed", "Codex sandbox 가 네트워크를 막는다. 승인을 받아 sandbox 밖에서 send 를 다시 한다");
-  const { id, short } = readRun(d);
+  const { id, short, shortsha } = readRun(d);
   const payload = payloadToSend(d, id, Boolean(o["allow-large"]));
-  return { d, out, id, payload, short: Number(short) };
+  return { d, out, id, payload, short: Number(short), shortSha: shortsha || null };
 }
 
+const resultJson = (command, result) => `${JSON.stringify({ command, ...result }, null, 2)}\n`;
+const writeResult = (dir, name, json) => {
+  try {
+    writeFileSync(join(dir, `result-${name}.md`), json, { mode: 0o600 });
+  } catch {
+    /* the JSON on stdout is the answer */
+  }
+};
+
+// A send that went out writes result-send.md before the lock goes back, so the next send to take the lock finds it
+// (report writes it again with the same JSON).
 async function send(o, ctx) {
   const a = sendArgs(o);
-  const { d, out, id, payload, short } = sendStart(o, ctx, a);
-  const lock = takeLock(d, ctx.now());
+  const { d, out, id, payload, short, shortSha } = sendStart(o, ctx, a);
+  const lock = holdFolder(d, ctx.now());
   const touch = keepFresh(lock);
   const signals = watchSignals();
-  const run = { ...a, d, o: out, id, short, signalled: () => signals.code() !== 0 };
+  const run = { ...a, d, o: out, id, short, shortSha, signalled: () => signals.code() !== 0 };
   try {
     // every seat settles before the lock goes back and the stop handlers go away
     const settled = await Promise.allSettled(a.seats.map((x) => sendSeat(ctx, run, x, payload)));
     const thrown = settled.find((x) => x.status === "rejected");
     if (thrown) throw thrown.reason;
     const seats = settled.map((x) => x.value);
+    if (!a.dryRun) appendFileSync(join(d, "run.md"), seats.filter((x) => x.cliVersion).map((x) => `cli-${x.seat} ${x.cliVersion}\n`).join(""), { mode: 0o600 });
     const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };
+    if (!a.dryRun) writeResult(d, "send", resultJson("send", result));
     return [result, signals.code(), a.dryRun ? null : d];
   } finally {
     clearInterval(touch);
@@ -810,23 +817,17 @@ const COMMANDS = { init, untracked: listUntracked, prepare, check, send, cleanup
 
 // The JSON on stdout and in <d>/result-<command>.md (not for cleanup: the folder is gone).
 function report(ctx, command, dir, result, code, name = command) {
-  const json = `${JSON.stringify({ command, ...result }, null, 2)}\n`;
+  const json = resultJson(command, result);
   ctx.stdout.write(json);
   if (result.message) ctx.stderr.write(`${result.message}\n`);
-  if (dir) {
-    try {
-      writeFileSync(join(dir, `result-${name}.md`), json, { mode: 0o600 });
-    } catch {
-      /* the JSON on stdout is the answer */
-    }
-  }
+  if (dir) writeResult(dir, name, json);
   return code;
 }
 
 // A stop in the folder it concerns, when that is a run folder.
-const folderOf = (o) => {
+const folderOf = (o, ctx) => {
   try {
-    return o.dir ? runFolder(o.dir).d : null;
+    return o.dir ? runPair(o.dir, ctx).d : null;
   } catch {
     return null;
   }
@@ -835,17 +836,20 @@ const folderOf = (o) => {
 // A send that stopped goes to result-send-stop.md: result-send.md says the folder was sent, and a stopped send sent nothing.
 const stopName = (command) => (command === "send" ? "send-stop" : command);
 
+// A stop of run-folder.mjs carries no name: this runner's goes before it.
+const named = (message) => (message.startsWith("ralph-qa: ") ? message : `ralph-qa: ${message}`);
+
 function failed(ctx, { command, o }, e) {
   if (e instanceof Usage) {
     ctx.stderr.write(`ralph-qa: ${e.message}\n${USAGE}`);
     return 2;
   }
-  if (!(e instanceof Stop)) {
+  if (!(e instanceof RunStop)) {
     ctx.stderr.write(`ralph-qa: 실행기 내부 오류(${e?.code || e?.name || "error"}): ${String(e?.message || e).split("\n")[0]}\n`);
     return 2;
   }
-  const result = { ok: false, stop: e.code, message: e.message, detail: e.detail };
-  return report(ctx, command, folderOf(o), result, EXIT_OF[e.code] || 3, stopName(command));
+  const result = { ok: false, stop: e.code, message: named(e.message), detail: e.detail };
+  return report(ctx, command, folderOf(o, ctx), result, EXIT_OF[e.code] || 3, stopName(command));
 }
 
 // ---- the send's own node ----

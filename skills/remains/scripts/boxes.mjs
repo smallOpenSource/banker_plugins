@@ -117,10 +117,14 @@ export const nodeTestCommand = (os, files) =>
 
 // The script that runs on the box from the top of the sent tree. On Linux and macOS it first leaves its process
 // id beside itself, so a stopped run can end everything it started. On Windows it is a .cmd file: `call` returns
-// from a batch command such as npm, and the command stays out of the ssh and cmd /c quoting.
+// from a batch command such as npm, and the command stays out of the ssh and cmd /c quoting. The file is UTF-8, so
+// it first sets that code page: cmd reads each line in the console's (949 on a Korean Windows), and a Korean
+// argument came to node broken. `call` cannot run for, if or a ( block, so those go as they are.
+const NO_CALL = /^\s*(?:(?:for|if)(?=[\s/]|$)|\()/i;
 export function runScript(b, prefix, command) {
   if (b.os === "win32") {
-    const lines = ["@echo off", `cd /d "%~dp0${prefix}" || exit /b 97`, `call ${command}`, "exit /b %ERRORLEVEL%"];
+    const run = NO_CALL.test(command) ? command : `call ${command}`;
+    const lines = ["@echo off", "chcp 65001 >nul 2>&1", `cd /d "%~dp0${prefix}" || exit /b 97`, run, "exit /b %ERRORLEVEL%"];
     return { ext: ".cmd", text: lines.map((l) => `${l}\r\n`).join("") };
   }
   const path = b.path?.length ? [`${pathPrefix(b)}export PATH`] : [];

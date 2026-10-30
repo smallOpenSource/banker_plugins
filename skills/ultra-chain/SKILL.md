@@ -55,9 +55,9 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 1 자료 조사 | `Skill("banker:deep-research")` | `$banker-deep-research` |
 | 1 전문가 작업 방식 | `Skill("banker:lfm")` | `$banker-lfm` |
 | 2 모호성 제거 | `Skill("banker:ultra-interview")` | `$banker-ultra-interview` |
-| 3 합의 계획 | `Skill("oh-my-claudecode:ralplan")` `--deliberate`, 이어서 `Skill("banker:ralph-qa")` | `$ralplan --deliberate`, 이어서 `$banker-ralph-qa` |
+| 3 합의 계획 | `Skill("oh-my-claudecode:ralplan")` `--deliberate`, 이어서 `Skill("banker:ralph-qa")` | `$ralplan --deliberate`, 이어서 `$banker-ralph-qa`(플러그인 길 `$banker:ralph-qa`) |
 | 5 구현 | `Skill("oh-my-claudecode:ralph")` `--critic=critic` | `$ralph` 뒤 이 스킬의 critic 루프(OMX `ralph` 에는 `--critic` 이 없다) |
-| 6 합의 검증 | `Skill("banker:ralph-qa")` | `$banker-ralph-qa` |
+| 6 합의 검증 | `Skill("banker:ralph-qa")` | `$banker-ralph-qa`(플러그인 길 `$banker:ralph-qa`) |
 | 7 시각 판정 에이전트 | `Plan` 유형, `model` 없이 | `spawn_agent`, 역할과 `model` 없이 |
 | 질문 | `AskUserQuestion` | `request_user_input`. 없으면 번호 붙인 평문 선택지 |
 | 오래 도는 명령 | Bash `run_in_background`, 멈출 때 `TaskStop` | `exec_command` 를 `tty: true` 로 띄우고 `write_stdin` 으로 출력을 받음. 멈출 때 그 세션에 `write_stdin` 으로 Ctrl-C(`\u0003`). `tty` 없이 띄운 작업은 PID 로 멈춤 |
@@ -68,6 +68,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 - Codex 에는 Skill 도구가 없다. 위 표의 `$이름` 은 그 스킬의 `SKILL.md` 를 읽고 그대로 따른다는 뜻이다. banker 스킬은 npm 설치면 `<S>/../banker-<이름>/SKILL.md`, Codex 플러그인 설치(`<S>` 가 `plugins/cache/` 아래, 스킬 이름 `banker:<이름>`)면 `<S>/../<이름>/SKILL.md` 다. 표의 `$banker-<이름>` 은 플러그인 설치에서 `$banker:<이름>` 이다. OMX 스킬은 `~/.codex/skills/<이름>/SKILL.md` 다. 그 스킬이 상태 기록을 요구하면 그 지시대로 직접 기록한다. 큰 `SKILL.md`(ralph-qa 는 약 71KB)는 셸 출력 한도에서 잘리니 나눠 읽는다.
 - Codex 의 하위 에이전트(critic, 시각 판정)는 저자 대화를 넘기지 않는다. multi-agent v2 는 `fork_turns="none"` 을 주고, v1 은 `fork_context` 를 주지 않는다. 판정을 받으면 `close_agent` 로 닫는다.
 - Codex 환경 지시가 역할(`agent_type`)을 요구하면, 고정 모델이 세션 모델과 같은 역할을 쓰고 지시 앞머리에 파일 쓰기 금지를 적는다. 그런 역할이 없으면 역할 없이 띄운다. 쓴 역할과 모델, 강도를 판정 기록의 `note` 에 적는다.
+- **Codex 의 tmux 밖 실행.** OMX 의 런타임 워크플로(`ralph`, `team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
 - Codex 의 오래 도는 명령은 기다리는 시간을 박스 `--timeout` 보다 길게 둔다. 기다리다 끊기면 박스 정리와 결과 JSON 이 남지 않는다.
 - Codex 세션을 닫으면 그 세션에서 띄운 서버도 끝날 수 있다. 오래 볼 미리보기는 사용자 터미널에서 띄우게 안내한다(9단계).
 
@@ -81,7 +82,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 박스 시험(`boxes.mjs run`) | ssh, scp 네트워크와 `git stash create` 의 `.git` 쓰기 |
 | `npm ci` 같은 의존성 설치, 웹 조사, 외부 좌석 | 네트워크 |
 | 미리보기 서버, Chromium | 포트와 브라우저 실행 |
-| ralph-qa 좌석 폴더 | 작업 폴더 밖 쓰기 |
+| ralph-qa 좌석 폴더(`seat-run.mjs init`), 게이트 기록 폴더 `<g>`(`gate-evidence.mjs` 의 init, run, cleanup) | 작업 폴더 밖 쓰기 |
 
 - 모든 박스가 같은 권한 오류로 실패하면 접속 실패로 판정하지 않는다. 승인을 받아 다시 돌린 뒤 판정한다.
 - 스테이징을 못 하면 새 시험 파일은 박스로 가지 않는다. 그 시험은 박스에서 미검증으로 적는다.
@@ -96,6 +97,8 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | `<S>` | 이 스킬 디렉터리 절대경로 |
 | `<boxes>` | Claude Code `<S>/../remains/scripts/boxes.mjs`, Codex `<S>/../banker-remains/scripts/boxes.mjs` |
 | `<scan>` | Claude Code `<S>/../ralph-qa/references/payload-scan.mjs`, Codex `<S>/../banker-ralph-qa/references/payload-scan.mjs` |
+| `<rq>` | ralph-qa 의 `references` 폴더. Claude Code `<S>/../ralph-qa/references`, Codex npm 설치 `<S>/../banker-ralph-qa/references`, Codex 플러그인 설치 `<S>/../ralph-qa/references`. 게이트 실행기 `gate-evidence.mjs` 와 실행 폴더 도구 `seat-run.mjs` 가 여기 있다 |
+| `<g>` | 게이트 기록 폴더. 5단계 1에서 `node "<rq>/gate-evidence.mjs" init` 이 낸 `dir`(`ralph-qa-gates.<영숫자>`)다. 경로는 `05-baseline.md` 첫 줄에 있다. 9단계까지 남고, 어느 cleanup 의 하루 규칙도 지우지 않는다 |
 | `<run>` | 0단계에서 만든 실행 폴더 절대경로 |
 | `<base>` | 0단계에서 기록한 기준 커밋. 깨끗한 트리면 `HEAD`, 기존 변경을 두고 진행하면 `git stash create` 가 낸 커밋. ralph-qa 와 critic 이 만드는 diff 의 기준이다 |
 | `<agents>`, `<max>` | `--agents`, `--max` 값(기본 3, 5) |
@@ -172,7 +175,7 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
    - `.omc/` 나 `.omx/` 가 git 에 무시되지 않으면 사용자에게 알린다. 나중에 커밋할 때 상태 파일이 섞일 수 있다. 로컬 제외 파일에 넣을지는 사용자가 정한다.
    - 커밋하지 않은 변경이 있으면 진행할지 묻는다(`--auto` 는 멈춤). 진행하면 지금 트리를 기준선으로 쓴다. `git stash create` 로 지금 트리의 커밋을 만들어 `<base>` 로 기록한다(작업 트리와 stash 목록은 바뀌지 않는다). 깨끗한 트리이거나 출력이 비면(기존 변경이 추적하지 않는 새 파일뿐) `<base>` 는 `HEAD` 의 커밋이다. 이렇게 해야 검토 diff 에 사용자의 기존 변경이 실리지 않는다.
    - 기본 브랜치면 작업 브랜치를 만들지 묻는다(`--auto` 는 그대로 진행).
-4. `<boxes>` 와 `<scan>` 이 있는지 본다. banker 스킬은 함께 설치되므로 없으면 banker 설치가 깨진 것이니 멈추고 알린다. 이어서 실행 폴더를 만들고(`init`) `task.md` 를 쓴 뒤 바로 `preflight` 시작을 기록한다. 이어서 실행 폴더 경로, 해석한 플래그, 지금 단계를 이어 하기 메모(런타임 대응 표)에 덧붙인다. 사용자의 다른 메모는 고치지 않는다. 브랜치를 정한 뒤라 `run.json` 의 브랜치가 맞다. 아래 점검이 사전 점검의 걸린 시간에 들어가고, 점검 중에 멈춰도 기록이 남는다.
+4. `<boxes>`, `<scan>`, `<rq>/gate-evidence.mjs` 가 있는지 본다. banker 스킬은 함께 설치되므로 없으면 banker 설치가 깨진 것이니 멈추고 알린다. 이어서 실행 폴더를 만들고(`init`) `task.md` 를 쓴 뒤 바로 `preflight` 시작을 기록한다. 이어서 실행 폴더 경로, 해석한 플래그, 지금 단계를 이어 하기 메모(런타임 대응 표)에 덧붙인다. 사용자의 다른 메모는 고치지 않는다. 브랜치를 정한 뒤라 `run.json` 의 브랜치가 맞다. 아래 점검이 사전 점검의 걸린 시간에 들어가고, 점검 중에 멈춰도 기록이 남는다.
 5. 의존성
    - Claude Code: `omc ralph verify --help 2>&1 | grep -q 'Usage: omc ralph verify' && echo "omc ok"`. 판정은 출력 문구로 한다. 실패하면 멈추고 알린다. `setup-omc` 로 맞출지 묻고, 승인할 때만 그 스킬을 따른다. 묻지 않고 설치나 갱신(`omc update`, `npm install -g`)을 하지 않는다(`--auto` 는 멈춤).
    - Claude Code: 판 두 개를 기록한다. 플러그인 판은 `~/.claude/plugins/installed_plugins.json`(`CLAUDE_CONFIG_DIR` 가 있으면 그 폴더의 `plugins/installed_plugins.json`)에서 `oh-my-claudecode@` 로 시작하는 항목의 `version` 이다. CLI 판은 `omc --version` 이다. 주 판(첫 숫자)이 다르면 `checklist` 에 넣고, 그 밖의 차이는 `summary` 에만 적는다. 하위 스킬이 기대한 대로 돌지 않아도 OMC 의 내부 모듈(`dist/` 아래)을 직접 불러 쓰지 않는다. 판이 다른 내부 API 를 부르게 된다.
@@ -223,6 +226,7 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
    - 계획에 넣을 것
      - 대상 OS 와 OS 별 시험 명령. 비대화형으로 돌게 한다(`CI=true`, 감시 모드 끔. Windows 는 `cmd` 기준으로 `set CI=true&&`)
      - 시험 출력 꼴. node:test 면 TAP(`--test-reporter=tap`)로 내게 한다. 박스 결과가 시험 수를 셀 수 있다
+     - 이 머신의 로컬 게이트: `tests`, `build`, `lint`, `typecheck` 가운데 이 작업에 맞는 것, 게이트마다 명령 하나(`&&` 나 `;` 로 묶지 않음)와 시간 제한(초). 5단계 기준선과 6단계 ralph-qa `--gates` 가 이 목록을 쓴다
      - 4단계 목업의 보기 목록과 형태, 수용 기준과 단계의 대응
      - 7단계 기계 대조를 위해 실제 출력을 `<run>/actual/` 에 쓰는 방법(임시 데이터 폴더나 임시 HOME 에서)
    - 뒤 단계의 계약. Planner 와 검토자가 파일 시스템을 뒤져 찾지 않게 요약을 함께 넘긴다
@@ -237,6 +241,7 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
    - Claude Code: 1 에서 지정한 경로, 또는 ralplan 이 보고한 계획 경로다. 둘 다 없으면 이 단계가 시작된 뒤 `.omc/plans/` 에 쓰였고 `pending approval` 표지가 있는 파일을 고른다. 검토 문서(이름이 `-critic.md`, `-architect.md`, `-review.md` 로 끝남)와 `open-questions.md` 는 고르지 않는다. 원본 경로는 `summary` 에 적는다.
    - Codex: 이번에 쓰인 `.omx/plans/prd-*.md` 와 `test-spec-*.md` 를 차례로 붙이고, 원본 경로를 맨 위에 적는다.
 4. ralph-qa 를 `--lens=plan --agents=<agents> --max=<max>` 로 부른다. 외부 좌석 플래그(`--codex`, `--gemini`, `--opencode`)는 사용자가 준 것만 넘긴다.
+   - `--gates` 는 주지 않는다. 구현 전이라 돌릴 대상이 없는 계획 검토이고, 까닭은 `계획 검토` 로 넘긴다. ralph-qa 보고의 `게이트: 선언 없음(계획 검토)` 줄은 `03-ralph-qa.md` 에 그대로 두고, 판정 기록의 `verdict.note` 에도 판정 줄과 함께 적는다. 보고에 그 줄이 없으면 기록하기 전에 ralph-qa 에 그 줄을 다시 받는다.
    - 검증 대상: `03-plan.md`(구현 전이라 `<base>` 대비 diff 가 없으니 원문으로 붙인다). 수용 기준: `02-spec.md` 의 AC 와 deliberate 필수 항목(사전 부검, 확장 시험 계획), 그리고 `01-masters.md` 의 `M-n` 이 모두 `## 전문가 작업 방식 적용` 절에 판정과 함께 있는지(조정과 제외에 이유가 있는지).
    - 모든 좌석의 지시에 "저자의 주장이 틀렸다는 증거를 먼저 찾는 적대적 검토자로 판정한다" 를 넣는다. 렌즈 배정은 ralph-qa 그대로다. ralph-qa 의 기본 배정에서는 적대적 반증 렌즈가 한 좌석뿐이라, 이 문장이 있어야 검토자 모두가 적대적이다.
    - 출처-독립 검토자에게 줄 "사용자 원 요청" 은 `task.md` 와 `02-spec.md` 의 사용자 답변 원문이다.
@@ -288,8 +293,12 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
 
 ## 5. 구현
 
-1. 기준선: 바꾸기 전에 시험 명령을 한 번 돌려 이미 실패하는 항목을 `<run>/05-baseline.md` 에 남긴다. 0단계에서 기존 변경을 두고 진행했으면 지금 트리를 기준선으로 쓴다.
-   - 깨끗한 사본이 필요하면 저장소 밖 임시 폴더에 `git worktree add --detach <임시> HEAD` 로 만든다. 의존성을 링크하거나 설치한 뒤 돌리고, 명령이 실제로 돌았는지 확인한다. "명령 없음" 오류뿐인 기록은 기준선이 아니다. 끝나면 `git worktree remove --force <임시>` 로 지운다.
+1. 기준선: 바꾸기 전에 계획의 로컬 게이트마다 명령을 실행기로 한 번 돌린다. 0단계에서 기존 변경을 두고 진행했으면 지금 트리를 기준선으로 쓴다.
+   - `node "<rq>/gate-evidence.mjs" init --cwd "<저장소>"` 로 게이트 기록 폴더를 만든다. 출력의 `dir` 가 `<g>` 다. 이어 하기 메모에 `<g>` 를 덧붙인다.
+   - `init` 이나 `run` 이 `not-a-git-tree`(종료 3)로 멈추면 멈춤의 경로(JSON 의 `checked`)가 대상 저장소인지 먼저 확인하고, 아니면 `--cwd "<저장소>"` 로 다시 부른다. 대상이 맞으면 git 저장소가 아니다(0단계 1의 확인 뒤에 저장소가 사라진 경우). 작업 트리 지문이 변경을 보지 못해 게이트 증거가 설 수 없으니 순환을 쓰지 말고 그 자리에서 멈추고 알린다. 스스로 `git init` 하지 않는다. Claude Code 와 Codex(npm 길, 플러그인 길)가 같다.
+   - 게이트마다 `node "<rq>/gate-evidence.mjs" run --dir "<g>" --id <게이트> --cmd "<명령>" --timeout <초> --iter 0 --cwd "<저장소>"` 를 돌린다. 반복 0 이 기준선이다. 6단계 ralph-qa 는 같은 명령, 같은 실패 서명의 실패를 이번 변경의 실패가 아닌 것으로 가른다.
+   - `<run>/05-baseline.md` 첫 줄에 `<g>` 경로를 쓴다. 그 아래에 게이트마다 출력 JSON 의 `verdict`, `signature`, `output` 과 이미 실패하는 항목을 옮긴다.
+   - 깨끗한 사본이 필요하면 저장소 밖 임시 폴더에 `git worktree add --detach <임시> HEAD` 로 만들고 `--cwd` 를 그 폴더로 준다. 의존성을 링크하거나 설치한 뒤 돌리고, 명령이 실제로 돌았는지 확인한다. "명령 없음" 오류뿐인 기록은 기준선이 아니다. 끝나면 `git worktree remove --force <임시>` 로 지운다. 실행기는 명령을 돌린 폴더를 실패 서명에서 `<repo>` 로 바꾼다. 그래서 사본의 실패와 저장소의 같은 실패가 같은 서명이 된다.
    - `git stash`, `git reset` 은 쓰지 않는다.
 2. Claude Code: ralph 를 `--critic=critic` 으로 부른다. 인자에 아래를 넘긴다.
    - `03-plan.md` 경로. 계획은 합의가 끝났으니 다시 계획하지 말고 PRD 이야기로 나눠 구현하라는 말
@@ -322,12 +331,16 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
 
 ## 6. OS 시험과 합의 검증
 
-ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 연쇄가 이 머신과 박스에서 시험을 돌리고 원문 출력을 검토 입력으로 넣는다. 회차 `<k>` 는 1을 시작할 때 `show` 의 `qa.maxRound` 다음 번호로 한 번 정하고, 그 회차가 끝날 때까지 바꾸지 않는다.
+ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 이 머신의 게이트는 실행기(`gate-evidence.mjs run`)가 돌려 `observed` 기록으로 남기고, 박스 시험은 박스 실행기가 돌린다. 검토자는 그 기록과 출력을 대조한다. 회차 `<k>` 는 1을 시작할 때 `show` 의 `qa.maxRound` 다음 번호로 한 번 정하고, 그 회차가 끝날 때까지 바꾸지 않는다.
 
 1. 이번 변경의 새 파일을 스테이징한다(`git add -- <파일>...`, 커밋은 하지 않음). 박스로 보내는 트리는 추적 파일만 담는다. 스테이징할 목록을 먼저 보인다.
    - `.omc/`, `.omx/` 아래, `.env` 류, 키와 자격 증명 파일은 넣지 않는다.
    - 넣을 텍스트 파일은 `<scan>` 으로 검사한다. 걸린 파일은 넣지 않고 사용자에게 알린다. 그 파일이 필요한 시험은 박스에서 미검증이다.
-2. 이 머신에서 시험, 빌드, 린트를 돌려 원문 출력을 `<run>/qa/local-r<k>.md` 에 남긴다. 결과를 `tests` 에 기록한다(`where: "local"`, `os`, `status`, 셀 수 있으면 `tests`, `pass`, `fail`, `skipped`, `log: "qa/local-r<k>.md"`).
+2. 이 머신의 로컬 게이트를 실행기로 돌린다. 게이트마다 `node "<rq>/gate-evidence.mjs" run --dir "<g>" --id <게이트> --cmd "<명령>" --timeout <초> --iter <k> --cwd "<저장소>"` 를 하나씩 돌린다(게이트 하나에 명령 하나). 반복 번호는 회차 `<k>` 다.
+   - 이어서 `node "<S>/references/chain-ledger.mjs" gates "<run>" --file "<g>/evidence.md" --round <k>` 로 기록한다. 반복 `<k>` 의 `observed` 기록만 `tests`(`where: "local:<게이트>"`)로 옮기고, 보기 `<run>/qa/local-r<k>.md` 를 만든다.
+   - `status` 는 기록의 판정에서 온다. `pass` 는 통과, `fail` 과 `timeout` 은 실패, `misleading` 과 출력 파일 sha256 불일치는 미검증이다. 기준선과 같은 실패는 실패로 두고 `note` 에 적힌다.
+   - `reported`(모델이 적은 결과)는 받지 않는다. 시험 결과를 손으로 `tests` 에 적지 않는다.
+   - `<g>` 가 없으면(로그아웃이나 재부팅으로 `$XDG_RUNTIME_DIR` 가 비워짐, 지워짐, 이 판보다 먼저 `seat-run.mjs init` 으로 만든 `ralph-qa.*` 폴더가 하루 규칙으로 정리됨) `gate-evidence.mjs init` 으로 새로 만들고 반복 0 없이 돈다. 그러면 기존 실패도 이번 변경의 실패로 셈해진다. 그 사실을 `checklist` 에 넣고 `05-baseline.md` 를 검토 입력에 넣는다.
 3. 박스에서 같은 시험을 돌린다. 고른 박스마다 `--box <이름>` 을 붙인다. 오래 도는 명령으로 돌리고, 끝난 뒤에 기록한다.
 
    ```bash
@@ -345,10 +358,12 @@ ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 연쇄가 이 �
    - 0단계에서 접속된 박스가 0대였으면 이 3을 하지 않는다.
    - 한 OS 에서만 실패하면 원인을 나눈다. 제품 결함은 고치고, 시험이 실행 환경을 잘못 가정한 것도 고친다.
    - `--boxes=none` 이면 이 3을 건너뛴다.
-4. ralph-qa 를 `--lens=both --agents=<agents> --max=<max>` 로 부른다. 외부 좌석은 3단계에서 고른 모델을 값으로 넘긴다.
-   - 입력: 요청 원문, `02-spec.md` 의 수용 기준과 사용자 답변 원문, `03-plan.md`, 승인된 목업과 기대 출력, 2의 원문 출력, 3의 박스 JSON 과 실패한 박스의 로그 발췌, `05-baseline.md`. diff 의 기준은 `<base>` 다
+4. ralph-qa 를 `--lens=both --gates=<계획의 로컬 게이트> --agents=<agents> --max=<max>` 로 부른다. 외부 좌석은 3단계에서 고른 모델을 값으로 넘긴다.
+   - 입력: 요청 원문, `02-spec.md` 의 수용 기준과 사용자 답변 원문, `03-plan.md`, 승인된 목업과 기대 출력, 3의 박스 JSON 과 실패한 박스의 로그 발췌, `05-baseline.md`. diff 의 기준은 `<base>` 다
+   - 게이트 증거: 게이트 기록 폴더 `<g>`(반복 0 기준선과 반복 `<k>` 의 `observed` 기록), 게이트마다 명령과 시간 제한, 반복 번호는 회차 `<k>` 라는 말. `<g>` 는 게이트 기록 전용이라 ralph-qa 가 지우지 않는다(9단계에서 지움). 외부 좌석 페이로드는 ralph-qa 가 따로 만든 폴더로 보낸다
+   - 박스 JSON 은 기존대로 입력이다(박스 실행기가 만든 기록). 게이트 연언항에는 넣지 않는다
    - 3단계와 같이 모든 좌석의 지시에 적대적 검토 문장을 넣는다
-   - 회차마다 `note` 로 기록하고, 끝나면 보고 전문을 `<run>/qa/ralph-qa-r<k>.md` 로 저장한다.
+   - 회차마다 `note` 로 기록하고, 끝나면 보고 전문을 `<run>/qa/ralph-qa-r<k>.md` 로 저장한다. `verdict.note` 에는 종결어 전체와 판정 줄, 게이트 블록의 `연언항` 줄을 쓴다. 종결어가 `ITERATE(한도 소진, 원인 gate)` 면 `result` 는 `ITERATE` 이고 `원인 gate` 는 `note` 에 남는다.
    - `ITERATE` 면 고친 뒤 1부터 3까지 다시 하고(새 `<k>`), 같은 실행에서 다시 판정받는다. 끈끈한 반대는 그 검토자의 재판정으로만 풀린다.
 5. 게이트: ralph-qa 판정이 `APPROVE`. `INCONCLUSIVE` 나 한도 소진이면 멈추고 보고한다. 계획의 대상 OS 가운데 확인하지 못한 OS 는 `checklist` 에 하나씩 넣는다.
 
@@ -404,7 +419,7 @@ node "<S>/references/chain-report.mjs" "<run>"
    - 커밋 메시지와 PR 본문 초안 파일을 실행 폴더에 만들기
    - 커밋, push, PR 생성, 외부 게시: 사용자가 명시적으로 요청할 때만
 3. 밖으로 나가는 파일은 보내기 전에 하나씩 `node "<scan>" "<파일>"` 로 비밀처럼 보이는 문자열을 찾는다. 출력 JSON 의 `count` 가 0 이고 종료 코드가 0 일 때만 내보낸다. 이미지(캡처 PNG)는 이 검사로 볼 수 없으니, 화면에 비밀이 찍히지 않았는지 사용자에게 확인받는다.
-4. 서버는 사용자가 볼 수 있게 남겨 두고 끄는 명령을 알린다: `node "<S>/references/serve.mjs" --stop "<run>"`. Codex 는 세션을 닫으면 서버가 끝날 수 있으니, 사용자 터미널에서 다시 띄우는 명령(`node "<S>/references/serve.mjs" "<run>"`)도 알린다. 앱 서버처럼 연쇄가 띄운 다른 작업은 모두 멈춘다.
+4. 서버는 사용자가 볼 수 있게 남겨 두고 끄는 명령을 알린다: `node "<S>/references/serve.mjs" --stop "<run>"`. Codex 는 세션을 닫으면 서버가 끝날 수 있으니, 사용자 터미널에서 다시 띄우는 명령(`node "<S>/references/serve.mjs" "<run>"`)도 알린다. 앱 서버처럼 연쇄가 띄운 다른 작업은 모두 멈춘다. 게이트 기록 폴더는 `node "<rq>/gate-evidence.mjs" cleanup --dir "<g>"` 로 지운다(이 판보다 먼저 만든 `ralph-qa.*` 이름의 `<g>` 는 `node "<rq>/seat-run.mjs" cleanup --dir "<g>"`). 기록의 보기는 `qa/local-r<k>.md` 에 남아 있다.
 5. `share` 의 끝을 기록하고 보고서를 마지막으로 다시 만든다.
 
 ## 최종 보고
@@ -434,7 +449,7 @@ node "<S>/references/chain-report.mjs" "<run>"
 5. 회차는 `maxRound` 다음 번호로 이어 센다. 앞 회차 파일을 덮어쓰지 않는다. `--max` 는 남은 횟수만 쓴다.
 6. 판정이 없는 회차(그 번호의 시험이나 박스 기록은 있는데 같은 번호의 판정 기록이 없음)는 새 번호로, 지금 트리로 시험부터 다시 한다.
 7. 5단계에서 이을 때
-   - `05-baseline.md` 는 다시 쓰지 않는다. 이미 바뀐 트리로 쓰면 이번 변경이 만든 실패가 기존 실패로 바뀐다.
+   - `05-baseline.md` 는 다시 쓰지 않는다. 이미 바뀐 트리로 쓰면 이번 변경이 만든 실패가 기존 실패로 바뀐다. 반복 0 게이트 기록도 다시 돌리지 않는다. `<g>` 는 `05-baseline.md` 첫 줄에서 되찾는다.
    - 이 판보다 먼저 시작한 실행 폴더에는 기준선이 `05-baseline.txt` 로 있다. `05-baseline.md` 가 없으면 그 파일을 기준선으로 쓴다.
    - 같은 세션에서 ralph 가 아직 켜져 있으면 다시 부르지 않고 끝나기를 기다린다.
    - 새 세션에서 ralph 를 다시 부르면 ralph 는 지금 트리로 기준선을 다시 기록한다. 이 사실을 `build` 의 `note` 에 적고, 새 실패의 판정은 `05-baseline.md` 기준으로 한다.
@@ -463,10 +478,13 @@ node "<S>/references/chain-report.mjs" "<run>"
 
 멈출 때는 `stopped` 나 `failed` 와 `reason` 을 기록하고, 8단계 보고서를 만들고 최종 보고를 낸다. 이때 `trace` 는 기록하지 않고 보고서만 만든다. 기록하면 멈춘 실행이 다시 진행 중으로 보인다. `--auto` 면 묻는 대신 이렇게 멈춘다. 끝내지 못한 단계는 통과로 적지 않는다.
 
+STOPPED 뒤에는 한 줄 수정을 포함해 어떤 파일도 고치지 않는다. 사용자가 새로 지시할 때까지 보고만 한다. 이 스킬의 어떤 문구("한 줄 수정은 `ralph`" 안내 포함)도 멈춘 뒤의 수정을 허락하지 않는다. 8단계 보고서와 실행 기록 쓰기는 예외다.
+
 ## 함정
 
 - ralplan 의 Architect 와 Critic 은 둘이다. 이 둘을 "검토자 3명" 으로 세지 않는다. 3명 이상은 3단계 4의 ralph-qa 가 채운다.
-- ralph-qa 는 시험을 돌리지 않는다. 박스 결과 없이 판정받으면 OS 검증이 빠진다.
+- ralph-qa 의 검토자는 시험을 돌리지 않는다. 로컬 게이트는 실행기 기록, OS 는 박스 결과가 증거다. 박스 결과 없이 판정받으면 OS 검증이 빠진다.
+- 반복 0 기준선을 구현 뒤 트리에서 돌리면 이번 변경이 만든 실패가 기준선 실패로 갈려 게이트가 통과한다. 반복 0 은 5단계 1에서만 돌린다.
 - 추적하지 않는 새 파일은 박스로 가지 않는다. 6단계 1의 스테이징을 빼먹으면 새 시험이 박스에서 돌지 않는다.
 - 박스 결과 JSON 은 실행이 끝날 때 한 번 써진다. 끝나기 전에 `chain-ledger.mjs boxes` 를 돌리면 빈 파일이라 실패한다.
 - 피드백 명령의 `grep -Ev` 꼴을 시험 게이트에 쓰면 성공과 실패가 뒤집힌다. 그 꼴은 ralph 의 피드백 명령에만 쓴다.

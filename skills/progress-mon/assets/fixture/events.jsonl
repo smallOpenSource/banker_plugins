@@ -1,0 +1,7 @@
+{"t":"2026-10-28T00:00:00Z","stage":"preflight","status":"started"}
+{"t":"2026-10-28T00:10:00Z","stage":"preflight","status":"done","summary":"사전 점검"}
+{"t":"2026-10-28T00:12:00Z","stage":"research","status":"started"}
+{"t":"2026-10-28T01:30:00Z","stage":"research","status":"done","summary":"자료 조사"}
+{"t":"2026-10-28T01:40:00Z","stage":"interview","status":"started"}
+{"t":"2026-10-28T02:20:00Z","stage":"interview","status":"done","summary":"모호성 제거"}
+{"t":"2026-10-29T01:00:00Z","stage":"plan","status":"started"}

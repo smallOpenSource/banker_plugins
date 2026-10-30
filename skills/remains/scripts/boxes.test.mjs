@@ -95,10 +95,20 @@ test("the run script records its process id, enters the tree, adds the box's PAT
   assert.ok(!runScript(ROCKY, "repo", "x").text.includes("PATH="), "no PATH line without entries");
 });
 
-test("on Windows the command runs from a .cmd file through call, with CRLF line ends and its exit code", () => {
+test("on Windows the command runs from a UTF-8 .cmd file through call, with CRLF line ends and its exit code", () => {
   const s = runScript(WIN, "repo", "npm test");
   assert.equal(s.ext, ".cmd");
-  assert.equal(s.text, '@echo off\r\ncd /d "%~dp0repo" || exit /b 97\r\ncall npm test\r\nexit /b %ERRORLEVEL%\r\n');
+  assert.equal(s.text, '@echo off\r\nchcp 65001 >nul 2>&1\r\ncd /d "%~dp0repo" || exit /b 97\r\ncall npm test\r\nexit /b %ERRORLEVEL%\r\n');
+  // cmd reads the lines in the code page chcp set: a Korean argument stays as written
+  assert.ok(runScript(WIN, "repo", 'node --test --test-name-pattern="잠금" a.test.mjs').text.includes('\r\ncall node --test --test-name-pattern="잠금" a.test.mjs\r\n'));
+});
+
+test("on Windows for, if and a ( block go without call, which cannot run them; other commands go through call", () => {
+  const line = (c) => runScript(WIN, "repo", c).text.split("\r\n")[3];
+  for (const c of ["for /L %%i in (1,1,3) do echo %%i", "FOR %%f in (*.mjs) do call npm test", "if exist a.txt echo yes", "If/i a==A echo x", "  (echo a & echo b)"]) {
+    assert.equal(line(c), c, c);
+  }
+  for (const c of ["format-check", "iffy.cmd", "forge test", "node -e \"if (1) {}\""]) assert.equal(line(c), `call ${c}`, c);
 });
 
 test("node test commands quote each file for the box's shell", () => {

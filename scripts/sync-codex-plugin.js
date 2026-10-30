@@ -2,11 +2,17 @@
 'use strict';
 /*
  * Codex plugin sync guard. `codex plugin add banker@banker-plugins` installs this repo as a Codex plugin and reads
- * .codex-plugin/plugin.json (Claude Code reads .claude-plugin/ and ignores it). Its skills come from three folders:
- *   skills/                  the skills both runtimes share
- *   codex/skills/            the codex-only skills (Codex counterparts of Claude Code mods)
- *   codex/command-skills/    commands/<name>.md as skills (Codex 0.144+ has no custom prompts), written here
- * so the plugin offers what `banker setup --codex` installs (codex/manifest.json: target both and codex-only).
+ * .codex-plugin/plugin.json (Claude Code reads .claude-plugin/ and ignores it). Its skills list, written here from
+ * codex/manifest.json, names what `banker setup --codex` installs (target both and codex-only), one path per skill:
+ *   ./skills/<name>/                     a skill both runtimes share as it is
+ *   ./codex/renamed-skills/<codex name>/ a shared skill Codex names or describes apart (manifest codexName,
+ *                                        codexDescription): a copy of skills/<name>/ written here, its frontmatter
+ *                                        name and description changed, without the tests (not in the npm package)
+ *   ./codex/skills/                      the codex-only skills (Codex counterparts of Claude Code mods)
+ *   ./codex/command-skills/              commands/<name>.md as skills (Codex 0.144+ has no custom prompts), written here
+ * A claude-only skill (ultraqa) is in no path, and Codex reads no folder the list does not name (Codex 0.160.1 and
+ * 0.165.0, measured), so it never shows there. bin/lib/codex-names.mjs (Claude name to Codex name, for the usage count
+ * and the update notice) is written here too.
  * `commands: []` keeps Codex 0.160+ from also turning commands/ (Claude Code commands) into source-command-* skills.
  * codex/hooks.json is written here too. Codex runs a trusted hook outside its sandbox, so each command finds node on
  * PATH, resolves its real path, and runs nothing when that is relative or under the temp folder or the session folder
@@ -14,23 +20,30 @@
  * Codex keeps a hook's trust by the hash of its command, so each command carries a hash of the files the hooks run
  * (hooksRev): a change to those files changes the command, and Codex asks again in /hooks before it runs the new code.
  * Usage:
- *   node scripts/sync-codex-plugin.js          # write codex/command-skills from commands/, and codex/hooks.json
- *   node scripts/sync-codex-plugin.js --check  # exit 1 if a command skill, the hooks file, or the plugin's skill set drifts
+ *   node scripts/sync-codex-plugin.js          # write the skills list, the copies, the command skills, the names, the hooks
+ *   node scripts/sync-codex-plugin.js --check  # exit 1 if any of them drifts or the plugin's skill set != the manifest
  */
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { commandSkillText } = require('../bin/lib/command-skill.cjs');
+const { codexFrontmatter, commandSkillText } = require('../bin/lib/command-skill.cjs');
 
 const root = path.resolve(__dirname, '..');
 const CMD_DIR = path.join(root, 'codex', 'command-skills');
-const SKILL_DIRS = ['./skills/', './codex/skills/', './codex/command-skills/'];
+const RENAMED_DIR = 'codex/renamed-skills';
+const BUNDLE_DIRS = ['./codex/skills/', './codex/command-skills/'];
 const HOOKS_FILE = './codex/hooks.json';
+const NAMES_FILE = 'bin/lib/codex-names.mjs';
+// What a generated copy leaves out: what the npm package leaves out (package.json files), tests and their caches.
+const NOT_COPIED = /(?:^|\/)(?:__pycache__|\.omc)(?:\/|$)|\.test\.(?:mjs|ts)$|(?:^|\/)test_[^/]*\.py$/;
 
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 const manifest = () => JSON.parse(read('codex/manifest.json'));
 const eligible = (m) => m.surfaces.filter((s) => s.target === 'both' || s.target === 'codex-only');
 const skillDirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((d) => fs.existsSync(path.join(dir, d, 'SKILL.md'))) : []);
+const codexName = (s) => s.codexName || s.name;
+const renamed = (s) => Boolean(s.codexName || s.codexDescription);
+const sharedSkills = (m) => eligible(m).filter((s) => s.type === 'skill' && s.target === 'both');
 
 // The plugin's hooks: [event, tool matcher, script under hooks/, args, through run.cjs]. The obsidizer hook is not here:
 // it would start node on every shell call for everyone, so `obsidizer --enable` installs it on its own, in the user
@@ -44,8 +57,9 @@ const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@b
   + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY). The obsidizer hook is installed only by obsidizer --enable. '
   + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names (a multicall shim '
   + 'such as Volta or mise, or a .cmd shim on Windows: the node binary it names) only when its real path is absolute and outside the temp '
-  + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder, and otherwise says why it '
-  + 'skipped. Each command starts with a hash of the hook files (banker-hooks-rev), so new hook code asks for trust again. command is '
+  + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder when that is outside them too, '
+  + 'and otherwise says why it skipped. A hook whose script, plugin folder or node is under a config.toml [sandbox_workspace_write] writable_roots entry '
+  + '(not that entry\'s top .codex) does nothing but say why. PATH entries under a network mount outside the home folder are not read. Each command starts with a hash of the hook files (banker-hooks-rev), so new hook code asks for trust again. command is '
   + 'for sh, commandWindows for PowerShell; PLUGIN_ROOT is the installed plugin folder.';
 
 // The files a hook runs: the scripts HOOKS names, run.cjs, and what they load or start, found by following relative
@@ -81,6 +95,13 @@ function hooksRev(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
 //   first). Every path run or asked must be outside the real /tmp, TMPDIR and the session folder (pwd -P),
 //   which the sandbox can write; a session folder that is the home folder itself is no workspace here (nvm keeps node
 //   under ~/.nvm, and a sandbox writing the home can already change the shell's rc files and that node).
+// - The plugin folder (PLUGIN_ROOT) is judged first, by its real path, as node is: a Codex home in the session folder
+//   (CODEX_HOME=<session>/deep/.codex) would let the sandbox write the scripts the hook runs. The hook scripts run from
+//   that real path.
+// - PATH entries under a network mount (NET_TYPES, MOUNTS) outside the home folder are neither looked at nor kept: one
+//   that does not answer would hold the hook. node is looked for on the other entries; an entry under the home folder
+//   is checked as any other (a home that does not answer has held the hook already). A link elsewhere that leads to a
+//   network mount is not seen.
 // - Nothing else the command runs is found in those folders either: once node is found, PATH keeps only absolute
 //   entries outside them, so realpath, readlink, and whatever a shim starts come from elsewhere (a project .venv/bin
 //   or node_modules/.bin on PATH would otherwise lend a planted realpath). A PATH left empty becomes /usr/bin:/bin (bash
@@ -96,8 +117,23 @@ function hooksRev(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
 //   is taken, under the same checks. A node kept elsewhere (nvm) is not guessed: the refusal names the likely cause.
 // A refusal says why and exits 0: as a systemMessage for SessionStart (shown in the TUI), on stderr otherwise.
 const NODE_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
-function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NODE_DIRS) {
-  const run = viaRun ? ' "$PLUGIN_ROOT/hooks/run.cjs"' : '';
+// Network mounts: a PATH entry under one may not answer and would hold the hook until Codex's limit ends it, so the
+// mount table is read once (awk from the system's default PATH) for the mount points of network file systems, before
+// anything looks at PATH. Linux reads /proc/self/mounts (a mount point's space is written \040); elsewhere (macOS)
+// /sbin/mount prints `<device> on <mount point> (<type>, ...)` without waiting on any mount (getfsstat MNT_NOWAIT). A
+// mount point with a colon is left out: no PATH entry can be under it. Points are printed with a colon after each. awk
+// runs in the C locale so it reads bytes.
+const NET_TYPES = 'nfs|nfs4|cifs|smbfs|smb3|afpfs|webdav|davfs|autofs|ceph|glusterfs|lustre|9p';
+const MOUNTS = { table: '/proc/self/mounts', command: '/sbin/mount' };
+const MOUNT_AWK = [
+  'function dec(s,  o, i, c) { o = ""; for (i = 1; i <= length(s); i++) { c = substr(s, i, 1);',
+  ' if (c == "\\\\" && substr(s, i + 1, 3) ~ /^[0-7][0-7][0-7]$/) { o = o sprintf("%c", substr(s, i + 1, 1) * 64 + substr(s, i + 2, 1) * 8 + substr(s, i + 3, 1)); i += 3 } else o = o c }; return o }',
+  ' mac { i = index($0, " on "); j = 0; for (k = length($0); k > i; k--) if (substr($0, k, 2) == " (") { j = k; break };',
+  ' if (!i || !j) next; m = substr($0, i + 4, j - i - 4); t = substr($0, j + 2); sub(/[,)].*/, "", t) }',
+  ` !mac { m = dec($2); t = $3 } (t ~ /^(${NET_TYPES})$/ || t ~ /^fuse\\./) && m !~ /:/ { printf "%s:", m }`,
+].join('');
+function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NODE_DIRS, mounts = MOUNTS) {
+  const run = viaRun ? ' "$pr/hooks/run.cjs"' : '';
   const say = notice
     ? String.raw`m=$(printf '%s' "banker hooks skipped: $1" | command -p tr -d '\000-\037"\\'); printf '{"systemMessage":"%s"}\n' "$m"`
     : String.raw`printf '%s\n' "banker hooks skipped: $1" >&2`;
@@ -107,11 +143,16 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
     + 'u=$(cd /tmp 2>/dev/null && pwd -P); t=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P); '
     + String.raw`h=; case "$HOME" in /?*) h=$(cd "$HOME" 2>/dev/null && pwd -P);; esac; `
     + String.raw`w() { for z in "$u" "$t"; do [ -n "$z" ] && case "$1/" in "$z"/*) return 0;; esac; done; [ "$p" = "$h" ] && return 1; case "$1/" in "$p"/*) return 0;; esac; return 1; }; `
-    + `n=$(command -v node) || for d in ${nodeDirs.join(' ')}; do [ -x "$d/node" ] && n=$d/node && break; done; `
+    + String.raw`pr=$(cd -P "$PLUGIN_ROOT" 2>/dev/null && pwd -P) || x "cannot enter the plugin folder"; w "$pr" && x "the plugin folder is in a temp folder or the session folder ($pr)"; `
+    + `A='${MOUNT_AWK}'; if [ -r '${mounts.table}' ]; then M=$(LC_ALL=C command -p awk "$A" '${mounts.table}' 2>/dev/null); else M=$('${mounts.command}' 2>/dev/null | LC_ALL=C command -p awk -v mac=1 "$A" 2>/dev/null); fi; `
+    + String.raw`nm() { for z in $M; do case "$1/" in "$z"/*) return 0;; esac; done; return 1; }; `
+    + String.raw`hm() { for z in "$h" "$HOME"; do case "$z" in /?*) case "$1/" in "$z"/*) return 0;; esac;; esac; done; return 1; }; `
+    + 'set -f; o=$IFS; IFS=:; a=; q=; for v in $PATH; do case "$v" in /*) ;; *) a=$a${a:+:}$v; continue;; esac; nm "$v" && ! hm "$v" && continue; a=$a${a:+:}$v; '
+    + 'y=$(cd "$v" 2>/dev/null && pwd -P) || continue; w "$y" || q=$q${q:+:}$v; done; '
+    + `n=; [ -n "$a" ] && n=$(PATH=$a; command -v node) || for d in ${nodeDirs.join(' ')}; do nm "$d" && continue; [ -x "$d/node" ] && n=$d/node && break; done; IFS=$o; set +f; `
     + String.raw`[ -n "$n" ] || x "node is not on PATH (a Codex started from the desktop may not have the shell's PATH)"; case "$n" in /*) ;; *) x "node on PATH is not an absolute path ($n)";; esac; `
-    + 'set -f; o=$IFS; IFS=:; q=; for v in $PATH; do case "$v" in /*) ;; *) continue;; esac; y=$(cd "$v" 2>/dev/null && pwd -P) || continue; '
-    + 'w "$y" || q=$q${q:+:}$v; done; IFS=$o; set +f; PATH=${q:-/usr/bin:/bin}; export PATH; '
-    + String.raw`cd "$PLUGIN_ROOT" || x "cannot enter the plugin folder"; `
+    + 'PATH=${q:-/usr/bin:/bin}; export PATH; '
+    + String.raw`cd "$pr" || x "cannot enter the plugin folder"; `
     + String.raw`rp() { realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null || { f=$1; i=0; while [ -L "$f" ]; do i=$((i+1)); [ "$i" -le 40 ] || return 1; `
     + 'l=$(readlink "$f") || return 1; case "$l" in /*) f=$l;; *) f=${f%/*}/$l;; esac; done; [ -e "$f" ] || return 1; '
     + 'd=$(cd -P "${f%/*}/" 2>/dev/null && pwd -P) || return 1; printf \'%s\\n\' "${d%/}/${f##*/}"; }; }; '
@@ -119,7 +160,7 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
     + String.raw`k() { case "$1" in /*) ;; *) x "node path is not absolute ($1)";; esac; for d in "$u" "$t"; do [ -n "$d" ] && case "$1" in "$d"/*) x "node is in a temp folder ($1)";; esac; done; `
     + String.raw`[ "$p" = "$h" ] || case "$1" in "$p"/*) x "node is in the session folder ($1)";; esac; }; `
     + `case "\${r##*/}" in node) k "$r"; e=$r;; *) k "$n"; k "$r"; e=$("$n" -p 'require("fs").realpathSync(process.execPath)' 2>/dev/null) || x "the node shim $n did not name its node"; k "$e";; esac; `
-    + `"$e"${run} "$PLUGIN_ROOT/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
+    + `"$e"${run} "$pr/hooks/${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
 // PowerShell (Windows): the first node.exe, node.bat or node.cmd on PATH (in PATHEXT's order within a folder), looked
@@ -132,11 +173,12 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
 // way followed, and a subst drive written as the folder it stands for, as the sh command compares real paths. A hard
 // link is not followed: its other name is the same file. Network entries (a mapped network drive, \\server\share) are
 // never read, so a share that does not answer cannot hold the hook past Codex's limit; subst.exe is found through the
-// system folder the API names, not an environment variable. (The sh command reads every PATH entry as the shell itself
-// does when it looks up a command; a mount that does not answer holds it until Codex's limit ends the hook.) A refusal says why, as for sh (English: Windows PowerShell 5.1
-// garbles other letters in a command line).
+// system folder the API names, not an environment variable. (The sh command reads the mount table instead and leaves
+// out entries under a network mount outside the home folder.) The plugin folder is judged as node is, before the
+// command enters it, and the hook scripts run from its real path. A refusal says why, as for sh (English: Windows
+// PowerShell 5.1 garbles other letters in a command line).
 function psCommand(script, args, viaRun, notice = false, rev = '') {
-  const run = viaRun ? ' "$env:PLUGIN_ROOT\\hooks\\run.cjs"' : '';
+  const run = viaRun ? ' "$pr\\hooks\\run.cjs"' : '';
   const say = notice
     ? 'Write-Output (ConvertTo-Json -Compress @{ systemMessage = "banker hooks skipped: $m" })'
     : '[Console]::Error.WriteLine("banker hooks skipped: $m")';
@@ -151,15 +193,16 @@ function psCommand(script, args, viaRun, notice = false, rev = '') {
     + String.raw`$ds = @($ds | Where-Object { $_ } | ForEach-Object { L $_ } | Where-Object { $_ }); `
     + String.raw`function u($f) { $f = L $f; foreach ($d in $ds) { if ($f -eq $d -or $f.StartsWith($d + '\', 'OrdinalIgnoreCase')) { return $true } }; $false }; `
     + String.raw`function k($f) { if (u $f) { x "node is in a temp folder or the session folder ($(L $f))" }; L $f }; `
+    + String.raw`$pr = L $env:PLUGIN_ROOT; if (u $pr) { x "the plugin folder is in a temp folder or the session folder ($pr)" }; `
     + String.raw`$nd = @(@($env:PATH -split ';') | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"')) } | Where-Object { $_ -match '^[A-Za-z]:\\' -and ([IO.DriveInfo]::new($_.Substring(0, 1))).DriveType -ne 'Network' }); `
     + String.raw`$n = $null; foreach ($d in $nd) { foreach ($e in 'node.exe', 'node.bat', 'node.cmd') { $f = Join-Path $d $e; if (Test-Path -LiteralPath $f -PathType Leaf) { $n = $f; break } }; if ($n) { break } }; `
     + "if (-not $n) { x 'node is not on PATH' }; "
     + String.raw`$env:PATH = ($nd | Where-Object { -not (u $_) }) -join ';'; `
     + "$r = k $n; "
-    + "if (-not (Set-Location -LiteralPath $env:PLUGIN_ROOT -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
+    + "if (-not (Set-Location -LiteralPath $pr -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
     + String.raw`if ($r -notmatch '\.exe$') { $e = & $r -p process.execPath 2>$null | Select-Object -Last 1; `
     + String.raw`if (-not $e -or $e -notmatch '\.exe$' -or -not (Test-Path -LiteralPath $e -PathType Leaf)) { x "the node shim $r did not name its node" }; $r = k $e }; `
-    + `& $r${run} "$env:PLUGIN_ROOT\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
+    + `& $r${run} "$pr\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
 }
 
 function hooksText() {
@@ -178,79 +221,171 @@ function commandSkills(m = manifest()) {
   return eligible(m).filter((s) => s.type === 'command').map((s) => ({
     name: s.name,
     file: path.join(CMD_DIR, s.name, 'SKILL.md'),
-    text: commandSkillText(read(`commands/${s.name}.md`), s.name, `$banker:${s.name}`),
+    text: commandSkillText(read(`commands/${s.name}.md`), s.name, `$banker:${s.name}`, { description: s.codexDescription, rename: renameMap(m) }),
   }));
+}
+
+// Claude name to Codex name, for the skills Codex names apart.
+function renameMap(m = manifest()) {
+  return Object.fromEntries(sharedSkills(m).filter((s) => s.codexName).map((s) => [s.name, s.codexName]));
+}
+
+// The plugin's skills list: one path per shared skill (a renamed copy when Codex names or describes it apart), then
+// the two bundle folders. Sorted by path so a new skill lands in one place.
+function skillList(m = manifest()) {
+  const one = sharedSkills(m).map((s) => (renamed(s) ? `./${RENAMED_DIR}/${codexName(s)}/` : `./skills/${s.name}/`));
+  return [...one.sort(), ...BUNDLE_DIRS];
+}
+
+// Every file of a skill folder, repo-relative with forward slashes, but what NOT_COPIED names.
+function filesUnder(rel) {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+    const r = `${rel}/${e.name}`;
+    if (NOT_COPIED.test(r)) continue;
+    if (e.isDirectory()) out.push(...filesUnder(r));
+    else if (e.isFile()) out.push(r);
+  }
+  return out;
+}
+
+// The renamed copies as { rel, data }: skills/<name>/ under codex/renamed-skills/<codex name>/, with the SKILL.md
+// frontmatter name and description set (the description as a JSON string, which YAML reads as a double-quoted one).
+function renamedCopies(m = manifest()) {
+  const out = [];
+  for (const s of sharedSkills(m).filter(renamed)) {
+    for (const rel of filesUnder(`skills/${s.name}`)) {
+      const sub = rel.slice(`skills/${s.name}/`.length);
+      const data = fs.readFileSync(path.join(root, rel));
+      out.push({ rel: `${RENAMED_DIR}/${codexName(s)}/${sub}`, data: sub === 'SKILL.md' ? codexFrontmatter(data.toString('utf8'), codexName(s), s.codexDescription) : data });
+    }
+  }
+  return out;
+}
+
+// bin/lib/codex-names.mjs: the hooks count a skill and name it in the update notice by its Claude name.
+function namesText(m = manifest()) {
+  return '// Written by scripts/sync-codex-plugin.js from codex/manifest.json (codexName). Do not edit.\n'
+    + '// CODEX_NAMES: Claude name to Codex name; CLAUDE_NAMES: the other way.\n'
+    + `export const CODEX_NAMES = Object.freeze(${JSON.stringify(renameMap(m))});\n`
+    + 'export const CLAUDE_NAMES = Object.freeze(Object.fromEntries(Object.entries(CODEX_NAMES).map(([a, b]) => [b, a])));\n';
+}
+
+// .codex-plugin/plugin.json with the skills list in place.
+function pluginText(m = manifest()) {
+  return `${JSON.stringify({ ...JSON.parse(read('.codex-plugin/plugin.json')), skills: skillList(m) }, null, 2)}\n`;
+}
+
+// The files this script writes before the hooks file (whose hash covers bin/lib/codex-names.mjs), as { rel, data }.
+function targets(m = manifest()) {
+  return [
+    ...commandSkills(m).map((s) => ({ rel: path.relative(root, s.file).split(path.sep).join('/'), data: s.text })),
+    ...renamedCopies(m),
+    { rel: NAMES_FILE, data: namesText(m) },
+    { rel: '.codex-plugin/plugin.json', data: pluginText(m) },
+  ];
+}
+
+// The files under codex/renamed-skills/ and the folders in codex/command-skills/ no target writes.
+function staleOf(list) {
+  const want = new Set(list.map((x) => x.rel));
+  const files = fs.existsSync(path.join(root, RENAMED_DIR)) ? filesUnder(RENAMED_DIR).filter((r) => !want.has(r)) : [];
+  const cmds = skillDirs(CMD_DIR).map((d) => `codex/command-skills/${d}`).filter((d) => !want.has(`${d}/SKILL.md`));
+  return [...files, ...cmds];
+}
+
+// The skills the plugin's list gives Codex, by the name Codex shows (the folder name), and where each comes from.
+// A path that is no skill folder or bundle folder is a problem; so is a name two paths give (one would shadow the other).
+function listedSkills(list, out) {
+  const seen = new Map();
+  for (const entry of list) {
+    const dir = path.join(root, entry);
+    const names = fs.existsSync(path.join(dir, 'SKILL.md')) ? [path.basename(dir)] : skillDirs(dir);
+    if (!names.length) out.push(`skills list path ${entry} has no skill`);
+    for (const d of names) {
+      if (seen.has(d)) out.push(`skill ${d} is in both ${seen.get(d)} and ${entry}`);
+      seen.set(d, entry);
+    }
+  }
+  return seen;
+}
+
+// Every hook runs a script this repo has.
+function hookProblems(out) {
+  const hooks = JSON.parse(read(HOOKS_FILE)).hooks || {};
+  for (const h of Object.values(hooks).flatMap((groups) => groups.flatMap((g) => g.hooks || []))) {
+    for (const cmd of [h.command, h.commandWindows]) {
+      const scripts = String(cmd).match(/hooks[\\/][a-z-]+\.(?:mjs|cjs)/g) || [];
+      if (!scripts.length) out.push(`hook command runs no hooks/ script: ${cmd}`);
+      for (const s of scripts) if (!fs.existsSync(path.join(root, ...s.split(/[\\/]/)))) out.push(`hook script missing: ${s}`);
+    }
+  }
+}
+
+// The fields of .codex-plugin/plugin.json this script owns or Codex needs as they are.
+function fieldProblems(plugin, m, out) {
+  const claude = JSON.parse(read('.claude-plugin/plugin.json'));
+  if (plugin.name !== claude.name) out.push(`.codex-plugin/plugin.json name ${plugin.name} != ${claude.name}`);
+  if (JSON.stringify(plugin.skills) !== JSON.stringify(skillList(m))) out.push('.codex-plugin/plugin.json skills != the list the manifest gives. Fix: node scripts/sync-codex-plugin.js');
+  if (plugin.hooks !== HOOKS_FILE) out.push(`.codex-plugin/plugin.json hooks must be ${HOOKS_FILE}`);
+  // Codex 0.160 turns a plugin's commands/*.md into skills named source-command-<name> unless the manifest names its
+  // commands. Ours are Claude Code commands (codex/command-skills carries the Codex side), so the list stays empty.
+  if (!Array.isArray(plugin.commands) || plugin.commands.length) out.push('.codex-plugin/plugin.json commands must be [] (keeps Codex 0.160+ from turning commands/ into source-command-* skills)');
 }
 
 // Problems with the plugin manifest, its skill set and its hooks file, as messages.
 function pluginProblems(m = manifest()) {
   const out = [];
   const plugin = JSON.parse(read('.codex-plugin/plugin.json'));
-  const claude = JSON.parse(read('.claude-plugin/plugin.json'));
-  if (plugin.name !== claude.name) out.push(`.codex-plugin/plugin.json name ${plugin.name} != ${claude.name}`);
-  if (JSON.stringify(plugin.skills) !== JSON.stringify(SKILL_DIRS)) out.push(`.codex-plugin/plugin.json skills must be ${JSON.stringify(SKILL_DIRS)}`);
-  if (plugin.hooks !== HOOKS_FILE) out.push(`.codex-plugin/plugin.json hooks must be ${HOOKS_FILE}`);
-  // Codex 0.160 turns a plugin's commands/*.md into skills named source-command-<name> unless the manifest names its
-  // commands. Ours are Claude Code commands (codex/command-skills carries the Codex side), so the list stays empty.
-  if (!Array.isArray(plugin.commands) || plugin.commands.length) out.push('.codex-plugin/plugin.json commands must be [] (keeps Codex 0.160+ from turning commands/ into source-command-* skills)');
-  // Codex names a plugin skill <plugin>:<dir>, so a name in two folders would shadow the other.
-  const seen = new Map();
-  for (const dir of SKILL_DIRS) {
-    for (const d of skillDirs(path.join(root, dir))) {
-      if (seen.has(d)) out.push(`skill ${d} is in both ${seen.get(d)} and ${dir}`);
-      seen.set(d, dir);
-    }
-  }
-  const want = eligible(m).map((s) => s.name).sort();
+  fieldProblems(plugin, m, out);
+  // Codex reads only the folders the list names, so a skill left out is silently missing there.
+  const seen = listedSkills(Array.isArray(plugin.skills) ? plugin.skills : [], out);
+  const want = eligible(m).map(codexName).sort();
   const have = [...seen.keys()].sort();
   if (JSON.stringify(want) !== JSON.stringify(have)) {
     out.push(`plugin skills != manifest (missing: ${want.filter((n) => !seen.has(n)).join(', ') || '-'}; extra: ${have.filter((n) => !want.includes(n)).join(', ') || '-'})`);
   }
-  // Every hook runs a script this repo has.
-  const hooks = JSON.parse(read(HOOKS_FILE)).hooks || {};
-  for (const groups of Object.values(hooks)) {
-    for (const h of groups.flatMap((g) => g.hooks || [])) {
-      for (const cmd of [h.command, h.commandWindows]) {
-        const scripts = String(cmd).match(/hooks[\\/][a-z-]+\.(?:mjs|cjs)/g) || [];
-        if (!scripts.length) out.push(`hook command runs no hooks/ script: ${cmd}`);
-        for (const s of scripts) if (!fs.existsSync(path.join(root, ...s.split(/[\\/]/)))) out.push(`hook script missing: ${s}`);
-      }
-    }
-  }
+  hookProblems(out);
   return out;
+}
+
+// Write or (check) compare one file. True when it drifts under --check.
+function syncOne({ rel, data }, check) {
+  const file = path.join(root, ...rel.split('/'));
+  const now = fs.existsSync(file) ? fs.readFileSync(file) : null;
+  if (now && now.equals(Buffer.from(data))) return false;
+  if (check) { console.error(`OUT OF SYNC: ${rel}. Fix: node scripts/sync-codex-plugin.js`); return true; }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, data);
+  console.log(`wrote ${rel}`);
+  return false;
 }
 
 function main() {
   const check = process.argv.includes('--check');
   const m = manifest();
-  const skills = commandSkills(m);
+  const list = targets(m);
   let failed = false;
-  for (const s of skills) {
-    const now = fs.existsSync(s.file) ? fs.readFileSync(s.file, 'utf8') : null;
-    if (now === s.text) { console.log(`command skill ${s.name} in sync`); continue; }
-    if (check) {
-      console.error(`COMMAND SKILL MISMATCH: ${path.relative(root, s.file)} != commands/${s.name}.md. Fix: node scripts/sync-codex-plugin.js`);
-      failed = true;
-      continue;
-    }
-    fs.mkdirSync(path.dirname(s.file), { recursive: true });
-    fs.writeFileSync(s.file, s.text);
-    console.log(`wrote ${path.relative(root, s.file)}`);
+  for (const x of list) failed = syncOne(x, check) || failed;
+  // A command or a renamed skill dropped from the manifest leaves nothing behind.
+  for (const rel of staleOf(list)) {
+    if (check) { console.error(`STALE: ${rel}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
+    else { fs.rmSync(path.join(root, ...rel.split('/')), { recursive: true, force: true }); console.log(`removed ${rel}`); }
   }
-  // A command dropped from the manifest leaves no stale skill behind.
-  for (const d of skillDirs(CMD_DIR).filter((d) => !skills.some((s) => s.name === d))) {
-    if (check) { console.error(`STALE COMMAND SKILL: codex/command-skills/${d}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
-    else { fs.rmSync(path.join(CMD_DIR, d), { recursive: true, force: true }); console.log(`removed codex/command-skills/${d}`); }
-  }
-  const hooksFile = path.join(root, ...HOOKS_FILE.split('/'));
-  if ((fs.existsSync(hooksFile) ? fs.readFileSync(hooksFile, 'utf8') : null) !== hooksText()) {
-    if (check) { console.error(`HOOKS MISMATCH: ${HOOKS_FILE}. Fix: node scripts/sync-codex-plugin.js`); failed = true; }
-    else { fs.writeFileSync(hooksFile, hooksText()); console.log(`wrote ${HOOKS_FILE}`); }
-  } else console.log(`${HOOKS_FILE} in sync`);
+  if (!check) removeEmptyDirs(path.join(root, RENAMED_DIR));
+  failed = syncOne({ rel: HOOKS_FILE.slice(2), data: hooksText() }, check) || failed;
   for (const p of pluginProblems(m)) { console.error(`CODEX PLUGIN: ${p}`); failed = true; }
   if (failed) process.exit(1);
+  console.log(`Codex plugin in sync: ${list.length + 1} files${check ? ' checked' : ''}`);
+}
+
+// Folders a removed file left empty under codex/renamed-skills/.
+function removeEmptyDirs(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) removeEmptyDirs(path.join(dir, e.name));
+  if (!fs.readdirSync(dir).length) fs.rmdirSync(dir);
 }
 
 if (require.main === module) main();
 
-module.exports = { commandSkills, pluginProblems, hooksText, hookFiles, hooksRev, shCommand, psCommand, SKILL_DIRS, HOOKS_FILE };
+module.exports = { commandSkills, pluginProblems, hooksText, hookFiles, hooksRev, shCommand, psCommand, skillList, renamedCopies, renameMap, namesText, targets, staleOf, BUNDLE_DIRS, RENAMED_DIR, NAMES_FILE, HOOKS_FILE };

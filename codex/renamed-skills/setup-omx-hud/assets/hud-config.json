@@ -1,0 +1,53 @@
+{
+  "preset": "full",
+  "labels": {
+    "thinking": "think"
+  },
+  "elements": {
+    "omcLabel": true,
+    "updateNotification": true,
+    "model": true,
+    "modelFormat": "versioned",
+    "cwd": true,
+    "cwdFormat": "absolute",
+    "useHyperlinks": false,
+    "gitRepo": false,
+    "gitBranch": true,
+    "gitStatus": false,
+    "ralph": true,
+    "autopilot": true,
+    "prdStory": true,
+    "activeSkills": false,
+    "lastSkill": false,
+    "contextBar": true,
+    "agents": true,
+    "agentsFormat": "multiline",
+    "backgroundTasks": true,
+    "todos": true,
+    "thinking": true,
+    "thinkingFormat": "text",
+    "permissionStatus": false,
+    "apiKeySource": false,
+    "profile": false,
+    "promptTime": false,
+    "sessionHealth": true,
+    "showSessionDuration": true,
+    "showHealthIndicator": false,
+    "useBars": false,
+    "showCallCounts": true,
+    "callCountsFormat": "emoji",
+    "safeMode": true,
+    "maxOutputLines": 8
+  },
+  "thresholds": {
+    "contextWarning": 70,
+    "contextCompactSuggestion": 80,
+    "contextCritical": 85,
+    "ralphWarning": 7
+  },
+  "staleTaskThresholdMinutes": 30,
+  "contextLimitWarning": {
+    "threshold": 80,
+    "autoCompact": false
+  }
+}

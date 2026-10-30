@@ -1,0 +1,7 @@
+{"type":"launched"}
+{"type":"started","key":"k1","agentId":"a01","label":"impl-A1-r1","phase":"impl"}
+{"type":"result","key":"k1","agentId":"a01","result":{"done":true}}
+{"type":"started","key":"k2","agentId":"a02","label":"impl-A2-r1","phase":"impl"}
+{"type":"result","key":"k2","agentId":"a02","result":{"done":true}}
+{"type":"started","key":"k3","agentId":"a03","label":"impl-A3-r1","phase":"impl"}
+{"type":"started","key":"k4","agentId":"a04","label":"check-docs","phase":"review"}

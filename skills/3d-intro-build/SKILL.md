@@ -1,6 +1,6 @@
 ---
 name: 3d-intro-build
-description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이는 브랜드 인트로를 만듦. Azure gpt-image 로 스틸을, WAN 키 풀(소진되면 Sora-2)로 영상을 만들며 비용 승인과 단계별 검토 페이지 판정 뒤에만 유료 생성을 진행. 결과는 엄격한 CSP 에서도 도는 페이지이고, 장면 단위 이동과 기존 사이트 통합은 선택. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
+description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이는 브랜드 인트로를 만듦. Azure gpt-image 로 스틸을, WAN 키 풀(소진되면 Sora-2)로 영상을 만들며 비용 승인과 단계별 검토 페이지 판정 뒤에만 유료 생성을 진행. 결과는 엄격한 CSP 에서도 도는 페이지이고, 장면 단위 이동은 기본(끌 수 있음), 기존 사이트 통합은 선택. '3d-intro-build'/'3D 인트로'/'스크롤 fly-through'/'인트로 영상 사이트' 시 사용."
 ---
 
 # 3d-intro-build - 스크롤-스크럽 3D 인트로 제작 (Azure 이미지 + WAN/Sora 영상)
@@ -15,14 +15,17 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 | 파일 | 맡은 일 |
 |---|---|
 | `references/azure-adapter.mjs` | Azure 호출, ffmpeg 처리(`stillToClip` 포함), 비용 추정 |
+| `references/clip-post.mjs` | 클립 후처리(역재생, 판 착지, 디지털 줌)와 측정(이음매 SSIM, 회전과 줌, `seamReport`). 출력은 모두 같은 인코딩 인자(`ENCODE`)와 원본의 색 표시(없으면 bt709) |
+| `references/dive-mode.mjs` | dive 모드의 leg 계획과 실행, 첫 쌍 게이트, `intro.json` 작성 |
 | `references/video-pool.mjs` | 영상 provider 선택, WAN 키 풀, 폴백 |
 | `references/curate.mjs` | 검토 페이지(스틸, 클립)와 판정 기록 |
 | `references/serve.mjs`, `references/preview-lib.mjs` | 미리보기 서버(빈 포트, 상태 파일, 종료, CSP 헤더) |
 | `references/assemble.mjs` | 인트로 페이지 조립(인라인 script, style 없음) |
-| `references/intro-fixes.css`, `panel-glass.css`, `step-nav.js`, `step-nav.css` | 엔진 덧씌움(수정 파일은 항상, 나머지는 선택) |
+| `references/intro-fixes.css`, `panel-glass.css`, `step-nav.js`, `step-nav.css` | 엔진 덧씌움(수정 파일과 장면 단위 이동은 기본, 유리 패널은 선택) |
 | `references/verify-intro.mjs`, `references/verify.md` | 실제 브라우저 측정과 검증 목록 |
 
 엔진(`references/scrub-engine.js`)과 템플릿(`references/index-template.html`)은 벤더링본이라 **수정하지 않는다**(출처는 `references/NOTICE.md`). 엔진의 결함은 사이트 CSS 와 JS 로 덧씌운다.
+예외는 엔진의 선택 설정 `connectorStills` 한 줄뿐이다(사용자 승인, 변경 기록은 `NOTICE.md`). 설정이 없으면 상류와 같다.
 답변은 한글(기술 토큰, 경로, 명령은 영문).
 
 ## 원칙
@@ -37,7 +40,7 @@ description: "스크롤 위치에 맞춰 3D 플라이스루 영상이 움직이�
 **유료 호출은 일곱 개다:** `generateImage`, `generateImageFlux`, `editImage`, `generateClip`(영상의 기본 진입점), `wanCreateTask`, `createVideo`, `createVideoTwoImage`.
 `resumeClip` 은 새로 제출하지 않고 이미 만든 task 를 마저 받기만 한다.
 이 중 **어느 것도 Step 2 의 명시적 승인 이전에는 실행하지 않는다.**
-`resolveCreds`, `resolveFfmpeg`, `detectTwoImageSupport`, `estimateCost`, `poolSummary`, `probeWanPool`, `stillToClip` 은 과금이 없다.
+`resolveCreds`, `resolveFfmpeg`, `detectTwoImageSupport`, `estimateCost`, `poolSummary`, `probeWanPool`, `probeSoraDeployment`, `stillToClip`, 그리고 `clip-post.mjs` 의 후처리와 측정은 과금이 없다. `dive-mode.mjs` 의 `runDiveLegs` 는 `generateClip` 을 부르므로 유료다.
 가장 비싼 영상 호출은 **Step 3 에서 모든 장면의 스틸이 승인되기 전에는 실행하지 않는다**.
 
 ---
@@ -56,14 +59,25 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 ```
 
 - `creds._source` 가 `null` 이면 크리덴셜이 없다. `3d-intro-setup` 으로 보낸다.
-- `creds._tracked` 가 참이면 프로젝트 키 파일을 git 이 추적한다. 멈추고 사람에게 알린다. 그 값은 저장소에서 왔을 수 있고(endpoint 가 프롬프트와 프레임을 받는 곳이다), 키를 적으면 다음 커밋에 실린다. `git rm --cached .env.3d-intro.local` 로 추적을 풀거나 홈 키 파일을 쓴다.
+- `creds._tracked` 가 참이면 프로젝트 키 파일을 git 이 추적한다. 멈추고 사람에게 알린다. 그 값은 저장소에서 왔을 수 있고(endpoint 가 프롬프트와 프레임을 받는 곳이다), 키를 적으면 다음 커밋에 실린다. 그래서 `resolveCreds` 는 이때 endpoint, key, 배포명 같은 값을 하나도 내주지 않고 `_source`, `_tracked`, `_names`(적힌 이름 목록)만 준다. 이 creds 로 이미지나 영상 호출을 해도 아무것도 보내지 않고 오류로 멈춘다. `git rm --cached .env.3d-intro.local` 로 추적을 풀거나 홈 키 파일을 쓴다.
 - `creds._ignored` 가 있으면 프로젝트 키 파일의 `FFMPEG_PATH` 를 쓰지 않은 것이다. 저장소와 함께 온 파일이 실행할 프로그램을 정하지 못하게 막은 것이다. 값은 출력하지 않으니 사람이 파일을 열어 확인하고, 그 경로가 필요하면 `3d-intro-setup` §2 로 홈 설정 파일에 남긴다.
   Claude Code: `/banker:setup` 에서 3d-intro-setup / Codex: `banker-3d-intro-setup`.
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다. 같은 `3d-intro-setup` 으로 보낸다.
 - 둘 다 통과해야 다음 단계로 간다.
 - 영상 provider 상태를 무료로 확인해 둔다.
-  `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)를 키 원문 없이 돌려준다.
+  `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)와 마지막 줄의 Sora 상태(`label: 'AZURE_SORA'`, `ok`, `retired`, `unset`, `malformed`)를 키 원문 없이 돌려준다. WAN 줄은 `provider: 'wan'`, Sora 줄은 `provider: 'sora'` 다.
   쉬는 키를 바로 다시 쓰려면 `resetPoolState({ creds, labels: ['WAN_2'] })` 로 그 키의 기록을 지운다(`labels` 를 빼면 전체). 서버의 `Retry-After` 는 1초에서 10분 사이로만 받는다.
+  Sora 배포는 `probeSoraDeployment` 의 GET 두 번으로 확인한다(과금 없음, 아래 코드). 배포 GET 이 있음과 없음(404)을 가르고, 리소스의 모델 목록이 퇴역일을 알려 준다. Sora 는 프롬프트 없는 POST 로는 배포를 가르지 못한다(2026-10-29 실측, 없는 배포명에도 같은 400).
+
+  ```js
+  import { probeSoraDeployment } from './references/azure-adapter.mjs';
+  const dep = await probeSoraDeployment({ endpoint: creds.AZURE_SORA_ENDPOINT, key: creds.AZURE_SORA_API_KEY, deployment: creds.AZURE_SORA_DEPLOYMENT || 'sora-2' });
+  // dep.state: deployed | no_deployment | retired | auth | unreachable | unknown, dep.retiresAt(ms), dep.daysLeft, dep.soon(14일 안)
+  ```
+
+  - `dep.state` 가 `retired` 이거나 `poolSummary` 의 Sora 줄이 `retired` 인데 WAN 항목이 없으면, 유료 스틸을 만들기 전에 멈춘다. 영상을 만들 provider 가 없다. 사용자에게 알리고 WAN 키를 넣거나(`3d-intro-setup`) 새 Sora 모델을 배포하게 한다.
+  - `dep.soon` 이면 퇴역일(`dep.retiresAt`)과 남은 날 수를 사용자에게 알린다. 그날 뒤로 Sora 는 410 을 준다(Foundry 모델 수명 문서: 서비스에서 빠진 모델은 410 Gone). 퇴역일은 리소스마다 다르니 이 프로브 값만 쓴다.
+  - `dep.state` 가 `no_deployment` 면 `AZURE_SORA_DEPLOYMENT` 이름이 틀렸거나 퇴역 뒤 배포가 지워진 것이다. `3d-intro-setup` §4 로 보낸다.
   `malformed` 는 endpoint 가 https URL 이 아니거나(http 는 이 기기의 localhost 만 허용) 모델이 한 id 가 아닌 항목이다(`reason` 이 `endpoint` 또는 `model`). 영상 단계는 이 항목을 건너뛰고, 모두 `malformed` 면 영상 단계에서 멈춘다. 그러니 유료 스틸을 만들기 전에 사용자에게 알리고 `3d-intro-setup` 으로 고친다.
   Azure 호출도 같다. 키는 https 로만 보내고, `http://` endpoint 는 보내기 전에 막는다(Sora 영상 단계는 `invalid_request`, 이미지 생성 같은 그 밖의 호출은 `HTTP 0 (EINSECURE)` 오류).
   이 기기의 `http://` 로 키를 보낼 때도 Node 가 env 프록시(`NODE_USE_ENV_PROXY=1`, `--use-env-proxy`)로 http 를 보내면 보내기 전에 막는다(`EPROXYKEY`). `NO_PROXY` 에 그 호스트나 `호스트:포트` 를 그대로 적으면(`no_proxy` 도 있으면 그쪽에도) 직접 보낸다. 영상 단계는 그런 WAN 항목을 보내기 전에 건너뛰고, 모든 항목이 그렇거나 Sora endpoint 가 그렇다면 Sora 로 넘어가지 않고 `invalid_request` 로 멈춘다.
@@ -81,7 +95,24 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 - **SCENES[] (순서 있는 씬 목록)** - 권장 5~7개. 이야기 순서는 여기서 정한다(예: 문제 제기, 해법, 결론. 식당이나 여행지라면 도착, 경험, 초대처럼 브랜드에 맞게). CTA 는 마지막 장면에만 둔다. 각 씬의 `id`, `label`, `subject`, `eyebrow`, `title`, `body`, `tags[]`.
 - **ORIENTATION** - `720x1280`(세로) 또는 `1280x720`(가로). 스틸과 영상 크기가 이 값으로 통일된다.
 - **BUDGET** - 상한 USD.
-- **CLIP_MODE** - `chain`(기본) 또는 `holdFlight`(선택, WAN 필요). 차이는 Step 4 에 있다.
+- **CLIP_MODE** - 셋을 보이고 고르게 한다. 기본은 b 다. holdFlight(WAN 필요, 미검증)는 따로 묻지 않고 사용자가 원할 때만 쓴다. 차이는 Step 4 에 있다.
+
+  | 선택 | 모드 | 모습 | 6장면 Sora 추정 |
+  |---|---|---|---|
+  | a | `chain` | 앞 클립 마지막 프레임에서 이어지는 한 줄 활공 | $2.4 |
+  | b (기본) | `dive`, 나가기 없음 | 장면마다 그 스틸에서 들어감, 장면 사이는 배경 판 착지와 엔진 디졸브 | $4.8 |
+  | c | `dive`, 나가기 있음 | b 에 장면 사이 물러나는 클립을 더함 | $6.8 |
+
+  ```js
+  import { defaultClipMode } from './references/video-pool.mjs';
+  const { mode, exit, provider, measured, reason } = defaultClipMode(creds);   // mode 'dive' + exit false (b), or null
+  ```
+
+  - 기본 b 의 까닭: sora-2(2025-12-08) 비교 페이지에서 사용자가 셋 가운데 b 를 가장 자연스럽다고 골랐다. provider 와 관계없이 b 가 기본이다.
+  - `measured` 가 거짓(영상이 WAN 으로 돎)이면 고를 때 "WAN 에서 dive 는 미측정" 을 알린다. chain 은 WAN 에서도 쓰던 길이다.
+  - `mode` 가 `null` 이면 영상을 만들 provider 가 없다(모든 WAN 항목 형식 오류, http Sora endpoint, 설정 없음, 퇴역 기록). `reason` 을 알리고 유료 스틸 전에 멈춘다.
+  - CLIP_MODE 와 카메라 느낌은 한 질문으로 묻는다(아래 `CAMERA_FEEL`). 질문에 표의 비용 차이를 함께 보인다.
+  - dive 면 장면마다 **MOVE** 도 받는다: `push-in`(기본, 밀고 내려감), `crane`(위에서 곧게 내려감, 넓은 공간), `arc`(대상 둘레를 돌며 내려감, 제품과 랜드마크). arc 는 회전 지시 순응이 낮다(실측 3개 가운데 눈으로 돈 것 1개, roll 근사 10도 이상 0개). arc 를 고르면 첫 쌍 게이트에서 회전을 눈으로 확인한다. 문구는 `references/prompts.md` 8절.
 - **SITE** - 단독 인트로 페이지인지, 기존 사이트 위에 붙이는지. 붙인다면 그 사이트의 CSP, 본문 시작 요소의 선택자(`#main` 같은 것), 고정 헤더의 선택자, 지원 언어.
 
 부수 항목(없으면 기본값)
@@ -90,10 +121,10 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 |---|---|---|
 | `PALETTE` | 배경색 하나, accent 하나 | 엔진 테마 색 |
 | `TONE`, `STYLE` | clay diorama | 화풍(prompts.md 2절) |
-| `CAMERA_FEEL` | 잔잔한 전진 활공 | 카메라 움직임 |
+| `CAMERA_FEEL` | CLIP_MODE 를 따름. dive 면 "장면마다 바깥에서 들어감"(장면별 MOVE, b 는 나가기 없음, c 는 있음), chain 과 holdFlight 면 잔잔한 전진 활공(fly-through, walkthrough, locked-iso 중 고름) | 카메라 움직임 |
 | `MOBILE` | no | yes 면 약 2배 비용(세로 체인 추가) |
 | `STILLS_SOURCE` | gpt-image-2 | 코히전 강화가 필요하면 FLUX 옵트인 |
-| `STEP_NAV` | no | yes 면 휠 1칸, 키, 스와이프가 정확히 한 장면을 이동(`step-nav.js`). 스크롤 동작을 가로채므로 사이트 성격을 보고 고른다 |
+| `STEP_NAV` | yes | 장면 단위 이동(`step-nav.js`). 멈춤 자리는 장면마다 시작점(dive 첫 프레임, 나가기는 다음 장면으로 잇는 구간), 마지막 장면 끝, 본문 시작. 휠 1칸과 방향키(위아래, 좌우) 1번은 다음 멈춤 자리까지 절반, 2번이면 한 장면. PageUp/PageDown, Space, 스와이프는 한 장면, Home 은 첫 장면 시작, End 는 마지막 장면 끝으로 애니메이션 없이 바로 가고, 장면 점(클릭, 또는 점에 포커스를 두고 Enter 나 Space)도 그 장면 시작점으로 바로 간다(포스터 디코드 뒤, 문구도 바로). 포스터 디코드를 기다리는 시간이 150ms(`loadingDelayMs`)를 넘으면 화면 가운데에 작은 불러오는 중 표시(`loadingLabel`, 화면 읽기 프로그램에 알림, 포커스와 입력은 막지 않음, 움직임 줄이기에서는 돌지 않음)를 보이고 이동하면 바로 숨긴다. 애니메이션 이동의 대기(최대 300ms)에도 같은 규칙이다. 멈춤 자리나 절반 지점이 아닌 곳에 멈추면 잠시 뒤 가까운 장면 시작점으로 붙는다. 멈춘 자리에서는 그 장면 문구를 보인다. 스크롤 동작을 가로채므로 원하지 않으면 매니페스트 `"stepNav": false` 로 끈다 |
 | `PANEL` | 없음 | `glass` 면 흐린 유리 문구 패널(`panel-glass.css`) |
 
 ---
@@ -110,8 +141,14 @@ import { estimateCost, detectTwoImageSupport } from './references/azure-adapter.
 const twoImage = wantConnectors && await detectTwoImageSupport({ endpoint, key }); // 무료 GET probe
 const cost = CLIP_MODE === 'holdFlight'
   ? estimateCost({ nScenes, mode: 'holdFlight', flightSeconds: 5 })   // 비행 클립 길이(초)
-  : estimateCost({ nScenes, seconds, twoImage });
+  : CLIP_MODE === 'dive'
+    ? estimateCost({ nScenes, mode: 'dive', diveSeconds: 8, exitSeconds: 4, exit })   // 6장면: 나가기 있음 $6.8, 없음 $4.8
+    : estimateCost({ nScenes, seconds, twoImage });
 ```
+
+- dive 는 장면마다 8초(dive, 마지막 장면은 finale)와, 나가기를 쓰면(c) 장면 사이마다 4초다. 기본 b 는 나가기 없음이라 승인 추정도 나가기 없음 기준이다. 첫 쌍 게이트는 b 면 장면 1 의 dive 8초(약 $0.8)만, c 면 dive 8초와 나가기 4초(약 $1.2)를 만들고, 둘 다 고른 모드의 추정 안에 들어간다. b 의 게이트에서 c 로 바꾸려면 게이트 결과의 `switchToExitUsd`(나가기 전부의 추가 비용, 6장면 $2.0)를 알리고 승인받은 뒤 `exit: true` 로 다시 부른다.
+- 6장면 기준 Sora 추정: b(dive 나가기 없음) $4.8, c(나가기 있음) $6.8, a(chain 4초) $2.4. 참고 실측: sora-2(2025-12-08) 시험에서 나가기를 쓰면 원본 이음매 SSIM 이 0.43~0.60 에서 0.59~0.81 로 올랐지만, 화면으로 본 자연스러움은 사용자가 b 를 골랐다.
+- Sora 로 도는 실행이면 Step 0 프로브의 퇴역일(`dep.retiresAt`, `dep.daysLeft`)을 함께 보인다. 그날 뒤로 Sora 실행은 `retired` 로 멈춘다. 날짜는 프로브 값만 쓴다.
 
 - 사용자에게 `cost.images` / `cost.videos` / `cost.usd` 와 BUDGET 대비를 보여준다.
 - `cost.videos` 는 **Sora 단가($0.10/초) 기준**이다.
@@ -181,10 +218,12 @@ node references/curate.mjs --stop <projectDir>   # 끝나면 종료
 
 모드는 Step 1 의 CLIP_MODE 다. 어느 모드든 모든 leg 는 `generateClip` 한 함수로 만든다. provider 순서(`VIDEO_PROVIDER_ORDER`, 기본 `wan,sora`)와 키 풀은 이 함수가 처리한다.
 
-### 4A. chain (기본, 검증된 경로)
+### 4A. chain (선택 a)
 
 연속성은 **forward-chaining** 으로 만든다. 직전 클립의 **실제 마지막 프레임을 톤 변형 없이 그대로** 다음 클립의 첫 프레임으로 넣는다.
-(시드 프레임에 histeq 톤 정합을 걸면 시작 톤이 바뀌어 연속성이 **오히려 나빠진다**. e2e 실측 raw-시드 SSIM ~0.59 대 histeq-시드 0.46. 톤 정합은 조립, 재생 계층에서 처리한다.)
+(시드 프레임에 histeq 톤 정합을 걸면 시작 톤이 바뀌어 연속성이 **오히려 나빠진다**. e2e 실측 raw-시드 SSIM ~0.59 대 histeq-시드 0.46.)
+톤 정합은 하지 않는다. sora-2 실측 10곳에서 시드와 새 클립 첫 프레임의 채널 평균 차이가 최대 2.6/255 라 고칠 톤이 없었고, 보정은 재인코딩 손실만 남겼다. WAN 은 재지 않았다.
+이음매 디졸브는 엔진의 `crossfade`(매니페스트 `crossfade`, 기본 0.12 vh)가 하고, dive 모드의 배경 이음매는 `landOnStill` 이 한다(4C).
 
 ```js
 import { extractLastFrame, extractFirstFrame } from './references/azure-adapter.mjs';
@@ -223,6 +262,37 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 - `intro.json`: `sections[i].clip` 은 정지 클립, `connectors[i]` 는 비행 클립이다. 권장 간격은 `diveScroll: 0.6`, `connScroll: 1.4` 다.
 - 비행 프롬프트는 `references/prompts.md` 5절을 쓴다.
 
+### 4C. dive (기본 b 는 나가기 없음, c 는 나가기 있음)
+
+장면마다 그 장면의 승인 스틸에서 시작한다. 장면 정체성은 첫 프레임이 지키고, 장면 사이 이음매는 무료 후처리가 맞춘다.
+sora-2(2025-12-08) 유료 실측(장면 한 세트)에서 dive 는 장면마다 섬 바깥에서 들어가 목표 근처에 닿았다. 한계도 함께 알린다.
+- arc 회전은 지시 순응이 낮다(눈 1/3). 회전은 첫 쌍 게이트의 눈 검토로 판정한다.
+- finale 끝이 결론 스틸과 맞는 것은 `landOnStill` 착지 덕이다(역재생만 SSIM 0.91, 착지 뒤 0.985).
+- WAN 으로 도는 dive(`VIDEO_PROVIDER_ORDER` 에서 WAN 이 먼저이고 WAN 항목이 있을 때)는 미측정이다.
+
+| 순서 | 클립 | 첫 프레임 | 길이 | 후처리 | 매니페스트 자리 |
+|---|---|---|---|---|---|
+| 장면 i(마지막 제외) | dive_i | 장면 i 스틸 | 8초 | `zoomBoost`(선택, 장면의 `zoom`). 나가기가 없고 배경 이음매가 켜졌으면 끝 0.6초 배경 판 착지 | `sections[i].clip` |
+| 장면 i 와 i+1 사이(선택) | exit_i | dive_i 마지막 프레임 | 4초 | 배경 이음매가 켜졌으면 끝 0.6초 배경 판 착지 | `connectors[i]`, 포스터는 `connectorStills[i]`(그 클립 첫 프레임) |
+| 마지막 장면 | finale | 결론 스틸 | 8초 | `reverseClip`, 끝 0.4초 결론 스틸 착지 | `sections[n-1].clip`, 포스터는 finale 첫 프레임 |
+
+- **배경 이음매 판정과 판 색(무료, 이음매마다, 한 프레임)** - 모든 클립을 만든 뒤 이음매 다음 클립의 **실제 첫 프레임**으로 정한다. 그 프레임의 가장자리 4% 띠에서 가장 흔한 색(작은 색 칸으로 묶음) 근처(채널마다 `bgTolerance`, 기본 12 안)의 비율이 `bgShare`(기본 0.85) 이상이면 켜고, 그 근처 픽셀의 평균색으로 판을 만든다(`seam`, `plate` 이벤트). 가장자리에 닿은 지붕이나 연기 같은 작은 물체는 판정을 깨지 않는다. 꺼진 이음매는 엔진 디졸브만 쓰고, 그 사실과 잰 비율, 문턱(`seam`, `note` 이벤트의 `share`, `threshold`)을 Step 4 에서 알린다. 실제 프레임으로 보정이 필요하면 `bgShare`, `bgTolerance` 를 인자로 바꾼다. sora-2 실측 다섯 이음매 가운데 넷이 켜졌다(꺼진 하나는 비율 0.81).
+- **첫 쌍 게이트의 판** - 다음 클립이 아직 없으므로 다음 장면 스틸로 같은 판정을 한다(다음 dive 는 그 스틸에서 시작한다).
+- **시드 순서** - exit 시드는 dive 의 원본 마지막 프레임이다. `zoomBoost` 를 썼으면 보이는 프레임이 바뀌므로 줌한 클립에서 뽑는다. 판 착지는 시드를 뽑은 뒤에 한다.
+- **스틸 크기** - 스틸이 ORIENTATION 과 다르면(classic 폴백 1024x1536) `resizePng` 로 맞춘 뒤 넣는다(`resize` 이벤트).
+- **첫 쌍 게이트** - 장면 1 만 먼저 만든다. b(나가기 없음)면 dive 하나만 만들어 판에 착지한 판(`withoutExit`)과 `motion`(roll 근사, 줌), c 로 바꿀 때의 추가 비용 `switchToExitUsd` 를 보인다(`withExit` 는 null). c(나가기 있음)면 나가기도 만들어 나가기 없는 판과 있는 판(dive + 판에 착지하는 나가기)을 검토 페이지에 나란히 올리고 `diveExitSsim`, `exitEnd` 를 함께 보인다. `exitEnd.reached` 가 거짓이면(나가기 끝이 배경에 닿지 않음) 그 사실과 잰 비율(`exitEnd.share`, 문턱 `exitEnd.threshold`)을 보이고 나가기를 다시 만들지 묻는다. arc 를 골랐으면 회전을 눈으로 확인한다. 사람이 MOVE, 나가기 사용, 길이를 정한 뒤 나머지를 만든다. 게이트에서 만든 클립(`*.raw.mp4`)은 만든 입력(프롬프트, 시드, 길이, 크기, MOVE, provider 순서)이 같을 때만 다시 쓰므로 두 번 과금하지 않는다(입력 기록은 옆의 `*.raw.json`). 게이트에서 MOVE 나 길이를 바꾸면 그 leg 는 새로 만들어지고 `stale` 이벤트가 바뀐 항목을 알린다. 같은 입력으로 다시 만들려면(예: 나가기 재생성) 그 `*.raw.mp4` 를 지우거나 `reuse: false` 를 준다. 기록 없는 `*.raw.mp4` 는 맞는지 알 수 없어 `kind: 'reuse_unknown'` 으로 멈춘다(과금 없음).
+
+```js
+import { runDiveLegs } from './references/dive-mode.mjs';
+const promptFor = (leg, section) => buildPrompt(leg.kind, leg.move, section);   // prompts.md 8절의 dive, exit, finale
+const gate = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds, promptFor, only: 'first', exit: 고른_값, onEvent: log });   // b: exit false(기본), c: exit true
+// gate.withoutExit(c 면 gate.withExit 도)를 검토 페이지에 올리고 판정을 받는다. b 에서 c 로 바꾸려면 gate.switchToExitUsd 를 먼저 승인받는다
+const done = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds, promptFor, exit: 사람이_고른_값, onEvent: log });
+// done.file = <projectDir>/intro.json (sections[i].clip, connectors, connectorStills, finale 포스터)
+```
+
+- 멈추는 경우는 4A 와 같다(아래 표). `runDiveLegs` 는 `generateClip` 의 오류를 그대로 던진다. 이미 만든 leg 는 `clips/<이름>.raw.mp4` 로 남으니 원인을 고친 뒤 다시 부르면 남은 leg 만 만든다.
+
 ### 클립 공통
 
 - **클립 검토**: `curate-input.json` 을 `"stage": "clips"` 로 다시 쓴다. 테이크마다 클립 파일, 프롬프트, 모델, 길이(`seconds`), 비행이면 `firstFrame`, `lastFrame`, 비용을 적고 같은 검토 페이지로 판정받는다(클립은 무음 반복 재생된다). 재생성은 지적받은 클립만 한다.
@@ -236,10 +306,11 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
   | 오류 | 뜻 | 다음 행동 |
   |---|---|---|
   | `ContentRejectedError` | 검열(`DataInspectionFailed` 등) | 프롬프트나 프레임을 고쳐 다시 부름 |
-  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`, 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume, env 프록시가 키를 막는 http endpoint(`EPROXYKEY`) | 설정을 고침(task 는 생기지 않음. resume 이면 고친 뒤 다시 resume) |
+  | `kind: 'invalid_request'` | 요청 형식 오류, `ModelNotFound`, 모든 WAN 항목의 형식 오류, Sora 크레덴셜 없이 Sora resume, env 프록시가 키를 막는 http endpoint(`EPROXYKEY`), Sora 제출 404(배포명이 틀렸거나 퇴역 뒤 배포가 지워짐. 기록은 남기지 않음) | 설정을 고침(task 는 생기지 않음. resume 이면 고친 뒤 다시 resume) |
   | `kind: 'timeout'` / `'download'` | task 는 있음(과금됐을 수 있음) | `resumeClip({ creds, provider: err.provider, label: err.label, taskId: err.taskId, seconds: err.seconds })` |
   | `kind: 'submit_unknown'` / `'task_lost'` / `'no_video'` / `'failed'` | 결과를 알 수 없음 | Model Studio 콘솔(또는 Azure)에서 task 를 확인한 뒤 사용자와 정함. `task_lost` 인데 콘솔에 task 가 있으면 `resumeClip` 으로 마저 받음(새 제출 없음) |
   | `kind: 'unreachable'` | Sora 연결 거부(아무것도 보내지 않음) | 네트워크를 확인한 뒤 다시 부름 |
+  | `kind: 'retired'` | Sora 배포가 410 으로 답함(제출 410 은 바로, 폴링과 내려받기 410 은 무료 배포 확인이 퇴역이라고 할 때만). 그 배포는 24시간 기록되고, 그동안 Sora 에 보내지 않음. WAN 키가 있으면 다음 leg 는 WAN 으로 감. 폴링이나 내려받기에서 났으면 job 이 과금됐을 수 있음(`err.taskId`) | 유료 생성을 멈추고 사용자에게 알림. WAN 키를 넣거나 새 Sora 모델을 배포한 뒤 `resetPoolState({ labels: ['AZURE_SORA'] })` 로 기록을 지움 |
   | `kind: 'rate'` | Sora 가 다섯 번 제출 모두 429 로 거절함, 또는 다음 기다림이 `maxRateWaitMs`(기본 120초)보다 김(서버의 `Retry-After`, 없으면 30초부터 두 배로 늘린 값. 만든 job 없음, 과금 없음) | 잠시(`err.retryAfterMs` 가 있으면 그만큼) 기다린 뒤 다시 부름 |
   | `kind` 가 없는 오류 | 예상하지 못한 실패 | 원인을 확인하기 전에는 다시 부르지 않음 |
 
@@ -255,8 +326,10 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 | 매니페스트 항목 | 쓰임 |
 |---|---|
 | `lang` | `<html lang>` |
-| `panel: "glass"` | 흐린 유리 문구 패널. 기본값(알파 .36, 흰 글자)은 어두운 장면용이다. 밝은 장면(기본 화풍 clay diorama 등)은 `--intro-panel-alpha` 를 .6 이상으로 올리고 Step 6 대비로 확인한다 |
-| `stepNav: { "end": "#main" }` | 장면 단위 이동. `end` 는 기존 사이트의 본문 시작(단독 페이지면 생략). 나머지 옵션은 `step-nav.js` 머리말 |
+| `panel: "glass"` | 흐린 유리 문구 패널(흰 글자). 알파는 조립이 정한다: 패널 글자색과 accent 로 만든 라벨색이 흰 픽셀 위에서도 대비 4.5 를 넘는 최소값(accent 가 없으면 0.64). 조립이 그 값을 알린다 |
+| `panelAlpha: 0.7` | 사람이 정한 유리 패널 알파(0~1). 계산값보다 이긴다. Step 6 의 대비 실패 줄은 그 줄에 필요한 최소 알파(`needs --intro-panel-alpha >= …`)를 함께 알린다 |
+| `stepNav: { "end": "#main" }` | 장면 단위 이동(기본 켬, `false` 면 끔). `end` 는 기존 사이트의 본문 시작(단독 페이지면 생략). 나머지 옵션은 `step-nav.js` 머리말 |
+| `connectorStills: ["clips/exit-1-first.png", ...]` | 커넥터마다 포스터로 쓸 그 클립의 실제 첫 프레임(dive 모드의 나가기, `runDiveLegs` 가 채움). 없으면 엔진이 다음 장면 스틸을 포스터로 둔다 |
 
 ```bash
 node references/assemble.mjs <projectDir>                    # <projectDir>/site 에 페이지를 만들고 styleHash 를 알린다
@@ -266,10 +339,10 @@ node references/serve.mjs --stop <projectDir>/site           # 끝나면 종료
 
 - 사이트에 CSP 가 있으면 처음부터 `--csp "<운영 정책>"`(정책을 모르면 `--csp strict`)을 붙여 띄운다. 같은 폴더에 설정이 다른 서버가 떠 있으면 시작이 실패한다(exit 1). 그때는 `--stop` 뒤 다시 띄운다. 같은 설정이면 떠 있는 서버의 주소만 알려 준다.
 
-- 페이지에는 인라인 script, style 이 없다. 설정은 `intro.js`, 테마는 `theme.css`, 엔진 CSS 는 `scrub-engine.css` 다.
+- 페이지에는 인라인 script, style 이 없다. 설정은 `intro.js`, 테마는 `theme.css`, 엔진 CSS 는 `scrub-engine.css` 다. 엔진은 포스터를 늦게 불러오므로(`loading=lazy`) 조립이 처음 세 구간의 포스터를 `<link rel="preload" as="image">` 로 미리 받는다. 엔진은 포스터를 비동기로 디코드해, 점프(앵커, 움직임 줄이기의 장면 점, 스크롤 막대)로 새로 보이게 된 장면이 0.1~0.35초 빈 배경으로 보였다. 그래서 `intro.js` 가 모든 포스터를 적재 때와 스크롤이 멈춘 뒤 미리 디코드하고, 장면 단위 이동(`step-nav.js`)은 이동 전에 포스터 디코드를 기다린다(최대 `decodeCapMs` 300ms).
   엔진은 여전히 `<style>` 하나를 주입하려 한다. CSP 가 있는 사이트는 조립이 알려 준 `styleHash` 를 `style-src` 에 더하면 콘솔 오류가 남지 않는다(더하지 않아도 같은 규칙이 `scrub-engine.css` 로 적용된다).
 - 엔진은 클립을 `fetch` 로 받아 `blob:` 으로 재생한다. CSP 에 `connect-src 'self'`(클립을 다른 출처에서 받으면 그 출처)와 `media-src 'self' blob:` 이 필요하다.
-- `intro-fixes.css` 는 항상 붙는다. 엔진의 인라인 transform 이 덮는 패널 세로 가운데 맞춤(`translate`), 860px 이하에서 장면 점과 겹치지 않는 오른쪽 여백과 아래 안내 위로 올린 문구, 높이 500px 이하 가로 화면의 두 단 배치, 어두운 테마에서도 읽히는 주 버튼과 상단 CTA 글자, 고정 헤더를 깨는 `overflow-x: hidden` 대신 `clip` 을 담는다.
+- `intro-fixes.css` 는 항상 붙는다. 클립이 준비되기 전 포스터에 엔진이 주는 확대와 이동을 끄는 규칙(클립이 나타날 때 화면이 튀지 않게), 클립이 나타난 뒤 0.15초 동안 포스터를 아래에 두는 규칙(클립 프레임이 그려지기 전의 빈 프레임 방지), 엔진의 인라인 transform 이 덮는 패널 세로 가운데 맞춤(`translate`), 860px 이하에서 장면 점과 겹치지 않는 오른쪽 여백과 아래 안내 위로 올린 문구, 높이 500px 이하 가로 화면의 두 단 배치, 어두운 테마에서도 읽히는 주 버튼과 상단 CTA 글자, 고정 헤더를 깨는 `overflow-x: hidden` 대신 `clip` 을 담는다.
 - 기존 사이트에 붙이는 미리보기는 반드시 운영과 같은 CSP 헤더로 서빙한다. 일반 정적 서버에서는 CSP 오류가 보이지 않는다.
 - 상태 파일은 `serve.mjs` 가 서빙 폴더 밖(`<site>.server.json`)에, `curate.mjs` 가 프로젝트 폴더(`curate.server.json`)에 둔다. 검토 서버는 입력에 적힌 테이크와 프레임 가운데 이미지와 영상만, 링크를 따라가도 프로젝트 안의 이미지나 영상일 때만 내준다. 그래서 이 파일과 `.env` 키 파일은 입력에 잘못 적혀도 내려가지 않는다. 읽을 수 없는 파일은 403 으로 답하고 서버는 계속 돈다. 두 서버 모두 Host 가 localhost 나 IP 주소가 아니면 거절한다(DNS 재바인딩 방지). 종료는 `--stop` 으로 한다. 상태 파일의 PID 가 1보다 큰 정수가 아니면 끄지 않는다. 명령줄 패턴으로 `pkill -f` 하지 않는다. 이미 떠 있는 서버를 같은 설정으로 다시 띄우면 그 주소만 알려 준다. CSP, 바인드 주소, 포트가 다르면 `--stop` 으로 먼저 끄라며 멈춘다(exit 1). 검토 페이지의 sha256 은 파일을 나눠 읽어 크기 제한이 없고, 서버를 띄울 때 미리 계산한다.
 - 상태 파일의 PID 가 1보다 큰 정수가 아니거나 기록된 주소가 이 기기가 아니면 그 서버를 끄지 않는다(`--stop` 은 종료 1, 파일은 사람이 보도록 남긴다). 상태 파일은 남의 저장소 안에 있을 수 있기 때문이다.
@@ -277,6 +350,7 @@ node references/serve.mjs --stop <projectDir>/site           # 끝나면 종료
 - 휴대폰 실기기로 볼 때만 `PREVIEW_HOST=0.0.0.0` 을 쓴다. 같은 네트워크에 미공개 산출물이 보인다는 경고가 나온다.
 - 프로젝트 관례상 **claude.ai 아티팩트를 만들지 않는다** - 로컬 페이지를 포트로 서빙해 사용자가 브라우저로 확인한다.
 - 사용자 검토를 받는다. 지적이 있으면 카피, 매니페스트, 해당 클립만 고치고 다시 조립한다.
+- 이음매와 움직임을 무료로 잰다: `seamReport(projectDir)`(`clip-post.mjs`)가 `intro.json` 순서대로 이음매 SSIM 과 클립별 `cameraMotion`(roll 근사의 누적 회전각, 누적 줌)을 JSON 으로 준다. 평행 이동은 재지 않는다. 수치는 Step 8 보고에 그대로 쓴다.
 
 ---
 
@@ -290,8 +364,14 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 
 - 화면 크기마다 새 브라우저 컨텍스트로 잰다(재빌드 뒤 재사용 컨텍스트는 예전 CSS 를 캐시에서 준다). 기본 화면은 1280x800, 1920x1080, 860x900, 390x844 터치, 375x667 터치, 844x390 터치(가로로 든 휴대폰)다. 다른 크기를 지원하면 `--viewports` 에 더한다. 지원 언어마다 그 언어 페이지 주소로 다시 돌린다.
 - 장면마다 패널이 화면 안, 헤더 아래에 있는지, 안내, 건너뛰기, 버튼, 장면 점과 겹치지 않는지, 가로 넘침, 콘솔 오류, 글자 줄 단위 대비(CTA 버튼 글자 포함, 글자를 숨긴 채 가장 나쁜 배경 픽셀 기준, 4.5 이상)를 잰다. 상단 CTA 는 제 바탕색과의 대비를 잰다. 바탕이 단색이 아니면 잴 수 없어 실패로 남고, 검증자가 눈으로 보고 판정에 적는다. 두 번째 장면부터는 클립이 있는데 5초 안에 그려지지 않으면 실패다(첫 장면은 첫 이동 전까지 스틸, 움직임 줄이기는 클립 없음).
-- 장면 단위 이동이면 입력도 잰다: 직전 장면에서 휠 1칸과 관성 1회가 마지막 장면에 멈추는지, 마지막 장면에서 입력 방식별 본문 도착과 위 입력 복귀, 메인화면 버튼과 건너뛰기 링크. 움직임 줄이기 설정은 `--viewports 1280x800r` 로 따로 잰다.
-- 눈으로 볼 항목은 `references/verify.md` 에 있다.
+- 장면 단위 이동이면 입력도 잰다: 직전 장면에서 휠 1칸과 관성 1회(한 동작)가 한 장면만 가서 마지막 장면 시작에 멈추는지, 마지막 장면 끝에서 입력 방식별 본문 도착과 위 입력 복귀(휠과 방향키는 2번), 메인화면 버튼과 건너뛰기 링크. 움직임 줄이기 설정은 `--viewports 1280x800r` 로 따로 잰다.
+- 이음매 탐침: `--seams` 를 더하면 첫 화면 크기에서 클립 사이 경계마다 앞뒤를 스크롤하며 잰다. 빈 화면(색과 관계없이 거의 한 색) 길이가 한도를 넘거나, 느린 망(`--slow-clips 4000`)에서 포스터가 클립과 크게 다르면 실패다. dive 모드면 반드시 돌린다. 도착할 때 클립이 이미 있던 경계는 포스터를 재지 못한다(`posterUnmeasured`, 통과로 세지 않음: 실패가 없어도 종료 코드 3). `--seam-reload` 를 더하면 경계마다 페이지를 새로 불러 모든 경계를 잰다.
+
+  ```bash
+  node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800 --no-input --seams --slow-clips 4000 --seam-reload --out <projectDir>/verify-seams.json
+  ```
+
+- 눈으로 볼 항목은 `references/verify.md` 에 있다(dive 는 회전, 배경 이음매, 결론 착지).
 - 실패가 0 이고 검증자가 APPROVE 해야 Step 7 이나 완료 보고로 간다. 실패가 있으면 고친 뒤 같은 검증자로 다시 잰다.
 
 ---
@@ -319,9 +399,10 @@ node references/verify-intro.mjs http://localhost:<port>/ --out <projectDir>/ver
 - leg 별 영상 provider 와 키 라벨(`WAN_2`, `AZURE_SORA` 등), 폴백이 일어난 leg, 끝난 뒤의 `poolSummary`.
 - **실제 소요 비용**(추정 대비, 승인 예산 대비).
 - 독립 검증 결과(화면 크기별 실패 수, 판정).
-- 이음매 품질은 경로에 따라 **정직하게** 쓴다. 과장하지 않는다.
-  - chain: **near-seamless** 하되 **경미한 톤/디테일 drift** 가 있을 수 있다(pre-composite raw SSIM ~0.59).
+- 이음매 품질은 경로에 따라 **정직하게** 쓴다. 과장하지 않는다. "near-seamless", "이음매 없음" 같은 표현은 쓰지 않고, 이 실행의 수치를 아래 실측 범위(sora-2 2025-12-08, 장면 한 세트)와 나란히 쓴다.
+  - chain: 실측 원본 이음매 SSIM 0.63~0.95. 후반이 높았던 것은 같은 흐린 근접 화면이 이어졌기 때문이라, 수치와 함께 장면이 실제로 바뀌었는지 눈 검토 결과를 쓴다.
   - holdFlight: 비행 클립의 첫과 끝 프레임이 장면 스틸과 맞으면 이음매가 없다. 이 스킬에서는 미검증 경로이므로 실제로 확인한 결과만 쓴다.
+  - dive: 배경 이음매가 켜진 곳은 판 착지로 맞춘다. 꺼진 곳(테두리가 한 색이 아님)은 엔진 디졸브다. `seamReport` 의 이음매 SSIM, 클립별 roll 근사와 줌, `--seams` 결과를 그대로 쓴다. 실측 범위: 빈 화면 0건, 원본 이음매 SSIM 나가기 없음 0.43~0.60, 나가기 있음 0.59~0.81, 판 착지 뒤 0.89, finale 착지 뒤 결론 스틸 SSIM 0.985. 움직임과 회전이 chain 보다 나아졌다는 말은 같은 스틸의 chain 대조군 수치가 있을 때만 한다.
   - 수용 기준은 조립, 서빙된 페이지의 실제 스크럽 경험이다.
 - 재생성한 스틸이나 클립이 있으면 그 사유.
 

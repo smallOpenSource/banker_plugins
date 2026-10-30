@@ -1,12 +1,13 @@
 // Tests for codex-routes.mjs. Run from the repo root: node --test bin/lib/codex-routes.test.mjs
 import { strict as assert } from 'node:assert';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { after, test } from 'node:test';
 
-import { codexHomeOf, dualInstallNote, npmRoute, pluginRootInfo, pluginRoutes, projectNpmRoot } from './codex-routes.mjs';
+import { codexCliVersion, codexHomeOf, dualInstallNote, hookPlaces, npmRoute, pluginRootInfo, pluginRoutes, projectNpmRoot, realPath, writableRoots, writableRootsNote } from './codex-routes.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'codex-routes-test-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -104,4 +105,68 @@ test('the dual install note names both ways out only when both routes are there'
   npmSkill(join(loose, '.codex'), 'lineage');
   mkdirSync(join(loose, 'sub'));
   assert.equal(projectNpmRoot(join(loose, 'sub')), '');
+});
+
+// codex --version is started by bare name (codex.cmd through cmd on Windows): from the home folder, with the search of
+// the current folder off, so a codex.cmd planted in the session folder (a hook's current folder) never runs.
+test('codex --version runs from the home folder with NoDefaultCurrentDirectoryInExePath set', () => {
+  let seen = null;
+  assert.equal(codexCliVersion((_c, _a, o) => { seen = o; return { stdout: 'codex-cli 0.165.0\n' }; }), '0.165.0');
+  assert.equal(seen.cwd, homedir());
+  assert.equal(seen.env.NoDefaultCurrentDirectoryInExePath, '1');
+});
+
+test('a codex.cmd in the current folder or the home folder is not what codex --version runs', { skip: process.platform !== 'win32' && 'cmd.exe and .cmd files' }, (t) => {
+  const d = home();
+  const fake = join(d, 'fakehome');
+  mkdirSync(fake);
+  const plant = (dir) => writeFileSync(join(dir, 'codex.cmd'), '@echo codex-cli 9.9.9\r\n');
+  plant(d);
+  plant(fake);
+  const saved = { cwd: process.cwd(), USERPROFILE: process.env.USERPROFILE, PATH: process.env.PATH };
+  t.after(() => { process.chdir(saved.cwd); process.env.USERPROFILE = saved.USERPROFILE; process.env.PATH = saved.PATH; });
+  process.chdir(d);
+  process.env.USERPROFILE = fake;
+  process.env.PATH = join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  assert.equal(homedir(), fake);
+  assert.equal(codexCliVersion(spawnSync), '', 'neither planted codex.cmd ran');
+});
+
+// Plan B9 (S11): the hooks check config.toml's writable_roots as the teamwork engine reads them.
+test('writable_roots are read from the table and the dotted key, relative to the Codex home, ~ as the home folder', () => {
+  const h = home();
+  assert.deepEqual(writableRoots(h), [], 'no config.toml');
+  mkdirSync(join(h, 'w1'));
+  writeFileSync(join(h, 'config.toml'), '[sandbox_workspace_write]\nwritable_roots = [\n  "w1",\n  \'~\',\n]\n[other]\nwritable_roots = ["no"]\n');
+  assert.deepEqual(writableRoots(h), [realPath(join(h, 'w1')), realPath(homedir())]);
+  writeFileSync(join(h, 'config.toml'), 'sandbox_workspace_write.writable_roots = ["w1"]\n');
+  assert.deepEqual(writableRoots(h), [realPath(join(h, 'w1'))]);
+});
+
+test('a hook place under a writable root is named, but not under that root\'s top .codex, and nothing without the setting', () => {
+  const h = home();
+  const root = join(h, 'shared');
+  const plugin = join(root, 'deep', 'codexhome', 'plugins', 'cache', 'banker-plugins', 'banker', '0.23.0');
+  mkdirSync(join(plugin, 'hooks'), { recursive: true });
+  const script = join(plugin, 'hooks', 'update-notify.mjs');
+  writeFileSync(script, '');
+  const places = hookPlaces(pathToFileURL(script).href);
+  assert.deepEqual(places.slice(0, 2), [script, plugin]);
+  assert.equal(writableRootsNote(h, places), '', 'no config.toml: the hook runs as before');
+  writeFileSync(join(h, 'config.toml'), `[sandbox_workspace_write]\nwritable_roots = [${JSON.stringify(root)}]\n`);
+  assert.match(writableRootsNote(h, places), /^banker hooks skipped: .*update-notify\.mjs is under the sandbox writable root .*shared \(config\.toml \[sandbox_workspace_write\] writable_roots\)/);
+  const top = join(root, '.codex', 'plugins', 'x', 'hooks', 'a.mjs');
+  mkdirSync(dirname(top), { recursive: true });
+  writeFileSync(top, '');
+  assert.equal(writableRootsNote(h, [top]), '', 'the top .codex of a writable root stays read-only in the sandbox');
+  assert.equal(writableRootsNote(h, [join(h, 'elsewhere')]), '');
+});
+
+test('a hook place reached through a link is judged where it leads', { skip: process.platform === 'win32' && 'symbolic links need privileges' }, () => {
+  const h = home();
+  const root = join(h, 'shared');
+  mkdirSync(join(root, 'plugin'), { recursive: true });
+  symlinkSync(join(root, 'plugin'), join(h, 'link'));
+  writeFileSync(join(h, 'config.toml'), `sandbox_workspace_write.writable_roots = [${JSON.stringify(root)}]\n`);
+  assert.match(writableRootsNote(h, [join(h, 'link')]), new RegExp(`${realpathSync(join(root, 'plugin')).replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&')} is under`));
 });

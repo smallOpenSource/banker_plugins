@@ -2,7 +2,7 @@
 // Run from the repo root: node --test scripts/sync-codex-plugin.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -15,16 +15,23 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'codex-plugin-hooks-')));
 after(() => rmSync(base, { recursive: true, force: true }));
+// The commands judge the plugin folder as they judge node, so the test plugin folders sit outside every temp folder and
+// the session folder: /var/tmp on Linux and macOS, the repository's git-ignored work/ on Windows.
+const plugBase = process.platform === 'win32' ? join(ROOT, 'work') : '/var/tmp';
+mkdirSync(plugBase, { recursive: true });
+const plugins = realpathSync(mkdtempSync(join(plugBase, 'codex-plugin-root-')));
+after(() => rmSync(plugins, { recursive: true, force: true }));
 let n = 0;
-// A plugin folder whose hooks/probe.mjs writes `ran <args>` to the marker file, and an empty session folder.
+// A plugin folder whose hooks/probe.mjs writes `ran <args>` to the marker file (and PATH to marker.path), and an empty
+// session folder.
 function setup() {
-  const d = join(base, `c${n++}`);
-  const plugin = join(d, 'plugin');
+  const d = join(base, `c${n}`);
+  const plugin = join(plugins, `c${n++}`);
   const work = join(d, 'work');
   mkdirSync(join(plugin, 'hooks'), { recursive: true });
-  mkdirSync(work);
+  mkdirSync(work, { recursive: true });
   const marker = join(d, 'marker');
-  writeFileSync(join(plugin, 'hooks', 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\nwriteFileSync(${JSON.stringify(marker + '.cwd')}, process.cwd());\n`);
+  writeFileSync(join(plugin, 'hooks', 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\nwriteFileSync(${JSON.stringify(marker + '.cwd')}, process.cwd());\nwriteFileSync(${JSON.stringify(marker + '.path')}, process.env.PATH);\n`);
   writeFileSync(join(plugin, 'hooks', 'run.cjs'), readFileSync(join(ROOT, 'hooks', 'run.cjs')));
   return { d, plugin, work, marker };
 }
@@ -482,5 +489,194 @@ test('sh: a multicall shim on PATH runs the node binary it names', homeCase, () 
     assert.equal(readFileSync(c.marker, 'utf8'), 'ran --codex');
   } finally {
     rmSync(d, { recursive: true, force: true });
+  }
+});
+
+// A copy of a setup() plugin folder at dir (probe.mjs and run.cjs).
+function pluginAt(c, dir) {
+  mkdirSync(join(dir, 'hooks'), { recursive: true });
+  for (const f of ['probe.mjs', 'run.cjs']) copyFileSync(join(c.plugin, 'hooks', f), join(dir, 'hooks', f));
+  return dir;
+}
+const shells = () => ['/bin/sh', '/bin/bash', '/bin/dash', '/usr/bin/dash'].filter((f) => existsSync(f));
+
+// A PATH entry under a network mount outside the home folder may not answer: the command neither looks for node there
+// nor keeps it. An entry under the home folder is checked as before, even on a network mount.
+test('sh: PATH entries under a network mount outside the home folder are left out; under the home folder they are kept', homeCase, (t) => {
+  const c = setup();
+  const o = outside(t);
+  const home = join(o.d, 'home');
+  const net = join(o.d, 'net');
+  const spaced = join(o.d, 'net 2');
+  const homeNet = join(home, 'nfs');
+  for (const dir of [join(net, 'bin'), join(spaced, 'bin')]) fakeNode(c, dir);
+  mkdirSync(join(homeNet, 'bin'), { recursive: true });
+  const table = join(c.d, 'mounts');
+  writeFileSync(table, [
+    `srv:/x ${net} nfs4 rw 0 0`,
+    `//srv/y ${spaced.replace(/ /g, '\\040')} cifs rw 0 0`,
+    `srv:/h ${homeNet} nfs rw 0 0`,
+    `/dev/sda1 ${o.d} ext4 rw 0 0`,
+  ].join('\n'));
+  const path = [join(net, 'bin'), join(spaced, 'bin'), join(homeNet, 'bin'), dirname(o.node), '/usr/bin', '/bin'].join(delimiter);
+  for (const sh of shells()) {
+    const cmd = shCommand('probe.mjs', [], true, false, '', [join(c.d, 'none')], { table, command: '/nonexistent' });
+    const r = spawnSync(sh, ['-c', cmd], { cwd: c.work, encoding: 'utf8', env: { PATH: path, PLUGIN_ROOT: c.plugin, TMPDIR: '/tmp', HOME: home } });
+    assert.equal(r.status, 0, `${sh}: ${r.stderr}`);
+    assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', `${sh}: the node outside the network mounts ran`);
+    const kept = readFileSync(`${c.marker}.path`, 'utf8').split(delimiter);
+    assert.ok(!kept.includes(join(net, 'bin')) && !kept.includes(join(spaced, 'bin')), `${sh}: ${kept.join(delimiter)}`);
+    assert.ok(kept.includes(join(homeNet, 'bin')), `${sh}: an entry under the home folder is kept after its check`);
+    rmSync(c.marker);
+  }
+  // With node only on the network mount, the command says node is not on PATH rather than reading the mount.
+  const r = sh(c, shCommand('probe.mjs', [], true, false, '', [join(c.d, 'none')], { table, command: '/nonexistent' }), join(net, 'bin'));
+  assert.match(r.stderr, /^banker hooks skipped: node is not on PATH/);
+  assert.ok(!existsSync(c.marker));
+});
+
+// macOS has no /proc: the command reads /sbin/mount's `<device> on <mount point> (<type>, ...)` lines.
+test('sh: on a system without /proc/self/mounts, the mount command\'s lines name the network mounts', homeCase, (t) => {
+  const c = setup();
+  const o = outside(t);
+  const net = join(o.d, 'Volumes', 'My share');
+  fakeNode(c, join(net, 'bin'));
+  const mount = join(o.d, 'mount');
+  writeFileSync(mount, `#!/bin/sh\nprintf '%s\\n' '/dev/disk1s1 on / (apfs, local, journaled)' '//u@srv/share on ${net} (smbfs, nodev, nosuid, mounted by u)' 'map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)'\n`);
+  chmodSync(mount, 0o755);
+  const cmd = shCommand('probe.mjs', [], true, false, '', [join(c.d, 'none')], { table: join(c.d, 'no-such-table'), command: mount });
+  const r = spawnSync('/bin/sh', ['-c', cmd], { cwd: c.work, encoding: 'utf8', env: { PATH: [join(net, 'bin'), dirname(o.node), '/usr/bin', '/bin'].join(delimiter), PLUGIN_ROOT: c.plugin, TMPDIR: '/tmp', HOME: c.d } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ');
+  assert.ok(!readFileSync(`${c.marker}.path`, 'utf8').split(delimiter).includes(join(net, 'bin')));
+});
+
+// The hook scripts the command runs sit in the plugin folder. One the sandbox can write (a Codex home deep in the
+// session folder, or the temp folder) runs nothing, as a node there would not; a session in the home folder itself is
+// no workspace here either.
+test('sh: a plugin folder in the session folder (however deep, or through a link) or a temp folder runs nothing', homeCase, (t) => {
+  const c = setup();
+  const o = outside(t);
+  const work = join(o.d, 'work');
+  const deep = pluginAt(c, join(work, 'deep', 'codexhome', 'plugins', 'cache', 'm', 'banker', '1.0'));
+  const link = join(o.d, 'link');
+  symlinkSync(deep, link);
+  // 진짜 /tmp 아래(명령이 늘 검사하는 곳). macOS 의 os.tmpdir() 은 /var/folders 라 TMPDIR=/tmp 로 부르면 임시 폴더가 아니다
+  const tmpRoot = mkdtempSync('/tmp/codex-plugin-tmp-');
+  t.after(() => rmSync(tmpRoot, { recursive: true, force: true }));
+  const inTmp = pluginAt(c, join(tmpRoot, 'tmp-plugin'));
+  const run = (cwd, root, home = o.d) => spawnSync('/bin/sh', ['-c', shCommand('probe.mjs', [], true, true)], { cwd, encoding: 'utf8', env: { PATH: `${dirname(o.node)}${delimiter}/usr/bin${delimiter}/bin`, PLUGIN_ROOT: root, TMPDIR: '/tmp', HOME: home } });
+  for (const root of [deep, link, inTmp]) {
+    const r = run(work, root);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: the plugin folder is in a temp folder or the session folder \(/, root);
+    assert.ok(!existsSync(c.marker), `${root}: nothing ran`);
+  }
+  let r = run(o.d, c.plugin);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', `the setup plugin folder runs: ${r.stdout}${r.stderr}`);
+  rmSync(c.marker);
+  r = run(work, deep, work);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran ', `a session in the home folder itself: ${r.stdout}${r.stderr}`);
+  assert.equal(readFileSync(`${c.marker}.cwd`, 'utf8'), realpathSync(deep), 'run from the real path of the plugin folder');
+});
+
+test('PowerShell: a plugin folder in the session folder or under TEMP runs nothing', windows, () => {
+  const c = setup();
+  const deep = pluginAt(c, join(c.work, 'deep', 'codexhome', 'plugins', 'cache', 'm', 'banker', '1.0'));
+  let r = psRun(c, psCommand('probe.mjs', [], true, true), asideEnv(c, { PLUGIN_ROOT: deep, PATH: `${nodeDir}${delimiter}${sysPath()}` }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: the plugin folder is in a temp folder or the session folder/);
+  assert.ok(!existsSync(c.marker));
+  const inTemp = pluginAt(c, join(c.d, 'tmp-plugin'));
+  r = ps({ ...c, plugin: inTemp }, psCommand('probe.mjs', [], true), `${nodeDir}${delimiter}${sysPath()}`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /banker hooks skipped: the plugin folder is in a temp folder or the session folder/);
+  assert.ok(!existsSync(c.marker));
+});
+
+// The skills list (plan 22.3): Codex reads only the folders the list names, so the list is what Codex shows.
+const { renamedCopies, skillList, staleOf, targets, BUNDLE_DIRS, RENAMED_DIR } = require('./sync-codex-plugin.js');
+const MANIFEST = JSON.parse(readFileSync(join(ROOT, 'codex', 'manifest.json'), 'utf8'));
+const frontmatter = (text) => (/^---\r?\n([\s\S]*?)\r?\n---/.exec(text) || [, ''])[1];
+
+test('the skills list names every shared skill once, a renamed copy for the six Codex names or describes apart, no claude-only skill', () => {
+  const list = skillList();
+  assert.deepEqual(JSON.parse(readFileSync(join(ROOT, '.codex-plugin', 'plugin.json'), 'utf8')).skills, list);
+  assert.deepEqual(list.slice(-2), BUNDLE_DIRS);
+  const shared = MANIFEST.surfaces.filter((s) => s.type === 'skill' && s.target === 'both');
+  assert.equal(list.length, shared.length + 2);
+  for (const s of shared) {
+    const want = s.codexName || s.codexDescription ? `./${RENAMED_DIR}/${s.codexName || s.name}/` : `./skills/${s.name}/`;
+    assert.ok(list.includes(want), want);
+  }
+  assert.deepEqual(MANIFEST.surfaces.filter((s) => s.codexName || s.codexDescription).map((s) => s.name).sort(),
+    ['append_wiki', 'compact-wiki', 'omc-reference', 'setup', 'setup-omc', 'setup-omc-hud', 'setup-tmux']);
+  for (const s of MANIFEST.surfaces.filter((x) => x.target === 'claude-only')) assert.ok(!list.some((p) => p.includes(`/${s.name}/`)), s.name);
+  assert.ok(!list.some((p) => p.includes('/ultraqa/')));
+});
+
+test('a renamed copy is its source with only the frontmatter name and description changed, and no tests', () => {
+  const copies = renamedCopies();
+  for (const s of MANIFEST.surfaces.filter((x) => x.type === 'skill' && (x.codexName || x.codexDescription))) {
+    const dir = `${RENAMED_DIR}/${s.codexName || s.name}/`;
+    const mine = copies.filter((c) => c.rel.startsWith(dir));
+    assert.ok(mine.length, dir);
+    for (const c of mine) {
+      assert.doesNotMatch(c.rel, /\.test\.(?:mjs|ts)$|__pycache__|\/test_[^/]*\.py$/);
+      const src = readFileSync(join(ROOT, 'skills', s.name, ...c.rel.slice(dir.length).split('/')));
+      if (!c.rel.endsWith('/SKILL.md')) { assert.ok(src.equals(c.data), c.rel); continue; }
+      const fm = frontmatter(c.data);
+      assert.match(fm, new RegExp(`^name: ${s.codexName || s.name}$`, 'm'));
+      const desc = /^description: (.*)$/m.exec(fm)[1];
+      assert.equal(JSON.parse(desc), s.codexDescription, 'the description reads back as the double-quoted string it was written as');
+      const strip = (t) => String(t).split('\n').filter((l) => !/^(?:name|description):/.test(l)).join('\n');
+      assert.equal(strip(c.data), strip(src), `${c.rel}: nothing but the two lines changed`);
+    }
+  }
+  assert.deepEqual(staleOf(targets()), [], 'nothing stale under codex/renamed-skills or codex/command-skills');
+});
+
+test('no test file sits in codex/renamed-skills, so a run of every *.test.mjs never runs a copy twice', () => {
+  const found = [];
+  const walk = (rel) => {
+    for (const e of readdirSync(join(ROOT, ...rel.split('/')), { withFileTypes: true })) {
+      if (e.isDirectory()) walk(`${rel}/${e.name}`);
+      else if (/\.test\.(?:mjs|ts)$/.test(e.name)) found.push(`${rel}/${e.name}`);
+    }
+  };
+  walk(RENAMED_DIR);
+  assert.deepEqual(found, []);
+});
+
+// Plan 22.7: what Codex shows from the plugin (each listed skill's frontmatter in full) says OMX, not OMC. omc-patch and
+// payload-mon keep their names: their description opens with the line that they act on Claude Code's OMC.
+test('the Codex plugin frontmatter has no OMC but the two kept skills, which say they handle Claude Code\'s OMC', () => {
+  const files = [];
+  for (const entry of skillList()) {
+    const dir = join(ROOT, entry);
+    if (existsSync(join(dir, 'SKILL.md'))) files.push(join(dir, 'SKILL.md'));
+    else for (const d of readdirSync(dir)) if (existsSync(join(dir, d, 'SKILL.md'))) files.push(join(dir, d, 'SKILL.md'));
+  }
+  assert.equal(files.length, MANIFEST.surfaces.filter((s) => s.target !== 'claude-only').length);
+  for (const f of files) {
+    const fm = frontmatter(readFileSync(f, 'utf8'));
+    const name = /^name: (.*)$/m.exec(fm)[1];
+    if (name === 'omc-patch' || name === 'payload-mon') assert.match(fm, /^description: "Claude Code 의 OMC 를 다룸\(Codex 에서 실행해도 같음\)\. /m, f);
+    else assert.doesNotMatch(fm, /omc/i, f);
+  }
+});
+
+// Plan S11 B7: a sentence that says what a renamed skill installs is written for Codex as a whole. A name swap alone
+// made the Codex front-qa and setup send the OMX install skill to install OMC.
+test('the command skills say the Codex install skill installs OMX, and every Codex phrase still occurs in a command', () => {
+  const { CODEX_PHRASES } = require('../bin/lib/command-skill.cjs');
+  const commands = readdirSync(join(ROOT, 'commands')).map((f) => readFileSync(join(ROOT, 'commands', f), 'utf8')).join('\n');
+  for (const [from] of CODEX_PHRASES) assert.ok(commands.includes(from), `no command says: ${from}`);
+  for (const name of ['front-qa', 'setup']) {
+    const text = readFileSync(join(ROOT, 'codex', 'command-skills', name, 'SKILL.md'), 'utf8');
+    for (const line of text.split('\n').filter((l) => /setup-omx/.test(l))) {
+      assert.doesNotMatch(line, /oh-my-claudecode|oh-my-claude-sisyphus|omc_hud 상태표시줄\(/, `${name}: ${line}`);
+    }
+    for (const [from] of CODEX_PHRASES) assert.ok(!text.includes(from), `${name} still says: ${from}`);
   }
 });

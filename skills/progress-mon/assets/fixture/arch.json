@@ -1,0 +1,33 @@
+{
+  "note": "예시 앱 구성.",
+  "width": 1000,
+  "height": 380,
+  "legend": ["주황 굵은 선: 요청 길", "점선: 파일 읽기와 쓰기"],
+  "main": ["browser", "server", "render"],
+  "zones": [
+    { "id": "user", "label": "사용자 쪽", "x": 20, "y": 40, "w": 200, "h": 320, "color": "#1565c0" },
+    { "id": "app", "label": "앱", "x": 320, "y": 40, "w": 360, "h": 320, "color": "#2e7d32" },
+    { "id": "store", "label": "저장", "x": 780, "y": 40, "w": 200, "h": 320, "color": "#6a1b9a", "dashed": true }
+  ],
+  "nodes": [
+    { "id": "browser", "zone": "user", "label": "브라우저", "x": 40, "y": 90, "w": 160, "h": 64, "kind": "사람", "detail": "탭을 고름" },
+    { "id": "cli", "zone": "user", "label": "CLI", "x": 40, "y": 250, "w": 160, "h": 64, "kind": "명령", "detail": "시작, 정지, 기록" },
+    { "id": "server", "zone": "app", "label": "서버", "x": 340, "y": 90, "w": 130, "h": 64, "kind": "프로세스", "detail": "Host 검사" },
+    { "id": "render", "zone": "app", "label": "렌더", "x": 530, "y": 90, "w": 130, "h": 64, "kind": "모듈", "detail": "네 탭 HTML" },
+    { "id": "files", "zone": "store", "label": "자료 파일", "x": 800, "y": 90, "w": 160, "h": 64, "kind": "파일", "detail": "JSON 네 개" },
+    { "id": "git", "zone": "store", "label": "git 저장소", "x": 800, "y": 250, "w": 160, "h": 64, "kind": "저장소", "detail": "커밋 제목" }
+  ],
+  "edges": [
+    { "id": "e-req", "from": "browser", "to": "server", "kind": "api", "label": "요청", "off": -12 },
+    { "id": "e-render", "from": "server", "to": "render", "kind": "control", "label": "" },
+    { "id": "e-read", "from": "render", "to": "files", "kind": "data", "label": "자료 읽기" },
+    { "id": "e-log", "from": "render", "to": "git", "kind": "data", "label": "" },
+    { "id": "e-ctl", "from": "cli", "to": "server", "kind": "control", "label": "시작, 정지" },
+    { "id": "e-write", "from": "cli", "to": "store", "kind": "data", "label": "자료 쓰기" },
+    { "id": "e-res", "from": "server", "to": "browser", "kind": "control", "label": "응답", "off": 12 }
+  ],
+  "scenes": [
+    { "n": 1, "sec": 2, "focus": ["browser", "server", "e-req"], "caption": "브라우저가 서버에 요청" },
+    { "n": 2, "sec": 3, "focus": ["render", "files", "git"], "caption": "렌더가 자료와 git 을 읽음" }
+  ]
+}

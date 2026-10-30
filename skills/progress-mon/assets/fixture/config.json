@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "title": "예시 앱 진척도",
+  "shortName": "example-app",
+  "port": 30000,
+  "portStrict": false,
+  "hosts": [],
+  "refreshSec": 30,
+  "stages": "auto",
+  "stories": [
+    { "id": "A1", "name": "기본 화면" },
+    { "id": "A2", "name": "설정 읽기" },
+    { "id": "A3", "name": "자료 검사" },
+    { "id": "A4", "name": "내보내기" },
+    { "id": "A5", "name": "알림" }
+  ],
+  "sources": {
+    "events": "auto",
+    "git": true,
+    "gitMax": 5000,
+    "workflowDirs": [".omc/example-workflows"],
+    "agentStaleMin": 15,
+    "journalMaxAgeH": 24,
+    "journalMaxSessions": 20
+  },
+  "text": {
+    "reqRule": "구현 여부: 근거 AC 의 담당 스토리가 모두 커밋되면 완료, 일부만 커밋되면 일부, 남은 스토리에 에이전트가 돌면 진행 중, 커밋이 없으면 미구현. 담당 스토리가 없는 명세는 미검증. 비고에 근거를 적어 따로 판정한 명세는 그 판정이 앞섬. 대상 제외: 범위에서 뺌. 완료율에 넣지 않음.",
+    "plannedPrefix": "예정"
+  }
+}

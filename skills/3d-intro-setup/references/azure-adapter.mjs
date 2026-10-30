@@ -173,6 +173,9 @@ const MACHINE_ONLY = ['FFMPEG_PATH'];
  * Load creds from `.env.3d-intro.local` in projectDir, else `~/.config/banker/3d-intro/env`.
  * Returns the parsed KEY=VALUE map plus `_source` (the file used, or null if none found). From a
  * project file, FFMPEG_PATH is left out and returned under `_ignored` so the caller can say why.
+ * A project file git tracks gives no value at all: only `_source`, `_tracked: true` and `_names`
+ * (the names it sets). It may have come with the repository, so its endpoint would receive the
+ * prompts, the frames and the key; the calls refuse creds without an endpoint and a key.
  */
 export function resolveCreds({ projectDir } = {}) {
   const home = homeCredsPath();
@@ -183,7 +186,14 @@ export function resolveCreds({ projectDir } = {}) {
   if (!p) return { _source: null };
   const creds = { ...parseEnvFile(fs.readFileSync(p, 'utf8')), _source: p };
   if (p === home) return creds;
-  return trackedByGit(p) ? { ...withoutMachineOnly(creds), _tracked: true } : withoutMachineOnly(creds);
+  if (trackedByGit(p)) return { _source: p, _tracked: true, _names: Object.keys(creds).filter((k) => k !== '_source') };
+  return withoutMachineOnly(creds);
+}
+
+// The paid and listing calls need both; resolveCreds gives neither from a project key file git tracks.
+function requireConn(fn, endpoint, key) {
+  if (endpoint && key) return;
+  throw new Error(`${fn}: endpoint and key are required; nothing was sent (resolveCreds gives no value from a project key file git tracks: untrack it with git rm --cached, or use the home key file)`);
 }
 
 function withoutMachineOnly(creds) {
@@ -615,6 +625,7 @@ export async function generateImage({
   endpoint, key, deployment, apiVersion = 'preview',
   prompt, size = '720x1280', quality = 'low', n = 1, onNote, retry429 = 3,
 } = {}) {
+  requireConn('generateImage', endpoint, key);
   const genBody = { model: deployment, prompt, size, quality, n };
   const post = (url, body) => postJsonWith429Retry(url, { key, body: JSON.stringify(body), retries: retry429, onNote });
   let r = await post(`${endpoint}/openai/v1/images/generations?api-version=${apiVersion}`, genBody);
@@ -641,6 +652,7 @@ function pngFrom(r, b64, failed) {
 export async function editImage({
   endpoint, key, deployment, apiVersion = 'preview', prompt, imageBuf, maskBuf, size,
 } = {}) {
+  requireConn('editImage', endpoint, key);
   const r = await azFetch(`${endpoint}/openai/v1/images/edits?api-version=${apiVersion}`, {
     key, method: 'POST', body: editForm({ deployment, prompt, imageBuf, maskBuf, size }), timeoutMs: IMAGE_TIMEOUT_MS,
   });
@@ -659,6 +671,7 @@ function editForm({ deployment, prompt, imageBuf, maskBuf, size }) {
 
 /** Generate a still via the Black Forest Labs FLUX provider path. Returns a PNG Buffer. */
 export async function generateImageFlux({ endpoint, key, prompt, width, height, apiVersion = 'preview' } = {}) {
+  requireConn('generateImageFlux', endpoint, key);
   const r = await azFetch(`${endpoint}/providers/blackforestlabs/v1/flux-2-pro?api-version=${apiVersion}`, {
     key, method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, width, height }), timeoutMs: IMAGE_TIMEOUT_MS,
@@ -684,6 +697,7 @@ export async function listVideos({ endpoint, key, apiVersion = 'preview' } = {})
 export async function createVideo({
   endpoint, key, model = 'sora-2', prompt, size = '720x1280', seconds = 4, inputReferencePng, apiVersion = 'preview',
 } = {}) {
+  requireConn('createVideo', endpoint, key);
   const body = videoForm({ model, prompt, size, seconds, inputReferencePng });
   const r = await azFetch(`${endpoint}/openai/v1/videos?api-version=${apiVersion}`, { key, method: 'POST', body });
   if (!(r.ok && r.body?.id)) throw createVideoError(r);
@@ -704,10 +718,13 @@ function videoForm({ model, prompt, size, seconds, inputReferencePng }) {
 
 // status 0 = network error; errno tells a refused connection (nothing sent) from a lost one.
 // retryAfterMs is the server's wait for a 429.
+// code is the answer's error.code (DeploymentNotFound and the like), for a 404 or 410 the caller reads.
 function createVideoError(r) {
   const err = new Error(`createVideo failed: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return Object.assign(err, { status: r.status, errno: r.errno || null, retryAfterMs: r.retryAfterMs ?? null });
+  return Object.assign(err, { status: r.status, errno: r.errno || null, retryAfterMs: r.retryAfterMs ?? null, code: errorCodeOf(r) });
 }
+
+const errorCodeOf = (r) => (typeof r.body?.error?.code === 'string' ? r.body.error.code : null);
 
 const POLL_DEFAULTS = { apiVersion: 'preview', intervalMs: 5000, maxTicks: 180, now: Date.now };
 const POLL_RETRY_4XX = new Set([408, 429]);
@@ -758,13 +775,85 @@ function throwIfRefused(r, id) {
   throw Object.assign(new Error(`pollVideo: job ${id} answered HTTP ${r.status}${code ? ` ${code}` : ''}`), { status: r.status, code });
 }
 
-/** Download finished video bytes. Returns an mp4 Buffer; throws on non-200 / empty body. */
+/** Download finished video bytes. Returns an mp4 Buffer; throws on non-200 / empty body, with err.status. */
 export async function downloadVideo({ endpoint, key, id, apiVersion = 'preview' } = {}) {
   const r = await azFetch(`${endpoint}/openai/v1/videos/${id}/content?api-version=${apiVersion}`, {
     key, method: 'GET', binary: true,
   });
-  if (!(r.status === 200 && r.body?.length)) throw new Error(`downloadVideo failed: HTTP ${r.status}${why(r)}`);
+  if (!(r.status === 200 && r.body?.length)) throw Object.assign(new Error(`downloadVideo failed: HTTP ${r.status}${why(r)}`), { status: r.status });
   return r.body;
+}
+
+// ---------------------------------------------------------------------------
+// Sora deployment probe (FREE: two GETs, nothing is generated)
+// ---------------------------------------------------------------------------
+
+const DEPLOYMENT_API_VERSION = '2022-12-01';
+/** A retirement date this many days away or nearer is reported (`soon`). */
+export const RETIRE_SOON_DAYS = 14;
+const DAY_MS = 86_400_000;
+const RETIRED_LIFECYCLE = new Set(['retired', 'removed']);
+
+/**
+ * FREE check of a Sora deployment that makes no job. POST /openai/v1/videos checks every parameter
+ * before it looks the deployment up (a deployment that does not exist answers the same 400 as one
+ * that does, measured 2026-10-29), and a POST that passes the checks is a paid generation. So the
+ * check is two GETs:
+ *   GET /openai/deployments/<name>?api-version=2022-12-01   200 {model, status}, or 404 when there is none
+ *   GET /openai/v1/models?api-version=preview                 the model's lifecycle_status and deprecation.inference
+ * state: deployed | no_deployment | retired | auth | unreachable | unknown | unset (no endpoint or key: nothing sent). `retired` means the
+ * deployment answered 410, the model list calls the model retired, or its inference retirement date
+ * has passed. `retiresAt` (ms) and `daysLeft` come from the model list; when the deployment names the
+ * model without its version, the newest dated version is taken (`versionInferred`). `soon` is true
+ * within RETIRE_SOON_DAYS. The result holds no key and no URL.
+ */
+export async function probeSoraDeployment({ endpoint, key, deployment = 'sora-2', now = Date.now } = {}) {
+  // no endpoint or key (unset, or creds from a key file git tracks, which give no values): nothing is sent
+  if (!endpoint || !key) return { deployment, status: null, code: null, errno: null, state: 'unset' };
+  const d = await azFetch(`${endpoint}/openai/deployments/${encodeURIComponent(deployment)}?api-version=${DEPLOYMENT_API_VERSION}`, { key, method: 'GET' });
+  const base = { deployment, status: d.status, code: errorCodeOf(d), errno: d.errno || null };
+  if (d.status !== 200) return { ...base, state: deploymentState(d.status) };
+  const { model, deploymentStatus } = deploymentOf(d.body);
+  const life = model ? await modelLifecycle(endpoint, key, model) : {};
+  return withSchedule({ ...base, deploymentStatus, model, ...life }, now());
+}
+
+const deploymentOf = (b) => ({ model: typeof b?.model === 'string' ? b.model : null, deploymentStatus: b?.status ?? null });
+
+const DEPLOYMENT_STATE = new Map([[404, 'no_deployment'], [410, 'retired'], [401, 'auth'], [403, 'auth'], [0, 'unreachable']]);
+const deploymentState = (status) => DEPLOYMENT_STATE.get(status) || 'unknown';
+
+// The model's entry in the resource's model list: its lifecycle and inference retirement date.
+async function modelLifecycle(endpoint, key, model) {
+  const r = await azFetch(`${endpoint}/openai/v1/models?api-version=preview`, { key, method: 'GET' });
+  const m = r.ok ? modelEntry(r.body?.data, model) : null;
+  if (!m) return { modelVersion: null, lifecycle: null, retiresAt: null };
+  return { modelVersion: m.entry.id, versionInferred: m.inferred, lifecycle: m.entry.lifecycle_status ?? null, retiresAt: msOf(m.entry.deprecation?.inference) };
+}
+
+// The entry named exactly `model`, else the newest `<model>-YYYY-MM-DD` one (a deployment names only the model).
+function modelEntry(list, model) {
+  if (!Array.isArray(list)) return null;
+  const exact = list.find((x) => x?.id === model);
+  if (exact) return { entry: exact, inferred: false };
+  const dated = (id) => typeof id === 'string' && id.startsWith(`${model}-`) && /^\d{4}-\d{2}-\d{2}$/.test(id.slice(model.length + 1));
+  const versions = list.filter((x) => dated(x?.id)).sort((a, b) => b.id.localeCompare(a.id));
+  return versions.length ? { entry: versions[0], inferred: true } : null;
+}
+
+// deprecation.inference is unix seconds; an ISO date is read too.
+function msOf(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) return v * 1000;
+  const t = typeof v === 'string' ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? t : null;
+}
+
+function withSchedule(r, t) {
+  const daysLeft = r.retiresAt == null ? null : Math.ceil((r.retiresAt - t) / DAY_MS);
+  const gone = (r.retiresAt != null && r.retiresAt <= t) || RETIRED_LIFECYCLE.has(r.lifecycle);
+  const ready = !r.deploymentStatus || r.deploymentStatus === 'succeeded';
+  const state = gone ? 'retired' : ready ? 'deployed' : 'unknown';
+  return { ...r, state, daysLeft, soon: !gone && daysLeft != null && daysLeft <= RETIRE_SOON_DAYS };
 }
 
 /**
@@ -792,6 +881,7 @@ export async function detectTwoImageSupport({ endpoint, key, apiVersion = 'previ
 export async function createVideoTwoImage({
   endpoint, key, model = 'sora-2', prompt = '', firstPng, lastPng, size = '720x1280', seconds = 4, apiVersion = 'preview',
 } = {}) {
+  requireConn('createVideoTwoImage', endpoint, key);
   const r = await azFetch(`${endpoint}/openai/v1/video/generations/jobs?api-version=${apiVersion}`, {
     key, method: 'POST', body: twoImageForm({ model, prompt, firstPng, lastPng, size, seconds }),
   });
@@ -901,21 +991,6 @@ export async function extractFirstFrame(mp4, out, { ffmpeg } = {}) {
 }
 
 /**
- * Tone/color continuity pass on srcPng. Stock ffmpeg has no true "match A's histogram to B"
- * filter, so this uses histeq — per-channel histogram equalization — the simplest robust
- * histogram normalization, which keeps a chained clip's first frame from drifting in
- * contrast/tone. refPng is accepted for API symmetry and a future CLUT-based exact match; it
- * is not fed to ffmpeg today (an unmapped extra input would make ffmpeg error). Returns out.
- */
-export async function colorMatch(srcPng, refPng, out, { ffmpeg } = {}) {
-  const bin = ffmpeg || await resolveFfmpeg();
-  void refPng; // reserved (see doc comment)
-  const r = runFf(bin, ['-y', '-i', srcPng, '-vf', 'format=rgb24,histeq', '-frames:v', '1', out]);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`colorMatch failed: ${tail(r.stderr)}`);
-  return out;
-}
-
-/**
  * Crossfade clip A into clip B with an `xfade` transition of `sec` seconds. `offset` (opts) is
  * where the fade starts in A; when omitted it is derived from A's probed duration (dur - sec).
  * Returns out.
@@ -988,15 +1063,26 @@ const IMAGE_USD_EACH = 0.02;
  * Rough budget for an intro of `nScenes` scenes. Video billed at $0.10/sec/clip (the Sora rate:
  * WAN rates cannot be read through an API); one image gen per scene (two per scene in two-image
  * mode). mode 'chain' (default) makes one clip of `seconds` per scene; 'holdFlight' makes one
- * flight of `flightSeconds` between each pair of scenes, the holds being encoded stills (free).
+ * flight of `flightSeconds` between each pair of scenes, the holds being encoded stills (free);
+ * 'dive' makes one clip of `diveSeconds` per scene (the dives and the finale) and, with `exit`, one
+ * exit of `exitSeconds` between each pair of scenes (6 scenes: $4.8 without, the default, $6.8 with `exit: true`).
  * Returns per-category USD sub-costs and the total.
  * @returns {{images:number, videos:number, usd:number}}
  */
-export function estimateCost({ nScenes, seconds = 4, twoImage = false, mode = 'chain', flightSeconds = 5 } = {}) {
-  const n = Number(nScenes) || 0;
-  const imageCount = twoImage ? n * 2 : n;
+const COST_DEFAULTS = { seconds: 4, twoImage: false, mode: 'chain', flightSeconds: 5, diveSeconds: 8, exitSeconds: 4, exit: false };
+// The clip seconds an intro bills, by mode.
+const CLIP_SECONDS = {
+  chain: (n, o) => n * o.seconds,
+  holdFlight: (n, o) => Math.max(0, n - 1) * o.flightSeconds,
+  dive: (n, o) => n * o.diveSeconds + (o.exit ? Math.max(0, n - 1) * o.exitSeconds : 0),
+};
+
+export function estimateCost(opts = {}) {
+  const o = { ...COST_DEFAULTS, ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
+  const n = Number(o.nScenes) || 0;
+  const imageCount = o.twoImage ? n * 2 : n;
   const images = round2(imageCount * IMAGE_USD_EACH);
-  const clipSeconds = mode === 'holdFlight' ? Math.max(0, n - 1) * flightSeconds : n * seconds;
+  const clipSeconds = (CLIP_SECONDS[o.mode] || CLIP_SECONDS.chain)(n, o);
   const videos = round2(clipSeconds * VIDEO_USD_PER_SEC);
   const usd = round2(images + videos);
   return { images, videos, usd };

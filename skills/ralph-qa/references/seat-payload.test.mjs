@@ -3,12 +3,13 @@
 // step2-chain.test.mjs, which ran the 0.20.4 bash chain the runner replaces.
 // Run from the repo root: node --test skills/ralph-qa/references/seat-payload.test.mjs
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { MAX_BYTES, Stop, buildPayload, checkPayload, markerCount, splitPayload, untracked } from "./seat-payload.mjs";
+import { MAX_BYTES, Stop, buildPayload, checkPayload, markerCount, sha256, splitPayload, untracked } from "./seat-payload.mjs";
 
 const WIN = process.platform === "win32";
 const SKIP = spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0 ? false : "no git";
@@ -956,6 +957,7 @@ test("raw.md holds the diff and the parts alone, for the source-independent seat
   assert.ok(raw.includes("+++ b/a.txt") && raw.endsWith("=== file rules.md\nthe rules\n"), raw);
   assert.equal(r.prompt, `${MARK}\nreview this\n${raw}${CLOSE}\n`);
   assert.equal(readFileSync(join(ctx.d, "run.md"), "utf8").split("\n")[0], "id a1b2c3d4");
+  assert.match(readFileSync(join(ctx.d, "run.md"), "utf8"), new RegExp(`^shortsha ${sha256(Buffer.from(`${MARK}\nreview this\n`))}$`, "m"));
 });
 
 // --split: parts cut where a part starts (a file's diff, a `=== ` line), each with the short part, a part line and the
@@ -993,6 +995,27 @@ test("split never cuts inside the short part: its `=== ` and `diff --git ` lines
   assert.throws(() => splitPayload(text, 2, "a1b2c3d4", undefined), (e) => e.code === "split");
 });
 
+test("the runner's own SHA-256 gives node:crypto's digest, across the padding edges and for UTF-8", () => {
+  for (const n of [0, 1, 55, 56, 63, 64, 65, 119, 120, 1000]) {
+    const buf = Buffer.from(Array.from({ length: n }, (_, i) => (i * 31 + 7) & 0xff));
+    assert.equal(sha256(buf), createHash("sha256").update(buf).digest("hex"), `length ${n}`);
+  }
+  assert.equal(sha256(Buffer.from("짧은 부분\n")), createHash("sha256").update("짧은 부분\n").digest("hex"));
+});
+
+// remains 8-5: the short part's sha256 from run.md is compared, so a change that keeps its length stops too; a run.md
+// of an older prepare (no hash) is read as before.
+test("split compares the short part with its sha256 from prepare: one character of the same length stops", () => {
+  const short = `${MARK}\nreview this\n`;
+  const units = ["diff --git a/x b/x\n+x1\n", "=== file rules.md\nthe rules\n"];
+  const text = Buffer.from(`${short}${units.join("")}${CLOSE}\n`);
+  const sha = sha256(Buffer.from(short));
+  assert.equal(splitPayload(text, 2, "a1b2c3d4", Buffer.byteLength(short), sha).length, 2);
+  const changed = Buffer.from(text.toString("utf8").replace("review this", "review thiz"));
+  assert.throws(() => splitPayload(changed, 2, "a1b2c3d4", Buffer.byteLength(short), sha), (e) => e.code === "split");
+  assert.equal(splitPayload(changed, 2, "a1b2c3d4", Buffer.byteLength(short), null).length, 2, "no hash: as before");
+});
+
 // Each guard alone stops the lazy fetch above on a git that knows GIT_NO_LAZY_FETCH (2.45, and backports such as
 // 2.43.4): this pins every guard on every git call, for gits that know only some of them.
 test("every git call of prepare carries every guard: no hooks, no fsmonitor, no protocol, no lazy fetch", { skip: SKIP || (WIN && "the stand-in git is a sh script") }, (t) => {
@@ -1012,6 +1035,37 @@ test("every git call of prepare carries every guard: no hooks, no fsmonitor, no 
     assert.ok(c.startsWith("ralph-qa-no-protocol|1|"), c);
     for (const g of ["core.fsmonitor=false", "core.hooksPath=", "protocol.allow=never"]) assert.ok(c.includes(g), `${g}: ${c}`);
   }
+});
+
+// S19: the two first-try mistakes a Codex author made, each with a stop that says what to write instead.
+test("short.md with the closing marker, without any marker, and a spec line of prose each stop with how to fix it", { skip: SKIP }, (t) => {
+  const ctx = repo(t);
+  put(ctx, "a.txt", "two\n");
+  const both = prep(ctx, { short: '<review-data id="a1b2c3d4">\nreview this\n</review-data id="a1b2c3d4">\n' });
+  assert.equal(both.stop, "markers", both.message);
+  assert.match(both.message, /표지 2줄\)\. 닫는 표지와 원문은 실행기가 붙이므로 short\.md 에는 여는 표지 한 줄만 둔다/);
+  const none = prep(ctx, { short: "review this\n" });
+  assert.equal(none.stop, "markers", none.message);
+  assert.match(none.message, /표지 0줄\)\. 고정 앞머리 다음에 여는 표지 한 줄/);
+  const prose = prep(ctx, { spec: "User request: add sub\n" });
+  assert.equal(prose.stop, "spec", prose.message);
+  assert.match(prose.message, /요청 문장과 수용 기준은 spec\.md 가 아니라 short\.md 에 쓴다/);
+});
+
+// S19 (2): a git that cannot be started (in the Codex sandbox, node's pipes gave EPERM) is a named stop, not a guess;
+// git runs on files, so a git that did run gives prepare its output whole.
+test("a git that cannot start is the git-failed stop with the start error, and git's output arrives through files", { skip: SKIP || (WIN && "the stand-in git is a sh script") }, (t) => {
+  const ctx = repo(t);
+  const bin = join(ctx.dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "git"), "#!/nonexistent/interpreter\n", { mode: 0o755 });
+  put(ctx, "a.txt", "two\n");
+  const r = prep(ctx, { env: { PATH: `${bin}${delimiter}${process.env.PATH}` } });
+  assert.equal(r.stop, "git-failed", r.message);
+  assert.match(r.message, /git rev-parse[^\n]*를 띄우지 못했다\((?:ENOENT|EACCES|ENOEXEC)\)/);
+  const ok = prep(ctx, {});
+  assert.equal(ok.stop, undefined, ok.message);
+  assert.match(ok.prompt, /two/);
 });
 
 // libuv on Windows looks for a bare program name in the child's working folder before PATH: git starts by the absolute

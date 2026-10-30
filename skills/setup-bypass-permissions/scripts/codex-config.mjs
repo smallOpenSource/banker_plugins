@@ -166,16 +166,27 @@ export function setKey(text, table, key, rawValue, comment = '') {
     return ls.join(nl);
   }
   const range = tableRange(scan(text), table);
-  if (!range) {
-    while (ls.length && ls[ls.length - 1] === '') ls.pop();
-    return [...ls, ...(ls.length ? [''] : []), `[${table}]`, ...line, ''].join(nl);
-  }
-  // 다음 표 머리에 붙은 주석(`# MCP servers` 처럼 머리 바로 위의 주석 줄)과 그 앞 빈 줄은 건너뛰고 넣는다.
-  let at = range[1];
-  if (range[1] < ls.length) while (at > range[0] && ls[at - 1].trim().startsWith('#')) at--;
-  while (at > range[0] && ls[at - 1].trim() === '') at--;
-  ls.splice(at, 0, ...line);
+  if (!range) return withNewTable(ls, table, line).join(nl);
+  const [at, after] = placeIn(ls, range);
+  ls.splice(at, 0, ...line, ...after);
   return ls.join(nl);
+}
+
+function withNewTable(ls, table, line) {
+  while (ls.length && ls[ls.length - 1] === '') ls.pop();
+  return [...ls, ...(ls.length ? [''] : []), `[${table}]`, ...line, ''];
+}
+
+// 표 안에서 새 키를 넣을 줄 번호와 키 뒤에 더할 줄. 다음 표 머리에 붙은 주석(`# MCP servers` 처럼 머리 바로 위의 주석
+// 줄)과 그 앞 빈 줄은 건너뛴다. 건너뛴 주석이 파일 첫 줄까지 닿으면 파일 머리 주석으로 보고 그 뒤에 넣고, 키와 표 머리
+// 사이에 빈 줄 하나를 둔다(파일 첫 줄부터 표 설명 주석인 파일도 이렇게 되지만 값의 뜻은 같다).
+function placeIn(ls, range) {
+  let at = range[1];
+  const beforeHead = range[1] < ls.length;
+  if (beforeHead) while (at > range[0] && ls[at - 1].trim().startsWith('#')) at--;
+  if (beforeHead && at === 0 && range[1] > 0) return [range[1], ['']];
+  while (at > range[0] && ls[at - 1].trim() === '') at--;
+  return [at, []];
 }
 
 // 키를 뺀다. comment 와 같은 주석 줄이 바로 위에 있으면 그것도 뺀다.

@@ -1,0 +1,44 @@
+{
+  "note": "예시 앱의 실행 순서.",
+  "lanes": [
+    {
+      "id": "main",
+      "title": "화면 만들기",
+      "color": "#1565c0",
+      "note": "요청 하나를 받아 화면을 돌려줄 때까지.",
+      "steps": [
+        { "id": "p1", "label": "인자 읽기", "detail": "포트와 자료 폴더 인자 확인", "actor": "cli.mjs", "refs": ["cli.mjs:10"], "planned": false },
+        { "id": "p2", "label": "설정 읽기", "detail": "config.json 을 읽고 기본값 채움", "actor": "config.mjs", "refs": ["config.mjs:5"], "planned": false },
+        { "id": "p3", "label": "자료 모으기", "detail": "기록 파일과 git log 읽기", "actor": "sources.mjs", "refs": ["sources.mjs:20"], "planned": false },
+        { "id": "p4", "label": "판정", "detail": "단계와 스토리 상태 계산", "actor": "sources.mjs", "refs": ["sources.mjs:60"], "planned": false },
+        { "id": "p5", "label": "화면 그리기", "detail": "탭 HTML 만들기", "actor": "render.mjs", "refs": ["render.mjs:1"], "planned": false },
+        { "id": "p6", "label": "응답", "detail": "HTML 을 브라우저로 보냄", "actor": "server.mjs", "refs": ["server.mjs:30"], "planned": false },
+        { "id": "p7", "label": "기록", "detail": "요청 수와 시각 기록", "actor": "server.mjs", "refs": ["server.mjs:40"], "planned": false }
+      ],
+      "branches": [
+        { "from": "p2", "to": "", "when": "설정 오류 종료 1", "note": "형식이 틀린 config.json" },
+        { "from": "p4", "to": "p1", "when": "자료 다시 읽기", "note": "자료 파일이 바뀜" }
+      ],
+      "externals": [
+        { "id": "x1", "label": "git log", "linkTo": "p3", "note": "커밋 제목으로 스토리 판정" }
+      ]
+    },
+    {
+      "id": "export",
+      "title": "내보내기",
+      "color": "#2e7d32",
+      "steps": [
+        { "id": "e1", "label": "인자 검사", "detail": "출력 파일 경로 확인", "actor": "cli.mjs", "refs": ["cli.mjs:80"], "planned": false },
+        { "id": "e2", "label": "네 탭 렌더", "detail": "네 탭을 한 파일에 담음", "actor": "render.mjs", "refs": ["render.mjs:200"], "planned": false },
+        { "id": "e3", "label": "파일 쓰기", "detail": "임시 파일에 쓰고 이름 바꿈", "actor": "cli.mjs", "refs": [], "planned": true }
+      ],
+      "branches": [],
+      "externals": []
+    }
+  ],
+  "scenes": [
+    { "n": 1, "sec": 2, "lane": "main", "focus": ["p1", "p2"], "caption": "인자와 설정을 읽음" },
+    { "n": 2, "sec": 3, "lane": "main", "focus": ["p4", "p5"], "caption": "상태를 판정해 화면을 그림" },
+    { "n": 3, "sec": 2, "lane": "export", "focus": ["e2"], "caption": "네 탭을 한 파일로" }
+  ]
+}

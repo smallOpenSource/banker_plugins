@@ -15,7 +15,7 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 
 2. **버전 올리기** — `.claude-plugin/plugin.json` 의 `version` 을 새 semver 로 바꾼다(단일 출처).
 
-3. **버전 동기화** — `npm run sync-version` 으로 `package.json`, `marketplace.json`, Codex 플러그인의 `.codex-plugin/plugin.json` 을 `plugin.json` 에 맞춘다. `commands/` 나 Codex 플러그인 훅(`scripts/sync-codex-plugin.js` 의 `HOOKS`, `shCommand`, `psCommand`), 또는 훅이 실행하는 파일(`hooks/`, `bin/lib/` 중 `hookFiles()` 가 찾는 것)을 바꿨으면 `node scripts/sync-codex-plugin.js` 로 `codex/command-skills/` 와 `codex/hooks.json` 을 다시 만든다(스모크가 `--check` 로 확인). 훅 명령 앞의 `banker-hooks-rev` 해시가 바뀌므로 Codex 플러그인 사용자는 다음 세션에서 `/hooks` 신뢰를 다시 묻는 화면을 본다. 바뀐 훅 코드는 사용자가 신뢰한 뒤에만 돈다.
+3. **버전 동기화** — `npm run sync-version` 으로 `package.json`, `marketplace.json`, Codex 플러그인의 `.codex-plugin/plugin.json` 을 `plugin.json` 에 맞춘다. `commands/` 나 Codex 플러그인 훅(`scripts/sync-codex-plugin.js` 의 `HOOKS`, `shCommand`, `psCommand`), 또는 훅이 실행하는 파일(`hooks/`, `bin/lib/` 중 `hookFiles()` 가 찾는 것)을 바꿨으면 `node scripts/sync-codex-plugin.js` 로 `codex/command-skills/` 와 `codex/hooks.json` 을 다시 만든다(스모크가 `--check` 로 확인). 스킬을 더하거나 빼거나 `codex/manifest.json` 을 바꿨을 때, 또 Codex 이름이나 설명이 다른 스킬(`codexName`, `codexDescription`)의 정본을 바꿨을 때도 같은 명령이 Codex 플러그인 스킬 목록, `codex/renamed-skills/` 사본, `bin/lib/codex-names.mjs` 를 다시 만든다. 순서는 `node scripts/sync-adapter.js` 먼저, `sync-codex-plugin.js` 나중이다. 훅 명령 앞의 `banker-hooks-rev` 해시가 바뀌므로 Codex 플러그인 사용자는 다음 세션에서 `/hooks` 신뢰를 다시 묻는 화면을 본다. 바뀐 훅 코드는 사용자가 신뢰한 뒤에만 돈다.
 
 4. **바뀐 스킬 매니페스트 갱신 (← 잊기 쉬운 단계).** `node scripts/gen-skill-changes.js` 를 **버전 bump 후·릴리스 커밋 전**에 실행한다.
    - 이 타이밍이 핵심이다. 이때 `from` = 직전 릴리스 커밋(plugin.json 을 마지막으로 바꾼 커밋), `to` = 작업트리(방금 올린 새 버전)로 잡혀 diff 가 정확하다. 커밋 뒤에 실행하면 `from` 이 방금 만든 릴리스 커밋이 되어 diff 가 비어버린다.
@@ -27,6 +27,8 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 
 6. **CHANGELOG 와 LIST.md 갱신** — `CHANGELOG.md` 최상단에 새 버전 섹션을 추가한다. 이어서 `LIST.md` 의 구성요소 표를 갱신한다(방법은 `LIST.md` 의 '갱신 방법' 절).
    - 4번처럼 릴리스 커밋 전에 한다. 커밋 뒤에는 직전 릴리스 커밋이 방금 만든 커밋으로 잡혀 이번 릴리스의 변경이 보이지 않는다.
+
+push 전 스모크(`node scripts/smoke-test.js`)는 필수다. Codex 플러그인 스킬 목록에서 빠진 스킬은 Codex 가 경고 없이 건너뛰므로, 스모크의 목록 집합 단언과 `sync-codex-plugin.js --check` 를 넘긴 판만 올린다.
 
 7. **검증** — 유닛·스모크가 초록인지 확인한다.
    ```bash

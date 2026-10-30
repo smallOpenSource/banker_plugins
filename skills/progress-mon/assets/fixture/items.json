@@ -1,0 +1,14 @@
+{
+  "notes": {
+    "stage:plan": { "note": "검토 2회차" },
+    "A3": { "note": "검사 규칙 정리 중", "issue": "예시 자료 부족" }
+  },
+  "items": [
+    { "key": "doc-guide", "t": "2026-10-28T04:00:00Z", "s": "2026-10-28T03:00:00Z", "status": "done", "text": "사용 안내 초안" },
+    { "key": "icon", "t": "2026-10-29T01:30:00Z", "s": "2026-10-29T01:30:00Z", "status": "doing", "text": "아이콘 정리", "note": "색 후보 2개" },
+    { "key": "bench", "t": "2026-10-29T02:00:00Z", "status": "todo", "text": "속도 측정", "issue": "측정 PC 미정" }
+  ],
+  "storyCommits": {},
+  "storyStates": {},
+  "stageEvents": []
+}

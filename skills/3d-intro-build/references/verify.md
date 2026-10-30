@@ -9,6 +9,7 @@ Node 용 playwright 패키지와 Chromium 이 필요하다(`npm i -g playwright 
 ```bash
 node references/verify-intro.mjs http://localhost:<port>/ --out verify.json
 node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800r --out verify-reduced.json   # 움직임 줄이기
+node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800 --no-input --seams --slow-clips 4000 --out verify-seams.json   # 이음매 탐침(느린 적재 흉내)
 ```
 
 | 항목 | 기준 |
@@ -25,6 +26,7 @@ node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800r 
 | 입력 (본문이 있을 때) | 마지막 장면에서 휠, 아래 방향키, PageDown, Space, 스와이프 1회로 본문 맨 위에 섬. 위 입력 1회로 마지막 장면 복귀 |
 | 버튼과 링크 | 메인화면 버튼은 마지막 장면 전에는 숨고 도착하면 보임. 누르면 본문으로 가서 포커스가 본문에 감. 건너뛰기 링크도 같음 |
 | 움직임 줄이기 | 이동 시간 0. 메인화면 버튼이 마지막 장면에서 보임 |
+| 이음매 (`--seams`) | 첫 화면 크기에서 클립 사이 경계마다 앞뒤를 20 단계로 스크롤하며, 클립이 스크롤을 따라잡고 `seeked` 를 마친 뒤 찍는다(문구, 막대, 점은 숨김). 빈 화면(색과 관계없이 거의 한 색인 화면)이 이어지는 길이가 0.3 vh 에 앞 클립의 배경 판 몫(0.6초가 스크롤에서 차지하는 길이)을 더한 한도를 넘으면 실패. 도착할 때 포스터가 보이면 클립이 그려진 뒤와 비교해 평균 픽셀 차이가 24 를 넘으면 포스터 깜빡임 실패. 연속 화면 차이의 최대값(`maxDiff`)은 기록만 한다. `--slow-clips <ms>` 는 클립 요청마다 그만큼 늦춰 느린 망을 흉내 낸다 |
 
 ## 2. 눈으로 보는 항목
 
@@ -36,6 +38,10 @@ node references/verify-intro.mjs http://localhost:<port>/ --viewports 1280x800r 
 | 화면 속 글자 | 깨진 글자, 뜻 없는 글자가 없음. 있으면 그 스틸이나 클립만 재생성 |
 | 사물 | 사물이 엉뚱한 위치에 뜨거나 이상하게 움직이지 않음. 색이 다른 물체로 번지지 않음 |
 | 이음매 | chain 은 경미한 톤 drift 까지 허용. holdFlight 는 비행 클립의 첫과 끝 프레임이 장면과 맞음 |
+| 배경 이음매 (dive) | 배경 판 착지가 켜진 이음매는 이음매 쪽 클립(나가기, 없으면 dive)의 끝이 판 한 색으로 끝나고, 다음 장면이 같은 바탕 위에서 시작함. 판 색이 다음 장면 바탕과 눈에 띄게 다르면 지적. 착지가 꺼진 이음매(테두리가 한 색이 아닌 스틸)는 엔진 디졸브만 보임 |
+| 회전 (dive arc) | `arc` 장면은 카메라가 초점 대상을 가운데 두고 실제로 돌며 내려가는 것이 보임(대략 4분의 1 바퀴). 줌만 보이고 돌지 않으면 지적. `cameraMotion` 의 roll 근사(누적 회전각)는 참고값이다. 평행 이동은 재지 않고, 대상 둘레를 도는 궤도는 화면의 roll 과 다르므로 판정은 눈으로 한다 |
+| 결론 착지 (dive finale) | 마지막 장면 클립이 결론 스틸 그대로의 화면으로 끝남. 뒤집힌 클립이라 사람, 연기, 물의 움직임이 거꾸로 보이면 지적 |
+| 포스터 (dive 나가기) | 느린 망에서도 나가기 구간에 들어설 때 다음 장면이 잠깐 보였다가 이전 장면 실내로 돌아가는 튐이 없음(`connectorStills` 가 그 클립의 첫 프레임을 포스터로 둠) |
 | 첫 이동 | 첫 장면에서 처음 움직일 때 영상이 바로 나옴(클립 미리 받기) |
 | 문구 | 375px 화면에서 본문이 넘치지 않음. 유리 패널이면 본문은 한 줄에 항목 하나(권장 세 줄). CTA 는 마지막 장면에만 |
 

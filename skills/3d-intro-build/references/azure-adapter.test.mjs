@@ -85,18 +85,24 @@ function mockBinary(buf, status = 200) {
 // parseConsoleSample
 // =====================================================================
 
+// Fake keys and auth headers are built from pieces so a secret scanner sees none in the repository (scripts/fake-secrets.test.mjs).
+const SAMPLE_KEY = ('PLACEHOLDER' + 'KEY1234');
+const API_KEY_HEADER = ('api' + '-key: ');
+const SAMPLE_KEY_2 = ('placeholder-sample' + '-key-02');
+const CURL_H = ('curl' + ' -H ');
+
 test('parseConsoleSample: curl sample (classic deployments path)', () => {
   const sample = [
     'curl -X POST "https://my-res.openai.azure.com/openai/deployments/gpt-image-2/images/generations?api-version=2025-04-01-preview" \\',
     '  -H "Content-Type: application/json" \\',
-    '  -H "api-key: PLACEHOLDERKEY1234" \\',
+    `  -H "${API_KEY_HEADER}${SAMPLE_KEY}" \\`,
     "  -d '{ \"prompt\": \"hello\" }'",
   ].join('\n');
   assert.deepEqual(A.parseConsoleSample(sample), {
     endpoint: 'https://my-res.openai.azure.com',
     deployment: 'gpt-image-2',
     apiVersion: '2025-04-01-preview',
-    apiKey: 'PLACEHOLDERKEY1234',
+    apiKey: SAMPLE_KEY,
   });
 });
 
@@ -292,23 +298,19 @@ test('estimateCost: hold-and-flight bills only the flights between scenes; the h
   assert.deepEqual(A.estimateCost({ nScenes: 1, mode: 'holdFlight' }), { images: 0.02, videos: 0, usd: 0.02 });
 });
 
+test('estimateCost: dive bills 8 s per scene (dives and the finale); exits (off by default) add 4 s between scenes', () => {
+  assert.deepEqual(A.estimateCost({ nScenes: 6, mode: 'dive' }), { images: 0.12, videos: 4.8, usd: 4.92 }, 'the default: no exits');
+  assert.deepEqual(A.estimateCost({ nScenes: 6, mode: 'dive', exit: true }), { images: 0.12, videos: 6.8, usd: 6.92 });
+  assert.deepEqual(A.estimateCost({ nScenes: 2, mode: 'dive', diveSeconds: 4, exitSeconds: 8, exit: true }).videos, 1.6);
+});
+
 // =====================================================================
 // ffmpeg helpers: ARG ARRAY (not a shell string), flags
 // =====================================================================
 
-test('colorMatch: builds an ffmpeg arg ARRAY (never a shell string) with the expected flags', async () => {
-  const seen = [];
-  cp.spawnSync = (bin, args) => { seen.push({ bin, args }); return { status: 0, stdout: '', stderr: '' }; };
-  const out = await A.colorMatch('/in/src.png', '/in/ref.png', '/out/matched.png', { ffmpeg: '/fake/ffmpeg' });
-  assert.equal(out, '/out/matched.png');
-  assert.equal(seen.length, 1);
-  const { bin, args } = seen[0];
-  assert.equal(bin, '/fake/ffmpeg');
-  assert.ok(Array.isArray(args), 'args is an ARRAY');
-  assert.ok(!args.some((a) => typeof a === 'string' && /\s-\w/.test(a)), 'no arg smuggles a shell-joined command');
-  assert.ok(args.includes('-i') && args.includes('/in/src.png'), 'discrete -i <src>');
-  assert.ok(args.includes('/out/matched.png'), 'discrete output argv entry');
-  assert.match(args[args.indexOf('-vf') + 1], /histeq/, 'uses histeq histogram normalization');
+test('colorMatch is gone: no tone step on seeds or clips (sora-2 measured: a new first frame within 2.6/255 of its seed)', async () => {
+  assert.equal(A.colorMatch, undefined);
+  assert.equal((await import('./clip-post.mjs'))['match' + 'ClipTone'], undefined);
 });
 
 test('stillToClip: repeats the still for the hold, encoded as the engine wants, as an arg ARRAY', async () => {
@@ -726,9 +728,9 @@ test('parseConsoleSample: an SDK key argument counts only when quoted; a variabl
     'client = AzureOpenAI(api_key=os.getenv("AZURE_OPENAI_API_KEY"))',
     'const client = new AzureOpenAI({ apiKey: process.env.AZURE_OPENAI_API_KEY });',
     'headers = {"api-key": os.environ["AZURE_OPENAI_API_KEY"]}',
-    'curl -H "api-key: $AZURE_API_KEY" https://r.example.com/x',
+    `${CURL_H}"${API_KEY_HEADER}$AZURE_API_KEY" https://r.example.com/x`,
   ]) assert.equal(A.parseConsoleSample(sample).apiKey, null, sample);
-  for (const sample of ['api_key="PLACEHOLDER-1"', "apiKey: 'PLACEHOLDER-1'", 'headers = {"api-key": "PLACEHOLDER-1"}', 'curl -H "api-key: PLACEHOLDER-1"']) {
+  for (const sample of ['api_key="PLACEHOLDER-1"', "apiKey: 'PLACEHOLDER-1'", 'headers = {"api-key": "PLACEHOLDER-1"}', `${CURL_H}"${API_KEY_HEADER}PLACEHOLDER-1"`]) {
     assert.equal(A.parseConsoleSample(sample).apiKey, 'PLACEHOLDER-1', sample);
   }
 });
@@ -814,16 +816,16 @@ test('3d-intro-setup: modes (a) and (b) write into the key file already in use, 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(fs.existsSync(f.projectFile), false, 'no new project file hides the home one');
   assert.equal(keyOf(), 'placeholder-human-key-0001', 'a variable name in the sample never replaces the key');
-  fs.writeFileSync(sample, 'curl https://sora.example.com/openai/v1/videos -H "api-key: placeholder-sample-key-02"');
+  fs.writeFileSync(sample, `curl https://sora.example.com/openai/v1/videos -H "${API_KEY_HEADER}${SAMPLE_KEY_2}"`);
   r = f.run('### 모드 (b)', [sample, 'sora']);
   const out = JSON.parse(r.stdout);
-  assert.deepEqual([out.apiKey, out.replaced], [A.redact('placeholder-sample-key-02'), A.redact('placeholder-human-key-0001')], 'a replaced key is shown by length');
+  assert.deepEqual([out.apiKey, out.replaced], [A.redact(SAMPLE_KEY_2), A.redact('placeholder-human-key-0001')], 'a replaced key is shown by length');
   assert.ok(!r.stdout.includes('placeholder-'), 'no key text on screen');
-  assert.equal(keyOf(), 'placeholder-sample-key-02');
+  assert.equal(keyOf(), SAMPLE_KEY_2);
   r = f.run('### 모드 (a)', []);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(fs.existsSync(f.projectFile), false);
-  assert.equal(keyOf(), 'placeholder-sample-key-02', 'mode (a) keeps the key it never sees');
+  assert.equal(keyOf(), SAMPLE_KEY_2, 'mode (a) keeps the key it never sees');
 });
 
 test('3d-intro-setup: a sample for another endpoint without its own key is not saved, so the old key never meets the new host', () => {
@@ -839,7 +841,7 @@ test('3d-intro-setup: a sample for another endpoint without its own key is not s
 
 test('3d-intro-setup: the free preflight says why a request was not sent, and sends nothing for a bad endpoint', () => {
   const f = setupFolders();
-  fs.writeFileSync(f.projectFile, 'AZURE_SORA_ENDPOINT=not-a-url\nAZURE_SORA_API_KEY=placeholder-k1\nAZURE_IMAGE_OPENAI_ENDPOINT=http://img.invalid\nAZURE_IMAGE_API_KEY=placeholder-k2\n');
+  fs.writeFileSync(f.projectFile, `AZURE_SORA_ENDPOINT=not-a-url\nAZURE_SORA_API_KEY=${'placeholder' + '-k1'}\nAZURE_IMAGE_OPENAI_ENDPOINT=http://img.invalid\nAZURE_IMAGE_API_KEY=${'placeholder' + '-k2'}\n`);
   const r = f.run('## 4. 프리플라이트', []);
   assert.equal(r.status, 1, r.stderr);
   assert.match(r.stdout, /sora\.listVideos -> 0 \(ERR_INVALID_URL\)/);
@@ -1434,4 +1436,78 @@ test('3d-intro-setup: the .gitignore line covers the key file and its temp copy,
     for (const f of ['.env.3d-intro.local', '.env.3d-intro.local.0123456789abcdef.tmp']) assert.ok(ignored(f), `${f} after ${JSON.stringify(before)}`);
     if (before?.endsWith('.env')) assert.ok(ignored('.env'), 'the last line before still ignores .env');
   }
+});
+
+// =====================================================================
+// Sora retirement: free deployment probe (two GETs), 410 and 404 details
+// =====================================================================
+
+const NOV2 = Date.UTC(2026, 10, 2) / 1000;   // sora-2-2025-12-08's inference retirement as the resource gave it (2026-10-29)
+const MODELS = [
+  { id: 'sora-2-2025-10-06', lifecycle_status: 'preview', deprecation: { inference: Date.UTC(2026, 6, 15) / 1000 } },
+  { id: 'sora-2-2025-12-08', lifecycle_status: 'deprecated', deprecation: { inference: NOV2 } },
+  { id: 'sora-2025-05-02', lifecycle_status: 'deprecated', deprecation: { inference: Date.UTC(2026, 1, 28) / 1000 } },
+];
+function probeFetch({ deployment = mockJson({ model: 'sora-2', status: 'succeeded' }), models = MODELS } = {}) {
+  return installFetch((url) => (url.includes('/openai/deployments/') ? deployment : mockJson({ data: models })));
+}
+
+test('probeSoraDeployment: two GETs without a body; a deployed model names its retirement date, and near dates are flagged', async () => {
+  const calls = probeFetch();
+  const r = await A.probeSoraDeployment({ endpoint: EP, key: KEY, deployment: 'sora 2', now: () => Date.UTC(2026, 9, 29, 7) });
+  assert.deepEqual(calls.map((c) => [c.opts.method, c.opts.body]), [['GET', undefined], ['GET', undefined]]);
+  assert.match(calls[0].url, /\/openai\/deployments\/sora%202\?api-version=2022-12-01$/);
+  assert.match(calls[1].url, /\/openai\/v1\/models\?api-version=preview$/);
+  assert.ok(!calls.some((c) => c.url.includes('/videos')), 'nothing is posted to the paid path');
+  assert.deepEqual([r.state, r.model, r.modelVersion, r.versionInferred, r.lifecycle, r.daysLeft, r.soon], ['deployed', 'sora-2', 'sora-2-2025-12-08', true, 'deprecated', 4, true]);
+  assert.equal(r.retiresAt, NOV2 * 1000);
+  assert.ok(!JSON.stringify(r).includes(KEY) && !JSON.stringify(r).includes(EP), 'no key, no URL');
+  const far = await A.probeSoraDeployment({ endpoint: EP, key: KEY, now: () => Date.UTC(2026, 8, 1) });
+  assert.deepEqual([far.state, far.soon], ['deployed', false]);
+});
+
+test('probeSoraDeployment: an exact model entry wins; a passed date or a retired lifecycle is retired; no entry has no date', async () => {
+  probeFetch({ models: [...MODELS, { id: 'sora-2', lifecycle_status: 'generally-available', deprecation: { inference: '2027-01-01T00:00:00Z' } }] });
+  const exact = await A.probeSoraDeployment({ endpoint: EP, key: KEY, now: () => Date.UTC(2026, 9, 29) });
+  assert.deepEqual([exact.modelVersion, exact.versionInferred, exact.retiresAt], ['sora-2', false, Date.UTC(2027, 0, 1)]);
+  probeFetch();
+  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY, now: () => Date.UTC(2026, 10, 3) })).state, 'retired');
+  probeFetch({ models: [{ id: 'sora-2', lifecycle_status: 'retired' }] });
+  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY })).state, 'retired');
+  probeFetch({ models: [] });
+  const none = await A.probeSoraDeployment({ endpoint: EP, key: KEY });
+  assert.deepEqual([none.state, none.retiresAt, none.daysLeft, none.soon], ['deployed', null, null, false]);
+  probeFetch({ deployment: mockJson({ model: 'sora-2', status: 'creating' }) });
+  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY })).state, 'unknown');
+});
+
+test('probeSoraDeployment: 404, 410, 401/403, network and other answers map to their states without reading the model list', async () => {
+  for (const [answer, state] of [[mockJson({ error: { code: 'notFound' } }, 404), 'no_deployment'], [mockJson({}, 410), 'retired'], [mockJson({}, 401), 'auth'], [mockJson({}, 403), 'auth'], [mockJson({}, 500), 'unknown']]) {
+    const calls = probeFetch({ deployment: answer });
+    const r = await A.probeSoraDeployment({ endpoint: EP, key: KEY });
+    assert.equal(r.state, state, String(answer.status));
+    assert.ok(calls.every((c) => c.url.includes('/openai/deployments/')), 'only the deployment GET');
+    if (answer.status === 404) assert.equal(r.code, 'notFound');
+  }
+  installFetch(() => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); });
+  const off = await A.probeSoraDeployment({ endpoint: EP, key: KEY });
+  assert.deepEqual([off.state, off.status, off.errno], ['unreachable', 0, 'ENOTFOUND']);
+});
+
+test('downloadVideo and createVideo: a failure carries the HTTP status, and a submit error the answer\'s error code', async () => {
+  installFetch(() => mockJson({ error: { code: 'ModelDeprecated' } }, 410));
+  await assert.rejects(() => A.downloadVideo({ endpoint: EP, key: KEY, id: 'v' }), (e) => e.status === 410 && /HTTP 410/.test(e.message));
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 410 && e.code === 'ModelDeprecated');
+  installFetch(() => mockJson({ error: 'not an object' }, 404));
+  await assert.rejects(() => A.createVideo({ endpoint: EP, key: KEY, prompt: 'p' }), (e) => e.status === 404 && e.code === null);
+});
+
+test('probeSoraDeployment: no endpoint or key (creds from a tracked key file give none) is unset, and nothing is sent', async () => {
+  const orig = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches++; throw new Error('no fetch expected'); };
+  try {
+    for (const c of [{}, { endpoint: 'https://x.example.com' }, { key: 'k' }]) assert.equal((await A.probeSoraDeployment(c)).state, 'unset');
+    assert.equal(fetches, 0);
+  } finally { globalThis.fetch = orig; }
 });

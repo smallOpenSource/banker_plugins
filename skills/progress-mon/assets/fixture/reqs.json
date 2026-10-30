@@ -1,0 +1,11 @@
+{
+  "generated": "예시 자료(모르는 키 허용 확인용)",
+  "acs": [
+    { "id": "AC-1", "title": "기본 화면", "stories": ["A1"] },
+    { "id": "AC-2", "title": "설정 파일", "stories": ["A2", "A4"] },
+    { "id": "AC-3", "title": "자료 검사", "stories": ["A3"] },
+    { "id": "AC-4", "title": "내보내기", "stories": ["A5"] },
+    { "id": "AC-5", "title": "인쇄", "stories": ["A5"] },
+    { "id": "AC-6", "title": "글자 크기", "stories": [] }
+  ]
+}

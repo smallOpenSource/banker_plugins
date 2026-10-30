@@ -13,13 +13,13 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { chooseFetcher } from './update-notify.mjs';
+import { chooseFetcher, claimSteps } from './update-notify.mjs';
 import { installedVersion } from '../bin/lib/telemetry-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -391,6 +391,34 @@ test('개인화: changedSkills ∩ 써본스킬 이 있으면 그 스킬명을 �
   assert.equal(readCache(tmp).notified, '99.0.0', '개인화 알림도 notified 기록(재고지 방지)');
 });
 
+test('개인화: Codex 에서는 바뀐 스킬을 Codex 이름으로 보인다(setup-omc 는 setup-omx), Claude Code 는 그대로', () => {
+  const tmp = mkTmp();
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:setup-omc', 'banker:lineage'] });
+  writeUsedSkills(tmp, ['banker:setup-omc', 'banker:lineage']);
+  const codex = JSON.parse(runNotify(tmp, { argv: ['--codex'] }).stdout.trim()).systemMessage;
+  assert.match(codex, /바뀌었습니다: setup-omx, lineage\./);
+  writeCache(tmp, { latest: '99.0.1', checkedAt: NOW(), changedSkills: ['banker:setup-omc'] });
+  const claude = JSON.parse(runNotify(tmp).stdout.trim()).systemMessage;
+  assert.match(claude, /바뀌었습니다: setup-omc\./);
+});
+
+test('Codex 플러그인 길: 기록의 Codex 판이 0.160.1 보다 낮으면 한 줄 알리고, 그 이상이거나 npm 길이면 알리지 않는다', async () => {
+  const { pluginVersionNotice } = await import(pathToFileURL(NOTIFY_HOOK).href);
+  const tmp = mkTmp();
+  const rec = (v) => {
+    const f = join(tmp, `r-${v}.jsonl`);
+    writeFileSync(f, `${JSON.stringify({ type: 'session_meta', payload: { cli_version: v } })}\n`);
+    return { transcript_path: f };
+  };
+  const never = () => { throw new Error('codex --version 은 기록에 판이 있으면 부르지 않음'); };
+  assert.match(pluginVersionNotice(rec('0.144.5'), true, never), /Codex 0\.144\.5 은 0\.160\.1 보다 낮아/);
+  assert.equal(pluginVersionNotice(rec('0.160.1'), true, never), '');
+  assert.equal(pluginVersionNotice(rec('0.165.0'), true, never), '');
+  assert.equal(pluginVersionNotice(rec('0.144.5'), false, never), '');
+  assert.match(pluginVersionNotice({}, true, () => ({ stdout: 'codex-cli 0.150.2\n' })), /Codex 0\.150\.2/);
+  assert.equal(pluginVersionNotice({}, true, () => ({ stdout: '' })), '', '판을 모르면 알리지 않는다');
+});
+
 test('개인화 없음: changedSkills 있어도 써본스킬 파일 없으면 일반 알림', () => {
   const tmp = mkTmp();
   writeCache(tmp, { latest: '99.0.0', checkedAt: NOW(), changedSkills: ['banker:foo'] });
@@ -521,5 +549,90 @@ test('codex-sessions: 넘겨받는 사이 짝 훅이 새로 만든 폴더를 옮
     assert.equal(readdirSync(join(bankerDir(tmp), 'codex-sessions')).filter((n) => n.startsWith('sid.old-')).length, 1, '옮긴 폴더는 돌려놓지 않고 이틀 뒤 정리에 맡김');
   } finally {
     if (prev === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prev;
+  }
+});
+
+// Codex 의 SessionStart 입력에는 두 길의 훅이 함께 받고 시작마다 다른 값이 없다(update-notify.mjs 의 claimSession 주석).
+// 그래서 두 훅이 파일 시스템 동작 사이사이로 끼어드는 모든 순서를 claimSteps 로 돌려, 어느 순서에서도 알림이 한 번
+// 이하임을 본다. 시작 상태: 폴더 없음(새 세션), 방금 만든 폴더(짝 훅이 알림), 30초 넘게 지난 폴더(이어 연 세션).
+function interleavings(prepare) {
+  const outcomes = [];
+  const todo = [[]];
+  while (todo.length) {
+    const prefix = todo.pop();
+    const { mine, now } = prepare();
+    const hooks = [claimSteps(mine, now), claimSteps(mine, now)];
+    const got = [null, null];
+    const trace = [];
+    while (got.includes(null)) {
+      let pick = got[0] === null ? 0 : 1;
+      if (got[0] === null && got[1] === null) {
+        if (trace.length < prefix.length) pick = prefix[trace.length];
+        else todo.push([...trace, 1]);
+        trace.push(pick);
+      }
+      const step = hooks[pick].next();
+      if (step.done) got[pick] = step.value;
+    }
+    outcomes.push({ trace: trace.join(''), notified: got.filter(Boolean).length });
+  }
+  return outcomes;
+}
+
+test('codex-sessions: 두 훅의 모든 끼어들기 순서에서 알림은 한 번 이하, 새 세션과 이어 연 세션은 꼭 한 번', () => {
+  const root = mkTmp();
+  let n = 0;
+  const at = (age) => () => {
+    const mine = join(root, `c${n++}`, 'sid');
+    const now = Date.now();
+    if (age !== null) {
+      mkdirSync(mine, { recursive: true });
+      utimesSync(mine, (now - age) / 1000, (now - age) / 1000);
+    } else mkdirSync(dirname(mine));
+    return { mine, now };
+  };
+  for (const [what, age, want] of [['새 세션', null, 1], ['방금 짝 훅이 만든 폴더', 0, 0], ['이어 연 세션', 60_000, 1]]) {
+    const outcomes = interleavings(at(age));
+    assert.ok(outcomes.length >= 6, `${what}: ${outcomes.length} 순서`);
+    for (const o of outcomes) assert.equal(o.notified, want, `${what}, 순서 ${o.trace}`);
+  }
+});
+
+// Codex 홈이 세션 폴더 안(맨 위 .codex 말고)이면 샌드박스가 그 설정과 훅을 고칠 수 있다. 세션 시작에 알린다.
+test('Codex: Codex 홈이 세션 폴더 깊은 곳이면 세션 시작에 알리고, 맨 위 .codex 나 밖이면 알리지 않는다', () => {
+  const tmp = mkTmp();
+  const work = join(tmp, 'work');
+  const rollout = (home) => {
+    const day = join(home, 'sessions', '2026', '10', '29');
+    mkdirSync(day, { recursive: true });
+    return join(day, 'rollout-x.jsonl');
+  };
+  const env = { BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1', PLUGIN_ROOT: '' };
+  const say = (home, sid) => runNotify(tmp, { argv: ['--codex'], env, input: JSON.stringify({ session_id: sid, cwd: work, transcript_path: rollout(home) }) }).stdout;
+  const deep = join(work, 'deep', '.codex');
+  assert.match(JSON.parse(say(deep, 'h1')).systemMessage, /Codex 홈\(.*deep.*\)이 이 세션 폴더 안에 있어 샌드박스가 그 설정과 훅을 고칠 수 있습니다/);
+  assert.equal(say(join(work, '.codex'), 'h2'), '', '맨 위 .codex 는 샌드박스가 읽기만 함');
+  assert.equal(say(join(tmp, 'elsewhere', '.codex'), 'h3'), '');
+});
+
+// Plan S11 B9: a SessionStart hook whose script, folder or node is under a config.toml writable_roots entry does nothing
+// else and says why in one systemMessage; a writable root elsewhere, or no config.toml, changes nothing.
+test('Codex: a hook under a sandbox writable root does nothing but say why', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'banker-notify-wr-'));
+  try {
+    const home = join(tmp, 'codex');
+    mkdirSync(home);
+    writeFileSync(join(home, 'config.toml'), `sandbox_workspace_write.writable_roots = [${JSON.stringify(dirname(HERE))}]\n`);
+    const input = JSON.stringify({ session_id: 'wr-1', cwd: tmp });
+    let r = runNotify(tmp, { input, argv: ['--codex'], env: { CODEX_HOME: home, BANKER_NO_UPDATE_CHECK: '1' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(JSON.parse(r.stdout).systemMessage, /^banker hooks skipped: .*update-notify\.mjs is under the sandbox writable root .* writable_roots\), so a Codex session could change what this hook runs outside the sandbox$/);
+    assert.ok(!existsSync(join(tmp, 'banker', 'codex-sessions', 'wr-1')), 'nothing else ran (no session claim)');
+    writeFileSync(join(home, 'config.toml'), `sandbox_workspace_write.writable_roots = [${JSON.stringify(join(tmp, 'other'))}]\n`);
+    r = runNotify(tmp, { input, argv: ['--codex'], env: { CODEX_HOME: home, BANKER_NO_UPDATE_CHECK: '1' } });
+    assert.doesNotMatch(r.stdout, /banker hooks skipped/);
+    assert.ok(existsSync(join(tmp, 'banker', 'codex-sessions', 'wr-1')), 'the hook ran as before');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

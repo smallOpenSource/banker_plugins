@@ -57,3 +57,32 @@ html.isn-ready .isn-main { display: inline-flex; }
 /* The last scene keeps the main button alone; the body shows none of these. */
 html.isn-last .isn-hint, html.isn-last .sw-hint, html.isn-last .isn-skip,
 html.isn-body .isn-hint, html.isn-body .sw-hint, html.isn-body .isn-skip, html.isn-body .isn-main { display: none !important; }
+
+/* At a stop or a half point step-nav.js marks the copy of the scene in view (isn-copy): it shows over the
+   engine's own fade, which leaves a middle scene's copy hidden at its start. When a move starts the mark
+   goes and the engine's fade takes over; both ways the opacity eases, at once under reduced motion. */
+.isn-on .sw-copy { transition: opacity .35s ease; }
+.isn-on .sw-copy.isn-copy { opacity: 1 !important; pointer-events: auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  .isn-on .sw-copy { transition: none; }
+}
+/* An instant move (Home, End, a route dot) swaps the copy at once. */
+.isn-on.isn-instant .sw-copy { transition: none; }
+
+/* The loading mark of a poster wait longer than loadingDelayMs (step-nav.js): small, mid-screen, above the
+   scenes, taking no input. A status region, so its text reaches a screen reader; it never takes the focus. */
+.isn-loading {
+  position: fixed; left: 50%; top: 50%; z-index: 300; transform: translate(-50%, -50%);
+  display: none; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 999px;
+  background: color-mix(in srgb, var(--sw-bg, #000) 78%, transparent); color: var(--sw-ink, #fff);
+  font-size: .82rem; letter-spacing: .04em; pointer-events: none;
+}
+.isn-loading.is-on { display: flex; }
+.isn-loading__spin {
+  width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent;
+  animation: isn-spin .8s linear infinite;
+}
+@keyframes isn-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .isn-loading__spin { animation: none; border-right-color: currentColor; opacity: .6; }
+}

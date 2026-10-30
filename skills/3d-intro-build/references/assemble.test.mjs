@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { assemble, engineCss } from './assemble.mjs';
+import { assemble, engineCss, firstPosters, panelAlpha } from './assemble.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,7 +40,7 @@ test('the page carries no inline script or style, so a strict CSP runs it', () =
   assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i, 'every script has a src');
   assert.doesNotMatch(html, /\son[a-z]+=/i, 'no inline event handlers');
   for (const f of ['scrub-engine.css', 'theme.css', 'intro-fixes.css']) assert.match(html, new RegExp(`<link rel="stylesheet" href="${f}"`));
-  assert.match(html, /<script src="scrub-engine\.js"><\/script>\s*<script src="intro\.js"><\/script>/);
+  assert.match(html, /<script src="scrub-engine\.js"><\/script>\s*<script src="step-nav\.js"><\/script>\s*<script src="intro\.js"><\/script>/);
   const intro = read(dir, 'intro.js');
   assert.match(intro, /var world = document\.getElementById\('world'\);[\s\S]*mountScrollWorld\(world, config\);/);
   assert.match(intro, /"connectors": \[\s*"assets\/vid\/conn1\.mp4"\s*\]/);
@@ -72,8 +72,8 @@ test('the engine and the template stay as shipped', () => {
   assert.ok(fs.readFileSync(path.join(HERE, 'index-template.html')).equals(before));
 });
 
-test('the engine fixes always ship; the glass panel and scene steps only when asked', () => {
-  const plain = project();
+test('the engine fixes always ship; the glass panel only when asked; scene steps by default, off with stepNav false', () => {
+  const plain = project({ stepNav: false });
   assemble({ projectDir: plain });
   assert.match(read(plain, 'intro-fixes.css'), /translate:\s*0 -50%/);
   assert.match(read(plain, 'intro-fixes.css'), /overflow-x:\s*clip/);
@@ -83,8 +83,14 @@ test('the engine fixes always ship; the glass panel and scene steps only when as
   assert.ok(!fs.existsSync(path.join(plain, 'site', 'panel-glass.css')));
   assert.ok(!fs.existsSync(path.join(plain, 'site', 'step-nav.js')));
   assert.doesNotMatch(read(plain, 'intro.js'), /IntroStepNav/);
+  const byDefault = project();
+  assemble({ projectDir: byDefault });
+  assert.ok(fs.existsSync(path.join(byDefault, 'site', 'step-nav.js')), 'on without a stepNav entry');
+  assert.match(read(byDefault, 'intro.js'), /var nav = \{\};[\s\S]*IntroStepNav\.attach\(world, config, nav\)/);
+  assert.match(read(byDefault, 'step-nav.css'), /\.isn-on \.sw-copy\.isn-copy \{ opacity: 1 !important;/);
+  assert.match(read(byDefault, 'step-nav.css'), /prefers-reduced-motion: reduce\)\s*\{\s*\.isn-on \.sw-copy \{ transition: none; \}/);
 
-  const full = project({ panel: 'glass', stepNav: { end: '#main', lastGuardMs: 250 }, lang: 'ko' });
+  const full = project({ panel: 'glass', stepNav: { end: '#main' }, lang: 'ko' });
   assemble({ projectDir: full });
   const html = read(full, 'index.html');
   assert.match(html, /<html lang="ko">/);
@@ -104,4 +110,63 @@ test('an unknown panel style or a missing asset stops the build with the reason'
   const dir = project();
   fs.rmSync(path.join(dir, 'hold-2.mp4'));
   assert.throws(() => assemble({ projectDir: dir }), /asset not found: hold-2\.mp4/);
+});
+
+test('the first posters are preloaded (the engine loads posters lazily), and every poster drops the engine\'s zoom', () => {
+  const dir = project();
+  assemble({ projectDir: dir });
+  const html = read(dir, 'index.html');
+  assert.match(html, /<link rel="preload" as="image" href="assets\/a\.png" \/>\s*<link rel="preload" as="image" href="assets\/b\.png" \/>/);
+  assert.equal((html.match(/rel="preload"/g) || []).length, 2, 'two sections: two posters');
+  assert.deepEqual(firstPosters({ sections: [{ still: 'a' }, { still: 'b' }, { still: 'c' }], connectors: ['x', null], connectorStills: ['cs1', null] }), ['a', 'cs1', 'b']);
+  assert.deepEqual(firstPosters({ sections: [{ still: 'a' }, { still: 'b' }], connectors: [null], connectorStills: ['cs1'] }), ['a', 'b'], 'a connector poster counts only with its connector');
+  assert.match(read(dir, 'intro-fixes.css'), /\.sw-scene__still \{ transform: none !important; \}/);
+  assert.match(read(dir, 'intro-fixes.css'), /\.sw-scene\.has-clip \.sw-scene__still \{ transition: opacity 0s linear \.15s; \}/, 'the poster is hidden 0.15 s after the clip shows');
+});
+
+test('glass panel alpha: the lowest that keeps 4.5 over a white pixel for every panel text and accent label; a person\'s panelAlpha wins', () => {
+  assert.equal(panelAlpha([]), 0.64);
+  assert.ok(panelAlpha(['#C68B59']) >= panelAlpha([]), 'an accent label counts');
+  const alphaIn = (dir) => Number(/--intro-panel-alpha:\s*([\d.]+);/.exec(read(dir, 'panel-glass.css'))[1]);
+  const auto = project({ panel: 'glass', theme: { bg: '#F3E9DC', ink: '#3B2A20', accent: '#C68B59' } });
+  const r = assemble({ projectDir: auto });
+  assert.deepEqual(r.panelAlpha, { alpha: panelAlpha(['#C68B59', undefined, undefined]), from: 'computed' });
+  assert.equal(alphaIn(auto), r.panelAlpha.alpha);
+  const mine = project({ panel: 'glass', panelAlpha: 0.5 });
+  assert.deepEqual(assemble({ projectDir: mine }).panelAlpha, { alpha: 0.5, from: 'manifest' });
+  assert.equal(alphaIn(mine), 0.5);
+  assert.equal(assemble({ projectDir: project() }).panelAlpha, undefined, 'no glass panel: nothing to set');
+});
+
+test('an asset outside the project folder (../ or a link out) is refused with a named error, connector posters included', () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'assemble-outside-'));
+  made.push(outside);
+  fs.writeFileSync(path.join(outside, 'secret.png'), 'not for the page');
+  const up = project({ connectorStills: [`../${path.basename(outside)}/secret.png`] });
+  assert.throws(() => assemble({ projectDir: up }), (e) => e.code === 'EOUTSIDE' && /outside the project folder/.test(e.message));
+  const linked = project();
+  fs.rmSync(path.join(linked, 's1.png'));
+  fs.symlinkSync(path.join(outside, 'secret.png'), path.join(linked, 's1.png'));
+  assert.throws(() => assemble({ projectDir: linked }), (e) => e.code === 'EOUTSIDE');
+  assert.ok(!fs.existsSync(path.join(linked, 'site', 'assets', 'a.png')), 'nothing copied from outside');
+});
+
+test('a section id that would leave assets/ (../, a separator, a dot name) is refused before anything is written', () => {
+  for (const id of ['../../pwned', 'a/b', 'a\\b', '..', '.hidden', 'x'.repeat(65)]) {
+    const dir = project({ sections: [{ id, still: 's1.png', clip: 'hold-1.mp4' }, { id: 'b', still: 's2.png', clip: 'hold-2.mp4' }] });
+    assert.throws(() => assemble({ projectDir: dir }), /id .* must be letters, digits, '-' or '_'/, id);
+    assert.ok(!fs.existsSync(path.join(dir, 'pwned')) && !fs.existsSync(path.join(path.dirname(dir), 'pwned')), `${id}: nothing written outside`);
+  }
+  assert.doesNotThrow(() => assemble({ projectDir: project({ sections: [{ id: 'dive-s1_push-in', still: 's1.png', clip: 'hold-1.mp4' }, { id: 'B2', still: 's2.png', clip: 'hold-2.mp4' }] }) }));
+});
+
+test('intro.js decodes every poster at load and after scrolling stops (a jump would otherwise paint an empty scene), with and without step navigation', () => {
+  for (const extra of [{}, { stepNav: {} }]) {
+    const dir = project(extra);
+    assemble({ projectDir: dir });
+    const intro = read(dir, 'intro.js');
+    assert.match(intro, /mountScrollWorld\(world, config\);[\s\S]*var warm = function \(\) \{ \[\]\.forEach\.call\(world\.querySelectorAll\('\.sw-scene__still'\)[\s\S]*i\.decode\(\)/);
+    assert.match(intro, /warm\(\); window\.addEventListener\('load', warm\);/);
+    assert.match(intro, /addEventListener\('scroll', [\s\S]*setTimeout\(warm, 400\)/);
+  }
 });

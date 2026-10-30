@@ -106,6 +106,20 @@ test('throttle 미경과면 fetch 안 함(mock 미호출), 캐시 불변', async
   }
 });
 
+test('업데이트 확인을 끄면(BANKER_NO_UPDATE_CHECK) 직접 실행돼도 조회하지 않는다', async () => {
+  const tmp = mkTmp();
+  let hit = false;
+  const server = await mockServer({ body: { version: '9.9.9' }, onRequest: () => { hit = true; } });
+  try {
+    const code = await runFetch(tmp, `http://127.0.0.1:${server.address().port}/latest`, { env: { BANKER_NO_UPDATE_CHECK: '1' } });
+    assert.equal(code, 0);
+    assert.equal(hit, false, 'mock 서버 호출 없음');
+    assert.equal(existsSync(cachePath(tmp)), false, '캐시를 쓰지 않음');
+  } finally {
+    server.close();
+  }
+});
+
 test('캐시 없음이면 throttle 가드 없이 진행한다', async () => {
   const tmp = mkTmp(); // update-check.json 자체가 없음.
   let hit = false;

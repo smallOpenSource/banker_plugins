@@ -14,7 +14,8 @@
  * word after a space, a quote, `(` or `=` as in `env`, `docker -e`, `--from-literal=`, or after a Dockerfile
  * `ENV KEY value`; the shell's own PWD or OLDPWD holding a path is no password),
  * secrets given as command-line flags, curl's user and password flag,
- * hex keys, Basic and Bearer credentials, credentials in URLs and
+ * hex keys, Basic and Bearer credentials, credentials in URLs, a .netrc password (on its machine line or on a line
+ * of its own), a .pgpass line, docker's config.json "auth" (base64 of user:password) and
  * long high-entropy strings (a lockfile's sha512- integrity hash and a Go or Terraform h1: hash
  * aside); they do not prove a payload clean. A Docker secret file's path after a *_FILE key is
  * not read as the password it points to, and a value masked as a whole `[REDACTED]` word (the mask
@@ -74,7 +75,21 @@ export const PATTERNS = [
   // that would let admin:admin through.
   ["curl-user", /(?<!\S)(?:-u\s*|--user(?:\s+|=))(?!(["']?)\d{1,10}:\d{1,10}\1(?=["'`\s;|&)]|$))(?!["']?\+%|\))[^\s:=]{1,256}:(?!\/)\S{3,256}/],
   ["assigned-hex", /(?:key|auth|token|secret)[\w-]{0,64}["']?\s*[:=]\s*["']?[0-9a-f]{32,65536}(?![0-9a-z])/i],
+  // .netrc: `machine <host> ... password <value>` on one line, or a `password <value>` line of its own (the file's
+  // other layout, one token pair a line); a value that is a reference or a placeholder is none
+  ["netrc-password", /^[+\- ]?\s*(?:(?:machine\s+\S{1,256}|default)(?:\s+\S{1,256}){0,16}?\s+password\s+(?![$<{%])\S|password\s+(?![$<{%])\S{1,256}\s*$)/],
+  // .pgpass: host:port:database:user:password, the port a number or *, no empty field. The host is not digits alone
+  // and the password holds no colon but an escaped one (\:), so a MAC of digits or a time (12:30:45:00) is no hit.
+  ["pgpass-line", /^[+\- ]?(?=[^\s:#]*[^\d\s:#])[^\s:#+\-][^\s:#]{0,255}:(?:\d{1,5}|\*):[^\s:]{1,256}:[^\s:]{1,256}:(?!\*?$)(?:\\.|[^\s:\\]){1,256}$/],
+  // docker's config.json: "auth" holds base64 of user:password (checked by decoding it, below)
+  ["docker-auth", /"auth"\s*:\s*"[A-Za-z0-9+/]{4,65536}={0,2}"/],
 ];
+
+// A kind whose pattern alone reads too wide: the line counts only when this holds as well.
+const DOCKER_AUTH = /"auth"\s*:\s*"([A-Za-z0-9+/]{4,65536}={0,2})"/;
+const CONFIRM = {
+  "docker-auth": (line) => Buffer.from(DOCKER_AUTH.exec(line)[1], "base64").toString("latin1").includes(":"),
+};
 
 // Long runs of base64-like characters whose Shannon entropy is that of random data, as
 // lineage's redaction measures them (32 characters or more, 4.5 bits per character or more).
@@ -113,6 +128,8 @@ const KEY_END = new RegExp(`-----END ${PRIVATE_KEY}`);
 // The mask SKILL.md asks for, as a word of its own. One glued to the rest of a value is no mask: what is left is read.
 const WHOLE_MASK = /(?<!\w)\[REDACTED\](?!\w)/g;
 
+const caught = (kind, re, plain, keyed) => re.test(KEYED.has(kind) ? keyed : plain) && (!CONFIRM[kind] || CONFIRM[kind](plain));
+
 // Each line's secret-like kinds, once per kind and line. A private key closes at the first END
 // marker at or after its line: the END lines are found once and walked with the lines, so many
 // BEGIN lines without an END still take linear time.
@@ -126,7 +143,7 @@ export function scan(text) {
     const plain = line.replace(WHOLE_MASK, "-");
     const keyed = plain.replace(SECRET_FILE_PATH, "$1-").replace(SHELL_DIR, "$1-");
     for (const [kind, re] of PATTERNS) {
-      if (!re.test(KEYED.has(kind) ? keyed : plain)) continue;
+      if (!caught(kind, re, plain, keyed)) continue;
       hits.push(kind === "private-key" ? { line: i + 1, kind, end: ends[next] ?? null } : { line: i + 1, kind });
     }
     if (highEntropy(plain)) hits.push({ line: i + 1, kind: "high-entropy" });

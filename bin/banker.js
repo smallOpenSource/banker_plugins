@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const cp = require('child_process');
 const { pathToFileURL } = require('url');
-const { commandSkillText } = require('./lib/command-skill.cjs');
+const { codexFrontmatter, commandSkillText } = require('./lib/command-skill.cjs');
 
 const PKG_ROOT = path.resolve(__dirname, '..');
 const MANIFEST = path.join(PKG_ROOT, 'codex', 'manifest.json');
@@ -34,15 +34,22 @@ function isoTime(t) {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
 }
 
+// What banker starts by bare name (gh, claude) runs from the home folder with Windows' search of the current folder off:
+// on Windows the program search (cmd, and CreateProcess through libuv) looks in the current folder before PATH, and the
+// current folder may be a project with a planted gh.exe or claude.cmd.
+function bareSpawnOpts() {
+  return { cwd: os.homedir(), env: { ...process.env, NoDefaultCurrentDirectoryInExePath: '1' } };
+}
+
 // GitHub 저장소에 별을 단다 (gh CLI 인증 사용). star 는 repo 쓰기 권한이 필요 없어 인증된 어느 계정으로도
 // 가능하다. gh 미설치/미인증/실패는 {ok:false, reason} 로 반환해 호출부가 URL 안내로 폴백하게 한다.
 // spawn 은 테스트 주입용(기본 cp.spawnSync). 자체 timeout·오류삼킴으로 setup 을 절대 막지 않는다.
 function starRepo(spawn = cp.spawnSync) {
   try {
-    const v = spawn('gh', ['--version'], { stdio: 'ignore', timeout: 3000, windowsHide: true });
+    const v = spawn('gh', ['--version'], { stdio: 'ignore', timeout: 3000, windowsHide: true, ...bareSpawnOpts() });
     if (v.error || v.status !== 0) return { ok: false, reason: 'gh CLI 없음' };
     const r = spawn('gh', ['api', '-X', 'PUT', `/user/starred/${REPO_SLUG}`],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, windowsHide: true });
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000, windowsHide: true, ...bareSpawnOpts() });
     if (r.error) return { ok: false, reason: r.error.message };
     if (r.status !== 0) {
       const msg = (`${r.stderr || r.stdout || ''}`).trim().split('\n')[0] || `gh exited ${r.status}`;
@@ -151,23 +158,31 @@ function readSkillName(skillMd) {
 
 // Codex discovers skills by directory and expects the SKILL.md frontmatter `name:` to equal the
 // directory name. Our Codex dir is `banker-<name>` (prefixed to avoid colliding with omx/system
-// skills), so rewrite ONLY the first `name:` line inside the YAML frontmatter to match.
-function setCodexSkillName(skillMd, newName, dryRun) {
-  if (dryRun) { log(`  [dry-run] set frontmatter name: ${newName}`); return; }
+// skills), so rewrite ONLY the first `name:` line inside the YAML frontmatter to match, and the
+// `description:` line when the manifest gives the skill a Codex one (codexDescription).
+function setCodexSkillName(skillMd, newName, dryRun, description) {
+  if (dryRun) { log(`  [dry-run] set frontmatter name: ${newName}${description ? ' and the Codex description' : ''}`); return; }
   let src;
   try { src = fs.readFileSync(skillMd, 'utf8'); } catch { return; }
-  const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return;                                   // no frontmatter — leave untouched
-  let block = fm[1];
-  block = /^name:.*$/m.test(block) ? block.replace(/^name:.*$/m, `name: ${newName}`) : `name: ${newName}\n${block}`;
-  fs.writeFileSync(skillMd, src.slice(0, fm.index) + `---\n${block}\n---` + src.slice(fm.index + fm[0].length));
+  const out = codexFrontmatter(src, newName, description);  // no frontmatter: left untouched
+  if (out !== src) fs.writeFileSync(skillMd, out);
+}
+
+// The name Codex gives a skill (manifest codexName: setup-omc is setup-omx there), and Claude name to Codex name.
+function codexNameOf(s) { return s.codexName || s.name; }
+function codexRenames(m) { return Object.fromEntries(eligible(m).filter(s => s.codexName).map(s => [s.name, s.codexName])); }
+
+// Installed banker-<old> skill folders whose skill Codex now names apart, as [old, new] folder names (found before the sweep).
+function renamedInstalls(skillsDir, m) {
+  return eligible(m).filter(s => s.codexName && fs.existsSync(path.join(skillsDir, `banker-${s.name}`, 'SKILL.md')))
+    .map(s => [`banker-${s.name}`, `banker-${s.codexName}`]);
 }
 
 // A command as a Codex skill (bin/lib/command-skill.cjs, shared with the Codex plugin's codex/command-skills/).
-function writeCommandSkill(src, destDir, name, dryRun) {
+function writeCommandSkill(src, destDir, name, dryRun, codex = {}) {
   if (dryRun) { log(`  [dry-run] write command skill ${path.relative(PKG_ROOT, src)} -> ${destDir}`); return; }
   fs.mkdirSync(destDir, { recursive: true });
-  fs.writeFileSync(path.join(destDir, 'SKILL.md'), commandSkillText(fs.readFileSync(src, 'utf8'), name, `$${name}`));
+  fs.writeFileSync(path.join(destDir, 'SKILL.md'), commandSkillText(fs.readFileSync(src, 'utf8'), name, `$${name}`, codex));
 }
 
 /* ---------- Claude Code target ---------- */
@@ -180,7 +195,7 @@ function setupClaude(dryRun) {
   ];
   for (const [bin, args] of steps) {
     if (dryRun) { log(`  [dry-run] ${bin} ${args.join(' ')}`); continue; }
-    try { cp.execFileSync(bin, args, { stdio: 'inherit' }); }
+    try { cp.execFileSync(bin, args, { stdio: 'inherit', ...bareSpawnOpts() }); }
     catch (e) { warn(`  step failed (may already be applied): ${bin} ${args.join(' ')}`); }
   }
   log('  → skills/commands available as /banker:* (reload-plugins or restart to apply).');
@@ -195,28 +210,36 @@ function setupCodex(dryRun, scope) {
   const base = codexBase(scope);
   const skillsDir = path.join(base, 'skills');
   const promptsDir = path.join(base, 'prompts');
+  const renames = renamedInstalls(skillsDir, m);
   // Clean reinstall: remove any prior banker-* first so an update never leaves a stale duplicate.
   const swept = sweepCodexArtifacts(base, dryRun);
   if (swept) log(`  swept ${swept} prior banker-* artifact(s) before reinstall.`);
   let nSkill = 0, nCmd = 0;
   for (const s of eligible(m)) {
     if (s.type === 'skill') {
-      const dest = path.join(skillsDir, `banker-${s.name}`);
+      const dest = path.join(skillsDir, `banker-${codexNameOf(s)}`);
       copyDir(skillSource(s), dest, dryRun);
-      setCodexSkillName(path.join(dest, 'SKILL.md'), `banker-${s.name}`, dryRun); // dir==name (Codex discovery)
+      setCodexSkillName(path.join(dest, 'SKILL.md'), `banker-${codexNameOf(s)}`, dryRun, s.codexDescription); // dir==name (Codex discovery)
       nSkill++;
     } else if (s.type === 'command') {
       const src = path.join(PKG_ROOT, 'commands', `${s.name}.md`);
       copyFile(src, path.join(promptsDir, `banker-${s.name}.md`), dryRun);
-      writeCommandSkill(src, path.join(skillsDir, `banker-${s.name}`), `banker-${s.name}`, dryRun);
+      writeCommandSkill(src, path.join(skillsDir, `banker-${s.name}`), `banker-${s.name}`, dryRun, { description: s.codexDescription, rename: codexRenames(m) });
       nCmd++;
     }
   }
   log(`  → ${nSkill} skills -> ${path.join(base, 'skills', 'banker-*')}, ${nCmd} commands -> skills banker-* and prompts ${path.join(base, 'prompts', 'banker-*.md')}`);
+  reportRenames(renames);
   log('  → Codex 0.144+ has no custom prompts, so each command is also a skill: invoke it as $banker-<name>.');
   log('  → skills are invoked as `banker-<name>` (frontmatter name rewritten to match the dir).');
   log('  → ~/.codex/AGENTS.md is NOT modified (omx regenerates it); skills auto-discovered from ~/.codex/skills/.');
   return true;
+}
+
+// The skills an update installed under their new Codex name, and what a user who turned an old name off must do.
+function reportRenames(renames) {
+  for (const [from, to] of renames) log(`  이름 바뀜: ${from} 에서 ${to} (부를 때는 $${to})`);
+  if (renames.length) log('  옛 이름으로 끈 설정(config.toml 의 [[skills.config]])은 새 이름에 닿지 않으니 새 이름으로 다시 적으십시오.');
 }
 
 /* ---------- doctor ---------- */
@@ -264,11 +287,31 @@ function doctorCodexShape(base) {
   const file = newestRollout(base);
   if (!file) { log('  Codex record shape: no session record yet (run one Codex session, then doctor again)'); return; }
   const r = codexShapeReport(file);
-  if (r && r.tooLong) { log(`  Codex record shape: ${path.basename(file)} opens with a line over 8 MB, not checked`); return; }
-  if (r && r.fresh) { log(`  Codex record shape: ${path.basename(file)} holds no turn yet (run one Codex turn, then doctor again)`); return; }
-  if (!r || !r.version) { log(`  ⚠ Codex record shape: ${path.basename(file)} does not open with session_meta - lineage, progress and usage counting cannot read it`); return; }
+  const early = shapeEarlyNote(r, path.basename(file));
+  if (early) { log(early); return; }
   const mark = (ok) => (ok ? 'ok' : 'MISSING');
   log(`  Codex record shape (Codex ${r.version}, ${path.basename(file)}): turn start ${mark(r.turnStart)}, user text ${mark(r.userText)}, tool calls ${mark(r.toolCall)}`);
+  doctorShapeVerdict(r);
+}
+
+// What doctor says before the three checks: the first line is too long, no turn yet, or not a Codex record. Lines after
+// session_meta of which banker reads none (no turn start, user text or tool call) are what a Codex update that changed
+// the whole record shape leaves, so they are flagged, not taken for a session with no turn yet.
+function shapeEarlyNote(r, name) {
+  const unread = `  ⚠ Codex record shape: ${name} does not open with session_meta - lineage, progress and usage counting cannot read it`;
+  if (!r) return unread;
+  if (r.tooLong) return `  Codex record shape: ${name} opens with a line over 8 MB, not checked`;
+  if (r.fresh) return `  Codex record shape: ${name} holds no turn yet (run one Codex turn, then doctor again)`;
+  if (r.version && !(r.turnStart || r.userText || r.toolCall)) {
+    return `  ⚠ Codex record shape (Codex ${r.version}, ${name}): it has lines after session_meta but no turn start, user text or tool call banker reads - `
+      + 'the record shape may have changed (lineage stops, progress warns, usage counting misses); update banker. If this session has run no turn yet, run one and doctor again';
+  }
+  return r.version ? '' : unread;
+}
+
+// A turn opens with task_started, then the user's text. Text or tool calls with no turn start, or a turn start with no
+// text, is a record shape banker does not know. Neither one is a session whose first turn has not begun.
+function doctorShapeVerdict(r) {
   if (!r.turnStart || !r.userText) log('  ⚠ banker may not read this Codex version\'s records (lineage stops, progress warns, usage counting misses); update banker');
   else if (!r.toolCall) log('    (no tool calls: fine for a session that used no tools)');
 }
@@ -294,6 +337,21 @@ async function warnCodexPlugin(base) {
   warn(`    Keep one: codex plugin remove ${ids[0].split(' ')[0]}, or banker uninstall --codex.`);
 }
 
+// The plugin's per-skill list was measured on Codex 0.160.1 and later; below that the banker skills may not show.
+async function warnOldCodex(plugins) {
+  if (!plugins.length) return;
+  const r = await loadCodexRoutes();
+  const note = r.pluginVersionNote(r.codexCliVersion(cp.spawnSync));
+  if (note) log(`  ⚠ ${note}`);
+}
+
+// A Codex home inside the folder doctor runs in (not its top .codex, which Codex's sandbox keeps read-only) is one a
+// Codex session opened here can change from the sandbox: its config, the hook copies, the plugins.
+async function warnCodexHomeHere(base) {
+  if (!(await loadCodexRoutes()).homeInSession(base, process.cwd())) return;
+  log(`  ⚠ the Codex home ${base} is inside this folder (not its top .codex): a Codex session opened here can change its config and hooks from the sandbox; use a Codex home outside the folders you open Codex in`);
+}
+
 async function doctor() {
   log(`banker v${version()}  (pkg: ${PKG_ROOT})`);
   log(`plugin.json version: ${(() => { try { return require(PLUGIN_JSON).version; } catch { return '?'; } })()}`);
@@ -306,6 +364,7 @@ async function doctor() {
   try { installed = fs.readdirSync(sdir).filter(d => d.startsWith('banker-')); } catch {}
   log(`  codex CLI: ${have('codex') ? 'found' : 'NOT found'}`);
   log(`  installed banker skills in ${sdir}: ${installed.length}`);
+  await warnCodexHomeHere(base);
   doctorCodexShape(base);
   // Codex only discovers a skill when its dir name equals the SKILL.md `name:` — flag any mismatch.
   const mismatched = installed
@@ -317,6 +376,8 @@ async function doctor() {
   }
   const plugins = await codexPluginInstalls(base);
   log(`  Codex plugin (codex plugin add): ${plugins.length ? plugins.join(', ') : 'not installed'}`);
+  await warnOldCodex(plugins);
+  doctorTeamwork(base);
   // A project-scope npm install (banker setup --codex --scope project) in this folder doubles the skills here too.
   const projectNpm = (await loadCodexRoutes()).projectNpmRoot(process.cwd());
   if (plugins.length && (installed.length || projectNpm)) log(`  ⚠ banker is installed both ways${projectNpm && !installed.length ? ` (npm in ${path.join(projectNpm, '.codex')})` : ''}: skills show twice ($banker-<name> and $banker:<name>). Keep one: banker uninstall --codex, or codex plugin remove ${plugins[0].split(' ')[0]}`);
@@ -328,13 +389,27 @@ async function doctor() {
   log('  → install via /banker:setup (Claude) or the setup-* skills; skills also guide you if a dependency is missing.');
 }
 
+// The Codex-only teamwork skill keeps its engine, hooks and approval rule in the Codex home: say whether the programs it
+// recorded still exist, and whether a rules/teamwork.rules it did not write sits where its rule goes.
+function doctorTeamwork(base) {
+  let st = null;
+  try { st = JSON.parse(fs.readFileSync(path.join(base, 'teamwork', 'state.json'), 'utf8')); } catch { return; }
+  const missing = ['node', 'codex'].filter((k) => !(st.tools && st.tools[k] && fs.existsSync(st.tools[k])));
+  // The hooks' wrapper needs the engine and node only; send and reply start the recorded codex.
+  const fails = [...(missing.includes('node') ? ['its hooks stay silent'] : []), ...(missing.includes('codex') ? ['send and reply fail'] : [])];
+  log(`  teamwork: ${st.enabled ? 'on' : 'off'} (engine ${st.version || '?'})${missing.length ? ` ⚠ recorded ${missing.join(', ')} missing: ${fails.join(' and ')} until $banker-teamwork on runs again` : ''}`);
+  let rules = '';
+  try { rules = fs.readFileSync(path.join(base, 'rules', 'teamwork.rules'), 'utf8'); } catch { return; }
+  if (!rules.startsWith('# teamwork ')) log(`  ⚠ ${path.join(base, 'rules', 'teamwork.rules')} was not written by teamwork; teamwork leaves it as it is and asks for approval on every call`);
+}
+
 /* ---------- uninstall ---------- */
 function uninstallClaude(dryRun) {
   log('• Claude Code uninstall:');
   if (!have('claude')) { warn('  claude CLI not found; skipping.'); return; }
   for (const args of [['plugin', 'uninstall', PLUGIN_NAME], ['plugin', 'marketplace', 'remove', MARKETPLACE]]) {
     if (dryRun) { log(`  [dry-run] claude ${args.join(' ')}`); continue; }
-    try { cp.execFileSync('claude', args, { stdio: 'inherit' }); } catch { warn(`  (not present) claude ${args.join(' ')}`); }
+    try { cp.execFileSync('claude', args, { stdio: 'inherit', ...bareSpawnOpts() }); } catch { warn(`  (not present) claude ${args.join(' ')}`); }
   }
 }
 function uninstallCodex(dryRun, scopes) {
@@ -358,6 +433,21 @@ function uninstallCodex(dryRun, scopes) {
   }
 }
 
+// teamwork (codex-only) goes only when no other way of banker into this Codex home is left: the user-scope npm skills
+// (kept by --scope project) and the Codex plugin. Its own uninstall removes its two hooks, its rule and its state.
+// It runs only with the user scope in the sweep, so a dry run counts the npm skills as gone, as the real run finds them.
+async function uninstallTeamwork(dryRun) {
+  const base = codexBase('user');
+  if (!fs.existsSync(path.join(base, 'teamwork'))) return;
+  const npmLeft = !dryRun && fs.existsSync(path.join(base, 'skills', 'banker-teamwork'));
+  const left = [...(npmLeft ? ['npm skills'] : []), ...(await codexPluginInstalls(base))];
+  if (left.length) { log(`  teamwork kept: banker is still in this Codex home (${left.join(', ')})`); return; }
+  if (dryRun) { log(`  [dry-run] teamwork uninstall in ${base}`); return; }
+  const r = cp.spawnSync(process.execPath, [path.join(PKG_ROOT, 'codex', 'skills', 'teamwork', 'scripts', 'teamwork.mjs'), 'uninstall'], { env: { ...process.env, CODEX_HOME: base }, encoding: 'utf8' });
+  if (r.status === 0) log('  removed teamwork (its hooks, approval rule and state)');
+  else warn(`  teamwork not removed (exit ${r.status}): ${(r.stderr || '').trim()}`);
+}
+
 /* ---------- Codex hooks ---------- */
 // bin/lib/codex-hooks.mjs is ESM; loaded lazily like telemetry-config. Hooks go into the same Codex home as the skills.
 async function loadCodexHooks() {
@@ -374,6 +464,7 @@ async function setupCodexHooks(dryRun, scope) {
   const r = ch.enableHooks(codexHookPaths(ch), ch.DEFAULT_HOOKS, PKG_ROOT);
   if (r.code) { warn(`  Codex hooks not changed: ${r.msg}`); return; }
   log(`  → Codex hooks ${ch.DEFAULT_HOOKS.join(', ')} in ${codexHookPaths(ch).hooks}${r.changed.length ? ` (changed: ${r.changed.join(', ')})` : ' (already in place)'}.`);
+  if (r.note) log(`  → ${r.note}`);
   if (r.changed.length) log(`  → ${ch.TRUST_NOTE}`);
 }
 
@@ -401,7 +492,12 @@ async function hooksCmd(sub, ids) {
   }
   const r = sub === 'enable' ? ch.enableHooks(p, want, PKG_ROOT) : ch.disableHooks(p, want);
   if (r.code) { warn(`banker hooks: not changed: ${r.msg}`); process.exitCode = 1; return; }
+  reportHooks(sub, r, ch);
+}
+
+function reportHooks(sub, r, ch) {
   log(`banker hooks ${sub}: ${r.changed.length ? r.changed.join(', ') : 'nothing to change'}`);
+  if (r.note) log(r.note);
   if (sub === 'enable' && r.changed.length) log(ch.TRUST_NOTE);
   if (r.shifted && r.shifted.length) log(`later ${r.shifted.join(', ')} hooks may need trusting again in /hooks.`);
 }
@@ -593,7 +689,7 @@ async function main() {
     if (a.claude) uninstallClaude(a.dryRun);
     if (a.codex) {
       uninstallCodex(a.dryRun, a.scopeExplicit ? [a.scope] : ['user', 'project']);
-      if (!a.scopeExplicit || a.scope === 'user') await uninstallCodexHooks(a.dryRun);
+      if (!a.scopeExplicit || a.scope === 'user') { await uninstallCodexHooks(a.dryRun); await uninstallTeamwork(a.dryRun); }
     }
     log('done.');
     return;

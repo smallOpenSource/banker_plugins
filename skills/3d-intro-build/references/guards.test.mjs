@@ -258,6 +258,11 @@ test('a project key file the repository tracks is never written, and resolveCred
   assert.throws(() => A.persistCreds({ AZURE_SORA_DEPLOYMENT: 'sora-2' }, { target }), /tracked by git/);
   assert.equal(fs.readFileSync(target, 'utf8'), 'WAN_1_ENDPOINT=https://ws.example.com\n');
   assert.equal(A.resolveCreds({ projectDir: repo })._tracked, true);
+  // 8-e: a tracked file gives names, never values
+  fs.writeFileSync(target, `WAN_1_ENDPOINT=https://ws.example.com\nAZURE_SORA_ENDPOINT=https://repo-sora.example.com\nAZURE_SORA_API_KEY=${'repo' + '-planted-key-01'}\n`);
+  const tracked = A.resolveCreds({ projectDir: repo });
+  assert.deepEqual(tracked, { _source: target, _tracked: true, _names: ['WAN_1_ENDPOINT', 'AZURE_SORA_ENDPOINT', 'AZURE_SORA_API_KEY'] });
+  fs.writeFileSync(target, 'WAN_1_ENDPOINT=https://ws.example.com\n');
   git('rm', '-q', '--cached', '.env.3d-intro.local');
   A.persistCreds({ AZURE_SORA_DEPLOYMENT: 'sora-2' }, { target });
   assert.match(fs.readFileSync(target, 'utf8'), /AZURE_SORA_DEPLOYMENT=sora-2/, 'an untracked one is written as before');
@@ -288,4 +293,60 @@ test('a link at the temp name a write draws is refused (wx), not written through
   } finally { crypto.randomBytes = randomBytes; }
   assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched');
   assert.equal(fs.readFileSync(keys, 'utf8'), 'A=1\n');
+});
+
+// The tone and seam sentences of both SKILL files name functions that exist (no promise without code).
+test('SKILL: the tone and seam lines in build Step 4A and setup §2 name functions that the modules export', async () => {
+  const C = await import('./clip-post.mjs');
+  const D = await import('./dive-mode.mjs');
+  const exported = new Set([...Object.keys(A), ...Object.keys(C), ...Object.keys(D)]);
+  const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const build = read('../SKILL.md');
+  const tone = build.split('\n').find((l) => l.startsWith('톤 정합은 하지 않는다'));
+  const seam = build.split('\n').find((l) => l.startsWith('이음매 디졸브는 엔진의 `crossfade`'));
+  assert.ok(tone && seam, 'build Step 4A says there is no tone step and where seams are handled');
+  assert.match(tone, /WAN 은 재지 않았다/);
+  assert.doesNotMatch(build, new RegExp(`${'match'}ClipTone|tone\\.kept`));
+  assert.doesNotMatch(build, /톤 정합은 조립, 재생 계층에서 처리한다/);
+  const setupLine = read('../../3d-intro-setup/SKILL.md').split('\n').find((l) => l.includes('`ffmpeg` 바이너리를 요구한다'));
+  for (const line of [seam, setupLine]) {
+    const names = [...line.matchAll(/`([a-z][A-Za-z]+)[`(]/g)].map((m) => m[1]).filter((n) => /^[a-z]+[A-Z]/.test(n));
+    assert.ok(names.length >= 1, line);
+    for (const n of names) assert.ok(exported.has(n), `${n} is exported (${line.slice(0, 40)}...)`);
+  }
+  assert.doesNotMatch(setupLine, new RegExp(`colorMatch|${'match'}ClipTone`));
+});
+
+// 8-e: creds without values (what resolveCreds gives from a tracked project key file) send nothing, with a clear error.
+test('creds from a tracked key file reach no network: generateImage, createVideo and generateClip stop before any fetch', async () => {
+  const creds = { _source: '/repo/.env.3d-intro.local', _tracked: true, _names: ['AZURE_SORA_ENDPOINT', 'AZURE_SORA_API_KEY'] };
+  const orig = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches++; throw new Error('no fetch expected'); };
+  try {
+    await assert.rejects(() => A.generateImage({ endpoint: creds.AZURE_IMAGE_OPENAI_ENDPOINT, key: creds.AZURE_IMAGE_API_KEY, deployment: 'd', prompt: 'p' }), /generateImage: endpoint and key are required; nothing was sent/);
+    await assert.rejects(() => A.createVideo({ endpoint: creds.AZURE_SORA_ENDPOINT, key: creds.AZURE_SORA_API_KEY, prompt: 'p' }), /createVideo: endpoint and key are required/);
+    for (const fn of ['editImage', 'generateImageFlux', 'createVideoTwoImage']) await assert.rejects(() => A[fn]({ prompt: 'p' }), new RegExp(`${fn}: endpoint and key are required`));
+    await assert.rejects(() => P.generateClip({ creds, prompt: 'p', statePath: path.join(tmp('r8e-'), 's.json') }), (e) => e.kind === 'invalid_request' && /tracked by git/.test(e.message));
+    await assert.rejects(() => P.generateClip({ creds: { _source: null }, prompt: 'p', statePath: path.join(tmp('r8e-'), 's.json') }), /no video provider available/);
+    assert.equal(fetches, 0);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+// 24.2, S21: the default CLIP_MODE is b (dive without exits) on any provider; a, b and c are shown, WAN dive is said to be unmeasured.
+test('SKILL: Step 1 takes the default CLIP_MODE from defaultClipMode, says dive on WAN is not measured, and fixes no retirement date', async () => {
+  const P2 = await import('./video-pool.mjs');
+  assert.equal(typeof P2.defaultClipMode, 'function');
+  const build = fs.readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+  const step1 = build.slice(build.indexOf('## Step 1'), build.indexOf('## Step 2'));
+  assert.match(step1, /defaultClipMode\(creds\)/);
+  for (const row of [/\| a \| `chain` \|/, /\| b \(기본\) \| `dive`, 나가기 없음 \|/, /\| c \| `dive`, 나가기 있음 \|/]) assert.match(step1, row);
+  assert.match(step1, /provider 와 관계없이 b 가 기본/);
+  assert.match(step1, /sora-2\(2025-12-08\)/);
+  assert.match(step1, /WAN 에서 dive 는 미측정/);
+  assert.match(step1, /`push-in`\(기본/);
+  assert.doesNotMatch(build, /2026-11-02/, 'the retirement date comes from the probe');
+  assert.doesNotMatch(build, /near-seamless\*\* 하되/);
 });

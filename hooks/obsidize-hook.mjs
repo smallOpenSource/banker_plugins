@@ -56,35 +56,46 @@ const CODEX = process.argv.includes('--codex');
 // JSON names, regular single-name pages, a canonicalizer pinned to the checked omx_wiki/ of the session folder).
 const OMX_WIKI_WRITE_RE = /^\s*(?:&\s*)?['"]?omx(?:\.cmd|\.ps1)?['"]?\s+wiki\s+(?:wiki_)?(?:ingest|add)\b/;
 
-// A command's statements, split at `;`, `&&`, `||` and line ends outside quotes. A backslash keeps the next character
-// outside quotes and inside double quotes; a backtick does so only inside double quotes (PowerShell's escape there; in
-// sh a backtick starts a command substitution, so outside quotes it is an ordinary character here). Inside single
-// quotes nothing is special.
-function statements(command) {
-  const out = [];
-  let cur = '';
-  let quote = '';
-  for (let i = 0; i < command.length; i++) {
-    const c = command[i];
-    const two = command.slice(i, i + 2);
-    if ((c === '\\' && quote !== "'") || (c === '`' && quote === '"')) {
-      cur += command.slice(i, i + 2);
-      i++;
-    } else if (quote) {
-      if (c === quote) quote = '';
-      cur += c;
-    } else if (c === '"' || c === "'") {
-      quote = c;
-      cur += c;
-    } else if (c === ';' || c === '\n' || c === '\r' || two === '&&' || two === '||') {
-      out.push(cur);
-      cur = '';
-      if (two === '&&' || two === '||') i++;
-    } else cur += c;
+// A command's statements, split at `;`, `&&`, `||` and line ends outside quotes, by the rules of the shell Codex runs
+// it in: PowerShell on Windows, sh elsewhere (shell defaults by process.platform).
+// - sh: a backslash keeps the next character, outside quotes and inside double quotes. A backtick outside quotes opens
+//   a command substitution that the next backtick closes; its inside is part of the statement around it.
+// - PowerShell: a backslash is an ordinary character (`cd C:\work\; omx wiki add` is two statements). A backtick keeps
+//   the next character, outside quotes and inside double quotes.
+// Inside single quotes nothing is special. A quote or backtick left open (an apostrophe in a here-string or a comment)
+// leaves the scan inside it to the end; then the plain split is taken too, so such a command is not missed.
+const SHELL_RULES = {
+  sh: { escape: (c, quote) => c === '\\' && quote !== "'", opens: `"'\``, },
+  powershell: { escape: (c, quote) => c === '`' && quote !== "'", opens: `"'` },
+};
+const PAIRS = new Set(['&&', '||']);
+const isBreak = (c, two) => c === ';' || c === '\n' || c === '\r' || PAIRS.has(two);
+export function statements(command, shell = process.platform === 'win32' ? 'powershell' : 'sh') {
+  const rule = SHELL_RULES[shell] ?? SHELL_RULES.sh;
+  const st = { out: [], cur: '', quote: '' };
+  for (let i = 0; i < command.length; i++) i += scan(st, rule, command[i], command.slice(i, i + 2));
+  return st.quote ? [...st.out, st.cur, ...command.split(/;|&&|\|\||\r?\n/)] : [...st.out, st.cur];
+}
+
+// One character of statements(): it joins the statement or ends one. Returns how many more characters it took (0, 1).
+function scan(st, rule, c, two) {
+  if (rule.escape(c, st.quote)) {
+    st.cur += two;
+    return 1;
   }
-  // A lone quote (an apostrophe in a here-string or a comment) leaves the scan inside quotes to the end; then the plain
-  // split is taken too, so such a command is not missed.
-  return quote ? [...out, cur, ...command.split(/;|&&|\|\||\r?\n/)] : [...out, cur];
+  if (st.quote || rule.opens.includes(c)) {
+    if (!st.quote) st.quote = c;
+    else if (c === st.quote) st.quote = '';
+    st.cur += c;
+    return 0;
+  }
+  if (!isBreak(c, two)) {
+    st.cur += c;
+    return 0;
+  }
+  st.out.push(st.cur);
+  st.cur = '';
+  return PAIRS.has(two) ? 1 : 0;
 }
 const PAGE_NAME_RE = /^[\w.-]+\.md$/;
 
@@ -270,9 +281,29 @@ function codexWikiWrite(payload) {
   return typeof command === 'string' && statements(command).some((part) => OMX_WIKI_WRITE_RE.test(part));
 }
 
+// Codex: when where this hook runs (the script, its plugin or copy folder, node) is under a config.toml writable_roots
+// entry, it does nothing and says why on stderr (the session start hook says it as a systemMessage). Unreadable: runs.
+// Loaded only on Codex, so the Claude Code hook needs nothing beside it.
+async function codexUnsafe(payload) {
+  let why = '';
+  try {
+    const r = await import('../bin/lib/codex-routes.mjs');
+    why = r.writableRootsNote(r.codexHomeOf(payload?.transcript_path), r.hookPlaces(import.meta.url));
+  } catch { /* as before */ }
+  if (why) process.stderr.write(`${why}\n`);
+  return Boolean(why);
+}
+
+// Codex: only an `omx wiki` write goes on (an unreadable payload goes on to be logged), and only from outside the
+// writable roots.
+async function codexSkip(payload, error) {
+  if (!error && !codexWikiWrite(payload)) return true;
+  return codexUnsafe(payload);
+}
+
 async function main() {
   const { payload, error } = await readPayload();
-  if (CODEX && !error && !codexWikiWrite(payload)) return;
+  if (CODEX && await codexSkip(payload, error)) return;
   const wikiDir = findArmedWikiDir(writeRoot(payload));
   if (!wikiDir) return; // Not armed: change nothing, log nothing.
 
@@ -286,6 +317,18 @@ async function main() {
   }
 }
 
-main()
-  .catch(() => {}) // An un-canonicalized page is not-yet-formatted; the next bare run repairs it.
-  .finally(() => process.exit(0));
+// Run as the hook only (node, run.cjs, or the npm hook command's import); a test imports statements() alone. Both
+// paths go through realpath: Node resolves links for import.meta.url but not for process.argv[1].
+function invokedDirectly() {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main()
+    .catch(() => {}) // An un-canonicalized page is not-yet-formatted; the next bare run repairs it.
+    .finally(() => process.exit(0));
+}

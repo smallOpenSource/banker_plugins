@@ -97,6 +97,7 @@ function mountScrollWorld(container, config) {
       SEGMENTS.push({ kind: 'conn', si: i, clip: CONNECTORS[i], clipM: CONNECTORS_M[i],
                       still: SECTIONS[i + 1].still, stillM: SECTIONS[i + 1].stillMobile,
                       accent: SECTIONS[i + 1].accent, w: CONN_W });
+      if ((config.connectorStills || [])[i]) Object.assign(SEGMENTS[SEGMENTS.length - 1], { still: config.connectorStills[i], stillM: null }); // banker: opt-in connector poster, see NOTICE.md
     }
   });
   const NSEG = SEGMENTS.length;

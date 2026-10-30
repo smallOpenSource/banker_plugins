@@ -1,6 +1,6 @@
 ---
 name: omc-patch
-description: "OMC 플러그인이 자동 업데이트된 뒤 사라진 훅 패치를 활성 버전에 다시 적용하고 OMC 마켓플레이스 자동 업데이트를 막음. 옛 킷이 남긴 헬퍼 자리 결함(project-memory 꺼짐)도 찾아 고침. 진단, 적용, 검증, 되돌리기. 'omc-patch'/'OMC 패치'/'OMC 업데이트 뒤 패치'/'훅 timed out'/'훅 프로세스 누적'/'PC 느려짐'/'project-memory 안 됨' 시 사용."
+description: "Claude Code 의 OMC 를 다룸(Codex 에서 실행해도 같음). OMC 플러그인이 자동 업데이트된 뒤 사라진 훅 패치를 활성 버전에 다시 적용하고 OMC 마켓플레이스 자동 업데이트를 막음. 옛 킷이 남긴 헬퍼 자리 결함(project-memory 꺼짐)도 찾아 고침. 진단, 적용, 검증, 되돌리기. 'omc-patch'/'OMC 패치'/'OMC 업데이트 뒤 패치'/'훅 timed out'/'훅 프로세스 누적'/'PC 느려짐'/'project-memory 안 됨' 시 사용."
 argument-hint: "[check | revert]"
 ---
 

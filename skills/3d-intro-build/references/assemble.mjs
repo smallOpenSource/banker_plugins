@@ -5,7 +5,7 @@
  * Takes a project directory that already holds the generated stills + clips (+ an intro.json
  * manifest describing them) and produces the intro page:
  *   <outDir>/
- *     index.html            (head of index-template.html; no inline script or style)
+ *     index.html            (head of index-template.html; no inline script or style; preloads the first posters)
  *     scrub-engine.js       (copied verbatim from references/)
  *     scrub-engine.css      (the CSS the engine injects, taken from scrub-engine.js unchanged)
  *     scrub-engine.LICENSE.md (scroll-world's MIT notice, which ships with the engine files)
@@ -13,10 +13,11 @@
  *     intro-fixes.css       (layout, button text and overflow fixes for the engine, every page)
  *     intro.js              (the mountScrollWorld config and call)
  *     panel-glass.css       (only with "panel": "glass")
- *     step-nav.js/.css      (only with "stepNav": scene-by-scene navigation)
+ *     step-nav.js/.css      (scene-by-scene navigation; on unless "stepNav": false)
  *     assets/<id>.<ext>     (scene posters/stills)
  *     assets/vid/<id>.mp4   (per-scene clips: dives, or the short holds of the hold-and-flight mode)
- *     assets/vid/connN.mp4  (optional connectors: the flights between scenes)
+ *     assets/vid/connN.mp4  (optional connectors: the flights between scenes, or dive mode's exits)
+ *     assets/connN-poster.<ext> (optional connectorStills: a connector's own first frame as its poster)
  * Nothing inline, so the page runs under a strict Content-Security-Policy (no 'unsafe-inline';
  * media-src needs blob:). The engine still tries to inject its <style>: a site with a CSP adds the
  * reported `styleHash` to style-src to keep that refusal out of the console (scrub-engine.css
@@ -40,7 +41,8 @@
  *     "diveScroll": 1.3, "connScroll": 0.9, "crossfade": 0.12, // optional
  *     "nav": true, "atmosphere": true,                 // optional (only false is emitted)
  *     "panel": "glass",                                 // optional frosted-glass copy panel
- *     "stepNav": { "end": "#main", ... },              // optional, see step-nav.js for the options
+ *     "panelAlpha": 0.7,                                // optional glass alpha; default: panelAlpha() below
+ *     "stepNav": { "end": "#main", ... },              // optional, default on ({}); false turns it off; options in step-nav.js
  *     "sections": [                                     // required, >= 1, in order
  *       { "id":"sceneA", "label":"Scene A",
  *         "still":"still-1.png",  "clip":"dive-1.mp4",       // required (relative to projectDir)
@@ -51,7 +53,10 @@
  *         "cta": { "primary":{"label":"","href":""}, "secondary":{"label":"","href":""} } } // last only
  *     ],
  *     "connectors": ["conn-1.mp4", null, ...],          // optional, len = sections.length-1
- *     "connectorsMobile": ["conn-1-m.mp4", ...]         // optional, same length
+ *     "connectorsMobile": ["conn-1-m.mp4", ...],        // optional, same length
+ *     "connectorStills": ["conn-1-first.png", ...]      // optional, same length: each connector's poster,
+ *                                                       // its clip's actual first frame (dive mode's exits).
+ *                                                       // Without it the engine shows the next scene's still.
  *   }
  *
  * Usage:
@@ -73,10 +78,17 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const osPath = (base, posixRel) => path.join(base, ...posixRel.split('/'));
 
 // Copy one source asset (path relative to projectDir) to a posix dest URL under outDir.
+// Only files inside the project folder (after links) go into assets/: a manifest naming ../ or a link
+// out of the folder would otherwise publish any readable file with the page.
 function copyAsset(projectDir, outDir, srcRel, destPosix) {
   const src = path.join(projectDir, ...String(srcRel).split(/[\\/]/));
   if (!fs.existsSync(src)) throw new Error(`assemble: asset not found: ${srcRel} (looked at ${src})`);
+  const root = fs.realpathSync(projectDir);
+  const real = fs.realpathSync(src);
+  if (real !== root && !real.startsWith(root + path.sep)) throw Object.assign(new Error(`assemble: asset outside the project folder: ${srcRel} (resolves to ${real}); copy it into ${root} first`), { code: 'EOUTSIDE' });
   const dest = osPath(outDir, destPosix);
+  const out = path.resolve(outDir);
+  if (!path.resolve(dest).startsWith(out + path.sep)) throw Object.assign(new Error(`assemble: asset would be written outside the output folder: ${destPosix}`), { code: 'EOUTSIDE' });
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
   return destPosix;
@@ -97,8 +109,12 @@ const MEDIA = [
   ['clipMobile', (id, src) => `assets/vid/${id}-m${extOf(src) || '.mp4'}`],
 ];
 
+// A section id becomes a file name under assets/, so it is letters, digits, '-' and '_' only (no ../ or a separator).
+const SECTION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
 function requireFields(s, i) {
   if (!s || !s.id) throw new Error(`assemble: section[${i}] missing "id"`);
+  if (!SECTION_ID_RE.test(String(s.id))) throw new Error(`assemble: section[${i}] id ${JSON.stringify(String(s.id)).slice(0, 80)} must be letters, digits, '-' or '_' (it names files under assets/)`);
   for (const k of ['still', 'clip']) if (!s[k]) throw new Error(`assemble: section[${i}] (${s.id}) missing "${k}"`);
 }
 
@@ -114,13 +130,17 @@ function sectionOut(s, i, copy) {
 
 // Connectors: one per gap between sections, in order; a null entry means "crossfade directly".
 function connectorsOut(list, n, suffix, copy) {
+  return gapsOut(list, n, copy, (i, src) => `assets/vid/conn${i + 1}${suffix}${extOf(src) || '.mp4'}`);
+}
+
+// One copied file (or null) per gap between sections.
+function gapsOut(list, n, copy, dest) {
   const src = Array.isArray(list) ? list : [];
-  return Array.from({ length: Math.max(0, n - 1) }, (_, i) => (src[i]
-    ? copy(src[i], `assets/vid/conn${i + 1}${suffix}${extOf(src[i]) || '.mp4'}`) : null));
+  return Array.from({ length: Math.max(0, n - 1) }, (_, i) => (src[i] ? copy(src[i], dest(i, src[i])) : null));
 }
 
 // The config in the shape mountScrollWorld reads (see scrub-engine.js).
-function engineConfig(m, sections, connectors, connectorsMobile) {
+function engineConfig(m, sections, { connectors, connectorsMobile, connectorStills }) {
   const config = {};
   for (const k of ['brand', 'cta']) if (m[k]) config[k] = m[k];
   config.hint = m.hint || 'scroll to fly in';
@@ -130,9 +150,12 @@ function engineConfig(m, sections, connectors, connectorsMobile) {
   for (const k of ['nav', 'atmosphere']) if (m[k] === false) config[k] = false;
   config.sections = sections;
   config.connectors = connectors;
-  if (connectorsMobile.some(Boolean)) config.connectorsMobile = connectorsMobile;
-  return config;
+  return Object.assign(config, setLists({ connectorsMobile, connectorStills }));
 }
+
+// The per-gap lists that hold at least one file. connectorStills is the engine's opt-in connector
+// poster (see the banker line in scrub-engine.js and NOTICE.md).
+const setLists = (lists) => Object.fromEntries(Object.entries(lists).filter(([, list]) => list.some(Boolean)));
 
 /**
  * Build the exact mountScrollWorld config object from a manifest, copying every referenced
@@ -144,14 +167,52 @@ function buildConfig(manifest, projectDir, outDir) {
   const copied = [];
   const copy = (src, dest) => { copied.push(copyAsset(projectDir, outDir, src, dest)); return dest; };
   const sectionsOut = sections.map((s, i) => sectionOut(s, i, copy));
-  const connectors = connectorsOut(manifest.connectors, sectionsOut.length, '', copy);
-  const connectorsMobile = connectorsOut(manifest.connectorsMobile, sectionsOut.length, '-m', copy);
-  return { config: engineConfig(manifest, sectionsOut, connectors, connectorsMobile), copied };
+  const gaps = {
+    connectors: connectorsOut(manifest.connectors, sectionsOut.length, '', copy),
+    connectorsMobile: connectorsOut(manifest.connectorsMobile, sectionsOut.length, '-m', copy),
+    connectorStills: gapsOut(manifest.connectorStills, sectionsOut.length, copy, (i, src) => `assets/conn${i + 1}-poster${extOf(src)}`),
+  };
+  return { config: engineConfig(manifest, sectionsOut, gaps), copied };
 }
 
 // ---- page generation -------------------------------------------------------
 
 const PANELS = { glass: 'panel-glass.css' };
+
+/** The step navigation options: on by default ({}), off only with "stepNav": false. */
+export const navOf = (manifest) => (manifest.stepNav === false ? null : (manifest.stepNav && typeof manifest.stepNav === 'object' ? manifest.stepNav : {}));
+
+// ---- glass panel alpha ---------------------------------------------------------
+
+const lin = (c) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+const hexRgb = (h) => { const m = /^#?([\da-f]{6})$/i.exec(String(h || '').trim()); return m ? [0, 2, 4].map((k) => parseInt(m[1].slice(k, k + 2), 16)) : null; };
+// The glass panel's colours (panel-glass.css): its shade, and its text (title, body, number); the
+// label line mixes 30% of the accent into white.
+export const GLASS = { panel: [11, 18, 32], text: ['#ffffff', '#F1F5F9', '#E2E8F0'].map(hexRgb), alpha: 0.36 };
+
+/**
+ * The lowest glass alpha (0.01 steps) at which every panel text colour keeps `min` contrast even over a
+ * white pixel (the worst a scene can put behind the panel), the label colour from each accent included.
+ */
+export function panelAlpha(accents = [], { min = 4.5, panel = GLASS.panel } = {}) {
+  const labels = accents.map(hexRgb).filter(Boolean).map((a) => a.map((c) => 0.3 * c + 0.7 * 255));
+  const texts = [...GLASS.text, ...labels];
+  for (let k = 0; k <= 100; k++) {
+    const bg = panel.map((c) => (k / 100) * c + (1 - k / 100) * 255);
+    if (texts.every((t) => ratio(t, bg) >= min)) return k / 100;
+  }
+  return 1;
+}
+
+// The alpha the page gets: the manifest's panelAlpha (a person's choice) wins, else panelAlpha().
+function glassAlpha(manifest) {
+  const given = Number(manifest.panelAlpha);
+  if (manifest.panelAlpha != null && given >= 0 && given <= 1) return { alpha: given, from: 'manifest' };
+  const accents = [manifest.theme?.accent, ...(manifest.sections || []).map((s) => s.accent)];
+  return { alpha: panelAlpha(accents), from: 'computed' };
+}
 
 /**
  * The CSS the engine injects into <head>, exactly: the `css` template literal wrapped in @layer sw.
@@ -186,11 +247,25 @@ function themeCss(styleInner, theme = {}) {
 
 function stylesheets(manifest) {
   return ['scrub-engine.css', 'theme.css', 'intro-fixes.css', manifest.panel ? PANELS[manifest.panel] : null,
-    manifest.stepNav ? 'step-nav.css' : null].filter(Boolean);
+    navOf(manifest) ? 'step-nav.css' : null].filter(Boolean);
+}
+
+/**
+ * The posters of the first `n` segments in scroll order (scene still, then the connector's own poster
+ * when it has one): the engine makes its posters loading=lazy, so on a fast first scroll the first
+ * seams could show a poster not yet loaded. A preload link fetches them with the page.
+ */
+export function firstPosters(config, n = 3) {
+  const out = [];
+  (config.sections || []).forEach((s, i) => {
+    out.push(s.still);
+    if (config.connectors?.[i] && config.connectorStills?.[i]) out.push(config.connectorStills[i]);
+  });
+  return [...new Set(out.filter(Boolean))].slice(0, n);
 }
 
 /** index.html from the template's head: title, description and lang set, its inline style replaced by links. */
-function renderIndexHtml(template, manifest) {
+function renderIndexHtml(template, manifest, config = {}) {
   const brandName = manifest.brand?.name || 'BRAND';
   const subject = manifest.subject || 'SUBJECT';
   const title = manifest.pageTitle || `${brandName} - the world of ${subject}`;
@@ -202,12 +277,22 @@ function renderIndexHtml(template, manifest) {
   head = head.replace(/<title>[^<]*<\/title>/, `<title>${escHtml(title)}</title>`);
   head = head.replace(/(<meta name="description" content=")[^"]*(")/, `$1${escAttr(desc)}$2`);
   if (manifest.lang) head = head.replace(/<html lang="[^"]*">/, `<html lang="${escAttr(manifest.lang)}">`);
-  const links = stylesheets(manifest).map((f) => `  <link rel="stylesheet" href="${f}" />`).join('\n');
+  const links = [...stylesheets(manifest).map((f) => `  <link rel="stylesheet" href="${f}" />`),
+    ...firstPosters(config).map((f) => `  <link rel="preload" as="image" href="${escAttr(f)}" />`)].join('\n');
   head = head.replace(/[ \t]*<style>[\s\S]*?<\/style>\n?/, `${links}\n`);
-  const scripts = ['scrub-engine.js', manifest.stepNav ? 'step-nav.js' : null, 'intro.js'].filter(Boolean)
+  const scripts = ['scrub-engine.js', navOf(manifest) ? 'step-nav.js' : null, 'intro.js'].filter(Boolean)
     .map((f) => `  <script src="${f}"></script>`).join('\n');
   return `${head}${scripts}\n</body>\n</html>\n`;
 }
+
+// A scene a jump shows (an anchor, a route dot under reduced motion, a scrollbar drag) paints nothing until
+// its poster is decoded, and the engine decodes posters async: a jump showed an empty background for
+// 0.1-0.35 s. The page decodes every poster at load and again once scrolling stops.
+const WARM = [
+  "var warm = function () { [].forEach.call(world.querySelectorAll('.sw-scene__still'), function (i) { if (i.decode) i.decode().catch(function () {}); }); };",
+  "warm(); window.addEventListener('load', warm);",
+  "var warmT = 0; window.addEventListener('scroll', function () { clearTimeout(warmT); warmT = setTimeout(warm, 400); }, { passive: true });",
+];
 
 // The config and the mount, out of the page so no inline script is needed.
 function introJs(config, nav) {
@@ -216,6 +301,7 @@ function introJs(config, nav) {
     ? [`var nav = ${json(nav === true ? {} : nav)};`, 'if (window.IntroStepNav) window.IntroStepNav.prefetch(config, nav);',
       'mountScrollWorld(world, config);', 'if (window.IntroStepNav) window.IntroStepNav.attach(world, config, nav);']
     : ['mountScrollWorld(world, config);'];
+  lines.push(...WARM);
   return `// Generated by assemble.mjs from intro.json. Kept out of index.html so the page runs under a
 // Content-Security-Policy without 'unsafe-inline'.
 (function () {
@@ -242,8 +328,12 @@ function writeStatic(out, manifest, template) {
   const style = /<style>([\s\S]*?)<\/style>/.exec(template);
   fs.writeFileSync(path.join(out, 'theme.css'), themeCss(style ? style[1] : '', manifest.theme));
   const copies = ['intro-fixes.css', manifest.panel ? PANELS[manifest.panel] : null,
-    manifest.stepNav ? 'step-nav.css' : null, manifest.stepNav ? 'step-nav.js' : null].filter(Boolean);
+    navOf(manifest) ? 'step-nav.css' : null, navOf(manifest) ? 'step-nav.js' : null].filter(Boolean);
   for (const f of copies) fs.copyFileSync(path.join(HERE, f), path.join(out, f));
+  if (manifest.panel === 'glass') {
+    const css = path.join(out, PANELS.glass);
+    fs.writeFileSync(css, fs.readFileSync(css, 'utf8').replace(/(--intro-panel-alpha:\s*)[\d.]+;/, `$1${glassAlpha(manifest).alpha};`));
+  }
   return `'sha256-${crypto.createHash('sha256').update(css).digest('base64')}'`;
 }
 
@@ -252,7 +342,7 @@ function writeStatic(out, manifest, template) {
 /**
  * Assemble the intro page. Copies the engine, its fixes and all referenced assets into outDir and
  * writes index.html, intro.js and the stylesheets (see the header).
- * @returns {{ outDir:string, index:string, engine:string, assets:string[], styleHash:string }}
+ * @returns {{ outDir:string, index:string, engine:string, assets:string[], styleHash:string, panelAlpha?:{alpha,from} }}
  */
 export function assemble({ projectDir, outDir, manifestPath } = {}) {
   if (!projectDir) throw new Error('assemble: projectDir is required');
@@ -270,11 +360,11 @@ export function assemble({ projectDir, outDir, manifestPath } = {}) {
   const { config, copied } = buildConfig(manifest, proj, out);
   const template = fs.readFileSync(path.join(HERE, 'index-template.html'), 'utf8');
   const styleHash = writeStatic(out, manifest, template);
-  fs.writeFileSync(path.join(out, 'intro.js'), introJs(config, manifest.stepNav));
+  fs.writeFileSync(path.join(out, 'intro.js'), introJs(config, navOf(manifest)));
   const indexPath = path.join(out, 'index.html');
-  fs.writeFileSync(indexPath, renderIndexHtml(template, manifest));
+  fs.writeFileSync(indexPath, renderIndexHtml(template, manifest, config));
 
-  return { outDir: out, index: indexPath, engine: path.join(out, 'scrub-engine.js'), assets: copied, styleHash };
+  return { outDir: out, index: indexPath, engine: path.join(out, 'scrub-engine.js'), assets: copied, styleHash, ...(manifest.panel === 'glass' ? { panelAlpha: glassAlpha(manifest) } : {}) };
 }
 
 // ---- CLI --------------------------------------------------------------------
@@ -307,6 +397,7 @@ if (invokedDirectly()) {
     console.log(`assembled ${r.assets.length} asset(s) -> ${r.outDir}`);
     console.log(`index:  ${r.index}`);
     console.log(`engine: ${r.engine}`);
+    if (r.panelAlpha) console.log(`glass panel alpha: ${r.panelAlpha.alpha} (${r.panelAlpha.from === 'manifest' ? 'the manifest\'s panelAlpha' : 'computed: contrast 4.5 even over white'})`);
     console.log(`CSP: the engine injects one <style>; to allow it add ${r.styleHash} to style-src (scrub-engine.css carries the same rules)`);
     console.log(`\npreview:  node ${path.join(HERE, 'serve.mjs')} ${r.outDir} [--csp strict]`);
   } catch (e) {

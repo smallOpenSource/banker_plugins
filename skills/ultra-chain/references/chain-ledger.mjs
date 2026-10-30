@@ -8,14 +8,16 @@
 //                               [--summary <text>] [--reason <text>]
 //   node chain-ledger.mjs boxes <run> --file <boxes.mjs report> [--stage <id>] [--round <n>]
 //                               [--unverified <box,...> --why <text>]
+//   node chain-ledger.mjs gates <run> --file <g>/evidence.md --round <k> [--stage <id>]
+//                               (ralph-qa's gate-evidence.mjs records of iteration <k>; observed only)
 //   node chain-ledger.mjs show <run>
 //
 // Exit codes: 0 done, 1 a file could not be read or written (a missing or broken --file included),
 // 2 a usage error or a rejected event.
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const STAGES = [
@@ -354,6 +356,94 @@ export function boxesToTests(report, dir) {
   return report.boxes.slice(0, 60).map((b) => boxEntry(isObject(b) ? b : {}, dir));
 }
 
+// ── gate-evidence.mjs records ────────────────────────────────────────────────
+
+// ralph-qa's gate-evidence.mjs writes one JSON line per gate run into <g>/evidence.md. Only `observed` lines
+// (the runner ran the command and saw its exit) become tests; `reported` lines (what a model said) never do.
+const GATE_STATUS = { pass: "pass", fail: "fail", timeout: "fail", misleading: "unverified" };
+const sha256 = (b) => createHash("sha256").update(b).digest("hex");
+const hostOs = () => (["linux", "darwin", "win32"].includes(process.platform) ? process.platform : "other");
+
+function evidenceLines(text) {
+  return String(text).split(/\r?\n/).filter((l) => l.trim()).map((l) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      return null;
+    }
+  }).filter(isObject);
+}
+
+// The last observed record of each gate in iteration `iter`, the baseline records (iteration 0) and how many
+// reported lines that iteration had.
+export function observedOf(text, iter) {
+  const recs = evidenceLines(text);
+  const last = new Map();
+  for (const r of recs) if (r.kind === "observed" && r.iter === iter && typeof r.id === "string") last.set(r.id, r);
+  return { records: [...last.values()], base: recs.filter((r) => r.kind === "observed" && r.iter === 0),
+    reported: recs.filter((r) => r.kind === "reported" && r.iter === iter).length };
+}
+
+// The recorded output file as it is now: its text when its sha256 is the recorded one, else why not. Only a file
+// right in the gate folder (the folder of evidence.md, where gate-evidence.mjs writes them), so the shared view never
+// carries a file from elsewhere a record names.
+const inFolder = (p, dir) => {
+  try {
+    return realpathSync.native(dirname(resolve(p))) === realpathSync.native(dir);
+  } catch {
+    return false;
+  }
+};
+function outputOf(rec, gateDir) {
+  if (!inFolder(String(rec.output), gateDir)) return { why: "출력 파일이 게이트 기록 폴더 밖" };
+  try {
+    const buf = readFileSync(String(rec.output));
+    return sha256(buf) === rec.outputSha256 ? { text: decodeText(buf) } : { why: "출력 파일 sha256 이 기록과 다름" };
+  } catch {
+    return { why: "출력 파일을 읽지 못함" };
+  }
+}
+
+// A failure the baseline had with the same command and signature (gate-evidence.mjs's own rule).
+const sameAsBaseline = (rec, base) => base.some((b) => b.id === rec.id && b.verdict !== "pass" && b.cmd === rec.cmd
+  && typeof b.signature === "string" && b.signature === rec.signature);
+
+export function gateToTest(rec, out, baseline, log) {
+  const status = out.why ? "unverified" : GATE_STATUS[rec.verdict] ?? "unverified";
+  const ended = rec.timedOut ? "시간 초과" : rec.exit === null || rec.exit === undefined ? `신호 ${rec.signal}` : `종료 ${rec.exit}`;
+  const notes = [`${rec.verdict}${rec.why ? `(${rec.why})` : ""}`, `${String(rec.cmd).slice(0, 200)} ${ended}`,
+    baseline ? "기준선과 같은 실패" : "", out.why ?? ""].filter(Boolean);
+  return { where: `local:${rec.id}`.slice(0, 100), os: hostOs(), status, note: notes.join("; ").slice(0, 500), log };
+}
+
+const fenceFor = (text) => "`".repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+
+// The view qa/local-r<k>.md: every record's facts and its output, so the log can be read without the runner.
+function gateView(round, entries) {
+  const parts = [`# 로컬 게이트 r${round} (gate-evidence.mjs 의 observed 기록, 반복 ${round})`, ""];
+  for (const { rec, out, test } of entries) {
+    const body = out.text ?? `(${out.why})`;
+    const fence = fenceFor(body);
+    parts.push(`## ${rec.id}: ${test.status}`, "", `- ${test.note}`, `- 폴더: ${rec.cwd}`, `- 출력: ${rec.output}`,
+      `- 출력 sha256: ${rec.outputSha256}`, `- 작업 트리 지문: ${rec.fingerprint}`, "", fence, body.trimEnd(), fence, "");
+  }
+  return parts.join("\n");
+}
+
+// One tests[] entry per gate of iteration `round` from <g>/evidence.md, and the view they link to.
+export function gatesToTests(text, round, dir, gateDir) {
+  const { records, base, reported } = observedOf(text, round);
+  if (!records.length) throw new UsageError(`반복 ${round} 의 observed 기록이 없습니다(reported ${reported}건은 받지 않음)`);
+  const log = `qa/local-r${round}.md`;
+  const entries = records.slice(0, 60).map((rec) => {
+    const out = outputOf(rec, gateDir);
+    return { rec, out, test: gateToTest(rec, out, sameAsBaseline(rec, base), log) };
+  });
+  mkdirSync(join(dir, "qa"), { recursive: true });
+  writeFileSync(join(dir, log), gateView(round, entries));
+  return { tests: entries.map((e) => e.test), reported, baseline: entries.filter((e) => e.test.note.includes("기준선과 같은 실패")).length };
+}
+
 // ── command line ─────────────────────────────────────────────────────────────
 
 const FLAGS = new Set(["--base", "--runtime", "--stage", "--status", "--file", "--round", "--summary", "--reason", "--unverified", "--why"]);
@@ -455,6 +545,24 @@ const COMMANDS = {
     const summary = `박스 ${tests.length}대: 통과 ${count("pass")}, 실패 ${count("fail")}, 미검증 ${count("unverified")}${untracked}`;
     return withProgress(appendEvent(dir, { stage: o.stage ?? "qa", status: "note", summary, tests, ...(o.round ? { round: Number(o.round) } : {}) }));
   },
+  gates: (o) => {
+    const dir = runDir(o);
+    if (!o.file || !o.round) throw new UsageError("--file <gate-evidence 의 evidence.md> 와 --round <k> 가 필요합니다");
+    const round = Number(o.round);
+    if (!Number.isInteger(round) || round < 1 || round > 99) throw new UsageError("--round 는 1~99 정수입니다");
+    let text;
+    try {
+      text = decodeText(readFileSync(o.file));
+    } catch (e) {
+      throw new Error(`게이트 기록을 읽지 못했습니다(${o.file}): ${e.message}`);
+    }
+    const { tests, reported, baseline } = gatesToTests(text, round, dir, dirname(resolve(o.file)));
+    const count = (s) => tests.filter((t) => t.status === s).length;
+    const summary = `로컬 게이트 ${tests.length}개: 통과 ${count("pass")}, 실패 ${count("fail")}, 미검증 ${count("unverified")}`
+      + `, 기준선과 같은 실패 ${baseline}, 받지 않은 reported ${reported}건`;
+    const artifacts = [{ label: `로컬 게이트 r${round}`, path: `qa/local-r${round}.md` }];
+    return withProgress(appendEvent(dir, { stage: o.stage ?? "qa", status: "note", round, summary, tests, artifacts }));
+  },
   // show is the first command of a resume, so it also re-makes the stage folders an older run may lack.
   show: (o) => {
     const dir = runDir(o);
@@ -469,7 +577,7 @@ export function main(argv, out = process.stdout, err = process.stderr) {
   try {
     const o = parseArgs(argv);
     const run = COMMANDS[o._[0]];
-    if (!run) throw new UsageError("명령은 init, event, boxes, show 중 하나입니다");
+    if (!run) throw new UsageError("명령은 init, event, boxes, gates, show 중 하나입니다");
     out.write(`${JSON.stringify(run(o), null, 1)}\n`);
     return 0;
   } catch (e) {

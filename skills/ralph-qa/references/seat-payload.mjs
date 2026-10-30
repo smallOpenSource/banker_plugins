@@ -29,12 +29,12 @@
  * stop is a Stop with the 0.20.4 wording. The secret scan and the size are reported, not stopped
  * on: the author masks prompt.md and runs check.
  */
-import { spawnSync } from "node:child_process";
 import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scan } from "./payload-scan.mjs";
+import { Stop as RunStop, spawnFiles } from "./run-folder.mjs";
 import { which } from "./seat-spawn.mjs";
 
 export const MAX_BYTES = 524288;
@@ -44,11 +44,9 @@ const FOLD_PAST = 100;
 const WIN = process.platform === "win32";
 const OUTPUTS = ["prompt.md", "raw.md", "unsent.md", "run.md"];
 
-export class Stop extends Error {
+export class Stop extends RunStop {
   constructor(code, message, detail = []) {
-    super(`ralph-qa: ${message}`);
-    this.code = code;
-    this.detail = detail;
+    super(code, `ralph-qa: ${message}`, detail);
   }
 }
 
@@ -90,8 +88,10 @@ export function markerCount(buf, id) {
 
 function readShort(dir, id) {
   const short = withNewline(readAuthor(dir, "short.md"));
-  if (markerCount(short, id) !== 1 || !short.includes(Buffer.from(`<review-data id="${id}">`))) {
-    throw new Stop("markers", `short.md 에 여는 표지 <review-data id="${id}"> 가 한 줄에 한 번만 있어야 한다`);
+  const count = markerCount(short, id);
+  if (count !== 1 || !short.includes(Buffer.from(`<review-data id="${id}">`))) {
+    const fix = count > 1 ? "닫는 표지와 원문은 실행기가 붙이므로 short.md 에는 여는 표지 한 줄만 둔다" : "고정 앞머리 다음에 여는 표지 한 줄, 그 아래 사용자 요청 문장과 수용 기준을 둔다";
+    throw new Stop("markers", `short.md 에 여는 표지 <review-data id="${id}"> 가 한 줄에 한 번만 있어야 한다(지금 표지 ${count}줄). ${fix}`);
   }
   return short;
 }
@@ -107,7 +107,7 @@ function repoPath(raw, n) {
 
 function specLine(line, n) {
   const m = /^(new|range|file|gate|review) (.+)$/.exec(line);
-  if (!m) throw new Stop("spec", `spec ${n}: new, range, file, gate, review 로 시작하는 줄이 아니다: ${line.slice(0, 200)}`);
+  if (!m) throw new Stop("spec", `spec ${n}: new, range, file, gate, review 로 시작하는 줄이 아니다: ${line.slice(0, 200)}. 요청 문장과 수용 기준은 spec.md 가 아니라 short.md 에 쓴다`);
   if (m[1] === "new") return { kind: "new", path: repoPath(m[2], n), line: n };
   if (m[1] !== "range") {
     if (m[2].includes("\0")) throw new Stop("spec", `spec ${n}: 경로에 NUL 이 있다`);
@@ -155,7 +155,7 @@ export function gitAt(repo, env = process.env, cwd = homedir(), extra = []) {
   const onCopy = (index) => ({ ...withoutKeys(base, /^GIT_INDEX_FILE$/i), GIT_INDEX_FILE: index });
   return (args, { index, input, ok = [0] } = {}) => {
     const pre = ["-C", repo, ...SAFE, ...extra, ...(index ? ["-c", "core.splitIndex=false"] : [])];
-    const r = spawnSync(exe, [...pre, ...args], {
+    const r = spawnFiles(exe, [...pre, ...args], {
       cwd, env: index ? onCopy(index) : base, input, maxBuffer: 1 << 30, timeout: GIT_TIMEOUT_MS, windowsHide: true,
     });
     const what = `git ${args.filter((a) => a.startsWith("-") || /^[a-z-]+$/.test(a)).slice(0, 4).join(" ")}`;
@@ -253,7 +253,9 @@ function ownLayout(realTop, { gitDir, common, tree }) {
   return norm(common) === norm(gitDir) && Boolean(tree) && norm(realOr(resolve(gitDir, tree))) === norm(realTop);
 }
 
-// The first link at or below `root`: git would read another repo's objects or refs through it.
+// The first link at or below `root`: git would read another repo's objects or refs through it. A whole walk of a
+// git folder with 100,000 loose objects and 10,000 refs (objects and refs, 21 runs, 2026-10-29) took p95 206 ms on
+// Linux (Rocky 8, Node 24.13) and 76 ms on the Windows test box (Node 24.19): well under the 1 s that would call for streaming.
 function linkUnder(root) {
   const folders = [root];
   while (folders.length) {
@@ -568,7 +570,7 @@ export function buildPayload({ dir, repo, base, id, env = process.env }) {
     const prompt = Buffer.concat([short, raw, Buffer.from(`</review-data id="${id}">\n`)]);
     const markers = markerCount(prompt, id);
     if (markers !== 2) throw new Stop("markers", `표지가 두 줄이 아니다(${markers}줄). id 를 바꿔 short.md 를 다시 쓴다`);
-    writeOutputs(dir, { prompt, raw, unsent, run: `id ${id}\nbase ${base}\ntree ${tree}\nrepo ${top}\nshort ${short.length}\n` });
+    writeOutputs(dir, { prompt, raw, unsent, run: `id ${id}\nbase ${base}\ntree ${tree}\nrepo ${top}\nshort ${short.length}\nshortsha ${sha256(short)}\n` });
     return { bytes: prompt.length, markers, scan: scan(prompt.toString("utf8")), unsent: String(unsent).split("\n").filter(Boolean).length };
   } finally {
     rmSync(ctx.idx, { force: true });
@@ -623,14 +625,59 @@ function balanced(units, n) {
   return groups;
 }
 
+// SHA-256 (FIPS 180-4) in plain JavaScript: the runner loads no crypto module (a Node built without it still runs the
+// send). Only the short part goes through it, a few KiB.
+const K256 = Array.from({ length: 64 }, (_, i) => {
+  const primes = [];
+  for (let n = 2; primes.length < 64; n += 1) if (primes.every((q) => n % q)) primes.push(n);
+  return (Math.cbrt(primes[i]) % 1) * 2 ** 32 >>> 0;
+});
+const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+function sha256Block(h, w) {
+  for (let t = 16; t < 64; t += 1) {
+    const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+    const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+    w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
+  }
+  let [a, b, c, d, e, f, g, k] = h;
+  for (let t = 0; t < 64; t += 1) {
+    const t1 = (k + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K256[t] + w[t]) >>> 0;
+    const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+    [k, g, f, e, d, c, b, a] = [g, f, e, (d + t1) >>> 0, c, b, a, (t1 + t2) >>> 0];
+  }
+  return h.map((x, i) => (x + [a, b, c, d, e, f, g, k][i]) >>> 0);
+}
+export function sha256(data) {
+  const msg = Buffer.from(data);
+  const padded = Buffer.alloc(Math.ceil((msg.length + 9) / 64) * 64);
+  msg.copy(padded);
+  padded[msg.length] = 0x80;
+  padded.writeUInt32BE(Math.floor((msg.length * 8) / 2 ** 32), padded.length - 8);
+  padded.writeUInt32BE((msg.length * 8) >>> 0, padded.length - 4);
+  let h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  for (let off = 0; off < padded.length; off += 64) {
+    const w = new Array(64).fill(0);
+    for (let t = 0; t < 16; t += 1) w[t] = padded.readUInt32BE(off + t * 4);
+    h = sha256Block(h, w);
+  }
+  return h.map((x) => x.toString(16).padStart(8, "0")).join("");
+}
+
+// The short part as prepare wrote it: its length is a line start and, when run.md holds its sha256, the same bytes (a
+// change of the same length inside it, a masked word, moved no line start). A run.md of an older prepare has no hash.
+function shortIntact(buf, at, short, shortSha) {
+  if (!Number.isInteger(short) || !at.includes(short)) return false;
+  return !shortSha || sha256(buf.subarray(0, short)) === shortSha;
+}
+
 // The payload cut into `n` parts where a part starts (a file's diff, a `=== ` line), between the short part (its
 // first `short` bytes, as prepare wrote it: a `=== ` line of the author's is no cut) and the closing marker. Each part
 // holds the short part, a `부분 <k>/<n>` line and the closing marker; the parts in order hold every part of the payload
 // once. A line inside a file that starts like a part may become a cut: the parts are still whole together.
-export function splitPayload(buf, n, id, short) {
+export function splitPayload(buf, n, id, short, shortSha = null) {
   if (!Number.isInteger(n) || n < 2) throw new Stop("split", `나눌 수는 2 이상의 정수다: ${n}`);
   const at = lineStartsOf(buf);
-  if (!Number.isInteger(short) || !at.includes(short)) throw new Stop("split", "prompt.md 의 짧은 부분이 prepare 때와 다르다. 가림은 짧은 부분 밖에서 하거나 prepare 를 다시 한다");
+  if (!shortIntact(buf, at, short, shortSha)) throw new Stop("split", "prompt.md 의 짧은 부분이 prepare 때와 다르다. 가림은 짧은 부분 밖에서 하거나 prepare 를 다시 한다");
   const lineAt = (k) => buf.slice(at[k], k + 1 < at.length ? at[k + 1] : buf.length).toString("utf8").replace(/\r?\n$/, "");
   const lines = at.map((_, k) => lineAt(k));
   const open = lines.findIndex((l) => l.includes(`<review-data id="${id}">`));

@@ -50,6 +50,17 @@
   .sw-route__label { display: none; }
 }
 
+/* Before a clip is ready the engine shows the scene's poster with a small zoom and shift of its own
+   (an inline transform on the img); the clip itself has none. When the clip appears the picture
+   jumps by that zoom (seen on a slow network at the first seams). The poster stays as still as the
+   clip's first frame: the inline style loses to !important, the engine file stays as shipped. */
+.sw-scene__still { transform: none !important; }
+
+/* The engine hides the poster the moment a clip has seeked, before the clip's frame is on screen: on
+   a slow network that left one or two frames with no picture at all. The poster stays under the clip
+   for 0.15 s more (the clip is on top from the start, so nothing fades; reduced motion loads no clip). */
+.sw-scene.has-clip .sw-scene__still { transition: opacity 0s linear .15s; }
+
 /* The engine draws its primary buttons in white on the theme's ink colour, which a dark theme
    (light ink) turns into white on a light pill. The theme's background colour reads on the ink in
    any theme, as the body text reads on the background. */

@@ -88,6 +88,17 @@ test("__pycache__ and .omc below a skill are not shipped and name no skill", nee
   assert.deepEqual(changedSkills(base, commit(dir), dir), []);
 });
 
+// The Codex plugin's renamed copies (scripts/sync-codex-plugin.js) are not compared: the keys stay Claude names.
+test("a change under codex/renamed-skills names no skill; the copy's source in skills/ names its Claude name", needGit, () => {
+  const { dir, base } = fixture();
+  put(dir, "codex/renamed-skills/alpha-x/SKILL.md", "# alpha, Codex copy\n");
+  assert.deepEqual(changedSkills(base, commit(dir), dir), []);
+  const next = git(dir, "rev-parse", "HEAD");
+  put(dir, "skills/alpha/SKILL.md", "# alpha changed\n");
+  put(dir, "codex/renamed-skills/alpha-x/SKILL.md", "# alpha changed, Codex copy\n");
+  assert.deepEqual(changedSkills(next, commit(dir), dir), ["banker:alpha"]);
+});
+
 test("shipped changes name their skill: an edit, a deletion, and a name with spaces and Korean", needGit, () => {
   const one = fixture();
   put(one.dir, "skills/alpha/scripts/a.mjs", "export const a = 2;\n");

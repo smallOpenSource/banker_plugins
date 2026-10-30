@@ -248,10 +248,23 @@ test('doctor: the newest Codex record is checked for what banker reads, and a sh
   let { out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') });
   assert.match(out, /Codex record shape \(Codex 9\.9\.9, rollout-a\.jsonl\): turn start ok, user text ok, tool calls MISSING/);
   assert.doesNotMatch(out, /may not read/);
-  fs.writeFileSync(path.join(day, 'rollout-b.jsonl'), `${meta}\n{"type":"event_msg","payload":{"type":"turn_begun_v2"}}\n`);
+  fs.writeFileSync(path.join(day, 'rollout-b.jsonl'), `${meta}\n{"type":"event_msg","payload":{"type":"turn_begun_v2"}}\n{"type":"event_msg","payload":{"type":"user_message","message":"hi"}}\n`);
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
-  assert.match(out, /rollout-b\.jsonl\): turn start MISSING, user text MISSING/);
-  assert.match(out, /banker may not read this Codex version's records/);
+  assert.match(out, /rollout-b\.jsonl\): turn start MISSING, user text ok/);
+  assert.match(out, /banker may not read this Codex version's records/, 'user text with no turn start');
+  fs.writeFileSync(path.join(day, 'rollout-b2.jsonl'), `${meta}\n{"type":"event_msg","payload":{"type":"turn_begun_v2"}}\n{"type":"response_item","payload":{"type":"function_call","name":"x"}}\n`);
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
+  assert.match(out, /rollout-b2\.jsonl\): turn start MISSING, user text MISSING, tool calls ok/);
+  assert.match(out, /banker may not read this Codex version's records/, 'tool calls with no turn start');
+  fs.writeFileSync(path.join(day, 'rollout-b3.jsonl'), `${meta}\n{"type":"event_msg","payload":{"type":"thread_settings_applied"}}\n{"type":"world_state"}\n`);
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
+  assert.match(out, /⚠ Codex record shape \(Codex 9\.9\.9, rollout-b3\.jsonl\): it has lines after session_meta but no turn start, user text or tool call banker reads - the record shape may have changed/);
+  assert.doesNotMatch(out, /holds no turn yet/, 'lines after session_meta of which banker reads none are not taken for a session with no turn yet');
+  // A Codex update that renamed every record type: one whole turn banker cannot read is flagged, not told to run a turn.
+  fs.writeFileSync(path.join(day, 'rollout-b4.jsonl'), `${meta}\n${['{"type":"event","payload":{"kind":"turn.started"}}', '{"type":"event","payload":{"kind":"user.text"}}', '{"type":"event","payload":{"kind":"tool"}}', '{"type":"event","payload":{"kind":"turn.completed"}}'].join('\n')}\n`);
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
+  assert.match(out, /⚠ Codex record shape \(Codex 9\.9\.9, rollout-b4\.jsonl\): .*the record shape may have changed/);
+  assert.doesNotMatch(out, /holds no turn yet/);
   fs.writeFileSync(path.join(day, 'rollout-c.jsonl'), `${meta}\n`);
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
   assert.match(out, /rollout-c\.jsonl holds no turn yet/);
@@ -263,3 +276,95 @@ test('doctor: the newest Codex record is checked for what banker reads, and a sh
   ({ out } = run(['doctor'], dir, { CODEX_HOME: path.join(dir, 'codex') }));
   assert.doesNotMatch(out, /rollout-e\.jsonl opens with a line over 8 MB/, '6 MB of bytes in 2 M characters is under 8 MB');
 }));
+
+test('doctor: a Codex home inside this folder, other than its top .codex, is flagged', () => withXdg((dir) => {
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(path.join(work, 'deep', '.codex'), { recursive: true });
+  const doctorIn = (home) => {
+    const env = { ...process.env, XDG_CONFIG_HOME: dir, CODEX_HOME: home, BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1' };
+    const r = spawnSync(process.execPath, [BANKER, 'doctor'], { cwd: work, encoding: 'utf8', input: '', env, timeout: 20000 });
+    return `${r.stdout || ''}${r.stderr || ''}`;
+  };
+  assert.match(doctorIn(path.join(work, 'deep', '.codex')), /⚠ the Codex home .*deep.* is inside this folder \(not its top \.codex\)/);
+  assert.doesNotMatch(doctorIn(path.join(work, '.codex')), /is inside this folder/);
+  assert.doesNotMatch(doctorIn(path.join(dir, 'other')), /is inside this folder/);
+}));
+
+// Plan 22.5, 22.7: Codex names three skills apart (codex/manifest.json codexName). An update sweeps the old folders,
+// installs the new names, says so, and every installed frontmatter says OMX, not OMC (omc-patch and payload-mon keep
+// their names and say they handle Claude Code's OMC).
+test('setup --codex: an update installs the Codex names, says what was renamed, and no installed frontmatter says OMC', () => withXdg((dir) => {
+  const home = path.join(dir, 'codex');
+  const skills = path.join(home, 'skills');
+  for (const old of ['setup-omc', 'omc-reference', 'setup-omc-hud']) {
+    fs.mkdirSync(path.join(skills, `banker-${old}`), { recursive: true });
+    fs.writeFileSync(path.join(skills, `banker-${old}`, 'SKILL.md'), `---\nname: banker-${old}\n---\n`);
+  }
+  const env = { CODEX_HOME: home, HOME: path.join(dir, 'home'), USERPROFILE: path.join(dir, 'home'), BANKER_NO_UPDATE_CHECK: '1', BANKER_NO_TELEMETRY: '1' };
+  const { out, code } = run(['setup', '--codex', '--scope', 'user'], dir, env);
+  assert.equal(code, 0, out);
+  for (const [from, to] of [['setup-omc', 'setup-omx'], ['omc-reference', 'omx-reference'], ['setup-omc-hud', 'setup-omx-hud']]) {
+    assert.match(out, new RegExp(`이름 바뀜: banker-${from} 에서 banker-${to} \\(부를 때는 \\$banker-${to}\\)`));
+    assert.ok(!fs.existsSync(path.join(skills, `banker-${from}`)), `banker-${from} swept`);
+    assert.ok(fs.existsSync(path.join(skills, `banker-${to}`, 'SKILL.md')), `banker-${to} installed`);
+  }
+  assert.match(out, /옛 이름으로 끈 설정\(config\.toml 의 \[\[skills\.config\]\]\)은 새 이름에 닿지 않으니 새 이름으로 다시 적으십시오/);
+  const installed = fs.readdirSync(skills).filter((d) => d.startsWith('banker-'));
+  assert.ok(!installed.includes('banker-ultraqa'));
+  for (const d of installed) {
+    const fm = (/^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(path.join(skills, d, 'SKILL.md'), 'utf8')) || [, ''])[1];
+    assert.match(fm, new RegExp(`^name: ${d}\\r?$`, 'm'), d);
+    if (d === 'banker-omc-patch' || d === 'banker-payload-mon') assert.match(fm, /^description: "Claude Code 의 OMC 를 다룸\(Codex 에서 실행해도 같음\)\. /m, d);
+    else assert.doesNotMatch(fm, /omc/i, d);
+  }
+  const again = run(['setup', '--codex', '--scope', 'user'], dir, env).out;
+  assert.doesNotMatch(again, /이름 바뀜/, 'a second run renames nothing');
+}));
+
+// The dry run of uninstall --codex says what the real run does: the user-scope npm skills go in the same run, so they do
+// not keep teamwork; a Codex plugin install does.
+test('uninstall --codex --dry-run: teamwork goes when only the npm skills it removes are left, and stays beside the plugin', () => withXdg((dir) => {
+  const home = path.join(dir, 'codex');
+  fs.mkdirSync(path.join(home, 'teamwork'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'skills', 'banker-teamwork'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'skills', 'banker-teamwork', 'SKILL.md'), '---\nname: banker-teamwork\n---\n');
+  const env = { CODEX_HOME: home };
+  let { out, code } = run(['uninstall', '--codex', '--dry-run'], dir, env);
+  assert.equal(code, 0, out);
+  assert.match(out, /\[dry-run\] rm .*banker-teamwork/);
+  assert.match(out, /\[dry-run\] teamwork uninstall in /);
+  assert.doesNotMatch(out, /teamwork kept/);
+  assert.ok(fs.existsSync(path.join(home, 'skills', 'banker-teamwork')) && fs.existsSync(path.join(home, 'teamwork')), 'a dry run removes nothing');
+  fs.writeFileSync(path.join(home, 'config.toml'), '[plugins."banker@banker-plugins"]\nenabled = true\n');
+  ({ out } = run(['uninstall', '--codex', '--dry-run'], dir, env));
+  assert.match(out, /teamwork kept: banker is still in this Codex home \(banker@banker-plugins\)/);
+}));
+
+// teamwork's hook wrapper needs its engine and node only; send and reply start the recorded codex.
+test('doctor: teamwork says what a missing recorded node or codex stops', () => withXdg((dir) => {
+  const home = path.join(dir, 'codex');
+  fs.mkdirSync(path.join(home, 'teamwork'), { recursive: true });
+  const state = (tools) => fs.writeFileSync(path.join(home, 'teamwork', 'state.json'), JSON.stringify({ enabled: true, version: '1.0.0', tools }));
+  const gone = path.join(dir, 'gone');
+  state({ node: process.execPath, codex: gone });
+  let { out } = run(['doctor'], dir, { CODEX_HOME: home });
+  assert.match(out, /teamwork: on \(engine 1\.0\.0\) ⚠ recorded codex missing: send and reply fail until \$banker-teamwork on runs again/);
+  assert.doesNotMatch(out, /hooks stay silent/, 'the hooks still run without the recorded codex');
+  state({ node: gone, codex: process.execPath });
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: home }));
+  assert.match(out, /⚠ recorded node missing: its hooks stay silent until \$banker-teamwork on runs again/);
+  state({ node: gone, codex: gone });
+  ({ out } = run(['doctor'], dir, { CODEX_HOME: home }));
+  assert.match(out, /⚠ recorded node, codex missing: its hooks stay silent and send and reply fail until/);
+}));
+
+// gh is started by bare name: from the home folder, with Windows' search of the current folder off.
+test('starRepo: gh runs from the home folder with NoDefaultCurrentDirectoryInExePath set', () => {
+  const seen = [];
+  starRepo((_cmd, _args, opts) => { seen.push(opts); return { status: 0 }; });
+  assert.equal(seen.length, 2);
+  for (const o of seen) {
+    assert.equal(o.cwd, os.homedir());
+    assert.equal(o.env.NoDefaultCurrentDirectoryInExePath, '1');
+  }
+});

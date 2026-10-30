@@ -4,14 +4,16 @@
 // Run from the repo root: node --test skills/ralph-qa/references/seat-run.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
-import { fromMsys, gathered, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock } from "./seat-run.mjs";
+import { cliVersion, fromMsys, gathered, holdFolder, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock, takeOver } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -158,6 +160,20 @@ test("cleanup's day rule removes only marked folders past a day, never a user's 
   assert.ok(!existsSync(j.dir) && !existsSync(j.out), "this run's folders are gone");
 });
 
+// S11 M5: a gate folder (gate-evidence.mjs init) lives the whole run and may wait past a day for Stage 3 or a resume:
+// the day rule of any ralph-qa cleanup in the same base never takes it.
+test("cleanup's day rule leaves a gate folder past a day: another name and marker than a payload folder", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const gates = join(w.base, "ralph-qa-gates.abc123");
+  mkdirSync(gates);
+  writeFileSync(join(gates, ".ralph-qa-gates"), "");
+  writeFileSync(join(gates, "evidence.md"), "{}\n");
+  utimesSync(gates, DAY_2, DAY_2);
+  const r = cli(w, ["cleanup", "--dir", init(w).dir]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(existsSync(join(gates, "evidence.md")) && !r.json.swept.includes(gates), "the baseline of a run that goes on stays");
+});
+
 // Code review: one leftover that cannot be removed stopped the whole cleanup before this run's folders went. The
 // leftover sits in the ~/.cache base, which takes no change: its contents and marker go, the folder itself cannot.
 test("cleanup goes on past a leftover it cannot remove and names it, again next time; this run's own folder that stays is a stop", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
@@ -282,6 +298,118 @@ test("the send lock is one file made with wx: a second taker while it lives is b
   rmSync(lock);
 });
 
+test("takeLock: a lock with no number yet (another send just made it) or a broken one is busy and stays; a stale one is taken over", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = join(j.dir, ".running.md");
+  const old = (Date.now() - 16 * 60 * 1000) / 1000;
+  for (const [label, text] of [["empty", ""], ["broken", "x y\n"], ["no number", " 2026-10-30T00:00:00.000Z\n"]]) {
+    writeFileSync(lock, text);
+    assert.throws(() => takeLock(j.dir), (e) => e.code === "busy" && /방금 시작했다/.test(e.message), label);
+    assert.equal(readFileSync(lock, "utf8"), text, `${label}: the other send's lock is not removed`);
+    utimesSync(lock, old, old);
+    assert.equal(takeLock(j.dir), lock, `${label}: untouched for 16 minutes, it is taken over`);
+    assert.equal(lockHolder(j.dir), process.pid);
+    rmSync(lock);
+  }
+});
+
+test("takeLock: a stale lock is taken over only under .taking.md, judged again there; a mark left a minute is cleared", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = join(j.dir, ".running.md");
+  const taking = join(j.dir, ".taking.md");
+  const ago = (min) => (Date.now() - min * 60 * 1000) / 1000;
+  const staleLock = () => {
+    writeFileSync(lock, `${2 ** 22 + 12345} x\n`);
+    utimesSync(lock, ago(16), ago(16));
+  };
+  // another send is taking the stale lock over: busy, and neither its mark nor the lock is touched
+  staleLock();
+  writeFileSync(taking, `${process.ppid} x\n`);
+  assert.throws(() => takeLock(j.dir), (e) => e.code === "busy" && /넘겨받는 중/.test(e.message));
+  assert.ok(existsSync(taking), "the other send's mark stays");
+  assert.equal(readFileSync(lock, "utf8"), `${2 ** 22 + 12345} x\n`, "the stale lock is left to the other send");
+  // a mark a minute old (its send died taking over): this send clears it and is busy, the next one takes over
+  utimesSync(taking, ago(1.5), ago(1.5));
+  assert.throws(() => takeLock(j.dir), (e) => e.code === "busy");
+  assert.equal(existsSync(taking), false, "the old mark is cleared");
+  assert.equal(takeLock(j.dir), lock);
+  assert.equal(lockHolder(j.dir), process.pid);
+  assert.equal(existsSync(taking), false, "a take-over leaves no mark");
+  // judged again under the mark: a send that found the lock stale, when another has made it new since, removes nothing
+  for (const [label, text] of [["another send's lock", `${process.ppid} x\n`], ["one with no number yet", ""]]) {
+    writeFileSync(lock, text);
+    assert.throws(() => takeOver(j.dir, lock), (e) => e.code === "busy" && /방금 시작했다/.test(e.message), label);
+    assert.equal(readFileSync(lock, "utf8"), text, `${label} is not removed`);
+    assert.equal(existsSync(taking), false, `${label}: the mark goes back`);
+  }
+  staleLock();
+  assert.equal(takeOver(j.dir, lock), lock, "still stale under the mark: taken over");
+  assert.equal(lockHolder(j.dir), process.pid);
+  rmSync(lock);
+});
+
+// The next `times` "wx" writes of a file named `name` fail with `code`, as Windows fails one where a file is being
+// deleted. Gives back the count of the writes it failed and a restore.
+function failWx(name, code, times) {
+  const real = fs.writeFileSync;
+  const seen = { failed: 0 };
+  fs.writeFileSync = (f, data, o) => {
+    if (seen.failed < times && String(f).endsWith(name) && o?.flag === "wx") {
+      seen.failed += 1;
+      throw Object.assign(new Error(`${code}: fake`), { code });
+    }
+    return real(f, data, o);
+  };
+  syncBuiltinESMExports();
+  seen.restore = () => {
+    fs.writeFileSync = real;
+    syncBuiltinESMExports();
+  };
+  return seen;
+}
+
+test("takeLock: EPERM, EACCES, EBUSY from wx (a lock being deleted on Windows) are tried again; other errors fail at once", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = join(j.dir, ".running.md");
+  const run = (name, code, times, fn) => {
+    const f = failWx(name, code, times);
+    try {
+      return [fn(), f.failed];
+    } catch (e) {
+      return [e, f.failed];
+    } finally {
+      f.restore();
+    }
+  };
+  for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+    const [got, failed] = run(".running.md", code, 3, () => takeLock(j.dir));
+    assert.equal(got, lock, `${code}: taken once the file is gone`);
+    assert.equal(failed, 3);
+    assert.equal(lockHolder(j.dir), process.pid);
+    rmSync(lock);
+  }
+  // the same code to the end: this send's error with no lock to see, the lock (here a live one) when there is one
+  const started = Date.now();
+  let [got] = run(".running.md", "EPERM", 1e9, () => takeLock(j.dir));
+  assert.equal(got.code, "EPERM", "no lock file: the error");
+  assert.ok(Date.now() - started < 10000, "within its bound");
+  writeFileSync(lock, `${process.ppid} x\n`);
+  [got] = run(".running.md", "EPERM", 1e9, () => takeLock(j.dir));
+  assert.ok(got.code === "busy" && new RegExp(`pid ${process.ppid}`).test(got.message), "a lock to see: busy");
+  rmSync(lock);
+  // another code fails at once, and the take-over mark is made the same way
+  const [rofs, tried] = run(".running.md", "EROFS", 1e9, () => takeLock(j.dir));
+  assert.deepEqual([rofs.code, tried], ["EROFS", 1]);
+  writeFileSync(lock, `${2 ** 22 + 12345} x\n`);
+  const [over, failed] = run(".taking.md", "EPERM", 3, () => takeLock(j.dir));
+  assert.deepEqual([over, failed], [lock, 3], "the mark too is tried again");
+  assert.equal(lockHolder(j.dir), process.pid);
+  rmSync(lock);
+});
+
 test("a send keeps its lock fresh while it runs, so a long split send stays live to cleanup", { skip: SKIP }, async (t) => {
   const w = world(t);
   const j = init(w);
@@ -295,21 +423,65 @@ test("a send keeps its lock fresh while it runs, so a long split send stays live
   rmSync(lock);
 });
 
-test("two sends of one folder that start together: one sends, the other is busy", { skip: SKIP }, async (t) => {
+const sendChild = (w, p, mode) => import("node:child_process").then(({ spawn }) => new Promise((res) => {
+  const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro"],
+    { env: { ...w.env, RQ_STUB_MODE: mode }, stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  c.stdout.on("data", (b) => { out += b; });
+  c.stderr.resume();
+  c.on("close", (code) => res({ code, out }));
+}));
+const until = async (ok, ms = 20000) => {
+  for (let waited = 0; !ok() && waited < ms; waited += 50) await new Promise((res) => setTimeout(res, 50));
+  return ok();
+};
+
+test("two sends of one folder that start together: one sends, the other is busy or finds it sent", { skip: SKIP }, async (t) => {
   const w = world(t);
   const p = prepared(w);
-  const { spawn } = await import("node:child_process");
-  const one = () => new Promise((res) => {
-    const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro"],
-      { env: { ...w.env, RQ_STUB_MODE: "slow=1500" }, stdio: ["ignore", "pipe", "pipe"] });
-    let out = "";
-    c.stdout.on("data", (b) => { out += b; });
-    c.stderr.resume();
-    c.on("close", (code) => res({ code, out }));
-  });
-  const codes = (await Promise.all([one(), one()])).map((x) => x.code).sort();
-  assert.deepEqual(codes, [0, 5], "one send and one busy");
+  // however the two nodes interleave (one late on a loaded box), the payload goes out once: the other is busy (5)
+  // while the lock is held, or finds result-send.md (3), before or after it takes the lock
+  const done = await Promise.all([sendChild(w, p, "slow=1500"), sendChild(w, p, "slow=1500")]);
+  const codes = done.map((x) => x.code).sort();
+  assert.ok(codes[0] === 0 && [3, 5].includes(codes[1]), `one send, the other busy or sent: ${codes}`);
   assert.equal(runs(w, "gemini").length, 1, "the payload went out once");
+});
+
+test("holdFolder: a folder another send marked sent while this one waited is refused under the lock, and the lock goes back", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  writeFileSync(join(j.dir, "result-send.md"), "{}\n");
+  assert.throws(() => holdFolder(j.dir), (e) => e.code === "sent");
+  assert.equal(existsSync(join(j.dir, ".running.md")), false, "the lock went back");
+  rmSync(join(j.dir, "result-send.md"));
+  const lock = holdFolder(j.dir);
+  assert.ok(existsSync(lock), "a folder not sent is held");
+  rmSync(lock);
+});
+
+// The gap between giving the lock back and marking the folder sent: result-send.md is made a FIFO while the seat runs,
+// so the send stops where it writes it (no reader). The lock must still be held there: a send that took it then would
+// send again. A reader then lets the send end; the marker is what report writes.
+test("a send marks the folder sent before it gives the lock back", { skip: SKIP || (WIN && "no FIFO on Windows") }, async (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const lock = join(p.dir, ".running.md");
+  const marker = join(p.dir, "result-send.md");
+  const first = sendChild(w, p, "slow=1500");
+  assert.ok(await until(() => existsSync(join(p.dir, "gemini"))), "the seat started (after the lock and its last look)");
+  assert.equal(spawnSync("mkfifo", [marker]).status, 0, "mkfifo");
+  assert.ok(await until(() => readFileSync(join(p.dir, "run.md"), "utf8").includes("cli-gemini")), "the seat ended");
+  await new Promise((res) => setTimeout(res, 1500)); // the send is now stopped at the marker, wherever it writes it
+  const held = existsSync(lock);
+  const fd = openSync(marker, constants.O_RDWR | constants.O_NONBLOCK); // a reader: the writes go through
+  t.after(() => closeSync(fd));
+  const r = await first;
+  assert.equal(held, true, "the lock is held while the marker is written");
+  assert.equal(r.code, 0, r.out);
+  const buf = Buffer.alloc(1 << 20);
+  const text = buf.subarray(0, readSync(fd, buf)).toString("utf8");
+  assert.ok(text.startsWith('{\n  "command": "send",\n  "ok": true,') && text.includes(`"dir": ${JSON.stringify(p.dir)}`), "the marker is the send's JSON");
+  assert.equal(runs(w, "gemini").length, 1);
 });
 
 test("cleanup and the other commands refuse a folder init did not make, and remove nothing", { skip: SKIP }, (t) => {
@@ -334,6 +506,71 @@ test("cleanup and the other commands refuse a folder init did not make, and remo
     }
   }
   assert.ok(existsSync(join(plain, "keep.md")) && existsSync(join(named, ".ralph-qa")));
+});
+
+// remains 8-1: cleanup --dir removed any marked ralph-qa.* folder it was given, wherever it sat.
+test("cleanup takes a run folder only right under a known base, by real path either way, and only while the base is private", { skip: SKIP }, (t) => {
+  const w = world(t);
+  // a run folder moved out of the base keeps its name and marker, and is still no run folder
+  const j = init(w);
+  const away = join(w.dir, "away");
+  mkdirSync(away);
+  const moved = join(away, j.dir.split(/[\\/]/).pop());
+  cpSync(j.dir, moved, { recursive: true });
+  let r = cli(w, ["cleanup", "--dir", moved]);
+  assert.deepEqual([r.code, r.json.stop], [3, "not-a-run-folder"], r.stdout);
+  assert.match(r.json.message, /기준 폴더/);
+  assert.ok(existsSync(join(moved, ".ralph-qa")), "nothing removed");
+  // nested one level below the base is not right under it
+  const nested = join(w.base, "deeper", "ralph-qa.nest12");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(nested, ".ralph-qa"), "");
+  r = cli(w, ["cleanup", "--dir", nested]);
+  assert.equal(r.json.stop, "not-a-run-folder", r.stdout);
+  assert.ok(existsSync(nested));
+  if (!WIN) {
+    // the base through a link (macOS's /var and /private/var): the folder named by either path is the run folder
+    const via = join(w.dir, "via");
+    symlinkSync(w.base, via);
+    const env = MAC ? { TMPDIR: via } : { XDG_RUNTIME_DIR: via };
+    for (const pick of [(d) => d, (d) => join(realpathSync.native(w.base), d.split("/").pop())]) {
+      const k = init(w, env);
+      r = cli(w, ["cleanup", "--dir", pick(k.dir)], { env });
+      assert.equal(r.code, 0, r.stdout);
+      assert.ok(!existsSync(k.dir) && !existsSync(k.out));
+    }
+  }
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+});
+
+test("a base others may write in holds no run folder for cleanup", { skip: SKIP || (WIN && "POSIX mode bits") || (asRoot && "root owns every folder here") }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  chmodSync(w.base, 0o777);
+  let r = cli(w, ["cleanup", "--dir", j.dir]);
+  chmodSync(w.base, 0o700);
+  assert.equal(r.json.stop, "not-a-run-folder", r.stdout);
+  assert.ok(existsSync(join(j.dir, ".ralph-qa")));
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+});
+
+test("cleanup removes the marker last: a removal that stops part way leaves the same marker, and a retry ends it", { skip: SKIP || (WIN && "the no-write bit does not stop a delete on Windows") || (asRoot && "root removes it anyway") }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const keep = join(j.dir, "keep");
+  mkdirSync(keep);
+  writeFileSync(join(keep, "held.md"), "held\n");
+  chmodSync(keep, 0o500);
+  const marker = statSync(join(j.dir, ".ralph-qa")).ino;
+  let r = cli(w, ["cleanup", "--dir", j.dir]);
+  chmodSync(keep, 0o700);
+  assert.equal(r.json.stop, "cleanup-left", r.stdout);
+  assert.equal(statSync(join(j.dir, ".ralph-qa")).ino, marker, "the marker was never taken");
+  r = cli(w, ["cleanup", "--dir", j.dir]);
+  assert.equal(r.code, 0, r.stdout);
+  assert.ok(!existsSync(j.dir) && !existsSync(j.out));
 });
 
 test("cleanup deletes this run's opencode session and those of seat folders that are gone, by the base as written and resolved", { skip: SKIP || (WIN && "the base link is a POSIX case; Windows runs the rest in the next test") }, (t) => {
@@ -534,6 +771,45 @@ test("send runs each seat from its own copy in its own folder, with the answers 
   assert.ok(existsSync(join(p.dir, "result-send.md")));
   assert.ok(!existsSync(join(p.dir, ".running.md")), "the lock is gone");
   assert.match(r.json.declared, /^외부 전송\(선언\): .*codex.*gemini.*opencode.*prov.*페이로드 \d+B, 비밀 검사 0건, 보내지 않은 새 파일 0/);
+});
+
+// D7: the seat CLI's version goes to run.md, read without starting gemini or opencode.
+test("send writes each sent seat's CLI version to run.md: codex's from --version, the others' from their install", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const r = send(w, p, ["codex=gpt-5.5", "gemini=pro"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(seatOf(r, "codex").cliVersion, "codex-cli 0.144.5");
+  assert.equal(seatOf(r, "gemini").cliVersion, "알 수 없음", "a stub with no package.json above it");
+  const run = readFileSync(join(p.dir, "run.md"), "utf8");
+  assert.match(run, /^cli-codex codex-cli 0\.144\.5$/m);
+  assert.match(run, /^cli-gemini 알 수 없음$/m);
+  assert.ok(runs(w, "gemini").every((x) => x.args[0] !== "--version"), "gemini was not started for its version");
+});
+
+test("the version of an npm install is read from its package.json, and opencode's installer folder from its plugin package", () => {
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "rq-ver-")));
+  try {
+    const pkg = join(dir, "npm", "lib", "node_modules", "@google", "gemini-cli");
+    mkdirSync(join(pkg, "dist"), { recursive: true });
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@google/gemini-cli", version: "0.99.1" }));
+    writeFileSync(join(pkg, "dist", "index.js"), "");
+    mkdirSync(join(dir, "npm", "bin"));
+    assert.equal(cliVersion("gemini", join(pkg, "dist", "index.js"), null), "0.99.1", "above the real path");
+    assert.equal(cliVersion("gemini", join(dir, "npm", "bin", "gemini"), null), "0.99.1", "under the prefix's lib/node_modules");
+    const win = join(dir, "appdata", "npm");
+    mkdirSync(join(win, "node_modules", "opencode-ai"), { recursive: true });
+    writeFileSync(join(win, "node_modules", "opencode-ai", "package.json"), JSON.stringify({ name: "opencode-ai", version: "1.4.0" }));
+    assert.equal(cliVersion("opencode", join(win, "opencode.cmd"), null), "1.4.0", "beside a Windows shim");
+    const own = join(dir, "home", ".opencode");
+    mkdirSync(join(own, "bin"), { recursive: true });
+    writeFileSync(join(own, "package.json"), JSON.stringify({ dependencies: { "@opencode-ai/plugin": "1.3.10" } }));
+    assert.equal(cliVersion("opencode", join(own, "bin", "opencode"), null), "1.3.10 (설치 폴더의 @opencode-ai/plugin)");
+    assert.equal(cliVersion("codex", join(dir, "nowhere", "codex"), { version: "codex-cli 0.165.0" }), "codex-cli 0.165.0");
+    assert.equal(cliVersion("codex", join(dir, "nowhere", "codex"), {}), "알 수 없음");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // The 0.20.4 commands of the skill's bash block, word for word: the read-only guards the mock-server checks proved.
@@ -765,6 +1041,19 @@ test("a split seat gets the whole short part in every part, also with `=== ` lin
   const got = runs(w, "gemini").sort((a, b) => a.at - b.at).map((x) => readFileSync(join(w.log, `gemini-${x.pid}-stdin.md`), "utf8"));
   assert.equal(got.length, 2);
   for (const g of got) assert.ok(g.includes("=== 수용 기준\n- 기준 1\n"), g);
+});
+
+// remains 8-5: a change of the same length inside the short part kept every line start, and the split went out.
+test("a split send stops when the short part changed after prepare, also by one character of the same length", { skip: SKIP }, (t) => {
+  const w = world(t);
+  writeFileSync(join(w.dir, "rules.md"), "the rules\n");
+  const p = prepared(w, { spec: `file ${join(w.dir, "rules.md")}\n`, short: "review this\n" });
+  assert.match(readFileSync(join(p.dir, "run.md"), "utf8"), /^shortsha [0-9a-f]{64}$/m);
+  const prompt = join(p.dir, "prompt.md");
+  writeFileSync(prompt, readFileSync(prompt, "utf8").replace("review this", "review thiz"));
+  const r = send(w, p, ["gemini=pro"], ["--split", "gemini=2"]);
+  assert.equal(seatOf(r, "gemini").why, "split", r.stdout);
+  assert.equal(runs(w, "gemini").length, 0, "no part went out");
 });
 
 // What a send test that fails leaves running (the runner, its send's node, hung seats) ends with the test. Made before

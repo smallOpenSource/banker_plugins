@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.23.0] - 2026-10-30
+
+### Added
+- 새 스킬 `teamwork`(Codex 전용): 같은 기기의 Codex CLI 세션끼리 피어 협업을 켜고 끈다(`on` 기본, `off`, `status`). 켜면 열린 세션과 새 세션이 모두 팀으로 동작하고, 역할은 각 세션에 말로 주며, 요청과 결과는 Codex 내장 `codex queue` 로 오간다. npm 길 `$banker-teamwork`, 플러그인 길 `$banker:teamwork`.
+  - 승인 규칙은 래퍼의 `peers`, `role`, `send`, `reply`, `status`, `version` 만 허용하고 `on`, `off`, `uninstall` 은 승인을 받는다.
+  - 래퍼와 훅은 `on` 때 찾은 `node`, `codex`, `ps`, `sh` 의 절대 경로만 쓰고, 임시 폴더, 작업 폴더, `writable_roots` 아래의 프로그램과 Codex 홈은 거부한다. `hooks.json` 은 banker 훅 설치와 같은 잠금으로 고친다.
+  - Codex 0.149.0 이상, Linux 와 macOS. Windows 는 `on` 이 까닭을 밝히고 끝난다(승인 규칙이 PowerShell 로 부르는 래퍼에 맞지 않아 쓸 때마다 승인을 물어야 함).
+- 새 스킬 `progress-mon`: 프로젝트 진척도를 4탭 웹 화면(진척도, 구현요건, workflow, 구성도)으로 로컬 서버(기본 127.0.0.1)에 띄운다. `init` 이 코드를 읽어 탭 자료를 쓰고, `export` 는 서버 없는 단일 HTML 을 만든다. Node 18 이상, npm 의존 없음. 두 런타임에서 쓴다. 세션 작업 목록 패널은 지금처럼 `/progress` 다.
+- 새 스킬 `ultraqa`(Claude Code 전용, `/banker:ultraqa`): OMX ultraqa 를 본뜬 적대적 동적 e2e QA 순환. 9분류 시나리오 행렬과 실행기가 돌린 게이트 증거로 최대 5회 진단, 고침, 재시험한다. Codex 에는 설치하지 않는다(Codex 는 OMX `$ultraqa`).
+- `3d-intro-build` 의 dive 모드: 장면마다 그 장면 스틸에서 시작하는 클립을 만든다. Step 1 에서 a(chain), b(dive 나가기 없음), c(dive 나가기 있음) 가운데 고르고, 기본은 b 다. 비용 추정과 첫 쌍 게이트의 기본 선택도 b 기준이다(6장면 약 $4.8). WAN 실행이면 dive 가 미측정이라고 알린다.
+- `3d-intro-build` 결과 페이지의 장면 단위 이동(스크롤 스냅)이 기본으로 켜진다. 매니페스트 `stepNav: false` 로 끈다.
+  - 휠 1칸과 방향키 1번은 다음 장면까지 절반, 2번이면 한 장면. PageUp, PageDown, Space, 스와이프는 한 장면.
+  - Home 은 첫 장면 시작, End 는 마지막 장면 끝, 장면 점은 그 장면 시작으로 애니메이션 없이 바로 간다.
+  - 장면 사이에서 멈추면 가까운 장면 시작으로 붙는다. 멈춘 자리에서 그 장면의 문구가 보인다.
+  - 포스터 디코드를 150ms 넘게 기다리면 화면 가운데에 불러오는 중 표시가 보이고, 이동하면 바로 사라진다.
+
+### Changed
+- `ralph-qa`: 실행기가 직접 돌린 게이트 증거(`--gates`, 출력 sha256 과 작업 트리 지문), 적대 관점과 scenarios, 같은 이슈 기준, 흔들림 재실행을 더한다. 좌석에 도구 규칙을 고정 앞머리로 넘기고, 역할 좌석 모델은 `agents/<역할>.toml` 에서 읽는다.
+- `ralph-qa` send 가 같은 폴더에서 둘 동시에 불려도 페이로드를 한 번만 보낸다. Windows 에서 지우는 중인 잠금 자리의 `EPERM` 도 잠금 있음으로 보고 다시 시도한다.
+- `all-in-one` Stage 3, `ultra-init` Phase 3 의 마지막 QA 게이트가 두 런타임 모두 `ralph-qa --gates` 단독이다. `ultra-chain` 6단계 로컬 게이트도 실행기 증거로 판정한다. git 없는 폴더는 시작 전에 `not-a-git-tree` 로 멈추고, STOPPED 뒤에는 어떤 파일도 고치지 않는다. Codex 에서 OMX 단계가 tmux 밖이면 기록한 대체 실행을 쓰고, 그것도 못 하면 STOPPED 로 끝난다.
+- Codex 의 스킬 이름과 설명이 OMC 대신 OMX 를 적는다. `setup-omc`, `omc-reference`, `setup-omc-hud` 는 Codex 에서 `setup-omx`, `omx-reference`, `setup-omx-hud` 다. npm 길은 갱신 때 옛 폴더를 지우고 `이름 바뀜:` 줄로 알린다. 플러그인 스킬 목록은 스킬마다 경로를 적는다.
+- `remains` 의 박스 도구(`boxes.mjs`)가 Windows `--cmd` 에서 한글 인자를 깨뜨리지 않는다(`chcp 65001`). `for`, `if`, `(` 로 시작하는 명령은 `call` 없이 돈다.
+- `3d-intro-build` 의 측정(`verify-intro`)이 화면 캡처 10초, 페이지 load 15초, `intro.js` 받기 15초까지만 기다린다. 넘으면 그 결과는 이유와 함께 미측정으로 남고 통과로 세지 않는다.
+- `3d-intro-build` 의 그 밖 수정
+  - Sora 퇴역(410)을 알아보고 같은 배포로 다시 보내지 않는다. 배포 확인은 과금 없는 GET 으로 한다.
+  - 클립 후처리를 공통 인코딩 하나로 한다(역재생, 판 착지). 톤 맞춤은 고칠 톤이 없어 뺐다.
+  - git 이 추적하는 키 파일에서는 endpoint 와 key 를 읽지 않는다. 섹션 id 와 자산 경로가 프로젝트나 출력 폴더 밖을 가리키지 못한다.
+  - 즉시 이동과 클립이 나타나는 순간의 빈 화면, 느린 적재의 첫 경계 포스터 튐, 밝은 장면의 유리 패널 대비를 고친다.
+- `play-qa` 설명이 Godot 대신 웹 기반 동작 컨텐츠를 적는다.
+- 그 밖 하자 수정
+  - Codex 훅이 `writable_roots` 아래면 돌지 않고 이유를 한 줄로 알린다. Windows 에서 지금 폴더에 심은 `codex.cmd` 를 돌리지 않는다.
+  - Codex 사용량 카운팅의 턴 셈 틈을 닫고, 턴 시작이 기록 끝 32 MB 밖이어도 센다. 홈 밖 네트워크 마운트 PATH 항목에서 멈추지 않는다.
+  - obsidize 훅이 셸 규칙(Windows 는 PowerShell)대로 명령을 나눈다. `config.toml` 머리 주석 뒤에 새 키를 바르게 넣는다.
+  - `progress --follow` 가 계획 파일만 바뀌어도 2초 안에 다시 그리고, `banker doctor` 가 첫 턴 전 기록에 오경고를 내지 않는다. 지울 수 없는 낡은 `hooks.json` 잠금은 까닭과 함께 끝난다.
+
+### Notes
+- Codex 플러그인 사용자: 훅 코드가 바뀌어 `banker-hooks-rev` 해시가 바뀐다(`625aade934d2` 에서 `7fad90560d65`). 다음 세션에서 `/hooks` 신뢰를 다시 묻고, 신뢰하기 전에는 훅이 돌지 않는다.
+- Codex npm 길 사용자: npm 을 올린 뒤 `banker setup --codex` 를 다시 해야 새 훅 사본과 바뀐 Codex 스킬 이름이 들어간다. `config.toml` 의 `[[skills.config]]` 로 옛 이름을 꺼 두었다면 새 이름으로 다시 적는다.
+- 실측: 테스트박스 3대(macOS, Windows, Rocky Linux 8)에서 시험을 돌렸다. Node 18 은 `progress-mon` 만 재었다(Rocky 8 박스의 v18.20.8). Codex 는 0.165.0(Linux)과 0.160.1(Windows)에서 확인했다.
+- dive 모드의 실제 클립 측정은 Sora 로 장면 한 세트만 했다. 유료 WAN 검증은 하지 않았고, WAN 에서 dive 는 재지 않았다.
+
 ## [0.22.0] - 2026-10-29
 
 ### Added

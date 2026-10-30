@@ -56,6 +56,9 @@ const FAKES = {
   ["config-pass" + "word"]: "  POSTGRES_PASS" + "WORD: example123",
   ["dockerfile-env-pass" + "word"]: "ENV DB_PASS" + "WORD hunter22xyz",
   "curl-user": "curl -u admin:" + "Hunter22pw https://x",
+  ["netrc-pass" + "word"]: "machine api.example.com login bob pass" + "word Netrc-V4lue",
+  "pgpass-line": "db.internal:5432:app:bob:" + "Pg-V4lue",
+  "docker-auth": '{"auths": {"registry.example.com": {"au' + 'th": "' + Buffer.from("bob:" + "Dock3r-V4lue").toString("base64") + '"}}}',
 };
 
 test("every pattern has a sample it catches, by its own name", () => {
@@ -410,4 +413,31 @@ test("the shell's own PWD and OLDPWD with a path are no password; a key that onl
   for (const line of [`MYSQL_${W}=${pw}`, `UID=sa;${W}=${pw}`, `${W}=${odd}`, `ENV DB_${P} ${odd}`]) {
     assert.ok(scan(line).count > 0, `not caught: ${line}`);
   }
+});
+
+// Curation N-2: ~/.netrc (one line and its token-a-line layout), ~/.pgpass and docker's config.json "auth" went out
+// with no hit; the nine kinds before them still do.
+test("a .netrc password, a .pgpass line and docker's config.json auth are caught, each in its own file layout", () => {
+  const pw = "pass" + "word";
+  const netrcLines = ["machine git.example.com", "  login bob", `  ${pw} ` + "Netrc-V4lue", "default login anon " + pw + " An0n-V4lue account x"].join("\n");
+  assert.deepEqual(scan(netrcLines).hits.map((h) => [h.line, h.kind]), [[3, "netrc-pass" + "word"], [4, "netrc-pass" + "word"]]);
+  const pgpass = ["# host:port:db:user:" + pw, "localhost:*:*:bob:" + "Pg-V4lue", "+db.internal:6432:app:svc:" + "Pg-0ther", "10.0.0.5:5432:app:bob:" + "Pg\\:c0lon"].join("\n");
+  assert.deepEqual(scan(pgpass).hits.map((h) => [h.line, h.kind]), [[2, "pgpass-line"], [3, "pgpass-line"], [4, "pgpass-line"]], "an escaped colon in the password too");
+  const auth = Buffer.from("svc:" + "Dock3r-V4lue").toString("base64");
+  const docker = ["{", '  "auths": {', '    "ghcr.io": {', `      "au` + `th": "${auth}"`, "    }", "  }", "}"].join("\n");
+  assert.deepEqual(scan(docker).hits.map((h) => [h.line, h.kind]), [[4, "docker-auth"]]);
+});
+
+test("files shaped like a .netrc, a .pgpass or a docker config.json with no secret in them are clean", () => {
+  const pw = "pass" + "word";
+  const text = [
+    "machine git.example.com", "  login bob", "machine h login u", "default login anonymous", `  ${pw}`, `  ${pw} $NETRC_PASS`,
+    `the ${pw} is required here`, `${pw} must be 12 characters or more`,
+    "localhost:5432:*:*:*", "root:x:0:0:root:/root:/bin/bash", "12:30:45", "a:b:c:d:e", "ports: 8080:80",
+    // S11 L10: a MAC of digits, a time with frames, a MAC with a letter in its first group (the password would hold a colon)
+    "+00:11:22:33:44:55", "+12:30:45:00:01", "0a:11:22:33:44:55",
+    '{"auths": {}}', '{"auths": {"ghcr.io": {"au' + 'th": ""}}}', '"credsStore": "desktop"', '"au' + 'th": "none"',
+    '"au' + 'th": "' + Buffer.from("no colon here").toString("base64") + '"',
+  ].join("\n");
+  assert.deepEqual(scan(text), { count: 0, hits: [] });
 });
