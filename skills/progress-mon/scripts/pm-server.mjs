@@ -142,8 +142,9 @@ export function makeLogger(dataDir, max = LOG_MAX, onWarn = () => {}) {
       if (pending) fs.writeSync(fd, pending);
       pending = '';
       fs.writeSync(fd, line);
-    } catch {
-      // 로그를 못 써도 응답은 계속
+    } catch (e) {
+      // 로그를 못 써도 응답은 계속. 링크, 특수 파일, 하드링크라 거부했으면 기록이 멈춘 것을 한 번 알린다(status 경고)
+      if (e && e.code === 'EINVAL') warn('server.log 가 링크, 특수 파일이거나 하드링크라 기록하지 않음. 그 파일을 치우면 다시 기록');
     } finally {
       if (fd !== null) fs.closeSync(fd);
     }

@@ -363,6 +363,10 @@ test('commitRegex: 실제 커밋 제목에서 역추적이 폭발하면 FAIL(화
   g('commit', '-q', '-m', `${'a'.repeat(40)}!`); // (a+)+$ 가 폭발하는 제목
   const fails = only(check(ctx), /^FAIL config\.json commitRegex .*끝나지 않음/);
   assert.equal(fails.length, 1, '실제 제목에서 시간 초과를 FAIL 로');
+  // 스토리가 없으면 화면이 이 정규식을 쓰지 않으므로 check 도 돌리지 않는다(화면에서 문제없는 설정을 FAIL 로 내지 않음)
+  fs.writeFileSync(path.join(ctx.dataDir, 'config.json'), JSON.stringify({ ...read('config.json'), commitRegex: '^(?<id>(a+)+)$', stories: [] }));
+  fs.writeFileSync(path.join(ctx.dataDir, 'items.json'), JSON.stringify({ ...read('items.json'), storyCommits: {}, storyStates: {} }));
+  assert.equal(only(check(ctx), /commitRegex/).length, 0, '스토리 없으면 commitRegex 검사 없음');
 });
 
 test('CLI: FAIL 이 있으면 종료 1, 자료 폴더가 없어도 만들지 않음', T, () => {

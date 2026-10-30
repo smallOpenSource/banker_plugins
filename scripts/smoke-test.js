@@ -19,6 +19,7 @@ const run = (cmd, args, opts = {}) => cp.execFileSync(cmd, args, { encoding: 'ut
 // Run Node on npm's own npm-cli.js instead: no shell, so a temp path with spaces needs no quoting. POSIX falls back to
 // `npm` on PATH when npm-cli.js is not where Node ships it.
 const npmCli = [
+  /npm-cli\.js$/.test(process.env.npm_execpath || '') ? process.env.npm_execpath : null, // run under npm: its own npm
   path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
   path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
 ].find((p) => fs.existsSync(p));
@@ -66,6 +67,11 @@ try {
   ok(Boolean(bankerJs), 'installed banker bin JS is present to run through Node');
   const bankerRun = (args, opts) => run(process.execPath, [bankerJs, ...args], opts);
   const bankerSpawn = (args, opts) => cp.spawnSync(process.execPath, [bankerJs, ...args], opts);
+  // the shim itself still runs once where it can without a shell (POSIX): a broken shim would pass the JS runs alone
+  if (process.platform !== 'win32') {
+    const shim = cp.spawnSync(binPath, ['--version'], { encoding: 'utf8' });
+    ok(shim.status === 0 && shim.stdout.trim() === require(path.join(root, 'package.json')).version, `the installed banker shim runs (status ${shim.status})`);
+  }
 
   const env = { ...process.env, HOME: home, USERPROFILE: home };
   delete env.CODEX_HOME; // the installer follows CODEX_HOME; the tests install under the temp HOME only
@@ -423,8 +429,13 @@ try {
   const pmonDoc = fs.readFileSync(path.join(root, 'skills', 'progress-mon', 'SKILL.md'), 'utf8');
   const pluginVer = JSON.parse(fs.readFileSync(path.join(root, '.codex-plugin', 'plugin.json'), 'utf8')).version;
   const cacheDir = path.join(tmp, 'codexhome-plugin', 'plugins', 'cache', 'banker-plugins', 'banker', pluginVer, 'skills', 'progress-mon');
-  fs.mkdirSync(path.dirname(cacheDir), { recursive: true });
-  fs.cpSync(path.join(root, 'skills', 'progress-mon'), cacheDir, { recursive: true });
+  // only the files git tracks (what the marketplace's git source carries), not untracked or ignored ones in this tree
+  const pmTracked = cp.execFileSync('git', ['-C', root, 'ls-files', '-z', 'skills/progress-mon'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+  for (const rel of pmTracked) {
+    const dest = path.join(cacheDir, path.relative('skills/progress-mon', rel));
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(path.join(root, rel), dest);
+  }
   const pmonPluginRun = cp.spawnSync(process.execPath, [path.join(cacheDir, 'scripts', 'progress-mon.mjs'), '--help'], { encoding: 'utf8' });
   ok(pmonPlugin.includes('./skills/progress-mon/') && pmonDoc.includes('`~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/progress-mon/`')
      && pmonDoc.includes('`~/.codex/skills/banker-progress-mon/`') && pmonPluginRun.status === 0 && pmonPluginRun.stdout.startsWith('progress-mon: '),
@@ -699,6 +710,12 @@ try {
      && fs.existsSync(path.join(root, 'skills', 'ultraqa', 'references', 'uqa-run.test.mjs')),
      'ultraqa-a: the npm package carries ultraqa\'s runner, the shared modules, the tmux guide and NOTICE.md, and not its test');
   const uqaSkill = fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'SKILL.md'), 'utf8');
+  // ultraqa runs the gate command as found (a flag such as --test-force-exit would turn a hang into a pass), and remains
+  // tells a repeated test run to end at the first failing pass (a for loop's exit code is the last pass's)
+  const remSkill = fs.readFileSync(path.join(root, 'skills', 'remains', 'SKILL.md'), 'utf8');
+  ok(/게이트 명령에 플래그를 더하거나 바꾸지 않는다/.test(uqaSkill) && /--test-force-exit/.test(uqaSkill)
+     && /\|\| exit \/b 1/.test(remSkill) && /\|\| exit 1/.test(remSkill),
+     'ultraqa keeps the gate command as found; remains tells a for loop to stop at the first failing pass');
   const uqaFm = uqaSkill.slice(0, uqaSkill.indexOf('---', 4));
   const sameCopy = ['gate-evidence.mjs', 'run-folder.mjs'].every((f) => fs.readFileSync(path.join(root, 'skills', 'ralph-qa', 'references', f))
     .equals(fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'references', f))));

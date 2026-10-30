@@ -429,6 +429,23 @@ test('server.log 가 링크면 따라가지 않음: 대상을 쓰지도 비우�
   assert.deepEqual(logLinesSince(ctx.dataDir, 0, ['오류:']), [], '링크를 따라 읽지 않음');
 });
 
+test('server.log 가 하드링크면 쓰지도 비우지도 읽지도 않고, 기록이 멈춘 것을 한 번 알림', T, () => {
+  const ctx = ctxOf();
+  const target = path.join(ctx.dataDir, `victim${++n}.txt`); // 하드링크는 같은 파일 시스템이어야 함
+  const body = `2026-10-30T00:00:00.000Z 오류: ${'h'.repeat(100)}\n`;
+  fs.writeFileSync(target, body);
+  fs.linkSync(target, logPath(ctx.dataDir));
+  fs.mkdirSync(`${logPath(ctx.dataDir)}.1`); // 옮기지 못하는 자리: 고치기 전에는 여기서 ftruncate 로 대상을 비웠음
+  const warns = [];
+  const log = makeLogger(ctx.dataDir, 50, (w) => warns.push(w));
+  log('한 줄');
+  log('두 줄');
+  assert.equal(fs.readFileSync(target, 'utf8'), body, '대상(남의 파일) 내용 그대로');
+  assert.deepEqual(logLinesSince(ctx.dataDir, 0, ['오류:']), [], '하드링크를 읽지 않음');
+  assert.equal(warns.length, 1, '기록이 멈춘 것을 한 번 알림');
+  assert.match(warns[0], /하드링크/);
+});
+
 test('server.log 가 한도를 넘으면 server.log.1 로 옮기고 새로 씀', T, () => {
   const ctx = ctxOf();
   fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));

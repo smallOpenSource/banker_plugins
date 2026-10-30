@@ -60,26 +60,34 @@ function checkConfig(ctx, r) {
   config.stories.forEach((s, i) => {
     if (s.id.includes('-')) r.warn('config.json', `stories[${i}].id`, `id 에 - 가 있어 에이전트 라벨 토큰 판정이 안 됨: ${s.id}. agentLabelPattern 을 쓰거나 id 를 바꿈`);
   });
-  // commitRegex 를 실제 커밋 제목으로 돌려 본다(컴파일만 보던 것). 역추적이 폭발하면 화면은 매 요청 500 인데
-  // check 는 통과하던 것을 FAIL 로 잡는다. sources.git 이 꺼졌거나 git 저장소가 아니면 돌려보지 못해 WARN.
-  if (config.commitRegex) {
-    if (!config.sources.git) r.warn('config.json', 'commitRegex', 'sources.git 이 꺼져 있어 실제 커밋 제목으로 돌려보지 못함(화면도 이 정규식을 쓰지 않음)');
-    else {
-      const lines = gitLog(ctx.project, config.sources.gitMax);
-      if (lines === null) r.warn('config.json', 'commitRegex', 'git 저장소가 아니거나 커밋이 없어 실제 제목으로 돌려보지 못함');
-      else {
-        try {
-          regexBatch(config.commitRegex, 'commitRegex', lines.map((l) => l.split('|').slice(2).join('|')));
-        } catch (e) {
-          r.fail('config.json', 'commitRegex', e.message);
-        }
-      }
-    }
-  }
   return config;
 }
 
+// commitRegex 를 실제 커밋 제목으로 돌려 본다(컴파일만 보던 것). 역추적이 폭발하면 화면은 매 요청 500 인데 check 는
+// 통과하던 것을 FAIL 로 잡는다. 화면처럼 스토리(ids)가 없으면 이 정규식을 쓰지 않으므로 돌리지 않는다.
+// sources.git 이 꺼졌거나 git 저장소가 아니면 돌려보지 못해 WARN.
+function checkCommitRegex(ctx, config, ids, r) {
+  if (!config.commitRegex || !ids.length) return;
+  if (!config.sources.git) return r.warn('config.json', 'commitRegex', 'sources.git 이 꺼져 있어 실제 커밋 제목으로 돌려보지 못함(화면도 이 정규식을 쓰지 않음)');
+  const lines = gitLog(ctx.project, config.sources.gitMax);
+  if (lines === null) return r.warn('config.json', 'commitRegex', 'git 저장소가 아니거나 커밋이 없어 실제 제목으로 돌려보지 못함');
+  try {
+    regexBatch(config.commitRegex, 'commitRegex', lines.map((l) => l.split('|').slice(2).join('|')));
+  } catch (e) {
+    r.fail('config.json', 'commitRegex', e.message);
+  }
+}
+
 // ---------- items.json ----------
+
+// storyCommits 의 값은 해시 문자열이나 {hash}. 둘 다 16진 4~40자(item --commit, story --commit 과 같은 규칙).
+function checkStoryCommits(commits, r) {
+  for (const [id, c] of Object.entries(obj(commits) || {})) {
+    const hash = typeof c === 'string' ? c : obj(c)?.hash;
+    if (typeof hash !== 'string') r.fail('items.json', `storyCommits.${id}`, '해시 문자열 또는 {hash} 가 아님');
+    else if (!/^[0-9a-f]{4,40}$/i.test(hash)) r.fail('items.json', `storyCommits.${id}`, `4~40자 16진 해시가 아님: ${hash}`);
+  }
+}
 
 function checkItems(dir, r) {
   const got = readJson(path.join(dir, 'items.json'));
@@ -102,11 +110,7 @@ function checkItems(dir, r) {
     for (const f of ['key', 't', 's', 'note', 'issue', 'hash']) if (x[f] !== undefined && typeof x[f] !== 'string') r.fail(F, `${p}.${f}`, '문자열이 아님');
     if (typeof x.hash === 'string' && !/^[0-9a-f]{4,40}$/i.test(x.hash)) r.fail(F, `${p}.hash`, `4~40자 16진 해시가 아님: ${x.hash}`);
   });
-  for (const [id, c] of Object.entries(obj(v.storyCommits) || {})) {
-    const hash = typeof c === 'string' ? c : (obj(c) ? c.hash : undefined);
-    if (typeof hash !== 'string') r.fail(F, `storyCommits.${id}`, '해시 문자열 또는 {hash} 가 아님');
-    else if (!/^[0-9a-f]{4,40}$/i.test(hash)) r.fail(F, `storyCommits.${id}`, `4~40자 16진 해시가 아님: ${hash}`);
-  }
+  checkStoryCommits(v.storyCommits, r);
   for (const [id, s] of Object.entries(obj(v.storyStates) || {})) {
     if (!obj(s) || !ITEM_STATUS.includes(s.status)) r.fail(F, `storyStates.${id}`, '{status: todo|doing|done} 가 아님');
   }
@@ -506,6 +510,7 @@ export function runCheck(ctx, env = process.env) {
   checkItems(ctx.dataDir, r);
   const items = readItems(ctx.dataDir);
   const ids = storyList(config, items).map((s) => s.id);
+  checkCommitRegex(ctx, config, ids, r);
   const req = checkReq(ctx.dataDir, r, ids);
   const flow = checkFlow(ctx.dataDir, r);
   const arch = checkArch(ctx.dataDir, r, config.text.plannedPrefix);

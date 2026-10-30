@@ -200,7 +200,7 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `scan` | 비밀처럼 보이는 줄이 있다(종료 1) | 4단계대로 가린다 | 끝내 못 가리면 `cli-call-failed` |
 | `too-large` | 512 KiB 를 넘는다(종료 4) | 4단계대로 묻는다 | 못 물으면 `cli-call-failed`, 거절이면 `model-declined` |
 | `split` | 나눌 단위가 부분 수보다 적거나, 부분의 표지나 검사가 맞지 않다. prompt.md 의 짧은 부분이 prepare 때와 다를 때도(짧은 부분 안을 고쳐 가림. 길이가 같아도 `run.md` 의 sha256 과 견줌) | 부분 수를 줄인다. 짧은 부분 안을 가렸으면 short.md 를 고쳐 prepare 를 다시 한다 | 없음 |
-| `sent` | 이미 보낸 폴더다(`result-send.md` 나 `.sent.md` 가 있음). 멈춘 send 뒤(`result-send-stop.md` 가 있음)라면 좌석이 이미 페이로드를 받았을 수 있다 | 다시 보내지 않는다. 좌석의 답은 이 폴더에 있다. 다시 보낼지는 사용자에게 묻는다. 새 반복이면 `init` 으로 새 폴더를 만든다 | 없음 |
+| `sent` | 이미 보낸 폴더다(`result-send.md` 나 `.sent.md` 가 있음). 멈춘 send 뒤(`result-send-stop.md` 가 있음)라면 좌석이 이미 페이로드를 받았을 수 있다 | 다시 보내지 않는다. 좌석의 답이 있으면 답 폴더(`ralph-qa-out.*`)에 있다. 다시 보낼지는 사용자에게 묻는다. 새 반복이면 `init` 으로 새 폴더를 만든다 | 없음 |
 | `sent-mark` | 보냈음 표지 `.sent.md` 를 쓰지 못했다(디스크 가득 참 등) | 폴더의 쓰기 상태를 본다. 좌석은 아무것도 보내지 않았다 | 없음 |
 | `not-prepared` | `prepare` 가 끝난 폴더가 아니다 | `prepare` 를 한다 | 없음 |
 | `not-a-run-folder` | `init` 이 만든 폴더가 아니다. 이름과 표지가 맞아도 알려진 기준 폴더(실제 경로로 견줌) 바로 아래가 아니거나 그 기준 폴더를 다른 계정도 쓸 수 있으면 이것이다 | `init` 이 찍은 경로를 쓴다 | 없음 |

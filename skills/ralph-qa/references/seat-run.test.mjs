@@ -9,7 +9,7 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
@@ -523,6 +523,44 @@ test("a folder sent by a send that left only .sent.md (result-send.md absent) is
   const again = send(w, p, ["gemini=pro"]);
   assert.deepEqual([again.code, again.json.stop], [3, "sent"], again.stdout);
   assert.equal(runs(w, "gemini").length, 1, "the payload did not go out a second time");
+});
+
+// A preload for the send's own node (NODE_OPTIONS reaches the forked node): `fail` makes the .sent.md write fail with
+// ENOSPC after the file was made (an empty mark, as a full disk leaves it), `race` makes another send's mark appear just before it (the A2 window), so the write meets EEXIST.
+function sentPreload(w, kind) {
+  const file = join(w.dir, `sent-${kind}.mjs`);
+  const body = kind === "fail"
+    ? 'if (String(f).endsWith(".sent.md")) { real(f, "", { flag: "wx" }); throw Object.assign(new Error("ENOSPC: fake"), { code: "ENOSPC" }); }'
+    : 'if (String(f).endsWith(".sent.md")) { try { real(f, "other\\n", { flag: "wx" }); } catch {} }';
+  writeFileSync(file, `import fs from "node:fs";\nimport { syncBuiltinESMExports } from "node:module";\nconst real = fs.writeFileSync;\n`
+    + `fs.writeFileSync = (f, d, o) => { ${body} return real(f, d, o); };\nsyncBuiltinESMExports();\n`);
+  return { NODE_OPTIONS: `--import=${pathToFileURL(file).href}` };
+}
+
+test("a send that cannot write .sent.md stops with sent-mark, sends nothing, leaves no mark, and the folder can be sent after", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const r = send(w, p, ["gemini=pro"], [], sentPreload(w, "fail"));
+  assert.deepEqual([r.code, r.json?.stop], [3, "sent-mark"], r.stdout + r.stderr);
+  assert.ok(existsSync(join(p.dir, "result-send-stop.md")), "the stop goes to result-send-stop.md");
+  assert.equal(existsSync(join(p.dir, ".sent.md")), false, "the empty mark the failed write left is taken away");
+  assert.equal(runs(w, "gemini").length, 0, "no seat ran");
+  const again = send(w, p, ["gemini=pro"]);
+  assert.equal(again.code, 0, again.stdout);
+  assert.equal(runs(w, "gemini").length, 1, "nothing went out the first time, so the folder is sent now, once");
+});
+
+test("a send that loses the A2 window to another send's mark stops as sent before any seat work", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  // the winner's seat is mid-run: its copy folder holds its files
+  mkdirSync(join(p.dir, "gemini"), { recursive: true });
+  writeFileSync(join(p.dir, "gemini", "winner.md"), "the winner's seat copy\n");
+  const r = send(w, p, ["gemini=pro"], [], sentPreload(w, "race"));
+  assert.deepEqual([r.code, r.json?.stop], [3, "sent"], r.stdout + r.stderr);
+  assert.equal(runs(w, "gemini").length, 0, "the payload did not go out again");
+  assert.equal(records(w, "gemini").length, 0, "the losing send started no seat CLI");
+  assert.equal(readFileSync(join(p.dir, "gemini", "winner.md"), "utf8"), "the winner's seat copy\n", "the losing send left the winner's seat folder alone (it used to clean it)");
 });
 
 test("cleanup and the other commands refuse a folder init did not make, and remove nothing", { skip: SKIP }, (t) => {
