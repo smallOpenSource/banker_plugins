@@ -230,3 +230,45 @@ test('on a slow network the exit shows its own first frame as its poster; withou
   const bad = await probe(upstream.server.url, { slowClipsMs: 4000 });
   assert.ok(bad.failures.some((f) => /dive 1 -> conn 1: the poster differs from the clip/.test(f)), JSON.stringify(bad.boundaries.map((b) => [b.to, b.posterDiff])));
 });
+
+test('step navigation: off the stops the page settles on the nearest scene start, not while a pointer holds it; a retarget ends once and never runs back', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+  const server = await servedIntro(t, DARK);
+  const { chromium } = await loadPlaywright();
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
+  await page.goto(server.url, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.IntroStepNav && window.IntroStepNav.current);
+  const nav = () => page.evaluate(() => ({ y: Math.round(window.scrollY), stops: window.IntroStepNav.current.stops(), ...window.IntroStepNav.current.state() }));
+  const rest = async () => { await page.waitForTimeout(700); await page.waitForFunction(() => !window.IntroStepNav.current.state().moving, null, { timeout: 20_000 }); await page.waitForTimeout(200); };
+  const near = async (want, what) => { const { y } = await nav(); assert.ok(Math.abs(y - want) <= 2, `${what}: at ${y}, want ${want}`); };
+  const { stops } = await nav();
+  const gap = stops[2] - stops[1];
+  // settle: 0.7 of the way from scene 2's start to scene 3's (not a half point) comes to scene 3's start
+  await page.evaluate((y) => window.scrollTo(0, y), Math.round(stops[1] + 0.7 * gap));
+  await rest();
+  await near(stops[2], 'settles on the nearest scene start');
+  // held: nothing settles while the pointer is down; after it lets go, the page settles
+  const held = Math.round(stops[1] + 0.3 * gap);
+  await page.mouse.move(640, 400);
+  await page.mouse.down();
+  await page.evaluate((y) => window.scrollTo(0, y), held);
+  await page.waitForTimeout(1200);
+  await near(held, 'stays while held');
+  await page.mouse.up();
+  await rest();
+  await near(stops[1], 'settles once let go');
+  // retarget: two arrows from scene 1's start end at scene 2's start, in one arrival, never running back
+  await page.keyboard.press('Home');
+  await rest();
+  await page.evaluate(() => { window.__ys = []; (function f() { window.__ys.push(window.scrollY); requestAnimationFrame(f); })(); });
+  const before = (await nav()).arrivals;
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(250);
+  await page.keyboard.press('ArrowDown');
+  await rest();
+  await near(stops[1], 'two half steps make the scene');
+  assert.equal((await nav()).arrivals, before + 1, 'the move ends once');
+  const ys = await page.evaluate(() => window.__ys);
+  assert.ok(ys.every((y, i) => i === 0 || y >= ys[i - 1] - 1), 'the page never runs back while retargeting');
+});

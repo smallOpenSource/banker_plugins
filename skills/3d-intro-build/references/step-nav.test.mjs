@@ -151,7 +151,7 @@ test('the navigator moves to stops and half points; an input during a move retar
   moves[0].done();
   assert.equal(n.state().moving, true, 'the first move\'s end does nothing');
   arrive();
-  assert.deepEqual([n.state().index, n.state().onStop, n.state().moving], [1, true, false]);
+  assert.deepEqual([n.state().index, n.state().onStop, n.state().moving, n.state().arrivals], [1, true, false, 1], 'two inputs, one arrival');
   n.input({ scenes: 1 });
   n.cancel();
   moves.at(-1).done();

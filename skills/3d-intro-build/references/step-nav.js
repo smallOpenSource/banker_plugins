@@ -210,6 +210,7 @@
     let pos = 0;
     let target = null;
     let generation = 0;
+    let arrivals = 0;
     const list = function () { return opt.stops(); };
     function go(y) {
       if (y == null || Math.abs(y - (target == null ? pos : target)) <= 1) return;
@@ -220,6 +221,7 @@
         if (gen !== generation) return;
         pos = y;
         target = null;
+        arrivals++;
         if (opt.onArrive) opt.onArrive(y);
       });
     }
@@ -232,7 +234,7 @@
         const stops = list();
         const at = target == null ? pos : target;
         const index = nearest(stops, at);
-        return { index: index, y: at, moving: target != null, onStop: Math.abs(stops[index] - at) <= 1,
+        return { index: index, y: at, moving: target != null, arrivals: arrivals, onStop: Math.abs(stops[index] - at) <= 1,
           atBody: stops.length - 1 > opt.lastStop && index === stops.length - 1 && Math.abs(stops[index] - at) <= 1 };
       },
     };
@@ -424,7 +426,12 @@
       onLeave: function () { showCopy(ctx, -1); }, onArrive: ctx.mark,
       move: function (from, to, done) {
         const mine = ++pending;
-        postersReady(world, o.decodeCapMs, function () { if (mine === pending) animate(from, to, moveDuration(to - from, ctx.vh(), o, reduce), done); });
+        // from where the page is once the posters are ready: an earlier move may have run on while waiting
+        postersReady(world, o.decodeCapMs, function () {
+          if (mine !== pending) return;
+          const at = window.scrollY;
+          animate(at, to, moveDuration(to - at, ctx.vh(), o, reduce), done);
+        });
       } });
     const fine = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
     document.documentElement.classList.add('isn-on', fine ? 'isn-mouse' : 'isn-touch');
@@ -575,10 +582,13 @@
   function listenScroll(ctx) {
     let queued = false;
     let rest = 0;
+    const later = function () { clearTimeout(rest); rest = setTimeout(function () { settle(ctx); }, ctx.o.snapMs); };
+    // while a pointer holds the page or its scrollbar, nothing settles; snapMs after it lets go, it may
+    window.addEventListener('pointerdown', function () { ctx.pressed = true; clearTimeout(rest); }, true);
+    ['pointerup', 'pointercancel'].forEach(function (k) { window.addEventListener(k, function () { ctx.pressed = false; later(); }, true); });
     window.addEventListener('scroll', function () {
       if (ctx.nav.state().moving) return;
-      clearTimeout(rest);
-      rest = setTimeout(function () { settle(ctx); }, ctx.o.snapMs);
+      later();
       if (queued) return;
       queued = true;
       requestAnimationFrame(function () {
@@ -592,7 +602,7 @@
 
   function settle(ctx) {
     const y = window.scrollY;
-    if (ctx.held || ctx.nav.state().moving || !ctx.ours(y, 'down')) return;
+    if (ctx.held || ctx.pressed || ctx.nav.state().moving || !ctx.ours(y, 'down')) return;
     const to = settleTarget(ctx.stops(), ctx.lastStop, y);
     if (to >= 0) step(ctx, { to: to });
   }
