@@ -490,7 +490,8 @@ async function measureViewport(browser, url, vp, o) {
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push(String(e.message || e)));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('load', { timeout: o.loadMs }).catch(() => {});
+  // a page whose load does not come within loadMs is measured as it stands, and that is a failure of this screen
+  const loadFailures = await loadedWithin(page, o.loadMs) ? [] : [`page load did not finish within ${o.loadMs} ms (measured while still loading)`];
   await page.waitForSelector('.sw-copy');
   const scenes = [];
   for (let i = 0, n = await page.locator('.sw-copy').count(); i < n; i++) scenes.push(await measureScene(page, i, { ...o, reduce: Boolean(vp.reduce) }));
@@ -498,9 +499,9 @@ async function measureViewport(browser, url, vp, o) {
   const buttons = o.contrast ? await topCtaContrast(page) : [];
   await context.close();
   const buttonMisses = buttonFailures(buttons, o.minContrast);
-  const failures = scenes.reduce((a, s) => a + s.failures.length, 0) + consoleErrors.length + inputFailures(input).length + buttonMisses.length;
+  const failures = scenes.reduce((a, s) => a + s.failures.length, 0) + consoleErrors.length + inputFailures(input).length + buttonMisses.length + loadFailures.length;
   return { viewport: `${vp.width}x${vp.height}${vp.touch ? ' touch' : ''}${vp.reduce ? ' reduced-motion' : ''}`, scenes, input, inputFailures: inputFailures(input),
-    buttons, buttonFailures: buttonMisses, consoleErrors, failures };
+    buttons, buttonFailures: buttonMisses, consoleErrors, loadFailures, failures };
 }
 
 /**
@@ -704,11 +705,13 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
   const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   if (slowClipsMs) await page.route(/\.mp4(\?|$)/, async (route) => { await new Promise((r) => setTimeout(r, slowClipsMs)); await route.continue(); });
-  await openIntro(page, url, opts.loadMs);
+  const loadMisses = [];
+  const note = (loaded, at) => { if (!loaded) loadMisses.push(`seams: page load did not finish within ${opts.loadMs} ms ${at} (measured while still loading)`); };
+  note(await openIntro(page, url, opts.loadMs), 'at the start');
   const segs = segmentsOf(config);
   const boundaries = [];
   for (let k = 1; k < segs.length; k++) {
-    if (opts.reload && k > 1) await openIntro(page, url, opts.loadMs);
+    if (opts.reload && k > 1) note(await openIntro(page, url, opts.loadMs), `before ${segs[k - 1].label} -> ${segs[k].label}`);
     boundaries.push(await probeSeam(page, segs, k, opts).catch((e) => {
       if (!isTimeout(e)) throw e;
       const why = `screen capture timed out after ${opts.captureMs} ms`;   // not measured: never a pass
@@ -719,18 +722,22 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
   await context.close();
   // a seam whose clip was there on arrival showed no poster: not measured, so not counted as a pass
   const posterUnmeasured = boundaries.filter((b) => b.posterDiff === null).length;
-  return { viewport: `${viewport.width}x${viewport.height}`, slowClipsMs, reload: Boolean(opts.reload), posterMeasured: boundaries.length - posterUnmeasured, posterUnmeasured, boundaries, failures: boundaries.flatMap((b) => b.failures) };
+  return { viewport: `${viewport.width}x${viewport.height}`, slowClipsMs, reload: Boolean(opts.reload), posterMeasured: boundaries.length - posterUnmeasured, posterUnmeasured, boundaries, failures: [...loadMisses, ...boundaries.flatMap((b) => b.failures)] };
 }
 
 // Routing (the slow clips) turns the browser's HTTP cache off, so a fresh load fetches every clip again.
+// Whether the page's load event came within ms (a resource whose answer never comes must not stop a measure).
+const loadedWithin = (page, ms) => page.waitForLoadState('load', { timeout: ms }).then(() => true, () => false);
+
+// Opens the intro for the seam probe; false when its load did not come within loadMs (the caller fails it).
 async function openIntro(page, url, loadMs = SEAM_DEFAULTS.loadMs) {
-  // the page's load is awaited at most loadMs: a resource whose answer never comes must not stop the probe
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('load', { timeout: loadMs }).catch(() => {});
+  const loaded = await loadedWithin(page, loadMs);
   await page.waitForSelector('.sw-scene');
   // the probe parks the page between stops: step navigation must not settle it on one
   await page.evaluate(() => window.IntroStepNav?.current?.hold(true));
   await page.evaluate((sels) => { for (const el of document.querySelectorAll(sels.join(','))) el.style.visibility = 'hidden'; }, OVERLAYS);
+  return loaded;
 }
 
 // The scenes in view: whether each shows its clip, its poster's load state and transform, its video's frame.

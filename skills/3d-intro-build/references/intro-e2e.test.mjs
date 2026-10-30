@@ -430,3 +430,28 @@ test('a font that never answers: each capture gives up after captureMs, the scen
   assert.ok(report.seams.failures.some((f) => /not measured \(screen capture timed out after 1500 ms\)/.test(f)), JSON.stringify(report.seams.failures));
   assert.ok(report.failures > 0, 'not measured is never a pass');
 });
+
+test('a poster that never answers keeps the page loading: verify-intro does not pass a page measured before its load', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intro-e2e-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  await makeMedia(dir);
+  fs.writeFileSync(path.join(dir, 'intro.json'), JSON.stringify(manifest()));
+  const built = assemble({ projectDir: dir });
+  const http = await import('node:http');
+  const held = [];
+  const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.mp4': 'video/mp4' };
+  const srv = http.createServer((q, s) => {
+    const u = decodeURIComponent(q.url.split('?')[0]);
+    if (u === '/assets/s3.png') { held.push(s); return; }   // never answered
+    const f = path.join(built.outDir, u === '/' ? 'index.html' : u.slice(1));
+    if (!fs.existsSync(f)) { s.writeHead(404); s.end(); return; }
+    s.writeHead(200, { 'content-type': types[path.extname(f)] || 'application/octet-stream' });
+    s.end(fs.readFileSync(f));
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { for (const s of held) s.destroy(); srv.close(); });
+  // the measures that need no capture: only the load can tell this page is not ready
+  const report = await verifyIntro(`http://127.0.0.1:${srv.address().port}/`, { viewports: [{ width: 1280, height: 800 }], input: false, contrast: false, loadMs: 2000 });
+  assert.deepEqual(report.viewports[0].loadFailures, ['page load did not finish within 2000 ms (measured while still loading)']);
+  assert.ok(report.failures > 0, 'not a pass');
+});
