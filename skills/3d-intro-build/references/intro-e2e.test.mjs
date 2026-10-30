@@ -274,9 +274,9 @@ test('step navigation: off the stops the page settles on the nearest scene start
 });
 
 // One instant jump, watched: every rAF scroll position and every composited frame from the input on.
-async function instantJump({ page, cdp, release }, name, act, want) {
+async function instantJump({ page, cdp, release }, name, act, want, loading) {
   const from = await page.evaluate(() => window.scrollY);
-  await page.evaluate(() => { window.__ys = []; (function f() { window.__ys.push(window.scrollY); requestAnimationFrame(f); })(); });
+  await page.evaluate(() => { window.__ys = []; window.__ld = []; (function f() { window.__ys.push(window.scrollY); window.__ld.push(document.querySelector('.isn-loading').classList.contains('is-on')); requestAnimationFrame(f); })(); });
   const frames = [];
   const onFrame = (f) => { frames.push({ t: Date.now(), buf: Buffer.from(f.data, 'base64') }); cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); };
   cdp.on('Page.screencastFrame', onFrame);
@@ -287,7 +287,11 @@ async function instantJump({ page, cdp, release }, name, act, want) {
   await page.waitForTimeout(2200);
   await cdp.send('Page.stopScreencast');
   cdp.off('Page.screencastFrame', onFrame);
-  const ys = await page.evaluate(() => window.__ys);
+  const [ys, ld] = await page.evaluate(() => [window.__ys, window.__ld]);
+  // a wait for a late poster shows the loading mark and hides it as the page moves; a quick one never shows it
+  assert.equal(ld.some(Boolean), loading, `${name}: the loading mark ${loading ? 'shows' : 'stays hidden'}`);
+  assert.equal(ld.at(-1), false, `${name}: no loading mark once arrived`);
+  if (loading) assert.ok(ys.slice(0, ld.indexOf(true) + 1).every((y) => Math.abs(y - want) > 2) && Math.abs(ys[ld.lastIndexOf(true) + 1] - want) <= 2, `${name}: the mark shows while waiting and goes as the page moves`);
   assert.ok(Math.abs(ys.at(-1) - want) <= 2, `${name}: at ${ys.at(-1)}, want ${want}`);
   assert.ok(ys.every((y) => Math.abs(y - from) <= 2 || Math.abs(y - want) <= 2), `${name}: no place in between (${[...new Set(ys.map(Math.round))].join(', ')})`);
   // every frame is the screen before or the scene arrived at: an empty or half-drawn scene is neither
@@ -327,10 +331,10 @@ test('Home, End and a route dot jump at once, after their late posters have deco
     await page.evaluate(() => document.querySelector('.sw-scene__still').decode().catch(() => {}).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
     return page.evaluate(() => ({ stops: window.IntroStepNav.current.stops(), lastStop: window.IntroStepNav.current.lastStop }));
   };
-  const jump = (name, act, want) => instantJump({ page, cdp, release: (t) => { releaseAt = Math.min(releaseAt, t + 900); } }, name, act, want);
+  const jump = (name, act, want, loading) => instantJump({ page, cdp, release: (t) => { releaseAt = Math.min(releaseAt, t + 900); } }, name, act, want, loading);
   let { stops, lastStop } = await open();
-  await jump('End (late poster)', () => page.keyboard.press('End'), stops[lastStop]);
-  await jump('Home', () => page.keyboard.press('Home'), 0);
+  await jump('End (late poster)', () => page.keyboard.press('End'), stops[lastStop], true);
+  await jump('Home', () => page.keyboard.press('Home'), 0, false);
   ({ stops, lastStop } = await open());
-  await jump('dot 2 (late poster)', () => page.evaluate(() => document.querySelector('.sw-route__dot:nth-child(2)').click()), stops[1]);
+  await jump('dot 2 (late poster)', () => page.evaluate(() => document.querySelector('.sw-route__dot:nth-child(2)').click()), stops[1], true);
 });

@@ -32,6 +32,10 @@
  *   snapMs         how long the page must rest off the stops before it settles on the nearest one
  *   decodeCapMs, instantDecodeCapMs   the longest wait for the posters to decode before a move, and before
  *                  an instant one (nothing hides an undecoded poster there, so it waits longer)
+ *   loadingDelayMs, loadingLabel   a wait for the posters (either kind of move) longer than loadingDelayMs
+ *                  shows a small loading mark mid-screen with this text (a status region, read by a screen
+ *                  reader; it takes no focus and no input, and a new input drops it with the old move). It
+ *                  goes as the move starts. Under reduced motion the mark does not spin
  *   prefetch       download the clips at load so the first move already plays video; on a phone or
  *                  with Save-Data only the first three in playback order
  *   hintLabel, skipLabel, mainLabel   texts of the mouse hint, the skip link and the main button
@@ -50,7 +54,7 @@
   const DEFAULTS = Object.freeze({
     end: null, gestureGapMs: 220, minWheel: 2, swipePx: 30,
     durBaseMs: 2600, durPerVhMs: 760, durMaxMs: 5600, decodeCapMs: 300, prefetch: true,
-    notchPx: 100, linePx: 40, maxNotches: 2, snapMs: 400, instantDecodeCapMs: 1500,
+    notchPx: 100, linePx: 40, maxNotches: 2, snapMs: 400, instantDecodeCapMs: 1500, loadingDelayMs: 150, loadingLabel: 'Loading',
     hintLabel: 'Scroll or press the down key', skipLabel: 'Skip intro', mainLabel: 'Go to main content',
   });
 
@@ -286,6 +290,32 @@
     setTimeout(go, capMs);
   }
 
+  /**
+   * The loading mark of the poster waits: begin(token) shows it after delayMs unless end(token) came first;
+   * a newer begin() or cancel() drops the older wait and its mark. show() and hide() draw it; timers injectable.
+   */
+  function createLoader(delayMs, show, hide, timers) {
+    // wrapped: a browser refuses setTimeout called as a method of another object (Illegal invocation)
+    const t = timers || { set: function (f, ms) { return setTimeout(f, ms); }, clear: function (id) { clearTimeout(id); } };
+    let current = null;
+    let timer = null;
+    let shown = false;
+    function drop() {
+      if (timer !== null) t.clear(timer);
+      timer = null;
+      if (shown) { shown = false; hide(); }
+    }
+    return {
+      begin: function (token) {
+        drop();
+        current = token;
+        timer = t.set(function () { timer = null; if (current === token) { shown = true; show(); } }, delayMs);
+      },
+      end: function (token) { if (token === current) { drop(); current = null; } },
+      cancel: function () { drop(); current = null; },
+    };
+  }
+
   // The running animation; a newer one, or stopAnimation(), ends it between frames.
   let animation = 0;
   let pending = 0;   // a move waiting for its posters; a newer move or stopAnimation() drops it
@@ -382,7 +412,16 @@
     document.body.insertBefore(skip, document.body.firstChild);
     document.body.appendChild(hint);
     if (o.end) document.body.appendChild(main);
-    return { hint: hint, skip: skip, main: main };
+    // a status region: its text is set while a poster wait shows, so a screen reader hears it; no focus taken
+    const loading = element('div', 'isn-loading');
+    loading.setAttribute('role', 'status');
+    loading.setAttribute('aria-live', 'polite');
+    const spin = element('i', 'isn-loading__spin');
+    spin.setAttribute('aria-hidden', 'true');
+    loading.appendChild(spin);
+    loading.appendChild(element('span', 'isn-loading__label'));
+    document.body.appendChild(loading);
+    return { hint: hint, skip: skip, main: main, loading: loading };
   }
 
   /**
@@ -393,6 +432,10 @@
     const o = Object.assign({}, DEFAULTS, options || {});
     const ctx = makeContext(world, config, o);
     ctx.ui = buildUi(o);
+    const label = ctx.ui.loading.querySelector('.isn-loading__label');
+    ctx.loader = createLoader(o.loadingDelayMs,
+      function () { label.textContent = o.loadingLabel; ctx.ui.loading.classList.add('is-on'); },
+      function () { ctx.ui.loading.classList.remove('is-on'); label.textContent = ''; });
     listenWheel(ctx);
     listenKeys(ctx);
     listenTouch(ctx);
@@ -428,9 +471,11 @@
       onArrive: function () { ctx.mark(); requestAnimationFrame(function () { requestAnimationFrame(function () { instantCopy(false); }); }); },
       move: function (from, to, done, instant) {
         const mine = ++pending;
+        ctx.loader.begin(mine);
         // from where the page is once the posters are ready: an earlier move may have run on while waiting
         postersReady(world, instant ? o.instantDecodeCapMs : o.decodeCapMs, function () {
           if (mine !== pending) return;
+          ctx.loader.end(mine);
           const at = window.scrollY;
           animate(at, to, instant ? 0 : moveDuration(to - at, ctx.vh(), o, reduce), done);
         });
@@ -551,6 +596,7 @@
   function skip(ctx) {
     ctx.nav.cancel();
     stopAnimation();
+    ctx.loader.cancel();
     const top = ctx.endTop();
     jump(top == null ? ctx.stops()[ctx.lastStop] : top);
     ctx.nav.sync(window.scrollY);
@@ -616,7 +662,7 @@
     DEFAULTS: DEFAULTS, stopPositions: stopPositions, totalWeight: totalWeight, moveDuration: moveDuration,
     wheelIgnored: wheelIgnored, createWheelGesture: createWheelGesture, belongsToIntro: belongsToIntro,
     createNavigator: createNavigator, keyInput: keyInput, prefetch: prefetch, attach: attach, postersReady: postersReady,
-    gridOf: gridOf, stepFrom: stepFrom, sceneAt: sceneAt, wheelNotches: wheelNotches, dirOf: dirOf, settleTarget: settleTarget,
+    gridOf: gridOf, stepFrom: stepFrom, createLoader: createLoader, sceneAt: sceneAt, wheelNotches: wheelNotches, dirOf: dirOf, settleTarget: settleTarget,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else window.IntroStepNav = api;

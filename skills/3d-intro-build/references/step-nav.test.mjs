@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { DEFAULTS, belongsToIntro, createNavigator, createWheelGesture, dirOf, gridOf, keyInput, moveDuration, postersReady, sceneAt, settleTarget, stepFrom, stopPositions, totalWeight, wheelIgnored, wheelNotches } = require('./step-nav.js');
+const { DEFAULTS, belongsToIntro, createLoader, createNavigator, createWheelGesture, dirOf, gridOf, keyInput, moveDuration, postersReady, sceneAt, settleTarget, stepFrom, stopPositions, totalWeight, wheelIgnored, wheelNotches } = require('./step-nav.js');
 
 const CONFIG = { diveScroll: 1.3, connScroll: 0.9, sections: [{}, {}, {}], connectors: ['c1.mp4', null] };
 
@@ -189,4 +189,30 @@ test('Home, End and a route dot move at once: the navigator hands the move an in
   arrive();
   n.input({ to: 0, instant: true });
   assert.deepEqual([moves[2].to, moves[2].instant], [0, true]);
+});
+
+test('the loading mark of a poster wait: shown only past the delay, hidden as the move starts, dropped with an abandoned move', () => {
+  assert.deepEqual([DEFAULTS.loadingDelayMs, DEFAULTS.loadingLabel], [150, 'Loading']);
+  const due = [];
+  const timers = { set: (fn) => { due.push(fn); return due.length; }, clear: (id) => { due[id - 1] = null; } };
+  const log = [];
+  const l = createLoader(150, () => log.push('show'), () => log.push('hide'), timers);
+  l.begin(1);
+  l.end(1);
+  due.forEach((f) => f && f());
+  assert.deepEqual(log, [], 'a wait under the delay shows nothing');
+  l.begin(2);
+  due.at(-1)();
+  assert.deepEqual(log, ['show'], 'past the delay: shown');
+  l.end(2);
+  assert.deepEqual(log, ['show', 'hide'], 'the move starts: hidden');
+  l.begin(3);
+  due.at(-1)();
+  l.begin(4);
+  assert.deepEqual(log.slice(2), ['show', 'hide'], 'a new input drops the old wait and its mark');
+  l.end(3);
+  assert.equal(log.length, 4, 'the old move ending later does nothing');
+  due.at(-1)();
+  l.cancel();
+  assert.deepEqual(log.slice(4), ['show', 'hide'], 'cancel (the skip link) hides it');
 });
