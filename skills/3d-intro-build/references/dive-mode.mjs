@@ -1,5 +1,5 @@
 /*
- * dive mode for 3d-intro-build (CLIP_MODE = dive): the default when the video runs on Sora. Measured on
+ * dive mode for 3d-intro-build (CLIP_MODE = dive): the default on every provider, without exits. Measured on
  * sora-2 (2025-12-08, one scene set): each scene shows, arc turns little, the finale lands only through
  * landOnStill. dive on WAN is not measured.
  *
