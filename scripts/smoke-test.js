@@ -536,7 +536,8 @@ try {
   // EL8/Rocky8's default `python3` is 3.6.8, which lineage.py sys.exit(2)s at import, so a
   // presence check would FALSE-FAIL the per-OS matrix. Probe candidates, run under the first
   // >=3.7, and SKIP (not fail) with an explicit log if none exists ("too old" == "absent").
-  const pyCandidates = ['python3', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'python3.7'];
+  // `python` last: the Windows name (no python3 there); the version probe below drops a POSIX Python 2
+  const pyCandidates = ['python3', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'python3.7', 'python'];
   let py = null;
   for (const cand of pyCandidates) {
     const r = cp.spawnSync(cand, ['-c', 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)'], { encoding: 'utf8' });
