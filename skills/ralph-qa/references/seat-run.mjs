@@ -255,6 +255,19 @@ function giveBack(lock) {
   if (lockPid(dirname(lock)) === process.pid) rmSync(lock, { force: true });
 }
 
+// The lock, and only then the last look for result-send.md: a send that checked before another gave the lock back
+// finds the folder sent here, not after it sent again. A stop here gives the lock back.
+export function holdFolder(d, now = Date.now()) {
+  const lock = takeLock(d, now);
+  try {
+    refuseSent(d);
+  } catch (e) {
+    giveBack(lock);
+    throw e;
+  }
+  return lock;
+}
+
 // The day rule: folders of an earlier run, marked, past a day, never a link or a folder without the marker (removed
 // by run-folder.mjs, the marker last). One that cannot be removed (a held handle, a folder this account cannot
 // empty) goes to `left` with why; the rest go on.
@@ -714,10 +727,21 @@ function sendStart(o, ctx, a) {
   return { d, out, id, payload, short: Number(short), shortSha: shortsha || null };
 }
 
+const resultJson = (command, result) => `${JSON.stringify({ command, ...result }, null, 2)}\n`;
+const writeResult = (dir, name, json) => {
+  try {
+    writeFileSync(join(dir, `result-${name}.md`), json, { mode: 0o600 });
+  } catch {
+    /* the JSON on stdout is the answer */
+  }
+};
+
+// A send that went out writes result-send.md before the lock goes back, so the next send to take the lock finds it
+// (report writes it again with the same JSON).
 async function send(o, ctx) {
   const a = sendArgs(o);
   const { d, out, id, payload, short, shortSha } = sendStart(o, ctx, a);
-  const lock = takeLock(d, ctx.now());
+  const lock = holdFolder(d, ctx.now());
   const touch = keepFresh(lock);
   const signals = watchSignals();
   const run = { ...a, d, o: out, id, short, shortSha, signalled: () => signals.code() !== 0 };
@@ -729,6 +753,7 @@ async function send(o, ctx) {
     const seats = settled.map((x) => x.value);
     if (!a.dryRun) appendFileSync(join(d, "run.md"), seats.filter((x) => x.cliVersion).map((x) => `cli-${x.seat} ${x.cliVersion}\n`).join(""), { mode: 0o600 });
     const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };
+    if (!a.dryRun) writeResult(d, "send", resultJson("send", result));
     return [result, signals.code(), a.dryRun ? null : d];
   } finally {
     clearInterval(touch);
@@ -741,16 +766,10 @@ const COMMANDS = { init, untracked: listUntracked, prepare, check, send, cleanup
 
 // The JSON on stdout and in <d>/result-<command>.md (not for cleanup: the folder is gone).
 function report(ctx, command, dir, result, code, name = command) {
-  const json = `${JSON.stringify({ command, ...result }, null, 2)}\n`;
+  const json = resultJson(command, result);
   ctx.stdout.write(json);
   if (result.message) ctx.stderr.write(`${result.message}\n`);
-  if (dir) {
-    try {
-      writeFileSync(join(dir, `result-${name}.md`), json, { mode: 0o600 });
-    } catch {
-      /* the JSON on stdout is the answer */
-    }
-  }
+  if (dir) writeResult(dir, name, json);
   return code;
 }
 

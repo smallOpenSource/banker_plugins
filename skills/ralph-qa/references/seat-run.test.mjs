@@ -4,14 +4,14 @@
 // Run from the repo root: node --test skills/ralph-qa/references/seat-run.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
-import { cliVersion, fromMsys, gathered, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock } from "./seat-run.mjs";
+import { cliVersion, fromMsys, gathered, holdFolder, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -309,27 +309,65 @@ test("a send keeps its lock fresh while it runs, so a long split send stays live
   rmSync(lock);
 });
 
-test("two sends of one folder that start together: one sends, the other is busy", { skip: SKIP }, async (t) => {
+const sendChild = (w, p, mode) => import("node:child_process").then(({ spawn }) => new Promise((res) => {
+  const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro"],
+    { env: { ...w.env, RQ_STUB_MODE: mode }, stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  c.stdout.on("data", (b) => { out += b; });
+  c.stderr.resume();
+  c.on("close", (code) => res({ code, out }));
+}));
+const until = async (ok, ms = 20000) => {
+  for (let waited = 0; !ok() && waited < ms; waited += 50) await new Promise((res) => setTimeout(res, 50));
+  return ok();
+};
+
+test("two sends of one folder that start together: one sends, the other is busy or finds it sent", { skip: SKIP }, async (t) => {
   const w = world(t);
   const p = prepared(w);
-  const { spawn } = await import("node:child_process");
-  const one = () => new Promise((res) => {
-    const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro"],
-      { env: { ...w.env, RQ_STUB_MODE: "slow=6000" }, stdio: ["ignore", "pipe", "pipe"] });
-    let out = "";
-    c.stdout.on("data", (b) => { out += b; });
-    c.stderr.resume();
-    c.on("close", (code) => res({ code, out }));
-  });
-  // The second starts once the first holds the lock and while its seat still runs: on a loaded box a second node
-  // that starts late came in after the first had finished, and both sent (Rocky8, 2026-10-30).
-  const first = one();
-  const lock = join(p.dir, ".running.md");
-  for (let waited = 0; !existsSync(lock) && waited < 20000; waited += 50) await new Promise((res) => setTimeout(res, 50));
-  assert.ok(existsSync(lock), "the first send took the lock");
-  const codes = (await Promise.all([first, one()])).map((x) => x.code).sort();
-  assert.deepEqual(codes, [0, 5], "one send and one busy");
+  // however the two nodes interleave (one late on a loaded box), the payload goes out once: the other is busy (5)
+  // while the lock is held, or finds result-send.md (3), before or after it takes the lock
+  const done = await Promise.all([sendChild(w, p, "slow=1500"), sendChild(w, p, "slow=1500")]);
+  const codes = done.map((x) => x.code).sort();
+  assert.ok(codes[0] === 0 && [3, 5].includes(codes[1]), `one send, the other busy or sent: ${codes}`);
   assert.equal(runs(w, "gemini").length, 1, "the payload went out once");
+});
+
+test("holdFolder: a folder another send marked sent while this one waited is refused under the lock, and the lock goes back", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  writeFileSync(join(j.dir, "result-send.md"), "{}\n");
+  assert.throws(() => holdFolder(j.dir), (e) => e.code === "sent");
+  assert.equal(existsSync(join(j.dir, ".running.md")), false, "the lock went back");
+  rmSync(join(j.dir, "result-send.md"));
+  const lock = holdFolder(j.dir);
+  assert.ok(existsSync(lock), "a folder not sent is held");
+  rmSync(lock);
+});
+
+// The gap between giving the lock back and marking the folder sent: result-send.md is made a FIFO while the seat runs,
+// so the send stops where it writes it (no reader). The lock must still be held there: a send that took it then would
+// send again. A reader then lets the send end; the marker is what report writes.
+test("a send marks the folder sent before it gives the lock back", { skip: SKIP || (WIN && "no FIFO on Windows") }, async (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const lock = join(p.dir, ".running.md");
+  const marker = join(p.dir, "result-send.md");
+  const first = sendChild(w, p, "slow=1500");
+  assert.ok(await until(() => existsSync(join(p.dir, "gemini"))), "the seat started (after the lock and its last look)");
+  assert.equal(spawnSync("mkfifo", [marker]).status, 0, "mkfifo");
+  assert.ok(await until(() => readFileSync(join(p.dir, "run.md"), "utf8").includes("cli-gemini")), "the seat ended");
+  await new Promise((res) => setTimeout(res, 1500)); // the send is now stopped at the marker, wherever it writes it
+  const held = existsSync(lock);
+  const fd = openSync(marker, constants.O_RDWR | constants.O_NONBLOCK); // a reader: the writes go through
+  t.after(() => closeSync(fd));
+  const r = await first;
+  assert.equal(held, true, "the lock is held while the marker is written");
+  assert.equal(r.code, 0, r.out);
+  const buf = Buffer.alloc(1 << 20);
+  const text = buf.subarray(0, readSync(fd, buf)).toString("utf8");
+  assert.ok(text.startsWith('{\n  "command": "send",\n  "ok": true,') && text.includes(`"dir": ${JSON.stringify(p.dir)}`), "the marker is the send's JSON");
+  assert.equal(runs(w, "gemini").length, 1);
 });
 
 test("cleanup and the other commands refuse a folder init did not make, and remove nothing", { skip: SKIP }, (t) => {
