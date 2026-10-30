@@ -117,7 +117,7 @@ node "<이 스킬 디렉터리 절대경로>/references/verifier-probe.mjs" --ru
 
 폴더, 페이로드, 비밀 검사, 좌석 명령, 시간 상한, 정리는 실행기 `references/seat-run.mjs` 가 한다. **좌석 명령과 git 사슬을 손으로 짜지 않는다.** 실행기가 멈추면 출력 JSON 의 `stop` 을 아래 멈춤 표대로 처리한다.
 `<R>` 은 `<이 스킬 디렉터리 절대경로>/references` 다(Codex 의 npm 설치본은 `~/.codex/skills/banker-ralph-qa/references`, 플러그인 설치본은 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/ralph-qa/references`. `CODEX_HOME` 이 있으면 `~/.codex` 대신 그 폴더). 호출 사이에 셸 변수가 남지 않으므로 호출마다 실제 경로를 적는다.
-명령마다 stdout 에 JSON 하나를 내고, 같은 JSON 을 `<d>/result-<명령>.md` 에도 쓴다(멈춘 send 는 `result-send-stop.md`). 종료 코드는 0 끝남, 1 비밀처럼 보이는 줄, 2 인자나 실행기 오류, 3 멈춤, 4 512 KiB 초과, 5 send 가 아직 돎이다.
+명령마다 stdout 에 JSON 하나를 내고, 같은 JSON 을 `<d>/result-<명령>.md` 에도 쓴다(멈춘 send 는 `result-send-stop.md`. 멈춘 send 도 `.sent.md` 가 있으면 좌석이 페이로드를 이미 받았을 수 있어 다시 보내지 않는다). 종료 코드는 0 끝남, 1 비밀처럼 보이는 줄, 2 인자나 실행기 오류, 3 멈춤, 4 512 KiB 초과, 5 send 가 아직 돎이다.
 페이로드 폴더는 반복마다 새로 만든다. `--gates` 의 게이트 기록 폴더 `<g>` 는 이것과 따로, 실행 내내 하나다(게이트 증거 절).
 
 1. `init` 으로 폴더 둘을 만든다. 출력의 `dir` 이 페이로드 폴더 `<d>`, `out` 이 답 폴더다.
@@ -200,7 +200,8 @@ node '<R>/seat-run.mjs' cleanup --dir '<d>'
 | `scan` | 비밀처럼 보이는 줄이 있다(종료 1) | 4단계대로 가린다 | 끝내 못 가리면 `cli-call-failed` |
 | `too-large` | 512 KiB 를 넘는다(종료 4) | 4단계대로 묻는다 | 못 물으면 `cli-call-failed`, 거절이면 `model-declined` |
 | `split` | 나눌 단위가 부분 수보다 적거나, 부분의 표지나 검사가 맞지 않다. prompt.md 의 짧은 부분이 prepare 때와 다를 때도(짧은 부분 안을 고쳐 가림. 길이가 같아도 `run.md` 의 sha256 과 견줌) | 부분 수를 줄인다. 짧은 부분 안을 가렸으면 short.md 를 고쳐 prepare 를 다시 한다 | 없음 |
-| `sent` | 이미 보낸 폴더다 | `init` 으로 새 폴더를 만든다 | 없음 |
+| `sent` | 이미 보낸 폴더다(`result-send.md` 나 `.sent.md` 가 있음). 멈춘 send 뒤(`result-send-stop.md` 가 있음)라면 좌석이 이미 페이로드를 받았을 수 있다 | 다시 보내지 않는다. 좌석의 답은 이 폴더에 있다. 다시 보낼지는 사용자에게 묻는다. 새 반복이면 `init` 으로 새 폴더를 만든다 | 없음 |
+| `sent-mark` | 보냈음 표지 `.sent.md` 를 쓰지 못했다(디스크 가득 참 등) | 폴더의 쓰기 상태를 본다. 좌석은 아무것도 보내지 않았다 | 없음 |
 | `not-prepared` | `prepare` 가 끝난 폴더가 아니다 | `prepare` 를 한다 | 없음 |
 | `not-a-run-folder` | `init` 이 만든 폴더가 아니다. 이름과 표지가 맞아도 알려진 기준 폴더(실제 경로로 견줌) 바로 아래가 아니거나 그 기준 폴더를 다른 계정도 쓸 수 있으면 이것이다 | `init` 이 찍은 경로를 쓴다 | 없음 |
 | `sandboxed` | Codex sandbox 가 네트워크를 막는다 | 승인을 받아 sandbox 밖에서 다시 한다 | 승인할 수 없으면 `cli-call-failed` |

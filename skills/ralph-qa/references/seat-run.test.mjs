@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
-import { cliVersion, fromMsys, gathered, holdFolder, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock, takeOver } from "./seat-run.mjs";
+import { cliVersion, fromMsys, gathered, holdFolder, keepFresh, liveLock, makeMarkSent, seatPlan, SEAT_WHY, takeLock, takeOver } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -482,6 +482,47 @@ test("a send marks the folder sent before it gives the lock back", { skip: SKIP 
   const text = buf.subarray(0, readSync(fd, buf)).toString("utf8");
   assert.ok(text.startsWith('{\n  "command": "send",\n  "ok": true,') && text.includes(`"dir": ${JSON.stringify(p.dir)}`), "the marker is the send's JSON");
   assert.equal(runs(w, "gemini").length, 1);
+});
+
+test("makeMarkSent writes .sent.md once; a mark another send left is `already`; a write error is `err`", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const mark = makeMarkSent(j.dir, () => Date.now());
+  const first = mark();
+  assert.deepEqual(first, { ok: true });
+  assert.ok(existsSync(join(j.dir, ".sent.md")), ".sent.md is there");
+  const body = readFileSync(join(j.dir, ".sent.md"), "utf8");
+  assert.ok(new RegExp(`^${process.pid} `).test(body), "it holds the pid and the time");
+  rmSync(join(j.dir, ".sent.md"));
+  assert.deepEqual(mark(), { ok: true }, "the send-wide memo writes once: no second write even after the file is gone");
+  assert.equal(existsSync(join(j.dir, ".sent.md")), false);
+  // a mark another send (the A2 window) left: `already`, so this send does not send the payload
+  const j2 = init(w);
+  writeFileSync(join(j2.dir, ".sent.md"), "other\n", { flag: "wx" });
+  assert.deepEqual(makeMarkSent(j2.dir, () => Date.now())(), { already: true });
+  // a write error that is not EEXIST: `err`, which the runner turns into a sent-mark stop
+  const j3 = init(w);
+  const f = failWx(".sent.md", "EACCES", 1);
+  try {
+    const r = makeMarkSent(j3.dir, () => Date.now())();
+    assert.equal(r.err?.code, "EACCES", "a non-EEXIST write error is carried as err");
+  } finally {
+    f.restore();
+  }
+});
+
+test("a folder sent by a send that left only .sent.md (result-send.md absent) is not sent again", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const p = prepared(w);
+  const first = send(w, p, ["gemini=pro"]);
+  assert.equal(first.code, 0, first.stderr);
+  assert.ok(existsSync(join(p.dir, ".sent.md")), ".sent.md is written before the payload goes out");
+  assert.equal(runs(w, "gemini").length, 1, "the seat ran once");
+  // a send that carried the payload but stopped (or died) before result-send.md: only .sent.md is there
+  rmSync(join(p.dir, "result-send.md"));
+  const again = send(w, p, ["gemini=pro"]);
+  assert.deepEqual([again.code, again.json.stop], [3, "sent"], again.stdout);
+  assert.equal(runs(w, "gemini").length, 1, "the payload did not go out a second time");
 });
 
 test("cleanup and the other commands refuse a folder init did not make, and remove nothing", { skip: SKIP }, (t) => {
