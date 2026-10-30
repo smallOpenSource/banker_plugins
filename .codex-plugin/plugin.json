@@ -1,6 +1,6 @@
 {
   "name": "banker",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Codex CLI plugin: QA, audit, docs, architecture, setup, media, and wiki skills, with an update notice and usage counting hooks.",
   "author": {
     "name": "smallOpenSource",

@@ -285,5 +285,23 @@
     "banker:ultra-ui-qa",
     "banker:update-banker",
     "banker:vertical-pptx"
+  ],
+  "0.23.0": [
+    "banker:3d-intro-build",
+    "banker:3d-intro-setup",
+    "banker:all-in-one",
+    "banker:omc-patch",
+    "banker:payload-mon",
+    "banker:play-qa",
+    "banker:progress-mon",
+    "banker:ralph-qa",
+    "banker:remains",
+    "banker:setup-bypass-permissions",
+    "banker:setup-mcp",
+    "banker:setup-omc-hud",
+    "banker:ultra-chain",
+    "banker:ultra-init",
+    "banker:ultraqa",
+    "banker:update-banker"
   ]
 }
