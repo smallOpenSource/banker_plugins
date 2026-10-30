@@ -361,9 +361,11 @@ test('a press ended without a pointerup (context menu, focus lost) lets the page
   // End while a PageDown move runs: the copy at the end shows at once (isn-instant), not through the 0.35 s fade
   await page.keyboard.press('Home');
   await page.waitForTimeout(1500);
-  await page.evaluate(() => { window.__inst = []; (function f() { window.__inst.push(document.documentElement.classList.contains('isn-instant')); requestAnimationFrame(f); })(); });
+  // watched with a MutationObserver, not frame by frame: a page standing still may run no animation frame for a while
+  await page.evaluate(() => { window.__inst = []; new MutationObserver(() => window.__inst.push(document.documentElement.classList.contains('isn-instant'))).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] }); });
   await page.keyboard.press('PageDown');
   await page.waitForTimeout(400);
+  assert.equal(await page.evaluate(() => window.IntroStepNav.current.state().moving), true, 'End comes while the PageDown move runs');
   await page.keyboard.press('End');
   await page.waitForFunction(() => !window.IntroStepNav.current.state().moving, null, { timeout: 20_000 });
   assert.ok((await page.evaluate(() => window.__inst)).some(Boolean), 'the instant move swaps the copy at once');
@@ -395,4 +397,36 @@ test('the seam probe gives up on a poster that does not arrive in time: that sea
   const unmeasured = r.boundaries.filter((b) => b.posterDiff === null && /did not decode within 1000 ms/.test(b.posterWhy || ''));
   assert.ok(unmeasured.length >= 1, JSON.stringify(r.boundaries.map((b) => [b.to, b.posterDiff, b.posterWhy])));
   assert.equal(r.posterUnmeasured >= unmeasured.length, true, 'counted as unmeasured, not as a pass');
+});
+
+test('a font that never answers: each capture gives up after captureMs, the scenes and seams it could not capture are not measured (with the reason), and the rest of the report stays', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intro-e2e-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  await makeMedia(dir);
+  fs.writeFileSync(path.join(dir, 'intro.json'), JSON.stringify(manifest()));
+  const built = assemble({ projectDir: dir });
+  const http = await import('node:http');
+  const held = [];
+  const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.mp4': 'video/mp4' };
+  const srv = http.createServer((q, s) => {
+    const u = decodeURIComponent(q.url.split('?')[0]);
+    if (u === '/hang.woff2') { held.push(s); return; }   // never answered
+    if (u === '/hang.css') { s.writeHead(200, { 'content-type': 'text/css' }); s.end('@font-face{font-family:Hang;src:url(/hang.woff2)}body,.sw-copy{font-family:Hang,sans-serif}'); return; }
+    const f = path.join(built.outDir, u === '/' ? 'index.html' : u.slice(1));
+    if (!fs.existsSync(f)) { s.writeHead(404); s.end(); return; }
+    let body = fs.readFileSync(f);
+    if (f.endsWith('index.html')) body = Buffer.from(String(body).replace('</head>', '<link rel="stylesheet" href="hang.css" /></head>'));
+    s.writeHead(200, { 'content-type': types[path.extname(f)] || 'application/octet-stream' });
+    s.end(body);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { for (const s of held) s.destroy(); srv.close(); });
+  const report = await verifyIntro(`http://127.0.0.1:${srv.address().port}/`, { viewports: [{ width: 1280, height: 800 }], input: false, seams: true, captureMs: 1500, loadMs: 2000, fetchMs: 3000 });
+  const v = report.viewports[0];
+  assert.equal(v.scenes.length, 3, 'every scene is still reported (place, overlaps)');
+  assert.ok(v.scenes.every((sc) => typeof sc.inViewport === 'boolean'), 'the geometry stays');
+  assert.ok(v.scenes.some((sc) => sc.failures.some((f) => /not measured \(screen capture timed out after 1500 ms\)/.test(f))), JSON.stringify(v.scenes.map((sc) => sc.failures)));
+  assert.ok(report.seams.boundaries.length >= 1 && report.seams.boundaries.every((b) => b.posterDiff === null), 'the seams it could not capture are unmeasured');
+  assert.ok(report.seams.failures.some((f) => /not measured \(screen capture timed out after 1500 ms\)/.test(f)), JSON.stringify(report.seams.failures));
+  assert.ok(report.failures > 0, 'not measured is never a pass');
 });

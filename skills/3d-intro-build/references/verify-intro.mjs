@@ -348,12 +348,12 @@ export async function screenshot(page, opts, { tries = 3, waitMs = 150 } = {}) {
   }
 }
 
-async function lineContrast(page, i, panel, minContrast = 4.5) {
+async function lineContrast(page, i, panel, minContrast = 4.5, captureMs = 10_000) {
   const clip = { x: Math.max(0, Math.floor(panel.x)), y: Math.max(0, Math.floor(panel.y)), width: Math.ceil(panel.width), height: Math.ceil(panel.height) };
   const lines = await page.evaluate(hideTextLines, { i, parts: TEXT_PARTS });
   const panelBg = await page.evaluate((k) => getComputedStyle(document.querySelectorAll('.sw-copy')[k]).backgroundColor, i);
   await page.waitForTimeout(80);
-  const png = await screenshot(page, { type: 'png', clip });
+  const png = await screenshot(page, { type: 'png', clip, timeout: captureMs });
   await page.evaluate(showText, { i, parts: TEXT_PARTS });
   const img = await pixels(page.context(), png);
   return lines.map((l) => {
@@ -382,7 +382,10 @@ async function measureScene(page, i, o) {
   if (await page.evaluate(() => document.documentElement.classList.contains('isn-on'))) await page.waitForTimeout(450);
   const clip = await clipState(page, i, o.reduce);
   const g = geometry(await page.evaluate(rawGeometry, { i, header: o.header, covers: COVERS }));
-  const contrast = o.contrast && g.opacity > 0.5 ? await lineContrast(page, i, g.panel, o.minContrast) : [];
+  const contrast = o.contrast && g.opacity > 0.5 ? await lineContrast(page, i, g.panel, o.minContrast, o.captureMs).catch((e) => {
+    if (!isTimeout(e)) throw e;
+    return [{ el: 'panel', line: 0, min: null, why: `screen capture timed out after ${o.captureMs} ms` }];   // not measured: never a pass
+  }) : [];
   const scene = { scene: i + 1, clip, ...g, contrast };
   return { ...scene, failures: g.opacity > 0.5 ? judge(scene, o) : ['panel not visible at its stop'] };
 }
@@ -486,7 +489,8 @@ async function measureViewport(browser, url, vp, o) {
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push(String(e.message || e)));
-  await page.goto(url, { waitUntil: 'load' });
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('load', { timeout: o.loadMs }).catch(() => {});
   await page.waitForSelector('.sw-copy');
   const scenes = [];
   for (let i = 0, n = await page.locator('.sw-copy').count(); i < n; i++) scenes.push(await measureScene(page, i, { ...o, reduce: Boolean(vp.reduce) }));
@@ -503,7 +507,12 @@ async function measureViewport(browser, url, vp, o) {
  * Measures `url` at every viewport. Resolves to { url, viewports: [...], failures }; with `seams`,
  * also { seams } from seamProbe at the first viewport, its failures counted in.
  */
-const VERIFY_DEFAULTS = { viewports: VIEWPORTS, header: '.sw-topbar', minContrast: 4.5, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0, seamReload: false };
+// captureMs, loadMs, fetchMs: the longest wait for one screen capture, the page's load and intro.js; past them that
+// part is not measured (with the reason, never a pass) and the run goes on. A font or an image that never answers
+// would otherwise hold a capture 30 s and throw away every result.
+const VERIFY_DEFAULTS = { viewports: VIEWPORTS, header: '.sw-topbar', minContrast: 4.5, input: true, contrast: true, playwrightFromProject: false, seams: false, slowClipsMs: 0, seamReload: false,
+  captureMs: 10_000, loadMs: 15_000, fetchMs: 15_000 };
+const isTimeout = (e) => e?.name === 'TimeoutError';
 
 export async function verifyIntro(url, opts = {}) {
   const o = { ...VERIFY_DEFAULTS, ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
@@ -511,8 +520,9 @@ export async function verifyIntro(url, opts = {}) {
   const browser = await chromium.launch();
   try {
     const results = [];
-    for (const vp of o.viewports) results.push(await measureViewport(browser, url, vp, { header: o.header, minContrast: o.minContrast, input: o.input, contrast: o.contrast }));
-    const seam = o.seams ? await seamProbe(browser, url, { viewport: o.viewports[0], slowClipsMs: Number(o.slowClipsMs) || 0, reload: Boolean(o.seamReload) }) : null;
+    const limits = { captureMs: o.captureMs, loadMs: o.loadMs };
+    for (const vp of o.viewports) results.push(await measureViewport(browser, url, vp, { header: o.header, minContrast: o.minContrast, input: o.input, contrast: o.contrast, ...limits }));
+    const seam = o.seams ? await seamProbe(browser, url, { viewport: o.viewports[0], slowClipsMs: Number(o.slowClipsMs) || 0, reload: Boolean(o.seamReload), ...limits, fetchMs: o.fetchMs }) : null;
     const failures = results.reduce((a, r) => a + r.failures, 0) + (seam ? seam.failures.length : 0);
     return { url, viewports: results, ...(seam ? { seams: seam } : {}), failures };
   } finally {
@@ -532,7 +542,7 @@ export async function verifyIntro(url, opts = {}) {
  * longest wait for the posters in view to decode on arrival; past it the seam is unmeasured (posterDiff null, posterWhy).
  * loadMs: the longest wait for the page's load event (a resource that never answers must not stop the probe).
  */
-export const SEAM_DEFAULTS = { steps: 20, windowVh: 0.6, blankVh: 0.3, plateSec: 0.6, flickerDiff: 24, settleMs: 8000, posterDecodeMs: 5000, loadMs: 15000 };
+export const SEAM_DEFAULTS = { steps: 20, windowVh: 0.6, blankVh: 0.3, plateSec: 0.6, flickerDiff: 24, settleMs: 8000, posterDecodeMs: 5000, loadMs: 15000, captureMs: 10_000, fetchMs: 15_000 };
 const OVERLAYS = ['.sw-copylayer', '.sw-topbar', '.sw-hint', '.sw-route', '.sw-scrollbar', '.isn-hint', '.isn-skip', '.isn-main'];
 
 /** The mountScrollWorld config in an assembled intro.js; null when it is not one. */
@@ -616,7 +626,7 @@ const posterShown = (page) => page.evaluate(() => [...document.querySelectorAll(
 
 const scrollToVh = (page, vh) => page.evaluate((y) => { window.scrollTo(0, y * window.innerHeight); return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); }, vh);
 // A seam capture, decoded here: many captures per seam, so not through a browser tab as pixels() does.
-const capture = async (page) => decodePng(await screenshot(page, { type: 'png' })).data;
+const capture = async (page, ms = SEAM_DEFAULTS.captureMs) => decodePng(await screenshot(page, { type: 'png', timeout: ms })).data;
 
 /**
  * RGBA pixels of an 8-bit, non-interlaced PNG (grey, grey+alpha, RGB or RGBA: what a browser
@@ -689,8 +699,8 @@ const clipSeconds = (page, k) => page.evaluate((i) => document.querySelectorAll(
  */
 export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowClipsMs = 0, ...o } = {}) {
   const opts = { ...SEAM_DEFAULTS, ...o };
-  const config = configFromIntroJs(await (await fetch(new URL('intro.js', url))).text());
-  if (!config) return { viewport: `${viewport.width}x${viewport.height}`, boundaries: [], failures: ['seams: intro.js holds no config to read the segments from'] };
+  const config = await fetch(new URL('intro.js', url), { signal: AbortSignal.timeout(opts.fetchMs) }).then((res) => res.text()).then(configFromIntroJs).catch(() => null);
+  if (!config) return { viewport: `${viewport.width}x${viewport.height}`, boundaries: [], failures: ['seams: intro.js was not read (no answer within fetchMs, or no config in it)'] };
   const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   if (slowClipsMs) await page.route(/\.mp4(\?|$)/, async (route) => { await new Promise((r) => setTimeout(r, slowClipsMs)); await route.continue(); });
@@ -699,7 +709,12 @@ export async function seamProbe(browser, url, { viewport = VIEWPORTS[0], slowCli
   const boundaries = [];
   for (let k = 1; k < segs.length; k++) {
     if (opts.reload && k > 1) await openIntro(page, url, opts.loadMs);
-    boundaries.push(await probeSeam(page, segs, k, opts));
+    boundaries.push(await probeSeam(page, segs, k, opts).catch((e) => {
+      if (!isTimeout(e)) throw e;
+      const why = `screen capture timed out after ${opts.captureMs} ms`;   // not measured: never a pass
+      return { from: segs[k - 1].label, to: segs[k].label, atVh: segs[k].start, maxDiff: null, blank: [], posterDiff: null, posterWhy: why,
+        failures: [`seam ${segs[k - 1].label} -> ${segs[k].label}: not measured (${why})`] };
+    }));
   }
   await context.close();
   // a seam whose clip was there on arrival showed no poster: not measured, so not counted as a pass
@@ -741,7 +756,7 @@ async function probeSeam(page, segs, k, o) {
   for (const y of ys) {
     await scrollToVh(page, y);
     await settleClips(page, o.settleMs);
-    const px = await capture(page);
+    const px = await capture(page, o.captureMs);
     if (last) maxDiff = Math.max(maxDiff, meanAbsDiff(last, px));
     flags.push(isBlank(px));
     last = px;
@@ -770,11 +785,11 @@ async function arrive(page, vh, o) {
   const before = await sceneStates(page);
   if (!decoded) return { diff: null, flicker: false, why: `a poster did not decode within ${o.posterDecodeMs} ms`, states: { before } };
   if (!(await posterShown(page))) { await settleClips(page, o.settleMs); return { diff: null, flicker: false, states: { before } }; }
-  const early = await capture(page);
+  const early = await capture(page, o.captureMs);
   await page.waitForFunction(() => [...document.querySelectorAll('.sw-scene')]
     .every((e) => Number(getComputedStyle(e).opacity) <= 0.5 || e.classList.contains('has-clip')), null, { timeout: o.settleMs }).catch(() => {});
   await settleClips(page, o.settleMs);
-  const diff = meanAbsDiff(early, await capture(page));
+  const diff = meanAbsDiff(early, await capture(page, o.captureMs));
   return { diff, flicker: diff > o.flickerDiff, states: { before, after: await sceneStates(page) } };
 }
 
