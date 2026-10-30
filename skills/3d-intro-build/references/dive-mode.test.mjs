@@ -123,12 +123,28 @@ test('runDiveLegs: the finale is reversed and ends on the closing still', { skip
   assert.ok(await ssimFrames(end, path.join(dir, 's1.png'), { ffmpeg: FF }) >= 0.99);
 });
 
-test('runDiveLegs: first pair gate makes scene 1\'s dive and exit only, two versions to compare; the full run reuses them', { skip: needFf, timeout: 180_000 }, async (t) => {
+test('runDiveLegs: choice b\'s gate makes scene 1\'s dive only (no exit paid for) and says what exits would add; the full run reuses the dive', { skip: needFf, timeout: 180_000 }, async (t) => {
   const { dir, manifest } = project(t);
   const calls = [];
-  const gate = await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, exit: false, only: 'first', generate: fakeGenerate(dir, calls), ffmpeg: FF });
+  const gate = await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, only: 'first', generate: fakeGenerate(dir, calls), ffmpeg: FF });
   assert.equal(gate.stage, 'first-pair');
-  assert.deepEqual(calls.map((c) => c.prompt), ['dive push-in', 'exit'], 'the gate shows the exit version even when exits are off');
+  assert.deepEqual(calls.map((c) => [c.prompt, c.seconds]), [['dive push-in', 8]], 'b: the gate pays for scene 1\'s dive only, inside the approved estimate');
+  assert.deepEqual([gate.withExit, gate.switchToExitUsd], [null, 0.8], 'turning to c would add two 4 s exits, $0.8, to approve first');
+  assert.ok(!fs.existsSync(path.join(dir, 'clips', 'exit-1.raw.mp4')));
+  assert.ok(!fs.existsSync(path.join(dir, 'intro.json')), 'nothing past the gate');
+  const end = await extractLastFrame(path.join(dir, gate.withoutExit[0]), path.join(dir, 'g.png'), { ffmpeg: FF });
+  assert.ok(await ssimFrames(end, path.join(dir, 'clips', 'plate-1.png'), { ffmpeg: FF }) >= 0.99, 'the dive lands on the plate');
+  const full = await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, generate: fakeGenerate(dir, calls), ffmpeg: FF });
+  assert.deepEqual(calls.slice(1).map((c) => c.prompt), ['dive push-in', 'finale'], 'dive 1 is not paid for again');
+  assert.deepEqual(full.manifest.connectors, [null, null]);
+});
+
+test('runDiveLegs: choice c\'s gate makes scene 1\'s dive and exit, two versions to compare; the full run without exits reuses the dive', { skip: needFf, timeout: 180_000 }, async (t) => {
+  const { dir, manifest } = project(t);
+  const calls = [];
+  const gate = await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, exit: true, only: 'first', generate: fakeGenerate(dir, calls), ffmpeg: FF });
+  assert.equal(gate.stage, 'first-pair');
+  assert.deepEqual(calls.map((c) => c.prompt), ['dive push-in', 'exit'], 'c: the gate makes the exit too');
   assert.deepEqual([gate.withoutExit, gate.withExit], [['clips/gate/dive-1.noexit.mp4'], ['clips/gate/dive-1.mp4', 'clips/gate/exit-1.mp4']]);
   assert.ok(typeof gate.diveExitSsim === 'number' && typeof gate.motion.zoom === 'number');
   assert.equal(gate.seam.frame, 'the next scene\'s still');
@@ -147,7 +163,7 @@ test('runDiveLegs: first pair gate makes scene 1\'s dive and exit only, two vers
 test('runDiveLegs: with zoomBoost the exit seed is the zoomed dive\'s last frame', { skip: needFf, timeout: 180_000 }, async (t) => {
   const { dir, manifest } = project(t);
   manifest.sections[0].zoom = 1.2;
-  await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, only: 'first', generate: fakeGenerate(dir, []), ffmpeg: FF });
+  await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, exit: true, only: 'first', generate: fakeGenerate(dir, []), ffmpeg: FF });
   const ref = await extractLastFrame(path.join(dir, 'clips', 'dive-1.zoom.mp4'), path.join(dir, 'zref.png'), { ffmpeg: FF });
   assert.ok(fs.readFileSync(path.join(dir, 'clips', 'seed-exit-1.png')).equals(fs.readFileSync(ref)));
 });
@@ -156,7 +172,7 @@ test('runDiveLegs: a raw clip is reused only for the same leg; a changed MOVE or
   const { dir, manifest } = project(t);
   const calls = [];
   const events = [];
-  const run = (o = {}) => D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, only: 'first', generate: fakeGenerate(dir, calls), ffmpeg: FF, onEvent: (e) => events.push(e), ...o });
+  const run = (o = {}) => D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, exit: true, only: 'first', generate: fakeGenerate(dir, calls), ffmpeg: FF, onEvent: (e) => events.push(e), ...o });
   await run();
   assert.equal(calls.length, 2);
   const rec = JSON.parse(fs.readFileSync(path.join(dir, 'clips', 'dive-1.raw.json'), 'utf8'));

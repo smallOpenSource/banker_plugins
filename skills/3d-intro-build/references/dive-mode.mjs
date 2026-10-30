@@ -14,8 +14,8 @@
  *
  *   planDiveLegs   the legs in order (pure)
  *   runDiveLegs    makes them with generateClip (injectable), post-processes, writes intro.json;
- *                  { only: 'first' } makes scene 1's dive and exit and stops at the first pair gate
- *                  with two versions to compare: without the exit and with it
+ *                  { only: 'first' } makes scene 1's dive (and its exit only with exit: true, choice c) and
+ *                  stops at the first pair gate: the dive landed, and with an exit both versions to compare
  *
  * A generated clip is kept as <name>.raw.mp4 beside <name>.raw.json, the fingerprint of what made it
  * (prompt, seed frame, seconds, size, MOVE, provider order). A run after the gate (or after a stop) reuses
@@ -28,7 +28,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractFirstFrame, extractLastFrame, probeDims, resolveFfmpeg } from './azure-adapter.mjs';
+import { estimateCost, extractFirstFrame, extractLastFrame, probeDims, resolveFfmpeg } from './azure-adapter.mjs';
 import { generateClip, parseProviderOrder } from './video-pool.mjs';
 import { borderColour, cameraMotion, postClip, resizePng, seamSsim, solidPlate } from './clip-post.mjs';
 
@@ -80,7 +80,7 @@ export async function judgeBackground(png, { border = DIVE_DEFAULTS.border, bgSh
  *   size         ORIENTATION ('720x1280'); a still of another size is scaled before it seeds a clip
  *   promptFor(leg, section)   the prompt of each leg (prompts.md: dive, exit, finale)
  *   exit         make exit clips (connectors); default false (dive without exits is the default mode)
- *   only         'first': scene 1's dive and exit, the two gate versions, then stop
+ *   only         'first': scene 1's dive, and its exit only when exit is true (no exit is paid for in choice b), then stop
  *   generate     the clip maker (default generateClip); creds and clipOptions are passed on
  *   bgShare, bgTolerance, border, landSec, finaleLandSec, diveSeconds, exitSeconds, finaleSeconds, reuse (default true), ffmpeg, onEvent
  * Returns { stage: 'first-pair', ... } at the gate, else { stage: 'done', manifest, file, seams } (seams: each gap's judgeBackground).
@@ -90,7 +90,7 @@ export async function runDiveLegs(opts = {}) {
   if (!o.projectDir || !o.manifest || !o.size || typeof o.promptFor !== 'function') throw new Error('runDiveLegs: projectDir, manifest, size and promptFor are required');
   const ctx = await prepare(o);
   const first = o.only === 'first';
-  const legs = planDiveLegs({ scenes: o.manifest.sections, exit: o.exit || first, diveSeconds: o.diveSeconds, exitSeconds: o.exitSeconds, finaleSeconds: o.finaleSeconds });
+  const legs = planDiveLegs({ scenes: o.manifest.sections, exit: o.exit, diveSeconds: o.diveSeconds, exitSeconds: o.exitSeconds, finaleSeconds: o.finaleSeconds });
   for (const leg of first ? legs.filter((l) => l.scene === 0 && l.kind !== 'finale') : legs) await makeLeg(ctx, leg);
   if (first) return firstPair(ctx);
   await finish(ctx);
@@ -275,17 +275,21 @@ async function firstPair(ctx) {
   const land = await plateFrom(ctx, 0, ctx.seeds[1], 'the next scene\'s still');
   const noExit = path.join(gate, 'dive-1.noexit.mp4');
   await placeOrPost(ctx, 'dive-1', ctx.shown['dive-1'], noExit, land ? { land } : {});
+  const motion = await cameraMotion(ctx.shown['dive-1'], { ffmpeg: ctx.bin });
+  const base = { stage: 'first-pair', seam: ctx.seams[0], withoutExit: [relOf(ctx, noExit)], motion: { rollDeg: motion.rollDeg, zoom: motion.zoom, method: motion.method } };
+  // choice b: no exit was made; what turning to c would add (exits between every pair of scenes), to approve first
+  if (!ctx.o.exit) return { ...base, withExit: null, switchToExitUsd: switchCost(ctx) };
   const dive = path.join(gate, 'dive-1.mp4');
   fs.copyFileSync(ctx.shown['dive-1'], dive);
   const exit = path.join(gate, 'exit-1.mp4');
   await placeOrPost(ctx, 'exit-1', ctx.raw['exit-1'], exit, land ? { land } : {});
-  const motion = await cameraMotion(ctx.shown['dive-1'], { ffmpeg: ctx.bin });
-  return {
-    stage: 'first-pair', seam: ctx.seams[0], exitEnd: await exitEnd(ctx),
-    withoutExit: [relOf(ctx, noExit)], withExit: [relOf(ctx, dive), relOf(ctx, exit)],
-    diveExitSsim: await seamSsim(dive, exit, { ffmpeg: ctx.bin }),
-    motion: { rollDeg: motion.rollDeg, zoom: motion.zoom, method: motion.method },
-  };
+  return { ...base, exitEnd: await exitEnd(ctx), withExit: [relOf(ctx, dive), relOf(ctx, exit)], diveExitSsim: await seamSsim(dive, exit, { ffmpeg: ctx.bin }) };
+}
+
+// What exits between every pair of scenes add to the estimate (Sora rate, as Step 2 approved it).
+function switchCost(ctx) {
+  const at = (exit) => estimateCost({ nScenes: ctx.n, mode: 'dive', diveSeconds: ctx.o.diveSeconds, exitSeconds: ctx.o.exitSeconds, exit }).videos;
+  return Math.round((at(true) - at(false)) * 100) / 100;
 }
 
 // Whether the exit as generated reached the background by its end (the same measure), for the gate to show.

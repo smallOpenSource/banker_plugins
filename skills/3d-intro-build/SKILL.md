@@ -146,7 +146,7 @@ const cost = CLIP_MODE === 'holdFlight'
     : estimateCost({ nScenes, seconds, twoImage });
 ```
 
-- dive 는 장면마다 8초(dive, 마지막 장면은 finale)와, 나가기를 쓰면(c) 장면 사이마다 4초다. 기본 b 는 나가기 없음이라 승인 추정도 나가기 없음 기준이다. 첫 쌍 게이트에서 c 로 바꾸면 그 차이만큼 다시 승인을 받는다. 첫 쌍 게이트(장면 1 의 dive 8초 + 나가기 4초, 약 $1.2)는 그 추정 안에 들어간다.
+- dive 는 장면마다 8초(dive, 마지막 장면은 finale)와, 나가기를 쓰면(c) 장면 사이마다 4초다. 기본 b 는 나가기 없음이라 승인 추정도 나가기 없음 기준이다. 첫 쌍 게이트는 b 면 장면 1 의 dive 8초(약 $0.8)만, c 면 dive 8초와 나가기 4초(약 $1.2)를 만들고, 둘 다 고른 모드의 추정 안에 들어간다. b 의 게이트에서 c 로 바꾸려면 게이트 결과의 `switchToExitUsd`(나가기 전부의 추가 비용, 6장면 $2.0)를 알리고 승인받은 뒤 `exit: true` 로 다시 부른다.
 - 6장면 기준 Sora 추정: b(dive 나가기 없음) $4.8, c(나가기 있음) $6.8, a(chain 4초) $2.4. 참고 실측: sora-2(2025-12-08) 시험에서 나가기를 쓰면 원본 이음매 SSIM 이 0.43~0.60 에서 0.59~0.81 로 올랐지만, 화면으로 본 자연스러움은 사용자가 b 를 골랐다.
 - Sora 로 도는 실행이면 Step 0 프로브의 퇴역일(`dep.retiresAt`, `dep.daysLeft`)을 함께 보인다. 그날 뒤로 Sora 실행은 `retired` 로 멈춘다. 날짜는 프로브 값만 쓴다.
 
@@ -280,13 +280,13 @@ sora-2(2025-12-08) 유료 실측(장면 한 세트)에서 dive 는 장면마다 
 - **첫 쌍 게이트의 판** - 다음 클립이 아직 없으므로 다음 장면 스틸로 같은 판정을 한다(다음 dive 는 그 스틸에서 시작한다).
 - **시드 순서** - exit 시드는 dive 의 원본 마지막 프레임이다. `zoomBoost` 를 썼으면 보이는 프레임이 바뀌므로 줌한 클립에서 뽑는다. 판 착지는 시드를 뽑은 뒤에 한다.
 - **스틸 크기** - 스틸이 ORIENTATION 과 다르면(classic 폴백 1024x1536) `resizePng` 로 맞춘 뒤 넣는다(`resize` 이벤트).
-- **첫 쌍 게이트** - 장면 1 의 dive 와 나가기만 먼저 만든다. 나가기 없는 판(dive 가 판에 착지)과 나가기 있는 판(dive + 판에 착지하는 나가기)을 검토 페이지에 나란히 올리고 `motion`(roll 근사, 줌), `diveExitSsim`, `exitEnd` 를 함께 보인다. 기본 선택은 나가기 없음(b)이다. `exitEnd.reached` 가 거짓이면(나가기 끝이 배경에 닿지 않음) 그 사실과 잰 비율(`exitEnd.share`, 문턱 `exitEnd.threshold`)을 보이고 나가기를 다시 만들지 묻는다. arc 를 골랐으면 회전을 눈으로 확인한다. 사람이 MOVE, 나가기 사용, 길이를 정한 뒤 나머지를 만든다. 게이트에서 만든 클립(`*.raw.mp4`)은 만든 입력(프롬프트, 시드, 길이, 크기, MOVE, provider 순서)이 같을 때만 다시 쓰므로 두 번 과금하지 않는다(입력 기록은 옆의 `*.raw.json`). 게이트에서 MOVE 나 길이를 바꾸면 그 leg 는 새로 만들어지고 `stale` 이벤트가 바뀐 항목을 알린다. 같은 입력으로 다시 만들려면(예: 나가기 재생성) 그 `*.raw.mp4` 를 지우거나 `reuse: false` 를 준다. 기록 없는 `*.raw.mp4` 는 맞는지 알 수 없어 `kind: 'reuse_unknown'` 으로 멈춘다(과금 없음).
+- **첫 쌍 게이트** - 장면 1 만 먼저 만든다. b(나가기 없음)면 dive 하나만 만들어 판에 착지한 판(`withoutExit`)과 `motion`(roll 근사, 줌), c 로 바꿀 때의 추가 비용 `switchToExitUsd` 를 보인다(`withExit` 는 null). c(나가기 있음)면 나가기도 만들어 나가기 없는 판과 있는 판(dive + 판에 착지하는 나가기)을 검토 페이지에 나란히 올리고 `diveExitSsim`, `exitEnd` 를 함께 보인다. `exitEnd.reached` 가 거짓이면(나가기 끝이 배경에 닿지 않음) 그 사실과 잰 비율(`exitEnd.share`, 문턱 `exitEnd.threshold`)을 보이고 나가기를 다시 만들지 묻는다. arc 를 골랐으면 회전을 눈으로 확인한다. 사람이 MOVE, 나가기 사용, 길이를 정한 뒤 나머지를 만든다. 게이트에서 만든 클립(`*.raw.mp4`)은 만든 입력(프롬프트, 시드, 길이, 크기, MOVE, provider 순서)이 같을 때만 다시 쓰므로 두 번 과금하지 않는다(입력 기록은 옆의 `*.raw.json`). 게이트에서 MOVE 나 길이를 바꾸면 그 leg 는 새로 만들어지고 `stale` 이벤트가 바뀐 항목을 알린다. 같은 입력으로 다시 만들려면(예: 나가기 재생성) 그 `*.raw.mp4` 를 지우거나 `reuse: false` 를 준다. 기록 없는 `*.raw.mp4` 는 맞는지 알 수 없어 `kind: 'reuse_unknown'` 으로 멈춘다(과금 없음).
 
 ```js
 import { runDiveLegs } from './references/dive-mode.mjs';
 const promptFor = (leg, section) => buildPrompt(leg.kind, leg.move, section);   // prompts.md 8절의 dive, exit, finale
-const gate = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds, promptFor, only: 'first', onEvent: log });
-// gate.withoutExit, gate.withExit 를 검토 페이지에 나란히 올리고 판정을 받는다
+const gate = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds, promptFor, only: 'first', exit: 고른_값, onEvent: log });   // b: exit false(기본), c: exit true
+// gate.withoutExit(c 면 gate.withExit 도)를 검토 페이지에 올리고 판정을 받는다. b 에서 c 로 바꾸려면 gate.switchToExitUsd 를 먼저 승인받는다
 const done = await runDiveLegs({ projectDir, manifest, size: ORIENTATION, creds, promptFor, exit: 사람이_고른_값, onEvent: log });
 // done.file = <projectDir>/intro.json (sections[i].clip, connectors, connectorStills, finale 포스터)
 ```
