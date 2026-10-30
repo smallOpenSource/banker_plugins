@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { stubBin } from "../../../scripts/test-fixtures/seat-stub.mjs";
 import { CLI_DEFAULT } from "./verifier-probe.mjs";
-import { cliVersion, fromMsys, gathered, holdFolder, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock } from "./seat-run.mjs";
+import { cliVersion, fromMsys, gathered, holdFolder, keepFresh, liveLock, seatPlan, SEAT_WHY, takeLock, takeOver } from "./seat-run.mjs";
 
 const RUNNER = fileURLToPath(new URL("./seat-run.mjs", import.meta.url));
 const WIN = process.platform === "win32";
@@ -310,6 +310,42 @@ test("takeLock: a lock with no number yet (another send just made it) or a broke
     assert.equal(lockHolder(j.dir), process.pid);
     rmSync(lock);
   }
+});
+
+test("takeLock: a stale lock is taken over only under .taking.md, judged again there; a mark left a minute is cleared", { skip: SKIP }, (t) => {
+  const w = world(t);
+  const j = init(w);
+  const lock = join(j.dir, ".running.md");
+  const taking = join(j.dir, ".taking.md");
+  const ago = (min) => (Date.now() - min * 60 * 1000) / 1000;
+  const staleLock = () => {
+    writeFileSync(lock, `${2 ** 22 + 12345} x\n`);
+    utimesSync(lock, ago(16), ago(16));
+  };
+  // another send is taking the stale lock over: busy, and neither its mark nor the lock is touched
+  staleLock();
+  writeFileSync(taking, `${process.ppid} x\n`);
+  assert.throws(() => takeLock(j.dir), (e) => e.code === "busy" && /넘겨받는 중/.test(e.message));
+  assert.ok(existsSync(taking), "the other send's mark stays");
+  assert.equal(readFileSync(lock, "utf8"), `${2 ** 22 + 12345} x\n`, "the stale lock is left to the other send");
+  // a mark a minute old (its send died taking over): this send clears it and is busy, the next one takes over
+  utimesSync(taking, ago(1.5), ago(1.5));
+  assert.throws(() => takeLock(j.dir), (e) => e.code === "busy");
+  assert.equal(existsSync(taking), false, "the old mark is cleared");
+  assert.equal(takeLock(j.dir), lock);
+  assert.equal(lockHolder(j.dir), process.pid);
+  assert.equal(existsSync(taking), false, "a take-over leaves no mark");
+  // judged again under the mark: a send that found the lock stale, when another has made it new since, removes nothing
+  for (const [label, text] of [["another send's lock", `${process.ppid} x\n`], ["one with no number yet", ""]]) {
+    writeFileSync(lock, text);
+    assert.throws(() => takeOver(j.dir, lock), (e) => e.code === "busy" && /방금 시작했다/.test(e.message), label);
+    assert.equal(readFileSync(lock, "utf8"), text, `${label} is not removed`);
+    assert.equal(existsSync(taking), false, `${label}: the mark goes back`);
+  }
+  staleLock();
+  assert.equal(takeOver(j.dir, lock), lock, "still stale under the mark: taken over");
+  assert.equal(lockHolder(j.dir), process.pid);
+  rmSync(lock);
 });
 
 test("a send keeps its lock fresh while it runs, so a long split send stays live to cleanup", { skip: SKIP }, async (t) => {

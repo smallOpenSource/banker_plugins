@@ -43,6 +43,8 @@ const RUN_NAME = /^ralph-qa\.[A-Za-z0-9]+$/;
 const ANY_RUN = /^ralph-qa(-out)?\.[A-Za-z0-9]+$/;
 // The lock of a send that runs: one name, made with "wx", holding the pid and the time.
 const LOCK_NAME = ".running.md";
+const TAKING_NAME = ".taking.md";
+const STALE_TAKING_MS = 60 * 1000;
 
 class Usage extends Error {}
 const USAGE = "usage: node seat-run.mjs init | untracked --repo <repo> [--folder <f>] | prepare --dir <d> --repo <repo> --base <base|auto> --id <id>"
@@ -226,23 +228,49 @@ function freshUnread(d, now) {
   return Boolean(st && st.isFile() && now - st.mtimeMs < STALE_LOCK_MS);
 }
 
-// Takes the folder's lock: "wx" lets one of two sends that start together have it. A stale lock is taken over once
-// (two sends that both find the same stale lock is the one gap left). Gives back the lock's path.
+const justStarted = () => new Stop("busy", "이 폴더의 send 가 방금 시작했다");
+
+// The lock (or the take-over mark) made with "wx": one of two sends that make it together has it.
+function makeLock(file, now) {
+  try {
+    writeFileSync(file, `${process.pid} ${new Date(now).toISOString()}\n`, { flag: "wx", mode: 0o600 });
+    return true;
+  } catch (e) {
+    if (e.code !== "EEXIST") throw e;
+    return false;
+  }
+}
+
+// A stale lock is taken over only under the take-over mark .taking.md, and judged again under it: of two sends that
+// both found it stale, the second finds the first's new lock live (or with no number yet) and is busy; neither removes
+// a lock that is not stale. A mark left by a send that died taking over is cleared once it is a minute old (that send
+// is busy; the next one goes on), so it holds the folder no longer than that.
+export function takeOver(d, lock, now = Date.now()) {
+  const taking = join(d, TAKING_NAME);
+  if (!makeLock(taking, now)) {
+    const st = lstatOr(taking);
+    if (st?.isFile() && now - st.mtimeMs >= STALE_TAKING_MS) rmSync(taking, { force: true });
+    throw new Stop("busy", "다른 send 가 이 폴더의 낡은 잠금을 넘겨받는 중이다");
+  }
+  try {
+    if (liveLock(d, now) || freshUnread(d, now)) throw justStarted();
+    rmSync(lock, { force: true });
+    if (!makeLock(lock, now)) throw justStarted();
+    return lock;
+  } finally {
+    rmSync(taking, { force: true });
+  }
+}
+
+// Takes the folder's lock: "wx" lets one of two sends that start together have it; a stale one is taken over under
+// the take-over mark. Gives back the lock's path.
 export function takeLock(d, now = Date.now()) {
   const lock = join(d, LOCK_NAME);
-  for (let tries = 0; tries < 2; tries += 1) {
-    try {
-      writeFileSync(lock, `${process.pid} ${new Date(now).toISOString()}\n`, { flag: "wx", mode: 0o600 });
-      return lock;
-    } catch (e) {
-      if (e.code !== "EEXIST") throw e;
-    }
-    const pid = liveLock(d, now);
-    if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
-    if (freshUnread(d, now)) break;
-    rmSync(lock, { force: true });
-  }
-  throw new Stop("busy", "이 폴더의 send 가 방금 시작했다");
+  if (makeLock(lock, now)) return lock;
+  const pid = liveLock(d, now);
+  if (pid) throw new Stop("busy", `이 폴더의 send 가 아직 돈다(pid ${pid})`);
+  if (freshUnread(d, now)) throw justStarted();
+  return takeOver(d, lock, now);
 }
 
 // Touches the lock every `every` ms while a send runs: a send past 15 minutes (split parts) stays live to cleanup.
