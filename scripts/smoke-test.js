@@ -71,7 +71,8 @@ try {
   delete env.CODEX_HOME; // the installer follows CODEX_HOME; the tests install under the temp HOME only
 
   // 3) codex dry-run (project scope)
-  const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
+  // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
+  const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
   ok(copies === 65, `codex dry-run plans 65 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
