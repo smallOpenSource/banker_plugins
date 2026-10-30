@@ -14,7 +14,7 @@ import { assemble } from './assemble.mjs';
 import { crossfade, resolveFfmpeg, stillToClip } from './azure-adapter.mjs';
 import { STRICT_CSP } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
-import { configFromIntroJs, decodePng, loadPlaywright, meanAbsDiff, seamProbe, verifyIntro } from './verify-intro.mjs';
+import { configFromIntroJs, decodePng, isBlank, loadPlaywright, meanAbsDiff, seamProbe, verifyIntro } from './verify-intro.mjs';
 import { runDiveLegs } from './dive-mode.mjs';
 import { spawnSync } from 'node:child_process';
 
@@ -296,6 +296,8 @@ async function instantJump({ page, cdp, release }, name, act, want, loading) {
   assert.ok(ys.every((y) => Math.abs(y - from) <= 2 || Math.abs(y - want) <= 2), `${name}: no place in between (${[...new Set(ys.map(Math.round))].join(', ')})`);
   // every frame is the screen before or the scene arrived at: an empty or half-drawn scene is neither
   const px = frames.map((f) => decodePng(f.buf).data);
+  // the two references must be real scenes, not blank: a blank reference would let a blank stray frame match it and pass
+  assert.ok(!isBlank(px[0]) && !isBlank(px.at(-1)), `${name}: the before and arrived frames are real scenes, not blank (so the stray check is meaningful)`);
   const strayAt = frames.filter((f, k) => Math.min(meanAbsDiff(px[k], px[0]), meanAbsDiff(px[k], px.at(-1))) > 12).map((f) => f.t - tAct);
   assert.ok(frames.length > 1 && !strayAt.length, `${name}: no blank frame in ${frames.length} (a frame neither before nor after at ms after the input: ${strayAt.join(',')})`);
   const copy = await page.evaluate(() => [...document.querySelectorAll('.sw-copy')].map((c) => Number(getComputedStyle(c).opacity)));
