@@ -346,32 +346,64 @@ test('start 잠금: 죽은 프로세스의 잠금과 링크 잠금은 넘겨받�
   }
 });
 
+// 렌더가 4초 걸리는 serve(같은 모듈, 렌더만 바꿈)를 따로 띄운다. 렌더는 동기라 그동안 신원 요청이 줄을 선다.
+// 렌더를 시작하면 marker 파일을 쓴다. 돌려줌: { child, busy() }. busy() 는 느린 요청을 보내고 렌더가 시작될 때까지 기다린다.
+async function slowServe(p, port) {
+  const helper = path.join(ROOT, `slow-serve${++n}.mjs`);
+  const marker = `${helper}.rendering`;
+  const url = (f) => JSON.stringify(new URL(f, `file://${HERE.replaceAll('\\', '/').replace(/^(?=[A-Za-z]:)/, '/')}/`).href);
+  fs.writeFileSync(helper, [
+    `import fs from 'node:fs';`,
+    `import { serve } from ${url('pm-server.mjs')};`,
+    `import { defaults } from ${url('pm-config.mjs')};`,
+    `const [project, port, marker] = process.argv.slice(2);`,
+    `const ctx = { project, runtime: 'claude', dataDir: project + '/.omc/progress-mon', exists: true, warn: null };`,
+    `const render = () => { fs.writeFileSync(marker, '1'); const end = Date.now() + 4000; while (Date.now() < end); return 'slow'; };`,
+    `await serve(ctx, defaults(project), { port: Number(port) }, { out: () => {}, err: () => {} }, { render });`,
+  ].join('\n'));
+  const child = spawn(process.execPath, [helper, p, String(port), marker], { env: ENV, stdio: 'ignore', windowsHide: true });
+  for (let i = 0; i < 200 && !fs.existsSync(path.join(dataOf(p), 'server.json')); i++) await new Promise((r) => setTimeout(r, 50));
+  const busy = async () => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/', headers: { host: `127.0.0.1:${port}` }, agent: false });
+    req.on('error', () => {});
+    for (let i = 0; i < 200 && !fs.existsSync(marker); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(fs.existsSync(marker), '느린 렌더가 시작됨(그래서 신원 응답이 늦음)');
+    return req;
+  };
+  return { child, busy };
+}
+
 test('떠 있는 서버의 렌더가 느려 신원 응답이 늦어도 start 는 재사용(거짓 실패와 둘째 서버 없음)', T, async () => {
   const p = project('.omc/progress-mon');
   guardData(p);
   const port = await freePort();
-  // 렌더가 4초 걸리는 serve(같은 모듈, 렌더만 바꿈)를 따로 띄운다. 렌더는 동기라 그동안 신원 요청이 줄을 선다
-  const helper = path.join(ROOT, `slow-serve${++n}.mjs`);
-  const url = (f) => JSON.stringify(new URL(f, `file://${HERE.replaceAll('\\', '/').replace(/^(?=[A-Za-z]:)/, '/')}/`).href);
-  fs.writeFileSync(helper, [
-    `import { serve } from ${url('pm-server.mjs')};`,
-    `import { defaults } from ${url('pm-config.mjs')};`,
-    `const [project, port] = process.argv.slice(2);`,
-    `const ctx = { project, runtime: 'claude', dataDir: project + '/.omc/progress-mon', exists: true, warn: null };`,
-    `await serve(ctx, defaults(project), { port: Number(port) }, { out: () => {}, err: () => {} }, { render: () => { const end = Date.now() + 4000; while (Date.now() < end); return 'slow'; } });`,
-  ].join('\n'));
-  const child = spawn(process.execPath, [helper, p, String(port)], { env: ENV, stdio: 'ignore', windowsHide: true });
+  const { child, busy } = await slowServe(p, port);
   try {
-    for (let i = 0; i < 100 && !fs.existsSync(path.join(dataOf(p), 'server.json')); i++) await new Promise((r) => setTimeout(r, 50));
-    const busy = http.get({ host: '127.0.0.1', port, path: '/', headers: { host: `127.0.0.1:${port}` }, agent: false });
-    busy.on('error', () => {});
-    await new Promise((r) => setTimeout(r, 200));
+    const req = await busy();
     const a = await cliAsync(['start', '--port', String(port)], p);
     assert.equal(a.code, 0, a.err);
     assert.equal(a.out, `이미 실행 중(재사용): http://127.0.0.1:${port}/\n`);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataOf(p), 'server.json'), 'utf8')).pid, child.pid, '상태 파일은 처음 서버');
     await assert.rejects(get(port + 1), /ECONNREFUSED/, '옆 포트에 둘째 서버 없음');
-    busy.destroy();
+    req.destroy();
+  } finally {
+    child.kill();
+    cleanup(p);
+  }
+});
+
+test('렌더가 느린 동안 부른 stop 도 그 서버를 끔(PID 대조는 그대로)', T, async () => {
+  const p = project('.omc/progress-mon');
+  guardData(p);
+  const port = await freePort();
+  const { child, busy } = await slowServe(p, port);
+  try {
+    const req = await busy();
+    const r = await cliAsync(['stop'], p);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out, `정지함: http://127.0.0.1:${port}/ (PID ${child.pid}). 상태 파일 삭제\n`);
+    await assert.rejects(get(port), /ECONNREFUSED/);
+    req.destroy();
   } finally {
     child.kill();
     cleanup(p);

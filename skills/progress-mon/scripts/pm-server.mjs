@@ -623,14 +623,16 @@ export async function stop(ctx, io) {
     io.err('오류: 상태 파일 server.json 이 올바르지 않음. 그대로 둠');
     return 1;
   }
-  const r = await askIdentity(st.port);
+  let r = await askIdentity(st.port);
+  // runningServer 와 같은 확인: 렌더가 느린 서버는 pid 가 살아 있으면 BUSY_WAIT_MS 까지 기다린다(PID 대조는 아래 그대로)
+  if (r.kind === 'timeout' && alive(st.pid)) r = await askIdentity(st.port, BUSY_WAIT_MS);
   if (r.kind === 'refused') {
     dropState(ctx.dataDir);
     io.out(`이미 꺼짐(포트 ${st.port} 연결 거부). 상태 파일 삭제`);
     return 0;
   }
   if (r.kind === 'timeout') {
-    io.err(`오류: 포트 ${st.port} 응답 시간 초과(1.5초). 상태 파일 그대로 둠`);
+    io.err(`오류: 포트 ${st.port} 응답 시간 초과(${alive(st.pid) ? '11.5' : '1.5'}초). 상태 파일 그대로 둠`);
     return 1;
   }
   if (r.kind === 'other') {

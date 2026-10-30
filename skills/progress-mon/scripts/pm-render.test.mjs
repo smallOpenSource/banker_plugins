@@ -745,13 +745,13 @@ test('AC-7: 시험이 아닌 스크립트에 S0~S16 꼴 id, pcc, portable-cc 문
   }
 });
 
-test('agentLabelPattern 시간 상한은 요청마다 하나: 에이전트가 많아도 200 ms 근처에서 이유가 든 오류로 끝남', T, () => {
+test('agentLabelPattern 시간 상한은 요청마다 하나: 에이전트가 많아도 200 ms 근처에서 이유가 든 오류로 끝남', T, (t) => {
   const proj = path.join(ROOT, 'many-agents');
   const run = path.join(proj, 'wf', 'run1');
   const ctx = { project: proj, runtime: 'claude', dataDir: path.join(proj, '.omc', 'progress-mon') };
   fs.mkdirSync(run, { recursive: true });
   fs.mkdirSync(ctx.dataDir, { recursive: true });
-  // 라벨 하나는 상한 아래(20 ms 이상), 모두 합치면 상한을 크게 넘는 길이와 수를 이 PC 에서 잰다(V8 판과 PC 마다 빠르기가 다름)
+  // 라벨 하나는 상한 아래(20 ms 이상), 모두 합치면 상한을 크게(3초) 넘는 길이와 수를 이 PC 에서 잰다(V8 판과 PC 마다 빠르기가 다름)
   const re = /(?:a+)+$/;
   const cost = (k) => {
     const t = process.hrtime.bigint();
@@ -759,10 +759,14 @@ test('agentLabelPattern 시간 상한은 요청마다 하나: 에이전트가 �
     return Number(process.hrtime.bigint() - t) / 1e6;
   };
   let k = 14;
-  while (k < 40 && Math.min(cost(k), cost(k)) < 20) k++;
-  const each = Math.min(cost(k), cost(k));
+  let each = 0;
+  for (; k < 40; k++) {
+    each = Math.min(cost(k), cost(k));
+    if (each >= 20) break;
+  }
+  if (each < 20) return t.skip('이 Node 는 역추적이 넘치면 선형 엔진으로 바꿔 정규식이 시간을 넘기지 않음');
   assert.ok(each < 200, `라벨 하나 ${each} ms`);
-  const many = Math.min(300, Math.ceil(1500 / each));
+  const many = Math.min(400, Math.ceil(3000 / each));
   const slow = 'a'.repeat(k) + '!';
   const lines = [];
   for (let i = 0; i < many; i++) {

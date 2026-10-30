@@ -361,7 +361,7 @@ test('stop: 다른 pid, 다른 프로그램, 시간 초과는 상태 파일 그�
   const cases = [
     [(q, s) => s.end(JSON.stringify({ app: 'progress-mon', pid: 4242 })), /서버 PID 4242 가 상태 파일 PID \d+ 와 다름/],
     [(q, s) => (s.writeHead(404), s.end('<html>other</html>')), /다른 프로그램이 답함/],
-    ['silent', /응답 시간 초과\(1\.5초\)/],
+    ['silent', /응답 시간 초과\(11\.5초\)/], // 상태 파일 pid(이 프로세스)가 살아 있어 10초 더 기다림
   ];
   for (const [onReq, msg] of cases) {
     const ctx = ctxOf();
