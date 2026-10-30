@@ -12,6 +12,11 @@ import { homeInSession } from './codex-routes.mjs';
 const PKG = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = mkdtempSync(join(tmpdir(), 'codex-hooks-test-'));
 after(() => rmSync(root, { recursive: true, force: true }));
+// enableHooks 의 cwd 기본값은 process.cwd() 다. 러너가 임시 폴더(예: /tmp)에서 실행되면, 그 아래에 만든 시험 Codex 홈이
+// 작업 폴더 안으로 보여 "샌드박스가 고칠 수 있는 곳" 검사에 걸린다. 이 검사가 제대로 되도록 시험을 저장소(임시 폴더 밖)에서 돌린다.
+const cwd0 = process.cwd();
+process.chdir(PKG);
+after(() => process.chdir(cwd0));
 let n = 0;
 const home = () => {
   const d = join(root, `h${n++}`);
