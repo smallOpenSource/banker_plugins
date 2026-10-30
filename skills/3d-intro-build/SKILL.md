@@ -95,17 +95,23 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 - **SCENES[] (순서 있는 씬 목록)** - 권장 5~7개. 이야기 순서는 여기서 정한다(예: 문제 제기, 해법, 결론. 식당이나 여행지라면 도착, 경험, 초대처럼 브랜드에 맞게). CTA 는 마지막 장면에만 둔다. 각 씬의 `id`, `label`, `subject`, `eyebrow`, `title`, `body`, `tags[]`.
 - **ORIENTATION** - `720x1280`(세로) 또는 `1280x720`(가로). 스틸과 영상 크기가 이 값으로 통일된다.
 - **BUDGET** - 상한 USD.
-- **CLIP_MODE** - `dive`, `chain`, `holdFlight`(선택, WAN 필요, 미검증). 차이는 Step 4 에 있다. 기본값은 `defaultClipMode(creds)`(`video-pool.mjs`, 무료)가 정한다. `VIDEO_PROVIDER_ORDER` 에서 실제로 처음 쓰일 provider 가 Sora 면 `dive`, WAN 이면 `chain` 이다.
+- **CLIP_MODE** - 셋을 보이고 고르게 한다. 기본은 b 다. holdFlight(WAN 필요, 미검증)는 따로 묻지 않고 사용자가 원할 때만 쓴다. 차이는 Step 4 에 있다.
+
+  | 선택 | 모드 | 모습 | 6장면 Sora 추정 |
+  |---|---|---|---|
+  | a | `chain` | 앞 클립 마지막 프레임에서 이어지는 한 줄 활공 | $2.4 |
+  | b (기본) | `dive`, 나가기 없음 | 장면마다 그 스틸에서 들어감, 장면 사이는 배경 판 착지와 엔진 디졸브 | $4.8 |
+  | c | `dive`, 나가기 있음 | b 에 장면 사이 물러나는 클립을 더함 | $6.8 |
 
   ```js
   import { defaultClipMode } from './references/video-pool.mjs';
-  const { mode, provider, reason } = defaultClipMode(creds);   // mode: 'dive' | 'chain' | null
+  const { mode, exit, provider, measured, reason } = defaultClipMode(creds);   // mode 'dive' + exit false (b), or null
   ```
 
+  - 기본 b 의 까닭: sora-2(2025-12-08) 비교 페이지에서 사용자가 셋 가운데 b 를 가장 자연스럽다고 골랐다. provider 와 관계없이 b 가 기본이다.
+  - `measured` 가 거짓(영상이 WAN 으로 돎)이면 고를 때 "WAN 에서 dive 는 미측정" 을 알린다. chain 은 WAN 에서도 쓰던 길이다.
   - `mode` 가 `null` 이면 영상을 만들 provider 가 없다(모든 WAN 항목 형식 오류, http Sora endpoint, 설정 없음, 퇴역 기록). `reason` 을 알리고 유료 스틸 전에 멈춘다.
-  - CLIP_MODE, 나가기, 카메라 느낌은 한 질문으로 묻는다(아래 `CAMERA_FEEL`). 질문에 기본값과 까닭, 나가기 기본(있음), 비용 차이(Step 2)를 함께 보인다.
-  - dive 기본의 까닭: 장면마다 그 승인 스틸에서 들어가므로 모든 장면이 화면에 나온다. 클립당 배율도 크다(기하평균 dive 1.39, chain 1.25). chain 대조군은 장면 2~6 에 닿지 못했다. 근거는 sora-2(2025-12-08) 로 만든 장면 한 세트의 실측이다.
-  - WAN 에서 dive 는 미측정이다. WAN 으로 도는 실행은 chain 이 기본이고, dive 를 고를 수는 있다.
+  - CLIP_MODE 와 카메라 느낌은 한 질문으로 묻는다(아래 `CAMERA_FEEL`). 질문에 표의 비용 차이를 함께 보인다.
   - dive 면 장면마다 **MOVE** 도 받는다: `push-in`(기본, 밀고 내려감), `crane`(위에서 곧게 내려감, 넓은 공간), `arc`(대상 둘레를 돌며 내려감, 제품과 랜드마크). arc 는 회전 지시 순응이 낮다(실측 3개 가운데 눈으로 돈 것 1개, roll 근사 10도 이상 0개). arc 를 고르면 첫 쌍 게이트에서 회전을 눈으로 확인한다. 문구는 `references/prompts.md` 8절.
 - **SITE** - 단독 인트로 페이지인지, 기존 사이트 위에 붙이는지. 붙인다면 그 사이트의 CSP, 본문 시작 요소의 선택자(`#main` 같은 것), 고정 헤더의 선택자, 지원 언어.
 
@@ -115,10 +121,10 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 |---|---|---|
 | `PALETTE` | 배경색 하나, accent 하나 | 엔진 테마 색 |
 | `TONE`, `STYLE` | clay diorama | 화풍(prompts.md 2절) |
-| `CAMERA_FEEL` | CLIP_MODE 를 따름. dive 면 "장면마다 바깥에서 들어감"(장면별 MOVE, 나가기 있음), chain 과 holdFlight 면 잔잔한 전진 활공(fly-through, walkthrough, locked-iso 중 고름) | 카메라 움직임 |
+| `CAMERA_FEEL` | CLIP_MODE 를 따름. dive 면 "장면마다 바깥에서 들어감"(장면별 MOVE, b 는 나가기 없음, c 는 있음), chain 과 holdFlight 면 잔잔한 전진 활공(fly-through, walkthrough, locked-iso 중 고름) | 카메라 움직임 |
 | `MOBILE` | no | yes 면 약 2배 비용(세로 체인 추가) |
 | `STILLS_SOURCE` | gpt-image-2 | 코히전 강화가 필요하면 FLUX 옵트인 |
-| `STEP_NAV` | yes | 장면 단위 이동(`step-nav.js`). 멈춤 자리는 장면마다 시작점(dive 첫 프레임, 나가기는 다음 장면으로 잇는 구간), 마지막 장면 끝, 본문 시작. 휠 1칸과 방향키(위아래, 좌우) 1번은 다음 멈춤 자리까지 절반, 2번이면 한 장면. PageUp/PageDown, Space, 스와이프는 한 장면, Home 은 첫 장면 시작, End 는 마지막 장면 끝. 멈춤 자리나 절반 지점이 아닌 곳에 멈추면 잠시 뒤 가까운 장면 시작점으로 붙는다. 멈춘 자리에서는 그 장면 문구를 보인다. 스크롤 동작을 가로채므로 원하지 않으면 매니페스트 `"stepNav": false` 로 끈다 |
+| `STEP_NAV` | yes | 장면 단위 이동(`step-nav.js`). 멈춤 자리는 장면마다 시작점(dive 첫 프레임, 나가기는 다음 장면으로 잇는 구간), 마지막 장면 끝, 본문 시작. 휠 1칸과 방향키(위아래, 좌우) 1번은 다음 멈춤 자리까지 절반, 2번이면 한 장면. PageUp/PageDown, Space, 스와이프는 한 장면, Home 은 첫 장면 시작, End 는 마지막 장면 끝으로 애니메이션 없이 바로 가고, 장면 점(클릭, 또는 점에 포커스를 두고 Enter 나 Space)도 그 장면 시작점으로 바로 간다(포스터 디코드 뒤, 문구도 바로). 멈춤 자리나 절반 지점이 아닌 곳에 멈추면 잠시 뒤 가까운 장면 시작점으로 붙는다. 멈춘 자리에서는 그 장면 문구를 보인다. 스크롤 동작을 가로채므로 원하지 않으면 매니페스트 `"stepNav": false` 로 끈다 |
 | `PANEL` | 없음 | `glass` 면 흐린 유리 문구 패널(`panel-glass.css`) |
 
 ---
@@ -140,8 +146,8 @@ const cost = CLIP_MODE === 'holdFlight'
     : estimateCost({ nScenes, seconds, twoImage });
 ```
 
-- dive 는 장면마다 8초(dive, 마지막 장면은 finale)와, 나가기를 쓰면 장면 사이마다 4초다. 나가기 기본은 있음이고, 사용 여부는 첫 쌍 게이트에서 정한다. 그래서 승인 때는 나가기 있음(큰 쪽)으로 추정한다. 첫 쌍 게이트(장면 1 의 dive 8초 + 나가기 4초, 약 $1.2)는 그 추정 안에 들어간다.
-- 6장면 기준 Sora 추정: dive 나가기 있음 $6.8, 나가기 없음 $4.8, chain(4초) $2.4. 실측 근거: sora-2(2025-12-08) 시험에서 나가기를 쓰면 원본 이음매 SSIM 이 0.43~0.60 에서 0.59~0.81 로 올랐다.
+- dive 는 장면마다 8초(dive, 마지막 장면은 finale)와, 나가기를 쓰면(c) 장면 사이마다 4초다. 기본 b 는 나가기 없음이라 승인 추정도 나가기 없음 기준이다. 첫 쌍 게이트에서 c 로 바꾸면 그 차이만큼 다시 승인을 받는다. 첫 쌍 게이트(장면 1 의 dive 8초 + 나가기 4초, 약 $1.2)는 그 추정 안에 들어간다.
+- 6장면 기준 Sora 추정: b(dive 나가기 없음) $4.8, c(나가기 있음) $6.8, a(chain 4초) $2.4. 참고 실측: sora-2(2025-12-08) 시험에서 나가기를 쓰면 원본 이음매 SSIM 이 0.43~0.60 에서 0.59~0.81 로 올랐지만, 화면으로 본 자연스러움은 사용자가 b 를 골랐다.
 - Sora 로 도는 실행이면 Step 0 프로브의 퇴역일(`dep.retiresAt`, `dep.daysLeft`)을 함께 보인다. 그날 뒤로 Sora 실행은 `retired` 로 멈춘다. 날짜는 프로브 값만 쓴다.
 
 - 사용자에게 `cost.images` / `cost.videos` / `cost.usd` 와 BUDGET 대비를 보여준다.
@@ -212,7 +218,7 @@ node references/curate.mjs --stop <projectDir>   # 끝나면 종료
 
 모드는 Step 1 의 CLIP_MODE 다. 어느 모드든 모든 leg 는 `generateClip` 한 함수로 만든다. provider 순서(`VIDEO_PROVIDER_ORDER`, 기본 `wan,sora`)와 키 풀은 이 함수가 처리한다.
 
-### 4A. chain (WAN 실행의 기본)
+### 4A. chain (선택 a)
 
 연속성은 **forward-chaining** 으로 만든다. 직전 클립의 **실제 마지막 프레임을 톤 변형 없이 그대로** 다음 클립의 첫 프레임으로 넣는다.
 (시드 프레임에 histeq 톤 정합을 걸면 시작 톤이 바뀌어 연속성이 **오히려 나빠진다**. e2e 실측 raw-시드 SSIM ~0.59 대 histeq-시드 0.46.)
@@ -256,7 +262,7 @@ const r = await generateClip({ creds, prompt: flight, size: ORIENTATION, seconds
 - `intro.json`: `sections[i].clip` 은 정지 클립, `connectors[i]` 는 비행 클립이다. 권장 간격은 `diveScroll: 0.6`, `connScroll: 1.4` 다.
 - 비행 프롬프트는 `references/prompts.md` 5절을 쓴다.
 
-### 4C. dive (Sora 실행의 기본)
+### 4C. dive (기본 b 는 나가기 없음, c 는 나가기 있음)
 
 장면마다 그 장면의 승인 스틸에서 시작한다. 장면 정체성은 첫 프레임이 지키고, 장면 사이 이음매는 무료 후처리가 맞춘다.
 sora-2(2025-12-08) 유료 실측(장면 한 세트)에서 dive 는 장면마다 섬 바깥에서 들어가 목표 근처에 닿았다. 한계도 함께 알린다.
@@ -274,7 +280,7 @@ sora-2(2025-12-08) 유료 실측(장면 한 세트)에서 dive 는 장면마다 
 - **첫 쌍 게이트의 판** - 다음 클립이 아직 없으므로 다음 장면 스틸로 같은 판정을 한다(다음 dive 는 그 스틸에서 시작한다).
 - **시드 순서** - exit 시드는 dive 의 원본 마지막 프레임이다. `zoomBoost` 를 썼으면 보이는 프레임이 바뀌므로 줌한 클립에서 뽑는다. 판 착지는 시드를 뽑은 뒤에 한다.
 - **스틸 크기** - 스틸이 ORIENTATION 과 다르면(classic 폴백 1024x1536) `resizePng` 로 맞춘 뒤 넣는다(`resize` 이벤트).
-- **첫 쌍 게이트** - 장면 1 의 dive 와 나가기만 먼저 만든다. 나가기 없는 판(dive 가 판에 착지)과 나가기 있는 판(dive + 판에 착지하는 나가기)을 검토 페이지에 나란히 올리고 `motion`(roll 근사, 줌), `diveExitSsim`, `exitEnd` 를 함께 보인다. 기본 선택은 나가기 있음이다. `exitEnd.reached` 가 거짓이면(나가기 끝이 배경에 닿지 않음) 그 사실과 잰 비율(`exitEnd.share`, 문턱 `exitEnd.threshold`)을 보이고 나가기를 다시 만들지 묻는다. arc 를 골랐으면 회전을 눈으로 확인한다. 사람이 MOVE, 나가기 사용, 길이를 정한 뒤 나머지를 만든다. 게이트에서 만든 클립(`*.raw.mp4`)은 만든 입력(프롬프트, 시드, 길이, 크기, MOVE, provider 순서)이 같을 때만 다시 쓰므로 두 번 과금하지 않는다(입력 기록은 옆의 `*.raw.json`). 게이트에서 MOVE 나 길이를 바꾸면 그 leg 는 새로 만들어지고 `stale` 이벤트가 바뀐 항목을 알린다. 같은 입력으로 다시 만들려면(예: 나가기 재생성) 그 `*.raw.mp4` 를 지우거나 `reuse: false` 를 준다. 기록 없는 `*.raw.mp4` 는 맞는지 알 수 없어 `kind: 'reuse_unknown'` 으로 멈춘다(과금 없음).
+- **첫 쌍 게이트** - 장면 1 의 dive 와 나가기만 먼저 만든다. 나가기 없는 판(dive 가 판에 착지)과 나가기 있는 판(dive + 판에 착지하는 나가기)을 검토 페이지에 나란히 올리고 `motion`(roll 근사, 줌), `diveExitSsim`, `exitEnd` 를 함께 보인다. 기본 선택은 나가기 없음(b)이다. `exitEnd.reached` 가 거짓이면(나가기 끝이 배경에 닿지 않음) 그 사실과 잰 비율(`exitEnd.share`, 문턱 `exitEnd.threshold`)을 보이고 나가기를 다시 만들지 묻는다. arc 를 골랐으면 회전을 눈으로 확인한다. 사람이 MOVE, 나가기 사용, 길이를 정한 뒤 나머지를 만든다. 게이트에서 만든 클립(`*.raw.mp4`)은 만든 입력(프롬프트, 시드, 길이, 크기, MOVE, provider 순서)이 같을 때만 다시 쓰므로 두 번 과금하지 않는다(입력 기록은 옆의 `*.raw.json`). 게이트에서 MOVE 나 길이를 바꾸면 그 leg 는 새로 만들어지고 `stale` 이벤트가 바뀐 항목을 알린다. 같은 입력으로 다시 만들려면(예: 나가기 재생성) 그 `*.raw.mp4` 를 지우거나 `reuse: false` 를 준다. 기록 없는 `*.raw.mp4` 는 맞는지 알 수 없어 `kind: 'reuse_unknown'` 으로 멈춘다(과금 없음).
 
 ```js
 import { runDiveLegs } from './references/dive-mode.mjs';

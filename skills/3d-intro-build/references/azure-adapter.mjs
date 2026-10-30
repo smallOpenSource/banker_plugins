@@ -1065,11 +1065,11 @@ const IMAGE_USD_EACH = 0.02;
  * mode). mode 'chain' (default) makes one clip of `seconds` per scene; 'holdFlight' makes one
  * flight of `flightSeconds` between each pair of scenes, the holds being encoded stills (free);
  * 'dive' makes one clip of `diveSeconds` per scene (the dives and the finale) and, with `exit`, one
- * exit of `exitSeconds` between each pair of scenes (6 scenes: $6.8 with exits, $4.8 without).
+ * exit of `exitSeconds` between each pair of scenes (6 scenes: $4.8 without, the default, $6.8 with `exit: true`).
  * Returns per-category USD sub-costs and the total.
  * @returns {{images:number, videos:number, usd:number}}
  */
-const COST_DEFAULTS = { seconds: 4, twoImage: false, mode: 'chain', flightSeconds: 5, diveSeconds: 8, exitSeconds: 4, exit: true };
+const COST_DEFAULTS = { seconds: 4, twoImage: false, mode: 'chain', flightSeconds: 5, diveSeconds: 8, exitSeconds: 4, exit: false };
 // The clip seconds an intro bills, by mode.
 const CLIP_SECONDS = {
   chain: (n, o) => n * o.seconds,

@@ -41,7 +41,7 @@ test('a pause over 220 ms or a turn of direction starts a new gesture; tiny, zoo
 function nav(stops = [0, 1000, 2000, 2500], lastStop = 2) {
   const moves = [];
   let where = 0;
-  const n = createNavigator({ stops: () => stops, lastStop, where: () => where, move: (from, to, done) => moves.push({ from, to, done }) });
+  const n = createNavigator({ stops: () => stops, lastStop, where: () => where, move: (from, to, done, instant) => moves.push({ from, to, done, instant }) });
   return { n, moves, at: (y) => { where = y; }, arrive: () => moves.at(-1).done() };
 }
 
@@ -130,8 +130,8 @@ test('keys: arrows (and left/right) as the wheel, page keys, Space and swipes a 
   assert.deepEqual(key('PageUp', el('BODY')), { scenes: -1 });
   assert.deepEqual(key(' ', el('BODY')), { scenes: 1 });
   assert.deepEqual(key(' ', el('BODY'), { shiftKey: true }), { scenes: -1 });
-  assert.deepEqual(key('Home', el('BODY')), { to: 0 });
-  assert.deepEqual(key('End', el('BODY')), { to: 'last' });
+  assert.deepEqual(key('Home', el('BODY')), { to: 0, instant: true }, 'Home goes at once');
+  assert.deepEqual(key('End', el('BODY')), { to: 'last', instant: true }, 'End goes at once');
   assert.equal(key(' ', el('BUTTON')), null);
   assert.equal(key('ArrowDown', el('INPUT')), null);
   assert.equal(key('Home', el('DIV', 'textbox')), null);
@@ -176,4 +176,16 @@ test('the body is reached only from the last scene\'s end; a page at rest off th
 test('the copy in view: the dive holding the place, across an exit the nearer scene', () => {
   // dive0 0-1300, conn0 1300-2200, dive1 2200-3500, dive2 3500-4800
   assert.deepEqual([0, 1100, 1700, 1800, 2200, 2850, 3500, 4800].map((y) => sceneAt(CONFIG, 1000, y)), [0, 0, 0, 1, 1, 1, 2, 2]);
+});
+
+test('Home, End and a route dot move at once: the navigator hands the move an instant flag; other inputs animate', () => {
+  const { n, moves, arrive } = nav([0, 2200, 3500, 4800]);
+  n.input({ to: 3, instant: true });
+  assert.deepEqual([moves[0].to, moves[0].instant], [4800, true]);
+  arrive();
+  n.input({ scenes: -1 });
+  assert.deepEqual([moves[1].to, moves[1].instant], [3500, false]);
+  arrive();
+  n.input({ to: 0, instant: true });
+  assert.deepEqual([moves[2].to, moves[2].instant], [0, true]);
 });

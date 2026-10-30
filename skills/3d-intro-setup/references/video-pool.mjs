@@ -268,10 +268,11 @@ function soraSummary(creds, state, t) {
 }
 
 /**
- * The CLIP_MODE a run starts with (FREE, nothing is sent): the first provider generateClip would really
- * use, in VIDEO_PROVIDER_ORDER, decides. Sora gives 'dive' (measured on sora-2 2025-12-08); WAN gives
- * 'chain' (dive on WAN is not measured). Returns { mode, provider, reason }. mode is null when no leg
- * could be made: every WAN entry refused (generateClip stops there and does not use Sora), a Sora
+ * The CLIP_MODE a run starts with (FREE, nothing is sent): dive without exits on any provider (the user
+ * found it the most natural of the three on the sora-2 comparison page). Returns { mode, exit, provider,
+ * measured, reason }: provider is the first one generateClip would really use (VIDEO_PROVIDER_ORDER), and
+ * measured is false on WAN (dive on WAN is not measured; say so when the user picks). mode is null when
+ * no leg could be made: every WAN entry refused (generateClip stops there and does not use Sora), a Sora
  * endpoint that is not https, or nothing set up (no WAN entry, Sora unset or recorded retired).
  */
 export function defaultClipMode(creds = {}, { statePath = defaultStatePath(), now = Date.now() } = {}) {
@@ -286,7 +287,7 @@ function wanMode(creds) {
   const pool = loadWanPool(creds);
   if (!pool.length) return null;
   if (pool.every((e) => entryRefusal(e))) return { mode: null, provider: 'wan', reason: 'every WAN entry is malformed or held back: generateClip stops there and does not use Sora' };
-  return { mode: 'chain', provider: 'wan', reason: 'the video runs on WAN: chain (dive on WAN is not measured)' };
+  return { mode: 'dive', exit: false, provider: 'wan', measured: false, reason: 'the video runs on WAN: dive without exits (dive on WAN is not measured)' };
 }
 
 function soraMode(creds, state, t) {
@@ -295,7 +296,7 @@ function soraMode(creds, state, t) {
   const origin = originOf(conn.endpoint);
   if (!origin || proxyHolds(origin)) return { mode: null, provider: 'sora', reason: 'AZURE_SORA_ENDPOINT is not an https URL (or the env proxy holds the key back): the leg stops before sending' };
   if (retiredIn(state, conn, t)) return null;
-  return { mode: 'dive', provider: 'sora', reason: 'the video runs on Sora: dive (measured on sora-2 2025-12-08)' };
+  return { mode: 'dive', exit: false, provider: 'sora', measured: true, reason: 'the video runs on Sora: dive without exits (measured on sora-2 2025-12-08)' };
 }
 
 // In-process in-flight counter per fingerprint (the documented limit is per key).

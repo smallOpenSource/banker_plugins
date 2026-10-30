@@ -358,15 +358,17 @@ test('generateClip: VIDEO_PROVIDER_ORDER=sora skips WAN; missing providers end i
   await assert.rejects(() => run({ creds: { WAN_1_ENDPOINT: WAN(1) }, statePath: tmpState() }), /no video provider available/);
 });
 
-test('defaultClipMode: the first provider generateClip would use decides (Sora dive, WAN chain); a run that cannot make a leg gets null', () => {
+test('defaultClipMode: dive without exits on any provider, WAN marked not measured; a run that cannot make a leg gets null', () => {
   const statePath = tmpState();
   const mode = (c, o = {}) => P.defaultClipMode(c, { statePath, ...o }).mode;
   const sora = { AZURE_SORA_ENDPOINT: SORA, AZURE_SORA_API_KEY: creds().AZURE_SORA_API_KEY };
   assert.equal(mode(sora), 'dive', 'no WAN entry: the video runs on Sora');
-  assert.equal(mode(creds()), 'chain', 'WAN entries first (default order wan,sora)');
+  assert.equal(mode(creds()), 'dive', 'WAN entries first (default order wan,sora): dive too');
+  assert.deepEqual((({ exit, provider, measured }) => ({ exit, provider, measured }))(P.defaultClipMode(creds(), { statePath })), { exit: false, provider: 'wan', measured: false }, 'WAN: not measured');
+  assert.deepEqual((({ exit, provider, measured }) => ({ exit, provider, measured }))(P.defaultClipMode(sora, { statePath })), { exit: false, provider: 'sora', measured: true });
   assert.equal(mode(creds({ VIDEO_PROVIDER_ORDER: 'sora' })), 'dive', 'order sora: Sora runs even with WAN keys');
-  assert.equal(mode(creds({ VIDEO_PROVIDER_ORDER: 'wan' })), 'chain');
-  assert.equal(mode({ WAN_1_ENDPOINT: WAN(1), WAN_1_API_KEY: 'k' }), 'chain', 'WAN only');
+  assert.equal(mode(creds({ VIDEO_PROVIDER_ORDER: 'wan' })), 'dive');
+  assert.equal(mode({ WAN_1_ENDPOINT: WAN(1), WAN_1_API_KEY: 'k' }), 'dive', 'WAN only');
   const bad = { WAN_1_ENDPOINT: 'http://ws.example.com', WAN_1_API_KEY: 'k', ...sora };
   const r = P.defaultClipMode(bad, { statePath });
   assert.deepEqual([r.mode, r.provider], [null, 'wan'], 'every WAN entry malformed: generateClip stops, Sora is not used');
@@ -378,7 +380,7 @@ test('defaultClipMode: the first provider generateClip would use decides (Sora d
   const fp = `sora:${crypto.createHash('sha256').update(`${SORA}\nsora-2`).digest('hex').slice(0, 16)}`;
   P.savePoolState({ version: 1, entries: { [fp]: { status: 'retired', retiredAt: Date.now(), label: 'AZURE_SORA' } } }, statePath);
   assert.equal(mode(sora), null, 'Sora retired, no WAN: stop before any paid still');
-  assert.equal(mode(creds({ VIDEO_PROVIDER_ORDER: 'sora,wan' })), 'chain');
+  assert.equal(P.defaultClipMode(creds({ VIDEO_PROVIDER_ORDER: 'sora,wan' }), { statePath }).provider, 'wan', 'Sora retired: WAN takes over');
   assert.equal(mode(sora, { now: Date.now() + 25 * 3_600_000 }), 'dive', 'the record lasts 24 h');
 });
 

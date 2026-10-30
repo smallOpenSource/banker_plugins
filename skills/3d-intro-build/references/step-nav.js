@@ -11,8 +11,8 @@
  *                  one gesture moves at most maxNotches
  *   arrow keys     up/down and left/right as the wheel (up and left go back)
  *   PageUp/PageDown, Space (shift goes back), a swipe over swipePx   one scene
- *   Home, End      the first scene's start, the last scene's end
- *   a route dot    its scene's start
+ *   Home, End      the first scene's start, the last scene's end, at once (no animation)
+ *   a route dot    its scene's start, at once (a click, or Enter or Space on the focused dot)
  * Fields and editable places keep their keys. An input during a move retargets it from where that
  * move was going. When the page comes to rest anywhere else above the body (a scrollbar, a touchpad,
  * an anchor), it settles on the nearest stop after snapMs. Below the body top the browser scrolls as
@@ -212,10 +212,10 @@
     let generation = 0;
     let arrivals = 0;
     const list = function () { return opt.stops(); };
-    function go(y) {
+    function go(y, instant) {
       if (y == null || Math.abs(y - (target == null ? pos : target)) <= 1) return;
       const gen = ++generation;
-      if (target == null && opt.onLeave) opt.onLeave();
+      if (target == null && opt.onLeave) opt.onLeave(instant);
       target = y;
       opt.move(opt.where ? opt.where() : pos, y, function () {
         if (gen !== generation) return;
@@ -223,10 +223,10 @@
         target = null;
         arrivals++;
         if (opt.onArrive) opt.onArrive(y);
-      });
+      }, Boolean(instant));
     }
     return {
-      input: function (spec) { go(targetOf(list(), target == null ? pos : target, spec)); },
+      input: function (spec) { go(targetOf(list(), target == null ? pos : target, spec), spec.instant); },
       sync: function (y) { if (target == null) pos = y; },
       // Drops the move in flight; its end, when it comes, does nothing.
       cancel: function () { generation++; target = null; },
@@ -250,7 +250,7 @@
     return Boolean(t) && (/^(BUTTON|A|SUMMARY)$/.test(t.tagName || '') || /^(button|link|checkbox|switch|menuitem|tab|option)$/.test(role(t)));
   };
   const KEYS = { ArrowDown: { steps: 1 }, ArrowRight: { steps: 1 }, ArrowUp: { steps: -1 }, ArrowLeft: { steps: -1 },
-    PageDown: { scenes: 1 }, PageUp: { scenes: -1 }, Home: { to: 0 }, End: { to: 'last' } };
+    PageDown: { scenes: 1 }, PageUp: { scenes: -1 }, Home: { to: 0, instant: true }, End: { to: 'last', instant: true } };
 
   /** What a key asks for ({ steps }, { scenes }, { to }; End's to is 'last'), or null when the key is not the intro's. */
   function keyInput(e) {
@@ -423,14 +423,15 @@
     ctx.ours = function (y, dir) { return belongsToIntro(y, dir, ctx.stops()[ctx.lastStop], ctx.endTop()); };
     ctx.mark = function () { mark(ctx); };
     ctx.nav = createNavigator({ stops: ctx.stops, lastStop: ctx.lastStop, where: function () { return window.scrollY; },
-      onLeave: function () { showCopy(ctx, -1); }, onArrive: ctx.mark,
-      move: function (from, to, done) {
+      onLeave: function (instant) { instantCopy(instant); showCopy(ctx, -1); },
+      onArrive: function () { ctx.mark(); requestAnimationFrame(function () { requestAnimationFrame(function () { instantCopy(false); }); }); },
+      move: function (from, to, done, instant) {
         const mine = ++pending;
         // from where the page is once the posters are ready: an earlier move may have run on while waiting
         postersReady(world, o.decodeCapMs, function () {
           if (mine !== pending) return;
           const at = window.scrollY;
-          animate(at, to, moveDuration(to - at, ctx.vh(), o, reduce), done);
+          animate(at, to, instant ? 0 : moveDuration(to - at, ctx.vh(), o, reduce), done);
         });
       } });
     const fine = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
@@ -458,6 +459,9 @@
     e.focus({ preventScroll: true });
   }
 
+  // An instant move (Home, End, a dot) swaps the copy without the fade (class isn-instant, step-nav.css).
+  function instantCopy(on) { document.documentElement.classList.toggle('isn-instant', Boolean(on)); }
+
   // The copy of scene k shows over the engine's own fade (class isn-copy, see step-nav.css); -1 shows none.
   // The same element: nothing is copied, so a screen reader and the focus meet each text once.
   function showCopy(ctx, k) {
@@ -482,16 +486,16 @@
     if (ctx.focusEnd && body) focusBody(ctx);
   }
 
-  // An input ({ steps }, { scenes }, { to }, End's { to: 'last' }) from where the page stands.
+  // An input ({ steps }, { scenes }, { to }, End's { to: 'last' }; instant: no animation) from where the page stands.
   function step(ctx, input) {
     ctx.nav.sync(window.scrollY);
-    ctx.nav.input(input.to === 'last' ? { to: ctx.lastStop } : input);
+    ctx.nav.input(input.to === 'last' ? { to: ctx.lastStop, instant: input.instant } : input);
   }
 
   // The direction an input takes from where the page (or the move in flight) is going.
   const dirFrom = function (ctx, input) {
     const st = ctx.nav.state();
-    return dirOf(ctx.stops(), st.moving ? st.y : window.scrollY, input.to === 'last' ? { to: ctx.lastStop } : input);
+    return dirOf(ctx.stops(), st.moving ? st.y : window.scrollY, input.to === 'last' ? { to: ctx.lastStop, instant: input.instant } : input);
   };
 
   function listenWheel(ctx) {
@@ -572,7 +576,7 @@
       if (!dot && !control) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (dot) return step(ctx, { to: Array.prototype.indexOf.call(dot.parentNode.children, dot) });
+      if (dot) return step(ctx, { to: Array.prototype.indexOf.call(dot.parentNode.children, dot), instant: true });
       return control.classList.contains('isn-skip') ? skip(ctx) : toBody(ctx);
     }, true);
   }

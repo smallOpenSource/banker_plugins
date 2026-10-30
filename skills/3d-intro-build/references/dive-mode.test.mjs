@@ -59,13 +59,13 @@ const promptFor = (leg) => `${leg.kind} ${leg.move || ''}`.trim();
 
 test('planDiveLegs: six scenes make five dives, five exits and the finale, seeded in order; without exits none', () => {
   const scenes = Array.from({ length: 6 }, (_, i) => ({ id: `s${i}`, move: i === 2 ? 'arc' : i === 3 ? 'crane' : undefined }));
-  const legs = D.planDiveLegs({ scenes });
+  const legs = D.planDiveLegs({ scenes, exit: true });
   assert.deepEqual(legs.map((l) => l.kind).filter((k) => k === 'dive').length, 5);
   assert.deepEqual(legs.map((l) => l.kind).filter((k) => k === 'exit').length, 5);
   assert.deepEqual(legs.at(-1), { kind: 'finale', scene: 5, name: 'finale', seed: { from: 'still', scene: 5 }, seconds: 8, reverse: true });
   assert.deepEqual(legs.slice(0, 2).map((l) => [l.name, l.seed, l.seconds]), [['dive-1', { from: 'still', scene: 0 }, 8], ['exit-1', { from: 'last-frame', leg: 'dive-1' }, 4]]);
   assert.deepEqual(legs.filter((l) => l.kind === 'dive').map((l) => l.move), ['push-in', 'push-in', 'arc', 'crane', 'push-in']);
-  assert.equal(D.planDiveLegs({ scenes, exit: false }).filter((l) => l.kind === 'exit').length, 0);
+  assert.equal(D.planDiveLegs({ scenes }).filter((l) => l.kind === 'exit').length, 0, 'no exits by default');
   assert.throws(() => D.planDiveLegs({ scenes: [{ move: 'orbit' }, {}] }), /MOVE "orbit" is not one of push-in, arc, crane/);
   assert.throws(() => D.planDiveLegs({ scenes: [{}] }), /two scenes or more/);
 });
@@ -84,7 +84,7 @@ test('runDiveLegs: dives, exits and the finale make an intro.json that assembles
   const { dir, manifest } = project(t);
   const calls = [];
   const events = [];
-  const r = await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, creds: { AZURE_SORA_API_KEY: FAKE_KEY }, generate: fakeGenerate(dir, calls), ffmpeg: FF, onEvent: (e) => events.push(e) });
+  const r = await D.runDiveLegs({ projectDir: dir, manifest, size: SIZE, promptFor, exit: true, creds: { AZURE_SORA_API_KEY: FAKE_KEY }, generate: fakeGenerate(dir, calls), ffmpeg: FF, onEvent: (e) => events.push(e) });
   assert.equal(r.stage, 'done');
   assert.deepEqual(calls.map((c) => c.prompt), ['dive push-in', 'exit', 'dive push-in', 'exit', 'finale']);
   assert.deepEqual(calls.map((c) => c.seconds), [8, 4, 8, 4, 8]);

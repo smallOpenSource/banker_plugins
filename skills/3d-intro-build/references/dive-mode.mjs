@@ -46,7 +46,7 @@ function moveOf(scene, i) {
  * (with an optional `move`); `exit` adds one exit after each dive. Seeds: a dive and the finale start
  * from their scene's still, an exit from its dive's last frame.
  */
-export function planDiveLegs({ scenes, exit = true, diveSeconds = DIVE_DEFAULTS.diveSeconds, exitSeconds = DIVE_DEFAULTS.exitSeconds, finaleSeconds = DIVE_DEFAULTS.finaleSeconds } = {}) {
+export function planDiveLegs({ scenes, exit = false, diveSeconds = DIVE_DEFAULTS.diveSeconds, exitSeconds = DIVE_DEFAULTS.exitSeconds, finaleSeconds = DIVE_DEFAULTS.finaleSeconds } = {}) {
   const n = Array.isArray(scenes) ? scenes.length : 0;
   if (n < 2) throw new Error('planDiveLegs: dive mode needs two scenes or more (dives, then the finale)');
   const legs = [];
@@ -79,14 +79,14 @@ export async function judgeBackground(png, { border = DIVE_DEFAULTS.border, bgSh
  *   manifest     the intro.json to fill: sections (still, copy, optional move and zoom) and the rest
  *   size         ORIENTATION ('720x1280'); a still of another size is scaled before it seeds a clip
  *   promptFor(leg, section)   the prompt of each leg (prompts.md: dive, exit, finale)
- *   exit         make exit clips (connectors); default true
+ *   exit         make exit clips (connectors); default false (dive without exits is the default mode)
  *   only         'first': scene 1's dive and exit, the two gate versions, then stop
  *   generate     the clip maker (default generateClip); creds and clipOptions are passed on
  *   bgShare, bgTolerance, border, landSec, finaleLandSec, diveSeconds, exitSeconds, finaleSeconds, reuse (default true), ffmpeg, onEvent
  * Returns { stage: 'first-pair', ... } at the gate, else { stage: 'done', manifest, file, seams } (seams: each gap's judgeBackground).
  */
 export async function runDiveLegs(opts = {}) {
-  const o = { ...DIVE_DEFAULTS, exit: true, reuse: true, generate: generateClip, clipsDir: 'clips', ...opts };
+  const o = { ...DIVE_DEFAULTS, exit: false, reuse: true, generate: generateClip, clipsDir: 'clips', ...opts };
   if (!o.projectDir || !o.manifest || !o.size || typeof o.promptFor !== 'function') throw new Error('runDiveLegs: projectDir, manifest, size and promptFor are required');
   const ctx = await prepare(o);
   const first = o.only === 'first';

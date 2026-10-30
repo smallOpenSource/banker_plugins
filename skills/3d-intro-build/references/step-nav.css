@@ -66,3 +66,5 @@ html.isn-body .isn-hint, html.isn-body .sw-hint, html.isn-body .isn-skip, html.i
 @media (prefers-reduced-motion: reduce) {
   .isn-on .sw-copy { transition: none; }
 }
+/* An instant move (Home, End, a route dot) swaps the copy at once. */
+.isn-on.isn-instant .sw-copy { transition: none; }

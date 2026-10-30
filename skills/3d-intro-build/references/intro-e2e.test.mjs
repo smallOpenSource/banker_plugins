@@ -14,7 +14,7 @@ import { assemble } from './assemble.mjs';
 import { crossfade, resolveFfmpeg, stillToClip } from './azure-adapter.mjs';
 import { STRICT_CSP } from './preview-lib.mjs';
 import { startServe } from './serve.mjs';
-import { loadPlaywright, seamProbe, verifyIntro } from './verify-intro.mjs';
+import { decodePng, isBlank, loadPlaywright, seamProbe, verifyIntro } from './verify-intro.mjs';
 import { runDiveLegs } from './dive-mode.mjs';
 import { spawnSync } from 'node:child_process';
 
@@ -163,7 +163,7 @@ async function diveProject(t) {
   const size = `${SIZE.width}x${SIZE.height}`;
   DIVE_BG.forEach((bg, i) => ffRun(ffmpeg, ['-f', 'lavfi', '-i', `color=c=${bg}:s=${size},drawbox=x=380:y=110:w=160:h=140:color=0x2B2B2B:t=fill`, '-frames:v', '1', path.join(dir, `s${i + 1}.png`)]));
   const manifest = { ...manifest0(), sections: manifest0().sections.map((s) => ({ ...s, clip: undefined })), connectors: undefined, diveScroll: 1.2, connScroll: 0.9 };
-  await runDiveLegs({ projectDir: dir, manifest, size, promptFor: (leg) => leg.kind, generate: fakeClips(ffmpeg, dir), ffmpeg });
+  await runDiveLegs({ projectDir: dir, manifest, size, promptFor: (leg) => leg.kind, exit: true, generate: fakeClips(ffmpeg, dir), ffmpeg });   // the exits (choice c) are what these tests look at
   return { dir, ffmpeg };
 }
 
@@ -271,4 +271,37 @@ test('step navigation: off the stops the page settles on the nearest scene start
   assert.equal((await nav()).arrivals, before + 1, 'the move ends once');
   const ys = await page.evaluate(() => window.__ys);
   assert.ok(ys.every((y, i) => i === 0 || y >= ys[i - 1] - 1), 'the page never runs back while retargeting');
+});
+
+test('Home, End and a route dot jump at once: no place in between, the right stop, no blank frame, the copy shown at once', { skip: !RUN && 'set INTRO_E2E=1 (needs Playwright)', timeout: 300_000 }, async (t) => {
+  const server = await servedIntro(t, DARK);
+  const { chromium } = await loadPlaywright();
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  await page.goto(server.url, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.IntroStepNav && window.IntroStepNav.current);
+  const cdp = await context.newCDPSession(page);
+  const { stops, lastStop } = await page.evaluate(() => ({ stops: window.IntroStepNav.current.stops(), lastStop: window.IntroStepNav.current.lastStop }));
+  const jumps = [['End', () => page.keyboard.press('End'), stops[lastStop]], ['Home', () => page.keyboard.press('Home'), 0],
+    ['dot 2', () => page.click('.sw-route__dot:nth-child(2)'), stops[1]]];
+  for (const [name, act, want] of jumps) {
+    const from = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => { window.__ys = []; (function f() { window.__ys.push(window.scrollY); requestAnimationFrame(f); })(); });
+    const frames = [];
+    const onFrame = (f) => { frames.push(Buffer.from(f.data, 'base64')); cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); };
+    cdp.on('Page.screencastFrame', onFrame);
+    await cdp.send('Page.startScreencast', { format: 'png', maxWidth: 640, maxHeight: 400 });
+    await act();
+    await page.waitForTimeout(1200);
+    await cdp.send('Page.stopScreencast');
+    cdp.off('Page.screencastFrame', onFrame);
+    const ys = await page.evaluate(() => window.__ys);
+    assert.ok(Math.abs(ys.at(-1) - want) <= 2, `${name}: at ${ys.at(-1)}, want ${want}`);
+    assert.ok(ys.every((y) => Math.abs(y - from) <= 2 || Math.abs(y - want) <= 2), `${name}: no place in between (${[...new Set(ys.map(Math.round))].join(', ')})`);
+    assert.ok(frames.length > 0 && !frames.some((b) => isBlank(decodePng(b).data)), `${name}: no blank frame in ${frames.length}`);
+    const copy = await page.evaluate(() => [...document.querySelectorAll('.sw-copy')].map((c) => Number(getComputedStyle(c).opacity)));
+    assert.ok(Math.max(...copy) > 0.99, `${name}: the copy shows (${copy})`);
+  }
 });
