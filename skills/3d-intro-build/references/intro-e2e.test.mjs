@@ -282,6 +282,8 @@ test('Home, End and a route dot jump at once: no place in between, the right sto
   const page = await context.newPage();
   await page.goto(server.url, { waitUntil: 'load' });
   await page.waitForFunction(() => window.IntroStepNav && window.IntroStepNav.current);
+  // start from a painted first scene: a page still decoding its first poster is loading, not jumping
+  await page.evaluate(() => Promise.all([...document.querySelectorAll('.sw-scene__still')].map((i) => i.decode().catch(() => {}))).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
   const cdp = await context.newCDPSession(page);
   const { stops, lastStop } = await page.evaluate(() => ({ stops: window.IntroStepNav.current.stops(), lastStop: window.IntroStepNav.current.lastStop }));
   const jumps = [['End', () => page.keyboard.press('End'), stops[lastStop]], ['Home', () => page.keyboard.press('Home'), 0],
@@ -290,9 +292,10 @@ test('Home, End and a route dot jump at once: no place in between, the right sto
     const from = await page.evaluate(() => window.scrollY);
     await page.evaluate(() => { window.__ys = []; (function f() { window.__ys.push(window.scrollY); requestAnimationFrame(f); })(); });
     const frames = [];
-    const onFrame = (f) => { frames.push(Buffer.from(f.data, 'base64')); cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); };
+    const onFrame = (f) => { frames.push(Buffer.from(f.data, 'base64')); frames.t = [...(frames.t || []), Date.now()]; cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); };
     cdp.on('Page.screencastFrame', onFrame);
     await cdp.send('Page.startScreencast', { format: 'png', maxWidth: 640, maxHeight: 400 });
+    const tAct = Date.now();
     await act();
     await page.waitForTimeout(1200);
     await cdp.send('Page.stopScreencast');
@@ -300,7 +303,8 @@ test('Home, End and a route dot jump at once: no place in between, the right sto
     const ys = await page.evaluate(() => window.__ys);
     assert.ok(Math.abs(ys.at(-1) - want) <= 2, `${name}: at ${ys.at(-1)}, want ${want}`);
     assert.ok(ys.every((y) => Math.abs(y - from) <= 2 || Math.abs(y - want) <= 2), `${name}: no place in between (${[...new Set(ys.map(Math.round))].join(', ')})`);
-    assert.ok(frames.length > 0 && !frames.some((b) => isBlank(decodePng(b).data)), `${name}: no blank frame in ${frames.length}`);
+    const blankAt = frames.map((b, k) => (isBlank(decodePng(b).data) ? frames.t[k] - tAct : null)).filter((x) => x !== null);
+    assert.ok(frames.length > 0 && !blankAt.length, `${name}: no blank frame in ${frames.length} (blank at ms after the key: ${blankAt.join(',')}; first frame at ${frames.t[0] - tAct})`);
     const copy = await page.evaluate(() => [...document.querySelectorAll('.sw-copy')].map((c) => Number(getComputedStyle(c).opacity)));
     assert.ok(Math.max(...copy) > 0.99, `${name}: the copy shows (${copy})`);
   }

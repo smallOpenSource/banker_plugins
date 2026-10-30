@@ -70,6 +70,7 @@ test('the scroll length matches the engine: dives and the connectors that exist,
 
 test('a move waits for every poster to decode (the engine paints a newly shown scene empty until then), at most decodeCapMs', async () => {
   assert.equal(DEFAULTS.decodeCapMs, 300);
+  assert.equal(DEFAULTS.instantDecodeCapMs, 1500, 'an instant move (Home, End, a dot) waits longer: nothing hides an undecoded poster');
   const world = (decode) => ({ querySelectorAll: () => [{ decode }, { decode }, {}] });
   let ran = 0;
   await new Promise((r) => postersReady(world(() => Promise.resolve()), 5000, () => { ran++; r(); }));

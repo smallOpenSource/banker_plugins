@@ -30,7 +30,8 @@
  *                  x durPerVh) ms with a cosine ease; 0 under prefers-reduced-motion
  *   notchPx, linePx, maxNotches   wheel pixels to a notch, pixels in a line delta, notches per gesture
  *   snapMs         how long the page must rest off the stops before it settles on the nearest one
- *   decodeCapMs    the longest wait for the posters to decode before a move
+ *   decodeCapMs, instantDecodeCapMs   the longest wait for the posters to decode before a move, and before
+ *                  an instant one (nothing hides an undecoded poster there, so it waits longer)
  *   prefetch       download the clips at load so the first move already plays video; on a phone or
  *                  with Save-Data only the first three in playback order
  *   hintLabel, skipLabel, mainLabel   texts of the mouse hint, the skip link and the main button
@@ -49,7 +50,7 @@
   const DEFAULTS = Object.freeze({
     end: null, gestureGapMs: 220, minWheel: 2, swipePx: 30,
     durBaseMs: 2600, durPerVhMs: 760, durMaxMs: 5600, decodeCapMs: 300, prefetch: true,
-    notchPx: 100, linePx: 40, maxNotches: 2, snapMs: 400,
+    notchPx: 100, linePx: 40, maxNotches: 2, snapMs: 400, instantDecodeCapMs: 1500,
     hintLabel: 'Scroll or press the down key', skipLabel: 'Skip intro', mainLabel: 'Go to main content',
   });
 
@@ -428,7 +429,7 @@
       move: function (from, to, done, instant) {
         const mine = ++pending;
         // from where the page is once the posters are ready: an earlier move may have run on while waiting
-        postersReady(world, o.decodeCapMs, function () {
+        postersReady(world, instant ? o.instantDecodeCapMs : o.decodeCapMs, function () {
           if (mine !== pending) return;
           const at = window.scrollY;
           animate(at, to, instant ? 0 : moveDuration(to - at, ctx.vh(), o, reduce), done);
