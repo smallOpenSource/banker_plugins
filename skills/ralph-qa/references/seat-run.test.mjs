@@ -315,13 +315,19 @@ test("two sends of one folder that start together: one sends, the other is busy"
   const { spawn } = await import("node:child_process");
   const one = () => new Promise((res) => {
     const c = spawn(process.execPath, [RUNNER, "send", "--dir", p.dir, "--runtime", "claude", "--seat", "gemini=pro"],
-      { env: { ...w.env, RQ_STUB_MODE: "slow=1500" }, stdio: ["ignore", "pipe", "pipe"] });
+      { env: { ...w.env, RQ_STUB_MODE: "slow=6000" }, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     c.stdout.on("data", (b) => { out += b; });
     c.stderr.resume();
     c.on("close", (code) => res({ code, out }));
   });
-  const codes = (await Promise.all([one(), one()])).map((x) => x.code).sort();
+  // The second starts once the first holds the lock and while its seat still runs: on a loaded box a second node
+  // that starts late came in after the first had finished, and both sent (Rocky8, 2026-10-30).
+  const first = one();
+  const lock = join(p.dir, ".running.md");
+  for (let waited = 0; !existsSync(lock) && waited < 20000; waited += 50) await new Promise((res) => setTimeout(res, 50));
+  assert.ok(existsSync(lock), "the first send took the lock");
+  const codes = (await Promise.all([first, one()])).map((x) => x.code).sort();
   assert.deepEqual(codes, [0, 5], "one send and one busy");
   assert.equal(runs(w, "gemini").length, 1, "the payload went out once");
 });
