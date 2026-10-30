@@ -37,7 +37,8 @@ function cached(file, parse) {
     return { missing: true };
   }
   const hit = fileCache.get(file);
-  if (hit && hit.parse === parse && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.out;
+  // ctime 도 본다: mtime 이 거친 파일 시스템에서 같은 크기로 바뀐 자료를 놓치지 않게
+  if (hit && hit.parse === parse && hit.mtimeMs === st.mtimeMs && hit.ctimeMs === st.ctimeMs && hit.size === st.size) return hit.out;
   let out;
   try {
     const text = readRegular(file);
@@ -45,7 +46,7 @@ function cached(file, parse) {
   } catch (e) {
     out = { error: e instanceof SyntaxError ? 'JSON 아님' : `읽기 실패(${e.code || 'error'})` };
   }
-  fileCache.set(file, { parse, mtimeMs: st.mtimeMs, size: st.size, out });
+  fileCache.set(file, { parse, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, size: st.size, out });
   return out;
 }
 
@@ -146,7 +147,7 @@ export function hiddenAgent(label, ids, pattern) {
 // ---------- 단계 ----------
 
 // 단계 기록(events.jsonl 과 items.json 의 stageEvents)을 시각 순으로 한 상태 전이로 합친다.
-// 단계마다 { s: doing|done|stopped, t: 완료 시각 또는 시작 시각, start: 첫 시작 시각 }.
+// 단계마다 마지막 기록의 { s: doing|done|stopped, t: 완료 시각 또는 시작 시각, start: 첫 시작 시각 }.
 export function stageStates(records) {
   const st = {};
   const list = records.map((e, i) => ({ e, i, t: parseTime(e.t) }));
@@ -155,9 +156,9 @@ export function stageStates(records) {
     if (typeof e.stage !== 'string') continue;
     const cur = Object.prototype.hasOwnProperty.call(st, e.stage) ? st[e.stage] : null;
     const start = (cur && cur.start) || (e.status === 'started' ? t : 0);
-    if (e.status === 'started') {
-      if (!cur || cur.s !== 'done') st[e.stage] = { s: 'doing', t, start };
-    } else if (e.status === 'done' || e.status === 'skipped') st[e.stage] = { s: 'done', t, start };
+    // 마지막 기록이 상태를 정한다: 완료 뒤에 다시 시작한 단계(ultra-chain 재실행)는 진행 중
+    if (e.status === 'started') st[e.stage] = { s: 'doing', t, start };
+    else if (e.status === 'done' || e.status === 'skipped') st[e.stage] = { s: 'done', t, start };
     else if (e.status === 'failed' || e.status === 'stopped') st[e.stage] = { s: 'stopped', t, start };
   }
   return st;
@@ -260,7 +261,11 @@ const sameHash = (a, b) => a.length >= 4 && b.length >= 4 && (a.startsWith(b) ||
 // log 에 없는 storyCommits 해시도 완료로 친다(시각은 값의 t, 없으면 0).
 export function gitInfo(lines, ids, storyCommits = {}, commitRegex = null) {
   const commits = {};
-  const rows = (lines || []).map((l) => l.split('|'));
+  // %h|%cI|%s: 제목에 | 가 있어도 앞 두 칸만 나눈다
+  const rows = (lines || []).map((l) => {
+    const [h, t, ...rest] = l.split('|');
+    return [h, t, rest.join('|')];
+  });
   const found = subjectStories(rows.map((r) => r[2] || null), ids, commitRegex);
   rows.forEach(([h, t], i) => {
     const id = found[i];

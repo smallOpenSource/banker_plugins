@@ -31,13 +31,15 @@
 
 | 셸 | 명령 |
 |---|---|
-| cmd | `set CI=true&& node --test --test-reporter=tap skills-dev/progress-mon/scripts/` |
-| POSIX | `CI=true node --test --test-reporter=tap skills-dev/progress-mon/scripts/` |
+| cmd | `set CI=true&& node --test --test-reporter=tap skills/progress-mon/scripts/` |
+| POSIX | `CI=true node --test --test-reporter=tap skills/progress-mon/scripts/` |
 
-- banker 저장소에서는 경로를 `skills/progress-mon/scripts/` 로 바꾼다
+- 경로는 banker 저장소 기준. 원본 폴더(`skills-dev/`)에서는 그 경로로 바꾼다
 - 폴더 인자: Node 24 는 폴더를 모듈로 풀어 `scripts/index.js` 를 적재한다. 판정은 `# fail 0` 과 `all <n> test files loaded` 시험 ok
+- Node 18 은 폴더를 모듈로 풀지 않고 시험 파일을 직접 찾는다. 시험은 모두 돌고 `all <n> test files loaded` 시험 하나만 없다
 - 시험은 임시 HOME, 임시 프로젝트, OS 가 고른 빈 포트에서 돈다. 포트 30000, 3456, 3458 은 쓰지 않는다
-- 시험은 PATH 의 `git` 으로 임시 저장소를 만든다. git 이 없는 PC 에서는 그 시험 7개가 `spawnSync git ENOENT` 로 실패한다(스킬 자체는 git 이 없으면 커밋 기록 없이 동작)
+- 시험은 PATH 의 `git` 으로 임시 저장소를 만든다. git 이 없는 PC 에서는 그 시험 10개가 실패한다(2026-10-30, PATH 에 node 와 mkfifo 만 두고 실측). 스킬 자체는 git 이 없으면 커밋 기록 없이 동작
+- FIFO 와 `/dev/zero` 시험은 POSIX 만. Windows 에서는 이유를 밝히고 건너뛴다
 
 ## 개발
 
@@ -48,11 +50,15 @@
 
 ## 대상 OS
 
-| OS | 상태 |
+2026-10-30 banker 테스트박스 실측(시험 182개).
+
+| 대상 | 상태 |
 |---|---|
-| Windows 10 x64 | 확인(개발 PC, 테스트박스) |
-| macOS, Linux | 미검증 |
-| Node 18 실제 실행 | 미검증(시험이 Node 18 에 없는 API 사용 0 을 정적으로 확인) |
+| Windows 10 x64 | 확인. 181 통과, 1 건너뜀(FIFO 와 `/dev/zero` 는 POSIX 만) |
+| macOS | 확인. 182/182 |
+| Linux(Rocky8, Node 22) | 확인. 182/182 |
+| Node 18(v18.20.8, Rocky8) | 확인. 181/181. 폴더 진입 로더 확인 시험 1개는 Node 18 에 해당 없음 |
+| 사설 IP 바인드(`PM_TEST_PRIVATE_IP`) | Linux PC 에서만 확인. 박스 주소가 사설 대역이 아니라 박스에서는 미검증 |
 
 ## 보안 요약
 
@@ -72,7 +78,8 @@ override 에 banker 블록이나 이 스킬 블록만 있으면 `init`, `status`
 
 ## banker 통합 메모
 
-banker 파일은 이 폴더 작업에서 고치지 않았다. 아래는 banker 세션이 할 일의 초안이다.
+아래는 banker 에 넣기 전에 쓴 초안이다. 통합은 끝났다(banker 의 `codex/manifest.json`, `scripts/smoke-test.js`, `hooks/progress.test.mjs`, README 스킬 표).
+통합 뒤 이 폴더에서 고친 것(링크와 특수 파일 거부, 정규식 시간 상한, 실행 중 config 반영, start 잠금 등)은 banker 계획 문서 31절에 있다.
 
 ### `/banker:progress` 와 차이
 

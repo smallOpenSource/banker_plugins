@@ -165,7 +165,7 @@ test('시각 해석: Z 없는 19자는 실행 환경 시간대를 따름(자식 
   assert.deepEqual(at('America/New_York'), ['2026-10-25T20:01:00.000Z', '2026-10-25T16:01:00.000Z', '2026-10-25T07:01:00.000Z']);
 });
 
-test('단계 상태 전이: 시작, 완료, 건너뜀, 실패와 멈춤, 완료 뒤 시작은 무시, 첫 시작 시각 유지', T, () => {
+test('단계 상태 전이: 시작, 완료, 건너뜀, 실패와 멈춤, 완료 뒤 다시 시작하면 진행 중, 첫 시작 시각 유지', T, () => {
   const st = stageStates([
     { t: '2026-10-28T00:00:00Z', stage: 'a', status: 'started' },
     { t: '2026-10-28T00:10:00Z', stage: 'a', status: 'done' },
@@ -179,7 +179,7 @@ test('단계 상태 전이: 시작, 완료, 건너뜀, 실패와 멈춤, 완료 
     { t: '2026-10-28T05:00:00Z', stage: 'f', status: 'wip' },
   ]);
   const ms = (h, m = 0) => Date.UTC(2026, 9, 28, h, m);
-  assert.deepEqual(st.a, { s: 'done', t: ms(0, 10), start: ms(0) });
+  assert.deepEqual(st.a, { s: 'doing', t: ms(0, 20), start: ms(0) }, '완료 뒤 다시 시작(재실행)은 진행 중');
   assert.deepEqual(st.b, { s: 'stopped', t: ms(1, 30), start: ms(1) });
   assert.deepEqual(st.c, { s: 'done', t: ms(2), start: 0 });
   assert.deepEqual(st.d, { s: 'doing', t: ms(3, 10), start: ms(3) });
@@ -547,4 +547,27 @@ test('events, journal 이 특수 파일(FIFO, /dev/zero)이면 읽지 않고 빈
   const m = collect(ctx, { ...cfg, sources: { ...cfg.sources, git: false, events: fifo, workflowDirs: ['wf', '/dev/zero'] } }, Date.now());
   assert.deepEqual(m.agents, []);
   assert.deepEqual(m.stageState, {});
+});
+
+test('git 제목에 | 가 있어도 HEAD 표시는 제목 전체', T, () => {
+  assert.equal(gitInfo(['a1b2c3d|2026-10-28T00:00:00Z|feat: a | b'], [], {}).head, 'a1b2c3d feat: a | b');
+  assert.deepEqual(gitInfo(['a1b2c3d|2026-10-28T00:00:00Z|S1: a|b'], ['S1'], {}).commits.S1.h, 'a1b2c3d');
+});
+
+test('파일 캐시: 같은 크기와 같은 mtime 으로 바뀐 파일도 다시 읽음(ctime)', T, (t) => {
+  const f = path.join(tmp(), 'same.json');
+  const at = new Date('2026-10-01T00:00:00Z'); // 초 단위 시각: 되돌린 mtime 이 처음과 정확히 같게
+  fs.writeFileSync(f, '{"v":1}');
+  fs.utimesSync(f, at, at);
+  const first = fs.statSync(f).ctimeMs;
+  assert.deepEqual(readJsonFile(f).value, { v: 1 });
+  fs.writeFileSync(f, '{"v":2}');
+  fs.utimesSync(f, at, at);
+  // ctime 눈금이 거친 파일 시스템(XFS, NTFS 의 몇 ms)에서는 눈금이 넘어갈 때까지 기다려 다시 맞춘다
+  for (let i = 0; i < 100 && fs.statSync(f).ctimeMs === first; i++) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    fs.utimesSync(f, at, at);
+  }
+  if (fs.statSync(f).ctimeMs === first) return t.skip('이 파일 시스템은 ctime 이 바뀌지 않음');
+  assert.deepEqual(readJsonFile(f).value, { v: 2 });
 });

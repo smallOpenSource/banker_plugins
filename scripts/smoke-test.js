@@ -396,6 +396,14 @@ try {
   const pmonRun = cp.spawnSync(process.execPath, [path.join(pmonDir, 'scripts', 'progress-mon.mjs'), '--help'], { encoding: 'utf8' });
   ok(pmonRun.status === 0 && pmonRun.stdout.startsWith('progress-mon: '),
      `the Codex copy of progress-mon runs (status ${pmonRun.status}, stderr ${JSON.stringify(pmonRun.stderr)})`);
+  // The Codex plugin install keeps the plugin's tree under ~/.codex/plugins/cache/<marketplace>/banker/<version>/, and the
+  // plugin's skills list names ./skills/progress-mon/: the SKILL.md runtime table gives that folder, and the script runs there.
+  const pmonPlugin = JSON.parse(fs.readFileSync(path.join(root, '.codex-plugin', 'plugin.json'), 'utf8')).skills;
+  const pmonDoc = fs.readFileSync(path.join(root, 'skills', 'progress-mon', 'SKILL.md'), 'utf8');
+  const pmonPluginRun = cp.spawnSync(process.execPath, [path.join(root, 'skills', 'progress-mon', 'scripts', 'progress-mon.mjs'), '--help'], { encoding: 'utf8' });
+  ok(pmonPlugin.includes('./skills/progress-mon/') && pmonDoc.includes('`~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/progress-mon/`')
+     && pmonDoc.includes('`~/.codex/skills/banker-progress-mon/`') && pmonPluginRun.status === 0,
+     'progress-mon: the Codex plugin path (plugins/cache/.../skills/progress-mon/) is in the plugin list and the SKILL.md runtime table, and the script runs there');
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its

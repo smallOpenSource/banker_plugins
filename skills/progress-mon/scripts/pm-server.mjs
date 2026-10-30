@@ -298,6 +298,15 @@ function hostList(config, host) {
   return out;
 }
 
+// 서버를 다시 띄워야 적용되는 config 값(나머지는 요청마다 다시 읽음). 상태 파일에 남겨 status 가 바뀜을 알린다.
+const restartValues = (config) => ({ port: config.port, portStrict: config.portStrict, hosts: [...(config.hosts || [])].sort() });
+
+// 상태 파일의 다른 서버가 살아 있으면 이 서버는 상태 파일을 덮지 않고 닫는다(끌 수 없는 서버가 남지 않게).
+async function refuseSecond(dataDir) {
+  const run = await runningServer(dataDir);
+  if (run && run.st.pid !== process.pid) throw new UsageError(`이미 실행 중인 서버가 있음: ${urlOf(LOOPBACK, run.st.port)} (PID ${run.st.pid}). 이 서버는 닫음`);
+}
+
 // 앞에서 도는 서버. 돌려줌: 닫기 함수가 든 객체. 실패는 UsageError.
 // opts: { port, portStrict, host }, io: { out(line), err(line) }
 export async function serve(ctx, config, opts, io, { render } = {}) {
@@ -310,8 +319,8 @@ export async function serve(ctx, config, opts, io, { render } = {}) {
   const stats = { startedAt: iso(Date.now()), requests: 0, lastRequestAt: null, lastErrorAt: null };
   const fixedNow = process.env.PROGRESS_MON_NOW ? Date.parse(process.env.PROGRESS_MON_NOW) : NaN;
   if (!render) {
-    const { renderTab } = await import('./pm-render.mjs');
-    render = (tab, now) => renderTab(ctx, config, tab, now);
+    const { liveRender } = await import('./pm-render.mjs');
+    render = liveRender(ctx, config);
   }
   const srv = {
     port: 0,
@@ -354,7 +363,8 @@ export async function serve(ctx, config, opts, io, { render } = {}) {
       process.exit(1);
     });
   try {
-    await writeState(ctx.dataDir, { port: bound.port, pid: process.pid, hosts, project: ctx.project, startedAt: stats.startedAt });
+    await refuseSecond(ctx.dataDir);
+    await writeState(ctx.dataDir, { port: bound.port, pid: process.pid, hosts, project: ctx.project, startedAt: stats.startedAt, applied: restartValues(config) });
   } catch (e) {
     await closeAll(bound.servers);
     return fail(e);
@@ -408,9 +418,105 @@ export async function saveHost(ctx, ip, io, fsx = fs) {
   }
 }
 
-// serve 를 분리 실행하고 자기 탐침으로 최대 5초 기다린다. 돌려줌: 종료 코드.
-export async function start(ctx, config, opts, io, { cliPath }) {
+// ---------- start 잠금 ----------
+// 동시에 부른 start 가 서버를 둘 띄우지 않게 start 전체를 server.json.lock 으로 감싼다(wx: 둘 가운데 하나만 만듦,
+// 그 자리의 링크는 따라가지 않고 EEXIST). 못 잡은 쪽은 기다렸다가 잡고, 그 안에서 떠 있는 서버를 다시 보아 재사용한다.
+// 낡은 잠금(쥔 프로세스가 죽음, 또는 START_LOCK_STALE_MS 넘게 남음, 링크나 일반 파일 아님)은 넘겨받기 표지
+// server.json.lock.taking 을 wx 로 잡은 쪽만, 그 안에서 다시 판정한 뒤 지우고 새로 만든다.
+const START_LOCK = 'server.json.lock';
+const START_LOCK_STALE_MS = 30000;
+const START_LOCK_WAIT_MS = 15000;
+
+function makeLockFile(file) {
+  try {
+    fs.writeFileSync(file, `${process.pid} ${iso(Date.now())}\n`, { flag: 'wx', mode: 0o600 });
+    return true;
+  } catch (e) {
+    if (e.code === 'EEXIST') return false;
+    throw new UsageError(`잠금 ${path.basename(file)} 을 만들지 못함(${e.code || e.message})`);
+  }
+}
+
+const lockPid = (file) => {
+  try {
+    const pid = Number(readRegular(file).split(' ')[0]);
+    return validPid(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+};
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+};
+
+// 지금 낡았는지. 없으면 거짓(다시 만들면 됨). pid 를 아직 못 읽는 잠금(막 만들어 쓰는 중)은 시간으로만 본다.
+function staleLock(file, now) {
+  let st;
+  try {
+    st = fs.lstatSync(file);
+  } catch {
+    return false;
+  }
+  if (!st.isFile() || now - st.mtimeMs > START_LOCK_STALE_MS) return true;
+  const pid = lockPid(file);
+  return pid !== null && !alive(pid);
+}
+
+function takeOverLock(file, now) {
+  const taking = `${file}.taking`;
+  if (!makeLockFile(taking)) {
+    // 넘겨받던 start 가 죽어 남은 표지는 START_LOCK_STALE_MS 뒤 치운다(이번은 기다리고 다음에 넘겨받음)
+    try {
+      if (now - fs.lstatSync(taking).mtimeMs > START_LOCK_STALE_MS) fs.rmSync(taking, { force: true });
+    } catch {
+      // 그 사이 지워짐
+    }
+    return false;
+  }
+  try {
+    if (!staleLock(file, now)) return false;
+    fs.rmSync(file, { force: true });
+    return makeLockFile(file);
+  } finally {
+    fs.rmSync(taking, { force: true });
+  }
+}
+
+// start 잠금을 잡을 때까지 START_LOCK_WAIT_MS 기다린다. 돌려줌: 잠금 경로. 시간 초과는 UsageError.
+async function takeStartLock(dataDir) {
+  const file = path.join(dataDir, START_LOCK);
+  const until = Date.now() + START_LOCK_WAIT_MS;
+  for (;;) {
+    if (makeLockFile(file) || (staleLock(file, Date.now()) && takeOverLock(file, Date.now()))) return file;
+    if (Date.now() >= until) throw new UsageError(`다른 start 가 끝나지 않음(잠금 ${START_LOCK}, pid ${lockPid(file) ?? '알 수 없음'}). 그 start 가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`);
+    await sleep(100);
+  }
+}
+
+// 잠금은 이 프로세스의 것일 때만 돌려준다.
+function giveBackLock(file) {
+  if (lockPid(file) === process.pid) fs.rmSync(file, { force: true });
+}
+
+// serve 를 분리 실행하고 자기 탐침으로 최대 5초 기다린다. 동시에 부른 start 는 잠금 순서대로, 뒤쪽은 앞쪽 서버를 재사용한다.
+// 돌려줌: 종료 코드.
+export async function start(ctx, config, opts, io, deps) {
   if (opts.host !== undefined && !privateIPv4(opts.host)) throw new UsageError(hostRefusal(opts.host));
+  const lock = await takeStartLock(ctx.dataDir);
+  try {
+    return await startLocked(ctx, config, opts, io, deps);
+  } finally {
+    giveBackLock(lock);
+  }
+}
+
+async function startLocked(ctx, config, opts, io, { cliPath }) {
   const port = opts.port ?? config.port;
   const strict = Boolean(opts.portStrict || config.portStrict);
   const run = await runningServer(ctx.dataDir);
@@ -518,10 +624,26 @@ export async function stop(ctx, io) {
   return 1;
 }
 
-// 탭 자료 유무 줄.
+// 탭 자료 유무 줄. 읽지 못하거나 JSON 이 아닌 파일은 깨짐(check 로 확인).
 function tabData(dataDir) {
-  const has = (f) => (fs.existsSync(path.join(dataDir, f)) ? '있음' : '없음');
+  const has = (f) => {
+    try {
+      JSON.parse(readRegular(path.join(dataDir, f)));
+      return '있음';
+    } catch (e) {
+      return e.code === 'ENOENT' ? '없음' : '깨짐';
+    }
+  };
   return `진척도 ${has('items.json')}, 구현요건 ${has('req-spec.json')}, workflow ${has('flow.json')}, 구성도 ${has('arch.json')}`;
+}
+
+// 서버를 띄운 뒤 config.json 의 port, portStrict, hosts 가 바뀌었으면 경고 한 줄(그 값은 다시 띄워야 적용).
+function restartWarning(ctx, st, io) {
+  const { config, errors } = loadConfig(ctx);
+  if (errors.length || !st.applied) return;
+  const now = restartValues(config);
+  const changed = Object.keys(now).filter((k) => JSON.stringify(now[k]) !== JSON.stringify(st.applied[k]));
+  if (changed.length) io.err(`경고: 서버를 띄운 뒤 config.json 의 ${changed.join(', ')} 가 바뀜. 적용하려면 stop 뒤 start`);
 }
 
 // 다시 잰 규칙 로드 한도와 override 가려짐 경고(state.json 의 memory), workflowDirs auto 0개. stderr 로.
@@ -557,6 +679,7 @@ export async function status(ctx, io) {
   io.out(`탭 자료: ${tabData(ctx.dataDir)}`);
   io.out(`시작: ${info.startedAt || st.startedAt || '알 수 없음'}`);
   io.out(`요청: ${info.requests ?? 0}, 마지막 요청: ${info.lastRequestAt || '없음'}, 마지막 오류: ${info.lastErrorAt || '없음'}`);
+  restartWarning(ctx, st, io);
   statusWarnings(ctx, io);
   return 0;
 }

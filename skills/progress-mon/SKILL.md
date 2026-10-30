@@ -48,7 +48,7 @@ progress-mon skill body marker v1
 
 | 항목 | Claude Code | Codex |
 |---|---|---|
-| 스킬 디렉터리 | 스킬 맨 위 "Base directory for this skill:" 경로 | `~/.codex/skills/banker-progress-mon/` 절대경로. 프로젝트 범위 설치면 `./.codex/skills/banker-progress-mon/` |
+| 스킬 디렉터리 | 스킬 맨 위 "Base directory for this skill:" 경로 | Codex 스킬 목록이 보이는 이 SKILL.md 경로(file)의 폴더. npm 설치는 `~/.codex/skills/banker-progress-mon/`(프로젝트 범위 설치면 `./.codex/skills/banker-progress-mon/`), 플러그인 설치(`codex plugin add`)는 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/progress-mon/`. 절대경로로 씀 |
 | `--runtime` | `claude` | `codex` |
 | 자료 폴더 | `.omc/progress-mon/` | `.omx/progress-mon/` |
 | `--memory` | 자동 메모리 폴더를 알면 `auto-memory`, 아니면 `claude-md` | `agents-md` |
@@ -84,9 +84,9 @@ progress-mon skill body marker v1
 | 명령 | 인자 | 동작 |
 |---|---|---|
 | `init` | `--memory claude-md\|agents-md\|auto-memory\|none` `[--memory-dir <dir>] [--title <t>]` | 자료 폴더, `config.json`(있으면 그대로), 빈 `items.json`, `state.json` 생성. git 제외 목록에 자료 폴더 한 줄. 메모리 규칙 등록. `auto-memory` 는 `--memory-dir` 필수 |
-| `start` | `[--port <n>] [--port-strict] [--host <사설 IPv4>]` | 서버를 분리 실행하고 URL 출력. 같은 프로젝트 서버가 떠 있으면 재사용. `<n>` 은 1024~65535 |
+| `start` | `[--port <n>] [--port-strict] [--host <사설 IPv4>]` | 서버를 분리 실행하고 URL 출력. 같은 프로젝트 서버가 떠 있으면 재사용. 동시에 부른 start 는 차례로 돌아 서버 하나를 같이 씀. `<n>` 은 1024~65535 |
 | `stop` | 없음 | 상태 파일 PID 가 이 서버일 때만 끔 |
-| `status` | 없음 | 실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무, 시작 시각, 요청 수, 마지막 오류 시각 |
+| `status` | 없음 | 실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무(깨진 JSON 은 깨짐), 시작 시각, 요청 수, 마지막 오류 시각. 서버를 띄운 뒤 `config.json` 의 `port`, `portStrict`, `hosts` 가 바뀌었으면 경고(그 셋만 `stop` 뒤 `start` 해야 적용, 나머지는 다음 응답에 반영) |
 | `export` | `<file> [--now <ISO>]` | 4탭을 한 HTML 파일로. 외부 자원 없음, `file://` 에서 탭 전환. 사용자가 지시할 때만 만든다 |
 | `item` | `--key <k> --status todo\|doing\|done --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]` | 기타 항목. 같은 key 는 대체하고 시작 시각 유지(시작 시각은 `doing` 으로 기록할 때만). `--at` 은 지금 대신 그 시각으로 기록(시간대 필수). `--commit` 은 7~40자 16진 해시(commit Hash 칸에 앞 7자리). 빼면 있던 해시 유지 |
 | `note` | `--key <k> [--note <t>] [--issue <t>]` | 단계(`stage:<id>`)나 스토리 행의 비고, 문제점. 빈 값은 그 칸을 지움 |

@@ -3,6 +3,9 @@
 자료 폴더(`.omc/progress-mon/`, Codex `.omx/progress-mon/`)의 설정 파일. `init` 이 기본값으로 만들고, 있으면 그대로 둔다.
 형식이 틀린 칸은 기본값으로 읽고 `check` 가 `FAIL config.json <경로> <이유>` 로 알린다. `start`, `export` 는 형식 오류가 있으면 종료 1.
 
+실행 중 서버는 요청마다 `config.json` 을 보고, 바뀌었으면 다시 읽는다. 그래서 `stories`, `commitRegex`, `title` 같은 값은 다음 응답에 반영된다. 형식 오류가 생기면 화면은 오류 목록을 보이고, 고치면 돌아온다.
+`port`, `portStrict`, `hosts` 만은 서버를 다시 띄워야 적용된다(`stop` 뒤 `start`). 바뀐 채로 서버가 떠 있으면 `status` 가 경고 줄을 낸다.
+
 ## 키
 
 | 키 | 형식 | 기본 | 뜻 |

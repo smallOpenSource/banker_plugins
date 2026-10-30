@@ -185,6 +185,8 @@ export async function updateItems(dataDir, change, { fsx = fs, waitMs, label = '
 
 const need = (o, key, cmd) => {
   if (typeof o[key] !== 'string' || !o[key]) throw new UsageError(`${cmd} 에는 --${key} 가 필요함`);
+  // 객체 칸 이름으로 쓰면 JSON 에 남지 않는 이름(쓰기 성공 출력 뒤 기록이 사라지던 것)
+  if (o[key] === '__proto__') throw new UsageError(`--${key} 에 __proto__ 는 쓰지 않음`);
   return o[key];
 };
 const oneOf = (v, list) => {
@@ -285,6 +287,13 @@ function storyChange(o, now, configIds) {
 const NEXT = ['다음 할 일', '  1. references/authoring.md 를 읽고 req-spec.json, reqs.json, flow.json, arch.json 작성', '  2. check 로 검사. FAIL 0 까지 최대 3회', '  3. start 로 서버 시작'];
 
 const slash = (p) => p.split(path.sep).join('/');
+const realOr = (p) => {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+};
 const inside = (rel) => rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 
 // 자료 폴더를 git 제외 목록(git rev-parse --git-path info/exclude)에 한 줄 추가. 추적 파일은 바꾸지 않는다. 실패는 알림만.
@@ -297,7 +306,8 @@ function gitExclude(ctx) {
   } catch {
     return 'git 제외 목록: git 저장소 아님, 건너뜀';
   }
-  const rel = path.relative(top, ctx.dataDir);
+  // 링크 경로(macOS /var 와 /private/var, Windows junction)로 부른 --project 도 git 최상위(실제 경로)와 맞게 푼다
+  const rel = path.relative(realOr(top), path.join(realOr(path.dirname(ctx.dataDir)), path.basename(ctx.dataDir)));
   if (!inside(rel)) return 'git 제외 목록: 자료 폴더가 저장소 밖이라 건너뜀';
   const line = `/${slash(rel)}/`;
   const shown = inside(path.relative(ctx.project, excl)) ? slash(path.relative(ctx.project, excl)) : 'info/exclude';

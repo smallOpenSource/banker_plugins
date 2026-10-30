@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { esc, color, finite, textW, wrap, FAVICON, CSS, TABS, tabsHtml } from './pm-html.mjs';
-import { configOrFail, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
+import { configOrFail, loadConfig, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
 import { collect, parseTime, storyOfBusyLabel, hiddenAgent } from './pm-sources.mjs';
 
 const two = (n) => String(n).padStart(2, '0');
@@ -1581,6 +1581,43 @@ addEventListener('hashchange',show);show();})();</script>
 // 서버가 요청마다 부른다. 자료는 요청마다 다시 읽는다(바뀌지 않은 파일은 캐시).
 export function renderTab(ctx, config, tab, now) {
   return pageFrom(collect(ctx, config, now), config, tab, now);
+}
+
+// config.json 형식 오류 화면. 고치면 다음 자동 갱신(기본 주기)에 화면이 돌아온다.
+export function configErrorPage(errors, refreshSec) {
+  const rows = errors.map((e) => `<li><code>${esc(e.path)}</code> ${esc(e.msg)}</li>`).join('');
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta http-equiv="refresh" content="${refreshSec}">
+<title>config.json 형식 오류</title><link rel="icon" href="${FAVICON}"><style>
+${CSS}
+</style></head><body>
+<h1>config.json 형식 오류</h1>
+<div class="meta">고친 뒤 ${refreshSec}초 안에 화면이 돌아옴. check 로 확인</div>
+<ul>${rows}</ul></body></html>`;
+}
+
+// 서버의 렌더 함수. config.json 을 요청마다 보고 (mtime, 크기, ctime)이 바뀌었을 때만 다시 읽는다.
+// 그래서 stories, commitRegex, title 같은 값은 서버를 다시 띄우지 않아도 다음 응답에 반영된다(포트와 주소만 다시 띄워야 함).
+export function liveRender(ctx, initial) {
+  const file = path.join(ctx.dataDir, 'config.json');
+  const keyOf = () => {
+    try {
+      const st = fs.statSync(file);
+      return `${st.mtimeMs}:${st.size}:${st.ctimeMs}`;
+    } catch (e) {
+      return e.code || 'error';
+    }
+  };
+  let key = keyOf();
+  let cur = { config: initial, errors: [] };
+  return (tab, now) => {
+    const k = keyOf();
+    if (k !== key) {
+      key = k;
+      cur = loadConfig(ctx);
+    }
+    if (cur.errors.length) return configErrorPage(cur.errors, initial.refreshSec);
+    return renderTab(ctx, cur.config, tab, now);
+  };
 }
 
 // CLI: export <file> [--now <ISO>]. 자료 폴더를 만들지 않는다.

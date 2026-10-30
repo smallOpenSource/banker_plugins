@@ -478,3 +478,25 @@ test('updateItems: 깨진 items.json 은 고치지 않고 거부, 모르는 키�
   assert.deepEqual(v.stageEvents, []);
   assert.equal(isoSec(Date.parse('2026-01-02T03:04:05.999Z')), '2026-01-02T03:04:05Z');
 });
+
+test('--key, --id 에 __proto__ 는 거부(쓰기 성공 출력 뒤 JSON 에 남지 않던 것)', T, () => {
+  assert.throws(() => itemChange({ key: '__proto__', status: 'done', text: 'x' }, Date.now()), /__proto__ 는 쓰지 않음/);
+  const p = project({ data: true });
+  const before = fs.readFileSync(path.join(dataOf(p), 'items.json'), 'utf8');
+  for (const args of [['note', '--key', '__proto__', '--note', 'x'], ['story', '--id', '__proto__', '--status', 'done'], ['stage', '--id', '__proto__', '--status', 'done']]) {
+    const r = cli(args, p);
+    assert.equal(r.code, 1, args.join(' '));
+    assert.match(r.err, /__proto__ 는 쓰지 않음/);
+  }
+  assert.equal(fs.readFileSync(path.join(dataOf(p), 'items.json'), 'utf8'), before);
+});
+
+test('init: 링크 경로로 준 --project 도 git 제외 목록에 넣음(macOS /var, Windows junction)', T, () => {
+  const p = project({ git: true });
+  const via = path.join(ROOT, `via${++n}`);
+  fs.symlinkSync(p, via, process.platform === 'win32' ? 'junction' : 'dir');
+  const r = cli(['init', '--memory', 'none', '--project', via], via);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^git 제외 목록 추가: \/\.omc\/progress-mon\/ /m);
+  assert.match(fs.readFileSync(path.join(p, '.git', 'info', 'exclude'), 'utf8'), /^\/\.omc\/progress-mon\/$/m);
+});

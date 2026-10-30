@@ -324,3 +324,11 @@ test('프로젝트 안을 가리키는 링크(CLAUDE.md -> AGENTS.md)는 그대�
   assert.ok(fs.lstatSync(path.join(p, 'CLAUDE.md')).isSymbolicLink());
   assert.equal(count(fs.readFileSync(path.join(p, 'AGENTS.md'), 'utf8'), MARKER), 1);
 });
+
+test('Codex 규칙 줄: 승인 목록은 SKILL 런타임 표와 같은 start, stop, status, 다시 부를 이름은 Codex 이름', T, () => {
+  const line = ruleLine('codex');
+  assert.match(line, /start, stop, status 는 sandbox_permissions "require_escalated" 로 승인 요청/);
+  assert.match(line, /banker-progress-mon 스킬\(플러그인 설치는 banker:progress-mon\)로 호출/);
+  assert.match(fs.readFileSync(path.join(HERE, '..', 'SKILL.md'), 'utf8'), /^\| `start`, `stop`, `status` \| 바로 실행 \| 명령 하나씩 `sandbox_permissions: "require_escalated"`/m);
+  assert.doesNotMatch(ruleLine('claude'), /sandbox_permissions/);
+});

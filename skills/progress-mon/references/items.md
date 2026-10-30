@@ -56,7 +56,7 @@
 
 | 행 | 상태 |
 |---|---|
-| 단계 | events 출처와 `stageEvents` 를 시각 순으로 합침. `started` 진행 중, `done`, `skipped` 완료, `failed`, `stopped` 진행 중(비고 "멈춤"), 기록 없음 예정 |
+| 단계 | events 출처와 `stageEvents` 를 시각 순으로 합침. 단계마다 마지막 기록이 상태(완료 뒤 다시 `started` 면 진행 중). `started` 진행 중, `done`, `skipped` 완료, `failed`, `stopped` 진행 중(비고 "멈춤"), 기록 없음 예정 |
 | 스토리 | 커밋(제목 판정 또는 `storyCommits`) 있으면 완료, 없으면 `storyStates`, 없으면 진행 중 에이전트가 있으면 진행 중, 그 밖 예정 |
 | 에이전트 | 워크플로 journal 에서 끝나지 않은 에이전트. 스토리로 잡힌 라벨은 숨김(`references/config.md`) |
 | 기타 | `items` 그대로. 소요시간은 `s` 가 있을 때만(`doing` 은 지금까지, `done` 은 `t` 까지) |

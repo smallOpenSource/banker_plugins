@@ -253,6 +253,99 @@ test('start, 재사용, status, stop 수명 주기와 HTTP 응답', T, async () 
   }
 });
 
+test('실행 중 서버는 config.json 변경을 다음 응답에 반영, 형식 오류는 안내 화면, 다시 띄워야 하는 값은 status 경고', T, async () => {
+  const p = project('.omc/progress-mon');
+  guardData(p);
+  const port = await freePort();
+  const cfg = path.join(dataOf(p), 'config.json');
+  try {
+    assert.equal(cli(['start', '--port', String(port)], p).code, 0);
+    assert.doesNotMatch((await get(port)).body, /스토리 0\/2/);
+    fs.writeFileSync(cfg, JSON.stringify({ title: '바꾼 제목', stories: [{ id: 'S1', name: '하나' }, { id: 'S2', name: '둘' }] }));
+    const after = (await get(port)).body;
+    assert.match(after, /<h1>바꾼 제목<\/h1>/);
+    assert.match(after, /스토리 0\/2 완료/);
+    fs.writeFileSync(cfg, JSON.stringify({ title: '' }));
+    const bad = await get(port);
+    assert.equal(bad.status, 200);
+    assert.match(bad.body, /config\.json 형식 오류/);
+    assert.match(bad.body, /\$\.title/);
+    fs.writeFileSync(cfg, JSON.stringify({ title: '다시', port: port + 7 }));
+    assert.match((await get(port)).body, /<h1>다시<\/h1>/);
+    const s = cli(['status'], p);
+    assert.equal(s.code, 0);
+    assert.match(s.err, /경고: 서버를 띄운 뒤 config\.json 의 port 가 바뀜\. 적용하려면 stop 뒤 start/);
+    fs.writeFileSync(path.join(dataOf(p), 'req-spec.json'), '{');
+    assert.match(cli(['status'], p).out, /^탭 자료: 진척도 없음, 구현요건 깨짐, workflow 없음, 구성도 없음$/m, '깨진 JSON 은 있음이 아니라 깨짐');
+  } finally {
+    cleanup(p);
+  }
+});
+
+function cliAsync(args, cwd) {
+  return new Promise((resolve) => {
+    const c = spawn(process.execPath, [CLI, ...args], { cwd, env: ENV, windowsHide: true });
+    let out = '';
+    let err = '';
+    c.stdout.on('data', (d) => (out += d));
+    c.stderr.on('data', (d) => (err += d));
+    c.on('close', (code) => resolve({ code, out, err }));
+  });
+}
+
+test('동시에 부른 start 는 서버 하나를 띄우고 모두 같은 URL, 거짓 실패와 끌 수 없는 서버 없음(5회)', { timeout: 300000 }, async () => {
+  for (let round = 0; round < 5; round++) {
+    const p = project('.omc/progress-mon');
+    guardData(p);
+    const port = await freePort();
+    try {
+      const rs = await Promise.all([0, 1, 2, 3].map(() => cliAsync(['start', '--port', String(port)], p)));
+      const url = `http://127.0.0.1:${port}/`;
+      assert.deepEqual(rs.map((r) => r.code), [0, 0, 0, 0], JSON.stringify(rs));
+      assert.equal(rs.filter((r) => r.out === `시작함: ${url}\n`).length, 1, JSON.stringify(rs));
+      assert.equal(rs.filter((r) => r.out === `이미 실행 중(재사용): ${url}\n`).length, 3, JSON.stringify(rs));
+      assert.equal(fs.existsSync(path.join(dataOf(p), 'server.json.lock')), false, '잠금은 돌려줌');
+      assert.equal(cli(['stop'], p).code, 0);
+      for (let q = port; q <= port + 4; q++) await assert.rejects(get(q), /ECONNREFUSED/, `포트 ${q} 에 남은 서버 없음`);
+    } finally {
+      cleanup(p);
+    }
+  }
+});
+
+test('start 잠금: 죽은 프로세스의 잠금과 링크 잠금은 넘겨받고, 살아 있는 잠금은 기다림', T, async () => {
+  const p = project('.omc/progress-mon');
+  guardData(p);
+  const lock = path.join(dataOf(p), 'server.json.lock');
+  const port = await freePort();
+  try {
+    const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' });
+    fs.writeFileSync(lock, `${dead.stdout} 2026-10-30T00:00:00.000Z\n`);
+    const a = cli(['start', '--port', String(port)], p);
+    assert.equal(a.code, 0, a.err);
+    assert.equal(fs.existsSync(lock), false);
+    assert.equal(cli(['stop'], p).code, 0);
+    if (process.platform !== 'win32') {
+      const victim = path.join(ROOT, `victim${++n}`);
+      fs.writeFileSync(victim, 'keep');
+      fs.symlinkSync(victim, lock);
+      assert.equal(cli(['start', '--port', String(port)], p).code, 0);
+      assert.equal(fs.readFileSync(victim, 'utf8'), 'keep', '링크 대상은 그대로');
+      assert.equal(cli(['stop'], p).code, 0);
+    }
+    fs.writeFileSync(lock, `${process.pid} 2026-10-30T00:00:00.000Z\n`);
+    const t0 = Date.now();
+    const b = cliAsync(['start', '--port', String(port)], p);
+    await new Promise((r) => setTimeout(r, 1500));
+    fs.rmSync(lock);
+    const rb = await b;
+    assert.equal(rb.code, 0, rb.err);
+    assert.ok(Date.now() - t0 >= 1500, '살아 있는 잠금이 풀릴 때까지 기다림');
+  } finally {
+    cleanup(p);
+  }
+});
+
 test('포트 점유면 다음 포트와 알림, strict 면 거부', T, async () => {
   const p = project('.omc/progress-mon');
   const holder = http.createServer((q, s) => (s.writeHead(404), s.end()));

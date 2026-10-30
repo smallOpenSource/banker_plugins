@@ -14,7 +14,7 @@ const KINDS = ['claude-md', 'agents-md', 'auto-memory', 'none'];
 // 규칙 줄. 경로는 자료 폴더 기준 상대 표기뿐(스킬 폴더 절대 경로는 state.json 의 skillDir).
 export function ruleLine(runtime) {
   if (runtime === 'codex') {
-    return `진척도 화면(progress-mon): 모든 명령에 --runtime codex 를 붙임. 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. .omx/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 progress-mon 스킬로 호출. 세션 시작 때 status, 꺼져 있으면 start. start, status 는 sandbox_permissions "require_escalated" 로 승인 요청. 세션을 닫아도 화면을 두려면 사용자 터미널에서 serve 실행을 안내. ${MARKER}`;
+    return `진척도 화면(progress-mon): 모든 명령에 --runtime codex 를 붙임. 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. .omx/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 banker-progress-mon 스킬(플러그인 설치는 banker:progress-mon)로 호출. 세션 시작 때 status, 꺼져 있으면 start. start, stop, status 는 sandbox_permissions "require_escalated" 로 승인 요청. 세션을 닫아도 화면을 두려면 사용자 터미널에서 serve 실행을 안내. ${MARKER}`;
   }
   return `진척도 화면(progress-mon): 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. .omc/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 progress-mon 스킬로 호출. 세션 시작 때 status, 꺼져 있으면 start. ${MARKER}`;
 }
