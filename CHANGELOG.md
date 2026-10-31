@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.3] - 2026-10-31
 
 ### Fixed
 - `teamwork`(Codex 전용, 엔진 0.3.2): 세션 이름(`/rename`) 처리를 다듬는다.
