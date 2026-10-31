@@ -630,6 +630,8 @@ test('쓰기가 계속 실패하며 까닭이 번갈아 바뀌어도 쌓아 둔 
   const lines = text.trimEnd().split('\n');
   assert.ok(lines.length <= 23, `줄 ${lines.length}`);
   assert.match(text, /쓰지 못한 경고와 회복 줄 \d+개 생략/);
+  const stamps = lines.map((l) => l.slice(0, l.indexOf(' ')));
+  assert.deepEqual(stamps, [...stamps].sort(), '로그 시각이 거꾸로 가지 않음');
   const body = lines.map((l) => l.replace(/^\S+ /, ''));
   assert.equal(body[0], '경고: server.log 에 기록하지 못함(ENOSPC). 서버는 계속', '처음 까닭이 남음');
   assert.equal(body.at(-3), '경고: server.log 에 기록하지 못함(EIO). 서버는 계속', '최신 까닭이 남음');

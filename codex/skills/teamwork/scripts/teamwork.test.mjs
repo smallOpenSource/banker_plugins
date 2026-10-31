@@ -1234,3 +1234,36 @@ ptest('깃발과 ZWJ 이모지는 목록에 그대로 보이고, 그 밖의 태�
   assert.match(lineOf(out, 'bbbbbb'), /이름:"x\?\?y\?z" /);
   assert.deepEqual(sendTo(h, `${england} ${family}`, C).to, [A]);
 });
+
+ptest('넓게 맞는 역할(구분 글자 꼴)은 NFKC 로 맞는 이름을 가리지 않고, 긴 대상을 32자 역할로 자르지 않는다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  run(h, ['role', 'a-b'], { threadId: B });
+  renameSession(h, C, 'a＂b');
+  assert.deepEqual(sendTo(h, 'a"b').to, [C], '이름 NFKC 가 역할 구분 글자 꼴보다 먼저');
+  assert.deepEqual(sendTo(h, 'a b').to, [B], '같은 넓이에서는 역할이 먼저');
+  run(h, ['role', 'x'.repeat(32)], { threadId: B });
+  renameSession(h, C, 'x'.repeat(40));
+  assert.deepEqual(sendTo(h, 'x'.repeat(40)).to, [C], '앞 32자가 같은 긴 대상이 역할로 가지 않음');
+  assert.deepEqual(sendTo(h, 'x'.repeat(32)).to, [B]);
+});
+
+ptest('깃발은 유니코드가 권하는 셋만 남기고, 자르기가 깃발을 가르면 남은 태그도 ? 가 된다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  const cp = (...c) => String.fromCodePoint(...c);
+  const tags = (t) => Array.from(t, (c) => cp(0xe0000 + c.charCodeAt(0))).join('');
+  const scotland = cp(0x1f3f4) + tags('gbsct') + cp(0xe007f);
+  renameSession(h, A, `${scotland} ${cp(0x1f3f4)}${tags('ignore')}${cp(0xe007f)}`);
+  renameSession(h, B, 'x'.repeat(60) + scotland);
+  const out = peersOf(h);
+  assert.ok(lineOf(out, 'aaaaaa').includes(`이름:"${scotland} ${cp(0x1f3f4)}???????" `), lineOf(out, 'aaaaaa'));
+  assert.ok(lineOf(out, 'bbbbbb').includes(`이름:"${'x'.repeat(60)}${cp(0x1f3f4)}???" `), lineOf(out, 'bbbbbb'));
+  assert.doesNotMatch(lineOf(out, 'bbbbbb'), /[\u{e0000}-\u{e007f}]/u, '잘린 깃발의 짝 없는 태그 문자가 남지 않음');
+  assert.deepEqual(sendTo(h, `${'x'.repeat(60)}${cp(0x1f3f4)}???`, A).to, [B], '목록 값으로 보냄');
+});

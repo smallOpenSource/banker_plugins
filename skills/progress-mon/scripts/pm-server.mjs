@@ -143,6 +143,7 @@ function logWarnings(onWarn) {
   const shown = { fail: null, rotate: null };
   let lines = [];
   let dropped = 0;
+  let droppedAt = ''; // 처음 빠진 줄의 시각. 생략 줄에 써서 로그 시각이 거꾸로 가지 않게 한다
   const current = () => shown.fail || shown.rotate;
   const set = (kind, text) => {
     const before = current();
@@ -153,11 +154,12 @@ function logWarnings(onWarn) {
   const note = (text) => {
     lines.push(`${new Date().toISOString()} ${text}\n`);
     if (lines.length > PENDING_KEEP * 2) {
-      lines.splice(PENDING_KEEP, 1);
+      const [gone] = lines.splice(PENDING_KEEP, 1);
+      if (!dropped) droppedAt = gone.slice(0, gone.indexOf(' '));
       dropped++;
     }
   };
-  const omitted = () => (dropped ? [`${new Date().toISOString()} 경고: 쓰지 못한 경고와 회복 줄 ${dropped}개 생략\n`] : []);
+  const omitted = () => (dropped ? [`${droppedAt} 경고: 쓰지 못한 경고와 회복 줄 ${dropped}개 생략\n`] : []);
   return {
     warn(kind, text) {
       if (shown[kind] === text) return;
