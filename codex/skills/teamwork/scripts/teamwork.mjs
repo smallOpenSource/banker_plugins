@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const MIN_CODEX = [0, 149, 0];
 const CODEX_HOME = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 const TW = path.join(CODEX_HOME, 'teamwork');
@@ -288,10 +288,12 @@ function dropStale(file, p) {
 // ---------- 세션 이름 (/rename) ----------
 
 // Codex 는 /rename 이름을 $CODEX_HOME/session_index.jsonl 에 한 줄씩 덧붙인다. 같은 id 의 마지막 줄이 지금 이름이다.
-// 특수 파일에서 멈추지 않게 O_NONBLOCK 으로 열어 일반 파일만 읽고, 커지면 끝 1MiB 만 본다
+// 특수 파일에서 멈추지 않게 O_NONBLOCK 으로 열어 일반 파일만 읽고, 커지면 끝 1MiB 만 본다.
+// 링크는 따라간다(점 파일을 링크로 관리하는 사용자). 따라간 대상이 일반 파일이 아니면 읽지 않고, 터미널 장치여도 제어 터미널로 잡지 않는다(O_NOCTTY)
 function readIndexTail() {
   let fd;
-  try { fd = fs.openSync(INDEX, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0)); } catch { return ''; }
+  const { O_RDONLY, O_NONBLOCK, O_NOCTTY } = fs.constants;
+  try { fd = fs.openSync(INDEX, O_RDONLY | (O_NONBLOCK || 0) | (O_NOCTTY || 0)); } catch { return ''; }
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) return '';
@@ -312,7 +314,9 @@ export function parseThreadNames(text) {
   return names;
 }
 
-function threadNames() { return parseThreadNames(readIndexTail()); }
+// 명령과 훅은 한 번 돌고 끝나는 프로세스다. send 한 번에 여러 번 묻더라도 색인은 한 번만 읽는다
+let namesOnce = null;
+function threadNames() { return (namesOnce ??= parseThreadNames(readIndexTail())); }
 
 function roster() {
   let names = [];
@@ -331,7 +335,13 @@ function roster() {
     .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
 }
 
-const NAME_SEP = /[\s\u0000-\u001f\u007f[\]()#:'"`$\\]+/g;
+// 목록과 머리말에 보이면 안 되는 글자: C0, DEL, C1(U+0085 포함), 폭 없는 문자, 줄과 문단 구분, 양방향 제어
+const HIDDEN = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+const NAME_SEP = /[\s\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff[\]()#:'"`$\\]+/g;
+const NAME_MAX = 64;
+
+// 글자(코드 포인트) 단위로 자른다. UTF-16 단위로 자르면 서로게이트 쌍이 갈려 깨진 글자가 보인다
+function clip(s, max) { const cs = Array.from(s); return cs.length > max ? cs.slice(0, max).join('') : s; }
 
 // 역할 이름: 머리말과 목록의 줄을 흉내 내지 못하게 공백, 제어 문자, 괄호와 따옴표를 바꾼다. 기록할 때와 보일 때 모두 쓴다
 function roleName(s) { return String(s || '').normalize('NFKC').trim().replace(NAME_SEP, '-').slice(0, 32); }
@@ -343,10 +353,13 @@ function nameKey(s) { return String(s || '').normalize('NFKC').trim().toLowerCas
 function label(p) { const r = roleName(p.role) || roleName(p.name); return r ? `${r}(${shortId(p.id)})` : shortId(p.id); }
 
 // 폴더는 그 세션의 훅 입력(cwd)에서 온다. 줄을 나눠 지시처럼 보이지 못하게 제어 문자를 바꾸고 잘라서 JSON 문자열로 감싼다. 세션 이름도 같게
-function showCwd(s, max = 200) { return sanitize(JSON.stringify(String(s).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, '?').slice(0, max))); }
+function showCwd(s, max = 200) { return sanitize(JSON.stringify(clip(String(s).replace(HIDDEN, '?'), max))); }
+
+// 목록에 보이는 이름(바꾸고 자른 값). 모델은 이 값만 보므로 send 도 이 값을 받는다
+function shownName(s) { return clip(String(s).replace(HIDDEN, '?'), NAME_MAX); }
 
 function peerLine(p, selfId) {
-  const name = p.name ? ` 이름:${showCwd(p.name, 64)}` : '';
+  const name = p.name ? ` 이름:${showCwd(p.name, NAME_MAX)}` : '';
   return `- ${shortId(p.id)}${name} 역할:${roleName(p.role) || '미정'} 폴더:${p.cwd ? showCwd(p.cwd) : '?'}${p.id === selfId ? ' (이 세션)' : ''}`;
 }
 
@@ -355,17 +368,32 @@ function rosterText(list, selfId) {
   return list.map((p) => peerLine(p, selfId)).join('\n');
 }
 
-// 대상 찾는 순서: all, 역할, 세션 이름(/rename), 짧은ID 나 UUID. 같은 역할이나 이름이 여럿이면 모두에게 보낸다
+const byId = (list, key) => list.filter((p) => shortId(p.id).toLowerCase() === key.replace(/-/g, '') || p.id.toLowerCase() === key);
+
+// 이름 비교: 먼저 글자 그대로(대소문자만 무시) 보고, 맞는 세션이 없을 때만 공백과 '-' 를 같게 본다(-qa- 가 qa 를 가리지 않게).
+// 원래 이름과 목록에 보이는 값(64자로 자르고 숨은 글자를 ? 로 바꾼 값) 둘 다 받는다
+function byName(list, to) {
+  const named = list.filter((p) => p.name);
+  const forms = (p) => [p.name, shownName(p.name)];
+  const exact = String(to).normalize('NFKC').trim().toLowerCase();
+  const hit = exact ? named.filter((p) => forms(p).some((f) => f.normalize('NFKC').toLowerCase() === exact)) : [];
+  if (hit.length) return hit;
+  const nk = nameKey(to);
+  return nk ? named.filter((p) => forms(p).some((f) => nameKey(f) === nk)) : [];
+}
+
+// 대상 찾는 순서: all, 실제 피어의 짧은ID 나 UUID 와 정확히 같으면 그 세션, 역할, 세션 이름(/rename), 나머지 짧은ID 꼴.
+// ID 를 먼저 보는 것은 역할이나 이름이 다른 세션의 짧은ID 를 가로채지 못하게 하려는 것이다. 같은 역할이나 이름이 여럿이면 모두에게 보낸다
 function resolveTargets(to, selfId) {
   const list = roster().filter((p) => p.id !== selfId);
   const key = String(to).trim().toLowerCase();
   if (key === 'all') return list;
+  const ids = /^[0-9a-f]{6}$/.test(key) || isUuid(key) ? byId(list, key) : [];
+  if (ids.length) return ids;
   const byRole = list.filter((p) => p.role && p.role.toLowerCase() === key);
   if (byRole.length) return byRole;
-  const nk = nameKey(to);
-  const byName = list.filter((p) => nk && p.name && nameKey(p.name) === nk);
-  if (byName.length) return byName;
-  return list.filter((p) => shortId(p.id) === key.replace(/-/g, '') || p.id.toLowerCase() === key);
+  const named = byName(list, to);
+  return named.length ? named : byId(list, key);
 }
 
 // ---------- 맥락 문구 ----------
@@ -373,7 +401,7 @@ function resolveTargets(to, selfId) {
 function protocolText(selfId, list) {
   const w = shq(WRAPPER);
   const me = list.find((p) => p.id === selfId) || (selfId ? readJson(peerFile(selfId), {}) : {});
-  const name = me.name ? ` 이름:${showCwd(me.name, 64)}` : '';
+  const name = me.name ? ` 이름:${showCwd(me.name, NAME_MAX)}` : '';
   return [
     '[teamwork 켜짐] 이 기기의 Codex 세션들이 피어로 협업한다.',
     `이 세션: ${selfId ? shortId(selfId) : '?'}${name} 역할:${roleName(me.role) || '미정'}`,
@@ -402,11 +430,15 @@ const OFF_TEXT = '[teamwork 꺼짐] 피어 협업이 꺼졌다. 다른 세션에
 
 const orphanText = () => `[teamwork 멈춤] banker 가 이 기기에서 지워져 teamwork 가 멈췄다. 피어에 보내지 않는다. 사용자에게 한 번 알린다: 훅과 상태를 지우려면 승인을 받아 \`${shq(WRAPPER)} uninstall\` 을 실행한다.`;
 
+// 세션이 마지막으로 받은 목록의 지문. 앞에 엔진 판을 붙여, 판이 바뀌면 바뀐 목록 대신 새 규칙 전문을 다시 보낸다.
+// 값은 JSON 으로 묶어 이름에 ':' 나 ',' 가 들어가도 다른 목록과 같은 지문이 되지 않게 한다
 function digest(selfId, list) {
   const me = list.find((p) => p.id === selfId) || readJson(peerFile(selfId), {});
-  const peers = list.map((p) => `${p.id}:${p.role}:${p.name || ''}`).join(',');
-  return crypto.createHash('sha1').update(`${me.role}|${peers}`).digest('hex');
+  const peers = list.map((p) => [p.id, p.role ?? null, p.name || '']);
+  return `${VERSION}:${crypto.createHash('sha1').update(JSON.stringify([me.role ?? null, peers])).digest('hex')}`;
 }
+
+const sameEngine = (seen) => seen.startsWith(`${VERSION}:`);
 
 // ---------- 훅 ----------
 
@@ -490,7 +522,7 @@ function onContext(kind, id, input, seen) {
   if (kind === 'prompt') writeText(path.join(TURN, id), /^\s*\[teamwork (요청|결과)/.test(String(input.prompt || '')) ? 'peer' : 'user');
   const list = roster();
   const d = digest(id, list);
-  if (!seen || seen === 'off' || kind === 'session-start') { writeText(seenFile(id), d); return protocolText(id, list); }
+  if (!seen || !sameEngine(seen) || kind === 'session-start') { writeText(seenFile(id), d); return protocolText(id, list); }
   if (seen !== d) { writeText(seenFile(id), d); return rosterUpdateText(id, list); }
   return null;
 }

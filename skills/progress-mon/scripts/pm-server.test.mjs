@@ -527,6 +527,73 @@ test('server.log.1 자리가 폴더라 옮기지 못하면 server.log 를 비우
   }
 });
 
+// fs.writeSync 를 잠시 바꿔 server.log 쓰기를 code 로 실패시킨다(open 은 됨). 되돌리는 함수를 돌려줌
+function failLogWrites(code) {
+  const real = fs.writeSync;
+  fs.writeSync = (fd, ...rest) => {
+    throw Object.assign(new Error(code), { code });
+  };
+  return () => (fs.writeSync = real);
+}
+
+test('server.log 기록이 회복되면 status 경고를 지우고 로그에 회복 줄을 남김', T, () => {
+  const ctx = ctxOf();
+  fs.mkdirSync(logPath(ctx.dataDir)); // 폴더 자리: 기록하지 않음
+  const warns = [];
+  const log = makeLogger(ctx.dataDir, 4000, (w) => warns.push(w));
+  log('한 줄');
+  log('두 줄');
+  fs.rmdirSync(logPath(ctx.dataDir));
+  log('세 줄');
+  log('네 줄');
+  assert.equal(warns.length, 2, warns.join('|'));
+  assert.match(warns[0], /링크, 특수 파일/);
+  assert.equal(warns[1], null, 'status 경고를 지움');
+  const lines = fs.readFileSync(logPath(ctx.dataDir), 'utf8').trimEnd().split('\n').map((l) => l.replace(/^\S+ /, ''));
+  assert.equal(lines.length, 4, lines.join('\n'));
+  assert.match(lines[0], /^경고: server\.log 가 링크/);
+  assert.equal(lines[1], '세 줄');
+  assert.match(lines[2], /^회복: 앞의 경고가 풀림\(server\.log 가 링크/);
+  assert.equal(lines[3], '네 줄');
+});
+
+test('server.log 를 못 쓰는 까닭이 바뀌면 새 까닭으로 다시 알리고, 같은 까닭이 계속되면 한 번만 알림', T, () => {
+  const ctx = ctxOf();
+  const warns = [];
+  const log = makeLogger(ctx.dataDir, 4000, (w) => warns.push(w));
+  let restore = failLogWrites('ENOSPC');
+  try {
+    for (let i = 0; i < 4; i++) log(`줄 ${i}`); // open 은 되고 write 만 실패: 경고가 났다 지워지기를 되풀이하지 않음
+  } finally {
+    restore();
+  }
+  restore = failLogWrites('EIO');
+  try {
+    log('다른 까닭');
+  } finally {
+    restore();
+  }
+  assert.deepEqual(warns, ['server.log 에 기록하지 못함(ENOSPC). 서버는 계속', 'server.log 에 기록하지 못함(EIO). 서버는 계속']);
+  log('회복');
+  assert.equal(warns.at(-1), null);
+  const text = fs.readFileSync(logPath(ctx.dataDir), 'utf8');
+  assert.match(text, /경고: server\.log 에 기록하지 못함\(ENOSPC\)[\s\S]*경고: server\.log 에 기록하지 못함\(EIO\)[\s\S]* 회복\n[\s\S]*회복: 앞의 경고가 풀림\(server\.log 에 기록하지 못함\(EIO\)/);
+});
+
+test('server.log.1 자리를 치워 다시 옮기면 옮기지 못한 경고를 지움', T, () => {
+  const ctx = ctxOf();
+  fs.mkdirSync(`${logPath(ctx.dataDir)}.1`);
+  fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
+  const warns = [];
+  const log = makeLogger(ctx.dataDir, 400, (w) => warns.push(w));
+  log(`줄 ${'y'.repeat(60)}`);
+  assert.equal(warns.length, 1);
+  fs.rmdirSync(`${logPath(ctx.dataDir)}.1`);
+  for (let i = 0; i < 12; i++) log(`줄 ${i} ${'z'.repeat(40)}`);
+  assert.deepEqual(warns.slice(1), [null], '다음 옮기기가 되면 한 번 지움');
+  assert.ok(fs.statSync(`${logPath(ctx.dataDir)}.1`).isFile());
+});
+
 // fs.writeFileSync 를 잠시 바꿔 server.json.lock(또는 suffix 로 끝나는 파일)의 wx 를 code 로 times 번 실패시킨다
 // (Windows 의 delete pending 흉내).
 function failLockWrites(code, times, suffix = 'server.json.lock') {

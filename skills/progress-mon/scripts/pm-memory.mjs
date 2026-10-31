@@ -258,10 +258,18 @@ function append(file, info, lines) {
   // O_NONBLOCK: 검사 뒤 FIFO 로 바뀐 자리에서 open 이 읽는 쪽을 기다리며 멈추지 않게 한다(Windows 에는 없어 0)
   const { O_WRONLY, O_APPEND, O_CREAT, O_EXCL } = fs.constants;
   const flags = O_WRONLY | (fs.constants.O_NONBLOCK || 0) | O_CREAT | (info.exists ? O_APPEND : O_EXCL);
-  const fd = fs.openSync(file, flags, 0o666);
+  const changed = () => new UsageError(`${path.basename(file)} 이 검사 뒤 하드링크나 특수 파일로 바뀌어 쓰지 않음`);
+  let fd;
+  try {
+    fd = fs.openSync(file, flags, 0o666);
+  } catch (e) {
+    // 읽는 쪽이 없는 FIFO(ENXIO)나 막힌 특수 파일(EAGAIN)은 검사 뒤 바뀐 자리다. 날 오류 대신 같은 거부 문구로 끝낸다
+    if (e.code === 'ENXIO' || e.code === 'EAGAIN') throw changed();
+    throw e;
+  }
   try {
     const st = fs.fstatSync(fd);
-    if (!st.isFile() || st.nlink > 1) throw new UsageError(`${path.basename(file)} 이 검사 뒤 하드링크나 특수 파일로 바뀌어 쓰지 않음`);
+    if (!st.isFile() || st.nlink > 1) throw changed();
     fs.writeFileSync(fd, body); // 다 쓸 때까지 반복
   } finally {
     fs.closeSync(fd);

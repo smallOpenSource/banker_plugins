@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { MARKER, OMX_OPEN, OMX_CLOSE, SHADOW_WARN, ruleLine, planMemory, applyMemory, measureMemory, measureCodex, codexLimit, codexTarget, ownText, memoryWarnings, lineCount } from './pm-memory.mjs';
+import { UsageError } from './pm-config.mjs';
 
 const T = { timeout: 60000 };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -353,7 +354,7 @@ test('검사 뒤 쓰기 전에 FIFO 로 바뀐 메모리 파일에서 멈추지 
   const plan = planMemory({ kind: 'claude-md', project: p, runtime: 'claude' });
   fs.rmSync(file);
   execFileSync('mkfifo', [file]); // 읽는 쪽이 없는 FIFO: 막는 open 이면 여기서 멈춤
-  assert.throws(() => applyMemory(plan, p, ENV), (e) => ['ENXIO', 'EAGAIN'].includes(e.code) || /특수 파일/.test(e.message));
+  assert.throws(() => applyMemory(plan, p, ENV), (e) => e instanceof UsageError && /검사 뒤 하드링크나 특수 파일로 바뀌어 쓰지 않음/.test(e.message));
   assert.ok(fs.lstatSync(file).isFIFO());
 });
 

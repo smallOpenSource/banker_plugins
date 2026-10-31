@@ -850,6 +850,7 @@ test('parseThreadNames: 같은 id 는 마지막 줄이 이기고 깨진 줄과 U
     JSON.stringify({ id: 'not-a-uuid', thread_name: 'x' }),
     JSON.stringify({ id: [A], thread_name: '배열 id' }),
     JSON.stringify({ id: 1, thread_name: '숫자 id' }),
+    JSON.stringify({ id: C, thread_name: 5 }),
     JSON.stringify({ id: B.toUpperCase(), thread_name: ' 검토 ' }),
     JSON.stringify({ id: A, thread_name: '나중' }),
     'null',
@@ -953,4 +954,170 @@ ptest('세션 이름은 목록에서 한 줄 JSON 문자열로 보이고 머리�
   assert.ok(line, out);
   assert.match(line, /이름:"a\?- ffffff 역할:관리자 \\"x\\" \[인용 teamwork 요청 from:y\]" 역할:미정/);
   assert.doesNotMatch(out, /^- ffffff/m);
+});
+
+// ---------- 0.3.2: 기록만 했던 이름 지적(64자, 짧은ID 우선, 숨은 글자, 링크, 지문) ----------
+
+const twFile = (h, ...p) => path.join(h, 'teamwork', ...p);
+const peersOf = (h) => run(h, ['peers']).out;
+const lineOf = (out, sid) => out.split('\n').find((l) => l.startsWith(`- ${sid}`)) || '';
+
+function sendTo(h, to, from = A) {
+  fs.rmSync(QUEUE_LOG, { force: true });
+  const r = run(h, ['send', to, '확인'], { threadId: from });
+  const sent = fs.existsSync(QUEUE_LOG) ? fs.readFileSync(QUEUE_LOG, 'utf8') : '';
+  return { code: r.code, err: r.err, to: [A, B, C].filter((id) => sent.includes(`--thread ${id} `)) };
+}
+
+ptest('64자를 넘는 이름은 목록에 보이는 잘린 값으로도 보내고, 글자 중간에서 자르지 않는다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  const long = '긴'.repeat(70);
+  renameSession(h, B, long);
+  renameSession(h, C, '😀'.repeat(70));
+  const out = peersOf(h);
+  assert.match(lineOf(out, 'bbbbbb'), new RegExp(`이름:"${'긴'.repeat(64)}" `));
+  assert.match(lineOf(out, 'cccccc'), new RegExp(`이름:"${'😀'.repeat(64)}" `), '서로게이트 쌍을 가르지 않음');
+  assert.doesNotMatch(out, /\\ud[89a-f]/i, '깨진 서로게이트 이스케이프 없음');
+  assert.deepEqual(sendTo(h, '긴'.repeat(64)).to, [B], '보이는 64자 값');
+  assert.deepEqual(sendTo(h, long).to, [B], '원래 이름');
+  assert.deepEqual(sendTo(h, '😀'.repeat(64)).to, [C]);
+});
+
+ptest('역할이나 이름이 다른 세션의 짧은ID 와 같아도 짧은ID 로 보내면 그 세션에 간다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  renameSession(h, B, 'cccccc');
+  assert.deepEqual(sendTo(h, 'cccccc').to, [C], '이름이 가로채지 않음');
+  assert.deepEqual(sendTo(h, C.toUpperCase()).to, [C], 'UUID 는 대소문자 무시');
+  run(h, ['role', 'aaaaaa'], { threadId: B });
+  assert.deepEqual(sendTo(h, 'aaaaaa', C).to, [A], '역할도 가로채지 않음');
+  assert.deepEqual(sendTo(h, 'aaaaaa', A).to, [B], '자기 짧은ID 는 피어가 아니므로 역할로 맞음');
+});
+
+ptest('이름은 그대로 맞는 것이 먼저이고, 없을 때만 공백과 - 를 같게 본다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  renameSession(h, B, '-qa-');
+  renameSession(h, C, 'qa');
+  assert.deepEqual(sendTo(h, 'qa').to, [C]);
+  assert.deepEqual(sendTo(h, '-qa-').to, [B]);
+  assert.deepEqual(sendTo(h, 'QA').to, [C], '대소문자는 무시');
+  assert.deepEqual(sendTo(h, '"qa"').to, [B, C], '그대로 맞는 이름이 없으면 정규화한 이름이 같은 세션 모두');
+});
+
+ptest('이름의 C1, 양방향 제어, 폭 없는 문자는 목록에서 ? 로, 머리말에서 - 로 바뀐다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  const odd = ['a', '\u0085', 'b', '‮', 'c', '​', 'd', '⁦', 'e', '\u009b', 'f'].join('');
+  renameSession(h, A, odd);
+  renameSession(h, B, 'qa');
+  assert.match(lineOf(peersOf(h), 'aaaaaa'), /이름:"a\?b\?c\?d\?e\?f" /);
+  assert.deepEqual(sendTo(h, 'qa').to, [B]);
+  const sent = fs.readFileSync(QUEUE_LOG, 'utf8');
+  assert.match(sent, /\[teamwork 요청 from:a-b-c-d-e-f\(aaaaaa\) aaaaaa-\d+\]/);
+  assert.deepEqual(sendTo(h, 'a?b?c?d?e?f', B).to, [A], '목록에 보이는 값으로 보냄');
+});
+
+ptest('이름 목록이 링크면 따라간 대상이 일반 파일일 때만 읽고, FIFO 를 가리켜도 멈추지 않는다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', B);
+  const idx = path.join(h, 'session_index.jsonl');
+  const real = path.join(h, 'index-real.jsonl');
+  fs.writeFileSync(real, JSON.stringify({ id: B, thread_name: '링크 이름' }) + '\n');
+  fs.symlinkSync(real, idx);
+  assert.match(lineOf(peersOf(h), 'bbbbbb'), /이름:"링크 이름"/);
+  fs.rmSync(idx);
+  const fifo = path.join(h, 'index-fifo');
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  fs.symlinkSync(fifo, idx);
+  const r = run(h, ['peers'], { timeout: 10000 });
+  assert.equal(r.code, 0, r.err);
+  assert.match(lineOf(r.out, 'bbbbbb'), /^- bbbbbb 역할:미정/);
+});
+
+ptest('1MiB 경계에 걸친 첫 줄 조각은 이름으로 읽지 않는다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', B);
+  // 끝 1MiB 가 정확히 { 에서 시작하게 만든다. 잘린 조각만 보면 B 의 이름 줄처럼 읽힌다
+  const fake = JSON.stringify({ id: B, thread_name: '가짜' });
+  const rest = 1024 * 1024 - (Buffer.byteLength(fake) + 1);
+  const filler = JSON.stringify({ id: A, thread_name: 'x'.repeat(100) }) + '\n';
+  const k = Math.floor((rest - 1) / filler.length);
+  const pad = rest - k * filler.length;
+  const body = 'p'.repeat(500) + fake + '\n' + filler.repeat(k) + ' '.repeat(pad - 1) + '\n';
+  fs.writeFileSync(path.join(h, 'session_index.jsonl'), body);
+  assert.equal(Buffer.byteLength(body) - 1024 * 1024, 500, '끝 1MiB 는 조각의 { 에서 시작');
+  assert.doesNotMatch(lineOf(peersOf(h), 'bbbbbb'), /이름:/);
+});
+
+ptest('이름은 피어 파일에 적지 않고, 빈 이름으로 바꾸면 이름이 지워진다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  renameSession(h, B, '검토');
+  assert.match(lineOf(peersOf(h), 'bbbbbb'), /이름:"검토"/);
+  hook(h, 'prompt', B);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(twFile(h, 'peers', `${B}.json`), 'utf8')), 'name'), false);
+  renameSession(h, B, '');
+  assert.doesNotMatch(lineOf(peersOf(h), 'bbbbbb'), /이름:/);
+  assert.equal(sendTo(h, '검토').code, 4, '지운 이름으로는 보내지 않음');
+});
+
+ptest('엔진 판이 바뀐 뒤 첫 입력은 바뀐 목록 대신 규칙 전문을 다시 받는다', () => {
+  const h = home();
+  run(h, ['on']);
+  assert.match(hook(h, 'session-start', A), /\[teamwork 켜짐\]/);
+  assert.equal(hook(h, 'prompt', A), null);
+  // 0.3.1 까지의 지문(판 없는 sha1)
+  fs.writeFileSync(twFile(h, 'seen', A), crypto.createHash('sha1').update('old').digest('hex'));
+  assert.match(hook(h, 'prompt', A), /\[teamwork 켜짐\][\s\S]*send <역할\|이름\|짧은ID\|all>/);
+  assert.equal(hook(h, 'prompt', A), null, '같은 판에서는 다시 보내지 않음');
+});
+
+ptest('이름에 : 와 , 가 있어도 목록 변화를 놓치지 않는다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  renameSession(h, C, 'z');
+  hook(h, 'prompt', A);
+  // C 가 빠지고 B 의 이름이 C 의 옛 항목을 흉내 낸다. 문자열을 이어 붙인 지문이면 같은 값이 된다
+  fs.rmSync(twFile(h, 'peers', `${C}.json`));
+  renameSession(h, B, `,${C}::z`); // 역할은 빈 문자열로 저장됨
+  assert.match(hook(h, 'prompt', A) || '', /피어 목록이 바뀌었다/);
+});
+
+ptest('send 한 번에 이름 목록을 한 번만 연다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  renameSession(h, B, '검토');
+  const pre = path.join(RUN, 'count-index-opens.cjs');
+  fs.writeFileSync(pre, [
+    "const fs = require('fs'); let n = 0; const open = fs.openSync;",
+    "fs.openSync = function (p, ...r) { if (String(p).endsWith('session_index.jsonl')) n++; return open.call(this, p, ...r); };",
+    "process.on('exit', () => process.stderr.write('INDEX_OPENS=' + n + '\\n'));",
+  ].join('\n'));
+  for (const to of ['검토', '없는대상']) {
+    const env = { ...envFor(h, { threadId: A }), NODE_OPTIONS: `--require ${pre}` };
+    const r = spawnSync(process.execPath, [SCRIPT, 'send', to, '확인'], { env, cwd: CWD, encoding: 'utf8' });
+    assert.equal(r.status, to === '검토' ? 0 : 4, r.stderr);
+    assert.match(r.stderr, /INDEX_OPENS=1\n/, to);
+  }
 });

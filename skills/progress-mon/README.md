@@ -68,7 +68,7 @@
 - 응답 머리: `cache-control: no-store`, `x-content-type-options: nosniff`, `referrer-policy: no-referrer`, `content-security-policy: default-src 'none'; style-src 'unsafe-inline'; img-src data:`
 - `stop` 은 상태 파일 PID 와 신원 응답 PID 가 같을 때만
 - 자료 폴더나 그 위 `.omc`, `.omx` 가 링크면 모든 명령을 거부한다(저장소가 심은 링크로 밖에 쓰거나 지우지 않게)
-- `server.log` 가 링크, 특수 파일, 하드링크면 쓰지도 비우지도 않고, 기록이 멈춘 것을 status 경고로 한 번 알린다. 자료 파일(`config.json` 등)은 링크를 따라 읽되 일반 파일만 읽는다. 메모리 대상은 프로젝트(또는 `--memory-dir`) 밖을 가리키는 링크와 하드링크를 거부한다
+- `server.log` 가 링크, 특수 파일, 하드링크면 쓰지도 비우지도 않고, 기록이 멈춘 것을 status 경고로 알린다. 같은 까닭은 한 번만 알리고, 기록이 다시 되면 경고를 지우고 로그에 회복 줄을 남긴다. 자료 파일(`config.json` 등)은 링크를 따라 읽되 일반 파일만 읽는다. 메모리 대상은 프로젝트(또는 `--memory-dir`) 밖을 가리키는 링크와 하드링크를 거부한다
 
 ## Codex override 가려짐 해소
 

@@ -102,12 +102,13 @@ function openLog(file, append = true) {
   return fd;
 }
 
-// 한도를 넘은 server.log 를 server.log.1 로 옮기고 새 fd 를 돌려준다(rename 은 링크를 따라가지 않음).
-// 옮기지 못하면(그 자리에 폴더 등) 로그를 버리지 않도록 연 fd(일반 파일로 확인함)를 비우고 계속 쓰며, 그 사실을 onWarn 으로 한 번 알린다.
-function rotateLog(file, fd, warn) {
+// 한도를 넘은 server.log 를 server.log.1 로 옮기고 새 fd 를 돌려준다(rename 은 링크를 따라가지 않음). 옮기면 ok() 를 부른다.
+// 옮기지 못하면(그 자리에 폴더 등) 로그를 버리지 않도록 연 fd(일반 파일로 확인함)를 비우고 계속 쓰며, 그 사실을 warn 으로 알린다.
+function rotateLog(file, fd, warn, ok) {
   fs.closeSync(fd);
   try {
     fs.renameSync(file, `${file}.1`);
+    ok();
     return openLog(file);
   } catch (e) {
     const again = openLog(file, false);
@@ -128,18 +129,42 @@ function logFailure(e) {
   return `server.log 에 기록하지 못함(${(e && (e.code || e.message)) || e}). 서버는 계속`;
 }
 
+// server.log 경고 상태. 같은 까닭은 한 번만 알리고, 까닭이 바뀌면 새 까닭으로 다시 알린다.
+// kind 'fail' 은 기록이 멈춘 경고라 쓰기가 다시 되면 지우고(status 경고도 null), 'rotate' 는 다음 옮기기가 되면 지운다.
+// 알림과 회복 줄은 쌓아 두었다가 다음에 쓰는 줄과 함께 쓴다. 쓰기에 성공한 뒤에만 비운다
+function logWarnings(onWarn) {
+  let shown = null; // { kind, text }
+  let pending = '';
+  const note = (text) => (pending += `${new Date().toISOString()} ${text}\n`);
+  return {
+    warn(kind, text) {
+      if (shown && shown.text === text) return;
+      shown = { kind, text };
+      onWarn(text);
+      note(`경고: ${text}`);
+    },
+    clear(kind) {
+      if (!shown || shown.kind !== kind) return false;
+      note(`회복: 앞의 경고가 풀림(${shown.text})`);
+      shown = null;
+      onWarn(null);
+      return true;
+    },
+    head: () => pending,
+    sent() {
+      pending = '';
+    },
+  };
+}
+
 // server.log 한 줄 덧붙이기. 덧붙이면 max(1 MB)를 넘을 때 먼저 server.log.1 로 옮긴다(대상을 자르지 않음).
-// 링크이거나 일반 파일이 아니면 쓰지 않는다. 옮기지 못한 일은 onWarn(서버의 status 경고)과 로그의 경고 줄로 한 번 알린다. 실패해도 서버는 계속.
+// 링크이거나 일반 파일이 아니면 쓰지 않는다. 못 쓰거나 옮기지 못한 일은 onWarn(서버의 status 경고)과 로그의 경고 줄로 알리고,
+// 회복하면 onWarn(null) 로 status 경고를 지운다. 실패해도 서버는 계속.
 export function makeLogger(dataDir, max = LOG_MAX, onWarn = () => {}) {
   const file = logPath(dataDir);
-  let warned = false;
-  let pending = ''; // 다음 줄 앞에 남길 경고 한 줄
-  const warn = (w) => {
-    if (warned) return;
-    warned = true;
-    onWarn(w);
-    pending = `${new Date().toISOString()} 경고: ${w}\n`;
-  };
+  const w = logWarnings(onWarn);
+  const rotateWarn = (text) => w.warn('rotate', text);
+  const rotateOk = () => w.clear('rotate');
   return (msg) => {
     const line = `${new Date().toISOString()} ${msg}\n`;
     let fd = null;
@@ -148,14 +173,17 @@ export function makeLogger(dataDir, max = LOG_MAX, onWarn = () => {}) {
       if (fs.fstatSync(fd).size + Buffer.byteLength(line) > max) {
         const old = fd;
         fd = null;
-        fd = rotateLog(file, old, warn);
+        fd = rotateLog(file, old, rotateWarn, rotateOk);
       }
-      if (pending) fs.writeSync(fd, pending);
-      pending = '';
-      fs.writeSync(fd, line);
+      fs.writeSync(fd, w.head() + line);
+      w.sent();
+      if (w.clear('fail')) {
+        fs.writeSync(fd, w.head());
+        w.sent();
+      }
     } catch (e) {
-      // 로그를 못 써도 응답은 계속. 기록이 멈춘 것을 까닭과 함께 한 번 알린다(status 경고)
-      warn(logFailure(e));
+      // 로그를 못 써도 응답은 계속. 기록이 멈춘 것을 까닭과 함께 알린다(status 경고)
+      w.warn('fail', logFailure(e));
     } finally {
       if (fd !== null) fs.closeSync(fd);
     }
