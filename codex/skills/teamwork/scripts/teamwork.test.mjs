@@ -1180,3 +1180,28 @@ ptest('NFKC 로 같아지는 이름은 글자 그대로 맞는 쪽이 먼저이�
   run(h, ['role', 'qa'], { threadId: C });
   assert.deepEqual(sendTo(h, 'ｑａ').to, [C], '전각 역할 이름');
 });
+
+ptest('글자 그대로 맞는 이름은 NFKC 로만 맞는 역할에 가려지지 않는다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  run(h, ['role', 'pm'], { threadId: B });
+  renameSession(h, C, 'ｐｍ');
+  assert.deepEqual(sendTo(h, 'ｐｍ').to, [C], '이름 그대로');
+  assert.deepEqual(sendTo(h, 'pm').to, [B], '역할 그대로');
+  assert.deepEqual(sendTo(h, 'PM').to, [B]);
+});
+
+ptest('옛 판이 기록한 역할(괄호 범주 글자 포함)도 목록에 보이는 값으로 보낸다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  const file = twFile(h, 'peers', `${B}.json`);
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), role: 'a{b}' }));
+  assert.match(lineOf(peersOf(h), 'bbbbbb'), /역할:a-b- /);
+  assert.deepEqual(sendTo(h, 'a-b-').to, [B], '목록에 보이는 값');
+  assert.deepEqual(sendTo(h, 'a{b}').to, [B], '기록된 값');
+});

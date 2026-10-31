@@ -372,28 +372,43 @@ function rosterText(list, selfId) {
 
 const byId = (list, key) => list.filter((p) => shortId(p.id).toLowerCase() === key.replace(/-/g, '') || p.id.toLowerCase() === key);
 
-// 이름 비교 단계: 글자 그대로(대소문자만 무시), NFKC 로 푼 글자, 공백과 '-' 를 같게 본 꼴(nameKey). 앞 단계에서 맞는 세션이 있으면 멈춘다.
-// 그래서 ｐｍ 과 pm 이 둘 다 있으면 pm 은 pm 에만, -qa- 와 qa 가 둘 다 있으면 qa 는 qa 에만 간다
+// 이름 비교 단계: 글자 그대로(대소문자만 무시), NFKC 로 푼 글자, 공백과 '-' 를 같게 본 꼴(nameKey)
 const NAME_TIERS = [
   (s) => String(s).trim().toLowerCase(),
   (s) => String(s).normalize('NFKC').trim().toLowerCase(),
   nameKey,
 ];
 
+// 역할 비교 단계: 글자 그대로, 목록에 보이는 꼴(roleName). 옛 판이 기록한 a{b} 같은 역할도 목록의 a-b- 로 보낸다
+const ROLE_TIERS = [
+  (s) => String(s).trim().toLowerCase(),
+  (s) => roleName(s).toLowerCase(),
+];
+
 // 원래 이름, 목록에 보이는 값(숨은 글자를 ? 로 바꾸고 64자로 자른 값), 목록에 적힌 그대로(JSON 따옴표 안, [인용 teamwork 포함)
 function nameForms(name) { return [name, shownName(name), showCwd(name, NAME_MAX).slice(1, -1)]; }
 
-function byName(list, to) {
-  const named = list.filter((p) => p.name).map((p) => ({ p, forms: nameForms(p.name) }));
-  for (const key of NAME_TIERS) {
-    const want = key(to);
-    const hit = want ? named.filter((x) => x.forms.some((f) => key(f) === want)) : [];
-    if (hit.length) return hit.map((x) => x.p);
-  }
-  return [];
+function byName(list, to, key) {
+  const want = key(to);
+  return want ? list.filter((p) => p.name && nameForms(p.name).some((f) => key(f) === want)) : [];
 }
 
-// 대상 찾는 순서: all, 실제 피어의 짧은ID 나 UUID 와 정확히 같으면 그 세션, 역할, 세션 이름(/rename), 나머지 짧은ID 꼴.
+function byRole(list, to, key) {
+  const want = key(to);
+  return want ? list.filter((p) => p.role && key(p.role) === want) : [];
+}
+
+// 역할과 이름을 단계마다 번갈아 본다: 역할 그대로, 이름 그대로, 역할 보이는 꼴, 이름 NFKC, 이름 nameKey. 앞 단계에서 맞으면 멈춘다.
+// 그래서 글자 그대로 맞는 이름이 넓게 맞는 역할에 가려지지 않는다(역할 pm 과 이름 ｐｍ 이면 ｐｍ 은 이름 쪽)
+const TARGET_STEPS = [
+  (list, to) => byRole(list, to, ROLE_TIERS[0]),
+  (list, to) => byName(list, to, NAME_TIERS[0]),
+  (list, to) => byRole(list, to, ROLE_TIERS[1]),
+  (list, to) => byName(list, to, NAME_TIERS[1]),
+  (list, to) => byName(list, to, NAME_TIERS[2]),
+];
+
+// 대상 찾는 순서: all, 실제 피어의 짧은ID 나 UUID 와 정확히 같으면 그 세션, 역할과 세션 이름(/rename)의 단계들, 나머지 짧은ID 꼴.
 // ID 를 먼저 보는 것은 역할이나 이름이 다른 세션의 짧은ID 를 가로채지 못하게 하려는 것이다. 같은 역할이나 이름이 여럿이면 모두에게 보낸다
 function resolveTargets(to, selfId) {
   const list = roster().filter((p) => p.id !== selfId);
@@ -401,11 +416,11 @@ function resolveTargets(to, selfId) {
   if (key === 'all') return list;
   const ids = /^[0-9a-f]{6}$/.test(key) || isUuid(key) ? byId(list, key) : [];
   if (ids.length) return ids;
-  const roleKey = String(to).normalize('NFKC').trim().toLowerCase(); // 역할은 기록할 때 NFKC 로 풀어 둠
-  const byRole = list.filter((p) => p.role && p.role.toLowerCase() === roleKey);
-  if (byRole.length) return byRole;
-  const named = byName(list, to);
-  return named.length ? named : byId(list, key);
+  for (const step of TARGET_STEPS) {
+    const hit = step(list, to);
+    if (hit.length) return hit;
+  }
+  return byId(list, key);
 }
 
 // ---------- 맥락 문구 ----------
