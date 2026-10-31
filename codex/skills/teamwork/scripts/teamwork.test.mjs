@@ -1205,3 +1205,32 @@ ptest('옛 판이 기록한 역할(괄호 범주 글자 포함)도 목록에 보
   assert.deepEqual(sendTo(h, 'a-b-').to, [B], '목록에 보이는 값');
   assert.deepEqual(sendTo(h, 'a{b}').to, [B], '기록된 값');
 });
+
+ptest('목록 값이 다른 세션의 원래 이름과 같으면 원래 이름 쪽에 보낸다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  renameSession(h, B, 'a"b');
+  renameSession(h, C, 'a\\"b');
+  assert.deepEqual(sendTo(h, 'a\\"b').to, [C], 'C 의 원래 이름(B 의 목록 값과 같음)');
+  assert.deepEqual(sendTo(h, 'a"b').to, [B]);
+});
+
+ptest('깃발과 ZWJ 이모지는 목록에 그대로 보이고, 그 밖의 태그 문자와 ZWJ 는 ? 로 바뀐다', () => {
+  const h = home();
+  run(h, ['on']);
+  hook(h, 'session-start', A);
+  hook(h, 'session-start', B);
+  hook(h, 'session-start', C);
+  const cp = (...c) => String.fromCodePoint(...c);
+  const england = cp(0x1f3f4, 0xe0067, 0xe0062, 0xe0065, 0xe006e, 0xe0067, 0xe007f);
+  const family = cp(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467);
+  renameSession(h, A, `${england} ${family}`);
+  renameSession(h, B, `x${cp(0xe0041, 0xe0042)}y${cp(0x200d)}z`);
+  const out = peersOf(h);
+  assert.ok(lineOf(out, 'aaaaaa').includes(`이름:"${england} ${family}" `), lineOf(out, 'aaaaaa'));
+  assert.match(lineOf(out, 'bbbbbb'), /이름:"x\?\?y\?z" /);
+  assert.deepEqual(sendTo(h, `${england} ${family}`, C).to, [A]);
+});

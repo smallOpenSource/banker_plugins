@@ -630,7 +630,11 @@ test('쓰기가 계속 실패하며 까닭이 번갈아 바뀌어도 쌓아 둔 
   const lines = text.trimEnd().split('\n');
   assert.ok(lines.length <= 23, `줄 ${lines.length}`);
   assert.match(text, /쓰지 못한 경고와 회복 줄 \d+개 생략/);
-  assert.match(lines.at(-1), /회복: 앞의 경고가 풀림/);
+  const body = lines.map((l) => l.replace(/^\S+ /, ''));
+  assert.equal(body[0], '경고: server.log 에 기록하지 못함(ENOSPC). 서버는 계속', '처음 까닭이 남음');
+  assert.equal(body.at(-3), '경고: server.log 에 기록하지 못함(EIO). 서버는 계속', '최신 까닭이 남음');
+  assert.equal(body.at(-2), '회복');
+  assert.match(body.at(-1), /^회복: 앞의 경고가 풀림\(server\.log 에 기록하지 못함\(EIO\)/, '회복 줄은 그 기록 뒤에');
 });
 
 test('옮긴 뒤 새 server.log 를 못 열면 옮기지 못했다고 하지 않고 쓰기 실패로 알림', T, () => {

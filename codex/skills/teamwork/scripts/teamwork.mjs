@@ -338,7 +338,12 @@ function roster() {
 // 목록과 머리말에 보이면 안 되는 글자: 제어 문자(C0, DEL, C1, U+0085 포함), 서식 문자(폭 없는 문자, 양방향 제어, 태그 문자 등),
 // 줄과 문단 구분, 한글 채움 문자. 범위를 손으로 적지 않고 유니코드 범주로 고른다
 const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]/gu;
-// 머리말의 이름에서 바꾸는 글자: 위 글자, 공백, 여는 괄호와 닫는 괄호 범주(NFKC 로 풀리지 않는 【】 등), 따옴표와 셸 글자
+// 목록 표시에서는 이모지를 이루는 서식 문자만 남긴다: 깃발(U+1F3F4) 뒤 태그 소문자와 숫자 2~6자와 끝 표지(U+E007F),
+// 그림 문자 사이의 ZWJ(U+200D). 그 밖의 태그 문자와 ZWJ 는 ? 로 바꾼다(태그 문자로 보이지 않는 글을 숨기지 못하게)
+const EMOJI_PART = String.raw`\u{1F3F4}[\u{E0030}-\u{E0039}\u{E0061}-\u{E007A}]{2,6}\u{E007F}|(?<=\p{Extended_Pictographic}[\u{FE0F}\u{1F3FB}-\u{1F3FF}]?)\u200D(?=\p{Extended_Pictographic})`;
+const SHOWN = new RegExp(`(${EMOJI_PART})|${HIDDEN.source}`, 'gu');
+const hideChars = (s) => String(s).replace(SHOWN, (m, emoji) => emoji || '?');
+// 머리말의 이름에서 바꾸는 글자: 위 글자(이모지의 태그와 ZWJ 포함), 공백, 여는 괄호와 닫는 괄호 범주(NFKC 로 풀리지 않는 【】 등), 따옴표, 셸과 머리말 글자
 const NAME_SEP = /[\s\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Ps}\p{Pe}\u115f\u1160\u3164\uffa0#:'"`$\\]+/gu;
 const NAME_MAX = 64;
 
@@ -355,10 +360,10 @@ function nameKey(s) { return String(s || '').normalize('NFKC').trim().toLowerCas
 function label(p) { const r = roleName(p.role) || roleName(p.name); return r ? `${r}(${shortId(p.id)})` : shortId(p.id); }
 
 // 폴더는 그 세션의 훅 입력(cwd)에서 온다. 줄을 나눠 지시처럼 보이지 못하게 제어 문자를 바꾸고 잘라서 JSON 문자열로 감싼다. 세션 이름도 같게
-function showCwd(s, max = 200) { return sanitize(JSON.stringify(clip(String(s).replace(HIDDEN, '?'), max))); }
+function showCwd(s, max = 200) { return sanitize(JSON.stringify(clip(hideChars(s), max))); }
 
 // 목록에 보이는 이름(바꾸고 자른 값). 모델은 이 값만 보므로 send 도 이 값을 받는다
-function shownName(s) { return clip(String(s).replace(HIDDEN, '?'), NAME_MAX); }
+function shownName(s) { return clip(hideChars(s), NAME_MAX); }
 
 function peerLine(p, selfId) {
   const name = p.name ? ` 이름:${showCwd(p.name, NAME_MAX)}` : '';
@@ -385,12 +390,13 @@ const ROLE_TIERS = [
   (s) => roleName(s).toLowerCase(),
 ];
 
-// 원래 이름, 목록에 보이는 값(숨은 글자를 ? 로 바꾸고 64자로 자른 값), 목록에 적힌 그대로(JSON 따옴표 안, [인용 teamwork 포함)
-function nameForms(name) { return [name, shownName(name), showCwd(name, NAME_MAX).slice(1, -1)]; }
+// 이름의 꼴: 원래 이름, 그리고 목록에 보이는 값(숨은 글자를 ? 로 바꾸고 64자로 자른 값)과 목록에 적힌 그대로(JSON 따옴표 안, [인용 teamwork 포함)
+const ORIGINAL = (name) => [name];
+const SHOWN_FORMS = (name) => [shownName(name), showCwd(name, NAME_MAX).slice(1, -1)];
 
-function byName(list, to, key) {
+function byName(list, to, key, forms) {
   const want = key(to);
-  return want ? list.filter((p) => p.name && nameForms(p.name).some((f) => key(f) === want)) : [];
+  return want ? list.filter((p) => p.name && forms(p.name).some((f) => key(f) === want)) : [];
 }
 
 function byRole(list, to, key) {
@@ -398,14 +404,17 @@ function byRole(list, to, key) {
   return want ? list.filter((p) => p.role && key(p.role) === want) : [];
 }
 
+// 이름 단계 하나: 원래 이름이 맞는 세션이 먼저이고, 없을 때만 목록 값을 본다(목록 값이 다른 세션의 원래 이름과 겹쳐도 원래 이름 쪽)
+const nameStep = (key) => [(list, to) => byName(list, to, key, ORIGINAL), (list, to) => byName(list, to, key, SHOWN_FORMS)];
+
 // 역할과 이름을 단계마다 번갈아 본다: 역할 그대로, 이름 그대로, 역할 보이는 꼴, 이름 NFKC, 이름 nameKey. 앞 단계에서 맞으면 멈춘다.
 // 그래서 글자 그대로 맞는 이름이 넓게 맞는 역할에 가려지지 않는다(역할 pm 과 이름 ｐｍ 이면 ｐｍ 은 이름 쪽)
 const TARGET_STEPS = [
   (list, to) => byRole(list, to, ROLE_TIERS[0]),
-  (list, to) => byName(list, to, NAME_TIERS[0]),
+  ...nameStep(NAME_TIERS[0]),
   (list, to) => byRole(list, to, ROLE_TIERS[1]),
-  (list, to) => byName(list, to, NAME_TIERS[1]),
-  (list, to) => byName(list, to, NAME_TIERS[2]),
+  ...nameStep(NAME_TIERS[1]),
+  ...nameStep(NAME_TIERS[2]),
 ];
 
 // 대상 찾는 순서: all, 실제 피어의 짧은ID 나 UUID 와 정확히 같으면 그 세션, 역할과 세션 이름(/rename)의 단계들, 나머지 짧은ID 꼴.
@@ -874,7 +883,7 @@ function sanitize(text) {
   return out;
 }
 
-// cs[i] 에서 [teamwork 꼴(사이 공백과 폭 없는 문자 허용)이 시작하면 그 끝 다음 위치, 아니면 -1
+// cs[i] 에서 [teamwork 꼴(사이 공백과 서식 문자 허용)이 시작하면 그 끝 다음 위치, 아니면 -1
 function fakeHeadEnd(cs, i) {
   if (fold(cs[i]) !== '[') return -1;
   let j = i + 1;

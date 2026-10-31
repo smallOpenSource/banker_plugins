@@ -358,6 +358,24 @@ test('검사 뒤 쓰기 전에 FIFO 로 바뀐 메모리 파일에서 멈추지 
   assert.ok(fs.lstatSync(file).isFIFO());
 });
 
+test('쓰려고 열 때 EAGAIN(다른 프로세스의 잠금 등)이면 날 오류 대신 거부 문구로 끝나고 쓰지 않음', T, () => {
+  const p = dir();
+  const file = path.join(p, 'CLAUDE.md');
+  fs.writeFileSync(file, '# 지시\n');
+  const plan = planMemory({ kind: 'claude-md', project: p, runtime: 'claude' });
+  const real = fs.openSync;
+  fs.openSync = (f, ...rest) => {
+    if (String(f) === file) throw Object.assign(new Error('EAGAIN'), { code: 'EAGAIN' });
+    return real(f, ...rest);
+  };
+  try {
+    assert.throws(() => applyMemory(plan, p, ENV), (e) => e instanceof UsageError && /CLAUDE\.md 이 검사 뒤 바뀌었거나 다른 프로세스가 잡고 있어 쓰지 않음/.test(e.message));
+  } finally {
+    fs.openSync = real;
+  }
+  assert.equal(fs.readFileSync(file, 'utf8'), '# 지시\n');
+});
+
 test('프로젝트 안을 가리키는 링크(CLAUDE.md -> AGENTS.md)는 그대로 받아 대상 파일에 덧붙임', T, (t) => {
   const p = dir();
   fs.writeFileSync(path.join(p, 'AGENTS.md'), '# 지시\n');

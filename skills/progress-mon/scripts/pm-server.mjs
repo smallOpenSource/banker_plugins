@@ -134,7 +134,7 @@ function logFailure(e) {
   return `server.log 에 기록하지 못함(${(e && (e.code || e.message)) || e}). 서버는 계속`;
 }
 
-const PENDING_MAX = 20; // 쓰지 못하고 쌓아 두는 경고와 회복 줄의 상한. 넘친 줄은 개수만 남긴다
+const PENDING_KEEP = 10; // 쓰지 못하고 쌓아 두는 경고와 회복 줄은 앞 10줄과 뒤 10줄만 남기고 가운데는 개수만 남긴다
 
 // server.log 경고 상태. 종류별 칸이 따로 있다: 'fail' 은 기록이 멈춘 경고라 쓰기가 다시 되면 지우고, 'rotate' 는 다음 옮기기가 되면 지운다.
 // 같은 까닭은 한 번만 알리고, 까닭이 바뀌면 다시 알린다. status 에는 fail 이 있으면 fail, 없으면 rotate 를 보인다(바뀔 때만 onWarn).
@@ -149,10 +149,15 @@ function logWarnings(onWarn) {
     shown[kind] = text;
     if (current() !== before) onWarn(current());
   };
+  // 처음 까닭과 최신 까닭(회복 줄 포함)이 함께 남도록 넘치면 가운데 줄을 뺀다
   const note = (text) => {
-    if (lines.length < PENDING_MAX) lines.push(`${new Date().toISOString()} ${text}\n`);
-    else dropped++;
+    lines.push(`${new Date().toISOString()} ${text}\n`);
+    if (lines.length > PENDING_KEEP * 2) {
+      lines.splice(PENDING_KEEP, 1);
+      dropped++;
+    }
   };
+  const omitted = () => (dropped ? [`${new Date().toISOString()} 경고: 쓰지 못한 경고와 회복 줄 ${dropped}개 생략\n`] : []);
   return {
     warn(kind, text) {
       if (shown[kind] === text) return;
@@ -165,7 +170,7 @@ function logWarnings(onWarn) {
       set(kind, null);
       return true;
     },
-    head: () => lines.join('') + (dropped ? `${new Date().toISOString()} 경고: 쓰지 못한 경고와 회복 줄 ${dropped}개 생략\n` : ''),
+    head: () => [...lines.slice(0, PENDING_KEEP), ...omitted(), ...lines.slice(PENDING_KEEP)].join(''),
     sent() {
       lines = [];
       dropped = 0;
