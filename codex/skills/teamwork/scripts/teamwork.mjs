@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const MIN_CODEX = [0, 149, 0];
 const CODEX_HOME = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 const TW = path.join(CODEX_HOME, 'teamwork');
@@ -288,10 +288,12 @@ function dropStale(file, p) {
 // ---------- 세션 이름 (/rename) ----------
 
 // Codex 는 /rename 이름을 $CODEX_HOME/session_index.jsonl 에 한 줄씩 덧붙인다. 같은 id 의 마지막 줄이 지금 이름이다.
-// 특수 파일에서 멈추지 않게 O_NONBLOCK 으로 열어 일반 파일만 읽고, 커지면 끝 1MiB 만 본다
+// 특수 파일에서 멈추지 않게 O_NONBLOCK 으로 열어 일반 파일만 읽고, 커지면 끝 1MiB 만 본다.
+// 링크는 따라간다(점 파일을 링크로 관리하는 사용자). 따라간 대상이 일반 파일이 아니면 읽지 않고, 터미널 장치여도 제어 터미널로 잡지 않는다(O_NOCTTY)
 function readIndexTail() {
   let fd;
-  try { fd = fs.openSync(INDEX, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0)); } catch { return ''; }
+  const { O_RDONLY, O_NONBLOCK, O_NOCTTY } = fs.constants;
+  try { fd = fs.openSync(INDEX, O_RDONLY | (O_NONBLOCK || 0) | (O_NOCTTY || 0)); } catch { return ''; }
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile()) return '';
@@ -312,7 +314,9 @@ export function parseThreadNames(text) {
   return names;
 }
 
-function threadNames() { return parseThreadNames(readIndexTail()); }
+// 명령과 훅은 한 번 돌고 끝나는 프로세스다. send 한 번에 여러 번 묻더라도 색인은 한 번만 읽는다
+let namesOnce = null;
+function threadNames() { return (namesOnce ??= parseThreadNames(readIndexTail())); }
 
 function roster() {
   let names = [];
@@ -331,10 +335,23 @@ function roster() {
     .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
 }
 
-const NAME_SEP = /[\s\u0000-\u001f\u007f[\]()#:'"`$\\]+/g;
+// 목록과 머리말에 보이면 안 되는 글자: 제어 문자(C0, DEL, C1, U+0085 포함), 서식 문자(폭 없는 문자, 양방향 제어, 태그 문자 등),
+// 줄과 문단 구분, 한글 채움 문자. 범위를 손으로 적지 않고 유니코드 범주로 고른다
+const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]/gu;
+// 목록 표시에서는 이모지를 이루는 서식 문자만 남긴다: 유니코드가 권하는 깃발 셋(잉글랜드, 스코틀랜드, 웨일스)의 태그 열,
+// 그림 문자 사이의 ZWJ(U+200D). 그 밖의 태그 문자와 ZWJ 는 ? 로 바꾼다(태그 문자로 보이지 않는 글을 숨기지 못하게)
+const EMOJI_PART = String.raw`\u{1F3F4}\u{E0067}\u{E0062}(?:\u{E0065}\u{E006E}\u{E0067}|\u{E0073}\u{E0063}\u{E0074}|\u{E0077}\u{E006C}\u{E0073})\u{E007F}|(?<=\p{Extended_Pictographic}[\u{FE0F}\u{1F3FB}-\u{1F3FF}]?)\u200D(?=\p{Extended_Pictographic})`;
+const SHOWN = new RegExp(`(${EMOJI_PART})|${HIDDEN.source}`, 'gu');
+const hideChars = (s) => String(s).replace(SHOWN, (m, emoji) => emoji || '?');
+// 머리말의 이름에서 바꾸는 글자: 위 글자(이모지의 태그와 ZWJ 포함), 공백, 여는 괄호와 닫는 괄호 범주(NFKC 로 풀리지 않는 【】 등), 따옴표, 셸과 머리말 글자
+const NAME_SEP = /[\s\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Ps}\p{Pe}\u115f\u1160\u3164\uffa0#:'"`$\\]+/gu;
+const NAME_MAX = 64;
+
+// 글자(코드 포인트) 단위로 자른다. UTF-16 단위로 자르면 서로게이트 쌍이 갈려 깨진 글자가 보인다
+function clip(s, max) { const cs = Array.from(s); return cs.length > max ? cs.slice(0, max).join('') : s; }
 
 // 역할 이름: 머리말과 목록의 줄을 흉내 내지 못하게 공백, 제어 문자, 괄호와 따옴표를 바꾼다. 기록할 때와 보일 때 모두 쓴다
-function roleName(s) { return String(s || '').normalize('NFKC').trim().replace(NAME_SEP, '-').slice(0, 32); }
+function roleName(s) { return clip(String(s || '').normalize('NFKC').trim().replace(NAME_SEP, '-'), 32); }
 
 // 세션 이름 비교: 공백과 '-' 를 같게 보고 대소문자를 가리지 않는다 ('리뷰 담당' 과 리뷰-담당). 앞뒤에 남은 '-'(따옴표 등)는 뺀다
 function nameKey(s) { return String(s || '').normalize('NFKC').trim().toLowerCase().replace(NAME_SEP, '-').replace(/^-+|-+$/g, ''); }
@@ -343,10 +360,14 @@ function nameKey(s) { return String(s || '').normalize('NFKC').trim().toLowerCas
 function label(p) { const r = roleName(p.role) || roleName(p.name); return r ? `${r}(${shortId(p.id)})` : shortId(p.id); }
 
 // 폴더는 그 세션의 훅 입력(cwd)에서 온다. 줄을 나눠 지시처럼 보이지 못하게 제어 문자를 바꾸고 잘라서 JSON 문자열로 감싼다. 세션 이름도 같게
-function showCwd(s, max = 200) { return sanitize(JSON.stringify(String(s).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, '?').slice(0, max))); }
+// 먼저 자르고 숨은 글자를 바꾼다. 자르기가 깃발 가운데를 가르면 끝 표지가 없어 남은 태그도 ? 가 된다(글자 수는 같음)
+function showCwd(s, max = 200) { return sanitize(JSON.stringify(hideChars(clip(String(s), max)))); }
+
+// 목록에 보이는 이름(바꾸고 자른 값). 모델은 이 값만 보므로 send 도 이 값을 받는다
+function shownName(s) { return hideChars(clip(String(s), NAME_MAX)); }
 
 function peerLine(p, selfId) {
-  const name = p.name ? ` 이름:${showCwd(p.name, 64)}` : '';
+  const name = p.name ? ` 이름:${showCwd(p.name, NAME_MAX)}` : '';
   return `- ${shortId(p.id)}${name} 역할:${roleName(p.role) || '미정'} 폴더:${p.cwd ? showCwd(p.cwd) : '?'}${p.id === selfId ? ' (이 세션)' : ''}`;
 }
 
@@ -355,17 +376,57 @@ function rosterText(list, selfId) {
   return list.map((p) => peerLine(p, selfId)).join('\n');
 }
 
-// 대상 찾는 순서: all, 역할, 세션 이름(/rename), 짧은ID 나 UUID. 같은 역할이나 이름이 여럿이면 모두에게 보낸다
+const byId = (list, key) => list.filter((p) => shortId(p.id).toLowerCase() === key.replace(/-/g, '') || p.id.toLowerCase() === key);
+
+// 이름 비교 단계: 글자 그대로(대소문자만 무시), NFKC 로 푼 글자, 공백과 '-' 를 같게 본 꼴(nameKey)
+const NAME_TIERS = [
+  (s) => String(s).trim().toLowerCase(),
+  (s) => String(s).normalize('NFKC').trim().toLowerCase(),
+  nameKey,
+];
+
+// 역할 비교 단계: 글자 그대로, NFKC 로 푼 글자, 구분 글자를 - 로 모은 꼴(자르지 않음). 기록된 역할은 이미 roleName 을 거쳐 32자 이하다.
+// 셋째 단계로 옛 판이 기록한 a{b} 같은 역할도 목록의 a-b- 로 보낸다
+const ROLE_TIERS = [
+  (s) => String(s).trim().toLowerCase(),
+  (s) => String(s).normalize('NFKC').trim().toLowerCase(),
+  (s) => String(s).normalize('NFKC').trim().replace(NAME_SEP, '-').toLowerCase(),
+];
+
+// 이름의 꼴: 원래 이름, 그리고 목록에 보이는 값(숨은 글자를 ? 로 바꾸고 64자로 자른 값)과 목록에 적힌 그대로(JSON 따옴표 안, [인용 teamwork 포함)
+const ORIGINAL = (name) => [name];
+const SHOWN_FORMS = (name) => [shownName(name), showCwd(name, NAME_MAX).slice(1, -1)];
+
+function byName(list, to, key, forms) {
+  const want = key(to);
+  return want ? list.filter((p) => p.name && forms(p.name).some((f) => key(f) === want)) : [];
+}
+
+function byRole(list, to, key) {
+  const want = key(to);
+  return want ? list.filter((p) => p.role && key(p.role) === want) : [];
+}
+
+// 이름 단계 하나: 원래 이름이 맞는 세션이 먼저이고, 없을 때만 목록 값을 본다(목록 값이 다른 세션의 원래 이름과 겹쳐도 원래 이름 쪽)
+const nameStep = (key) => [(list, to) => byName(list, to, key, ORIGINAL), (list, to) => byName(list, to, key, SHOWN_FORMS)];
+
+// 역할과 이름을 같은 넓이의 단계끼리 번갈아 본다: 그대로, NFKC, 구분 글자 꼴(이름은 nameKey). 각 넓이에서 역할이 먼저이고, 앞 단계에서 맞으면 멈춘다.
+// 그래서 글자 그대로 맞는 이름이 넓게 맞는 역할에 가려지지 않는다(역할 pm 과 이름 ｐｍ 이면 ｐｍ 은 이름 쪽)
+const TARGET_STEPS = [0, 1, 2].flatMap((i) => [(list, to) => byRole(list, to, ROLE_TIERS[i]), ...nameStep(NAME_TIERS[i])]);
+
+// 대상 찾는 순서: all, 실제 피어의 짧은ID 나 UUID 와 정확히 같으면 그 세션, 역할과 세션 이름(/rename)의 단계들, 나머지 짧은ID 꼴.
+// ID 를 먼저 보는 것은 역할이나 이름이 다른 세션의 짧은ID 를 가로채지 못하게 하려는 것이다. 같은 역할이나 이름이 여럿이면 모두에게 보낸다
 function resolveTargets(to, selfId) {
   const list = roster().filter((p) => p.id !== selfId);
   const key = String(to).trim().toLowerCase();
   if (key === 'all') return list;
-  const byRole = list.filter((p) => p.role && p.role.toLowerCase() === key);
-  if (byRole.length) return byRole;
-  const nk = nameKey(to);
-  const byName = list.filter((p) => nk && p.name && nameKey(p.name) === nk);
-  if (byName.length) return byName;
-  return list.filter((p) => shortId(p.id) === key.replace(/-/g, '') || p.id.toLowerCase() === key);
+  const ids = /^[0-9a-f]{6}$/.test(key) || isUuid(key) ? byId(list, key) : [];
+  if (ids.length) return ids;
+  for (const step of TARGET_STEPS) {
+    const hit = step(list, to);
+    if (hit.length) return hit;
+  }
+  return byId(list, key);
 }
 
 // ---------- 맥락 문구 ----------
@@ -373,7 +434,7 @@ function resolveTargets(to, selfId) {
 function protocolText(selfId, list) {
   const w = shq(WRAPPER);
   const me = list.find((p) => p.id === selfId) || (selfId ? readJson(peerFile(selfId), {}) : {});
-  const name = me.name ? ` 이름:${showCwd(me.name, 64)}` : '';
+  const name = me.name ? ` 이름:${showCwd(me.name, NAME_MAX)}` : '';
   return [
     '[teamwork 켜짐] 이 기기의 Codex 세션들이 피어로 협업한다.',
     `이 세션: ${selfId ? shortId(selfId) : '?'}${name} 역할:${roleName(me.role) || '미정'}`,
@@ -402,11 +463,15 @@ const OFF_TEXT = '[teamwork 꺼짐] 피어 협업이 꺼졌다. 다른 세션에
 
 const orphanText = () => `[teamwork 멈춤] banker 가 이 기기에서 지워져 teamwork 가 멈췄다. 피어에 보내지 않는다. 사용자에게 한 번 알린다: 훅과 상태를 지우려면 승인을 받아 \`${shq(WRAPPER)} uninstall\` 을 실행한다.`;
 
+// 세션이 마지막으로 받은 목록의 지문. 앞에 엔진 판을 붙여, 판이 바뀌면 바뀐 목록 대신 새 규칙 전문을 다시 보낸다.
+// 값은 JSON 으로 묶어 이름에 ':' 나 ',' 가 들어가도 다른 목록과 같은 지문이 되지 않게 한다
 function digest(selfId, list) {
   const me = list.find((p) => p.id === selfId) || readJson(peerFile(selfId), {});
-  const peers = list.map((p) => `${p.id}:${p.role}:${p.name || ''}`).join(',');
-  return crypto.createHash('sha1').update(`${me.role}|${peers}`).digest('hex');
+  const peers = list.map((p) => [p.id, p.role ?? null, p.name || '']);
+  return `${VERSION}:${crypto.createHash('sha1').update(JSON.stringify([me.role ?? null, peers])).digest('hex')}`;
 }
+
+const sameEngine = (seen) => seen.startsWith(`${VERSION}:`);
 
 // ---------- 훅 ----------
 
@@ -490,7 +555,7 @@ function onContext(kind, id, input, seen) {
   if (kind === 'prompt') writeText(path.join(TURN, id), /^\s*\[teamwork (요청|결과)/.test(String(input.prompt || '')) ? 'peer' : 'user');
   const list = roster();
   const d = digest(id, list);
-  if (!seen || seen === 'off' || kind === 'session-start') { writeText(seenFile(id), d); return protocolText(id, list); }
+  if (!seen || !sameEngine(seen) || kind === 'session-start') { writeText(seenFile(id), d); return protocolText(id, list); }
   if (seen !== d) { writeText(seenFile(id), d); return rosterUpdateText(id, list); }
   return null;
 }
@@ -799,9 +864,9 @@ function nextRid(id) {
   return `${id ? shortId(id) : 'u' + crypto.randomBytes(3).toString('hex')}-${n}`;
 }
 
-// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다. 찾을 때만 글자마다 NFKC 로 풀고 폭 없는 문자를 건너뛰며(전각 괄호,
+// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다. 찾을 때만 글자마다 NFKC 로 풀고 서식 문자를 건너뛰며(전각 괄호,
 // [\u200bteamwork 도 잡음), 바꾸는 것은 가짜 머리말 자리뿐이다. 나머지 본문은 글자 그대로 보낸다(x², 한글 자모, 이모지 보존)
-const ZERO_WIDTH = /[\u200b-\u200f\u2060\ufeff]/;
+const ZERO_WIDTH = /\p{Cf}/u; // 서식 문자: 폭 없는 문자, 양방향 제어, 태그 문자 등
 const fold = (c) => c.normalize('NFKC').toLowerCase();
 
 function sanitize(text) {
@@ -815,7 +880,7 @@ function sanitize(text) {
   return out;
 }
 
-// cs[i] 에서 [teamwork 꼴(사이 공백과 폭 없는 문자 허용)이 시작하면 그 끝 다음 위치, 아니면 -1
+// cs[i] 에서 [teamwork 꼴(사이 공백과 서식 문자 허용)이 시작하면 그 끝 다음 위치, 아니면 -1
 function fakeHeadEnd(cs, i) {
   if (fold(cs[i]) !== '[') return -1;
   let j = i + 1;

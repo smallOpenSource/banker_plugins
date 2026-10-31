@@ -310,5 +310,8 @@
     "banker:ralph-qa",
     "banker:remains",
     "banker:ultraqa"
+  ],
+  "0.23.3": [
+    "banker:progress-mon"
   ]
 }

@@ -176,17 +176,26 @@ test('a Codex home inside the working folder gets no hooks; one in a repository 
   assert.equal(codexPaths({ CODEX_HOME: 'rel' }).home, join(process.cwd(), 'rel'), 'a relative CODEX_HOME is read from here, as Codex reads it');
 });
 
+// repoAbove 와 같은 실제 경로: native 를 먼저 쓴다(Windows 의 8.3 짧은 TMP 이름을 긴 이름으로 푸는 쪽이 같아야 비교가 맞음)
+const nativeReal = (p) => {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return realpathSync(p);
+  }
+};
+
 test('the repository above a Codex home is found by walking up for .git, without git, and not at the home folder itself', () => {
   const top = join(root, `walk${n++}`);
   const home = join(top, 'a', 'b', '.codex');
   mkdirSync(home, { recursive: true });
   // 임시 폴더가 저장소 안이면(TMPDIR 을 저장소 안에 둔 러너) 그 저장소가 답이다. 시험 홈 위로 걸어 올라가며 직접 찾는다.
   let outer = '';
-  for (let d = realpathSync(top); !outer && dirname(d) !== d; d = dirname(d)) if (existsSync(join(dirname(d), '.git'))) outer = dirname(d);
+  for (let d = nativeReal(top); !outer && dirname(d) !== d; d = dirname(d)) if (existsSync(join(dirname(d), '.git'))) outer = dirname(d);
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import { repoAbove } from ${JSON.stringify(pathToFileURL(join(PKG, 'bin', 'lib', 'codex-hooks.mjs')).href)}; process.stdout.write(repoAbove(process.argv[1], process.argv[2]))`, home, join(top, 'a')], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
   assert.equal(r.stdout, outer, `no .git between the home and ${outer || 'the root'}: ${r.stderr}`);
   writeFileSync(join(top, '.git'), 'gitdir: elsewhere\n'); // a worktree's .git is a file
-  const realTop = realpathSync(top); // repoAbove 는 실제 경로를 돌려준다(macOS 의 임시 폴더는 /private/var 아래)
+  const realTop = nativeReal(top); // repoAbove 는 실제 경로를 돌려준다(macOS 의 임시 폴더는 /private/var 아래)
   assert.equal(repoAbove(home), realTop);
   mkdirSync(join(top, 'a', '.git'));
   assert.equal(repoAbove(home), join(realTop, 'a'));
