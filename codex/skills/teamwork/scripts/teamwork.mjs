@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const MIN_CODEX = [0, 149, 0];
 const CODEX_HOME = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 const TW = path.join(CODEX_HOME, 'teamwork');
@@ -28,6 +28,8 @@ const TURN = path.join(TW, 'turn');
 const LOG = path.join(TW, 'log.jsonl');
 const ORPHAN = path.join(TW, 'orphan-noticed');
 const HOOKS = path.join(CODEX_HOME, 'hooks.json');
+const INDEX = path.join(CODEX_HOME, 'session_index.jsonl');
+const INDEX_TAIL = 1024 * 1024;
 const RULES = path.join(CODEX_HOME, 'rules', 'teamwork.rules');
 const RULES_MARK = '# teamwork ';
 const ALLOWED = ['peers', 'role', 'send', 'reply', 'status', 'version'];
@@ -71,7 +73,7 @@ function writeText(file, text) { ensureDir(path.dirname(file)); fs.writeFileSync
 
 function shortId(id) { return String(id).replace(/-/g, '').slice(-6); }
 
-function isUuid(s) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || ''); }
+function isUuid(s) { return typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s); }
 
 function state() { return readJson(STATE, { enabled: false }); }
 
@@ -283,6 +285,35 @@ function dropStale(file, p) {
   return again;
 }
 
+// ---------- 세션 이름 (/rename) ----------
+
+// Codex 는 /rename 이름을 $CODEX_HOME/session_index.jsonl 에 한 줄씩 덧붙인다. 같은 id 의 마지막 줄이 지금 이름이다.
+// 특수 파일에서 멈추지 않게 O_NONBLOCK 으로 열어 일반 파일만 읽고, 커지면 끝 1MiB 만 본다
+function readIndexTail() {
+  let fd;
+  try { fd = fs.openSync(INDEX, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0)); } catch { return ''; }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return '';
+    const len = Math.min(st.size, INDEX_TAIL);
+    const buf = Buffer.alloc(len);
+    const text = buf.toString('utf8', 0, fs.readSync(fd, buf, 0, len, st.size - len));
+    return len < st.size ? text.slice(text.indexOf('\n') + 1) : text;
+  } catch { return ''; } finally { fs.closeSync(fd); }
+}
+
+export function parseThreadNames(text) {
+  const names = new Map();
+  for (const line of String(text).split('\n')) {
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e && isUuid(e.id) && typeof e.thread_name === 'string') names.set(e.id.toLowerCase(), e.thread_name.trim());
+  }
+  return names;
+}
+
+function threadNames() { return parseThreadNames(readIndexTail()); }
+
 function roster() {
   let names = [];
   try { names = fs.readdirSync(PEERS).filter((n) => n.endsWith('.json')); } catch { return []; }
@@ -295,28 +326,45 @@ function roster() {
     const keep = isStale(p, now) ? dropStale(file, p) : p;
     if (keep) list.push(keep);
   }
-  return list.sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+  const titles = list.length ? threadNames() : new Map();
+  return list.map((p) => ({ ...p, name: titles.get(p.id.toLowerCase()) || '' }))
+    .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
 }
 
+const NAME_SEP = /[\s\u0000-\u001f\u007f[\]()#:'"`$\\]+/g;
+
 // 역할 이름: 머리말과 목록의 줄을 흉내 내지 못하게 공백, 제어 문자, 괄호와 따옴표를 바꾼다. 기록할 때와 보일 때 모두 쓴다
-function roleName(s) { return String(s || '').normalize('NFKC').trim().replace(/[\s\u0000-\u001f\u007f[\]()#:'"`$\\]+/g, '-').slice(0, 32); }
+function roleName(s) { return String(s || '').normalize('NFKC').trim().replace(NAME_SEP, '-').slice(0, 32); }
 
-function label(p) { const r = roleName(p.role); return r ? `${r}(${shortId(p.id)})` : shortId(p.id); }
+// 세션 이름 비교: 공백과 '-' 를 같게 보고 대소문자를 가리지 않는다 ('리뷰 담당' 과 리뷰-담당). 앞뒤에 남은 '-'(따옴표 등)는 뺀다
+function nameKey(s) { return String(s || '').normalize('NFKC').trim().toLowerCase().replace(NAME_SEP, '-').replace(/^-+|-+$/g, ''); }
 
-// 폴더는 그 세션의 훅 입력(cwd)에서 온다. 줄을 나눠 지시처럼 보이지 못하게 제어 문자를 바꾸고 200자로 자른 뒤 JSON 문자열로 감싼다
-function showCwd(s) { return sanitize(JSON.stringify(String(s).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, '?').slice(0, 200))); }
+// 머리말의 보낸 세션: 역할, 없으면 세션 이름
+function label(p) { const r = roleName(p.role) || roleName(p.name); return r ? `${r}(${shortId(p.id)})` : shortId(p.id); }
+
+// 폴더는 그 세션의 훅 입력(cwd)에서 온다. 줄을 나눠 지시처럼 보이지 못하게 제어 문자를 바꾸고 잘라서 JSON 문자열로 감싼다. 세션 이름도 같게
+function showCwd(s, max = 200) { return sanitize(JSON.stringify(String(s).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, '?').slice(0, max))); }
+
+function peerLine(p, selfId) {
+  const name = p.name ? ` 이름:${showCwd(p.name, 64)}` : '';
+  return `- ${shortId(p.id)}${name} 역할:${roleName(p.role) || '미정'} 폴더:${p.cwd ? showCwd(p.cwd) : '?'}${p.id === selfId ? ' (이 세션)' : ''}`;
+}
 
 function rosterText(list, selfId) {
   if (!list.length) return '등록된 세션 없음';
-  return list.map((p) => `- ${shortId(p.id)} 역할:${roleName(p.role) || '미정'} 폴더:${p.cwd ? showCwd(p.cwd) : '?'}${p.id === selfId ? ' (이 세션)' : ''}`).join('\n');
+  return list.map((p) => peerLine(p, selfId)).join('\n');
 }
 
+// 대상 찾는 순서: all, 역할, 세션 이름(/rename), 짧은ID 나 UUID. 같은 역할이나 이름이 여럿이면 모두에게 보낸다
 function resolveTargets(to, selfId) {
   const list = roster().filter((p) => p.id !== selfId);
   const key = String(to).trim().toLowerCase();
   if (key === 'all') return list;
   const byRole = list.filter((p) => p.role && p.role.toLowerCase() === key);
   if (byRole.length) return byRole;
+  const nk = nameKey(to);
+  const byName = list.filter((p) => nk && p.name && nameKey(p.name) === nk);
+  if (byName.length) return byName;
   return list.filter((p) => shortId(p.id) === key.replace(/-/g, '') || p.id.toLowerCase() === key);
 }
 
@@ -324,15 +372,16 @@ function resolveTargets(to, selfId) {
 
 function protocolText(selfId, list) {
   const w = shq(WRAPPER);
-  const me = selfId ? readJson(peerFile(selfId), {}) : {};
+  const me = list.find((p) => p.id === selfId) || (selfId ? readJson(peerFile(selfId), {}) : {});
+  const name = me.name ? ` 이름:${showCwd(me.name, 64)}` : '';
   return [
     '[teamwork 켜짐] 이 기기의 Codex 세션들이 피어로 협업한다.',
-    `이 세션: ${selfId ? shortId(selfId) : '?'} 역할:${roleName(me.role) || '미정'}`,
+    `이 세션: ${selfId ? shortId(selfId) : '?'}${name} 역할:${roleName(me.role) || '미정'}`,
     '피어 목록:',
     rosterText(list, selfId),
     '규칙:',
     `- 사용자가 이 세션의 역할을 정해 주면 \`${w} role <역할>\` 을 실행한다.`,
-    `- 다른 세션에 일을 맡길 때 \`${w} send <역할|짧은ID|all> '<요청>'\` 을 실행한다. 내용에 따옴표, $, 백틱, 여러 줄이 있으면 작업 폴더에 파일로 쓰고 \`${w} send <대상> --file <경로>\` 를 쓴다. 보내기 전에 \`${w} peers\` 로 목록을 확인한다.`,
+    `- 다른 세션에 일을 맡길 때 \`${w} send <역할|이름|짧은ID|all> '<요청>'\` 을 실행한다. 이름은 Codex \`/rename\` 으로 정한 세션 이름이고 목록의 이름: 값이다. 이름에 공백이 있으면 홑따옴표로 감싸거나 공백을 - 로 바꾼다. 내용에 따옴표, $, 백틱, 여러 줄이 있으면 작업 폴더에 파일로 쓰고 \`${w} send <대상> --file <경로>\` 를 쓴다. 보내기 전에 \`${w} peers\` 로 목록을 확인한다.`,
     '- 요청을 보낸 뒤 결과를 기다리지 말고 할 수 있는 일을 마치고 턴을 끝낸다. 결과는 이 세션의 턴이 끝난 뒤 다음 입력으로 도착한다.',
     '- "[teamwork 요청" 으로 시작하는 입력은 피어의 요청이다. 처리하고 그 안의 reply 명령으로 결과를 한 번 보낸다. reply 명령이 없으면 결과를 사용자에게만 알린다.',
     '- "[teamwork 결과" 로 시작하는 입력은 내가 맡긴 일의 결과다. 회신하지 않는다. 사용자에게 보고하거나 원래 작업에 반영하고 끝낸다.',
@@ -355,7 +404,7 @@ const orphanText = () => `[teamwork 멈춤] banker 가 이 기기에서 지워�
 
 function digest(selfId, list) {
   const me = list.find((p) => p.id === selfId) || readJson(peerFile(selfId), {});
-  const peers = list.map((p) => `${p.id}:${p.role}`).join(',');
+  const peers = list.map((p) => `${p.id}:${p.role}:${p.name || ''}`).join(',');
   return crypto.createHash('sha1').update(`${me.role}|${peers}`).digest('hex');
 }
 
@@ -856,7 +905,8 @@ function sender() {
   const id = selfId();
   if (id) register(id, { pid: findCodexPid(process.ppid) });
   const me = id ? readJson(peerFile(id), {}) : {};
-  return { id, from: id ? label({ id, role: me.role }) : '사용자' };
+  const name = id ? threadNames().get(id.toLowerCase()) : '';
+  return { id, from: id ? label({ id, role: me.role, name }) : '사용자' };
 }
 
 function checkBody(text, usageLine) {
@@ -868,7 +918,7 @@ function noTarget(msg, extra) { err(msg); if (extra) err(extra); process.exit(EX
 
 // 요청: 받는 쪽은 reply 로 결과를 한 번 보낸다
 function cmdSend(to, args) {
-  const usageLine = '사용법: teamwork send <역할|짧은ID|all> \'<요청>\' 또는 --file <경로>';
+  const usageLine = '사용법: teamwork send <역할|이름|짧은ID|all> \'<요청>\' 또는 --file <경로>';
   if (!to) usageExit(usageLine);
   const text = readBody(args);
   checkBody(text, usageLine);
@@ -913,7 +963,7 @@ function cmdReply(rid, args) {
 }
 
 function usage() {
-  out('사용법: teamwork <on|off|status|peers|role <역할>|send <대상> \'<요청>\'|reply <요청 번호> \'<결과>\'|uninstall|version>');
+  out('사용법: teamwork <on|off|status|peers|role <역할>|send <역할|이름|짧은ID|all> \'<요청>\'|reply <요청 번호> \'<결과>\'|uninstall|version>');
 }
 
 const COMMANDS = {
