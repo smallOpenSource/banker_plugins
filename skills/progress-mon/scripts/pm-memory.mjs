@@ -205,8 +205,33 @@ const within = (a, b) => {
   return !rel.startsWith('..') && !path.isAbsolute(rel);
 };
 
+// 링크의 대상 stat. 대상이 없거나 실제 경로가 base 밖이면 UsageError.
+function linkTarget(file, name, base, tail) {
+  let st;
+  let real;
+  try {
+    st = fs.statSync(file);
+    real = fs.realpathSync(file);
+  } catch {
+    throw new UsageError(`${name} 은 대상이 없는 링크라 거부${tail}`);
+  }
+  if (!within(fs.realpathSync(base), real)) throw new UsageError(`${name} 은 ${path.basename(base)} 밖을 가리키는 링크라 거부${tail}`);
+  return st;
+}
+
+// 파일을 UTF-8 로 읽는다(BOM 은 뗌). UTF-8 이 아니면 UsageError.
+function readUtf8(file, name, tail) {
+  const buf = fs.readFileSync(file);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    throw new UsageError(`${name} 이 UTF-8 이 아니라 거부${tail}`);
+  }
+}
+
 // 덧붙일 수 있는 파일인지. 일반 파일이나, 실제 경로가 base(프로젝트 루트나 --memory-dir) 안인 일반 파일을 가리키는 링크만.
 // 저장소가 심은 링크로 밖의 파일에 덧붙이지 않게 한다. CLAUDE.md -> AGENTS.md 같은 안쪽 링크는 받는다. 없으면 새로 만든다.
+// 하드링크(nlink > 1)는 거부한다. 다른 이름이 어디 있는지 알 수 없어, 밖의 파일과 같은 내용일 수 있다.
 // 돌려줌: { exists, text, eol }. 거부는 UsageError.
 function inspect(file, name, base, alt = '') {
   const tail = alt ? `. ${alt}` : '';
@@ -217,35 +242,30 @@ function inspect(file, name, base, alt = '') {
     if (e.code === 'ENOENT') return { exists: false, text: '', eol: '\n' };
     throw new UsageError(`${name} 을 읽지 못함(${e.code || e.message})${tail}`);
   }
-  let st = lst;
-  if (lst.isSymbolicLink()) {
-    let real;
-    try {
-      st = fs.statSync(file);
-      real = fs.realpathSync(file);
-    } catch {
-      throw new UsageError(`${name} 은 대상이 없는 링크라 거부${tail}`);
-    }
-    if (!within(fs.realpathSync(base), real)) throw new UsageError(`${name} 은 ${path.basename(base)} 밖을 가리키는 링크라 거부${tail}`);
-  }
+  const st = lst.isSymbolicLink() ? linkTarget(file, name, base, tail) : lst;
   if (!st.isFile()) throw new UsageError(`${name} 은 일반 파일이 아니라 거부${tail}`);
-  const buf = fs.readFileSync(file);
-  let text;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
-  } catch {
-    throw new UsageError(`${name} 이 UTF-8 이 아니라 거부${tail}`);
-  }
+  if (st.nlink > 1) throw new UsageError(`${name} 은 하드링크(이름 ${st.nlink}개)라 거부${tail}`);
+  const text = readUtf8(file, name, tail);
   // TextDecoder 는 BOM 을 떼므로 줄 끝 판정만 쓴다. 쓰기는 원본 바이트 뒤에 덧붙인다.
   return { exists: true, text, eol: text.includes('\r\n') ? '\r\n' : '\n' };
 }
 
 // 원본 바이트를 그대로 두고 끝에 줄을 덧붙인다. 마지막 줄에 줄바꿈이 없으면 먼저 넣는다.
+// 연 fd 를 fstat 으로 다시 본다: 검사(inspect)와 쓰기 사이에 하드링크나 특수 파일로 바뀌었으면 쓰지 않는다.
 function append(file, info, lines) {
   const glue = info.text && !info.text.endsWith('\n') ? info.eol : '';
   const body = glue + lines.join(info.eol) + info.eol;
-  if (info.exists) fs.appendFileSync(file, body);
-  else fs.writeFileSync(file, body, { flag: 'wx' });
+  // O_NONBLOCK: 검사 뒤 FIFO 로 바뀐 자리에서 open 이 읽는 쪽을 기다리며 멈추지 않게 한다(Windows 에는 없어 0)
+  const { O_WRONLY, O_APPEND, O_CREAT, O_EXCL } = fs.constants;
+  const flags = O_WRONLY | (fs.constants.O_NONBLOCK || 0) | O_CREAT | (info.exists ? O_APPEND : O_EXCL);
+  const fd = fs.openSync(file, flags, 0o666);
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink > 1) throw new UsageError(`${path.basename(file)} 이 검사 뒤 하드링크나 특수 파일로 바뀌어 쓰지 않음`);
+    fs.writeFileSync(fd, body); // 다 쓸 때까지 반복
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // 등록 계획. 쓰기 전에 대상을 모두 검사한다(거부면 아무것도 바꾸지 않음).

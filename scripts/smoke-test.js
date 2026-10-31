@@ -429,8 +429,16 @@ try {
   const pmonDoc = fs.readFileSync(path.join(root, 'skills', 'progress-mon', 'SKILL.md'), 'utf8');
   const pluginVer = JSON.parse(fs.readFileSync(path.join(root, '.codex-plugin', 'plugin.json'), 'utf8')).version;
   const cacheDir = path.join(tmp, 'codexhome-plugin', 'plugins', 'cache', 'banker-plugins', 'banker', pluginVer, 'skills', 'progress-mon');
-  // only the files git tracks (what the marketplace's git source carries), not untracked or ignored ones in this tree
-  const pmTracked = cp.execFileSync('git', ['-C', root, 'ls-files', '-z', 'skills/progress-mon'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+  // only the files git tracks (what the marketplace's git source carries), not untracked or ignored ones in this tree.
+  // Outside a git tree (smoke run from an unpacked tarball, or no git) the folder holds only shipped files: copy them all.
+  const pmLs = cp.spawnSync('git', ['-C', root, 'ls-files', '-z', '--', 'skills/progress-mon'], { encoding: 'utf8' });
+  const walk = (rel) => fs.readdirSync(path.join(root, rel), { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(`${rel}/${e.name}`) : e.isFile() ? [`${rel}/${e.name}`] : []));
+  const pmGit = pmLs.status === 0 && pmLs.stdout;
+  if (pmLs.status !== 0 && fs.existsSync(path.join(root, '.git'))) {
+    console.log(`WARN: git ls-files failed in a git tree (status ${pmLs.status}, ${String(pmLs.stderr || pmLs.error || '').trim().split('\n')[0]}); the progress-mon cache copy takes the whole folder, untracked files included`);
+  }
+  const pmTracked = pmGit ? pmLs.stdout.split('\0').filter(Boolean) : walk('skills/progress-mon');
   for (const rel of pmTracked) {
     const dest = path.join(cacheDir, path.relative('skills/progress-mon', rel));
     fs.mkdirSync(path.dirname(dest), { recursive: true });

@@ -13,10 +13,10 @@ const PKG = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = mkdtempSync(join(tmpdir(), 'codex-hooks-test-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 // enableHooks 의 cwd 기본값은 process.cwd() 다. 러너가 임시 폴더(예: /tmp)에서 실행되면, 그 아래에 만든 시험 Codex 홈이
-// 작업 폴더 안으로 보여 "샌드박스가 고칠 수 있는 곳" 검사에 걸린다. 이 검사가 제대로 되도록 시험을 저장소(임시 폴더 밖)에서 돌린다.
-const cwd0 = process.cwd();
-process.chdir(PKG);
-after(() => process.chdir(cwd0));
+// 작업 폴더 안으로 보여 "샌드박스가 고칠 수 있는 곳" 검사에 걸린다. 작업 폴더로는 root 의 형제 폴더를 넘긴다.
+// 형제 폴더는 시험 홈을 품지 않으므로, 러너의 cwd 나 TMPDIR 이 어디든(저장소 안이어도) 이 검사에 걸리지 않는다.
+const WORK = mkdtempSync(join(tmpdir(), 'codex-hooks-cwd-'));
+after(() => rmSync(WORK, { recursive: true, force: true }));
 let n = 0;
 const home = () => {
   const d = join(root, `h${n++}`);
@@ -31,7 +31,7 @@ const posix = { skip: process.platform === 'win32' && 'POSIX modes' };
 test('enable copies the payload and appends after the existing groups; a second run changes nothing', () => {
   const p = home();
   seed(p);
-  const r = enableHooks(p, ['update', 'count'], PKG);
+  const r = enableHooks(p, ['update', 'count'], PKG, process.execPath, WORK);
   assert.deepEqual([r.code, r.changed], [0, ['update', 'count']]);
   const h = read(p);
   assert.deepEqual(h.SessionStart[0].hooks[0], omx, 'OMX keeps index 0');
@@ -39,18 +39,18 @@ test('enable copies the payload and appends after the existing groups; a second 
   assert.equal(h.Stop[0].hooks[0].command, formatCommand(process.execPath, join(p.dir, 'hooks', 'telemetry-count-codex.mjs'), [], process.platform === 'win32', hookGuard(false)));
   assert.equal(h.Stop.length, 1);
   assert.ok(existsSync(join(p.dir, 'bin', 'lib', 'telemetry-config.mjs')) && existsSync(join(p.dir, '.claude-plugin', 'plugin.json')));
-  assert.deepEqual(enableHooks(p, ['update', 'count'], PKG).changed, []);
+  assert.deepEqual(enableHooks(p, ['update', 'count'], PKG, process.execPath, WORK).changed, []);
   assert.deepEqual(hookStatus(p, ['update', 'count', 'obsidize'], PKG).status, { update: 'on', count: 'on', obsidize: 'off' });
 });
 
 test('a stale command is fixed in place and status says stale until then', () => {
   const p = home();
-  enableHooks(p, ['update'], PKG);
+  enableHooks(p, ['update'], PKG, process.execPath, WORK);
   const doc = JSON.parse(readFileSync(p.hooks, 'utf8'));
   doc.hooks.SessionStart[0].hooks[0].command = `"/old/node" "${join(p.dir, 'hooks', 'update-notify.mjs')}" --codex`;
   writeFileSync(p.hooks, JSON.stringify(doc));
   assert.equal(hookStatus(p, ['update'], PKG).status.update, 'stale');
-  assert.deepEqual(enableHooks(p, ['update'], PKG).changed, ['update']);
+  assert.deepEqual(enableHooks(p, ['update'], PKG, process.execPath, WORK).changed, ['update']);
   assert.equal(read(p).SessionStart.length, 1);
   assert.equal(hookStatus(p, ['update'], PKG).status.update, 'on');
 });
@@ -58,7 +58,7 @@ test('a stale command is fixed in place and status says stale until then', () =>
 test('disable removes only our handler, keeps a shared group, backs up, and reports shifted events', () => {
   const p = home();
   seed(p);
-  enableHooks(p, ['update'], PKG);
+  enableHooks(p, ['update'], PKG, process.execPath, WORK);
   const doc = JSON.parse(readFileSync(p.hooks, 'utf8'));
   doc.hooks.SessionStart[1].hooks.push({ type: 'command', command: 'other' });
   doc.hooks.Stop = [{ hooks: [{ type: 'command', command: `x /hooks-custom/banker/hooks/telemetry-count-codex.mjs` }] }, { hooks: [{ type: 'command', command: 'later' }] }];
@@ -75,7 +75,7 @@ test('disable removes only our handler, keeps a shared group, backs up, and repo
 test('removeAll takes every banker hook and the copy folder away', () => {
   const p = home();
   seed(p);
-  enableHooks(p, ['update', 'count'], PKG);
+  enableHooks(p, ['update', 'count'], PKG, process.execPath, WORK);
   assert.equal(removeAll(p).code, 0);
   assert.deepEqual(read(p), { SessionStart: [{ hooks: [omx] }] });
   assert.ok(!existsSync(p.dir));
@@ -85,7 +85,7 @@ test('hooks files of the wrong shape, links, and unreadable ones change nothing'
   const p = home();
   for (const body of ['[]', '{"hooks":[]}', '{"hooks":{"Stop":{}}}']) {
     writeFileSync(p.hooks, body);
-    assert.equal(enableHooks(p, ['count'], PKG).code, 1, body);
+    assert.equal(enableHooks(p, ['count'], PKG, process.execPath, WORK).code, 1, body);
     assert.equal(readFileSync(p.hooks, 'utf8'), body);
   }
   const q = home();
@@ -96,7 +96,7 @@ test('hooks files of the wrong shape, links, and unreadable ones change nothing'
   } catch {
     return t.skip('no file links');
   }
-  assert.equal(enableHooks(q, ['count'], PKG).code, 1);
+  assert.equal(enableHooks(q, ['count'], PKG, process.execPath, WORK).code, 1);
   assert.equal(readFileSync(real, 'utf8'), '{"hooks":{}}');
 });
 
@@ -104,12 +104,12 @@ test('rewriting keeps the mode, and an unreadable hooks.json is not taken for a 
   const p = home();
   seed(p);
   chmodSync(p.hooks, 0o600);
-  enableHooks(p, ['update'], PKG);
+  enableHooks(p, ['update'], PKG, process.execPath, WORK);
   assert.equal(statSync(p.hooks).mode & 0o777, 0o600);
   if (process.getuid && process.getuid() === 0) return t.skip('root reads past mode bits');
   chmodSync(p.home, 0o000);
   try {
-    assert.match(enableHooks(p, ['count'], PKG).msg, /확인하지 못함\(EACCES\)/);
+    assert.match(enableHooks(p, ['count'], PKG, process.execPath, WORK).msg, /확인하지 못함\(EACCES\)/);
   } finally {
     chmodSync(p.home, 0o755);
   }
@@ -135,7 +135,7 @@ test('command text per platform and node location rules', () => {
 
 test('obsidize goes after shell calls only and brings its canonicalizer along', () => {
   const p = home();
-  assert.deepEqual(enableHooks(p, ['obsidize'], PKG).changed, ['obsidize']);
+  assert.deepEqual(enableHooks(p, ['obsidize'], PKG, process.execPath, WORK).changed, ['obsidize']);
   const g = read(p).PostToolUse;
   assert.deepEqual([g.length, g[0].matcher], [1, 'Bash']);
   assert.match(g[0].hooks[0].command, /obsidize-hook\.mjs["'] --codex$/);
@@ -146,7 +146,7 @@ test('obsidize goes after shell calls only and brings its canonicalizer along', 
 
 test('every hook copy loads from the copy folder alone (no import left behind in the package)', () => {
   const p = home();
-  enableHooks(p, ['update', 'count', 'obsidize'], PKG);
+  enableHooks(p, ['update', 'count', 'obsidize'], PKG, process.execPath, WORK);
   const cfg = join(root, `cfg${n++}`);
   for (const id of ['update', 'count', 'obsidize']) {
     const script = join(p.dir, ...HOOKS[id].script.split('/'));
@@ -180,8 +180,11 @@ test('the repository above a Codex home is found by walking up for .git, without
   const top = join(root, `walk${n++}`);
   const home = join(top, 'a', 'b', '.codex');
   mkdirSync(home, { recursive: true });
+  // 임시 폴더가 저장소 안이면(TMPDIR 을 저장소 안에 둔 러너) 그 저장소가 답이다. 시험 홈 위로 걸어 올라가며 직접 찾는다.
+  let outer = '';
+  for (let d = realpathSync(top); !outer && dirname(d) !== d; d = dirname(d)) if (existsSync(join(dirname(d), '.git'))) outer = dirname(d);
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import { repoAbove } from ${JSON.stringify(pathToFileURL(join(PKG, 'bin', 'lib', 'codex-hooks.mjs')).href)}; process.stdout.write(repoAbove(process.argv[1], process.argv[2]))`, home, join(top, 'a')], { encoding: 'utf8', env: { ...process.env, PATH: '' } });
-  assert.equal(r.stdout, '', `no .git anywhere above: ${r.stderr}`);
+  assert.equal(r.stdout, outer, `no .git between the home and ${outer || 'the root'}: ${r.stderr}`);
   writeFileSync(join(top, '.git'), 'gitdir: elsewhere\n'); // a worktree's .git is a file
   const realTop = realpathSync(top); // repoAbove 는 실제 경로를 돌려준다(macOS 의 임시 폴더는 /private/var 아래)
   assert.equal(repoAbove(home), realTop);
@@ -256,7 +259,7 @@ test('the npm hook command runs its script only from outside the temp folder and
 const canImport = Number(process.versions.node.split('.')[0]) > 20 || (Number(process.versions.node.split('.')[0]) === 20 && Number(process.versions.node.split('.')[1]) >= 6);
 test('the copies of update-fetch, update-checkin and obsidize load from the copy folder and touch no network', { skip: !canImport && 'node --import needs Node 20.6 or later' }, () => {
   const p = home();
-  enableHooks(p, ['update', 'count', 'obsidize'], PKG);
+  enableHooks(p, ['update', 'count', 'obsidize'], PKG, process.execPath, WORK);
   const tmpHome = join(root, `home${n++}`);
   mkdirSync(tmpHome);
   const mark = join(tmpHome, 'network-tries');
@@ -295,7 +298,7 @@ test('a stale lock that cannot be removed ends with a named failure, not an endl
     const old = new Date(Date.now() - 60000);
     utimesSync(lock, old, old);
     const src = `import { enableHooks } from ${JSON.stringify(pathToFileURL(join(PKG, 'bin', 'lib', 'codex-hooks.mjs')).href)};`
-      + `const r = enableHooks(${JSON.stringify(p)}, ['update'], ${JSON.stringify(PKG)}); process.stdout.write(JSON.stringify(r));`;
+      + `const r = enableHooks(${JSON.stringify(p)}, ['update'], ${JSON.stringify(PKG)}, process.execPath, ${JSON.stringify(WORK)}); process.stdout.write(JSON.stringify(r));`;
     const t0 = Date.now();
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8', timeout: 20000 });
     assert.equal(r.signal, null, `${kind}: the lock wait did not end (${r.stderr})`);
@@ -313,7 +316,7 @@ test('a stale empty lock folder is cleared and the change goes through', () => {
   mkdirSync(lock);
   const old = new Date(Date.now() - 60000);
   utimesSync(lock, old, old);
-  assert.equal(enableHooks(p, ['update'], PKG).code, 0);
+  assert.equal(enableHooks(p, ['update'], PKG, process.execPath, WORK).code, 0);
   assert.ok(!existsSync(lock));
 });
 
