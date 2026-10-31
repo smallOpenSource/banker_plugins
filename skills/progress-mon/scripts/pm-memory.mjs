@@ -263,8 +263,10 @@ function append(file, info, lines) {
   try {
     fd = fs.openSync(file, flags, 0o666);
   } catch (e) {
-    // 읽는 쪽이 없는 FIFO(ENXIO)나 막힌 특수 파일(EAGAIN)은 검사 뒤 바뀐 자리다. 날 오류 대신 같은 거부 문구로 끝낸다
-    if (e.code === 'ENXIO' || e.code === 'EAGAIN') throw changed();
+    // 읽는 쪽이 없는 FIFO(ENXIO)는 검사 뒤 바뀐 자리다. EAGAIN 은 막힌 특수 파일이나 다른 프로세스의 잠금(lease)일 수 있다.
+    // 둘 다 날 오류 대신 거부 문구로 끝낸다
+    if (e.code === 'ENXIO') throw changed();
+    if (e.code === 'EAGAIN') throw new UsageError(`${path.basename(file)} 이 검사 뒤 바뀌었거나 다른 프로세스가 잡고 있어 쓰지 않음`);
     throw e;
   }
   try {

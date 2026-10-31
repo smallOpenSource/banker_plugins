@@ -335,16 +335,18 @@ function roster() {
     .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
 }
 
-// 목록과 머리말에 보이면 안 되는 글자: C0, DEL, C1(U+0085 포함), 폭 없는 문자, 줄과 문단 구분, 양방향 제어
-const HIDDEN = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
-const NAME_SEP = /[\s\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff[\]()#:'"`$\\]+/g;
+// 목록과 머리말에 보이면 안 되는 글자: 제어 문자(C0, DEL, C1, U+0085 포함), 서식 문자(폭 없는 문자, 양방향 제어, 태그 문자 등),
+// 줄과 문단 구분, 한글 채움 문자. 범위를 손으로 적지 않고 유니코드 범주로 고른다
+const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115f\u1160\u3164\uffa0]/gu;
+// 머리말의 이름에서 바꾸는 글자: 위 글자, 공백, 여는 괄호와 닫는 괄호 범주(NFKC 로 풀리지 않는 【】 등), 따옴표와 셸 글자
+const NAME_SEP = /[\s\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Ps}\p{Pe}\u115f\u1160\u3164\uffa0#:'"`$\\]+/gu;
 const NAME_MAX = 64;
 
 // 글자(코드 포인트) 단위로 자른다. UTF-16 단위로 자르면 서로게이트 쌍이 갈려 깨진 글자가 보인다
 function clip(s, max) { const cs = Array.from(s); return cs.length > max ? cs.slice(0, max).join('') : s; }
 
 // 역할 이름: 머리말과 목록의 줄을 흉내 내지 못하게 공백, 제어 문자, 괄호와 따옴표를 바꾼다. 기록할 때와 보일 때 모두 쓴다
-function roleName(s) { return String(s || '').normalize('NFKC').trim().replace(NAME_SEP, '-').slice(0, 32); }
+function roleName(s) { return clip(String(s || '').normalize('NFKC').trim().replace(NAME_SEP, '-'), 32); }
 
 // 세션 이름 비교: 공백과 '-' 를 같게 보고 대소문자를 가리지 않는다 ('리뷰 담당' 과 리뷰-담당). 앞뒤에 남은 '-'(따옴표 등)는 뺀다
 function nameKey(s) { return String(s || '').normalize('NFKC').trim().toLowerCase().replace(NAME_SEP, '-').replace(/^-+|-+$/g, ''); }
@@ -370,16 +372,25 @@ function rosterText(list, selfId) {
 
 const byId = (list, key) => list.filter((p) => shortId(p.id).toLowerCase() === key.replace(/-/g, '') || p.id.toLowerCase() === key);
 
-// 이름 비교: 먼저 글자 그대로(대소문자만 무시) 보고, 맞는 세션이 없을 때만 공백과 '-' 를 같게 본다(-qa- 가 qa 를 가리지 않게).
-// 원래 이름과 목록에 보이는 값(64자로 자르고 숨은 글자를 ? 로 바꾼 값) 둘 다 받는다
+// 이름 비교 단계: 글자 그대로(대소문자만 무시), NFKC 로 푼 글자, 공백과 '-' 를 같게 본 꼴(nameKey). 앞 단계에서 맞는 세션이 있으면 멈춘다.
+// 그래서 ｐｍ 과 pm 이 둘 다 있으면 pm 은 pm 에만, -qa- 와 qa 가 둘 다 있으면 qa 는 qa 에만 간다
+const NAME_TIERS = [
+  (s) => String(s).trim().toLowerCase(),
+  (s) => String(s).normalize('NFKC').trim().toLowerCase(),
+  nameKey,
+];
+
+// 원래 이름, 목록에 보이는 값(숨은 글자를 ? 로 바꾸고 64자로 자른 값), 목록에 적힌 그대로(JSON 따옴표 안, [인용 teamwork 포함)
+function nameForms(name) { return [name, shownName(name), showCwd(name, NAME_MAX).slice(1, -1)]; }
+
 function byName(list, to) {
-  const named = list.filter((p) => p.name);
-  const forms = (p) => [p.name, shownName(p.name)];
-  const exact = String(to).normalize('NFKC').trim().toLowerCase();
-  const hit = exact ? named.filter((p) => forms(p).some((f) => f.normalize('NFKC').toLowerCase() === exact)) : [];
-  if (hit.length) return hit;
-  const nk = nameKey(to);
-  return nk ? named.filter((p) => forms(p).some((f) => nameKey(f) === nk)) : [];
+  const named = list.filter((p) => p.name).map((p) => ({ p, forms: nameForms(p.name) }));
+  for (const key of NAME_TIERS) {
+    const want = key(to);
+    const hit = want ? named.filter((x) => x.forms.some((f) => key(f) === want)) : [];
+    if (hit.length) return hit.map((x) => x.p);
+  }
+  return [];
 }
 
 // 대상 찾는 순서: all, 실제 피어의 짧은ID 나 UUID 와 정확히 같으면 그 세션, 역할, 세션 이름(/rename), 나머지 짧은ID 꼴.
@@ -390,7 +401,8 @@ function resolveTargets(to, selfId) {
   if (key === 'all') return list;
   const ids = /^[0-9a-f]{6}$/.test(key) || isUuid(key) ? byId(list, key) : [];
   if (ids.length) return ids;
-  const byRole = list.filter((p) => p.role && p.role.toLowerCase() === key);
+  const roleKey = String(to).normalize('NFKC').trim().toLowerCase(); // 역할은 기록할 때 NFKC 로 풀어 둠
+  const byRole = list.filter((p) => p.role && p.role.toLowerCase() === roleKey);
   if (byRole.length) return byRole;
   const named = byName(list, to);
   return named.length ? named : byId(list, key);
@@ -831,9 +843,9 @@ function nextRid(id) {
   return `${id ? shortId(id) : 'u' + crypto.randomBytes(3).toString('hex')}-${n}`;
 }
 
-// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다. 찾을 때만 글자마다 NFKC 로 풀고 폭 없는 문자를 건너뛰며(전각 괄호,
+// 본문 안에서 teamwork 머리말을 흉내 내지 못하게 한다. 찾을 때만 글자마다 NFKC 로 풀고 서식 문자를 건너뛰며(전각 괄호,
 // [\u200bteamwork 도 잡음), 바꾸는 것은 가짜 머리말 자리뿐이다. 나머지 본문은 글자 그대로 보낸다(x², 한글 자모, 이모지 보존)
-const ZERO_WIDTH = /[\u200b-\u200f\u2060\ufeff]/;
+const ZERO_WIDTH = /\p{Cf}/u; // 서식 문자: 폭 없는 문자, 양방향 제어, 태그 문자 등
 const fold = (c) => c.normalize('NFKC').toLowerCase();
 
 function sanitize(text) {

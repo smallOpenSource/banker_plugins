@@ -594,6 +594,64 @@ test('server.log.1 자리를 치워 다시 옮기면 옮기지 못한 경고를 
   assert.ok(fs.statSync(`${logPath(ctx.dataDir)}.1`).isFile());
 });
 
+test('옮기기 경고는 쓰기 실패가 회복된 뒤에도 status 에 다시 보임', T, () => {
+  const ctx = ctxOf();
+  fs.mkdirSync(`${logPath(ctx.dataDir)}.1`);
+  fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
+  const warns = [];
+  const log = makeLogger(ctx.dataDir, 400, (w) => warns.push(w));
+  log(`줄 ${'y'.repeat(60)}`);
+  const restore = failLogWrites('ENOSPC');
+  try {
+    log('못 씀');
+  } finally {
+    restore();
+  }
+  log('회복');
+  assert.equal(warns.length, 3, warns.join('|'));
+  assert.match(warns[0], /server\.log\.1 로 옮기지 못함/);
+  assert.equal(warns[1], 'server.log 에 기록하지 못함(ENOSPC). 서버는 계속');
+  assert.equal(warns[2], warns[0], 'fail 이 풀리면 남은 rotate 경고를 다시 보임');
+});
+
+test('쓰기가 계속 실패하며 까닭이 번갈아 바뀌어도 쌓아 둔 경고 줄은 상한을 넘지 않음', T, () => {
+  const ctx = ctxOf();
+  const log = makeLogger(ctx.dataDir, 1024 * 1024);
+  for (let i = 0; i < 200; i++) {
+    const restore = failLogWrites(i % 2 ? 'EIO' : 'ENOSPC');
+    try {
+      log(`줄 ${i}`);
+    } finally {
+      restore();
+    }
+  }
+  log('회복');
+  const text = fs.readFileSync(logPath(ctx.dataDir), 'utf8');
+  const lines = text.trimEnd().split('\n');
+  assert.ok(lines.length <= 23, `줄 ${lines.length}`);
+  assert.match(text, /쓰지 못한 경고와 회복 줄 \d+개 생략/);
+  assert.match(lines.at(-1), /회복: 앞의 경고가 풀림/);
+});
+
+test('옮긴 뒤 새 server.log 를 못 열면 옮기지 못했다고 하지 않고 쓰기 실패로 알림', T, () => {
+  const ctx = ctxOf();
+  fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
+  const real = fs.openSync;
+  let opens = 0;
+  fs.openSync = (f, ...rest) => {
+    if (String(f) === logPath(ctx.dataDir) && ++opens === 2) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+    return real(f, ...rest);
+  };
+  const warns = [];
+  try {
+    makeLogger(ctx.dataDir, 400, (w) => warns.push(w))(`줄 ${'y'.repeat(60)}`);
+  } finally {
+    fs.openSync = real;
+  }
+  assert.deepEqual(warns, ['server.log 에 기록하지 못함(EIO). 서버는 계속']);
+  assert.equal(fs.readFileSync(`${logPath(ctx.dataDir)}.1`, 'utf8'), 'x'.repeat(350), '옮기기는 됨');
+});
+
 // fs.writeFileSync 를 잠시 바꿔 server.json.lock(또는 suffix 로 끝나는 파일)의 wx 를 code 로 times 번 실패시킨다
 // (Windows 의 delete pending 흉내).
 function failLockWrites(code, times, suffix = 'server.json.lock') {
