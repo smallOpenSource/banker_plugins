@@ -303,5 +303,12 @@
     "banker:ultra-init",
     "banker:ultraqa",
     "banker:update-banker"
+  ],
+  "0.23.1": [
+    "banker:3d-intro-build",
+    "banker:progress-mon",
+    "banker:ralph-qa",
+    "banker:remains",
+    "banker:ultraqa"
   ]
 }
