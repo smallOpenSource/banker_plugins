@@ -3,10 +3,11 @@
 banker 구성요소의 이력표입니다.
 릴리스마다 갱신합니다.
 
-- 기준: 0.23.1 (2026-10-31)
+- 기준: 0.23.2 (2026-10-31)
 - 구성: 스킬 66개, 커맨드 2개, 즉시명령 2개 (모두 70개)
 - 0.18.1 은 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.18.0 다음이 0.19.0 입니다.
 - 0.20.3 과 0.20.4 도 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.20.2 다음이 0.20.5 입니다.
+- 0.23.1 도 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.23.0 다음이 0.23.2 입니다.
 - 스킬과 커맨드: Claude Code 와 Codex 에서 씁니다. `ultraqa` 는 Claude Code 에서만 씁니다.
 - 즉시명령: Claude Code 에서 씁니다. Codex 에는 같은 이름의 Codex 전용 스킬 `graceful-pause` 와 `progress` 가 있습니다.
 - Codex 전용 스킬 `teamwork`(0.23.0)는 `codex/skills/` 에 있어 이 표에 넣지 않습니다. `graceful-pause`, `progress` 와 같습니다.
