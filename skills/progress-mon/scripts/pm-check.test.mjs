@@ -66,7 +66,7 @@ test('변형 check-overlap, check-auto: 기대 출력과 같은 줄', T, () => {
 
 test('형식: JSON 아님, 필수 키, status 값, 색, 수, 정규식 컴파일', T, () => {
   const cfg = { ...read('config.json'), commitRegex: '(', agentLabelPattern: '(S\\d+)' };
-  const it = { notes: { A1: 'x' }, items: [{ status: 'wip', text: 'x' }, { status: 'done', text: 'y', hash: 'xyz1234' }, { status: 'done', text: 'z', hash: 'ABCdef0' }], storyCommits: { A1: 5 }, storyStates: { A2: { status: 'later' } }, stageEvents: [{ stage: 'plan', status: 'begun' }] };
+  const it = { notes: { A1: 'x' }, items: [{ status: 'wip', text: 'x' }, { status: 'done', text: 'y', hash: 'xyz1234' }, { status: 'done', text: 'z', hash: 'ABCdef0' }], storyCommits: { A1: 5, B1: 'nothex!', B2: { hash: 'abcd' } }, storyStates: { A2: { status: 'later' } }, stageEvents: [{ stage: 'plan', status: 'begun' }] };
   const lines = check(data({ 'config.json': cfg, 'items.json': it, 'flow.json': '{bad' }));
   assert.ok(lines.includes('FAIL flow.json $ JSON 아님: ' + (() => {
     try {
@@ -78,9 +78,12 @@ test('형식: JSON 아님, 필수 키, status 값, 색, 수, 정규식 컴파일
   assert.equal(only(lines, /^FAIL config\.json commitRegex /).length, 1);
   assert.equal(only(lines, /^FAIL config\.json agentLabelPattern .*그룹/).length, 1);
   for (const p of ['notes.A1', 'items[0].status', 'storyCommits.A1', 'storyStates.A2', 'stageEvents[0]']) assert.equal(only(lines, new RegExp(`^FAIL items\\.json ${p.replace(/[.[\]]/g, '\\$&')} `)).length, 1, p);
-  // items[].hash 는 7~40자 16진(대소문자 무관)
-  assert.ok(lines.includes('FAIL items.json items[1].hash 7~40자 16진 해시가 아님: xyz1234'));
+  // items[].hash 는 4~40자 16진(대소문자 무관)
+  assert.ok(lines.includes('FAIL items.json items[1].hash 4~40자 16진 해시가 아님: xyz1234'));
   assert.equal(only(lines, /items\[2\]/).length, 0);
+  // storyCommits 도 16진 4~40자(문자열과 {hash} 둘 다). B1 은 16진 아님, B2 는 유효
+  assert.ok(lines.includes('FAIL items.json storyCommits.B1 4~40자 16진 해시가 아님: nothex!'));
+  assert.equal(only(lines, /storyCommits\.B2/).length, 0);
   const arch = read('arch.json');
   arch.zones[0].color = 'red';
   arch.scenes[0].sec = 'x';
@@ -339,6 +342,31 @@ test('밀도: 미달 대상은 앞 10개와 외 n, 상자설명은 줄 수, 수�
   assert.equal(densityLine(row('상자설명')), 'WARN density arch 상자설명 1/13: n1(1줄), n2(1줄), n3(1줄), n4(1줄), n5(1줄), n6(1줄), n7(1줄), n8(1줄), n9(1줄), n10(1줄) 외 2');
   assert.equal(densityLine(row('상자')), 'WARN density arch 상자 13/20');
   assert.equal(densityLine(d.rows.find((x) => x.tab === 'req' && x.item === '요구')), 'WARN density req 요구 0/1');
+});
+
+const GIT = spawnSync(process.platform === 'win32' ? 'where' : 'sh', process.platform === 'win32' ? ['git'] : ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.split(/\r?\n/)[0].trim();
+
+test('commitRegex: sources.git 이 꺼졌거나 git 저장소가 아니면 돌려보지 못해 WARN', T, () => {
+  const off = data({ 'config.json': { ...read('config.json'), commitRegex: '^(?<id>S\\d+):', sources: { ...read('config.json').sources, git: false } } });
+  assert.equal(only(check(off), /^WARN config\.json commitRegex sources\.git 이 꺼져/).length, 1);
+  const nogit = data({ 'config.json': { ...read('config.json'), commitRegex: '^(?<id>S\\d+):' } });
+  assert.equal(only(check(nogit), /^WARN config\.json commitRegex git 저장소가 아니거나/).length, 1);
+});
+
+test('commitRegex: 실제 커밋 제목에서 역추적이 폭발하면 FAIL(화면은 500 인데 check 는 통과하던 것)', { ...T, skip: GIT ? false : 'no git' }, () => {
+  const ctx = data({ 'config.json': { ...read('config.json'), commitRegex: '^(?<id>(a+)+)$' } });
+  const gitEnv = { ...ENV, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const g = (...a) => assert.equal(spawnSync('git', a, { cwd: ctx.project, env: gitEnv, encoding: 'utf8' }).status, 0, a.join(' '));
+  g('init', '-q');
+  fs.writeFileSync(path.join(ctx.project, 'f.txt'), 'x');
+  g('add', 'f.txt');
+  g('commit', '-q', '-m', `${'a'.repeat(40)}!`); // (a+)+$ 가 폭발하는 제목
+  const fails = only(check(ctx), /^FAIL config\.json commitRegex .*끝나지 않음/);
+  assert.equal(fails.length, 1, '실제 제목에서 시간 초과를 FAIL 로');
+  // 스토리가 없으면 화면이 이 정규식을 쓰지 않으므로 check 도 돌리지 않는다(화면에서 문제없는 설정을 FAIL 로 내지 않음)
+  fs.writeFileSync(path.join(ctx.dataDir, 'config.json'), JSON.stringify({ ...read('config.json'), commitRegex: '^(?<id>(a+)+)$', stories: [] }));
+  fs.writeFileSync(path.join(ctx.dataDir, 'items.json'), JSON.stringify({ ...read('items.json'), storyCommits: {}, storyStates: {} }));
+  assert.equal(only(check(ctx), /commitRegex/).length, 0, '스토리 없으면 commitRegex 검사 없음');
 });
 
 test('CLI: FAIL 이 있으면 종료 1, 자료 폴더가 없어도 만들지 않음', T, () => {

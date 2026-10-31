@@ -429,6 +429,68 @@ test('server.log 가 링크면 따라가지 않음: 대상을 쓰지도 비우�
   assert.deepEqual(logLinesSince(ctx.dataDir, 0, ['오류:']), [], '링크를 따라 읽지 않음');
 });
 
+test('server.log 가 하드링크면 쓰지도 비우지도 읽지도 않고, 기록이 멈춘 것을 한 번 알림', T, () => {
+  const ctx = ctxOf();
+  const target = path.join(ctx.dataDir, `victim${++n}.txt`); // 하드링크는 같은 파일 시스템이어야 함
+  const body = `2026-10-30T00:00:00.000Z 오류: ${'h'.repeat(100)}\n`;
+  fs.writeFileSync(target, body);
+  fs.linkSync(target, logPath(ctx.dataDir));
+  fs.mkdirSync(`${logPath(ctx.dataDir)}.1`); // 옮기지 못하는 자리: 고치기 전에는 여기서 ftruncate 로 대상을 비웠음
+  const warns = [];
+  const log = makeLogger(ctx.dataDir, 50, (w) => warns.push(w));
+  log('한 줄');
+  log('두 줄');
+  assert.equal(fs.readFileSync(target, 'utf8'), body, '대상(남의 파일) 내용 그대로');
+  assert.deepEqual(logLinesSince(ctx.dataDir, 0, ['오류:']), [], '하드링크를 읽지 않음');
+  assert.equal(warns.length, 1, '기록이 멈춘 것을 한 번 알림');
+  assert.match(warns[0], /하드링크/);
+});
+
+// 링크, 하드링크 거부와 fs 가 낸 오류를 다른 문구로 알린다. 옮기지 못해 비우려던 ftruncate 가 fs 의 EINVAL 이나 EIO 로
+// 실패하면(고치기 전: EINVAL 은 링크 문구, EIO 는 알림 없이 기록이 멈춤) 그 코드로 한 번 알린다.
+test('server.log 를 fs 오류로 못 쓰면 링크 문구가 아니라 그 코드로 한 번 알림', T, () => {
+  for (const code of ['EINVAL', 'EIO']) {
+    const ctx = ctxOf();
+    fs.mkdirSync(`${logPath(ctx.dataDir)}.1`); // 옮기지 못하는 자리라 ftruncate 로 감
+    fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
+    const real = fs.ftruncateSync;
+    fs.ftruncateSync = () => {
+      throw Object.assign(new Error(code), { code });
+    };
+    const warns = [];
+    try {
+      const log = makeLogger(ctx.dataDir, 400, (w) => warns.push(w));
+      log(`줄 ${'y'.repeat(60)}`);
+      log(`줄 ${'z'.repeat(60)}`);
+    } finally {
+      fs.ftruncateSync = real;
+    }
+    assert.equal(warns.length, 1, `${code}: 한 번 알림`);
+    assert.equal(warns[0], `server.log 에 기록하지 못함(${code}). 서버는 계속`, code);
+  }
+});
+
+// lstat 뒤 open 전에 링크나 소켓으로 바뀐 자리(open 이 ELOOP, EMLINK, ENXIO)는 링크 거부와 같은 문구로 알린다.
+test('server.log 를 여는 순간 링크나 소켓으로 바뀌었으면(ELOOP, EMLINK, ENXIO) 링크 문구로 한 번 알림', T, () => {
+  for (const code of ['ELOOP', 'EMLINK', 'ENXIO']) {
+    const ctx = ctxOf();
+    const real = fs.openSync;
+    fs.openSync = (f, ...rest) => {
+      if (String(f) === logPath(ctx.dataDir)) throw Object.assign(new Error(code), { code });
+      return real(f, ...rest);
+    };
+    const warns = [];
+    try {
+      const log = makeLogger(ctx.dataDir, 400, (w) => warns.push(w));
+      log('한 줄');
+      log('두 줄');
+    } finally {
+      fs.openSync = real;
+    }
+    assert.deepEqual(warns, ['server.log 가 링크, 특수 파일이거나 하드링크라 기록하지 않음. 그 파일을 치우면 다시 기록'], code);
+  }
+});
+
 test('server.log 가 한도를 넘으면 server.log.1 로 옮기고 새로 씀', T, () => {
   const ctx = ctxOf();
   fs.writeFileSync(logPath(ctx.dataDir), 'x'.repeat(350));
@@ -465,12 +527,13 @@ test('server.log.1 자리가 폴더라 옮기지 못하면 server.log 를 비우
   }
 });
 
-// fs.writeFileSync 를 잠시 바꿔 server.json.lock 의 wx 를 code 로 times 번 실패시킨다(Windows 의 delete pending 흉내).
-function failLockWrites(code, times) {
+// fs.writeFileSync 를 잠시 바꿔 server.json.lock(또는 suffix 로 끝나는 파일)의 wx 를 code 로 times 번 실패시킨다
+// (Windows 의 delete pending 흉내).
+function failLockWrites(code, times, suffix = 'server.json.lock') {
   const real = fs.writeFileSync;
   let left = times;
   fs.writeFileSync = (f, data, o) => {
-    if (left > 0 && String(f).endsWith('server.json.lock') && o && o.flag === 'wx') {
+    if (left > 0 && String(f).endsWith(suffix) && o && o.flag === 'wx') {
       left--;
       throw Object.assign(new Error(code), { code });
     }
@@ -513,6 +576,54 @@ test('start 잠금: wx 의 EPERM, EACCES, EBUSY 는 잠금이 있는 것처럼 �
   restore = failLockWrites('EROFS', 1);
   try {
     await assert.rejects(takeStartLock(c.dataDir, 5000), /만들지 못함\(EROFS\)/);
+  } finally {
+    restore();
+  }
+});
+
+// 낡은 잠금을 넘겨받는 표지(server.json.lock.taking)도 잠금 자리와 같은 규칙: 잠깐의 EPERM 뒤에는 넘겨받고,
+// 끝내 표지를 못 만드는 진짜 권한 오류는 1초대에 표지 이름으로 실패한다(고치기 전엔 15초 뒤 "다른 start 가 끝나지 않음").
+test('start 잠금: 넘겨받기 표지의 EPERM 은 기다렸다 넘겨받고, 끝내 못 만들면 1초대에 표지 이름으로 실패', T, async () => {
+  const staleAt = (dataDir) => {
+    const f = path.join(dataDir, 'server.json.lock');
+    fs.writeFileSync(f, `${process.pid} ${new Date().toISOString()}\n`);
+    const old = new Date(Date.now() - 60000); // START_LOCK_STALE_MS(30초)보다 오래됨
+    fs.utimesSync(f, old, old);
+    return f;
+  };
+  const a = ctxOf();
+  staleAt(a.dataDir);
+  let restore = failLockWrites('EPERM', 3, '.taking');
+  try {
+    const lock = await takeStartLock(a.dataDir, 5000);
+    assert.equal(fs.readFileSync(lock, 'utf8').split(' ')[0], String(process.pid));
+    assert.ok(Date.now() - fs.statSync(lock).mtimeMs < 10000, '새로 만든 잠금');
+    assert.equal(fs.existsSync(`${lock}.taking`), false);
+    giveBackLock(lock);
+  } finally {
+    restore();
+  }
+  const b = ctxOf();
+  const f = staleAt(b.dataDir);
+  restore = failLockWrites('EACCES', 1e9, '.taking');
+  const begin = Date.now();
+  try {
+    await assert.rejects(takeStartLock(b.dataDir), /잠금 server\.json\.lock\.taking 을 만들지 못함\(EACCES\)/);
+    assert.ok(Date.now() - begin < 3000, `1초대에 실패해야 함(걸린 시간 ${Date.now() - begin}ms)`);
+    assert.equal(fs.existsSync(f), true, '넘겨받지 못한 잠금은 그대로');
+  } finally {
+    restore();
+  }
+});
+
+test('start 잠금: 잠금 파일이 끝내 안 보이는 진짜 권한 오류는 기본 대기를 다 기다리지 않고 1초대에 실패', T, async () => {
+  const d = ctxOf();
+  const restore = failLockWrites('EACCES', 1e9); // 읽기 전용 폴더처럼 wx 가 늘 EACCES, 잠금 파일은 생기지 않음
+  const begin = Date.now();
+  try {
+    // 기본 대기(15초)를 그대로 쓰되, pendingMs(1초)를 넘기면 바로 끝난다(고치기 전엔 15초를 기다렸음)
+    await assert.rejects(takeStartLock(d.dataDir), /잠금 server\.json\.lock 을 만들지 못함\(EACCES\)/);
+    assert.ok(Date.now() - begin < 3000, `1초대에 실패해야 함(걸린 시간 ${Date.now() - begin}ms)`);
   } finally {
     restore();
   }

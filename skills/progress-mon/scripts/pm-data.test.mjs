@@ -179,20 +179,24 @@ test('item --at: 지난 시각으로 기록(처음부터 done 이면 s 없음), 
   assert.equal(items(p).items.some((x) => x.key === 'c2'), false, '거부하면 쓰지 않음');
 });
 
-test('item --commit: 7~40자 16진 해시를 hash 칸에, 그 밖은 거부', T, () => {
+test('item --commit: 4~40자 16진 해시를 hash 칸에, 그 밖은 거부(story --commit 과 같은 규칙)', T, () => {
   const p = project({ data: true });
   const a = cli(['item', '--key', 'c-1a2b3c4', '--status', 'done', '--text', '지난 커밋', '--at', '2026-10-20T12:34:56+09:00', '--commit', '1a2b3c4d5e'], p);
   assert.equal(a.code, 0, a.err);
   assert.deepEqual(items(p).items.find((x) => x.key === 'c-1a2b3c4'), { key: 'c-1a2b3c4', t: '2026-10-20T03:34:56Z', status: 'done', text: '지난 커밋', hash: '1a2b3c4d5e' });
-  for (const bad of ['1a2b3c', 'xyz1234', 'a'.repeat(41), '']) {
+  // 4자리는 받는다(story --commit 과 같은 하한)
+  const short = cli(['item', '--key', 'c-short', '--status', 'done', '--text', 'x', '--commit', 'abcd'], p);
+  assert.equal(short.code, 0, short.err);
+  assert.equal(items(p).items.find((x) => x.key === 'c-short').hash, 'abcd');
+  for (const bad of ['1a2', 'xyz1234', 'a'.repeat(41), '']) {
     const r = cli(['item', '--key', 'c2', '--status', 'done', '--text', 'x', '--commit', bad], p);
     assert.equal(r.code, 1, bad);
-    assert.equal(r.err, `오류: --commit 은 7~40자 16진 해시(받은 값 ${bad})\n`);
+    assert.equal(r.err, `오류: --commit 은 4~40자 16진 해시(받은 값 ${bad})\n`);
   }
   assert.equal(items(p).items.some((x) => x.key === 'c2'), false, '거부하면 쓰지 않음');
   // --commit 없이 다시 기록하면 있던 hash 유지, 시작 시각이 없던 항목은 "시작 시각 유지" 문구 없음
   const again = cli(['item', '--key', 'c-1a2b3c4', '--status', 'done', '--text', '지난 커밋 고침'], p);
-  assert.equal(again.out, 'item c-1a2b3c4: 대체(done 에서 done). 항목 4개\n');
+  assert.equal(again.out, 'item c-1a2b3c4: 대체(done 에서 done). 항목 5개\n');
   assert.equal(items(p).items.find((x) => x.key === 'c-1a2b3c4').hash, '1a2b3c4d5e');
   cli(['item', '--key', 'c-1a2b3c4', '--status', 'done', '--text', '지난 커밋', '--commit', 'abcdef1'], p);
   assert.equal(items(p).items.find((x) => x.key === 'c-1a2b3c4').hash, 'abcdef1', '--commit 을 주면 바꿈');

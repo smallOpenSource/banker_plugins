@@ -15,6 +15,15 @@ const root = path.resolve(__dirname, '..');
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}: ${msg}`); if (!cond) failures++; };
 const run = (cmd, args, opts = {}) => cp.execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+// npm (and the installed `banker`) is a .cmd on Windows, which execFileSync cannot run since Node 18.20.2 (EINVAL).
+// Run Node on npm's own npm-cli.js instead: no shell, so a temp path with spaces needs no quoting. POSIX falls back to
+// `npm` on PATH when npm-cli.js is not where Node ships it.
+const npmCli = [
+  /npm-cli\.js$/.test(process.env.npm_execpath || '') ? process.env.npm_execpath : null, // run under npm: its own npm
+  path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+].find((p) => fs.existsSync(p));
+const npm = (args, opts = {}) => (npmCli ? run(process.execPath, [npmCli, ...args], opts) : run('npm', args, opts));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-smoke-'));
 // npm reaches no registry from this harness: update_notifier=false stops the weekly update check, the one request
 // npm pack and a local tarball's install made; offline keeps any other lookup off the network. Its cache and logs go
@@ -38,22 +47,38 @@ fs.mkdirSync(npmHome, { recursive: true });
 
 try {
   // 1) pack
-  const packOut = run('npm', ['pack', '--silent', '--pack-destination', tmp], { cwd: root, env: NPM_OFFLINE });
+  const packOut = npm(['pack', '--silent', '--pack-destination', tmp], { cwd: root, env: NPM_OFFLINE });
   const tarball = packOut.trim().split('\n').filter(Boolean).pop().trim();
   const tarPath = path.join(tmp, tarball);
   ok(fs.existsSync(tarPath), `npm pack produced ${tarball}`);
   ok(fs.readdirSync(npmHome).length === 0, 'npm put nothing under its HOME: its cache and logs stay in the temp folder (not ~/.npm)');
 
   // 2) global install into temp prefix (offline; no deps)
-  run('npm', ['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
+  npm(['i', '-g', '--prefix', prefix, tarPath], { stdio: 'pipe', env: NPM_OFFLINE });
   const binPath = process.platform === 'win32' ? path.join(prefix, 'banker.cmd') : path.join(prefix, 'bin', 'banker');
   ok(fs.existsSync(binPath), `installed banker bin (${path.relative(tmp, binPath)})`);
+  // The shim above is a .cmd on Windows; run the installed bin JS through Node so no shell is needed (and the temp
+  // prefix path with spaces needs no quoting). Global install puts the package under node_modules/ (Windows) or
+  // lib/node_modules/ (POSIX).
+  const bankerJs = [
+    path.join(prefix, 'node_modules', '@kaydash9999', 'banker-plugins', 'bin', 'banker.js'),
+    path.join(prefix, 'lib', 'node_modules', '@kaydash9999', 'banker-plugins', 'bin', 'banker.js'),
+  ].find((p) => fs.existsSync(p));
+  ok(Boolean(bankerJs), 'installed banker bin JS is present to run through Node');
+  const bankerRun = (args, opts) => run(process.execPath, [bankerJs, ...args], opts);
+  const bankerSpawn = (args, opts) => cp.spawnSync(process.execPath, [bankerJs, ...args], opts);
+  // the shim itself still runs once where it can without a shell (POSIX): a broken shim would pass the JS runs alone
+  if (process.platform !== 'win32') {
+    const shim = cp.spawnSync(binPath, ['--version'], { encoding: 'utf8' });
+    ok(shim.status === 0 && shim.stdout.trim() === require(path.join(root, 'package.json')).version, `the installed banker shim runs (status ${shim.status})`);
+  }
 
   const env = { ...process.env, HOME: home, USERPROFILE: home };
   delete env.CODEX_HOME; // the installer follows CODEX_HOME; the tests install under the temp HOME only
 
   // 3) codex dry-run (project scope)
-  const codexOut = run(binPath, ['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env });
+  // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
+  const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
   ok(copies === 65, `codex dry-run plans 65 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
@@ -72,7 +97,7 @@ try {
   ok(codexOut.includes('AGENTS.md is NOT modified'), 'codex states AGENTS.md untouched');
 
   // 4) claude dry-run (capture stdout+stderr; tolerate absent claude, e.g. CI runners)
-  const claudeRes = cp.spawnSync(binPath, ['setup', '--claude', '--dry-run'], { cwd: home, env, encoding: 'utf8' });
+  const claudeRes = bankerSpawn(['setup', '--claude', '--dry-run'], { cwd: home, env, encoding: 'utf8' });
   const claudeOut = `${claudeRes.stdout || ''}${claudeRes.stderr || ''}`;
   ok(/marketplace add/.test(claudeOut) && /plugin install banker@banker-plugins/.test(claudeOut) || /claude CLI not found/.test(claudeOut),
      'claude dry-run prints register commands (or notes missing claude)');
@@ -269,7 +294,7 @@ try {
   fs.writeFileSync(path.join(removedPauseDir, 'SKILL.md'), '---\nname: banker-graceful_pause\n---\n');
   const env2 = { ...process.env, HOME: home2, USERPROFILE: home2 };
   delete env2.CODEX_HOME;
-  run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
+  bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
   const wantSkills = 65 + 2 + codexOnlyNames.length;
@@ -280,7 +305,7 @@ try {
   // Codex reads skills and hooks from $CODEX_HOME when it is set, so user scope installs there and not in ~/.codex.
   const home3 = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-codexhome-'));
   const codexHome3 = path.join(home3, 'custom-codex');
-  run(binPath, ['setup', '--codex', '--scope', 'user'], { cwd: home3, env: { ...env2, HOME: home3, USERPROFILE: home3, CODEX_HOME: codexHome3 } });
+  bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home3, env: { ...env2, HOME: home3, USERPROFILE: home3, CODEX_HOME: codexHome3 } });
   ok(fs.existsSync(path.join(codexHome3, 'skills', 'banker-lineage', 'SKILL.md')) && fs.existsSync(path.join(codexHome3, 'hooks.json'))
      && !fs.existsSync(path.join(home3, '.codex')), 'setup --codex follows CODEX_HOME for the skills and the hooks');
   fs.rmSync(home3, { recursive: true, force: true });
@@ -396,14 +421,33 @@ try {
   const pmonRun = cp.spawnSync(process.execPath, [path.join(pmonDir, 'scripts', 'progress-mon.mjs'), '--help'], { encoding: 'utf8' });
   ok(pmonRun.status === 0 && pmonRun.stdout.startsWith('progress-mon: '),
      `the Codex copy of progress-mon runs (status ${pmonRun.status}, stderr ${JSON.stringify(pmonRun.stderr)})`);
-  // The Codex plugin install keeps the plugin's tree under ~/.codex/plugins/cache/<marketplace>/banker/<version>/, and the
-  // plugin's skills list names ./skills/progress-mon/: the SKILL.md runtime table gives that folder, and the script runs there.
+  // The Codex plugin install keeps the plugin's tree under ~/.codex/plugins/cache/<marketplace>/banker/<version>/skills/,
+  // and the plugin's skills list names ./skills/progress-mon/. Build that layout in a temp CODEX_HOME from the repo tree
+  // (the marketplace git source, not the npm rename) and run the script from there: the repo copy alone would pass even
+  // if the real plugin path were wrong.
   const pmonPlugin = JSON.parse(fs.readFileSync(path.join(root, '.codex-plugin', 'plugin.json'), 'utf8')).skills;
   const pmonDoc = fs.readFileSync(path.join(root, 'skills', 'progress-mon', 'SKILL.md'), 'utf8');
-  const pmonPluginRun = cp.spawnSync(process.execPath, [path.join(root, 'skills', 'progress-mon', 'scripts', 'progress-mon.mjs'), '--help'], { encoding: 'utf8' });
+  const pluginVer = JSON.parse(fs.readFileSync(path.join(root, '.codex-plugin', 'plugin.json'), 'utf8')).version;
+  const cacheDir = path.join(tmp, 'codexhome-plugin', 'plugins', 'cache', 'banker-plugins', 'banker', pluginVer, 'skills', 'progress-mon');
+  // only the files git tracks (what the marketplace's git source carries), not untracked or ignored ones in this tree.
+  // Outside a git tree (smoke run from an unpacked tarball, or no git) the folder holds only shipped files: copy them all.
+  const pmLs = cp.spawnSync('git', ['-C', root, 'ls-files', '-z', '--', 'skills/progress-mon'], { encoding: 'utf8' });
+  const walk = (rel) => fs.readdirSync(path.join(root, rel), { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(`${rel}/${e.name}`) : e.isFile() ? [`${rel}/${e.name}`] : []));
+  const pmGit = pmLs.status === 0 && pmLs.stdout;
+  if (pmLs.status !== 0 && fs.existsSync(path.join(root, '.git'))) {
+    console.log(`WARN: git ls-files failed in a git tree (status ${pmLs.status}, ${String(pmLs.stderr || pmLs.error || '').trim().split('\n')[0]}); the progress-mon cache copy takes the whole folder, untracked files included`);
+  }
+  const pmTracked = pmGit ? pmLs.stdout.split('\0').filter(Boolean) : walk('skills/progress-mon');
+  for (const rel of pmTracked) {
+    const dest = path.join(cacheDir, path.relative('skills/progress-mon', rel));
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(path.join(root, rel), dest);
+  }
+  const pmonPluginRun = cp.spawnSync(process.execPath, [path.join(cacheDir, 'scripts', 'progress-mon.mjs'), '--help'], { encoding: 'utf8' });
   ok(pmonPlugin.includes('./skills/progress-mon/') && pmonDoc.includes('`~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/progress-mon/`')
-     && pmonDoc.includes('`~/.codex/skills/banker-progress-mon/`') && pmonPluginRun.status === 0,
-     'progress-mon: the Codex plugin path (plugins/cache/.../skills/progress-mon/) is in the plugin list and the SKILL.md runtime table, and the script runs there');
+     && pmonDoc.includes('`~/.codex/skills/banker-progress-mon/`') && pmonPluginRun.status === 0 && pmonPluginRun.stdout.startsWith('progress-mon: '),
+     `progress-mon: the Codex plugin path (plugins/cache/banker-plugins/banker/${pluginVer}/skills/progress-mon/) is in the plugin list and the SKILL.md runtime table, and the script runs from a built cache copy there`);
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its
@@ -511,7 +555,8 @@ try {
   // EL8/Rocky8's default `python3` is 3.6.8, which lineage.py sys.exit(2)s at import, so a
   // presence check would FALSE-FAIL the per-OS matrix. Probe candidates, run under the first
   // >=3.7, and SKIP (not fail) with an explicit log if none exists ("too old" == "absent").
-  const pyCandidates = ['python3', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'python3.7'];
+  // `python` last: the Windows name (no python3 there); the version probe below drops a POSIX Python 2
+  const pyCandidates = ['python3', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'python3.7', 'python'];
   let py = null;
   for (const cand of pyCandidates) {
     const r = cp.spawnSync(cand, ['-c', 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)'], { encoding: 'utf8' });
@@ -673,6 +718,12 @@ try {
      && fs.existsSync(path.join(root, 'skills', 'ultraqa', 'references', 'uqa-run.test.mjs')),
      'ultraqa-a: the npm package carries ultraqa\'s runner, the shared modules, the tmux guide and NOTICE.md, and not its test');
   const uqaSkill = fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'SKILL.md'), 'utf8');
+  // ultraqa runs the gate command as found (a flag such as --test-force-exit would turn a hang into a pass), and remains
+  // tells a repeated test run to end at the first failing pass (a for loop's exit code is the last pass's)
+  const remSkill = fs.readFileSync(path.join(root, 'skills', 'remains', 'SKILL.md'), 'utf8');
+  ok(/게이트 명령에 플래그를 더하거나 바꾸지 않는다/.test(uqaSkill) && /--test-force-exit/.test(uqaSkill)
+     && /\|\| exit \/b 1/.test(remSkill) && /\|\| exit 1/.test(remSkill),
+     'ultraqa keeps the gate command as found; remains tells a for loop to stop at the first failing pass');
   const uqaFm = uqaSkill.slice(0, uqaSkill.indexOf('---', 4));
   const sameCopy = ['gate-evidence.mjs', 'run-folder.mjs'].every((f) => fs.readFileSync(path.join(root, 'skills', 'ralph-qa', 'references', f))
     .equals(fs.readFileSync(path.join(root, 'skills', 'ultraqa', 'references', f))));

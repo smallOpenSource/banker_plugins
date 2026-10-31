@@ -199,7 +199,7 @@ const AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}
 // item: 같은 key 는 대체하고 시작 시각 s 는 유지. 새 key 는 끝에 추가.
 // s 는 doing 으로 기록할 때만 정한다(이미 있으면 유지). 처음부터 done 이나 todo 면 s 없음(소요시간 "-").
 // --at 이 있으면 지금 대신 그 시각을 t 로 쓴다. 지난 커밋을 커밋 시각으로 기록할 때.
-// --commit 은 7~40자 16진 해시. hash 칸에 두고 진척도 표 commit Hash 칸에 앞 7자리로 보인다. --commit 이 없으면 있던 hash 를 유지.
+// --commit 은 4~40자 16진 해시(story --commit 과 같은 규칙). hash 칸에 두고 진척도 표 commit Hash 칸에 앞 7자리로 보인다. --commit 이 없으면 있던 hash 를 유지.
 export function itemChange(o, now) {
   const key = need(o, 'key', 'item');
   const status = need(o, 'status', 'item');
@@ -210,7 +210,7 @@ export function itemChange(o, now) {
     at = typeof o.at === 'string' && AT_RE.test(o.at) ? Date.parse(o.at) : NaN;
     if (!Number.isFinite(at)) throw new UsageError(`--at 은 시간대가 붙은 ISO 8601 시각(예 2026-10-29T12:34:56+09:00): ${o.at}`);
   }
-  if (o.commit !== undefined && !(typeof o.commit === 'string' && /^[0-9a-f]{7,40}$/i.test(o.commit))) throw new UsageError(`--commit 은 7~40자 16진 해시(받은 값 ${o.commit})`);
+  if (o.commit !== undefined && !(typeof o.commit === 'string' && /^[0-9a-f]{4,40}$/i.test(o.commit))) throw new UsageError(`--commit 은 4~40자 16진 해시(받은 값 ${o.commit})`);
   const t = isoSec(at);
   return (v) => {
     const i = v.items.findIndex((x) => obj(x) && x.key === key);

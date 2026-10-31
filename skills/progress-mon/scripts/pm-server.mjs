@@ -72,24 +72,32 @@ function dropState(dataDir) {
 const NOFOLLOW = fs.constants.O_NOFOLLOW || 0; // Windows 에는 없음. 거기서는 lstat 만으로 링크를 거른다
 const NONBLOCK = fs.constants.O_NONBLOCK || 0;
 
-// server.log 가 링크나 일반 파일이 아닌 것(FIFO 등)이면 참. 없으면 거짓.
+// server.log 가 링크나 일반 파일이 아닌 것(FIFO 등)이거나 하드링크(nlink > 1)면 참. 없으면 거짓.
+// 하드링크를 거르는 까닭: rotateLog 가 옮기지 못할 때 ftruncate 로 비우는데, 하드링크면 그 대상(남의 파일)이 비워진다.
 function oddLog(file) {
   try {
-    return !fs.lstatSync(file).isFile();
+    const st = fs.lstatSync(file);
+    return !st.isFile() || st.nlink > 1;
   } catch (e) {
     return e.code !== 'ENOENT';
   }
 }
 
+// 링크, 특수 파일, 하드링크라 server.log 를 거부한 오류. fs 가 낸 오류(EINVAL 등)와 섞이지 않게 표시를 따로 둔다.
+const oddLogError = (msg) => Object.assign(new Error(msg), { oddLog: true });
+// lstat 과 open 사이에 링크(ELOOP, BSD 의 EMLINK)나 소켓(ENXIO)으로 바뀐 자리에서 open 이 내는 코드. 같은 거부로 본다.
+const ODD_OPEN = new Set(['ELOOP', 'EMLINK', 'ENXIO']);
+
 // server.log 의 fd. 기본은 덧붙이기, append 가 거짓이면 처음부터 다시 쓰기(Windows 의 덧붙이기 fd 는 자를 수 없음).
 // 링크와 일반 파일 아닌 것은 열지 않는다(POSIX 는 O_NOFOLLOW, 연 뒤 fstat 다시 확인).
 function openLog(file, append = true) {
-  if (oddLog(file)) throw Object.assign(new Error('server.log 가 일반 파일 아님'), { code: 'EINVAL' });
+  if (oddLog(file)) throw oddLogError('server.log 가 일반 파일 아님');
   const { O_WRONLY, O_RDWR, O_APPEND, O_CREAT } = fs.constants;
   const fd = fs.openSync(file, (append ? O_WRONLY | O_APPEND : O_RDWR) | O_CREAT | NOFOLLOW | NONBLOCK, 0o600);
-  if (!fs.fstatSync(fd).isFile()) {
+  const st = fs.fstatSync(fd);
+  if (!st.isFile() || st.nlink > 1) {
     fs.closeSync(fd);
-    throw Object.assign(new Error('server.log 가 일반 파일 아님'), { code: 'EINVAL' });
+    throw oddLogError('server.log 가 일반 파일 아님 또는 하드링크');
   }
   return fd;
 }
@@ -112,6 +120,12 @@ function rotateLog(file, fd, warn) {
     warn(`server.log 를 server.log.1 로 옮기지 못함(${e.code || e.message}). 대신 server.log 를 비우고 계속 기록. server.log.1 자리를 치우면 다시 옮김`);
     return again;
   }
+}
+
+// server.log 를 못 쓴 까닭의 경고 문구. 링크, 특수 파일, 하드링크 거부와 fs 오류를 나눈다.
+function logFailure(e) {
+  if (e && (e.oddLog || ODD_OPEN.has(e.code))) return 'server.log 가 링크, 특수 파일이거나 하드링크라 기록하지 않음. 그 파일을 치우면 다시 기록';
+  return `server.log 에 기록하지 못함(${(e && (e.code || e.message)) || e}). 서버는 계속`;
 }
 
 // server.log 한 줄 덧붙이기. 덧붙이면 max(1 MB)를 넘을 때 먼저 server.log.1 로 옮긴다(대상을 자르지 않음).
@@ -139,8 +153,9 @@ export function makeLogger(dataDir, max = LOG_MAX, onWarn = () => {}) {
       if (pending) fs.writeSync(fd, pending);
       pending = '';
       fs.writeSync(fd, line);
-    } catch {
-      // 로그를 못 써도 응답은 계속
+    } catch (e) {
+      // 로그를 못 써도 응답은 계속. 기록이 멈춘 것을 까닭과 함께 한 번 알린다(status 경고)
+      warn(logFailure(e));
     } finally {
       if (fd !== null) fs.closeSync(fd);
     }
@@ -508,21 +523,26 @@ function staleLock(file, now) {
   return pid !== null && !alive(pid);
 }
 
+// 낡은 잠금을 넘겨받는다. 돌려줌: 넘겨받았으면 null, 아니면 기다릴 까닭 { code, slot }(slot 은 그 코드를 낸 파일).
+// 표지를 EEXIST 밖의 까닭(EPERM, EACCES, EBUSY)으로 못 만들면 slot 은 표지다. 그래야 표지 자리의 진짜 권한 오류가
+// 잠금 자리처럼 1초대에 끝나고, 15초 뒤 "다른 start 가 끝나지 않음" 으로 잘못 안내하지 않는다.
 function takeOverLock(file, now) {
   const taking = `${file}.taking`;
-  if (makeLockFile(taking) !== null) {
+  const code = makeLockFile(taking);
+  if (code !== null) {
     // 넘겨받던 start 가 죽어 남은 표지는 START_LOCK_STALE_MS 뒤 치운다(이번은 기다리고 다음에 넘겨받음)
     try {
       if (now - fs.lstatSync(taking).mtimeMs > START_LOCK_STALE_MS) fs.rmSync(taking, { force: true });
     } catch {
-      // 그 사이 지워짐
+      // 그 사이 지워짐, 또는 표지가 없음(EPERM 등)
     }
-    return false;
+    return { code, slot: taking };
   }
   try {
-    if (!staleLock(file, now)) return false;
+    if (!staleLock(file, now)) return { code: 'EEXIST', slot: file };
     fs.rmSync(file, { force: true });
-    return makeLockFile(file) === null;
+    const again = makeLockFile(file);
+    return again === null ? null : { code: again, slot: file };
   } finally {
     fs.rmSync(taking, { force: true });
   }
@@ -530,18 +550,44 @@ function takeOverLock(file, now) {
 
 // start 잠금을 잡을 때까지 waitMs 기다린다. 돌려줌: 잠금 경로. 시간 초과는 UsageError: 잠금 파일이 한 번이라도 보였으면
 // 다른 start, 끝내 없었으면(EPERM 등이 계속, 권한 등) 만들지 못함.
-export async function takeStartLock(dataDir, waitMs = START_LOCK_WAIT_MS) {
+// 잠금 파일이 끝내 안 보이는 동안 EPERM/EACCES/EBUSY 가 pendingMs(1초) 넘게 이어지면 바로 실패한다: Windows 의
+// delete pending 은 ms 안에 풀려 그 사이 성공하지만, 읽기 전용 폴더 같은 진짜 권한 오류는 15초를 기다리지 않고 끝낸다.
+// 잠금을 만들거나 낡은 것을 넘겨받으면 { lock }, 아니면 그 까닭 { code, slot }.
+function tryStartLock(file, now) {
+  const code = makeLockFile(file);
+  if (code === null) return { lock: file };
+  if (!staleLock(file, now)) return { code, slot: file };
+  const why = takeOverLock(file, now);
+  return why === null ? { lock: file } : why;
+}
+
+// 전체 대기가 끝났을 때 던질 오류: 잠금 파일을 한 번도 못 봤으면 만들지 못함, 봤으면 다른 start 가 끝나지 않음.
+function startWaitError(file, seen, code) {
+  if (!seen) return new UsageError(`잠금 ${START_LOCK} 을 만들지 못함(${code})`);
+  return new UsageError(`다른 start 가 끝나지 않음(잠금 ${START_LOCK}, pid ${lockPid(file) ?? '알 수 없음'}). 30초 뒤 다시 실행. 그 start 가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`);
+}
+
+// 잠금을 못 잡은 반복의 상태 갱신. 돌려줌: [seen, errSince]. 그 코드를 낸 파일(slot: 잠금 또는 넘겨받기 표지)이 없는
+// EPERM/EACCES/EBUSY 가 pendingMs 넘게 이어지면(진짜 권한 오류) 바로 실패시킨다. errSince 는 그런 코드가 처음 난 때.
+// seen 은 잠금 파일을 한 번이라도 본 것(표지를 못 만든 반복도 잠금 파일은 있음).
+function startWaitStep(file, { code, slot }, seen, errSince, now, pendingMs) {
+  const here = code === 'EEXIST' || fs.existsSync(slot);
+  const es = here ? null : (errSince ?? now);
+  if (es !== null && now - es >= pendingMs) throw new UsageError(`잠금 ${path.basename(slot)} 을 만들지 못함(${code})`);
+  return [seen || here || (slot !== file && fs.existsSync(file)), es];
+}
+
+export async function takeStartLock(dataDir, waitMs = START_LOCK_WAIT_MS, pendingMs = 1000) {
   const file = path.join(dataDir, START_LOCK);
   const until = Date.now() + waitMs;
   let seen = false;
+  let errSince = null;
   for (;;) {
-    const code = makeLockFile(file);
-    if (code === null || (staleLock(file, Date.now()) && takeOverLock(file, Date.now()))) return file;
-    seen = seen || code === 'EEXIST' || fs.existsSync(file);
-    if (Date.now() >= until) {
-      if (!seen) throw new UsageError(`잠금 ${START_LOCK} 을 만들지 못함(${code})`);
-      throw new UsageError(`다른 start 가 끝나지 않음(잠금 ${START_LOCK}, pid ${lockPid(file) ?? '알 수 없음'}). 30초 뒤 다시 실행. 그 start 가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`);
-    }
+    const now = Date.now();
+    const r = tryStartLock(file, now);
+    if (r.lock) return r.lock;
+    [seen, errSince] = startWaitStep(file, r, seen, errSince, now, pendingMs);
+    if (now >= until) throw startWaitError(file, seen, r.code);
     await sleep(100);
   }
 }

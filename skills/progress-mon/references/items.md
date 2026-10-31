@@ -30,7 +30,7 @@
 
 | 명령 | 동작 |
 |---|---|
-| `item --key <k> --status <s> --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]` | 같은 key 는 대체하고 시작 시각 `s` 는 유지. 새 key 는 끝에 추가. `s` 는 `doing` 으로 기록할 때만 정함(처음부터 `done`, `todo` 면 없음). `--at` 이 있으면 지금 대신 그 시각을 `t` 로(`doing` 이면 `s` 도). `--commit` 은 7~40자 16진 해시를 `hash` 에. `--commit` 이 없으면 있던 `hash` 를 유지 |
+| `item --key <k> --status <s> --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]` | 같은 key 는 대체하고 시작 시각 `s` 는 유지. 새 key 는 끝에 추가. `s` 는 `doing` 으로 기록할 때만 정함(처음부터 `done`, `todo` 면 없음). `--at` 이 있으면 지금 대신 그 시각을 `t` 로(`doing` 이면 `s` 도). `--commit` 은 4~40자 16진 해시를 `hash` 에. `--commit` 이 없으면 있던 `hash` 를 유지 |
 | `note --key <k> [--note <t>] [--issue <t>]` | 그 key 의 칸만 대체. 빈 값(`--issue ""`)은 그 칸을 지움 |
 | `stage --id <id> --status <s> [--label <t>]` | `stageEvents` 에 한 줄 추가. 설정에 없는 id 는 새 단계 행(이름은 `--label` 또는 id) |
 | `story --id <id> --status <s> [--name <t>]` | `storyStates` 의 그 id 를 대체 |
@@ -46,7 +46,7 @@
 - `s` 는 항목이 `doing` 이 된 시각. 이미 있으면 바꾸지 않는다. `s` 가 없는 항목(처음부터 `done` 이나 `todo`)은 소요시간이 "-"
 - 옛 판이 쓴 자료에는 `s` 와 `t` 가 같은 `done` 항목이 있다(처음부터 `done` 으로 기록한 항목). 이 줄은 소요시간이 "0:00" 으로 보인다. "-" 로 보이게 하려면 그 항목의 `s` 를 지운다
 - `item --at <ISO>`: 날짜, 시각, 시간대(`Z` 또는 `+09:00`)가 모두 있어야 한다(예 `2026-10-20T12:34:56+09:00`, 초는 선택). 그 밖은 종료 1. 지난 커밋은 `git log --format=%cI` 의 커밋 시각을 그대로 넘긴다. 저장은 위 UTC Z 형식
-- `item --commit <hash>`: 7~40자 16진 해시. 그 밖은 종료 1. 손으로 쓴 `hash` 가 이 꼴이 아니면 `check` 가 FAIL. 지난 커밋은 `git log --format=%h` 의 해시를 함께 넘긴다(`--at <%cI> --commit <%h>`)
+- `item --commit <hash>`: 4~40자 16진 해시. 그 밖은 종료 1. 손으로 쓴 `hash` 가 이 꼴이 아니면 `check` 가 FAIL. 지난 커밋은 `git log --format=%h` 의 해시를 함께 넘긴다(`--at <%cI> --commit <%h>`)
 - Z 없는 19자 옛 형식(`YYYY-MM-DDTHH:MM:SS`)은 서버를 실행한 환경의 현지 시각으로 읽는다(옛 진척도 서버와 같음). 옛 자료에는 UTC 값을 Z 없이 쓴 줄도 섞여 있다. 그 줄도 현지로 읽어 옛 화면과 같은 시각을 낸다(시차만큼 이르게 보임)
 - Z 나 시차(`+09:00`)가 붙은 시각은 그 값 그대로 읽는다
 - 손으로 적을 때는 Z 를 붙여 UTC 로 적거나 시차를 붙인다. Z 없는 19자는 서버 시간대가 바뀌면 다른 시각이 된다

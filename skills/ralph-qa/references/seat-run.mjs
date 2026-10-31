@@ -32,7 +32,7 @@ import { CLI_DEFAULT, probe as localProbe, safeModel } from "./verifier-probe.mj
 
 // The stops a command may end with, as `stop` in its JSON; the skill's table of what to do holds the same set.
 export const STOP_CODES = ["index-missing", "no-diff", "list", "binary-diff", "range-source", "range-link", "range-outside", "file", "markers",
-  "spec", "not-a-repo", "base-invalid", "git-failed", "git-timeout", "scan", "too-large", "sent", "sandboxed", "base-not-private",
+  "spec", "not-a-repo", "base-invalid", "git-failed", "git-timeout", "scan", "too-large", "sent", "sent-mark", "sandboxed", "base-not-private",
   "base-not-writable", "inside-repo", "busy", "not-prepared", "not-a-run-folder", "split", "cleanup-left"];
 const EXIT_OF = { scan: 1, "too-large": 4, busy: 5 };
 
@@ -44,6 +44,10 @@ const ANY_RUN = /^ralph-qa(-out)?\.[A-Za-z0-9]+$/;
 // The lock of a send that runs: one name, made with "wx", holding the pid and the time.
 const LOCK_NAME = ".running.md";
 const TAKING_NAME = ".taking.md";
+// The "sent" mark, written once under the lock before any seat work (send's markOrStop). It stands apart from
+// result-send.md (written after every seat ends): a send that holds the lock in the A2 window finds this mark and
+// does not send the payload again, even if that first send died before it wrote result-send.md.
+const SENT_NAME = ".sent.md";
 const STALE_TAKING_MS = 60 * 1000;
 
 class Usage extends Error {}
@@ -144,10 +148,38 @@ function listUntracked(o, ctx) {
   return [{ ok: true, ...untracked({ repo: o.repo, env: ctx.env, folder: o.folder || null }) }, 0, null];
 }
 
-const sent = (d) => existsSync(join(d, "result-send.md"));
+// A folder is sent once either mark is there: result-send.md (a send ran to the end) or .sent.md (a send took the
+// folder to send it, even if it then stopped or died before result-send.md).
+const sent = (d) => existsSync(join(d, "result-send.md")) || existsSync(join(d, SENT_NAME));
 const refuseSent = (d) => {
-  if (sent(d)) throw new Stop("sent", `이미 보낸 폴더다. 반복마다 init 으로 새 폴더를 만든다: ${d}`);
+  if (sent(d)) throw new Stop("sent", `이미 보낸 폴더다. 좌석의 답이 있으면 답 폴더(ralph-qa-out.*)에 있다. 다시 보내지 말고, 다시 보낼지는 사용자에게 묻는다: ${d}`);
 };
+
+// Writes .sent.md once (the memo answers again with the first result). EEXIST means another send (the A2 window)
+// already marked it; any other write error is `err`, and a mark left empty by a failed write is taken away, so the
+// next send is not refused for a folder nothing went out of.
+export function makeMarkSent(d, now) {
+  let state = null;
+  return () => {
+    if (state) return state;
+    const file = join(d, SENT_NAME);
+    try {
+      writeFileSync(file, `${process.pid} ${new Date(now()).toISOString()}\n`, { flag: "wx", mode: 0o600 });
+      state = { ok: true };
+    } catch (e) {
+      if (e.code !== "EEXIST") rmSync(file, { force: true });
+      state = e.code === "EEXIST" ? { already: true } : { err: e };
+    }
+    return state;
+  };
+}
+
+// Marks the folder sent under the lock, before any seat work, or stops the send (the lock goes back in send's finally).
+function markOrStop(d, now) {
+  const mark = makeMarkSent(d, now)();
+  if (mark.already) throw new RunStop("sent", `다른 send 가 이미 이 폴더를 보냈다: ${d}`);
+  if (mark.err) throw new RunStop("sent-mark", `보냈음 표지(.sent.md)를 쓰지 못했다(${mark.err.code || mark.err.message}). 좌석은 아무것도 보내지 않았다: ${d}`);
+}
 
 // prepare and check end with 1 when a line looks like a secret and 4 past 512 KiB; the JSON carries both.
 function verdict(result) {
@@ -797,6 +829,9 @@ async function send(o, ctx) {
   const signals = watchSignals();
   const run = { ...a, d, o: out, id, short, shortSha, signalled: () => signals.code() !== 0 };
   try {
+    // The folder is marked sent under the lock, before any seat writes into it: a send that lost the A2 window stops
+    // here, before it could overwrite the winner's prompt copies or clean the winner's seat folders.
+    if (!a.dryRun) markOrStop(d, ctx.now);
     // every seat settles before the lock goes back and the stop handlers go away
     const settled = await Promise.allSettled(a.seats.map((x) => sendSeat(ctx, run, x, payload)));
     const thrown = settled.find((x) => x.status === "rejected");
@@ -833,7 +868,9 @@ const folderOf = (o, ctx) => {
   }
 };
 
-// A send that stopped goes to result-send-stop.md: result-send.md says the folder was sent, and a stopped send sent nothing.
+// A send that stopped goes to result-send-stop.md, not result-send.md (that one says every seat ended). A stopped
+// send may still have carried the payload to some seats: .sent.md, written under the lock before any seat work, is what
+// keeps the next send from sending it again.
 const stopName = (command) => (command === "send" ? "send-stop" : command);
 
 // A stop of run-folder.mjs carries no name: this runner's goes before it.
