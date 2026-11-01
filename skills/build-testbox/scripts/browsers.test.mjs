@@ -77,12 +77,12 @@ function runInFakeContainer(mode) {
   return { fake, out, r, res: JSON.parse(readFileSync(join(out, "results.json"), "utf8")) };
 }
 
-test("--browser-in-container (fake engine): cp puts playwright and playwright-core, cells run in the container", () => {
+test("--browser-in-container (fake engine): cp puts playwright and playwright-core, cells run in the container", (t) => {
   const loc = locatePlaywright();
   const { fake, r, res } = runInFakeContainer("ok");
   if (loc.error) {
     assert.ok(res.cells.every((c) => c.reason === "needs-playwright"), "no Playwright here: every cell needs-playwright");
-    return;
+    return t.skip("Playwright 없음. needs-playwright 사유만 확인");
   }
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const log = calls(fake).filter((c) => c.tool === "podman");
@@ -96,9 +96,12 @@ test("--browser-in-container (fake engine): cp puts playwright and playwright-co
   assert.ok(res.cells.length >= 1 && res.cells.every((c) => c.status === "pass" && c.where === "container"));
 });
 
-test("--browser-in-container (fake engine): missing image is needs-image with the setup --playwright-image hint", () => {
+test("--browser-in-container (fake engine): missing image is needs-image with the setup --playwright-image hint", (t) => {
   const { fake, r, res } = runInFakeContainer("missing");
-  if (locatePlaywright().error) return assert.ok(res.cells.every((c) => c.reason === "needs-playwright"));
+  if (locatePlaywright().error) {
+    assert.ok(res.cells.every((c) => c.reason === "needs-playwright"));
+    return t.skip("Playwright 없음. needs-playwright 사유만 확인");
+  }
   assert.equal(r.status, 4);
   assert.ok(res.cells.every((c) => c.reason === "needs-image" && /--playwright-image/.test(c.hint)));
   assert.ok(!calls(fake).some((c) => ["pull", "create"].includes(c.args[0])));

@@ -183,6 +183,14 @@ function checkCriticSeats(event, n) {
   }
 }
 
+// Stage 5 verdicts come from the critic seat loop or ralph's own reviewer only; any other `by` would slip past the
+// seat count above.
+const BUILD_JUDGES = ["critic", "ralph-reviewer"];
+function checkBuildBy(event) {
+  if (event.stage !== "build" || !event.verdict || BUILD_JUDGES.includes(event.verdict.by)) return;
+  throw new UsageError(`verdict.by: build 단계 판정은 ${BUILD_JUDGES.join(", ")} 만 기록합니다(받은 값 ${event.verdict.by})`);
+}
+
 // Stage 7: a view passes only when all <agents> judges judge#1..judge#N pass with 90 or more, and its score is the
 // lowest judge score.
 function checkVisualJudges(event, n) {
@@ -200,6 +208,7 @@ function checkVisualJudges(event, n) {
 // Run folders made before --agents (no `agents` in run.json) are not checked, so an old run can still be resumed.
 export function checkQuorum(event, meta) {
   if (!isObject(meta) || !Number.isInteger(meta.agents)) return;
+  checkBuildBy(event);
   checkCriticSeats(event, meta.agents);
   checkVisualJudges(event, meta.agents);
 }

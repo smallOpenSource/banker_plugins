@@ -100,7 +100,7 @@ argument-hint: "[check|run] [--branch <이름>] [--local-identity \"<이름> <<�
    - 하위 폴더에 `.git` 이 있음(넣으면 gitlink 가 됨). 그 경로를 보임
    - 커밋 신원: `user.name` 과 `user.email` 설정이 둘 다 없고 `--local-identity` 도 없음. `git var` 는 호스트 이름으로 추정한 신원으로 성공할 수 있어 쓰지 않음
 2. `.gitignore`: 없으면 새로 쓴다. 있으면 기존 줄은 두고 빠진 패턴만 `# banker:git-init:start` .. `# banker:git-init:end` 블록으로 끝에 넣는다
-   - 패턴: `.env`, `.env.*`, `!.env.example`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa*`, `id_ecdsa*`, `id_ed25519*`, `credentials.json`, `*.tfstate`, `*.tfstate.*`, `.aws/`, `.ssh/`, `.omc/`, `.omx/`, `node_modules/`, `.DS_Store`, `Thumbs.db`, `.gitignore.git-init.bak`(이 스킬이 남기는 백업)
+   - 패턴: `.env`, `.env.*`, `!.env.example`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa*`, `id_ecdsa*`, `id_ed25519*`, `credentials.json`, `*.tfstate`, `*.tfstate.*`, `.aws/`, `.ssh/`, `.omc/`, `.omx/`, `node_modules/`, `.npmrc`, `.netrc`, `_netrc`, `.pgpass`, `.DS_Store`, `Thumbs.db`, `.gitignore.git-init.bak`(이 스킬이 남기는 백업)
    - 블록 밖 바이트, CRLF, BOM, 권한 비트는 그대로. 바이트가 바뀔 때만 첫 원본을 `.gitignore.git-init.bak` 에 둔다(이미 있으면 덮지 않음)
 3. 추적 후보: 임시 폴더의 빈 저장소로 `git ls-files -o --exclude-standard` 를 구한다. 루트에는 아직 `.git` 이 없다
 4. 스캔

@@ -107,7 +107,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | `<g>` | 게이트 기록 폴더. 5단계 1에서 `node "<rq>/gate-evidence.mjs" init` 이 낸 `dir`(`ralph-qa-gates.<영숫자>`)다. 경로는 `05-baseline.md` 첫 줄에 있다. 9단계까지 남고, 어느 cleanup 의 하루 규칙도 지우지 않는다 |
 | `<run>` | 0단계에서 만든 실행 폴더 절대경로 |
 | `<base>` | 0단계에서 기록한 기준 커밋. 깨끗한 트리면 `HEAD`, 기존 변경을 두고 진행하면 `git stash create` 가 낸 커밋. ralph-qa 와 critic 이 만드는 diff 의 기준이다 |
-| `<agents>` | `run.json` 의 `agents`(`--agents`, 미지정 시 3). 3단계와 6단계 ralph-qa `--agents`, 5단계 critic 좌석 수, 7단계 판정자 수 |
+| `<agents>` | 0단계 init 뒤 `run.json` 의 `agents`(사용자가 준 `--agents`, 미지정 시 3). init 명령에는 쓰지 않는다. 3단계와 6단계 ralph-qa `--agents`, 5단계 critic 좌석 수, 7단계 판정자 수 |
 | `<max>` | `--max` 값(기본 5) |
 | `<k>` | 6단계 회차. 회차를 시작할 때(6단계 1) 한 번 정하고, 그 회차의 시험, 박스, 판정 기록에 모두 같은 값을 쓴다. 값은 그때 `show` 의 `qa.maxRound` 다음 번호다. 실행 전체에서 이어 센다 |
 | `<view>` | 목업 보기 이름. 영문 소문자, 숫자, `-` 만 쓴다(캡처 파일 이름이 된다) |
@@ -136,12 +136,20 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 
 모든 단계는 실행 폴더 하나에 산출물과 기록을 남긴다. 시각은 스크립트가 찍고, 모델이 적지 않는다.
 
+사용자가 `--agents N` 을 줬을 때:
+
 ```bash
-node "<S>/references/chain-ledger.mjs" init --base .omc/ultra-chain --runtime claude --agents <agents> --exclude
+node "<S>/references/chain-ledger.mjs" init --base .omc/ultra-chain --runtime claude --agents N --exclude
+```
+
+주지 않았을 때(`--agents` 를 넘기지 않음):
+
+```bash
+node "<S>/references/chain-ledger.mjs" init --base .omc/ultra-chain --runtime claude --exclude
 ```
 
 - Codex 는 `--base .omx/ultra-chain --runtime codex` 다.
-- `--agents` 는 사용자가 준 값만 넘긴다. 주지 않았으면 빼고, 스크립트가 `agents: 3`, `agentsSource: "default"` 를 쓴다. `run.json` 의 `agents` 가 이후 모든 단계의 `<agents>` 다.
+- `N` 은 사용자가 준 값 그대로다. 주지 않았으면 3 을 직접 넘기지 않는다. 스크립트가 `agents: 3`, `agentsSource: "default"` 를 쓴다(3 을 넘기면 `agentsSource` 가 `flag` 로 남는다). init 뒤 `run.json` 의 `agents` 가 이후 모든 단계의 `<agents>` 다.
 - 출력 JSON 의 `dir` 가 `<run>` 이다. `mock/expected`, `actual`, `visual`, `qa`, `boxes` 폴더가 함께 생긴다.
 - `ignored` 가 false 면 `--exclude` 가 기준 폴더(`/.omc/ultra-chain/`)를 저장소의 로컬 제외 파일(`.git/info/exclude`)에 넣는다. 추적되는 파일은 바꾸지 않는다. `excludeError` 가 있으면 넣지 못한 것이니 사용자에게 알린다.
 - `<run>/task.md` 를 파일 도구로 쓴다. 첫 줄은 받은 인자 줄 그대로, 다음 줄부터 작업 설명이다. 쓴 뒤 `node "<scan>" "<run>/task.md"` 로 비밀처럼 보이는 문자열을 찾는다. 걸린 값은 `[REDACTED]` 로 가리고 0건이 될 때까지 다시 검사한다. `02-spec.md` 의 사용자 답변 원문도 같다.
@@ -504,6 +512,7 @@ STOPPED 뒤에는 한 줄 수정을 포함해 어떤 파일도 고치지 않는�
 
 - ralplan 의 Architect 와 Critic 은 둘이다. 이 둘을 "검토자 3명" 으로 세지 않는다. 3명 이상은 3단계 4의 ralph-qa 가 채운다.
 - ralph 의 자체 승인(`ralph-reviewer`)은 5단계 게이트가 아니다. 게이트는 ralph 뒤 critic 좌석 `<agents>` 개의 전원 승인이다.
+- `build` 단계 판정의 `by` 는 `critic`, `ralph-reviewer` 둘뿐이다. 다른 값은 기록이 거부된다(종료 2). `run.json` 에 `agents` 가 없는 옛 실행은 검사하지 않는다.
 - ralph-qa 의 검토자는 시험을 돌리지 않는다. 로컬 게이트는 실행기 기록, OS 는 박스 결과가 증거다. 박스 결과 없이 판정받으면 OS 검증이 빠진다.
 - 반복 0 기준선을 구현 뒤 트리에서 돌리면 이번 변경이 만든 실패가 기준선 실패로 갈려 게이트가 통과한다. 반복 0 은 5단계 1에서만 돌린다.
 - 추적하지 않는 새 파일은 박스로 가지 않는다. 6단계 1의 스테이징을 빼먹으면 새 시험이 박스에서 돌지 않는다.

@@ -11,6 +11,7 @@ import { delimiter, join } from "node:path";
 //            the stage path), start prints passing browser results for the staged spec, pull 0, rm 0
 //   missing  image inspect fails with "image not known", the rest as ok
 //   denied   every call fails with a permission error (exit 125)
+//   hang     start never ends (a container still running when the run is stopped), the rest as ok
 // npx: exit 0. tart: list prints FAKE_TART_VMS as JSON, exec --help fails when FAKE_MODE is noexec, exec prints
 // "tart ran" and exits FAKE_EXIT (0).
 const FAKE_SOURCE = String.raw`
@@ -35,7 +36,7 @@ const ENGINE = {
   image: () => (mode === "missing" ? (process.stderr.write("Error: " + args.at(-1) + ": image not known\n"), 125) : 0),
   inspect: () => (say(process.env.FAKE_NET || "bridge"), 0),
   cp: () => (args[2].endsWith(":/tb") && writeFileSync(state, args[1].slice(0, -1)), 0),
-  start: startStaged,
+  start: () => (mode === "hang" ? (setInterval(() => {}, 1000), undefined) : startStaged()),
   create: () => (say("fakeid"), 0),
 };
 function engine() {

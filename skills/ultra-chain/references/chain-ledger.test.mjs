@@ -543,6 +543,28 @@ test("AC3 INCONCLUSIVE rounds and ralph's own verdict (ralph-reviewer) are not s
   assert.equal(summarize(readEvents(dir).events).stages.find((s) => s.id === "build").lastVerdict.by, "ralph-reviewer");
 });
 
+test("a build verdict is by critic or ralph-reviewer only (exit 2 otherwise); a run from before --agents is not checked", () => {
+  const dir = runWith(undefined);
+  for (const by of ["ralph-qa", "architect", "Critic", "critic#1"]) {
+    const e = { stage: "build", status: "note", verdict: { by, result: "APPROVE" } };
+    assert.throws(() => appendEvent(dir, e), /critic, ralph-reviewer 만/, by);
+    const file = join(dir, ".event.json");
+    writeFileSync(file, JSON.stringify(e));
+    assert.equal(main(["event", dir, "--file", file], sink(), sink()), 2, by);
+  }
+  assert.equal(lines(dir), 0);
+  appendEvent(dir, { stage: "build", status: "note", verdict: { by: "ralph-reviewer", result: "APPROVE" } });
+  appendEvent(dir, { stage: "build", status: "started" });
+  appendEvent(dir, { stage: "qa", status: "note", verdict: { by: "ralph-qa", result: "ITERATE" } });
+  assert.equal(lines(dir), 3);
+  const old = runWith(undefined);
+  const meta = JSON.parse(readFileSync(join(old, "run.json"), "utf8"));
+  delete meta.agents;
+  writeFileSync(join(old, "run.json"), `${JSON.stringify(meta, null, 1)}\n`);
+  appendEvent(old, { stage: "build", status: "note", verdict: { by: "architect", result: "APPROVE" } });
+  assert.equal(lines(old), 1);
+});
+
 test("AC4 a visual pass needs all <agents> judges at 90 or more, and its score is their lowest", () => {
   const dir = runWith(undefined);
   assert.throws(() => appendEvent(dir, view([95, 88, 92], { score: 88 })), /90점 이상/);

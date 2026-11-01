@@ -105,6 +105,15 @@ test("수용 3: .env 와 키 파일은 .gitignore 로 빠져 커밋에 없음, .
   assert.deepEqual(tracked.sort(), [".env.example", ".gitignore", "app.js"]);
 });
 
+test("이름으로 막는 .npmrc, .netrc, _netrc, .pgpass 는 PATTERNS 로 자동 제외되어 커밋되고 git ls-files 에 없음", () => {
+  for (const name of [".npmrc", ".netrc", "_netrc", ".pgpass"]) assert.ok(nameHit(name) && PATTERNS.includes(name), name);
+  const root = project();
+  files(root, { "app.js": "1\n", ".npmrc": "registry=https://registry.example.invalid/\n", ".netrc": "machine example.invalid\n", "_netrc": "machine example.invalid\n", ".pgpass": "# none\n", "sub/.npmrc": "x=1\n" });
+  const r = cli(["run", "--root", root, "--local-identity", ID]);
+  assert.equal(r.status, 0, output(r));
+  assert.deepEqual(gitIn(root, ["ls-files"]).split("\n").sort(), [".gitignore", "app.js"]);
+});
+
 test("수용 4: 추적될 파일 안의 가짜 토큰은 종료 1, .git 없음, 파일:줄:종류 만 출력", () => {
   const root = project();
   files(root, { "config.txt": `name = demo\nTOKEN_VALUE ${FAKE_TOKEN}\n` });

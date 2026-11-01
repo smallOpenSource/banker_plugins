@@ -955,9 +955,10 @@ try {
      && /`INCONCLUSIVE` 로 기록하고 멈춘다/.test(ucStage(5)) && /`INCONCLUSIVE` 이거나 `<max>` 회 안에 전원 승인하지 않으면 멈추고/.test(ucStage(5))
      && /`<agents>`/.test(ucStage(7)) && /judge#1/.test(ucStage(7)) && /`judges`/.test(ucStage(7)) && /최솟값/.test(ucStage(7))
      && /미지정 시 3/.test(ucFlags) && /`agentsSource: "default"`/.test(ucFlags) && /5단계 critic 좌석 루프\(두 런타임\)의 최대 회차/.test(ucFlags)
-     && /init --base \.omc\/ultra-chain --runtime claude --agents <agents> --exclude/.test(ucDoc)
+     && /init --base \.omc\/ultra-chain --runtime claude --agents N --exclude\n/.test(ucDoc) && /init --base \.omc\/ultra-chain --runtime claude --exclude\n/.test(ucDoc)
+     && !/--agents <agents>/.test(ucDoc) && /init 명령에는 쓰지 않는다/.test(ucDoc)
      && /`ralph-reviewer`\)은 5단계 게이트가 아니다/.test(ucDoc) && !/Codex critic 루프/.test(ucDoc),
-     'uc-agents: ultra-chain stages 5 and 7 use <agents> critic seats and judges, stage 5 records ralph\'s approval as ralph-reviewer and stops on INCONCLUSIVE, and the flags say the default 3 is recorded in run.json');
+     'uc-agents: ultra-chain stages 5 and 7 use <agents> critic seats and judges, stage 5 records ralph\'s approval as ralph-reviewer and stops on INCONCLUSIVE, the flags say the default 3 is recorded in run.json, and init passes --agents only when the user gave it');
   // Plan 18 S12, 19.10 U6: all-in-one and ultra-init end with banker ralph-qa on both runtimes: the --qa goals go as
   // --gates over an iteration-0 baseline the runner took before the build; no OMX ultraqa and no verify cycle of their own.
   const s12Docs = ['all-in-one', 'ultra-init'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);

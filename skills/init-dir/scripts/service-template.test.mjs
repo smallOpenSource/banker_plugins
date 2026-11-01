@@ -3,7 +3,7 @@
 // Temp project folders and a temp HOME only.
 // Run: node --test skills/init-dir/scripts/service-template.test.mjs
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -201,4 +201,111 @@ test("AC11: tests/run.mjs prints one line per suite and exits 1 when a suite fai
   const none = wrapper(root, "tests", "run");
   assert.equal(none.status, 2);
   assert.match(none.stderr, /실행할 명령 없음/);
+});
+
+// A live process that is not this service, started and ended by the test itself.
+function stranger() {
+  const p = spawn(process.execPath, ["-e", "setInterval(()=>{},1e3)"], { stdio: "ignore" });
+  return p;
+}
+const plant = (root, value) => {
+  mkdirSync(join(root, "logs"), { recursive: true });
+  writeFileSync(join(root, "logs", "app.pid"), `${JSON.stringify(value)}\n`);
+};
+
+test("PID reuse: an unrelated live PID in the pid file is no running service; start runs anew and stop leaves it alive", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const other = stranger();
+  try {
+    assert.ok(await waitFor(() => alive(other.pid)));
+    const recent = { supervisor: other.pid, child: other.pid, startedAt: new Date().toISOString(), command: "something else" };
+    plant(root, recent);
+    const sp = svc(root, "stop");
+    assert.equal(sp.status, 0, sp.stderr);
+    assert.match(sp.stdout, /실행 중 아님/);
+    assert.match(sp.stderr, /이 서비스가 아님/);
+    assert.equal(alive(other.pid), true, "stop did not signal the unrelated process");
+    const st = svc(root, "status");
+    assert.equal(st.status, 1);
+    assert.match(st.stdout, /감독: 없음/);
+    plant(root, recent);
+    const s = svc(root, "start");
+    assert.equal(s.status, 0, s.stderr);
+    assert.doesNotMatch(s.stdout, /이미 실행 중/);
+    assert.match(s.stdout, /시작함/);
+    const mine = pidOf(root);
+    assert.notEqual(mine.supervisor, other.pid);
+    assert.equal(mine.command, `"${process.execPath}" -e "${WAITER}"`);
+    assert.equal(svc(root, "stop").status, 0);
+    assert.equal(alive(mine.supervisor) || groupAlive(mine.child), false);
+    assert.equal(alive(other.pid), true, "the unrelated process is still alive");
+  } finally {
+    other.kill("SIGKILL");
+  }
+});
+
+test("PID reuse: a pid file older than the last boot is stale and its live PID gets no signal", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const other = stranger();
+  try {
+    assert.ok(await waitFor(() => alive(other.pid)));
+    plant(root, { supervisor: other.pid, child: other.pid, startedAt: "2000-01-01T00:00:00.000Z", command: `"${process.execPath}" -e "setInterval(()=>{},1e3)"` });
+    const sp = svc(root, "stop");
+    assert.equal(sp.status, 0, sp.stderr);
+    assert.match(sp.stderr, /PID 파일이 낡음/);
+    assert.equal(alive(other.pid), true);
+  } finally {
+    other.kill("SIGKILL");
+  }
+});
+
+test("a failed rotation warns once in the stderr log and the service keeps writing to the current file", async () => {
+  const root = project("scripts");
+  configure(root, "let i=0;const t=setInterval(()=>{console.log('row-'+String(i).padStart(2,'0')+'-'+'y'.repeat(40));if(++i===20)clearInterval(t)},10);setInterval(()=>{},1000)");
+  // A folder where the oldest rotated file goes makes every rotation of the stdout log fail. 400 bytes keeps the
+  // warning line inside one stderr log file.
+  mkdirSync(join(root, "logs", "app.out.6.log"), { recursive: true });
+  writeFileSync(join(root, "logs", "app.out.6.log", "keep"), "x");
+  const s = svc(root, "start", { SERVICE_LOG_ROTATE_BYTES: "400" });
+  assert.equal(s.status, 0, s.stderr);
+  pidOf(root);
+  assert.ok(await waitFor(() => logText(root, "app.out.log").includes("row-19"), 10000));
+  assert.equal(svc(root, "stop").status, 0);
+  const warnings = logText(root, "app.err.log").split(/\r?\n/).filter((l) => l.startsWith("service: 로그 로테이션 실패"));
+  assert.equal(warnings.length, 1, logText(root, "app.err.log"));
+  for (let i = 0; i < 20; i++) assert.ok(logText(root, "app.out.log").includes(`row-${String(i).padStart(2, "0")}`), `row ${i}`);
+});
+
+test("Windows paths in the template: stop and the supervisor use taskkill /T, then /T /F after the grace time", () => {
+  const root = project("scripts");
+  const text = readFileSync(join(root, "scripts", "lib", "service.mjs"), "utf8");
+  assert.match(text, /if \(WIN\) return taskkill\(pid, signal === "SIGKILL"\);/);
+  assert.match(text, /killTimer \?\?= setTimeout\(\(\) => signalGroup\(child\.pid, "SIGKILL"\), STOP_GRACE_MS\)/);
+  assert.match(text, /\|\| \(terminate\(own, true\), await waitGone\(own, 3000\)\)/);
+  assert.match(text, /Get-CimInstance Win32_Process -Filter "ProcessId=\$\{pid\}"/);
+});
+
+test("AC11: a suite past its time limit is FAIL (timeout) and its whole process tree is killed; the environment wins over tests.conf", async () => {
+  const root = project("tests");
+  const node = `"${process.execPath}"`;
+  const grand = join(root, "grandchild.pid");
+  // The suite starts a grandchild that writes its PID, then both wait forever.
+  const script = `const c=require('child_process').spawn(process.execPath,['-e','require(\\'fs\\').writeFileSync(process.argv[1],String(process.pid));setInterval(()=>{},1e3)',process.argv[1]],{stdio:'ignore'});setInterval(()=>{},1e3)`;
+  writeFileSync(join(root, "tests", "tests.conf"), `timeout=1\nunit=${node} -e "process.exit(0)"\nslow=${node} -e "${script}" "${grand}"\n`);
+  const began = Date.now();
+  const r = wrapper(root, "tests", "run");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const lines = r.stdout.trimEnd().split(/\r?\n/);
+  assert.match(lines[0], /^PASS unit \(\d+\.\d+s\)$/);
+  assert.match(lines[1], /^FAIL slow \(\d+\.\d+s, timeout 1초\)$/);
+  assert.equal(lines.at(-1), "결과: 통과 1, 실패 1, 건너뜀 0");
+  assert.ok(Date.now() - began < 20000, "the limit ended the run");
+  assert.ok(existsSync(grand), "the grandchild started");
+  const pid = Number(readFileSync(grand, "utf8"));
+  assert.ok(await waitFor(() => !alive(pid)), `grandchild ${pid} is gone`);
+  const env = wrapper(root, "tests", "run", ["slow"], { TESTS_TIMEOUT_SECONDS: "2" });
+  assert.match(env.stdout, /^FAIL slow \(\d+\.\d+s, timeout 2초\)$/m);
+  assert.ok(await waitFor(() => !alive(Number(readFileSync(grand, "utf8")))));
 });

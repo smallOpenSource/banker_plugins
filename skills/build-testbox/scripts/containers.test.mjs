@@ -1,7 +1,7 @@
 // Unit tests with fake executables: engine choice, error reasons, an engine permission error (sandbox), the macOS
 // judgment (non-Apple, Intel Mac, fake tart), source copy selection.
 import { strict as assert } from "node:assert";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +71,25 @@ test("missing image (fake engine): needs-image and no pull, no create", () => {
   assert.equal(res.cells[0].reason, "needs-image");
   const verbs = calls(fake).map((c) => c.args[0]);
   assert.ok(!verbs.includes("pull") && !verbs.includes("create"), verbs.join(","));
+});
+
+test("SIGHUP during a run (fake engine) removes the container it made and exits 129", { skip: process.platform === "win32" && "Windows: 프로세스에 SIGHUP 을 보낼 수 없음(OS 고유)" }, async () => {
+  const fake = fakeBin(["podman"]);
+  const argv = [TESTBOX, "run", "--engine", "podman", "--os", "rocky8", "--out", tempDir(), "--src", tempDir()];
+  const child = spawn(process.execPath, argv, { env: fakeEnv(fake, { FAKE_MODE: "hang" }) });
+  let stderr = "";
+  child.stderr.on("data", (d) => { stderr += d; });
+  const status = await new Promise((done) => {
+    const poll = setInterval(() => {
+      if (calls(fake).some((c) => c.args[0] === "start")) { clearInterval(poll); setTimeout(() => child.kill("SIGHUP"), 300); }
+    }, 100);
+    child.on("close", (code) => { clearInterval(poll); done(code); });
+  });
+  assert.equal(status, 129, stderr);
+  assert.match(stderr, /^SIGHUP: 만든 컨테이너 1개를 지우고 멈춤$/m);
+  const log = calls(fake);
+  const name = log.find((c) => c.args[0] === "create").args[2];
+  assert.ok(log.some((c) => c.args[0] === "rm" && c.args.includes(name)), JSON.stringify(log.map((c) => c.args.slice(0, 2))));
 });
 
 function macCtx(host, args = [], extra = {}) {

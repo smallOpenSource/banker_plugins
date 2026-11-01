@@ -38,11 +38,12 @@ export const USAGE = [
   "종료 코드: 0 커밋 완료(check 는 걸림 없음), 1 스캔 걸림이나 쓰기 거부나 git 단계 실패, 2 사용 오류, 3 선행 조건 실패(아무것도 안 바꿈)",
 ].join("\n");
 
-/** The .gitignore patterns git-init makes sure of. */
+/** The .gitignore patterns git-init makes sure of. Every name NAME_RULES blocks has one, so a file blocked by name
+ * is left out by the .gitignore and stops the commit only when a user `!` pattern brings it back. */
 export const PATTERNS = Object.freeze([
   ".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "id_rsa*", "id_ecdsa*",
   "id_ed25519*", "credentials.json", "*.tfstate", "*.tfstate.*", ".aws/", ".ssh/", ".omc/", ".omx/", "node_modules/",
-  ".DS_Store", "Thumbs.db", ".gitignore.git-init.bak",
+  ".npmrc", ".netrc", "_netrc", ".pgpass", ".DS_Store", "Thumbs.db", ".gitignore.git-init.bak",
 ]);
 
 const ID = "banker:git-init";

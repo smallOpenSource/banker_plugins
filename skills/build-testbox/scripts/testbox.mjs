@@ -27,7 +27,7 @@ usage:
 기본: --devices "Desktop Chrome,Pixel 7,Desktop Safari,iPhone 15", --os rocky8,rocky9, --cmd "cat /etc/os-release",
       --jobs min(4, CPU 수), --timeout 300, --out ./.testbox/<시각>
 exit(run): 0 모든 칸 pass, 1 fail 1칸 이상, 4 fail 없이 unverified 나 unsupported, 2 사용 오류, 3 내부 오류나 결과 쓰기 실패,
-           130, 143 SIGINT, SIGTERM(만든 컨테이너를 지운 뒤)
+           129, 130, 143 SIGHUP, SIGINT, SIGTERM(만든 컨테이너를 지운 뒤)
 exit(setup): 0 받고 확인됨(또는 계획만), 1 일부 실패, 4 네트워크 필요, 2 사용 오류
 `;
 
@@ -47,15 +47,17 @@ function cleanup(tracker, engine) {
   return n;
 }
 
+// 128 + the signal number, the shell's convention.
+const SIGNAL_EXIT = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
 function installSignals(tracker, engine) {
   const handler = (sig) => {
     const n = cleanup(tracker, engine);
     process.stderr.write(`${sig}: 만든 컨테이너 ${n}개를 지우고 멈춤\n`);
-    process.exit(sig === "SIGINT" ? 130 : 143);
+    process.exit(SIGNAL_EXIT[sig]);
   };
-  process.on("SIGINT", handler);
-  process.on("SIGTERM", handler);
-  return () => { process.off("SIGINT", handler); process.off("SIGTERM", handler); };
+  for (const sig of Object.keys(SIGNAL_EXIT)) process.on(sig, handler);
+  return () => { for (const sig of Object.keys(SIGNAL_EXIT)) process.off(sig, handler); };
 }
 
 function notesOf(o, engines, engine) {

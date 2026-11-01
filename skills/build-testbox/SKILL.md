@@ -94,7 +94,7 @@ description: "이 PC 가 스스로 구성하는 범용 시험 환경. 서비스 
   - 오프라인 예: `--cmd "cat /etc/os-release && rpm -q bash"`
 - 컨테이너 칸: `image inspect`(받지 않음), `create`, 소스 사본을 `cp` 로 `/src` 에, `start -a`, 끝나면 `rm -f`. 바인드 마운트는 쓰지 않는다(SELinux 재라벨, Windows 경로 문제)
   - 소스 사본: git 저장소면 추적 파일과 무시되지 않은 새 파일(작업 트리 내용), 아니면 `node_modules`, `.git`, `.testbox` 를 뺀 전부. 결과 폴더는 뺀다
-  - 이름은 `banker-testbox-<난수>-<os>`. 시간 초과, SIGINT, SIGTERM 에서도 지운다
+  - 이름은 `banker-testbox-<난수>-<os>`. 시간 초과, SIGINT, SIGTERM, SIGHUP 에서도 지운다
 - 브라우저 칸: 브라우저 종류마다 한 번 띄우고 기기마다 새 컨텍스트. 응답 상태, 페이지 오류 수, 콘솔 오류 수, 제목, 스크린숏(`<out>/browser-<기기>.png`). 통과는 응답 2xx 나 3xx(파일 URL 은 응답 없음)이고 페이지 오류 0
 
 ## 칸 상태와 사유
@@ -129,7 +129,7 @@ description: "이 PC 가 스스로 구성하는 범용 시험 환경. 서비스 
 
 | 명령 | 코드 |
 |---|---|
-| `run` | 0 요청한 모든 칸 `pass`, 1 `fail` 1칸 이상, 4 `fail` 없이 `unverified` 나 `unsupported` 1칸 이상, 2 사용 오류, 3 내부 오류나 결과 폴더 쓰기 실패, 130 과 143 SIGINT 와 SIGTERM(만든 컨테이너를 지운 뒤) |
+| `run` | 0 요청한 모든 칸 `pass`, 1 `fail` 1칸 이상, 4 `fail` 없이 `unverified` 나 `unsupported` 1칸 이상, 2 사용 오류, 3 내부 오류나 결과 폴더 쓰기 실패, 129, 130, 143 SIGHUP, SIGINT, SIGTERM(만든 컨테이너를 지운 뒤) |
 | `setup` | 0 받고 확인됨(또는 계획만 보임), 1 일부 실패, 4 실패 없이 닿지 못한 원천이 있음("네트워크 필요"), 2 사용 오류 |
 | `detect` | 0, 사용 오류 2 |
 
