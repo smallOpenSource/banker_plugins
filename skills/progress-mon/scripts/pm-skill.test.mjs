@@ -128,7 +128,7 @@ test('SKILL.md: init 절차의 ADR 단계와 근거 출처 순서, 정리 단계
   assert.ok(order.every((i) => i > 0) && order.every((i, k) => !k || i > order[k - 1]), `근거 출처 순서 ${order}`);
   assert.match(init, /실제로 돌린 명령의 출력만 참조/);
   assert.match(init, /^11\. 정리 단계/m);
-  assert.match(init, /`check --adr-cleanup`[\s\S]*스키마 FAIL 이 남으면 파일을 지워[\s\S]*참조 FAIL[\s\S]*\{ "gap": "참조 확인 실패: <이유>" \}/);
+  assert.match(init, /`check --adr-cleanup`[\s\S]*스키마 FAIL 이 남으면 지우지 않고 `adr\.json\.rejected-<YYYYMMDD-HHMMSS>` 로 옮겨[\s\S]*참조 FAIL[\s\S]*\{ "gap": "참조 확인 실패: <이유>" \}/);
   assert.match(init, /^14\. `start` 를 실행하고 URL 을 보고한다$/m);
   const rule = section('갱신 규칙(init 뒤 세션)');
   assert.match(rule, /^ {2}\| 결정이 생기거나 스토리가 끝남 \| `<data>\/adr\.json` 을 고치고/m);

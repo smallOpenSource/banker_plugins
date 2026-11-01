@@ -340,22 +340,31 @@ export function refreshText(text) {
   return { text: out.join('\n'), changed };
 }
 
-// 같은 파일을 제자리에서 다시 쓴다(링크는 대상 파일). 연 fd 를 fstat 으로 다시 보고 하드링크나 특수 파일이면 쓰지 않는다.
+const RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// 같은 파일을 원자적으로 다시 쓴다: 대상(링크면 실제 파일) 옆 임시 파일에 쓰고 권한을 맞춘 뒤 rename.
+// 쓰기 전에 대상을 다시 보고 하드링크나 특수 파일로 바뀌었으면 쓰지 않는다. 실패하면 임시 파일을 지우고 원본 그대로.
 function rewrite(file, body) {
-  let fd;
+  const real = fs.realpathSync(file);
+  const st = fs.statSync(real);
+  if (!st.isFile() || st.nlink > 1) throw changedError(file);
+  const tmp = `${real}.${process.pid}.${Date.now().toString(36)}.tmp`;
   try {
-    fd = fs.openSync(file, fs.constants.O_WRONLY | (fs.constants.O_NONBLOCK || 0));
+    fs.writeFileSync(tmp, body, { flag: 'wx', mode: st.mode & 0o777 });
+    fs.chmodSync(tmp, st.mode & 0o7777);
+    for (let i = 0; ; i++) {
+      try {
+        fs.renameSync(tmp, real);
+        return;
+      } catch (e) {
+        if (i >= 4 || !RENAME_CODES.has(e.code)) throw e;
+        pause(50); // Windows 에서 다른 프로세스가 잠깐 쥔 파일
+      }
+    }
   } catch (e) {
-    if (e.code === 'ENXIO' || e.code === 'EAGAIN') throw changedError(file);
-    throw e;
-  }
-  try {
-    const st = fs.fstatSync(fd);
-    if (!st.isFile() || st.nlink > 1) throw changedError(file);
-    fs.ftruncateSync(fd, 0);
-    fs.writeFileSync(fd, body);
-  } finally {
-    fs.closeSync(fd);
+    fs.rmSync(tmp, { force: true });
+    throw e instanceof UsageError ? e : new UsageError(`${path.basename(file)} 쓰기 실패(${e.code || e.message}). 원본 그대로`);
   }
 }
 
@@ -371,10 +380,17 @@ function backup(file, buf) {
 }
 
 // 표식이 이미 있는 파일. 우리 줄이 지금 판과 다를 때만 그 줄을 바꾸고 백업을 남긴다. BOM 과 나머지 바이트는 그대로.
+// 검사 뒤 UTF-8 이 아니게 바뀐 파일은 바꾸지 않고 경고 줄(U+FFFD 로 바뀐 바이트를 쓰지 않게).
 function refreshStep(s) {
   const buf = fs.readFileSync(s.file);
   const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
-  const r = refreshText(new TextDecoder('utf-8').decode(bom ? buf.subarray(3) : buf));
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bom ? buf.subarray(3) : buf);
+  } catch {
+    return `경고: ${s.name} 이 UTF-8 이 아니라 규칙 줄을 바꾸지 않음`;
+  }
+  const r = refreshText(text);
   if (!r.changed) return `규칙 이미 있음: ${s.name}`;
   const bak = backup(s.file, buf);
   rewrite(s.file, Buffer.concat([bom ? buf.subarray(0, 3) : Buffer.alloc(0), Buffer.from(r.text, 'utf8')]));

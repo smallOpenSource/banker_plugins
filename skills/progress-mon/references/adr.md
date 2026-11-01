@@ -106,7 +106,7 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 - 참조 결과 줄은 `FAIL adr.json <json 경로> 참조: <이유>`, `WARN adr.json <json 경로> 참조: <이유>`
 - 참조 파일은 check 에서만 읽는다. 크기 상한(4 MB) 안의 일반 파일만 읽고, 넘으면 줄과 이름 확인을 못 해 `WARN`
 - 처리가 다르다
-  - 스키마 위반 FAIL: init 정리 단계에서 FAIL 이 남으면 `adr.json` 을 지워 "자료 없음" 으로 둔다
+  - 스키마 위반 FAIL: init 정리 단계에서 FAIL 이 남으면 `adr.json` 을 지우지 않고 같은 폴더의 `adr.json.rejected-<YYYYMMDD-HHMMSS>`(이름이 있으면 `-2` 부터 번호)로 옮겨 "자료 없음" 으로 둔다. 옮긴 파일을 고쳐 `adr.json` 으로 되돌릴 수 있다
   - 참조 FAIL: 파일을 지우지 않는다. init 정리 단계에서 그 참조를 `{ "gap": "참조 확인 실패: <이유>" }` 로 바꾸고 check 를 다시 돌린다. 갱신 때(init 밖)는 FAIL 줄을 보고하고 json 경로를 고친다
   - `check --adr-cleanup` 이 정리 단계를 적용한 뒤 검사한다(출력 첫 줄 `정리: ...`)
 

@@ -29,7 +29,7 @@
       "color": "#2e7d32",
       "steps": [
         { "id": "e1", "label": "인자 검사", "detail": "출력 파일 경로 확인", "actor": "cli.mjs", "refs": ["cli.mjs:80"], "planned": false },
-        { "id": "e2", "label": "네 탭 렌더", "detail": "네 탭을 한 파일에 담음", "actor": "render.mjs", "refs": ["render.mjs:200"], "planned": false },
+        { "id": "e2", "label": "다섯 탭 렌더", "detail": "다섯 탭을 한 파일에 담음", "actor": "render.mjs", "refs": ["render.mjs:200"], "planned": false },
         { "id": "e3", "label": "파일 쓰기", "detail": "임시 파일에 쓰고 이름 바꿈", "actor": "cli.mjs", "refs": [], "planned": true }
       ],
       "branches": [],
@@ -39,6 +39,6 @@
   "scenes": [
     { "n": 1, "sec": 2, "lane": "main", "focus": ["p1", "p2"], "caption": "인자와 설정을 읽음" },
     { "n": 2, "sec": 3, "lane": "main", "focus": ["p4", "p5"], "caption": "상태를 판정해 화면을 그림" },
-    { "n": 3, "sec": 2, "lane": "export", "focus": ["e2"], "caption": "네 탭을 한 파일로" }
+    { "n": 3, "sec": 2, "lane": "export", "focus": ["e2"], "caption": "다섯 탭을 한 파일로" }
   ]
 }

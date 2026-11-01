@@ -13,7 +13,7 @@
     { "id": "browser", "zone": "user", "label": "브라우저", "x": 40, "y": 90, "w": 160, "h": 64, "kind": "사람", "detail": "탭을 고름" },
     { "id": "cli", "zone": "user", "label": "CLI", "x": 40, "y": 250, "w": 160, "h": 64, "kind": "명령", "detail": "시작, 정지, 기록" },
     { "id": "server", "zone": "app", "label": "서버", "x": 340, "y": 90, "w": 130, "h": 64, "kind": "프로세스", "detail": "Host 검사" },
-    { "id": "render", "zone": "app", "label": "렌더", "x": 530, "y": 90, "w": 130, "h": 64, "kind": "모듈", "detail": "네 탭 HTML" },
+    { "id": "render", "zone": "app", "label": "렌더", "x": 530, "y": 90, "w": 130, "h": 64, "kind": "모듈", "detail": "다섯 탭 HTML" },
     { "id": "files", "zone": "store", "label": "자료 파일", "x": 800, "y": 90, "w": 160, "h": 64, "kind": "파일", "detail": "JSON 네 개" },
     { "id": "git", "zone": "store", "label": "git 저장소", "x": 800, "y": 250, "w": 160, "h": 64, "kind": "저장소", "detail": "커밋 제목" }
   ],

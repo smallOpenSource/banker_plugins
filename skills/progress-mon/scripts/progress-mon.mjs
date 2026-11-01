@@ -28,7 +28,7 @@ export const HELP = `progress-mon: 프로젝트 진척도 웹 화면
   stage     --id <id> --status started|done|skipped|failed|stopped [--label <t>]
   story     --id <id> (--status todo|doing|done | --commit <hash>) [--name <t>]
   check     [--adr-cleanup]
-            자료 파일 검사. FAIL, WARN 한 줄씩. --adr-cleanup 은 먼저 adr.json 정리(참조 FAIL 은 gap, 스키마 FAIL 은 파일 삭제)
+            자료 파일 검사. FAIL, WARN 한 줄씩. --adr-cleanup 은 먼저 adr.json 정리(참조 FAIL 은 gap, 스키마 FAIL 이 남으면 adr.json.rejected-<시각> 으로 옮김)
 
 공통 인자
   --runtime claude|codex    자료 폴더 기본값(.omc/progress-mon/, .omx/progress-mon/)

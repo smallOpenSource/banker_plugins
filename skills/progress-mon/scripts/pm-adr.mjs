@@ -344,17 +344,38 @@ function setAt(root, parts, value) {
   holder[parts[parts.length - 1]] = value;
 }
 
-// init 정리 단계(결정 I). 스키마 위반이 남으면 adr.json 을 지워 자료 없음으로, 참조 FAIL 만 있으면 그 참조를
-// { gap: "참조 확인 실패: ..." } 로 바꿔 파일을 남긴다. 돌려줌: 출력 줄 목록.
-export async function cleanAdr(ctx, config) {
+const two = (n) => String(n).padStart(2, '0');
+// 현지 시각 YYYYMMDD-HHMMSS.
+const stamp = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
+};
+
+// 스키마 FAIL 이 남은 adr.json 을 같은 폴더의 adr.json.rejected-<시각>(있으면 -2, -3 ...)으로 옮긴다. 결정 기록을 잃지 않게
+// 지우지 않는다. 새 이름은 COPYFILE_EXCL 로 만들어 있는 파일을 덮지 않고, 사본을 만든 뒤에만 원본을 지운다. 돌려줌: 옮긴 경로.
+function reject(file, now) {
+  const base = `${file}.rejected-${stamp(now)}`;
+  for (let i = 1; ; i++) {
+    const dest = i === 1 ? base : `${base}-${i}`;
+    try {
+      fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
+    } catch (e) {
+      if (e.code === 'EEXIST') continue;
+      throw e;
+    }
+    fs.rmSync(file, { force: true });
+    return dest;
+  }
+}
+
+// init 정리 단계(결정 I). 스키마 위반이 남으면 adr.json 을 adr.json.rejected-<시각> 으로 옮겨 자료 없음으로, 참조 FAIL 만
+// 있으면 그 참조를 { gap: "참조 확인 실패: ..." } 로 바꿔 파일을 남긴다. 돌려줌: 출력 줄 목록.
+export async function cleanAdr(ctx, config, now = Date.now()) {
   const file = path.join(ctx.dataDir, ADR_FILE);
   const got = inspectAdr(ctx, config);
   if (got.missing) return ['정리: adr.json 없음'];
   const schema = got.error ? 1 : got.S.schema.length;
-  if (schema) {
-    fs.rmSync(file, { force: true });
-    return [`정리: adr.json 지움(스키마 FAIL ${schema}건이 남아 자료 없음으로 둠)`];
-  }
+  if (schema) return [`정리: adr.json 을 ${reject(file, now)} 로 옮김(스키마 FAIL ${schema}건이 남아 자료 없음으로 둠)`];
   const fails = got.S.refFail;
   if (!fails.length) return ['정리: adr.json 참조 FAIL 0, 바꾼 것 없음'];
   for (const f of fails) setAt(got.value, f.parts, { gap: `참조 확인 실패: ${f.msg}` });

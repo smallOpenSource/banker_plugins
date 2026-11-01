@@ -485,3 +485,29 @@ test('규칙 줄 교체: init 다시 실행은 표식 줄만 바꾸고 자료 �
   assert.deepEqual(['config.json', 'items.json'].map((x) => fs.readFileSync(path.join(data, x))), keep);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).memory, { kind: 'claude-md', path: f });
 });
+
+test('규칙 줄 교체: 검사 뒤 UTF-8 이 아니게 바뀐 파일은 바꾸지 않고 경고, 바이트와 백업 없음 그대로', T, () => {
+  const p = dir();
+  const f = path.join(p, 'CLAUDE.md');
+  fs.writeFileSync(f, `${OLD.claude}\n`);
+  const plan = planMemory({ kind: 'claude-md', project: p, runtime: 'claude' });
+  const bad = Buffer.concat([Buffer.from(`${OLD.claude}\n`, 'utf8'), Buffer.from([0xff, 0xfe, 0x0a])]);
+  fs.writeFileSync(f, bad);
+  assert.deepEqual(applyMemory(plan, p, ENV), ['경고: CLAUDE.md 이 UTF-8 이 아니라 규칙 줄을 바꾸지 않음']);
+  assert.deepEqual(fs.readFileSync(f), bad, 'U+FFFD 로 바뀌지 않음');
+  assert.deepEqual(fs.readdirSync(p), ['CLAUDE.md'], '백업과 임시 파일 없음');
+});
+
+test('규칙 줄 교체는 임시 파일과 rename: 권한 유지, 임시 파일 남지 않음, 안쪽 링크(CLAUDE.md -> AGENTS.md)는 링크 그대로 대상만 바뀜', T, (t) => {
+  const p = dir();
+  const f = path.join(p, 'AGENTS.md');
+  fs.writeFileSync(f, `# 지시\n${OLD.claude}\n`);
+  if (process.platform !== 'win32') fs.chmodSync(f, 0o640);
+  if (!fileLink('AGENTS.md', path.join(p, 'CLAUDE.md'))) return t.skip('Windows 에서 링크를 만들 권한이 없음(개발자 모드 꺼짐)');
+  const out = register({ kind: 'claude-md', project: p, runtime: 'claude' });
+  assert.deepEqual(out, [`규칙 줄 교체(백업 ${path.join(p, 'CLAUDE.md.progress-mon.bak')}): CLAUDE.md`]);
+  assert.ok(fs.lstatSync(path.join(p, 'CLAUDE.md')).isSymbolicLink(), '링크 그대로');
+  assert.equal(fs.readFileSync(f, 'utf8'), `# 지시\n${ruleLine('claude')}\n`);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(f).mode & 0o777, 0o640, '권한 유지');
+  assert.deepEqual(fs.readdirSync(p).sort(), ['AGENTS.md', 'CLAUDE.md', 'CLAUDE.md.progress-mon.bak'], '임시 파일 없음');
+});

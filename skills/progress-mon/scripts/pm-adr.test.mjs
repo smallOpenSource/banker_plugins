@@ -195,7 +195,7 @@ test('check 참조: git 저장소에서 없는 커밋은 FAIL, 있는 커밋은 
   assert.ok(lines.includes(`WARN adr.json project.proof.implemented[0].proofs[1] 참조: sources.git 이 꺼져 있어 커밋을 확인 못 함: ${head.slice(0, 7)}`), lines.join('\n'));
 });
 
-test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap 으로, 다시 돈 check 는 FAIL 0 과 WARN. 스키마 FAIL 이 남으면 파일 삭제', T, async () => {
+test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap 으로, 다시 돈 check 는 FAIL 0 과 WARN. 스키마 FAIL 이 남으면 adr.json.rejected-<시각> 으로 옮김(바이트 같음, 이름이 있으면 번호)', T, async () => {
   const a = readFix('adr.json');
   a.project.verification[1].evidence[0] = { kind: 'file', path: 'src/none.mjs' };
   const ctx = project({ adr: a, initd: true });
@@ -212,8 +212,18 @@ test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap �
   delete bad.project.flow;
   bad.project.verification[1].evidence[0] = { kind: 'file', path: 'src/none.mjs' };
   const ctx2 = project({ adr: bad });
-  assert.deepEqual(await cleanAdr(ctx2, configOf(ctx2)), ['정리: adr.json 지움(스키마 FAIL 1건이 남아 자료 없음으로 둠)']);
-  assert.equal(fs.existsSync(path.join(ctx2.dataDir, 'adr.json')), false);
+  const src = path.join(ctx2.dataDir, 'adr.json');
+  const orig = fs.readFileSync(src);
+  const at = new Date(2026, 9, 29, 3, 4, 5).getTime();
+  const moved = path.join(ctx2.dataDir, 'adr.json.rejected-20261029-030405');
+  assert.deepEqual(await cleanAdr(ctx2, configOf(ctx2), at), [`정리: adr.json 을 ${moved} 로 옮김(스키마 FAIL 1건이 남아 자료 없음으로 둠)`]);
+  assert.equal(fs.existsSync(src), false, '탭은 자료 없음');
+  assert.deepEqual(fs.readFileSync(moved), orig, '옮긴 파일 바이트가 원본과 같음');
+  // 같은 시각에 다시 옮기면 있는 파일을 덮지 않고 -2
+  fs.writeFileSync(src, '{"project": 1}');
+  assert.deepEqual(await cleanAdr(ctx2, configOf(ctx2), at), [`정리: adr.json 을 ${moved}-2 로 옮김(스키마 FAIL 2건이 남아 자료 없음으로 둠)`]);
+  assert.deepEqual(fs.readFileSync(moved), orig, '먼저 옮긴 파일 그대로');
+  assert.equal(fs.readFileSync(`${moved}-2`, 'utf8'), '{"project": 1}');
   const ctx3 = project({ adr: a });
   const r = cli(['check', '--adr-cleanup'], ctx3.project);
   assert.equal(r.code, 0, r.out + r.err);
