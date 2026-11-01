@@ -3,7 +3,7 @@
 // run.json (when, where and from which commit the run started) and events.jsonl (one JSON line per stage
 // event). The time of every event is taken here, never written by the model. Pure Node, no dependencies.
 //
-//   node chain-ledger.mjs init --base <folder> [--runtime claude|codex] [--exclude]
+//   node chain-ledger.mjs init --base <folder> [--runtime claude|codex] [--agents N] [--exclude]
 //   node chain-ledger.mjs event <run> --stage <id> --status <status> [--file <event.json>] [--round <n>]
 //                               [--summary <text>] [--reason <text>]
 //   node chain-ledger.mjs boxes <run> --file <boxes.mjs report> [--stage <id>] [--round <n>]
@@ -61,7 +61,13 @@ const bool = () => (v) => (typeof v === "boolean" ? v : undefined);
 const path = () => (v) => runPath(v) ?? undefined;
 const COUNT = int(0, 10_000_000);
 
-// Each field: [check, required, what the check wants]. A check returns the cleaned value or undefined.
+// The judges of one visual view (stage 7): every judge's score and its verdict after the score rule.
+const JUDGES = { max: 20, fields: {
+  id: [text(60), true, "60자 이하 글"], score: [num(0, 100), false, "0~100 수"],
+  verdict: [oneOf("pass", "revise", "fail", "unverified"), true, "pass, revise, fail, unverified"] } };
+
+// Each field: [check, required, what the check wants]. A check returns the cleaned value or undefined. `lists` are
+// arrays of records inside one record.
 const RECORDS = {
   artifacts: { max: 50, fields: { label: [text(200), false, "200자 이하 글"], path: [path(), true, "실행 폴더 기준 상대 경로"] } },
   tests: { max: 60, fields: {
@@ -73,7 +79,7 @@ const RECORDS = {
     name: [text(100), true, "100자 이하 글"], mock: [path(), false, "실행 폴더 기준 상대 경로"],
     actual: [path(), false, "실행 폴더 기준 상대 경로"], score: [num(0, 100), false, "0~100 수"],
     verdict: [oneOf("pass", "revise", "fail", "unverified"), false, "pass, revise, fail, unverified"], intended: [bool(), false, "true, false"],
-    note: [text(500), false, "500자 이하 글"] } },
+    note: [text(500), false, "500자 이하 글"] }, lists: { judges: JUDGES } },
   checklist: { max: 60, fields: {
     item: [text(300), true, "300자 이하 글"], why: [text(500), false, "500자 이하 글"], ref: [path(), false, "실행 폴더 기준 상대 경로"] } },
   seats: { max: 20, fields: {
@@ -109,9 +115,16 @@ function checkFields(obj, fields, where, extra = []) {
   return out;
 }
 
+function checkItem(item, spec, where) {
+  const lists = spec.lists ?? {};
+  const out = checkFields(item, spec.fields, where, Object.keys(lists));
+  for (const [key, sub] of Object.entries(lists)) if (item[key] !== undefined) out[key] = checkList(item[key], sub, `${where}.${key}`);
+  return out;
+}
+
 function checkList(list, spec, where) {
   if (!Array.isArray(list) || list.length > spec.max) throw new UsageError(`${where}: ${spec.max}개 이하 배열이어야 합니다`);
-  return list.map((item, i) => checkFields(item, spec.fields, `${where}[${i}]`));
+  return list.map((item, i) => checkItem(item, spec, `${where}[${i}]`));
 }
 
 const BLOCKERS = { max: 50, fields: { item: [text(1000), true, "1000자 이하 글"] } };
@@ -135,6 +148,60 @@ export function checkEvent(raw) {
   }
   if (raw.verdict !== undefined) event.verdict = checkVerdict(raw.verdict);
   return event;
+}
+
+// ── reviewer count (--agents) ────────────────────────────────────────────────
+
+// One count for every independent verdict of the chain: the ralph-qa seats of stages 3 and 6, the critic seats of
+// stage 5 and the judges of stage 7. Under 3 is raised to 3 as ralph-qa does; over 17 is refused (the seat record
+// holds 20, less the three outside seats).
+export const AGENTS_DEFAULT = 3;
+export const AGENTS_MAX = 17;
+
+export function agentsOf(value) {
+  if (value === undefined || value === null) return { agents: AGENTS_DEFAULT, agentsSource: "default" };
+  const n = typeof value === "number" ? value : /^\d+$/.test(String(value)) ? Number(value) : Number.NaN;
+  if (!Number.isInteger(n) || n < 0 || n > AGENTS_MAX) throw new UsageError(`--agents 는 0~${AGENTS_MAX} 정수입니다(좌석 기록 20 에서 외부 좌석 3 을 뺀 상한)`);
+  if (n < AGENTS_DEFAULT) return { agents: AGENTS_DEFAULT, agentsSource: "raised", agentsAsked: n };
+  return { agents: n, agentsSource: "flag" };
+}
+
+const seatIds = (prefix, n) => Array.from({ length: n }, (_, i) => `${prefix}#${i + 1}`);
+const sameIds = (ids, prefix, n) => ids.length === n && [...ids].sort().join("\n") === seatIds(prefix, n).sort().join("\n");
+
+// Stage 5's critic seat loop: an APPROVE or ITERATE round has exactly <agents> seats critic#1..critic#N, and APPROVE
+// only when every seat approves. INCONCLUSIVE (a lost seat) and ralph's own verdict (by "ralph-reviewer") are not counted.
+function checkCriticSeats(event, n) {
+  const v = event.verdict;
+  if (event.stage !== "build" || !v || v.by !== "critic" || !["APPROVE", "ITERATE"].includes(v.result)) return;
+  const seats = v.seats ?? [];
+  if (!sameIds(seats.map((s) => s.id), "critic", n)) {
+    throw new UsageError(`verdict.seats: critic ${v.result} 기록은 좌석 ${n}개(${seatIds("critic", n).join(", ")})여야 합니다`);
+  }
+  if (v.result === "APPROVE" && seats.some((s) => s.verdict !== "APPROVE")) {
+    throw new UsageError("verdict.result: 모든 critic 좌석이 APPROVE 일 때만 APPROVE 입니다");
+  }
+}
+
+// Stage 7: a view passes only when all <agents> judges judge#1..judge#N pass with 90 or more, and its score is the
+// lowest judge score.
+function checkVisualJudges(event, n) {
+  (event.visual ?? []).forEach((v, i) => {
+    if (v.verdict !== "pass") return;
+    const where = `visual[${i}]`;
+    const judges = v.judges ?? [];
+    if (!sameIds(judges.map((j) => j.id), "judge", n)) throw new UsageError(`${where}.judges: pass 는 판정자 ${n}명(${seatIds("judge", n).join(", ")})이 있어야 합니다`);
+    if (judges.some((j) => j.verdict !== "pass" || !(j.score >= 90))) throw new UsageError(`${where}.judges: pass 는 모든 판정자가 pass 이고 90점 이상일 때만입니다`);
+    const low = Math.min(...judges.map((j) => j.score));
+    if (v.score !== low) throw new UsageError(`${where}.score: 판정자 점수의 최솟값 ${low} 이어야 합니다`);
+  });
+}
+
+// Run folders made before --agents (no `agents` in run.json) are not checked, so an old run can still be resumed.
+export function checkQuorum(event, meta) {
+  if (!isObject(meta) || !Number.isInteger(meta.agents)) return;
+  checkCriticSeats(event, meta.agents);
+  checkVisualJudges(event, meta.agents);
 }
 
 // ── run folder ───────────────────────────────────────────────────────────────
@@ -191,19 +258,20 @@ function ignoreState(root, dir, baseDir, exclude) {
 // Folders the stages write into, made up front so a shell redirect into them never fails.
 export const RUN_FOLDERS = ["mock/expected", "actual", "visual", "qa", "boxes"];
 
-// Creates <base>/<id>/ with run.json and an empty events.jsonl. opts: base, cwd, runtime, exclude, now, rand.
+// Creates <base>/<id>/ with run.json and an empty events.jsonl. opts: base, cwd, runtime, agents, exclude, now, rand.
 export function initRun(opts) {
   const o = { cwd: process.cwd(), runtime: null, exclude: false, now: new Date(), rand: randomBytes(2).toString("hex"), ...opts };
   if (!o.base) throw new UsageError("--base 가 필요합니다");
   if (/[\u0000-\u001F]/.test(o.base)) throw new UsageError("--base 에 제어 문자가 있습니다");
   if (o.runtime !== null && !["claude", "codex"].includes(o.runtime)) throw new UsageError("--runtime 은 claude, codex 중 하나입니다");
+  const agents = agentsOf(o.agents);
   const info = repoInfo(o.cwd);
   const baseDir = resolve(o.cwd, o.base);
   const id = runId(o.now, o.rand);
   const dir = join(baseDir, id);
   if (existsSync(dir)) throw new Error(`이미 있는 실행 폴더입니다: ${dir}`);
   mkdirSync(dir, { recursive: true });
-  const meta = { schema: 1, id, createdAt: o.now.toISOString(), runtime: o.runtime, ...info };
+  const meta = { schema: 1, id, createdAt: o.now.toISOString(), runtime: o.runtime, ...agents, ...info };
   writeFileSync(join(dir, "run.json"), `${JSON.stringify(meta, null, 1)}\n`);
   writeFileSync(join(dir, "events.jsonl"), "");
   for (const f of RUN_FOLDERS) mkdirSync(join(dir, f), { recursive: true });
@@ -224,8 +292,9 @@ function needsNewline(file) {
 }
 
 export function appendEvent(dir, raw, now = new Date()) {
-  readRun(dir);
+  const meta = readRun(dir);
   const event = { t: now.toISOString(), ...checkEvent(raw) };
+  checkQuorum(event, meta);
   const file = join(dir, "events.jsonl");
   appendFileSync(file, `${needsNewline(file) ? "\n" : ""}${JSON.stringify(event)}\n`);
   return event;
@@ -446,7 +515,7 @@ export function gatesToTests(text, round, dir, gateDir) {
 
 // ── command line ─────────────────────────────────────────────────────────────
 
-const FLAGS = new Set(["--base", "--runtime", "--stage", "--status", "--file", "--round", "--summary", "--reason", "--unverified", "--why"]);
+const FLAGS = new Set(["--base", "--runtime", "--agents", "--stage", "--status", "--file", "--round", "--summary", "--reason", "--unverified", "--why"]);
 
 export function parseArgs(argv) {
   const o = { _: [] };
@@ -533,7 +602,7 @@ export function progressLine(e) {
 const withProgress = (e) => ({ ...e, progress: progressLine(e) });
 
 const COMMANDS = {
-  init: (o) => initRun({ base: o.base, runtime: o.runtime ?? null, exclude: Boolean(o.exclude) }),
+  init: (o) => initRun({ base: o.base, runtime: o.runtime ?? null, agents: o.agents, exclude: Boolean(o.exclude) }),
   event: (o) => withProgress(appendEvent(runDir(o), eventFrom(o))),
   boxes: (o) => {
     const dir = runDir(o);
@@ -566,10 +635,10 @@ const COMMANDS = {
   // show is the first command of a resume, so it also re-makes the stage folders an older run may lack.
   show: (o) => {
     const dir = runDir(o);
-    const { id } = readRun(dir);
+    const { id, agents = null, agentsSource = null } = readRun(dir);
     for (const f of RUN_FOLDERS) mkdirSync(join(dir, f), { recursive: true });
     const { events, bad } = readEvents(dir);
-    return { id, dir, ...summarize(events), bad };
+    return { id, dir, agents, agentsSource, ...summarize(events), bad };
   },
 };
 

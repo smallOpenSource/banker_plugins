@@ -66,12 +66,19 @@ export function taskText(task) {
   return lines.length > 1 && lines[1].trim() && lines[1].trim() === lines[0].trim() ? [lines[0], ...lines.slice(2)].join("\n") : String(task);
 }
 
+// How many reviewers each independent verdict used (--agents), and where the number came from.
+export function agentsText(run) {
+  if (!Number.isInteger(run.agents)) return "기록 없음(옛 실행)";
+  if (run.agentsSource === "raised") return `${run.agents}(${run.agentsAsked ?? "?"} 에서 올림)`;
+  return `${run.agents}(${run.agentsSource === "flag" ? "--agents" : "기본"})`;
+}
+
 function renderHeader(run, task, sum, generatedAt) {
   const total = sum.stages.reduce((a, s) => a + (s.ms ?? 0), 0);
   const current = sum.current ? `${esc(LABEL[sum.current])} 단계` : "모든 단계 끝";
   const facts = [
     ["실행", esc(run.id)], ["상태", `${badge(sum.overall)} ${current}`], ["시작", esc(when(run.createdAt))],
-    ["단계 시간 합", esc(duration(total))], ["런타임", esc(run.runtime ?? "미상")],
+    ["단계 시간 합", esc(duration(total))], ["런타임", esc(run.runtime ?? "미상")], ["검토자 수", esc(agentsText(run))],
     ["기준 커밋", esc((run.baseCommit ?? "").slice(0, 12))], ["브랜치", esc(run.branch ?? "")], ["보고서 생성", esc(when(generatedAt))],
   ];
   const dl = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("");
@@ -123,12 +130,16 @@ function renderShot(p, caption, ctx) {
   return `<figure class="shot"><a href="${esc(h)}"><img src="${esc(h)}" alt="${esc(caption)}" loading="lazy"></a><figcaption>${esc(caption)}</figcaption></figure>`;
 }
 
+const judgesTable = (judges) => (judges?.length
+  ? table(["판정자", "점수", "판정"], judges.map((j) => [td(esc(j.id)), td(esc(j.score ?? "")), td(badge(j.verdict))])) : "");
+
 function renderVisual(events, ctx) {
   const cards = latestVisual(events).map((v) => {
     const score = v.score === undefined ? "" : ` ${v.score}점`;
     const intended = v.intended ? ' <span class="s s-note">의도한 차이</span>' : "";
     return `<article class="card"><h3>${esc(v.name)}${esc(score)} ${v.verdict ? badge(v.verdict) : ""}${intended}</h3>`
-      + `<div class="pair">${renderShot(v.mock, "목업", ctx)}${renderShot(v.actual, "실제", ctx)}</div>${v.note ? `<p>${esc(v.note)}</p>` : ""}</article>`;
+      + `<div class="pair">${renderShot(v.mock, "목업", ctx)}${renderShot(v.actual, "실제", ctx)}</div>${judgesTable(v.judges)}`
+      + `${v.note ? `<p>${esc(v.note)}</p>` : ""}</article>`;
   });
   return `<section><h2>시각 검토</h2>${cards.length ? cards.join("\n") : '<p class="none">없음</p>'}</section>`;
 }

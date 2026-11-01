@@ -47,6 +47,10 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 - 플래그가 아닌 첫 낱말부터 끝까지가 작업 설명이다. 작업 설명 안의 `--json` 같은 낱말은 플래그가 아니다.
 - 맨 아래 `ARGUMENTS:` 줄은 형식 안내다. 사용자 입력이 아니다.
 - `--from` 의 값은 단계 이름(`research`, `interview`, `plan`, `mock`, `build`, `qa`, `visual`, `trace`, `share`)이다.
+- `--agents=N` 은 모든 독립 판정의 검토자 수다. 3단계 ralph-qa 좌석, 5단계 critic 좌석, 6단계 ralph-qa 좌석, 7단계 시각 판정자에 같은 수를 쓴다.
+  - 미지정 시 3이다. 실행 기록 `run.json` 에 `agents: 3` 과 `agentsSource: "default"` 로 남는다. 준 값은 `agentsSource: "flag"` 다.
+  - 3 미만은 ralph-qa 와 같이 3으로 올리고 보고한다(`agentsSource: "raised"`, 준 값은 `agentsAsked`). 17 초과는 거부한다(좌석 기록 상한 20 에서 외부 좌석 3 을 뺀 값). 정수가 아니어도 거부한다.
+  - 이어 하기(`--run --from`)는 `run.json` 의 `agents` 를 쓴다. 다른 `--agents` 를 받으면 무시하고 그 사실을 `checklist` 에 남긴다.
 
 ## 런타임 대응
 
@@ -56,9 +60,10 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 1 전문가 작업 방식 | `Skill("banker:lfm")` | `$banker-lfm` |
 | 2 모호성 제거 | `Skill("banker:ultra-interview")` | `$banker-ultra-interview` |
 | 3 합의 계획 | `Skill("oh-my-claudecode:ralplan")` `--deliberate`, 이어서 `Skill("banker:ralph-qa")` | `$ralplan --deliberate`, 이어서 `$banker-ralph-qa`(플러그인 길 `$banker:ralph-qa`) |
-| 5 구현 | `Skill("oh-my-claudecode:ralph")` `--critic=critic` | `$ralph` 뒤 이 스킬의 critic 루프(OMX `ralph` 에는 `--critic` 이 없다) |
+| 5 구현 | `Skill("oh-my-claudecode:ralph")` `--critic=critic`, 이어서 이 스킬의 critic 좌석 `<agents>` 개 루프 | `$ralph`, 이어서 이 스킬의 critic 좌석 `<agents>` 개 루프(OMX `ralph` 에는 `--critic` 이 없다) |
+| 5 critic 좌석 에이전트 | `Agent` 의 `Plan` 유형, `model` 없이 | `spawn_agent`, 역할 규칙은 아래 |
 | 6 합의 검증 | `Skill("banker:ralph-qa")` | `$banker-ralph-qa`(플러그인 길 `$banker:ralph-qa`) |
-| 7 시각 판정 에이전트 | `Plan` 유형, `model` 없이 | `spawn_agent`, 역할과 `model` 없이 |
+| 7 시각 판정 에이전트 | 판정자 `<agents>` 명. `Plan` 유형, `model` 없이 | 판정자 `<agents>` 명. `spawn_agent`, 역할과 `model` 없이 |
 | 질문 | `AskUserQuestion` | `request_user_input`. 없으면 번호 붙인 평문 선택지 |
 | 오래 도는 명령 | Bash `run_in_background`, 멈출 때 `TaskStop` | `exec_command` 를 `tty: true` 로 띄우고 `write_stdin` 으로 출력을 받음. 멈출 때 그 세션에 `write_stdin` 으로 Ctrl-C(`\u0003`). `tty` 없이 띄운 작업은 PID 로 멈춤 |
 | 켜진 모드 확인과 끄기 | `state_list_active`, `/oh-my-claudecode:cancel` | `omx state list-active --json`, `$cancel` |
@@ -66,7 +71,8 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 실행 기록 기본 폴더 | `.omc/ultra-chain/` | `.omx/ultra-chain/` |
 
 - Codex 에는 Skill 도구가 없다. 위 표의 `$이름` 은 그 스킬의 `SKILL.md` 를 읽고 그대로 따른다는 뜻이다. banker 스킬은 npm 설치면 `<S>/../banker-<이름>/SKILL.md`, Codex 플러그인 설치(`<S>` 가 `plugins/cache/` 아래, 스킬 이름 `banker:<이름>`)면 `<S>/../<이름>/SKILL.md` 다. 표의 `$banker-<이름>` 은 플러그인 설치에서 `$banker:<이름>` 이다. OMX 스킬은 `~/.codex/skills/<이름>/SKILL.md` 다. 그 스킬이 상태 기록을 요구하면 그 지시대로 직접 기록한다. 큰 `SKILL.md`(ralph-qa 는 약 71KB)는 셸 출력 한도에서 잘리니 나눠 읽는다.
-- Codex 의 하위 에이전트(critic, 시각 판정)는 저자 대화를 넘기지 않는다. multi-agent v2 는 `fork_turns="none"` 을 주고, v1 은 `fork_context` 를 주지 않는다. 판정을 받으면 `close_agent` 로 닫는다.
+- Codex 의 하위 에이전트(critic 좌석, 시각 판정자)는 저자 대화를 넘기지 않는다. multi-agent v2 는 `fork_turns="none"` 을 주고, v1 은 `fork_context` 를 주지 않는다. 판정을 받으면 `close_agent` 로 닫는다.
+- Codex 의 동시 하위 에이전트 한도보다 `<agents>` 가 크면 나눠 띄우고, 모두 받은 뒤 합친다.
 - Codex 환경 지시가 역할(`agent_type`)을 요구하면, 고정 모델이 세션 모델과 같은 역할을 쓰고 지시 앞머리에 파일 쓰기 금지를 적는다. 그런 역할이 없으면 역할 없이 띄운다. 쓴 역할과 모델, 강도를 판정 기록의 `note` 에 적는다.
 - **Codex 의 tmux 밖 실행.** OMX 의 런타임 워크플로(`ralph`, `team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
 - Codex 의 오래 도는 명령은 기다리는 시간을 박스 `--timeout` 보다 길게 둔다. 기다리다 끊기면 박스 정리와 결과 JSON 이 남지 않는다.
@@ -101,7 +107,8 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | `<g>` | 게이트 기록 폴더. 5단계 1에서 `node "<rq>/gate-evidence.mjs" init` 이 낸 `dir`(`ralph-qa-gates.<영숫자>`)다. 경로는 `05-baseline.md` 첫 줄에 있다. 9단계까지 남고, 어느 cleanup 의 하루 규칙도 지우지 않는다 |
 | `<run>` | 0단계에서 만든 실행 폴더 절대경로 |
 | `<base>` | 0단계에서 기록한 기준 커밋. 깨끗한 트리면 `HEAD`, 기존 변경을 두고 진행하면 `git stash create` 가 낸 커밋. ralph-qa 와 critic 이 만드는 diff 의 기준이다 |
-| `<agents>`, `<max>` | `--agents`, `--max` 값(기본 3, 5) |
+| `<agents>` | `run.json` 의 `agents`(`--agents`, 미지정 시 3). 3단계와 6단계 ralph-qa `--agents`, 5단계 critic 좌석 수, 7단계 판정자 수 |
+| `<max>` | `--max` 값(기본 5) |
 | `<k>` | 6단계 회차. 회차를 시작할 때(6단계 1) 한 번 정하고, 그 회차의 시험, 박스, 판정 기록에 모두 같은 값을 쓴다. 값은 그때 `show` 의 `qa.maxRound` 다음 번호다. 실행 전체에서 이어 센다 |
 | `<view>` | 목업 보기 이름. 영문 소문자, 숫자, `-` 만 쓴다(캡처 파일 이름이 된다) |
 
@@ -130,10 +137,11 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 모든 단계는 실행 폴더 하나에 산출물과 기록을 남긴다. 시각은 스크립트가 찍고, 모델이 적지 않는다.
 
 ```bash
-node "<S>/references/chain-ledger.mjs" init --base .omc/ultra-chain --runtime claude --exclude
+node "<S>/references/chain-ledger.mjs" init --base .omc/ultra-chain --runtime claude --agents <agents> --exclude
 ```
 
 - Codex 는 `--base .omx/ultra-chain --runtime codex` 다.
+- `--agents` 는 사용자가 준 값만 넘긴다. 주지 않았으면 빼고, 스크립트가 `agents: 3`, `agentsSource: "default"` 를 쓴다. `run.json` 의 `agents` 가 이후 모든 단계의 `<agents>` 다.
 - 출력 JSON 의 `dir` 가 `<run>` 이다. `mock/expected`, `actual`, `visual`, `qa`, `boxes` 폴더가 함께 생긴다.
 - `ignored` 가 false 면 `--exclude` 가 기준 폴더(`/.omc/ultra-chain/`)를 저장소의 로컬 제외 파일(`.git/info/exclude`)에 넣는다. 추적되는 파일은 바꾸지 않는다. `excludeError` 가 있으면 넣지 못한 것이니 사용자에게 알린다.
 - `<run>/task.md` 를 파일 도구로 쓴다. 첫 줄은 받은 인자 줄 그대로, 다음 줄부터 작업 설명이다. 쓴 뒤 `node "<scan>" "<run>/task.md"` 로 비밀처럼 보이는 문자열을 찾는다. 걸린 값은 `[REDACTED]` 로 가리고 0건이 될 때까지 다시 검사한다. `02-spec.md` 의 사용자 답변 원문도 같다.
@@ -150,11 +158,12 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
 | `--status` | `started`, `done`, `failed`, `skipped`, `stopped`, `note`(회차와 중간 기록). `failed`, `skipped`, `stopped` 는 `reason` 이 있어야 한다 |
 | `artifacts` | `{label, path}`. `path` 는 실행 폴더 안 실제 파일의 상대 경로. 폴더는 넣지 않는다 |
 | `verdict` | `by`, `result` 는 필수. `result` 는 `APPROVE`, `ITERATE`, `REJECT`, `INCONCLUSIVE`, `PASS`, `FAIL`, `STOPPED` 중 하나 |
-| `verdict.seats` | `{id, lens, model, verdict}`. 좌석 `verdict` 는 `APPROVE`, `ITERATE`, `REJECT`, `ERROR` |
+| `verdict.seats` | `{id, lens, model, verdict}`. 좌석 `verdict` 는 `APPROVE`, `ITERATE`, `REJECT`, `ERROR`. 5단계 critic 기록(`by: "critic"`)의 `APPROVE`, `ITERATE` 는 좌석이 정확히 `<agents>` 개이고 id 가 `critic#1`..`critic#N` 이어야 한다. `APPROVE` 는 모든 좌석이 `APPROVE` 일 때만이다 |
 | `verdict.blockers` | `<좌석 id>: <내용>` 꼴의 글. 이어 하기에서 누가 낸 반대인지 되찾기 위해서다 |
 | `round` | 회차 기록과 그 회차의 판정 기록은 같은 번호를 쓴다(6단계는 `<k>`). ralph-qa 와 critic 의 회차에만 쓴다 |
 | `tests` | `{where, os, status, tests, pass, fail, skipped, note, log}`. `status` 는 `pass`, `fail`, `unverified` |
-| `visual` | `{name, mock, actual, score, verdict, intended, note}`. `verdict` 는 `pass`, `revise`, `fail`, `unverified`. `mock`, `actual` 은 `visual/` 아래 PNG 경로 |
+| `visual` | `{name, mock, actual, score, verdict, intended, note, judges}`. `verdict` 는 `pass`, `revise`, `fail`, `unverified`. `mock`, `actual` 은 `visual/` 아래 PNG 경로 |
+| `visual.judges` | `{id, score, verdict}` 최대 20. 판정자마다 하나. `verdict` 는 점수 규칙을 적용한 뒤의 판정이다. `pass` 인 보기는 판정자가 정확히 `<agents>` 명(`judge#1`..`judge#N`)이고 모두 `pass` 와 90점 이상이며, 보기의 `score` 는 그 최솟값이어야 한다 |
 | `checklist` | `{item, why, ref}`. 사람이 볼 것. `ref` 는 실행 폴더 안 실제 파일의 상대 경로만 쓴다. 절이나 줄 같은 설명은 `why` 에 쓴다 |
 
 - 판정 낱말 옮기기
@@ -162,7 +171,8 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
   - OMX critic 의 `OKAY` 는 `APPROVE`, `REJECT` 는 `ITERATE` 로 적는다.
   - 앉지 못한 외부 좌석은 `seats` 에서 빼고 사유를 `note` 에 쓴다.
   - 판정 에이전트의 `differences` 는 500자 안으로 줄여 `note` 에 쓴다.
-- 모르는 칸이나 틀린 값은 거부되고 종료 코드가 2 다. 메시지대로 고쳐 다시 기록한다.
+- 모르는 칸이나 틀린 값은 거부되고 종료 코드가 2 다. 메시지대로 고쳐 다시 기록한다. 좌석 수와 판정자 수의 검사는 `run.json` 에 `agents` 가 있는 실행에서만 한다. 그 칸이 없는 옛 실행 폴더는 검사 없이 받는다.
+- 스크립트는 좌석의 꼴(수, id, 전원 승인)만 검사한다. 좌석이 실제로 떴는지는 검사하지 못한다. 띄우지 않은 좌석을 적지 않는다.
 - 기록과 별도로, ralph-qa 의 보고 전문은 파일로 남긴다(3단계 `03-ralph-qa.md`, 6단계 `qa/ralph-qa-r<k>.md`). 압축 뒤에도 선언 블록을 옮길 수 있게 하기 위해서다.
 - 보고서는 없는 파일과 폴더를 링크하지 않고 글로 보인다. 그래도 링크가 되도록 실제 파일만 적는다.
 - 기록 명령(`event`, `boxes`)은 출력 JSON 의 `progress` 에 진행 줄을 준다(예: `[ultra-chain] 3/9 합의 계획: ralph-qa ITERATE 2회차`). 기록할 때마다 그 줄을 그대로 대화에 한 줄로 내고, 이어 하기 메모에도 덧붙인다. 진행 줄과 메모를 따로 지어 쓰지 않는다.
@@ -317,16 +327,20 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
      - 상태가 없으면 OMC 의 `RalphLoopState` 칸으로 쓴다: `active: true`, `iteration: 1`, `max_iterations: 10`, `started_at`(지금 ISO 시각), `prompt`(ralph 에 넘긴 인자를 500자 안으로), `session_id`, `project_path`(저장소 루트), `prd_mode: true`, `critic_mode: "critic"`. OMC 판이 바뀌었으면 그 판의 `src/hooks/ralph/loop.ts` 를 따른다.
      - `prd.json` 이 없으면 OMC 의 `PRD` 꼴(`src/hooks/ralph/prd.ts`)로 쓴다. 최상위 `project`(저장소 이름), `branchName`(지금 브랜치), `description`(작업 요약), `userStories` 는 빠지면 OMC 가 PRD 전체를 무효로 읽는다. 이야기마다 `id`, `title`, `description`, `acceptanceCriteria`(배열), `priority`(수), `passes: false` 를 넣는다. 위에서 정한 피드백 명령은 `feedbackCommands`, 품질 등급은 `repoQualityClass` 로 같은 파일에 넣는다. 빠지면 `omc ralph verify` 가 package.json 의 스크립트로 대신 돈다.
      - OMC 의 내부 모듈(`dist/` 아래)을 불러 PRD 나 상태를 만들지 않는다. 판이 다른 내부 API 를 부르게 된다. 이 확인과 고친 것을 `build` 의 `note` 에 적는다.
-3. ralph 가 끝까지 가게 둔다(검토자 승인, deslop, 회귀 확인, `/oh-my-claudecode:cancel`). ralph 의 cancel 은 구현 단계의 끝이지 연쇄의 끝이 아니다. ralph 가 아직 도는 동안 6단계를 시작하지 않는다. 끝나면 `.omc/state/sessions/<id>/prd.json`(`OMC_STATE_DIR` 이 있으면 그 아래)을 `<run>/05-prd.json` 으로 복사한다. ralph 의 반복 한도는 ralph 자신의 것이다. ralph 보고에서 실제로 승인한 검토자가 critic 인지 확인해 기록한다. Skill 경로로 켠 ralph 는 검토자 설정이 architect 로 남을 수 있다.
-4. Codex: `$ralph` 를 따른다. 2의 입력을 같이 넘기고, 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라고 적는다. 연쇄 전체의 목표(goal)를 완료로 바꾸지 말라고도 적는다. 이어서 critic 루프를 돈다.
-   - 런타임 대응 절의 방법으로 critic 을 띄운다. 역할 `critic` 의 고정 모델이 세션 모델과 같으면 그 역할을 쓰고, 아니면 런타임 대응 절의 역할 규칙을 따른다. 지시 앞머리에 파일 쓰기 금지를 적는다.
+3. ralph 가 끝까지 가게 둔다(검토자 승인, deslop, 회귀 확인, `/oh-my-claudecode:cancel`). ralph 의 cancel 은 구현 단계의 끝이지 연쇄의 끝이 아니다. ralph 가 아직 도는 동안 6단계를 시작하지 않는다. 끝나면 `.omc/state/sessions/<id>/prd.json`(`OMC_STATE_DIR` 이 있으면 그 아래)을 `<run>/05-prd.json` 으로 복사한다. ralph 의 반복 한도는 ralph 자신의 것이다. ralph 보고에서 실제로 승인한 검토자가 critic 인지 확인해 기록한다. Skill 경로로 켠 ralph 는 검토자 설정이 architect 로 남을 수 있다. ralph 의 승인은 `build` 에 `note` 하나로 `verdict.by: "ralph-reviewer"` 로 기록한다(좌석 수 검사 대상이 아니다). 이어서 5의 critic 좌석 루프를 돈다.
+4. Codex: `$ralph` 를 따른다. 2의 입력을 같이 넘기고, 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라고 적는다. 연쇄 전체의 목표(goal)를 완료로 바꾸지 말라고도 적는다. ralph 의 승인은 3과 같이 `verdict.by: "ralph-reviewer"` 로 기록한다. 이어서 5의 critic 좌석 루프를 돈다.
+5. critic 좌석 루프(두 런타임 공통). ralph 의 critic 은 1명 고정이고 ralph 가 끝나면 다시 판정할 수 없어서, ralph 가 끝난 뒤 이 스킬의 좌석 `<agents>` 개로 다시 판정한다.
+   - 좌석 `critic#1`..`critic#<agents>` 를 런타임 대응 표의 5 critic 좌석 에이전트로 띄운다. Claude Code 는 `Agent` 의 `Plan` 유형을 `model` 없이(읽기 전용 도구, 세션 모델) 쓴다. Codex 는 `spawn_agent` 이고, 역할 `critic` 의 고정 모델이 세션 모델과 같으면 그 역할을 쓰고, 아니면 런타임 대응 절의 역할 규칙을 따른다. 지시 앞머리에 파일 쓰기 금지를 적는다.
+   - Agent 도구나 `Plan` 유형을 띄울 수 없으면(Codex 는 하위 에이전트 기능이 꺼짐) 한 맥락이 좌석을 연기하지 않는다. 그 회차를 `INCONCLUSIVE` 로 기록하고 멈춘다(ralph-qa 의 "띄울 수 없으면 흉내 내지 않는다" 와 같은 규칙).
    - 입력: 새 파일을 포함한 diff, `03-plan.md`, 수용 기준, 시험 출력 원문. diff 는 ralph-qa 의 외부 좌석 전송 2단계(임시 인덱스 사본)로, `<base>` 를 기준으로 만든다.
-   - 출력 꼴을 고정한다: 단독 줄 `VERDICT: APPROVE` 나 `VERDICT: ITERATE`, 그 아래 번호 붙은 고칠 목록.
-   - 2회차부터는 앞 회차 목록을 주고 항목마다 해소 여부를 판정하게 한다. 회차마다 `build` 에 `note`(`verdict.by: "critic"`)를 남긴다.
-   - `<max>` 회 안에 `APPROVE` 가 아니면 멈추고 보고한다.
-5. 게이트
-   - Claude Code: 모든 PRD 이야기 통과, critic `APPROVE`.
-   - Codex: 계획의 모든 단계와 수용 기준이 시험 출력으로 확인되고 critic `APPROVE`.
+   - 출력 꼴을 고정한다: 단독 줄 `VERDICT: APPROVE` 나 `VERDICT: ITERATE`, 그 아래 번호 붙은 고칠 목록. 꼴이 어긋나면 그 좌석은 `ERROR` 다.
+   - 회차마다 `build` 에 `note` 하나를 남긴다: `round`, `verdict.by: "critic"`, `verdict.seats` 는 좌석 `<agents>` 개, `verdict.blockers` 는 `critic#<i>: <내용>`. 합치기는 전원 승인이다. 모든 좌석이 `APPROVE` 면 `APPROVE`, 하나라도 `ITERATE` 면 `ITERATE` 다. 기록 스크립트가 좌석 수, id, 전원 승인을 검사하고 어긋나면 종료 2 로 거부한다.
+   - `ITERATE` 면 고친 뒤 같은 좌석 id 로 다시 띄운다. 2회차부터는 그 좌석이 낸 앞 회차 목록을 주고 항목마다 해소 여부를 판정하게 한다. 끈끈한 반대는 그 좌석의 재판정으로만 풀린다.
+   - 다시 띄울 수 없는 좌석(좌석 상실)은 좌석 `verdict: "ERROR"` 로 남기고 그 회차 판정은 `INCONCLUSIVE` 다.
+6. 게이트
+   - 마지막 critic 회차의 좌석 `<agents>` 개가 모두 `APPROVE`(두 런타임).
+   - Claude Code 는 모든 PRD 이야기 통과도 함께 본다. Codex 는 계획의 모든 단계와 수용 기준이 시험 출력으로 확인되는지도 함께 본다.
+   - critic 좌석 루프가 `INCONCLUSIVE` 이거나 `<max>` 회 안에 전원 승인하지 않으면 멈추고 보고한다.
    - 같은 문제가 3회 되풀이되거나 자격 증명, 외부 의존이 막으면 멈추고 보고한다. 부서진 구현으로 6단계를 돌리지 않는다.
 
 ## 6. OS 시험과 합의 검증
@@ -388,10 +402,14 @@ ralph-qa 의 검토자는 시험을 직접 돌리지 않는다. 이 머신의 �
    - 프로젝트 자신의 Playwright 를 쓰려면 `--playwright-from-project` 를 준다. 그 프로젝트의 코드를 실행하므로 사용자 저장소일 때만 쓴다.
    - URL 은 loopback(`localhost`, `127.0.0.1`, `[::1]`)만 찍는다. 다른 주소는 사용자가 그 주소를 지정했을 때만 `--allow-remote` 로 찍는다.
    - `--skip=mock` 이면 비교할 목업이 없다. 실제 화면만 찍어 보고서에 싣고, 보기마다 `visual` 에 `verdict: "unverified"` 와 "목업 없음" 을 적어 `checklist` 에 넣는다.
-3. 시각 판정: 구현에 관여하지 않은 새 에이전트에게 맡긴다(런타임 대응 표). 지시 앞머리에 파일 쓰기 금지를 적는다. Codex 는 PNG 를 `view_image` 로 연다.
+3. 시각 판정: 구현에 관여하지 않은 새 판정자 `judge#1`..`judge#<agents>` 에게 맡긴다(런타임 대응 표, 5단계 5와 같은 방법). 지시 앞머리에 파일 쓰기 금지를 적는다. Codex 는 PNG 를 `view_image` 로 연다.
+   - 비용 완화: 판정자 한 명에게 그 회차의 모든 보기를 한 번에 준다. 회차마다 에이전트는 `<agents>` 개이고, 보기 수만큼 늘지 않는다.
    - 입력: 보기마다 목업 PNG 와 실제 PNG, 그 보기의 수용 기준
-   - 출력: 보기마다 JSON 한 줄. `{"name", "score": 0~100, "verdict": "pass|revise|fail", "differences": [...]}`
+   - 출력: 판정자마다, 보기마다 JSON 한 줄. `{"name", "score": 0~100, "verdict": "pass|revise|fail", "differences": [...]}`
    - 판정은 점수로 한다. 90점 이상이 통과다. `verdict` 와 점수가 어긋나면 점수를 따른다. 다만 아래의 잘림 때문에 낸 `revise` 는 점수와 관계없이 `revise` 다.
+   - 합치기는 전원 승인이다. 모든 판정자가 90점 이상이면 그 보기는 `pass` 이고, `score` 는 판정자 점수의 최솟값이다. 잘림 `revise` 가 하나라도 있으면 아래 잘림 규칙을 따른다. 응답 꼴이 어긋난 판정자는 `unverified` 이고 그 보기는 통과가 아니다.
+   - 판정자마다 `visual` 의 `judges` 에 `{id, score, verdict}` 를 남긴다. `verdict` 는 점수 규칙을 적용한 뒤의 판정이다. 기록 스크립트가 `pass` 인 보기의 판정자 수, id, 점수, 최솟값을 검사한다.
+   - 판정자를 띄울 수 없으면 보기마다 `verdict: "unverified"` 와 사유를 적고 `checklist` 에 넣는다. 통과로 적지 않는다.
    - 판정자 지시에 "잘려서 보이지 않는 수용 기준이 있으면 점수와 관계없이 `revise` 로 하고 `differences` 에 무엇이 잘렸는지 적는다" 를 넣는다. 그런 보기는 `--full` 로 한 번 다시 찍어 다시 판정받는다. 이미 `--full` 로 찍었으면 다시 찍지 않고 바로 아래처럼 미검증으로 적는다. 다시 찍어도 잘리면 `visual` 에 `verdict: "unverified"` 로 적고 `checklist` 에 넣는다. 보이지 않는 것을 통과로 적지 않는다. 잘림만으로 낸 `revise` 는 아래 4의 결함 순환에 넣지 않고, 보이는 부분에 결함이 따로 있으면 그 몫은 4로 보낸다.
    - `visual` 에 기록한다: `mock` 은 `visual/mock-<view>.png`, `actual` 은 `visual/actual-<view>.png`.
 4. 90점 미만이면(잘림만으로 낸 경우는 빼고) 연쇄가 차이를 나눈다.
@@ -446,6 +464,8 @@ node "<S>/references/chain-report.mjs" "<run>"
    - 끊긴 실행을 `note` 로 `INCONCLUSIVE`(압축으로 좌석 상실)로 기록한다. 이 기록의 `verdict.blockers` 에 앞 판정의 blocker 를 좌석 id 와 함께 그대로 옮겨 적는다. 그래야 다시 압축돼도 `show` 의 `lastVerdict` 에서 되찾는다.
    - 새 실행을 한 번만 연다. 앞 실행의 `blockers` 는 낸 좌석과 함께 `AC-carry-1`, `AC-carry-2` 처럼 수용 기준에 넣는다. 저자의 "고쳤다" 는 그 수용 기준을 풀지 못한다. 새 실행의 판정으로만 풀린다.
    - 새 실행도 `INCONCLUSIVE` 면 멈추고 사람의 판단을 받는다.
+   - 끊긴 5단계 critic 좌석 루프와 7단계 판정도 되살리지 않는다. 같은 방법으로 앞 실행을 `INCONCLUSIVE`(압축으로 좌석 상실)로 기록하고, 앞 회차 blocker 를 좌석 id 와 함께 `AC-carry-n` 으로 이월해 새 좌석 루프나 새 판정을 연다.
+   - 검토자 수는 `show` 의 `agents` 다. 이어 하기에서 받은 다른 `--agents` 는 쓰지 않고 그 사실을 `checklist` 에 남긴다. 옛 실행 폴더(`agents` 가 `null`)는 3으로 이어 간다.
 5. 회차는 `maxRound` 다음 번호로 이어 센다. 앞 회차 파일을 덮어쓰지 않는다. `--max` 는 남은 횟수만 쓴다.
 6. 판정이 없는 회차(그 번호의 시험이나 박스 기록은 있는데 같은 번호의 판정 기록이 없음)는 새 번호로, 지금 트리로 시험부터 다시 한다.
 7. 5단계에서 이을 때
@@ -458,13 +478,13 @@ node "<S>/references/chain-report.mjs" "<run>"
 
 | 플래그 | 효과 | 기본 |
 |---|---|---|
-| `--agents=N` | 3단계와 6단계 ralph-qa 의 내부 검토자 수(3 이상) | 3 |
+| `--agents=N` | 모든 독립 판정의 검토자 수: 3단계와 6단계 ralph-qa 의 내부 좌석, 5단계 critic 좌석, 7단계 시각 판정자. 3 미만은 3으로 올리고 17 초과는 거부한다. 미지정 시 3이고 `run.json` 에 `agents: 3`, `agentsSource: "default"` 로 남는다. 비용: 5단계와 7단계는 회차마다 에이전트 N개를 띄우므로 `--agents=17` 이면 크게 는다 | 3 |
 | `--codex`, `--gemini`, `--opencode` | ralph-qa 의 외부 좌석. 값이 있으면 그 모델 | 없음 |
 | `--boxes=all\|none\|<이름,...>` | 6단계에 쓸 박스. 이름은 쉼표로 잇고, 명령에는 `--box <이름>` 으로 하나씩 붙인다 | all(등록되고 접속되는 것) |
 | `--skip=<단계,...>` | `research`, `mock`, `visual` 만 건너뛸 수 있다. `skipped` 와 이유를 기록한다. `mock` 을 건너뛰면 사람 승인 없이 구현하고 `checklist` 에 남긴다. `visual` 을 건너뛰면 기계 대조도 하지 않고 `checklist` 에 남긴다 | 없음 |
 | `--run=<폴더> --from=<단계>` | 그 실행 폴더에서 그 단계부터 이어 함 | 새 실행 |
 | `--auto` | 사람에게 묻지 않는다. 사람이 보는 곳 표의 `--auto` 열대로 하고, 묻지 않고 지나간 것은 모두 `checklist` 에 남긴다 | 꺼짐 |
-| `--max=N` | 3단계와 6단계 ralph-qa, Codex critic 루프의 최대 회차 | 5 |
+| `--max=N` | 3단계와 6단계 ralph-qa, 5단계 critic 좌석 루프(두 런타임)의 최대 회차 | 5 |
 
 ## 멈추는 조건
 
@@ -472,7 +492,7 @@ node "<S>/references/chain-report.mjs" "<run>"
 - 2단계: 진전 없이 2회, `--auto` 에서 보수적인 쪽이 없는 핵심 P.
 - 3단계: ralplan 5회 무합의, ralph-qa `INCONCLUSIVE` 나 한도 소진.
 - 4단계: 사용자가 `멈춤` 을 고름.
-- 5단계: ralph 근본 차단, Codex critic 이 `<max>` 회 안에 승인하지 않음.
+- 5단계: ralph 근본 차단, critic 좌석 루프가 `INCONCLUSIVE` 이거나 `<max>` 회 안에 전원 승인하지 않음(두 런타임).
 - 6단계: ralph-qa `INCONCLUSIVE` 나 한도 소진.
 - 사용자가 멈추라고 하면 켜진 모드를 끄고(런타임 대응 표) `stopped` 와 이유를 기록한다.
 
@@ -483,6 +503,7 @@ STOPPED 뒤에는 한 줄 수정을 포함해 어떤 파일도 고치지 않는�
 ## 함정
 
 - ralplan 의 Architect 와 Critic 은 둘이다. 이 둘을 "검토자 3명" 으로 세지 않는다. 3명 이상은 3단계 4의 ralph-qa 가 채운다.
+- ralph 의 자체 승인(`ralph-reviewer`)은 5단계 게이트가 아니다. 게이트는 ralph 뒤 critic 좌석 `<agents>` 개의 전원 승인이다.
 - ralph-qa 의 검토자는 시험을 돌리지 않는다. 로컬 게이트는 실행기 기록, OS 는 박스 결과가 증거다. 박스 결과 없이 판정받으면 OS 검증이 빠진다.
 - 반복 0 기준선을 구현 뒤 트리에서 돌리면 이번 변경이 만든 실패가 기준선 실패로 갈려 게이트가 통과한다. 반복 0 은 5단계 1에서만 돌린다.
 - 추적하지 않는 새 파일은 박스로 가지 않는다. 6단계 1의 스테이징을 빼먹으면 새 시험이 박스에서 돌지 않는다.
