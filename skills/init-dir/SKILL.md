@@ -17,7 +17,7 @@ argument-hint: "[apply|status] [--only=<폴더,...>] [--follow-symlink] [--dry-r
 | `work/` | 사용자와 상호작용하는 작업공간. 사용자가 에이전트에게 줄 파일을 둠 |
 | `mockup/` | 목업 파일 관리 |
 | `tests/` | 단위, 통합 시험 스크립트와 결과를 간결하게 출력하는 실행기 |
-| `docs/` | 문서 관리 |
+| `docs/` | 문서를 관리하는 영역. evidence와 ADR도 포함하여 보관한다. |
 | `KB/` | knowledge base. OMC, OMX 위키 밖에서 사용자가 알아야 할 내용을 두는 2차 위키 |
 
 ## 언제 쓰나
@@ -94,7 +94,7 @@ argument-hint: "[apply|status] [--only=<폴더,...>] [--follow-symlink] [--dry-r
 | `work/` | `README.md`(비밀값을 두지 말 것. 커밋 전 git-init 이나 audit-security 스캔이 잡음) |
 | `mockup/` | `README.md` |
 | `tests/` | `run.sh`, `run.cmd`, `run.mjs`, `tests.conf`(`unit=`, `integration=`), `unit/`, `integration/`, `README.md` |
-| `docs/` | `README.md` |
+| `docs/` | `README.md`(evidence 와 ADR 보관 안내, 하위 폴더 뜻), `evidence/`, `adr/`(빈 `.gitkeep`) |
 | `KB/` | `README.md`(2차 위키의 대상과 색인 규칙) |
 
 - `work/`, `mockup/` 는 git 에서 빼지 않는다

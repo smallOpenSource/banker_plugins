@@ -22,7 +22,7 @@ export const PURPOSES = {
   mockup: "목업 파일을 관리하는 공간",
   tests:
     "단위 시험(`tests/unit/`)과 통합 시험(`tests/integration/`) 스크립트. `./tests/run.sh`(Windows `tests\\run.cmd`)가 스위트마다 한 줄로 결과를 간결하게 출력. 스위트 명령은 `tests/tests.conf`",
-  docs: "문서를 관리하는 영역",
+  docs: "문서를 관리하는 영역. evidence와 ADR도 포함하여 보관한다.",
   KB: "knowledge base. OMC 나 OMX 위키 밖에서 사용자가 알고 있어야 할 내용을 보관하는 2차 위키. 색인은 `KB/README.md`",
 };
 
@@ -37,7 +37,7 @@ const FILES = {
   work: ["README.md"],
   mockup: ["README.md"],
   tests: ["run.sh", "run.cmd", "run.mjs", "tests.conf", "README.md", { to: "unit/.gitkeep" }, { to: "integration/.gitkeep" }],
-  docs: ["README.md"],
+  docs: ["README.md", { to: "evidence/.gitkeep" }, { to: "adr/.gitkeep" }],
   KB: ["README.md"],
 };
 

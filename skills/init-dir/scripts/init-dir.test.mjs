@@ -261,3 +261,75 @@ test("status reports folders and block state without writing", () => {
   const stale = JSON.parse(cli(["status", "--root", root, "--json"]).stdout);
   assert.deepEqual(stale.instructions, [{ file: "CLAUDE.md", status: "stale" }]);
 });
+
+// US-9: the docs purpose and docs/evidence/, docs/adr/.
+const OLD_DOCS = "- `docs/`: 문서를 관리하는 영역";
+const NEW_DOCS = "- `docs/`: 문서를 관리하는 영역. evidence와 ADR도 포함하여 보관한다.";
+// The block commit 558ce77 wrote for a project with docs/ only (byte for byte).
+const OLD_BLOCK = [
+  START,
+  "## 프로젝트 폴더 (banker init-dir)",
+  "",
+  "이 프로젝트의 관리 폴더와 목적. 해당하는 파일은 그 폴더에 둔다. 이 블록은 init-dir 이 다시 쓴다(직접 고치지 않음).",
+  "",
+  OLD_DOCS,
+  "<!-- banker:init-dir:end -->",
+  "",
+].join("\n");
+const OLD_DOCS_README = "# docs\n\n프로젝트 문서를 관리하는 폴더. banker init-dir 이 만든 틀이다.\n\n- 설계, 사용법, 운영 절차, 결정 기록을 둔다\n- 문서 하나에 주제 하나. 파일 이름은 주제를 드러내게 짓는다\n";
+
+test("US-9 AC2: empty folder, --only=docs makes docs/README.md, empty evidence/.gitkeep and adr/.gitkeep; the block has the new docs line", () => {
+  const root = project();
+  const r = apply(root, "--runtime", "claude", "--only=docs");
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(read(join(root, "docs", "README.md")).includes("`docs/adr/`"));
+  for (const keep of [["evidence", ".gitkeep"], ["adr", ".gitkeep"]]) assert.equal(readFileSync(join(root, "docs", ...keep)).length, 0, keep.join("/"));
+  assert.match(r.stdout, /\| `docs\/evidence\/\.gitkeep` \| 만듦 \|/);
+  const claude = read(join(root, "CLAUDE.md"));
+  assert.equal(count(claude, NEW_DOCS), 1);
+  assert.equal(claude.split("\n").includes(OLD_DOCS), false);
+});
+
+test("US-9 AC3: an existing docs/ with a file gets no evidence/ or adr/, only its purpose", () => {
+  const root = project();
+  mkdirSync(join(root, "docs"));
+  writeFileSync(join(root, "docs", "design.md"), "# design\n");
+  const r = apply(root, "--runtime", "claude");
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readdirSync(join(root, "docs")), ["design.md"]);
+  assert.match(r.stdout, /\| `docs\/` \| 있음\(목적만 전달\) \|/);
+  assert.match(read(join(root, "CLAUDE.md")), new RegExp(`^${NEW_DOCS.replace(/[.()`]/g, "\\$&")}$`, "m"));
+});
+
+test("US-9 AC4: an old 558ce77 block in CLAUDE.md and AGENTS.md: --only=docs changes only the docs line; the second run changes no byte", () => {
+  const root = project();
+  const oldClaude = `# claude\n\n${OLD_BLOCK}`;
+  const oldAgents = `# mine\n${POLICY_OPEN}\nkeep me\n${POLICY_CLOSE}\n\n${POLICY_OPEN}\n${OLD_BLOCK}${POLICY_CLOSE}\n`;
+  writeFileSync(join(root, "CLAUDE.md"), oldClaude);
+  writeFileSync(join(root, "AGENTS.md"), oldAgents);
+  mkdirSync(join(root, "docs"));
+  writeFileSync(join(root, "docs", "README.md"), OLD_DOCS_README);
+  const r = apply(root, "--runtime", "claude", "--only=docs");
+  assert.equal(r.status, 0, r.stderr);
+  const swap = (text) => text.replace(`\n${OLD_DOCS}\n`, `\n${NEW_DOCS}\n`);
+  assert.equal(read(join(root, "CLAUDE.md")), swap(oldClaude));
+  assert.equal(read(join(root, "AGENTS.md")), swap(oldAgents));
+  assert.equal(count(read(join(root, "AGENTS.md")), POLICY_OPEN), 2);
+  assert.equal(read(join(root, "docs", "README.md")), OLD_DOCS_README);
+  assert.deepEqual(readdirSync(join(root, "docs")), ["README.md"]);
+  const before = snapshot(root);
+  const again = apply(root, "--runtime", "claude", "--only=docs");
+  assert.equal(again.status, 0, again.stderr);
+  assert.deepEqual(snapshot(root), before);
+  assert.match(again.stdout, /\| `AGENTS\.md` \| 변경 없음 \|/);
+  assert.match(again.stdout, /\| `CLAUDE\.md` \| 변경 없음 \|/);
+  assert.equal(again.stdout.includes("만듦"), false);
+});
+
+test("US-9 AC5: the purpose summary and --json carry the new docs purpose", () => {
+  const root = project();
+  const text = apply(root, "--runtime", "claude", "--only=docs").stdout.trimEnd().split("\n");
+  assert.deepEqual(text.slice(text.indexOf("폴더 목적 요약") + 1), [NEW_DOCS]);
+  const rep = JSON.parse(apply(root, "--runtime", "claude", "--json").stdout);
+  assert.equal(rep.summary.find((s) => s.folder === "docs").purpose, "문서를 관리하는 영역. evidence와 ADR도 포함하여 보관한다.");
+});

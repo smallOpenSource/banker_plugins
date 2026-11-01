@@ -30,7 +30,7 @@ const EXPECTED = {
   work: ["work/README.md"],
   mockup: ["mockup/README.md"],
   tests: ["tests/run.sh", "tests/run.cmd", "tests/run.mjs", "tests/tests.conf", "tests/README.md", "tests/unit/.gitkeep", "tests/integration/.gitkeep"],
-  docs: ["docs/README.md"],
+  docs: ["docs/README.md", "docs/evidence/.gitkeep", "docs/adr/.gitkeep"],
   KB: ["KB/README.md"],
 };
 
@@ -111,4 +111,13 @@ test("block body: same folders give the same bytes, listed in folder order, no m
   assert.ok(lines[0].startsWith("- `logs/`:"));
   assert.ok(lines[1].startsWith("- `KB/`:"));
   assert.equal(/<!--|USER:OMX:POLICY/.test(blockBody(FOLDERS)), false);
+});
+
+test("US-9 AC1: docs purpose is the user text byte for byte; docs gets README.md and empty evidence/, adr/ keep files", () => {
+  assert.ok(Buffer.from(PURPOSES.docs, "utf8").equals(Buffer.from("문서를 관리하는 영역. evidence와 ADR도 포함하여 보관한다.", "utf8")));
+  assert.equal(summaryLines(["docs"])[0], "- `docs/`: 문서를 관리하는 영역. evidence와 ADR도 포함하여 보관한다.");
+  const files = templateFiles("docs");
+  for (const keep of ["docs/evidence/.gitkeep", "docs/adr/.gitkeep"]) assert.equal(files.find((t) => t.rel === keep).data.length, 0, keep);
+  const readme = files.find((t) => t.rel === "docs/README.md").data.toString("utf8");
+  for (const rule of ["`docs/evidence/`", "`docs/adr/`", "evidence 와 ADR 도 여기에 보관", "progress-mon 의 ADR 탭"]) assert.ok(readme.includes(rule), rule);
 });
