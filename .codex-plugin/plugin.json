@@ -38,6 +38,7 @@
     "./skills/deep-init/",
     "./skills/deep-research/",
     "./skills/docs-setup/",
+    "./skills/git-init/",
     "./skills/humanizer/",
     "./skills/init-dir/",
     "./skills/interval-report/",

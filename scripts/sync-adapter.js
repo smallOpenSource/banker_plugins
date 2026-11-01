@@ -10,8 +10,9 @@
  *   setup-bypass-permissions/scripts: codex-config.mjs                -> setup-omc-hud/assets (Codex config.toml line edits)
  *   hooks: progress-plan.mjs (repo root)                              -> codex/skills/progress/scripts (plan tree for the Codex progress skill)
  *   ralph-qa/references: gate-evidence.mjs, run-folder.mjs           -> ultraqa             (gate evidence, run folders; tests at the source)
- * marker-block.mjs (AGENTS.md / CLAUDE.md marked-block editor): source of truth is skills/init-dir/scripts/marker-block.mjs;
- *   tune-tmux and git-init will get copies, and their MIRRORS rows are added together with those copies.
+ *   init-dir/scripts: marker-block.mjs                                -> git-init/scripts    (marked-block editor for AGENTS.md, CLAUDE.md, .gitignore)
+ *   ralph-qa/references: payload-scan.mjs                             -> git-init/scripts    (secret scan before the first commit; tests at the source)
+ * tune-tmux also keeps a marker-block.mjs copy; its MIRRORS row is added when that skill is registered.
  * A pair without a root is under skills/; one with `root: true` names repo-root paths.
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
@@ -29,6 +30,8 @@ const MIRRORS = [
   { from: 'setup-bypass-permissions/scripts', to: 'setup-omc-hud/assets', files: ['codex-config.mjs'] },
   { from: 'hooks', to: 'codex/skills/progress/scripts', files: ['progress-plan.mjs'], root: true },
   { from: 'ralph-qa/references', to: 'ultraqa/references', files: ['gate-evidence.mjs', 'run-folder.mjs'] },
+  { from: 'init-dir/scripts', to: 'git-init/scripts', files: ['marker-block.mjs'] },
+  { from: 'ralph-qa/references', to: 'git-init/scripts', files: ['payload-scan.mjs'] },
 ];
 const check = process.argv.includes('--check');
 
