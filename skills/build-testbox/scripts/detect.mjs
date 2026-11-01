@@ -51,28 +51,42 @@ function coreDirOf(pwDir) {
   try { return dirname(createRequire(join(pwDir, "package.json")).resolve("playwright-core/package.json")); } catch { return null; }
 }
 
-// { info: { entry, dir, coreDir, version, from } } or { error }. The global npm root first; the project only with
-// --playwright-from-project (loading it runs that project's code). A bare import is not used.
-function findEntry(fromProject, cwd) {
+export const PLAYWRIGHT_DIR_ENV = "BUILD_TESTBOX_PLAYWRIGHT_DIR";
+
+// A folder given by --playwright-dir or BUILD_TESTBOX_PLAYWRIGHT_DIR (the folder that holds node_modules), or null.
+const givenDir = (dir, env) => dir || env[PLAYWRIGHT_DIR_ENV] || null;
+
+// { entry, from, base } or { missing } (where it looked). Order: a given folder (--playwright-dir, then
+// BUILD_TESTBOX_PLAYWRIGHT_DIR; no fallback when it lacks Playwright), the project only with --playwright-from-project
+// (loading it runs that project's code), then the global npm root. A bare import is not used.
+function findEntry(fromProject, cwd, dir, env) {
+  const base = givenDir(dir, env);
+  if (base) {
+    const entry = resolveFrom(base);
+    return entry ? { entry, from: "dir", base } : { missing: `--playwright-dir 또는 ${PLAYWRIGHT_DIR_ENV}: ${base}` };
+  }
   const projectEntry = fromProject ? resolveFrom(cwd) : null;
-  if (projectEntry) return { entry: projectEntry, from: "project" };
+  if (projectEntry) return { entry: projectEntry, from: "project", base: cwd };
   const root = globalRoot();
   const entry = root ? resolveFrom(root) : null;
-  return entry ? { entry, from: "global" } : null;
+  return entry ? { entry, from: "global", base: null } : { missing: `${fromProject ? "프로젝트, " : ""}전역 npm root` };
 }
 
-export function locatePlaywright(fromProject = false, cwd = process.cwd()) {
-  const found = findEntry(fromProject, cwd);
-  if (!found) return { error: `playwright 패키지가 없습니다(${fromProject ? "프로젝트, " : ""}전역 npm root)` };
-  const dir = packageDir(found.entry, "playwright");
-  if (!dir) return { info: { entry: found.entry, dir: null, coreDir: null, version: null, from: found.from } };
-  const version = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version;
-  const entry = existsSync(join(dir, "index.mjs")) ? join(dir, "index.mjs") : found.entry;
-  return { info: { entry, dir, coreDir: coreDirOf(dir), version, from: found.from } };
+// { info: { entry, dir, coreDir, version, from, base } } or { error }. from is dir, project or global; base is the
+// folder npx runs in for that Playwright (null for global).
+export function locatePlaywright(fromProject = false, cwd = process.cwd(), dir = null, env = process.env) {
+  const found = findEntry(fromProject, cwd, dir, env);
+  if (found.missing) return { error: `playwright 패키지가 없습니다(${found.missing})` };
+  const pkg = packageDir(found.entry, "playwright");
+  const at = { from: found.from, base: found.base };
+  if (!pkg) return { info: { entry: found.entry, dir: null, coreDir: null, version: null, ...at } };
+  const version = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")).version;
+  const entry = existsSync(join(pkg, "index.mjs")) ? join(pkg, "index.mjs") : found.entry;
+  return { info: { entry, dir: pkg, coreDir: coreDirOf(pkg), version, ...at } };
 }
 
-export async function loadPlaywright(fromProject = false) {
-  const loc = locatePlaywright(fromProject);
+export async function loadPlaywright(fromProject = false, dir = null) {
+  const loc = locatePlaywright(fromProject, process.cwd(), dir);
   if (loc.error) return loc;
   try {
     return { ...loc, pw: await importPlaywright(loc.info.entry) };
@@ -111,7 +125,7 @@ async function tartOf(host) {
 
 export async function detect(o) {
   const host = hostInfo();
-  const loaded = await loadPlaywright(o.fromProject);
+  const loaded = await loadPlaywright(o.fromProject, o.playwrightDir);
   const engines = await detectEngines();
   const engine = selectEngine(o.engine, engines);
   const playwright = loaded.info ? { found: !loaded.error, ...loaded.info, error: loaded.error } : { found: false, error: loaded.error };

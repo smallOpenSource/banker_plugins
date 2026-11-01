@@ -6,7 +6,14 @@ description: "이 PC 가 스스로 구성하는 범용 시험 환경. 서비스 
 # build-testbox: 브라우저 행렬과 컨테이너 OS 를 병렬로 돌리는 시험 환경
 
 이 스킬을 쓰는 PC, 서버, 세션이 자기 자원으로 시험 환경을 꾸린다. 특정 테스트박스를 전제하지 않는다.
-스크립트는 순수 Node 18+ 이고 의존성이 없다. Playwright 는 이 저장소의 의존성이 아니라 전역 설치(또는 `--playwright-from-project` 의 프로젝트 설치)를 찾아 불러온다.
+스크립트는 순수 Node 18+ 이고 의존성이 없다. Playwright 는 이 저장소의 의존성이 아니라 설치된 것을 찾아 불러온다. 찾는 순서는 아래와 같고, 앞의 것이 있으면 뒤는 보지 않는다.
+
+1. `--playwright-dir <폴더>`: `node_modules/playwright` 를 담은 폴더
+2. 환경 변수 `BUILD_TESTBOX_PLAYWRIGHT_DIR`: 1 과 같은 뜻
+3. `--playwright-from-project` 일 때 작업 폴더의 프로젝트 설치(그 프로젝트 코드가 돎)
+4. 전역 npm root
+
+1 이나 2 로 준 폴더에 Playwright 가 없으면 3, 4 로 넘어가지 않고 그 폴더를 적어 "없음" 으로 보고한다.
 답변은 한글.
 
 | 묶음 | 칸 | 엔진 |
@@ -65,7 +72,7 @@ description: "이 PC 가 스스로 구성하는 범용 시험 환경. 서비스 
 
 | 명령 | 내용 |
 |---|---|
-| `detect [--json] [--engine ...] [--os ...] [--image <os>=<이미지>] [--playwright-from-project]` | 호스트 OS, 아키텍처, Apple Silicon 여부, Playwright 위치와 판, 브라우저별 실제 headless 실행 결과(chromium 은 headless shell 과 전체 chromium 을 따로), 엔진(docker 가 podman 에뮬레이션인지), 로컬 이미지 유무(`image inspect`), Tart 와 VM 목록. 내려받지 않음 |
+| `detect [--json] [--engine ...] [--os ...] [--image <os>=<이미지>] [--playwright-from-project] [--playwright-dir <폴더>]` | 호스트 OS, 아키텍처, Apple Silicon 여부, Playwright 위치와 판, 브라우저별 실제 headless 실행 결과(chromium 은 headless shell 과 전체 chromium 을 따로), 엔진(docker 가 podman 에뮬레이션인지), 로컬 이미지 유무(`image inspect`), Tart 와 VM 목록. 내려받지 않음 |
 | `run [옵션]` | 브라우저 묶음과 컨테이너 묶음을 병렬 실행. 내려받지 않음 |
 | `setup [--images <os,...>] [--browsers <이름,...>] [--playwright-image] [--yes]` | `--yes` 가 없으면 받을 것과 대략 크기만 보이고 종료 0. 이름을 주지 않으면 로컬에 없는 기본 이미지와 빌드가 없는 브라우저가 대상 |
 
@@ -86,6 +93,7 @@ description: "이 PC 가 스스로 구성하는 범용 시험 환경. 서비스 
 | `--jobs N`, `--timeout <초>` | 묶음마다 동시 칸 수, 칸마다 시간 제한 | `min(4, CPU 수)`, 300 |
 | `--out <dir>` | 결과 폴더 | `./.testbox/<시각>` |
 | `--playwright-from-project` | 프로젝트 `node_modules` 의 Playwright(그 프로젝트 코드가 돎) | 꺼짐 |
+| `--playwright-dir <폴더>` | 이 폴더의 `node_modules/playwright` 를 씀. `detect`, `setup` 에도 씀. 환경 변수 `BUILD_TESTBOX_PLAYWRIGHT_DIR` 보다 앞 | 없음 |
 | `--allow-remote` | loopback 이 아닌 URL 도 엶 | 꺼짐 |
 | `--tart-vm <이름>`, `--json` | Tart VM 이름(없으면 첫 로컬 VM), 결과 JSON 한 줄 출력 | 꺼짐 |
 
@@ -153,7 +161,8 @@ description: "이 PC 가 스스로 구성하는 범용 시험 환경. 서비스 
 - `--yes` 는 받기 전에 원천마다 15초 안의 확인을 한다. 레지스트리는 `https://<호스트>/v2/`(docker.io 는 `registry-1.docker.io`, loopback 레지스트리는 http), 브라우저는 `PLAYWRIGHT_DOWNLOAD_HOST`(chromium 은 `PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST` 도) 또는 `https://cdn.playwright.dev`. 주소의 사용자 정보는 뗀다. HTTP 답이면 401, 404 도 닿은 것이다
 - 닿지 못한 원천의 항목은 받지 않고 `needs-network` 로 남긴다. `CODEX_SANDBOX_NETWORK_DISABLED=1` 이면 "Codex 샌드박스가 네트워크를 막음" 으로 구분한다
 - 받는 순서: 이미지(준 순서), 그다음 브라우저. 하나씩 받고, 받을 때마다 `image inspect` 나 실제 headless 실행으로 확인한다
-- 브라우저 설치는 `npx --no-install playwright install <이름>` 을 홈 폴더에서 실행한다(`--playwright-from-project` 면 작업 폴더)
+- 브라우저 설치는 `npx --no-install playwright install <이름>` 을 홈 폴더에서 실행한다(`--playwright-dir` 이나 `BUILD_TESTBOX_PLAYWRIGHT_DIR` 이면 그 폴더, `--playwright-from-project` 면 작업 폴더)
+- Playwright 패키지를 찾지 못하면 브라우저 항목은 받지 않고 `failed` 로 남기며(종료 1) 찾아본 곳을 적는다
 
 ## macOS
 

@@ -88,6 +88,7 @@ const VALUES = {
   "--out": (o, v) => { o.out = resolve(v); },
   "--tart-vm": (o, v) => { if (!VM_NAME.test(v)) throw new UsageError(`--tart-vm 이름이 맞지 않습니다: ${v}`); o.tartVm = v; },
   "--images": (o, v) => { o.setupImages = osOf(v); },
+  "--playwright-dir": (o, v) => { if (!String(v).trim()) throw new UsageError("--playwright-dir 가 비었습니다"); o.playwrightDir = resolve(v); },
 };
 
 const SWITCHES = {
@@ -96,15 +97,15 @@ const SWITCHES = {
 };
 
 const ALLOWED = {
-  detect: ["--json", "--engine", "--image", "--os", "--playwright-from-project"],
+  detect: ["--json", "--engine", "--image", "--os", "--playwright-from-project", "--playwright-dir"],
   run: ["--url", "--browsers", "--devices", "--browser-in-container", "--os", "--image", "--cmd", "--src", "--engine",
-    "--network", "--jobs", "--timeout", "--out", "--playwright-from-project", "--allow-remote", "--tart-vm", "--json"],
-  setup: ["--images", "--browsers", "--playwright-image", "--yes", "--engine", "--image", "--playwright-from-project", "--json"],
+    "--network", "--jobs", "--timeout", "--out", "--playwright-from-project", "--playwright-dir", "--allow-remote", "--tart-vm", "--json"],
+  setup: ["--images", "--browsers", "--playwright-image", "--yes", "--engine", "--image", "--playwright-from-project", "--playwright-dir", "--json"],
 };
 
 function defaults(command) {
   return {
-    command, json: false, yes: false, browserInContainer: false, playwrightImage: false, fromProject: false, allowRemote: false,
+    command, json: false, yes: false, browserInContainer: false, playwrightImage: false, fromProject: false, playwrightDir: null, allowRemote: false,
     urlArg: null, url: null, browsers: [...BROWSERS], browsersGiven: false, devices: null, os: ["rocky8", "rocky9"], images: {},
     cmd: "cat /etc/os-release", src: process.cwd(), engine: "auto", network: null,
     jobs: Math.max(1, Math.min(4, cpus().length || 1)), timeout: 300, out: null, tartVm: null, setupImages: null,

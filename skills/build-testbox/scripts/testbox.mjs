@@ -16,14 +16,17 @@ import { applySetup, planSetup, renderPlan, renderSetup, setupExitCode } from ".
 export const USAGE = `build-testbox: 브라우저 행렬과 컨테이너 OS 를 병렬로 돌리는 시험 환경(detect, run, setup)
 usage:
   node testbox.mjs detect [--json] [--engine auto|docker|podman] [--os <os,...>] [--image <os>=<이미지>] [--playwright-from-project]
+                          [--playwright-dir <폴더>]
   node testbox.mjs run [--url <loopback URL|파일>] [--browsers chromium,webkit] [--devices "<기기>,..."] [--browser-in-container]
                        [--os rocky8,rocky9,macos|none] [--image <os>=<이미지>] [--cmd "<명령>"] [--src <dir>]
                        [--engine auto|docker|podman] [--network bridge|none|host] [--jobs N] [--timeout <초>] [--out <dir>]
-                       [--playwright-from-project] [--allow-remote] [--tart-vm <이름>] [--json]
+                       [--playwright-from-project] [--playwright-dir <폴더>] [--allow-remote] [--tart-vm <이름>] [--json]
   node testbox.mjs setup [--images <os,...>] [--browsers <이름,...>] [--playwright-image] [--yes] [--engine ...] [--image <os>=<이미지>]
+                         [--playwright-dir <폴더>]
   detect  호스트, Playwright, 브라우저(실제 headless 실행), 엔진, 로컬 이미지, Tart. 내려받지 않음
   run     브라우저 묶음(--url 이 있을 때)과 컨테이너 묶음을 같은 순간에 시작. 내려받지 않음. 결과는 <out>/results.json, summary.md
   setup   --yes 가 없으면 받을 것과 크기만 보임. --yes 면 원천마다 15초 확인 뒤 받고 detect 와 같은 확인
+Playwright 찾는 순서: --playwright-dir, BUILD_TESTBOX_PLAYWRIGHT_DIR(둘 다 node_modules 를 담은 폴더), --playwright-from-project 의 프로젝트, 전역 npm root
 기본: --devices "Desktop Chrome,Pixel 7,Desktop Safari,iPhone 15", --os rocky8,rocky9, --cmd "cat /etc/os-release",
       --jobs min(4, CPU 수), --timeout 300, --out ./.testbox/<시각>
 exit(run): 0 모든 칸 pass, 1 fail 1칸 이상, 4 fail 없이 unverified 나 unsupported, 2 사용 오류, 3 내부 오류나 결과 쓰기 실패,
@@ -72,7 +75,7 @@ function notesOf(o, engines, engine) {
 }
 
 async function browserGroup(ctx) {
-  const loaded = await loadPlaywright(ctx.o.fromProject);
+  const loaded = await loadPlaywright(ctx.o.fromProject, ctx.o.playwrightDir);
   return runBrowserGroup({ ...ctx, pw: loaded.pw, pwInfo: loaded.info, pwError: loaded.error });
 }
 

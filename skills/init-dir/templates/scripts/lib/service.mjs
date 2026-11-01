@@ -23,6 +23,8 @@
  * are killed. With the supervisor gone, the child is stopped directly. Windows uses taskkill /T and, when the
  * grace time has passed, taskkill /T /F (stop and the supervisor alike).
  * If the supervisor dies the child may die of SIGPIPE at its next write; `status` reports both separately.
+ * On Windows the child is the shell, which dies with the supervisor (its job object); what the shell ran lives on
+ * and counts as the child when its parent is the recorded shell PID and its command line holds the command.
  *
  * Exit status: 0 done (status: supervisor and child running), 1 failed (died within the start check, could not
  * stop, status found it not fully running), 2 settings (command= empty, bad name, usage), 3 environment (the
@@ -191,6 +193,8 @@ function supervise(conf) {
   const warn = (text) => err?.write(Buffer.from(`service: ${text}\n`));
   const out = openLog(p.out, warn);
   err = openLog(p.err, warn);
+  // Not detached on Windows: a detached shell has no console, so what it runs gets a new console of its own (its
+  // output goes there, not into the logs). See orphanOf for what this costs when the supervisor dies.
   const child = spawn(conf.command, { shell: true, cwd: ROOT, detached: !WIN, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   child.stdout.on("data", (c) => out.write(c));
   child.stderr.on("data", (c) => err.write(c));
@@ -274,13 +278,29 @@ function staleWhy(cur) {
 // why a live PID could not be checked: the callers then stop with exit 1 and keep the pid file.
 function owned(cur) {
   const none = { supervisor: null, child: null, unknown: null };
-  if (!cur || (!alive(cur.supervisor) && !groupAlive(cur.child))) return none;
-  const stale = staleWhy(cur);
+  if (!cur) return none;
+  const orphan = !alive(cur.supervisor) && !groupAlive(cur.child) ? orphanOf(cur) : null;
+  const rec = orphan ? { ...cur, child: orphan } : cur;
+  if (!alive(rec.supervisor) && !groupAlive(rec.child)) return none;
+  const stale = staleWhy(rec);
   if (stale) {
     console.error(`PID 파일이 낡음(${stale}): 기록된 PID 에 신호를 보내지 않음`);
     return none;
   }
-  return checkLive(cur);
+  return checkLive(rec);
+}
+
+// Windows: the child is the shell (cmd.exe) in the supervisor's job object, so it dies with the supervisor, while
+// what it ran has left the job and lives on with the dead shell's PID as its parent. That process is the child
+// when its command line holds the recorded command. null elsewhere, or when none is found or readable.
+function orphanOf(cur) {
+  if (!WIN || !Number.isInteger(cur.child) || cur.child <= 0 || process.env.SERVICE_TEST_NO_CMDLINE === "1") return null;
+  const script = `Get-CimInstance Win32_Process -Filter "ParentProcessId=${cur.child}" | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }`;
+  const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 20000 });
+  if (r.error || r.status !== 0) return null;
+  const lines = r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const hit = lines.find((l) => isChild(cur.command)(l.slice(l.indexOf(" ") + 1)));
+  return hit ? Number.parseInt(hit, 10) : null;
 }
 
 function checkLive(cur) {
@@ -304,7 +324,7 @@ async function start(conf) {
     return 0;
   }
   if (own.child) {
-    console.error(`감독 없이 자식이 살아 있음(PID ${cur.child}). 먼저 stop 을 실행하세요`);
+    console.error(`감독 없이 자식이 살아 있음(PID ${own.child}). 먼저 stop 을 실행하세요`);
     return 1;
   }
   rmSync(p.pid, { force: true });
@@ -358,7 +378,7 @@ async function stop(conf) {
   terminate(own, false);
   const gone = (await waitGone(own, STOP_GRACE_MS)) || (terminate(own, true), await waitGone(own, 3000));
   if (!gone) {
-    console.error(`멈추지 못함: ${conf.name} (감독 PID ${cur.supervisor}, 자식 PID ${cur.child})`);
+    console.error(`멈추지 못함: ${conf.name} (감독 PID ${cur.supervisor}, 자식 PID ${own.child ?? cur.child})`);
     return 1;
   }
   rmSync(p.pid, { force: true });
@@ -381,7 +401,7 @@ function status(conf) {
   const child = own.child !== null;
   console.log(`서비스: ${conf.name}`);
   console.log(`감독: ${sup ? `실행 중 (PID ${cur.supervisor})` : "없음"}`);
-  console.log(`자식: ${child ? `실행 중 (PID ${cur.child})` : "없음"}`);
+  console.log(`자식: ${child ? `실행 중 (PID ${own.child})` : "없음"}`);
   console.log(`표준 출력 로그: ${logLine(p.out)}`);
   console.log(`표준 오류 로그: ${logLine(p.err)}`);
   return sup && child ? 0 : 1;

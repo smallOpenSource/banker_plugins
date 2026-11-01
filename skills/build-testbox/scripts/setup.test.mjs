@@ -1,13 +1,12 @@
 // setup tests with a fake engine and a fake npx. Nothing is downloaded: sources are local servers or closed ports.
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { probeBrowser } from "./browser-cell.mjs";
-import { loadPlaywright } from "./detect.mjs";
-import { calls, fakeBin, fakeEnv } from "../../../scripts/test-fixtures/testbox-fakes.mjs";
+import { calls, fakeBin, fakeEnv, fakePlaywrightDir, tempDir } from "../../../scripts/test-fixtures/testbox-fakes.mjs";
 import { downloadHosts, registryUrl, setupExitCode } from "./setup.mjs";
 
 const TESTBOX = fileURLToPath(new URL("./testbox.mjs", import.meta.url));
@@ -84,19 +83,37 @@ test("--yes with reachable sources: pull and verify each image in order, then in
   const server = createServer((q, s) => s.end());
   const port = await listen(server);
   const fake = fakeBin(["podman", "npx"]);
+  // A fake Playwright in a given folder: the run does not depend on whether this host has Playwright.
+  const pwDir = fakePlaywrightDir();
   try {
     const argv = ["setup", "--yes", "--images", "a,b", "--image", `a=127.0.0.1:${port}/a:1`, "--image", `b=127.0.0.1:${port}/b:1`, "--browsers", "chromium", "--engine", "podman"];
-    const r = await run(argv, fakeEnv(fake, { PLAYWRIGHT_DOWNLOAD_HOST: `http://127.0.0.1:${port}` }));
-    const seq = calls(fake).map((c) => `${c.tool} ${c.args.join(" ")}`).filter((s) => !s.endsWith("--version"));
-    assert.deepEqual(seq, [
+    const r = await run(argv, fakeEnv(fake, { PLAYWRIGHT_DOWNLOAD_HOST: `http://127.0.0.1:${port}`, BUILD_TESTBOX_PLAYWRIGHT_DIR: pwDir }));
+    const log = calls(fake).filter((c) => c.args.at(-1) !== "--version");
+    assert.deepEqual(log.map((c) => `${c.tool} ${c.args.join(" ")}`), [
       `podman pull 127.0.0.1:${port}/a:1`, `podman image inspect --format {{.Id}} 127.0.0.1:${port}/a:1`,
       `podman pull 127.0.0.1:${port}/b:1`, `podman image inspect --format {{.Id}} 127.0.0.1:${port}/b:1`,
       "npx --no-install playwright install chromium",
     ]);
-    const loaded = await loadPlaywright();
-    const chromiumRuns = Boolean(loaded.pw) && (await probeBrowser(loaded.pw, "chromium")).runnable;
-    assert.equal(r.status, chromiumRuns ? 0 : 1, r.stdout + r.stderr);
-    assert.match(r.stdout, chromiumRuns ? /ok 3, failed 0/ : /failed 1/);
+    assert.equal(realpathSync(log.at(-1).cwd), realpathSync(pwDir), "npx runs in the folder that holds that Playwright");
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /ok 3, failed 0/);
+  } finally {
+    server.close();
+  }
+});
+
+test("--yes with no Playwright where it was told to look: the browser step fails by name (exit 1), npx never runs", async () => {
+  const server = createServer((q, s) => s.end());
+  const port = await listen(server);
+  const fake = fakeBin(["podman", "npx"]);
+  const empty = tempDir("banker-testbox-nopw-");
+  try {
+    const argv = ["setup", "--yes", "--browsers", "chromium", "--engine", "podman"];
+    const r = await run(argv, fakeEnv(fake, { PLAYWRIGHT_DOWNLOAD_HOST: `http://127.0.0.1:${port}`, BUILD_TESTBOX_PLAYWRIGHT_DIR: empty }));
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /failed 1/);
+    assert.match(r.stdout, /playwright 패키지가 없습니다\(--playwright-dir 또는 BUILD_TESTBOX_PLAYWRIGHT_DIR: /);
+    assert.ok(!calls(fake).some((c) => c.tool === "npx"), "no npx without a Playwright package");
   } finally {
     server.close();
   }

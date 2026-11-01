@@ -2,11 +2,11 @@
 // calls they got. Each fake is a Node script behind a POSIX sh wrapper and a Windows .cmd wrapper.
 // Not shipped (scripts/ is outside package.json's files), so the npm package, the Codex install copy and the Codex
 // plugin's skills/build-testbox/ never carry it.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
-// The fake: appends {tool, args} to FAKE_LOG and answers by FAKE_MODE.
+// The fake: appends {tool, args, cwd} to FAKE_LOG and answers by FAKE_MODE.
 //   ok       image inspect 0, create prints an id, inspect prints FAKE_NET (bridge), cp 0 (a cp of <stage>/. keeps
 //            the stage path), start prints passing browser results for the staged spec, pull 0, rm 0
 //   missing  image inspect fails with "image not known", the rest as ok
@@ -20,7 +20,7 @@ import { basename, join } from "node:path";
 const tool = basename(process.argv[2]);
 const args = process.argv.slice(3);
 const mode = process.env.FAKE_MODE || "ok";
-appendFileSync(process.env.FAKE_LOG, JSON.stringify({ tool, args }) + "\n");
+appendFileSync(process.env.FAKE_LOG, JSON.stringify({ tool, args, cwd: process.cwd() }) + "\n");
 const state = process.env.FAKE_LOG + ".stage";
 const say = (s) => process.stdout.write(s + "\n");
 function startStaged() {
@@ -89,3 +89,16 @@ export function calls(fake) {
 }
 
 export const tempDir = (prefix = "banker-testbox-t-") => made(prefix);
+
+// A folder holding node_modules/playwright with a fake package (version as given): every browser type starts and
+// closes. For BUILD_TESTBOX_PLAYWRIGHT_DIR or --playwright-dir, so a test does not depend on this host's Playwright.
+export function fakePlaywrightDir(version = "9.9.9-fake") {
+  const dir = made("banker-testbox-pw-");
+  const pkg = join(dir, "node_modules", "playwright");
+  mkdirSync(pkg, { recursive: true });
+  writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "playwright", version, main: "index.js" }));
+  const body = "const browser = { close: async () => {} };\nconst type = { launch: async () => browser };\n";
+  writeFileSync(join(pkg, "index.js"), `${body}module.exports = { chromium: type, webkit: type };\n`);
+  writeFileSync(join(pkg, "index.mjs"), `${body}export const chromium = type;\nexport const webkit = type;\nexport default { chromium, webkit };\n`);
+  return dir;
+}

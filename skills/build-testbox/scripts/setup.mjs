@@ -59,7 +59,7 @@ async function defaultItems(o, engine, pw) {
 }
 
 export async function planSetup(o) {
-  const loaded = await loadPlaywright(o.fromProject);
+  const loaded = await loadPlaywright(o.fromProject, o.playwrightDir);
   const engine = selectEngine(o.engine, await detectEngines());
   const named = Boolean(o.setupImages || o.playwrightImage || o.browsersGiven);
   const items = named ? itemsFromArgs(o, loaded.info && loaded.info.version) : await defaultItems(o, engine, loaded.pw);
@@ -101,11 +101,12 @@ async function getImage(it, engine) {
 }
 
 async function getBrowser(it, loaded) {
-  if (!loaded.info) return { status: "failed", detail: "Playwright 패키지 없음(setup-playwright 스킬로 설치)" };
-  const cwd = loaded.info.from === "project" ? process.cwd() : homedir();
+  if (!loaded.info) return { status: "failed", detail: `${loaded.error}. setup-playwright 스킬로 설치하거나 --playwright-dir 로 위치를 줌` };
+  // npx runs where that Playwright is: the given folder, the project, or (global) the home folder.
+  const cwd = loaded.info.base || homedir();
   const r = await runProc("npx", ["--no-install", "playwright", "install", it.key], { cwd, timeoutMs: 60 * 60 * 1000 });
   if (r.code !== 0) return { status: "failed", detail: firstLine(r.stderr) || r.error };
-  const again = await loadPlaywright(loaded.info.from === "project");
+  const again = await loadPlaywright(loaded.info.from === "project", loaded.info.from === "dir" ? loaded.info.base : null);
   const p = again.pw ? await probeBrowser(again.pw, it.key) : { runnable: false, reason: "needs-playwright" };
   return p.runnable ? { status: "ok" } : { status: "failed", detail: `설치 뒤 실행 확인 실패: ${p.reason}` };
 }

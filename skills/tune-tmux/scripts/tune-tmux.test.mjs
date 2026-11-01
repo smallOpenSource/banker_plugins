@@ -98,8 +98,9 @@ test("acceptance 2: user conf with CRLF and 0600 comes back byte- and mode-ident
   assert.match(on1, /\r\nset -g mouse on\r\n/, "block lines use the file's CRLF");
   assert.deepEqual(readFileSync(`${conf}.tune-tmux.bak`), original);
   const bin = fresh("bin");
-  writeFileSync(join(bin, WIN ? "xclip.exe" : "xclip"), "");
-  if (!WIN) chmodSync(join(bin, "xclip"), 0o755);
+  // tune() plays Linux (platform "linux"), so the lookup wants the Linux name "xclip" with no extension on every host.
+  writeFileSync(join(bin, "xclip"), "");
+  chmodSync(join(bin, "xclip"), 0o755);
   const second = tune(home, ["on", "--target", "tmux"], { env: { PATH: bin, DISPLAY: ":9" } });
   assert.equal(second.code, 0);
   assert.notEqual(readFileSync(conf, "utf8"), on1, "the second on changed the block (clipboard found)");
@@ -187,7 +188,10 @@ test("acceptance 6: clipboard choice for macOS, Wayland, X11 xclip and xsel, WSL
   const bin = fresh("bin");
   writeFileSync(join(bin, WIN ? "xsel.exe" : "xsel"), "");
   if (!WIN) chmodSync(join(bin, "xsel"), 0o755);
-  assert.equal(tc.which("xsel", { PATH: bin, PATHEXT: ".EXE" }), join(bin, WIN ? "xsel.exe" : "xsel"));
+  // Windows: the PATHEXT entry as written (.EXE) finds xsel.exe on a case-insensitive file system; same file.
+  const found = tc.which("xsel", { PATH: bin, PATHEXT: ".EXE" });
+  const want = join(bin, WIN ? "xsel.exe" : "xsel");
+  assert.equal(WIN ? found?.toLowerCase() : found, WIN ? want.toLowerCase() : want);
   assert.equal(tc.which("xclip", { PATH: bin, PATHEXT: ".EXE" }), null);
 });
 

@@ -158,9 +158,14 @@ test("AC10: with the supervisor killed, status reports it gone and the child apa
   assert.equal(st.status, 1);
   assert.match(st.stdout, /감독: 없음/);
   assert.match(st.stdout, /자식: 실행 중/);
+  // On Windows the shell (p.child) dies with the supervisor's job object; the child status names is what it ran.
+  const left = Number(/자식: 실행 중 \(PID (\d+)\)/.exec(st.stdout)?.[1]);
+  started.push({ child: left });
+  if (!WIN) assert.equal(left, p.child);
   const sp = svc(root, "stop");
   assert.equal(sp.status, 0, sp.stderr);
   assert.equal(groupAlive(p.child), false);
+  assert.equal(alive(left), false, `the child status named (PID ${left}) is gone`);
 });
 
 test("AC10: empty command= makes start exit 2; a missing Node makes the wrapper exit 3; .sh files are 0755", () => {

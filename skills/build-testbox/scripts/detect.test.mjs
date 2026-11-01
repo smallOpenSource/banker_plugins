@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { which } from "./proc.mjs";
+import { fakeBin, fakeEnv, fakePlaywrightDir, tempDir } from "../../../scripts/test-fixtures/testbox-fakes.mjs";
 
 const TESTBOX = fileURLToPath(new URL("./testbox.mjs", import.meta.url));
 
@@ -17,8 +18,10 @@ function npmRoot() {
   return String(r.stdout || "").trim();
 }
 
+// BUILD_TESTBOX_PLAYWRIGHT_DIR (a test box's tool folder) comes before the global npm root, as in detect.
 function ownPlaywright() {
-  const dir = join(npmRoot(), "playwright");
+  const given = process.env.BUILD_TESTBOX_PLAYWRIGHT_DIR;
+  const dir = given ? join(given, "node_modules", "playwright") : join(npmRoot(), "playwright");
   try {
     return { dir, version: JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version };
   } catch {
@@ -87,4 +90,29 @@ test("detect text output and --help first line", () => {
   assert.match(text.stdout, /^호스트: /);
   assert.match(text.stdout, /- chromium: /);
   assert.match(text.stdout, /엔진: /);
+});
+
+test("Playwright location: --playwright-dir before BUILD_TESTBOX_PLAYWRIGHT_DIR; a given folder without it is not found (no fallback)", () => {
+  const fake = fakeBin(["podman"]);
+  const fromEnv = fakePlaywrightDir("1.0.0-env");
+  const fromFlag = fakePlaywrightDir("2.0.0-flag");
+  const detectWith = (args, extra) => {
+    const r = spawnSync(process.execPath, [TESTBOX, "detect", "--json", "--os", "none", ...args], { encoding: "utf8", cwd: homedir(), env: fakeEnv(fake, extra) });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const env = detectWith([], { BUILD_TESTBOX_PLAYWRIGHT_DIR: fromEnv });
+  assert.equal(env.playwright.found, true, env.playwright.error);
+  assert.deepEqual([env.playwright.version, env.playwright.from, env.playwright.base], ["1.0.0-env", "dir", fromEnv]);
+  assert.equal(env.browsers.chromium.runnable, true, "the fake package starts every browser");
+  const flag = detectWith(["--playwright-dir", fromFlag], { BUILD_TESTBOX_PLAYWRIGHT_DIR: fromEnv });
+  assert.deepEqual([flag.playwright.version, flag.playwright.base], ["2.0.0-flag", fromFlag]);
+  const empty = tempDir("banker-testbox-nopw-");
+  const none = detectWith([], { BUILD_TESTBOX_PLAYWRIGHT_DIR: empty });
+  assert.equal(none.playwright.found, false);
+  assert.ok(none.playwright.error.includes(empty), none.playwright.error);
+  assert.equal(none.browsers.chromium.reason, "needs-playwright");
+  const blank = spawnSync(process.execPath, [TESTBOX, "detect", "--playwright-dir", " "], { encoding: "utf8" });
+  assert.equal(blank.status, 2);
+  assert.match(blank.stderr, /--playwright-dir/);
 });
