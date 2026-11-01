@@ -10,6 +10,8 @@
  *   setup-bypass-permissions/scripts: codex-config.mjs                -> setup-omc-hud/assets (Codex config.toml line edits)
  *   hooks: progress-plan.mjs (repo root)                              -> codex/skills/progress/scripts (plan tree for the Codex progress skill)
  *   ralph-qa/references: gate-evidence.mjs, run-folder.mjs           -> ultraqa             (gate evidence, run folders; tests at the source)
+ * marker-block.mjs (AGENTS.md / CLAUDE.md marked-block editor): source of truth is skills/init-dir/scripts/marker-block.mjs;
+ *   tune-tmux and git-init will get copies, and their MIRRORS rows are added together with those copies.
  * A pair without a root is under skills/; one with `root: true` names repo-root paths.
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)

@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (65 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (66 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -80,7 +80,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 65, `codex dry-run plans 65 skill copies (got ${copies})`);
+  ok(copies === 66, `codex dry-run plans 66 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -297,8 +297,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 65 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 65 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 66 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 66 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
@@ -448,6 +448,19 @@ try {
   ok(pmonPlugin.includes('./skills/progress-mon/') && pmonDoc.includes('`~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/progress-mon/`')
      && pmonDoc.includes('`~/.codex/skills/banker-progress-mon/`') && pmonPluginRun.status === 0 && pmonPluginRun.stdout.startsWith('progress-mon: '),
      `progress-mon: the Codex plugin path (plugins/cache/banker-plugins/banker/${pluginVer}/skills/progress-mon/) is in the plugin list and the SKILL.md runtime table, and the script runs from a built cache copy there`);
+  // init-dir runs scripts/init-dir.mjs from the skill's own folder and copies its templates/ into the project; the Codex
+  // copy keeps every supporting file (the .cmd templates stay LF there and are written CRLF) and none of the tests.
+  ok(installed.includes('banker-init-dir'), 'new init-dir installed as banker-init-dir');
+  const idirDir = path.join(instDir, 'banker-init-dir');
+  const idirFiles = mfAllSkills.find((s) => s.name === 'init-dir').supportingFiles;
+  const idirWalk = (d) => fs.readdirSync(d, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? idirWalk(path.join(d, e.name)) : [e.name]));
+  ok(idirFiles.length === 25 && idirFiles.every((f) => fs.existsSync(path.join(idirDir, ...f.split('/'))))
+     && !idirWalk(idirDir).some((f) => f.endsWith('.test.mjs')),
+     `banker-init-dir carries its ${idirFiles.length} supporting files and no tests into the Codex install`);
+  const idirRun = cp.spawnSync(process.execPath, [path.join(idirDir, 'scripts', 'init-dir.mjs'), '--help'], { encoding: 'utf8' });
+  ok(idirRun.status === 0 && idirRun.stdout.split(/\r?\n/)[0].startsWith('init-dir: '),
+     `the Codex copy of init-dir runs (status ${idirRun.status}, stderr ${JSON.stringify(idirRun.stderr)})`);
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its
@@ -626,6 +639,8 @@ try {
     path.join('skills', 'theme-selection', 'scripts', 'themes.test.mjs'),
     ...['pm-check', 'pm-config', 'pm-data', 'pm-html', 'pm-memory', 'pm-render', 'pm-server', 'pm-skill', 'pm-sources', 'progress-mon']
       .map((n) => path.join('skills', 'progress-mon', 'scripts', `${n}.test.mjs`)),
+    ...['init-dir', 'marker-block', 'service-template', 'templates']
+      .map((n) => path.join('skills', 'init-dir', 'scripts', `${n}.test.mjs`)),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),
