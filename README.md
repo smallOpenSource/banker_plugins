@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 66개 + 커맨드 2개**(총 68개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 65개와 Codex 전용 스킬 3개)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 70개 + 커맨드 2개**(총 72개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 69개와 Codex 전용 스킬 3개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -117,6 +117,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `play-qa` | 웹 기반 동작 컨텐츠를 실제 브라우저에서 직접 플레이하는 QA |
 | `ultra-ui-qa` | UI를 기준(디자인 PDF/스펙)과 1:1 대조 QA |
 | `visual-ralph` | 레퍼런스(생성/정적/URL) 기준 프론트 UI를 Visual Verdict(≥90)로 측정 빌드 |
+| `build-testbox` | 이 PC 의 자원으로 시험 환경을 꾸림. 127.0.0.1 서비스를 브라우저 행렬(Playwright Chromium, WebKit 의 데스크톱과 모바일 기기 에뮬레이션)로, 배포 명령을 컨테이너 OS(Rocky Linux 8, 9. docker 나 podman)로 병렬 실행하고 칸마다 통과, 실패, 미검증, 미지원과 사유를 남김. `run` 은 내려받지 않고, 받기는 확인 뒤 `setup --yes` 로만. macOS 는 Apple Silicon 호스트의 Tart VM 만 |
 
 ### 스킬: 문서 · 디자인 · 위키
 
@@ -169,8 +170,10 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `omc-patch` | OMC 자동 업데이트 뒤 사라진 훅 패치를 재적용하고 OMC 마켓플레이스 자동 업데이트를 고정(진단·확인·적용·검증·되돌리기). 옛 킷이 블록 안에 넣은 헬퍼(project-memory 꺼짐)를 찾아 고치고, project-memory 훅이 실제로 일하는지 임시 폴더에서 확인 |
 | `remains` | 남은 버그, 하자, 미검증 항목을 찾아 표로 보여 줌. 테스트박스(`~/.config/banker/test-boxes.json`)가 등록돼 있으면 각 OS 에서 시험을 돌려 확인(읽기와 시험만, 고치지 않음) |
 | `trouble-shooting` | 문제를 조사해 현상, 문제점, 원인, 해결방법, 조치계획을 표 하나로 간결히 보고(문제마다 한 행, `--no-plan` 은 해결방법까지, 고치지 않고 보고만) |
-| `ultra-chain` | 자료 조사, 모호성 제거, 검토자 3명 이상의 합의 계획, 목업 승인, 비판 검증 구현, 실제 OS 테스트박스 시험과 합의 검증, 시각 검토, 과정 시각화, 결과 공유를 한 명령으로 잇는 9단계 연쇄. 사람이 볼 곳은 인터뷰의 취향 질문과 목업 승인으로 줄임. 실행 기록과 단일 HTML 보고서를 남기고, push 나 외부 게시는 요청할 때만 |
-| `progress-mon` | 프로젝트 진척도를 4탭 웹 화면(진척도, 구현요건, workflow, 구성도)으로 로컬 서버(기본 127.0.0.1)에 띄움. `init` 이 코드를 읽어 탭 자료를 쓰고 프로젝트 메모리에 갱신 규칙 한 줄을 등록, `export` 는 서버 없는 단일 HTML. 세션 작업 목록 패널은 `/progress` |
+| `ultra-chain` | 자료 조사, 모호성 제거, 검토자 3명 이상의 합의 계획, 목업 승인, 비판 검증 구현, 실제 OS 테스트박스 시험과 합의 검증, 시각 검토, 과정 시각화, 결과 공유를 한 명령으로 잇는 9단계 연쇄. 사람이 볼 곳은 인터뷰의 취향 질문과 목업 승인으로 줄임. `--agents`(기본 3)가 합의 계획, 비판 검증, 합의 검증의 검토자 수와 시각 판정자 수를 정하고 전원 승인일 때만 넘어감. 실행 기록과 단일 HTML 보고서를 남기고, push 나 외부 게시는 요청할 때만 |
+| `progress-mon` | 프로젝트 진척도를 5탭 웹 화면(진척도, 구현요건, workflow, 구성도, ADR)으로 로컬 서버(기본 127.0.0.1)에 띄움. ADR 탭은 결정마다 최적화 로직, 확장 대응, 포기와 얻은 것과 프로젝트의 검증, 흐름, 증거를 `check` 가 확인한 참조와 함께 보임. `init` 이 코드를 읽어 탭 자료를 쓰고 프로젝트 메모리에 갱신 규칙 한 줄을 등록, `export` 는 서버 없는 단일 HTML. 세션 작업 목록 패널은 `/progress` |
+| `init-dir` | 프로젝트에 관리 폴더 7개(logs, scripts, work, mockup, tests, docs, KB)를 만들고 폴더 목적을 지금 세션에 전달하며, `AGENTS.md` 와 `CLAUDE.md` 중 있는 것에 표지 블록으로 기록. 새로 만든 폴더에만 틀 파일(서비스 시작, 정지 스크립트와 로그 로테이션, 시험 실행기, README)을 넣고, 이미 있는 폴더는 목적만 전달 |
+| `git-init` | 저장소가 아닌 폴더에 첫 커밋 `init` 을 만들어 worktree 같은 병렬 작업을 준비. 비밀값과 로컬 상태를 빼는 `.gitignore` 를 쓰고, 추적될 파일을 이름과 내용으로 스캔(위치와 종류만 보이고 값은 안 보임)한 뒤 `git init`, `git add .`, `git commit` 실행. 걸림이 있으면 `.git` 을 만들지 않음. `check` 는 계획만, 원격 연결과 push 는 안 함 |
 
 ### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
 
@@ -191,6 +194,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `setup-java` | JDK 21 + JAVA_HOME (Debian=Adoptium Temurin) |
 | `setup-lsp` | 언어별 LSP(vtsls·basedpyright·bash·jdtls·spring) + lsp-mcp 브리지 (node·python·java 의존) |
 | `setup-tmux` | tmux(Rocky8 3.6a 소스빌드) / psmux(Windows) |
+| `tune-tmux` | 설치된 tmux, psmux 의 설정 파일에 표지 블록을 넣고 빼서 마우스 드래그 복사(OS 클립보드)와 PageUp/PageDown 스크롤을 맞춤. 전체 화면 앱(Claude Code, Codex)의 키와 마우스는 빼앗지 않고 앱별 동작을 `status` 로 안내. 첫 원본 백업, `off` 는 블록만 뺌, `--reload` 로 떠 있는 서버에 반영. psmux 는 넣는 줄 0(기본값으로 되는 것: 마우스, set-clipboard, 휠 copy-mode. 확인 못 한 것: 드래그한 글의 Windows 클립보드 전달, 전체 화면 앱 안 PageUp/PageDown. 안 되는 것: 앱 밖 PageUp 은 prefix 필요, PageDown 은 바닥에서 copy-mode 를 안 빠짐, `alternate_on` 이 늘 0 이라 앱 구분 불가). `on` 은 미확인, 안 됨 수를 보이고 옛 블록이 있으면 뺌 |
 | `setup-pwsh` | Windows PowerShell 7 환경(비-Windows no-op) |
 | `setup-mcp` | 공통 MCP 서버(context7·seq-thinking·filesystem·git·fetch) |
 | `setup-sandbox` | OS별 샌드박스(bubblewrap+userns / Seatbelt) + rust + git safe.directory |
@@ -227,14 +231,14 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 65개와 Codex 전용 스킬 3개(`graceful-pause`, `progress`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 69개와 Codex 전용 스킬 3개(`graceful-pause`, `progress`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
   `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
-  스킬 65개, Codex 전용 스킬 3개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
+  스킬 69개, Codex 전용 스킬 3개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. 훅 스크립트, 플러그인 폴더, node 가 `config.toml` 의 `[sandbox_workspace_write] writable_roots` 아래(그 항목 맨 위 `.codex` 제외)면 훅은 다른 일을 하지 않고 그 이유를 한 줄로 알립니다. 이 검사는 훅 파일 안에서 하므로, 샌드박스가 이미 그 파일을 고친 뒤에는 막지 못합니다. writable_roots 에 Codex 홈이나 node 가 든 폴더를 넣지 마십시오. \
@@ -308,6 +312,7 @@ banker uninstall        # 제거
 | `anti-drm` | `rules/banker-anti-drm.md` 생성 (`off` 로 삭제) + 설정 `~/.config/banker/anti-drm.json`(두 런타임 공용, `off` 뒤에도 남음, anti-drm 이 쓰지 않은 파일이 있었으면 `.bak`) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.anti-drm.bak` 백업·멱등, `off` 로 원복) |
 | `omc-patch` | 활성 OMC 버전의 `scripts/*.mjs` 와 `hooks/hooks.json` 수정(`.omcbak` 백업, `PostToolUse` 훅 제거) + OMC 마켓플레이스 `origin` 을 `omc-pinned://` 로 고정(기록 `~/.claude/omc-local-patches/PINNED`, `revert` 로 원복). 헬퍼 자리 결함은 활성 폴더만 되돌린 뒤 다시 패치. project-memory 확인은 임시 폴더에서만 하고 끝나면 지움 | — (Codex에서 실행해도 Claude Code 의 OMC 캐시만 다룸) |
 | `remains` | 설정 파일 미변경. `~/.config/banker/test-boxes.json` 은 읽기만 함(사용자가 만들거나, 사용자가 준 정보로 확인받고 만듦). 처음 접속하는 박스의 호스트 키가 `~/.ssh/known_hosts` 에 더해짐. 테스트박스에는 임시 폴더를 만들고 끝나면 지움(시간 초과나 중단 때는 시작한 프로세스를 먼저 끝냄, 못 지우면 결과에 표시) | 동일 |
+| `tune-tmux` | tmux, psmux 설정 파일(`~/.tmux.conf` 등)에 `# banker:tune-tmux:start` 표지 블록 1개(바이트가 바뀔 때만 첫 원본을 `<파일>.tune-tmux.bak` 에 백업·멱등, `off` 로 블록만 뺌). `--reload` 는 떠 있는 서버에 반영 | 동일. 설정 파일이 작업 폴더 밖이라 `on`, `off`, `--reload` 는 승인 요청 |
 | `motion-graphic-setup` | 설정 파일 미패치 (Node/ffmpeg 확보 + `npx hyperframes` 설치만) | 동일 (`config.toml` 미변경) |
 | `3d-intro-setup` | `settings.json` 미패치 — 크레덴셜을 untracked env 파일에 기록(`.env.3d-intro.local` 또는 `~/.config/banker/3d-intro/env`) | 동일 (`config.toml` 미변경) |
 | `setup-bypass-permissions` | `permissions.defaultMode` = `bypassPermissions` (켜기 전 내용은 `settings.json.bypass-permissions.bak`, 되돌리기 기록은 `settings.json.bypass-permissions.json`, `off` 로 원복. 관리 정책, 설정 파일의 금지 키, root 계정이면 거부) | 대상 `codex` 면 `~/.codex/config.toml` 최상위의 `approval_policy` = `"never"`, `sandbox_mode` = `"danger-full-access"` (켜기 전 원본 `config.toml.bypass-permissions.bak`, 되돌리기 기록 `config.toml.bypass-permissions.json`, `off` 로 원복. 조직 정책이 막으면 거부). 대상 `claude` 면 Codex 에서 실행해도 Claude Code 설정을 바꿈 |
@@ -326,6 +331,8 @@ banker uninstall        # 제거
   - `progress-mon`: Node 18 이상(npm 의존 없음). 커밋 기록을 보이려면 `git`. 서버는 기본 127.0.0.1 에만 바인드하고, `--host` 는 사설 IPv4 만 받습니다.
   - `remains`: 테스트박스를 쓰려면 이 머신에 `ssh`, `scp`, `git`, 박스에 `tar` 와 시험에 필요한 런타임(예: Node)이 있어야 하고, SSH 키로 암호 없이 접속돼야 합니다.
   - `ultra-chain`: 위 OMC(Codex 는 OMX), 웹 조사 수단, 시각 검토의 캡처에는 Node 용 playwright 패키지와 Chromium, OS 시험에는 `remains` 와 같은 테스트박스 조건.
+  - `build-testbox`: Node 18 이상. 브라우저 칸의 Playwright(전역 설치. 저장소 의존성 아님)와 컨테이너 칸의 docker 또는 podman 은 선택이며, 없으면 그 칸은 `unverified` 와 사유로 끝납니다. macOS 칸은 Apple Silicon 호스트의 Tart 만.
+  - `init-dir`: 만든 틀(서비스 시작, 정지 스크립트와 시험 실행기)은 대상 프로젝트에 Node 18 이상이 필요합니다.
   - `/graceful-pause`: Claude Code 2.1.289 이상(mod). 그보다 오래된 Claude Code 는 명령을 등록하지 않고 한 줄로 알립니다. Codex 는 스킬 `$banker-graceful-pause` 입니다(0.144.5 에서 확인).
   - `/progress`: mod 를 지원하는 Claude Code(2.1.286 과 2.1.296 에서 확인). 작업 중 즉시 실행은 2.1.289 이상에서 확인했습니다. mod 가 없는 Claude Code(2.1.250 에서 확인)에서는 "mod 를 지원하지않는 claude code 버전입니다" 만 보이고 모델은 호출되지 않습니다. Codex 는 스킬 `$banker-progress` 입니다(상시 패널이 아니라 부를 때마다 보임, tmux 칸은 선택).
   - `teamwork`(Codex 전용): Node 18 이상, Codex 0.149.0 이상(`codex queue`), Linux 와 macOS. Windows 는 `on` 이 까닭을 밝히고 끝납니다. Codex 0.160.1 Windows 에서 승인 규칙 판정(`codex execpolicy check`)이 PowerShell 로 부르는 래퍼에는 맞지 않아(래퍼를 바로 부르는 꼴만 맞음) 쓸 때마다 승인을 물어야 하기 때문입니다. \
@@ -448,8 +455,9 @@ banker setup
   - `deep-research`, `lfm`, 이를 부르는 `ultra-chain` 1단계, `ultra-interview` 와 `rfp-author` 의 조사: 웹 도구가 모두 실패하면 조사하지 못했다고 알립니다. `lfm` 은 모델이 아는 관행으로 표를 채우지 않고 "웹 조사 불가" 로 끝납니다.
   - `npx` 로 부르는 도구(`motion-graphic-make` 의 hyperframes 등): 전역 설치가 없으면 패키지를 받으려 해, 네트워크가 없으면 약 70초 뒤 실패합니다. 오프라인에서는 전역 설치한 실행 파일을 부릅니다.
   - 유료 API 를 부르는 `3d-intro-build`(요청마다 시간 제한), `ralph-qa` 의 외부 좌석(codex, gemini, opencode, 좌석마다 600초)
+  - `build-testbox`: `run` 은 내려받지 않고, 없는 이미지, 브라우저, 엔진의 칸은 `unverified` 와 setup 할 항목으로 끝납니다. `setup` 은 `--yes` 확인 뒤에만 받고, 원천에 닿지 못하면 받지 않고 "네트워크 필요" 로 끝납니다.
   - `vertical-pptx`, `pdf-vision-extract` 가 빠진 도구를 설치하라고 안내할 때, `nothing-design` 의 글꼴(Google Fonts. 받지 못하면 대체 글꼴로 보임)
-- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`)은 네트워크 없이 그대로 씁니다.
+- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`, `init-dir`, `git-init`, `tune-tmux`)은 네트워크 없이 그대로 씁니다.
 
 ## 라이선스 / 서드파티
 

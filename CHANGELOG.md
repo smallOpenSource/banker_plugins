@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.24.0] - 2026-11-02
+
+### Added
+- 새 스킬 `init-dir`: 프로젝트에 관리 폴더 7개(`logs`, `scripts`, `work`, `mockup`, `tests`, `docs`, `KB`)를 만들고, 폴더마다 목적을 지금 세션에 알리며 `AGENTS.md`, `CLAUDE.md` 중 있는 것에 표지 블록으로 적는다. 새로 만든 폴더에만 틀 파일(서비스 시작, 정지, 상태, 재시작 스크립트와 100MB 로그 로테이션, 시험 실행기, README)을 넣고, 이미 있는 폴더는 내용을 건드리지 않는다. 두 런타임에서 쓰고, 내려받지 않는다.
+  - `docs` 의 목적은 "문서를 관리하는 영역. evidence와 ADR도 포함하여 보관한다." 이고, 새 `docs/` 에 `evidence/`, `adr/` 하위 폴더를 만든다. 옛 판이 쓴 블록은 docs 줄만 멱등으로 바꾼다.
+  - 틀은 임시 폴더에 다 쓴 뒤 rename 으로 옮긴다. 강제 종료로 남은 임시 폴더는 `status` 가 보고한다.
+  - 틀의 `service.mjs` 는 PID 재사용으로 남의 프로세스를 끄지 않는다. Linux 는 `/proc/<pid>/cmdline` 을 먼저 읽고, 끝내 확인하지 못하면 PID 파일을 남기고 종료 1 로 끝난다. 동시에 `start` 해도 감독은 하나다. Windows 에서는 감독과 함께 죽은 셸이 남긴 자식도 찾아 끈다.
+- 새 스킬 `git-init`: 저장소가 아닌 폴더에 첫 커밋을 만들어 worktree 같은 병렬 작업을 준비한다. 민감 정보를 빼는 `.gitignore` 를 쓰고, 추적할 파일을 이름과 내용으로 비밀값 스캔한 뒤 `git init`, `git add .`, `git commit -m init` 을 실행한다. 걸리면 `.git` 을 만들지 않고 위치(`파일:줄:종류`)만 보고하며, 사용자가 오탐으로 확인한 것만 `--accept` 로 넘긴다. 키 파일 이름은 넘길 수 없다. 두 런타임에서 쓰고, 네트워크를 쓰지 않는다.
+  - `.npmrc`, `.netrc` 같은 자격 증명 파일과 강제 종료로 남은 `init-dir` 임시 폴더를 자동으로 뺀다. 스캔하지 못한 파일 목록을 보인다.
+- 새 스킬 `build-testbox`: 이 PC 의 자원으로 시험 환경을 꾸린다. Playwright Chromium, WebKit 의 데스크톱과 모바일 기기 에뮬레이션과 docker, podman 의 Rocky Linux 8, 9 컨테이너를 병렬로 돌려, 칸마다 pass, fail, unverified, unsupported 와 사유를 표와 `results.json` 으로 낸다. 두 런타임에서 쓴다.
+  - `run` 은 내려받지 않는다. 없는 이미지나 브라우저는 `unverified` 와 사유로 남는다. 받기는 `setup` 이 목록과 크기를 보인 뒤 `--yes` 로 다시 부를 때만 한다.
+  - Playwright 위치는 `--playwright-dir` 이나 `BUILD_TESTBOX_PLAYWRIGHT_DIR` 로 줄 수 있다. Rocky 8 처럼 WebKit 라이브러리가 없는 호스트는 `--browser-in-container` 로 Playwright 공식 이미지에서 돌린다.
+  - e2e 시험의 조용한 통과를 사유 있는 건너뜀으로 바꿨다.
+- 새 스킬 `tune-tmux`: tmux, psmux 설정 파일에 표지 블록을 넣고 빼서, 마우스 드래그 복사(OS 클립보드, 도구가 없으면 OSC 52)와 일반 화면의 PageUp/PageDown 스크롤을 맞춘다. 전체 화면 앱(Claude Code, Codex)의 키와 마우스는 앱에 넘긴다. 첫 원본을 백업하고, `off` 는 블록만 빼며, `--reload` 로 떠 있는 서버에 반영한다. 두 런타임에서 쓰고, 네트워크를 쓰지 않는다.
+
+### Changed
+- `ultra-chain`: `--agents=N`(기본 3)을 5단계 critic 좌석과 7단계 시각 판정자에도 쓴다. 전원 승인 합치기와 좌석 수는 기록 스크립트(`chain-ledger`)가 강제한다. ralph 자체 승인은 `ralph-reviewer` 로 기록하고, 좌석을 잃으면 `INCONCLUSIVE` 로 멈춘다. 5단계 판정을 기록하는 쪽은 `critic`, `ralph-reviewer` 둘뿐이고 결과값도 정해진 값만 받는다. `--agents` 를 주지 않으면 init 에 3 을 넘기지 않아 기본값으로 기록된다.
+- `progress-mon`: ADR 탭을 더해 5탭이 된다.
+  - 자료는 두 층이다. 프로젝트 단위(검증, 흐름, 증거)와 결정 단위(최적화 로직, 확장 대응, 포기와 얻은 것)의 6항목을 확인 가능한 참조와 함께 보인다.
+  - `check` 가 스키마, 참조, 밀도, `docs/adr` 와의 갈라짐을 검사한다.
+  - "주장에는 증거" 규칙: 구현된 기능의 증명과 검증한 모듈의 evidence 에 확인을 마친 참조(FAIL, WARN 없음)가 없으면 FAIL 이다. 통과하려면 그 기능을 구현 못 함으로, 그 모듈을 미검증으로 옮겨야 한다. 결정의 서술 칸 gap 은 WARN 이다. 화면 배지와 `check` 마지막 줄에 근거 없음 칸, 미검증, 구현 못 함, 참조 없는 서술 수를 늘 보인다.
+  - 꼴이 틀린 `adr.json` 은 지우지 않고 `adr.json.rejected-<시각>` 으로 옮긴다.
+  - ADR 탭 전에 init 한 프로젝트는 다음 인자 없는 호출에서 확인 뒤 ADR 단계를 하고, 메모리의 옛 규칙 줄을 새 판으로 바꾼다(백업, UTF-8 아닌 파일 거부, 임시 파일 rename).
+
+### Fixed
+- 저장소 `.gitignore` 의 `work/` 가 스킬 틀 폴더(`skills/init-dir/templates/work/`)까지 무시해 틀 파일이 커밋에서 빠지던 것을 고친다. 규칙을 루트 `/work/` 로 한정했다. 스모크가 배포 파일이 git 무시 규칙에 걸리지 않는지 단언한다.
+- `progress-mon` 시험이 macOS 의 차례 포트 배정 때문에 다른 시험 서버가 잡은 `port+k` 를 자기 서버로 보고 실패하던 것을 고친다. 남은 서버 확인이 신원 경로의 PID 로 자기 서버만 판정한다.
+- 부하에 흔들리던 시험의 대기를 폴링으로 바꿨다. `omc-patch` 의 git 도우미 연결 종료 대기는 3초에서 15초로 늘렸다(50ms 폴링, 끝나지 않는 도우미는 그대로 실패).
+
+### Notes
+- 범위 축소와 한계
+  - psmux(3.3.8 실측)는 넣을 줄이 0줄이다. `on` 은 종료 0 과 `넣은 줄 0: psmux 기본값 유지. 미확인 2, 안 됨 3` 줄, 되는 것, 확인 못 한 것, 안 되는 것 목록을 낸다. 종료 0 은 원하는 동작이 다 된다는 뜻이 아니다.
+  - `build-testbox` 의 macOS 배포 시험은 Apple Silicon 호스트의 Tart VM 만 지원한다. 비 Apple 호스트는 라이선스 사유로 `unsupported` 다. 실제 Safari, iOS 시뮬레이터는 WebKit 에뮬레이션으로 대신한다.
+  - Codex Fullscreen(기본)의 기록 스크롤은 tmux 설정으로 고칠 수 없다. 공식 우회(`/tui` 의 Scrollback, `codex --no-alt-screen`, `tui.alternate_screen = "never"`)를 안내만 하고 Codex 설정은 바꾸지 않는다.
+  - ADR `check` 는 참조가 가리키는 파일과 위치가 있는지만 본다. 참조 내용이 주장을 뒷받침하는지는 판정하지 않는다.
+- 훅 코드는 바뀌지 않아 Codex 플러그인 사용자에게 `/hooks` 신뢰를 다시 묻지 않는다.
+- 실측: 테스트박스 3대에서 945d3e3 을 시험했다(통과/실패/건너뜀). Rocky Linux 8 2796/0/35, macOS 2788/0/43, Windows 2483/0/343.
+- 실측: Rocky Linux 8 박스(podman 4.9.4)에서 `build-testbox run --browser-in-container` 로 Desktop Chrome, Pixel 7(Chromium), Desktop Safari, iPhone 15(WebKit)와 `os:rocky8`, `os:rocky9` 6칸이 모두 통과했고, 브라우저 칸과 컨테이너 칸이 병렬로 겹쳐 돈 것을 확인했다.
+
 ## [0.23.3] - 2026-10-31
 
 ### Fixed

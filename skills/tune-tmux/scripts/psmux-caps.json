@@ -1,0 +1,71 @@
+{
+  "psmux": "3.3.8",
+  "probed": "2026-11-01, Windows 10 22H2 test box, psmux 3.3.8 (winget marlocarlo.psmux)",
+  "rule": "A line goes into the block only when verified is true and default is not true (psmux already has it).",
+  "behavior": {
+    "default": ["마우스(mouse on)", "set-clipboard on", "휠로 copy-mode 진입(scroll-enter-copy-mode on)"],
+    "unverified": [
+      "드래그한 글이 Windows 클립보드로 가는지(실제 마우스와 데스크톱이 필요해 미실측)",
+      "전체 화면 앱(Claude Code, Codex) 안의 PageUp/PageDown 을 앱이 받는지(미실측)"
+    ],
+    "broken": [
+      "앱 밖(셸) PageUp 은 prefix 뒤에만 copy-mode 진입. 루트 PageUp 바인딩은 넣지 않음",
+      "PageDown 이 바닥에서 copy-mode 를 빠지지 않음(-e 미지원, Escape 로 빠짐)",
+      "#{alternate_on} 이 늘 0 이라 전체 화면 앱을 구분하지 못함(앱 구분 바인딩 불가)"
+    ]
+  },
+  "options": [
+    {
+      "id": "mouse",
+      "line": "set -g mouse on",
+      "verified": true,
+      "default": true,
+      "note": "psmux 기본값이 on. 블록에 넣지 않음"
+    },
+    {
+      "id": "set-clipboard",
+      "line": "set -s set-clipboard on",
+      "verified": true,
+      "default": true,
+      "note": "psmux 기본값이 on. show -s 는 show -g 와 같음"
+    },
+    {
+      "id": "scroll-enter-copy-mode",
+      "line": "set -g scroll-enter-copy-mode on",
+      "verified": true,
+      "default": true,
+      "note": "psmux 기본값이 on"
+    },
+    {
+      "id": "page-up",
+      "line": "bind -n PPage if -F \"#{||:#{alternate_on},#{pane_in_mode}}\" \"send-keys PPage\" \"copy-mode -e -u\"",
+      "verified": false,
+      "note": "등록, copy-mode 진입, 스크롤은 됨. 그러나 Windows 10 에서 #{alternate_on} 이 늘 0 이라 전체 화면 앱의 PageUp 을 빼앗음. 바닥에서 빠지는 -e 미지원"
+    },
+    {
+      "id": "page-up-joined-flags",
+      "line": "bind -n PPage copy-mode -eu",
+      "verified": false,
+      "note": "붙인 짧은 플래그를 풀지 못해 -eu 가 사라짐"
+    },
+    {
+      "id": "copy-command",
+      "line": "set -s copy-command 'clip.exe'",
+      "verified": false,
+      "note": "값 저장만 확인. 드래그 복사에 쓰는지 미확인"
+    },
+    {
+      "id": "copy-pipe",
+      "line": "bind -T copy-mode MouseDragEnd1Pane send -X copy-pipe-and-cancel 'clip.exe'",
+      "verified": false,
+      "note": "경고 없이 버려짐"
+    },
+    {
+      "id": "force-drag",
+      "line": "bind -n MouseDrag1Pane if -F \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -M\"",
+      "verified": false,
+      "forceDrag": true,
+      "note": "경고 없이 버려짐"
+    }
+  ]
+}

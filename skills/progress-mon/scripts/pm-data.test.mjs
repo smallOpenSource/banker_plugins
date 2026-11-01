@@ -60,7 +60,7 @@ const cli = (args, cwd) => {
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const Z = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
-const NEXT = '다음 할 일\n  1. references/authoring.md 를 읽고 req-spec.json, reqs.json, flow.json, arch.json 작성\n  2. check 로 검사. FAIL 0 까지 최대 3회\n  3. start 로 서버 시작\n';
+const NEXT = '다음 할 일\n  1. references/authoring.md 를 읽고 req-spec.json, reqs.json, flow.json, arch.json, adr.json 작성\n  2. check 로 검사. FAIL 0 까지 최대 3회\n  3. start 로 서버 시작\n';
 
 test('init: --memory 없음과 틀린 값은 종료 1, 아무것도 만들지 않음', T, () => {
   const p = project({ git: true });

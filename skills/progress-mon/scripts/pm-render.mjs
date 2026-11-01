@@ -1,4 +1,4 @@
-// pm-render.mjs: 4탭(진척도, 구현요건, workflow, 구성도)과 단일 HTML 스냅숏, workflow 배치와 구성도 자동 배치.
+// pm-render.mjs: 5탭(진척도, 구현요건, workflow, 구성도, ADR)과 단일 HTML 스냅숏, workflow 배치와 구성도 자동 배치.
 // 옛 진척도 서버의 클래스 이름과 DOM 구조를 그대로 둔다. 저장소 고유 값은 config.json 에서 읽는다.
 // 시각은 now 인자로만 받는다. CLI 하위 명령 export 도 여기서 맡는다.
 import fs from 'node:fs';
@@ -6,6 +6,7 @@ import path from 'node:path';
 import { esc, color, finite, textW, wrap, FAVICON, CSS, TABS, tabsHtml } from './pm-html.mjs';
 import { configOrFail, loadConfig, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
 import { collect, parseTime, agentJudge } from './pm-sources.mjs';
+import { adrBody } from './pm-adr.mjs';
 
 const two = (n) => String(n).padStart(2, '0');
 const hm = (ms) => (ms == null ? '-' : Math.floor(ms / 3600e3) + ':' + two(Math.floor((ms % 3600e3) / 60000)));
@@ -1540,13 +1541,14 @@ ${legend ? `<h2>읽는 법</h2><ul class="meta">${legend}</ul>` : ''}
 export const tabKey = (tab) => (tab === 'flow' ? 'workflow' : TABS.some((t) => t[0] === tab) ? tab : 'history');
 
 function tabBody(m, config, k, now) {
+  if (k === 'adr') return adrBody(m, emptyNotice);
   if (k === 'arch') return archBody(m, config);
   if (k === 'workflow') return flowBody(m);
   if (k === 'req') return reqBody(m, config);
   return historyBody(m, config, now);
 }
 
-// 모은 자료(m)로 탭 하나의 HTML. workflow 와 구성도는 움직임이 있고 자주 바뀌지 않아 자동 갱신하지 않는다.
+// 모은 자료(m)로 탭 하나의 HTML. workflow, 구성도, ADR 은 자주 바뀌지 않아 자동 갱신하지 않는다.
 export function pageFrom(m, config, tab, now) {
   const k = tabKey(tab);
   const refresh = k === 'history' || k === 'req' ? `<meta http-equiv="refresh" content="${config.refreshSec};url=/?tab=${k}">` : '';
@@ -1560,8 +1562,8 @@ ${tabsHtml(k)}
 ${tabBody(m, config, k, now)}</body></html>`;
 }
 
-// 단일 HTML 스냅숏: 네 탭을 한 파일에. 서버, 자동 갱신, 외부 자원 없이 file:// 로 열린다.
-// 탭 전환은 주소의 #history, #req, #workflow, #arch 와 짧은 인라인 스크립트. 스크립트가 꺼져 있으면 네 탭을 모두 보인다.
+// 단일 HTML 스냅숏: 다섯 탭을 한 파일에. 서버, 자동 갱신, 외부 자원 없이 file:// 로 열린다.
+// 탭 전환은 주소의 #history, #req, #workflow, #arch, #adr 와 짧은 인라인 스크립트. 스크립트가 꺼져 있으면 다섯 탭을 모두 보인다.
 export function snapshotFrom(m, config, now) {
   const tabs = TABS.map(([k, name]) => `<a href="#${k}" data-tab="${k}">${esc(name)}</a>`).join('');
   const secs = TABS.map(([k, name]) => `<section id="tab-${k}" class="tab"><h2 class="tt">${esc(name)}</h2>\n\n${tabBody(m, config, k, now)}</section>`).join('\n');

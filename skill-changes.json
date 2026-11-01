@@ -313,5 +313,13 @@
   ],
   "0.23.3": [
     "banker:progress-mon"
+  ],
+  "0.24.0": [
+    "banker:build-testbox",
+    "banker:git-init",
+    "banker:init-dir",
+    "banker:progress-mon",
+    "banker:tune-tmux",
+    "banker:ultra-chain"
   ]
 }

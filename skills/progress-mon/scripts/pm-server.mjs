@@ -780,7 +780,7 @@ function tabData(dataDir) {
       return e.code === 'ENOENT' ? '없음' : '깨짐';
     }
   };
-  return `진척도 ${has('items.json')}, 구현요건 ${has('req-spec.json')}, workflow ${has('flow.json')}, 구성도 ${has('arch.json')}`;
+  return `진척도 ${has('items.json')}, 구현요건 ${has('req-spec.json')}, workflow ${has('flow.json')}, 구성도 ${has('arch.json')}, ADR ${has('adr.json')}`;
 }
 
 // 서버를 띄운 뒤 config.json 의 port, portStrict, hosts 가 바뀌었으면 경고 한 줄(그 값은 다시 띄워야 적용).
@@ -815,6 +815,7 @@ export async function status(ctx, io) {
   const run = await runningServer(ctx.dataDir);
   if (!run) {
     io.out(`꺼짐(자료 폴더: ${label})`);
+    io.out(`탭 자료: ${tabData(ctx.dataDir)}`);
     statusWarnings(ctx, io);
     return 3;
   }

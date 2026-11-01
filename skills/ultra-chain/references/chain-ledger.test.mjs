@@ -470,3 +470,176 @@ test("gates reads what ralph-qa's real gate-evidence.mjs writes: an observed pas
   assert.match(e.summary, /받지 않은 reported 1건/);
   assert.match(readFileSync(join(dir, "qa", "local-r1.md"), "utf8"), /ok 1 - real/);
 });
+
+// ── --agents: one reviewer count for stages 3, 5, 6 and 7 (plan US-1) ────────
+
+const initCli = (args) => {
+  const cwd = fresh("agents");
+  const out = sink();
+  const err = sink();
+  const prev = process.cwd();
+  process.chdir(cwd);
+  try {
+    const code = main(["init", "--base", cwd, "--runtime", "claude", ...args], out, err);
+    return { code, err: err.text, meta: code === 0 ? JSON.parse(readFileSync(join(JSON.parse(out.text).dir, "run.json"), "utf8")) : null };
+  } finally {
+    process.chdir(prev);
+  }
+};
+const seat = (i, verdict, prefix = "critic") => ({ id: `${prefix}#${i}`, verdict });
+const critic = (result, seats, extra = {}) => ({ stage: "build", status: "note", round: 1, verdict: { by: "critic", result, seats, ...extra } });
+const view = (scores, extra = {}) => ({ stage: "visual", status: "note", visual: [{ name: "home", verdict: "pass",
+  judges: scores.map((score, i) => ({ id: `judge#${i + 1}`, score, verdict: "pass" })), ...extra }] });
+const runWith = (agents) => initRun({ base: "runs", cwd: fresh("quorum"), agents, rand: "q000" }).dir;
+const lines = (dir) => readEvents(dir).events.length;
+
+test("AC1 init records agents: 3 by default, 5 from the flag, 2 raised to 3; 18 and x exit 2", () => {
+  assert.deepEqual([initCli([]).meta.agents, initCli([]).meta.agentsSource], [3, "default"]);
+  const five = initCli(["--agents", "5"]).meta;
+  assert.deepEqual([five.agents, five.agentsSource], [5, "flag"]);
+  const raised = initCli(["--agents=2"]).meta;
+  assert.deepEqual([raised.agents, raised.agentsSource, raised.agentsAsked], [3, "raised", 2]);
+  assert.deepEqual([initCli(["--agents", "17"]).meta.agents], [17]);
+  for (const bad of [["--agents", "18"], ["--agents", "x"], ["--agents=3.5"], ["--agents="], ["--agents", "-1"]]) {
+    const r = initCli(bad);
+    assert.equal(r.code, 2, bad.join(" "));
+    assert.match(r.err, /--agents/);
+  }
+});
+
+test("AC2 a critic APPROVE or ITERATE round needs exactly <agents> seats critic#1..N, and APPROVE needs every seat", () => {
+  const dir = runWith(undefined);
+  const bad = [
+    critic("ITERATE", [seat(1, "ITERATE"), seat(2, "APPROVE")]),
+    critic("ITERATE", [seat(1, "ITERATE"), seat(2, "APPROVE"), seat(4, "APPROVE")]),
+    critic("ITERATE", [seat(1, "ITERATE"), seat(1, "APPROVE"), seat(2, "APPROVE")]),
+    critic("ITERATE", [seat(1, "ITERATE"), seat(2, "APPROVE"), { id: "backbone#3", verdict: "APPROVE" }]),
+    critic("APPROVE", [seat(1, "APPROVE"), seat(2, "ITERATE"), seat(3, "APPROVE")]),
+    critic("APPROVE", [seat(1, "APPROVE"), seat(2, "APPROVE"), seat(3, "APPROVE"), seat(4, "APPROVE")]),
+    critic("APPROVE", []),
+  ];
+  for (const e of bad) {
+    assert.throws(() => appendEvent(dir, e), UsageError, JSON.stringify(e.verdict));
+    const file = join(dir, ".event.json");
+    writeFileSync(file, JSON.stringify(e));
+    assert.equal(main(["event", dir, "--file", file], sink(), sink()), 2, "the command line exits 2");
+  }
+  assert.equal(lines(dir), 0, "nothing refused was written");
+  appendEvent(dir, critic("ITERATE", [seat(3, "APPROVE"), seat(1, "ITERATE"), seat(2, "APPROVE")], { blockers: ["critic#1: AC-2 시험 없음"] }));
+  appendEvent(dir, critic("APPROVE", [seat(1, "APPROVE"), seat(2, "APPROVE"), seat(3, "APPROVE")]));
+  assert.equal(lines(dir), 2);
+  const five = runWith(5);
+  assert.throws(() => appendEvent(five, critic("APPROVE", [1, 2, 3].map((i) => seat(i, "APPROVE")))), /좌석 5개/);
+  appendEvent(five, critic("APPROVE", [1, 2, 3, 4, 5].map((i) => seat(i, "APPROVE"))));
+});
+
+test("AC3 INCONCLUSIVE rounds and ralph's own verdict (ralph-reviewer) are not seat-counted", () => {
+  const dir = runWith(undefined);
+  appendEvent(dir, critic("INCONCLUSIVE", [seat(1, "APPROVE"), seat(2, "ERROR"), seat(3, "APPROVE")], { note: "critic#2 좌석 상실" }));
+  appendEvent(dir, critic("INCONCLUSIVE", [seat(1, "APPROVE"), seat(2, "APPROVE")]));
+  appendEvent(dir, { stage: "build", status: "note", verdict: { by: "ralph-reviewer", result: "APPROVE" } });
+  appendEvent(dir, { stage: "plan", status: "note", round: 1, verdict: { by: "ralph-qa", result: "APPROVE", seats: [seat(1, "APPROVE", "backbone")] } });
+  assert.equal(lines(dir), 4);
+  assert.equal(summarize(readEvents(dir).events).stages.find((s) => s.id === "build").lastVerdict.by, "ralph-reviewer");
+});
+
+test("a build critic record takes APPROVE, ITERATE, INCONCLUSIVE or STOPPED only (exit 2 otherwise); a run from before --agents is not checked", () => {
+  const dir = runWith(undefined);
+  for (const result of ["PASS", "REJECT", "FAIL"]) {
+    const e = { stage: "build", status: "note", verdict: { by: "critic", result } };
+    assert.throws(() => appendEvent(dir, e), /critic 기록은 APPROVE, ITERATE, INCONCLUSIVE, STOPPED 만/, result);
+    const file = join(dir, ".event.json");
+    writeFileSync(file, JSON.stringify(e));
+    assert.equal(main(["event", dir, "--file", file], sink(), sink()), 2, result);
+  }
+  assert.equal(lines(dir), 0);
+  appendEvent(dir, { stage: "build", status: "stopped", reason: "좌석 루프 한도", verdict: { by: "critic", result: "STOPPED" } });
+  appendEvent(dir, { stage: "plan", status: "note", verdict: { by: "ralph-qa", result: "PASS" } });
+  assert.equal(lines(dir), 2, "STOPPED by critic and PASS outside build are kept");
+  const old = runWith(undefined);
+  const meta = JSON.parse(readFileSync(join(old, "run.json"), "utf8"));
+  delete meta.agents;
+  writeFileSync(join(old, "run.json"), `${JSON.stringify(meta, null, 1)}\n`);
+  appendEvent(old, { stage: "build", status: "note", verdict: { by: "critic", result: "PASS" } });
+  assert.equal(lines(old), 1);
+});
+
+test("a build verdict is by critic or ralph-reviewer only (exit 2 otherwise); a run from before --agents is not checked", () => {
+  const dir = runWith(undefined);
+  for (const by of ["ralph-qa", "architect", "Critic", "critic#1"]) {
+    const e = { stage: "build", status: "note", verdict: { by, result: "APPROVE" } };
+    assert.throws(() => appendEvent(dir, e), /critic, ralph-reviewer 만/, by);
+    const file = join(dir, ".event.json");
+    writeFileSync(file, JSON.stringify(e));
+    assert.equal(main(["event", dir, "--file", file], sink(), sink()), 2, by);
+  }
+  assert.equal(lines(dir), 0);
+  appendEvent(dir, { stage: "build", status: "note", verdict: { by: "ralph-reviewer", result: "APPROVE" } });
+  appendEvent(dir, { stage: "build", status: "started" });
+  appendEvent(dir, { stage: "qa", status: "note", verdict: { by: "ralph-qa", result: "ITERATE" } });
+  assert.equal(lines(dir), 3);
+  const old = runWith(undefined);
+  const meta = JSON.parse(readFileSync(join(old, "run.json"), "utf8"));
+  delete meta.agents;
+  writeFileSync(join(old, "run.json"), `${JSON.stringify(meta, null, 1)}\n`);
+  appendEvent(old, { stage: "build", status: "note", verdict: { by: "architect", result: "APPROVE" } });
+  assert.equal(lines(old), 1);
+});
+
+test("AC4 a visual pass needs all <agents> judges at 90 or more, and its score is their lowest", () => {
+  const dir = runWith(undefined);
+  assert.throws(() => appendEvent(dir, view([95, 88, 92], { score: 88 })), /90점 이상/);
+  assert.throws(() => appendEvent(dir, view([95, 91, 92], { score: 95 })), /최솟값 91/);
+  assert.throws(() => appendEvent(dir, view([95, 91, 92])), /최솟값 91/, "a pass without its score");
+  assert.throws(() => appendEvent(dir, view([95, 91], { score: 91 })), /판정자 3명/);
+  assert.throws(() => appendEvent(dir, view([95, 91, 92, 93], { score: 91 })), /판정자 3명/);
+  assert.throws(() => appendEvent(dir, view([], { score: 91 })), /판정자 3명/);
+  const revised = view([95, 91, 92], { score: 91 });
+  revised.visual[0].judges[1].verdict = "revise";
+  assert.throws(() => appendEvent(dir, revised), /모든 판정자가 pass/, "a judge's cut-off revise keeps the view from passing");
+  const unscored = view([95, 91, 92], { score: 91 });
+  delete unscored.visual[0].judges[2].score;
+  assert.throws(() => appendEvent(dir, unscored), /90점 이상/);
+  const odd = view([95, 91, 92], { score: 91 });
+  odd.visual[0].judges[0].verdict = "great";
+  assert.throws(() => appendEvent(dir, odd), /judges\[0\]\.verdict: pass, revise, fail, unverified/);
+  assert.throws(() => checkEvent({ ...view([95], { score: 95 }), visual: [{ name: "x", judges: [{ id: "judge#1", verdict: "pass", extra: 1 }] }] }), /모르는 항목 extra/);
+  assert.equal(lines(dir), 0);
+  const e = appendEvent(dir, view([95, 91, 92], { score: 91 }));
+  assert.deepEqual(e.visual[0].judges.map((j) => j.score), [95, 91, 92]);
+  appendEvent(dir, { stage: "visual", status: "note", visual: [{ name: "home", verdict: "revise", score: 71,
+    judges: [{ id: "judge#1", score: 71, verdict: "revise" }, { id: "judge#2", verdict: "unverified" }] }] });
+  appendEvent(dir, { stage: "visual", status: "note", visual: [{ name: "settings", verdict: "unverified", note: "판정자를 띄울 수 없음" }] });
+  assert.equal(lines(dir), 3);
+});
+
+test("AC5 a run folder from before --agents takes a one-seat critic record and a visual pass without judges", () => {
+  const dir = runWith(undefined);
+  const meta = JSON.parse(readFileSync(join(dir, "run.json"), "utf8"));
+  delete meta.agents;
+  delete meta.agentsSource;
+  writeFileSync(join(dir, "run.json"), `${JSON.stringify(meta, null, 1)}\n`);
+  appendEvent(dir, critic("APPROVE", [seat(1, "APPROVE")]));
+  appendEvent(dir, critic("ITERATE", [{ id: "critic", verdict: "ITERATE" }]));
+  appendEvent(dir, { stage: "visual", status: "note", visual: [{ name: "home", score: 93, verdict: "pass" }] });
+  assert.equal(lines(dir), 3);
+});
+
+test("AC6 show gives agents and agentsSource, null for a run from before --agents", () => {
+  const show = (dir) => {
+    const out = sink();
+    assert.equal(main(["show", dir], out, sink()), 0);
+    return JSON.parse(out.text);
+  };
+  const now = show(runWith(5));
+  assert.deepEqual([now.agents, now.agentsSource], [5, "flag"]);
+  const dflt = show(runWith(undefined));
+  assert.deepEqual([dflt.agents, dflt.agentsSource], [3, "default"]);
+  const old = runWith(undefined);
+  const meta = JSON.parse(readFileSync(join(old, "run.json"), "utf8"));
+  delete meta.agents;
+  delete meta.agentsSource;
+  writeFileSync(join(old, "run.json"), JSON.stringify(meta));
+  const o = show(old);
+  assert.deepEqual([o.agents, o.agentsSource], [null, null]);
+});

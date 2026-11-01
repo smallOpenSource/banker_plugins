@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { STAGES, appendEvent, initRun } from "./chain-ledger.mjs";
-import { checklistItems, duration, esc, href, main, renderReport, taskText, writeReport } from "./chain-report.mjs";
+import { agentsText, checklistItems, duration, esc, href, main, renderReport, taskText, writeReport } from "./chain-report.mjs";
 
 const tmp = mkdtempSync(join(tmpdir(), "chain-report-test-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -122,7 +122,9 @@ test("the page links only files the run folder holds; a folder, a missing file o
   appendEvent(dir, { stage: "plan", status: "done", artifacts: [{ label: "명세", path: "02-spec.md" }, { label: "기대 출력", path: "mock/expected" }],
     checklist: [{ item: "AC-10 해석", ref: "02-spec.md AC-10" }, { item: "명세 확인", ref: "02-spec.md" }] });
   appendEvent(dir, { stage: "qa", status: "note", tests: [{ where: "local", os: "linux", status: "pass", log: "qa/gone.txt" }] });
-  appendEvent(dir, { stage: "visual", status: "note", visual: [{ name: "home", mock: "visual/none.png", actual: "visual/none2.png", score: 95, verdict: "pass" }] });
+  // A new run folder counts its judges (chain-ledger --agents), so the pass carries the default three.
+  const judges = [1, 2, 3].map((i) => ({ id: `judge#${i}`, score: 95, verdict: "pass" }));
+  appendEvent(dir, { stage: "visual", status: "note", visual: [{ name: "home", mock: "visual/none.png", actual: "visual/none2.png", score: 95, verdict: "pass", judges }] });
   const html = readFileSync(writeReport(dir), "utf8");
   assert.match(html, /<a href="\.\/02-spec\.md">근거<\/a>/);
   assert.match(html, /근거: 02-spec\.md AC-10/);
@@ -138,4 +140,26 @@ test("task.md's argument line and its task are shown once when they say the same
   assert.equal(taskText("--auto list 에 --json\nlist 에 --json"), "--auto list 에 --json\nlist 에 --json");
   assert.equal(taskText("한 줄"), "한 줄");
   assert.match(renderReport({ run: RUN, task: "같은 줄\n같은 줄", events: [] }), /<pre class="task">같은 줄<\/pre>/);
+});
+
+test("AC7 the head says how many reviewers (default, flag, raised) and a visual card lists its judges, all escaped", () => {
+  assert.equal(agentsText({ agents: 3, agentsSource: "default" }), "3(기본)");
+  assert.equal(agentsText({ agents: 5, agentsSource: "flag" }), "5(--agents)");
+  assert.equal(agentsText({ agents: 3, agentsSource: "raised", agentsAsked: 2 }), "3(2 에서 올림)");
+  assert.equal(agentsText({}), "기록 없음(옛 실행)");
+  for (const [run, words] of [[{ agents: 3, agentsSource: "default" }, "3(기본)"], [{ agents: 5, agentsSource: "flag" }, "5(--agents)"],
+    [{ agents: 3, agentsSource: "raised", agentsAsked: 2 }, "3(2 에서 올림)"]]) {
+    assert.ok(renderReport({ run: { ...RUN, ...run }, task: null, events: [] }).includes(`<dt>검토자 수</dt><dd>${words}</dd>`), words);
+  }
+  const judges = [{ id: XSS, score: 95, verdict: "pass" }, { id: "judge#2", score: 88, verdict: "revise" }, { id: "judge#3", verdict: "unverified" }];
+  const ev = { t: t(1), stage: "visual", status: "note", visual: [{ name: "home", score: 88, verdict: "revise", judges }] };
+  const html = renderReport({ run: { ...RUN, agents: 3, agentsSource: "default" }, task: null, events: [ev] });
+  assert.match(html, /<th>판정자<\/th><th>점수<\/th><th>판정<\/th>/);
+  assert.match(html, /<td>judge#2<\/td><td>88<\/td><td><span class="s s-revise">고칠 것<\/span><\/td>/);
+  assert.match(html, /<td>judge#3<\/td><td><\/td><td><span class="s s-unverified">미검증<\/span><\/td>/);
+  assert.doesNotMatch(html, /<script/i);
+  assert.ok(html.includes("<td>&lt;script&gt;alert(1)&lt;/script&gt;</td>"));
+  const hostile = renderReport({ run: { ...RUN, agents: 3, agentsSource: "raised", agentsAsked: XSS }, task: null, events: [] });
+  assert.doesNotMatch(hostile, /<script/i);
+  assert.doesNotMatch(renderReport({ run: RUN, task: null, events: EVENTS }), /<th>판정자<\/th>/, "a card without judges has no judge table");
 });

@@ -1,6 +1,6 @@
 # init 작성 지침
 
-init 절차(SKILL.md)에서 에이전트가 4탭 자료를 쓸 때 따르는 기준. 목표 밀도는 이 문서 안에서 확인한다: 아래 "밀도 하한" 표의 수(구성도 영역 5, 상자 20, 연결 15, workflow 흐름 2, 흐름당 단계 7 등)와 "좋은 예" 의 꼴(상자 설명 2~3줄과 칩과 근거, 연결마다 `파일:줄`, 흐름마다 실패 분기와 3문장 설명).
+init 절차(SKILL.md)에서 에이전트가 5탭 자료를 쓸 때 따르는 기준. 목표 밀도는 이 문서 안에서 확인한다: 아래 "밀도 하한" 표의 수(구성도 영역 5, 상자 20, 연결 15, workflow 흐름 2, 흐름당 단계 7 등)와 "좋은 예" 의 꼴(상자 설명 2~3줄과 칩과 근거, 연결마다 `파일:줄`, 흐름마다 실패 분기와 3문장 설명).
 숫자 하한은 보조 점검이다. 하한을 채워도 아래 좋은 예보다 얇으면(설명 한 줄, 근거 없음, 분기 없음) 보충한다.
 
 ## 순서
@@ -9,7 +9,8 @@ init 절차(SKILL.md)에서 에이전트가 4탭 자료를 쓸 때 따르는 기
 2. `inventory.json` 에 실제 구성요소, 흐름, 외부, 읽은 파일을 적는다(`references/inventory.md`)
 3. `config.json` 의 `title`, `shortName`, `stories` 를 채운다
 4. `req-spec.json`, `reqs.json`, `flow.json`, `arch.json` 을 쓴다. 좌표는 쓰지 않는다
-5. `check` 로 검사한다. FAIL 0 까지 최대 3회. `WARN density` 가 남으면 한 번 더 보충(SKILL.md init 절차 8, 9)
+5. ADR 단계: `adr.json` 을 쓴다(`references/adr.md`, SKILL.md init 절차 8)
+6. `check` 로 검사한다. FAIL 0 까지 최대 3회. `WARN density` 가 남으면 한 번 더 보충(SKILL.md init 절차 9, 10)
 
 ## 밀도 하한
 
@@ -31,6 +32,9 @@ init 절차(SKILL.md)에서 에이전트가 4탭 자료를 쓸 때 따르는 기
 | 구현요건 | 교차 대응 | 명세마다 AC 1 이상. 스토리가 있으면 AC 를 거쳐 담당 스토리 1 이상 | `req 명세AC`, `명세스토리` |
 | 구현요건 | 비고 | `state` 를 적은 명세는 `note`(판정 근거) | `req 비고` |
 | 진척도 | 기타 항목 | 항목마다 `note`(근거 커밋, 결과). 문제점이 없으면 `--issue` 를 빼고 실행(칸은 빈칸) | `history 비고` |
+| ADR | 여섯 항목 | 프로젝트 3칸과 결정마다 3칸이 `gap` 아님 | `adr 빈 항목` |
+| ADR | 프로젝트 | `verification` 1 이상, `flow` 의 입력, 처리, 출력이 빈 칸 아님, `proof.implemented` 1 이상 | `adr 검증`, `흐름`, `증거` |
+| ADR | 결정 | 결정 1 이상. 결정마다 `tradeoffs` 의 `gaveUp`, `gained` 각 1 이상 | `adr 결정`, `포기얻음` |
 
 - 미달은 `WARN density <탭> <항목> <값>/<하한>` 한 줄씩. 종료 코드에 영향 없음
 - 대상마다 재는 항목은 줄 끝에 `: ` 와 못 채운 대상을 붙인다. 앞 10개, 넘으면 `외 n`
@@ -46,12 +50,16 @@ init 절차(SKILL.md)에서 에이전트가 4탭 자료를 쓸 때 따르는 기
   | `req 요구` | json 경로 | `users[2]` |
   | `req 명세AC`, `명세스토리`, `비고` | json 경로 | `users[0].specs[3]` |
   | `history 비고` | 항목 key | `docs-1` |
+  | `adr 빈 항목` | json 경로 | `decisions[1].scaling` |
+  | `adr 흐름` | 빈 칸 이름 | `입력` |
+  | `adr 포기얻음` | 결정 id | `ADR-2` |
 
-- 수만 재는 항목(영역, 상자, 연결, 범례, 주흐름, 장면, 흐름, `단계:<흐름 id>`)은 이름을 붙이지 않는다. 수를 늘린다
+- 수만 재는 항목(영역, 상자, 연결, 범례, 주흐름, 장면, 흐름, `단계:<흐름 id>`, `adr 검증`, `증거`, `결정`)은 이름을 붙이지 않는다. 수를 늘린다
 - 하한을 채운 항목은 줄을 내지 않는다. 값을 보려면 자료에서 직접 센다
 - 자동 배치의 `이름표 덮음`, `이름표가 그림 밖` WARN 은 배치 조언이고 실패가 아니다(자동 배치 선은 상자를 돌아감). 연결을 하한 아래로 줄여 없애지 않는다. 줄이는 법은 `references/arch.md` 의 "자동 배치 WARN 줄이기"
-- `check` 끝에 `density <탭> ok|low` 4줄(history, req, workflow, arch)
-- 밀도는 init 이 만든 자료 폴더(`state.json` 의 `memory`)나 `inventory.json` 이 있을 때만 잰다
+- `check` 끝에 `density <탭> ok|low` 5줄(history, req, workflow, arch, adr)
+- 밀도는 init 이 만든 자료 폴더(`state.json` 의 `memory`)나 `inventory.json` 이 있을 때만 잰다. ADR 밀도는 `adr.json` 이 있으면 늘 잰다
+- 증거 없는 모듈과 기능(`evidence`, `proofs` 에 FAIL, WARN 없이 확인된 참조 0개)은 밀도가 아니라 FAIL 이다(`references/adr.md` 의 "주장에는 증거")
 
 ## 설명 줄 수
 

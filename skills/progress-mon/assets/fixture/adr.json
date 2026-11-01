@@ -1,0 +1,35 @@
+{
+  "project": {
+    "verification": [
+      { "id": "M-1", "module": "설정 읽기", "result": "시험 3개 통과", "evidence": [{ "kind": "test", "path": "test/app.test.mjs", "name": "설정 읽기" }, { "kind": "cmd", "cmd": "node --test test/", "output": "docs/evidence/test-run.md" }] },
+      { "id": "M-2", "module": "화면 렌더", "result": "고정 자료로 HTML 확인", "evidence": [{ "kind": "file", "path": "src/app.mjs", "line": 3, "note": "render 함수" }] }
+    ],
+    "flow": { "input": "config.json 과 자료 파일", "logic": "설정을 읽어 검사한 뒤 탭마다 HTML 로 렌더", "output": "로컬 서버 화면과 단일 HTML", "refs": [{ "kind": "file", "path": "src/app.mjs", "line": 1 }] },
+    "proof": {
+      "implemented": [{ "feature": "설정 읽기와 화면", "modules": ["M-1", "M-2"], "proofs": [{ "kind": "test", "path": "test/app.test.mjs", "name": "설정 읽기" }, { "kind": "commit", "hash": "1a2b3c4" }] }],
+      "notImplemented": [{ "feature": "알림", "why": "범위 밖으로 미룸" }]
+    }
+  },
+  "decisions": [
+    {
+      "id": "ADR-1", "title": "자료는 JSON 파일", "status": "accepted", "date": "2026-10-20",
+      "context": "의존성 없이 자료를 저장해야 함",
+      "options": [{ "name": "JSON 파일", "pros": "내장 모듈만", "cons": "동시 쓰기 잠금 필요" }, { "name": "SQLite", "pros": "질의", "cons": "의존성 추가" }],
+      "decision": "JSON 파일", "why": "의존성 0 원칙과 자료 크기가 작음",
+      "optimization": { "process": "자료 크기 1 MB 미만에서 읽기 시간을 재어 파일 하나 읽기가 충분함을 확인", "modules": ["M-1"], "refs": [{ "kind": "cmd", "cmd": "node --test test/", "output": "docs/evidence/test-run.md" }] },
+      "scaling": { "argument": "탭마다 파일을 나눠 한 파일이 커지지 않음. 바뀐 파일만 다시 읽음", "limits": "파일 하나가 32 MB 를 넘으면 읽지 않음", "refs": [{ "kind": "file", "path": "src/app.mjs", "line": 2 }] },
+      "tradeoffs": { "gaveUp": [{ "what": "질의 기능", "why": "의존성 0" }], "gained": [{ "what": "설치 없는 실행", "purpose": "어느 PC 에서나 바로 실행" }] },
+      "sources": [{ "kind": "file", "path": "docs/adr/0001-data-file.md" }]
+    },
+    {
+      "id": "ADR-2", "title": "서버는 127.0.0.1 만", "status": "proposed",
+      "context": "화면을 로컬에서만 보이게 함",
+      "options": [{ "name": "127.0.0.1", "pros": "밖에서 못 봄", "cons": "다른 PC 에서 못 봄" }],
+      "rejected": "0.0.0.0 은 공개 노출 위험",
+      "decision": "127.0.0.1 바인드", "why": "보안 원칙",
+      "optimization": { "process": "바인드 주소별 접근 시험", "modules": ["M-2"], "refs": [{ "kind": "test", "path": "test/app.test.mjs", "name": "바인드" }] },
+      "scaling": { "gap": "규모 확장 근거를 아직 재지 않음" },
+      "tradeoffs": { "gaveUp": [{ "what": "원격 보기", "why": "노출 위험" }], "gained": [{ "what": "기본 안전", "purpose": "설정 실수로 밖에 열리지 않게" }] }
+    }
+  ]
+}

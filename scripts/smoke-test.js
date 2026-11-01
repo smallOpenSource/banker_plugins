@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (65 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (69 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -80,7 +80,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 65, `codex dry-run plans 65 skill copies (got ${copies})`);
+  ok(copies === 69, `codex dry-run plans 69 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -123,6 +123,32 @@ try {
     .filter((d) => fs.existsSync(path.join(root, 'codex', 'skills', d, 'SKILL.md'))).sort();
   ok(JSON.stringify(mfCodexOnly) === JSON.stringify(diskCodexOnly),
      `manifest codex-only == codex/skills/ ([${mfCodexOnly.join(', ')}] vs [${diskCodexOnly.join(', ')}])`);
+  // Every file the manifest ships has to reach the git tree. A source that the repo's .gitignore matches (the old
+  // `work/` rule caught skills/init-dir/templates/work/README.md) stays out of every commit, so the marketplace git
+  // source and any tarball packed from a clone lose it while this working tree still passes. In a git work tree each
+  // SKILL.md and supporting file of every skill, and each command prompt, is tracked or at least not ignored.
+  const shipTree = cp.spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  if (shipTree.status !== 0 || shipTree.stdout.trim() !== 'true') {
+    console.log(`SKIP: shipped files vs .gitignore not checked (${shipTree.error ? `git not runnable: ${shipTree.error.code}` : 'not a git work tree'})`);
+  } else {
+    const shipSurfaces = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8')).surfaces;
+    const shipped = shipSurfaces.flatMap((s) => (s.type === 'command'
+      ? [`commands/${s.name}.md`, `codex/command-skills/${s.name}/SKILL.md`].filter((f) => fs.existsSync(path.join(root, f)))
+      : ['SKILL.md', ...(s.supportingFiles || [])].map((f) => `${s.target === 'codex-only' ? 'codex/skills' : 'skills'}/${s.name}/${f}`)));
+    const shipLs = cp.spawnSync('git', ['-C', root, 'ls-files', '-z', '--', 'skills', 'codex', 'commands'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const shipTracked = new Set(shipLs.status === 0 ? shipLs.stdout.split('\0').filter(Boolean) : []);
+    const shipUntracked = shipped.filter((f) => !shipTracked.has(f));
+    // exit 0: some path is ignored (one `<source>:<line>:<pattern>\t<path>` line each), 1: none, other: git failed
+    const shipIgn = shipUntracked.length
+      ? cp.spawnSync('git', ['-C', root, 'check-ignore', '-v', '--stdin'], { input: shipUntracked.join('\n') + '\n', encoding: 'utf8' })
+      : { status: 1, stdout: '' };
+    const shipHits = shipIgn.status === 0 ? shipIgn.stdout.split('\n').filter(Boolean) : [];
+    ok(shipLs.status === 0 && (shipIgn.status === 0 || shipIgn.status === 1) && shipHits.length === 0,
+       `every shipped SKILL.md, supporting file and command prompt (${shipped.length}) is tracked by git or not ignored (${shipped.length - shipUntracked.length} tracked, ${shipUntracked.length} untracked`
+       + `${shipLs.status !== 0 ? `; git ls-files failed: ${String(shipLs.stderr).trim()}` : ''}`
+       + `${shipIgn.status !== 0 && shipIgn.status !== 1 ? `; git check-ignore failed: ${String(shipIgn.stderr || (shipIgn.error && shipIgn.error.code)).trim()}` : ''}`
+       + `${shipHits.length ? `; ignored (rule<TAB>file): ${shipHits.join('; ')}` : ''})`);
+  }
   // The Codex plugin (codex plugin add banker@banker-plugins) reads .codex-plugin/plugin.json: same version as the
   // Claude plugin, its skills list (one path per skill, plus codex/skills/ and codex/command-skills/) == the manifest's
   // Codex surfaces, codex/command-skills and codex/renamed-skills in step with their sources, and every script
@@ -297,8 +323,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 65 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 65 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 69 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 69 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
@@ -413,7 +439,7 @@ try {
   const pmonDir = path.join(instDir, 'banker-progress-mon');
   const pmonFiles = mfAllSkills.find((s) => s.name === 'progress-mon').supportingFiles;
   const pmonSkill = fs.readFileSync(path.join(pmonDir, 'SKILL.md'), 'utf8');
-  ok(pmonFiles.length === 39 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
+  ok(pmonFiles.length === 44 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
      && !fs.readdirSync(path.join(pmonDir, 'scripts')).some((f) => f.endsWith('.test.mjs')),
      `banker-progress-mon carries its ${pmonFiles.length} supporting files and no tests into the Codex install`);
   ok(/^---\nname: banker-progress-mon\n/.test(pmonSkill) && pmonSkill.includes('\nprogress-mon skill body marker v1\n'),
@@ -448,6 +474,63 @@ try {
   ok(pmonPlugin.includes('./skills/progress-mon/') && pmonDoc.includes('`~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/progress-mon/`')
      && pmonDoc.includes('`~/.codex/skills/banker-progress-mon/`') && pmonPluginRun.status === 0 && pmonPluginRun.stdout.startsWith('progress-mon: '),
      `progress-mon: the Codex plugin path (plugins/cache/banker-plugins/banker/${pluginVer}/skills/progress-mon/) is in the plugin list and the SKILL.md runtime table, and the script runs from a built cache copy there`);
+  // init-dir runs scripts/init-dir.mjs from the skill's own folder and copies its templates/ into the project; the Codex
+  // copy keeps every supporting file (the .cmd templates stay LF there and are written CRLF) and none of the tests.
+  ok(installed.includes('banker-init-dir'), 'new init-dir installed as banker-init-dir');
+  const idirDir = path.join(instDir, 'banker-init-dir');
+  const idirFiles = mfAllSkills.find((s) => s.name === 'init-dir').supportingFiles;
+  const idirWalk = (d) => fs.readdirSync(d, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? idirWalk(path.join(d, e.name)) : [e.name]));
+  ok(idirFiles.length === 25 && idirFiles.every((f) => fs.existsSync(path.join(idirDir, ...f.split('/'))))
+     && !idirWalk(idirDir).some((f) => f.endsWith('.test.mjs')),
+     `banker-init-dir carries its ${idirFiles.length} supporting files and no tests into the Codex install`);
+  const idirRun = cp.spawnSync(process.execPath, [path.join(idirDir, 'scripts', 'init-dir.mjs'), '--help'], { encoding: 'utf8' });
+  ok(idirRun.status === 0 && idirRun.stdout.split(/\r?\n/)[0].startsWith('init-dir: '),
+     `the Codex copy of init-dir runs (status ${idirRun.status}, stderr ${JSON.stringify(idirRun.stderr)})`);
+  // git-init runs scripts/git-init.mjs with copies of init-dir's marker-block.mjs and ralph-qa's payload-scan.mjs beside
+  // it (scripts/sync-adapter.js keeps them byte-identical); the Codex copy keeps those three files and none of the tests.
+  ok(installed.includes('banker-git-init'), 'new git-init installed as banker-git-init');
+  const ginitDir = path.join(instDir, 'banker-git-init');
+  const ginitFiles = mfAllSkills.find((s) => s.name === 'git-init').supportingFiles;
+  ok(ginitFiles.length === 3 && ginitFiles.every((f) => fs.existsSync(path.join(ginitDir, ...f.split('/'))))
+     && !fs.readdirSync(path.join(ginitDir, 'scripts')).some((f) => f.endsWith('.test.mjs')),
+     `banker-git-init carries its ${ginitFiles.length} supporting files and no tests into the Codex install`);
+  const ginitRun = cp.spawnSync(process.execPath, [path.join(ginitDir, 'scripts', 'git-init.mjs'), '--help'], { encoding: 'utf8' });
+  ok(ginitRun.status === 0 && ginitRun.stdout.split(/\r?\n/)[0].startsWith('git-init: '),
+     `the Codex copy of git-init runs (status ${ginitRun.status}, stderr ${JSON.stringify(ginitRun.stderr)})`);
+  for (const [src, f] of [[['init-dir', 'scripts'], 'marker-block.mjs'], [['ralph-qa', 'references'], 'payload-scan.mjs']]) {
+    ok(fs.readFileSync(path.join(root, 'skills', ...src, f)).equals(fs.readFileSync(path.join(root, 'skills', 'git-init', 'scripts', f))),
+       `${f} is byte-identical across ${src[0]} and git-init`);
+  }
+  // build-testbox runs scripts/testbox.mjs with its modules beside it (browser-cell.mjs is copied into the Playwright image
+  // and runs there alone); the Codex copy keeps all of them and neither the tests nor the test-only fakes, which live in
+  // scripts/test-fixtures/testbox-fakes.mjs (outside package.json's files).
+  ok(installed.includes('banker-build-testbox'), 'new build-testbox installed as banker-build-testbox');
+  const tboxDir = path.join(instDir, 'banker-build-testbox');
+  const tboxFiles = mfAllSkills.find((s) => s.name === 'build-testbox').supportingFiles;
+  const tboxScripts = fs.readdirSync(path.join(tboxDir, 'scripts'));
+  ok(tboxFiles.length === 9 && tboxFiles.every((f) => fs.existsSync(path.join(tboxDir, ...f.split('/'))))
+     && !tboxScripts.some((f) => f.endsWith('.test.mjs') || /fakes/.test(f)),
+     `banker-build-testbox carries its ${tboxFiles.length} supporting files and no tests or fakes into the Codex install (got ${tboxScripts.join(', ')})`);
+  const tboxRun = cp.spawnSync(process.execPath, [path.join(tboxDir, 'scripts', 'testbox.mjs'), '--help'], { encoding: 'utf8' });
+  ok(tboxRun.status === 0 && tboxRun.stdout.split(/\r?\n/)[0].startsWith('build-testbox: '),
+     `the Codex copy of build-testbox runs (status ${tboxRun.status}, stderr ${JSON.stringify(tboxRun.stderr)})`);
+  // tune-tmux runs scripts/tune-tmux.mjs with a copy of init-dir's marker-block.mjs beside it (scripts/sync-adapter.js keeps
+  // it byte-identical); the Codex copy keeps its five files and neither the tests nor the test-only full-screen app, which
+  // lives in scripts/test-fixtures/alt-screen-probe.mjs (outside package.json's files).
+  ok(installed.includes('banker-tune-tmux'), 'new tune-tmux installed as banker-tune-tmux');
+  const ttmuxDir = path.join(instDir, 'banker-tune-tmux');
+  const ttmuxFiles = mfAllSkills.find((s) => s.name === 'tune-tmux').supportingFiles;
+  const ttmuxScripts = fs.readdirSync(path.join(ttmuxDir, 'scripts'));
+  ok(ttmuxFiles.length === 5 && ttmuxFiles.every((f) => fs.existsSync(path.join(ttmuxDir, ...f.split('/'))))
+     && !ttmuxScripts.some((f) => f.endsWith('.test.mjs') || /probe/.test(f)),
+     `banker-tune-tmux carries its ${ttmuxFiles.length} supporting files and no tests or probe into the Codex install (got ${ttmuxScripts.join(', ')})`);
+  const ttmuxRun = cp.spawnSync(process.execPath, [path.join(ttmuxDir, 'scripts', 'tune-tmux.mjs'), '--help'], { encoding: 'utf8' });
+  ok(ttmuxRun.status === 0 && ttmuxRun.stdout.split(/\r?\n/)[0].startsWith('tune-tmux: '),
+     `the Codex copy of tune-tmux runs (status ${ttmuxRun.status}, stderr ${JSON.stringify(ttmuxRun.stderr)})`);
+  ok(fs.readFileSync(path.join(root, 'skills', 'init-dir', 'scripts', 'marker-block.mjs'))
+       .equals(fs.readFileSync(path.join(root, 'skills', 'tune-tmux', 'scripts', 'marker-block.mjs'))),
+     'marker-block.mjs is byte-identical across init-dir and tune-tmux');
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its
@@ -626,6 +709,15 @@ try {
     path.join('skills', 'theme-selection', 'scripts', 'themes.test.mjs'),
     ...['pm-check', 'pm-config', 'pm-data', 'pm-html', 'pm-memory', 'pm-render', 'pm-server', 'pm-skill', 'pm-sources', 'progress-mon']
       .map((n) => path.join('skills', 'progress-mon', 'scripts', `${n}.test.mjs`)),
+    ...['init-dir', 'marker-block', 'service-template', 'templates']
+      .map((n) => path.join('skills', 'init-dir', 'scripts', `${n}.test.mjs`)),
+    path.join('skills', 'git-init', 'scripts', 'git-init.test.mjs'),
+    ...['no-cmdline', 'fail-open'].map((n) => path.join('scripts', 'test-fixtures', `${n}.mjs`)),
+    ...['args', 'browsers', 'containers', 'detect', 'e2e', 'report', 'setup']
+      .map((n) => path.join('skills', 'build-testbox', 'scripts', `${n}.test.mjs`)),
+    path.join('scripts', 'test-fixtures', 'testbox-fakes.mjs'),
+    ...['tune-tmux', 'tmux-it'].map((n) => path.join('skills', 'tune-tmux', 'scripts', `${n}.test.mjs`)),
+    path.join('scripts', 'test-fixtures', 'alt-screen-probe.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),
@@ -882,6 +974,18 @@ try {
      && (ucDoc.match(/`\$banker-ralph-qa`\(플러그인 길 `\$banker:ralph-qa`\)/g) || []).length === 2
      && /Codex 플러그인 설치 `<S>\/\.\.\/ralph-qa\/references`/.test(ucDoc),
      'uc-gates: ultra-chain stage 3 gives ralph-qa no --gates and keeps its no-gate line, stage 5 runs the iteration-0 baseline, stage 6 runs the local gates through gate-evidence, records them with chain-ledger gates and passes --gates, and both Codex names are given');
+  // Plan skills-1101 US-1: --agents is the count of every independent verdict; stage 5 runs <agents> critic seats after
+  // ralph on both runtimes (ralph's own approval is ralph-reviewer, not the gate) and stops on INCONCLUSIVE; stage 7 has
+  // <agents> judges. The ledger enforces the count (chain-ledger.test.mjs AC1-AC6).
+  const ucFlags = (ucDoc.split('\n## 플래그\n')[1] || '').split(/\n## /)[0];
+  ok(/`<agents>`/.test(ucStage(5)) && /critic#1/.test(ucStage(5)) && /`verdict\.by: "ralph-reviewer"`/.test(ucStage(5))
+     && /`INCONCLUSIVE` 로 기록하고 멈춘다/.test(ucStage(5)) && /`INCONCLUSIVE` 이거나 `<max>` 회 안에 전원 승인하지 않으면 멈추고/.test(ucStage(5))
+     && /`<agents>`/.test(ucStage(7)) && /judge#1/.test(ucStage(7)) && /`judges`/.test(ucStage(7)) && /최솟값/.test(ucStage(7))
+     && /미지정 시 3/.test(ucFlags) && /`agentsSource: "default"`/.test(ucFlags) && /5단계 critic 좌석 루프\(두 런타임\)의 최대 회차/.test(ucFlags)
+     && /init --base \.omc\/ultra-chain --runtime claude --agents N --exclude\n/.test(ucDoc) && /init --base \.omc\/ultra-chain --runtime claude --exclude\n/.test(ucDoc)
+     && !/--agents <agents>/.test(ucDoc) && /init 명령에는 쓰지 않는다/.test(ucDoc)
+     && /`ralph-reviewer`\)은 5단계 게이트가 아니다/.test(ucDoc) && !/Codex critic 루프/.test(ucDoc),
+     'uc-agents: ultra-chain stages 5 and 7 use <agents> critic seats and judges, stage 5 records ralph\'s approval as ralph-reviewer and stops on INCONCLUSIVE, the flags say the default 3 is recorded in run.json, and init passes --agents only when the user gave it');
   // Plan 18 S12, 19.10 U6: all-in-one and ultra-init end with banker ralph-qa on both runtimes: the --qa goals go as
   // --gates over an iteration-0 baseline the runner took before the build; no OMX ultraqa and no verify cycle of their own.
   const s12Docs = ['all-in-one', 'ultra-init'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);

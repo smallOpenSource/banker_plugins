@@ -1,0 +1,6 @@
+{
+  "note": "옛 판(브랜치 bd4d7cd) init 이 쓴 규칙 줄. 규칙 줄 교체 시험이 이 줄로 메모리 파일을 만든다",
+  "claude": "진척도 화면(progress-mon): 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. .omc/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 progress-mon 스킬로 호출. 세션 시작 때 status, 꺼져 있으면 start. <!-- progress-mon:rule -->",
+  "codex": "진척도 화면(progress-mon): 모든 명령에 --runtime codex 를 붙임. 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. .omx/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 banker-progress-mon 스킬(플러그인 설치는 banker:progress-mon)로 호출. 세션 시작 때 status, 꺼져 있으면 start. start, stop, status 는 sandbox_permissions \"require_escalated\" 로 승인 요청. 세션을 닫아도 화면을 두려면 사용자 터미널에서 serve 실행을 안내. <!-- progress-mon:rule -->",
+  "index": "- [진척도 화면 갱신 규칙](progress-mon.md) - stage, story, item 으로 progress-mon 갱신 <!-- progress-mon:rule -->"
+}

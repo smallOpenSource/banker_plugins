@@ -1,4 +1,4 @@
-// pm-render.mjs 시험. 4탭 고정 입력 사실, 구현요건 판정 4행, workflow 간격 확장과 이름 줄바꿈, 구성도 좌표와 자동 배치,
+// pm-render.mjs 시험. 5탭 고정 입력 사실, 구현요건 판정 4행, workflow 간격 확장과 이름 줄바꿈, 구성도 좌표와 자동 배치,
 // 자료 없음 안내, 위험 문자열, 스토리 0, events 없음, 시각은 now 인자만, export 명령, 저장소 고유 문자열 0.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -95,6 +95,7 @@ function model(over = {}) {
     reqs: { missing: true },
     flow: { missing: true },
     arch: { missing: true },
+    adr: { missing: true },
     ...over,
   };
 }
@@ -291,10 +292,11 @@ test('구현요건: 스토리가 없는 프로젝트는 담당 스토리 칸과 
   assert.ok(h3.includes('담당 스토리가 모두 완료되면') && !h3.includes('스토리가 없는 프로젝트라'));
 });
 
-test('자료 없음: 세 탭은 안내와 스키마 문서 경로, 진척도는 빈 표', T, () => {
+test('자료 없음: 진척도 밖의 탭은 모두 안내와 스키마 문서 경로, 진척도는 빈 표', T, () => {
   const cfg = cfgOf();
   const s = snapshotFrom(model(), cfg, NOW);
-  assert.equal(count(s, /<div class="meta empty">/g), 3);
+  assert.equal(count(s, /<div class="meta empty">/g), 4);
+  assert.ok(s.includes('<code>references/adr.md</code>'));
   assert.ok(s.includes('<code>references/req-spec.md</code>, <code>references/reqs.md</code>'));
   assert.ok(s.includes('<code>references/flow.md</code>'));
   assert.ok(s.includes('<code>references/arch.md</code>'));
@@ -675,24 +677,25 @@ test('위험 문자열과 색: 모든 글 escape, 색은 #rrggbb 만', T, () => 
   assert.ok(!s.includes('url(x)') && !s.includes('#fff" x') && !s.includes('#a1b2c3"'));
   assert.ok(s.includes('stroke="#555555" stroke-width="1.5"'), '틀린 영역 색은 기본 색');
   assert.ok(s.includes('r="10" fill="#455a64"/>'), '틀린 흐름 색은 기본 색');
-  for (const k of ['history', 'req', 'workflow', 'arch']) assert.ok(!pageFrom(m, cfg, k, NOW).includes('<script>'), k);
+  for (const k of ['history', 'req', 'workflow', 'arch', 'adr']) assert.ok(!pageFrom(m, cfg, k, NOW).includes('<script>'), k);
 });
 
-test('단일 HTML 스냅숏: 절 4, 인라인 스크립트 1, 외부 참조 0, 자동 갱신 없음, 탭은 # 링크', T, () => {
+test('단일 HTML 스냅숏: 절 5, 인라인 스크립트 1, 외부 참조 0, 자동 갱신 없음, 탭은 # 링크', T, () => {
   const cfg = cfgOf({ title: '예시', shortName: 'ex' });
   const m = model({ flow: { value: readFix('flow.json') }, arch: { value: readFix('arch.json') }, reqSpec: { value: readFix('req-spec.json') }, reqs: { value: readFix('reqs.json') } });
   const s = snapshotFrom(m, cfg, NOW);
-  assert.equal(count(s, /<section id="tab-/g), 4);
+  assert.equal(count(s, /<section id="tab-/g), 5);
   assert.equal(count(s, /<script\b/g), 1);
   assert.ok(!/http-equiv="refresh"/.test(s));
   assert.ok(!/(?:src|href)\s*=\s*["']?(?:https?:)?\/\//i.test(s));
   assert.ok(s.includes('<title>ex 진척도 스냅숏</title>'));
-  assert.ok(s.includes('<div class="tabs"><a href="#history" data-tab="history">진척도</a><a href="#req" data-tab="req">구현요건</a><a href="#workflow" data-tab="workflow">workflow</a><a href="#arch" data-tab="arch">구성도</a></div>'));
+  assert.ok(s.includes('<div class="tabs"><a href="#history" data-tab="history">진척도</a><a href="#req" data-tab="req">구현요건</a><a href="#workflow" data-tab="workflow">workflow</a><a href="#arch" data-tab="arch">구성도</a><a href="#adr" data-tab="adr">ADR</a></div>'));
+  assert.ok(s.includes('var ks=["history","req","workflow","arch","adr"]'), '#adr 로 전환');
   assert.ok(s.includes('<section id="tab-req" class="tab"><h2 class="tt">구현요건</h2>\n\n<div>요구 2건'));
   assert.ok(!s.includes('/?tab='), '서버 주소 링크 없음');
 });
 
-test('고정 자료 프로젝트로 renderTab: 출처를 읽어 4탭(git 없음, events 자동 탐색)', T, () => {
+test('고정 자료 프로젝트로 renderTab: 출처를 읽어 5탭(git 없음, events 자동 탐색)', T, () => {
   const files = {};
   for (const f of ['config.json', 'items.json', 'req-spec.json', 'reqs.json', 'flow.json', 'arch.json']) files[f] = fs.readFileSync(path.join(FIX, f), 'utf8');
   const ctx = project(files);
@@ -720,7 +723,7 @@ test('export 명령: 파일을 쓰고 경로 한 줄, --now 형식, 파일 인�
   assert.deepEqual(lines, [`내보냄: ${out}`]);
   const html = fs.readFileSync(out, 'utf8');
   assert.ok(html.includes(`스냅숏 ${new Date(NOW).toLocaleString('ko-KR', { hour12: false })} |`));
-  assert.equal(count(html, /<section id="tab-/g), 4);
+  assert.equal(count(html, /<section id="tab-/g), 5);
   await assert.rejects(command('export', ctx, { _: ['export', out], now: 'yesterday' }, io), (e) => e instanceof UsageError && /--now/.test(e.message));
   await assert.rejects(command('export', ctx, { _: ['export'] }, io), UsageError);
   await assert.rejects(command('export', ctx, { _: ['export', path.join(ROOT, 'no-such-dir', 'x.html')] }, io), /쓰기 실패/);

@@ -55,11 +55,14 @@ test('공통 CSS 는 옛 화면의 주요 선택자를 담음', T, () => {
   assert.equal(CSS.split('\n').length, 30);
 });
 
-test('탭 머리는 네 탭과 켜진 탭 하나', T, () => {
-  assert.deepEqual(TABS.map((t) => t[0]), ['history', 'req', 'workflow', 'arch']);
+test('탭 머리는 다섯 탭과 켜진 탭 하나, 다섯째는 ADR', T, () => {
+  assert.deepEqual(TABS.map((t) => t[0]), ['history', 'req', 'workflow', 'arch', 'adr']);
+  assert.deepEqual(TABS[4], ['adr', 'ADR']);
   const h = tabsHtml('req');
-  assert.equal(h, '<div class="tabs"><a href="/?tab=history">진척도</a><a href="/?tab=req" class="on">구현요건</a><a href="/?tab=workflow">workflow</a><a href="/?tab=arch">구성도</a></div>');
+  assert.equal(h, '<div class="tabs"><a href="/?tab=history">진척도</a><a href="/?tab=req" class="on">구현요건</a><a href="/?tab=workflow">workflow</a><a href="/?tab=arch">구성도</a><a href="/?tab=adr">ADR</a></div>');
   assert.equal((tabsHtml('arch').match(/class="on"/g) || []).length, 1);
+  assert.equal((tabsHtml('adr').match(/class="on"/g) || []).length, 1);
+  assert.ok(tabsHtml('adr').includes('<a href="/?tab=adr" class="on">ADR</a>'));
 });
 
 test('favicon 은 외부 자원 없는 data URI', T, () => {

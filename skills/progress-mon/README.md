@@ -1,6 +1,6 @@
 # progress-mon
 
-프로젝트 진척도를 4탭 웹 화면(진척도, 구현요건, workflow, 구성도)으로 보이는 스킬. 사용 절차는 `SKILL.md`.
+프로젝트 진척도를 5탭 웹 화면(진척도, 구현요건, workflow, 구성도, ADR)으로 보이는 스킬. 사용 절차는 `SKILL.md`.
 이 폴더 하나를 banker 의 `skills/progress-mon/` 으로 그대로 옮긴다.
 
 ## 구조
@@ -13,15 +13,16 @@
 | `scripts/pm-config.mjs` | 프로젝트 루트와 자료 폴더 결정, `config.json` 읽기, 기본값, 형식 검사, 원자적 쓰기(임시 파일과 rename, Windows 재시도) |
 | `scripts/pm-sources.mjs` | events.jsonl, git log, 워크플로 journal, `items.json` 읽기. 스토리와 라벨 판정 함수, 시각 해석, 읽기 캐시 |
 | `scripts/pm-html.mjs` | escape, 색 검사, 유한 수 검사, 글 폭 추정, 줄바꿈, 공통 CSS, 탭 머리 |
-| `scripts/pm-render.mjs` | 4탭, 단일 HTML 스냅숏(`export`), workflow 배치, 구성도 자동 배치 |
+| `scripts/pm-render.mjs` | 5탭, 단일 HTML 스냅숏(`export`), workflow 배치, 구성도 자동 배치 |
+| `scripts/pm-adr.mjs` | ADR 탭: `adr.json` 두 층 스키마 검사, 참조 확인과 정리(`check --adr-cleanup`), `docs/adr/` 갈라짐 경고, 밀도, 렌더 |
 | `scripts/pm-server.mjs` | `serve`, `start`, `stop`, `status`. 바인드, Host 검사, 신원 경로, 상태 파일, 포트 선택, 로그 |
 | `scripts/pm-data.mjs` | `init`, `item`, `note`, `stage`, `story`(`items.json` 잠금과 낡은 잠금 정리) |
-| `scripts/pm-memory.mjs` | 메모리 규칙 등록, 규칙 로드 한도 측정 |
+| `scripts/pm-memory.mjs` | 메모리 규칙 등록, 옛 판 규칙 줄의 제자리 교체(첫 원본 `.progress-mon.bak`), 규칙 로드 한도 측정 |
 | `scripts/pm-check.mjs` | 자료 형식, 상호 참조, 구성도와 workflow 기하, 밀도 검사 |
 | `scripts/index.js` | `node --test <폴더>/` 진입 로더. 모든 `*.test.mjs` 적재, 마지막 시험 `all <n> test files loaded` |
 | `scripts/*.test.mjs` | 모듈별 시험. 시험마다 `timeout: 60000` |
-| `references/` | `config.md`, `items.md`, `req-spec.md`, `reqs.md`, `flow.md`, `arch.md`(스키마와 판정 규칙), `authoring.md`(init 작성 지침, 밀도 기준), `inventory.md` |
-| `assets/fixture/` | 형식 시험용 최소 자료와 변형(`variants/`). 화면 수준의 견본이 아님 |
+| `references/` | `config.md`, `items.md`, `req-spec.md`, `reqs.md`, `flow.md`, `arch.md`, `adr.md`(스키마와 판정 규칙), `authoring.md`(init 작성 지침, 밀도 기준), `inventory.md` |
+| `assets/fixture/` | 형식 시험용 최소 자료와 변형(`variants/`, 옛 판 규칙 줄 `variants/legacy-init/`). 화면 수준의 견본이 아님 |
 
 - 의존성: Node 18 이상 내장 모듈만. npm 의존 0
 - 인코딩: UTF-8, BOM 없음, LF. 숨은 문자는 escape(`\u{...}`)로만
@@ -40,6 +41,7 @@
 - 시험은 임시 HOME, 임시 프로젝트, OS 가 고른 빈 포트에서 돈다. 포트 30000, 3456, 3458 은 쓰지 않는다
 - 시험은 PATH 의 `git` 으로 임시 저장소를 만든다. git 이 없는 PC 에서는 그 시험 10개가 실패한다(2026-10-30, PATH 에 node 와 mkfifo 만 두고 실측). 스킬 자체는 git 이 없으면 커밋 기록 없이 동작
 - FIFO 와 `/dev/zero` 시험은 POSIX 만. Windows 에서는 이유를 밝히고 건너뛴다
+- ADR 화면 e2e 는 `npm root -g` 의 전역 Playwright Chromium 으로 `export` 한 HTML 을 연다. Playwright 가 없거나 Chromium 을 띄우지 못하면 사유를 밝히고 건너뛴다. `PM_ADR_SHOT=<png 경로>` 를 주면 스크린숏을 그 경로에 남긴다
 
 ## 개발
 
@@ -88,7 +90,7 @@ override 에 banker 블록이나 이 스킬 블록만 있으면 `init`, `status`
 | 항목 | `/banker:progress` | `/banker:progress-mon` |
 |---|---|---|
 | 종류 | 명령(`commands/progress.md`)과 훅 | 스킬 |
-| 보이는 곳 | Claude Mods 패널(세션 작업 목록) | 브라우저(로컬 포트 서버, 4탭) |
+| 보이는 곳 | Claude Mods 패널(세션 작업 목록) | 브라우저(로컬 포트 서버, 5탭) |
 | 런타임 | mod 를 지원하는 Claude Code 만 | Claude Code 와 Codex |
 | 서버 | 없음 | 있음(127.0.0.1 기본) |
 
@@ -100,8 +102,8 @@ override 에 banker 블록이나 이 스킬 블록만 있으면 `init`, `status`
 
 ```json
 { "name": "progress-mon", "type": "skill", "target": "both",
-  "reason": "project progress web screen with four tabs (progress, requirements, workflow, architecture) on a local server; init reads the code and writes the tab data, registers a one-line update rule in project memory; item, note, stage, story keep it current; pure Node, no deps",
-  "supportingFiles": ["README.md", "references/arch.md", "references/authoring.md", "references/config.md", "references/flow.md", "references/inventory.md", "references/items.md", "references/req-spec.md", "references/reqs.md", "scripts/index.js", "scripts/pm-check.mjs", "scripts/pm-config.mjs", "scripts/pm-data.mjs", "scripts/pm-html.mjs", "scripts/pm-memory.mjs", "scripts/pm-render.mjs", "scripts/pm-server.mjs", "scripts/pm-sources.mjs", "scripts/progress-mon.mjs", "assets/fixture/README.md", "assets/fixture/config.json", "assets/fixture/events.jsonl", "assets/fixture/items.json", "assets/fixture/commits.json", "assets/fixture/req-spec.json", "assets/fixture/reqs.json", "assets/fixture/flow.json", "assets/fixture/arch.json", "assets/fixture/workflows/wf_ex1/journal.jsonl", "assets/fixture/workflows/wf_ex1/agent-a01.jsonl", "assets/fixture/workflows/wf_ex1/agent-a02.jsonl", "assets/fixture/workflows/wf_ex1/agent-a03.jsonl", "assets/fixture/workflows/wf_ex1/agent-a04.jsonl", "assets/fixture/variants/arch-auto/arch.json", "assets/fixture/variants/check-auto/arch.json", "assets/fixture/variants/check-overlap/arch.json", "assets/fixture/variants/history-manual/config.json", "assets/fixture/variants/history-manual/items.json", "assets/fixture/variants/workflow-wide/flow.json"],
+  "reason": "project progress web screen with five tabs (progress, requirements, workflow, architecture, ADR) on a local server; init reads the code and writes the tab data, registers a one-line update rule in project memory; item, note, stage, story keep it current; pure Node, no deps",
+  "supportingFiles": ["README.md", "references/adr.md", "references/arch.md", "references/authoring.md", "references/config.md", "references/flow.md", "references/inventory.md", "references/items.md", "references/req-spec.md", "references/reqs.md", "scripts/index.js", "scripts/pm-adr.mjs", "scripts/pm-check.mjs", "scripts/pm-config.mjs", "scripts/pm-data.mjs", "scripts/pm-html.mjs", "scripts/pm-memory.mjs", "scripts/pm-render.mjs", "scripts/pm-server.mjs", "scripts/pm-sources.mjs", "scripts/progress-mon.mjs", "assets/fixture/README.md", "assets/fixture/config.json", "assets/fixture/events.jsonl", "assets/fixture/items.json", "assets/fixture/commits.json", "assets/fixture/req-spec.json", "assets/fixture/reqs.json", "assets/fixture/flow.json", "assets/fixture/arch.json", "assets/fixture/adr.json", "assets/fixture/workflows/wf_ex1/journal.jsonl", "assets/fixture/workflows/wf_ex1/agent-a01.jsonl", "assets/fixture/workflows/wf_ex1/agent-a02.jsonl", "assets/fixture/workflows/wf_ex1/agent-a03.jsonl", "assets/fixture/workflows/wf_ex1/agent-a04.jsonl", "assets/fixture/variants/arch-auto/arch.json", "assets/fixture/variants/check-auto/arch.json", "assets/fixture/variants/check-overlap/arch.json", "assets/fixture/variants/history-manual/config.json", "assets/fixture/variants/history-manual/items.json", "assets/fixture/variants/workflow-wide/flow.json", "assets/fixture/variants/legacy-init/rules.json", "assets/fixture/variants/legacy-init/state.json"],
   "caveat": "needs Node 18 or later (above the package engines floor); binds 127.0.0.1 only by default, --host takes a private IPv4 with a warning; data lives in .omc/progress-mon/ (Codex .omx/progress-mon/); on Codex start, stop, status and init each ask for sandbox_permissions require_escalated, and a long-lived screen runs from the user's terminal (serve) since closing the session may stop the server" }
 ```
 
