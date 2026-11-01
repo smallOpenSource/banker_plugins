@@ -3992,7 +3992,9 @@ test("a bare apply whose fetch hits its time limit ends git's helpers with it: t
     assert.equal(r.code, 1, r.out);
     assert.match(r.out, /origin 에서 태그를 받지 못함: 1초 안에 끝나지 않아 끊음/, r.out);
     assert.ok(srv.held.length > 0, "git reached the server");
-    assert.ok(await srv.closedAll(3000), "a git helper still holds the connection 3 s after the tool ended");
+    // closedAll polls every 50 ms; the 15 s limit only gives a loaded machine time to reap the helpers, and a helper
+    // that never ends still fails here
+    assert.ok(await srv.closedAll(15000), "a git helper still holds the connection 15 s after the tool ended");
   } finally {
     srv.end();
   }

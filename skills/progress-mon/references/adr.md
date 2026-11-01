@@ -17,7 +17,8 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 {
   "project": {
     "verification": [
-      { "id": "M-1", "module": "<단위 기능>", "result": "<결과>", "evidence": ["<참조>"] }
+      { "id": "M-1", "module": "<단위 기능>", "result": "<결과>", "evidence": ["<참조>"] },
+      { "id": "M-2", "module": "<검증 못 한 단위 기능>", "status": "unverified", "why": "<미검증 사유>" }
     ],
     "flow": { "input": "<입력>", "logic": "<처리 로직>", "output": "<출력>", "refs": ["<참조>"] },
     "proof": {
@@ -43,6 +44,7 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 - 모듈 id 는 `project.verification` 안에서 겹치지 않는다. 결정과 `proof.implemented` 의 `modules` 는 있는 id 만
 - `options` 는 2개 이상. 하나뿐이면 `rejected`(다른 선택지를 버린 사유)를 쓴다
 - `modules`, `refs`(flow), `limits`, `date`, `rejected`, `sources` 는 선택. 그 밖 칸은 필수
+- 모듈 `status` 는 선택. 없거나 `"verified"` 면 검증한 모듈(`result`, `evidence` 필수), `"unverified"` 면 미검증 모듈(`why` 필수, `result`, `evidence` 선택)
 - 모든 글은 화면에서 escape 한다. 비밀값(키, 토큰, 비밀번호)을 적지 않는다
 
 ## 사용자 항목과 칸
@@ -56,8 +58,12 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 | 5. 포기와 얻은 것 | 결정의 `tradeoffs` | 포기와 얻은 것 |
 | 6. 증거 | `project.proof` | 증거 |
 
-- 여섯 칸은 각각 내용 꼴이나 `{ "gap": "<사유>" }`. 근거가 없으면 지어내지 않고 사유를 적어 비운다
+- 주장에는 증거(사용자 결정 D 안). 근거가 없으면 지어내지 않는다
+  - 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 는 `gap` 아닌 참조 1개 이상. 없으면 FAIL. 벗어나는 길: 그 모듈은 `status: "unverified"` 와 `why`, 그 기능은 `notImplemented` 로 옮김
+  - `project.verification`, `project.proof` 칸 전체를 `gap` 으로 두면 FAIL(모듈을 적고 미검증으로, 기능은 `notImplemented` 로)
+  - 결정의 `optimization`, `scaling`, `tradeoffs` 와 `project.flow` 는 `{ "gap": "<사유>" }` 로 비울 수 있음(밀도 WARN)
 - 화면은 빈 칸을 `근거 없음: <사유>` 로 보이고, 결정 목록에 결정별 3항목 채움 수(`n/3`)와 빈 항목을 보인다
+- "근거 없음 n칸" 배지: adr.json 안의 `{ "gap" }` 수(여섯 항목 칸과 참조 자리). 화면 맨 위(프로젝트 요약 위)와 `check` 의 마지막 줄 `adr 근거 없음 n칸` 에 늘 보임. 0 이면 0(adr.json 이 없으면 check 는 0)
 
 ## 참조
 
@@ -90,9 +96,10 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 | 경우 | check |
 |---|---|
 | 항목 칸이 없거나 꼴이 틀림 | `FAIL adr.json <json 경로> <이유>`(스키마 위반) |
-| 항목이 `{ "gap": "<사유>" }` | `WARN density adr 빈 항목 <값>/<하한>: <json 경로>`(init 기록이 있을 때) |
+| 결정의 3칸이나 `project.flow` 가 `{ "gap": "<사유>" }` | `WARN density adr 빈 항목 <값>/<하한>: <json 경로>` |
 | `gap` 에 사유가 없음 | `FAIL adr.json <json 경로>.gap gap 에 사유 없음` |
-| 내용은 있으나 참조가 0개(모듈 검증, 구현 기능의 증명) | `WARN density adr 참조 <값>/<하한>: <json 경로>` |
+| 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 에 `gap` 아닌 참조가 0개 | `FAIL adr.json <json 경로> 증거 없음: ...`(벗어나는 길을 줄에 적음) |
+| `project.verification`, `project.proof` 칸 전체가 `gap` | `FAIL adr.json <json 경로> 증거 없음: ...` |
 
 참조 확인(결정 I)
 
@@ -108,6 +115,7 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 - 처리가 다르다
   - 스키마 위반 FAIL: init 정리 단계에서 FAIL 이 남으면 `adr.json` 을 지우지 않고 같은 폴더의 `adr.json.rejected-<YYYYMMDD-HHMMSS>`(이름이 있으면 `-2` 부터 번호)로 옮겨 "자료 없음" 으로 둔다. 옮긴 파일을 고쳐 `adr.json` 으로 되돌릴 수 있다
   - 참조 FAIL: 파일을 지우지 않는다. init 정리 단계에서 그 참조를 `{ "gap": "참조 확인 실패: <이유>" }` 로 바꾸고 check 를 다시 돌린다. 갱신 때(init 밖)는 FAIL 줄을 보고하고 json 경로를 고친다
+  - 증거 없음 FAIL: 정리 단계가 파일을 옮기지 않고 자동으로 고치지도 않는다. 참조를 `gap` 으로 바꾼 결과 증거가 모두 `gap` 이 된 주장은 `정리: 증거가 남지 않은 주장 n건` 줄로 알리고, 에이전트가 판단해 그 모듈을 미검증으로, 그 기능을 `notImplemented` 로 옮긴다
   - `check --adr-cleanup` 이 정리 단계를 적용한 뒤 검사한다(출력 첫 줄 `정리: ...`)
 
 두 원본 갈라짐(결정 K)
@@ -119,7 +127,7 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 
 - 연결 유무만 본다. 사람이 쓴 문서와 `adr.json` 의 내용 일치는 검사하지 않는다
 
-밀도(init 기록이 있을 때만)
+밀도(adr.json 이 있으면 늘. 없으면 init 기록이 있을 때만)
 
 | `check` 의 이름 | 하한 |
 |---|---|
@@ -127,11 +135,10 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 | `adr 검증` | `verification` 1 이상 |
 | `adr 흐름` | 입력, 처리, 출력 3칸이 빈 칸 아님 |
 | `adr 증거` | `proof.implemented` 1 이상 |
-| `adr 참조` | 모듈마다 `evidence`, 구현된 기능마다 `proofs` 에 `gap` 아닌 참조 1 이상 |
 | `adr 결정` | 결정 1 이상 |
 | `adr 포기얻음` | 결정마다 `gaveUp`, `gained` 각 1 이상 |
 
-- 끝의 밀도 요약에 `density adr ok|low`
+- 끝의 밀도 요약에 `density adr ok|low`(init 기록이 있을 때), 마지막 줄은 늘 `adr 근거 없음 n칸`
 
 ## 좋은 예
 
@@ -163,4 +170,4 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 }
 ```
 
-- 나쁜 예: 실행하지 않은 시험을 "통과" 로 적음, 참조 없이 "검증함" 만 적음, 근거가 없는 확장 논거를 지어냄. 근거가 없으면 `gap` 과 사유
+- 나쁜 예: 실행하지 않은 시험을 "통과" 로 적음, 참조 없이 "검증함" 만 적음, 근거가 없는 확장 논거를 지어냄. 결정의 근거가 없으면 `gap` 과 사유, 증거 없는 모듈과 기능은 미검증과 `notImplemented`

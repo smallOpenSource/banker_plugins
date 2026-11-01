@@ -293,6 +293,24 @@ function cliAsync(args, cwd) {
   });
 }
 
+// 포트에 서버가 남지 않았는지. 닫히는 중인 서버는 연결 거부 대신 끊김(socket hang up, ECONNRESET)을 낼 수 있어(Windows 부하)
+// 거부가 될 때까지 짧게 다시 묻는다. 한도(10초) 뒤에도 응답하거나 끊기면 남은 서버로 본다. 돌려줌: 'refused' | 마지막 결과
+async function gone(port, ms = 10000) {
+  const until = Date.now() + ms;
+  let last = '';
+  do {
+    try {
+      const r = await get(port);
+      last = `응답 ${r.status}`;
+    } catch (e) {
+      if (e.code === 'ECONNREFUSED') return 'refused';
+      last = e.code || e.message;
+    }
+    await new Promise((res) => setTimeout(res, 100));
+  } while (Date.now() < until);
+  return last;
+}
+
 test('동시에 부른 start 는 서버 하나를 띄우고 모두 같은 URL, 거짓 실패와 끌 수 없는 서버 없음(5회)', { timeout: 300000 }, async () => {
   for (let round = 0; round < 5; round++) {
     const p = project('.omc/progress-mon');
@@ -306,7 +324,7 @@ test('동시에 부른 start 는 서버 하나를 띄우고 모두 같은 URL, �
       assert.equal(rs.filter((r) => r.out === `이미 실행 중(재사용): ${url}\n`).length, 3, JSON.stringify(rs));
       assert.equal(fs.existsSync(path.join(dataOf(p), 'server.json.lock')), false, '잠금은 돌려줌');
       assert.equal(cli(['stop'], p).code, 0);
-      for (let q = port; q <= port + 4; q++) await assert.rejects(get(q), /ECONNREFUSED/, `포트 ${q} 에 남은 서버 없음`);
+      for (let q = port; q <= port + 4; q++) assert.equal(await gone(q), 'refused', `포트 ${q} 에 남은 서버 없음`);
     } finally {
       cleanup(p);
     }

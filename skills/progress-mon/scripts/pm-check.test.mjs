@@ -49,19 +49,21 @@ function data(over = {}) {
 }
 const check = (ctx) => runCheck(ctx, ENV).lines;
 const only = (lines, re) => lines.filter((l) => re.test(l));
+// check 끝에 늘 붙는 ADR 근거 없음 칸 수(adr.json 이 없으면 0)
+const NO_GAP = 'adr 근거 없음 0칸';
 const problems = (lines) => lines.filter((l) => /^(FAIL|WARN) /.test(l));
 
-test('고정 자료: FAIL 0, WARN 0, init 기록과 inventory 가 없으면 밀도 줄 없음', T, () => {
+test('고정 자료: FAIL 0, WARN 0, init 기록과 inventory 가 없으면 밀도 줄 없음, ADR 근거 없음 0칸은 늘', T, () => {
   const lines = check(data());
-  assert.deepEqual(lines, ['check: FAIL 0, WARN 0']);
+  assert.deepEqual(lines, ['check: FAIL 0, WARN 0', NO_GAP]);
 });
 
 test('변형 check-overlap, check-auto: 기대 출력과 같은 줄', T, () => {
   const ov = check(data({ 'arch.json': read('variants/check-overlap/arch.json') }));
-  assert.deepEqual(ov, ['FAIL arch.json nodes[1] 상자 겹침: n2, n1', 'check: FAIL 1, WARN 0']);
+  assert.deepEqual(ov, ['FAIL arch.json nodes[1] 상자 겹침: n2, n1', 'check: FAIL 1, WARN 0', NO_GAP]);
   // 같은 행의 가운데 상자를 건너뛰는 연결: 자동 배치는 그 상자를 돌아가므로 WARN 없음
   const au = check(data({ 'arch.json': read('variants/check-auto/arch.json') }));
-  assert.deepEqual(au, ['check: FAIL 0, WARN 0']);
+  assert.deepEqual(au, ['check: FAIL 0, WARN 0', NO_GAP]);
 });
 
 test('형식: JSON 아님, 필수 키, status 값, 색, 수, 정규식 컴파일', T, () => {
@@ -174,7 +176,7 @@ test('구성도 자동 배치: 겹침, 영역 밖, 글 넘침 FAIL 없음, 이�
   const f = strip(read('variants/check-auto/arch.json'));
   f.nodes = f.nodes.slice(0, 2);
   f.edges[0] = { ...f.edges[0], to: 'n2', label: '아주 긴 연결 이름표가 두 상자 사이 틈보다 훨씬 길어서 덮어 버림' };
-  assert.deepEqual(check(data({ 'arch.json': f })), ['check: FAIL 0, WARN 0']);
+  assert.deepEqual(check(data({ 'arch.json': f })), ['check: FAIL 0, WARN 0', NO_GAP]);
   f.edges[0].label = f.edges[0].label.repeat(3);
   const lines = check(data({ 'arch.json': f }));
   assert.equal(only(lines, /^FAIL /).length, 0);
@@ -204,7 +206,7 @@ test('구성도 자기 연결(from 과 to 가 같음)은 상자든 영역이든,
   assert.equal(only(lines, /edges\[2\]/).length, 0);
   // 자기 연결만 있는 그림: 선이 상자를 지나지 않음(길이 0 인 선)
   const one = { zones: [{ id: 'z', label: '영역' }], nodes: [{ id: 'a', zone: 'z', label: 'a', detail: '설명' }], edges: [{ id: 'zz', from: 'z', to: 'z' }] };
-  assert.deepEqual(check(data({ 'arch.json': one })), ['WARN arch.json edges[0] 자기 연결(from 과 to 가 같음): zz', 'check: FAIL 0, WARN 1']);
+  assert.deepEqual(check(data({ 'arch.json': one })), ['WARN arch.json edges[0] 자기 연결(from 과 to 가 같음): zz', 'check: FAIL 0, WARN 1', NO_GAP]);
   // 좌표 사용 자료도 자기 연결은 WARN
   const fixed = read('arch.json');
   fixed.edges.push({ id: 'self', from: fixed.nodes[0].id, to: fixed.nodes[0].id, label: '스스로' });
@@ -286,9 +288,9 @@ test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코�
   ]) assert.ok(lines.includes(w), `${w}\n${lines.join('\n')}`);
   assert.ok(lines.some((l) => l.startsWith('WARN density workflow 단계설명 1/10: main/p1(1줄), ')), lines.join('\n'));
   assert.equal(only(lines, /^WARN density (workflow 단계:main|req 비고) /).length, 0, '하한을 채운 항목은 WARN 없음');
-  assert.deepEqual(lines.slice(-5), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low']);
+  assert.deepEqual(lines.slice(-6), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', NO_GAP]);
   assert.ok(lines.includes('WARN density adr 결정 0/1'), 'adr.json 이 없으면 ADR 밀도 미달');
-  assert.match(lines[lines.length - 6], /^check: FAIL 0, WARN \d+$/);
+  assert.match(lines[lines.length - 7], /^check: FAIL 0, WARN \d+$/);
 });
 
 test('밀도: inventory.json 으로 하한을 낮춤, 없는 경로는 FAIL, inventory 만 있어도 밀도 검사', T, () => {
@@ -377,7 +379,7 @@ test('CLI: FAIL 이 있으면 종료 1, 자료 폴더가 없어도 만들지 않
   const ctx = data({ 'arch.json': read('variants/check-overlap/arch.json') });
   const r = spawnSync(process.execPath, [CLI, 'check'], { cwd: ctx.project, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 30000 });
   assert.equal(r.status, 1);
-  assert.equal(r.stdout, 'FAIL arch.json nodes[1] 상자 겹침: n2, n1\ncheck: FAIL 1, WARN 0\n');
+  assert.equal(r.stdout, 'FAIL arch.json nodes[1] 상자 겹침: n2, n1\ncheck: FAIL 1, WARN 0\nadr 근거 없음 0칸\n');
   const empty = path.join(ROOT, `e${++n}`);
   fs.mkdirSync(empty);
   const e = spawnSync(process.execPath, [CLI, 'check'], { cwd: empty, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 30000 });

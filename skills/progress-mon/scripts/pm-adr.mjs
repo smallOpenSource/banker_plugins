@@ -35,12 +35,19 @@ const KIND = {
   obj: [(v) => Boolean(obj(v)), '객체가 아님'],
 };
 
-// 검사 결과 모음. schema: 스키마 위반, refFail, refWarn: 참조 확인 결과, refs: 확인할 참조, modRefs: 모듈 id 참조.
+// 검사 결과 모음. schema: 스키마 위반, claim: 증거 없는 주장(구현됨, 검증됨), refFail, refWarn: 참조 확인 결과,
+// refs: 확인할 참조, modRefs: 모듈 id 참조. schema 와 claim 은 둘 다 FAIL 이지만 정리 단계는 schema 만 파일을 옮긴다.
 function state() {
-  const S = { schema: [], refFail: [], refWarn: [], refs: [], modRefs: [], ids: new Set() };
+  const S = { schema: [], claim: [], refFail: [], refWarn: [], refs: [], modRefs: [], ids: new Set() };
   S.bad = (parts, msg) => S.schema.push({ p: jp(parts), msg });
+  S.unproven = (parts, msg) => S.claim.push({ p: jp(parts), msg });
   return S;
 }
+
+// 주장에는 증거: 증거 칸에 gap 아닌 참조가 0개면(비었거나 모두 gap) 증거 없음.
+const realRefs = (list) => arr(list).filter((x) => obj(x) && !isGap(x)).length;
+const MODULE_WAY = '증거를 지어내지 말고 그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)';
+const FEATURE_WAY = '증거를 지어내지 말고 그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)';
 
 // o[key] 의 꼴 검사. 돌려줌: 맞으면 참. optional 이면 없어도 참.
 function want(S, o, key, parts, kind, optional = false) {
@@ -120,13 +127,19 @@ function each(S, list, parts, check) {
   list.forEach((x, i) => (obj(x) ? check(x, [...parts, i]) : S.bad([...parts, i], '객체가 아님')));
 }
 
+// 모듈 하나. 검증한 모듈(status 없음이나 "verified")은 evidence 에 gap 아닌 참조 1개 이상, 미검증 모듈("unverified")은 why.
+function moduleItem(S, x, p) {
+  const unverified = x.status === 'unverified';
+  if (x.status !== undefined && !['verified', 'unverified'].includes(x.status)) S.bad([...p, 'status'], `verified, unverified 가운데 하나가 아님: ${x.status}`);
+  fields(S, x, p, [['id', 'str'], ['module', 'str'], ['result', 'str', unverified], ['why', 'str', !unverified]]);
+  if (str(x.id) && S.ids.has(x.id)) S.bad([...p, 'id'], `모듈 id 겹침: ${x.id}`);
+  if (str(x.id)) S.ids.add(x.id);
+  refList(S, x, 'evidence', p, unverified);
+  if (!unverified && Array.isArray(x.evidence) && !realRefs(x.evidence)) S.unproven([...p, 'evidence'], `증거 없음: 검증 증거가 없음(gap 아닌 참조 0개). ${MODULE_WAY}`);
+}
+
 function verification(S, list, parts) {
-  each(S, list, parts, (x, p) => {
-    fields(S, x, p, [['id', 'str'], ['module', 'str'], ['result', 'str']]);
-    if (str(x.id) && S.ids.has(x.id)) S.bad([...p, 'id'], `모듈 id 겹침: ${x.id}`);
-    if (str(x.id)) S.ids.add(x.id);
-    refList(S, x, 'evidence', p);
-  });
+  each(S, list, parts, (x, p) => moduleItem(S, x, p));
 }
 
 function flow(S, f, parts) {
@@ -140,6 +153,7 @@ function proof(S, v, parts) {
       want(S, x, 'feature', p, 'str');
       modules(S, x, p);
       refList(S, x, 'proofs', p);
+      if (Array.isArray(x.proofs) && !realRefs(x.proofs)) S.unproven([...p, 'proofs'], `증거 없음: 구현 증명이 없음(gap 아닌 참조 0개). ${FEATURE_WAY}`);
     });
   }
   if (want(S, v, 'notImplemented', parts, 'arr')) each(S, v.notImplemented, [...parts, 'notImplemented'], (x, p) => fields(S, x, p, [['feature', 'str'], ['why', 'str']]));
@@ -150,6 +164,9 @@ function project(S, p) {
   slot(S, p, 'verification', parts, { kind: 'arr', check: (v, q) => verification(S, v, q) });
   slot(S, p, 'flow', parts, { kind: 'obj', check: (v, q) => flow(S, v, q) });
   slot(S, p, 'proof', parts, { kind: 'obj', check: (v, q) => proof(S, v, q) });
+  // 검증과 증거 칸 전체를 gap 으로 둘 수 없음(주장에는 증거). 흐름의 gap 은 밀도 WARN
+  if (isGap(p.verification) && str(p.verification.gap)) S.unproven([...parts, 'verification'], `증거 없음: 검증 칸 전체를 gap 으로 둘 수 없음. 모듈을 적고 ${MODULE_WAY}`);
+  if (isGap(p.proof) && str(p.proof.gap)) S.unproven([...parts, 'proof'], `증거 없음: 증거 칸 전체를 gap 으로 둘 수 없음. implemented 를 비우고 ${FEATURE_WAY}`);
 }
 
 function options(S, d, parts) {
@@ -331,7 +348,7 @@ export function checkAdr(ctx, config, r) {
   const got = inspectAdr(ctx, config);
   if (got.missing) return null;
   if (got.error) return r.fail(ADR_FILE, '$', got.error), null;
-  for (const x of got.S.schema) r.fail(ADR_FILE, x.p, x.msg);
+  for (const x of [...got.S.schema, ...got.S.claim]) r.fail(ADR_FILE, x.p, x.msg);
   for (const x of got.S.refFail) r.fail(ADR_FILE, jp(x.parts), `참조: ${x.msg}`);
   for (const x of got.S.refWarn) r.warn(ADR_FILE, jp(x.parts), `참조: ${x.msg}`);
   for (const msg of got.diverge) r.warn(ADR_FILE, 'sources:', msg);
@@ -380,12 +397,15 @@ export async function cleanAdr(ctx, config, now = Date.now()) {
   if (!fails.length) return ['정리: adr.json 참조 FAIL 0, 바꾼 것 없음'];
   for (const f of fails) setAt(got.value, f.parts, { gap: `참조 확인 실패: ${f.msg}` });
   await writeAtomic(file, JSON.stringify(got.value, null, 2) + '\n');
-  return [`정리: adr.json 참조 FAIL ${fails.length}건을 gap 으로 바꿈: ${fails.map((f) => jp(f.parts)).join(', ')}`];
+  const out = [`정리: adr.json 참조 FAIL ${fails.length}건을 gap 으로 바꿈: ${fails.map((f) => jp(f.parts)).join(', ')}`];
+  // 바꾼 뒤 증거가 모두 gap 이 된 주장은 자동으로 옮기지 않는다(check 가 FAIL 로 보고, 에이전트가 판단해 옮김)
+  const left = adrSchema(got.value).claim;
+  if (left.length) out.push(`정리: 증거가 남지 않은 주장 ${left.length}건(자동으로 옮기지 않음, check 의 FAIL 참고): ${left.map((x) => x.p).join(', ')}`);
+  return out;
 }
 
 // ---------- 밀도 ----------
 
-const realRefs = (list) => arr(list).filter((x) => obj(x) && !isGap(x)).length;
 const content = (v) => (isGap(v) ? null : v);
 
 // 여섯 항목 칸 가운데 비었거나(gap, 없음) 채운 칸.
@@ -400,6 +420,7 @@ function slotsOf(p, ds) {
 }
 
 // 돌려줌: density 줄 [{tab: 'adr', item, value, min, miss}]. v 가 없으면(파일 없음, 깨짐) 모두 0.
+// 증거 없는 모듈과 기능은 밀도가 아니라 FAIL(adrSchema 의 claim)이라 여기서 세지 않는다.
 export function adrRows(v) {
   const rows = [];
   const add = (item, value, min, miss = []) => rows.push({ tab: 'adr', item, value, min, miss });
@@ -416,13 +437,17 @@ export function adrRows(v) {
   add('흐름', 3 - fmiss.length, 3, fmiss);
   const impl = arr(obj(content(p.proof)) && p.proof.implemented).filter(obj);
   add('증거', impl.length, 1);
-  const refd = [...ver.map((x, i) => [`project.verification[${i}](${x.id})`, x.evidence]), ...impl.map((x, i) => [`project.proof.implemented[${i}]`, x.proofs])];
-  const rmiss = refd.filter(([, l]) => !realRefs(l)).map(([n]) => n);
-  add('참조', refd.length - rmiss.length, refd.length, rmiss);
   add('결정', ds.length, 1);
   const tmiss = ds.filter((d) => !(obj(content(d.tradeoffs)) && arr(d.tradeoffs.gaveUp).length && arr(d.tradeoffs.gained).length)).map((d) => d.id);
   add('포기얻음', ds.length - tmiss.length, ds.length, tmiss);
   return rows;
+}
+
+// adr.json 안의 { gap } 수(여섯 항목 칸과 참조 자리). 화면 배지와 check 끝 요약의 "근거 없음 n칸".
+export function gapCount(v) {
+  if (Array.isArray(v)) return v.reduce((a, x) => a + gapCount(x), 0);
+  if (!obj(v)) return 0;
+  return isGap(v) ? 1 : Object.values(v).reduce((a, x) => a + gapCount(x), 0);
 }
 
 // ---------- 렌더 ----------
@@ -451,8 +476,10 @@ const sec = (title, body) => `<h3>${esc(title)}</h3>${body}`;
 // 칸이 gap 이면 근거 없음, 아니면 body(값).
 const slotHtml = (v, body) => (isGap(v) ? `<div>${gapHtml(v)}</div>` : obj(v) || Array.isArray(v) ? body(v) : `<div>${gapHtml({ gap: '칸 없음' })}</div>`);
 
+const evidenceHtml = (x) => (x.status === 'unverified' ? `<span class="b unv">미검증: ${esc(x.why)}</span>${arr(x.evidence).length ? `<br>${refsHtml(x.evidence)}` : ''}` : refsHtml(x.evidence));
+
 function verificationHtml(v) {
-  return table(['id', '단위 기능', '결과', 'evidence'], arr(v).filter(obj).map((x) => `<tr>${td(esc(x.id), 'h')}${td(esc(x.module))}${td(esc(x.result))}${td(refsHtml(x.evidence), 'n')}</tr>`));
+  return table(['id', '단위 기능', '결과', 'evidence'], arr(v).filter(obj).map((x) => `<tr>${td(esc(x.id), 'h')}${td(esc(x.module))}${td(esc(x.result || '-'))}${td(evidenceHtml(x), 'n')}</tr>`));
 }
 
 function flowHtml(f) {
@@ -500,6 +527,7 @@ export function adrBody(m, emptyNotice) {
   const p = obj(v.project) || {};
   const ds = arr(v.decisions).filter(obj);
   return `<div class="meta">의사 결정 기록. 위는 프로젝트 전체(검증, 흐름, 증거), 아래는 결정마다(최적화 로직, 확장 대응, 포기와 얻은 것). 자료: <code>adr.json</code>. 참조는 위치만 보이고 이 화면은 파일을 열지 않음. 참조 확인은 check.</div>
+<div class="meta"><span class="b ${gapCount(v) ? 'miss' : 'done'}">근거 없음 ${gapCount(v)}칸</span></div>
 <h2>프로젝트 요약</h2>
 ${sec('검증', slotHtml(p.verification, verificationHtml))}${sec('흐름', slotHtml(p.flow, flowHtml))}${sec('증거', slotHtml(p.proof, proofHtml))}
 <h2>결정 목록 <small>${ds.length}건</small></h2>

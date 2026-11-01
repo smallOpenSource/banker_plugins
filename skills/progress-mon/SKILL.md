@@ -114,7 +114,7 @@ ADR 탭이 생기기 전 판으로 init 한 프로젝트는 `adr.json` 이 없�
 | `note` | `--key <k> [--note <t>] [--issue <t>]` | 단계(`stage:<id>`)나 스토리 행의 비고, 문제점. 빈 값은 그 칸을 지움 |
 | `stage` | `--id <id> --status started\|done\|skipped\|failed\|stopped [--label <t>]` | 단계 상태 기록. 설정에 없는 id 는 새 단계 행 |
 | `story` | `--id <id> (--status todo\|doing\|done \| --commit <hash>) [--name <t>]` | 스토리 상태나 완료 커밋 기록. 설정에 없는 id 는 새 스토리 행 |
-| `check` | `[--adr-cleanup]` | 자료 파일 검사. `FAIL <파일> <json 경로> <이유>`, `WARN ...` 한 줄씩, 끝에 `check: FAIL n, WARN m` 과 밀도 요약 `density <탭> ok\|low`. 밀도 미달 줄 `WARN density <탭> <항목> <값>/<하한>[: <못 채운 대상>]`. `--adr-cleanup` 은 먼저 init 정리 단계를 `adr.json` 에 적용(참조 FAIL 은 `gap`, 스키마 FAIL 이 남으면 같은 폴더의 `adr.json.rejected-<YYYYMMDD-HHMMSS>` 로 옮김. 이름이 있으면 `-2` 부터 번호)하고 `정리:` 줄(옮긴 경로 포함)을 낸 뒤 검사 |
+| `check` | `[--adr-cleanup]` | 자료 파일 검사. `FAIL <파일> <json 경로> <이유>`, `WARN ...` 한 줄씩, 끝에 `check: FAIL n, WARN m` 과 밀도 요약 `density <탭> ok\|low`, 마지막 줄 `adr 근거 없음 n칸`(늘). 밀도 미달 줄 `WARN density <탭> <항목> <값>/<하한>[: <못 채운 대상>]`. `--adr-cleanup` 은 먼저 init 정리 단계를 `adr.json` 에 적용(참조 FAIL 은 `gap`, 스키마 FAIL 이 남으면 같은 폴더의 `adr.json.rejected-<YYYYMMDD-HHMMSS>` 로 옮김. 이름이 있으면 `-2` 부터 번호)하고 `정리:` 줄(옮긴 경로 포함)을 낸 뒤 검사 |
 
 - 공통 인자: `--runtime claude|codex`, `--project <dir>`, `--data <dir>`(자료 폴더 직접 지정)
 - 종료 코드: 0 성공(이미 그 상태 포함), 1 거부나 사용법 오류나 `check` FAIL, 2 예기치 못한 오류, 3 `status` 꺼짐
@@ -142,7 +142,7 @@ ADR 탭이 생기기 전 판으로 init 한 프로젝트는 `adr.json` 이 없�
    4. 커밋 기록(`git log`)과 시험 파일
 
    - 시험 결과는 실제로 돌린 명령의 출력만 참조한다. 출력 파일이 없으면 `cmd` 참조에 `output` 없이 두어 WARN 으로 드러낸다
-   - 근거가 없는 항목은 지어내지 않고 `{ "gap": "<사유>" }`
+   - 근거가 없는 항목은 지어내지 않는다. 결정의 3칸과 흐름은 `{ "gap": "<사유>" }`, 증거 없는 모듈은 `status: "unverified"` 와 `why`, 증명 없는 기능은 `notImplemented`(구현됨, 검증됨 주장에 증거가 없으면 FAIL)
    - `docs/adr/*.md` 가 있으면 결정마다 그 문서를 `sources` 로 가리킨다(가리키지 않는 문서는 WARN)
 9. `check` 를 실행한다. FAIL 이 있으면 고쳐 7, 8 과 9 를 다시. 9 의 `check` 는 FAIL 0 이 될 때까지 최대 3회
 10. FAIL 0 이 된 뒤 `WARN density ...` 가 남으면 읽기 예산 안에서 한 번 보충하고 `check` 를 한 번 더 실행한다
@@ -153,7 +153,8 @@ ADR 탭이 생기기 전 판으로 init 한 프로젝트는 `adr.json` 이 없�
    - `자기 연결` WARN 은 그 연결의 `from` 이나 `to` 를 실제 상대로 고친다
 11. 정리 단계. 9 의 3회 뒤에도 FAIL 이 남으면
     - 탭 파일(`req-spec.json`, `reqs.json`, `flow.json`, `arch.json`)은 FAIL 이 난 그 파일만 지워 "자료 없음" 으로 둔다
-    - `adr.json` 은 `check --adr-cleanup` 을 실행한다. 스키마 FAIL 이 남으면 지우지 않고 `adr.json.rejected-<YYYYMMDD-HHMMSS>` 로 옮겨 "자료 없음" 으로 두고(옮긴 경로를 보고), 참조 FAIL(`참조:` 가 붙은 줄)만 있으면 그 참조를 `{ "gap": "참조 확인 실패: <이유>" }` 로 바꾸고 다시 검사한다(남는 것은 WARN)
+    - `adr.json` 은 `check --adr-cleanup` 을 실행한다. 스키마 FAIL 이 남으면 지우지 않고 `adr.json.rejected-<YYYYMMDD-HHMMSS>` 로 옮겨 "자료 없음" 으로 두고(옮긴 경로를 보고), 참조 FAIL(`참조:` 가 붙은 줄)만 있으면 그 참조를 `{ "gap": "참조 확인 실패: <이유>" }` 로 바꾸고 다시 검사한다
+    - 정리 뒤 `증거 없음` FAIL(`정리: 증거가 남지 않은 주장 n건` 줄)이 남으면 스크립트는 옮기지 않는다. 증거를 지어내지 말고 그 모듈을 `status: "unverified"` 와 `why` 로, 그 기능을 `notImplemented` 로 옮긴 뒤 `check` 를 다시 돌린다(`references/adr.md` 의 "주장에는 증거")
     - 남은 FAIL 과 정리 결과(`정리:` 줄)를 보고한다
 12. 진척도 탭: 아는 단계와 작업을 적는다. 명령마다 `--note`(근거 커밋, 결과)를 쓴다. 문제점이 있으면 `--issue` 도 쓰고, 없으면 `--issue` 를 빼서 칸을 빈칸으로 둔다
 
