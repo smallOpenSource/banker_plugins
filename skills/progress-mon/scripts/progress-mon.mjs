@@ -27,7 +27,8 @@ export const HELP = `progress-mon: 프로젝트 진척도 웹 화면
   note      --key <k> [--note <t>] [--issue <t>]
   stage     --id <id> --status started|done|skipped|failed|stopped [--label <t>]
   story     --id <id> (--status todo|doing|done | --commit <hash>) [--name <t>]
-  check     자료 파일 검사. FAIL, WARN 한 줄씩
+  check     [--adr-cleanup]
+            자료 파일 검사. FAIL, WARN 한 줄씩. --adr-cleanup 은 먼저 adr.json 정리(참조 FAIL 은 gap, 스키마 FAIL 은 파일 삭제)
 
 공통 인자
   --runtime claude|codex    자료 폴더 기본값(.omc/progress-mon/, .omx/progress-mon/)
@@ -39,7 +40,7 @@ export const HELP = `progress-mon: 프로젝트 진척도 웹 화면
 
 // 값을 받는 인자와 값 없는 인자.
 const VALUE_FLAGS = new Set(['runtime', 'project', 'data', 'port', 'host', 'memory', 'memory-dir', 'title', 'now', 'key', 'status', 'text', 'note', 'issue', 'id', 'label', 'commit', 'name', 'at']);
-const BOOL_FLAGS = new Set(['port-strict', 'help']);
+const BOOL_FLAGS = new Set(['port-strict', 'help', 'adr-cleanup']);
 
 // 서버 밖 명령을 맡는 모듈. 쓰는 명령에서만 적재한다.
 const MODS = {

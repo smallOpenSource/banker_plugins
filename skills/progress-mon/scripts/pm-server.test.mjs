@@ -397,7 +397,7 @@ test('status: 자료 폴더 없음, 꺼짐은 종료 3', T, async () => {
   const ctx = ctxOf();
   const io = quietIo();
   assert.equal(await status(ctx, io), 3);
-  assert.deepEqual(io.lines.out, ['꺼짐(자료 폴더: .omc/progress-mon/)']);
+  assert.deepEqual(io.lines.out, ['꺼짐(자료 폴더: .omc/progress-mon/)', '탭 자료: 진척도 없음, 구현요건 없음, workflow 없음, 구성도 없음, ADR 없음']);
   const none = { ...ctx, exists: false, dataDir: path.join(ctx.project, '.omx', 'progress-mon') };
   const io2 = quietIo();
   assert.equal(await status(none, io2), 3);

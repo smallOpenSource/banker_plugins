@@ -1,11 +1,11 @@
 ---
 name: progress-mon
-description: "프로젝트 진척도를 4탭 웹 화면(진척도, 구현요건, workflow, 구성도)으로 로컬 서버(기본 127.0.0.1:30000)에 띄움. 인자 없이 부르면 자료 폴더가 없을 때 init(코드를 읽어 4탭 자료를 쓰고 갱신 규칙 등록), 서버가 꺼져 있으면 start, 켜져 있으면 URL 보고. 하위 명령 init, start, stop, status, export, item, note, stage, story, check. 'progress-mon'/'진척도 화면'/'진척도 서버'/'진행 현황 웹 화면' 시 사용. 세션 작업 목록 패널은 이 스킬 대신 progress(Claude Code `/banker:progress`, Codex `$banker-progress`)."
+description: "프로젝트 진척도를 5탭 웹 화면(진척도, 구현요건, workflow, 구성도, ADR)으로 로컬 서버(기본 127.0.0.1:30000)에 띄움. ADR 탭은 결정마다 최적화 로직, 확장 대응, 포기와 얻은 것과 프로젝트의 검증, 흐름, 증거를 확인 가능한 참조와 함께 보임. 인자 없이 부르면 자료 폴더가 없을 때 init(코드를 읽어 5탭 자료를 쓰고 갱신 규칙 등록), 서버가 꺼져 있으면 start, 켜져 있으면 URL 보고. ADR 자료가 없는 옛 자료 폴더는 확인 뒤 ADR 단계를 먼저 함. 하위 명령 init, start, stop, status, export, item, note, stage, story, check. 'progress-mon'/'진척도 화면'/'진척도 서버'/'진행 현황 웹 화면' 시 사용. 세션 작업 목록 패널은 이 스킬 대신 progress(Claude Code `/banker:progress`, Codex `$banker-progress`)."
 ---
 
 # progress-mon: 프로젝트 진척도 웹 화면
 
-프로젝트의 진척도를 4탭 웹 화면으로 보인다. 서버는 Node 내장 모듈만 쓰고 기본으로 127.0.0.1 에만 바인드한다.
+프로젝트의 진척도를 5탭 웹 화면으로 보인다. 서버는 Node 내장 모듈만 쓰고 기본으로 127.0.0.1 에만 바인드한다.
 답변은 한글.
 
 progress-mon skill body marker v1
@@ -16,13 +16,16 @@ progress-mon skill body marker v1
 | 구현요건 | 요구 원문, 기능 명세, 근거 AC, 담당 스토리, 구현 여부 | `req-spec.json`, `reqs.json` |
 | workflow | 실행 흐름 그림, 분기, 외부 구성요소, 장면 대본 | `flow.json` |
 | 구성도 | 영역, 구성요소, 연결, 범례, 장면 대본 | `arch.json` |
+| ADR | 프로젝트 요약(검증, 흐름, 증거)과 결정마다 맥락, 선택지, 결론, 최적화 로직, 확장 대응, 포기와 얻은 것. 참조는 위치 글만 | `adr.json` |
 
 - 없는 출처는 건너뛴다. 자료가 없는 탭은 "자료 없음" 과 스키마 문서 경로를 보인다
 - 진척도, 구현요건 탭은 30초마다 자동 갱신(meta refresh). 다른 갱신 연결은 없다
+- ADR 탭은 서버가 `adr.json` 만 읽는다. 프로젝트의 `docs/adr/`, `docs/evidence/` 는 에이전트가 init 과 갱신 때 근거 출처로 읽고 참조로 가리킨다
 
 ## 언제 쓰나
 
-- 다른 프로젝트에서도 같은 4탭 진척도 화면을 띄우고 싶을 때
+- 다른 프로젝트에서도 같은 5탭 진척도 화면을 띄우고 싶을 때
+- 결정의 근거와 검증 증거를 타인이 확인할 수 있게 한 화면에 모으고 싶을 때(ADR 탭)
 - 단계, 스토리, 그 밖 작업의 진행을 에이전트가 세션마다 기록하게 하고 싶을 때
 - 화면을 서버 없이 한 파일로 넘겨야 할 때(`export`)
 
@@ -70,10 +73,29 @@ progress-mon skill body marker v1
    | 종료 3, `꺼짐(자료 폴더 없음: ...)` | 아래 "init 절차" 를 끝까지. 마지막 단계가 `start` 와 URL 보고 |
    | 종료 3, `꺼짐(자료 폴더: ...)` | `start` 를 실행하고 출력의 URL 을 보고 |
    | 종료 0, `실행 중: <URL> (PID n)` | URL 과 `탭 자료:` 줄을 보고 |
+   | 자료 폴더가 있고 `탭 자료:` 줄이 `ADR 없음` | 위 행의 일을 하기 전에 아래 "기존 프로젝트의 ADR 단계" 를 한다. `ADR 깨짐` 이면 하지 않고 깨짐을 보고(`check` 로 위치 확인) |
    | 종료 1 또는 2 | 오류 줄을 그대로 보고하고 멈춤 |
 
 3. `status` 의 표준 오류에 경고 줄(규칙 로드 한도, override 가려짐, `workflowDirs`)이 있으면 그대로 전한다
    - `WARN workflowDirs auto: 찾은 폴더 0` 은 이 프로젝트에서 Claude Code 워크플로를 돌린 적이 없으면 정상이다. 끄려면 `config.json` 의 `sources.workflowDirs` 를 `[]`(`references/config.md`)
+
+### 기존 프로젝트의 ADR 단계
+
+ADR 탭이 생기기 전 판으로 init 한 프로젝트는 `adr.json` 이 없고 메모리의 규칙 줄도 옛 판이다. 다음 인자 없는 호출에서 한 번 채운다.
+
+1. 진행 전에 한 번 묻는다: "ADR 탭 자료가 없습니다. 코드와 문서를 읽어 `adr.json` 을 쓰고 메모리의 progress-mon 규칙 줄을 새 판으로 바꿀까요?"
+   - Claude Code 는 AskUserQuestion, Codex 는 request_user_input 으로 묻는다(선택지: 진행, 이번에는 건너뜀)
+   - 사용자가 `--auto` 를 붙여 불렀거나(예 `/progress-mon --auto`, 스크립트에는 넘기지 않음) 다른 스킬이 자동 진행으로 불렀으면 묻지 않는다
+   - 건너뜀이면 원래 표의 일만 한다
+2. `<data>/state.json` 의 `memory`(`{kind, path}`)를 읽어 `init` 을 다시 실행한다. 다른 자료 파일은 이미 있으면 그대로 둔다
+   - `auto-memory`: `init --runtime <rt> --memory auto-memory --memory-dir "<path 의 폴더>"`(`--memory-dir` 필수. `path` 는 `MEMORY.md` 경로라 그 폴더를 넘긴다)
+   - `claude-md`, `agents-md`, `none`: `init --runtime <rt> --memory <kind>`
+   - Codex 는 init 처럼 `sandbox_permissions: "require_escalated"` 로 승인 요청
+3. 출력의 `규칙 줄 교체(백업 <경로>): <파일>` 줄을 사용자에게 알린다. 표식 줄(우리가 쓴 규칙 줄과 색인 줄)만 새 판으로 바꾸고 첫 원본을 그 백업에 남긴다. 사용자가 손으로 고친 표식 줄도 덮으므로 백업 경로를 함께 알린다
+4. 아래 "init 절차" 의 8(ADR 단계), 9~11(check 반복과 정리 단계)만 한다
+5. 원래 표의 일(`start` 와 URL 보고, 또는 URL 과 `탭 자료:` 보고)로 돌아간다
+
+- `--memory none` 으로 init 한 프로젝트는 바꿀 규칙 줄이 없어 1, 4, 5 만 한다
 
 - `start` 출력: `시작함: <URL>`, 이미 떠 있으면 `이미 실행 중(재사용): <URL>`. 포트가 차 있으면 다음 빈 포트를 쓰고 알림 줄을 낸다
 - `--port 0`(OS 선택)은 받지 않는다. 특정 포트를 피해야 하면 OS 가 고른 빈 포트를 먼저 얻어 `--port` 로 넘긴다(`references/config.md` 의 "포트와 주소")
@@ -86,19 +108,19 @@ progress-mon skill body marker v1
 | `init` | `--memory claude-md\|agents-md\|auto-memory\|none` `[--memory-dir <dir>] [--title <t>]` | 자료 폴더, `config.json`(있으면 그대로), 빈 `items.json`, `state.json` 생성. git 제외 목록에 자료 폴더 한 줄. 메모리 규칙 등록. `auto-memory` 는 `--memory-dir` 필수 |
 | `start` | `[--port <n>] [--port-strict] [--host <사설 IPv4>]` | 서버를 분리 실행하고 URL 출력. 같은 프로젝트 서버가 떠 있으면 재사용. 동시에 부른 start 는 차례로 돌아 서버 하나를 같이 씀. `<n>` 은 1024~65535 |
 | `stop` | 없음 | 상태 파일 PID 가 이 서버일 때만 끔 |
-| `status` | 없음 | 실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무(깨진 JSON 은 깨짐), 시작 시각, 요청 수, 마지막 오류 시각. 서버를 띄운 뒤 `config.json` 의 `port`, `portStrict`, `hosts` 가 바뀌었으면 경고(그 셋만 `stop` 뒤 `start` 해야 적용, 나머지는 다음 응답에 반영) |
-| `export` | `<file> [--now <ISO>]` | 4탭을 한 HTML 파일로. 외부 자원 없음, `file://` 에서 탭 전환. 사용자가 지시할 때만 만든다 |
+| `status` | 없음 | 실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무(`탭 자료:` 줄, 꺼져 있어도 자료 폴더가 있으면 보임. 깨진 JSON 은 깨짐), 시작 시각, 요청 수, 마지막 오류 시각. 서버를 띄운 뒤 `config.json` 의 `port`, `portStrict`, `hosts` 가 바뀌었으면 경고(그 셋만 `stop` 뒤 `start` 해야 적용, 나머지는 다음 응답에 반영) |
+| `export` | `<file> [--now <ISO>]` | 5탭을 한 HTML 파일로. 외부 자원 없음, `file://` 에서 탭 전환. 사용자가 지시할 때만 만든다 |
 | `item` | `--key <k> --status todo\|doing\|done --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]` | 기타 항목. 같은 key 는 대체하고 시작 시각 유지(시작 시각은 `doing` 으로 기록할 때만). `--at` 은 지금 대신 그 시각으로 기록(시간대 필수). `--commit` 은 4~40자 16진 해시(commit Hash 칸에 앞 7자리). 빼면 있던 해시 유지 |
 | `note` | `--key <k> [--note <t>] [--issue <t>]` | 단계(`stage:<id>`)나 스토리 행의 비고, 문제점. 빈 값은 그 칸을 지움 |
 | `stage` | `--id <id> --status started\|done\|skipped\|failed\|stopped [--label <t>]` | 단계 상태 기록. 설정에 없는 id 는 새 단계 행 |
 | `story` | `--id <id> (--status todo\|doing\|done \| --commit <hash>) [--name <t>]` | 스토리 상태나 완료 커밋 기록. 설정에 없는 id 는 새 스토리 행 |
-| `check` | 없음 | 자료 파일 검사. `FAIL <파일> <json 경로> <이유>`, `WARN ...` 한 줄씩, 끝에 `check: FAIL n, WARN m` 과 밀도 요약 `density <탭> ok\|low`. 밀도 미달 줄 `WARN density <탭> <항목> <값>/<하한>[: <못 채운 대상>]` |
+| `check` | `[--adr-cleanup]` | 자료 파일 검사. `FAIL <파일> <json 경로> <이유>`, `WARN ...` 한 줄씩, 끝에 `check: FAIL n, WARN m` 과 밀도 요약 `density <탭> ok\|low`. 밀도 미달 줄 `WARN density <탭> <항목> <값>/<하한>[: <못 채운 대상>]`. `--adr-cleanup` 은 먼저 init 정리 단계를 `adr.json` 에 적용(참조 FAIL 은 `gap`, 스키마 FAIL 이 남으면 파일 삭제)하고 `정리:` 줄을 낸 뒤 검사 |
 
 - 공통 인자: `--runtime claude|codex`, `--project <dir>`, `--data <dir>`(자료 폴더 직접 지정)
 - 종료 코드: 0 성공(이미 그 상태 포함), 1 거부나 사용법 오류나 `check` FAIL, 2 예기치 못한 오류, 3 `status` 꺼짐
 - 자료 폴더가 없으면 `start`, `item`, `note`, `stage`, `story` 는 종료 1("init 먼저"). `status`, `check`, `export` 는 폴더를 만들지 않는다
 - 내부용 `serve`: `start` 와 같은 인자로 서버를 앞에서 실행. Codex 사용자 터미널 안내와 디버그에만 쓴다
-- 스키마와 규칙: `references/config.md`, `references/items.md`
+- 스키마와 규칙: `references/config.md`, `references/items.md`, `references/adr.md`
 
 ## init 절차
 
@@ -108,20 +130,32 @@ progress-mon skill body marker v1
    - 쓴 파일과 줄 수: 자동 메모리는 파일 2개(`progress-mon.md`, `MEMORY.md` 색인 1줄), `CLAUDE.md` 는 1줄, Codex 는 3줄 블록
    - `--memory claude-md` 는 프로젝트 루트 `CLAUDE.md` 를 만들거나 고친다. 새로 만들었으면 `git status` 에 추적하지 않는 파일로 보인다. 커밋할지는 사용자가 정한다고 알린다
    - 출력에 `경고:` 줄(규칙 로드 한도, override 가려짐)이 있으면 그대로 전한다. Claude 면 `--memory claude-md` 로 다시 등록할지 묻고, Codex 면 프로젝트 지시 파일 정리(banker `cleansing-memory`)나 `config.toml` 의 `project_doc_max_bytes` 확인을 제안한다
-   - 출력 끝 `다음 할 일` 3줄은 요약이다. 그 목록이 아니라 이 절차 4~13 을 모두 따른다(`inventory.json`, `config.json` 의 `title`, `shortName`, `stories`, 진척도 기록은 요약에 없어도 한다)
+   - 출력 끝 `다음 할 일` 3줄은 요약이다. 그 목록이 아니라 이 절차 4~14 를 모두 따른다(`inventory.json`, `config.json` 의 `title`, `shortName`, `stories`, 진척도 기록은 요약에 없어도 한다)
 4. `<S>/references/authoring.md` 를 읽는다. 밀도 기준 표, 읽기 예산, 좋은 예가 거기 있다
 5. 읽기 예산 안에서 코드를 읽고 `<data>/inventory.json` 을 쓴다(`references/inventory.md`)
 6. `<data>/config.json` 의 `title`, `shortName`, `stories` 를 채운다. `shortName` 은 브라우저 탭 제목과 구성도 그림 이름에 쓰는 짧은 이름(기본은 폴더 이름). 스토리가 없으면 빈 목록(`references/config.md`)
 7. `<data>/req-spec.json`, `reqs.json`, `flow.json`, `arch.json` 을 쓴다. 구조만 쓰고 좌표는 쓰지 않는다(자동 배치). 스토리가 없으면 명세마다 `state` 와 `note`(`references/req-spec.md`, `reqs.md`, `flow.md`, `arch.md`)
-8. `check` 를 실행한다. FAIL 이 있으면 고쳐 7 과 8 을 다시. 8 의 `check` 는 FAIL 0 이 될 때까지 최대 3회
-9. FAIL 0 이 된 뒤 `WARN density ...` 가 남으면 읽기 예산 안에서 한 번 보충하고 `check` 를 한 번 더 실행한다
-   - 이 보충과 `check` 는 8 의 3회에 세지 않는다. 보충은 한 번만
+8. ADR 단계: `<data>/adr.json` 을 쓴다(`references/adr.md`). 두 층(프로젝트의 검증, 흐름, 증거와 결정마다 최적화 로직, 확장 대응, 포기와 얻은 것). 근거 출처를 이 순서로 읽는다
+   1. 프로젝트의 `docs/adr/`(init-dir 규칙), `docs/evidence/`
+   2. `.omc/plans/*.md`(Codex `.omx/plans/`)의 ADR 절과 RALPLAN-DR
+   3. ultra-chain 실행 기록(`events.jsonl` 의 판정과 시험 기록)
+   4. 커밋 기록(`git log`)과 시험 파일
+
+   - 시험 결과는 실제로 돌린 명령의 출력만 참조한다. 출력 파일이 없으면 `cmd` 참조에 `output` 없이 두어 WARN 으로 드러낸다
+   - 근거가 없는 항목은 지어내지 않고 `{ "gap": "<사유>" }`
+   - `docs/adr/*.md` 가 있으면 결정마다 그 문서를 `sources` 로 가리킨다(가리키지 않는 문서는 WARN)
+9. `check` 를 실행한다. FAIL 이 있으면 고쳐 7, 8 과 9 를 다시. 9 의 `check` 는 FAIL 0 이 될 때까지 최대 3회
+10. FAIL 0 이 된 뒤 `WARN density ...` 가 남으면 읽기 예산 안에서 한 번 보충하고 `check` 를 한 번 더 실행한다
+   - 이 보충과 `check` 는 9 의 3회에 세지 않는다. 보충은 한 번만
    - 보충 뒤 새 FAIL 이 나오면 그 보충 부분을 고치거나 되돌려 FAIL 0 으로 둔다
    - 그래도 남은 `WARN density` 줄은 그대로 사용자에게 보고한다(실패 아님). 줄 끝의 대상 이름이 고칠 곳이다(`references/authoring.md`)
    - 자동 배치 WARN(`이름표 덮음`, `이름표가 그림 밖`)은 배치 조언이다. 자동 배치 선은 상자와 영역 제목을 돌아가므로 `선이 상자 지남` 은 보통 없다. 연결을 하한 아래로 지우지 않는다(`references/arch.md` 의 "자동 배치 WARN 줄이기")
    - `자기 연결` WARN 은 그 연결의 `from` 이나 `to` 를 실제 상대로 고친다
-10. 8 의 3회 뒤에도 FAIL 이 남으면 그 탭의 파일만 지워 "자료 없음" 으로 두고 남은 FAIL 을 보고한다
-11. 진척도 탭: 아는 단계와 작업을 적는다. 명령마다 `--note`(근거 커밋, 결과)를 쓴다. 문제점이 있으면 `--issue` 도 쓰고, 없으면 `--issue` 를 빼서 칸을 빈칸으로 둔다
+11. 정리 단계. 9 의 3회 뒤에도 FAIL 이 남으면
+    - 탭 파일(`req-spec.json`, `reqs.json`, `flow.json`, `arch.json`)은 FAIL 이 난 그 파일만 지워 "자료 없음" 으로 둔다
+    - `adr.json` 은 `check --adr-cleanup` 을 실행한다. 스키마 FAIL 이 남으면 파일을 지워 "자료 없음" 으로 두고, 참조 FAIL(`참조:` 가 붙은 줄)만 있으면 그 참조를 `{ "gap": "참조 확인 실패: <이유>" }` 로 바꾸고 다시 검사한다(남는 것은 WARN)
+    - 남은 FAIL 과 정리 결과(`정리:` 줄)를 보고한다
+12. 진척도 탭: 아는 단계와 작업을 적는다. 명령마다 `--note`(근거 커밋, 결과)를 쓴다. 문제점이 있으면 `--issue` 도 쓰고, 없으면 `--issue` 를 빼서 칸을 빈칸으로 둔다
 
     | 프로젝트 | 쓸 명령 |
     |---|---|
@@ -131,11 +165,12 @@ progress-mon skill body marker v1
 
     - 스토리가 없는 프로젝트에서 `story` 를 쓰지 않는다. 설정에 없는 id 는 새 스토리 행이 되어 진척률이 켜진다. 단계도 같다(`stage` 는 새 단계 행)
     - 지난 커밋은 커밋 시각과 해시로 기록한다. `git log -n <수> --format="%h %cI %s"` 의 `%cI` 를 `--at`, `%h` 를 `--commit` 에 넘긴다(예 `item --key c-1a2b3c4 --status done --text "<제목>" --at 2026-10-20T12:34:56+09:00 --commit 1a2b3c4`). `--at` 이 없으면 모든 항목이 기록한 지금 시각으로 보인다. `--commit` 이 없으면 commit Hash 칸이 빈다
-12. `check` 를 다시 실행한다. 11 의 기록으로 `history 비고` 같은 밀도 줄이 바뀐다. 새 FAIL 이 있으면 고친다. 남은 `WARN` 은 보고한다
-13. `start` 를 실행하고 URL 을 보고한다
+13. `check` 를 다시 실행한다. 12 의 기록으로 `history 비고` 같은 밀도 줄이 바뀐다. 새 FAIL 이 있으면 고친다. 남은 `WARN` 은 보고한다
+14. `start` 를 실행하고 URL 을 보고한다
 
 - 자료가 없는 탭을 만들 수 없을 때(문서와 코드에 근거 없음)는 그 파일을 쓰지 않는다. 화면은 "자료 없음" 과 만드는 법을 보인다
-- 사용자 문서는 덧붙이기만 한다. 표식 `<!-- progress-mon:rule -->` 이 이미 있으면 다시 쓰지 않는다
+- 사용자 문서는 덧붙이기만 한다. 표식 `<!-- progress-mon:rule -->` 이 이미 있으면 다시 덧붙이지 않는다
+- 예외: 표식이 붙은 우리 줄(줄 앞머리가 `진척도 화면(progress-mon):` 인 규칙 줄과 `- [진척도 화면 갱신 규칙](progress-mon.md)` 인 색인 줄)이 지금 판과 다르면 그 줄만 제자리에서 바꾼다. 규칙 줄의 런타임은 줄에 `--runtime codex` 가 있으면 Codex 판. 줄 끝(CRLF, LF), BOM, 나머지 줄은 그대로이고, 첫 원본은 `<파일>.progress-mon.bak`(이미 있으면 덮지 않음). 앞머리가 다른 표식 줄은 손대지 않는다
 
 ## 갱신 규칙(init 뒤 세션)
 
@@ -151,6 +186,7 @@ progress-mon skill body marker v1
   | 스토리 진행, 완료 | `story --id <id> --status doing`, 완료 커밋은 `story --id <id> --commit <hash>` |
   | 그 밖 작업 | `item --key <k> --status doing\|done --text "<내용>" --note "<근거>" [--issue "<문제점>"]` |
   | 단계, 스토리 행의 비고 | `note --key stage:<id> --note "<근거>"`, `note --key <스토리 id> --issue "<문제점>"` |
+  | 결정이 생기거나 스토리가 끝남 | `<data>/adr.json` 을 고치고(`references/adr.md`) `check`. 참조 FAIL 은 FAIL 줄의 json 경로를 고침 |
 
 - Codex 는 모든 명령에 `--runtime codex` 를 붙인다. 세션을 닫아도 화면을 두려면 사용자 터미널의 `serve` 를 안내한다
 - 스토리 상태 우선순위: 커밋(제목 판정 또는 `story --commit`) 있으면 완료, 없으면 `story --status`, 없으면 진행 중 에이전트가 있으면 진행 중, 그 밖 예정

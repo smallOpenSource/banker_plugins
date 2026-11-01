@@ -3,7 +3,8 @@
 // 구성도와 workflow 기하는 렌더와 같은 배치 계산(archLayout, archFlaws, flowLayout)에 검사한다.
 // 밀도(4.9절)는 init 이 만든 자료 폴더(state.json 의 memory)나 inventory.json 이 있을 때만 재고, 미달은 WARN(종료 코드 영향 없음).
 // 항목마다 재는 밀도 미달 줄은 끝에 못 채운 대상 이름을 붙인다(`: a, b 외 n`).
-// 끝에 `density <탭> ok|low` 4줄. 형식 시험 자료와 옮긴 자료(둘 다 init 기록 없음)는 밀도를 재지 않는다.
+// ADR(adr.json)의 스키마, 참조, docs/adr 갈라짐은 pm-adr.mjs 가 검사한다.
+// 끝에 `density <탭> ok|low` 5줄. 형식 시험 자료와 옮긴 자료(둘 다 init 기록 없음)는 밀도를 재지 않는다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig, noBom, readRegular, UsageError } from './pm-config.mjs';
@@ -12,6 +13,7 @@ import { ITEM_STATUS, STAGE_STATUS } from './pm-data.mjs';
 import { archLayout, archFlaws, flowLayout, nameFits, FLOW } from './pm-render.mjs';
 import { color, finite, textW, wrap, TABS } from './pm-html.mjs';
 import { memoryWarnings } from './pm-memory.mjs';
+import { checkAdr, adrRows, cleanAdr } from './pm-adr.mjs';
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
@@ -438,7 +440,7 @@ const lines23 = (n) => n >= 2 && n <= 3;
 
 // 돌려줌: { rows: [{tab, item, value, min, miss}], low: Set(탭) }. value < min 이면 미달.
 // miss 는 항목마다 재는 줄(상자, 단계, 흐름, 명세, 기타 항목)에서 기준을 못 채운 대상 이름. 수만 재는 줄은 빈 배열.
-export function density({ arch, flow, req, items, inv, storyCount }) {
+export function density({ arch, flow, req, items, inv, storyCount, adr }) {
   const rows = [];
   const add = (tab, item, value, min, miss = []) => rows.push({ tab, item, value, min, miss });
   // 대상마다 ok 를 재어 값, 하한(대상 수), 못 채운 대상 이름을 한 줄로.
@@ -488,6 +490,7 @@ export function density({ arch, flow, req, items, inv, storyCount }) {
   const stated = req.specs.filter((x) => x.state !== undefined);
   each('req', '비고', stated, (x) => str(x.note), (x) => at(x, `specs[${req.specs.indexOf(x)}]`));
   each('history', '비고', items, (x) => str(x.note), (x, i) => (str(x.key) ? x.key : `items[${i}]`));
+  rows.push(...adrRows(adr));
   return { rows, low: new Set(rows.filter((x) => x.value < x.min).map((x) => x.tab)) };
 }
 
@@ -503,6 +506,24 @@ export function densityLine(x) {
 
 // ---------- 실행 ----------
 
+// state.json 의 memory(init 기록). 없거나 깨졌으면 null.
+function memoryOf(ctx) {
+  try {
+    const state = obj(JSON.parse(readRegular(path.join(ctx.dataDir, 'state.json'))));
+    return (state && obj(state.memory)) || null;
+  } catch {
+    return null;
+  }
+}
+
+// 메모리 경고를 WARN 줄로. 경고 줄에 뒤따르는 대안 줄은 그 WARN 한 줄에 붙인다.
+function memoryInto(r, memory, project, env) {
+  for (const l of memoryWarnings(memory, project, env)) {
+    if (l.startsWith('경고: ')) r.warn('state.json', 'memory', l.slice(4));
+    else if (r.lines.length) r.lines[r.lines.length - 1].msg += `. ${l}`;
+  }
+}
+
 // 검사 전체. 돌려줌: { lines: [출력 줄], fails }
 export function runCheck(ctx, env = process.env) {
   const r = sink();
@@ -514,35 +535,31 @@ export function runCheck(ctx, env = process.env) {
   const req = checkReq(ctx.dataDir, r, ids);
   const flow = checkFlow(ctx.dataDir, r);
   const arch = checkArch(ctx.dataDir, r, config.text.plannedPrefix);
+  const adr = checkAdr(ctx, config, r);
   const inv = checkInventory(ctx, r);
-  let state = null;
-  try {
-    state = obj(JSON.parse(readRegular(path.join(ctx.dataDir, 'state.json'))));
-  } catch {
-    state = null;
-  }
-  const memory = state && obj(state.memory);
-  // 경고 줄에 뒤따르는 대안 줄을 붙여 WARN 한 줄로.
-  for (const l of memoryWarnings(memory, ctx.project, env)) {
-    if (l.startsWith('경고: ')) r.warn('state.json', 'memory', l.slice(4));
-    else if (r.lines.length) r.lines[r.lines.length - 1].msg += `. ${l}`;
-  }
+  const memory = memoryOf(ctx);
+  memoryInto(r, memory, ctx.project, env);
   const out = r.lines.map((x) => `${x.level} ${x.file} ${x.path} ${x.msg}`);
   if (config.sources.workflowDirs === 'auto' && !workflowRoots(config, ctx, env).length) out.push('WARN workflowDirs auto: 찾은 폴더 0');
-  let dens = null;
-  if (inv || memory) {
-    dens = density({ arch, flow, req, items: items.items, inv, storyCount: ids.length });
-    for (const x of dens.rows) if (x.value < x.min) out.push(densityLine(x));
-  }
+  // 밀도는 init 기록이나 inventory.json 이 있을 때만
+  const dens = inv || memory ? density({ arch, flow, req, items: items.items, inv, storyCount: ids.length, adr }) : null;
+  return finish(out, dens);
+}
+
+// 밀도 미달 줄, 합계 줄, 탭별 밀도 요약을 붙인다. 돌려줌: { lines, fails }
+function finish(out, dens) {
+  if (dens) for (const x of dens.rows) if (x.value < x.min) out.push(densityLine(x));
   const fails = out.filter((l) => l.startsWith('FAIL ')).length;
   out.push(`check: FAIL ${fails}, WARN ${out.length - fails}`);
   if (dens) for (const [k] of TABS) out.push(`density ${k} ${dens.low.has(k) ? 'low' : 'ok'}`);
   return { lines: out, fails };
 }
 
+// --adr-cleanup: 검사 전에 init 정리 단계(pm-adr.mjs cleanAdr)를 적용한다. 그 밖에는 자료를 바꾸지 않는다.
 export async function command(cmd, ctx, o, io) {
   if (cmd !== 'check') throw new UsageError(`${cmd} 는 pm-check.mjs 가 맡지 않음`);
   if (o._.length > 1) throw new UsageError(`check 는 위치 인자를 받지 않음: ${o._.slice(1).join(' ')}`);
+  if (o['adr-cleanup'] && ctx.exists) for (const l of await cleanAdr(ctx, loadConfig(ctx).config)) io.out(l);
   const { lines, fails } = runCheck(ctx);
   for (const l of lines) io.out(l);
   return fails ? 1 : 0;

@@ -272,7 +272,7 @@ function initd(over = {}) {
   return ctx;
 }
 
-test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코드 영향 없음), 요약 4줄', T, () => {
+test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코드 영향 없음), 요약 5줄', T, () => {
   const ctx = initd();
   const { lines, fails } = runCheck(ctx, ENV);
   assert.equal(fails, 0);
@@ -286,8 +286,9 @@ test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코�
   ]) assert.ok(lines.includes(w), `${w}\n${lines.join('\n')}`);
   assert.ok(lines.some((l) => l.startsWith('WARN density workflow 단계설명 1/10: main/p1(1줄), ')), lines.join('\n'));
   assert.equal(only(lines, /^WARN density (workflow 단계:main|req 비고) /).length, 0, '하한을 채운 항목은 WARN 없음');
-  assert.deepEqual(lines.slice(-4), ['density history low', 'density req low', 'density workflow low', 'density arch low']);
-  assert.match(lines[lines.length - 5], /^check: FAIL 0, WARN \d+$/);
+  assert.deepEqual(lines.slice(-5), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low']);
+  assert.ok(lines.includes('WARN density adr 결정 0/1'), 'adr.json 이 없으면 ADR 밀도 미달');
+  assert.match(lines[lines.length - 6], /^check: FAIL 0, WARN \d+$/);
 });
 
 test('밀도: inventory.json 으로 하한을 낮춤, 없는 경로는 FAIL, inventory 만 있어도 밀도 검사', T, () => {
@@ -316,7 +317,7 @@ test('밀도: inventory.json 으로 하한을 낮춤, 없는 경로는 FAIL, inv
   assert.ok(l2.includes('FAIL inventory.json flows[1].evidence 경로 없음: gone/x.mjs:3'));
 });
 
-test('밀도: 하한을 채우면 4탭 ok, 함수 직접', T, () => {
+test('밀도: 하한을 채우면 5탭 ok, 함수 직접', T, () => {
   const zones = Array.from({ length: 5 }, (_, i) => ({ id: `z${i}` }));
   const det = '두 줄이 되도록 충분히 긴 설명 문장을 여기에 적어 둠';
   const nodes = Array.from({ length: 20 }, (_, i) => ({ id: `n${i}`, zone: 'z0', detail: det }));
@@ -327,8 +328,11 @@ test('밀도: 하한을 채우면 4탭 ok, 함수 직접', T, () => {
   const lane = { id: 'l', steps, branches: [{}], externals: [{}], note: '명령. 실패 처리. 근거.' };
   const flow = { lanes: [lane, { ...lane, id: 'm' }] };
   const req = { users: [{ text: 't', source: 's' }], specs: [{ acs: ['AC-1'], state: 'done', note: '근거' }], acStories: new Map([['AC-1', ['A1']]]) };
-  const d = density({ arch, flow, req, items: [{ note: 'n' }], inv: null, storyCount: 1 });
+  const adr = read('adr.json');
+  adr.decisions[1].scaling = { argument: '규모와 무관', refs: [] };
+  const d = density({ arch, flow, req, items: [{ note: 'n' }], inv: null, storyCount: 1, adr });
   assert.deepEqual(d.rows.filter((x) => x.value < x.min), []);
+  assert.ok(d.rows.some((x) => x.tab === 'adr'));
   assert.equal(d.low.size, 0);
 });
 

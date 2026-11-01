@@ -123,6 +123,32 @@ try {
     .filter((d) => fs.existsSync(path.join(root, 'codex', 'skills', d, 'SKILL.md'))).sort();
   ok(JSON.stringify(mfCodexOnly) === JSON.stringify(diskCodexOnly),
      `manifest codex-only == codex/skills/ ([${mfCodexOnly.join(', ')}] vs [${diskCodexOnly.join(', ')}])`);
+  // Every file the manifest ships has to reach the git tree. A source that the repo's .gitignore matches (the old
+  // `work/` rule caught skills/init-dir/templates/work/README.md) stays out of every commit, so the marketplace git
+  // source and any tarball packed from a clone lose it while this working tree still passes. In a git work tree each
+  // SKILL.md and supporting file of every skill, and each command prompt, is tracked or at least not ignored.
+  const shipTree = cp.spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  if (shipTree.status !== 0 || shipTree.stdout.trim() !== 'true') {
+    console.log(`SKIP: shipped files vs .gitignore not checked (${shipTree.error ? `git not runnable: ${shipTree.error.code}` : 'not a git work tree'})`);
+  } else {
+    const shipSurfaces = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8')).surfaces;
+    const shipped = shipSurfaces.flatMap((s) => (s.type === 'command'
+      ? [`commands/${s.name}.md`, `codex/command-skills/${s.name}/SKILL.md`].filter((f) => fs.existsSync(path.join(root, f)))
+      : ['SKILL.md', ...(s.supportingFiles || [])].map((f) => `${s.target === 'codex-only' ? 'codex/skills' : 'skills'}/${s.name}/${f}`)));
+    const shipLs = cp.spawnSync('git', ['-C', root, 'ls-files', '-z', '--', 'skills', 'codex', 'commands'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const shipTracked = new Set(shipLs.status === 0 ? shipLs.stdout.split('\0').filter(Boolean) : []);
+    const shipUntracked = shipped.filter((f) => !shipTracked.has(f));
+    // exit 0: some path is ignored (one `<source>:<line>:<pattern>\t<path>` line each), 1: none, other: git failed
+    const shipIgn = shipUntracked.length
+      ? cp.spawnSync('git', ['-C', root, 'check-ignore', '-v', '--stdin'], { input: shipUntracked.join('\n') + '\n', encoding: 'utf8' })
+      : { status: 1, stdout: '' };
+    const shipHits = shipIgn.status === 0 ? shipIgn.stdout.split('\n').filter(Boolean) : [];
+    ok(shipLs.status === 0 && (shipIgn.status === 0 || shipIgn.status === 1) && shipHits.length === 0,
+       `every shipped SKILL.md, supporting file and command prompt (${shipped.length}) is tracked by git or not ignored (${shipped.length - shipUntracked.length} tracked, ${shipUntracked.length} untracked`
+       + `${shipLs.status !== 0 ? `; git ls-files failed: ${String(shipLs.stderr).trim()}` : ''}`
+       + `${shipIgn.status !== 0 && shipIgn.status !== 1 ? `; git check-ignore failed: ${String(shipIgn.stderr || (shipIgn.error && shipIgn.error.code)).trim()}` : ''}`
+       + `${shipHits.length ? `; ignored (rule<TAB>file): ${shipHits.join('; ')}` : ''})`);
+  }
   // The Codex plugin (codex plugin add banker@banker-plugins) reads .codex-plugin/plugin.json: same version as the
   // Claude plugin, its skills list (one path per skill, plus codex/skills/ and codex/command-skills/) == the manifest's
   // Codex surfaces, codex/command-skills and codex/renamed-skills in step with their sources, and every script
@@ -413,7 +439,7 @@ try {
   const pmonDir = path.join(instDir, 'banker-progress-mon');
   const pmonFiles = mfAllSkills.find((s) => s.name === 'progress-mon').supportingFiles;
   const pmonSkill = fs.readFileSync(path.join(pmonDir, 'SKILL.md'), 'utf8');
-  ok(pmonFiles.length === 39 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
+  ok(pmonFiles.length === 44 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
      && !fs.readdirSync(path.join(pmonDir, 'scripts')).some((f) => f.endsWith('.test.mjs')),
      `banker-progress-mon carries its ${pmonFiles.length} supporting files and no tests into the Codex install`);
   ok(/^---\nname: banker-progress-mon\n/.test(pmonSkill) && pmonSkill.includes('\nprogress-mon skill body marker v1\n'),

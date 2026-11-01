@@ -11,7 +11,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.dirname(HERE);
 const SKILL = fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8');
 const MARKER = 'progress-mon skill body marker v1';
-const REFS = ['config.md', 'items.md', 'req-spec.md', 'reqs.md', 'flow.md', 'arch.md', 'authoring.md', 'inventory.md'];
+const REFS = ['config.md', 'items.md', 'req-spec.md', 'reqs.md', 'flow.md', 'arch.md', 'authoring.md', 'inventory.md', 'adr.md'];
 
 // frontmatter: 첫 줄 --- 부터 다음 --- 까지. 돌려줌: { keys: {이름: 값}, body }
 function frontmatter(text) {
@@ -110,7 +110,7 @@ test('SKILL.md: 규칙 줄 안내(stage, story, item, Codex --runtime codex)와 
   assert.match(init, /`--note`[\s\S]*`--issue`/);
 });
 
-test('SKILL.md, README.md 가 가리키는 파일이 모두 있음. references 8개', T, () => {
+test('SKILL.md, README.md 가 가리키는 파일이 모두 있음. references 9개', T, () => {
   assert.deepEqual(fs.readdirSync(path.join(SKILL_DIR, 'references')).sort(), [...REFS].sort());
   for (const r of REFS) assert.ok(SKILL.includes(r), `SKILL.md 가 ${r} 를 안내하지 않음`);
   const readme = fs.readFileSync(path.join(SKILL_DIR, 'README.md'), 'utf8');
@@ -119,4 +119,38 @@ test('SKILL.md, README.md 가 가리키는 파일이 모두 있음. references 8
       assert.ok(fs.existsSync(path.join(SKILL_DIR, m[1])), `${name}: ${m[1]}`);
     }
   }
+});
+
+test('SKILL.md: init 절차의 ADR 단계와 근거 출처 순서, 정리 단계의 두 처리, 갱신 규칙 표의 ADR 행', T, () => {
+  const init = section('init 절차');
+  assert.match(init, /^8\. ADR 단계: `<data>\/adr\.json` 을 쓴다\(`references\/adr\.md`\)/m);
+  const order = ['`docs/adr/`', '`.omc/plans/*.md`', 'ultra-chain 실행 기록', '`git log`'].map((w) => init.indexOf(w));
+  assert.ok(order.every((i) => i > 0) && order.every((i, k) => !k || i > order[k - 1]), `근거 출처 순서 ${order}`);
+  assert.match(init, /실제로 돌린 명령의 출력만 참조/);
+  assert.match(init, /^11\. 정리 단계/m);
+  assert.match(init, /`check --adr-cleanup`[\s\S]*스키마 FAIL 이 남으면 파일을 지워[\s\S]*참조 FAIL[\s\S]*\{ "gap": "참조 확인 실패: <이유>" \}/);
+  assert.match(init, /^14\. `start` 를 실행하고 URL 을 보고한다$/m);
+  const rule = section('갱신 규칙(init 뒤 세션)');
+  assert.match(rule, /^ {2}\| 결정이 생기거나 스토리가 끝남 \| `<data>\/adr\.json` 을 고치고/m);
+});
+
+test('SKILL.md: 인자 없는 호출 표의 ADR 없음 행, 진행 전 확인(AskUserQuestion, request_user_input, --auto), state.json memory 로 init 다시 실행, Codex 승인', T, () => {
+  const s = section('인자 없는 호출');
+  assert.match(s, /^ {3}\| 자료 폴더가 있고 `탭 자료:` 줄이 `ADR 없음` \| .*기존 프로젝트의 ADR 단계/m);
+  assert.match(s, /`ADR 깨짐` 이면 하지 않고/);
+  for (const w of ['AskUserQuestion', 'request_user_input', '`--auto`', '--memory-dir "<path 의 폴더>"`', '`sandbox_permissions: "require_escalated"`', '`규칙 줄 교체(백업 <경로>): <파일>`', '사용자가 손으로 고친 표식 줄도 덮으므로']) assert.ok(s.includes(w), w);
+  // 문서가 인용한 출력 문구는 스크립트가 실제로 내는 문구
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-server.mjs'), 'utf8').includes("ADR ${has('adr.json')}"));
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-memory.mjs'), 'utf8').includes('`규칙 줄 교체(백업 ${bak}): ${s.name}`'));
+});
+
+test('옛 탭 수 문구(ADR 이전)가 대상 파일(SKILL.md, README.md, references, scripts, banker 등록 지점)에 0건, description 에 ADR', T, () => {
+  const files = ['SKILL.md', 'README.md', ...REFS.map((r) => `references/${r}`), ...fs.readdirSync(HERE).filter((f) => /\.(mjs|js)$/.test(f)).map((f) => `scripts/${f}`)].map((f) => path.join(SKILL_DIR, f));
+  // banker 저장소 안에서 돌 때만 있는 등록 지점(스킬 폴더만 옮긴 원본에는 없음)
+  const repo = path.resolve(SKILL_DIR, '..', '..');
+  for (const f of ['codex/manifest.json', 'codex/transform-matrix.md', 'README.md']) if (fs.existsSync(path.join(repo, 'codex', 'manifest.json'))) files.push(path.join(repo, f));
+  const bad = new RegExp(['4' + '탭', '네 ' + '탭', 'four ' + 'tabs'].join('|'));
+  const hits = files.filter((f) => bad.test(fs.readFileSync(f, 'utf8')));
+  assert.deepEqual(hits, []);
+  assert.match(frontmatter(SKILL).keys.description, /5탭 웹 화면\(진척도, 구현요건, workflow, 구성도, ADR\)/);
 });

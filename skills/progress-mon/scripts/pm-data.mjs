@@ -284,7 +284,7 @@ function storyChange(o, now, configIds) {
 
 // ---------- init ----------
 
-const NEXT = ['다음 할 일', '  1. references/authoring.md 를 읽고 req-spec.json, reqs.json, flow.json, arch.json 작성', '  2. check 로 검사. FAIL 0 까지 최대 3회', '  3. start 로 서버 시작'];
+const NEXT = ['다음 할 일', '  1. references/authoring.md 를 읽고 req-spec.json, reqs.json, flow.json, arch.json, adr.json 작성', '  2. check 로 검사. FAIL 0 까지 최대 3회', '  3. start 로 서버 시작'];
 
 const slash = (p) => p.split(path.sep).join('/');
 const realOr = (p) => {

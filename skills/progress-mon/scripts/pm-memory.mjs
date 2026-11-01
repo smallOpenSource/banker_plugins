@@ -1,4 +1,5 @@
 // pm-memory.mjs: 메모리 규칙 등록(계획 6.2절). 표식으로 중복을 막고 사용자 파일은 끝에 덧붙이기만 한다.
+// 예외: 표식이 붙은 우리 줄(앞머리로 가린 규칙 줄과 색인 줄)이 지금 판과 다르면 그 줄만 제자리에서 바꾼다(첫 원본은 .progress-mon.bak).
 // 대상 파일은 에이전트가 넘긴다(--memory, --memory-dir). 스크립트는 HOME 아래 쓰기 경로를 스스로 만들지 않는다.
 // 덧붙인 뒤 규칙 로드 한도를 재고 경고 줄을 낸다(종료 코드는 그대로). status, check 도 같은 측정을 다시 한다.
 import fs from 'node:fs';
@@ -14,22 +15,33 @@ const KINDS = ['claude-md', 'agents-md', 'auto-memory', 'none'];
 // 규칙 줄. 경로는 자료 폴더 기준 상대 표기뿐(스킬 폴더 절대 경로는 state.json 의 skillDir).
 export function ruleLine(runtime) {
   if (runtime === 'codex') {
-    return `진척도 화면(progress-mon): 모든 명령에 --runtime codex 를 붙임. 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. .omx/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 banker-progress-mon 스킬(플러그인 설치는 banker:progress-mon)로 호출. 세션 시작 때 status, 꺼져 있으면 start. start, stop, status 는 sandbox_permissions "require_escalated" 로 승인 요청. 세션을 닫아도 화면을 두려면 사용자 터미널에서 serve 실행을 안내. ${MARKER}`;
+    return `진척도 화면(progress-mon): 모든 명령에 --runtime codex 를 붙임. 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. 결정이 생기거나 스토리가 끝나면 .omx/progress-mon/adr.json(ADR 탭)을 고치고 check. .omx/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 banker-progress-mon 스킬(플러그인 설치는 banker:progress-mon)로 호출. 세션 시작 때 status, 꺼져 있으면 start. start, stop, status 는 sandbox_permissions "require_escalated" 로 승인 요청. 세션을 닫아도 화면을 두려면 사용자 터미널에서 serve 실행을 안내. ${MARKER}`;
   }
-  return `진척도 화면(progress-mon): 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. .omc/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 progress-mon 스킬로 호출. 세션 시작 때 status, 꺼져 있으면 start. ${MARKER}`;
+  return `진척도 화면(progress-mon): 단계는 stage, 스토리는 story, 그 밖 작업은 item 으로 갱신. 결정이 생기거나 스토리가 끝나면 .omc/progress-mon/adr.json(ADR 탭)을 고치고 check. .omc/progress-mon/state.json 의 skillDir 아래 scripts/progress-mon.mjs 를 node 로 직접 실행하고, 실패하면 progress-mon 스킬로 호출. 세션 시작 때 status, 꺼져 있으면 start. ${MARKER}`;
 }
 
 // 자동 메모리 규칙 파일(새로 만들 때)과 MEMORY.md 색인 줄.
 const ruleFile = (runtime) => `---
 name: progress-mon
-description: 진척도 화면(progress-mon) 갱신 규칙. 단계, 스토리, 그 밖 작업을 stage, story, item 으로 기록
+description: 진척도 화면(progress-mon) 갱신 규칙. 단계, 스토리, 그 밖 작업을 stage, story, item 으로, 결정은 adr.json 에 기록
 metadata:
   type: feedback
 ---
 
 ${ruleLine(runtime)}
 `;
-const INDEX_LINE = `- [진척도 화면 갱신 규칙](progress-mon.md) - stage, story, item 으로 progress-mon 갱신 ${MARKER}`;
+export const INDEX_LINE = `- [진척도 화면 갱신 규칙](progress-mon.md) - stage, story, item 과 adr.json 으로 progress-mon 갱신 ${MARKER}`;
+
+// 표식 줄 가운데 우리가 쓴 줄을 가리는 앞머리. 규칙 줄의 런타임은 `--runtime codex` 가 있으면 codex.
+export const RULE_HEAD = '진척도 화면(progress-mon):';
+export const INDEX_HEAD = '- [진척도 화면 갱신 규칙](progress-mon.md)';
+// 표식 줄이 지금 판에서 되어야 할 줄. 앞머리가 다른 표식 줄(사용자가 쓴 줄 등)은 null(손대지 않음).
+export function currentLine(line) {
+  if (!line.includes(MARKER)) return null;
+  if (line.startsWith(INDEX_HEAD)) return INDEX_LINE;
+  if (line.startsWith(RULE_HEAD)) return ruleLine(line.includes('--runtime codex') ? 'codex' : 'claude');
+  return null;
+}
 
 // ---------- 한도 ----------
 
@@ -250,6 +262,8 @@ function inspect(file, name, base, alt = '') {
   return { exists: true, text, eol: text.includes('\r\n') ? '\r\n' : '\n' };
 }
 
+const changedError = (file) => new UsageError(`${path.basename(file)} 이 검사 뒤 하드링크나 특수 파일로 바뀌어 쓰지 않음`);
+
 // 원본 바이트를 그대로 두고 끝에 줄을 덧붙인다. 마지막 줄에 줄바꿈이 없으면 먼저 넣는다.
 // 연 fd 를 fstat 으로 다시 본다: 검사(inspect)와 쓰기 사이에 하드링크나 특수 파일로 바뀌었으면 쓰지 않는다.
 function append(file, info, lines) {
@@ -258,7 +272,7 @@ function append(file, info, lines) {
   // O_NONBLOCK: 검사 뒤 FIFO 로 바뀐 자리에서 open 이 읽는 쪽을 기다리며 멈추지 않게 한다(Windows 에는 없어 0)
   const { O_WRONLY, O_APPEND, O_CREAT, O_EXCL } = fs.constants;
   const flags = O_WRONLY | (fs.constants.O_NONBLOCK || 0) | O_CREAT | (info.exists ? O_APPEND : O_EXCL);
-  const changed = () => new UsageError(`${path.basename(file)} 이 검사 뒤 하드링크나 특수 파일로 바뀌어 쓰지 않음`);
+  const changed = () => changedError(file);
   let fd;
   try {
     fd = fs.openSync(file, flags, 0o666);
@@ -312,32 +326,87 @@ export function planMemory({ kind, memoryDir, project, runtime }) {
   return { kind, runtime, steps: [{ file: t.file, name, info: inspect(t.file, name, root, AGENTS_ALT), what: 'block' }], memory: { kind, path: t.file } };
 }
 
+// 표식 줄 가운데 우리 줄만 지금 판으로 바꾼 글. 줄 끝(CRLF, LF)과 나머지 줄은 그대로. 돌려줌: { text, changed }
+export function refreshText(text) {
+  let changed = 0;
+  const out = text.split('\n').map((seg) => {
+    const cr = seg.endsWith('\r') ? '\r' : '';
+    const line = cr ? seg.slice(0, -1) : seg;
+    const want = currentLine(line);
+    if (want === null || want === line) return seg;
+    changed++;
+    return want + cr;
+  });
+  return { text: out.join('\n'), changed };
+}
+
+// 같은 파일을 제자리에서 다시 쓴다(링크는 대상 파일). 연 fd 를 fstat 으로 다시 보고 하드링크나 특수 파일이면 쓰지 않는다.
+function rewrite(file, body) {
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_WRONLY | (fs.constants.O_NONBLOCK || 0));
+  } catch (e) {
+    if (e.code === 'ENXIO' || e.code === 'EAGAIN') throw changedError(file);
+    throw e;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink > 1) throw changedError(file);
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, body);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// 첫 원본 백업. 이미 있으면 덮지 않는다. 만들지 못하면 바꾸지 않고 거부.
+function backup(file, buf) {
+  const bak = `${file}.progress-mon.bak`;
+  try {
+    fs.writeFileSync(bak, buf, { flag: 'wx' });
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw new UsageError(`${path.basename(bak)} 백업을 만들지 못해 규칙 줄을 바꾸지 않음(${e.code || e.message})`);
+  }
+  return bak;
+}
+
+// 표식이 이미 있는 파일. 우리 줄이 지금 판과 다를 때만 그 줄을 바꾸고 백업을 남긴다. BOM 과 나머지 바이트는 그대로.
+function refreshStep(s) {
+  const buf = fs.readFileSync(s.file);
+  const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
+  const r = refreshText(new TextDecoder('utf-8').decode(bom ? buf.subarray(3) : buf));
+  if (!r.changed) return `규칙 이미 있음: ${s.name}`;
+  const bak = backup(s.file, buf);
+  rewrite(s.file, Buffer.concat([bom ? buf.subarray(0, 3) : Buffer.alloc(0), Buffer.from(r.text, 'utf8')]));
+  return `규칙 줄 교체(백업 ${bak}): ${s.name}`;
+}
+
+// 표식이 없는 파일에 규칙을 더한다. 돌려줌: 출력 줄.
+function addStep(s, runtime) {
+  const { info } = s;
+  const fresh = !info.exists;
+  const made = fresh ? '새로 만듦, ' : '';
+  if (s.what === 'rule-file') {
+    if (fresh) fs.writeFileSync(s.file, ruleFile(runtime), { flag: 'wx' });
+    else append(s.file, info, [ruleLine(runtime)]);
+    return `규칙 추가: ${s.name} (${fresh ? '새로 만듦' : '1줄'})`;
+  }
+  if (s.what === 'index') {
+    append(s.file, info, [INDEX_LINE]);
+    return `규칙 추가: ${s.name} (${made}색인 1줄)`;
+  }
+  if (s.what === 'line') {
+    append(s.file, info, [ruleLine(runtime)]);
+    return `규칙 추가: ${s.name} (${made}1줄)`;
+  }
+  append(s.file, info, [OMX_OPEN, ruleLine(runtime), OMX_CLOSE]);
+  return `규칙 추가: ${s.name} (${made}3줄)`;
+}
+
 // 계획대로 쓴다. 돌려줌: 출력 줄 목록(규칙 줄, 경고 줄).
 export function applyMemory(plan, project, env = process.env) {
   if (plan.kind === 'none') return ['규칙 등록 안 함(--memory none)'];
-  const out = [];
   if (plan.dir) fs.mkdirSync(plan.dir, { recursive: true });
-  for (const s of plan.steps) {
-    const { info } = s;
-    if (info.text.includes(MARKER)) {
-      out.push(`규칙 이미 있음: ${s.name}`);
-      continue;
-    }
-    const fresh = !info.exists;
-    if (s.what === 'rule-file') {
-      if (fresh) fs.writeFileSync(s.file, ruleFile(plan.runtime), { flag: 'wx' });
-      else append(s.file, info, [ruleLine(plan.runtime)]);
-      out.push(`규칙 추가: ${s.name} (${fresh ? '새로 만듦' : '1줄'})`);
-    } else if (s.what === 'index') {
-      append(s.file, info, [INDEX_LINE]);
-      out.push(`규칙 추가: ${s.name} (${fresh ? '새로 만듦, ' : ''}색인 1줄)`);
-    } else if (s.what === 'line') {
-      append(s.file, info, [ruleLine(plan.runtime)]);
-      out.push(`규칙 추가: ${s.name} (${fresh ? '새로 만듦, ' : ''}1줄)`);
-    } else {
-      append(s.file, info, [OMX_OPEN, ruleLine(plan.runtime), OMX_CLOSE]);
-      out.push(`규칙 추가: ${s.name} (${fresh ? '새로 만듦, ' : ''}3줄)`);
-    }
-  }
+  const out = plan.steps.map((s) => (s.info.text.includes(MARKER) ? refreshStep(s) : addStep(s, plan.runtime)));
   return [...out, ...memoryWarnings(plan.memory, project, env)];
 }

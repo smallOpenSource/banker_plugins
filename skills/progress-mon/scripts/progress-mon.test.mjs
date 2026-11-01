@@ -165,10 +165,10 @@ test('자료 폴더 없으면 갱신 명령과 start 는 종료 1, 읽기 명령
 
 test('런타임 판별: .omx 만이면 codex, 둘 다면 경고', T, () => {
   const a = project('.omx/progress-mon');
-  assert.equal(cli(['status'], a).out, '꺼짐(자료 폴더: .omx/progress-mon/)\n');
+  assert.equal(cli(['status'], a).out, '꺼짐(자료 폴더: .omx/progress-mon/)\n탭 자료: 진척도 없음, 구현요건 없음, workflow 없음, 구성도 없음, ADR 없음\n');
   const b = project('.omc/progress-mon', '.omx/progress-mon');
   const r = cli(['status'], b);
-  assert.equal(r.out, '꺼짐(자료 폴더: .omc/progress-mon/)\n');
+  assert.equal(r.out, '꺼짐(자료 폴더: .omc/progress-mon/)\n탭 자료: 진척도 없음, 구현요건 없음, workflow 없음, 구성도 없음, ADR 없음\n');
   assert.match(r.err, /^경고: .*모두 있음/);
   const c = project();
   const d = path.join(ROOT, `data${++n}`);
@@ -238,7 +238,7 @@ test('start, 재사용, status, stop 수명 주기와 HTTP 응답', T, async () 
     assert.equal(lines[0], `실행 중: http://127.0.0.1:${port}/ (PID ${st.pid})`);
     assert.equal(lines[1], '주소: 127.0.0.1');
     assert.equal(lines[2], '자료 폴더: .omc/progress-mon/');
-    assert.equal(lines[3], '탭 자료: 진척도 없음, 구현요건 없음, workflow 없음, 구성도 없음');
+    assert.equal(lines[3], '탭 자료: 진척도 없음, 구현요건 없음, workflow 없음, 구성도 없음, ADR 없음');
     assert.match(lines[4], /^시작: \d{4}-\d\d-\d\dT.*Z$/);
     assert.match(lines[5], /^요청: 1, 마지막 요청: .*Z, 마지막 오류: 없음$/, '403 은 세지 않음');
 
@@ -276,7 +276,7 @@ test('실행 중 서버는 config.json 변경을 다음 응답에 반영, 형식
     assert.equal(s.code, 0);
     assert.match(s.err, /경고: 서버를 띄운 뒤 config\.json 의 port 가 바뀜\. 적용하려면 stop 뒤 start/);
     fs.writeFileSync(path.join(dataOf(p), 'req-spec.json'), '{');
-    assert.match(cli(['status'], p).out, /^탭 자료: 진척도 없음, 구현요건 깨짐, workflow 없음, 구성도 없음$/m, '깨진 JSON 은 있음이 아니라 깨짐');
+    assert.match(cli(['status'], p).out, /^탭 자료: 진척도 없음, 구현요건 깨짐, workflow 없음, 구성도 없음, ADR 없음$/m, '깨진 JSON 은 있음이 아니라 깨짐');
   } finally {
     cleanup(p);
   }

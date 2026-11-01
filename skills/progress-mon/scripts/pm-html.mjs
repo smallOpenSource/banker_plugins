@@ -71,6 +71,7 @@ export const TABS = [
   ['req', '구현요건'],
   ['workflow', 'workflow'],
   ['arch', '구성도'],
+  ['adr', 'ADR'],
 ];
 
 // 서버 화면의 탭 머리. cur 는 켜진 탭 id.

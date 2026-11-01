@@ -1,0 +1,166 @@
+# adr.json (ADR 탭)
+
+ADR 탭의 자료. 의사 결정 과정과 결론에 더해, 타인이 결과를 의심할 때 확인할 근거를 함께 적는다.
+init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰고, `check` 가 형식과 참조를 확인한다.
+화면은 자동 갱신하지 않는다. 주소 `?tab=adr`, `export` 파일의 `#adr`.
+
+## 두 층
+
+| 층 | 칸 | 뜻 |
+|---|---|---|
+| 프로젝트(하나) | `project.verification` | 단위 기능(모듈)마다 검증 결과와 evidence |
+| 프로젝트(하나) | `project.flow` | 입력, 처리 로직, 출력 |
+| 프로젝트(하나) | `project.proof` | 구현된 기능과 증명 위치, 구현 못 한 기능과 사유 |
+| 결정(여럿) | `decisions[]` | 맥락, 선택지, 결론과 이유, 최적화 로직, 확장 대응, 포기와 얻은 것, 근거 출처 |
+
+```json
+{
+  "project": {
+    "verification": [
+      { "id": "M-1", "module": "<단위 기능>", "result": "<결과>", "evidence": ["<참조>"] }
+    ],
+    "flow": { "input": "<입력>", "logic": "<처리 로직>", "output": "<출력>", "refs": ["<참조>"] },
+    "proof": {
+      "implemented": [{ "feature": "<구현된 기능>", "modules": ["M-1"], "proofs": ["<참조>"] }],
+      "notImplemented": [{ "feature": "<구현 못 한 기능>", "why": "<사유>" }]
+    }
+  },
+  "decisions": [
+    {
+      "id": "ADR-1", "title": "<결정 제목>", "status": "accepted|proposed|superseded", "date": "<YYYY-MM-DD, 선택>",
+      "context": "<맥락>",
+      "options": [{ "name": "<선택지>", "pros": "<장점>", "cons": "<단점>" }],
+      "decision": "<결론>", "why": "<과정과 선택 이유>",
+      "optimization": { "process": "<최적 로직인지 검증한 과정>", "modules": ["M-1"], "refs": ["<참조>"] },
+      "scaling": { "argument": "<확장 대응 논거>", "limits": "<한계, 선택>", "refs": ["<참조>"] },
+      "tradeoffs": { "gaveUp": [{ "what": "<포기한 것>", "why": "<이유>" }], "gained": [{ "what": "<얻은 것>", "purpose": "<목적>" }] },
+      "sources": ["<참조>"]
+    }
+  ]
+}
+```
+
+- 모듈 id 는 `project.verification` 안에서 겹치지 않는다. 결정과 `proof.implemented` 의 `modules` 는 있는 id 만
+- `options` 는 2개 이상. 하나뿐이면 `rejected`(다른 선택지를 버린 사유)를 쓴다
+- `modules`, `refs`(flow), `limits`, `date`, `rejected`, `sources` 는 선택. 그 밖 칸은 필수
+- 모든 글은 화면에서 escape 한다. 비밀값(키, 토큰, 비밀번호)을 적지 않는다
+
+## 사용자 항목과 칸
+
+| 사용자 항목 | 층과 칸 | 화면 절 제목 |
+|---|---|---|
+| 1. 최적화 로직 | 결정의 `optimization` | 최적화 로직 |
+| 2. 검증 | `project.verification` | 검증 |
+| 3. 흐름 | `project.flow` | 흐름 |
+| 4. 확장 대응 | 결정의 `scaling` | 확장 대응 |
+| 5. 포기와 얻은 것 | 결정의 `tradeoffs` | 포기와 얻은 것 |
+| 6. 증거 | `project.proof` | 증거 |
+
+- 여섯 칸은 각각 내용 꼴이나 `{ "gap": "<사유>" }`. 근거가 없으면 지어내지 않고 사유를 적어 비운다
+- 화면은 빈 칸을 `근거 없음: <사유>` 로 보이고, 결정 목록에 결정별 3항목 채움 수(`n/3`)와 빈 항목을 보인다
+
+## 참조
+
+`<참조>` 는 종류에 맞는 칸만 쓴다. 참조 자리에 `{ "gap": "<사유>" }` 도 받는다.
+
+| `kind` | 칸 | 화면 글 |
+|---|---|---|
+| `file` | `path`, 선택 `line`(1 이상 정수) | `파일 <path>:<line>` |
+| `test` | `path`, `name`(시험 이름) | `시험 <path> 의 <name>` |
+| `commit` | `hash`(4~40자 16진) | `커밋 <앞 7자리>` |
+| `cmd` | `cmd`, 선택 `output`(출력 파일) | `명령 <cmd>, 출력 <output>` |
+
+- 모든 종류에 선택 `note`(짧은 설명)
+- 경로는 프로젝트 루트 기준 상대 경로. 화면은 참조를 글로만 보이고 파일을 읽거나 링크하지 않는다
+- 시험 결과는 실제로 돌린 명령의 출력만 참조한다. 출력 파일이 없으면 `output` 없이 두어 WARN 으로 드러낸다
+- 권장: `cmd` 의 `output` 파일은 `docs/evidence/` 에 두고 머리 3줄에 명령, 종료 코드, 시각을 적는다
+
+  ```
+  명령: node --test test/
+  종료 코드: 0
+  시각: 2026-10-29T03:00:00Z
+  ```
+
+- init-dir 로 만든 프로젝트는 `docs/adr/`(사람이 쓴 ADR 문서), `docs/evidence/`(검증 출력)가 근거 출처다
+
+## check 판정
+
+항목 누락(결정 H)
+
+| 경우 | check |
+|---|---|
+| 항목 칸이 없거나 꼴이 틀림 | `FAIL adr.json <json 경로> <이유>`(스키마 위반) |
+| 항목이 `{ "gap": "<사유>" }` | `WARN density adr 빈 항목 <값>/<하한>: <json 경로>`(init 기록이 있을 때) |
+| `gap` 에 사유가 없음 | `FAIL adr.json <json 경로>.gap gap 에 사유 없음` |
+| 내용은 있으나 참조가 0개(모듈 검증, 구현 기능의 증명) | `WARN density adr 참조 <값>/<하한>: <json 경로>` |
+
+참조 확인(결정 I)
+
+| 참조 종류 | check |
+|---|---|
+| `file` | 절대 경로, `..` 이 든 경로, 루트 밖을 가리키는 링크는 `FAIL`. 없는 파일, 폴더나 특수 파일(FIFO 등), 줄 수를 넘는 `line` 은 `FAIL` |
+| `test` | 파일 규칙은 `file` 과 같음. 파일 글에 `name` 이 없으면 `WARN` |
+| `commit` | git 저장소에서 없는 커밋은 `FAIL`. `config.json` 의 `sources.git` 이 꺼졌거나 저장소가 아니면 `WARN`(확인 못 함) |
+| `cmd` | 명령 자체는 확인 못 함. `output` 이 있으면 `file` 규칙, 없으면 `WARN` |
+
+- 참조 결과 줄은 `FAIL adr.json <json 경로> 참조: <이유>`, `WARN adr.json <json 경로> 참조: <이유>`
+- 참조 파일은 check 에서만 읽는다. 크기 상한(4 MB) 안의 일반 파일만 읽고, 넘으면 줄과 이름 확인을 못 해 `WARN`
+- 처리가 다르다
+  - 스키마 위반 FAIL: init 정리 단계에서 FAIL 이 남으면 `adr.json` 을 지워 "자료 없음" 으로 둔다
+  - 참조 FAIL: 파일을 지우지 않는다. init 정리 단계에서 그 참조를 `{ "gap": "참조 확인 실패: <이유>" }` 로 바꾸고 check 를 다시 돌린다. 갱신 때(init 밖)는 FAIL 줄을 보고하고 json 경로를 고친다
+  - `check --adr-cleanup` 이 정리 단계를 적용한 뒤 검사한다(출력 첫 줄 `정리: ...`)
+
+두 원본 갈라짐(결정 K)
+
+| 경우 | check |
+|---|---|
+| `docs/adr/*.md` 가운데 어떤 결정의 `sources` 도 가리키지 않는 파일 | 파일마다 `WARN adr.json sources: docs/adr/<파일> 를 가리키는 결정 없음` |
+| `docs/adr/` 가 없거나 `.md` 가 없음 | 줄 없음 |
+
+- 연결 유무만 본다. 사람이 쓴 문서와 `adr.json` 의 내용 일치는 검사하지 않는다
+
+밀도(init 기록이 있을 때만)
+
+| `check` 의 이름 | 하한 |
+|---|---|
+| `adr 빈 항목` | 프로젝트 3칸과 결정마다 3칸이 모두 `gap` 아님 |
+| `adr 검증` | `verification` 1 이상 |
+| `adr 흐름` | 입력, 처리, 출력 3칸이 빈 칸 아님 |
+| `adr 증거` | `proof.implemented` 1 이상 |
+| `adr 참조` | 모듈마다 `evidence`, 구현된 기능마다 `proofs` 에 `gap` 아닌 참조 1 이상 |
+| `adr 결정` | 결정 1 이상 |
+| `adr 포기얻음` | 결정마다 `gaveUp`, `gained` 각 1 이상 |
+
+- 끝의 밀도 요약에 `density adr ok|low`
+
+## 좋은 예
+
+```json
+{
+  "project": {
+    "verification": [
+      { "id": "M-1", "module": "설정 읽기", "result": "시험 3개 통과", "evidence": [{ "kind": "test", "path": "test/config.test.mjs", "name": "설정 읽기" }, { "kind": "cmd", "cmd": "node --test test/", "output": "docs/evidence/test-run.md" }] },
+      { "id": "M-2", "module": "화면 렌더", "result": "고정 자료로 HTML 확인", "evidence": [{ "kind": "file", "path": "src/render.mjs", "line": 40, "note": "render 함수" }] }
+    ],
+    "flow": { "input": "config.json 과 자료 파일", "logic": "설정을 읽어 검사한 뒤 탭마다 HTML 로 렌더", "output": "로컬 서버 화면과 단일 HTML", "refs": [{ "kind": "file", "path": "src/main.mjs", "line": 12 }] },
+    "proof": {
+      "implemented": [{ "feature": "설정 읽기와 화면", "modules": ["M-1", "M-2"], "proofs": [{ "kind": "test", "path": "test/config.test.mjs", "name": "설정 읽기" }, { "kind": "commit", "hash": "1a2b3c4" }] }],
+      "notImplemented": [{ "feature": "알림", "why": "범위 밖으로 미룸(계획 9장)" }]
+    }
+  },
+  "decisions": [
+    {
+      "id": "ADR-1", "title": "자료는 JSON 파일", "status": "accepted", "date": "2026-10-20",
+      "context": "의존성 없이 자료를 저장해야 함",
+      "options": [{ "name": "JSON 파일", "pros": "내장 모듈만", "cons": "동시 쓰기 잠금 필요" }, { "name": "SQLite", "pros": "질의", "cons": "의존성 추가" }],
+      "decision": "JSON 파일", "why": "의존성 0 원칙과 자료 크기가 작음",
+      "optimization": { "process": "자료 크기 1 MB 미만에서 읽기 시간을 재어 파일 하나 읽기가 충분함을 확인", "modules": ["M-1"], "refs": [{ "kind": "cmd", "cmd": "node bench.mjs", "output": "docs/evidence/bench.md" }] },
+      "scaling": { "argument": "탭마다 파일을 나눠 한 파일이 커지지 않음. 바뀐 파일만 다시 읽음", "limits": "파일 하나가 32 MB 를 넘으면 읽지 않음", "refs": [{ "kind": "file", "path": "src/sources.mjs", "line": 30 }] },
+      "tradeoffs": { "gaveUp": [{ "what": "질의 기능", "why": "의존성 0" }], "gained": [{ "what": "설치 없는 실행", "purpose": "어느 PC 에서나 바로 실행" }] },
+      "sources": [{ "kind": "file", "path": "docs/adr/0001-data-file.md" }]
+    }
+  ]
+}
+```
+
+- 나쁜 예: 실행하지 않은 시험을 "통과" 로 적음, 참조 없이 "검증함" 만 적음, 근거가 없는 확장 논거를 지어냄. 근거가 없으면 `gap` 과 사유

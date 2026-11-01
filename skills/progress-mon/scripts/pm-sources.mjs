@@ -497,5 +497,6 @@ export function collect(ctx, config, now, inject = {}) {
     reqs: tab('reqs.json'),
     flow: tab('flow.json'),
     arch: tab('arch.json'),
+    adr: tab('adr.json'),
   };
 }

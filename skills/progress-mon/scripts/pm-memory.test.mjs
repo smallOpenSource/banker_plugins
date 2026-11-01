@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { MARKER, OMX_OPEN, OMX_CLOSE, SHADOW_WARN, ruleLine, planMemory, applyMemory, measureMemory, measureCodex, codexLimit, codexTarget, ownText, memoryWarnings, lineCount } from './pm-memory.mjs';
+import { MARKER, OMX_OPEN, OMX_CLOSE, SHADOW_WARN, INDEX_LINE, ruleLine, currentLine, planMemory, applyMemory, measureMemory, measureCodex, codexLimit, codexTarget, ownText, memoryWarnings, lineCount } from './pm-memory.mjs';
 import { UsageError } from './pm-config.mjs';
 
 const T = { timeout: 60000 };
@@ -49,6 +49,8 @@ const cli = (args, cwd) => {
   return { code: r.status, out: r.stdout, err: r.stderr };
 };
 const register = (o) => applyMemory(planMemory(o), o.project, ENV);
+// 옛 판(bd4d7cd) init 이 쓴 규칙 줄과 색인 줄.
+const OLD = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'assets', 'fixture', 'variants', 'legacy-init', 'rules.json'), 'utf8'));
 
 test('규칙 줄: 경로 없음, 표식, Codex 는 --runtime codex', T, () => {
   const c = ruleLine('claude');
@@ -392,4 +394,94 @@ test('Codex 규칙 줄: 승인 목록은 SKILL 런타임 표와 같은 start, st
   assert.match(line, /banker-progress-mon 스킬\(플러그인 설치는 banker:progress-mon\)로 호출/);
   assert.match(fs.readFileSync(path.join(HERE, '..', 'SKILL.md'), 'utf8'), /^\| `start`, `stop`, `status` \| 바로 실행 \| 명령 하나씩 `sandbox_permissions: "require_escalated"`/m);
   assert.doesNotMatch(ruleLine('claude'), /sandbox_permissions/);
+});
+
+test('규칙 줄 교체 대상: 표식과 앞머리(규칙 줄, 색인 줄)로만 가리고, 규칙 줄 런타임은 --runtime codex 유무', T, () => {
+  assert.equal(currentLine(OLD.claude), ruleLine('claude'));
+  assert.equal(currentLine(OLD.codex), ruleLine('codex'));
+  assert.equal(currentLine(OLD.index), INDEX_LINE);
+  assert.equal(currentLine(ruleLine('claude')), ruleLine('claude'));
+  assert.equal(currentLine(`사용자 메모 ${MARKER}`), null, '앞머리가 다른 표식 줄은 손대지 않음');
+  assert.equal(currentLine(`  ${OLD.claude}`), null, '앞머리는 줄 맨 앞');
+  assert.equal(currentLine(OLD.claude.replace(MARKER, '')), null, '표식 없는 줄');
+  for (const r of [ruleLine('claude'), ruleLine('codex')]) assert.match(r, /adr\.json\(ADR 탭\)을 고치고 check/);
+  assert.match(INDEX_LINE, /adr\.json/);
+});
+
+test('규칙 줄 교체: 옛 규칙 줄(CRLF, BOM)의 CLAUDE.md 는 그 줄만 바뀌고 나머지 바이트 그대로, 첫 원본 백업, 두 번째는 바뀐 것 없음', T, () => {
+  const p = dir();
+  const f = path.join(p, 'CLAUDE.md');
+  const head = Buffer.from('\u{FEFF}# 내 규칙\r\n- 하나\r\n', 'utf8');
+  const tail = Buffer.from('\r\n- 끝\r\n사용자 메모 ' + MARKER + '\r\n', 'utf8');
+  const orig = Buffer.concat([head, Buffer.from(OLD.claude, 'utf8'), tail]);
+  fs.writeFileSync(f, orig);
+  const bak = `${f}.progress-mon.bak`;
+  assert.deepEqual(register({ kind: 'claude-md', project: p, runtime: 'claude' }), [`규칙 줄 교체(백업 ${bak}): CLAUDE.md`]);
+  const want = Buffer.concat([head, Buffer.from(ruleLine('claude'), 'utf8'), tail]);
+  assert.deepEqual(fs.readFileSync(f), want);
+  assert.deepEqual(fs.readFileSync(bak), orig);
+  assert.deepEqual(register({ kind: 'claude-md', project: p, runtime: 'claude' }), ['규칙 이미 있음: CLAUDE.md']);
+  assert.deepEqual(fs.readFileSync(f), want);
+  assert.deepEqual(fs.readFileSync(bak), orig, '.bak 그대로');
+  // 새로 만든 파일이 지금 판이면 다시 실행해도 아무것도 쓰지 않고 백업도 없음
+  const q = dir();
+  register({ kind: 'claude-md', project: q, runtime: 'claude' });
+  register({ kind: 'claude-md', project: q, runtime: 'claude' });
+  assert.deepEqual(fs.readdirSync(q), ['CLAUDE.md']);
+});
+
+test('규칙 줄 교체: 백업이 이미 있으면 덮지 않음, CLAUDE.md 의 옛 Codex 규칙 줄은 Codex 판으로', T, () => {
+  const p = dir();
+  const f = path.join(p, 'CLAUDE.md');
+  fs.writeFileSync(f, `${OLD.codex}\n`);
+  fs.writeFileSync(`${f}.progress-mon.bak`, '처음 원본');
+  register({ kind: 'claude-md', project: p, runtime: 'claude' });
+  assert.equal(fs.readFileSync(f, 'utf8'), `${ruleLine('codex')}\n`);
+  assert.equal(fs.readFileSync(`${f}.progress-mon.bak`, 'utf8'), '처음 원본');
+});
+
+test('규칙 줄 교체: AGENTS.md 의 Codex 3줄 블록은 가운데 줄만 바뀌고 바깥 두 줄과 블록 밖 바이트 그대로', T, () => {
+  const p = dir();
+  const f = path.join(p, 'AGENTS.md');
+  const text = (rule) => `# 지시\n\n${OMX_OPEN}\n${rule}\n${OMX_CLOSE}\n뒤 내용\n`;
+  fs.writeFileSync(f, text(OLD.codex));
+  assert.deepEqual(register({ kind: 'agents-md', project: p, runtime: 'codex' }), [`규칙 줄 교체(백업 ${f}.progress-mon.bak): AGENTS.md`]);
+  assert.equal(fs.readFileSync(f, 'utf8'), text(ruleLine('codex')));
+  assert.equal(fs.readFileSync(`${f}.progress-mon.bak`, 'utf8'), text(OLD.codex));
+  const after = fs.readFileSync(f);
+  assert.deepEqual(register({ kind: 'agents-md', project: p, runtime: 'codex' }), ['규칙 이미 있음: AGENTS.md']);
+  assert.deepEqual(fs.readFileSync(f), after);
+});
+
+test('규칙 줄 교체: 자동 메모리 progress-mon.md 의 규칙 줄과 MEMORY.md 색인 줄, 다른 줄 그대로', T, () => {
+  const mem = dir('mem');
+  const p = dir();
+  const rule = (l) => `---\nname: progress-mon\ndescription: 옛 설명\nmetadata:\n  type: feedback\n---\n\n${l}\n`;
+  const index = (l) => `# 색인\n- [다른 메모](a.md) - 설명\n${l}\n`;
+  fs.writeFileSync(path.join(mem, 'progress-mon.md'), rule(OLD.claude));
+  fs.writeFileSync(path.join(mem, 'MEMORY.md'), index(OLD.index));
+  const out = register({ kind: 'auto-memory', memoryDir: mem, project: p, runtime: 'claude' });
+  assert.deepEqual(out, [
+    `규칙 줄 교체(백업 ${path.join(mem, 'progress-mon.md.progress-mon.bak')}): 자동 메모리 progress-mon.md`,
+    `규칙 줄 교체(백업 ${path.join(mem, 'MEMORY.md.progress-mon.bak')}): 자동 메모리 MEMORY.md`,
+  ]);
+  assert.equal(fs.readFileSync(path.join(mem, 'progress-mon.md'), 'utf8'), rule(ruleLine('claude')), 'frontmatter 는 옛 그대로');
+  assert.equal(fs.readFileSync(path.join(mem, 'MEMORY.md'), 'utf8'), index(INDEX_LINE));
+  assert.deepEqual(register({ kind: 'auto-memory', memoryDir: mem, project: p, runtime: 'claude' }), ['규칙 이미 있음: 자동 메모리 progress-mon.md', '규칙 이미 있음: 자동 메모리 MEMORY.md']);
+});
+
+test('규칙 줄 교체: init 다시 실행은 표식 줄만 바꾸고 자료 폴더의 config.json, items.json, state.json 의 memory 는 그대로', T, () => {
+  const p = dir();
+  assert.equal(cli(['init', '--memory', 'claude-md'], p).code, 0);
+  const data = path.join(p, '.omc', 'progress-mon');
+  const f = path.join(p, 'CLAUDE.md');
+  fs.writeFileSync(f, `# 내 규칙\n${OLD.claude}\n`);
+  const keep = ['config.json', 'items.json'].map((x) => fs.readFileSync(path.join(data, x)));
+  const r = cli(['init', '--memory', 'claude-md'], p);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^규칙 줄 교체\(백업 .*CLAUDE\.md\.progress-mon\.bak\): CLAUDE\.md$/m);
+  assert.match(r.out, /^그대로 둠: \.omc\/progress-mon\/config\.json$/m);
+  assert.equal(fs.readFileSync(f, 'utf8'), `# 내 규칙\n${ruleLine('claude')}\n`);
+  assert.deepEqual(['config.json', 'items.json'].map((x) => fs.readFileSync(path.join(data, x))), keep);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).memory, { kind: 'claude-md', path: f });
 });

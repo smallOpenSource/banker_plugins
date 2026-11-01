@@ -1,1 +1,1 @@
-형식 시험용 최소 자료(시험 픽스처와 형식 시험 보기 fixture-*). 화면 수준의 견본이 아님.
+형식 시험용 최소 자료(시험 픽스처와 형식 시험 보기 fixture-*). 화면 수준의 견본이 아님. `adr.json` 의 참조는 시험이 임시 프로젝트에 만드는 파일(`src/app.mjs`, `test/app.test.mjs`, `docs/evidence/test-run.md`, `docs/adr/0001-data-file.md`)을 가리킴. `variants/legacy-init/` 은 옛 판 init 의 규칙 줄(`rules.json`)과 `state.json`(`<memory-dir>` 자리는 시험이 바꿈).

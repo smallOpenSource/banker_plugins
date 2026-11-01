@@ -1,0 +1,5 @@
+{
+  "runtime": "claude",
+  "memory": { "kind": "auto-memory", "path": "<memory-dir>/MEMORY.md" },
+  "updatedAt": "2026-10-30T00:00:00Z"
+}
