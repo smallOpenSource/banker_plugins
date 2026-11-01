@@ -71,12 +71,13 @@ tmux 설정 파일에 `# banker:tune-tmux:start` .. `# banker:tune-tmux:end` 블
    - `--force-drag` 는 사용자가 맞바꿈(아래 절)을 듣고 고를 때만 붙임
 4. 결과 처리
    - `결과:` 줄, `넣지 않은 줄:` 의 이유, `경고:` 줄을 그대로 전함
+   - psmux 의 `넣은 줄 0: psmux 기본값 유지. 미확인 n, 안 됨 n` 줄과 그 아래 세 목록(되는 것, 확인 못 한 것, 안 되는 것)을 그대로 전함. 종료 0 을 "원하는 동작이 다 됨" 으로 보고하지 않음
    - `status` 의 앱별 동작 표를 사용자에게 보이고, 쓰는 앱(Claude Code, Codex)의 행을 짚어 줌
 5. 종료 코드
 
    | 코드 | 뜻 | 처리 |
    |---|---|---|
-   | 0 | 완료. 바뀐 것 없음 포함. psmux 에 넣을 줄이 없는 경우 포함 | 결과 보고 |
+   | 0 | 완료. 바뀐 것 없음 포함. psmux 에 넣을 줄이 없는 경우 포함(파일 처리 성공일 뿐, 미확인과 안 되는 동작이 남음) | 결과 보고. psmux 는 미확인, 안 됨 수와 목록도 |
    | 1 | 거부(링크, 하드 링크, 소유자, 표지 손상, UTF-8 아님, 특수 파일), 쓰기 실패, `--reload` 반영 실패. 거부는 아무것도 바꾸지 않음 | 메시지 그대로 전하고 아래 "문제 해결" |
    | 2 | 사용 오류 | 인자를 고쳐 다시 실행 |
    | 3 | `on`, `off` 인데 tmux, psmux 둘 다 없음 | banker `setup-tmux` 안내. `status` 는 이때 종료 0 과 "미설치" |
@@ -139,8 +140,21 @@ tmux 설정 파일에 `# banker:tune-tmux:start` .. `# banker:tune-tmux:end` 블
 ## psmux(Windows)
 
 psmux 3.3.8 실측(Windows 10 22H2 박스, 2026-11-01) 결과 블록에 넣을 줄이 없다.
-`on` 은 파일을 바꾸지 않고 종료 0 과 "psmux 기본값으로 충분하거나 미확인" 을 낸다.
-판단 근거는 `scripts/psmux-caps.json` 의 표다. `verified: true` 이고 psmux 기본값이 아닌 줄만 넣는다.
+psmux 기본값으로 모든 요구가 채워지는 것은 아니다. 되는 것, 확인 못 한 것, 안 되는 것이 나뉜다.
+`on` 은 종료 0 과 `넣은 줄 0: psmux 기본값 유지. 미확인 2, 안 됨 3` 줄, 그 아래 세 목록을 낸다(`--json` 은 `note` 와 `psmux`).
+그 설정 파일에 옛 tune-tmux 블록이 있으면 `off` 처럼 블록만 뺀다(`넣을 줄이 0개라 옛 tune-tmux 블록을 뺌` 줄). 없으면 파일을 바꾸지 않는다.
+판단 근거는 `scripts/psmux-caps.json` 의 표다. `verified: true` 이고 psmux 기본값이 아닌 줄만 넣는다. 세 목록은 같은 파일의 `behavior` 다.
+
+| 구분 | 내용 |
+|---|---|
+| 기본값으로 되는 것 | 마우스(`mouse on`) |
+| 기본값으로 되는 것 | `set-clipboard on` |
+| 기본값으로 되는 것 | 휠로 copy-mode 진입(`scroll-enter-copy-mode on`) |
+| 확인 못 한 것 | 드래그한 글이 Windows 클립보드로 가는지 |
+| 확인 못 한 것 | 전체 화면 앱 안의 PageUp/PageDown 을 앱이 받는지 |
+| 안 되는 것 | 앱 밖 PageUp 은 prefix 뒤에만 copy-mode 진입 |
+| 안 되는 것 | PageDown 이 바닥에서 copy-mode 를 빠지지 않음 |
+| 안 되는 것 | `#{alternate_on}` 이 늘 0 이라 전체 화면 앱을 구분하지 못함 |
 
 | 사용자 요구 | psmux 기본값으로 되는 것 | 안 되거나 미확인 |
 |---|---|---|

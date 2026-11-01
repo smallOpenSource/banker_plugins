@@ -291,13 +291,17 @@ test("선행 조건: GIT_DIR 환경 변수와 HOME 루트는 종료 3, 아무것
   assert.equal(cli(["run", "--root", join(base, "missing")]).status, 2);
 });
 
-test("2MB 넘는 파일은 내용 미스캔 목록, 걸림으로 막지 않음", () => {
+test("2MB 넘는 파일과 바이너리는 내용 미스캔 목록(check 출력에 둘 다), 걸림으로 막지 않음", () => {
   const root = project();
   files(root, { "big.log": "x".repeat(2 * 1024 * 1024 + 1), "bin.dat": Buffer.from([0, 1, 2, 3]) });
   const r = JSON.parse(cli(["check", "--root", root, "--local-identity", ID, "--json"]).stdout);
   assert.equal(r.exit, 0);
   assert.deepEqual(r.unscanned, ["big.log"]);
   assert.equal(r.binary, 1);
+  assert.deepEqual(r.binaries, ["bin.dat"]);
+  const text = cli(["check", "--root", root, "--local-identity", ID]).stdout;
+  assert.match(text, /^- 내용 미스캔\(2MB 초과\): big\.log$/m);
+  assert.match(text, /^- 내용 미스캔\(바이너리\): bin\.dat$/m);
 });
 
 test("missingPatterns 는 자기 블록 밖의 줄만 셈, nameHit 는 키 이름과 .aws, .ssh 폴더", () => {

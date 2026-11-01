@@ -10,7 +10,8 @@
  *   copy-pipe on older) and a PageUp binding that enters copy-mode only on the normal screen. The root
  *   MouseDrag1Pane default (an app that grabs the mouse gets the drag) is kept unless --force-drag.
  * - psmux: only lines psmux-caps.json marks verified and not already psmux defaults. Today that is none, so psmux
- *   gets no block and the report says so.
+ *   gets no block. on says so with the counts of unverified and broken behaviors (exit 0 is not "all works"), and
+ *   takes out an old block left in that file, as off does.
  * - marker-block.mjs refuses links (unless --follow-symlink), hard links, other owners, broken markers and files
  *   that are not UTF-8; a refusal changes nothing. The first original is kept in <conf>.tune-tmux.bak.
  * - Claude Code and Codex settings are never read or written.
@@ -135,14 +136,30 @@ function reportOf(ctx, command, o) {
   return { ok: true, command, target: ctx.target, tool, conf: ctx.conf, dryRun: o.dryRun, lines: ctx.lines, omitted: ctx.omitted, clipboard: ctx.clipboard, warnings: ctx.warnings };
 }
 
-const PSMUX_NOTE = "psmux 기본값으로 충분하거나 미확인: 넣을 줄 없음. 파일을 바꾸지 않음";
+// on with zero lines (psmux): what the defaults do, what is unverified, what does not work. Exit 0 means the file
+// was handled, not that every behavior works, so the counts stay on the result.
+function noLines(ctx) {
+  const b = ctx.behavior ?? { default: [], unverified: [], broken: [] };
+  return { psmux: b, note: `넣은 줄 0: psmux 기본값 유지. 미확인 ${b.unverified.length}, 안 됨 ${b.broken.length}` };
+}
 
-// on or off: plan, write unless dry-run, then reload when asked.
+// The report of an on with zero lines that took out an old block: the counts note, and what was taken out.
+function removedOld(out, ctx) {
+  const removed = `넣을 줄이 0개라 옛 tune-tmux 블록을 ${out.dryRun ? "뺄 예정" : "뺌"}(off 와 같음)${out.note ? `. ${out.note}` : ""}`;
+  return { ...out, ...noLines(ctx), removed };
+}
+
+// on or off: plan, write unless dry-run, then reload when asked. on with zero lines takes out an old block as off.
 function change(ctx, o, d) {
-  if (o.cmd === "on" && ctx.lines.length === 0) return { code: 0, report: { ...reportOf(ctx, o.cmd, o), changed: false, note: PSMUX_NOTE } };
-  const plan = planOf(ctx, o.cmd === "off" ? null : ctx.lines.join("\n"), o);
+  const none = o.cmd === "on" && ctx.lines.length === 0;
+  const plan = planOf(ctx, o.cmd === "off" || none ? null : ctx.lines.join("\n"), o);
   if (!plan.ok) return fail(1, `${plan.message}. 아무것도 바꾸지 않음`);
-  const out = written(ctx, o, plan);
+  if (none && !plan.changed) return { code: 0, report: { ...reportOf(ctx, o.cmd, o), changed: false, ...noLines(ctx) } };
+  return reloaded(ctx, plan, o, d, none ? removedOld(written(ctx, o, plan), ctx) : written(ctx, o, plan));
+}
+
+// The written report, applied to a running server when --reload asks (not on a dry run).
+function reloaded(ctx, plan, o, d, out) {
   if (!o.reload || o.dryRun) return { code: 0, report: out };
   const reload = reloadServer(ctx, plan, o, d);
   if (reload.error) return fail(1, `파일은 ${plan.changed ? "바꿨음" : "그대로"}. 떠 있는 서버 반영 실패: ${reload.error}`);
@@ -152,7 +169,7 @@ function change(ctx, o, d) {
 // Writes the plan unless dry-run and says what happened.
 function written(ctx, o, plan) {
   const done = o.dryRun ? plan : commitBlock(plan, SKILL);
-  const empty = o.cmd === "off" && plan.changed && plan.after?.length === 0;
+  const empty = (o.cmd === "off" || ctx.lines.length === 0) && plan.changed && plan.after?.length === 0;
   const note = empty ? "블록만 있던 파일이라 빈 파일로 남김" : null;
   return { ...reportOf(ctx, o.cmd, o), changed: plan.changed, created: done.created === true, backup: done.backup ?? null, note };
 }
@@ -210,8 +227,16 @@ function resultLine(rep) {
   return `결과: ${what}`;
 }
 
+// The psmux behavior lists under an on with zero lines.
+function behaviorLines(rep) {
+  if (!rep.psmux) return [];
+  const list = (head, xs) => (xs.length ? [head, ...xs.map((x) => `  - ${x}`)] : []);
+  const removed = rep.removed ? [rep.removed] : [];
+  return [...removed, ...list("psmux 기본값으로 되는 것:", rep.psmux.default), ...list("확인 못 한 것:", rep.psmux.unverified), ...list("안 되는 것:", rep.psmux.broken)];
+}
+
 function textOf(rep) {
-  const out = [...headLines(rep), resultLine(rep), ...(rep.note ? [rep.note] : []), ...(rep.reload ? [`반영: ${rep.reload.message}`] : [])];
+  const out = [...headLines(rep), resultLine(rep), ...(rep.note ? [rep.note] : []), ...behaviorLines(rep), ...(rep.reload ? [`반영: ${rep.reload.message}`] : [])];
   out.push(...(rep.command === "off" ? [] : bodyLines(rep)), ...rep.warnings);
   if (rep.apps) out.push("", "앱별 동작", "", "| 앱 상태 | PageUp/PageDown | 드래그 |", "|---|---|---|", ...rep.apps.map((a) => `| ${a.state} | ${a.keys} | ${a.drag} |`));
   return out.join("\n");

@@ -171,9 +171,13 @@ const sameIds = (ids, prefix, n) => ids.length === n && [...ids].sort().join("\n
 
 // Stage 5's critic seat loop: an APPROVE or ITERATE round has exactly <agents> seats critic#1..critic#N, and APPROVE
 // only when every seat approves. INCONCLUSIVE (a lost seat) and ralph's own verdict (by "ralph-reviewer") are not counted.
+// A critic record takes only the results the loop can end in, so PASS or REJECT cannot slip past the seat count.
+const CRITIC_RESULTS = ["APPROVE", "ITERATE", "INCONCLUSIVE", "STOPPED"];
 function checkCriticSeats(event, n) {
   const v = event.verdict;
-  if (event.stage !== "build" || !v || v.by !== "critic" || !["APPROVE", "ITERATE"].includes(v.result)) return;
+  if (event.stage !== "build" || !v || v.by !== "critic") return;
+  if (!CRITIC_RESULTS.includes(v.result)) throw new UsageError(`verdict.result: build 단계 critic 기록은 ${CRITIC_RESULTS.join(", ")} 만 됩니다(받은 값 ${v.result})`);
+  if (!["APPROVE", "ITERATE"].includes(v.result)) return;
   const seats = v.seats ?? [];
   if (!sameIds(seats.map((s) => s.id), "critic", n)) {
     throw new UsageError(`verdict.seats: critic ${v.result} 기록은 좌석 ${n}개(${seatIds("critic", n).join(", ")})여야 합니다`);

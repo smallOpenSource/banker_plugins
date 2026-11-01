@@ -8,6 +8,8 @@
  *   node init-dir.mjs status [--root <dir>] [--json]
  *
  * - A folder that is already there gets no template file, only its purpose passed on.
+ * - A new folder gets all its templates or does not appear: they are written into a temp folder beside it, which
+ *   is then renamed into place. A failure removes the temp folder and exits 1, so the next run starts clean.
  * - The block goes into each of AGENTS.md and CLAUDE.md that exists (exact names). With neither, the runtime's
  *   file is made (claude: CLAUDE.md, codex: AGENTS.md). In AGENTS.md the block sits inside its own
  *   USER:OMX:POLICY pair at the end, so `omx setup --merge-agents` keeps it.
@@ -19,7 +21,8 @@
  * (only a differently cased instructions file on a case-sensitive file system, or the root is HOME or a file
  * system root). No network is used.
  */
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -174,19 +177,33 @@ function prepare(o) {
   return { root, folders, present, entries, plan, warnings: [overrideWarning(root)].filter(Boolean) };
 }
 
+// One new folder with every template, or none of it. The templates go into root/.<name>.init-dir-<random> (same
+// parent, so same volume) and that folder is renamed to root/<name>. Rename of a folder whose target is absent
+// works on every OS: on Windows libuv calls MoveFileExW(MOVEFILE_REPLACE_EXISTING), which moves a directory when
+// the target does not exist and fails with EPERM when a directory is there (directories are never replaced). On
+// any failure the temp folder is removed and the error rethrown. Returns the rel paths written, or null when a
+// folder appeared at the name meanwhile (then it is left alone).
+function makeFolder(root, name) {
+  const tmp = join(root, `.${name}.init-dir-${randomBytes(6).toString("hex")}`);
+  mkdirSync(tmp);
+  try {
+    const files = writeTemplates(root, name, tmp);
+    renameSync(tmp, join(root, name));
+    return files;
+  } catch (e) {
+    rmSync(tmp, { recursive: true, force: true });
+    if (statSync(join(root, name), { throwIfNoEntry: false })?.isDirectory()) return null;
+    throw e;
+  }
+}
+
 // Makes the wanted folders that are not there, each with its templates.
 function makeFolders(root, folders) {
   return folders
     .filter((f) => f.exists || f.wanted)
     .map((f) => {
-      if (f.exists) return { name: f.name, status: "exists", files: [] };
-      try {
-        mkdirSync(join(root, f.name));
-      } catch (e) {
-        if (e.code === "EEXIST") return { name: f.name, status: "exists", files: [] };
-        throw e;
-      }
-      return { name: f.name, status: "created", files: writeTemplates(root, f.name) };
+      const files = f.exists ? null : makeFolder(root, f.name);
+      return files ? { name: f.name, status: "created", files } : { name: f.name, status: "exists", files: [] };
     });
 }
 

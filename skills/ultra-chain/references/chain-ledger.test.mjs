@@ -543,6 +543,27 @@ test("AC3 INCONCLUSIVE rounds and ralph's own verdict (ralph-reviewer) are not s
   assert.equal(summarize(readEvents(dir).events).stages.find((s) => s.id === "build").lastVerdict.by, "ralph-reviewer");
 });
 
+test("a build critic record takes APPROVE, ITERATE, INCONCLUSIVE or STOPPED only (exit 2 otherwise); a run from before --agents is not checked", () => {
+  const dir = runWith(undefined);
+  for (const result of ["PASS", "REJECT", "FAIL"]) {
+    const e = { stage: "build", status: "note", verdict: { by: "critic", result } };
+    assert.throws(() => appendEvent(dir, e), /critic 기록은 APPROVE, ITERATE, INCONCLUSIVE, STOPPED 만/, result);
+    const file = join(dir, ".event.json");
+    writeFileSync(file, JSON.stringify(e));
+    assert.equal(main(["event", dir, "--file", file], sink(), sink()), 2, result);
+  }
+  assert.equal(lines(dir), 0);
+  appendEvent(dir, { stage: "build", status: "stopped", reason: "좌석 루프 한도", verdict: { by: "critic", result: "STOPPED" } });
+  appendEvent(dir, { stage: "plan", status: "note", verdict: { by: "ralph-qa", result: "PASS" } });
+  assert.equal(lines(dir), 2, "STOPPED by critic and PASS outside build are kept");
+  const old = runWith(undefined);
+  const meta = JSON.parse(readFileSync(join(old, "run.json"), "utf8"));
+  delete meta.agents;
+  writeFileSync(join(old, "run.json"), `${JSON.stringify(meta, null, 1)}\n`);
+  appendEvent(old, { stage: "build", status: "note", verdict: { by: "critic", result: "PASS" } });
+  assert.equal(lines(old), 1);
+});
+
 test("a build verdict is by critic or ralph-reviewer only (exit 2 otherwise); a run from before --agents is not checked", () => {
   const dir = runWith(undefined);
   for (const by of ["ralph-qa", "architect", "Critic", "critic#1"]) {

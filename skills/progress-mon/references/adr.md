@@ -62,8 +62,10 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
   - 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 는 확인된 참조 1개 이상. 확인된 참조는 꼴이 맞고 `gap` 이 아니며 아래 참조 확인에서 FAIL 도 WARN 도 없는 것. 출력 파일 없는 `cmd`, 파일에 없는 이름의 `test`, git 이 꺼졌거나 저장소가 아닌 `commit` 은 세지 않는다. 없으면 FAIL. 벗어나는 길: 그 모듈은 `status: "unverified"` 와 `why`, 그 기능은 `notImplemented` 로 옮김
   - `project.verification`, `project.proof` 칸 전체를 `gap` 으로 두면 FAIL(모듈을 적고 미검증으로, 기능은 `notImplemented` 로)
   - 결정의 `optimization`, `scaling`, `tradeoffs` 와 `project.flow` 는 `{ "gap": "<사유>" }` 로 비울 수 있음(밀도 WARN)
+  - 서술 칸(결정의 `optimization` 과 `scaling`)을 채웠는데 `refs` 에 확인된 참조가 0개면 FAIL 이 아니고 WARN(`adr 서술참조` 밀도). 다만 그 칸 수를 집계 배지와 `check` 마지막 줄에 `참조 없는 서술 n` 으로 늘 보인다
 - 화면은 빈 칸을 `근거 없음: <사유>` 로 보이고, 결정 목록에 결정별 3항목 채움 수(`n/3`)와 빈 항목을 보인다
-- 집계 배지 `근거 없음 n칸, 미검증 n, 구현 못 함 n`: adr.json 안의 `{ "gap" }` 수(여섯 항목 칸과 참조 자리), `status: "unverified"` 모듈 수, `notImplemented` 기능 수. 화면 맨 위(프로젝트 요약 위)와 `check` 의 마지막 줄 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n` 에 늘 보임. 0 이면 0(adr.json 이 없으면 check 는 모두 0). 셋 가운데 하나라도 0 이 아니면 배지는 빨강(모든 모듈이 미검증인데 초록 0칸만 보이지 않게)
+- 집계 배지 `근거 없음 n칸, 미검증 n, 구현 못 함 n, 참조 없는 서술 n`: adr.json 안의 `{ "gap" }` 수(여섯 항목 칸과 참조 자리), `status: "unverified"` 모듈 수, `notImplemented` 기능 수, `refs` 에 확인된 참조가 0개인 서술 칸 수. 화면 맨 위(프로젝트 요약 위)와 `check` 의 마지막 줄 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n, 참조 없는 서술 n` 에 늘 보임. 0 이면 0(adr.json 이 없으면 check 는 모두 0). 넷 가운데 하나라도 0 이 아니면 배지는 빨강(모든 모듈이 미검증이거나 서술 칸에 참조가 없는데 초록 0칸만 보이지 않게)
+  - `check` 는 참조 확인을 마친 참조(FAIL, WARN 없음)만 센다. 화면은 파일을 읽지 않으므로 꼴이 맞고 `gap` 이 아닌 참조를 센다. 그래서 출력 파일 없는 `cmd` 하나만 적힌 칸은 화면에서 0, `check` 에서 1 로 셀 수 있다
 
 ## 참조
 
@@ -97,6 +99,7 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 |---|---|
 | 항목 칸이 없거나 꼴이 틀림 | `FAIL adr.json <json 경로> <이유>`(스키마 위반) |
 | 결정의 3칸이나 `project.flow` 가 `{ "gap": "<사유>" }` | `WARN density adr 빈 항목 <값>/<하한>: <json 경로>` |
+| 서술 칸(`optimization`, `scaling`)의 `refs` 에 확인된 참조가 0개 | `WARN density adr 서술참조 <값>/<하한>: <json 경로>`, 마지막 줄 `참조 없는 서술 n` |
 | `gap` 에 사유가 없음 | `FAIL adr.json <json 경로>.gap gap 에 사유 없음` |
 | 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 에 확인된 참조(FAIL, WARN 없음)가 0개 | `FAIL adr.json <json 경로> 증거 없음: ...`(벗어나는 길을 줄에 적음) |
 | `project.verification`, `project.proof` 칸 전체가 `gap` | `FAIL adr.json <json 경로> 증거 없음: ...` |
@@ -137,8 +140,9 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 | `adr 증거` | `proof.implemented` 1 이상 |
 | `adr 결정` | 결정 1 이상 |
 | `adr 포기얻음` | 결정마다 `gaveUp`, `gained` 각 1 이상 |
+| `adr 서술참조` | `gap` 이 아닌 서술 칸(`optimization`, `scaling`)마다 `refs` 에 확인된 참조 1 이상. 못 채운 칸은 json 경로로 |
 
-- 끝의 밀도 요약에 `density adr ok|low`(init 기록이 있을 때), 마지막 줄은 늘 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n`
+- 끝의 밀도 요약에 `density adr ok|low`(init 기록이 있을 때), 마지막 줄은 늘 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n, 참조 없는 서술 n`
 
 ## 좋은 예
 

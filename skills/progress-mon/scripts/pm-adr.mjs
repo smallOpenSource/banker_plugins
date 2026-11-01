@@ -310,6 +310,7 @@ function verifyRefs(S, ctx, config) {
 function judgeClaims(S) {
   const bad = new Set([...S.refFail, ...S.refWarn].map((x) => jp(x.parts)));
   const good = new Set(S.refs.map((x) => jp(x.parts)).filter((p) => !bad.has(p)));
+  S.good = good;
   for (const c of S.claims) {
     const ok = Array.from({ length: c.n }, (_, i) => jp([...c.parts, i])).some((p) => good.has(p));
     if (!ok) S.unproven(c.parts, c.msg);
@@ -361,7 +362,7 @@ function inspectAdr(ctx, config) {
   return { value: got.value, S, diverge };
 }
 
-// check 의 ADR 부분. r: pm-check 의 sink. 돌려줌: 밀도에 쓸 값(없거나 깨졌으면 null).
+// check 의 ADR 부분. r: pm-check 의 sink. 돌려줌: { value: 밀도에 쓸 값, bare: 참조 없는 서술 칸 } (없거나 깨졌으면 null).
 export function checkAdr(ctx, config, r) {
   const got = inspectAdr(ctx, config);
   if (got.missing) return null;
@@ -370,7 +371,7 @@ export function checkAdr(ctx, config, r) {
   for (const x of got.S.refFail) r.fail(ADR_FILE, jp(x.parts), `참조: ${x.msg}`);
   for (const x of got.S.refWarn) r.warn(ADR_FILE, jp(x.parts), `참조: ${x.msg}`);
   for (const msg of got.diverge) r.warn(ADR_FILE, 'sources:', msg);
-  return got.value;
+  return { value: got.value, bare: bareSlots(got.value, (p) => got.S.good.has(p)) };
 }
 
 // json 경로 조각 자리에 값을 넣는다.
@@ -437,9 +438,26 @@ function slotsOf(p, ds) {
   return list;
 }
 
+// 서술 칸: 결정의 최적화 로직(검증한 과정)과 확장 대응. gap 이 아닌 객체만(gap 은 근거 없음 칸으로 센다). 돌려줌: [이름, 칸]
+const NARRATIVE = ['optimization', 'scaling'];
+function narrativeSlots(v) {
+  return arr(obj(v) && v.decisions).flatMap((d, i) => (obj(d) ? NARRATIVE.filter((k) => obj(d[k]) && !isGap(d[k])).map((k) => [`decisions[${i}].${k}`, d[k]]) : []));
+}
+
+// 참조 없는 서술: 서술 칸 가운데 refs 에 확인된 참조가 0개인 칸 이름. 규칙은 WARN 이지만 배지와 check 마지막 줄에 늘 센다.
+// good(json 경로 글): 확인된 참조인가. check 는 참조 확인을 마친 집합(FAIL, WARN 없음). 화면은 파일을 읽지 않으므로
+// 기본값은 꼴이 맞고 gap 이 아닌 참조(적힌 참조)다.
+export function bareSlots(v, good) {
+  const written = good ? null : new Set(adrSchema(v).refs.map((x) => jp(x.parts)));
+  const ok = good || ((p) => written.has(p));
+  return narrativeSlots(v)
+    .filter(([n, x]) => !arr(x.refs).some((_, j) => ok(`${n}.refs[${j}]`)))
+    .map(([n]) => n);
+}
+
 // 돌려줌: density 줄 [{tab: 'adr', item, value, min, miss}]. v 가 없으면(파일 없음, 깨짐) 모두 0.
-// 증거 없는 모듈과 기능은 밀도가 아니라 FAIL(adrSchema 의 claim)이라 여기서 세지 않는다.
-export function adrRows(v) {
+// 증거 없는 모듈과 기능은 밀도가 아니라 FAIL(adrSchema 의 claim)이라 여기서 세지 않는다. bare: 참조 없는 서술 칸(없으면 적힌 참조로 잼).
+export function adrRows(v, bare = bareSlots(v)) {
   const rows = [];
   const add = (item, value, min, miss = []) => rows.push({ tab: 'adr', item, value, min, miss });
   const a = obj(v) || {};
@@ -458,6 +476,8 @@ export function adrRows(v) {
   add('결정', ds.length, 1);
   const tmiss = ds.filter((d) => !(obj(content(d.tradeoffs)) && arr(d.tradeoffs.gaveUp).length && arr(d.tradeoffs.gained).length)).map((d) => d.id);
   add('포기얻음', ds.length - tmiss.length, ds.length, tmiss);
+  const narr = narrativeSlots(a).length;
+  add('서술참조', narr - bare.length, narr, bare);
   return rows;
 }
 
@@ -468,13 +488,14 @@ function gapCount(v) {
   return isGap(v) ? 1 : Object.values(v).reduce((a, x) => a + gapCount(x), 0);
 }
 
-// 화면 배지와 check 끝 요약: 근거 없음(gap) 칸, 미검증 모듈, 구현 못 한 기능 수. 모두 미검증이어도 0칸만 보이는 오해를 막는다.
-export function adrTally(v) {
+// 화면 배지와 check 끝 요약: 근거 없음(gap) 칸, 미검증 모듈, 구현 못 한 기능, 참조 없는 서술 칸 수. 모두 미검증이거나
+// 서술 칸에 참조가 없어도 0칸만 보이는 오해를 막는다. bare: 참조 없는 서술 칸(없으면 적힌 참조로 잼).
+export function adrTally(v, bare = bareSlots(v)) {
   const p = obj(obj(v) && v.project) || {};
   const unverified = arr(p.verification).filter((x) => obj(x) && x.status === 'unverified').length;
   const notImplemented = arr(obj(p.proof) && p.proof.notImplemented).filter(obj).length;
   const gaps = gapCount(v);
-  return { text: `근거 없음 ${gaps}칸, 미검증 ${unverified}, 구현 못 함 ${notImplemented}`, any: gaps + unverified + notImplemented > 0 };
+  return { text: `근거 없음 ${gaps}칸, 미검증 ${unverified}, 구현 못 함 ${notImplemented}, 참조 없는 서술 ${bare.length}`, any: gaps + unverified + notImplemented + bare.length > 0 };
 }
 
 // ---------- 렌더 ----------
@@ -553,8 +574,9 @@ export function adrBody(m, emptyNotice) {
   if (!v) return emptyNotice('references/adr.md');
   const p = obj(v.project) || {};
   const ds = arr(v.decisions).filter(obj);
+  const tally = adrTally(v);
   return `<div class="meta">의사 결정 기록. 위는 프로젝트 전체(검증, 흐름, 증거), 아래는 결정마다(최적화 로직, 확장 대응, 포기와 얻은 것). 자료: <code>adr.json</code>. 참조는 위치만 보이고 이 화면은 파일을 열지 않음. 참조 확인은 check.</div>
-<div class="meta"><span class="b ${adrTally(v).any ? 'miss' : 'done'}">${esc(adrTally(v).text)}</span></div>
+<div class="meta"><span class="b ${tally.any ? 'miss' : 'done'}">${esc(tally.text)}</span></div>
 <h2>프로젝트 요약</h2>
 ${sec('검증', slotHtml(p.verification, verificationHtml))}${sec('흐름', slotHtml(p.flow, flowHtml))}${sec('증거', slotHtml(p.proof, proofHtml))}
 <h2>결정 목록 <small>${ds.length}건</small></h2>

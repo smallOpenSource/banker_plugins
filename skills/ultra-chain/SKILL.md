@@ -165,7 +165,7 @@ node "<S>/references/chain-ledger.mjs" event "<run>" --stage research --status d
 | `--stage` | 단계 이름(인자 절) 또는 `preflight` |
 | `--status` | `started`, `done`, `failed`, `skipped`, `stopped`, `note`(회차와 중간 기록). `failed`, `skipped`, `stopped` 는 `reason` 이 있어야 한다 |
 | `artifacts` | `{label, path}`. `path` 는 실행 폴더 안 실제 파일의 상대 경로. 폴더는 넣지 않는다 |
-| `verdict` | `by`, `result` 는 필수. `result` 는 `APPROVE`, `ITERATE`, `REJECT`, `INCONCLUSIVE`, `PASS`, `FAIL`, `STOPPED` 중 하나 |
+| `verdict` | `by`, `result` 는 필수. `result` 는 `APPROVE`, `ITERATE`, `REJECT`, `INCONCLUSIVE`, `PASS`, `FAIL`, `STOPPED` 중 하나. 5단계 critic 기록(`by: "critic"`)은 `APPROVE`, `ITERATE`, `INCONCLUSIVE`, `STOPPED` 만(그 밖은 종료 2. `run.json` 에 `agents` 가 없는 옛 실행은 검사하지 않음) |
 | `verdict.seats` | `{id, lens, model, verdict}`. 좌석 `verdict` 는 `APPROVE`, `ITERATE`, `REJECT`, `ERROR`. 5단계 critic 기록(`by: "critic"`)의 `APPROVE`, `ITERATE` 는 좌석이 정확히 `<agents>` 개이고 id 가 `critic#1`..`critic#N` 이어야 한다. `APPROVE` 는 모든 좌석이 `APPROVE` 일 때만이다 |
 | `verdict.blockers` | `<좌석 id>: <내용>` 꼴의 글. 이어 하기에서 누가 낸 반대인지 되찾기 위해서다 |
 | `round` | 회차 기록과 그 회차의 판정 기록은 같은 번호를 쓴다(6단계는 `<k>`). ralph-qa 와 critic 의 회차에만 쓴다 |

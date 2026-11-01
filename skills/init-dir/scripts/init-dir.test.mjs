@@ -155,6 +155,22 @@ test("AC5: an existing logs/ gets no template, only its purpose", () => {
   assert.match(read(join(root, "CLAUDE.md")), /- `logs\/`: /);
 });
 
+test("a template write failing midway leaves neither the folder nor the temp folder; the rerun makes the whole folder", () => {
+  const root = project();
+  const env = { ...process.env, HOME: home, USERPROFILE: home, BANKER_INIT_DIR_TEST_FAIL_AT: "scripts/stop.sh" };
+  const r = spawnSync(process.execPath, [CLI, "apply", "--root", root, "--runtime", "claude", "--only=logs,scripts"], { encoding: "utf8", cwd: base, env });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /^init-dir: 쓰기 실패: 주입한 실패\(BANKER_INIT_DIR_TEST_FAIL_AT\): scripts\/stop\.sh/);
+  assert.deepEqual(readdirSync(root).sort(), ["logs"], "scripts/ 도 .scripts.init-dir-* 도 없음. 앞서 끝난 logs/ 는 완전함");
+  assert.deepEqual(readdirSync(join(root, "logs")).sort(), [".gitignore", "README.md"]);
+  const again = apply(root, "--runtime", "claude", "--only=logs,scripts");
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /\| `scripts\/` \| 만듦 \|/);
+  const want = templateFiles("scripts").map((f) => f.rel);
+  for (const rel of want) assert.ok(existsSync(join(root, ...rel.split("/"))), rel);
+  assert.equal(readdirSync(root).filter((x) => x.includes(".init-dir-")).length, 0);
+});
+
 test("AC6: --only=logs,KB makes two folders; the block lists every managed folder on disk", () => {
   const root = project();
   mkdirSync(join(root, "docs"));

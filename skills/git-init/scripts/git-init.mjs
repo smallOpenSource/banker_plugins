@@ -248,16 +248,16 @@ function inspectFile(root, rel) {
   return { hits: scan(bytes.toString("utf8")).hits };
 }
 
-/** Scans the listed files: name hits, content hits (file:line:kind), accepted ones, unscanned and large files. */
+/** Scans the listed files: name hits, content hits (file:line:kind), accepted ones, unscanned, binary and large files. */
 function scanFiles(root, list, accept) {
-  const r = { names: [], hits: [], accepted: [], unscanned: [], large: [], binary: 0 };
+  const r = { names: [], hits: [], accepted: [], unscanned: [], large: [], binaries: [] };
   const wanted = new Set(accept);
   for (const rel of list.filter((p) => !p.endsWith("/"))) {
     if (nameHit(rel)) r.names.push(rel);
     const f = inspectFile(root, rel);
     if (f.large) r.large.push(rel);
     if (f.unscanned) r.unscanned.push(rel);
-    if (f.binary) r.binary += 1;
+    if (f.binary) r.binaries.push(rel);
     for (const h of f.hits ?? []) {
       const where = `${rel}:${h.line}:${h.kind}`;
       (wanted.has(where) ? r.accepted : r.hits).push(where);
@@ -277,7 +277,7 @@ function baseReport(o, pre, branch, gi) {
 }
 
 function withScan(report, list, s) {
-  return { ...report, ok: !blocked(s), candidates: list.filter((p) => !p.endsWith("/")).length, nameHits: s.names, hits: s.hits, accepted: s.accepted, unmatchedAccepts: s.unmatched, unscanned: s.unscanned, large: s.large, binary: s.binary };
+  return { ...report, ok: !blocked(s), candidates: list.filter((p) => !p.endsWith("/")).length, nameHits: s.names, hits: s.hits, accepted: s.accepted, unmatchedAccepts: s.unmatched, unscanned: s.unscanned, large: s.large, binary: s.binaries.length, binaries: s.binaries };
 }
 
 function check(o, ctx) {
@@ -377,6 +377,7 @@ function scanLines(rep) {
     ...listLine("확인으로 넘긴 항목", rep.accepted),
     ...listLine("맞는 걸림이 없어 쓰이지 않은 --accept", rep.unmatchedAccepts),
     ...listLine("내용 미스캔(2MB 초과)", rep.unscanned),
+    ...listLine("내용 미스캔(바이너리)", rep.binaries),
     ...listLine("경고: 100MB 초과(원격 저장소가 거부할 수 있음)", rep.large),
   ];
 }

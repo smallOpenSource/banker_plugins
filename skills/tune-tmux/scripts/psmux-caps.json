@@ -2,6 +2,18 @@
   "psmux": "3.3.8",
   "probed": "2026-11-01, Windows 10 22H2 test box, psmux 3.3.8 (winget marlocarlo.psmux)",
   "rule": "A line goes into the block only when verified is true and default is not true (psmux already has it).",
+  "behavior": {
+    "default": ["마우스(mouse on)", "set-clipboard on", "휠로 copy-mode 진입(scroll-enter-copy-mode on)"],
+    "unverified": [
+      "드래그한 글이 Windows 클립보드로 가는지(실제 마우스와 데스크톱이 필요해 미실측)",
+      "전체 화면 앱(Claude Code, Codex) 안의 PageUp/PageDown 을 앱이 받는지(미실측)"
+    ],
+    "broken": [
+      "앱 밖(셸) PageUp 은 prefix 뒤에만 copy-mode 진입. 루트 PageUp 바인딩은 넣지 않음",
+      "PageDown 이 바닥에서 copy-mode 를 빠지지 않음(-e 미지원, Escape 로 빠짐)",
+      "#{alternate_on} 이 늘 0 이라 전체 화면 앱을 구분하지 못함(앱 구분 바인딩 불가)"
+    ]
+  },
   "options": [
     {
       "id": "mouse",

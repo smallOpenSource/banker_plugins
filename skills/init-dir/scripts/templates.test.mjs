@@ -2,7 +2,7 @@
 // Run: node --test skills/init-dir/scripts/templates.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -102,6 +102,15 @@ test("writeTemplates writes every file and never overwrites one", () => {
   writeFileSync(join(tmplRoot, "docs", "README.md"), "mine\n");
   assert.throws(() => writeTemplates(tmplRoot, "docs"), { code: "EEXIST" });
   assert.equal(readFileSync(join(tmplRoot, "docs", "README.md"), "utf8"), "mine\n");
+});
+
+test("writeTemplates with dest writes the folder's files there and returns rel paths under the folder name", () => {
+  const root = join(base, "dest");
+  const dest = join(root, ".KB.init-dir-test");
+  mkdirSync(dest, { recursive: true });
+  assert.deepEqual(writeTemplates(root, "KB", dest), ["KB/README.md"]);
+  assert.deepEqual(readdirSync(dest), ["README.md"]);
+  assert.equal(existsSync(join(root, "KB")), false);
 });
 
 test("block body: same folders give the same bytes, listed in folder order, no marker inside", () => {

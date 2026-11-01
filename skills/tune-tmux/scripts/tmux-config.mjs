@@ -135,7 +135,14 @@ export function psmuxBody(caps, forceDrag) {
   const omitted = wanted
     .filter((o) => !(o.verified === true && o.default !== true))
     .map((o) => ({ what: o.id, reason: o.default === true ? `psmux 기본값과 같음: ${o.note}` : `psmux ${caps.psmux} 에서 확인 안 됨: ${o.note}` }));
-  return { lines: lines.length > 0 ? [HEADER, ...lines] : [], omitted };
+  return { lines: lines.length > 0 ? [HEADER, ...lines] : [], omitted, behavior: psmuxBehavior(caps) };
+}
+
+/** What psmux does with its defaults: { default, unverified, broken } lists of text (empty when caps has none). */
+function psmuxBehavior(caps) {
+  const b = caps.behavior ?? {};
+  const list = (v) => (Array.isArray(v) ? v : []);
+  return { default: list(b.default), unverified: list(b.unverified), broken: list(b.broken) };
 }
 
 // The socket file of a private server, removed after kill-server (tmux leaves it behind; measured 2.7 and 3.6a).

@@ -114,7 +114,7 @@ ADR 탭이 생기기 전 판으로 init 한 프로젝트는 `adr.json` 이 없�
 | `note` | `--key <k> [--note <t>] [--issue <t>]` | 단계(`stage:<id>`)나 스토리 행의 비고, 문제점. 빈 값은 그 칸을 지움 |
 | `stage` | `--id <id> --status started\|done\|skipped\|failed\|stopped [--label <t>]` | 단계 상태 기록. 설정에 없는 id 는 새 단계 행 |
 | `story` | `--id <id> (--status todo\|doing\|done \| --commit <hash>) [--name <t>]` | 스토리 상태나 완료 커밋 기록. 설정에 없는 id 는 새 스토리 행 |
-| `check` | `[--adr-cleanup]` | 자료 파일 검사. `FAIL <파일> <json 경로> <이유>`, `WARN ...` 한 줄씩, 끝에 `check: FAIL n, WARN m` 과 밀도 요약 `density <탭> ok\|low`, 마지막 줄 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n`(늘). 밀도 미달 줄 `WARN density <탭> <항목> <값>/<하한>[: <못 채운 대상>]`. `--adr-cleanup` 은 먼저 init 정리 단계를 `adr.json` 에 적용(참조 FAIL 은 `gap`, 스키마 FAIL 이 남으면 같은 폴더의 `adr.json.rejected-<YYYYMMDD-HHMMSS>` 로 옮김. 이름이 있으면 `-2` 부터 번호)하고 `정리:` 줄(옮긴 경로 포함)을 낸 뒤 검사 |
+| `check` | `[--adr-cleanup]` | 자료 파일 검사. `FAIL <파일> <json 경로> <이유>`, `WARN ...` 한 줄씩, 끝에 `check: FAIL n, WARN m` 과 밀도 요약 `density <탭> ok\|low`, 마지막 줄 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n, 참조 없는 서술 n`(늘. 참조 없는 서술은 `refs` 에 확인된 참조가 0개인 `optimization`, `scaling` 칸 수로 규칙은 WARN 이지만 0 이 아니면 화면 배지가 빨강). 밀도 미달 줄 `WARN density <탭> <항목> <값>/<하한>[: <못 채운 대상>]`. `--adr-cleanup` 은 먼저 init 정리 단계를 `adr.json` 에 적용(참조 FAIL 은 `gap`, 스키마 FAIL 이 남으면 같은 폴더의 `adr.json.rejected-<YYYYMMDD-HHMMSS>` 로 옮김. 이름이 있으면 `-2` 부터 번호)하고 `정리:` 줄(옮긴 경로 포함)을 낸 뒤 검사 |
 
 - 공통 인자: `--runtime claude|codex`, `--project <dir>`, `--data <dir>`(자료 폴더 직접 지정)
 - 종료 코드: 0 성공(이미 그 상태 포함), 1 거부나 사용법 오류나 `check` FAIL, 2 예기치 못한 오류, 3 `status` 꺼짐

@@ -141,13 +141,19 @@ test("acceptance 4: on Windows auto picks psmux, and a tmux command that is psmu
   assert.deepEqual(tc.parseVersion(PSMUX_V), { kind: "psmux", major: 3, minor: 3, raw: "tmux 3.3.8" });
 });
 
-test("acceptance 5: the shipped psmux table puts no block and reports 'unverified' with exit 0", () => {
+test("acceptance 5: the shipped psmux table puts no block; exit 0 with the counts of unverified and broken behaviors", () => {
   const home = fresh();
   writeFileSync(join(home, ".psmux.conf"), "set -g @mine 1\n");
   const before = readFileSync(join(home, ".psmux.conf"));
   const r = tune(home, ["on", "--target", "psmux"], { platform: "win32", fake: { psmux: PSMUX_V } });
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /psmux 기본값으로 충분하거나 미확인/);
+  assert.doesNotMatch(r.stdout, /충분/, "no claim that the defaults are enough");
+  assert.match(r.stdout, /^넣은 줄 0: psmux 기본값 유지\. 미확인 2, 안 됨 3$/m);
+  assert.match(r.stdout, /psmux 기본값으로 되는 것:\n  - 마우스\(mouse on\)\n  - set-clipboard on\n  - 휠로 copy-mode 진입/);
+  assert.match(r.stdout, /확인 못 한 것:\n  - 드래그한 글이 Windows 클립보드로 가는지/);
+  assert.match(r.stdout, /안 되는 것:\n  - 앱 밖\(셸\) PageUp 은 prefix 뒤에만[^\n]*\n  - PageDown 이 바닥에서 copy-mode 를 빠지지 않음[^\n]*\n  - #\{alternate_on\} 이 늘 0/);
+  const j = json(tune(home, ["on", "--target", "psmux", "--json"], { platform: "win32", fake: { psmux: PSMUX_V } }));
+  assert.deepEqual([j.changed, j.note, j.psmux.unverified.length, j.psmux.broken.length], [false, "넣은 줄 0: psmux 기본값 유지. 미확인 2, 안 됨 3", 2, 3]);
   assert.deepEqual(readFileSync(join(home, ".psmux.conf")), before);
   assert.deepEqual(readdirSync(home).sort(), [".psmux.conf"], "no backup, no new file");
   const caps = JSON.parse(readFileSync(join(HERE, "psmux-caps.json"), "utf8"));
@@ -174,6 +180,33 @@ test("acceptance 5: a verified line goes in, a line equal to the psmux default d
   assert.doesNotMatch(text, /mouse on/);
   assert.doesNotMatch(text, /PPage/);
   assert.equal(count(text, MK.start), 1);
+});
+
+test("psmux on with zero lines takes out an old tune-tmux block like off, keeps the user's lines, then changes nothing", () => {
+  const home = fresh();
+  const conf = join(home, ".psmux.conf");
+  writeFileSync(conf, "set -g @mine 1\n");
+  const caps = { psmux: "9.9", options: [{ id: "history", line: "set -g history-limit 5000", verified: true, note: "확인" }] };
+  assert.equal(tune(home, ["on", "--target", "psmux"], { platform: "win32", fake: { psmux: PSMUX_V }, caps }).code, 0);
+  assert.equal(count(readFileSync(conf, "utf8"), MK.start), 1, "old block in place");
+  const dry = tune(home, ["on", "--target", "psmux", "--dry-run"], { platform: "win32", fake: { psmux: PSMUX_V } });
+  assert.match(dry.stdout, /옛 tune-tmux 블록을 뺄 예정/);
+  assert.equal(count(readFileSync(conf, "utf8"), MK.start), 1, "dry-run changes nothing");
+  const r = tune(home, ["on", "--target", "psmux"], { platform: "win32", fake: { psmux: PSMUX_V } });
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^결과: 바꿈: /m);
+  assert.match(r.stdout, /^넣은 줄 0: psmux 기본값 유지\. 미확인 2, 안 됨 3$/m);
+  assert.match(r.stdout, /^넣을 줄이 0개라 옛 tune-tmux 블록을 뺌\(off 와 같음\)$/m);
+  assert.equal(readFileSync(conf, "utf8"), "set -g @mine 1\n", "only the block is gone");
+  const again = json(tune(home, ["on", "--target", "psmux", "--json"], { platform: "win32", fake: { psmux: PSMUX_V } }));
+  assert.equal(again.changed, false);
+  // a file that held only the block is left empty, and the report says so
+  const only = fresh("only");
+  const conf2 = join(only, ".psmux.conf");
+  tune(only, ["on", "--target", "psmux"], { platform: "win32", fake: { psmux: PSMUX_V }, caps });
+  const r2 = json(tune(only, ["on", "--target", "psmux", "--json"], { platform: "win32", fake: { psmux: PSMUX_V } }));
+  assert.equal(r2.removed, "넣을 줄이 0개라 옛 tune-tmux 블록을 뺌(off 와 같음). 블록만 있던 파일이라 빈 파일로 남김");
+  assert.equal(readFileSync(conf2, "utf8"), "");
 });
 
 test("acceptance 6: clipboard choice for macOS, Wayland, X11 xclip and xsel, WSL and none", () => {
