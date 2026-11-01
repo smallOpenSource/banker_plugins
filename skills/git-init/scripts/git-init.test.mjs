@@ -114,6 +114,15 @@ test("이름으로 막는 .npmrc, .netrc, _netrc, .pgpass 는 PATTERNS 로 자�
   assert.deepEqual(gitIn(root, ["ls-files"]).split("\n").sort(), [".gitignore", "app.js"]);
 });
 
+test("init-dir 강제 종료가 남긴 임시 폴더 .<이름>.init-dir-<난수>/ 는 PATTERNS 로 빠져 git ls-files 에 없음", () => {
+  assert.ok(PATTERNS.includes(".*.init-dir-*/"));
+  const root = project();
+  files(root, { "app.js": "1\n", ".scripts.init-dir-0123456789ab/start.sh": "#!/bin/sh\n", ".KB.init-dir-abcdef/README.md": "# KB\n", "scripts/start.sh": "#!/bin/sh\n" });
+  const r = cli(["run", "--root", root, "--local-identity", ID]);
+  assert.equal(r.status, 0, output(r));
+  assert.deepEqual(gitIn(root, ["ls-files"]).split("\n").sort(), [".gitignore", "app.js", "scripts/start.sh"]);
+});
+
 test("수용 4: 추적될 파일 안의 가짜 토큰은 종료 1, .git 없음, 파일:줄:종류 만 출력", () => {
   const root = project();
   files(root, { "config.txt": `name = demo\nTOKEN_VALUE ${FAKE_TOKEN}\n` });

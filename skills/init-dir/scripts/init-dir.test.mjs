@@ -9,6 +9,9 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { FOLDERS, templateFiles } from "./templates.mjs";
 
+// Preload that makes fs.openSync throw for one file name (scripts/test-fixtures, not shipped).
+const FAIL_OPEN = new URL("../../../scripts/test-fixtures/fail-open.mjs", import.meta.url).href;
+
 const WIN = process.platform === "win32";
 const CLI = fileURLToPath(new URL("./init-dir.mjs", import.meta.url));
 const base = mkdtempSync(join(tmpdir(), "init-dir-cli-"));
@@ -157,10 +160,10 @@ test("AC5: an existing logs/ gets no template, only its purpose", () => {
 
 test("a template write failing midway leaves neither the folder nor the temp folder; the rerun makes the whole folder", () => {
   const root = project();
-  const env = { ...process.env, HOME: home, USERPROFILE: home, BANKER_INIT_DIR_TEST_FAIL_AT: "scripts/stop.sh" };
-  const r = spawnSync(process.execPath, [CLI, "apply", "--root", root, "--runtime", "claude", "--only=logs,scripts"], { encoding: "utf8", cwd: base, env });
+  const env = { ...process.env, HOME: home, USERPROFILE: home, FAIL_OPEN_AT: "stop.sh" };
+  const r = spawnSync(process.execPath, ["--import", FAIL_OPEN, CLI, "apply", "--root", root, "--runtime", "claude", "--only=logs,scripts"], { encoding: "utf8", cwd: base, env });
   assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.match(r.stderr, /^init-dir: 쓰기 실패: 주입한 실패\(BANKER_INIT_DIR_TEST_FAIL_AT\): scripts\/stop\.sh/);
+  assert.match(r.stderr, /^init-dir: 쓰기 실패: 주입한 실패: .*\.scripts\.init-dir-[0-9a-f]{12}[\\/]stop\.sh/);
   assert.deepEqual(readdirSync(root).sort(), ["logs"], "scripts/ 도 .scripts.init-dir-* 도 없음. 앞서 끝난 logs/ 는 완전함");
   assert.deepEqual(readdirSync(join(root, "logs")).sort(), [".gitignore", "README.md"]);
   const again = apply(root, "--runtime", "claude", "--only=logs,scripts");
@@ -169,6 +172,26 @@ test("a template write failing midway leaves neither the folder nor the temp fol
   const want = templateFiles("scripts").map((f) => f.rel);
   for (const rel of want) assert.ok(existsSync(join(root, ...rel.split("/"))), rel);
   assert.equal(readdirSync(root).filter((x) => x.includes(".init-dir-")).length, 0);
+});
+
+test("a temp folder left by a killed run: status and apply report it as removable and leave it in place", () => {
+  const root = project();
+  const left = join(root, ".scripts.init-dir-0123456789ab");
+  mkdirSync(left);
+  writeFileSync(join(left, "start.sh"), "#!/bin/sh\n");
+  mkdirSync(join(root, ".notes.init-dir-0123456789ab"));
+  writeFileSync(join(root, ".logs.init-dir-abcdef"), "a file, not a folder\n");
+  const line = `남은 임시 폴더: ${left} (지워도 됨)`;
+  const st = cli(["status", "--root", root]);
+  assert.equal(st.status, 0, st.stderr);
+  assert.deepEqual(st.stdout.split("\n").filter((l) => l.startsWith("남은 임시 폴더")), [line]);
+  assert.deepEqual(JSON.parse(cli(["status", "--root", root, "--json"]).stdout).warnings, [line]);
+  const r = apply(root, "--runtime", "claude", "--only=scripts");
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.split("\n").filter((l) => l.startsWith("남은 임시 폴더")), [line]);
+  assert.ok(existsSync(join(left, "start.sh")), "not removed");
+  assert.ok(existsSync(join(root, "scripts", "lib", "service.mjs")));
+  assert.doesNotMatch(cli(["status", "--root", project()]).stdout, /남은 임시 폴더/);
 });
 
 test("AC6: --only=logs,KB makes two folders; the block lists every managed folder on disk", () => {

@@ -30,11 +30,16 @@
  * stop, status found it not fully running), 2 settings (command= empty, bad name, usage), 3 environment (the
  * wrappers did not find Node 18 or later).
  *
- * Environment (tests and tuning): SERVICE_LOG_ROTATE_BYTES (default 104857600), SERVICE_STOP_GRACE_MS (10000),
- * SERVICE_START_CHECK_MS (2000). SERVICE_TEST_NO_CMDLINE=1 (tests only) makes every command line unreadable.
+ * Two `start` runs at once launch one supervisor: start holds logs/<name>.start.lock (made with O_EXCL, holding its
+ * pid and time, removed when it ends). A later start waits for it, then sees the service running. A lock whose pid
+ * is dead, is another program, or is older than 30 seconds plus the start check is taken over. A link or a folder
+ * at the lock's name is refused (exit 1).
+ *
+ * Environment (tuning): SERVICE_LOG_ROTATE_BYTES (default 104857600), SERVICE_STOP_GRACE_MS (10000),
+ * SERVICE_START_CHECK_MS (2000).
  */
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { uptime } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +60,8 @@ const ROTATE_BYTES = envInt("SERVICE_LOG_ROTATE_BYTES", 100 * 1024 * 1024);
 const STOP_GRACE_MS = envInt("SERVICE_STOP_GRACE_MS", 10000);
 const START_CHECK_MS = envInt("SERVICE_START_CHECK_MS", 2000);
 const BOOT_SLACK_MS = 5000;
+const LOCK_STALE_MS = 30000 + START_CHECK_MS;
+const LOCK_WAIT_MS = 5000 + START_CHECK_MS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function parseConf(text) {
@@ -237,7 +244,6 @@ function procCommandLine(pid) {
 
 // The command line of a process: { text } ("" when it is gone) or { why } when it cannot be read.
 function commandLine(pid) {
-  if (process.env.SERVICE_TEST_NO_CMDLINE === "1") return { why: "명령줄 읽기 꺼짐(SERVICE_TEST_NO_CMDLINE)" };
   return procCommandLine(pid) ?? toolCommandLine(pid);
 }
 
@@ -294,7 +300,7 @@ function owned(cur) {
 // what it ran has left the job and lives on with the dead shell's PID as its parent. That process is the child
 // when its command line holds the recorded command. null elsewhere, or when none is found or readable.
 function orphanOf(cur) {
-  if (!WIN || !Number.isInteger(cur.child) || cur.child <= 0 || process.env.SERVICE_TEST_NO_CMDLINE === "1") return null;
+  if (!WIN || !Number.isInteger(cur.child) || cur.child <= 0) return null;
   const script = `Get-CimInstance Win32_Process -Filter "ParentProcessId=${cur.child}" | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }`;
   const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 20000 });
   if (r.error || r.status !== 0) return null;
@@ -314,7 +320,99 @@ function unverifiable(own) {
   return 1;
 }
 
+const readText = (file) => {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+};
+const lockInfo = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+const holders = new Map();
+
+// Whether the lock (text as read) belongs to a start still at work: its pid alive, younger than LOCK_STALE_MS, and
+// the pid's command line holds service.mjs (read once per lock; unreadable counts as its own, the age decides).
+function lockBusy(text, st) {
+  const info = lockInfo(text);
+  const at = Date.parse(info?.at);
+  if (Date.now() - (Number.isNaN(at) ? st.mtimeMs : at) > LOCK_STALE_MS) return false;
+  if (!info) return true; // just made, its pid not written yet
+  if (!alive(info.pid)) return false;
+  if (!holders.has(text)) {
+    const line = commandLine(info.pid);
+    holders.set(text, line.why !== undefined || line.text.includes("service.mjs"));
+  }
+  return holders.get(text);
+}
+
+// Moves a stale lock aside and removes it. When what was moved is not the lock judged stale (another start took
+// over first and made a fresh one), it goes back unless a newer lock is there.
+function takeOver(file, seen) {
+  const aside = `${file}.${process.pid}.stale`;
+  try {
+    renameSync(file, aside);
+  } catch {
+    return; // gone or taken already: the next try sees
+  }
+  if (readText(aside) !== seen) {
+    try {
+      linkSync(aside, file);
+    } catch {
+      // a newer lock is there, or no hard links on this file system
+    }
+  }
+  rmSync(aside, { force: true });
+}
+
+// One try at the lock: { text } held, { error } refused, or {} busy.
+function tryLock(file) {
+  const text = `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`;
+  try {
+    const fd = openSync(file, "wx");
+    try {
+      writeSync(fd, text);
+    } finally {
+      closeSync(fd);
+    }
+    return { text };
+  } catch (e) {
+    const st = lstatSync(file, { throwIfNoEntry: false });
+    if (!st && e.code !== "EEXIST") throw e;
+    if (st && !st.isFile()) return { error: `시작 잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${file}` };
+    const seen = st ? readText(file) : null;
+    if (st && seen !== null && !lockBusy(seen, st)) takeOver(file, seen);
+    return {};
+  }
+}
+
+// logs/<name>.start.lock, waiting up to LOCK_WAIT_MS for another start: { text } or { error }.
+async function takeLock(file) {
+  for (const until = Date.now() + LOCK_WAIT_MS; ; await sleep(100)) {
+    const r = tryLock(file);
+    if (r.text || r.error) return r;
+    if (Date.now() >= until) return { error: `다른 start 가 ${LOCK_WAIT_MS}ms 넘게 진행 중: ${file}. 잠시 뒤 다시 실행하세요` };
+  }
+}
+
 async function start(conf) {
+  mkdirSync(LOGS, { recursive: true });
+  const lock = join(LOGS, `${conf.name}.start.lock`);
+  const held = await takeLock(lock);
+  if (held.error) return say(console.error, held.error, 1);
+  try {
+    return await startLocked(conf);
+  } finally {
+    if (readText(lock) === held.text) rmSync(lock, { force: true });
+  }
+}
+
+async function startLocked(conf) {
   const p = pathsOf(conf.name);
   const cur = readPid(p.pid);
   const own = owned(cur);
@@ -328,7 +426,6 @@ async function start(conf) {
     return 1;
   }
   rmSync(p.pid, { force: true });
-  mkdirSync(LOGS, { recursive: true });
   const sup = spawn(process.execPath, [SELF, "__supervise"], { cwd: ROOT, detached: true, stdio: "ignore", windowsHide: true });
   sup.unref();
   await sleep(START_CHECK_MS);

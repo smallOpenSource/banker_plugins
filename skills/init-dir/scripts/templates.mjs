@@ -63,9 +63,9 @@ export function templateFiles(folder) {
 
 /**
  * Writes the template files of folder into dest (by default root/folder), never over an existing file. Returns the
- * rel paths written. BANKER_INIT_DIR_TEST_FAIL_AT=<rel> makes it throw right after writing that file (tests only).
+ * rel paths written. opts.failAt=<rel> makes it throw right after writing that file (a failure midway, for tests).
  */
-export function writeTemplates(root, folder, dest = join(root, folder)) {
+export function writeTemplates(root, folder, dest = join(root, folder), opts = {}) {
   const written = [];
   for (const f of templateFiles(folder)) {
     const path = join(dest, ...f.rel.split("/").slice(1));
@@ -78,7 +78,7 @@ export function writeTemplates(root, folder, dest = join(root, folder)) {
     }
     if (process.platform !== "win32") chmodSync(path, f.mode);
     written.push(f.rel);
-    if (process.env.BANKER_INIT_DIR_TEST_FAIL_AT === f.rel) throw new Error(`주입한 실패(BANKER_INIT_DIR_TEST_FAIL_AT): ${f.rel}`);
+    if (opts.failAt === f.rel) throw new Error(`주입한 실패: ${f.rel}`);
   }
   return written;
 }

@@ -10,6 +10,7 @@
  * - A folder that is already there gets no template file, only its purpose passed on.
  * - A new folder gets all its templates or does not appear: they are written into a temp folder beside it, which
  *   is then renamed into place. A failure removes the temp folder and exits 1, so the next run starts clean.
+ *   A temp folder left by a killed run is reported by status and apply ("남은 임시 폴더"), never removed.
  * - The block goes into each of AGENTS.md and CLAUDE.md that exists (exact names). With neither, the runtime's
  *   file is made (claude: CLAUDE.md, codex: AGENTS.md). In AGENTS.md the block sits inside its own
  *   USER:OMX:POLICY pair at the end, so `omx setup --merge-agents` keeps it.
@@ -141,6 +142,16 @@ function overrideWarning(root) {
   return /\S/.test(readFileSync(path, "utf8")) ? `경고: AGENTS.override.md 에 내용이 있음. ${why}` : null;
 }
 
+const LEFTOVER_RE = new RegExp(`^\\.(?:${FOLDERS.join("|")})\\.init-dir-[0-9a-f]+$`);
+
+// The temp folders (.<name>.init-dir-<random>) a killed run left in root, one warning line each.
+function leftoverWarnings(root) {
+  return readdirSync(root, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && LEFTOVER_RE.test(e.name))
+    .map((e) => `남은 임시 폴더: ${join(root, e.name)} (지워도 됨)`)
+    .sort();
+}
+
 const blockEntries = (root, files, present, follow) =>
   files.map((name) => ({
     path: join(root, name),
@@ -218,14 +229,16 @@ function apply(o) {
   const done = o.dryRun ? p.plan : applyBlocks(p.entries);
   if (!done.ok) return fail(1, `지시 파일 거부: ${done.refused.map((r) => r.message).join("; ")}. 폴더는 만들었음`);
   const instructions = done.results.map((r, i) => ({ file: p.entries[i].name, status: instructionStatus(r) }));
-  return { code: 0, report: { ok: true, command: "apply", root: p.root, runtime: o.runtime, dryRun: o.dryRun, folders, instructions, warnings: p.warnings, present: p.present } };
+  const warnings = [...p.warnings, ...leftoverWarnings(p.root)];
+  return { code: 0, report: { ok: true, command: "apply", root: p.root, runtime: o.runtime, dryRun: o.dryRun, folders, instructions, warnings, present: p.present } };
 }
 
 function status(o) {
   const at = checkRoot(o.root);
   if (at.error) return at;
   const inst = instructionFiles(at.root, null);
-  const warnings = [overrideWarning(at.root), inst.conflicts ? `경고: 대소문자가 다른 지시 파일만 있음: ${inst.conflicts.join(", ")}` : null].filter(Boolean);
+  const conflict = inst.conflicts ? `경고: 대소문자가 다른 지시 파일만 있음: ${inst.conflicts.join(", ")}` : null;
+  const warnings = [overrideWarning(at.root), conflict, ...leftoverWarnings(at.root)].filter(Boolean);
   const present = folderStates(at.root, []).filter((f) => f.exists).map((f) => f.name);
   const folders = FOLDERS.map((name) => ({ name, status: present.includes(name) ? "exists" : "missing", files: [] }));
   const instructions = (inst.files ?? []).map((name) => {

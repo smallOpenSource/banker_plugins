@@ -44,6 +44,7 @@ export const PATTERNS = Object.freeze([
   ".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "id_rsa*", "id_ecdsa*",
   "id_ed25519*", "credentials.json", "*.tfstate", "*.tfstate.*", ".aws/", ".ssh/", ".omc/", ".omx/", "node_modules/",
   ".npmrc", ".netrc", "_netrc", ".pgpass", ".DS_Store", "Thumbs.db", ".gitignore.git-init.bak",
+  ".*.init-dir-*/",
 ]);
 
 const ID = "banker:git-init";

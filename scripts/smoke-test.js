@@ -712,6 +712,7 @@ try {
     ...['init-dir', 'marker-block', 'service-template', 'templates']
       .map((n) => path.join('skills', 'init-dir', 'scripts', `${n}.test.mjs`)),
     path.join('skills', 'git-init', 'scripts', 'git-init.test.mjs'),
+    ...['no-cmdline', 'fail-open'].map((n) => path.join('scripts', 'test-fixtures', `${n}.mjs`)),
     ...['args', 'browsers', 'containers', 'detect', 'e2e', 'report', 'setup']
       .map((n) => path.join('skills', 'build-testbox', 'scripts', `${n}.test.mjs`)),
     path.join('scripts', 'test-fixtures', 'testbox-fakes.mjs'),

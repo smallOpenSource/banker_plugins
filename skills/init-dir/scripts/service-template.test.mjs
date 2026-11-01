@@ -4,14 +4,17 @@
 // Run: node --test skills/init-dir/scripts/service-template.test.mjs
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
 
 const WIN = process.platform === "win32";
 const CLI = fileURLToPath(new URL("./init-dir.mjs", import.meta.url));
+// Preload that blocks /proc/<pid>/cmdline, ps and powershell.exe (scripts/test-fixtures, not shipped).
+const NO_CMDLINE = new URL("../../../scripts/test-fixtures/no-cmdline.mjs", import.meta.url).href;
 const base = mkdtempSync(join(tmpdir(), "init-dir-service-"));
 const home = join(base, "home");
 mkdirSync(home);
@@ -315,7 +318,8 @@ test("AC11: a suite past its time limit is FAIL (timeout) and its whole process 
   assert.ok(await waitFor(() => !alive(Number(readFileSync(grand, "utf8")))));
 });
 
-const serviceDirect = (root, cmd, env) => spawnSync(process.execPath, [join(root, "scripts", "lib", "service.mjs"), cmd], { encoding: "utf8", cwd: root, env: { ...ENV, ...env }, timeout: 30000 });
+const serviceDirect = (root, cmd, env, preload = []) =>
+  spawnSync(process.execPath, [...preload, join(root, "scripts", "lib", "service.mjs"), cmd], { encoding: "utf8", cwd: root, env: { ...ENV, ...env }, timeout: 30000 });
 
 test("no ps on PATH (Linux): stop reads /proc and really stops a live service", { skip: process.platform !== "linux" && "Linux 전용(/proc)" }, async () => {
   const root = project("scripts");
@@ -332,21 +336,27 @@ test("no ps on PATH (Linux): stop reads /proc and really stops a live service", 
   assert.equal(existsSync(join(root, "logs", "app.pid")), false);
 });
 
-test("command lines unreadable (no /proc, no ps; injected): stop, status, start, restart exit 1, keep the pid file and signal nothing", async () => {
+test("command lines unreadable (no /proc, no ps; preload): stop, status, start, restart exit 1, keep the pid file and signal nothing", async () => {
   const root = project("scripts");
   configure(root, WAITER);
   assert.equal(svc(root, "start").status, 0);
   const p = pidOf(root);
-  const blind = { SERVICE_TEST_NO_CMDLINE: "1" };
+  const mark = join(base, `blind${n++}.log`);
+  const blind = { NO_CMDLINE_MARK: mark };
+  const preload = ["--import", NO_CMDLINE];
+  const reader = process.platform === "linux" ? ["proc", "ps"] : [WIN ? "powershell.exe" : "ps"];
   const pidFile = join(root, "logs", "app.pid");
   const before = readFileSync(pidFile, "utf8");
   for (const cmd of ["stop", "status", "start", "restart"]) {
-    const r = serviceDirect(root, cmd, blind);
+    rmSync(mark, { force: true });
+    const r = serviceDirect(root, cmd, blind, preload);
     assert.equal(r.status, 1, `${cmd}: ${r.stdout}${r.stderr}`);
-    assert.match(r.stderr, /확인 불가: 감독 PID \d+ 의 명령줄을 읽지 못함/, cmd);
+    assert.match(r.stderr, /확인 불가: 감독 PID \d+ 의 명령줄을 읽지 못함\(ENOENT\)/, cmd);
+    assert.deepEqual([...new Set(readFileSync(mark, "utf8").trim().split("\n"))].sort(), reader.sort(), `${cmd} tried the real readers`);
     assert.equal(readFileSync(pidFile, "utf8"), before, `${cmd} keeps the pid file`);
     assert.ok(alive(p.supervisor) && groupAlive(p.child), `${cmd} signalled nothing`);
   }
+  assert.equal(existsSync(join(root, "logs", "app.start.lock")), false, "start left no lock");
   assert.equal(svc(root, "stop").status, 0);
   assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
   // A pid file older than the last boot stays stale even when command lines cannot be read.
@@ -354,11 +364,76 @@ test("command lines unreadable (no /proc, no ps; injected): stop, status, start,
   try {
     assert.ok(await waitFor(() => alive(other.pid)));
     plant(root, { supervisor: other.pid, child: other.pid, startedAt: "2000-01-01T00:00:00.000Z", command: "x" });
-    const sp = serviceDirect(root, "stop", blind);
+    const sp = serviceDirect(root, "stop", blind, preload);
     assert.equal(sp.status, 0, sp.stderr);
     assert.match(sp.stderr, /PID 파일이 낡음/);
     assert.equal(alive(other.pid), true);
   } finally {
     other.kill("SIGKILL");
   }
+});
+
+// Runs the start wrapper without waiting, as a user starting it twice at once.
+function startAsync(root) {
+  const opts = { cwd: root, env: ENV };
+  const p = WIN ? spawn("cmd.exe", ["/d", "/c", join(root, "scripts", "start.cmd")], opts) : spawn(join(root, "scripts", "start.sh"), [], opts);
+  let out = "";
+  p.stdout.on("data", (c) => (out += c));
+  p.stderr.on("data", (c) => (out += c));
+  return new Promise((resolve) => p.on("close", (code) => resolve({ code, out })));
+}
+
+test("start lock: four starts at once launch one supervisor; all exit 0, three report it already running, no lock is left", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const runs = await Promise.all([0, 1, 2, 3].map(() => startAsync(root)));
+  const p = pidOf(root);
+  for (const r of runs) assert.equal(r.code, 0, r.out);
+  const startedRuns = runs.filter((r) => /시작함/.test(r.out));
+  const already = runs.filter((r) => /이미 실행 중/.test(r.out));
+  assert.equal(startedRuns.length, 1, runs.map((r) => r.out).join("\n"));
+  assert.equal(already.length, 3, runs.map((r) => r.out).join("\n"));
+  for (const r of runs) assert.match(r.out, new RegExp(`감독 PID ${p.supervisor}[,)]`), "every run names the same supervisor");
+  assert.equal(existsSync(join(root, "logs", "app.start.lock")), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+});
+
+test("start lock: a stale lock of a dead pid is taken over; a folder at the lock's name is refused", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const dead = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+  const deadPid = Number(dead.stdout.trim());
+  assert.equal(alive(deadPid), false);
+  const lock = join(root, "logs", "app.start.lock");
+  mkdirSync(join(root, "logs"), { recursive: true });
+  writeFileSync(lock, `${JSON.stringify({ pid: deadPid, at: new Date(Date.now() - 60000).toISOString() })}\n`);
+  const s = svc(root, "start");
+  assert.equal(s.status, 0, s.stdout + s.stderr);
+  assert.match(s.stdout, /시작함/);
+  const p = pidOf(root);
+  assert.equal(existsSync(lock), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  mkdirSync(lock);
+  const refused = svc(root, "start");
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /시작 잠금 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
+});
+
+test("start lock: a symbolic link at the lock's name is refused and its target is not touched", { skip: symlinkSkip }, () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  mkdirSync(join(root, "logs"), { recursive: true });
+  const target = join(root, "elsewhere.json");
+  writeFileSync(target, "keep\n");
+  const lock = join(root, "logs", "app.start.lock");
+  symlinkSync(target, lock, "file");
+  const r = svc(root, "start");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /시작 잠금 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
+  assert.equal(readFileSync(target, "utf8"), "keep\n");
+  assert.equal(lstatSync(lock).isSymbolicLink(), true);
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false);
 });

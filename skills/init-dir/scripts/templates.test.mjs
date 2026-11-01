@@ -113,6 +113,13 @@ test("writeTemplates with dest writes the folder's files there and returns rel p
   assert.equal(existsSync(join(root, "KB")), false);
 });
 
+test("writeTemplates with opts.failAt throws right after that file; the files before it and it are written, none after", () => {
+  const dest = join(base, "fail-at");
+  mkdirSync(dest);
+  assert.throws(() => writeTemplates(base, "scripts", dest, { failAt: "scripts/stop.sh" }), /^Error: 주입한 실패: scripts\/stop\.sh$/);
+  assert.deepEqual(readdirSync(dest).sort(), ["start.sh", "stop.sh"]);
+});
+
 test("block body: same folders give the same bytes, listed in folder order, no marker inside", () => {
   assert.equal(blockBody(["KB", "logs"]), blockBody(["logs", "KB"]));
   const lines = summaryLines(["KB", "logs"]);
