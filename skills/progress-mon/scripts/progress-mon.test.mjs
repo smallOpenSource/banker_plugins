@@ -293,15 +293,36 @@ function cliAsync(args, cwd) {
   });
 }
 
-// 포트에 서버가 남지 않았는지. 닫히는 중인 서버는 연결 거부 대신 끊김(socket hang up, ECONNRESET)을 낼 수 있어(Windows 부하)
-// 거부가 될 때까지 짧게 다시 묻는다. 한도(10초) 뒤에도 응답하거나 끊기면 남은 서버로 본다. 돌려줌: 'refused' | 마지막 결과
-async function gone(port, ms = 10000) {
+// 이 자료 폴더로 띄운 서버의 PID(server.log 의 시작 줄, 바인드 직후 씀).
+function ourPids(p) {
+  let text = '';
+  try {
+    text = fs.readFileSync(path.join(dataOf(p), 'server.log'), 'utf8');
+  } catch {
+    text = '';
+  }
+  return new Set([...text.matchAll(/시작 port=\d+ .*PID (\d+)/g)].map((m) => Number(m[1])));
+}
+
+// 포트에 이 프로젝트의 서버가 남지 않았는지. 닫히는 중인 서버는 연결 거부 대신 끊김(socket hang up, ECONNRESET)을 낼 수 있어(Windows 부하)
+// 거부가 될 때까지 짧게 다시 묻는다. 응답한 서버가 pids 밖이면(신원 경로가 다른 PID 이거나 progress-mon 이 아님) 다른 시험의 서버다:
+// macOS 는 빈 포트를 차례로 주어 병렬로 도는 다른 시험 파일의 freePort 가 옆 포트를 받는다. 한도(10초) 뒤에도 이 프로젝트 서버가
+// 답하거나 끊기면 남은 서버로 본다. 돌려줌: 'refused' | 'not-ours' | 마지막 결과
+async function gone(port, pids, ms = 10000) {
   const until = Date.now() + ms;
   let last = '';
   do {
     try {
-      const r = await get(port);
-      last = `응답 ${r.status}`;
+      const r = await get(port, { pathname: '/__progress-mon/id' });
+      let pid = null;
+      try {
+        const info = JSON.parse(r.body);
+        if (info && info.app === 'progress-mon') pid = info.pid;
+      } catch {
+        pid = null;
+      }
+      if (!pids.has(pid)) return 'not-ours';
+      last = `응답 ${r.status}(이 프로젝트 서버 PID ${pid})`;
     } catch (e) {
       if (e.code === 'ECONNREFUSED') return 'refused';
       last = e.code || e.message;
@@ -324,7 +345,8 @@ test('동시에 부른 start 는 서버 하나를 띄우고 모두 같은 URL, �
       assert.equal(rs.filter((r) => r.out === `이미 실행 중(재사용): ${url}\n`).length, 3, JSON.stringify(rs));
       assert.equal(fs.existsSync(path.join(dataOf(p), 'server.json.lock')), false, '잠금은 돌려줌');
       assert.equal(cli(['stop'], p).code, 0);
-      for (let q = port; q <= port + 4; q++) assert.equal(await gone(q), 'refused', `포트 ${q} 에 남은 서버 없음`);
+      const pids = ourPids(p);
+      for (let q = port; q <= port + 4; q++) assert.match(await gone(q, pids), /^(refused|not-ours)$/, `포트 ${q} 에 남은 서버 없음`);
     } finally {
       cleanup(p);
     }
@@ -402,7 +424,7 @@ test('떠 있는 서버의 렌더가 느려 신원 응답이 늦어도 start 는
     assert.equal(a.code, 0, a.err);
     assert.equal(a.out, `이미 실행 중(재사용): http://127.0.0.1:${port}/\n`);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataOf(p), 'server.json'), 'utf8')).pid, child.pid, '상태 파일은 처음 서버');
-    await assert.rejects(get(port + 1), /ECONNREFUSED/, '옆 포트에 둘째 서버 없음');
+    assert.match(await gone(port + 1, ourPids(p)), /^(refused|not-ours)$/, '옆 포트에 둘째 서버 없음');
     req.destroy();
   } finally {
     child.kill();
@@ -441,7 +463,7 @@ test('떠 있는 서버 옆에서 serve 를 띄우면 바인드 전에 닫고 �
     assert.equal(r.out, '', '옆 포트 알림 없이 바로 닫음');
     assert.ok(alive(first));
     assert.match(cli(['status'], p).out, new RegExp(`^실행 중: http://127\\.0\\.0\\.1:${port}/ \\(PID ${first}\\)$`, 'm'));
-    await assert.rejects(get(port + 1), /ECONNREFUSED/);
+    assert.match(await gone(port + 1, ourPids(p)), /^(refused|not-ours)$/);
   } finally {
     cleanup(p);
   }
