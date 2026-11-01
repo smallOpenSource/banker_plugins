@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (68 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (69 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -80,7 +80,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 68, `codex dry-run plans 68 skill copies (got ${copies})`);
+  ok(copies === 69, `codex dry-run plans 69 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -297,8 +297,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 68 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 68 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 69 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 69 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
@@ -489,6 +489,22 @@ try {
   const tboxRun = cp.spawnSync(process.execPath, [path.join(tboxDir, 'scripts', 'testbox.mjs'), '--help'], { encoding: 'utf8' });
   ok(tboxRun.status === 0 && tboxRun.stdout.split(/\r?\n/)[0].startsWith('build-testbox: '),
      `the Codex copy of build-testbox runs (status ${tboxRun.status}, stderr ${JSON.stringify(tboxRun.stderr)})`);
+  // tune-tmux runs scripts/tune-tmux.mjs with a copy of init-dir's marker-block.mjs beside it (scripts/sync-adapter.js keeps
+  // it byte-identical); the Codex copy keeps its five files and neither the tests nor the test-only full-screen app, which
+  // lives in scripts/test-fixtures/alt-screen-probe.mjs (outside package.json's files).
+  ok(installed.includes('banker-tune-tmux'), 'new tune-tmux installed as banker-tune-tmux');
+  const ttmuxDir = path.join(instDir, 'banker-tune-tmux');
+  const ttmuxFiles = mfAllSkills.find((s) => s.name === 'tune-tmux').supportingFiles;
+  const ttmuxScripts = fs.readdirSync(path.join(ttmuxDir, 'scripts'));
+  ok(ttmuxFiles.length === 5 && ttmuxFiles.every((f) => fs.existsSync(path.join(ttmuxDir, ...f.split('/'))))
+     && !ttmuxScripts.some((f) => f.endsWith('.test.mjs') || /probe/.test(f)),
+     `banker-tune-tmux carries its ${ttmuxFiles.length} supporting files and no tests or probe into the Codex install (got ${ttmuxScripts.join(', ')})`);
+  const ttmuxRun = cp.spawnSync(process.execPath, [path.join(ttmuxDir, 'scripts', 'tune-tmux.mjs'), '--help'], { encoding: 'utf8' });
+  ok(ttmuxRun.status === 0 && ttmuxRun.stdout.split(/\r?\n/)[0].startsWith('tune-tmux: '),
+     `the Codex copy of tune-tmux runs (status ${ttmuxRun.status}, stderr ${JSON.stringify(ttmuxRun.stderr)})`);
+  ok(fs.readFileSync(path.join(root, 'skills', 'init-dir', 'scripts', 'marker-block.mjs'))
+       .equals(fs.readFileSync(path.join(root, 'skills', 'tune-tmux', 'scripts', 'marker-block.mjs'))),
+     'marker-block.mjs is byte-identical across init-dir and tune-tmux');
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its
@@ -673,6 +689,8 @@ try {
     ...['args', 'browsers', 'containers', 'detect', 'e2e', 'report', 'setup']
       .map((n) => path.join('skills', 'build-testbox', 'scripts', `${n}.test.mjs`)),
     path.join('scripts', 'test-fixtures', 'testbox-fakes.mjs'),
+    ...['tune-tmux', 'tmux-it'].map((n) => path.join('skills', 'tune-tmux', 'scripts', `${n}.test.mjs`)),
+    path.join('scripts', 'test-fixtures', 'alt-screen-probe.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),

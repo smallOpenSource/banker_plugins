@@ -12,7 +12,7 @@
  *   ralph-qa/references: gate-evidence.mjs, run-folder.mjs           -> ultraqa             (gate evidence, run folders; tests at the source)
  *   init-dir/scripts: marker-block.mjs                                -> git-init/scripts    (marked-block editor for AGENTS.md, CLAUDE.md, .gitignore)
  *   ralph-qa/references: payload-scan.mjs                             -> git-init/scripts    (secret scan before the first commit; tests at the source)
- * tune-tmux also keeps a marker-block.mjs copy; its MIRRORS row is added when that skill is registered.
+ *   init-dir/scripts: marker-block.mjs                                -> tune-tmux/scripts   (marked-block editor for tmux and psmux config files)
  * A pair without a root is under skills/; one with `root: true` names repo-root paths.
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
@@ -32,6 +32,7 @@ const MIRRORS = [
   { from: 'ralph-qa/references', to: 'ultraqa/references', files: ['gate-evidence.mjs', 'run-folder.mjs'] },
   { from: 'init-dir/scripts', to: 'git-init/scripts', files: ['marker-block.mjs'] },
   { from: 'ralph-qa/references', to: 'git-init/scripts', files: ['payload-scan.mjs'] },
+  { from: 'init-dir/scripts', to: 'tune-tmux/scripts', files: ['marker-block.mjs'] },
 ];
 const check = process.argv.includes('--check');
 

@@ -194,6 +194,7 @@ USER_RESOURCES 가이드의 공통 요소를 OS별·런타임별(Claude Code/Cod
 | `setup-java` | JDK 21 + JAVA_HOME (Debian=Adoptium Temurin) |
 | `setup-lsp` | 언어별 LSP(vtsls·basedpyright·bash·jdtls·spring) + lsp-mcp 브리지 (node·python·java 의존) |
 | `setup-tmux` | tmux(Rocky8 3.6a 소스빌드) / psmux(Windows) |
+| `tune-tmux` | 설치된 tmux, psmux 의 설정 파일에 표지 블록을 넣고 빼서 마우스 드래그 복사(OS 클립보드)와 PageUp/PageDown 스크롤을 맞춤. 전체 화면 앱(Claude Code, Codex)의 키와 마우스는 빼앗지 않고 앱별 동작을 `status` 로 안내. 첫 원본 백업, `off` 는 블록만 뺌, `--reload` 로 떠 있는 서버에 반영. psmux 는 기본값으로 충분해 넣는 줄 없음 |
 | `setup-pwsh` | Windows PowerShell 7 환경(비-Windows no-op) |
 | `setup-mcp` | 공통 MCP 서버(context7·seq-thinking·filesystem·git·fetch) |
 | `setup-sandbox` | OS별 샌드박스(bubblewrap+userns / Seatbelt) + rust + git safe.directory |
