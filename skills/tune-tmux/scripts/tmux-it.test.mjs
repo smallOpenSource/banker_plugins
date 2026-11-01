@@ -19,7 +19,8 @@ import * as tc from "./tmux-config.mjs";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const CLI = join(HERE, "tune-tmux.mjs");
 const PROBE = join(HERE, "..", "..", "..", "scripts", "test-fixtures", "alt-screen-probe.mjs");
-const CLIP = "xclip -selection clipboard -in";
+// macOS picks pbcopy before any xclip on PATH (tmux-config clipboard order), so the expected command follows the OS.
+const CLIP = process.platform === "darwin" ? "pbcopy" : "xclip -selection clipboard -in";
 const base = mkdtempSync(join(tmpdir(), "tune-tmux-it-"));
 const servers = new Set();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
