@@ -25,7 +25,7 @@ export function classifyLaunchError(message) {
 }
 
 // chromium: Playwright's headless shell first, then the full Chromium (channel "chromium"); webkit has one build.
-export const VARIANTS = {
+const VARIANTS = {
   chromium: [["headless-shell", {}], ["chromium", { channel: "chromium" }]],
   webkit: [["webkit", {}]],
 };
@@ -40,21 +40,22 @@ async function tryLaunch(pw, name, options, timeoutMs) {
 }
 
 // The reason to report when no variant starts: a missing executable says less than a missing library.
-function worstReason(failures) {
+// No variant at all means the browser name is unknown.
+function worstReason(failures, name) {
+  if (!failures.length) return { reason: "launch-failed", detail: `모르는 브라우저 ${name}` };
   const telling = failures.find((f) => f.reason !== "needs-browser");
   return telling || failures[0];
 }
 
 // { browser, variant } or { reason, detail }.
-export async function launchBest(pw, name, timeoutMs = 30000) {
+async function launchBest(pw, name, timeoutMs = 30000) {
   const failures = [];
   for (const [variant, options] of VARIANTS[name] || []) {
     const r = await tryLaunch(pw, name, options, timeoutMs);
     if (r.browser) return { browser: r.browser, variant };
     failures.push({ ...r, variant });
   }
-  if (!failures.length) return { reason: "launch-failed", detail: `모르는 브라우저 ${name}` };
-  return worstReason(failures);
+  return worstReason(failures, name);
 }
 
 // detect: each variant started and closed. { runnable, variant, reason, detail, variants: { <v>: { ok, reason?, detail? } } }
@@ -67,8 +68,7 @@ export async function probeBrowser(pw, name, timeoutMs = 30000) {
   }
   const ok = Object.entries(variants).find(([, v]) => v.ok);
   if (ok) return { runnable: true, variant: ok[0], variants };
-  const failures = Object.values(variants);
-  const worst = failures.length ? worstReason(failures) : { reason: "launch-failed", detail: `모르는 브라우저 ${name}` };
+  const worst = worstReason(Object.values(variants), name);
   return { runnable: false, reason: worst.reason, detail: worst.detail, variants };
 }
 
@@ -142,7 +142,7 @@ async function runBrowser(pw, name, cells, spec) {
 }
 
 // All browser types at once; the cells of one type share its jobs.
-export async function runGroup(pw, spec) {
+async function runGroup(pw, spec) {
   mkdirSync(spec.outDir, { recursive: true });
   const byBrowser = new Map();
   for (const c of spec.cells) byBrowser.set(c.browser, [...(byBrowser.get(c.browser) || []), c]);

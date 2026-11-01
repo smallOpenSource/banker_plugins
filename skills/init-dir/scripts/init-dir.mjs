@@ -46,7 +46,7 @@ function splitArg(a) {
 }
 
 /** The options in argv, or { error } (exit 2). */
-export function parseArgs(argv) {
+function parseArgs(argv) {
   const o = { cmd: "apply", runtime: null, root: process.cwd(), only: null, follow: false, dryRun: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const [name, inline] = splitArg(argv[i]);
@@ -67,7 +67,7 @@ export function parseArgs(argv) {
 }
 
 /** The folder names in an --only value, case-insensitive, as FOLDERS spells them; or { error }. */
-export function normalizeOnly(value) {
+function normalizeOnly(value) {
   const names = value.split(",").map((s) => s.trim()).filter(Boolean);
   const unknown = names.filter((n) => !FOLDERS.some((f) => f.toLowerCase() === n.toLowerCase()));
   if (unknown.length > 0) return { error: `모르는 폴더 이름: ${unknown.join(", ")} (쓸 수 있는 이름: ${FOLDERS.join(", ")})` };
@@ -103,7 +103,7 @@ function checkRoot(rootArg) {
  * The instructions files to write, AGENTS.md first: the exact names present, or on a case-insensitive file system
  * the name as it is on disk. A differently cased name alone on a case-sensitive file system is a conflict.
  */
-export function instructionFiles(root, runtime) {
+function instructionFiles(root, runtime) {
   const listing = readdirSync(root);
   const files = [];
   const conflicts = [];

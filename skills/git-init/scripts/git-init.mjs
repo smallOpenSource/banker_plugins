@@ -31,7 +31,7 @@ import { pathToFileURL } from "node:url";
 import { HASH, commitBlock, findBlock, markers, planBlock } from "./marker-block.mjs";
 import { scan } from "./payload-scan.mjs";
 
-export const USAGE = [
+const USAGE = [
   "git-init: 민감 정보를 빼는 .gitignore 를 쓰고 비밀값을 스캔한 뒤 git init, git add ., git commit -m \"init\" 으로 첫 커밋을 만듦(check 는 계획만)",
   "사용법: node git-init.mjs [check|run] [--root <dir>] [--branch <이름>] [--local-identity \"<이름> <<메일>>\"] [--nested]",
   "        [--accept <파일:줄:종류>]... [--follow-symlink] [--json]",
@@ -80,7 +80,7 @@ function takeValue(o, name, inline, argv, i) {
 }
 
 /** The options in argv, or { error } (exit 2). --accept may be given more than once. */
-export function parseArgs(argv) {
+function parseArgs(argv) {
   const o = { cmd: "check", root: process.cwd(), branch: null, identity: null, nested: false, accept: [], follow: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const [name, inline] = splitArg(argv[i]);
@@ -101,7 +101,7 @@ export function parseArgs(argv) {
 }
 
 /** { name, email } from "<name> <<mail>>", or null. */
-export function parseIdentity(text) {
+function parseIdentity(text) {
   const m = IDENTITY_RE.exec(text);
   return m ? { name: m[1], email: m[2] } : null;
 }
@@ -146,7 +146,7 @@ function checkRoot(rootArg) {
 }
 
 /** [major, minor] of `git version x.y.z`, or null. */
-export function gitVersion(text) {
+function gitVersion(text) {
   const m = /(\d+)\.(\d+)/.exec(text);
   return m ? [Number(m[1]), Number(m[2])] : null;
 }
@@ -249,7 +249,7 @@ function inspectFile(root, rel) {
 }
 
 /** Scans the listed files: name hits, content hits (file:line:kind), accepted ones, unscanned and large files. */
-export function scanFiles(root, list, accept) {
+function scanFiles(root, list, accept) {
   const r = { names: [], hits: [], accepted: [], unscanned: [], large: [], binary: 0 };
   const wanted = new Set(accept);
   for (const rel of list.filter((p) => !p.endsWith("/"))) {

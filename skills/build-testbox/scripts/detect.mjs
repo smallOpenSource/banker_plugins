@@ -31,7 +31,7 @@ function resolveFrom(base) {
 }
 
 // npm's global root, asked from the home folder so a project's npm.cmd or .npmrc is not used.
-export function globalRoot() {
+function globalRoot() {
   const opts = { encoding: "utf8", cwd: homedir(), timeout: 30000 };
   const r = process.platform === "win32" ? spawnSync("npm.cmd root -g", { ...opts, shell: true }) : spawnSync("npm", ["root", "-g"], opts);
   return String(r.stdout || "").trim();
@@ -51,7 +51,7 @@ function coreDirOf(pwDir) {
   try { return dirname(createRequire(join(pwDir, "package.json")).resolve("playwright-core/package.json")); } catch { return null; }
 }
 
-export const PLAYWRIGHT_DIR_ENV = "BUILD_TESTBOX_PLAYWRIGHT_DIR";
+const PLAYWRIGHT_DIR_ENV = "BUILD_TESTBOX_PLAYWRIGHT_DIR";
 
 // A folder given by --playwright-dir or BUILD_TESTBOX_PLAYWRIGHT_DIR (the folder that holds node_modules), or null.
 const givenDir = (dir, env) => dir || env[PLAYWRIGHT_DIR_ENV] || null;

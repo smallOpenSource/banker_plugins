@@ -27,7 +27,7 @@ import { HASH, commitBlock, markers, planBlock } from "./marker-block.mjs";
 import * as tc from "./tmux-config.mjs";
 import { appRows } from "./app-notes.mjs";
 
-export const USAGE = [
+const USAGE = [
   "tune-tmux: tmux, psmux 설정에 표지 블록을 넣고 빼서 마우스 드래그 복사와 PageUp/PageDown 스크롤을 맞춤",
   "사용법: node tune-tmux.mjs [status|on|off] [--target auto|tmux|psmux] [--conf <경로>] [--follow-symlink] [--force-drag] [--reload] [--socket <이름>] [--dry-run] [--json]",
   "종료 코드: 0 성공(바뀐 것 없음 포함), 1 거부나 쓰기, 반영 실패, 2 사용 오류, 3 환경(on, off 인데 tmux, psmux 둘 다 없음)",
@@ -79,7 +79,7 @@ function detectTools(want, platform, exec) {
 }
 
 /** The target and its tool: auto is psmux on Windows (tmux when there is no psmux), tmux elsewhere. */
-export function resolveTarget(want, platform, exec) {
+function resolveTarget(want, platform, exec) {
   const { tmux, psmux } = detectTools(want, platform, exec);
   if (want === "psmux" || (want === "auto" && platform === "win32" && psmux !== null)) return { target: "psmux", tool: psmux, warnings: [] };
   if (tmux?.kind === "psmux") return { target: "psmux", tool: tmux, warnings: ["경고: tmux 명령이 psmux 라 psmux 로 처리"] };

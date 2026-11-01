@@ -92,7 +92,7 @@ export function chooseTmuxConf(v, env, home, conf) {
 }
 
 /** psmux reads one file: -f, PSMUX_CONFIG_FILE, then the first there of these four (measured on psmux 3.3.8). */
-export function psmuxCandidates(home) {
+function psmuxCandidates(home) {
   return [join(home, ".psmux.conf"), join(home, ".psmuxrc"), join(home, ".tmux.conf"), join(home, ".config", "psmux", "psmux.conf")];
 }
 
@@ -145,7 +145,7 @@ function removeSocket(path, sock) {
 }
 
 /** Runs fn(sock) against a private server started with no config, then kills it: { value } or { error }. */
-export function withPrivateServer(exec, bin, fn) {
+function withPrivateServer(exec, bin, fn) {
   const sock = `banker-tune-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const up = exec(bin, ["-L", sock, "-f", devNull, "new-session", "-d", "-s", "probe", "-x", "80", "-y", "24"]);
   if (up.error || up.status !== 0) return { error: `사설 서버를 띄우지 못함: ${firstLine(up)}` };

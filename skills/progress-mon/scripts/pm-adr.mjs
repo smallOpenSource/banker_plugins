@@ -7,7 +7,7 @@ import path from 'node:path';
 import { git, noBom, readRegular, writeAtomic } from './pm-config.mjs';
 import { esc } from './pm-html.mjs';
 
-export const ADR_FILE = 'adr.json';
+const ADR_FILE = 'adr.json';
 const REF_READ_MAX = 4 * 1024 * 1024;
 const STATUS = { accepted: '채택', proposed: '제안', superseded: '대체됨' };
 const REF_KINDS = ['file', 'test', 'commit', 'cmd'];
@@ -21,9 +21,9 @@ const DECISION_SLOTS = [
 const arr = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
 const str = (v) => typeof v === 'string' && v.trim().length > 0;
-export const isGap = (v) => Boolean(obj(v)) && Object.hasOwn(v, 'gap');
+const isGap = (v) => Boolean(obj(v)) && Object.hasOwn(v, 'gap');
 // json 경로 조각(['decisions', 0, 'scaling']) 을 글(decisions[0].scaling)로.
-export const jp = (parts) => parts.reduce((a, k) => (typeof k === 'number' ? `${a}[${k}]` : a ? `${a}.${k}` : k), '') || '$';
+const jp = (parts) => parts.reduce((a, k) => (typeof k === 'number' ? `${a}[${k}]` : a ? `${a}.${k}` : k), '') || '$';
 
 // ---------- 스키마 ----------
 
@@ -205,7 +205,7 @@ const realOr = (p) => {
 };
 
 // 프로젝트 루트 안 상대 경로의 일반 파일. 돌려줌: { file } | { err }. 절대 경로, .., 루트 밖 링크, 없음, 폴더와 특수 파일은 err.
-export function localFile(root, p) {
+function localFile(root, p) {
   if (path.isAbsolute(p) || /^[\\/]/.test(p) || /^[A-Za-z]:/.test(p)) return { err: `절대 경로: ${p}` };
   if (p.split(/[\\/]/).includes('..')) return { err: `.. 이 든 경로: ${p}` };
   let real;
@@ -317,7 +317,7 @@ function readAdr(dataDir) {
 }
 
 // 검사 전체(check 와 정리가 같이 씀). 돌려줌: { missing } | { error } | { value, S, diverge }
-export function inspectAdr(ctx, config) {
+function inspectAdr(ctx, config) {
   const got = readAdr(ctx.dataDir);
   if (!Object.hasOwn(got, 'value')) return got;
   const S = adrSchema(got.value);

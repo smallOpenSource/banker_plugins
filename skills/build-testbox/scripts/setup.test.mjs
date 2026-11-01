@@ -80,7 +80,7 @@ test("--yes with a source that never answers: ends within 15 seconds of checking
 });
 
 test("--yes with reachable sources: pull and verify each image in order, then install the browser and verify", async () => {
-  const server = createServer((q, s) => s.end());
+  const server = createServer((_, s) => s.end());
   const port = await listen(server);
   const fake = fakeBin(["podman", "npx"]);
   // A fake Playwright in a given folder: the run does not depend on whether this host has Playwright.
@@ -103,7 +103,7 @@ test("--yes with reachable sources: pull and verify each image in order, then in
 });
 
 test("--yes with no Playwright where it was told to look: the browser step fails by name (exit 1), npx never runs", async () => {
-  const server = createServer((q, s) => s.end());
+  const server = createServer((_, s) => s.end());
   const port = await listen(server);
   const fake = fakeBin(["podman", "npx"]);
   const empty = tempDir("banker-testbox-nopw-");

@@ -13,7 +13,7 @@ import { killAll } from "./proc.mjs";
 import { buildResults, renderSummary, writeResults } from "./report.mjs";
 import { applySetup, planSetup, renderPlan, renderSetup, setupExitCode } from "./setup.mjs";
 
-export const USAGE = `build-testbox: 브라우저 행렬과 컨테이너 OS 를 병렬로 돌리는 시험 환경(detect, run, setup)
+const USAGE = `build-testbox: 브라우저 행렬과 컨테이너 OS 를 병렬로 돌리는 시험 환경(detect, run, setup)
 usage:
   node testbox.mjs detect [--json] [--engine auto|docker|podman] [--os <os,...>] [--image <os>=<이미지>] [--playwright-from-project]
                           [--playwright-dir <폴더>]
@@ -79,7 +79,7 @@ async function browserGroup(ctx) {
   return runBrowserGroup({ ...ctx, pw: loaded.pw, pwInfo: loaded.info, pwError: loaded.error });
 }
 
-export async function runCommand(o) {
+async function runCommand(o) {
   const startedAt = new Date().toISOString();
   const out = o.out || defaultOut();
   mkdirSync(out, { recursive: true });

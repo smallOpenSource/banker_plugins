@@ -33,8 +33,8 @@ ${ruleLine(runtime)}
 export const INDEX_LINE = `- [진척도 화면 갱신 규칙](progress-mon.md) - stage, story, item 과 adr.json 으로 progress-mon 갱신 ${MARKER}`;
 
 // 표식 줄 가운데 우리가 쓴 줄을 가리는 앞머리. 규칙 줄의 런타임은 `--runtime codex` 가 있으면 codex.
-export const RULE_HEAD = '진척도 화면(progress-mon):';
-export const INDEX_HEAD = '- [진척도 화면 갱신 규칙](progress-mon.md)';
+const RULE_HEAD = '진척도 화면(progress-mon):';
+const INDEX_HEAD = '- [진척도 화면 갱신 규칙](progress-mon.md)';
 // 표식 줄이 지금 판에서 되어야 할 줄. 앞머리가 다른 표식 줄(사용자가 쓴 줄 등)은 null(손대지 않음).
 export function currentLine(line) {
   if (!line.includes(MARKER)) return null;
@@ -327,7 +327,7 @@ export function planMemory({ kind, memoryDir, project, runtime }) {
 }
 
 // 표식 줄 가운데 우리 줄만 지금 판으로 바꾼 글. 줄 끝(CRLF, LF)과 나머지 줄은 그대로. 돌려줌: { text, changed }
-export function refreshText(text) {
+function refreshText(text) {
   let changed = 0;
   const out = text.split('\n').map((seg) => {
     const cr = seg.endsWith('\r') ? '\r' : '';

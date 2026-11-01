@@ -44,7 +44,6 @@ process.env.GIT_CEILING_DIRECTORIES = ROOT;
 const NOW = Date.parse('2026-10-29T03:00:00Z');
 const FILES = ['config.json', 'items.json', 'req-spec.json', 'reqs.json', 'flow.json', 'arch.json'];
 const readFix = (...p) => JSON.parse(fs.readFileSync(path.join(FIX, ...p), 'utf8'));
-const clone = (v) => JSON.parse(JSON.stringify(v));
 const EVIL = `<script>alert("x")</script>&'`;
 const COMMIT_WARN = 'WARN adr.json project.proof.implemented[0].proofs[1] 참조: git 저장소가 아니거나 git 이 없어 커밋을 확인 못 함: 1a2b3c4';
 

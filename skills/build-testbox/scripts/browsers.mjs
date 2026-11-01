@@ -11,7 +11,7 @@ import { playwrightImage } from "./detect.mjs";
 import { firstLine, runProc } from "./proc.mjs";
 import { cellOf } from "./report.mjs";
 
-export const CELL_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "browser-cell.mjs");
+const CELL_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "browser-cell.mjs");
 export const DEFAULT_DEVICES = ["Desktop Chrome", "Pixel 7", "Desktop Safari", "iPhone 15"];
 const KNOWN = { "Desktop Chrome": "chromium", "Pixel 7": "chromium", "Desktop Safari": "webkit", "iPhone 15": "webkit" };
 const iso = () => new Date().toISOString();

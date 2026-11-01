@@ -155,10 +155,10 @@ export function checkEvent(raw) {
 // One count for every independent verdict of the chain: the ralph-qa seats of stages 3 and 6, the critic seats of
 // stage 5 and the judges of stage 7. Under 3 is raised to 3 as ralph-qa does; over 17 is refused (the seat record
 // holds 20, less the three outside seats).
-export const AGENTS_DEFAULT = 3;
-export const AGENTS_MAX = 17;
+const AGENTS_DEFAULT = 3;
+const AGENTS_MAX = 17;
 
-export function agentsOf(value) {
+function agentsOf(value) {
   if (value === undefined || value === null) return { agents: AGENTS_DEFAULT, agentsSource: "default" };
   const n = typeof value === "number" ? value : /^\d+$/.test(String(value)) ? Number(value) : Number.NaN;
   if (!Number.isInteger(n) || n < 0 || n > AGENTS_MAX) throw new UsageError(`--agents 는 0~${AGENTS_MAX} 정수입니다(좌석 기록 20 에서 외부 좌석 3 을 뺀 상한)`);
@@ -206,7 +206,7 @@ function checkVisualJudges(event, n) {
 }
 
 // Run folders made before --agents (no `agents` in run.json) are not checked, so an old run can still be resumed.
-export function checkQuorum(event, meta) {
+function checkQuorum(event, meta) {
   if (!isObject(meta) || !Number.isInteger(meta.agents)) return;
   checkBuildBy(event);
   checkCriticSeats(event, meta.agents);

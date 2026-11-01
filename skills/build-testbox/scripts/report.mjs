@@ -42,7 +42,7 @@ export function hintOf(cell) {
   return cell.status === "fail" ? "로그 확인" : "";
 }
 
-export function countOf(cells) {
+function countOf(cells) {
   const counts = { pass: 0, fail: 0, unverified: 0, unsupported: 0 };
   for (const c of cells) counts[c.status] += 1;
   return counts;

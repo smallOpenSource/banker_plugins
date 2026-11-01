@@ -103,7 +103,7 @@ export function sourceFiles(src, out) {
   return files.filter((f) => !f.startsWith(".testbox/") && !(skipOut && (f === outRel || f.startsWith(`${outRel}/`))));
 }
 
-export function stageSource(src, out) {
+function stageSource(src, out) {
   const dir = mkdtempSync(join(tmpdir(), `${NAME_PREFIX}-src-`));
   try {
     let count = 0;
