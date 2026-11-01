@@ -29,7 +29,7 @@ skills/ultra-init-workspace/
 # lineage exports: work/ is its default output dir (work/lineage-<name>_YYMMDD+HHMM.html), and
 # --output can drop one at the repo root. These are generated session dumps, never sources.
 # The change-request SPEC that drove the 2.0.0 overhaul lives at docs/ and stays tracked.
-work/
+/work/
 /lineage-*.html
 
 # --- Local git credential store (token-scoped auth option) ---
