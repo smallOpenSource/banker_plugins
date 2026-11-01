@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (67 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (68 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -80,7 +80,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 67, `codex dry-run plans 67 skill copies (got ${copies})`);
+  ok(copies === 68, `codex dry-run plans 68 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -297,8 +297,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 67 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 67 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 68 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 68 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
@@ -476,6 +476,19 @@ try {
     ok(fs.readFileSync(path.join(root, 'skills', ...src, f)).equals(fs.readFileSync(path.join(root, 'skills', 'git-init', 'scripts', f))),
        `${f} is byte-identical across ${src[0]} and git-init`);
   }
+  // build-testbox runs scripts/testbox.mjs with its modules beside it (browser-cell.mjs is copied into the Playwright image
+  // and runs there alone); the Codex copy keeps all of them and neither the tests nor the test-only fakes, which live in
+  // scripts/test-fixtures/testbox-fakes.mjs (outside package.json's files).
+  ok(installed.includes('banker-build-testbox'), 'new build-testbox installed as banker-build-testbox');
+  const tboxDir = path.join(instDir, 'banker-build-testbox');
+  const tboxFiles = mfAllSkills.find((s) => s.name === 'build-testbox').supportingFiles;
+  const tboxScripts = fs.readdirSync(path.join(tboxDir, 'scripts'));
+  ok(tboxFiles.length === 9 && tboxFiles.every((f) => fs.existsSync(path.join(tboxDir, ...f.split('/'))))
+     && !tboxScripts.some((f) => f.endsWith('.test.mjs') || /fakes/.test(f)),
+     `banker-build-testbox carries its ${tboxFiles.length} supporting files and no tests or fakes into the Codex install (got ${tboxScripts.join(', ')})`);
+  const tboxRun = cp.spawnSync(process.execPath, [path.join(tboxDir, 'scripts', 'testbox.mjs'), '--help'], { encoding: 'utf8' });
+  ok(tboxRun.status === 0 && tboxRun.stdout.split(/\r?\n/)[0].startsWith('build-testbox: '),
+     `the Codex copy of build-testbox runs (status ${tboxRun.status}, stderr ${JSON.stringify(tboxRun.stderr)})`);
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its
@@ -657,6 +670,9 @@ try {
     ...['init-dir', 'marker-block', 'service-template', 'templates']
       .map((n) => path.join('skills', 'init-dir', 'scripts', `${n}.test.mjs`)),
     path.join('skills', 'git-init', 'scripts', 'git-init.test.mjs'),
+    ...['args', 'browsers', 'containers', 'detect', 'e2e', 'report', 'setup']
+      .map((n) => path.join('skills', 'build-testbox', 'scripts', `${n}.test.mjs`)),
+    path.join('scripts', 'test-fixtures', 'testbox-fakes.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),

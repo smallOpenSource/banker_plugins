@@ -117,6 +117,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `play-qa` | 웹 기반 동작 컨텐츠를 실제 브라우저에서 직접 플레이하는 QA |
 | `ultra-ui-qa` | UI를 기준(디자인 PDF/스펙)과 1:1 대조 QA |
 | `visual-ralph` | 레퍼런스(생성/정적/URL) 기준 프론트 UI를 Visual Verdict(≥90)로 측정 빌드 |
+| `build-testbox` | 이 PC 의 자원으로 시험 환경을 꾸림. 127.0.0.1 서비스를 브라우저 행렬(Playwright Chromium, WebKit 의 데스크톱과 모바일 기기 에뮬레이션)로, 배포 명령을 컨테이너 OS(Rocky Linux 8, 9. docker 나 podman)로 병렬 실행하고 칸마다 통과, 실패, 미검증, 미지원과 사유를 남김. `run` 은 내려받지 않고, 받기는 확인 뒤 `setup --yes` 로만. macOS 는 Apple Silicon 호스트의 Tart VM 만 |
 
 ### 스킬: 문서 · 디자인 · 위키
 

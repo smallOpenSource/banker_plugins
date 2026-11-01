@@ -32,6 +32,7 @@
     "./skills/audit-mock/",
     "./skills/audit-security/",
     "./skills/audit-web-page/",
+    "./skills/build-testbox/",
     "./skills/cleansing-memory/",
     "./skills/compact-copy/",
     "./skills/curation/",
