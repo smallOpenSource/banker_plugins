@@ -20,7 +20,8 @@
 - `start` 는 분리된 감독 프로세스를 띄운다. 감독이 `command` 를 자식으로 실행하고 출력을 로그 파일에 쓴다
 - `stop` 은 감독에 SIGTERM 을 보낸다. 감독이 자식의 프로세스 그룹에 넘기고, 10초 뒤에도 살아 있으면 강제로 끝낸다. Windows 는 `taskkill /T`, 10초 뒤 `taskkill /T /F`
 - 감독이 죽으면 자식은 다음 출력 때 SIGPIPE 로 죽을 수 있다. `status` 는 감독과 자식을 따로 보고한다. 감독 없이 자식만 남았으면 `stop` 이 자식을 끝낸다
-- PID 파일의 PID 는 확인한 뒤에만 이 서비스로 본다. 시작 시각이 마지막 부팅보다 이르면 낡은 파일이다. 명령줄에 `service.mjs` 와 `__supervise`(감독) 또는 기록된 `command`(자식)가 없으면 다른 프로세스다. 명령줄은 POSIX 는 `ps`, Windows 는 PowerShell `Get-CimInstance` 로 읽는다. 확인하지 못한 PID 에는 신호를 보내지 않고 사유를 출력한다
+- PID 파일의 PID 는 확인한 뒤에만 이 서비스로 본다. 시작 시각이 마지막 부팅보다 이르면 낡은 파일이다. 명령줄에 `service.mjs` 와 `__supervise`(감독) 또는 기록된 `command`(자식)가 없으면 다른 프로세스다. 명령줄은 Linux 는 `/proc/<pid>/cmdline` 다음 `ps`, 그 밖의 POSIX 는 `ps`, Windows 는 PowerShell `Get-CimInstance` 로 읽는다. 다른 프로세스로 판정한 PID 에는 신호를 보내지 않고 사유를 출력한다
+- 살아 있는 PID 의 명령줄을 끝내 읽지 못하면(`/proc` 도 `ps` 도 없음) start, stop, status, restart 는 `확인 불가: <사유>` 와 종료 1. 신호를 보내지 않고 PID 파일을 남긴다
 - 로테이션이 실패하면(Windows 에서 다른 프로그램이 로그를 연 경우 등) 표준 오류 로그에 `service:` 경고 한 줄을 쓰고 현재 파일에 이어 쓴다
 
 ## 조정용 환경 변수

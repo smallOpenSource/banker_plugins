@@ -14,9 +14,10 @@
  *
  * Before a recorded PID counts as this service (already running, status, a signal from stop) it is checked: a pid
  * file older than the last boot is stale, and the process's command line must hold service.mjs and __supervise
- * (the supervisor) or the recorded command (the child). POSIX reads it with `ps`, Windows with PowerShell
- * Get-CimInstance. A PID that fails the check, or whose command line cannot be read, gets no signal; the reason
- * is printed.
+ * (the supervisor) or the recorded command (the child). Linux reads it from /proc/<pid>/cmdline, then `ps`; other
+ * POSIX systems use `ps`, Windows PowerShell Get-CimInstance. A PID that fails the check gets no signal and the pid
+ * file counts as stale. When a live PID's command line cannot be read at all (no /proc, no ps), start, stop, status
+ * and restart print "확인 불가: <사유>", send no signal, keep the pid file and exit 1.
  *
  * `stop` sends SIGTERM to the supervisor, which passes it to the child's process group; after 10 seconds both
  * are killed. With the supervisor gone, the child is stopped directly. Windows uses taskkill /T and, when the
@@ -28,7 +29,7 @@
  * wrappers did not find Node 18 or later).
  *
  * Environment (tests and tuning): SERVICE_LOG_ROTATE_BYTES (default 104857600), SERVICE_STOP_GRACE_MS (10000),
- * SERVICE_START_CHECK_MS (2000).
+ * SERVICE_START_CHECK_MS (2000). SERVICE_TEST_NO_CMDLINE=1 (tests only) makes every command line unreadable.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -220,8 +221,24 @@ function tail(file, lines) {
   }
 }
 
+// Linux: /proc/<pid>/cmdline with its NULs as spaces; { text: "" } when the process is gone, null without /proc.
+function procCommandLine(pid) {
+  if (process.platform !== "linux" || !existsSync("/proc/self/cmdline")) return null;
+  try {
+    return { text: readFileSync(`/proc/${pid}/cmdline`).toString("utf8").replace(/\0/g, " ").trim() };
+  } catch (e) {
+    return e.code === "ENOENT" ? { text: "" } : null;
+  }
+}
+
 // The command line of a process: { text } ("" when it is gone) or { why } when it cannot be read.
 function commandLine(pid) {
+  if (process.env.SERVICE_TEST_NO_CMDLINE === "1") return { why: "명령줄 읽기 꺼짐(SERVICE_TEST_NO_CMDLINE)" };
+  return procCommandLine(pid) ?? toolCommandLine(pid);
+}
+
+// `ps` on POSIX, PowerShell on Windows.
+function toolCommandLine(pid) {
   const r = WIN
     ? spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: "utf8", windowsHide: true, timeout: 20000 })
     : spawnSync("ps", ["-ww", "-o", "args=", "-p", String(pid)], { encoding: "utf8", timeout: 10000 });
@@ -236,12 +253,13 @@ const squash = (s) => String(s).replace(/["'\\]/g, "").replace(/\s+/g, " ").trim
 const isSupervisor = (text) => text.includes("service.mjs") && text.includes("__supervise");
 const isChild = (command) => (text) => typeof command === "string" && squash(command) !== "" && squash(text).includes(squash(command));
 
+// { ok: true } this service's, {} another process, { unknown } its command line could not be read.
 function confirm(pid, label, test) {
   const line = commandLine(pid);
-  if (line.why) console.error(`${label} PID ${pid} 의 명령줄을 읽지 못함(${line.why}): 신호를 보내지 않고 낡은 PID 파일로 봄`);
-  else if (test(line.text)) return true;
-  else console.error(`${label} PID ${pid} 는 이 서비스가 아님(명령줄이 기록과 다름): 신호를 보내지 않고 낡은 PID 파일로 봄`);
-  return false;
+  if (line.why) return { unknown: `${label} PID ${pid} 의 명령줄을 읽지 못함(${line.why})` };
+  if (test(line.text)) return { ok: true };
+  console.error(`${label} PID ${pid} 는 이 서비스가 아님(명령줄이 기록과 다름): 신호를 보내지 않고 낡은 PID 파일로 봄`);
+  return {};
 }
 
 // Why the pid file is older than the last boot (its PIDs then belong to other processes), or null.
@@ -251,25 +269,36 @@ function staleWhy(cur) {
   return at < Date.now() - uptime() * 1000 - BOOT_SLACK_MS ? `startedAt ${cur.startedAt} 이 마지막 부팅보다 이름` : null;
 }
 
-// The recorded PIDs that are this service's: { supervisor, child }, each a PID or null. A live PID that does not
-// count says why on stderr and gets no signal. The child of a confirmed supervisor counts with it.
+// The recorded PIDs that are this service's: { supervisor, child, unknown }, each PID or null. A live PID that does
+// not count says why on stderr and gets no signal. The child of a confirmed supervisor counts with it. unknown is
+// why a live PID could not be checked: the callers then stop with exit 1 and keep the pid file.
 function owned(cur) {
-  const none = { supervisor: null, child: null };
+  const none = { supervisor: null, child: null, unknown: null };
   if (!cur || (!alive(cur.supervisor) && !groupAlive(cur.child))) return none;
   const stale = staleWhy(cur);
   if (stale) {
     console.error(`PID 파일이 낡음(${stale}): 기록된 PID 에 신호를 보내지 않음`);
     return none;
   }
-  const supervisor = alive(cur.supervisor) && confirm(cur.supervisor, "감독", isSupervisor) ? cur.supervisor : null;
-  const childOk = groupAlive(cur.child) && (supervisor !== null || confirm(cur.child, "자식", isChild(cur.command)));
-  return { supervisor, child: childOk ? cur.child : null };
+  return checkLive(cur);
+}
+
+function checkLive(cur) {
+  const sup = alive(cur.supervisor) ? confirm(cur.supervisor, "감독", isSupervisor) : {};
+  const kid = !groupAlive(cur.child) ? {} : sup.ok ? { ok: true } : confirm(cur.child, "자식", isChild(cur.command));
+  return { supervisor: sup.ok ? cur.supervisor : null, child: kid.ok ? cur.child : null, unknown: sup.unknown ?? kid.unknown ?? null };
+}
+
+function unverifiable(own) {
+  console.error(`확인 불가: ${own.unknown}. 신호를 보내지 않고 PID 파일을 남김`);
+  return 1;
 }
 
 async function start(conf) {
   const p = pathsOf(conf.name);
   const cur = readPid(p.pid);
   const own = owned(cur);
+  if (own.unknown) return unverifiable(own);
   if (own.supervisor) {
     console.log(`이미 실행 중: ${conf.name} (감독 PID ${cur.supervisor}, 자식 PID ${cur.child})`);
     return 0;
@@ -320,6 +349,7 @@ async function stop(conf) {
   const p = pathsOf(conf.name);
   const cur = readPid(p.pid);
   const own = owned(cur);
+  if (own.unknown) return unverifiable(own);
   if (!own.supervisor && !own.child) {
     rmSync(p.pid, { force: true });
     console.log(`실행 중 아님: ${conf.name}`);
@@ -346,6 +376,7 @@ function status(conf) {
   const p = pathsOf(conf.name);
   const cur = readPid(p.pid) ?? {};
   const own = owned(cur);
+  if (own.unknown) return unverifiable(own);
   const sup = own.supervisor !== null;
   const child = own.child !== null;
   console.log(`서비스: ${conf.name}`);

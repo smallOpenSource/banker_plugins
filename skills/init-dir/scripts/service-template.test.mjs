@@ -309,3 +309,51 @@ test("AC11: a suite past its time limit is FAIL (timeout) and its whole process 
   assert.match(env.stdout, /^FAIL slow \(\d+\.\d+s, timeout 2초\)$/m);
   assert.ok(await waitFor(() => !alive(Number(readFileSync(grand, "utf8")))));
 });
+
+const serviceDirect = (root, cmd, env) => spawnSync(process.execPath, [join(root, "scripts", "lib", "service.mjs"), cmd], { encoding: "utf8", cwd: root, env: { ...ENV, ...env }, timeout: 30000 });
+
+test("no ps on PATH (Linux): stop reads /proc and really stops a live service", { skip: process.platform !== "linux" && "Linux 전용(/proc)" }, async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  assert.equal(svc(root, "start").status, 0);
+  const p = pidOf(root);
+  const empty = join(base, `nops${n++}`);
+  mkdirSync(empty);
+  assert.equal(spawnSync("ps", [], { env: { PATH: empty } }).error?.code, "ENOENT", "ps is not reachable");
+  const sp = serviceDirect(root, "stop", { PATH: empty });
+  assert.equal(sp.status, 0, sp.stdout + sp.stderr);
+  assert.match(sp.stdout, /멈춤/);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false);
+});
+
+test("command lines unreadable (no /proc, no ps; injected): stop, status, start, restart exit 1, keep the pid file and signal nothing", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  assert.equal(svc(root, "start").status, 0);
+  const p = pidOf(root);
+  const blind = { SERVICE_TEST_NO_CMDLINE: "1" };
+  const pidFile = join(root, "logs", "app.pid");
+  const before = readFileSync(pidFile, "utf8");
+  for (const cmd of ["stop", "status", "start", "restart"]) {
+    const r = serviceDirect(root, cmd, blind);
+    assert.equal(r.status, 1, `${cmd}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /확인 불가: 감독 PID \d+ 의 명령줄을 읽지 못함/, cmd);
+    assert.equal(readFileSync(pidFile, "utf8"), before, `${cmd} keeps the pid file`);
+    assert.ok(alive(p.supervisor) && groupAlive(p.child), `${cmd} signalled nothing`);
+  }
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  // A pid file older than the last boot stays stale even when command lines cannot be read.
+  const other = stranger();
+  try {
+    assert.ok(await waitFor(() => alive(other.pid)));
+    plant(root, { supervisor: other.pid, child: other.pid, startedAt: "2000-01-01T00:00:00.000Z", command: "x" });
+    const sp = serviceDirect(root, "stop", blind);
+    assert.equal(sp.status, 0, sp.stderr);
+    assert.match(sp.stderr, /PID 파일이 낡음/);
+    assert.equal(alive(other.pid), true);
+  } finally {
+    other.kill("SIGKILL");
+  }
+});
