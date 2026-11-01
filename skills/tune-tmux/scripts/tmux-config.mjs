@@ -37,19 +37,24 @@ export function homeOf(env, platform) {
   return first || homedir();
 }
 
+// Whether p is a file this user may run (Windows: any file).
+function runnable(p, platform) {
+  try {
+    if (!statSync(p).isFile()) return false;
+    if (platform !== "win32") accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The path of an executable name in env.PATH, or null. */
 export function which(name, env, platform = process.platform) {
   const exts = platform === "win32" ? ["", ...String(env.PATHEXT || ".EXE;.CMD;.BAT").split(";")] : [""];
   for (const dir of String(env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean)) {
     for (const ext of exts) {
       const p = join(dir, name + ext);
-      try {
-        if (!statSync(p).isFile()) continue;
-        if (platform !== "win32") accessSync(p, constants.X_OK);
-        return p;
-      } catch {
-        // not here
-      }
+      if (runnable(p, platform)) return p;
     }
   }
   return null;

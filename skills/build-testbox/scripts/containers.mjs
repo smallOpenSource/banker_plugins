@@ -188,16 +188,25 @@ async function tartVms(tart, env) {
 
 // Tart runs only on Apple Silicon Macs (the Apple SLA allows macOS VMs on Apple hardware). hw.model alone is not
 // trusted: an x86_64 macOS VM on QEMU reports a Mac model too.
-export async function macosCell(ctx) {
+// The tart binary and VM to use: { tart, vm }, or { cell } that says why there is none.
+async function macosVm(ctx, base) {
   const { host, o, env } = ctx;
-  const base = { id: "os:macos", group: "os", target: "macos", engine: "tart", startedAt: iso() };
-  if (host.platform !== "darwin") return cellOf(base, "unsupported", "apple-sla");
-  if (!host.appleSilicon) return cellOf(base, "unsupported", "tart-needs-apple-silicon");
+  if (host.platform !== "darwin") return { cell: cellOf(base, "unsupported", "apple-sla") };
+  if (!host.appleSilicon) return { cell: cellOf(base, "unsupported", "tart-needs-apple-silicon") };
   const tart = which("tart", env);
-  if (!tart) return cellOf(base, "unverified", "needs-tart");
+  if (!tart) return { cell: cellOf(base, "unverified", "needs-tart") };
   const vms = await tartVms(tart, env);
   const vm = o.tartVm ? vms.find((v) => v === o.tartVm) : vms[0];
-  if (!vm) return cellOf(base, "unverified", "needs-vm", { detail: `로컬 VM: ${vms.join(", ") || "없음"}` });
+  if (!vm) return { cell: cellOf(base, "unverified", "needs-vm", { detail: `로컬 VM: ${vms.join(", ") || "없음"}` }) };
+  return { tart, vm };
+}
+
+export async function macosCell(ctx) {
+  const { o, env } = ctx;
+  const base = { id: "os:macos", group: "os", target: "macos", engine: "tart", startedAt: iso() };
+  const found = await macosVm(ctx, base);
+  if (found.cell) return found.cell;
+  const { tart, vm } = found;
   const help = await runProc(tart, ["exec", "--help"], { timeoutMs: 15000, env });
   if (help.code !== 0) return cellOf({ ...base, vm }, "unverified", "tart-exec-unsupported", { detail: firstLine(help.stderr) });
   const r = await runProc(tart, ["exec", vm, "--", "sh", "-c", o.cmd], { timeoutMs: o.timeout * 1000, env });

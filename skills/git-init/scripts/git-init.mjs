@@ -69,6 +69,15 @@ function splitArg(a) {
   return a.startsWith("--") && eq > 0 ? [a.slice(0, eq), a.slice(eq + 1)] : [a, undefined];
 }
 
+// Stores the value of option name (inline or the next argv item); returns the index of its last item, or { error }.
+function takeValue(o, name, inline, argv, i) {
+  const value = inline ?? argv[i + 1];
+  if (!value) return { error: `${name} 에 값이 없음` };
+  if (name === "--accept") o.accept.push(value);
+  else o[VALUES[name]] = value;
+  return inline === undefined ? i + 1 : i;
+}
+
 /** The options in argv, or { error } (exit 2). --accept may be given more than once. */
 export function parseArgs(argv) {
   const o = { cmd: "check", root: process.cwd(), branch: null, identity: null, nested: false, accept: [], follow: false, json: false, help: false };
@@ -79,10 +88,9 @@ export function parseArgs(argv) {
       continue;
     }
     if (VALUES[name] || name === "--accept") {
-      const value = inline ?? argv[++i];
-      if (!value) return { error: `${name} 에 값이 없음` };
-      if (name === "--accept") o.accept.push(value);
-      else o[VALUES[name]] = value;
+      const next = takeValue(o, name, inline, argv, i);
+      if (next.error) return next;
+      i = next;
       continue;
     }
     if (i === 0 && SUBCOMMANDS.has(name)) o.cmd = name;
@@ -115,6 +123,8 @@ function git(args, cwd, { env, timeout } = {}) {
   const r = spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv(env), timeout, killSignal: "SIGKILL", maxBuffer: 256 * 1024 * 1024, windowsHide: true });
   return { ok: !r.error && r.status === 0, out: r.stdout ?? "", err: (r.stderr ?? "").trim(), error: r.error };
 }
+
+const errText = (r) => r.err || r.error?.message;
 
 const real = (p) => {
   try {
@@ -152,20 +162,32 @@ function existingRepo(root, nested) {
   return { parent: top };
 }
 
-// Everything checked before any temp folder or file is made: { root, version, parent } or a failure.
-function preflight(o) {
+// git runs and no GIT_DIR, GIT_WORK_TREE redirects it: { version } or a failure (3).
+function gitReady() {
   const v = git(["--version"], tmpdir());
   if (!v.ok) return fail(3, `git 을 실행하지 못함: ${v.error?.code ?? v.err}. git 을 설치한 뒤 다시 실행`);
   for (const k of ["GIT_DIR", "GIT_WORK_TREE"]) if (process.env[k]) return fail(3, `${k} 환경 변수가 있어 거부. 그 변수를 지운 셸에서 다시 실행`);
+  return { version: gitVersion(v.out) };
+}
+
+// A failure (2) when --branch is given and git does not take it as a branch name, else null.
+function branchProblem(branch) {
+  if (branch === null) return null;
+  const b = git(["check-ref-format", "--branch", branch], tmpdir());
+  return !b.ok || b.out.trim() !== branch ? fail(2, `브랜치 이름으로 쓸 수 없음: ${branch}`) : null;
+}
+
+// Everything checked before any temp folder or file is made: { root, version, parent } or a failure.
+function preflight(o) {
+  const g = gitReady();
+  if (g.error) return g;
   const at = checkRoot(o.root);
   if (at.error) return at;
-  if (o.branch !== null) {
-    const b = git(["check-ref-format", "--branch", o.branch], tmpdir());
-    if (!b.ok || b.out.trim() !== o.branch) return fail(2, `브랜치 이름으로 쓸 수 없음: ${o.branch}`);
-  }
+  const bad = branchProblem(o.branch);
+  if (bad) return bad;
   const repo = existingRepo(at.root, o.nested);
   if (repo.error) return repo;
-  return { root: at.root, version: gitVersion(v.out), parent: repo.parent ?? null };
+  return { root: at.root, version: g.version, parent: repo.parent ?? null };
 }
 
 function identityProblem(tmp, o) {
@@ -272,7 +294,7 @@ function initRepo(root, branch, version, identity) {
   if (who) steps.push(["config", "--local", "user.name", who.name], ["config", "--local", "user.email", who.email]);
   for (const args of steps) {
     const r = git(args, root);
-    if (!r.ok) return `git ${args[0]} 실패: ${r.err || r.error?.message}`;
+    if (!r.ok) return `git ${args[0]} 실패: ${errText(r)}`;
   }
   return null;
 }
@@ -280,9 +302,9 @@ function initRepo(root, branch, version, identity) {
 // git add . and the staged names compared with the scanned list: null when they match, else why not.
 function stage(root, list) {
   const add = git(["add", "."], root);
-  if (!add.ok) return `git add 실패: ${add.err || add.error?.message}`;
+  if (!add.ok) return `git add 실패: ${errText(add)}`;
   const d = git(["diff", "--cached", "--name-only", "--no-renames", "-z"], root);
-  if (!d.ok) return `git diff --cached 실패: ${d.err || d.error?.message}`;
+  if (!d.ok) return `git diff --cached 실패: ${errText(d)}`;
   const staged = d.out.split("\0").filter(Boolean);
   const onlyStaged = staged.filter((p) => !list.includes(p));
   const onlyList = list.filter((p) => !staged.includes(p));
@@ -317,7 +339,7 @@ function runSteps(o, ctx) {
 // Work that needs the temp repository; the caller removes it.
 function withTemp(o, pre, tmp) {
   const made = git(["init", "-q", tmp], tmpdir());
-  if (!made.ok) throw new Error(`임시 저장소를 만들지 못함: ${made.err || made.error?.message}`);
+  if (!made.ok) throw new Error(`임시 저장소를 만들지 못함: ${errText(made)}`);
   if (real(tmp).startsWith(real(pre.root) + sep)) return fail(3, `임시 폴더가 루트 안에 있음: ${tmp}. TMPDIR 을 루트 밖으로 바꿔 다시 실행`);
   const who = identityProblem(tmp, o);
   if (who) return who;

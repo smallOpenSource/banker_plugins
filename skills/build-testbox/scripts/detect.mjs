@@ -132,9 +132,17 @@ function browserLine(name, b) {
   return `- ${name}: 실행 불가(${b.reason})${b.detail ? ` ${b.detail.slice(0, 160)}` : ""}`;
 }
 
+function hostLine(h) {
+  const mac = h.platform === "darwin" ? `, Apple Silicon ${h.appleSilicon ? "예" : "아니오"}, hw.model ${h.hwModel}` : "";
+  return `호스트: ${h.platform} ${h.arch}${mac}`;
+}
+
+function playwrightLine(p) {
+  return p.found ? `Playwright: ${p.version} (${p.from}, ${p.dir})` : `Playwright: 없음 (${p.error})`;
+}
+
 export function renderDetect(d) {
-  const lines = [`호스트: ${d.host.platform} ${d.host.arch}${d.host.platform === "darwin" ? `, Apple Silicon ${d.host.appleSilicon ? "예" : "아니오"}, hw.model ${d.host.hwModel}` : ""}`];
-  lines.push(d.playwright.found ? `Playwright: ${d.playwright.version} (${d.playwright.from}, ${d.playwright.dir})` : `Playwright: 없음 (${d.playwright.error})`);
+  const lines = [hostLine(d.host), playwrightLine(d.playwright)];
   for (const name of BROWSERS) lines.push(browserLine(name, d.browsers[name]));
   const emu = d.engines.docker.present && d.engines.docker.podmanEmulation ? ", docker 는 podman 에뮬레이션" : "";
   lines.push(`엔진: ${d.engine ? `${d.engine.name}${emu}` : "없음"}`);

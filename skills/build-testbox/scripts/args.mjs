@@ -56,14 +56,16 @@ function devicesOf(v) {
   return names;
 }
 
+function httpUrl(target, allowRemote) {
+  let url;
+  try { url = new URL(target); } catch { throw new UsageError(`URL 이 아닙니다: ${target}`); }
+  if (!allowRemote && !LOOPBACK.has(url.hostname)) throw new UsageError(`loopback 이 아닌 주소는 --allow-remote 를 줄 때만 엽니다: ${target}`);
+  return url.href;
+}
+
 // --url: an http(s) URL (loopback unless --allow-remote) or an existing local file.
 export function toUrl(target, allowRemote = false, cwd = process.cwd()) {
-  if (/^https?:\/\//i.test(target)) {
-    let url;
-    try { url = new URL(target); } catch { throw new UsageError(`URL 이 아닙니다: ${target}`); }
-    if (!allowRemote && !LOOPBACK.has(url.hostname)) throw new UsageError(`loopback 이 아닌 주소는 --allow-remote 를 줄 때만 엽니다: ${target}`);
-    return url.href;
-  }
+  if (/^https?:\/\//i.test(target)) return httpUrl(target, allowRemote);
   if (/^[\\/]{2}/.test(target)) throw new UsageError(`네트워크 경로는 열지 않습니다: ${target}`);
   if (/^[A-Za-z][A-Za-z0-9+.-]+:/.test(target) && !/^[A-Za-z]:[\\/]/.test(target)) throw new UsageError(`http, https URL 이나 로컬 파일만 엽니다: ${target}`);
   const file = resolve(cwd, target);

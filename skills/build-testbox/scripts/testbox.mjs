@@ -120,8 +120,10 @@ async function dispatch(o) {
   return results.exitCode;
 }
 
+const wantsHelp = (argv) => !argv.length || ["--help", "-h", "help"].includes(argv[0]) || argv.includes("--help");
+
 export async function main(argv) {
-  if (!argv.length || argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help" || argv.includes("--help")) {
+  if (wantsHelp(argv)) {
     process.stdout.write(USAGE);
     return argv.length ? 0 : 2;
   }
