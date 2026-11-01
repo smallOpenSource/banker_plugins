@@ -59,7 +59,7 @@ init 절차(SKILL.md)에서 에이전트가 5탭 자료를 쓸 때 따르는 기
 - 자동 배치의 `이름표 덮음`, `이름표가 그림 밖` WARN 은 배치 조언이고 실패가 아니다(자동 배치 선은 상자를 돌아감). 연결을 하한 아래로 줄여 없애지 않는다. 줄이는 법은 `references/arch.md` 의 "자동 배치 WARN 줄이기"
 - `check` 끝에 `density <탭> ok|low` 5줄(history, req, workflow, arch, adr)
 - 밀도는 init 이 만든 자료 폴더(`state.json` 의 `memory`)나 `inventory.json` 이 있을 때만 잰다. ADR 밀도는 `adr.json` 이 있으면 늘 잰다
-- 증거 없는 모듈과 기능(`evidence`, `proofs` 에 `gap` 아닌 참조 0개)은 밀도가 아니라 FAIL 이다(`references/adr.md` 의 "주장에는 증거")
+- 증거 없는 모듈과 기능(`evidence`, `proofs` 에 FAIL, WARN 없이 확인된 참조 0개)은 밀도가 아니라 FAIL 이다(`references/adr.md` 의 "주장에는 증거")
 
 ## 설명 줄 수
 

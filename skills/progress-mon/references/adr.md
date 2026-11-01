@@ -59,11 +59,11 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 | 6. 증거 | `project.proof` | 증거 |
 
 - 주장에는 증거(사용자 결정 D 안). 근거가 없으면 지어내지 않는다
-  - 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 는 `gap` 아닌 참조 1개 이상. 없으면 FAIL. 벗어나는 길: 그 모듈은 `status: "unverified"` 와 `why`, 그 기능은 `notImplemented` 로 옮김
+  - 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 는 확인된 참조 1개 이상. 확인된 참조는 꼴이 맞고 `gap` 이 아니며 아래 참조 확인에서 FAIL 도 WARN 도 없는 것. 출력 파일 없는 `cmd`, 파일에 없는 이름의 `test`, git 이 꺼졌거나 저장소가 아닌 `commit` 은 세지 않는다. 없으면 FAIL. 벗어나는 길: 그 모듈은 `status: "unverified"` 와 `why`, 그 기능은 `notImplemented` 로 옮김
   - `project.verification`, `project.proof` 칸 전체를 `gap` 으로 두면 FAIL(모듈을 적고 미검증으로, 기능은 `notImplemented` 로)
   - 결정의 `optimization`, `scaling`, `tradeoffs` 와 `project.flow` 는 `{ "gap": "<사유>" }` 로 비울 수 있음(밀도 WARN)
 - 화면은 빈 칸을 `근거 없음: <사유>` 로 보이고, 결정 목록에 결정별 3항목 채움 수(`n/3`)와 빈 항목을 보인다
-- "근거 없음 n칸" 배지: adr.json 안의 `{ "gap" }` 수(여섯 항목 칸과 참조 자리). 화면 맨 위(프로젝트 요약 위)와 `check` 의 마지막 줄 `adr 근거 없음 n칸` 에 늘 보임. 0 이면 0(adr.json 이 없으면 check 는 0)
+- 집계 배지 `근거 없음 n칸, 미검증 n, 구현 못 함 n`: adr.json 안의 `{ "gap" }` 수(여섯 항목 칸과 참조 자리), `status: "unverified"` 모듈 수, `notImplemented` 기능 수. 화면 맨 위(프로젝트 요약 위)와 `check` 의 마지막 줄 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n` 에 늘 보임. 0 이면 0(adr.json 이 없으면 check 는 모두 0). 셋 가운데 하나라도 0 이 아니면 배지는 빨강(모든 모듈이 미검증인데 초록 0칸만 보이지 않게)
 
 ## 참조
 
@@ -98,7 +98,7 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 | 항목 칸이 없거나 꼴이 틀림 | `FAIL adr.json <json 경로> <이유>`(스키마 위반) |
 | 결정의 3칸이나 `project.flow` 가 `{ "gap": "<사유>" }` | `WARN density adr 빈 항목 <값>/<하한>: <json 경로>` |
 | `gap` 에 사유가 없음 | `FAIL adr.json <json 경로>.gap gap 에 사유 없음` |
-| 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 에 `gap` 아닌 참조가 0개 | `FAIL adr.json <json 경로> 증거 없음: ...`(벗어나는 길을 줄에 적음) |
+| 검증한 모듈의 `evidence`, 구현된 기능의 `proofs` 에 확인된 참조(FAIL, WARN 없음)가 0개 | `FAIL adr.json <json 경로> 증거 없음: ...`(벗어나는 길을 줄에 적음) |
 | `project.verification`, `project.proof` 칸 전체가 `gap` | `FAIL adr.json <json 경로> 증거 없음: ...` |
 
 참조 확인(결정 I)
@@ -138,7 +138,7 @@ init 절차의 ADR 단계와 갱신 규칙(SKILL.md)에서 에이전트가 쓰�
 | `adr 결정` | 결정 1 이상 |
 | `adr 포기얻음` | 결정마다 `gaveUp`, `gained` 각 1 이상 |
 
-- 끝의 밀도 요약에 `density adr ok|low`(init 기록이 있을 때), 마지막 줄은 늘 `adr 근거 없음 n칸`
+- 끝의 밀도 요약에 `density adr ok|low`(init 기록이 있을 때), 마지막 줄은 늘 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n`
 
 ## 좋은 예
 

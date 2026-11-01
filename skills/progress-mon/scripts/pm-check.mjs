@@ -4,7 +4,7 @@
 // 밀도(4.9절)는 init 이 만든 자료 폴더(state.json 의 memory)나 inventory.json 이 있을 때만 재고, 미달은 WARN(종료 코드 영향 없음).
 // 항목마다 재는 밀도 미달 줄은 끝에 못 채운 대상 이름을 붙인다(`: a, b 외 n`).
 // ADR(adr.json)의 스키마, 참조, docs/adr 갈라짐은 pm-adr.mjs 가 검사한다.
-// 끝에 `density <탭> ok|low` 5줄(init 기록이 있을 때)과 늘 `adr 근거 없음 n칸` 한 줄. ADR 밀도는 adr.json 이 있으면 늘 잰다.
+// 끝에 `density <탭> ok|low` 5줄(init 기록이 있을 때)과 늘 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n` 한 줄. ADR 밀도는 adr.json 이 있으면 늘 잰다.
 // 형식 시험 자료와 옮긴 자료(둘 다 init 기록 없음)는 밀도를 재지 않는다.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +14,7 @@ import { ITEM_STATUS, STAGE_STATUS } from './pm-data.mjs';
 import { archLayout, archFlaws, flowLayout, nameFits, FLOW } from './pm-render.mjs';
 import { color, finite, textW, wrap, TABS } from './pm-html.mjs';
 import { memoryWarnings } from './pm-memory.mjs';
-import { checkAdr, adrRows, cleanAdr, gapCount } from './pm-adr.mjs';
+import { checkAdr, adrRows, cleanAdr, adrTally } from './pm-adr.mjs';
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
@@ -545,16 +545,16 @@ export function runCheck(ctx, env = process.env) {
   // 밀도는 init 기록이나 inventory.json 이 있을 때만. 다만 ADR 밀도는 adr.json 이 있으면 늘 낸다
   const dens = inv || memory ? density({ arch, flow, req, items: items.items, inv, storyCount: ids.length, adr }) : null;
   const rows = dens ? dens.rows : adr ? adrRows(adr) : [];
-  return finish(out, rows, dens, gapCount(adr));
+  return finish(out, rows, dens, adrTally(adr).text);
 }
 
-// 밀도 미달 줄, 합계 줄, 탭별 밀도 요약, ADR 근거 없음 칸 수(늘 한 줄)를 붙인다. 돌려줌: { lines, fails }
-function finish(out, rows, dens, gaps) {
+// 밀도 미달 줄, 합계 줄, 탭별 밀도 요약, ADR 집계(근거 없음 칸, 미검증, 구현 못 함. 늘 한 줄)를 붙인다. 돌려줌: { lines, fails }
+function finish(out, rows, dens, tally) {
   for (const x of rows) if (x.value < x.min) out.push(densityLine(x));
   const fails = out.filter((l) => l.startsWith('FAIL ')).length;
   out.push(`check: FAIL ${fails}, WARN ${out.length - fails}`);
   if (dens) for (const [k] of TABS) out.push(`density ${k} ${dens.low.has(k) ? 'low' : 'ok'}`);
-  out.push(`adr 근거 없음 ${gaps}칸`);
+  out.push(`adr ${tally}`);
   return { lines: out, fails };
 }
 

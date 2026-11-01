@@ -50,7 +50,7 @@ function data(over = {}) {
 const check = (ctx) => runCheck(ctx, ENV).lines;
 const only = (lines, re) => lines.filter((l) => re.test(l));
 // check 끝에 늘 붙는 ADR 근거 없음 칸 수(adr.json 이 없으면 0)
-const NO_GAP = 'adr 근거 없음 0칸';
+const NO_GAP = 'adr 근거 없음 0칸, 미검증 0, 구현 못 함 0';
 const problems = (lines) => lines.filter((l) => /^(FAIL|WARN) /.test(l));
 
 test('고정 자료: FAIL 0, WARN 0, init 기록과 inventory 가 없으면 밀도 줄 없음, ADR 근거 없음 0칸은 늘', T, () => {
@@ -379,7 +379,7 @@ test('CLI: FAIL 이 있으면 종료 1, 자료 폴더가 없어도 만들지 않
   const ctx = data({ 'arch.json': read('variants/check-overlap/arch.json') });
   const r = spawnSync(process.execPath, [CLI, 'check'], { cwd: ctx.project, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 30000 });
   assert.equal(r.status, 1);
-  assert.equal(r.stdout, 'FAIL arch.json nodes[1] 상자 겹침: n2, n1\ncheck: FAIL 1, WARN 0\nadr 근거 없음 0칸\n');
+  assert.equal(r.stdout, 'FAIL arch.json nodes[1] 상자 겹침: n2, n1\ncheck: FAIL 1, WARN 0\nadr 근거 없음 0칸, 미검증 0, 구현 못 함 0\n');
   const empty = path.join(ROOT, `e${++n}`);
   fs.mkdirSync(empty);
   const e = spawnSync(process.execPath, [CLI, 'check'], { cwd: empty, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 30000 });

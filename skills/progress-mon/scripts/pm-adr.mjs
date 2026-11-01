@@ -36,16 +36,17 @@ const KIND = {
 };
 
 // 검사 결과 모음. schema: 스키마 위반, claim: 증거 없는 주장(구현됨, 검증됨), refFail, refWarn: 참조 확인 결과,
-// refs: 확인할 참조, modRefs: 모듈 id 참조. schema 와 claim 은 둘 다 FAIL 이지만 정리 단계는 schema 만 파일을 옮긴다.
+// refs: 확인할 참조, modRefs: 모듈 id 참조, claims: 참조 확인 뒤 판정할 주장(검증한 모듈, 구현된 기능).
+// schema 와 claim 은 둘 다 FAIL 이지만 정리 단계는 schema 만 파일을 옮긴다.
 function state() {
-  const S = { schema: [], claim: [], refFail: [], refWarn: [], refs: [], modRefs: [], ids: new Set() };
+  const S = { schema: [], claim: [], claims: [], refFail: [], refWarn: [], refs: [], modRefs: [], ids: new Set() };
   S.bad = (parts, msg) => S.schema.push({ p: jp(parts), msg });
   S.unproven = (parts, msg) => S.claim.push({ p: jp(parts), msg });
   return S;
 }
 
-// 주장에는 증거: 증거 칸에 gap 아닌 참조가 0개면(비었거나 모두 gap) 증거 없음.
-const realRefs = (list) => arr(list).filter((x) => obj(x) && !isGap(x)).length;
+// 주장에는 증거: 증거 칸에서 실제로 확인된 참조(꼴이 맞고 참조 확인에서 FAIL 도 WARN 도 없음)가 0개면 증거 없음.
+// 확인 못 한 참조(출력 파일 없는 명령, 파일에 없는 시험 이름, git 이 꺼진 커밋)는 증거로 세지 않는다.
 const MODULE_WAY = '증거를 지어내지 말고 그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)';
 const FEATURE_WAY = '증거를 지어내지 말고 그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)';
 
@@ -135,7 +136,7 @@ function moduleItem(S, x, p) {
   if (str(x.id) && S.ids.has(x.id)) S.bad([...p, 'id'], `모듈 id 겹침: ${x.id}`);
   if (str(x.id)) S.ids.add(x.id);
   refList(S, x, 'evidence', p, unverified);
-  if (!unverified && Array.isArray(x.evidence) && !realRefs(x.evidence)) S.unproven([...p, 'evidence'], `증거 없음: 검증 증거가 없음(gap 아닌 참조 0개). ${MODULE_WAY}`);
+  if (!unverified && Array.isArray(x.evidence)) S.claims.push({ parts: [...p, 'evidence'], n: x.evidence.length, msg: `증거 없음: 확인된 검증 증거가 없음(FAIL, WARN 없이 확인된 참조 0개). ${MODULE_WAY}` });
 }
 
 function verification(S, list, parts) {
@@ -153,7 +154,7 @@ function proof(S, v, parts) {
       want(S, x, 'feature', p, 'str');
       modules(S, x, p);
       refList(S, x, 'proofs', p);
-      if (Array.isArray(x.proofs) && !realRefs(x.proofs)) S.unproven([...p, 'proofs'], `증거 없음: 구현 증명이 없음(gap 아닌 참조 0개). ${FEATURE_WAY}`);
+      if (Array.isArray(x.proofs)) S.claims.push({ parts: [...p, 'proofs'], n: x.proofs.length, msg: `증거 없음: 확인된 구현 증명이 없음(FAIL, WARN 없이 확인된 참조 0개). ${FEATURE_WAY}` });
     });
   }
   if (want(S, v, 'notImplemented', parts, 'arr')) each(S, v.notImplemented, [...parts, 'notImplemented'], (x, p) => fields(S, x, p, [['feature', 'str'], ['why', 'str']]));
@@ -193,7 +194,7 @@ function decision(S, d, parts, seen) {
   refList(S, d, 'sources', parts, true);
 }
 
-// 두 층 스키마 검사. 돌려줌: 검사 결과 S(schema, refs, modRefs).
+// 두 층 스키마 검사. 돌려줌: 검사 결과 S(schema, refs, modRefs, claims). 주장 판정은 참조 확인 뒤(examine).
 export function adrSchema(v) {
   const S = state();
   const a = obj(v);
@@ -305,6 +306,24 @@ function verifyRefs(S, ctx, config) {
   }
 }
 
+// 참조 확인 뒤 주장 판정. 증거 칸의 참조 가운데 확인할 목록에 들었고(꼴이 맞고 gap 아님) FAIL, WARN 이 없는 것만 센다.
+function judgeClaims(S) {
+  const bad = new Set([...S.refFail, ...S.refWarn].map((x) => jp(x.parts)));
+  const good = new Set(S.refs.map((x) => jp(x.parts)).filter((p) => !bad.has(p)));
+  for (const c of S.claims) {
+    const ok = Array.from({ length: c.n }, (_, i) => jp([...c.parts, i])).some((p) => good.has(p));
+    if (!ok) S.unproven(c.parts, c.msg);
+  }
+}
+
+// 스키마, 참조 확인, 주장 판정을 차례로. 돌려줌: S
+function examine(v, ctx, config) {
+  const S = adrSchema(v);
+  verifyRefs(S, ctx, config);
+  judgeClaims(S);
+  return S;
+}
+
 // 두 원본 갈라짐: docs/adr/*.md 가운데 어떤 결정의 sources 도 가리키지 않는 파일.
 function divergence(ctx, v) {
   let names;
@@ -337,8 +356,7 @@ function readAdr(dataDir) {
 function inspectAdr(ctx, config) {
   const got = readAdr(ctx.dataDir);
   if (!Object.hasOwn(got, 'value')) return got;
-  const S = adrSchema(got.value);
-  verifyRefs(S, ctx, config);
+  const S = examine(got.value, ctx, config);
   const diverge = S.schema.length ? [] : divergence(ctx, got.value);
   return { value: got.value, S, diverge };
 }
@@ -399,7 +417,7 @@ export async function cleanAdr(ctx, config, now = Date.now()) {
   await writeAtomic(file, JSON.stringify(got.value, null, 2) + '\n');
   const out = [`정리: adr.json 참조 FAIL ${fails.length}건을 gap 으로 바꿈: ${fails.map((f) => jp(f.parts)).join(', ')}`];
   // 바꾼 뒤 증거가 모두 gap 이 된 주장은 자동으로 옮기지 않는다(check 가 FAIL 로 보고, 에이전트가 판단해 옮김)
-  const left = adrSchema(got.value).claim;
+  const left = examine(got.value, ctx, config).claim;
   if (left.length) out.push(`정리: 증거가 남지 않은 주장 ${left.length}건(자동으로 옮기지 않음, check 의 FAIL 참고): ${left.map((x) => x.p).join(', ')}`);
   return out;
 }
@@ -443,11 +461,20 @@ export function adrRows(v) {
   return rows;
 }
 
-// adr.json 안의 { gap } 수(여섯 항목 칸과 참조 자리). 화면 배지와 check 끝 요약의 "근거 없음 n칸".
-export function gapCount(v) {
+// adr.json 안의 { gap } 수(여섯 항목 칸과 참조 자리).
+function gapCount(v) {
   if (Array.isArray(v)) return v.reduce((a, x) => a + gapCount(x), 0);
   if (!obj(v)) return 0;
   return isGap(v) ? 1 : Object.values(v).reduce((a, x) => a + gapCount(x), 0);
+}
+
+// 화면 배지와 check 끝 요약: 근거 없음(gap) 칸, 미검증 모듈, 구현 못 한 기능 수. 모두 미검증이어도 0칸만 보이는 오해를 막는다.
+export function adrTally(v) {
+  const p = obj(obj(v) && v.project) || {};
+  const unverified = arr(p.verification).filter((x) => obj(x) && x.status === 'unverified').length;
+  const notImplemented = arr(obj(p.proof) && p.proof.notImplemented).filter(obj).length;
+  const gaps = gapCount(v);
+  return { text: `근거 없음 ${gaps}칸, 미검증 ${unverified}, 구현 못 함 ${notImplemented}`, any: gaps + unverified + notImplemented > 0 };
 }
 
 // ---------- 렌더 ----------
@@ -527,7 +554,7 @@ export function adrBody(m, emptyNotice) {
   const p = obj(v.project) || {};
   const ds = arr(v.decisions).filter(obj);
   return `<div class="meta">의사 결정 기록. 위는 프로젝트 전체(검증, 흐름, 증거), 아래는 결정마다(최적화 로직, 확장 대응, 포기와 얻은 것). 자료: <code>adr.json</code>. 참조는 위치만 보이고 이 화면은 파일을 열지 않음. 참조 확인은 check.</div>
-<div class="meta"><span class="b ${gapCount(v) ? 'miss' : 'done'}">근거 없음 ${gapCount(v)}칸</span></div>
+<div class="meta"><span class="b ${adrTally(v).any ? 'miss' : 'done'}">${esc(adrTally(v).text)}</span></div>
 <h2>프로젝트 요약</h2>
 ${sec('검증', slotHtml(p.verification, verificationHtml))}${sec('흐름', slotHtml(p.flow, flowHtml))}${sec('증거', slotHtml(p.proof, proofHtml))}
 <h2>결정 목록 <small>${ds.length}건</small></h2>

@@ -47,7 +47,7 @@ const readFix = (...p) => JSON.parse(fs.readFileSync(path.join(FIX, ...p), 'utf8
 const EVIL = `<script>alert("x")</script>&'`;
 const COMMIT_WARN = 'WARN adr.json project.proof.implemented[0].proofs[1] 참조: git 저장소가 아니거나 git 이 없어 커밋을 확인 못 함: 1a2b3c4';
 // 고정 자료의 gap 은 ADR-2 의 확장 대응 하나. ADR 밀도는 adr.json 이 있으면 init 기록이 없어도 늘 나온다
-const FIX_TAIL = ['WARN density adr 빈 항목 8/9: decisions[1].scaling', 'check: FAIL 0, WARN 2', 'adr 근거 없음 1칸'];
+const FIX_TAIL = ['WARN density adr 빈 항목 8/9: decisions[1].scaling', 'check: FAIL 0, WARN 2', 'adr 근거 없음 1칸, 미검증 0, 구현 못 함 1'];
 
 let n = 0;
 // adr.json 이 가리키는 프로젝트 파일.
@@ -97,15 +97,15 @@ test('check: 고정 adr.json 은 FAIL 0, 커밋은 git 저장소가 아니라 WA
   const { lines, fails } = check(project());
   assert.equal(fails, 0);
   assert.deepEqual(lines, [COMMIT_WARN, ...FIX_TAIL]);
-  assert.deepEqual(check(project({ adr: null })).lines.slice(-1), ['adr 근거 없음 0칸'], 'adr.json 이 없어도 0 으로');
+  assert.deepEqual(check(project({ adr: null })).lines.slice(-1), ['adr 근거 없음 0칸, 미검증 0, 구현 못 함 0'], 'adr.json 이 없어도 0 으로');
 });
 
 test('주장에는 증거: 구현됨 기능의 증명, 검증한 모듈의 evidence 가 gap 뿐이거나 참조 0개면 FAIL 과 벗어나는 길', T, () => {
   const cases = [
-    [(a) => (a.project.verification[1].evidence = [{ gap: '시험 안 돌림' }]), 'FAIL adr.json project.verification[1].evidence 증거 없음: 검증 증거가 없음(gap 아닌 참조 0개). 증거를 지어내지 말고 그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)'],
-    [(a) => (a.project.verification[1].evidence = []), 'FAIL adr.json project.verification[1].evidence 증거 없음: 검증 증거가 없음(gap 아닌 참조 0개). 증거를 지어내지 말고 그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)'],
-    [(a) => (a.project.proof.implemented[0].proofs = [{ gap: '아직 없음' }]), 'FAIL adr.json project.proof.implemented[0].proofs 증거 없음: 구현 증명이 없음(gap 아닌 참조 0개). 증거를 지어내지 말고 그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)'],
-    [(a) => (a.project.proof.implemented[0].proofs = []), 'FAIL adr.json project.proof.implemented[0].proofs 증거 없음: 구현 증명이 없음(gap 아닌 참조 0개). 증거를 지어내지 말고 그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)'],
+    [(a) => (a.project.verification[1].evidence = [{ gap: '시험 안 돌림' }]), 'FAIL adr.json project.verification[1].evidence 증거 없음: 확인된 검증 증거가 없음(FAIL, WARN 없이 확인된 참조 0개). 증거를 지어내지 말고 그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)'],
+    [(a) => (a.project.verification[1].evidence = []), 'FAIL adr.json project.verification[1].evidence 증거 없음: 확인된 검증 증거가 없음(FAIL, WARN 없이 확인된 참조 0개). 증거를 지어내지 말고 그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)'],
+    [(a) => (a.project.proof.implemented[0].proofs = [{ gap: '아직 없음' }]), 'FAIL adr.json project.proof.implemented[0].proofs 증거 없음: 확인된 구현 증명이 없음(FAIL, WARN 없이 확인된 참조 0개). 증거를 지어내지 말고 그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)'],
+    [(a) => (a.project.proof.implemented[0].proofs = []), 'FAIL adr.json project.proof.implemented[0].proofs 증거 없음: 확인된 구현 증명이 없음(FAIL, WARN 없이 확인된 참조 0개). 증거를 지어내지 말고 그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)'],
     [(a) => (a.project.verification = { gap: '모름' }), 'FAIL adr.json project.verification 증거 없음: 검증 칸 전체를 gap 으로 둘 수 없음. 모듈을 적고 증거를 지어내지 말고 그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)'],
     [(a) => (a.project.proof = { gap: '모름' }), 'FAIL adr.json project.proof 증거 없음: 증거 칸 전체를 gap 으로 둘 수 없음. implemented 를 비우고 증거를 지어내지 말고 그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)'],
     [(a) => (a.project.verification[1] = { id: 'M-2', module: '화면 렌더', status: 'unverified' }), 'FAIL adr.json project.verification[1].why 칸 없음'],
@@ -129,6 +129,31 @@ test('주장에는 증거: 구현됨 기능의 증명, 검증한 모듈의 evide
   assert.ok(h.includes('<span class="b unv">미검증: 렌더 시험을 아직 돌리지 않음</span>'));
 });
 
+test('주장에는 증거: 확인 못 한 참조(출력 없는 명령, 파일에 없는 시험 이름, git 이 꺼진 커밋)는 증거로 세지 않아 FAIL, 확인된 file 참조 하나면 통과', T, () => {
+  const M = 'FAIL adr.json project.verification[1].evidence 증거 없음: ';
+  const F = 'FAIL adr.json project.proof.implemented[0].proofs 증거 없음: ';
+  const off = readFix('config.json');
+  off.sources.git = false;
+  const cases = [
+    [(a) => (a.project.verification[1].evidence = [{ kind: 'cmd', cmd: 'node --test test/' }]), M, undefined],
+    [(a) => (a.project.proof.implemented[0].proofs = [{ kind: 'test', path: 'test/app.test.mjs', name: '없는 시험' }]), F, undefined],
+    [(a) => (a.project.proof.implemented[0].proofs = [{ kind: 'commit', hash: '1a2b3c4' }]), F, off],
+    [(a) => (a.project.verification[1].evidence = [{ kind: 'file', path: 'src/none.mjs' }]), M, undefined],
+  ];
+  for (const [edit, head, config] of cases) {
+    const a = readFix('adr.json');
+    edit(a);
+    const { lines } = check(project({ adr: a, config }));
+    const hit = lines.find((l) => l.startsWith(head));
+    assert.ok(hit && hit.endsWith('증거를 지어내지 말고 ' + (head === M ? '그 모듈을 미검증으로 옮김: status "unverified" 와 why(사유)' : '그 기능을 구현 못 함 목록으로 옮김: notImplemented 에 feature 와 why(사유)')), `${head}\n${lines.join('\n')}`);
+  }
+  const a = readFix('adr.json');
+  a.project.verification[1].evidence = [{ kind: 'cmd', cmd: 'x' }, { kind: 'file', path: 'src/app.mjs' }];
+  a.project.proof.implemented[0].proofs = [{ kind: 'file', path: 'src/app.mjs', line: 1 }];
+  const { lines, fails } = check(project({ adr: a }));
+  assert.equal(fails, 0, lines.join('\n'));
+});
+
 test('WARN 유지: 결정의 최적화 로직, 확장 대응, 포기와 얻은 것과 프로젝트 흐름의 gap 은 FAIL 이 아니고 밀도 WARN, 근거 없음 칸 수', T, () => {
   const a = readFix('adr.json');
   a.project.flow = { gap: '흐름 문서 없음' };
@@ -141,16 +166,22 @@ test('WARN 유지: 결정의 최적화 로직, 확장 대응, 포기와 얻은 �
   const { lines, fails } = check(ctx);
   assert.equal(fails, 0, lines.join('\n'));
   assert.ok(lines.includes('WARN density adr 빈 항목 4/9: project.flow, decisions[0].optimization, decisions[0].scaling, decisions[0].tradeoffs, decisions[1].scaling'), lines.join('\n'));
-  assert.equal(lines[lines.length - 1], 'adr 근거 없음 6칸', '여섯 항목 칸 5개와 참조 자리 1개');
+  assert.equal(lines[lines.length - 1], 'adr 근거 없음 6칸, 미검증 0, 구현 못 함 1', '여섯 항목 칸 5개와 참조 자리 1개');
   const h = renderTab(ctx, configOf(ctx), 'adr', NOW);
-  assert.ok(h.includes('<div class="meta"><span class="b miss">근거 없음 6칸</span></div>\n<h2>프로젝트 요약</h2>'), '배지는 프로젝트 요약 위');
+  assert.ok(h.includes('<div class="meta"><span class="b miss">근거 없음 6칸, 미검증 0, 구현 못 함 1</span></div>\n<h2>프로젝트 요약</h2>'), '배지는 프로젝트 요약 위');
   a.decisions[1].scaling = { argument: '규모와 무관', refs: [] };
   for (const k of ['optimization', 'scaling', 'tradeoffs']) a.decisions[0][k] = readFix('adr.json').decisions[0][k];
   a.project.flow = readFix('adr.json').project.flow;
   delete a.decisions[0].sources;
+  a.project.proof.notImplemented = [];
   fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), JSON.stringify(a));
-  assert.equal(check(ctx).lines.slice(-1)[0], 'adr 근거 없음 0칸');
-  assert.ok(renderTab(ctx, configOf(ctx), 'adr', NOW).includes('<span class="b done">근거 없음 0칸</span>'), '0 이면 0 으로');
+  assert.equal(check(ctx).lines.slice(-1)[0], 'adr 근거 없음 0칸, 미검증 0, 구현 못 함 0');
+  assert.ok(renderTab(ctx, configOf(ctx), 'adr', NOW).includes('<span class="b done">근거 없음 0칸, 미검증 0, 구현 못 함 0</span>'), '0 이면 0 으로');
+  // 모든 모듈이 미검증이면 근거 없음 0칸이어도 초록이 아니고 미검증 수가 보임
+  a.project.verification = a.project.verification.map((m) => ({ id: m.id, module: m.module, status: 'unverified', why: '시험 안 돌림' }));
+  fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), JSON.stringify(a));
+  assert.equal(check(ctx).lines.slice(-1)[0], 'adr 근거 없음 0칸, 미검증 2, 구현 못 함 0');
+  assert.ok(renderTab(ctx, configOf(ctx), 'adr', NOW).includes('<span class="b miss">근거 없음 0칸, 미검증 2, 구현 못 함 0</span>'));
 });
 
 test('check 스키마: project, project.flow, 결정의 tradeoffs 없음, 선택지 1개에 rejected 없음, 사유 없는 gap, 모듈 id 겹침과 없는 id 는 FAIL 과 json 경로', T, () => {
@@ -255,7 +286,7 @@ test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap �
   a.project.verification[1].evidence[0] = { kind: 'file', path: 'src/none.mjs' };
   // M-2 의 evidence 는 이 참조 하나: 정리 뒤 증거가 모두 gap 이 되어도 자동으로 옮기지 않고 FAIL 로 보고, 파일은 남음
   const ctx = project({ adr: a, initd: true });
-  assert.equal(check(ctx).fails, 1);
+  assert.equal(check(ctx).fails, 2, '참조 FAIL 과 증거 없음');
   const out = await cleanAdr(ctx, configOf(ctx));
   assert.deepEqual(out, ['정리: adr.json 참조 FAIL 1건을 gap 으로 바꿈: project.verification[1].evidence[0]', '정리: 증거가 남지 않은 주장 1건(자동으로 옮기지 않음, check 의 FAIL 참고): project.verification[1].evidence']);
   const now = JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'adr.json'), 'utf8'));
@@ -292,21 +323,21 @@ test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap �
   const r = cli(['check', '--adr-cleanup'], ctx3.project);
   assert.equal(r.code, 0, r.out + r.err);
   assert.match(r.out, /^정리: adr\.json 참조 FAIL 1건을 gap 으로 바꿈: project\.verification\[0\]\.evidence\[0\]\n/);
-  assert.match(r.out, /\ncheck: FAIL 0, WARN 2\nadr 근거 없음 2칸\n$/);
+  assert.match(r.out, /\ncheck: FAIL 0, WARN 2\nadr 근거 없음 2칸, 미검증 0, 구현 못 함 1\n$/);
 });
 
 test('밀도: init 기록이 있으면 빈 항목과 프로젝트, 결정별 하한 미달이 WARN density adr, 요약 끝 5줄. 채우면 density adr ok', T, () => {
   const ctx = project({ initd: true });
   const { lines } = check(ctx);
   assert.ok(lines.includes('WARN density adr 빈 항목 8/9: decisions[1].scaling'), lines.join('\n'));
-  assert.deepEqual(lines.slice(-6), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', 'adr 근거 없음 1칸']);
+  assert.deepEqual(lines.slice(-6), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', 'adr 근거 없음 1칸, 미검증 0, 구현 못 함 1']);
   assert.match(lines[lines.length - 7], /^check: FAIL 0, WARN \d+$/);
   const a = readFix('adr.json');
   a.decisions[1].scaling = { argument: '바인드 주소는 설정 하나라 규모와 무관', refs: [{ kind: 'file', path: 'src/app.mjs' }] };
   fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), JSON.stringify(a));
   const ok = check(ctx).lines;
   assert.equal(ok.filter((l) => l.startsWith('WARN density adr ')).length, 0, ok.join('\n'));
-  assert.deepEqual(ok.slice(-2), ['density adr ok', 'adr 근거 없음 0칸']);
+  assert.deepEqual(ok.slice(-2), ['density adr ok', 'adr 근거 없음 0칸, 미검증 0, 구현 못 함 1']);
   const none = project({ adr: null, initd: true });
   const l2 = check(none).lines;
   for (const w of ['WARN density adr 빈 항목 0/3: project.verification, project.flow, project.proof', 'WARN density adr 검증 0/1', 'WARN density adr 흐름 0/3: 입력, 처리, 출력', 'WARN density adr 증거 0/1', 'WARN density adr 결정 0/1']) assert.ok(l2.includes(w), `${w}\n${l2.join('\n')}`);
