@@ -3,7 +3,7 @@
 // Run: node --test skills/git-init/scripts/git-init.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -300,6 +300,13 @@ test("선행 조건: GIT_DIR 환경 변수와 HOME 루트는 종료 3, 아무것
   assert.equal(cli(["run", "--root", join(base, "missing")]).status, 2);
 });
 
+test("선행 조건: 다른 대소문자로 적은 HOME 루트도 종료 3(대소문자를 무시하는 파일 시스템)", (t) => {
+  const other = join(dirname(home), "HOME");
+  if (!existsSync(other)) return t.skip("대소문자를 가리는 파일 시스템: 다른 철자는 다른 폴더");
+  assert.equal(cli(["run", "--root", other, "--local-identity", ID]).status, 3);
+  assert.equal(existsSync(join(home, ".git")), false);
+});
+
 test("2MB 넘는 파일과 바이너리는 내용 미스캔 목록(check 출력에 둘 다), 걸림으로 막지 않음", () => {
   const root = project();
   files(root, { "big.log": "x".repeat(2 * 1024 * 1024 + 1), "bin.dat": Buffer.from([0, 1, 2, 3]) });
@@ -320,3 +327,13 @@ test("missingPatterns 는 자기 블록 밖의 줄만 셈, nameHit 는 키 이�
   assert.ok(nameHit("a/.env") && nameHit("x.PEM") && nameHit(".aws/config") && nameHit("id_ed25519") && nameHit(".npmrc"));
   assert.ok(!nameHit(".env.example") && !nameHit("id_rsa.pub") && !nameHit("src/key.js"));
 });
+
+test("Windows: a git.exe inside the folder being initialized is not run (git starts from the home folder with -C)", { skip: process.platform !== "win32" && "Windows 만 일하는 폴더에서 프로그램을 먼저 찾음" }, () => {
+  const root = project();
+  files(root, { "a.txt": "a\n", ".gitignore": "git.exe\n" }); // the planted program stays out of the first commit
+  copyFileSync(process.execPath, join(root, "git.exe")); // a node.exe named git.exe: it would fail on git's arguments
+  const r = cli(["run", "--root", root, "--local-identity", ID]);
+  assert.equal(r.status, 0, output(r));
+  assert.ok(existsSync(join(root, ".git")));
+});
+

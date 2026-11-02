@@ -20,7 +20,7 @@
  *   file. Windows has no owner or permission bits to check.
  * - Writes go to a temp file in the same folder and a rename. A failed write removes the temp file.
  * - When the bytes change, the first original is kept in `<file>.<skill>.bak`; an existing backup is never
- *   overwritten.
+ *   overwritten. Something else at that name (a link, a folder) refuses the change (backup), so no original is lost.
  *
  * Results are { ok, changed, refused?, message, path, file }. Callers map refused to exit status 1.
  */
@@ -220,8 +220,24 @@ const options = (opts) => ({
   wrap: opts.wrap ?? null,
   skill: opts.skill,
   follow: opts.followSymlink === true,
+  readOnly: opts.readOnly === true, // a plan only read (never committed): no backup spot to check
   uid: "uid" in opts ? opts.uid : process.getuid?.(),
 });
+
+// A file not there yet is named by its folder as the file system spells it (one key for a linked parent, an 8.3 name
+// or the folder in another case) and its own name as given. Two names differing only in case still get two keys:
+// where the file system takes them for one file, applyBlocks meets that when the second create finds the first.
+const newFileKey = (file) => `path:${join(nativeReal(dirname(resolve(file))), basename(file))}`;
+
+// The key of a file that is there now, as planBlock gives it, or null when it cannot be read.
+function keyNow(file) {
+  try {
+    const id = statSync(file, { bigint: true });
+    return id.ino === 0n ? `path:${nativeReal(file)}` : `ino:${id.dev}:${id.ino}`;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Works out what applyBlock would write, without writing: { ok, changed, refused?, message, path, file, key,
@@ -234,13 +250,17 @@ export function planBlock(path, opts) {
   if (at.refuse) return at.refuse;
   if (!at.exists) {
     const after = o.body === null ? null : Buffer.from(blockText(o.mk, o.body, o.wrap, "\n"), "utf8");
-    return { ok: true, changed: after !== null, path, file: at.file, key: `path:${resolve(at.file)}`, before: null, after, mode: NEW_FILE_MODE };
+    return { ok: true, changed: after !== null, path, file: at.file, key: newFileKey(at.file), before: null, after, mode: NEW_FILE_MODE };
   }
   const read = readChecked(at.file, o.uid);
   if (read.refuse) return read.refuse;
   const next = nextBytes(read.bytes, o, at.file);
   if (next.refuse) return next.refuse;
   const changed = !next.bytes.equals(read.bytes);
+  // A change keeps the first original in <file>.<skill>.bak: something else there (a link, a folder) is refused now,
+  // in the plan, so a dry run, a status and a check say so before anything is written.
+  const bakWhy = changed && !o.readOnly ? backupSpotWhy(`${at.file}.${o.skill}.bak`) : null;
+  if (bakWhy) return refusal("backup", `${bakWhy}: ${at.file}.${o.skill}.bak`, path);
   // ino 0 (a file system without file ids) tells nothing apart: then the path as the file system spells it is the
   // key (realpathSync.native gives one spelling for names that differ only in case where case is ignored).
   const key = read.id.ino === 0n ? `path:${nativeReal(at.file)}` : `ino:${read.id.dev}:${read.id.ino}`;
@@ -264,36 +284,111 @@ function writeAtomic(file, data, mode) {
   }
 }
 
-// Keeps the first original: writes <file>.<skill>.bak only when nothing is at that name yet.
-function backup(file, skill, bytes) {
-  const bak = `${file}.${skill}.bak`;
-  if (lstatSync(bak, { throwIfNoEntry: false })) return null;
-  const fd = openSync(bak, "wx", BACKUP_MODE);
+// Opens a file not there yet, as "wx" does, and makes sure the name is the file made. Anything at the name, a link to
+// nothing among them, is EEXIST: Windows opens "wx" through a link to nothing and makes the file it leads to (macOS
+// and Linux answer EEXIST), so the name is looked at first, and a link planted between that look and the open is
+// caught after it by comparing the opened file with the name; the empty file made through it is taken back.
+function openFresh(path, mode) {
+  if (lstatSync(path, { throwIfNoEntry: false })) throw eexist(path);
+  const fd = openSync(path, "wx", mode);
+  let made;
+  let st;
+  try {
+    made = fstatSync(fd, { bigint: true });
+    st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+  } catch {
+    return fd; // cannot look (ESTALE, EPERM): the file is the caller's, as a plain "wx" leaves it
+  }
+  if (st && !st.isSymbolicLink() && (made.ino === 0n || (st.dev === made.dev && st.ino === made.ino))) return fd;
+  closeSync(fd);
+  if (st?.isSymbolicLink()) takeBack(path, made);
+  throw eexist(path);
+}
+
+const eexist = (path) => Object.assign(new Error(`EEXIST: file already exists, open '${path}'`), { code: "EEXIST", path });
+
+// Removes the file an open made through the link at path, while it is still that empty file.
+function takeBack(path, made) {
+  try {
+    const target = realpathSync(path);
+    const st = statSync(target, { bigint: true });
+    if (st.dev === made.dev && st.ino === made.ino && st.size === 0n) rmSync(target, { force: true });
+  } catch {
+    // the link changed again: nothing of ours to find
+  }
+}
+
+// Writes bytes to a file not there yet (openFresh) and closes it. A write that fails takes the empty file away again
+// while the name is still that file, so no empty file stands for a first original later.
+function writeFresh(path, bytes, mode) {
+  const fd = openFresh(path, mode);
   try {
     writeFileSync(fd, bytes);
+  } catch (e) {
+    try {
+      const made = fstatSync(fd, { bigint: true });
+      const st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+      if (st && st.isFile() && st.dev === made.dev && st.ino === made.ino) rmSync(path, { force: true });
+    } catch {
+      // cannot tell the name is still that file: it stays, and the write's own error is what is reported
+    }
+    throw e;
   } finally {
     closeSync(fd);
   }
-  return bak;
 }
 
-/** Writes what planBlock worked out. A plan that changes nothing or was refused is returned as a result. */
+// Why the backup spot cannot take the first original, or null: something that is not a regular file there, or a look
+// that fails (EPERM on Windows for a .bak being deleted, and the like).
+function backupSpotWhy(bak) {
+  try {
+    const st = lstatSync(bak, { throwIfNoEntry: false });
+    return st && !st.isFile() ? "백업 자리에 일반 파일이 아닌 것이 있어 그대로 둠" : null;
+  } catch (e) {
+    return `백업 자리를 확인하지 못해 그대로 둠(${e.code || e.message})`;
+  }
+}
+
+// Keeps the first original: writes <file>.<skill>.bak only when nothing is at that name yet. { bak } (null when a
+// regular file there is the first original already), or { refuse } when something else is there (a link, a folder):
+// then the file is not changed, as its original would have nowhere to go.
+function backup(file, skill, bytes) {
+  const bak = `${file}.${skill}.bak`;
+  const there = (st) => (st.isFile() ? { bak: null } : { refuse: refusal("backup", `백업 자리에 일반 파일이 아닌 것이 있어 그대로 둠: ${bak}`, file) });
+  const st = lstatSync(bak, { throwIfNoEntry: false });
+  if (st) return there(st);
+  try {
+    writeFresh(bak, bytes, BACKUP_MODE);
+  } catch (e) {
+    if (e?.code !== "EEXIST") throw e;
+    const now = lstatSync(bak, { throwIfNoEntry: false }); // made since the look
+    return now ? there(now) : { refuse: refusal("backup", `백업을 만들지 못해 그대로 둠: ${bak}`, file) };
+  }
+  return { bak };
+}
+
+/**
+ * Writes what planBlock worked out. A plan that changes nothing or was refused is returned as a result. A file planned
+ * as new that is there by the write (made or linked since the plan) is not touched: the result is a refusal with
+ * raced: true, which applyBlocks answers by planning that file again.
+ */
 export function commitBlock(plan, skill) {
   if (!plan.ok) return plan;
   const result = { ok: true, changed: plan.changed, path: plan.path, file: plan.file };
   if (!plan.changed) return { ...result, message: `변경 없음: ${plan.path}` };
   if (plan.before === null && plan.after !== null) {
-    const fd = openSync(plan.file, "wx", plan.mode);
     try {
-      writeFileSync(fd, plan.after);
-    } finally {
-      closeSync(fd);
+      writeFresh(plan.file, plan.after, plan.mode);
+    } catch (e) {
+      if (e?.code !== "EEXIST") throw e;
+      return { ...refusal("raced", `계획한 뒤 그 이름에 파일이나 링크가 생겨 그대로 둠: ${plan.path}`, plan.path), raced: true };
     }
     return { ...result, created: true, message: `새로 만듦: ${plan.path}` };
   }
-  const bak = backup(plan.file, skill, plan.before);
+  const kept = backup(plan.file, skill, plan.before);
+  if (kept.refuse) return kept.refuse;
   writeAtomic(plan.file, plan.after, plan.mode);
-  return { ...result, backup: bak, message: `바꿈: ${plan.path}` };
+  return { ...result, backup: kept.bak, message: `바꿈: ${plan.path}` };
 }
 
 /** Puts in, replaces or (body null) takes out the block in one file. dryRun plans only. */
@@ -306,16 +401,33 @@ export function applyBlock(path, opts) {
 /**
  * Applies blocks to several files, each entry { path, ...opts }. Every file is planned first: one refusal and
  * none is written. Two entries naming one file (after links are followed) write it once, by the first entry.
+ * A file that changes between the plans and the writes (raced) is planned again; a refusal then comes back as
+ * { ok: false, partial: true }, the entries before it being written already.
  */
 export function applyBlocks(entries, { dryRun = false } = {}) {
   const plans = entries.map((e) => ({ entry: e, plan: planBlock(e.path, e) }));
   const refused = plans.filter((p) => !p.plan.ok).map((p) => p.plan);
   if (refused.length > 0) return { ok: false, refused, results: plans.map((p) => p.plan) };
   const seen = new Map();
-  const results = plans.map(({ entry, plan }) => {
-    if (seen.has(plan.key)) return { ok: true, changed: false, path: plan.path, file: plan.file, sameAs: seen.get(plan.key), message: `같은 파일이라 한 번만 씀: ${plan.path}` };
+  const once = (plan) => ({ ok: true, changed: false, path: plan.path, file: plan.file, sameAs: seen.get(plan.key), message: `같은 파일이라 한 번만 씀: ${plan.path}` });
+  const write = (entry, plan) => {
+    const done = dryRun ? plan : commitBlock(plan, entry.skill);
+    if (!done.ok) return done;
     seen.set(plan.key, plan.path);
-    return dryRun ? plan : commitBlock(plan, entry.skill);
+    const now = done.created ? keyNow(plan.file) : null; // a file made now is that file to later spellings too
+    if (now && !seen.has(now)) seen.set(now, plan.path);
+    return done;
+  };
+  const results = plans.map(({ entry, plan }) => {
+    if (seen.has(plan.key)) return once(plan);
+    const done = write(entry, plan);
+    if (!done.raced) return done;
+    // Made since the plan: by an earlier entry under another spelling (a case-insensitive file system), or by another
+    // program. Plan it again as what is there now.
+    const again = planBlock(entry.path, entry);
+    if (!again.ok) return again;
+    return seen.has(again.key) ? once(again) : write(entry, again);
   });
-  return { ok: true, refused: [], results };
+  const late = results.filter((r) => r.ok === false);
+  return late.length > 0 ? { ok: false, partial: true, refused: late, results } : { ok: true, refused: [], results };
 }

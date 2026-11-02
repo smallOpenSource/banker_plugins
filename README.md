@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 70개 + 커맨드 2개**(총 72개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 69개와 Codex 전용 스킬 3개)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 71개 + 커맨드 2개**(총 73개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 70개와 Codex 전용 스킬 3개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -180,6 +180,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | 스킬 | 설명 |
 |---|---|
 | `motion-graphic-make` | 10초 내외 내레이션 없는 무료 모션 그래픽 제작 (hyperframes 위임). 계획 승인, 스냅숏과 렌더 검토 페이지, 독립 검증, 사이트 배치는 선택 |
+| `motion-sites` | MotionSites 의 `motionsites-web-builder` 스킬을 짧은 이름으로 부름. 첫 실행 때 원본 플러그인을 MotionSites 마켓플레이스에서 설치하고 Playwright 와 Chromium 을 갖춘 뒤 프롬프트를 그대로 넘김. 원본은 banker 에 복사하지 않음(예시와 미디어 재배포 금지), 첫 실행에 네트워크 필요 |
 | `3d-intro-build` | 스크롤-스크럽 3D 인트로 사이트 제작 (Azure gpt-image 스틸 + WAN 키 풀 영상, 소진 시 Sora-2 폴백, 유료). 단계별 검토 페이지, 엄격한 CSP 에서 도는 페이지, 실제 브라우저 독립 검증. 영상 모드는 chain, dive 나가기 없음(기본), dive 나가기 있음 가운데 고름. 장면 단위 이동(장면 시작점에 멈춤, Home, End, 장면 점은 바로 이동)은 기본 켬이고 끌 수 있음, 기존 사이트 통합은 선택 |
 
 ### 스킬: 개발환경 setup (OS별 · 런타임별)
@@ -231,14 +232,14 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 69개와 Codex 전용 스킬 3개(`graceful-pause`, `progress`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 70개와 Codex 전용 스킬 3개(`graceful-pause`, `progress`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
   `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
-  스킬 69개, Codex 전용 스킬 3개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
+  스킬 70개, Codex 전용 스킬 3개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. 훅 스크립트, 플러그인 폴더, node 가 `config.toml` 의 `[sandbox_workspace_write] writable_roots` 아래(그 항목 맨 위 `.codex` 제외)면 훅은 다른 일을 하지 않고 그 이유를 한 줄로 알립니다. 이 검사는 훅 파일 안에서 하므로, 샌드박스가 이미 그 파일을 고친 뒤에는 막지 못합니다. writable_roots 에 Codex 홈이나 node 가 든 폴더를 넣지 마십시오. \
@@ -449,7 +450,7 @@ banker setup
 - 세션 시작 훅의 업데이트 조회와 체크인은 따로 돌아 세션을 기다리게 하지 않습니다. 실패하면 24시간 동안 다시 시도하지 않고, 아예 시도하지 않게 하려면 `BANKER_NO_UPDATE_CHECK=1` 을 둡니다.
 - 훅은 `HTTPS_PROXY`, `HTTP_PROXY` 를 따르지 않습니다(Node 가 `NODE_USE_ENV_PROXY=1` 일 때만 따름). 프록시를 거쳐야만 밖에 닿는 망에서는 훅의 확인이 실패로 기록됩니다(`banker telemetry status` 의 "마지막 시도").
 - 네트워크가 필요한 스킬과 네트워크 없이 끝나는 모습
-  - 내려받는 설치 스킬(`setup-omc-hud`, `setup-bypass-permissions` 를 뺀 `setup-*`, `docs-setup`, `vertical-pptx-setup`, `motion-graphic-setup`, `3d-intro-setup`): 웹 원천(npm, PyPI, GitHub 등)은 먼저 닿는지 보고, 닿지 못하면 받지 않고 "오프라인이라 설치하지 않음" 으로 알립니다. OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 그 관리자의 미러 설정을 따르므로 미리 판정하지 않고 시도합니다. 단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다.
+  - 내려받는 설치 스킬(`setup-omc-hud`, `setup-bypass-permissions` 를 뺀 `setup-*`, `docs-setup`, `vertical-pptx-setup`, `motion-graphic-setup`, `3d-intro-setup`, `motion-sites` 의 첫 실행 구성): 웹 원천(npm, PyPI, GitHub 등)은 먼저 닿는지 보고, 닿지 못하면 받지 않고 "오프라인이라 설치하지 않음" 으로 알립니다. OS 패키지 관리자(dnf, apt, brew, winget)의 단계는 그 관리자의 미러 설정을 따르므로 미리 판정하지 않고 시도합니다. 단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다.
   - `update-banker`: 레지스트리에 닿지 못하면 어느 채널도 바꾸지 않고 멈춥니다.
   - `audit-security` 의 의존성 취약점 조회: 결과로 읽을 수 없는 도구는 0건이 아니라 "미커버" 로 적습니다.
   - `deep-research`, `lfm`, 이를 부르는 `ultra-chain` 1단계, `ultra-interview` 와 `rfp-author` 의 조사: 웹 도구가 모두 실패하면 조사하지 못했다고 알립니다. `lfm` 은 모델이 아는 관행으로 표를 채우지 않고 "웹 조사 불가" 로 끝납니다.

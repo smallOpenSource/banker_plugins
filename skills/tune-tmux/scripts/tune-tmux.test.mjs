@@ -367,6 +367,19 @@ test("config files tmux reads: 3.1 and later add the XDG paths, older reads only
   assert.equal(tc.parseVersion("bash: tmux: not found"), null);
 });
 
+test("config files tmux reads: XDG_CONFIG_HOME through a link to ~/.config is one file, and names one file with it", () => {
+  const home = fresh();
+  const v = (s) => tc.parseVersion(`tmux ${s}`);
+  mkdirSync(join(home, ".config", "tmux"), { recursive: true });
+  const xdg = join(home, "xdg-link");
+  symlinkSync(join(home, ".config"), xdg, "junction");
+  assert.deepEqual(tc.tmuxReads(v("3.6a"), { XDG_CONFIG_HOME: xdg }, home), [join(home, ".tmux.conf"), join(xdg, "tmux", "tmux.conf")]);
+  assert.equal(tc.sameFile(join(xdg, "tmux", "tmux.conf"), join(home, ".config", "tmux", "tmux.conf")), true, "not there yet");
+  writeFileSync(join(home, ".config", "tmux", "tmux.conf"), "");
+  assert.equal(tc.sameFile(join(xdg, "tmux", "tmux.conf"), join(home, ".config", "tmux", "tmux.conf")), true, "there");
+  assert.equal(tc.sameFile(join(home, ".tmux.conf"), join(home, ".config", "tmux", "tmux.conf")), false);
+});
+
 test("alt-screen-probe: usage error without a log file", () => {
   const r = spawnSync(process.execPath, [join(HERE, "..", "..", "..", "scripts", "test-fixtures", "alt-screen-probe.mjs")], { encoding: "utf8" });
   assert.equal(r.status, 2);

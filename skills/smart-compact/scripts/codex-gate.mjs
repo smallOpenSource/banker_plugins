@@ -27,6 +27,7 @@ import {
   chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync,
   renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,10 +61,11 @@ function readJson(file) {
   }
 }
 
-// A new file beside the target, given the target's mode when there is one, then renamed over it. The temp name is
-// created exclusively and a link in the target's place is replaced, not followed. The temp file goes on failure.
+// A new file beside the target, given the target's mode when there is one, then renamed over it. The temp name ends
+// in random bytes, so no one can plant a link at it first (Windows opens "wx" through a link to nothing and makes the
+// file it leads to), and a link in the target's place is replaced, not followed. The temp file goes on failure.
 function writeAtomic(file, data) {
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
   try {
     writeFileSync(tmp, data, { flag: "wx" });
     const mode = modeOf(file);
@@ -214,8 +216,27 @@ export function hookCommand(node, script, opts = {}) {
     const r = P.relative(dir, f);
     return r === "" || (!r.startsWith("..") && !P.isAbsolute(r));
   };
-  if (under(node, tmpdir()) || (codex && [node, SELF].some((f) => under(f, cwd)))) return null;
+  // Each path as given and as the file system spells it: a link, macOS /var against /private/var, a Windows 8.3 name
+  // or another case would otherwise slip a node in the temp folder past the check.
+  const both = (p) => [p, realOf(p)];
+  const temps = [tmpdir(), ...(win ? [] : ["/tmp"])].flatMap(both);
+  const inTemp = both(node).some((f) => temps.some((d) => under(f, d)));
+  const inWork = codex && [node, SELF].flatMap(both).some((f) => both(cwd).some((d) => under(f, d)));
+  if (inTemp || inWork) return null;
   return formatCommand(node, script, win);
+}
+
+// The path as the file system spells it (native first: it gives the long name and the case on disk), or as given.
+function realOf(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  }
 }
 
 const COPY_RE = new RegExp(`[/\\\\]${COPY_NAME.replace(/\./g, "\\.")}["']? hook$`);

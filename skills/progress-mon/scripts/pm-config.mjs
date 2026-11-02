@@ -1,4 +1,5 @@
 // pm-config.mjs: 프로젝트 루트와 자료 폴더 결정, 런타임 판별, config.json 읽기와 기본값, 형식 검사, 원자적 쓰기.
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
@@ -52,13 +53,64 @@ export function readRegular(file, encoding = 'utf8', fsx = fs, max = READ_MAX) {
   return fsx.readFileSync(file, encoding);
 }
 
+// 실제 경로. native 먼저(Windows 의 8.3 짧은 이름, macOS 와 Windows 의 디스크 대소문자로 푼다). 아직 없는 꼬리는 있는
+// 조상까지 풀고 붙인다(macOS 의 /var 는 /private/var 로 가는 링크).
+export function realNative(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      const up = path.dirname(p);
+      return up === p ? p : path.join(realNative(up), path.basename(p));
+    }
+  }
+}
+
+// 두 경로가 같은 폴더인지: 장치와 inode(bigint), inode 가 없는 파일 시스템은 realNative 철자(Windows, macOS 는 접어서).
+// 문자열 비교는 대소문자, 8.3 이름, 링크인 부모 폴더처럼 철자만 다른 같은 폴더를 다른 폴더로 본다.
+export function sameFolder(a, b) {
+  try {
+    const x = fs.statSync(a, { bigint: true });
+    const y = fs.statSync(b, { bigint: true });
+    if (x.ino !== 0n && y.ino !== 0n) return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
+  const fold = (p) => (process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p);
+  return fold(realNative(a)) === fold(realNative(b));
+}
+
 // 프로젝트 안 자료 폴더의 경로 가운데 링크인 첫 폴더(.omc, progress-mon 등). 없으면 null.
-// 프로젝트 밖(--data)이면 자료 폴더 자체만 본다. 아직 없는 폴더에서 멈춘다.
+// 프로젝트 밖(--data)이면 자료 폴더 자체만 본다. 아직 없는 폴더에서 멈춘다. 안팎은 자료 폴더에서 위로 올라가며
+// 프로젝트 루트와 같은 폴더(sameFolder)를 만나는지로 본다: --data 를 다른 대소문자나 8.3 이름으로 적어도 안으로 본다.
 function linkedDir(root, dataDir) {
-  const rel = path.relative(root, dataDir);
-  const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
-  const parts = inside ? rel.split(path.sep) : [];
-  const dirs = inside ? parts.map((_, i) => path.join(root, ...parts.slice(0, i + 1))) : [dataDir];
+  const isLink = (d) => {
+    try {
+      return fs.lstatSync(d).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  };
+  // 위로 올라가며 루트를 찾는다. 링크가 아닌 루트를 만나면 그 아래가 안이다(.omc -> . 같은 안의 링크도 목록에 남아
+  // 거부된다). 끝까지 못 만나면 루트를 가리키는 첫 링크(루트를 링크 철자로 적은 --data)를 루트로 본다.
+  const up = [];
+  let rootAt = -1;
+  let linkRootAt = -1;
+  for (let d = dataDir; ; d = path.dirname(d)) {
+    if (sameFolder(d, root)) {
+      if (!isLink(d)) {
+        rootAt = up.length;
+        break;
+      }
+      if (linkRootAt < 0) linkRootAt = up.length;
+    }
+    up.push(d);
+    if (path.dirname(d) === d) break;
+  }
+  const cut = rootAt >= 0 ? rootAt : linkRootAt;
+  const dirs = cut > 0 ? up.slice(0, cut).reverse() : [dataDir];
   for (const d of dirs) {
     let st;
     try {
@@ -85,8 +137,11 @@ export function privateIPv4(ip) {
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
-// git 출력(앞뒤 공백 제거). git 이 없거나 실패하면 예외.
-export const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+// git 출력(앞뒤 공백 제거). git 이 없거나 실패하면 예외. 홈 폴더에서 git -C 로 부른다: Windows 는 일하는 폴더의
+// 프로그램을 먼저 찾으므로, 프로젝트 안의 git.exe 가 실행되지 않게.
+// 프로그램을 띄울 폴더: 홈 폴더(없으면 임시 폴더).
+export const runDir = () => (fs.existsSync(os.homedir()) ? os.homedir() : os.tmpdir());
+export const git = (cwd, args) => execFileSync('git', ['-C', path.resolve(cwd), ...args], { cwd: runDir(), encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
 // 프로젝트 루트: --project, 아니면 cwd 의 git 최상위, 실패면 cwd.
 export function projectRoot(cwd, project) {
@@ -122,6 +177,77 @@ function pickContext({ cwd = process.cwd(), project, runtime, data } = {}) {
 
 // 사용법 오류(종료 1).
 export class UsageError extends Error {}
+
+// 고정 이름(잠금, 백업, 처음 만드는 설정)에 새 파일을 만든다(wx). 그 이름에 무엇이든 있으면 끊어진 링크까지 EEXIST.
+// 까닭: Windows 의 wx 는 끊어진 링크를 따라가 그 너머에 파일을 만든다(macOS, Linux 는 EEXIST). 그래서 먼저 lstat 로
+// 보고, 연 뒤 쓰기 전에 연 파일(fstat)과 이름(lstat)을 대조한다. 이름이 없거나 링크이거나 다른 파일이면 아무것도 쓰지
+// 않고 EEXIST(링크를 따라 만든 빈 파일은 지움). 볼 수 없으면(ESTALE, EPERM 등) 보통의 wx 처럼 그대로 쓴다. 쓰기가
+// 실패하면 이름이 아직 그 파일일 때 지운다(빈 잠금이나 빈 백업이 남지 않게). 처음 lstat 의 EPERM 등(Windows 에서 지우는
+// 중인 파일)은 그대로 던진다. 부른 쪽은 wx 의 같은 코드처럼 기다린다.
+export function writeNew(file, data, opts = {}, fsx = fs) {
+  if (fsx.lstatSync(file, { throwIfNoEntry: false }) !== undefined) throw eexist(file);
+  const fd = fsx.openSync(file, 'wx', opts.mode);
+  try {
+    const made = fstatOr(fd, fsx);
+    if (namesOpened(file, made, fsx) === false) throw eexist(file);
+    try {
+      fsx.writeFileSync(fd, data);
+    } catch (e) {
+      if (namesOpened(file, made, fsx) === true) fsx.rmSync(file, { force: true });
+      throw e;
+    }
+  } finally {
+    fsx.closeSync(fd);
+  }
+}
+
+const fstatOr = (fd, fsx) => {
+  try {
+    return fsx.fstatSync(fd, { bigint: true });
+  } catch {
+    return null;
+  }
+};
+
+// 이름이 연 파일(made)을 가리키는지: 참, 거짓(없음, 링크, 다른 파일), 볼 수 없으면 null. 링크면 그 링크로 만든 빈 파일을 지움.
+function namesOpened(file, made, fsx) {
+  let st;
+  try {
+    st = fsx.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+  } catch {
+    return null;
+  }
+  if (!st) return false;
+  if (st.isSymbolicLink()) {
+    if (made) dropFollowed(file, made, fsx);
+    return false;
+  }
+  if (!made || made.ino === 0n) return null;
+  return st.dev === made.dev && st.ino === made.ino;
+}
+
+// 링크를 따라 연 파일이 아직 그 빈 파일이면 지운다.
+function dropFollowed(file, made, fsx) {
+  try {
+    const target = fsx.realpathSync(file);
+    const at = fsx.statSync(target, { bigint: true });
+    if (at.dev === made.dev && at.ino === made.ino && at.size === 0n) fsx.rmSync(target, { force: true });
+  } catch {
+    // 링크가 또 바뀜: 되돌릴 것을 찾지 못함
+  }
+}
+
+const eexist = (file) => Object.assign(new Error(`EEXIST: file already exists, open '${file}'`), { code: 'EEXIST', syscall: 'open', path: file });
+
+// 그 자리에 일반 파일이 아닌 것(링크, 폴더 등)이 있는지. 없거나 볼 수 없으면 거짓.
+export function notPlainFile(file, fsx = fs) {
+  try {
+    const st = fsx.lstatSync(file, { throwIfNoEntry: false });
+    return st !== undefined && !st.isFile();
+  } catch {
+    return false;
+  }
+}
 
 const RENAME_RETRIES = 5;
 const RENAME_STEP_MS = 50;

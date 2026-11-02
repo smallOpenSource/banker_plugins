@@ -3,13 +3,17 @@
 // No bind mount (SELinux relabel, Windows paths). Containers are named banker-testbox-<random>-<os> and removed on
 // success, failure, time-out and signal.
 import { spawnSync } from "node:child_process";
-import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { imageFor } from "./args.mjs";
 import { pool } from "./browser-cell.mjs";
 import { firstLine, runProc, which } from "./proc.mjs";
 import { cellOf } from "./report.mjs";
+
+// The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
+// program planted in the folder worked on never runs), or the temp folder when there is no home folder.
+const runDir = () => (existsSync(homedir()) ? homedir() : tmpdir());
 
 export const NAME_PREFIX = "banker-testbox";
 const iso = () => new Date().toISOString();
@@ -66,7 +70,8 @@ export function removeAllSync(engine, names) {
 
 function gitFiles(src) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
-  const r = spawnSync("git", ["-C", src, "ls-files", "-z", "-co", "--exclude-standard"], { encoding: "utf8", env, maxBuffer: 256 * 1024 * 1024 });
+  // from the home folder: Windows looks for git.exe in the working folder first
+  const r = spawnSync("git", ["-C", src, "ls-files", "-z", "-co", "--exclude-standard"], { cwd: runDir(), encoding: "utf8", env, maxBuffer: 256 * 1024 * 1024 });
   return r.status === 0 ? r.stdout.split("\0").filter(Boolean) : null;
 }
 

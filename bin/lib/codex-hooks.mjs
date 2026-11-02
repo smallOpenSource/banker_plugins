@@ -119,7 +119,11 @@ export function safeNode(node, { win = process.platform === 'win32', cwd = proce
   // absolute home names one (HOME=. would make every folder the home); path.relative compares as the OS does (case on Windows).
   const isHome = P.isAbsolute(home) && P.relative(real(home), real(cwd)) === '';
   const inWork = codex && !isHome;
-  return !places.some((f) => under(f, os.tmpdir()) || (inWork && under(f, cwd)));
+  // Both sides as given and as the file system spells them (as hookGuard): node comes from process.execPath, which is
+  // the real path (/private/var on macOS, the long name on Windows), while TMPDIR or TEMP may be a link or an 8.3 name.
+  const temps = [os.tmpdir(), ...(win ? [] : ['/tmp'])].flatMap((d) => [d, real(d)]);
+  const works = [cwd, real(cwd)];
+  return !places.some((f) => temps.some((d) => under(f, d)) || (inWork && works.some((d) => under(f, d))));
 }
 
 // 실제 경로. 아직 없는 절대 경로는 있는 조상까지만 풀고 나머지를 붙인다(macOS 의 /var 는 /private/var 로 가는 링크라,

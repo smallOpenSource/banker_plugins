@@ -658,19 +658,19 @@ test('옮긴 뒤 새 server.log 를 못 열면 옮기지 못했다고 하지 않
   assert.equal(fs.readFileSync(`${logPath(ctx.dataDir)}.1`, 'utf8'), 'x'.repeat(350), '옮기기는 됨');
 });
 
-// fs.writeFileSync 를 잠시 바꿔 server.json.lock(또는 suffix 로 끝나는 파일)의 wx 를 code 로 times 번 실패시킨다
+// fs.openSync 를 잠시 바꿔 server.json.lock(또는 suffix 로 끝나는 파일)의 wx 를 code 로 times 번 실패시킨다
 // (Windows 의 delete pending 흉내).
 function failLockWrites(code, times, suffix = 'server.json.lock') {
-  const real = fs.writeFileSync;
+  const real = fs.openSync;
   let left = times;
-  fs.writeFileSync = (f, data, o) => {
-    if (left > 0 && String(f).endsWith(suffix) && o && o.flag === 'wx') {
+  fs.openSync = (f, flags, ...a) => {
+    if (left > 0 && String(f).endsWith(suffix) && flags === 'wx') {
       left--;
       throw Object.assign(new Error(code), { code });
     }
-    return real(f, data, o);
+    return real(f, flags, ...a);
   };
-  return () => (fs.writeFileSync = real);
+  return () => (fs.openSync = real);
 }
 
 test('start 잠금: wx 의 EPERM, EACCES, EBUSY 는 잠금이 있는 것처럼 기다렸다 다시(Windows delete pending)', T, async () => {

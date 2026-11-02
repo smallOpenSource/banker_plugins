@@ -6,9 +6,9 @@
  * Every function that runs a program takes `exec(cmd, args)` returning { status, stdout, stderr, error }, so the
  * tests can stand in for tmux on every OS. No network is used.
  */
-import { accessSync, constants, lstatSync, readFileSync, rmSync, statSync } from "node:fs";
+import { accessSync, constants, lstatSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { devNull, homedir } from "node:os";
-import { basename, delimiter, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 
 /** The tool and version in `tmux -V` output. psmux says "tmux 3.3.8" on line 1 and "psmux" on line 2. */
 export function parseVersion(text) {
@@ -76,13 +76,45 @@ export function pickClipboard({ platform, env, has }) {
 
 const exists = (p) => lstatSync(p, { throwIfNoEntry: false }) !== undefined;
 
+// The path as the file system spells it (native first: the long name and the case on disk), a missing tail joined to
+// its nearest existing folder so spelled.
+function spelled(p) {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    try {
+      return realpathSync(p);
+    } catch {
+      const up = dirname(p);
+      return up === p ? p : join(spelled(up), basename(p));
+    }
+  }
+}
+
+/**
+ * Whether a and b name one file: device and inode (bigint) when both are there, else the spelled paths, case folded on
+ * Windows and macOS. A string compare took a --conf in another case, through a linked XDG_CONFIG_HOME or an 8.3 name
+ * for another file and warned wrongly.
+ */
+export function sameFile(a, b) {
+  try {
+    const x = statSync(a, { bigint: true });
+    const y = statSync(b, { bigint: true });
+    if (x.ino !== 0n && y.ino !== 0n) return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    // one is not there (yet): the spellings decide
+  }
+  const fold = (p) => (process.platform === "win32" || process.platform === "darwin" ? p.toLowerCase() : p);
+  return fold(spelled(resolve(a))) === fold(spelled(resolve(b)));
+}
+
 /** The config files tmux reads by itself, in order. Measured: 3.6a reads every one there; 2.7 only ~/.tmux.conf. */
 export function tmuxReads(v, env, home) {
   const files = [join(home, ".tmux.conf")];
   if (v && !atLeast(v, 3, 1)) return files;
   if (env.XDG_CONFIG_HOME) files.push(join(env.XDG_CONFIG_HOME, "tmux", "tmux.conf"));
   files.push(join(home, ".config", "tmux", "tmux.conf"));
-  return [...new Set(files.map((f) => resolve(f)))];
+  return files.map((f) => resolve(f)).filter((f, i, all) => !all.slice(0, i).some((g) => sameFile(g, f)));
 }
 
 /** The tmux file for the block: --conf, else the first of tmuxReads that is there, else ~/.tmux.conf. */

@@ -186,7 +186,8 @@ export function stageStates(records) {
 // ---------- git ----------
 
 const gitCache = new Map();
-const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+// 홈 폴더에서 부른다(Windows 는 일하는 폴더의 git.exe 를 먼저 찾는다)
+const git = (cwd, args) => execFileSync('git', ['-C', path.resolve(cwd), ...args], { cwd: fs.existsSync(os.homedir()) ? os.homedir() : os.tmpdir(), encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
 
 const readText = (p) => {
   try {

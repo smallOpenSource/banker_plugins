@@ -86,7 +86,11 @@ function err(s) { process.stderr.write(s.endsWith('\n') ? s : s + '\n'); }
 // POSIX sh 용 따옴표. 홑따옴표 안에서는 확장이 일어나지 않는다
 function shq(s) { return /^[A-Za-z0-9_./:@%+=-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`; }
 
-function realOr(p) { try { return fs.realpathSync(p); } catch { return p; } }
+// 실제 경로. native 먼저: macOS 에서 디스크의 대소문자로 돌려줘, 세션 폴더나 writable_roots 를 다른 대소문자로 적어도
+// 같은 폴더로 판정한다(JS 판은 받은 철자를 그대로 둔다).
+function realOr(p) {
+  try { return fs.realpathSync.native(p); } catch { try { return fs.realpathSync(p); } catch { return p; } }
+}
 
 function isExec(f) { try { fs.accessSync(f, fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; } }
 
@@ -99,11 +103,17 @@ const verOf = (s) => String(s).split('.').map(Number);
 
 // ---------- 샌드박스가 쓸 수 있는 곳 ----------
 
-function under(p, dir) {
+function under(p, dir, fold = (x) => x) {
   if (!dir) return false;
-  const r = path.relative(dir, p);
+  const r = path.relative(fold(dir), fold(p));
   return r === '' || (r.split(path.sep)[0] !== '..' && !path.isAbsolute(r));
 }
+
+// 위험한 곳 판정에만 쓰는 접기: macOS 는 대소문자를 가리지 않는 볼륨이 기본이라, 아직 없어 실제 철자로 못 푼 경로도
+// 같은 폴더로 본다. 대소문자를 가리는 볼륨에서는 다른 폴더를 위험한 곳으로 볼 수 있지만 그쪽은 거부일 뿐이다.
+// 파일 보내기 같은 허용 판정(아래 roots)은 접지 않는다.
+const foldMac = (p) => (process.platform === 'darwin' ? p.toLowerCase() : p);
+const unsafeUnder = (p, dir) => under(p, dir, foldMac);
 
 // p 가 샌드박스 안 세션이 쓸 수 있는 곳이면 그 까닭, 아니면 ''. 순수 함수: 경로는 부르는 쪽이 실제 경로로 푼다.
 // 세션 폴더(와 그 git 최상위)가 홈 폴더 자체나 파일 시스템 루트면 그 규칙은 쓰지 않는다
@@ -114,10 +124,10 @@ export function unsafePath(p, ctx = {}) {
   if (typeof p !== 'string' || !path.isAbsolute(p)) return `절대 경로가 아님(${p})`;
   const c = { ...NO_CTX, ...ctx };
   const hit = [
-    [c.tmpRoots.some((d) => under(p, d)), '임시 폴더 아래'],
-    [isWork(c.cwd, c.home) && under(p, c.cwd), '세션 폴더 아래'],
-    [isWork(c.gitTop, c.home) && under(p, c.gitTop), '세션 폴더의 git 저장소 아래'],
-    [c.writableRoots.some((d) => under(p, d)), '샌드박스 쓰기 허용 폴더(writable_roots) 아래'],
+    [c.tmpRoots.some((d) => unsafeUnder(p, d)), '임시 폴더 아래'],
+    [isWork(c.cwd, c.home) && unsafeUnder(p, c.cwd), '세션 폴더 아래'],
+    [isWork(c.gitTop, c.home) && unsafeUnder(p, c.gitTop), '세션 폴더의 git 저장소 아래'],
+    [c.writableRoots.some((d) => unsafeUnder(p, d)), '샌드박스 쓰기 허용 폴더(writable_roots) 아래'],
   ].find(([yes]) => yes);
   return hit ? `${hit[1]}(${p})` : '';
 }
@@ -922,7 +932,7 @@ function readChecked(real, roots) {
 // 래퍼는 샌드박스 밖에서 돈다. 이 세션의 작업 폴더와 임시 폴더 안의 파일만 보낸다
 function readFileBody(file) {
   let real;
-  try { real = fs.realpathSync(path.resolve(file)); } catch (e) { usageExit(`파일을 읽지 못했습니다: ${e.message}`); }
+  try { real = fs.realpathSync.native(path.resolve(file)); } catch (e) { usageExit(`파일을 읽지 못했습니다: ${e.message}`); }
   const base = sessionCwd();
   const roots = [base, os.tmpdir()].filter(Boolean).map(realOr);
   if (!roots.some((r) => under(real, r))) {

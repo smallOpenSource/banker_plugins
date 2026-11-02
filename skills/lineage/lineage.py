@@ -1590,24 +1590,24 @@ def _stdin_id_key():
     if key is not None and len(key) == 32:
         return key
     key = os.urandom(32)
-    tmp = path.with_name("%s.%d" % (path.name, os.getpid()))
+    tmp = None
     try:
         CACHE_BASE.mkdir(parents=True, exist_ok=True)
         os.chmod(str(CACHE_BASE), 0o700)
-        # O_EXCL: a name that is already there (a link planted at this guessable name among them) is refused
-        fd = os.open(
-            str(tmp),
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
-            0o600,
+        # mkstemp: a fresh random name made exclusively (0600), so no link can be planted at it
+        # first (Windows opens O_EXCL through a link to nothing and makes the file it leads to)
+        fd, tmp = tempfile.mkstemp(
+            dir=str(CACHE_BASE), prefix=f".{path.name}.", suffix=".tmp"
         )
         with os.fdopen(fd, "wb") as f:
             f.write(key)
-        os.replace(str(tmp), str(path))  # whole or not at all
+        os.replace(tmp, str(path))  # whole or not at all
     except OSError:
-        try:
-            os.unlink(str(tmp))
-        except OSError:
-            pass
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     return key
 
 

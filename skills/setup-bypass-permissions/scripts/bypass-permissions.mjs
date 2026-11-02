@@ -38,6 +38,7 @@
  * folder (a sandbox, a read-only mount, a file another account owns): the settings are unchanged.
  * Every output ends with the line `설정 파일: <path>`.
  */
+import { randomBytes } from "node:crypto";
 import { accessSync, chmodSync, constants, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -187,7 +188,7 @@ function writeFresh(file, data, mode) {
   if (lstatSync(file, { throwIfNoEntry: false })?.isDirectory()) {
     throw Object.assign(new Error(`쓸 자리에 폴더가 있습니다: ${file}`), { code: "EISDIR" });
   }
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   rmSync(tmp, { force: true });
   try {
     writeFileSync(tmp, data, { flag: "wx", mode });

@@ -133,6 +133,23 @@ test('command text per platform and node location rules', () => {
   assert.equal(safeNode('C:\\Users\\U\\nvm\\node.exe', { win: true, cwd: 'C:\\Users\\U', codex: true, home: 'c:\\users\\u' }), true, 'Windows compares without case');
 });
 
+test('safeNode: a node in the temp folder is refused when TMPDIR or TEMP names that folder through a link', () => {
+  const real = realpathSync.native(mkdtempSync(join(tmpdir(), 'tmp-real-')));
+  const alias = `${real}-alias`;
+  symlinkSync(real, alias, 'junction');
+  const keys = process.platform === 'win32' ? ['TEMP', 'TMP'] : ['TMPDIR'];
+  const old = keys.map((k) => process.env[k]);
+  try {
+    for (const k of keys) process.env[k] = alias;
+    assert.equal(tmpdir(), alias);
+    assert.equal(safeNode(join(real, 'node'), { win: process.platform === 'win32', cwd: real, codex: false }), false);
+  } finally {
+    keys.forEach((k, i) => (old[i] === undefined ? delete process.env[k] : (process.env[k] = old[i])));
+    rmSync(alias, { force: true, recursive: false });
+    rmSync(real, { recursive: true, force: true });
+  }
+});
+
 test('obsidize goes after shell calls only and brings its canonicalizer along', () => {
   const p = home();
   assert.deepEqual(enableHooks(p, ['obsidize'], PKG, process.execPath, WORK).changed, ['obsidize']);

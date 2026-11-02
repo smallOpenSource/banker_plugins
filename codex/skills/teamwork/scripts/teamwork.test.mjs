@@ -505,6 +505,13 @@ test('unsafePath: 상대 경로, 임시 폴더, 세션 폴더, 그 git 저장소
   assert.equal(engine.unsafePath('/opt/x', { ...ctx, cwd: '/', gitTop: '' }), '', '루트는 세션 폴더로 보지 않음');
 });
 
+test('unsafePath: macOS 는 대소문자만 다른 철자도 같은 폴더로 보고 거부(대소문자를 무시하는 볼륨이 기본)', { skip: process.platform !== 'darwin' && 'macOS 전용 규칙' }, () => {
+  const ctx = { cwd: '/w/proj', gitTop: '', tmpRoots: ['/tmp'], writableRoots: ['/Data/RW'], home: '/home/u' };
+  assert.match(engine.unsafePath('/W/Proj/deep/.codex', ctx), /세션 폴더 아래/);
+  assert.match(engine.unsafePath('/data/rw/h', ctx), /writable_roots/);
+  assert.match(engine.unsafePath('/TMP/x', ctx), /임시 폴더/);
+});
+
 function refused(h, opts) {
   const r = run(h, ['on'], opts);
   assert.equal(r.code, 6, r.err);

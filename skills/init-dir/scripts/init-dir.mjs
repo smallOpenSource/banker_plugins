@@ -93,12 +93,35 @@ const real = (p) => {
   }
 };
 
+// Whether a and b are one folder: device and inode (bigint, as NTFS file ids pass 2^53), or where the file system has
+// no inode numbers, the path as the file system spells it (realpathSync.native gives one spelling for names that differ
+// only in case, an 8.3 short name or a linked parent), case folded on Windows and macOS. A string compare of the JS
+// realpath let `--root c:\users\me` (or /users/me on macOS) pass the HOME refusal.
+function sameDir(a, b) {
+  try {
+    const x = statSync(a, { bigint: true });
+    const y = statSync(b, { bigint: true });
+    if (x.ino !== 0n && y.ino !== 0n) return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    // one is gone: the spellings below decide
+  }
+  const spell = (p) => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return real(p);
+    }
+  };
+  const fold = (p) => (process.platform === "win32" || process.platform === "darwin" ? p.toLowerCase() : p);
+  return fold(spell(a)) === fold(spell(b));
+}
+
 // The root folder, or a failure: missing (2), HOME or a file system root (3).
 function checkRoot(rootArg) {
   const root = resolve(rootArg);
   if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) return fail(2, `루트 폴더가 없음: ${root}`);
   const r = real(root);
-  if (r === real(homedir())) return fail(3, `루트가 HOME 이라 거부: ${root}. 프로젝트 폴더에서 실행하거나 --root 로 지정`);
+  if (sameDir(root, homedir())) return fail(3, `루트가 HOME 이라 거부: ${root}. 프로젝트 폴더에서 실행하거나 --root 로 지정`);
   if (parse(r).root === r) return fail(3, `루트가 파일 시스템 루트라 거부: ${root}`);
   return { root };
 }
@@ -165,6 +188,7 @@ const blockEntries = (root, files, present, follow) =>
   }));
 
 function instructionStatus(r) {
+  if (r.ok === false) return `refused:${r.refused}`;
   if (r.sameAs) return "same-file";
   if (!r.changed) return "unchanged";
   return r.created || r.before === null ? "created" : "updated";
@@ -227,7 +251,10 @@ function apply(o) {
   if (p.error) return p;
   const folders = o.dryRun ? plannedFolders(p.folders) : makeFolders(p.root, p.folders);
   const done = o.dryRun ? p.plan : applyBlocks(p.entries);
-  if (!done.ok) return fail(1, `지시 파일 거부: ${done.refused.map((r) => r.message).join("; ")}. 폴더는 만들었음`);
+  if (!done.ok) {
+    const wrote = done.partial ? done.results.filter((r) => r.ok && r.changed).map((r) => r.path) : [];
+    return fail(1, `지시 파일 거부: ${done.refused.map((r) => r.message).join("; ")}. 폴더는 만들었음${wrote.length ? `. 이미 쓴 파일: ${wrote.join(", ")}` : ""}`);
+  }
   const instructions = done.results.map((r, i) => ({ file: p.entries[i].name, status: instructionStatus(r) }));
   const warnings = [...p.warnings, ...leftoverWarnings(p.root)];
   return { code: 0, report: { ok: true, command: "apply", root: p.root, runtime: o.runtime, dryRun: o.dryRun, folders, instructions, warnings, present: p.present } };

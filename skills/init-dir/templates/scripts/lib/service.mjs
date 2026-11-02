@@ -34,13 +34,15 @@
  * pid and time, removed when it ends). A later start waits for it, then sees the service running. A lock whose pid
  * is dead, is another program, or is older than 30 seconds plus the start check is removed, by one start at a time:
  * the one holding logs/<name>.start.lock.break (O_EXCL), which reads the lock again and removes only the lock it
- * judged stale. A link or a folder at either name is refused (exit 1).
+ * judged stale. A link or a folder at either name is refused (exit 1), a link to nothing among them: Windows opens
+ * O_EXCL through such a link and makes the file it leads to, so the name is looked at before the open and again after.
  *
  * Environment (tuning): SERVICE_LOG_ROTATE_BYTES (default 104857600), SERVICE_STOP_GRACE_MS (10000),
  * SERVICE_START_CHECK_MS (2000).
  */
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { uptime } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -105,10 +107,16 @@ function readPid(file) {
   }
 }
 
+// A fresh temp file with a random name (no one can plant a link at it first), renamed over the pid file.
 function writePid(file, value) {
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value)}\n`);
-  renameSync(tmp, file);
+  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(value)}\n`, { flag: "wx" });
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 // Removes the pid file when it still names this supervisor.
@@ -356,12 +364,30 @@ function lockBusy(text, st) {
 }
 
 // One file made with O_EXCL holding this start's pid and time: { text } made, { code } not (EEXIST: there is one).
+// Anything at the name, a link to nothing among them, is EEXIST: Windows opens O_EXCL through a link to nothing and
+// makes the file it leads to (macOS and Linux answer EEXIST), so the name is looked at first, and after the open,
+// before anything is written, the opened file is compared with the name: a name gone, a link or another file is EEXIST
+// (an empty file made through a link is taken back). A look that cannot be made (ESTALE, EPERM) writes as a plain
+// O_EXCL open would. A write that fails takes the empty lock away again.
 function makeLockFile(file) {
   const text = `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`;
   try {
+    if (lstatSync(file, { throwIfNoEntry: false }) !== undefined) return { code: "EEXIST" };
     const fd = openSync(file, "wx");
     try {
-      writeSync(fd, text);
+      let made = null;
+      try {
+        made = fstatSync(fd, { bigint: true });
+      } catch {
+        // cannot look: the name is not judged
+      }
+      if (namesOpened(file, made) === false) return { code: "EEXIST" };
+      try {
+        writeSync(fd, text);
+      } catch (e) {
+        if (namesOpened(file, made) === true) rmSync(file, { force: true });
+        throw e;
+      }
     } finally {
       closeSync(fd);
     }
@@ -369,6 +395,31 @@ function makeLockFile(file) {
   } catch (e) {
     return { code: e.code };
   }
+}
+
+// Whether the name is the opened file (made): true, false (gone, a link, another file), or null when it cannot be
+// told (a look that fails, no file ids). A link: the empty file made through it is taken back, and false.
+function namesOpened(file, made) {
+  let st;
+  try {
+    st = lstatSync(file, { bigint: true, throwIfNoEntry: false });
+  } catch {
+    return null;
+  }
+  if (!st) return false;
+  if (st.isSymbolicLink()) {
+    if (!made) return false;
+    try {
+      const target = realpathSync(file);
+      const at = statSync(target, { bigint: true });
+      if (at.dev === made.dev && at.ino === made.ino && at.size === 0n) rmSync(target, { force: true });
+    } catch {
+      // the link changed again: nothing of ours to find
+    }
+    return false;
+  }
+  if (!made || made.ino === 0n) return null;
+  return st.dev === made.dev && st.ino === made.ino;
 }
 
 // lstat that answers undefined for a missing file and null for one busy being deleted (the next try sees).

@@ -253,7 +253,8 @@ function readTurns() {
   }
 }
 
-// 링크나 일반 파일이 아닌 자리에는 쓰지 않는다. 새 파일을 만들어 바꿔 넣는다.
+// 링크나 일반 파일이 아닌 자리에는 쓰지 않는다. 새 파일을 만들어 바꿔 넣는다. 임시 이름에 난수를 붙인다: Windows 의
+// wx 는 끊어진 링크를 따라가 그 너머에 파일을 만들므로, 이름을 미리 알 수 없어야 링크를 심어 둘 수 없다.
 function writeTurns(lines) {
   const file = TURNS_FILE();
   try {
@@ -261,7 +262,7 @@ function writeTurns(lines) {
   } catch (e) {
     if (e?.code !== 'ENOENT') return;
   }
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomHex()}.tmp`;
   try {
     writeFileSync(tmp, `${lines.slice(-KEEP_TURNS).join('\n')}\n`, { flag: 'wx', mode: 0o600 });
     renameSync(tmp, file);

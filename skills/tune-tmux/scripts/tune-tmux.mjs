@@ -19,14 +19,18 @@
  * Exit status: 0 done (nothing to change included), 1 refused, write or reload failed, 2 usage error,
  * 3 environment (on or off with neither tmux nor psmux). No network is used.
  */
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HASH, commitBlock, markers, planBlock } from "./marker-block.mjs";
 import * as tc from "./tmux-config.mjs";
 import { appRows } from "./app-notes.mjs";
+
+// The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
+// program planted in the folder worked on never runs), or the temp folder when there is no home folder.
+const runDir = () => (existsSync(homedir()) ? homedir() : tmpdir());
 
 const USAGE = [
   "tune-tmux: tmux, psmux 설정에 표지 블록을 넣고 빼서 마우스 드래그 복사와 PageUp/PageDown 스크롤을 맞춤",
@@ -68,7 +72,8 @@ const loadCaps = () => JSON.parse(readFileSync(new URL("./psmux-caps.json", impo
 
 function defaults(deps) {
   const env = deps.env ?? process.env;
-  const exec = (cmd, args) => spawnSync(cmd, args, { encoding: "utf8", env, timeout: 15000, windowsHide: true });
+  // from the home folder: Windows looks for tmux or psmux in the working folder first
+  const exec = (cmd, args) => spawnSync(cmd, args, { cwd: runDir(), encoding: "utf8", env, timeout: 15000, windowsHide: true });
   return { env, platform: process.platform, exec, caps: null, ...deps };
 }
 
@@ -109,8 +114,8 @@ function context(o, d) {
   }
   const conf = tc.chooseTmuxConf(t.tool, d.env, home, o.conf);
   const reads = tc.tmuxReads(t.tool, d.env, home);
-  if (o.conf && !reads.includes(conf)) ctx.warnings.push(`경고: tmux 가 스스로 읽지 않는 파일: ${conf}. tmux -f 나 source-file 로 불러야 적용됨`);
-  ctx.warnings.push(...tc.conflictsIn(reads.filter((f) => f !== conf)));
+  if (o.conf && !reads.some((f) => tc.sameFile(f, conf))) ctx.warnings.push(`경고: tmux 가 스스로 읽지 않는 파일: ${conf}. tmux -f 나 source-file 로 불러야 적용됨`);
+  ctx.warnings.push(...tc.conflictsIn(reads.filter((f) => !tc.sameFile(f, conf))));
   const body = t.tool ? tmuxWanted(t.tool, o, d) : { lines: [], omitted: [], clipboard: null };
   return { ...ctx, conf, ...body };
 }
@@ -155,7 +160,9 @@ function change(ctx, o, d) {
   const plan = planOf(ctx, o.cmd === "off" || none ? null : ctx.lines.join("\n"), o);
   if (!plan.ok) return fail(1, `${plan.message}. 아무것도 바꾸지 않음`);
   if (none && !plan.changed) return { code: 0, report: { ...reportOf(ctx, o.cmd, o), changed: false, ...noLines(ctx) } };
-  return reloaded(ctx, plan, o, d, none ? removedOld(written(ctx, o, plan), ctx) : written(ctx, o, plan));
+  const done = o.dryRun ? plan : commitBlock(plan, SKILL);
+  if (!done.ok) return fail(1, `${done.message}. 아무것도 바꾸지 않음`);
+  return reloaded(ctx, plan, o, d, none ? removedOld(written(ctx, o, plan, done), ctx) : written(ctx, o, plan, done));
 }
 
 // The written report, applied to a running server when --reload asks (not on a dry run).
@@ -166,9 +173,8 @@ function reloaded(ctx, plan, o, d, out) {
   return { code: 0, report: { ...out, reload } };
 }
 
-// Writes the plan unless dry-run and says what happened.
-function written(ctx, o, plan) {
-  const done = o.dryRun ? plan : commitBlock(plan, SKILL);
+// What the write (or the dry-run plan) did, as the report says it.
+function written(ctx, o, plan, done) {
   const empty = (o.cmd === "off" || ctx.lines.length === 0) && plan.changed && plan.after?.length === 0;
   const note = empty ? "블록만 있던 파일이라 빈 파일로 남김" : null;
   return { ...reportOf(ctx, o.cmd, o), changed: plan.changed, created: done.created === true, backup: done.backup ?? null, note };

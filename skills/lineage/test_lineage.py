@@ -1394,31 +1394,18 @@ class TestLlmReviewSources(_ReviewCase):
             self.assertEqual(key.stat().st_mode & 0o777, 0o600)
 
     def test_the_stdin_id_key_is_written_in_binary_mode(self):
-        seen = []
-        real_open, had, old = (
-            os.open,
-            hasattr(os, "O_BINARY"),
-            getattr(os, "O_BINARY", None),
-        )
-        os.O_BINARY = 0x8000  # the Windows value; posix has no text mode
-
-        def spy(path, flag, mode=0o777):
-            seen.append(flag)
-            return real_open(path, flag & ~0x8000, mode)
-
-        os.open = spy
+        # a key full of 0x0A: in text mode Windows writes each as two bytes
+        real_urandom = os.urandom
+        os.urandom = lambda n: b"\n" * n
         try:
-            L._stdin_id_key()
+            key = L._stdin_id_key()
         finally:
-            os.open = real_open
-            if had:
-                os.O_BINARY = old
-            else:
-                del os.O_BINARY
-        self.assertTrue(
-            seen and all(f & 0x8000 for f in seen),
-            "in text mode Windows writes a 0x0A as two bytes",
-        )
+            os.urandom = real_urandom
+        self.assertEqual(key, b"\n" * 32)
+        with open(pathlib.Path(self.cache) / "stdin-id.key", "rb") as f:
+            self.assertEqual(
+                f.read(), b"\n" * 32, "in text mode Windows writes a 0x0A as two bytes"
+            )
 
     def test_a_stdin_id_key_lasts_one_run_when_the_cache_folder_cannot_be_made(self):
         blocker = os.path.join(self.d, "not-a-folder")
@@ -1435,13 +1422,19 @@ class TestLlmReviewSources(_ReviewCase):
         victim = os.path.join(self.d, "victim.txt")
         with open(victim, "wb") as f:
             f.write(b"someone's file\n")
+        # the old guessable name (stdin-id.key.<pid>): the temporary name comes from mkstemp now
+        planted = os.path.join(self.cache, "stdin-id.key.%d" % os.getpid())
         try:
-            os.symlink(
-                victim, os.path.join(self.cache, "stdin-id.key.%d" % os.getpid())
-            )
+            os.symlink(victim, planted)
         except (OSError, NotImplementedError):
             self.skipTest("no symbolic links here")
         self.assertEqual(len(L._stdin_id_key()), 32)
+        self.assertTrue(os.path.islink(planted), "the planted link is left as it was")
+        self.assertEqual(
+            [n for n in os.listdir(self.cache) if n.endswith(".tmp")],
+            [],
+            "no temporary file left",
+        )
         with open(victim, "rb") as f:
             self.assertEqual(
                 f.read(), b"someone's file\n", "the file the link leads to is untouched"

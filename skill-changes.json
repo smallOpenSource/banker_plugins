@@ -327,5 +327,24 @@
     "banker:init-dir",
     "banker:progress-mon",
     "banker:tune-tmux"
+  ],
+  "0.25.0": [
+    "banker:anti-drm",
+    "banker:build-testbox",
+    "banker:git-init",
+    "banker:init-dir",
+    "banker:lineage",
+    "banker:motion-sites",
+    "banker:omc-patch",
+    "banker:payload-mon",
+    "banker:progress-mon",
+    "banker:remains",
+    "banker:setup-bypass-permissions",
+    "banker:setup-omc-hud",
+    "banker:smart-compact",
+    "banker:tone-compact",
+    "banker:tune-tmux",
+    "banker:ultra-chain",
+    "banker:vertical-pptx"
   ]
 }

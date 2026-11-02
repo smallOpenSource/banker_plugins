@@ -538,6 +538,34 @@ test("start lock: a fresh break lock is left alone until it is older than 5 seco
   assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
 });
 
+test("start lock: a link to nothing at the lock's name is refused and no file is made where it leads", { skip: symlinkSkip }, () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  mkdirSync(join(root, "logs"), { recursive: true });
+  const target = join(root, "outside-made.json");
+  const lock = join(root, "logs", "app.start.lock");
+  symlinkSync(target, lock, "file");
+  const r = svc(root, "start");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /시작 잠금 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
+  assert.equal(existsSync(target), false, "Windows opens O_EXCL through a link to nothing: the file must not appear");
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false);
+});
+
+test("start lock: a link to nothing at the break lock's name is refused and no file is made where it leads", { skip: symlinkSkip }, () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  mkdirSync(join(root, "logs"), { recursive: true });
+  const lock = join(root, "logs", "app.start.lock");
+  writeFileSync(lock, `${JSON.stringify({ pid: 2147483646, at: new Date(Date.now() - 3600e3).toISOString() })}\n`);
+  const target = join(root, "outside-break.json");
+  symlinkSync(target, `${lock}.break`, "file");
+  const r = svc(root, "start");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /시작 잠금 정리 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
+  assert.equal(existsSync(target), false, "Windows opens O_EXCL through a link to nothing: the file must not appear");
+});
+
 test("start lock: a symbolic link at the lock's name is refused and its target is not touched", { skip: symlinkSkip }, () => {
   const root = project("scripts");
   configure(root, WAITER);

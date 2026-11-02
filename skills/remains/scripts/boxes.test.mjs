@@ -5,12 +5,9 @@ import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { after, test } from "node:test";
-import {
-  checkBox, installStop, loadBoxes, main, nodeTestCommand, parseArgs, parseTap, probeBox, remoteSteps, runOnBox, runScript,
-  scpBase, spawnExec, sshBase,
-} from "./boxes.mjs";
+import { checkBox, installStop, loadBoxes, main, nodeTestCommand, parseArgs, parseTap, probeBox, remoteSteps, runOnBox, runScript, scpBase, spawnExec, sshBase } from "./boxes.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "remains-boxes-test-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -420,3 +417,11 @@ test("spawnExec reports a missing program and a timeout without hanging", async 
   assert.equal(slow.timedOut, true);
   assert.ok(Date.now() - t0 < 5000, "returns soon after the limit");
 });
+
+test("identity: a relative key path is made absolute against the run's folder (ssh starts in the home folder), a path from ~ stays for OpenSSH", () => {
+  const args = (identity) => { const a = sshBase({ name: "b", os: "linux", ssh: "u@h", identity }); return a[a.indexOf("-i") + 1]; };
+  assert.equal(args("keys/k"), resolve("keys/k"));
+  assert.equal(args("~/.ssh/k"), "~/.ssh/k");
+  assert.equal(args("/abs/k"), "/abs/k", "an absolute path stays as written");
+});
+

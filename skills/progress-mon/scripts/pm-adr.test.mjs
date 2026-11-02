@@ -16,6 +16,22 @@ import { checkNote, refText } from './pm-adr-view.mjs';
 import { renderTab, command as renderCommand } from './pm-render.mjs';
 import { serve } from './pm-server.mjs';
 import { validate } from './pm-config.mjs';
+// 이 계정이 심볼릭 링크를 만들 수 있는지(Windows 는 관리자나 개발자 모드). 못 만들면 링크 시험은 그 까닭으로 건너뜀.
+// scripts/test-fixtures/can-symlink.mjs 와 같은 일을 여기서 한다: progress-mon 의 파일은 node: 와 ./ 만 가져온다(progress-mon.test.mjs AC-4).
+const symlinkSkip = (() => {
+  if (process.platform !== 'win32') return false;
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'can-symlink-'));
+  try {
+    fs.writeFileSync(path.join(d, 't'), '');
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'), 'file');
+    return false;
+  } catch {
+    return 'this Windows account cannot make symbolic links (needs an elevated administrator or Developer Mode)';
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+})();
+
 
 const T = { timeout: 60000 };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -350,6 +366,20 @@ test('check 참조: git 저장소에서 없는 커밋은 FAIL, 있는 커밋은 
   fs.writeFileSync(path.join(ctx.dataDir, 'config.json'), JSON.stringify(cfg));
   lines = adrLines(check(ctx).lines);
   assert.ok(lines.includes(`WARN adr.json project.proof.implemented[0].proofs[1] 참조: sources.git 이 꺼져 있어 커밋을 확인 못 함: ${head.slice(0, 7)}`), lines.join('\n'));
+});
+
+test('정리: 옮길 이름 자리의 끊어진 링크는 따라가지 않고 다음 번호로, 링크 너머에 파일 없음', { ...T, skip: symlinkSkip }, async () => {
+  const bad = readFix('adr.json');
+  delete bad.project.flow;
+  const ctx = project({ adr: bad });
+  const at = new Date(2026, 9, 29, 3, 4, 5).getTime();
+  const first = path.join(ctx.dataDir, 'adr.json.rejected-20261029-030405');
+  const target = path.join(ctx.project, 'outside-rejected.json');
+  fs.symlinkSync(target, first, 'file');
+  const out = await cleanAdr(ctx, configOf(ctx), at);
+  assert.match(out[0], /adr\.json\.rejected-20261029-030405-2 로 옮김/);
+  assert.equal(fs.existsSync(target), false);
+  assert.ok(fs.lstatSync(first).isSymbolicLink(), '링크는 그대로');
 });
 
 test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap 으로, 다시 돈 check 는 FAIL 0 과 WARN. 스키마 FAIL 이 남으면 adr.json.rejected-<시각> 으로 옮김(바이트 같음, 이름이 있으면 번호)', T, async () => {

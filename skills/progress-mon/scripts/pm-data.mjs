@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { dataLabel, defaults, loadConfig, eventsPath, writeAtomic, git, noBom, readRegular, UsageError } from './pm-config.mjs';
+import { dataLabel, defaults, loadConfig, eventsPath, writeAtomic, writeNew, notPlainFile, git, noBom, readRegular, realNative, UsageError } from './pm-config.mjs';
 import { stageList } from './pm-sources.mjs';
 import { planMemory, applyMemory } from './pm-memory.mjs';
 
@@ -58,7 +58,7 @@ function readLock(file, fsx) {
 function breakStale(file, seen, fsx) {
   const brk = `${file}.break`;
   try {
-    fsx.writeFileSync(brk, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + '\n', { flag: 'wx' });
+    writeNew(brk, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + '\n', {}, fsx);
   } catch (e) {
     if (!BUSY_CODES.has(e.code)) return false;
     try {
@@ -97,6 +97,27 @@ function breakStale(file, seen, fsx) {
   return removed;
 }
 
+// 잠금을 한 번 만들어 본다. 돌려줌: 만들었으면 null, 아니면 기다릴 까닭 코드(EEXIST, Windows 의 EPERM 등).
+// 링크나 폴더가 잠금 자리에 있으면 풀릴 잠금이 아니므로 기다리지 않고 거부한다(끊어진 링크면 읽기가 없음으로 보여 헛돈다).
+function tryLockOnce(file, body, fsx, label) {
+  try {
+    writeNew(file, body, {}, fsx);
+    return null;
+  } catch (e) {
+    if (!BUSY_CODES.has(e.code)) throw new UsageError(`잠금 파일을 만들지 못함(${e.code || e.message})`);
+    if (notPlainFile(file, fsx)) throw new UsageError(`잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${label}items.json.lock`);
+    return e.code;
+  }
+}
+
+// 기다림이 끝났을 때의 오류. 잠금 파일이 끝내 없었으면 다른 쓰기가 아니라 만들지 못한 것(권한 등).
+function lockTimeout(code, seenLock, last, label) {
+  if (!seenLock && code !== 'EEXIST') return new UsageError(`잠금 파일을 만들지 못함(${code})`);
+  return new UsageError(
+    `다른 쓰기가 끝나지 않음(잠금 ${label}items.json.lock, pid ${last.pid ?? '알 수 없음'}, createdAt ${last.createdAt ?? '알 수 없음'}). 그 프로세스가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`,
+  );
+}
+
 // items.json.lock 을 wx 로 만든다. 있으면 50 ms 간격으로 최대 waitMs 기다린다.
 // Windows 에서 지우는 중인 파일에 wx 하면 EPERM(또는 EACCES, EBUSY)이라 EEXIST 처럼 기다린다.
 // 낡은 잠금은 breakStale 로만 정리한다.
@@ -109,27 +130,15 @@ export async function acquireLock(dataDir, { fsx = fs, waitMs = LOCK_WAIT_MS, la
   let last = {};
   let seenLock = false; // 기다리는 동안 잠금 파일이 한 번이라도 보였는지
   for (;;) {
-    let code;
-    try {
-      fsx.writeFileSync(file, body, { flag: 'wx' });
-      return { file, mine };
-    } catch (e) {
-      code = e.code;
-      if (!BUSY_CODES.has(code)) throw new UsageError(`잠금 파일을 만들지 못함(${code || e.message})`);
-    }
+    const code = tryLockOnce(file, body, fsx, label);
+    if (code === null) return { file, mine };
     const info = readLock(file, fsx);
     // 그 사이 풀림: 바로 다시. 지우는 중(EPERM 등)이면 아래에서 기다린다
     if (info === null && code === 'EEXIST' && Date.now() < until) continue;
     if (info) seenLock = true;
     if (info && info.pid !== undefined) last = info;
     if (staleLock(info, Date.now()) && breakStale(file, info, fsx)) continue;
-    if (Date.now() >= until) {
-      // 잠금 파일이 끝내 없었으면 다른 쓰기가 아니라 만들지 못한 것(권한 등)
-      if (!seenLock && code !== 'EEXIST') throw new UsageError(`잠금 파일을 만들지 못함(${code})`);
-      throw new UsageError(
-        `다른 쓰기가 끝나지 않음(잠금 ${label}items.json.lock, pid ${last.pid ?? '알 수 없음'}, createdAt ${last.createdAt ?? '알 수 없음'}). 그 프로세스가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`,
-      );
-    }
+    if (Date.now() >= until) throw lockTimeout(code, seenLock, last, label);
     await sleep(STEP_MS);
   }
 }
@@ -287,13 +296,6 @@ function storyChange(o, now, configIds) {
 const NEXT = ['다음 할 일', '  1. references/authoring.md 를 읽고 req-spec.json, reqs.json, flow.json, arch.json, adr.json 작성', '  2. check 로 검사. FAIL 0 까지 최대 3회', '  3. start 로 서버 시작'];
 
 const slash = (p) => p.split(path.sep).join('/');
-const realOr = (p) => {
-  try {
-    return fs.realpathSync(p);
-  } catch {
-    return p;
-  }
-};
 const inside = (rel) => rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 
 // 자료 폴더를 git 제외 목록(git rev-parse --git-path info/exclude)에 한 줄 추가. 추적 파일은 바꾸지 않는다. 실패는 알림만.
@@ -306,8 +308,9 @@ function gitExclude(ctx) {
   } catch {
     return 'git 제외 목록: git 저장소 아님, 건너뜀';
   }
-  // 링크 경로(macOS /var 와 /private/var, Windows junction)로 부른 --project 도 git 최상위(실제 경로)와 맞게 푼다
-  const rel = path.relative(realOr(top), path.join(realOr(path.dirname(ctx.dataDir)), path.basename(ctx.dataDir)));
+  // 링크 경로(macOS /var 와 /private/var, Windows junction), 다른 대소문자, 8.3 이름으로 부른 --project 나 --data 도
+  // git 최상위와 같은 철자로 푼다(realNative: 디스크의 철자)
+  const rel = path.relative(realNative(top), realNative(ctx.dataDir));
   if (!inside(rel)) return 'git 제외 목록: 자료 폴더가 저장소 밖이라 건너뜀';
   const line = `/${slash(rel)}/`;
   const shown = inside(path.relative(ctx.project, excl)) ? slash(path.relative(ctx.project, excl)) : 'info/exclude';
@@ -334,10 +337,13 @@ function gitExclude(ctx) {
   return `git 제외 목록 추가: ${line} (${shown})`;
 }
 
-// 없을 때만 만든다. 돌려줌: 출력 줄.
+// 없을 때만 만든다. 돌려줌: 출력 줄. 가리키는 것이 없는 링크는 거부한다(만들면 링크 너머에 파일이 생긴다).
 function makeOnce(file, label, text) {
-  if (fs.existsSync(file)) return `그대로 둠: ${label}`;
-  fs.writeFileSync(file, text, { flag: 'wx' });
+  if (fs.lstatSync(file, { throwIfNoEntry: false }) !== undefined) {
+    if (fs.existsSync(file)) return `그대로 둠: ${label}`;
+    throw new UsageError(`${label} 자리에 가리키는 것이 없는 링크가 있어 거부`);
+  }
+  writeNew(file, text);
   return `새로 만듦: ${label}`;
 }
 

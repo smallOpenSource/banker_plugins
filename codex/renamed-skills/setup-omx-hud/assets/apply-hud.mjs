@@ -34,6 +34,7 @@
  * changes the exit code. APPLY_HUD_CHECK_TIMEOUT_MS (tests) shortens its 25s limit.
  * Exit 1 means nothing changed; exit 2 means an unexpected error stopped it partway.
  */
+import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   accessSync,
@@ -405,7 +406,7 @@ function writeSettings(file, text) {
   } catch {
     if (isLink(file)) return writeFileSync(file, text);
   }
-  const tmp = `${target}.${process.pid}.tmp`;
+  const tmp = `${target}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   try {
     rmSync(tmp, { force: true });
     writeFileSync(tmp, text, { flag: "wx", mode });

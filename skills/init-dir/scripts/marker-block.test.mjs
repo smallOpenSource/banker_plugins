@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { HASH, HTML, applyBlock, applyBlocks, findBlock, markers } from "./marker-block.mjs";
+import { HASH, HTML, applyBlock, applyBlocks, commitBlock, findBlock, markers } from "./marker-block.mjs";
 
 const WIN = process.platform === "win32";
 const BOM = "\u{FEFF}";
@@ -227,6 +227,128 @@ test("one file under two names is written once", (t) => {
   const s = applyBlocks([{ path: p, ...opts({ body: "both" }) }, { path: join(d, "CLAUDE.md"), ...opts({ body: "both", followSymlink: true }) }]);
   assert.equal(s.ok, true);
   assert.equal(read(p).split("banker:test:start").length - 1, 1);
+});
+
+// Whether the folder's file system takes names that differ only in case for one file (Windows, macOS by default).
+function caseBlind(d) {
+  const p = put(d, "case-probe", "");
+  const blind = lstatSync(join(d, "CASE-PROBE"), { throwIfNoEntry: false }) !== undefined;
+  rmSync(p);
+  return blind;
+}
+
+test("a file not there yet, named through a linked folder too, is made once", (t) => {
+  const d = fresh();
+  mkdirSync(join(d, "real"));
+  if (!trySymlink(join(d, "real"), join(d, "alias"))) return t.skip("Windows: 심볼릭 링크를 만들 권한 없음(개발자 모드 꺼짐)");
+  const r = applyBlocks([{ path: join(d, "real", "AGENTS.md"), ...opts() }, { path: join(d, "alias", "AGENTS.md"), ...opts() }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.results[0].created, true);
+  assert.equal(r.results[1].sameAs, join(d, "real", "AGENTS.md"));
+  assert.equal(read(join(d, "real", "AGENTS.md")), BLOCK);
+});
+
+test("a file not there yet, named in two cases where case is ignored, is made once and no exception", (t) => {
+  const d = fresh();
+  if (!caseBlind(d)) return t.skip("대소문자를 가리는 파일 시스템: 두 이름은 다른 파일");
+  const r = applyBlocks([{ path: join(d, "AGENTS.md"), ...opts() }, { path: join(d, "agents.md"), ...opts() }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.results[0].created, true);
+  assert.equal(r.results[1].sameAs, join(d, "AGENTS.md"));
+  assert.deepEqual(readdirSync(d).filter((f) => f.toLowerCase() === "agents.md"), ["AGENTS.md"]);
+  assert.equal(read(join(d, "AGENTS.md")), BLOCK);
+});
+
+test("a file planned as new but made before the write is planned again, not an exception", () => {
+  const d = fresh();
+  const p = join(d, "AGENTS.md");
+  // The file appears after both plans (which say "new") and before the second write: the first entry's skill is read
+  // once by its plan and once more for its write, and that second read makes the file.
+  let reads = 0;
+  const first = { path: join(d, "first.md"), ...opts() };
+  Object.defineProperty(first, "skill", {
+    get() {
+      if (++reads === 2) writeFileSync(p, "made meanwhile\n");
+      return "test";
+    },
+  });
+  const r = applyBlocks([first, { path: p, ...opts() }]);
+  assert.equal(reads, 2);
+  assert.equal(r.ok, true);
+  assert.equal(r.results[1].changed, true);
+  assert.equal(read(p), `made meanwhile\n\n${BLOCK}`);
+});
+
+test("a link that appears at a file planned as new before its write is a refusal (ok false, partial), not a quiet success", (t) => {
+  const d = fresh();
+  const p = join(d, "AGENTS.md");
+  const outside = join(d, "outside.md");
+  let reads = 0;
+  let linked = true;
+  const first = { path: join(d, "first.md"), ...opts() };
+  Object.defineProperty(first, "skill", {
+    get() {
+      if (++reads === 2) linked = trySymlink(outside, p);
+      return "test";
+    },
+  });
+  const r = applyBlocks([first, { path: p, ...opts() }]);
+  if (!linked) return t.skip("Windows: 심볼릭 링크를 만들 권한 없음(개발자 모드 꺼짐)");
+  assert.equal(r.ok, false);
+  assert.equal(r.partial, true);
+  assert.equal(r.refused.length, 1);
+  assert.equal(r.refused[0].path, p);
+  assert.equal(r.results[0].created, true, "the entry before it is written already");
+  assert.equal(lstatSync(outside, { throwIfNoEntry: false }), undefined, "nothing made where the link leads");
+});
+
+test("commitBlock: a file planned as new that is there by the write is a raced refusal, the file untouched", () => {
+  const d = fresh();
+  const p = join(d, "new.md");
+  const plan = applyBlock(p, opts({ dryRun: true }));
+  writeFileSync(p, "someone's\n");
+  const r = applyBlocks([{ path: p, ...opts() }]);
+  assert.equal(r.ok, true, "planned now, the file there is planned as it is (no raced path)");
+  const single = commitBlock(plan, "test");
+  assert.equal(single.ok, false);
+  assert.equal(single.refused, "raced");
+  assert.match(read(p), /someone's/);
+});
+
+test("a link or a folder at the .bak name refuses the change (backup), so the first original is not lost", (t) => {
+  const d = fresh();
+  const p = put(d, "AGENTS.md", "mine\n");
+  mkdirSync(`${p}.test.bak`);
+  const r = applyBlock(p, opts());
+  assert.equal(r.ok, false);
+  assert.equal(r.refused, "backup");
+  assert.equal(read(p), "mine\n");
+  const q = put(d, "CLAUDE.md", "mine\n");
+  if (!trySymlink(join(d, "nowhere"), `${q}.test.bak`)) return t.skip("Windows: 심볼릭 링크를 만들 권한 없음(개발자 모드 꺼짐)");
+  const s = applyBlock(q, opts());
+  assert.equal(s.refused, "backup");
+  assert.equal(read(q), "mine\n");
+  assert.equal(lstatSync(join(d, "nowhere"), { throwIfNoEntry: false }), undefined);
+});
+
+test("a link or a folder at the .bak name is refused already in the plan, so a dry run says so", () => {
+  const d = fresh();
+  const p = put(d, "AGENTS.md", "mine\n");
+  mkdirSync(`${p}.test.bak`);
+  const r = applyBlock(p, opts({ dryRun: true }));
+  assert.equal(r.ok, false);
+  assert.equal(r.refused, "backup");
+  const same = applyBlock(p, opts({ body: null, dryRun: true }));
+  assert.equal(same.ok, true, "a plan that changes nothing needs no backup");
+});
+
+test("a read-only plan (readOnly) does not check the .bak spot", () => {
+  const d = fresh();
+  const p = put(d, "AGENTS.md", `x\n\n${BLOCK}`);
+  mkdirSync(`${p}.test.bak`);
+  const r = applyBlock(p, opts({ body: null, dryRun: true, readOnly: true }));
+  assert.equal(r.ok, true);
+  assert.equal(r.changed, true);
 });
 
 test("one refusal among several files: none is written", () => {

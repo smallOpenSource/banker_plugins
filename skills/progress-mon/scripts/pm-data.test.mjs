@@ -382,14 +382,14 @@ test('잠금 wx 의 EPERM, EACCES, EBUSY 는 EEXIST 처럼 기다렸다 다시, 
   const { d, lock, fsx } = lockDir();
   const codes = ['EPERM', 'EACCES', 'EBUSY'];
   let calls = 0;
-  fsx.writeFileSync = (f, data, o) => {
-    if (f === lock && calls < codes.length) throw Object.assign(new Error('busy'), { code: codes[calls++] });
-    return fs.writeFileSync(f, data, o);
+  fsx.openSync = (f, flags, ...a) => {
+    if (f === lock && flags === 'wx' && calls < codes.length) throw Object.assign(new Error('busy'), { code: codes[calls++] });
+    return fs.openSync(f, flags, ...a);
   };
   const h = await acquireLock(d, { fsx, waitMs: 2000 });
   assert.equal(calls, 3);
   releaseLock(h, fsx);
-  const bad = { ...fs, writeFileSync: () => { throw Object.assign(new Error('ro'), { code: 'EROFS' }); } };
+  const bad = { ...fs, openSync: (f, flags, ...a) => { if (flags === 'wx') throw Object.assign(new Error('ro'), { code: 'EROFS' }); return fs.openSync(f, flags, ...a); } };
   await assert.rejects(acquireLock(d, { fsx: bad, waitMs: 2000 }), /잠금 파일을 만들지 못함\(EROFS\)/);
 });
 
@@ -416,9 +416,9 @@ test('오래된 정리 잠금 제거: 다시 읽은 pid, createdAt 이 처음 �
 test('잠금 wx 가 EPERM, EACCES 로 끝까지 실패하고 잠금 파일이 없으면 만들지 못함 메시지, 잠금 파일이 보였으면 다른 쓰기 메시지', T, async () => {
   for (const code of ['EPERM', 'EACCES']) {
     const { d, lock, fsx } = lockDir();
-    fsx.writeFileSync = (f, data, o) => {
-      if (f === lock) throw Object.assign(new Error('denied'), { code });
-      return fs.writeFileSync(f, data, o);
+    fsx.openSync = (f, flags, ...a) => {
+      if (f === lock && flags === 'wx') throw Object.assign(new Error('denied'), { code });
+      return fs.openSync(f, flags, ...a);
     };
     await assert.rejects(acquireLock(d, { fsx, waitMs: 200 }), (e) => e.message === `잠금 파일을 만들지 못함(${code})`);
     fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, createdAt: isoSec(Date.now()), token: 'live' }));

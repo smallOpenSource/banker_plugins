@@ -15,8 +15,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
+// program planted in the folder worked on never runs), or the temp folder when there is no home folder.
+const runDir = () => (existsSync(homedir()) ? homedir() : tmpdir());
 
 const OSES = new Set(["linux", "darwin", "win32"]);
 const FIELDS = new Set(["name", "os", "ssh", "port", "identity", "path", "runAs"]);
@@ -102,7 +106,10 @@ export function loadBoxes(file = configFile()) {
 
 // ── commands for a box ───────────────────────────────────────────────────────
 
-const extras = (b, portFlag) => [...(b.port ? [portFlag, String(b.port)] : []), ...(b.identity ? ["-i", b.identity] : [])];
+// ssh and scp start in the home folder, so a relative key path is made absolute against this run's folder first,
+// where it was meant. A path from ~ stays as it is: OpenSSH expands it itself.
+const keyPath = (p) => (/^~([\\/]|$)/.test(p) || isAbsolute(p) ? p : resolve(p));
+const extras = (b, portFlag) => [...(b.port ? [portFlag, String(b.port)] : []), ...(b.identity ? ["-i", keyPath(b.identity)] : [])];
 export const sshBase = (b) => [...BASE, ...extras(b, "-p")];
 export const scpBase = (b) => [...BASE, ...extras(b, "-P")];
 
@@ -256,8 +263,10 @@ export async function runOnBox(b, plan, exec) {
   return { ...rest, ms: Date.now() - t0 };
 }
 
+// Started from the home folder with git -C: Windows looks for a program in the working folder first, so a git.exe
+// inside the folder worked on never runs.
 function git(cwd, args) {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync("git", ["-C", resolve(cwd), ...args], { cwd: runDir(), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`git ${args.filter((a) => !a.includes("=")).join(" ")} 실패: ${lastLine(r.stderr) || r.error?.message || ""}`);
   return r.stdout;
 }
@@ -423,7 +432,8 @@ export async function main(argv, deps = {}) {
 // even if a grandchild still holds its pipes. Output past MAX_OUTPUT is dropped.
 export function spawnExec(file, args, { timeoutMs = UPLOAD_MS } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    // from the home folder: Windows looks for ssh.exe and scp.exe in the working folder (the repository) first
+    const child = spawn(file, args, { cwd: runDir(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     children.add(child);
     const buf = { stdout: "", stderr: "" };
     for (const k of ["stdout", "stderr"]) {
