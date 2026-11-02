@@ -17,6 +17,8 @@ const CLI = fileURLToPath(new URL("./init-dir.mjs", import.meta.url));
 const NO_CMDLINE = new URL("../../../scripts/test-fixtures/no-cmdline.mjs", import.meta.url).href;
 // Preload that writes another start's fresh lock at the moment a stale lock is being cleared (scripts/test-fixtures).
 const LOCK_RACE = new URL("../../../scripts/test-fixtures/lock-race.mjs", import.meta.url).href;
+// Preload that answers EPERM, EBUSY once, as Windows does for a lock file being deleted (scripts/test-fixtures).
+const LOCK_BUSY = new URL("../../../scripts/test-fixtures/lock-busy-once.mjs", import.meta.url).href;
 const base = mkdtempSync(join(tmpdir(), "init-dir-service-"));
 const home = join(base, "home");
 mkdirSync(home);
@@ -485,6 +487,37 @@ test("start lock: a lock another start makes after the stale one was judged is n
   assert.equal(JSON.parse(readFileSync(lock, "utf8")).race, "A", "the fresh lock made after the stale one was judged is still there");
   assert.equal(existsSync(`${lock}.break`), false, "the break lock is gone");
   assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
+});
+
+test("start lock: EPERM and EBUSY from a lock or break lock being deleted (Windows) are waited out, not a failure", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  const mark = join(base, `busy${n++}.log`);
+  const r = serviceDirect(root, "start", { LOCK_BUSY_MARK: mark }, ["--import", LOCK_BUSY]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /시작함/);
+  assert.deepEqual(readFileSync(mark, "utf8").trim().split("\n").sort(), ["lstat break", "lstat lock", "open break", "open lock", "rm lock"], "every busy answer was met");
+  const p = pidOf(root);
+  assert.equal(existsSync(lock), false);
+  assert.equal(existsSync(`${lock}.break`), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+});
+
+test("start lock: a fresh break lock is left alone until it is older than 5 seconds", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  writeFileSync(`${lock}.break`, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`);
+  const t0 = Date.now();
+  const r = serviceDirect(root, "start", { SERVICE_START_CHECK_MS: "3000" });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(Date.now() - t0 >= 4500, `waited ${Date.now() - t0} ms for the fresh break lock`);
+  const p = pidOf(root);
+  assert.equal(existsSync(`${lock}.break`), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
 });
 
 test("start lock: a symbolic link at the lock's name is refused and its target is not touched", { skip: symlinkSkip }, () => {

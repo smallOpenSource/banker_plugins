@@ -240,6 +240,10 @@ test('check 대조: check 명령이 adr-check.json 에 집계와 adr.json sha256
   const none = project({ adr: null });
   assert.equal(cli(['check'], none.project).code, 0);
   assert.ok(!fs.existsSync(path.join(none.dataDir, 'adr-check.json')));
+  // adr.json 이 JSON 이 아니면 FAIL 이고 기록을 쓰지 않음
+  const broken = project({ adr: '{' });
+  assert.equal(cli(['check'], broken.project).code, 1);
+  assert.ok(!fs.existsSync(path.join(broken.dataDir, 'adr-check.json')));
 });
 
 test('checkNote: 기록의 글은 이스케이프하고, 꼴이 틀린 기록은 기록 없음', () => {

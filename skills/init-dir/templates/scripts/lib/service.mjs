@@ -64,6 +64,8 @@ const BOOT_SLACK_MS = 5000;
 const LOCK_STALE_MS = 30000 + START_CHECK_MS;
 const LOCK_WAIT_MS = 5000 + START_CHECK_MS;
 const BREAK_STALE_MS = 5000;
+// On Windows a file being deleted while another process has it open answers EPERM, EACCES or EBUSY: busy, try again.
+const BUSY = new Set(["EEXIST", "EPERM", "EACCES", "EBUSY"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function parseConf(text) {
@@ -369,12 +371,39 @@ function makeLockFile(file) {
   }
 }
 
-// Removes a break lock left by a start that died while removing a stale lock: older than BREAK_STALE_MS, and still
-// the text judged old when read again (a newer break lock is left alone).
+// lstat that answers undefined for a missing file and for one busy being deleted (the next try sees).
+function lstatNow(file) {
+  try {
+    return lstatSync(file, { throwIfNoEntry: false });
+  } catch (e) {
+    if (BUSY.has(e.code)) return undefined;
+    throw e;
+  }
+}
+
+// rm that leaves a busy file for the next try (a lock left so has a dead pid once this start ends: stale).
+function rmNow(file) {
+  try {
+    rmSync(file, { force: true });
+  } catch (e) {
+    if (!BUSY.has(e.code)) throw e;
+  }
+}
+
+// Removes a break lock older than BREAK_STALE_MS (clearing takes milliseconds, so its start is taken as dead or
+// stuck), and only when it is still the text judged old when read again (a newer break lock is left alone).
 function clearStaleBreak(brk, st) {
   const text = readText(brk);
   const at = Date.parse(lockInfo(text)?.at);
-  if (Date.now() - (Number.isNaN(at) ? st.mtimeMs : at) > BREAK_STALE_MS && readText(brk) === text) rmSync(brk, { force: true });
+  if (Date.now() - (Number.isNaN(at) ? st.mtimeMs : at) > BREAK_STALE_MS && readText(brk) === text) rmNow(brk);
+}
+
+// The break lock could not be made (code): another start holds it, or it was left. { error } for a link or a folder.
+function breakHeld(brk, code) {
+  const st = BUSY.has(code) ? lstatNow(brk) : undefined;
+  if (st && !st.isFile()) return { error: `시작 잠금 정리 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${brk}` };
+  if (st) clearStaleBreak(brk, st);
+  return {};
 }
 
 // Removes a stale lock (seen: its text as judged). Only the start holding <lock>.break does it, and only when the lock
@@ -384,17 +413,12 @@ function clearStaleBreak(brk, st) {
 function breakStale(file, seen) {
   const brk = `${file}.break`;
   const made = makeLockFile(brk);
-  if (!made.text) {
-    const st = lstatSync(brk, { throwIfNoEntry: false });
-    if (st && !st.isFile()) return { error: `시작 잠금 정리 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${brk}` };
-    if (st) clearStaleBreak(brk, st);
-    return {};
-  }
+  if (!made.text) return breakHeld(brk, made.code);
   try {
-    const st = lstatSync(file, { throwIfNoEntry: false });
-    if (st && st.isFile() && readText(file) === seen && !lockBusy(seen, st)) rmSync(file, { force: true });
+    const st = lstatNow(file);
+    if (st && st.isFile() && readText(file) === seen && !lockBusy(seen, st)) rmNow(file);
   } finally {
-    if (readText(brk) === made.text) rmSync(brk, { force: true });
+    if (readText(brk) === made.text) rmNow(brk);
   }
   return {};
 }
@@ -403,11 +427,12 @@ function breakStale(file, seen) {
 function tryLock(file) {
   const made = makeLockFile(file);
   if (made.text) return made;
-  const st = lstatSync(file, { throwIfNoEntry: false });
-  if (!st && made.code !== "EEXIST") throw Object.assign(new Error(`시작 잠금을 만들지 못함(${made.code}): ${file}`), { code: made.code });
-  if (st && !st.isFile()) return { error: `시작 잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${file}` };
-  const seen = st ? readText(file) : null;
-  return st && seen !== null && !lockBusy(seen, st) ? breakStale(file, seen) : {};
+  if (!BUSY.has(made.code)) throw Object.assign(new Error(`시작 잠금을 만들지 못함(${made.code}): ${file}`), { code: made.code });
+  const st = lstatNow(file);
+  if (!st) return {}; // gone or busy being deleted: the next try sees
+  if (!st.isFile()) return { error: `시작 잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${file}` };
+  const seen = readText(file);
+  return seen !== null && !lockBusy(seen, st) ? breakStale(file, seen) : {};
 }
 
 // logs/<name>.start.lock, waiting up to LOCK_WAIT_MS for another start: { text } or { error }.
@@ -427,7 +452,7 @@ async function start(conf) {
   try {
     return await startLocked(conf);
   } finally {
-    if (readText(lock) === held.text) rmSync(lock, { force: true });
+    if (readText(lock) === held.text) rmNow(lock);
   }
 }
 
