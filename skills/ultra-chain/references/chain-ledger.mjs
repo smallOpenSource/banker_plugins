@@ -18,7 +18,12 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+
+// The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
+// program planted in the folder worked on never runs), or the temp folder when there is no home folder.
+const startDir = () => (existsSync(homedir()) ? homedir() : tmpdir());
 
 export const STAGES = [
   { id: "preflight", label: "사전 점검" },
@@ -219,8 +224,10 @@ function checkQuorum(event, meta) {
 
 // ── run folder ───────────────────────────────────────────────────────────────
 
+// Started from the home folder with git -C: Windows looks for a program in the working folder first, so a git.exe
+// inside the folder worked on never runs.
 function git(cwd, args) {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  const r = spawnSync("git", ["-C", cwd, ...args], { cwd: startDir(), encoding: "utf8" });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 

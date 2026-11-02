@@ -20,10 +20,14 @@
  * 0 ready (status, setup) or found (path), 1 not ready or a step failed, 2 usage.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
+// program planted in the folder worked on never runs), or the temp folder when there is no home folder.
+const runDir = () => (existsSync(homedir()) ? homedir() : tmpdir());
 
 export const REPO = "Motionsites-AI/claude-skill";
 export const PLUGIN = "motionsites-web-builder";
@@ -43,7 +47,9 @@ const USAGE = `motion-sites: MotionSites 의 motionsites-web-builder 스킬 설�
  */
 export function run(cmd, args, { timeout = LOOK_MS, env = process.env } = {}) {
   const shim = WIN && (cmd === "claude" || cmd === "codex");
-  const opts = { encoding: "utf8", timeout, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024 };
+  // From the home folder: python -c and -m put the working folder first on the import path (a pip/ or playwright/ in
+  // the project would run), and Windows looks for a program there first.
+  const opts = { cwd: runDir(), encoding: "utf8", timeout, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024 };
   const r = shim ? spawnSync([cmd, ...args].join(" "), { ...opts, shell: true }) : spawnSync(cmd, args, opts);
   const stdout = r.stdout ?? "";
   const out = `${stdout}${r.stderr ?? ""}`;

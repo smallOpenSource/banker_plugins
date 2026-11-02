@@ -315,6 +315,22 @@ test("commitBlock: a file planned as new that is there by the write is a raced r
   assert.match(read(p), /someone's/);
 });
 
+test("a link or a folder at the .bak name refuses the change (backup), so the first original is not lost", (t) => {
+  const d = fresh();
+  const p = put(d, "AGENTS.md", "mine\n");
+  mkdirSync(`${p}.test.bak`);
+  const r = applyBlock(p, opts());
+  assert.equal(r.ok, false);
+  assert.equal(r.refused, "backup");
+  assert.equal(read(p), "mine\n");
+  const q = put(d, "CLAUDE.md", "mine\n");
+  if (!trySymlink(join(d, "nowhere"), `${q}.test.bak`)) return t.skip("Windows: 심볼릭 링크를 만들 권한 없음(개발자 모드 꺼짐)");
+  const s = applyBlock(q, opts());
+  assert.equal(s.refused, "backup");
+  assert.equal(read(q), "mine\n");
+  assert.equal(lstatSync(join(d, "nowhere"), { throwIfNoEntry: false }), undefined);
+});
+
 test("one refusal among several files: none is written", () => {
   const d = fresh();
   const good = put(d, "good.md", "g\n");

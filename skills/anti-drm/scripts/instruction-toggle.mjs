@@ -198,7 +198,7 @@ export function writeFresh(file, data, mode = 0o644) {
 // any name that is there, a link to nothing among them (EEXIST). Windows follows a link to nothing and makes the file
 // it leads to: then that file is removed again when it is still the empty one made, and the open is refused with
 // EEXIST as elsewhere. A look before the open catches such a link; this catches one planted between the look and the
-// open. A look that fails after the open leaves the file to the caller, as a plain "wx" would.
+// open. A name gone after the open, or a look that fails, is EEXIST too: nothing is written through a name not proved.
 export function openNew(path, mode) {
   const fd = openSync(path, "wx", mode);
   let made = null;
@@ -207,7 +207,8 @@ export function openNew(path, mode) {
     made = fstatSync(fd, { bigint: true });
     st = lstatSync(path, { bigint: true });
   } catch {
-    return fd;
+    closeSync(fd); // the name is gone or cannot be compared with the opened file: nothing is written through it
+    throw Object.assign(new Error(`EEXIST: file already exists, open '${path}'`), { code: "EEXIST", syscall: "open", path });
   }
   if (!st.isSymbolicLink() && (made.ino === 0n || sameInode(made, st))) return fd;
   closeSync(fd);

@@ -19,14 +19,18 @@
  * Exit status: 0 done (nothing to change included), 1 refused, write or reload failed, 2 usage error,
  * 3 environment (on or off with neither tmux nor psmux). No network is used.
  */
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HASH, commitBlock, markers, planBlock } from "./marker-block.mjs";
 import * as tc from "./tmux-config.mjs";
 import { appRows } from "./app-notes.mjs";
+
+// The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
+// program planted in the folder worked on never runs), or the temp folder when there is no home folder.
+const runDir = () => (existsSync(homedir()) ? homedir() : tmpdir());
 
 const USAGE = [
   "tune-tmux: tmux, psmux 설정에 표지 블록을 넣고 빼서 마우스 드래그 복사와 PageUp/PageDown 스크롤을 맞춤",
@@ -68,7 +72,8 @@ const loadCaps = () => JSON.parse(readFileSync(new URL("./psmux-caps.json", impo
 
 function defaults(deps) {
   const env = deps.env ?? process.env;
-  const exec = (cmd, args) => spawnSync(cmd, args, { encoding: "utf8", env, timeout: 15000, windowsHide: true });
+  // from the home folder: Windows looks for tmux or psmux in the working folder first
+  const exec = (cmd, args) => spawnSync(cmd, args, { cwd: runDir(), encoding: "utf8", env, timeout: 15000, windowsHide: true });
   return { env, platform: process.platform, exec, caps: null, ...deps };
 }
 

@@ -3,12 +3,12 @@
 // Run: node --test skills/motion-sites/scripts/motion-sites.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { byVersion, cacheHome, claudePlugin, claudeSkill, codexPlugin, codexSkill, main, pythons, reachable, setup, sources, status } from "./motion-sites.mjs";
+import { byVersion, cacheHome, claudePlugin, run, claudeSkill, codexPlugin, codexSkill, main, pythons, reachable, setup, sources, status } from "./motion-sites.mjs";
 
 const CLI = fileURLToPath(new URL("./motion-sites.mjs", import.meta.url));
 const base = mkdtempSync(join(tmpdir(), "motion-sites-"));
@@ -235,5 +235,11 @@ test("setup: a mirror set in git or pip configuration is not judged offline by t
   const one = fake([...PY_OK, [/require\('net'\).* cdn\.playwright\.dev$/, { ok: false }], [/sync_playwright/, { ok: true, out: "/gone\n" }], [/install chromium/, { ok: true }]]);
   const c = setup("codex", { env: { ...env, CODEX_HOME: h }, runner: one.runner });
   assert.deepEqual(c.steps, [{ step: "playwright install chromium", ok: true, why: null }], "the second host answered");
+});
+
+test("run starts programs in the home folder, not the working folder (python -c and -m import from there, Windows finds programs there)", () => {
+  const r = run(process.execPath, ["-e", "process.stdout.write(process.cwd())"]);
+  assert.equal(r.ok, true, r.why);
+  assert.equal(realpathSync(r.stdout), realpathSync(homedir()));
 });
 

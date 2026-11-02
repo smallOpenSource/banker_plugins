@@ -24,12 +24,16 @@
  * repository, a .git below the root, no commit identity). No network is used.
  */
 import { spawnSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, parse, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HASH, commitBlock, findBlock, markers, planBlock } from "./marker-block.mjs";
 import { scan } from "./payload-scan.mjs";
+
+// The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
+// program planted in the folder worked on never runs), or the temp folder when there is no home folder.
+const runDir = () => (existsSync(homedir()) ? homedir() : tmpdir());
 
 const USAGE = [
   "git-init: 민감 정보를 빼는 .gitignore 를 쓰고 비밀값을 스캔한 뒤 git init, git add ., git commit -m \"init\" 으로 첫 커밋을 만듦(check 는 계획만)",
@@ -120,9 +124,29 @@ function gitEnv(extra) {
   return env;
 }
 
-// Runs git; never throws. ok is false when git could not start or exited non-zero.
+// On Windows git is a wrapper (cmd\git.exe) that starts the real git: a time limit on the wrapper alone leaves the real
+// git running, which can still make the commit after the failure was reported. With a time limit, git runs under this
+// small Node supervisor instead, which ends the whole tree with System32's taskkill /T /F and exits 124.
+const TREE_SUPERVISOR = [
+  "const {spawn,spawnSync}=require('child_process');const p=require('path');",
+  "const [ms,...a]=process.argv.slice(1);",
+  "const c=spawn('git',a,{stdio:'inherit',windowsHide:true});",
+  "const t=setTimeout(()=>{spawnSync(p.win32.join(process.env.SystemRoot||'C:\\\\Windows','System32','taskkill.exe'),['/T','/F','/PID',String(c.pid)],{stdio:'ignore',windowsHide:true});process.exit(124)},Number(ms));",
+  "c.on('error',()=>process.exit(127));c.on('exit',(code)=>{clearTimeout(t);process.exit(code==null?1:code)});",
+].join("");
+
+// Runs git on the folder cwd (git -C), started from the home folder: Windows looks for a program in the working folder
+// first, so a git.exe inside the folder being initialized never runs. Never throws. ok is false when git could not
+// start or exited non-zero; a time-out is error.code ETIMEDOUT.
 function git(args, cwd, { env, timeout } = {}) {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv(env), timeout, killSignal: "SIGKILL", maxBuffer: 256 * 1024 * 1024, windowsHide: true });
+  const opts = { cwd: runDir(), encoding: "utf8", env: gitEnv(env), killSignal: "SIGKILL", maxBuffer: 256 * 1024 * 1024, windowsHide: true };
+  const argv = ["-C", cwd, ...args];
+  if (timeout && process.platform === "win32") {
+    const r = spawnSync(process.execPath, ["-e", TREE_SUPERVISOR, String(timeout), ...argv], { ...opts, timeout: timeout + 30000 });
+    const error = r.status === 124 ? Object.assign(new Error("git timed out"), { code: "ETIMEDOUT" }) : r.error;
+    return { ok: !error && r.status === 0, out: r.stdout ?? "", err: (r.stderr ?? "").trim(), error };
+  }
+  const r = spawnSync("git", argv, { ...opts, timeout });
   return { ok: !r.error && r.status === 0, out: r.stdout ?? "", err: (r.stderr ?? "").trim(), error: r.error };
 }
 

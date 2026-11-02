@@ -1219,7 +1219,7 @@ test("config says where a file anti-drm did not write went, and says so when it 
   assert.doesNotMatch(configure(s.o, FLAGS).message, /참고:/, "anti-drm's own settings go without a word");
 });
 
-test("config does not call a folder or a link at .bak a file kept before: it says something that is not a regular file is there", () => {
+test("config does not write over a file it did not write when a folder or a link is at .bak: it refuses and the file stays", () => {
   const places = [["a folder", (bak) => { mkdirSync(bak); return true; }]];
   if (symlinks) places.push(["a link to nothing", (bak) => { symlinkSync(join(bak, "..", "nowhere"), bak); return true; }]);
   for (const [what, make] of places) {
@@ -1228,9 +1228,9 @@ test("config does not call a folder or a link at .bak a file kept before: it say
     writeFileSync(s.o.configFile, '{"theme":"dark"}\n');
     make(`${s.o.configFile}.bak`);
     const r = configure(s.o, FLAGS);
-    assert.ok(r.ok, `${what}: ${r.message}`);
-    assert.match(r.message, /참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다\. 그 자리에 일반 파일이 아닌 것이 있습니다: .*anti-drm\.json\.bak/, what);
-    assert.doesNotMatch(r.message, /먼저 남긴 파일/, what);
+    assert.equal(r.ok, false, `${what}: ${r.message}`);
+    assert.match(r.message, /원래 파일을 남길 자리에 일반 파일이 아닌 것이 있어 설정을 저장하지 않았습니다: .*anti-drm\.json\.bak/, what);
+    assert.equal(readFileSync(s.o.configFile, "utf8"), '{"theme":"dark"}\n', `${what}: the file stays as it was`);
   }
 });
 

@@ -20,7 +20,7 @@
  *   file. Windows has no owner or permission bits to check.
  * - Writes go to a temp file in the same folder and a rename. A failed write removes the temp file.
  * - When the bytes change, the first original is kept in `<file>.<skill>.bak`; an existing backup is never
- *   overwritten.
+ *   overwritten. Something else at that name (a link, a folder) refuses the change (backup), so no original is lost.
  *
  * Results are { ok, changed, refused?, message, path, file }. Callers map refused to exit status 1.
  */
@@ -292,7 +292,8 @@ function openFresh(path, mode) {
     made = fstatSync(fd, { bigint: true });
     st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
   } catch {
-    return fd;
+    closeSync(fd); // the name cannot be compared with the opened file: nothing is written through it
+    throw eexist(path);
   }
   if (st && !st.isSymbolicLink() && (made.ino === 0n || (st.dev === made.dev && st.ino === made.ino))) return fd;
   closeSync(fd);
@@ -313,27 +314,38 @@ function takeBack(path, made) {
   }
 }
 
-// Writes bytes to a file not there yet (openFresh) and closes it.
+// Writes bytes to a file not there yet (openFresh) and closes it. A write that fails takes the empty file away again
+// while the name is still that file, so no empty file stands for a first original later.
 function writeFresh(path, bytes, mode) {
   const fd = openFresh(path, mode);
   try {
     writeFileSync(fd, bytes);
+  } catch (e) {
+    const made = fstatSync(fd, { bigint: true });
+    const st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+    if (st && st.isFile() && st.dev === made.dev && st.ino === made.ino) rmSync(path, { force: true });
+    throw e;
   } finally {
     closeSync(fd);
   }
 }
 
-// Keeps the first original: writes <file>.<skill>.bak only when nothing is at that name yet.
+// Keeps the first original: writes <file>.<skill>.bak only when nothing is at that name yet. { bak } (null when a
+// regular file there is the first original already), or { refuse } when something else is there (a link, a folder):
+// then the file is not changed, as its original would have nowhere to go.
 function backup(file, skill, bytes) {
   const bak = `${file}.${skill}.bak`;
-  if (lstatSync(bak, { throwIfNoEntry: false })) return null;
+  const there = (st) => (st.isFile() ? { bak: null } : { refuse: refusal("backup", `백업 자리에 일반 파일이 아닌 것이 있어 그대로 둠: ${bak}`, file) });
+  const st = lstatSync(bak, { throwIfNoEntry: false });
+  if (st) return there(st);
   try {
     writeFresh(bak, bytes, BACKUP_MODE);
   } catch (e) {
-    if (e?.code === "EEXIST") return null; // made since the look: the first original is someone's already
-    throw e;
+    if (e?.code !== "EEXIST") throw e;
+    const now = lstatSync(bak, { throwIfNoEntry: false }); // made since the look
+    return now ? there(now) : { refuse: refusal("backup", `백업을 만들지 못해 그대로 둠: ${bak}`, file) };
   }
-  return bak;
+  return { bak };
 }
 
 /**
@@ -354,9 +366,10 @@ export function commitBlock(plan, skill) {
     }
     return { ...result, created: true, message: `새로 만듦: ${plan.path}` };
   }
-  const bak = backup(plan.file, skill, plan.before);
+  const kept = backup(plan.file, skill, plan.before);
+  if (kept.refuse) return kept.refuse;
   writeAtomic(plan.file, plan.after, plan.mode);
-  return { ...result, backup: bak, message: `바꿈: ${plan.path}` };
+  return { ...result, backup: kept.bak, message: `바꿈: ${plan.path}` };
 }
 
 /** Puts in, replaces or (body null) takes out the block in one file. dryRun plans only. */

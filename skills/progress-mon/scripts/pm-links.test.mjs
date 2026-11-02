@@ -69,12 +69,13 @@ test('writeNew: 본 뒤 열기 전에 심은 링크로 만든 파일은 지우�
   const d = dir();
   const at = path.join(d, 'race.lock');
   const target = path.join(d, 'outside-race');
-  // 열기(wx)가 링크를 따라간 것을 흉내: 쓰기 직전에 이름을 링크로 바꾸고, 쓰기는 대상에 만든다
+  // 열기(wx)가 링크를 따라간 것을 흉내: 열기 직전에 이름을 링크로 바꾸고, 열기는 대상에 만든다
   const fsx = {
     ...fs,
-    writeFileSync: (f, data, o) => {
+    openSync: (f, flags, ...a) => {
+      if (f !== at || flags !== 'wx') return fs.openSync(f, flags, ...a);
       fs.symlinkSync(target, f, 'file');
-      fs.writeFileSync(target, data, { ...o, flag: 'wx' });
+      return fs.openSync(target, 'wx', ...a);
     },
   };
   assert.throws(() => writeNew(at, 'mine', {}, fsx), { code: 'EEXIST' });
@@ -167,3 +168,15 @@ test('자료 폴더 링크 검사: 프로젝트 루트 자체를 가리키는 �
   fs.symlinkSync(real, path.join(real, '.omc'), 'dir');
   assert.throws(() => resolveContext({ cwd: real }), /링크/);
 });
+
+test('writeNew: 연 뒤 이름이 사라졌으면 쓰지 않고 EEXIST, 쓰기가 실패하면 빈 파일을 지움', () => {
+  const d = dir();
+  const at = path.join(d, 'gone.lock');
+  const gone = { ...fs, openSync: (f, flags, ...a) => { const fd = fs.openSync(f, flags, ...a); if (f === at) fs.rmSync(at); return fd; } };
+  assert.throws(() => writeNew(at, 'x', {}, gone), { code: 'EEXIST' });
+  const full = path.join(d, 'full.lock');
+  const nospc = { ...fs, writeFileSync: (f, ...rest) => { if (typeof f === 'number') throw Object.assign(new Error('nospc'), { code: 'ENOSPC' }); return fs.writeFileSync(f, ...rest); } };
+  assert.throws(() => writeNew(full, 'x', {}, nospc), { code: 'ENOSPC' });
+  assert.equal(fs.existsSync(full), false, '빈 잠금이 남지 않음');
+});
+

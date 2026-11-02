@@ -7,7 +7,7 @@
 //
 // spec: { url, jobs, timeoutMs, settleMs, outDir, cells: [{ id, device, browser, png }] }
 // Prints one line "BANKER_TESTBOX_RESULT <json>": { cells: [...] } or { fatal, detail }.
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -173,7 +173,15 @@ async function main(argv) {
   return { cells: await runGroup(pw, spec) };
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// Run directly, also through a linked path or another spelling: both sides as real paths.
+const realOr = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+};
+const isMain = process.argv[1] && realOr(process.argv[1]) === realOr(fileURLToPath(import.meta.url));
 if (isMain) {
   main(process.argv.slice(2))
     .then((r) => { process.stdout.write(`${RESULT_TAG}${JSON.stringify(r)}\n`); process.exit(0); })

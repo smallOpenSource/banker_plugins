@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { git, notPlainFile, readRegular, realNative, UsageError, writeNew } from './pm-config.mjs';
+import { git, readRegular, realNative, UsageError, writeNew } from './pm-config.mjs';
 
 export const MARKER = '<!-- progress-mon:rule -->';
 export const OMX_OPEN = '<!-- USER:OMX:POLICY:START -->';
@@ -378,7 +378,9 @@ function backup(file, buf) {
   try {
     writeNew(bak, buf);
   } catch (e) {
-    const why = e.code !== 'EEXIST' ? e.code || e.message : notPlainFile(bak) ? '일반 파일이 아닌 것(링크나 폴더)이 있음' : null;
+    // EEXIST 는 그 자리에 일반 파일(먼저 남긴 첫 원본)이 있을 때만 통과. 링크, 폴더, 그 사이 사라진 이름은 거부
+    const st = e.code === 'EEXIST' ? fs.lstatSync(bak, { throwIfNoEntry: false }) : null;
+    const why = e.code !== 'EEXIST' ? e.code || e.message : !st ? '만든 뒤 이름이 사라짐' : !st.isFile() ? '일반 파일이 아닌 것(링크나 폴더)이 있음' : null;
     if (why) throw new UsageError(`${path.basename(bak)} 백업을 만들지 못해 규칙 줄을 바꾸지 않음(${why})`);
   }
   return bak;

@@ -2,7 +2,7 @@
 // build-testbox: a test bed each PC builds for itself. Browser matrix (Playwright Chromium and WebKit, desktop and
 // mobile emulation) and container OS (Rocky Linux; macOS only as a Tart VM on Apple Silicon) run in parallel.
 // run downloads nothing; setup downloads only after --yes. Pure Node 18+, no dependency.
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { UsageError, parseArgs } from "./args.mjs";
@@ -144,5 +144,13 @@ export async function main(argv) {
   }
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// Run directly, also through a linked path or another spelling: both sides as real paths.
+const realOr = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+};
+const isMain = process.argv[1] && realOr(process.argv[1]) === realOr(fileURLToPath(import.meta.url));
 if (isMain) main(process.argv.slice(2)).then((code) => { process.exitCode = code; });

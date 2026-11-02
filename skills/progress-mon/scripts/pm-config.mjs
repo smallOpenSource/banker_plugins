@@ -1,4 +1,5 @@
 // pm-config.mjs: 프로젝트 루트와 자료 폴더 결정, 런타임 판별, config.json 읽기와 기본값, 형식 검사, 원자적 쓰기.
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
@@ -136,8 +137,11 @@ export function privateIPv4(ip) {
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
-// git 출력(앞뒤 공백 제거). git 이 없거나 실패하면 예외.
-export const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+// git 출력(앞뒤 공백 제거). git 이 없거나 실패하면 예외. 홈 폴더에서 git -C 로 부른다: Windows 는 일하는 폴더의
+// 프로그램을 먼저 찾으므로, 프로젝트 안의 git.exe 가 실행되지 않게.
+// 프로그램을 띄울 폴더: 홈 폴더(없으면 임시 폴더).
+export const runDir = () => (fs.existsSync(os.homedir()) ? os.homedir() : os.tmpdir());
+export const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { cwd: runDir(), encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
 // 프로젝트 루트: --project, 아니면 cwd 의 git 최상위, 실패면 cwd.
 export function projectRoot(cwd, project) {
@@ -176,25 +180,45 @@ export class UsageError extends Error {}
 
 // 고정 이름(잠금, 백업, 처음 만드는 설정)에 새 파일을 만든다(wx). 그 이름에 무엇이든 있으면 끊어진 링크까지 EEXIST.
 // 까닭: Windows 의 wx 는 끊어진 링크를 따라가 그 너머에 파일을 만든다(macOS, Linux 는 EEXIST). 그래서 먼저 lstat 로
-// 보고, 본 뒤 열기 전 틈에 심은 링크는 쓴 뒤 다시 lstat 로 잡는다: 따라가 만든 파일이 방금 쓴 내용 그대로면 지우고 EEXIST.
-// lstat 의 EPERM 등(Windows 에서 지우는 중인 파일)은 그대로 던진다. 부른 쪽은 wx 의 같은 코드처럼 기다린다.
+// 보고, 연 뒤 쓰기 전에 연 파일(fstat)과 이름(lstat)을 대조한다. 이름이 없거나 링크이거나 다른 파일이면 아무것도 쓰지
+// 않고 EEXIST(링크를 따라 만든 빈 파일은 지움). 쓰기가 실패하면 이름이 아직 그 파일일 때 지운다(빈 잠금이나 빈 백업이
+// 남지 않게). lstat 의 EPERM 등(Windows 에서 지우는 중인 파일)은 그대로 던진다. 부른 쪽은 wx 의 같은 코드처럼 기다린다.
 export function writeNew(file, data, opts = {}, fsx = fs) {
   if (fsx.lstatSync(file, { throwIfNoEntry: false }) !== undefined) throw eexist(file);
-  fsx.writeFileSync(file, data, { ...opts, flag: 'wx' });
+  const fd = fsx.openSync(file, 'wx', opts.mode);
+  try {
+    const made = fsx.fstatSync(fd, { bigint: true });
+    if (!namesOpened(file, made, fsx)) throw eexist(file);
+    try {
+      fsx.writeFileSync(fd, data);
+    } catch (e) {
+      if (namesOpened(file, made, fsx)) fsx.rmSync(file, { force: true });
+      throw e;
+    }
+  } finally {
+    fsx.closeSync(fd);
+  }
+}
+
+// 이름이 연 파일(made)을 가리키는지. 링크면 그 링크로 만든 빈 파일을 지우고 거짓. 볼 수 없으면 거짓.
+function namesOpened(file, made, fsx) {
   let st;
   try {
-    st = fsx.lstatSync(file);
+    st = fsx.lstatSync(file, { bigint: true, throwIfNoEntry: false });
   } catch {
-    return; // 그 사이 지워짐: 만든 것은 이 이름의 파일이었다
+    return false;
   }
-  if (!st.isSymbolicLink()) return;
-  try {
-    const target = fsx.realpathSync(file);
-    if (fsx.readFileSync(target).equals(Buffer.from(data))) fsx.rmSync(target, { force: true });
-  } catch {
-    // 링크가 또 바뀜: 되돌릴 것을 찾지 못함
+  if (!st) return false;
+  if (st.isSymbolicLink()) {
+    try {
+      const at = fsx.statSync(fsx.realpathSync(file), { bigint: true });
+      if (at.dev === made.dev && at.ino === made.ino && at.size === 0n) fsx.rmSync(fsx.realpathSync(file), { force: true });
+    } catch {
+      // 링크가 또 바뀜: 되돌릴 것을 찾지 못함
+    }
+    return false;
   }
-  throw eexist(file);
+  return made.ino === 0n || (st.dev === made.dev && st.ino === made.ino);
 }
 
 const eexist = (file) => Object.assign(new Error(`EEXIST: file already exists, open '${file}'`), { code: 'EEXIST', syscall: 'open', path: file });

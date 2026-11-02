@@ -3,7 +3,7 @@
 // Run: node --test skills/git-init/scripts/git-init.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -327,3 +327,13 @@ test("missingPatterns 는 자기 블록 밖의 줄만 셈, nameHit 는 키 이�
   assert.ok(nameHit("a/.env") && nameHit("x.PEM") && nameHit(".aws/config") && nameHit("id_ed25519") && nameHit(".npmrc"));
   assert.ok(!nameHit(".env.example") && !nameHit("id_rsa.pub") && !nameHit("src/key.js"));
 });
+
+test("Windows: a git.exe inside the folder being initialized is not run (git starts from the home folder with -C)", { skip: process.platform !== "win32" && "Windows 만 일하는 폴더에서 프로그램을 먼저 찾음" }, () => {
+  const root = project();
+  files(root, { "a.txt": "a\n" });
+  copyFileSync(process.execPath, join(root, "git.exe")); // a node.exe named git.exe: it would fail on git's arguments
+  const r = cli(["run", "--root", root, "--local-identity", ID]);
+  assert.equal(r.status, 0, output(r));
+  assert.ok(existsSync(join(root, ".git")));
+});
+

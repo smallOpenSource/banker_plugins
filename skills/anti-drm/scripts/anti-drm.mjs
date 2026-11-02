@@ -358,11 +358,13 @@ function priorSettings(file) {
  * rename. keep, when given, is a file anti-drm did not write; its bytes go to
  * <file>.bak, readable by this account only, once: a .bak already there is the
  * first such file and stays. Gives back what became of keep: null when none was
- * given, else "kept", "earlier" or "other" (see keepOnce).
+ * given, else "kept", "earlier" or "other" (see keepOnce). With "other" the settings are not written: the
+ * original would be lost.
  */
 export function writeConfig(file, config, keep = null) {
   mkdirSync(dirname(file), { recursive: true, mode: 0o755 });
   const kept = keep === null ? null : keepOnce(`${file}.bak`, keep);
+  if (kept === "other") return kept; // the original has nowhere to go: the settings are not written over it
   writeFresh(file, `${JSON.stringify(config, null, 2)}\n`, 0o644);
   return kept;
 }
@@ -472,12 +474,11 @@ export function status(opts = {}) {
 
 // What a save does beyond writing the settings, as lines to report: a link or a hard link at the settings path becomes
 // a regular file (what it led to stays, and nothing of it goes to .bak), and a file anti-drm did not write goes to
-// .bak, or is not kept when an earlier one, or something that is not a regular file, is there already. kept is what
-// writeConfig gave back.
+// .bak, or is not kept when an earlier one is there already (something that is not a regular file there refuses the
+// save before this). kept is what writeConfig gave back.
 const KEPT_NOTES = {
   kept: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 ${bak} 에 남겼습니다.`,
   earlier: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다. 먼저 남긴 파일이 있습니다: ${bak}`,
-  other: (bak) => `참고: anti-drm 이 쓰지 않은 원래 파일은 남기지 않았습니다. 그 자리에 일반 파일이 아닌 것이 있습니다: ${bak}`,
 };
 const REPLACED_NOTES = {
   link: LINK_REPLACED,
@@ -496,7 +497,9 @@ function save(o, config) {
     const prior = priorSettings(o.configFile);
     if (prior.refusal) return refuse(`${prior.refusal}: ${where(o.configFile)}`);
     const replaced = pathKind(o.configFile);
-    notes = saveNotes(o.configFile, replaced, writeConfig(o.configFile, config, prior.keep));
+    const kept = writeConfig(o.configFile, config, prior.keep);
+    if (kept === "other") return refuse(`원래 파일을 남길 자리에 일반 파일이 아닌 것이 있어 설정을 저장하지 않았습니다: ${where(`${o.configFile}.bak`)}`);
+    notes = saveNotes(o.configFile, replaced, kept);
   } catch (e) {
     if (denied(e)) return refuse(`쓸 권한이 없어 설정을 저장하지 못했습니다 (${e.code}): ${where(o.configFile)}`);
     throw e;
