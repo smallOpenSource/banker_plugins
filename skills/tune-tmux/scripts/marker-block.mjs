@@ -256,6 +256,10 @@ export function planBlock(path, opts) {
   const next = nextBytes(read.bytes, o, at.file);
   if (next.refuse) return next.refuse;
   const changed = !next.bytes.equals(read.bytes);
+  // A change keeps the first original in <file>.<skill>.bak: something else there (a link, a folder) is refused now,
+  // in the plan, so a dry run, a status and a check say so before anything is written.
+  const bakAt = changed ? lstatSync(`${at.file}.${o.skill}.bak`, { throwIfNoEntry: false }) : undefined;
+  if (bakAt && !bakAt.isFile()) return refusal("backup", `백업 자리에 일반 파일이 아닌 것이 있어 그대로 둠: ${at.file}.${o.skill}.bak`, path);
   // ino 0 (a file system without file ids) tells nothing apart: then the path as the file system spells it is the
   // key (realpathSync.native gives one spelling for names that differ only in case where case is ignored).
   const key = read.id.ino === 0n ? `path:${nativeReal(at.file)}` : `ino:${read.id.dev}:${read.id.ino}`;
@@ -292,8 +296,7 @@ function openFresh(path, mode) {
     made = fstatSync(fd, { bigint: true });
     st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
   } catch {
-    closeSync(fd); // the name cannot be compared with the opened file: nothing is written through it
-    throw eexist(path);
+    return fd; // cannot look (ESTALE, EPERM): the file is the caller's, as a plain "wx" leaves it
   }
   if (st && !st.isSymbolicLink() && (made.ino === 0n || (st.dev === made.dev && st.ino === made.ino))) return fd;
   closeSync(fd);
@@ -321,9 +324,13 @@ function writeFresh(path, bytes, mode) {
   try {
     writeFileSync(fd, bytes);
   } catch (e) {
-    const made = fstatSync(fd, { bigint: true });
-    const st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
-    if (st && st.isFile() && st.dev === made.dev && st.ino === made.ino) rmSync(path, { force: true });
+    try {
+      const made = fstatSync(fd, { bigint: true });
+      const st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+      if (st && st.isFile() && st.dev === made.dev && st.ino === made.ino) rmSync(path, { force: true });
+    } catch {
+      // cannot tell the name is still that file: it stays, and the write's own error is what is reported
+    }
     throw e;
   } finally {
     closeSync(fd);

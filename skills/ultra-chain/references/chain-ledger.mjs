@@ -227,7 +227,7 @@ function checkQuorum(event, meta) {
 // Started from the home folder with git -C: Windows looks for a program in the working folder first, so a git.exe
 // inside the folder worked on never runs.
 function git(cwd, args) {
-  const r = spawnSync("git", ["-C", cwd, ...args], { cwd: startDir(), encoding: "utf8" });
+  const r = spawnSync("git", ["-C", resolve(cwd), ...args], { cwd: startDir(), encoding: "utf8" });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 

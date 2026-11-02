@@ -15,7 +15,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
@@ -106,7 +106,9 @@ export function loadBoxes(file = configFile()) {
 
 // ── commands for a box ───────────────────────────────────────────────────────
 
-const extras = (b, portFlag) => [...(b.port ? [portFlag, String(b.port)] : []), ...(b.identity ? ["-i", b.identity] : [])];
+// ssh and scp start in the home folder, so a relative key path is made absolute against this run's folder first,
+// where it was meant.
+const extras = (b, portFlag) => [...(b.port ? [portFlag, String(b.port)] : []), ...(b.identity ? ["-i", resolve(b.identity)] : [])];
 export const sshBase = (b) => [...BASE, ...extras(b, "-p")];
 export const scpBase = (b) => [...BASE, ...extras(b, "-P")];
 
@@ -263,7 +265,7 @@ export async function runOnBox(b, plan, exec) {
 // Started from the home folder with git -C: Windows looks for a program in the working folder first, so a git.exe
 // inside the folder worked on never runs.
 function git(cwd, args) {
-  const r = spawnSync("git", ["-C", cwd, ...args], { cwd: runDir(), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync("git", ["-C", resolve(cwd), ...args], { cwd: runDir(), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`git ${args.filter((a) => !a.includes("=")).join(" ")} 실패: ${lastLine(r.stderr) || r.error?.message || ""}`);
   return r.stdout;
 }

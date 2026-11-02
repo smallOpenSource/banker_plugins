@@ -331,6 +331,17 @@ test("a link or a folder at the .bak name refuses the change (backup), so the fi
   assert.equal(lstatSync(join(d, "nowhere"), { throwIfNoEntry: false }), undefined);
 });
 
+test("a link or a folder at the .bak name is refused already in the plan, so a dry run says so", () => {
+  const d = fresh();
+  const p = put(d, "AGENTS.md", "mine\n");
+  mkdirSync(`${p}.test.bak`);
+  const r = applyBlock(p, opts({ dryRun: true }));
+  assert.equal(r.ok, false);
+  assert.equal(r.refused, "backup");
+  const same = applyBlock(p, opts({ body: null, dryRun: true }));
+  assert.equal(same.ok, true, "a plan that changes nothing needs no backup");
+});
+
 test("one refusal among several files: none is written", () => {
   const d = fresh();
   const good = put(d, "good.md", "g\n");

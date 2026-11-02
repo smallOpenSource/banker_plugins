@@ -1482,6 +1482,24 @@ test("Codex: an ESTALE once while the lock is made is tried again, and on goes o
   assert.equal(blocks(read(s.agents)), 1);
 });
 
+test("Codex: an ESTALE on the look right after the lock is made is no reason to refuse: on goes on and gives the lock back", () => {
+  const s = setup();
+  writeFileSync(s.agents, "# base\n");
+  const lock = join(s.o.codexDir, ".banker-agents.lock");
+  let done = false;
+  const r = onWithFs(s, "lstatSync", (real) => (p, o, ...a) => {
+    if (!done && String(p) === lock && o && o.bigint && existsSync(lock)) {
+      done = true;
+      throw estale("lstat");
+    }
+    return real(p, o, ...a);
+  });
+  assert.equal(done, true, "the look after the open was made");
+  assert.ok(r.ok, r.message);
+  assert.doesNotMatch(r.message, /다른 banker 지침 작업/);
+  assert.equal(existsSync(lock), false, "no lock is left behind");
+});
+
 test("Codex: an ESTALE while a dead run's lock is removed is looked at again, and the dead lock is cleared", () => {
   const s = setup();
   writeFileSync(s.agents, "# base\n");

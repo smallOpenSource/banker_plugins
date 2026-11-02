@@ -114,7 +114,7 @@ argument-hint: "[기준 커밋] [--no-boxes]"
 | `name` | 박스 이름(영문이나 숫자로 시작, 영문, 숫자, `.`, `_`, `-`) |
 | `os` | `linux`, `darwin`, `win32` 중 하나 |
 | `ssh` | `user@host`. 암호 없이 SSH 키로 접속돼야 한다 |
-| `port`, `identity` | 선택. SSH 포트와 키 파일 경로 |
+| `port`, `identity` | 선택. SSH 포트와 키 파일 경로(상대 경로는 boxes.mjs 를 실행한 폴더 기준) |
 | `path` | 선택. Linux, macOS 박스에서 PATH 앞에 붙일 절대 경로(비대화형 SSH 의 PATH 에 node 가 없을 때) |
 | `runAs` | 선택. root 로 접속하는 Linux 박스에서 시험을 대신 돌릴 계정(예: `nobody`) |
 

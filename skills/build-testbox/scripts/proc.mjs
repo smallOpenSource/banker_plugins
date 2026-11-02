@@ -101,10 +101,15 @@ export function runProc(cmd, args = [], opts = {}) {
   });
 }
 
-// Stops every child still running (used by the SIGINT and SIGTERM handlers).
+// Stops every child still running (used by the SIGINT and SIGTERM handlers, and when this process exits). On POSIX a
+// child leads its own process group, so it no longer gets the terminal's signals: an entry point that uses runProc
+// keeps signal handlers that call killAll (testbox.mjs does).
 export function killAll() {
   for (const child of LIVE) killTree(child);
   LIVE.clear();
 }
 
 export const firstLine = (s) => String(s || "").split(/\r?\n/).map((l) => l.trim()).find(Boolean) || "";
+
+// A child group left when this process ends some other way (an uncaught error) is ended too.
+process.on("exit", killAll);
