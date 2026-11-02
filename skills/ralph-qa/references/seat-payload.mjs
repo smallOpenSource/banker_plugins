@@ -29,6 +29,7 @@
  * stop is a Stop with the 0.20.4 wording. The secret scan and the size are reported, not stopped
  * on: the author masks prompt.md and runs check.
  */
+import { randomBytes } from "node:crypto";
 import { closeSync, constants, copyFileSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -537,7 +538,7 @@ const unitOf = (ctx, u) => (u.kind === "range" ? rangeUnit(ctx, u) : fileUnit(ct
 function writeOutputs(dir, { prompt, raw, unsent, run }) {
   writeFileSync(join(dir, "raw.md"), raw, { mode: 0o600 });
   writeFileSync(join(dir, "unsent.md"), unsent, { mode: 0o600 });
-  const tmp = join(dir, `.prompt-${process.pid}.md`);
+  const tmp = join(dir, `.prompt-${process.pid}-${randomBytes(6).toString("hex")}.md`);
   writeFileSync(tmp, prompt, { mode: 0o600 });
   renameSync(tmp, join(dir, "prompt.md"));
   writeFileSync(join(dir, "run.md"), run, { mode: 0o600 });

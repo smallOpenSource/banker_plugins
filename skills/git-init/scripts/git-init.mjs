@@ -348,6 +348,7 @@ function commitInit(root) {
 
 function runSteps(o, ctx) {
   const done = commitBlock(ctx.gi.plan, SKILL);
+  if (!done.ok) return fail(1, `.gitignore 거부: ${done.message}. git init 하지 않음`, { ...ctx.report, ok: false });
   const report = { ...ctx.report, gitignore: { ...ctx.report.gitignore, status: done.changed ? (done.created ? "created" : "updated") : "unchanged", backup: done.backup ?? null } };
   const list = listCandidates(ctx.tmp, ctx.root, []);
   const nested = list.filter((p) => p.endsWith("/"));

@@ -8,11 +8,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 import { acquireLock } from './pm-data.mjs';
 import { takeStartLock } from './pm-server.mjs';
 import { applyMemory, measureCodex, planMemory, ruleLine } from './pm-memory.mjs';
 import { resolveContext, writeNew } from './pm-config.mjs';
+// 이 계정이 심볼릭 링크를 만들 수 있는지(Windows 는 관리자나 개발자 모드). 못 만들면 링크 시험은 그 까닭으로 건너뜀.
+const symlinkSkip = (() => {
+  if (process.platform !== 'win32') return false;
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'can-symlink-'));
+  try {
+    fs.writeFileSync(path.join(d, 't'), '');
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'), 'file');
+    return false;
+  } catch {
+    return 'this Windows account cannot make symbolic links (needs an elevated administrator or Developer Mode)';
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+})();
+
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, 'progress-mon.mjs');
@@ -144,4 +158,11 @@ test('Codex 지시 합계: 링크인 폴더 철자로 준 --project 도 저장�
   const alias = path.join(ROOT, `alias${++n}`);
   fs.symlinkSync(real, alias, 'dir');
   assert.equal(measureCodex(path.join(alias, 'sub'), {}).total, 110);
+});
+
+test('자료 폴더 링크 검사: 프로젝트 루트 자체를 가리키는 안쪽 링크(.omc -> .)도 거부', S, () => {
+  const real = dir();
+  execFileSync('git', ['init', '-q'], { cwd: real, env: ENV, windowsHide: true });
+  fs.symlinkSync(real, path.join(real, '.omc'), 'dir');
+  assert.throws(() => resolveContext({ cwd: real }), /링크/);
 });

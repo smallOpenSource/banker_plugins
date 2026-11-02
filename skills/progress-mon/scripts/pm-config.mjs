@@ -85,17 +85,31 @@ export function sameFolder(a, b) {
 // 프로젝트 밖(--data)이면 자료 폴더 자체만 본다. 아직 없는 폴더에서 멈춘다. 안팎은 자료 폴더에서 위로 올라가며
 // 프로젝트 루트와 같은 폴더(sameFolder)를 만나는지로 본다: --data 를 다른 대소문자나 8.3 이름으로 적어도 안으로 본다.
 function linkedDir(root, dataDir) {
+  const isLink = (d) => {
+    try {
+      return fs.lstatSync(d).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  };
+  // 위로 올라가며 루트를 찾는다. 링크가 아닌 루트를 만나면 그 아래가 안이다(.omc -> . 같은 안의 링크도 목록에 남아
+  // 거부된다). 끝까지 못 만나면 루트를 가리키는 첫 링크(루트를 링크 철자로 적은 --data)를 루트로 본다.
   const up = [];
-  let inside = false;
+  let rootAt = -1;
+  let linkRootAt = -1;
   for (let d = dataDir; ; d = path.dirname(d)) {
     if (sameFolder(d, root)) {
-      inside = up.length > 0;
-      break;
+      if (!isLink(d)) {
+        rootAt = up.length;
+        break;
+      }
+      if (linkRootAt < 0) linkRootAt = up.length;
     }
     up.push(d);
     if (path.dirname(d) === d) break;
   }
-  const dirs = inside ? up.reverse() : [dataDir];
+  const cut = rootAt >= 0 ? rootAt : linkRootAt;
+  const dirs = cut > 0 ? up.slice(0, cut).reverse() : [dataDir];
   for (const d of dirs) {
     let st;
     try {

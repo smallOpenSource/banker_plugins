@@ -27,7 +27,8 @@ banker 는 원본을 복사하지 않는다. 원본의 예시(`examples/`)와 �
 
 | 칸 | 뜻 |
 |---|---|
-| `skillFile` | 설치된 원본 `SKILL.md` 경로. 없으면 `null` |
+| `skillFile` | 설치된 원본 `SKILL.md` 경로. 없거나 꺼져 있으면 `null` |
+| `disabled` | 설치는 됐지만 꺼져 있음 |
 | `python.bin` | Playwright 를 쓸 Python |
 | `python.playwright`, `python.chromium` | Playwright 와 Chromium 이 있는지 |
 | `ready` | 셋 다 있으면 `true`(종료 0) |
@@ -38,6 +39,8 @@ banker 는 원본을 복사하지 않는다. 원본의 예시(`examples/`)와 �
 
 1. 사용자에게 한 줄로 알린다: MotionSites 플러그인을 설치하고 Playwright 와 Chromium 을 받는다.
 2. `node <엔진> setup --runtime <claude|codex>` 를 실행한다. 빠진 단계만 차례로 한다.
+   - 꺼져 있는 플러그인은 다시 설치하지 않는다. Claude Code 는 `claude plugin enable` 로 켜고, Codex 는 `config.toml` 에서 켜라고 안내한다.
+   - 받기 전에 원천(github.com, PyPI, Playwright 내려받기 서버. 환경 변수의 미러가 있으면 그것)에 닿는지 8초 안에 본다. 닿지 않으면 그 단계는 "오프라인이라 설치하지 않음" 으로 끝난다. 프록시 환경 변수가 있으면 이 판정은 하지 않고 단계의 시간 제한에 맡긴다.
    - Claude Code: `claude plugin marketplace add Motionsites-AI/claude-skill`, `claude plugin install motionsites-web-builder@motionsites`
    - Codex: `codex plugin marketplace add Motionsites-AI/claude-skill`, `codex plugin add motionsites-web-builder@motionsites`
    - 공통: `<python> -m pip install playwright`, `<python> -m playwright install chromium`

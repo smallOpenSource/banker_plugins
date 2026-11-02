@@ -103,15 +103,17 @@ const verOf = (s) => String(s).split('.').map(Number);
 
 // ---------- 샌드박스가 쓸 수 있는 곳 ----------
 
-// macOS 는 대소문자를 가리지 않는 볼륨이 기본이라 접어 비교한다(아직 없는 경로는 실제 철자로 못 풀어서). 대소문자를
-// 가리는 볼륨에서는 다른 폴더를 위험한 곳으로 볼 수 있지만, 그쪽은 거부일 뿐 허용이 아니다.
-const foldMac = (p) => (process.platform === 'darwin' ? p.toLowerCase() : p);
-
-function under(p, dir) {
+function under(p, dir, fold = (x) => x) {
   if (!dir) return false;
-  const r = path.relative(foldMac(dir), foldMac(p));
+  const r = path.relative(fold(dir), fold(p));
   return r === '' || (r.split(path.sep)[0] !== '..' && !path.isAbsolute(r));
 }
+
+// 위험한 곳 판정에만 쓰는 접기: macOS 는 대소문자를 가리지 않는 볼륨이 기본이라, 아직 없어 실제 철자로 못 푼 경로도
+// 같은 폴더로 본다. 대소문자를 가리는 볼륨에서는 다른 폴더를 위험한 곳으로 볼 수 있지만 그쪽은 거부일 뿐이다.
+// 파일 보내기 같은 허용 판정(아래 roots)은 접지 않는다.
+const foldMac = (p) => (process.platform === 'darwin' ? p.toLowerCase() : p);
+const unsafeUnder = (p, dir) => under(p, dir, foldMac);
 
 // p 가 샌드박스 안 세션이 쓸 수 있는 곳이면 그 까닭, 아니면 ''. 순수 함수: 경로는 부르는 쪽이 실제 경로로 푼다.
 // 세션 폴더(와 그 git 최상위)가 홈 폴더 자체나 파일 시스템 루트면 그 규칙은 쓰지 않는다
@@ -122,10 +124,10 @@ export function unsafePath(p, ctx = {}) {
   if (typeof p !== 'string' || !path.isAbsolute(p)) return `절대 경로가 아님(${p})`;
   const c = { ...NO_CTX, ...ctx };
   const hit = [
-    [c.tmpRoots.some((d) => under(p, d)), '임시 폴더 아래'],
-    [isWork(c.cwd, c.home) && under(p, c.cwd), '세션 폴더 아래'],
-    [isWork(c.gitTop, c.home) && under(p, c.gitTop), '세션 폴더의 git 저장소 아래'],
-    [c.writableRoots.some((d) => under(p, d)), '샌드박스 쓰기 허용 폴더(writable_roots) 아래'],
+    [c.tmpRoots.some((d) => unsafeUnder(p, d)), '임시 폴더 아래'],
+    [isWork(c.cwd, c.home) && unsafeUnder(p, c.cwd), '세션 폴더 아래'],
+    [isWork(c.gitTop, c.home) && unsafeUnder(p, c.gitTop), '세션 폴더의 git 저장소 아래'],
+    [c.writableRoots.some((d) => unsafeUnder(p, d)), '샌드박스 쓰기 허용 폴더(writable_roots) 아래'],
   ].find(([yes]) => yes);
   return hit ? `${hit[1]}(${p})` : '';
 }

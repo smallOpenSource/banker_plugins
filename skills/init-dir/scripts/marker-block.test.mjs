@@ -19,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { HASH, HTML, applyBlock, applyBlocks, findBlock, markers } from "./marker-block.mjs";
+import { HASH, HTML, applyBlock, applyBlocks, commitBlock, findBlock, markers } from "./marker-block.mjs";
 
 const WIN = process.platform === "win32";
 const BOM = "\u{FEFF}";
@@ -277,6 +277,42 @@ test("a file planned as new but made before the write is planned again, not an e
   assert.equal(r.ok, true);
   assert.equal(r.results[1].changed, true);
   assert.equal(read(p), `made meanwhile\n\n${BLOCK}`);
+});
+
+test("a link that appears at a file planned as new before its write is a refusal (ok false, partial), not a quiet success", (t) => {
+  const d = fresh();
+  const p = join(d, "AGENTS.md");
+  const outside = join(d, "outside.md");
+  let reads = 0;
+  let linked = true;
+  const first = { path: join(d, "first.md"), ...opts() };
+  Object.defineProperty(first, "skill", {
+    get() {
+      if (++reads === 2) linked = trySymlink(outside, p);
+      return "test";
+    },
+  });
+  const r = applyBlocks([first, { path: p, ...opts() }]);
+  if (!linked) return t.skip("Windows: 심볼릭 링크를 만들 권한 없음(개발자 모드 꺼짐)");
+  assert.equal(r.ok, false);
+  assert.equal(r.partial, true);
+  assert.equal(r.refused.length, 1);
+  assert.equal(r.refused[0].path, p);
+  assert.equal(r.results[0].created, true, "the entry before it is written already");
+  assert.equal(lstatSync(outside, { throwIfNoEntry: false }), undefined, "nothing made where the link leads");
+});
+
+test("commitBlock: a file planned as new that is there by the write is a raced refusal, the file untouched", () => {
+  const d = fresh();
+  const p = join(d, "new.md");
+  const plan = applyBlock(p, opts({ dryRun: true }));
+  writeFileSync(p, "someone's\n");
+  const r = applyBlocks([{ path: p, ...opts() }]);
+  assert.equal(r.ok, true, "applyBlocks plans it again");
+  const single = commitBlock(plan, "test");
+  assert.equal(single.ok, false);
+  assert.equal(single.refused, "raced");
+  assert.match(read(p), /someone's/);
 });
 
 test("one refusal among several files: none is written", () => {

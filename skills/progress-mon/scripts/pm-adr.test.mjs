@@ -1,7 +1,6 @@
 // pm-adr.mjs 시험. 임시 프로젝트에 고정 자료(assets/fixture)와 adr.json 이 가리키는 파일을 만들고 check, 정리, 렌더, export,
 // 서버, 옛 판 자료 폴더의 ADR 단계를 본다. 화면 e2e 는 Playwright Chromium(테스트박스 도구 폴더, 없으면 이 PC 의 전역)으로 export 한 HTML 을 연다.
 import { test, after } from 'node:test';
-import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,6 +16,21 @@ import { checkNote, refText } from './pm-adr-view.mjs';
 import { renderTab, command as renderCommand } from './pm-render.mjs';
 import { serve } from './pm-server.mjs';
 import { validate } from './pm-config.mjs';
+// 이 계정이 심볼릭 링크를 만들 수 있는지(Windows 는 관리자나 개발자 모드). 못 만들면 링크 시험은 그 까닭으로 건너뜀.
+const symlinkSkip = (() => {
+  if (process.platform !== 'win32') return false;
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'can-symlink-'));
+  try {
+    fs.writeFileSync(path.join(d, 't'), '');
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'), 'file');
+    return false;
+  } catch {
+    return 'this Windows account cannot make symbolic links (needs an elevated administrator or Developer Mode)';
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+})();
+
 
 const T = { timeout: 60000 };
 const HERE = path.dirname(fileURLToPath(import.meta.url));

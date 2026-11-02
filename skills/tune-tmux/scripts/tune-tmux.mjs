@@ -155,7 +155,9 @@ function change(ctx, o, d) {
   const plan = planOf(ctx, o.cmd === "off" || none ? null : ctx.lines.join("\n"), o);
   if (!plan.ok) return fail(1, `${plan.message}. 아무것도 바꾸지 않음`);
   if (none && !plan.changed) return { code: 0, report: { ...reportOf(ctx, o.cmd, o), changed: false, ...noLines(ctx) } };
-  return reloaded(ctx, plan, o, d, none ? removedOld(written(ctx, o, plan), ctx) : written(ctx, o, plan));
+  const done = o.dryRun ? plan : commitBlock(plan, SKILL);
+  if (!done.ok) return fail(1, `${done.message}. 아무것도 바꾸지 않음`);
+  return reloaded(ctx, plan, o, d, none ? removedOld(written(ctx, o, plan, done), ctx) : written(ctx, o, plan, done));
 }
 
 // The written report, applied to a running server when --reload asks (not on a dry run).
@@ -166,9 +168,8 @@ function reloaded(ctx, plan, o, d, out) {
   return { code: 0, report: { ...out, reload } };
 }
 
-// Writes the plan unless dry-run and says what happened.
-function written(ctx, o, plan) {
-  const done = o.dryRun ? plan : commitBlock(plan, SKILL);
+// What the write (or the dry-run plan) did, as the report says it.
+function written(ctx, o, plan, done) {
   const empty = (o.cmd === "off" || ctx.lines.length === 0) && plan.changed && plan.after?.length === 0;
   const note = empty ? "블록만 있던 파일이라 빈 파일로 남김" : null;
   return { ...reportOf(ctx, o.cmd, o), changed: plan.changed, created: done.created === true, backup: done.backup ?? null, note };

@@ -97,6 +97,27 @@ function breakStale(file, seen, fsx) {
   return removed;
 }
 
+// 잠금을 한 번 만들어 본다. 돌려줌: 만들었으면 null, 아니면 기다릴 까닭 코드(EEXIST, Windows 의 EPERM 등).
+// 링크나 폴더가 잠금 자리에 있으면 풀릴 잠금이 아니므로 기다리지 않고 거부한다(끊어진 링크면 읽기가 없음으로 보여 헛돈다).
+function tryLockOnce(file, body, fsx, label) {
+  try {
+    writeNew(file, body, {}, fsx);
+    return null;
+  } catch (e) {
+    if (!BUSY_CODES.has(e.code)) throw new UsageError(`잠금 파일을 만들지 못함(${e.code || e.message})`);
+    if (notPlainFile(file, fsx)) throw new UsageError(`잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${label}items.json.lock`);
+    return e.code;
+  }
+}
+
+// 기다림이 끝났을 때의 오류. 잠금 파일이 끝내 없었으면 다른 쓰기가 아니라 만들지 못한 것(권한 등).
+function lockTimeout(code, seenLock, last, label) {
+  if (!seenLock && code !== 'EEXIST') return new UsageError(`잠금 파일을 만들지 못함(${code})`);
+  return new UsageError(
+    `다른 쓰기가 끝나지 않음(잠금 ${label}items.json.lock, pid ${last.pid ?? '알 수 없음'}, createdAt ${last.createdAt ?? '알 수 없음'}). 그 프로세스가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`,
+  );
+}
+
 // items.json.lock 을 wx 로 만든다. 있으면 50 ms 간격으로 최대 waitMs 기다린다.
 // Windows 에서 지우는 중인 파일에 wx 하면 EPERM(또는 EACCES, EBUSY)이라 EEXIST 처럼 기다린다.
 // 낡은 잠금은 breakStale 로만 정리한다.
@@ -109,29 +130,15 @@ export async function acquireLock(dataDir, { fsx = fs, waitMs = LOCK_WAIT_MS, la
   let last = {};
   let seenLock = false; // 기다리는 동안 잠금 파일이 한 번이라도 보였는지
   for (;;) {
-    let code;
-    try {
-      writeNew(file, body, {}, fsx);
-      return { file, mine };
-    } catch (e) {
-      code = e.code;
-      if (!BUSY_CODES.has(code)) throw new UsageError(`잠금 파일을 만들지 못함(${code || e.message})`);
-    }
-    // 링크나 폴더가 잠금 자리에 있음: 풀릴 잠금이 아니므로 기다리지 않고 거부(끊어진 링크면 읽기가 없음으로 보여 헛돈다)
-    if (notPlainFile(file, fsx)) throw new UsageError(`잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${label}items.json.lock`);
+    const code = tryLockOnce(file, body, fsx, label);
+    if (code === null) return { file, mine };
     const info = readLock(file, fsx);
     // 그 사이 풀림: 바로 다시. 지우는 중(EPERM 등)이면 아래에서 기다린다
     if (info === null && code === 'EEXIST' && Date.now() < until) continue;
     if (info) seenLock = true;
     if (info && info.pid !== undefined) last = info;
     if (staleLock(info, Date.now()) && breakStale(file, info, fsx)) continue;
-    if (Date.now() >= until) {
-      // 잠금 파일이 끝내 없었으면 다른 쓰기가 아니라 만들지 못한 것(권한 등)
-      if (!seenLock && code !== 'EEXIST') throw new UsageError(`잠금 파일을 만들지 못함(${code})`);
-      throw new UsageError(
-        `다른 쓰기가 끝나지 않음(잠금 ${label}items.json.lock, pid ${last.pid ?? '알 수 없음'}, createdAt ${last.createdAt ?? '알 수 없음'}). 그 프로세스가 끝났는데도 남아 있으면 잠금 파일을 지운 뒤 다시 실행`,
-      );
-    }
+    if (Date.now() >= until) throw lockTimeout(code, seenLock, last, label);
     await sleep(STEP_MS);
   }
 }

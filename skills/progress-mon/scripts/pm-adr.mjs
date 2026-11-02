@@ -409,10 +409,11 @@ const stamp = (ms) => {
 function reject(file, now) {
   const base = `${file}.rejected-${stamp(now)}`;
   const bytes = fs.readFileSync(file);
+  const mode = fs.statSync(file).mode & 0o777; // as COPYFILE_EXCL kept it
   for (let i = 1; ; i++) {
     const dest = i === 1 ? base : `${base}-${i}`;
     try {
-      writeNew(dest, bytes);
+      writeNew(dest, bytes, { mode });
     } catch (e) {
       if (e.code === 'EEXIST') continue;
       throw e;

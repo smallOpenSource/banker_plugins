@@ -279,30 +279,78 @@ function writeAtomic(file, data, mode) {
   }
 }
 
-// Keeps the first original: writes <file>.<skill>.bak only when nothing is at that name yet.
-function backup(file, skill, bytes) {
-  const bak = `${file}.${skill}.bak`;
-  if (lstatSync(bak, { throwIfNoEntry: false })) return null;
-  const fd = openSync(bak, "wx", BACKUP_MODE);
+// Opens a file not there yet, as "wx" does, and makes sure the name is the file made. Anything at the name, a link to
+// nothing among them, is EEXIST: Windows opens "wx" through a link to nothing and makes the file it leads to (macOS
+// and Linux answer EEXIST), so the name is looked at first, and a link planted between that look and the open is
+// caught after it by comparing the opened file with the name; the empty file made through it is taken back.
+function openFresh(path, mode) {
+  if (lstatSync(path, { throwIfNoEntry: false })) throw eexist(path);
+  const fd = openSync(path, "wx", mode);
+  let made;
+  let st;
+  try {
+    made = fstatSync(fd, { bigint: true });
+    st = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+  } catch {
+    return fd;
+  }
+  if (st && !st.isSymbolicLink() && (made.ino === 0n || (st.dev === made.dev && st.ino === made.ino))) return fd;
+  closeSync(fd);
+  if (st?.isSymbolicLink()) takeBack(path, made);
+  throw eexist(path);
+}
+
+const eexist = (path) => Object.assign(new Error(`EEXIST: file already exists, open '${path}'`), { code: "EEXIST", path });
+
+// Removes the file an open made through the link at path, while it is still that empty file.
+function takeBack(path, made) {
+  try {
+    const target = realpathSync(path);
+    const st = statSync(target, { bigint: true });
+    if (st.dev === made.dev && st.ino === made.ino && st.size === 0n) rmSync(target, { force: true });
+  } catch {
+    // the link changed again: nothing of ours to find
+  }
+}
+
+// Writes bytes to a file not there yet (openFresh) and closes it.
+function writeFresh(path, bytes, mode) {
+  const fd = openFresh(path, mode);
   try {
     writeFileSync(fd, bytes);
   } finally {
     closeSync(fd);
   }
+}
+
+// Keeps the first original: writes <file>.<skill>.bak only when nothing is at that name yet.
+function backup(file, skill, bytes) {
+  const bak = `${file}.${skill}.bak`;
+  if (lstatSync(bak, { throwIfNoEntry: false })) return null;
+  try {
+    writeFresh(bak, bytes, BACKUP_MODE);
+  } catch (e) {
+    if (e?.code === "EEXIST") return null; // made since the look: the first original is someone's already
+    throw e;
+  }
   return bak;
 }
 
-/** Writes what planBlock worked out. A plan that changes nothing or was refused is returned as a result. */
+/**
+ * Writes what planBlock worked out. A plan that changes nothing or was refused is returned as a result. A file planned
+ * as new that is there by the write (made or linked since the plan) is not touched: the result is a refusal with
+ * raced: true, which applyBlocks answers by planning that file again.
+ */
 export function commitBlock(plan, skill) {
   if (!plan.ok) return plan;
   const result = { ok: true, changed: plan.changed, path: plan.path, file: plan.file };
   if (!plan.changed) return { ...result, message: `변경 없음: ${plan.path}` };
   if (plan.before === null && plan.after !== null) {
-    const fd = openSync(plan.file, "wx", plan.mode);
     try {
-      writeFileSync(fd, plan.after);
-    } finally {
-      closeSync(fd);
+      writeFresh(plan.file, plan.after, plan.mode);
+    } catch (e) {
+      if (e?.code !== "EEXIST") throw e;
+      return { ...refusal("raced", `계획한 뒤 그 이름에 파일이나 링크가 생겨 그대로 둠: ${plan.path}`, plan.path), raced: true };
     }
     return { ...result, created: true, message: `새로 만듦: ${plan.path}` };
   }
@@ -321,6 +369,8 @@ export function applyBlock(path, opts) {
 /**
  * Applies blocks to several files, each entry { path, ...opts }. Every file is planned first: one refusal and
  * none is written. Two entries naming one file (after links are followed) write it once, by the first entry.
+ * A file that changes between the plans and the writes (raced) is planned again; a refusal then comes back as
+ * { ok: false, partial: true }, the entries before it being written already.
  */
 export function applyBlocks(entries, { dryRun = false } = {}) {
   const plans = entries.map((e) => ({ entry: e, plan: planBlock(e.path, e) }));
@@ -329,25 +379,23 @@ export function applyBlocks(entries, { dryRun = false } = {}) {
   const seen = new Map();
   const once = (plan) => ({ ok: true, changed: false, path: plan.path, file: plan.file, sameAs: seen.get(plan.key), message: `같은 파일이라 한 번만 씀: ${plan.path}` });
   const write = (entry, plan) => {
+    const done = dryRun ? plan : commitBlock(plan, entry.skill);
+    if (!done.ok) return done;
     seen.set(plan.key, plan.path);
-    if (dryRun) return plan;
-    const done = commitBlock(plan, entry.skill);
     const now = done.created ? keyNow(plan.file) : null; // a file made now is that file to later spellings too
     if (now && !seen.has(now)) seen.set(now, plan.path);
     return done;
   };
   const results = plans.map(({ entry, plan }) => {
     if (seen.has(plan.key)) return once(plan);
-    try {
-      return write(entry, plan);
-    } catch (e) {
-      // A file planned as new was made since: by an earlier entry under another spelling (a case-insensitive file
-      // system), or by another program. Plan it again as the file now there.
-      if (e?.code !== "EEXIST" || plan.before !== null || dryRun) throw e;
-      const again = planBlock(entry.path, entry);
-      if (!again.ok) return again;
-      return seen.has(again.key) ? once(again) : write(entry, again);
-    }
+    const done = write(entry, plan);
+    if (!done.raced) return done;
+    // Made since the plan: by an earlier entry under another spelling (a case-insensitive file system), or by another
+    // program. Plan it again as what is there now.
+    const again = planBlock(entry.path, entry);
+    if (!again.ok) return again;
+    return seen.has(again.key) ? once(again) : write(entry, again);
   });
-  return { ok: true, refused: [], results };
+  const late = results.filter((r) => r.ok === false);
+  return late.length > 0 ? { ok: false, partial: true, refused: late, results } : { ok: true, refused: [], results };
 }

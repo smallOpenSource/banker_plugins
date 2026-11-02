@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { byVersion, cacheHome, claudeSkill, codexSkill, main, pythons, setup, status } from "./motion-sites.mjs";
+import { byVersion, cacheHome, claudePlugin, claudeSkill, codexPlugin, codexSkill, main, pythons, reachable, setup, sources, status } from "./motion-sites.mjs";
 
 const CLI = fileURLToPath(new URL("./motion-sites.mjs", import.meta.url));
 const base = mkdtempSync(join(tmpdir(), "motion-sites-"));
@@ -33,15 +33,17 @@ function codexHome({ enabled = true, versions = ["1.0.0"] } = {}) {
   return h;
 }
 
-// A fake runner: answers by the first matching [test, result] rule and records every call.
+// A fake runner: answers by the first matching [test, result] rule and records every call. A rule's out is stdout
+// unless it gives stdout itself; the reachability probe (node -e ... net) answers yes unless a rule says otherwise.
 function fake(rules) {
   const calls = [];
+  const all = [...rules, [/require\('net'\)/, { ok: true }]];
   const runner = (cmd, args, opts = {}) => {
     const line = [cmd, ...args].join(" ");
     calls.push({ line, timeout: opts.timeout });
-    const hit = rules.find(([re]) => re.test(line));
+    const hit = all.find(([re]) => re.test(line));
     const r = hit ? (typeof hit[1] === "function" ? hit[1](line) : hit[1]) : { ok: false, out: "", why: `${cmd} 실행 실패(ENOENT)` };
-    return { out: "", why: null, ...r };
+    return { out: "", why: null, ...r, stdout: r.stdout ?? r.out ?? "" };
   };
   return { runner, calls };
 }
@@ -170,3 +172,54 @@ test("command line: usage errors exit 2, --help exits 0, path without the plugin
   assert.match(found.stdout, /motionsites-web-builder[\\/]SKILL\.md/);
   assert.equal(main(["nope"], () => {}, () => {}), 2);
 });
+
+test("codexPlugin: enabled = false after an array value holding [ is still read as off", () => {
+  const h = codexHome();
+  writeFileSync(join(h, "config.toml"), `[plugins."${ID}"]\ntags = ["a", "b"]\nenabled = false\n\n[other]\nx = 1\n`);
+  assert.deepEqual(codexPlugin({ CODEX_HOME: h }), { file: null, disabled: true });
+  writeFileSync(join(h, "config.toml"), `[plugins."${ID}"]\ntags = ["a"]\n\n[other]\nenabled = false\n`);
+  assert.equal(codexPlugin({ CODEX_HOME: h }).disabled, false, "another table's enabled is not this plugin's");
+});
+
+test("claudePlugin: JSON from stdout only, so a warning on stderr does not hide the plugin; a disabled one is told apart", () => {
+  const p = fresh();
+  mkdirSync(join(p, "skills", "motionsites-web-builder"), { recursive: true });
+  writeFileSync(join(p, "skills", "motionsites-web-builder", "SKILL.md"), "x");
+  const list = (enabled) => JSON.stringify([{ id: ID, enabled, installPath: p }]);
+  const warned = (enabled) => fake([[/plugin list/, { ok: true, stdout: list(enabled), out: `${list(enabled)}warning: [update] a newer version\n` }]]).runner;
+  assert.equal(claudePlugin(warned(true)).file, join(p, "skills", "motionsites-web-builder", "SKILL.md"));
+  assert.deepEqual(claudePlugin(warned(false)), { file: null, disabled: true });
+});
+
+test("setup: a disabled plugin is turned on (Claude Code) or named with where to turn it on (Codex), not installed again", () => {
+  const p = fresh();
+  mkdirSync(join(p, "skills", "motionsites-web-builder"), { recursive: true });
+  writeFileSync(join(p, "skills", "motionsites-web-builder", "SKILL.md"), "x");
+  const env = { MOTION_SITES_HOME: fresh() };
+  const { runner, calls } = fake([[/plugin list/, { ok: true, out: JSON.stringify([{ id: ID, enabled: false, installPath: p }]) }], [/plugin enable/, { ok: true }], ...PY_OK]);
+  const r = setup("claude", { env, runner });
+  assert.deepEqual(r.steps[0], { step: "plugin enable", ok: true, why: null });
+  assert.equal(calls.some((c) => /plugin install|marketplace add/.test(c.line)), false);
+  const h = codexHome({ enabled: false });
+  const c = setup("codex", { env: { ...env, CODEX_HOME: h }, runner: fake(PY_OK).runner });
+  assert.equal(c.steps[0].ok, false);
+  assert.match(c.steps[0].why, /enabled = true/);
+});
+
+test("setup offline: a source that does not answer stops its step with the reason, before any download", () => {
+  const env = { MOTION_SITES_HOME: fresh() };
+  const { runner, calls } = fake([[/plugin list/, { ok: true, out: "[]" }], [/require\('net'\).* github\.com$/, { ok: false }]]);
+  const r = setup("claude", { env, runner });
+  assert.deepEqual(r.steps, [{ step: "marketplace add", ok: false, why: "오프라인이라 설치하지 않음(github.com 에 닿지 않음)" }]);
+  assert.equal(calls.some((c) => /marketplace add|plugin install|pip install/.test(c.line)), false);
+  const h = codexHome();
+  const py = setup("codex", { env: { ...env, CODEX_HOME: h }, runner: fake([...PY_OK.slice(0, 1), [/require\('net'\).* pypi\.org$/, { ok: false }]]).runner });
+  assert.deepEqual(py.steps, [{ step: "pip install playwright", ok: false, why: "오프라인이라 설치하지 않음(pypi.org 에 닿지 않음)" }]);
+});
+
+test("reachable: not judged behind a proxy; sources follow the mirrors named in the environment", () => {
+  assert.equal(reachable("github.com", { env: { HTTPS_PROXY: "http://p:3128" }, runner: () => assert.fail("no probe behind a proxy") }), null);
+  assert.deepEqual(sources({ PIP_INDEX_URL: "https://mirror.example/simple", PLAYWRIGHT_DOWNLOAD_HOST: "https://dl.example" }), { plugin: "github.com", pip: "mirror.example", chromium: "dl.example" });
+  assert.deepEqual(sources({}), { plugin: "github.com", pip: "pypi.org", chromium: "cdn.playwright.dev" });
+});
+

@@ -37,15 +37,52 @@ const USAGE = `motion-sites: MotionSites 의 motionsites-web-builder 스킬 설�
 사용법: node motion-sites.mjs status|setup|path --runtime claude|codex`;
 
 /**
- * Runs a program with fixed arguments: { ok, out, why }. On Windows claude and codex are .cmd shims, which Node runs
- * only through a shell; their arguments here are fixed words. Python gets no shell (its -c code holds quotes).
+ * Runs a program with fixed arguments: { ok, stdout, out (stdout and stderr), why }. Data (JSON, paths) is read from
+ * stdout only, so a warning on stderr never spoils it. On Windows claude and codex are .cmd shims, which Node runs only
+ * through a shell: they go as one command line (their arguments here are fixed words). Python gets no shell.
  */
 export function run(cmd, args, { timeout = LOOK_MS, env = process.env } = {}) {
-  const shell = WIN && (cmd === "claude" || cmd === "codex");
-  const r = spawnSync(cmd, args, { encoding: "utf8", timeout, env, shell, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
-  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-  if (r.error) return { ok: false, out, why: r.error.code === "ETIMEDOUT" ? `시간 초과(${timeout / 1000}초)` : `${cmd} 실행 실패(${r.error.code})` };
-  return { ok: r.status === 0, out, why: r.status === 0 ? null : `${cmd} ${args.join(" ")} 종료 ${r.status}: ${lastLine(out)}` };
+  const shim = WIN && (cmd === "claude" || cmd === "codex");
+  const opts = { encoding: "utf8", timeout, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024 };
+  const r = shim ? spawnSync([cmd, ...args].join(" "), { ...opts, shell: true }) : spawnSync(cmd, args, opts);
+  const stdout = r.stdout ?? "";
+  const out = `${stdout}${r.stderr ?? ""}`;
+  if (r.error) return { ok: false, stdout, out, why: r.error.code === "ETIMEDOUT" ? `시간 초과(${timeout / 1000}초)` : `${cmd} 실행 실패(${r.error.code})` };
+  return { ok: r.status === 0, stdout, out, why: r.status === 0 ? null : `${cmd} ${args.join(" ")} 종료 ${r.status}: ${lastLine(out)}` };
+}
+
+const PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"];
+const PROBE = "const s=require('net').connect({host:process.argv[1],port:443,timeout:8000});s.on('connect',()=>process.exit(0));s.on('timeout',()=>process.exit(1));s.on('error',()=>process.exit(1))";
+
+/**
+ * Whether a web source answers on port 443 within 8 seconds: true, false, or null (not judged: behind a proxy a
+ * direct look says nothing, so the step's own time limit decides).
+ */
+export function reachable(host, { env = process.env, runner = run } = {}) {
+  if (PROXY_KEYS.some((k) => env[k])) return null;
+  return runner(process.execPath, ["-e", PROBE, host], { timeout: 15000 }).ok;
+}
+
+const hostOf = (url, fallback) => {
+  try {
+    return new URL(url).hostname || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+/** The hosts each install step downloads from (a mirror named in the environment first). */
+export function sources(env = process.env) {
+  return {
+    plugin: "github.com",
+    pip: hostOf(env.PIP_INDEX_URL, "pypi.org"),
+    chromium: hostOf(env.PLAYWRIGHT_DOWNLOAD_HOST, "cdn.playwright.dev"),
+  };
+}
+
+// A failed step for a source that does not answer, or null when it answers (or cannot be judged).
+function offline(step, host, env, runner) {
+  return reachable(host, { env, runner }) === false ? { step, ok: false, why: `오프라인이라 설치하지 않음(${host} 에 닿지 않음)` } : null;
 }
 
 const lastLine = (text) => text.trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
@@ -59,42 +96,55 @@ export function cacheHome(env = process.env) {
 
 const venvPython = (env) => join(cacheHome(env), "venv", WIN ? "Scripts" : "bin", WIN ? "python.exe" : "python");
 
-/** The SKILL.md of the installed plugin for Claude Code, or null. */
-export function claudeSkill(runner = run) {
+/** The plugin for Claude Code: { file (its SKILL.md, or null), disabled (installed but turned off) }. */
+export function claudePlugin(runner = run) {
+  const none = { file: null, disabled: false };
   const r = runner("claude", ["plugin", "list", "--json"]);
-  if (!r.ok) return null;
+  if (!r.ok) return none;
   let list;
   try {
-    list = JSON.parse(r.out.slice(r.out.indexOf("[")));
+    list = JSON.parse(r.stdout);
   } catch {
-    return null;
+    return none;
   }
-  const p = Array.isArray(list) ? list.find((x) => x?.id === ID && x.enabled !== false) : null;
+  const p = Array.isArray(list) ? list.find((x) => x?.id === ID) : null;
   const file = p?.installPath ? join(p.installPath, "skills", PLUGIN, "SKILL.md") : null;
-  return file && existsSync(file) ? file : null;
+  if (!file || !existsSync(file)) return none;
+  return p.enabled === false ? { file: null, disabled: true } : { file, disabled: false };
 }
 
-/** The SKILL.md of the installed plugin for Codex (on in config.toml, newest version in the cache), or null. */
-export function codexSkill(env = process.env) {
+export const claudeSkill = (runner = run) => claudePlugin(runner).file;
+
+/**
+ * The plugin for Codex: { file, disabled }. Installed means its table in config.toml (the body runs to the next table
+ * header, so an array value holding "[" does not cut it short) and a version in the cache; the newest version's
+ * SKILL.md is the file. enabled = false is disabled.
+ */
+export function codexPlugin(env = process.env) {
+  const none = { file: null, disabled: false };
   const home = env.CODEX_HOME || join(homedir(), ".codex");
   let toml = "";
   try {
     toml = readFileSync(join(home, "config.toml"), "utf8");
   } catch {
-    return null;
+    return none;
   }
-  const table = new RegExp(`^\\[plugins\\."${ID.replace(/[.]/g, "\\.")}"\\]\\s*\\n([^\\[]*)`, "m").exec(toml);
-  if (!table || /^\s*enabled\s*=\s*false/m.test(table[1])) return null;
+  const head = `[plugins."${ID}"]`.replace(/[.[\]"]/g, "\\$&");
+  const table = new RegExp(`^${head}[ \\t]*\\r?\\n([\\s\\S]*?)(?=^[ \\t]*\\[|(?![\\s\\S]))`, "m").exec(toml);
+  if (!table) return none;
   const dir = join(home, "plugins", "cache", MARKET, PLUGIN);
   let versions = [];
   try {
     versions = readdirSync(dir).sort(byVersion);
   } catch {
-    return null;
+    return none;
   }
   const file = versions.map((v) => join(dir, v, "skills", PLUGIN, "SKILL.md")).reverse().find((f) => existsSync(f));
-  return file ?? null;
+  if (!file) return none;
+  return /^[ \t]*enabled[ \t]*=[ \t]*false\b/m.test(table[1]) ? { file: null, disabled: true } : { file, disabled: false };
 }
+
+export const codexSkill = (env = process.env) => codexPlugin(env).file;
 
 export function byVersion(a, b) {
   const pa = a.split(/[.-]/).map((x) => (/^\d+$/.test(x) ? Number(x) : x));
@@ -127,10 +177,11 @@ export function lookPython(py, runner = run) {
   if (/[\\/]/.test(cmd) && !existsSync(cmd)) return null;
   const v = runner(cmd, [...pre, "-c", "import sys;print(sys.executable)"]);
   if (!v.ok) return null;
-  const bin = lastLine(v.out);
+  const bin = lastLine(v.stdout ?? "");
   const pw = runner(cmd, [...pre, "-c", "import playwright"]).ok;
-  const exe = pw ? runner(cmd, [...pre, "-c", CHROMIUM]) : { ok: false, out: "" };
-  return { bin, cmd: py, playwright: pw, chromium: exe.ok && existsSync(lastLine(exe.out)) };
+  const exe = pw ? runner(cmd, [...pre, "-c", CHROMIUM]) : { ok: false, stdout: "" };
+  const chrome = lastLine(exe.stdout ?? "");
+  return { bin, cmd: py, playwright: pw, chromium: exe.ok && chrome !== "" && existsSync(chrome) };
 }
 
 /** The first Python with Playwright (and Chromium, when one has both), else the first that runs. */
@@ -141,17 +192,19 @@ export function pickPython(env = process.env, runner = run) {
 
 /** status: the plugin and the Python, and whether /motion-sites can hand over now. */
 export function status(runtime, { env = process.env, runner = run } = {}) {
-  const skill = runtime === "claude" ? claudeSkill(runner) : codexSkill(env);
+  const p = runtime === "claude" ? claudePlugin(runner) : codexPlugin(env);
   const py = pickPython(env, runner);
   const python = py ? { bin: py.bin, playwright: py.playwright, chromium: py.chromium } : null;
-  return { runtime, plugin: ID, skillFile: skill, python, ready: Boolean(skill && py?.playwright && py?.chromium) };
+  return { runtime, plugin: ID, skillFile: p.file, disabled: p.disabled, python, ready: Boolean(p.file && py?.playwright && py?.chromium) };
 }
 
 /**
  * The plugin steps of one runtime: marketplace add, then install. An add that fails (the marketplace may be there
  * already) is reported only when the install fails too.
  */
-function installPlugin(runtime, runner) {
+function installPlugin(runtime, env, runner) {
+  const down = offline("marketplace add", sources(env).plugin, env, runner);
+  if (down) return [down];
   const cli = runtime === "claude" ? "claude" : "codex";
   const add = runner(cli, ["plugin", "marketplace", "add", REPO], { timeout: STEP_MS });
   const verb = runtime === "claude" ? "install" : "add";
@@ -162,6 +215,8 @@ function installPlugin(runtime, runner) {
 
 /** pip install playwright with this Python, or in a virtual environment when pip refuses the system Python. */
 function installPlaywright(py, env, runner) {
+  const down = offline("pip install playwright", sources(env).pip, env, runner);
+  if (down) return { ok: false, why: down.why };
   const [cmd, ...pre] = py.cmd;
   const pip = runner(cmd, [...pre, "-m", "pip", "install", "playwright"], { timeout: STEP_MS });
   if (pip.ok) return { ok: true, py: py.cmd };
@@ -170,6 +225,13 @@ function installPlaywright(py, env, runner) {
   if (!venv.ok) return { ok: false, why: `${pip.why}. 가상 환경도 만들지 못함: ${venv.why}` };
   const inVenv = runner(venvPython(env), ["-m", "pip", "install", "playwright"], { timeout: STEP_MS });
   return inVenv.ok ? { ok: true, py: [venvPython(env)] } : { ok: false, why: inVenv.why };
+}
+
+/** A plugin installed but turned off: Claude Code turns it on; Codex has no command for it, so it says where. */
+function enablePlugin(runtime, runner) {
+  if (runtime === "codex") return { step: "plugin enable", ok: false, why: `Codex 설정에서 꺼져 있음: config.toml 의 [plugins."${ID}"] 를 enabled = true 로` };
+  const r = runner("claude", ["plugin", "enable", ID]);
+  return { step: "plugin enable", ok: r.ok, why: r.why };
 }
 
 /** The Python steps: Playwright, then Chromium. */
@@ -185,6 +247,8 @@ function installBrowser(env, runner) {
     cmd = pw.py;
   }
   if (!py.chromium) {
+    const down = offline("playwright install chromium", sources(env).chromium, env, runner);
+    if (down) return [...steps, down];
     const [c, ...pre] = cmd;
     const ch = runner(c, [...pre, "-m", "playwright", "install", "chromium"], { timeout: STEP_MS });
     steps.push({ step: "playwright install chromium", ok: ch.ok, why: ch.why });
@@ -196,7 +260,8 @@ function installBrowser(env, runner) {
 export function setup(runtime, { env = process.env, runner = run } = {}) {
   const before = status(runtime, { env, runner });
   const steps = [];
-  if (!before.skillFile) steps.push(...installPlugin(runtime, runner));
+  if (before.disabled) steps.push(enablePlugin(runtime, runner));
+  else if (!before.skillFile) steps.push(...installPlugin(runtime, env, runner));
   if (steps.every((s) => s.ok) && !(before.python?.playwright && before.python?.chromium)) steps.push(...installBrowser(env, runner));
   return { steps, ...status(runtime, { env, runner }) };
 }

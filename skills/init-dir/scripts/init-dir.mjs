@@ -188,6 +188,7 @@ const blockEntries = (root, files, present, follow) =>
   }));
 
 function instructionStatus(r) {
+  if (r.ok === false) return `refused:${r.refused}`;
   if (r.sameAs) return "same-file";
   if (!r.changed) return "unchanged";
   return r.created || r.before === null ? "created" : "updated";
@@ -250,7 +251,10 @@ function apply(o) {
   if (p.error) return p;
   const folders = o.dryRun ? plannedFolders(p.folders) : makeFolders(p.root, p.folders);
   const done = o.dryRun ? p.plan : applyBlocks(p.entries);
-  if (!done.ok) return fail(1, `지시 파일 거부: ${done.refused.map((r) => r.message).join("; ")}. 폴더는 만들었음`);
+  if (!done.ok) {
+    const wrote = done.partial ? done.results.filter((r) => r.ok && r.changed).map((r) => r.path) : [];
+    return fail(1, `지시 파일 거부: ${done.refused.map((r) => r.message).join("; ")}. 폴더는 만들었음${wrote.length ? `. 이미 쓴 파일: ${wrote.join(", ")}` : ""}`);
+  }
   const instructions = done.results.map((r, i) => ({ file: p.entries[i].name, status: instructionStatus(r) }));
   const warnings = [...p.warnings, ...leftoverWarnings(p.root)];
   return { code: 0, report: { ok: true, command: "apply", root: p.root, runtime: o.runtime, dryRun: o.dryRun, folders, instructions, warnings, present: p.present } };
