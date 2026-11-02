@@ -136,12 +136,35 @@ const real = (p) => {
   }
 };
 
+// Whether a and b are one folder: device and inode (bigint, as NTFS file ids pass 2^53), or where the file system has
+// no inode numbers, the path as the file system spells it (realpathSync.native gives one spelling for names that differ
+// only in case, an 8.3 short name or a linked parent), case folded on Windows and macOS. A string compare of the JS
+// realpath let `--root c:\users\me` (or /users/me on macOS) pass the HOME refusal.
+function sameDir(a, b) {
+  try {
+    const x = statSync(a, { bigint: true });
+    const y = statSync(b, { bigint: true });
+    if (x.ino !== 0n && y.ino !== 0n) return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    // one is gone: the spellings below decide
+  }
+  const spell = (p) => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return real(p);
+    }
+  };
+  const fold = (p) => (process.platform === "win32" || process.platform === "darwin" ? p.toLowerCase() : p);
+  return fold(spell(a)) === fold(spell(b));
+}
+
 // The root folder, or a failure: missing (2), HOME or a file system root (3).
 function checkRoot(rootArg) {
   const root = resolve(rootArg);
   if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) return fail(2, `루트 폴더가 없음: ${root}`);
   const r = real(root);
-  if (r === real(homedir())) return fail(3, `루트가 HOME 이라 거부: ${root}. 프로젝트 폴더에서 실행하거나 --root 로 지정`);
+  if (sameDir(root, homedir())) return fail(3, `루트가 HOME 이라 거부: ${root}. 프로젝트 폴더에서 실행하거나 --root 로 지정`);
   if (parse(r).root === r) return fail(3, `루트가 파일 시스템 루트라 거부: ${root}`);
   return { root };
 }

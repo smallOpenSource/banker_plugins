@@ -2,10 +2,11 @@
 // 예외: 표식이 붙은 우리 줄(앞머리로 가린 규칙 줄과 색인 줄)이 지금 판과 다르면 그 줄만 제자리에서 바꾼다(첫 원본은 .progress-mon.bak).
 // 대상 파일은 에이전트가 넘긴다(--memory, --memory-dir). 스크립트는 HOME 아래 쓰기 경로를 스스로 만들지 않는다.
 // 덧붙인 뒤 규칙 로드 한도를 재고 경고 줄을 낸다(종료 코드는 그대로). status, check 도 같은 측정을 다시 한다.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { git, readRegular, UsageError } from './pm-config.mjs';
+import { git, notPlainFile, readRegular, realNative, UsageError, writeNew } from './pm-config.mjs';
 
 export const MARKER = '<!-- progress-mon:rule -->';
 export const OMX_OPEN = '<!-- USER:OMX:POLICY:START -->';
@@ -159,8 +160,10 @@ const gitTop = (dir) => {
 // Codex 프로젝트 지시 합계: 저장소 루트에서 프로젝트 루트까지 각 폴더에서 Codex 가 읽는 파일 크기의 합.
 export function measureCodex(project, env = process.env) {
   const limit = codexLimit(env);
-  const proj = path.resolve(project);
-  const top = gitTop(proj);
+  // 둘 다 디스크의 철자로 푼다: 링크나 다른 대소문자로 준 --project 가 저장소 밖으로 보여 지시 파일을 빼먹지 않게
+  const proj = realNative(path.resolve(project));
+  const top0 = gitTop(proj);
+  const top = top0 && realNative(top0);
   const rel = top ? path.relative(top, proj) : '';
   const dirs = [top && !rel.startsWith('..') && !path.isAbsolute(rel) ? top : proj];
   if (dirs[0] !== proj) for (const part of rel.split(path.sep).filter(Boolean)) dirs.push(path.join(dirs[dirs.length - 1], part));
@@ -349,7 +352,8 @@ function rewrite(file, body) {
   const real = fs.realpathSync(file);
   const st = fs.statSync(real);
   if (!st.isFile() || st.nlink > 1) throw changedError(file);
-  const tmp = `${real}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  // 임시 이름은 난수: Windows 의 wx 는 끊어진 링크를 따라가므로, 미리 맞힐 수 있는 이름이면 링크를 심어 둘 수 있다.
+  const tmp = `${real}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
     fs.writeFileSync(tmp, body, { flag: 'wx', mode: st.mode & 0o777 });
     fs.chmodSync(tmp, st.mode & 0o7777);
@@ -368,13 +372,14 @@ function rewrite(file, body) {
   }
 }
 
-// 첫 원본 백업. 이미 있으면 덮지 않는다. 만들지 못하면 바꾸지 않고 거부.
+// 첫 원본 백업. 이미 있으면 덮지 않는다. 만들지 못하거나 그 자리에 일반 파일이 아닌 것(링크 등)이 있으면 바꾸지 않고 거부.
 function backup(file, buf) {
   const bak = `${file}.progress-mon.bak`;
   try {
-    fs.writeFileSync(bak, buf, { flag: 'wx' });
+    writeNew(bak, buf);
   } catch (e) {
-    if (e.code !== 'EEXIST') throw new UsageError(`${path.basename(bak)} 백업을 만들지 못해 규칙 줄을 바꾸지 않음(${e.code || e.message})`);
+    const why = e.code !== 'EEXIST' ? e.code || e.message : notPlainFile(bak) ? '일반 파일이 아닌 것(링크나 폴더)이 있음' : null;
+    if (why) throw new UsageError(`${path.basename(bak)} 백업을 만들지 못해 규칙 줄을 바꾸지 않음(${why})`);
   }
   return bak;
 }

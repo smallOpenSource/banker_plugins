@@ -109,8 +109,8 @@ function context(o, d) {
   }
   const conf = tc.chooseTmuxConf(t.tool, d.env, home, o.conf);
   const reads = tc.tmuxReads(t.tool, d.env, home);
-  if (o.conf && !reads.includes(conf)) ctx.warnings.push(`경고: tmux 가 스스로 읽지 않는 파일: ${conf}. tmux -f 나 source-file 로 불러야 적용됨`);
-  ctx.warnings.push(...tc.conflictsIn(reads.filter((f) => f !== conf)));
+  if (o.conf && !reads.some((f) => tc.sameFile(f, conf))) ctx.warnings.push(`경고: tmux 가 스스로 읽지 않는 파일: ${conf}. tmux -f 나 source-file 로 불러야 적용됨`);
+  ctx.warnings.push(...tc.conflictsIn(reads.filter((f) => !tc.sameFile(f, conf))));
   const body = t.tool ? tmuxWanted(t.tool, o, d) : { lines: [], omitted: [], clipboard: null };
   return { ...ctx, conf, ...body };
 }

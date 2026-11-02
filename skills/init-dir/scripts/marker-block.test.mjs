@@ -229,6 +229,56 @@ test("one file under two names is written once", (t) => {
   assert.equal(read(p).split("banker:test:start").length - 1, 1);
 });
 
+// Whether the folder's file system takes names that differ only in case for one file (Windows, macOS by default).
+function caseBlind(d) {
+  const p = put(d, "case-probe", "");
+  const blind = lstatSync(join(d, "CASE-PROBE"), { throwIfNoEntry: false }) !== undefined;
+  rmSync(p);
+  return blind;
+}
+
+test("a file not there yet, named through a linked folder too, is made once", (t) => {
+  const d = fresh();
+  mkdirSync(join(d, "real"));
+  if (!trySymlink(join(d, "real"), join(d, "alias"))) return t.skip("Windows: 심볼릭 링크를 만들 권한 없음(개발자 모드 꺼짐)");
+  const r = applyBlocks([{ path: join(d, "real", "AGENTS.md"), ...opts() }, { path: join(d, "alias", "AGENTS.md"), ...opts() }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.results[0].created, true);
+  assert.equal(r.results[1].sameAs, join(d, "real", "AGENTS.md"));
+  assert.equal(read(join(d, "real", "AGENTS.md")), BLOCK);
+});
+
+test("a file not there yet, named in two cases where case is ignored, is made once and no exception", (t) => {
+  const d = fresh();
+  if (!caseBlind(d)) return t.skip("대소문자를 가리는 파일 시스템: 두 이름은 다른 파일");
+  const r = applyBlocks([{ path: join(d, "AGENTS.md"), ...opts() }, { path: join(d, "agents.md"), ...opts() }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.results[0].created, true);
+  assert.equal(r.results[1].sameAs, join(d, "AGENTS.md"));
+  assert.deepEqual(readdirSync(d).filter((f) => f.toLowerCase() === "agents.md"), ["AGENTS.md"]);
+  assert.equal(read(join(d, "AGENTS.md")), BLOCK);
+});
+
+test("a file planned as new but made before the write is planned again, not an exception", () => {
+  const d = fresh();
+  const p = join(d, "AGENTS.md");
+  // The file appears after both plans (which say "new") and before the second write: the first entry's skill is read
+  // once by its plan and once more for its write, and that second read makes the file.
+  let reads = 0;
+  const first = { path: join(d, "first.md"), ...opts() };
+  Object.defineProperty(first, "skill", {
+    get() {
+      if (++reads === 2) writeFileSync(p, "made meanwhile\n");
+      return "test";
+    },
+  });
+  const r = applyBlocks([first, { path: p, ...opts() }]);
+  assert.equal(reads, 2);
+  assert.equal(r.ok, true);
+  assert.equal(r.results[1].changed, true);
+  assert.equal(read(p), `made meanwhile\n\n${BLOCK}`);
+});
+
 test("one refusal among several files: none is written", () => {
   const d = fresh();
   const good = put(d, "good.md", "g\n");

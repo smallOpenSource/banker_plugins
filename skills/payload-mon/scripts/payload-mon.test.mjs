@@ -1,6 +1,8 @@
 // Tests for payload-mon.mjs. Run from the repo root: node --test skills/payload-mon/scripts/*.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import {
   chmodSync,
   existsSync,
@@ -813,8 +815,20 @@ test("a failed refresh keeps the module copy that worked", () => {
   const c = setup();
   turnOn(c);
   writeFileSync(copyOf(c), "// an older version's module\n");
-  mkdirSync(`${copyOf(c)}.${process.pid}.tmp`); // the temp name is taken, so the refresh cannot write
-  const res = turnOn(c);
+  // the refresh's temp file cannot be written (its name is random now, so it cannot be taken beforehand)
+  const write = fs.writeFileSync;
+  fs.writeFileSync = function (p, ...rest) {
+    if (typeof p === "string" && p.startsWith(`${copyOf(c)}.`) && p.endsWith(".tmp")) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    return write.call(this, p, ...rest);
+  };
+  syncBuiltinESMExports();
+  let res;
+  try {
+    res = turnOn(c);
+  } finally {
+    fs.writeFileSync = write;
+    syncBuiltinESMExports();
+  }
   assert.equal(res.ok, false);
   assert.match(res.message, /모듈 사본을 쓰지 못했습니다/);
   assert.equal(readFileSync(copyOf(c), "utf8"), "// an older version's module\n");
@@ -918,7 +932,7 @@ function swapPreload(outside, after = null) {
     "const rename = fs.renameSync;",
     "let swapped = false;",
     "fs.writeFileSync = function (p, ...rest) {",
-    "  if (!swapped && typeof p === \"string\" && /payload-mon[\\\\/]payload-size\\.mjs\\.\\d+\\.tmp$/.test(p)) {",
+    "  if (!swapped && typeof p === \"string\" && /payload-mon[\\\\/]payload-size\\.mjs\\.\\d+\\.[0-9a-f]+\\.tmp$/.test(p)) {",
     "    swapped = true;",
     "    rmSync(dirname(p), { recursive: true, force: true });",
     `    symlinkSync(${JSON.stringify(outside)}, dirname(p), process.platform === "win32" ? "junction" : "dir");`,
@@ -1033,7 +1047,7 @@ function restorePreload(outside) {
     "const rename = fs.renameSync;",
     "let dir = null;",
     "fs.writeFileSync = function (p, ...rest) {",
-    '  if (dir === null && typeof p === "string" && /payload-mon[\\\\/]payload-size\\.mjs\\.\\d+\\.tmp$/.test(p)) {',
+    '  if (dir === null && typeof p === "string" && /payload-mon[\\\\/]payload-size\\.mjs\\.\\d+\\.[0-9a-f]+\\.tmp$/.test(p)) {',
     "    dir = dirname(p);",
     '    rename.call(fs, dir, dir + ".aside");',
     `    symlinkSync(${JSON.stringify(outside)}, dir, process.platform === "win32" ? "junction" : "dir");`,

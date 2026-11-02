@@ -362,7 +362,8 @@ test("설치 스크립트는 내장 모듈만 가져오고 네트워크 코드�
   const specifiers = [...src.matchAll(/^import\b[^;]*;/gm)].map((m) => /["']([^"']+)["']\s*;$/.exec(m[0])?.[1]);
   assert.ok(specifiers.length > 0);
   // child_process runs the installed statusline once for the render check.
-  const builtins = ["node:child_process", "node:fs", "node:os", "node:path", "node:url"];
+  // crypto names temp files at random.
+  const builtins = ["node:child_process", "node:crypto", "node:fs", "node:os", "node:path", "node:url"];
   assert.deepEqual(specifiers.filter((s) => !builtins.includes(s)), []);
   assert.doesNotMatch(src, /\bimport\s*\(/);
   assert.doesNotMatch(src, /\bfetch\s*\(/);
@@ -817,16 +818,18 @@ function pinnedPid() {
   return ["--import", pathToFileURL(file).href];
 }
 
-test("같은 pid 의 임시 파일이 남아 있어도 settings.json 을 바꿔 넣고 그 파일을 치움", () => {
+test("같은 pid 의 임시 파일이 남아 있어도 settings.json 을 바꿔 넣고, 남의 그 파일은 그대로 둠(임시 이름은 난수)", () => {
   const cfg = fresh();
   writeFileSync(join(cfg, "settings.json"), JSON.stringify({ theme: "dark" }));
-  writeFileSync(join(cfg, `settings.json.${PID}.tmp`), "left by an earlier run that was killed\n");
+  const left = `settings.json.${PID}.tmp`;
+  writeFileSync(join(cfg, left), "left by an earlier run that was killed\n");
   const ino = inoOf(join(cfg, "settings.json"));
   const r = install({ cfg, nodeArgs: pinnedPid() });
   assert.equal(r.status, 0, r.out);
   assert.match(settingsOf(cfg).statusLine.command, /omc-hud-custom\.mjs/);
   assert.notEqual(inoOf(join(cfg, "settings.json")), ino, "went in through the rename, not in place");
-  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), []);
+  assert.deepEqual(readdirSync(cfg).filter((n) => n.endsWith(".tmp")), [left]);
+  assert.equal(readFileSync(join(cfg, left), "utf8"), "left by an earlier run that was killed\n");
 });
 
 test("임시 파일 자리에 끊어진 링크가 있어도 그 너머에 쓰지 않음", fileLinks, () => {

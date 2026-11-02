@@ -52,13 +52,50 @@ export function readRegular(file, encoding = 'utf8', fsx = fs, max = READ_MAX) {
   return fsx.readFileSync(file, encoding);
 }
 
+// 실제 경로. native 먼저(Windows 의 8.3 짧은 이름, macOS 와 Windows 의 디스크 대소문자로 푼다). 아직 없는 꼬리는 있는
+// 조상까지 풀고 붙인다(macOS 의 /var 는 /private/var 로 가는 링크).
+export function realNative(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      const up = path.dirname(p);
+      return up === p ? p : path.join(realNative(up), path.basename(p));
+    }
+  }
+}
+
+// 두 경로가 같은 폴더인지: 장치와 inode(bigint), inode 가 없는 파일 시스템은 realNative 철자(Windows, macOS 는 접어서).
+// 문자열 비교는 대소문자, 8.3 이름, 링크인 부모 폴더처럼 철자만 다른 같은 폴더를 다른 폴더로 본다.
+export function sameFolder(a, b) {
+  try {
+    const x = fs.statSync(a, { bigint: true });
+    const y = fs.statSync(b, { bigint: true });
+    if (x.ino !== 0n && y.ino !== 0n) return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
+  const fold = (p) => (process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p);
+  return fold(realNative(a)) === fold(realNative(b));
+}
+
 // 프로젝트 안 자료 폴더의 경로 가운데 링크인 첫 폴더(.omc, progress-mon 등). 없으면 null.
-// 프로젝트 밖(--data)이면 자료 폴더 자체만 본다. 아직 없는 폴더에서 멈춘다.
+// 프로젝트 밖(--data)이면 자료 폴더 자체만 본다. 아직 없는 폴더에서 멈춘다. 안팎은 자료 폴더에서 위로 올라가며
+// 프로젝트 루트와 같은 폴더(sameFolder)를 만나는지로 본다: --data 를 다른 대소문자나 8.3 이름으로 적어도 안으로 본다.
 function linkedDir(root, dataDir) {
-  const rel = path.relative(root, dataDir);
-  const inside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
-  const parts = inside ? rel.split(path.sep) : [];
-  const dirs = inside ? parts.map((_, i) => path.join(root, ...parts.slice(0, i + 1))) : [dataDir];
+  const up = [];
+  let inside = false;
+  for (let d = dataDir; ; d = path.dirname(d)) {
+    if (sameFolder(d, root)) {
+      inside = up.length > 0;
+      break;
+    }
+    up.push(d);
+    if (path.dirname(d) === d) break;
+  }
+  const dirs = inside ? up.reverse() : [dataDir];
   for (const d of dirs) {
     let st;
     try {
@@ -122,6 +159,41 @@ function pickContext({ cwd = process.cwd(), project, runtime, data } = {}) {
 
 // 사용법 오류(종료 1).
 export class UsageError extends Error {}
+
+// 고정 이름(잠금, 백업, 처음 만드는 설정)에 새 파일을 만든다(wx). 그 이름에 무엇이든 있으면 끊어진 링크까지 EEXIST.
+// 까닭: Windows 의 wx 는 끊어진 링크를 따라가 그 너머에 파일을 만든다(macOS, Linux 는 EEXIST). 그래서 먼저 lstat 로
+// 보고, 본 뒤 열기 전 틈에 심은 링크는 쓴 뒤 다시 lstat 로 잡는다: 따라가 만든 파일이 방금 쓴 내용 그대로면 지우고 EEXIST.
+// lstat 의 EPERM 등(Windows 에서 지우는 중인 파일)은 그대로 던진다. 부른 쪽은 wx 의 같은 코드처럼 기다린다.
+export function writeNew(file, data, opts = {}, fsx = fs) {
+  if (fsx.lstatSync(file, { throwIfNoEntry: false }) !== undefined) throw eexist(file);
+  fsx.writeFileSync(file, data, { ...opts, flag: 'wx' });
+  let st;
+  try {
+    st = fsx.lstatSync(file);
+  } catch {
+    return; // 그 사이 지워짐: 만든 것은 이 이름의 파일이었다
+  }
+  if (!st.isSymbolicLink()) return;
+  try {
+    const target = fsx.realpathSync(file);
+    if (fsx.readFileSync(target).equals(Buffer.from(data))) fsx.rmSync(target, { force: true });
+  } catch {
+    // 링크가 또 바뀜: 되돌릴 것을 찾지 못함
+  }
+  throw eexist(file);
+}
+
+const eexist = (file) => Object.assign(new Error(`EEXIST: file already exists, open '${file}'`), { code: 'EEXIST', syscall: 'open', path: file });
+
+// 그 자리에 일반 파일이 아닌 것(링크, 폴더 등)이 있는지. 없거나 볼 수 없으면 거짓.
+export function notPlainFile(file, fsx = fs) {
+  try {
+    const st = fsx.lstatSync(file, { throwIfNoEntry: false });
+    return st !== undefined && !st.isFile();
+  } catch {
+    return false;
+  }
+}
 
 const RENAME_RETRIES = 5;
 const RENAME_STEP_MS = 50;

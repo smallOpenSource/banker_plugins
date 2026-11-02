@@ -41,6 +41,7 @@
  * Usage: node verify_a4p.mjs <file.pptx> [--json] [--strict] [--font-file <path>] [--deck <deck.json>]
  */
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -2101,10 +2102,16 @@ export function main(argv) {
         console.error(`verify_a4p: 재압축 산출물이 자기 무결성 검사를 통과하지 못해 쓰지 않았다:\n  ${integrity.problems.join('\n  ')}`);
         return EXIT.FAIL;
       }
-      // Stage then rename, so an interrupted --in-place cannot leave a half-written deck.
-      const tmp = `${target}.a4p-tmp`;
-      fs.writeFileSync(tmp, rep.out);
-      fs.renameSync(tmp, target);
+      // Stage then rename, so an interrupted --in-place cannot leave a half-written deck. The stage name is random
+      // and made exclusively, so a link someone left at a fixed name is never written through.
+      const tmp = `${target}.${randomBytes(6).toString('hex')}.a4p-tmp`;
+      try {
+        fs.writeFileSync(tmp, rep.out, { flag: 'wx' });
+        fs.renameSync(tmp, target);
+      } catch (e) {
+        fs.rmSync(tmp, { force: true });
+        throw e;
+      }
 
       report.write = {
         mode: opts.convert ? 'convert-a4p' : 'repair',

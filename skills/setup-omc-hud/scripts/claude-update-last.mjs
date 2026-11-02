@@ -25,6 +25,7 @@
  * `node --check`. Exit status 1 means nothing was changed; 2 means an unexpected
  * error stopped the command partway, so check `status`.
  */
+import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -139,7 +140,7 @@ function insertBlock(base) {
 // either name is replaced rather than written through, and a write that fails
 // leaves the old file as it was.
 function writeFresh(file, data) {
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   rmSync(tmp, { force: true });
   try {
     writeFileSync(tmp, data, { flag: "wx" });

@@ -332,10 +332,14 @@ test("the cache's temp file is created fresh, never written through a link plant
   mkdirSync(t.cache, { mode: 0o700 });
   const victim = join(dirname(t.cache), "victim.txt");
   writeFileSync(victim, "keep me");
-  symlinkSync(victim, `${cachePath(t.cache, t.path)}.${process.pid}.tmp`);
+  // the old guessable name (<cache>.<pid>.tmp): the temp name is random now, so a link there is never opened
+  const planted = `${cachePath(t.cache, t.path)}.${process.pid}.tmp`;
+  symlinkSync(victim, planted);
   assert.equal(estimatePayloadBytes(t.path, t.cache), sum(a));
   assert.equal(readFileSync(victim, "utf8"), "keep me");
   assert.ok(lstatSync(cachePath(t.cache, t.path)).isFile(), "the cache itself is a regular file");
+  assert.ok(lstatSync(planted).isSymbolicLink(), "the planted link is left as it was");
+  rmSync(planted);
   assert.equal(readCache(t.cache).state.bytes, sum(a));
 });
 

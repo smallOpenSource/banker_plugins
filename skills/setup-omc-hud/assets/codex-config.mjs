@@ -9,6 +9,7 @@
  * - 파일이 링크이거나 일반 파일이 아니면 고치지 않는다. 쓰기 전 원본을 백업(이 계정만 읽음)하고, 새 파일에 쓴 뒤
  *   바꿔 넣으며 파일 모드를 지킨다.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,15 +35,19 @@ export function readToml(file) {
   return { text: fs.readFileSync(file, 'utf8'), mode: st.mode & 0o7777, exists: true };
 }
 
-// 원본을 backup 에 복사한 뒤(원본이 있을 때) 새 파일에 써서 바꿔 넣는다.
+// 원본을 backup 에 복사한 뒤(원본이 있을 때) 새 파일에 써서 바꿔 넣는다. 백업도 같은 방식이라 백업 자리의 링크는
+// 따라가지 않고 바뀐다.
 export function writeToml(file, text, { mode = null, backup = null } = {}) {
-  if (backup && fs.existsSync(file)) {
-    fs.copyFileSync(file, backup);
-    fs.chmodSync(backup, 0o600); // 원본에 비밀 값이 있을 수 있다
-  }
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  if (backup && fs.existsSync(file)) replaceFile(backup, fs.readFileSync(file), 0o600); // 원본에 비밀 값이 있을 수 있다
+  replaceFile(file, text, mode);
+}
+
+// 난수 이름의 새 파일에 쓴 뒤 file 자리로 바꿔 넣는다. 이름을 미리 맞힐 수 없어, 그 자리에 심어 둔 링크를 wx 가
+// 따라가는 일(Windows 는 끊어진 링크를 따라가 대상 파일을 만든다)이 없다. 실패하면 새 파일을 지운다.
+function replaceFile(file, data, mode) {
+  const tmp = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
   try {
-    fs.writeFileSync(tmp, text, { flag: 'wx', mode: mode ?? 0o600 });
+    fs.writeFileSync(tmp, data, { flag: 'wx', mode: mode ?? 0o600 });
     if (mode !== null) fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, file);
   } catch (e) {

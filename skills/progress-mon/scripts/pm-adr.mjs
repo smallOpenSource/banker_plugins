@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, noBom, readRegular, writeAtomic } from './pm-config.mjs';
+import { git, noBom, readRegular, writeAtomic, writeNew } from './pm-config.mjs';
 
 const ADR_FILE = 'adr.json';
 const ADR_CHECK_FILE = 'adr-check.json';
@@ -404,13 +404,15 @@ const stamp = (ms) => {
 };
 
 // 스키마 FAIL 이 남은 adr.json 을 같은 폴더의 adr.json.rejected-<시각>(있으면 -2, -3 ...)으로 옮긴다. 결정 기록을 잃지 않게
-// 지우지 않는다. 새 이름은 COPYFILE_EXCL 로 만들어 있는 파일을 덮지 않고, 사본을 만든 뒤에만 원본을 지운다. 돌려줌: 옮긴 경로.
+// 지우지 않는다. 새 이름은 writeNew 로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않고, 사본을 만든 뒤에만 원본을
+// 지운다. 돌려줌: 옮긴 경로.
 function reject(file, now) {
   const base = `${file}.rejected-${stamp(now)}`;
+  const bytes = fs.readFileSync(file);
   for (let i = 1; ; i++) {
     const dest = i === 1 ? base : `${base}-${i}`;
     try {
-      fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
+      writeNew(dest, bytes);
     } catch (e) {
       if (e.code === 'EEXIST') continue;
       throw e;

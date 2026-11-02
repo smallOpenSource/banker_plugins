@@ -300,6 +300,13 @@ test("선행 조건: GIT_DIR 환경 변수와 HOME 루트는 종료 3, 아무것
   assert.equal(cli(["run", "--root", join(base, "missing")]).status, 2);
 });
 
+test("선행 조건: 다른 대소문자로 적은 HOME 루트도 종료 3(대소문자를 무시하는 파일 시스템)", (t) => {
+  const other = join(dirname(home), "HOME");
+  if (!existsSync(other)) return t.skip("대소문자를 가리는 파일 시스템: 다른 철자는 다른 폴더");
+  assert.equal(cli(["run", "--root", other, "--local-identity", ID]).status, 3);
+  assert.equal(existsSync(join(home, ".git")), false);
+});
+
 test("2MB 넘는 파일과 바이너리는 내용 미스캔 목록(check 출력에 둘 다), 걸림으로 막지 않음", () => {
   const root = project();
   files(root, { "big.log": "x".repeat(2 * 1024 * 1024 + 1), "bin.dat": Buffer.from([0, 1, 2, 3]) });

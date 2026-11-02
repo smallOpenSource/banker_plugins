@@ -1,6 +1,7 @@
 // pm-adr.mjs 시험. 임시 프로젝트에 고정 자료(assets/fixture)와 adr.json 이 가리키는 파일을 만들고 check, 정리, 렌더, export,
 // 서버, 옛 판 자료 폴더의 ADR 단계를 본다. 화면 e2e 는 Playwright Chromium(테스트박스 도구 폴더, 없으면 이 PC 의 전역)으로 export 한 HTML 을 연다.
 import { test, after } from 'node:test';
+import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -350,6 +351,20 @@ test('check 참조: git 저장소에서 없는 커밋은 FAIL, 있는 커밋은 
   fs.writeFileSync(path.join(ctx.dataDir, 'config.json'), JSON.stringify(cfg));
   lines = adrLines(check(ctx).lines);
   assert.ok(lines.includes(`WARN adr.json project.proof.implemented[0].proofs[1] 참조: sources.git 이 꺼져 있어 커밋을 확인 못 함: ${head.slice(0, 7)}`), lines.join('\n'));
+});
+
+test('정리: 옮길 이름 자리의 끊어진 링크는 따라가지 않고 다음 번호로, 링크 너머에 파일 없음', { ...T, skip: symlinkSkip }, async () => {
+  const bad = readFix('adr.json');
+  delete bad.project.flow;
+  const ctx = project({ adr: bad });
+  const at = new Date(2026, 9, 29, 3, 4, 5).getTime();
+  const first = path.join(ctx.dataDir, 'adr.json.rejected-20261029-030405');
+  const target = path.join(ctx.project, 'outside-rejected.json');
+  fs.symlinkSync(target, first, 'file');
+  const out = await cleanAdr(ctx, configOf(ctx), at);
+  assert.match(out[0], /adr\.json\.rejected-20261029-030405-2 로 옮김/);
+  assert.equal(fs.existsSync(target), false);
+  assert.ok(fs.lstatSync(first).isSymbolicLink(), '링크는 그대로');
 });
 
 test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap 으로, 다시 돈 check 는 FAIL 0 과 WARN. 스키마 FAIL 이 남으면 adr.json.rejected-<시각> 으로 옮김(바이트 같음, 이름이 있으면 번호)', T, async () => {

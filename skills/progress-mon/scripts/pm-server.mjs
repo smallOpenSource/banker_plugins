@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { privateIPv4, dataLabel, loadConfig, writeAtomic, readRegular, UsageError } from './pm-config.mjs';
+import { privateIPv4, dataLabel, loadConfig, writeAtomic, writeNew, readRegular, UsageError } from './pm-config.mjs';
 import { workflowRoots } from './pm-sources.mjs';
 import { memoryWarnings } from './pm-memory.mjs';
 
@@ -521,7 +521,7 @@ export async function saveHost(ctx, ip, io, fsx = fs) {
 
 // ---------- start 잠금 ----------
 // 동시에 부른 start 가 서버를 둘 띄우지 않게 start 전체를 server.json.lock 으로 감싼다(wx: 둘 가운데 하나만 만듦,
-// 그 자리의 링크는 따라가지 않고 EEXIST). 못 잡은 쪽은 기다렸다가 잡고, 그 안에서 떠 있는 서버를 다시 보아 재사용한다.
+// 그 자리의 링크는 따라가지 않고 EEXIST. Windows 의 wx 는 끊어진 링크를 따라가므로 writeNew 가 먼저 lstat 로 본다). 못 잡은 쪽은 기다렸다가 잡고, 그 안에서 떠 있는 서버를 다시 보아 재사용한다.
 // 낡은 잠금(쥔 프로세스가 죽음, 또는 START_LOCK_STALE_MS 넘게 남음, 링크나 일반 파일 아님)은 넘겨받기 표지
 // server.json.lock.taking 을 wx 로 잡은 쪽만, 그 안에서 다시 판정한 뒤 지우고 새로 만든다.
 const START_LOCK = 'server.json.lock';
@@ -535,7 +535,7 @@ const LOCK_BUSY = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
 // 돌려줌: 만들었으면 null, 아니면 그 까닭 코드. 그 밖 오류는 UsageError.
 function makeLockFile(file) {
   try {
-    fs.writeFileSync(file, `${process.pid} ${iso(Date.now())}\n`, { flag: 'wx', mode: 0o600 });
+    writeNew(file, `${process.pid} ${iso(Date.now())}\n`, { mode: 0o600 });
     return null;
   } catch (e) {
     if (LOCK_BUSY.has(e.code)) return e.code;

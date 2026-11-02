@@ -86,7 +86,11 @@ function err(s) { process.stderr.write(s.endsWith('\n') ? s : s + '\n'); }
 // POSIX sh 용 따옴표. 홑따옴표 안에서는 확장이 일어나지 않는다
 function shq(s) { return /^[A-Za-z0-9_./:@%+=-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`; }
 
-function realOr(p) { try { return fs.realpathSync(p); } catch { return p; } }
+// 실제 경로. native 먼저: macOS 에서 디스크의 대소문자로 돌려줘, 세션 폴더나 writable_roots 를 다른 대소문자로 적어도
+// 같은 폴더로 판정한다(JS 판은 받은 철자를 그대로 둔다).
+function realOr(p) {
+  try { return fs.realpathSync.native(p); } catch { try { return fs.realpathSync(p); } catch { return p; } }
+}
 
 function isExec(f) { try { fs.accessSync(f, fs.constants.X_OK); return fs.statSync(f).isFile(); } catch { return false; } }
 
@@ -99,9 +103,13 @@ const verOf = (s) => String(s).split('.').map(Number);
 
 // ---------- 샌드박스가 쓸 수 있는 곳 ----------
 
+// macOS 는 대소문자를 가리지 않는 볼륨이 기본이라 접어 비교한다(아직 없는 경로는 실제 철자로 못 풀어서). 대소문자를
+// 가리는 볼륨에서는 다른 폴더를 위험한 곳으로 볼 수 있지만, 그쪽은 거부일 뿐 허용이 아니다.
+const foldMac = (p) => (process.platform === 'darwin' ? p.toLowerCase() : p);
+
 function under(p, dir) {
   if (!dir) return false;
-  const r = path.relative(dir, p);
+  const r = path.relative(foldMac(dir), foldMac(p));
   return r === '' || (r.split(path.sep)[0] !== '..' && !path.isAbsolute(r));
 }
 

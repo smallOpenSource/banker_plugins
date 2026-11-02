@@ -21,6 +21,7 @@
  * OS: Windows / macOS / Linux 공통. 런처(apply.cmd, apply.sh)와 배경 문서(README.md)는
  * 킷 배포 폴더에만 있다. 이 파일만 옮겨 쓰는 곳(예: 스킬 폴더)에는 없다.
  */
+import { randomBytes } from "node:crypto";
 import {
   readFileSync, writeFileSync, writeSync, existsSync, copyFileSync, readdirSync,
   unlinkSync, mkdirSync, rmSync, symlinkSync, lstatSync, realpathSync,
@@ -422,7 +423,7 @@ function switchActive(sha) {
 // 줄인 비트는 chmod 가 맞춘다). 만든 뒤에 맞추면 그 사이 기본 권한(0664 등)으로 남이 읽을 수 있다.
 function writeAtomic(file, data, mode, { follow = true } = {}) {
   const real = follow ? realOr(file) : file;
-  const tmp = join(dirname(real), `.${basename(real)}.omc-tmp-${process.pid}`);
+  const tmp = join(dirname(real), `.${basename(real)}.omc-tmp-${process.pid}-${randomBytes(6).toString("hex")}`);
   const m = mode ?? modeOf(real);
   rmSync(tmp, { force: true });
   try {

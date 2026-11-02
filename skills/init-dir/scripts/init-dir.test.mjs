@@ -89,6 +89,13 @@ test("root is HOME or a file system root: exit 3", () => {
   assert.equal(cli(["status", "--root", fsRoot]).status, 3);
 });
 
+test("root is HOME spelled in another case where case is ignored: exit 3, nothing made", (t) => {
+  const other = join(base, "HOME");
+  if (!existsSync(other)) return t.skip("대소문자를 가리는 파일 시스템: 다른 철자는 다른 폴더");
+  assert.equal(apply(other, "--runtime", "claude").status, 3);
+  assert.deepEqual(readdirSync(home), []);
+});
+
 test("AC2: empty folder, --runtime claude makes 7 folders, every template and CLAUDE.md with one block; rerun is byte-identical", () => {
   const root = project();
   const r = apply(root, "--runtime", "claude");

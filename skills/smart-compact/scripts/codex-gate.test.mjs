@@ -2,7 +2,7 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -274,6 +274,23 @@ test("the hook command refuses a node in the temp folder, and inside Codex a nod
   assert.notEqual(hookCommand("C:\\Program Files\\nodejs\\node.exe", "C:\\h\\g.mjs", { win: true, cwd: "D:\\w", codex: true }), null,
     "Windows paths are judged by Windows rules wherever the test runs");
   assert.equal(hookCommand("D:\\w\\node.exe", "C:\\h\\g.mjs", { win: true, cwd: "d:\\W", codex: true }), null);
+});
+
+test("the hook command refuses a node in the temp folder when TMPDIR or TEMP names that folder through a link", () => {
+  const real = realpathSync.native(mkdtempSync(join(tmpdir(), "tmp-real-")));
+  const alias = `${real}-alias`;
+  symlinkSync(real, alias, "junction");
+  const keys = process.platform === "win32" ? ["TEMP", "TMP"] : ["TMPDIR"];
+  const old = keys.map((k) => process.env[k]);
+  try {
+    for (const k of keys) process.env[k] = alias;
+    assert.equal(tmpdir(), alias);
+    assert.equal(hookCommand(join(real, "node"), join(real, "g.mjs"), { win: process.platform === "win32", cwd: real, codex: false }), null);
+  } finally {
+    keys.forEach((k, i) => (old[i] === undefined ? delete process.env[k] : (process.env[k] = old[i])));
+    rmSync(alias, { force: true });
+    rmSync(real, { recursive: true, force: true });
+  }
 });
 
 test("status does not call a hook stale just because on would refuse to write it here", () => {

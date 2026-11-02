@@ -1,13 +1,14 @@
 // Tests for codex-config.mjs and codex-bypass.mjs. Run: node --test skills/setup-bypass-permissions/scripts/codex-bypass.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
 
-import { definedInline, findKey, removeKey, setKey, tablesSetting } from './codex-config.mjs';
+import { definedInline, findKey, removeKey, setKey, tablesSetting, writeToml } from './codex-config.mjs';
+import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 import { overridingProfile, policyBlock, status, turnOff, turnOn } from './codex-bypass.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'codex-bypass.mjs');
@@ -175,4 +176,29 @@ test('a long line opening with [ and no ] is read at once (no backtracking blow-
   const started = Date.now();
   findKey(`[${' '.repeat(20000)}\nk = 1\n`, '', 'k');
   assert.ok(Date.now() - started < 1000);
+});
+
+test('writeToml: 백업 자리의 링크는 따라가지 않고 바꿈(링크가 가리키던 파일 그대로), 끊어진 링크면 너머에 파일을 만들지 않음', { skip: symlinkSkip }, () => {
+  const d = mkdtempSync(join(tmpdir(), 'codex-config-bak-'));
+  try {
+    const file = join(d, 'config.toml');
+    writeFileSync(file, 'model = "a"\n');
+    const victim = join(d, 'victim.txt');
+    writeFileSync(victim, 'keep\n');
+    const bak = join(d, 'config.toml.test.bak');
+    symlinkSync(victim, bak, 'file');
+    writeToml(file, 'model = "b"\n', { backup: bak });
+    assert.equal(readFileSync(victim, 'utf8'), 'keep\n');
+    assert.equal(readFileSync(bak, 'utf8'), 'model = "a"\n');
+    assert.equal(readFileSync(file, 'utf8'), 'model = "b"\n');
+    const bak2 = join(d, 'config.toml.dangling.bak');
+    const gone = join(d, 'outside-made.txt');
+    symlinkSync(gone, bak2, 'file');
+    writeToml(file, 'model = "c"\n', { backup: bak2 });
+    assert.equal(existsSync(gone), false);
+    assert.equal(readFileSync(bak2, 'utf8'), 'model = "b"\n');
+    assert.deepEqual(readdirSync(d).filter((f) => f.endsWith('.tmp')), []);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
 });

@@ -223,6 +223,21 @@ const options = (opts) => ({
   uid: "uid" in opts ? opts.uid : process.getuid?.(),
 });
 
+// A file not there yet is named by its folder as the file system spells it (one key for a linked parent, an 8.3 name
+// or the folder in another case) and its own name as given. Two names differing only in case still get two keys:
+// where the file system takes them for one file, applyBlocks meets that when the second create finds the first.
+const newFileKey = (file) => `path:${join(nativeReal(dirname(resolve(file))), basename(file))}`;
+
+// The key of a file that is there now, as planBlock gives it, or null when it cannot be read.
+function keyNow(file) {
+  try {
+    const id = statSync(file, { bigint: true });
+    return id.ino === 0n ? `path:${nativeReal(file)}` : `ino:${id.dev}:${id.ino}`;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Works out what applyBlock would write, without writing: { ok, changed, refused?, message, path, file, key,
  * before, after, mode }. key names the file (device and inode, or the path of a file not there yet).
@@ -234,7 +249,7 @@ export function planBlock(path, opts) {
   if (at.refuse) return at.refuse;
   if (!at.exists) {
     const after = o.body === null ? null : Buffer.from(blockText(o.mk, o.body, o.wrap, "\n"), "utf8");
-    return { ok: true, changed: after !== null, path, file: at.file, key: `path:${resolve(at.file)}`, before: null, after, mode: NEW_FILE_MODE };
+    return { ok: true, changed: after !== null, path, file: at.file, key: newFileKey(at.file), before: null, after, mode: NEW_FILE_MODE };
   }
   const read = readChecked(at.file, o.uid);
   if (read.refuse) return read.refuse;
@@ -312,10 +327,27 @@ export function applyBlocks(entries, { dryRun = false } = {}) {
   const refused = plans.filter((p) => !p.plan.ok).map((p) => p.plan);
   if (refused.length > 0) return { ok: false, refused, results: plans.map((p) => p.plan) };
   const seen = new Map();
-  const results = plans.map(({ entry, plan }) => {
-    if (seen.has(plan.key)) return { ok: true, changed: false, path: plan.path, file: plan.file, sameAs: seen.get(plan.key), message: `같은 파일이라 한 번만 씀: ${plan.path}` };
+  const once = (plan) => ({ ok: true, changed: false, path: plan.path, file: plan.file, sameAs: seen.get(plan.key), message: `같은 파일이라 한 번만 씀: ${plan.path}` });
+  const write = (entry, plan) => {
     seen.set(plan.key, plan.path);
-    return dryRun ? plan : commitBlock(plan, entry.skill);
+    if (dryRun) return plan;
+    const done = commitBlock(plan, entry.skill);
+    const now = done.created ? keyNow(plan.file) : null; // a file made now is that file to later spellings too
+    if (now && !seen.has(now)) seen.set(now, plan.path);
+    return done;
+  };
+  const results = plans.map(({ entry, plan }) => {
+    if (seen.has(plan.key)) return once(plan);
+    try {
+      return write(entry, plan);
+    } catch (e) {
+      // A file planned as new was made since: by an earlier entry under another spelling (a case-insensitive file
+      // system), or by another program. Plan it again as the file now there.
+      if (e?.code !== "EEXIST" || plan.before !== null || dryRun) throw e;
+      const again = planBlock(entry.path, entry);
+      if (!again.ok) return again;
+      return seen.has(again.key) ? once(again) : write(entry, again);
+    }
   });
   return { ok: true, refused: [], results };
 }

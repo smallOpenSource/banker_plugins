@@ -42,6 +42,7 @@ import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
 import * as V from './verify_a4p.mjs';
+import { symlinkSkip } from '../../scripts/test-fixtures/can-symlink.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -1321,6 +1322,19 @@ test('U12 exit codes: 0 pass, 1 verification failure, 2 environment missing, 3 u
   const slotSplit = fixtureFile('exit-slots', makePptx({ slides: [[{ ...FIT_SHAPE, ea: null }]] }));
   assert.equal(quiet(() => V.main([slotSplit])).value, 0);
   assert.equal(quiet(() => V.main([slotSplit, '--strict'])).value, 1);
+});
+
+test('U12 --repair stages under a random name: a link left at the old fixed stage name is never written through', { skip: symlinkSkip }, () => {
+  const good = fixtureFile('stage-good', FIXTURES.good);
+  const out = tmp('stage-out.pptx');
+  const victim = tmp('stage-victim.txt');
+  fs.writeFileSync(victim, 'keep');
+  fs.symlinkSync(victim, `${out}.a4p-tmp`, 'file');
+  quiet(() => V.main([good, '--repair', '--out', out]));
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'keep', 'the file the link leads to is untouched');
+  assert.ok(fs.lstatSync(out).isFile(), 'the output is a regular file');
+  const left = fs.readdirSync(TMP).filter((n) => n.startsWith('stage-out.pptx.') && n !== 'stage-out.pptx.a4p-tmp');
+  assert.deepEqual(left, [], 'no stage file left');
 });
 
 test('U12 the builder maps a schema violation to 3 and a missing pptxgenjs to 2', async () => {

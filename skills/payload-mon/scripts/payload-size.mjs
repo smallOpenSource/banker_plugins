@@ -33,7 +33,7 @@
  * fix sentPart and bump CACHE_VERSION, so totals cached under the old rules are
  * rebuilt.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
   fstatSync,
@@ -187,7 +187,7 @@ function saveCache(file, state) {
     const dir = dirname(file);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!ownedDir(dir)) return; // a folder this account does not control: no cache
-    const tmp = `${file}.${process.pid}.tmp`;
+    const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     rmSync(tmp, { force: true });
     writeFileSync(tmp, JSON.stringify(state), { flag: "wx", mode: 0o600 });
     renameSync(tmp, file);
