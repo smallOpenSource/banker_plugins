@@ -6,7 +6,7 @@ import path from 'node:path';
 import { esc, color, finite, textW, wrap, FAVICON, CSS, TABS, tabsHtml } from './pm-html.mjs';
 import { configOrFail, loadConfig, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
 import { collect, parseTime, agentJudge } from './pm-sources.mjs';
-import { adrBody } from './pm-adr.mjs';
+import { adrBody } from './pm-adr-view.mjs';
 
 const two = (n) => String(n).padStart(2, '0');
 const hm = (ms) => (ms == null ? '-' : Math.floor(ms / 3600e3) + ':' + two(Math.floor((ms % 3600e3) / 60000)));

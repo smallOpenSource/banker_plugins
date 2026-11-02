@@ -15,6 +15,8 @@ const WIN = process.platform === "win32";
 const CLI = fileURLToPath(new URL("./init-dir.mjs", import.meta.url));
 // Preload that blocks /proc/<pid>/cmdline, ps and powershell.exe (scripts/test-fixtures, not shipped).
 const NO_CMDLINE = new URL("../../../scripts/test-fixtures/no-cmdline.mjs", import.meta.url).href;
+// Preload that writes another start's fresh lock at the moment a stale lock is being cleared (scripts/test-fixtures).
+const LOCK_RACE = new URL("../../../scripts/test-fixtures/lock-race.mjs", import.meta.url).href;
 const base = mkdtempSync(join(tmpdir(), "init-dir-service-"));
 const home = join(base, "home");
 mkdirSync(home);
@@ -419,6 +421,69 @@ test("start lock: a stale lock of a dead pid is taken over; a folder at the lock
   const refused = svc(root, "start");
   assert.equal(refused.status, 1, refused.stdout + refused.stderr);
   assert.match(refused.stderr, /시작 잠금 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
+});
+
+// A lock left by a dead start, written as one (its pid dead, a minute old).
+function staleLock(root, name = "app.start.lock") {
+  const dead = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+  const deadPid = Number(dead.stdout.trim());
+  assert.equal(alive(deadPid), false);
+  mkdirSync(join(root, "logs"), { recursive: true });
+  const file = join(root, "logs", name);
+  writeFileSync(file, `${JSON.stringify({ pid: deadPid, at: new Date(Date.now() - 60000).toISOString() })}\n`);
+  return file;
+}
+
+test("start lock: four starts at once over a stale lock launch one supervisor, rounds over; no lock or break lock is left", async () => {
+  for (let round = 0; round < 3; round++) {
+    const root = project("scripts");
+    configure(root, WAITER);
+    const lock = staleLock(root);
+    const runs = await Promise.all([0, 1, 2, 3].map(() => startAsync(root)));
+    const all = runs.map((r) => r.out).join("\n");
+    const p = pidOf(root);
+    for (const r of runs) assert.equal(r.code, 0, all);
+    assert.equal(runs.filter((r) => /시작함/.test(r.out)).length, 1, `round ${round}: ${all}`);
+    for (const r of runs) assert.match(r.out, new RegExp(`감독 PID ${p.supervisor}[,)]`), `round ${round}: every run names the same supervisor`);
+    assert.equal(existsSync(lock), false);
+    assert.equal(existsSync(`${lock}.break`), false);
+    assert.equal(svc(root, "stop").status, 0);
+    assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  }
+});
+
+test("start lock: a break lock left by a dead start is cleared after a while; a folder at its name is refused", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  staleLock(root, "app.start.lock.break");
+  const s = svc(root, "start");
+  assert.equal(s.status, 0, s.stdout + s.stderr);
+  assert.match(s.stdout, /시작함/);
+  const p = pidOf(root);
+  assert.equal(existsSync(lock), false);
+  assert.equal(existsSync(`${lock}.break`), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  staleLock(root);
+  mkdirSync(`${lock}.break`);
+  const refused = svc(root, "start");
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /시작 잠금 정리 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
+  assert.equal(existsSync(lock), true, "the stale lock stays when it cannot be cleared safely");
+});
+
+test("start lock: a lock another start makes after the stale one was judged is never removed; this start waits and gives up", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  const r = serviceDirect(root, "start", {}, ["--import", LOCK_RACE]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /다른 start 가 \d+ms 넘게 진행 중/);
+  assert.equal(JSON.parse(readFileSync(lock, "utf8")).race, "A", "the fresh lock made after the stale one was judged is still there");
+  assert.equal(existsSync(`${lock}.break`), false, "the break lock is gone");
   assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
 });
 
