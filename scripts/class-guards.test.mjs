@@ -19,6 +19,7 @@ const shipped = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "
 const ALLOWED = new Map([
   ["skills/tone-compact/scripts/instruction-toggle.mjs", "writeFresh removes the name first and openNew compares the opened file with the name"],
   ["skills/anti-drm/scripts/instruction-toggle.mjs", "byte-identical copy of tone-compact's"],
+  ["skills/ralph-qa/references/seat-payload.mjs", "writes only inside its run folder, made by mkdtemp under this account's base folder; the runner may not load node:crypto (smoke S25-b)"],
 ]);
 
 // A line that builds a file name from the pid or the clock with nothing random beside it.

@@ -145,7 +145,7 @@ test("setup: pip refusing the system Python (externally managed) puts Playwright
   const env = { CODEX_HOME: codexHome(), MOTION_SITES_HOME: home };
   const { runner, calls } = fake([
     [/-c import sys/, { ok: true, out: "/usr/bin/python3\n" }],
-    [/^python3 -m pip install playwright/, { ok: false, out: "error: externally-managed-environment", why: "x" }],
+    [/^(python3|python|py -3) -m pip install playwright/, { ok: false, out: "error: externally-managed-environment", why: "x" }],
     [/-m venv /, { ok: true }],
     [/venv.*-m pip install playwright/, { ok: true }],
     [/venv.*-m playwright install chromium/, { ok: true }],
