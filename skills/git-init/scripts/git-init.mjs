@@ -259,7 +259,7 @@ export function missingPatterns(text) {
 function gitignorePlan(root, follow) {
   const path = join(root, ".gitignore");
   const opts = { comment: HASH, id: ID, skill: SKILL, followSymlink: follow };
-  const probe = planBlock(path, { ...opts, body: null });
+  const probe = planBlock(path, { ...opts, body: null, readOnly: true }); // read only: never written
   if (!probe.ok) return { refuse: probe };
   const missing = missingPatterns(probe.before === null ? "" : probe.before.toString("utf8"));
   const plan = planBlock(path, { ...opts, body: missing.length > 0 ? [BLOCK_HEAD, ...missing].join("\n") : null });

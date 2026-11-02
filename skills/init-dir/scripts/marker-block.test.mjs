@@ -342,6 +342,15 @@ test("a link or a folder at the .bak name is refused already in the plan, so a d
   assert.equal(same.ok, true, "a plan that changes nothing needs no backup");
 });
 
+test("a read-only plan (readOnly) does not check the .bak spot", () => {
+  const d = fresh();
+  const p = put(d, "AGENTS.md", `x\n\n${BLOCK}`);
+  mkdirSync(`${p}.test.bak`);
+  const r = applyBlock(p, opts({ body: null, dryRun: true, readOnly: true }));
+  assert.equal(r.ok, true);
+  assert.equal(r.changed, true);
+});
+
 test("one refusal among several files: none is written", () => {
   const d = fresh();
   const good = put(d, "good.md", "g\n");

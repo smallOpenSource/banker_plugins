@@ -107,8 +107,9 @@ export function loadBoxes(file = configFile()) {
 // ── commands for a box ───────────────────────────────────────────────────────
 
 // ssh and scp start in the home folder, so a relative key path is made absolute against this run's folder first,
-// where it was meant.
-const extras = (b, portFlag) => [...(b.port ? [portFlag, String(b.port)] : []), ...(b.identity ? ["-i", resolve(b.identity)] : [])];
+// where it was meant. A path from ~ stays as it is: OpenSSH expands it itself.
+const keyPath = (p) => (/^~([\\/]|$)/.test(p) ? p : resolve(p));
+const extras = (b, portFlag) => [...(b.port ? [portFlag, String(b.port)] : []), ...(b.identity ? ["-i", keyPath(b.identity)] : [])];
 export const sshBase = (b) => [...BASE, ...extras(b, "-p")];
 export const scpBase = (b) => [...BASE, ...extras(b, "-P")];
 

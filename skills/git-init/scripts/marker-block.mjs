@@ -220,6 +220,7 @@ const options = (opts) => ({
   wrap: opts.wrap ?? null,
   skill: opts.skill,
   follow: opts.followSymlink === true,
+  readOnly: opts.readOnly === true, // a plan only read (never committed): no backup spot to check
   uid: "uid" in opts ? opts.uid : process.getuid?.(),
 });
 
@@ -258,8 +259,8 @@ export function planBlock(path, opts) {
   const changed = !next.bytes.equals(read.bytes);
   // A change keeps the first original in <file>.<skill>.bak: something else there (a link, a folder) is refused now,
   // in the plan, so a dry run, a status and a check say so before anything is written.
-  const bakAt = changed ? lstatSync(`${at.file}.${o.skill}.bak`, { throwIfNoEntry: false }) : undefined;
-  if (bakAt && !bakAt.isFile()) return refusal("backup", `백업 자리에 일반 파일이 아닌 것이 있어 그대로 둠: ${at.file}.${o.skill}.bak`, path);
+  const bakWhy = changed && !o.readOnly ? backupSpotWhy(`${at.file}.${o.skill}.bak`) : null;
+  if (bakWhy) return refusal("backup", `${bakWhy}: ${at.file}.${o.skill}.bak`, path);
   // ino 0 (a file system without file ids) tells nothing apart: then the path as the file system spells it is the
   // key (realpathSync.native gives one spelling for names that differ only in case where case is ignored).
   const key = read.id.ino === 0n ? `path:${nativeReal(at.file)}` : `ino:${read.id.dev}:${read.id.ino}`;
@@ -334,6 +335,17 @@ function writeFresh(path, bytes, mode) {
     throw e;
   } finally {
     closeSync(fd);
+  }
+}
+
+// Why the backup spot cannot take the first original, or null: something that is not a regular file there, or a look
+// that fails (EPERM on Windows for a .bak being deleted, and the like).
+function backupSpotWhy(bak) {
+  try {
+    const st = lstatSync(bak, { throwIfNoEntry: false });
+    return st && !st.isFile() ? "백업 자리에 일반 파일이 아닌 것이 있어 그대로 둠" : null;
+  } catch (e) {
+    return `백업 자리를 확인하지 못해 그대로 둠(${e.code || e.message})`;
   }
 }
 
