@@ -11,6 +11,8 @@ import { FOLDERS, templateFiles } from "./templates.mjs";
 
 // Preload that makes fs.openSync throw for one file name (scripts/test-fixtures, not shipped).
 const FAIL_OPEN = new URL("../../../scripts/test-fixtures/fail-open.mjs", import.meta.url).href;
+// Preload that gives every Number stat one ino, as an NTFS file id past 2^53 can (scripts/test-fixtures, not shipped).
+const SAME_INO = new URL("../../../scripts/test-fixtures/same-ino.mjs", import.meta.url).href;
 
 const WIN = process.platform === "win32";
 const CLI = fileURLToPath(new URL("./init-dir.mjs", import.meta.url));
@@ -118,6 +120,17 @@ test("AC3: both files get the block; AGENTS.md in its own policy pair, the old p
   const c = read(join(root, "CLAUDE.md"));
   assert.equal(count(c, START), 1);
   assert.equal(c.includes(POLICY_OPEN), false);
+});
+
+test("AC3: two files whose Number ino is the same (NTFS ids past 2^53) both get the block", () => {
+  const root = project();
+  writeFileSync(join(root, "AGENTS.md"), "# agents\n");
+  writeFileSync(join(root, "CLAUDE.md"), "# claude\n");
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const r = spawnSync(process.execPath, ["--import", SAME_INO, CLI, "apply", "--root", root, "--runtime", "claude"], { encoding: "utf8", cwd: base, env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(count(read(join(root, "AGENTS.md")), START), 1);
+  assert.equal(count(read(join(root, "CLAUDE.md")), START), 1, r.stdout);
 });
 
 test("AC3: neither file and --runtime codex makes AGENTS.md only", () => {

@@ -96,7 +96,8 @@ function fileProblem(st, file, uid) {
   return null;
 }
 
-// The file's stat and bytes, opened without blocking so a FIFO planted after the look never waits.
+// The file's stat and bytes, opened without blocking so a FIFO planted after the look never waits. id: the same
+// file's bigint stat for telling files apart (an NTFS file id passes 2^53, so as a Number two files can share one).
 function readChecked(file, uid) {
   const first = statSync(file);
   const problem = fileProblem(first, file, uid);
@@ -105,7 +106,7 @@ function readChecked(file, uid) {
   try {
     const st = fstatSync(fd);
     const late = fileProblem(st, file, uid);
-    return late ? { refuse: late } : { st, bytes: readFileSync(fd) };
+    return late ? { refuse: late } : { st, id: fstatSync(fd, { bigint: true }), bytes: readFileSync(fd) };
   } finally {
     closeSync(fd);
   }
@@ -233,7 +234,8 @@ export function planBlock(path, opts) {
   const next = nextBytes(read.bytes, o, at.file);
   if (next.refuse) return next.refuse;
   const changed = !next.bytes.equals(read.bytes);
-  const key = `ino:${read.st.dev}:${read.st.ino}`;
+  // ino 0 (a file system without file ids) tells nothing apart: then the resolved path is the key.
+  const key = read.id.ino === 0n ? `path:${resolve(at.file)}` : `ino:${read.id.dev}:${read.id.ino}`;
   return { ok: true, changed, path, file: at.file, key, before: read.bytes, after: next.bytes, mode: read.st.mode & 0o7777 };
 }
 
