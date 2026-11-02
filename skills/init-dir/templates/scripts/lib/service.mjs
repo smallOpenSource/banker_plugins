@@ -371,12 +371,12 @@ function makeLockFile(file) {
   }
 }
 
-// lstat that answers undefined for a missing file and for one busy being deleted (the next try sees).
+// lstat that answers undefined for a missing file and null for one busy being deleted (the next try sees).
 function lstatNow(file) {
   try {
     return lstatSync(file, { throwIfNoEntry: false });
   } catch (e) {
-    if (BUSY.has(e.code)) return undefined;
+    if (BUSY.has(e.code)) return null;
     throw e;
   }
 }
@@ -423,12 +423,24 @@ function breakStale(file, seen) {
   return {};
 }
 
+// Makes the lock or looks at what is there: { text } made, or { st } (undefined: gone, null: busy being deleted).
+// When nothing is there and the open failed for another reason than EEXIST (no write access and the like), one more
+// open (a Windows file being deleted can be gone by the lstat), then it throws.
+function makeOrSee(file) {
+  for (let i = 0; ; i++) {
+    const made = makeLockFile(file);
+    if (made.text) return made;
+    const st = lstatNow(file);
+    if (st !== undefined || made.code === "EEXIST") return { st };
+    if (i) throw Object.assign(new Error(`시작 잠금을 만들지 못함(${made.code}): ${file}`), { code: made.code });
+  }
+}
+
 // One try at the lock: { text } held, { error } refused, or {} busy.
 function tryLock(file) {
-  const made = makeLockFile(file);
-  if (made.text) return made;
-  if (!BUSY.has(made.code)) throw Object.assign(new Error(`시작 잠금을 만들지 못함(${made.code}): ${file}`), { code: made.code });
-  const st = lstatNow(file);
+  const got = makeOrSee(file);
+  if (got.text) return got;
+  const { st } = got;
   if (!st) return {}; // gone or busy being deleted: the next try sees
   if (!st.isFile()) return { error: `시작 잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${file}` };
   const seen = readText(file);

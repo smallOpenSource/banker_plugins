@@ -4,7 +4,7 @@
 // Run: node --test skills/init-dir/scripts/service-template.test.mjs
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -503,6 +503,24 @@ test("start lock: EPERM and EBUSY from a lock or break lock being deleted (Windo
   assert.equal(existsSync(`${lock}.break`), false);
   assert.equal(svc(root, "stop").status, 0);
   assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+});
+
+test("start lock: a logs folder this account cannot write fails at once with the reason, not as a start at work", { skip: (WIN && "POSIX 권한 비트 전용") || (process.getuid?.() === 0 && "root 는 권한 비트를 무시") }, () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const logs = join(root, "logs");
+  mkdirSync(logs, { recursive: true });
+  chmodSync(logs, 0o555);
+  try {
+    const t0 = Date.now();
+    const r = svc(root, "start");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /시작 잠금을 만들지 못함\(EACCES\)/);
+    assert.doesNotMatch(r.stderr, /진행 중/);
+    assert.ok(Date.now() - t0 < 4000, `took ${Date.now() - t0} ms`);
+  } finally {
+    chmodSync(logs, 0o755);
+  }
 });
 
 test("start lock: a fresh break lock is left alone until it is older than 5 seconds", async () => {
