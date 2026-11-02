@@ -265,10 +265,20 @@ function enablePlugin(runtime, runner) {
   return { step: "plugin enable", ok: r.ok, why: r.why };
 }
 
+// No Python found: says where it looked and how to name one that is installed but not on PATH (Windows with only
+// Miniconda, or only the Microsoft Store link, has no py and no working python).
+export const NO_PYTHON = "Python 3 을 찾지 못함(python3, python, Windows 는 py). 설치한 Python 이 PATH 밖에 있으면 환경 변수 MOTION_SITES_PYTHON 에 그 python 실행 파일의 절대 경로를 영구로 지정한 뒤 다시 실행";
+
+/** Why no Python was found; a MOTION_SITES_PYTHON that is set but does not run is named, so a typo is not hidden. */
+export function noPython(env = process.env) {
+  if (!env.MOTION_SITES_PYTHON) return NO_PYTHON;
+  return `MOTION_SITES_PYTHON 에 지정한 ${pythons(env)[0][0]} 가 실행되지 않음. 경로를 고친 뒤 다시 실행. ${NO_PYTHON}`;
+}
+
 /** The Python steps: Playwright, then Chromium. */
 function installBrowser(env, runner) {
   let py = pickPython(env, runner);
-  if (!py) return [{ step: "python", ok: false, why: "Python 3 을 찾지 못함(python3, python, Windows 는 py)" }];
+  if (!py) return [{ step: "python", ok: false, why: noPython(env) }];
   const steps = [];
   let cmd = py.cmd;
   if (!py.playwright) {

@@ -8,7 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { byVersion, cacheHome, claudePlugin, run, claudeSkill, codexPlugin, codexSkill, main, pythons, reachable, setup, sources, status } from "./motion-sites.mjs";
+import { byVersion, cacheHome, claudePlugin, run, claudeSkill, codexPlugin, codexSkill, main, NO_PYTHON, noPython, pythons, reachable, setup, sources, status } from "./motion-sites.mjs";
 
 const CLI = fileURLToPath(new URL("./motion-sites.mjs", import.meta.url));
 const base = mkdtempSync(join(tmpdir(), "motion-sites-"));
@@ -153,6 +153,25 @@ test("setup: pip refusing the system Python (externally managed) puts Playwright
   const r = setup("codex", { env, runner });
   assert.deepEqual(r.steps.map((s) => [s.step, s.ok]), [["pip install playwright", true], ["playwright install chromium", true]]);
   assert.ok(calls.some((c) => c.line.includes(join(home, "venv"))));
+});
+
+test("setup: no Python runs (Windows with no py, a Store link for python): the python step fails and names MOTION_SITES_PYTHON", () => {
+  const p = fresh();
+  mkdirSync(join(p, "skills", "motionsites-web-builder"), { recursive: true });
+  writeFileSync(join(p, "skills", "motionsites-web-builder", "SKILL.md"), "x");
+  const env = { MOTION_SITES_HOME: fresh() };
+  const { runner, calls } = fake([[/plugin list/, { ok: true, out: JSON.stringify([{ id: ID, enabled: true, installPath: p }]) }]]);
+  const r = setup("claude", { env, runner });
+  assert.equal(r.ready, false);
+  assert.equal(r.python, null);
+  assert.deepEqual(r.steps.map((s) => [s.step, s.ok]), [["python", false]]);
+  assert.equal(r.steps[0].why, NO_PYTHON);
+  assert.match(r.steps[0].why, /MOTION_SITES_PYTHON/);
+  assert.equal(calls.some((c) => /pip install|plugin install/.test(c.line)), false, "nothing installed");
+  const bad = join(fresh(), "nope", "python.exe");
+  const wrong = setup("claude", { env: { ...env, MOTION_SITES_PYTHON: bad }, runner: fake([[/plugin list/, { ok: true, out: JSON.stringify([{ id: ID, enabled: true, installPath: p }]) }]]).runner });
+  assert.equal(wrong.steps[0].why, noPython({ MOTION_SITES_PYTHON: bad }));
+  assert.ok(wrong.steps[0].why.startsWith(`MOTION_SITES_PYTHON 에 지정한 ${bad} 가 실행되지 않음`), wrong.steps[0].why);
 });
 
 test("command line: usage errors exit 2, --help exits 0, path without the plugin exits 1", () => {
