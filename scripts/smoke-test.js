@@ -439,7 +439,7 @@ try {
   const pmonDir = path.join(instDir, 'banker-progress-mon');
   const pmonFiles = mfAllSkills.find((s) => s.name === 'progress-mon').supportingFiles;
   const pmonSkill = fs.readFileSync(path.join(pmonDir, 'SKILL.md'), 'utf8');
-  ok(pmonFiles.length === 44 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
+  ok(pmonFiles.length === 45 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
      && !fs.readdirSync(path.join(pmonDir, 'scripts')).some((f) => f.endsWith('.test.mjs')),
      `banker-progress-mon carries its ${pmonFiles.length} supporting files and no tests into the Codex install`);
   ok(/^---\nname: banker-progress-mon\n/.test(pmonSkill) && pmonSkill.includes('\nprogress-mon skill body marker v1\n'),

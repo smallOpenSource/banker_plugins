@@ -4,7 +4,7 @@
 // Run: node --test skills/init-dir/scripts/service-template.test.mjs
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -15,6 +15,10 @@ const WIN = process.platform === "win32";
 const CLI = fileURLToPath(new URL("./init-dir.mjs", import.meta.url));
 // Preload that blocks /proc/<pid>/cmdline, ps and powershell.exe (scripts/test-fixtures, not shipped).
 const NO_CMDLINE = new URL("../../../scripts/test-fixtures/no-cmdline.mjs", import.meta.url).href;
+// Preload that writes another start's fresh lock at the moment a stale lock is being cleared (scripts/test-fixtures).
+const LOCK_RACE = new URL("../../../scripts/test-fixtures/lock-race.mjs", import.meta.url).href;
+// Preload that answers EPERM, EBUSY once, as Windows does for a lock file being deleted (scripts/test-fixtures).
+const LOCK_BUSY = new URL("../../../scripts/test-fixtures/lock-busy-once.mjs", import.meta.url).href;
 const base = mkdtempSync(join(tmpdir(), "init-dir-service-"));
 const home = join(base, "home");
 mkdirSync(home);
@@ -420,6 +424,118 @@ test("start lock: a stale lock of a dead pid is taken over; a folder at the lock
   assert.equal(refused.status, 1, refused.stdout + refused.stderr);
   assert.match(refused.stderr, /시작 잠금 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
   assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
+});
+
+// A lock left by a dead start, written as one (its pid dead, a minute old).
+function staleLock(root, name = "app.start.lock") {
+  const dead = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" });
+  const deadPid = Number(dead.stdout.trim());
+  assert.equal(alive(deadPid), false);
+  mkdirSync(join(root, "logs"), { recursive: true });
+  const file = join(root, "logs", name);
+  writeFileSync(file, `${JSON.stringify({ pid: deadPid, at: new Date(Date.now() - 60000).toISOString() })}\n`);
+  return file;
+}
+
+test("start lock: four starts at once over a stale lock launch one supervisor, rounds over; no lock or break lock is left", async () => {
+  for (let round = 0; round < 3; round++) {
+    const root = project("scripts");
+    configure(root, WAITER);
+    const lock = staleLock(root);
+    const runs = await Promise.all([0, 1, 2, 3].map(() => startAsync(root)));
+    const all = runs.map((r) => r.out).join("\n");
+    const p = pidOf(root);
+    for (const r of runs) assert.equal(r.code, 0, all);
+    assert.equal(runs.filter((r) => /시작함/.test(r.out)).length, 1, `round ${round}: ${all}`);
+    for (const r of runs) assert.match(r.out, new RegExp(`감독 PID ${p.supervisor}[,)]`), `round ${round}: every run names the same supervisor`);
+    assert.equal(existsSync(lock), false);
+    assert.equal(existsSync(`${lock}.break`), false);
+    assert.equal(svc(root, "stop").status, 0);
+    assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  }
+});
+
+test("start lock: a break lock left by a dead start is cleared after a while; a folder at its name is refused", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  staleLock(root, "app.start.lock.break");
+  const s = svc(root, "start");
+  assert.equal(s.status, 0, s.stdout + s.stderr);
+  assert.match(s.stdout, /시작함/);
+  const p = pidOf(root);
+  assert.equal(existsSync(lock), false);
+  assert.equal(existsSync(`${lock}.break`), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  staleLock(root);
+  mkdirSync(`${lock}.break`);
+  const refused = svc(root, "start");
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stderr, /시작 잠금 정리 자리에 일반 파일이 아닌 것\(링크나 폴더\)이 있어 거부/);
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
+  assert.equal(existsSync(lock), true, "the stale lock stays when it cannot be cleared safely");
+});
+
+test("start lock: a lock another start makes after the stale one was judged is never removed; this start waits and gives up", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  const r = serviceDirect(root, "start", {}, ["--import", LOCK_RACE]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /다른 start 가 \d+ms 넘게 진행 중/);
+  assert.equal(JSON.parse(readFileSync(lock, "utf8")).race, "A", "the fresh lock made after the stale one was judged is still there");
+  assert.equal(existsSync(`${lock}.break`), false, "the break lock is gone");
+  assert.equal(existsSync(join(root, "logs", "app.pid")), false, "nothing started");
+});
+
+test("start lock: EPERM and EBUSY from a lock or break lock being deleted (Windows) are waited out, not a failure", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  const mark = join(base, `busy${n++}.log`);
+  const r = serviceDirect(root, "start", { LOCK_BUSY_MARK: mark }, ["--import", LOCK_BUSY]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /시작함/);
+  assert.deepEqual(readFileSync(mark, "utf8").trim().split("\n").sort(), ["lstat break", "lstat lock", "open break", "open lock", "rm lock"], "every busy answer was met");
+  const p = pidOf(root);
+  assert.equal(existsSync(lock), false);
+  assert.equal(existsSync(`${lock}.break`), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+});
+
+test("start lock: a logs folder this account cannot write fails at once with the reason, not as a start at work", { skip: (WIN && "POSIX 권한 비트 전용") || (process.getuid?.() === 0 && "root 는 권한 비트를 무시") }, () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const logs = join(root, "logs");
+  mkdirSync(logs, { recursive: true });
+  chmodSync(logs, 0o555);
+  try {
+    const t0 = Date.now();
+    const r = svc(root, "start");
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /시작 잠금을 만들지 못함\(EACCES\)/);
+    assert.doesNotMatch(r.stderr, /진행 중/);
+    assert.ok(Date.now() - t0 < 4000, `took ${Date.now() - t0} ms`);
+  } finally {
+    chmodSync(logs, 0o755);
+  }
+});
+
+test("start lock: a fresh break lock is left alone until it is older than 5 seconds", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const lock = staleLock(root);
+  writeFileSync(`${lock}.break`, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`);
+  const t0 = Date.now();
+  const r = serviceDirect(root, "start", { SERVICE_START_CHECK_MS: "3000" });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(Date.now() - t0 >= 4500, `waited ${Date.now() - t0} ms for the fresh break lock`);
+  const p = pidOf(root);
+  assert.equal(existsSync(`${lock}.break`), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
 });
 
 test("start lock: a symbolic link at the lock's name is refused and its target is not touched", { skip: symlinkSkip }, () => {

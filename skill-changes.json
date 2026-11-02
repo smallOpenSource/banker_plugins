@@ -321,5 +321,11 @@
     "banker:progress-mon",
     "banker:tune-tmux",
     "banker:ultra-chain"
+  ],
+  "0.24.1": [
+    "banker:git-init",
+    "banker:init-dir",
+    "banker:progress-mon",
+    "banker:tune-tmux"
   ]
 }

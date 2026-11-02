@@ -1477,8 +1477,10 @@ test('probeSoraDeployment: an exact model entry wins; a passed date or a retired
   probeFetch({ models: [] });
   const none = await A.probeSoraDeployment({ endpoint: EP, key: KEY });
   assert.deepEqual([none.state, none.retiresAt, none.daysLeft, none.soon], ['deployed', null, null, false]);
+  // a deployment not yet ready reads as unknown while its model's retirement date (NOV2) has not passed: a fixed now,
+  // so the test does not turn into 'retired' once the real date passes it
   probeFetch({ deployment: mockJson({ model: 'sora-2', status: 'creating' }) });
-  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY })).state, 'unknown');
+  assert.equal((await A.probeSoraDeployment({ endpoint: EP, key: KEY, now: () => Date.UTC(2026, 9, 29) })).state, 'unknown');
 });
 
 test('probeSoraDeployment: 404, 410, 401/403, network and other answers map to their states without reading the model list', async () => {

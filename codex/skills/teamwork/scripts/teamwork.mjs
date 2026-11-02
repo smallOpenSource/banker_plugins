@@ -906,12 +906,12 @@ function sessionCwd() {
 function openedPath(fd) { try { return fs.readlinkSync(`/proc/self/fd/${fd}`); } catch { return ''; } }
 
 // 연 파일이 확인한 파일과 같은지: 마지막 이름은 O_NOFOLLOW 로 링크를 따라가지 않고(Windows 는 그 플래그가 없어 lstat 으로 링크가 아님을 봄),
-// 연 파일의 dev, ino 를 실제 경로의 lstat 과 비교한다. Linux 는 연 파일의 경로도 경계 안인지 다시 봐 그사이 바뀐 폴더를 거부한다
+// 연 파일의 dev, ino 를 실제 경로의 lstat 과 비교한다(bigint: NTFS 파일 ID 는 2^53 을 넘어 Number 로는 다른 두 파일이 같아 보일 수 있음). Linux 는 연 파일의 경로도 경계 안인지 다시 봐 그사이 바뀐 폴더를 거부한다
 function readChecked(real, roots) {
-  const before = fs.lstatSync(real);
+  const before = fs.lstatSync(real, { bigint: true });
   const fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
   try {
-    const st = fs.fstatSync(fd);
+    const st = fs.fstatSync(fd, { bigint: true });
     const opened = openedPath(fd);
     const moved = !st.isFile() || !before.isFile() || st.dev !== before.dev || st.ino !== before.ino;
     if (moved || (opened && !roots.some((r) => under(opened, r)))) throw new Error(`확인한 뒤 바뀌었거나 일반 파일이 아님: ${real}`);

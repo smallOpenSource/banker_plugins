@@ -14,7 +14,8 @@
 | `scripts/pm-sources.mjs` | events.jsonl, git log, 워크플로 journal, `items.json` 읽기. 스토리와 라벨 판정 함수, 시각 해석, 읽기 캐시 |
 | `scripts/pm-html.mjs` | escape, 색 검사, 유한 수 검사, 글 폭 추정, 줄바꿈, 공통 CSS, 탭 머리 |
 | `scripts/pm-render.mjs` | 5탭, 단일 HTML 스냅숏(`export`), workflow 배치, 구성도 자동 배치 |
-| `scripts/pm-adr.mjs` | ADR 탭: `adr.json` 두 층 스키마 검사, 참조 확인과 정리(`check --adr-cleanup`), `docs/adr/` 갈라짐 경고, 밀도, 렌더 |
+| `scripts/pm-adr.mjs` | ADR 탭 검사: `adr.json` 두 층 스키마 검사, 참조 확인과 정리(`check --adr-cleanup`), `docs/adr/` 갈라짐 경고, 밀도, 집계, check 대조 기록(`adr-check.json`) |
+| `scripts/pm-adr-view.mjs` | ADR 탭 렌더: 화면 본문과 check 대조 배지 |
 | `scripts/pm-server.mjs` | `serve`, `start`, `stop`, `status`. 바인드, Host 검사, 신원 경로, 상태 파일, 포트 선택, 로그 |
 | `scripts/pm-data.mjs` | `init`, `item`, `note`, `stage`, `story`(`items.json` 잠금과 낡은 잠금 정리) |
 | `scripts/pm-memory.mjs` | 메모리 규칙 등록, 옛 판 규칙 줄의 제자리 교체(첫 원본 `.progress-mon.bak`), 규칙 로드 한도 측정 |
@@ -41,7 +42,7 @@
 - 시험은 임시 HOME, 임시 프로젝트, OS 가 고른 빈 포트에서 돈다. 포트 30000, 3456, 3458 은 쓰지 않는다
 - 시험은 PATH 의 `git` 으로 임시 저장소를 만든다. git 이 없는 PC 에서는 그 시험 10개가 실패한다(2026-10-30, PATH 에 node 와 mkfifo 만 두고 실측). 스킬 자체는 git 이 없으면 커밋 기록 없이 동작
 - FIFO 와 `/dev/zero` 시험은 POSIX 만. Windows 에서는 이유를 밝히고 건너뛴다
-- ADR 화면 e2e 는 `npm root -g` 의 전역 Playwright Chromium 으로 `export` 한 HTML 을 연다. Playwright 가 없거나 Chromium 을 띄우지 못하면 사유를 밝히고 건너뛴다. `PM_ADR_SHOT=<png 경로>` 를 주면 스크린숏을 그 경로에 남긴다
+- ADR 화면 e2e 는 Playwright Chromium 으로 `export` 한 HTML 을 연다. Playwright 는 `BUILD_TESTBOX_PLAYWRIGHT_DIR`(테스트박스 도구 폴더, `node_modules` 를 담은 폴더)이 있으면 그곳, 없으면 `npm root -g` 에서 찾는다. Playwright 가 없거나 Chromium 을 띄우지 못하면 사유를 밝히고 건너뛴다. `PM_ADR_SHOT=<png 경로>` 를 주면 스크린숏을 그 경로에 남긴다
 
 ## 개발
 
@@ -103,7 +104,7 @@ override 에 banker 블록이나 이 스킬 블록만 있으면 `init`, `status`
 ```json
 { "name": "progress-mon", "type": "skill", "target": "both",
   "reason": "project progress web screen with five tabs (progress, requirements, workflow, architecture, ADR) on a local server; init reads the code and writes the tab data, registers a one-line update rule in project memory; item, note, stage, story keep it current; pure Node, no deps",
-  "supportingFiles": ["README.md", "references/adr.md", "references/arch.md", "references/authoring.md", "references/config.md", "references/flow.md", "references/inventory.md", "references/items.md", "references/req-spec.md", "references/reqs.md", "scripts/index.js", "scripts/pm-adr.mjs", "scripts/pm-check.mjs", "scripts/pm-config.mjs", "scripts/pm-data.mjs", "scripts/pm-html.mjs", "scripts/pm-memory.mjs", "scripts/pm-render.mjs", "scripts/pm-server.mjs", "scripts/pm-sources.mjs", "scripts/progress-mon.mjs", "assets/fixture/README.md", "assets/fixture/config.json", "assets/fixture/events.jsonl", "assets/fixture/items.json", "assets/fixture/commits.json", "assets/fixture/req-spec.json", "assets/fixture/reqs.json", "assets/fixture/flow.json", "assets/fixture/arch.json", "assets/fixture/adr.json", "assets/fixture/workflows/wf_ex1/journal.jsonl", "assets/fixture/workflows/wf_ex1/agent-a01.jsonl", "assets/fixture/workflows/wf_ex1/agent-a02.jsonl", "assets/fixture/workflows/wf_ex1/agent-a03.jsonl", "assets/fixture/workflows/wf_ex1/agent-a04.jsonl", "assets/fixture/variants/arch-auto/arch.json", "assets/fixture/variants/check-auto/arch.json", "assets/fixture/variants/check-overlap/arch.json", "assets/fixture/variants/history-manual/config.json", "assets/fixture/variants/history-manual/items.json", "assets/fixture/variants/workflow-wide/flow.json", "assets/fixture/variants/legacy-init/rules.json", "assets/fixture/variants/legacy-init/state.json"],
+  "supportingFiles": ["README.md", "references/adr.md", "references/arch.md", "references/authoring.md", "references/config.md", "references/flow.md", "references/inventory.md", "references/items.md", "references/req-spec.md", "references/reqs.md", "scripts/index.js", "scripts/pm-adr.mjs", "scripts/pm-adr-view.mjs", "scripts/pm-check.mjs", "scripts/pm-config.mjs", "scripts/pm-data.mjs", "scripts/pm-html.mjs", "scripts/pm-memory.mjs", "scripts/pm-render.mjs", "scripts/pm-server.mjs", "scripts/pm-sources.mjs", "scripts/progress-mon.mjs", "assets/fixture/README.md", "assets/fixture/config.json", "assets/fixture/events.jsonl", "assets/fixture/items.json", "assets/fixture/commits.json", "assets/fixture/req-spec.json", "assets/fixture/reqs.json", "assets/fixture/flow.json", "assets/fixture/arch.json", "assets/fixture/adr.json", "assets/fixture/workflows/wf_ex1/journal.jsonl", "assets/fixture/workflows/wf_ex1/agent-a01.jsonl", "assets/fixture/workflows/wf_ex1/agent-a02.jsonl", "assets/fixture/workflows/wf_ex1/agent-a03.jsonl", "assets/fixture/workflows/wf_ex1/agent-a04.jsonl", "assets/fixture/variants/arch-auto/arch.json", "assets/fixture/variants/check-auto/arch.json", "assets/fixture/variants/check-overlap/arch.json", "assets/fixture/variants/history-manual/config.json", "assets/fixture/variants/history-manual/items.json", "assets/fixture/variants/workflow-wide/flow.json", "assets/fixture/variants/legacy-init/rules.json", "assets/fixture/variants/legacy-init/state.json"],
   "caveat": "needs Node 18 or later (above the package engines floor); binds 127.0.0.1 only by default, --host takes a private IPv4 with a warning; data lives in .omc/progress-mon/ (Codex .omx/progress-mon/); on Codex start, stop, status and init each ask for sandbox_permissions require_escalated, and a long-lived screen runs from the user's terminal (serve) since closing the session may stop the server" }
 ```
 

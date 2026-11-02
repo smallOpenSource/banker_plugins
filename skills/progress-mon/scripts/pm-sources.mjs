@@ -7,6 +7,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { eventsPath, stagesFor, isDir, noBom, readRegular } from './pm-config.mjs';
+import { adrSha } from './pm-adr.mjs';
 
 // ---------- 시각 ----------
 
@@ -67,6 +68,13 @@ const parseLines = (t) =>
 
 // JSON 파일. 돌려줌: { value } | { missing: true } | { error }
 export const readJsonFile = (file) => cached(file, parseJson);
+
+// adr.json: 값과 글의 sha256(check 대조 기록 adr-check.json 과 견줌). 돌려줌: { value, sha } | { missing: true } | { error }
+const parseAdr = (t) => ({ json: JSON.parse(t), sha: adrSha(t) });
+export function readAdrFile(file) {
+  const r = cached(file, parseAdr);
+  return r.value ? { value: r.value.json, sha: r.value.sha } : r;
+}
 // JSONL 파일의 객체 줄 목록. 없거나 못 읽으면 빈 목록.
 export const readLines = (file) => cached(file, parseLines).value || [];
 
@@ -497,6 +505,7 @@ export function collect(ctx, config, now, inject = {}) {
     reqs: tab('reqs.json'),
     flow: tab('flow.json'),
     arch: tab('arch.json'),
-    adr: tab('adr.json'),
+    adr: readAdrFile(path.join(ctx.dataDir, 'adr.json')),
+    adrCheck: tab('adr-check.json'),
   };
 }

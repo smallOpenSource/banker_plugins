@@ -1,5 +1,5 @@
 // pm-adr.mjs 시험. 임시 프로젝트에 고정 자료(assets/fixture)와 adr.json 이 가리키는 파일을 만들고 check, 정리, 렌더, export,
-// 서버, 옛 판 자료 폴더의 ADR 단계를 본다. 화면 e2e 는 이 PC 의 전역 Playwright Chromium 으로 export 한 HTML 을 연다.
+// 서버, 옛 판 자료 폴더의 ADR 단계를 본다. 화면 e2e 는 Playwright Chromium(테스트박스 도구 폴더, 없으면 이 PC 의 전역)으로 export 한 HTML 을 연다.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,7 +11,8 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runCheck } from './pm-check.mjs';
-import { adrRows, adrSchema, cleanAdr, refText } from './pm-adr.mjs';
+import { adrRows, adrSchema, cleanAdr } from './pm-adr.mjs';
+import { checkNote, refText } from './pm-adr-view.mjs';
 import { renderTab, command as renderCommand } from './pm-render.mjs';
 import { serve } from './pm-server.mjs';
 import { validate } from './pm-config.mjs';
@@ -168,7 +169,7 @@ test('WARN 유지: 결정의 최적화 로직, 확장 대응, 포기와 얻은 �
   assert.ok(lines.includes('WARN density adr 빈 항목 4/9: project.flow, decisions[0].optimization, decisions[0].scaling, decisions[0].tradeoffs, decisions[1].scaling'), lines.join('\n'));
   assert.equal(lines[lines.length - 1], 'adr 근거 없음 6칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0', '여섯 항목 칸 5개와 참조 자리 1개');
   const h = renderTab(ctx, configOf(ctx), 'adr', NOW);
-  assert.ok(h.includes('<div class="meta"><span class="b miss">근거 없음 6칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0</span></div>\n<h2>프로젝트 요약</h2>'), '배지는 프로젝트 요약 위');
+  assert.ok(h.includes('<div class="meta"><span class="b miss">근거 없음 6칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0</span> <span class="b unv">check 기록 없음. 참조 확인은 check</span></div>\n<h2>프로젝트 요약</h2>'), '배지는 프로젝트 요약 위, 그 옆에 check 대조');
   // 확장 대응을 채웠지만 refs 에 확인된 참조가 0개: 규칙은 WARN(FAIL 0)이고, 배지와 마지막 줄에 참조 없는 서술 1, 배지는 초록이 아님
   a.decisions[1].scaling = { argument: '규모와 무관', refs: [] };
   for (const k of ['optimization', 'scaling', 'tradeoffs']) a.decisions[0][k] = readFix('adr.json').decisions[0][k];
@@ -194,6 +195,64 @@ test('WARN 유지: 결정의 최적화 로직, 확장 대응, 포기와 얻은 �
   fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), JSON.stringify(a));
   assert.equal(check(ctx).lines.slice(-1)[0], 'adr 근거 없음 0칸, 미검증 2, 구현 못 함 0, 참조 없는 서술 0');
   assert.ok(renderTab(ctx, configOf(ctx), 'adr', NOW).includes('<span class="b miss">근거 없음 0칸, 미검증 2, 구현 못 함 0, 참조 없는 서술 0</span>'));
+});
+
+test('check 대조: check 명령이 adr-check.json 에 집계와 adr.json sha256 을 남기고, 화면은 같음, 바뀜, 다름을 알림', T, () => {
+  const a = readFix('adr.json');
+  const ctx = project({ adr: a });
+  const rec = () => JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'adr-check.json'), 'utf8'));
+  const tab = () => renderTab(ctx, configOf(ctx), 'adr', NOW);
+  assert.ok(!fs.existsSync(path.join(ctx.dataDir, 'adr-check.json')), 'runCheck 는 자료 폴더에 쓰지 않음');
+  check(ctx);
+  assert.ok(!fs.existsSync(path.join(ctx.dataDir, 'adr-check.json')), 'runCheck 만으로는 기록을 쓰지 않음');
+  assert.equal(cli(['check'], ctx.project).code, 0);
+  const r1 = rec();
+  assert.match(r1.sha, /^[0-9a-f]{64}$/);
+  assert.equal(r1.tally, FIX_TAIL[2].slice(4));
+  assert.match(tab(), /<span class="b done">check\(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\) 와 같음<\/span>/);
+  // 확인 못 하는 참조(출력 파일 없는 명령)로 바꿈: check 전에는 바뀜, check 뒤에는 check 기준 수와 다름을 알림
+  a.decisions[0].scaling.refs = [{ kind: 'cmd', cmd: 'node bench.mjs' }];
+  fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), JSON.stringify(a, null, 2));
+  assert.match(tab(), /<span class="b unv">check\([^)]*\) 뒤 adr\.json 이 바뀜\. check 를 다시 실행하면 대조<\/span>/);
+  assert.equal(cli(['check'], ctx.project).code, 0);
+  const r2 = rec();
+  assert.notEqual(r2.sha, r1.sha);
+  assert.match(r2.tally, /참조 없는 서술 1$/);
+  const h = tab();
+  assert.ok(h.includes('참조 없는 서술 0</span>'), '화면 배지는 적힌 참조로 0');
+  assert.ok(h.includes(`<span class="b miss">check(${r2.at.slice(0, 19).replace('T', ' ')} UTC) 기준: ${r2.tally}. 화면은 적힌 참조로 세어 다름. 확인 못 한 참조는 check 의 참조 줄</span>`), h);
+  // BOM 이 붙어도 같은 글로 보아 같음
+  assert.equal(cli(['check'], ctx.project).code, 0);
+  fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), `\ufeff${JSON.stringify(a, null, 2)}`);
+  assert.ok(tab().includes('기준: '), 'BOM 만 붙은 adr.json 은 같은 글');
+  // 깨진 기록은 기록 없음
+  fs.writeFileSync(path.join(ctx.dataDir, 'adr-check.json'), '{');
+  assert.ok(tab().includes('<span class="b unv">check 기록 없음. 참조 확인은 check</span>'));
+  // 기록 자리에 폴더가 있으면 쓰기 실패 경고만 stderr 에, 검사 결과와 종료 코드는 그대로
+  fs.rmSync(path.join(ctx.dataDir, 'adr-check.json'));
+  fs.mkdirSync(path.join(ctx.dataDir, 'adr-check.json'));
+  const w = cli(['check'], ctx.project);
+  assert.equal(w.code, 0, w.err);
+  assert.match(w.err, /경고: adr-check\.json 쓰기 실패\([A-Z]+\)\. 원본 그대로\. 화면의 check 대조가 낡을 수 있음/);
+  assert.match(w.out, /\nadr 근거 없음 1칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 1\n$/);
+  assert.deepEqual(fs.readdirSync(ctx.dataDir).filter((x) => x.endsWith('.tmp')), [], '임시 파일 남지 않음');
+  // adr.json 이 없으면 기록을 쓰지 않음
+  const none = project({ adr: null });
+  assert.equal(cli(['check'], none.project).code, 0);
+  assert.ok(!fs.existsSync(path.join(none.dataDir, 'adr-check.json')));
+  // adr.json 이 JSON 이 아니면 FAIL 이고 기록을 쓰지 않음
+  const broken = project({ adr: '{' });
+  assert.equal(cli(['check'], broken.project).code, 1);
+  assert.ok(!fs.existsSync(path.join(broken.dataDir, 'adr-check.json')));
+});
+
+test('checkNote: 기록의 글은 이스케이프하고, 꼴이 틀린 기록은 기록 없음', () => {
+  const m = (value, sha = 'x') => ({ adr: { value: {}, sha }, adrCheck: { value } });
+  assert.ok(checkNote(m({ sha: 'x', tally: EVIL, at: EVIL }), 'y').includes('&lt;script&gt;'));
+  assert.ok(!checkNote(m({ sha: 'x', tally: EVIL, at: EVIL }), 'y').includes('<script>'));
+  for (const v of [null, [], { sha: 1, tally: 'a' }, { sha: 'x' }]) assert.ok(checkNote(m(v), 'a').includes('check 기록 없음'), JSON.stringify(v));
+  assert.ok(checkNote({ adr: { missing: true } }, 'a').includes('check 기록 없음'));
+  assert.ok(checkNote(m({ sha: 'x', tally: 'a' }), 'a').includes('b done">check 와 같음'), '시각 없는 기록');
 });
 
 test('check 스키마: project, project.flow, 결정의 tradeoffs 없음, 선택지 1개에 rejected 없음, 사유 없는 gap, 모듈 id 겹침과 없는 id 는 FAIL 과 json 경로', T, () => {
@@ -436,12 +495,19 @@ test('export: tab-adr 절과 #adr 전환, 외부 자원 0', T, async () => {
   assert.ok(!/(?:src|href)\s*=\s*["']?(?:https?:)?\/\//i.test(html));
 });
 
-// 이 PC 의 전역 Playwright. 없으면 { skip: 사유 }.
-async function chromium() {
+// Playwright: 테스트박스 도구 폴더(BUILD_TESTBOX_PLAYWRIGHT_DIR, node_modules 를 담은 폴더. build-testbox 시험과 같은 관례)가
+// 먼저, 없으면 이 PC 의 전역 npm root. 둘 다 없으면 { skip: 사유 }.
+function playwrightModules() {
+  const given = process.env.BUILD_TESTBOX_PLAYWRIGHT_DIR;
+  if (given) return { dir: path.join(given, 'node_modules'), from: 'BUILD_TESTBOX_PLAYWRIGHT_DIR' };
   const win = process.platform === 'win32';
   const r = spawnSync(win ? 'npm.cmd' : 'npm', ['root', '-g'], { encoding: 'utf8', shell: win, timeout: 30000 });
-  const dir = r.status === 0 ? r.stdout.trim() : '';
-  if (!dir || !fs.existsSync(path.join(dir, 'playwright'))) return { skip: `전역 Playwright 없음(npm root -g: ${dir || r.status})` };
+  return { dir: r.status === 0 ? r.stdout.trim() : '', from: 'npm root -g', status: r.status };
+}
+
+async function chromium() {
+  const { dir, from, status } = playwrightModules();
+  if (!dir || !fs.existsSync(path.join(dir, 'playwright'))) return { skip: `Playwright 없음(${from}: ${dir || status})` };
   try {
     const mod = await import(pathToFileURL(createRequire(path.join(dir, 'noop.js')).resolve('playwright')).href);
     const browser = await (mod.chromium || mod.default.chromium).launch();

@@ -32,14 +32,15 @@
  *
  * Two `start` runs at once launch one supervisor: start holds logs/<name>.start.lock (made with O_EXCL, holding its
  * pid and time, removed when it ends). A later start waits for it, then sees the service running. A lock whose pid
- * is dead, is another program, or is older than 30 seconds plus the start check is taken over. A link or a folder
- * at the lock's name is refused (exit 1).
+ * is dead, is another program, or is older than 30 seconds plus the start check is removed, by one start at a time:
+ * the one holding logs/<name>.start.lock.break (O_EXCL), which reads the lock again and removes only the lock it
+ * judged stale. A link or a folder at either name is refused (exit 1).
  *
  * Environment (tuning): SERVICE_LOG_ROTATE_BYTES (default 104857600), SERVICE_STOP_GRACE_MS (10000),
  * SERVICE_START_CHECK_MS (2000).
  */
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { uptime } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +63,9 @@ const START_CHECK_MS = envInt("SERVICE_START_CHECK_MS", 2000);
 const BOOT_SLACK_MS = 5000;
 const LOCK_STALE_MS = 30000 + START_CHECK_MS;
 const LOCK_WAIT_MS = 5000 + START_CHECK_MS;
+const BREAK_STALE_MS = 5000;
+// On Windows a file being deleted while another process has it open answers EPERM, EACCES or EBUSY: busy, try again.
+const BUSY = new Set(["EEXIST", "EPERM", "EACCES", "EBUSY"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function parseConf(text) {
@@ -351,27 +355,8 @@ function lockBusy(text, st) {
   return holders.get(text);
 }
 
-// Moves a stale lock aside and removes it. When what was moved is not the lock judged stale (another start took
-// over first and made a fresh one), it goes back unless a newer lock is there.
-function takeOver(file, seen) {
-  const aside = `${file}.${process.pid}.stale`;
-  try {
-    renameSync(file, aside);
-  } catch {
-    return; // gone or taken already: the next try sees
-  }
-  if (readText(aside) !== seen) {
-    try {
-      linkSync(aside, file);
-    } catch {
-      // a newer lock is there, or no hard links on this file system
-    }
-  }
-  rmSync(aside, { force: true });
-}
-
-// One try at the lock: { text } held, { error } refused, or {} busy.
-function tryLock(file) {
+// One file made with O_EXCL holding this start's pid and time: { text } made, { code } not (EEXIST: there is one).
+function makeLockFile(file) {
   const text = `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`;
   try {
     const fd = openSync(file, "wx");
@@ -382,13 +367,84 @@ function tryLock(file) {
     }
     return { text };
   } catch (e) {
-    const st = lstatSync(file, { throwIfNoEntry: false });
-    if (!st && e.code !== "EEXIST") throw e;
-    if (st && !st.isFile()) return { error: `시작 잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${file}` };
-    const seen = st ? readText(file) : null;
-    if (st && seen !== null && !lockBusy(seen, st)) takeOver(file, seen);
-    return {};
+    return { code: e.code };
   }
+}
+
+// lstat that answers undefined for a missing file and null for one busy being deleted (the next try sees).
+function lstatNow(file) {
+  try {
+    return lstatSync(file, { throwIfNoEntry: false });
+  } catch (e) {
+    if (BUSY.has(e.code)) return null;
+    throw e;
+  }
+}
+
+// rm that leaves a busy file for the next try (a lock left so has a dead pid once this start ends: stale).
+function rmNow(file) {
+  try {
+    rmSync(file, { force: true });
+  } catch (e) {
+    if (!BUSY.has(e.code)) throw e;
+  }
+}
+
+// Removes a break lock older than BREAK_STALE_MS (clearing takes milliseconds, so its start is taken as dead or
+// stuck), and only when it is still the text judged old when read again (a newer break lock is left alone).
+function clearStaleBreak(brk, st) {
+  const text = readText(brk);
+  const at = Date.parse(lockInfo(text)?.at);
+  if (Date.now() - (Number.isNaN(at) ? st.mtimeMs : at) > BREAK_STALE_MS && readText(brk) === text) rmNow(brk);
+}
+
+// The break lock could not be made (code): another start holds it, or it was left. { error } for a link or a folder.
+function breakHeld(brk, code) {
+  const st = BUSY.has(code) ? lstatNow(brk) : undefined;
+  if (st && !st.isFile()) return { error: `시작 잠금 정리 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${brk}` };
+  if (st) clearStaleBreak(brk, st);
+  return {};
+}
+
+// Removes a stale lock (seen: its text as judged). Only the start holding <lock>.break does it, and only when the lock
+// read again under the break lock is the same text and still not busy, so a lock another start made after the
+// first read is never removed. Another start holding the break lock leaves the work to it. Returns { error } when a
+// link or a folder sits at the break lock's name, else {}.
+function breakStale(file, seen) {
+  const brk = `${file}.break`;
+  const made = makeLockFile(brk);
+  if (!made.text) return breakHeld(brk, made.code);
+  try {
+    const st = lstatNow(file);
+    if (st && st.isFile() && readText(file) === seen && !lockBusy(seen, st)) rmNow(file);
+  } finally {
+    if (readText(brk) === made.text) rmNow(brk);
+  }
+  return {};
+}
+
+// Makes the lock or looks at what is there: { text } made, or { st } (undefined: gone, null: busy being deleted).
+// When nothing is there and the open failed for another reason than EEXIST (no write access and the like), one more
+// open (a Windows file being deleted can be gone by the lstat), then it throws.
+function makeOrSee(file) {
+  for (let i = 0; ; i++) {
+    const made = makeLockFile(file);
+    if (made.text) return made;
+    const st = lstatNow(file);
+    if (st !== undefined || made.code === "EEXIST") return { st };
+    if (i) throw Object.assign(new Error(`시작 잠금을 만들지 못함(${made.code}): ${file}`), { code: made.code });
+  }
+}
+
+// One try at the lock: { text } held, { error } refused, or {} busy.
+function tryLock(file) {
+  const got = makeOrSee(file);
+  if (got.text) return got;
+  const { st } = got;
+  if (!st) return {}; // gone or busy being deleted: the next try sees
+  if (!st.isFile()) return { error: `시작 잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${file}` };
+  const seen = readText(file);
+  return seen !== null && !lockBusy(seen, st) ? breakStale(file, seen) : {};
 }
 
 // logs/<name>.start.lock, waiting up to LOCK_WAIT_MS for another start: { text } or { error }.
@@ -408,7 +464,7 @@ async function start(conf) {
   try {
     return await startLocked(conf);
   } finally {
-    if (readText(lock) === held.text) rmSync(lock, { force: true });
+    if (readText(lock) === held.text) rmNow(lock);
   }
 }
 

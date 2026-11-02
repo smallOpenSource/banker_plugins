@@ -14,7 +14,7 @@ import { ITEM_STATUS, STAGE_STATUS } from './pm-data.mjs';
 import { archLayout, archFlaws, flowLayout, nameFits, FLOW } from './pm-render.mjs';
 import { color, finite, textW, wrap, TABS } from './pm-html.mjs';
 import { memoryWarnings } from './pm-memory.mjs';
-import { checkAdr, adrRows, cleanAdr, adrTally } from './pm-adr.mjs';
+import { checkAdr, adrRows, cleanAdr, adrTally, writeAdrCheck } from './pm-adr.mjs';
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
@@ -531,7 +531,7 @@ function memoryInto(r, memory, project, env) {
   }
 }
 
-// 검사 전체. 돌려줌: { lines: [출력 줄], fails }
+// 검사 전체. 자료를 바꾸지 않는다. 돌려줌: { lines: [출력 줄], fails, adr: check 대조 기록 { sha, tally } (adr.json 이 없거나 깨졌으면 null) }
 export function runCheck(ctx, env = process.env) {
   const r = sink();
   const config = checkConfig(ctx, r);
@@ -543,8 +543,8 @@ export function runCheck(ctx, env = process.env) {
   const flow = checkFlow(ctx.dataDir, r);
   const arch = checkArch(ctx.dataDir, r, config.text.plannedPrefix);
   const got = checkAdr(ctx, config, r);
-  const adr = got && got.value;
-  const adrBare = got ? got.bare : [];
+  const adr = got.value;
+  const adrBare = got.bare;
   const inv = checkInventory(ctx, r);
   const memory = memoryOf(ctx);
   memoryInto(r, memory, ctx.project, env);
@@ -553,7 +553,8 @@ export function runCheck(ctx, env = process.env) {
   // 밀도는 init 기록이나 inventory.json 이 있을 때만. 다만 ADR 밀도는 adr.json 이 있으면 늘 낸다
   const dens = inv || memory ? density({ arch, flow, req, items: items.items, inv, storyCount: ids.length, adr, adrBare }) : null;
   const rows = dens ? dens.rows : adr ? adrRows(adr, adrBare) : [];
-  return finish(out, rows, dens, adrTally(adr, adrBare).text);
+  const tally = adrTally(adr, adrBare).text;
+  return { ...finish(out, rows, dens, tally), adr: got.sha ? { sha: got.sha, tally } : null };
 }
 
 // 밀도 미달 줄, 합계 줄, 탭별 밀도 요약, ADR 집계(근거 없음 칸, 미검증, 구현 못 함, 참조 없는 서술. 늘 한 줄)를 붙인다. 돌려줌: { lines, fails }
@@ -566,12 +567,20 @@ function finish(out, rows, dens, tally) {
   return { lines: out, fails };
 }
 
-// --adr-cleanup: 검사 전에 init 정리 단계(pm-adr.mjs cleanAdr)를 적용한다. 그 밖에는 자료를 바꾸지 않는다.
+// --adr-cleanup: 검사 전에 init 정리 단계(pm-adr.mjs cleanAdr)를 적용한다. 그 밖에는 자료를 바꾸지 않고,
+// 화면 대조용 adr-check.json 만 쓴다. 쓰지 못하면 stderr 경고(검사 결과와 종료 코드는 그대로).
 export async function command(cmd, ctx, o, io) {
   if (cmd !== 'check') throw new UsageError(`${cmd} 는 pm-check.mjs 가 맡지 않음`);
   if (o._.length > 1) throw new UsageError(`check 는 위치 인자를 받지 않음: ${o._.slice(1).join(' ')}`);
   if (o['adr-cleanup'] && ctx.exists) for (const l of await cleanAdr(ctx, loadConfig(ctx).config)) io.out(l);
-  const { lines, fails } = runCheck(ctx);
+  const { lines, fails, adr } = runCheck(ctx);
   for (const l of lines) io.out(l);
+  if (adr) {
+    try {
+      await writeAdrCheck(ctx.dataDir, adr);
+    } catch (e) {
+      io.err(`경고: ${e.message}. 화면의 check 대조가 낡을 수 있음`);
+    }
+  }
   return fails ? 1 : 0;
 }

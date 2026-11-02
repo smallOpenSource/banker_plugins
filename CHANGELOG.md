@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.24.1] - 2026-11-02
+
+### Fixed
+- `init-dir`(Windows): `AGENTS.md` 와 `CLAUDE.md` 가 둘 다 있을 때 가끔 `CLAUDE.md` 에 블록을 쓰지 않고도 종료 0 으로 끝나던 것을 고친다. 두 파일이 같은 파일인지 가릴 때 파일 번호(ino)를 Number 로 받았는데, NTFS 파일 ID 는 2^53 을 넘어 아래 자리가 잘리고 연달아 만든 두 파일이 같은 번호가 될 수 있었다(Windows 테스트박스 실측: 300쌍 중 3쌍 충돌). 이제 bigint 로 가리고, 번호가 0 인 파일 시스템은 파일 시스템이 쓰는 경로 표기로 가린다. 같은 표지 블록 모듈을 쓰는 `git-init`, `tune-tmux` 도 같은 판으로 맞췄다. 두 스킬은 파일 하나만 쓰므로 이 결함에 닿지 않았다.
+- `init-dir` 틀의 `service.mjs`: 낡은 시작 잠금이 있을 때 `start` 를 여럿 동시에 실행하면 감독이 둘 뜰 수 있던 틈을 닫는다. 낡은 잠금은 이제 정리 잠금(`logs/<이름>.start.lock.break`)을 새 파일로 만든 `start` 하나만 지우고, 지우기 전에 다시 읽어 그 사이 다른 `start` 가 잡은 잠금은 지우지 않는다. Windows 에서 지우는 중인 잠금이 내는 EPERM, EACCES, EBUSY 는 바쁨으로 보고 기다리고, 잠금을 만들 수 없는 진짜 권한 오류는 바로 사유와 함께 종료 1 로 끝난다. 고친 틀은 새로 만드는 `scripts/` 폴더에 들어간다. `init-dir` 은 이미 있는 폴더의 내용을 건드리지 않으므로 이미 만든 프로젝트의 틀은 그대로다.
+- `teamwork`(Codex 전용): `--file` 이 확인과 열기 사이에 바뀐 파일을 가릴 때도 파일 번호를 bigint 로 비교한다. Windows 에서 다른 파일로 바꿔치기된 것을 놓칠 수 있었다.
+
+### Changed
+- `progress-mon`: ADR 화면이 `check` 결과와 같은지 알린다. 화면은 참조 파일을 열지 않아 적힌 참조로 세고, `check` 는 확인을 마친 참조로 세므로 "참조 없는 서술" 수가 다를 수 있었다. 이제 `check` 가 자료 폴더의 `adr-check.json` 에 집계와 그때 `adr.json` 의 sha256 을 남기고, 화면은 집계 배지 옆에 `check 와 같음`, `check 뒤 adr.json 이 바뀜`, `check 기준: <집계>`(다름), `check 기록 없음` 가운데 하나를 보인다. 기록을 쓰지 못하면 경고만 내고 검사 결과와 종료 코드는 그대로다.
+- `progress-mon`: ADR 화면 렌더를 `scripts/pm-adr-view.mjs` 로 나눴다. 검사, 정리, 밀도, 집계는 `scripts/pm-adr.mjs` 에 남는다.
+
+### Notes
+- Windows 에서 0.24.0 의 `init-dir apply` 를 쓴 프로젝트는 업데이트 뒤 `init-dir status` 로 확인한다. `CLAUDE.md` 나 `AGENTS.md` 가 `stale` 로 나오면 블록이 빠진 것이므로 `init-dir apply` 를 한 번 더 실행하면 채워진다. 이미 블록이 있는 파일은 바뀌지 않는다.
+- 시험 정비: Windows 에서 위 결함 때문에 가끔 실패하던 `init-dir` 시험의 원인을 고쳤다. `3d-intro-build` 의 Sora 배포 확인 시험이 실제 현재 시각을 써 시험 자료의 퇴역일(2026-11-02)이 지나자 실패하던 것을 고정 시각으로 고쳤다(제품 동작은 바뀌지 않음). `progress-mon` 의 ADR 화면 e2e 는 테스트박스 도구 폴더의 Playwright(`BUILD_TESTBOX_PLAYWRIGHT_DIR`)를 먼저 써서 박스에서 건너뛰지 않는다.
+- 훅 코드는 바뀌지 않아 Codex 플러그인 사용자에게 `/hooks` 신뢰를 다시 묻지 않는다.
+- 실측: 테스트박스 3대에서 38ab876 을 시험했다(통과/실패/건너뜀). Rocky Linux 8 2807/0/34, macOS 2799/0/42, Windows 2492/0/344.
+
 ## [0.24.0] - 2026-11-02
 
 ### Added
