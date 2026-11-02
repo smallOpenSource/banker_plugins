@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.25.0] - 2026-11-02
+
+### Added
+- 새 스킬 `motion-sites`: MotionSites 의 `motionsites-web-builder` 스킬(https://github.com/Motionsites-AI/claude-skill)을 짧은 이름으로 부른다. 원본은 banker 에 복사하지 않는다(원본의 예시와 미디어는 재배포 금지). 첫 실행 때 사용자의 Claude Code 나 Codex 가 MotionSites 마켓플레이스에서 원본 플러그인을 설치하고, `pip install playwright` 와 `python -m playwright install chromium` 으로 스크린숏 검사를 갖춘 뒤 프롬프트를 그대로 넘긴다. 그다음부터는 넘기기만 한다.
+  - 받기 전에 원천(github.com, PyPI, Playwright 내려받기 서버, 환경 변수나 git, pip 설정의 미러)에 닿는지 본다. 닿지 않으면 "오프라인이라 설치하지 않음" 으로 끝난다.
+  - pip 이 시스템 Python 을 거부하면(externally managed) `~/.cache/banker/motion-sites/venv` 에 설치한다.
+  - 원본의 유료 상품 안내 블록은 넣지 않고 결과 끝에 출처 한 줄을 남긴다.
+- `remains`: "같은 종류 전체 찾기" 단계(2-1). 지적마다 원인을 한 문장으로 정하고, 같은 원인의 코드 꼴을 배포 코드 전체(사본 포함)에서 찾아 자리마다 판정한다. CHANGELOG, 위키, 메모리에 기록된 예전에 고친 결함도 종류로 삼는다. 지적 하나를 그 자리에서만 고쳐 다음 검토에서 같은 종류가 또 나오던 것을 막는다.
+
+### Fixed
+- Windows 에서 추측할 수 있는 이름에 새 파일을 만들 때(`wx`, `O_EXCL`), 그 자리에 심어 둔 끊어진 링크를 따라가 프로젝트 밖에 파일을 만들던 자리를 전부 고친다. 임시 이름은 난수를 붙이고, 고정 이름(잠금, 정리 잠금, 백업, 처음 만드는 설정)은 열기 전후로 이름을 확인한다.
+  - 고친 스킬: `init-dir` 틀의 `service.mjs`, `progress-mon`, `smart-compact`, `setup-bypass-permissions`, `setup-omc-hud`, `payload-mon`, `omc-patch`, `vertical-pptx`, `lineage`, 사용량 기록 훅
+  - Codex 설정 백업(`config.toml` 의 `.bak`)은 백업 자리의 링크를 모든 OS 에서 따라가 덮어쓰던 것도 함께 고친다.
+- 대소문자, Windows 8.3 짧은 이름, 링크인 부모 폴더, macOS `/var` 처럼 철자만 다른 같은 폴더를 다른 폴더로 보던 판정을 고친다.
+  - `init-dir`, `git-init`: `--root` 를 HOME 의 다른 철자(예: `c:\users\me`)로 주면 HOME 거부를 통과하던 것
+  - 훅 명령을 쓸 때 임시 폴더의 node 를 거부하는 판정(`smart-compact`, Codex 훅 설치)
+  - `progress-mon`: 자료 폴더 링크 검사, git 제외 목록, Codex 지시 합계
+  - `tune-tmux`: 같은 설정 파일을 다른 파일로 보아 내던 거짓 경고
+  - 표지 블록 모듈(`init-dir`, `git-init`, `tune-tmux`): 아직 없는 파일을 두 철자로 받으면 예외로 끝나던 것
+- Windows 에서 이름만 준 프로그램(`git`, `ssh`, `scp`, `psmux`, `claude`, `codex`, `python`)을 일하는 폴더에서 먼저 찾아, 그 폴더에 심은 같은 이름의 프로그램이 실행되던 자리를 고친다. 이제 홈 폴더에서 띄우고 대상 폴더는 `git -C` 로 준다(`git-init`, `progress-mon`, `ultra-chain`, `remains`, `build-testbox`, `tune-tmux`, `motion-sites`).
+- `build-testbox`: 시간 제한이 직접 자식만 끝내고 손자가 쥔 파이프를 기다려 멈추던 것. 이제 프로세스 그룹(Windows 는 트리)을 끝내고 곧 돌아온다. 링크가 낀 경로로 부르면 아무것도 하지 않고 종료 0 으로 끝나던 것도 고친다.
+- `git-init`(Windows): `git commit` 이 시간 제한에 걸리면 래퍼만 끝나고 실제 git 이 남아, 실패로 보고한 뒤 커밋이 생길 수 있던 것.
+- 잠금과 백업을 새로 만들 때 연 파일과 이름을 대조한 뒤에만 쓴다. 이름이 사라졌거나 다른 것이면 쓰지 않고, 쓰기가 실패하면 빈 파일을 지운다(빈 백업이 첫 원본처럼 남지 않게). 확인할 수 없을 때(ESTALE 등)는 예전처럼 쓴다.
+- 백업 자리에 링크나 폴더가 있으면 원본을 바꾸지 않고 거부한다(`init-dir`, `git-init`, `tune-tmux` 는 계획 단계에서, `progress-mon` 규칙 줄, `anti-drm` 설정). 전에는 백업을 건너뛰고 원본을 바꿔 첫 원본을 잃었다.
+- `anti-drm`: `anti-drm.json.bak` 자리에 일반 파일이 아닌 것이 있으면 설정을 저장하지 않고 거부한다.
+
+### Notes
+- 같은 종류가 다시 들어오지 않게 저장소 시험 `scripts/class-guards.test.mjs` 가 배포 코드에서 pid 나 시각만으로 만든 임시, 잠금 이름을 잡는다.
+- 사용량 기록 훅(`hooks/telemetry-count-codex.mjs`)이 바뀌어 Codex 플러그인 사용자는 다음 세션에서 `/hooks` 신뢰를 다시 묻는 화면을 본다.
+- `lineage` 3.1.2.
+- 실측: 테스트박스 3대에서 d4a1242 를 시험했다(통과/실패/건너뜀). Rocky Linux 8 2856/0/39, macOS 2852/0/43, Windows 2543/2/345. Windows 의 2건은 절대 경로를 다시 푸는 시험의 가정이었고 211ae51 에서 고쳐 그 두 시험 파일이 Windows 에서 56/56 통과했다.
+
 ## [0.24.1] - 2026-11-02
 
 ### Fixed
