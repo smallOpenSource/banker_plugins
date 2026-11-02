@@ -1,5 +1,5 @@
 // pm-adr.mjs 시험. 임시 프로젝트에 고정 자료(assets/fixture)와 adr.json 이 가리키는 파일을 만들고 check, 정리, 렌더, export,
-// 서버, 옛 판 자료 폴더의 ADR 단계를 본다. 화면 e2e 는 이 PC 의 전역 Playwright Chromium 으로 export 한 HTML 을 연다.
+// 서버, 옛 판 자료 폴더의 ADR 단계를 본다. 화면 e2e 는 Playwright Chromium(테스트박스 도구 폴더, 없으면 이 PC 의 전역)으로 export 한 HTML 을 연다.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -495,12 +495,19 @@ test('export: tab-adr 절과 #adr 전환, 외부 자원 0', T, async () => {
   assert.ok(!/(?:src|href)\s*=\s*["']?(?:https?:)?\/\//i.test(html));
 });
 
-// 이 PC 의 전역 Playwright. 없으면 { skip: 사유 }.
-async function chromium() {
+// Playwright: 테스트박스 도구 폴더(BUILD_TESTBOX_PLAYWRIGHT_DIR, node_modules 를 담은 폴더. build-testbox 시험과 같은 관례)가
+// 먼저, 없으면 이 PC 의 전역 npm root. 둘 다 없으면 { skip: 사유 }.
+function playwrightModules() {
+  const given = process.env.BUILD_TESTBOX_PLAYWRIGHT_DIR;
+  if (given) return { dir: path.join(given, 'node_modules'), from: 'BUILD_TESTBOX_PLAYWRIGHT_DIR' };
   const win = process.platform === 'win32';
   const r = spawnSync(win ? 'npm.cmd' : 'npm', ['root', '-g'], { encoding: 'utf8', shell: win, timeout: 30000 });
-  const dir = r.status === 0 ? r.stdout.trim() : '';
-  if (!dir || !fs.existsSync(path.join(dir, 'playwright'))) return { skip: `전역 Playwright 없음(npm root -g: ${dir || r.status})` };
+  return { dir: r.status === 0 ? r.stdout.trim() : '', from: 'npm root -g', status: r.status };
+}
+
+async function chromium() {
+  const { dir, from, status } = playwrightModules();
+  if (!dir || !fs.existsSync(path.join(dir, 'playwright'))) return { skip: `Playwright 없음(${from}: ${dir || status})` };
   try {
     const mod = await import(pathToFileURL(createRequire(path.join(dir, 'noop.js')).resolve('playwright')).href);
     const browser = await (mod.chromium || mod.default.chromium).launch();

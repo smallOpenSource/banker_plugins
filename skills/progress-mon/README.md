@@ -42,7 +42,7 @@
 - 시험은 임시 HOME, 임시 프로젝트, OS 가 고른 빈 포트에서 돈다. 포트 30000, 3456, 3458 은 쓰지 않는다
 - 시험은 PATH 의 `git` 으로 임시 저장소를 만든다. git 이 없는 PC 에서는 그 시험 10개가 실패한다(2026-10-30, PATH 에 node 와 mkfifo 만 두고 실측). 스킬 자체는 git 이 없으면 커밋 기록 없이 동작
 - FIFO 와 `/dev/zero` 시험은 POSIX 만. Windows 에서는 이유를 밝히고 건너뛴다
-- ADR 화면 e2e 는 `npm root -g` 의 전역 Playwright Chromium 으로 `export` 한 HTML 을 연다. Playwright 가 없거나 Chromium 을 띄우지 못하면 사유를 밝히고 건너뛴다. `PM_ADR_SHOT=<png 경로>` 를 주면 스크린숏을 그 경로에 남긴다
+- ADR 화면 e2e 는 Playwright Chromium 으로 `export` 한 HTML 을 연다. Playwright 는 `BUILD_TESTBOX_PLAYWRIGHT_DIR`(테스트박스 도구 폴더, `node_modules` 를 담은 폴더)이 있으면 그곳, 없으면 `npm root -g` 에서 찾는다. Playwright 가 없거나 Chromium 을 띄우지 못하면 사유를 밝히고 건너뛴다. `PM_ADR_SHOT=<png 경로>` 를 주면 스크린숏을 그 경로에 남긴다
 
 ## 개발
 
