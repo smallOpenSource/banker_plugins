@@ -932,7 +932,7 @@ function readChecked(real, roots) {
 // 래퍼는 샌드박스 밖에서 돈다. 이 세션의 작업 폴더와 임시 폴더 안의 파일만 보낸다
 function readFileBody(file) {
   let real;
-  try { real = fs.realpathSync(path.resolve(file)); } catch (e) { usageExit(`파일을 읽지 못했습니다: ${e.message}`); }
+  try { real = fs.realpathSync.native(path.resolve(file)); } catch (e) { usageExit(`파일을 읽지 못했습니다: ${e.message}`); }
   const base = sessionCwd();
   const roots = [base, os.tmpdir()].filter(Boolean).map(realOr);
   if (!roots.some((r) => under(real, r))) {

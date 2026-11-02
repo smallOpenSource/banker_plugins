@@ -71,18 +71,42 @@ const hostOf = (url, fallback) => {
   }
 };
 
-/** The hosts each install step downloads from (a mirror named in the environment first). */
+/** The hosts each install step downloads from, any one answering being enough (a mirror named in the environment first). */
 export function sources(env = process.env) {
   return {
-    plugin: "github.com",
-    pip: hostOf(env.PIP_INDEX_URL, "pypi.org"),
-    chromium: hostOf(env.PLAYWRIGHT_DOWNLOAD_HOST, "cdn.playwright.dev"),
+    plugin: ["github.com"],
+    pip: [hostOf(env.PIP_INDEX_URL, "pypi.org")],
+    chromium: env.PLAYWRIGHT_DOWNLOAD_HOST ? [hostOf(env.PLAYWRIGHT_DOWNLOAD_HOST, "cdn.playwright.dev")] : ["cdn.playwright.dev", "playwright.download.prss.microsoft.com"],
   };
 }
 
-// A failed step for a source that does not answer, or null when it answers (or cannot be judged).
-function offline(step, host, env, runner) {
-  return reachable(host, { env, runner }) === false ? { step, ok: false, why: `오프라인이라 설치하지 않음(${host} 에 닿지 않음)` } : null;
+const GIT_MIRROR = "^(https?\\..*proxy|url\\..*insteadof)$";
+
+/**
+ * Whether a step's tool is set to a mirror or a proxy in its own configuration, where a direct look at the public
+ * host says nothing: git (http.proxy, url.<base>.insteadOf) for the plugin, pip config (index-url) for Playwright.
+ */
+export function mirrorSet(kind, { py = null, runner = run } = {}) {
+  if (kind === "plugin") {
+    const r = runner("git", ["config", "--get-regexp", GIT_MIRROR]);
+    return r.ok && (r.stdout ?? "").trim() !== "";
+  }
+  if (kind === "pip" && py) {
+    const [cmd, ...pre] = py;
+    const r = runner(cmd, [...pre, "-m", "pip", "config", "list"]);
+    return r.ok && /index-url/i.test(r.stdout ?? "");
+  }
+  return false;
+}
+
+// A failed step when none of its sources answers, or null when one answers (or it cannot be judged: a proxy, or a
+// mirror set in the tool's own configuration).
+function offline(step, kind, { env, runner, py = null }) {
+  const hosts = sources(env)[kind];
+  if (mirrorSet(kind, { py, runner })) return null;
+  const seen = hosts.map((h) => reachable(h, { env, runner }));
+  if (!seen.every((x) => x === false)) return null;
+  return { step, ok: false, why: `오프라인이라 설치하지 않음(${hosts.join(", ")} 에 닿지 않음)` };
 }
 
 const lastLine = (text) => text.trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
@@ -203,7 +227,7 @@ export function status(runtime, { env = process.env, runner = run } = {}) {
  * already) is reported only when the install fails too.
  */
 function installPlugin(runtime, env, runner) {
-  const down = offline("marketplace add", sources(env).plugin, env, runner);
+  const down = offline("marketplace add", "plugin", { env, runner });
   if (down) return [down];
   const cli = runtime === "claude" ? "claude" : "codex";
   const add = runner(cli, ["plugin", "marketplace", "add", REPO], { timeout: STEP_MS });
@@ -215,7 +239,7 @@ function installPlugin(runtime, env, runner) {
 
 /** pip install playwright with this Python, or in a virtual environment when pip refuses the system Python. */
 function installPlaywright(py, env, runner) {
-  const down = offline("pip install playwright", sources(env).pip, env, runner);
+  const down = offline("pip install playwright", "pip", { env, runner, py: py.cmd });
   if (down) return { ok: false, why: down.why };
   const [cmd, ...pre] = py.cmd;
   const pip = runner(cmd, [...pre, "-m", "pip", "install", "playwright"], { timeout: STEP_MS });
@@ -247,7 +271,7 @@ function installBrowser(env, runner) {
     cmd = pw.py;
   }
   if (!py.chromium) {
-    const down = offline("playwright install chromium", sources(env).chromium, env, runner);
+    const down = offline("playwright install chromium", "chromium", { env, runner });
     if (down) return [...steps, down];
     const [c, ...pre] = cmd;
     const ch = runner(c, [...pre, "-m", "playwright", "install", "chromium"], { timeout: STEP_MS });

@@ -308,7 +308,7 @@ test("commitBlock: a file planned as new that is there by the write is a raced r
   const plan = applyBlock(p, opts({ dryRun: true }));
   writeFileSync(p, "someone's\n");
   const r = applyBlocks([{ path: p, ...opts() }]);
-  assert.equal(r.ok, true, "applyBlocks plans it again");
+  assert.equal(r.ok, true, "planned now, the file there is planned as it is (no raced path)");
   const single = commitBlock(plan, "test");
   assert.equal(single.ok, false);
   assert.equal(single.refused, "raced");

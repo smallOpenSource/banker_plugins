@@ -17,6 +17,7 @@ import { renderTab, command as renderCommand } from './pm-render.mjs';
 import { serve } from './pm-server.mjs';
 import { validate } from './pm-config.mjs';
 // 이 계정이 심볼릭 링크를 만들 수 있는지(Windows 는 관리자나 개발자 모드). 못 만들면 링크 시험은 그 까닭으로 건너뜀.
+// scripts/test-fixtures/can-symlink.mjs 와 같은 일을 여기서 한다: progress-mon 의 파일은 node: 와 ./ 만 가져온다(progress-mon.test.mjs AC-4).
 const symlinkSkip = (() => {
   if (process.platform !== 'win32') return false;
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'can-symlink-'));

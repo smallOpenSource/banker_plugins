@@ -22,10 +22,14 @@ const ALLOWED = new Map([
   ["skills/ralph-qa/references/seat-payload.mjs", "writes only inside its run folder, made by mkdtemp under this account's base folder; the runner may not load node:crypto (smoke S25-b)"],
 ]);
 
-// A line that builds a file name from the pid or the clock with nothing random beside it.
-const GUESSABLE = /(\$\{process\.pid\}|\$\{Date\.now\(\)[^}]*\}|os\.getpid\(\))/;
-const RANDOM = /random(Bytes|UUID|Hex)|mkstemp|mkdtemp|Math\.random|rand\(\)/;
+// A line that builds a file name from the pid or the clock (in a template or joined with +) with no random call
+// beside it, or that writes a fixed-suffix temporary name without "wx".
+const GUESSABLE = /\$\{\s*(process\.pid|Date\.now\(\))|[`'"]\s*\+\s*(process\.pid|Date\.now\(\))|(process\.pid|Date\.now\(\)[\w.()]*)\s*\+\s*[`'"]|os\.getpid\(\)/;
+const RANDOM = /random(Bytes|UUID|Hex)\(|mkstemp\(|mkdtemp(Sync)?\(|Math\.random\(\)|\brand\(\)/;
 const NAMING = /(tmp|temp|lock|\.bak|\.part|\.new|key\.)/i;
+// where a name is made: assigned to a name-like variable, or passed to join() or with_name()
+const NAME_BUILT = /(^|\b(const|let|var)\s+)\s*\w*(tmp|temp|lock|bak|part|key|name|path|file)\w*\s*=(?!=)|\bjoin\(|with_name\(/i;
+const FIXED_TEMP_WRITE = /writeFileSync\([^,]*[`'"][^`'"]*\.(tmp|part|new)[`'"]/;
 
 test("no shipped file names a temporary or lock file from the pid or the clock alone", () => {
   assert.ok(shipped.length > 100, `found ${shipped.length} shipped files`);
@@ -34,8 +38,25 @@ test("no shipped file names a temporary or lock file from the pid or the clock a
     if (ALLOWED.has(f)) continue;
     readFileSync(join(ROOT, f), "utf8").split("\n").forEach((line, i) => {
       if (/^\s*(\/\/|\*|#)/.test(line)) return;
-      if (GUESSABLE.test(line) && NAMING.test(line) && !RANDOM.test(line)) hits.push(`${f}:${i + 1}: ${line.trim()}`);
+      const guessed = GUESSABLE.test(line) && NAMING.test(line) && NAME_BUILT.test(line) && !RANDOM.test(line);
+      const fixed = FIXED_TEMP_WRITE.test(line) && !/flag:\s*['"]wx/.test(line);
+      if (guessed || fixed) hits.push(`${f}:${i + 1}: ${line.trim()}`);
     });
   }
   assert.deepEqual(hits, []);
 });
+
+test("the guard's patterns catch the shapes they are for (template, joined, Python, fixed suffix)", () => {
+  const caught = (line) => {
+    const guessed = GUESSABLE.test(line) && NAMING.test(line) && NAME_BUILT.test(line) && !RANDOM.test(line);
+    return guessed || (FIXED_TEMP_WRITE.test(line) && !/flag:\s*['"]wx/.test(line));
+  };
+  assert.ok(caught("const tmp = `${file}.${process.pid}.tmp`;"));
+  assert.ok(caught('const tmp = file + "." + process.pid + ".tmp";'));
+  assert.ok(caught('tmp = path.with_name("%s.%d" % (path.name, os.getpid()))  # key.tmp'));
+  assert.ok(caught("fs.writeFileSync(`${target}.a4p-tmp`, out);") === false, "a name built in a variable is seen where the variable is made");
+  assert.ok(caught("fs.writeFileSync('out.tmp', data);"));
+  assert.equal(caught("const tmp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;"), false);
+  assert.equal(caught("writeFileSync(lock, `${process.pid} ${iso(Date.now())}\\n`, { flag: 'wx' });"), false, "a lock's contents, not its name");
+});
+

@@ -219,7 +219,21 @@ test("setup offline: a source that does not answer stops its step with the reaso
 
 test("reachable: not judged behind a proxy; sources follow the mirrors named in the environment", () => {
   assert.equal(reachable("github.com", { env: { HTTPS_PROXY: "http://p:3128" }, runner: () => assert.fail("no probe behind a proxy") }), null);
-  assert.deepEqual(sources({ PIP_INDEX_URL: "https://mirror.example/simple", PLAYWRIGHT_DOWNLOAD_HOST: "https://dl.example" }), { plugin: "github.com", pip: "mirror.example", chromium: "dl.example" });
-  assert.deepEqual(sources({}), { plugin: "github.com", pip: "pypi.org", chromium: "cdn.playwright.dev" });
+  assert.deepEqual(sources({ PIP_INDEX_URL: "https://mirror.example/simple", PLAYWRIGHT_DOWNLOAD_HOST: "https://dl.example" }), { plugin: ["github.com"], pip: ["mirror.example"], chromium: ["dl.example"] });
+  assert.deepEqual(sources({}), { plugin: ["github.com"], pip: ["pypi.org"], chromium: ["cdn.playwright.dev", "playwright.download.prss.microsoft.com"] });
+});
+
+test("setup: a mirror set in git or pip configuration is not judged offline by the public host; Chromium needs one host of two", () => {
+  const env = { MOTION_SITES_HOME: fresh() };
+  const git = fake([[/plugin list/, { ok: true, out: "[]" }], [/^git config --get-regexp/, { ok: true, out: "url.https://mirror.example/.insteadof https://github.com/\n" }], [/require\('net'\)/, { ok: false }], [/marketplace add|plugin install/, { ok: true }]]);
+  const r = setup("claude", { env, runner: git.runner });
+  assert.deepEqual(r.steps.slice(0, 2).map((x) => x.ok), [true, true], "the install was tried, not refused as offline");
+  const h = codexHome();
+  const pip = fake([...PY_OK.slice(0, 1), [/-m pip config list/, { ok: true, out: "global.index-url='https://mirror.example/simple'\n" }], [/require\('net'\)/, { ok: false }], [/-m pip install playwright/, { ok: true }], [/install chromium/, { ok: true }]]);
+  const q = setup("codex", { env: { ...env, CODEX_HOME: h }, runner: pip.runner });
+  assert.equal(q.steps[0].ok, true);
+  const one = fake([...PY_OK, [/require\('net'\).* cdn\.playwright\.dev$/, { ok: false }], [/sync_playwright/, { ok: true, out: "/gone\n" }], [/install chromium/, { ok: true }]]);
+  const c = setup("codex", { env: { ...env, CODEX_HOME: h }, runner: one.runner });
+  assert.deepEqual(c.steps, [{ step: "playwright install chromium", ok: true, why: null }], "the second host answered");
 });
 
