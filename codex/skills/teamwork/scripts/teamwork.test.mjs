@@ -808,6 +808,23 @@ ptest('--file 의 경계는 명령의 지금 폴더가 아니라 훅이 기록�
   assert.equal(run(h, ['send', 'all', '--file', path.join(work, 'msg.txt')], { threadId: A, cwd: elsewhere }).code, 4, '세션 폴더 안이면 지금 폴더와 상관없이 읽음');
 });
 
+ptest('--file 은 확인과 열기 사이에 바뀐 파일을 Number ino 가 같아도 거절한다(NTFS 파일 ID 는 2^53 을 넘음)', () => {
+  const h = home();
+  run(h, ['on']);
+  const work = fs.mkdtempSync(path.join(CWD, 'work-'));
+  hook(h, 'session-start', A, { cwd: work });
+  const msg = path.join(work, 'msg.txt');
+  const other = path.join(work, 'other.txt');
+  fs.writeFileSync(msg, 'y');
+  fs.writeFileSync(other, 'z');
+  const fixture = (name) => pathToFileURL(path.join(REPO, 'scripts', 'test-fixtures', name)).href;
+  const env = { ...envFor(h, { threadId: A }), SWAP_ON_OPEN: fs.realpathSync(msg), SWAP_FROM: other };
+  const r = spawnSync(process.execPath, ['--import', fixture('same-ino.mjs'), '--import', fixture('swap-on-open.mjs'), SCRIPT, 'send', 'all', '--file', msg], { env, cwd: work, encoding: 'utf8' });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /확인한 뒤 바뀌었거나 일반 파일이 아님/);
+  assert.equal(fs.existsSync(other), false, '바꿔치기가 실제로 일어남');
+});
+
 ptest('폭 없는 문자와 전각 괄호로 만든 머리말도 인용으로 바꾼다', () => {
   const h = home();
   run(h, ['on']);

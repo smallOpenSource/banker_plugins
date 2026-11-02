@@ -67,6 +67,13 @@ const readlinkOr = (path) => {
     return "?";
   }
 };
+const nativeReal = (path) => {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
+};
 const realOrNull = (path) => {
   try {
     return realpathSync(path);
@@ -234,8 +241,9 @@ export function planBlock(path, opts) {
   const next = nextBytes(read.bytes, o, at.file);
   if (next.refuse) return next.refuse;
   const changed = !next.bytes.equals(read.bytes);
-  // ino 0 (a file system without file ids) tells nothing apart: then the resolved path is the key.
-  const key = read.id.ino === 0n ? `path:${resolve(at.file)}` : `ino:${read.id.dev}:${read.id.ino}`;
+  // ino 0 (a file system without file ids) tells nothing apart: then the path as the file system spells it is the
+  // key (realpathSync.native gives one spelling for names that differ only in case where case is ignored).
+  const key = read.id.ino === 0n ? `path:${nativeReal(at.file)}` : `ino:${read.id.dev}:${read.id.ino}`;
   return { ok: true, changed, path, file: at.file, key, before: read.bytes, after: next.bytes, mode: read.st.mode & 0o7777 };
 }
 
