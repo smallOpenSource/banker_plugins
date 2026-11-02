@@ -422,6 +422,6 @@ test("identity: a relative key path is made absolute against the run's folder (s
   const args = (identity) => { const a = sshBase({ name: "b", os: "linux", ssh: "u@h", identity }); return a[a.indexOf("-i") + 1]; };
   assert.equal(args("keys/k"), resolve("keys/k"));
   assert.equal(args("~/.ssh/k"), "~/.ssh/k");
-  assert.equal(args("/abs/k"), resolve("/abs/k"));
+  assert.equal(args("/abs/k"), "/abs/k", "an absolute path stays as written");
 });
 

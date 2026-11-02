@@ -22,7 +22,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
@@ -192,7 +192,8 @@ export function byVersion(a, b) {
 /** Python programs to try, in order: MOTION_SITES_PYTHON, the cache's virtual environment, then the system's. */
 export function pythons(env = process.env) {
   const list = [];
-  if (env.MOTION_SITES_PYTHON) list.push([resolve(env.MOTION_SITES_PYTHON)]); // programs start in the home folder
+  // a relative path is made absolute here, as programs start in the home folder
+  if (env.MOTION_SITES_PYTHON) list.push([isAbsolute(env.MOTION_SITES_PYTHON) ? env.MOTION_SITES_PYTHON : resolve(env.MOTION_SITES_PYTHON)]);
   list.push([venvPython(env)]);
   if (WIN) list.push(["py", "-3"], ["python"]);
   else list.push(["python3"], ["python"]);

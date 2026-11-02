@@ -15,7 +15,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The folder programs start in: the home folder (Windows looks for a program in the working folder first, so a
@@ -108,7 +108,7 @@ export function loadBoxes(file = configFile()) {
 
 // ssh and scp start in the home folder, so a relative key path is made absolute against this run's folder first,
 // where it was meant. A path from ~ stays as it is: OpenSSH expands it itself.
-const keyPath = (p) => (/^~([\\/]|$)/.test(p) ? p : resolve(p));
+const keyPath = (p) => (/^~([\\/]|$)/.test(p) || isAbsolute(p) ? p : resolve(p));
 const extras = (b, portFlag) => [...(b.port ? [portFlag, String(b.port)] : []), ...(b.identity ? ["-i", keyPath(b.identity)] : [])];
 export const sshBase = (b) => [...BASE, ...extras(b, "-p")];
 export const scpBase = (b) => [...BASE, ...extras(b, "-P")];
