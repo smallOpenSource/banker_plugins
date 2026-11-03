@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, test } from "node:test";
-import { checkBox, installStop, loadBoxes, main, nodeTestCommand, parseArgs, parseTap, probeBox, remoteSteps, runOnBox, runScript, scpBase, spawnExec, sshBase } from "./boxes.mjs";
+import { checkBox, gitWords, installStop, loadBoxes, main, nodeTestCommand, parseArgs, parseTap, probeBox, remoteSteps, resolveTree, runOnBox, runScript, scpBase, spawnExec, sshBase } from "./boxes.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "remains-boxes-test-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -258,7 +258,7 @@ test("a cleanup that fails is reported, not hidden", async () => {
 });
 
 test("a root Linux box runs the script as the configured account, with a HOME of its own", async () => {
-  const f = fakeExec();
+  const f = fakeExec({ made: "/var/lib/banker-remains.Ab12Cd34\n" });
   await runOnBox(ROCKY, plan(), f.exec);
   const run = f.calls.find((c) => c.step === "run").args.at(-1);
   assert.ok(run.includes('chown -R nobody "$D"'));
@@ -425,3 +425,48 @@ test("identity: a relative key path is made absolute against the run's folder (s
   assert.equal(args("/abs/k"), "/abs/k", "an absolute path stays as written");
 });
 
+
+test("resolveTree worktree: does not write the repository's index, so a held index.lock (another run, the user's git) does not stop it", () => {
+  const d = mkdtempSync(join(tmpdir(), "boxes-tree-"));
+  try {
+    const repo = join(d, "r");
+    const g = (...a) => spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" });
+    mkdirSync(repo);
+    g("init", "-q");
+    writeFileSync(join(repo, "f"), "a\n");
+    g("add", "f");
+    g("commit", "-qm", "i");
+    writeFileSync(join(repo, "f"), "b\n");
+    const index = readFileSync(join(repo, ".git", "index"));
+    writeFileSync(join(repo, ".git", "index.lock"), "");
+    const t = resolveTree(repo, "worktree");
+    assert.equal(g("show", `${t.sha}:f`).stdout, "b\n", "the change in the work tree is sent");
+    assert.deepEqual(readFileSync(join(repo, ".git", "index")), index, "the index is as it was");
+    assert.ok(existsSync(join(repo, ".git", "index.lock")), "the lock held by someone else is left alone");
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("gitWords: a failure message names the command, not the -c values or -c alone", () => {
+  assert.equal(gitWords(["-c", "user.name=a", "-c", "user.email=b", "stash", "create"]), "stash create");
+  assert.equal(gitWords(["--no-optional-locks", "status", "--porcelain"]), "status --porcelain");
+});
+
+test("a runAs box gets its private folder under /var/lib, outside the temporary folders; one elsewhere is refused", async () => {
+  const lib = "/var/lib/banker-remains.Ab12Cd34";
+  const f = fakeExec({ made: `${lib}\n` });
+  const r = await runOnBox(ROCKY, plan(), f.exec);
+  assert.equal(f.calls[0].args.at(-1), "mktemp -d /var/lib/banker-remains.XXXXXXXX");
+  assert.deepEqual(f.steps(), ["prepare", "upload", "run", "cleanup"]);
+  assert.ok(f.calls[2].args.at(-1).includes(`D=${lib}; `) && f.calls[2].args.at(-1).includes('env HOME="$D/home"'));
+  assert.deepEqual([r.exit, r.cleaned], [0, true]);
+  const tmp = fakeExec();
+  const bad = await runOnBox(ROCKY, plan(), tmp.exec);
+  assert.deepEqual(tmp.steps(), ["prepare"], "a /tmp path from a runAs box is not used");
+  assert.match(bad.error, /mktemp/);
+  const mac = fakeExec({ made: `${lib}\n` });
+  await runOnBox(MAC, plan(), mac.exec);
+  assert.equal(mac.calls[0].args.at(-1), "mktemp -d /tmp/banker-remains.XXXXXXXX");
+  assert.deepEqual(mac.steps(), ["prepare"], "a /var/lib path from a box without runAs is not used");
+});

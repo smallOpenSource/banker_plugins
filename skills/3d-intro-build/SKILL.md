@@ -63,6 +63,7 @@ if (creds._tracked) throw new Error(`프로젝트 키 파일을 git 이 추적�
 - `creds._ignored` 가 있으면 프로젝트 키 파일의 `FFMPEG_PATH` 를 쓰지 않은 것이다. 저장소와 함께 온 파일이 실행할 프로그램을 정하지 못하게 막은 것이다. 값은 출력하지 않으니 사람이 파일을 열어 확인하고, 그 경로가 필요하면 `3d-intro-setup` §2 로 홈 설정 파일에 남긴다.
   Claude Code: `/banker:setup` 에서 3d-intro-setup / Codex: `banker-3d-intro-setup`.
 - `resolveFfmpeg()` 가 throw 하면 ffmpeg 가 없다. 같은 `3d-intro-setup` 으로 보낸다.
+  - 오류가 `FFMPEG_PATH from the shell is not usable` 이면 셸에서 지정한 `FFMPEG_PATH` 가 상대 경로이거나 없는 파일이다. 다른 ffmpeg 로 넘어가지 않는다. 그 값을 고치거나 지우게 한다.
 - 둘 다 통과해야 다음 단계로 간다.
 - 영상 provider 상태를 무료로 확인해 둔다.
   `poolSummary({ creds })` 는 WAN 키별 상태(`ok`, `cooldown`, `exhausted`, `invalid`, `malformed`)와 마지막 줄의 Sora 상태(`label: 'AZURE_SORA'`, `ok`, `retired`, `unset`, `malformed`)를 키 원문 없이 돌려준다. WAN 줄은 `provider: 'wan'`, Sora 줄은 `provider: 'sora'` 다.

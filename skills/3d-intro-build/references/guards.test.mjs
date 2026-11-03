@@ -232,7 +232,7 @@ test('a WAN 401 without a code rests the key like a 403 and it comes back; Inval
     if (u.startsWith('https://ws1.')) return new Response('', { status: 401 });
     if (u.includes('video-synthesis')) return json(200, { output: { task_id: 't2', task_status: 'PENDING' } });
     if (u.includes('/api/v1/tasks/')) return json(200, { output: { task_id: 't2', task_status: 'SUCCEEDED', video_url: 'https://oss.example.com/t2.mp4' } });
-    return new Response('mp4', { status: 200 });
+    return new Response(Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom')]), { status: 200 }); // an mp4 begins with its ftyp box
   };
   const t0 = 1_000_000;
   const statePath = path.join(tmp('r4-401-'), 'state.json');

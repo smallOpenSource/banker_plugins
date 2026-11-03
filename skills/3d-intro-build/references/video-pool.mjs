@@ -43,7 +43,7 @@ import crypto from 'node:crypto';
 import cp from 'node:child_process';
 import {
   createVideo, pollVideo, downloadVideo, resolveFfmpeg, redact, fetchGuarded, safeForKey, keyHeldBack, probeSoraDeployment,
-  API_TIMEOUT_MS, DOWNLOAD_TIMEOUT_MS, HELD_KEY, errnoOf, timeLeft,
+  API_TIMEOUT_MS, DOWNLOAD_TIMEOUT_MS, HELD_KEY, errnoOf, timeLeft, isMp4, isImage, FF_TIMEOUT_MS,
 } from './azure-adapter.mjs';
 
 export const WAN_DEFAULT_MODEL = 'wan3.0-video-prime';
@@ -399,9 +399,11 @@ async function stripAlpha(buf) {
     const src = path.join(dir, 'in.png');
     const out = path.join(dir, 'out.png');
     fs.writeFileSync(src, buf);
-    const r = cp.spawnSync(bin, ['-y', '-i', src, '-vf', 'format=rgb24', '-frames:v', '1', out], { encoding: 'utf8' });
-    if (!fs.existsSync(out)) throw new Error(`stripAlpha failed: ${String(r.stderr || '').slice(-400)}`);
-    return fs.readFileSync(out);
+    const r = cp.spawnSync(bin, ['-y', '-i', src, '-vf', 'format=rgb24', '-frames:v', '1', out], { encoding: 'utf8', timeout: FF_TIMEOUT_MS, killSignal: 'SIGKILL' });
+    // only a run that ended by itself with 0: a killed ffmpeg's partial PNG would go to WAN as the frame
+    const png = r.status === 0 && fs.existsSync(out) ? fs.readFileSync(out) : null;
+    if (!png || !isImage(png)) throw new Error(`stripAlpha failed: ${r.error ? r.error.code : r.signal ? `killed by ${r.signal}` : String(r.stderr || '').slice(-400)}`);
+    return png;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -410,6 +412,8 @@ async function stripAlpha(buf) {
 /** Encode a PNG/JPEG frame as the data URI WAN accepts, dropping any PNG alpha channel first. */
 export async function frameDataUri(buf) {
   const b = Buffer.isBuffer(buf) ? buf : fs.readFileSync(buf);
+  // an empty or non-image seed would be sent with a paid task and answered with a clip that does not start from it
+  if (!isImage(b)) throw new Error(`frameDataUri: the frame is not a PNG, JPEG or WebP image (${b.length} bytes)`);
   if (b[0] === 0xff && b[1] === 0xd8) return `data:image/jpeg;base64,${b.toString('base64')}`;
   const png = pngHasAlpha(b) ? await stripAlpha(b) : b;
   return `data:image/png;base64,${png.toString('base64')}`;
@@ -514,10 +518,11 @@ export async function downloadWanVideo(url, { sleep = realSleep, tries = 3 } = {
   let last;
   for (let i = 0; i < tries; i++) {
     last = await wanFetch(url, { binary: true, timeoutMs: DOWNLOAD_TIMEOUT_MS });
-    if (last.status === 200 && last.body?.length) return last.body;
+    // a 200 that is an HTML or JSON page (an expired or refused signed URL) is not the video: try again, then fail
+    if (last.status === 200 && isMp4(last.body)) return last.body;
     if (i < tries - 1) await sleep(2000 * (i + 1));
   }
-  throw new Error(`WAN video download failed: HTTP ${last?.status}`);
+  throw new Error(`WAN video download failed: HTTP ${last?.status}${last?.status === 200 ? ` but the body is not an mp4 (${last.body?.length ?? 0} bytes)` : ''}`);
 }
 
 /**

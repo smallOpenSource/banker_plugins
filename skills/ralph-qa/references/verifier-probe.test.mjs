@@ -1,7 +1,7 @@
 // Tests for verifier-probe.mjs. Run from the repo root: node --test skills/ralph-qa/references/verifier-probe.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -952,4 +952,69 @@ test("an array of tables under mcp_servers, quoted or not, leaves the server lis
   }
   assert.equal(readToml('[mcp_servers.x]\ncommand = "x"\n').mcpUnread, false);
   assert.equal(readToml('[[profiles.fast]]\nmodel = "o3"\n').mcpUnread, false);
+});
+
+// ── A CLI or a file that fails is not reported as a seat (2026-11-03 error injection) ────────────────────────────────
+const posixOnly = (process.platform === "win32" && "a shell-script stand-in needs POSIX") || false;
+const noModes = posixOnly || (typeof process.getuid === "function" && process.getuid() === 0 && "root ignores modes") || false;
+const GOOD_CODEX = `case "$*" in --version) echo codex-cli 0.150.0;; *) echo '${CATALOG}';; esac`;
+// A fake CLI on a PATH of its own, a home of its own; the probe runs as the command line does.
+function probeWith(cli, script, flag, setup = () => {}) {
+  const dir = mkdtempSync(join(tmpdir(), "probe-inject-"));
+  try {
+    mkdirSync(join(dir, "bin"));
+    mkdirSync(join(dir, "home"));
+    if (script !== null) writeFileSync(join(dir, "bin", cli), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+    setup(join(dir, "home"));
+    const r = spawnSync(process.execPath, [PROBE, "--runtime=claude", flag], { encoding: "utf8", timeout: 60000,
+      env: cleanEnv({ PATH: `${join(dir, "bin")}:/usr/bin:/bin`, HOME: join(dir, "home"), CODEX_HOME: join(dir, "home", ".codex"), XDG_CONFIG_HOME: join(dir, "home", ".config"), XDG_CACHE_HOME: join(dir, "home", ".cache") }) });
+    return { r, seat: r.stdout ? JSON.parse(r.stdout).seats[0] : null };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("a codex that fails both calls (error, killed, empty, malformed) is not a seat, and a note says how the calls ended", { skip: posixOnly }, () => {
+  for (const script of ['echo "Error: not logged in"; exit 1', "kill -9 $$", "exit 0", 'echo \'{"error":"x"}\'', 'echo "{models:["']) {
+    const { seat } = probeWith("codex", script, "--codex");
+    assert.deepEqual([seat.decision, seat.reason], ["unseated", "cli-call-failed"], `${script}: ${JSON.stringify(seat)}`);
+    assert.ok(seat.notes.some((n) => n.startsWith("codex debug models --bundled gave no catalog (")), JSON.stringify(seat.notes));
+  }
+  const killed = probeWith("codex", "kill -9 $$", "--codex").seat;
+  assert.ok(killed.notes.some((n) => n.includes("killed by SIGKILL")), JSON.stringify(killed.notes));
+});
+
+test("a codex that ignores SIGTERM does not hold the probe past its time limits", { skip: posixOnly }, () => {
+  const t0 = Date.now();
+  const { r, seat } = probeWith("codex", 'trap "" TERM; while :; do sleep 1; done', "--codex");
+  assert.ok(Date.now() - t0 < 45000, `took ${Date.now() - t0} ms`);
+  assert.equal(r.error, undefined, String(r.error));
+  assert.deepEqual([seat.decision, seat.reason], ["unseated", "cli-call-failed"]);
+  assert.ok(seat.notes.some((n) => n.includes("timed out")), JSON.stringify(seat.notes));
+});
+
+test("an unreadable config file is not taken for an absent one: codex, gemini and opencode do not adopt past it", { skip: noModes }, () => {
+  const lock = (file, text) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text); chmodSync(file, 0); };
+  const codex = probeWith("codex", GOOD_CODEX, "--codex", (h) => lock(join(h, ".codex", "config.toml"), 'profile = "x"\n[mcp_servers.evil]\ncommand = "x"\n'));
+  assert.notEqual(codex.seat.decision, "adopt", JSON.stringify(codex.seat));
+  assert.ok(codex.seat.notes.some((n) => n.includes("(not readable: EACCES)")), JSON.stringify(codex.seat.notes));
+  const gemini = probeWith("gemini", "exit 1", "--gemini", (h) => lock(join(h, ".gemini", "settings.json"), '{"context":{"includeDirectories":["/etc"]}}'));
+  assert.notEqual(gemini.seat.decision, "adopt", JSON.stringify(gemini.seat));
+  const folder = probeWith("gemini", "exit 1", "--gemini", (h) => mkdirSync(join(h, ".gemini", "settings.json"), { recursive: true }));
+  assert.notEqual(folder.seat.decision, "adopt", JSON.stringify(folder.seat));
+  const opencode = probeWith("opencode", "exit 0", "--opencode", (h) => lock(join(h, ".config", "opencode", "opencode.json"), '{"model":"acme/qwen3"}'));
+  assert.ok(opencode.seat.notes.some((n) => n.startsWith("config not readable: ")), JSON.stringify(opencode.seat));
+});
+
+test("an emptied models.dev copy ({}) is no catalog: a single configured custom model is asked about, not adopted", { skip: posixOnly }, () => {
+  const cfg = '{"model":"acme/qwen3","enabled_providers":["acme"],"provider":{"acme":{"models":{"qwen3":{}}}}}';
+  const put = (h, cache) => {
+    mkdirSync(join(h, ".config", "opencode"), { recursive: true });
+    writeFileSync(join(h, ".config", "opencode", "opencode.json"), cfg);
+    if (cache !== null) { mkdirSync(join(h, ".cache", "opencode"), { recursive: true }); writeFileSync(join(h, ".cache", "opencode", "models.json"), cache); }
+  };
+  for (const cache of ["{}", null]) {
+    const { seat } = probeWith("opencode", "exit 0", "--opencode", (h) => put(h, cache));
+    assert.equal(seat.decision, "ask", `${cache}: ${JSON.stringify(seat)}`);
+  }
 });

@@ -29,7 +29,7 @@ banker 는 원본을 복사하지 않는다. 원본의 예시(`examples/`)와 �
 |---|---|
 | `skillFile` | 설치된 원본 `SKILL.md` 경로. 없거나 꺼져 있으면 `null` |
 | `disabled` | 설치는 됐지만 꺼져 있음 |
-| `python.bin` | Playwright 를 쓸 Python |
+| `python.bin` | Playwright 를 쓸 Python. 찾는 차례는 `MOTION_SITES_PYTHON`, 캐시 폴더의 가상 환경, PATH 의 `python3`, `python`(Windows 는 `py -3`, `python`). `MOTION_SITES_PYTHON` 이 있으면 그것과 캐시 폴더의 가상 환경만 보고, 지정한 것이 실행되지 않으면 다른 Python 으로 넘어가지 않는다 |
 | `python.playwright`, `python.chromium` | Playwright 와 Chromium 이 있는지 |
 | `ready` | 셋 다 있으면 `true`(종료 0) |
 
@@ -49,6 +49,14 @@ banker 는 원본을 복사하지 않는다. 원본의 예시(`examples/`)와 �
 3. Codex 에서는 이 명령이 네트워크와 `~/.codex` 쓰기를 하므로 `sandbox_permissions: "require_escalated"` 로 승인을 요청한다.
 4. 출력의 `steps` 에 실패한 단계가 있으면 그 단계와 `why` 를 보여 주고 멈춘다. 설치되지 않은 것을 설치된 것처럼 말하지 않는다.
    - 네트워크가 없으면 여기서 멈춘다. 오프라인에서는 이 스킬을 쓸 수 없다.
+   - `python` 단계가 "Python 3 을 찾지 못함" 으로 실패하면, 설치한 Python 이 PATH 밖에 있는지 사용자에게 묻는다. Windows 에서 `py` 가 없고 PATH 의 `python` 이 Microsoft Store 연결 파일뿐이거나, Miniconda 를 PATH 에 넣지 않고 설치한 경우다.
+   - 있으면 그 python 실행 파일의 절대 경로를 환경 변수 `MOTION_SITES_PYTHON` 에 영구로 지정하라고 안내한다. `%USERPROFILE%`, `~` 같은 줄임은 쓰지 않는다. 셸에 따라 글자 그대로 저장되어 엔진이 찾지 못한다.
+     - Windows(cmd 나 PowerShell): `setx MOTION_SITES_PYTHON "C:\Users\<이름>\miniconda3\python.exe"`
+     - macOS, Linux: 셸 설정 파일(`~/.zshrc`, `~/.bashrc`)에 `export MOTION_SITES_PYTHON=/절대/경로/python3`
+   - 한 번만 주는 것으로는 안 된다. 다음 실행의 상태 확인도 그 Python 을 봐야 한다. 이미 떠 있는 프로그램에는 새 값이 반영되지 않으므로, Claude Code 나 Codex 를 완전히 끝내고 다시 시작한 뒤 2단계를 다시 한다.
+   - Playwright 는 지정한 Python 에 설치된다. 그 Python 을 바꾸고 싶지 않으면 `<그 python> -m venv <폴더>` 로 가상 환경을 만들고 그 안의 python 을 지정한다(Windows `<폴더>\Scripts\python.exe`, macOS 와 Linux `<폴더>/bin/python`). pip 이 시스템 Python 을 거부하는(externally managed) 경우는 엔진이 캐시 폴더에 가상 환경을 스스로 만든다.
+   - 실패 이유가 "MOTION_SITES_PYTHON 에 지정한 ... 가 실행되지 않음" 이면 지정한 경로가 틀린 것이다. 경로를 고치게 한다.
+   - Python 이 없으면 Python 3 설치를 안내한다. 직접 설치하지 않는다.
    - Linux 에서 Chromium 이 시스템 라이브러리 부족으로 뜨지 않으면 `<python.bin> -m playwright install-deps chromium` 을 안내한다. 관리자 권한이 필요하므로 직접 실행하지 않는다.
 5. 끝나면 `ready` 가 `true` 인지 확인하고 3단계로 간다.
 

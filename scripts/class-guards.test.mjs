@@ -4,15 +4,34 @@
 // take random bytes (crypto.randomBytes, randomUUID, mkstemp) or are checked before and after the open.
 // Run: node --test scripts/class-guards.test.mjs
 import { strict as assert } from "node:assert";
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const shipped = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" })
-  .split("\0")
+// The files git tracks here, or every file when this is no checkout: the boxes get an archive copy of the tracked
+// files only (as hidden-chars.test.mjs does). work/ is skipped there too: tests write their fixtures into it while
+// this runs. git runs without the caller's GIT_* variables, so it reads this checkout and no other.
+const SKIP = new Set([".git", "node_modules", ".omc", "work"]);
+function* walk(dir, rel = "") {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP.has(e.name)) continue;
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) yield* walk(join(dir, e.name), r);
+    else if (e.isFile()) yield r;
+  }
+}
+function repoFiles() {
+  if (existsSync(join(ROOT, ".git"))) {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
+    const r = spawnSync("git", ["-C", ROOT, "ls-files", "-z"], { encoding: "utf8", env, maxBuffer: 64 * 1024 * 1024 });
+    if (r.status === 0) return r.stdout.split("\0").filter(Boolean);
+  }
+  return [...walk(ROOT)];
+}
+const shipped = repoFiles()
   .filter((f) => /\.(mjs|js|cjs|py)$/.test(f) && !/\.test\.|(^|\/)test_|^scripts\/|\/test-fixtures\//.test(f));
 
 // Names guarded another way, with the reason.

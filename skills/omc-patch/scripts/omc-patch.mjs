@@ -252,8 +252,10 @@ function gitFetch(args) {
 // ── 1. 업데이트 ──────────────────────────────────────────────────────────────
 function ensureVersion() {
   const have = installedVersions();
-  if (have.includes(TARGET_VERSION)) return useCached();
-  if (MODE === "check") { bad(`${TARGET_VERSION} 미설치 (설치된 버전: ${have.join(", ") || "없음"})`); return false; }
+  if (have.includes(TARGET_VERSION) && completeVersion(TARGET_VERSION)) return useCached();
+  // 풀다 멈춘 폴더(hooks/hooks.json 이나 scripts/ 가 없음)는 설치된 것으로 보지 않는다. 그대로 전환하면 빈 플러그인으로 바뀐다.
+  if (have.includes(TARGET_VERSION)) bad(`${TARGET_VERSION} 캐시 폴더가 불완전함 (hooks/hooks.json 이나 scripts/ 가 없음)${MODE === "check" ? "" : ". 다시 풉니다"}`);
+  if (MODE === "check") { if (!have.includes(TARGET_VERSION)) bad(`${TARGET_VERSION} 미설치 (설치된 버전: ${have.join(", ") || "없음"})`); return false; }
   if (!canInstallTarget()) return false;
 
   log(`  ${TARGET_VERSION} 설치 중...`);
@@ -264,6 +266,9 @@ function ensureVersion() {
   linkNodeModules(dest, have);
   return switchActive(sha);
 }
+
+// 판 폴더에 훅 목록과 스크립트 폴더가 있는가.
+const completeVersion = (v) => existsSync(join(CACHE, v, "hooks", "hooks.json")) && existsSync(join(CACHE, v, "scripts"));
 
 // TARGET_VERSION 이 캐시에 있을 때. 이미 활성이면 끝, 아니면 마켓플레이스 태그의 커밋으로 전환한다.
 // 전환도 마켓플레이스와 git 이 있어야 하므로 먼저 확인한다(풀지 않으므로 tar 는 없어도 된다).
@@ -356,16 +361,27 @@ function targetSha() {
 }
 
 // git archive | tar 로 소스를 편다. 저장소에 dist/ 가 포함되어 빌드는 불필요하다.
+// 옆의 난수 이름 폴더에 다 푼 뒤에만 판 이름으로 옮긴다. 도중에 멈추면(tar 실패, 신호, 디스크 부족) 판 이름의 폴더는 생기지 않아,
+// 다음 실행이 반쯤 찬 폴더를 설치된 판으로 보고 전환하지 않는다. 옆 폴더는 판 이름 꼴이 아니라 installedVersions 가 세지 않는다.
 function unpackTarget(dest) {
-  if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
-  mkdirSync(dest, { recursive: true });
-  git(["archive", `v${TARGET_VERSION}`, "-o", join(dest, "_src.tar")]);
-  execFileSync("tar", ["-xf", join(dest, "_src.tar"), "-C", dest], { cwd: homedir(), stdio: "ignore" });
-  unlinkSync(join(dest, "_src.tar"));
+  const part = `${dest}.part-${randomBytes(6).toString("hex")}`;
+  mkdirSync(part, { recursive: true });
+  try {
+    git(["archive", `v${TARGET_VERSION}`, "-o", join(part, "_src.tar")]);
+    execFileSync("tar", ["-xf", join(part, "_src.tar"), "-C", part], { cwd: homedir(), stdio: "ignore" });
+    unlinkSync(join(part, "_src.tar"));
+    if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+    renameSync(part, dest);
+  } catch (e) {
+    rmSync(part, { recursive: true, force: true });
+    throw e;
+  }
 }
 
 // node_modules 는 복사하지 않고 직전 버전 것을 링크한다. Windows 는 junction
 // (관리자 권한 불필요), POSIX 는 type 인자가 무시되고 디렉터리 symlink 가 된다.
+// 없어도 전환을 막지 않는다. Claude Code 가 직접 설치한 OMC 판에는 node_modules 가 없고, 실행에 쓰는 것은 dist/ 에
+// 묶여 있다(2026-11-03 실측: 5.7.21~5.7.30 모두 없음, OMC 정상 동작). 막으면 보통 PC 에서 전환이 늘 실패한다.
 function linkNodeModules(dest, have) {
   const prev = have.find((v) => v !== TARGET_VERSION);
   const nm = join(dest, "node_modules");
@@ -699,15 +715,21 @@ function openParenOf(src, j) {
 // 그 상태를 «패치됨» 으로 넘기면 --check 가 결함 트리에 «모두 적용» 을 낸다(2026-10-12 실측).
 function siteInfo(src) {
   if (src.includes("__omcRaceImport")) {
-    const why = helperDefect(scanFacts(src));
+    // 헬퍼가 있어도 적용이 감쌌어야 할 자리가 남았으면(패치 뒤 상류가 줄을 더함) 적용된 것이 아니다.
+    // 헬퍼 본문의 Promise.race 는 손으로 두른 것이 아니므로, 같은 길이의 공백으로 지운 글에서 찾는다(자리는 그대로).
+    const left = openSites(src.split(HELPER).join(" ".repeat(HELPER.length)));
+    const why = helperDefect(scanFacts(src)) ?? (left.length ? `감싸지 않은 최상위 await import 가 남음 :${left.map((p) => src.slice(0, p).split("\n").length).join(", :")}` : null);
     return why ? { state: "misplaced", sites: [], why } : { state: "patched", sites: [] };
   }
   const all = scanTopLevelAwaitImports(src);
   if (!all.length) return { state: "n/a", sites: [] };
-  const open = all.filter((p) => !/Promise\.race/.test(src.slice(Math.max(0, p - 300), p)));
+  const open = openSites(src);
   if (!open.length) return { state: "guarded", sites: [] };
   return { state: "needs", sites: open };
 }
+
+// 적용이 감싸는 자리: 최상위 await import 가운데 바로 앞(300자)에 손으로 두른 Promise.race 가 없는 것.
+const openSites = (src) => scanTopLevelAwaitImports(src).filter((p) => !/Promise\.race/.test(src.slice(Math.max(0, p - 300), p)));
 
 // 헬퍼가 쓰일 수 없는 자리면 그 이유를, 제자리면 null 을 낸다.
 //   - 선언이 블록 안(깊이 1 이상): 다른 블록의 자리에서 ReferenceError(옛 킷이 남긴 자리)
@@ -834,14 +856,32 @@ function patchHooks(root) {
   // 4.15.7 이 둘 다 겪었다 — PostToolUse 를 지우면 그 스크립트가 목록에서 빠지고(그래서
   // .omcbak 이 있어도 안 돌아온다), 손으로 고친 파일은 .omcbak 조차 없어 아예 안 보인다.
   const names = MODE === "revert" ? scriptNames(root, r) : hookNames(root);
+  // 고칠 훅을 하나도 찾지 못했으면 «실패 0건» 이 아니다. 목록이 빈 hooks.json(`{}`, `[]`)은 고친 것도 확인한 것도 없다.
+  // hooks.json 이 없거나 읽히지 않으면 [3/4] 가 이름과 이유를 대고 센다. 여기서는 읽혔는데 훅이 없을 때만 센다.
+  if (MODE !== "revert" && !names.length) {
+    if (readableFile(join(root, "hooks", "hooks.json"))) notChecked(r, join(root, "hooks", "hooks.json"), "hooks.json 이 부르는 훅(scripts/*.mjs)을 하나도 찾지 못함");
+    return r;
+  }
   for (const n of names) {
     const f = join(root, "scripts", `${n}.mjs`);
-    if (!existsSync(f)) continue;
-    if (MODE === "revert") revertScript(root, n, f, r);
-    else checkOrPatchScript(root, n, f, r);
+    if (MODE === "revert") { if (existsSync(f)) revertScript(root, n, f, r); continue; }
+    // hooks.json 이 부르는데 파일이 없으면 이름을 대고 센다. 그 밖에 볼 수 없으면(권한) readHook 이 이유를 대고 센다.
+    if (missingFile(f)) { notChecked(r, f, `hooks.json 이 부르는 훅 파일이 없음: ${shown(n)}`); continue; }
+    checkOrPatchScript(root, n, f, r);
   }
   return r;
 }
+
+// 확인하지 못한 것: 이름과 이유를 대고 실패로 센다. check 는 «모두 적용» 이라 하지 않게 읽지 못한 것으로도 센다.
+function notChecked(r, f, why) {
+  bad(why);
+  r.fail++;
+  r.failed.push(f);
+  if (MODE === "check") r.unread++;
+}
+
+const readableFile = (f) => { try { readRegular(f); return true; } catch { return false; } };
+const missingFile = (f) => { try { lstatSync(f); return false; } catch (e) { return e.code === "ENOENT"; } };
 
 // revert 가 훑는 이름: scripts/ 의 .mjs 전부. scripts/ 가 없는 판 폴더는 되돌릴 훅이 없어 한 줄로 알리고 넘어간다.
 // 그 밖에 목록을 읽지 못하면(파일, 권한) 이름과 이유를 대고 실패로 센다 — 다음 판과 [3/4], [4/4] 는 그대로 간다.
@@ -927,12 +967,20 @@ function handRestoreHint(bak, f) {
 
 // 백업의 내용으로 파일을 바꾼다. 쓰지 못하면 그 이유, 백업이 읽으려는 순간 사라졌으면 GONE, 아니면 null.
 const GONE = "백업이 먼저 사라짐";
+// 빈 백업이나 문법 검사를 통과하지 못하는 백업(잘린 복사)으로는 되돌리지 않는다. 쓴 뒤 검사에 걸리면 쓰기 전 글로 되돌린다.
 function restoreFrom(f, bak) {
   let data;
   try { data = readRegular(bak); }
   catch (e) { return e.code === "ENOENT" ? GONE : `읽지 못함: ${failWhy(e)}`; }
-  try { writeAtomic(f, data); return null; }
+  if (!data.length) return "백업이 비어 있음";
+  let before;
+  try { before = readRegular(f); writeAtomic(f, data); }
   catch (e) { return `쓰지 못함: ${failWhy(e)}`; }
+  const err = syntaxError(f);
+  if (!err) return null;
+  try { writeAtomic(f, before); }
+  catch (e) { return `백업이 문법 검사를 통과하지 못했고 원래 글로도 되돌리지 못함 (${failWhy(e)}): ${oneLine(err)}`; }
+  return `백업이 문법 검사를 통과하지 못함: ${oneLine(err)}`;
 }
 
 // 되돌린 뒤 백업을 지운다. 다른 실행이 먼저 지웠으면(ENOENT) 된 것이다. 못 지우면 그 이유, 아니면 null.
@@ -948,6 +996,9 @@ function checkOrPatchScript(root, n, f, r) {
   // 헬퍼 자리 결함은 check 와 apply 모두 이름을 댄다. 이미 감싼 파일이라 transform 으로는
   // 고칠 수 없으므로 apply 도 건드리지 않고, 되돌린 뒤 다시 적용하라고 안내한다(misplacedHint).
   if (info.state === "misplaced") { bad(`헬퍼 자리 결함: ${n} (${info.why})`); r.misplaced++; return; }
+  // 헬퍼 이름이 있어도 잘린 파일(복사가 끊김)은 돌지 않는다. 문법 검사를 통과해야 패치된 것으로 센다.
+  const broken = info.state === "patched" ? syntaxError(f) : null;
+  if (broken) { bad(`헬퍼 자리 결함: ${n} (패치된 파일이 문법 검사를 통과하지 못함: ${oneLine(broken)})`); r.misplaced++; return; }
   if (info.state !== "needs") { r.skip++; return; }
   const bak = `${f}.omcbak`;
   const why = whyNotWrite(root, f, bak);
@@ -1079,6 +1130,7 @@ function revertHooksJson(root, hj) {
   const bak = `${hj}.omcbak`;
   const saved = readBackup(bak);
   if (saved !== null) {
+    if (!isJson(saved)) { hjBad("hooks.json 을 되돌리지 않음 (백업이 비었거나 JSON 이 아님)"); return "unsafe"; }
     if (staleHooksJson(hj, saved)) { hjBad(`hooks.json 을 되돌리지 않음 (지금 파일에 PostToolUse 가 있고 백업과 글이 다름. 백업이 옛 원본일 수 있음)`); return "unsafe"; }
     writeAtomic(hj, saved);
     log(`  되돌림  ${hjTag}hooks.json`);
@@ -1102,8 +1154,13 @@ function revertHooksJson(root, hj) {
     return "reverted";
   }
   if (usable.length > 1) { hjBad(`hooks.json 수동 백업이 여러 개라 자동 복구하지 않음: ${usable.map(shown).join(", ")}`); return "ambiguous"; }
-  return unsafe.length ? "linked" : "no-backup";
+  if (unsafe.length) return "linked";
+  // 깨진 hooks.json 에 되돌릴 백업도 없으면 «이 도구가 지운 적 없음» 이라 할 근거가 없다. 그대로 두고 실패로 센다.
+  if (!isJson(readHooksJson(hj))) { hjBad("hooks.json 이 JSON 이 아니고 되돌릴 백업도 없음"); return "unsafe"; }
+  return "no-backup";
 }
+
+const isJson = (text) => { try { JSON.parse(String(text)); return true; } catch { return false; } };
 
 // 파일에서 읽은 값(파일 이름, PINNED 의 host)과 출력하는 경로를 출력에 넣을 때 쓴다. 줄바꿈과 제어 문자를 ? 로 바꾸고 길이를 자른다.
 // SKILL 은 [!] 줄을 그대로 보고하라고 하므로, 값이 제 줄을 새로 시작하면 도구가 낸 줄처럼 읽힌다.
@@ -1270,7 +1327,7 @@ function removePostToolUse(hj, why) {
 // 고정과 되돌리기가 하지 않은 일을 했다고 끝난다.
 function originUrl() {
   try { return git(["config", "--get", "remote.origin.url"]); }
-  catch (e) { return e.status === 1 ? null : { unreadable: gitLine(e) }; }
+  catch (e) { return e.status === 1 && !String(e.stderr || "").trim() ? null : { unreadable: gitLine(e) }; }
 }
 
 // git 오류의 원인 줄: `fatal:` 이나 `error:` 로 시작하는 첫 줄, 없으면 첫 줄(`warning:` 이 먼저 올 수 있다), 정화하고
@@ -1688,7 +1745,8 @@ for (const v of targets) {
   else if (hj === "needs") hjNeedBy[v] = true;
   else if (hj === "reverted" || hj === "ambiguous" || hj === "linked") { /* patchHooksJson 이 출력함 */ }
   else if (hj === "no-backup") ok(`${tag}되돌릴 백업 없음 (이 도구가 지운 적 없음)`);
-  else if (hj === "no-file") bad(`${tag}hooks.json 파일 자체가 없음`);
+  // 판 폴더에 hooks.json 이 없으면 고친 것도 확인한 것도 없다. 실패로 센다.
+  else if (hj === "no-file") { bad(`${tag}hooks.json 파일 자체가 없음`); r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
   // "failed" 는 고친 hooks.json 이 JSON 으로 읽히지 않아 되돌린 경우다. 고치지 못했으니 실패로 센다.
   else if (hj === "unsafe" || hj === "failed") { r.fail++; hjFailBy[v] = true; failed.add(fileKey(join(root, "hooks", "hooks.json"))); }
   if (hj === "ambiguous" || hj === "linked") left.add(fileKey(join(root, "hooks", "hooks.json")));

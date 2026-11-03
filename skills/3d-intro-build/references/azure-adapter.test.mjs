@@ -22,6 +22,10 @@ const inoOf = (p) => fs.statSync(p, { bigint: true }).ino;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EP = 'https://unit-test.example.com';
+// Fakes that start as the real formats do: an image answer must be an image and a video download an mp4.
+const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const fakePng = (tag) => Buffer.concat([PNG_HEAD, Buffer.alloc(4), Buffer.from(tag)]);
+const fakeMp4 = (tag) => Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.from(tag)]);
 const KEY = 'placeholder-key-0000';
 
 // ---- save / restore globals stubbed by the tests ----
@@ -136,18 +140,18 @@ test('parseConsoleSample: missing fields come back null (never throws)', () => {
 // =====================================================================
 
 test('generateImage: v1 happy path decodes b64_json into a PNG Buffer', async () => {
-  const png = Buffer.from('PLACEHOLDER-PNG-BYTES');
+  const png = fakePng('PLACEHOLDER-PNG-BYTES');
   const calls = installFetch(() => mockJson({ data: [{ b64_json: png.toString('base64') }] }));
   const buf = await A.generateImage({ endpoint: EP, key: KEY, deployment: 'gpt-image-2', prompt: 'x' });
   assert.ok(Buffer.isBuffer(buf));
-  assert.equal(buf.toString(), 'PLACEHOLDER-PNG-BYTES');
+  assert.ok(buf.equals(fakePng('PLACEHOLDER-PNG-BYTES')));
   assert.equal(calls.length, 1, 'v1 success -> exactly one request');
   assert.match(calls[0].url, /\/openai\/v1\/images\/generations\?api-version=preview$/);
   assert.equal(JSON.parse(calls[0].opts.body).model, 'gpt-image-2', 'body model = deployment');
 });
 
 test('generateImage: v1 failure falls back to the classic deployments path', async () => {
-  const png = Buffer.from('CLASSIC-PNG');
+  const png = fakePng('CLASSIC-PNG');
   let noteMsg = null;
   const calls = installFetch((url) =>
     url.includes('/openai/v1/images/generations')
@@ -157,7 +161,7 @@ test('generateImage: v1 failure falls back to the classic deployments path', asy
     endpoint: EP, key: KEY, deployment: 'gpt-image-2', prompt: 'x', size: '720x1280',
     onNote: (m) => { noteMsg = m; },
   });
-  assert.equal(buf.toString(), 'CLASSIC-PNG');
+  assert.ok(buf.equals(fakePng('CLASSIC-PNG')));
   assert.equal(calls.length, 2, 'v1 then classic');
   assert.match(calls[1].url, /\/openai\/deployments\/gpt-image-2\/images\/generations\?api-version=2025-04-01-preview$/);
   assert.equal(JSON.parse(calls[1].opts.body).size, '1024x1536', 'classic uses a discrete portrait size');
@@ -165,7 +169,7 @@ test('generateImage: v1 failure falls back to the classic deployments path', asy
 });
 
 test('generateImage: HTTP 429 waits Retry-After and retries v1 instead of falling back to classic', async () => {
-  const b64 = Buffer.from('png-after-429').toString('base64');
+  const b64 = fakePng('png-after-429').toString('base64');
   const calls = installFetch((url, opts, i) => {
     if (i < 2) {
       const r = mockJson({ error: { code: 'RateLimitReached' } }, 429);
@@ -176,7 +180,7 @@ test('generateImage: HTTP 429 waits Retry-After and retries v1 instead of fallin
   });
   const notes = [];
   const buf = await A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p', onNote: (m) => notes.push(m) });
-  assert.equal(buf.toString(), 'png-after-429');
+  assert.ok(buf.equals(fakePng('png-after-429')));
   assert.equal(calls.length, 3);
   assert.ok(calls.every((c) => c.url.includes('/openai/v1/images/generations')), 'never left the v1 path');
   assert.equal(notes.filter((m) => /HTTP 429/.test(m)).length, 2);
@@ -206,12 +210,12 @@ test('createVideo: failures carry status and errno for the caller\'s billing dec
 });
 
 test('editImage: multipart edit decodes b64_json into a PNG Buffer', async () => {
-  const png = Buffer.from('EDITED-PNG');
+  const png = fakePng('EDITED-PNG');
   const calls = installFetch(() => mockJson({ data: [{ b64_json: png.toString('base64') }] }));
   const buf = await A.editImage({
     endpoint: EP, key: KEY, deployment: 'gpt-image-2', prompt: 'add a lamp', imageBuf: Buffer.from('IMG'),
   });
-  assert.equal(buf.toString(), 'EDITED-PNG');
+  assert.ok(buf.equals(fakePng('EDITED-PNG')));
   assert.match(calls[0].url, /\/openai\/v1\/images\/edits\?api-version=preview$/);
   assert.ok(calls[0].opts.body instanceof FormData, 'edit posts multipart FormData');
 });
@@ -221,7 +225,7 @@ test('editImage: multipart edit decodes b64_json into a PNG Buffer', async () =>
 // =====================================================================
 
 test('video: createVideo -> pollVideo(terminal) -> downloadVideo', async () => {
-  const mp4 = Buffer.from('MP4-BYTES');
+  const mp4 = fakeMp4('MP4-BYTES');
   const calls = installFetch((url) => {
     if (url.includes('/content')) return mockBinary(mp4);
     if (/\/openai\/v1\/videos\/vid-1(\?|$)/.test(url)) return mockJson({ id: 'vid-1', status: 'completed', progress: 100 });
@@ -241,7 +245,7 @@ test('video: createVideo -> pollVideo(terminal) -> downloadVideo', async () => {
 
   const bytes = await A.downloadVideo({ endpoint: EP, key: KEY, id: 'vid-1' });
   assert.ok(Buffer.isBuffer(bytes));
-  assert.equal(bytes.toString(), 'MP4-BYTES');
+  assert.ok(bytes.equals(fakeMp4('MP4-BYTES')));
 });
 
 test('pollVideo: a 4xx other than 408/429 stops at once with its status; an answer it cannot use is not polled to maxTicks', async () => {
@@ -315,9 +319,10 @@ test('colorMatch is gone: no tone step on seeds or clips (sora-2 measured: a new
 
 test('stillToClip: repeats the still for the hold, encoded as the engine wants, as an arg ARRAY', async () => {
   const seen = [];
-  cp.spawnSync = (bin, args) => { seen.push({ bin, args }); return { status: 0, stdout: '', stderr: '' }; };
-  const out = await A.stillToClip('/in/s1.png', '/out/hold-1.mp4', { ffmpeg: '/fake/ffmpeg', size: '720x1280' });
-  assert.equal(out, '/out/hold-1.mp4');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hold-out-'));
+  cp.spawnSync = (bin, args) => { seen.push({ bin, args }); fs.writeFileSync(args.at(-1), 'clip'); return { status: 0, stdout: '', stderr: '' }; };
+  const out = await A.stillToClip('/in/s1.png', path.join(dir, 'hold-1.mp4'), { ffmpeg: '/fake/ffmpeg', size: '720x1280' });
+  assert.equal(out, path.join(dir, 'hold-1.mp4'));
   const { bin, args } = seen[0];
   assert.equal(bin, '/fake/ffmpeg');
   assert.ok(Array.isArray(args));
@@ -325,24 +330,27 @@ test('stillToClip: repeats the still for the hold, encoded as the engine wants, 
   assert.deepEqual([after('-loop'), after('-i'), after('-t'), after('-r')], ['1', '/in/s1.png', '1', '24']);
   assert.equal(after('-vf'), 'scale=720:1280,format=yuv420p');
   assert.deepEqual([after('-c:v'), after('-crf'), after('-g'), after('-movflags')], ['libx264', '20', '8', '+faststart']);
-  assert.ok(args.includes('-an') && args.at(-1) === '/out/hold-1.mp4');
-  await A.stillToClip('/in/s1.png', '/out/h.mp4', { ffmpeg: '/fake/ffmpeg', seconds: 2 });
+  assert.ok(args.includes('-an') && args.at(-1) === path.join(dir, 'hold-1.mp4'));
+  await A.stillToClip('/in/s1.png', path.join(dir, 'h.mp4'), { ffmpeg: '/fake/ffmpeg', seconds: 2 });
   assert.deepEqual([seen[1].args[seen[1].args.indexOf('-t') + 1], seen[1].args[seen[1].args.indexOf('-vf') + 1]], ['2', 'format=yuv420p']);
   cp.spawnSync = () => ({ status: 1, stdout: '', stderr: 'Unknown encoder libx264' });
-  await assert.rejects(A.stillToClip('/in/s1.png', path.join(os.tmpdir(), 'never-written.mp4'), { ffmpeg: '/fake/ffmpeg' }), /stillToClip failed: Unknown encoder/);
+  await assert.rejects(A.stillToClip('/in/s1.png', path.join(os.tmpdir(), 'never-written.mp4'), { ffmpeg: '/fake/ffmpeg' }), /stillToClip failed: exit 1: Unknown encoder/);
   const old = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hold-')), 'hold-1.mp4');
   fs.writeFileSync(old, 'a hold from an earlier run');
   await assert.rejects(A.stillToClip('/in/s1.png', old, { ffmpeg: '/fake/ffmpeg' }), /stillToClip failed/, 'an earlier file never passes for a failed run');
   assert.equal(fs.existsSync(old), false);
   fs.rmSync(path.dirname(old), { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('concatClips: builds an arg ARRAY with one -i per clip, a concat filter, and -map', async () => {
   const seen = [];
-  cp.spawnSync = (bin, args) => { seen.push({ bin, args }); return { status: 0, stdout: '', stderr: '' }; };
+  const chain = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'chain-out-')), 'chain.mp4');
+  cp.spawnSync = (bin, args) => { seen.push({ bin, args }); fs.writeFileSync(args.at(-1), 'clip'); return { status: 0, stdout: '', stderr: '' }; };
   const clips = ['/c/a.mp4', '/c/b.mp4', '/c/c.mp4'];
-  const out = await A.concatClips(clips, '/out/chain.mp4', { ffmpeg: '/fake/ffmpeg' });
-  assert.equal(out, '/out/chain.mp4');
+  const out = await A.concatClips(clips, chain, { ffmpeg: '/fake/ffmpeg' });
+  assert.equal(out, chain);
+  fs.rmSync(path.dirname(chain), { recursive: true, force: true });
   const { args } = seen[0];
   assert.ok(Array.isArray(args), 'args is an ARRAY');
   assert.equal(args.filter((a) => a === '-i').length, 3, 'one -i per clip');
@@ -468,11 +476,25 @@ test('resolveFfmpeg: a relative FFMPEG_PATH, from the shell or the home file, is
   process.env.PATH = path.join(root, 'empty');
   process.chdir(proj);
   process.env.FFMPEG_PATH = path.join('bin', 'ffmpeg');
-  await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'shell value');
+  await assert.rejects(A.resolveFfmpeg(), /FFMPEG_PATH from the shell is not usable \(not an absolute path\)/, 'shell value');
   delete process.env.FFMPEG_PATH;
   fs.writeFileSync(homeFile, `FFMPEG_PATH=${path.join('bin', 'ffmpeg')}\n`);
   fs.writeFileSync(A.homeSettingsPath(), `FFMPEG_PATH=${path.join('bin', 'ffmpeg')}\n`);
   await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'settings and key file values');
+});
+
+test('resolveFfmpeg: a $FFMPEG_PATH naming no file stops with why, and another ffmpeg on PATH is not taken instead', async () => {
+  const dir = mkTmp('adapter-ff-');
+  const binDir = path.join(dir, 'bin');
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(path.join(binDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), '');
+  useHome(path.join(dir, 'home'));
+  process.env.PATH = binDir;
+  const gone = path.join(dir, 'gone', 'ffmpeg');
+  process.env.FFMPEG_PATH = gone;
+  await assert.rejects(A.resolveFfmpeg(), (e) => e.message === `FFMPEG_PATH from the shell is not usable (no such file): ${gone}; fix it or unset it`);
+  delete process.env.FFMPEG_PATH;
+  assert.equal(await A.resolveFfmpeg(), path.join(binDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), 'unset, PATH is used');
 });
 
 test('persistCreds: a value or name with a line break is refused and nothing is written, so a sample cannot add lines', () => {
@@ -893,7 +915,7 @@ test('azFetch: Retry-After reads as seconds or an HTTP date, and retry-after-ms 
 
 test('generateImage: a 429 waits the server hint capped at 60 s, else 10 s doubling', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const b64 = Buffer.from('png-after-429').toString('base64');
+  const b64 = fakePng('png-after-429').toString('base64');
   installFetch((url, opts, i) => (i === 0 ? mock429({ 'retry-after': '300' }) : i === 1 ? mock429({}) : mockJson({ data: [{ b64_json: b64 }] })));
   const notes = [];
   const onNote = (m) => {
@@ -902,7 +924,7 @@ test('generateImage: a 429 waits the server hint capped at 60 s, else 10 s doubl
     setImmediate(() => t.mock.timers.tick(ms));
   };
   const buf = await A.generateImage({ endpoint: EP, key: KEY, deployment: 'img-dep', prompt: 'p', onNote });
-  assert.equal(buf.toString(), 'png-after-429');
+  assert.ok(buf.equals(fakePng('png-after-429')));
   assert.deepEqual(notes.filter((m) => /HTTP 429/.test(m)), ['HTTP 429; retry 1/3 in 60000 ms', 'HTTP 429; retry 2/3 in 20000 ms']);
 });
 
@@ -930,8 +952,8 @@ test('azFetch: requests are limited to 120 s, downloads to 600 s, image generati
   const timeout = AbortSignal.timeout;
   AbortSignal.timeout = (ms) => { seen.push(ms); return timeout.call(AbortSignal, ms); };
   try {
-    const b64 = Buffer.from('PNG').toString('base64');
-    const calls = installFetch((url, opts, i) => (i === 0 ? mockJson({}, 401) : url.includes('/content') ? mockBinary(Buffer.from('MP4')) : mockJson({ data: [{ b64_json: b64 }] })));
+    const b64 = fakePng('PNG').toString('base64');
+    const calls = installFetch((url, opts, i) => (i === 0 ? mockJson({}, 401) : url.includes('/content') ? mockBinary(fakeMp4('MP4')) : mockJson({ data: [{ b64_json: b64 }] })));
     await A.listVideos({ endpoint: EP, key: KEY });
     await A.downloadVideo({ endpoint: EP, key: KEY, id: 'vid-1' });
     await A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' });
@@ -1193,9 +1215,10 @@ test('createVideoTwoImage: posts both frames and the inpaint items to the jobs A
 });
 
 test('generateImageFlux: takes the image from data[0].b64_json, b64_json or image; a failure says so with its status', async () => {
-  for (const body of [{ data: [{ b64_json: 'QQ==' }] }, { b64_json: 'QQ==' }, { image: 'QQ==' }]) {
+  const one = fakePng('A').toString('base64');
+  for (const body of [{ data: [{ b64_json: one }] }, { b64_json: one }, { image: one }]) {
     installFetch(() => mockJson(body));
-    assert.equal((await A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 })).toString(), 'A');
+    assert.ok((await A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 })).equals(fakePng('A')));
   }
   const calls = installFetch(() => mockJson({ error: 'no' }, 500));
   await assert.rejects(A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 }), (e) => e.message.startsWith('generateImageFlux failed: HTTP 500 '));
@@ -1212,7 +1235,7 @@ test('editImage and generateImage: a failure message keeps its form, the path tr
 });
 
 test('editImage: a mask goes as its own form field; without one there is none', async () => {
-  const b64 = Buffer.from('E').toString('base64');
+  const b64 = fakePng('E').toString('base64');
   const calls = installFetch(() => mockJson({ data: [{ b64_json: b64 }] }));
   await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I'), maskBuf: Buffer.from('M'), size: '1024x1024' });
   await A.editImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p', imageBuf: Buffer.from('I') });
@@ -1512,4 +1535,58 @@ test('probeSoraDeployment: no endpoint or key (creds from a tracked key file giv
     for (const c of [{}, { endpoint: 'https://x.example.com' }, { key: 'k' }]) assert.equal((await A.probeSoraDeployment(c)).state, 'unset');
     assert.equal(fetches, 0);
   } finally { globalThis.fetch = orig; }
+});
+
+// ── Failures are not reported as results (2026-11-03 error injection) ──────────────────────────────────────────────
+test('ffmpeg helpers: an earlier output, a failed, killed or silent ffmpeg is a failure, and no stale file is left as the result', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ff-inject-'));
+  try {
+    const calls = [
+      ['extractLastFrame', (out) => A.extractLastFrame('/in/a.mp4', out, { ffmpeg: '/fake/ffmpeg' })],
+      ['extractFirstFrame', (out) => A.extractFirstFrame('/in/a.mp4', out, { ffmpeg: '/fake/ffmpeg' })],
+      ['crossfade', (out) => A.crossfade('/in/a.mp4', '/in/b.mp4', out, 0.5, { ffmpeg: '/fake/ffmpeg', offset: 1 })],
+      ['concatClips', (out) => A.concatClips(['/in/a.mp4', '/in/b.mp4'], out, { ffmpeg: '/fake/ffmpeg' })],
+      ['stillToClip', (out) => A.stillToClip('/in/s.png', out, { ffmpeg: '/fake/ffmpeg' })],
+    ];
+    const runs = [
+      [() => ({ status: 1, stdout: '', stderr: 'boom' }), /exit 1: boom/],
+      [(args) => { fs.writeFileSync(args.at(-1), 'PARTIAL'); return { status: null, signal: 'SIGKILL', stdout: '', stderr: '' }; }, /killed by SIGKILL/],
+      [() => ({ status: 0, stdout: '', stderr: '' }), /ffmpeg wrote no output/],
+      [(args) => { fs.writeFileSync(args.at(-1), ''); return { status: 0, stdout: '', stderr: '' }; }, /ffmpeg wrote no output/],
+      [() => ({ status: null, signal: 'SIGKILL', error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }), stdout: '', stderr: '' }), /timed out after 600 s/],
+    ];
+    for (const [name, call] of calls) {
+      for (const [stub, why] of runs) {
+        const out = path.join(dir, `${name}.out`);
+        fs.writeFileSync(out, 'OLD');
+        cp.spawnSync = (_bin, args) => stub(args);
+        await assert.rejects(call(out), (e) => e.message.startsWith(`${name} failed: `) && why.test(e.message), `${name} ${why}`);
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('crossfade: with no offset and a duration it cannot read, it stops instead of fading at 0 s', async () => {
+  let ran = 0;
+  cp.spawnSync = (_bin, args) => { ran++; return args.length === 2 ? { status: 1, stdout: '', stderr: 'Invalid data found' } : { status: 0, stdout: '', stderr: '' }; };
+  await assert.rejects(A.crossfade('/in/a.mp4', '/in/b.mp4', path.join(os.tmpdir(), 'never.mp4'), 0.5, { ffmpeg: '/fake/ffmpeg' }), /crossfade failed: could not read the duration of a\.mp4/);
+  assert.equal(ran, 1, 'only the probe ran');
+});
+
+test('downloadVideo: a 200 that is an HTML or JSON page is not the video', async () => {
+  for (const body of [Buffer.from('<html>AccessDenied</html>'), Buffer.from('{"error":{"code":"Expired"}}')]) {
+    installFetch(() => mockBinary(body));
+    await assert.rejects(A.downloadVideo({ endpoint: EP, key: KEY, id: 'vid-1' }), (e) => /downloadVideo failed: HTTP 200 but the body is not an mp4/.test(e.message) && e.status === 200);
+  }
+});
+
+test('image calls: an answer that is not an image (text, empty base64, a URL) is a failure, not a picture', async () => {
+  for (const b64 of [Buffer.from('not an image at all').toString('base64'), '!!!!', 'https://cdn.example/out.png']) {
+    installFetch(() => mockJson({ data: [{ b64_json: b64 }] }));
+    await assert.rejects(A.generateImage({ endpoint: EP, key: KEY, deployment: 'd', prompt: 'p' }), /generateImage failed \(v1\): the answer is not a PNG, JPEG or WebP image/);
+    installFetch(() => mockJson({ image: b64 }));
+    await assert.rejects(A.generateImageFlux({ endpoint: EP, key: KEY, prompt: 'p', width: 8, height: 8 }), /generateImageFlux failed: the answer is not a PNG, JPEG or WebP image/);
+  }
 });
