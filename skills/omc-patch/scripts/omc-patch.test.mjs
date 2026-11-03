@@ -4295,13 +4295,15 @@ test("--check does not call a patched hook applied when it is cut short or has a
   }
 });
 
-test("a bare apply does not switch to a version whose node_modules it cannot provide", { skip: !HAS_GIT && "git not found" }, () => {
+// Claude Code's own OMC installs carry no node_modules (what runs is bundled in dist/), so a missing one does not stop
+// the switch: stopping would fail the apply on an ordinary PC (2026-11-03: 5.7.21 to 5.7.30 here, none has one).
+test("a bare apply still switches when the previous version has no node_modules, and says so", { skip: !HAS_GIT && "git not found" }, () => {
   const { f, target } = bareApplyFixture();
   rmSync(join(f.cache, "5.6.1", "node_modules"), { recursive: true });
   const r = run(f.home, []);
-  assert.equal(r.code, 1, r.out);
+  assert.equal(r.code, 0, r.out);
   assert.match(r.out, /node_modules 없음/);
-  assert.equal(JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0].version, "5.6.1", `not switched to ${target}`);
+  assert.equal(JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0].version, target);
 });
 
 test("a git config that ends with 1 and an error is an unreadable origin, not 'no origin'", { skip: (!HAS_GIT && "git not found") || noWin }, () => {

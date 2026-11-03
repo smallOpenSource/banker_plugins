@@ -263,7 +263,7 @@ function ensureVersion() {
   if (sha === null) return false;
   const dest = join(CACHE, TARGET_VERSION);
   unpackTarget(dest);
-  if (!linkNodeModules(dest, have)) return false;
+  linkNodeModules(dest, have);
   return switchActive(sha);
 }
 
@@ -380,17 +380,17 @@ function unpackTarget(dest) {
 
 // node_modules 는 복사하지 않고 직전 버전 것을 링크한다. Windows 는 junction
 // (관리자 권한 불필요), POSIX 는 type 인자가 무시되고 디렉터리 symlink 가 된다.
-// 갖추지 못하면 false 다. 의존 모듈이 없는 판으로 전환하면 OMC 훅이 돌지 못하므로, 전환하지 않고 실패로 끝낸다.
+// 없어도 전환을 막지 않는다. Claude Code 가 직접 설치한 OMC 판에는 node_modules 가 없고, 실행에 쓰는 것은 dist/ 에
+// 묶여 있다(2026-11-03 실측: 5.7.21~5.7.30 모두 없음, OMC 정상 동작). 막으면 보통 PC 에서 전환이 늘 실패한다.
 function linkNodeModules(dest, have) {
   const prev = have.find((v) => v !== TARGET_VERSION);
   const nm = join(dest, "node_modules");
-  if (existsSync(nm)) return true;
-  if (prev && existsSync(join(CACHE, prev, "node_modules"))) {
-    try { symlinkSync(join(CACHE, prev, "node_modules"), nm, "junction"); ok(`node_modules → ${prev} 링크`); return true; }
-    catch (e) { bad(`node_modules 링크 실패(${failWhy(e)}). ${oneLine(dest)} 에서 \`npm install --omit=dev\` 를 실행한 뒤 다시 적용하십시오`); return false; }
+  if (!existsSync(nm) && prev && existsSync(join(CACHE, prev, "node_modules"))) {
+    try { symlinkSync(join(CACHE, prev, "node_modules"), nm, "junction"); ok(`node_modules → ${prev} 링크`); }
+    catch (e) { bad(`node_modules 링크 실패(${e.code}). \`npm install\` 이 필요할 수 있음`); }
+  } else if (!existsSync(nm)) {
+    bad(`node_modules 없음. ${oneLine(dest)} 에서 \`npm install --omit=dev\` 를 실행하십시오`);
   }
-  bad(`node_modules 없음. ${oneLine(dest)} 에서 \`npm install --omit=dev\` 를 실행한 뒤 다시 적용하십시오`);
-  return false;
 }
 
 // installed_plugins.json 을 읽는다. 읽지 못하거나 JSON 이 아니면 이름과 이유를 대고 undefined(파일 글은 내지 않는다).
