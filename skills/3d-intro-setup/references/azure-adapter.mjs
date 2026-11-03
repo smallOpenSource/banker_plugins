@@ -642,11 +642,25 @@ export async function generateImage({
 const classicWorthTrying = (r) => !(r.ok && dataB64(r)) && r.status !== 429 && r.status !== 0;
 const dataB64 = (r) => r.body?.data?.[0]?.b64_json;
 
-// The PNG an image call answered with, or an error that starts with `failed`.
+// The PNG an image call answered with, or an error that starts with `failed`. Bytes that are not an image (a URL or an
+// error text in the image field, base64 that decodes to nothing) are a failure, not a picture.
 function pngFrom(r, b64, failed) {
   if (!(r.ok && b64)) throw new Error(`${failed}: HTTP ${r.status}${why(r)} ${truncate(r.body)}`);
-  return Buffer.from(b64, 'base64');
+  const buf = Buffer.from(String(b64), 'base64');
+  if (!isImage(buf)) throw new Error(`${failed}: the answer is not a PNG, JPEG or WebP image (${buf.length} bytes)`);
+  return buf;
 }
+
+/** Whether bytes start as a PNG, JPEG or WebP image. */
+export const isImage = (b) => Buffer.isBuffer(b) && b.length >= 12 && (b.readUInt32BE(0) === 0x89504e47
+  || (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) || (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP'));
+
+/**
+ * Whether bytes start as an ISO media file (mp4, mov): the first box is one such a file starts with (ftyp, or styp,
+ * free, skip, wide, moov, mdat in fragmented and QuickTime files). An HTML or JSON error page is not.
+ */
+const MEDIA_BOXES = new Set(['ftyp', 'styp', 'free', 'skip', 'wide', 'moov', 'mdat']);
+export const isMp4 = (b) => Buffer.isBuffer(b) && b.length >= 12 && MEDIA_BOXES.has(b.toString('latin1', 4, 8));
 
 /** Edit an image (optional mask) via the v1 images/edits multipart path. Returns a PNG Buffer. */
 export async function editImage({
@@ -781,6 +795,7 @@ export async function downloadVideo({ endpoint, key, id, apiVersion = 'preview' 
     key, method: 'GET', binary: true,
   });
   if (!(r.status === 200 && r.body?.length)) throw Object.assign(new Error(`downloadVideo failed: HTTP ${r.status}${why(r)}`), { status: r.status });
+  if (!isMp4(r.body)) throw Object.assign(new Error(`downloadVideo failed: HTTP 200 but the body is not an mp4 (${r.ct || 'no content type'}, ${r.body.length} bytes)`), { status: r.status });
   return r.body;
 }
 
@@ -960,17 +975,30 @@ async function staticFfmpeg() {
 }
 
 // Run ffmpeg with an ARGUMENT ARRAY (never a shell string). Returns {code, stdout, stderr, args}.
+// ffmpeg has a time limit: a stuck one (a FIFO input, a blocked disk) would hold the whole run. SIGKILL, as a stuck
+// ffmpeg may not end on SIGTERM.
+export const FF_TIMEOUT_MS = 10 * 60 * 1000;
 function runFf(bin, args, cwd) {
-  const r = cp.spawnSync(bin, args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 });
-  return { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '', args };
+  const r = cp.spawnSync(bin, args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28, timeout: FF_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  return { code: r.status, signal: r.signal || null, error: r.error || null, stdout: r.stdout || '', stderr: r.stderr || '', args };
+}
+
+// One ffmpeg run that must make `out`: an earlier file there is removed first, and the run counts only when ffmpeg
+// ended by itself with 0 and `out` is a file with something in it. A killed or failed ffmpeg's partial file is not a result.
+function ffOut(name, bin, args, out) {
+  fs.rmSync(out, { force: true });
+  const r = runFf(bin, args);
+  const size = (() => { try { return fs.statSync(out).size; } catch { return 0; } })();
+  if (r.code === 0 && size > 0) return out;
+  const how = r.error ? (r.error.code === 'ETIMEDOUT' ? `timed out after ${FF_TIMEOUT_MS / 1000} s` : r.error.code || r.error.message)
+    : r.signal ? `killed by ${r.signal}` : r.code !== 0 ? `exit ${r.code}: ${tail(r.stderr)}` : 'ffmpeg wrote no output';
+  throw new Error(`${name} failed: ${how}`);
 }
 
 /** Extract the exact LAST frame of an mp4 to a PNG (reverse + first-frame trick). Returns out. */
 export async function extractLastFrame(mp4, out, { ffmpeg } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
-  const r = runFf(bin, ['-y', '-i', mp4, '-vf', 'reverse', '-frames:v', '1', out]);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`extractLastFrame failed: ${tail(r.stderr)}`);
-  return out;
+  return ffOut('extractLastFrame', bin, ['-y', '-i', mp4, '-vf', 'reverse', '-frames:v', '1', out], out);
 }
 
 /**
@@ -981,20 +1009,15 @@ export async function extractLastFrame(mp4, out, { ffmpeg } = {}) {
  */
 export async function stillToClip(png, out, { ffmpeg, seconds = 1, fps = 24, size } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
-  fs.rmSync(out, { force: true }); // a file from an earlier run must not pass for this one
   const vf = `${size ? `scale=${String(size).replace('x', ':')},` : ''}format=yuv420p`;
-  const r = runFf(bin, ['-y', '-loop', '1', '-i', png, '-t', String(seconds), '-r', String(fps), '-vf', vf,
-    '-c:v', 'libx264', '-crf', '20', '-g', '8', '-movflags', '+faststart', '-an', out]);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`stillToClip failed: ${tail(r.stderr)}`);
-  return out;
+  return ffOut('stillToClip', bin, ['-y', '-loop', '1', '-i', png, '-t', String(seconds), '-r', String(fps), '-vf', vf,
+    '-c:v', 'libx264', '-crf', '20', '-g', '8', '-movflags', '+faststart', '-an', out], out);
 }
 
 /** Extract the FIRST frame of an mp4 to a PNG. Returns out. */
 export async function extractFirstFrame(mp4, out, { ffmpeg } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
-  const r = runFf(bin, ['-y', '-i', mp4, '-frames:v', '1', out]);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`extractFirstFrame failed: ${tail(r.stderr)}`);
-  return out;
+  return ffOut('extractFirstFrame', bin, ['-y', '-i', mp4, '-frames:v', '1', out], out);
 }
 
 /**
@@ -1007,13 +1030,12 @@ export async function crossfade(aMp4, bMp4, out, sec = 0.5, { ffmpeg, offset } =
   let off = offset;
   if (off == null) {
     const dur = probeDurationSec(bin, aMp4);
-    off = dur != null ? Math.max(0, dur - sec) : 0;
+    // with A's length unknown, an offset of 0 would cut A to the fade: a wrong clip, not a result
+    if (dur == null) throw new Error(`crossfade failed: could not read the duration of ${path.basename(aMp4)}; pass { offset }`);
+    off = Math.max(0, dur - sec);
   }
   const filter = `[0:v][1:v]xfade=transition=fade:duration=${sec}:offset=${off}`;
-  const args = ['-y', '-i', aMp4, '-i', bMp4, '-filter_complex', filter, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out];
-  const r = runFf(bin, args);
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`crossfade failed: ${tail(r.stderr)}`);
-  return out;
+  return ffOut('crossfade', bin, ['-y', '-i', aMp4, '-i', bMp4, '-filter_complex', filter, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out], out);
 }
 
 /**
@@ -1022,9 +1044,7 @@ export async function crossfade(aMp4, bMp4, out, sec = 0.5, { ffmpeg, offset } =
  */
 export async function concatClips(mp4List, out, { ffmpeg, fps = 30, width = 720, height = 1280 } = {}) {
   const bin = ffmpeg || await resolveFfmpeg();
-  const r = runFf(bin, concatArgs(clipList(mp4List), out, { fps, width, height }));
-  if (r.code !== 0 && !fs.existsSync(out)) throw new Error(`concatClips failed: ${tail(r.stderr)}`);
-  return out;
+  return ffOut('concatClips', bin, concatArgs(clipList(mp4List), out, { fps, width, height }), out);
 }
 
 function clipList(mp4List) {
@@ -1045,7 +1065,7 @@ function concatArgs(list, out, { fps, width, height }) {
 
 // Probe an mp4's duration (seconds) by parsing ffmpeg's stderr banner. Returns null if absent.
 function probeDurationSec(bin, mp4) {
-  const r = cp.spawnSync(bin, ['-i', mp4], { encoding: 'utf8' });
+  const r = cp.spawnSync(bin, ['-i', mp4], { encoding: 'utf8', timeout: FF_TIMEOUT_MS, killSignal: 'SIGKILL' });
   const text = `${r.stderr || ''}${r.stdout || ''}`;
   const m = text.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
   if (!m) return null;

@@ -3342,6 +3342,8 @@ test("an apply over a new hooks.json makes the hooks.json backup that new origin
   const hj = join(plug, "hooks", "hooks.json");
   const fresh = HOOKS_JSON.replace("stopper.mjs", "stopper2.mjs");
   writeFileSync(hj, fresh);
+  // the new hooks.json names a hook the bundle must have (a hook it names but lacks is a counted failure)
+  writeFileSync(join(plug, "scripts", "stopper2.mjs"), read(join(plug, "scripts", "stopper.mjs.omcbak")));
   const r = run(bareHome(), ["--root", plug]);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /ok {2}옛 백업을 지금 원본으로 바꿈: hooks\.json/);
@@ -4186,4 +4188,127 @@ test("the SKILL's PowerShell temp tar line keeps a hook name inside quotes and r
       assert.deepEqual(readdirSync(tmp), [], "the temp folder is gone");
     } else assert.equal(calls, "", "git or tar ran without a temp folder");
   }
+});
+
+// ── Failures at the edges are reported as failures (2026-11-03 error injection) ──────────────────────────────────────
+const noWin = (process.platform === "win32" && "POSIX sh shims and modes") || false;
+const shimDir = (name, lines) => {
+  const dir = join(root, `${name}${seq++}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, name.replace(/\d+$/, "")), ["#!/bin/sh", ...lines, ""].join("\n"), { mode: 0o755 });
+  return `${dir}${delimiter}${process.env.PATH}`;
+};
+
+test("an unpack that stops midway leaves no version folder, and the next apply unpacks again instead of switching to it", { skip: (!HAS_GIT && "git not found") || noWin }, () => {
+  const { f, target } = bareApplyFixture();
+  const realTar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
+  const PATH = shimDir("tar", ['if [ "$1" = -xf ]; then echo "tar: cut short" >&2; exit 2; fi', `exec '${realTar}' "$@"`]);
+  const first = run(f.home, [], { PATH });
+  assert.equal(first.code, 1, first.out);
+  assert.ok(!existsSync(join(f.cache, target)), "no half-filled version folder");
+  assert.deepEqual(readdirSync(f.cache).filter((d) => d.includes(".part-")), [], "the side folder is removed");
+  assert.equal(JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0].version, "5.6.1");
+  // a half-filled folder left by an older tool: --check names it, the apply unpacks again
+  mkdirSync(join(f.cache, target), { recursive: true });
+  writeFileSync(join(f.cache, target, "package.json"), "{}");
+  const check = run(f.home, ["--check"]);
+  assert.match(check.out, /캐시 폴더가 불완전함/);
+  const second = run(f.home, []);
+  assert.equal(second.code, 0, second.out);
+  assert.ok(existsSync(join(f.cache, target, "hooks", "hooks.json")), "unpacked again");
+});
+
+test("a version folder with no hooks.json is a counted failure, not 0 failures, in the apply and in --check", () => {
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  rmSync(join(f.cache, "5.6.1", "hooks"), { recursive: true });
+  for (const args of [["--no-update"], ["--no-update", "--check"]]) {
+    const r = run(f.home, args);
+    assert.equal(r.code, 1, `${args}: ${r.out}`);
+    assert.match(r.out, /hooks\.json 파일 자체가 없음/);
+    assert.ok(!/완료\. 실패 0건|모두 적용된 상태/.test(r.out), r.out);
+  }
+});
+
+test("a hooks.json that names no hook, or names a hook whose file is missing, is a counted failure", () => {
+  const empty = bundle();
+  writeFileSync(join(empty, "hooks", "hooks.json"), "{}");
+  const gone = bundle();
+  rmSync(join(gone, "scripts", "foo.mjs"));
+  for (const [plug, line] of [[empty, /훅\(scripts\/\*\.mjs\)을 하나도 찾지 못함/], [gone, /hooks\.json 이 부르는 훅 파일이 없음: foo/]]) {
+    for (const args of [["--root", plug], ["--root", plug, "--check"]]) {
+      const r = run(bareHome(), args);
+      assert.equal(r.code, 1, `${args}: ${r.out}`);
+      assert.match(r.out, line);
+      assert.ok(!/완료\. 실패 0건|모두 적용된 상태/.test(r.out), r.out);
+    }
+  }
+});
+
+test("a scripts folder the tool cannot read into is a counted failure", { skip: noWin || (asRoot && "root ignores modes") }, () => {
+  const plug = bundle();
+  chmodSync(join(plug, "scripts"), 0);
+  try {
+    const r = run(bareHome(), ["--root", plug]);
+    assert.equal(r.code, 1, r.out);
+    assert.ok(!/완료\. 실패 0건/.test(r.out), r.out);
+  } finally {
+    chmodSync(join(plug, "scripts"), 0o755);
+  }
+});
+
+test("--revert does not restore an empty, cut or broken backup over a working file", () => {
+  const plug = bundle();
+  assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+  const foo = join(plug, "scripts", "foo.mjs");
+  const hj = join(plug, "hooks", "hooks.json");
+  const [fooNow, hjNow] = [read(foo), read(hj)];
+  for (const bak of ["", "const { x } = await import(\"./lib.mjs\"\n"]) {
+    writeFileSync(`${foo}.omcbak`, bak);
+    writeFileSync(`${hj}.omcbak`, '{"hooks":');
+    const r = run(bareHome(), ["--root", plug, "--revert"]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, bak ? /되돌리지 않음: foo \(백업이 문법 검사를 통과하지 못함/ : /되돌리지 않음: foo \(백업이 비어 있음\)/);
+    assert.match(r.out, /hooks\.json 을 되돌리지 않음 \(백업이 비었거나 JSON 이 아님\)/);
+    assert.equal(read(foo), fooNow, "the working hook is kept");
+    assert.equal(read(hj), hjNow, "the working hooks.json is kept");
+  }
+});
+
+test("--revert over a hooks.json that is not JSON, with no backup, is a counted failure, not 'never removed'", () => {
+  const plug = bundle();
+  writeFileSync(join(plug, "hooks", "hooks.json"), '{"hooks":');
+  const r = run(bareHome(), ["--root", plug, "--revert"]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /hooks\.json 이 JSON 이 아니고 되돌릴 백업도 없음/);
+  assert.ok(!r.out.includes("이 도구가 지운 적 없음"), r.out);
+});
+
+test("--check does not call a patched hook applied when it is cut short or has an unwrapped top-level await import", () => {
+  for (const spoil of [(t) => t.slice(0, Math.floor(t.length * 0.8)), (t) => `${t}const { y } = await import("./lib.mjs");\n`]) {
+    const plug = bundle();
+    assert.equal(run(bareHome(), ["--root", plug]).code, 0);
+    const foo = join(plug, "scripts", "foo.mjs");
+    writeFileSync(foo, spoil(read(foo)));
+    const r = run(bareHome(), ["--root", plug, "--check"]);
+    assert.match(r.out, /헬퍼 자리 결함: foo \((패치된 파일이 문법 검사를 통과하지 못함|감싸지 않은 최상위 await import 가 남음)/);
+    assert.ok(!r.out.includes("모두 적용된 상태"), r.out);
+  }
+});
+
+test("a bare apply does not switch to a version whose node_modules it cannot provide", { skip: !HAS_GIT && "git not found" }, () => {
+  const { f, target } = bareApplyFixture();
+  rmSync(join(f.cache, "5.6.1", "node_modules"), { recursive: true });
+  const r = run(f.home, []);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /node_modules 없음/);
+  assert.equal(JSON.parse(read(join(f.plugins, "installed_plugins.json"))).plugins["oh-my-claudecode@omc"][0].version, "5.6.1", `not switched to ${target}`);
+});
+
+test("a git config that ends with 1 and an error is an unreadable origin, not 'no origin'", { skip: (!HAS_GIT && "git not found") || noWin }, () => {
+  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+  const PATH = shimDir("git", ['if [ "$3" = config ] && [ "$4" = --get ]; then echo "error: could not lock config file" >&2; exit 1; fi', `exec '${realGit}' "$@"`]);
+  const f = fakeHome([{ v: "5.6.1", active: true }]);
+  const r = run(f.home, ["--no-update"], { PATH });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /origin 을 읽지 못함 \(error: could not lock config file\)/);
 });

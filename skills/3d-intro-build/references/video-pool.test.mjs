@@ -44,7 +44,8 @@ function creds(extra = {}) {
 }
 
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
-const MP4 = Buffer.from('fake-mp4-bytes');
+// an mp4's first box is ftyp: the download checks it, so the fake carries it
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.from('fake-mp4-bytes')]);
 
 // Minimal PNG header: signature + IHDR (only bytes 0..25 matter to the code under test).
 function png(colorType) {
@@ -427,7 +428,7 @@ test('frameDataUri: RGB PNG passes through; RGBA PNG is flattened via ffmpeg; JP
   cp.spawnSync = (_bin, a) => { args = a; fs.writeFileSync(a[a.length - 1], flat); return { status: 0, stdout: '', stderr: '' }; };
   assert.equal(await P.frameDataUri(png(6)), `data:image/png;base64,${flat.toString('base64')}`);
   assert.ok(args.includes('format=rgb24'));
-  assert.match(await P.frameDataUri(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), /^data:image\/jpeg;base64,/);
+  assert.match(await P.frameDataUri(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1])), /^data:image\/jpeg;base64,/);
 });
 
 test('snapSoraSeconds / parseProviderOrder', () => {
@@ -1475,4 +1476,29 @@ test('SKILL: Step 0 and setup §4 check the Sora deployment with the free GET pr
   assert.match(setup, /const dep = await probeSoraDeployment\(/);
   assert.match(setup, /\| `sora\.deploy` 가 `retired` \|/);
   assert.doesNotMatch(setup, /배포명이 실제 존재하는지는 이 무과금 프리플라이트로 확인 불가/);
+});
+
+// ── Failures are not reported as results (2026-11-03 error injection) ──────────────────────────────────────────────
+test('downloadWanVideo: a 200 that is not an mp4 (an expired or refused signed URL) is tried again, then a failure', async () => {
+  let n = 0;
+  globalThis.fetch = async () => { n++; return new Response('<html>AccessDenied</html>', { status: 200, headers: { 'content-type': 'text/html' } }); };
+  await assert.rejects(P.downloadWanVideo('https://oss.example/v.mp4', { sleep: async () => {}, tries: 3 }), /WAN video download failed: HTTP 200 but the body is not an mp4/);
+  assert.equal(n, 3);
+});
+
+test('frameDataUri: an empty or non-image seed is refused before any paid task is sent', async () => {
+  for (const seed of [Buffer.alloc(0), Buffer.from('<html>not a frame</html>')]) {
+    await assert.rejects(P.frameDataUri(seed), /frameDataUri: the frame is not a PNG, JPEG or WebP image/);
+  }
+});
+
+test('frameDataUri: a killed or failed ffmpeg while flattening alpha is a failure, its partial PNG is not sent', async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'video-pool-ff-'));
+  tmps.push(d);
+  process.env.FFMPEG_PATH = path.join(d, 'ffmpeg');
+  fs.writeFileSync(process.env.FFMPEG_PATH, '');
+  for (const r of [{ status: null, signal: 'SIGKILL' }, { status: 1, signal: null, stderr: 'boom' }]) {
+    cp.spawnSync = (_bin, a) => { fs.writeFileSync(a[a.length - 1], png(2)); return { stdout: '', stderr: '', ...r }; };
+    await assert.rejects(P.frameDataUri(png(6)), /stripAlpha failed: (killed by SIGKILL|boom)/);
+  }
 });

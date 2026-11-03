@@ -8,6 +8,11 @@
 - `3d-intro-build`, `3d-intro-setup`: 셸의 `FFMPEG_PATH` 가 상대 경로이거나 없는 파일이면 `resolveFfmpeg()` 가 그 까닭으로 멈춘다. 전에는 알리지 않고 설정 파일, PATH, `ffmpeg-static` 의 다른 ffmpeg 를 썼다. 설정 파일의 값은 예전처럼 쓸 수 없으면 다음 후보로 넘어간다.
 - `remains`: 박스 시험 실행기(`boxes.mjs`)가 저장소의 index 를 쓰지 않는다. `--ref worktree` 의 `git stash create` 는 index 사본으로, `git status` 는 선택 잠금 없이 돈다. 두 실행을 동시에 하거나 사용자의 git 명령이 index 를 잠그고 있으면 "could not write index" 로 멈추던 것을 고친다. 실패 문구가 `git -c -c stash create` 처럼 깨져 보이던 것도 고친다.
 - `remains`: root 로 접속해 `runAs` 계정으로 돌리는 Linux 박스는 개인 폴더를 `/tmp` 대신 `/var/lib` 아래에 만든다. 저장소 사본과 그 계정의 HOME 이 임시 폴더 아래에 있어, 임시 폴더를 거부하는 teamwork 의 설치 흐름 시험을 확인할 수 없던 것을 고친다.
+- 오류 주입 시험으로 찾은 "실패를 성공으로 보고" 를 고친다(omc-patch, ralph-qa 의 seat-run, verifier-probe, 3d-intro 의 azure-adapter, video-pool).
+  - `omc-patch`: 풀다 멈춘 판 폴더로 전환하던 것(옆 폴더에 다 푼 뒤에만 판 이름으로 옮기고, hooks.json 이나 scripts/ 가 없는 폴더는 설치된 판으로 보지 않음), hooks.json 이 없거나 훅을 하나도 부르지 않거나 부르는 훅 파일이 없을 때 "실패 0건" 이던 것, 빈 백업이나 잘린 백업으로 되돌리고 "되돌리기 완료" 이던 것, 깨진 hooks.json 을 "이 도구가 지운 적 없음" 으로 넘기던 것, 잘린 패치 파일과 패치 뒤 새로 생긴 감싸지 않은 import 를 `--check` 가 "모두 적용" 으로 보던 것, node_modules 없는 판으로 전환하던 것, 오류 문구가 있는 git 종료 1 을 "origin 없음" 으로 보던 것
+  - `verifier-probe`: 두 호출이 모두 실패한 codex 를 앉힐 수 있는 좌석으로 보고하던 것(이제 `cli-call-failed` 와 호출이 끝난 사정), 읽지 못한 설정 파일(권한, 폴더)을 없는 파일로 보고 모델을 채택하던 것, 빈 models.dev 사본(`{}`)으로 채택하던 것, SIGTERM 을 무시하는 CLI 에 끝없이 멈추던 것(SIGKILL), 오류 글을 판으로 적던 것
+  - `seat-run`: 코드펜스 안의 `VERDICT:` 줄을 좌석의 판정으로 세던 것, 실패한 좌석의 `facts` 에 판정이 남던 것. send 출력에 `answered`, `failed` 를 더한다
+  - `3d-intro`: ffmpeg 가 실패하거나 끝나지 않거나 아무것도 쓰지 않아도 앞서 있던 파일이나 반쯤 쓴 파일을 결과로 내던 것(이제 출력부터 지우고 종료 0 과 빈 파일 아님을 요구, 10분 시간 제한), 길이를 읽지 못하면 0초에서 겹치던 crossfade, 200 으로 온 HTML, JSON 오류 페이지를 영상으로 받던 것, 이미지가 아닌 답을 PNG 로 내던 것, 빈 시드 프레임으로 유료 작업을 보내던 것
 
 ### Notes
 - teamwork 시험은 저장소 사본이 임시 폴더 아래에 있으면(remains 박스 실행기 등) 설치 흐름 고정물을 홈 아래 난수 폴더에 두고 끝나면 지운다. 홈도 임시 폴더 아래면 설치 흐름 시험만 까닭을 대고 건너뛴다. 전에는 macOS, Rocky8 박스에서 74, 75건이 거짓 실패했다.

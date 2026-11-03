@@ -601,11 +601,24 @@ const readText = (file) => {
   }
 };
 
+// The standalone verdict lines of an answer. A line inside a code fence (``` or ~~~) is quoted text, not the seat's verdict.
+export function verdictLines(out) {
+  let fence = null;
+  const found = [];
+  for (const line of out.split(/\r?\n/)) {
+    const mark = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (mark && (!fence || (mark[1][0] === fence[0] && mark[1].length >= fence.length))) { fence = fence ? null : mark[1]; continue; }
+    const m = !fence && VERDICT_LINE.exec(line);
+    if (m) found.push(m[1]);
+  }
+  return found;
+}
+
 // What a seat's answer and errors say.
 function factsOf(cli, plan) {
   const out = readText(plan.answer);
   const err = readText(plan.stderr);
-  const facts = { verdicts: out.split(/\r?\n/).map((l) => VERDICT_LINE.exec(l)).filter(Boolean).map((m) => m[1]), empty: !out.trim() };
+  const facts = { verdicts: verdictLines(out), empty: !out.trim() };
   if (cli === "codex") facts.ranModel = (/^model: (\S+)/m.exec(err.split("\n").slice(0, 40).join("\n")) || [])[1] || null;
   if (cli === "gemini") Object.assign(facts, { policyError: err.includes("Policy file error"), apiError: err.includes("Full report") });
   if (cli === "opencode") facts.fallback = err.includes("Falling back to default agent");
@@ -665,10 +678,12 @@ async function runParts(ctx, run, seat, g, parts, base) {
   }
   const last = done[done.length - 1];
   const secs = Math.round(done.reduce((t, x) => t + (x.r.secs || 0), 0) * 10) / 10;
+  // a failed seat has no verdict to count, so its facts carry none (a reader that skips `status` would count it)
+  const shownFacts = (x) => { const f = factsShown(x.f); if (x.why) delete f.verdict; return f; };
   const result = { ...base, status: last.why ? "failed" : "answered", why: last.why, exit: last.r.exit, signal: last.r.signal, secs,
-    answer: last.plan.answer, errors: last.plan.stderr, facts: factsShown(last.f) };
+    answer: last.plan.answer, errors: last.plan.stderr, facts: shownFacts(last) };
   if (!last.why && parts.length > 1) result.facts.verdict = gathered(done.map((x) => x.f.verdicts[0]));
-  if (parts.length > 1) result.parts = done.map((x) => ({ answer: x.plan.answer, errors: x.plan.stderr, why: x.why, facts: factsShown(x.f) }));
+  if (parts.length > 1) result.parts = done.map((x) => ({ answer: x.plan.answer, errors: x.plan.stderr, why: x.why, facts: shownFacts(x) }));
   return result;
 }
 
@@ -838,7 +853,9 @@ async function send(o, ctx) {
     if (thrown) throw thrown.reason;
     const seats = settled.map((x) => x.value);
     if (!a.dryRun) appendFileSync(join(d, "run.md"), seats.filter((x) => x.cliVersion).map((x) => `cli-${x.seat} ${x.cliVersion}\n`).join(""), { mode: 0o600 });
-    const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), seats, declared: declared(run, payload.length, seats, d) };
+    // ok says the send ran; whether seats answered is in `answered`, `failed` and each seat's status
+    const answered = seats.filter((x) => x.status === "answered").length;
+    const result = { ok: true, ...(a.dryRun ? { dryRun: true } : {}), dir: d, out, bytes: payload.length, scan: 0, unsent: unsentCount(d), answered, failed: seats.filter((x) => x.status === "failed").length, seats, declared: declared(run, payload.length, seats, d) };
     if (!a.dryRun) writeResult(d, "send", resultJson("send", result));
     return [result, signals.code(), a.dryRun ? null : d];
   } finally {

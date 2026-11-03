@@ -188,6 +188,8 @@ export const DECISION_REASONS = [
 
 export const CLI_DEFAULT = "@cli-default";
 
+// How a CLI call ended, for a note.
+const callWhy = (res) => (res?.why ? res.why : res?.status === 0 ? "exit 0 with output the probe could not use" : `exit ${res?.status ?? "?"}`);
 const firstLine = (res) => (res?.status === 0 ? String(res.stdout).trim().split("\n")[0] || null : null);
 const absent = (cli) => ({ cli, present: false, decision: "unseated", reason: "cli-absent" });
 const adopt = (seat, model, reason) => ({ ...seat, decision: "adopt", model, reason });
@@ -382,6 +384,8 @@ const rawMcpNames = (lines) => lines.filter((l) => !/^\s*#/.test(l))
 // or the line that opened what is still open), and the strings of each top-level array
 // (`arrays`). Enough for those keys; not a TOML parser.
 export function readToml(text) {
+  // a file there that could not be read (permissions, a folder): nothing it says is known, so it reads as broken
+  if (text?.unreadable) return { values: {}, roots: [], arrays: {}, mcpServers: [], mcpUnread: true, modelKeys: false, broken: true, brokenAt: 0, unreadable: text.unreadable };
   const state = tomlState();
   const lines = String(text ?? "").split(/\r?\n/);
   const isOpen = () => state.open !== null || state.depth > 0;
@@ -457,6 +461,7 @@ export function stripJsonc(text) {
 // { value } for a readable JSONC text, { unreadable: true } for a broken one, {} when absent.
 function readJsonc(text) {
   if (text == null) return {};
+  if (text.unreadable) return { unreadable: true };
   try {
     const value = JSON.parse(stripJsonc(String(text)));
     return value && typeof value === "object" && !Array.isArray(value) ? { value } : { unreadable: true };
@@ -530,7 +535,7 @@ function codexConfig(world) {
     mcpUnread: layers.some((l) => l.mcpUnread),
     modelKeys: layers.some((l) => l.modelKeys),
     broken: layers.some((l) => l.broken),
-    brokenAt: layers.map((l, k) => (l.broken ? `${files[k]} line ${l.brokenAt}` : null)).filter(Boolean),
+    brokenAt: layers.map((l, k) => (!l.broken ? null : l.unreadable ? `${files[k]} (not readable: ${l.unreadable})` : `${files[k]} line ${l.brokenAt}`)).filter(Boolean),
   };
 }
 
@@ -555,6 +560,8 @@ function mcpBlockedSeat(seat, conf, notes) {
 const SEAT_KEYS = ["notify", "otel", "mcp_servers", "web_search", "tools", "analytics", "features", "hooks",
   "sandbox_mode", "sandbox_workspace_write", "approval_policy"];
 
+const unreadAt = (read) => (read.unreadable ? `could not be read (${read.unreadable})` : `could not be read to its end (line ${read.brokenAt})`);
+
 // The unseated seat when the managed file sets one of those keys, or could not be read to its
 // end (a line read short may set one); null otherwise.
 function managedBlockedSeat(seat, world, notes) {
@@ -562,7 +569,7 @@ function managedBlockedSeat(seat, world, notes) {
   const read = readToml(world.readFile(CODEX_MANAGED));
   const keys = read.roots.filter((k) => SEAT_KEYS.includes(k));
   if (!keys.length && !read.broken) return null;
-  notes.push(`${CODEX_MANAGED} ${keys.length ? `sets ${keys.join(", ")}` : `could not be read to its end (line ${read.brokenAt})`}, which codex applies over the seat's -c flags: the seat cannot hold its guards`);
+  notes.push(`${CODEX_MANAGED} ${keys.length ? `sets ${keys.join(", ")}` : unreadAt(read)}, which codex applies over the seat's -c flags: the seat cannot hold its guards`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -583,7 +590,7 @@ function requirementsBlockedSeat(seat, world, notes) {
   const allows = (k) => SEAT_ALLOWS[k] !== undefined && (read.arrays[k] ?? []).includes(SEAT_ALLOWS[k]);
   const keys = read.roots.filter((k) => !GUARD_FREE.includes(k) && !allows(k));
   if (!keys.length && !read.broken) return null;
-  notes.push(`${CODEX_REQUIREMENTS} ${keys.length ? `sets ${keys.join(", ")}` : `could not be read to its end (line ${read.brokenAt})`}, which codex holds over the seat's -c, --disable and -s flags: the seat cannot hold its guards`);
+  notes.push(`${CODEX_REQUIREMENTS} ${keys.length ? `sets ${keys.join(", ")}` : unreadAt(read)}, which codex holds over the seat's -c, --disable and -s flags: the seat cannot hold its guards`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -653,10 +660,18 @@ function codexSeat(flag, { world, runtime, authorFamilies }) {
   const notes = [];
   const conf = codexConfig(world);
   const configured = vetConfigured(safeOnly([conf.cfg.model], "config.toml", notes)[0], authorFamilies, notes);
-  const catalog = readCatalog(world.run("codex", ["debug", "models", "--bundled"]), notes) ?? [];
+  const listed = world.run("codex", ["debug", "models", "--bundled"]);
+  const read = readCatalog(listed, notes);
+  const catalog = read ?? [];
   const sorted = sortModels([...catalog, configured], authorFamilies);
-  const version = firstLine(world.run("codex", ["--version"]));
+  const ran = world.run("codex", ["--version"]);
+  // a version line has a version number in it; an error text on stdout with exit 0 is not one
+  const version = /\d+\.\d+/.test(firstLine(ran) ?? "") ? firstLine(ran) : null;
+  if (!read) notes.push(`codex debug models --bundled gave no catalog (${callWhy(listed)})`);
+  if (!version) notes.push(`codex --version gave no version (${callWhy(ran)})`);
   const seat = { cli: "codex", present: true, version, configured, candidates: sorted.independent, unclassified: sorted.unclassified, mcpServers: conf.mcpServers };
+  // both calls failed: this codex does not run here (not logged in, broken install, killed), so it is not a seat
+  if (!read && !version) return withNotes({ ...seat, decision: "unseated", reason: "cli-call-failed" }, notes);
   const refused = legacyProfileSeat(seat, conf.cfg, notes) ?? managedBlockedSeat(seat, world, notes)
     ?? requirementsBlockedSeat(seat, world, notes) ?? mcpBlockedSeat(seat, conf, notes);
   if (refused) return withNotes(refused, notes);
@@ -710,8 +725,10 @@ function geminiPoliciesDir(world) {
 // seat's read-only tools rest on that flag: such a seat is not seated.
 function geminiPolicySeat(seat, world, notes) {
   const dir = geminiPoliciesDir(world);
-  if (!world.listDir(dir).some((f) => f.endsWith(".toml"))) return null;
-  notes.push(`gemini ignores --admin-policy while ${dir} holds policies: the seat cannot be held to its read-only tools`);
+  const list = world.listDir(dir);
+  if (list && !list.some((f) => f.endsWith(".toml"))) return null;
+  notes.push(list ? `gemini ignores --admin-policy while ${dir} holds policies: the seat cannot be held to its read-only tools`
+    : `the probe could not list ${dir}: gemini ignores --admin-policy while it holds policies, so the seat cannot be shown to keep to its read-only tools`);
   return { ...seat, decision: "unseated", reason: "cli-call-failed" };
 }
 
@@ -835,7 +852,8 @@ const opencodeCache = (world) => join(world.env.XDG_CACHE_HOME || join(world.hom
 function catalogProviders(world) {
   const file = join(opencodeCache(world), "models.json");
   const read = readJsonc(world.readFile(file));
-  return read.value ? new Set(Object.keys(read.value)) : null;
+  // an emptied copy ({}) lists no provider: it says nothing about which ones models.dev knows
+  return read.value && Object.keys(read.value).length ? new Set(Object.keys(read.value)) : null;
 }
 
 // The models the config lists are all opencode can run only when enabled_providers names
@@ -953,18 +971,20 @@ function realWorld() {
     platform: process.platform,
     env: process.env,
     which: onPath,
+    // null when the file is not there; { unreadable } when it is but cannot be read, which is not the same as absent
     readFile: (path) => {
       try {
         return readFileSync(path, "utf8");
-      } catch {
-        return null;
+      } catch (e) {
+        return e.code === "ENOENT" || e.code === "ENOTDIR" ? null : { unreadable: e.code || "error" };
       }
     },
+    // [] when the folder is not there; null when it is but cannot be listed
     listDir: (path) => {
       try {
         return readdirSync(path);
-      } catch {
-        return [];
+      } catch (e) {
+        return e.code === "ENOENT" || e.code === "ENOTDIR" ? [] : null;
       }
     },
     run: (cmd, args, env = {}) => {
@@ -978,11 +998,13 @@ function realWorld() {
       const r = spawnSync(viaCmd ? `"${exe}"` : exe, args, {
         encoding: "utf8",
         timeout: 15000,
+        // a CLI that ignores SIGTERM would hold spawnSync past its time limit
+        killSignal: "SIGKILL",
         maxBuffer: 64 * 1024 * 1024,
         shell,
         env: { ...process.env, ...(viaCmd ? { NoDefaultCurrentDirectoryInExePath: "1" } : {}), ...env },
       });
-      return { status: r.status, stdout: r.stdout ?? "" };
+      return { status: r.status, stdout: r.stdout ?? "", why: r.error ? (r.error.code === "ETIMEDOUT" ? "timed out" : r.error.code) : r.signal ? `killed by ${r.signal}` : null };
     },
   };
 }
