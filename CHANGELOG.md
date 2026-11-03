@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.25.1] - 2026-11-03
 
 ### Fixed
 - `motion-sites`: Python 을 찾지 못해 첫 실행 구성이 멈출 때, 실패 이유와 `SKILL.md` 가 `MOTION_SITES_PYTHON` 으로 Python 을 지정하는 방법을 알린다. 전에는 PATH 밖의 Python(Windows 의 Miniconda, `py` 없이 Store 연결 파일만 있는 PC)을 쓸 방법이 안내되지 않았다. Windows 박스 실제 설치 시험에서 찾음.

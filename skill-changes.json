@@ -346,5 +346,13 @@
     "banker:tune-tmux",
     "banker:ultra-chain",
     "banker:vertical-pptx"
+  ],
+  "0.25.1": [
+    "banker:3d-intro-build",
+    "banker:3d-intro-setup",
+    "banker:motion-sites",
+    "banker:omc-patch",
+    "banker:ralph-qa",
+    "banker:remains"
   ]
 }
