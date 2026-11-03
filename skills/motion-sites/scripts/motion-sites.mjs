@@ -215,9 +215,16 @@ export function lookPython(py, runner = run) {
   return { bin, cmd: py, playwright: pw, chromium: exe.ok && chrome !== "" && existsSync(chrome) };
 }
 
-/** The first Python with Playwright (and Chromium, when one has both), else the first that runs. */
+/**
+ * The first Python with Playwright (and Chromium, when one has both), else the first that runs. A MOTION_SITES_PYTHON
+ * is the user's choice: only it and the cache's virtual environment (made from it when pip refuses it) are looked at,
+ * and when it does not run there is none, so Playwright never goes into a Python the user did not name.
+ */
 export function pickPython(env = process.env, runner = run) {
-  const seen = pythons(env).map((p) => lookPython(p, runner)).filter(Boolean);
+  const all = pythons(env);
+  const named = env.MOTION_SITES_PYTHON ? lookPython(all[0], runner) : null;
+  if (env.MOTION_SITES_PYTHON && !named) return null;
+  const seen = (named ? [named, lookPython(all[1], runner)] : all.map((p) => lookPython(p, runner))).filter(Boolean);
   return seen.find((p) => p.playwright && p.chromium) ?? seen.find((p) => p.playwright) ?? seen[0] ?? null;
 }
 

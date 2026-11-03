@@ -24,17 +24,37 @@ const POSIX = process.platform !== 'win32';
 // 모든 test() 를 등록하기 전에 불러 둔다 (중간의 top-level await 는 옛 Node 에서 after 를 먼저 돌림)
 const engine = await import(pathToFileURL(SCRIPT).href);
 const ch = await import(pathToFileURL(path.join(REPO, 'bin', 'lib', 'codex-hooks.mjs')).href);
+// 엔진이 임시 폴더로 보는 곳(teamwork.mjs 의 tmpRoots 와 같은 목록) 아래인지
+const realOr = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+const TMP_ROOTS = [...new Set([os.tmpdir(), process.env.TMPDIR, process.env.TEMP, process.env.TMP, '/tmp', '/var/tmp', '/dev/shm']
+  .filter(Boolean).flatMap((d) => [path.resolve(d), realOr(d)]))];
+const underTemp = (p) => { const r = realOr(p); return TMP_ROOTS.some((t) => r === t || r.startsWith(t.endsWith(path.sep) ? t : t + path.sep)); };
+
+// 설치 흐름의 고정물 자리: TEAMWORK_FIXTURE_ROOT, 아니면 저장소의 work/teamwork-fixture.
+// 저장소 사본이 임시 폴더 아래면(remains 박스 실행기 등) 홈 아래 난수 폴더를 쓰고 끝나면 지운다.
+// 홈도 임시 폴더 아래면 고정물을 둘 곳이 없으므로 설치 흐름 시험은 까닭을 대고 건너뛴다.
+let FIX_ROOT = process.env.TEAMWORK_FIXTURE_ROOT || path.join(REPO, 'work', 'teamwork-fixture');
+let FIX_OWN = null;
+let NO_FIXTURE = '';
+if (!process.env.TEAMWORK_FIXTURE_ROOT && underTemp(REPO)) {
+  if (!underTemp(os.homedir()) && fs.existsSync(os.homedir())) FIX_ROOT = FIX_OWN = fs.mkdtempSync(path.join(os.homedir(), '.banker-teamwork-fixture-'));
+  else NO_FIXTURE = '저장소와 홈이 모두 임시 폴더 아래라 설치 흐름 고정물을 둘 곳이 없음(TEAMWORK_FIXTURE_ROOT 로 임시 폴더 밖 폴더를 줌)';
+}
+
 // Windows 에서는 on 이 미지원(6)으로 끝나므로 설치 흐름 시험은 POSIX 에서만 돈다 (OS 고유 조건)
 const ptest = (name, ...rest) => {
   const opts = rest.length > 1 ? rest[0] : {};
-  return test(name, { ...opts, skip: (!POSIX && 'Windows 는 on 미지원') || opts.skip }, rest.at(-1));
+  return test(name, { ...opts, skip: (!POSIX && 'Windows 는 on 미지원') || NO_FIXTURE || opts.skip }, rest.at(-1));
 };
 
-const FIX_ROOT = process.env.TEAMWORK_FIXTURE_ROOT || path.join(REPO, 'work', 'teamwork-fixture');
 fs.mkdirSync(FIX_ROOT, { recursive: true });
 const RUN = fs.mkdtempSync(path.join(FIX_ROOT, `run-${process.pid}-`));
 const CWD = fs.mkdtempSync(path.join(os.tmpdir(), 'teamwork-cwd-'));
-after(() => { fs.rmSync(RUN, { recursive: true, force: true }); fs.rmSync(CWD, { recursive: true, force: true }); });
+after(() => {
+  fs.rmSync(RUN, { recursive: true, force: true });
+  fs.rmSync(CWD, { recursive: true, force: true });
+  if (FIX_OWN) fs.rmSync(FIX_OWN, { recursive: true, force: true });
+});
 
 // 가짜 codex: --version 에 판을 내고, queue 인자는 파일에 적는다
 const FAKE = path.join(RUN, 'bin');

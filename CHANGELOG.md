@@ -4,6 +4,14 @@
 
 ### Fixed
 - `motion-sites`: Python 을 찾지 못해 첫 실행 구성이 멈출 때, 실패 이유와 `SKILL.md` 가 `MOTION_SITES_PYTHON` 으로 Python 을 지정하는 방법을 알린다. 전에는 PATH 밖의 Python(Windows 의 Miniconda, `py` 없이 Store 연결 파일만 있는 PC)을 쓸 방법이 안내되지 않았다. Windows 박스 실제 설치 시험에서 찾음.
+- `motion-sites`: `MOTION_SITES_PYTHON` 으로 지정한 Python 이 실행되지 않으면 그 사실을 알리고 멈춘다. 전에는 PATH 의 다른 Python 이 있으면 알리지 않고 그쪽에 Playwright 를 설치했다. 지정한 Python 으로 만든 캐시 폴더 가상 환경은 그대로 찾는다.
+- `3d-intro-build`, `3d-intro-setup`: 셸의 `FFMPEG_PATH` 가 상대 경로이거나 없는 파일이면 `resolveFfmpeg()` 가 그 까닭으로 멈춘다. 전에는 알리지 않고 설정 파일, PATH, `ffmpeg-static` 의 다른 ffmpeg 를 썼다. 설정 파일의 값은 예전처럼 쓸 수 없으면 다음 후보로 넘어간다.
+- `remains`: 박스 시험 실행기(`boxes.mjs`)가 저장소의 index 를 쓰지 않는다. `--ref worktree` 의 `git stash create` 는 index 사본으로, `git status` 는 선택 잠금 없이 돈다. 두 실행을 동시에 하거나 사용자의 git 명령이 index 를 잠그고 있으면 "could not write index" 로 멈추던 것을 고친다. 실패 문구가 `git -c -c stash create` 처럼 깨져 보이던 것도 고친다.
+- `remains`: root 로 접속해 `runAs` 계정으로 돌리는 Linux 박스는 개인 폴더를 `/tmp` 대신 `/var/lib` 아래에 만든다. 저장소 사본과 그 계정의 HOME 이 임시 폴더 아래에 있어, 임시 폴더를 거부하는 teamwork 의 설치 흐름 시험을 확인할 수 없던 것을 고친다.
+
+### Notes
+- teamwork 시험은 저장소 사본이 임시 폴더 아래에 있으면(remains 박스 실행기 등) 설치 흐름 고정물을 홈 아래 난수 폴더에 두고 끝나면 지운다. 홈도 임시 폴더 아래면 설치 흐름 시험만 까닭을 대고 건너뛴다. 전에는 macOS, Rocky8 박스에서 74, 75건이 거짓 실패했다.
+- `scripts/class-guards.test.mjs` 는 git 저장소가 아닌 사본(박스에 보내는 추적 파일 묶음)에서도 파일을 걸어 돈다.
 
 ## [0.25.0] - 2026-11-02
 

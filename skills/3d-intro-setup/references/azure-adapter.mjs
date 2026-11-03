@@ -919,7 +919,7 @@ function twoImageForm({ model, prompt, firstPng, lastPng, size, seconds }) {
  *   3) the optional ffmpeg-static package (dynamic import — may be absent)
  * A project's .env.3d-intro.local never names the program, and "." or another relative PATH entry is
  * skipped: either would let the files of a project, a cloned repository say, choose what runs.
- * Throws an actionable error if none is found.
+ * Throws an actionable error if none is found, or if $FFMPEG_PATH is set but not usable.
  */
 export async function resolveFfmpeg() {
   const found = namedFfmpeg() || ffmpegOnPath() || await staticFfmpeg();
@@ -928,10 +928,17 @@ export async function resolveFfmpeg() {
 }
 
 // The ffmpeg this machine names. Absolute only: a relative value would be looked up in the current
-// folder, the project. The files are read only when the shell names nothing usable.
+// folder, the project. A $FFMPEG_PATH from the shell is the user's choice for this run: when it is
+// relative or names no file, this stops with why instead of quietly taking another ffmpeg. The files
+// are read only when the shell names nothing.
 function namedFfmpeg() {
   const usable = (p) => !!p && path.isAbsolute(p) && fs.existsSync(p);
-  if (usable(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
+  const shell = process.env.FFMPEG_PATH;
+  if (shell) {
+    if (usable(shell)) return shell;
+    const why = path.isAbsolute(shell) ? 'no such file' : 'not an absolute path';
+    throw new Error(`FFMPEG_PATH from the shell is not usable (${why}): ${shell}; fix it or unset it`);
+  }
   return [readSettings(), readEnvQuietly(homeCredsPath)].map((s) => s.FFMPEG_PATH).find(usable) || null;
 }
 

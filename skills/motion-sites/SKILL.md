@@ -29,7 +29,7 @@ banker 는 원본을 복사하지 않는다. 원본의 예시(`examples/`)와 �
 |---|---|
 | `skillFile` | 설치된 원본 `SKILL.md` 경로. 없거나 꺼져 있으면 `null` |
 | `disabled` | 설치는 됐지만 꺼져 있음 |
-| `python.bin` | Playwright 를 쓸 Python. 찾는 차례는 `MOTION_SITES_PYTHON`, 캐시 폴더의 가상 환경, PATH 의 `python3`, `python`(Windows 는 `py -3`, `python`) |
+| `python.bin` | Playwright 를 쓸 Python. 찾는 차례는 `MOTION_SITES_PYTHON`, 캐시 폴더의 가상 환경, PATH 의 `python3`, `python`(Windows 는 `py -3`, `python`). `MOTION_SITES_PYTHON` 이 있으면 그것과 캐시 폴더의 가상 환경만 보고, 지정한 것이 실행되지 않으면 다른 Python 으로 넘어가지 않는다 |
 | `python.playwright`, `python.chromium` | Playwright 와 Chromium 이 있는지 |
 | `ready` | 셋 다 있으면 `true`(종료 0) |
 

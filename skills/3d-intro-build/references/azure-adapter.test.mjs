@@ -468,11 +468,25 @@ test('resolveFfmpeg: a relative FFMPEG_PATH, from the shell or the home file, is
   process.env.PATH = path.join(root, 'empty');
   process.chdir(proj);
   process.env.FFMPEG_PATH = path.join('bin', 'ffmpeg');
-  await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'shell value');
+  await assert.rejects(A.resolveFfmpeg(), /FFMPEG_PATH from the shell is not usable \(not an absolute path\)/, 'shell value');
   delete process.env.FFMPEG_PATH;
   fs.writeFileSync(homeFile, `FFMPEG_PATH=${path.join('bin', 'ffmpeg')}\n`);
   fs.writeFileSync(A.homeSettingsPath(), `FFMPEG_PATH=${path.join('bin', 'ffmpeg')}\n`);
   await assert.rejects(A.resolveFfmpeg(), /ffmpeg not found/, 'settings and key file values');
+});
+
+test('resolveFfmpeg: a $FFMPEG_PATH naming no file stops with why, and another ffmpeg on PATH is not taken instead', async () => {
+  const dir = mkTmp('adapter-ff-');
+  const binDir = path.join(dir, 'bin');
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(path.join(binDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), '');
+  useHome(path.join(dir, 'home'));
+  process.env.PATH = binDir;
+  const gone = path.join(dir, 'gone', 'ffmpeg');
+  process.env.FFMPEG_PATH = gone;
+  await assert.rejects(A.resolveFfmpeg(), (e) => e.message === `FFMPEG_PATH from the shell is not usable (no such file): ${gone}; fix it or unset it`);
+  delete process.env.FFMPEG_PATH;
+  assert.equal(await A.resolveFfmpeg(), path.join(binDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), 'unset, PATH is used');
 });
 
 test('persistCreds: a value or name with a line break is refused and nothing is written, so a sample cannot add lines', () => {

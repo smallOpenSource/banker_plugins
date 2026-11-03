@@ -27,7 +27,11 @@ const FIELDS = new Set(["name", "os", "ssh", "port", "identity", "path", "runAs"
 const SECRETISH = /pass|secret|token|credential/i;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TARGET = /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*$/;
-const REMOTE_DIR = /^\/tmp\/banker-remains\.[A-Za-z0-9]+$/;
+// Where a box's private folder goes. A runAs box gets one outside the temporary folders, so that the copy and the
+// run account's HOME inside it are not under /tmp: tools that refuse temporary folders (teamwork's Codex home check)
+// would refuse the tests' fixtures there. /var/lib is root's, so only a root login (runAs) makes one there.
+const dirBase = (b) => (b.runAs ? "/var/lib" : "/tmp");
+const remoteDir = (b) => new RegExp(`^${dirBase(b).replace(/\//g, "\\/")}\\/banker-remains\\.[A-Za-z0-9]+$`);
 // What ssh and scp print about the connection itself, as opposed to what the remote command prints.
 const SSH_ERR = /^(ssh|scp): |Connection (closed|refused|reset|timed out)|Host key verification failed|Permission denied \(|Could not resolve hostname|No route to host|Broken pipe/m;
 const UPLOAD_MS = 10 * 60 * 1000;
@@ -153,8 +157,8 @@ function winSteps(b, name) {
   };
 }
 
-// Linux and macOS work in the private folder `mktemp -d` made. A root login hands the run to runAs, with a
-// HOME of its own. Ending a run takes the process tree under the recorded id first, then the folder.
+// Linux and macOS work in the private folder `mktemp -d` made (under /tmp, or /var/lib for runAs). A root login
+// hands the run to runAs, with a HOME of its own inside that folder. Ending a run takes the process tree under the recorded id first, then the folder.
 function posixSteps(b, name, dir) {
   const go = b.runAs
     ? `mkdir -p "$D/home" && chown -R ${b.runAs} "$D" && runuser -u ${b.runAs} -- env HOME="$D/home" sh "$D/run.sh"`
@@ -227,10 +231,10 @@ const sshFailed = (r) => (r.status === null && !r.timedOut) || (r.status === 255
 
 async function makeDir(b, exec) {
   if (b.os === "win32") return { dir: null };
-  const r = await exec("ssh", [...sshBase(b), b.ssh, "mktemp -d /tmp/banker-remains.XXXXXXXX"], { timeoutMs: PROBE_MS });
+  const r = await exec("ssh", [...sshBase(b), b.ssh, `mktemp -d ${dirBase(b)}/banker-remains.XXXXXXXX`], { timeoutMs: PROBE_MS });
   const dir = String(r.stdout || "").trim();
   if (r.status !== 0) return { error: lastLine(r.stderr) || "ssh 실패" };
-  return REMOTE_DIR.test(dir) ? { dir } : { error: `mktemp -d 가 예상과 다른 경로를 냈습니다: ${dir.slice(0, 80)}` };
+  return remoteDir(b).test(dir) ? { dir } : { error: `mktemp -d 가 예상과 다른 경로를 냈습니다: ${dir.slice(0, 80)}` };
 }
 
 async function attempt(b, plan, exec, files, steps) {
@@ -265,22 +269,37 @@ export async function runOnBox(b, plan, exec) {
 
 // Started from the home folder with git -C: Windows looks for a program in the working folder first, so a git.exe
 // inside the folder worked on never runs.
-function git(cwd, args) {
-  const r = spawnSync("git", ["-C", resolve(cwd), ...args], { cwd: runDir(), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`git ${args.filter((a) => !a.includes("=")).join(" ")} 실패: ${lastLine(r.stderr) || r.error?.message || ""}`);
+function git(cwd, args, env = process.env) {
+  const r = spawnSync("git", ["-C", resolve(cwd), ...args], { cwd: runDir(), env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) throw new Error(`git ${gitWords(args)} 실패: ${lastLine(r.stderr) || r.error?.message || ""}`);
   return r.stdout;
 }
 
+// The command words for a message: global options (-c key=value, --no-optional-locks) are left out.
+export const gitWords = (args) => args.filter((a, i) => a !== "-c" && args[i - 1] !== "-c" && !a.startsWith("--no-optional-locks")).join(" ");
+
 // The commit to send. `worktree` is a commit object made from the tracked files as they are now
 // (git stash create: no stash entry, no change to the work tree). Untracked files are never sent.
-function resolveTree(repo, ref) {
-  const status = git(repo, ["status", "--porcelain", "--untracked-files=all"]).split("\n").filter(Boolean);
+// Neither step writes the repository's index: status takes no optional lock, and stash create works on a copy of
+// the index (GIT_INDEX_FILE), so two runs at once, or a git command of the user's, do not meet on index.lock.
+export function resolveTree(repo, ref) {
+  const status = git(repo, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"]).split("\n").filter(Boolean);
   const untracked = status.filter((l) => l.startsWith("??")).length;
   if (ref !== "worktree") {
     return { sha: git(repo, ["rev-parse", "--verify", `${ref}^{commit}`]).trim(), untracked, modified: status.length - untracked };
   }
-  const made = git(repo, ["-c", "user.name=banker-remains", "-c", "user.email=banker-remains@localhost", "stash", "create"]).trim();
-  return { sha: made || git(repo, ["rev-parse", "HEAD"]).trim(), untracked, modified: 0 };
+  const tmp = join(tmpdir(), `banker-remains-index-${randomBytes(8).toString("hex")}`);
+  mkdirSync(tmp, { mode: 0o700 });
+  try {
+    const index = resolve(repo, git(repo, ["rev-parse", "--git-path", "index"]).trim());
+    const copy = join(tmp, "index");
+    if (existsSync(index)) copyFileSync(index, copy);
+    const env = { ...process.env, GIT_INDEX_FILE: copy };
+    const made = git(repo, ["-c", "user.name=banker-remains", "-c", "user.email=banker-remains@localhost", "stash", "create"], env).trim();
+    return { sha: made || git(repo, ["rev-parse", "HEAD"]).trim(), untracked, modified: 0 };
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 function testFiles(repo, sha) {

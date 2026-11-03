@@ -174,6 +174,40 @@ test("setup: no Python runs (Windows with no py, a Store link for python): the p
   assert.ok(wrong.steps[0].why.startsWith(`MOTION_SITES_PYTHON 에 지정한 ${bad} 가 실행되지 않음`), wrong.steps[0].why);
 });
 
+test("pickPython: a MOTION_SITES_PYTHON that does not run is not swapped for a system Python that does", () => {
+  const p = fresh();
+  mkdirSync(join(p, "skills", "motionsites-web-builder"), { recursive: true });
+  writeFileSync(join(p, "skills", "motionsites-web-builder", "SKILL.md"), "x");
+  const env = { MOTION_SITES_HOME: fresh(), MOTION_SITES_PYTHON: join(fresh(), "gone", "python") };
+  const { runner, calls } = fake([[/plugin list/, { ok: true, out: JSON.stringify([{ id: ID, enabled: true, installPath: p }]) }], ...PY_OK, [/sync_playwright/, { ok: true, out: "/gone\n" }], [/install/, { ok: true }]]);
+  const r = setup("claude", { env, runner });
+  assert.equal(r.python, null, "the system Python is not taken");
+  assert.deepEqual(r.steps.map((s) => [s.step, s.ok]), [["python", false]]);
+  assert.match(r.steps[0].why, /^MOTION_SITES_PYTHON 에 지정한 /);
+  assert.equal(calls.some((c) => /^(python3|python|py -3) /.test(c.line)), false, "no system Python is even asked");
+});
+
+test("pickPython: with MOTION_SITES_PYTHON, the cache's virtual environment made from it is still found", () => {
+  const home = fresh();
+  const venvPy = join(home, "venv", process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? "python.exe" : "python");
+  mkdirSync(join(venvPy, ".."), { recursive: true });
+  writeFileSync(venvPy, "");
+  const named = join(fresh(), "python3");
+  writeFileSync(named, "");
+  const chrome = join(fresh(), "chrome");
+  writeFileSync(chrome, "");
+  const venvRe = new RegExp(`^${venvPy.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")} `);
+  const { runner } = fake([
+    [/-c import sys/, (line) => ({ ok: true, out: `${line.split(" ")[0]}\n` })],
+    [new RegExp(`${venvRe.source}-c import playwright$`), { ok: true }],
+    [new RegExp(`${venvRe.source}-c from playwright`), { ok: true, out: `${chrome}\n` }],
+    [/-c import playwright$/, { ok: false, out: "", why: "x" }],
+  ]);
+  const s = status("codex", { env: { CODEX_HOME: fresh(), MOTION_SITES_HOME: home, MOTION_SITES_PYTHON: named }, runner });
+  assert.equal(s.python?.bin, venvPy);
+  assert.deepEqual([s.python.playwright, s.python.chromium], [true, true]);
+});
+
 test("command line: usage errors exit 2, --help exits 0, path without the plugin exits 1", () => {
   const cli = (args, env = {}) => spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
   assert.equal(cli([]).status, 2);
