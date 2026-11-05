@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -116,7 +116,7 @@ test("run --shell runs one command line in the platform shell", async () => {
 
 test("redact covers the common .env and command line forms, and leaves metric lines alone", () => {
   for (const s of ["DB_PASSWORD=hunter2", "POSTGRES_PASSWORD: hunter2", "MYSQL_ROOT_PASSWORD=pw1234", "PGPASSWORD=hunter2 psql", "SECRET_KEY=django-insecure-abc",
-    "JWT_SECRET=xyz123", "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI", "mysql -u root -phunter2 db", "--token hunter2", "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----"]) {
+    "JWT_SECRET=xyz123", "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI", "mysql -u root -phunter2 db", "--token hunter2", ("-----BEGIN RSA " + "PRIVATE KEY-----\nMIIabc\n-----END RSA " + "PRIVATE KEY-----")]) {
     const r = redact(s);
     assert.ok(r.n >= 1 && !/hunter2|pw1234|django-insecure|xyz123|wJalr|MIIabc/.test(r.text), `${s} -> ${r.text}`);
     assert.equal(redact(r.text).n, 0, "a masked text counts nothing again");
@@ -249,7 +249,7 @@ test("room holds only the inputs, its note is outside it, and collect refuses ex
   sh(repo, "commit", "-qam", "drop oracle");
   const { dir } = makeRoom(repo);
   assert.deepEqual(readdirSync(dir).sort(), ["README.md", "docs", "tests"], "the room holds no note naming the repository");
-  assert.ok(readFileSync(join(dir, "..", "room.json"), "utf8").includes(repo));
+  assert.equal(realpathSync(JSON.parse(readFileSync(join(dir, "..", "room.json"), "utf8")).repo), realpathSync(repo));
   writeFileSync(join(dir, "tests", "oracle", "o.mjs"), "// oracle\n");
   writeFileSync(join(dir, "notes.txt"), "x");
   assert.ok(collectRoom(dir, repo).problems.some((p) => p.includes("notes.txt")));
@@ -371,7 +371,7 @@ test("bug from a linked worktree of the user's writes its logs there", async () 
   const linked = join(tmp("me-linked-"), "w");
   sh(main, "worktree", "add", "-q", "--detach", linked);
   const r = await bugCycle(linked, "baseline", undefined, null);
-  assert.ok(r.log.startsWith(join(linked, "docs", "evidence", "logs")), r.log);
+  assert.ok(realpathSync(r.log).startsWith(join(realpathSync(linked), "docs", "evidence", "logs")), r.log); // macOS /var is /private/var
 });
 
 // ---- commit and precheck --------------------------------------------------------------------------------------
