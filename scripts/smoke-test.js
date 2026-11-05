@@ -1071,15 +1071,33 @@ try {
     ['visual-ralph', 'skills/visual-ralph/SKILL.md'], ['front-qa', 'commands/front-qa.md']].map(([n, f]) => [n, fs.readFileSync(path.join(root, f), 'utf8')]);
   // Sentences, not lines: the English text wraps a sentence over lines.
   const sentences = (t) => t.split(/\n\s*\n|\n(?=\s*(?:[-*|]|\d+\.) )/).flatMap((b) => b.replace(/\s+/g, ' ').split(/(?<=[.)])\s+(?=[A-Z가-힣`(])/));
-  const ralphBad = ralphCallers.filter(([, t]) => !(t.includes('`$banker-ralph`') && t.includes('`$banker:ralph`') && /(?:codex\/skills|\.\.\/\.\.\/skills)\/ralph\/SKILL\.md/.test(t))
-    || sentences(t).some((l) => /`\$ralph`/.test(l) && !/(부르지 않|넘어가지 않|없애|없앰|removed|stop there|never calls)/.test(l))).map(([n]) => n);
+  // Each caller's plugin-route path to the ralph SKILL.md, resolved from where the caller sits in the plugin (shared
+  // skills under skills/<name>/, the command skill under codex/command-skills/front-qa/), must name a real file.
+  const pluginSeat = { 'front-qa': 'codex/command-skills/front-qa' };
+  const pathOk = (n, t) => {
+    const rels = [...t.matchAll(/플러그인 (?:길|경로) `<S>\/((?:\.\.\/)+[^`]*ralph\/SKILL\.md)`|`<S>\/((?:\.\.\/)+codex\/skills\/ralph\/SKILL\.md)`/g)].map((m) => m[1] || m[2]);
+    const seat = pluginSeat[n] || `skills/${n}`;
+    return rels.length > 0 && rels.every((r) => fs.existsSync(path.join(root, seat, r)) && path.relative(root, path.join(root, seat, r)) === path.join('codex', 'skills', 'ralph', 'SKILL.md'))
+      && /`<S>\/\.\.\/banker-ralph\/SKILL\.md`/.test(t);
+  };
+  const ralphBad = ralphCallers.filter(([n, t]) => !(t.includes('`$banker-ralph`') && t.includes('`$banker:ralph`') && pathOk(n, t)) || /ralph-progress\.json/.test(t)
+    || sentences(t).some((l) => /`\$ralph`/.test(l) && !/(부르지 않|넘어가지 않|OMX 0\.21 이 `\$ralph` 를 없|OMX 0\.21 removed|stop there|never calls)/.test(l))).map(([n]) => n);
   ok(ralphBad.length === 0, `codex-ralph: all-in-one, ultra-init, ultra-chain, visual-ralph and front-qa call banker's Codex ralph and never OMX's $ralph${ralphBad.length ? ` (${ralphBad.join(', ')})` : ''}`);
   const planOnlyBad = ralphCallers.filter(([n]) => n !== 'visual-ralph').filter(([, t]) => !/`\$ultragoal`[^\n]*(넘어가지 않|stop there|멈추)/.test(t) && !/계획만 쓰고 멈추/.test(t)).map(([n]) => n);
   ok(planOnlyBad.length === 0, `ralplan-plan-only: the Codex $ralplan is told to stop at the plan, not move on to $ultragoal${planOnlyBad.length ? ` (${planOnlyBad.join(', ')})` : ''}`);
   const crSkill = fs.readFileSync(path.join(root, 'codex', 'skills', 'ralph', 'SKILL.md'), 'utf8');
   ok(/^name: ralph$/m.test(crSkill) && /ralph-state\.mjs' done/.test(crSkill) && /RALPH COMPLETE/.test(crSkill) && /OMX \| 쓰지 않음/.test(crSkill)
-     && /sandbox_permissions: "require_escalated"/.test(crSkill) && /저자 대화를 넘기지 않음/.test(crSkill),
-     'codex-ralph-skill: the Codex ralph ends only through ralph-state.mjs done, uses no OMX, asks for approval outside the sandbox and spawns reviewers without the author\'s context');
+     && /sandbox_permissions: "require_escalated"/.test(crSkill) && /저자 대화를 넘기지 않음/.test(crSkill)
+     && /`--max`, `--no-deslop` 은 1단계의 `start` 에 그대로 넘긴다/.test(crSkill) && /--fingerprint '<fp>'/.test(crSkill) && /accept-baseline/.test(crSkill)
+     && /hooks\/ralph-continue-codex\.mjs/.test(crSkill) && /adopt --dir/.test(crSkill),
+     'codex-ralph-skill: the Codex ralph ends only through ralph-state.mjs done, uses no OMX, asks for approval outside the sandbox, spawns reviewers without the author\'s context, passes --max and --no-deslop to start, records verdicts on the tree the reviewer saw, and names its Stop hook');
+  // Like the OMC ralph in Claude Code, a Stop hook keeps the Codex ralph going: on both routes, after the earlier Stop hook.
+  const cxHooks = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'hooks.json'), 'utf8')).hooks;
+  const chSrc = fs.readFileSync(path.join(root, 'bin', 'lib', 'codex-hooks.mjs'), 'utf8');
+  ok(cxHooks.Stop?.length === 2 && /telemetry-count-codex\.mjs/.test(cxHooks.Stop[0].hooks[0].command) && /ralph-continue-codex\.mjs/.test(cxHooks.Stop[1].hooks[0].command)
+     && /ralph-continue-codex\.mjs/.test(cxHooks.Stop[1].hooks[0].commandWindows)
+     && /DEFAULT_HOOKS = \['update', 'count', 'ralph'\]/.test(chSrc) && /'codex\/skills\/ralph\/scripts\/ralph-state\.mjs'/.test(chSrc),
+     'codex-ralph-hook: the plugin and the npm route both install the ralph Stop hook, the plugin one as its own group after the usage-count hook');
   // Plan 27.1 (4): after STOPPED no file changes, not even a one-line fix, in all three chains; nothing allows one.
   const stopDocs = ['all-in-one', 'ultra-init', 'ultra-chain'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);
   const stopBad = stopDocs.filter(([, t]) => !/After STOPPED, change no file, not even a one-line fix: report only, until the user gives a new instruction\./.test(t)

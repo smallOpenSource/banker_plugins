@@ -19,7 +19,7 @@ description: "프론트엔드 UI 를 레퍼런스(생성 이미지, 정적 이�
 | 비주얼 판정 | `Skill("oh-my-claudecode:visual-verdict")` | OMX Visual Verdict |
 | 이미지 이해 | **Read 툴 네이티브**(이미지 직접 판독) | `vision` 에이전트 |
 | UI 레퍼런스 생성 | **Stitch**(`/banker:setup-stitch` MCP UI-gen); 없으면 **정적/라이브 URL 레퍼런스**로 폴백(생성 불요) | `$imagegen` + `omx imagegen continuation`(Stop-hook 큐) |
-| 아티팩트/상태 경로 | `.omc/artifacts/visual-ralph/<slug>/` | `.omx/artifacts/visual-ralph/<slug>/` · `.omx/state/sessions/` |
+| 아티팩트/상태 경로 | `.omc/artifacts/visual-ralph/<slug>/` | `.omx/artifacts/visual-ralph/<slug>/` |
 
 Codex 의 banker `ralph` 는 `SKILL.md` 를 읽고 따른다. npm 길 `<S>/../banker-ralph/SKILL.md`, 플러그인 길 `<S>/../../codex/skills/ralph/SKILL.md`(`<S>` 는 이 스킬 폴더).
 - 그 ralph 는 게이트 기록, 검토, 슬롭 점검이 지금 작업 트리와 맞아야 끝난다. 저장소 안에 새로 쓰는 스샷과 판정 파일도 작업 트리를 바꾼다
@@ -58,7 +58,7 @@ Codex 의 banker `ralph` 는 `SKILL.md` 를 읽고 따른다. npm 길 `<S>/../ba
 - **생성 레퍼런스**: 위 런타임 매핑의 imagegen 경로로 UI 서술에서 생성. 프롬프트 요건: `ui-mockup`
   분류, viewport/종횡비·대상 표면, 레이아웃·계층·타이포·컬러 무드·정확한 텍스트, 로고/워터마크 금지,
   불가능한 UI 디테일·판독불가 텍스트 회피.
-  - Codex 런타임에서 활성 Ralph 루프 중 내장 이미지 툴 호출 전엔 continuation 체크포인트를 큐잉:
+  - Codex 런타임에서 OMX 루프(OMX 0.20.x 의 ralph 모드 등)가 켜져 있을 때만, 내장 이미지 툴 호출 전에 continuation 체크포인트를 큐잉(banker `ralph` 는 OMX Stop 체크포인트를 쓰지 않으므로 이 단계가 없음. 이미지 생성은 구현 위임 전에 끝냄):
     `omx imagegen continuation <session> --artifact <slug> --generated-dir "$CODEX_HOME/generated_images/<session>" --work-dir ".omx/artifacts/visual-ralph/<slug>"`
     (내장 이미지 생성이 턴을 즉시 종료할 수 있어, 다음 Stop 체크포인트가 아티팩트 회수·QA를 재개.)
 - 승인된 레퍼런스는 **워크스페이스로 복사**한다(예: `.omc/artifacts/visual-ralph/<slug>/reference.png`).
