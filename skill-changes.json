@@ -360,5 +360,13 @@
   ],
   "0.26.1": [
     "banker:make-evidence"
+  ],
+  "0.27.0": [
+    "banker:all-in-one",
+    "banker:ralph-qa",
+    "banker:ultra-chain",
+    "banker:ultra-init",
+    "banker:ultraqa",
+    "banker:visual-ralph"
   ]
 }

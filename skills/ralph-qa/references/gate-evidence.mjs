@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * gate-evidence: a gate command run by this program, not by the model, and what it saw, as the evidence ralph-qa
- * (--gates), ultraqa, all-in-one, ultra-init and ultra-chain judge by. The source of truth is
- * skills/ralph-qa/references/gate-evidence.mjs; skills/ultraqa/references holds a byte-identical copy
- * (scripts/sync-adapter.js).
+ * (--gates), ultraqa, the Codex ralph, all-in-one, ultra-init and ultra-chain judge by. The source of truth is
+ * skills/ralph-qa/references/gate-evidence.mjs; skills/ultraqa/references and codex/skills/ralph/scripts hold
+ * byte-identical copies (scripts/sync-adapter.js).
  *
  *   node gate-evidence.mjs init [--cwd <repo>]   the gate folder <g> of one ralph-qa run (ralph-qa-gates.<letters and digits>): made
  *        once before the baseline, kept across the iterations, apart from the payload folder seat-run.mjs makes anew

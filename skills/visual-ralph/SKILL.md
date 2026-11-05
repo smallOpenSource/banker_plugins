@@ -15,11 +15,16 @@ description: "프론트엔드 UI 를 레퍼런스(생성 이미지, 정적 이�
 
 | 단계 | Claude Code (OMC) | Codex (OMX) |
 |---|---|---|
-| 구현 루프 | `Skill("oh-my-claudecode:ralph")` | OMX `$ralph` |
+| 구현 루프 | `Skill("oh-my-claudecode:ralph")` | banker `$banker-ralph`(플러그인 길 `$banker:ralph`). OMX 0.21 이 `$ralph` 를 없애 OMX 것은 부르지 않음 |
 | 비주얼 판정 | `Skill("oh-my-claudecode:visual-verdict")` | OMX Visual Verdict |
 | 이미지 이해 | **Read 툴 네이티브**(이미지 직접 판독) | `vision` 에이전트 |
 | UI 레퍼런스 생성 | **Stitch**(`/banker:setup-stitch` MCP UI-gen); 없으면 **정적/라이브 URL 레퍼런스**로 폴백(생성 불요) | `$imagegen` + `omx imagegen continuation`(Stop-hook 큐) |
-| 아티팩트/상태 경로 | `.omc/artifacts/visual-ralph/<slug>/` | `.omx/artifacts/visual-ralph/<slug>/` · `.omx/state/sessions/` |
+| 아티팩트/상태 경로 | `.omc/artifacts/visual-ralph/<slug>/` | `.omx/artifacts/visual-ralph/<slug>/` |
+
+Codex 의 banker `ralph` 는 `SKILL.md` 를 읽고 따른다. npm 길 `<S>/../banker-ralph/SKILL.md`, 플러그인 길 `<S>/../../codex/skills/ralph/SKILL.md`(`<S>` 는 이 스킬 폴더).
+- 그 ralph 는 게이트 기록, 검토, 슬롭 점검이 지금 작업 트리와 맞아야 끝난다. 저장소 안에 새로 쓰는 스샷과 판정 파일도 작업 트리를 바꾼다
+- 그래서 반복마다 스샷과 Visual Verdict 를 ralph 의 슬롭 점검 기록 전에 끝낸다. 그 뒤에 새 스샷을 찍었으면 슬롭 점검 기록, 게이트, 검토를 다시 한다
+- Visual Verdict 점수 `>= 90` 은 ralph 검토자에게 수용 기준으로 넘긴다
 
 생성 레퍼런스 경로가 양쪽 다 없으면(imagegen 부재) → **정적 레퍼런스 이미지나 라이브 URL을 요구**한다
 (생성 없이도 루프는 성립한다). 라이브 URL 클론은 이 스킬이 흡수한다(구 `$web-clone` 미사용).
@@ -53,7 +58,7 @@ description: "프론트엔드 UI 를 레퍼런스(생성 이미지, 정적 이�
 - **생성 레퍼런스**: 위 런타임 매핑의 imagegen 경로로 UI 서술에서 생성. 프롬프트 요건: `ui-mockup`
   분류, viewport/종횡비·대상 표면, 레이아웃·계층·타이포·컬러 무드·정확한 텍스트, 로고/워터마크 금지,
   불가능한 UI 디테일·판독불가 텍스트 회피.
-  - Codex 런타임에서 활성 Ralph 루프 중 내장 이미지 툴 호출 전엔 continuation 체크포인트를 큐잉:
+  - Codex 런타임에서 OMX 루프(OMX 0.20.x 의 ralph 모드 등)가 켜져 있을 때만, 내장 이미지 툴 호출 전에 continuation 체크포인트를 큐잉(banker `ralph` 는 OMX Stop 체크포인트를 쓰지 않으므로 이 단계가 없음. 이미지 생성은 구현 위임 전에 끝냄):
     `omx imagegen continuation <session> --artifact <slug> --generated-dir "$CODEX_HOME/generated_images/<session>" --work-dir ".omx/artifacts/visual-ralph/<slug>"`
     (내장 이미지 생성이 턴을 즉시 종료할 수 있어, 다음 Stop 체크포인트가 아티팩트 회수·QA를 재개.)
 - 승인된 레퍼런스는 **워크스페이스로 복사**한다(예: `.omc/artifacts/visual-ralph/<slug>/reference.png`).
@@ -109,7 +114,7 @@ Route/표면: <route 또는 컴포넌트>
 완료 전 build/lint/test 실행.
 명시 요청 없인 방향전환 금지."
 ```
-(Claude=`Skill("oh-my-claudecode:ralph")`, Codex=`$ralph` 에 위 지침 전달.)
+(Claude=`Skill("oh-my-claudecode:ralph")`, Codex=banker `$banker-ralph`(플러그인 길 `$banker:ralph`) 에 위 지침 전달.)
 
 ## 함정
 - **승인 게이트 스킵 금지** — 러프 이미지를 진실원본으로 굳히면 방향이 틀어진다.

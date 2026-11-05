@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.27.0] - 2026-11-06
+
+### Added
+- Codex 전용 새 스킬 `ralph`(npm 길 `$banker-ralph`, 플러그인 길 `$banker:ralph`): oh-my-codex 0.21 이 `$ralph` 를 없애(`$ultragoal` 을 가리키는 스텁) banker 스킬이 Codex 에서 구현 단계를 부르지 못하던 것을 대신한다. OMX 없이 동작한다.
+  - 반복마다 구현, 슬롭 점검, 게이트 실행, 새 맥락 검토자 판정을 차례로 한다. 게이트는 ralph-qa 의 실행기(`gate-evidence.mjs`, 바이트 동일 사본)가 돌린다.
+  - 끝남은 `scripts/ralph-state.mjs done` 만 정한다. 게이트 기록, 검토자 APPROVE, 슬롭 점검이 모두 지금 작업 트리 지문과 맞아야 한다. 같은 트리에 받은 REJECT 는 다음 반복에서도 남는다. 판정은 검토자가 본 지문으로만 기록한다.
+  - 시작 전부터 있던 실패(기준선)는 그대로 두면 끝나지 않는다. 이 작업과 상관없는 실패만 `accept-baseline` 으로 까닭을 적고, 그 뒤에 받은 APPROVE 로만 끝낸다. 반복 0 은 깨끗한 시작 트리에서 돈 것만 기준선이 된다.
+  - 기록은 저장소 밖 게이트 폴더에 두고 잠금 안에서 바꾼다. 저장소 안에 추적하지 않는 파일을 만들지 않는다.
+- Codex Stop 훅 `ralph-continue-codex`: Claude Code 의 OMC ralph 처럼, 실행을 시작한 세션이 그 실행을 `done` 이나 `stop` 으로 끝내기 전에는 턴을 이어 간다. Codex goal 설정이 없어도 된다.
+  - 하위 에이전트와 다른 세션은 막지 않는다. 기록 변화 없이 다섯 번 막은 뒤, 또는 한 실행에서 모두 100번 막은 뒤에는 놓아준다.
+  - 새 세션에서 이어 갈 때는 `adopt` 로 옮긴다. `BANKER_NO_RALPH_CONTINUE` 로 끈다.
+  - npm 길(`banker setup --codex`)과 Codex 플러그인(`codex/hooks.json` 의 Stop 두 번째 묶음) 모두에 들어간다. 훅 코드가 바뀌어 Codex 가 banker 훅의 신뢰를 한 번 다시 묻는다.
+
+### Changed
+- `all-in-one`, `ultra-init`, `ultra-chain`, `visual-ralph`, `/banker:front-qa`: Codex 에서 구현 단계를 OMX `$ralph` 대신 banker `ralph` 로 부른다. Codex 의 `$ralplan` 에는 계획만 쓰고 멈추라고 넘긴다. OMX 0.21 의 ralplan 은 끝에 스스로 `$ultragoal` 로 넘어가기 때문이다. Claude Code 쪽은 바뀌지 않는다.
+- `ralph-qa`, `ultraqa`: 공유 실행기 `gate-evidence.mjs`, `run-folder.mjs` 의 머리 주석에 Codex ralph 사본을 적는다(동작 변경 없음).
+
 ## [0.26.1] - 2026-11-05
 
 ### Changed

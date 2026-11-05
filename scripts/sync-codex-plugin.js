@@ -51,10 +51,11 @@ const sharedSkills = (m) => eligible(m).filter((s) => s.type === 'skill' && s.ta
 const HOOKS = [
   ['SessionStart', null, 'update-notify.mjs', ['--codex', '--plugin'], true],
   ['Stop', null, 'telemetry-count-codex.mjs', [], true],
+  ['Stop', null, 'ralph-continue-codex.mjs', [], true],
 ];
 const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@banker-plugins), written by scripts/sync-codex-plugin.js. '
   + 'Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out '
-  + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY). The obsidizer hook is installed only by obsidizer --enable. '
+  + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY), keeping a banker ralph run going until it ends (Stop, only for the session that started it, opt-out BANKER_NO_RALPH_CONTINUE). The obsidizer hook is installed only by obsidizer --enable. '
   + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names (a multicall shim '
   + 'such as Volta or mise, or a .cmd shim on Windows: the node binary it names) only when its real path is absolute and outside the temp '
   + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder when that is outside them too, '
@@ -209,9 +210,10 @@ function hooksText() {
   const doc = { description: HOOKS_NOTE, hooks: {} };
   const rev = hooksRev();
   for (const [ev, matcher, script, args, viaRun] of HOOKS) {
-    doc.hooks[ev] = [{ ...(matcher ? { matcher } : {}), hooks: [{
+    // a new group after the event's earlier ones: Codex keys trust by group number, so an earlier hook keeps its own
+    (doc.hooks[ev] ||= []).push({ ...(matcher ? { matcher } : {}), hooks: [{
       type: 'command', command: shCommand(script, args, viaRun, ev === 'SessionStart', rev), commandWindows: psCommand(script, args, viaRun, ev === 'SessionStart', rev), timeout: 5,
-    }] }];
+    }] });
   }
   return `${JSON.stringify(doc, null, 2)}\n`;
 }

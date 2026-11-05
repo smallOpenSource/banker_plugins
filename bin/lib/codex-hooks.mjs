@@ -20,6 +20,7 @@ import path from 'node:path';
 export const HOOKS = {
   update: { event: 'SessionStart', script: 'hooks/update-notify.mjs', args: ['--codex'] },
   count: { event: 'Stop', script: 'hooks/telemetry-count-codex.mjs', args: [] },
+  ralph: { event: 'Stop', script: 'hooks/ralph-continue-codex.mjs', args: [] },
   obsidize: { event: 'PostToolUse', script: 'hooks/obsidize-hook.mjs', args: ['--codex'], matcher: 'Bash' },
 };
 // 사본으로 옮길 파일(훅 스크립트와 그 의존 파일). 상대 경로를 그대로 둬 '../bin/lib/...' 가져오기가 맞는다.
@@ -34,8 +35,13 @@ export const PAYLOAD = [
   'hooks/telemetry-count-codex.mjs',
   'hooks/obsidize-hook.mjs',
   'skills/obsidizer/obsidize.mjs',
+  'hooks/ralph-continue-codex.mjs',
+  'codex/skills/ralph/scripts/ralph-state.mjs',
+  'codex/skills/ralph/scripts/gate-evidence.mjs',
+  'codex/skills/ralph/scripts/run-folder.mjs',
 ];
-export const DEFAULT_HOOKS = ['update', 'count'];
+// ralph: the Codex ralph keeps its turn going until its run ends (as the OMC ralph's Stop hook does in Claude Code).
+export const DEFAULT_HOOKS = ['update', 'count', 'ralph'];
 
 // Codex 처럼 상대 경로 CODEX_HOME 은 지금 폴더 기준으로 푼다.
 export function codexPaths(env = process.env) {

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * run-folder: the private run folders of ralph-qa and ultraqa, and the work tree snapshot their gate evidence is judged
- * against. The source of truth is skills/ralph-qa/references/run-folder.mjs; skills/ultraqa/references holds a
- * byte-identical copy (scripts/sync-adapter.js).
+ * run-folder: the private run folders of ralph-qa, ultraqa and the Codex ralph, and the work tree snapshot their gate
+ * evidence is judged against. The source of truth is skills/ralph-qa/references/run-folder.mjs;
+ * skills/ultraqa/references and codex/skills/ralph/scripts hold byte-identical copies (scripts/sync-adapter.js).
  *
  *   bases(ctx)                        { base, known }: this run's base, and every base a run of any version used
  *   sharedAbove(p)                    the nearest folder above p every account may write in, or null (POSIX)

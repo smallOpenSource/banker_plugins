@@ -14,8 +14,9 @@ level: 4
 This skill orchestrates OMC's `ralplan` → `ralph`, then banker's own `ralph-qa`
 as the QA gate. **Check the dependency before Stage 1**; if it is missing or
 stale, **guide installation first** rather than failing mid-pipeline. The `omc`
-check below is for Claude Code; on Codex check OMX instead (`omx --version`), whose
-`ralph` does not use the `omc` CLI.
+check below is for Claude Code. On Codex check OMX for Stage 1 (`omx --version`);
+Stage 2 there is banker's Codex `ralph` (npm `$banker-ralph`, plugin
+`$banker:ralph`), which needs neither OMX nor the `omc` CLI.
 
 - **The `omc` CLI must have `ralph verify` (Claude Code).** OMC 5's `ralph` runs
   `omc ralph verify` on its first iteration and stops when the command is
@@ -35,13 +36,14 @@ check below is for Claude Code; on Codex check OMX instead (`omx --version`), wh
   pipeline whose Stage 2 will stop.
 - **Stage 3 is banker's `ralph-qa` on both runtimes.** It ships with banker, so
   the gate needs no OMC or OMX skill; OMC and OMX serve Stages 1 and 2 only.
-- On Codex the equivalent framework is OMX (`omx setup`).
+- On Codex the planning framework is OMX (`omx setup`). OMX 0.21 removed
+  `$ralph` (a stub that points at `$ultragoal`), so Stage 2 never calls OMX's.
 
-**런타임 매핑 (Claude Code ↔ Codex).** Stage 1·2 의 `ralplan`·`ralph` 는 Claude Code에선 OMC 스킬이고 **Codex에선 oh-my-codex(OMX)가 제공하는 동명 스킬**이다. Stage 3 은 두 런타임 모두 banker `ralph-qa` 다: Claude Code `Skill("banker:ralph-qa")`, Codex npm 길 `$banker-ralph-qa`, 플러그인 길 `$banker:ralph-qa`. Codex 에는 Skill 도구가 없으니 그 `SKILL.md` 를 읽고 그대로 따른다(npm 길 `<S>/../banker-ralph-qa/SKILL.md`, 플러그인 길 `<S>/../ralph-qa/SKILL.md`, `<S>` 는 이 스킬 폴더). `<RQ>` 는 ralph-qa 의 `references` 폴더다(Claude Code 와 Codex 플러그인 길 `<S>/../ralph-qa/references`, Codex npm 길 `<S>/../banker-ralph-qa/references`). 아래 `Skill("oh-my-claudecode:<name>")` 표기는 Claude Code 기준이다.
+**런타임 매핑 (Claude Code ↔ Codex).** Stage 1 의 `ralplan` 은 Claude Code에선 OMC 스킬이고 **Codex에선 oh-my-codex(OMX)가 제공하는 동명 스킬**이다. Stage 2 의 `ralph` 는 Claude Code에선 OMC 스킬이고 **Codex에선 banker 의 Codex 전용 `ralph`** 다(npm 길 `$banker-ralph`, 플러그인 길 `$banker:ralph`). 그 `SKILL.md` 는 npm 길 `<S>/../banker-ralph/SKILL.md`, 플러그인 길 `<S>/../../codex/skills/ralph/SKILL.md` 다. OMX 의 `$ralph` 는 부르지 않는다(OMX 0.21 이 없앰). Stage 3 은 두 런타임 모두 banker `ralph-qa` 다: Claude Code `Skill("banker:ralph-qa")`, Codex npm 길 `$banker-ralph-qa`, 플러그인 길 `$banker:ralph-qa`. Codex 에는 Skill 도구가 없으니 그 `SKILL.md` 를 읽고 그대로 따른다(npm 길 `<S>/../banker-ralph-qa/SKILL.md`, 플러그인 길 `<S>/../ralph-qa/SKILL.md`, `<S>` 는 이 스킬 폴더). `<RQ>` 는 ralph-qa 의 `references` 폴더다(Claude Code 와 Codex 플러그인 길 `<S>/../ralph-qa/references`, Codex npm 길 `<S>/../banker-ralph-qa/references`). 아래 `Skill("oh-my-claudecode:<name>")` 표기는 Claude Code 기준이다.
 
-**Codex 의 tmux 밖 실행.** OMX 의 런타임 워크플로(`ralph`, `team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
+**Codex 의 tmux 밖 실행.** banker `ralph` 는 tmux 가 필요 없다. OMX 의 런타임 워크플로(`team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
 
-**Codex 의 계획과 상태 경로.** 이 문서의 `.omc/plans/`, `.omc/state/` 는 Claude Code(OMC) 경로다. Codex 에서는 OMX 경로를 쓴다: 계획은 `.omx/plans/`(ralplan 이 쓰는 `prd-*.md`, `test-spec-*.md`), ralph 의 진행 기록은 `.omx/state/<scope>/ralph-progress.json`. Codex 에서 `.omc/` 아래에 계획을 쓰지 않는다.
+**Codex 의 계획과 상태 경로.** 이 문서의 `.omc/plans/`, `.omc/state/` 는 Claude Code(OMC) 경로다. Codex 에서는 OMX 경로를 쓴다: 계획은 `.omx/plans/`(ralplan 이 쓰는 `prd-*.md`, `test-spec-*.md`), ralph 의 진행 기록은 저장소 밖 게이트 폴더의 `ralph.md`(banker `ralph` 의 `ralph-state.mjs`). Codex 에서 `.omc/` 아래에 계획을 쓰지 않는다.
 
 ## Purpose
 
@@ -148,6 +150,9 @@ then **stops**.
 - **If `--checkpoint`:** before proceeding, use `AskUserQuestion` to present the
   plan and offer *Approve & implement / Request changes / Stop*. Only continue
   on approval.
+- **Codex: plan only.** OMX 0.21's `$ralplan` ends by moving on to
+  `$ultragoal`. Tell it to write the plan and stop there: no `$ultragoal`,
+  `$ralph`, `$team` or implementation. Stage 2 is banker's `ralph`.
 - **If consensus is NOT reached** (ralplan hits its 5-iteration cap with no
   `APPROVE`): do not auto-proceed. Surface the best plan and ask the user how to
   proceed. Never build on an unapproved plan.
@@ -167,8 +172,8 @@ One command per gate (no `&&` or `;` chains) and a `--timeout` on each.
 record** (iteration 0 in `<g>/evidence.md`) is the gate's baseline: ralph-qa
 counts a failure with the same command and failure signature as not this
 change's (`baseline`). It covers checks that are not among ralph's feedback
-commands, and on Codex it is the only baseline there is (OMX `ralph` keeps
-none). Never use `git stash` or `git reset` to get a pre-change state for it; if
+commands. On Codex banker's `ralph` keeps a baseline of its own in its own
+gate folder; this one is still the gate's. Never use `git stash` or `git reset` to get a pre-change state for it; if
 the tree already has changes, take the record from a clean copy of HEAD
 (`git worktree add --detach <tmp> HEAD`, run with `--cwd <tmp>`, then
 `git worktree remove <tmp>`). A fresh worktree has no installed dependencies
@@ -246,6 +251,15 @@ criteria → Step-7 reviewer verification → Step-7.5 deslop → Step-7.6 regre
   missing credentials, unclear requirement, external dependency down, or the
   `omc ralph verify` command unavailable): stop and report. Do **not** run
   Stage 3 on a broken or partial build and call it done.
+
+**Codex: banker `ralph`.** Follow its `SKILL.md` (paths above) instead of the
+OMC `ralph` above. Hand it the plan file path with its stories and acceptance
+criteria, the `--qa` goals' commands as its gates (one command per gate id),
+`--no-deslop` if passed, and "no questions: write assumptions down". `--critic`
+has no Codex counterpart: ralph's fresh reviewer takes that place. It runs its
+own gate folder, apart from `<g>`. Go on to Stage 3 only after its
+`RALPH COMPLETE` line; on `RALPH STOPPED` stop and report its reason. The
+`omc ralph verify` bullets above are Claude Code only.
 
 ### Stage 3 — QA gate: banker `ralph-qa` (both runtimes)
 
