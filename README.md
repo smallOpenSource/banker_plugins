@@ -158,7 +158,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `smart-compact` | 컨텍스트 임계 초과 시 위키·resume 저장 게이트 자동 무장 |
 | `deep-research` | 다중 소스 팬아웃 + 적대적 검증 인용 리서치 |
 | `lfm` | learn from master. 그 분야 최고 전문가 그룹이 일하는 방식을 1차 자료로 조사해 계획 적용 항목으로 정리(ultra-interview, ultra-chain, deep-research, rfp-author 의 리서치에서도 씀) |
-| `make-evidence` | 구현한 서비스의 증거 문서 여섯(optimize, verify, flow, scale, decisions, trace)을 실제 실행으로 만들어 `docs/evidence/` 에 커밋. 도우미 `evidence.mjs` 가 명령을 로그로 남기고(종료 코드, 시간 제한, 비밀값 가림), 문서의 수치를 로그의 `METRIC` 줄과 대조하고, 증거 경로만 커밋. 판정기는 저장소 밖 방에서 README 와 담당자 사실만 받은 새 맥락 하위 에이전트가 쓰고(`--oracle-only` 면 구현 전에), 버그 셋은 별도 작업 트리에서만 넣고 지움. 구현을 고치지 않고, 설치와 push 는 안 함 |
+| `make-evidence` | 구현한 서비스의 증거 문서 여섯(optimize, verify, flow, scale, decisions, trace)을 실제 실행으로 만들어 `docs/evidence/` 에 커밋. 도우미 `evidence.mjs` 가 명령을 로그로 남기고(종료 코드, 시간 제한, 비밀값 가림), 문서의 수치를 로그의 `METRIC` 줄과 대조하고, 증거 경로만 커밋. 판정기는 저장소 밖 방에서 README 와 담당자 사실만 받은 새 맥락 하위 에이전트가 쓰고(새 프로젝트는 구현 전에 `--oracle-only` 로 먼저 불러 판정기를 앞서 커밋, 구현 전으로 보이면 스킬이 물음), 버그 셋은 별도 작업 트리에서만 넣고 지움. 구현을 고치지 않고, 설치와 push 는 안 함 |
 | `ultra-interview` | 리서치 선행으로 사람 질문 최소화, 모호성 3% 이하까지 인터뷰 |
 | `interval-report` | 장기 수행 중간 보고를 `docs/intermission.md` 로 갱신(경과·잔여·단일 표) |
 | `summary-wiki` | 위키를 `docs/` 단일 파일 개조식으로 요약(지식 동기화 검토용, 읽기 전용) |

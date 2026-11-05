@@ -1,6 +1,6 @@
 ---
 name: make-evidence
-description: "구현한 서비스의 증거 문서 여섯(optimize, verify, flow, scale, decisions, trace)을 실제 실행으로 만들어 docs/evidence/ 에 커밋. 수치는 실행 로그의 METRIC 줄에서만 옮기고 도우미가 대조함. 판정기는 저장소 밖 방에서 README 와 담당자 사실만 받은 새 맥락 하위 에이전트가 씀. 버그 셋은 별도 작업 트리에서만 넣고 지움. 미구현은 숨기지 않음. 'make-evidence'/'증거 문서'/'evidence 만들어'/'검증 근거 문서' 시 사용."
+description: "구현한 서비스의 증거 문서 여섯(optimize, verify, flow, scale, decisions, trace)을 실제 실행으로 만들어 docs/evidence/ 에 커밋. 수치는 실행 로그의 METRIC 줄에서만 옮기고 도우미가 대조함. 판정기는 저장소 밖 방에서 README 와 담당자 사실만 받은 새 맥락 하위 에이전트가 씀. 버그 셋은 별도 작업 트리에서만 넣고 지움. 미구현은 숨기지 않음. 새 프로젝트는 구현 전에 --oracle-only 로 먼저 불러야 판정기가 구현보다 앞섬. 'make-evidence'/'증거 문서'/'evidence 만들어'/'검증 근거 문서' 시 사용."
 argument-hint: "[--host <host>] [--port <port>] [--only <문서,...>] [--oracle-only] [--no-commit]"
 ---
 
@@ -82,6 +82,7 @@ node "$E" run --log 'docs/evidence/logs/precheck-{ts}.log' -- node "$E" precheck
 - `ASK dirty`: 커밋하지 않은 변경이 있다. 묻는다: 사용자가 커밋한 뒤 다시 부름(권장), 또는 그대로 진행. 그대로 진행하면 문서마다 "커밋하지 않은 변경 위에서 실행함(precheck 로그)" 을 적는다. 판정기와 버그 시험은 늘 HEAD 의 별도 작업 트리에서 돈다.
 - `ASK host`: 설정이나 환경 변수가 이 컴퓨터 밖의 DB 나 서비스를 가리킨다. 묻는다. 허락이 없으면 구현을 띄우지 않는다. 판정기 기준선과 버그 셋, `flow.md`, `scale.md` 의 측정이 모두 `미검증(비로컬 설정)` 이다.
 - `NOTE host`: 저장소가 이름을 부르지 않는 환경 변수의 주소다. 서비스나 그 라이브러리가 그 변수를 읽는다면 `ASK host` 와 같이 묻는다.
+- **구현 전인지 본다.** `--oracle-only` 없이 불렀는데 README 의 요구를 처리하는 코드(최적화, API 라우트, CLI 나 배치의 진입점)를 하나도 찾지 못하면 구현 전으로 보고 묻는다: 판정기만 쓰고 멈춤(`--oracle-only` 와 같음, 권장), 또는 그대로 진행. 물을 수 없으면 판정기만 쓰고 멈춘다. 구현 전에 판정기를 커밋해야 "판정기를 구현 전에 씀" 이 지켜지기 때문이다.
 - `precheck` 는 흔한 설정 꼴만 본다. 시작 스크립트와 설정 로더가 읽는 곳(코드 안의 기본값, 다른 이름의 설정 파일, 프레임워크가 환경에서 덮어쓰는 이름)도 직접 읽어 확인한다.
 
 ### 1. 담당자 사실
@@ -253,3 +254,5 @@ node "$E" check --tracked
 - 상태는 `작성`, `일부 미검증`, `작성 안 함(까닭)` 가운데 하나다.
 - 핵심 결과에는 판정기 기준선의 실패 수, 버그 셋의 결과와 까닭, trace 의 상태별 개수, 수치 대조의 오류와 경고 수를 METRIC 값 그대로 적는다.
 - `요구 미충족`(판정기가 구현 뒤에 쓰임), 찾은 결함, 띄운 서버를 내렸는지, 커밋 해시를 적는다. push 는 하지 않았다고 적는다.
+- `요구 미충족` 이면 마지막 줄에 다음 행동을 적는다: 다음 프로젝트는 구현을 시작하기 전에 `/banker:make-evidence --oracle-only`(Codex 는 `$banker-make-evidence --oracle-only`, 플러그인 설치면 `$banker:make-evidence --oracle-only`)로 판정기를 먼저 커밋한다.
+- `--oracle-only` 로 멈췄으면 마지막 줄에 다음 행동을 적는다: 구현을 마친 뒤 같은 스킬을 인자 없이 다시 부른다.
