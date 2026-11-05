@@ -29,7 +29,7 @@
  * object on stdout; exit 2 for a usage or internal error, 3 for a stop. The gate commands themselves run through
  * gate-evidence.mjs (a byte-identical copy of ralph-qa's), never through this program. No network, no shell.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -147,8 +147,8 @@ function readState(d) {
 // Written whole to a new file, then moved over the old one: a stop part way leaves the old record. Windows may refuse
 // the move for a moment while a scanner holds the file: a few short retries.
 function writeState(d, s) {
-  const tmp = join(d, `.${STATE}.${process.pid}.tmp`);
-  writeFileSync(tmp, `${JSON.stringify(s, null, 2)}\n`, { mode: 0o600 });
+  const tmp = join(d, `.${STATE}.${randomBytes(6).toString("hex")}.tmp`);
+  writeFileSync(tmp, `${JSON.stringify(s, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   for (let i = 0; ; i += 1) {
     try {
       renameSync(tmp, statePath(d));
