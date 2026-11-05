@@ -354,6 +354,8 @@ test("continueFor: a continued turn (same turn_id) still counts each stop, a hel
   rmSync(lock);
   const rollout = join(w.dir, `rollout-2026-11-06T00-00-00-${SESSION}.jsonl`);
   assert.match(continueFor({ cwd: w.repo, sessionId: "not-a-uuid", turnId: "r1", transcript: rollout }, ctxOf(w)), /banker ralph/);
+  assert.equal(continueFor({ cwd: w.repo, sessionId: "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0009", turnId: "r2", transcript: rollout }, ctxOf(w)), null,
+    "a sub-agent with its own session id is not matched through the parent's rollout path");
   writeFileSync(note, JSON.stringify({ key: "x", count: 1, total: 100, turn: "old", at: 0 }));
   assert.equal(ask({ turnId: "late" }), null, "a hundred blocks in all let the turn end");
 });

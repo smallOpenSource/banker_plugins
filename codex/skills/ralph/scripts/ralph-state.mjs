@@ -535,12 +535,16 @@ function stopsWithoutChange(d, s, turnId) {
   const now = Date.now();
   if (turnId && last.turn === turnId && now - (last.at || 0) < SAME_STOP_MS) return last;
   const next = { key, count: last.key === key ? (last.count || 0) + 1 : 1, total: (last.total || 0) + 1, turn: turnId || null, at: now };
-  writeFileSync(p, `${JSON.stringify(next)}\n`, { mode: 0o600 });
+  const tmp = `${p}.${randomBytes(6).toString("hex")}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: "wx" });
+  renameSync(tmp, p);
   return next;
 }
 
-// The session that started the run: the hook's session_id, or the rollout file it names (rollout-<time>-<thread id>.jsonl).
-const sameSession = (s, sessionId, transcript) => Boolean(s.session) && (s.session === sessionId || new RegExp(`${s.session}\\.jsonl$`, "i").test(String(transcript || "")));
+// The session that started the run: the hook's session_id; only when the input has none, the rollout file it names
+// (rollout-<time>-<thread id>.jsonl). A sub-agent's own session_id is never matched through a rollout path.
+const sameSession = (s, sessionId, transcript) => Boolean(s.session)
+  && (UUID.test(String(sessionId || "")) ? s.session === sessionId : new RegExp(`${s.session}\\.jsonl$`, "i").test(String(transcript || "")));
 
 // The active run of this session in the repo at cwd, or null.
 function activeRun({ cwd, sessionId, transcript }, ctx) {
