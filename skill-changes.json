@@ -354,5 +354,8 @@
     "banker:omc-patch",
     "banker:ralph-qa",
     "banker:remains"
+  ],
+  "0.26.0": [
+    "banker:make-evidence"
   ]
 }
