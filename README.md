@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 72개 + 커맨드 2개**(총 74개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 71개와 Codex 전용 스킬 3개)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 72개 + 커맨드 2개**(총 74개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 71개와 Codex 전용 스킬 4개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -101,6 +101,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `$banker-<이름>`(플러그인 설�
 | `/banker:setup` | 구성요소·의존성 설치 오케스트레이터 (multi-select) |
 | `/graceful-pause` | 작업 중에도 바로 실행되는 정지 요청. 지금 단계만 끝내고 멈춘 뒤 보고하고 지시를 기다림 (Claude Code 2.1.289 이상, mod. Codex 는 작업 중에 `$banker-graceful-pause` 를 보내면 실행 중인 도구 호출이 끝난 뒤 멈춤) |
 | `$banker-teamwork` (Codex 전용 스킬) | 같은 기기의 Codex CLI 세션끼리 피어 협업을 켜고 끔(`on` 기본, `off`, `status`). 켜면 열린 세션과 새 세션이 모두 팀으로 동작하고, 역할은 각 세션에 말로 주며, 요청과 결과는 Codex 내장 `codex queue` 로 오감. 보낼 대상은 역할, `/rename` 으로 정한 세션 이름, 짧은ID 로 지정. 플러그인 길은 `$banker:teamwork` |
+| `$banker-ralph` (Codex 전용 스킬) | 작업이 실제로 끝날 때까지 구현, 게이트 실행, 슬롭 점검, 새 맥락 검토를 반복. 실행기가 돌린 게이트 기록, 검토자 APPROVE, 슬롭 점검이 모두 지금 작업 트리와 맞을 때만 `RALPH COMPLETE`. OMX 0.21 에서 없어진 `$ralph` 를 대신하고 OMX 없이 동작. `all-in-one`, `ultra-init`, `ultra-chain`, `visual-ralph`, `front-qa` 가 Codex 에서 이것을 부름. 플러그인 길은 `$banker:ralph` |
 | `/progress` | 진행 상황 패널을 켜고 끔(`show` 기본 토글, `on`, `off`). 맨 위는 이 세션이 쓰거나 읽은 마지막 계획 파일(`.omc/plans/*.md`, `docs/superpowers/plans/*.md`, `~/.claude/plans/*.md`, ralph `prd.json`, ultragoal `goals.json`) 전체. Notion 토글 목록처럼 제목이 그 아래 내용을, 목록 항목이 하위 항목을, 표와 코드 블록이 행과 줄을 품고, 처음에는 큰 제목만 접힌 채 보임. 체크박스는 완료와 대기, 제목은 그 아래 체크 수(`2/5`). 그 아래 단계는 할 일 목록(Claude 의 작업 목록이나 `mcp__banker__todo`), 없으면 이 세션의 요청이고, 하위 목록은 그 단계가 진행 중일 때 한 도구 호출 한 단계까지. 작업 중에도 바로 실행됨(2.1.289 이상에서 확인) (mod. Codex 는 `$banker-progress` 스킬이 지금 세션의 계획 트리, `update_plan` 단계, 최근 도구 호출을 텍스트로 보이고, tmux 안이면 `--pane` 으로 오른쪽 칸에 갱신) |
 
 Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(TaskCreate, TodoWrite)를 주지 않습니다. 그래서 `/progress` 를 켜면 모델에게 할 일 도구 `mcp__banker__todo` 를 줍니다(다음 요청부터). 모델이 여러 단계 작업을 시작할 때 할 일 목록을 보내면 그 목록이 단계가 됩니다. 한 단계로 끝나는 일에는 쓰지 않으므로 그때는 요청이 단계입니다. 내장 작업 목록 도구가 있는 세션(옛 모델, `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`)에는 이 도구를 더하지 않습니다. 도구는 `/progress off` 뒤에도 세션이 끝날 때까지 남고, 그동안 부르면 패널이 꺼져 있다고 답합니다.
@@ -233,14 +234,14 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 71개와 Codex 전용 스킬 3개(`graceful-pause`, `progress`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 71개와 Codex 전용 스킬 4개(`graceful-pause`, `progress`, `ralph`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
   `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
-  스킬 71개, Codex 전용 스킬 3개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
+  스킬 71개, Codex 전용 스킬 4개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림과 사용량 카운팅 훅은 `codex/hooks.json` 에서 옵니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. 훅 스크립트, 플러그인 폴더, node 가 `config.toml` 의 `[sandbox_workspace_write] writable_roots` 아래(그 항목 맨 위 `.codex` 제외)면 훅은 다른 일을 하지 않고 그 이유를 한 줄로 알립니다. 이 검사는 훅 파일 안에서 하므로, 샌드박스가 이미 그 파일을 고친 뒤에는 막지 못합니다. writable_roots 에 Codex 홈이나 node 가 든 폴더를 넣지 마십시오. \
@@ -268,7 +269,8 @@ banker uninstall        # 제거
 - `payload-mon` 은 Codex에서 실행해도 같은 머신의 Claude Code HUD 래퍼만 켜고 끕니다. \
   32MB 요청 한도는 Claude Code 의 것이라 Codex 자신의 요청 크기는 재지 않습니다.
 - `omc-patch` 도 Codex에서 실행하면 같은 머신의 Claude Code OMC 플러그인 캐시(`~/.claude/plugins/`)만 다룹니다. Codex 의 OMX 는 건드리지 않습니다.
-- Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·ralph·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제).
+- Codex에선 OMC 대신 **oh-my-codex(OMX)** 의 동명 스킬(ralplan·hud 등)과 `codex mcp`·내장 `/copy` 를 사용합니다(Codex는 `omx setup` 전제). \
+  `ralph` 만 예외입니다. OMX 0.21 이 `$ralph` 를 없앴으므로 banker 스킬은 Codex 에서 banker 의 Codex 전용 `ralph`(`$banker-ralph`, 플러그인 길 `$banker:ralph`)를 부릅니다.
 - `all-in-one`·`ultra-init` 의 마지막 QA 게이트는 두 런타임 모두 banker `ralph-qa` 입니다. 독립 검토자 3명 이상이 실행기가 돌린 `--qa` 목표의 게이트 기록으로 판정합니다.
 - 설치기는 `~/.codex/AGENTS.md` 를 건드리지 않습니다(omx가 재생성하므로 `~/.codex/skills/` 자동 검색에 의존). \
   예외는 사용자가 켠 `tone-compact` 와 `anti-drm` 입니다. 각각 그 파일 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개를 넣고, `off` 로 뺍니다. \
@@ -326,7 +328,8 @@ banker uninstall        # 제거
 - Claude Code (마켓플레이스 경로): 스킬이 `/banker:*` 로 동작.
 - 또는 Node.js ≥ 16.7 (npm 전역 설치 경로): `banker` CLI 제공.
 - 일부 스킬은 별도 의존성이 필요하며 `/banker:setup` 으로 설치합니다. 의존성이 없으면 각 스킬이 실행 전에 설치부터 안내합니다.
-  - `all-in-one`, `ultra-chain`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 OMX. 마지막 QA 의 `ralph-qa` 는 banker 에 들어 있습니다.
+  - `all-in-one`, `ultra-chain`, `ultra-init`, `/banker:front-qa`: oh-my-claudecode(OMC) 5 와 같은 버전대의 `omc` CLI(`ralph` 가 `omc ralph verify` 를 부르므로 4.x CLI 로는 멈춤). Codex에서는 계획 단계에 OMX(`$ralplan`)가 필요하고, 구현 단계는 banker 의 Codex 전용 `ralph` 라 OMX 가 필요 없습니다. 마지막 QA 의 `ralph-qa` 는 banker 에 들어 있습니다.
+  - `ralph`(Codex 전용): git 저장소. 기록은 저장소 밖 게이트 폴더에 두므로 `workspace-write` 샌드박스에서는 실행기 호출에 승인이 필요할 수 있습니다.
   - `audit-web-page`, `play-qa`, `ultra-ui-qa`: playwright. `3d-intro-build` 의 독립 검증(`verify-intro.mjs`)도 Node 용 playwright 패키지와 Chromium 을 씁니다(`npm i -g playwright && npx playwright install chromium`).
   - `payload-mon`: OMC 커스텀 HUD 래퍼(`setup-omc-hud` 로 설치).
   - `omc-patch`: Node 18 이상과 `git`(OMC 마켓플레이스 고정과 확인에 사용).

@@ -10,7 +10,7 @@ banker 구성요소의 이력표입니다.
 - 0.23.1 도 GitHub 와 Claude 마켓플레이스로만 나왔습니다. npm 에는 게시하지 않았고, npm 에서는 0.23.0 다음이 0.23.2 입니다.
 - 스킬과 커맨드: Claude Code 와 Codex 에서 씁니다. `ultraqa` 는 Claude Code 에서만 씁니다.
 - 즉시명령: Claude Code 에서 씁니다. Codex 에는 같은 이름의 Codex 전용 스킬 `graceful-pause` 와 `progress` 가 있습니다.
-- Codex 전용 스킬 `teamwork`(0.23.0)는 `codex/skills/` 에 있어 이 표에 넣지 않습니다. `graceful-pause`, `progress` 와 같습니다.
+- Codex 전용 스킬 `teamwork`(0.23.0)와 `ralph`(0.27.0)는 `codex/skills/` 에 있어 이 표에 넣지 않습니다. `graceful-pause`, `progress` 와 같습니다.
 
 즉시명령은 작업 중에 입력해도 턴이 끝나기를 기다리지 않고 바로 실행되는 명령입니다.
 Claude Code 의 mod 로 `hooks/register.mjs` 가 등록합니다.

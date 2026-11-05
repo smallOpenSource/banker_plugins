@@ -60,7 +60,7 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 1 전문가 작업 방식 | `Skill("banker:lfm")` | `$banker-lfm` |
 | 2 모호성 제거 | `Skill("banker:ultra-interview")` | `$banker-ultra-interview` |
 | 3 합의 계획 | `Skill("oh-my-claudecode:ralplan")` `--deliberate`, 이어서 `Skill("banker:ralph-qa")` | `$ralplan --deliberate`, 이어서 `$banker-ralph-qa`(플러그인 길 `$banker:ralph-qa`) |
-| 5 구현 | `Skill("oh-my-claudecode:ralph")` `--critic=critic`, 이어서 이 스킬의 critic 좌석 `<agents>` 개 루프 | `$ralph`, 이어서 이 스킬의 critic 좌석 `<agents>` 개 루프(OMX `ralph` 에는 `--critic` 이 없다) |
+| 5 구현 | `Skill("oh-my-claudecode:ralph")` `--critic=critic`, 이어서 이 스킬의 critic 좌석 `<agents>` 개 루프 | banker `$banker-ralph`(플러그인 길 `$banker:ralph`), 이어서 이 스킬의 critic 좌석 `<agents>` 개 루프(banker `ralph` 에는 `--critic` 이 없다. OMX 0.21 이 `$ralph` 를 없앰) |
 | 5 critic 좌석 에이전트 | `Agent` 의 `Plan` 유형, `model` 없이 | `spawn_agent`, 역할 규칙은 아래 |
 | 6 합의 검증 | `Skill("banker:ralph-qa")` | `$banker-ralph-qa`(플러그인 길 `$banker:ralph-qa`) |
 | 7 시각 판정 에이전트 | 판정자 `<agents>` 명. `Plan` 유형, `model` 없이 | 판정자 `<agents>` 명. `spawn_agent`, 역할과 `model` 없이 |
@@ -70,11 +70,11 @@ ultra-chain 이 직접 하는 일은 여섯 가지다.
 | 이어 하기 메모 | OMC 작업 노트에 덧붙이기(`notepad_write_working`). 우선 노트는 통째로 바뀌므로 쓰지 않음 | `.omx/notepad.md` 에 한 줄 덧붙이기 |
 | 실행 기록 기본 폴더 | `.omc/ultra-chain/` | `.omx/ultra-chain/` |
 
-- Codex 에는 Skill 도구가 없다. 위 표의 `$이름` 은 그 스킬의 `SKILL.md` 를 읽고 그대로 따른다는 뜻이다. banker 스킬은 npm 설치면 `<S>/../banker-<이름>/SKILL.md`, Codex 플러그인 설치(`<S>` 가 `plugins/cache/` 아래, 스킬 이름 `banker:<이름>`)면 `<S>/../<이름>/SKILL.md` 다. 표의 `$banker-<이름>` 은 플러그인 설치에서 `$banker:<이름>` 이다. OMX 스킬은 `~/.codex/skills/<이름>/SKILL.md` 다. 그 스킬이 상태 기록을 요구하면 그 지시대로 직접 기록한다. 큰 `SKILL.md`(ralph-qa 는 약 71KB)는 셸 출력 한도에서 잘리니 나눠 읽는다.
+- Codex 에는 Skill 도구가 없다. 위 표의 `$이름` 은 그 스킬의 `SKILL.md` 를 읽고 그대로 따른다는 뜻이다. banker 스킬은 npm 설치면 `<S>/../banker-<이름>/SKILL.md`, Codex 플러그인 설치(`<S>` 가 `plugins/cache/` 아래, 스킬 이름 `banker:<이름>`)면 `<S>/../<이름>/SKILL.md` 다. 표의 `$banker-<이름>` 은 플러그인 설치에서 `$banker:<이름>` 이다. Codex 전용인 banker `ralph` 만 플러그인 설치에서 `<S>/../../codex/skills/ralph/SKILL.md` 다(npm 설치는 `<S>/../banker-ralph/SKILL.md`). OMX 스킬은 `~/.codex/skills/<이름>/SKILL.md` 다. 그 스킬이 상태 기록을 요구하면 그 지시대로 직접 기록한다. 큰 `SKILL.md`(ralph-qa 는 약 71KB)는 셸 출력 한도에서 잘리니 나눠 읽는다.
 - Codex 의 하위 에이전트(critic 좌석, 시각 판정자)는 저자 대화를 넘기지 않는다. multi-agent v2 는 `fork_turns="none"` 을 주고, v1 은 `fork_context` 를 주지 않는다. 판정을 받으면 `close_agent` 로 닫는다.
 - Codex 의 동시 하위 에이전트 한도보다 `<agents>` 가 크면 나눠 띄우고, 모두 받은 뒤 합친다.
 - Codex 환경 지시가 역할(`agent_type`)을 요구하면, 고정 모델이 세션 모델과 같은 역할을 쓰고 지시 앞머리에 파일 쓰기 금지를 적는다. 그런 역할이 없으면 역할 없이 띄운다. 쓴 역할과 모델, 강도를 판정 기록의 `note` 에 적는다.
-- **Codex 의 tmux 밖 실행.** OMX 의 런타임 워크플로(`ralph`, `team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
+- **Codex 의 tmux 밖 실행.** banker `ralph` 는 tmux 가 필요 없다. OMX 의 런타임 워크플로(`team` 등)는 OMX tmux 런타임을 요구한다. OMX 의 `AGENTS.md` 는 tmux 밖(Codex App, 일반 `codex`, `codex exec`)이면 그 사실을 알리고 가장 가까운 대체 경로로 계속하라고 정한다(oh-my-codex 0.20.2 `templates/AGENTS.md`). 그래서 tmux 밖이라는 사실만으로는 멈추지 않는다. 그 단계는 이 세션이 그 스킬의 `SKILL.md` 절차를 네이티브 하위 에이전트로 그대로 따르고, 보고에 `<단계>: tmux 밖 대체 실행(OMX 런타임 없음)` 한 줄을 적는다. 종결 낱말은 다른 멈춤 조건과 마지막 ralph-qa 판정으로만 정한다. 대체 실행도 할 수 없으면(하위 에이전트 기능이 꺼짐 등) `STOPPED(omx-runtime-unavailable)` 로 멈추고 tmux 안의 OMX 에서 다시 실행하라고 안내한다.
 - Codex 의 오래 도는 명령은 기다리는 시간을 박스 `--timeout` 보다 길게 둔다. 기다리다 끊기면 박스 정리와 결과 JSON 이 남지 않는다.
 - Codex 세션을 닫으면 그 세션에서 띄운 서버도 끝날 수 있다. 오래 볼 미리보기는 사용자 터미널에서 띄우게 안내한다(9단계).
 
@@ -241,6 +241,7 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
    - 계획에 `## 전문가 작업 방식 적용` 절을 두라는 지시. `01-masters.md` 의 `M-n` 마다 판정(적용, 조정, 제외)과 계획의 어느 단계에 넣었는지, 조정과 제외는 그 이유를 적는다. 판정을 바꾸면(예: `lfm` 이 적용인데 계획은 제외) 이유를 적는다
    - 계획 저장 경로: Claude Code 는 `.omc/plans/ultra-chain-<run id>.md`. Codex 는 OMX 규칙대로 `.omx/plans/` 에 쓴다
    - Codex: 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라는 말
+   - Codex: 계획만 쓰고 멈추라는 말. OMX 0.21 의 `$ralplan` 은 끝에 스스로 `$ultragoal` 로 넘어간다. `$ultragoal`, `$ralph`, `$team`, 구현으로 넘어가지 않게 한다
    - 계획에 넣을 것
      - 대상 OS 와 OS 별 시험 명령. 비대화형으로 돌게 한다(`CI=true`, 감시 모드 끔. Windows 는 `cmd` 기준으로 `set CI=true&&`)
      - 시험 출력 꼴. node:test 면 TAP(`--test-reporter=tap`)로 내게 한다. 박스 결과가 시험 수를 셀 수 있다
@@ -336,7 +337,13 @@ ralplan 은 계획 작성자 외에 Architect 와 Critic 두 검토자로 합의
      - `prd.json` 이 없으면 OMC 의 `PRD` 꼴(`src/hooks/ralph/prd.ts`)로 쓴다. 최상위 `project`(저장소 이름), `branchName`(지금 브랜치), `description`(작업 요약), `userStories` 는 빠지면 OMC 가 PRD 전체를 무효로 읽는다. 이야기마다 `id`, `title`, `description`, `acceptanceCriteria`(배열), `priority`(수), `passes: false` 를 넣는다. 위에서 정한 피드백 명령은 `feedbackCommands`, 품질 등급은 `repoQualityClass` 로 같은 파일에 넣는다. 빠지면 `omc ralph verify` 가 package.json 의 스크립트로 대신 돈다.
      - OMC 의 내부 모듈(`dist/` 아래)을 불러 PRD 나 상태를 만들지 않는다. 판이 다른 내부 API 를 부르게 된다. 이 확인과 고친 것을 `build` 의 `note` 에 적는다.
 3. ralph 가 끝까지 가게 둔다(검토자 승인, deslop, 회귀 확인, `/oh-my-claudecode:cancel`). ralph 의 cancel 은 구현 단계의 끝이지 연쇄의 끝이 아니다. ralph 가 아직 도는 동안 6단계를 시작하지 않는다. 끝나면 `.omc/state/sessions/<id>/prd.json`(`OMC_STATE_DIR` 이 있으면 그 아래)을 `<run>/05-prd.json` 으로 복사한다. ralph 의 반복 한도는 ralph 자신의 것이다. ralph 보고에서 실제로 승인한 검토자가 critic 인지 확인해 기록한다. Skill 경로로 켠 ralph 는 검토자 설정이 architect 로 남을 수 있다. ralph 의 승인은 `build` 에 `note` 하나로 `verdict.by: "ralph-reviewer"` 로 기록한다(좌석 수 검사 대상이 아니다). 이어서 5의 critic 좌석 루프를 돈다.
-4. Codex: `$ralph` 를 따른다. 2의 입력을 같이 넘기고, 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라고 적는다. 연쇄 전체의 목표(goal)를 완료로 바꾸지 말라고도 적는다. ralph 의 승인은 3과 같이 `verdict.by: "ralph-reviewer"` 로 기록한다. 이어서 5의 critic 좌석 루프를 돈다.
+4. Codex: banker `$banker-ralph`(플러그인 길 `$banker:ralph`)를 따른다. OMX 의 `$ralph` 는 부르지 않는다(OMX 0.21 이 없앰).
+   - 2의 입력 가운데 계획, 목업, 기대 출력, 수용 기준을 넘긴다. `repoQualityClass`, `prd.json`, `state_read` 는 Claude Code 의 OMC 것이라 넘기지 않는다
+   - 게이트: 계획의 로컬 게이트 목록(게이트마다 명령 하나와 시간 제한)을 넘긴다. 2의 피드백 명령 꼴(`grep -Ev` 로 거른 꼴)이 아니라 종료 코드로 판정하는 보통 명령을 쓴다
+   - 인터뷰가 끝났으니 `$deep-interview` 를 돌리지 말라고 적는다. 연쇄 전체의 목표(goal)를 완료로 바꾸지 말라고도 적는다. 질문하지 말고 가정을 적으라고 적는다
+   - ralph 가 `RALPH COMPLETE` 줄을 낸 뒤에만 다음으로 간다. `RALPH STOPPED` 면 그 까닭으로 `stopped` 를 기록하고 멈춘다
+   - ralph 의 게이트 폴더는 이 연쇄의 `<g>` 와 따로다. ralph 가 끝나며 지운다. ralph 의 `RALPH COMPLETE` 줄을 `build` 의 `note` 에 적는다
+   - ralph 의 승인은 3과 같이 `verdict.by: "ralph-reviewer"` 로 기록한다. 이어서 5의 critic 좌석 루프를 돈다
 5. critic 좌석 루프(두 런타임 공통). ralph 의 critic 은 1명 고정이고 ralph 가 끝나면 다시 판정할 수 없어서, ralph 가 끝난 뒤 이 스킬의 좌석 `<agents>` 개로 다시 판정한다.
    - 좌석 `critic#1`..`critic#<agents>` 를 런타임 대응 표의 5 critic 좌석 에이전트로 띄운다. Claude Code 는 `Agent` 의 `Plan` 유형을 `model` 없이(읽기 전용 도구, 세션 모델) 쓴다. Codex 는 `spawn_agent` 이고, 역할 `critic` 의 고정 모델이 세션 모델과 같으면 그 역할을 쓰고, 아니면 런타임 대응 절의 역할 규칙을 따른다. 지시 앞머리에 파일 쓰기 금지를 적는다.
    - Agent 도구나 `Plan` 유형을 띄울 수 없으면(Codex 는 하위 에이전트 기능이 꺼짐) 한 맥락이 좌석을 연기하지 않는다. 그 회차를 `INCONCLUSIVE` 로 기록하고 멈춘다(ralph-qa 의 "띄울 수 없으면 흉내 내지 않는다" 와 같은 규칙).

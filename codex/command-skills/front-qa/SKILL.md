@@ -19,7 +19,9 @@ description: "스펙 파일(기본 `docs/note.md`)을 바탕으로 프론트엔�
   omc ralph verify --help 2>&1 | grep -q 'Usage: omc ralph verify' && echo "omc ok" || echo "omc CLI 없음 또는 낡음"
   ```
 - 실패하면 `/banker:setup` → oh-my-codex(OMX)(또는 `setup-omx` 스킬)로 먼저 구성한 뒤 이어서 진행. 점검을 통과하기 전에는 절차 1을 시작하지 않는다.
-- **런타임 매핑:** 아래 절차의 `/ralplan`·`/ralph`는 Claude Code에선 OMC 스킬, **Codex에선 oh-my-codex(OMX)의 동명 스킬**이다(Codex는 OMC 대신 OMX 전제). 각 런타임에서 사용 가능한 형태로 호출한다.
+- **런타임 매핑:** 아래 절차의 `/ralplan` 은 Claude Code에선 OMC 스킬, **Codex에선 oh-my-codex(OMX)의 동명 스킬**이다(Codex는 OMC 대신 OMX 전제). `/ralph` 는 Claude Code에선 OMC 스킬, **Codex에선 banker 의 Codex 전용 `ralph`** 다(npm 길 `$banker-ralph`, 플러그인 길 `$banker:ralph`. OMX 0.21 이 `$ralph` 를 없애 OMX 것은 부르지 않음). 각 런타임에서 사용 가능한 형태로 호출한다.
+- **Codex 의 2단계:** OMX 0.21 의 `$ralplan` 은 끝에 스스로 `$ultragoal` 로 넘어간다. 계획만 쓰고 멈추라고 넘긴다(`$ultragoal`, `$ralph`, `$team`, 구현으로 넘어가지 않음). 계획은 `.omx/plans/` 에 둔다.
+- **Codex 의 3~6단계:** banker `ralph` 의 `SKILL.md`(npm 길 `<S>/../banker-ralph/SKILL.md`, 플러그인 길 `<S>/../../skills/ralph/SKILL.md`, `<S>` 는 이 커맨드 스킬 폴더)를 따른다. 스테이지와 스펙 항목을 수용 기준으로, typecheck 와 vitest 와 parity-gate 를 게이트(게이트마다 명령 하나)로 넘긴다. 그 ralph 가 새 맥락 검토, 슬롭 점검, 회귀 확인을 함께 하고 `RALPH COMPLETE` 줄을 낸다. critic 은 ralph 의 검토자가 맡는다.
 
 ## 절차 (CLAUDE.md: 계획 없는 즉시실행 금지)
 

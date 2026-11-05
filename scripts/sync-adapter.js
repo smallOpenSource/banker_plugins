@@ -10,6 +10,7 @@
  *   setup-bypass-permissions/scripts: codex-config.mjs                -> setup-omc-hud/assets (Codex config.toml line edits)
  *   hooks: progress-plan.mjs (repo root)                              -> codex/skills/progress/scripts (plan tree for the Codex progress skill)
  *   ralph-qa/references: gate-evidence.mjs, run-folder.mjs           -> ultraqa             (gate evidence, run folders; tests at the source)
+ *   ralph-qa/references: gate-evidence.mjs, run-folder.mjs           -> codex/skills/ralph/scripts (gate runs of the Codex ralph)
  *   init-dir/scripts: marker-block.mjs                                -> git-init/scripts    (marked-block editor for AGENTS.md, CLAUDE.md, .gitignore)
  *   ralph-qa/references: payload-scan.mjs                             -> git-init/scripts    (secret scan before the first commit; tests at the source)
  *   init-dir/scripts: marker-block.mjs                                -> tune-tmux/scripts   (marked-block editor for tmux and psmux config files)
@@ -30,6 +31,7 @@ const MIRRORS = [
   { from: 'setup-bypass-permissions/scripts', to: 'setup-omc-hud/assets', files: ['codex-config.mjs'] },
   { from: 'hooks', to: 'codex/skills/progress/scripts', files: ['progress-plan.mjs'], root: true },
   { from: 'ralph-qa/references', to: 'ultraqa/references', files: ['gate-evidence.mjs', 'run-folder.mjs'] },
+  { from: 'skills/ralph-qa/references', to: 'codex/skills/ralph/scripts', files: ['gate-evidence.mjs', 'run-folder.mjs'], root: true },
   { from: 'init-dir/scripts', to: 'git-init/scripts', files: ['marker-block.mjs'] },
   { from: 'ralph-qa/references', to: 'git-init/scripts', files: ['payload-scan.mjs'] },
   { from: 'init-dir/scripts', to: 'tune-tmux/scripts', files: ['marker-block.mjs'] },
