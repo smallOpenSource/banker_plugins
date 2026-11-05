@@ -357,5 +357,8 @@
   ],
   "0.26.0": [
     "banker:make-evidence"
+  ],
+  "0.26.1": [
+    "banker:make-evidence"
   ]
 }
