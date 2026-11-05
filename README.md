@@ -49,7 +49,7 @@ codex plugin add banker@banker-plugins
 ```
 
 스킬을 `$banker:audit-security` 처럼 `$banker:<name>` 으로 호출합니다.\
-훅(업데이트 알림, 사용량 카운팅)은 Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돕니다.\
+훅(업데이트 알림, 사용량 카운팅, banker `ralph` 계속)은 Codex 를 다시 열 때 뜨는 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돕니다.\
 Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 받습니다. 바로 올리려면 `codex plugin marketplace upgrade banker-plugins` 를 실행합니다.
 
 2) npm 전역 설치 후 `banker setup`
