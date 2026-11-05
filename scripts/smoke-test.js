@@ -531,6 +531,16 @@ try {
   ok(fs.readFileSync(path.join(root, 'skills', 'init-dir', 'scripts', 'marker-block.mjs'))
        .equals(fs.readFileSync(path.join(root, 'skills', 'tune-tmux', 'scripts', 'marker-block.mjs'))),
      'marker-block.mjs is byte-identical across init-dir and tune-tmux');
+  // make-evidence runs scripts/evidence.mjs; the Codex copy keeps it and none of its tests, and it runs there.
+  ok(installed.includes('banker-make-evidence'), 'new make-evidence installed as banker-make-evidence');
+  const mevDir = path.join(instDir, 'banker-make-evidence');
+  const mevFiles = mfAllSkills.find((s) => s.name === 'make-evidence').supportingFiles;
+  ok(mevFiles.length === 7 && mevFiles.every((f) => fs.existsSync(path.join(mevDir, ...f.split('/'))))
+     && !fs.readdirSync(path.join(mevDir, 'scripts')).some((f) => f.endsWith('.test.mjs')),
+     `banker-make-evidence carries its ${mevFiles.length} supporting files and no tests into the Codex install`);
+  const mevRun = cp.spawnSync(process.execPath, [path.join(mevDir, 'scripts', 'evidence.mjs'), '--help'], { encoding: 'utf8' });
+  ok(mevRun.status === 0 && mevRun.stdout.split(/\r?\n/)[0].startsWith('make-evidence: '),
+     `the Codex copy of make-evidence runs (status ${mevRun.status}, stderr ${JSON.stringify(mevRun.stderr)})`);
   ok(!fs.existsSync(removedPauseDir) && !installed.includes('banker-graceful_pause'),
      'removed graceful_pause swept on update and not reinstalled (Claude Code has /graceful-pause instead)');
   // setup-omc-hud installs the statusline from the files in its own folder (assets/), downloading nothing, and its
@@ -712,6 +722,7 @@ try {
     ...['init-dir', 'marker-block', 'service-template', 'templates']
       .map((n) => path.join('skills', 'init-dir', 'scripts', `${n}.test.mjs`)),
     path.join('skills', 'git-init', 'scripts', 'git-init.test.mjs'),
+    path.join('skills', 'make-evidence', 'scripts', 'evidence.test.mjs'),
     ...['no-cmdline', 'fail-open'].map((n) => path.join('scripts', 'test-fixtures', `${n}.mjs`)),
     ...['args', 'browsers', 'containers', 'detect', 'e2e', 'report', 'setup']
       .map((n) => path.join('skills', 'build-testbox', 'scripts', `${n}.test.mjs`)),
