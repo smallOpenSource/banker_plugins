@@ -47,7 +47,9 @@ const LOCK_WAIT_MS = 10000;
 const LOCK_STALE_MS = 60000;
 const CONTINUE = ".ralph-continue.md";
 const CONTINUE_LIMIT = 5;
-const HOOK_LOCK_WAIT_MS = 1500;
+const CONTINUE_TOTAL = 100;
+const SAME_STOP_MS = 3000;
+const HOOK_LOCK_WAIT_MS = 200;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 class Usage extends Error {}
@@ -158,11 +160,30 @@ function writeState(d, s) {
   }
 }
 
+// The lock's content names its holder: only the holder removes it, never a lock someone else took after a stale one.
 function takeLock(p) {
+  const token = `${process.pid} ${new Date().toISOString()} ${Math.random().toString(36).slice(2)}\n`;
   const fd = openSync(p, "wx", 0o600);
-  writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
+  writeSync(fd, token);
   closeSync(fd);
+  return token;
 }
+
+function dropLock(p, token) {
+  try {
+    if (readFileSync(p, "utf8") === token) unlinkSync(p);
+  } catch {
+    /* gone already */
+  }
+}
+
+const unlinkGone = (p) => {
+  try {
+    unlinkSync(p);
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+  }
+};
 
 // A lock left by a process that died is old: removed after a minute. A live call holds it for milliseconds.
 function staleLock(p) {
@@ -176,13 +197,13 @@ function staleLock(p) {
 // fn runs with <g>/.ralph.lock held: the read, the change and the write of the record as one step.
 function locked(d, fn, waitMs = LOCK_WAIT_MS) {
   const p = join(d, LOCK);
-  for (const until = Date.now() + waitMs; ; ) {
+  let token;
+  for (const until = Date.now() + waitMs; !token; ) {
     try {
-      takeLock(p);
-      break;
+      token = takeLock(p);
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
-      if (staleLock(p)) unlinkSync(p);
+      if (staleLock(p)) unlinkGone(p);
       else if (Date.now() > until) throw new Stop("busy", `다른 ralph-state 호출이 기록을 쥐고 있다: ${p}`);
       else sleep(50);
     }
@@ -190,7 +211,7 @@ function locked(d, fn, waitMs = LOCK_WAIT_MS) {
   try {
     return fn();
   } finally {
-    unlinkSync(p);
+    dropLock(p, token);
   }
 }
 
@@ -227,6 +248,13 @@ function cleanTree(root, env) {
   const cwd = existsSync(homedir()) ? homedir() : tmpdir();
   const r = spawnFiles("git", ["-c", "core.fsmonitor=false", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all"], { cwd, env, windowsHide: true });
   return r.status === 0 && !r.error && Buffer.isBuffer(r.stdout) && r.stdout.length === 0;
+}
+
+// `git diff --quiet HEAD` by its exit code alone (1: a change), which no lost output can turn into "clean".
+function diffQuiet(root, env) {
+  const cwd = existsSync(homedir()) ? homedir() : tmpdir();
+  const r = spawnFiles("git", ["-c", "core.fsmonitor=false", "-C", root, "diff", "--quiet", "--no-ext-diff", "HEAD"], { cwd, env, windowsHide: true });
+  return r.status === 0 && !r.error;
 }
 
 // ---- the check
@@ -309,7 +337,7 @@ async function start(o, ctx) {
   const fields = { task: text(o.task, "task"), max: whole(o.max ?? 10, "max", 1, 100) };
   const root = requireGitTree(o.cwd, ctx.env);
   const snap = await snapshot(root, ctx.env);
-  const clean = cleanTree(snap.root, ctx.env);
+  const clean = cleanTree(snap.root, ctx.env) && snap.untracked.length === 0 && diffQuiet(snap.root, ctx.env);
   const s = {
     v: 1, kind: "banker-ralph", status: "active", repo: snap.root, ...fields, plan: o.plan ? resolve(o.plan) : null, ...gates,
     deslop: !o["no-deslop"], iter: 0, seq: 0, head: snap.head, startFingerprint: snap.fingerprint, baseline: clean ? "run" : "none-dirty",
@@ -489,47 +517,64 @@ const evidenceSize = (d) => {
   }
 };
 
-// How many stops in a row this run has seen with nothing new: one per turn (two banker hooks in one Codex, the npm
-// and the plugin route, ask once each for the same turn), reset when the record or the gate evidence grew.
+const readJsonOr = (p, fallback) => {
+  try {
+    return JSON.parse(readFileSync(p, "utf8")) || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+// How many stops in a row this run has seen with nothing new (reset when the record or the gate evidence grew), and
+// how many it blocked in all. A continued turn keeps its turn_id, so each stop counts; only a second banker hook at
+// the same stop (the npm and the plugin route both installed: same turn, within a few seconds) does not count again.
 function stopsWithoutChange(d, s, turnId) {
   const key = `${s.iter}:${s.seq}:${s.status}:${evidenceSize(d)}`;
   const p = join(d, CONTINUE);
-  let last = {};
-  try {
-    last = JSON.parse(readFileSync(p, "utf8")) || {};
-  } catch {
-    /* none yet */
-  }
-  if (last.turn && last.turn === turnId) return last.count;
-  const count = last.key === key ? (last.count || 0) + 1 : 1;
-  writeFileSync(p, `${JSON.stringify({ key, count, turn: turnId || null })}\n`, { mode: 0o600 });
-  return count;
+  const last = readJsonOr(p, {});
+  const now = Date.now();
+  if (turnId && last.turn === turnId && now - (last.at || 0) < SAME_STOP_MS) return last;
+  const next = { key, count: last.key === key ? (last.count || 0) + 1 : 1, total: (last.total || 0) + 1, turn: turnId || null, at: now };
+  writeFileSync(p, `${JSON.stringify(next)}\n`, { mode: 0o600 });
+  return next;
 }
 
-// The reason to keep the turn going, or null: an active run this session started in this repo.
-export function continueFor({ cwd, sessionId, turnId }, ctx = { env: process.env, platform: process.platform }) {
-  if (!UUID.test(String(sessionId || "")) || !cwd) return null;
+// The session that started the run: the hook's session_id, or the rollout file it names (rollout-<time>-<thread id>.jsonl).
+const sameSession = (s, sessionId, transcript) => Boolean(s.session) && (s.session === sessionId || new RegExp(`${s.session}\\.jsonl$`, "i").test(String(transcript || "")));
+
+// The active run of this session in the repo at cwd, or null.
+function activeRun({ cwd, sessionId, transcript }, ctx) {
+  if (!cwd || (!UUID.test(String(sessionId || "")) && !transcript)) return null;
   let root;
   try {
     root = requireGitTree(cwd, ctx.env);
   } catch {
     return null;
   }
-  const run = runsOf(root, ctx).runs.find(({ state: s }) => s.status === "active" && s.session === sessionId);
-  if (!run) return null;
-  const s = run.state;
-  // The hook has 5 seconds: a lock held longer still keeps the turn going, uncounted (a dead holder's lock goes in a minute).
-  let count = 0;
+  const run = runsOf(root, ctx).runs.find(({ state: s }) => s.status === "active" && sameSession(s, sessionId, transcript));
+  return run ? { ...run, root } : null;
+}
+
+// This stop counted under the lock; a lock it cannot take at once (the hook has 5 seconds) is null: the turn may end.
+function countStop(run, turnId) {
   try {
-    count = locked(run.dir, () => stopsWithoutChange(run.dir, s, turnId), HOOK_LOCK_WAIT_MS);
+    return locked(run.dir, () => stopsWithoutChange(run.dir, run.state, turnId), HOOK_LOCK_WAIT_MS);
   } catch (e) {
-    if (e.code !== "busy") throw e;
+    if (e.code === "busy") return null;
+    throw e;
   }
-  if (count > CONTINUE_LIMIT) return null;
+}
+
+// The reason to keep the turn going, or null: an active run this session started in this repo, not yet let go.
+export function continueFor(input, ctx = { env: process.env, platform: process.platform }) {
+  const run = activeRun(input, ctx);
+  const seen = run && countStop(run, input.turnId);
+  if (!seen || seen.count > CONTINUE_LIMIT || seen.total > CONTINUE_TOTAL) return null;
+  const s = run.state;
   return [`banker ralph 실행이 아직 active 다(게이트 폴더 ${run.dir}, 반복 ${s.iter}/${s.max}). 끝내지 말고 이어 간다.`,
-    `node '${fileURLToPath(import.meta.url)}' check --dir '${run.dir}' --cwd '${root}' 로 빠진 것을 보고 banker ralph SKILL.md 절차를 계속한다.`,
+    `node '${fileURLToPath(import.meta.url)}' check --dir '${run.dir}' --cwd '${run.root}' 로 빠진 것을 보고 banker ralph SKILL.md 절차를 계속한다.`,
     "모두 맞으면 done 으로 끝낸다. 사용자 결정이 필요하거나 같은 실패가 반복되면 stop --reason 으로 멈추고 보고한다.",
-    `(기록 변화 없이 멈추려 한 횟수 ${count}/${CONTINUE_LIMIT})`].join(" ");
+    `(기록 변화 없이 멈추려 한 횟수 ${seen.count}/${CONTINUE_LIMIT})`].join(" ");
 }
 
 const COMMANDS = { start, next, verdict, deslop, "accept-baseline": acceptBaseline, evidence, check, done, stop, adopt, status, find };

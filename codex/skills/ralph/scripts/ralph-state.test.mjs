@@ -333,3 +333,27 @@ test("continueFor: keeps only the starting session going while its run is active
   assert.equal(ask("t10", other), null);
   assert.equal(continueFor({ cwd: join(w.dir, "nowhere"), sessionId: SESSION, turnId: "x" }, ctxOf(w)), null);
 });
+
+test("continueFor: a continued turn (same turn_id) still counts each stop, a held lock lets the turn end at once, and the rollout name finds the session", (t) => {
+  const w = world(t);
+  start(w);
+  const note = join(w.g, ".ralph-continue.md");
+  const age = () => writeFileSync(note, JSON.stringify({ ...JSON.parse(readFileSync(note, "utf8")), at: Date.now() - 10000 }));
+  const ask = (extra = {}) => continueFor({ cwd: w.repo, sessionId: SESSION, turnId: "same", ...extra }, ctxOf(w));
+  for (let i = 1; i <= 5; i += 1) {
+    assert.match(ask(), new RegExp(`${i}/5`));
+    age();
+  }
+  assert.equal(ask(), null, "five blocks in one continued turn with nothing new, then the turn may end");
+  next(w);
+  const lock = join(w.g, ".ralph.lock");
+  writeFileSync(lock, "someone else\n");
+  const t0 = Date.now();
+  assert.equal(ask({ turnId: "other" }), null);
+  assert.ok(Date.now() - t0 < 2000, "the hook does not wait for a held lock");
+  rmSync(lock);
+  const rollout = join(w.dir, `rollout-2026-11-06T00-00-00-${SESSION}.jsonl`);
+  assert.match(continueFor({ cwd: w.repo, sessionId: "not-a-uuid", turnId: "r1", transcript: rollout }, ctxOf(w)), /banker ralph/);
+  writeFileSync(note, JSON.stringify({ key: "x", count: 1, total: 100, turn: "old", at: 0 }));
+  assert.equal(ask({ turnId: "late" }), null, "a hundred blocks in all let the turn end");
+});

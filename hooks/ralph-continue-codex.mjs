@@ -35,7 +35,7 @@ function readStdin() {
 export function decide(input, env = process.env, platform = process.platform) {
   if (env.BANKER_NO_RALPH_CONTINUE) return null;
   if (!input || typeof input !== 'object') return null;
-  return continueFor({ cwd: input.cwd, sessionId: input.session_id, turnId: input.turn_id }, { env, platform });
+  return continueFor({ cwd: input.cwd, sessionId: input.session_id, turnId: input.turn_id, transcript: input.transcript_path }, { env, platform });
 }
 
 async function main() {
