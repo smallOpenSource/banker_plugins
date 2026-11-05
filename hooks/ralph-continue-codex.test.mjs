@@ -3,7 +3,7 @@
 // Run: node --test hooks/ralph-continue-codex.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,4 +54,28 @@ test('an active run of this session blocks the stop with a reason; another sessi
     const b = hook(w, bad);
     assert.deepEqual([b.status, b.stdout], [0, ''], bad);
   }
+});
+
+// The command the plugin's codex/hooks.json gives Codex for this hook (the second Stop group), run as Codex runs it:
+// sh with PLUGIN_ROOT on POSIX, PowerShell on Windows, from the session folder. A plugin folder under a temp folder is
+// one the command refuses on purpose (it says why and does nothing), so there the test checks that refusal instead.
+test('the plugin hook command in codex/hooks.json blocks the stop of an active run', (t) => {
+  const w = world(t);
+  assert.equal(startRun(w).status, 0);
+  const root = realpathSync.native(fileURLToPath(new URL('..', import.meta.url)));
+  const hooks = JSON.parse(readFileSync(join(root, 'codex', 'hooks.json'), 'utf8')).hooks.Stop;
+  const entry = hooks.map((g) => g.hooks[0]).find((h) => /ralph-continue-codex\.mjs/.test(h.command));
+  assert.ok(entry, 'a Stop group runs ralph-continue-codex.mjs');
+  const input = JSON.stringify({ session_id: SESSION, turn_id: 'turn-cmd', cwd: w.repo, hook_event_name: 'Stop' });
+  const env = { ...w.env, PLUGIN_ROOT: root };
+  const r = WIN
+    ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', entry.commandWindows], { cwd: w.repo, env, input, encoding: 'utf8', timeout: 60000 })
+    : spawnSync('/bin/sh', ['-c', entry.command], { cwd: w.repo, env, input, encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 0, r.stderr);
+  const temps = [tmpdir(), '/tmp', process.env.TEMP].filter(Boolean).map((p) => { try { return realpathSync.native(p); } catch { return p; } });
+  if (temps.some((p) => root.toLowerCase().startsWith(`${p.toLowerCase()}${WIN ? '\\' : '/'}`))) {
+    assert.match(r.stderr, /banker hooks skipped: the plugin folder is in a temp folder/);
+    return;
+  }
+  assert.equal(JSON.parse(r.stdout).decision, 'block', r.stdout + r.stderr);
 });

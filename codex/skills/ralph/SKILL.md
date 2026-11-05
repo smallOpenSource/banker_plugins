@@ -28,7 +28,7 @@ Claude Code 의 OMC ralph 처럼 실행이 끝나기 전에는 턴이 끝나지 
 - banker 의 Codex Stop 훅(`hooks/ralph-continue-codex.mjs`)이 턴 끝마다 이 저장소의 실행을 본다
 - 그 실행을 시작한 세션(`start` 때의 `CODEX_THREAD_ID`)이고 상태가 `active` 면 계속하라는 이유를 넣는다. 받은 이유대로 `check` 를 보고 절차를 잇는다
 - 끝나는 길은 `done`(완료)과 `stop`(멈춤) 둘뿐이다
-- 기록이나 게이트 증거가 바뀌지 않은 채 다섯 번 멈추려 하면 훅이 놓아준다. 그때는 `stop` 으로 까닭을 남긴다
+- 기록이나 게이트 증거가 바뀌지 않은 채 멈추려 하면 훅이 다섯 번까지 막고 여섯 번째에 놓아준다. 그때는 `stop` 으로 까닭을 남긴다
 - 훅은 `banker setup --codex` 나 Codex 플러그인 설치가 넣는다. Codex 가 처음 한 번 신뢰를 묻는다(`/hooks`). 신뢰하지 않으면 턴이 끝날 때 멈추고, 사용자가 "계속" 이라고 하면 `find` 로 이어 간다
 - 사용자가 멈추라고 하면 `stop --reason '사용자 요청'` 을 부르고 멈춘다. 훅을 끄려면 `BANKER_NO_RALPH_CONTINUE=1`
 - 검토자 같은 하위 에이전트 세션은 막지 않는다(세션 id 가 다름)
@@ -82,8 +82,9 @@ Claude Code 의 OMC ralph 처럼 실행이 끝나기 전에는 턴이 끝나지 
    - git 저장소가 아니면 멈춘다. 완료를 기계로 검사할 수 없기 때문이다
    - 스스로 `git init` 하지 않는다. 사용자에게 `git init` 과 첫 커밋을 하면 쓸 수 있다고 알린다
 2. 계속 생기는 파일 확인: 작업 중 저장소 안에 추적하지 않는 파일이 계속 생기면(OMX 훅의 `.omx/`, 커버리지 결과 등) 지문이 계속 바뀐다
-   - `git check-ignore -q .omx` 처럼 확인한다. 무시되지 않으면 사용자에게 알리고 `.git/info/exclude` 에 넣을지 묻는다(쓰기에 승인이 필요할 수 있음)
-3. 이어 하기: `--resume` 이거나 작업이 이전 실행을 가리키면 `find` 로 찾는다
+   - 그런 폴더가 있을 때만 `git check-ignore -q .omx` 처럼 확인한다. 무시되지 않으면 사용자에게 알리고 `.git/info/exclude` 에 넣을지 묻는다(쓰기에 승인이 필요할 수 있음). 없는 폴더는 확인하지 않는다
+3. 모호한 점: 저장소를 읽어 먼저 줄인다. 그래도 사용자 결정이 필요하면 `start` 전에 한 번만 묻는다. 호출자가 질문 금지라고 했으면 가정을 정하고 진행한다
+4. 이어 하기: `--resume` 이거나 작업이 이전 실행을 가리키면 `find` 로 찾는다
 
    ```bash
    node '<T>/ralph-state.mjs' find --cwd '<저장소>'
@@ -104,8 +105,10 @@ node '<T>/ralph-state.mjs' start --dir '<g>' --cwd '<저장소>' --task '<한 �
 - `--plan` 은 계획 파일이 있을 때만 준다
 - `--gates` 에는 게이트 id 만 쉼표로 적는다. 명령은 `run --cmd` 로 준다
 - `start` 출력의 `head` 가 시작 HEAD 다. 슬롭 점검과 검토가 이 값을 쓴다
+- `start` 출력의 `session` 이 `null` 이면(`warnings` 에 나옴) Stop 훅이 이 실행을 잇지 않는다. Codex 세션 안에서 `adopt` 로 고친다
 - 맥락 요약을 `<g>/context.md` 에 쓴다: 작업, 바라는 결과, 아는 사실, 제약, 모르는 것, 건드릴 곳
-  - 모호한 점은 저장소를 읽어 먼저 줄인다. 그래도 사용자 결정이 필요하면 한 번만 묻는다. 호출자가 질문 금지라고 했으면 가정을 적고 진행한다
+- `start` 뒤에는 사용자에게 묻지 않는다. 물으려면 턴이 끝나야 하는데 Stop 훅이 그 턴을 잇기 때문이다. 가정을 `<g>/context.md` 에 적고 진행한다
+- 꼭 사용자 결정이 필요하면 `stop --reason '사용자 결정 필요: <무엇>'` 으로 멈춘 뒤 묻는다. 답을 받으면 새 실행으로 다시 시작한다
 - `start` 출력의 `baseline` 을 따른다
 
 | `baseline` | 할 일 |
@@ -158,7 +161,7 @@ node '<T>/gate-evidence.mjs' run --dir '<g>' --id tests --cmd 'npm test' --timeo
      node '<T>/ralph-state.mjs' accept-baseline --dir '<g>' --cwd '<저장소>' --id tests --reason '<상관없는 까닭>'
      ```
 
-5. 검토 준비: `check` 를 돌려 `fingerprint` 와 `warnings` 를 얻고, `evidence` 로 게이트 기록을 뽑는다
+5. 검토 준비: `check` 를 돌려 `fingerprint` 와 `warnings` 를 얻고, `evidence` 로 게이트 기록을 뽑는다. 이때 `check` 는 APPROVE 가 아직 없어 종료 1 이다. APPROVE 말고 다른 `missing` 이 있으면 검토 전에 그것부터 고친다
 
    ```bash
    node '<T>/ralph-state.mjs' check --dir '<g>' --cwd '<저장소>'
@@ -168,7 +171,7 @@ node '<T>/gate-evidence.mjs' run --dir '<g>' --id tests --cmd 'npm test' --timeo
 6. 검토: 새 맥락 검토자를 띄운다
    - 기본 1명. 바뀐 파일이 20개를 넘거나 보안, 권한, 구조 변경이면 2명
    - 검토 중에는 작업 트리를 바꾸지 않는다
-   - 검토자에게 주는 것: 작업, 계획과 수용 기준, 시작 HEAD, `git diff <시작 HEAD>` 를 보는 방법, `evidence` 출력(이번 반복 게이트 기록, 출력 파일 경로, 받아들인 기준선), `check` 의 `warnings`, 5의 `fingerprint`
+   - 검토자에게 주는 것: 작업, 계획과 수용 기준, 시작 HEAD, `git diff <시작 HEAD>` 를 보는 방법, `evidence` 출력(반복 0 기준선과 이번 반복의 게이트 기록, 출력 파일 경로, 받아들인 기준선), `check` 의 `warnings`, 5의 `fingerprint`
    - 검토자 지시: 파일을 고치지 않음. 첫 줄은 `VERDICT: APPROVE` 나 `VERDICT: REJECT`. blocker 마다 `파일:줄`, 무엇이 틀렸나, 왜. 수용 기준마다 충족 여부. 받아들인 기준선이 이 작업의 실패면 blocker
    - 판정마다 5의 `fingerprint` 로 기록한다. blocker 가 하나라도 있으면 `REJECT` 다. 기록 때 트리가 바뀌었으면 `stale-review` 로 멈추니 다시 검토받는다
 

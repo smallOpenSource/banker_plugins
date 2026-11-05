@@ -47,6 +47,7 @@ const LOCK_WAIT_MS = 10000;
 const LOCK_STALE_MS = 60000;
 const CONTINUE = ".ralph-continue.md";
 const CONTINUE_LIMIT = 5;
+const HOOK_LOCK_WAIT_MS = 1500;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 class Usage extends Error {}
@@ -173,9 +174,9 @@ function staleLock(p) {
 }
 
 // fn runs with <g>/.ralph.lock held: the read, the change and the write of the record as one step.
-function locked(d, fn) {
+function locked(d, fn, waitMs = LOCK_WAIT_MS) {
   const p = join(d, LOCK);
-  for (const until = Date.now() + LOCK_WAIT_MS; ; ) {
+  for (const until = Date.now() + waitMs; ; ) {
     try {
       takeLock(p);
       break;
@@ -319,7 +320,8 @@ async function start(o, ctx) {
     if (existsSync(statePath(d))) throw new Stop("started", `이 게이트 폴더에는 이미 ralph 기록이 있다(status 로 이어 감): ${d}`);
     writeState(d, s);
   });
-  return [{ ok: true, dir: d, head: s.head, session: s.session, iter: 0, baseline: s.baseline, startFingerprint: s.startFingerprint, gates: s.gates, max: s.max, deslop: s.deslop }, 0];
+  const warnings = s.session ? [] : ["CODEX_THREAD_ID 가 없어 Stop 훅이 이 실행을 잇지 않는다(Codex 세션 안에서 adopt 하면 이음)"];
+  return [{ ok: true, dir: d, head: s.head, session: s.session, warnings, iter: 0, baseline: s.baseline, startFingerprint: s.startFingerprint, gates: s.gates, max: s.max, deslop: s.deslop }, 0];
 }
 
 function next(o, ctx) {
@@ -516,10 +518,16 @@ export function continueFor({ cwd, sessionId, turnId }, ctx = { env: process.env
   const run = runsOf(root, ctx).runs.find(({ state: s }) => s.status === "active" && s.session === sessionId);
   if (!run) return null;
   const s = run.state;
-  const count = locked(run.dir, () => stopsWithoutChange(run.dir, s, turnId));
+  // The hook has 5 seconds: a lock held longer still keeps the turn going, uncounted (a dead holder's lock goes in a minute).
+  let count = 0;
+  try {
+    count = locked(run.dir, () => stopsWithoutChange(run.dir, s, turnId), HOOK_LOCK_WAIT_MS);
+  } catch (e) {
+    if (e.code !== "busy") throw e;
+  }
   if (count > CONTINUE_LIMIT) return null;
   return [`banker ralph 실행이 아직 active 다(게이트 폴더 ${run.dir}, 반복 ${s.iter}/${s.max}). 끝내지 말고 이어 간다.`,
-    `ralph-state.mjs check --dir '${run.dir}' --cwd '${root}' 로 빠진 것을 보고 그 SKILL.md 절차를 계속한다.`,
+    `node '${fileURLToPath(import.meta.url)}' check --dir '${run.dir}' --cwd '${root}' 로 빠진 것을 보고 banker ralph SKILL.md 절차를 계속한다.`,
     "모두 맞으면 done 으로 끝낸다. 사용자 결정이 필요하거나 같은 실패가 반복되면 stop --reason 으로 멈추고 보고한다.",
     `(기록 변화 없이 멈추려 한 횟수 ${count}/${CONTINUE_LIMIT})`].join(" ");
 }
