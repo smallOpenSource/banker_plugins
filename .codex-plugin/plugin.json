@@ -1,6 +1,6 @@
 {
   "name": "banker",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "Codex CLI plugin: QA, audit, docs, architecture, setup, media, and wiki skills, with an update notice and usage counting hooks.",
   "author": {
     "name": "smallOpenSource",
@@ -88,7 +88,10 @@
     "./skills/update-banker/",
     "./skills/vertical-pptx-setup/",
     "./skills/vertical-pptx/",
+    "./skills/video-gen/",
     "./skills/visual-ralph/",
+    "./skills/wbs-gen/",
+    "./skills/wide-pptx/",
     "./codex/skills/",
     "./codex/command-skills/"
   ],

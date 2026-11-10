@@ -1,0 +1,58 @@
+{
+  "title": "샘플 대시보드 2차 개발 WBS 간트",
+  "subtitle": "범위 미정, 요건과 UI 확정(08/03) 뒤 단계적 상세화",
+  "start": "2026-07-22",
+  "end": "2026-08-28",
+  "holidays": "8/17",
+  "sheet": "WBS 간트",
+  "gates": [{ "date": "08/03", "label": "요건·UI 확정 게이트" }],
+  "parts": {
+    "plan": { "name": "기획", "light": "D6EAF8", "dark": "5DADE2" },
+    "data": { "name": "데이터 리서치", "light": "D4EFDF", "dark": "27AE60" },
+    "eng": { "name": "데이터 엔지니어링", "light": "D4E6F1", "dark": "2E86C1" },
+    "be": { "name": "백엔드", "light": "FAE5D3", "dark": "E67E22" },
+    "fe": { "name": "프론트엔드", "light": "FADBD8", "dark": "E74C3C" },
+    "ai": { "name": "AI 에이전트", "light": "E8DAEF", "dark": "9B59B6" },
+    "ops": { "name": "공통", "light": "D6DBDF", "dark": "34495E", "legend": false }
+  },
+  "bars": { "선택": "FAD7A0", "준비": "D5DBDB", "마무리": "34495E" },
+  "rows": [
+    { "kind": "group", "wbs": "C", "task": "제약사항", "owner": "타 부서", "part": "ops" },
+    { "kind": "constraint", "wbs": "C-1", "task": "기획 담당자 확정", "owner": "기획부", "priority": "선행", "pending": "미해소 시 요건 확정 불가", "date": "07/24" },
+    { "kind": "constraint", "wbs": "C-2", "task": "UI/UX 디자인 확정", "owner": "디자인팀", "priority": "선행", "pending": "프론트 재디자인 선행", "date": "08/03" },
+    { "kind": "constraint", "wbs": "C-3", "task": "데이터 원천 확보", "owner": "영업부", "priority": "선행", "pending": "실적 지표 개발 선행", "date": "08/07" },
+    { "kind": "group", "wbs": "P", "task": "병행 트랙", "owner": "전 파트", "part": "ops" },
+    { "kind": "task", "wbs": "P-1", "task": "기준선 대비 변경 추적", "owner": "전 파트", "priority": "준비", "pending": "요건 비종속", "start": "07/22", "end": "08/03" },
+    { "kind": "task", "wbs": "P-2", "task": "시험 도구 준비", "owner": "전 파트", "priority": "준비", "pending": "요건 비종속", "start": "07/28", "end": "08/07" },
+    { "kind": "group", "wbs": "1", "task": "기획", "owner": "기획부", "part": "plan" },
+    { "kind": "task", "wbs": "1.1", "task": "요건·UI 확정", "owner": "홍길동", "priority": "필수", "pending": "화면 항목과 진입점 결정", "start": "07/27", "end": "08/03", "part": "plan" },
+    { "kind": "group", "wbs": "2", "task": "데이터 리서치", "owner": "데이터팀", "part": "data" },
+    { "kind": "task", "wbs": "2.1", "task": "항목별 데이터 추출 매핑", "owner": "김철수", "priority": "확정예정", "pending": "항목 확정", "start": "08/04", "end": "08/07", "part": "data" },
+    { "kind": "task", "wbs": "2.2", "task": "계열사 종합 수치", "owner": "김철수", "priority": "선택", "pending": "계열사 마트 제공", "start": "08/10", "end": "08/14", "part": "data" },
+    { "kind": "group", "wbs": "3", "task": "데이터 엔지니어링", "owner": "엔지니어링팀", "part": "eng" },
+    { "kind": "task", "wbs": "3.1", "task": "마트와 파이프라인 변경", "owner": "이영희", "priority": "확정예정", "pending": "데이터 원천 확인", "start": "08/10", "end": "08/14", "part": "eng" },
+    { "kind": "group", "wbs": "4", "task": "백엔드", "owner": "백엔드팀", "part": "be" },
+    { "kind": "task", "wbs": "4.1", "task": "API 리팩터링", "owner": "박민수", "priority": "확정예정", "pending": "화면 항목 확정", "start": "08/04", "end": "08/14", "part": "be" },
+    { "kind": "group", "wbs": "5", "task": "프론트엔드", "owner": "프론트팀", "part": "fe" },
+    { "kind": "task", "wbs": "5.1", "task": "대시보드 웹 개발", "owner": "최지우", "priority": "확정예정", "pending": "항목, 진입점, UI 확정", "start": "08/04", "end": "08/14", "part": "fe" },
+    { "kind": "group", "wbs": "6", "task": "AI 에이전트", "owner": "솔루션팀", "part": "ai" },
+    { "kind": "task", "wbs": "6.1", "task": "에이전트 변경 반영", "owner": "정하늘", "priority": "확정예정", "pending": "항목 확정", "start": "08/06", "end": "08/14", "part": "ai" },
+    { "kind": "group", "wbs": "7", "task": "배포", "owner": "전 파트", "part": "ops" },
+    { "kind": "task", "wbs": "7.1", "task": "통합 점검", "owner": "전 파트", "priority": "마무리", "pending": "-", "start": "08/18", "end": "08/21" },
+    { "kind": "task", "wbs": "7.2", "task": "운영망 배포", "owner": "전 파트", "priority": "마무리", "pending": "-", "start": "08/28", "end": "08/28" },
+    { "kind": "group", "wbs": "M", "task": "마일스톤", "part": "ops" },
+    { "kind": "milestone", "wbs": "M0", "task": "착수", "date": "07/22" },
+    { "kind": "milestone", "wbs": "M1", "task": "요건·UI 확정", "date": "08/03" },
+    { "kind": "milestone", "wbs": "M2", "task": "개발 완료", "date": "08/14" },
+    { "kind": "milestone", "wbs": "M3", "task": "서비스 오픈", "date": "08/28" }
+  ],
+  "legend": [
+    { "color": "BDC3C7", "label": "선행 항목(◆, 점선 = 개발 아님, 외부 선행)", "dotted": true },
+    { "color": "D5DBDB", "label": "준비 트랙(요건 비종속, 바로 병행)" },
+    { "color": "FAD7A0", "label": "선택 = 마감 위험 시 먼저 제외" }
+  ],
+  "notes": [
+    { "heading": "[우선순위]", "lines": ["필수, 권장, 선택(마감 위험 시 먼저 제외), 확정예정(범위 확정 뒤 지정)"] },
+    { "heading": "[가정·변경]", "lines": ["범위 전면 미정: 자리표시 항목, 요건 확정(08/03) 뒤 상세화"] }
+  ]
+}

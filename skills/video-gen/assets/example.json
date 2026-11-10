@@ -1,0 +1,36 @@
+{
+  "title": "샘플 대시보드 2차 개발 소개",
+  "size": "1280x720",
+  "fps": 30,
+  "theme": { "bg": "1F3864", "accent": "2E86C1" },
+  "scenes": [
+    { "type": "title", "duration": 3.5, "title": "샘플 대시보드 2차 개발", "subtitle": "요건 확정부터 운영 배포까지", "transition": "cut" },
+    { "type": "kinetic", "duration": 3.5, "lines": ["작은 개선이", "큰 차이를 만든다"], "transition": "stripes" },
+    {
+      "type": "bullets",
+      "duration": 5,
+      "title": "이번 개발의 범위",
+      "bullets": ["요건과 UI 확정", "API 리팩터링과 대시보드 웹", "계열사 지표(선택)"],
+      "transition": "fade"
+    },
+    {
+      "type": "chart",
+      "duration": 5,
+      "title": "파트별 투입 영업일",
+      "chart": {
+        "kind": "bar",
+        "unit": "영업일",
+        "labels": ["기획", "데이터", "백엔드", "프론트", "AI"],
+        "series": [
+          { "name": "필수", "values": [6, 4, 9, 9, 7] },
+          { "name": "선택", "values": [0, 5, 0, 5, 0] }
+        ]
+      },
+      "transition": "wipe"
+    },
+    { "type": "counter", "duration": 3, "label": "2차 개발 영업일", "from": 0, "to": 27, "unit": "일", "transition": "fade" },
+    { "type": "lowerthird", "duration": 3.5, "name": "홍길동", "role": "기획팀장", "transition": "fade" },
+    { "type": "quote", "duration": 4, "quote": "요건 확정 전에는 요건에 기대지 않는 일부터 한다", "by": "프로젝트 운영 원칙", "transition": "fade" },
+    { "type": "credits", "duration": 5, "title": "함께한 사람들", "lines": ["기획 홍길동", "데이터 김철수", "엔지니어링 이영희", "백엔드 박민수", "프론트엔드 최지우", "AI 에이전트 정하늘"], "transition": "fade" }
+  ]
+}

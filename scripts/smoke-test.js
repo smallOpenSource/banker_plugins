@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (71 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (74 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -80,7 +80,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 71, `codex dry-run plans 71 skill copies (got ${copies})`);
+  ok(copies === 74, `codex dry-run plans 74 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -260,6 +260,8 @@ try {
     ['commands/front-qa.md', 'docs/note.txt', 'the old default spec, read only when docs/note.md is missing'],
     ['commands/front-qa.md', 'progress.txt', "OMC's checkpoint file, named by OMC"],
     ['skills/setup-omc-hud/assets/apply-hud.mjs', 'hud-wrapper-template.txt', "OMC's HUD loader template, named by OMC; the installer only reads it"],
+    ...['cjdict.txt', 'laodict.txt', '//github.com/rober42539/lao-dictionary/laodict.txt', '//github.com/rober42539/lao-dictionary/LICENSE.txt', 'burmesedict.txt', 'FTL.TXT'].map((n) =>
+      ['skills/video-gen/vendor/canvaskit/THIRD-PARTY-NOTICES.md', n, 'upstream ICU and FreeType license texts quoted as published; they name their own files']),
     ...['3d-intro-build', 'motion-graphic-make', 'ultra-chain'].map((s) =>
       [`skills/${s}/references/preview-lib.mjs`, '.txt', 'a MIME type the preview server serves; no file is written']),
   ];
@@ -323,8 +325,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 71 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 71 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 74 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 74 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
