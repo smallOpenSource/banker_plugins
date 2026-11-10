@@ -7,10 +7,10 @@ const NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NSR = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 // Hangul is set in Noto Sans KR and everything else in Noto Sans. A cell that mixes the two holds rich-text runs,
 // one font per run; spaces and punctuation stay in the run they follow. Noto Sans has no geometric shapes, so ◆
-// goes with Noto Sans KR, which has them.
+// goes with Noto Sans KR, which has them; so do Hanja, CJK punctuation and full-width forms (Noto Sans has none).
 export const KR = "Noto Sans KR";
 export const LATIN = "Noto Sans";
-const HANGUL = /[\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7A3\uD7B0-\uD7FF\u25A0-\u25FF]/;
+const HANGUL = /[\u1100-\u11FF\u2190-\u21FF\u2460-\u24FF\u25A0-\u27BF\u2E80-\u9FFF\uA960-\uA97F\uAC00-\uD7A3\uD7B0-\uD7FF\uF900-\uFAFF\uFF00-\uFFEF※]/;
 const NEUTRAL = /[\s.,·:;()[\]{}\-/|'"!?~]/;
 const GRID = "D5D8DC";
 const GATE = "C0392B";
@@ -59,7 +59,11 @@ export function scriptRuns(text) {
 
 /** Sheet names may not hold []:*?/\, start or end with ', be History, or pass 31 characters. */
 export function sheetName(s) {
-  const t = Array.from(clean(s).replace(/[[\]:*?/\\]/g, " ").trim().replace(/^'+|'+$/g, "").trim()).slice(0, 31).join("").trim();
+  const trim = (x) => x.trim().replace(/^'+|'+$/g, "").trim();
+  let t = trim(clean(s).replace(/[[\]:*?/\\]/g, " "));
+  // 31 UTF-16 units, without cutting a surrogate pair; trim again in case the cut leaves a ' at the end.
+  while (t.length > 31) t = Array.from(t).slice(0, -1).join("");
+  t = trim(t);
   return !t || /^history$/i.test(t) ? "WBS" : t;
 }
 
@@ -165,7 +169,7 @@ class Sheet {
   /** A shared string; mixed runs carry their fonts, so the same text in another cell font is another entry. */
   sst(text, runs) {
     const t = clean(text);
-    const key = runs ? JSON.stringify(runs) : t;
+    const key = runs ? `r:${JSON.stringify(runs)}` : `p:${t}`;
     this.refs++;
     if (!this.stringIndex.has(key)) this.stringIndex.set(key, this.strings.push({ text: t, runs }) - 1);
     return this.stringIndex.get(key);

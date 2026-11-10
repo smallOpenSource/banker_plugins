@@ -10,13 +10,14 @@ export const ICS_URL =
 const MAX_BYTES = 4 * 1024 * 1024;
 
 /** Fetches a URL as text within timeoutMs (redirects followed up to 3 times). Rejects on any failure. */
-export function fetchText(url, timeoutMs, hops = 0) {
+export function fetchText(url, timeoutMs, hops = 0, deadline = Date.now() + timeoutMs) {
   return new Promise((resolve, reject) => {
+    const left = Math.max(1, deadline - Date.now());
     const req = get(url, { headers: { "user-agent": "wbs-gen" } }, (res) => {
       const code = res.statusCode ?? 0;
       if (code >= 300 && code < 400 && res.headers.location && hops < 3) {
         res.resume();
-        resolve(fetchText(new URL(res.headers.location, url).href, timeoutMs, hops + 1));
+        resolve(fetchText(new URL(res.headers.location, url).href, timeoutMs, hops + 1, deadline));
         return;
       }
       if (code !== 200) {
@@ -26,8 +27,8 @@ export function fetchText(url, timeoutMs, hops = 0) {
       }
       readBody(res, resolve, reject);
     });
-    // One timer for the whole exchange: a server that sends a little at a time is cut at the same limit.
-    const timer = setTimeout(() => req.destroy(new Error(`${Math.round(timeoutMs / 1000)}초 안에 끝나지 않음`)), timeoutMs);
+    // One deadline for the whole exchange, redirects included: a server that sends a little at a time is cut too.
+    const timer = setTimeout(() => req.destroy(new Error(`${Math.round(timeoutMs / 1000)}초 안에 끝나지 않음`)), left);
     req.on("close", () => clearTimeout(timer));
     req.on("error", reject);
   });

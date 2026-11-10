@@ -188,7 +188,10 @@ function titleOf(plan, range, n) {
 }
 
 function tooLong(model, errors) {
-  const texts = [model.title, ...model.rows.flatMap((r) => r.cells.map(str)), ...model.notes.flatMap((n) => [n.heading, ...n.lines])];
+  const texts = [
+    model.title, model.sheet, ...model.legend.map((l) => l.label), ...model.rows.flatMap((r) => r.cells.map(str)),
+    ...model.notes.flatMap((n) => [n.heading, ...n.lines]),
+  ];
   if (texts.some((t) => t.length > MAX_TEXT)) errors.push(`한 칸의 글이 ${MAX_TEXT}자를 넘음(Excel 한도)`);
 }
 

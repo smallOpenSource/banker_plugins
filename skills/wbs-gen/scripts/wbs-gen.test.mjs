@@ -181,6 +181,7 @@ test("Hangul goes to Noto Sans KR runs, everything else to Noto Sans; spaces sta
   assert.deepEqual(scriptRuns("07/22"), [{ text: "07/22", kr: false }]);
   assert.deepEqual(scriptRuns("◆"), [{ text: "◆", kr: true }], "Noto Sans has no ◆");
   assert.deepEqual(scriptRuns(" - "), [{ text: " - ", kr: false }]);
+  assert.deepEqual(scriptRuns("※ 漢字 OK"), [{ text: "※ 漢字 ", kr: true }, { text: "OK", kr: false }], "symbols and Hanja Noto Sans lacks");
 });
 
 test("sheet names and column letters follow Excel's rules", () => {
@@ -189,7 +190,9 @@ test("sheet names and column letters follow Excel's rules", () => {
   assert.equal(sheetName(" "), "WBS");
   assert.equal(sheetName("'계획'"), "계획");
   assert.equal(sheetName("History"), "WBS");
-  assert.equal(sheetName(`${"가".repeat(30)}😀끝`), `${"가".repeat(30)}😀`, "a surrogate pair is not cut");
+  assert.ok(!sheetName(`${"가".repeat(30)}'나`).endsWith("'"), "no ' left at the end after the cut");
+  assert.equal(sheetName(`${"가".repeat(30)}😀끝`), "가".repeat(30), "31 UTF-16 units, and a surrogate pair is not cut");
+  assert.equal(sheetName(`${"가".repeat(29)}😀끝`), `${"가".repeat(29)}😀`);
   assert.deepEqual([0, 25, 26, 34, 701, 702].map(colName), ["A", "Z", "AA", "AI", "ZZ", "AAA"]);
 });
 

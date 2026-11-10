@@ -89,13 +89,23 @@ function cmdCheck(args) {
   return 0;
 }
 
+/** An exclusive copy; a copy that fails after making target (disk full) removes what it made. */
+function copyExclusive(tmp, target) {
+  try {
+    copyFileSync(tmp, target, constants.COPYFILE_EXCL);
+  } catch (e) {
+    if (e.code !== "EEXIST") rmSync(target, { force: true });
+    throw e;
+  }
+}
+
 /** Puts tmp at target without replacing a file that appeared meanwhile (link, else an exclusive copy). */
 function placeNew(tmp, target) {
   try {
     linkSync(tmp, target);
   } catch (e) {
     if (e.code === "EEXIST") throw e;
-    copyFileSync(tmp, target, constants.COPYFILE_EXCL);
+    copyExclusive(tmp, target);
   }
   rmSync(tmp, { force: true });
 }
