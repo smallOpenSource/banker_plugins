@@ -12,7 +12,8 @@
  *   from Google's public Korean holiday calendar (공휴일 only, not 기념일). --ics reads a saved calendar file instead;
  *   --url reads another iCalendar URL in the same form (a mirror).
  * - --holidays replaces the plan's holidays; it takes 'M/D' or 'YYYY-MM-DD' items, or 없음.
- * - build checks every --out first (kind, duplicates, existing files), then writes each through a random temporary
+ * - build checks every --out first (kind, duplicates, folder, existing files) and makes every output before it
+ *   writes any, each through a random temporary
  *   name: a hard link (or an exclusive copy) puts it in place, so a file that appears meanwhile is never replaced;
  *   --force renames over an existing file instead.
  * - holidays prints MM/DD within one year and YYYY-MM-DD when --from and --to are in different years.
@@ -21,7 +22,7 @@
  * 3 the holiday calendar could not be reached (ask the user for the holidays instead).
  */
 import { randomBytes } from "node:crypto";
-import { constants, copyFileSync, existsSync, linkSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { keyMs, mmdd } from "./wg-dates.mjs";
@@ -34,6 +35,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const EXAMPLE = join(HERE, "..", "assets", "example.json");
 
 class Usage extends Error {}
+
+const isDir = (p) => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 /** Reads --name value pairs; flags listed in bools take no value; --out may repeat. */
 export function parseArgs(argv, bools = ["force"]) {
@@ -131,6 +140,8 @@ function targetsOf(args) {
   const bad = targets.filter((x) => ![".xlsx", ".html", ".htm"].includes(x.kind));
   if (bad.length) throw new Usage(`--out 은 .xlsx 나 .html 이어야 함: ${bad.map((x) => x.path).join(", ")}`);
   if (new Set(targets.map((x) => x.path)).size !== targets.length) throw new Usage("--out 에 같은 파일이 두 번 있음");
+  const noDir = targets.filter((x) => !isDir(dirname(x.path)));
+  if (noDir.length) throw new Usage(`출력 폴더가 없음: ${noDir.map((x) => dirname(x.path)).join(", ")}`);
   const there = targets.filter((x) => existsSync(x.path));
   if (there.length && !args.force) throw new Usage(`이미 있음(덮어쓰려면 --force): ${there.map((x) => x.path).join(", ")}`);
   return targets;
@@ -141,10 +152,9 @@ function cmdBuild(args) {
   const res = layout(readPlan(args));
   report(res);
   if (!res.model) return 1;
-  for (const x of targets) {
-    const data = x.kind === ".xlsx" ? toXlsx(res.model) : toHtml(res.model);
-    process.stdout.write(`WROTE ${writeOut(x.path, data, args.force)}\n`);
-  }
+  // Every output is made before any is written, so a drawing error leaves no half set behind.
+  const made = targets.map((x) => ({ ...x, data: x.kind === ".xlsx" ? toXlsx(res.model) : toHtml(res.model) }));
+  for (const x of made) process.stdout.write(`WROTE ${writeOut(x.path, x.data, args.force)}\n`);
   process.stdout.write(`OK ${summary(res.model)}\n`);
   return 0;
 }

@@ -26,7 +26,7 @@ ul.b li.l2::before{width:8px;height:8px;border-radius:0;background:#${t.muted}}
 table.t{width:100%;border-collapse:collapse;font-size:19px}
 table.t th{background:#${t.primary};color:#fff;font-weight:700}
 table.t th,table.t td{border:1px solid #D5D8DC;padding:8px 10px;text-align:left}
-table.t tr:nth-child(odd) td{background:#${t.light}}
+table.t tbody tr:nth-child(odd) td{background:#${t.light}}
 .cap{position:absolute;left:77px;top:605px;width:1126px;font-size:16px;color:#${t.muted}}
 .media{display:flex;align-items:center;justify-content:center;height:446px}
 .media img{max-width:100%;max-height:100%}
@@ -57,8 +57,8 @@ const head = (s) => `<h2>${br(s.title)}</h2><div class="bar"></div>`;
 const cap = (s) => (s.caption ? `<div class="cap">${br(s.caption)}</div>` : "");
 
 function table(t) {
-  const th = t.header.length ? `<tr>${t.header.map((h) => `<th>${br(h)}</th>`).join("")}</tr>` : "";
-  return `<table class="t">${th}${t.rows.map((r) => `<tr>${r.map((c) => `<td>${br(c)}</td>`).join("")}</tr>`).join("")}</table>`;
+  const th = t.header.length ? `<thead><tr>${t.header.map((h) => `<th>${br(h)}</th>`).join("")}</tr></thead>` : "";
+  return `<table class="t">${th}<tbody>${t.rows.map((r) => `<tr>${r.map((c) => `<td>${br(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
 const BODY = {

@@ -7,8 +7,8 @@ const f = (n) => Math.round(n * 10) / 10;
 
 /** A "nice" axis: [min, max, step] covering the values with about 5 steps. */
 export function niceAxis(values) {
-  let lo = Math.min(0, ...values);
-  let hi = Math.max(0, ...values);
+  let lo = values.reduce((a, b) => Math.min(a, b), 0);
+  let hi = values.reduce((a, b) => Math.max(a, b), 0);
   if (lo === hi) hi = lo + 1;
   const raw = (hi - lo) / 5;
   const mag = 10 ** Math.floor(Math.log10(raw));
@@ -18,7 +18,21 @@ export function niceAxis(values) {
   return [lo, hi, step];
 }
 
-const fmt = (v) => (Math.abs(v) >= 1000 ? v.toLocaleString("en-US") : String(f(v)));
+/** Decimal places a step needs: 0.25 needs 2, 0.02 needs 2, 5 needs 0. */
+export function decimalsOf(step) {
+  for (let d = 0; d < 10; d++) if (Math.abs(Math.round(step * 10 ** d) - step * 10 ** d) < 1e-9) return d;
+  return 10;
+}
+
+/** The tick labels of an axis: lo + k * step, each with the decimals the step needs. */
+export function tickLabels([lo, hi, step]) {
+  const dec = decimalsOf(step);
+  const n = Math.round((hi - lo) / step);
+  return Array.from({ length: n + 1 }, (_, k) => {
+    const v = lo + k * step;
+    return { v, text: Math.abs(v) >= 1000 ? v.toLocaleString("en-US", { maximumFractionDigits: dec }) : v.toFixed(dec) };
+  });
+}
 
 function legend(names, w, y) {
   if (names.length < 2) return "";
@@ -29,13 +43,11 @@ function legend(names, w, y) {
 }
 
 function axes(c, box) {
-  const [lo, hi, step] = niceAxis(c.series.flatMap((s) => s.values));
+  const axis = niceAxis(c.series.flatMap((s) => s.values));
+  const [lo, hi] = axis;
   const y = (v) => box.y + box.h - ((v - lo) / (hi - lo)) * box.h;
-  let grid = "";
-  for (let v = lo; v <= hi + step / 2; v += step) {
-    grid += `<line x1="${box.x}" x2="${box.x + box.w}" y1="${f(y(v))}" y2="${f(y(v))}" stroke="#D5D8DC"/>`
-      + `<text x="${box.x - 10}" y="${f(y(v)) + 5}" font-size="14" text-anchor="end">${esc(fmt(v))}</text>`;
-  }
+  const grid = tickLabels(axis).map((t) => `<line x1="${box.x}" x2="${box.x + box.w}" y1="${f(y(t.v))}" y2="${f(y(t.v))}" stroke="#D5D8DC"/>`
+    + `<text x="${box.x - 10}" y="${f(y(t.v)) + 5}" font-size="14" text-anchor="end">${esc(t.text)}</text>`).join("");
   const unit = c.unit ? `<text x="${box.x}" y="${box.y - 14}" font-size="14">${esc(c.unit)}</text>` : "";
   return { y, svg: grid + unit };
 }
