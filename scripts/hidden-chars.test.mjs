@@ -17,6 +17,11 @@ const UTF8 = new TextDecoder("utf-8", { fatal: true });
 // nothing or as a space a reader takes for another (the kit's set: U+00A0, U+2800, U+3000, U+3164).
 const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\u{00A0}\u{2800}\u{3000}\u{3164}]/u;
 const ALLOWED = /[\t\n\r]/;
+// Third-party files kept byte for byte as published (minified code carries control characters in its string tables);
+// each one's sha256 is pinned by its skill's test, so an edit there fails that test instead.
+const VENDORED = new Map([
+  ["skills/wide-pptx/vendor/pptxgen.bundle.js", "PptxGenJS 4.0.1 dist bundle; sha256 pinned in skills/wide-pptx/scripts/wide-pptx.test.mjs"],
+]);
 
 function* walk(dir) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -41,6 +46,7 @@ function repoFiles() {
 test("no text file in the repository holds a raw hidden character", () => {
   const found = [];
   for (const file of repoFiles()) {
+    if (VENDORED.has(relative(ROOT, file).split("\\").join("/"))) continue;
     let text;
     try {
       text = UTF8.decode(readFileSync(file));

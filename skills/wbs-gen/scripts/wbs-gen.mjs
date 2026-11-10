@@ -61,7 +61,7 @@ function readPlan(args) {
   if (!args.plan) throw new Usage("--plan <plan.json> 이 필요함");
   let plan;
   try {
-    plan = JSON.parse(readFileSync(args.plan, "utf8").replace(/^﻿/, ""));
+    plan = JSON.parse(readFileSync(args.plan, "utf8").replace(/^\uFEFF/, ""));
   } catch (e) {
     throw new Usage(`plan 을 읽지 못함: ${e.message}`);
   }
