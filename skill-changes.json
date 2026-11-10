@@ -368,5 +368,10 @@
     "banker:ultra-init",
     "banker:ultraqa",
     "banker:visual-ralph"
+  ],
+  "0.28.0": [
+    "banker:video-gen",
+    "banker:wbs-gen",
+    "banker:wide-pptx"
   ]
 }

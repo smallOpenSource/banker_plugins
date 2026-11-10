@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 72개 + 커맨드 2개**(총 74개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 71개와 Codex 전용 스킬 4개)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 75개 + 커맨드 2개**(총 77개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 74개와 Codex 전용 스킬 4개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -126,6 +126,8 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 |---|---|
 | `arch-diagram` | 시스템 아키텍처 구성도 (PlantUML + 편집가능 PPTX) |
 | `vertical-pptx` | A4 세로(210x297mm) 규격 PPTX 생성·점검·수리, 16:9 덱의 A4 세로 변환 |
+| `wide-pptx` | 발표용 16:9 슬라이드를 한 JSON 덱에서 PPTX 와 단일 HTML 덱으로 같은 배치로 만듦. 슬라이드 종류 9개(표지, 글머리, 2단, 차트, 표, 그림, 인용, 구역, 끝)와 발표자 노트. 번들한 PptxGenJS 4.0.1 을 써 설치와 내려받기 없이 동작하고, 글꼴은 한글 Noto Sans KR, 그 밖 Noto Sans |
+| `wbs-gen` | WBS 를 간트 차트 XLSX(셀 채움 막대, 인쇄 설정)와 같은 격자의 단일 HTML 표로 만듦. 영업일과 주차를 계산하고 공휴일은 온라인이면 Google 공개 캘린더에서 읽어 사용자가 확인, 닿지 못하면 사용자가 `월/일, 월/일` 로 입력. XLSX 는 순수 Node 로 직접 써 설치가 필요 없음 |
 | `make-notion-guide` | API 호출 가이드를 노션 양식 문서로 작성 |
 | `pdf-vision-extract` | 비주얼 PDF를 고해상도 PNG로 변환(비전 입력) |
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
@@ -181,6 +183,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 
 | 스킬 | 설명 |
 |---|---|
+| `video-gen` | 만들 수 있는 영상 목록을 보이고 고르게 한 뒤, 빠진 내용은 인터뷰로 받아 MP4 를 만듦. 내장 종류 9개(제목, 키네틱 타이포, 글머리, 차트, 카운터, 이름 자막, 인용, 사진, 크레디트)와 장면 전환 4개, `wide-pptx` 덱 변환, 정지 화면 확인. 번들한 WASM 엔진(Skia CanvasKit, H.264 MP4 인코더)과 Noto 글꼴로 Chrome, ffmpeg, 설치, 내려받기 없이 모든 OS 에서 같게 렌더. 다른 종류는 `motion-graphic-make`, `3d-intro-build`, `motion-sites` 로 넘김 |
 | `motion-graphic-make` | 10초 내외 내레이션 없는 무료 모션 그래픽 제작 (hyperframes 위임). 계획 승인, 스냅숏과 렌더 검토 페이지, 독립 검증, 사이트 배치는 선택 |
 | `motion-sites` | MotionSites 의 `motionsites-web-builder` 스킬을 짧은 이름으로 부름. 첫 실행 때 원본 플러그인을 MotionSites 마켓플레이스에서 설치하고 Playwright 와 Chromium 을 갖춘 뒤 프롬프트를 그대로 넘김. 원본은 banker 에 복사하지 않음(예시와 미디어 재배포 금지), 첫 실행에 네트워크 필요 |
 | `3d-intro-build` | 스크롤-스크럽 3D 인트로 사이트 제작 (Azure gpt-image 스틸 + WAN 키 풀 영상, 소진 시 Sora-2 폴백, 유료). 단계별 검토 페이지, 엄격한 CSP 에서 도는 페이지, 실제 브라우저 독립 검증. 영상 모드는 chain, dive 나가기 없음(기본), dive 나가기 있음 가운데 고름. 장면 단위 이동(장면 시작점에 멈춤, Home, End, 장면 점은 바로 이동)은 기본 켬이고 끌 수 있음, 기존 사이트 통합은 선택 |
@@ -461,8 +464,9 @@ banker setup
   - `npx` 로 부르는 도구(`motion-graphic-make` 의 hyperframes 등): 전역 설치가 없으면 패키지를 받으려 해, 네트워크가 없으면 약 70초 뒤 실패합니다. 오프라인에서는 전역 설치한 실행 파일을 부릅니다.
   - 유료 API 를 부르는 `3d-intro-build`(요청마다 시간 제한), `ralph-qa` 의 외부 좌석(codex, gemini, opencode, 좌석마다 600초)
   - `build-testbox`: `run` 은 내려받지 않고, 없는 이미지, 브라우저, 엔진의 칸은 `unverified` 와 setup 할 항목으로 끝납니다. `setup` 은 `--yes` 확인 뒤에만 받고, 원천에 닿지 못하면 받지 않고 "네트워크 필요" 로 끝납니다.
+  - `wbs-gen` 의 공휴일 조회(Google 공개 캘린더): 닿지 못하면 기다리지 않고 종료 코드 3 으로 끝나고, 스킬이 사용자에게 공휴일을 `월/일, 월/일` 로 받습니다. 공휴일 표를 지어내지 않습니다.
   - `vertical-pptx`, `pdf-vision-extract` 가 빠진 도구를 설치하라고 안내할 때, `nothing-design` 의 글꼴(Google Fonts. 받지 못하면 대체 글꼴로 보임)
-- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`, `init-dir`, `git-init`, `tune-tmux`)은 네트워크 없이 그대로 씁니다.
+- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`, `init-dir`, `git-init`, `tune-tmux`, `wide-pptx`, `video-gen`)은 네트워크 없이 그대로 씁니다.
 
 ## 라이선스 / 서드파티
 
@@ -479,8 +483,16 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
 - `skills/theme-selection/assets`: 번들 팔레트(`palettes.json`)는 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) 의 DESIGN.md 에서 색 값을 읽어 만든 것, **MIT License**(© 2026 VoltAgent).\
   원본 라이선스 고지는 `skills/theme-selection/assets/LICENSE` 와 `NOTICE.md` 에 포함.\
   테마 이름의 상표는 각 소유자에게 있으며, banker 는 그 회사들과 관계가 없습니다.
+- `skills/wide-pptx/vendor`: [PptxGenJS](https://github.com/gitbrent/PptxGenJS) 4.0.1 의 `pptxgen.bundle.js` 를 고치지 않고 벤더링, **MIT License**.\
+  안에 든 JSZip(MIT 또는 GPLv3 중 MIT), pako(MIT), core-js 등의 고지는 같은 폴더의 `LICENSE-*.md` 와 `THIRD-PARTY-NOTICES.md` 에 포함.
+- `skills/video-gen/vendor`: 아래를 고치지 않고 벤더링. 파일별 판과 sha256 은 `skills/video-gen/vendor/README.md`.
+  - [Skia CanvasKit](https://skia.org/docs/user/modules/canvaskit/) 0.42.0(`canvaskit-wasm`), **BSD-3-Clause**. 안에 든 ICU, FreeType, HarfBuzz, libpng, zlib 등의 고지는 `canvaskit/THIRD-PARTY-NOTICES.md`.
+  - [h264-mp4-encoder](https://github.com/TrevorSundberg/h264-mp4-encoder) 1.0.12, **MIT License**. 안의 minih264 는 public domain(CC0), libmp4v2 는 **Mozilla Public License 1.1**(전문 `h264-mp4-encoder/MPL-1.1.md`).\
+    libmp4v2 소스 묶음은 GitHub 저장소의 `third_party/libmp4v2-d49b4466.tar.gz` 에 둡니다(npm 묶음에는 넣지 않음).
+  - [Noto Sans](https://notofonts.github.io/), [Noto Sans KR](https://github.com/notofonts/noto-cjk) 글꼴, **SIL Open Font License 1.1**(`fonts/OFL-*.md`).
+  - `scripts/vg-fx.mjs` 의 동작 도우미 일부는 [kstost/cokacmotion](https://github.com/kstost/cokacmotion) 의 aimotion 에서 옮긴 것, **MIT License**(`aimotion/LICENSE.md`).
 
-코드로 포함(재배포)하는 서드파티는 `humanizer` 와 `scroll-world`(`3d-intro-build`) 둘이고, 데이터로 포함하는 것은 `awesome-design-md`(`theme-selection`) 하나입니다.\
+코드로 포함(재배포)하는 서드파티는 `humanizer`, `scroll-world`(`3d-intro-build`), `omc_hud`(`setup-omc-hud`), PptxGenJS(`wide-pptx`), CanvasKit 과 h264-mp4-encoder 와 aimotion 도우미(`video-gen`)이고, 데이터로 포함하는 것은 `awesome-design-md`(`theme-selection`)와 Noto 글꼴(`video-gen`)입니다.\
 아래는 스킬이 **런타임에 의존하거나 연동**하는 외부 요소로, banker 가 재배포하지 않으며 각 라이선스·상표는 소유자에게 있습니다.
 
 **의존 라이브러리·도구 (사용 시 별도 설치, 라이선스는 각 프로젝트 소유)**
