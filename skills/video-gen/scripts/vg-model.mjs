@@ -84,25 +84,30 @@ export function imageInfo(b) {
   const at = (sig, off = 0) => sig.every((x, i) => b[off + i] === x);
   if (at([0x89, 0x50, 0x4e, 0x47]) && b.length > 24) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), whole: b.includes("IEND", Math.max(0, b.length - 16)) };
   if (at([0x47, 0x49, 0x46, 0x38]) && b.length > 10) return { w: b.readUInt16LE(6), h: b.readUInt16LE(8), whole: b.lastIndexOf(0x3b) >= b.length - 16 };
-  if (at([0xff, 0xd8, 0xff])) return { ...jpegSize(b), whole: b.lastIndexOf(Buffer.from([0xff, 0xd9])) >= Math.max(0, b.length - 1024) };
+  if (at([0xff, 0xd8, 0xff])) return jpegInfo(b);
   if (at([0x52, 0x49, 0x46, 0x46]) && b.length > 30 && b.toString("latin1", 8, 12) === "WEBP") return { ...webpSize(b), whole: b.readUInt32LE(4) + 8 <= b.length };
   return null;
 }
 
-function jpegSize(b) {
-  for (let i = 2; i + 9 < b.length;) {
+// Walks the JPEG segments to the size (SOF) and the first scan (SOS). The file is whole when an end marker (FF D9)
+// follows that scan: inside scan data FF is only followed by 00 or a restart marker, so the first FF D9 after it is
+// the end, whatever is appended behind it (a phone's motion photo puts a whole MP4 there).
+function jpegInfo(b) {
+  let size = { w: 0, h: 0 };
+  for (let i = 2; i + 3 < b.length;) {
     if (b[i] !== 0xff) break;
     if (b[i + 1] === 0xff) {
       i++;
       continue;
     }
     const marker = b[i + 1];
-    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { w: b.readUInt16BE(i + 7), h: b.readUInt16BE(i + 5) };
+    if (marker === 0xda) return { ...size, whole: b.indexOf(Buffer.from([0xff, 0xd9]), i + 2) >= 0 };
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker) && i + 9 < b.length) size = { w: b.readUInt16BE(i + 7), h: b.readUInt16BE(i + 5) };
     const len = b.readUInt16BE(i + 2);
     if (len < 2) break;
     i += 2 + len;
   }
-  return { w: 0, h: 0 };
+  return { ...size, whole: false };
 }
 
 function webpSize(b) {

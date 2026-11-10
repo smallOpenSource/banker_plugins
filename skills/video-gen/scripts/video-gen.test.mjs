@@ -138,6 +138,30 @@ test("images are checked by their bytes: kind, size, a cut-off end", () => {
   }
 });
 
+test("a JPEG is whole when its end marker follows the scan, whatever is appended (a motion photo)", async () => {
+  const { CK } = await loadEngine();
+  const surface = CK.MakeSurface(64, 48);
+  surface.getCanvas().clear(CK.Color(30, 160, 90, 1));
+  const snap = surface.makeImageSnapshot();
+  const jpeg = Buffer.from(snap.encodeToBytes(CK.ImageFormat.JPEG, 90));
+  snap.delete();
+  surface.delete();
+  const motion = Buffer.concat([jpeg, Buffer.from("\0\0\0\x18ftypmp42"), Buffer.alloc(10240, 7)]);
+  assert.deepEqual(imageInfo(jpeg), { w: 64, h: 48, whole: true });
+  assert.deepEqual(imageInfo(motion), { w: 64, h: 48, whole: true }, "data after the end marker");
+  assert.equal(imageInfo(jpeg.subarray(0, jpeg.length - 2)).whole, false, "the end marker cut off");
+  assert.equal(imageInfo(jpeg.subarray(0, 200)).whole, false, "cut inside the headers or the scan");
+  const dir = mkdtempSync(join(tmpdir(), "video-gen-"));
+  try {
+    writeFileSync(join(dir, "motion.jpg"), motion);
+    const { model, errors } = readScenes({ scenes: [{ type: "image", image: "motion.jpg" }] }, dir);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(await probeImages(model), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("blank text is not content; NFD Hangul is put in NFC", () => {
   const errs = readScenes({ scenes: [{ type: "kinetic", lines: ["", " "] }, { type: "quote", quote: " " }, { type: "image", image: "a.png", motion: "Pan" }] }, HERE).errors.join("\n");
   for (const want of ["lines 가 필요함", "quote 가 필요함", "zoom, pan"]) assert.ok(errs.includes(want), `missing: ${want}\n${errs}`);
@@ -202,16 +226,32 @@ test("every frame starts clean: a frame drawn after another equals the same fram
   }
 });
 
-test("short scenes still show everything before they end; decimals are kept", async () => {
-  const doc = { fps: 12, scenes: [
-    { type: "bullets", duration: 2, title: "짧음", bullets: ["하나", "둘", "셋", "넷", "다섯"], transition: "cut" },
-    { type: "counter", duration: 1, label: "평균", from: 0, to: 3.5, unit: "점", transition: "cut" },
-  ] };
-  const { model } = readScenes(doc, HERE);
-  const end = await renderStill(model, 1.95);
-  const mid = await renderStill(model, 1.0);
-  assert.ok(!end.equals(mid), "the last bullet arrived by the end");
-  assert.deepEqual(await probeImages(model), []);
+test("decimals are kept in the numbers a chart or counter shows", () => {
+  assert.equal(grouped(1.5, decimals([1.5, 2.75])), "1.50");
+  assert.equal(grouped(1234567.5, decimals([1234567.5])), "1,234,567.5");
+  assert.equal(counter(10, 0, 3.5, 0, 1, decimals([0, 3.5])), 3.5);
+});
+
+test("a scene of the shortest length ends on the same frame as a long one: everything shown, at rest", async () => {
+  const chart = (kind) => ({ kind, labels: ["A", "B", "C"], series: [{ name: "s", values: [100, 50, 12.5] }, { name: "t", values: [20, 80, 40] }] });
+  const kinds = [
+    { type: "title", title: "제목 Title", subtitle: "부제" },
+    { type: "kinetic", lines: ["짧은 장면도", "끝까지 Shown"] },
+    { type: "bullets", title: "짧은 글머리", bullets: ["하나", "둘", "셋", "넷", "다섯"] },
+    { type: "chart", title: "막대", chart: chart("bar") },
+    { type: "chart", title: "꺾은선", chart: chart("line") },
+    { type: "counter", label: "평균", from: 0, to: 3.5, unit: "점" },
+    { type: "quote", quote: "짧아도 다 보임", by: "video-gen" },
+  ];
+  const last = async (scene, duration) => {
+    const { model, errors } = readScenes({ fps: 12, scenes: [{ ...scene, duration, transition: "cut" }, { type: "title", duration: 2, title: "끝", transition: "cut" }] }, HERE);
+    assert.deepEqual(errors, []);
+    return renderStill(model, duration - 1 / 24);
+  };
+  for (const scene of kinds) {
+    const name = `${scene.type} ${scene.chart ? scene.chart.kind : ""}`;
+    assert.ok((await last(scene, 0.5)).equals(await last(scene, 6)), `${name}: the last frame of a 0.5 s scene matches a 6 s one`);
+  }
 });
 
 test("a render that fails reports its own error, not the encoder's", async () => {

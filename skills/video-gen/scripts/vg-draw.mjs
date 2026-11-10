@@ -193,7 +193,8 @@ export class Painter {
   }
 
   shrink(full) {
-    const k = Math.min(1, (Math.max(this.W, this.H) * 1.15) / Math.max(full.width(), full.height()));
+    // Down to the size it covers the frame at (plus room for the zoom), so a portrait or panorama is not enlarged again.
+    const k = Math.min(1, Math.max(this.W / full.width(), this.H / full.height()) * 1.15);
     if (k >= 1) return full;
     const w = Math.max(1, Math.round(full.width() * k));
     const h = Math.max(1, Math.round(full.height() * k));
