@@ -11,7 +11,7 @@ import { businessDays, parseHolidays, resolveDate, weeks } from "./wg-dates.mjs"
 import { parseIcs, publicHolidays } from "./wg-holidays.mjs";
 import { toHtml } from "./wg-html.mjs";
 import { layout } from "./wg-plan.mjs";
-import { colName, sheetName, toXlsx } from "./wg-xlsx.mjs";
+import { colName, scriptRuns, sheetName, toXlsx } from "./wg-xlsx.mjs";
 import { crc32 } from "./wg-zip.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -89,6 +89,46 @@ test("the example plan lays out like the reference sheet", () => {
   assert.match(model.title, /27 영업일/);
 });
 
+test("a far or long range is refused at once, not looped over", () => {
+  const far = { ...example(), start: "9999-12-01", end: "9999-12-31", rows: [{ kind: "task", start: "9999-12-01", end: "9999-12-03" }], gates: [] };
+  const t0 = Date.now();
+  assert.equal(layout(far).model?.days.length, 23);
+  const long = { ...example(), start: "2020-01-01", end: "2026-01-01" };
+  assert.match(layout(long).errors.join(), /5년을 넘음/);
+  assert.ok(Date.now() - t0 < 2000);
+});
+
+test("a month/day that falls in two years of a long project is an error; full dates work", () => {
+  const plan = { title: "t", start: "2026-01-05", end: "2027-06-30", rows: [{ kind: "task", start: "4/1", end: "2026-04-30" }] };
+  assert.match(layout(plan).errors.join("\n"), /두 해에 걸림/);
+  plan.rows[0].start = "2026-04-01";
+  plan.holidays = "5/5";
+  assert.match(layout(plan).errors.join("\n"), /두 해에 걸리는 M\/D: 5\/5/);
+  plan.holidays = "2026-05-05, 2027-05-05, 2027-02-08";
+  const { model } = layout(plan);
+  assert.equal(model.days.length, 388 - 3);
+  assert.equal(model.rows[0].cells[5], "26/04/01", "multi-year plans show the year in start and end");
+});
+
+test("plan names that match Object.prototype members are just unknown names", () => {
+  const plan = example();
+  plan.rows.push({ kind: "task", wbs: "Y1", priority: "constructor", start: "08/04", end: "08/05" });
+  const { model } = layout(plan);
+  assert.equal(model.rows[model.rows.length - 1].bar, "5D6D7E");
+  plan.rows.push({ kind: "task", wbs: "Y2", part: "toString", start: "08/04", end: "08/05" });
+  assert.match(layout(plan).errors.join(), /parts 에 없는 part \(toString\)/);
+});
+
+test("weeks keep calendar numbers across a week with no working day; notes lines may be one string", () => {
+  const days = businessDays("2026-09-21", "2026-10-16", new Set(["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]));
+  assert.deepEqual(weeks(days).map((w) => w.label), ["W1", "W3", "W4"]);
+  const plan = example();
+  plan.notes = [{ heading: "[메모]", lines: "한 줄" }];
+  assert.deepEqual(layout(plan).model.notes, [{ heading: "[메모]", lines: ["한 줄"] }]);
+  plan.gates = { date: "08/03" };
+  assert.match(layout(plan).errors.join(), /gates 는 배열이어야 함/);
+});
+
 test("plan errors are reported, not drawn", () => {
   const bad = example();
   bad.rows.push({ kind: "milestone", wbs: "X1", date: "08/17" });
@@ -120,7 +160,14 @@ test("the XLSX holds the reference layout: frozen 8x3, A3 landscape one page wid
   assert.match(sheet, /<pageSetUpPr fitToPage="1"\/>/);
   assert.match(sheet, /<mergeCells count="15">/);
   assert.match(files["xl/workbook.xml"], /_xlnm\.Print_Titles" localSheetId="0">'WBS 간트'!\$1:\$3</);
-  assert.ok(files["xl/sharedStrings.xml"].includes("A &lt;b&gt; &amp; &quot;C&quot;  끝"), "escaped, control character dropped");
+  const sst = files["xl/sharedStrings.xml"];
+  assert.ok(sst.includes('<rFont val="Noto Sans"/><family val="2"/></rPr><t xml:space="preserve">A &lt;b&gt; &amp; &quot;C&quot;  </t>'), "Latin run escaped, control character dropped");
+  assert.ok(sst.includes('<rFont val="Noto Sans KR"/><family val="2"/><charset val="129"/></rPr><t xml:space="preserve">끝</t>'), "Hangul run in Noto Sans KR");
+  assert.match(sst, /<sst [^>]*count="(\d+)" uniqueCount="(\d+)"/);
+  assert.ok(+/count="(\d+)"/.exec(sst)[1] >= +/uniqueCount="(\d+)"/.exec(sst)[1], "count is the number of references");
+  assert.match(files["xl/styles.xml"], /<name val="Noto Sans KR"\/>/);
+  assert.match(files["xl/styles.xml"], /<name val="Noto Sans"\/>/);
+  assert.ok(!/theme=/.test(files["xl/styles.xml"]), "no theme colours without a theme part");
   assert.match(files["xl/styles.xml"], /<fills count="\d+"><fill><patternFill patternType="none"\/><\/fill><fill><patternFill patternType="gray125"\/>/);
   assert.match(files["xl/styles.xml"], /<left style="medium"><color rgb="FFC0392B"\/>/);
   assert.ok(!/conditionalFormatting/.test(sheet), "bars are cell fills");
@@ -128,10 +175,21 @@ test("the XLSX holds the reference layout: frozen 8x3, A3 landscape one page wid
   assert.deepEqual(rows, [...rows].sort((a, b) => a - b), "rows in order");
 });
 
+test("Hangul goes to Noto Sans KR runs, everything else to Noto Sans; spaces stay with the run before", () => {
+  assert.deepEqual(scriptRuns("API 리팩터링 v2"), [{ text: "API ", kr: false }, { text: "리팩터링 ", kr: true }, { text: "v2", kr: false }]);
+  assert.deepEqual(scriptRuns("(요건)"), [{ text: "(요건)", kr: true }]);
+  assert.deepEqual(scriptRuns("07/22"), [{ text: "07/22", kr: false }]);
+  assert.deepEqual(scriptRuns("◆"), [{ text: "◆", kr: true }], "Noto Sans has no ◆");
+  assert.deepEqual(scriptRuns(" - "), [{ text: " - ", kr: false }]);
+});
+
 test("sheet names and column letters follow Excel's rules", () => {
   assert.equal(sheetName("a[b]:c*?/\\d"), "a b  c    d");
   assert.equal(sheetName("x".repeat(40)).length, 31);
   assert.equal(sheetName(" "), "WBS");
+  assert.equal(sheetName("'계획'"), "계획");
+  assert.equal(sheetName("History"), "WBS");
+  assert.equal(sheetName(`${"가".repeat(30)}😀끝`), `${"가".repeat(30)}😀`, "a surrogate pair is not cut");
   assert.deepEqual([0, 25, 26, 34, 701, 702].map(colName), ["A", "Z", "AA", "AI", "ZZ", "AAA"]);
 });
 
@@ -142,6 +200,7 @@ test("the HTML is one offline file: no script, no link out, text escaped, A3 lan
   assert.ok(!/<script|<link|https?:\/\/|@import|url\(/i.test(html));
   assert.ok(html.includes("&lt;img src=x onerror=alert(1)&gt;"));
   assert.match(html, /@page\{size:A3 landscape/);
+  assert.match(html, /font-family:"Noto Sans","Noto Sans KR",sans-serif/);
   assert.equal((html.match(/<td class="gate/g) || []).length, layout(plan).model.rows.length);
   assert.equal((html.match(/◆<\/td>/g) || []).length, 7, "7 marks in the rows");
 });
@@ -181,6 +240,10 @@ test("the CLI builds both files, keeps an existing file without --force and leav
     assert.deepEqual(readdirSync(dir).sort(), ["g.html", "g.xlsx", "plan.json"]);
     const bad = run(["build", "--plan", "plan.json", "--out", "g.pdf"], dir);
     assert.equal(bad.status, 2);
+    const partly = run(["build", "--plan", "plan.json", "--out", "new.xlsx", "--out", "g.html"], dir);
+    assert.equal(partly.status, 2, "g.html is there");
+    assert.ok(!readdirSync(dir).includes("new.xlsx"), "nothing is written when one output is refused");
+    assert.equal(run(["build", "--plan", "plan.json", "--out", "a.html", "--out", "./a.html"], dir).status, 2);
     const broken = run(["check", "--plan", "plan.json", "--holidays", "8/3"], dir);
     assert.equal(broken.status, 1, "the gate and milestones on 08/03 now fall on a holiday");
   } finally {
@@ -202,6 +265,11 @@ test("holidays: a saved calendar is read; an unreachable one ends with 3 and ask
     assert.equal(off.status, 3);
     assert.match(off.stderr, /M\/D, M\/D/);
     assert.equal(run(["holidays", "--from", "2026-07-22", "--to", "2026-08-28", "--url", "http://x"], dir).status, 2);
+    const span = run(["holidays", "--from", "2026-07-01", "--to", "2027-01-31", "--ics", "kr.ics"], dir);
+    assert.match(span.stdout, /^HOLIDAYS 2026-08-15, 2026-08-17, 2026-09-24, 2026-09-25, 2026-09-26$/m, "full dates across years");
+    writeFileSync(join(dir, "obs.ics"), ICS.replace(/DESCRIPTION:공휴일/g, "DESCRIPTION:Public holiday"));
+    const wording = run(["holidays", "--from", "2026-07-22", "--to", "2026-08-28", "--ics", "obs.ics"], dir);
+    assert.equal(wording.status, 3, "a calendar with no 공휴일 at all is not 'no holidays'");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

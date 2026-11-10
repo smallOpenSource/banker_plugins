@@ -26,7 +26,9 @@ export function fetchText(url, timeoutMs, hops = 0) {
       }
       readBody(res, resolve, reject);
     });
-    req.setTimeout(timeoutMs, () => req.destroy(new Error(`${Math.round(timeoutMs / 1000)}초 안에 응답 없음`)));
+    // One timer for the whole exchange: a server that sends a little at a time is cut at the same limit.
+    const timer = setTimeout(() => req.destroy(new Error(`${Math.round(timeoutMs / 1000)}초 안에 끝나지 않음`)), timeoutMs);
+    req.on("close", () => clearTimeout(timer));
     req.on("error", reject);
   });
 }

@@ -1,6 +1,8 @@
 // wg-html.mjs: draws the wbs-gen model as one self-contained HTML file (a table and CSS, no script, no library, no
 // network). The grid matches the XLSX: 8 fixed columns, week and day headers, cell-fill bars, ◆, the red gate line.
-// Colours reach the page only as 6-digit hex checked by wg-plan.mjs.
+// Colours reach the page only as 6-digit hex checked by wg-plan.mjs. Fonts: Noto Sans first and Noto Sans KR next;
+// Noto Sans has no Hangul, so Hangul is drawn in Noto Sans KR and everything else in Noto Sans. Nothing is embedded:
+// a viewer without the fonts uses its own sans-serif.
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const br = (s) => esc(s).replace(/\n/g, "<br>");
@@ -10,7 +12,7 @@ const ALIGN = ["c", "l", "c", "c", "l", "c", "c", "c"];
 
 const CSS = `
 *{box-sizing:border-box}
-body{margin:16px;font-family:"맑은 고딕","Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif;color:#2C3E50;font-size:12px}
+body{margin:16px;font-family:"Noto Sans","Noto Sans KR",sans-serif;color:#2C3E50;font-size:12px}
 .wrap{overflow:auto;max-height:calc(100vh - 32px);border:1px solid #D5D8DC}
 table{border-collapse:separate;border-spacing:0;table-layout:fixed}
 th,td{border-right:1px solid #D5D8DC;border-bottom:1px solid #D5D8DC;padding:2px 4px;overflow:hidden;vertical-align:middle;height:22px}
@@ -97,7 +99,9 @@ function notes(m) {
 /** Returns the HTML text for a layout model. */
 export function toHtml(m) {
   const gate = new Set(m.gates.map((g) => g.col));
-  const table = `<table>${colgroup(m.days.length)}${head(m, gate)}${body(m, gate)}</table>`;
+  // A fixed width keeps every column at its colgroup width, so the sticky offsets match in a narrow window too.
+  const width = WIDTHS.reduce((x, y) => x + y, 0) + DAY * m.days.length;
+  const table = `<table style="width:${width}px">${colgroup(m.days.length)}${head(m, gate)}${body(m, gate)}</table>`;
   return `<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`
     + `<title>${esc(m.title.split("    |    ")[0])}</title><style>${CSS}</style></head>`
     + `<body><div class="wrap">${table}</div>${notes(m)}</body></html>\n`;

@@ -5,11 +5,17 @@ import { zip } from "./wg-zip.mjs";
 
 const NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const NSR = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-const FONT = "맑은 고딕";
+// Hangul is set in Noto Sans KR and everything else in Noto Sans. A cell that mixes the two holds rich-text runs,
+// one font per run; spaces and punctuation stay in the run they follow. Noto Sans has no geometric shapes, so ◆
+// goes with Noto Sans KR, which has them.
+export const KR = "Noto Sans KR";
+export const LATIN = "Noto Sans";
+const HANGUL = /[\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7A3\uD7B0-\uD7FF\u25A0-\u25FF]/;
+const NEUTRAL = /[\s.,·:;()[\]{}\-/|'"!?~]/;
 const GRID = "D5D8DC";
 const GATE = "C0392B";
 const FONTS = {
-  base: { sz: 11 },
+  base: { sz: 11, name: LATIN },
   title: { b: 1, sz: 13, color: "FFFFFF" },
   head: { b: 1, sz: 10, color: "FFFFFF" },
   day: { b: 1, sz: 8, color: "2C3E50" },
@@ -24,7 +30,7 @@ const DAY_WIDTH = 4.8;
 const ALIGN = ["center", "left", "center", "center", "left", "center", "center", "center"];
 
 // Control characters other than tab and new line are not allowed in XML 1.0.
-const clean = (s) => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g, "");
+const clean = (s) => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "");
 export const esc = (s) => clean(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 export function colName(i) {
@@ -33,10 +39,28 @@ export function colName(i) {
   return s;
 }
 
-/** Sheet names may not hold []:*?/\ and stop at 31 characters. */
+/** Splits text into runs of one font: [{ text, kr }]. Text with no letters is one Noto Sans run. */
+export function scriptRuns(text) {
+  const runs = [];
+  let lead = "";
+  for (const ch of String(text)) {
+    const last = runs[runs.length - 1];
+    if (NEUTRAL.test(ch)) {
+      if (last) last.text += ch;
+      else lead += ch;
+      continue;
+    }
+    const kr = HANGUL.test(ch);
+    if (last && last.kr === kr) last.text += ch;
+    else runs.push({ text: (last ? "" : lead) + ch, kr });
+  }
+  return runs.length ? runs : [{ text: lead, kr: false }];
+}
+
+/** Sheet names may not hold []:*?/\, start or end with ', be History, or pass 31 characters. */
 export function sheetName(s) {
-  const t = clean(s).replace(/[[\]:*?/\\]/g, " ").trim().slice(0, 31);
-  return t || "WBS";
+  const t = Array.from(clean(s).replace(/[[\]:*?/\\]/g, " ").trim().replace(/^'+|'+$/g, "").trim()).slice(0, 31).join("").trim();
+  return !t || /^history$/i.test(t) ? "WBS" : t;
 }
 
 /** Collects the distinct fonts, fills, borders and cell formats a sheet uses. */
@@ -54,12 +78,12 @@ class Styles {
     if (i < 0) i = list.push(item) - 1;
     return i;
   }
-  /** spec: { font, fill, border: { l, r, t, b }, h, wrap } */
-  id(spec) {
-    const key = JSON.stringify(spec);
+  /** spec: { font, fill, border: { l, r, t, b }, h, wrap }; kr picks Noto Sans KR for the cell font. */
+  id(spec, kr) {
+    const key = JSON.stringify([spec, kr]);
     if (this.seen.has(key)) return this.seen.get(key);
     const xf = {
-      font: this.pick(this.fonts, FONTS[spec.font] ?? FONTS.base),
+      font: this.pick(this.fonts, fontOf(spec, kr)),
       fill: spec.fill ? this.pick(this.fills, spec.fill) : 0,
       border: this.pick(this.borders, spec.border ?? {}),
       h: spec.h ?? "",
@@ -71,13 +95,19 @@ class Styles {
   }
 }
 
+export const fontOf = (spec, kr) => ({ ...(FONTS[spec.font] ?? FONTS.base), name: kr ? KR : LATIN });
+
 const BORDER = { thin: ["thin", GRID], gate: ["medium", GATE], dotted: ["dotted", "7F8C8D"] };
 
-function fontXml(f) {
+// The inside of <font> (cell fonts, name) and of <rPr> (rich-text runs, rFont): same children, other name tag.
+function fontBody(f, nameTag) {
   const b = f.b ? "<b/>" : "";
-  const color = f.color ? `<color rgb="FF${f.color}"/>` : `<color theme="1"/>`;
-  return `<font>${b}<sz val="${f.sz}"/>${color}<name val="${FONT}"/><family val="3"/><charset val="129"/></font>`;
+  const color = `<color rgb="FF${f.color ?? "000000"}"/>`;
+  const charset = f.name === KR ? `<charset val="129"/>` : "";
+  return `${b}<sz val="${f.sz}"/>${color}<${nameTag} val="${f.name}"/><family val="2"/>${charset}`;
 }
+
+const fontXml = (f) => `<font>${fontBody(f, "name")}</font>`;
 
 function fillXml(f) {
   if (f === "none" || f === "gray125") return `<fill><patternFill patternType="${f}"/></fill>`;
@@ -118,26 +148,33 @@ class Sheet {
     this.merges = [];
     this.heights = new Map();
     this.strings = [];
+    this.refs = 0;
     this.stringIndex = new Map();
     this.styles = new Styles();
   }
   put(r, c, value, spec) {
     if (!this.rows.has(r)) this.rows.set(r, new Map());
-    this.rows.get(r).set(c, { value, s: this.styles.id(spec) });
+    const runs = typeof value === "string" && value ? scriptRuns(clean(value)) : [{ text: "", kr: false }];
+    const kr = runs.some((x) => x.kr);
+    const mixed = runs.length > 1 ? runs.map((x) => ({ ...x, font: fontOf(spec, x.kr) })) : null;
+    this.rows.get(r).set(c, { value, s: this.styles.id(spec, kr), runs: mixed });
   }
   merge(r1, c1, r2, c2) {
     this.merges.push(`${colName(c1)}${r1}:${colName(c2)}${r2}`);
   }
-  sst(text) {
+  /** A shared string; mixed runs carry their fonts, so the same text in another cell font is another entry. */
+  sst(text, runs) {
     const t = clean(text);
-    if (!this.stringIndex.has(t)) this.stringIndex.set(t, this.strings.push(t) - 1);
-    return this.stringIndex.get(t);
+    const key = runs ? JSON.stringify(runs) : t;
+    this.refs++;
+    if (!this.stringIndex.has(key)) this.stringIndex.set(key, this.strings.push({ text: t, runs }) - 1);
+    return this.stringIndex.get(key);
   }
   cellXml(r, c, cell) {
     const ref = `${colName(c)}${r}`;
     if (typeof cell.value === "number") return `<c r="${ref}" s="${cell.s}"><v>${cell.value}</v></c>`;
     if (cell.value === "" || cell.value === null || cell.value === undefined) return `<c r="${ref}" s="${cell.s}"/>`;
-    return `<c r="${ref}" s="${cell.s}" t="s"><v>${this.sst(cell.value)}</v></c>`;
+    return `<c r="${ref}" s="${cell.s}" t="s"><v>${this.sst(cell.value, cell.runs)}</v></c>`;
   }
   dataXml() {
     const out = [];
@@ -239,9 +276,10 @@ function sheetXml(sh, last, lastRow) {
     + `<pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
 }
 
-function sstXml(strings) {
-  const si = strings.map((t) => `<si><t xml:space="preserve">${esc(t)}</t></si>`).join("");
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<sst xmlns="${NS}" count="${strings.length}" uniqueCount="${strings.length}">${si}</sst>`;
+function sstXml(strings, refs) {
+  const run = (x) => `<r><rPr>${fontBody(x.font, "rFont")}</rPr><t xml:space="preserve">${esc(x.text)}</t></r>`;
+  const si = strings.map((s) => (s.runs ? `<si>${s.runs.map(run).join("")}</si>` : `<si><t xml:space="preserve">${esc(s.text)}</t></si>`)).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<sst xmlns="${NS}" count="${refs}" uniqueCount="${strings.length}">${si}</sst>`;
 }
 
 function packageParts(name) {
@@ -281,6 +319,6 @@ export function toXlsx(m) {
     { name: "xl/_rels/workbook.xml.rels", data: p.wbRels },
     { name: "xl/worksheets/sheet1.xml", data: sheet },
     { name: "xl/styles.xml", data: stylesXml(sh.styles) },
-    { name: "xl/sharedStrings.xml", data: sstXml(sh.strings) },
+    { name: "xl/sharedStrings.xml", data: sstXml(sh.strings, sh.refs) },
   ]);
 }
