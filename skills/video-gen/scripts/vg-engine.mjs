@@ -2,6 +2,8 @@
 // encoder (WASM) writes the video: no Chrome, no ffmpeg, no native module, the same on every OS.
 // Fonts are the bundled Noto Sans and Noto Sans KR; text asks for Noto Sans first, so Latin letters, digits and
 // symbols use it and Hangul falls through to Noto Sans KR.
+// The encoder's Emscripten glue registers process handlers for uncaught exceptions and unhandled rejections when it
+// is required; the CLI handles its own rejections, so they never reach those handlers.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -57,8 +59,16 @@ export async function mp4Writer({ width, height, fps, quality = 20, speed = 5 })
       enc.delete();
       return { bytes, frames: count };
     },
+    // Deleting an unfinished encoder throws inside the WASM glue; finish it first and swallow what it throws, so
+    // the caller's own error is the one reported.
     abort() {
-      enc.delete();
+      for (const step of [() => enc.finalize(), () => enc.FS.unlink(enc.outputFilename), () => enc.delete()]) {
+        try {
+          step();
+        } catch {
+          // already finished, or never started
+        }
+      }
     },
   };
 }

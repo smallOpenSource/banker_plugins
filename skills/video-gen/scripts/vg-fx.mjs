@@ -77,10 +77,30 @@ export function stripes(t, dur, n = 6) {
   });
 }
 
-/** The value a counter shows at t: from -> to over [start, start + dur], whole numbers, eased out. */
-export function counter(t, from, to, start, dur) {
-  return Math.round(lerp(from, to, ease.outExpo(clamp((t - start) / dur))));
+/** Decimal places a list of numbers is written with (the most any of them has), at most 3. */
+export function decimals(values) {
+  return values.reduce((d, v) => {
+    for (let k = 0; k < 3; k++) if (Math.abs(Math.round(v * 10 ** k) - v * 10 ** k) < 1e-9) return Math.max(d, k);
+    return 3;
+  }, 0);
 }
 
-/** "1234567" -> "1,234,567" (negative numbers keep their sign). */
-export const grouped = (n) => String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+/** The value a counter shows at t: from -> to over [start, start + dur], eased out, rounded to d places. */
+export function counter(t, from, to, start, dur, d = 0) {
+  const p = ease.outExpo(clamp((t - start) / dur));
+  if (p >= 1) return to;
+  return Math.round(lerp(from, to, p) * 10 ** d) / 10 ** d;
+}
+
+/** 1234567.5 with d = 1 -> "1,234,567.5": thousands grouped, exactly d decimal places. */
+export function grouped(n, d = 0) {
+  const [int, frac] = Math.abs(n).toFixed(d).split(".");
+  const sign = n < 0 && Number(Math.abs(n).toFixed(d)) !== 0 ? "-" : "";
+  return `${sign}${int.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${frac ? `.${frac}` : ""}`;
+}
+
+/** Spreads n staggered starts over the time left before `end`: the gap shrinks so the last one still finishes. */
+export function fitGap(n, wanted, from, dur, end) {
+  if (n <= 1) return wanted;
+  return Math.max(0, Math.min(wanted, (end - from - dur) / (n - 1)));
+}

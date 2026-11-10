@@ -17,7 +17,7 @@ function columns(s) {
 function tableRows(s) {
   const head = Array.isArray(s.header) ? s.header.map(str) : [];
   const rows = (Array.isArray(s.rows) ? s.rows : []).map((r) => (Array.isArray(r) ? r.map(str) : []));
-  return rows.map((r) => (head.length ? r.map((c, i) => (head[i] ? `${head[i]} ${c}` : c)) : r).filter(Boolean).join(" | "));
+  return rows.map((r) => (head.length ? r.map((c, i) => (c && head[i] ? `${head[i]} ${c}` : c)) : r).filter(Boolean).join(" | ")).filter(Boolean);
 }
 
 const bulletsScene = (title, items) => ({ type: "bullets", title, bullets: items, duration: Math.min(20, 2 + 1.2 * items.length) });
@@ -51,6 +51,9 @@ function themeOf(t) {
   return { bg: pick("primary", "1F3864"), accent: pick("accent", "2E86C1"), ink: pick("dark", "1B2631"), panel: pick("light", "F4F6F7"), fg: "FFFFFF", muted: "D6EAF8" };
 }
 
+const blank = (x) => !String(x ?? "").trim();
+const emptyScene = (s) => ({ bullets: () => !s.bullets.length, quote: () => blank(s.quote), title: () => blank(s.title) }[s.type]?.() ?? false);
+
 /** Returns { scenes: <scene file object>, skipped: [notes] }. base is the deck's folder (image paths). */
 export function deckToScenes(deck, base = process.cwd()) {
   const d = obj(deck);
@@ -58,8 +61,12 @@ export function deckToScenes(deck, base = process.cwd()) {
   const scenes = (Array.isArray(d.slides) ? d.slides : []).map((raw, i) => {
     const s = obj(raw);
     const f = Object.prototype.hasOwnProperty.call(MAP, s.type) ? MAP[s.type] : null;
-    if (!f) skipped.push(`slides[${i}]: 알 수 없는 type(${str(s.type)}) 은 뺌`);
-    return f ? { ...f(s, skipped, i, base), transition: i ? "fade" : "cut" } : null;
+    if (!f) {
+      skipped.push(`slides[${i}]: 알 수 없는 type(${str(s.type)}) 은 뺌`);
+      return null;
+    }
+    const scene = { ...f(s, skipped, i, base), transition: i ? "fade" : "cut" };
+    return emptyScene(scene) ? (skipped.push(`slides[${i}]: 영상에 쓸 내용이 없어 뺌`), null) : scene;
   }).filter(Boolean);
   return { scenes: { title: str(d.title), size: "1280x720", fps: 30, theme: themeOf(obj(d.theme)), scenes }, skipped };
 }

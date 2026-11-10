@@ -47,6 +47,8 @@ function drawTransition(P, model, tr, s, t) {
 
 /** Draws the frame at global time T. */
 export function drawFrame(P, model, T) {
+  // A clean frame every time: nothing of the frame before may show through (a still and a video frame match).
+  P.clear(model.theme.bg);
   const { k, s, t } = sceneAt(model, T);
   const tr = transitionOf(model, k, t);
   if (tr) drawTransition(P, model, tr, s, t);
@@ -87,10 +89,52 @@ export function renderMp4(model, { quality = 20, speed = 5, onFrame } = {}) {
         if (onFrame) onFrame(i + 1, model.frames);
       }
     } catch (e) {
-      out.abort();
+      try {
+        out.abort();
+      } catch {
+        // keep the error that stopped the render
+      }
       throw e;
     }
     return out.finish();
+  });
+}
+
+/**
+ * Decodes every image of the timeline once with the engine, so a file that only looks like an image fails at
+ * check time rather than minutes into a render. Returns error lines (empty when all decode).
+ */
+export async function probeImages(model) {
+  const { CK } = await loadEngine();
+  const errors = [];
+  model.scenes.forEach((s, i) => {
+    if (!s.image) return;
+    const im = CK.MakeImageFromEncoded(s.image.data);
+    if (!im || !(im.width() > 0)) errors.push(`scenes[${i}]: 그림을 풀지 못함 (${s.image.file})`);
+    if (im) im.delete();
+  });
+  return errors;
+}
+
+/** Text that will not fit its place, measured with the bundled fonts. Returns warning lines. */
+export function layoutWarnings(model) {
+  return withPainter(model, ({ P }) => {
+    const out = [];
+    const m = Math.round(P.W * 0.08);
+    model.scenes.forEach((s, i) => {
+      const w = `scenes[${i}]`;
+      if (s.type === "kinetic") {
+        const size = (s.lines.length > 3 ? 56 : 76) * P.u;
+        if (s.lines.some((l) => P.measure(l, { size, bold: true, width: 1e6 }).w > P.W * 0.92)) out.push(`${w}: 줄이 화면 너비를 넘음(줄을 나누십시오)`);
+      }
+      const head = s.title ? P.measure(s.title, { size: 44 * P.u, bold: true, width: P.W - 2 * m }).h : 0;
+      if (["bullets", "chart"].includes(s.type) && head > 44 * P.u * 1.25 * 1.5) out.push(`${w}: 제목이 두 줄 이상이라 본문이 좁아짐`);
+      if (s.type === "bullets") {
+        const body = s.bullets.reduce((h, b) => h + P.measure(b, { size: 32 * P.u, width: P.W - 2 * m - 34 * P.u }).h + 16 * P.u, 0);
+        if (m * 0.8 + head + 40 * P.u + body > P.H - m * 0.5) out.push(`${w}: 글머리가 화면 아래로 넘침`);
+      }
+    });
+    return out;
   });
 }
 

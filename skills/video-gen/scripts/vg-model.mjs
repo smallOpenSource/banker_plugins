@@ -8,7 +8,7 @@ export const TRANSITIONS = ["cut", "fade", "wipe", "stripes"];
 export const SIZES = { "1280x720": [1280, 720], "1920x1080": [1920, 1080], "1080x1920": [1080, 1920], "1080x1080": [1080, 1080] };
 export const THEME = { bg: "1F3864", fg: "FFFFFF", accent: "2E86C1", muted: "D6EAF8", panel: "F4F6F7", ink: "1B2631" };
 export const PALETTE = ["2E86C1", "E67E22", "27AE60", "9B59B6", "E74C3C", "16A085", "F1C40F", "34495E"];
-export const LIMITS = { duration: 600, scene: 60, sceneMin: 0.5, transition: 1.5, bullets: 7, lines: 6, credits: 60, points: 24 };
+export const LIMITS = { duration: 600, scene: 60, sceneMin: 0.5, bullets: 7, lines: 6, credits: 60, points: 24, value: 1e15, side: 16384, pixels: 50e6 };
 const HEX = /^#?[0-9A-Fa-f]{6}$/;
 const MAX_IMAGE = 20 * 1024 * 1024;
 
@@ -16,7 +16,8 @@ const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 export const hex = (c) => String(c).replace(/^#/, "").toUpperCase();
 
 // Drawn text has no use for control characters; a copied soft line break (U+000B) becomes a line break.
-export const cleanText = (s) => s.replace(/\u{B}/gu, "\n").replace(/[\u{0}-\u{8}\u{C}\u{E}-\u{1F}\u{FFFE}\u{FFFF}]/gu, "").replace(/[\u{D800}-\u{DFFF}]/gu, "");
+// Text is put in NFC, so Hangul copied from macOS (jamo apart) draws as syllables.
+export const cleanText = (s) => s.normalize("NFC").replace(/\u{B}/gu, "\n").replace(/[\u{0}-\u{8}\u{C}\u{E}-\u{1F}\u{FFFE}\u{FFFF}]/gu, "").replace(/[\u{D800}-\u{DFFF}]/gu, "");
 
 function text(v, what, ctx) {
   if (v === undefined || v === null) return "";
@@ -34,7 +35,9 @@ function list(v, what, ctx) {
 }
 
 function texts(v, what, ctx, max) {
-  const out = list(v, what, ctx).map((x, i) => text(x, `${what}[${i}]`, ctx));
+  const all = list(v, what, ctx).map((x, i) => text(x, `${what}[${i}]`, ctx));
+  const out = all.filter((x) => x.trim());
+  if (out.length < all.length) ctx.warnings.push(`${what}: 빈 항목은 뺌`);
   if (out.length > max) ctx.warnings.push(`${what}: ${max}개를 넘음(화면에 다 들어가지 않을 수 있음)`);
   return out;
 }
@@ -68,6 +71,7 @@ function chartOf(raw, what, ctx) {
   const series = list(c.series, `${what}.series`, ctx).map(obj).map((s, k) => {
     const values = list(s.values, `${what}.series[${k}].values`, ctx);
     if (values.some((v) => typeof v !== "number" || !Number.isFinite(v))) ctx.errors.push(`${what}: 계열 값은 숫자만(null 이나 글자 안 됨)`);
+    else if (values.some((v) => Math.abs(v) > LIMITS.value)) ctx.errors.push(`${what}: 계열 값은 절댓값 ${LIMITS.value} 이하`);
     if (values.length !== labels.length) ctx.errors.push(`${what}: 계열마다 값 수가 labels 수와 같아야 함`);
     return { name: text(s.name, `${what}.series[${k}].name`, ctx), values: values.map((v) => (typeof v === "number" ? v : 0)) };
   });
@@ -75,12 +79,49 @@ function chartOf(raw, what, ctx) {
   return { kind, labels, series, unit: text(c.unit, `${what}.unit`, ctx) };
 }
 
-const IMAGE_TYPES = [
-  { mime: "image/png", magic: [0x89, 0x50, 0x4e, 0x47] },
-  { mime: "image/jpeg", magic: [0xff, 0xd8, 0xff] },
-  { mime: "image/gif", magic: [0x47, 0x49, 0x46, 0x38] },
-  { mime: "image/webp", magic: [0x52, 0x49, 0x46, 0x46] },
-];
+/** Pixel size and whether the file ends as its format ends, from the bytes; null when it is no PNG/JPEG/GIF/WebP. */
+export function imageInfo(b) {
+  const at = (sig, off = 0) => sig.every((x, i) => b[off + i] === x);
+  if (at([0x89, 0x50, 0x4e, 0x47]) && b.length > 24) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), whole: b.includes("IEND", Math.max(0, b.length - 16)) };
+  if (at([0x47, 0x49, 0x46, 0x38]) && b.length > 10) return { w: b.readUInt16LE(6), h: b.readUInt16LE(8), whole: b.lastIndexOf(0x3b) >= b.length - 16 };
+  if (at([0xff, 0xd8, 0xff])) return { ...jpegSize(b), whole: b.lastIndexOf(Buffer.from([0xff, 0xd9])) >= Math.max(0, b.length - 1024) };
+  if (at([0x52, 0x49, 0x46, 0x46]) && b.length > 30 && b.toString("latin1", 8, 12) === "WEBP") return { ...webpSize(b), whole: b.readUInt32LE(4) + 8 <= b.length };
+  return null;
+}
+
+function jpegSize(b) {
+  for (let i = 2; i + 9 < b.length;) {
+    if (b[i] !== 0xff) break;
+    if (b[i + 1] === 0xff) {
+      i++;
+      continue;
+    }
+    const marker = b[i + 1];
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return { w: b.readUInt16BE(i + 7), h: b.readUInt16BE(i + 5) };
+    const len = b.readUInt16BE(i + 2);
+    if (len < 2) break;
+    i += 2 + len;
+  }
+  return { w: 0, h: 0 };
+}
+
+function webpSize(b) {
+  const kind = b.toString("latin1", 12, 16);
+  if (kind === "VP8X") return { w: 1 + b.readUIntLE(24, 3), h: 1 + b.readUIntLE(27, 3) };
+  if (kind === "VP8L") {
+    const v = b.readUInt32LE(21);
+    return { w: 1 + (v & 0x3fff), h: 1 + ((v >> 14) & 0x3fff) };
+  }
+  return { w: b.readUInt16LE(26) & 0x3fff, h: b.readUInt16LE(28) & 0x3fff };
+}
+
+function checkImage(data) {
+  const info = imageInfo(data);
+  if (!info) throw new Error("PNG, JPEG, GIF, WebP 가 아님");
+  if (!(info.w > 0 && info.h > 0)) throw new Error("그림 크기를 읽지 못함");
+  if (info.w > LIMITS.side || info.h > LIMITS.side || info.w * info.h > LIMITS.pixels) throw new Error(`너무 큼(${info.w}x${info.h}, 한 변 ${LIMITS.side}, ${LIMITS.pixels / 1e6}MP 까지)`);
+  if (!info.whole) throw new Error("파일이 잘림(끝 표지가 없음)");
+}
 
 function imageOf(raw, what, ctx) {
   const p = text(raw, what, ctx);
@@ -95,12 +136,19 @@ function imageOf(raw, what, ctx) {
     if (!st.isFile()) throw new Error("보통 파일이 아님");
     if (st.size > MAX_IMAGE) throw new Error("20MB 를 넘음");
     const data = readFileSync(file);
-    if (!IMAGE_TYPES.some((x) => x.magic.every((b, i) => data[i] === b))) throw new Error("PNG, JPEG, GIF, WebP 가 아님");
+    checkImage(data);
     return { file, data };
   } catch (e) {
     ctx.errors.push(`${what}: 이미지를 읽지 못함 (${file}: ${e.message})`);
     return null;
   }
+}
+
+function motionOf(v, what, ctx) {
+  if (v === undefined) return "zoom";
+  if (v === "zoom" || v === "pan") return v;
+  ctx.errors.push(`${what}: zoom, pan 중 하나`);
+  return "zoom";
 }
 
 const FIELDS = {
@@ -114,7 +162,7 @@ const FIELDS = {
   }),
   lowerthird: (s, w, c) => ({ name: text(s.name, `${w}.name`, c), role: text(s.role, `${w}.role`, c), image: s.image === undefined ? null : imageOf(s.image, `${w}.image`, c) }),
   quote: (s, w, c) => ({ quote: text(s.quote, `${w}.quote`, c), by: text(s.by, `${w}.by`, c) }),
-  image: (s, w, c) => ({ image: imageOf(s.image, `${w}.image`, c), caption: text(s.caption, `${w}.caption`, c), motion: s.motion === "pan" ? "pan" : "zoom" }),
+  image: (s, w, c) => ({ image: imageOf(s.image, `${w}.image`, c), caption: text(s.caption, `${w}.caption`, c), motion: motionOf(s.motion, `${w}.motion`, c) }),
   credits: (s, w, c) => ({ title: text(s.title, `${w}.title`, c), lines: texts(s.lines, `${w}.lines`, c, LIMITS.credits) }),
 };
 
@@ -133,9 +181,16 @@ function sceneOf(raw, i, ctx) {
   if (!TRANSITIONS.includes(transition)) ctx.errors.push(`${what}.transition 은 ${TRANSITIONS.join(", ")} 중 하나`);
   const scene = { type, duration, transition, ...FIELDS[type](s, what, ctx) };
   const need = NEEDS[type];
-  const v = need && scene[need];
-  if (need && (!v || (Array.isArray(v) && !v.length))) ctx.errors.push(`${what}: ${need} 가 필요함`);
+  if (need && isEmpty(scene[need])) ctx.errors.push(`${what}: ${need} 가 필요함(빈 글 안 됨)`);
   return scene;
+}
+
+/** Empty: missing, blank text, or a list with no non-blank text (a chart or image object is never empty here). */
+function isEmpty(v) {
+  if (v === null || v === undefined) return true;
+  if (typeof v === "string") return !v.trim();
+  if (Array.isArray(v)) return !v.some((x) => typeof x === "string" && x.trim());
+  return false;
 }
 
 /** Start times: each scene starts where the one before ends. */

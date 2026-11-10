@@ -2,22 +2,57 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { CATALOG } from "./vg-catalog.mjs";
 import { deckToScenes } from "./vg-deck.mjs";
-import { counter, ease, grouped, rand, stagger, stripes, track } from "./vg-fx.mjs";
-import { cleanText, readScenes } from "./vg-model.mjs";
-import { renderMp4, renderStill, sceneAt } from "./vg-render.mjs";
+import { Painter } from "./vg-draw.mjs";
+import { loadEngine } from "./vg-engine.mjs";
+import { counter, decimals, ease, fitGap, grouped, rand, stagger, stripes, track } from "./vg-fx.mjs";
+import { cleanText, imageInfo, readScenes } from "./vg-model.mjs";
+import { drawFrame, probeImages, renderMp4, renderStill, sceneAt } from "./vg-render.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VENDOR = join(HERE, "..", "vendor");
 const CLI = join(HERE, "video-gen.mjs");
 const example = () => JSON.parse(readFileSync(join(HERE, "..", "assets", "example.json"), "utf8"));
 const run = (args, cwd) => spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", timeout: 120000 });
+/** A w x h RGBA PNG: fully transparent, with an opaque yellow square in the middle. */
+function png(w, h) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (b) => {
+    let c = 0xffffffff;
+    for (const x of b) c = crcTable[(c ^ x) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(crc(td));
+    return Buffer.concat([len, td, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const raw = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = y * (w * 4 + 1) + 1 + x * 4;
+    if (Math.abs(x - w / 2) < w / 6 && Math.abs(y - h / 2) < h / 6) raw.set([255, 220, 0, 255], o);
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
 const sha = (f) => createHash("sha256").update(readFileSync(join(VENDOR, f))).digest("hex");
 
 test("the vendored engine and fonts are the recorded files", () => {
@@ -46,6 +81,11 @@ test("motion helpers are pure functions of time", () => {
   assert.equal(counter(10, 1180, 1284, 0, 1), 1284);
   assert.equal(grouped(1234567), "1,234,567");
   assert.equal(grouped(-1234), "-1,234");
+  assert.equal(grouped(2.75, 2), "2.75");
+  assert.equal(grouped(1234.5, 1), "1,234.5");
+  assert.equal(decimals([1.5, 2.75, 0.4]), 2);
+  assert.equal(counter(9, 0, 3.5, 0, 1, 1), 3.5, "the last value is exactly `to`");
+  assert.equal(fitGap(10, 0.35, 0.6, 0.6, 2), (2 - 0.6 - 0.6) / 9, "gaps shrink so the last item finishes in time");
   const mid = stripes(0.5, 1, 6);
   assert.ok(mid.some(([a, b]) => b > a), "stripes cover the frame in the middle");
   assert.deepEqual(stripes(1, 1, 6).map(([a, b]) => b - a), [0, 0, 0, 0, 0, 0], "and are gone at the end");
@@ -78,6 +118,32 @@ test("scene errors", () => {
   assert.deepEqual(readScenes([], HERE).errors, ["scene 파일은 JSON 객체여야 함"]);
 });
 
+test("images are checked by their bytes: kind, size, a cut-off end", () => {
+  const ok = png(40, 20);
+  assert.deepEqual(imageInfo(ok), { w: 40, h: 20, whole: true });
+  assert.equal(imageInfo(Buffer.from("RIFF\0\0\0\0WAVEfmt ".padEnd(40, " "))), null, "RIFF that is not WebP");
+  assert.equal(imageInfo(ok.subarray(0, 60)).whole, false, "a PNG cut short");
+  const big = Buffer.from(ok);
+  big.writeUInt32BE(24000, 16);
+  big.writeUInt32BE(24000, 20);
+  const dir = mkdtempSync(join(tmpdir(), "video-gen-"));
+  try {
+    writeFileSync(join(dir, "cut.png"), ok.subarray(0, 60));
+    writeFileSync(join(dir, "big.png"), big);
+    const errs = (f) => readScenes({ scenes: [{ type: "image", image: f }] }, dir).errors.join();
+    assert.match(errs("cut.png"), /잘림/);
+    assert.match(errs("big.png"), /너무 큼/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("blank text is not content; NFD Hangul is put in NFC", () => {
+  const errs = readScenes({ scenes: [{ type: "kinetic", lines: ["", " "] }, { type: "quote", quote: " " }, { type: "image", image: "a.png", motion: "Pan" }] }, HERE).errors.join("\n");
+  for (const want of ["lines 가 필요함", "quote 가 필요함", "zoom, pan"]) assert.ok(errs.includes(want), `missing: ${want}\n${errs}`);
+  assert.equal(cleanText("\u{1112}\u{1161}\u{11AB}"), "한");
+});
+
 test("a wide-pptx deck becomes scenes, nothing invented", () => {
   const deck = JSON.parse(readFileSync(join(HERE, "..", "..", "wide-pptx", "assets", "example.json"), "utf8"));
   const { scenes, skipped } = deckToScenes(deck, HERE);
@@ -86,6 +152,11 @@ test("a wide-pptx deck becomes scenes, nothing invented", () => {
   assert.equal(scenes.theme.bg, "1F3864");
   const { errors } = readScenes(scenes, HERE);
   assert.deepEqual(errors, [], "the converted file checks clean");
+  const edge = { title: "t", slides: [{ type: "bullets", title: "빈" }, { type: "two", title: "빈 2단" }, { type: "table", title: "머리만", header: ["a", "b"], rows: [["", ""]] }, { type: "quote", quote: "" }, { type: "title", title: "남음" }] };
+  const r = deckToScenes(edge, HERE);
+  assert.equal(r.scenes.scenes.length, 1);
+  assert.equal(r.skipped.length, 4);
+  assert.deepEqual(readScenes(r.scenes, HERE).errors, []);
 });
 
 test("the catalog names a built-in kind or a banker skill for every entry", () => {
@@ -106,6 +177,49 @@ test("stills are deterministic PNGs and a short render is a valid H.264 MP4", as
   assert.ok(bytes.includes(Buffer.from("avc1")), "H.264 track");
 });
 
+test("every frame starts clean: a frame drawn after another equals the same frame drawn fresh", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "video-gen-"));
+  try {
+    writeFileSync(join(dir, "alpha.png"), png(64, 36));
+    const doc = { fps: 12, scenes: [{ type: "title", duration: 1, title: "PREVIOUS", transition: "cut" }, { type: "lowerthird", duration: 2, name: "홍길동", role: "팀장", image: "alpha.png", transition: "cut" }] };
+    const { model } = readScenes(doc, dir);
+    const { CK, fonts } = await loadEngine();
+    const grab = (T, before) => {
+      const s = CK.MakeSurface(model.width, model.height);
+      const P = new Painter(CK, fonts, s.getCanvas(), model.width, model.height);
+      if (before !== undefined) drawFrame(P, model, before);
+      drawFrame(P, model, T);
+      const img = s.makeImageSnapshot();
+      const px = Buffer.from(img.readPixels(0, 0, { width: model.width, height: model.height, colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB }));
+      img.delete();
+      P.free();
+      s.delete();
+      return px;
+    };
+    assert.ok(grab(1.5, 0.9).equals(grab(1.5)));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("short scenes still show everything before they end; decimals are kept", async () => {
+  const doc = { fps: 12, scenes: [
+    { type: "bullets", duration: 2, title: "짧음", bullets: ["하나", "둘", "셋", "넷", "다섯"], transition: "cut" },
+    { type: "counter", duration: 1, label: "평균", from: 0, to: 3.5, unit: "점", transition: "cut" },
+  ] };
+  const { model } = readScenes(doc, HERE);
+  const end = await renderStill(model, 1.95);
+  const mid = await renderStill(model, 1.0);
+  assert.ok(!end.equals(mid), "the last bullet arrived by the end");
+  assert.deepEqual(await probeImages(model), []);
+});
+
+test("a render that fails reports its own error, not the encoder's", async () => {
+  const { model } = readScenes({ fps: 12, scenes: [{ type: "title", duration: 0.5, title: "t" }] }, HERE);
+  const broken = { ...model, scenes: [{ ...model.scenes[0], type: "nope" }] };
+  await assert.rejects(renderMp4(broken), (e) => !/abort\(/.test(e.message));
+});
+
 test("the CLI checks outputs before rendering and never replaces a file without --force", () => {
   const dir = mkdtempSync(join(tmpdir(), "video-gen-"));
   try {
@@ -120,6 +234,14 @@ test("the CLI checks outputs before rendering and never replaces a file without 
     assert.equal(run(["render", "--scene", "s.json", "--out", "v.mov"], dir).status, 2);
     assert.equal(run(["render", "--scene", "s.json", "--out", "w.mp4", "--quality", "5"], dir).status, 2);
     assert.deepEqual(readdirSync(dir).sort(), ["s.json", "v.mp4"]);
+    const st = run(["still", "--scene", "s.json", "--at", "0.2", "--out", "f.png"], dir);
+    assert.match(st.stdout, /^FRAME 2 /m);
+    assert.equal(run(["still", "--scene", "s.json", "--at", "9", "--out", "g.png"], dir).status, 2, "past the end");
+    if (process.platform !== "win32") {
+      symlinkSync(join(HERE, ".."), join(dir, "link"));
+      const viaLink = spawnSync(process.execPath, [join(dir, "link", "scripts", "video-gen.mjs"), "list"], { encoding: "utf8" });
+      assert.match(viaLink.stdout, /motion-graphic-make/, "a linked path runs the CLI");
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

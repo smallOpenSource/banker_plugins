@@ -19,13 +19,13 @@
  * Exit status: 0 done, 1 the scene file has errors, 2 usage error or a file that could not be read or written.
  */
 import { randomBytes } from "node:crypto";
-import { constants, copyFileSync, existsSync, linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, linkSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { catalogText } from "./vg-catalog.mjs";
 import { deckToScenes } from "./vg-deck.mjs";
 import { readScenes, sceneBase } from "./vg-model.mjs";
-import { renderMp4, renderStill } from "./vg-render.mjs";
+import { layoutWarnings, probeImages, renderMp4, renderStill } from "./vg-render.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXAMPLE = join(HERE, "..", "assets", "example.json");
@@ -69,11 +69,16 @@ function readJson(file, what) {
   }
 }
 
-function loadScenes(args) {
+/** Reads and checks the scene file, decodes its images and measures its text; null when it has errors. */
+async function loadScenes(args) {
   const res = readScenes(readJson(args.scene, "scene"), sceneBase(args.scene));
-  for (const w of res.warnings) process.stderr.write(`경고: ${w}\n`);
-  for (const e of res.errors) process.stderr.write(`오류: ${e}\n`);
-  return res.model;
+  const errors = [...res.errors];
+  const warnings = [...res.warnings];
+  if (res.model) errors.push(...(await probeImages(res.model)));
+  if (res.model && !errors.length) warnings.push(...(await layoutWarnings(res.model)));
+  for (const w of warnings) process.stderr.write(`경고: ${w}\n`);
+  for (const e of errors) process.stderr.write(`오류: ${e}\n`);
+  return errors.length ? null : res.model;
 }
 
 const summary = (m) => `장면 ${m.scenes.length}, ${m.duration.toFixed(1)}초, ${m.width}x${m.height}, ${m.fps}fps, 프레임 ${m.frames}`;
@@ -84,7 +89,14 @@ function target(args, ext) {
   const p = resolve(args.out);
   if (extname(p).toLowerCase() !== ext) throw new Usage(`--out 은 ${ext} 이어야 함`);
   if (!isDir(dirname(p))) throw new Usage(`출력 폴더가 없음: ${dirname(p)}`);
-  if (existsSync(p) && !args.force) throw new Usage(`이미 있음(덮어쓰려면 --force): ${p}`);
+  let st = null;
+  try {
+    st = lstatSync(p);
+  } catch {
+    // nothing there yet
+  }
+  if (st && !args.force) throw new Usage(`이미 있음(덮어쓰려면 --force): ${p}`);
+  if (st && !st.isFile()) throw new Usage(`보통 파일이 아니라 덮어쓰지 않음: ${p}`);
   return p;
 }
 
@@ -122,7 +134,7 @@ async function cmdRender(args) {
   const dest = target(args, ".mp4");
   const quality = args.quality === undefined ? 20 : Number(args.quality);
   if (!Number.isInteger(quality) || quality < 10 || quality > 51) throw new Usage("--quality 는 10~51 정수(작을수록 고화질)");
-  const model = loadScenes(args);
+  const model = await loadScenes(args);
   if (!model) return 1;
   let last = 0;
   const onFrame = (i, n) => {
@@ -135,18 +147,21 @@ async function cmdRender(args) {
   return 0;
 }
 
+/** A still is a video frame: --at is snapped to the frame grid, and a time past the video is an error. */
 async function cmdStill(args) {
   const dest = target(args, ".png");
   const at = Number(args.at);
   if (!Number.isFinite(at) || at < 0) throw new Usage("--at <초> 는 0 이상 숫자");
-  const model = loadScenes(args);
+  const model = await loadScenes(args);
   if (!model) return 1;
-  process.stdout.write(`WROTE ${writeOut(dest, await renderStill(model, at), args.force)}\n`);
+  if (at >= model.duration) throw new Usage(`--at 은 영상 길이(${model.duration}초)보다 짧아야 함`);
+  const frame = Math.min(model.frames - 1, Math.round(at * model.fps));
+  process.stdout.write(`WROTE ${writeOut(dest, await renderStill(model, frame / model.fps), args.force)}\nFRAME ${frame} (${(frame / model.fps).toFixed(3)}초)\n`);
   return 0;
 }
 
-function cmdCheck(args) {
-  const model = loadScenes(args);
+async function cmdCheck(args) {
+  const model = await loadScenes(args);
   if (!model) return 1;
   process.stdout.write(`OK ${summary(model)}\n`);
   return 0;
@@ -175,7 +190,16 @@ export async function main(argv) {
   return run(parseArgs(rest));
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compared as real paths: Node resolves links in import.meta.url but not in argv[1], so a linked path would
+// otherwise do nothing and exit 0.
+const real = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+};
+if (process.argv[1] && real(process.argv[1]) !== null && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;

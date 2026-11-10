@@ -12,7 +12,7 @@ argument-hint: "[<종류>] [--dir <폴더>] [--scene <scene.json>] [--deck <deck
 
 - **내장 종류는 설치와 내려받기 없이 모든 OS 에서 만든다.** 렌더 엔진(Skia CanvasKit WASM), H.264 MP4 인코더(WASM), 글꼴(Noto Sans, Noto Sans KR)이 모두 `vendor/` 에 있다. Chrome, ffmpeg, 네이티브 모듈, 인터넷을 쓰지 않는다.
 - **글꼴은 한글 Noto Sans KR, 그 밖(영문, 숫자, 기호) Noto Sans 다.** 엔진이 글자마다 고른다. 글꼴이 파일 안에 있어 어느 PC 에서나 같게 나온다.
-- **프레임은 시간만의 함수다.** 같은 장면 파일은 같은 영상이 되고, 어느 시각의 정지 화면(`still`)도 영상의 그 프레임과 같다.
+- **프레임은 시간만의 함수다.** 같은 장면 파일은 같은 영상이 되고, 정지 화면(`still`)은 `--at` 에 가장 가까운 영상 프레임과 같다(출력의 `FRAME` 줄이 그 번호).
 - 사용자가 주지 않은 수치, 이름, 인용을 지어내지 않는다. 모자라면 묻는다. 물을 수 없으면 `[확인 필요]` 로 두고 보고한다.
 - 있는 파일을 덮어쓰지 않는다. 같은 이름이 있으면 묻고, 허락을 받은 뒤에만 `--force` 를 준다.
 
@@ -47,11 +47,11 @@ argument-hint: "[<종류>] [--dir <폴더>] [--scene <scene.json>] [--deck <deck
 | `node "$G" list` | 영상 목록(종류, 만드는 곳, 설명, 필요한 것) | 0 |
 | `node "$G" example` | 예시 장면 파일(JSON). 틀로 씀 | 0 |
 | `node "$G" from-deck --deck <deck.json>` | wide-pptx 덱을 장면 파일로 바꿔 stdout 에 냄. 원 차트는 막대로 바꾸고 경고 | 0, 파일 오류 2 |
-| `node "$G" check --scene <scene.json>` | 검사하고 `OK 장면 N, 길이, 크기, fps, 프레임` 을 냄 | 0, 장면 오류 1 |
-| `node "$G" still --scene <scene.json> --at <초> --out <파일.png>` | 그 시각의 한 프레임 | 0, 1, 2 |
+| `node "$G" check --scene <scene.json>` | 검사하고 `OK 장면 N, 길이, 크기, fps, 프레임` 을 냄. 그림은 엔진으로 실제로 풀어 보고, 글은 내장 글꼴로 재서 화면을 넘을 곳을 `경고:` 로 냄 | 0, 장면 오류 1 |
+| `node "$G" still --scene <scene.json> --at <초> --out <파일.png>` | 그 시각에 가장 가까운 영상 프레임 한 장. `--at` 이 영상 길이 이상이면 오류 | 0, 1, 2 |
 | `node "$G" render --scene <scene.json> --out <파일.mp4>` | MP4 를 만듦. 진행은 stderr 에 1초마다. `--quality <10-51>`(기본 20, 작을수록 고화질) | 0, 1, 2 |
 
-- 렌더 속도는 이 PC(EL8, 1280x720)에서 초당 약 8프레임이었다. 30초 영상(30fps)이면 2분쯤 걸린다. 1920x1080 은 두 배 넘게 걸린다.
+- 렌더는 CPU 로 한다. 1920x1080 은 1280x720 보다 두 배 넘게 걸린다. 처음 몇 초의 진행 줄로 남은 시간을 어림해 사용자에게 알린다.
 
 ## 영상 목록
 
@@ -96,7 +96,8 @@ argument-hint: "[<종류>] [--dir <폴더>] [--scene <scene.json>] [--deck <deck
 | `image` | `image`, `caption`, `motion`(`zoom` 기본, `pan`) |
 | `credits` | `title`, `lines` |
 
-사진 경로는 장면 파일 폴더 기준이다. URL 은 받지 않는다.
+사진 경로는 장면 파일 폴더 기준이다. URL 은 받지 않는다. 그림은 한 변 16384, 50MP 까지이고, 잘린 파일은 오류다.
+들어오는 효과의 간격은 장면 길이에 맞춰 줄어, 장면이 끝나기 0.3초 전에는 모두 보인다. 빈 글 항목은 빼고 경고한다.
 
 ## 절차
 
@@ -115,7 +116,7 @@ argument-hint: "[<종류>] [--dir <폴더>] [--scene <scene.json>] [--deck <deck
 - `node "$G" check --scene <파일>` 이 0 이 될 때까지 고친다. `경고:` 는 나누거나 줄여서 없앤다.
 
 ### 4. 미리 보기
-- 장면마다 가운데쯤 시각을 골라 `still` 로 PNG 를 몇 장 만들고 본다(그림을 볼 수 있으면). 글이 넘치거나 겹치면 장면 파일을 고친다.
+- 장면마다 가운데 시각과 끝나기 0.1초 전 시각을 골라 `still` 로 PNG 를 만들고 본다(그림을 볼 수 있으면). 글이 넘치거나 겹치면 장면 파일을 고친다.
 - 미리 보기 PNG 는 출력 폴더 안 `<이름>-preview/` 에 두고, 보고에 경로를 적는다.
 
 ### 5. 렌더
@@ -133,6 +134,8 @@ argument-hint: "[<종류>] [--dir <폴더>] [--scene <scene.json>] [--deck <deck
 ## 함정
 
 - 소리는 넣지 않는다. 배경 음악은 영상 편집기에서 더한다.
-- 사진은 20MB 까지, PNG, JPEG, GIF(첫 프레임), WebP 만. 휴대폰 사진의 회전 정보(EXIF)는 읽지 않는다.
+- 사진은 20MB 까지, PNG, JPEG, GIF(첫 프레임), WebP 만. 휴대폰 사진의 회전 정보(EXIF)는 엔진이 적용한다.
+- 엔딩 크레딧은 장면 끝에서 화면 위로 다 빠져나간다. 마지막 장면이면 영상 끝은 바탕색이다.
+- 내장 글꼴에 없는 글자(일부 이모지, 드문 한자)는 빈 네모로 나온다.
 - `vendor/` 의 파일은 고치지 않는다. 시험이 sha256 을 대조한다.
 - 키네틱 기법 일부는 aimotion(kstost/cokacmotion, MIT)의 도우미 코드를 옮겨 썼다. 고지는 `vendor/aimotion/LICENSE.md`, 출처는 `scripts/vg-fx.mjs` 머리에 있다.

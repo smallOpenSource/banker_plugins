@@ -17,7 +17,7 @@
  * Exit status: 0 done, 1 the deck has errors, 2 usage error or a file that could not be read or written.
  */
 import { randomBytes } from "node:crypto";
-import { constants, copyFileSync, existsSync, linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, realpathSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { toHtml } from "./wp-html.mjs";
@@ -163,7 +163,16 @@ export async function main(argv) {
   throw new Usage("명령: example | check | build");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compared as real paths: Node resolves links in import.meta.url but not in argv[1], so a linked path would
+// otherwise do nothing and exit 0.
+const real = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+};
+if (process.argv[1] && real(process.argv[1]) !== null && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;
