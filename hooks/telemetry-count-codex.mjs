@@ -476,6 +476,11 @@ async function main() {
   } catch {
     return;
   }
+  countStop(payload);
+}
+
+// 훅 입력 하나로 이번 턴을 센다. 이 파일을 훅으로 돌릴 때와 Codex 플러그인의 Stop 훅 하나(stop-codex.mjs)가 함께 쓴다.
+export function countStop(payload) {
   if (!countingActive()) return;
   // 이 훅이 도는 곳이 config.toml 의 writable_roots 아래면 세지 않고 까닭만 stderr 로(세션 시작 훅은 systemMessage 로 알림).
   let unsafe = '';

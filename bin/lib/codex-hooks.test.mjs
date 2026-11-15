@@ -6,7 +6,7 @@ import { basename, dirname, join, posix as P } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { codexPaths, disableHooks, enableHooks, formatCommand, homeInWorkspace, hookGuard, HOOKS, hookStatus, PAYLOAD, removeAll, repoAbove, safeNode } from './codex-hooks.mjs';
+import { codexPaths, disableHooks, enableHooks, formatCommand, homeInWorkspace, hookGuard, HOOK_TIMEOUT, HOOKS, hookStatus, PAYLOAD, removeAll, repoAbove, safeNode } from './codex-hooks.mjs';
 import { homeInSession } from './codex-routes.mjs';
 
 const PKG = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -53,6 +53,28 @@ test('a stale command is fixed in place and status says stale until then', () =>
   assert.deepEqual(enableHooks(p, ['update'], PKG, process.execPath, WORK).changed, ['update']);
   assert.equal(read(p).SessionStart.length, 1);
   assert.equal(hookStatus(p, ['update'], PKG).status.update, 'on');
+});
+
+test('a hook an earlier banker wrote with a 5 s limit is stale, enable sets the 10 s limit in place, and a longer limit stays', () => {
+  const p = home();
+  enableHooks(p, ['update', 'count'], PKG, process.execPath, WORK);
+  assert.deepEqual(Object.values(read(p)).flat().map((g) => g.hooks[0].timeout), [HOOK_TIMEOUT, HOOK_TIMEOUT]);
+  assert.equal(HOOK_TIMEOUT, 10);
+  const doc = JSON.parse(readFileSync(p.hooks, 'utf8'));
+  doc.hooks.Stop[0].hooks[0].timeout = 5;
+  writeFileSync(p.hooks, JSON.stringify(doc));
+  assert.equal(hookStatus(p, ['count'], PKG).status.count, 'stale');
+  assert.deepEqual(enableHooks(p, ['update', 'count'], PKG, process.execPath, WORK).changed, ['count']);
+  assert.equal(read(p).Stop.length, 1);
+  assert.equal(read(p).Stop[0].hooks[0].timeout, HOOK_TIMEOUT);
+  assert.equal(hookStatus(p, ['count'], PKG).status.count, 'on');
+  // A limit the user raised by hand stays.
+  const raised = JSON.parse(readFileSync(p.hooks, 'utf8'));
+  raised.hooks.Stop[0].hooks[0].timeout = 30;
+  writeFileSync(p.hooks, JSON.stringify(raised));
+  assert.equal(hookStatus(p, ['count'], PKG).status.count, 'on');
+  assert.deepEqual(enableHooks(p, ['update', 'count'], PKG, process.execPath, WORK).changed, []);
+  assert.equal(read(p).Stop[0].hooks[0].timeout, 30);
 });
 
 test('disable removes only our handler, keeps a shared group, backs up, and reports shifted events', () => {

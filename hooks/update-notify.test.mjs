@@ -415,8 +415,30 @@ test('Codex 플러그인 길: 기록의 Codex 판이 0.160.1 보다 낮으면 �
   assert.equal(pluginVersionNotice(rec('0.160.1'), true, never), '');
   assert.equal(pluginVersionNotice(rec('0.165.0'), true, never), '');
   assert.equal(pluginVersionNotice(rec('0.144.5'), false, never), '');
-  assert.match(pluginVersionNotice({}, true, () => ({ stdout: 'codex-cli 0.150.2\n' })), /Codex 0\.150\.2/);
-  assert.equal(pluginVersionNotice({}, true, () => ({ stdout: '' })), '', '판을 모르면 알리지 않는다');
+  assert.match(pluginVersionNotice({}, true, () => ({ stdout: 'codex-cli 0.150.2\n' }), join(tmp, 'c1.json')), /Codex 0\.150\.2/);
+  assert.equal(pluginVersionNotice({}, true, () => ({ stdout: '' }), join(tmp, 'c2.json')), '', '판을 모르면 알리지 않는다');
+});
+
+test('Codex 플러그인 길: codex --version 으로 얻은 알릴 필요 없는 판은 하루 동안 다시 묻지 않고, 낮은 판은 다음에 다시 묻는다', async () => {
+  const { cliVersion } = await import(pathToFileURL(NOTIFY_HOOK).href);
+  const tmp = mkTmp();
+  const file = join(tmp, 'deep', 'codex-cli-version.json');
+  let calls = 0;
+  const ask = (v) => () => { calls += 1; return { stdout: `codex-cli ${v}\n` }; };
+  const t0 = Date.UTC(2026, 10, 15);
+  assert.equal(cliVersion(ask('0.169.0'), file, t0), '0.169.0');
+  assert.equal(cliVersion(ask('0.170.0'), file, t0 + 60_000), '0.169.0', '하루 안: 저장한 판');
+  assert.equal(calls, 1);
+  assert.equal(cliVersion(ask('0.170.0'), file, t0 + 25 * 3600_000), '0.170.0', '하루 지남: 다시 묻는다');
+  assert.equal(calls, 2);
+  assert.equal(cliVersion(ask('0.171.0'), file, t0 - 60_000), '0.171.0', '앞날짜 기록은 쓰지 않는다');
+  const low = join(tmp, 'low.json');
+  assert.equal(cliVersion(ask('0.150.0'), low, t0), '0.150.0');
+  assert.equal(cliVersion(ask('0.150.0'), low, t0 + 1000), '0.150.0');
+  assert.equal(calls, 5, '낮은 판은 저장하지 않아 매번 묻는다');
+  assert.ok(!existsSync(low));
+  writeFileSync(low, '{"version":"0.160.1; rm -rf","at":0}');
+  assert.equal(cliVersion(ask('0.160.1'), low, t0), '0.160.1', '모양이 틀린 기록은 쓰지 않는다');
 });
 
 test('개인화 없음: changedSkills 있어도 써본스킬 파일 없으면 일반 알림', () => {

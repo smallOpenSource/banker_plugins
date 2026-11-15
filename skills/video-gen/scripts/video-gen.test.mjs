@@ -2,12 +2,12 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { deflateSync } from "node:zlib";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { brotliCompressSync, deflateSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { CATALOG } from "./vg-catalog.mjs";
 import { deckToScenes } from "./vg-deck.mjs";
 import { Painter } from "./vg-draw.mjs";
@@ -15,6 +15,7 @@ import { loadEngine } from "./vg-engine.mjs";
 import { counter, decimals, ease, fitGap, grouped, rand, stagger, stripes, track } from "./vg-fx.mjs";
 import { cleanText, imageInfo, readScenes } from "./vg-model.mjs";
 import { drawFrame, probeImages, renderMp4, renderStill, sceneAt } from "./vg-render.mjs";
+import { ORIGINALS, PACKED, vendorBytes } from "./vg-vendor.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VENDOR = join(HERE, "..", "vendor");
@@ -53,8 +54,10 @@ function png(w, h) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
-const sha = (f) => createHash("sha256").update(readFileSync(join(VENDOR, f))).digest("hex");
+const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
+// The CanvasKit WASM and the fonts are kept brotli-packed (vg-vendor.mjs): each unpacks to the recorded original, no
+// unpacked copy is left beside it, and the JavaScript files are kept as they are.
 test("the vendored engine and fonts are the recorded files", () => {
   const want = {
     "canvaskit/canvaskit.js": "894815b2d39b24de2eacdb01453778d83e0b6c418b034e3b728e80956ac2a9d5",
@@ -65,9 +68,45 @@ test("the vendored engine and fonts are the recorded files", () => {
     "fonts/NotoSansKR-Regular.otf": "69975a0ac8472717870aefeab0a4d52739308d90856b9955313b2ad5e0148d68",
     "fonts/NotoSansKR-Bold.otf": "5a6ceb287ed2fc6cfc6213144ebea68cbd94b20fc9eb873d8486493bf02d9bda",
   };
-  for (const [f, h] of Object.entries(want)) assert.equal(sha(f), h, f);
+  assert.deepEqual(ORIGINALS, want);
+  for (const [f, h] of Object.entries(want)) {
+    if (PACKED.includes(f)) {
+      assert.equal(sha(vendorBytes(f)), h, f);
+      assert.ok(!existsSync(join(VENDOR, f)), `${f}: only the packed file is kept`);
+    } else {
+      assert.equal(sha(readFileSync(join(VENDOR, f))), h, f);
+    }
+  }
   const readme = readFileSync(join(VENDOR, "README.md"), "utf8");
   for (const h of Object.values(want)) assert.ok(readme.includes(h), `README records ${h}`);
+});
+
+test("the engine starts from the packed WASM and gives WebAssembly.instantiate back", async () => {
+  const before = WebAssembly.instantiate;
+  const { CK } = await loadEngine();
+  assert.equal(typeof CK.MakeSurface, "function");
+  assert.equal(WebAssembly.instantiate, before);
+  assert.match(String(WebAssembly.instantiate), /\[native code\]/);
+});
+
+test("a damaged or missing packed vendor file stops with a reason, not a broken engine", () => {
+  const dir = mkdtempSync(join(tmpdir(), "vg-vendor-"));
+  try {
+    const src = readFileSync(join(HERE, "vg-vendor.mjs"), "utf8");
+    mkdirSync(join(dir, "scripts"));
+    mkdirSync(join(dir, "vendor", "fonts"), { recursive: true });
+    writeFileSync(join(dir, "scripts", "vg-vendor.mjs"), src);
+    writeFileSync(join(dir, "vendor", "fonts", "NotoSans-Bold.ttf.br"), brotliCompressSync(Buffer.from("not the font")));
+    writeFileSync(join(dir, "vendor", "fonts", "NotoSans-Regular.ttf.br"), Buffer.from("not brotli"));
+    const code = `import("${pathToFileURL(join(dir, "scripts", "vg-vendor.mjs")).href}").then((m) => { for (const f of ["fonts/NotoSans-Bold.ttf", "fonts/NotoSans-Regular.ttf", "fonts/NotoSansKR-Bold.otf"]) { try { m.vendorBytes(f); console.log("no error"); } catch (e) { console.log(e.message); } } })`;
+    const r = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+    const lines = r.stdout.trim().split("\n");
+    assert.match(lines[0], /NotoSans-Bold\.ttf\.br 가 원본과 다름/);
+    assert.match(lines[1], /NotoSans-Regular\.ttf\.br 를 풀지 못함/);
+    assert.match(lines[2], /NotoSansKR-Bold\.otf\.br 를 풀지 못함\(ENOENT\)/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("motion helpers are pure functions of time", () => {

@@ -249,14 +249,21 @@ export function installPayload(p, pkgRoot) {
   return '';
 }
 
-// 한 훅을 제자리에 두기: 없으면 이벤트 맨 뒤 묶음으로, 명령이 낡았으면 같은 자리에서 고친다. 바뀌었으면 true.
+// 훅 하나의 시간 제한(초). Codex 는 신뢰 확인부터 이 시간에 넣고, 느린 Windows PC 에서는 PowerShell 과 node 를 띄우는
+// 데만 몇 초가 든다(5초를 넘긴 보고). Codex 플러그인 훅(scripts/sync-codex-plugin.js 의 HOOK_TIMEOUT)과 같다.
+// 이보다 짧은 값만 낡은 것으로 본다: 사용자가 손으로 더 늘린 값은 그대로 둔다.
+export const HOOK_TIMEOUT = 10;
+const timeoutOk = (t) => typeof t === 'number' && t >= HOOK_TIMEOUT;
+
+// 한 훅을 제자리에 두기: 없으면 이벤트 맨 뒤 묶음으로, 명령이나 시간 제한이 낡았으면 같은 자리에서 고친다. 바뀌었으면 true.
 function place(doc, id, command) {
   const ev = HOOKS[id].event;
   const groups = doc.hooks[ev] || [];
   const at = findOurs(groups, id);
-  if (at && groups[at[0]].hooks[at[1]].command === command) return false;
-  if (at) groups[at[0]].hooks[at[1]] = { ...groups[at[0]].hooks[at[1]], command, timeout: 5 };
-  else groups.push({ ...(HOOKS[id].matcher ? { matcher: HOOKS[id].matcher } : {}), hooks: [{ type: 'command', command, timeout: 5 }] });
+  const old = at && groups[at[0]].hooks[at[1]];
+  if (old && old.command === command && timeoutOk(old.timeout)) return false;
+  if (old) groups[at[0]].hooks[at[1]] = { ...old, command, timeout: timeoutOk(old.timeout) ? old.timeout : HOOK_TIMEOUT };
+  else groups.push({ ...(HOOKS[id].matcher ? { matcher: HOOKS[id].matcher } : {}), hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT }] });
   doc.hooks[ev] = groups;
   return true;
 }
@@ -339,7 +346,10 @@ export function hookStatus(p, ids, pkgRoot, node = process.execPath) {
     const groups = doc.hooks[HOOKS[id].event] || [];
     const at = findOurs(groups, id);
     if (!at) out[id] = 'off';
-    else out[id] = groups[at[0]].hooks[at[1]].command === hookCommand(p, id, node) && copyCurrent(p, pkgRoot) ? 'on' : 'stale';
+    else {
+      const h = groups[at[0]].hooks[at[1]];
+      out[id] = h.command === hookCommand(p, id, node) && timeoutOk(h.timeout) && copyCurrent(p, pkgRoot) ? 'on' : 'stale';
+    }
   }
   return { status: out };
 }

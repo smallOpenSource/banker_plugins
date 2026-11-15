@@ -56,7 +56,8 @@ test('an active run of this session blocks the stop with a reason; another sessi
   }
 });
 
-// The command the plugin's codex/hooks.json gives Codex for this hook (the second Stop group), run as Codex runs it:
+// The command the plugin's codex/hooks.json gives Codex for this hook (its one Stop hook, stop-codex.mjs, which asks
+// decide() first), run as Codex runs it:
 // sh with PLUGIN_ROOT on POSIX, PowerShell on Windows, from the session folder. A plugin folder under a temp folder is
 // one the command refuses on purpose (it says why and does nothing), so there the test checks that refusal instead.
 test('the plugin hook command in codex/hooks.json blocks the stop of an active run', (t) => {
@@ -64,8 +65,8 @@ test('the plugin hook command in codex/hooks.json blocks the stop of an active r
   assert.equal(startRun(w).status, 0);
   const root = realpathSync.native(fileURLToPath(new URL('..', import.meta.url)));
   const hooks = JSON.parse(readFileSync(join(root, 'codex', 'hooks.json'), 'utf8')).hooks.Stop;
-  const entry = hooks.map((g) => g.hooks[0]).find((h) => /ralph-continue-codex\.mjs/.test(h.command));
-  assert.ok(entry, 'a Stop group runs ralph-continue-codex.mjs');
+  const entry = hooks.map((g) => g.hooks[0]).find((h) => /stop-codex\.mjs/.test(h.command));
+  assert.ok(entry, 'a Stop group runs stop-codex.mjs');
   const input = JSON.stringify({ session_id: SESSION, turn_id: 'turn-cmd', cwd: w.repo, hook_event_name: 'Stop' });
   const env = { ...w.env, PLUGIN_ROOT: root };
   const r = WIN
