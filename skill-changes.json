@@ -373,5 +373,8 @@
     "banker:video-gen",
     "banker:wbs-gen",
     "banker:wide-pptx"
+  ],
+  "0.28.1": [
+    "banker:video-gen"
   ]
 }

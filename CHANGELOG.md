@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.28.1] - 2026-11-15
+
+### Fixed
+- Codex 플러그인 훅이 느린 Windows PC 에서 시간 제한을 넘기던 일(사용자 제보: 답변 끝마다 `hook timed out after 5s` 두 번, 10초로 늘려도 같음).
+  - 원인: Codex 0.169.0 은 플러그인 훅을 돌릴 때마다 그 훅의 시간 제한 안에서 플러그인 폴더 전체의 해시를 먼저 구한다. 0.28.0 에서 폴더가 커졌고, Windows 명령은 PowerShell 경로 검사와 두 번째 node 실행에 시간을 썼다.
+  - 훅 시간 제한을 10초로 올렸다. Codex 플러그인과 npm 길(`banker setup --codex`) 모두. npm 길은 사용자가 손으로 더 늘린 값을 그대로 둔다.
+  - Codex 플러그인의 Stop 훅 두 개(ralph 계속, 사용량 카운팅)를 `hooks/stop-codex.mjs` 하나로 합쳤다. 턴 끝마다 해시와 셸, node 를 한 번만 치른다. ralph 판정을 먼저 낸다. 끄는 환경 변수는 전과 같다.
+  - Windows 명령을 줄였다. PowerShell 은 node 와 플러그인 폴더만 실제 경로(링크, junction, subst, 8.3 이름)로 검사한다. node 는 플러그인 폴더에서 .NET 으로 시작하고, `hooks/codex-hook.cjs` 가 경로를 다시 확인하고 PATH 를 정리한 뒤 같은 node 에서 훅을 실행한다. Windows PowerShell 5.1 의 `&` 는 명령이 약 2,040자를 넘으면 프로세스 시작이 약 0.25초 늦어진다(테스트박스 실측). `subst.exe` 는 시스템 드라이브 밖의 경로가 있을 때만 실행한다.
+  - 세션 시작 훅은 `codex --version` 결과를 하루 동안 다시 묻지 않는다(알릴 필요가 없는 판일 때만).
+  - 테스트박스(Windows 10, PowerShell 5.1) 중앙값: 세션 시작 0.38초에서 0.28초, 턴 끝 Stop 0.74초(훅 두 개)에서 0.29초.
+  - 훅 코드가 바뀌어 Codex 가 banker 훅의 신뢰를 한 번 다시 묻는다(`/hooks`).
+- `video-gen`: CanvasKit WASM 과 글꼴 네 개를 brotli 로 묶어 두고 실행할 때 메모리에서 푼 뒤 원본 sha256 과 대조한다. 다르면 렌더하지 않는다. 저장소 크기는 30.3MB 에서 20.9MB 로 줄었다(Codex 가 훅마다 해시하는 플러그인 폴더도 같이 줄어듦).
+
 ## [0.28.0] - 2026-11-10
 
 ### Added
