@@ -149,13 +149,44 @@ export function dualNotice(payload, env = process.env) {
 
 // Codex 플러그인 길: Codex 판이 플러그인 스킬 목록을 읽는다고 확인한 판(0.160.1)보다 낮으면 알린다. 판은 기록 첫 줄의
 // cli_version 에서, 없으면 codex --version 에서 읽는다. 판을 모르면 알리지 않는다.
-export function pluginVersionNotice(payload, plugin = PLUGIN, spawnFn = spawnSync) {
+export function pluginVersionNotice(payload, plugin = PLUGIN, spawnFn = spawnSync, cacheFile = CLI_VERSION_FILE()) {
   if (!plugin) return '';
   try {
     const file = typeof payload?.transcript_path === 'string' ? payload.transcript_path : '';
-    return pluginVersionNote((file && codexVersionOf(file)) || codexCliVersion(spawnFn));
+    return pluginVersionNote((file && codexVersionOf(file)) || cliVersion(spawnFn, cacheFile));
   } catch {
     return '';
+  }
+}
+
+// `codex --version` 은 Windows 에서 cmd, node, codex 를 차례로 띄워, 느린 PC 에서는 이 훅의 시간 제한(Codex 가 플러그인
+// 폴더 해시부터 함께 잼) 안에서 1초 넘게 든다. 세션 시작 때는 기록 파일이 아직 없을 수 있어 자주 부르게 된다. 그래서
+// 알릴 필요가 없는 판(MIN_PLUGIN_CODEX 이상)을 얻으면 하루 동안 다시 묻지 않는다. 낮은 판이나 모르는 판은 다음 시작에
+// 다시 묻는다: Codex 를 올리면 바로 알림이 그친다. 하루 안에 판을 내리면 그날은 알리지 않을 수 있다(알림만).
+const CLI_VERSION_FILE = () => join(configDir(), 'codex-cli-version.json');
+const CLI_VERSION_KEEP_MS = 24 * 60 * 60 * 1000;
+export function cliVersion(spawnFn, file = CLI_VERSION_FILE(), now = Date.now()) {
+  const kept = keptCliVersion(file, now);
+  if (kept) return kept;
+  const v = codexCliVersion(spawnFn);
+  if (v && !pluginVersionNote(v)) {
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      writeByRename(file, JSON.stringify({ version: v, at: now }));
+    } catch { /* 다음 시작에 다시 묻는다 */ }
+  }
+  return v;
+}
+
+// 하루 안에 저장한, 알릴 필요 없는 판(x.y.z) 또는 ''.
+function keptCliVersion(file, now) {
+  try {
+    const c = JSON.parse(readRegular(file));
+    const age = now - c?.at;
+    const ok = typeof c?.version === 'string' && /^\d+\.\d+\.\d+$/.test(c.version) && !pluginVersionNote(c.version);
+    return ok && age >= 0 && age < CLI_VERSION_KEEP_MS ? c.version : '';
+  } catch {
+    return ''; // 없거나 읽지 못함: 묻는다
   }
 }
 

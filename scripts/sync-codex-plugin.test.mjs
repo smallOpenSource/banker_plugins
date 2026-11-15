@@ -10,7 +10,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { hookFiles, hooksRev, hooksText, psCommand, shCommand, HOOKS_FILE } = require('./sync-codex-plugin.js');
+const { hookFiles, hooksRev, hooksText, psCommand, shCommand, HOOK_TIMEOUT, HOOKS_FILE } = require('./sync-codex-plugin.js');
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'codex-plugin-hooks-')));
@@ -22,7 +22,7 @@ mkdirSync(plugBase, { recursive: true });
 const plugins = realpathSync(mkdtempSync(join(plugBase, 'codex-plugin-root-')));
 after(() => rmSync(plugins, { recursive: true, force: true }));
 let n = 0;
-// A plugin folder whose hooks/probe.mjs writes `ran <args>` to the marker file (and PATH to marker.path), and an empty
+// A plugin folder (with run.cjs and codex-hook.cjs) whose hooks/probe.mjs writes `ran <args>` to the marker file (and PATH to marker.path), and an empty
 // session folder.
 function setup() {
   const d = join(base, `c${n}`);
@@ -32,7 +32,7 @@ function setup() {
   mkdirSync(work, { recursive: true });
   const marker = join(d, 'marker');
   writeFileSync(join(plugin, 'hooks', 'probe.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran ' + process.argv.slice(2).join(' '));\nwriteFileSync(${JSON.stringify(marker + '.cwd')}, process.cwd());\nwriteFileSync(${JSON.stringify(marker + '.path')}, process.env.PATH);\n`);
-  writeFileSync(join(plugin, 'hooks', 'run.cjs'), readFileSync(join(ROOT, 'hooks', 'run.cjs')));
+  for (const f of ['run.cjs', 'codex-hook.cjs']) writeFileSync(join(plugin, 'hooks', f), readFileSync(join(ROOT, 'hooks', f)));
   return { d, plugin, work, marker };
 }
 const nodeDir = dirname(realpathSync(process.execPath));
@@ -57,8 +57,80 @@ test('the hooks file is what the script writes', () => {
   assert.equal(readFileSync(join(ROOT, ...HOOKS_FILE.split('/')), 'utf8'), hooksText());
 });
 
-// Codex keeps a hook's trust by its command's hash, so the command carries a hash of the code it runs: new hook code is
-// a new command, which Codex asks to trust again (measured on 0.160.1: a changed command goes back to review).
+// Codex 0.169.0 hashes the whole plugin folder before each plugin hook, within that hook's limit: one Stop hook does both
+// Stop jobs, and each limit is 10 s (a slow Windows PC went past 5 s, then past 10 s with two Stop hooks).
+test('the hooks file has one SessionStart and one Stop hook, each with a 10 s limit; the Stop hook runs stop-codex.mjs', () => {
+  const doc = JSON.parse(readFileSync(join(ROOT, ...HOOKS_FILE.split('/')), 'utf8'));
+  assert.deepEqual(Object.keys(doc.hooks), ['SessionStart', 'Stop']);
+  assert.equal(HOOK_TIMEOUT, 10);
+  for (const g of Object.values(doc.hooks).flat()) {
+    assert.equal(g.hooks.length, 1);
+    assert.equal(g.hooks[0].timeout, HOOK_TIMEOUT);
+  }
+  assert.equal(doc.hooks.Stop.length, 1);
+  for (const cmd of [doc.hooks.Stop[0].hooks[0].command, doc.hooks.Stop[0].hooks[0].commandWindows]) assert.match(cmd, /hooks[\\/]stop-codex\.mjs/);
+  // The Windows command imports the hook in the node it judged: no second node through run.cjs.
+  for (const g of Object.values(doc.hooks).flat()) assert.doesNotMatch(g.hooks[0].commandWindows, /run\.cjs/);
+});
+
+// The Windows command hands node hooks\codex-hook.cjs from the plugin folder, started through .NET: Windows PowerShell
+// 5.1's & started a process about 0.25 s later once its command passed about 2,040 characters (Windows box).
+test('the PowerShell command starts node through .NET with codex-hook.cjs, never through & or run.cjs', () => {
+  for (const notice of [false, true]) {
+    const cmd = psCommand('probe.mjs', ['--codex'], true, notice);
+    // node starts in the plugin folder (a Volta or mise .exe shim reads no version file of the session folder) and is told
+    // the session folder in BANKER_HOOK_SESSION
+    assert.ok(cmd.endsWith(`$env:BANKER_HOOK_SESSION=$w0;$s=New-Object Diagnostics.ProcessStartInfo $r,('"'+$pr+'\\hooks\\codex-hook.cjs"${notice ? ' --notice' : ''} "'+$pr+'\\hooks\\probe.mjs" --codex');$s.WorkingDirectory=$pr;$s.UseShellExecute=0;try{$h=[Diagnostics.Process]::Start($s)}catch{x "cannot start node ($r)"};$h.WaitForExit();exit $h.ExitCode`), cmd.slice(-360));
+    assert.doesNotMatch(cmd, /run\.cjs|&\$r "/);
+  }
+  assert.ok(hookFiles().includes('hooks/codex-hook.cjs'), 'its code is in the hooks hash');
+});
+
+// codex-hook.cjs, run with the node running this test (on every OS: its paths are compared as the OS compares them):
+// node codex-hook.cjs <script> <args> runs the script from the plugin folder with its args and PATH without the entries
+// under the session folder or a temp folder.
+test('codex-hook.cjs runs the hook from the plugin folder with its args and PATH cleaned', () => {
+  const c = setup();
+  const inWork = join(c.work, 'bin');
+  const inTemp = join(c.d, 'tbin');
+  mkdirSync(inWork);
+  mkdirSync(inTemp);
+  const env = { ...process.env, PLUGIN_ROOT: c.plugin, TEMP: c.d, TMP: c.d, TMPDIR: c.d, PATH: [inWork, '', inTemp, nodeDir].join(delimiter) };
+  const r = spawnSync(process.execPath, [join(c.plugin, 'hooks', 'codex-hook.cjs'), join(c.plugin, 'hooks', 'probe.mjs'), '--codex', '--plugin'], { cwd: c.work, encoding: 'utf8', env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, '');
+  assert.equal(readFileSync(c.marker, 'utf8'), 'ran --codex --plugin');
+  assert.equal(readFileSync(`${c.marker}.cwd`, 'utf8').toLowerCase(), realpathSync.native(c.plugin).toLowerCase());
+  assert.deepEqual(readFileSync(`${c.marker}.path`, 'utf8').split(delimiter), [nodeDir]);
+  // A session in the home folder itself keeps the home's entries (nvm-windows and Volta keep node under it).
+  const { cleanPath, unsafeDirs } = require('../hooks/codex-hook.cjs');
+  const home = realpathSync.native(c.work);
+  assert.deepEqual(cleanPath([inWork, nodeDir].join(delimiter), unsafeDirs({ TEMP: inTemp, TMP: inTemp, USERPROFILE: home }, c.work, inTemp)), [inWork, nodeDir].join(delimiter));
+  assert.deepEqual(cleanPath([inWork, nodeDir].join(delimiter), unsafeDirs({ TEMP: inTemp, TMP: inTemp, USERPROFILE: c.d }, c.work, inTemp)), nodeDir);
+});
+
+// PowerShell starts node in the plugin folder and names the session folder in BANKER_HOOK_SESSION. codex-hook.cjs judges
+// the hook script by its real path against it, and a hook that cannot load says why; both exit 0.
+test('codex-hook.cjs takes the session folder from BANKER_HOOK_SESSION, refuses a script there, and a hook that cannot load says why', () => {
+  const c = setup();
+  const hook = join(c.plugin, 'hooks', 'codex-hook.cjs');
+  const env = { ...process.env, BANKER_HOOK_SESSION: c.work, TEMP: join(c.d, 't1'), TMP: join(c.d, 't1'), TMPDIR: join(c.d, 't1'), USERPROFILE: join(c.d, 'home') };
+  const run = (args) => spawnSync(process.execPath, [hook, ...args], { cwd: c.plugin, encoding: 'utf8', env });
+  writeFileSync(join(c.plugin, 'hooks', 'env.mjs'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(c.marker)}, String(process.env.BANKER_HOOK_SESSION));\n`);
+  let r = run([join(c.plugin, 'hooks', 'env.mjs')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(c.marker, 'utf8'), 'undefined', 'the hook does not see BANKER_HOOK_SESSION');
+  rmSync(c.marker);
+  writeFileSync(join(c.work, 'probe.mjs'), readFileSync(join(c.plugin, 'hooks', 'probe.mjs')));
+  r = run(['--notice', join(c.work, 'probe.mjs')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout).systemMessage, /^banker hooks skipped: the hook script is in a temp folder or the session folder/);
+  assert.ok(!existsSync(c.marker));
+  r = run([join(c.plugin, 'hooks', 'missing.mjs')]);
+  assert.deepEqual([r.status, r.stdout], [0, '']);
+  assert.match(r.stderr, /^banker hooks skipped: cannot run missing\.mjs \(ERR_MODULE_NOT_FOUND\)/);
+});
+
 test('the commands carry a hash of every file the hooks run, so changed hook code asks for trust again', () => {
   const files = hookFiles();
   for (const f of ['hooks/run.cjs', 'hooks/update-notify.mjs', 'hooks/telemetry-count-codex.mjs', 'hooks/update-fetch.mjs', 'hooks/update-checkin.mjs', 'bin/lib/telemetry-config.mjs', 'bin/lib/codex-routes.mjs']) {
@@ -81,7 +153,7 @@ test('the commands carry a hash of every file the hooks run, so changed hook cod
   const doc = JSON.parse(readFileSync(join(ROOT, ...HOOKS_FILE.split('/')), 'utf8'));
   for (const h of Object.values(doc.hooks).flat().flatMap((g) => g.hooks)) {
     assert.ok(h.command.startsWith(`: banker-hooks-rev ${rev}; `), h.command.slice(0, 60));
-    assert.ok(h.commandWindows.startsWith(`$null = 'banker-hooks-rev ${rev}'; `), h.commandWindows.slice(0, 60));
+    assert.ok(h.commandWindows.startsWith(`$null='banker-hooks-rev ${rev}';`), h.commandWindows.slice(0, 60));
   }
 });
 
@@ -397,6 +469,44 @@ test('PowerShell: a session folder opened on a subst drive still refuses a node.
 });
 
 // A TEMP in 8.3 form (C:\Users\LONGNA~1\...) names the same folder as the long path a node.exe is found under.
+// A link or junction whose target is written with an 8.3 name: the target is judged in its long form too, so a node.exe
+// in the session folder or under TEMP reached that way is still refused.
+test('PowerShell: a PATH entry that is a junction to an 8.3 name in the session folder or TEMP still refuses the node.exe there', windows, (t) => {
+  const c = setup();
+  const session = join(c.d, 'a long session folder');
+  const temp = join(c.d, 'a long temp folder');
+  for (const dir of [session, temp]) mkdirSync(join(dir, 'evil'), { recursive: true });
+  const shortOf = (p) => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${p.replace(/'/g, "''")}').ShortPath`], { encoding: 'utf8' }).stdout.trim();
+  const short = { session: shortOf(session), temp: shortOf(temp) };
+  if (!short.session || short.session.toLowerCase() === session.toLowerCase()) {
+    t.skip('this volume makes no 8.3 names');
+    return;
+  }
+  for (const [dir, target] of [[session, short.session], [temp, short.temp]]) {
+    copyFileSync(process.execPath, join(dir, 'evil', 'node.exe'));
+    const link = join(c.d, `jn-${dir === session ? 's' : 't'}`);
+    symlinkSync(join(target, 'evil'), link, 'junction');
+    const r = spawnSync(PS, ['-NoProfile', '-NonInteractive', '-Command', psCommand('probe.mjs', [], true)], {
+      cwd: session, encoding: 'utf8', env: asideEnv(c, { TEMP: temp, TMP: temp, PATH: `${link}${delimiter}${nodeDir}${delimiter}${sysPath()}` }),
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /banker hooks skipped: node is in a temp folder or the session folder/, `${dir}: ${r.stderr}`);
+    assert.ok(!existsSync(c.marker), `${dir}: nothing ran`);
+  }
+});
+
+// At session start a refusal of node is a systemMessage on stdout (k's refusal inside an assignment once lost it).
+test('PowerShell: at session start a node under TEMP is refused with a systemMessage', windows, () => {
+  const c = setup();
+  const dir = join(c.d, 'bin');
+  mkdirSync(dir);
+  copyFileSync(process.execPath, join(dir, 'node.exe'));
+  const r = ps(c, psCommand('probe.mjs', [], true, true), `${dir}${delimiter}${nodeDir}${delimiter}${sysPath()}`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout.trim()).systemMessage, /^banker hooks skipped: node is in a temp folder or the session folder/);
+  assert.ok(!existsSync(c.marker));
+});
+
 test('PowerShell: a TEMP written as an 8.3 short name still refuses a node.exe under it', windows, (t) => {
   const c = setup();
   const long = join(c.d, 'a long temp folder name');
@@ -495,7 +605,7 @@ test('sh: a multicall shim on PATH runs the node binary it names', homeCase, () 
 // A copy of a setup() plugin folder at dir (probe.mjs and run.cjs).
 function pluginAt(c, dir) {
   mkdirSync(join(dir, 'hooks'), { recursive: true });
-  for (const f of ['probe.mjs', 'run.cjs']) copyFileSync(join(c.plugin, 'hooks', f), join(dir, 'hooks', f));
+  for (const f of ['probe.mjs', 'run.cjs', 'codex-hook.cjs']) copyFileSync(join(c.plugin, 'hooks', f), join(dir, 'hooks', f));
   return dir;
 }
 const shells = () => ['/bin/sh', '/bin/bash', '/bin/dash', '/usr/bin/dash'].filter((f) => existsSync(f));

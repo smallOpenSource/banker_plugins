@@ -48,14 +48,18 @@ const sharedSkills = (m) => eligible(m).filter((s) => s.type === 'skill' && s.ta
 // The plugin's hooks: [event, tool matcher, script under hooks/, args, through run.cjs]. The obsidizer hook is not here:
 // it would start node on every shell call for everyone, so `obsidizer --enable` installs it on its own, in the user
 // scope, as the npm install does (bin/banker.js hooks enable obsidize, run from the plugin folder).
+// One Stop hook does both Stop jobs (stop-codex.mjs: the ralph turn, then the usage count): Codex hashes the whole plugin
+// folder before each hook it runs, within that hook's limit, so two Stop hooks paid for it twice at every turn's end.
 const HOOKS = [
   ['SessionStart', null, 'update-notify.mjs', ['--codex', '--plugin'], true],
-  ['Stop', null, 'telemetry-count-codex.mjs', [], true],
-  ['Stop', null, 'ralph-continue-codex.mjs', [], true],
+  ['Stop', null, 'stop-codex.mjs', [], true],
 ];
+// Each hook's limit in seconds. Codex 0.169.0 starts the clock before it hashes the plugin folder (plugin_trust.rs,
+// command_runner.rs), so the limit covers that hash, the shell, node and the hook.
+const HOOK_TIMEOUT = 10;
 const HOOKS_NOTE = 'banker hooks for the Codex plugin (codex plugin add banker@banker-plugins), written by scripts/sync-codex-plugin.js. '
   + 'Codex reads this file instead of hooks/hooks.json because .codex-plugin/plugin.json names it. update notice (SessionStart, opt-out '
-  + 'BANKER_NO_UPDATE_CHECK), usage counting (Stop, opt-out BANKER_NO_TELEMETRY), keeping a banker ralph run going until it ends (Stop, only for the session that started it, opt-out BANKER_NO_RALPH_CONTINUE). The obsidizer hook is installed only by obsidizer --enable. '
+  + 'BANKER_NO_UPDATE_CHECK), and one Stop hook for keeping a banker ralph run going until it ends (only for the session that started it, opt-out BANKER_NO_RALPH_CONTINUE) and usage counting (opt-out BANKER_NO_TELEMETRY). The obsidizer hook is installed only by obsidizer --enable. '
   + 'Codex runs them only after you trust them in /hooks, and outside its sandbox: each command runs the node PATH names (a multicall shim '
   + 'such as Volta or mise, or a .cmd shim on Windows: the node binary it names) only when its real path is absolute and outside the temp '
   + 'folder and the session folder (a session in the home folder itself excepted), from the plugin folder when that is outside them too, '
@@ -77,6 +81,7 @@ function hookFiles(read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8')
     for (const m of text.matchAll(/['"]([A-Za-z0-9_-]+\.(?:mjs|cjs|js))['"]/g)) visit(path.posix.join(dir, m[1]));
   };
   visit('hooks/run.cjs');
+  visit('hooks/codex-hook.cjs');
   for (const [, , script] of HOOKS) visit(`hooks/${script}`);
   return [...seen].sort();
 }
@@ -165,45 +170,62 @@ function shCommand(script, args, viaRun, notice = false, rev = '', nodeDirs = NO
 }
 
 // PowerShell (Windows): the first node.exe, node.bat or node.cmd on PATH (in PATHEXT's order within a folder), looked
-// for only in local drive folders: a network drive or UNC entry is neither searched nor kept. A .cmd or .bat shim (mise) is asked, from the
-// plugin folder, for the node.exe it runs, and that runs, as the sh command asks a multicall shim. Every path run or
-// asked is refused under TEMP, TMP, LOCALAPPDATA\Temp or the session folder (unless that is USERPROFILE itself: nvm-windows
-// and Volta keep node under it). Once node is found, PATH keeps only absolute entries outside those folders, so what a
-// shim starts by name (cmd.exe looks mise up on PATH) comes from elsewhere. Paths are compared in their long form
-// (Get-Item, so an 8.3 name such as C:\Users\LONGNA~1 in TEMP still matches) with symbolic links and junctions on the
-// way followed, and a subst drive written as the folder it stands for, as the sh command compares real paths. A hard
-// link is not followed: its other name is the same file. Network entries (a mapped network drive, \\server\share) are
-// never read, so a share that does not answer cannot hold the hook past Codex's limit; subst.exe is found through the
-// system folder the API names, not an environment variable. (The sh command reads the mount table instead and leaves
-// out entries under a network mount outside the home folder.) The plugin folder is judged as node is, before the
-// command enters it, and the hook scripts run from its real path. A refusal says why, as for sh (English: Windows
-// PowerShell 5.1 garbles other letters in a command line).
+// for only in local drive folders: a network drive or UNC entry is neither searched nor kept. Every path run or asked,
+// and the plugin folder, is refused under TEMP, TMP, LOCALAPPDATA\Temp or the session folder (unless that is
+// USERPROFILE itself: nvm-windows and Volta keep node under it). Then node runs hooks\codex-hook.cjs from the plugin
+// folder, which cleans PATH and imports the hook script in that node (no second node through run.cjs, so viaRun is not
+// used here). Codex 0.169.0 counts its own hash of the whole plugin folder against the hook's limit, and on a slow
+// Windows PC every cmdlet and process costs (a Windows 11 Enterprise report: the earlier command took 7.3 to 10.1 s on
+// its own), so the command is short and does little:
+// - Windows PowerShell 5.1 started each process about 0.25 s later once its command passed about 2,040 characters
+//   (Windows box, 2026-11-15; the earlier command had 2,783 and started two), so node and subst.exe start through .NET,
+//   which pays nothing for it. Only a .cmd shim is still asked with &. Built-in aliases and short names keep it short.
+// - Paths are compared in their long form with symbolic links and junctions on the way followed, and a subst drive
+//   written as the folder it stands for, as the sh command compares real paths. Each folder on the way is looked at
+//   through .NET (Get-Item only for a reparse point); Get-Item writes the long form of a path with a ~ (an 8.3 name such
+//   as C:\Users\LONGNA~1 in TEMP), again after each link or subst drive is followed. A hard link is not followed: its
+//   other name is the same file. codex-hook.cjs checks node and the hook script once more by their real paths.
+// - subst.exe (found through the system folder the API names, not an environment variable) runs only for a path on a
+//   drive other than SystemDrive: the system drive cannot be a subst drive.
+// - Network entries (a mapped network drive, \\server\share) are never read, so a share that does not answer cannot hold
+//   the hook past Codex's limit.
+// - Once node is found, PATH keeps only the entries outside those folders, before anything starts.
+// - A .cmd or .bat shim (mise) is asked, from the plugin folder, for the node.exe it runs, and that runs, as the sh
+//   command asks a multicall shim.
+// (The sh command reads the mount table instead and leaves out entries under a network mount outside the home folder.)
+// A refusal says why, as for sh (English: Windows PowerShell 5.1 garbles other letters in a command line).
 function psCommand(script, args, viaRun, notice = false, rev = '') {
-  const run = viaRun ? ' "$pr\\hooks\\run.cjs"' : '';
   const say = notice
-    ? 'Write-Output (ConvertTo-Json -Compress @{ systemMessage = "banker hooks skipped: $m" })'
+    ? '[Console]::Out.WriteLine((ConvertTo-Json -Compress @{systemMessage="banker hooks skipped: $m"}))'
     : '[Console]::Error.WriteLine("banker hooks skipped: $m")';
-  return (rev ? `$null = 'banker-hooks-rev ${rev}'; ` : '')
-    + `function x($m) { ${say}; exit 0 }; if (-not $env:PLUGIN_ROOT) { x 'PLUGIN_ROOT is not set' }; `
-    + String.raw`function G($p) { try { (Get-Item -LiteralPath $p -Force -ErrorAction Stop).FullName } catch { try { [IO.Path]::GetFullPath($p) } catch { $p } } }; `
-    + String.raw`$sb = @{}; foreach ($l in @(& (Join-Path ([Environment]::SystemDirectory) 'subst.exe') 2>$null)) { if ($l -match '^([A-Za-z]:)\\: => (.+)$') { $sb[$matches[1].ToUpper()] = $matches[2] } }; `
-    + String.raw`function L($p) { if (-not $p) { return '' }; $p = G $p; for ($i = 0; $i -lt 32; $i++) { $d2 = if ($p.Length -ge 2) { $p.Substring(0, 2).ToUpper() } else { '' }; if ($sb.Contains($d2)) { $p = G ($sb[$d2].TrimEnd('\') + $p.Substring(2)); continue }; $c = $p; $t = $null; `
-    + String.raw`while ($c) { $it = Get-Item -LiteralPath $c -Force -ErrorAction SilentlyContinue; if ($it -and $it.LinkType -in 'SymbolicLink', 'Junction' -and @($it.Target)[0]) { $t = [string]@($it.Target)[0]; break }; $c = Split-Path -LiteralPath $c }; `
-    + String.raw`if (-not $t) { break }; if (-not [IO.Path]::IsPathRooted($t)) { $t = Join-Path (Split-Path -LiteralPath $c) $t }; $p = G ($t.TrimEnd('\') + $p.Substring($c.Length)) }; $p.TrimEnd('\') }; `
-    + String.raw`$ds = @($env:TEMP, $env:TMP); if ($env:LOCALAPPDATA) { $ds += "$env:LOCALAPPDATA\Temp" }; $w = L $PWD.Path; if ($w -ne (L $env:USERPROFILE)) { $ds += $w }; `
-    + String.raw`$ds = @($ds | Where-Object { $_ } | ForEach-Object { L $_ } | Where-Object { $_ }); `
-    + String.raw`function u($f) { $f = L $f; foreach ($d in $ds) { if ($f -eq $d -or $f.StartsWith($d + '\', 'OrdinalIgnoreCase')) { return $true } }; $false }; `
-    + String.raw`function k($f) { if (u $f) { x "node is in a temp folder or the session folder ($(L $f))" }; L $f }; `
-    + String.raw`$pr = L $env:PLUGIN_ROOT; if (u $pr) { x "the plugin folder is in a temp folder or the session folder ($pr)" }; `
-    + String.raw`$nd = @(@($env:PATH -split ';') | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"')) } | Where-Object { $_ -match '^[A-Za-z]:\\' -and ([IO.DriveInfo]::new($_.Substring(0, 1))).DriveType -ne 'Network' }); `
-    + String.raw`$n = $null; foreach ($d in $nd) { foreach ($e in 'node.exe', 'node.bat', 'node.cmd') { $f = Join-Path $d $e; if (Test-Path -LiteralPath $f -PathType Leaf) { $n = $f; break } }; if ($n) { break } }; `
-    + "if (-not $n) { x 'node is not on PATH' }; "
-    + String.raw`$env:PATH = ($nd | Where-Object { -not (u $_) }) -join ';'; `
-    + "$r = k $n; "
-    + "if (-not (Set-Location -LiteralPath $pr -PassThru -ErrorAction SilentlyContinue)) { x 'cannot enter the plugin folder' }; "
-    + String.raw`if ($r -notmatch '\.exe$') { $e = & $r -p process.execPath 2>$null | Select-Object -Last 1; `
-    + String.raw`if (-not $e -or $e -notmatch '\.exe$' -or -not (Test-Path -LiteralPath $e -PathType Leaf)) { x "the node shim $r did not name its node" }; $r = k $e }; `
-    + `& $r${run} "$pr\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}`;
+  return [
+    rev ? `$null='banker-hooks-rev ${rev}'` : '',
+    `function x($m){${say};exit 0}`,
+    "if(!$env:PLUGIN_ROOT){x 'PLUGIN_ROOT is not set'}",
+    String.raw`$IO=[IO.Path];$sb=@{};$sd="$env:SystemDrive";$q=' is in a temp folder or the session folder'`,
+    // L: the long form, with subst drives, links and junctions followed. $sb: subst.exe's drives, read once.
+    String.raw`function L($p){if(!$p){return ''};try{$p=$IO::GetFullPath($p)}catch{}`
+      + String.raw`;for($i=0;$i-lt32;$i++){if($p.Contains('~')){try{$p=(gi -L $p -Fo -EA 1).FullName}catch{}};$d=($p+'  ').Substring(0,2);if($d-ne$sd){if(!$sb.Count){$sb[0]=0;$s=New-Object Diagnostics.ProcessStartInfo "$([Environment]::SystemDirectory)\subst.exe";$s.UseShellExecute=0;$s.RedirectStandardOutput=1;$s.CreateNoWindow=1;$h=[Diagnostics.Process]::Start($s);foreach($l in $h.StandardOutput.ReadToEnd()-split[char]10){if($l.Trim()-match'^(.:)\\: => (.+)$'){$sb[$matches[1]]=$matches[2]}};$h.WaitForExit()}`
+      + String.raw`;if($sb[$d]){$p=$IO::GetFullPath($sb[$d].TrimEnd('\')+$p.Substring(2));continue}}`
+      + String.raw`;$c=$p;$t='';while($c){try{if([IO.File]::GetAttributes($c)-band1024){$o=gi -L $c -Fo -EA 1;if($o.LinkType-in'SymbolicLink','Junction'){$t=[string]@($o.Target)[0]}}}catch{};if($t){break};$c=$IO::GetDirectoryName($c)}`
+      + String.raw`;if(!$t){break};if(!$IO::IsPathRooted($t)){$t=$IO::Combine($IO::GetDirectoryName($c),$t)};$p=$IO::GetFullPath($t.TrimEnd('\')+$p.Substring($c.Length))};$p.TrimEnd('\')}`,
+    String.raw`$w0=$PWD.ProviderPath;$ds=@($env:TEMP,$env:TMP);if($env:LOCALAPPDATA){$ds+="$env:LOCALAPPDATA\Temp"};$w=L $w0;if($w-ne(L $env:USERPROFILE)){$ds+=$w};$ds=@($ds|?{$_}|%{L $_})`,
+    String.raw`function u($f){$f=L $f;foreach($d in $ds){if($f-eq$d-or$f.StartsWith("$d\",5)){return 1}};0}`,
+    String.raw`function k($f){$f=L $f;if(u $f){x "node$q ($f)"};$f}`,
+    String.raw`$pr=L $env:PLUGIN_ROOT;if(u $pr){x "the plugin folder$q ($pr)"}`,
+    String.raw`$nd=@($env:PATH-split';'|%{[Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"'))}|?{$_-match'^[A-Za-z]:\\'-and$(try{[IO.DriveInfo]::new($_[0]).DriveType-ne4}catch{0})})`,
+    String.raw`$n=$null;foreach($d in $nd){foreach($e in 'exe','bat','cmd'){$f="$($d.TrimEnd('\'))\node.$e";if([IO.File]::Exists($f)){$n=$f;break}};if($n){break}}`,
+    "if(!$n){x 'node is not on PATH'}",
+    String.raw`$r=k $n;$env:PATH=@($nd|?{!(u $_)})-join';'`,
+    String.raw`if($r-notmatch'\.exe$'){if(!(cd -L $pr -PassThru -EA 0)){x 'cannot enter the plugin folder'}`
+      + String.raw`;$e=&$r -p process.execPath 2>$null|select -l 1;if($e-notmatch'\.exe$'-or![IO.File]::Exists($e)){x "the node shim $r did not name its node"};$r=k $e}`,
+    // started through .NET, not &: Windows PowerShell 5.1's & started a process about 0.25 s later once the command passed
+    // about 2,040 characters (Windows box). node starts in the plugin folder (so Volta's or mise's .exe shim reads no
+    // version file or hook of the session folder) and is told the session folder; it inherits this PowerShell's stdin,
+    // stdout and stderr, and its exit code is ours.
+    `$env:BANKER_HOOK_SESSION=$w0;$s=New-Object Diagnostics.ProcessStartInfo $r,('"'+$pr+'\\hooks\\codex-hook.cjs"${notice ? ' --notice' : ''} "'+$pr+'\\hooks\\${script}"${args.map((a) => ` ${a}`).join('')}')`,
+    '$s.WorkingDirectory=$pr;$s.UseShellExecute=0;try{$h=[Diagnostics.Process]::Start($s)}catch{x "cannot start node ($r)"};$h.WaitForExit();exit $h.ExitCode',
+  ].filter(Boolean).join(';');
 }
 
 function hooksText() {
@@ -212,7 +234,7 @@ function hooksText() {
   for (const [ev, matcher, script, args, viaRun] of HOOKS) {
     // a new group after the event's earlier ones: Codex keys trust by group number, so an earlier hook keeps its own
     (doc.hooks[ev] ||= []).push({ ...(matcher ? { matcher } : {}), hooks: [{
-      type: 'command', command: shCommand(script, args, viaRun, ev === 'SessionStart', rev), commandWindows: psCommand(script, args, viaRun, ev === 'SessionStart', rev), timeout: 5,
+      type: 'command', command: shCommand(script, args, viaRun, ev === 'SessionStart', rev), commandWindows: psCommand(script, args, viaRun, ev === 'SessionStart', rev), timeout: HOOK_TIMEOUT,
     }] });
   }
   return `${JSON.stringify(doc, null, 2)}\n`;
@@ -390,4 +412,4 @@ function removeEmptyDirs(dir) {
 
 if (require.main === module) main();
 
-module.exports = { commandSkills, pluginProblems, hooksText, hookFiles, hooksRev, shCommand, psCommand, skillList, renamedCopies, renameMap, namesText, targets, staleOf, BUNDLE_DIRS, RENAMED_DIR, NAMES_FILE, HOOKS_FILE };
+module.exports = { commandSkills, pluginProblems, hooksText, hookFiles, hooksRev, shCommand, psCommand, HOOK_TIMEOUT, skillList, renamedCopies, renameMap, namesText, targets, staleOf, BUNDLE_DIRS, RENAMED_DIR, NAMES_FILE, HOOKS_FILE };

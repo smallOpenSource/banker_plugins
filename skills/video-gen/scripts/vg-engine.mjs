@@ -4,12 +4,11 @@
 // symbols use it and Hangul falls through to Noto Sans KR.
 // The encoder's Emscripten glue registers process handlers for uncaught exceptions and unhandled rejections when it
 // is required; the CLI handles its own rejections, so they never reach those handlers.
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const VENDOR = join(dirname(fileURLToPath(import.meta.url)), "..", "vendor");
+import { VENDOR, vendorBytes } from "./vg-vendor.mjs";
+
 const require = createRequire(import.meta.url);
 export const FAMILIES = ["Noto Sans", "Noto Sans KR"];
 const FONTS = [
@@ -21,16 +20,32 @@ const FONTS = [
 
 let engine = null;
 
-/** CanvasKit with the bundled fonts registered: { CK, fonts }. Loaded once per process. */
-export async function loadEngine() {
-  if (engine) return engine;
-  const init = require(join(VENDOR, "canvaskit", "canvaskit.js"));
-  const wasm = readFileSync(join(VENDOR, "canvaskit", "canvaskit.wasm"));
-  const CK = await init({ wasmBinary: wasm, locateFile: (f) => join(VENDOR, "canvaskit", f) });
-  const fonts = CK.TypefaceFontProvider.Make();
-  for (const [file, family] of FONTS) fonts.registerFont(readFileSync(join(VENDOR, "fonts", file)), family);
-  engine = { CK, fonts };
+/** CanvasKit with the bundled fonts registered: { CK, fonts }. Loaded once per process, also when asked twice at once. */
+export function loadEngine() {
+  engine ??= startEngine();
   return engine;
+}
+
+async function startEngine() {
+  const init = require(join(VENDOR, "canvaskit", "canvaskit.js"));
+  const wasm = vendorBytes("canvaskit/canvaskit.wasm");
+  const CK = await withWasm(wasm, () => init({ locateFile: (f) => join(VENDOR, "canvaskit", `${f}.br`) }));
+  const fonts = CK.TypefaceFontProvider.Make();
+  for (const [file, family] of FONTS) fonts.registerFont(vendorBytes(`fonts/${file}`), family);
+  return { CK, fonts };
+}
+
+// CanvasKit's Emscripten glue takes no wasmBinary: it reads the file locateFile names and hands those bytes to
+// WebAssembly.instantiate. It is pointed at the packed file (which it can read), and while it starts, and only then,
+// WebAssembly.instantiate gets the unpacked bytes vendorBytes checked in place of what the glue read.
+async function withWasm(wasm, start) {
+  const real = WebAssembly.instantiate;
+  WebAssembly.instantiate = (source, imports) => real.call(WebAssembly, source instanceof WebAssembly.Module ? source : wasm, imports);
+  try {
+    return await start();
+  } finally {
+    WebAssembly.instantiate = real;
+  }
 }
 
 /**

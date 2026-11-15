@@ -245,6 +245,7 @@ banker uninstall        # 제거
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
   스킬 71개, Codex 전용 스킬 4개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림, 사용량 카운팅, banker `ralph` 계속 훅은 `codex/hooks.json` 에서 옵니다. \
+  훅의 시간 제한은 10초입니다. Codex 는 플러그인 훅을 돌릴 때마다 플러그인 폴더 전체의 해시를 먼저 구하고 그 시간도 제한에 넣으므로, Stop 일(ralph 계속, 사용량 카운팅)은 훅 하나로 합쳤습니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
   훅은 Codex 샌드박스 밖에서 돌므로, PATH 의 node 가 임시 폴더나 작업 폴더 안에 있으면(샌드박스가 바꿀 수 있는 곳) 아무것도 돌리지 않고 그 이유를 세션 시작 알림으로 보입니다. 작업 폴더가 홈 폴더 자체이면 홈 아래의 node(nvm 등)는 그대로 씁니다. 훅 스크립트, 플러그인 폴더, node 가 `config.toml` 의 `[sandbox_workspace_write] writable_roots` 아래(그 항목 맨 위 `.codex` 제외)면 훅은 다른 일을 하지 않고 그 이유를 한 줄로 알립니다. 이 검사는 훅 파일 안에서 하므로, 샌드박스가 이미 그 파일을 고친 뒤에는 막지 못합니다. writable_roots 에 Codex 홈이나 node 가 든 폴더를 넣지 마십시오. \
@@ -485,7 +486,8 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
   테마 이름의 상표는 각 소유자에게 있으며, banker 는 그 회사들과 관계가 없습니다.
 - `skills/wide-pptx/vendor`: [PptxGenJS](https://github.com/gitbrent/PptxGenJS) 4.0.1 의 `pptxgen.bundle.js` 를 고치지 않고 벤더링, **MIT License**.\
   안에 든 JSZip(MIT 또는 GPLv3 중 MIT), pako(MIT), core-js 등의 고지는 같은 폴더의 `LICENSE-*.md` 와 `THIRD-PARTY-NOTICES.md` 에 포함.
-- `skills/video-gen/vendor`: 아래를 고치지 않고 벤더링. 파일별 판과 sha256 은 `skills/video-gen/vendor/README.md`.
+- `skills/video-gen/vendor`: 아래를 고치지 않고 벤더링. 파일별 판과 sha256 은 `skills/video-gen/vendor/README.md`.\
+  WASM 과 글꼴은 원본을 brotli 로 묶어 두고, 실행할 때 풀어 원본 sha256 과 맞는지 확인합니다.
   - [Skia CanvasKit](https://skia.org/docs/user/modules/canvaskit/) 0.42.0(`canvaskit-wasm`), **BSD-3-Clause**. 안에 든 ICU, FreeType, HarfBuzz, libpng, zlib 등의 고지는 `canvaskit/THIRD-PARTY-NOTICES.md`.
   - [h264-mp4-encoder](https://github.com/TrevorSundberg/h264-mp4-encoder) 1.0.12, **MIT License**. 안의 minih264 는 public domain(CC0), libmp4v2 는 **Mozilla Public License 1.1**(전문 `h264-mp4-encoder/MPL-1.1.md`).\
     libmp4v2 소스 묶음은 GitHub 저장소의 `third_party/libmp4v2-d49b4466.tar.gz` 에 둡니다(npm 묶음에는 넣지 않음).

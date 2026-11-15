@@ -1096,10 +1096,13 @@ try {
   // Like the OMC ralph in Claude Code, a Stop hook keeps the Codex ralph going: on both routes, after the earlier Stop hook.
   const cxHooks = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'hooks.json'), 'utf8')).hooks;
   const chSrc = fs.readFileSync(path.join(root, 'bin', 'lib', 'codex-hooks.mjs'), 'utf8');
-  ok(cxHooks.Stop?.length === 2 && /telemetry-count-codex\.mjs/.test(cxHooks.Stop[0].hooks[0].command) && /ralph-continue-codex\.mjs/.test(cxHooks.Stop[1].hooks[0].command)
-     && /ralph-continue-codex\.mjs/.test(cxHooks.Stop[1].hooks[0].commandWindows)
+  const stopSrc = fs.readFileSync(path.join(root, 'hooks', 'stop-codex.mjs'), 'utf8');
+  ok(cxHooks.Stop?.length === 1 && /stop-codex\.mjs/.test(cxHooks.Stop[0].hooks[0].command) && /stop-codex\.mjs/.test(cxHooks.Stop[0].hooks[0].commandWindows)
+     && /from '\.\/ralph-continue-codex\.mjs'/.test(stopSrc) && /from '\.\/telemetry-count-codex\.mjs'/.test(stopSrc)
      && /DEFAULT_HOOKS = \['update', 'count', 'ralph'\]/.test(chSrc) && /'codex\/skills\/ralph\/scripts\/ralph-state\.mjs'/.test(chSrc),
-     'codex-ralph-hook: the plugin and the npm route both install the ralph Stop hook, the plugin one as its own group after the usage-count hook');
+     'codex-ralph-hook: the plugin\'s one Stop hook (stop-codex.mjs) runs the ralph turn and the usage count; the npm route installs the ralph Stop hook as its own');
+  ok(Object.values(cxHooks).flat().every((g) => g.hooks.every((h) => h.timeout === 10)),
+     'codex-hook-timeout: every Codex plugin hook has a 10 s limit (Codex counts its hash of the plugin folder in it)');
   // Plan 27.1 (4): after STOPPED no file changes, not even a one-line fix, in all three chains; nothing allows one.
   const stopDocs = ['all-in-one', 'ultra-init', 'ultra-chain'].map((n) => [n, fs.readFileSync(path.join(root, 'skills', n, 'SKILL.md'), 'utf8')]);
   const stopBad = stopDocs.filter(([, t]) => !/After STOPPED, change no file, not even a one-line fix: report only, until the user gives a new instruction\./.test(t)
