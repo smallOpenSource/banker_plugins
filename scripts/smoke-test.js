@@ -838,21 +838,22 @@ try {
     ['Codex npm install', (s) => path.join(instDir, `banker-${s}`), 'banker-append_wiki', true],
     ['Codex plugin', cxSkillDir, 'append_wiki', false],
   ];
-  const wikiBad = wikiRoutes.flatMap(([route, dirOf, sibling, built]) => ['append_wiki', 'compact-wiki', 'summary-wiki'].flatMap((s) => {
+  const wikiBad = wikiRoutes.flatMap(([route, dirOf, sibling, built]) => ['append_wiki', 'compact-wiki', 'summary-wiki', 'obsidizer'].flatMap((s) => {
     const at = s === 'append_wiki' ? path.join(dirOf(s), 'wiki.mjs') : path.join(dirOf(s), '..', sibling, 'wiki.mjs');
     const same = fs.existsSync(at) && fs.readFileSync(at).equals(wikiSrc);
     const testLeak = built && fs.existsSync(path.join(path.dirname(at), 'wiki.test.mjs'));
     return [...(same ? [] : [`${route}: ${s} finds no identical wiki.mjs at ${at}`]), ...(testLeak ? [`${route}: wiki.test.mjs shipped`] : [])];
   }));
   ok(JSON.stringify(awSurface.supportingFiles) === JSON.stringify(['wiki.mjs']) && wikiBad.length === 0,
-     `wiki fallback: append_wiki supportingFiles is [wiki.mjs] and append_wiki, compact-wiki and summary-wiki reach an identical wiki.mjs on every install route, without its test (${wikiBad.join('; ') || 'all routes'})`);
+     `wiki fallback: append_wiki supportingFiles is [wiki.mjs] and append_wiki, compact-wiki, summary-wiki and obsidizer reach an identical wiki.mjs on every install route, without its test (${wikiBad.join('; ') || 'all routes'})`);
   const wikiDoc = (s) => fs.readFileSync(path.join(root, 'skills', s, 'SKILL.md'), 'utf8');
   const wikiDocBad = [
     ['append_wiki', [/node "<스킬 폴더>\/wiki\.mjs" wiki_ingest --input-file/, /plugin:oh-my-claudecode:t/, /`log\.md`/, /Created new page "<title>"/, /쓴 경로: OMC MCP/]],
     ['compact-wiki', [/`<S>\/\.\.\/append_wiki\/wiki\.mjs`/, /`<S>\/\.\.\/banker-append_wiki\/wiki\.mjs`/, /plugin:oh-my-claudecode:t/, /`log\.md`/, /쓴 경로: OMC MCP/]],
     ['summary-wiki', [/`<S>\/\.\.\/append_wiki\/wiki\.mjs`/, /`<S>\/\.\.\/banker-append_wiki\/wiki\.mjs`/, /node "<S>\/\.\.\/append_wiki\/wiki\.mjs" wiki_lint/]],
+    ['obsidizer', [/`<S>\/\.\.\/banker-append_wiki\/wiki\.mjs`/, /node "<S>\/\.\.\/append_wiki\/wiki\.mjs" wiki_lint/, /plugin:oh-my-claudecode:t/]],
   ].flatMap(([s, res]) => res.filter((re) => !re.test(wikiDoc(s))).map((re) => `${s}: ${re}`));
-  ok(wikiDocBad.length === 0, `wiki fallback: the three wiki skills give the path choice, the sibling paths, the log.md check before a retry and the path in the report (missing: [${wikiDocBad.join(', ')}])`);
+  ok(wikiDocBad.length === 0, `wiki fallback: the wiki skills give the path choice, the sibling paths, the log.md check before a retry and the path in the report (missing: [${wikiDocBad.join(', ')}])`);
   const wikiHelp = cp.spawnSync(process.execPath, [path.join(pkgRoot, 'skills', 'append_wiki', 'wiki.mjs'), '--help'], { encoding: 'utf8' });
   ok(wikiHelp.status === 0 && /usage: node wiki\.mjs <tool>/.test(wikiHelp.stdout),
      `wiki fallback: the packaged wiki.mjs runs on its own (no dependency) (exit ${wikiHelp.status})`);

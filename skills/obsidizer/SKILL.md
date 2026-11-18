@@ -54,6 +54,10 @@ AI가 생성한 마크다운 위키를 **의미 보존**한 채 그래프 관점
 - **검증은 읽기 전용**: OMC-managed일 때만 `wiki_lint`를 ToolSearch로 로드해 before/after 베이스라인
   대조에 쓴다. Codex 는 `omx wiki wiki_lint --input '{}' --json`. **쓰기 의존은 없다** — `wiki_ingest`/`wiki_add`를 호출하지 않고 파일을 직접
   정규화한다.
+- **Claude Code 에서 OMC 위키 도구가 없을 때의 lint**: ToolSearch 로 `wiki_lint` 스키마가 오지 않거나, OMC MCP 서버(`plugin:oh-my-claudecode:t`) 연결 실패 안내가 있거나, `wiki_lint` 호출이 연결 오류로 끝나면, append_wiki 스킬 폴더의 대체 스크립트로 같은 lint 를 돌린다. OMC 5.8.4 의 `wiki_lint` 와 같은 검사, 같은 출력이다.
+  - 명령: `node "<S>/../append_wiki/wiki.mjs" wiki_lint --input '{}'`(`<S>` 는 이 스킬 폴더). 같은 스크립트가 Codex npm 길에는 `<S>/../banker-append_wiki/wiki.mjs` 로 있다(Codex 에서 쓰는 법은 위 Codex 문장). 작업 폴더의 위키(`.omc/wiki`)를 본다. 경로 인자로 다른 폴더를 줬으면 lint 는 그 폴더가 아니라 작업 폴더의 위키를 본다는 점이 OMC 도구와 같다.
+  - OMC 의 `wiki_lint` 처럼 `log.md` 에 lint 항목 한 줄을 더한다. 페이지는 바꾸지 않는다. 위의 "읽기 전용" 은 페이지를 뜻하며, 두 도구 모두 이 한 줄은 쓴다.
+  - 둘 다 쓸 수 없으면 lint 대조를 건너뛰고, 그 사실을 보고에 적는다. 정규화와 그 밖의 검증은 그대로 한다.
 
 ## 모드
 

@@ -64,6 +64,14 @@ function unescapeYaml(s) {
   return s.replace(/\\(\\|"|n|r)/g, (_, ch) => (ch === 'n' ? '\n' : ch === 'r' ? '\r' : ch));
 }
 
+// A quoted scalar as OMC 5.8.4 reads it (src/utils/frontmatter.ts): only a double-quoted value has backslash
+// escapes; a single-quoted one turns '' into '; a bare value, or one with an unmatched quote, stays as it is.
+function readScalar(v) {
+  if (v.startsWith('"') && v.endsWith('"')) return unescapeYaml(v.slice(1, -1));
+  if (v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1).replace(/''/g, "'");
+  return v;
+}
+
 /** Line-based `key: value` parse, mirroring OMC parseSimpleYaml (a line with no `:` is skipped). */
 function parseSimpleYaml(yaml) {
   const map = {};
@@ -74,13 +82,41 @@ function parseSimpleYaml(yaml) {
     const key = line.slice(0, colonIdx).trim();
     if (!key) continue;
     let value = line.slice(colonIdx + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = unescapeYaml(value.slice(1, -1));
-    }
+    value = readScalar(value);
     if (!(key in map)) order.push(key);
     map[key] = value;
   }
   return { map, order };
+}
+
+// One character inside a quoted item; returns how many more characters it took (an escape or a doubled quote).
+function quotedChar(st, inner, i) {
+  const ch = inner[i];
+  st.current += ch;
+  const escaped = st.quote === '"' && ch === '\\' && i + 1 < inner.length;
+  const doubled = st.quote === "'" && ch === "'" && inner[i + 1] === "'";
+  if (escaped || doubled) {
+    st.current += inner[i + 1];
+    return 1;
+  }
+  if (ch === st.quote) st.quote = null;
+  return 0;
+}
+
+// The inside of `[a, "b, c"]` split on commas outside quotes, as OMC 5.8.4's splitFlowSequenceItems does (a quote
+// opens only at the start of an item). A plain split(',') cut a quoted source such as "hooks/a.mjs (x, y)" in two,
+// and the canonical rewrite then wrote the pieces back as separate items.
+function splitFlowItems(inner) {
+  const st = { items: [], current: '', quote: null };
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (st.quote) i += quotedChar(st, inner, i);
+    else if ((ch === '"' || ch === "'") && st.current.trim() === '') { st.quote = ch; st.current += ch; }
+    else if (ch === ',') { st.items.push(st.current); st.current = ''; }
+    else st.current += ch;
+  }
+  st.items.push(st.current);
+  return st.items;
 }
 
 /** Parse a FLOW YAML array `[a, b]` (mirrors OMC parseYamlArray — flow form only). */
@@ -88,8 +124,8 @@ function parseYamlArray(value) {
   if (!value) return [];
   const trimmed = value.trim();
   if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-    return trimmed.slice(1, -1).split(',')
-      .map((s) => unescapeYaml(s.trim().replace(/^["']|["']$/g, '')))
+    return splitFlowItems(trimmed.slice(1, -1))
+      .map((s) => readScalar(s.trim()))
       .filter(Boolean);
   }
   return trimmed ? [trimmed] : [];
