@@ -1,0 +1,50 @@
+{
+ "source": "OMX 0.20.2, written by scripts/gen-omx-wiki-golden.mjs",
+ "digest": "baf4a7bf3948171b",
+ "steps": [
+  {
+   "stdout": "{\"pages\":[],\"index\":null}\n",
+   "status": 0
+  },
+  {
+   "stdout": "{\n  \"pages\": [],\n  \"index\": null\n}\n",
+   "status": 0
+  },
+  {
+   "stdout": "{\"created\":[\"한글-cli-page.md\"],\"updated\":[],\"totalAffected\":1}\n",
+   "status": 0
+  },
+  {
+   "stdout": "{\n  \"created\": [],\n  \"updated\": [\n    \"한글-cli-page.md\"\n  ],\n  \"totalAffected\": 1\n}\n",
+   "status": 0
+  },
+  {
+   "stdout": "{\"filename\":\"한글-cli-page.md\",\"frontmatter\":{\"title\":\"한글 CLI Page\",\"tags\":[\"한글\"],\"created\":\"<time>\",\"updated\":\"<time>\",\"sources\":[],\"links\":[],\"category\":\"pattern\",\"confidence\":\"medium\",\"schemaVersion\":1},\"content\":\"\\n# 한글 CLI Page\\n\\n본문 \\\"따옴표\\\" \\\\ 역슬래시\\n줄 %TEMP% & !\\n\\n---\\n\\n## Update (<time>)\\n\\n본문 \\\"따옴표\\\" \\\\ 역슬래시\\n줄 %TEMP% & !\\n\"}\n",
+   "status": 0
+  },
+  {
+   "stdout": "{\n  \"error\": \"Wiki page not found\"\n}\n",
+   "status": 1
+  },
+  {
+   "stdout": "{\"error\":\"Wiki page not found\"}\n",
+   "status": 1
+  },
+  {
+   "stdout": "[\n  {\n    \"page\": {\n      \"filename\": \"한글-cli-page.md\",\n      \"frontmatter\": {\n        \"title\": \"한글 CLI Page\",\n        \"tags\": [\n          \"한글\"\n        ],\n        \"created\": \"<time>\",\n        \"updated\": \"<time>\",\n        \"sources\": [],\n        \"links\": [],\n        \"category\": \"pattern\",\n        \"confidence\": \"medium\",\n        \"schemaVersion\": 1\n      },\n      \"content\": \"\\n# 한글 CLI Page\\n\\n본문 \\\"따옴표\\\" \\\\ 역슬래시\\n줄 %TEMP% & !\\n\\n---\\n\\n## Update (<time>)\\n\\n본문 \\\"따옴표\\\" \\\\ 역슬래시\\n줄 %TEMP% & !\\n\"\n    },\n    \"snippet\": \"# 한글 CLI Page 본문 \\\"따옴표\\\" \\\\ 역슬래시 줄 %TEMP% & ! --- ## Update (<time>) 본문 \\\"따옴표\\\" \\\\ 역...\",\n    \"score\": 5\n  }\n]\n",
+   "status": 0
+  },
+  {
+   "stdout": "{\"issues\":[{\"page\":\"한글-cli-page.md\",\"severity\":\"info\",\"type\":\"orphan\",\"message\":\"No other pages link to \\\"한글 CLI Page\\\"\"}],\"stats\":{\"totalPages\":1,\"orphanCount\":1,\"staleCount\":0,\"brokenRefCount\":0,\"lowConfidenceCount\":0,\"oversizedCount\":0,\"contradictionCount\":0}}\n",
+   "status": 0
+  },
+  {
+   "stdout": "{\"error\":\"Wiki page not found or reserved: index.md\"}\n",
+   "status": 1
+  },
+  {
+   "stdout": "{\"deleted\":true,\"page\":\"한글-cli-page.md\"}\n",
+   "status": 0
+  }
+ ]
+}

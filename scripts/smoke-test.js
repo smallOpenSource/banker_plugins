@@ -735,6 +735,9 @@ try {
     path.join('skills', 'make-evidence', 'scripts', 'evidence.test.mjs'),
     path.join('skills', 'append_wiki', 'wiki.test.mjs'), path.join('scripts', 'test-fixtures', 'omc-wiki-cases.mjs'),
     path.join('scripts', 'test-fixtures', 'omc-wiki-5.8.4', 'golden.json'), path.join('scripts', 'gen-omc-wiki-golden.mjs'),
+    path.join('skills', 'append_wiki', 'wiki-omx.test.mjs'), path.join('scripts', 'test-fixtures', 'omx-wiki-cases.mjs'),
+    path.join('scripts', 'test-fixtures', 'omx-wiki-0.20.2', 'golden.json'), path.join('scripts', 'test-fixtures', 'omx-wiki-0.20.2', 'cli.json'),
+    path.join('scripts', 'gen-omx-wiki-golden.mjs'),
     ...['no-cmdline', 'fail-open'].map((n) => path.join('scripts', 'test-fixtures', `${n}.mjs`)),
     ...['args', 'browsers', 'containers', 'detect', 'e2e', 'report', 'setup']
       .map((n) => path.join('skills', 'build-testbox', 'scripts', `${n}.test.mjs`)),
@@ -825,10 +828,10 @@ try {
   ok(rqRefs.every((f) => fs.existsSync(path.join(pkgRoot, 'skills', 'ralph-qa', 'references', f))
        && fs.existsSync(path.join(instDir, 'banker-ralph-qa', 'references', f))),
      'S2-c: the npm package and the Codex install both carry the probe, the scanner, the gemini policy, its seat helper and the seat runner');
-  // The wiki fallback: append_wiki ships wiki.mjs (OMC 5.8.4's wiki tools without OMC), and compact-wiki and
-  // summary-wiki run the same file from the sibling append_wiki folder, as all-in-one reaches ralph-qa: <S>/../append_wiki
+  // The wiki fallback: append_wiki ships wiki.mjs (OMC 5.8.4's wiki tools without OMC, and OMX 0.20.2's with
+  // --profile=omx), and compact-wiki, summary-wiki and obsidizer run the same file from the sibling append_wiki folder, as all-in-one reaches ralph-qa: <S>/../append_wiki
   // on the Claude Code plugin and the Codex plugin, <S>/../banker-append_wiki on the Codex npm copy. Each route below
-  // must lead to a byte-identical copy, and the test must stay out of the two the package builds (the Codex plugin is
+  // must lead to a byte-identical copy, and the tests must stay out of the two the package builds (the Codex plugin is
   // this git tree, tests and all, as for every skill).
   const wikiSrc = fs.readFileSync(path.join(root, 'skills', 'append_wiki', 'wiki.mjs'));
   const awSurface = mfAllSkills.find((s) => s.name === 'append_wiki');
@@ -841,22 +844,33 @@ try {
   const wikiBad = wikiRoutes.flatMap(([route, dirOf, sibling, built]) => ['append_wiki', 'compact-wiki', 'summary-wiki', 'obsidizer'].flatMap((s) => {
     const at = s === 'append_wiki' ? path.join(dirOf(s), 'wiki.mjs') : path.join(dirOf(s), '..', sibling, 'wiki.mjs');
     const same = fs.existsSync(at) && fs.readFileSync(at).equals(wikiSrc);
-    const testLeak = built && fs.existsSync(path.join(path.dirname(at), 'wiki.test.mjs'));
-    return [...(same ? [] : [`${route}: ${s} finds no identical wiki.mjs at ${at}`]), ...(testLeak ? [`${route}: wiki.test.mjs shipped`] : [])];
+    const leaks = built ? ['wiki.test.mjs', 'wiki-omx.test.mjs'].filter((t) => fs.existsSync(path.join(path.dirname(at), t))) : [];
+    return [...(same ? [] : [`${route}: ${s} finds no identical wiki.mjs at ${at}`]), ...leaks.map((t) => `${route}: ${t} shipped`)];
   }));
   ok(JSON.stringify(awSurface.supportingFiles) === JSON.stringify(['wiki.mjs']) && wikiBad.length === 0,
-     `wiki fallback: append_wiki supportingFiles is [wiki.mjs] and append_wiki, compact-wiki, summary-wiki and obsidizer reach an identical wiki.mjs on every install route, without its test (${wikiBad.join('; ') || 'all routes'})`);
+     `wiki fallback: append_wiki supportingFiles is [wiki.mjs] and append_wiki, compact-wiki, summary-wiki and obsidizer reach an identical wiki.mjs on every install route, without its tests (${wikiBad.join('; ') || 'all routes'})`);
   const wikiDoc = (s) => fs.readFileSync(path.join(root, 'skills', s, 'SKILL.md'), 'utf8');
   const wikiDocBad = [
     ['append_wiki', [/node "<스킬 폴더>\/wiki\.mjs" wiki_ingest --input-file/, /plugin:oh-my-claudecode:t/, /`log\.md`/, /Created new page "<title>"/, /쓴 경로: OMC MCP/]],
     ['compact-wiki', [/`<S>\/\.\.\/append_wiki\/wiki\.mjs`/, /`<S>\/\.\.\/banker-append_wiki\/wiki\.mjs`/, /plugin:oh-my-claudecode:t/, /`log\.md`/, /쓴 경로: OMC MCP/]],
     ['summary-wiki', [/`<S>\/\.\.\/append_wiki\/wiki\.mjs`/, /`<S>\/\.\.\/banker-append_wiki\/wiki\.mjs`/, /node "<S>\/\.\.\/append_wiki\/wiki\.mjs" wiki_lint/]],
     ['obsidizer', [/`<S>\/\.\.\/banker-append_wiki\/wiki\.mjs`/, /node "<S>\/\.\.\/append_wiki\/wiki\.mjs" wiki_lint/, /plugin:oh-my-claudecode:t/]],
+    // Codex without omx: the same file with --profile=omx, chosen by a check for omx, reported as the path written.
+    ['append_wiki', [/node "<스킬 폴더>\/wiki\.mjs" wiki_ingest --profile=omx --input-file/, /command -v omx/, /`omx_wiki\/log\.md`/, /banker 대체\(`wiki\.mjs --profile=omx`\)/]],
+    ['compact-wiki', [/node "<S>\/\.\.\/append_wiki\/wiki\.mjs" wiki_xxx --profile=omx --input-file/, /command -v omx/, /`omx_wiki\/log\.md`/, /banker 대체\(`wiki\.mjs --profile=omx`\)/]],
+    ['summary-wiki', [/node "<S>\/\.\.\/append_wiki\/wiki\.mjs" wiki_lint --profile=omx --json/, /command -v omx/]],
+    ['obsidizer', [/node "<S>\/\.\.\/append_wiki\/wiki\.mjs" wiki_lint --profile=omx --json/]],
   ].flatMap(([s, res]) => res.filter((re) => !re.test(wikiDoc(s))).map((re) => `${s}: ${re}`));
-  ok(wikiDocBad.length === 0, `wiki fallback: the wiki skills give the path choice, the sibling paths, the log.md check before a retry and the path in the report (missing: [${wikiDocBad.join(', ')}])`);
+  ok(wikiDocBad.length === 0, `wiki fallback: the wiki skills give the path choice (Claude Code and Codex), the sibling paths, the log.md check before a retry and the path in the report (missing: [${wikiDocBad.join(', ')}])`);
   const wikiHelp = cp.spawnSync(process.execPath, [path.join(pkgRoot, 'skills', 'append_wiki', 'wiki.mjs'), '--help'], { encoding: 'utf8' });
   ok(wikiHelp.status === 0 && /usage: node wiki\.mjs <tool>/.test(wikiHelp.stdout),
      `wiki fallback: the packaged wiki.mjs runs on its own (no dependency) (exit ${wikiHelp.status})`);
+  const omxCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'banker-omxwiki-'));
+  const omxList = cp.spawnSync(process.execPath, [path.join(instDir, 'banker-append_wiki', 'wiki.mjs'), 'wiki_list', '--profile=omx', '--json'], { cwd: omxCwd, encoding: 'utf8' });
+  const omxMade = fs.readdirSync(omxCwd);
+  fs.rmSync(omxCwd, { recursive: true, force: true });
+  ok(omxList.status === 0 && omxList.stdout === '{"pages":[],"index":null}\n' && omxMade.length === 0,
+     `wiki fallback: the Codex npm copy answers --profile=omx as \`omx wiki wiki_list --json\` does in an empty folder and makes nothing (exit ${omxList.status}: ${omxList.stdout.trim()}${omxList.stderr.trim()})`);
   // ultraqa ships its runner and the two shared modules in the npm package (the Claude plugin reads skills/), its test
   // stays in the repo, and the two copies are ralph-qa's byte for byte (scripts/sync-adapter.js).
   const uqaRefs = ['uqa-run.mjs', 'gate-evidence.mjs', 'run-folder.mjs', 'tmux-drive.md'];
