@@ -27,6 +27,35 @@ Claude Code 는 OMC `wiki` 스킬의 MCP 도구로 `.omc/wiki/` 에, Codex 는 O
 ToolSearch(query="select:mcp__plugin_oh-my-claudecode_t__wiki_ingest,mcp__plugin_oh-my-claudecode_t__wiki_query,mcp__plugin_oh-my-claudecode_t__wiki_list,mcp__plugin_oh-my-claudecode_t__wiki_lint")
 ```
 
+그다음 어느 경로로 쓸지 고른다. OMC 판에 따라 MCP 서버가 뜨지 않는다(5.8.6 은 `bridge/mcp-server.cjs` 가 없다).
+- 스키마 4개가 모두 돌아오면 OMC MCP 도구를 쓴다. 지금까지와 같고, obsidizer 훅도 그대로 돈다.
+- 아래 중 하나면 banker 대체 경로를 쓴다.
+  - 스키마가 하나라도 돌아오지 않음
+  - 세션에 `plugin:oh-my-claudecode:t` 연결 실패 안내가 있음
+  - 첫 호출 `wiki_list()` 가 연결 오류로 끝남
+- 대체 경로는 이 스킬 폴더의 `wiki.mjs` 다(`<스킬 폴더>` 는 이 SKILL.md 가 있는 폴더의 절대경로). OMC 5.8.4 의 위키 도구 7개를 node 내장 모듈만으로 다시 구현했다.
+  같은 도구 이름과 입력을 받고, 같은 `.omc/wiki` 에 같은 저장 위치 규칙, 같은 잠금, 같은 응답 글로 쓴다. 그래서 OMC 가 살아 있는 다른 세션과 같은 위키에 동시에 써도 된다.
+  ```bash
+  node "<스킬 폴더>/wiki.mjs" wiki_list
+  node "<스킬 폴더>/wiki.mjs" wiki_query --input '{"query":"<키워드>","tags":["<태그>"]}'
+  node "<스킬 폴더>/wiki.mjs" wiki_ingest --input-file <JSON 파일>
+  ```
+  - 아래 단계의 `wiki_xxx({...})` 는 대체 경로에서 `node "<스킬 폴더>/wiki.mjs" wiki_xxx --input-file <같은 JSON 을 쓴 파일>` 이다. 짧은 JSON 은 `--input '<json>'` 도 된다.
+  - 본문이 긴 ingest 는 JSON 을 파일로 써서 `--input-file` 로 넘긴다. 셸 인용이 깨지지 않게 하기 위해서다.
+  - 그 파일은 Write 도구로 UTF-8 로 쓴다. Windows PowerShell 5.1 의 `Set-Content` 는 기본이 시스템 코드 페이지(한국어 Windows 는 cp949)라, 스크립트가 UTF-8 이 아니라며 종료 2 로 멈춘다(위키는 바뀌지 않음).
+  - 종료 코드는 0 성공, 1 도구 오류(출력 글이 이유), 2 사용법 오류다.
+  - 대체 경로는 Bash 의 지금 폴더를 세션 폴더로 본다(OMC 서버는 세션을 시작한 폴더를 본다). 부르기 전에 지금 폴더가 이 세션의 프로젝트 안인지 확인한다.
+  - 입력 길이는 도구 스키마대로 검사한다(제목 200자, 본문 50,000자, 태그 20개 각 50자, sources 10개 각 100자). 넘으면 1 로 끝나고 아무것도 쓰지 않는다.
+  - ingest 가 OMC 와 다르게 멈추는 곳이 둘 있다. 둘 다 1 로 끝나고 파일을 바꾸지 않는다. 멈추면 위키 파일을 손으로 고치지 말고 보고한다.
+    - 위키에 `schemaVersion` 이 1 보다 큰 페이지가 있음(더 새 OMC 형식)
+    - 제목이 가리키는 페이지 파일이 있는데 프론트매터를 읽을 수 없음(OMC 는 덮어써서 본문을 잃는다)
+  - `<위키 폴더>/.obsidizer` 가 있으면 대체 경로가 바뀐 페이지마다 obsidizer 캐노니컬라이저를 직접 부른다. obsidizer 훅은 MCP 호출만 보고 Bash 호출은 보지 않기 때문이다.
+- 쓰기(`wiki_ingest`)가 연결 오류로 끝나면 바로 다시 쓰지 않는다.
+  - 위키 폴더(보통 `.omc/wiki/`)의 `log.md` 끝을 먼저 본다. 호출한 뒤의 시각으로 그 제목의 `Created new page "<title>"` 또는 `Updated "<title>" with new content` 항목이 있으면 이미 쓰였다.
+  - 그런 항목이 없을 때만 대체 경로로 다시 쓴다. ingest 는 덧붙이기라 두 번 쓰면 같은 Update 절이 둘 생기기 때문이다.
+- 한 번 대체 경로로 바꾸면 이 실행이 끝날 때까지 대체 경로만 쓴다.
+- 위키 파일을 손으로 쓰지 않는다(목차와 이력이 어긋난다). 손으로 쓸 일은 대체 경로가 대신한다.
+
 **Codex:** `wiki_*` MCP 도 ToolSearch 도 없다. OMX 의 `omx wiki` CLI 가 같은 도구 이름과 입력을 받는다. 위키 폴더는 `.omc/wiki/` 가 아니라 프로젝트 루트의 `omx_wiki/` 다.
 ```bash
 omx wiki wiki_list --json
@@ -96,24 +125,26 @@ wiki_ingest({
 
 **environment.md 위생 (이식 가능 셀프힐 — Claude Code 만. Codex 의 `omx_wiki/` 에는 이 파일이 생기지 않으므로 건너뛴다).**
 `.omc/wiki/environment.md` 는 append_wiki 가 아니라 OMC **SessionStart hook**
-(`hooks/wiki/session-hooks`)이 `project-memory.json` 에서 자동생성한다. 이 hook 에는 **알려진 버그**가
-있어 `techStack.frameworks`(객체 `{name,version}` 배열) 와 객체형 `build` 값(예: `scripts`)을 그대로
-문자열화해 `[object Object]` 로 남긴다(`languages` 는 `.map(name)` 으로 정상 처리됨). append_wiki 실행 시
-이 파일에 `[object Object]` 가 보이면 정화한다:
-- `**Frameworks:**` 줄 → `project-memory.json` 의 `techStack.frameworks[].name` 들을 `, ` 로 조인한 값으로 교체.
+(`hooks/wiki/session-hooks`)이 `project-memory.json` 에서 자동생성한다. OMC 5.8.4 의 이 hook 에는 **알려진 버그**가
+하나 남아 있다. `## Build Commands` 반복문이 `if (val)` 만 보고 객체형 `build` 값(예: `scripts`)을 그대로 문자열화해
+`[object Object]` 로 남긴다(`session-hooks.ts:320-325`). `techStack.frameworks`(객체 `{name,version}` 배열)는 5.8.4 에서
+`languages` 와 같은 `.map(name)` 으로 고쳐졌다(`session-hooks.ts:308-313`). 그보다 옛 판에서는 `**Frameworks:**` 줄에도
+`[object Object]` 가 남는다. append_wiki 실행 시 이 파일에 `[object Object]` 가 보이면 정화한다:
 - `## Build Commands` 의 객체형 값 줄(예: `- **scripts:** ` 뒤 `[object Object]`) → 삭제(문자열 command 만 남긴다).
+- (옛 판만) `**Frameworks:**` 줄 → `project-memory.json` 의 `techStack.frameworks[].name` 들을 `, ` 로 조인한 값으로 교체.
 project-memory 가 안 바뀌면 hook 은 재생성을 건너뛰므로(`existing.updated >= pm.lastScanned`) 정화가 유지된다.
 
 - **근본 해결(선택·권장 — 그 시스템에서 1회 영구).**
   `find ~/.claude/plugins -path '*hooks/wiki/session-hooks*'` 로 소스(`.ts`)와 **dist 실행본(`.js`)** 을 찾아,
-  `ts.frameworks.join(` 을 `languages` 와 같은
-  `.map(f => typeof f === 'string' ? f : f?.name).filter(Boolean).join(', ')` 패턴으로 바꾸고,
   build 루프의 `if (val)` 가드를 `if (typeof val === 'string' && val)` 로 바꾼다.
+  옛 판에서 `ts.frameworks.join(` 이 보이면 그것도 `languages` 와 같은
+  `.map(f => typeof f === 'string' ? f : f?.name).filter(Boolean).join(', ')` 패턴으로 바꾼다.
   🔴 **dist(.js)까지 고쳐야 실제 반영**(hook 은 dist 를 실행). 패턴이 없으면(이미 수정/버전 변경) 건너뛴다.
   단 플러그인 업데이트 시 덮어써지므로, 영구·전파를 원하면 upstream(oh-my-claudecode)에 동일 패치를 리포트한다.
 
 ### 6) 보고 (한글)
 - 생성/갱신된 페이지와 슬러그 목록.
+- 쓴 경로: OMC MCP 도구인지 banker 대체(`wiki.mjs`)인지. 대체 경로였으면 고른 까닭(스키마 없음, 연결 실패 안내, 연결 오류)도 적는다.
 - lint 결과.
 - environment.md 위생: `[object Object]` 정화 여부(및 hook 소스 근본패치 시 그 사실).
 - 저장 위치는 실제로 쓴 곳을 적는다. Claude Code 는 `.omc/wiki/*.md`(프로젝트 로컬, git-ignored), Codex 는 `omx_wiki/*.md` 다. 목차 `index.md`, 이력 `log.md`.
