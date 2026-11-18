@@ -1225,6 +1225,48 @@ test('U18d the node builder takes a Korean name only when fc-match returns that 
   assert.deepEqual(JSON.parse(r.stdout.trim()), [font, null]);
 });
 
+// 0.16.2 rule: no file in the project folder picks the program. Windows looks for a bare fc-match in the working
+// folder first and seldom has one at all, so on Windows the three font lookups skip fc-match and walk the font folders.
+// Here process.platform (a preload for node, sys.platform for python) says win32 and a stand-in fc-match on PATH
+// leaves a mark when it runs; it must not run. Without the platform change the same lookup does run it (control).
+const FAKE_WIN32 = new URL('../../scripts/test-fixtures/fake-win32.mjs', import.meta.url).href;
+test('U18f on Windows no builder or the verifier runs fc-match', { skip: process.platform === 'win32' && 'the stand-in fc-match is a sh script' }, (t) => {
+  const bin = fs.mkdtempSync(path.join(TMP, 'u18f-'));
+  const mark = path.join(bin, 'ran');
+  const font = path.join(bin, 'NanumGothic.ttf');
+  fs.writeFileSync(font, '');
+  const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+  fs.writeFileSync(path.join(bin, 'fc-match'), `#!/bin/sh\necho x >> ${q(mark)}\nprintf '%s|NanumGothic,나눔고딕' ${q(font)}\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const ran = () => (fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8').split('\n').filter(Boolean).length : 0);
+  const node = (code, win) => {
+    fs.rmSync(mark, { force: true });
+    const r = spawnSync(process.execPath, [...(win ? ['--import', FAKE_WIN32] : []), '--input-type=module', '-e', code], { encoding: 'utf8', env, cwd: TMP });
+    assert.equal(r.status, 0, r.stderr);
+    return ran();
+  };
+  const build = `import { createRequire } from 'node:module'; const B = createRequire(import.meta.url)(${JSON.stringify(BUILD_JS)}); B.findFontFile('나눔고딕'); B.resolveFont({ metaFont: 'auto' });`;
+  const verify = `const V = await import(${JSON.stringify(new URL('./verify_a4p.mjs', import.meta.url).href)}); V.resolveFont('NanumGothic');`;
+  assert.ok(node(build, false) > 0, 'control: the node builder runs fc-match on POSIX');
+  assert.equal(node(build, true), 0, 'the node builder on win32');
+  assert.ok(node(verify, false) > 0, 'control: the verifier runs fc-match on POSIX');
+  assert.equal(node(verify, true), 0, 'the verifier on win32');
+  if (!pythonModule.ok) {
+    if (process.env.A4P_REQUIRE_BUILDERS === '1') assert.fail(`${pythonModule.reason} (A4P_REQUIRE_BUILDERS=1)`);
+    t.diagnostic(`python builder not checked: ${pythonModule.reason}`);
+    return;
+  }
+  const py = (platform) => {
+    fs.rmSync(mark, { force: true });
+    const code = `import sys\nsys.path.insert(0, sys.argv[1])\nimport build_a4p as b\nsys.platform = sys.argv[2] or sys.platform\nb.find_font_file('나눔고딕')\nb.resolve_font(None, 'auto')\n`;
+    const r = spawnSync(pythonModule.bin, ['-B', '-c', code, HERE, platform], { encoding: 'utf8', env, cwd: TMP });
+    assert.equal(r.status, 0, r.stderr);
+    return ran();
+  };
+  assert.ok(py('') > 0, 'control: the python builder runs fc-match on POSIX');
+  assert.equal(py('win32'), 0, 'the python builder on win32');
+});
+
 // ===========================================================================
 // U17 — meta.title length: the two builders must agree
 // ===========================================================================

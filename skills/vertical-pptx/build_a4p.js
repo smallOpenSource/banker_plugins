@@ -492,7 +492,8 @@ const sanitizeFontName = (s) => (typeof s === 'string' ? s.replace(/["'<>&]/g, '
 
 let fcMatchAvailable = null;
 function fcMatch(pattern) {
-  if (fcMatchAvailable === false) return null;
+  // Windows 에는 fc-match 가 보통 없고, 이름만 주면 지금 폴더(사용자 프로젝트)의 fc-match.exe 를 먼저 찾는다. 폰트 폴더 탐색만 쓴다.
+  if (fcMatchAvailable === false || process.platform === 'win32') return null;
   let res;
   try {
     res = cp.spawnSync('fc-match', ['--format=%{file}|%{family}', pattern], {
