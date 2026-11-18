@@ -6,11 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { after, before, describe, test } from 'node:test';
 import { SKILL, parseScript } from './build.mjs';
-import { findBrowser } from './cdp.mjs';
+import { findBrowser, launch, scratchDir } from './cdp.mjs';
 import { mp4Info, notesText, patchNotes, patchSlide, writeNew } from './pptx-common.mjs';
-import { verify } from './pptx.mjs';
+import { FRAME_PAGE, VIDEO_MEAN_TOL, VIDEO_SHARE_TOL, verify } from './pptx.mjs';
 import { buildVideoPptx } from './pptx-video.mjs';
 import { mp4Writer } from './record.mjs';
 import { VENDOR, VendorError, pptxgen } from './vendor.mjs';
@@ -184,5 +185,33 @@ describe('PowerPoint pipeline in a browser', { skip: SKIP }, () => {
     const r2 = await verify(efile, { script, log: () => {} });
     assert.equal(r2.results.find((x) => x.gate === 'notes').ok, false);
     assert.equal(r2.results.find((x) => x.gate === 'edit-slides').ok, true);
+  });
+
+  test('the end frame is drawn only when requestVideoFrameCallback reports it: a play without it is played again, none in 5 plays is an error (never the frame shown at ended)', async () => {
+    const rec = join(out, `mini-recording-${STAMP}`), m = JSON.parse(readFileSync(join(rec, 'manifest.json'), 'utf8'));
+    const page = scratchDir(BROWSER, 'pgg-frame-page-');
+    // as seen on Windows Chrome: 'ended' comes before the held end is presented, in the first `hide` plays of a video
+    const stub = `<script>window.hide = 0;
+      document.addEventListener('play', (e) => { e.target.plays = (e.target.plays || 0) + 1; }, true);
+      const rvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function (cb) {
+        return rvfc.call(this, (now, meta) => { if ((this.plays || 0) <= window.hide && meta.mediaTime >= this.duration - 0.3) return; cb(now, meta); });
+      };</script>`;
+    const b = await launch({ browser: BROWSER });
+    try {
+      cpSync(join(rec, m.steps[0].mp4), join(page, 'a.mp4'));
+      cpSync(join(rec, m.steps[1].mp4), join(page, 'b.mp4'));
+      writeFileSync(join(page, 'frames.html'), FRAME_PAGE.replace('<body>', '<body>' + stub));
+      const p = await b.open(null);
+      await b.send('Page.navigate', { url: pathToFileURL(join(page, 'frames.html')).href }, p.sessionId);
+      for (let k = 0; k < 50 && !(await p.eval('typeof window.compare === "function"').catch(() => false)); k++) await new Promise((r) => setTimeout(r, 100));
+      const r = await p.eval(`(window.hide = 1, compare('a.mp4', 'b.mp4', ${m.fps}, false))`);
+      assert.equal(r.plays, 2, JSON.stringify(r));
+      assert.ok(r.size && r.mean <= VIDEO_MEAN_TOL && r.share <= VIDEO_SHARE_TOL, JSON.stringify(r));
+      await assert.rejects(p.eval(`(window.hide = 9, compare('a.mp4', 'b.mp4', ${m.fps}, false))`), /no end frame of a\.mp4 in 5 plays/);
+    } finally {
+      b.close();
+      rmSync(page, { recursive: true, force: true });
+    }
   });
 });

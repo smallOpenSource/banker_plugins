@@ -75,6 +75,7 @@ FAIL decorations: 1 decoration(s) off their text
 | `edit-slides` | 편집 덱: 화면 줄이 있는 슬라이드마다 텍스트 상자, 테마 글꼴 Noto Sans / Noto Sans KR | 모두 |
 
 - `--frames <폴더>` 는 연속성 비교에 쓴 디코딩 프레임(`NN-last.png`, `NN-first.png`)을 저장한다. 몇 장을 직접 본다. 폴더가 비어 있지 않으면 작업 전에 종료 코드 2(`--force` 로만 다시 씀).
+- 끝 프레임은 브라우저가 `requestVideoFrameCallback` 으로 마지막 두 프레임 중 하나라고 알린 때만 잡는다. `ended` 때 요소가 보이는 프레임은 쓰지 않는다(Windows Chrome 은 끝을 보이기 전에 `ended` 를 낼 수 있다). 알림이 없으면 처음부터 다시 재생하고, 게이트 줄에 `; N end frame(s) taken on a later play`, 쌍 줄에 `end frame on play N` 을 적는다. 5번 재생해도 없으면 오류.
 - 예시 덱의 실측(이 스킬의 시험 PC): 디코딩 연속성 15쌍 최악 평균 0.015, 원본 연속성 차이 0.
 
 ## 선택: PowerPoint 확인

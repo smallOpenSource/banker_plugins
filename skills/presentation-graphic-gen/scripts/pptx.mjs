@@ -30,8 +30,13 @@ export const VIDEO_MEAN_TOL = 0.5, VIDEO_SHARE_TOL = 0.001;
 
 // evaluated in a page next to the extracted MP4 files: RGBA of a video's first or last frame. First: the frame the
 // element shows once loaded and painted. Last: a paused seek in a headless browser does not present the new frame,
-// so the video plays from 0.3 s before its end and one of its last two frames (or the frame at the end) is taken.
-const FRAME_PAGE = `<!doctype html><meta charset="utf-8"><body><script>
+// so the video plays from 0.3 s before its end, and the frame is drawn only inside a requestVideoFrameCallback that
+// reports one of its last two frames (both inside the held end of a recorded step). 'ended' is not such a frame:
+// after a seek into the last keyframe group, play() starts again from 0 or ends at once, and Windows Chrome can fire
+// 'ended' before the end of the playback is presented, with the element still showing a frame from the middle of the
+// animation. A play with no reported end frame is played again from 0 (plays > 1 in the result); none in 5 plays is
+// an error.
+export const FRAME_PAGE = `<!doctype html><meta charset="utf-8"><body><script>
 const raf = () => new Promise((ok) => requestAnimationFrame(() => ok()));
 async function frame(src, last, fps) {
   const v = document.createElement('video');
@@ -40,33 +45,39 @@ async function frame(src, last, fps) {
   await new Promise((ok, bad) => { v.onloadeddata = ok; v.onerror = () => bad(new Error('cannot decode ' + src)); });
   const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
   const g = c.getContext('2d', { willReadFrequently: true });
+  let plays = 0;
   if (last) {
-    // any of the last two frames (both inside the held end of a recorded step), or the frame shown at 'ended'
-    let got = 'timeout';
-    for (let k = 0; k < 3 && got === 'timeout'; k++) {
-      await new Promise((ok) => { v.onseeked = ok; v.currentTime = Math.max(0, v.duration - 0.3); setTimeout(ok, 5000); });
+    let got = false;
+    while (!got && plays < 5) {
+      plays++;
+      await new Promise((ok) => { v.onseeked = ok; v.currentTime = plays === 1 ? Math.max(0, v.duration - 0.3) : 0; setTimeout(ok, 5000); });
       got = await new Promise((ok) => {
         let fin = false;
-        const done = (why) => { if (fin) return; fin = true; v.pause(); g.drawImage(v, 0, 0); ok(why); };
-        const tick = (now, meta) => { if (meta.mediaTime >= v.duration - 2.5 / fps) done('frame'); else if (!fin) v.requestVideoFrameCallback(tick); };
+        const end = (drawn) => { if (fin) return; fin = true; v.pause(); ok(drawn); };
+        const tick = (now, meta) => {
+          if (fin) return;
+          if (meta.mediaTime >= v.duration - 2.5 / fps) { g.drawImage(v, 0, 0); end(true); } else v.requestVideoFrameCallback(tick);
+        };
         v.requestVideoFrameCallback(tick);
-        v.onended = () => done('ended');
+        // a frame can still be presented just after 'ended'
+        v.onended = () => setTimeout(() => end(false), 1500);
         v.play().catch(() => {});
-        setTimeout(() => { if (!fin) { fin = true; v.pause(); ok('timeout'); } }, 6000);
+        // the play can start from 0, so the whole video is allowed
+        setTimeout(() => end(false), (v.duration + 6) * 1000);
       });
     }
-    if (got === 'timeout') throw new Error('no end frame of ' + src);
+    if (!got) throw new Error('no end frame of ' + src + ' in ' + plays + ' plays');
   } else { await raf(); await raf(); g.drawImage(v, 0, 0); }
   const px = g.getImageData(0, 0, c.width, c.height).data;
   v.remove();
   // a frame that drew nothing is a decode failure, not a match
   if (!px.some((x, i) => i % 4 === 3 && x > 0)) throw new Error('no decoded ' + (last ? 'last' : 'first') + ' frame of ' + src);
-  return { px, c };
+  return { px, c, plays };
 }
 window.compare = async (a, b, fps, save) => {
   const FA = await frame(a, true, fps), FB = await frame(b, false, fps);
   const A = FA.px, B = FB.px;
-  const urls = save ? { lastUrl: FA.c.toDataURL('image/png'), firstUrl: FB.c.toDataURL('image/png') } : {};
+  const urls = Object.assign({ plays: FA.plays }, save ? { lastUrl: FA.c.toDataURL('image/png'), firstUrl: FB.c.toDataURL('image/png') } : {});
   if (A.length !== B.length) return Object.assign({ size: false }, urls);
   let sum = 0, max = 0, over = 0;
   for (let i = 0; i < A.length; i += 4) {
@@ -197,9 +208,11 @@ export async function verify(file, { script, media = null, frames = null, force 
           }
           const badC = rows.filter((r) => !r.size || r.mean > VIDEO_MEAN_TOL || r.share > VIDEO_SHARE_TOL);
           const mx = (k) => Math.max(0, ...rows.map((r) => r[k] || 0));
+          // a video played again because no end frame was reported is said on the gate line
+          const again = rows.filter((r) => r.plays > 1).length;
           gate('continuity', !badC.length && rows.length === infos.length - 1,
-            `decoded MP4: last frame of slide n vs first frame of slide n+1, ${rows.length - badC.length}/${rows.length} pairs within mean ${VIDEO_MEAN_TOL} and share ${VIDEO_SHARE_TOL} (worst mean ${mx('mean').toFixed(3)}, max ${mx('max')}, share over 32 ${mx('share').toFixed(5)})`,
-            rows.map((r) => `${r.pair}: mean ${r.mean != null ? r.mean.toFixed(3) : '-'}, max ${r.max}, share over 32 ${r.share != null ? r.share.toFixed(5) : '-'}`));
+            `decoded MP4: last frame of slide n vs first frame of slide n+1, ${rows.length - badC.length}/${rows.length} pairs within mean ${VIDEO_MEAN_TOL} and share ${VIDEO_SHARE_TOL} (worst mean ${mx('mean').toFixed(3)}, max ${mx('max')}, share over 32 ${mx('share').toFixed(5)})${again ? `; ${again} end frame(s) taken on a later play` : ''}`,
+            rows.map((r) => `${r.pair}: mean ${r.mean != null ? r.mean.toFixed(3) : '-'}, max ${r.max}, share over 32 ${r.share != null ? r.share.toFixed(5) : '-'}${r.plays > 1 ? `, end frame on play ${r.plays}` : ''}`));
         }
       } finally {
         b.close();
