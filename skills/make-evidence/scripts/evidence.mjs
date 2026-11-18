@@ -28,7 +28,7 @@
  * usage error or a step that could not run, 3 precheck found something the user must decide, 124 run hit its
  * time limit; run otherwise passes the command's own exit code through.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { OWN, ORACLE, Usage } from "./me-git.mjs";
@@ -157,6 +157,9 @@ export async function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// real paths on both sides: node runs a script reached through a link by its real path, so a plain resolve() of a
+// linked argv[1] never matched and the command exited 0 doing nothing. A name realpath cannot read is compared as given.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && import.meta.url === pathToFileURL(ranAs(process.argv[1])).href) {
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; });
 }

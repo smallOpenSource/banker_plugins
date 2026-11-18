@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readText } from './build.mjs';
 
 const show = (s) => JSON.stringify(String(s).length > 40 ? String(s).slice(0, 40) + '..' : String(s));
 
@@ -63,8 +64,10 @@ export function applyFixes(items, { root = process.cwd(), dryRun = false } = {})
   return { applied, skipped, lines };
 }
 
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   let list = null, root = process.cwd(), dryRun = false;
   for (let i = 0; i < argv.length; i++) {
@@ -76,11 +79,11 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   if (!list) { process.stderr.write('usage: node scripts/apply-fix.mjs <accepted.json> [--root <dir>] [--dry-run]\n'); process.exit(2); }
   let items;
   try {
-    const j = JSON.parse(readFileSync(list, 'utf8'));
+    const j = JSON.parse(readText(list));
     items = Array.isArray(j) ? j : j.items;
     if (!Array.isArray(items)) throw new Error('expected an array or { "items": [...] }');
   } catch (e) {
-    process.stderr.write(`apply-fix: ${join(list)}: ${e.message}\n`);
+    process.stderr.write(`apply-fix: ${e.exit ? e.message : `${join(list)}: ${e.message}`}\n`);
     process.exit(2);
   }
   const r = applyFixes(items, { root, dryRun });

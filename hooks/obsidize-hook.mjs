@@ -97,7 +97,9 @@ function scan(st, rule, c, two) {
   st.cur = '';
   return PAIRS.has(two) ? 1 : 0;
 }
-const PAGE_NAME_RE = /^[\w.-]+\.md$/;
+// A page name from omx's JSON: letters and digits of any script (an OMX slug of a Korean title is 커피-설계.md), "_",
+// dots and dashes; no separator or space.
+const PAGE_NAME_RE = /^[\p{L}\p{N}_.-]+\.md$/u;
 
 function readStdin() {
   return new Promise((resolvePromise, rejectPromise) => {

@@ -367,4 +367,7 @@ function main() {
   return fail ? 1 : 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main();
+// real paths on both sides: node runs a script reached through a link by its real path, so a plain resolve() of a
+// linked argv[1] never matched and the command exited 0 doing nothing. A name realpath cannot read is compared as given.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main();

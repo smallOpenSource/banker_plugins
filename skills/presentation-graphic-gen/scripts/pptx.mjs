@@ -19,7 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { deckData, parseScript } from './build.mjs';
+import { deckData, parseScript, readText } from './build.mjs';
 import { findBrowser, launch, scratchDir } from './cdp.mjs';
 import { KR, LATIN, mp4Info, notesText, paragraphs, slideTitle, xmlText } from './pptx-common.mjs';
 import { decodePng } from './png.mjs';
@@ -108,7 +108,7 @@ export async function verify(file, { script, media = null, frames = null, force 
     for (const l of lines.slice(0, 12)) log(`  ${l}`);
     if (lines.length > 12) log(`  ... ${lines.length - 12} more`);
   };
-  const parsed = parseScript(readFileSync(script, 'utf8'));
+  const parsed = parseScript(readText(script));
   if (parsed.errors.length) throw Object.assign(new Error(`script errors: ${parsed.errors.join('; ')}`), { exit: 2 });
   const data = deckData(parsed, 'review');
   const { JSZip } = pptxgen();
@@ -253,7 +253,16 @@ export async function verify(file, { script, media = null, frames = null, force 
   return { ok, kind, results };
 }
 
-const notEmpty = (d) => existsSync(d) && readdirSync(d).length > 0;
+// A path that is there but is not a folder that can be read (a file given as the PNG or frames folder) is a usage
+// error with one line and exit 2, not a stack trace.
+const notEmpty = (d) => {
+  if (!existsSync(d)) return false;
+  try {
+    return readdirSync(d).length > 0;
+  } catch (e) {
+    throw Object.assign(new Error(`${resolve(d)} is not a folder that can be read (${e.code || e.message})`), { exit: 2 });
+  }
+};
 
 /** The summary line of a verify result: ALL PASS only with no SKIP (a SKIP is not a pass). */
 export function summaryLine(r, file) {
@@ -282,13 +291,21 @@ export function comCheck(file, pngDir, { force = false } = {}) {
   return { state: r.status === 0 ? 'pass' : 'fail', out };
 }
 
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   if (argv[0] === 'com') {
     const pos = argv.slice(1).filter((x) => x !== '--force'), force = argv.includes('--force');
     if (pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com <file.pptx> <png dir> [--force]\n'); process.exit(2); }
-    const r = comCheck(pos[0], pos[1], { force });
+    let r;
+    try {
+      r = comCheck(pos[0], pos[1], { force });
+    } catch (e) {
+      process.stderr.write(`pptx: ${e.message}\n`);
+      process.exit(exitOf(e, 2));
+    }
     if (r.state === 'exists') { process.stderr.write(`pptx: ${r.out}\n`); process.exit(2); }
     const fail = r.state === 'fail';
     process.stdout.write(`${r.out}\n${r.state.toUpperCase()} pptx-com: ${r.state === 'skip' ? 'PowerPoint check skipped' : fail ? 'PowerPoint did not open the file or export the slides' : `PowerPoint opened the file and exported slides to ${resolve(pos[1])}`}\n`);

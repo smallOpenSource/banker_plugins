@@ -96,8 +96,10 @@ export async function record(file, { out = null, fps = 30, hold = 0.5, quality =
   return { out, manifest };
 }
 
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const o = {};
   let file = null;
