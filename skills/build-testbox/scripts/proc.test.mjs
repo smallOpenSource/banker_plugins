@@ -3,11 +3,11 @@
 // Run: node --test skills/build-testbox/scripts/proc.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runProc } from "./proc.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -67,4 +67,18 @@ test("a program not on PATH is ENOENT, not a program of that name in the working
   assert.equal(r.error, "ENOENT", r.out);
   assert.equal(r.code, null);
   assert.equal(r.out, "");
+});
+
+// Windows allows a quoted PATH entry ("C:\Program Files\nodejs"); which() searches the folder inside the quotes.
+// The Windows branch runs here through scripts/test-fixtures/fake-win32.mjs.
+test("which: a quoted PATH entry on Windows is searched without its quotes", () => {
+  const dir = join(base, "with space");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "tool.exe"), "");
+  chmodSync(join(dir, "tool.exe"), 0o755);
+  const fake = pathToFileURL(join(HERE, "..", "..", "..", "scripts", "test-fixtures", "fake-win32.mjs")).href;
+  const code = `import(${JSON.stringify(pathToFileURL(join(HERE, "proc.mjs")).href)}).then((m) => console.log(m.which("tool", { PATH: process.env.Q, PATHEXT: ".EXE" })))`;
+  const r = spawnSync(process.execPath, ["--import", fake, "--input-type=module", "-e", code], { encoding: "utf8", env: { ...process.env, Q: `"${dir}"` } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim().toLowerCase(), join(dir, "tool.exe").toLowerCase());
 });

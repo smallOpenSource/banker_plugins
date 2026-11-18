@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
@@ -246,7 +246,9 @@ test(".cmd wrappers: NODE unset, node comes from PATH only, not from the project
   const cmds = ["start", "stop", "status", "restart"].map((s) => join("scripts", `${s}.cmd`)).concat(join("tests", "run.cmd"));
   for (const rel of cmds) {
     const text = readFileSync(join(root, rel), "utf8");
-    assert.match(text, /^if "%NODE_BIN%"=="" for %%I in \(node\.exe\) do set "NODE_BIN=%%~\$PATH:I"\r$/m, rel);
+    // the search runs over a copy of PATH without quotes: %~$PATH: skips a quoted entry ("C:\Program Files\nodejs")
+    assert.match(text, /^set "NODE_SEARCH=%PATH:"=%"\r$/m, rel);
+    assert.match(text, /^if "%NODE_BIN%"=="" for %%I in \(node\.exe\) do set "NODE_BIN=%%~\$NODE_SEARCH:I"\r$/m, rel);
     assert.doesNotMatch(text, /set "NODE_BIN=node"/, rel);
   }
   if (!WIN) return;
@@ -258,6 +260,14 @@ test(".cmd wrappers: NODE unset, node comes from PATH only, not from the project
   const r = spawnSync("cmd.exe", ["/d", "/c", join(root, "scripts", "status.cmd")], { encoding: "utf8", cwd: root, env, timeout: 30000 });
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stdout, /서비스: app/, "the real node ran service.mjs");
+  assert.equal(existsSync(join(root, "planted.txt")), false);
+  // a quoted PATH entry for node's folder still finds node
+  const sys32 = join(process.env.SystemRoot || "C:\\Windows", "System32");
+  const qenv = Object.fromEntries(Object.entries(env).filter(([k]) => !/^path$/i.test(k)));
+  qenv.PATH = `"${dirname(process.execPath)}";${sys32}`;
+  const q = spawnSync("cmd.exe", ["/d", "/c", join(root, "scripts", "status.cmd")], { encoding: "utf8", cwd: root, env: qenv, timeout: 30000 });
+  assert.equal(q.status, 1, q.stdout + q.stderr);
+  assert.match(q.stdout, /서비스: app/, "node found through a quoted PATH entry");
   assert.equal(existsSync(join(root, "planted.txt")), false);
 });
 
