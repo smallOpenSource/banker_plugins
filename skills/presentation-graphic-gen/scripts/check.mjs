@@ -33,6 +33,9 @@ export const SAFE = { l: 160, r: 1760, t: 120, b: 960 };
 export const MIN_PX = 28, REPORT_PX = 40;
 export const PIXEL_TOL = 16, SHARE_TOL = 0.0002;
 export const PLAY_VIEW = { width: 1227, height: 785, dpr: 1.5 }; // the second viewport of decorations-played
+// the gates play the steps even when the OS asks for reduced motion (macOS Reduce Motion): that setting would show
+// each end state at once and leave the playing frames unchecked
+export const PLAY_MOTION = [{ name: 'prefers-reduced-motion', value: 'no-preference' }];
 
 // evaluated in the page: the visible scene's text and leaf elements at the current state
 export const LAYOUT = `(() => {
@@ -237,7 +240,7 @@ export async function check(file, { script = null, out = null, force = false, br
     },
   });
   try {
-    const page = await b.open(null, { network: true });
+    const page = await b.open(null, { network: true, media: PLAY_MOTION });
     await page.goto(url);
     await page.settle();
     const info = await page.eval(`({ N: __deck.N, steps: __deck.steps, error: __deck.error, data: JSON.parse(document.getElementById('deck-data').textContent),
@@ -308,7 +311,7 @@ export async function check(file, { script = null, out = null, force = false, br
     // (all rules). Frames go to played/NN-<id>-mid.png and -end.png.
     const pv = PLAY_VIEW, played = [];
     mkdirSync(join(out, 'played'), { recursive: true });
-    const pp = await b.open(null, { width: pv.width, height: pv.height, dpr: pv.dpr });
+    const pp = await b.open(null, { width: pv.width, height: pv.height, dpr: pv.dpr, media: PLAY_MOTION });
     await b.send('Page.bringToFront', {}, pp.sessionId);
     await pp.goto(url + '#0');
     const pclip = await pp.eval(`(() => { const r = document.getElementById('stage').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; })()`);

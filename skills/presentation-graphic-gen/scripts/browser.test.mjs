@@ -49,7 +49,7 @@ describe('engine in a browser', { skip: SKIP }, () => {
     TMP = mkdtempSync(join(tmpdir(), 'pgg-browser-test-'));
     ({ review: REVIEW, present: PRESENT } = buildDeck(SAMPLE, join(TMP, 'sample')));
     b = await launch({ browser: BROWSER });
-    page = await b.open(null);
+    page = await b.open(null, { media: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] }); // the keys test plays steps even under an OS Reduce Motion setting
   });
   after(() => { if (b) b.close(); if (TMP) rmSync(TMP, { recursive: true, force: true }); });
 
