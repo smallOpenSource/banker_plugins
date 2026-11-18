@@ -18,7 +18,7 @@ import {
   FIXTURE_DIR, LOCATION_CASES, SCENARIOS, VALIDATION, buildLocationLayout, caseCwd, caseEnv, caseExtraEnv, caseWd,
   digest, makeBase, makeProject, normalizeWhere, runChild,
 } from '../../scripts/test-fixtures/omc-wiki-cases.mjs';
-import { parseFrontmatter, serializePage, titleToSlug, tokenize, validateInput } from './wiki.mjs';
+import { parseFrontmatter, refuseDeviceName, serializePage, titleToSlug, tokenize, validateInput } from './wiki.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WIKI = path.join(HERE, 'wiki.mjs');
@@ -141,6 +141,29 @@ test('input validation accepts and rejects exactly what the tools\' zod schemas 
     const why = validateInput(tool, input);
     assert.equal(why === null, want.ok[i], `case ${i} ${tool}: ${why}`);
   });
+});
+
+// remains 0.29.0 #9: a slug that is a Windows device name (con.md, nul.md, com1.md) is refused before anything is
+// read or written; the slug's shape stays OMC's.
+test('a title or page whose file name would be a Windows device name is refused, and nothing is written', () => {
+  assert.equal(titleToSlug('Con'), 'con.md', 'the slug keeps the OMC shape');
+  assert.throws(() => refuseDeviceName('con.md.md'), /would be a Windows device name/, 'a device name before any extension is one');
+  assert.equal(refuseDeviceName('console.md'), 'console.md');
+  const p = project();
+  for (const title of ['Con', 'NUL', 'com1', 'Lpt9', 'aux', 'PRN']) {
+    for (const tool of ['wiki_ingest', 'wiki_add']) {
+      const run = p.cli([tool, '--input', JSON.stringify({ tags: [], category: 'reference', title, content: 'c' })]);
+      assert.equal(run.status, 1, `${tool} ${title}: ${run.stdout}${run.stderr}`);
+      assert.match(run.stdout, /would be a Windows device name/, `${tool} ${title}`);
+    }
+  }
+  assert.ok(!fs.existsSync(path.join(p.cwd, '.omc')), 'nothing written, not even the wiki folder');
+  for (const tool of ['wiki_read', 'wiki_delete']) {
+    const run = p.cli([tool, '--input', JSON.stringify({ page: 'com1.md' })]);
+    assert.equal(run.status, 1, `${tool}: ${run.stdout}${run.stderr}`);
+    assert.match(run.stdout, /com1\.md would be a Windows device name/, tool);
+  }
+  for (const title of ['Console', 'Null Pointer', 'COM10', 'Auxiliary']) assert.equal(p.cli(ingestArgs({ title, content: 'c' })).status, 0, title);
 });
 
 test('a rejected input exits 1, says why, and creates nothing', () => {
