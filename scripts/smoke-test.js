@@ -1661,6 +1661,12 @@ console.log(JSON.stringify(['codex', 'gemini', 'opencode'].map((cli) => seatPlan
      && /OS 패키지 관리자\(dnf, apt, brew, winget\)의 단계는 .*미리 판정하지 않고 시도합니다/.test(offlineReadme) && /단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다/.test(offlineReadme)
      && [offlineReadme, privacy].every((t) => /훅은 `HTTPS_PROXY`, `HTTP_PROXY` 를 따르지 않습니다/.test(t)),
      'airgap-11: the README offline section names the skills that need the network and how each ends, and both docs say the hooks ignore HTTPS_PROXY');
+  // presentation-graphic-gen ends the browser tree with taskkill from System32 (a bare name is looked up in the
+  // current folder first on Windows) and drives the browser over its pipe, with no debugging port.
+  const pggCdp = fs.readFileSync(path.join(root, 'skills', 'presentation-graphic-gen', 'scripts', 'cdp.mjs'), 'utf8');
+  ok(/win32\.join\(process\.env\.SystemRoot \|\| 'C:\\\\Windows', 'System32', 'taskkill\.exe'\)/.test(pggCdp) && !/execFileSync\(\s*['"]taskkill/.test(pggCdp)
+     && /'--remote-debugging-pipe'/.test(pggCdp) && !/remote-debugging-port/.test(pggCdp),
+     'pgg-taskkill: presentation-graphic-gen takes taskkill.exe from System32 and drives the browser over --remote-debugging-pipe, not a port');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

@@ -37,12 +37,29 @@
 | OS | 실행 파일 |
 |---|---|
 | Windows | `chrome-win64\chrome.exe` |
-| macOS | `chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing` |
+| macOS(Apple silicon) | `chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing` |
+| macOS(Intel) | `chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing` |
 | Linux | `chrome-linux64/chrome` |
+
+- Playwright 의 chromium 폴더(`chromium-<번호>/`) 안도 같은 이름이다. 도우미는 이 표의 경로를 모두 찾는다.
 
 - Edge: 기업용 설치 파일을 실행한다. 기본 경로에 설치되면 따로 지정하지 않아도 찾는다.
 - Playwright 의 chromium: 받은 폴더를 Windows `%LOCALAPPDATA%\ms-playwright\`, macOS `~/Library/Caches/ms-playwright/`, Linux `~/.cache/ms-playwright/` 아래에 두거나, 그 위 폴더를 환경 변수 `PLAYWRIGHT_BROWSERS_PATH` 에 넣는다.
 - Linux 를 root 로 쓰면 브라우저가 `--no-sandbox` 로 뜬다(도우미가 알아서 붙임).
+
+### Linux 의 snap Chromium
+
+Ubuntu 의 `chromium`, `chromium-browser` 명령은 보통 snap 으로 설치된 Chromium 을 띄운다. snap 브라우저는 갇혀서 돈다.
+
+| 제약 | 도우미의 대처 |
+|---|---|
+| 자기 전용 `/tmp` 를 써서 호스트의 `/tmp` 를 보지 못함 | 프로필 폴더를 `/tmp` 대신 `~/snap/chromium/common/` 에 만든다. 그 폴더가 없으면 `~/.cache/presentation-graphic-gen/` 에 만든다 |
+| 홈 폴더 아래의 숨김이 아닌 폴더만 읽음 | 덱 파일이 그 밖(`/tmp`, 숨김 폴더 등)에 있으면 브라우저를 그 파일로 보내기 전에 `snap Chromium cannot read <파일>` 문장과 종료 코드 2 로 끝난다 |
+
+- snap 인지는 브라우저 경로, 실제 경로(`/snap/` 이 들어 있거나 `/usr/bin/snap`), `/snap/bin/` 을 부르는 스크립트인지로 판단한다.
+- 덱과 출력 폴더를 홈 아래(예: `~/talks/`)에 둔다. 그래도 안 되면 snap 이 아닌 브라우저(Chrome, Edge, Playwright 의 chromium)의 실행 파일 경로를 `CHROME` 에 넣는다.
+- 스킬의 시험(`*.test.mjs`)은 OS 임시 폴더를 쓴다. snap Chromium 만 있는 PC 에서는 `CHROME` 으로 다른 브라우저를 지정해 돌린다.
+- 이 대처는 판단 함수의 단위 시험으로만 확인했다. 실제 snap Chromium 으로 돌려 보지 않았다.
 
 ## 4. 확인
 
