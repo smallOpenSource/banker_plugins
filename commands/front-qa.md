@@ -39,7 +39,7 @@ argument-hint: "[스펙 파일 경로. 생략하면 docs/note.md]"
 
 ## 루프/중단 (사용자 directive)
 - **/loop**: 모든 문제 해결까지 진행. credit/llm/token 비용 비고려.
-- **중단 조건**: 컨텍스트 85% 도달 OR 작업 완료 → 작업·loop 중단(체크포인트: prd.json·progress.txt·메모리).
+- **중단 조건**: 컨텍스트 85% 도달 OR 작업 완료 → 작업·loop 중단(체크포인트: prd.json·ralph 진행 기록·메모리. 진행 기록은 Claude Code 의 OMC ralph 가 `.omc/progress.txt`, omc-patch 의 DRM 대응 패치 뒤에는 `.omc/progress.md`. Codex 의 banker ralph 는 저장소 밖 게이트 폴더의 `ralph.md`).
 
 ## 🔴 불변 제약
 - 보안모델: 비밀 서버사이드 주입·VITE_ 비밀 금지·`client.ts` onResponse 인터셉터 금지(openapi-fetch body 1회 소비)·

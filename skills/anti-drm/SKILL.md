@@ -66,6 +66,14 @@ argument-hint: "on | off | status | config"
 3. "설정 넘기기" 대로 `config --stdin` 실행
 4. 이 런타임이 켜져 있으면 출력의 `적용할 규칙:` 아래 규칙을 이 세션에 바로 적용
 
+## OMC ralph 의 진행 기록
+
+- Claude Code 의 OMC ralph 는 진행 기록을 `.omc/progress.txt` 로 만듦. 에이전트가 아니라 OMC 훅이 만드는 파일이라 이 규칙으로 바뀌지 않음
+- `on` 이나 `config` 가 성공하고 금지 확장자에 `.txt` 가 있으면 한 줄로 알림
+  - 알릴 말: "OMC ralph 의 `progress.txt` 는 `omc-patch` 의 DRM 대응 패치로 `progress.md` 로 바꿀 수 있습니다"
+  - 이 스킬이 대신 패치하지 않음. 패치는 사용자가 `omc-patch` 를 실행하고 동의할 때만 함
+- Codex 는 해당 없음. banker 의 Codex ralph 는 `ralph.md` 로 씀
+
 ## 질문
 
 - Claude Code: `AskUserQuestion` 한 번에 세 질문
