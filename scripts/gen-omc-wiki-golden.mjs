@@ -48,8 +48,16 @@ function newestIntact() {
   return null;
 }
 
-const CHECK = process.argv[2] === '--check';
-const given = process.argv[CHECK ? 3 : 2];
+// --check anywhere among the arguments; at most one folder; anything else is a usage error, so a misplaced flag
+// never turns a check into a rewrite of the fixtures.
+const ARGS = process.argv.slice(2);
+const CHECK = ARGS.includes('--check');
+const folders = ARGS.filter((a) => a !== '--check');
+if (folders.length > 1 || folders.some((a) => a.startsWith('-'))) {
+  console.error(`usage: node ${path.basename(process.argv[1])} [--check] [<folder>]`);
+  process.exit(2);
+}
+const given = folders[0];
 const omcDir = given ? path.resolve(given) : CHECK ? newestIntact() : path.join(CACHE, '5.8.4');
 if (!omcDir) {
   console.error(`no intact OMC version folder (with ${NEEDS.join(', ')}) in ${CACHE}`);

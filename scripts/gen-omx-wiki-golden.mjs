@@ -21,8 +21,16 @@ import path from 'node:path';
 import { caseEnv, digest, makeBase, makeProject } from './test-fixtures/omc-wiki-cases.mjs';
 import { CLI_STEPS, FIXTURE_DIR, SCENARIOS, findOmxDir, runCli, runScenarioChild } from './test-fixtures/omx-wiki-cases.mjs';
 
-const CHECK = process.argv[2] === '--check';
-const given = process.argv[CHECK ? 3 : 2];
+// --check anywhere among the arguments; at most one folder; anything else is a usage error, so a misplaced flag
+// never turns a check into a rewrite of the fixtures.
+const ARGS = process.argv.slice(2);
+const CHECK = ARGS.includes('--check');
+const folders = ARGS.filter((a) => a !== '--check');
+if (folders.length > 1 || folders.some((a) => a.startsWith('-'))) {
+  console.error(`usage: node ${path.basename(process.argv[1])} [--check] [<folder>]`);
+  process.exit(2);
+}
+const given = folders[0];
 const omxDir = path.resolve(given || findOmxDir() || 'oh-my-codex-not-found');
 for (const need of ['dist/cli/mcp-parity.js', 'dist/cli/omx.js', 'dist/wiki/storage.js', 'node_modules/@modelcontextprotocol/sdk']) {
   if (!fs.existsSync(path.join(omxDir, ...need.split('/')))) {
