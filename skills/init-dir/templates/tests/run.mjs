@@ -19,7 +19,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TESTS = dirname(fileURLToPath(import.meta.url));
@@ -54,7 +54,8 @@ function seconds(text) {
 function killTree(child) {
   // The shell may be gone while what it started still holds the output pipes, so the group is killed regardless.
   if (!child.pid) return;
-  if (WIN) spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore", windowsHide: true });
+  // System32's taskkill by full path: a bare name is looked for in the working folder (the project) first.
+  if (WIN) spawnSync(win32.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"), ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore", windowsHide: true });
   else {
     try {
       process.kill(-child.pid, "SIGKILL");

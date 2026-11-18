@@ -1260,6 +1260,9 @@ export function faceDistance(face) {
 const fcEscape = (name) => String(name).replace(/([\\:,\-])/g, '\\$1');
 
 function fcMatch(name) {
+  // Windows rarely has fc-match, and a bare name would be looked for in the working folder (the user's project) first:
+  // there the font folders are walked instead.
+  if (process.platform === 'win32') return null;
   let r;
   try {
     r = spawnSync('fc-match', [`--format=%{file}`, fcEscape(name)], { encoding: 'utf8', timeout: 4000 });

@@ -2,7 +2,7 @@
 // and starts or stops a server. Pure Node, no network beyond the ready check on the URL it is given.
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, win32 } from "node:path";
 import { EXCLUDE, Usage, git, lines, runDir, stamp } from "./me-git.mjs";
 
 // ---- secrets --------------------------------------------------------------------------------------------------
@@ -63,10 +63,13 @@ export function header(argv, shell, cwd) {
   return `$ ${shown}\n# head=${h.sha} dirty=${h.dirty} at=${new Date().toISOString()} node=${process.version} os=${process.platform} cwd=${cwd}\n`;
 }
 
-function spawnArgs(argv, shell) {
+// --shell on Windows runs System32's Windows PowerShell by full path: the command runs in the project folder, and a
+// bare powershell.exe would be looked for there first.
+export function spawnArgs(argv, shell, platform = process.platform, env = process.env) {
   if (!shell) return [argv[0], argv.slice(1)];
   const line = argv.join(" ");
-  return process.platform === "win32" ? ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", line]] : ["/bin/sh", ["-c", line]];
+  if (platform !== "win32") return ["/bin/sh", ["-c", line]];
+  return [win32.join(env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", line]];
 }
 
 export function killTree(pid) {

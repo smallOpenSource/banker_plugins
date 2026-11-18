@@ -69,7 +69,10 @@ function killTree(child) {
 // Runs a program and resolves { code, signal, stdout, stderr, out, timedOut, error }. Never rejects: a missing
 // program is { code: null, error: "ENOENT" }. out holds stdout and stderr in arrival order.
 export function runProc(cmd, args = [], opts = {}) {
-  const file = which(cmd, opts.env || process.env) || cmd;
+  // A program not on PATH is not started by its bare name: Windows (and an empty PATH entry on POSIX) would look in
+  // the working folder first and run a program of that name there.
+  const file = which(cmd, opts.env || process.env);
+  if (!file) return Promise.resolve({ code: null, signal: null, stdout: "", stderr: "", out: "", timedOut: false, error: "ENOENT" });
   const [bin, argv, extra] = spawnArgs(file, args);
   const { parts, add } = collector();
   return new Promise((resolveRun) => {
