@@ -26,6 +26,8 @@ const OSES = new Set(["linux", "darwin", "win32"]);
 const FIELDS = new Set(["name", "os", "ssh", "port", "identity", "path", "runAs"]);
 const SECRETISH = /pass|secret|token|credential/i;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// A name is a local folder and a log file name. Windows opens a device for these, with any extension after them.
+const WIN_DEVICE = /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i;
 const TARGET = /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*$/;
 // Where a box's private folder goes. A runAs box gets one outside the temporary folders, so that the copy and the
 // run account's HOME inside it are not under /tmp: tools that refuse temporary folders (teamwork's Codex home check)
@@ -73,6 +75,7 @@ function checkShape(b, where) {
 
 function checkRequired(b, where) {
   if (!NAME.test(String(b.name ?? ""))) return `${where}: name 은 영문이나 숫자로 시작하고 영문, 숫자, '.', '_', '-' 만 씁니다`;
+  if (WIN_DEVICE.test(b.name)) return `${where}: name ${b.name} 은 Windows 장치 이름(CON, PRN, AUX, NUL, COM0~9, LPT0~9)이라 폴더와 로그 파일 이름으로 쓸 수 없습니다`;
   if (!OSES.has(b.os)) return `${where}: os 는 linux, darwin, win32 중 하나입니다`;
   if (!TARGET.test(String(b.ssh ?? ""))) return `${where}: ssh 는 user@host 형식이고 영문이나 숫자로 시작합니다`;
   return null;
@@ -181,13 +184,19 @@ export const remoteSteps = (b, name, dir) => (b.os === "win32" ? winSteps(b, nam
 
 const lastLine = (s) => String(s || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1) || "";
 
-// node --test --test-reporter=tap: the summary lines and the names of failing tests (TODO tests left out),
-// or null without a summary.
+// node --test with the tap reporter (`# tests 5`) or the spec reporter, the default from Node 23 (`\u2139 tests 5`,
+// failing tests on `\u2716 <name> (<time>)` lines): the summary lines and the names of failing tests (TODO tests left
+// out), or null without a summary. Colour codes are dropped first, in case the command forces them.
 export function parseTap(text) {
-  const s = String(text || "");
-  if (!/^# tests \d+/m.test(s)) return null;
-  const n = (k) => Number((s.match(new RegExp(`^# ${k} (\\d+)`, "m")) || [])[1]);
-  const names = [...s.matchAll(/^\s*not ok \d+ - (.+?)\s*$/gm)].map((m) => m[1]).filter((t) => !/#\s*TODO\b/i.test(t));
+  const s = String(text || "").replace(/\x1b\[[0-9;]*m/g, "");
+  const mark = /^# tests \d+/m.test(s) ? "#" : /^\u2139 tests \d+/m.test(s) ? "\u2139" : null;
+  if (!mark) return null;
+  const n = (k) => Number((s.match(new RegExp(`^${mark} ${k} (\\d+)`, "m")) || [])[1]);
+  // [name, the text that may carry "# TODO"]
+  const found = mark === "#"
+    ? [...s.matchAll(/^\s*not ok \d+ - (.+?)\s*$/gm)].map((m) => [m[1], m[1]])
+    : [...s.matchAll(/^\s*\u2716 (.+?) \([\d.]+m?s\)(.*)$/gm)].map((m) => [m[1], m[2]]);
+  const names = found.filter(([, rest]) => !/#\s*TODO\b/i.test(rest)).map(([name]) => name);
   return { tests: n("tests"), pass: n("pass"), fail: n("fail"), skipped: n("skipped"), todo: n("todo"),
     cancelled: n("cancelled"), failures: [...new Set(names)].slice(0, 30) };
 }

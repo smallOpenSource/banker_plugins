@@ -59,6 +59,16 @@ test("each box needs a name, a known os and a plain user@host", () => {
   assert.match(checkBox(null, 3), /boxes\[3\]/);
 });
 
+test("a name that is a Windows device name is refused: it becomes a local folder and a log file name", () => {
+  for (const name of ["CON", "con", "Prn", "aux", "NUL", "nul.log", "COM1", "com9", "LPT1", "lpt0.x", "COM0"]) {
+    assert.match(checkBox({ name, os: "linux", ssh: "a@b" }, 0), /Windows/, name);
+  }
+  for (const name of ["console", "nullbox", "com10", "lpt", "aux-1", "con_2", "my.con"]) {
+    assert.equal(checkBox({ name, os: "linux", ssh: "a@b" }, 0), null, name);
+  }
+  assert.throws(() => loadBoxes(config({ boxes: [{ ...MAC, name: "NUL" }] })), /boxes\[0\].*Windows/);
+});
+
 test("passwords and unknown fields are refused, so a typo cannot pass silently", () => {
   assert.match(checkBox({ ...MAC, password: "x" }, 0), /비밀번호/);
   assert.match(checkBox({ ...MAC, apiToken: "x" }, 0), /비밀번호/);
@@ -121,6 +131,20 @@ test("the TAP summary and the failing test names come from node's reporter, TODO
   assert.deepEqual([r.tests, r.pass, r.fail, r.skipped, r.todo], [5, 1, 3, 0, 1]);
   assert.deepEqual(r.failures, ["x fails", "nested"]);
   assert.equal(parseTap("plain output, no summary"), null);
+});
+
+test("the spec summary (Node 23 and later by default) is read too, with failing tests from the cross lines", () => {
+  const spec = "\u2714 passes (1.6ms)\n\u2716 fails here (2.1ms)\n\u2716 todo one (0.3ms) # TODO\n\ufe63 skipped one (0.2ms) # SKIP\n"
+    + "\u25b6 group\n  \u2716 nested fail (2.8ms)\n  \u2714 nested ok (0.5ms)\n\u2716 group (4.0ms)\n"
+    + "\u2139 tests 6\n\u2139 suites 1\n\u2139 pass 2\n\u2139 fail 2\n\u2139 cancelled 0\n\u2139 skipped 1\n\u2139 todo 1\n"
+    + "\u2139 duration_ms 169.6\n\n\u2716 failing tests:\n\ntest at a.test.mjs:4:1\n\u2716 fails here (2.1ms)\n  AssertionError: 1 == 2\n";
+  const r = parseTap(spec);
+  assert.deepEqual([r.tests, r.pass, r.fail, r.skipped, r.todo, r.cancelled], [6, 2, 2, 1, 1, 0]);
+  assert.deepEqual(r.failures, ["fails here", "nested fail", "group"]);
+  const win = "\u2139 tests 1\r\n\u2139 pass 1\r\n\u2139 fail 0\r\n\u2139 skipped 0\r\n";
+  assert.deepEqual([parseTap(win).tests, parseTap(win).fail, parseTap(win).failures.length], [1, 0, 0], "Windows line ends");
+  const colour = "\x1b[31m\u2716 red (1ms)\x1b[39m\n\x1b[34m\u2139 tests 1\x1b[39m\n\x1b[34m\u2139 fail 1\x1b[39m\n";
+  assert.deepEqual([parseTap(colour).tests, parseTap(colour).failures], [1, ["red"]], "colour codes do not hide the summary");
 });
 
 test("probe reads node, git and tar from a box that answers", async () => {
