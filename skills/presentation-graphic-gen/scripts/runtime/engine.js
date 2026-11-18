@@ -38,7 +38,7 @@
 
   const $ = (s, r = document) => r.querySelector(s);
   const pad2 = (n) => String(n).padStart(2, '0');
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function el(tag, cls, parent) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;

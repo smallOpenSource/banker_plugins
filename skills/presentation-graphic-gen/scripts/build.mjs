@@ -32,7 +32,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { embedFonts } from './fonts.mjs';
-import { VendorError } from './vendor.mjs';
+import { VendorError, exitOf, requireVendor } from './vendor.mjs';
 
 export const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const RUNTIME = join(SKILL, 'scripts', 'runtime');
@@ -225,7 +225,7 @@ function loadAssets(dir, names) {
 // ---------- page ----------
 const FAVICON = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#14151C"/><rect x="13" y="18" width="38" height="8" rx="4" fill="#F2F2F6"/><rect x="13" y="32" width="26" height="8" rx="4" fill="#F2F2F6" opacity=".6"/><rect x="13" y="45" width="22" height="5" rx="2.5" fill="#E0263F"/></svg>').toString('base64')}`;
 const jsonScript = (id, data) => `<script type="application/json" id="${id}">${JSON.stringify(data).replace(/</g, '\\u003c')}</script>`;
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const inlineJs = (s) => s.replace(/<\/script/gi, '<\\/script');
 
 export function page({ mode, data, fonts, css, engine, scenes, assets }) {
@@ -274,6 +274,13 @@ function writeOut(path, text, force) {
   renameSync(tmp, path);
 }
 
+// Output name: letters of any script (Hangul too), digits, combining marks, spaces, ".", "_", "-". The class leaves
+// out path separators, control characters and the characters Windows forbids in file names (<>:"/\|?*).
+const NAME_RE = /^[\p{L}\p{M}\p{N}._ -]+$/u;
+export const nameOk = (n) => NAME_RE.test(n) && !n.includes('..') && !/^ | $|\.$/.test(n);
+// default: the script's file name (NFC, so a macOS decomposed name reads the same), runs of spaces as one "-"
+export const defaultName = (script) => basename(script, extname(script)).normalize('NFC').trim().replace(/\s+/g, '-');
+
 export function parseArgs(argv, cwd = process.cwd()) {
   const a = { script: null, scenes: null, media: null, name: null, dir: null, stamp: null, force: false };
   for (let i = 0; i < argv.length; i++) {
@@ -294,14 +301,16 @@ export function parseArgs(argv, cwd = process.cwd()) {
   const base = dirname(a.script);
   a.scenes = a.scenes || join(base, 'scenes');
   a.media = a.media || join(base, 'media');
-  a.name = a.name || basename(a.script, extname(a.script));
-  if (!/^[\w.-]+$/.test(a.name)) throw fail(`--name may hold letters, digits, ".", "_" and "-" only, got "${a.name}"`, 2);
+  const given = a.name != null;
+  a.name = given ? a.name : defaultName(a.script);
+  if (!nameOk(a.name)) throw fail(`${given ? '--name' : 'the output name (the script file name; give --name)'} may hold letters of any language, digits, spaces, ".", "_" and "-", not "..", path separators, control characters or <>:"/\\|?*, and may not start or end with a space or end with "."; got ${JSON.stringify(a.name)}`, 2);
   a.dir = a.dir || join(cwd, 'presentation-out', a.name);
   return a;
 }
 
 /** Builds the review / present pair. Returns { review, present, budget, warnings, fonts }. Throws with .exit set. */
 export async function build(a) {
+  requireVendor(); // every vendored file, before any work (exit 3)
   if (!existsSync(a.script)) throw fail(`script not found: ${a.script}`, 2);
   const parsed = parseScript(readFileSync(a.script, 'utf8'));
   if (parsed.errors.length) throw fail(`script errors:\n  ${parsed.errors.join('\n  ')}`, 1);
@@ -362,6 +371,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.stdout.write(report(r) + '\n');
   } catch (e) {
     process.stderr.write(`build: ${e.message}\n`);
-    process.exit(e.exit || 1);
+    process.exit(exitOf(e, 1));
   }
 }

@@ -1,5 +1,6 @@
-// build.test.mjs: script parsing, time budget, repeat warning, scene lint, no-overwrite rule, vendor sha check,
-// font subsetting and its fallback, and file hygiene. No browser needed.
+// build.test.mjs: script parsing, time budget, repeat warning, scene lint, output names, no-overwrite rule (build,
+// and the refusals of check, verify --frames, com and make that come before any work), vendor sha check (each
+// vendored file alone), font subsetting and its fallback, SKIP in the reports, and file hygiene. No browser needed.
 // Run: node --test scripts/build.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
@@ -7,8 +8,11 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { extname, join, relative } from 'node:path';
 import { after, test } from 'node:test';
-import { SAMPLE, SKILL, lintScene, parseArgs, parseScript, repeatWarnings, syllables, timeBudget } from './build.mjs';
+import { SAMPLE, SKILL, deckData, lintScene, parseArgs, parseScript, repeatWarnings, syllables, timeBudget } from './build.mjs';
+import { check } from './check.mjs';
 import { codepointsOf, embedFonts } from './fonts.mjs';
+import { doneReport } from './make.mjs';
+import { comCheck, summaryLine, verify } from './pptx.mjs';
 import { ORIGINALS, PACKED, VendorError, VENDOR, vendorBytes, verifyVendor } from './vendor.mjs';
 
 const BUILD = join(SKILL, 'scripts', 'build.mjs');
@@ -206,6 +210,115 @@ test('fonts: when subsetting fails the full font is embedded and a warning is re
     assert.equal(f.subset, false);
     assert.ok(f.bytes.equals(vendorBytes(f.rel)), `${f.rel} is the full original`);
   }
+});
+
+// a copy of the skill with one vendored file changed by a byte appended
+function tampered(name, rel) {
+  const copy = join(TMP, name);
+  for (const d of ['scripts', 'vendor', 'assets']) cpSync(join(SKILL, d), join(copy, d), { recursive: true });
+  const f = join(copy, 'vendor', rel);
+  writeFileSync(f, Buffer.concat([readFileSync(f), Buffer.from([0x20])]));
+  return copy;
+}
+
+test('vendor: the HarfBuzz wasm alone changed stops the build with exit 3 (no full-font fallback)', () => {
+  const copy = tampered('t-wasm', 'harfbuzz/harfbuzz-subset.wasm');
+  const out = join(TMP, 't-wasm-out');
+  const r = run([join(copy, 'scripts', 'build.mjs'), '--sample', '--dir', out]);
+  assert.equal(r.status, 3, r.stdout + r.stderr);
+  assert.match(r.stderr, /harfbuzz-subset\.wasm: sha256 differs/);
+  assert.doesNotMatch(r.stdout + r.stderr, /embedding the full fonts/);
+  assert.ok(!existsSync(out), 'nothing is written');
+});
+
+test('vendor: the H.264 encoder alone, or PptxGenJS alone, changed stops make.mjs with exit 3 before any work', () => {
+  for (const [name, rel] of [['t-h264', 'h264-mp4-encoder/h264-mp4-encoder.node.js'], ['t-pptx', 'pptxgenjs/pptxgen.bundle.js']]) {
+    const copy = tampered(name, rel);
+    const out = join(TMP, `${name}-out`);
+    const t0 = Date.now();
+    const r = run([join(copy, 'scripts', 'make.mjs'), '--sample', '--format', 'pptx', '--dir', out]);
+    assert.equal(r.status, 3, `${name}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`${rel.split('/')[1].replace(/\./g, '\\.')}: sha256 differs`));
+    assert.doesNotMatch(r.stdout, /== build/, 'stopped before the build');
+    assert.ok(!existsSync(out), 'nothing is written');
+    assert.ok(Date.now() - t0 < 20000, `${name}: ${Date.now() - t0} ms`);
+  }
+  // the other helpers that read PptxGenJS stop with 3 too
+  const copy = join(TMP, 't-pptx');
+  const v = run([join(copy, 'scripts', 'pptx.mjs'), 'verify', join(TMP, 'none.pptx'), '--script', SAMPLE]);
+  assert.equal(v.status, 3, v.stdout + v.stderr);
+  const media = join(TMP, 't-pptx-media');
+  mkdirSync(media, { recursive: true });
+  writeFileSync(join(media, 'manifest.json'), JSON.stringify({ fps: 30, steps: deckData(parseScript(readFileSync(SAMPLE, 'utf8'))).steps.map((s) => ({ id: s.id })) }));
+  const pv = run([join(copy, 'scripts', 'pptx-video.mjs'), SAMPLE, '--media', media, '--out', join(TMP, 't-pptx.pptx')]);
+  assert.equal(pv.status, 3, pv.stdout + pv.stderr);
+  assert.ok(!existsSync(join(TMP, 't-pptx.pptx')));
+});
+
+test('names: the default name is the script file name, Hangul and spaces included (spaces become "-")', () => {
+  assert.equal(parseArgs(['발표.md'], TMP).name, '발표');
+  assert.equal(parseArgs(['발표.md'], TMP).dir, join(TMP, 'presentation-out', '발표'));
+  assert.equal(parseArgs(['my talk.md'], TMP).name, 'my-talk');
+  assert.equal(parseArgs(['\u1107\u1161\u11af\u1111\u116d.md'.normalize('NFD')], TMP).name, '발표'.normalize('NFC'), 'a decomposed (macOS) name reads as composed');
+  assert.equal(parseArgs(['x.md', '--name', '2026 상반기 v1.2'], TMP).name, '2026 상반기 v1.2', 'a given name keeps its spaces');
+  for (const bad of ['../up', 'a/b', 'a\\b', 'a:b', 'a*b', 'a?b', 'a"b', 'a<b', 'a|b', 'a\u0001b', '..', 'x.', ' x', 'x ']) {
+    assert.throws(() => parseArgs(['x.md', '--name', bad], TMP), (e) => e.exit === 2 && /--name may hold/.test(e.message), JSON.stringify(bad));
+  }
+  assert.throws(() => parseArgs(['a:b.md'], TMP), (e) => e.exit === 2 && /the output name \(the script file name; give --name\)/.test(e.message));
+});
+
+test('build: script files named 발표.md and "my talk.md" build without --name', () => {
+  for (const [file, name] of [['발표.md', '발표'], ['my talk.md', 'my-talk']]) {
+    const dir = join(TMP, `named-${name}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, file), MINI);
+    const r = run([BUILD, join(dir, file), '--dir', join(dir, 'out'), '--stamp', '261118+1300']);
+    assert.equal(r.status, 0, r.stderr);
+    for (const k of ['review', 'present']) assert.ok(existsSync(join(dir, 'out', `${name}-${k}-261118+1300.html`)), `${name} ${k}`);
+  }
+});
+
+test('no overwrite: check, verify --frames, com and make refuse a folder that is not empty (exit 2) before any work', async () => {
+  const full = join(TMP, 'full');
+  mkdirSync(full, { recursive: true });
+  writeFileSync(join(full, 'keep.txt'), 'mine');
+  // check: refused before the browser starts (a browser that does not exist would fail differently)
+  await assert.rejects(check(join(TMP, 'deck.html'), { out: full, browser: join(TMP, 'no-browser'), log: () => {} }), (e) => e.exit === 2 && /not empty; not overwriting/.test(e.message));
+  await assert.rejects(verify(join(TMP, 'none.pptx'), { script: SAMPLE, frames: full, log: () => {} }), (e) => e.exit === 2 && /not empty; not overwriting/.test(e.message));
+  assert.equal(comCheck(join(TMP, 'none.pptx'), full).state, 'exists');
+  const com = run([join(SKILL, 'scripts', 'pptx.mjs'), 'com', join(TMP, 'none.pptx'), full]);
+  assert.equal(com.status, 2, com.stdout + com.stderr);
+  assert.match(com.stderr, /not overwriting/);
+  if (process.platform === 'win32') {
+    // the PowerShell script itself keeps the rule when called directly (exit 4)
+    writeFileSync(join(TMP, 'none.pptx'), 'x');
+    const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const p = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(SKILL, 'scripts', 'pptx-com.ps1'), '-Src', join(TMP, 'none.pptx'), '-PngDir', full], { encoding: 'utf8', windowsHide: true });
+    assert.ok(p.status === 4 || /already running/.test(p.stdout), p.stdout + p.stderr);
+  }
+  assert.equal(readFileSync(join(full, 'keep.txt'), 'utf8'), 'mine', 'the folder is untouched');
+  // make: the check folder (html) and the recording folder (pptx) of the same name and stamp are checked first
+  const out = join(TMP, 'make-out'), st = '261118+1400';
+  for (const [sub, format] of [[`check-coffee-present-${st}`, 'html'], [`coffee-recording-${st}`, 'pptx']]) {
+    mkdirSync(join(out, sub), { recursive: true });
+    writeFileSync(join(out, sub, 'old.png'), 'x');
+    const r = run([join(SKILL, 'scripts', 'make.mjs'), '--sample', '--format', format, '--dir', out, '--stamp', st]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, new RegExp(`${sub.replace(/[+]/g, '\\+')} is not empty; not overwriting`));
+    assert.doesNotMatch(r.stdout, /== build/, 'refused before the build');
+    rmSync(join(out, sub), { recursive: true });
+  }
+});
+
+test('reports: a SKIP is never ALL PASS (verify summary and the make done block)', () => {
+  const res = (skip) => ({ ok: true, results: [{ gate: 'zip', ok: true, skipped: false }, { gate: 'continuity', ok: true, skipped: skip }] });
+  assert.equal(summaryLine(res(false), 'a.pptx'), 'ALL PASS (2 pass, 0 skip, 0 fail) a.pptx');
+  assert.equal(summaryLine(res(true), 'a.pptx'), 'PASS with SKIP (continuity) (1 pass, 1 skip, 0 fail) a.pptx');
+  assert.match(summaryLine({ ok: false, results: [{ gate: 'zip', ok: false }] }, 'a.pptx'), /^FAILED/);
+  const done = doneReport({ review: '/r.html', video: '/v.pptx', fallbacks: [], skipped: 'continuity (video deck)' });
+  assert.match(done, /^== done: PASS with SKIP\n/);
+  assert.match(done, /^skipped {6}continuity \(video deck\)$/m);
+  assert.equal(doneReport({ review: '/r.html', skipped: '' }), '== done\nreview       /r.html\n');
 });
 
 // format 4 / 12 cmap lookup

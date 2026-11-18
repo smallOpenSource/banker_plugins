@@ -2,6 +2,7 @@
 // Korean = Noto Sans KR, everything else = Noto Sans, weights 400 and 700. Subsetting runs HarfBuzz's hb-subset
 // (WebAssembly, vendor/harfbuzz/harfbuzz-subset.wasm) through the small glue below: no Python, no npm package.
 // When subsetting fails the full font is embedded and a warning is reported (the page still works, only larger).
+// A vendored file that differs from its original is not a subsetting failure: it throws VendorError.
 import { vendorBytes } from './vendor.mjs';
 
 // CSS family names are private to the deck so an installed font of the same name never replaces them.
@@ -74,9 +75,12 @@ export function codepointsOf(text) {
 export async function embedFonts(text, { wasm, onWarn = () => {} } = {}) {
   const fonts = FACES.map((f) => ({ ...f, original: vendorBytes(f.rel) }));
   const cps = codepointsOf(text);
+  // a vendored wasm that fails its sha256 check stops the build (VendorError, exit 3); only a subsetter that does
+  // not run falls back to the full fonts
+  const wasmBytes = wasm || vendorBytes('harfbuzz/harfbuzz-subset.wasm');
   let subset = null;
   try {
-    subset = await loadSubsetter(wasm || vendorBytes('harfbuzz/harfbuzz-subset.wasm'));
+    subset = await loadSubsetter(wasmBytes);
   } catch (e) {
     onWarn(`font subsetting unavailable (${e.message}); embedding the full fonts`);
   }

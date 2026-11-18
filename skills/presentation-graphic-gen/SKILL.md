@@ -13,7 +13,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 
 - **실행할 때 인터넷을 쓰지 않는다.** 글꼴(Noto Sans, Noto Sans KR), 글꼴 서브셋(HarfBuzz WASM), H.264 인코더(WASM), PptxGenJS 가 모두 `vendor/` 에 있다. 실행 전에 원본 sha256 과 대조하고, 다르면 멈춘다(종료 코드 3). 필요한 것은 Node 22 이상과 Chromium 계열 브라우저뿐이다.
 - **내용은 사용자의 대본 초안이다.** 화면 글과 말은 초안에서 가져온다. 수치, 사례, 인용, 출처를 지어내지 않는다. 비어 있거나 의심스러운 곳은 `[확인 필요]` 로 두고 보고에 적는다.
-- **이미 있는 파일을 덮어쓰지 않는다.** 같은 이름이 있으면 도우미가 종료 코드 2 로 끝난다. 덮어쓸지 묻고, 허락을 받은 뒤에만 `--force` 를 준다. 다른 회차로 남기려면 `--stamp` 를 바꾼다.
+- **이미 있는 파일을 덮어쓰지 않는다.** 같은 이름의 파일이나, 비어 있지 않은 출력 폴더(게이트 결과, 녹화, `--frames`, PowerPoint PNG)가 있으면 도우미가 작업 전에 종료 코드 2 로 끝난다. 덮어쓸지 묻고, 허락을 받은 뒤에만 `--force` 를 준다. 다른 회차로 남기려면 `--stamp` 를 바꾼다.
 - **애니메이션 엔진은 브라우저 내장 Web Animations API(WAAPI)다.** GSAP 표준 라이선스는 사용자가 코드 없이 애니메이션을 만드는 도구에서 서면 동의 없이 쓰는 것을 금하므로 쓰지 않는다.
 - **글꼴은 한글에 Noto Sans KR, 그 밖(영문, 숫자, 기호)에 Noto Sans 를 쓴다.** HTML 에는 덱이 쓰는 글자만 남긴 글꼴을 넣는다. PPTX 는 테마 글꼴로 지정만 하고 파일은 넣지 않는다.
 - 화면은 1920 x 1080 무대, 안전 영역은 x 160~1760, y 120~960 이다. 화면 글은 28px 이상, 가능하면 40px 이상으로 한다.
@@ -41,7 +41,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 | `--format html\|pptx\|both` | 낼 형식. 기본 `html`. `pptx` 와 `both` 는 같음(PPTX 는 늘 HTML 을 먼저 만듦) |
 | `--scenes <폴더>` | 장면 파일 폴더. 기본 대본 옆 `scenes/` |
 | `--media <폴더>` | 장면이 `d.asset()` 으로 쓰는 그림 폴더. 기본 대본 옆 `media/` |
-| `--name <이름>` | 출력 파일 이름의 앞부분. 기본 대본 파일 이름 |
+| `--name <이름>` | 출력 파일 이름의 앞부분. 기본 대본 파일 이름(띄어쓰기는 `-` 로 바꿈). 쓸 수 있는 글자: 한글을 포함한 모든 언어의 글자, 숫자, 띄어쓰기, `.`, `_`, `-`. 쓸 수 없는 것: `..`, 경로 구분자, 제어 문자, Windows 가 파일 이름에 금지하는 글자(`<>:"/\?*` 와 세로 막대), 앞뒤 띄어쓰기, 끝의 `.` |
 | `--dir <폴더>` | 출력 폴더. 기본 `./presentation-out/<이름>/` |
 | `--stamp <yymmdd+HHMM>` | 파일 이름의 시각. 기본 지금 시각 |
 | `--force` | 있는 파일을 덮어씀. 사용자 허락 뒤에만 |
@@ -54,9 +54,9 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 | `node "$M" <대본> --format html` | 만들기와 게이트(`build.mjs`, `check.mjs`) | 0, 게이트 1, 사용법과 파일 2, vendor 3 |
 | `node "$M" <대본> --format both` | 위에 더해 녹화, 영상 PPTX, 편집 PPTX, 검증 | 같음 |
 | `node "<S>/scripts/build.mjs" <대본> [인자]` | HTML 두 벌만. 시간 예산과 반복 경고를 냄 | 0, 1, 2, 3 |
-| `node "<S>/scripts/check.mjs" <present.html> --script <대본>` | 게이트 10개, 스냅숏, 정지 화면, 키로 재생한 화면, 컨택트 시트 | 0, 1, 2 |
-| `node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>]` | PPTX 게이트 | 0, 1, 2 |
-| `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더>` | 선택. Windows 의 PowerPoint 로 열고 슬라이드 PNG 를 냄. 그 밖에서는 SKIP | 0, 1 |
+| `node "<S>/scripts/check.mjs" <present.html> --script <대본> [--out <폴더>] [--force]` | 게이트 10개, 스냅숏, 정지 화면, 키로 재생한 화면, 컨택트 시트. 출력 폴더가 비어 있지 않으면 2 | 0, 1, 2 |
+| `node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--force]` | PPTX 게이트. `--frames` 폴더가 비어 있지 않으면 2 | 0, 1, 2, 3 |
+| `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더> [--force]` | 선택. Windows 의 PowerPoint 로 열고 슬라이드 PNG 를 냄. 그 밖에서는 SKIP. PNG 폴더가 비어 있지 않으면 2 | 0, 1, 2 |
 | `node "<S>/scripts/apply-fix.mjs" <accepted.json> [--root <폴더>] [--dry-run]` | 다듬기 회차의 채택 항목을 적용 | 0, 2 |
 
 출력 이름: `<이름>-review-<stamp>.html`, `<이름>-present-<stamp>.html`, `check-<이름>-present-<stamp>/`, `<이름>-recording-<stamp>/`, `<이름>-video-<stamp>.pptx`, `<이름>-edit-<stamp>.pptx`.
@@ -67,6 +67,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 - `node --version` 이 22 이상인지 본다.
 - 브라우저가 있는지 본다: `node "<S>/scripts/cdp.mjs"` 가 `browser <경로>` 를 내면 있다. 없으면 `no Chrome, Edge or Chromium found` 를 내고 종료 코드 2 로 끝난다. 찾는 순서는 환경 변수 `CHROME`, Chrome, Edge, Chromium, Playwright 의 chromium 이다.
 - 없으면 `<S>/references/offline-install.md` 의 순서를 사용자에게 안내하고 멈춘다. 이 스킬은 아무것도 내려받지 않는다.
+- Linux 의 snap Chromium 은 `/tmp` 와 숨김 폴더를 읽지 못한다. 덱을 홈 폴더 아래에 두거나 `CHROME` 으로 다른 브라우저를 지정한다(`offline-install.md`).
 
 ### 2. 대본 받기
 - 사용자의 대본 초안을 받는다. 형식은 `<S>/references/script-format.md`. 형식이 다르면 내용을 바꾸지 않고 형식만 맞춰 보여 주고 확인을 받는다.
@@ -107,7 +108,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 
 ### 10. 보고
 - 만든 파일의 절대경로와 크기
-- 게이트 줄(`PASS`, `FAIL`, `SKIP`) 그대로
+- 게이트 줄(`PASS`, `FAIL`, `SKIP`) 그대로. SKIP 이 하나라도 있으면 `ALL PASS` 라고 쓰지 않는다. `PASS with SKIP (continuity)` 처럼 건너뛴 게이트 이름을 함께 쓴다. `pptx.mjs verify` 의 요약 줄과 `make.mjs` 의 `== done: PASS with SKIP`, `skipped` 줄이 같은 형식이다
 - 시간 예산(섹션별, 합계, 초과 섹션)
 - 다듬기: 모델 id, 회차 수, 회차별 제안, 채택, 기각 수, 마지막 0건 회차의 기록 파일
 - 편집 PPTX 의 그림 대체 목록

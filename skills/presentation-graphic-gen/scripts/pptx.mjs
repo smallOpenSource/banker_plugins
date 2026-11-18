@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // pptx.mjs: checks a PowerPoint file written by pptx-video.mjs or pptx-edit.mjs. One PASS / FAIL / SKIP line per
-// gate; exit 1 when a gate fails, 2 on a usage error.
+// gate; exit 1 when a gate fails, 2 on a usage error or an output folder that is not empty, 3 on a vendor check.
+// The summary is ALL PASS only when no gate was skipped: "PASS with SKIP (<gates>)" otherwise (still exit 0).
 //
-//   node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>] [--frames <dir>]
-//   node scripts/pptx.mjs com <file.pptx> <png dir>     optional: PowerPoint (Windows) opens it, exports slide PNGs
-// --frames writes the decoded frames the continuity gate compared (NN-last.png, NN-first.png).
+//   node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>] [--frames <dir>] [--force]
+//   node scripts/pptx.mjs com <file.pptx> <png dir> [--force]   optional: PowerPoint (Windows) opens it, exports slide PNGs
+// --frames writes the decoded frames the continuity gate compared (NN-last.png, NN-first.png). A non-empty --frames
+// or PNG folder is refused (exit 2) unless --force.
 //
 // Both kinds: the zip opens, the slide size is 16:9, slide count = steps, every slide has notes equal to the step's
 // spoken lines with its [stage directions] apart, and a unique hidden title.
@@ -14,15 +16,14 @@
 // of slide n+1's video are compared after decoding in the browser (and, with --media, the recorded frames too).
 // Editable decks: every slide has native text boxes with the theme fonts (Latin Noto Sans, East Asian Noto Sans KR).
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deckData, parseScript } from './build.mjs';
-import { findBrowser, launch } from './cdp.mjs';
+import { findBrowser, launch, scratchDir } from './cdp.mjs';
 import { KR, LATIN, mp4Info, notesText, paragraphs, slideTitle, xmlText } from './pptx-common.mjs';
 import { decodePng } from './png.mjs';
-import { pptxgen } from './vendor.mjs';
+import { exitOf, pptxgen } from './vendor.mjs';
 
 // decoded-video continuity: mean channel difference and share of pixels off by more than 32 levels
 export const VIDEO_MEAN_TOL = 0.5, VIDEO_SHARE_TOL = 0.001;
@@ -79,7 +80,8 @@ window.compare = async (a, b, fps, save) => {
 };
 </script>`;
 
-export async function verify(file, { script, media = null, frames = null, log = (l) => process.stdout.write(l + '\n'), browser = findBrowser() } = {}) {
+export async function verify(file, { script, media = null, frames = null, force = false, log = (l) => process.stdout.write(l + '\n'), browser = findBrowser() } = {}) {
+  if (frames && !force && notEmpty(frames)) throw Object.assign(new Error(`${frames} is not empty; not overwriting (use --force or another --frames)`), { exit: 2 });
   const results = [];
   const gate = (name, state, detail, lines = []) => {
     results.push({ gate: name, ok: state !== false, skipped: state === null, detail, lines });
@@ -169,7 +171,7 @@ export async function verify(file, { script, media = null, frames = null, log = 
     // continuity of the decoded videos (browser) and of the recorded frames (--media)
     if (!browser) gate('continuity', null, 'no browser to decode the videos (set CHROME)');
     else {
-      const dir = mkdtempSync(join(tmpdir(), 'pgg-verify-'));
+      const dir = scratchDir(browser, 'pgg-verify-'); // where the browser can read it (a snap browser cannot read /tmp)
       const b = await launch({ browser });
       try {
         infos.forEach((x) => { if (x.bytes) writeFileSync(join(dir, `v${x.n}.mp4`), x.bytes); });
@@ -187,7 +189,8 @@ export async function verify(file, { script, media = null, frames = null, log = 
             if (frames) {
               mkdirSync(frames, { recursive: true });
               const pad = (n) => String(n).padStart(2, '0');
-              for (const [u, name] of [[r.lastUrl, `${pad(A.n)}-last.png`], [r.firstUrl, `${pad(B.n)}-first.png`]]) if (u) writeFileSync(join(frames, name), Buffer.from(u.split(',')[1], 'base64'));
+              // slide n's first frame is written once, as pair n's -first; with force earlier files are replaced
+              for (const [u, name] of [[r.lastUrl, `${pad(A.n)}-last.png`], [r.firstUrl, `${pad(B.n)}-first.png`]]) if (u) writeFileSync(join(frames, name), Buffer.from(u.split(',')[1], 'base64'), { flag: force ? 'w' : 'wx' });
               delete r.lastUrl; delete r.firstUrl;
             }
             rows.push({ pair: `${A.n}->${B.n}`, ...r });
@@ -229,17 +232,31 @@ export async function verify(file, { script, media = null, frames = null, log = 
   return { ok, kind, results };
 }
 
+const notEmpty = (d) => existsSync(d) && readdirSync(d).length > 0;
+
+/** The summary line of a verify result: ALL PASS only with no SKIP (a SKIP is not a pass). */
+export function summaryLine(r, file) {
+  const pass = r.results.filter((x) => x.ok && !x.skipped).length, fail = r.results.filter((x) => !x.ok).length;
+  const skipped = r.results.filter((x) => x.skipped).map((x) => x.gate);
+  const head = !r.ok ? 'FAILED' : skipped.length ? `PASS with SKIP (${skipped.join(', ')})` : 'ALL PASS';
+  return `${head} (${pass} pass, ${skipped.length} skip, ${fail} fail) ${file}`;
+}
+
 /**
  * Optional PowerPoint check (Windows with PowerPoint only): opens the file through COM and exports every slide to
- * <pngDir>/NN.png. Returns { state: 'pass' | 'fail' | 'skip', out }. Never touches a PowerPoint that is already
- * running (skip). Not part of verify.
+ * <pngDir>/NN.png. Returns { state: 'pass' | 'fail' | 'skip' | 'exists', out }. A non-empty PNG folder is
+ * refused before anything runs ('exists', exit 2) unless force. Never touches a PowerPoint that is already running
+ * (skip). Not part of verify.
  */
-export function comCheck(file, pngDir) {
+export function comCheck(file, pngDir, { force = false } = {}) {
+  if (!force && notEmpty(pngDir)) return { state: 'exists', out: `${resolve(pngDir)} is not empty; not overwriting (use --force or another folder)` };
   if (process.platform !== 'win32') return { state: 'skip', out: 'not Windows' };
   const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const script = join(dirname(fileURLToPath(import.meta.url)), 'pptx-com.ps1');
-  const r = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Src', resolve(file), '-PngDir', resolve(pngDir)], { encoding: 'utf8', windowsHide: true, timeout: 900000 });
+  const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Src', resolve(file), '-PngDir', resolve(pngDir)].concat(force ? ['-Force'] : []);
+  const r = spawnSync(ps, args, { encoding: 'utf8', windowsHide: true, timeout: 900000 });
   const out = `${r.stdout || ''}${r.stderr || ''}`.trim();
+  if (r.status === 4) return { state: 'exists', out };
   if (r.status === 2 || /Cannot create|80040154|class not registered/i.test(out)) return { state: 'skip', out };
   return { state: r.status === 0 ? 'pass' : 'fail', out };
 }
@@ -247,27 +264,31 @@ export function comCheck(file, pngDir) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   if (argv[0] === 'com') {
-    if (!argv[1] || !argv[2]) { process.stderr.write('usage: node scripts/pptx.mjs com <file.pptx> <png dir>\n'); process.exit(2); }
-    const r = comCheck(argv[1], argv[2]);
-    process.stdout.write(`${r.out}\n${r.state.toUpperCase()} pptx-com: ${r.state === 'skip' ? 'PowerPoint check skipped' : `PowerPoint opened the file and exported slides to ${resolve(argv[2])}`}\n`);
-    process.exit(r.state === 'fail' ? 1 : 0);
+    const pos = argv.slice(1).filter((x) => x !== '--force'), force = argv.includes('--force');
+    if (pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com <file.pptx> <png dir> [--force]\n'); process.exit(2); }
+    const r = comCheck(pos[0], pos[1], { force });
+    if (r.state === 'exists') { process.stderr.write(`pptx: ${r.out}\n`); process.exit(2); }
+    const fail = r.state === 'fail';
+    process.stdout.write(`${r.out}\n${r.state.toUpperCase()} pptx-com: ${r.state === 'skip' ? 'PowerPoint check skipped' : fail ? 'PowerPoint did not open the file or export the slides' : `PowerPoint opened the file and exported slides to ${resolve(pos[1])}`}\n`);
+    process.exit(fail ? 1 : 0);
   }
-  if (argv[0] !== 'verify') { process.stderr.write('usage: node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>]\n       node scripts/pptx.mjs com <file.pptx> <png dir>   (optional, Windows + PowerPoint)\n'); process.exit(2); }
-  let file = null, script = null, media = null, frames = null;
+  if (argv[0] !== 'verify') { process.stderr.write('usage: node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>] [--frames <dir>] [--force]\n       node scripts/pptx.mjs com <file.pptx> <png dir> [--force]   (optional, Windows + PowerPoint)\n'); process.exit(2); }
+  let file = null, script = null, media = null, frames = null, force = false;
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '--script') script = resolve(argv[++i] || '');
     else if (argv[i] === '--media') media = resolve(argv[++i] || '');
     else if (argv[i] === '--frames') frames = resolve(argv[++i] || '');
+    else if (argv[i] === '--force') force = true;
     else if (!argv[i].startsWith('--') && !file) file = resolve(argv[i]);
     else { process.stderr.write(`pptx: unknown argument ${argv[i]}\n`); process.exit(2); }
   }
   if (!file || !script) { process.stderr.write('usage: node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>]\n'); process.exit(2); }
   try {
-    const r = await verify(file, { script, media, frames });
-    process.stdout.write(`${r.ok ? 'ALL PASS' : 'FAILED'} (${r.results.filter((x) => x.ok && !x.skipped).length} pass, ${r.results.filter((x) => x.skipped).length} skip, ${r.results.filter((x) => !x.ok).length} fail) ${file}\n`);
+    const r = await verify(file, { script, media, frames, force });
+    process.stdout.write(summaryLine(r, file) + '\n');
     process.exit(r.ok ? 0 : 1);
   } catch (e) {
-    process.stderr.write(`pptx: ${e.stack || e.message}\n`);
-    process.exit(e.exit || 2);
+    process.stderr.write(`pptx: ${e.exit ? e.message : e.stack || e.message}\n`);
+    process.exit(exitOf(e, 2));
   }
 }

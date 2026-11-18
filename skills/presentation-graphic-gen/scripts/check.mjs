@@ -2,7 +2,9 @@
 // check.mjs: gates for a built deck page, in a real headless browser at 1920x1080. One PASS / FAIL line per gate;
 // exits 1 when a gate fails, 2 on a usage error or when no browser is found.
 //
-//   node scripts/check.mjs <deck.html> [--script <script.md>] [--out <dir>]
+//   node scripts/check.mjs <deck.html> [--script <script.md>] [--out <dir>] [--force]
+// A non-empty output folder (an earlier run, or any folder --out names) is refused with exit 2 before the browser
+// starts; --force writes over it (only after the user agrees).
 //
 // Gates:
 //   console-errors  no console error, uncaught exception or deck build error while loading and stepping
@@ -19,12 +21,13 @@
 //                   previous step with the Next key (pixel compare, small tolerance)
 //   snapshots       first / mid / end PNG per step, an end-state still per step (count = steps) and a contact sheet
 // Output (default <html dir>/check-<html name>/): snaps/, stills/, contact-sheet.png, report.json
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseScript } from './build.mjs';
 import { findBrowser, launch } from './cdp.mjs';
 import { diffPng } from './png.mjs';
+import { exitOf } from './vendor.mjs';
 
 export const SAFE = { l: 160, r: 1760, t: 120, b: 960 };
 export const MIN_PX = 28, REPORT_PX = 40;
@@ -210,9 +213,11 @@ export const DECOR = decorExpr(false);
 const pad2 = (n) => String(n).padStart(2, '0');
 const uniq = (a) => [...new Set(a)];
 
-export async function check(file, { script = null, out = null, browser = findBrowser(), log = (l) => process.stdout.write(l + '\n') } = {}) {
+export async function check(file, { script = null, out = null, force = false, browser = findBrowser(), log = (l) => process.stdout.write(l + '\n') } = {}) {
   file = resolve(file);
-  out = out || join(dirname(file), `check-${basename(file, extname(file))}`);
+  out = resolve(out || join(dirname(file), `check-${basename(file, extname(file))}`));
+  // the output folder holds an earlier run (or the user's files): refused before the browser starts, unless force
+  if (!force && existsSync(out) && readdirSync(out).length) throw Object.assign(new Error(`${out} is not empty; not overwriting (use --force or another --out)`), { exit: 2 });
   const url = pathToFileURL(file).href;
   const results = [];
   const gate = (name, ok, detail, lines = []) => {
@@ -355,21 +360,22 @@ img{width:384px;height:216px;display:block;outline:1px solid #444}.lab{overflow:
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
-  let file = null, script = null, out = null;
+  let file = null, script = null, out = null, force = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--script') script = resolve(argv[++i] || '');
     else if (argv[i] === '--out') out = resolve(argv[++i] || '');
+    else if (argv[i] === '--force') force = true;
     else if (!argv[i].startsWith('--') && !file) file = argv[i];
     else { process.stderr.write(`check: unknown argument ${argv[i]}\n`); process.exit(2); }
   }
-  if (!file) { process.stderr.write('usage: node scripts/check.mjs <deck.html> [--script <script.md>] [--out <dir>]\n'); process.exit(2); }
+  if (!file) { process.stderr.write('usage: node scripts/check.mjs <deck.html> [--script <script.md>] [--out <dir>] [--force]\n'); process.exit(2); }
   if (!findBrowser()) { process.stderr.write('check: no Chrome, Edge or Chromium found; set CHROME to the browser executable\n'); process.exit(2); }
   try {
-    const r = await check(file, { script, out });
+    const r = await check(file, { script, out, force });
     process.stdout.write(`${r.ok ? 'ALL PASS' : 'FAILED'} (${r.results.filter((x) => x.ok).length}/${r.results.length} gates) ${r.out}\n`);
     process.exit(r.ok ? 0 : 1);
   } catch (e) {
-    process.stderr.write(`check: ${e.stack || e.message}\n`);
-    process.exit(2);
+    process.stderr.write(`check: ${e.exit ? e.message : e.stack || e.message}\n`);
+    process.exit(exitOf(e, 2));
   }
 }

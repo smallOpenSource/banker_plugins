@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deckData, parseScript } from './build.mjs';
 import { findBrowser, launch } from './cdp.mjs';
 import { MASTER, PX, defineMaster, notesText, patchNotes, patchSlide, patchTheme, slideTitle, writeNew } from './pptx-common.mjs';
-import { pptxgen } from './vendor.mjs';
+import { exitOf, pptxgen } from './vendor.mjs';
 
 // evaluated in the page at a step's end state: { bg, items, fallbacks } in stage px, items in paint order
 const EXTRACT = String.raw`(() => {
@@ -247,6 +247,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     for (const f of r.fallbacks) process.stdout.write(`  fallback ${f.step}: ${f.what} (${f.why})\n`);
   } catch (e) {
     process.stderr.write(`pptx-edit: ${e.message}\n`);
-    process.exit(e.exit || 1);
+    process.exit(exitOf(e, 1));
   }
 }

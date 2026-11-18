@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deckData, parseScript } from './build.mjs';
 import { MASTER, SLIDE_H, SLIDE_W, defineMaster, notesText, patchNotes, patchSlide, patchTheme, slideTitle, writeNew } from './pptx-common.mjs';
-import { pptxgen } from './vendor.mjs';
+import { exitOf, pptxgen } from './vendor.mjs';
 
 // PowerPoint "Start: Automatically" for a video: playFrom(0.0) when the slide starts, shown while stopped, no repeat,
 // no rewind (the last frame stays).
@@ -70,10 +70,11 @@ export async function buildVideoPptx({ parsed, media, out, force = false }) {
       let xml = r.xml;
       const vid = r.ids.find((x) => x.name === sl.objectName);
       if (!vid) throw new Error(`slide ${sm[1]}: video shape missing`);
-      xml = xml.replace(`<p:cNvPr id="${vid.id}" name="${sl.objectName}"`, `<p:cNvPr id="${vid.id}" name="${sl.objectName}" descr="${esc(sl.alt)}"`);
+      const tag = `<p:cNvPr id="${vid.id}" name="${sl.objectName}"`;
+      xml = xml.replace(tag, () => `${tag} descr="${esc(sl.alt)}"`); // a function: "$'" or "$&" in the alt text stays as written
       xml = xml.replace(/<a:ext cx="\d+" cy="6858000"\/>/, '<a:ext cx="12192000" cy="6858000"/>'); // exactly the slide width
       if (!xml.includes('</p:clrMapOvr>')) throw new Error(`slide ${sm[1]}: no p:clrMapOvr to put the timing after`);
-      body = xml.replace('</p:clrMapOvr>', '</p:clrMapOvr>' + videoTiming(vid.id, sl.ms));
+      body = xml.replace('</p:clrMapOvr>', () => '</p:clrMapOvr>' + videoTiming(vid.id, sl.ms));
     } else if (/^ppt\/theme\/theme\d+\.xml$/.test(name)) body = patchTheme(await zip.file(name).async('string'));
     else if (/^ppt\/notesSlides\/notesSlide\d+\.xml$/.test(name)) body = patchNotes(await zip.file(name).async('string'));
     else if (/\.(xml|rels)$/.test(name)) body = await zip.file(name).async('string');
@@ -103,6 +104,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.stdout.write(`pptx-video ${r.out} ${r.slides} slides ${(r.bytes / 1048576).toFixed(1)} MiB\n`);
   } catch (e) {
     process.stderr.write(`pptx-video: ${e.message}\n`);
-    process.exit(e.exit || 1);
+    process.exit(exitOf(e, 1));
   }
 }

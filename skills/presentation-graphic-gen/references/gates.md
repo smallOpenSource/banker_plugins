@@ -2,10 +2,19 @@
 
 게이트마다 한 줄: `PASS <이름>: <설명>`, `FAIL <이름>: <설명>`, 또는 `SKIP <이름>: <까닭>`. 아래에 들여쓴 줄은 근거다(12줄까지, 나머지는 `... N more`). SKIP 은 통과가 아니다. 보고에 그대로 적는다.
 
+요약 줄도 SKIP 을 숨기지 않는다. `ALL PASS` 는 SKIP 이 0 일 때만 쓴다.
+
+| 결과 | `pptx.mjs verify` 의 요약 줄 | `make.mjs` 의 끝 블록 | 종료 코드 |
+|---|---|---|---|
+| 모두 PASS | `ALL PASS (8 pass, 0 skip, 0 fail) <파일>` | `== done` | 0 |
+| PASS 와 SKIP | `PASS with SKIP (continuity) (7 pass, 1 skip, 0 fail) <파일>` | `== done: PASS with SKIP` 다음에 `skipped      continuity (video deck)` | 0 |
+| FAIL 이 있음 | `FAILED (...) <파일>` | `make: pptx verify failed` | 1 |
+
 ## HTML: `check.mjs`
 
 `node "<S>/scripts/check.mjs" <present.html> --script <대본>`. 브라우저는 헤드리스로 1920 x 1080.
-출력 폴더(기본 `<html 폴더>/check-<html 이름>/`): `snaps/`, `stills/`, `contact-sheet.png`, `contact-sheet.html`, `report.json`.
+출력 폴더(기본 `<html 폴더>/check-<html 이름>/`, 다른 곳은 `--out <폴더>`): `snaps/`, `stills/`, `played/`, `contact-sheet.png`, `contact-sheet.html`, `report.json`.
+출력 폴더가 비어 있지 않으면(지난 회차, 또는 `--out` 이 가리킨 다른 폴더) 브라우저를 띄우기 전에 `not overwriting` 과 종료 코드 2 로 끝난다. 다시 쓰려면 허락을 받고 `--force` 를 준다. `make.mjs --force` 는 이 `--force` 를 넘긴다.
 
 | 게이트 | 증명하는 것 | 기준 |
 |---|---|---|
@@ -51,7 +60,7 @@ FAIL decorations: 1 decoration(s) off their text
 
 ## PPTX: `pptx.mjs verify`
 
-`node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>]`. 종류(영상, 편집)는 파일에서 알아낸다.
+`node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--force]`. 종류(영상, 편집)는 파일에서 알아낸다.
 
 | 게이트 | 증명하는 것 | 기준 |
 |---|---|---|
@@ -65,11 +74,11 @@ FAIL decorations: 1 decoration(s) off their text
 | `continuity-raw` | (`--media`) 녹화한 원본 프레임의 같은 비교 | 최대 채널 차이 16 이하 |
 | `edit-slides` | 편집 덱: 화면 줄이 있는 슬라이드마다 텍스트 상자, 테마 글꼴 Noto Sans / Noto Sans KR | 모두 |
 
-- `--frames <폴더>` 는 연속성 비교에 쓴 디코딩 프레임(`NN-last.png`, `NN-first.png`)을 저장한다. 몇 장을 직접 본다.
+- `--frames <폴더>` 는 연속성 비교에 쓴 디코딩 프레임(`NN-last.png`, `NN-first.png`)을 저장한다. 몇 장을 직접 본다. 폴더가 비어 있지 않으면 작업 전에 종료 코드 2(`--force` 로만 다시 씀).
 - 예시 덱의 실측(이 스킬의 시험 PC): 디코딩 연속성 15쌍 최악 평균 0.015, 원본 연속성 차이 0.
 
 ## 선택: PowerPoint 확인
 
-- `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더>` 는 Windows 에서 PowerPoint 로 파일을 열고 슬라이드, 노트, 미디어 수를 낸 뒤 슬라이드마다 `NN.png` 를 쓴다.
+- `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더> [--force]` 는 Windows 에서 PowerPoint 로 파일을 열고 슬라이드, 노트, 미디어 수를 낸 뒤 슬라이드마다 `NN.png` 를 쓴다. PNG 폴더가 비어 있지 않으면 아무것도 하지 않고 종료 코드 2(`--force` 로만 다시 씀).
 - PowerPoint 가 이미 실행 중이면 아무것도 하지 않고 SKIP. Windows 가 아니거나 PowerPoint 가 없어도 SKIP.
 - 슬라이드 쇼의 자동 재생 자체는 이 확인으로 알 수 없다(PNG 는 포스터). 발표 PC 에서 한 번 넘겨 본다.

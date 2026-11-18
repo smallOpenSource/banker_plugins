@@ -123,6 +123,37 @@ describe('PowerPoint pipeline in a browser', { skip: SKIP }, () => {
     assert.doesNotMatch(xml, /ring-e/, 'no edge pieces');
   });
 
+  test('verify with no browser (CHROME names no file): continuity SKIP, the summary says PASS with SKIP, never ALL PASS, exit 0', () => {
+    const r = spawnSync(process.execPath, [join(SKILL, 'scripts', 'pptx.mjs'), 'verify', join(out, `mini-video-${STAMP}.pptx`), '--script', script],
+      { encoding: 'utf8', timeout: 60000, env: { ...process.env, CHROME: join(TMP, 'nonexistent', 'chrome') } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^SKIP continuity: no browser to decode the videos/m);
+    assert.match(r.stdout, /^PASS with SKIP \(continuity\) \(\d+ pass, 1 skip, 0 fail\) /m);
+    assert.doesNotMatch(r.stdout, /ALL PASS/);
+  });
+
+  test('verify --frames writes the decoded frames once; the same folder again is refused (exit 2) unless --force', () => {
+    const frames = join(dir, 'frames');
+    const args = [join(SKILL, 'scripts', 'pptx.mjs'), 'verify', join(out, `mini-video-${STAMP}.pptx`), '--script', script, '--frames', frames];
+    const r1 = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 120000 });
+    assert.equal(r1.status, 0, r1.stdout + r1.stderr);
+    assert.deepEqual(readdirSync(frames).sort(), ['01-last.png', '02-first.png', '02-last.png', '03-first.png']);
+    const r2 = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 120000 });
+    assert.equal(r2.status, 2, r2.stdout + r2.stderr);
+    assert.match(r2.stderr, /not empty; not overwriting/);
+    const r3 = spawnSync(process.execPath, args.concat('--force'), { encoding: 'utf8', timeout: 120000 });
+    assert.equal(r3.status, 0, r3.stdout + r3.stderr);
+  });
+
+  test('check.mjs on the same deck again is refused (exit 2) unless --force: the earlier snapshots and report stay', () => {
+    const present = join(out, `mini-present-${STAMP}.html`), report = join(out, `check-mini-present-${STAMP}`, 'report.json');
+    const before = readFileSync(report, 'utf8');
+    const r = spawnSync(process.execPath, [join(SKILL, 'scripts', 'check.mjs'), present], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /not empty; not overwriting \(use --force/);
+    assert.equal(readFileSync(report, 'utf8'), before);
+  });
+
   test('make.mjs never overwrites an earlier run (exit 2) unless --force', () => {
     const r = spawnSync(process.execPath, [MAKE, script, '--format', 'pptx', '--dir', out, '--stamp', STAMP], { encoding: 'utf8', timeout: 60000 });
     assert.equal(r.status, 2, r.stdout + r.stderr);

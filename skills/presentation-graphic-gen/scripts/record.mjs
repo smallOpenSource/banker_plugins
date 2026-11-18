@@ -14,7 +14,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { findBrowser, launch } from './cdp.mjs';
 import { decodePng } from './png.mjs';
-import { h264Encoder } from './vendor.mjs';
+import { exitOf, h264Encoder } from './vendor.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
@@ -115,6 +115,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.stdout.write(`recorded ${r.manifest.steps.length} steps into ${r.out}\n`);
   } catch (e) {
     process.stderr.write(`record: ${e.message}\n`);
-    process.exit(e.exit || 1);
+    process.exit(exitOf(e, 1));
   }
 }

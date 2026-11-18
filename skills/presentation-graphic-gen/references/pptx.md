@@ -9,7 +9,7 @@
 | 3 | `node "<S>/scripts/pptx-edit.mjs" <present.html> <대본> --out <이름>-edit-<stamp>.pptx` | 편집 덱, 그림 대체 목록 |
 | 4 | `node "<S>/scripts/pptx.mjs" verify <파일> --script <대본> [--media <녹화 폴더>]` | 게이트(`gates.md`) |
 
-- 모든 도우미는 이미 있는 파일과 비어 있지 않은 녹화 폴더를 덮어쓰지 않는다(종료 코드 2). `--force` 는 허락 뒤에만.
+- 모든 도우미는 이미 있는 파일과 비어 있지 않은 녹화 폴더, `--frames` 폴더, PowerPoint PNG 폴더를 덮어쓰지 않는다(종료 코드 2). `make.mjs` 는 PPTX 두 파일과 녹화 폴더를 HTML 빌드 전에 미리 검사한다. `--force` 는 허락 뒤에만.
 
 ## 녹화(`record.mjs`)
 

@@ -28,6 +28,15 @@ export const PACKED = Object.freeze(['fonts/NotoSansKRStatic-Regular.ttf', 'font
 
 export class VendorError extends Error {}
 
+/** The exit code of a helper that stopped on e: 3 for a vendor check, else e.exit, else fallback. */
+export const exitOf = (e, fallback) => (e instanceof VendorError ? 3 : e.exit || fallback);
+
+/** Throws when any vendored file differs from its original: helpers call it before any work (exit 3). */
+export function requireVendor(root = VENDOR) {
+  const bad = verifyVendor(root);
+  if (bad.length) throw new VendorError(bad.join('; '));
+}
+
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 /** The original bytes of a vendored file, unpacked when packed, sha256-checked. Throws VendorError otherwise. */

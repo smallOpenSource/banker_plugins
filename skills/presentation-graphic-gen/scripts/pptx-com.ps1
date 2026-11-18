@@ -1,6 +1,7 @@
 # pptx-com.ps1: optional PowerPoint check on Windows (pptx.mjs com calls it; nothing else needs it).
 #   -Src <pptx> -PngDir <dir>   open read-only, report slides / notes / media shapes, export every slide to
 #                               <dir>\NN.png (1920x1080)
+#   -Force                      write into a <dir> that is not empty (without it: nothing is done, exit 4)
 # Safety: if POWERPNT.EXE is already running nothing is done (exit 2): the user's PowerPoint is never touched.
 # The COM work runs in a child process; after -TimeoutSec it is killed together with only the POWERPNT.EXE it
 # started (exit 3). Quit and release always.
@@ -9,6 +10,7 @@ param(
   [string]$PidFile,
   [string]$Src,
   [string]$PngDir,
+  [switch]$Force,
   [int]$TimeoutSec = 600
 )
 $ErrorActionPreference = 'Stop'
@@ -47,6 +49,7 @@ if ($Worker) {
 $running = Get-PptPids
 if ($running.Count) { Write-Output "[com] STOP: POWERPNT.EXE is already running (PID $($running -join ', ')). Nothing was done."; exit 2 }
 if (-not $Src -or -not (Test-Path $Src) -or -not $PngDir) { Write-Output "[com] ERROR: an existing -Src and a -PngDir are required"; exit 1 }
+if (-not $Force -and (Test-Path -LiteralPath $PngDir) -and @(Get-ChildItem -LiteralPath $PngDir -Force).Count) { Write-Output "[com] STOP: $PngDir is not empty; not overwriting (use -Force). Nothing was done."; exit 4 }
 $Src = (Resolve-Path $Src).Path
 $t0 = Get-Date
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("pgg-com-" + [guid]::NewGuid().ToString('N'))

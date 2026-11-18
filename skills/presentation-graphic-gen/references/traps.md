@@ -14,8 +14,10 @@
 | Chromium 의 H.264 | Chromium, Playwright 의 chromium 은 H.264 를 풀지 못함 | PPTX 영상 연속성 게이트가 SKIP(통과 아님). Chrome 이나 Edge 로 다시 돌림 | `verify` 의 SKIP 줄 |
 | 편집 PPTX 의 그림 대체 | 그림, SVG, 회전, 그라데이션, 빗금은 PowerPoint 도형으로 그릴 수 없음 | 그 요소만 투명 바탕에 잘라 낸 그림으로 바꿔 넣고 목록을 냄 | `pptx-edit` 출력의 `fallback` 줄 |
 | PPTX 글꼴 | 글꼴 파일을 넣지 않음 | 테마 글꼴만 지정(Latin Noto Sans, East Asian Noto Sans KR). 보는 PC 에 두 글꼴이 있어야 같은 줄바꿈 | 보고에 적음 |
-| 덮어쓰기 | 지난 회차가 사라짐 | 모든 도우미가 이미 있는 파일에 종료 코드 2 로 끝남. `--force` 는 허락 뒤에만 | 덮어쓰기 시험 |
-| vendor 손상 | 다른 바이트로 실행 | 원본 sha256 대조, 다르면 종료 코드 3 | vendor 변조 시험 |
+| 덮어쓰기 | 지난 회차가 사라짐 | 모든 도우미가 이미 있는 파일과 비어 있지 않은 출력 폴더(`check-...`, 녹화, `--frames`, PowerPoint PNG)에 작업 전 종료 코드 2 로 끝남. `--force` 는 허락 뒤에만 | 덮어쓰기 시험 |
+| vendor 손상 | 다른 바이트로 실행 | `build.mjs`, `make.mjs` 는 시작할 때 vendor 파일 전부를 원본 sha256 과 대조하고, 하나라도 다르면 작업 전에 종료 코드 3. 다른 도우미도 읽는 파일이 다르면 3 | vendor 변조 시험(글꼴, wasm, h264, PptxGenJS 각각) |
+| snap Chromium | `/tmp` 의 프로필과 덱을 못 봐 브라우저가 뜨지 않거나 빈 화면 | 프로필은 홈 아래, 못 읽는 덱은 까닭과 `CHROME` 안내로 종료 코드 2(`offline-install.md`) | 판단 함수 단위 시험 |
+| 디버깅 포트 | 같은 PC 의 다른 사용자가 열린 포트로 브라우저를 조종 | 포트를 열지 않고 브라우저의 파이프(`--remote-debugging-pipe`)로만 말함 | `cdp.test.mjs` |
 
 ## 같은 채널을 여러 단계에서 움직이는 법
 
