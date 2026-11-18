@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "./evidence.mjs";
 import { claimLog, redact, runLogged, runMetrics, secretLines, serve, stop } from "./me-run.mjs";
 import { foreignHosts, isLocalHost, precheck } from "./me-precheck.mjs";
@@ -452,6 +452,25 @@ test("isLocalHost keeps this machine and compose services, nothing else", () => 
 });
 
 // ---- command line ---------------------------------------------------------------------------------------------
+
+// remains 0.29.0 #2: node runs a script reached through a link by its real path, so the old resolve() check never matched
+// a linked argv[1] and the command exited 0 printing nothing. A junction on Windows needs no admin right.
+test("run through a linked folder it still answers, and importing it with a non-file argv[1] does not throw", () => {
+  const dir = tmp("me-link-");
+  const link = join(dir, "scripts");
+  symlinkSync(join(CLI, ".."), link, "junction");
+  let help;
+  try {
+    help = spawnSync(NODE, [join(link, "evidence.mjs"), "--help"], { encoding: "utf8" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /^make-evidence: /);
+  const imp = spawnSync(NODE, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(CLI).href)})`, "no-such-file"], { encoding: "utf8" });
+  assert.equal(imp.status, 0, imp.stderr);
+  assert.equal(imp.stdout + imp.stderr, "");
+});
 
 test("parseArgs, claimLog and the command line", () => {
   assert.deepEqual(parseArgs(["--log", "a", "--shell", "--req", "x", "--req", "y", "--", "echo", "--log"]), { _: [], rest: ["echo", "--log"], multi: { req: ["x", "y"] }, log: "a", shell: true });
