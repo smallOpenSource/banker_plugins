@@ -11,6 +11,7 @@
  * - 어떤 오류도 삼키고 항상 exit 0. 막지 않을 때 표준 출력은 비운다.
  */
 import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { continueFor } from '../codex/skills/ralph/scripts/ralph-state.mjs';
@@ -49,11 +50,9 @@ async function main() {
 }
 
 const invokedDirectly = () => {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 };
 
 if (invokedDirectly()) main().then(() => process.exit(0));

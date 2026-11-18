@@ -29,7 +29,7 @@ import {
 } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { join, posix, win32 } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -392,11 +392,9 @@ async function main(argv) {
 }
 
 const invoked = (() => {
-  try {
-    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(SELF);
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(SELF);
 })();
 if (invoked) {
   main(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => {

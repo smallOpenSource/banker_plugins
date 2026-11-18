@@ -641,11 +641,9 @@ function main(argv) {
 // compared as given, a run through a linked folder would exit 0 without doing anything.
 // fileURLToPath, not URL.pathname: the latter yields "/C:/..." on Windows and never matches argv[1].
 const invoked = () => {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 };
 if (invoked()) {
   try {

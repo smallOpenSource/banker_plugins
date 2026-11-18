@@ -50,7 +50,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   KEEP_CLOSE,
@@ -734,11 +734,9 @@ function main(argv, env = process.env, input = () => readCapped(0, MAX_BYTES)) {
 // Run as a command, also when reached through a symlinked path: Node resolves
 // symlinks for import.meta.url but not for process.argv[1].
 const invokedDirectly = () => {
-  try {
-    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === fileURLToPath(import.meta.url);
 };
 
 if (invokedDirectly()) process.exitCode = main(process.argv.slice(2));

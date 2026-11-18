@@ -322,11 +322,9 @@ async function main() {
 // Run as the hook only (node, run.cjs, or the npm hook command's import); a test imports statements() alone. Both
 // paths go through realpath: Node resolves links for import.meta.url but not for process.argv[1].
 function invokedDirectly() {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 }
 
 if (invokedDirectly()) {

@@ -1037,12 +1037,9 @@ export function main(argv) {
 // 한쪽만 푼 비교는 거짓이 되어 CLI 가 아무것도 내지 않고 종료 코드 0 으로
 // 끝납니다.
 function invokedDirectly() {
-  try {
-    return realpathSync(process.argv[1])
-      === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // realpath 가 읽지 못하는 경로는 resolve 로 비교합니다. false 로 답하면 CLI 가 아무것도 내지 않고 종료 코드 0 으로 끝납니다.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 }
 
 // 🔴 읽는 쪽이 먼저 닫히면(`json | head`) 남은 쓰기가 EPIPE 로 끝납니다. 받지

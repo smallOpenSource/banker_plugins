@@ -481,10 +481,8 @@ export function spawnExec(file, args, { timeoutMs = UPLOAD_MS } = {}) {
 }
 
 const isMain = () => {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 };
 if (isMain()) main(process.argv.slice(2)).then((code) => { process.exitCode = code; });

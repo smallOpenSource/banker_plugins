@@ -233,14 +233,15 @@ export async function main(argv) {
 
 // Compared as real paths: Node resolves links in import.meta.url but not in argv[1], so a linked path would
 // otherwise do nothing and exit 0.
+// a path realpath cannot read is compared as given (resolve): null here made the command exit 0 doing nothing.
 const real = (p) => {
   try {
     return realpathSync(p);
   } catch {
-    return null;
+    return resolve(p);
   }
 };
-if (process.argv[1] && real(process.argv[1]) !== null && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
+if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).then(
     (code) => { process.exitCode = code; },
     (e) => {

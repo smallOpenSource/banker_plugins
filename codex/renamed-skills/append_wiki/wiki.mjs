@@ -1711,11 +1711,9 @@ function main(argv) {
 
 // Run as a command only; a test imports the functions. Node resolves links for import.meta.url, not for argv[1].
 function invokedDirectly() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 }
 
 if (invokedDirectly()) process.exitCode = main(process.argv.slice(2));

@@ -26,7 +26,7 @@
 //   no-agent      opencode's `debug agent` finds no agent
 import { spawn } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -219,11 +219,9 @@ function codex(args) {
 }
 
 const invokedDirectly = () => {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(SELF);
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(SELF);
 };
 
 if (invokedDirectly()) {

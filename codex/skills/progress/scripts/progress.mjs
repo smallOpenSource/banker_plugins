@@ -321,7 +321,9 @@ function main(argv) {
 }
 
 // 직접 실행일 때만 main. 경로에 링크가 있어도(~/.codex 가 링크인 경우) 같은 파일로 본다.
-const same = (a, b) => { try { return realpathSync(a) === realpathSync(b); } catch { return false; } };
+// a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+const same = (a, b) => ranAs(a) === ranAs(b);
 if (process.argv[1] && same(fileURLToPath(import.meta.url), resolve(process.argv[1]))) {
   const code = main(process.argv.slice(2));
   if (typeof code === 'number') process.exitCode = code;
