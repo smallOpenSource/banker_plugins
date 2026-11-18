@@ -1,0 +1,114 @@
+/* presentation-graphic-gen engine.css: stage, themes, shared scene components, review panel.
+   Stage px 1920x1080. Safe area x 160-1760, y 120-960. Animated values are only opacity and the individual
+   transform properties translate / scale / rotate (engine.js); everything else here is static. */
+:root {
+  --font: "Deck Sans", "Deck Sans KR", sans-serif;
+  --accent-solid: #E0263F;
+  --on-accent: #FFFFFF;
+}
+/* dark is the default theme; ?theme=light switches (colors are CSS variables only, so no rebuild) */
+:root, [data-theme="dark"] {
+  --bg: #14151C; --fg: #F2F2F6; --muted: #A4A6B6; --line: #3B3D4E; --soft: #1F2130; --accent: #FF5C70;
+  --mark: rgba(224, 38, 63, 0.38); --panel-bg: #0D0E13; --panel-fg: #D9DAE2; --panel-cur: #262838;
+}
+[data-theme="light"] {
+  --bg: #FFFFFF; --fg: #16171F; --muted: #666879; --line: #D3D4DD; --soft: #F3F3F7; --accent: #D0112D;
+  --mark: rgba(224, 38, 63, 0.20); --panel-bg: #EEEEF2; --panel-fg: #23242C; --panel-cur: #DADBE4;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+body { font-family: var(--font); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+#app { position: fixed; inset: 0; display: flex; }
+#viewport { position: relative; flex: 1 1 0; min-width: 0; height: 100%; overflow: hidden; background: var(--bg); cursor: pointer; }
+#stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; }
+/* nothing on the stage paints until the timeline is built (fonts loaded, every animation at time 0) */
+html:not([data-ready]) #stage { visibility: hidden; }
+#blank { position: absolute; inset: 0; z-index: 50; background: #000; display: none; }
+body.blanked #blank { display: block; }
+
+/* every scene starts invisible; only the timeline (opacity keyframes) shows one */
+.scene { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; opacity: 0; color: var(--fg); background: var(--bg); }
+.scene h1, .scene h2, .scene h3, .scene p { margin: 0; font-weight: inherit; }
+.layer { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+
+/* type scale (stage px) */
+.t-hero { font-size: 200px; font-weight: 700; line-height: 1; letter-spacing: -0.03em; }
+.t-display { font-size: 104px; font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; }
+.t-h1 { font-size: 72px; font-weight: 700; line-height: 1.2; }
+.t-h2 { font-size: 56px; line-height: 1.3; }
+.t-body { font-size: 44px; line-height: 1.4; }
+.t-small { font-size: 40px; line-height: 1.4; }
+.muted { color: var(--muted); }
+
+/* small title, top left */
+.kicker { position: absolute; left: 160px; top: 128px; font-size: 40px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+
+/* chip: bordered pill */
+.chip { position: relative; display: inline-flex; align-items: center; min-height: 76px; padding: 10px 30px; font-size: 40px; line-height: 1.35;
+  white-space: nowrap; color: var(--fg); background: var(--bg); border: 2px solid var(--line); border-radius: 16px; }
+
+/* flow box (pair with s.connector) */
+.fbox { position: relative; display: flex; align-items: center; height: 120px; padding: 0 40px; font-size: 44px; white-space: nowrap;
+  color: var(--fg); background: var(--bg); border: 2px solid var(--line); border-radius: 16px; }
+
+/* accent: s.accent fades in an overlay copy of the text in the accent color (an opacity change, no color tween) */
+.acc { position: relative; }
+.acc > .acc-ink { position: absolute; inset: 0; opacity: 0; color: var(--accent); background: var(--bg); pointer-events: none;
+  padding: inherit; display: inherit; align-items: inherit; justify-content: inherit; white-space: inherit; border-radius: inherit; }
+.chip.acc > .acc-ink, .fbox.acc > .acc-ink { inset: -2px; border: 2px solid var(--accent-solid); }
+
+/* focus outline: one element inside its target (s.focus), the target's shape plus a pad; only its opacity and a
+   small scale (about 1) are animated, so it is never a stretched sliver. An old .ring placeholder stays hidden. */
+.fx-focus { position: absolute; opacity: 0; pointer-events: none; z-index: 2; border: 4px solid var(--accent-solid);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent-solid) 45%, transparent); }
+.ring { display: none; }
+
+/* drawn border box: the engine adds four edges that draw by scale, with a gap for .dbox-label */
+.dbox { position: relative; padding: 44px 32px 32px; }
+.dbox > .dbox-e { position: absolute; background: var(--line); pointer-events: none; }
+.dbox-label { position: absolute; left: 28px; top: -26px; padding: 0 10px; font-size: 40px; font-weight: 700; line-height: 52px; color: var(--muted); }
+
+/* connectors: straight segments that draw by scale, then a small arrow tip fades in */
+.links { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; pointer-events: none; }
+.link-seg { position: absolute; background: var(--muted); }
+.link-tip { position: absolute; width: 20px; height: 20px; overflow: visible; }
+.link-tip path { fill: none; stroke: var(--muted); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+
+/* strike-through line, highlight box, underline bar */
+.strike { position: relative; }
+.strike > .strike-line { position: absolute; left: 0; right: 0; top: 52%; height: 5px; background: var(--accent-solid); transform-origin: 0 50%; }
+.mk { position: relative; z-index: 0; }
+.mk > .mk-box { position: absolute; left: -8px; right: -8px; top: 8%; bottom: 2%; z-index: -1; background: var(--mark); border-radius: 6px; transform-origin: 0 50%; }
+.ul { position: absolute; height: 8px; background: var(--accent-solid); border-radius: 4px; transform-origin: 0 50%; }
+
+/* fill in the blank */
+.blank { position: relative; display: inline-block; min-width: 220px; height: 1.25em; vertical-align: -0.2em; }
+.blank > .blank-hatch { position: absolute; inset: 0; border-bottom: 4px solid var(--muted);
+  background: repeating-linear-gradient(135deg, transparent 0 10px, var(--soft) 10px 20px); }
+.blank > .blank-word { position: absolute; left: 0; right: 0; bottom: 0.05em; text-align: center; color: var(--accent); font-weight: 700; }
+
+/* wipe reveal: the window (this element) and its content move in opposite directions */
+.wipe { overflow: hidden; }
+
+/* placeholder scene (a section without a scene file) */
+.ph { position: absolute; left: 160px; top: 140px; width: 1600px; }
+.ph-title { font-size: 56px; font-weight: 700; margin-bottom: 40px; }
+.ph-step { font-size: 40px; line-height: 1.4; color: var(--muted); margin-bottom: 24px; }
+
+.deck-error { position: absolute; left: 160px; top: 160px; width: 1600px; padding: 40px; font-size: 32px; line-height: 1.4; color: #fff; background: #8A1022; border-radius: 16px; z-index: 60; white-space: pre-wrap; }
+
+/* ---------- review: stage left, script panel right ---------- */
+.mode-review #viewport { flex: 0 0 62%; }
+#panel { flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--panel-bg); color: var(--panel-fg); font-size: 18px; line-height: 1.55; }
+#p-head { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
+#p-sec { font-weight: 700; font-size: 20px; }
+#p-count, .tm { font-variant-numeric: tabular-nums; color: var(--muted); }
+#p-list { flex: 1 1 0; overflow-y: auto; padding: 8px 12px 40vh; }
+.p-secname { margin: 18px 8px 6px; font-weight: 700; color: var(--muted); }
+.p-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+.p-item.cur { background: var(--panel-cur); }
+.p-key { font-size: 14px; color: var(--muted); }
+.p-screen { font-size: 15px; color: var(--muted); }
+.p-dir { font-size: 15px; color: var(--muted); font-style: italic; }
+.p-speech { white-space: pre-wrap; }

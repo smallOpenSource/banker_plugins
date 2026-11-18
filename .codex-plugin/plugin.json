@@ -56,6 +56,7 @@
     "./skills/payload-mon/",
     "./skills/pdf-vision-extract/",
     "./skills/play-qa/",
+    "./skills/presentation-graphic-gen/",
     "./skills/progress-mon/",
     "./skills/ralph-qa/",
     "./skills/ready-compact/",

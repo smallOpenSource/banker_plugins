@@ -1,0 +1,157 @@
+// pptx.test.mjs: the PowerPoint pipeline. Pieces without a browser always run; the end-to-end pipeline
+// (make.mjs --format both on a small deck, verify both directions) skips with the reason when no browser is found.
+// Run: node --test scripts/pptx.test.mjs
+import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, describe, test } from 'node:test';
+import { SKILL, parseScript } from './build.mjs';
+import { findBrowser } from './cdp.mjs';
+import { mp4Info, notesText, patchNotes, patchSlide, writeNew } from './pptx-common.mjs';
+import { verify } from './pptx.mjs';
+import { buildVideoPptx } from './pptx-video.mjs';
+import { mp4Writer } from './record.mjs';
+import { VENDOR, VendorError, pptxgen } from './vendor.mjs';
+
+const TMP = mkdtempSync(join(tmpdir(), 'pgg-pptx-test-'));
+after(() => rmSync(TMP, { recursive: true, force: true }));
+const MAKE = join(SKILL, 'scripts', 'make.mjs');
+
+test('the WASM encoder writes an H.264 MP4 that mp4Info reads back (codec, size, frames, fps)', async () => {
+  const w = await mp4Writer({ width: 64, height: 48, fps: 30 });
+  const px = new Uint8Array(64 * 48 * 4);
+  for (let f = 0; f < 6; f++) { px.fill(40 * f); w.add(px); }
+  const { bytes, frames } = w.finish();
+  assert.equal(frames, 6);
+  const info = mp4Info(bytes);
+  assert.deepEqual({ codec: info.codec, avcC: info.avcC, w: info.width, h: info.height, n: info.samples, fps: info.fps }, { codec: 'avc1', avcC: true, w: 64, h: 48, n: 6, fps: 30 });
+  assert.equal(mp4Info(Buffer.from('not an mp4 at all, just text')), null);
+});
+
+test('notes: spoken lines first, stage directions apart in brackets; one paragraph per line in the notes XML', () => {
+  const st = { speech: '첫 문장.\n둘째 문장.', directions: ['연출 하나', '연출 둘'] };
+  assert.equal(notesText(st), '첫 문장.\n둘째 문장.\n\n[연출 하나]\n[연출 둘]');
+  assert.equal(notesText({ speech: '', directions: ['연출'] }), '[연출]');
+  const xml = '<p:sp><p:nvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>가\n\n[나]</a:t></a:r><a:endParaRPr lang="en-US" dirty="0"/></a:p></p:txBody></p:sp>';
+  const out = patchNotes(xml);
+  assert.equal((out.match(/<a:p>/g) || []).length, 3);
+  assert.match(out, /<a:t>가<\/a:t>.*<a:endParaRPr lang="ko-KR".*<a:t>\[나\]<\/a:t>/);
+});
+
+test('slide XML: shape ids renumbered, the title placeholder hidden, Korean as the text language', () => {
+  const xml = '<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/></p:nvGrpSpPr><p:sp><p:nvSpPr><p:cNvPr id="9" name="Text 0"></p:cNvPr><p:nvPr><p:ph\n idx="100"\n type="title"/></p:nvPr></p:nvSpPr><a:r><a:rPr lang="en-US"/></a:r></p:sp><p:pic><p:cNvPr id="9" name="video s1-1"/></p:pic></p:spTree>';
+  const r = patchSlide(xml);
+  assert.deepEqual(r.ids.map((x) => x.id), [1, 2, 3]);
+  assert.match(r.xml, /<p:cNvPr id="2" name="Text 0" hidden="1">/);
+  assert.match(r.xml, /<p:cNvPr id="3" name="video s1-1"\/>/);
+  assert.match(r.xml, /lang="ko-KR"/);
+});
+
+test('writeNew never overwrites (exit 2) unless forced', () => {
+  const f = join(TMP, 'x.pptx');
+  writeNew(f, Buffer.from('a'));
+  assert.throws(() => writeNew(f, Buffer.from('b')), (e) => e.exit === 2 && /not overwriting/.test(e.message));
+  assert.equal(readFileSync(f, 'utf8'), 'a');
+  writeNew(f, Buffer.from('c'), true);
+  assert.equal(readFileSync(f, 'utf8'), 'c');
+  assert.deepEqual(readdirSync(TMP).filter((n) => n.endsWith('.tmp')), []);
+});
+
+test('vendored PptxGenJS loads from its checked bytes; a tampered copy is refused', () => {
+  const { PptxGenJS, JSZip } = pptxgen();
+  assert.equal(typeof PptxGenJS, 'function');
+  assert.equal(typeof JSZip, 'function');
+  const copy = join(TMP, 'vendor');
+  cpSync(VENDOR, copy, { recursive: true });
+  const f = join(copy, 'pptxgenjs', 'pptxgen.bundle.js');
+  writeFileSync(f, readFileSync(f, 'utf8').replace('PptxGenJS', 'PptxGenJZ'));
+  assert.throws(() => pptxgen(copy), VendorError);
+});
+
+test('make.mjs rejects an unknown --format (exit 2)', () => {
+  const r = spawnSync(process.execPath, [MAKE, '--sample', '--format', 'pdf'], { encoding: 'utf8' });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /--format needs html, pptx or both/);
+});
+
+const BROWSER = findBrowser();
+const SKIP = BROWSER ? false : 'no Chrome, Edge or Chromium found (set CHROME to the browser executable); PowerPoint pipeline tests not run';
+if (SKIP) process.stdout.write(`# SKIP pptx pipeline tests: ${SKIP}\n`);
+
+describe('PowerPoint pipeline in a browser', { skip: SKIP }, () => {
+  let dir, script, out, made;
+  const STAMP = '261118+0930';
+  before(() => {
+    dir = join(TMP, 'mini');
+    mkdirSync(join(dir, 'scenes'), { recursive: true });
+    script = join(dir, 'mini.md');
+    writeFileSync(script, '# 작은 덱\n\n## 1. 하나\n\n### 1-1\n화면: 첫 장면 제목\n[제목이 떠오름]\n말:\n첫 말입니다.\n\n### 1-2\n화면: 밑줄\n말: 둘째 말.\n\n## 2. 둘\n\n### 2-1\n화면: 둘째 장면\n- 칩 하나\n[장면이 바뀜]\n말: 셋째 말.\n');
+    writeFileSync(join(dir, 'scenes', '01.js'), `Deck.scene({ section: 1, css: '.s01 .t { position: absolute; left: 200px; top: 300px; } .s01 .p { position: absolute; left: 200px; top: 480px; }',
+      html: (d) => '<h1 class="t t-display" data-r="t">' + d.esc(d.lines('s1-1')[0]) + '</h1><p class="p t-h2" data-r="p">' + d.esc(d.lines('s1-2')[0]) + ' 문장</p><i class="ul" data-r="ul"></i>',
+      steps: { 's1-1'(s) { s.fadeUp('t', { at: 0.1 }); }, 's1-2'(s) { const t = s.fadeUp('p'); s.underline('ul', 'p', { at: t }); } } });`);
+    writeFileSync(join(dir, 'scenes', '02.js'), `Deck.scene({ section: 2, css: '.s02 .t { position: absolute; left: 200px; top: 300px; } .s02 .c { position: absolute; left: 200px; top: 500px; }',
+      html: (d) => '<h2 class="t t-h1" data-r="t">' + d.esc(d.lines('s2-1')[0]) + '</h2><span class="chip c" data-r="c">' + d.esc(d.lines('s2-1')[1]) + '</span>',
+      steps: { 's2-1'(s) { s.fadeUp('t', { at: 0.1 }); s.chips('c', { at: 0.3, ring: 'f' }); } } });`);
+    out = join(dir, 'out');
+    made = spawnSync(process.execPath, [MAKE, script, '--format', 'both', '--dir', out, '--stamp', STAMP], { encoding: 'utf8', timeout: 400000 });
+  });
+
+  test('make.mjs --format both: HTML pair, check, recording, video and editable decks, both verified', () => {
+    assert.equal(made.status, 0, made.stdout + made.stderr);
+    for (const f of [`mini-review-${STAMP}.html`, `mini-present-${STAMP}.html`, `mini-video-${STAMP}.pptx`, `mini-edit-${STAMP}.pptx`]) assert.ok(existsSync(join(out, f)), f);
+    const rec = JSON.parse(readFileSync(join(out, `mini-recording-${STAMP}`, 'manifest.json'), 'utf8'));
+    assert.equal(rec.steps.length, 3);
+    for (const s of rec.steps) assert.equal(s.holdFrames, 15, 'the last frame is held 0.5 s');
+    assert.match(made.stdout, /PASS continuity: decoded MP4: last frame of slide n vs first frame of slide n\+1, 2\/2 pairs/);
+    assert.match(made.stdout, /PASS continuity-raw: recorded frames: .* worst channel difference 0/);
+    assert.match(made.stdout, /PASS h264: 3 MP4 files are H\.264/);
+    assert.match(made.stdout, /PASS edit-slides: 3\/3 slides have native text boxes; theme fonts Noto Sans \/ Noto Sans KR/);
+    assert.equal((made.stdout.match(/^FAIL /gm) || []).length, 0);
+  });
+
+  test('editable deck: the focus outline is a native rounded rectangle outline (no fill, one shape)', async () => {
+    const { JSZip } = pptxgen();
+    const zip = await JSZip.loadAsync(readFileSync(join(out, `mini-edit-${STAMP}.pptx`)));
+    const xml = await zip.file('ppt/slides/slide3.xml').async('string');
+    const shapes = [...xml.matchAll(/<p:sp><p:nvSpPr><p:cNvPr id="\d+" name="shape i\.fx-focus"[\s\S]*?<\/p:sp>/g)].map((m) => m[0]);
+    assert.equal(shapes.length, 1, 'one outline shape for the one marked chip');
+    assert.match(shapes[0], /<a:prstGeom prst="roundRect">/);
+    assert.match(shapes[0], /<a:noFill\/>/);
+    assert.match(shapes[0], /<a:ln w="\d+"><a:solidFill><a:srgbClr val="E0263F"\/>/);
+    assert.doesNotMatch(xml, /ring-e/, 'no edge pieces');
+  });
+
+  test('make.mjs never overwrites an earlier run (exit 2) unless --force', () => {
+    const r = spawnSync(process.execPath, [MAKE, script, '--format', 'pptx', '--dir', out, '--stamp', STAMP], { encoding: 'utf8', timeout: 60000 });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /exists; not overwriting/);
+  });
+
+  test('verify fails when the videos are out of order (decoded continuity) and when notes are wrong', async () => {
+    const rec = join(out, `mini-recording-${STAMP}`), bad = join(dir, 'swapped');
+    cpSync(rec, bad, { recursive: true });
+    const m = JSON.parse(readFileSync(join(bad, 'manifest.json'), 'utf8'));
+    const [a, b] = [m.steps[1].mp4, m.steps[2].mp4];
+    renameSync(join(bad, a), join(bad, 'x.mp4')); renameSync(join(bad, b), join(bad, a)); renameSync(join(bad, 'x.mp4'), join(bad, b));
+    const parsed = parseScript(readFileSync(script, 'utf8'));
+    const vfile = join(dir, 'swapped.pptx');
+    await buildVideoPptx({ parsed, media: bad, out: vfile });
+    const r = await verify(vfile, { script, media: bad, log: () => {} });
+    const g = Object.fromEntries(r.results.map((x) => [x.gate, x.ok]));
+    assert.equal(g.continuity, false, 'swapped videos must break the decoded continuity');
+    assert.equal(g['continuity-raw'], true, 'the recorded frames themselves are still continuous');
+    assert.equal(g['video-slides'], true);
+    // notes edited by hand no longer match the script
+    const { JSZip } = pptxgen();
+    const zip = await JSZip.loadAsync(readFileSync(join(out, `mini-edit-${STAMP}.pptx`)));
+    const n = Object.keys(zip.files).find((x) => /notesSlide\d+\.xml$/.test(x));
+    zip.file(n, (await zip.file(n).async('string')).replace(/<a:t>[^<]+<\/a:t>/, '<a:t>다른 말</a:t>'));
+    const efile = join(dir, 'notes-bad.pptx');
+    writeFileSync(efile, await zip.generateAsync({ type: 'nodebuffer' }));
+    const r2 = await verify(efile, { script, log: () => {} });
+    assert.equal(r2.results.find((x) => x.gate === 'notes').ok, false);
+    assert.equal(r2.results.find((x) => x.gate === 'edit-slides').ok, true);
+  });
+});
