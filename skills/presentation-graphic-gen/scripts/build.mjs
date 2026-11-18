@@ -41,6 +41,24 @@ export const SYLLABLES_PER_MIN = 290;
 
 const fail = (msg, exit) => Object.assign(new Error(msg), { exit });
 
+/**
+ * A text input (the script, a scene file, accepted.json) as text: UTF-8 (a BOM is dropped) or UTF-16 with its BOM,
+ * the rule of append_wiki's --input-file. Anything else is a file error (exit 2) naming the file, not a deck or a
+ * PowerPoint with U+FFFD in it: Windows PowerShell 5.1's Set-Content and Notepad's ANSI write the system code page
+ * (cp949 on Korean Windows). Kept here, not imported from append_wiki: each skill is installed on its own.
+ */
+export function readText(file) {
+  const bytes = readFileSync(file);
+  const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : null;
+  let text;
+  try {
+    text = new TextDecoder(utf16 || 'utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw fail(`${file} is not UTF-8 (or UTF-16 with a BOM); save it as UTF-8`, 2);
+  }
+  return text.startsWith('\uFEFF') ? text.slice(1) : text;
+}
+
 // ---------- script ----------
 const SEC_RE = /^## (\d+)\.\s+(.+?)(?:\s+\(목표 (\d+):(\d\d)\))?\s*$/;
 const STEP_RE = /^### (\d+)-(\d+)\s*$/;
@@ -184,7 +202,7 @@ export function loadScenes(dir, data) {
   const files = readdirSync(dir).filter((f) => /^\d\d\.js$/.test(f)).sort();
   for (const f of files) {
     const n = +f.slice(0, 2);
-    const src = readFileSync(join(dir, f), 'utf8');
+    const src = readText(join(dir, f));
     for (const what of lintScene(src)) errors.push(`scenes/${f}: uses ${what}`);
     const got = [];
     try {
@@ -277,9 +295,14 @@ function writeOut(path, text, force) {
 // Output name: letters of any script (Hangul too), digits, combining marks, spaces, ".", "_", "-". The class leaves
 // out path separators, control characters and the characters Windows forbids in file names (<>:"/\|?*).
 const NAME_RE = /^[\p{L}\p{M}\p{N}._ -]+$/u;
-export const nameOk = (n) => NAME_RE.test(n) && !n.includes('..') && !/^ | $|\.$/.test(n);
-// default: the script's file name (NFC, so a macOS decomposed name reads the same), runs of spaces as one "-"
-export const defaultName = (script) => basename(script, extname(script)).normalize('NFC').trim().replace(/\s+/g, '-');
+// Windows device names, alone or before an extension (CON, nul.md, COM1.html): the output folder could not be made there.
+const DEVICE_RE = /^(?:CON|PRN|AUX|NUL|COM[0-9\u00b9\u00b2\u00b3]|LPT[0-9\u00b9\u00b2\u00b3])\s*(?:\..*)?$/iu;
+export const nameOk = (n) => NAME_RE.test(n) && !n.includes('..') && !/^ | $|\.$/.test(n) && !DEVICE_RE.test(n);
+// default: the script's file name (NFC, so a macOS decomposed name reads the same). Each run of characters outside the
+// name class, spaces too, becomes one "-" (발표(최종).md is 발표-최종, Q&A 자료.md is Q-A-자료), with no "-" left at the ends.
+// A --name the user gives is never changed: one outside the rule is refused.
+export const defaultName = (script) => basename(script, extname(script)).normalize('NFC').trim()
+  .replace(/[^\p{L}\p{M}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '');
 
 export function parseArgs(argv, cwd = process.cwd()) {
   const a = { script: null, scenes: null, media: null, name: null, dir: null, stamp: null, force: false };
@@ -303,7 +326,7 @@ export function parseArgs(argv, cwd = process.cwd()) {
   a.media = a.media || join(base, 'media');
   const given = a.name != null;
   a.name = given ? a.name : defaultName(a.script);
-  if (!nameOk(a.name)) throw fail(`${given ? '--name' : 'the output name (the script file name; give --name)'} may hold letters of any language, digits, spaces, ".", "_" and "-", not "..", path separators, control characters or <>:"/\\|?*, and may not start or end with a space or end with "."; got ${JSON.stringify(a.name)}`, 2);
+  if (!nameOk(a.name)) throw fail(`${given ? '--name' : 'the output name (the script file name; give --name)'} may hold letters of any language, digits, spaces, ".", "_" and "-", not "..", path separators, control characters or <>:"/\\|?*, may not start or end with a space or end with ".", and may not be a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with or without an extension); got ${JSON.stringify(a.name)}`, 2);
   a.dir = a.dir || join(cwd, 'presentation-out', a.name);
   return a;
 }
@@ -312,7 +335,7 @@ export function parseArgs(argv, cwd = process.cwd()) {
 export async function build(a) {
   requireVendor(); // every vendored file, before any work (exit 3)
   if (!existsSync(a.script)) throw fail(`script not found: ${a.script}`, 2);
-  const parsed = parseScript(readFileSync(a.script, 'utf8'));
+  const parsed = parseScript(readText(a.script));
   if (parsed.errors.length) throw fail(`script errors:\n  ${parsed.errors.join('\n  ')}`, 1);
   const review = deckData(parsed, 'review');
   const { scenes, errors } = loadScenes(a.scenes, review);
@@ -365,8 +388,10 @@ export function report(r) {
   return lines.join('\n');
 }
 
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const r = await build(parseArgs(process.argv.slice(2)));
     process.stdout.write(report(r) + '\n');

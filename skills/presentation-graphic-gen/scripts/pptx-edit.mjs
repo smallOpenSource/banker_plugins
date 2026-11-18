@@ -7,10 +7,10 @@
 // East Asian Noto Sans KR (the fonts are not embedded: the viewing PC needs them installed).
 //
 //   node scripts/pptx-edit.mjs <present.html> <script.md> --out <file.pptx> [--force]
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { deckData, parseScript } from './build.mjs';
+import { deckData, parseScript, readText } from './build.mjs';
 import { findBrowser, launch } from './cdp.mjs';
 import { MASTER, PX, defineMaster, notesText, patchNotes, patchSlide, patchTheme, slideTitle, writeNew } from './pptx-common.mjs';
 import { exitOf, pptxgen } from './vendor.mjs';
@@ -227,8 +227,10 @@ export async function buildEditPptx({ html, parsed, out, force = false, browser 
   return { out, bytes: bytes.length, slides: data.steps.length, fallbacks };
 }
 
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   let html = null, script = null, out = null, force = false;
   for (let i = 0; i < argv.length; i++) {
@@ -241,7 +243,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   if (!html || !script || !out) { process.stderr.write('usage: node scripts/pptx-edit.mjs <present.html> <script.md> --out <file.pptx> [--force]\n'); process.exit(2); }
   if (!findBrowser()) { process.stderr.write('pptx-edit: no Chrome, Edge or Chromium found; set CHROME to the browser executable\n'); process.exit(2); }
   try {
-    const parsed = parseScript(readFileSync(script, 'utf8'));
+    const parsed = parseScript(readText(script));
     if (parsed.errors.length) throw Object.assign(new Error(parsed.errors.join('; ')), { exit: 1 });
     const r = await buildEditPptx({ html, parsed, out, force });
     process.stdout.write(`pptx-edit ${r.out} ${r.slides} slides ${(r.bytes / 1048576).toFixed(1)} MiB, ${r.fallbacks.length} picture fallback(s)\n`);

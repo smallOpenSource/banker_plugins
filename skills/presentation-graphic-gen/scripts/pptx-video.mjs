@@ -9,7 +9,7 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deckData, parseScript } from './build.mjs';
+import { deckData, parseScript, readText } from './build.mjs';
 import { MASTER, SLIDE_H, SLIDE_W, defineMaster, notesText, patchNotes, patchSlide, patchTheme, slideTitle, writeNew } from './pptx-common.mjs';
 import { exitOf, pptxgen } from './vendor.mjs';
 
@@ -86,8 +86,10 @@ export async function buildVideoPptx({ parsed, media, out, force = false }) {
   return { out, bytes: bytes.length, slides: slides.length };
 }
 
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   let script = null, media = null, out = null, force = false;
   for (let i = 0; i < argv.length; i++) {
@@ -99,7 +101,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   }
   if (!script || !media || !out) { process.stderr.write('usage: node scripts/pptx-video.mjs <script.md> --media <record dir> --out <file.pptx> [--force]\n'); process.exit(2); }
   try {
-    const parsed = parseScript(readFileSync(script, 'utf8'));
+    const parsed = parseScript(readText(script));
     if (parsed.errors.length) throw Object.assign(new Error(parsed.errors.join('; ')), { exit: 1 });
     const r = await buildVideoPptx({ parsed, media, out, force });
     process.stdout.write(`pptx-video ${r.out} ${r.slides} slides ${(r.bytes / 1048576).toFixed(1)} MiB\n`);

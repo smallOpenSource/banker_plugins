@@ -14,10 +14,10 @@
 // Every output is checked before any work (an existing file or a non-empty folder: exit 2), and every vendored file
 // is checked against its sha256 (exit 3). A gate SKIP is listed in the done block ("== done: PASS with SKIP").
 // A failing step stops the run: exit 1 (gates), 2 (usage, files, no browser), 3 (vendor check).
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build, parseArgs, parseScript, report, stamp } from './build.mjs';
+import { build, parseArgs, parseScript, readText, report, stamp } from './build.mjs';
 import { findBrowser } from './cdp.mjs';
 import { check } from './check.mjs';
 import { verify } from './pptx.mjs';
@@ -70,7 +70,7 @@ export async function make(argv, { log = (l) => process.stdout.write(l + '\n'), 
   const result = { review: r.review, present: r.present, check: c.out, contactSheet: c.contactSheet };
   if (!pptx) return result;
 
-  const parsed = parseScript(readFileSync(a.script, 'utf8'));
+  const parsed = parseScript(readText(a.script));
   log('== record');
   await record(r.present, { out: out.recording, force: a.force, log });
   log('== pptx-video');
@@ -95,8 +95,10 @@ export function doneReport(r) {
   return [head, ...Object.entries(r).filter(([, v]) => typeof v === 'string' && v).map(([k, v]) => `${k.padEnd(13)}${v}`)].join('\n') + '\n';
 }
 
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const r = await make(process.argv.slice(2));
     process.stdout.write(doneReport(r));

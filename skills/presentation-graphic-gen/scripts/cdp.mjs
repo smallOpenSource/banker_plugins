@@ -299,8 +299,10 @@ export async function launch({ onEvent, browser = findBrowser(), extraArgs = [] 
 }
 
 // node scripts/cdp.mjs: prints the browser the gates will use, or says none was found (exit 2)
-// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
+// A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const found = findBrowser();
   process.stdout.write(found ? `browser ${found}\n` : 'no Chrome, Edge or Chromium found (set CHROME to the browser executable)\n');
   process.exit(found ? 0 : 2);
