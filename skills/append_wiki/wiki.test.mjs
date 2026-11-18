@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Tests for wiki.mjs, the OMC-free wiki fallback. Run: `node --test skills/append_wiki/`
+ * Tests for wiki.mjs, the OMC-free wiki fallback. Run: `node --test skills/append_wiki/wiki.test.mjs`
  * Zero deps: node:test + node:assert only. Every case runs in a temp folder with its own git project, HOME and temp,
  * never in the real ~/.claude, ~/.omc or this repo's .omc/wiki.
  *
@@ -387,4 +387,33 @@ test('obsidizer: a flag with no canonicalizer beside the skill warns on stderr a
   assert.equal(run.status, 0);
   assert.match(run.stderr, /obsidize\.mjs is not beside this skill/);
   assert.ok(fs.existsSync(path.join(p.wikiDir, 'alone.md')));
+});
+
+test('CLI: an --input-file that is not UTF-8 stops with exit 2 and writes nothing; UTF-16 with a BOM is read', () => {
+  const p = project();
+  const input = { title: 'Code Page', content: '한글 본문', tags: ['한글'], category: 'pattern' };
+  // "한글" in cp949 (EUC-KR), as Windows PowerShell 5.1's Set-Content writes on Korean Windows.
+  const cp949 = Buffer.from(JSON.stringify(input).replace(/한글/g, '@@'), 'utf8');
+  const bytes = Buffer.concat(cp949.toString('latin1').split('@@').flatMap((part, i, all) =>
+    (i < all.length - 1 ? [Buffer.from(part, 'latin1'), Buffer.from([0xc7, 0xd1, 0xb1, 0xdb])] : [Buffer.from(part, 'latin1')])));
+  const bad = path.join(p.base, 'cp949.json');
+  fs.writeFileSync(bad, bytes);
+  const r = p.cli(['ingest', '--input-file', bad]);
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stderr, /is not UTF-8 \(or UTF-16 with a BOM\); write it as UTF-8/);
+  assert.ok(!fs.existsSync(p.wikiDir) || !fs.readdirSync(p.wikiDir).some((f) => f.startsWith('code-page')));
+  const le = path.join(p.base, 'utf16.json');
+  fs.writeFileSync(le, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify(input), 'utf16le')]));
+  const ok = p.cli(['ingest', '--input-file', le, '--json']);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.ok(p.page('code-page.md').includes('한글 본문'));
+});
+
+test('git runs from the home folder: a git.exe in the project folder is never started (Windows looks there first)', { skip: process.platform !== 'win32' && 'only Windows looks up a bare program name in the current folder' }, () => {
+  const p = project();
+  // A stand-in git.exe: node itself, which rejects git's arguments, so any answer from it would be a refusal.
+  fs.copyFileSync(process.execPath, path.join(p.cwd, 'git.exe'));
+  const r = p.cli(['ingest', '--input', JSON.stringify({ title: 'Real Git', content: 'x', tags: [], category: 'reference' }), '--json']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(fs.existsSync(path.join(p.wikiDir, 'real-git.md')));
 });

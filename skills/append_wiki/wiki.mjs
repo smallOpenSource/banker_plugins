@@ -57,9 +57,12 @@ const CANONICALIZERS = [
 // git probes (src/lib/worktree-paths.ts)
 // ============================================================================
 
+// The folder goes to git as -C, and git itself starts in the home folder: on Windows a bare "git" is looked up in
+// the current folder first, so starting it in the project would let a git.exe there run (as in banker 0.16.2).
+// git -C <dir> behaves as if started in <dir>, so the answers are the same as OMC's cwd: <dir>.
 function git(args, cwd, english = false) {
-  return execFileSync('git', args, {
-    cwd,
+  return execFileSync('git', ['-C', path.resolve(cwd), ...args], {
+    cwd: os.homedir(),
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -550,7 +553,7 @@ function atomicWrite(filePath, content) {
 
 // Windows refuses a rename onto a file another process has open or is replacing at that moment (EPERM, EBUSY,
 // EACCES); measured on the Windows test box with two writers creating .omc/.gitignore together. It clears within
-// milliseconds, so the rename is tried again for up to about a second there. Other systems rename atomically.
+// milliseconds, so the rename is tried again for up to about two seconds there. Other systems rename atomically.
 const RENAME_BUSY = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const PAUSE = new Int32Array(new SharedArrayBuffer(4));
 function renameRetry(from, to) {
@@ -1339,12 +1342,24 @@ const USAGE = `usage: node wiki.mjs <tool> [--input '<json>' | --input-file <pat
   tools: ${TOOL_NAMES.join(', ')} (the wiki_ prefix may be left out)
   exit: 0 done, 1 the tool reported an error, 2 a usage error`;
 
+// The input file as text: UTF-8 (a BOM is dropped) or UTF-16 with its BOM. Anything else stops with exit 2 instead
+// of writing U+FFFD into the wiki: Windows PowerShell 5.1's Set-Content writes the system code page (cp949 on Korean
+// Windows) by default.
+function decodeInputFile(bytes, file) {
+  const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : null;
+  try {
+    const text = new TextDecoder(utf16 || 'utf-8', { fatal: true }).decode(bytes);
+    return text.startsWith('\uFEFF') ? text.slice(1) : text;
+  } catch {
+    throw new Error(`--input-file ${file} is not UTF-8 (or UTF-16 with a BOM); write it as UTF-8`);
+  }
+}
+
 function readInput(flag, value) {
   if (value === undefined) throw new Error(`missing value for ${flag}`);
   let raw = value;
   if (flag === '--input-file') {
-    raw = fs.readFileSync(value, 'utf8');
-    if (raw.startsWith('\uFEFF')) raw = raw.slice(1);
+    raw = decodeInputFile(fs.readFileSync(value), value);
   }
   let parsed;
   try {

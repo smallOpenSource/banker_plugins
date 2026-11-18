@@ -42,6 +42,7 @@ ToolSearch(query="select:mcp__plugin_oh-my-claudecode_t__wiki_ingest,mcp__plugin
   ```
   - 아래 단계의 `wiki_xxx({...})` 는 대체 경로에서 `node "<스킬 폴더>/wiki.mjs" wiki_xxx --input-file <같은 JSON 을 쓴 파일>` 이다. 짧은 JSON 은 `--input '<json>'` 도 된다.
   - 본문이 긴 ingest 는 JSON 을 파일로 써서 `--input-file` 로 넘긴다. 셸 인용이 깨지지 않게 하기 위해서다.
+  - 그 파일은 Write 도구로 UTF-8 로 쓴다. Windows PowerShell 5.1 의 `Set-Content` 는 기본이 시스템 코드 페이지(한국어 Windows 는 cp949)라, 스크립트가 UTF-8 이 아니라며 종료 2 로 멈춘다(위키는 바뀌지 않음).
   - 종료 코드는 0 성공, 1 도구 오류(출력 글이 이유), 2 사용법 오류다.
   - 대체 경로는 Bash 의 지금 폴더를 세션 폴더로 본다(OMC 서버는 세션을 시작한 폴더를 본다). 부르기 전에 지금 폴더가 이 세션의 프로젝트 안인지 확인한다.
   - 입력 길이는 도구 스키마대로 검사한다(제목 200자, 본문 50,000자, 태그 20개 각 50자, sources 10개 각 100자). 넘으면 1 로 끝나고 아무것도 쓰지 않는다.
