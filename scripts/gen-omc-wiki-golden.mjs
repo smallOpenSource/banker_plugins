@@ -29,10 +29,23 @@ const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const byVersion = (a, b) => { const x = a.match(SEMVER), y = b.match(SEMVER); for (let i = 1; i <= 3; i++) if (+x[i] !== +y[i]) return +y[i] - +x[i]; return 0; };
 
 // The newest version folder that is a real folder (not a link to another version) and holds what the cases import.
+// Newer folders it passes over (no build, a link, unreadable) are named, so an "equal" result is not read as a check
+// against the newest OMC when it was not.
 function newestIntact() {
-  if (!fs.existsSync(CACHE)) return null;
-  const names = fs.readdirSync(CACHE).filter((n) => SEMVER.test(n)).sort(byVersion);
-  return names.map((n) => path.join(CACHE, n)).find((d) => !fs.lstatSync(d).isSymbolicLink() && !missingIn(d)) || null;
+  let names;
+  try { names = fs.readdirSync(CACHE).filter((n) => SEMVER.test(n)).sort(byVersion); } catch { return null; }
+  const skipped = [];
+  for (const n of names) {
+    const d = path.join(CACHE, n);
+    let link;
+    try { link = fs.lstatSync(d).isSymbolicLink(); } catch { skipped.push(`${n} (unreadable)`); continue; }
+    if (!link && !missingIn(d)) {
+      if (skipped.length) console.log(`note: newer version folders are not intact, so this compares with ${n}: ${skipped.join(', ')}`);
+      return d;
+    }
+    if (!link) skipped.push(`${n} (no ${missingIn(d)})`);
+  }
+  return null;
 }
 
 const CHECK = process.argv[2] === '--check';
