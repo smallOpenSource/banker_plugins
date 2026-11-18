@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (74 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (75 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -80,7 +80,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 74, `codex dry-run plans 74 skill copies (got ${copies})`);
+  ok(copies === 75, `codex dry-run plans 75 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -332,8 +332,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 74 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 74 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 75 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 75 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
@@ -1661,6 +1661,12 @@ console.log(JSON.stringify(['codex', 'gemini', 'opencode'].map((cli) => seatPlan
      && /OS 패키지 관리자\(dnf, apt, brew, winget\)의 단계는 .*미리 판정하지 않고 시도합니다/.test(offlineReadme) && /단 `setup-pwsh` 는 winget 이 유일한 원천이라 그 원천을 먼저 봅니다/.test(offlineReadme)
      && [offlineReadme, privacy].every((t) => /훅은 `HTTPS_PROXY`, `HTTP_PROXY` 를 따르지 않습니다/.test(t)),
      'airgap-11: the README offline section names the skills that need the network and how each ends, and both docs say the hooks ignore HTTPS_PROXY');
+  // presentation-graphic-gen ends the browser tree with taskkill from System32 (a bare name is looked up in the
+  // current folder first on Windows) and drives the browser over its pipe, with no debugging port.
+  const pggCdp = fs.readFileSync(path.join(root, 'skills', 'presentation-graphic-gen', 'scripts', 'cdp.mjs'), 'utf8');
+  ok(/win32\.join\(process\.env\.SystemRoot \|\| 'C:\\\\Windows', 'System32', 'taskkill\.exe'\)/.test(pggCdp) && !/execFileSync\(\s*['"]taskkill/.test(pggCdp)
+     && /'--remote-debugging-pipe'/.test(pggCdp) && !/remote-debugging-port/.test(pggCdp),
+     'pgg-taskkill: presentation-graphic-gen takes taskkill.exe from System32 and drives the browser over --remote-debugging-pipe, not a port');
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;
