@@ -12,7 +12,7 @@
  *        node scripts/gen-omc-wiki-golden.mjs --check [<OMC plugin folder>]
  *   default: the newest intact version folder in the plugin cache. Writes nothing: compares that OMC's answers with
  *   the fixtures (all but their `source` line) and exits 0 when equal, 1 when OMC now answers differently (wiki.mjs
- *   would then write a format that OMC no longer does), 2 when no intact OMC folder is found. RELEASING.md step 7.
+ *   would then write a format that OMC no longer does), 2 when no intact OMC folder is found, 3 on a usage error. RELEASING.md step 7.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -48,8 +48,17 @@ function newestIntact() {
   return null;
 }
 
-const CHECK = process.argv[2] === '--check';
-const given = process.argv[CHECK ? 3 : 2];
+// --check anywhere among the arguments; at most one folder; anything else is a usage error, so a misplaced flag
+// never turns a check into a rewrite of the fixtures.
+const ARGS = process.argv.slice(2);
+const CHECK = ARGS.includes('--check');
+const folders = ARGS.filter((a) => a !== '--check');
+if (folders.length > 1 || folders.some((a) => a.startsWith('-'))) {
+  // 3, not 2: RELEASING.md reads 2 as "no OMC/OMX to compare with" and goes on; a mistyped command must not.
+  console.error(`usage: node ${path.basename(process.argv[1])} [--check] [<folder>]`);
+  process.exit(3);
+}
+const given = folders[0];
 const omcDir = given ? path.resolve(given) : CHECK ? newestIntact() : path.join(CACHE, '5.8.4');
 if (!omcDir) {
   console.error(`no intact OMC version folder (with ${NEEDS.join(', ')}) in ${CACHE}`);
