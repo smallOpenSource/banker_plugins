@@ -394,7 +394,30 @@ test('a title or page whose file name would be a Windows device name is refused,
   for (const tool of ['wiki_read', 'wiki_delete']) {
     const run = p.cli([tool, '--input', JSON.stringify({ page: 'nul' }), '--json']);
     assert.equal(run.status, 1, `${tool}: ${run.stdout}${run.stderr}`);
-    assert.match(JSON.parse(run.stdout).error, /nul\.md would be a Windows device name/, tool);
+    // Only Windows refuses the name itself; elsewhere a missing nul.md is just not there.
+    if (process.platform === 'win32') assert.match(JSON.parse(run.stdout).error, /nul\.md would be a Windows device name/, tool);
+    else assert.match(JSON.parse(run.stdout).error, /Wiki page not found/, tool);
   }
   for (const title of ['Console', 'Null Pointer', 'COM10', 'Auxiliary']) assert.equal(p.cli(ingestArgs({ title, content: 'c' })).status, 0, title);
+});
+
+// An existing device-named page (OMX on Linux writes nul.md for the title "NUL") is read, updated and deleted off
+// Windows; only a new one is refused.
+test('an existing device-named page is read, updated and deleted off Windows; only a new one is refused', { skip: process.platform === 'win32' && 'nul.md cannot be made on Windows' }, () => {
+  const p = project();
+  assert.equal(p.cli(ingestArgs({ title: 'Nulx', content: 'first' })).status, 0);
+  fs.renameSync(path.join(p.wikiDir, 'nulx.md'), path.join(p.wikiDir, 'nul.md'));
+  const read = p.cli(['wiki_read', '--input', JSON.stringify({ page: 'nul' }), '--json']);
+  assert.equal(read.status, 0, read.stdout);
+  assert.match(read.stdout, /first/);
+  const ingest = p.cli(ingestArgs({ title: 'NUL', content: 'second' }));
+  assert.equal(ingest.status, 0, ingest.stdout);
+  assert.deepEqual(JSON.parse(ingest.stdout).updated, ['nul.md']);
+  assert.match(p.page('nul.md'), /first[\s\S]*second/);
+  const del = p.cli(['wiki_delete', '--input', JSON.stringify({ page: 'nul.md' }), '--json']);
+  assert.equal(del.status, 0, del.stdout);
+  assert.ok(!fs.existsSync(path.join(p.wikiDir, 'nul.md')));
+  const again = p.cli(['wiki_add', '--input', ingestInput({ title: 'NUL', content: 'c' }), '--json']);
+  assert.equal(again.status, 1);
+  assert.match(JSON.parse(again.stdout).error, /nul\.md would be a Windows device name/);
 });

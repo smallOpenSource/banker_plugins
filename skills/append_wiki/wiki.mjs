@@ -816,11 +816,13 @@ export function titleToSlug(title) {
 }
 
 // A Windows device name, alone or before an extension (con.md, nul.md, com1.md, lpt9.md): on Windows such a file opens
-// the device, so a write goes nowhere and a read waits on the console. The slugs keep OMC's and OMX's shape; a page
-// whose file name would be one is refused before anything is read or written, on every OS (a wiki is often shared).
+// the device, so a write goes nowhere and a read waits on the console. The slugs keep OMC's and OMX's shape. A new page
+// with such a name is refused on every OS (a wiki is often shared with a Windows PC). An existing one (the real OMC and
+// OMX write con.md on Linux) is read, updated and deleted where it is an ordinary file; on Windows the name is refused
+// before anything is read.
 const DEVICE_RE = /^(?:con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])\s*(?:\..*)?$/iu;
-export function refuseDeviceName(filename) {
-  if (DEVICE_RE.test(filename)) {
+export function refuseDeviceName(filename, { creating = true, platform = process.platform } = {}) {
+  if ((creating || platform === 'win32') && DEVICE_RE.test(filename)) {
     throw new Error(`Wiki page ${filename} would be a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9); give it another title`);
   }
   return filename;
@@ -982,11 +984,12 @@ function ingestTarget(ctx, slug) {
   refuseNewerSchema(ctx);
   const existing = readPage(ctx, slug, ctx.wikiDir);
   refuseUnparsable(ctx, slug, existing);
+  if (!existing) refuseDeviceName(slug);
   return existing;
 }
 
 function ingestKnowledge(ctx, input) {
-  const slug = refuseDeviceName(ctx.p.slug(input.title));
+  const slug = refuseDeviceName(ctx.p.slug(input.title), { creating: false });
   const now = new Date().toISOString();
   const result = { created: [], updated: [], totalAffected: 0 };
   if (ctx.p.stopsBeforeLock) ingestTarget(ctx, slug);
@@ -1161,7 +1164,7 @@ function lintWiki(ctx) {
 // ============================================================================
 
 const searchedSuffix = (root, pages) => ` (searched ${pages} page${pages === 1 ? '' : 's'} in ${path.basename(root)}/.omc/wiki)`;
-const pageFile = (page) => refuseDeviceName(page.endsWith('.md') ? page : `${page}.md`);
+const pageFile = (page) => refuseDeviceName(page.endsWith('.md') ? page : `${page}.md`, { creating: false });
 const failure = (text) => ({ isError: true, text, data: { error: text } });
 
 function toolIngest(ctx, a) {
@@ -1174,7 +1177,7 @@ function toolIngest(ctx, a) {
 }
 
 function toolAdd(ctx, a) {
-  const slug = refuseDeviceName(titleToSlug(a.title));
+  const slug = refuseDeviceName(titleToSlug(a.title), { creating: false });
   if (readPage(ctx, slug)) {
     return failure(`Page "${slug}" already exists. Use wiki_ingest to merge content into it, or wiki_delete to remove it first.`);
   }
@@ -1522,7 +1525,7 @@ function omxIngest(ctx, a) {
 }
 
 function omxAdd(ctx, a) {
-  const slug = refuseDeviceName(omxTitleToSlug(a.title));
+  const slug = refuseDeviceName(omxTitleToSlug(a.title), { creating: false });
   if (readPage(ctx, slug, ctx.wikiDir)) return omxFailure(`Page "${slug}" already exists. Use wiki_ingest to merge into it.`);
   const result = ingestKnowledge(ctx, { title: a.title, content: a.content, tags: a.tags || [], category: a.category || 'reference' });
   appendLog(ctx, { timestamp: new Date().toISOString(), operation: 'add', pagesAffected: result.created, summary: `Created wiki page ${slug}` });

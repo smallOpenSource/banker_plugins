@@ -161,9 +161,41 @@ test('a title or page whose file name would be a Windows device name is refused,
   for (const tool of ['wiki_read', 'wiki_delete']) {
     const run = p.cli([tool, '--input', JSON.stringify({ page: 'com1.md' })]);
     assert.equal(run.status, 1, `${tool}: ${run.stdout}${run.stderr}`);
-    assert.match(run.stdout, /com1\.md would be a Windows device name/, tool);
+    // Only Windows refuses the name itself; elsewhere a missing com1.md is just not there.
+    if (process.platform === 'win32') assert.match(run.stdout, /com1\.md would be a Windows device name/, tool);
+    else assert.match(run.stdout, /Wiki page not found: com1\.md/, tool);
   }
   for (const title of ['Console', 'Null Pointer', 'COM10', 'Auxiliary']) assert.equal(p.cli(ingestArgs({ title, content: 'c' })).status, 0, title);
+});
+
+// A device name is refused only for a new file on every OS. An existing one (the real OMC on Linux writes con.md for
+// the title "Con") is read, updated and deleted where it is an ordinary file; on Windows the name opens the device.
+test('an existing device-named page is read, updated and deleted off Windows; only a new one is refused', () => {
+  assert.throws(() => refuseDeviceName('con.md', { creating: false, platform: 'win32' }), /would be a Windows device name/);
+  assert.equal(refuseDeviceName('con.md', { creating: false, platform: 'linux' }), 'con.md');
+  assert.throws(() => refuseDeviceName('con.md', { creating: true, platform: 'linux' }), /would be a Windows device name/);
+  if (process.platform === 'win32') return; // con.md cannot be made here; the refusals above and in the test before cover it
+  const p = project();
+  assert.equal(p.cli(ingestArgs({ title: 'Conx', content: 'first' })).status, 0);
+  fs.renameSync(path.join(p.wikiDir, 'conx.md'), path.join(p.wikiDir, 'con.md'));
+  fs.writeFileSync(path.join(p.wikiDir, 'con.md'), p.page('con.md').replace('title: "Conx"', 'title: "Con"').replace('title: Conx', 'title: Con'));
+  const read = p.cli(['wiki_read', '--input', JSON.stringify({ page: 'con' })]);
+  assert.equal(read.status, 0, read.stdout);
+  assert.match(read.stdout, /first/);
+  const ingest = p.cli(['wiki_ingest', '--input', JSON.stringify({ tags: [], category: 'reference', title: 'Con', content: 'second' }), '--json']);
+  assert.equal(ingest.status, 0, ingest.stdout);
+  assert.deepEqual(JSON.parse(ingest.stdout).updated, ['con.md']);
+  assert.match(p.page('con.md'), /first[\s\S]*second/);
+  const add = p.cli(['wiki_add', '--input', JSON.stringify({ title: 'Con', content: 'c' })]);
+  assert.equal(add.status, 1);
+  assert.match(add.stdout, /already exists/);
+  const del = p.cli(['wiki_delete', '--input', JSON.stringify({ page: 'con.md' })]);
+  assert.equal(del.status, 0, del.stdout);
+  assert.ok(!fs.existsSync(path.join(p.wikiDir, 'con.md')));
+  const again = p.cli(['wiki_ingest', '--input', JSON.stringify({ tags: [], category: 'reference', title: 'Con', content: 'c' })]);
+  assert.equal(again.status, 1);
+  assert.match(again.stdout, /con\.md would be a Windows device name/);
+  assert.ok(!fs.existsSync(path.join(p.wikiDir, 'con.md')));
 });
 
 test('a rejected input exits 1, says why, and creates nothing', () => {
