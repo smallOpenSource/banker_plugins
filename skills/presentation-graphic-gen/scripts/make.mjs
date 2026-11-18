@@ -68,6 +68,7 @@ export async function make(argv, { log = (l) => process.stdout.write(l + '\n'), 
   const pptx = format !== 'html';
   requireVendor(); // every vendored file before any work: a mismatch ends the run with exit 3
   const out = outputs(a, pptx);
+  if (!existsSync(a.script)) throw fail(`script not found: ${a.script}`, 2);
   const text = readText(a.script); // a script that is not UTF-8 is the user's error to fix first, before the browser search
   if (!findBrowser()) throw fail('no Chrome, Edge or Chromium found (set CHROME to the browser executable); the gates need one', 2);
 
