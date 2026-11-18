@@ -1257,9 +1257,24 @@ test("DRM: 기존 로더가 있으면 그대로 두고 나머지를 설치", () 
 });
 
 test("DRM: 제어 문자나 UTF-8 이 아닌 바이트가 든 템플릿도 글이 아닌 것으로 봄, 탭과 CRLF 는 글", () => {
-  for (const [bytes, readable] of [[Buffer.from("a\tb\r\nc\f"), true], [Buffer.from("a\u0001b"), false], [Buffer.from([0x61, 0xc3]), false], [Buffer.from("  \n"), false]]) {
+  for (const [bytes, readable] of [[Buffer.from("a\tb\r\nc\f"), true], [Buffer.from("\uFEFF// 한글 \u001b[31m\r\n"), true], [Buffer.from("a\u0001b"), false], [Buffer.from([0x61, 0xc3]), false], [Buffer.from("  \n"), false]]) {
     const cfg = fresh();
     const r = install({ cfg, omc: { "5.7.4": { loader: bytes } } });
     assert.equal(r.status, readable ? 0 : 1, `${JSON.stringify([...bytes])}: ${r.out}`);
   }
+});
+
+test("DRM: 마켓플레이스 폴더가 git 저장소가 아니면 바깥 저장소의 파일을 쓰지 않음", gitOnly, () => {
+  const cfg = fresh();
+  marketplace(cfg, `// outer loader\n${banner("5.7.4")}`, "v5.7.4");
+  const repo = join(cfg, "plugins", "marketplaces", "omc");
+  // The config folder itself becomes the outer repository; the marketplace folder loses its own .git.
+  rmSync(join(repo, ".git"), { recursive: true, force: true });
+  gitIn(cfg, "init", "-q");
+  gitIn(cfg, "add", ".");
+  gitIn(cfg, "commit", "-q", "-m", "outer");
+  gitIn(cfg, "tag", "v5.7.4");
+  const r = install({ cfg, omc: encrypted });
+  assert.equal(r.status, 1, r.out);
+  assert.ok(!existsSync(join(cfg, "hud")));
 });

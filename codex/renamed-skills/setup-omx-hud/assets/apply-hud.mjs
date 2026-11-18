@@ -254,12 +254,14 @@ const TEMPLATE_REL = "scripts/lib/hud-wrapper-template.txt";
 function readableText(buf) {
   let text;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch { return null; }
-  return /[\u0000-\u0008\u000B\u000E-\u001F\u007F]/.test(text) || !text.trim() ? null : buf;
+  return /[\u0000-\u0008\u000B\u000E-\u001A\u001C-\u001F\u007F]/.test(text) || !text.trim() ? null : buf;
 }
 // git with the variables that pick a repository dropped, so a run from inside a git hook reads only the marketplace.
 function gitShow(repo, spec) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|PREFIX|IMPLICIT_WORK_TREE)$/i.test(k)));
-  const r = spawnSync("git", ["-C", repo, "show", spec], { env, timeout: 10000, windowsHide: true, maxBuffer: 1 << 24 });
+  // cwd is the config folder, as in the render check: on Windows a bare "git" is looked up in the current folder first,
+  // so the project folder the installer runs in would pick the program.
+  const r = spawnSync("git", ["-C", repo, "show", spec], { cwd: CONFIG_DIR, env, timeout: 10000, windowsHide: true, maxBuffer: 1 << 24 });
   return r.status === 0 ? r.stdout : null;
 }
 // The refs to try, most exact first: the installed entry's commit for this folder, then the version's tag.
@@ -282,7 +284,8 @@ function loaderSource(root) {
   try { buf = readFileSync(file); } catch (e) { return { error: `${file} (${e.code})` }; }
   if (readableText(buf)) return { data: buf };
   const repo = join(CONFIG_DIR, "plugins", "marketplaces", "omc");
-  for (const ref of existsSync(repo) ? templateRefs(root) : []) {
+  // Only the marketplace clone itself: in a folder that is not a repository git would walk up to an outer one.
+  for (const ref of existsSync(join(repo, ".git")) ? templateRefs(root) : []) {
     const got = gitShow(repo, `${ref}:${TEMPLATE_REL}`);
     if (got && readableText(got)) return { data: got, note: `[!] ${file} is not readable text (a DRM may have encrypted it); using the same file from the OMC marketplace git repository at ${ref}` };
   }
