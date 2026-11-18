@@ -55,6 +55,15 @@ push 전 스모크(`node scripts/smoke-test.js`)는 필수다. Codex 플러그�
      A4P_REQUIRE_BUILDERS=1 node --test skills/vertical-pptx/a4p.test.mjs
    ```
 
+   OMC 없는 위키 대체(`skills/append_wiki/wiki.mjs`)가 OMC 의 위키 형식과 아직 같은지 대조한다. 이 스크립트는 OMC 5.8.4 의 위키 도구를 다시 구현한 것이라, OMC 가 형식을 바꾸면 말없이 옛 형식으로 쓰게 된다.
+   ```bash
+   # 캐시에서 온전한(dist/ 와 node_modules/ 가 있는) 가장 새 OMC 판으로 시험의 정답 파일과 같은 답을 내는지 본다. 아무것도 쓰지 않는다.
+   node scripts/gen-omc-wiki-golden.mjs --check
+   ```
+   - 종료 0: 같다. 대조한 OMC 판을 릴리스 보고에 적는다. `note: newer version folders are not intact` 줄이 나오면 가장 새 판과 대조한 것이 아니므로 그 줄도 적는다.
+   - 종료 1: OMC 가 다르게 답한다. 출력이 다른 항목을 적는다. 그 OMC 의 `src/hooks/wiki`, `src/tools/wiki-tools.ts` 를 보고 `wiki.mjs` 를 맞춘다. 그다음 정답 파일 폴더 이름(`scripts/test-fixtures/omc-wiki-<판>/`)과 그것을 가리키는 `FIXTURE_DIR`(`scripts/test-fixtures/omc-wiki-cases.mjs`)을 그 판으로 바꾸고, `node scripts/gen-omc-wiki-golden.mjs <그 판 폴더>` 로 다시 만든다. 맞추기 전에는 릴리스하지 않는다. 스크립트가 오류로 죽어도 종료 1 이니, 출력에 다른 항목 목록이 없으면 오류부터 본다.
+   - 종료 2: 온전한 OMC 판이 없다(빌드 없이 깔린 판뿐). 대조하지 못했다고 릴리스 보고에 적고 진행한다.
+
 8. **커밋** — 위 변경(`plugin.json` · `package.json` · `skill-changes.json` · `marketplace.json` · `CHANGELOG.md` · `LIST.md` · 코드)을 **한 릴리스 커밋**으로 묶는다.
 
 9. **push** — `git push` 로 main 에 올린다. GitHub 채널이 전진하고, `skill-changes.json` 의 GitHub raw 도 이때 반영된다(개인화 알림이 읽는 소스).
