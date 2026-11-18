@@ -258,7 +258,11 @@ try {
     ['skills/lineage/SKILL.md', '.txt', 'names the .txt of lineage 3.0.2 and earlier, not used since summarizer version 4'],
     ['skills/ultra-chain/SKILL.md', '05-baseline.txt', 'the baseline of a run begun before the change, read when resuming'],
     ['commands/front-qa.md', 'docs/note.txt', 'the old default spec, read only when docs/note.md is missing'],
-    ['commands/front-qa.md', 'progress.txt', "OMC's checkpoint file, named by OMC"],
+    ['commands/front-qa.md', '.omc/progress.txt', "OMC's checkpoint file, named by OMC (omc-patch's DRM patch renames it .md)"],
+    ...['.txt', '.omc/progress.txt', 'progress.txt', '.omx/progress.txt'].map((n) =>
+      ['skills/omc-patch/SKILL.md', n, "OMC's and OMX's ralph progress file, named by them: the DRM patch renames OMC's to .md"]),
+    ...['.txt', '.omc/progress.txt', 'progress.txt'].map((n) =>
+      ['skills/omc-patch/scripts/drm-progress.mjs', n, 'the name the DRM patch replaces in OMC; it writes progress.md']),
     ['skills/setup-omc-hud/assets/apply-hud.mjs', 'hud-wrapper-template.txt', "OMC's HUD loader template, named by OMC; the installer only reads it"],
     ...['cjdict.txt', 'laodict.txt', '//github.com/rober42539/lao-dictionary/laodict.txt', '//github.com/rober42539/lao-dictionary/LICENSE.txt', 'burmesedict.txt', 'FTL.TXT'].map((n) =>
       ['skills/video-gen/vendor/canvaskit/THIRD-PARTY-NOTICES.md', n, 'upstream ICU and FreeType license texts quoted as published; they name their own files']),
@@ -413,6 +417,7 @@ try {
   ok(installed.includes('banker-omc-patch'), 'new omc-patch installed as banker-omc-patch');
   ok(fs.existsSync(path.join(instDir, 'banker-omc-patch', 'scripts', 'omc-patch.mjs')), 'banker-omc-patch carries scripts/omc-patch.mjs into the Codex install');
   ok(fs.existsSync(path.join(instDir, 'banker-omc-patch', 'scripts', 'probe-pm.mjs')), 'banker-omc-patch carries scripts/probe-pm.mjs into the Codex install');
+  ok(fs.existsSync(path.join(instDir, 'banker-omc-patch', 'scripts', 'drm-progress.mjs')), 'banker-omc-patch carries scripts/drm-progress.mjs into the Codex install');
   // theme-selection runs scripts/themes.mjs from the skill's own folder, and the engine reads the palettes beside
   // it (../assets/palettes.json); their MIT notice travels with them. Run the installed copy once: a copy that has
   // the file but cannot find its palettes would pass an existence check alone.
@@ -733,6 +738,7 @@ try {
     path.join('scripts', 'test-fixtures', 'alt-screen-probe.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'omc-patch.test.mjs'),
     path.join('skills', 'omc-patch', 'scripts', 'probe-pm.test.mjs'),
+    path.join('skills', 'omc-patch', 'scripts', 'drm-progress.test.mjs'),
     path.join('skills', 'remains', 'scripts', 'boxes.test.mjs'),
     path.join('skills', 'ultra-chain', 'references', 'chain-ledger.test.mjs'),
     path.join('skills', 'ultra-chain', 'references', 'chain-report.test.mjs'),
