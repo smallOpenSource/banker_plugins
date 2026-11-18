@@ -8,6 +8,11 @@
  * Usage: node scripts/gen-omc-wiki-golden.mjs [<OMC plugin folder>]
  *   default: ~/.claude/plugins/cache/omc/oh-my-claudecode/5.8.4
  * Writes scripts/test-fixtures/omc-wiki-5.8.4/{golden,locations,validation}.json. Works in temp folders only.
+ *
+ *        node scripts/gen-omc-wiki-golden.mjs --check [<OMC plugin folder>]
+ *   default: the newest intact version folder in the plugin cache. Writes nothing: compares that OMC's answers with
+ *   the fixtures (all but their `source` line) and exits 0 when equal, 1 when OMC now answers differently (wiki.mjs
+ *   would then write a format that OMC no longer does), 2 when no intact OMC folder is found. RELEASING.md step 7.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,12 +22,29 @@ import {
   digest, makeBase, makeProject, normalizeWhere, runChild,
 } from './test-fixtures/omc-wiki-cases.mjs';
 
-const omcDir = path.resolve(process.argv[2] || path.join(os.homedir(), '.claude', 'plugins', 'cache', 'omc', 'oh-my-claudecode', '5.8.4'));
-for (const need of ['dist/tools/wiki-tools.js', 'dist/hooks/wiki/storage.js', 'dist/lib/worktree-paths.js', 'node_modules/zod/index.js']) {
-  if (!fs.existsSync(path.join(omcDir, ...need.split('/')))) {
-    console.error(`not an intact OMC plugin folder (no ${need}): ${omcDir}`);
-    process.exit(2);
-  }
+const NEEDS = ['dist/tools/wiki-tools.js', 'dist/hooks/wiki/storage.js', 'dist/lib/worktree-paths.js', 'node_modules/zod/index.js'];
+const CACHE = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'omc', 'oh-my-claudecode');
+const missingIn = (dir) => NEEDS.find((need) => !fs.existsSync(path.join(dir, ...need.split('/'))));
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+const byVersion = (a, b) => { const x = a.match(SEMVER), y = b.match(SEMVER); for (let i = 1; i <= 3; i++) if (+x[i] !== +y[i]) return +y[i] - +x[i]; return 0; };
+
+// The newest version folder that is a real folder (not a link to another version) and holds what the cases import.
+function newestIntact() {
+  if (!fs.existsSync(CACHE)) return null;
+  const names = fs.readdirSync(CACHE).filter((n) => SEMVER.test(n)).sort(byVersion);
+  return names.map((n) => path.join(CACHE, n)).find((d) => !fs.lstatSync(d).isSymbolicLink() && !missingIn(d)) || null;
+}
+
+const CHECK = process.argv[2] === '--check';
+const given = process.argv[CHECK ? 3 : 2];
+const omcDir = given ? path.resolve(given) : CHECK ? newestIntact() : path.join(CACHE, '5.8.4');
+if (!omcDir) {
+  console.error(`no intact OMC version folder (with ${NEEDS.join(', ')}) in ${CACHE}`);
+  process.exit(2);
+}
+if (missingIn(omcDir)) {
+  console.error(`not an intact OMC plugin folder (no ${missingIn(omcDir)}): ${omcDir}`);
+  process.exit(2);
 }
 const version = JSON.parse(fs.readFileSync(path.join(omcDir, 'package.json'), 'utf8')).version;
 const impl = `omc=${omcDir}`;
@@ -44,6 +66,35 @@ try {
     return { name: c[0], ...normalizeWhere(locBase, answer) };
   });
   const validation = { digest: digest(VALIDATION), ok: runChild('validate', impl, undefined, { cwd: base, env: caseEnv(base) }) };
+  if (CHECK) process.exitCode = compare({ 'golden.json': { scenarios }, 'locations.json': { cases: locations }, 'validation.json': validation });
+  else writeAll(scenarios, locations, validation);
+} finally {
+  fs.rmSync(base, { recursive: true, force: true });
+}
+
+// --check: the fixtures without their source line against what this OMC answers now. Names the parts that differ.
+function compare(now) {
+  const differ = [];
+  for (const [file, data] of Object.entries(now)) {
+    const { source, ...kept } = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, file), 'utf8'));
+    for (const key of new Set([...Object.keys(kept), ...Object.keys(data)])) {
+      const was = kept[key], is = JSON.parse(JSON.stringify(data[key] ?? null));
+      if (key === 'scenarios' || key === 'cases') {
+        const name = (x, i) => (key === 'cases' ? x.name : i);
+        const list = (v) => (key === 'cases' ? Object.fromEntries((v || []).map((x, i) => [name(x, i), x])) : v || {});
+        const [a, b] = [list(was), list(is)];
+        for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) differ.push(`${file} ${key} ${k}`);
+      } else if (JSON.stringify(was) !== JSON.stringify(is)) differ.push(`${file} ${key}`);
+    }
+  }
+  if (!differ.length) { console.log(`OMC ${version} (${omcDir}) answers as the fixtures: wiki.mjs still writes its format`); return 0; }
+  console.log(`OMC ${version} (${omcDir}) answers differently from the fixtures (${FIXTURE_DIR}):`);
+  for (const d of differ) console.log(`  ${d}`);
+  console.log('Compare the new OMC wiki code (src/hooks/wiki, src/tools/wiki-tools.ts) and bring wiki.mjs to it, then regenerate.');
+  return 1;
+}
+
+function writeAll(scenarios, locations, validation) {
   fs.mkdirSync(FIXTURE_DIR, { recursive: true });
   const source = `OMC ${version}, written by scripts/gen-omc-wiki-golden.mjs`;
   const write = (file, data) => fs.writeFileSync(path.join(FIXTURE_DIR, file), `${JSON.stringify({ source, ...data }, null, 1)}\n`);
@@ -51,6 +102,4 @@ try {
   write('locations.json', { cases: locations });
   write('validation.json', validation);
   console.log(`wrote ${FIXTURE_DIR} from ${source}: ${Object.keys(scenarios).length} scenarios, ${locations.length} locations, ${VALIDATION.length} inputs`);
-} finally {
-  fs.rmSync(base, { recursive: true, force: true });
 }
