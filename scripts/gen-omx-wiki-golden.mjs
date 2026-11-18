@@ -12,7 +12,7 @@
  *
  *        node scripts/gen-omx-wiki-golden.mjs --check [<OMX package folder>]
  *   Writes nothing: compares that OMX's answers with the fixtures (all but their `source` line) and exits 0 when equal,
- *   1 when OMX now answers differently (or this script fails), 2 when no installed OMX package is found.
+ *   1 when OMX now answers differently (or this script fails), 2 when no installed OMX package is found, 3 on a usage error.
  *   RELEASING.md step 7, beside the OMC check.
  */
 import fs from 'node:fs';
@@ -27,8 +27,9 @@ const ARGS = process.argv.slice(2);
 const CHECK = ARGS.includes('--check');
 const folders = ARGS.filter((a) => a !== '--check');
 if (folders.length > 1 || folders.some((a) => a.startsWith('-'))) {
+  // 3, not 2: RELEASING.md reads 2 as "no OMC/OMX to compare with" and goes on; a mistyped command must not.
   console.error(`usage: node ${path.basename(process.argv[1])} [--check] [<folder>]`);
-  process.exit(2);
+  process.exit(3);
 }
 const given = folders[0];
 const omxDir = path.resolve(given || findOmxDir() || 'oh-my-codex-not-found');

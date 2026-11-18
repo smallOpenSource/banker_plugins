@@ -71,6 +71,7 @@ push 전 스모크(`node scripts/smoke-test.js`)는 필수다. Codex 플러그�
    - 종료 0: 같다. 대조한 OMX 판을 릴리스 보고에 적는다.
    - 종료 1: 다르다(또는 스크립트 오류). OMX 의 `dist/wiki` 를 보고 `--profile=omx` 를 맞춘 뒤, 정답 폴더 이름(`scripts/test-fixtures/omx-wiki-<판>/`)과 `FIXTURE_DIR`(`scripts/test-fixtures/omx-wiki-cases.mjs`)을 그 판으로 바꾸고 `node scripts/gen-omx-wiki-golden.mjs` 로 다시 만든다. 맞추기 전에는 릴리스하지 않는다.
    - 종료 2: OMX 가 깔려 있지 않다. 대조하지 못했다고 릴리스 보고에 적고 진행한다.
+   - 종료 3(두 스크립트 공통): 명령의 인자가 틀렸다. `usage:` 줄을 보고 명령을 고쳐 다시 돌린다.
 
 8. **커밋** — 위 변경(`plugin.json` · `package.json` · `skill-changes.json` · `marketplace.json` · `CHANGELOG.md` · `LIST.md` · 코드)을 **한 릴리스 커밋**으로 묶는다.
 
