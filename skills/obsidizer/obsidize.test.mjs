@@ -700,3 +700,16 @@ test('OMC profile: a quoted tag or source holding a comma stays one item through
   const fm = parseOmcFrontmatter(parseFrontmatter(text).map);
   assert.deepEqual(fm.sources, ['hooks/x.mjs (one, two)', 'plain']);
 });
+
+test('OMC profile: quoted scalars read as OMC 5.8.4 reads them, so the canonical rewrite keeps their values', () => {
+  const raw = omcPage({ title: 'X' })
+    .replace('title: "X"', "title: 'Quoted ''Items'''")
+    .replace(/tags: \[[^\]]*\]/, "tags: ['it''s', 'p\\nq', \"a\\\"b\", plain]");
+  const fm = parseOmcFrontmatter(parseFrontmatter(raw).map);
+  assert.equal(fm.title, "Quoted 'Items'");
+  assert.deepEqual(fm.tags, ["it's", 'p\\nq', 'a"b', 'plain']);
+  const { text } = canonicalizeText(raw, { profile: 'omc', model: emptyModel });
+  const again = parseOmcFrontmatter(parseFrontmatter(text).map);
+  assert.equal(again.title, "Quoted 'Items'");
+  assert.deepEqual(again.tags, ["it's", 'p\\nq', 'a"b', 'plain']);
+});

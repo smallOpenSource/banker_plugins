@@ -64,6 +64,14 @@ function unescapeYaml(s) {
   return s.replace(/\\(\\|"|n|r)/g, (_, ch) => (ch === 'n' ? '\n' : ch === 'r' ? '\r' : ch));
 }
 
+// A quoted scalar as OMC 5.8.4 reads it (src/utils/frontmatter.ts): only a double-quoted value has backslash
+// escapes; a single-quoted one turns '' into '; a bare value, or one with an unmatched quote, stays as it is.
+function readScalar(v) {
+  if (v.startsWith('"') && v.endsWith('"')) return unescapeYaml(v.slice(1, -1));
+  if (v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1).replace(/''/g, "'");
+  return v;
+}
+
 /** Line-based `key: value` parse, mirroring OMC parseSimpleYaml (a line with no `:` is skipped). */
 function parseSimpleYaml(yaml) {
   const map = {};
@@ -74,9 +82,7 @@ function parseSimpleYaml(yaml) {
     const key = line.slice(0, colonIdx).trim();
     if (!key) continue;
     let value = line.slice(colonIdx + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = unescapeYaml(value.slice(1, -1));
-    }
+    value = readScalar(value);
     if (!(key in map)) order.push(key);
     map[key] = value;
   }
@@ -119,7 +125,7 @@ function parseYamlArray(value) {
   const trimmed = value.trim();
   if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
     return splitFlowItems(trimmed.slice(1, -1))
-      .map((s) => unescapeYaml(s.trim().replace(/^["']|["']$/g, '')))
+      .map((s) => readScalar(s.trim()))
       .filter(Boolean);
   }
   return trimmed ? [trimmed] : [];
