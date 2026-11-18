@@ -2049,7 +2049,11 @@ export function main(argv) {
   let deck = null;
   if (opts.deckPath) {
     try {
-      deck = JSON.parse(fs.readFileSync(opts.deckPath, 'utf8'));
+      // 빌더와 같은 규칙: UTF-8 만 받고 앞의 BOM 은 뗀다. cp949 나 암호화된 파일은 U+FFFD 로 비교하지 않는다.
+      const bytes = fs.readFileSync(opts.deckPath);
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw new Error('UTF-8 이 아니다'); }
+      deck = JSON.parse(text);
     } catch (err) {
       console.error(`verify_a4p: --deck 을 읽을 수 없다: ${opts.deckPath} (${err.message})`);
       return EXIT.USAGE;
