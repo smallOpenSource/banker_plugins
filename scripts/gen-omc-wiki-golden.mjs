@@ -29,7 +29,7 @@ const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const byVersion = (a, b) => { const x = a.match(SEMVER), y = b.match(SEMVER); for (let i = 1; i <= 3; i++) if (+x[i] !== +y[i]) return +y[i] - +x[i]; return 0; };
 
 // The newest version folder that is a real folder (not a link to another version) and holds what the cases import.
-// Newer folders it passes over (no build, a link, unreadable) are named, so an "equal" result is not read as a check
+// Newer real folders it passes over (no build, unreadable) are named; links are skipped silently. So an "equal" result is not read as a check
 // against the newest OMC when it was not.
 function newestIntact() {
   let names;
