@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 75개 + 커맨드 2개**(총 77개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 74개와 Codex 전용 스킬 4개)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 76개 + 커맨드 2개**(총 78개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 75개와 Codex 전용 스킬 4개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -184,6 +184,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | 스킬 | 설명 |
 |---|---|
 | `video-gen` | 만들 수 있는 영상 목록을 보이고 고르게 한 뒤, 빠진 내용은 인터뷰로 받아 MP4 를 만듦. 내장 종류 9개(제목, 키네틱 타이포, 글머리, 차트, 카운터, 이름 자막, 인용, 사진, 크레디트)와 장면 전환 4개, `wide-pptx` 덱 변환, 정지 화면 확인. 번들한 WASM 엔진(Skia CanvasKit, H.264 MP4 인코더)과 Noto 글꼴로 Chrome, ffmpeg, 설치, 내려받기 없이 모든 OS 에서 같게 렌더. 다른 종류는 `motion-graphic-make`, `3d-intro-build`, `motion-sites` 로 넘김 |
+| `presentation-graphic-gen` | 화면/말 대본 초안으로 키를 한 번 누를 때마다 한 단계씩 움직이는 모션 그래픽 발표 자료를 만듦. 단일 HTML 두 벌(검토용, 발표용)과, 고르면 PPTX 두 벌(단계마다 자동 재생 영상, 편집 가능한 도형). 애니메이션은 브라우저 내장 Web Animations API, 번들한 Noto 글꼴과 글꼴 서브셋(HarfBuzz WASM), H.264 MP4 인코더(WASM), PptxGenJS 로 설치와 내려받기 없이 오프라인에서 동작(Node 22 이상과 Chromium 계열 브라우저 필요). 대본의 수치와 인용을 지어내지 않고, 정적 16:9 슬라이드는 `wide-pptx`, MP4 영상만은 `video-gen`, 10초 안팎 클립은 `motion-graphic-make` 로 넘김 |
 | `motion-graphic-make` | 10초 내외 내레이션 없는 무료 모션 그래픽 제작 (hyperframes 위임). 계획 승인, 스냅숏과 렌더 검토 페이지, 독립 검증, 사이트 배치는 선택 |
 | `motion-sites` | MotionSites 의 `motionsites-web-builder` 스킬을 짧은 이름으로 부름. 첫 실행 때 원본 플러그인을 MotionSites 마켓플레이스에서 설치하고 Playwright 와 Chromium 을 갖춘 뒤 프롬프트를 그대로 넘김. 원본은 banker 에 복사하지 않음(예시와 미디어 재배포 금지), 첫 실행에 네트워크 필요 |
 | `3d-intro-build` | 스크롤-스크럽 3D 인트로 사이트 제작 (Azure gpt-image 스틸 + WAN 키 풀 영상, 소진 시 Sora-2 폴백, 유료). 단계별 검토 페이지, 엄격한 CSP 에서 도는 페이지, 실제 브라우저 독립 검증. 영상 모드는 chain, dive 나가기 없음(기본), dive 나가기 있음 가운데 고름. 장면 단위 이동(장면 시작점에 멈춤, Home, End, 장면 점은 바로 이동)은 기본 켬이고 끌 수 있음, 기존 사이트 통합은 선택 |
@@ -237,14 +238,14 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 71개와 Codex 전용 스킬 4개(`graceful-pause`, `progress`, `ralph`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- Codex에는 스킬 75개와 Codex 전용 스킬 4개(`graceful-pause`, `progress`, `ralph`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
   `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
-  스킬 71개, Codex 전용 스킬 4개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림, 사용량 카운팅, banker `ralph` 계속 훅은 `codex/hooks.json` 에서 옵니다. \
+  스킬 75개, Codex 전용 스킬 4개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림, 사용량 카운팅, banker `ralph` 계속 훅은 `codex/hooks.json` 에서 옵니다. \
   훅의 시간 제한은 10초입니다. Codex 는 플러그인 훅을 돌릴 때마다 플러그인 폴더 전체의 해시를 먼저 구하고 그 시간도 제한에 넣으므로, Stop 일(ralph 계속, 사용량 카운팅)은 훅 하나로 합쳤습니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
@@ -467,7 +468,7 @@ banker setup
   - `build-testbox`: `run` 은 내려받지 않고, 없는 이미지, 브라우저, 엔진의 칸은 `unverified` 와 setup 할 항목으로 끝납니다. `setup` 은 `--yes` 확인 뒤에만 받고, 원천에 닿지 못하면 받지 않고 "네트워크 필요" 로 끝납니다.
   - `wbs-gen` 의 공휴일 조회(Google 공개 캘린더): 닿지 못하면 기다리지 않고 종료 코드 3 으로 끝나고, 스킬이 사용자에게 공휴일을 `월/일, 월/일` 로 받습니다. 공휴일 표를 지어내지 않습니다.
   - `vertical-pptx`, `pdf-vision-extract` 가 빠진 도구를 설치하라고 안내할 때, `nothing-design` 의 글꼴(Google Fonts. 받지 못하면 대체 글꼴로 보임)
-- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`, `init-dir`, `git-init`, `tune-tmux`, `wide-pptx`, `video-gen`)은 네트워크 없이 그대로 씁니다.
+- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`, `init-dir`, `git-init`, `tune-tmux`, `wide-pptx`, `video-gen`, `presentation-graphic-gen`)은 네트워크 없이 그대로 씁니다.
 
 ## 라이선스 / 서드파티
 
@@ -493,8 +494,14 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
     libmp4v2 소스 묶음은 GitHub 저장소의 `third_party/libmp4v2-d49b4466.tar.gz` 에 둡니다(npm 묶음에는 넣지 않음).
   - [Noto Sans](https://notofonts.github.io/), [Noto Sans KR](https://github.com/notofonts/noto-cjk) 글꼴, **SIL Open Font License 1.1**(`fonts/OFL-*.md`).
   - `scripts/vg-fx.mjs` 의 동작 도우미 일부는 [kstost/cokacmotion](https://github.com/kstost/cokacmotion) 의 aimotion 에서 옮긴 것, **MIT License**(`aimotion/LICENSE.md`).
+- `skills/presentation-graphic-gen/vendor`: 아래를 고치지 않고 벤더링. 파일별 판과 sha256 은 `skills/presentation-graphic-gen/vendor/README.md`.\
+  1MiB 가 넘는 Noto Sans KR 글꼴 둘은 원본을 brotli 로 묶어 두고, 실행할 때 풀어 원본 sha256 과 맞는지 확인합니다.
+  - [Noto Sans](https://notofonts.github.io/) 2.015, [Noto Sans KR](https://github.com/notofonts/noto-cjk) 2.04(정적 인스턴스) 글꼴, **SIL Open Font License 1.1**(`fonts/OFL-*.md`).
+  - [harfbuzzjs](https://github.com/harfbuzz/harfbuzzjs) 1.6.4 의 `harfbuzz-subset.wasm`(HarfBuzz 15.0.0), harfbuzzjs 는 **MIT License**, HarfBuzz 는 "Old MIT"(`harfbuzz/LICENSE-harfbuzzjs.md`, `harfbuzz/COPYING-harfbuzz.md`).
+  - [h264-mp4-encoder](https://github.com/TrevorSundberg/h264-mp4-encoder) 1.0.12(`video-gen` 과 같은 파일), **MIT License**. 안의 minih264 는 public domain(CC0), libmp4v2 는 **Mozilla Public License 1.1**(전문 `h264-mp4-encoder/MPL-1.1.md`). libmp4v2 소스 묶음은 위와 같은 `third_party/libmp4v2-d49b4466.tar.gz` 입니다.
+  - [PptxGenJS](https://github.com/gitbrent/PptxGenJS) 4.0.1 의 `pptxgen.bundle.js`(`wide-pptx` 와 같은 파일), **MIT License**. 안에 든 JSZip, pako, core-js 등의 고지는 `pptxgenjs/` 의 `LICENSE-*.md` 와 `THIRD-PARTY-NOTICES.md` 에 포함.
 
-코드로 포함(재배포)하는 서드파티는 `humanizer`, `scroll-world`(`3d-intro-build`), `omc_hud`(`setup-omc-hud`), PptxGenJS(`wide-pptx`), CanvasKit 과 h264-mp4-encoder 와 aimotion 도우미(`video-gen`)이고, 데이터로 포함하는 것은 `awesome-design-md`(`theme-selection`)와 Noto 글꼴(`video-gen`)입니다.\
+코드로 포함(재배포)하는 서드파티는 `humanizer`, `scroll-world`(`3d-intro-build`), `omc_hud`(`setup-omc-hud`), PptxGenJS(`wide-pptx`), CanvasKit 과 h264-mp4-encoder 와 aimotion 도우미(`video-gen`), harfbuzz-subset.wasm 과 h264-mp4-encoder 와 PptxGenJS(`presentation-graphic-gen`)이고, 데이터로 포함하는 것은 `awesome-design-md`(`theme-selection`)와 Noto 글꼴(`video-gen`, `presentation-graphic-gen`)입니다.\
 아래는 스킬이 **런타임에 의존하거나 연동**하는 외부 요소로, banker 가 재배포하지 않으며 각 라이선스·상표는 소유자에게 있습니다.
 
 **의존 라이브러리·도구 (사용 시 별도 설치, 라이선스는 각 프로젝트 소유)**

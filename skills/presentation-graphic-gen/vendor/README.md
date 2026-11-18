@@ -27,7 +27,7 @@ presentation-graphic-gen 이 설치와 내려받기 없이(오프라인) 덱을 
 
 - 커밋 번호는 h264-mp4-encoder 의 `v1.0.12` 태그가 가리키는 하위 모듈의 커밋이다.
 - libmp4v2 는 MPL 1.1 이다. 실행 형태(WASM)로 함께 배포하므로 그 소스를 MPL 1.1 로 구할 수 있게 한다:
-  - banker 저장소는 위 커밋의 소스 묶음을 `third_party/libmp4v2-d49b4466.tar.gz` 에 둔다(sha256 `c63b3dcb1e7f77e8134b9ccd2500cb144b51b90ba5bce0625313f8d23a9f2e1c`). 이 스킬을 banker 에 넣을 때 같은 묶음을 가리키면 된다. 이 스킬 폴더에는 넣지 않았다.
+  - banker 저장소는 위 커밋의 소스 묶음을 `third_party/libmp4v2-d49b4466.tar.gz` 에 둔다(sha256 `c63b3dcb1e7f77e8134b9ccd2500cb144b51b90ba5bce0625313f8d23a9f2e1c`). video-gen 의 인코더와 같은 파일이라 이 묶음을 함께 쓴다. 이 스킬 폴더에는 넣지 않았다.
   - 이 구성요소를 고치지 않았다.
 - 이 인코더의 Emscripten 글루는 불러올 때 프로세스에 처리되지 않은 예외 처리기와 처리되지 않은 거부 처리기를 등록한다. `scripts/record.mjs` 는 자기가 만든 Promise 의 거부를 모두 처리한다.
 - `scripts/vendor.mjs` 는 sha256 확인을 마친 바이트를 CommonJS 모듈로 컴파일한다. 인코더 파일을 `require` 로 다시 읽지 않으며, 위쪽 `package.json` 의 `"type": "module"` 도 영향을 주지 않는다. PptxGenJS 번들도 확인한 바이트를 Node `vm` 의 별도 컨텍스트에서 실행한다(보안 격리는 아님).

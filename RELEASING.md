@@ -26,17 +26,20 @@ banker 는 3채널(npm · GitHub · Claude 마켓플레이스)로 배포된다.
 5. **마켓플레이스 버전 올리기** — `.claude-plugin/marketplace.json` 의 `metadata.version` 을 새 버전으로 바꾼다.
 
 6. **CHANGELOG 와 LIST.md 갱신** — `CHANGELOG.md` 최상단에 새 버전 섹션을 추가한다. 이어서 `LIST.md` 의 구성요소 표를 갱신한다(방법은 `LIST.md` 의 '갱신 방법' 절).
+   - README 의 스킬 수와 스킬 표, 서드파티 절도 갱신한다. 스킬 수는 `codex/manifest.json` 의 `target` 집계가 정본이다(Claude Code 는 `both` 와 `claude-only`, Codex 는 `both` 와 `codex-only`). 첫 머리의 구성요소 수와 '설치 상세' 절의 Codex 스킬 수 두 곳을 함께 본다. 새 스킬은 스킬 표에 행을 넣고(설명은 그 `SKILL.md` 의 description 과 맞춤), `vendor/` 처럼 남의 코드나 글꼴을 넣었으면 서드파티 절과 `third_party/README.md` 의 '쓰는 곳' 에도 적는다.
    - 4번처럼 릴리스 커밋 전에 한다. 커밋 뒤에는 직전 릴리스 커밋이 방금 만든 커밋으로 잡혀 이번 릴리스의 변경이 보이지 않는다.
 
 push 전 스모크(`node scripts/smoke-test.js`)는 필수다. Codex 플러그인 스킬 목록에서 빠진 스킬은 Codex 가 경고 없이 건너뛰므로, 스모크의 목록 집합 단언과 `sync-codex-plugin.js --check` 를 넘긴 판만 올린다.
 
 7. **검증** — 유닛·스모크가 초록인지 확인한다.
    ```bash
-   # 셸 글롭이 아니라 find 로 전량을 넘긴다. 글롭(`skills/*/*.test.mjs`)은 한 단계만 훑어서
+   # 셸 글롭이 아니라 git ls-files 로 전량을 넘긴다. 글롭(`skills/*/*.test.mjs`)은 한 단계만 훑어서
    # `skills/*/references/` 안의 테스트를 놓친다 — 0.12.0 까지 azure-adapter.test.mjs 가,
    # 0.13.0 에서는 verifier-probe.test.mjs 가 그 구멍에 빠졌다(로컬 전량 241 vs 글롭 201).
-   # 매치가 0 이면 리터럴이 그대로 넘어가 에러가 나는 문제도 find 형태에는 없다.
-   node --test $(find . -name '*.test.mjs' -not -path '*/node_modules/*')
+   # git 의 패턴 '*.test.mjs' 는 폴더 경계를 넘어 모든 깊이에서 찾고, 따옴표로 감싸 셸이 펼치지 않는다.
+   # 예전의 `find .` 는 git 이 무시하는 사본(work/, .omc/, node_modules/)의 시험까지 돌렸다(추적 112 vs find 314).
+   # --others --exclude-standard 는 아직 add 하지 않은 새 시험 파일도 넣는다.
+   node --test $(git ls-files --cached --others --exclude-standard '*.test.mjs')
    # function hooks 의 *.test.ts 는 엔진 자체 키트(claude plugin test)에서 돈다. 엔진은 --plugin-dir 로
    # 불러온 플러그인 폴더에 타입 파일(.claude-plugin/types/, 루트 tsconfig.json)을 쓴다. 키트가 쓰는 것은
    # 보지 못했지만 같은 엔진이라 사본에서 돌린다. 사본에는 git 이 추적하거나 추적할 파일만 담아
