@@ -68,6 +68,7 @@ export async function make(argv, { log = (l) => process.stdout.write(l + '\n'), 
   const pptx = format !== 'html';
   requireVendor(); // every vendored file before any work: a mismatch ends the run with exit 3
   const out = outputs(a, pptx);
+  const text = readText(a.script); // a script that is not UTF-8 is the user's error to fix first, before the browser search
   if (!findBrowser()) throw fail('no Chrome, Edge or Chromium found (set CHROME to the browser executable); the gates need one', 2);
 
   log(`== build (${format})`);
@@ -79,7 +80,7 @@ export async function make(argv, { log = (l) => process.stdout.write(l + '\n'), 
   const result = { review: r.review, present: r.present, check: c.out, contactSheet: c.contactSheet };
   if (!pptx) return result;
 
-  const parsed = parseScript(readText(a.script));
+  const parsed = parseScript(text);
   log('== record');
   await record(r.present, { out: out.recording, force: a.force, log });
   log('== pptx-video');

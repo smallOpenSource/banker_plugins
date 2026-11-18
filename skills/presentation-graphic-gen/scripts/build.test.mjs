@@ -84,7 +84,8 @@ test('not UTF-8: build, make, pptx-video, pptx-edit and verify stop with one lin
   };
   one(run([BUILD, script, '--dir', join(dir, 'out'), '--stamp', '261118+1500']), 'build');
   assert.ok(!existsSync(join(dir, 'out')), 'build wrote nothing');
-  one(run([join(SKILL, 'scripts', 'make.mjs'), script, '--dir', join(dir, 'make-out'), '--stamp', '261118+1500']), 'make');
+  // CHROME names no file, so there is no browser here: make reports the script before the browser search, on every PC
+  one(run([join(SKILL, 'scripts', 'make.mjs'), script, '--dir', join(dir, 'make-out'), '--stamp', '261118+1500'], { env: { ...process.env, CHROME: join(dir, 'no-browser') } }), 'make');
   one(run([join(SKILL, 'scripts', 'pptx-video.mjs'), script, '--media', join(dir, 'media'), '--out', join(dir, 'v.pptx')]), 'pptx-video');
   // CHROME names a file that exists, so pptx-edit gets past its browser check to the script (nothing is launched)
   one(run([join(SKILL, 'scripts', 'pptx-edit.mjs'), join(dir, 'p.html'), script, '--out', join(dir, 'e.pptx')], { env: { ...process.env, CHROME: process.execPath } }), 'pptx-edit');
