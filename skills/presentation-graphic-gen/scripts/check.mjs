@@ -21,7 +21,7 @@
 //                   previous step with the Next key (pixel compare, small tolerance)
 //   snapshots       first / mid / end PNG per step, an end-state still per step (count = steps) and a contact sheet
 // Output (default <html dir>/check-<html name>/): snaps/, stills/, contact-sheet.png, report.json
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseScript } from './build.mjs';
@@ -358,7 +358,8 @@ img{width:384px;height:216px;display:block;outline:1px solid #444}.lab{overflow:
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   let file = null, script = null, out = null, force = false;
   for (let i = 0; i < argv.length; i++) {

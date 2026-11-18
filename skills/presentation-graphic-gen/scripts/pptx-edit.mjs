@@ -7,7 +7,7 @@
 // East Asian Noto Sans KR (the fonts are not embedded: the viewing PC needs them installed).
 //
 //   node scripts/pptx-edit.mjs <present.html> <script.md> --out <file.pptx> [--force]
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deckData, parseScript } from './build.mjs';
@@ -227,7 +227,8 @@ export async function buildEditPptx({ html, parsed, out, force = false, browser 
   return { out, bytes: bytes.length, slides: data.steps.length, fallbacks };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   let html = null, script = null, out = null, force = false;
   for (let i = 0; i < argv.length; i++) {

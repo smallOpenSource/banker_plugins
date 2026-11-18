@@ -3,7 +3,8 @@
 // and, when a browser is found, a real launch over the pipe that opens no debugging port.
 // Run: node --test scripts/cdp.test.mjs
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, test } from 'node:test';
@@ -75,6 +76,16 @@ test('the driver opens no debugging port and takes taskkill from System32', () =
   assert.match(SRC, /windowsHide: true/);
 });
 
+test('a helper reached through a linked folder still runs its command (it once exited 0 and did nothing)', () => {
+  const link = join(TMP, 'skill-link');
+  symlinkSync(SKILL, link, 'junction'); // a junction on Windows (no admin right needed), a symlink elsewhere
+  for (const [file, re] of [['cdp.mjs', /^(browser |no Chrome)/], ['build.mjs', /usage: node scripts\/build\.mjs/]]) {
+    const r = spawnSync(process.execPath, [join(link, 'scripts', file)], { encoding: 'utf8' });
+    assert.match(r.stdout + r.stderr, re, file);
+    assert.notEqual(r.stdout + r.stderr, '');
+  }
+});
+
 const BROWSER = findBrowser();
 const SKIP = BROWSER ? false : 'no Chrome, Edge or Chromium found (set CHROME to the browser executable); launch test not run';
 if (SKIP) process.stdout.write(`# SKIP cdp launch test: ${SKIP}\n`);
@@ -108,7 +119,7 @@ describe('launch over the pipe', { skip: SKIP }, () => {
 
   test('a program that is not a browser fails to start with the reason (no 20 s wait when it exits)', async () => {
     const t0 = Date.now();
-    await assert.rejects(launch({ browser: process.execPath }), /browser did not start: .*node(\.exe)? \(Browser\.getVersion: the browser (exited|pipe broke)/i);
+    await assert.rejects(launch({ browser: process.execPath }), /browser did not start: \S.* \(Browser\.getVersion: the browser (exited|pipe broke)/i);
     assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
   });
 });

@@ -264,7 +264,7 @@ test('names: the default name is the script file name, Hangul and spaces include
   for (const bad of ['../up', 'a/b', 'a\\b', 'a:b', 'a*b', 'a?b', 'a"b', 'a<b', 'a|b', 'a\u0001b', '..', 'x.', ' x', 'x ']) {
     assert.throws(() => parseArgs(['x.md', '--name', bad], TMP), (e) => e.exit === 2 && /--name may hold/.test(e.message), JSON.stringify(bad));
   }
-  assert.throws(() => parseArgs(['a:b.md'], TMP), (e) => e.exit === 2 && /the output name \(the script file name; give --name\)/.test(e.message));
+  assert.throws(() => parseArgs(['a*b.md'], TMP), (e) => e.exit === 2 && /the output name \(the script file name; give --name\)/.test(e.message));
 });
 
 test('build: script files named 발표.md and "my talk.md" build without --name', () => {

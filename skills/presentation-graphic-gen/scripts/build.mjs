@@ -27,7 +27,7 @@
 // A section without a scene file gets a placeholder scene showing its 화면 lines.
 // Exit codes: 0 ok, 1 script or scene error, 2 usage or file error (including an existing output), 3 vendor check.
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -365,7 +365,8 @@ export function report(r) {
   return lines.join('\n');
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const r = await build(parseArgs(process.argv.slice(2)));
     process.stdout.write(report(r) + '\n');

@@ -9,7 +9,7 @@
 // h264-mp4-encoder (WASM; no ffmpeg). Step i's first frame and step i-1's last frame show the same master time.
 // Output (--out, default <html dir>/<html name>-media/): NN-<id>.mp4, NN-<id>-first.png, NN-<id>-last.png,
 // manifest.json. An existing non-empty output folder is refused unless --force.
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { findBrowser, launch } from './cdp.mjs';
@@ -96,7 +96,8 @@ export async function record(file, { out = null, fps = 30, hold = 0.5, quality =
   return { out, manifest };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const o = {};
   let file = null;

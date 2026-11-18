@@ -6,7 +6,7 @@
 // the video has alt text.
 //
 //   node scripts/pptx-video.mjs <script.md> --media <record dir> --out <file.pptx> [--force]
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deckData, parseScript } from './build.mjs';
@@ -86,7 +86,8 @@ export async function buildVideoPptx({ parsed, media, out, force = false }) {
   return { out, bytes: bytes.length, slides: slides.length };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   let script = null, media = null, out = null, force = false;
   for (let i = 0; i < argv.length; i++) {

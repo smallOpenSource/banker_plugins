@@ -14,7 +14,7 @@
 // Every output is checked before any work (an existing file or a non-empty folder: exit 2), and every vendored file
 // is checked against its sha256 (exit 3). A gate SKIP is listed in the done block ("== done: PASS with SKIP").
 // A failing step stops the run: exit 1 (gates), 2 (usage, files, no browser), 3 (vendor check).
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, parseArgs, parseScript, report, stamp } from './build.mjs';
@@ -95,7 +95,8 @@ export function doneReport(r) {
   return [head, ...Object.entries(r).filter(([, v]) => typeof v === 'string' && v).map(([k, v]) => `${k.padEnd(13)}${v}`)].join('\n') + '\n';
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const r = await make(process.argv.slice(2));
     process.stdout.write(doneReport(r));

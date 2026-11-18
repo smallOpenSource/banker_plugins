@@ -11,7 +11,7 @@
 // Output: one APPLY / SKIP line per item, then "applied N, skipped M" (dry run: "would apply N, skipped M").
 // Exit codes: 0 done (skips are reported, not errors), 2 usage or file error.
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -63,7 +63,8 @@ export function applyFixes(items, { root = process.cwd(), dryRun = false } = {})
   return { applied, skipped, lines };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   let list = null, root = process.cwd(), dryRun = false;
   for (let i = 0; i < argv.length; i++) {

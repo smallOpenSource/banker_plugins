@@ -16,7 +16,7 @@
 // of slide n+1's video are compared after decoding in the browser (and, with --media, the recorded frames too).
 // Editable decks: every slide has native text boxes with the theme fonts (Latin Noto Sans, East Asian Noto Sans KR).
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deckData, parseScript } from './build.mjs';
@@ -261,7 +261,8 @@ export function comCheck(file, pngDir, { force = false } = {}) {
   return { state: r.status === 0 ? 'pass' : 'fail', out };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   if (argv[0] === 'com') {
     const pos = argv.slice(1).filter((x) => x !== '--force'), force = argv.includes('--force');
