@@ -28,6 +28,14 @@ import { exitOf, pptxgen } from './vendor.mjs';
 // decoded-video continuity: mean channel difference and share of pixels off by more than 32 levels
 export const VIDEO_MEAN_TOL = 0.5, VIDEO_SHARE_TOL = 0.001;
 
+// the reply time of one compare() of FRAME_PAGE, longer than the 30 s of a protocol command: slide n's video played up
+// to 5 times (each a seek of up to 5 s, then up to its length + 6 s), plus slide n+1's length and 30 s for loading both
+// videos, the first frame and the comparison. Always finite, so a browser that stops answering still ends the gate.
+export function compareMs(secA, secB) {
+  const s = (x) => (Number.isFinite(x) && x > 0 ? x : 0);
+  return Math.min(2 ** 31 - 1, Math.ceil((5 * (5 + s(secA) + 6) + s(secB) + 30) * 1000));
+}
+
 // evaluated in a page next to the extracted MP4 files: RGBA of a video's first or last frame. First: the frame the
 // element shows once loaded and painted. Last: a paused seek in a headless browser does not present the new frame,
 // so the video plays from 0.3 s before its end, and the frame is drawn only inside a requestVideoFrameCallback that
@@ -196,7 +204,7 @@ export async function verify(file, { script, media = null, frames = null, force 
           const rows = [];
           for (let k = 0; k + 1 < infos.length; k++) {
             const A = infos[k], B = infos[k + 1];
-            const r = await page.eval(`compare('v${A.n}.mp4', 'v${B.n}.mp4', ${A.info.fps}, ${frames ? 'true' : 'false'})`);
+            const r = await page.eval(`compare('v${A.n}.mp4', 'v${B.n}.mp4', ${A.info.fps}, ${frames ? 'true' : 'false'})`, compareMs(A.info.sec, B.info.sec));
             if (frames) {
               mkdirSync(frames, { recursive: true });
               const pad = (n) => String(n).padStart(2, '0');

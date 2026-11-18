@@ -53,7 +53,7 @@ Ubuntu 의 `chromium`, `chromium-browser` 명령은 보통 snap 으로 설치된
 
 | 제약 | 도우미의 대처 |
 |---|---|
-| 자기 전용 `/tmp` 를 써서 호스트의 `/tmp` 를 보지 못함 | 프로필 폴더를 `/tmp` 대신 `~/snap/chromium/common/` 에 만든다. 그 폴더가 없으면 `~/.cache/presentation-graphic-gen/` 에 만든다 |
+| 자기 전용 `/tmp` 를 써서 호스트의 `/tmp` 를 보지 못함 | 프로필 폴더를 `/tmp` 대신 `~/snap/chromium/common/` 에 만든다. snap Chromium 을 한 번도 띄우지 않아 그 폴더가 없으면 도우미가 만든다(숨김 폴더는 snap 이 읽지 못해 쓰지 않음) |
 | 홈 폴더 아래의 숨김이 아닌 폴더만 읽음 | 덱 파일이 그 밖(`/tmp`, 숨김 폴더 등)에 있으면 브라우저를 그 파일로 보내기 전에 `snap Chromium cannot read <파일>` 문장과 종료 코드 2 로 끝난다 |
 
 - snap 인지는 브라우저 경로, 실제 경로(`/snap/` 이 들어 있거나 `/usr/bin/snap`), `/snap/bin/` 을 부르는 스크립트인지로 판단한다.

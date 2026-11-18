@@ -38,11 +38,12 @@ test('snap Chromium is recognized by its path, its real path, or a wrapper scrip
   assert.equal(snapBrowser(findBrowser() || process.execPath), false, 'the browser of this test run is not a snap');
 });
 
-test('snap Chromium: the profile goes under home (~/snap/chromium/common when it exists), never the OS temp folder', () => {
+test('snap Chromium: the profile always goes under ~/snap/chromium/common (a folder the snap can read), never the OS temp folder or a hidden folder', () => {
   const home = join(TMP, 'home');
   assert.equal(scratchBase(false, home), tmpdir());
-  assert.equal(scratchBase(true, home, () => false), join(home, '.cache', 'presentation-graphic-gen'));
-  assert.equal(scratchBase(true, home, (p) => p === join(home, 'snap', 'chromium', 'common')), join(home, 'snap', 'chromium', 'common'));
+  const base = scratchBase(true, home);
+  assert.equal(base, join(home, 'snap', 'chromium', 'common'), 'also when the snap has never run and the folder does not exist yet');
+  assert.equal(snapCanRead(join(base, 'pgg-chrome-x', 'Default'), home), true);
 });
 
 test('snap Chromium can read non-hidden folders under home only; anything else fails with a sentence that names CHROME', () => {

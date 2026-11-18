@@ -12,7 +12,7 @@ import { delimiter, dirname, isAbsolute, join, relative, resolve, sep, win32 } f
 import { fileURLToPath } from 'node:url';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const CMD_MS = 30000;
+const CMD_MS = 30000; // the reply time of one protocol command, unless the caller gives its own
 
 function playwrightRoots() {
   const roots = [];
@@ -107,11 +107,11 @@ export function snapBrowser(browser, platform = process.platform) {
   return isSnap(browser, real, head);
 }
 
-/** Where the profile and other files the browser must read go: OS temp, or for a snap a folder under home. Pure. */
-export function scratchBase(snap, home = homedir(), exists = existsSync) {
-  if (!snap) return tmpdir();
-  const common = join(home, 'snap', 'chromium', 'common');
-  return exists(common) ? common : join(home, '.cache', 'presentation-graphic-gen');
+/** Where the profile and other files the browser must read go: OS temp, or for a snap ~/snap/chromium/common, the one
+ * folder under home a snap Chromium may write (any hidden folder is unreadable to it). scratchDir creates it when the
+ * snap has never run; snapd creates its own folders with MkdirAll, so one that already exists is kept. Pure. */
+export function scratchBase(snap, home = homedir()) {
+  return snap ? join(home, 'snap', 'chromium', 'common') : tmpdir();
 }
 
 /** A new empty folder in scratchBase (the caller removes it). */
@@ -185,10 +185,10 @@ function pipeTransport(proc, onEvent) {
   for (const s of [toB, fromB]) s.on('error', () => failAll('the browser pipe broke'));
   proc.on('exit', (code, sig) => failAll(`the browser exited (${sig || code})`));
   proc.on('error', (e) => failAll(`the browser did not run (${e.code || e.message})`));
-  const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
+  const send = (method, params = {}, sessionId, ms = CMD_MS) => new Promise((res, rej) => {
     if (gone) { rej(new Error(`${method}: ${gone}`)); return; }
     const i = ++id;
-    const t = setTimeout(() => { pending.delete(i); rej(new Error(`${method}: no reply in ${CMD_MS} ms`)); }, CMD_MS);
+    const t = setTimeout(() => { pending.delete(i); rej(new Error(`${method}: no reply in ${ms} ms`)); }, ms);
     pending.set(i, { method, res: (v) => { clearTimeout(t); res(v); }, rej: (e) => { clearTimeout(t); rej(e); } });
     toB.write(JSON.stringify(sessionId ? { id: i, method, params, sessionId } : { id: i, method, params }) + '\0');
   });
@@ -218,13 +218,13 @@ export async function launch({ onEvent, browser = findBrowser(), extraArgs = [] 
     removeDir(profile);
   };
   // a file the snap browser cannot see fails here with the reason, not later as a page that never loads
-  const send = (method, params = {}, sessionId) => {
+  const send = (method, params = {}, sessionId, ms) => {
     const url = params && typeof params.url === 'string' ? params.url : '';
     if (snap && /^file:/i.test(url) && (method === 'Page.navigate' || method === 'Target.createTarget')) {
       const file = fileURLToPath(url.split('#')[0]);
       if (!snapCanRead(file)) return Promise.reject(snapUnreadable(file));
     }
-    return pipe.send(method, params, sessionId);
+    return pipe.send(method, params, sessionId, ms);
   };
   let timer;
   try {
@@ -250,8 +250,9 @@ export async function launch({ onEvent, browser = findBrowser(), extraArgs = [] 
     for (const source of init) await send('Page.addScriptToEvaluateOnNewDocument', { source }, sessionId);
     const page = {
       sessionId, targetId,
-      async eval(expression) {
-        const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
+      // ms: the reply time for an expression that awaits longer than one command (pptx.mjs compareMs)
+      async eval(expression, ms) {
+        const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId, ms);
         if (r.exceptionDetails) throw new Error('eval: ' + (r.exceptionDetails.exception ? r.exceptionDetails.exception.description : r.exceptionDetails.text) + ' :: ' + expression.slice(0, 100));
         return r.result.value;
       },

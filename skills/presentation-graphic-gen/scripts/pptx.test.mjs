@@ -11,7 +11,7 @@ import { after, before, describe, test } from 'node:test';
 import { SKILL, parseScript } from './build.mjs';
 import { findBrowser, launch, scratchDir } from './cdp.mjs';
 import { mp4Info, notesText, patchNotes, patchSlide, writeNew } from './pptx-common.mjs';
-import { FRAME_PAGE, VIDEO_MEAN_TOL, VIDEO_SHARE_TOL, verify } from './pptx.mjs';
+import { FRAME_PAGE, VIDEO_MEAN_TOL, VIDEO_SHARE_TOL, compareMs, verify } from './pptx.mjs';
 import { buildVideoPptx } from './pptx-video.mjs';
 import { mp4Writer } from './record.mjs';
 import { VENDOR, VendorError, pptxgen } from './vendor.mjs';
@@ -75,6 +75,15 @@ test('make.mjs rejects an unknown --format (exit 2)', () => {
   const r = spawnSync(process.execPath, [MAKE, '--sample', '--format', 'pdf'], { encoding: 'utf8' });
   assert.equal(r.status, 2, r.stderr);
   assert.match(r.stderr, /--format needs html, pptx or both/);
+});
+
+test('compareMs: the reply time of one compare covers 5 plays of slide n\'s video, its seeks and slide n+1, and is always finite', () => {
+  // FRAME_PAGE: each play waits up to 5 s for the seek and up to the length + 6 s for the end
+  assert.ok(compareMs(6.5, 2) >= (5 * (5 + 6.5 + 6) + 2) * 1000, String(compareMs(6.5, 2)));
+  assert.ok(compareMs(0.4, 0.4) > 30000, 'longer than one protocol command even for a short step');
+  assert.ok(compareMs(30, 1) > compareMs(3, 1) && compareMs(3, 30) > compareMs(3, 1));
+  for (const x of [NaN, undefined, -1, Infinity]) assert.ok(Number.isFinite(compareMs(x, x)) && compareMs(x, x) > 30000, String(x));
+  assert.equal(compareMs(1e9, 0), 2 ** 31 - 1, 'within what setTimeout accepts');
 });
 
 const BROWSER = findBrowser();
@@ -187,28 +196,58 @@ describe('PowerPoint pipeline in a browser', { skip: SKIP }, () => {
     assert.equal(r2.results.find((x) => x.gate === 'edit-slides').ok, true);
   });
 
-  test('the end frame is drawn only when requestVideoFrameCallback reports it: a play without it is played again, none in 5 plays is an error (never the frame shown at ended)', async () => {
-    const rec = join(out, `mini-recording-${STAMP}`), m = JSON.parse(readFileSync(join(rec, 'manifest.json'), 'utf8'));
-    const page = scratchDir(BROWSER, 'pgg-frame-page-');
-    // as seen on Windows Chrome: 'ended' comes before the held end is presented, in the first `hide` plays of a video
-    const stub = `<script>window.hide = 0;
+  // as seen on Windows Chrome: 'ended' comes before the held end is presented, in the first `hide` plays of a video
+  const HIDE_STUB = `<script>window.hide = 0;
       document.addEventListener('play', (e) => { e.target.plays = (e.target.plays || 0) + 1; }, true);
       const rvfc = HTMLVideoElement.prototype.requestVideoFrameCallback;
       HTMLVideoElement.prototype.requestVideoFrameCallback = function (cb) {
         return rvfc.call(this, (now, meta) => { if ((this.plays || 0) <= window.hide && meta.mediaTime >= this.duration - 0.3) return; cb(now, meta); });
       };</script>`;
+  // FRAME_PAGE with HIDE_STUB in folder page, opened in browser b
+  async function framePage(b, page) {
+    writeFileSync(join(page, 'frames.html'), FRAME_PAGE.replace('<body>', '<body>' + HIDE_STUB));
+    const p = await b.open(null);
+    await b.send('Page.navigate', { url: pathToFileURL(join(page, 'frames.html')).href }, p.sessionId);
+    for (let k = 0; k < 50 && !(await p.eval('typeof window.compare === "function"').catch(() => false)); k++) await new Promise((r) => setTimeout(r, 100));
+    return p;
+  }
+
+  test('the end frame is drawn only when requestVideoFrameCallback reports it: a play without it is played again, none in 5 plays is an error (never the frame shown at ended)', async () => {
+    const rec = join(out, `mini-recording-${STAMP}`), m = JSON.parse(readFileSync(join(rec, 'manifest.json'), 'utf8'));
+    const page = scratchDir(BROWSER, 'pgg-frame-page-');
     const b = await launch({ browser: BROWSER });
     try {
       cpSync(join(rec, m.steps[0].mp4), join(page, 'a.mp4'));
       cpSync(join(rec, m.steps[1].mp4), join(page, 'b.mp4'));
-      writeFileSync(join(page, 'frames.html'), FRAME_PAGE.replace('<body>', '<body>' + stub));
-      const p = await b.open(null);
-      await b.send('Page.navigate', { url: pathToFileURL(join(page, 'frames.html')).href }, p.sessionId);
-      for (let k = 0; k < 50 && !(await p.eval('typeof window.compare === "function"').catch(() => false)); k++) await new Promise((r) => setTimeout(r, 100));
+      const p = await framePage(b, page);
       const r = await p.eval(`(window.hide = 1, compare('a.mp4', 'b.mp4', ${m.fps}, false))`);
-      assert.equal(r.plays, 2, JSON.stringify(r));
+      // 2, or later when the browser itself also skips the end of the second play (Windows Chrome)
+      assert.ok(r.plays >= 2 && r.plays <= 5, JSON.stringify(r));
       assert.ok(r.size && r.mean <= VIDEO_MEAN_TOL && r.share <= VIDEO_SHARE_TOL, JSON.stringify(r));
       await assert.rejects(p.eval(`(window.hide = 9, compare('a.mp4', 'b.mp4', ${m.fps}, false))`), /no end frame of a\.mp4 in 5 plays/);
+    } finally {
+      b.close();
+      rmSync(page, { recursive: true, force: true });
+    }
+  });
+
+  test('a step video longer than one protocol command (6.5 s) with no reported end frame ends with "no end frame ... in 5 plays", not a reply timeout', async () => {
+    const fps = 30, w = await mp4Writer({ width: 64, height: 48, fps }), px = new Uint8Array(64 * 48 * 4);
+    for (let f = 0; f < 6.5 * fps; f++) { px.fill(60 + (f % 100)); w.add(px); }
+    const { bytes } = w.finish(), sec = mp4Info(bytes).sec;
+    assert.ok(sec >= 6.4, String(sec));
+    const page = scratchDir(BROWSER, 'pgg-frame-page-');
+    const b = await launch({ browser: BROWSER });
+    try {
+      writeFileSync(join(page, 'long.mp4'), bytes);
+      const p = await framePage(b, page);
+      const t0 = Date.now();
+      const e = await p.eval(`(window.hide = 9, compare('long.mp4', 'long.mp4', ${fps}, false))`, compareMs(sec, sec)).then(() => null, (x) => x);
+      assert.ok(e, 'compare must fail when no play reports the end frame');
+      assert.match(e.message, /no end frame of long\.mp4 in 5 plays/);
+      assert.doesNotMatch(e.message, /no reply/);
+      // the 5 plays took longer than the 30 s a protocol command waits by default
+      assert.ok(Date.now() - t0 > 30000, String(Date.now() - t0));
     } finally {
       b.close();
       rmSync(page, { recursive: true, force: true });
