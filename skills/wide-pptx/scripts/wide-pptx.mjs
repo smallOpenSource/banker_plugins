@@ -59,11 +59,24 @@ export function parseArgs(argv, bools = ["force"]) {
   return out;
 }
 
+/**
+ * The file as text: UTF-8, a leading BOM dropped. Other bytes (cp949 from Windows PowerShell 5.1, a DRM-encrypted
+ * file) stop here instead of reaching the outputs as U+FFFD.
+ */
+function readUtf8(file) {
+  const bytes = readFileSync(file);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`${file} 이 UTF-8 이 아님(cp949 같은 다른 인코딩이나 암호화된 파일). UTF-8 로 저장해 다시 실행`);
+  }
+}
+
 function readDeckFile(args) {
   if (!args.deck) throw new Usage("--deck <deck.json> 이 필요함");
   let deck;
   try {
-    deck = JSON.parse(readFileSync(args.deck, "utf8").replace(/^\uFEFF/, ""));
+    deck = JSON.parse(readUtf8(args.deck));
   } catch (e) {
     throw new Usage(`deck 을 읽지 못함: ${e.message}`);
   }
