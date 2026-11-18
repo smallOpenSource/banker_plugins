@@ -49,7 +49,7 @@ ToolSearch(query="select:mcp__plugin_oh-my-claudecode_t__wiki_list,mcp__plugin_o
     - `wiki_delete` 로 `index.md`, `log.md`, `environment.md` 를 지우려 함
 - 쓰기(`wiki_ingest`, `wiki_delete`)가 연결 오류로 끝나면 바로 다시 하지 않는다. 위키 폴더의 `log.md` 끝에 호출한 뒤의 시각으로 그 항목(`Created new page "<title>"`, `Updated "<title>" with new content`, `Deleted page "<file>"`)이 있는지 먼저 본다. 있으면 이미 된 것이다. ingest 를 두 번 하면 같은 Update 절이 둘 생긴다.
 - 한 번 대체 경로로 바꾸면 이 실행이 끝날 때까지 대체 경로만 쓴다. 8단계 보고에 어느 경로로 썼는지(OMC MCP 또는 banker 대체) 적는다.
-- Codex 는 지금처럼 아래 `omx wiki` 를 쓴다.
+- Codex 는 아래 `omx wiki` 를 쓰고, `omx` 가 없을 때만 같은 `wiki.mjs` 를 `--profile=omx` 로 쓴다(아래).
 
 **Codex:** `wiki_*` MCP 도 ToolSearch 도 없다. `omx wiki` CLI 가 같은 도구 이름과 입력을 받는다(`wiki_list`, `wiki_query`, `wiki_read`, `wiki_ingest`, `wiki_delete`, `wiki_lint`).
 ```bash
@@ -75,8 +75,20 @@ omx wiki wiki_delete --input '{"page":"<slug>"}' --json
   omx wiki wiki_query --input (Arg '{"query":"<키워드>"}') --json
   ```
 - 인자 하나는 Linux 에서 128KB 를 넘지 못한다. 본문이 그보다 크면 페이지를 나눈다.
-- `omx` 가 없으면 멈추고 OMX 설치를 안내한다. 위키 파일을 손으로 지우거나 쓰지 않는다(목차와 이력이 어긋난다).
 - `omx wiki` 와 스냅샷은 작업 폴더에만 쓰므로 샌드박스 승인이 필요 없다(Codex 0.144.5, OMX 0.20.2 에서 확인).
+- 먼저 `omx` 가 있는지 본다(bash `command -v omx`, PowerShell `Get-Command omx -ErrorAction SilentlyContinue`). 있으면 위의 `omx wiki` 를 쓴다.
+- `omx` 가 없으면 banker 대체 경로를 쓴다. append_wiki 스킬 폴더의 `wiki.mjs` 를 `--profile=omx` 로 부른다. OMX 0.20.2 의 위키 도구 7개를 같은 이름, 같은 입력, 같은 `omx_wiki/`, 같은 잠금 폴더, 같은 JSON 답으로 다시 구현했다.
+  - 위치: Codex 플러그인 길 `<S>/../append_wiki/wiki.mjs`, Codex npm 길 `<S>/../banker-append_wiki/wiki.mjs`(`<S>` 는 이 스킬 폴더).
+  - 아래 단계의 `wiki_xxx({...})` 는 `node "<S>/../append_wiki/wiki.mjs" wiki_xxx --profile=omx --input-file <같은 JSON 을 쓴 파일> --json` 이다(Codex npm 길은 `<S>/../banker-append_wiki/wiki.mjs`).
+  - 종료 코드는 0 성공, 1 도구 오류(출력 `{"error":"..."}` 가 이유), 2 사용법 오류다.
+  - 지금 폴더(또는 입력의 `workingDirectory`)의 `omx_wiki/` 에 쓴다. `omx wiki` 와 같고, git 은 보지 않는다. 부르기 전에 지금 폴더가 프로젝트 루트인지 확인한다.
+  - JSON 파일은 편집 도구로 UTF-8 로 쓴다. 인자가 아니라 파일로 넘기므로 PowerShell 에서도 위의 `Arg` 변환이 필요 없다.
+  - 입력 길이는 도구 스키마대로 검사한다(OMX 는 검사하지 않는다). 넘으면 1 로 끝나고 아무것도 쓰지 않는다.
+  - OMX 와 다르게 멈추는 곳이 둘 있다. 둘 다 1 로 끝나고 파일을 바꾸지 않는다. 멈추면 위키 파일을 손으로 고치지 말고 보고한다.
+    - 위키에 `schemaVersion` 이 1 보다 큰 페이지가 있음: ingest 와 delete 를 하지 않음
+    - 정본 제목이 가리키는 페이지 파일이 있는데 프론트매터를 읽을 수 없음(BOM 으로 시작하는 파일 포함)
+- `omx wiki` 쓰기(`wiki_ingest`, `wiki_delete`)가 JSON 답 없이 오류로 끝나면 바로 대체 경로로 다시 하지 않는다. `omx_wiki/log.md` 끝에 호출한 뒤의 시각으로 그 항목(`Created new page "<title>"`, `Updated "<title>" with new content`, `Deleted wiki page <file>`)이 있는지 먼저 본다. 있으면 이미 된 것이다.
+- 한 번 대체 경로로 바꾸면 이 실행이 끝날 때까지 대체 경로만 쓴다. 위키 파일을 손으로 지우거나 쓰지 않는다(목차와 이력이 어긋난다). `node` 도 없으면 멈추고 OMX 설치를 안내한다.
 
 ### 1) 스냅샷 (★안전망 — 가장 먼저)
 삭제·치환 전에 wiki 디렉터리를 통째로 백업해 복구 가능 상태를 만든다:
@@ -121,7 +133,7 @@ Codex 는 `omx_wiki/` 를 `.omx/` 아래로 떠 둔다(`mkdir -p .omx && cp -r o
 ### 8) 보고 (한글)
 - 병합/supersede 매핑(어느 페이지 → 어느 정본), 삭제된 슬러그, 리포인트한 링크.
 - before→after: 페이지 수·총 크기·lint 결과.
-- 쓴 경로: OMC MCP 도구인지 banker 대체(`wiki.mjs`)인지.
+- 쓴 경로: OMC MCP 도구인지 banker 대체(`wiki.mjs`)인지. Codex 는 `omx wiki` 인지 banker 대체(`wiki.mjs --profile=omx`)인지.
 - **백업 위치**(Claude Code `.omc/wiki.bak-*`, Codex `.omx/wiki.bak-*`, 실제로 만든 경로)와 "이상 없으면 삭제해도 됨" 안내.
 
 ## 작성 원칙 (append-wiki 와 정합)

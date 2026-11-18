@@ -6,7 +6,7 @@ description: "새로 알게 된 비자명한 지식을 `.omc/wiki`(Codex 는 `om
 # append_wiki — 작업 지식을 wiki에 적재
 
 이번 작업에서 **새로 배운 비자명한 지식**을 위키에 구조화해 남기는 워크플로우.
-Claude Code 는 OMC `wiki` 스킬의 MCP 도구로 `.omc/wiki/` 에, Codex 는 OMX 의 `omx wiki` CLI 로 `omx_wiki/` 에 쓴다.
+Claude Code 는 OMC `wiki` 스킬의 MCP 도구로 `.omc/wiki/` 에, Codex 는 OMX 의 `omx wiki` CLI 로 `omx_wiki/` 에 쓴다. 도구가 없으면 둘 다 이 스킬 폴더의 `wiki.mjs` 가 대신한다.
 답변·설명은 한글로 작성한다(도구명·경로·식별자 등 기술 토큰은 영문 유지).
 
 ## 언제 쓰나
@@ -79,8 +79,28 @@ omx wiki wiki_ingest --input "$(cat <JSON 파일>)" --json
   omx wiki wiki_query --input (Arg '{"query":"<키워드>"}') --json
   ```
 - 인자 하나는 Linux 에서 128KB 를 넘지 못한다. 본문이 그보다 크면 페이지를 나눈다.
-- `omx` 가 없으면 멈추고 OMX 설치를 안내한다. 위키 파일을 손으로 쓰지 않는다(목차와 이력이 어긋난다).
 - `omx wiki` 는 작업 폴더에만 쓰므로 샌드박스 승인이 필요 없다(Codex 0.144.5, OMX 0.20.2 에서 확인).
+- 먼저 `omx` 가 있는지 본다(bash `command -v omx`, PowerShell `Get-Command omx -ErrorAction SilentlyContinue`). 있으면 위의 `omx wiki` 를 쓴다.
+- `omx` 가 없으면 banker 대체 경로를 쓴다. 이 스킬 폴더의 `wiki.mjs` 를 `--profile=omx` 로 부른다(`<스킬 폴더>` 는 이 SKILL.md 가 있는 폴더의 절대경로).
+  OMX 0.20.2 의 위키 도구 7개를 node 내장 모듈만으로 다시 구현했다. 같은 도구 이름과 입력을 받고, 같은 `omx_wiki/` 에 같은 형식, 같은 한글 슬러그, 같은 잠금 폴더로 쓰며, `omx wiki ... --json` 과 같은 JSON 을 낸다.
+  ```bash
+  node "<스킬 폴더>/wiki.mjs" wiki_list --profile=omx --json
+  node "<스킬 폴더>/wiki.mjs" wiki_ingest --profile=omx --input-file <JSON 파일> --json
+  ```
+  - 아래 단계의 `wiki_xxx({...})` 는 대체 경로에서 `node "<스킬 폴더>/wiki.mjs" wiki_xxx --profile=omx --input-file <같은 JSON 을 쓴 파일> --json` 이다.
+  - 종료 코드는 0 성공, 1 도구 오류(출력 `{"error":"..."}` 가 이유), 2 사용법 오류다.
+  - 지금 폴더(또는 입력의 `workingDirectory`)의 `omx_wiki/` 에 쓴다. `omx wiki` 와 같고, git 은 보지 않는다. 부르기 전에 지금 폴더가 프로젝트 루트인지 확인한다.
+  - JSON 파일은 편집 도구로 UTF-8 로 쓴다. 인자가 아니라 파일로 넘기므로 PowerShell 에서도 위의 `Arg` 변환이 필요 없다.
+  - 입력 길이는 도구 스키마대로 검사한다(OMX 는 검사하지 않는다). 넘으면 1 로 끝나고 아무것도 쓰지 않는다.
+  - OMX 와 다르게 멈추는 곳이 둘 있다. 둘 다 1 로 끝나고 파일을 바꾸지 않는다. 멈추면 위키 파일을 손으로 고치지 말고 보고한다.
+    - 위키에 `schemaVersion` 이 1 보다 큰 페이지가 있음
+    - 제목이 가리키는 페이지 파일이 있는데 프론트매터를 읽을 수 없음(BOM 으로 시작하는 파일 포함. OMX 는 덮어써서 본문을 잃는다)
+  - `omx_wiki/.obsidizer` 가 있으면 대체 경로가 바뀐 페이지를 obsidizer 캐노니컬라이저에 직접 넘긴다. Codex 의 obsidizer 훅은 `omx wiki` 명령만 보기 때문이다.
+- `omx wiki` 쓰기(`wiki_ingest`, `wiki_add`)가 JSON 답 없이 오류로 끝나면 바로 대체 경로로 다시 쓰지 않는다.
+  - `omx_wiki/log.md` 끝을 먼저 본다. 호출한 뒤의 시각으로 그 제목의 `Created new page "<title>"` 또는 `Updated "<title>" with new content` 항목이 있으면 이미 쓰였다.
+  - 그런 항목이 없을 때만 대체 경로로 다시 쓴다. ingest 는 덧붙이기라 두 번 쓰면 같은 Update 절이 둘 생긴다.
+- 한 번 대체 경로로 바꾸면 이 실행이 끝날 때까지 대체 경로만 쓴다.
+- 위키 파일을 손으로 쓰지 않는다(목차와 이력이 어긋난다). `node` 도 없으면 멈추고 OMX 설치를 안내한다.
 
 ### 1) 무엇을 남길지 식별
 이번 작업의 산출에서 다음을 추린다:
@@ -144,7 +164,7 @@ project-memory 가 안 바뀌면 hook 은 재생성을 건너뛰므로(`existing
 
 ### 6) 보고 (한글)
 - 생성/갱신된 페이지와 슬러그 목록.
-- 쓴 경로: OMC MCP 도구인지 banker 대체(`wiki.mjs`)인지. 대체 경로였으면 고른 까닭(스키마 없음, 연결 실패 안내, 연결 오류)도 적는다.
+- 쓴 경로: OMC MCP 도구인지 banker 대체(`wiki.mjs`)인지. Codex 는 `omx wiki` 인지 banker 대체(`wiki.mjs --profile=omx`)인지. 대체 경로였으면 고른 까닭(스키마 없음, 연결 실패 안내, 연결 오류, `omx` 없음)도 적는다.
 - lint 결과.
 - environment.md 위생: `[object Object]` 정화 여부(및 hook 소스 근본패치 시 그 사실).
 - 저장 위치는 실제로 쓴 곳을 적는다. Claude Code 는 `.omc/wiki/*.md`(프로젝트 로컬, git-ignored), Codex 는 `omx_wiki/*.md` 다. 목차 `index.md`, 이력 `log.md`.

@@ -17,13 +17,22 @@
  *  - the page a title maps to exists but does not parse: OMC overwrites it (its body is lost), this does not;
  *  - wiki_delete of index.md, log.md or environment.md: OMC deletes it, this refuses.
  * After an ingest or add, when <wiki>/.obsidizer exists, each changed page goes through skills/obsidizer/obsidize.mjs
- * as hooks/obsidize-hook.mjs runs it (the hook watches MCP tool calls and so never sees this script).
+ * as hooks/obsidize-hook.mjs runs it (the hook watches MCP tool calls and `omx wiki` commands, never this script).
  *
- * Usage: node wiki.mjs <tool> [--input '<json>' | --input-file <path>] [--json] [--profile=omc]
+ * --profile=omx is OMX 0.20.2's wiki instead, for a Codex session without the `omx` CLI (dist/wiki/*.js, the tool
+ * handler of dist/mcp/wiki-server.js and `omx wiki` of dist/cli/mcp-parity.js): omx_wiki/ in the session cwd or the
+ * workingDirectory (resolveWorkingDirectoryForState, with OMX_MCP_WORKDIR_ROOTS), read from .omx/wiki while only
+ * that exists; slugs that keep letters of any script (NFC); a lock folder <wiki>/.wiki-lock.lock (mkdir, 5 s at 50 ms,
+ * never reaped); a temporary file beside the target, then rename; OMX's simpler frontmatter reading (no BOM
+ * removal, tags split on every comma); OMX's answers, which are JSON (pretty, or one line with --json, as
+ * `omx wiki` prints them). No git, no .gitignore. The same inputs are checked against the same schema (OMX checks
+ * none), and the same three stops hold (OMX itself refuses to delete its reserved files); wiki_refresh, OMX's eighth
+ * tool, is not here.
+ *
+ * Usage: node wiki.mjs <tool> [--input '<json>' | --input-file <path>] [--json] [--profile=omc|omx]
  *   <tool>   wiki_ingest | wiki_add | wiki_query | wiki_list | wiki_read | wiki_delete | wiki_lint (or without wiki_)
  *   --json   print the result as OMX's `omx wiki ... --json` does ({"created":[..],...}; {"error":".."} on an error)
  *   exit     0 done, 1 the tool reported an error (the text says why), 2 a usage error
- * --profile=omx (Codex's omx_wiki/) is not built yet.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -665,7 +674,7 @@ function ensureWikiDir(ctx) {
   }
 }
 
-function withWikiLock(ctx, fn) {
+function withOmcLock(ctx, fn) {
   ensureWikiDir(ctx);
   const lockPath = path.join(ctx.wikiDir, '.wiki-lock.lock');
   const handle = acquireLock(lockPath);
@@ -677,6 +686,12 @@ function withWikiLock(ctx, fn) {
     unlinkQuiet(handle.path);
   }
 }
+
+// How the omc profile reads, names, writes and locks; the omx profile's is OMX_STORE.
+const OMC_STORE = {
+  owner: 'OMC', parse: parseFrontmatter, slug: titleToSlug, write: atomicWrite, ensure: ensureWikiDir, lock: withOmcLock,
+  stopsBeforeLock: true,
+};
 
 const unquote = (v) => {
   if (v.startsWith('"') && v.endsWith('"')) return v.slice(1, -1);
@@ -746,25 +761,29 @@ function parseYamlArray(value) {
   }).filter(Boolean);
 }
 
-export function parseFrontmatter(raw) {
-  const normalized = (raw.startsWith('\uFEFF') ? raw.slice(1) : raw).replace(/\r\n/g, '\n');
+// A page's frontmatter and body, its YAML read with yamlOf and its flow arrays with arrayOf (OMC and OMX differ there).
+function readFrontmatter(normalized, yamlOf, arrayOf) {
   const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return null;
-  const fm = parseSimpleYaml(match[1]);
+  const fm = yamlOf(match[1]);
   return {
     frontmatter: {
       title: String(fm.title || ''),
-      tags: parseYamlArray(fm.tags),
+      tags: arrayOf(fm.tags),
       created: String(fm.created || new Date().toISOString()),
       updated: String(fm.updated || new Date().toISOString()),
-      sources: parseYamlArray(fm.sources),
-      links: parseYamlArray(fm.links),
+      sources: arrayOf(fm.sources),
+      links: arrayOf(fm.links),
       category: fm.category || 'reference',
       confidence: fm.confidence || 'medium',
       schemaVersion: Number(fm.schemaVersion) || SCHEMA_VERSION,
     },
     content: match[2],
   };
+}
+
+export function parseFrontmatter(raw) {
+  return readFrontmatter((raw.startsWith('\uFEFF') ? raw.slice(1) : raw).replace(/\r\n/g, '\n'), parseSimpleYaml, parseYamlArray);
 }
 
 export function serializePage(page) {
@@ -784,12 +803,16 @@ export function serializePage(page) {
   return `---\n${yaml}\n---\n${page.content}`;
 }
 
-export function titleToSlug(title) {
-  const base = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64);
+// The file name for a slug base, or a hash of the title when nothing is left of it.
+function slugFile(base, title) {
   if (base) return `${base}.md`;
   let hash = 0;
   for (let i = 0; i < title.length; i++) hash = ((hash << 5) - hash + title.charCodeAt(i)) | 0;
   return `page-${Math.abs(hash).toString(16).padStart(8, '0')}.md`;
+}
+
+export function titleToSlug(title) {
+  return slugFile(title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64), title);
 }
 
 function safeWikiPath(wikiDir, filename) {
@@ -798,37 +821,38 @@ function safeWikiPath(wikiDir, filename) {
   return path.resolve(filePath).startsWith(path.resolve(wikiDir) + path.sep) ? filePath : null;
 }
 
-function readPage(ctx, filename) {
-  const filePath = safeWikiPath(ctx.wikiDir, filename);
+// Reads go to ctx.readDir (OMX's old .omx/wiki while only that exists), writes and their checks to ctx.wikiDir.
+function readPage(ctx, filename, dir = ctx.readDir) {
+  const filePath = safeWikiPath(dir, filename);
   if (!filePath || !fs.existsSync(filePath)) return null;
   try {
-    const parsed = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
+    const parsed = ctx.p.parse(fs.readFileSync(filePath, 'utf-8'));
     return parsed ? { filename, frontmatter: parsed.frontmatter, content: parsed.content } : null;
   } catch {
     return null;
   }
 }
 
-function listPages(ctx) {
-  if (!fs.existsSync(ctx.wikiDir)) return [];
-  return fs.readdirSync(ctx.wikiDir).filter((f) => f.endsWith('.md') && !RESERVED.has(f)).sort();
+function listPages(ctx, dir = ctx.readDir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter((f) => f.endsWith('.md') && !RESERVED.has(f)).sort();
 }
 
-function readAllPages(ctx) {
-  return listPages(ctx).map((f) => readPage(ctx, f)).filter((p) => p !== null);
+function readAllPages(ctx, dir = ctx.readDir) {
+  return listPages(ctx, dir).map((f) => readPage(ctx, f, dir)).filter((p) => p !== null);
 }
 
 function readWikiFile(ctx, name) {
-  const p = path.join(ctx.wikiDir, name);
+  const p = path.join(ctx.readDir, name);
   return fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : null;
 }
 
 function writePageUnsafe(ctx, page) {
   if (RESERVED.has(page.filename)) throw new Error(`Cannot write to reserved wiki file: ${page.filename}`);
-  ensureWikiDir(ctx);
+  ctx.p.ensure(ctx);
   const filePath = safeWikiPath(ctx.wikiDir, page.filename);
   if (!filePath) throw new Error(`Invalid wiki page filename: ${page.filename}`);
-  atomicWrite(filePath, serializePage(page));
+  ctx.p.write(filePath, serializePage(page));
 }
 
 function indexLine(page) {
@@ -838,7 +862,7 @@ function indexLine(page) {
 }
 
 function updateIndexUnsafe(ctx) {
-  const pages = readAllPages(ctx);
+  const pages = readAllPages(ctx, ctx.wikiDir);
   const byCategory = new Map();
   for (const page of pages) {
     const cat = page.frontmatter.category;
@@ -849,30 +873,39 @@ function updateIndexUnsafe(ctx) {
   for (const cat of [...byCategory.keys()].sort()) {
     lines.push(`## ${cat}`, '', ...byCategory.get(cat).map(indexLine), '');
   }
-  ensureWikiDir(ctx);
-  atomicWrite(path.join(ctx.wikiDir, 'index.md'), lines.join('\n'));
+  ctx.p.ensure(ctx);
+  ctx.p.write(path.join(ctx.wikiDir, 'index.md'), lines.join('\n'));
 }
 
 function appendLogUnsafe(ctx, entry) {
-  ensureWikiDir(ctx);
+  ctx.p.ensure(ctx);
   const logPath = path.join(ctx.wikiDir, 'log.md');
   const line = `## [${entry.timestamp}] ${entry.operation}\n`
     + `- **Pages:** ${entry.pagesAffected.join(', ') || 'none'}\n`
     + `- **Summary:** ${entry.summary}\n\n`;
   const existing = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '# Wiki Log\n\n';
-  atomicWrite(logPath, existing + line);
+  ctx.p.write(logPath, existing + line);
+}
+
+function withWikiLock(ctx, fn) {
+  return ctx.p.lock(ctx, fn);
 }
 
 function appendLog(ctx, entry) {
   withWikiLock(ctx, () => appendLogUnsafe(ctx, entry));
 }
 
-// Deliberate difference: a page in a newer OMC format stops every write that rewrites pages or the index.
+// The log entry of a query or lint; OMX writes none while it reads the old .omx/wiki (so a read makes no omx_wiki/).
+function appendReadLog(ctx, entry) {
+  if (!ctx.legacy) appendLog(ctx, entry);
+}
+
+// Deliberate difference: a page in a newer format stops every write that rewrites pages or the index.
 function refuseNewerSchema(ctx) {
-  const newer = readAllPages(ctx).find((p) => p.frontmatter.schemaVersion > SCHEMA_VERSION);
+  const newer = readAllPages(ctx, ctx.wikiDir).find((p) => p.frontmatter.schemaVersion > SCHEMA_VERSION);
   if (newer) {
     throw new Error(`Wiki page ${newer.filename} has schemaVersion ${newer.frontmatter.schemaVersion}, newer than the `
-      + `${SCHEMA_VERSION} this fallback writes; nothing was changed. Use the OMC wiki tools of that version.`);
+      + `${SCHEMA_VERSION} this fallback writes; nothing was changed. Use the ${ctx.p.owner} wiki tools of that version.`);
   }
 }
 
@@ -880,13 +913,13 @@ function refuseNewerSchema(ctx) {
 // Operations (src/hooks/wiki/ingest.ts, query.ts, lint.ts)
 // ============================================================================
 
-function extractWikiLinks(content) {
+function extractWikiLinks(ctx, content) {
   const matches = content.match(/\[\[([^\]]+)\]\]/g);
   if (!matches) return [];
-  return [...new Set(matches.map((m) => titleToSlug(m.slice(2, -2).trim())))];
+  return [...new Set(matches.map((m) => ctx.p.slug(m.slice(2, -2).trim())))];
 }
 
-function createPage(slug, input, now) {
+function createPage(ctx, slug, input, now) {
   return {
     filename: slug,
     frontmatter: {
@@ -895,7 +928,7 @@ function createPage(slug, input, now) {
       created: now,
       updated: now,
       sources: input.sources || [],
-      links: extractWikiLinks(input.content),
+      links: extractWikiLinks(ctx, input.content),
       category: input.category,
       confidence: input.confidence || 'medium',
       schemaVersion: SCHEMA_VERSION,
@@ -904,7 +937,7 @@ function createPage(slug, input, now) {
   };
 }
 
-function mergePage(existing, input, now) {
+function mergePage(ctx, existing, input, now) {
   const rank = { high: 3, medium: 2, low: 1 };
   const fm = existing.frontmatter;
   const keepNew = (rank[input.confidence || 'medium'] || 2) >= (rank[fm.confidence] || 2);
@@ -915,7 +948,7 @@ function mergePage(existing, input, now) {
       tags: [...new Set([...fm.tags, ...input.tags])],
       updated: now,
       sources: [...new Set([...fm.sources, ...(input.sources || [])])],
-      links: [...new Set([...fm.links, ...extractWikiLinks(input.content)])],
+      links: [...new Set([...fm.links, ...extractWikiLinks(ctx, input.content)])],
       confidence: keepNew ? (input.confidence || 'medium') : fm.confidence,
     },
     content: `${existing.content.trimEnd()}\n\n---\n\n## Update (${now})\n\n${input.content}\n`,
@@ -931,24 +964,24 @@ function refuseUnparsable(ctx, slug, existing) {
   }
 }
 
-// The page an ingest would merge into, after the stops; run once before the lock (so a stop changes no file, not
-// even the .gitignore the lock's setup writes) and again under it.
+// The page an ingest would merge into, after the stops; for OMC run once before the lock too (so a stop changes no
+// file, not even the .gitignore the lock's setup writes). OMX makes omx_wiki/ before it stops, and so does omx.
 function ingestTarget(ctx, slug) {
   if (RESERVED.has(slug)) throw new Error(`Cannot write to reserved wiki file: ${slug}`);
   refuseNewerSchema(ctx);
-  const existing = readPage(ctx, slug);
+  const existing = readPage(ctx, slug, ctx.wikiDir);
   refuseUnparsable(ctx, slug, existing);
   return existing;
 }
 
 function ingestKnowledge(ctx, input) {
-  const slug = titleToSlug(input.title);
+  const slug = ctx.p.slug(input.title);
   const now = new Date().toISOString();
   const result = { created: [], updated: [], totalAffected: 0 };
-  ingestTarget(ctx, slug);
+  if (ctx.p.stopsBeforeLock) ingestTarget(ctx, slug);
   withWikiLock(ctx, () => {
     const existing = ingestTarget(ctx, slug);
-    writePageUnsafe(ctx, existing ? mergePage(existing, input, now) : createPage(slug, input, now));
+    writePageUnsafe(ctx, existing ? mergePage(ctx, existing, input, now) : createPage(ctx, slug, input, now));
     (existing ? result.updated : result.created).push(slug);
     updateIndexUnsafe(ctx);
     appendLogUnsafe(ctx, {
@@ -1026,7 +1059,7 @@ function queryWiki(ctx, queryText, options) {
   }
   matches.sort((a, b) => b.score - a.score);
   const limited = matches.slice(0, limit);
-  appendLog(ctx, {
+  appendReadLog(ctx, {
     timestamp: new Date().toISOString(),
     operation: 'query',
     pagesAffected: limited.map((m) => m.page.filename),
@@ -1103,7 +1136,7 @@ function lintWiki(ctx) {
     totalPages: pages.length, orphanCount: count('orphan'), staleCount: count('stale'), brokenRefCount: count('broken-ref'),
     lowConfidenceCount: count('low-confidence'), oversizedCount: count('oversized'), contradictionCount: count('structural-contradiction'),
   };
-  appendLog(ctx, {
+  appendReadLog(ctx, {
     timestamp: new Date().toISOString(),
     operation: 'lint',
     pagesAffected: [...new Set(issues.map((i) => i.page))],
@@ -1293,17 +1326,255 @@ export function validateInput(tool, input) {
 }
 
 // ============================================================================
+// Profile omx: OMX 0.20.2's wiki (dist/wiki/storage.js, dist/mcp/state-paths.js, dist/mcp/wiki-server.js)
+// ============================================================================
+
+const OMX_ROOTS_ENV = 'OMX_MCP_WORKDIR_ROOTS';
+
+// The real path of p, or of its deepest existing parent with the rest put back on (canonicalizeExistingPath).
+function omxCanonical(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const suffixes = [];
+  for (let current = p; ;) {
+    const parent = path.resolve(current, '..');
+    if (parent === current) return p;
+    suffixes.unshift(current.substring(parent.length).replace(/^[\\/]+/, ''));
+    current = parent;
+    try {
+      return suffixes.reduce((acc, segment) => path.resolve(acc, segment), fs.realpathSync.native(current));
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+}
+
+function omxAllowedRoots() {
+  const raw = process.env[OMX_ROOTS_ENV];
+  if (typeof raw !== 'string' || raw.trim() === '') return [];
+  const roots = raw.split(path.delimiter).map((part) => part.trim()).filter(Boolean).map((part) => {
+    if (part.includes('\0')) throw new Error(`${OMX_ROOTS_ENV} contains an invalid root with a NUL byte`);
+    const resolvedRoot = path.resolve(part);
+    const realRoot = omxCanonical(resolvedRoot);
+    if (realRoot !== resolvedRoot) throw new Error(`${OMX_ROOTS_ENV} root "${resolvedRoot}" resolves through a symlink to "${realRoot}"`);
+    return realRoot;
+  });
+  return [...new Set(roots)];
+}
+
+// OMX_MCP_WORKDIR_ROOTS, when set, holds the only folders a wiki may be in.
+function omxPolicy(resolved) {
+  const roots = omxAllowedRoots();
+  if (roots.length === 0) return resolved;
+  const canonical = omxCanonical(resolved);
+  const inside = (root) => {
+    const rel = path.relative(root, canonical);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  };
+  if (!roots.some(inside)) throw new Error(`workingDirectory "${canonical}" is outside allowed roots (${OMX_ROOTS_ENV})`);
+  return canonical;
+}
+
+// A Windows path on WSL as /mnt/<drive>/..; unchanged when it is no such path or the drive is not mounted.
+function omxWindowsToWsl(raw) {
+  const m = /^([a-zA-Z]):[\\/](.*)$/.exec(raw);
+  if (!m) return raw;
+  const mount = `/mnt/${m[1].toLowerCase()}`;
+  if (!fs.existsSync(mount)) return raw;
+  const rest = String(m[2] || '').replace(/\\/g, '/');
+  return rest ? `${mount}/${rest}` : mount;
+}
+
+function omxWslToWindows(raw) {
+  const m = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(raw);
+  if (!m) return raw;
+  return `${m[1].toUpperCase()}:\\${String(m[2] || '').replace(/\//g, '\\')}`;
+}
+
+// A workingDirectory in the other system's spelling: /mnt/<drive>/.. on Windows, <drive>:\.. elsewhere (WSL).
+function omxHostPath(raw) {
+  if (process.platform === 'win32') return raw.startsWith('/mnt/') ? omxWslToWindows(raw) : raw;
+  if (!/^[a-zA-Z]:[\\/]/.test(raw)) return raw;
+  const converted = omxWindowsToWsl(raw);
+  if (converted === raw) throw new Error('workingDirectory Windows path is not available on this host');
+  return converted;
+}
+
+/** The folder whose omx_wiki/ a call works on: the cwd, or the workingDirectory as given (no git lookup). */
+export function omxRootOf(workingDirectory) {
+  const raw = typeof workingDirectory === 'string' ? workingDirectory.trim() : '';
+  if (raw.includes('\0')) throw new Error('workingDirectory contains a NUL byte');
+  if (!raw) return omxPolicy(path.resolve(process.cwd()));
+  return omxPolicy(path.resolve(omxHostPath(raw)));
+}
+
+function omxContext(workingDirectory) {
+  const root = omxRootOf(workingDirectory);
+  const wikiDir = path.join(root, 'omx_wiki');
+  const legacyDir = path.join(root, '.omx', 'wiki');
+  const legacy = !fs.existsSync(wikiDir) && fs.existsSync(legacyDir);
+  return { p: OMX_STORE, root, wikiDir, readDir: legacy ? legacyDir : wikiDir, legacy };
+}
+
+// OMX's YAML reading: both quote kinds lose their quotes and take the same escapes; a flow array splits on every comma.
+function omxSimpleYaml(yaml) {
+  const result = {};
+  for (const line of yaml.split('\n')) {
+    const colon = line.indexOf(':');
+    if (colon === -1) continue;
+    const key = line.slice(0, colon).trim();
+    let value = line.slice(colon + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = unescapeYaml(value.slice(1, -1));
+    }
+    if (key) result[key] = value;
+  }
+  return result;
+}
+
+function omxYamlArray(value) {
+  if (!value) return [];
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith('[') && trimmed.endsWith(']'))) return trimmed ? [trimmed] : [];
+  return trimmed.slice(1, -1).split(',').map((item) => unescapeYaml(item.trim().replace(/^["']|["']$/g, ''))).filter(Boolean);
+}
+
+/** A page as OMX reads it: CRLF is LF, but a BOM is kept, so a page that starts with one does not parse. */
+export function omxParseFrontmatter(raw) {
+  return readFrontmatter(raw.replace(/\r\n/g, '\n'), omxSimpleYaml, omxYamlArray);
+}
+
+/** OMX's slug: letters and digits of any script stay (NFC), so a Korean title gives a Korean file name. */
+export function omxTitleToSlug(title) {
+  return slugFile(title.toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 64), title);
+}
+
+// OMX's write: a temporary file beside the target, then rename. OMX names it <file>.<pid>.<ms>.tmp; here random
+// bytes stand for the clock and the file must be new ('wx'), so a link planted at a name guessed from the pid and the
+// clock is never followed (as banker names every temporary file). The name stays short: a 64-letter Korean slug is
+// 195 bytes with .md, and a file name may have 255.
+function omxAtomicWrite(filePath, content) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  fs.writeFileSync(tempPath, content, { encoding: 'utf8', flag: 'wx' });
+  try {
+    renameRetry(tempPath, filePath);
+  } catch (err) {
+    unlinkQuiet(tempPath);
+    throw err;
+  }
+}
+
+function omxEnsureWikiDir(ctx) {
+  fs.mkdirSync(ctx.wikiDir, { recursive: true });
+}
+
+// OMX's lock: the folder <wiki>/.wiki-lock.lock, made with mkdir. A folder left by a writer that died stays until
+// removed by hand, as in OMX (it has no owner to check), so a write then stops after 5 s.
+function withOmxLock(ctx, fn) {
+  omxEnsureWikiDir(ctx);
+  const lockPath = path.join(ctx.wikiDir, '.wiki-lock.lock');
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      fs.mkdirSync(lockPath);
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      if (Date.now() >= deadline) throw new Error(`Timed out acquiring wiki lock at ${lockPath}`);
+      Atomics.wait(PAUSE, 0, 0, LOCK_RETRY_MS);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
+const OMX_STORE = {
+  owner: 'OMX', parse: omxParseFrontmatter, slug: omxTitleToSlug, write: omxAtomicWrite, ensure: omxEnsureWikiDir, lock: withOmxLock,
+};
+
+// The tools' answers: OMX's server puts JSON.stringify(data, null, 2) in its text, and `omx wiki` prints that
+// (pretty) or, with --json, JSON.stringify(data) on one line.
+const omxAnswer = (data) => ({ text: JSON.stringify(data, null, 2), data });
+const omxFailure = (message) => ({ isError: true, text: JSON.stringify({ error: message }, null, 2), data: { error: message } });
+
+function omxIngest(ctx, a) {
+  return omxAnswer(ingestKnowledge(ctx, {
+    title: a.title, content: a.content, tags: a.tags, category: a.category, sources: a.sources, confidence: a.confidence,
+  }));
+}
+
+function omxAdd(ctx, a) {
+  const slug = omxTitleToSlug(a.title);
+  if (readPage(ctx, slug, ctx.wikiDir)) return omxFailure(`Page "${slug}" already exists. Use wiki_ingest to merge into it.`);
+  const result = ingestKnowledge(ctx, { title: a.title, content: a.content, tags: a.tags || [], category: a.category || 'reference' });
+  appendLog(ctx, { timestamp: new Date().toISOString(), operation: 'add', pagesAffected: result.created, summary: `Created wiki page ${slug}` });
+  return omxAnswer(result);
+}
+
+function omxRead(ctx, a) {
+  const page = readPage(ctx, pageFile(a.page));
+  return page ? omxAnswer(page) : omxFailure('Wiki page not found');
+}
+
+// OMX deletes only in omx_wiki/ and never its reserved files; isReservedFile also catches another spelling of one on
+// a case-blind disk, where OMX would delete it.
+function omxDelete(ctx, a) {
+  const filename = pageFile(a.page);
+  const notFound = omxFailure(`Wiki page not found or reserved: ${filename}`);
+  if (!fs.existsSync(ctx.wikiDir) || isReservedFile(ctx, filename)) return notFound;
+  if (!deletePageLocked(ctx, filename)) return notFound;
+  appendLog(ctx, { timestamp: new Date().toISOString(), operation: 'delete', pagesAffected: [filename], summary: `Deleted wiki page ${filename}` });
+  return omxAnswer({ deleted: true, page: filename });
+}
+
+const OMX_TOOLS = {
+  wiki_ingest: omxIngest,
+  wiki_query: (ctx, a) => omxAnswer(queryWiki(ctx, a.query, { tags: a.tags, category: a.category, limit: a.limit })),
+  wiki_lint: (ctx) => omxAnswer(lintWiki(ctx)),
+  wiki_add: omxAdd,
+  wiki_list: (ctx) => omxAnswer({ pages: listPages(ctx), index: readWikiFile(ctx, 'index.md') }),
+  wiki_read: omxRead,
+  wiki_delete: omxDelete,
+};
+
+function runOmxTool(name, input) {
+  const tool = OMX_TOOLS[name];
+  if (!tool) return omxFailure(`Unknown tool: ${name}`);
+  const invalid = validateInput(name, input);
+  if (invalid) return omxFailure(`invalid input: ${invalid}`);
+  let ctx;
+  let out;
+  try {
+    ctx = omxContext(input.workingDirectory);
+    out = tool(ctx, input);
+  } catch (err) {
+    return omxFailure(err instanceof Error ? err.message : String(err));
+  }
+  if (!out.isError && (name === 'wiki_ingest' || name === 'wiki_add')) obsidize(ctx.wikiDir, out.data, true);
+  return { isError: Boolean(out.isError), text: out.text, data: out.data };
+}
+
+// ============================================================================
 // obsidizer: the hook's canonicalizer run, for the pages this call wrote
 // ============================================================================
 
-function obsidize(wikiDir, data) {
+// With onlyPlainNames (omx), as the Codex hook does: only pages whose name is ASCII word characters, dots and dashes.
+function obsidize(wikiDir, data, onlyPlainNames = false) {
   if (!fs.existsSync(path.join(wikiDir, '.obsidizer'))) return;
   const canonicalizer = CANONICALIZERS.find((p) => fs.existsSync(p));
   if (!canonicalizer) {
     process.stderr.write(`wiki.mjs: obsidizer is on (${path.join(wikiDir, '.obsidizer')}) but obsidize.mjs is not beside this skill; run obsidizer on the wiki later\n`);
     return;
   }
-  const pages = [...data.created, ...data.updated].filter((n) => !RESERVED.has(n)).map((n) => path.join(wikiDir, n));
+  const names = [...data.created, ...data.updated].filter((n) => !RESERVED.has(n) && (!onlyPlainNames || /^[\w.-]+\.md$/.test(n)));
+  const pages = names.map((n) => path.join(wikiDir, n));
   for (const page of pages.filter((p) => fs.existsSync(p))) {
     const run = spawnSync(process.execPath, [canonicalizer, page, '--profile=omc', '--json'], {
       encoding: 'utf8', timeout: OBSIDIZE_TIMEOUT_MS, windowsHide: true,
@@ -1316,8 +1587,10 @@ function obsidize(wikiDir, data) {
 /**
  * Run one tool as OMC's MCP server would. Returns { isError, text, data }: text is OMC's response text, data the
  * OMX-shaped JSON result ({ error } when isError). The project is the process's cwd, as for OMC's server.
+ * With profile 'omx', as `omx wiki` would: text is then OMX's JSON answer, pretty-printed.
  */
-export function runTool(name, input = {}) {
+export function runTool(name, input = {}, profile = 'omc') {
+  if (profile === 'omx') return runOmxTool(name, input);
   const tool = TOOLS[name];
   if (!tool) return failure(`Unknown tool: ${name}`);
   const invalid = validateInput(name, input);
@@ -1327,7 +1600,8 @@ export function runTool(name, input = {}) {
   try {
     const root = resolveRoot(input.workingDirectory);
     const omcRoot = omcRootOf(root);
-    ctx = { root, omcRoot, wikiDir: path.join(omcRoot, 'wiki') };
+    const wikiDir = path.join(omcRoot, 'wiki');
+    ctx = { p: OMC_STORE, root, omcRoot, wikiDir, readDir: wikiDir, legacy: false };
     out = tool.run(ctx, input);
   } catch (err) {
     return failure(`${tool.prefix}${err instanceof Error ? err.message : String(err)}`);
@@ -1340,7 +1614,8 @@ export function runTool(name, input = {}) {
 // CLI
 // ============================================================================
 
-const USAGE = `usage: node wiki.mjs <tool> [--input '<json>' | --input-file <path>] [--json] [--profile=omc]
+const PROFILES = new Set(['omc', 'omx']);
+const USAGE = `usage: node wiki.mjs <tool> [--input '<json>' | --input-file <path>] [--json] [--profile=omc|omx]
   tools: ${TOOL_NAMES.join(', ')} (the wiki_ prefix may be left out)
   exit: 0 done, 1 the tool reported an error, 2 a usage error`;
 
@@ -1405,15 +1680,15 @@ function main(argv) {
     (opts.help ? process.stdout : process.stderr).write(`${USAGE}\n`);
     return opts.help ? 0 : 2;
   }
-  if (opts.profile !== 'omc') {
-    process.stderr.write(`wiki.mjs: --profile=${opts.profile} is not built yet; only --profile=omc (.omc/wiki) is\n`);
+  if (!PROFILES.has(opts.profile)) {
+    process.stderr.write(`wiki.mjs: unknown --profile=${opts.profile}; omc (.omc/wiki) or omx (omx_wiki/)\n`);
     return 2;
   }
   if (!TOOLS[opts.tool]) {
     process.stderr.write(`wiki.mjs: unknown tool: ${opts.tool}\n${USAGE}\n`);
     return 2;
   }
-  const result = runTool(opts.tool, opts.input);
+  const result = runTool(opts.tool, opts.input, opts.profile);
   const out = opts.json ? JSON.stringify(result.data) : result.text;
   process.stdout.write(`${out}\n`);
   return result.isError ? 1 : 0;

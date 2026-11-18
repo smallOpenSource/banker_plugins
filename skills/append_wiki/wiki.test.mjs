@@ -185,7 +185,7 @@ test('CLI: usage errors exit 2 and touch nothing; --help exits 0', () => {
   const p = project();
   const bad = [[], ['wiki_nope'], ['wiki_list', '--bogus'], ['wiki_list', 'extra'], ['wiki_ingest', '--input', '{oops'],
     ['wiki_ingest', '--input', '[]'], ['wiki_list', '--input', '{}', '--input', '{}'], ['wiki_list', '--input'],
-    ['wiki_list', '--profile=omx'], ['wiki_list', '--input-file', path.join(p.base, 'missing.json')]];
+    ['wiki_list', '--profile=bogus'], ['wiki_list', '--input-file', path.join(p.base, 'missing.json')]];
   for (const args of bad) {
     const run = p.cli(args);
     assert.equal(run.status, 2, `${args.join(' ')}: ${run.stdout}${run.stderr}`);
