@@ -261,7 +261,8 @@ function gitShow(repo, spec) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|PREFIX|IMPLICIT_WORK_TREE)$/i.test(k)));
   // cwd is the config folder, as in the render check: on Windows a bare "git" is looked up in the current folder first,
   // so the project folder the installer runs in would pick the program.
-  const r = spawnSync("git", ["-C", repo, "show", spec], { cwd: CONFIG_DIR, env, timeout: 10000, windowsHide: true, maxBuffer: 1 << 24 });
+  // --git-dir names the clone's own .git: a broken one is an error, never a walk up to an outer repository.
+  const r = spawnSync("git", ["--git-dir", join(repo, ".git"), "show", spec], { cwd: CONFIG_DIR, env, timeout: 10000, windowsHide: true, maxBuffer: 1 << 24 });
   return r.status === 0 ? r.stdout : null;
 }
 // The refs to try, most exact first: the installed entry's commit for this folder, then the version's tag.

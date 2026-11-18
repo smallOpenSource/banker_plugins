@@ -1268,8 +1268,12 @@ test("DRM: 마켓플레이스 폴더가 git 저장소가 아니면 바깥 저장
   const cfg = fresh();
   marketplace(cfg, `// outer loader\n${banner("5.7.4")}`, "v5.7.4");
   const repo = join(cfg, "plugins", "marketplaces", "omc");
-  // The config folder itself becomes the outer repository; the marketplace folder loses its own .git.
+  // The config folder itself becomes the outer repository, holding the template at its own root under the same
+  // path and tag; the marketplace folder loses its .git (or keeps a broken, empty one).
   rmSync(join(repo, ".git"), { recursive: true, force: true });
+  mkdirSync(join(repo, ".git"));
+  mkdirSync(join(cfg, "scripts", "lib"), { recursive: true });
+  writeFileSync(join(cfg, "scripts", "lib", "hud-wrapper-template.txt"), `// outer loader\n${banner("5.7.4")}`);
   gitIn(cfg, "init", "-q");
   gitIn(cfg, "add", ".");
   gitIn(cfg, "commit", "-q", "-m", "outer");
