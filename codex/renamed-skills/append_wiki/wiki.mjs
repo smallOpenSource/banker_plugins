@@ -57,12 +57,14 @@ const CANONICALIZERS = [
 // git probes (src/lib/worktree-paths.ts)
 // ============================================================================
 
-// The folder goes to git as -C, and git itself starts in the home folder: on Windows a bare "git" is looked up in
-// the current folder first, so starting it in the project would let a git.exe there run (as in banker 0.16.2).
-// git -C <dir> behaves as if started in <dir>, so the answers are the same as OMC's cwd: <dir>.
+// The folder goes to git as -C, and git itself starts in this script's own folder: on Windows a bare "git" is looked
+// up in the current folder first, so starting it in the project would let a git.exe there run (as in banker 0.16.2).
+// The script's folder always exists (the home folder may not). git -C <dir> behaves as if started in <dir>, so the
+// answers are the same as OMC's cwd: <dir>.
+const GIT_START = path.dirname(fileURLToPath(import.meta.url));
 function git(args, cwd, english = false) {
   return execFileSync('git', ['-C', path.resolve(cwd), ...args], {
-    cwd: os.homedir(),
+    cwd: GIT_START,
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
