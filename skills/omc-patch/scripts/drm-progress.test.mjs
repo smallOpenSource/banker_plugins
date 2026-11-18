@@ -3,7 +3,7 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -182,17 +182,71 @@ test("an old backup that differs from the current original is replaced by the cu
   assert.equal(read(root, "bridge/cli.cjs.omcbak"), CLI_CJS);
 });
 
-test("revert leaves a file the user changed after the patch", () => {
+test("revert reverts none of the three when the user changed one after the patch", () => {
   const root = fresh();
   run(["--root", root]);
   const edited = `${read(root, "skills/ralph/SKILL.md")}\nmy note\n`;
   writeFileSync(join(root, "skills/ralph/SKILL.md"), edited);
+  const before = snapshot(root);
   const r = run(["--root", root, "--revert"]);
   assert.equal(r.status, 1);
   assert.match(r.stdout, /되돌리지 않음: skills\/ralph\/SKILL\.md/);
-  assert.equal(read(root, "skills/ralph/SKILL.md"), edited);
-  assert.ok(existsSync(join(root, "skills/ralph/SKILL.md.omcbak")));
-  assert.equal(read(root, "bridge/cli.cjs"), CLI_CJS);
+  assert.match(r.stdout, /되돌리기를 끝내지 못했습니다\./);
+  assert.deepEqual(snapshot(root), before);
+  assert.deepEqual(backups(root), Object.keys(FILES));
+});
+
+test("revert reverts none when a patched file has no backup: the names would split", () => {
+  const root = fresh();
+  run(["--root", root]);
+  rmSync(join(root, "bridge/cli.cjs.omcbak"));
+  const before = snapshot(root);
+  const r = run(["--root", root, "--revert"]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /되돌리지 않음: bridge\/cli\.cjs \(백업이 없어/);
+  assert.deepEqual(snapshot(root), before);
+});
+
+const canChmod = process.platform !== "win32" && !(typeof process.getuid === "function" && process.getuid() === 0);
+test("a write error during revert puts back what it reverted and ends with the failure line", { skip: !canChmod && "needs POSIX modes and a non-root account" }, () => {
+  const root = fresh();
+  run(["--root", root]);
+  const before = snapshot(root);
+  chmodSync(join(root, "bridge"), 0o555);
+  try {
+    const r = run(["--root", root, "--revert"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /되돌리지 못함: bridge\/cli\.cjs/);
+    assert.match(r.stdout, /되돌리기를 끝내지 못했습니다\./);
+    assert.equal(r.stderr, "");
+    assert.deepEqual(snapshot(root), before);
+  } finally { chmodSync(join(root, "bridge"), 0o755); }
+});
+
+test("revert of a version where a new original replaced the patched file leaves the old backup without failing", () => {
+  const root = fresh();
+  run(["--root", root]);
+  const newer = CLI_CJS.replace("init_progress();", "init_progress(); // newer");
+  for (const [rel, text] of [["bridge/cli.cjs", newer], ["dist/hooks/ralph/progress.js", PROGRESS_JS], ["skills/ralph/SKILL.md", SKILL_MD]]) writeFileSync(join(root, rel), text);
+  const r = run(["--root", root, "--revert"]);
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /bridge\/cli\.cjs: 이미 원본\. 옛 백업이 남음/);
+  assert.equal(read(root, "bridge/cli.cjs"), newer);
+});
+
+test("a link at a backup spot is refused, and a dangling one does not crash the check", { skip: symlinkSkip }, () => {
+  const root = fresh();
+  symlinkSync(join(root, "dist/hooks/ralph/progress.js"), join(root, "bridge/cli.cjs.omcbak"), "file");
+  const r = run(["--root", root]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /bridge\/cli\.cjs: 쓰지 않음 \(백업 자리\(\.omcbak\)가 링크임\)/);
+  assert.deepEqual(snapshot(root), FILES);
+  const root2 = fresh();
+  symlinkSync(join(root2, "nowhere"), join(root2, "skills/ralph/SKILL.md.omcbak"), "file");
+  const c = run(["--root", root2, "--check"]);
+  assert.equal(c.status, 1);
+  assert.equal(c.stderr, "");
+  assert.match(c.stdout, /결과: 고칠 수 없는 파일이 있습니다/);
 });
 
 test("a folder of another plugin is refused", () => {
@@ -246,9 +300,11 @@ test("check tells whether the anti-drm settings deny .txt", () => {
   const cfg = join(base, `anti-drm${n++}.json`);
   assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: 설정 없음/);
   writeFileSync(cfg, JSON.stringify({ version: 1, deny: [".TXT", ".pdf"], alt: [".md"] }));
-  assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: \.txt 금지 \(/);
+  assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: \.txt 금지함 \(/);
+  writeFileSync(cfg, `\uFEFF${JSON.stringify({ version: 1, deny: ["txt"], alt: [".md"] })}`);
+  assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: \.txt 금지함 \(/);
   writeFileSync(cfg, JSON.stringify({ version: 1, deny: [".pdf"], alt: [".md"] }));
-  assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: \.txt 금지 안 함/);
+  assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: \.txt 허용/);
   writeFileSync(cfg, "{");
   assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: 설정을 읽지 못함/);
 });

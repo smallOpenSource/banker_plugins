@@ -72,11 +72,17 @@ function insideRoot(root, p) {
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
-/** 쓸 수 없는 까닭, 쓸 수 있으면 null. 링크는 플러그인 폴더 안을 가리킬 때만, 일반 파일만 받는다. */
-function whyNot(root, p) {
+/**
+ * 쓸 수 없는 까닭, 쓸 수 있으면 null. 일반 파일만 받는다. 고칠 파일의 링크는 플러그인 폴더 안을 가리킬 때만 받고,
+ * 백업 자리(.omcbak)는 링크면 받지 않는다(omc-patch.mjs 와 같은 규칙: 링크를 따라가 다른 파일을 덮지 않게).
+ */
+function whyNot(root, p, { backup = false } = {}) {
   const l = lstatSync(p, { throwIfNoEntry: false });
   if (!l) return null;
-  if (l.isSymbolicLink() && !insideRoot(root, p)) return "링크가 플러그인 폴더 밖을 가리킴";
+  if (l.isSymbolicLink()) {
+    if (backup) return "백업 자리(.omcbak)가 링크임";
+    try { if (!insideRoot(root, p)) return "링크가 플러그인 폴더 밖을 가리킴"; } catch { return "링크가 가리키는 파일이 없음"; }
+  }
   return statSync(p).isFile() ? null : "일반 파일이 아님";
 }
 
@@ -107,8 +113,8 @@ function survey(root) {
   return FILES.map((f) => {
     const path = join(root, f.rel);
     const item = { ...f, path, bak: `${path}.omcbak` };
-    if (!existsSync(path)) return { ...item, state: "missing" };
-    const why = whyNot(root, path) || whyNot(root, item.bak);
+    const why = whyNot(root, path) || whyNot(root, item.bak, { backup: true });
+    if (!why && !existsSync(path)) return { ...item, state: "missing" };
     if (why) return { ...item, state: "unsafe", why };
     try { item.src = readText(path); } catch (e) { return { ...item, state: "unreadable", why: e.code || e.message }; }
     return { ...item, state: stateOf(item.src, f.code) };
@@ -151,9 +157,9 @@ function applyRoot(root) {
       if (x.code && !syntaxOk(x.path)) throw new Error(`${x.rel}: 고친 뒤 문법 오류`);
     }
   } catch (e) {
-    bad(`${e.message || e} — 이번에 고친 파일을 원본으로 되돌림`);
-    for (const x of done) writeAtomic(x.path, x.src);
-    return 1;
+    bad(`${e.code ? `${e.code}: ` : ""}${e.message || e} — 이번에 고친 파일을 원본으로 되돌림`);
+    const stuck = rollBack(done, (x) => x.src);
+    return 1 + stuck;
   }
   for (const x of todo) ok(`패치: ${x.rel}`);
   return 0;
@@ -167,24 +173,59 @@ function keepBackup(x) {
 }
 
 // ── 되돌리기 ──────────────────────────────────────────────────────────────
-/** 실패 건수를 돌려준다. 이 도구가 만든 글일 때만 백업으로 되돌린다. */
+/** 이번에 쓴 파일을 앞 글로 다시 쓴다. 다시 쓰지 못한 파일은 이름을 대고 그 수를 돌려준다. */
+function rollBack(done, textOf) {
+  let stuck = 0;
+  for (const x of done) {
+    try { writeAtomic(x.path, textOf(x)); } catch (e) { bad(`되돌려 놓지 못함: ${x.rel} (${e.code || e.message}). 이 파일만 바뀐 채 남음`); stuck++; }
+  }
+  return stuck;
+}
+
+/**
+ * 파일 하나를 어떻게 되돌릴지. { act, orig } 또는 { block }.
+ * act: restore(백업으로 되돌림) | drop(이미 원본, 백업만 지움) | keep(손대지 않음)
+ */
+function revertPlan(x) {
+  if (x.state === "unsafe" || x.state === "unreadable") return { block: x.why };
+  if (!existsSync(x.bak)) {
+    if (x.state === "patched") return { act: "keep", note: `백업 없음 (이 도구가 바꾸지 않았거나 원래 ${NEW})`, patched: true };
+    return { act: "keep" };
+  }
+  if (x.state === "missing") return { act: "keep", note: "파일이 없어 백업을 그대로 둠" };
+  let orig;
+  try { orig = readText(x.bak); } catch (e) { return { block: `백업을 읽지 못함 (${e.code || e.message})` }; }
+  if (x.src === orig) return { act: "drop" };
+  if (transform(orig, x.code) === x.src) return { act: "restore", orig };
+  // 같은 판 폴더에 새 원본이 깔려 지금 파일이 원본이면 되돌릴 것이 없다. 옛 백업은 다음 적용이 지금 원본으로 바꾼다.
+  if (x.state === "original") return { act: "keep", note: "이미 원본. 옛 백업이 남음 (다음 적용이 지금 원본으로 바꿈)" };
+  return { block: "지금 글이 이 도구의 패치본과 다름. 패치 뒤 고쳐졌을 수 있음" };
+}
+
+/** 실패 건수를 돌려준다. 판 하나의 셋을 모두 되돌리거나 하나도 되돌리지 않는다. */
 function revertRoot(root) {
+  const items = survey(root).map((x) => ({ ...x, plan: revertPlan(x) }));
+  const blocked = items.filter((x) => x.plan.block);
+  const restore = items.filter((x) => x.plan.act === "restore");
+  const leftPatched = items.filter((x) => x.plan.patched);
+  for (const x of items) if (x.plan.note) log(`  ${x.rel}: ${x.plan.note}`);
+  if (restore.length && leftPatched.length) blocked.push(...leftPatched.map((x) => ({ ...x, plan: { block: "백업이 없어 이것만 남으면 훅과 CLI 가 다른 이름을 씀" } })));
+  if (blocked.length) {
+    for (const x of blocked) bad(`되돌리지 않음: ${x.rel} (${x.plan.block})`);
+    if (restore.length) bad("이 판의 다른 파일도 되돌리지 않음 (셋을 함께 되돌림)");
+    return blocked.length;
+  }
+  const done = [];
+  try {
+    for (const x of restore) { writeAtomic(x.path, x.plan.orig); done.push(x); }
+  } catch (e) {
+    bad(`되돌리지 못함: ${restore[done.length].rel} (${e.code || e.message}). 이번에 되돌린 파일을 패치본으로 다시 씀`);
+    return 1 + rollBack(done, (x) => x.src);
+  }
   let fail = 0;
-  for (const x of survey(root)) {
-    if (!existsSync(x.bak)) { if (x.state === "patched") log(`  ${x.rel}: 백업 없음 (이 도구가 바꾸지 않았거나 원래 ${NEW})`); continue; }
-    if (x.state === "unsafe" || x.state === "unreadable") { bad(`되돌리지 않음: ${x.rel} (${x.why})`); fail++; continue; }
-    let orig;
-    try { orig = readText(x.bak); } catch (e) { bad(`읽지 못함: ${x.rel} 의 백업 (${e.code || e.message})`); fail++; continue; }
-    if (x.state === "missing") { log(`  ${x.rel}: 파일이 없어 백업을 그대로 둠`); continue; }
-    if (x.src === orig) { unlinkSync(x.bak); ok(`백업 정리: ${x.rel} (이미 원본)`); continue; }
-    if (transform(orig, x.code) !== x.src) {
-      bad(`되돌리지 않음: ${x.rel} (지금 글이 이 도구의 패치본과 다름. 백업이 옛 원본일 수 있음)`);
-      fail++;
-      continue;
-    }
-    writeAtomic(x.path, orig);
-    unlinkSync(x.bak);
-    ok(`되돌림: ${x.rel}`);
+  for (const x of items.filter((y) => y.plan.act === "restore" || y.plan.act === "drop")) {
+    try { unlinkSync(x.bak); } catch (e) { bad(`${x.plan.act === "restore" ? "되돌렸으나" : "이미 원본이나"} 백업을 지우지 못함: ${x.rel} (${e.code || e.message})`); fail++; continue; }
+    ok(x.plan.act === "restore" ? `되돌림: ${x.rel}` : `백업 정리: ${x.rel} (이미 원본)`);
   }
   return fail;
 }
@@ -208,6 +249,13 @@ function allRoots() {
     seen.add(real);
     return true;
   });
+}
+
+/** 되돌릴 판: 캐시의 판과, 캐시 밖에 있으면 활성 판. */
+function revertRoots(active) {
+  const roots = allRoots();
+  if (active && !roots.some((p) => realpathSync(p) === realpathSync(active))) roots.unshift(active);
+  return roots;
 }
 
 /** 활성 판과 다른 실제 폴더의 판들. */
@@ -263,9 +311,11 @@ function antiDrmLine() {
   const file = process.env.BANKER_ANTI_DRM_CONFIG || join(homedir(), ".config", "banker", "anti-drm.json");
   if (!existsSync(file)) return "anti-drm: 설정 없음";
   try {
-    const deny = JSON.parse(readFileSync(file, "utf8")).deny;
-    const has = Array.isArray(deny) && deny.some((x) => String(x).toLowerCase() === ".txt");
-    return `anti-drm: .txt ${has ? "금지" : "금지 안 함"} (${file})`;
+    // anti-drm 의 설정 읽기와 같게: 앞의 BOM 을 떼고, 확장자는 소문자로, 점이 없으면 붙여 본다.
+    const deny = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, "")).deny;
+    const norm = (x) => { const v = String(x).trim().toLowerCase(); return v.startsWith(".") ? v : `.${v}`; };
+    const has = Array.isArray(deny) && deny.some((x) => norm(x) === ".txt");
+    return `anti-drm: .txt ${has ? "금지함" : "허용"} (${file})`;
   } catch { return `anti-drm: 설정을 읽지 못함 (${file})`; }
 }
 
@@ -304,7 +354,7 @@ function main() {
     return fail ? 1 : 0;
   }
   let fail = 0;
-  for (const root of o.root ? [o.root] : allRoots()) { log(`  — ${root}`); fail += revertRoot(root); }
+  for (const root of o.root ? [o.root] : revertRoots(active)) { log(`  — ${root}`); fail += revertRoot(root); }
   log();
   log(fail ? `되돌리기를 끝내지 못했습니다. 실패 ${fail}건.` : "되돌리기 완료.");
   return fail ? 1 : 0;
