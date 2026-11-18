@@ -80,7 +80,7 @@ omx wiki wiki_ingest --input "$(cat <JSON 파일>)" --json
   ```
 - 인자 하나는 Linux 에서 128KB 를 넘지 못한다. 본문이 그보다 크면 페이지를 나눈다.
 - `omx wiki` 는 작업 폴더에만 쓰므로 샌드박스 승인이 필요 없다(Codex 0.144.5, OMX 0.20.2 에서 확인).
-- 먼저 `omx` 가 있는지 본다(bash `command -v omx`, PowerShell `Get-Command omx`). 있으면 위의 `omx wiki` 를 쓴다.
+- 먼저 `omx` 가 있는지 본다(bash `command -v omx`, PowerShell `Get-Command omx -ErrorAction SilentlyContinue`). 있으면 위의 `omx wiki` 를 쓴다.
 - `omx` 가 없으면 banker 대체 경로를 쓴다. 이 스킬 폴더의 `wiki.mjs` 를 `--profile=omx` 로 부른다(`<스킬 폴더>` 는 이 SKILL.md 가 있는 폴더의 절대경로).
   OMX 0.20.2 의 위키 도구 7개를 node 내장 모듈만으로 다시 구현했다. 같은 도구 이름과 입력을 받고, 같은 `omx_wiki/` 에 같은 형식, 같은 한글 슬러그, 같은 잠금 폴더로 쓰며, `omx wiki ... --json` 과 같은 JSON 을 낸다.
   ```bash

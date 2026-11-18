@@ -76,7 +76,7 @@ node "<S>/../append_wiki/wiki.mjs" wiki_lint      # <S> 는 이 스킬 폴더
 - `wiki_lint` 는 어느 경로든 `log.md` 에 한 항목을 덧붙인다. 0단계 지문은 예약파일 3종을 빼고 재므로 어긋나지 않는다.
 - 보고에 어느 경로로 대조했는지(OMC MCP, `omx wiki`, banker 대체 중 하나) 적는다.
 
-**Codex 의 `wiki_lint`.** `omx wiki wiki_lint --input '{}' --json` 을 쓴다. `omx` 가 없으면(bash `command -v omx`, PowerShell `Get-Command omx`) 같은 `wiki.mjs` 를 `--profile=omx` 로 쓴다.
+**Codex 의 `wiki_lint`.** `omx wiki wiki_lint --input '{}' --json` 을 쓴다. `omx` 가 없으면(bash `command -v omx`, PowerShell `Get-Command omx -ErrorAction SilentlyContinue`) 같은 `wiki.mjs` 를 `--profile=omx` 로 쓴다.
 
 ```bash
 node "<S>/../append_wiki/wiki.mjs" wiki_lint --profile=omx --json

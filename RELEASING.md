@@ -64,6 +64,14 @@ push 전 스모크(`node scripts/smoke-test.js`)는 필수다. Codex 플러그�
    - 종료 1: OMC 가 다르게 답한다. 출력이 다른 항목을 적는다. 그 OMC 의 `src/hooks/wiki`, `src/tools/wiki-tools.ts` 를 보고 `wiki.mjs` 를 맞춘다. 그다음 정답 파일 폴더 이름(`scripts/test-fixtures/omc-wiki-<판>/`)과 그것을 가리키는 `FIXTURE_DIR`(`scripts/test-fixtures/omc-wiki-cases.mjs`)을 그 판으로 바꾸고, `node scripts/gen-omc-wiki-golden.mjs <그 판 폴더>` 로 다시 만든다. 맞추기 전에는 릴리스하지 않는다. 스크립트가 오류로 죽어도 종료 1 이니, 출력에 다른 항목 목록이 없으면 오류부터 본다.
    - 종료 2: 온전한 OMC 판이 없다(빌드 없이 깔린 판뿐). 대조하지 못했다고 릴리스 보고에 적고 진행한다.
 
+   Codex 쪽 대체(`wiki.mjs --profile=omx`)도 OMX 의 형식과 아직 같은지 같은 방식으로 대조한다. 기준은 전역 npm 의 `oh-my-codex`(또는 `BANKER_OMX_DIR`)다.
+   ```bash
+   node scripts/gen-omx-wiki-golden.mjs --check
+   ```
+   - 종료 0: 같다. 대조한 OMX 판을 릴리스 보고에 적는다.
+   - 종료 1: 다르다(또는 스크립트 오류). OMX 의 `dist/wiki` 를 보고 `--profile=omx` 를 맞춘 뒤, 정답 폴더 이름(`scripts/test-fixtures/omx-wiki-<판>/`)과 `FIXTURE_DIR`(`scripts/test-fixtures/omx-wiki-cases.mjs`)을 그 판으로 바꾸고 `node scripts/gen-omx-wiki-golden.mjs` 로 다시 만든다. 맞추기 전에는 릴리스하지 않는다.
+   - 종료 2: OMX 가 깔려 있지 않다. 대조하지 못했다고 릴리스 보고에 적고 진행한다.
+
 8. **커밋** — 위 변경(`plugin.json` · `package.json` · `skill-changes.json` · `marketplace.json` · `CHANGELOG.md` · `LIST.md` · 코드)을 **한 릴리스 커밋**으로 묶는다.
 
 9. **push** — `git push` 로 main 에 올린다. GitHub 채널이 전진하고, `skill-changes.json` 의 GitHub raw 도 이때 반영된다(개인화 알림이 읽는 소스).

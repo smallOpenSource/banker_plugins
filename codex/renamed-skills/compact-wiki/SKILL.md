@@ -1,6 +1,6 @@
 ---
 name: compact-wiki
-description: "`omx_wiki/` 페이지를 OMX 의 `omx wiki` CLI 로 무손실 정리. 중복은 지우고, 낡은 내용은 새 내용으로 대체하고, 겹치는 페이지는 병합. 'compact-wiki'/'위키 정리'/'위키 압축'/'wiki 중복 제거'/'위키 병합' 시 사용."
+description: "`omx_wiki/` 페이지를 OMX 의 `omx wiki` CLI(없으면 banker 의 wiki.mjs)로 무손실 정리. 중복은 지우고, 낡은 내용은 새 내용으로 대체하고, 겹치는 페이지는 병합. 'compact-wiki'/'위키 정리'/'위키 압축'/'wiki 중복 제거'/'위키 병합' 시 사용."
 ---
 
 # compact-wiki — wiki 정리·압축 (무손실)
@@ -76,10 +76,10 @@ omx wiki wiki_delete --input '{"page":"<slug>"}' --json
   ```
 - 인자 하나는 Linux 에서 128KB 를 넘지 못한다. 본문이 그보다 크면 페이지를 나눈다.
 - `omx wiki` 와 스냅샷은 작업 폴더에만 쓰므로 샌드박스 승인이 필요 없다(Codex 0.144.5, OMX 0.20.2 에서 확인).
-- 먼저 `omx` 가 있는지 본다(bash `command -v omx`, PowerShell `Get-Command omx`). 있으면 위의 `omx wiki` 를 쓴다.
+- 먼저 `omx` 가 있는지 본다(bash `command -v omx`, PowerShell `Get-Command omx -ErrorAction SilentlyContinue`). 있으면 위의 `omx wiki` 를 쓴다.
 - `omx` 가 없으면 banker 대체 경로를 쓴다. append_wiki 스킬 폴더의 `wiki.mjs` 를 `--profile=omx` 로 부른다. OMX 0.20.2 의 위키 도구 7개를 같은 이름, 같은 입력, 같은 `omx_wiki/`, 같은 잠금 폴더, 같은 JSON 답으로 다시 구현했다.
   - 위치: Codex 플러그인 길 `<S>/../append_wiki/wiki.mjs`, Codex npm 길 `<S>/../banker-append_wiki/wiki.mjs`(`<S>` 는 이 스킬 폴더).
-  - 아래 단계의 `wiki_xxx({...})` 는 `node "<S>/../append_wiki/wiki.mjs" wiki_xxx --profile=omx --input-file <같은 JSON 을 쓴 파일> --json` 이다.
+  - 아래 단계의 `wiki_xxx({...})` 는 `node "<S>/../append_wiki/wiki.mjs" wiki_xxx --profile=omx --input-file <같은 JSON 을 쓴 파일> --json` 이다(Codex npm 길은 `<S>/../banker-append_wiki/wiki.mjs`).
   - 종료 코드는 0 성공, 1 도구 오류(출력 `{"error":"..."}` 가 이유), 2 사용법 오류다.
   - 지금 폴더(또는 입력의 `workingDirectory`)의 `omx_wiki/` 에 쓴다. `omx wiki` 와 같고, git 은 보지 않는다. 부르기 전에 지금 폴더가 프로젝트 루트인지 확인한다.
   - JSON 파일은 편집 도구로 UTF-8 로 쓴다. 인자가 아니라 파일로 넘기므로 PowerShell 에서도 위의 `Arg` 변환이 필요 없다.
