@@ -81,7 +81,7 @@ argument-hint: "[기준 커밋] [--no-boxes]"
    - 그 `.cmd` 파일은 UTF-8 코드 페이지로 돌아 한글 인자도 그대로 간다. `for` 의 변수는 배치 파일 규칙대로 `%%i` 로 쓰고, `for` 나 `if` 안에서 npm 같은 배치 명령을 부르면 `call npm ...` 으로 쓴다.
    - `for` 반복으로 시험을 여러 번 돌릴 때 종료 코드는 마지막 반복 것이라 앞 반복의 실패가 가려진다(POSIX `run.sh` 도 같다). 각 반복에 `|| exit /b 1`(POSIX `|| exit 1`)을 붙여 한 번이라도 실패하면 비정상 종료로 끝낸다.
    - 오래 걸리면 `--timeout <분>`(기본 20)을 늘린다.
-4. 출력 JSON 의 박스별 `summary`(tests, pass, fail, skipped, failures)와 `log` 파일을 근거로 쓴다. 종료 코드는 다음과 같다.
+4. 출력 JSON 의 박스별 `summary`(tests, pass, fail, skipped, failures)와 `log` 파일을 근거로 쓴다. `summary` 는 node:test 의 tap 보고 형식(`# tests`)과 spec 형식(Node 23 이상의 기본, `ℹ tests`)의 요약 줄을 읽는다. 둘 다 없으면 `null` 이니 숫자는 로그에서 읽는다. 종료 코드는 다음과 같다.
    - 0: 모든 박스가 통과
    - 1: 접속 실패, 시험 실패, 시간 초과, 시험 0건(`noTests`), 정리 실패(`cleaned: false`) 중 하나가 있음
    - 2: 사용법이나 등록 파일 오류
