@@ -387,6 +387,13 @@ test('no overwrite: check, verify --frames, com and make refuse a folder that is
     assert.match(r.stderr, new RegExp(`${sub.replace(/[+]/g, '\\+')} is not empty; not overwriting`));
     assert.doesNotMatch(r.stdout, /== build/, 'refused before the build');
     rmSync(join(out, sub), { recursive: true });
+    // a file where that folder goes: one line and exit 2 (a usage error), not ENOTDIR and exit 1
+    writeFileSync(join(out, sub), 'x');
+    const f = run([join(SKILL, 'scripts', 'make.mjs'), '--sample', '--format', format, '--dir', out, '--stamp', st]);
+    assert.equal(f.status, 2, f.stdout + f.stderr);
+    assert.match(f.stderr, new RegExp(`^make: .*${sub.replace(/[+]/g, '\\+')} is not a folder that can be read \\(E[A-Z]+\\)\n$`));
+    assert.doesNotMatch(f.stdout, /== build/, 'refused before the build');
+    rmSync(join(out, sub));
   }
 });
 

@@ -27,7 +27,16 @@ import { record } from './record.mjs';
 import { exitOf, requireVendor } from './vendor.mjs';
 
 const fail = (msg, exit) => Object.assign(new Error(msg), { exit });
-const notEmpty = (d) => existsSync(d) && readdirSync(d).length > 0;
+// A path that is there but is not a folder that can be read (a file where the check or recording folder goes) is a
+// usage error with one line and exit 2, as in pptx.mjs, not ENOTDIR and exit 1.
+const notEmpty = (d) => {
+  if (!existsSync(d)) return false;
+  try {
+    return readdirSync(d).length > 0;
+  } catch (e) {
+    throw fail(`${resolve(d)} is not a folder that can be read (${e.code || e.message})`, 2);
+  }
+};
 
 /** Output paths of one run; refuses (exit 2) before any work when one exists, unless force. */
 function outputs(a, pptx) {
