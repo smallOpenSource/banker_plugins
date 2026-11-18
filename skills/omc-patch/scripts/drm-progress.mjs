@@ -77,13 +77,20 @@ function insideRoot(root, p) {
  * 백업 자리(.omcbak)는 링크면 받지 않는다(omc-patch.mjs 와 같은 규칙: 링크를 따라가 다른 파일을 덮지 않게).
  */
 function whyNot(root, p, { backup = false } = {}) {
-  const l = lstatSync(p, { throwIfNoEntry: false });
+  let l;
+  // 없는 파일만 null 이다. 위 폴더에 들어갈 수 없는 것(EACCES 등)은 읽지 못한 것으로 센다.
+  try { l = lstatSync(p, { throwIfNoEntry: false }); } catch (e) { return `읽지 못함 (${e.code || e.message})`; }
   if (!l) return null;
   if (l.isSymbolicLink()) {
     if (backup) return "백업 자리(.omcbak)가 링크임";
     try { if (!insideRoot(root, p)) return "링크가 플러그인 폴더 밖을 가리킴"; } catch { return "링크가 가리키는 파일이 없음"; }
   }
-  return statSync(p).isFile() ? null : "일반 파일이 아님";
+  try { return statSync(p).isFile() ? null : "일반 파일이 아님"; } catch (e) { return `읽지 못함 (${e.code || e.message})`; }
+}
+
+/** 실제 경로. 따라갈 수 없으면 받은 경로 그대로. */
+function realOr(p) {
+  try { return realpathSync(p); } catch { return p; }
 }
 
 function readText(p) {
@@ -245,7 +252,7 @@ function allRoots() {
   return readdirSync(CACHE).map((v) => join(CACHE, v)).filter((p) => {
     let real;
     try { real = realpathSync(p); } catch { return false; }
-    if (seen.has(real) || !statSync(real).isDirectory()) return false;
+    try { if (seen.has(real) || !statSync(real).isDirectory()) return false; } catch { return false; }
     seen.add(real);
     return true;
   });
@@ -254,14 +261,14 @@ function allRoots() {
 /** 되돌릴 판: 캐시의 판과, 캐시 밖에 있으면 활성 판. */
 function revertRoots(active) {
   const roots = allRoots();
-  if (active && !roots.some((p) => realpathSync(p) === realpathSync(active))) roots.unshift(active);
+  if (active && !roots.some((p) => realOr(p) === realOr(active))) roots.unshift(active);
   return roots;
 }
 
 /** 활성 판과 다른 실제 폴더의 판들. */
 function othersThan(active) {
-  const real = realpathSync(active);
-  return allRoots().filter((p) => realpathSync(p) !== real);
+  const real = realOr(active);
+  return allRoots().filter((p) => realOr(p) !== real);
 }
 
 function otherPluginName(root) {

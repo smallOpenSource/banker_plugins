@@ -308,3 +308,24 @@ test("check tells whether the anti-drm settings deny .txt", () => {
   writeFileSync(cfg, "{");
   assert.match(run(["--root", root, "--check"], { BANKER_ANTI_DRM_CONFIG: cfg }).stdout, /anti-drm: 설정을 읽지 못함/);
 });
+
+test("a folder this account cannot enter is a refusal with a result line, not a crash", { skip: !canChmod && "needs POSIX modes and a non-root account" }, () => {
+  const root = fresh();
+  run(["--root", root]);
+  const before = snapshot(root);
+  chmodSync(join(root, "dist/hooks/ralph"), 0o000);
+  try {
+    const c = run(["--root", root, "--check"]);
+    assert.equal(c.status, 1);
+    assert.equal(c.stderr, "");
+    assert.match(c.stdout, /dist\/hooks\/ralph\/progress\.js: 쓰지 않음 \(읽지 못함 \(EACCES\)\)/);
+    assert.match(c.stdout, /결과: 고칠 수 없는 파일이 있습니다/);
+    for (const args of [["--root", root, "--revert"], ["--root", root]]) {
+      const r = run(args);
+      assert.equal(r.status, 1, args.join(" "));
+      assert.equal(r.stderr, "");
+      assert.match(r.stdout, /되돌리기를 끝내지 못했습니다|완료\. 실패 1건\./);
+    }
+  } finally { chmodSync(join(root, "dist/hooks/ralph"), 0o755); }
+  assert.deepEqual(snapshot(root), before);
+});
