@@ -691,3 +691,12 @@ test('--page refuses a path instead of a bare name, and a cwd that is not the va
   assert.equal(cli(['p.md', '--page', '--vault=1:2']).status, 2);
   assert.equal(cli(['p.md', '--page']).status, 2);
 });
+
+test('OMC profile: a quoted tag or source holding a comma stays one item through the canonical rewrite', () => {
+  const raw = omcPage({ tags: ['a, b', 'c'] }).replace('sources: []', 'sources: ["hooks/x.mjs (one, two)", "plain"]');
+  const { text } = canonicalizeText(raw, { profile: 'omc', model: emptyModel });
+  assert.ok(text.includes('tags: ["a, b", "c"]'), text);
+  assert.ok(text.includes('sources: ["hooks/x.mjs (one, two)", "plain"]'), text);
+  const fm = parseOmcFrontmatter(parseFrontmatter(text).map);
+  assert.deepEqual(fm.sources, ['hooks/x.mjs (one, two)', 'plain']);
+});
