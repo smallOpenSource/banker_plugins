@@ -597,7 +597,7 @@ test('a decisions.json or curate-input.json that is not UTF-8 stops with its nam
 test('a decisions.json saved with a BOM (Windows Notepad) is read, and a chat verdict keeps its other stages', () => {
   const dir = project();
   const rec = path.join(dir, 'decisions.json');
-  fs.writeFileSync(rec, `﻿${JSON.stringify({ clips: { updatedAt: 'x', scenes: [{ id: 's2', verdict: 'approve', chosen: 'clips/flight-2.mp4', rejected: [] }] } })}`);
+  fs.writeFileSync(rec, `\uFEFF${JSON.stringify({ clips: { updatedAt: 'x', scenes: [{ id: 's2', verdict: 'approve', chosen: 'clips/flight-2.mp4', rejected: [] }] } })}`);
   assert.equal(readDecisions(dir).clips.scenes[0].chosen, 'clips/flight-2.mp4');
   recordDecision(dir, { scene: '1', verdict: 'approve', take: '2' }, NOW);
   const all = JSON.parse(fs.readFileSync(rec, 'utf8'));

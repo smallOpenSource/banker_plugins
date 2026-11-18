@@ -174,8 +174,8 @@ test("a task.md that is not UTF-8 stops with its name and exit 1, and no page is
   assert.equal(main([dir], sink(), err), 1);
   assert.match(err.text, /^chain-report: .*task\.md 이 UTF-8 이 아님.*\n$/);
   assert.ok(!existsSync(join(dir, "index.html")), "no page with U+FFFD");
-  writeFileSync(join(dir, "task.md"), "﻿--auto 요청\n요청\n");
+  writeFileSync(join(dir, "task.md"), "\uFEFF--auto 요청\n요청\n");
   const html = readFileSync(writeReport(dir), "utf8");
-  assert.ok(!html.includes("﻿"), "the BOM is not on the page");
+  assert.ok(!html.includes("\uFEFF"), "the BOM is not on the page");
   assert.match(html, /--auto 요청/);
 });
