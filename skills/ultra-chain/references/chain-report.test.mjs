@@ -163,3 +163,19 @@ test("AC7 the head says how many reviewers (default, flag, raised) and a visual 
   assert.doesNotMatch(hostile, /<script/i);
   assert.doesNotMatch(renderReport({ run: RUN, task: null, events: EVENTS }), /<th>판정자<\/th>/, "a card without judges has no judge table");
 });
+
+// remains 0.29.0 C: a task.md that is not UTF-8 (cp949, a DRM-encrypted file) reached the page as U+FFFD with exit 0.
+test("a task.md that is not UTF-8 stops with its name and exit 1, and no page is written; a BOM is dropped", () => {
+  const { dir } = initRun({ base: "runs", cwd: fresh(), rand: "cccc" });
+  appendEvent(dir, { stage: "preflight", status: "started" });
+  writeFileSync(join(dir, "task.md"), Buffer.from([0xbf, 0xe4, 0xc3, 0xbb, 0x0a])); // 요청 in cp949
+  assert.throws(() => writeReport(dir), /task\.md 이 UTF-8 이 아님/);
+  const err = sink();
+  assert.equal(main([dir], sink(), err), 1);
+  assert.match(err.text, /^chain-report: .*task\.md 이 UTF-8 이 아님.*\n$/);
+  assert.ok(!existsSync(join(dir, "index.html")), "no page with U+FFFD");
+  writeFileSync(join(dir, "task.md"), "﻿--auto 요청\n요청\n");
+  const html = readFileSync(writeReport(dir), "utf8");
+  assert.ok(!html.includes("﻿"), "the BOM is not on the page");
+  assert.match(html, /--auto 요청/);
+});
