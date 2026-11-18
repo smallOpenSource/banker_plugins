@@ -244,6 +244,53 @@ function unwritable() {
 const blocked = unwritable();
 if (blocked) refuse([`[x] Cannot write ${blocked}; nothing changed. Fix the permission and re-run.`]);
 
+// 1b. The loader template is OMC's .txt file, written when Claude Code installed the plugin. A DRM on an
+//     air-gapped PC may encrypt .txt files; copying one would install an encrypted hud/omc-hud.mjs. So the
+//     template must be readable text: UTF-8, and no control character but tab, line feed, carriage return and
+//     form feed. If it is not, the same file is read from the OMC marketplace's git repository at the commit
+//     (or tag) the plugin was installed from: git keeps it as an object, not as a .txt file. Decided before
+//     the first write, so a refusal changes nothing.
+const TEMPLATE_REL = "scripts/lib/hud-wrapper-template.txt";
+function readableText(buf) {
+  let text;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch { return null; }
+  return /[\u0000-\u0008\u000B\u000E-\u001F\u007F]/.test(text) || !text.trim() ? null : buf;
+}
+// git with the variables that pick a repository dropped, so a run from inside a git hook reads only the marketplace.
+function gitShow(repo, spec) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|PREFIX|IMPLICIT_WORK_TREE)$/i.test(k)));
+  const r = spawnSync("git", ["-C", repo, "show", spec], { env, timeout: 10000, windowsHide: true, maxBuffer: 1 << 24 });
+  return r.status === 0 ? r.stdout : null;
+}
+// The refs to try, most exact first: the installed entry's commit for this folder, then the version's tag.
+function templateRefs(root) {
+  const refs = [];
+  try {
+    const entries = JSON.parse(readFileSync(join(CONFIG_DIR, "plugins", "installed_plugins.json"), "utf8")).plugins?.["oh-my-claudecode@omc"] || [];
+    const real = (p) => { try { return realpathSync(p); } catch { return p; } };
+    for (const e of entries) if (e?.installPath && real(e.installPath) === real(root) && /^[0-9a-f]{7,64}$/i.test(e.gitCommitSha || "")) refs.push(e.gitCommitSha);
+  } catch { /* no entry: the tag below */ }
+  let version = "";
+  try { version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version || ""; } catch { /* the folder name below */ }
+  if (!/^\d+\.\d+\.\d+/.test(version)) version = root.split(/[\\/]/).pop();
+  if (/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version)) refs.push(`v${version}`);
+  return refs;
+}
+function loaderSource(root) {
+  const file = join(root, ...TEMPLATE_REL.split("/"));
+  let buf;
+  try { buf = readFileSync(file); } catch (e) { return { error: `${file} (${e.code})` }; }
+  if (readableText(buf)) return { data: buf };
+  const repo = join(CONFIG_DIR, "plugins", "marketplaces", "omc");
+  for (const ref of existsSync(repo) ? templateRefs(root) : []) {
+    const got = gitShow(repo, `${ref}:${TEMPLATE_REL}`);
+    if (got && readableText(got)) return { data: got, note: `[!] ${file} is not readable text (a DRM may have encrypted it); using the same file from the OMC marketplace git repository at ${ref}` };
+  }
+  return { error: `${file} is not readable text (a DRM may have encrypted it), and the OMC marketplace git repository (${repo}) has no readable copy of it for this version` };
+}
+const loader = pluginRoot ? loaderSource(pluginRoot) : null;
+if (loader?.error && !existsSync(loaderDst)) refuse([`[x] ${loader.error}; nothing changed.`, "    Ask for a plain copy of OMC, or reinstall it where the DRM does not apply, and re-run."]);
+
 // The statusline runs or reads these on every refresh, so no other account may change them.
 const FILE_MODE = 0o644;
 function writeOwned(file, data) {
@@ -345,7 +392,12 @@ function installLoader() {
     log("[..] OMC plugin root not found; keeping existing hud/omc-hud.mjs");
     return;
   }
-  writeOwned(loaderDst, readFileSync(join(pluginRoot, "scripts", "lib", "hud-wrapper-template.txt")));
+  if (loader.error) {
+    log(`[!] ${loader.error}; keeping existing hud/omc-hud.mjs`);
+    return;
+  }
+  if (loader.note) log(loader.note);
+  writeOwned(loaderDst, loader.data);
   writeOwned(libDst, readFileSync(join(pluginRoot, "scripts", "lib", "config-dir.mjs")));
   log("[ok] OMC HUD loader installed from " + pluginRoot);
 }

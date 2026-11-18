@@ -264,6 +264,8 @@ try {
     ...['.txt', '.omc/progress.txt', 'progress.txt'].map((n) =>
       ['skills/omc-patch/scripts/drm-progress.mjs', n, 'the name the DRM patch replaces in OMC; it writes progress.md']),
     ['skills/setup-omc-hud/assets/apply-hud.mjs', 'hud-wrapper-template.txt', "OMC's HUD loader template, named by OMC; the installer only reads it"],
+    ...['scripts/lib/hud-wrapper-template.txt', '.txt'].map((n) =>
+      ['skills/setup-omc-hud/assets/apply-hud.mjs', n, "the same OMC template, read from OMC's git repository when a DRM encrypted the file"]),
     ...['cjdict.txt', 'laodict.txt', '//github.com/rober42539/lao-dictionary/laodict.txt', '//github.com/rober42539/lao-dictionary/LICENSE.txt', 'burmesedict.txt', 'FTL.TXT'].map((n) =>
       ['skills/video-gen/vendor/canvaskit/THIRD-PARTY-NOTICES.md', n, 'upstream ICU and FreeType license texts quoted as published; they name their own files']),
     ...['3d-intro-build', 'motion-graphic-make', 'ultra-chain'].map((s) =>
