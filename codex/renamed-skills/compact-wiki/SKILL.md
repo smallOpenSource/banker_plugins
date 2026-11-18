@@ -32,6 +32,25 @@ Codex 는 OMX 의 `omx wiki` CLI 로 `omx_wiki/` 를 다룬다. 답변·설명�
 ToolSearch(query="select:mcp__plugin_oh-my-claudecode_t__wiki_list,mcp__plugin_oh-my-claudecode_t__wiki_query,mcp__plugin_oh-my-claudecode_t__wiki_read,mcp__plugin_oh-my-claudecode_t__wiki_ingest,mcp__plugin_oh-my-claudecode_t__wiki_delete,mcp__plugin_oh-my-claudecode_t__wiki_lint")
 ```
 
+그다음 어느 경로로 쓸지 고른다. 규칙은 append_wiki 0단계와 같다.
+- 스키마 6개가 모두 돌아오면 OMC MCP 도구를 쓴다.
+- 아래 중 하나면 banker 대체 경로를 쓴다.
+  - 스키마가 하나라도 돌아오지 않음
+  - 세션에 `plugin:oh-my-claudecode:t` 연결 실패 안내가 있음
+  - 첫 호출 `wiki_list()` 가 연결 오류로 끝남
+- 대체 경로는 append_wiki 스킬 폴더의 `wiki.mjs` 다. OMC 5.8.4 의 위키 도구 7개를 같은 이름, 같은 입력, 같은 `.omc/wiki`, 같은 잠금으로 다시 구현했다.
+  - 위치: Claude Code 플러그인과 Codex 플러그인 길 `<S>/../append_wiki/wiki.mjs`, Codex npm 길 `<S>/../banker-append_wiki/wiki.mjs`(`<S>` 는 이 스킬 폴더).
+  - 아래 단계의 `wiki_xxx({...})` 는 `node "<S>/../append_wiki/wiki.mjs" wiki_xxx --input-file <같은 JSON 을 쓴 파일>` 이다. 짧은 JSON 은 `--input '<json>'` 도 된다. 병합본처럼 긴 본문은 파일로 넘긴다.
+  - 종료 코드는 0 성공, 1 도구 오류(출력 글이 이유), 2 사용법 오류다.
+  - Bash 의 지금 폴더를 세션 폴더로 본다. 부르기 전에 지금 폴더가 이 세션의 프로젝트 안인지 확인한다.
+  - OMC 와 다르게 멈추는 곳이 셋 있다. 셋 다 1 로 끝나고 파일을 바꾸지 않는다. 멈추면 위키 파일을 손으로 고치지 말고 보고한다.
+    - 위키에 `schemaVersion` 이 1 보다 큰 페이지가 있음: ingest 와 delete 를 하지 않음
+    - 정본 제목이 가리키는 페이지 파일이 있는데 프론트매터를 읽을 수 없음
+    - `wiki_delete` 로 `index.md`, `log.md`, `environment.md` 를 지우려 함
+- 쓰기(`wiki_ingest`, `wiki_delete`)가 연결 오류로 끝나면 바로 다시 하지 않는다. 위키 폴더의 `log.md` 끝에 호출한 뒤의 시각으로 그 항목(`Created new page "<title>"`, `Updated "<title>" with new content`, `Deleted page "<file>"`)이 있는지 먼저 본다. 있으면 이미 된 것이다. ingest 를 두 번 하면 같은 Update 절이 둘 생긴다.
+- 한 번 대체 경로로 바꾸면 이 실행이 끝날 때까지 대체 경로만 쓴다. 8단계 보고에 어느 경로로 썼는지(OMC MCP 또는 banker 대체) 적는다.
+- Codex 는 지금처럼 아래 `omx wiki` 를 쓴다.
+
 **Codex:** `wiki_*` MCP 도 ToolSearch 도 없다. `omx wiki` CLI 가 같은 도구 이름과 입력을 받는다(`wiki_list`, `wiki_query`, `wiki_read`, `wiki_ingest`, `wiki_delete`, `wiki_lint`).
 ```bash
 omx wiki wiki_list --json
@@ -102,6 +121,7 @@ Codex 는 `omx_wiki/` 를 `.omx/` 아래로 떠 둔다(`mkdir -p .omx && cp -r o
 ### 8) 보고 (한글)
 - 병합/supersede 매핑(어느 페이지 → 어느 정본), 삭제된 슬러그, 리포인트한 링크.
 - before→after: 페이지 수·총 크기·lint 결과.
+- 쓴 경로: OMC MCP 도구인지 banker 대체(`wiki.mjs`)인지.
 - **백업 위치**(Claude Code `.omc/wiki.bak-*`, Codex `.omx/wiki.bak-*`, 실제로 만든 경로)와 "이상 없으면 삭제해도 됨" 안내.
 
 ## 작성 원칙 (append-wiki 와 정합)

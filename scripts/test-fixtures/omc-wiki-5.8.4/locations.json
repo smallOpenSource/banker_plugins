@@ -1,0 +1,93 @@
+{
+ "source": "OMC 5.8.4, written by scripts/gen-omc-wiki-golden.mjs",
+ "cases": [
+  {
+   "name": "git-root",
+   "dir": "<BASE>/repo/.omc/wiki"
+  },
+  {
+   "name": "git-subdir-cwd",
+   "dir": "<BASE>/repo/.omc/wiki"
+  },
+  {
+   "name": "git-wd-subdir",
+   "dir": "<BASE>/repo/.omc/wiki"
+  },
+  {
+   "name": "git-wd-relative",
+   "dir": "<BASE>/repo/.omc/wiki"
+  },
+  {
+   "name": "worktree-wd",
+   "dir": "<BASE>/wt/.omc/wiki"
+  },
+  {
+   "name": "worktree-cwd",
+   "dir": "<BASE>/wt/.omc/wiki"
+  },
+  {
+   "name": "submodule-cwd",
+   "dir": "<BASE>/super/.omc/wiki"
+  },
+  {
+   "name": "marker",
+   "dir": "<BASE>/ws/.omc/wiki"
+  },
+  {
+   "name": "marker-sensitive",
+   "dir": "<BASE>/ws/child/.omc/wiki"
+  },
+  {
+   "name": "marker-disabled",
+   "dir": "<BASE>/ws/child/.omc/wiki"
+  },
+  {
+   "name": "marker-non-git",
+   "dir": "<BASE>/ws2/.omc/wiki"
+  },
+  {
+   "name": "non-git",
+   "dir": "<BASE>/home/.omc/wiki"
+  },
+  {
+   "name": "state-remote",
+   "dir": "<BASE>/state/remote-repo-da37af38784f84ee/wiki"
+  },
+  {
+   "name": "state-no-remote",
+   "dir": "<BASE>/state/repo-<sha16:repo>/wiki"
+  },
+  {
+   "name": "state-worktree",
+   "dir": "<BASE>/state/repo-<sha16:repo>/wiki"
+  },
+  {
+   "name": "state-submodule",
+   "dir": "<BASE>/state/mod-<sha16:modsrc>/wiki"
+  },
+  {
+   "name": "state-marker-id",
+   "dir": "<BASE>/state/my_team_ws-52b5e9c242737e88/wiki"
+  },
+  {
+   "name": "state-marker-noid",
+   "dir": "<BASE>/state/ws-<sha16:ws>/wiki"
+  },
+  {
+   "name": "state-non-git",
+   "dir": "<BASE>/state/non-git/wiki"
+  },
+  {
+   "name": "foreign",
+   "error": "workingDirectory '<BASE>/other' belongs to a different repository than 'repo' and was not used. Cross-repository access is not permitted; pass a path inside the current repository or start the session there."
+  },
+  {
+   "name": "outside-non-git",
+   "error": "workingDirectory '<BASE>/plain2' is outside the trusted worktree root 'plain'."
+  },
+  {
+   "name": "missing-wd",
+   "error": "workingDirectory '<BASE>/repo/nope' git probe failed and was not used. Cross-repository access is not permitted; pass a path inside the current repository or start the session there."
+  }
+ ]
+}

@@ -65,6 +65,17 @@ ls "$W"/*.md | grep -vE '/(index|log|environment)\.md$'
 
 `wiki_lint` 는 열거가 아니라 **대조**에 쓴다(4단계). `wiki_list` 와는 대조조차 하지 마라. stale 한 쪽이라 맞으면 헛된 안심을, 틀리면 혼란만 준다.
 
+**Claude Code 에서 OMC MCP 가 뜨지 않을 때의 `wiki_lint`.** 경로 고르기는 append_wiki 0단계와 같다. ToolSearch 로 `mcp__plugin_oh-my-claudecode_t__wiki_lint` 를 고르고, 스키마가 돌아오지 않거나, 세션에 `plugin:oh-my-claudecode:t` 연결 실패 안내가 있거나, 호출이 연결 오류로 끝나면 append_wiki 의 `wiki.mjs` 를 쓴다.
+
+```bash
+node "<S>/../append_wiki/wiki.mjs" wiki_lint      # <S> 는 이 스킬 폴더
+```
+
+- 위치: Claude Code 플러그인과 Codex 플러그인 길 `<S>/../append_wiki/wiki.mjs`, Codex npm 길 `<S>/../banker-append_wiki/wiki.mjs`. Codex 는 지금처럼 `omx wiki` 를 쓴다.
+- OMC 5.8.4 의 `wiki_lint` 와 같은 보고를 같은 글로 낸다.
+- `wiki_lint` 는 어느 경로든 `log.md` 에 한 항목을 덧붙인다. 0단계 지문은 예약파일 3종을 빼고 재므로 어긋나지 않는다.
+- 보고에 어느 경로로 대조했는지(OMC MCP 또는 banker 대체) 적는다.
+
 ## 읽기 전용 (협상 대상 아님)
 
 이 스킬은 **위키에 쓰지 않는다.** 예의가 아니라 쓰기가 손실을 내기 때문이다.

@@ -1,0 +1,1352 @@
+{
+ "source": "OMC 5.8.4, written by scripts/gen-omc-wiki-golden.mjs",
+ "scenarios": {
+  "main": {
+   "digest": "0bf5143ee67684a9",
+   "steps": [
+    {
+     "result": {
+      "text": "Wiki is empty. (searched 0 pages in proj/.omc/wiki) Use wiki_add or wiki_ingest to create pages.",
+      "isError": false
+     },
+     "files": {}
+    },
+    {
+     "result": {
+      "text": "No wiki pages match \"anything\". (searched 0 pages in proj/.omc/wiki)",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/log.md": "1e05e015ce353c62"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki lint: 0 pages, no issues found.",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/log.md": "6a3f729edf5ca46d"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: auth-architecture.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "2bed4e608321ed1c",
+      "wiki/index.md": "e9040120dc5e9617",
+      "wiki/log.md": "f1a730b5bbd166ec"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: none\n- Updated: auth-architecture.md\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/index.md": "8699d17481a95bbc",
+      "wiki/log.md": "5bc79ef334714ce9"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: session-store.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/index.md": "e4547cc578b885ff",
+      "wiki/log.md": "42c5b648e38b8767",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": null,
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/index.md": "e4547cc578b885ff",
+      "wiki/log.md": "42c5b648e38b8767",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: login-flow.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/index.md": "b28e36c5763d358c",
+      "wiki/log.md": "0226e6c0aea15e20",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: page-0dd0c789.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/index.md": "5f3f7b7b01825c9f",
+      "wiki/log.md": "e22cb3fb6f5949fe",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: claude-code-context-usage-signals-and-compaction-automation-ceil.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/index.md": "15aaed53d6944702",
+      "wiki/log.md": "0f6e69777d5506d7",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: quote-and-back-slash-line-two.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/index.md": "1ea99b0c01c6af13",
+      "wiki/log.md": "20aa1a0ff78da3ce",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": null,
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/index.md": "1ea99b0c01c6af13",
+      "wiki/legacy-crlf.md": "efcaf29bc28b2f52",
+      "wiki/log.md": "20aa1a0ff78da3ce",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: none\n- Updated: legacy-crlf.md\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/index.md": "013dd654b4452855",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "81f152869ca4e620",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": null,
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/index.md": "013dd654b4452855",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "81f152869ca4e620",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "9a29ee0efe977d4d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: none\n- Updated: quoted-items.md\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/index.md": "e516fb31f3f2047b",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "65b483238a3672c7",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: conf-medium.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-medium.md": "bd69b135d01337a1",
+      "wiki/index.md": "510fa4876fe21ba1",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "a1060afc35ad4795",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: none\n- Updated: conf-medium.md\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-medium.md": "eab9754d3b480ea3",
+      "wiki/index.md": "99e757756745c484",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "a0c74b4a9df9afdc",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: none\n- Updated: conf-medium.md\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "ef17b87bbd885292",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "af937879f2c99a67",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: conf-low.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "f03094037b340a7a",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "38633d7e45b6eac7",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "97acd9a6e88746af",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: none\n- Updated: conf-low.md\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "7f461c3671ceb357",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "bc2b65986f9b12ac",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page created: quick-note.md\nPath: .omc/wiki/quick-note.md",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "90aeae9ed19f2e4d",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "94e393ec89b173d9",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Page \"quick-note.md\" already exists. Use wiki_ingest to merge content into it, or wiki_delete to remove it first.",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "90aeae9ed19f2e4d",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "94e393ec89b173d9",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page created: typed-note.md\nPath: .omc/wiki/typed-note.md",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Error ingesting into wiki: Cannot write to reserved wiki file: index.md",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Error ingesting into wiki: Cannot write to reserved wiki file: environment.md",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Auth Architecture\n**Category:** architecture | **Confidence:** high | **Updated:** 2026-01-01T04:00:00.000Z\n**Tags:** auth, Auth, login, jwt\n**Links:** session-store.md, session-store-the-store.md, token-refresh.md, login-flow.md\n**Sources:** src/auth.ts, notes, \"quoted\", docs/auth.md\n\n# Auth Architecture\n\nThis first line is deliberately longer than eighty characters so the index summary gets cut short.\n\nTokens live in [[Session Store]], see [[Session Store|the store]] and [[Token#Refresh]].\n- step one\n- step two\n\n---\n\n## Update (2026-01-01T04:00:00.000Z)\n\nSecond pass: refresh rotates. See [[Login Flow]].\n",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Auth Architecture\n**Category:** architecture | **Confidence:** high | **Updated:** 2026-01-01T04:00:00.000Z\n**Tags:** auth, Auth, login, jwt\n**Links:** session-store.md, session-store-the-store.md, token-refresh.md, login-flow.md\n**Sources:** src/auth.ts, notes, \"quoted\", docs/auth.md\n\n# Auth Architecture\n\nThis first line is deliberately longer than eighty characters so the index summary gets cut short.\n\nTokens live in [[Session Store]], see [[Session Store|the store]] and [[Token#Refresh]].\n- step one\n- step two\n\n---\n\n## Update (2026-01-01T04:00:00.000Z)\n\nSecond pass: refresh rotates. See [[Login Flow]].\n",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page not found: nope.md",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page not found: ../secret.md",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Legacy CRLF\n**Category:** reference | **Confidence:** medium | **Updated:** 2026-01-01T12:00:00.000Z\n**Tags:** old, two, parts, new\n\n# Legacy CRLF\n\nOld body.\n\n---\n\n## Update (2026-01-01T12:00:00.000Z)\n\nNew body after CRLF.\n",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Quoted 'Items'\n**Category:** pattern | **Confidence:** high | **Updated:** 2026-01-01T14:00:00.000Z\n**Tags:** x, y z, w\n**Sources:** a, b, it's, c\"d, e\n\n# Quoted\n\nSeeded without created, updated or schemaVersion.\n\n---\n\n## Update (2026-01-01T14:00:00.000Z)\n\nMerged into the quoted page.\n",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page not found: index.md",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b8adbf36f5812e55",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"auth\"\n\n2 results:\n\n### 1. Auth Architecture (architecture, high)\n**File:** auth-architecture.md | **Tags:** auth, Auth, login, jwt | **Score:** 8\n**Snippet:** # Auth Architecture This first line is deliberately longer than eighty characters so...\n\n### 2. Session Store (pattern, medium)\n**File:** session-store.md | **Tags:** auth, cache | **Score:** 3\n**Snippet:** ...Store Backed by redis. Links back to [[Auth Architecture]].",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "3405587ac4f67ebc",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"session store\"\n\n2 results:\n\n### 1. Session Store (pattern, medium)\n**File:** session-store.md | **Tags:** auth, cache | **Score:** 7\n**Snippet:** # Session Store Backed by redis. Links back to [[Auth Architecture]].\n\n### 2. Auth Architecture (architecture, high)\n**File:** auth-architecture.md | **Tags:** auth, Auth, login, jwt | **Score:** 2\n**Snippet:** ...mmary gets cut short. Tokens live in [[Session Store]], see [[Session Store|the store]] and [[Token#Refresh]]. - step one - st...",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "89418845d5422bd3",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"\"\n\n12 results:\n\n### 1. Auth Architecture (architecture, high)\n**File:** auth-architecture.md | **Tags:** auth, Auth, login, jwt | **Score:** 5\n**Snippet:** # Auth Architecture\n\n### 2. Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words (reference, medium)\n**File:** claude-code-context-usage-signals-and-compaction-automation-ceil.md | **Tags:**  | **Score:** 5\n**Snippet:** # Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words\n\n### 3. Conf Low (reference, medium)\n**File:** conf-low.md | **Tags:**  | **Score:** 5\n**Snippet:** # Conf Low\n\n### 4. Conf Medium (reference, high)\n**File:** conf-medium.md | **Tags:**  | **Score:** 5\n**Snippet:** # Conf Medium\n\n### 5. Legacy CRLF (reference, medium)\n**File:** legacy-crlf.md | **Tags:** old, two, parts, new | **Score:** 5\n**Snippet:** # Legacy CRLF\n\n### 6. Login Flow (decision, medium)\n**File:** login-flow.md | **Tags:** flow | **Score:** 5\n**Snippet:** # Login Flow\n\n### 7. 한글 제목 (convention, medium)\n**File:** page-0dd0c789.md | **Tags:** 한글, 위키 | **Score:** 5\n**Snippet:** # 한글 제목\n\n### 8. Quick Note (reference, medium)\n**File:** quick-note.md | **Tags:**  | **Score:** 5\n**Snippet:** # Quick Note\n\n### 9. Quote \"and\" back\\slash\nline two (reference, medium)\n**File:** quote-and-back-slash-line-two.md | **Tags:** odd \"tag\" | **Score:** 5\n**Snippet:** # Quote \"and\" back\\slash\n\n### 10. Quoted 'Items' (pattern, high)\n**File:** quoted-items.md | **Tags:** x, y z, w | **Score:** 5\n**Snippet:** # Quoted\n\n### 11. Session Store (pattern, medium)\n**File:** session-store.md | **Tags:** auth, cache | **Score:** 5\n**Snippet:** # Session Store\n\n### 12. Typed Note (environment, medium)\n**File:** typed-note.md | **Tags:** t1 | **Score:** 5\n**Snippet:** # Typed Note",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "350794c1b549cfa2",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"flow\"\n\n2 results:\n\n### 1. Login Flow (decision, medium)\n**File:** login-flow.md | **Tags:** flow | **Score:** 11\n**Snippet:** # Login Flow Login goes through the flow.\n\n### 2. Auth Architecture (architecture, high)\n**File:** auth-architecture.md | **Tags:** auth, Auth, login, jwt | **Score:** 4\n**Snippet:** ...cond pass: refresh rotates. See [[Login Flow]].",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "b287fb5f0ddadb77",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"한글\"\n\n1 results:\n\n### 1. 한글 제목 (convention, medium)\n**File:** page-0dd0c789.md | **Tags:** 한글, 위키 | **Score:** 14\n**Snippet:** # 한글 제목 한글 본문입니다. 검색 테스트.",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "5f84ace2d9c70ad3",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"검색\"\n\n1 results:\n\n### 1. 한글 제목 (convention, medium)\n**File:** page-0dd0c789.md | **Tags:** 한글, 위키 | **Score:** 3\n**Snippet:** # 한글 제목 한글 본문입니다. 검색 테스트.",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "e49dc5bd6be55721",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"auth\"\n\n1 results:\n\n### 1. Session Store (pattern, medium)\n**File:** session-store.md | **Tags:** auth, cache | **Score:** 3\n**Snippet:** ...Store Backed by redis. Links back to [[Auth Architecture]].",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "7a7122c44ec37db3",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"auth\"\n\n1 results:\n\n### 1. Auth Architecture (architecture, high)\n**File:** auth-architecture.md | **Tags:** auth, Auth, login, jwt | **Score:** 8\n**Snippet:** # Auth Architecture This first line is deliberately longer than eighty characters so...",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "d2cb9cfd90a47abc",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "No wiki pages match \"zzzz\". (searched 12 pages in proj/.omc/wiki)",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "d9bdb808078919ae",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "No wiki pages match \"Привет мир\". (searched 12 pages in proj/.omc/wiki)",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "79cea6b458c0de45",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "# Wiki Index\n\n> 12 pages | Last updated: 2026-01-01T22:00:00.000Z\n\n## architecture\n\n- [Auth Architecture](auth-architecture.md) — # Auth Architecture\n\n## convention\n\n- [한글 제목](page-0dd0c789.md) — # 한글 제목\n\n## decision\n\n- [Login Flow](login-flow.md) — # Login Flow\n\n## environment\n\n- [Typed Note](typed-note.md) — # Typed Note\n\n## pattern\n\n- [Quoted 'Items'](quoted-items.md) — # Quoted\n- [Session Store](session-store.md) — # Session Store\n\n## reference\n\n- [Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words](claude-code-context-usage-signals-and-compaction-automation-ceil.md) — # Claude Code Context Usage Signals And Compaction Automation Ceiling Extra W...\n- [Conf Low](conf-low.md) — # Conf Low\n- [Conf Medium](conf-medium.md) — # Conf Medium\n- [Legacy CRLF](legacy-crlf.md) — # Legacy CRLF\n- [Quick Note](quick-note.md) — # Quick Note\n- [Quote \"and\" back\\slash\nline two](quote-and-back-slash-line-two.md) — # Quote \"and\" back\\slash\n",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "0a0a0b55f2bbb8e5",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "79cea6b458c0de45",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: big-page.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/index.md": "9258d3111e7136e1",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "f8b6910bfeb9391f",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: edge-page.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/index.md": "643c07370c1dcd0d",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "f7beed7b5139ae99",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/index.md": "601321613acf44a9",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "40ab781d9ae60582",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: cache-layer-alpha.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/index.md": "3274380c54a24255",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "9789cf1d5e0f3479",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: cache-layer-beta.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/cache-layer-beta.md": "6d122ecec9e7c870",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/index.md": "ae1c0ffbdf61bb67",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "d6dd430379a32cc2",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quick-note.md": "fb03fc89a9f21932",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Deleted wiki page: quick-note.md",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/cache-layer-beta.md": "6d122ecec9e7c870",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/index.md": "0a9e39e06986c95b",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "ae106eef348c65ba",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page not found: quick-note.md",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/cache-layer-beta.md": "6d122ecec9e7c870",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/index.md": "0a9e39e06986c95b",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "ae106eef348c65ba",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page not found: ../outside.md",
+      "isError": true
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/cache-layer-beta.md": "6d122ecec9e7c870",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/index.md": "0a9e39e06986c95b",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "ae106eef348c65ba",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: fresh-page.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/cache-layer-beta.md": "6d122ecec9e7c870",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/fresh-page.md": "9da2c4ef00277f28",
+      "wiki/index.md": "1eb679904ff75a77",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "f9c52dee6ca1ad86",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Lint Report\n\n**17 pages**, 37 issues:\n\n- [INFO] orphan: No other pages link to \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n- [WARNING] stale: \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\" not updated in 73 days\n- [WARNING] oversized: \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\" is 49.0KB — consider splitting into smaller pages\n- [WARNING] stale: \"Auth Architecture\" not updated in 74 days\n- [ERROR] broken-ref: Broken link to \"session-store-the-store.md\" from \"Auth Architecture\"\n- [ERROR] broken-ref: Broken link to \"token-refresh.md\" from \"Auth Architecture\"\n- [INFO] orphan: No other pages link to \"Big Page\"\n- [WARNING] stale: \"Big Page\" not updated in 73 days\n- [WARNING] oversized: \"Big Page\" is 10.1KB — consider splitting into smaller pages\n- [INFO] orphan: No other pages link to \"Cache Layer Alpha\"\n- [WARNING] stale: \"Cache Layer Alpha\" not updated in 73 days\n- [INFO] orphan: No other pages link to \"Cache Layer Beta\"\n- [WARNING] stale: \"Cache Layer Beta\" not updated in 73 days\n- [INFO] low-confidence: \"Cache Layer Beta\" has low confidence — consider verifying or removing\n- [INFO] orphan: No other pages link to \"Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words\"\n- [WARNING] stale: \"Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words\" not updated in 74 days\n- [INFO] orphan: No other pages link to \"Conf Low\"\n- [WARNING] stale: \"Conf Low\" not updated in 74 days\n- [INFO] orphan: No other pages link to \"Conf Medium\"\n- [WARNING] stale: \"Conf Medium\" not updated in 74 days\n- [INFO] orphan: No other pages link to \"Edge Page\"\n- [WARNING] stale: \"Edge Page\" not updated in 73 days\n- [INFO] orphan: No other pages link to \"Fresh Page\"\n- [INFO] orphan: No other pages link to \"Legacy CRLF\"\n- [WARNING] stale: \"Legacy CRLF\" not updated in 74 days\n- [WARNING] stale: \"Login Flow\" not updated in 74 days\n- [INFO] orphan: No other pages link to \"한글 제목\"\n- [WARNING] stale: \"한글 제목\" not updated in 74 days\n- [INFO] orphan: No other pages link to \"Quote \"and\" back\\slash\nline two\"\n- [WARNING] stale: \"Quote \"and\" back\\slash\nline two\" not updated in 74 days\n- [INFO] orphan: No other pages link to \"Quoted 'Items'\"\n- [WARNING] stale: \"Quoted 'Items'\" not updated in 74 days\n- [WARNING] stale: \"Session Store\" not updated in 74 days\n- [INFO] orphan: No other pages link to \"Typed Note\"\n- [WARNING] stale: \"Typed Note\" not updated in 74 days\n- [WARNING] structural-contradiction: Conflicting confidence levels for related pages: \"Cache Layer Alpha\", \"Cache Layer Beta\"\n- [INFO] structural-contradiction: Tag \"shared\" appears in pages with different categories: architecture, pattern\n\n**Summary:** 14 orphan, 16 stale, 2 broken refs, 2 contradictions, 2 oversized",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/cache-layer-beta.md": "6d122ecec9e7c870",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/fresh-page.md": "9da2c4ef00277f28",
+      "wiki/index.md": "1eb679904ff75a77",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "f15bafceab862e7d",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    },
+    {
+     "result": {
+      "text": "# Wiki Index\n\n> 17 pages | Last updated: 2026-03-16T00:00:00.000Z\n\n## architecture\n\n- [Auth Architecture](auth-architecture.md) — # Auth Architecture\n- [Cache Layer Alpha](cache-layer-alpha.md) — # Cache Layer Alpha\n\n## convention\n\n- [한글 제목](page-0dd0c789.md) — # 한글 제목\n\n## decision\n\n- [AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA](aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md) — # AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA...\n- [Login Flow](login-flow.md) — # Login Flow\n\n## environment\n\n- [Typed Note](typed-note.md) — # Typed Note\n\n## pattern\n\n- [Cache Layer Beta](cache-layer-beta.md) — # Cache Layer Beta\n- [Quoted 'Items'](quoted-items.md) — # Quoted\n- [Session Store](session-store.md) — # Session Store\n\n## reference\n\n- [Big Page](big-page.md) — # Big Page\n- [Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words](claude-code-context-usage-signals-and-compaction-automation-ceil.md) — # Claude Code Context Usage Signals And Compaction Automation Ceiling Extra W...\n- [Conf Low](conf-low.md) — # Conf Low\n- [Conf Medium](conf-medium.md) — # Conf Medium\n- [Edge Page](edge-page.md) — # Edge Page\n- [Fresh Page](fresh-page.md) — # Fresh Page\n- [Legacy CRLF](legacy-crlf.md) — # Legacy CRLF\n- [Quote \"and\" back\\slash\nline two](quote-and-back-slash-line-two.md) — # Quote \"and\" back\\slash\n",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "22444fcb61bc408a",
+      "wiki/auth-architecture.md": "d63237fdaabc3a01",
+      "wiki/big-page.md": "f7f5b91c99bad0c6",
+      "wiki/cache-layer-alpha.md": "6db93f88667a91de",
+      "wiki/cache-layer-beta.md": "6d122ecec9e7c870",
+      "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "c97defadae36c4df",
+      "wiki/conf-low.md": "8d21d9aa7dd375f9",
+      "wiki/conf-medium.md": "2c8677d443fdffe3",
+      "wiki/edge-page.md": "1f9deb07dfc28c34",
+      "wiki/fresh-page.md": "9da2c4ef00277f28",
+      "wiki/index.md": "1eb679904ff75a77",
+      "wiki/legacy-crlf.md": "70c25a54256018fb",
+      "wiki/log.md": "f15bafceab862e7d",
+      "wiki/login-flow.md": "99612106546b21bc",
+      "wiki/page-0dd0c789.md": "71bc3ce8f0edaf4e",
+      "wiki/quote-and-back-slash-line-two.md": "43aa86e07a336d26",
+      "wiki/quoted-items.md": "14e3c7c1c79d056d",
+      "wiki/session-store.md": "34cf2e7876b78b13",
+      "wiki/typed-note.md": "8d53b708e43d68a4"
+     }
+    }
+   ],
+   "final": {
+    ".gitignore": "wiki/\n",
+    "wiki/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md": "---\ntitle: \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\ntags: [\"tag0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag1zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag2zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag3zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag4zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag5zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag6zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag7zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag8zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag9zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag10zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag11zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag12zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag13zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag14zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag15zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag16zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag17zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag18zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\", \"tag19zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"]\ncreated: 2026-01-02T15:00:00.000Z\nupdated: 2026-01-02T15:00:00.000Z\nsources: [\"src0ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src1ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src2ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src3ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src4ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src5ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src6ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src7ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src8ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\", \"src9ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\"]\nlinks: []\ncategory: decision\nconfidence: medium\nschemaVersion: 1\n---\n\n# AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\nmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm\n",
+    "wiki/auth-architecture.md": "---\ntitle: \"Auth Architecture\"\ntags: [\"auth\", \"Auth\", \"login\", \"jwt\"]\ncreated: 2026-01-01T03:00:00.000Z\nupdated: 2026-01-01T04:00:00.000Z\nsources: [\"src/auth.ts\", \"notes, \\\"quoted\\\"\", \"docs/auth.md\"]\nlinks: [\"session-store.md\", \"session-store-the-store.md\", \"token-refresh.md\", \"login-flow.md\"]\ncategory: architecture\nconfidence: high\nschemaVersion: 1\n---\n\n# Auth Architecture\n\nThis first line is deliberately longer than eighty characters so the index summary gets cut short.\n\nTokens live in [[Session Store]], see [[Session Store|the store]] and [[Token#Refresh]].\n- step one\n- step two\n\n---\n\n## Update (2026-01-01T04:00:00.000Z)\n\nSecond pass: refresh rotates. See [[Login Flow]].\n",
+    "wiki/big-page.md": "---\ntitle: \"Big Page\"\ntags: []\ncreated: 2026-01-02T13:00:00.000Z\nupdated: 2026-01-02T13:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Big Page\n\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+    "wiki/cache-layer-alpha.md": "---\ntitle: \"Cache Layer Alpha\"\ntags: [\"shared\"]\ncreated: 2026-01-02T16:00:00.000Z\nupdated: 2026-01-02T16:00:00.000Z\nsources: []\nlinks: []\ncategory: architecture\nconfidence: high\nschemaVersion: 1\n---\n\n# Cache Layer Alpha\n\nCache Layer Alpha body.\n",
+    "wiki/cache-layer-beta.md": "---\ntitle: \"Cache Layer Beta\"\ntags: [\"shared\"]\ncreated: 2026-01-02T17:00:00.000Z\nupdated: 2026-01-02T17:00:00.000Z\nsources: []\nlinks: []\ncategory: pattern\nconfidence: low\nschemaVersion: 1\n---\n\n# Cache Layer Beta\n\nCache Layer Beta body.\n",
+    "wiki/claude-code-context-usage-signals-and-compaction-automation-ceil.md": "---\ntitle: \"Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words\"\ntags: []\ncreated: 2026-01-01T09:00:00.000Z\nupdated: 2026-01-01T09:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words\n\nClaude Code Context Usage Signals And Compaction Automation Ceiling Extra Words body.\n",
+    "wiki/conf-low.md": "---\ntitle: \"Conf Low\"\ntags: []\ncreated: 2026-01-01T18:00:00.000Z\nupdated: 2026-01-01T19:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Conf Low\n\nConf Low body.\n\n---\n\n## Update (2026-01-01T19:00:00.000Z)\n\nConf Low body.\n",
+    "wiki/conf-medium.md": "---\ntitle: \"Conf Medium\"\ntags: []\ncreated: 2026-01-01T15:00:00.000Z\nupdated: 2026-01-01T17:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: high\nschemaVersion: 1\n---\n\n# Conf Medium\n\nConf Medium body.\n\n---\n\n## Update (2026-01-01T16:00:00.000Z)\n\nConf Medium body.\n\n---\n\n## Update (2026-01-01T17:00:00.000Z)\n\nConf Medium body.\n",
+    "wiki/edge-page.md": "---\ntitle: \"Edge Page\"\ntags: []\ncreated: 2026-01-02T14:00:00.000Z\nupdated: 2026-01-02T14:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Edge Page\n\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n",
+    "wiki/fresh-page.md": "---\ntitle: \"Fresh Page\"\ntags: []\ncreated: 2026-03-16T00:00:00.000Z\nupdated: 2026-03-16T00:00:00.000Z\nsources: []\nlinks: [\"auth-architecture.md\"]\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Fresh Page\n\nUpdated a day before the lint. [[Auth Architecture]]\n",
+    "wiki/index.md": "# Wiki Index\n\n> 17 pages | Last updated: 2026-03-16T00:00:00.000Z\n\n## architecture\n\n- [Auth Architecture](auth-architecture.md) — # Auth Architecture\n- [Cache Layer Alpha](cache-layer-alpha.md) — # Cache Layer Alpha\n\n## convention\n\n- [한글 제목](page-0dd0c789.md) — # 한글 제목\n\n## decision\n\n- [AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA](aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md) — # AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA...\n- [Login Flow](login-flow.md) — # Login Flow\n\n## environment\n\n- [Typed Note](typed-note.md) — # Typed Note\n\n## pattern\n\n- [Cache Layer Beta](cache-layer-beta.md) — # Cache Layer Beta\n- [Quoted 'Items'](quoted-items.md) — # Quoted\n- [Session Store](session-store.md) — # Session Store\n\n## reference\n\n- [Big Page](big-page.md) — # Big Page\n- [Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words](claude-code-context-usage-signals-and-compaction-automation-ceil.md) — # Claude Code Context Usage Signals And Compaction Automation Ceiling Extra W...\n- [Conf Low](conf-low.md) — # Conf Low\n- [Conf Medium](conf-medium.md) — # Conf Medium\n- [Edge Page](edge-page.md) — # Edge Page\n- [Fresh Page](fresh-page.md) — # Fresh Page\n- [Legacy CRLF](legacy-crlf.md) — # Legacy CRLF\n- [Quote \"and\" back\\slash\nline two](quote-and-back-slash-line-two.md) — # Quote \"and\" back\\slash\n",
+    "wiki/legacy-crlf.md": "---\ntitle: \"Legacy CRLF\"\ntags: [\"old\", \"two, parts\", \"new\"]\ncreated: 2025-12-01T00:00:00.000Z\nupdated: 2026-01-01T12:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Legacy CRLF\n\nOld body.\n\n---\n\n## Update (2026-01-01T12:00:00.000Z)\n\nNew body after CRLF.\n",
+    "wiki/log.md": "# Wiki Log\n\n## [2026-01-01T01:00:00.000Z] query\n- **Pages:** none\n- **Summary:** Query \"anything\" → 0 results (of 0 total)\n\n## [2026-01-01T02:00:00.000Z] lint\n- **Pages:** none\n- **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)\n\n## [2026-01-01T03:00:00.000Z] ingest\n- **Pages:** auth-architecture.md\n- **Summary:** Created new page \"Auth Architecture\"\n\n## [2026-01-01T04:00:00.000Z] ingest\n- **Pages:** auth-architecture.md\n- **Summary:** Updated \"Auth Architecture\" with new content\n\n## [2026-01-01T05:00:00.000Z] ingest\n- **Pages:** session-store.md\n- **Summary:** Created new page \"Session Store\"\n\n## [2026-01-01T07:00:00.000Z] ingest\n- **Pages:** login-flow.md\n- **Summary:** Created new page \"Login Flow\"\n\n## [2026-01-01T08:00:00.000Z] ingest\n- **Pages:** page-0dd0c789.md\n- **Summary:** Created new page \"한글 제목\"\n\n## [2026-01-01T09:00:00.000Z] ingest\n- **Pages:** claude-code-context-usage-signals-and-compaction-automation-ceil.md\n- **Summary:** Created new page \"Claude Code Context Usage Signals And Compaction Automation Ceiling Extra Words\"\n\n## [2026-01-01T10:00:00.000Z] ingest\n- **Pages:** quote-and-back-slash-line-two.md\n- **Summary:** Created new page \"Quote \"and\" back\\slash\nline two\"\n\n## [2026-01-01T12:00:00.000Z] ingest\n- **Pages:** legacy-crlf.md\n- **Summary:** Updated \"Legacy CRLF\" with new content\n\n## [2026-01-01T14:00:00.000Z] ingest\n- **Pages:** quoted-items.md\n- **Summary:** Updated \"Quoted Items\" with new content\n\n## [2026-01-01T15:00:00.000Z] ingest\n- **Pages:** conf-medium.md\n- **Summary:** Created new page \"Conf Medium\"\n\n## [2026-01-01T16:00:00.000Z] ingest\n- **Pages:** conf-medium.md\n- **Summary:** Updated \"Conf Medium\" with new content\n\n## [2026-01-01T17:00:00.000Z] ingest\n- **Pages:** conf-medium.md\n- **Summary:** Updated \"Conf Medium\" with new content\n\n## [2026-01-01T18:00:00.000Z] ingest\n- **Pages:** conf-low.md\n- **Summary:** Created new page \"Conf Low\"\n\n## [2026-01-01T19:00:00.000Z] ingest\n- **Pages:** conf-low.md\n- **Summary:** Updated \"Conf Low\" with new content\n\n## [2026-01-01T20:00:00.000Z] ingest\n- **Pages:** quick-note.md\n- **Summary:** Created new page \"Quick Note\"\n\n## [2026-01-01T22:00:00.000Z] ingest\n- **Pages:** typed-note.md\n- **Summary:** Created new page \"Typed Note\"\n\n## [2026-01-02T02:00:00.000Z] query\n- **Pages:** auth-architecture.md, session-store.md\n- **Summary:** Query \"auth\" → 2 results (of 2 total)\n\n## [2026-01-02T03:00:00.000Z] query\n- **Pages:** session-store.md, auth-architecture.md\n- **Summary:** Query \"session store\" → 2 results (of 2 total)\n\n## [2026-01-02T04:00:00.000Z] query\n- **Pages:** auth-architecture.md, claude-code-context-usage-signals-and-compaction-automation-ceil.md, conf-low.md, conf-medium.md, legacy-crlf.md, login-flow.md, page-0dd0c789.md, quick-note.md, quote-and-back-slash-line-two.md, quoted-items.md, session-store.md, typed-note.md\n- **Summary:** Query \"\" → 12 results (of 12 total)\n\n## [2026-01-02T05:00:00.000Z] query\n- **Pages:** login-flow.md, auth-architecture.md\n- **Summary:** Query \"flow\" → 2 results (of 2 total)\n\n## [2026-01-02T06:00:00.000Z] query\n- **Pages:** page-0dd0c789.md\n- **Summary:** Query \"한글\" → 1 results (of 1 total)\n\n## [2026-01-02T07:00:00.000Z] query\n- **Pages:** page-0dd0c789.md\n- **Summary:** Query \"검색\" → 1 results (of 1 total)\n\n## [2026-01-02T08:00:00.000Z] query\n- **Pages:** session-store.md\n- **Summary:** Query \"auth\" → 1 results (of 1 total)\n\n## [2026-01-02T09:00:00.000Z] query\n- **Pages:** auth-architecture.md\n- **Summary:** Query \"auth\" → 1 results (of 2 total)\n\n## [2026-01-02T10:00:00.000Z] query\n- **Pages:** none\n- **Summary:** Query \"zzzz\" → 0 results (of 0 total)\n\n## [2026-01-02T11:00:00.000Z] query\n- **Pages:** none\n- **Summary:** Query \"Привет мир\" → 0 results (of 0 total)\n\n## [2026-01-02T13:00:00.000Z] ingest\n- **Pages:** big-page.md\n- **Summary:** Created new page \"Big Page\"\n\n## [2026-01-02T14:00:00.000Z] ingest\n- **Pages:** edge-page.md\n- **Summary:** Created new page \"Edge Page\"\n\n## [2026-01-02T15:00:00.000Z] ingest\n- **Pages:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md\n- **Summary:** Created new page \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n\n## [2026-01-02T16:00:00.000Z] ingest\n- **Pages:** cache-layer-alpha.md\n- **Summary:** Created new page \"Cache Layer Alpha\"\n\n## [2026-01-02T17:00:00.000Z] ingest\n- **Pages:** cache-layer-beta.md\n- **Summary:** Created new page \"Cache Layer Beta\"\n\n## [2026-01-02T18:00:00.000Z] delete\n- **Pages:** quick-note.md\n- **Summary:** Deleted page \"quick-note.md\"\n\n## [2026-03-16T00:00:00.000Z] ingest\n- **Pages:** fresh-page.md\n- **Summary:** Created new page \"Fresh Page\"\n\n## [2026-03-17T00:00:00.000Z] lint\n- **Pages:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md, auth-architecture.md, big-page.md, cache-layer-alpha.md, cache-layer-beta.md, claude-code-context-usage-signals-and-compaction-automation-ceil.md, conf-low.md, conf-medium.md, edge-page.md, fresh-page.md, legacy-crlf.md, login-flow.md, page-0dd0c789.md, quote-and-back-slash-line-two.md, quoted-items.md, session-store.md, typed-note.md\n- **Summary:** Lint: 37 issues (14 orphan, 16 stale, 2 broken, 2 contradictions)\n\n",
+    "wiki/login-flow.md": "---\ntitle: \"Login Flow\"\ntags: [\"flow\"]\ncreated: 2026-01-01T07:00:00.000Z\nupdated: 2026-01-01T07:00:00.000Z\nsources: []\nlinks: []\ncategory: decision\nconfidence: medium\nschemaVersion: 1\n---\n\n# Login Flow\n\nLogin goes through the flow.\n",
+    "wiki/page-0dd0c789.md": "---\ntitle: \"한글 제목\"\ntags: [\"한글\", \"위키\"]\ncreated: 2026-01-01T08:00:00.000Z\nupdated: 2026-01-01T08:00:00.000Z\nsources: []\nlinks: []\ncategory: convention\nconfidence: medium\nschemaVersion: 1\n---\n\n# 한글 제목\n\n한글 본문입니다. 검색 테스트.\n",
+    "wiki/quote-and-back-slash-line-two.md": "---\ntitle: \"Quote \\\"and\\\" back\\\\slash\\nline two\"\ntags: [\"odd \\\"tag\\\"\"]\ncreated: 2026-01-01T10:00:00.000Z\nupdated: 2026-01-01T10:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Quote \"and\" back\\slash\nline two\n\nQuote \"and\" back\\slash\nline two body.\n",
+    "wiki/quoted-items.md": "---\ntitle: \"Quoted 'Items'\"\ntags: [\"x\", \"y z\", \"w\"]\ncreated: 2026-01-01T14:00:00.000Z\nupdated: 2026-01-01T14:00:00.000Z\nsources: [\"a, b\", \"it's\", \"c\\\"d\", \"e\"]\nlinks: []\ncategory: pattern\nconfidence: high\nschemaVersion: 1\n---\n\n# Quoted\n\nSeeded without created, updated or schemaVersion.\n\n---\n\n## Update (2026-01-01T14:00:00.000Z)\n\nMerged into the quoted page.\n",
+    "wiki/session-store.md": "---\ntitle: \"Session Store\"\ntags: [\"auth\", \"cache\"]\ncreated: 2026-01-01T05:00:00.000Z\nupdated: 2026-01-01T05:00:00.000Z\nsources: []\nlinks: [\"auth-architecture.md\"]\ncategory: pattern\nconfidence: medium\nschemaVersion: 1\n---\n\n# Session Store\n\nBacked by redis. Links back to [[Auth Architecture]].\n",
+    "wiki/typed-note.md": "---\ntitle: \"Typed Note\"\ntags: [\"t1\"]\ncreated: 2026-01-01T22:00:00.000Z\nupdated: 2026-01-01T22:00:00.000Z\nsources: []\nlinks: []\ncategory: environment\nconfidence: medium\nschemaVersion: 1\n---\n\n# Typed Note\n\nTyped body.\n"
+   }
+  },
+  "no-index": {
+   "digest": "4ea2a8b963a37932",
+   "steps": [
+    {
+     "result": null,
+     "files": {
+      "wiki/lonely.md": "3a6b14238a742309"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki has 1 pages but no index. Pages:\n- lonely.md",
+      "isError": false
+     },
+     "files": {
+      "wiki/lonely.md": "3a6b14238a742309"
+     }
+    },
+    {
+     "result": {
+      "text": "## Lonely\n**Category:** reference | **Confidence:** medium | **Updated:** 2026-01-01T00:00:00.000Z\n**Tags:** solo\n\n# Lonely\n\nNo index yet.\n",
+      "isError": false
+     },
+     "files": {
+      "wiki/lonely.md": "3a6b14238a742309"
+     }
+    },
+    {
+     "result": {
+      "text": "## Wiki Query: \"lonely\"\n\n1 results:\n\n### 1. Lonely (reference, medium)\n**File:** lonely.md | **Tags:** solo | **Score:** 6\n**Snippet:** # Lonely No index yet.",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/log.md": "b8cf50600886368f",
+      "wiki/lonely.md": "3a6b14238a742309"
+     }
+    }
+   ],
+   "final": {
+    ".gitignore": "wiki/\n",
+    "wiki/log.md": "# Wiki Log\n\n## [2026-01-01T03:00:00.000Z] query\n- **Pages:** lonely.md\n- **Summary:** Query \"lonely\" → 1 results (of 1 total)\n\n",
+    "wiki/lonely.md": "---\ntitle: \"Lonely\"\ntags: [solo]\ncreated: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-01T00:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Lonely\n\nNo index yet.\n"
+   }
+  },
+  "unparsable-ingest": {
+   "digest": "6924fabe1cfd6d50",
+   "steps": [
+    {
+     "result": null,
+     "files": {
+      "wiki/broken-page.md": "95efa7085806bb5f"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: broken-page.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/broken-page.md": "958b912c00b35abb",
+      "wiki/index.md": "a8d3e572e4fdac12",
+      "wiki/log.md": "6cb6667c40f862e0"
+     }
+    }
+   ],
+   "final": {
+    ".gitignore": "wiki/\n",
+    "wiki/broken-page.md": "---\ntitle: \"Broken Page\"\ntags: []\ncreated: 2026-01-01T01:00:00.000Z\nupdated: 2026-01-01T01:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Broken Page\n\nBroken Page body.\n",
+    "wiki/index.md": "# Wiki Index\n\n> 1 pages | Last updated: 2026-01-01T01:00:00.000Z\n\n## reference\n\n- [Broken Page](broken-page.md) — # Broken Page\n",
+    "wiki/log.md": "# Wiki Log\n\n## [2026-01-01T01:00:00.000Z] ingest\n- **Pages:** broken-page.md\n- **Summary:** Created new page \"Broken Page\"\n\n"
+   }
+  },
+  "unparsable-add": {
+   "digest": "b1117b90e3a75983",
+   "steps": [
+    {
+     "result": null,
+     "files": {
+      "wiki/broken-page.md": "95efa7085806bb5f"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki page created: broken-page.md\nPath: .omc/wiki/broken-page.md",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/broken-page.md": "e73f985d85163e16",
+      "wiki/index.md": "a8d3e572e4fdac12",
+      "wiki/log.md": "6cb6667c40f862e0"
+     }
+    }
+   ],
+   "final": {
+    ".gitignore": "wiki/\n",
+    "wiki/broken-page.md": "---\ntitle: \"Broken Page\"\ntags: []\ncreated: 2026-01-01T01:00:00.000Z\nupdated: 2026-01-01T01:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Broken Page\n\nNew.\n",
+    "wiki/index.md": "# Wiki Index\n\n> 1 pages | Last updated: 2026-01-01T01:00:00.000Z\n\n## reference\n\n- [Broken Page](broken-page.md) — # Broken Page\n",
+    "wiki/log.md": "# Wiki Log\n\n## [2026-01-01T01:00:00.000Z] ingest\n- **Pages:** broken-page.md\n- **Summary:** Created new page \"Broken Page\"\n\n"
+   }
+  },
+  "reserved-delete": {
+   "digest": "d3173ee262c2b49e",
+   "steps": [
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: some-page.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/index.md": "1440956860fb02d3",
+      "wiki/log.md": "2d17ba2b98677f25",
+      "wiki/some-page.md": "9b6374a6c92e8a14"
+     }
+    },
+    {
+     "result": {
+      "text": "Deleted wiki page: index.md",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/index.md": "e97733bfe1e5637b",
+      "wiki/log.md": "b159de5c8bb25f37",
+      "wiki/some-page.md": "9b6374a6c92e8a14"
+     }
+    }
+   ],
+   "final": {
+    ".gitignore": "wiki/\n",
+    "wiki/index.md": "# Wiki Index\n\n> 1 pages | Last updated: 2026-01-01T01:00:00.000Z\n\n## reference\n\n- [Some Page](some-page.md) — # Some Page\n",
+    "wiki/log.md": "# Wiki Log\n\n## [2026-01-01T00:00:00.000Z] ingest\n- **Pages:** some-page.md\n- **Summary:** Created new page \"Some Page\"\n\n## [2026-01-01T01:00:00.000Z] delete\n- **Pages:** index.md\n- **Summary:** Deleted page \"index.md\"\n\n",
+    "wiki/some-page.md": "---\ntitle: \"Some Page\"\ntags: []\ncreated: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-01T00:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Some Page\n\nSome Page body.\n"
+   }
+  },
+  "schema-v2": {
+   "digest": "4daabcac10569af3",
+   "steps": [
+    {
+     "result": null,
+     "files": {
+      "wiki/future.md": "c6a14787f3195c15"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: none\n- Updated: future.md\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/future.md": "74dc480695e45af0",
+      "wiki/index.md": "8b7b655a2d011ff4",
+      "wiki/log.md": "1b337c2743626bae"
+     }
+    },
+    {
+     "result": {
+      "text": "Wiki ingest complete.\n- Created: other.md\n- Updated: none\n- Total affected: 1",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/future.md": "74dc480695e45af0",
+      "wiki/index.md": "ac9b8e73355708a9",
+      "wiki/log.md": "26f8aa7dcb2a0bf6",
+      "wiki/other.md": "98911ded0c258986"
+     }
+    },
+    {
+     "result": {
+      "text": "Deleted wiki page: future.md",
+      "isError": false
+     },
+     "files": {
+      ".gitignore": "bc29c68844f09480",
+      "wiki/index.md": "f8519c8760234c4f",
+      "wiki/log.md": "fd7ec462bc851984",
+      "wiki/other.md": "98911ded0c258986"
+     }
+    }
+   ],
+   "final": {
+    ".gitignore": "wiki/\n",
+    "wiki/index.md": "# Wiki Index\n\n> 1 pages | Last updated: 2026-01-01T03:00:00.000Z\n\n## reference\n\n- [Other](other.md) — # Other\n",
+    "wiki/log.md": "# Wiki Log\n\n## [2026-01-01T01:00:00.000Z] ingest\n- **Pages:** future.md\n- **Summary:** Updated \"Future\" with new content\n\n## [2026-01-01T02:00:00.000Z] ingest\n- **Pages:** other.md\n- **Summary:** Created new page \"Other\"\n\n## [2026-01-01T03:00:00.000Z] delete\n- **Pages:** future.md\n- **Summary:** Deleted page \"future.md\"\n\n",
+    "wiki/other.md": "---\ntitle: \"Other\"\ntags: []\ncreated: 2026-01-01T02:00:00.000Z\nupdated: 2026-01-01T02:00:00.000Z\nsources: []\nlinks: []\ncategory: reference\nconfidence: medium\nschemaVersion: 1\n---\n\n# Other\n\nOther body.\n"
+   }
+  }
+ }
+}
