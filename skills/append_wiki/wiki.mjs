@@ -538,7 +538,7 @@ function atomicWrite(filePath, content) {
     writeAll(fd, content);
     fs.fsyncSync(fd);
     checkTemp(fd, tempPath);
-    fs.renameSync(tempPath, filePath);
+    renameRetry(tempPath, filePath);
     checkPublished(fd, filePath);
     published = true;
   } finally {
@@ -546,6 +546,23 @@ function atomicWrite(filePath, content) {
     if (!published) unlinkQuiet(tempPath);
   }
   syncDir(dir);
+}
+
+// Windows refuses a rename onto a file another process has open or is replacing at that moment (EPERM, EBUSY,
+// EACCES); measured on the Windows test box with two writers creating .omc/.gitignore together. It clears within
+// milliseconds, so the rename is tried again for up to about a second there. Other systems rename atomically.
+const RENAME_BUSY = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
+function renameRetry(from, to) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (err) {
+      if (process.platform !== 'win32' || !RENAME_BUSY.has(err.code) || attempt >= 20) throw err;
+      Atomics.wait(PAUSE, 0, 0, 10 * attempt);
+    }
+  }
 }
 
 function unlinkQuiet(p) {
@@ -632,9 +649,15 @@ function acquireLock(lockPath) {
 function ensureWikiDir(ctx) {
   if (!fs.existsSync(ctx.wikiDir)) fs.mkdirSync(ctx.wikiDir, { recursive: true });
   const ignore = path.join(ctx.omcRoot, '.gitignore');
-  if (!fs.existsSync(ignore)) return atomicWrite(ignore, 'wiki/\n');
-  const content = fs.readFileSync(ignore, 'utf-8');
-  if (!content.includes('wiki/')) atomicWrite(ignore, `${content.trimEnd()}\nwiki/\n`);
+  const has = () => fs.existsSync(ignore) && fs.readFileSync(ignore, 'utf-8').includes('wiki/');
+  try {
+    if (!fs.existsSync(ignore)) return atomicWrite(ignore, 'wiki/\n');
+    const content = fs.readFileSync(ignore, 'utf-8');
+    if (!content.includes('wiki/')) atomicWrite(ignore, `${content.trimEnd()}\nwiki/\n`);
+  } catch (err) {
+    // This runs before the lock, as in OMC: another writer may be making the same file. Its result is what is wanted.
+    if (!has()) throw err;
+  }
 }
 
 function withWikiLock(ctx, fn) {

@@ -323,7 +323,11 @@ export const caseExtraEnv = (base, c) => (c[3] ? c[3](base) : {});
 /** An answer of `where` with the base folder and the path hashes put back as placeholders, separators as /. */
 export function normalizeWhere(base, answer) {
   let text = JSON.stringify(answer);
-  for (const rel of HASHED) text = text.split(sha16(native(base, rel))).join(`<sha16:${rel}>`);
+  // On Windows git prints C:/... and OMC hashes that text as it is (its primary-root check compares it with the
+  // backslash root and keeps git's form), so both spellings of each folder stand for the same placeholder.
+  for (const rel of HASHED) {
+    for (const p of new Set([native(base, rel), native(base, rel).replace(/\\/g, '/')])) text = text.split(sha16(p)).join(`<sha16:${rel}>`);
+  }
   const json = (s) => JSON.stringify(s).slice(1, -1);
   text = text.split(json(base)).join('<BASE>');
   const out = JSON.parse(text);
