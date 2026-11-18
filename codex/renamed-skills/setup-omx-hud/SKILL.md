@@ -148,6 +148,11 @@ node "<이 스킬 디렉터리 절대경로>/scripts/claude-update-last.mjs" off
 
 ## 함정
 
+- 망분리 DRM 이 OMC 의 로더 템플릿(`scripts/lib/hud-wrapper-template.txt`)을 암호화했으면 그대로 복사하지 않는다.
+  - 읽을 수 있는 글(UTF-8, 탭과 줄바꿈과 ESC 밖의 제어 문자 없음)이 아니면, OMC 마켓플레이스 git 저장소에서 같은 파일을 읽는다. `installed_plugins.json` 에 적힌 설치 커밋을 본다. 판의 태그(`v<판>`)도 보지만, Claude Code 의 마켓플레이스 복제본에는 보통 태그가 없다. 그때 `[!] ... using the same file from the OMC marketplace git repository at <커밋>` 이 나온다.
+  - 그것도 없으면 기존 로더가 있을 때는 `[!] ...; keeping existing hud/omc-hud.mjs` 로 두고, 나머지를 설치한다.
+  - 기존 로더도 없으면 `[x] ...; nothing changed.` 와 종료 1 로 멈춘다. 그 줄을 그대로 보고하고, 평문 OMC 사본이나 DRM 이 걸리지 않는 곳에서의 재설치를 안내한다.
+  - 이 대체 경로는 망분리 PC 에서 실측하지 않았다. git 객체가 DRM 대상이 아니라는 가정이다.
 - 다시 설치하면 래퍼와 `hud-config.json` 을 첨부 파일로 덮어쓴다. 손으로 고친 내용은 `.backup.<시각>` 에만 남는다.
 - 도구가 쓴 그대로의 payload-mon, claude-update-last 블록만 다른 래퍼와 바뀌는 내용이 없는 `settings.json` 은 백업하지 않는다. 블록 안을 손으로 고쳤으면 그 래퍼를 백업한다.
 - `settings.json` 의 `omcHud` 값은 `hud-config.json` 의 같은 키를 덮어쓴다. 래퍼가 기대는 아래 키를 바꾸면 칸이 달라지거나 OMC 원문이 그대로 나온다.

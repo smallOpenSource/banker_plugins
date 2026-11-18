@@ -1178,3 +1178,107 @@ test("설치 대상 자리에 폴더가 있으면 반쯤 쓰지 않고 아무것
   assert.match(f.out, /\.omc is not a folder; nothing changed/);
   assertUntouched(other, "");
 });
+
+// ── DRM: an encrypted loader template ──────────────────────────────────────
+// A DRM on an air-gapped PC may encrypt OMC's hud-wrapper-template.txt. The installer then reads the same file
+// from the OMC marketplace's git repository, or stops before any write when no readable copy is there.
+const HAS_GIT = spawnSync("git", ["--version"], { encoding: "utf8" }).status === 0;
+const gitOnly = { skip: !HAS_GIT && "git not found" };
+// Bytes like a DRM container: a binary header and random-looking data, never UTF-8 text.
+const ENCRYPTED = Buffer.from([0x00, 0x44, 0x52, 0x4d, 0xff, 0xfe, 0x01, 0x9c, 0x80, 0x00, 0x13, 0xee]);
+function gitIn(dir, ...a) {
+  const env = { ...cleanEnv(), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(root, "no.gitconfig"), HOME: dir };
+  const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "init.defaultBranch=main", ...a], { cwd: dir, env, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim();
+}
+// The marketplace clone with the template committed and tagged; returns the commit.
+function marketplace(cfg, text, tag) {
+  const repo = join(cfg, "plugins", "marketplaces", "omc");
+  mkdirSync(join(repo, "scripts", "lib"), { recursive: true });
+  writeFileSync(join(repo, "scripts", "lib", "hud-wrapper-template.txt"), text);
+  gitIn(repo, "init", "-q");
+  gitIn(repo, "add", ".");
+  gitIn(repo, "commit", "-q", "-m", "omc");
+  if (tag) gitIn(repo, "tag", tag);
+  return gitIn(repo, "rev-parse", "HEAD");
+}
+const installedEntry = (cfg, version, sha) => writeFileSync(join(cfg, "plugins", "installed_plugins.json"),
+  JSON.stringify({ plugins: { "oh-my-claudecode@omc": [{ installPath: join(omcCache(cfg), version), version, gitCommitSha: sha }] } }));
+const encrypted = { "5.7.4": { loader: ENCRYPTED } };
+
+test("DRM: 암호화된 로더 템플릿은 마켓플레이스 git 의 설치 커밋에서 읽어 설치", gitOnly, () => {
+  const cfg = fresh();
+  mkdirSync(join(cfg, "plugins"), { recursive: true });
+  const sha = marketplace(cfg, `// loader 5.7.4\n${banner("5.7.4")}`);
+  installedEntry(cfg, "5.7.4", sha);
+  const r = install({ cfg, omc: encrypted });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(loaderOf(cfg), "// loader 5.7.4");
+  assert.match(r.out, new RegExp(`\\[!\\] .*hud-wrapper-template\\.txt is not readable text \\(a DRM may have encrypted it\\); using the same file from the OMC marketplace git repository at ${sha}`));
+});
+
+test("DRM: 설치 커밋이 없으면 판의 태그(v<판>)에서 읽음", gitOnly, () => {
+  const cfg = fresh();
+  marketplace(cfg, `// loader 5.7.4 from tag\n${banner("5.7.4")}`, "v5.7.4");
+  const r = install({ cfg, omc: encrypted });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(loaderOf(cfg), "// loader 5.7.4 from tag");
+  assert.match(r.out, /git repository at v5\.7\.4/);
+});
+
+test("DRM: 읽을 수 있는 사본이 없고 기존 로더도 없으면 종료 1 이고 아무것도 만들지 않음", () => {
+  const cfg = fresh();
+  const r = install({ cfg, omc: encrypted });
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /\[x\] .*hud-wrapper-template\.txt is not readable text \(a DRM may have encrypted it\), and the OMC marketplace git repository .* has no readable copy of it for this version; nothing changed\./);
+  assert.ok(!existsSync(join(cfg, "hud")));
+  assert.ok(!existsSync(join(cfg, "settings.json")));
+});
+
+test("DRM: git 의 사본도 암호화돼 있으면 쓰지 않음", gitOnly, () => {
+  const cfg = fresh();
+  mkdirSync(join(cfg, "plugins"), { recursive: true });
+  installedEntry(cfg, "5.7.4", marketplace(cfg, ENCRYPTED));
+  const r = install({ cfg, omc: encrypted });
+  assert.equal(r.status, 1, r.out);
+  assert.ok(!existsSync(join(cfg, "hud")));
+});
+
+test("DRM: 기존 로더가 있으면 그대로 두고 나머지를 설치", () => {
+  const cfg = fresh();
+  mkdirSync(join(cfg, "hud"), { recursive: true });
+  writeFileSync(join(cfg, "hud", "omc-hud.mjs"), "// loader kept\n");
+  const r = install({ cfg, omc: encrypted });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(loaderOf(cfg), "// loader kept");
+  assert.match(r.out, /\[!\] .*not readable text .*; keeping existing hud\/omc-hud\.mjs/);
+  assert.ok(readFileSync(join(cfg, "hud", "omc-hud-custom.mjs")).equals(asset("omc-hud-custom.mjs")));
+});
+
+test("DRM: 제어 문자나 UTF-8 이 아닌 바이트가 든 템플릿도 글이 아닌 것으로 봄, 탭과 CRLF 는 글", () => {
+  for (const [bytes, readable] of [[Buffer.from("a\tb\r\nc\f"), true], [Buffer.from("\uFEFF// 한글 \u001b[31m\r\n"), true], [Buffer.from("a\u0001b"), false], [Buffer.from([0x61, 0xc3]), false], [Buffer.from("  \n"), false]]) {
+    const cfg = fresh();
+    const r = install({ cfg, omc: { "5.7.4": { loader: bytes } } });
+    assert.equal(r.status, readable ? 0 : 1, `${JSON.stringify([...bytes])}: ${r.out}`);
+  }
+});
+
+test("DRM: 마켓플레이스 폴더가 git 저장소가 아니면 바깥 저장소의 파일을 쓰지 않음", gitOnly, () => {
+  const cfg = fresh();
+  marketplace(cfg, `// outer loader\n${banner("5.7.4")}`, "v5.7.4");
+  const repo = join(cfg, "plugins", "marketplaces", "omc");
+  // The config folder itself becomes the outer repository, holding the template at its own root under the same
+  // path and tag; the marketplace folder loses its .git (or keeps a broken, empty one).
+  rmSync(join(repo, ".git"), { recursive: true, force: true });
+  mkdirSync(join(repo, ".git"));
+  mkdirSync(join(cfg, "scripts", "lib"), { recursive: true });
+  writeFileSync(join(cfg, "scripts", "lib", "hud-wrapper-template.txt"), `// outer loader\n${banner("5.7.4")}`);
+  gitIn(cfg, "init", "-q");
+  gitIn(cfg, "add", ".");
+  gitIn(cfg, "commit", "-q", "-m", "outer");
+  gitIn(cfg, "tag", "v5.7.4");
+  const r = install({ cfg, omc: encrypted });
+  assert.equal(r.status, 1, r.out);
+  assert.ok(!existsSync(join(cfg, "hud")));
+});
