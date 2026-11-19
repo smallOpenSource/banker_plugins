@@ -1,9 +1,12 @@
-// pptx-anim.test.mjs: the editable deck's animation pieces that need no browser: the plan from measured series.
+// pptx-anim.test.mjs: the editable deck's animation pieces that need no browser: the plan from measured series,
+// the timing XML and the structure checker (negative cases too).
 // Run: node --test scripts/pptx-anim.test.mjs
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { COLS, sampleTimes, stepWindows } from './pptx-anim-extract.mjs';
 import { PARTIAL, easeAD, fitEase, fitProgress, monoRuns, planSection, reduceKeys } from './pptx-anim-plan.mjs';
+import { formula, timingXml, transitionXml, glowXml } from './pptx-anim-xml.mjs';
+import { checkSlide, parseXml } from './pptx-xmlcheck.mjs';
 import { sectionNotes, sectionTitle, shapeRect } from './pptx-common.mjs';
 
 // ---------- a synthetic section: items with a state function of time ----------
@@ -161,3 +164,66 @@ test('section notes and titles; the shape rectangle of a box (inset by half its 
   assert.ok(Math.abs(r.x + r.w - 200) < 1e-9 && r.w > 100);
 });
 
+// ---------- XML ----------
+const SLIDE = (inner, timing = '') => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${inner}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>${timing}</p:sld>`;
+const SP = (id, text) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="s${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/>${text ? `<p:txBody><a:bodyPr/><a:p><a:r><a:t>${text}</a:t></a:r></a:p></p:txBody>` : ''}</p:sp>`;
+const PIC = (id) => `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="p${id}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill/><p:spPr/></p:pic>`;
+const SHAPES = SP(2, '글') + SP(3) + PIC(4);
+
+function miniPlan() {
+  const S = section([BOX(1), BOX(2), BOX(3)], [['s1-1', 0, 0.8], ['s1-2', 0.8, 1.6], ['s1-3', 1.6, 2.2]], [
+    (t) => ({ op: ramp(t, 0.1, 0.5), cy: 350 + 24 * (1 - out(ramp(t, 0.1, 0.5))) }),
+    (t) => ({ op: ramp(t, 0.9, 1.2) }),
+    (t) => ({ op: t < 1.7 ? 0 : 1 }),
+  ], [0.1, 0.5, 0.9, 1.2, 1.7]);
+  return planSection(S);
+}
+
+test('timingXml: well formed in a slide, ids unique, the first group starts on its own, one click group per later step, keyframes from tm 0 to 100000, a build entry only for the text shape', () => {
+  const plan = miniPlan();
+  const xml = SLIDE(SHAPES, transitionXml() + timingXml(plan, [2, 3, 4], new Set([2])));
+  assert.deepEqual(checkSlide(xml), []);
+  assert.equal((xml.match(/evt="onBegin"/g) || []).length, 1);
+  assert.equal((xml.match(/nodeType="clickEffect"/g) || []).length, 2);
+  assert.deepEqual([...xml.matchAll(/<p:bldP spid="(\d+)"/g)].map((m) => m[1]), ['2']);
+  const tms = [...xml.matchAll(/<p:tavLst>([\s\S]*?)<\/p:tavLst>/g)].map((m) => [...m[1].matchAll(/tm="(\d+)"/g)].map((x) => +x[1]));
+  assert.ok(tms.length && tms.every((l) => l[0] === 0 && l[l.length - 1] === 100000));
+  assert.match(xml, /<p:strVal val="#ppt_y\+0\.0222\d*"\/>/, 'starts 24 px low (24 / 1080)');
+  assert.match(xml, /presetID="1" presetClass="entr"/, 'the jump is Appear');
+  assert.match(xml, /<p:transition spd="fast" p14:dur="250"><p:fade\/><\/p:transition>/);
+});
+
+test('formula and glow: values relative to rest, signs, factors; glow radius in EMU (1 stage px = 6350)', () => {
+  assert.equal(formula('ppt_x', 0.0125), '#ppt_x+0.0125');
+  assert.equal(formula('ppt_y', -0.5), '#ppt_y-0.5');
+  assert.equal(formula('ppt_x', 1e-9), '#ppt_x');
+  assert.equal(formula('ppt_w', 0.4), '#ppt_w*0.4');
+  assert.equal(formula('ppt_h', 1), '#ppt_h');
+  assert.equal(formula('r', 15.5), '15.5');
+  assert.equal(glowXml(9, 'E0263F', 0.45), '<a:effectLst><a:glow rad="57150"><a:srgbClr val="E0263F"><a:alpha val="45000"/></a:srgbClr></a:glow></a:effectLst>');
+});
+
+test('checkSlide catches what makes PowerPoint repair a file or drop its timing', () => {
+  const plan = miniPlan();
+  const good = SLIDE(SHAPES, transitionXml() + timingXml(plan, [2, 3, 4], new Set([2])));
+  const bad = (from, to, re) => { const x = good.replace(from, to); assert.notEqual(x, good, String(from)); const p = checkSlide(x); assert.ok(p.some((m) => re.test(m)), `${re}: ${p.join('; ')}`); };
+  bad('<p:cTn id="5"', '<p:cTn id="3"', /cTn id 3 is used twice/);
+  bad(/spid="3"/g, 'spid="9"', /target spid 9 is not a shape/);
+  bad('<p:bldP spid="2"', '<p:bldP spid="4"', /bldP spid 4 is not a shape with text/);
+  bad(/<\/p:clrMapOvr>(<mc:AlternateContent[\s\S]*?<\/mc:AlternateContent>)(<p:timing>[\s\S]*<\/p:timing>)/, '</p:clrMapOvr>$2$1', /out of order/);
+  bad(/<p:tav tm="0">/, '<p:tav tm="200000">', /outside 0\.\.100000/);
+  bad(/(<p:tavLst><p:tav tm=")0(")/, '$150$2', /not ascending from 0/);
+  bad('presetID="10" presetClass="entr"', 'presetID="53" presetClass="entr"', /not an allowed pair/);
+  bad(/<p:cond delay="0"\/>/, '<p:cond delay="-5"/>', /cond delay "-5"/);
+  bad(' xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main"', '', /prefix p14 .* not declared/);
+  bad('</p:sld>', '', /not well formed/);
+  bad(/(<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="\d+" dur="\d+")/, '$1 accel="90000" decel="90000"', /accel 90000 decel 90000/);
+});
+
+test('parseXml: well-formed checks (mismatched end tag, a duplicate attribute, two roots) and the tree', () => {
+  assert.throws(() => parseXml('<a><b></a></b>'), /does not close/);
+  assert.throws(() => parseXml('<a x="1" x="2"/>'), /attribute x twice/);
+  assert.throws(() => parseXml('<a/><b/>'), /exactly one root/);
+  const t = parseXml('<?xml version="1.0"?><a k=\'v\'><b>hi</b><c/></a>');
+  assert.deepEqual([t.name, t.attrs.k, t.kids.map((k) => k.name), t.kids[0].text], ['a', 'v', ['b', 'c'], 'hi']);
+});
