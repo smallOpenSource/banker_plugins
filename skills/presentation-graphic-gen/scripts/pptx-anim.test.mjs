@@ -10,6 +10,7 @@ import { checkSlide, parseXml } from './pptx-xmlcheck.mjs';
 import { sectionNotes, sectionTitle, shapeRect } from './pptx-common.mjs';
 import { evalFormula, itemsAt, readSlide, smilProgress, stateAt, wipeVisible } from './pptx-anim-sim.mjs';
 import { animGates, continuity } from './pptx-anim-gates.mjs';
+import { slideHtml } from './pptx-anim-render.mjs';
 
 // ---------- a synthetic section: items with a state function of time ----------
 const out = (u) => 1 - (1 - u) * (1 - u) * (1 - u);
@@ -439,4 +440,12 @@ test('plan and simulator (R2, R3): a start opacity off the 0.01 grid (0.334, 0.8
   assert.ok(Math.abs(op(0, -Infinity) - 0.175) < 1e-6 && Math.abs(op(1, Infinity) - 0.5) < 1e-6, `${op(0, -Infinity)} ${op(1, Infinity)}`);
   const naive = SLIDE(SH(2, 'shape div.b1 #1@35', 400, 300, 200, 100, 0.175) + SH(3, 'shape div.b1 #1', 400, 300, 200, 100, 0.5), transitionXml() + timingXml(plan, [2, 3]));
   assert.ok(Math.abs(itemsAt(stateAt(readSlide(naive), 1, Infinity)).get(1).op - 0.5875) < 1e-6, 'the alphas as the old writer wrote them make 0.5875');
+});
+
+test('anim-render draws a text line with a line box as tall as its shape (not a flex-centered "normal" line box, which Windows font metrics put 5 px lower than the page)', () => {
+  const sp = SH(2, 'text h1 #1', 100, 100, 600, 120).replace('</p:spPr></p:sp>', '</p:spPr><p:txBody><a:bodyPr anchor="ctr"/><a:p><a:pPr algn="l"/><a:r><a:rPr sz="5200"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:rPr><a:t>첫 장면</a:t></a:r></a:p></p:txBody></p:sp>');
+  const xml = SLIDE(sp);
+  const h = slideHtml(xml, stateAt(readSlide(xml), 0, Infinity), () => null);
+  assert.match(h, /line-height:120px;text-align:left;white-space:pre"><span style="font-size:104px/);
+  assert.doesNotMatch(h, /align-items:center/);
 });

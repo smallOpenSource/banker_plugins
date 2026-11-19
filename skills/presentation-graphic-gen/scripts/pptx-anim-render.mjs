@@ -37,17 +37,20 @@ function boxCss(sp, w, h) {
   if (glow) css.push(`box-shadow:0 0 ${(2 * +glow.attrs.rad) / EMU_PX}px ${color(glow)}`);
   return css;
 }
-function runsHtml(sp) {
+// one text line centered in its box (anchor ctr): the line box is as tall as the box, so the glyphs' content area sits
+// in its middle whatever line gap the platform's font metrics add (with flex centering of a "normal" line box,
+// Windows put a 104 px line 5 px lower than the page: its line height carries a gap the content area has not)
+function runsHtml(sp, h = null) {
   const body = kid(sp, 'p:txBody');
   if (!body) return '';
   const p = kid(body, 'a:p'), algn = p && walk(p).find((x) => x.name === 'a:pPr');
-  const just = { ctr: 'center', r: 'flex-end' }[algn && algn.attrs.algn] || 'flex-start';
+  const just = { ctr: 'center', r: 'right' }[algn && algn.attrs.algn] || 'left';
   const runs = p ? p.kids.filter((x) => x.name === 'a:r').map((r) => {
     const pr = kid(r, 'a:rPr'), t = kid(r, 'a:t');
     const css = [`font-size:${(+pr.attrs.sz / 100) * 2}px`, `font-weight:${pr.attrs.b === '1' ? 700 : 400}`, `color:${color(kid(pr, 'a:solidFill')) || '#000'}`, `letter-spacing:${(+(pr.attrs.spc || 0) / 100) * 2}px`];
     return `<span style="${css.join(';')}">${esc(xmlText(t ? t.text : ''))}</span>`;
   }) : [];
-  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:${just};white-space:pre">${runs.join('')}</div>`;
+  return `<div style="position:absolute;inset:0;${h ? `line-height:${h}px;` : ''}text-align:${just};white-space:pre">${runs.join('')}</div>`;
 }
 function picHtml(pic, media) {
   const blip = walk(pic).find((x) => x.name === 'a:blip'), am = blip && kid(blip, 'a:alphaModFix');
@@ -70,7 +73,7 @@ export function slideHtml(xml, states, media) {
     const id = walk(n).find((x) => x.name === 'p:cNvPr').attrs.id, st = states.get(id);
     if (!st || !st.vis || st.op <= 0) continue;
     const sh = st.shape, sx = st.w / sh.w, sy = st.h / sh.h;
-    const inner = n.name === 'p:pic' ? picHtml(n, media) : runsHtml(n);
+    const inner = n.name === 'p:pic' ? picHtml(n, media) : runsHtml(n, sh.h);
     const box = n.name === 'p:sp' ? boxCss(n, sh.w, sh.h) : [];
     const pos = `position:absolute;left:${st.cx - sh.w / 2}px;top:${st.cy - sh.h / 2}px;width:${sh.w}px;height:${sh.h}px;opacity:${st.op};transform:rotate(${st.rot}deg) scale(${sx}, ${sy});${clipCss(st.clip)}`;
     out.push(`<div style="${pos}"><div style="position:absolute;inset:0;box-sizing:border-box;${box.join(';')}"></div>${inner}</div>`);
@@ -113,7 +116,7 @@ export async function renderCompare(deck, slides, read, log = () => {}) {
   log(`  anim-render per step: ${rows.map((r) => `${r.id} ${(r.share * 100).toFixed(2)}%`).join(', ')}`);
   const bad = rows.filter((r) => r.share > RENDER_TOL.share).map((r) => `${r.id} end: ${(r.share * 100).toFixed(2)}% of pixels differ by more than ${RENDER_TOL.level} (mean ${r.mean.toFixed(2)})`);
   const worst = rows.reduce((a, r) => (r.share > a.share ? r : a), { share: 0, id: '-' });
-  return { ok: !bad.length && rows.length > 0, bad, detail: `${rows.length - bad.length}/${rows.length} step ends: the slide drawn from its XML at the simulated state against the page, at most ${RENDER_TOL.share * 100}% of pixels off by more than ${RENDER_TOL.level} (worst ${worst.id} ${(worst.share * 100).toFixed(2)}%)` };
+  return { ok: !bad.length && rows.length > 0, bad, detail: `${rows.length - bad.length}/${rows.length} step ends within the limit: the slide drawn from its XML at the simulated state against the page, at most ${RENDER_TOL.share * 100}% of pixels off by more than ${RENDER_TOL.level} (worst ${worst.id} ${(worst.share * 100).toFixed(2)}%)` };
 }
 
 // ---------- text-fit ----------
@@ -143,5 +146,5 @@ export async function textFit(deck, slides) {
       if (Math.abs(widths[i] - want) > tol) bad.push(`slide ${s.k + 1}: ${b.name}: text ${widths[i].toFixed(1)} px in a box made for ${want.toFixed(1)} px`);
     });
   }
-  return { ok: !bad.length && n > 0, bad, detail: `${n - bad.length}/${n} text boxes: the runs as written, in the page's fonts, are as wide as the box was made for (${FIT_TOL.px} px or ${FIT_TOL.share * 100}%)` };
+  return { ok: !bad.length && n > 0, bad, detail: `${n - bad.length}/${n} text boxes within the limit: the runs as written, in the page's fonts, are as wide as the box was made for (${FIT_TOL.px} px or ${FIT_TOL.share * 100}%)` };
 }
