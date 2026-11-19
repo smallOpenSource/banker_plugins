@@ -6,9 +6,9 @@
 #                               its dialog), write <dir>\anim.json (every slide's main sequence: shape, effect type,
 #                               trigger, delay, duration, exit, behaviors), save a copy as <dir>\resaved.pptx, then in
 #                               an interactive desktop session run the slide show: per slide GetClickCount,
-#                               FirstAnimationIsAutomatic and, after GotoClick(k) for k = 0..clicks and -ClickWaitSec,
-#                               a capture of the show window <dir>\NN-cK.png. A session without a desktop (SSH) skips
-#                               the show and says so in anim.json.
+#                               FirstAnimationIsAutomatic and, after the slide and then each click (View.Next) and
+#                               -ClickWaitSec, a capture of the show window <dir>\NN-cK.png. A session without a
+#                               desktop (SSH) skips the show and says so in anim.json.
 #   -Video                      with -Anim: on a temporary copy every click trigger becomes "after previous" with
 #                               -GapSec more delay, then CreateVideo (1920x1080, 30 fps) writes <dir>\video.mp4
 #   -Force                      write into a <dir> that is not empty (without it: nothing is done, exit 4)
@@ -47,17 +47,25 @@ function Test-Desktop {
   if (-not [Environment]::UserInteractive) { return $false }
   return ((Get-Process -Id $PID).SessionId -ne 0)
 }
-function Save-Window($hwnd, $file) {
+# PowerPoint 2019 has no SlideShowWindow.HWND over COM (DISP_E_MEMBERNOTFOUND): the show window is the
+# "screenClass" window (only this script's PowerPoint runs). PrintWindow with PW_RENDERFULLCONTENT reads the window
+# itself, so a console or another window on top of the show (it cannot take the foreground) is not captured.
+function Save-Window($file) {
   if (-not ('PggWin' -as [type])) {
     Add-Type -AssemblyName System.Drawing
-    Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public struct PggRect { public int L, T, R, B; } public static class PggWin { [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out PggRect r); }'
+    Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public struct PggRect { public int L, T, R, B; } public static class PggWin { [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out PggRect r); [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string n); [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f); }'
   }
+  $hwnd = [PggWin]::FindWindow('screenClass', [NullString]::Value)
+  if ($hwnd -eq [IntPtr]::Zero) { throw 'no slide show window (screenClass)' }
   $r = New-Object PggRect
-  [void][PggWin]::GetWindowRect([IntPtr]$hwnd, [ref]$r)
-  $w = $r.R - $r.L; $h = $r.B - $r.T
-  $bmp = New-Object System.Drawing.Bitmap($w, $h)
+  [void][PggWin]::GetWindowRect($hwnd, [ref]$r)
+  $bmp = New-Object System.Drawing.Bitmap(($r.R - $r.L), ($r.B - $r.T))
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  try { $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size); $bmp.Save($file, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $g.Dispose(); $bmp.Dispose() }
+  try {
+    $dc = $g.GetHdc(); $ok = [PggWin]::PrintWindow($hwnd, $dc, 2); $g.ReleaseHdc($dc)
+    if (-not $ok) { throw 'PrintWindow failed on the slide show window' }
+    $bmp.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
+  } finally { $g.Dispose(); $bmp.Dispose() }
 }
 function Invoke-Show($pres, $dir) {
   $rows = @()
@@ -71,10 +79,13 @@ function Invoke-Show($pres, $dir) {
       $auto = [bool]$view.FirstAnimationIsAutomatic()
       $shots = @()
       for ($k = 0; $k -le $clicks; $k++) {
-        $view.GotoClick($k)
+        # a real click (Next), not GotoClick: in PowerPoint 2019 GotoClick(k) sets the click index while the picture
+        # can stay at click 0 (after GotoClick(0) on the same slide; on a slide whose click 1 starts with a custom
+        # presetID 0 effect even when the slide was just entered)
+        if ($k -gt 0) { $view.Next() }
         Start-Sleep -Milliseconds ([int]($ClickWaitSec * 1000))
         $f = Join-Path $dir ('{0:D2}-c{1}.png' -f $i, $k)
-        Save-Window $win.HWND $f
+        Save-Window $f
         $shots += (Split-Path $f -Leaf)
       }
       $rows += [ordered]@{ slide = $i; clicks = $clicks; firstAuto = $auto; captures = $shots }

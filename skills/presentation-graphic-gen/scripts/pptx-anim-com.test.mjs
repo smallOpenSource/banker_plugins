@@ -118,7 +118,14 @@ test('pptx-com.ps1 parses (both modes, Windows PowerShell 5.1 syntax: no ?? or ?
     assert.equal(r.stdout.trim().split('\n')[0].trim(), '0', r.stdout);
     const src = readFileSync(f, 'utf8');
     assert.doesNotMatch(src, /\?\?|\s\?\s[^:]+\s:\s/);
-    for (const k of ['GetClickCount', 'FirstAnimationIsAutomatic', 'GotoClick', 'CreateVideo', 'SaveCopyAs', 'DisplayAlerts']) assert.ok(src.includes(k), k);
+    for (const k of ['GetClickCount', 'FirstAnimationIsAutomatic', 'CreateVideo', 'SaveCopyAs', 'DisplayAlerts']) assert.ok(src.includes(k), k);
+    // PowerPoint 2019 measurements: GotoClick skips some clicks (a real click, Next, plays them), SlideShowWindow has no
+    // HWND over COM (the show window is found by class), and a screen copy catches windows on top of the show
+    const show = src.slice(src.indexOf('function Save-Window'), src.indexOf('function New-Video'));
+    assert.match(show, /\$view\.Next\(\)/);
+    assert.doesNotMatch(show, /\$view\.GotoClick|\.HWND|CopyFromScreen/);
+    assert.match(show, /FindWindow\('screenClass', \[NullString\]::Value\)/);
+    assert.match(show, /PrintWindow\(\$hwnd, \$dc, 2\)/);
     // the -Anim open has no document window (a disconnected desktop leaves PowerPoint busy with one), and anim.json is
     // written before the slide show and the video, which may fail
     const anim = src.slice(src.indexOf('function Invoke-Anim'), src.indexOf('if ($Worker)'));
