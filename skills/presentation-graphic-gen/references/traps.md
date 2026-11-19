@@ -16,7 +16,7 @@
 | 편집 PPTX 의 움직임 근사 | PowerPoint 의 `accel`, `decel` 이 SMIL 식과 다르고(실측 0.08), 전환 뒤에야 첫 묶음이 시작 | 투명도와 기하는 표본 키프레임이라 정확. 남는 근사는 Wipe 의 속도, 첫 단계 늦음, 빛번짐뿐이고 `approx` 줄로 냄 | `pptx-edit` 출력의 `motion`, `approx`, `not possible` 줄. `anim-match` |
 | PowerPoint 가 조용히 바꾸는 타이밍 | 2019 실측: 글 도형의 `p:bldP` 는 첫 효과만 남기고, Fade 필터의 `fill="hold"` 는 뒤 Fade 끝내기를 막고, `style.opacity` 를 정한 뒤 Fade 진입은 불투명 1 로 끝나고, presetID 없는 효과는 클릭을 잃음 | 쓰지 않음. `anim-xml` 이 FAIL 로 잡고 시뮬레이터도 그렇게 재생 | `anim-xml`, `anim-match`, `com --anim` 의 `com-effects` |
 | 빈칸이 있는 줄 | 한 상자에 실행을 이어 붙이면 빈칸이 닫혀 뒤 글이 겹침 | 빈칸에서 상자를 나눔 | `text-fit` |
-| 편집 PPTX 를 PowerPoint 로 보지 않음 | 시험 PC 에 PowerPoint 가 없음. 시뮬레이터가 맞아도 PowerPoint 의 해석이 다르면 못 잡음. 2019 실측 결과는 `pptx.md` 에 있고, 재생 중 클릭(`nextAc`)과 GotoClick 은 화면이 연결된 세션이 필요해 아직 못 봄 | `anim-powerpoint` 를 늘 SKIP 으로 보이고 `ALL PASS` 를 쓰지 않음. PowerPoint 가 있는 PC 에서 `com --anim` | 요약 줄 `PASS with SKIP (anim-powerpoint)` |
+| 편집 PPTX 를 PowerPoint 로 보지 않음 | 시험 PC 에 PowerPoint 가 없음. 시뮬레이터가 맞아도 PowerPoint 의 해석이 다르면 못 잡음. 2019 실측 결과(슬라이드 쇼 포함)는 `pptx.md` 에 있음. 재생 중 클릭은 PowerPoint 고유 동작으로 HTML 과 다름(다음 묶음까지 시작) | `anim-powerpoint` 를 늘 SKIP 으로 보이고 `ALL PASS` 를 쓰지 않음. PowerPoint 가 있는 PC 에서 `com --anim` | 요약 줄 `PASS with SKIP (anim-powerpoint)` |
 | PPTX 글꼴 | 글꼴 파일을 넣지 않음 | 테마 글꼴만 지정(Latin Noto Sans, East Asian Noto Sans KR). 보는 PC 에 두 글꼴이 있어야 같은 줄바꿈 | 보고에 적음 |
 | 덮어쓰기 | 지난 회차가 사라짐 | 모든 도우미가 이미 있는 파일과 비어 있지 않은 출력 폴더(`check-...`, 녹화, `--frames`, PowerPoint PNG)에 작업 전 종료 코드 2 로 끝남. `--force` 는 허락 뒤에만 | 덮어쓰기 시험 |
 | vendor 손상 | 다른 바이트로 실행 | `build.mjs`, `make.mjs` 는 시작할 때 vendor 파일 전부를 원본 sha256 과 대조하고, 하나라도 다르면 작업 전에 종료 코드 3. 다른 도우미도 읽는 파일이 다르면 3 | vendor 변조 시험(글꼴, wasm, h264, PptxGenJS 각각) |

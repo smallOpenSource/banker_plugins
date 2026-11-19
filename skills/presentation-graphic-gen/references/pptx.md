@@ -58,6 +58,7 @@
 | 한쪽 끝에서 드러남(`s.reveal`) | Wipe 진입(그 쪽부터) | 근사 |
 | 그 밖의 잘라 내기 변화 | 없음. 잘리지 않은 채 보임 | 불가 |
 | 섹션 첫 단계 | 전환이 끝난 뒤 시작. HTML 보다 0.10초(첫 섹션은 0.25초) 늦음 | 근사 |
+| 재생 중 클릭 | 진행 중인 효과가 끝 상태로 가고, 같은 클릭에 다음 묶음이 시작됨. HTML 은 끝 상태로 마치기만 하고 다음 단계로 가지 않음 | 다름(PowerPoint 고유) |
 
 - 출력의 `motion: <N> exact, <N> approx, <N> not possible` 줄과 `approx <단계>: ...`, `not possible <단계>: ...` 줄이 위 판정의 목록이다.
 - 투명도 키프레임 값은 그 요소의 가장 높은 투명도 기준이다. 도형은 그 투명도로 그리고, 1 이 아니면 이름에 `@40` 처럼 적는다.
@@ -82,7 +83,8 @@
 ## PowerPoint 실측 결과(2026-11-19)
 
 - 판: Office ProPlus 2019 Volume, PowerPoint 16.0 build 10353(POWERPNT.EXE 16.0.10353.20037), Windows. Microsoft 365 는 재보지 않음
-- 방법: 대화형 예약 작업의 COM. 재생은 `CreateVideo` 영상을 프레임으로 풀어 잼(슬라이드 쇼는 화면이 연결되지 않은 세션에서 `E_FAIL`)
+- 방법: 대화형 예약 작업의 COM. 재생은 `CreateVideo` 영상을 프레임으로 풀어 잼
+- 슬라이드 쇼: 화면이 연결되지 않은 세션에서는 `E_FAIL`. SYSTEM 예약 작업으로 `tscon <세션> /dest:console` 을 실행해 세션을 콘솔에 연결한 뒤 잼. 끝나면 `tsdiscon <세션>` 으로 되돌림
 
 | 확인 | 결과 |
 |---|---|
@@ -98,7 +100,12 @@
 | Fade 필터의 `fill="hold"` | 같은 도형의 뒤 Fade 끝내기가 재생되지 않음 |
 | 도형 자체 투명도와 `style.opacity` | 곱해짐(35% 도형에 0.5 면 0.17). 1 을 넘는 값은 1 로 잘림 |
 
-- 아직 못 본 것(화면이 연결된 세션이 필요): 재생 중 클릭이 끝 상태로 마치는지(`nextAc="seek"`), `GetClickCount`, `FirstAnimationIsAutomatic`, `GotoClick` 캡처. 슬라이드 쇼가 `CreateVideo` 와 같게 재생하는지
+- 슬라이드 쇼 실측(2026-11-19, 예시 편집 덱과 검사 파일 P10)
+  - `GetClickCount`, `FirstAnimationIsAutomatic`: 파일대로 나옴(예시 덱 1, 2, 2, 2, 2, 1 과 모두 자동 시작)
+  - 실제 클릭(`View.Next`) 뒤 캡처: 16 단계 모두 가장 가까운 `stills/` 가 자기 단계. 48 넘게 다른 화소는 최대 1.67%. 단계 사이의 움직임은 캡처로 보지 않음(재생은 `CreateVideo` 로 봄)
+  - `GotoClick(k)`: 클릭 번호만 k 로 바뀌고 화면은 클릭 0 에 남을 수 있음(같은 슬라이드에서 `GotoClick(0)` 뒤, 클릭 1 이 presetID 0 효과로 시작하는 슬라이드). 그래서 `com --anim` 은 `View.Next` 로 캡처함
+  - 쇼 창: COM 에 `SlideShowWindow.HWND` 가 없음. `screenClass` 창을 찾아 `PrintWindow` 로 찍음(쇼 창은 앞으로 나오지 못해 화면 복사에는 위의 창이 찍힘)
+  - 재생 중 클릭(`nextAc="seek"`): 3초 이동의 0.9초에 다시 누르면 이동이 끝 자리로 가고, 같은 클릭에 다음 묶음이 시작됨. PowerPoint 가 COM 으로 직접 만들어 저장한 덱(경로 이동 효과, PowerPoint 도 `nextAc="seek"` 을 씀)도 같음. `nextAc="none"` 은 이동을 끝내지도 않고 다음 묶음을 시작하며, `concurrent="0"` 은 `seek` 와 같음. 그래서 HTML 처럼 끝 상태로 마치기만 하는 쓰기 방식은 없고, `seek` 를 그대로 씀. 발표자는 단계가 끝난 뒤 누름
 
 ## 개발용: PowerPoint 실측(단계 0)
 
