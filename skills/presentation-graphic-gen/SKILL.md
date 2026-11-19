@@ -55,7 +55,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 | `node "$M" <대본> --format both` | 위에 더해 녹화, 영상 PPTX, 편집 PPTX, 검증 | 같음 |
 | `node "<S>/scripts/build.mjs" <대본> [인자]` | HTML 두 벌만. 시간 예산과 반복 경고를 냄 | 0, 1, 2, 3 |
 | `node "<S>/scripts/check.mjs" <present.html> --script <대본> [--out <폴더>] [--force]` | 게이트 10개, 스냅숏, 정지 화면, 키로 재생한 화면, 컨택트 시트. 출력 폴더가 비어 있지 않으면 2 | 0, 1, 2 |
-| `node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--html <present.html>] [--force]` | PPTX 게이트. 편집 덱의 `anim-match`, `anim-render` 는 `--html` 이 있어야 돎. `--frames` 폴더가 비어 있지 않으면 2 | 0, 1, 2, 3 |
+| `node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--html <present.html>] [--force]` | PPTX 게이트. 편집 덱의 `anim-match`, `anim-render`, `text-fit` 은 `--html` 이 있어야 돎. `--frames` 폴더가 비어 있지 않으면 2 | 0, 1, 2, 3 |
 | `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더> [--force]` | 선택. Windows 의 PowerPoint 로 열고 슬라이드 PNG 를 냄. 그 밖에서는 SKIP. PNG 폴더가 비어 있지 않으면 2 | 0, 1, 2 |
 | `node "<S>/scripts/pptx.mjs" com --anim <편집.pptx> <폴더> --script <대본> [--video] [--force]` | 선택. PowerPoint 가 편집 덱의 효과, 클릭 수, 자동 첫 묶음을 파일대로 읽는지 보고 클릭마다 캡처. 그 밖에서는 SKIP | 0, 1, 2 |
 | `node "<S>/scripts/apply-fix.mjs" <accepted.json> [--root <폴더>] [--dry-run]` | 다듬기 회차의 채택 항목을 적용 | 0, 2 |
@@ -129,5 +129,5 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 - 한 도형을 따로 움직이는 조각으로 만들지 않는다. 1px 조각을 늘린 테두리는 GPU 로 그리는 브라우저에서 픽셀 비율이 1 이 아니면 모서리가 벌어진다. 헤드리스 시험 화면에서는 보이지 않으므로 `decorations-played` 게이트가 구조로 잡는다.
 - Chromium(Playwright 판 포함)은 H.264 를 풀지 못해 PPTX 영상 연속성 게이트가 SKIP 이 된다. Chrome 이나 Edge 로 다시 돌린다.
 - 편집 PPTX 는 그림, SVG, 회전한 요소, 그라데이션은 잘라 낸 그림으로 바꿔 넣는다. 글꼴은 넣지 않으므로 보는 PC 에 Noto Sans, Noto Sans KR 이 있어야 한다.
-- 편집 PPTX 의 투명도 곡선, 부분 투명도, 섹션 첫 단계의 시작은 근사다. 근사 목록을 보고에 그대로 옮긴다. PowerPoint 2016 이상과 Microsoft 365 만 보장한다.
+- 편집 PPTX 의 Wipe 속도, 섹션 첫 단계의 시작, 빛번짐은 근사다(투명도와 기하는 표본 키프레임이라 정확). 근사 목록을 보고에 그대로 옮긴다. PowerPoint 2016 이상과 Microsoft 365 만 보장한다(실측은 2019).
 - `vendor/` 의 파일은 고치지 않는다. sha256 이 다르면 실행을 멈춘다.

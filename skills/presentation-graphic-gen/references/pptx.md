@@ -42,7 +42,7 @@
 
 | 페이지의 것 | PPTX |
 |---|---|
-| 글 | 그려진 한 줄에 텍스트 상자 하나. 줄 안의 크기, 굵기, 색, 자간이 다른 조각은 실행(run)으로 나눔. 자동 줄바꿈 없음, 여백 0 |
+| 글 | 그려진 한 줄에 텍스트 상자 하나. 줄 안의 크기, 굵기, 색, 자간이 다른 조각은 실행(run)으로 나눔. 줄 안에 빈칸(0.4em 넘는 틈, `s.fill` 의 빈칸 등)이 있으면 조각마다 상자를 나눠 페이지 자리에 둠. 자동 줄바꿈 없음, 여백 0 |
 | 배경색, 테두리, 둥근 모서리가 있는 요소 | 사각형이나 둥근 사각형. CSS 테두리는 상자 안쪽에 그려지고 PowerPoint 외곽선은 도형 가장자리 가운데에 그려지므로, 외곽선 굵기의 절반만큼 안으로 줄여 놓음 |
 | 강조 테두리(`s.focus`) | 채우기 없는 둥근 사각형 외곽선 하나. 빛번짐(`box-shadow`)은 `a:glow`(반지름 = 흐림의 절반, 근사) |
 | 변마다 다른 테두리 | 변마다 얇은 사각형 |
@@ -51,16 +51,17 @@
 
 | 움직임 | PowerPoint | 판정 |
 |---|---|---|
-| 나타남, 사라짐 | Fade 진입, 끝내기. 페이드 구간과 `accel`, `decel` 을 페이지 곡선에 맞춤 | 직선이면 정확, 그 밖은 근사(오차를 적음) |
+| 나타남, 사라짐 | Fade 진입, 끝내기(프리셋 10). 투명도 곡선은 `style.opacity` 표본 키프레임(0.004 로 줄임) | 정확 |
 | 한 순간의 나타남, 사라짐, 그리기 시작 | Appear, Disappear | 정확 |
-| 부분 투명도(`s.dim`, `s.strike` 의 흐림) | 그 투명도의 흐린 복사본(`#n@35`)과 교차 Fade | 근사 |
+| 부분 투명도(`s.dim`, `s.strike` 의 흐림) | 같은 도형의 `style.opacity` 표본 키프레임(사용자 지정 효과) | 정확 |
 | 이동, 크기, 회전(부모 층 포함) | 그 단계 효과 안의 표본 키프레임(`ppt_x`, `ppt_y`, `ppt_w`, `ppt_h`, `r`), 0.3px 로 줄임 | 정확 |
 | 한쪽 끝에서 드러남(`s.reveal`) | Wipe 진입(그 쪽부터) | 근사 |
 | 그 밖의 잘라 내기 변화 | 없음. 잘리지 않은 채 보임 | 불가 |
 | 섹션 첫 단계 | 전환이 끝난 뒤 시작. HTML 보다 0.10초(첫 섹션은 0.25초) 늦음 | 근사 |
 
 - 출력의 `motion: <N> exact, <N> approx, <N> not possible` 줄과 `approx <단계>: ...`, `not possible <단계>: ...` 줄이 위 판정의 목록이다.
-- 부분 투명도의 방식은 `scripts/pptx-anim-plan.mjs` 의 `PARTIAL` 한 곳에서 바꾼다. 기본은 확인된 효과만 쓰는 `crossfade` 다. `anim`(`style.opacity`), `emph`(Transparency 강조)는 PowerPoint 실측(아래 단계 0) 뒤에 고른다.
+- 투명도 키프레임 값은 그 요소의 가장 높은 투명도 기준이다. 도형은 그 투명도로 그리고, 1 이 아니면 이름에 `@40` 처럼 적는다.
+- 쓰지 않는 것(PowerPoint 2019 실측): 글 도형의 `p:bldP`(첫 효과만 남기고 나머지를 버림), Fade 와 Wipe 필터의 `fill="hold"`(같은 도형의 뒤 Fade 끝내기가 재생되지 않음), `style.opacity` 를 정한 뒤 Fade 진입(끝이 불투명 1), Transparency 강조(계단), presetID 없는 효과(클릭 트리거를 잃음). `anim-xml` 이 이것을 FAIL 로 잡는다.
 - 노트는 단계마다 `[1-1]` 머리줄, 말, `[연출]` 줄이다. 클릭과 말을 맞출 때 본다.
 - 숨긴 제목은 `<n>. <섹션 이름>`.
 - 바뀌는 글(`s.swap`)과 사라지는 글이 같은 자리에 겹쳐 보인다. HTML 과 같은 구조라 피할 수 없다. 도형 이름(`text <요소> #n`)으로 구분한다.
@@ -74,6 +75,26 @@
 - `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더>`. `gates.md` 참고.
 - `node "<S>/scripts/pptx.mjs" com --anim <편집.pptx> <폴더> --script <대본> [--video]`: 편집 덱의 애니메이션을 PowerPoint 가 파일대로 읽는지 본다. `gates.md` 참고.
 - `scripts/pptx-com.ps1` 이 하위 프로세스에서 PowerPoint 를 열고, 끝나면 자기가 연 PowerPoint 만 닫는다. 시간 제한(기본 600초, `--anim` 은 900초)을 넘으면 그 PowerPoint 만 끝낸다.
+
+## PowerPoint 실측 결과(2026-11-19)
+
+- 판: Office ProPlus 2019 Volume, PowerPoint 16.0 build 10353(POWERPNT.EXE 16.0.10353.20037), Windows. Microsoft 365 는 재보지 않음
+- 방법: 대화형 예약 작업의 COM. 재생은 `CreateVideo` 영상을 프레임으로 풀어 잼(슬라이드 쇼는 화면이 연결되지 않은 세션에서 `E_FAIL`)
+
+| 확인 | 결과 |
+|---|---|
+| 열기(검사 파일 14개, 예시 편집 덱) | 고치기 창 없음 |
+| `style.opacity` 키프레임과 from/to | 부드럽게 재생, 끝 값 유지 |
+| Transparency 강조 | 한 번에 바뀜 |
+| Fade 의 `accel`, `decel` | SMIL 식보다 더 치우침(u=0.5 에서 0.08 차이). 그래서 투명도에 쓰지 않음 |
+| Fade 진입 안의 `ppt_x` 키프레임, `ppt_w`/`ppt_h`(글자도 함께, 가운데 기준), `r`(도, 시계 방향) | 기록대로 |
+| Wipe `wipe(left)`, `wipe(right)`, `wipe(up)`, `wipe(down)` | 왼쪽, 오른쪽, 위, 아래부터 드러남 |
+| 전환 `p14:dur` 250 과 첫 묶음 | 전환 뒤 클릭 없이 시작 |
+| presetID 0 의 emph | 사용자 지정 효과로 재생, 클릭 유지 |
+| 글 도형의 `p:bldP`(효과 둘 이상) | 첫 효과만 남음(예시 덱 151개 중 9개 버림) |
+| Fade 필터의 `fill="hold"` | 같은 도형의 뒤 Fade 끝내기가 재생되지 않음 |
+
+- 아직 못 본 것(화면이 연결된 세션이 필요): 재생 중 클릭이 끝 상태로 마치는지(`nextAc="seek"`), `GetClickCount`, `FirstAnimationIsAutomatic`, `GotoClick` 캡처. 슬라이드 쇼가 `CreateVideo` 와 같게 재생하는지
 
 ## 개발용: PowerPoint 실측(단계 0)
 
