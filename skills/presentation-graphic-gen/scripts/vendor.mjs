@@ -56,7 +56,8 @@ export function vendorBytes(rel, root = VENDOR) {
   let bytes;
   try {
     bytes = readFileSync(file);
-    if (packed) bytes = brotliDecompressSync(bytes);
+    // the largest original is about 6.2 MB; a bigger output is a damaged or swapped file, not a reason to run out of memory
+    if (packed) bytes = brotliDecompressSync(bytes, { maxOutputLength: 16 * 1024 * 1024 });
   } catch (e) {
     throw new VendorError(`vendor/${rel}${packed ? '.br' : ''}: cannot read (${e.code || e.message}); reinstall the skill`);
   }

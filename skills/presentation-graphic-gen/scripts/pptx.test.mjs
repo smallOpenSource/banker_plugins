@@ -73,6 +73,14 @@ test('vendored PptxGenJS loads from its checked bytes; a tampered copy is refuse
   assert.throws(() => pptxgen(copy), VendorError);
 });
 
+test('a vendored .br that unpacks to far more than any original is refused as damaged, not unpacked into memory', () => {
+  const copy = join(TMP, 'vendor-big');
+  cpSync(VENDOR, copy, { recursive: true });
+  // 64 MiB of zeros packs to a few KB; the largest original is about 6.2 MB
+  writeFileSync(join(copy, 'pptxgenjs', 'pptxgen.bundle.js.br'), brotliCompressSync(Buffer.alloc(64 * 1024 * 1024)));
+  assert.throws(() => pptxgen(copy), (e) => e instanceof VendorError && /cannot read/.test(e.message));
+});
+
 test('make.mjs rejects an unknown --format (exit 2)', () => {
   const r = spawnSync(process.execPath, [MAKE, '--sample', '--format', 'pdf'], { encoding: 'utf8' });
   assert.equal(r.status, 2, r.stderr);
