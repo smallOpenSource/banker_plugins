@@ -580,6 +580,153 @@ export function pickTheme(saved, allowed, fallback) {
   return list.includes(saved) ? saved : fallback;
 }
 
+/* ----------------------------------------------------- 무리와 설명 */
+
+// 인자 없이 부른 스킬이 사용자에게 테마를 고르게 할 때 쓰는 글. 🔴 전부 색
+// 값에서 계산합니다. 손으로 쓴 설명도, DESIGN.md 의 글도 없습니다. 그래서 번들
+// 74종과 `--design-md` 로 더한 테마가 같은 규칙을 따르고, 같은 입력이면 같은
+// 글이 나옵니다.
+
+// 첫 질문의 무리 넷. 🔴 기준은 번들 74종의 실제 분포를 보고 정했습니다
+// (순서대로 18, 14, 19, 23). 강조색이 무채색인 테마가 32종이라 그것을 바탕
+// 밝기로 둘로 가릅니다. 회색 바탕은 대개 어두운 바탕이 정체성인 브랜드를
+// 라이트로 되돌린 것입니다. 색이 있는 강조색은 색조 75도 아래와 330도 이상이
+// 따뜻한 쪽입니다.
+export const GROUPS = [
+  { id: "minimal", label: "밝은 미니멀", summary: "흰 바탕에 무채색 강조색" },
+  { id: "mono", label: "회색 모노톤", summary: "회색이나 미색 바탕에 무채색 강조색" },
+  { id: "warm", label: "따뜻한 강조색", summary: "빨강, 주황, 노랑 계열 강조색" },
+  { id: "cool", label: "차가운 강조색", summary: "초록, 파랑, 보라 계열 강조색" },
+];
+
+// [이 각도 아래, 이름]. 색조는 0~360 도입니다.
+const HUE_NAMES = [
+  [8, "빨강"], [20, "주황빛 빨강"], [38, "주황"], [48, "노란빛 주황"],
+  [70, "노랑"], [100, "연두"], [165, "초록"], [190, "청록"],
+  [205, "청록빛 파랑"], [240, "파랑"], [255, "보랏빛 파랑"], [285, "보라"],
+  [320, "자주"], [340, "분홍"], [352, "분홍빛 빨강"], [360, "빨강"],
+];
+
+// 바탕에 살짝 도는 기운. 채도가 낮은 바탕에만 씁니다.
+const TINTS = [[30, "붉은"], [75, "누런"], [165, "초록"], [280, "푸른"],
+               [330, "보라"], [360, "붉은"]];
+
+// 흰 바탕으로 보는 휘도. `#faf9f5`(0.947) 는 흰 바탕이고 `#f5f5f5`(0.91) 는
+// 밝은 회색입니다. 무리(`minimal`)와 설명("흰 바탕")이 같은 값을 씁니다.
+const WHITE_BG = 0.93;
+
+// [이 휘도 이상, 바탕 밝기]. 무채색 바탕에만 씁니다.
+const BG_LEVELS = [[WHITE_BG, "흰"], [0.75, "밝은 회색"], [0.4, "중간 회색"],
+                   [0.03, "어두운 회색"], [0, "검정에 가까운"]];
+
+// [이 HLS 명도 이상, 이름]. 무채색 강조색에만 씁니다.
+const GREY_NAMES = [[0.95, "흰색"], [0.7, "밝은 회색"], [0.4, "회색"],
+                    [0.15, "짙은 회색"], [0, "검정"]];
+
+// 🔴 채도는 HLS 의 s 가 아니라 채널 최댓값과 최솟값의 차이입니다. HLS 의 s 는
+// 거의 검정인 색(`#181d26`, s 0.23)도 높게 잡아 검정을 색으로 부릅니다.
+const GREY_CHROMA = 0.06;
+const MUTED_CHROMA = 0.15;
+// 바탕의 기운은 채널 차이 4/255 부터 봅니다. `#faf9f5`(5/255)는 누런 기가 돌고
+// `#f7f7f4`(3/255)는 돌지 않습니다.
+const TINT_CHROMA = 0.015;
+
+function colorShape(value) {
+  const chans = channels(value.toLowerCase());
+  const [hue, light] = rgbToHls(...chans);
+  return { hue: hue * 360, light,
+           chroma: Math.max(...chans) - Math.min(...chans) };
+}
+
+function firstBelow(table, degree) {
+  return table.find(([upper]) => degree < upper)[1];
+}
+
+function firstAtLeast(table, value) {
+  return table.find(([floor]) => value >= floor)[1];
+}
+
+function warmHue(degree) {
+  return degree < 75 || degree >= 330;
+}
+
+// `#ff385c` -> `분홍빛 빨강`. 채도가 낮으면 회색 이름이나 "검정에 가까운" 을 씁니다.
+export function colorName(value) {
+  const { hue, light, chroma } = colorShape(value);
+  if (chroma < GREY_CHROMA) return firstAtLeast(GREY_NAMES, light);
+  const name = firstBelow(HUE_NAMES, hue);
+  if (chroma < MUTED_CHROMA) {
+    if (light < 0.3) return `검정에 가까운 ${name}`;
+    return light > 0.8 ? `흰색에 가까운 ${name}` : `탁한 ${name}`;
+  }
+  if (light < 0.3) return `짙은 ${name}`;
+  return light > 0.7 ? `연한 ${name}` : name;
+}
+
+function bgPhrase(value) {
+  const { hue, chroma } = colorShape(value);
+  if (chroma >= MUTED_CHROMA) return `${colorName(value)} 바탕`;
+  const level = firstAtLeast(BG_LEVELS, luminance(value.toLowerCase()));
+  if (chroma < TINT_CHROMA) return `${level} 바탕`;
+  return `${firstBelow(TINTS, hue)} 기가 도는 ${level} 바탕`;
+}
+
+// 🔴 무리는 기본 보정을 거친 라이트 강조색으로 정합니다. CSS 로 나가는 색이
+// 그것이라서입니다. `resend` 의 원래 강조색 `#fcfdff` 은 거의 흰색이지만 보정이
+// 명도만 내려 파랑이 됩니다. `--target`, `--no-correct` 는 보지 않습니다. 옵션
+// 하나에 테마의 무리가 바뀌면 안 됩니다.
+export function groupOf(light) {
+  const accent = colorShape(Object.fromEntries(correctedPalette(light)).accent);
+  if (accent.chroma < MUTED_CHROMA) {
+    return luminance(light[0].toLowerCase()) >= WHITE_BG ? "minimal" : "mono";
+  }
+  return warmHue(accent.hue) ? "warm" : "cool";
+}
+
+function bodyContrast(out) {
+  const ratio = contrast(out.ink, out.bg);
+  const word = ratio >= 7 ? "높음" : (ratio >= 4.5 ? "보통" : "낮음");
+  return `본문 대비 ${ratio.toFixed(1)}:1(${word})`;
+}
+
+function modeText(values, opts) {
+  const out = Object.fromEntries(palettePairs(values, opts));
+  return `${bgPhrase(out.bg)}, ${colorName(out.accent)} 강조색, ${bodyContrast(out)}`;
+}
+
+// 🔴 설명은 CSS 로 나가는 값(보정 뒤)을 말합니다. 원본 값을 말하면 보정이
+// 옮긴 강조색(`bmw-m` 의 흰색)을 사용자가 고른 뒤에야 다른 색으로 봅니다.
+export function describeTheme(theme, opts = {}) {
+  return `${modeText(theme.light, opts)}. 다크는 ${modeText(theme.dark, opts)}`;
+}
+
+// 선택지 옆에 보일 고정폭 블록. 🔴 코드 펜스로 감쌉니다. 질문 도구의 미리보기는
+// 마크다운이라 펜스 밖에서는 줄과 칸 맞춤이 무너집니다.
+export function previewOf(theme, opts = {}) {
+  const row = (name, values) => {
+    const out = Object.fromEntries(palettePairs(values, opts));
+    return `${name.padEnd(7)}${["bg", "surface", "ink", "accent"]
+      .map((field) => out[field]).join("  ")}`;
+  };
+  return ["```", "       bg       surface  ink      accent",
+          row("light", theme.light), row("dark", theme.dark), "```"].join("\n");
+}
+
+// `list --json`. 테마 순서는 `list` 와 같고, 무리 안 순서도 그것을 따릅니다.
+// 빈 무리는 내지 않습니다. 질문 도구는 선택지가 둘 이상이어야 합니다.
+export function renderListJson(resolved, opts = {}) {
+  const themes = byLabel(resolved.themes).map(([slug, theme]) => ({
+    slug, label: theme.label, group: groupOf(theme.light),
+    description: describeTheme(theme, opts), preview: previewOf(theme, opts),
+  }));
+  const groups = GROUPS.map((group) => {
+    const slugs = themes.filter((theme) => theme.group === group.id)
+      .map((theme) => theme.slug);
+    return { ...group, count: slugs.length, slugs };
+  }).filter((group) => group.count > 0);
+  return JSON.stringify({ groups, themes }, null, 2);
+}
+
 /* ------------------------------------------------------------- 산출물 */
 
 function declarations(pairs, prefix) {
@@ -814,6 +961,7 @@ export function audit(resolved, opts) {
 
 const COMMANDS = new Set(["list", "css", "json", "widget", "check"]);
 const DARK_VIA = new Set(["attr", "media", "class"]);
+const JSON_COMMANDS = new Set(["check", "list"]);
 
 // `--prefix` 에 쓰는 글자. 🔴 접두사는 `--<접두사><이름>` 에 그대로 들어갑니다.
 // `;` 나 `}` 가 들면 그 뒤 선언이 통째로 깨집니다. 기본은 빈 문자열입니다.
@@ -830,7 +978,7 @@ const USAGE = `node scripts/themes.mjs <list|css|json|widget|check> [options]
   --label-target N    버튼 글자 목표 (기본 4.5)
   --no-correct        원본 값을 그대로 낸다 (대조군 전용)
   --out FILE          표준출력 대신 파일로
-  --json              check 에서만. 기계가 읽는 감사 결과`;
+  --json              check 와 list 에서만. 기계가 읽는 감사 결과, 무리와 설명`;
 
 class ArgError extends Error {}
 
@@ -901,8 +1049,8 @@ function checkCommand(opts) {
   if (!COMMANDS.has(opts.command)) {
     throw new ArgError(`unknown command ${opts.command}`);
   }
-  if (opts.json && opts.command !== "check") {
-    throw new ArgError("--json is for check only");
+  if (opts.json && !JSON_COMMANDS.has(opts.command)) {
+    throw new ArgError("--json is for check and list only");
   }
 }
 
@@ -944,8 +1092,11 @@ function emit(text, out) {
 }
 
 const RENDER = new Map([
-  ["list", (resolved) => byLabel(resolved.themes)
-    .map(([slug, theme]) => `${slug}\t${theme.label}`).join("\n")],
+  // 🔴 `--json` 이 없는 `list` 는 `슬러그<탭>표시명` 그대로입니다. 그 두 칸을
+  // 읽는 쪽이 있습니다. 무리와 설명은 `--json` 에만 더합니다.
+  ["list", (resolved, opts) => (opts.json ? renderListJson(resolved, opts)
+    : byLabel(resolved.themes)
+      .map(([slug, theme]) => `${slug}\t${theme.label}`).join("\n"))],
   ["css", renderCss],
   ["json", renderJson],
   ["widget", renderWidget],

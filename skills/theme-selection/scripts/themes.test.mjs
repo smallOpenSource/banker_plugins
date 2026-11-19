@@ -30,6 +30,7 @@ import {
   parseYamlColors, parseProseColors, themeFromDesign, labelOf, loadDesignMd,
   loadBundled, resolveThemes, pickTheme, byLabel, assertSlugs, onStdoutError,
   renderCss, renderJson, renderWidget, audit, parseArgs,
+  GROUPS, groupOf, colorName, describeTheme, previewOf,
 } from "./themes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -874,5 +875,138 @@ test("--out 이 심볼릭 링크면 쓰지 않고 종료 코드 2 다", (t) => {
     assert.equal(existsSync(made), false, "끊긴 링크가 가리키는 자리에 파일이 생겼다");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/* ============================================================
+   인자 없이 고르기 - 무리, 설명, 미리보기(list --json)
+   ============================================================ */
+
+// 🔴 무리와 설명은 색 값에서만 계산합니다. 같은 입력이면 같은 결과이고,
+// DESIGN.md 의 글은 옮기지 않습니다.
+function listJson(args = []) {
+  const res = run(SCRIPT, ["list", "--json", ...args]);
+  assert.equal(res.status, 0, res.stderr);
+  return JSON.parse(res.stdout);
+}
+
+test("colorName 은 색조, 명도, 채도에서 한글 색 이름을 낸다", () => {
+  const cases = [
+    ["#ff385c", "분홍빛 빨강"], ["#e60000", "빨강"], ["#f54e00", "주황빛 빨강"],
+    ["#f7a501", "노란빛 주황"], ["#ffed00", "노랑"], ["#faff69", "연한 노랑"],
+    ["#76b900", "연두"], ["#00ed64", "초록"], ["#0b6e99", "청록빛 파랑"],
+    ["#0052ff", "파랑"], ["#533afd", "보랏빛 파랑"], ["#7132f5", "보라"],
+    ["#4a154b", "짙은 자주"], ["#ffffff", "흰색"], ["#000000", "검정"],
+    ["#808080", "회색"], ["#dddddd", "밝은 회색"], ["#1b1938", "검정에 가까운 보랏빛 파랑"],
+  ];
+  for (const [value, name] of cases) assert.equal(colorName(value), name, value);
+  assert.equal(colorName("#FF385C"), colorName("#ff385c"), "대문자 hex");
+});
+
+test("groupOf 는 강조색의 채도와 색조, 바탕 밝기로 무리 넷 중 하나를 정한다", () => {
+  assert.deepEqual(GROUPS.map((group) => group.id), ["minimal", "mono", "warm", "cool"]);
+  const bundled = loadBundled().themes;
+  const of = (slug) => groupOf(bundled.get(slug).light);
+  assert.equal(of("vercel"), "minimal", "흰 바탕, 검정 강조색");
+  assert.equal(of("x.ai"), "mono", "회색 바탕, 흰 강조색");
+  assert.equal(of("airbnb"), "warm");
+  assert.equal(of("clickhouse"), "warm", "색조 62도 노랑");
+  assert.equal(of("nvidia"), "cool", "색조 82도 연두");
+  assert.equal(of("slack"), "cool", "채도 0.21 자주는 무채색이 아니다");
+  assert.equal(of("superhuman"), "minimal", "채도 0.12 남색은 무채색으로 본다");
+  assert.equal(of("resend"), "cool", "보정 뒤 강조색(파랑)으로 나눈다. 원래 #fcfdff");
+  assert.equal(groupOf(bundled.get("resend").light), of("resend"), "같은 입력, 같은 무리");
+  // 🔴 한 무리가 너무 크거나 작으면 첫 질문이 쓸모없어집니다. 74종의 실제 분포.
+  const counts = {};
+  for (const [, theme] of bundled) {
+    const id = groupOf(theme.light);
+    counts[id] = (counts[id] || 0) + 1;
+  }
+  assert.deepEqual(counts, { minimal: 18, mono: 14, warm: 19, cool: 23 });
+});
+
+test("describeTheme 은 바탕 밝기, 강조색 이름, 본문 대비, 다크 모습을 적는다", () => {
+  const bundled = loadBundled().themes;
+  assert.equal(describeTheme(bundled.get("airbnb")),
+    "흰 바탕, 분홍빛 빨강 강조색, 본문 대비 15.9:1(높음). "
+    + "다크는 검정에 가까운 바탕, 분홍빛 빨강 강조색, 본문 대비 19.2:1(높음)");
+  assert.match(describeTheme(bundled.get("claude")), /^누런 기가 도는 흰 바탕, /);
+  assert.match(describeTheme(bundled.get("lamborghini")), /^노란빛 주황 바탕, /);
+  // 🔴 설명은 CSS 로 나가는 값(보정 뒤)을 말합니다. bmw-m 의 원래 강조색은 흰색이고
+  // 회색 바탕 위에서 안 보여 보정이 어둡게 옮깁니다.
+  const bmw = describeTheme(bundled.get("bmw-m"));
+  assert.doesNotMatch(bmw.split(". ")[0], /흰색 강조색/);
+  assert.match(bmw, /회색 강조색/);
+  assert.match(describeTheme(bundled.get("bmw-m"), { correct: false }), /^[^.]*흰색 강조색/,
+               "대조군: 보정을 끄면 원래 흰색");
+});
+
+test("previewOf 는 라이트와 다크의 bg, surface, ink, accent 를 고정폭 블록으로 낸다", () => {
+  const theme = loadBundled().themes.get("airbnb");
+  const out = Object.fromEntries(palettePairs(theme.light));
+  const dark = Object.fromEntries(palettePairs(theme.dark));
+  assert.equal(previewOf(theme), [
+    "```",
+    "       bg       surface  ink      accent",
+    `light  ${out.bg}  ${out.surface}  ${out.ink}  ${out.accent}`,
+    `dark   ${dark.bg}  ${dark.surface}  ${dark.ink}  ${dark.accent}`,
+    "```",
+  ].join("\n"));
+});
+
+test("list --json 은 무리와 테마마다 설명, 미리보기를 내고 list 출력은 그대로다", () => {
+  const data = listJson();
+  assert.equal(data.themes.length, 74);
+  assert.deepEqual(data.groups.map((group) => group.id), ["minimal", "mono", "warm", "cool"]);
+  assert.equal(data.groups.reduce((sum, group) => sum + group.count, 0), 74);
+  const plain = run(SCRIPT, ["list"]);
+  assert.equal(plain.status, 0, plain.stderr);
+  const lines = plain.stdout.trimEnd().split("\n");
+  assert.deepEqual(data.themes.map((theme) => `${theme.slug}\t${theme.label}`), lines,
+                   "list 와 같은 순서, 같은 이름");
+  assert.ok(lines.every((line) => line.split("\t").length === 2), "list 는 두 칸 그대로");
+  for (const group of data.groups) {
+    assert.equal(group.slugs.length, group.count, group.id);
+    assert.ok(group.label && group.summary, group.id);
+    const members = data.themes.filter((theme) => theme.group === group.id);
+    assert.deepEqual(group.slugs, members.map((theme) => theme.slug), `${group.id} 순서`);
+  }
+  const airbnb = data.themes.find((theme) => theme.slug === "airbnb");
+  const bundled = loadBundled().themes.get("airbnb");
+  assert.deepEqual(airbnb, { slug: "airbnb", label: "Airbnb", group: "warm",
+                             description: describeTheme(bundled), preview: previewOf(bundled) });
+  assert.deepEqual(listJson(), data, "같은 입력이면 같은 출력");
+});
+
+test("list --json 은 --only 로 줄고 빈 무리는 내지 않는다", () => {
+  const data = listJson(["--only", "airbnb,vercel"]);
+  assert.deepEqual(data.groups.map((group) => [group.id, group.slugs]),
+                   [["minimal", ["vercel"]], ["warm", ["airbnb"]]]);
+  assert.equal(data.themes.length, 2);
+});
+
+test("list --json 은 --design-md 테마도 같은 규칙으로 나누고 문서의 글을 옮기지 않는다", () => {
+  const root = scratch("describe");
+  try {
+    mkdirSync(join(root, "brand"));
+    writeFileSync(join(root, "brand", "DESIGN.md"), PROSE_DESIGN);
+    const data = listJson(["--design-md", root, "--only", "brand"]);
+    const [brand] = data.themes;
+    const light = themeFromDesign(PROSE_DESIGN).light;
+    assert.equal(brand.group, groupOf(light));
+    assert.equal(brand.group, "warm", "#ff4f00 강조색");
+    assert.match(brand.description, /^누런 기가 도는 흰 바탕, 주황빛 빨강 강조색, /);
+    for (const word of ["Primary", "CTA", "hover", "near-black", "Cards"]) {
+      assert.ok(!brand.description.includes(word) && !brand.preview.includes(word), word);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("--json 은 check 와 list 에서만 받는다", () => {
+  assert.equal(parseArgs(["list", "--json"]).json, true);
+  for (const command of ["css", "json", "widget"]) {
+    assert.throws(() => parseArgs([command, "--json"]), /check and list only/, command);
   }
 });
