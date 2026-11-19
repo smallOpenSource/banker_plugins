@@ -405,3 +405,18 @@ test('anim-match continuity (B3): a click that starts with an entrance not yet s
   continuity(readSlide(xml('#ppt_w*0.5')), 1, bad, 's1-2');
   assert.deepEqual(bad, ['s1-2 start: shape i.ul #2 does not start where the previous click ended']);
 });
+
+// ---------- review 3: an item shown dim from the start that brightens later ----------
+test('plan (R1): an item shown from the start at 0.35 that brightens to 1 is two shapes: one at 35% shown during the transition, one at 100% that comes in over it; the simulator multiplies the shape transparency by style.opacity, clamped at 1 (X6)', () => {
+  const S = section([BOX(1)], [['s1-1', 0, 0.5], ['s1-2', 0.5, 1.2]], [(t) => ({ op: 0.35 + 0.65 * ramp(t, 0.6, 1.0) })], [0.6, 1.0]);
+  const plan = planSection(S);
+  assert.deepEqual(plan.shapes.map((c) => [c.name, c.level, c.vis0]), [['shape div.b1 #1@35', 0.35, true], ['shape div.b1 #1', 1, false]]);
+  const xml = SLIDE(SH(2, 'shape div.b1 #1@35', 400, 300, 200, 100) + SH(3, 'shape div.b1 #1', 400, 300, 200, 100), transitionXml() + timingXml(plan, [2, 3]));
+  assert.deepEqual(checkSlide(xml), []);
+  const sl = readSlide(xml), op = (k, t) => itemsAt(stateAt(sl, k, t)).get(1).op;
+  assert.ok(Math.abs(op(0, -Infinity) - 0.35) < 1e-9, `slide start ${op(0, -Infinity)}`);
+  assert.ok(Math.abs(op(1, 300) - (0.35 + 0.65 * 0.5)) < 0.005, `halfway ${op(1, 300)}`);
+  assert.ok(Math.abs(op(1, Infinity) - 1) < 1e-9);
+  const over = SLIDE(SH(2, 'shape a #1@35', 0, 0, 100, 100), TIMING(GROUP(10, true, C(11, '', 0, C(12, ' presetID="0" presetClass="emph" nodeType="afterEffect"', 0, TAV(13, 2, 'style.opacity', 0, 100, [[0, '1'], [100000, '2']]))))));
+  assert.equal(itemsAt(stateAt(readSlide(over), 0, Infinity)).get(1).op, 0.35, 'style.opacity above 1 does not brighten past the shape\'s own 35%');
+});

@@ -238,23 +238,41 @@ function geoTracks(s, R, lo, hi, enter, held) {
 const idxOf = (T, t) => { let lo = 0, hi = T.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (T[m] < t - 1e-9) lo = m + 1; else hi = m; } return lo; };
 const stepOf = (W, t) => { let k = 0; for (let i = 0; i < W.length; i++) if (t >= W[i].start - 1e-9) k = i; return k; };
 
+// the shapes an item is drawn as: one at its highest opacity. An item shown from the start at a lower opacity than
+// its highest is two shapes, because PowerPoint multiplies a shape's own transparency by style.opacity and clamps that
+// at 1 (measured X6), and keyframes only start after the transition: one at the starting opacity shown from the start,
+// and one at the highest that comes in over it (over each other: 1 - (1 - low)(1 - high) = the page's opacity)
+function copiesOf(s, it, k) {
+  const base = baseOf(s), vis0 = s.op[0] > ZERO && shows(s, it, 0), op0 = lvl(s.op[0]);
+  if (!base) return [];
+  if (!vis0 || op0 >= base - 0.005) return [{ item: k, level: base, vis0, coef: s.op.map((v) => v / base) }];
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  return [{ item: k, level: op0, vis0: true, coef: s.op.map((o) => clamp(o / op0)) },
+    { item: k, level: base, vis0: false, coef: s.op.map((o) => (o <= op0 ? 0 : clamp((1 - (1 - o) / (1 - op0)) / base))) }];
+}
+// a shape's own series (opacity = its level x its keyframe factor) and its events
+function copySeries(s, it, c, clips) {
+  const cs = Object.assign({}, s, { op: c.coef.map((v) => v * c.level), opn: c.coef });
+  const evs = opacityEvents(cs), gate = gateEvent(cs, it);
+  if (gate) evs.unshift(gate);
+  mergeClips(evs, clips, []);
+  return Object.assign(c, { s: cs, evs });
+}
 function itemPlan(S, k, lab) {
   const it = S.items[k], s = seriesOf(S, k, lab), R = shapeSeries(s, it), notes = [];
-  const evs = opacityEvents(s), gate = gateEvent(s, it);
+  const evs = opacityEvents(s), gate = gateEvent(s, it), clips = clipEvents(s);
   if (gate) evs.unshift(gate);
-  mergeClips(evs, clipEvents(s), notes);
-  const vis0 = s.op[0] > ZERO && shows(s, it, 0), base = baseOf(s);
-  s.opn = s.op.map((v) => (base ? v / base : 0));
-  return { it, s, R, evs, copies: base ? [{ item: k, level: base, vis0 }] : [], notes };
+  mergeClips(evs, clips, notes);
+  return { it, s, R, evs, copies: copiesOf(s, it, k).map((c) => copySeries(s, it, c, clips)), notes };
 }
 
 // one step of one shape: its effects with the geometry tracks of the step (when it is seen in it); vis at the step start
 function stepEffects(P, copy, W, w, held, vis) {
-  const T = P.s.T;
-  const mine = P.evs.filter((e) => e.step === w.k).map(eventEffect).filter(Boolean);
+  const T = copy.s.T;
+  const mine = copy.evs.filter((e) => e.step === w.k).map(eventEffect).filter(Boolean);
   const ent = mine.find((f) => f.cls === 'entr');
   const enter = ent ? idxOf(T, ent.bh[0].t) : vis ? idxOf(T, w.t0) : -1;
-  const tracks = enter >= 0 ? geoTracks(P.s, P.R, Math.max(idxOf(T, w.start), idxOf(T, w.t0)), idxOf(T, w.end), enter, held) : [];
+  const tracks = enter >= 0 ? geoTracks(copy.s, P.R, Math.max(idxOf(T, w.start), idxOf(T, w.t0)), idxOf(T, w.end), enter, held) : [];
   if (tracks.length && mine.length) mine[0].bh.push(...tracks);
   else if (tracks.length) mine.push({ cls: MOTION.cls, preset: MOTION.preset, bh: tracks, motion: true });
   return mine;

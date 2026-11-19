@@ -163,3 +163,30 @@ describe('editable deck: a line with a gap', { skip: SKIP }, () => {
     assert.match(w['text-fit'].lines.join('\n'), /text p\.line\.t-h1\[q\] #\d+: text [\d.]+ px in a box made for [\d.]+ px/);
   });
 });
+
+// review 3: a line dimmed from the section start (0.35) that brightens on the next click (deck9)
+describe('editable deck: shown dim from the start', { skip: SKIP }, () => {
+  let TMP, present, script, out;
+  before(async () => {
+    TMP = mkdtempSync(join(tmpdir(), 'pgg-anim-dim-test-'));
+    mkdirSync(join(TMP, 'scenes'));
+    script = join(TMP, 'mini.md');
+    writeFileSync(script, '# 작은 덱\n\n## 1. 하나\n\n### 1-1\n화면: 첫 장면\n말: 하나.\n\n## 2. 둘\n\n### 2-1\n화면: 흐린 글\n말: 둘.\n\n### 2-2\n화면: 밝아짐\n말: 셋.\n');
+    writeFileSync(join(TMP, 'scenes', '01.js'), `Deck.scene({ section: 1, css: '.s01 .a { position: absolute; left: 200px; top: 300px; }', html: () => '<p class="a t-h2" data-r="a">첫 장면</p>', steps: { 's1-1'(s) { s.fadeUp('a', { at: 0.1 }); } } });`);
+    writeFileSync(join(TMP, 'scenes', '02.js'), `Deck.scene({ section: 2, css: '.s02 .a { position: absolute; left: 200px; top: 300px; } .s02 .b { position: absolute; left: 200px; top: 500px; }',
+      html: () => '<p class="a t-h2" data-r="a">흐린 글</p><p class="b t-h2" data-r="b">다른 글</p>',
+      steps: { 's2-1'(s) { s.tween('a', { opacity: 0.35 }, { opacity: 0.35 }, { at: 0, dur: 0.3 }); s.fadeUp('b', { at: 0.1 }); }, 's2-2'(s) { s.tween('a', null, { opacity: 1 }, { dur: 0.4 }); } } });`);
+    const r = spawnSync(process.execPath, [join(SKILL, 'scripts', 'build.mjs'), script, '--scenes', join(TMP, 'scenes'), '--dir', TMP, '--stamp', STAMP], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    present = join(TMP, `mini-present-${STAMP}.html`);
+    out = join(TMP, 'edit.pptx');
+    await buildEditPptx({ html: present, parsed: parseScript(readFileSync(script, 'utf8')), out, browser: BROWSER });
+  });
+  after(() => { if (TMP) rmSync(TMP, { recursive: true, force: true }); });
+
+  test('every anim gate passes: the dim line is 35% from the slide start (during the transition) and brightens on the click', async () => {
+    const v = await verify(out, { script, html: present, browser: BROWSER, log: () => {} });
+    const g = Object.fromEntries(v.results.map((x) => [x.gate, x]));
+    for (const k of ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render', 'text-fit']) assert.equal(g[k].ok, true, `${k}: ${g[k].detail}\n${g[k].lines.join('\n')}`);
+  });
+});

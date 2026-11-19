@@ -153,7 +153,7 @@ function tavValue(b, t, sh) {
   return val(ks[ks.length - 1]);
 }
 const ATTR = { ppt_x: (s, v) => { s.cx = v * SLIDE.w; }, ppt_y: (s, v) => { s.cy = v * SLIDE.h; }, ppt_w: (s, v) => { s.w = v * SLIDE.w; }, ppt_h: (s, v) => { s.h = v * SLIDE.h; },
-  r: (s, v) => { s.rot = v; }, 'style.rotation': (s, v) => { s.rot = v; }, 'style.opacity': (s, v) => { s.opac = v; } };
+  r: (s, v) => { s.rot = v; }, 'style.rotation': (s, v) => { s.rot = v; }, 'style.opacity': (s, v) => { s.opac = Math.max(0, Math.min(1, v)); } }; // multiplies the shape's own transparency, clamped at 1 (X6)
 const BEHAVE = {
   set: (s, b) => { if (b.attr === 'style.visibility') s.vis = b.to === 'visible'; else if (b.attr === 'style.opacity') s.opac = +b.to; },
   animEffect: (s, b, t) => {
