@@ -172,6 +172,27 @@ describe('engine in a browser', { skip: SKIP }, () => {
     }
   });
 
+  test('__deck.segments(): every segment with its element, full from / to vectors, in time order per channel; read only (copies, the screen does not change)', async () => {
+    await page.goto(url(PRESENT, '#5'));
+    const r = await page.eval(`(() => {
+      const before = { t: __deck.time, o: getComputedStyle(document.querySelector('.s04 [data-r="num"]')).opacity };
+      const segs = __deck.segments();
+      const num = segs.filter((s) => s.el.dataset.r === 'num').map((s) => ({ ch: s.channel, t0: s.t0, t1: s.t1, from: s.from, to: s.to, ease: s.ease }));
+      segs[0].from[0] = 999; segs[0].el = null;
+      const again = __deck.segments()[0];
+      return { n: segs.length, anims: __deck.animationCount(), num, elements: segs.every((s, i) => i === 0 || s.el instanceof Element),
+        timed: segs.every((s) => s.t0 <= s.t1 + 1e-9 && s.t1 <= __deck.duration + 1e-9), copy: again.from[0] !== 999 && again.el instanceof Element,
+        same: __deck.time === before.t && getComputedStyle(document.querySelector('.s04 [data-r="num"]')).opacity === before.o };
+    })()`);
+    assert.ok(r.n > r.anims, `${r.n} segments, ${r.anims} tracks`);
+    assert.ok(r.elements && r.timed && r.copy && r.same, JSON.stringify(r));
+    const tr = r.num.filter((s) => s.ch === 'translate');
+    assert.deepEqual(tr.map((s) => s.to), [[0, 0], [0, -140], [1000, -100]], 'fadeUp, then the two moves (scene 4)');
+    assert.deepEqual(tr[1].from, [0, 0], 'from of a move from the current state is the full resolved vector');
+    assert.deepEqual(r.num.filter((s) => s.ch === 'opacity').map((s) => s.to[0]), [1, 0.35, 1]);
+    assert.ok(tr.every((s, i) => i === 0 || s.t0 >= tr[i - 1].t1 - 1e-9));
+  });
+
   test('trap 2 negative control: naive separate animations with fill "both" get the boundary wrong', async () => {
     const naive = await page.eval(`(() => {
       const e = document.createElement('div'); document.body.appendChild(e);
