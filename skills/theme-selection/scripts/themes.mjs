@@ -599,12 +599,26 @@ export const GROUPS = [
   { id: "cool", label: "차가운 강조색", summary: "초록, 파랑, 보라 계열 강조색" },
 ];
 
-// [이 각도 아래, 이름]. 색조는 0~360 도입니다.
+// [이 각도 아래, 이름]. 색조는 0~360 도입니다. 🔴 경계는 `<` 입니다. 순수
+// 파랑(`#0000ff`)이 정확히 240도라서 "파랑" 칸은 245 까지입니다.
 const HUE_NAMES = [
-  [8, "빨강"], [20, "주황빛 빨강"], [38, "주황"], [48, "노란빛 주황"],
+  [8, "빨강"], [20, "주황빛 빨강"], [42, "주황"], [47, "노란빛 주황"],
   [70, "노랑"], [100, "연두"], [165, "초록"], [190, "청록"],
-  [205, "청록빛 파랑"], [240, "파랑"], [255, "보랏빛 파랑"], [285, "보라"],
+  [205, "청록빛 파랑"], [245, "파랑"], [258, "보랏빛 파랑"], [285, "보라"],
   [320, "자주"], [340, "분홍"], [352, "분홍빛 빨강"], [360, "빨강"],
+];
+
+// 색조만으로는 틀리는 이름. [맞는지, 이름]이고 앞에서부터 봅니다. 어두운 주황은
+// 갈색(`#8b4513`), 채도가 낮은 어두운 빨강은 적갈색(`#a52a2a`), 어두운 노랑과
+// 연두는 올리브색, 어두운 파랑은 남색, 밝은 빨강은 분홍, 밝은 청록빛 파랑은
+// 하늘색입니다. `h` 는 색조(도), `l` 은 HLS 명도, `s` 는 HLS 채도입니다.
+const SHADE_NAMES = [
+  [(h, l) => l < 0.45 && h >= 10 && h < 45, "갈색"],
+  [(h, l, s) => l < 0.45 && s < 0.7 && (h < 10 || h >= 345), "적갈색"],
+  [(h, l) => l < 0.35 && h >= 45 && h < 90, "올리브색"],
+  [(h, l) => l < 0.3 && h >= 205 && h < 250, "남색"],
+  [(h, l) => l > 0.7 && (h < 10 || h >= 330), "분홍"],
+  [(h, l) => l > 0.7 && h >= 185 && h < 215, "하늘색"],
 ];
 
 // 바탕에 살짝 도는 기운. 채도가 낮은 바탕에만 씁니다.
@@ -623,9 +637,10 @@ const BG_LEVELS = [[WHITE_BG, "흰"], [0.75, "밝은 회색"], [0.4, "중간 회
 const GREY_NAMES = [[0.95, "흰색"], [0.7, "밝은 회색"], [0.4, "회색"],
                     [0.15, "짙은 회색"], [0, "검정"]];
 
-// 🔴 채도는 HLS 의 s 가 아니라 채널 최댓값과 최솟값의 차이입니다. HLS 의 s 는
-// 거의 검정인 색(`#181d26`, s 0.23)도 높게 잡아 검정을 색으로 부릅니다.
-const GREY_CHROMA = 0.06;
+// 🔴 무채색은 HLS 의 s 가 아니라 채널 최댓값과 최솟값의 차이로 봅니다. HLS 의
+// s 는 거의 검정인 색(`#181d26`, s 0.23)도 높게 잡아 검정을 색으로 부릅니다.
+// 🔴 이 한 값을 무리("무채색 강조색")와 색 이름이 함께 씁니다. 둘이 다르면
+// 무채색 무리의 설명이 색 이름을 말합니다.
 const MUTED_CHROMA = 0.15;
 // 바탕의 기운은 채널 차이 4/255 부터 봅니다. `#faf9f5`(5/255)는 누런 기가 돌고
 // `#f7f7f4`(3/255)는 돌지 않습니다.
@@ -633,8 +648,8 @@ const TINT_CHROMA = 0.015;
 
 function colorShape(value) {
   const chans = channels(value.toLowerCase());
-  const [hue, light] = rgbToHls(...chans);
-  return { hue: hue * 360, light,
+  const [hue, light, sat] = rgbToHls(...chans);
+  return { hue: hue * 360, light, sat,
            chroma: Math.max(...chans) - Math.min(...chans) };
 }
 
@@ -650,15 +665,13 @@ function warmHue(degree) {
   return degree < 75 || degree >= 330;
 }
 
-// `#ff385c` -> `분홍빛 빨강`. 채도가 낮으면 회색 이름이나 "검정에 가까운" 을 씁니다.
+// `#ff385c` -> `분홍빛 빨강`. 무채색이면 회색 이름을 씁니다.
 export function colorName(value) {
-  const { hue, light, chroma } = colorShape(value);
-  if (chroma < GREY_CHROMA) return firstAtLeast(GREY_NAMES, light);
+  const { hue, light, sat, chroma } = colorShape(value);
+  if (chroma < MUTED_CHROMA) return firstAtLeast(GREY_NAMES, light);
+  const shade = SHADE_NAMES.find(([fits]) => fits(hue, light, sat));
+  if (shade) return shade[1];
   const name = firstBelow(HUE_NAMES, hue);
-  if (chroma < MUTED_CHROMA) {
-    if (light < 0.3) return `검정에 가까운 ${name}`;
-    return light > 0.8 ? `흰색에 가까운 ${name}` : `탁한 ${name}`;
-  }
   if (light < 0.3) return `짙은 ${name}`;
   return light > 0.7 ? `연한 ${name}` : name;
 }
@@ -712,11 +725,29 @@ export function previewOf(theme, opts = {}) {
           row("light", theme.light), row("dark", theme.dark), "```"].join("\n");
 }
 
+// 겹치지 않는 표시명. 🔴 질문 도구는 고른 선택지의 이름을 돌려주므로 이름이
+// 겹치면 어느 테마인지 정할 수 없습니다. `labelOf` 는 `-` 와 `_` 를 같게 보고
+// (`ide-vscode`, `ide_vscode`), 맞춰 보기는 대소문자를 보지 않으므로(`Airbnb`
+// 폴더와 번들 `airbnb`) NFC 로 맞춘 소문자가 같으면 겹침입니다. 겹치는 것마다
+// ` (슬러그)` 를 붙입니다. 슬러그에는 빈칸과 괄호가 없어 붙인 이름끼리, 또는 붙인
+// 이름과 다른 표시명이 다시 겹치지 않습니다. `--json` 없는 `list` 는 그대로입니다.
+function uniqueLabels(entries) {
+  const key = (label) => label.normalize("NFC").toLowerCase();
+  const seen = new Map();
+  for (const [, theme] of entries) {
+    seen.set(key(theme.label), (seen.get(key(theme.label)) || 0) + 1);
+  }
+  return new Map(entries.map(([slug, theme]) => [slug,
+    seen.get(key(theme.label)) > 1 ? `${theme.label} (${slug})` : theme.label]));
+}
+
 // `list --json`. 테마 순서는 `list` 와 같고, 무리 안 순서도 그것을 따릅니다.
 // 빈 무리는 내지 않습니다. 질문 도구는 선택지가 둘 이상이어야 합니다.
 export function renderListJson(resolved, opts = {}) {
-  const themes = byLabel(resolved.themes).map(([slug, theme]) => ({
-    slug, label: theme.label, group: groupOf(theme.light),
+  const entries = byLabel(resolved.themes);
+  const labels = uniqueLabels(entries);
+  const themes = entries.map(([slug, theme]) => ({
+    slug, label: labels.get(slug), group: groupOf(theme.light),
     description: describeTheme(theme, opts), preview: previewOf(theme, opts),
   }));
   const groups = GROUPS.map((group) => {

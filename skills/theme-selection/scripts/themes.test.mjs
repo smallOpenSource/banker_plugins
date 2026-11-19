@@ -893,14 +893,43 @@ function listJson(args = []) {
 test("colorName 은 색조, 명도, 채도에서 한글 색 이름을 낸다", () => {
   const cases = [
     ["#ff385c", "분홍빛 빨강"], ["#e60000", "빨강"], ["#f54e00", "주황빛 빨강"],
-    ["#f7a501", "노란빛 주황"], ["#ffed00", "노랑"], ["#faff69", "연한 노랑"],
+    ["#f7a501", "주황"], ["#ffc000", "노란빛 주황"], ["#ffed00", "노랑"], ["#faff69", "연한 노랑"],
     ["#76b900", "연두"], ["#00ed64", "초록"], ["#0b6e99", "청록빛 파랑"],
     ["#0052ff", "파랑"], ["#533afd", "보랏빛 파랑"], ["#7132f5", "보라"],
     ["#4a154b", "짙은 자주"], ["#ffffff", "흰색"], ["#000000", "검정"],
-    ["#808080", "회색"], ["#dddddd", "밝은 회색"], ["#1b1938", "검정에 가까운 보랏빛 파랑"],
+    ["#808080", "회색"], ["#dddddd", "밝은 회색"], ["#1b1938", "짙은 회색"],
   ];
   for (const [value, name] of cases) assert.equal(colorName(value), name, value);
   assert.equal(colorName("#FF385C"), colorName("#ff385c"), "대문자 hex");
+});
+
+// 🔴 대표 색 표본. 색조 경계(정확히 240도인 순수 파랑)와 명도, 채도로 갈리는
+// 이름(갈색, 남색, 올리브색, 분홍, 하늘색)을 봅니다. 기대값은 색의 통상 이름에서
+// 끌어냈습니다.
+test("colorName 은 원색, 갈색, 분홍, 남색, 올리브, 청록 표본에 맞는 이름을 낸다", () => {
+  const cases = [
+    ["#ff0000", "빨강"], ["#00ff00", "초록"], ["#0000ff", "파랑"],
+    ["#ffff00", "노랑"], ["#00ffff", "청록"], ["#ff00ff", "자주"],
+    ["#ffa500", "주황"], ["#ffd700", "노랑"], ["#8b0000", "짙은 빨강"],
+    ["#8b4513", "갈색"], ["#a0522d", "갈색"], ["#a52a2a", "적갈색"],
+    ["#000080", "남색"], ["#191970", "남색"], ["#4169e1", "파랑"],
+    ["#808000", "올리브색"], ["#556b2f", "올리브색"], ["#008080", "짙은 청록"],
+    ["#ffc0cb", "분홍"], ["#ff69b4", "분홍"], ["#ff1493", "분홍"],
+    ["#87ceeb", "하늘색"], ["#800080", "짙은 자주"], ["#8a2be2", "보라"],
+    ["#32cd32", "초록"], ["#708090", "회색"],
+  ];
+  for (const [value, name] of cases) assert.equal(colorName(value), name, value);
+});
+
+// 🔴 무리 요약은 "무채색 강조색" 입니다. 설명의 색 이름도 같은 기준(채널 차이
+// 0.15 아래는 무채색)을 써야 무리와 설명이 서로 다른 말을 하지 않습니다.
+test("무채색 무리의 테마는 설명에서도 강조색을 회색 이름으로 부른다", () => {
+  const greys = new Set(["흰색", "밝은 회색", "회색", "짙은 회색", "검정"]);
+  for (const [slug, theme] of loadBundled().themes) {
+    if (!["minimal", "mono"].includes(groupOf(theme.light))) continue;
+    const accent = Object.fromEntries(palettePairs(theme.light)).accent;
+    assert.ok(greys.has(colorName(accent)), `${slug}: ${colorName(accent)}`);
+  }
 });
 
 test("groupOf 는 강조색의 채도와 색조, 바탕 밝기로 무리 넷 중 하나를 정한다", () => {
@@ -1002,6 +1031,50 @@ test("list --json 은 --design-md 테마도 같은 규칙으로 나누고 문서
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// 🔴 질문 도구는 선택지 이름(표시명)을 돌려줍니다. 표시명이 겹치면 고른 것이
+// 어느 테마인지 정할 수 없습니다. `labelOf` 는 `-` 와 `_` 를 같게 보고, 맞춰
+// 보기는 대소문자를 보지 않으므로 그 둘을 모두 겹침으로 봅니다.
+test("list --json 은 표시명이 겹치면 겹치는 것마다 슬러그를 붙인다", () => {
+  const root = scratch("labels");
+  try {
+    for (const name of ["ide-vscode", "ide_vscode", "Airbnb"]) {
+      mkdirSync(join(root, name));
+      writeFileSync(join(root, name, "DESIGN.md"), YAML_DESIGN);
+    }
+    const data = listJson(["--design-md", root,
+                           "--only", "ide-vscode,ide_vscode,Airbnb,airbnb,stripe"]);
+    const labels = Object.fromEntries(data.themes.map((theme) => [theme.slug, theme.label]));
+    assert.deepEqual(labels, {
+      Airbnb: "Airbnb (Airbnb)", airbnb: "Airbnb (airbnb)",
+      "ide-vscode": "Ide Vscode (ide-vscode)", "ide_vscode": "Ide Vscode (ide_vscode)",
+      stripe: "Stripe",
+    });
+    const lowered = Object.values(labels).map((label) => label.toLowerCase());
+    assert.equal(new Set(Object.values(labels)).size, 5, "표시명이 겹친다");
+    assert.equal(lowered.filter((label) => label === "stripe").length, 1, "겹치지 않으면 그대로");
+    const plain = run(SCRIPT, ["list", "--design-md", root, "--only", "ide-vscode,ide_vscode"]);
+    assert.equal(plain.stdout, "ide-vscode\tIde Vscode\nide_vscode\tIde Vscode\n",
+                 "--json 없는 list 는 그대로");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 🔴 질문은 `$ARGUMENTS` 가 완전히 비었을 때만 합니다. 명령을 준 호출(다른 스킬의
+// 연쇄, 헤드리스 포함)은 예전처럼 진행하고, 질문 흐름에서도 전부를 고를 수 있어야
+// 합니다. 고치기 전 문서는 명령이 있어도 `--only` 가 없으면 물었습니다.
+test("SKILL.md: 선택지 질문은 인자가 비었을 때만이고 전부를 고를 길이 있다", () => {
+  const skill = readFileSync(join(HERE, "..", "SKILL.md"), "utf8");
+  const step3 = skill.slice(skill.indexOf("3. 쓸 테마를 정한다."), skill.indexOf("4. CSS 를 낸다."));
+  assert.match(step3, /`\$ARGUMENTS` 가 완전히 비었을 때만/);
+  assert.match(step3, /모르면 `node <스킬>\/scripts\/themes\.mjs list` 로 목록을 보고 사용자에게 묻는다/);
+  assert.doesNotMatch(step3, /인자가 없을 때를 포함해/);
+  const pick = skill.slice(skill.indexOf("## 테마 고르기"), skill.indexOf("## 경고"));
+  assert.match(pick, /- `전부`: /);
+  assert.match(pick, /물을 수 없는 실행[^\n]*인자가 비었/);
+  assert.match(pick, /두 테마 이상과 맞으면/);
 });
 
 test("--json 은 check 와 list 에서만 받는다", () => {
