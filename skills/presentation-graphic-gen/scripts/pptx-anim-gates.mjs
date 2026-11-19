@@ -6,13 +6,14 @@
 //   anim-match      (page and browser) the independent simulator (pptx-anim-sim.mjs) against the page at every
 //                   step's 0, 15, 50, 85% and end, and between keyframes: end states exact (1 px, 0.5%, opacity
 //                   0.02), positions in between 1 px, opacity and wipes in between 0.2 (the largest is reported);
-//                   each click starts where the previous one ended
+//                   the slide start (the transition, before the automatic group) shows what the section start shows;
+//                   each click starts where the previous one ended, as seen
 //   anim-render     (page and browser) each step's end: the slide's shapes drawn by the browser at the simulated
 //                   state against the page at that time, pixel by pixel
 //   anim-powerpoint always SKIP here: no PowerPoint on the test PCs (pptx.mjs com --anim on a PC that has it)
 import { measure, openDeck, stepWindows } from './pptx-anim-extract.mjs';
 import { renderCompare } from './pptx-anim-render.mjs';
-import { itemsAt, readSlide, stateAt } from './pptx-anim-sim.mjs';
+import { itemsAt, readSlide, stateAt, wipeVisible } from './pptx-anim-sim.mjs';
 import { checkSlide } from './pptx-xmlcheck.mjs';
 
 export const TOL = { endPos: 1, endSize: 0.005, endOp: 0.02, midPos: 1, midSize: 0.01, midOp: 0.2, rot: 0.5 };
@@ -96,36 +97,43 @@ function judge(e, end, it) {
   const sizeOk = end ? e.size <= Math.max(TOL.endSize * Math.max(it.w, it.h), 0.5) : e.size <= Math.max(TOL.midSize * Math.max(it.w, it.h), 1);
   return e.op <= (end ? TOL.endOp : TOL.midOp) && e.pos <= (end ? TOL.endPos : TOL.midPos) && sizeOk && e.rot <= TOL.rot && e.clip <= (end ? TOL.endOp : TOL.midOp);
 }
-function continuity(sl, k, bad, id) {
+// a simulated shape's opacity as seen: 0 when hidden, without area or wiped away (an entrance at its first frame)
+export const seenOp = (st) => (st.vis && st.w * st.h >= DRAWN && wipeVisible(st.clip) > 0 ? st.op : 0);
+const moved = (x, y) => Math.hypot(x.cx - y.cx, x.cy - y.cy) > 0.01 || Math.abs(x.w - y.w) > 0.01 || Math.abs(x.h - y.h) > 0.01 || Math.abs(x.rot - y.rot) > 0.01;
+/** Click k starts where click k - 1 ended, as seen (geometry only of a shape seen on either side); problems go to bad. */
+export function continuity(sl, k, bad, id) {
   if (k === 0) return;
   const a = stateAt(sl, k - 1, Infinity), b = stateAt(sl, k, 0);
   for (const [spid, x] of a) {
-    const y = b.get(spid);
-    const seen = x.op > 1e-6 || y.op > 1e-6; // a shape not seen on either side may change unseen (an entrance at its first frame)
-    if (Math.abs(x.op - y.op) > 1e-6 || (seen && (Math.hypot(x.cx - y.cx, x.cy - y.cy) > 0.01 || Math.abs(x.w - y.w) > 0.01 || Math.abs(x.h - y.h) > 0.01 || Math.abs(x.rot - y.rot) > 0.01))) bad.push(`${id} start: ${x.shape.name} does not start where the previous click ended`);
+    const y = b.get(spid), ox = seenOp(x), oy = seenOp(y);
+    if (Math.abs(ox - oy) > 1e-6 || ((ox > 1e-6 || oy > 1e-6) && moved(x, y))) bad.push(`${id} start: ${x.shape.name} does not start where the previous click ended`);
   }
 }
 
-async function matchSection(deck, k, sl, worst, bad) {
+// tau -Infinity: the slide before its automatic group (during the 0.25 s transition) against the page at the
+// section start; only what is seen is compared there (a shape at another place than rest is listed as approx)
+const pageTime = (p, tau) => (tau === Infinity ? p.w.end : tau === -Infinity ? p.w.start : p.w.t0 + tau / 1000);
+const when = (tau) => (tau === Infinity ? 'end' : tau === -Infinity ? 'slide start' : `${Math.round(tau)} ms`);
+function checkTime(p, tau, sl, items, row, acc) {
+  const sims = itemsAt(stateAt(sl, p.gi, tau));
+  items.forEach((it, j) => {
+    const e = itemErr(it, row[j], sims.get(it.n));
+    acc.n++;
+    for (const key of ['pos', 'op', 'clip', 'size']) acc.worst[key] = Math.max(acc.worst[key], e[key]);
+    const ok = tau === -Infinity ? e.op <= TOL.endOp : judge(e, tau === Infinity, it);
+    if (!ok) acc.bad.push(`${p.w.id} ${when(tau)}: ${it.kind} ${it.what} #${it.n} opacity page ${e.page.toFixed(2)} PowerPoint ${e.ppt.toFixed(2)}, position ${e.pos.toFixed(2)} px, size ${e.size.toFixed(2)} px, clip ${e.clip.toFixed(2)}`);
+  });
+}
+async function matchSection(deck, k, sl, acc) {
   const sec = deck.sections[k], W = stepWindows(sec, deck.steps, k === 0);
   const L = await deck.page.eval(`__pggX.layout(${sec.n})`);
-  const plan = W.map((w, gi) => ({ w, gi, taus: compareTimes(w, sl.groups[gi]).concat(Infinity) }));
-  const times = plan.flatMap((p) => p.taus.map((t) => (t === Infinity ? p.w.end : p.w.t0 + t / 1000)));
-  const rows = await measure(deck.page, times);
-  let r = 0, n = 0;
+  const plan = W.map((w, gi) => ({ w, gi, taus: (gi ? [] : [-Infinity]).concat(compareTimes(w, sl.groups[gi]), Infinity) }));
+  const rows = await measure(deck.page, plan.flatMap((p) => p.taus.map((t) => pageTime(p, t))));
+  let r = 0;
   for (const p of plan) {
-    continuity(sl, p.gi, bad, p.w.id);
-    for (const tau of p.taus) {
-      const sims = itemsAt(stateAt(sl, p.gi, tau)), row = rows[r++], end = tau === Infinity;
-      L.items.forEach((it, j) => {
-        const e = itemErr(it, row[j], sims.get(it.n));
-        n++;
-        for (const key of ['pos', 'op', 'clip', 'size']) worst[key] = Math.max(worst[key], e[key]);
-        if (!judge(e, end, it)) bad.push(`${p.w.id} ${end ? 'end' : `${Math.round(tau)} ms`}: ${it.kind} ${it.what} #${it.n} opacity page ${e.page.toFixed(2)} PowerPoint ${e.ppt.toFixed(2)}, position ${e.pos.toFixed(2)} px, size ${e.size.toFixed(2)} px, clip ${e.clip.toFixed(2)}`);
-      });
-    }
+    continuity(sl, p.gi, acc.bad, p.w.id);
+    for (const tau of p.taus) checkTime(p, tau, sl, L.items, rows[r++], acc);
   }
-  return n;
 }
 
 /** Runs the anim-* gates on the editable deck's slides ([{ k, xml, media }]); html: the present page (for anim-match and anim-render). */
@@ -147,10 +155,9 @@ async function pageGates(slides, read, html, browser, gate, log) {
     const items = [];
     for (const sec of deck.sections) items.push((await deck.page.eval(`__pggX.layout(${sec.n})`)).items);
     targetsGate(read, items, gate);
-    const worst = { pos: 0, op: 0, clip: 0, size: 0 }, bad = [];
-    let n = 0;
-    for (let k = 0; k < Math.min(read.length, deck.sections.length); k++) n += await matchSection(deck, k, read[k], worst, bad);
-    gate('anim-match', !bad.length && n > 0, `${n} item states (${deck.steps.length} steps): ends within ${TOL.endPos} px, ${TOL.endSize * 100}% and opacity ${TOL.endOp}; in between ${TOL.midPos} px, opacity and wipe ${TOL.midOp} (largest: position ${worst.pos.toFixed(2)} px, size ${worst.size.toFixed(2)} px, opacity ${worst.op.toFixed(3)}, wipe ${worst.clip.toFixed(3)}); each click starts where the previous ended`, bad);
+    const acc = { worst: { pos: 0, op: 0, clip: 0, size: 0 }, bad: [], n: 0 }, { worst, bad } = acc;
+    for (let k = 0; k < Math.min(read.length, deck.sections.length); k++) await matchSection(deck, k, read[k], acc);
+    gate('anim-match', !bad.length && acc.n > 0, `${acc.n} item states (${deck.steps.length} steps): slide start (during the transition) as the section start, ends within ${TOL.endPos} px, ${TOL.endSize * 100}% and opacity ${TOL.endOp}; in between ${TOL.midPos} px, opacity and wipe ${TOL.midOp} (largest: position ${worst.pos.toFixed(2)} px, size ${worst.size.toFixed(2)} px, opacity ${worst.op.toFixed(3)}, wipe ${worst.clip.toFixed(3)}); each click starts where the previous ended`, bad);
     const rr = await renderCompare(deck, slides, read, log);
     gate('anim-render', rr.ok, rr.detail, rr.bad);
   } finally {

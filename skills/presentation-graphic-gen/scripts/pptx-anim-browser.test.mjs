@@ -1,16 +1,20 @@
 // pptx-anim-browser.test.mjs: what the editable deck's animation is read from, in a real headless browser: the rest
-// layout of a section and the measured time series (they must be what the page shows at that time). Skips with
+// layout of a section and the measured time series (they must be what the page shows at that time); and small decks
+// whose steps start with an entrance, cross a dim and a fade-out, or have no motion, through the anim gates. Skips with
 // the reason when no browser is found.
 // Run: node --test scripts/pptx-anim-browser.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
-import { SKILL } from './build.mjs';
+import { SKILL, parseScript } from './build.mjs';
 import { findBrowser } from './cdp.mjs';
 import { COLS, extractSection, measure, openDeck } from './pptx-anim-extract.mjs';
+import { buildEditPptx } from './pptx-edit.mjs';
+import { verify } from './pptx.mjs';
+import { pptxgen } from './vendor.mjs';
 
 const BROWSER = findBrowser();
 const SKIP = BROWSER ? false : 'no Chrome, Edge or Chromium found (set CHROME to the browser executable); extraction tests not run';
@@ -67,5 +71,56 @@ describe('editable deck: reading the page', { skip: SKIP }, () => {
     assert.equal(col(0, { k: t0, c: 'op' }), 0);
     const again = await measure(deck.page, [S.times[i]]);
     assert.deepEqual(again[0], S.states[i], 'the same time measures the same');
+  });
+});
+
+// review 1: clicks that start with s.reveal or s.underline, s.dim then s.fadeOut in the next step, a static line
+// with a step of s.hold only, and a first step with nothing on screen yet
+describe('editable deck: step boundaries and steps with no motion', { skip: SKIP }, () => {
+  let TMP, present, script, out;
+  before(async () => {
+    TMP = mkdtempSync(join(tmpdir(), 'pgg-anim-review-test-'));
+    mkdirSync(join(TMP, 'scenes'));
+    script = join(TMP, 'mini.md');
+    writeFileSync(script, '# 작은 덱\n\n## 1. 하나\n\n### 1-1\n화면: 제목\n말: 하나.\n\n### 1-2\n화면: 드러남\n말: 둘.\n\n### 1-3\n화면: 사라짐\n말: 셋.\n\n## 2. 둘\n\n### 2-1\n화면: 빈 화면\n말: 넷.\n\n### 2-2\n화면: 나중 글\n말: 다섯.\n\n### 2-3\n화면: 멈춤\n말: 여섯.\n');
+    writeFileSync(join(TMP, 'scenes', '01.js'), `Deck.scene({ section: 1, css: '.s01 .t { position: absolute; left: 200px; top: 200px; } .s01 .p { position: absolute; left: 200px; top: 420px; } .s01 .w { position: absolute; left: 200px; top: 640px; width: 600px; height: 80px; overflow: hidden; } .s01 .w > div { width: 600px; height: 80px; background: #e0a030; }',
+      html: (d) => '<h1 class="t t-display" data-r="t">' + d.esc(d.lines('s1-1')[0]) + '</h1><p class="p t-h2" data-r="p">' + d.esc(d.lines('s1-3')[0]) + '</p><i class="ul" data-r="ul"></i><div class="w" data-r="w"><div></div></div>',
+      steps: { 's1-1'(s) { s.fadeUp('t', { at: 0.1 }); s.fadeUp('p', { at: 0.2 }); }, 's1-2'(s) { s.reveal('w', { dur: 0.6 }); s.dim('t'); }, 's1-3'(s) { s.fadeOut('t'); s.underline('ul', 'p'); } } });`);
+    writeFileSync(join(TMP, 'scenes', '02.js'), `Deck.scene({ section: 2, css: '.s02 .a { position: absolute; left: 200px; top: 150px; } .s02 .t { position: absolute; left: 200px; top: 400px; }',
+      html: (d) => '<p class="a t-h2" data-r="a">고정 글</p><h2 class="t t-h1" data-r="t2">' + d.esc(d.lines('s2-2')[0]) + '</h2>',
+      steps: { 's2-1'(s) { s.hold(0.5); }, 's2-2'(s) { s.fadeUp('t2', { at: 0.1 }); }, 's2-3'(s) { s.hold(0.5); } } });`);
+    const r = spawnSync(process.execPath, [join(SKILL, 'scripts', 'build.mjs'), script, '--scenes', join(TMP, 'scenes'), '--dir', TMP, '--stamp', STAMP], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    present = join(TMP, `mini-present-${STAMP}.html`);
+    out = join(TMP, 'edit.pptx');
+    await buildEditPptx({ html: present, parsed: parseScript(readFileSync(script, 'utf8')), out, browser: BROWSER });
+  });
+  after(() => { if (TMP) rmSync(TMP, { recursive: true, force: true }); });
+  const gates = async (f) => Object.fromEntries((await verify(f, { script, html: present, browser: BROWSER, log: () => {} })).results.map((x) => [x.gate, x]));
+
+  test('every anim gate passes: the reveal and the underline are the first effects of their click, the dim and the fade-out stay in their own steps, the static line is shown from the slide start', async () => {
+    const g = await gates(out);
+    for (const k of ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render']) assert.equal(g[k].ok, true, `${k}: ${g[k].detail}\n${g[k].lines.join('\n')}`);
+    const { JSZip } = pptxgen();
+    const xml = await (await JSZip.loadAsync(readFileSync(out))).file('ppt/slides/slide1.xml').async('string');
+    const auto = xml.slice(0, xml.indexOf('nodeType="clickEffect"'));
+    assert.doesNotMatch(auto, /presetID="22"/, 'the wipe is not in the automatic group');
+    assert.match(xml.slice(xml.indexOf('nodeType="clickEffect"')), /presetID="22" presetClass="entr" presetSubtype="8" fill="hold" grpId="0" nodeType="(click|with)Effect"/);
+  });
+
+  test('anim-match compares the slide start (during the transition): a first visibility change written as hidden (the old no-op click) shows the later line too early and fails', async () => {
+    const { JSZip } = pptxgen();
+    const zip = await JSZip.loadAsync(readFileSync(out));
+    const xml = await zip.file('ppt/slides/slide2.xml').async('string');
+    const spid = /<p:cNvPr id="(\d+)" name="text h2[^"]*\[t2\] #\d+"/.exec(xml)[1];
+    const old = xml.replace(/<p:anim calcmode="lin" valueType="num"><p:cBhvr additive="base"><p:cTn id="(\d+)" dur="1" fill="hold">(<p:stCondLst>[\s\S]*?<\/p:stCondLst>)<\/p:cTn><p:tgtEl><p:spTgt spid="\d+"\/><\/p:tgtEl><p:attrNameLst><p:attrName>ppt_x<\/p:attrName><\/p:attrNameLst><\/p:cBhvr><p:tavLst>[\s\S]*?<\/p:tavLst><\/p:anim>/,
+      (m, id, cond) => `<p:set><p:cBhvr><p:cTn id="${id}" dur="1" fill="hold">${cond}</p:cTn><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="hidden"/></p:to></p:set>`);
+    assert.notEqual(old, xml, 'the no-op of step 2-1 is there to replace');
+    zip.file('ppt/slides/slide2.xml', old);
+    const f = join(TMP, 'old-marker.pptx');
+    writeFileSync(f, await zip.generateAsync({ type: 'nodebuffer' }));
+    const g = await gates(f);
+    assert.equal(g['anim-match'].ok, false);
+    assert.match(g['anim-match'].lines.join('\n'), /s2-1 slide start: text h2\.t\.t-h1\[t2\] #\d+ opacity page 0\.00 PowerPoint 1\.00/);
   });
 });

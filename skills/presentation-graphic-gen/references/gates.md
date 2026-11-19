@@ -77,7 +77,7 @@ FAIL decorations: 1 decoration(s) off their text
 | `anim-xml` | 편집 덱: PowerPoint 가 고치려 들지 않을 슬라이드 XML | 잘 짜인 XML, 요소 순서(`cSld`, `clrMapOvr`, `transition`, `timing`), `cTn` id 겹침 없음, 모든 대상이 그 슬라이드 도형, `p:bldP` 는 글 있는 `p:sp` 에만이고 같은 묶음 효과가 있음, `p:tav` 가 0 에서 100000 까지 오름차순, 허용한 프리셋(Fade 10, Appear 1, Wipe 22, 움직임 0, Transparency 9), 지연은 0 이상 정수 ms, 쓰는 접두어가 선언됨 |
 | `anim-steps` | 편집 덱: 키 한 번이 단계 하나 | 슬라이드마다 자동 묶음 1(맨 앞) + 클릭 묶음(단계 수 - 1), 합계 = 대본 단계 수 |
 | `anim-targets` | 편집 덱: 효과 대상이 실제 도형 | 대상이 숨긴 제목이 아니고 이름이 `<text\|shape\|picture> <요소> #n[@수준]`. `--html` 이 있으면 그 섹션 페이지의 n 번째 요소와 같음 |
-| `anim-match` | 편집 덱: 움직임이 HTML 과 같음(계산) | `--html` 과 브라우저가 있을 때. 슬라이드의 `p:timing` 만 읽는 독립 시뮬레이터(`pptx-anim-sim.mjs`)와 페이지를 단계마다 0, 15, 50, 85%, 끝, 키프레임 사이에서 비교. 끝: 위치 1px, 크기 0.5%, 투명도 0.02. 중간: 위치 1px, 크기 1%, 투명도와 Wipe 0.2. 클릭 시작 = 앞 클릭 끝. 없으면 SKIP |
+| `anim-match` | 편집 덱: 움직임이 HTML 과 같음(계산) | `--html` 과 브라우저가 있을 때. 슬라이드의 `p:timing` 만 읽는 독립 시뮬레이터(`pptx-anim-sim.mjs`)와 페이지를 단계마다 0, 15, 50, 85%, 끝, 키프레임 사이에서 비교. 슬라이드 시작(전환 0.25초 동안, 자동 묶음 앞)은 섹션 시작의 페이지와 보이는 투명도를 비교. 끝: 위치 1px, 크기 0.5%, 투명도 0.02. 중간: 위치 1px, 크기 1%, 투명도와 Wipe 0.2. 클릭 시작 = 앞 클릭 끝(보이는 값으로). 없으면 SKIP |
 | `anim-render` | 편집 덱: 다시 그린 도형도 같음 | `--html` 과 브라우저가 있을 때. 단계 끝마다 슬라이드 XML 만으로 그린 도형(시뮬레이터 상태)과 페이지를 픽셀 비교. 채널 차이 48 초과 픽셀 0.5% 이하. 없으면 SKIP |
 | `anim-powerpoint` | 편집 덱: PowerPoint 로 확인함 | 늘 SKIP(시험 PC 에 PowerPoint 가 없음). PowerPoint 가 있는 PC 에서 `com --anim` |
 

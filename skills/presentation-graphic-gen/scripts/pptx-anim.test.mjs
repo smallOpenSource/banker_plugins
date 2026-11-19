@@ -9,7 +9,7 @@ import { formula, timingXml, transitionXml, glowXml } from './pptx-anim-xml.mjs'
 import { checkSlide, parseXml } from './pptx-xmlcheck.mjs';
 import { sectionNotes, sectionTitle, shapeRect } from './pptx-common.mjs';
 import { evalFormula, itemsAt, readSlide, smilProgress, stateAt, wipeVisible } from './pptx-anim-sim.mjs';
-import { animGates } from './pptx-anim-gates.mjs';
+import { animGates, continuity } from './pptx-anim-gates.mjs';
 
 // ---------- a synthetic section: items with a state function of time ----------
 const out = (u) => 1 - (1 - u) * (1 - u) * (1 - u);
@@ -334,4 +334,48 @@ test('the other partial-opacity encodings (stage 0 picks one in PARTIAL): style.
   assert.equal(at(Infinity).get('2').op, 0.35);
   assert.equal(at(300).get('3').op, 0.35, 'Transparency: p:set does not interpolate (stage 0 P07 asks PowerPoint)');
   assert.ok(Math.abs(at(Infinity).get('4').op - 0.4) < 1e-9);
+});
+
+// ---------- review 1: step boundaries, clicks that start with an entrance, steps with no motion ----------
+test('plan (B1): a zero-length opacity change at a click step start (s.reveal) is that step\'s first effect, not a delayed effect of the step before', () => {
+  const pic = { kind: 'pic', n: 1, id: 'f0', x: 100, y: 200, w: 600, h: 80, what: 'div', why: 'image', e: 0 };
+  const S = section([pic], [['s1-1', 0, 0.5], ['s1-2', 0.5, 1.2]], [(t) => ({ op: t >= 0.5 ? 1 : 0, cr: t < 0.5 ? 0 : 0.01 + 0.99 * out(ramp(t, 0.5, 1.1)), cl: 0, ct: 0, cb: 1 })], [0.5, 1.1]);
+  const plan = planSection(S);
+  assert.ok(plan.steps[0].effects.every((f) => f.marker), JSON.stringify(plan.steps[0].effects.map((f) => [f.cls, f.preset])));
+  assert.deepEqual(plan.steps[1].effects.map((f) => [f.cls, f.preset, f.side]), [['entr', 22, 'left']]);
+  assert.ok(plan.notes.every((n) => !/wipe/.test(n.text) || n.step === 's1-2'), JSON.stringify(plan.notes));
+});
+
+test('plan (B2): a dim that ends where the next step starts and a fade-out at that start are two effects, one per step', () => {
+  const S = section([BOX(1)], [['s1-1', 0, 0.5], ['s1-2', 0.5, 0.9], ['s1-3', 0.9, 1.3]], [(t) => ({ op: t < 0.5 ? ramp(t, 0.1, 0.4) : t <= 0.9 ? 1 - 0.65 * ramp(t, 0.6, 0.9) : 0.35 * (1 - ramp(t, 0.9, 1.2)) })], [0.1, 0.4, 0.6, 0.9, 1.2]);
+  const plan = planSection(S), names = (k) => plan.steps[k].effects.map((f) => [plan.shapes[f.shape].name, f.cls]);
+  assert.deepEqual(names(1), [['shape div.b1 #1', 'exit'], ['shape div.b1 #1@35', 'entr']]);
+  assert.deepEqual(names(2), [['shape div.b1 #1@35', 'exit']]);
+  assert.ok(plan.notes.some((n) => n.step === 's1-2' && /opacity 1 to 0\.35/.test(n.text)) && !plan.notes.some((n) => /opacity 1 to 0 /.test(n.text)), JSON.stringify(plan.notes));
+});
+
+// item 1 shown from the start (static), item 2 enters in step 2; step 1 has no motion
+function stillStart() {
+  return section([BOX(1), BOX(2, { y: 500 })], [['s1-1', 0, 0.5], ['s1-2', 0.5, 1.0]], [() => ({ op: 1 }), (t) => ({ op: ramp(t, 0.6, 0.9) })], [0.6, 0.9]);
+}
+test('plan (B4): the click of a step with no motion changes no visibility, so a shape shown from the start stays shown and one entering later stays hidden during the transition', () => {
+  const plan = planSection(stillStart());
+  const mark = plan.steps[0].effects[0];
+  assert.ok(mark.marker && mark.bh.every((b) => b.b === 'anim' && b.keys.every((k) => k.v === b.keys[0].v)), JSON.stringify(mark));
+  const xml = SLIDE(SH(2, 'shape div.b1 #1', 400, 300, 200, 100) + SH(3, 'shape div.b2 #2', 400, 500, 200, 100), transitionXml() + timingXml(plan, [2, 3]));
+  assert.deepEqual(checkSlide(xml), []);
+  const sl = readSlide(xml), before = stateAt(sl, 0, -Infinity), first = stateAt(sl, 0, Infinity);
+  assert.deepEqual([before.get('2').vis, before.get('3').vis], [true, false], 'slide start: the static shape shown, the later one hidden');
+  assert.ok(Math.abs(first.get('2').cx - 500) < 1e-9 && first.get('2').vis, 'the no-op leaves the shape where it is');
+});
+
+test('anim-match continuity (B3): a click that starts with an entrance not yet seen (an underline at zero width, a wipe at 0%) starts where the previous click ended; a shape that jumps does not', () => {
+  const xml = (w0) => SLIDE(SH(2, 'shape div.a #1', 100, 100, 200, 100) + SH(3, 'shape i.ul #2', 100, 220, 200, 8), TIMING(
+    GROUP(10, true, C(11, '', 0, C(12, ' presetID="10" presetClass="entr" nodeType="afterEffect"', 100, VIS(13, 2, 'visible', 0) + FADE(14, 2, 'in', 0, 400))))
+    + GROUP(20, false, C(21, '', 0, C(22, ' presetID="1" presetClass="entr" nodeType="clickEffect"', 0, VIS(23, 3, 'visible', 0) + TAV(24, 3, 'ppt_w', 0, 400, [[0, w0], [100000, '#ppt_w']]) + TAV(25, 3, 'ppt_x', 0, 400, [[0, '#ppt_x-0.052083'], [100000, '#ppt_x']]))))));
+  const bad = [];
+  continuity(readSlide(xml('#ppt_w*0')), 1, bad, 's1-2');
+  assert.deepEqual(bad, []);
+  continuity(readSlide(xml('#ppt_w*0.5')), 1, bad, 's1-2');
+  assert.deepEqual(bad, ['s1-2 start: shape i.ul #2 does not start where the previous click ended']);
 });

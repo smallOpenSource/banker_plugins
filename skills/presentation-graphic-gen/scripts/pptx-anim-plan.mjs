@@ -12,7 +12,7 @@
 //     ppt_y, ppt_w, ppt_h and r inside the item's effect of that step, or in a motion effect of its own (MOTION).
 //     Values are relative to the shape's rest place (#ppt_x + dx), so a shape moved by hand keeps its motion.
 // The plan is checked by an independent simulator (pptx-anim-sim.mjs), never by this code.
-import { COLS } from './pptx-anim-extract.mjs';
+import { BEFORE, COLS } from './pptx-anim-extract.mjs';
 import { shapeRect } from './pptx-common.mjs';
 
 export const PARTIAL = 'crossfade'; // 'crossfade' | 'anim' | 'emph'
@@ -65,18 +65,30 @@ export function fitEase(us, qs) {
   return fitGrid(us, qs, best, [best.s], [best.e], steps(0, 1, 0.05));
 }
 
-/** Monotone runs of change (more than eps between two samples): [{ a, b }] sample indexes. A flat stretch of at most
- * gap seconds inside one direction (a slow tail, a sample just before a segment end) does not end a run. */
-export function monoRuns(T, v, eps, gap = 0.05) {
+/** Monotone runs of change (more than eps between two samples): [{ a, b, step }] sample indexes. A flat stretch of at
+ * most gap seconds inside one direction (a slow tail, a sample just before a segment end) does not end a run; a step
+ * boundary always does (lab[i]: the step of the interval from sample i to i + 1, default all 0). */
+export function monoRuns(T, v, eps, gap = 0.05, lab = null) {
   const out = [];
   let run = null;
   for (let i = 0; i + 1 < v.length; i++) {
-    const d = v[i + 1] - v[i];
+    const d = v[i + 1] - v[i], step = lab ? lab[i] : 0;
     if (Math.abs(d) <= eps) continue;
     const s = Math.sign(d);
-    if (run && s === run.s && T[i] - T[run.b] <= gap) run.b = i + 1;
-    else { run = { a: i, b: i + 1, s }; out.push(run); }
+    if (run && s === run.s && step === run.step && T[i] - T[run.b] <= gap) run.b = i + 1;
+    else { run = { a: i, b: i + 1, s, step }; out.push(run); }
   }
+  return out;
+}
+
+/**
+ * The step of each sample interval [T[i], T[i + 1]]: the step its start is in, except an interval no longer than the
+ * sample just before a segment end (BEFORE): that is a jump at its end time (a zero-length change at the start of a
+ * step, s.reveal's opacity) and belongs to the step that starts there.
+ */
+export function intervalSteps(W, T) {
+  const out = [];
+  for (let i = 0; i + 1 < T.length; i++) out.push(stepOf(W, T[i + 1] - T[i] <= 1.5 * BEFORE ? T[i + 1] : T[i]));
   return out;
 }
 
@@ -96,8 +108,8 @@ export function reduceKeys(T, v, i0, i1, tol) {
   return [...keep].sort((x, y) => x - y);
 }
 
-function seriesOf(S, k) {
-  const o = { T: S.times };
+function seriesOf(S, k, lab) {
+  const o = { T: S.times, lab };
   COLS.forEach((c, j) => { o[c] = S.states.map((r) => r[k][j]); });
   o.frac = o.T.map((_, i) => Math.max(0, o.cr[i] - o.cl[i]) * Math.max(0, o.cb[i] - o.ct[i]));
   return o;
@@ -121,7 +133,7 @@ function fadeFit(s, a, b, key, A, B) {
   return fitEase(us, qs);
 }
 function opacityEvents(s) {
-  return monoRuns(s.T, s.op, OP_EPS).map(({ a, b }) => ({ a, b, t0: s.T[a], t1: s.T[b], A: lvl(s.op[a]), B: lvl(s.op[b]) }))
+  return monoRuns(s.T, s.op, OP_EPS, 0.05, s.lab).map(({ a, b, step }) => ({ a, b, step, t0: s.T[a], t1: s.T[b], A: lvl(s.op[a]), B: lvl(s.op[b]) }))
     .filter((e) => e.A !== e.B)
     .map((e) => Object.assign(e, { kind: e.A === 0 ? 'in' : e.B === 0 ? 'out' : 'partial', instant: e.t1 - e.t0 < INSTANT,
       ease: e.t1 - e.t0 < INSTANT ? { s: 0, e: 1, a: 0, d: 0, err: 0 } : fadeFit(s, e.a, e.b, 'op', s.op[e.a], s.op[e.b]) }));
@@ -130,7 +142,7 @@ function opacityEvents(s) {
 function gateEvent(s, it) {
   if (!(s.op[0] > ZERO) || shows(s, it, 0)) return null;
   const i = s.T.findIndex((_, j) => s.op[j] > ZERO && shows(s, it, j));
-  return i < 1 ? null : { a: i - 1, b: i - 1, t0: s.T[i - 1], t1: s.T[i - 1], A: 0, B: lvl(s.op[i]), kind: 'in', instant: true, gate: true, ease: { s: 0, e: 1, a: 0, d: 0, err: 0 } };
+  return i < 1 ? null : { a: i - 1, b: i - 1, step: s.lab[i - 1], t0: s.T[i - 1], t1: s.T[i - 1], A: 0, B: lvl(s.op[i]), kind: 'in', instant: true, gate: true, ease: { s: 0, e: 1, a: 0, d: 0, err: 0 } };
 }
 // edge a reveal grows from: the visible part at sample i touches that edge only
 function sideAt(s, i) {
@@ -147,19 +159,18 @@ const clipKind = (A, B) => (A < 0.02 && B > 0.95 ? 'in' : A > 0.95 && B < 0.02 ?
 function clipEvent(s, a, b) {
   const A = s.frac[a], B = s.frac[b], kind = clipKind(A, B);
   const side = kind === 'in' ? sideAt(s, a + 1) : kind === 'out' ? OPP[sideAt(s, b - 1)] || null : null;
-  return { a, b, t0: s.T[a], t1: s.T[b], kind: side ? kind : 'clip', side, ease: fadeFit(s, a, b, 'frac', A, B) };
+  return { a, b, step: s.lab[a], t0: s.T[a], t1: s.T[b], kind: side ? kind : 'clip', side, ease: fadeFit(s, a, b, 'frac', A, B) };
 }
 // changes of the visible part (under 0.005: noise)
 function clipEvents(s) {
-  return monoRuns(s.T, s.frac, 1e-4).filter(({ a, b }) => Math.abs(s.frac[b] - s.frac[a]) >= 0.005).map(({ a, b }) => clipEvent(s, a, b));
+  return monoRuns(s.T, s.frac, 1e-4, 0.05, s.lab).filter(({ a, b }) => Math.abs(s.frac[b] - s.frac[a]) >= 0.005).map(({ a, b }) => clipEvent(s, a, b));
 }
 // a reveal from an edge joins the entrance (or exit) at its start (end); other clip changes cannot be shown
 function mergeClips(evs, clips, notes) {
   for (const c of clips) {
-    const e = c.kind === 'in' ? evs.find((x) => x.kind === 'in' && Math.abs(x.t1 - c.t0) <= MATCH)
-      : c.kind === 'out' ? evs.find((x) => x.kind === 'out' && Math.abs(x.t0 - c.t1) <= MATCH) : null;
+    const e = evs.find((x) => x.step === c.step && x.kind === c.kind && Math.abs(c.kind === 'in' ? x.t1 - c.t0 : x.t0 - c.t1) <= MATCH);
     if (e) { e.wipe = c; continue; }
-    notes.push({ t: c.t0, cat: 'impossible', what: `clip ${c.kind === 'clip' ? 'change' : c.kind} ${(c.t1 - c.t0).toFixed(2)} s not from an edge to the whole: shown unclipped` });
+    notes.push({ step: c.step, cat: 'impossible', what: `clip ${c.kind === 'clip' ? 'change' : c.kind} ${(c.t1 - c.t0).toFixed(2)} s not from an edge to the whole: shown unclipped` });
   }
 }
 
@@ -250,8 +261,8 @@ function geoTracks(s, R, lo, hi, enter, held) {
 const idxOf = (T, t) => { let lo = 0, hi = T.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (T[m] < t - 1e-9) lo = m + 1; else hi = m; } return lo; };
 const stepOf = (W, t) => { let k = 0; for (let i = 0; i < W.length; i++) if (t >= W[i].start - 1e-9) k = i; return k; };
 
-function itemPlan(S, k) {
-  const it = S.items[k], s = seriesOf(S, k), R = shapeSeries(s, it), notes = [];
+function itemPlan(S, k, lab) {
+  const it = S.items[k], s = seriesOf(S, k, lab), R = shapeSeries(s, it), notes = [];
   const evs = opacityEvents(s), gate = gateEvent(s, it);
   if (gate) evs.unshift(gate);
   mergeClips(evs, clipEvents(s), notes);
@@ -263,7 +274,7 @@ function itemPlan(S, k) {
 // one step of one shape: its effects with the geometry tracks of the step (when it is seen in it); vis at the step start
 function stepEffects(P, copy, W, w, held, vis) {
   const T = P.s.T;
-  const mine = P.evs.filter((e) => stepOf(W, e.t0) === w.k).flatMap((e) => eventEffects(e, P.copies).filter((x) => x.copy === copy).map((x) => x.fx));
+  const mine = P.evs.filter((e) => e.step === w.k).flatMap((e) => eventEffects(e, P.copies).filter((x) => x.copy === copy).map((x) => x.fx));
   const ent = mine.find((f) => f.cls === 'entr');
   const enter = ent ? idxOf(T, ent.bh[0].t) : vis ? idxOf(T, w.t0) : -1;
   const tracks = enter >= 0 ? geoTracks(P.s, P.R, Math.max(idxOf(T, w.start), idxOf(T, w.t0)), idxOf(T, w.end), enter, held) : [];
@@ -290,7 +301,7 @@ function sectionNotes(S, W, plans) {
   notes.push({ step: W[0].id, cat: 'approx', text: `the first step starts ${lag.toFixed(2)} s later than the page (it waits for the 0.25 s slide transition)` });
   for (const P of plans) {
     if (P.it.kind === 'box' && P.it.glow && P.copies.length) notes.push({ step: W[0].id, cat: 'approx', text: `${label(P.it)} glow ${(P.it.glow.blur / 2).toFixed(0)} px for box-shadow blur ${P.it.glow.blur} px` });
-    for (const n of P.notes) notes.push({ step: W[stepOf(W, n.t)].id, cat: n.cat, text: `${label(P.it)} ${n.what}` });
+    for (const n of P.notes) notes.push({ step: W[n.step].id, cat: n.cat, text: `${label(P.it)} ${n.what}` });
   }
   return notes;
 }
@@ -302,21 +313,25 @@ export const shapeName = (it, level) => `${label(it).replace(/[&<>"']/g, '_')}${
 function motions(plans, W) {
   const rows = [];
   for (const P of plans) {
-    for (const e of P.evs) { const a = accuracy(e, P.s); rows.push({ step: W[stepOf(W, e.t0)].id, cat: a.cat, text: a.text ? `${label(P.it)} ${a.text}` : '' }); }
+    for (const e of P.evs) { const a = accuracy(e, P.s); rows.push({ step: W[e.step].id, cat: a.cat, text: a.text ? `${label(P.it)} ${a.text}` : '' }); }
   }
   return rows;
 }
 
-// a step with no effect still needs its click: a no-op on a shape (its visibility set to what it is then)
+// where the earlier steps leave a shape's ppt_x (its last keyframe; 0 = rest)
+function heldX(steps, k, shape) {
+  let v = 0;
+  for (const st of steps.slice(0, k)) for (const f of st.effects) for (const b of f.bh) if (f.shape === shape && b.b === 'anim' && b.attr === 'ppt_x') v = b.keys[b.keys.length - 1].v;
+  return v;
+}
+// a step with no effect still needs its click: a no-op on a shape, ppt_x set to where it already is. Never a
+// visibility change: the first one a shape gets decides whether it is shown when the slide starts.
 function markEmpty(steps, shapes) {
-  const vis = shapes.map((c) => c.vis0);
-  for (const st of steps) {
-    if (!st.effects.length && shapes.length) {
-      const k = Math.max(0, vis.indexOf(true));
-      st.effects.push({ shape: k, cls: MOTION.cls, preset: MOTION.preset, bh: [{ b: 'set', to: vis[k] ? 'visible' : 'hidden', t: st.t0 }], start: st.t0, marker: true });
-    }
-    for (const f of st.effects) vis[f.shape] = f.cls === 'entr' ? true : f.cls === 'exit' ? false : vis[f.shape];
-  }
+  steps.forEach((st, k) => {
+    if (st.effects.length || !shapes.length) return;
+    const v = heldX(steps, k, 0), t = st.t0;
+    st.effects.push({ shape: 0, cls: MOTION.cls, preset: MOTION.preset, bh: [{ b: 'anim', attr: 'ppt_x', t0: t, t1: t + 0.001, keys: [{ t, v }, { t: t + 0.001, v }] }], start: t, marker: true });
+  });
 }
 
 /**
@@ -325,7 +340,7 @@ function markEmpty(steps, shapes) {
  * { shape (index), cls, preset, side?, bh: behaviors in page seconds }, in time order per step.
  */
 export function planSection(S) {
-  const W = S.windows, plans = S.items.map((_, k) => itemPlan(S, k));
+  const W = S.windows, lab = intervalSteps(W, S.times), plans = S.items.map((_, k) => itemPlan(S, k, lab));
   const shapes = plans.flatMap((P) => P.copies.map((c) => Object.assign(c, { name: shapeName(P.it, c.level) })));
   const fx = plans.flatMap((P) => P.copies.flatMap((c) => copyEffects(P, c, W)));
   const geo = new Set(fx.filter((f) => f.bh.some((b) => b.b === 'anim')).map((f) => `${f.copy.item}/${f.step}`));
