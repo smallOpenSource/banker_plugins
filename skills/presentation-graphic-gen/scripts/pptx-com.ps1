@@ -100,18 +100,24 @@ function New-Video($app, $src, $dir) {
     return [ordered]@{ file = 'video.mp4'; gapSec = $GapSec; seconds = ((Get-Date) - $t0).TotalSeconds }
   } finally { $p.Close(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($p); Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue }
 }
+function Save-AnimJson($out, $dir) { ($out | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $dir 'anim.json') -Encoding UTF8 }
+# the report first (effects, saved copy), then the slide show and the video: either can fail without losing it
 function Invoke-Anim($app, $dir) {
   $app.DisplayAlerts = 1
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  $pres = $app.Presentations.Open($Src, -1, 0, -1)
+  # no document window: with one, a disconnected desktop session leaves PowerPoint busy (RPC_E_CALL_REJECTED)
+  $pres = $app.Presentations.Open($Src, -1, 0, 0)
   try {
-    $out = [ordered]@{ version = $app.Version; opened = $true; slides = @() }
+    $out = [ordered]@{ version = $app.Version; build = $app.Build; opened = $true; slides = @() }
     foreach ($s in $pres.Slides) { $out.slides += [ordered]@{ slide = [int]$s.SlideIndex; effects = (Get-Effects $s) } }
     Write-Output "[worker] opened slides=$($pres.Slides.Count)"
     $pres.SaveCopyAs((Join-Path $dir 'resaved.pptx'))
-    if (Test-Desktop) { $out.show = Invoke-Show $pres $dir } else { $out.show = $null; $out.showSkipped = 'no interactive desktop session (SSH or a service): the slide show and captures were not run' }
-    if ($Video) { $out.video = New-Video $app $Src $dir }
-    ($out | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $dir 'anim.json') -Encoding UTF8
+    $out.show = $null
+    if (-not (Test-Desktop)) { $out.showSkipped = 'no interactive desktop session (SSH or a service): the slide show and captures were not run' }
+    Save-AnimJson $out $dir
+    if (Test-Desktop) { try { $out.show = Invoke-Show $pres $dir } catch { $out.showSkipped = "the slide show did not run: $($_.Exception.Message)" } }
+    if ($Video) { try { $out.video = New-Video $app $Src $dir } catch { $out.videoError = "$($_.Exception.Message)" } }
+    Save-AnimJson $out $dir
     Write-Output "[worker] wrote anim.json"
   } finally { try { $pres.Close() } catch { } ; [void][Runtime.InteropServices.Marshal]::ReleaseComObject($pres) }
 }

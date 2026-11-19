@@ -59,6 +59,14 @@ test('compareAnim: a report that matches passes; the slide show is SKIP without 
   assert.match(shown.lines.join('\n'), /PASS com-show: .* captures 2 PNG/);
 });
 
+test('compareAnim: a slide show that did not run (a disconnected desktop) is SKIP with its reason; a video that was asked for and failed is FAIL', () => {
+  const r = compareAnim(want, report({ build: '10353', showSkipped: 'the slide show did not run: E_FAIL', videoError: 'CreateVideo status 4' }), resaved, [1]);
+  assert.equal(r.ok, false);
+  assert.match(r.lines.join('\n'), /PASS com-open: PowerPoint 16\.0 build 10353 opened/);
+  assert.match(r.lines.join('\n'), /SKIP com-show: the slide show did not run: E_FAIL/);
+  assert.match(r.lines.join('\n'), /FAIL com-video: CreateVideo did not make the video: CreateVideo status 4/);
+});
+
 test('compareAnim fails a dropped effect, another trigger, another delay, a wrong click count and a show that disagrees', () => {
   const dropped = compareAnim(want, report({ slides: [{ slide: 1, effects: [report().slides[0].effects[0]] }] }), resaved, [1]);
   assert.equal(dropped.ok, false);
@@ -107,6 +115,11 @@ test('pptx-com.ps1 parses (both modes, Windows PowerShell 5.1 syntax: no ?? or ?
     const src = readFileSync(f, 'utf8');
     assert.doesNotMatch(src, /\?\?|\s\?\s[^:]+\s:\s/);
     for (const k of ['GetClickCount', 'FirstAnimationIsAutomatic', 'GotoClick', 'CreateVideo', 'SaveCopyAs', 'DisplayAlerts']) assert.ok(src.includes(k), k);
+    // the -Anim open has no document window (a disconnected desktop leaves PowerPoint busy with one), and anim.json is
+    // written before the slide show and the video, which may fail
+    const anim = src.slice(src.indexOf('function Invoke-Anim'), src.indexOf('if ($Worker)'));
+    assert.match(anim, /Presentations\.Open\(\$Src, -1, 0, 0\)/);
+    assert.ok(anim.indexOf('Save-AnimJson') < anim.indexOf('Invoke-Show'));
   } finally {
     rmSync(pse.home, { recursive: true, force: true });
   }

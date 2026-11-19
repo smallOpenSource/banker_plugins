@@ -67,13 +67,14 @@ export function compareAnim(want, rep, resaved, clicks = null) {
   const cbad = want.map((w, k) => (w.clicks !== exp[k] ? `slide ${k + 1}: ${w.clicks} click effects, ${exp[k]} expected` : null)).filter(Boolean);
   const rdiff = resaved ? want.flatMap((w, k) => effectDiff(k + 1, w.effects, effectsOf(resaved, k).map((e) => ({ ...e, delay: e.delay / 1000 })))) : ['no resaved.pptx'];
   const oks = [
-    gate('com-open', rep.slides.length === want.length, `PowerPoint ${rep.version} opened the file read-only with alerts off: ${rep.slides.length} slides (the file has ${want.length})`),
+    gate('com-open', rep.slides.length === want.length, `PowerPoint ${rep.version}${rep.build ? ` build ${rep.build}` : ''} opened the file read-only with alerts off: ${rep.slides.length} slides (the file has ${want.length})`),
     gate('com-effects', !diff.length, `${total} effects: target, trigger and delay as written`, diff),
     gate('com-clicks', !cbad.length, `click effects per slide ${want.map((w) => w.clicks).join(', ')}`, cbad),
     gate('com-resaved', !rdiff.length, 'the copy PowerPoint saved keeps every effect, target, trigger and delay', rdiff),
     showGate(gate, want, rep, exp),
   ];
   if (rep.video) gate('com-video', true, `${rep.video.file} (clicks turned into "after previous" + ${rep.video.gapSec} s)`);
+  if (rep.videoError) oks.push(gate('com-video', false, `CreateVideo did not make the video: ${rep.videoError}`));
   return { ok: oks.every(Boolean), lines };
 }
 
