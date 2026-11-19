@@ -57,6 +57,7 @@ const CASES = {
   "skills/presentation-graphic-gen/scripts/cdp.mjs": {},
   "skills/presentation-graphic-gen/scripts/check.mjs": {},
   "skills/presentation-graphic-gen/scripts/make.mjs": {},
+  "skills/presentation-graphic-gen/scripts/pptx-anim-probe.mjs": {},
   "skills/presentation-graphic-gen/scripts/pptx-edit.mjs": {},
   "skills/presentation-graphic-gen/scripts/pptx-video.mjs": {},
   "skills/presentation-graphic-gen/scripts/pptx.mjs": {},

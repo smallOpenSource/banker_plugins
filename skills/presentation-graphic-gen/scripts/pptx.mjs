@@ -291,11 +291,44 @@ export function comCheck(file, pngDir, { force = false } = {}) {
   return { state: r.status === 0 ? 'pass' : 'fail', out };
 }
 
+// `com --anim <file.pptx> <dir> [--script <script.md>] [--video] [--force]`: PowerPoint reports the editable deck's
+// animation (pptx-anim-com.mjs). With --script the expected clicks per slide are the section's steps - 1.
+async function comAnimMain(args) {
+  let script = null, video = false, force = false;
+  const pos = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--script') script = resolve(args[++i] || '');
+    else if (args[i] === '--video') video = true;
+    else if (args[i] === '--force') force = true;
+    else if (!args[i].startsWith('--')) pos.push(args[i]);
+    else { process.stderr.write(`pptx: unknown argument ${args[i]}\n`); process.exit(2); }
+  }
+  if (pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com --anim <file.pptx> <dir> [--script <script.md>] [--video] [--force]\n'); process.exit(2); }
+  try {
+    const { animCom } = await import('./pptx-anim-com.mjs');
+    let clicks = null;
+    if (script) {
+      const parsed = parseScript(readText(script));
+      if (parsed.errors.length) throw Object.assign(new Error(`script errors: ${parsed.errors.join('; ')}`), { exit: 2 });
+      clicks = parsed.sections.map((s) => s.steps.length - 1);
+    }
+    if (!force) notEmpty(pos[1]);
+    const r = await animCom(pos[0], pos[1], { force, video, clicks });
+    if (r.state === 'exists') { process.stderr.write(`pptx: ${r.out}\n`); process.exit(2); }
+    process.stdout.write(`${r.out ? r.out + '\n' : ''}${r.lines.join('\n')}\n${r.state.toUpperCase()} pptx-com --anim: ${r.state === 'skip' ? 'PowerPoint check skipped' : r.state === 'fail' ? 'PowerPoint and the file disagree' : `PowerPoint plays the timing as written; captures and report in ${resolve(pos[1])}`}\n`);
+    process.exit(r.state === 'fail' ? 1 : 0);
+  } catch (e) {
+    process.stderr.write(`pptx: ${e.message}\n`);
+    process.exit(exitOf(e, 2));
+  }
+}
+
 // real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
 // A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
 const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
 if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'com' && argv.includes('--anim')) await comAnimMain(argv.slice(1).filter((x) => x !== '--anim'));
   if (argv[0] === 'com') {
     const pos = argv.slice(1).filter((x) => x !== '--force'), force = argv.includes('--force');
     if (pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com <file.pptx> <png dir> [--force]\n'); process.exit(2); }
