@@ -21,7 +21,6 @@ const ALLOWED = /[\t\n\r]/;
 // each one's sha256 is pinned by its skill's test, so an edit there fails that test instead.
 const VENDORED = new Map([
   ["skills/wide-pptx/vendor/pptxgen.bundle.js", "PptxGenJS 4.0.1 dist bundle; sha256 pinned in skills/wide-pptx/scripts/wide-pptx.test.mjs"],
-  ["skills/presentation-graphic-gen/vendor/pptxgenjs/pptxgen.bundle.js", "PptxGenJS 4.0.1 dist bundle; sha256 pinned in skills/presentation-graphic-gen/scripts/vendor.mjs"],
 ]);
 
 function* walk(dir) {

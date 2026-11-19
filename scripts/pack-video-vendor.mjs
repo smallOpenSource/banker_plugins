@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Packs a video-gen vendor file as <file>.br (node zlib brotli, quality 11, 16 MB window) and prints the original's
-// sha256 for skills/video-gen/scripts/vg-vendor.mjs and vendor/README.md. Repo-only (scripts/ is not in the npm package).
+// Packs a video-gen or presentation-graphic-gen vendor file as <file>.br (node zlib brotli, quality 11, 16 MB window)
+// and prints the original's sha256 for the skill's scripts/vg-vendor.mjs or scripts/vendor.mjs and its vendor/README.md.
+// Repo-only (scripts/ is not in the npm package).
 // usage: node scripts/pack-video-vendor.mjs <original file>...   (the original stays; remove it once the .br is in place)
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';

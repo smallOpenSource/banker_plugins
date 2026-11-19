@@ -495,7 +495,7 @@ banker 자체는 **MIT** ([LICENSE](LICENSE)). Owner: [smallOpenSource](https://
   - [Noto Sans](https://notofonts.github.io/), [Noto Sans KR](https://github.com/notofonts/noto-cjk) 글꼴, **SIL Open Font License 1.1**(`fonts/OFL-*.md`).
   - `scripts/vg-fx.mjs` 의 동작 도우미 일부는 [kstost/cokacmotion](https://github.com/kstost/cokacmotion) 의 aimotion 에서 옮긴 것, **MIT License**(`aimotion/LICENSE.md`).
 - `skills/presentation-graphic-gen/vendor`: 아래를 고치지 않고 벤더링. 파일별 판과 sha256 은 `skills/presentation-graphic-gen/vendor/README.md`.\
-  1MiB 가 넘는 Noto Sans KR 글꼴 둘은 원본을 brotli 로 묶어 두고, 실행할 때 풀어 원본 sha256 과 맞는지 확인합니다.
+  글꼴, WASM, 인코더, PptxGenJS 번들은 원본을 brotli 로 묶어 두고(`<파일>.br`), 실행할 때 풀어 원본 sha256 과 맞는지 확인합니다.
   - [Noto Sans](https://notofonts.github.io/) 2.015, [Noto Sans KR](https://github.com/notofonts/noto-cjk) 2.04(정적 인스턴스) 글꼴, **SIL Open Font License 1.1**(`fonts/OFL-*.md`).
   - [harfbuzzjs](https://github.com/harfbuzz/harfbuzzjs) 1.6.4 의 `harfbuzz-subset.wasm`(HarfBuzz 15.0.0), harfbuzzjs 는 **MIT License**, HarfBuzz 는 "Old MIT"(`harfbuzz/LICENSE-harfbuzzjs.md`, `harfbuzz/COPYING-harfbuzz.md`).
   - [h264-mp4-encoder](https://github.com/TrevorSundberg/h264-mp4-encoder) 1.0.12(`video-gen` 과 같은 파일), **MIT License**. 안의 minih264 는 public domain(CC0), libmp4v2 는 **Mozilla Public License 1.1**(전문 `h264-mp4-encoder/MPL-1.1.md`). libmp4v2 소스 묶음은 위와 같은 `third_party/libmp4v2-d49b4466.tar.gz` 입니다.
