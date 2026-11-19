@@ -30,6 +30,7 @@ import {
   parseYamlColors, parseProseColors, themeFromDesign, labelOf, loadDesignMd,
   loadBundled, resolveThemes, pickTheme, byLabel, assertSlugs, onStdoutError,
   renderCss, renderJson, renderWidget, audit, parseArgs,
+  GROUPS, groupOf, colorName, describeTheme, previewOf,
 } from "./themes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -874,5 +875,264 @@ test("--out 이 심볼릭 링크면 쓰지 않고 종료 코드 2 다", (t) => {
     assert.equal(existsSync(made), false, "끊긴 링크가 가리키는 자리에 파일이 생겼다");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/* ============================================================
+   인자 없이 고르기 - 무리, 설명, 미리보기(list --json)
+   ============================================================ */
+
+// 🔴 무리와 설명은 색 값에서만 계산합니다. 같은 입력이면 같은 결과이고,
+// DESIGN.md 의 글은 옮기지 않습니다.
+function listJson(args = []) {
+  const res = run(SCRIPT, ["list", "--json", ...args]);
+  assert.equal(res.status, 0, res.stderr);
+  return JSON.parse(res.stdout);
+}
+
+test("colorName 은 색조, 명도, 채도에서 한글 색 이름을 낸다", () => {
+  const cases = [
+    ["#ff385c", "분홍빛 빨강"], ["#e60000", "빨강"], ["#f54e00", "주황빛 빨강"],
+    ["#f7a501", "노란빛 주황"], ["#ffc000", "노란빛 주황"], ["#ffed00", "노랑"], ["#faff69", "연한 노랑"],
+    ["#76b900", "연두"], ["#00ed64", "초록"], ["#0b6e99", "청록빛 파랑"],
+    ["#0052ff", "파랑"], ["#533afd", "보랏빛 파랑"], ["#7132f5", "보라"],
+    ["#4a154b", "짙은 자주"], ["#ffffff", "흰색"], ["#000000", "검정"],
+    ["#808080", "회색"], ["#dddddd", "밝은 회색"], ["#1b1938", "푸른빛 짙은 회색"],
+  ];
+  for (const [value, name] of cases) assert.equal(colorName(value), name, value);
+  assert.equal(colorName("#FF385C"), colorName("#ff385c"), "대문자 hex");
+});
+
+// 🔴 대표 색 표본. 색조 경계(정확히 240도인 순수 파랑)와 명도, 채도로 갈리는
+// 이름(갈색, 남색, 올리브색, 분홍, 하늘색)을 봅니다. 기대값은 색의 통상 이름에서
+// 끌어냈습니다.
+test("colorName 은 원색, 갈색, 분홍, 남색, 올리브, 청록 표본에 맞는 이름을 낸다", () => {
+  const cases = [
+    ["#ff0000", "빨강"], ["#00ff00", "초록"], ["#0000ff", "파랑"],
+    ["#ffff00", "노랑"], ["#00ffff", "청록"], ["#ff00ff", "자주"],
+    ["#ffa500", "주황"], ["#ffd700", "노랑"], ["#8b0000", "짙은 빨강"],
+    ["#8b4513", "갈색"], ["#a0522d", "갈색"], ["#a52a2a", "적갈색"],
+    ["#000080", "남색"], ["#191970", "남색"], ["#4169e1", "파랑"],
+    ["#808000", "올리브색"], ["#556b2f", "올리브색"], ["#008080", "짙은 청록"],
+    ["#ffc0cb", "분홍"], ["#ff69b4", "분홍"], ["#ff1493", "분홍"],
+    ["#87ceeb", "하늘색"], ["#800080", "짙은 자주"], ["#8a2be2", "보라"],
+    ["#32cd32", "초록"], ["#708090", "푸른빛 회색"],
+    ["#6b8e23", "올리브색"],
+  ];
+  for (const [value, name] of cases) assert.equal(colorName(value), name, value);
+});
+
+// 🔴 갈색과 올리브색은 "어두운 주황, 어두운 노랑" 입니다. 어두움을 HLS 명도로 보면
+// 채도가 가득한 색은 가장 밝은 채널이 65% 여도 명도가 0.32 라 선명한 연두와 진한
+// 노랑이 그 칸에 들어갑니다(`nvidia` 의 `#69a500` 이 올리브색이 됐던 퇴보). 가장
+// 밝은 채널(HSV 의 V)로 봅니다.
+test("colorName 은 선명한 연두, 노랑, 주황을 갈색이나 올리브색으로 부르지 않는다", () => {
+  const cases = [
+    ["#69a500", "연두"], ["#65a30d", "연두"], ["#ca8a04", "노란빛 주황"],
+    ["#c2410c", "주황빛 빨강"], ["#808000", "올리브색"], ["#556b2f", "올리브색"],
+    ["#8b4513", "갈색"], ["#a0522d", "갈색"], ["#a52a2a", "적갈색"],
+  ];
+  for (const [value, name] of cases) assert.equal(colorName(value), name, value);
+  const nvidia = Object.fromEntries(palettePairs(loadBundled().themes.get("nvidia").light));
+  assert.equal(colorName(nvidia.accent), "연두", nvidia.accent);
+});
+
+// 🔴 무채색 무리(채널 차이 0.15 아래)여도 색 기가 남은 것은 색조를 담아 부릅니다.
+// 순수 무채색에 가까운 것(채널 차이 15/255 이하)만 회색, 검정, 흰색입니다.
+test("colorName 은 은은한 색을 색조를 담은 회색이나 베이지로 부른다", () => {
+  const cases = [
+    ["#80808f", "회색"], ["#808090", "푸른빛 회색"], ["#89678a", "보랏빛 회색"],
+    ["#f5f5dc", "베이지"], ["#1b1938", "푸른빛 짙은 회색"], ["#181d26", "검정"],
+    ["#8f8080", "회색"], ["#908080", "붉은빛 회색"], ["#809080", "초록빛 회색"],
+    ["#fff8e8", "누런빛 흰색"], ["#ffffff", "흰색"], ["#000000", "검정"],
+  ];
+  for (const [value, name] of cases) assert.equal(colorName(value), name, value);
+});
+
+// 🔴 무리 요약은 "무채색 강조색" 입니다. 설명의 색 이름도 같은 기준(채널 차이
+// 0.15 아래는 무채색)을 써야 무리와 설명이 서로 다른 말을 하지 않습니다.
+test("무채색 무리의 테마는 설명에서도 강조색을 회색 이름으로 부른다", () => {
+  const greys = { has: (name) => /(?:흰색|회색|검정)$|^베이지$/.test(name) };
+  for (const [slug, theme] of loadBundled().themes) {
+    if (!["minimal", "mono"].includes(groupOf(theme.light))) continue;
+    const accent = Object.fromEntries(palettePairs(theme.light)).accent;
+    assert.ok(greys.has(colorName(accent)), `${slug}: ${colorName(accent)}`);
+  }
+});
+
+test("groupOf 는 강조색의 채도와 색조, 바탕 밝기로 무리 넷 중 하나를 정한다", () => {
+  assert.deepEqual(GROUPS.map((group) => group.id), ["minimal", "mono", "warm", "cool"]);
+  const bundled = loadBundled().themes;
+  const of = (slug) => groupOf(bundled.get(slug).light);
+  assert.equal(of("vercel"), "minimal", "흰 바탕, 검정 강조색");
+  assert.equal(of("x.ai"), "mono", "회색 바탕, 흰 강조색");
+  assert.equal(of("airbnb"), "warm");
+  assert.equal(of("clickhouse"), "warm", "색조 62도 노랑");
+  assert.equal(of("nvidia"), "cool", "색조 82도 연두");
+  assert.equal(of("slack"), "cool", "채도 0.21 자주는 무채색이 아니다");
+  assert.equal(of("superhuman"), "minimal", "채도 0.12 남색은 무채색으로 본다");
+  assert.equal(of("resend"), "cool", "보정 뒤 강조색(파랑)으로 나눈다. 원래 #fcfdff");
+  assert.equal(groupOf(bundled.get("resend").light), of("resend"), "같은 입력, 같은 무리");
+  // 🔴 한 무리가 너무 크거나 작으면 첫 질문이 쓸모없어집니다. 74종의 실제 분포.
+  const counts = {};
+  for (const [, theme] of bundled) {
+    const id = groupOf(theme.light);
+    counts[id] = (counts[id] || 0) + 1;
+  }
+  assert.deepEqual(counts, { minimal: 18, mono: 14, warm: 19, cool: 23 });
+});
+
+test("describeTheme 은 바탕 밝기, 강조색 이름, 본문 대비, 다크 모습을 적는다", () => {
+  const bundled = loadBundled().themes;
+  assert.equal(describeTheme(bundled.get("airbnb")),
+    "흰 바탕, 분홍빛 빨강 강조색, 본문 대비 15.9:1(높음). "
+    + "다크는 검정에 가까운 바탕, 분홍빛 빨강 강조색, 본문 대비 19.2:1(높음)");
+  assert.match(describeTheme(bundled.get("claude")), /^누런 기가 도는 흰 바탕, /);
+  assert.match(describeTheme(bundled.get("lamborghini")), /^노란빛 주황 바탕, /);
+  // 🔴 설명은 CSS 로 나가는 값(보정 뒤)을 말합니다. bmw-m 의 원래 강조색은 흰색이고
+  // 회색 바탕 위에서 안 보여 보정이 어둡게 옮깁니다.
+  const bmw = describeTheme(bundled.get("bmw-m"));
+  assert.doesNotMatch(bmw.split(". ")[0], /흰색 강조색/);
+  assert.match(bmw, /회색 강조색/);
+  assert.match(describeTheme(bundled.get("bmw-m"), { correct: false }), /^[^.]*흰색 강조색/,
+               "대조군: 보정을 끄면 원래 흰색");
+});
+
+test("previewOf 는 라이트와 다크의 bg, surface, ink, accent 를 고정폭 블록으로 낸다", () => {
+  const theme = loadBundled().themes.get("airbnb");
+  const out = Object.fromEntries(palettePairs(theme.light));
+  const dark = Object.fromEntries(palettePairs(theme.dark));
+  assert.equal(previewOf(theme), [
+    "```",
+    "       bg       surface  ink      accent",
+    `light  ${out.bg}  ${out.surface}  ${out.ink}  ${out.accent}`,
+    `dark   ${dark.bg}  ${dark.surface}  ${dark.ink}  ${dark.accent}`,
+    "```",
+  ].join("\n"));
+});
+
+test("list --json 은 무리와 테마마다 설명, 미리보기를 내고 list 출력은 그대로다", () => {
+  const data = listJson();
+  assert.equal(data.themes.length, 74);
+  assert.deepEqual(data.groups.map((group) => group.id), ["minimal", "mono", "warm", "cool"]);
+  assert.equal(data.groups.reduce((sum, group) => sum + group.count, 0), 74);
+  const plain = run(SCRIPT, ["list"]);
+  assert.equal(plain.status, 0, plain.stderr);
+  const lines = plain.stdout.trimEnd().split("\n");
+  assert.deepEqual(data.themes.map((theme) => `${theme.slug}\t${theme.label}`), lines,
+                   "list 와 같은 순서, 같은 이름");
+  assert.ok(lines.every((line) => line.split("\t").length === 2), "list 는 두 칸 그대로");
+  for (const group of data.groups) {
+    assert.equal(group.slugs.length, group.count, group.id);
+    assert.ok(group.label && group.summary, group.id);
+    const members = data.themes.filter((theme) => theme.group === group.id);
+    assert.deepEqual(group.slugs, members.map((theme) => theme.slug), `${group.id} 순서`);
+  }
+  const airbnb = data.themes.find((theme) => theme.slug === "airbnb");
+  const bundled = loadBundled().themes.get("airbnb");
+  assert.deepEqual(airbnb, { slug: "airbnb", label: "Airbnb", group: "warm",
+                             description: describeTheme(bundled), preview: previewOf(bundled) });
+  assert.deepEqual(listJson(), data, "같은 입력이면 같은 출력");
+});
+
+test("list --json 은 --only 로 줄고 빈 무리는 내지 않는다", () => {
+  const data = listJson(["--only", "airbnb,vercel"]);
+  assert.deepEqual(data.groups.map((group) => [group.id, group.slugs]),
+                   [["minimal", ["vercel"]], ["warm", ["airbnb"]]]);
+  assert.equal(data.themes.length, 2);
+});
+
+test("list --json 은 --design-md 테마도 같은 규칙으로 나누고 문서의 글을 옮기지 않는다", () => {
+  const root = scratch("describe");
+  try {
+    mkdirSync(join(root, "brand"));
+    writeFileSync(join(root, "brand", "DESIGN.md"), PROSE_DESIGN);
+    const data = listJson(["--design-md", root, "--only", "brand"]);
+    const [brand] = data.themes;
+    const light = themeFromDesign(PROSE_DESIGN).light;
+    assert.equal(brand.group, groupOf(light));
+    assert.equal(brand.group, "warm", "#ff4f00 강조색");
+    assert.match(brand.description, /^누런 기가 도는 흰 바탕, 주황빛 빨강 강조색, /);
+    for (const word of ["Primary", "CTA", "hover", "near-black", "Cards"]) {
+      assert.ok(!brand.description.includes(word) && !brand.preview.includes(word), word);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 🔴 질문 도구는 선택지 이름(표시명)을 돌려줍니다. 표시명이 겹치면 고른 것이
+// 어느 테마인지 정할 수 없습니다. `labelOf` 는 `-` 와 `_` 를 같게 보고, 맞춰
+// 보기는 대소문자를 보지 않으므로 그 둘을 모두 겹침으로 봅니다.
+test("list --json 은 표시명이 겹치면 겹치는 것마다 슬러그를 붙인다", () => {
+  const root = scratch("labels");
+  try {
+    for (const name of ["ide-vscode", "ide_vscode", "Airbnb"]) {
+      mkdirSync(join(root, name));
+      writeFileSync(join(root, name, "DESIGN.md"), YAML_DESIGN);
+    }
+    const data = listJson(["--design-md", root,
+                           "--only", "ide-vscode,ide_vscode,Airbnb,airbnb,stripe"]);
+    const labels = Object.fromEntries(data.themes.map((theme) => [theme.slug, theme.label]));
+    assert.deepEqual(labels, {
+      Airbnb: "Airbnb (Airbnb)", airbnb: "Airbnb (airbnb)",
+      "ide-vscode": "Ide Vscode (ide-vscode)", "ide_vscode": "Ide Vscode (ide_vscode)",
+      stripe: "Stripe",
+    });
+    const lowered = Object.values(labels).map((label) => label.toLowerCase());
+    assert.equal(new Set(Object.values(labels)).size, 5, "표시명이 겹친다");
+    assert.equal(lowered.filter((label) => label === "stripe").length, 1, "겹치지 않으면 그대로");
+    const plain = run(SCRIPT, ["list", "--design-md", root, "--only", "ide-vscode,ide_vscode"]);
+    assert.equal(plain.stdout, "ide-vscode\tIde Vscode\nide_vscode\tIde Vscode\n",
+                 "--json 없는 list 는 그대로");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 🔴 질문은 `$ARGUMENTS` 에 명령이 없을 때만 합니다(비었을 때, 자유 글이나 옵션만
+// 있을 때). 명령을 준 호출(다른 스킬의 연쇄, 헤드리스 포함)은 예전처럼 진행하고,
+// 질문 흐름에서도 전부를 고를 수 있어야 합니다.
+test("SKILL.md: 선택지 질문은 명령이 없을 때만이고 전부를 고를 길이 있다", () => {
+  const skill = readFileSync(join(HERE, "..", "SKILL.md"), "utf8");
+  const step3 = skill.slice(skill.indexOf("3. 쓸 테마를 정한다."), skill.indexOf("4. CSS 를 낸다."));
+  assert.match(step3, /`\$ARGUMENTS` 에 명령\(`list`, `css`, `json`, `widget`, `check`\)이 없을 때만/);
+  assert.match(step3, /자유 글은 셸에 넣지 않는다/);
+  assert.match(step3, /`--design-md` 가 있으면 그 테마를 포함해/);
+  assert.match(step3, /모르면 `node <스킬>\/scripts\/themes\.mjs list` 로 목록을 보고 사용자에게 묻는다/);
+  assert.doesNotMatch(step3, /인자가 없을 때를 포함해/);
+  const pick = skill.slice(skill.indexOf("## 테마 고르기"), skill.indexOf("## 경고"));
+  assert.match(pick, /- `전부`: /);
+  assert.match(pick, /물을 수 없는 실행[^\n]*명령이 없으면/);
+  assert.match(pick, /두 테마 이상과 맞으면/);
+  assert.match(pick, /기타 낱말이 먼저/);
+});
+
+// 🔴 기타 낱말(전부, 더 보기, 다른 무리)과 이름이 같은 테마는 표시명 겹침과 같게
+// ` (슬러그)` 를 붙입니다. 기타에 낱말을 적으면 낱말로 처리하고, 그 테마는 선택지나
+// 붙인 표시명으로 고릅니다. 엔진이 그런 슬러그를 거절하면 그 DESIGN.md 를 쓰는
+// css, check 까지 멈추므로 거절하지 않습니다.
+test("list --json 은 기타 낱말과 같은 표시명에도 슬러그를 붙인다", () => {
+  const root = scratch("words");
+  try {
+    for (const name of ["전부", "더-보기", "다른_무리", "더보기"]) {
+      mkdirSync(join(root, name));
+      writeFileSync(join(root, name, "DESIGN.md"), YAML_DESIGN);
+    }
+    const data = listJson(["--design-md", root, "--only", "전부,더-보기,다른_무리,더보기"]);
+    const labels = Object.fromEntries(data.themes.map((theme) => [theme.slug, theme.label]));
+    assert.deepEqual(labels, { 전부: "전부 (전부)", "더-보기": "더 보기 (더-보기)",
+                               다른_무리: "다른 무리 (다른_무리)", 더보기: "더보기" });
+    const css = run(SCRIPT, ["css", "--design-md", root, "--only", "전부"]);
+    assert.equal(css.status, 0, css.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("--json 은 check 와 list 에서만 받는다", () => {
+  assert.equal(parseArgs(["list", "--json"]).json, true);
+  for (const command of ["css", "json", "widget"]) {
+    assert.throws(() => parseArgs([command, "--json"]), /check and list only/, command);
   }
 });

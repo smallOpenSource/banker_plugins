@@ -131,7 +131,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `make-notion-guide` | API 호출 가이드를 노션 양식 문서로 작성 |
 | `pdf-vision-extract` | 비주얼 PDF를 고해상도 PNG로 변환(비전 입력) |
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
-| `theme-selection` | 테마 74종을 라이트와 다크 CSS 변수로 입힘(대비 보정 포함). 테마 고르개와 대비 감사도 냄 |
+| `theme-selection` | 테마 74종을 라이트와 다크 CSS 변수로 입힘(대비 보정 포함). 테마 고르개와 대비 감사도 냄. 명령(`list`, `css` 등) 없이 부르면 색 값에서 계산한 설명과 색 미리보기를 붙인 선택지로 고름 |
 | `rfp-author` | 외주 제안요청서(RFP) 저작 (범용 프레임워크) |
 | `humanizer` | AI 글 흔적 제거(자연스러운 문체로 윤문) |
 | `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export. 세션 모델이 턴마다 1줄 요약을 쓰고 남길 턴을 고름(`--rulebase` 는 규칙만), 마크다운 렌더, 다중 세션 병합 |
