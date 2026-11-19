@@ -7,7 +7,7 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 # presentation-graphic-gen: 키 진행 모션 그래픽 발표 자료(HTML, PPTX)
 
 사용자의 대본 초안을 받아, 키 한 번에 한 단계가 움직이는 발표 자료를 만든다. 답변은 한글.
-결과는 단일 HTML 두 벌(검토용, 발표용)과, 고르면 PPTX 두 벌(영상 슬라이드, 편집용 도형 슬라이드)이다.
+결과는 단일 HTML 두 벌(검토용, 발표용)과, 고르면 PPTX 두 벌(영상 슬라이드, PowerPoint 고유 애니메이션이 있는 편집용 도형 슬라이드)이다.
 
 ## 원칙
 
@@ -55,8 +55,9 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 | `node "$M" <대본> --format both` | 위에 더해 녹화, 영상 PPTX, 편집 PPTX, 검증 | 같음 |
 | `node "<S>/scripts/build.mjs" <대본> [인자]` | HTML 두 벌만. 시간 예산과 반복 경고를 냄 | 0, 1, 2, 3 |
 | `node "<S>/scripts/check.mjs" <present.html> --script <대본> [--out <폴더>] [--force]` | 게이트 10개, 스냅숏, 정지 화면, 키로 재생한 화면, 컨택트 시트. 출력 폴더가 비어 있지 않으면 2 | 0, 1, 2 |
-| `node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--force]` | PPTX 게이트. `--frames` 폴더가 비어 있지 않으면 2 | 0, 1, 2, 3 |
+| `node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--html <present.html>] [--force]` | PPTX 게이트. 편집 덱의 `anim-match`, `anim-render`, `text-fit` 은 `--html` 이 있어야 돎. `--frames` 폴더가 비어 있지 않으면 2 | 0, 1, 2, 3 |
 | `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더> [--force]` | 선택. Windows 의 PowerPoint 로 열고 슬라이드 PNG 를 냄. 그 밖에서는 SKIP. PNG 폴더가 비어 있지 않으면 2 | 0, 1, 2 |
+| `node "<S>/scripts/pptx.mjs" com --anim <편집.pptx> <폴더> --script <대본> [--video] [--force]` | 선택. PowerPoint 가 편집 덱의 효과, 클릭 수, 자동 첫 묶음을 파일대로 읽는지 보고 클릭마다 캡처. 그 밖에서는 SKIP | 0, 1, 2 |
 | `node "<S>/scripts/apply-fix.mjs" <accepted.json> [--root <폴더>] [--dry-run]` | 다듬기 회차의 채택 항목을 적용 | 0, 2 |
 
 출력 이름: `<이름>-review-<stamp>.html`, `<이름>-present-<stamp>.html`, `check-<이름>-present-<stamp>/`, `<이름>-recording-<stamp>/`, `<이름>-video-<stamp>.pptx`, `<이름>-edit-<stamp>.pptx`.
@@ -103,7 +104,8 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 ### 9. PPTX
 - `pptx` 나 `both` 면 `node "$M" <대본> --format both --dir <폴더>` 를 실행한다. 오래 걸리므로 백그라운드로 돌린다.
 - 녹화, 영상 PPTX, 편집 PPTX, 두 덱의 `verify` 가 이어서 돈다. 자세한 것은 `<S>/references/pptx.md`.
-- Windows 에 PowerPoint 가 있으면 `pptx.mjs com` 으로 열어 보고 PNG 몇 장을 본다. PowerPoint 가 이미 실행 중이면 건드리지 않고 SKIP 이다. 선택 단계다.
+- 편집 PPTX 는 섹션 하나에 슬라이드 하나, 단계 하나에 클릭 하나다. 섹션 첫 단계는 전환 뒤 저절로 재생된다.
+- Windows 에 PowerPoint 가 있으면 `pptx.mjs com` 으로 열어 보고 PNG 몇 장을 본다. 편집 덱은 `pptx.mjs com --anim` 으로 효과와 클릭 수를 본다. PowerPoint 가 이미 실행 중이면 건드리지 않고 SKIP 이다. 선택 단계다.
 - 종료 코드 2 에 `not overwriting` 이 나오면 덮어쓸지 묻는다.
 
 ### 10. 보고
@@ -111,7 +113,8 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 - 게이트 줄(`PASS`, `FAIL`, `SKIP`) 그대로. SKIP 이 하나라도 있으면 `ALL PASS` 라고 쓰지 않는다. `PASS with SKIP (continuity)` 처럼 건너뛴 게이트 이름을 함께 쓴다. `pptx.mjs verify` 의 요약 줄과 `make.mjs` 의 `== done: PASS with SKIP`, `skipped` 줄이 같은 형식이다
 - 시간 예산(섹션별, 합계, 초과 섹션)
 - 다듬기: 모델 id, 회차 수, 회차별 제안, 채택, 기각 수, 마지막 0건 회차의 기록 파일
-- 편집 PPTX 의 그림 대체 목록
+- 편집 PPTX 의 그림 대체 목록, 움직임 판정(`motion: <N> exact, <N> approx, <N> not possible`)과 `approx`, `not possible` 줄
+- 편집 덱의 `anim-powerpoint` 는 늘 SKIP 이다. PowerPoint 로 재생해 보지 않았다고 적는다
 - `[확인 필요]` 자리와 확인하지 못한 것(PowerPoint 로 열어 보지 않음, H.264 를 풀지 못해 SKIP 등)
 - 다음 행동이 있으면 마지막 줄에. 예: "고칠 곳은 `scenes/NN.js` 이니 고친 뒤 다시 부르십시오."
 
@@ -126,4 +129,5 @@ argument-hint: "[<대본.md>] [--format html|pptx|both] [--dir <폴더>] [--scen
 - 한 도형을 따로 움직이는 조각으로 만들지 않는다. 1px 조각을 늘린 테두리는 GPU 로 그리는 브라우저에서 픽셀 비율이 1 이 아니면 모서리가 벌어진다. 헤드리스 시험 화면에서는 보이지 않으므로 `decorations-played` 게이트가 구조로 잡는다.
 - Chromium(Playwright 판 포함)은 H.264 를 풀지 못해 PPTX 영상 연속성 게이트가 SKIP 이 된다. Chrome 이나 Edge 로 다시 돌린다.
 - 편집 PPTX 는 그림, SVG, 회전한 요소, 그라데이션은 잘라 낸 그림으로 바꿔 넣는다. 글꼴은 넣지 않으므로 보는 PC 에 Noto Sans, Noto Sans KR 이 있어야 한다.
+- 편집 PPTX 의 Wipe 속도, 섹션 첫 단계의 시작, 빛번짐은 근사다(투명도와 기하는 표본 키프레임이라 정확). 근사 목록을 보고에 그대로 옮긴다. PowerPoint 2016 이상과 Microsoft 365 만 보장한다(실측은 2019).
 - `vendor/` 의 파일은 고치지 않는다. sha256 이 다르면 실행을 멈춘다.

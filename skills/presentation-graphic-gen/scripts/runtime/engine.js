@@ -78,6 +78,7 @@
   let tracks = new Map(); // element -> { channel: [segment] }
   const focusLog = []; // { key, sec, target, fx, t, pad }: which target each focus group marks from time t (check.mjs reads it)
   let anims = [];
+  let segList = []; // every resolved segment with its element, kept for __deck.segments() (read only)
   let duration = 0, time = 0;
 
   function desc(e) {
@@ -142,10 +143,12 @@
   }
   function makeAnimations(total) {
     const list = [];
+    segList = [];
     for (const [e, tr] of tracks) {
       for (const ch of Object.keys(tr)) {
         const { segs } = resolve(e, ch);
         if (!segs.length) continue;
+        for (const s of segs) segList.push({ el: e, channel: ch, t0: s.t0, t1: s.t1, from: s.from, to: s.to, ease: s.ease });
         const kf = [];
         let last = segs[0].from, off = 0;
         const push = (t, v, ez) => {
@@ -692,6 +695,9 @@
     seek: (t) => { stop(); seekRaw(t); },
     next, prev,
     animationCount: () => anims.length,
+    // every segment of the timeline (copies): { el, channel, t0, t1, from, to, ease } in master-timeline seconds,
+    // from / to full vectors (pptx-anim-extract.mjs reads it; nothing here changes the screen)
+    segments: () => segList.map((s) => Object.assign({}, s, { from: s.from.slice(), to: s.to.slice() })),
     // the target each focus group marks at the current time (focus calls that started before now), with its
     // outline element (check.mjs reads it)
     focusTargets: () => {

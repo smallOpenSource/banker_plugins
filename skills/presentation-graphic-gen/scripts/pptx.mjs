@@ -21,7 +21,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deckData, parseScript, readText } from './build.mjs';
 import { findBrowser, launch, scratchDir } from './cdp.mjs';
-import { KR, LATIN, mp4Info, notesText, paragraphs, slideTitle, xmlText } from './pptx-common.mjs';
+import { animGates } from './pptx-anim-gates.mjs';
+import { KR, LATIN, mp4Info, notesText, paragraphs, sectionNotes, sectionTitle, slideTitle, xmlText } from './pptx-common.mjs';
 import { decodePng } from './png.mjs';
 import { exitOf, pptxgen } from './vendor.mjs';
 
@@ -99,7 +100,7 @@ window.compare = async (a, b, fps, save) => {
 };
 </script>`;
 
-export async function verify(file, { script, media = null, frames = null, force = false, log = (l) => process.stdout.write(l + '\n'), browser = findBrowser() } = {}) {
+export async function verify(file, { script, media = null, frames = null, html = null, force = false, log = (l) => process.stdout.write(l + '\n'), browser = findBrowser() } = {}) {
   if (frames && !force && notEmpty(frames)) throw Object.assign(new Error(`${frames} is not empty; not overwriting (use --force or another --frames)`), { exit: 2 });
   const results = [];
   const gate = (name, state, detail, lines = []) => {
@@ -126,8 +127,6 @@ export async function verify(file, { script, media = null, frames = null, force 
   const ratio = sz ? +sz[1] / +sz[2] : 0;
   gate('zip', !missing.length && Math.abs(ratio - 16 / 9) < 0.001, missing.length ? `missing ${missing.join(', ')}` : `parts present, slide size ${sz[1]}x${sz[2]} (16:9)`);
   const slideNames = names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
-  gate('slide-count', slideNames.length === data.steps.length, `${slideNames.length} slides, ${data.steps.length} steps in the script`);
-
   const ct = (await read('[Content_Types].xml')) || '';
   const slides = [];
   for (let k = 0; k < slideNames.length; k++) {
@@ -141,20 +140,24 @@ export async function verify(file, { script, media = null, frames = null, force 
     slides.push({ k, xml, rels, notes: paragraphs(body).join('\n'), target, rid });
   }
   const kind = slides.some((s) => /<p14:media /.test(s.xml)) ? 'video' : 'edit';
-  log(`  kind: ${kind === 'video' ? 'video deck (one video per slide)' : 'editable deck (native shapes)'}`);
+  log(`  kind: ${kind === 'video' ? 'video deck (one video per slide)' : 'editable deck (one slide per section, animated)'}`);
+  // a video deck has one slide per step, an editable deck one per section (its steps are clicks)
+  const units = kind === 'video' ? data.steps.map((st) => ({ notes: notesText(st), title: slideTitle(st) }))
+    : data.sections.map((sec) => ({ notes: sectionNotes(data.steps.filter((st) => st.section === sec.n)), title: sectionTitle(sec) }));
+  gate('slide-count', slideNames.length === units.length, kind === 'video' ? `${slideNames.length} slides, ${data.steps.length} steps in the script` : `${slideNames.length} slides, ${data.sections.length} sections in the script`);
 
   // notes and titles
   const badNotes = [], badTitle = [], titles = new Set();
   slides.forEach((s, k) => {
-    const st = data.steps[k];
-    if (!st) return;
-    if (s.notes !== notesText(st)) badNotes.push(`slide ${k + 1}: notes ${JSON.stringify(s.notes.slice(0, 40))}`);
+    const u = units[k];
+    if (!u) return;
+    if (s.notes !== u.notes) badNotes.push(`slide ${k + 1}: notes ${JSON.stringify(s.notes.slice(0, 40))}`);
     const ph = /<p:sp>(?:(?!<\/p:sp>)[\s\S])*?<p:cNvPr id="\d+" name="[^"]*"( hidden="1")?[^>]*>(?:(?!<\/p:sp>)[\s\S])*?<p:ph[^>]*\btype="title"[\s\S]*?<\/p:sp>/.exec(s.xml);
     const text = ph ? paragraphs(ph[0]).join(' ') : '';
-    if (!ph || !ph[1] || text !== slideTitle(st) || titles.has(text)) badTitle.push(`slide ${k + 1}: title ${JSON.stringify(text)}${ph && !ph[1] ? ' (not hidden)' : ''}`);
+    if (!ph || !ph[1] || text !== u.title || titles.has(text)) badTitle.push(`slide ${k + 1}: title ${JSON.stringify(text)}${ph && !ph[1] ? ' (not hidden)' : ''}`);
     titles.add(text);
   });
-  gate('notes', !badNotes.length && slides.length > 0, `${slides.length - badNotes.length}/${slides.length} slides: spoken lines, then stage directions apart`, badNotes);
+  gate('notes', !badNotes.length && slides.length > 0, `${slides.length - badNotes.length}/${slides.length} slides: ${kind === 'video' ? 'spoken lines, then stage directions apart' : 'each step as [key], its spoken lines and stage directions'}`, badNotes);
   gate('titles', !badTitle.length && slides.length > 0, `${slides.length - badTitle.length}/${slides.length} slides have a unique hidden title`, badTitle);
 
   if (kind === 'video') {
@@ -243,14 +246,30 @@ export async function verify(file, { script, media = null, frames = null, force 
     const bad = [];
     for (const s of slides) {
       const texts = [...s.xml.matchAll(/<p:sp>(?:(?!<\/p:sp>)[\s\S])*?<p:txBody>[\s\S]*?<\/p:sp>/g)].filter((m) => !/<p:ph[^>]*type="title"/.test(m[0]) && /<a:t>[^<]+<\/a:t>/.test(m[0]));
-      if (!texts.length && data.steps[s.k] && data.steps[s.k].lines.length) bad.push(`slide ${s.k + 1}: no native text box`);
+      const sec = data.sections[s.k];
+      if (!texts.length && sec && data.steps.some((st) => st.section === sec.n && st.lines.length)) bad.push(`slide ${s.k + 1}: no native text box`);
     }
     const theme = (await read('ppt/theme/theme1.xml')) || '';
     const fontsOk = theme.includes(`<a:latin typeface="${LATIN}"`) && theme.includes(`<a:ea typeface="${KR}"`);
     gate('edit-slides', !bad.length && fontsOk, `${slides.length - bad.length}/${slides.length} slides have native text boxes; theme fonts ${fontsOk ? `${LATIN} / ${KR}` : 'NOT set'}`, bad);
+    await animGates(await withMedia(zip, slides), data, { gate, html, browser, log });
   }
   const ok = results.every((r) => r.ok);
   return { ok, kind, results };
+}
+
+// each slide's pictures as data URLs by relationship id (anim-render draws them)
+async function withMedia(zip, slides) {
+  const out = [];
+  for (const s of slides) {
+    const urls = {};
+    for (const m of s.xml.matchAll(/r:embed="(rId\d+)"/g)) {
+      const part = s.rid(m[1]);
+      if (part && zip.file(part) && /\.png$/i.test(part)) urls[m[1]] = `data:image/png;base64,${Buffer.from(await zip.file(part).async('uint8array')).toString('base64')}`;
+    }
+    out.push({ k: s.k, xml: s.xml, media: (rid) => urls[rid] || null });
+  }
+  return out;
 }
 
 // A path that is there but is not a folder that can be read (a file given as the PNG or frames folder) is a usage
@@ -291,11 +310,49 @@ export function comCheck(file, pngDir, { force = false } = {}) {
   return { state: r.status === 0 ? 'pass' : 'fail', out };
 }
 
+// `com --anim <file.pptx> <dir> [--script <script.md>] [--video] [--force]`: PowerPoint reports the editable deck's
+// animation (pptx-anim-com.mjs). With --script the expected clicks per slide are the section's steps - 1.
+function comAnimArgs(args) {
+  const o = { script: null, video: false, force: false, pos: [] };
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--script') o.script = resolve(args[++i] || '');
+    else if (args[i] === '--video' || args[i] === '--force') o[args[i].slice(2)] = true;
+    else if (!args[i].startsWith('--')) o.pos.push(args[i]);
+    else { process.stderr.write(`pptx: unknown argument ${args[i]}\n`); process.exit(2); }
+  }
+  if (o.pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com --anim <file.pptx> <dir> [--script <script.md>] [--video] [--force]\n'); process.exit(2); }
+  return o;
+}
+function scriptClicks(script) {
+  if (!script) return null;
+  const parsed = parseScript(readText(script));
+  if (parsed.errors.length) throw Object.assign(new Error(`script errors: ${parsed.errors.join('; ')}`), { exit: 2 });
+  return parsed.sections.map((s) => s.steps.length - 1);
+}
+const COM_ANIM_SAY = { skip: 'PowerPoint check skipped', fail: 'PowerPoint and the file disagree' };
+async function comAnimMain(args) {
+  const o = comAnimArgs(args);
+  try {
+    const { animCom } = await import('./pptx-anim-com.mjs');
+    const clicks = scriptClicks(o.script);
+    if (!o.force) notEmpty(o.pos[1]);
+    const r = await animCom(o.pos[0], o.pos[1], { force: o.force, video: o.video, clicks });
+    if (r.state === 'exists') { process.stderr.write(`pptx: ${r.out}\n`); process.exit(2); }
+    const say = COM_ANIM_SAY[r.state] || `PowerPoint plays the timing as written; captures and report in ${resolve(o.pos[1])}`;
+    process.stdout.write(`${r.out ? r.out + '\n' : ''}${r.lines.join('\n')}\n${r.state.toUpperCase()} pptx-com --anim: ${say}\n`);
+    process.exit(r.state === 'fail' ? 1 : 0);
+  } catch (e) {
+    process.stderr.write(`pptx: ${e.message}\n`);
+    process.exit(exitOf(e, 2));
+  }
+}
+
 // real paths on both sides: node runs a script reached through a link (macOS /var is /private/var) by its real path.
 // A name realpath cannot read (argv[1] of `node -e`, for one) is compared as given, so importing this file never throws.
 const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
 if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'com' && argv.includes('--anim')) await comAnimMain(argv.slice(1).filter((x) => x !== '--anim'));
   if (argv[0] === 'com') {
     const pos = argv.slice(1).filter((x) => x !== '--force'), force = argv.includes('--force');
     if (pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com <file.pptx> <png dir> [--force]\n'); process.exit(2); }
@@ -312,18 +369,19 @@ if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)
     process.exit(fail ? 1 : 0);
   }
   if (argv[0] !== 'verify') { process.stderr.write('usage: node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>] [--frames <dir>] [--force]\n       node scripts/pptx.mjs com <file.pptx> <png dir> [--force]   (optional, Windows + PowerPoint)\n'); process.exit(2); }
-  let file = null, script = null, media = null, frames = null, force = false;
+  let file = null, script = null, media = null, frames = null, html = null, force = false;
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '--script') script = resolve(argv[++i] || '');
     else if (argv[i] === '--media') media = resolve(argv[++i] || '');
     else if (argv[i] === '--frames') frames = resolve(argv[++i] || '');
+    else if (argv[i] === '--html') html = resolve(argv[++i] || '');
     else if (argv[i] === '--force') force = true;
     else if (!argv[i].startsWith('--') && !file) file = resolve(argv[i]);
     else { process.stderr.write(`pptx: unknown argument ${argv[i]}\n`); process.exit(2); }
   }
   if (!file || !script) { process.stderr.write('usage: node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>]\n'); process.exit(2); }
   try {
-    const r = await verify(file, { script, media, frames, force });
+    const r = await verify(file, { script, media, frames, html, force });
     process.stdout.write(summaryLine(r, file) + '\n');
     process.exit(r.ok ? 0 : 1);
   } catch (e) {

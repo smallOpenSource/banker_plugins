@@ -127,20 +127,62 @@ describe('PowerPoint pipeline in a browser', { skip: SKIP }, () => {
     assert.match(made.stdout, /PASS continuity: decoded MP4: last frame of slide n vs first frame of slide n\+1, 2\/2 pairs/);
     assert.match(made.stdout, /PASS continuity-raw: recorded frames: .* worst channel difference 0/);
     assert.match(made.stdout, /PASS h264: 3 MP4 files are H\.264/);
-    assert.match(made.stdout, /PASS edit-slides: 3\/3 slides have native text boxes; theme fonts Noto Sans \/ Noto Sans KR/);
+    assert.match(made.stdout, /PASS edit-slides: 2\/2 slides have native text boxes; theme fonts Noto Sans \/ Noto Sans KR/);
+    assert.match(made.stdout, /PASS slide-count: 2 slides, 2 sections in the script/);
+    assert.match(made.stdout, /^pptx-edit .* 2 slides \(3 steps\) .*\n {2}motion: \d+ exact, \d+ approx, 0 not possible$/m);
     assert.equal((made.stdout.match(/^FAIL /gm) || []).length, 0);
+    // the editable deck's animation: every renderer-free gate passes, PowerPoint itself is SKIP (never ALL PASS)
+    for (const g of ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render', 'text-fit']) assert.match(made.stdout, new RegExp(`^PASS ${g}: `, 'm'), g);
+    assert.match(made.stdout, /^SKIP anim-powerpoint: PowerPoint is not run here/m);
+    const v = spawnSync(process.execPath, [join(SKILL, 'scripts', 'pptx.mjs'), 'verify', join(out, `mini-edit-${STAMP}.pptx`), '--script', script, '--html', join(out, `mini-present-${STAMP}.html`)], { encoding: 'utf8', timeout: 120000 });
+    assert.equal(v.status, 0, v.stdout + v.stderr);
+    assert.match(v.stdout, /^PASS with SKIP \(anim-powerpoint\) \(11 pass, 1 skip, 0 fail\) .*mini-edit-/m);
+    assert.doesNotMatch(v.stdout, /ALL PASS/);
+    assert.match(made.stdout, /^== done: PASS with SKIP\n[\s\S]*^skipped {6}.*anim-powerpoint \(editable deck\)/m);
   });
 
-  test('editable deck: the focus outline is a native rounded rectangle outline (no fill, one shape)', async () => {
+  // the editable deck with one change in slide 1's timing, verified against the page
+  async function editVariant(name, change) {
     const { JSZip } = pptxgen();
     const zip = await JSZip.loadAsync(readFileSync(join(out, `mini-edit-${STAMP}.pptx`)));
-    const xml = await zip.file('ppt/slides/slide3.xml').async('string');
-    const shapes = [...xml.matchAll(/<p:sp><p:nvSpPr><p:cNvPr id="\d+" name="shape i\.fx-focus"[\s\S]*?<\/p:sp>/g)].map((m) => m[0]);
+    const xml = await zip.file('ppt/slides/slide1.xml').async('string'), bad = change(xml);
+    assert.notEqual(bad, xml, name);
+    zip.file('ppt/slides/slide1.xml', bad);
+    const f = join(dir, `${name}.pptx`);
+    writeFileSync(f, await zip.generateAsync({ type: 'nodebuffer' }));
+    const r = await verify(f, { script, html: join(out, `mini-present-${STAMP}.html`), log: () => {} });
+    return Object.fromEntries(r.results.map((x) => [x.gate, x]));
+  }
+
+  test('editable deck: a click group taken out fails anim-steps; an effect started 300 ms late fails anim-match; a shape moved by hand fails anim-render', async () => {
+    const steps = await editVariant('no-click', (x) => x.replace(/<p:par><p:cTn id="\d+" fill="hold"><p:stCondLst><p:cond delay="indefinite"\/><\/p:stCondLst>[\s\S]*$/, (m) => m.replace(/^<p:par>[\s\S]*?(<p:prevCondLst>)/, '</p:childTnLst></p:cTn>$1')));
+    assert.equal(steps['anim-steps'].ok, false, steps['anim-steps'].detail);
+    assert.match(steps['anim-steps'].lines.join('\n'), /slide 1: 1 automatic and 0 click groups, want 1 and 1/);
+    const late = await editVariant('late', (x) => x.replace(/(nodeType="clickEffect"><p:stCondLst><p:cond delay=")(\d+)/, (m, a, d) => `${a}${+d + 300}`));
+    assert.equal(late['anim-match'].ok, false, late['anim-match'].detail);
+    assert.equal(late['anim-xml'].ok, true);
+    const moved = await editVariant('moved', (x) => x.replace(/(name="text h1[^"]*"[\s\S]*?<a:off x=")(\d+)/, (m, a, v) => `${a}${+v + 60 * 6350}`));
+    assert.equal(moved['anim-render'].ok, false, moved['anim-render'].detail);
+  });
+
+  test('editable deck: one slide per section; the focus outline is a native rounded rectangle outline (no fill, one shape, a glow)', async () => {
+    const { JSZip } = pptxgen();
+    const zip = await JSZip.loadAsync(readFileSync(join(out, `mini-edit-${STAMP}.pptx`)));
+    assert.deepEqual(Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort(), ['ppt/slides/slide1.xml', 'ppt/slides/slide2.xml']);
+    const xml = await zip.file('ppt/slides/slide2.xml').async('string');
+    const shapes = [...xml.matchAll(/<p:sp><p:nvSpPr><p:cNvPr id="\d+" name="shape i\.fx-focus #\d+"[\s\S]*?<\/p:sp>/g)].map((m) => m[0]);
     assert.equal(shapes.length, 1, 'one outline shape for the one marked chip');
     assert.match(shapes[0], /<a:prstGeom prst="roundRect">/);
     assert.match(shapes[0], /<a:noFill\/>/);
     assert.match(shapes[0], /<a:ln w="\d+"><a:solidFill><a:srgbClr val="E0263F"\/>/);
     assert.doesNotMatch(xml, /ring-e/, 'no edge pieces');
+    assert.match(shapes[0], /<a:effectLst><a:glow rad="\d+"><a:srgbClr val="E0263[EF]"><a:alpha val="\d+"\/>/, 'the box-shadow color (color-mix rounds the accent by one level)');
+    // slide 1: the first step starts by itself, the second is one click; slide 2 has its one step only
+    const one = await zip.file('ppt/slides/slide1.xml').async('string');
+    assert.equal((one.match(/evt="onBegin"/g) || []).length, 1);
+    assert.equal((one.match(/nodeType="clickEffect"/g) || []).length, 1);
+    assert.equal((xml.match(/nodeType="clickEffect"/g) || []).length, 0);
+    assert.match(one, /<p:transition spd="fast" p14:dur="250"><p:fade\/>/);
   });
 
   test('verify with no browser (CHROME names no file): continuity SKIP, the summary says PASS with SKIP, never ALL PASS, exit 0', () => {

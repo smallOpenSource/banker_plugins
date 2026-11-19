@@ -21,7 +21,7 @@ import { build, parseArgs, parseScript, readText, report, stamp } from './build.
 import { findBrowser } from './cdp.mjs';
 import { check } from './check.mjs';
 import { verify } from './pptx.mjs';
-import { buildEditPptx } from './pptx-edit.mjs';
+import { buildEditPptx, editReport } from './pptx-edit.mjs';
 import { buildVideoPptx } from './pptx-video.mjs';
 import { record } from './record.mjs';
 import { exitOf, requireVendor } from './vendor.mjs';
@@ -89,12 +89,11 @@ export async function make(argv, { log = (l) => process.stdout.write(l + '\n'), 
   log(`pptx-video ${v.out} ${v.slides} slides ${(v.bytes / 1048576).toFixed(1)} MiB`);
   log('== pptx-edit');
   const e = await buildEditPptx({ html: r.present, parsed, out: out.edit, force: a.force });
-  log(`pptx-edit ${e.out} ${e.slides} slides ${(e.bytes / 1048576).toFixed(1)} MiB, ${e.fallbacks.length} picture fallback(s)`);
-  for (const f of e.fallbacks) log(`  fallback ${f.step}: ${f.what} (${f.why})`);
+  for (const l of editReport(e)) log(l);
   log('== verify video deck');
   const vv = await verify(out.video, { script: a.script, media: out.recording, log });
   log('== verify editable deck');
-  const ve = await verify(out.edit, { script: a.script, log });
+  const ve = await verify(out.edit, { script: a.script, html: r.present, log });
   if (!vv.ok || !ve.ok) throw fail('pptx verify failed', 1);
   const skipped = skippedOf(vv, 'video deck').concat(skippedOf(ve, 'editable deck'));
   return Object.assign(result, { recording: out.recording, video: out.video, edit: out.edit, fallbacks: e.fallbacks, skipped: skipped.join(', ') });

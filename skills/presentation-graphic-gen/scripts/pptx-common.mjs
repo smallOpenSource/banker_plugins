@@ -19,6 +19,30 @@ export function notesText(step) {
 /** A unique slide title: the step key and its first 화면 line. */
 export const slideTitle = (step) => `${step.key} ${step.lines[0] || ''}`.trim();
 
+/** Editable deck (one slide per section): every step's notes under a [key] head line, the steps a blank line apart. */
+export const sectionNotes = (steps) => steps.map((st) => [`[${st.key}]`, notesText(st)].filter(Boolean).join('\n')).join('\n\n');
+
+/** Editable deck: the hidden title of a section slide, `<n>. <name>`. */
+export const sectionTitle = (sec) => `${sec.n}. ${sec.name}`;
+
+/**
+ * The PowerPoint shape of an extracted item, in stage px: a box is inset by half its outline (a CSS border lies inside
+ * the box, a PowerPoint outline on the shape edge); a text box is the rendered line made a little wider, so
+ * PowerPoint's metrics never wrap or clip it, on the side its alignment leaves free; a picture is its crop.
+ */
+export function shapeRect(it) {
+  if (it.kind === 'box') {
+    const h = it.line ? it.line.w / 2 : 0;
+    return { x: it.x + h, y: it.y + h, w: Math.max(it.w - 2 * h, 0.5), h: Math.max(it.h - 2 * h, 0.5) };
+  }
+  if (it.kind === 'text') {
+    const pad = it.w * 0.04 + 4;
+    const x = it.align === 'center' ? it.x - pad / 2 : it.align === 'right' ? it.x - pad : it.x;
+    return { x, y: it.y, w: it.w + pad, h: Math.max(it.h, 0.5) };
+  }
+  return { x: it.x, y: it.y, w: Math.max(it.w, 0.5), h: Math.max(it.h, 0.5) };
+}
+
 /** Slide master with a title placeholder (the title is hidden on every slide, but screen readers and the outline get it). */
 export function defineMaster(p, bg = '000000') {
   p.defineSlideMaster({

@@ -13,6 +13,10 @@
 | 따로 움직이는 조각 | 한 도형을 조각 여러 개로 나눠 따로 움직이면, 화면 배율과 기기 픽셀 비율에 따라 조각이 어긋남. 옛 강조 테두리(`.ring`)는 1px 조각 네 개를 100배 넘게 늘려 만들었다. GPU 로 그리는 Chrome 에서 픽셀 비율 1.25 면 변이 0.83배로 짧아져 모서리가 열렸고 1.5 면 길게 삐져나옴. 헤드리스 브라우저와 픽셀 비율 1 에서는 보이지 않음 | 규칙: 한 도형은 요소 하나로 그린다(CSS 테두리와 `border-radius`). 1~2px 요소를 늘려 크기를 만들지 않는다. 조각으로 그려야 하면(`s.box`, `s.connector`) 조각마다 처음부터 끝 크기로 두고 `scale` 0 에서 1 로만 그린다. 강조는 `s.focus` 의 테두리 하나 | `decorations`, `decorations-played`(1227x785, 픽셀 비율 1.5, 키로 재생한 가운데와 끝) 게이트와 그 양방향 시험 |
 | Chromium 의 H.264 | Chromium, Playwright 의 chromium 은 H.264 를 풀지 못함 | PPTX 영상 연속성 게이트가 SKIP(통과 아님). Chrome 이나 Edge 로 다시 돌림 | `verify` 의 SKIP 줄 |
 | 편집 PPTX 의 그림 대체 | 그림, SVG, 회전, 그라데이션, 빗금은 PowerPoint 도형으로 그릴 수 없음 | 그 요소만 투명 바탕에 잘라 낸 그림으로 바꿔 넣고 목록을 냄 | `pptx-edit` 출력의 `fallback` 줄 |
+| 편집 PPTX 의 움직임 근사 | PowerPoint 의 `accel`, `decel` 이 SMIL 식과 다르고(실측 0.08), 전환 뒤에야 첫 묶음이 시작 | 투명도와 기하는 표본 키프레임이라 정확. 남는 근사는 Wipe 의 속도, 첫 단계 늦음, 빛번짐뿐이고 `approx` 줄로 냄 | `pptx-edit` 출력의 `motion`, `approx`, `not possible` 줄. `anim-match` |
+| PowerPoint 가 조용히 바꾸는 타이밍 | 2019 실측: 글 도형의 `p:bldP` 는 첫 효과만 남기고, Fade 필터의 `fill="hold"` 는 뒤 Fade 끝내기를 막고, `style.opacity` 를 정한 뒤 Fade 진입은 불투명 1 로 끝나고, presetID 없는 효과는 클릭을 잃음 | 쓰지 않음. `anim-xml` 이 FAIL 로 잡고 시뮬레이터도 그렇게 재생 | `anim-xml`, `anim-match`, `com --anim` 의 `com-effects` |
+| 빈칸이 있는 줄 | 한 상자에 실행을 이어 붙이면 빈칸이 닫혀 뒤 글이 겹침 | 빈칸에서 상자를 나눔 | `text-fit` |
+| 편집 PPTX 를 PowerPoint 로 보지 않음 | 시험 PC 에 PowerPoint 가 없음. 시뮬레이터가 맞아도 PowerPoint 의 해석이 다르면 못 잡음. 2019 실측 결과는 `pptx.md` 에 있고, 재생 중 클릭(`nextAc`)과 GotoClick 은 화면이 연결된 세션이 필요해 아직 못 봄 | `anim-powerpoint` 를 늘 SKIP 으로 보이고 `ALL PASS` 를 쓰지 않음. PowerPoint 가 있는 PC 에서 `com --anim` | 요약 줄 `PASS with SKIP (anim-powerpoint)` |
 | PPTX 글꼴 | 글꼴 파일을 넣지 않음 | 테마 글꼴만 지정(Latin Noto Sans, East Asian Noto Sans KR). 보는 PC 에 두 글꼴이 있어야 같은 줄바꿈 | 보고에 적음 |
 | 덮어쓰기 | 지난 회차가 사라짐 | 모든 도우미가 이미 있는 파일과 비어 있지 않은 출력 폴더(`check-...`, 녹화, `--frames`, PowerPoint PNG)에 작업 전 종료 코드 2 로 끝남. `--force` 는 허락 뒤에만 | 덮어쓰기 시험 |
 | vendor 손상 | 다른 바이트로 실행 | `build.mjs`, `make.mjs` 는 시작할 때 vendor 파일 전부를 원본 sha256 과 대조하고, 하나라도 다르면 작업 전에 종료 코드 3. 다른 도우미도 읽는 파일이 다르면 3 | vendor 변조 시험(글꼴, wasm, h264, PptxGenJS 각각) |

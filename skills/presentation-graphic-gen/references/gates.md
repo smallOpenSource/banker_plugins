@@ -8,6 +8,7 @@
 |---|---|---|---|
 | 모두 PASS | `ALL PASS (8 pass, 0 skip, 0 fail) <파일>` | `== done` | 0 |
 | PASS 와 SKIP | `PASS with SKIP (continuity) (7 pass, 1 skip, 0 fail) <파일>` | `== done: PASS with SKIP` 다음에 `skipped      continuity (video deck)` | 0 |
+| 편집 덱(늘 SKIP 하나) | `PASS with SKIP (anim-powerpoint) (11 pass, 1 skip, 0 fail) <파일>` | `skipped      anim-powerpoint (editable deck)` | 0 |
 | FAIL 이 있음 | `FAILED (...) <파일>` | `make: pptx verify failed` | 1 |
 
 ## HTML: `check.mjs`
@@ -60,19 +61,26 @@ FAIL decorations: 1 decoration(s) off their text
 
 ## PPTX: `pptx.mjs verify`
 
-`node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--force]`. 종류(영상, 편집)는 파일에서 알아낸다.
+`node "<S>/scripts/pptx.mjs" verify <파일.pptx> --script <대본> [--media <녹화 폴더>] [--frames <폴더>] [--html <present.html>] [--force]`. 종류(영상, 편집)는 파일에서 알아낸다.
 
 | 게이트 | 증명하는 것 | 기준 |
 |---|---|---|
 | `zip` | 필수 부분이 있고 슬라이드가 16:9 | `[Content_Types].xml`, `ppt/presentation.xml` 등 |
-| `slide-count` | 슬라이드 수 = 단계 수 | 같음 |
-| `notes` | 노트 = 말, 빈 줄, `[연출]` 줄 | 문단 단위로 같음 |
-| `titles` | 슬라이드마다 숨긴 제목 자리표시자, 내용은 `<키> <첫 화면 줄>`, 서로 다름 | 모두 |
+| `slide-count` | 영상 덱: 슬라이드 수 = 단계 수. 편집 덱: 슬라이드 수 = 섹션 수 | 같음 |
+| `notes` | 영상 덱: 노트 = 말, 빈 줄, `[연출]` 줄. 편집 덱: 단계마다 `[키]` 머리줄, 말, `[연출]` 줄, 단계 사이 빈 줄 | 문단 단위로 같음 |
+| `titles` | 슬라이드마다 숨긴 제목 자리표시자, 서로 다름. 영상 덱 `<키> <첫 화면 줄>`, 편집 덱 `<n>. <섹션 이름>` | 모두 |
 | `video-slides` | 영상 덱: MP4 부분, 영상 도형, 자동 재생 타이밍(`playFrom(0.0)`, 그 도형 대상, 반복 없음), 포스터 PNG, 대체 텍스트 | 모든 슬라이드 |
 | `h264` | MP4 가 H.264(`avc1` + `avcC`) | 모두 |
 | `continuity` | 브라우저로 푼 슬라이드 n 영상의 끝 프레임과 n+1 영상의 첫 프레임이 같음 | 채널 평균 차이 0.5 이하, 32 초과 픽셀 0.1% 이하. 브라우저가 H.264 를 풀지 못하면 SKIP |
 | `continuity-raw` | (`--media`) 녹화한 원본 프레임의 같은 비교 | 최대 채널 차이 16 이하 |
-| `edit-slides` | 편집 덱: 화면 줄이 있는 슬라이드마다 텍스트 상자, 테마 글꼴 Noto Sans / Noto Sans KR | 모두 |
+| `edit-slides` | 편집 덱: 화면 줄이 있는 섹션의 슬라이드마다 텍스트 상자, 테마 글꼴 Noto Sans / Noto Sans KR | 모두 |
+| `anim-xml` | 편집 덱: PowerPoint 가 고치려 들지 않을 슬라이드 XML | 잘 짜인 XML, 요소 순서(`cSld`, `clrMapOvr`, `transition`, `timing`), `cTn` id 겹침 없음, 모든 대상이 그 슬라이드 도형, `p:bldP` 는 글 있는 `p:sp` 에만이고 그 도형의 효과가 하나, `p:tav` 가 0 에서 100000 까지 오름차순, 허용한 프리셋(Fade 10, Appear 1, Wipe 22, 움직임 0, Transparency 9, presetID 없는 효과는 FAIL), 지연은 0 이상 정수 ms, 쓰는 접두어가 선언됨. PowerPoint 2019 실측으로 FAIL: 필터(`animEffect`)의 `fill="hold"`, `style.opacity` 를 정한 뒤 Fade 진입 |
+| `anim-steps` | 편집 덱: 키 한 번이 단계 하나 | 슬라이드마다 자동 묶음 1(맨 앞) + 클릭 묶음(단계 수 - 1), 합계 = 대본 단계 수 |
+| `anim-targets` | 편집 덱: 효과 대상이 실제 도형 | 대상이 숨긴 제목이 아니고 이름이 `<text\|shape\|picture> <요소> #n[@수준]`. `--html` 이 있으면 그 섹션 페이지의 n 번째 요소와 같음 |
+| `anim-match` | 편집 덱: 움직임이 HTML 과 같음(계산) | `--html` 과 브라우저가 있을 때. 슬라이드의 `p:timing` 만 읽는 독립 시뮬레이터(`pptx-anim-sim.mjs`)와 페이지를 단계마다 0, 15, 50, 85%, 끝, 키프레임 사이에서 비교. 슬라이드 시작(전환 0.25초 동안, 자동 묶음 앞)은 섹션 시작의 페이지와 보이는 투명도를 비교. 끝: 위치 1px, 크기 0.5%, 투명도 0.02. 중간: 위치 1px, 크기 1%, 투명도 0.05, Wipe 0.2. 투명도는 그린 대로(페이지는 요소 투명도 x 색 투명도, 시뮬레이터는 XML 의 채우기, 선, 첫 글자색 alpha x 재생 값을 겹쳐 계산) 비교. 시뮬레이터는 PowerPoint 2019 실측을 따름(`p:bldP` 글 도형은 첫 효과만, `fill="hold"` 진입 Fade 뒤 Fade 끝내기는 재생 안 함, Fade 진입은 불투명 1 로 끝남). 클릭 시작 = 앞 클릭 끝(보이는 값으로). 없으면 SKIP |
+| `anim-render` | 편집 덱: 다시 그린 도형도 같음 | `--html` 과 브라우저가 있을 때. 단계 끝마다 슬라이드 XML 만으로 그린 도형(시뮬레이터 상태)과 페이지를 픽셀 비교. 채널 차이 48 초과 픽셀 0.5% 이하. 없으면 SKIP |
+| `text-fit` | 편집 덱: 글 상자가 글에 맞음 | `--html` 과 브라우저가 있을 때. 상자마다 XML 의 실행을 페이지 글꼴로 재어, 상자를 만든 폭(글 + 4% + 4px)과 6px 또는 3% 안. 빈칸이 닫혀 한 상자로 붙은 줄은 FAIL. 없으면 SKIP |
+| `anim-powerpoint` | 편집 덱: PowerPoint 로 확인함 | 늘 SKIP(시험 PC 에 PowerPoint 가 없음). PowerPoint 가 있는 PC 에서 `com --anim` |
 
 - `--frames <폴더>` 는 연속성 비교에 쓴 디코딩 프레임(`NN-last.png`, `NN-first.png`)을 저장한다. 몇 장을 직접 본다. 폴더가 비어 있지 않으면 작업 전에 종료 코드 2(`--force` 로만 다시 씀).
 - 끝 프레임은 브라우저가 `requestVideoFrameCallback` 으로 마지막 두 프레임 중 하나라고 알린 때만 잡는다. `ended` 때 요소가 보이는 프레임은 쓰지 않는다(Windows Chrome 은 끝을 보이기 전에 `ended` 를 낼 수 있다). 알림이 없으면 처음부터 다시 재생하고, 게이트 줄에 `; N end frame(s) taken on a later play`, 쌍 줄에 `end frame on play N` 을 적는다. 5번 재생해도 없으면 `no end frame of <영상> in 5 plays` 오류. 쌍 하나의 대기 시간은 두 영상 길이로 정해서, 긴 영상도 이 오류가 시간 초과보다 먼저 난다.
@@ -83,3 +91,15 @@ FAIL decorations: 1 decoration(s) off their text
 - `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더> [--force]` 는 Windows 에서 PowerPoint 로 파일을 열고 슬라이드, 노트, 미디어 수를 낸 뒤 슬라이드마다 `NN.png` 를 쓴다. PNG 폴더가 비어 있지 않으면 아무것도 하지 않고 종료 코드 2(`--force` 로만 다시 씀).
 - PowerPoint 가 이미 실행 중이면 아무것도 하지 않고 SKIP. Windows 가 아니거나 PowerPoint 가 없어도 SKIP.
 - 슬라이드 쇼의 자동 재생 자체는 이 확인으로 알 수 없다(PNG 는 포스터). 발표 PC 에서 한 번 넘겨 본다.
+- `node "<S>/scripts/pptx.mjs" com --anim <편집.pptx> <폴더> --script <대본> [--video] [--force]` 는 편집 덱의 애니메이션을 본다. 알림을 끄고 읽기 전용으로 연다(고치기 창이면 열기 실패나 시간 초과).
+
+| 줄 | 보는 것 |
+|---|---|
+| `com-open` | PowerPoint 가 파일을 열었고 슬라이드 수가 같음 |
+| `com-effects` | 슬라이드마다 효과 목록(대상 도형 이름, 트리거, 지연)이 파일에 쓴 것과 같음. 조용히 버린 효과를 잡음 |
+| `com-clicks` | 클릭 효과 수 = 섹션 단계 수 - 1 |
+| `com-resaved` | PowerPoint 가 다시 저장한 사본(`resaved.pptx`)이 같은 효과를 가짐 |
+| `com-show` | 데스크톱 세션의 슬라이드 쇼에서 `GetClickCount`, `FirstAnimationIsAutomatic`. 클릭마다 창 캡처 `NN-cK.png`. SSH 세션이면 SKIP |
+| `com-video` | `--video`: 클릭을 "이전 효과 다음에" 로 바꾼 임시 사본의 `CreateVideo` 결과 `video.mp4` |
+
+- 캡처와 영상을 HTML 의 `stills/`, 녹화 프레임과 비교하는 것은 아직 사람이 본다.
