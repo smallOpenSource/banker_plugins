@@ -141,6 +141,18 @@ test("check reports the active version from installed_plugins.json, not the TARG
   assert.deepEqual(omcbaks(join(f.cache, "5.6.1", "scripts")), []);
 });
 
+test("check names a PostToolUse hook in the exec form (command node, args [script]) that OMC 5.8.x writes", () => {
+  const f = fakeHome([{ v: "5.8.6", active: true }], { git: false });
+  const hj = join(f.cache, "5.8.6", "hooks", "hooks.json");
+  writeFileSync(hj, JSON.stringify({ hooks: {
+    Stop: [{ hooks: [{ type: "command", command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/scripts/stopper.mjs"] }] }],
+    PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/scripts/foo.mjs"] }] }],
+  } }, null, 2) + "\n");
+  const r = run(f.home, ["--check", "--no-update"]);
+  assert.match(r.out, /PostToolUse 남아있음: foo/);
+  assert.doesNotMatch(r.out, /PostToolUse 남아있음: \?/);
+});
+
 test("--no-update apply patches only the active version, removes PostToolUse, pins origin; check then passes", { skip: !HAS_GIT && "git not found" }, () => {
   const f = fakeHome([{ v: "5.3.0" }, { v: "5.6.1", active: true }]);
   const r = run(f.home, ["--no-update"]);

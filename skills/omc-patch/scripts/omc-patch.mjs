@@ -1302,7 +1302,9 @@ function removePostToolUse(hj, why) {
   const bak = `${hj}.omcbak`;
   const j = JSON.parse(readHooksJson(hj));
   if (!j.hooks?.PostToolUse) return "already";
-  const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => (h.command || "").match(/([\w-]+)\.mjs/)?.[1] || "?"));
+  // OMC 5.8.x writes the exec form ("command": "node", "args": [".../scripts/<name>.mjs"]), older ones one command line
+  const line = (h) => [h.command, ...(Array.isArray(h.args) ? h.args : [])].filter((x) => typeof x === "string").join(" ");
+  const list = j.hooks.PostToolUse.flatMap((g) => (g.hooks || []).map((h) => line(h).match(/([\w-]+)\.mjs/)?.[1] || "?"));
   if (MODE === "check") { hjBad(`hooks.json PostToolUse 남아있음${why ? `, 쓸 수 없음 (${why})` : ""}: ${list.join(", ")}`); return "needs"; }
   freshBackup(hj, bak, `${hjTag}hooks.json`, postToolUseIn);
   backup(hj, bak);
