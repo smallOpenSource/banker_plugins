@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.29.0] - 2026-11-19
+
+### Added
+- 새 스킬 `presentation-graphic-gen`: 사용자의 화면/말 대본 초안으로 키 한 번에 한 단계씩 움직이는 모션 그래픽 발표 자료를 만든다. 단일 HTML(검토용, 발표용)과, 고르면 PPTX 두 벌(단계별 자동 재생 영상, 편집용 도형). 브라우저 내장 Web Animations API 엔진, 게이트 10개, 한국어 다듬기 합의 루프. 글꼴(서브셋 HarfBuzz WASM), H.264 인코더(WASM), PptxGenJS 를 스킬에 넣어 실행할 때 내려받지 않는다.
+  - 편집용 PPTX 는 섹션마다 슬라이드 하나, 단계마다 클릭 하나다. 발표용 HTML 의 움직임을 재어 PowerPoint 고유 애니메이션(Fade, Wipe, 이동, 크기, 회전, 투명도 키프레임)으로 옮긴다. 옮기지 못한 움직임은 근사나 불가로 보고 줄에 적는다.
+  - PowerPoint 2019(16.0 build 10353) 실측 규칙을 따른다. 글 도형에 빌드 목록(`p:bldP`)을 쓰지 않고, Fade 와 Wipe 필터에 `fill="hold"` 를 쓰지 않는다. 두 가지 모두 PowerPoint 가 같은 도형의 뒤 효과를 말없이 버리게 했다.
+  - 편집 덱 게이트: `anim-xml`, `anim-steps`, `anim-targets`, `anim-match`, `anim-render`, `text-fit`, `anim-powerpoint`(늘 SKIP, 요약은 `PASS with SKIP`). 슬라이드 XML 만 읽는 독립 시뮬레이터(`pptx-anim-sim.mjs`)가 단계마다 페이지와 위치, 투명도, 픽셀을 비교한다.
+  - 아직 확인하지 못한 것: 슬라이드 쇼 재생 중 클릭(`nextAc` seek), `GotoClick`, `GetClickCount`. 화면이 연결된 세션이 필요하다.
+  - 묶은 파일(Noto 글꼴, `harfbuzz-subset.wasm`, h264-mp4-encoder, PptxGenJS 번들)은 brotli 로 묶어 두고, 실행할 때 메모리에서 푼 뒤 원본 sha256 과 대조한다. 다르거나, 풀리지 않거나, 16 MiB 를 넘게 풀리면 작업 전에 종료 3. vendor 는 8,915,591 바이트에서 6,303,809 바이트로 줄었다.
+  - 서드파티: Noto Sans 2.015, Noto Sans KR 2.04(SIL OFL 1.1), harfbuzzjs 1.6.4 의 `harfbuzz-subset.wasm`(MIT, HarfBuzz "Old MIT"), h264-mp4-encoder 1.0.12(MIT, 안의 minih264 는 CC0, libmp4v2 는 MPL 1.1), PptxGenJS 4.0.1(MIT). libmp4v2 소스는 `video-gen` 과 같은 `third_party/libmp4v2-d49b4466.tar.gz` 다.
+  - 넣은 뒤 검토로 고친 것: Windows Chrome 에서 영상 연속성 게이트가 가끔 FAIL 하던 것(끝 프레임은 `requestVideoFrameCallback` 이 알린 때만 잡고, 알림이 없으면 5번까지 다시 재생), snap Chromium 의 프로필 폴더(늘 `~/snap/chromium/common`), 긴 단계 영상의 비교가 CDP 명령 30초 제한에 먼저 걸리던 것, DevTools 포트 대신 파이프, 한글과 띄어쓰기 대본 이름, macOS 의 동작 줄이기 설정.
+- `append_wiki`: OMC 없이 쓰는 위키 대체 `wiki.mjs`. OMC 5.8.4 의 위키 도구 7개를 node 내장 모듈로 다시 구현했다(같은 `.omc/wiki` 저장 위치, 형식, 병합, 잠금). MCP 스키마가 오지 않거나 연결이 끊기면 `append_wiki`, `compact-wiki`, `summary-wiki` 가 이것으로 쓴다.
+  - Codex 에서 omx 가 없으면 `wiki.mjs --profile=omx` 를 쓴다. OMX 0.20.2 와 같은 형식(`omx_wiki/`, 한글이 남는 슬러그)이다.
+  - 릴리스마다 OMC 와 OMX 의 위키 형식을 대조한다(`gen-omc-wiki-golden.mjs --check`, `gen-omx-wiki-golden.mjs --check`, `RELEASING.md` 7번). 사용법 오류는 종료 3.
+- `omc-patch`: DRM 대응 패치. 동의하면 OMC ralph 의 진행 기록을 `progress.txt` 대신 `progress.md` 로 쓴다. 세 파일(`dist/hooks/ralph/progress.js`, `bridge/cli.cjs`, `skills/ralph/SKILL.md`)을 함께 바꾸거나 하나도 바꾸지 않는다. 되돌리기도 판 단위로 묶는다. `anti-drm` 이 `.txt` 를 막으면 안내한다. Codex 는 해당 없음(banker `ralph` 는 `ralph.md`).
+- `theme-selection`: 명령 없이 부르면 선택지로 테마를 고른다. 첫 질문은 분위기 무리 넷(밝은 미니멀, 회색 모노톤, 따뜻한 강조색, 차가운 강조색), 둘째 질문은 그 무리의 테마다.
+  - 설명(바탕 밝기, 강조색 이름, 본문 대비)과 색 미리보기는 손으로 쓴 글 없이 색 값에서 계산한다. `list --json` 이 그 재료를 낸다.
+  - Codex 는 `request_user_input` 으로 묻고, 없으면 번호 붙인 평문으로 묻는다. 명령을 준 호출은 전과 같다.
+
+### Fixed
+- UTF-8 이 아닌 입력(cp949, DRM 이 암호화한 파일)을 U+FFFD 로 바꿔 산출물에 쓰고 종료 0 이던 것. 입력을 엄격한 UTF-8 로 읽고 앞의 BOM 은 뗀다. 아니면 파일 이름과 까닭 한 줄로 사용 오류다.
+  - 대상: `wide-pptx`, `wbs-gen`, `video-gen`, `vertical-pptx`, `presentation-graphic-gen`, `3d-intro-build`(curate), `motion-graphic-make`, `ultra-chain`(chain-report), `append_wiki`(`--input-file`)
+  - `obsidizer` 는 cp949 페이지를 제자리 덮어써 원래 바이트를 잃었다. 이제 그 페이지를 쓰지 않고 경고와 함께 건너뛴다.
+- 링크로 닿은 경로에서 CLI 가 아무것도 하지 않고 종료 0 하던 것. 실행 판정을 실제 경로끼리 비교하고, `realpath` 가 실패하면 `resolve` 비교로 한다. 대상은 스킬 20여 개와 훅 4개의 명령 파일, 그 Codex 사본이다.
+- Windows 에서 이름만 준 프로그램을 지금 폴더(사용자 프로젝트)에서 먼저 찾던 것. System32 의 전체 경로로 부르거나, PATH 에서만 찾거나, 홈 폴더와 스크립트 폴더에서 실행한다.
+  - 대상: `make-evidence`(powershell.exe), `init-dir`(powershell.exe, taskkill.exe, node), `vertical-pptx`(fc-match), `build-testbox`(runProc), Codex `progress` 의 `--pane`(tmux), `append_wiki` 와 `setup-omc-hud`(git)
+- `init-dir`: Windows 에서 동시에 띄운 start 가 잠금 대기 한도를 넘겨 종료 1 하던 것. 기다림은 잠금을 쥔 start 하나 기준으로 센다. `.cmd` 다섯 개는 PATH 에 따옴표 친 항목(`"C:\Program Files\nodejs"`)만 있어도 node 를 찾는다. `build-testbox` 의 `which()` 도 같다.
+- `append_wiki`: Windows 장치 이름 슬러그(`con.md`, `nul.md`, `com1.md`)의 페이지는 새로 만들지 않는다. Windows 가 아닌 OS 에서는 이미 있는 그 페이지를 읽고, 갱신하고, 지울 수 있다. omx 프로필의 obsidize 가 한글 슬러그 페이지를 건너뛰던 것. Windows 에서 동시 쓰기의 rename 이 EPERM 으로 실패하던 것(약 1초까지 다시 시도).
+- `obsidizer`: YAML 배열과 따옴표 값을 OMC 5.8.4 처럼 읽는다. 따옴표 안 쉼표가 든 `sources` 가 갈라지거나 작은따옴표 값이 바뀌던 것. OMC 위키 도구가 없으면 lint 대조는 `wiki.mjs` 로 한다.
+- `setup-omc-hud`: DRM 이 OMC 로더 템플릿(`.txt`)을 암호화했으면 복사하지 않는다. OMC 마켓플레이스 복제본의 git 에서 설치 커밋의 같은 파일을 읽고, 없으면 기존 로더를 두거나 쓰기 전에 멈춘다(종료 1, 바뀐 것 없음).
+- `remains`: `boxes.mjs` 가 Windows 장치 이름인 박스 이름을 거부한다. `--cmd` 결과 요약이 Node 23 이상의 기본 spec 형식도 읽는다.
+- `/banker:front-qa`: 체크포인트의 진행 기록 위치를 런타임과 패치별로 적었다(OMC ralph 의 `.omc/progress.txt`, DRM 대응 패치 뒤 `.omc/progress.md`, Codex banker `ralph` 의 `ralph.md`).
+- 훅 코드가 바뀌어 Codex 가 banker 훅의 신뢰를 한 번 다시 묻는다(`/hooks`). `banker-hooks-rev` 는 `c828964dc68e` 에서 `cc0b4f7d4e17` 로 바뀌었다.
+- 크기와 훅 시간: Codex 0.169.0 은 훅을 돌릴 때마다 그 훅의 시간 제한 안에서 플러그인 폴더 전체를 해시한다.
+  - 0.29.0 의 git 추적 파일 합계는 598개, 약 28.7MB 다. 0.28.1 은 511개, 약 20.9MB 였다. Codex 는 git 마켓플레이스의 체크아웃을 해시하므로 이 값을 쓴다. npm 묶음은 시험 파일과 `third_party/` 를 빼서 압축 18.2MB, 푼 크기 23.3MB 다.
+  - Windows 테스트박스(Windows PowerShell 5.1) 14회 중앙값: 폴더 해시 0.26초에서 0.31초, 세션 시작 훅 0.30초에서 0.29초, 턴 끝 Stop 훅 0.31초에서 0.30초. 처음 한 번은 두 판 모두 약 2초까지 걸렸다. 제한 10초 안이다.
+
 ## [0.28.1] - 2026-11-15
 
 ### Fixed

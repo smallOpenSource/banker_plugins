@@ -376,5 +376,34 @@
   ],
   "0.28.1": [
     "banker:video-gen"
+  ],
+  "0.29.0": [
+    "banker:3d-intro-build",
+    "banker:anti-drm",
+    "banker:append_wiki",
+    "banker:build-testbox",
+    "banker:compact-wiki",
+    "banker:git-init",
+    "banker:init-dir",
+    "banker:make-evidence",
+    "banker:motion-graphic-make",
+    "banker:obsidizer",
+    "banker:omc-patch",
+    "banker:payload-mon",
+    "banker:presentation-graphic-gen",
+    "banker:ralph-qa",
+    "banker:remains",
+    "banker:setup-bypass-permissions",
+    "banker:setup-omc-hud",
+    "banker:smart-compact",
+    "banker:summary-wiki",
+    "banker:theme-selection",
+    "banker:tone-compact",
+    "banker:ultra-chain",
+    "banker:ultraqa",
+    "banker:vertical-pptx",
+    "banker:video-gen",
+    "banker:wbs-gen",
+    "banker:wide-pptx"
   ]
 }

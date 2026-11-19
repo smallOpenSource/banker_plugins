@@ -1,6 +1,6 @@
 ---
 name: theme-selection
-description: "프로젝트에 테마 74종을 라이트와 다크 한 쌍씩(148 조합) CSS 사용자 지정 속성으로 입힘. 대비 보정을 거친 값을 내고, 테마 고르개(HTML과 스크립트)와 대비 감사(check)도 냄. 프로젝트의 DESIGN.md 도 읽어 테마로 더함. 인자가 없으면 색 값에서 계산한 설명과 색 미리보기를 붙인 선택지로 테마를 고르게 함. Node 만 쓰고 인터넷을 쓰지 않음. 'theme-selection'/'테마 선택'/'테마 추가'/'테마 입히기'/'다크모드 추가' 시 사용. 일반 UI 작업에서는 자동 실행 금지."
+description: "프로젝트에 테마 74종을 라이트와 다크 한 쌍씩(148 조합) CSS 사용자 지정 속성으로 입힘. 대비 보정을 거친 값을 내고, 테마 고르개(HTML과 스크립트)와 대비 감사(check)도 냄. 프로젝트의 DESIGN.md 도 읽어 테마로 더함. 명령(list, css 등) 없이 부르면 색 값에서 계산한 설명과 색 미리보기를 붙인 선택지로 테마를 고르게 함. Node 만 쓰고 인터넷을 쓰지 않음. 'theme-selection'/'테마 선택'/'테마 추가'/'테마 입히기'/'다크모드 추가' 시 사용. 일반 UI 작업에서는 자동 실행 금지."
 argument-hint: "[list | css | json | widget | check] [--design-md PATH] [--only SLUGS] [--default SLUG] [--prefix STR] [--dark-via attr|media|class] [--out FILE] [--json]"
 ---
 
