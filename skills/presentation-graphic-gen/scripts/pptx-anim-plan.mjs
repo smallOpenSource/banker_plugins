@@ -46,10 +46,11 @@ function fitErr(us, qs, p, stop) {
   for (let i = 0; i < us.length && err < stop; i++) err = Math.max(err, Math.abs(qs[i] - fitProgress(us[i], p)));
   return err;
 }
+const fitOk = (p) => p.e - p.s >= 0.05 && p.a + p.d <= 1 + 1e-9 && Math.min(p.a, p.d, p.s) >= 0 && p.e <= 1;
 function fitGrid(us, qs, best, ss, es, as) {
-  for (const s of ss) for (const e of es) for (const a of as) for (const d of as) {
-    if (e - s < 0.05 || a + d > 1 + 1e-9 || a < 0 || d < 0 || s < 0 || e > 1) continue;
-    const p = { s, e, a, d }, err = fitErr(us, qs, p, best.err);
+  const all = ss.flatMap((s) => es.flatMap((e) => as.flatMap((a) => as.map((d) => ({ s, e, a, d }))))).filter(fitOk);
+  for (const p of all) {
+    const err = fitErr(us, qs, p, best.err);
     if (err < best.err) best = Object.assign(p, { err });
   }
   return best;
@@ -141,14 +142,16 @@ function sideAt(s, i) {
   return null;
 }
 const OPP = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' };
+// a picture's crop is 2 px wider than its element, so fully shown is a little under 1
+const clipKind = (A, B) => (A < 0.02 && B > 0.95 ? 'in' : A > 0.95 && B < 0.02 ? 'out' : 'clip');
+function clipEvent(s, a, b) {
+  const A = s.frac[a], B = s.frac[b], kind = clipKind(A, B);
+  const side = kind === 'in' ? sideAt(s, a + 1) : kind === 'out' ? OPP[sideAt(s, b - 1)] || null : null;
+  return { a, b, t0: s.T[a], t1: s.T[b], kind: side ? kind : 'clip', side, ease: fadeFit(s, a, b, 'frac', A, B) };
+}
+// changes of the visible part (under 0.005: noise)
 function clipEvents(s) {
-  // a picture's crop is 2 px wider than its element, so fully shown is a little under 1; changes under 0.005 are noise
-  return monoRuns(s.T, s.frac, 1e-4).filter(({ a, b }) => Math.abs(s.frac[b] - s.frac[a]) >= 0.005).map(({ a, b }) => {
-    const A = s.frac[a], B = s.frac[b];
-    const kind = A < 0.02 && B > 0.95 ? 'in' : A > 0.95 && B < 0.02 ? 'out' : 'clip';
-    const side = kind === 'in' ? sideAt(s, a + 1) : kind === 'out' ? OPP[sideAt(s, b - 1)] : null;
-    return { a, b, t0: s.T[a], t1: s.T[b], kind: side || kind !== 'clip' ? kind : 'clip', side, ease: fadeFit(s, a, b, 'frac', A, B) };
-  }).map((c) => (c.kind !== 'clip' && !c.side ? Object.assign(c, { kind: 'clip' }) : c));
+  return monoRuns(s.T, s.frac, 1e-4).filter(({ a, b }) => Math.abs(s.frac[b] - s.frac[a]) >= 0.005).map(({ a, b }) => clipEvent(s, a, b));
 }
 // a reveal from an edge joins the entrance (or exit) at its start (end); other clip changes cannot be shown
 function mergeClips(evs, clips, notes) {
@@ -257,19 +260,25 @@ function itemPlan(S, k) {
   return { it, s, R, evs, copies, notes };
 }
 
+// one step of one shape: its effects with the geometry tracks of the step (when it is seen in it); vis at the step start
+function stepEffects(P, copy, W, w, held, vis) {
+  const T = P.s.T;
+  const mine = P.evs.filter((e) => stepOf(W, e.t0) === w.k).flatMap((e) => eventEffects(e, P.copies).filter((x) => x.copy === copy).map((x) => x.fx));
+  const ent = mine.find((f) => f.cls === 'entr');
+  const enter = ent ? idxOf(T, ent.bh[0].t) : vis ? idxOf(T, w.t0) : -1;
+  const tracks = enter >= 0 ? geoTracks(P.s, P.R, Math.max(idxOf(T, w.start), idxOf(T, w.t0)), idxOf(T, w.end), enter, held) : [];
+  if (tracks.length && mine.length) mine[0].bh.push(...tracks);
+  else if (tracks.length) mine.push({ cls: MOTION.cls, preset: MOTION.preset, bh: tracks, motion: true });
+  return mine;
+}
+const visAfter = (vis, fxs) => fxs.reduce((v, f) => (f.cls === 'entr' ? true : f.cls === 'exit' ? false : v), vis);
 // per copy: its effects step by step, with the geometry of the steps where it is visible
 function copyEffects(P, copy, W) {
   const held = { ppt_x: 0, ppt_y: 0, ppt_w: 1, ppt_h: 1, r: 0 }, out = [];
   let vis = copy.vis0;
   for (const w of W) {
-    const lo = idxOf(P.s.T, w.start), hi = idxOf(P.s.T, w.end);
-    const mine = P.evs.filter((e) => stepOf(W, e.t0) === w.k).flatMap((e) => eventEffects(e, P.copies).filter((x) => x.copy === copy).map((x) => Object.assign(x.fx, { ev: e })));
-    const ent = mine.find((f) => f.cls === 'entr');
-    const enter = ent ? idxOf(P.s.T, ent.bh[0].t) : vis ? idxOf(P.s.T, w.t0) : -1;
-    const tracks = vis || ent ? geoTracks(P.s, P.R, Math.max(lo, idxOf(P.s.T, w.t0)), hi, enter, held) : [];
-    for (const f of mine) vis = f.cls === 'entr' ? true : f.cls === 'exit' ? false : vis;
-    if (tracks.length && mine.length) mine[0].bh.push(...tracks);
-    else if (tracks.length) mine.push({ cls: MOTION.cls, preset: MOTION.preset, bh: tracks, motion: true });
+    const mine = stepEffects(P, copy, W, w, held, vis);
+    vis = visAfter(vis, mine);
     for (const f of mine) out.push(Object.assign(f, { step: w.k, copy }));
   }
   return out;

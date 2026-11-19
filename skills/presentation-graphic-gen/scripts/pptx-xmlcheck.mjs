@@ -41,33 +41,33 @@ function skipSpecial(xml, i) {
   return -1;
 }
 
+// one markup item at lt ('<'): a comment or declaration is skipped, an end tag closes cur, a start tag opens a child.
+// Returns { cur, i }: the open element and the offset after the item.
+function step(xml, lt, cur) {
+  const sp = skipSpecial(xml, lt);
+  if (sp >= 0) return { cur, i: sp };
+  if (xml[lt + 1] === '/') {
+    const gt = xml.indexOf('>', lt), name = gt < 0 ? '' : xml.slice(lt + 2, gt).trim();
+    if (name !== cur.name) throw xmlError(`end tag </${name}> does not close <${cur.name}>`, lt);
+    return { cur: cur.parent, i: gt + 1 };
+  }
+  const t = readTag(xml, lt + 1, cur);
+  cur.kids.push(t.node);
+  return { cur: t.empty ? cur : t.node, i: t.end };
+}
+
 /** Parses XML into a tree; returns the root element. Throws { xml: true } when it is not well formed. */
 export function parseXml(xml) {
   const top = { name: '#doc', attrs: {}, kids: [], text: '', parent: null };
-  let cur = top, i = 0;
-  while (i < xml.length) {
-    const lt = xml.indexOf('<', i);
-    if (lt < 0) { cur.text += xml.slice(i); break; }
-    cur.text += xml.slice(i, lt);
-    const sp = skipSpecial(xml, lt);
-    if (sp >= 0) { i = sp; continue; }
-    if (xml[lt + 1] === '/') {
-      const gt = xml.indexOf('>', lt);
-      const name = gt < 0 ? '' : xml.slice(lt + 2, gt).trim();
-      if (name !== cur.name) throw xmlError(`end tag </${name}> does not close <${cur.name}>`, lt);
-      cur = cur.parent;
-      i = gt + 1;
-      continue;
-    }
-    const t = readTag(xml, lt + 1, cur);
-    cur.kids.push(t.node);
-    if (!t.empty) cur = t.node;
-    i = t.end;
+  let at = { cur: top, i: 0 };
+  for (let lt = xml.indexOf('<'); lt >= 0; lt = xml.indexOf('<', at.i)) {
+    at.cur.text += xml.slice(at.i, lt);
+    at = step(xml, lt, at.cur);
   }
-  if (cur !== top) throw xmlError(`<${cur.name}> is not closed`, xml.length);
-  const roots = top.kids;
-  if (roots.length !== 1 || top.text.trim()) throw xmlError('not exactly one root element', 0);
-  return roots[0];
+  at.cur.text += xml.slice(at.i);
+  if (at.cur !== top) throw xmlError(`<${at.cur.name}> is not closed`, xml.length);
+  if (top.kids.length !== 1 || top.text.trim()) throw xmlError('not exactly one root element', 0);
+  return top.kids[0];
 }
 
 /** Every element below node (depth first, document order), node itself first. */
@@ -107,6 +107,22 @@ export function slideShapes(root) {
 
 const isInt = (v, min = 0) => /^\d+$/.test(String(v)) && +v >= min;
 
+const timeOk = (v, min) => v == null || v === 'indefinite' || isInt(v, min);
+const pct = (v) => (v == null ? 0 : Number(v));
+function presetProblem(a) {
+  if (a.presetClass == null && a.presetID == null) return /Effect$/.test(a.nodeType || '') ? `cTn ${a.id}: an effect without presetClass and presetID` : null;
+  const ok = Object.hasOwn(PRESETS, a.presetClass) && PRESETS[a.presetClass].includes(+a.presetID);
+  return ok ? null : `cTn ${a.id}: presetClass "${a.presetClass}" presetID "${a.presetID}" is not an allowed pair`;
+}
+// one cTn's own attributes: dur, accel and decel (0..100000, together at most 100000), the preset pair
+function ctnAttrProblems(a) {
+  const bad = [];
+  if (!timeOk(a.dur, 1)) bad.push(`cTn ${a.id}: dur "${a.dur}"`);
+  const ac = pct(a.accel), dc = pct(a.decel);
+  if (![ac, dc].every((v) => Number.isInteger(v) && v >= 0 && v <= 100000) || ac + dc > 100000) bad.push(`cTn ${a.id}: accel ${a.accel} decel ${a.decel}`);
+  const p = presetProblem(a);
+  return p ? bad.concat(p) : bad;
+}
 function ctnProblems(nodes) {
   const bad = [], ids = new Set();
   for (const n of nodes.filter((x) => x.name === 'p:cTn')) {
@@ -114,17 +130,9 @@ function ctnProblems(nodes) {
     if (!isInt(a.id, 1)) bad.push(`cTn id "${a.id}" is not a positive integer`);
     else if (ids.has(a.id)) bad.push(`cTn id ${a.id} is used twice`);
     ids.add(a.id);
-    if (a.dur != null && a.dur !== 'indefinite' && !isInt(a.dur, 1)) bad.push(`cTn ${a.id}: dur "${a.dur}"`);
-    const ac = a.accel != null ? +a.accel : 0, dc = a.decel != null ? +a.decel : 0;
-    if (![ac, dc].every((v) => Number.isInteger(v) && v >= 0 && v <= 100000) || ac + dc > 100000) bad.push(`cTn ${a.id}: accel ${a.accel} decel ${a.decel}`);
-    if (a.presetClass != null || a.presetID != null) {
-      const ok = Object.hasOwn(PRESETS, a.presetClass) && PRESETS[a.presetClass].includes(+a.presetID);
-      if (!ok) bad.push(`cTn ${a.id}: presetClass "${a.presetClass}" presetID "${a.presetID}" is not an allowed pair`);
-    } else if (/Effect$/.test(a.nodeType || '')) bad.push(`cTn ${a.id}: an effect without presetClass and presetID`);
+    bad.push(...ctnAttrProblems(a));
   }
-  for (const c of nodes.filter((x) => x.name === 'p:cond')) {
-    if (c.attrs.delay != null && c.attrs.delay !== 'indefinite' && !isInt(c.attrs.delay)) bad.push(`cond delay "${c.attrs.delay}" is not indefinite or a whole number of ms >= 0`);
-  }
+  for (const c of nodes.filter((x) => x.name === 'p:cond' && !timeOk(x.attrs.delay, 0))) bad.push(`cond delay "${c.attrs.delay}" is not indefinite or a whole number of ms >= 0`);
   return bad;
 }
 
@@ -160,16 +168,21 @@ function targetProblems(nodes, shapes) {
 }
 
 // every prefix in use is declared; p14 outside mc:Choice needs mc:Ignorable on the root
+// the prefixes of an element's name and attributes that are not declared in scope, or p14 where it may not be
+function prefixProblems(n, scope, ignorable) {
+  const out = [];
+  for (const q of [n.name, ...Object.keys(n.attrs).filter((k) => !k.startsWith('xmlns'))]) {
+    const pre = q.includes(':') ? q.split(':')[0] : null;
+    if (pre && pre !== 'xml' && !scope.has(pre)) out.push(`prefix ${pre} of <${n.name}> is not declared`);
+    if (pre === 'p14' && !ignorable && !insideChoice(n)) out.push('p14 used outside mc:Choice without mc:Ignorable="p14"');
+  }
+  return out;
+}
 function nsProblems(root) {
-  const bad = new Set();
+  const bad = new Set(), ignorable = (root.attrs['mc:Ignorable'] || '').split(/\s+/).includes('p14');
   const visit = (n, scope) => {
-    const s = new Set(scope);
-    for (const k of Object.keys(n.attrs)) if (k.startsWith('xmlns:')) s.add(k.slice(6));
-    for (const q of [n.name, ...Object.keys(n.attrs).filter((k) => !k.startsWith('xmlns'))]) {
-      const pre = q.includes(':') ? q.split(':')[0] : null;
-      if (pre && pre !== 'xml' && !s.has(pre)) bad.add(`prefix ${pre} of <${n.name}> is not declared`);
-      if (pre === 'p14' && !insideChoice(n) && !(root.attrs['mc:Ignorable'] || '').split(/\s+/).includes('p14')) bad.add('p14 used outside mc:Choice without mc:Ignorable="p14"');
-    }
+    const s = new Set([...scope, ...Object.keys(n.attrs).filter((k) => k.startsWith('xmlns:')).map((k) => k.slice(6))]);
+    for (const p of prefixProblems(n, s, ignorable)) bad.add(p);
     for (const k of n.kids) visit(k, s);
   };
   visit(root, []);

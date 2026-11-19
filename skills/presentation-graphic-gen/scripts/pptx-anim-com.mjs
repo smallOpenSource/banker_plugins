@@ -52,47 +52,61 @@ function effectDiff(k, want, got) {
   return bad;
 }
 
+const effectsOf = (list, k) => (list && list[k] ? list[k].effects : []);
+function showGate(gate, want, rep, exp) {
+  if (!rep.show) return gate('com-show', null, rep.showSkipped || 'slide show not run');
+  const sbad = rep.show.filter((s, k) => s.clicks !== exp[k] || s.firstAuto !== want[k].auto)
+    .map((s) => `slide ${s.slide}: GetClickCount ${s.clicks} (expected ${exp[s.slide - 1]}), FirstAnimationIsAutomatic ${s.firstAuto} (expected ${want[s.slide - 1].auto})`);
+  return gate('com-show', !sbad.length, `slide show: GetClickCount and FirstAnimationIsAutomatic on ${rep.show.length} slides; captures ${rep.show.reduce((a, s) => a + s.captures.length, 0)} PNG`, sbad);
+}
 /** Gate lines from a deck, PowerPoint's anim.json and the saved copy's effects; clicks[] is the expected click count per slide (or null). */
 export function compareAnim(want, rep, resaved, clicks = null) {
   const lines = [], gate = (name, state, detail, rows = []) => { lines.push(`${state === null ? 'SKIP' : state ? 'PASS' : 'FAIL'} ${name}: ${detail}`); for (const r of rows.slice(0, 12)) lines.push(`  ${r}`); return state !== false; };
-  let ok = gate('com-open', rep.slides.length === want.length, `PowerPoint ${rep.version} opened the file read-only with alerts off: ${rep.slides.length} slides (the file has ${want.length})`);
-  const diff = want.flatMap((w, k) => effectDiff(k + 1, w.effects, (rep.slides[k] || { effects: [] }).effects));
-  ok = gate('com-effects', !diff.length, `${want.reduce((a, w) => a + w.effects.length, 0)} effects: target, trigger and delay as written`, diff) && ok;
-  const exp = clicks || want.map((w) => w.clicks);
+  const exp = clicks || want.map((w) => w.clicks), total = want.reduce((a, w) => a + w.effects.length, 0);
+  const diff = want.flatMap((w, k) => effectDiff(k + 1, w.effects, effectsOf(rep.slides, k)));
   const cbad = want.map((w, k) => (w.clicks !== exp[k] ? `slide ${k + 1}: ${w.clicks} click effects, ${exp[k]} expected` : null)).filter(Boolean);
-  ok = gate('com-clicks', !cbad.length, `click effects per slide ${want.map((w) => w.clicks).join(', ')}`, cbad) && ok;
-  const rdiff = resaved ? want.flatMap((w, k) => effectDiff(k + 1, w.effects, (resaved[k] || { effects: [] }).effects.map((e) => ({ ...e, delay: e.delay / 1000 })))) : ['no resaved.pptx'];
-  ok = gate('com-resaved', !rdiff.length, 'the copy PowerPoint saved keeps every effect, target, trigger and delay', rdiff) && ok;
-  if (!rep.show) gate('com-show', null, rep.showSkipped || 'slide show not run');
-  else {
-    const sbad = rep.show.map((s, k) => (s.clicks !== exp[k] || s.firstAuto !== want[k].auto ? `slide ${k + 1}: GetClickCount ${s.clicks} (expected ${exp[k]}), FirstAnimationIsAutomatic ${s.firstAuto} (expected ${want[k].auto})` : null)).filter(Boolean);
-    ok = gate('com-show', !sbad.length, `slide show: GetClickCount and FirstAnimationIsAutomatic on ${rep.show.length} slides; captures ${rep.show.reduce((a, s) => a + s.captures.length, 0)} PNG`, sbad) && ok;
-  }
+  const rdiff = resaved ? want.flatMap((w, k) => effectDiff(k + 1, w.effects, effectsOf(resaved, k).map((e) => ({ ...e, delay: e.delay / 1000 })))) : ['no resaved.pptx'];
+  const oks = [
+    gate('com-open', rep.slides.length === want.length, `PowerPoint ${rep.version} opened the file read-only with alerts off: ${rep.slides.length} slides (the file has ${want.length})`),
+    gate('com-effects', !diff.length, `${total} effects: target, trigger and delay as written`, diff),
+    gate('com-clicks', !cbad.length, `click effects per slide ${want.map((w) => w.clicks).join(', ')}`, cbad),
+    gate('com-resaved', !rdiff.length, 'the copy PowerPoint saved keeps every effect, target, trigger and delay', rdiff),
+    showGate(gate, want, rep, exp),
+  ];
   if (rep.video) gate('com-video', true, `${rep.video.file} (clicks turned into "after previous" + ${rep.video.gapSec} s)`);
-  return { ok, lines };
+  return { ok: oks.every(Boolean), lines };
 }
 
 /**
  * Runs pptx-com.ps1 -Anim on file into dir and compares. Returns { state: 'pass' | 'fail' | 'skip' | 'exists', lines, out }.
  * clicks: expected clicks per slide (from the script: steps - 1 per section), or null.
  */
-export async function animCom(file, dir, { force = false, video = false, clicks = null, timeoutSec = 900 } = {}) {
-  if (!force && existsSync(dir) && readdirSync(dir).length) return { state: 'exists', lines: [], out: `${resolve(dir)} is not empty; not overwriting (use --force or another folder)` };
-  if (process.platform !== 'win32') return { state: 'skip', lines: ['SKIP com-open: not Windows (PowerPoint COM is Windows only)'], out: '' };
+// pptx-com.ps1 -Anim in Windows PowerShell: { status, out }
+function runPs(file, dir, { force, video, timeoutSec }) {
   const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const script = join(dirname(fileURLToPath(import.meta.url)), 'pptx-com.ps1');
   const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Src', resolve(file), '-PngDir', resolve(dir), '-Anim', '-TimeoutSec', String(timeoutSec)]
     .concat(force ? ['-Force'] : [], video ? ['-Video'] : []);
   const r = spawnSync(ps, args, { encoding: 'utf8', windowsHide: true, timeout: (timeoutSec + 120) * 1000 });
-  const out = `${r.stdout || ''}${r.stderr || ''}`.trim();
-  if (r.status === 4) return { state: 'exists', lines: [], out };
-  if (r.status === 2 || /Cannot create|80040154|class not registered/i.test(out)) return { state: 'skip', lines: ['SKIP com-open: PowerPoint is running already or not installed'], out };
-  const json = join(dir, 'anim.json');
-  if (r.status !== 0 || !existsSync(json)) return { state: 'fail', lines: [`FAIL com-open: PowerPoint did not open the file or report its animation (exit ${r.status})`], out };
+  return { status: r.status, out: `${r.stdout || ''}${r.stderr || ''}`.trim() };
+}
+// the run's state before its report is read (null: the report is there to compare)
+function runState(r, json) {
+  if (r.status === 4) return { state: 'exists', lines: [], out: r.out };
+  if (r.status === 2 || /Cannot create|80040154|class not registered/i.test(r.out)) return { state: 'skip', lines: ['SKIP com-open: PowerPoint is running already or not installed'], out: r.out };
+  if (r.status !== 0 || !existsSync(json)) return { state: 'fail', lines: [`FAIL com-open: PowerPoint did not open the file or report its animation (exit ${r.status})`], out: r.out };
+  return null;
+}
+export async function animCom(file, dir, { force = false, video = false, clicks = null, timeoutSec = 900 } = {}) {
+  if (!force && existsSync(dir) && readdirSync(dir).length) return { state: 'exists', lines: [], out: `${resolve(dir)} is not empty; not overwriting (use --force or another folder)` };
+  if (process.platform !== 'win32') return { state: 'skip', lines: ['SKIP com-open: not Windows (PowerPoint COM is Windows only)'], out: '' };
+  const r = runPs(file, dir, { force, video, timeoutSec }), json = join(dir, 'anim.json');
+  const early = runState(r, json);
+  if (early) return early;
   const rep = JSON.parse(readFileSync(json, 'utf8').replace(/^\uFEFF/, ''));
   const resaved = existsSync(join(dir, 'resaved.pptx')) ? await deckEffects(join(dir, 'resaved.pptx')) : null;
   const c = compareAnim(await deckEffects(file), rep, resaved, clicks);
-  return { state: c.ok ? 'pass' : 'fail', lines: c.lines, out };
+  return { state: c.ok ? 'pass' : 'fail', lines: c.lines, out: r.out };
 }
 
 /** The probe folder (pptx-anim-probe.mjs): every probe file into <dir>/com/<id>/; one summary per probe. */

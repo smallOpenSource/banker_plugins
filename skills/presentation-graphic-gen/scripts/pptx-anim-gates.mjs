@@ -36,6 +36,16 @@ function stepsGate(read, data, gate) {
   gate('anim-steps', !bad.length && total === data.steps.length, `${total} groups (one automatic per slide, one click per later step) for ${data.steps.length} steps`, bad);
 }
 
+// what is wrong with one target (null: nothing); items: the page's elements of that section, or null
+function targetProblem(sh, spid, items) {
+  if (!sh) return `target ${spid} is not a shape`;
+  if (sh.hidden) return `target ${spid} is the hidden title`;
+  const m = NAME.exec(sh.name);
+  if (!m) return `target ${spid} has no element name (${sh.name})`;
+  const it = items ? items[+m[3] - 1] : null;
+  const same = it && it.kind === KIND[m[1]] && it.what.replace(/[&<>"']/g, '_') === m[2];
+  return items && !same ? `${sh.name} is not element #${m[3]} of the page (${it ? `${it.kind} ${it.what}` : 'none'})` : null;
+}
 function targetsGate(read, pageItems, gate) {
   const bad = [];
   let n = 0;
@@ -43,10 +53,8 @@ function targetsGate(read, pageItems, gate) {
     const spids = new Set(sl.groups.flatMap((g) => g.effects.flatMap((fx) => fx.behaviors.map((b) => b.spid))));
     for (const spid of spids) {
       n++;
-      const sh = sl.shapes.get(spid), m = sh && NAME.exec(sh.name);
-      if (!sh || sh.hidden || !m) { bad.push(`slide ${k + 1}: target ${spid} ${sh ? (sh.hidden ? 'is the hidden title' : `has no element name (${sh.name})`) : 'is not a shape'}`); continue; }
-      const it = pageItems && pageItems[k] ? pageItems[k][+m[3] - 1] : null;
-      if (pageItems && (!it || it.kind !== KIND[m[1]] || it.what.replace(/[&<>"']/g, '_') !== m[2])) bad.push(`slide ${k + 1}: ${sh.name} is not element #${m[3]} of the page (${it ? `${it.kind} ${it.what}` : 'none'})`);
+      const p = targetProblem(sl.shapes.get(spid), spid, pageItems ? pageItems[k] || [] : null);
+      if (p) bad.push(`slide ${k + 1}: ${p}`);
     }
   });
   gate('anim-targets', !bad.length && n > 0, `${n} target shapes named by their page element${pageItems ? ', each the same element of the page' : ' (no --html: names not compared with the page)'}`, bad);

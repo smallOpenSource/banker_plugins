@@ -312,29 +312,34 @@ export function comCheck(file, pngDir, { force = false } = {}) {
 
 // `com --anim <file.pptx> <dir> [--script <script.md>] [--video] [--force]`: PowerPoint reports the editable deck's
 // animation (pptx-anim-com.mjs). With --script the expected clicks per slide are the section's steps - 1.
-async function comAnimMain(args) {
-  let script = null, video = false, force = false;
-  const pos = [];
+function comAnimArgs(args) {
+  const o = { script: null, video: false, force: false, pos: [] };
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--script') script = resolve(args[++i] || '');
-    else if (args[i] === '--video') video = true;
-    else if (args[i] === '--force') force = true;
-    else if (!args[i].startsWith('--')) pos.push(args[i]);
+    if (args[i] === '--script') o.script = resolve(args[++i] || '');
+    else if (args[i] === '--video' || args[i] === '--force') o[args[i].slice(2)] = true;
+    else if (!args[i].startsWith('--')) o.pos.push(args[i]);
     else { process.stderr.write(`pptx: unknown argument ${args[i]}\n`); process.exit(2); }
   }
-  if (pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com --anim <file.pptx> <dir> [--script <script.md>] [--video] [--force]\n'); process.exit(2); }
+  if (o.pos.length !== 2) { process.stderr.write('usage: node scripts/pptx.mjs com --anim <file.pptx> <dir> [--script <script.md>] [--video] [--force]\n'); process.exit(2); }
+  return o;
+}
+function scriptClicks(script) {
+  if (!script) return null;
+  const parsed = parseScript(readText(script));
+  if (parsed.errors.length) throw Object.assign(new Error(`script errors: ${parsed.errors.join('; ')}`), { exit: 2 });
+  return parsed.sections.map((s) => s.steps.length - 1);
+}
+const COM_ANIM_SAY = { skip: 'PowerPoint check skipped', fail: 'PowerPoint and the file disagree' };
+async function comAnimMain(args) {
+  const o = comAnimArgs(args);
   try {
     const { animCom } = await import('./pptx-anim-com.mjs');
-    let clicks = null;
-    if (script) {
-      const parsed = parseScript(readText(script));
-      if (parsed.errors.length) throw Object.assign(new Error(`script errors: ${parsed.errors.join('; ')}`), { exit: 2 });
-      clicks = parsed.sections.map((s) => s.steps.length - 1);
-    }
-    if (!force) notEmpty(pos[1]);
-    const r = await animCom(pos[0], pos[1], { force, video, clicks });
+    const clicks = scriptClicks(o.script);
+    if (!o.force) notEmpty(o.pos[1]);
+    const r = await animCom(o.pos[0], o.pos[1], { force: o.force, video: o.video, clicks });
     if (r.state === 'exists') { process.stderr.write(`pptx: ${r.out}\n`); process.exit(2); }
-    process.stdout.write(`${r.out ? r.out + '\n' : ''}${r.lines.join('\n')}\n${r.state.toUpperCase()} pptx-com --anim: ${r.state === 'skip' ? 'PowerPoint check skipped' : r.state === 'fail' ? 'PowerPoint and the file disagree' : `PowerPoint plays the timing as written; captures and report in ${resolve(pos[1])}`}\n`);
+    const say = COM_ANIM_SAY[r.state] || `PowerPoint plays the timing as written; captures and report in ${resolve(o.pos[1])}`;
+    process.stdout.write(`${r.out ? r.out + '\n' : ''}${r.lines.join('\n')}\n${r.state.toUpperCase()} pptx-com --anim: ${say}\n`);
     process.exit(r.state === 'fail' ? 1 : 0);
   } catch (e) {
     process.stderr.write(`pptx: ${e.message}\n`);

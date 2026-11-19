@@ -20,15 +20,20 @@ function color(fill) {
   const al = kid(c, 'a:alpha'), a = al ? +al.attrs.val / 100000 : 1, v = c.attrs.val;
   return `rgba(${parseInt(v.slice(0, 2), 16)}, ${parseInt(v.slice(2, 4), 16)}, ${parseInt(v.slice(4, 6), 16)}, ${a})`;
 }
+// the outline: { w (px), c } centered on the shape edge, or null
+function outline(pr) {
+  const ln = kid(pr, 'a:ln'), c = ln && color(kid(ln, 'a:solidFill'));
+  return c && ln.attrs.w ? { w: +ln.attrs.w / EMU_PX, c } : null;
+}
+function radius(pr, w, h) {
+  const geom = kid(pr, 'a:prstGeom'), adj = geom && geom.attrs.prst === 'roundRect' ? walk(geom).find((x) => x.name === 'a:gd') : null;
+  return adj ? (+/val (\d+)/.exec(adj.attrs.fmla)[1] / 100000) * Math.min(w, h) : 0;
+}
 function boxCss(sp, w, h) {
-  const pr = kid(sp, 'p:spPr'), css = [];
-  const fill = kid(pr, 'a:solidFill'), ln = kid(pr, 'a:ln'), geom = kid(pr, 'a:prstGeom'), glow = walk(pr).find((x) => x.name === 'a:glow');
-  if (fill) css.push(`background:${color(fill)}`);
-  const lw = ln && ln.attrs.w ? +ln.attrs.w / EMU_PX : 0, lc = ln && color(kid(ln, 'a:solidFill'));
-  const adj = geom && geom.attrs.prst === 'roundRect' ? walk(geom).find((x) => x.name === 'a:gd') : null;
-  const r = adj ? (+/val (\d+)/.exec(adj.attrs.fmla)[1] / 100000) * Math.min(w, h) : 0;
-  if (lc && lw) css.push(`border:${lw}px solid ${lc}`, `margin:${-lw / 2}px`);
-  if (r) css.push(`border-radius:${r + (lc ? lw / 2 : 0)}px`);
+  const pr = kid(sp, 'p:spPr'), fill = kid(pr, 'a:solidFill'), ln = outline(pr), r = radius(pr, w, h), glow = walk(pr).find((x) => x.name === 'a:glow');
+  const css = fill ? [`background:${color(fill)}`] : [];
+  if (ln) css.push(`border:${ln.w}px solid ${ln.c}`, `margin:${-ln.w / 2}px`);
+  if (r) css.push(`border-radius:${r + (ln ? ln.w / 2 : 0)}px`);
   if (glow) css.push(`box-shadow:0 0 ${(2 * +glow.attrs.rad) / EMU_PX}px ${color(glow)}`);
   return css;
 }

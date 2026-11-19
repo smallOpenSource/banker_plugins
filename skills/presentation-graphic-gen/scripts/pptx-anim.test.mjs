@@ -318,3 +318,20 @@ test('anim gates fail a missing click group, a second automatic group, a target 
   const broken = await gatesOf([SIMXML.replace('<p:cTn id="14"', '<p:cTn id="13"')], [['s1-1', 's1-2', 's1-3']]);
   assert.equal(broken['anim-xml'][1], false);
 });
+
+test('the other partial-opacity encodings (stage 0 picks one in PARTIAL): style.opacity from / to, Transparency, an entrance to a level; the XML passes the checker and the simulator reads them', () => {
+  const plan = { steps: [{ id: 's1-1', k: 0, start: 0, t0: 0, end: 1, effects: [
+    { shape: 0, cls: 'emph', preset: 0, bh: [{ b: 'opacity', from: 1, to: 0.35, t0: 0.1, t1: 0.5, ease: { a: 0, d: 0 } }] },
+    { shape: 1, cls: 'emph', preset: 9, bh: [{ b: 'transp', to: 0.35, t0: 0.1, t1: 0.5, ease: { a: 0, d: 0 } }] },
+    { shape: 2, cls: 'entr', preset: 10, bh: [{ b: 'set', to: 'visible', t: 0.1 }, { b: 'setop', to: 0.4, t: 0.1 }, { b: 'fade', dir: 'in', t0: 0.1, t1: 0.5, ease: { a: 0, d: 0 } }] },
+  ] }] };
+  const xml = SLIDE(SH(2, 'shape a #1', 0, 0, 100, 100) + SH(3, 'shape b #2', 0, 0, 100, 100) + SH(4, 'shape c #3', 0, 0, 100, 100), transitionXml() + timingXml(plan, [2, 3, 4]));
+  assert.deepEqual(checkSlide(xml), []);
+  assert.match(xml, /<p:anim calcmode="lin" valueType="num" from="1" to="0\.35">/);
+  assert.match(xml, /presetID="9" presetClass="emph"[\s\S]*<p:animEffect filter="image" prLst="opacity: 0\.35">/);
+  const sl = readSlide(xml), at = (t) => stateAt(sl, 0, t);
+  assert.ok(Math.abs(at(300).get('2').op - 0.675) < 1e-9);
+  assert.equal(at(Infinity).get('2').op, 0.35);
+  assert.equal(at(300).get('3').op, 0.35, 'Transparency: p:set does not interpolate (stage 0 P07 asks PowerPoint)');
+  assert.ok(Math.abs(at(Infinity).get('4').op - 0.4) < 1e-9);
+});

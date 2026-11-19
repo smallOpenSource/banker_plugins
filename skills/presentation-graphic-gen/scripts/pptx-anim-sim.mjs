@@ -11,24 +11,44 @@ const EMU_PX = 6350; // 914400 EMU per inch, 1920 px per 13.333 in
 const SLIDE = { w: 1920, h: 1080 };
 
 // ---------- formulas ----------
-/** Value of a PowerPoint animation formula ("#ppt_x+0.25", "#ppt_w*0.4", "0-#ppt_w/2", "12") with vars { ppt_x, ... }. */
-export function evalFormula(src, vars) {
+// a small recursive-descent reader over the formula's tokens
+function reader(src, vars) {
   const toks = String(src).match(/#\w+|\d*\.\d+(?:e[-+]?\d+)?|\d+(?:e[-+]?\d+)?|[-+*/()]/gi) || [];
   let i = 0;
-  const factor = () => {
-    const t = toks[i++];
-    if (t === '-') return -factor();
-    if (t === '+') return factor();
-    if (t === '(') { const v = expr(); i++; return v; }
-    if (t && t[0] === '#') { const k = t.slice(1); if (!(k in vars)) throw new Error(`unknown formula variable ${t}`); return vars[k]; }
-    const v = Number(t);
-    if (!Number.isFinite(v)) throw new Error(`bad formula ${src}`);
-    return v;
-  };
-  const term = () => { let v = factor(); while (toks[i] === '*' || toks[i] === '/') v = toks[i++] === '*' ? v * factor() : v / factor(); return v; };
-  const expr = () => { let v = term(); while (toks[i] === '+' || toks[i] === '-') v = toks[i++] === '+' ? v + term() : v - term(); return v; };
-  return expr();
+  const r = { peek: () => toks[i], next: () => toks[i++], vars, src };
+  return r;
 }
+function atom(r, t) {
+  if (t && t[0] === '#') {
+    const k = t.slice(1);
+    if (!(k in r.vars)) throw new Error(`unknown formula variable ${t}`);
+    return r.vars[k];
+  }
+  const v = Number(t);
+  if (!Number.isFinite(v)) throw new Error(`bad formula ${r.src}`);
+  return v;
+}
+function factor(r) {
+  const t = r.next();
+  if (t === '-') return -factor(r);
+  if (t === '+') return factor(r);
+  if (t !== '(') return atom(r, t);
+  const v = sum(r);
+  r.next();
+  return v;
+}
+function product(r) {
+  let v = factor(r);
+  while (r.peek() === '*' || r.peek() === '/') v = r.next() === '*' ? v * factor(r) : v / factor(r);
+  return v;
+}
+function sum(r) {
+  let v = product(r);
+  while (r.peek() === '+' || r.peek() === '-') v = r.next() === '+' ? v + product(r) : v - product(r);
+  return v;
+}
+/** Value of a PowerPoint animation formula ("#ppt_x+0.25", "#ppt_w*0.4", "0-#ppt_w/2", "12") with vars { ppt_x, ... }. */
+export const evalFormula = (src, vars) => sum(reader(src, vars));
 
 /** SMIL simple-time progress with acceleration a and deceleration d (fractions) at linear progress x. */
 export function smilProgress(x, a, d) {
@@ -42,30 +62,38 @@ export function smilProgress(x, a, d) {
 
 // ---------- reading ----------
 const int = (v, dflt = 0) => (v == null || v === 'indefinite' ? dflt : +v);
+// a shape's name, place and size (stage px); #n is the page element, @35 the opacity level of a copy
+function shapeOf(n) {
+  const find = (name) => walk(n).find((x) => x.name === name);
+  const pr = find('p:cNvPr'), off = find('a:off'), ext = find('a:ext');
+  if (!pr || !off || !ext) return null;
+  const name = pr.attrs.name || '', m = /#(\d+)(?:@(\d+))?$/.exec(name) || [];
+  return { spid: pr.attrs.id, name, tag: n.name, hidden: pr.attrs.hidden === '1', key: m[1] ? +m[1] : null, level: m[2] ? +m[2] / 100 : 1,
+    x: +off.attrs.x / EMU_PX, y: +off.attrs.y / EMU_PX, w: +ext.attrs.cx / EMU_PX, h: +ext.attrs.cy / EMU_PX };
+}
 function shapesOf(root) {
   const out = new Map();
-  for (const n of walk(root)) {
-    if (n.name !== 'p:sp' && n.name !== 'p:pic') continue;
-    const pr = walk(n).find((x) => x.name === 'p:cNvPr'), off = walk(n).find((x) => x.name === 'a:off'), ext = walk(n).find((x) => x.name === 'a:ext');
-    if (!pr || !off || !ext) continue;
-    const name = pr.attrs.name || '', m = /#(\d+)(?:@(\d+))?$/.exec(name);
-    out.set(pr.attrs.id, { spid: pr.attrs.id, name, tag: n.name, hidden: pr.attrs.hidden === '1', key: m ? +m[1] : null, level: m && m[2] ? +m[2] / 100 : 1,
-      x: +off.attrs.x / EMU_PX, y: +off.attrs.y / EMU_PX, w: +ext.attrs.cx / EMU_PX, h: +ext.attrs.cy / EMU_PX });
+  for (const n of walk(root).filter((x) => x.name === 'p:sp' || x.name === 'p:pic')) {
+    const sh = shapeOf(n);
+    if (sh) out.set(sh.spid, sh);
   }
   return out;
 }
 const ctnOf = (n) => kid(kid(n, 'p:cBhvr') || n, 'p:cTn');
 const delayOf = (ctn) => { const c = ctn && kid(ctn, 'p:stCondLst'); const d = c && kidsNamed(c, 'p:cond').find((x) => x.attrs.delay != null && !x.attrs.evt); return int(d && d.attrs.delay); };
-function behavior(n, t0) {
-  const c = ctnOf(n), bh = kid(n, 'p:cBhvr'), tg = bh && walk(bh).find((x) => x.name === 'p:spTgt');
-  const an = bh && walk(bh).find((x) => x.name === 'p:attrName');
-  const b = { type: n.name.slice(2), spid: tg ? tg.attrs.spid : null, attr: an ? an.text.trim() : null, start: t0 + delayOf(c), dur: Math.max(1, int(c && c.attrs.dur, 1)),
-    accel: int(c && c.attrs.accel) / 100000, decel: int(c && c.attrs.decel) / 100000, transition: n.attrs.transition, filter: n.attrs.filter, from: n.attrs.from, to: n.attrs.to };
+const inBhvr = (n, name) => { const bh = kid(n, 'p:cBhvr'); return bh ? walk(bh).find((x) => x.name === name) || null : null; };
+// the value a set or anim goes to (<p:to><p:strVal>) and its keyframes (<p:tavLst>)
+function values(n, b) {
   const to = kid(n, 'p:to'), sv = to && walk(to).find((x) => x.name === 'p:strVal');
   if (sv) b.to = sv.attrs.val;
   const tl = kid(n, 'p:tavLst');
   if (tl) b.tavs = kidsNamed(tl, 'p:tav').map((t) => { const v = walk(t).find((x) => x.name === 'p:strVal' || x.name === 'p:fltVal'); return { tm: +t.attrs.tm / 100000, v: v ? v.attrs.val : '0' }; });
   return b;
+}
+function behavior(n, t0) {
+  const c = ctnOf(n) || { attrs: {} }, tg = inBhvr(n, 'p:spTgt'), an = inBhvr(n, 'p:attrName');
+  return values(n, { type: n.name.slice(2), spid: tg && tg.attrs.spid, attr: an && an.text.trim(), start: t0 + delayOf(c), dur: Math.max(1, int(c.attrs.dur, 1)),
+    accel: int(c.attrs.accel) / 100000, decel: int(c.attrs.decel) / 100000, transition: n.attrs.transition, filter: n.attrs.filter, from: n.attrs.from, to: n.attrs.to });
 }
 const BEHAVIORS = ['p:set', 'p:animEffect', 'p:anim', 'p:animScale', 'p:animRot', 'p:animMotion', 'p:animClr', 'p:cmd'];
 // an effect par: its behaviors (absolute ms from the group start)
@@ -112,33 +140,44 @@ function tavValue(b, t, sh) {
 }
 const ATTR = { ppt_x: (s, v) => { s.cx = v * SLIDE.w; }, ppt_y: (s, v) => { s.cy = v * SLIDE.h; }, ppt_w: (s, v) => { s.w = v * SLIDE.w; }, ppt_h: (s, v) => { s.h = v * SLIDE.h; },
   r: (s, v) => { s.rot = v; }, 'style.rotation': (s, v) => { s.rot = v; }, 'style.opacity': (s, v) => { s.opac = v; } };
-function apply(s, b, t, sh) {
-  if (t < b.start) return;
-  if (b.type === 'set' && b.attr === 'style.visibility') s.vis = b.to === 'visible';
-  else if (b.type === 'set' && b.attr === 'style.opacity') s.opac = +b.to;
-  else if (b.type === 'animEffect' && b.filter === 'fade') s.fade = b.transition === 'out' ? 1 - progress(b, t) : progress(b, t);
-  else if (b.type === 'animEffect' && /^wipe\((\w+)\)$/.test(b.filter || '')) s.clip = { dir: /^wipe\((\w+)\)$/.exec(b.filter)[1], out: b.transition === 'out', p: progress(b, t) };
-  else if (b.type === 'anim' && b.tavs && ATTR[b.attr]) ATTR[b.attr](s, b.attr.startsWith('ppt_') ? tavValue(b, t, sh) : tavValue(b, t, sh));
-  else if (b.type === 'anim' && b.from != null && ATTR[b.attr]) ATTR[b.attr](s, +b.from + (+b.to - +b.from) * progress(b, t));
-}
+const BEHAVE = {
+  set: (s, b) => { if (b.attr === 'style.visibility') s.vis = b.to === 'visible'; else if (b.attr === 'style.opacity') s.opac = +b.to; },
+  animEffect: (s, b, t) => {
+    const wipe = /^wipe\((\w+)\)$/.exec(b.filter || ''), p = progress(b, t);
+    if (b.filter === 'fade') s.fade = b.transition === 'out' ? 1 - p : p;
+    else if (wipe) s.clip = { dir: wipe[1], out: b.transition === 'out', p };
+  },
+  anim: (s, b, t, sh) => {
+    if (!ATTR[b.attr]) return;
+    if (b.tavs) ATTR[b.attr](s, tavValue(b, t, sh));
+    else if (b.from != null) ATTR[b.attr](s, +b.from + (+b.to - +b.from) * progress(b, t));
+  },
+};
+// a behavior that has begun by t changes the state (one that has ended holds its end: fill hold)
+function apply(s, b, t, sh) { if (t >= b.start && BEHAVE[b.type]) BEHAVE[b.type](s, b, t, sh); }
 
 /**
  * State of every shape at click k (0: the automatic group, or the first click when there is none), tau ms into that
  * group (Infinity: the group has ended): Map spid -> { vis, op, clip, cx, cy, w, h, rot, level, key }.
  */
+// a shape whose first visibility change in the whole timeline makes it visible starts hidden
+function startsHidden(slide, spid) {
+  const first = slide.groups.flatMap((g) => g.effects.flatMap((fx) => fx.behaviors)).find((b) => b.spid === spid && b.type === 'set' && b.attr === 'style.visibility');
+  return !!first && first.to === 'visible';
+}
+function shapeState(slide, sh, mine) {
+  const s = rest(sh);
+  if (startsHidden(slide, sh.spid)) s.vis = false;
+  for (const x of mine) apply(s, x.b, x.t, sh);
+  const vis = s.vis && !sh.hidden;
+  return { vis, op: vis ? s.fade * s.opac : 0, clip: s.clip, cx: s.cx, cy: s.cy, w: s.w, h: s.h, rot: s.rot, level: sh.level, key: sh.key, shape: sh };
+}
 export function stateAt(slide, k, tau) {
   const all = [];
-  slide.groups.forEach((g, gi) => { if (gi <= k) for (const fx of g.effects) for (const b of fx.behaviors) all.push({ b, gi, t: gi < k ? Infinity : tau }); });
+  slide.groups.slice(0, k + 1).forEach((g, gi) => g.effects.forEach((fx) => fx.behaviors.forEach((b) => all.push({ b, gi, t: gi < k ? Infinity : tau }))));
   all.sort((x, y) => x.gi - y.gi || x.b.start - y.b.start); // each group's times count from its own start
   const out = new Map();
-  for (const [spid, sh] of slide.shapes) {
-    const s = rest(sh);
-    const mine = all.filter((x) => x.b.spid === spid);
-    const firstVis = slide.groups.flatMap((g) => g.effects.flatMap((fx) => fx.behaviors)).find((b) => b.spid === spid && b.type === 'set' && b.attr === 'style.visibility');
-    if (firstVis && firstVis.to === 'visible') s.vis = false;
-    for (const x of mine) apply(s, x.b, x.t, sh);
-    out.set(spid, { vis: s.vis && !sh.hidden, op: s.vis && !sh.hidden ? s.fade * s.opac : 0, clip: s.clip, cx: s.cx, cy: s.cy, w: s.w, h: s.h, rot: s.rot, level: sh.level, key: sh.key, shape: sh });
-  }
+  for (const [spid, sh] of slide.shapes) out.set(spid, shapeState(slide, sh, all.filter((x) => x.b.spid === spid)));
   return out;
 }
 
