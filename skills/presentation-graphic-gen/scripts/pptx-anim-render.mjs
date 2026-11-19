@@ -115,3 +115,33 @@ export async function renderCompare(deck, slides, read, log = () => {}) {
   const worst = rows.reduce((a, r) => (r.share > a.share ? r : a), { share: 0, id: '-' });
   return { ok: !bad.length && rows.length > 0, bad, detail: `${rows.length - bad.length}/${rows.length} step ends: the slide drawn from its XML at the simulated state against the page, at most ${RENDER_TOL.share * 100}% of pixels off by more than ${RENDER_TOL.level} (worst ${worst.id} ${(worst.share * 100).toFixed(2)}%)` };
 }
+
+// ---------- text-fit ----------
+// every text box's runs as written, measured in the page's fonts, against the box: the writer makes a box its text
+// plus 4% and 4 px (pptx-common shapeRect); a box much wider than its text is a line whose gap was closed (two text
+// pieces joined into one box), a narrower one overflows
+export const FIT_TOL = { px: 6, share: 0.03 };
+function textBoxes(xml) {
+  const root = parseXml(xml), tree = walk(root).find((n) => n.name === 'p:spTree');
+  return tree.kids.filter((n) => n.name === 'p:sp' && kid(n, 'p:txBody')).map((n) => {
+    const pr = walk(n).find((x) => x.name === 'p:cNvPr'), ext = walk(n).find((x) => x.name === 'a:ext');
+    return { name: pr.attrs.name, hidden: pr.attrs.hidden === '1', w: +ext.attrs.cx / EMU_PX, html: runsHtml(n) };
+  }).filter((b) => !b.hidden && /<span/.test(b.html));
+}
+const MEASURE = (list) => `(() => { const d = document.createElement('div'); d.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;font-family:"Deck Sans","Deck Sans KR",sans-serif';
+  document.body.appendChild(d); const out = ${JSON.stringify(list)}.map((h) => { d.innerHTML = h; const r = d.querySelector('div').firstElementChild ? [...d.querySelectorAll('span')] : [];
+  return r.reduce((a, s) => a + s.getBoundingClientRect().width, 0); }); d.remove(); return out; })()`;
+/** text-fit: { ok, detail, bad }. */
+export async function textFit(deck, slides) {
+  const bad = [];
+  let n = 0;
+  for (const s of slides) {
+    const boxes = textBoxes(s.xml), widths = await deck.page.eval(MEASURE(boxes.map((b) => b.html.replace('position:absolute;inset:0;', ''))));
+    boxes.forEach((b, i) => {
+      n++;
+      const want = (b.w - 4) / 1.04, tol = Math.max(FIT_TOL.px, FIT_TOL.share * want);
+      if (Math.abs(widths[i] - want) > tol) bad.push(`slide ${s.k + 1}: ${b.name}: text ${widths[i].toFixed(1)} px in a box made for ${want.toFixed(1)} px`);
+    });
+  }
+  return { ok: !bad.length && n > 0, bad, detail: `${n - bad.length}/${n} text boxes: the runs as written, in the page's fonts, are as wide as the box was made for (${FIT_TOL.px} px or ${FIT_TOL.share * 100}%)` };
+}

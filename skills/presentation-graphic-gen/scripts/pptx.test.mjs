@@ -132,11 +132,11 @@ describe('PowerPoint pipeline in a browser', { skip: SKIP }, () => {
     assert.match(made.stdout, /^pptx-edit .* 2 slides \(3 steps\) .*\n {2}motion: \d+ exact, \d+ approx, 0 not possible$/m);
     assert.equal((made.stdout.match(/^FAIL /gm) || []).length, 0);
     // the editable deck's animation: every renderer-free gate passes, PowerPoint itself is SKIP (never ALL PASS)
-    for (const g of ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render']) assert.match(made.stdout, new RegExp(`^PASS ${g}: `, 'm'), g);
+    for (const g of ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render', 'text-fit']) assert.match(made.stdout, new RegExp(`^PASS ${g}: `, 'm'), g);
     assert.match(made.stdout, /^SKIP anim-powerpoint: PowerPoint is not run here/m);
     const v = spawnSync(process.execPath, [join(SKILL, 'scripts', 'pptx.mjs'), 'verify', join(out, `mini-edit-${STAMP}.pptx`), '--script', script, '--html', join(out, `mini-present-${STAMP}.html`)], { encoding: 'utf8', timeout: 120000 });
     assert.equal(v.status, 0, v.stdout + v.stderr);
-    assert.match(v.stdout, /^PASS with SKIP \(anim-powerpoint\) \(10 pass, 1 skip, 0 fail\) .*mini-edit-/m);
+    assert.match(v.stdout, /^PASS with SKIP \(anim-powerpoint\) \(11 pass, 1 skip, 0 fail\) .*mini-edit-/m);
     assert.doesNotMatch(v.stdout, /ALL PASS/);
     assert.match(made.stdout, /^== done: PASS with SKIP\n[\s\S]*^skipped {6}.*anim-powerpoint \(editable deck\)/m);
   });

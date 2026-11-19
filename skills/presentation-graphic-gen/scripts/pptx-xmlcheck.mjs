@@ -152,17 +152,43 @@ function effectOf(n) {
   return null;
 }
 
-function targetProblems(nodes, shapes) {
-  const bad = [], groups = new Set();
+// effects per spid and group: "spid/grpId" -> Set of effect cTn ids
+function effectsByGroup(nodes) {
+  const groups = new Map();
   for (const t of nodes.filter((x) => x.name === 'p:spTgt')) {
-    if (!shapes.has(t.attrs.spid)) bad.push(`target spid ${t.attrs.spid} is not a shape on this slide`);
-    const e = effectOf(t);
-    if (e) groups.add(`${t.attrs.spid}/${e.attrs.grpId}`);
+    const e = effectOf(t), key = e && `${t.attrs.spid}/${e.attrs.grpId}`;
+    if (key) groups.set(key, (groups.get(key) || new Set()).add(e.attrs.id));
   }
-  for (const b of nodes.filter((x) => x.name === 'p:bldP')) {
-    const sh = shapes.get(b.attrs.spid);
-    if (!sh || sh.tag !== 'p:sp' || !sh.text) bad.push(`bldP spid ${b.attrs.spid} is not a shape with text (p:sp)`);
-    if (!groups.has(`${b.attrs.spid}/${b.attrs.grpId}`)) bad.push(`bldP spid ${b.attrs.spid} grpId ${b.attrs.grpId} has no effect of that group`);
+  return groups;
+}
+function bldProblems(b, shapes, groups) {
+  const sh = shapes.get(b.attrs.spid), fx = groups.get(`${b.attrs.spid}/${b.attrs.grpId}`);
+  const bad = [];
+  if (!sh || sh.tag !== 'p:sp' || !sh.text) bad.push(`bldP spid ${b.attrs.spid} is not a shape with text (p:sp)`);
+  if (!fx) bad.push(`bldP spid ${b.attrs.spid} grpId ${b.attrs.grpId} has no effect of that group`);
+  else if (fx.size > 1) bad.push(`bldP spid ${b.attrs.spid} grpId ${b.attrs.grpId} has ${fx.size} effects (PowerPoint keeps only the first)`);
+  return bad;
+}
+function targetProblems(nodes, shapes) {
+  const bad = nodes.filter((x) => x.name === 'p:spTgt' && !shapes.has(x.attrs.spid)).map((t) => `target spid ${t.attrs.spid} is not a shape on this slide`);
+  const groups = effectsByGroup(nodes);
+  for (const b of nodes.filter((x) => x.name === 'p:bldP')) bad.push(...bldProblems(b, shapes, groups));
+  return bad;
+}
+
+// what PowerPoint 2019 was measured not to play as written: a Fade or Wipe filter with fill="hold" (a later Fade out
+// of the shape does not play: X4), a style.opacity set followed by a Fade in in one effect (it ends at full opacity: X1)
+function heldFilters(nodes) {
+  return nodes.filter((x) => x.name === 'p:animEffect').map((a) => walk(a).find((x) => x.name === 'p:cTn'))
+    .filter((c) => c && c.attrs.fill === 'hold').map((c) => `animEffect cTn ${c.attrs.id}: fill="hold" (a later Fade out of the shape does not play)`);
+}
+const isOpacitySet = (x) => x.name === 'p:set' && walk(x).some((y) => y.name === 'p:attrName' && y.text.trim() === 'style.opacity');
+const isFadeIn = (x) => x.name === 'p:animEffect' && x.attrs.transition === 'in' && x.attrs.filter === 'fade';
+function playProblems(nodes) {
+  const bad = heldFilters(nodes);
+  for (const e of nodes.filter((x) => x.name === 'p:cTn' && x.attrs.presetClass)) {
+    const all = walk(e);
+    if (all.some(isOpacitySet) && all.some(isFadeIn)) bad.push(`cTn ${e.attrs.id}: style.opacity set before a Fade in (the Fade ends at full opacity)`);
   }
   return bad;
 }
@@ -197,5 +223,5 @@ export function checkSlide(xml) {
   if (root.name !== 'p:sld') return [`root is <${root.name}>, not <p:sld>`];
   const timing = kid(root, 'p:timing');
   const nodes = timing ? walk(timing) : [];
-  return [...orderProblems(root), ...nsProblems(root), ...ctnProblems(nodes), ...tavProblems(nodes), ...targetProblems(nodes, slideShapes(root))];
+  return [...orderProblems(root), ...nsProblems(root), ...ctnProblems(nodes), ...tavProblems(nodes), ...targetProblems(nodes, slideShapes(root)), ...playProblems(nodes)];
 }

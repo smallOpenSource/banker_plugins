@@ -81,9 +81,8 @@ function slideXml(xml, S, plan) {
     const at = out.indexOf(`<p:cNvPr id="${spids[k]}" `), end = out.indexOf('</p:spPr>', at);
     if (at >= 0 && end > at) out = out.slice(0, end) + glowXml(it.glow.blur / 2, it.glow.hex, it.glow.a * c.level) + out.slice(end);
   });
-  const texts = new Set(plan.shapes.map((c, k) => (S.items[c.item].kind === 'text' ? spids[k] : null)).filter((v) => v != null));
   if (!out.includes('</p:clrMapOvr>')) throw new Error(`section ${S.n}: no p:clrMapOvr to put the timing after`);
-  return out.replace('</p:clrMapOvr>', () => '</p:clrMapOvr>' + transitionXml() + timingXml(plan, spids, texts));
+  return out.replace('</p:clrMapOvr>', () => '</p:clrMapOvr>' + transitionXml() + timingXml(plan, spids));
 }
 
 function checkSections(secs, data) {

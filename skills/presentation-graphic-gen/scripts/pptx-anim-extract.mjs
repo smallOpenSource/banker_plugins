@@ -6,7 +6,7 @@
 //      (images, SVG, gradients, statically rotated elements). Each item has its motion element: the box or picture
 //      element itself, for text the nearest animated element between the text and its block (else the block).
 //   2. Time samples: the master timeline is seeked to each time (120 Hz across the section's steps, plus every
-//      segment end and a time just before it, from __deck.segments()) and each item's state is measured: center,
+//      segment end and a time just before and after it, from __deck.segments()) and each item's state is measured: center,
 //      scale, rotation (relative to rest), opacity (product of the chain up to the scene, the scene itself is the
 //      slide transition) and the part left visible by overflow clipping ancestors.
 //   3. Pictures: each fallback item alone on a transparent background, at rest.
@@ -16,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 import { findBrowser, launch } from './cdp.mjs';
 
 export const SAMPLE_HZ = 120;
-// a sample this long before every segment end, so a jump (a zero-length segment) is seen as one
+// a sample this long before and after every segment end, so a jump (a zero-length segment) is seen as one
 export const BEFORE = 1e-4;
 // first step of a section after the first: the scene cross-fade starts the step, its own motion starts this much later
 // (engine.js buildAll: t0 = base + 0.15 when there is a previous scene)
@@ -179,6 +179,23 @@ function groupLines() {
   return groups;
 }
 // text items go in right after the items painted before their first fragment (from the last position back)
+// a line whose fragments leave a gap (a blank slot between two text nodes, more than 0.4 em) is one item per piece:
+// a PowerPoint text box would close the gap; the pieces are placed left aligned where the page has them
+function splitLine(g, out) {
+  g.parts.sort(function (a, b) { return a.x - b.x; });
+  var cur = null, first = out.length;
+  g.parts.forEach(function (p) {
+    if (cur && p.x - cur.r > 0.4 * p.run.size) cur = null;
+    if (!cur) { cur = { blk: g.blk, own: g.own, x: p.x, r: p.r, y: p.y, b: p.b, ord: g.ord, parts: [] }; out.push(cur); }
+    cur.parts.push(p); cur.x = Math.min(cur.x, p.x); cur.r = Math.max(cur.r, p.r); cur.y = Math.min(cur.y, p.y); cur.b = Math.max(cur.b, p.b);
+  });
+  if (out.length - first > 1) out.slice(first).forEach(function (x) { x.split = true; });
+}
+function splitGaps(groups) {
+  var out = [];
+  groups.forEach(function (g) { splitLine(g, out); });
+  return out;
+}
 function placeText(groups) {
   groups.forEach(function (g, k) { g.k = k; });
   groups.sort(function (a, b) { return b.ord - a.ord || b.k - a.k; });
@@ -188,7 +205,7 @@ function placeText(groups) {
     var runs = g.parts.map(function (p) { return Object.assign({ t: p.t.replace(/\s+/g, ' ') }, p.run); });
     runs[0].t = runs[0].t.replace(/^\s+/, ''); runs[runs.length - 1].t = runs[runs.length - 1].t.replace(/\s+$/, '');
     G.cur.items.splice(g.ord, 0, { kind: 'text', x: g.x, y: g.y, w: g.r - g.x, h: g.b - g.y, runs: runs,
-      align: ta === 'center' ? 'center' : ta === 'right' || ta === 'end' ? 'right' : 'left', what: what(g.blk), e: elIndex(g.own) });
+      align: g.split ? 'left' : ta === 'center' ? 'center' : ta === 'right' || ta === 'end' ? 'right' : 'left', what: what(g.blk), e: elIndex(g.own) });
   });
 }
 function segTimes(scene) {
@@ -207,7 +224,7 @@ function layout(n) {
   for (var nd = walker.nextNode(); nd; nd = walker.nextNode()) {
     if (nd.nodeType === 3) { if (nd.data.trim() && !(nd.parentElement instanceof SVGElement)) textNode(nd); } else element(nd);
   }
-  placeText(groupLines());
+  placeText(splitGaps(groupLines()));
   var bg = rgba(cs(scene).backgroundColor);
   setLayout(false);
   G.cur.items.forEach(function (it, k) { it.n = k + 1; });
@@ -274,7 +291,7 @@ function isolate(id) {
 function sections() { return JSON.parse(document.getElementById('deck-data').textContent).sections.map(function (s) { return { n: s.n, name: s.name, ids: s.ids }; }); }
 /* eslint-enable no-var */
 
-const PAGE = [K, cs, box, rgba, what, layoutStyle, setLayout, rotatedStatic, hiddenAt, elIndex, inConsumed, fallback, glowOf, sidesOf, borderBars, drawnSide, sameSides, boxItem, pictureWhy, skipElement, element, owner, blockOf, runStyle, addChar, charRuns, textNode, groupLines, placeText, segTimes, layout, clipRect, chain, elState, visibleFrac, itemState, sample, isolate, sections];
+const PAGE = [K, cs, box, rgba, what, layoutStyle, setLayout, rotatedStatic, hiddenAt, elIndex, inConsumed, fallback, glowOf, sidesOf, borderBars, drawnSide, sameSides, boxItem, pictureWhy, skipElement, element, owner, blockOf, runStyle, addChar, charRuns, textNode, groupLines, splitLine, splitGaps, placeText, segTimes, layout, clipRect, chain, elState, visibleFrac, itemState, sample, isolate, sections];
 export const INSTALL = `(() => { var G = { stage: document.getElementById('stage'), cur: null, cx: (() => { var c = document.createElement('canvas'); c.width = c.height = 1; return c.getContext('2d', { willReadFrequently: true }); })() };
 ${PAGE.map((f) => f.toString()).join('\n')}
 window.__pggX = { layout: layout, sample: sample, isolate: isolate, sections: sections }; return true; })()`;
@@ -288,13 +305,13 @@ export function stepWindows(sec, steps, first) {
   });
 }
 
-/** Sample times of a section: every 1/hz across its steps, each segment end and BEFORE it, sorted, unique (1e-7). */
+/** Sample times of a section: every 1/hz across its steps, each segment end and BEFORE before and after it, sorted, unique (1e-7). */
 export function sampleTimes(windows, segTimes, hz = SAMPLE_HZ) {
   const a = windows[0].start, b = windows[windows.length - 1].end, out = [];
   for (let t = a; t < b; t += 1 / hz) out.push(t);
   out.push(b);
   for (const w of windows) out.push(w.start, w.t0, w.end);
-  for (const t of segTimes) if (t >= a - 1e-9 && t <= b + 1e-9) out.push(t, Math.max(a, t - BEFORE));
+  for (const t of segTimes) if (t >= a - 1e-9 && t <= b + 1e-9) out.push(t, Math.max(a, t - BEFORE), Math.min(b, t + BEFORE));
   out.sort((x, y) => x - y);
   return out.filter((t, i) => i === 0 || t - out[i - 1] > 1e-7).map((t) => Math.round(t * 1e7) / 1e7);
 }

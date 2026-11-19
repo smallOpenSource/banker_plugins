@@ -1,12 +1,10 @@
 // pptx-anim-plan.mjs: the measured time series of one section (pptx-anim-extract.mjs) as a plan of PowerPoint effects,
 // one slide per section and one click group per step (the first group starts by itself after the slide transition).
-//   - Opacity: each monotone change of an item's opacity is an entrance (0 to a level), an exit (to 0) or a partial
-//     change (level to level). A change in one sample interval is Appear / Disappear, otherwise Fade with the
-//     accel / decel that fits the page's curve best (the largest error is kept).
-//   - Partial opacity (PARTIAL, the one switch): 'crossfade' (default; only effects known to play) gives the item one
-//     shape per opacity level (copies at 35% and so on, named #n@35) and crosses them with Fade out + Fade in.
-//     'anim' (style.opacity p:anim from / to) and 'emph' (Transparency emphasis) keep one shape; which one PowerPoint
-//     plays smoothly is the stage-0 question (pptx-anim-probe.mjs P05 to P07).
+//   - Opacity: each monotone change of an item's opacity is an entrance (0 to a level: Fade, Appear in one sample
+//     interval), an exit (to 0) or a change between levels. The curve itself is sampled keyframes of style.opacity
+//     (relative to the item's highest opacity, which the shape is drawn at, named #n@40 when it is not 1), like the
+//     geometry. PowerPoint 2019 plays them smoothly (stage 0: P05, P06, X5), unlike Transparency (P07), and a Fade
+//     after a set style.opacity ends at full opacity (X1), so Fade animEffect is not used for opacity.
 //   - Clipping: a part revealed from one edge to the whole (s.reveal) is a Wipe entrance from that edge.
 //   - Geometry: center, size and rotation relative to rest, as sampled keyframes (reduced to 0.3 px) on ppt_x,
 //     ppt_y, ppt_w, ppt_h and r inside the item's effect of that step, or in a motion effect of its own (MOTION).
@@ -15,8 +13,7 @@
 import { BEFORE, COLS } from './pptx-anim-extract.mjs';
 import { shapeRect } from './pptx-common.mjs';
 
-export const PARTIAL = 'crossfade'; // 'crossfade' | 'anim' | 'emph'
-export const PRESET = { fade: 10, appear: 1, wipe: 22, transp: 9 };
+export const PRESET = { fade: 10, appear: 1, wipe: 22 };
 export const MOTION = { cls: 'emph', preset: 0 }; // a geometry-only effect (P12a: PowerPoint shows it as custom)
 const OP_EPS = 2e-6, ZERO = 0.005, INSTANT = 0.002, MATCH = 0.01;
 const GEO = [ // attribute, series, change eps, keyframe tolerance (null: px / size), value
@@ -25,6 +22,7 @@ const GEO = [ // attribute, series, change eps, keyframe tolerance (null: px / s
   ['ppt_w', 'sx', 2e-6, (r) => 0.3 / Math.max(r.w, 1), (v) => v],
   ['ppt_h', 'sy', 2e-6, (r) => 0.3 / Math.max(r.h, 1), (v) => v],
   ['r', 'rot', 5e-4, () => 0.05, (v) => v],
+  ['style.opacity', 'opn', 1e-5, () => 0.004, (v) => v], // opacity / the item's highest
 ];
 export const lvl = (v) => (v < ZERO ? 0 : Math.round(v * 100) / 100);
 
@@ -135,14 +133,13 @@ function fadeFit(s, a, b, key, A, B) {
 function opacityEvents(s) {
   return monoRuns(s.T, s.op, OP_EPS, 0.05, s.lab).map(({ a, b, step }) => ({ a, b, step, t0: s.T[a], t1: s.T[b], A: lvl(s.op[a]), B: lvl(s.op[b]) }))
     .filter((e) => e.A !== e.B)
-    .map((e) => Object.assign(e, { kind: e.A === 0 ? 'in' : e.B === 0 ? 'out' : 'partial', instant: e.t1 - e.t0 < INSTANT,
-      ease: e.t1 - e.t0 < INSTANT ? { s: 0, e: 1, a: 0, d: 0, err: 0 } : fadeFit(s, e.a, e.b, 'op', s.op[e.a], s.op[e.b]) }));
+    .map((e) => Object.assign(e, { kind: e.A === 0 ? 'in' : e.B === 0 ? 'out' : 'partial', instant: e.t1 - e.t0 < INSTANT }));
 }
 // a shape that is not drawn at the start although its opacity is above 0 (zero size, clipped away) enters when drawn
 function gateEvent(s, it) {
   if (!(s.op[0] > ZERO) || shows(s, it, 0)) return null;
   const i = s.T.findIndex((_, j) => s.op[j] > ZERO && shows(s, it, j));
-  return i < 1 ? null : { a: i - 1, b: i - 1, step: s.lab[i - 1], t0: s.T[i - 1], t1: s.T[i - 1], A: 0, B: lvl(s.op[i]), kind: 'in', instant: true, gate: true, ease: { s: 0, e: 1, a: 0, d: 0, err: 0 } };
+  return i < 1 ? null : { a: i - 1, b: i - 1, step: s.lab[i - 1], t0: s.T[i - 1], t1: s.T[i - 1], A: 0, B: lvl(s.op[i]), kind: 'in', instant: true, gate: true };
 }
 // edge a reveal grows from: the visible part at sample i touches that edge only
 function sideAt(s, i) {
@@ -175,56 +172,29 @@ function mergeClips(evs, clips, notes) {
 }
 
 // ---------- shapes and their effects ----------
-function levelsOf(evs, vis0, op0) {
-  const set = new Set(vis0 ? [lvl(op0)] : []);
-  for (const e of evs) { if (e.A) set.add(e.A); if (e.B) set.add(e.B); }
-  return PARTIAL === 'crossfade' ? [...set].sort((x, y) => y - x) : set.size ? [1] : [];
-}
+// the opacity a shape is drawn at: the item's highest (style.opacity keyframes are relative to it)
+const baseOf = (s) => lvl(Math.max(0, ...s.op));
 const pct = (v) => `${Math.round(v * 100)}%`;
 const how = (q) => `${q.s || q.e < 1 ? `${pct(q.s)}-${pct(q.e)} of the time, ` : ''}accel ${pct(q.a)} decel ${pct(q.d)}`;
-// the fitted part of a change: { t0, t1 } in page seconds
+// the fitted part of a wipe: { t0, t1 } in page seconds
 const span = (c) => ({ t0: c.t0 + c.ease.s * (c.t1 - c.t0), t1: c.t0 + c.ease.e * (c.t1 - c.t0) });
-const motion = (b, dir, c, extra = {}) => Object.assign({ b, dir }, span(c), { ease: { a: c.ease.a, d: c.ease.d } }, extra);
-function entrance(e, copy) {
-  if (e.wipe) { const w = span(e.wipe); return { cls: 'entr', preset: PRESET.wipe, side: e.wipe.side, bh: [{ b: 'set', to: 'visible', t: w.t0 }, motion('wipe', 'in', e.wipe, { side: e.wipe.side })] }; }
-  const t = e.instant ? e.t0 : span(e).t0;
-  const bh = [{ b: 'set', to: 'visible', t }];
-  if (PARTIAL !== 'crossfade' && copy.level === 1 && e.B !== 1) bh.push({ b: 'setop', to: e.B, t });
-  if (e.instant) return { cls: 'entr', preset: PRESET.appear, bh };
-  return { cls: 'entr', preset: PRESET.fade, bh: bh.concat(motion('fade', 'in', e)) };
-}
-function exit(e) {
-  if (e.wipe) { const w = span(e.wipe); return { cls: 'exit', preset: PRESET.wipe, side: e.wipe.side, bh: [motion('wipe', 'out', e.wipe, { side: e.wipe.side }), { b: 'set', to: 'hidden', t: Math.max(w.t0, w.t1 - 0.001) }] }; }
-  if (e.instant) return { cls: 'exit', preset: PRESET.appear, bh: [{ b: 'set', to: 'hidden', t: e.t1 }] };
-  const f = motion('fade', 'out', e);
-  return { cls: 'exit', preset: PRESET.fade, bh: [f, { b: 'set', to: 'hidden', t: Math.max(f.t0, f.t1 - 0.001) }] };
-}
-function partialOne(e) {
-  const f = span(e), t1 = Math.max(f.t1, f.t0 + 0.001);
-  if (PARTIAL === 'emph') return { cls: 'emph', preset: PRESET.transp, bh: [{ b: 'transp', to: e.B, t0: f.t0, t1, ease: { a: e.ease.a, d: e.ease.d } }] };
-  return { cls: MOTION.cls, preset: MOTION.preset, bh: [{ b: 'opacity', from: e.A, to: e.B, t0: f.t0, t1, ease: { a: e.ease.a, d: e.ease.d } }] };
-}
-// the effects one opacity event gives each shape of the item: [{ copy, fx }]
-function eventEffects(e, copies) {
-  const at = (L) => copies.find((c) => c.level === L);
-  if (PARTIAL !== 'crossfade') return [{ copy: copies[0], fx: e.kind === 'in' ? entrance(e, copies[0]) : e.kind === 'out' ? exit(e) : partialOne(e) }];
-  const out = [];
-  if (e.A) out.push({ copy: at(e.A), fx: exit(Object.assign({}, e, { wipe: e.kind === 'out' ? e.wipe : null })) });
-  if (e.B) out.push({ copy: at(e.B), fx: entrance(Object.assign({}, e, { wipe: e.kind === 'in' ? e.wipe : null }), at(e.B)) });
-  return out;
-}
-// accuracy of an opacity event: { cat, err, text } (crossfade: the two copies over each other, 1 - (1 - a)(1 - b))
-function accuracy(e, s) {
-  if (e.wipe) return { cat: e.wipe.ease.err > 0.01 ? 'approx' : 'exact', err: e.wipe.ease.err, text: `wipe from ${e.wipe.side} (${how(e.wipe.ease)}, max ${e.wipe.ease.err.toFixed(2)})` };
-  if (e.instant) return { cat: 'exact', err: 0, text: '' };
-  let err = 0;
-  for (let i = e.a; i <= e.b; i++) {
-    const p = fitProgress((s.T[i] - e.t0) / (e.t1 - e.t0), e.ease);
-    const shown = e.kind === 'partial' && PARTIAL === 'crossfade' ? 1 - (1 - e.A * (1 - p)) * (1 - e.B * p) : e.A + (e.B - e.A) * p;
-    err = Math.max(err, Math.abs(shown - s.op[i]));
+const wipeBh = (dir, c) => Object.assign({ b: 'wipe', dir, side: c.side }, span(c), { ease: { a: c.ease.a, d: c.ease.d } });
+const preset = (e) => (e.wipe ? PRESET.wipe : e.instant ? PRESET.appear : PRESET.fade);
+// the visibility side of an opacity event (the opacity curve is the step's style.opacity track); a change between
+// levels has none
+function eventEffect(e) {
+  if (e.kind === 'in') {
+    const t = e.wipe ? span(e.wipe).t0 : e.t0;
+    return { cls: 'entr', preset: preset(e), side: e.wipe && e.wipe.side, bh: [{ b: 'set', to: 'visible', t }].concat(e.wipe ? [wipeBh('in', e.wipe)] : []) };
   }
-  const kind = e.kind === 'partial' && PARTIAL === 'crossfade' ? 'crossfade copy, ' : 'fade ';
-  return { cat: err > 0.01 ? 'approx' : 'exact', err, text: `opacity ${e.A} to ${e.B} (${kind}${how(e.ease)}, max ${err.toFixed(2)})` };
+  if (e.kind !== 'out') return null;
+  const w = e.wipe && wipeBh('out', e.wipe);
+  return { cls: 'exit', preset: preset(e), side: e.wipe && e.wipe.side, bh: (w ? [w] : []).concat({ b: 'set', to: 'hidden', t: w ? Math.max(w.t0, w.t1 - 0.001) : e.t1 }) };
+}
+// accuracy of an opacity event: keyframes are exact, a wipe is fitted
+function accuracy(e) {
+  if (!e.wipe) return { cat: 'exact', text: '' };
+  return { cat: e.wipe.ease.err > 0.01 ? 'approx' : 'exact', text: `wipe from ${e.wipe.side} (${how(e.wipe.ease)}, max ${e.wipe.ease.err.toFixed(2)})` };
 }
 
 // ---------- geometry ----------
@@ -241,18 +211,25 @@ function track(s, R, g, i0, i1) {
   const keep = i1 > i0 ? reduceKeys(s.T, s[key], i0, i1, tol(R)) : [i0];
   return { b: 'anim', attr, t0: s.T[i0], t1: i1 > i0 ? s.T[i1] : s.T[i0] + 0.001, keys: keep.map((i) => ({ t: s.T[i], v: val(s[key][i]) })) };
 }
+// the sample span of one attribute's track in a step, or null. Seen from a time before the step's own changes at
+// another value than held: the track starts there and runs at least to the step's motion start (a jump just before
+// it is in). settle: the step's last sample, when the track ends with the step's change
+function trackSpan(s, g, lo, hi, enter, held, R) {
+  const [attr, key, eps, tol] = g;
+  const span = changeSpan(s[key], lo, hi, eps);
+  if (enter >= 0 && Math.abs(s[key][enter] - held[attr]) > tol(R) && (!span || enter < span[0])) return { i0: enter, i1: Math.max(span ? span[1] : -1, lo), settle: span ? hi : -1 };
+  return span && { i0: span[0], i1: span[1], settle: hi };
+}
 // tracks of one shape in one step [lo, hi]; enter: index where it becomes visible (or -1); held: its value per attribute
 function geoTracks(s, R, lo, hi, enter, held) {
   const out = [];
   for (const g of GEO) {
-    const [attr, key, eps, tol] = g;
-    const span = changeSpan(s[key], lo, hi, eps);
-    let i0 = span ? span[0] : -1;
-    const i1 = span ? span[1] : -1;
-    if (enter >= 0 && Math.abs(s[key][enter] - held[attr]) > tol(R) && (i0 < 0 || enter < i0)) i0 = enter;
-    if (i0 < 0) continue;
-    out.push(track(s, R, g, i0, Math.max(i0, i1)));
-    held[attr] = s[key][Math.max(i0, i1)];
+    const sp = trackSpan(s, g, lo, hi, enter, held, R);
+    if (!sp) continue;
+    const tr = track(s, R, g, sp.i0, Math.max(sp.i0, sp.i1)), last = s[g[1]][sp.settle >= 0 ? sp.settle : Math.max(sp.i0, sp.i1)];
+    tr.keys[tr.keys.length - 1].v = g[4](last); // the settled value (the tail within eps of it is not a change)
+    out.push(tr);
+    held[g[0]] = last;
   }
   return out;
 }
@@ -266,15 +243,15 @@ function itemPlan(S, k, lab) {
   const evs = opacityEvents(s), gate = gateEvent(s, it);
   if (gate) evs.unshift(gate);
   mergeClips(evs, clipEvents(s), notes);
-  const vis0 = s.op[0] > ZERO && shows(s, it, 0);
-  const copies = levelsOf(evs, vis0, s.op[0]).map((level) => ({ item: k, level, vis0: vis0 && (PARTIAL !== 'crossfade' || level === lvl(s.op[0])) }));
-  return { it, s, R, evs, copies, notes };
+  const vis0 = s.op[0] > ZERO && shows(s, it, 0), base = baseOf(s);
+  s.opn = s.op.map((v) => (base ? v / base : 0));
+  return { it, s, R, evs, copies: base ? [{ item: k, level: base, vis0 }] : [], notes };
 }
 
 // one step of one shape: its effects with the geometry tracks of the step (when it is seen in it); vis at the step start
 function stepEffects(P, copy, W, w, held, vis) {
   const T = P.s.T;
-  const mine = P.evs.filter((e) => e.step === w.k).flatMap((e) => eventEffects(e, P.copies).filter((x) => x.copy === copy).map((x) => x.fx));
+  const mine = P.evs.filter((e) => e.step === w.k).map(eventEffect).filter(Boolean);
   const ent = mine.find((f) => f.cls === 'entr');
   const enter = ent ? idxOf(T, ent.bh[0].t) : vis ? idxOf(T, w.t0) : -1;
   const tracks = enter >= 0 ? geoTracks(P.s, P.R, Math.max(idxOf(T, w.start), idxOf(T, w.t0)), idxOf(T, w.end), enter, held) : [];
@@ -285,7 +262,7 @@ function stepEffects(P, copy, W, w, held, vis) {
 const visAfter = (vis, fxs) => fxs.reduce((v, f) => (f.cls === 'entr' ? true : f.cls === 'exit' ? false : v), vis);
 // per copy: its effects step by step, with the geometry of the steps where it is visible
 function copyEffects(P, copy, W) {
-  const held = { ppt_x: 0, ppt_y: 0, ppt_w: 1, ppt_h: 1, r: 0 }, out = [];
+  const held = { ppt_x: 0, ppt_y: 0, ppt_w: 1, ppt_h: 1, r: 0, 'style.opacity': 1 }, out = [];
   let vis = copy.vis0;
   for (const w of W) {
     const mine = stepEffects(P, copy, W, w, held, vis);
@@ -313,7 +290,7 @@ export const shapeName = (it, level) => `${label(it).replace(/[&<>"']/g, '_')}${
 function motions(plans, W) {
   const rows = [];
   for (const P of plans) {
-    for (const e of P.evs) { const a = accuracy(e, P.s); rows.push({ step: W[e.step].id, cat: a.cat, text: a.text ? `${label(P.it)} ${a.text}` : '' }); }
+    for (const e of P.evs) { const a = accuracy(e); rows.push({ step: W[e.step].id, cat: a.cat, text: a.text ? `${label(P.it)} ${a.text}` : '' }); }
   }
   return rows;
 }
@@ -343,7 +320,7 @@ export function planSection(S) {
   const W = S.windows, lab = intervalSteps(W, S.times), plans = S.items.map((_, k) => itemPlan(S, k, lab));
   const shapes = plans.flatMap((P) => P.copies.map((c) => Object.assign(c, { name: shapeName(P.it, c.level) })));
   const fx = plans.flatMap((P) => P.copies.flatMap((c) => copyEffects(P, c, W)));
-  const geo = new Set(fx.filter((f) => f.bh.some((b) => b.b === 'anim')).map((f) => `${f.copy.item}/${f.step}`));
+  const geo = new Set(fx.filter((f) => f.bh.some((b) => b.b === 'anim' && b.attr !== 'style.opacity')).map((f) => `${f.copy.item}/${f.step}`));
   const steps = W.map((w) => ({ ...w, effects: fx.filter((f) => f.step === w.k).map((f) => ({ shape: shapes.indexOf(f.copy), cls: f.cls, preset: f.preset, side: f.side, bh: f.bh, start: Math.min(...f.bh.map((b) => (b.t0 != null ? b.t0 : b.t))) }))
     .sort((a, b) => a.start - b.start || a.shape - b.shape) }));
   markEmpty(steps, shapes);

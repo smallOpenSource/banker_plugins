@@ -1,6 +1,7 @@
 // pptx-anim-xml.mjs: a section plan (pptx-anim-plan.mjs) as slide XML: <p:transition> (Fade 0.25 s) and <p:timing>
 // (main sequence: the first step's group starts by itself after the transition, every other step is one click
-// group; each effect is "with previous" at its delay from the step's start) with the build list. Times: behaviors
+// group; each effect is "with previous" at its delay from the step's start), without a build list (PowerPoint 2019
+// drops all but the first effect of a text shape that has a <p:bldP>: stage 7). Times: behaviors
 // start and end on whole ms; a keyframed anim starts on the ms before its first key and ends on the ms after its
 // last, its keys placed at their exact times inside (tm 0..100000), so rounding does not move the motion.
 const P14 = 'http://schemas.microsoft.com/office/powerpoint/2010/main';
@@ -24,7 +25,7 @@ export function formula(name, v) {
 
 // whole-ms window of a behavior relative to the group start z (seconds): { start, dur }
 function win(b, z) {
-  if (b.b === 'set' || b.b === 'setop') return { start: Math.max(0, Math.round((b.t - z) * 1000)), dur: 1 };
+  if (b.b === 'set') return { start: Math.max(0, Math.round((b.t - z) * 1000)), dur: 1 };
   if (b.b === 'anim') { const s = Math.max(0, Math.floor((b.t0 - z) * 1000 + 1e-6)); return { start: s, dur: Math.max(1, Math.ceil((b.t1 - z) * 1000 - 1e-6) - s) }; }
   const s = Math.max(0, Math.round((b.t0 - z) * 1000));
   return { start: s, dur: Math.max(1, Math.round((b.t1 - z) * 1000) - s) };
@@ -38,19 +39,17 @@ function tavXml(b, w, z) {
     out.push({ tm: tms[i], v: k.v });
   });
   if (out.length === 1) out.push({ tm: 100000, v: out[0].v });
-  const val = (v) => (b.attr === 'r' ? `<p:fltVal val="${num(v)}"/>` : `<p:strVal val="${formula(b.attr, v)}"/>`);
+  const val = (v) => (/^ppt_/.test(b.attr) ? `<p:strVal val="${formula(b.attr, v)}"/>` : `<p:fltVal val="${num(v)}"/>`);
   return `<p:tavLst>${out.map((k) => `<p:tav tm="${k.tm}"><p:val>${val(k.v)}</p:val></p:tav>`).join('')}</p:tavLst>`;
 }
 
-// one behavior; base: the effect's start (ms from the group start)
+// one behavior; base: the effect's start (ms from the group start). A Fade or Wipe filter has no fill="hold" (with it
+// PowerPoint 2019 does not play a later Fade out of the same shape: stage 0 X4); opacity and geometry hold.
 function behaviorXml(b, spid, base, z, id) {
-  const w = win(b, z), ctn = (extra = '') => `<p:cTn id="${id()}" dur="${w.dur}"${extra} fill="hold">${cond(w.start - base)}</p:cTn>`;
+  const w = win(b, z), ctn = (extra = '', fill = ' fill="hold"') => `<p:cTn id="${id()}" dur="${w.dur}"${extra}${fill}>${cond(w.start - base)}</p:cTn>`;
   if (b.b === 'set') return `<p:set><p:cBhvr>${ctn()}${tgt(spid)}${attr('style.visibility')}</p:cBhvr><p:to><p:strVal val="${b.to}"/></p:to></p:set>`;
-  if (b.b === 'setop') return `<p:set><p:cBhvr>${ctn()}${tgt(spid)}${attr('style.opacity')}</p:cBhvr><p:to><p:strVal val="${num(b.to)}"/></p:to></p:set>`;
-  if (b.b === 'fade' || b.b === 'wipe') return `<p:animEffect transition="${b.dir}" filter="${b.b === 'fade' ? 'fade' : WIPE[b.side][1]}"><p:cBhvr>${ctn(ad(b.ease))}${tgt(spid)}</p:cBhvr></p:animEffect>`;
-  if (b.b === 'anim') return `<p:anim calcmode="lin" valueType="num"><p:cBhvr additive="base">${ctn()}${tgt(spid)}${attr(b.attr)}</p:cBhvr>${tavXml(b, w, z)}</p:anim>`;
-  if (b.b === 'opacity') return `<p:anim calcmode="lin" valueType="num" from="${num(b.from)}" to="${num(b.to)}"><p:cBhvr>${ctn(ad(b.ease))}${tgt(spid)}${attr('style.opacity')}</p:cBhvr></p:anim>`;
-  if (b.b === 'transp') return `<p:set><p:cBhvr>${ctn(ad(b.ease))}${tgt(spid)}${attr('style.opacity')}</p:cBhvr><p:to><p:strVal val="${num(b.to)}"/></p:to></p:set><p:animEffect filter="image" prLst="opacity: ${num(b.to)}"><p:cBhvr rctx="IE">${ctn(ad(b.ease))}${tgt(spid)}</p:cBhvr></p:animEffect>`;
+  if (b.b === 'fade' || b.b === 'wipe') return `<p:animEffect transition="${b.dir}" filter="${b.b === 'fade' ? 'fade' : WIPE[b.side][1]}"><p:cBhvr>${ctn(ad(b.ease), '')}${tgt(spid)}</p:cBhvr></p:animEffect>`;
+  if (b.b === 'anim') return `<p:anim calcmode="lin" valueType="num"><p:cBhvr${/^ppt_|^r$/.test(b.attr) ? ' additive="base"' : ''}>${ctn()}${tgt(spid)}${attr(b.attr)}</p:cBhvr>${tavXml(b, w, z)}</p:anim>`;
   throw new Error(`unknown behavior ${b.b}`);
 }
 
@@ -69,20 +68,15 @@ function groupXml(step, auto, spids, id) {
   return `<p:par><p:cTn id="${outer}" fill="hold">${start}<p:childTnLst><p:par><p:cTn id="${inner}" fill="hold">${cond(0)}<p:childTnLst>${body}</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>`;
 }
 
-/**
- * <p:timing> of a section plan. spids[shape index] = the slide's shape id; texts: the spids of shapes with text
- * (they get a <p:bldP>, pictures and plain shapes do not).
- */
-export function timingXml(plan, spids, texts = new Set()) {
+/** <p:timing> of a section plan. spids[shape index] = the slide's shape id. */
+export function timingXml(plan, spids) {
   let n = 2;
   const id = () => ++n;
   const groups = plan.steps.filter((st) => st.effects.length).map((st) => groupXml(st, st.k === 0, spids, id)).join('');
-  const used = [...new Set(plan.steps.flatMap((st) => st.effects.map((fx) => spids[fx.shape])))].filter((s) => texts.has(s)).sort((a, b) => a - b);
-  const bld = used.length ? `<p:bldLst>${used.map((s) => `<p:bldP spid="${s}" grpId="0" animBg="1"/>`).join('')}</p:bldLst>` : '';
   return '<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>'
     + `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${groups}</p:childTnLst></p:cTn>`
     + '<p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq>'
-    + `</p:childTnLst></p:cTn></p:par></p:tnLst>${bld}</p:timing>`;
+    + '</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>';
 }
 
 /** Fade slide transition of TRANSITION_MS (p14:dur, PowerPoint 2010 and later; "fast" for older readers). */

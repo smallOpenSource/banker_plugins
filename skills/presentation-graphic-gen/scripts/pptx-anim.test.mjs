@@ -4,7 +4,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { COLS, sampleTimes, stepWindows } from './pptx-anim-extract.mjs';
-import { PARTIAL, easeAD, fitEase, fitProgress, monoRuns, planSection, reduceKeys } from './pptx-anim-plan.mjs';
+import { easeAD, fitEase, fitProgress, monoRuns, planSection, reduceKeys } from './pptx-anim-plan.mjs';
 import { formula, timingXml, transitionXml, glowXml } from './pptx-anim-xml.mjs';
 import { checkSlide, parseXml } from './pptx-xmlcheck.mjs';
 import { sectionNotes, sectionTitle, shapeRect } from './pptx-common.mjs';
@@ -57,33 +57,42 @@ test('reduceKeys keeps both ends and every point the line through the kept ones 
   }
 });
 
-test('plan: a linear fade-in is one exact Fade entrance (visible from the fade start); the first step is the automatic group', () => {
-  const S = section([BOX(1)], [['s1-1', 0, 0.8], ['s1-2', 0.8, 1.2]], [(t) => ({ op: ramp(t, 0.1, 0.5) })], [0.1, 0.5]);
+const opTrack = (f) => f.bh.find((b) => b.b === 'anim' && b.attr === 'style.opacity');
+test('plan: a fade-in is a Fade entrance whose opacity is style.opacity keyframes (visible from the change start, exact); the first step is the automatic group', () => {
+  const S = section([BOX(1)], [['s1-1', 0, 0.8], ['s1-2', 0.8, 1.2]], [(t) => ({ op: out(ramp(t, 0.1, 0.5)) })], [0.1, 0.5]);
   const plan = planSection(S);
   assert.equal(plan.shapes.length, 1);
   const fx = fxOf(plan);
   assert.equal(fx[0].cls, 'entr'); assert.equal(fx[0].preset, 10);
-  const fade = fx[0].bh.find((b) => b.b === 'fade'), set = fx[0].bh.find((b) => b.b === 'set');
-  assert.ok(Math.abs(fade.t0 - 0.1) < 1e-6 && Math.abs(fade.t1 - 0.5) < 1e-6 && fade.ease.a === 0 && fade.ease.d === 0, JSON.stringify(fade));
-  assert.equal(set.t, fade.t0);
-  assert.ok(!fx[0].bh.some((b) => b.b === 'anim'), 'no geometry');
+  assert.ok(!fx[0].bh.some((b) => b.b === 'fade'), 'no Fade filter');
+  const op = opTrack(fx[0]), set = fx[0].bh.find((b) => b.b === 'set');
+  assert.ok(Math.abs(op.t0 - 0.1) < 1e-6 && Math.abs(op.t1 - 0.5) < 0.02 && op.keys[0].v === 0 && Math.abs(op.keys[op.keys.length - 1].v - 1) < 1e-4, JSON.stringify(op).slice(0, 200));
+  for (const t of S.times.filter((x) => x > 0.1 && x < 0.5)) {
+    const j = op.keys.findIndex((k) => k.t >= t), a = op.keys[j - 1], c = op.keys[j];
+    const v = j < 0 ? op.keys[op.keys.length - 1].v : a.v + ((c.v - a.v) * (t - a.t)) / (c.t - a.t);
+    assert.ok(Math.abs(v - out(ramp(t, 0.1, 0.5))) <= 0.0041, `t ${t}`);
+  }
+  assert.equal(set.t, op.t0);
   assert.ok(plan.steps[1].effects[0].marker, 'the empty step still has its click (a no-op marker)');
-  assert.deepEqual([plan.counts.exact, plan.counts.impossible], [1, 0]);
+  assert.deepEqual([plan.counts.exact, plan.counts.approx, plan.counts.impossible], [1, 1, 0], 'the one approx is the first step after the transition');
 });
 
-test('plan: partial opacity 1 to 0.35 (crossfade) is a copy at 35%: the full shape fades out while the copy fades in, an approximation with its error', () => {
-  assert.equal(PARTIAL, 'crossfade', 'the default before the stage-0 measurement');
+test('plan: partial opacity 1 to 0.35 is one shape (no copies): a style.opacity track in its own effect, exact', () => {
   const S = section([BOX(1)], [['s1-1', 0, 0.6], ['s1-2', 0.6, 1.2]], [(t) => ({ op: t < 0.6 ? ramp(t, 0.1, 0.4) : 1 - 0.65 * ramp(t, 0.7, 1.0) })], [0.1, 0.4, 0.7, 1.0]);
   const plan = planSection(S);
-  assert.deepEqual(plan.shapes.map((c) => c.name), ['shape div.b1 #1', 'shape div.b1 #1@35']);
+  assert.deepEqual(plan.shapes.map((c) => c.name), ['shape div.b1 #1']);
   const two = plan.steps[1].effects;
-  assert.deepEqual(two.map((f) => [plan.shapes[f.shape].name, f.cls]), [['shape div.b1 #1', 'exit'], ['shape div.b1 #1@35', 'entr']]);
-  const [a, b] = two.map((f) => f.bh.find((x) => x.b === 'fade'));
-  assert.ok(a.t0 === b.t0 && a.t1 === b.t1);
-  const note = plan.notes.find((n) => /crossfade copy/.test(n.text));
-  assert.ok(note && note.cat === 'approx' && note.step === 's1-2', JSON.stringify(plan.notes));
-  const err = +/max ([\d.]+)/.exec(note.text)[1];
-  assert.ok(err > 0.05 && err < 0.12, note.text);
+  assert.deepEqual(two.map((f) => [f.cls, f.preset]), [['emph', 0]]);
+  const op = opTrack(two[0]);
+  assert.deepEqual([op.keys[0].v, op.keys[op.keys.length - 1].v].map((v) => Math.round(v * 100) / 100), [1, 0.35]);
+  assert.ok(!plan.notes.some((n) => /crossfade|opacity/.test(n.text)), JSON.stringify(plan.notes));
+});
+
+test('plan: an item never fully opaque is drawn at its highest opacity (#n@40) and its keyframes count from there', () => {
+  const S = section([BOX(1)], [['s1-1', 0, 0.6]], [(t) => ({ op: 0.4 * ramp(t, 0.1, 0.4) })], [0.1, 0.4]);
+  const plan = planSection(S), op = opTrack(fxOf(plan)[0]);
+  assert.deepEqual(plan.shapes.map((c) => [c.name, c.level]), [['shape div.b1 #1@40', 0.4]]);
+  assert.ok(Math.abs(op.keys[op.keys.length - 1].v - 1) < 1e-9);
 });
 
 test('plan: a move with an ease-out inside the fade is sampled keyframes on ppt_x (exact to 0.3 px); values are relative to the rest place', () => {
@@ -120,8 +129,7 @@ test('plan: a parent fade over a child fade (product, not a standard curve) is o
   const fx = fxOf(plan);
   assert.equal(fx.length, 1, JSON.stringify(fx.map((f) => f.cls)));
   assert.equal(plan.shapes.length, 1);
-  const note = plan.notes.find((n) => /opacity 0 to 1/.test(n.text));
-  assert.ok(!note || +/max ([\d.]+)/.exec(note.text)[1] < 0.2, note && note.text);
+  assert.ok(!plan.notes.some((n) => /opacity/.test(n.text)), 'keyframes follow the product exactly');
 });
 
 test('plan: a reveal from the left (clipped to nothing, then the visible part grows from the left edge) is a Wipe entrance from the left', () => {
@@ -181,13 +189,15 @@ function miniPlan() {
   return planSection(S);
 }
 
-test('timingXml: well formed in a slide, ids unique, the first group starts on its own, one click group per later step, keyframes from tm 0 to 100000, a build entry only for the text shape', () => {
+test('timingXml: well formed in a slide, ids unique, the first group starts on its own, one click group per later step, keyframes from tm 0 to 100000, no build list, opacity as fltVal keyframes', () => {
   const plan = miniPlan();
-  const xml = SLIDE(SHAPES, transitionXml() + timingXml(plan, [2, 3, 4], new Set([2])));
+  const xml = SLIDE(SHAPES, transitionXml() + timingXml(plan, [2, 3, 4]));
   assert.deepEqual(checkSlide(xml), []);
   assert.equal((xml.match(/evt="onBegin"/g) || []).length, 1);
   assert.equal((xml.match(/nodeType="clickEffect"/g) || []).length, 2);
-  assert.deepEqual([...xml.matchAll(/<p:bldP spid="(\d+)"/g)].map((m) => m[1]), ['2']);
+  assert.doesNotMatch(xml, /bldLst|bldP/, 'PowerPoint 2019 keeps only the first effect of a text shape with a build entry');
+  assert.match(xml, /<p:cBhvr><p:cTn id="\d+" dur="\d+" fill="hold">[\s\S]*?<p:attrName>style\.opacity<\/p:attrName><\/p:attrNameLst><\/p:cBhvr><p:tavLst><p:tav tm="0"><p:val><p:fltVal val="0"\/>/);
+  assert.doesNotMatch(xml, /<p:animEffect/, 'no Fade filter for opacity');
   const tms = [...xml.matchAll(/<p:tavLst>([\s\S]*?)<\/p:tavLst>/g)].map((m) => [...m[1].matchAll(/tm="(\d+)"/g)].map((x) => +x[1]));
   assert.ok(tms.length && tms.every((l) => l[0] === 0 && l[l.length - 1] === 100000));
   assert.match(xml, /<p:strVal val="#ppt_y\+0\.0222\d*"\/>/, 'starts 24 px low (24 / 1080)');
@@ -207,7 +217,7 @@ test('formula and glow: values relative to rest, signs, factors; glow radius in 
 
 test('checkSlide catches what makes PowerPoint repair a file or drop its timing', () => {
   const plan = miniPlan();
-  const good = SLIDE(SHAPES, transitionXml() + timingXml(plan, [2, 3, 4], new Set([2])));
+  const good = SLIDE(SHAPES, transitionXml() + timingXml(plan, [2, 3, 4]).replace('</p:tnLst>', '</p:tnLst><p:bldLst><p:bldP spid="2" grpId="0" animBg="1"/></p:bldLst>'));
   const bad = (from, to, re) => { const x = good.replace(from, to); assert.notEqual(x, good, String(from)); const p = checkSlide(x); assert.ok(p.some((m) => re.test(m)), `${re}: ${p.join('; ')}`); };
   bad('<p:cTn id="5"', '<p:cTn id="3"', /cTn id 3 is used twice/);
   bad(/spid="3"/g, 'spid="9"', /target spid 9 is not a shape/);
@@ -219,7 +229,7 @@ test('checkSlide catches what makes PowerPoint repair a file or drop its timing'
   bad(/<p:cond delay="0"\/>/, '<p:cond delay="-5"/>', /cond delay "-5"/);
   bad(' xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main"', '', /prefix p14 .* not declared/);
   bad('</p:sld>', '', /not well formed/);
-  bad(/(<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="\d+" dur="\d+")/, '$1 accel="90000" decel="90000"', /accel 90000 decel 90000/);
+  bad(/(<p:anim calcmode="lin" valueType="num"><p:cBhvr><p:cTn id="\d+" dur="\d+")/, '$1 accel="90000" decel="90000"', /accel 90000 decel 90000/);
 });
 
 test('parseXml: well-formed checks (mismatched end tag, a duplicate attribute, two roots) and the tree', () => {
@@ -236,7 +246,7 @@ const SH = (id, name, x, y, w, h) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="
 const C = (id, extra, delay, body) => `<p:par><p:cTn id="${id}"${extra} fill="hold" grpId="0">${delay != null ? `<p:stCondLst><p:cond delay="${delay}"/></p:stCondLst>` : ''}<p:childTnLst>${body}</p:childTnLst></p:cTn></p:par>`;
 const BT = (id, dur, delay, spid, extra = '') => `<p:cBhvr><p:cTn id="${id}" dur="${dur}"${extra} fill="hold"><p:stCondLst><p:cond delay="${delay}"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl>`;
 const VIS = (id, spid, v, delay) => `<p:set>${BT(id, 1, delay, spid)}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="${v}"/></p:to></p:set>`;
-const FADE = (id, spid, dir, delay, dur, extra) => `<p:animEffect transition="${dir}" filter="fade">${BT(id, dur, delay, spid, extra)}</p:cBhvr></p:animEffect>`;
+const FADE = (id, spid, dir, delay, dur, extra) => `<p:animEffect transition="${dir}" filter="fade">${BT(id, dur, delay, spid, extra).replace(' fill="hold"', '')}</p:cBhvr></p:animEffect>`;
 const TAV = (id, spid, attr, delay, dur, keys) => `<p:anim calcmode="lin" valueType="num">${BT(id, dur, delay, spid)}<p:attrNameLst><p:attrName>${attr}</p:attrName></p:attrNameLst></p:cBhvr><p:tavLst>${keys.map(([tm, v]) => `<p:tav tm="${tm}"><p:val><p:strVal val="${v}"/></p:val></p:tav>`).join('')}</p:tavLst></p:anim>`;
 const GROUP = (id, auto, inner) => `<p:par><p:cTn id="${id}" fill="hold"><p:stCondLst><p:cond delay="indefinite"/>${auto ? '<p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond>' : ''}</p:stCondLst><p:childTnLst>${inner}</p:childTnLst></p:cTn></p:par>`;
 const TIMING = (groups) => `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${groups}</p:childTnLst></p:cTn></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>`;
@@ -296,11 +306,11 @@ async function gatesOf(xmls, sections) {
 
 test('anim gates without a page: xml, steps and targets are checked; match and render SKIP; anim-powerpoint is always SKIP', async () => {
   const g = await gatesOf([SIMXML], [['s1-1', 's1-2', 's1-3']]);
-  assert.deepEqual(Object.keys(g), ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render', 'anim-powerpoint']);
+  assert.deepEqual(Object.keys(g), ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render', 'text-fit', 'anim-powerpoint']);
   assert.equal(g['anim-steps'][1], true, g['anim-steps'][2]);
   assert.equal(g['anim-targets'][1], true, g['anim-targets'][3].join('; '));
   assert.match(g['anim-targets'][2], /no --html: names not compared with the page/);
-  assert.deepEqual([g['anim-match'][1], g['anim-render'][1], g['anim-powerpoint'][1]], [null, null, null]);
+  assert.deepEqual([g['anim-match'][1], g['anim-render'][1], g['text-fit'][1], g['anim-powerpoint'][1]], [null, null, null, null]);
   assert.match(g['anim-powerpoint'][2], /pptx\.mjs com --anim/);
 });
 
@@ -319,21 +329,38 @@ test('anim gates fail a missing click group, a second automatic group, a target 
   assert.equal(broken['anim-xml'][1], false);
 });
 
-test('the other partial-opacity encodings (stage 0 picks one in PARTIAL): style.opacity from / to, Transparency, an entrance to a level; the XML passes the checker and the simulator reads them', () => {
-  const plan = { steps: [{ id: 's1-1', k: 0, start: 0, t0: 0, end: 1, effects: [
-    { shape: 0, cls: 'emph', preset: 0, bh: [{ b: 'opacity', from: 1, to: 0.35, t0: 0.1, t1: 0.5, ease: { a: 0, d: 0 } }] },
-    { shape: 1, cls: 'emph', preset: 9, bh: [{ b: 'transp', to: 0.35, t0: 0.1, t1: 0.5, ease: { a: 0, d: 0 } }] },
-    { shape: 2, cls: 'entr', preset: 10, bh: [{ b: 'set', to: 'visible', t: 0.1 }, { b: 'setop', to: 0.4, t: 0.1 }, { b: 'fade', dir: 'in', t0: 0.1, t1: 0.5, ease: { a: 0, d: 0 } }] },
-  ] }] };
-  const xml = SLIDE(SH(2, 'shape a #1', 0, 0, 100, 100) + SH(3, 'shape b #2', 0, 0, 100, 100) + SH(4, 'shape c #3', 0, 0, 100, 100), transitionXml() + timingXml(plan, [2, 3, 4]));
-  assert.deepEqual(checkSlide(xml), []);
-  assert.match(xml, /<p:anim calcmode="lin" valueType="num" from="1" to="0\.35">/);
-  assert.match(xml, /presetID="9" presetClass="emph"[\s\S]*<p:animEffect filter="image" prLst="opacity: 0\.35">/);
-  const sl = readSlide(xml), at = (t) => stateAt(sl, 0, t);
-  assert.ok(Math.abs(at(300).get('2').op - 0.675) < 1e-9);
-  assert.equal(at(Infinity).get('2').op, 0.35);
-  assert.equal(at(300).get('3').op, 0.35, 'Transparency: p:set does not interpolate (stage 0 P07 asks PowerPoint)');
-  assert.ok(Math.abs(at(Infinity).get('4').op - 0.4) < 1e-9);
+// ---------- what PowerPoint 2019 was measured to do (stage 0 and 7) ----------
+const FX = (id, cls, pid, node, body) => `<p:par><p:cTn id="${id}"${pid == null ? '' : ` presetID="${pid}"`} presetClass="${cls}" presetSubtype="0" fill="hold" grpId="0" nodeType="${node}"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>${body}</p:childTnLst></p:cTn></p:par>`;
+const FADEH = (id, spid, dir, dur) => `<p:animEffect transition="${dir}" filter="fade"><p:cBhvr><p:cTn id="${id}" dur="${dur}" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl></p:cBhvr></p:animEffect>`;
+const SETOP = (id, spid, v) => `<p:set><p:cBhvr><p:cTn id="${id}" dur="1" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl><p:attrNameLst><p:attrName>style.opacity</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="${v}"/></p:to></p:set>`;
+// shape 2 (text) fades in (fill="hold" on the filter), then on a click fades out; shape 3 enters with a style.opacity
+// set and a Fade; written the way the deck wrote them before the measurement
+const OLDXML = SLIDE(SH(2, 'text p #1', 100, 100, 200, 100).replace('</p:spPr></p:sp>', '</p:spPr><p:txBody><a:bodyPr/><a:p><a:r><a:t>글</a:t></a:r></a:p></p:txBody></p:sp>') + SH(3, 'shape div.c #2', 100, 300, 200, 100), TIMING(
+  GROUP(10, true, C(11, '', 0, FX(12, 'entr', 10, 'afterEffect', VIS(13, 2, 'visible', 0) + FADEH(14, 2, 'in', 400))))
+  + GROUP(20, false, C(21, '', 0, FX(22, 'exit', 10, 'clickEffect', FADEH(23, 2, 'out', 400) + VIS(24, 2, 'hidden', 399))
+    + FX(25, 'entr', 10, 'withEffect', VIS(26, 3, 'visible', 0) + SETOP(27, 3, '0.4') + FADEH(28, 3, 'in', 400)))))
+  .replace('</p:tnLst>', '</p:tnLst><p:bldLst><p:bldP spid="2" grpId="0" animBg="1"/></p:bldLst>'));
+
+test('anim-xml: a Fade with fill="hold", a style.opacity set before a Fade in, a build entry on a text shape with two effects, an emph effect without presetID all fail', () => {
+  const p = checkSlide(OLDXML).join('\n');
+  assert.match(p, /animEffect cTn 14: fill="hold" \(a later Fade out of the shape does not play\)/);
+  assert.match(p, /cTn 25: style\.opacity set before a Fade in/);
+  assert.match(p, /bldP spid 2 grpId 0 has 2 effects \(PowerPoint keeps only the first\)/);
+  const nopreset = checkSlide(OLDXML.replace('presetID="10" presetClass="exit"', 'presetClass="emph"'));
+  assert.ok(nopreset.some((m) => /presetClass "emph" presetID "undefined" is not an allowed pair/.test(m)), nopreset.join('; '));
+});
+
+test('simulator follows PowerPoint 2019: the build entry keeps only the first effect of the text shape; without it a held Fade in stops the later Fade out; a Fade in ends at full opacity after a style.opacity set', () => {
+  const built = readSlide(OLDXML);
+  assert.equal(built.groups[1].effects.length, 1, 'the text shape\'s exit is dropped');
+  assert.equal(stateAt(built, 1, Infinity).get('2').op, 1, 'so the text stays');
+  const sl = readSlide(OLDXML.replace(/<p:bldLst>[\s\S]*<\/p:bldLst>/, ''));
+  const mid = stateAt(sl, 1, 200);
+  assert.deepEqual([mid.get('2').vis, mid.get('2').op], [true, 1], 'the held Fade in: no Fade out on screen (X4)');
+  assert.deepEqual([stateAt(sl, 1, Infinity).get('2').vis], [false], 'hidden at its end');
+  assert.equal(stateAt(sl, 1, Infinity).get('3').op, 1, 'not 0.4 (X1)');
+  const free = readSlide(OLDXML.replace(/<p:bldLst>[\s\S]*<\/p:bldLst>/, '').replace(/ fill="hold"><p:stCondLst><p:cond delay="0"\/><\/p:stCondLst><\/p:cTn><p:tgtEl><p:spTgt spid="2"\/><\/p:tgtEl><\/p:cBhvr><\/p:animEffect>/g, '><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cBhvr></p:animEffect>'));
+  assert.ok(Math.abs(stateAt(free, 1, 200).get('2').op - 0.5) < 1e-9, 'without fill="hold" the Fade out plays (X3)');
 });
 
 // ---------- review 1: step boundaries, clicks that start with an entrance, steps with no motion ----------
@@ -348,10 +375,9 @@ test('plan (B1): a zero-length opacity change at a click step start (s.reveal) i
 
 test('plan (B2): a dim that ends where the next step starts and a fade-out at that start are two effects, one per step', () => {
   const S = section([BOX(1)], [['s1-1', 0, 0.5], ['s1-2', 0.5, 0.9], ['s1-3', 0.9, 1.3]], [(t) => ({ op: t < 0.5 ? ramp(t, 0.1, 0.4) : t <= 0.9 ? 1 - 0.65 * ramp(t, 0.6, 0.9) : 0.35 * (1 - ramp(t, 0.9, 1.2)) })], [0.1, 0.4, 0.6, 0.9, 1.2]);
-  const plan = planSection(S), names = (k) => plan.steps[k].effects.map((f) => [plan.shapes[f.shape].name, f.cls]);
-  assert.deepEqual(names(1), [['shape div.b1 #1', 'exit'], ['shape div.b1 #1@35', 'entr']]);
-  assert.deepEqual(names(2), [['shape div.b1 #1@35', 'exit']]);
-  assert.ok(plan.notes.some((n) => n.step === 's1-2' && /opacity 1 to 0\.35/.test(n.text)) && !plan.notes.some((n) => /opacity 1 to 0 /.test(n.text)), JSON.stringify(plan.notes));
+  const plan = planSection(S), ends = (k) => plan.steps[k].effects.map((f) => { const o = opTrack(f); return [f.cls, Math.round(o.keys[0].v * 100) / 100, Math.round(o.keys[o.keys.length - 1].v * 100) / 100]; });
+  assert.deepEqual(ends(1), [['emph', 1, 0.35]]);
+  assert.deepEqual(ends(2), [['exit', 0.35, 0]]);
 });
 
 // item 1 shown from the start (static), item 2 enters in step 2; step 1 has no motion

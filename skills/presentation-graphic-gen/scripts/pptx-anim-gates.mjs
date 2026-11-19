@@ -5,18 +5,20 @@
 //                   title; with the page, each name is that section's extracted element n
 //   anim-match      (page and browser) the independent simulator (pptx-anim-sim.mjs) against the page at every
 //                   step's 0, 15, 50, 85% and end, and between keyframes: end states exact (1 px, 0.5%, opacity
-//                   0.02), positions in between 1 px, opacity and wipes in between 0.2 (the largest is reported);
+//                   0.02), in between positions 1 px, opacity 0.05, wipes 0.2 (the largest is reported);
 //                   the slide start (the transition, before the automatic group) shows what the section start shows;
 //                   each click starts where the previous one ended, as seen
 //   anim-render     (page and browser) each step's end: the slide's shapes drawn by the browser at the simulated
 //                   state against the page at that time, pixel by pixel
+//   text-fit        (page and browser) every text box's runs, measured in the page's fonts, are as wide as the box
+//                   was made for (a line whose gap was closed into one box is much narrower)
 //   anim-powerpoint always SKIP here: no PowerPoint on the test PCs (pptx.mjs com --anim on a PC that has it)
 import { measure, openDeck, stepWindows } from './pptx-anim-extract.mjs';
-import { renderCompare } from './pptx-anim-render.mjs';
+import { renderCompare, textFit } from './pptx-anim-render.mjs';
 import { itemsAt, readSlide, stateAt, wipeVisible } from './pptx-anim-sim.mjs';
 import { checkSlide } from './pptx-xmlcheck.mjs';
 
-export const TOL = { endPos: 1, endSize: 0.005, endOp: 0.02, midPos: 1, midSize: 0.01, midOp: 0.2, rot: 0.5 };
+export const TOL = { endPos: 1, endSize: 0.005, endOp: 0.02, midPos: 1, midSize: 0.01, midOp: 0.05, midClip: 0.2, rot: 0.5 };
 const NAME = /^(text|shape|picture) (.+) #(\d+)(?:@\d+)?$/;
 const KIND = { text: 'text', shape: 'box', picture: 'pic' };
 
@@ -89,13 +91,14 @@ function itemErr(it, row, sim) {
 function compareTimes(w, g) {
   const len = (w.end - w.t0) * 1000, out = [0, 0.15, 0.5, 0.85].map((f) => f * len);
   const keys = [];
-  for (const fx of g ? g.effects : []) for (const b of fx.behaviors) if (b.tavs) b.tavs.forEach((t, i) => { if (i) keys.push(b.start + ((b.tavs[i - 1].tm + t.tm) / 2) * b.dur); });
+  // a jump is written as a 1 ms anim (whole ms); its inside is below what PowerPoint can time, so it is not compared
+  for (const fx of g ? g.effects : []) for (const b of fx.behaviors) if (b.tavs && b.dur > 2) b.tavs.forEach((t, i) => { if (i) keys.push(b.start + ((b.tavs[i - 1].tm + t.tm) / 2) * b.dur); });
   const step = Math.max(1, Math.ceil(keys.length / 40));
   return out.concat(keys.filter((_, i) => i % step === 0).filter((t) => t < len)).sort((a, b) => a - b);
 }
 function judge(e, end, it) {
   const sizeOk = end ? e.size <= Math.max(TOL.endSize * Math.max(it.w, it.h), 0.5) : e.size <= Math.max(TOL.midSize * Math.max(it.w, it.h), 1);
-  return e.op <= (end ? TOL.endOp : TOL.midOp) && e.pos <= (end ? TOL.endPos : TOL.midPos) && sizeOk && e.rot <= TOL.rot && e.clip <= (end ? TOL.endOp : TOL.midOp);
+  return e.op <= (end ? TOL.endOp : TOL.midOp) && e.pos <= (end ? TOL.endPos : TOL.midPos) && sizeOk && e.rot <= TOL.rot && e.clip <= (end ? TOL.endOp : TOL.midClip);
 }
 // a simulated shape's opacity as seen: 0 when hidden, without area or wiped away (an entrance at its first frame)
 export const seenOp = (st) => (st.vis && st.w * st.h >= DRAWN && wipeVisible(st.clip) > 0 ? st.op : 0);
@@ -144,7 +147,7 @@ export async function animGates(slides, data, { gate, html = null, browser = nul
   stepsGate(read, data, gate);
   if (!html || !browser) {
     targetsGate(read, null, gate);
-    for (const g of ['anim-match', 'anim-render']) gate(g, null, html ? 'no browser to play the page (set CHROME)' : 'no present page given (--html <present.html>)');
+    for (const g of ['anim-match', 'anim-render', 'text-fit']) gate(g, null, html ? 'no browser to play the page (set CHROME)' : 'no present page given (--html <present.html>)');
   } else await pageGates(slides, read, html, browser, gate, log);
   gate('anim-powerpoint', null, 'PowerPoint is not run here; on a PC with PowerPoint: node scripts/pptx.mjs com --anim <file.pptx> <dir> --script <script.md>');
 }
@@ -157,9 +160,11 @@ async function pageGates(slides, read, html, browser, gate, log) {
     targetsGate(read, items, gate);
     const acc = { worst: { pos: 0, op: 0, clip: 0, size: 0 }, bad: [], n: 0 }, { worst, bad } = acc;
     for (let k = 0; k < Math.min(read.length, deck.sections.length); k++) await matchSection(deck, k, read[k], acc);
-    gate('anim-match', !bad.length && acc.n > 0, `${acc.n} item states (${deck.steps.length} steps): slide start (during the transition) as the section start, ends within ${TOL.endPos} px, ${TOL.endSize * 100}% and opacity ${TOL.endOp}; in between ${TOL.midPos} px, opacity and wipe ${TOL.midOp} (largest: position ${worst.pos.toFixed(2)} px, size ${worst.size.toFixed(2)} px, opacity ${worst.op.toFixed(3)}, wipe ${worst.clip.toFixed(3)}); each click starts where the previous ended`, bad);
+    gate('anim-match', !bad.length && acc.n > 0, `${acc.n} item states (${deck.steps.length} steps): slide start (during the transition) as the section start, ends within ${TOL.endPos} px, ${TOL.endSize * 100}% and opacity ${TOL.endOp}; in between ${TOL.midPos} px, opacity ${TOL.midOp}, wipe ${TOL.midClip} (largest: position ${worst.pos.toFixed(2)} px, size ${worst.size.toFixed(2)} px, opacity ${worst.op.toFixed(3)}, wipe ${worst.clip.toFixed(3)}); each click starts where the previous ended`, bad);
     const rr = await renderCompare(deck, slides, read, log);
     gate('anim-render', rr.ok, rr.detail, rr.bad);
+    const tf = await textFit(deck, slides);
+    gate('text-fit', tf.ok, tf.detail, tf.bad);
   } finally {
     deck.b.close();
   }

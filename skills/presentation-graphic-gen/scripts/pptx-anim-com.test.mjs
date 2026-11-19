@@ -34,10 +34,14 @@ test('probe: one file per candidate (13 checks, P12 in two files) with the effec
     assert.ok(!bad.some((b) => /not well formed|out of order|not declared|used twice/.test(b)), `${p.id}: ${bad}`);
     if (bad.length) flagged[p.id] = bad.join('; ');
   }
-  // custom presets the deck does not use (Grow/Shrink 6, Spin 8), the effect with no preset, the picture build
-  assert.deepEqual(Object.keys(flagged), ['P04', 'P09', 'P12b', 'P13']);
-  assert.match(flagged.P13, /bldP spid \d+ is not a shape with text/);
-  assert.match(flagged.P12b, /an effect without presetClass and presetID/);
+  // custom presets the deck does not use (Grow/Shrink 6, Spin 8), the effect with no preset, the picture build, and
+  // (kept as measured) the Fade and Wipe filters with fill="hold" that the measurement showed to stop a later Fade out
+  const held = Object.keys(flagged).filter((k) => /fill="hold"/.test(flagged[k]));
+  assert.deepEqual(held, ['P01', 'P02', 'P07', 'P08', 'P10', 'P11', 'P13']);
+  const other = Object.fromEntries(Object.entries(flagged).map(([k, v]) => [k, v.split('; ').filter((m) => !/fill="hold"/.test(m)).join('; ')]).filter(([, v]) => v));
+  assert.deepEqual(Object.keys(other), ['P04', 'P09', 'P12b', 'P13']);
+  assert.match(other.P13, /bldP spid \d+ is not a shape with text/);
+  assert.match(other.P12b, /an effect without presetClass and presetID/);
   await assert.rejects(writeProbes(dir), (e) => e.exit === 2 && /not empty; not overwriting/.test(e.message));
 });
 

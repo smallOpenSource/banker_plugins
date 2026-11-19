@@ -100,7 +100,7 @@ describe('editable deck: step boundaries and steps with no motion', { skip: SKIP
 
   test('every anim gate passes: the reveal and the underline are the first effects of their click, the dim and the fade-out stay in their own steps, the static line is shown from the slide start', async () => {
     const g = await gates(out);
-    for (const k of ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render']) assert.equal(g[k].ok, true, `${k}: ${g[k].detail}\n${g[k].lines.join('\n')}`);
+    for (const k of ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render', 'text-fit']) assert.equal(g[k].ok, true, `${k}: ${g[k].detail}\n${g[k].lines.join('\n')}`);
     const { JSZip } = pptxgen();
     const xml = await (await JSZip.loadAsync(readFileSync(out))).file('ppt/slides/slide1.xml').async('string');
     const auto = xml.slice(0, xml.indexOf('nodeType="clickEffect"'));
@@ -122,5 +122,44 @@ describe('editable deck: step boundaries and steps with no motion', { skip: SKIP
     const g = await gates(f);
     assert.equal(g['anim-match'].ok, false);
     assert.match(g['anim-match'].lines.join('\n'), /s2-1 slide start: text h2\.t\.t-h1\[t2\] #\d+ opacity page 0\.00 PowerPoint 1\.00/);
+  });
+});
+
+// a line with a blank slot between two text pieces (s.fill): each piece its own box where the page has it
+describe('editable deck: a line with a gap', { skip: SKIP }, () => {
+  let TMP, present, script, out;
+  before(async () => {
+    TMP = mkdtempSync(join(tmpdir(), 'pgg-anim-gap-test-'));
+    mkdirSync(join(TMP, 'scenes'));
+    script = join(TMP, 'mini.md');
+    writeFileSync(script, '# 작은 덱\n\n## 1. 하나\n\n### 1-1\n화면: 원두 20 g 이면 물\n- 300\n- ml\n말: 하나.\n');
+    writeFileSync(join(TMP, 'scenes', '01.js'), `Deck.scene({ section: 1, css: '.s01 .line { position: absolute; left: 160px; top: 420px; white-space: nowrap; } .s01 .line .blank { min-width: 200px; margin: 0 16px; }',
+      html: (d) => { const [pre, word, unit] = d.lines('s1-1'); return '<p class="line t-h1" data-r="q">' + d.esc(pre) + '<span class="blank" data-r="blank"><i class="blank-hatch"></i><span class="blank-word" data-r="word">' + d.esc(word) + '</span></span>' + d.esc(unit) + '</p>'; },
+      steps: { 's1-1'(s) { const t = s.fadeUp('q', { at: 0.1, y: 12 }); s.fill('blank', 'word', { at: t }); } } });`);
+    const r = spawnSync(process.execPath, [join(SKILL, 'scripts', 'build.mjs'), script, '--scenes', join(TMP, 'scenes'), '--dir', TMP, '--stamp', STAMP], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    present = join(TMP, `mini-present-${STAMP}.html`);
+    out = join(TMP, 'edit.pptx');
+    await buildEditPptx({ html: present, parsed: parseScript(readFileSync(script, 'utf8')), out, browser: BROWSER });
+  });
+  after(() => { if (TMP) rmSync(TMP, { recursive: true, force: true }); });
+
+  test('the pieces before and after the slot are two text boxes with the slot between them; text-fit passes, and a box widened over the slot (the old joined line) fails it', async () => {
+    const { JSZip } = pptxgen();
+    const zip = await JSZip.loadAsync(readFileSync(out));
+    const xml = await zip.file('ppt/slides/slide1.xml').async('string');
+    const boxes = [...xml.matchAll(/<p:cNvPr id="\d+" name="text p\.line\.t-h1\[q\] #\d+"[\s\S]*?<a:off x="(\d+)"[\s\S]*?<a:ext cx="(\d+)"[\s\S]*?<a:t>([^<]*)<\/a:t>/g)].map((m) => ({ x: +m[1] / 6350, w: +m[2] / 6350, t: m[3] }));
+    assert.deepEqual(boxes.map((b) => b.t), ['원두 20 g 이면 물', 'ml']);
+    assert.ok(boxes[1].x - (boxes[0].x + boxes[0].w) > 150, JSON.stringify(boxes));
+    const v = await verify(out, { script, html: present, browser: BROWSER, log: () => {} });
+    const g = Object.fromEntries(v.results.map((x) => [x.gate, x]));
+    for (const k of ['anim-match', 'anim-render', 'text-fit']) assert.equal(g[k].ok, true, `${k}: ${g[k].detail} ${g[k].lines.join('; ')}`);
+    const wide = xml.replace(/(name="text p\.line\.t-h1\[q\] #\d+"[\s\S]*?<a:ext cx=")(\d+)/, (m, a, cx) => `${a}${+cx + 260 * 6350}`);
+    zip.file('ppt/slides/slide1.xml', wide);
+    const f = join(TMP, 'joined.pptx');
+    writeFileSync(f, await zip.generateAsync({ type: 'nodebuffer' }));
+    const w = Object.fromEntries((await verify(f, { script, html: present, browser: BROWSER, log: () => {} })).results.map((x) => [x.gate, x]));
+    assert.equal(w['text-fit'].ok, false);
+    assert.match(w['text-fit'].lines.join('\n'), /text p\.line\.t-h1\[q\] #\d+: text [\d.]+ px in a box made for [\d.]+ px/);
   });
 });

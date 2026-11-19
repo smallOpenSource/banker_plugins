@@ -5,6 +5,9 @@
 // click groups, inner "after previous" groups, effect and behavior delays), set (style.visibility, style.opacity),
 // animEffect fade and wipe(dir) in and out, anim with tavLst (strVal formulas on #ppt_x, #ppt_y, #ppt_w, #ppt_h,
 // fltVal) or from / to, accel / decel, fill hold. A shape whose first visibility change makes it visible starts hidden.
+// What PowerPoint 2019 did in the stage-0 and stage-7 measurements is followed: a Fade in with fill="hold" keeps a
+// later Fade out of the same shape from playing (X4), a Fade in ends at full opacity whatever style.opacity was set
+// to (X1), and a text shape with a <p:bldP> keeps only its first effect (the edit deck of stage 7).
 import { kid, kidsNamed, parseXml, walk } from './pptx-xmlcheck.mjs';
 
 const EMU_PX = 6350; // 914400 EMU per inch, 1920 px per 13.333 in
@@ -93,7 +96,7 @@ function values(n, b) {
 function behavior(n, t0) {
   const c = ctnOf(n) || { attrs: {} }, tg = inBhvr(n, 'p:spTgt'), an = inBhvr(n, 'p:attrName');
   return values(n, { type: n.name.slice(2), spid: tg && tg.attrs.spid, attr: an && an.text.trim(), start: t0 + delayOf(c), dur: Math.max(1, int(c.attrs.dur, 1)),
-    accel: int(c.attrs.accel) / 100000, decel: int(c.attrs.decel) / 100000, transition: n.attrs.transition, filter: n.attrs.filter, from: n.attrs.from, to: n.attrs.to });
+    accel: int(c.attrs.accel) / 100000, decel: int(c.attrs.decel) / 100000, fill: c.attrs.fill, transition: n.attrs.transition, filter: n.attrs.filter, from: n.attrs.from, to: n.attrs.to });
 }
 const BEHAVIORS = ['p:set', 'p:animEffect', 'p:anim', 'p:animScale', 'p:animRot', 'p:animMotion', 'p:animClr', 'p:cmd'];
 // an effect par: its behaviors (absolute ms from the group start)
@@ -118,12 +121,23 @@ function group(par) {
   return { auto, effects, end: Math.max(0, ...effects.map(endOf)) };
 }
 
+// a shape with a build entry keeps only its first effect (PowerPoint 2019 dropped the others on opening)
+function firstOnly(groups, built) {
+  const seen = new Set();
+  return groups.map((g) => Object.assign({}, g, { effects: g.effects.filter((fx) => {
+    const spids = [...new Set(fx.behaviors.map((b) => b.spid))].filter((x) => built.has(x));
+    const drop = spids.some((x) => seen.has(x));
+    spids.forEach((x) => seen.add(x));
+    return !drop;
+  }) }));
+}
 /** Reads a slide: { shapes: Map spid -> shape, groups: [{ auto, effects, end }] } (groups in click order). */
 export function readSlide(xml) {
   const root = parseXml(xml), timing = kid(root, 'p:timing');
   const seq = timing && walk(timing).find((n) => n.name === 'p:cTn' && n.attrs.nodeType === 'mainSeq');
   const groups = seq ? kidsNamed(kid(seq, 'p:childTnLst') || seq, 'p:par').map(group) : [];
-  return { shapes: shapesOf(root), groups };
+  const built = new Set(walk(timing || root).filter((n) => n.name === 'p:bldP').map((n) => n.attrs.spid));
+  return { shapes: shapesOf(root), groups: built.size ? firstOnly(groups, built) : groups };
 }
 
 // ---------- state ----------
@@ -144,7 +158,7 @@ const BEHAVE = {
   set: (s, b) => { if (b.attr === 'style.visibility') s.vis = b.to === 'visible'; else if (b.attr === 'style.opacity') s.opac = +b.to; },
   animEffect: (s, b, t) => {
     const wipe = /^wipe\((\w+)\)$/.exec(b.filter || ''), p = progress(b, t);
-    if (b.filter === 'fade') s.fade = b.transition === 'out' ? 1 - p : p;
+    if (b.filter === 'fade') fadeOn(s, b, p);
     else if (wipe) s.clip = { dir: wipe[1], out: b.transition === 'out', p };
   },
   anim: (s, b, t, sh) => {
@@ -153,6 +167,12 @@ const BEHAVE = {
     else if (b.from != null) ATTR[b.attr](s, +b.from + (+b.to - +b.from) * progress(b, t));
   },
 };
+function fadeOn(s, b, p) {
+  if (b.transition === 'out') { if (!s.heldIn) s.fade = 1 - p; return; }
+  s.fade = p;
+  s.opac = 1;
+  if (b.fill === 'hold') s.heldIn = true;
+}
 // a behavior that has begun by t changes the state (one that has ended holds its end: fill hold)
 function apply(s, b, t, sh) { if (t >= b.start && BEHAVE[b.type]) BEHAVE[b.type](s, b, t, sh); }
 
