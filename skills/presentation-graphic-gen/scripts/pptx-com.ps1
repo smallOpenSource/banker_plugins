@@ -89,7 +89,15 @@ function New-Video($app, $src, $dir) {
   try {
     foreach ($s in $p.Slides) {
       $seq = $s.TimeLine.MainSequence
-      for ($i = 1; $i -le $seq.Count; $i++) { $t = $seq.Item($i).Timing; if ($t.TriggerType -eq 1) { $t.TriggerType = 3; $t.TriggerDelayTime = $t.TriggerDelayTime + $GapSec } }
+      # a click becomes "after previous" with the gap; the "with previous" effects of that click get the same gap
+      # (a delay is per effect: without it they would start before the click's first effect)
+      $shift = $false
+      for ($i = 1; $i -le $seq.Count; $i++) {
+        $t = $seq.Item($i).Timing
+        if ($t.TriggerType -eq 1) { $t.TriggerType = 3; $t.TriggerDelayTime = $t.TriggerDelayTime + $GapSec; $shift = $true }
+        elseif ($t.TriggerType -eq 2 -and $shift) { $t.TriggerDelayTime = $t.TriggerDelayTime + $GapSec }
+        else { $shift = $false }
+      }
       $s.SlideShowTransition.AdvanceOnTime = -1; $s.SlideShowTransition.AdvanceTime = $GapSec
     }
     $mp4 = Join-Path $dir 'video.mp4'
