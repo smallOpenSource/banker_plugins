@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.29.1] - 2026-11-20
+
+### Fixed
+- `presentation-graphic-gen`: `pptx.mjs com --anim` 이 PowerPoint 2019 에서 슬라이드 쇼가 돌아도 `com-show` 를 SKIP 으로 보고하던 것. PowerPoint 2019 의 COM 에는 `SlideShowWindow.HWND` 가 없다.
+  - 쇼 창은 `screenClass` 창을 찾고, `PrintWindow` 로 그 창만 찍는다. 쇼 위에 다른 창이 있어도 그 창은 찍히지 않는다.
+  - 클릭은 `GotoClick` 대신 `View.Next` 로 한다.
+- `presentation-graphic-gen`: PowerPoint 2019 슬라이드 쇼 실측 결과를 `references/pptx.md`, `references/traps.md` 에 적었다. 0.29.0 에서 아직 확인하지 못한 것으로 둔 항목이다.
+  - `GetClickCount`, `FirstAnimationIsAutomatic` 은 파일대로 나온다.
+  - `View.Next` 뒤 캡처는 16/16 단계 모두 HTML `stills/` 의 자기 단계와 가장 가깝다. 48 넘게 다른 화소는 최대 1.67% 다.
+  - 재생 중 클릭은 PowerPoint 고유 동작이다. 진행 중인 효과를 끝 상태로 보내고 같은 클릭에 다음 묶음까지 시작한다. HTML 은 끝 상태로 마치기만 한다. 편집 PPTX 는 `nextAc="seek"` 를 그대로 쓴다.
+  - `GotoClick(k)` 는 클릭 번호만 바꾸고 화면은 클릭 0 에 남을 수 있다. 그래서 `com --anim` 은 `View.Next` 로 캡처한다.
+  - 방법: SYSTEM 예약 작업으로 `tscon <세션> /dest:console` 을 실행해 세션을 콘솔에 연결한 뒤 쟀다.
+- `omc-patch`: OMC 5.8.x 의 hooks.json 실행 꼴(`"command": "node"`, `"args": [".../<이름>.mjs"]`)에서 `--check` 가 PostToolUse 훅 이름을 `?` 로 보이던 것. `command` 와 `args` 를 이어 이름을 찾는다. 표시만 바뀌고 판정과 제거는 전과 같다.
+
+### Notes
+- 호환 확인. 코드 변경은 없다.
+  - OMC 5.8.6: 이 PC 와 테스트박스 3대에서 빌드한 판으로 위키 형식 대조, `omc-patch` 의 진단, 적용, 검증, 되돌리기, 훅 실행 비교, `setup-omc-hud` 가 모두 통과했다.
+  - OMX 0.22.11: 위키 형식 대조(`gen-omx-wiki-golden.mjs --check`)가 통과했다.
+  - 새 Claude Code 세션(`claude -p`)과 새 `codex exec` 세션에서 banker, OMC, OMX 훅이 오류나 시간 초과 없이 끝났다.
+  - 테스트박스의 Codex banker 훅 최대 시간: macOS 0.13초, Windows PowerShell 5.1 1.01초, pwsh 7 1.20초, Rocky Linux 8 0.27초. 제한 10초 안이다.
+- 훅 코드는 바뀌지 않아 Codex 플러그인 사용자에게 `/hooks` 신뢰를 다시 묻지 않는다. `banker-hooks-rev` 는 `cc0b4f7d4e17` 그대로다.
+- 크기: git 추적 파일 합계는 598개, 약 28.7MB 로 0.29.0 과 같다. npm 묶음은 압축 18.2MB, 푼 크기 23.3MB 다.
+- 실측: 테스트박스 3대에서 5a1026c 를 시험했다(통과/실패). macOS 3334/0, Windows 3329/0, Rocky Linux 8 3334/0. pwsh 7 의 훅 명령 시험은 21/0 이다.
+
 ## [0.29.0] - 2026-11-19
 
 ### Added

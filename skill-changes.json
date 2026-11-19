@@ -405,5 +405,9 @@
     "banker:video-gen",
     "banker:wbs-gen",
     "banker:wide-pptx"
+  ],
+  "0.29.1": [
+    "banker:omc-patch",
+    "banker:presentation-graphic-gen"
   ]
 }
