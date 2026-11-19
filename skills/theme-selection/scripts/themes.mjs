@@ -602,7 +602,7 @@ export const GROUPS = [
 // [이 각도 아래, 이름]. 색조는 0~360 도입니다. 🔴 경계는 `<` 입니다. 순수
 // 파랑(`#0000ff`)이 정확히 240도라서 "파랑" 칸은 245 까지입니다.
 const HUE_NAMES = [
-  [8, "빨강"], [20, "주황빛 빨강"], [42, "주황"], [47, "노란빛 주황"],
+  [8, "빨강"], [20, "주황빛 빨강"], [40, "주황"], [48, "노란빛 주황"],
   [70, "노랑"], [100, "연두"], [165, "초록"], [190, "청록"],
   [205, "청록빛 파랑"], [245, "파랑"], [258, "보랏빛 파랑"], [285, "보라"],
   [320, "자주"], [340, "분홍"], [352, "분홍빛 빨강"], [360, "빨강"],
@@ -611,15 +611,25 @@ const HUE_NAMES = [
 // 색조만으로는 틀리는 이름. [맞는지, 이름]이고 앞에서부터 봅니다. 어두운 주황은
 // 갈색(`#8b4513`), 채도가 낮은 어두운 빨강은 적갈색(`#a52a2a`), 어두운 노랑과
 // 연두는 올리브색, 어두운 파랑은 남색, 밝은 빨강은 분홍, 밝은 청록빛 파랑은
-// 하늘색입니다. `h` 는 색조(도), `l` 은 HLS 명도, `s` 는 HLS 채도입니다.
+// 하늘색입니다. 인자는 색 모양(`colorShape`)입니다.
+// 🔴 갈색, 적갈색, 올리브색의 어두움은 HLS 명도가 아니라 가장 밝은 채널(`top`,
+// HSV 의 V)로 봅니다. 채도가 가득한 색은 가장 밝은 채널이 65% 여도 HLS 명도가
+// 0.32 라서, 명도로 보면 선명한 연두(`nvidia` 의 `#69a500`)가 올리브색이 됩니다.
 const SHADE_NAMES = [
-  [(h, l) => l < 0.45 && h >= 10 && h < 45, "갈색"],
-  [(h, l, s) => l < 0.45 && s < 0.7 && (h < 10 || h >= 345), "적갈색"],
-  [(h, l) => l < 0.35 && h >= 45 && h < 90, "올리브색"],
-  [(h, l) => l < 0.3 && h >= 205 && h < 250, "남색"],
-  [(h, l) => l > 0.7 && (h < 10 || h >= 330), "분홍"],
-  [(h, l) => l > 0.7 && h >= 185 && h < 215, "하늘색"],
+  [(c) => c.top < 0.65 && c.hue >= 10 && c.hue < 45, "갈색"],
+  [(c) => c.top < 0.7 && c.sat < 0.7 && (c.hue < 10 || c.hue >= 345), "적갈색"],
+  [(c) => c.top < 0.6 && c.hue >= 45 && c.hue < 90, "올리브색"],
+  [(c) => c.light < 0.3 && c.hue >= 205 && c.hue < 250, "남색"],
+  [(c) => c.light > 0.7 && (c.hue < 10 || c.hue >= 330), "분홍"],
+  [(c) => c.light > 0.7 && c.hue >= 185 && c.hue < 215, "하늘색"],
 ];
+
+// 무채색 무리에 드는 색(채널 차이 0.15 아래)에 남은 기운. 🔴 무리 기준은 그대로
+// 두고 이름만 색조를 담습니다(`#89678a` 는 보랏빛 회색). 채널 차이가 이 값
+// (15/255) 이하인 것만 순수 무채색으로 보아 회색, 검정, 흰색입니다.
+const GREY_CHROMA = 15.5 / 255;
+const TINT_NAMES = [[30, "붉은빛"], [75, "누런빛"], [165, "초록빛"],
+                    [280, "푸른빛"], [330, "보랏빛"], [360, "붉은빛"]];
 
 // 바탕에 살짝 도는 기운. 채도가 낮은 바탕에만 씁니다.
 const TINTS = [[30, "붉은"], [75, "누런"], [165, "초록"], [280, "푸른"],
@@ -649,7 +659,7 @@ const TINT_CHROMA = 0.015;
 function colorShape(value) {
   const chans = channels(value.toLowerCase());
   const [hue, light, sat] = rgbToHls(...chans);
-  return { hue: hue * 360, light, sat,
+  return { hue: hue * 360, light, sat, top: Math.max(...chans),
            chroma: Math.max(...chans) - Math.min(...chans) };
 }
 
@@ -665,11 +675,20 @@ function warmHue(degree) {
   return degree < 75 || degree >= 330;
 }
 
+// 무채색 무리에 드는 색의 이름. 밝은 누런 기는 베이지(`#f5f5dc`)입니다.
+function mutedName({ hue, light, chroma }) {
+  const grey = firstAtLeast(GREY_NAMES, light);
+  if (chroma < GREY_CHROMA) return grey;
+  if (light >= 0.75 && light < 0.95 && hue >= 20 && hue < 70) return "베이지";
+  return `${firstBelow(TINT_NAMES, hue)} ${grey}`;
+}
+
 // `#ff385c` -> `분홍빛 빨강`. 무채색이면 회색 이름을 씁니다.
 export function colorName(value) {
-  const { hue, light, sat, chroma } = colorShape(value);
-  if (chroma < MUTED_CHROMA) return firstAtLeast(GREY_NAMES, light);
-  const shade = SHADE_NAMES.find(([fits]) => fits(hue, light, sat));
+  const shape = colorShape(value);
+  const { hue, light, chroma } = shape;
+  if (chroma < MUTED_CHROMA) return mutedName(shape);
+  const shade = SHADE_NAMES.find(([fits]) => fits(shape));
   if (shade) return shade[1];
   const name = firstBelow(HUE_NAMES, hue);
   if (light < 0.3) return `짙은 ${name}`;
@@ -731,9 +750,16 @@ export function previewOf(theme, opts = {}) {
 // 폴더와 번들 `airbnb`) NFC 로 맞춘 소문자가 같으면 겹침입니다. 겹치는 것마다
 // ` (슬러그)` 를 붙입니다. 슬러그에는 빈칸과 괄호가 없어 붙인 이름끼리, 또는 붙인
 // 이름과 다른 표시명이 다시 겹치지 않습니다. `--json` 없는 `list` 는 그대로입니다.
+//
+// 🔴 SKILL.md 의 기타 낱말과 같은 표시명도 겹침으로 봅니다. 기타에 적은 낱말은
+// 낱말이 먼저라서, 슬러그를 붙이지 않으면 그 테마(`전부` 폴더)를 적어서 고를 수
+// 없습니다. 슬러그를 거절하지 않는 까닭은 그 DESIGN.md 를 쓰는 `css`, `check` 까지
+// 멈추기 때문입니다.
+const PICK_WORDS = ["전부", "더 보기", "다른 무리"];
+
 function uniqueLabels(entries) {
   const key = (label) => label.normalize("NFC").toLowerCase();
-  const seen = new Map();
+  const seen = new Map(PICK_WORDS.map((word) => [key(word), 1]));
   for (const [, theme] of entries) {
     seen.set(key(theme.label), (seen.get(key(theme.label)) || 0) + 1);
   }
