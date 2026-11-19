@@ -131,5 +131,7 @@ function main(argv) {
   return r.code;
 }
 
-const same = (a, b) => { try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return false; } };
+// a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+const same = (a, b) => ranAs(a) === ranAs(b);
 if (process.argv[1] && same(fileURLToPath(import.meta.url), path.resolve(process.argv[1]))) process.exitCode = main(process.argv.slice(2));

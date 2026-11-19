@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { after, describe, test } from 'node:test';
 import { SKILL } from './build.mjs';
 import { findBrowser, isSnap, launch, nulSplitter, playwrightCandidates, scratchBase, snapBrowser, snapCanRead, snapUnreadable } from './cdp.mjs';
@@ -84,6 +85,15 @@ test('a helper reached through a linked folder still runs its command (it once e
     const r = spawnSync(process.execPath, [join(link, 'scripts', file)], { encoding: 'utf8' });
     assert.match(r.stdout + r.stderr, re, file);
     assert.notEqual(r.stdout + r.stderr, '');
+  }
+});
+
+test('every command file can be imported when argv[1] is not a file (node -e): no ENOENT from realpath, nothing runs', () => {
+  for (const file of ['apply-fix', 'build', 'cdp', 'check', 'make', 'pptx-edit', 'pptx-video', 'pptx', 'record']) {
+    const url = pathToFileURL(join(SKILL, 'scripts', `${file}.mjs`)).href;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(url)})`, 'no-such-file'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${file}: ${r.stderr}`);
+    assert.equal(r.stdout + r.stderr, '', file);
   }
 });
 

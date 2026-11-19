@@ -439,7 +439,9 @@ async function main([mode, impl, arg]) {
   process.stdout.write(JSON.stringify(await runs[mode]()));
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+// a path realpath cannot read is compared as given (resolve), not taken for an import
+const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+if (process.argv[1] && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).catch((err) => {
     process.stderr.write(`${err.stack || err}\n`);
     process.exitCode = 1;

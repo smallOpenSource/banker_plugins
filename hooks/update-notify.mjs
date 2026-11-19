@@ -15,7 +15,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, readdirSync, realpathSync, renameSync, rmdirSync, rmSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -304,11 +304,9 @@ async function main() {
 // 직접 실행(훅)일 때만 main() 을 돌린다. import(테스트)시엔 chooseFetcher 만 노출하고 main 은 미실행.
 // run.cjs 가 realpath 로 resolve 한 뒤 argv[1] 로 넘겨도(심링크 배포) 양쪽을 realpath 비교해 일치시킨다.
 function invokedDirectly() {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // realpath 가 읽지 못하는 경로는 resolve 로 비교한다. false 로 답하면 훅이 아무것도 안 하고 종료 0 한다.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 }
 
 if (invokedDirectly()) {

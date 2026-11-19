@@ -56,6 +56,23 @@ test('skips with a reason: not found, more than once, same text, overlapping, ou
   assert.equal(r.lines.at(-1), 'applied 1, skipped 7');
 });
 
+test('an accepted.json that is not UTF-8 stops with one line and exit 2, and no file changes (remains 0.29.0 #5)', () => {
+  const root = fixture('cp949');
+  const list = join(root, 'accepted.json');
+  // "to" holds 가나 in cp949 (b0 a1 b3 aa); read as UTF-8 it went into the file as U+FFFD
+  writeFileSync(list, Buffer.concat([Buffer.from('[{"file":"deck.md","from":"같은 말. 같은 말.","to":"'), Buffer.from([0xb0, 0xa1, 0xb3, 0xaa]), Buffer.from('"}]')]));
+  const before = readFileSync(join(root, 'deck.md'));
+  const r = spawnSync(process.execPath, [CLI, list, '--root', root], { encoding: 'utf8' });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.equal(r.stderr, `apply-fix: ${list} is not UTF-8 (or UTF-16 with a BOM); save it as UTF-8\n`);
+  assert.deepEqual(readFileSync(join(root, 'deck.md')), before);
+  // a UTF-8 BOM is still taken
+  writeFileSync(list, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('[{"file":"deck.md","from":"같은 말. 같은 말.","to":"같은 말."}]')]));
+  const ok = spawnSync(process.execPath, [CLI, list, '--root', root], { encoding: 'utf8' });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /applied 1, skipped 0/);
+});
+
 test('--dry-run reports what it would apply and writes nothing (CLI)', () => {
   const root = fixture('dry');
   const before = readFileSync(join(root, 'deck.md'), 'utf8');

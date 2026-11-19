@@ -492,7 +492,8 @@ const sanitizeFontName = (s) => (typeof s === 'string' ? s.replace(/["'<>&]/g, '
 
 let fcMatchAvailable = null;
 function fcMatch(pattern) {
-  if (fcMatchAvailable === false) return null;
+  // Windows 에는 fc-match 가 보통 없고, 이름만 주면 지금 폴더(사용자 프로젝트)의 fc-match.exe 를 먼저 찾는다. 폰트 폴더 탐색만 쓴다.
+  if (fcMatchAvailable === false || process.platform === 'win32') return null;
   let res;
   try {
     res = cp.spawnSync('fc-match', ['--format=%{file}|%{family}', pattern], {
@@ -828,9 +829,22 @@ function parseArgs(argv) {
   return opts;
 }
 
+/**
+ * 파일을 UTF-8 텍스트로 읽는다. 앞의 BOM 은 뗀다. UTF-8 이 아닌 바이트(Windows PowerShell 5.1 의 cp949,
+ * DRM 이 암호화한 파일)는 U+FFFD 로 덱에 들어가지 않게 사용 오류(exit 3)로 멈춘다.
+ */
+function readUtf8File(file, what) {
+  let bytes;
+  try { bytes = fs.readFileSync(file); } catch (e) { throw new UsageError(`${what}을 읽지 못했다: ${e.message}`); }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new UsageError(`${what}이 UTF-8 이 아니다 (${file}): cp949 같은 다른 인코딩이나 암호화된 파일. UTF-8 로 저장해 다시 실행하라.`);
+  }
+}
+
 function readDeckFile(file) {
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { throw new UsageError(`deck JSON 을 읽지 못했다: ${e.message}`); }
+  const text = readUtf8File(file, 'deck JSON ');
   try { return JSON.parse(text); } catch (e) { throw new UsageError(`deck JSON 파싱 실패 (${file}): ${e.message}`); }
 }
 
@@ -850,9 +864,7 @@ function runMain(argv) {
   let deck;
   let warnings = [];
   if (opts.md) {
-    let text;
-    try { text = fs.readFileSync(opts.md, 'utf8'); } catch (e) { throw new UsageError(`마크다운을 읽지 못했다: ${e.message}`); }
-    const converted = mdToDeck(text);
+    const converted = mdToDeck(readUtf8File(opts.md, '마크다운'));
     deck = converted.deck;
     warnings = converted.warnings;
   } else {

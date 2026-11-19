@@ -97,8 +97,20 @@ function refusal(dir, file) {
 
 // ---- input and decisions ----------------------------------------------------
 
+// The file as text: UTF-8, a leading BOM dropped (Windows Notepad writes one). Other bytes (cp949 from an editor on
+// Windows, a DRM-encrypted file) stop here with the file's name: read as U+FFFD they would reach the page, and a
+// verdict or an archive would write the record back without the original bytes.
+function readUtf8(file) {
+  const bytes = fs.readFileSync(file);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`curate: ${path.basename(file)} 이 UTF-8 이 아닙니다(cp949 같은 다른 인코딩이나 암호화된 파일). UTF-8 로 저장한 뒤 다시 하세요`);
+  }
+}
+
 export function readInput(dir) {
-  const raw = JSON.parse(fs.readFileSync(path.join(dir, INPUT), 'utf8'));
+  const raw = JSON.parse(readUtf8(path.join(dir, INPUT)));
   const scenes = (Array.isArray(raw.scenes) ? raw.scenes : []).map((s, i) => ({
     ...s, id: String(s.id ?? `scene-${i + 1}`), label: s.label || String(s.id ?? `scene-${i + 1}`),
     takes: (Array.isArray(s.takes) ? s.takes : Array.isArray(s.variants) ? s.variants : [])
@@ -111,7 +123,7 @@ export function readInput(dir) {
 // wrong is not replaced with the other stages' verdicts lost.
 export function readDecisions(dir) {
   let text;
-  try { text = fs.readFileSync(path.join(dir, DECISIONS), 'utf8'); } catch (e) {
+  try { text = readUtf8(path.join(dir, DECISIONS)); } catch (e) {
     if (e.code === 'ENOENT') return {};
     throw e;
   }
@@ -235,7 +247,7 @@ function moveInto(dir, file, folder) {
 
 /** Moves the current stage's rejected takes into rejected-YYYYMMDD/ and drops them from the input. */
 export function archiveRejected(dir, { now = new Date() } = {}) {
-  const raw = JSON.parse(fs.readFileSync(path.join(dir, INPUT), 'utf8'));
+  const raw = JSON.parse(readUtf8(path.join(dir, INPUT)));
   const input = readInput(dir);
   const all = readDecisions(dir);
   const stage = stageOf(all, input.stage);
@@ -638,11 +650,9 @@ async function main() {
 // Node resolves links for import.meta.url but not for process.argv[1], so both go through realpath:
 // compared as given, a run through a linked folder would exit 0 without doing anything.
 const invokedDirectly = () => {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 };
 if (invokedDirectly()) {
   main().catch((e) => { console.error(String(e?.message || e)); process.exit(1); });

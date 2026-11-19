@@ -597,6 +597,37 @@ test('single-file target canonicalizes only that page', () => {
   assert.equal(fs.readFileSync(path.join(dir, 'q-two.md'), 'utf8'), qBefore, 'the hook passes one page; siblings are untouched');
 });
 
+// cp949 (Korean Windows' code page) and a DRM-encrypted page are not UTF-8. Read as UTF-8 and written back, their
+// bytes would become U+FFFD for good. "한글" in cp949 is C7 D1 B1 DB.
+test('a page that is not UTF-8 is never rewritten: skipped, named in the summary and warned about on stderr', () => {
+  const cp949 = Buffer.concat([
+    Buffer.from(omcPage({ title: 'Cp', tags: ['#x'] }).split('Body text.')[0]),
+    Buffer.from([0xc7, 0xd1, 0xb1, 0xdb]),
+    Buffer.from('\n'),
+  ]);
+  const drm = Buffer.from([0x00, 0x9c, 0xff, 0xfe, 0x80, 0xc3, 0x28, 0xa0]);
+  const dir = makeVault({ 'index.md': '# I\n', 'log.md': '# L\n', 'cp.md': cp949, 'drm.md': drm, 'ok.md': omcPage({ title: 'Ok', tags: ['#y'] }) });
+  const report = run(dir, { now: NOW });
+  assert.equal(report.profile, 'omc');
+  assert.deepEqual(report.changed, ['ok.md'], 'the UTF-8 page is still canonicalized');
+  assert.deepEqual(report.skipped.filter((s) => s.reason === 'not UTF-8').map((s) => s.file), ['cp.md', 'drm.md']);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'cp.md')), cp949, 'the cp949 bytes are as they were');
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'drm.md')), drm);
+
+  fs.writeFileSync(path.join(dir, 'ok.md'), omcPage({ title: 'Ok', tags: ['#z'] }));
+  const cli = spawnSync(process.execPath, [fileURLToPath(new URL('./obsidize.mjs', import.meta.url)), dir], { encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /skipped: 4/, 'two pages that are not UTF-8 and the reserved index.md and log.md');
+  assert.match(cli.stdout, /^ {2}skipped {2}cp\.md \(not UTF-8\)$/m);
+  assert.match(cli.stderr, /cp\.md.*UTF-8/);
+  assert.match(cli.stderr, /drm\.md.*UTF-8/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'cp.md')), cp949);
+
+  const single = run(path.join(dir, 'cp.md'), { now: NOW });
+  assert.deepEqual(single.skipped, [{ file: 'cp.md', reason: 'not UTF-8' }], 'a single-page run (the hook) skips it too');
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'cp.md')), cp949);
+});
+
 test('findH1s ignores # lines inside fences', () => {
   assert.deepEqual(findH1s('# Real\n\n```sh\n# fake\n```\n'), ['Real']);
 });

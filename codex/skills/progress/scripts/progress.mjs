@@ -14,7 +14,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -249,17 +249,20 @@ function opt(argv, name, fallback) {
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : fallback;
 }
 
+// tmux runs from the home folder: Windows (psmux) looks for a bare program name in the working folder first.
+const tmux = (args, opts = {}) => spawnSync('tmux', args, { cwd: existsSync(homedir()) ? homedir() : tmpdir(), ...opts });
+
 function pane(mode, file, depth) {
   if (!process.env.TMUX) return 'tmux 안이 아니라 칸을 열 수 없음. 진행 상황은 이 출력으로 봄';
-  const ids = spawnSync('tmux', ['list-panes', '-F', '#{pane_id} #{pane_title}'], { encoding: 'utf8' });
+  const ids = tmux(['list-panes', '-F', '#{pane_id} #{pane_title}'], { encoding: 'utf8' });
   if (ids.status !== 0) return `tmux 에 닿지 못함(${(ids.stderr || '').trim() || ids.error?.code}). 샌드박스 밖 실행 승인이 필요할 수 있음`;
-  for (const l of ids.stdout.split('\n')) if (l.endsWith(` ${PANE_TITLE}`)) spawnSync('tmux', ['kill-pane', '-t', l.split(' ')[0]]);
+  for (const l of ids.stdout.split('\n')) if (l.endsWith(` ${PANE_TITLE}`)) tmux(['kill-pane', '-t', l.split(' ')[0]]);
   if (mode === 'off') return 'progress 칸을 닫음';
   const me = fileURLToPath(import.meta.url);
   const cmd = [process.execPath, me, '--follow', '--rollout', file, '--depth', String(depth)].map((a) => `'${a.replaceAll("'", "'\\''")}'`).join(' ');
-  const r = spawnSync('tmux', ['split-window', '-h', '-d', '-l', '40%', '-P', '-F', '#{pane_id}', cmd], { encoding: 'utf8' });
+  const r = tmux(['split-window', '-h', '-d', '-l', '40%', '-P', '-F', '#{pane_id}', cmd], { encoding: 'utf8' });
   if (r.status !== 0) return `칸을 열지 못함(${(r.stderr || '').trim()})`;
-  spawnSync('tmux', ['select-pane', '-t', r.stdout.trim(), '-T', PANE_TITLE]);
+  tmux(['select-pane', '-t', r.stdout.trim(), '-T', PANE_TITLE]);
   return 'progress 칸을 오른쪽에 엶(2초마다 갱신). 닫기: --pane off';
 }
 
@@ -318,7 +321,9 @@ function main(argv) {
 }
 
 // 직접 실행일 때만 main. 경로에 링크가 있어도(~/.codex 가 링크인 경우) 같은 파일로 본다.
-const same = (a, b) => { try { return realpathSync(a) === realpathSync(b); } catch { return false; } };
+// a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+const same = (a, b) => ranAs(a) === ranAs(b);
 if (process.argv[1] && same(fileURLToPath(import.meta.url), resolve(process.argv[1]))) {
   const code = main(process.argv.slice(2));
   if (typeof code === 'number') process.exitCode = code;

@@ -277,3 +277,45 @@ test("holidays: a saved calendar is read; an unreachable one ends with 3 and ask
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// cp949 (Korean Windows' code page) and a DRM-encrypted file are not UTF-8: read as UTF-8 they would put U+FFFD in
+// the XLSX, the HTML and the holiday names. "한글" in cp949 is C7 D1 B1 DB; it takes the first Hangul syllable's place.
+const CP949 = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb]);
+const NOT_TEXT = Buffer.from([0x00, 0x9c, 0xff, 0xfe, 0x80, 0xc3, 0x28, 0xa0]);
+const withCp949 = (text) => {
+  const chars = [...text];
+  const i = chars.findIndex((c) => c >= "\uAC00" && c <= "\uD7A3");
+  return Buffer.concat([Buffer.from(chars.slice(0, i).join("")), CP949, Buffer.from(chars.slice(i + 1).join(""))]);
+};
+
+test("a plan or calendar that is not UTF-8 stops with one line naming the file; a UTF-8 BOM is fine", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wbs-gen-"));
+  try {
+    const plan = run(["example"], dir).stdout;
+    writeFileSync(join(dir, "cp949.json"), withCp949(plan));
+    writeFileSync(join(dir, "drm.json"), NOT_TEXT);
+    writeFileSync(join(dir, "bom.json"), `\uFEFF${plan}`);
+    writeFileSync(join(dir, "cp949.ics"), withCp949(ICS));
+    writeFileSync(join(dir, "bom.ics"), `\uFEFF${ICS}`);
+    const refused = (r, file) => {
+      assert.equal(r.status, 2, `${file}: ${r.stdout}${r.stderr}`);
+      assert.equal(r.stderr.trim().split("\n").length, 1, r.stderr);
+      assert.ok(r.stderr.includes(file) && r.stderr.includes("UTF-8"), r.stderr);
+    };
+    for (const file of ["cp949.json", "drm.json"]) {
+      refused(run(["check", "--plan", file], dir), file);
+      refused(run(["build", "--plan", file, "--out", "x.xlsx", "--out", "x.html"], dir), file);
+    }
+    assert.ok(!readdirSync(dir).some((f) => f.startsWith("x.")), "nothing is written for a plan that is not UTF-8");
+    const holidays = ["holidays", "--from", "2026-07-22", "--to", "2026-08-28", "--ics"];
+    refused(run([...holidays, "cp949.ics"], dir), "cp949.ics");
+    const bomIcs = run([...holidays, "bom.ics"], dir);
+    assert.equal(bomIcs.status, 0, bomIcs.stderr);
+    assert.match(bomIcs.stdout, /^HOLIDAYS 08\/15, 08\/17$/m);
+    const bom = run(["build", "--plan", "bom.json", "--out", "b.html"], dir);
+    assert.equal(bom.status, 0, bom.stderr);
+    assert.ok(!readFileSync(join(dir, "b.html"), "utf8").includes("\uFFFD"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

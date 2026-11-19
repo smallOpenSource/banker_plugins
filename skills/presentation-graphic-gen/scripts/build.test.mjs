@@ -8,12 +8,13 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { extname, join, relative } from 'node:path';
 import { after, test } from 'node:test';
-import { SAMPLE, SKILL, deckData, lintScene, parseArgs, parseScript, repeatWarnings, syllables, timeBudget } from './build.mjs';
+import { SAMPLE, SKILL, deckData, lintScene, parseArgs, parseScript, readText, repeatWarnings, syllables, timeBudget } from './build.mjs';
 import { check } from './check.mjs';
 import { codepointsOf, embedFonts } from './fonts.mjs';
 import { doneReport } from './make.mjs';
 import { comCheck, summaryLine, verify } from './pptx.mjs';
 import { ORIGINALS, PACKED, VendorError, VENDOR, vendorBytes, verifyVendor } from './vendor.mjs';
+import { pwshEnv } from '../../../scripts/test-fixtures/pwsh-env.mjs';
 
 const BUILD = join(SKILL, 'scripts', 'build.mjs');
 const TMP = mkdtempSync(join(tmpdir(), 'pgg-build-test-'));
@@ -53,6 +54,56 @@ test('parseScript reads sections, steps, 화면 lines, 말 and keeps stage direc
   assert.deepEqual(b.screen, ['둘째', '둘째 줄']);
   assert.equal(b.speech, '짧은 말.');
   assert.equal(b.id, 's1-2');
+});
+
+// A script with one line in cp949 (가나 is b0 a1 b3 aa there): what Windows PowerShell 5.1's Set-Content writes on Korean
+// Windows. Before remains 0.29.0 #5 it built with U+FFFD in the review HTML and exit 0.
+const CP949_LINE = Buffer.from([0xb0, 0xa1, 0xb3, 0xaa]);
+const cp949Script = () => { const [head, tail] = MINI.split('짧은 말.'); return Buffer.concat([Buffer.from(head), CP949_LINE, Buffer.from(tail)]); };
+
+test('readText: UTF-8 (BOM dropped) and UTF-16 with a BOM are read; anything else is exit 2 naming the file', () => {
+  const dir = join(TMP, 'enc');
+  mkdirSync(dir, { recursive: true });
+  const put = (name, bytes) => { writeFileSync(join(dir, name), bytes); return join(dir, name); };
+  assert.equal(readText(put('plain.md', Buffer.from('# 가\n'))), '# 가\n');
+  assert.equal(readText(put('bom.md', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('# 가\n')]))), '# 가\n');
+  assert.equal(readText(put('le.md', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('# 가\n', 'utf16le')]))), '# 가\n');
+  const bad = put('cp949.md', cp949Script());
+  assert.throws(() => readText(bad), (e) => e.exit === 2 && e.message === `${bad} is not UTF-8 (or UTF-16 with a BOM); save it as UTF-8`);
+  assert.equal(parseScript(readText(put('bom-script.md', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(MINI)])))).errors.length, 0, 'a BOM script still parses');
+});
+
+test('not UTF-8: build, make, pptx-video, pptx-edit and verify stop with one line and exit 2, writing nothing', () => {
+  const dir = join(TMP, 'cp949');
+  mkdirSync(dir, { recursive: true });
+  const script = join(dir, 'deck.md');
+  writeFileSync(script, cp949Script());
+  const one = (r, what) => {
+    assert.equal(r.status, 2, `${what}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`^[a-z-]+: ${script.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')} is not UTF-8 \\(or UTF-16 with a BOM\\); save it as UTF-8\\n$`), what);
+  };
+  one(run([BUILD, script, '--dir', join(dir, 'out'), '--stamp', '261118+1500']), 'build');
+  assert.ok(!existsSync(join(dir, 'out')), 'build wrote nothing');
+  // CHROME names no file, so there is no browser here: make reports the script before the browser search, on every PC
+  one(run([join(SKILL, 'scripts', 'make.mjs'), script, '--dir', join(dir, 'make-out'), '--stamp', '261118+1500'], { env: { ...process.env, CHROME: join(dir, 'no-browser') } }), 'make');
+  // a script that does not exist is a usage error (exit 2) too, with or without a browser
+  const gone = run([join(SKILL, 'scripts', 'make.mjs'), join(dir, 'gone.md'), '--dir', join(dir, 'make-out'), '--stamp', '261118+1500'], { env: { ...process.env, CHROME: join(dir, 'no-browser') } });
+  assert.equal(gone.status, 2, gone.stdout + gone.stderr);
+  assert.match(gone.stderr, /^make: script not found: .*gone\.md\n$/);
+  one(run([join(SKILL, 'scripts', 'pptx-video.mjs'), script, '--media', join(dir, 'media'), '--out', join(dir, 'v.pptx')]), 'pptx-video');
+  // CHROME names a file that exists, so pptx-edit gets past its browser check to the script (nothing is launched)
+  one(run([join(SKILL, 'scripts', 'pptx-edit.mjs'), join(dir, 'p.html'), script, '--out', join(dir, 'e.pptx')], { env: { ...process.env, CHROME: process.execPath } }), 'pptx-edit');
+  one(run([join(SKILL, 'scripts', 'pptx.mjs'), 'verify', join(dir, 'none.pptx'), '--script', script]), 'verify');
+  for (const f of ['v.pptx', 'e.pptx']) assert.ok(!existsSync(join(dir, f)), f);
+  // a scene file in cp949 is the same file error, not a scene error (exit 1)
+  const ok = join(dir, 'ok.md');
+  writeFileSync(ok, MINI);
+  mkdirSync(join(dir, 'scenes'), { recursive: true });
+  writeFileSync(join(dir, 'scenes', '01.js'), Buffer.concat([Buffer.from("Deck.scene({ section: 1, steps: {} }); // "), CP949_LINE]));
+  const sc = run([BUILD, ok, '--dir', join(dir, 'out2'), '--stamp', '261118+1500']);
+  assert.equal(sc.status, 2, sc.stdout + sc.stderr);
+  assert.match(sc.stderr, /scenes[\\/]01\.js is not UTF-8/);
+  assert.ok(!existsSync(join(dir, 'out2')));
 });
 
 test('parseScript reports malformed scripts', () => {
@@ -264,7 +315,25 @@ test('names: the default name is the script file name, Hangul and spaces include
   for (const bad of ['../up', 'a/b', 'a\\b', 'a:b', 'a*b', 'a?b', 'a"b', 'a<b', 'a|b', 'a\u0001b', '..', 'x.', ' x', 'x ']) {
     assert.throws(() => parseArgs(['x.md', '--name', bad], TMP), (e) => e.exit === 2 && /--name may hold/.test(e.message), JSON.stringify(bad));
   }
-  assert.throws(() => parseArgs(['a*b.md'], TMP), (e) => e.exit === 2 && /the output name \(the script file name; give --name\)/.test(e.message));
+  assert.throws(() => parseArgs(['..md'], TMP), (e) => e.exit === 2 && /the output name \(the script file name; give --name\)/.test(e.message));
+});
+
+test('names: a default name turns characters outside the rule into "-"; a given --name is refused instead (remains 0.29.0 #7)', () => {
+  for (const [file, name] of [['발표(최종).md', '발표-최종'], ['Q&A 자료.md', 'Q-A-자료'], ['회의 #3, [초안]·메모.md', '회의-3-초안-메모'], ['a*b.md', 'a-b'], ['my  talk.md', 'my-talk']]) {
+    assert.equal(parseArgs([file], TMP).name, name, file);
+  }
+  for (const bad of ['발표(최종)', 'Q&A', 'a#b', 'a,b', 'a[b]', 'a·b']) {
+    assert.throws(() => parseArgs(['x.md', '--name', bad], TMP), (e) => e.exit === 2 && /--name may hold/.test(e.message), JSON.stringify(bad));
+  }
+  assert.throws(() => parseArgs(['(#).md'], TMP), (e) => e.exit === 2 && /give --name/.test(e.message), 'nothing left of the file name');
+});
+
+test('names: Windows device names are refused, given or by default, with or without an extension (N4)', () => {
+  for (const bad of ['CON', 'con', 'PRN', 'AUX', 'NUL', 'nul.html', 'COM1', 'com9.md', 'LPT1', 'lpt9.x.y', 'COM\u00b9', 'NUL .md']) {
+    assert.throws(() => parseArgs(['x.md', '--name', bad], TMP), (e) => e.exit === 2 && /Windows device name/.test(e.message), JSON.stringify(bad));
+  }
+  assert.throws(() => parseArgs(['nul.md'], TMP), (e) => e.exit === 2 && /give --name/.test(e.message));
+  for (const ok of ['CONSOLE', 'nullable', 'COM10', 'LPT', 'my-con', 'AUX1']) assert.equal(parseArgs(['x.md', '--name', ok], TMP).name, ok, ok);
 });
 
 test('build: script files named 발표.md and "my talk.md" build without --name', () => {
@@ -293,10 +362,26 @@ test('no overwrite: check, verify --frames, com and make refuse a folder that is
     // the PowerShell script itself keeps the rule when called directly (exit 4)
     writeFileSync(join(TMP, 'none.pptx'), 'x');
     const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const p = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(SKILL, 'scripts', 'pptx-com.ps1'), '-Src', join(TMP, 'none.pptx'), '-PngDir', full], { encoding: 'utf8', windowsHide: true });
+    // a temp home and the opt-outs, so PowerShell's caches stay out of the real home (scripts/test-fixtures/pwsh-env.mjs)
+    const pse = pwshEnv();
+    let p;
+    try {
+      p = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(SKILL, 'scripts', 'pptx-com.ps1'), '-Src', join(TMP, 'none.pptx'), '-PngDir', full], { encoding: 'utf8', windowsHide: true, env: pse.env });
+    } finally {
+      rmSync(pse.home, { recursive: true, force: true });
+    }
     assert.ok(p.status === 4 || /already running/.test(p.stdout), p.stdout + p.stderr);
   }
   assert.equal(readFileSync(join(full, 'keep.txt'), 'utf8'), 'mine', 'the folder is untouched');
+  // a file where the PNG or frames folder goes: one line and exit 2, no stack trace (remains 0.29.0 #8)
+  const notDir = join(full, 'keep.txt');
+  assert.throws(() => comCheck(join(TMP, 'none.pptx'), notDir), (e) => e.exit === 2 && /is not a folder that can be read/.test(e.message));
+  const comFile = run([join(SKILL, 'scripts', 'pptx.mjs'), 'com', join(TMP, 'none.pptx'), notDir]);
+  assert.equal(comFile.status, 2, comFile.stdout + comFile.stderr);
+  assert.match(comFile.stderr, /^pptx: .*keep\.txt is not a folder that can be read \(E[A-Z]+\)\n$/);
+  const vFile = run([join(SKILL, 'scripts', 'pptx.mjs'), 'verify', join(TMP, 'none.pptx'), '--script', SAMPLE, '--frames', notDir]);
+  assert.equal(vFile.status, 2, vFile.stdout + vFile.stderr);
+  assert.match(vFile.stderr, /^pptx: .*keep\.txt is not a folder that can be read \(E[A-Z]+\)\n$/);
   // make: the check folder (html) and the recording folder (pptx) of the same name and stamp are checked first
   const out = join(TMP, 'make-out'), st = '261118+1400';
   for (const [sub, format] of [[`check-coffee-present-${st}`, 'html'], [`coffee-recording-${st}`, 'pptx']]) {
@@ -307,6 +392,13 @@ test('no overwrite: check, verify --frames, com and make refuse a folder that is
     assert.match(r.stderr, new RegExp(`${sub.replace(/[+]/g, '\\+')} is not empty; not overwriting`));
     assert.doesNotMatch(r.stdout, /== build/, 'refused before the build');
     rmSync(join(out, sub), { recursive: true });
+    // a file where that folder goes: one line and exit 2 (a usage error), not ENOTDIR and exit 1
+    writeFileSync(join(out, sub), 'x');
+    const f = run([join(SKILL, 'scripts', 'make.mjs'), '--sample', '--format', format, '--dir', out, '--stamp', st]);
+    assert.equal(f.status, 2, f.stdout + f.stderr);
+    assert.match(f.stderr, new RegExp(`^make: .*${sub.replace(/[+]/g, '\\+')} is not a folder that can be read \\(E[A-Z]+\\)\n$`));
+    assert.doesNotMatch(f.stdout, /== build/, 'refused before the build');
+    rmSync(join(out, sub));
   }
 });
 

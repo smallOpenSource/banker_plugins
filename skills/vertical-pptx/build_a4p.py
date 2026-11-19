@@ -527,7 +527,9 @@ _FC_STATE = {"available": None}
 
 def fc_match(pattern):
     """fc-match 로 이름 하나를 파일 + family 로 해석한다. 없으면 None (한 번 확인하면 기억한다)."""
-    if _FC_STATE["available"] is False:
+    # Windows 에는 fc-match 가 보통 없고, 이름만 주면 지금 폴더(사용자 프로젝트)의 fc-match.exe 를 먼저 찾는다.
+    # 폰트 폴더 탐색만 쓴다.
+    if _FC_STATE["available"] is False or sys.platform == "win32":
         return None
     try:
         res = subprocess.run(
@@ -1065,11 +1067,17 @@ def parse_args(argv):
 
 
 def read_deck_file(path):
+    # node 빌더와 같은 규칙: UTF-8 만 받고 앞의 BOM 은 뗀다(utf-8-sig). cp949 나 암호화된 파일은 exit 3.
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8-sig") as fh:
             text = fh.read()
     except OSError as exc:
         raise UsageError("deck JSON 을 읽지 못했다: {0}".format(exc))
+    except UnicodeDecodeError:
+        raise UsageError(
+            "deck JSON 이 UTF-8 이 아니다 ({0}): cp949 같은 다른 인코딩이나 암호화된 파일. "
+            "UTF-8 로 저장해 다시 실행하라.".format(path)
+        )
     try:
         return json.loads(text)
     except ValueError as exc:

@@ -1,7 +1,7 @@
 // Tests for the Codex progress script. Run from the repo root: node --test codex/skills/progress/scripts/progress.test.mjs
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -143,4 +143,18 @@ test('--follow redraws at the next tick when only the plan file changed, without
   assert.equal(draw(), true);
   assert.equal(reads, 2, 'a grown record is read again');
   assert.match(shown.at(-1), /more/);
+});
+
+// 0.16.2 rule: no file in the project folder picks the program. tmux (psmux on Windows) runs from the home folder, so a
+// tmux in the folder Codex works in never runs. POSIX reaches the working folder through an empty PATH entry (used here).
+test('--pane runs tmux from the home folder, not a tmux in the working folder', { skip: process.platform === 'win32' && 'the stand-in tmux is a sh script' }, () => {
+  const work = mkdtempSync(join(root, 'work-'));
+  const empty = mkdtempSync(join(root, 'empty-'));
+  const mark = join(root, `tmux-ran-${process.pid}`);
+  writeFileSync(join(work, 'tmux'), `#!/bin/sh\necho x >> '${mark}'\n`, { mode: 0o755 });
+  const env = { ...process.env, TMUX: '/tmp/fake,1,0', PATH: `${empty}:` };
+  const r = spawnSync(process.execPath, [SCRIPT, '--rollout', join(root, 'none.jsonl'), '--pane', 'off'], { cwd: work, encoding: 'utf8', env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /tmux 에 닿지 못함/);
+  assert.equal(existsSync(mark), false, 'the tmux in the working folder did not run');
 });

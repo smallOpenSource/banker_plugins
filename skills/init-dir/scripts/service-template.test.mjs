@@ -4,9 +4,9 @@
 // Run: node --test skills/init-dir/scripts/service-template.test.mjs
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { symlinkSkip } from "../../../scripts/test-fixtures/can-symlink.mjs";
@@ -19,6 +19,10 @@ const NO_CMDLINE = new URL("../../../scripts/test-fixtures/no-cmdline.mjs", impo
 const LOCK_RACE = new URL("../../../scripts/test-fixtures/lock-race.mjs", import.meta.url).href;
 // Preload that answers EPERM, EBUSY once, as Windows does for a lock file being deleted (scripts/test-fixtures).
 const LOCK_BUSY = new URL("../../../scripts/test-fixtures/lock-busy-once.mjs", import.meta.url).href;
+// Preload that makes every command-line read take seconds, as PowerShell does on a loaded Windows (scripts/test-fixtures).
+const SLOW_CMDLINE = new URL("../../../scripts/test-fixtures/slow-cmdline.mjs", import.meta.url).href;
+// Preload that runs the Windows branch on POSIX and records each program it starts (scripts/test-fixtures).
+const FAKE_WIN32 = new URL("../../../scripts/test-fixtures/fake-win32.mjs", import.meta.url).href;
 const base = mkdtempSync(join(tmpdir(), "init-dir-service-"));
 const home = join(base, "home");
 mkdirSync(home);
@@ -55,13 +59,17 @@ function killQuietly(pid, group) {
   }
 }
 
-// Whatever a failed test left running is killed before the temp folder goes.
+// Whatever a failed test left running is killed before the temp folder goes. On Windows the whole tree goes through
+// taskkill /T: killing the supervisor and the shell leaves what the shell ran alive, its working folder inside base,
+// and Windows refuses to remove a folder a process works in (EPERM). A handle closes a moment after its process ends.
+const TASKKILL = join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe");
 after(() => {
   for (const p of started) {
+    if (WIN) for (const pid of [p.supervisor, p.child]) if (Number.isInteger(pid)) spawnSync(TASKKILL, ["/T", "/F", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
     killQuietly(p.supervisor, false);
     killQuietly(p.child, true);
   }
-  rmSync(base, { recursive: true, force: true });
+  rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 });
 
 let n = 0;
@@ -191,6 +199,76 @@ test("AC10: Windows .cmd wrappers are CRLF and stop uses taskkill", { skip: !WIN
     assert.equal(/(?<!\r)\n/.test(text), false, name);
   }
   assert.match(readFileSync(join(root, "scripts", "lib", "service.mjs"), "utf8"), /taskkill/);
+});
+
+// 0.16.2 rule: no file in the project folder picks the program to run. Windows looks for a bare program name in the
+// working folder first, so the Windows branch names System32's programs by full path (SystemRoot), checked on Linux
+// through a preload that makes process.platform win32 and answers powershell.exe and taskkill.exe (/proc needed).
+const fakeWin = (root, script, args, mark) =>
+  spawnSync(process.execPath, ["--import", FAKE_WIN32, join(root, script), ...args], { encoding: "utf8", cwd: root, env: { ...ENV, SystemRoot: "D:\\Win", FAKE_WIN32_MARK: mark }, timeout: 30000 });
+const ranOf = (mark) => (existsSync(mark) ? readFileSync(mark, "utf8").trim().split("\n") : []).filter((c) => /taskkill|powershell/i.test(c));
+const WIN_PS = "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+const WIN_TASKKILL = "D:\\Win\\System32\\taskkill.exe";
+
+test("Windows branch (preload): stop and status run System32's powershell.exe and taskkill.exe by full path", { skip: process.platform !== "linux" && "Linux 에서 Windows 분기를 흉내(/proc)" }, async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  assert.equal(svc(root, "start").status, 0);
+  const p = pidOf(root);
+  const mark = join(base, `win${n++}.log`);
+  const sp = fakeWin(root, join("scripts", "lib", "service.mjs"), ["stop"], mark);
+  assert.equal(sp.status, 0, sp.stdout + sp.stderr);
+  assert.match(sp.stdout, /멈춤/);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
+  assert.deepEqual([...new Set(ranOf(mark))].sort(), [WIN_PS, WIN_TASKKILL].sort(), "the command line through PowerShell, the stop through taskkill");
+  // A pid file whose supervisor and shell are dead: Windows looks for what the shell ran (orphanOf) through PowerShell.
+  const dead = Number(spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim());
+  plant(root, { supervisor: dead, child: dead, startedAt: new Date().toISOString(), command: "x" });
+  rmSync(mark, { force: true });
+  const st = fakeWin(root, join("scripts", "lib", "service.mjs"), ["status"], mark);
+  assert.equal(st.status, 1, st.stdout + st.stderr);
+  assert.deepEqual(ranOf(mark), [WIN_PS]);
+});
+
+test("Windows branch (preload): a suite past its time limit is ended through System32's taskkill.exe by full path", { skip: process.platform !== "linux" && "Linux 에서 Windows 분기를 흉내" }, () => {
+  const root = project("tests");
+  writeFileSync(join(root, "tests", "tests.conf"), "timeout=1\nslow=exec sleep 30\n");
+  const mark = join(base, `win${n++}.log`);
+  const r = fakeWin(root, join("tests", "run.mjs"), [], mark);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^FAIL slow \(\d+\.\d+s, timeout 1초\)$/m);
+  assert.deepEqual(ranOf(mark), [WIN_TASKKILL]);
+});
+
+// The .cmd wrappers find node.exe on PATH only (for's %~$PATH:), never a node.exe or node.cmd in the project folder.
+test(".cmd wrappers: NODE unset, node comes from PATH only, not from the project folder", () => {
+  const root = project("scripts,tests");
+  const cmds = ["start", "stop", "status", "restart"].map((s) => join("scripts", `${s}.cmd`)).concat(join("tests", "run.cmd"));
+  for (const rel of cmds) {
+    const text = readFileSync(join(root, rel), "utf8");
+    // the search runs over a copy of PATH without quotes: %~$PATH: skips a quoted entry ("C:\Program Files\nodejs")
+    assert.match(text, /^set "NODE_SEARCH=%PATH:"=%"\r$/m, rel);
+    assert.match(text, /^if "%NODE_BIN%"=="" for %%I in \(node\.exe\) do set "NODE_BIN=%%~\$NODE_SEARCH:I"\r$/m, rel);
+    assert.doesNotMatch(text, /set "NODE_BIN=node"/, rel);
+  }
+  if (!WIN) return;
+  // Windows: a node.exe (another program) and a node.cmd in the project folder; the wrapper run from there ignores them.
+  copyFileSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "whoami.exe"), join(root, "node.exe"));
+  writeFileSync(join(root, "node.cmd"), "@echo planted> \"%~dp0planted.txt\"\r\n");
+  const env = { ...ENV };
+  delete env.NODE;
+  const r = spawnSync("cmd.exe", ["/d", "/c", join(root, "scripts", "status.cmd")], { encoding: "utf8", cwd: root, env, timeout: 30000 });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /서비스: app/, "the real node ran service.mjs");
+  assert.equal(existsSync(join(root, "planted.txt")), false);
+  // a quoted PATH entry for node's folder still finds node
+  const sys32 = join(process.env.SystemRoot || "C:\\Windows", "System32");
+  const qenv = Object.fromEntries(Object.entries(env).filter(([k]) => !/^path$/i.test(k)));
+  qenv.PATH = `"${dirname(process.execPath)}";${sys32}`;
+  const q = spawnSync("cmd.exe", ["/d", "/c", join(root, "scripts", "status.cmd")], { encoding: "utf8", cwd: root, env: qenv, timeout: 30000 });
+  assert.equal(q.status, 1, q.stdout + q.stderr);
+  assert.match(q.stdout, /서비스: app/, "node found through a quoted PATH entry");
+  assert.equal(existsSync(join(root, "planted.txt")), false);
 });
 
 test("AC11: tests/run.mjs prints one line per suite and exits 1 when a suite fails", () => {
@@ -378,8 +456,8 @@ test("command lines unreadable (no /proc, no ps; preload): stop, status, start, 
 });
 
 // Runs the start wrapper without waiting, as a user starting it twice at once.
-function startAsync(root) {
-  const opts = { cwd: root, env: ENV };
+function startAsync(root, env = {}) {
+  const opts = { cwd: root, env: { ...ENV, ...env } };
   const p = WIN ? spawn("cmd.exe", ["/d", "/c", join(root, "scripts", "start.cmd")], opts) : spawn(join(root, "scripts", "start.sh"), [], opts);
   let out = "";
   p.stdout.on("data", (c) => (out += c));
@@ -453,6 +531,24 @@ test("start lock: four starts at once over a stale lock launch one supervisor, r
     assert.equal(svc(root, "stop").status, 0);
     assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
   }
+});
+
+// Windows box, full suite: each queued start reads command lines through PowerShell, which took seconds under load, and
+// the last of four gave up once the whole queue passed the wait. The wait is for one start at work, so it starts over
+// for each new holder. Here every read takes 2.5s (preload): the last start takes the lock about 7.5s in, past 5.8s.
+test("start lock: four starts at once all finish when every command-line read takes seconds; the wait starts over for each holder", async () => {
+  const root = project("scripts");
+  configure(root, WAITER);
+  const slow = { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${SLOW_CMDLINE}`.trim(), SLOW_CMDLINE_MS: "2500" };
+  const runs = await Promise.all([0, 1, 2, 3].map(() => startAsync(root, slow)));
+  const all = runs.map((r) => r.out).join("\n");
+  const p = pidOf(root);
+  for (const r of runs) assert.equal(r.code, 0, all);
+  assert.equal(runs.filter((r) => /시작함/.test(r.out)).length, 1, all);
+  assert.equal(runs.filter((r) => /이미 실행 중/.test(r.out)).length, 3, all);
+  assert.equal(existsSync(join(root, "logs", "app.start.lock")), false);
+  assert.equal(svc(root, "stop").status, 0);
+  assert.ok(await waitFor(() => !alive(p.supervisor) && !groupAlive(p.child)));
 });
 
 test("start lock: a break lock left by a dead start is cleared after a while; a folder at its name is refused", async () => {

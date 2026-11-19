@@ -24,6 +24,7 @@
  * overflow the regex stack.
  */
 import { readFileSync, realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SECRET_KEY = String.raw`(?:api[_-]?key|secret|token|passw(?:or)?d|pwd|access[_-]?key|credential|비밀번호|패스워드)[\w-]{0,64}["']?\s*[:=]\s*`;
@@ -176,11 +177,9 @@ function main(argv) {
 }
 
 const invokedDirectly = () => {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 };
 
 if (invokedDirectly()) process.exitCode = main(process.argv.slice(2));

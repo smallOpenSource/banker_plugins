@@ -20,7 +20,8 @@ function isExecutable(file) {
 
 // On Windows a name without extension also tries each PATHEXT entry.
 function candidates(name, env) {
-  const dirs = String(env.PATH || env.Path || "").split(delimiter).filter(Boolean);
+  // Windows allows quoted entries ("C:\Program Files\nodejs"); the quotes are not part of the folder
+  const dirs = String(env.PATH || env.Path || "").split(delimiter).map((d) => (process.platform === "win32" ? d.replace(/"/g, "") : d)).filter(Boolean);
   const exts = process.platform === "win32" && !extname(name) ? String(env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""];
   return dirs.flatMap((dir) => exts.flatMap((ext) => [...new Set([name + ext.toLowerCase(), name + ext])].map((n) => join(dir, n))));
 }
@@ -69,7 +70,10 @@ function killTree(child) {
 // Runs a program and resolves { code, signal, stdout, stderr, out, timedOut, error }. Never rejects: a missing
 // program is { code: null, error: "ENOENT" }. out holds stdout and stderr in arrival order.
 export function runProc(cmd, args = [], opts = {}) {
-  const file = which(cmd, opts.env || process.env) || cmd;
+  // A program not on PATH is not started by its bare name: Windows (and an empty PATH entry on POSIX) would look in
+  // the working folder first and run a program of that name there.
+  const file = which(cmd, opts.env || process.env);
+  if (!file) return Promise.resolve({ code: null, signal: null, stdout: "", stderr: "", out: "", timedOut: false, error: "ENOENT" });
   const [bin, argv, extra] = spawnArgs(file, args);
   const { parts, add } = collector();
   return new Promise((resolveRun) => {

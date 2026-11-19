@@ -1225,6 +1225,48 @@ test('U18d the node builder takes a Korean name only when fc-match returns that 
   assert.deepEqual(JSON.parse(r.stdout.trim()), [font, null]);
 });
 
+// 0.16.2 rule: no file in the project folder picks the program. Windows looks for a bare fc-match in the working
+// folder first and seldom has one at all, so on Windows the three font lookups skip fc-match and walk the font folders.
+// Here process.platform (a preload for node, sys.platform for python) says win32 and a stand-in fc-match on PATH
+// leaves a mark when it runs; it must not run. Without the platform change the same lookup does run it (control).
+const FAKE_WIN32 = new URL('../../scripts/test-fixtures/fake-win32.mjs', import.meta.url).href;
+test('U18f on Windows no builder or the verifier runs fc-match', { skip: process.platform === 'win32' && 'the stand-in fc-match is a sh script' }, (t) => {
+  const bin = fs.mkdtempSync(path.join(TMP, 'u18f-'));
+  const mark = path.join(bin, 'ran');
+  const font = path.join(bin, 'NanumGothic.ttf');
+  fs.writeFileSync(font, '');
+  const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+  fs.writeFileSync(path.join(bin, 'fc-match'), `#!/bin/sh\necho x >> ${q(mark)}\nprintf '%s|NanumGothic,나눔고딕' ${q(font)}\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const ran = () => (fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8').split('\n').filter(Boolean).length : 0);
+  const node = (code, win) => {
+    fs.rmSync(mark, { force: true });
+    const r = spawnSync(process.execPath, [...(win ? ['--import', FAKE_WIN32] : []), '--input-type=module', '-e', code], { encoding: 'utf8', env, cwd: TMP });
+    assert.equal(r.status, 0, r.stderr);
+    return ran();
+  };
+  const build = `import { createRequire } from 'node:module'; const B = createRequire(import.meta.url)(${JSON.stringify(BUILD_JS)}); B.findFontFile('나눔고딕'); B.resolveFont({ metaFont: 'auto' });`;
+  const verify = `const V = await import(${JSON.stringify(new URL('./verify_a4p.mjs', import.meta.url).href)}); V.resolveFont('NanumGothic');`;
+  assert.ok(node(build, false) > 0, 'control: the node builder runs fc-match on POSIX');
+  assert.equal(node(build, true), 0, 'the node builder on win32');
+  assert.ok(node(verify, false) > 0, 'control: the verifier runs fc-match on POSIX');
+  assert.equal(node(verify, true), 0, 'the verifier on win32');
+  if (!pythonModule.ok) {
+    if (process.env.A4P_REQUIRE_BUILDERS === '1') assert.fail(`${pythonModule.reason} (A4P_REQUIRE_BUILDERS=1)`);
+    t.diagnostic(`python builder not checked: ${pythonModule.reason}`);
+    return;
+  }
+  const py = (platform) => {
+    fs.rmSync(mark, { force: true });
+    const code = `import sys\nsys.path.insert(0, sys.argv[1])\nimport build_a4p as b\nsys.platform = sys.argv[2] or sys.platform\nb.find_font_file('나눔고딕')\nb.resolve_font(None, 'auto')\n`;
+    const r = spawnSync(pythonModule.bin, ['-B', '-c', code, HERE, platform], { encoding: 'utf8', env, cwd: TMP });
+    assert.equal(r.status, 0, r.stderr);
+    return ran();
+  };
+  assert.ok(py('') > 0, 'control: the python builder runs fc-match on POSIX');
+  assert.equal(py('win32'), 0, 'the python builder on win32');
+});
+
 // ===========================================================================
 // U17 — meta.title length: the two builders must agree
 // ===========================================================================
@@ -2041,4 +2083,75 @@ test('U19 verify_a4p answers the same through a linked folder as through its own
 test('U20 the python probe takes only what build_a4p.py runs on: python 3.9 or newer', () => {
   assert.match(fs.readFileSync(BUILD_PY, 'utf8'), /^MIN_PYTHON = \(3, 9\)$/m, 'the builder floor');
   assert.match(PY_PROBE, /sys\.exit\(3\) if sys\.version_info < \(3, 9\)/, 'the probe floor is the same');
+});
+
+// cp949 (Korean Windows' code page) and a DRM-encrypted file are not UTF-8: read as UTF-8 they would put U+FFFD in
+// the deck. "한글" in cp949 is C7 D1 B1 DB. A UTF-8 BOM (Windows PowerShell's -Encoding UTF8) is no defect.
+const CP949 = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb]);
+const NOT_TEXT = Buffer.from([0x00, 0x9c, 0xff, 0xfe, 0x80, 0xc3, 0x28, 0xa0]);
+const U21_DECK = { meta: { title: '한글' }, pages: [{ title: '한글', blocks: [{ type: 'body', text: '본문' }] }] };
+const u21Files = () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'u21-'));
+  const at = (name, bytes) => {
+    fs.writeFileSync(path.join(dir, name), bytes);
+    return path.join(dir, name);
+  };
+  return {
+    dir,
+    cp949: at('cp949.json', Buffer.concat([Buffer.from('{"meta":{"title":"'), CP949, Buffer.from('"},"pages":[{"title":"t","blocks":[{"type":"body","text":"x"}]}]}')])),
+    drm: at('drm.json', NOT_TEXT),
+    bom: at('bom.json', `\uFEFF${JSON.stringify(U21_DECK)}`),
+    md949: at('cp949.md', Buffer.concat([Buffer.from('# '), CP949, Buffer.from('\n\n## p\n\nx\n')])),
+    mdBom: at('bom.md', '\uFEFF# 제목\n\n## 페이지\n\n본문\n'),
+  };
+};
+const refusedLine = (r, file) => {
+  assert.equal(r.status, 3, `${file}: status ${r.status}\n${r.stdout}\n${r.stderr}`);
+  assert.equal(r.stderr.trim().split('\n').length, 1, r.stderr);
+  assert.ok(r.stderr.includes(file) && r.stderr.includes('UTF-8'), r.stderr);
+};
+
+test('U21 the node builder and verifier refuse a deck or markdown that is not UTF-8 (exit 3, one line) and take a UTF-8 BOM', () => {
+  const f = u21Files();
+  for (const file of [f.cp949, f.drm]) {
+    refusedLine(spawnSync(process.execPath, [BUILD_JS, '--in', file, '--emit-json'], { encoding: 'utf8' }), file);
+  }
+  refusedLine(spawnSync(process.execPath, [BUILD_JS, '--md', f.md949, '--emit-json'], { encoding: 'utf8' }), f.md949);
+  const bom = spawnSync(process.execPath, [BUILD_JS, '--in', f.bom, '--emit-json'], { encoding: 'utf8' });
+  assert.equal(bom.status, 0, bom.stderr);
+  assert.equal(JSON.parse(bom.stdout).meta.title, '한글');
+  const md = spawnSync(process.execPath, [BUILD_JS, '--md', f.mdBom, '--emit-json'], { encoding: 'utf8' });
+  assert.equal(md.status, 0, md.stderr);
+  assert.equal(JSON.parse(md.stdout).meta.title, '제목', 'the BOM is not part of the first heading');
+
+  const pptx = fixtureFile('u21', FIXTURES.good);
+  for (const file of [f.cp949, f.drm]) {
+    const r = quiet(() => V.main([pptx, '--deck', file]));
+    assert.equal(r.value, 3, r.out);
+    assert.ok(r.out.includes(file) && r.out.includes('UTF-8'), r.out);
+  }
+  const ok = quiet(() => V.main([pptx, '--deck', f.bom]));
+  assert.ok(!/--deck/.test(ok.out), `a deck with a BOM is read: ${ok.out}`);
+});
+
+const PY_READ_PROBE = String.raw`
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import build_a4p as b
+print(json.dumps(b.read_deck_file(sys.argv[2])))
+`;
+test('U21b the python builder reads a deck as the node builder does: not UTF-8 is exit 3 in one line, a BOM is fine', (t) => {
+  if (!pythonModule.ok) {
+    if (process.env.A4P_REQUIRE_BUILDERS === '1') assert.fail(`${pythonModule.reason} (A4P_REQUIRE_BUILDERS=1)`);
+    t.skip(pythonModule.reason);
+    return;
+  }
+  const f = u21Files();
+  for (const file of [f.cp949, f.drm]) {
+    refusedLine(spawnSync(pythonModule.bin, ['-B', BUILD_PY, '--in', file, '--out', path.join(f.dir, 'x.pptx')], { encoding: 'utf8', cwd: TMP }), file);
+  }
+  assert.ok(!fs.existsSync(path.join(f.dir, 'x.pptx')));
+  const r = spawnSync(pythonModule.bin, ['-B', '-c', PY_READ_PROBE, HERE, f.bom], { encoding: 'utf8', cwd: TMP });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), U21_DECK);
 });

@@ -638,6 +638,19 @@ test('codex: other shell calls, other omx wiki tools, and an armed .omc/wiki cha
   assert.deepEqual(logLines(tree), []);
 });
 
+// remains 0.29.0 #10: an OMX slug of a Korean title is a page name too; a space or a separator still is not.
+test('codex: a Korean page name from the CLI JSON is canonicalized', () => {
+  const tree = codexTree();
+  arm(tree);
+  writeFileSync(join(tree.wikiDir, '커피-설계.md'), PAGE_BEFORE);
+  runCodex(tree, codexPayload(tree, 'omx wiki ingest --input x', '{"created":["커피-설계.md"],"updated":[]}'));
+  const argv = readArgv(tree);
+  assert.equal(argv.length, 1, JSON.stringify(argv));
+  assert.ok(argv[0].includes('커피-설계.md'), JSON.stringify(argv[0]));
+  runCodex(tree, codexPayload(tree, 'omx wiki ingest --input x', '{"created":["커피 설계.md","../커피-설계.md","커피\\\\설계.md"],"updated":[]}'));
+  assert.equal(readArgv(tree).length, 1, 'a space or a separator is still no page name');
+});
+
 test('codex: a linked vault, linked or hard-linked pages, and names outside the CLI JSON are not rewritten', (t) => {
   const tree = codexTree();
   arm(tree);

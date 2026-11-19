@@ -329,3 +329,16 @@ test("a folder this account cannot enter is a refusal with a result line, not a 
   } finally { chmodSync(join(root, "dist/hooks/ralph"), 0o755); }
   assert.deepEqual(snapshot(root), before);
 });
+
+// remains 0.29.0 #2: node runs a script reached through a link by its real path, so the old resolve() check never matched
+// a linked argv[1] and the command exited 0 printing nothing. A junction on Windows needs no admin right.
+test("run through a linked folder it still does its work, and importing it with a non-file argv[1] does not throw", () => {
+  const link = join(base, `link${n++}`);
+  symlinkSync(dirname(TOOL), link, "junction");
+  const r = spawnSync(process.execPath, [join(link, "drm-progress.mjs"), "--check", "--root", join(base, "no-such-folder")], { encoding: "utf8" });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /폴더가 아님/);
+  const imp = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(TOOL).href)})`, "no-such-file"], { encoding: "utf8" });
+  assert.equal(imp.status, 0, imp.stderr);
+  assert.equal(imp.stdout + imp.stderr, "");
+});

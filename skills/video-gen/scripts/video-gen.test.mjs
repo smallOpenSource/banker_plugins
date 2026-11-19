@@ -325,3 +325,31 @@ test("the CLI checks outputs before rendering and never replaces a file without 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a scene file or deck that is not UTF-8 stops with one line naming the file; a UTF-8 BOM is fine", () => {
+  const dir = mkdtempSync(join(tmpdir(), "video-gen-"));
+  try {
+    // "한글" in cp949 (Korean Windows' code page) is C7 D1 B1 DB; a DRM-encrypted file is bytes that are not text.
+    const cp949 = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb]);
+    const inJson = (before, after) => Buffer.concat([Buffer.from(before), cp949, Buffer.from(after)]);
+    writeFileSync(join(dir, "cp949.json"), inJson('{"fps":12,"scenes":[{"type":"title","duration":0.5,"title":"', '"}]}'));
+    writeFileSync(join(dir, "drm.json"), Buffer.from([0x00, 0x9c, 0xff, 0xfe, 0x80, 0xc3, 0x28, 0xa0]));
+    writeFileSync(join(dir, "deck949.json"), inJson('{"title":"', '","slides":[{"type":"title","title":"t"}]}'));
+    writeFileSync(join(dir, "bom.json"), `\uFEFF${JSON.stringify({ fps: 12, scenes: [{ type: "title", duration: 0.5, title: "한글" }] })}`);
+    const refused = (r, file) => {
+      assert.equal(r.status, 2, `${file}: ${r.stdout}${r.stderr}`);
+      assert.equal(r.stderr.trim().split("\n").length, 1, r.stderr);
+      assert.ok(r.stderr.includes(file) && r.stderr.includes("UTF-8"), r.stderr);
+    };
+    for (const file of ["cp949.json", "drm.json"]) {
+      refused(run(["check", "--scene", file], dir), file);
+      refused(run(["still", "--scene", file, "--at", "0.2", "--out", "x.png"], dir), file);
+    }
+    refused(run(["from-deck", "--deck", "deck949.json"], dir), "deck949.json");
+    assert.ok(!readdirSync(dir).includes("x.png"), "nothing is drawn from a file that is not UTF-8");
+    const bom = run(["check", "--scene", "bom.json"], dir);
+    assert.equal(bom.status, 0, bom.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -815,6 +815,19 @@ export function titleToSlug(title) {
   return slugFile(title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64), title);
 }
 
+// A Windows device name, alone or before an extension (con.md, nul.md, com1.md, lpt9.md): on Windows such a file opens
+// the device, so a write goes nowhere and a read waits on the console. The slugs keep OMC's and OMX's shape. A new page
+// with such a name is refused on every OS (a wiki is often shared with a Windows PC). An existing one (the real OMC and
+// OMX write con.md on Linux) is read, updated and deleted where it is an ordinary file; on Windows the name is refused
+// before anything is read.
+const DEVICE_RE = /^(?:con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])\s*(?:\..*)?$/iu;
+export function refuseDeviceName(filename, { creating = true, platform = process.platform } = {}) {
+  if ((creating || platform === 'win32') && DEVICE_RE.test(filename)) {
+    throw new Error(`Wiki page ${filename} would be a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9); give it another title`);
+  }
+  return filename;
+}
+
 function safeWikiPath(wikiDir, filename) {
   if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) return null;
   const filePath = path.join(wikiDir, filename);
@@ -971,11 +984,12 @@ function ingestTarget(ctx, slug) {
   refuseNewerSchema(ctx);
   const existing = readPage(ctx, slug, ctx.wikiDir);
   refuseUnparsable(ctx, slug, existing);
+  if (!existing) refuseDeviceName(slug);
   return existing;
 }
 
 function ingestKnowledge(ctx, input) {
-  const slug = ctx.p.slug(input.title);
+  const slug = refuseDeviceName(ctx.p.slug(input.title), { creating: false });
   const now = new Date().toISOString();
   const result = { created: [], updated: [], totalAffected: 0 };
   if (ctx.p.stopsBeforeLock) ingestTarget(ctx, slug);
@@ -1150,7 +1164,7 @@ function lintWiki(ctx) {
 // ============================================================================
 
 const searchedSuffix = (root, pages) => ` (searched ${pages} page${pages === 1 ? '' : 's'} in ${path.basename(root)}/.omc/wiki)`;
-const pageFile = (page) => (page.endsWith('.md') ? page : `${page}.md`);
+const pageFile = (page) => refuseDeviceName(page.endsWith('.md') ? page : `${page}.md`, { creating: false });
 const failure = (text) => ({ isError: true, text, data: { error: text } });
 
 function toolIngest(ctx, a) {
@@ -1163,7 +1177,7 @@ function toolIngest(ctx, a) {
 }
 
 function toolAdd(ctx, a) {
-  const slug = titleToSlug(a.title);
+  const slug = refuseDeviceName(titleToSlug(a.title), { creating: false });
   if (readPage(ctx, slug)) {
     return failure(`Page "${slug}" already exists. Use wiki_ingest to merge content into it, or wiki_delete to remove it first.`);
   }
@@ -1511,7 +1525,7 @@ function omxIngest(ctx, a) {
 }
 
 function omxAdd(ctx, a) {
-  const slug = omxTitleToSlug(a.title);
+  const slug = refuseDeviceName(omxTitleToSlug(a.title), { creating: false });
   if (readPage(ctx, slug, ctx.wikiDir)) return omxFailure(`Page "${slug}" already exists. Use wiki_ingest to merge into it.`);
   const result = ingestKnowledge(ctx, { title: a.title, content: a.content, tags: a.tags || [], category: a.category || 'reference' });
   appendLog(ctx, { timestamp: new Date().toISOString(), operation: 'add', pagesAffected: result.created, summary: `Created wiki page ${slug}` });
@@ -1565,7 +1579,8 @@ function runOmxTool(name, input) {
 // obsidizer: the hook's canonicalizer run, for the pages this call wrote
 // ============================================================================
 
-// With onlyPlainNames (omx), as the Codex hook does: only pages whose name is ASCII word characters, dots and dashes.
+// With onlyPlainNames (omx), as the Codex hook does: only pages whose name is letters and digits of any script (an OMX
+// slug of a Korean title is 커피-설계.md), "_", dots and dashes; no separator or space.
 function obsidize(wikiDir, data, onlyPlainNames = false) {
   if (!fs.existsSync(path.join(wikiDir, '.obsidizer'))) return;
   const canonicalizer = CANONICALIZERS.find((p) => fs.existsSync(p));
@@ -1573,7 +1588,7 @@ function obsidize(wikiDir, data, onlyPlainNames = false) {
     process.stderr.write(`wiki.mjs: obsidizer is on (${path.join(wikiDir, '.obsidizer')}) but obsidize.mjs is not beside this skill; run obsidizer on the wiki later\n`);
     return;
   }
-  const names = [...data.created, ...data.updated].filter((n) => !RESERVED.has(n) && (!onlyPlainNames || /^[\w.-]+\.md$/.test(n)));
+  const names = [...data.created, ...data.updated].filter((n) => !RESERVED.has(n) && (!onlyPlainNames || /^[\p{L}\p{N}_.-]+\.md$/u.test(n)));
   const pages = names.map((n) => path.join(wikiDir, n));
   for (const page of pages.filter((p) => fs.existsSync(p))) {
     const run = spawnSync(process.execPath, [canonicalizer, page, '--profile=omc', '--json'], {
@@ -1696,11 +1711,9 @@ function main(argv) {
 
 // Run as a command only; a test imports the functions. Node resolves links for import.meta.url, not for argv[1].
 function invokedDirectly() {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 }
 
 if (invokedDirectly()) process.exitCode = main(process.argv.slice(2));

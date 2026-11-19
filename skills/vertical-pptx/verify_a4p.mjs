@@ -1260,6 +1260,9 @@ export function faceDistance(face) {
 const fcEscape = (name) => String(name).replace(/([\\:,\-])/g, '\\$1');
 
 function fcMatch(name) {
+  // Windows rarely has fc-match, and a bare name would be looked for in the working folder (the user's project) first:
+  // there the font folders are walked instead.
+  if (process.platform === 'win32') return null;
   let r;
   try {
     r = spawnSync('fc-match', [`--format=%{file}`, fcEscape(name)], { encoding: 'utf8', timeout: 4000 });
@@ -2049,7 +2052,11 @@ export function main(argv) {
   let deck = null;
   if (opts.deckPath) {
     try {
-      deck = JSON.parse(fs.readFileSync(opts.deckPath, 'utf8'));
+      // 빌더와 같은 규칙: UTF-8 만 받고 앞의 BOM 은 뗀다. cp949 나 암호화된 파일은 U+FFFD 로 비교하지 않는다.
+      const bytes = fs.readFileSync(opts.deckPath);
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw new Error('UTF-8 이 아니다'); }
+      deck = JSON.parse(text);
     } catch (err) {
       console.error(`verify_a4p: --deck 을 읽을 수 없다: ${opts.deckPath} (${err.message})`);
       return EXIT.USAGE;
@@ -2167,11 +2174,9 @@ export function main(argv) {
 // compared as given, a run through a linked folder would exit 0 without doing anything.
 // fileURLToPath, not URL.pathname: the latter yields "/C:/..." on Windows and never matches argv[1].
 const invoked = () => {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 };
 if (invoked()) {
   try {

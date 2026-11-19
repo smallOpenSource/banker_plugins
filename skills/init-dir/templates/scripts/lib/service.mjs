@@ -17,7 +17,8 @@
  * (the supervisor) or the recorded command (the child). Linux reads it from /proc/<pid>/cmdline, then `ps`; other
  * POSIX systems use `ps`, Windows PowerShell Get-CimInstance. A PID that fails the check gets no signal and the pid
  * file counts as stale. When a live PID's command line cannot be read at all (no /proc, no ps), start, stop, status
- * and restart print "확인 불가: <사유>", send no signal, keep the pid file and exit 1.
+ * and restart print "확인 불가: <사유>", send no signal, keep the pid file and exit 1. Windows runs powershell.exe and
+ * taskkill.exe from System32 by full path, never a program of that name in the project folder.
  *
  * `stop` sends SIGTERM to the supervisor, which passes it to the child's process group; after 10 seconds both
  * are killed. With the supervisor gone, the child is stopped directly. Windows uses taskkill /T and, when the
@@ -31,8 +32,10 @@
  * wrappers did not find Node 18 or later).
  *
  * Two `start` runs at once launch one supervisor: start holds logs/<name>.start.lock (made with O_EXCL, holding its
- * pid and time, removed when it ends). A later start waits for it, then sees the service running. A lock whose pid
- * is dead, is another program, or is older than 30 seconds plus the start check is removed, by one start at a time:
+ * pid and time, removed when it ends). A later start waits for it, then sees the service running; it gives up (exit
+ * 1) only when one start has held the lock for 5 seconds plus the start check, as a new holder starts the wait over.
+ * A lock whose pid is dead, is another program, or is older than 30 seconds plus the start check is removed, by one
+ * start at a time:
  * the one holding logs/<name>.start.lock.break (O_EXCL), which reads the lock again and removes only the lock it
  * judged stale. A link or a folder at either name is refused (exit 1), a link to nothing among them: Windows opens
  * O_EXCL through such a link and makes the file it leads to, so the name is looked at before the open and again after.
@@ -44,7 +47,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { uptime } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -54,6 +57,9 @@ const LOGS = join(ROOT, "logs");
 const KEEP = 7;
 const WIN = process.platform === "win32";
 const USAGE = "사용법: service.mjs start|stop|status|restart";
+// Windows programs by their System32 path: a bare name is looked for in the working folder (the project) first.
+const system32 = (...parts) => win32.join(process.env.SystemRoot || "C:\\Windows", "System32", ...parts);
+const POWERSHELL = system32("WindowsPowerShell", "v1.0", "powershell.exe");
 
 const envInt = (name, fallback) => {
   const n = Number.parseInt(process.env[name] ?? "", 10);
@@ -146,7 +152,7 @@ function groupAlive(pid) {
 }
 
 function taskkill(pid, force) {
-  spawnSync("taskkill", ["/T", ...(force ? ["/F"] : []), "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  spawnSync(system32("taskkill.exe"), ["/T", ...(force ? ["/F"] : []), "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
 }
 
 // The child's whole tree: its process group on POSIX, taskkill /T on Windows (/F for SIGKILL).
@@ -262,7 +268,7 @@ function commandLine(pid) {
 // `ps` on POSIX, PowerShell on Windows.
 function toolCommandLine(pid) {
   const r = WIN
-    ? spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: "utf8", windowsHide: true, timeout: 20000 })
+    ? spawnSync(POWERSHELL, ["-NoProfile", "-NonInteractive", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: "utf8", windowsHide: true, timeout: 20000 })
     : spawnSync("ps", ["-ww", "-o", "args=", "-p", String(pid)], { encoding: "utf8", timeout: 10000 });
   if (r.error) return { why: r.error.code || r.error.message };
   if (r.status === 0) return { text: r.stdout.trim() };
@@ -314,7 +320,7 @@ function owned(cur) {
 function orphanOf(cur) {
   if (!WIN || !Number.isInteger(cur.child) || cur.child <= 0) return null;
   const script = `Get-CimInstance Win32_Process -Filter "ParentProcessId=${cur.child}" | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }`;
-  const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 20000 });
+  const r = spawnSync(POWERSHELL, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, timeout: 20000 });
   if (r.error || r.status !== 0) return null;
   const lines = r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const hit = lines.find((l) => isChild(cur.command)(l.slice(l.indexOf(" ") + 1)));
@@ -487,7 +493,7 @@ function makeOrSee(file) {
   }
 }
 
-// One try at the lock: { text } held, { error } refused, or {} busy.
+// One try at the lock: { text } held, { error } refused, or {} not yet ({ seen }: the text of the lock found there).
 function tryLock(file) {
   const got = makeOrSee(file);
   if (got.text) return got;
@@ -495,14 +501,20 @@ function tryLock(file) {
   if (!st) return {}; // gone or busy being deleted: the next try sees
   if (!st.isFile()) return { error: `시작 잠금 자리에 일반 파일이 아닌 것(링크나 폴더)이 있어 거부: ${file}` };
   const seen = readText(file);
-  return seen !== null && !lockBusy(seen, st) ? breakStale(file, seen) : {};
+  if (seen === null) return {};
+  return lockBusy(seen, st) ? { seen } : { seen, ...breakStale(file, seen) };
 }
 
-// logs/<name>.start.lock, waiting up to LOCK_WAIT_MS for another start: { text } or { error }.
+// logs/<name>.start.lock, waiting up to LOCK_WAIT_MS for the start that holds it: { text } or { error }. A lock with
+// another text is another start that got its turn, so the wait starts over: with several starts queued, their checks
+// (a PowerShell call each on Windows, seconds on a loaded PC) add up past one LOCK_WAIT_MS. A waiter's own check of a
+// holder can outlast the holder, so a new text counts even when that lock was judged no longer busy.
 async function takeLock(file) {
-  for (const until = Date.now() + LOCK_WAIT_MS; ; await sleep(100)) {
+  let last = null;
+  for (let until = Date.now() + LOCK_WAIT_MS; ; await sleep(100)) {
     const r = tryLock(file);
     if (r.text || r.error) return r;
+    if (r.seen !== undefined && r.seen !== last) [last, until] = [r.seen, Date.now() + LOCK_WAIT_MS];
     if (Date.now() >= until) return { error: `다른 start 가 ${LOCK_WAIT_MS}ms 넘게 진행 중: ${file}. 잠시 뒤 다시 실행하세요` };
   }
 }

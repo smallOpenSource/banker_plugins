@@ -220,12 +220,23 @@ export function renderReport({ run, task, events, bad = [], generatedAt = new Da
 
 // ── command line ─────────────────────────────────────────────────────────────
 
+// task.md as text: UTF-8, a leading BOM dropped. Other bytes (cp949, a DRM-encrypted file) stop the report (exit 1,
+// the ledger could not be read) instead of reaching the page as U+FFFD.
+function readTask(file) {
+  const bytes = readFileSync(file);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`${file} 이 UTF-8 이 아님(cp949 같은 다른 인코딩이나 암호화된 파일). UTF-8 로 저장해 다시 실행`);
+  }
+}
+
 export function writeReport(dir, out = "index.html") {
   if (!/^[\w.-]+\.html$/.test(out)) throw new Error(`--out 은 실행 폴더 안의 .html 파일 이름입니다: ${out}`);
   const run = readRun(dir);
   const { events, bad } = readEvents(dir);
   const taskFile = join(dir, "task.md");
-  const task = existsSync(taskFile) ? readFileSync(taskFile, "utf8").slice(0, 8000) : null;
+  const task = existsSync(taskFile) ? readTask(taskFile).slice(0, 8000) : null;
   const file = join(dir, out);
   const exists = (rel) => {
     try {
@@ -258,11 +269,9 @@ export function main(argv, out = process.stdout, err = process.stderr) {
 // Run as a command, also when reached through a symlinked path: Node resolves
 // symlinks for import.meta.url but not for process.argv[1].
 const invokedDirectly = () => {
-  try {
-    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === fileURLToPath(import.meta.url);
 };
 
 if (invokedDirectly()) process.exitCode = main(process.argv.slice(2));

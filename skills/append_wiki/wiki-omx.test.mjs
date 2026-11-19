@@ -351,13 +351,73 @@ test('obsidizer: with omx_wiki/.obsidizer the page is what the Codex hook makes 
   assert.equal(sansTime(armed.page('source-page.md')), sansTime(hooked));
 });
 
-test('obsidizer: a Korean page name is left alone, as the Codex hook leaves it', () => {
+// remains 0.29.0 #10: an OMX slug of a Korean title (커피-설계.md) was skipped by wiki.mjs and by the Codex hook.
+test('obsidizer: a Korean page name is canonicalized too, as the Codex hook does it', () => {
+  const korean = (p) => {
+    assert.equal(p.cli(ingestArgs({ title: 'Target Page', content: 'The target.', category: 'pattern' })).status, 0);
+    const run = p.cli(ingestArgs({ title: '커피 설계', content: 'Mentions [[Target Page]] and Target Page again.', category: 'pattern' }));
+    assert.equal(run.status, 0, run.stderr);
+    return run;
+  };
+  const armed = project();
+  fs.mkdirSync(armed.wikiDir, { recursive: true });
+  fs.writeFileSync(path.join(armed.wikiDir, '.obsidizer'), '{"enabled":true}');
+  assert.equal(korean(armed).stderr, '');
+
+  const plain = project();
+  const plainRun = korean(plain);
+  assert.deepEqual(JSON.parse(plainRun.stdout).created, ['커피-설계.md']);
+  const raw = plain.page('커피-설계.md');
+  fs.writeFileSync(path.join(plain.wikiDir, '.obsidizer'), '{"enabled":true}');
+  const payload = { tool_name: 'Bash', tool_input: { command: 'omx wiki wiki_ingest --input x --json' }, tool_response: plainRun.stdout, cwd: plain.cwd };
+  const hook = spawnSync(process.execPath, [HOOK, '--codex'], { input: JSON.stringify(payload), env: plain.env, encoding: 'utf8' });
+  assert.equal(hook.status, 0, hook.stderr);
+  const hooked = plain.page('커피-설계.md');
+  assert.notEqual(sansTime(hooked), sansTime(raw), 'the hook canonicalizes the Korean page');
+  assert.equal(sansTime(armed.page('커피-설계.md')), sansTime(hooked), 'wiki.mjs does what the hook does');
+});
+
+// remains 0.29.0 #9: a slug that is a Windows device name (con.md, nul.md, com1.md) is refused before anything is
+// written; the slug's shape stays OMX's.
+test('a title or page whose file name would be a Windows device name is refused, and nothing is written', () => {
+  assert.equal(omxTitleToSlug('Con'), 'con.md', 'the slug keeps the OMX shape');
+  assert.equal(omxTitleToSlug('COM\u00b9'), 'com\u00b9.md');
   const p = project();
-  fs.mkdirSync(p.wikiDir, { recursive: true });
-  fs.writeFileSync(path.join(p.wikiDir, '.obsidizer'), '{}');
-  assert.equal(p.cli(ingestArgs({ title: 'Target Page', content: 'The target.' })).status, 0);
-  const run = p.cli(ingestArgs({ title: '한글 페이지', content: 'Mentions [[Target Page]] and Target Page again.' }));
-  assert.equal(run.status, 0, run.stderr);
-  const page = p.page('한글-페이지.md');
-  assert.ok(page.endsWith('\nMentions [[Target Page]] and Target Page again.\n'), page);
+  for (const title of ['Con', 'NUL', 'com1', 'Lpt9', 'aux', 'PRN', 'COM\u00b9']) {
+    for (const tool of ['wiki_ingest', 'wiki_add']) {
+      const run = p.cli([tool, '--input', ingestInput({ title, content: 'c' }), '--json']);
+      assert.equal(run.status, 1, `${tool} ${title}: ${run.stdout}${run.stderr}`);
+      assert.match(JSON.parse(run.stdout).error, /would be a Windows device name/, `${tool} ${title}`);
+    }
+  }
+  assert.ok(!fs.existsSync(p.wikiDir) || fs.readdirSync(p.wikiDir).every((f) => !/^(con|nul|com|lpt|aux|prn)/i.test(f)), 'no device-named file');
+  for (const tool of ['wiki_read', 'wiki_delete']) {
+    const run = p.cli([tool, '--input', JSON.stringify({ page: 'nul' }), '--json']);
+    assert.equal(run.status, 1, `${tool}: ${run.stdout}${run.stderr}`);
+    // Only Windows refuses the name itself; elsewhere a missing nul.md is just not there.
+    if (process.platform === 'win32') assert.match(JSON.parse(run.stdout).error, /nul\.md would be a Windows device name/, tool);
+    else assert.match(JSON.parse(run.stdout).error, /Wiki page not found/, tool);
+  }
+  for (const title of ['Console', 'Null Pointer', 'COM10', 'Auxiliary']) assert.equal(p.cli(ingestArgs({ title, content: 'c' })).status, 0, title);
+});
+
+// An existing device-named page (OMX on Linux writes nul.md for the title "NUL") is read, updated and deleted off
+// Windows; only a new one is refused.
+test('an existing device-named page is read, updated and deleted off Windows; only a new one is refused', { skip: process.platform === 'win32' && 'nul.md cannot be made on Windows' }, () => {
+  const p = project();
+  assert.equal(p.cli(ingestArgs({ title: 'Nulx', content: 'first' })).status, 0);
+  fs.renameSync(path.join(p.wikiDir, 'nulx.md'), path.join(p.wikiDir, 'nul.md'));
+  const read = p.cli(['wiki_read', '--input', JSON.stringify({ page: 'nul' }), '--json']);
+  assert.equal(read.status, 0, read.stdout);
+  assert.match(read.stdout, /first/);
+  const ingest = p.cli(ingestArgs({ title: 'NUL', content: 'second' }));
+  assert.equal(ingest.status, 0, ingest.stdout);
+  assert.deepEqual(JSON.parse(ingest.stdout).updated, ['nul.md']);
+  assert.match(p.page('nul.md'), /first[\s\S]*second/);
+  const del = p.cli(['wiki_delete', '--input', JSON.stringify({ page: 'nul.md' }), '--json']);
+  assert.equal(del.status, 0, del.stdout);
+  assert.ok(!fs.existsSync(path.join(p.wikiDir, 'nul.md')));
+  const again = p.cli(['wiki_add', '--input', ingestInput({ title: 'NUL', content: 'c' }), '--json']);
+  assert.equal(again.status, 1);
+  assert.match(JSON.parse(again.stdout).error, /nul\.md would be a Windows device name/);
 });

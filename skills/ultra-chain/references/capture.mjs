@@ -222,11 +222,9 @@ export async function main(argv, out = process.stdout, err = process.stderr, loa
 // Run as a command, also when reached through a symlinked path: Node resolves
 // symlinks for import.meta.url but not for process.argv[1].
 const invokedDirectly = () => {
-  try {
-    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === fileURLToPath(import.meta.url);
 };
 
 if (invokedDirectly()) main(process.argv.slice(2)).then((code) => { process.exitCode = code; });

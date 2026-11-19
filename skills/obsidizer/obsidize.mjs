@@ -330,13 +330,26 @@ export function detectProfile(target) {
   if (!fs.existsSync(path.join(dir, 'index.md')) || !fs.existsSync(path.join(dir, 'log.md'))) return 'generic';
   for (const f of listMarkdown(dir)) {
     if (RESERVED_FILES.has(f)) continue;
-    const fm = parseFrontmatter(read(path.join(dir, f)));
+    const raw = read(path.join(dir, f));
+    if (raw === null) continue;
+    const fm = parseFrontmatter(raw);
     if (fm && FM_KEYS.every((k) => k in fm.map)) return 'omc';
   }
   return 'generic';
 }
 
-const read = (p) => fs.readFileSync(p, 'utf8');
+// A page as text, or null when its bytes are not UTF-8: a cp949 page (Windows PowerShell 5.1) or a DRM-encrypted one,
+// read as UTF-8 and written back, would lose its bytes to U+FFFD for good. A BOM stays a character, as before.
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+const NOT_UTF8 = 'not UTF-8';
+const read = (p) => {
+  const bytes = fs.readFileSync(p);
+  try {
+    return UTF8.decode(bytes);
+  } catch {
+    return null;
+  }
+};
 
 /** Sorted explicitly — readdir order is not deterministic across filesystems. */
 // Why a --page run may not go on: the page must be a bare name and the cwd the vault folder the caller checked.
@@ -370,8 +383,9 @@ export function buildVaultModel(dir, plainOnly = false) {
   const h1Counts = new Map();
   for (const file of files) {
     const raw = read(path.join(dir, file));
-    const fm = parseFrontmatter(raw);
-    const h1s = findH1s(fm ? fm.body : raw);
+    // Not UTF-8: its name still resolves links, but it has no frontmatter or H1 to read.
+    const fm = raw === null ? null : parseFrontmatter(raw);
+    const h1s = raw === null ? [] : findH1s(fm ? fm.body : raw);
     pages.set(file, { file, base: file.replace(/\.md$/, ''), raw, fm, h1s });
     for (const h1 of h1s) h1Counts.set(h1, (h1Counts.get(h1) || 0) + 1);
   }
@@ -519,7 +533,7 @@ function writeIfUnchanged(file, baseline, text) {
   try {
     let current;
     try {
-      current = fs.readFileSync(file, 'utf8');
+      current = read(file); // null (no longer UTF-8) is no baseline either
     } catch {
       return false; // deleted mid-run; nothing of ours to preserve
     }
@@ -553,6 +567,10 @@ export function run(target, { profile = 'auto', dryRun = false, now = null, page
       continue;
     }
     report.scanned += 1;
+    if (page.raw === null) {
+      report.skipped.push({ file, reason: NOT_UTF8 });
+      continue;
+    }
     // Opt-out: the marker anywhere in the file means hands off — no canonicalize, no
     // write. The page still counts in the vault model (its slug resolves links, its H1
     // still gates an alias elsewhere): "do not modify" is not "does not exist".
@@ -604,6 +622,9 @@ function main(argv) {
     }
   }
   const report = run(flag('page') ? args[0] : path.resolve(args[0]), { profile, dryRun: flag('dry-run'), page: flag('page') });
+  for (const s of report.skipped) {
+    if (s.reason === NOT_UTF8) console.error(`obsidize: warning: ${path.join(report.root, s.file)} is not UTF-8 (cp949 or an encrypted file?); left as it is. Save it as UTF-8 to canonicalize it`);
+  }
   if (flag('json')) {
     console.log(JSON.stringify(report));
   } else {
@@ -620,11 +641,9 @@ function main(argv) {
 // compared as given, a run through a linked folder would exit 0 without doing anything.
 // fileURLToPath, not URL.pathname: the latter yields "/C:/..." on Windows and never matches argv[1].
 const invoked = () => {
-  try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
+  // a path realpath cannot read is compared as given (resolve): answering false made the command exit 0 doing nothing.
+  const ranAs = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return Boolean(process.argv[1]) && ranAs(process.argv[1]) === ranAs(fileURLToPath(import.meta.url));
 };
 if (invoked()) {
   try {

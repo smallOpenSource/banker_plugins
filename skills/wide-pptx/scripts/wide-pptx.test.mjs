@@ -209,3 +209,32 @@ test("the CLI builds both files, refuses an existing one without --force and lea
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// cp949 (Korean Windows' code page) and a DRM-encrypted file are not UTF-8: read as UTF-8 they would put U+FFFD in
+// the outputs. "한글" in cp949 is C7 D1 B1 DB.
+const CP949 = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb]);
+const NOT_TEXT = Buffer.from([0x00, 0x9c, 0xff, 0xfe, 0x80, 0xc3, 0x28, 0xa0]);
+
+test("a deck that is not UTF-8 stops with one line naming the file; a UTF-8 BOM is fine", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wide-pptx-"));
+  try {
+    writeFileSync(join(dir, "cp949.json"), Buffer.concat([Buffer.from('{"title":"'), CP949, Buffer.from('","slides":[{"type":"title","title":"t"}]}')]));
+    writeFileSync(join(dir, "drm.json"), NOT_TEXT);
+    writeFileSync(join(dir, "bom.json"), `\uFEFF${JSON.stringify({ title: "한글", slides: [{ type: "title", title: "한글" }] })}`);
+    for (const deck of ["cp949.json", "drm.json"]) {
+      for (const cmd of [["check"], ["build", "--out", "x.html", "--out", "x.pptx"]]) {
+        const r = run([cmd[0], "--deck", deck, ...cmd.slice(1)], dir);
+        assert.equal(r.status, 2, `${deck} ${cmd[0]}: ${r.stdout}${r.stderr}`);
+        assert.equal(r.stderr.trim().split("\n").length, 1, r.stderr);
+        assert.ok(r.stderr.includes(deck) && r.stderr.includes("UTF-8"), r.stderr);
+      }
+    }
+    assert.ok(!readdirSync(dir).some((f) => f.startsWith("x.")), "nothing is written for a deck that is not UTF-8");
+    const bom = run(["build", "--deck", "bom.json", "--out", "b.html"], dir);
+    assert.equal(bom.status, 0, bom.stderr);
+    const html = readFileSync(join(dir, "b.html"), "utf8");
+    assert.ok(html.includes("한글") && !html.includes("\uFFFD"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
