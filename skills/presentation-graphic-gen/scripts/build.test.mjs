@@ -198,13 +198,13 @@ test('build: default output folder is ./presentation-out/<name>/', () => {
   assert.throws(() => parseArgs(['x.md', '--stamp', '2611181200']), /yymmdd\+HHMM/);
 });
 
-test('vendor: every file matches its recorded sha256; large files are packed', () => {
+test('vendor: every file matches its recorded sha256; every file over 100 KB is packed', () => {
   assert.deepEqual(verifyVendor(), []);
   for (const rel of Object.keys(ORIGINALS)) {
     const packed = PACKED.includes(rel);
     const f = join(VENDOR, packed ? `${rel}.br` : rel);
     assert.ok(existsSync(f), f);
-    assert.ok(packed || statSync(f).size <= 1024 * 1024, `${rel} is over 1 MB and must be packed`);
+    assert.ok(packed || statSync(f).size <= 100 * 1024, `${rel} is over 100 KB and must be packed`);
     if (packed) assert.ok(!existsSync(join(VENDOR, rel)), `${rel}: only the .br is kept`);
   }
   const readme = readFileSync(join(VENDOR, 'README.md'), 'utf8');
@@ -213,7 +213,7 @@ test('vendor: every file matches its recorded sha256; large files are packed', (
   }
 });
 
-test('vendor: a tampered copy is refused (packed and plain files), and the build stops with exit 3', () => {
+test('vendor: a tampered .br is refused (it no longer unpacks, or unpacks to other bytes), and the build stops with exit 3', () => {
   const copy = join(TMP, 'skill');
   cpSync(join(SKILL, 'scripts'), join(copy, 'scripts'), { recursive: true });
   cpSync(VENDOR, join(copy, 'vendor'), { recursive: true });
@@ -223,8 +223,8 @@ test('vendor: a tampered copy is refused (packed and plain files), and the build
   const br = join(copy, 'vendor', 'fonts', 'NotoSansKRStatic-Bold.ttf.br');
   flip(br, 40000);
   assert.throws(() => vendorBytes('fonts/NotoSansKRStatic-Bold.ttf', join(copy, 'vendor')), VendorError);
-  flip(join(copy, 'vendor', 'harfbuzz', 'harfbuzz-subset.wasm'), 5000);
-  assert.throws(() => vendorBytes('harfbuzz/harfbuzz-subset.wasm', join(copy, 'vendor')), /sha256 differs/);
+  flip(join(copy, 'vendor', 'harfbuzz', 'harfbuzz-subset.wasm.br'), 5000);
+  assert.throws(() => vendorBytes('harfbuzz/harfbuzz-subset.wasm', join(copy, 'vendor')), /harfbuzz-subset\.wasm\.br: (sha256 differs|cannot read)/);
   assert.equal(verifyVendor(join(copy, 'vendor')).length, 2);
   const r = run([join(copy, 'scripts', 'build.mjs'), '--sample', '--dir', join(TMP, 'tampered-out')]);
   assert.equal(r.status, 3, r.stdout + r.stderr);
@@ -263,33 +263,39 @@ test('fonts: when subsetting fails the full font is embedded and a warning is re
   }
 });
 
-// a copy of the skill with one vendored file changed by a byte appended
+// a copy of the skill with one byte of one packed vendor file changed (a byte appended would not do: brotli ignores
+// what follows the end of its stream, so the unpacked bytes would still be the original)
 function tampered(name, rel) {
   const copy = join(TMP, name);
   for (const d of ['scripts', 'vendor', 'assets']) cpSync(join(SKILL, d), join(copy, d), { recursive: true });
-  const f = join(copy, 'vendor', rel);
-  writeFileSync(f, Buffer.concat([readFileSync(f), Buffer.from([0x20])]));
+  const f = join(copy, 'vendor', `${rel}.br`);
+  const b = readFileSync(f);
+  b[b.length >> 1] ^= 0xff;
+  writeFileSync(f, b);
   return copy;
 }
+// the message of a packed file that no longer unpacks, or unpacks to other bytes
+const refused = (rel) => new RegExp(`${rel.split('/')[1].replace(/\./g, '\\.')}\\.br: (sha256 differs|cannot read)`);
 
 test('vendor: the HarfBuzz wasm alone changed stops the build with exit 3 (no full-font fallback)', () => {
   const copy = tampered('t-wasm', 'harfbuzz/harfbuzz-subset.wasm');
   const out = join(TMP, 't-wasm-out');
   const r = run([join(copy, 'scripts', 'build.mjs'), '--sample', '--dir', out]);
   assert.equal(r.status, 3, r.stdout + r.stderr);
-  assert.match(r.stderr, /harfbuzz-subset\.wasm: sha256 differs/);
+  assert.match(r.stderr, refused('harfbuzz/harfbuzz-subset.wasm'));
   assert.doesNotMatch(r.stdout + r.stderr, /embedding the full fonts/);
   assert.ok(!existsSync(out), 'nothing is written');
 });
 
-test('vendor: the H.264 encoder alone, or PptxGenJS alone, changed stops make.mjs with exit 3 before any work', () => {
-  for (const [name, rel] of [['t-h264', 'h264-mp4-encoder/h264-mp4-encoder.node.js'], ['t-pptx', 'pptxgenjs/pptxgen.bundle.js']]) {
+test('vendor: any one packed file changed (fonts, wasm, H.264 encoder, PptxGenJS) stops make.mjs with exit 3 before any work', () => {
+  for (const [i, rel] of PACKED.entries()) {
+    const name = rel.startsWith('pptxgenjs/') ? 't-pptx' : `t-make-${i}`;
     const copy = tampered(name, rel);
     const out = join(TMP, `${name}-out`);
     const t0 = Date.now();
     const r = run([join(copy, 'scripts', 'make.mjs'), '--sample', '--format', 'pptx', '--dir', out]);
     assert.equal(r.status, 3, `${name}: ${r.stdout}${r.stderr}`);
-    assert.match(r.stderr, new RegExp(`${rel.split('/')[1].replace(/\./g, '\\.')}: sha256 differs`));
+    assert.match(r.stderr, refused(rel));
     assert.doesNotMatch(r.stdout, /== build/, 'stopped before the build');
     assert.ok(!existsSync(out), 'nothing is written');
     assert.ok(Date.now() - t0 < 20000, `${name}: ${Date.now() - t0} ms`);
@@ -454,18 +460,14 @@ test('hygiene: no hidden characters, emoji, secret-shaped strings, guessable tem
   const files = [];
   const walk = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else files.push(p); } };
   walk(SKILL);
-  // third-party code kept byte for byte (minified string tables hold control characters); its sha256 is pinned in
-  // scripts/vendor.mjs, so an edit there fails the vendor test instead (banker's hidden-chars test exempts the same file)
-  const VENDORED = new Set(['vendor/pptxgenjs/pptxgen.bundle.js']);
   const found = [];
   const utf8 = new TextDecoder('utf-8', { fatal: true });
   for (const f of files) {
     if (['.wasm', '.br', '.ttf', '.png'].includes(extname(f))) continue;
     const text = utf8.decode(readFileSync(f));
     const rel = relative(SKILL, f);
-    const pinned = VENDORED.has(rel.split('\\').join('/'));
     text.split('\n').forEach((line, i) => {
-      if (!pinned) for (const c of line) if (HIDDEN.test(c) && !/[\t\r]/.test(c)) found.push(`${rel}:${i + 1} hidden U+${c.codePointAt(0).toString(16)}`);
+      for (const c of line) if (HIDDEN.test(c) && !/[\t\r]/.test(c)) found.push(`${rel}:${i + 1} hidden U+${c.codePointAt(0).toString(16)}`);
       if (EMOJI.test(line)) found.push(`${rel}:${i + 1} emoji`);
       for (const re of SECRET) if (re.test(line)) found.push(`${rel}:${i + 1} secret-shaped`);
       if (/\.mjs$|\.js$/.test(f) && GUESSABLE.test(line) && /tmp|temp|lock/i.test(line)) found.push(`${rel}:${i + 1} guessable temp name`);

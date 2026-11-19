@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 import { after, before, describe, test } from 'node:test';
 import { SKILL, parseScript } from './build.mjs';
 import { findBrowser, launch, scratchDir } from './cdp.mjs';
@@ -66,9 +67,18 @@ test('vendored PptxGenJS loads from its checked bytes; a tampered copy is refuse
   assert.equal(typeof JSZip, 'function');
   const copy = join(TMP, 'vendor');
   cpSync(VENDOR, copy, { recursive: true });
-  const f = join(copy, 'pptxgenjs', 'pptxgen.bundle.js');
-  writeFileSync(f, readFileSync(f, 'utf8').replace('PptxGenJS', 'PptxGenJZ'));
+  // a .br that unpacks cleanly to other bytes
+  const f = join(copy, 'pptxgenjs', 'pptxgen.bundle.js.br');
+  writeFileSync(f, brotliCompressSync(Buffer.from(brotliDecompressSync(readFileSync(f)).toString('utf8').replace('PptxGenJS', 'PptxGenJZ'))));
   assert.throws(() => pptxgen(copy), VendorError);
+});
+
+test('a vendored .br that unpacks to far more than any original is refused as damaged, not unpacked into memory', () => {
+  const copy = join(TMP, 'vendor-big');
+  cpSync(VENDOR, copy, { recursive: true });
+  // 64 MiB of zeros packs to a few KB; the largest original is about 6.2 MB
+  writeFileSync(join(copy, 'pptxgenjs', 'pptxgen.bundle.js.br'), brotliCompressSync(Buffer.alloc(64 * 1024 * 1024)));
+  assert.throws(() => pptxgen(copy), (e) => e instanceof VendorError && /cannot read/.test(e.message));
 });
 
 test('make.mjs rejects an unknown --format (exit 2)', () => {

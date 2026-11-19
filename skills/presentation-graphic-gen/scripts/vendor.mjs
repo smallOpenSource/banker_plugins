@@ -1,7 +1,8 @@
-// vendor.mjs: the vendored files this skill reads (fonts and the HarfBuzz subsetter). Every file is checked against
-// the sha256 of its original before use; a mismatch stops the run. Files over 1 MB are kept brotli-packed as
-// <file>.br (node zlib brotli, quality 11, window 24) and unpacked here, in memory. vendor/README.md lists the same
-// sha256 values with each file's source, version and license.
+// vendor.mjs: the vendored files this skill reads (fonts, the HarfBuzz subsetter, the H.264 encoder and PptxGenJS).
+// Every file is checked against the sha256 of its original before use; a mismatch stops the run. They are all kept
+// brotli-packed as <file>.br (node zlib brotli, quality 11, window 24) and unpacked here, in memory, never on disk:
+// Codex hashes a plugin's whole folder before each of its hooks, inside that hook's time limit. vendor/README.md lists
+// the same sha256 values with each file's source, version and license.
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
@@ -23,8 +24,16 @@ export const ORIGINALS = Object.freeze({
   'pptxgenjs/pptxgen.bundle.js': '4fb9eac5cfefb213e2d8743c2b7151025f31bfb3f834c73c12062916daa0f3f8',
 });
 
-/** Files stored as <file>.br (originals over 1 MB). */
-export const PACKED = Object.freeze(['fonts/NotoSansKRStatic-Regular.ttf', 'fonts/NotoSansKRStatic-Bold.ttf']);
+/** Files stored as <file>.br (scripts/pack-video-vendor.mjs in the repository packs them). */
+export const PACKED = Object.freeze([
+  'fonts/NotoSans-Regular.ttf',
+  'fonts/NotoSans-Bold.ttf',
+  'fonts/NotoSansKRStatic-Regular.ttf',
+  'fonts/NotoSansKRStatic-Bold.ttf',
+  'harfbuzz/harfbuzz-subset.wasm',
+  'h264-mp4-encoder/h264-mp4-encoder.node.js',
+  'pptxgenjs/pptxgen.bundle.js',
+]);
 
 export class VendorError extends Error {}
 
@@ -47,7 +56,8 @@ export function vendorBytes(rel, root = VENDOR) {
   let bytes;
   try {
     bytes = readFileSync(file);
-    if (packed) bytes = brotliDecompressSync(bytes);
+    // the largest original is about 6.2 MB; a bigger output is a damaged or swapped file, not a reason to run out of memory
+    if (packed) bytes = brotliDecompressSync(bytes, { maxOutputLength: 16 * 1024 * 1024 });
   } catch (e) {
     throw new VendorError(`vendor/${rel}${packed ? '.br' : ''}: cannot read (${e.code || e.message}); reinstall the skill`);
   }
@@ -65,10 +75,10 @@ export function verifyVendor(root = VENDOR) {
 }
 
 /**
- * The H.264 MP4 encoder (Emscripten build of minih264 + libmp4v2), compiled as a CommonJS module from its
- * sha256-checked bytes (a plain require would read the file again, and under a package.json with "type": "module"
- * would load it as ESM). Note: the glue registers process handlers for uncaught exceptions and unhandled
- * rejections when it loads; callers handle their own rejections.
+ * The H.264 MP4 encoder (Emscripten build of minih264 + libmp4v2), compiled as a CommonJS module from its unpacked,
+ * sha256-checked bytes (only the .br is on disk; the module takes the original's path as its name, and a package.json
+ * with "type": "module" above does not apply). Note: the glue registers process handlers for uncaught exceptions
+ * and unhandled rejections when it loads; callers handle their own rejections.
  */
 let h264Loaded = null;
 export function h264Encoder(root = VENDOR) {
