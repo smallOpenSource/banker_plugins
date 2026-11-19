@@ -6,8 +6,8 @@
 |---|---|---|
 | 1 | `node "<S>/scripts/record.mjs" <present.html> --out <녹화 폴더>` | 단계마다 `NN-<id>.mp4`, `-first.png`, `-last.png`, `manifest.json` |
 | 2 | `node "<S>/scripts/pptx-video.mjs" <대본> --media <녹화 폴더> --out <이름>-video-<stamp>.pptx` | 영상 덱 |
-| 3 | `node "<S>/scripts/pptx-edit.mjs" <present.html> <대본> --out <이름>-edit-<stamp>.pptx` | 편집 덱, 그림 대체 목록 |
-| 4 | `node "<S>/scripts/pptx.mjs" verify <파일> --script <대본> [--media <녹화 폴더>]` | 게이트(`gates.md`) |
+| 3 | `node "<S>/scripts/pptx-edit.mjs" <present.html> <대본> --out <이름>-edit-<stamp>.pptx` | 편집 덱(애니메이션 포함), 그림 대체와 근사 목록 |
+| 4 | `node "<S>/scripts/pptx.mjs" verify <파일> --script <대본> [--media <녹화 폴더>] [--html <present.html>]` | 게이트(`gates.md`). 편집 덱은 `--html` 이 있어야 `anim-match`, `anim-render` 를 돌림 |
 
 - 모든 도우미는 이미 있는 파일과 비어 있지 않은 녹화 폴더, `--frames` 폴더, PowerPoint PNG 폴더를 덮어쓰지 않는다(종료 코드 2). `make.mjs` 는 PPTX 두 파일과 녹화 폴더를 HTML 빌드 전에 미리 검사한다. `--force` 는 허락 뒤에만.
 
@@ -36,23 +36,48 @@
 
 ## 편집 덱(`pptx-edit.mjs`)
 
-- 단계마다 끝 상태를 브라우저에서 읽어 PowerPoint 도형으로 다시 그린다.
+- 섹션 하나에 슬라이드 하나. 단계 하나가 클릭 묶음 하나다. 섹션의 첫 단계는 슬라이드 전환(Fade 0.25초) 뒤 저절로 재생된다. 그래서 키 한 번이 HTML 과 같은 단계 하나다.
+- 도형은 그 섹션에서 한 번이라도 보이는 것 전부다. 쉬는 자리(변형 없는 배치)에 PowerPoint 고유 도형으로 놓는다.
+- 움직임은 PowerPoint 고유 애니메이션이다. 값은 쉬는 자리 기준(`#ppt_x+dx`)이라 도형을 손으로 옮기면 움직임도 따라간다.
 
 | 페이지의 것 | PPTX |
 |---|---|
-| 글 | 그려진 한 줄에 텍스트 상자 하나. 줄 안의 크기, 굵기, 색, 투명도가 다른 조각은 실행(run)으로 나눔. 자동 줄바꿈 없음, 여백 0 |
+| 글 | 그려진 한 줄에 텍스트 상자 하나. 줄 안의 크기, 굵기, 색, 자간이 다른 조각은 실행(run)으로 나눔. 자동 줄바꿈 없음, 여백 0 |
 | 배경색, 테두리, 둥근 모서리가 있는 요소 | 사각형이나 둥근 사각형. CSS 테두리는 상자 안쪽에 그려지고 PowerPoint 외곽선은 도형 가장자리 가운데에 그려지므로, 외곽선 굵기의 절반만큼 안으로 줄여 놓음 |
-| 강조 테두리(`s.focus`) | 채우기 없는 둥근 사각형 외곽선 하나(대상의 모서리 반지름에 `pad` 를 더한 모양). 이름은 `shape i.fx-focus` |
+| 강조 테두리(`s.focus`) | 채우기 없는 둥근 사각형 외곽선 하나. 빛번짐(`box-shadow`)은 `a:glow`(반지름 = 흐림의 절반, 근사) |
 | 변마다 다른 테두리 | 변마다 얇은 사각형 |
 | 그림, SVG, 회전, 그라데이션, 빗금 | 그 요소만 투명 바탕에 잘라 낸 그림. `fallback <단계>: <요소> (<까닭>)` 줄로 목록을 냄 |
 | 장면 바탕 | 슬라이드 바탕색 |
 
-- 노트, 숨긴 제목, 테마 글꼴은 영상 덱과 같다.
+| 움직임 | PowerPoint | 판정 |
+|---|---|---|
+| 나타남, 사라짐 | Fade 진입, 끝내기. 페이드 구간과 `accel`, `decel` 을 페이지 곡선에 맞춤 | 직선이면 정확, 그 밖은 근사(오차를 적음) |
+| 한 순간의 나타남, 사라짐, 그리기 시작 | Appear, Disappear | 정확 |
+| 부분 투명도(`s.dim`, `s.strike` 의 흐림) | 그 투명도의 흐린 복사본(`#n@35`)과 교차 Fade | 근사 |
+| 이동, 크기, 회전(부모 층 포함) | 그 단계 효과 안의 표본 키프레임(`ppt_x`, `ppt_y`, `ppt_w`, `ppt_h`, `r`), 0.3px 로 줄임 | 정확 |
+| 한쪽 끝에서 드러남(`s.reveal`) | Wipe 진입(그 쪽부터) | 근사 |
+| 그 밖의 잘라 내기 변화 | 없음. 잘리지 않은 채 보임 | 불가 |
+| 섹션 첫 단계 | 전환이 끝난 뒤 시작. HTML 보다 0.10초(첫 섹션은 0.25초) 늦음 | 근사 |
+
+- 출력의 `motion: <N> exact, <N> approx, <N> not possible` 줄과 `approx <단계>: ...`, `not possible <단계>: ...` 줄이 위 판정의 목록이다.
+- 부분 투명도의 방식은 `scripts/pptx-anim-plan.mjs` 의 `PARTIAL` 한 곳에서 바꾼다. 기본은 확인된 효과만 쓰는 `crossfade` 다. `anim`(`style.opacity`), `emph`(Transparency 강조)는 PowerPoint 실측(아래 단계 0) 뒤에 고른다.
+- 노트는 단계마다 `[1-1]` 머리줄, 말, `[연출]` 줄이다. 클릭과 말을 맞출 때 본다.
+- 숨긴 제목은 `<n>. <섹션 이름>`.
+- 바뀌는 글(`s.swap`)과 사라지는 글이 같은 자리에 겹쳐 보인다. HTML 과 같은 구조라 피할 수 없다. 도형 이름(`text <요소> #n`)으로 구분한다.
 - 글꼴 파일은 넣지 않는다. 보는 PC 에 Noto Sans 와 Noto Sans KR 이 있어야 줄바꿈이 HTML 과 같다.
 - 여러 줄 글은 줄마다 다른 상자다. 고친 뒤 줄 길이가 바뀌면 상자를 손으로 맞춘다.
-- 움직임은 넣지 않는다. 움직이는 발표는 영상 덱이나 HTML 을 쓴다.
+- 보장하는 판: PowerPoint 2016 이상과 Microsoft 365(Windows, Mac). 웹, 모바일, Keynote 는 다르게 재생할 수 있다.
+- 단계마다 끝 상태를 정지 화면으로 넘기려면 `check-.../stills/` 를 쓴다.
 
 ## 선택: PowerPoint 확인(Windows)
 
 - `node "<S>/scripts/pptx.mjs" com <파일.pptx> <PNG 폴더>`. `gates.md` 참고.
-- `scripts/pptx-com.ps1` 이 하위 프로세스에서 PowerPoint 를 열고, 끝나면 자기가 연 PowerPoint 만 닫는다. 시간 제한(기본 600초)을 넘으면 그 PowerPoint 만 끝낸다.
+- `node "<S>/scripts/pptx.mjs" com --anim <편집.pptx> <폴더> --script <대본> [--video]`: 편집 덱의 애니메이션을 PowerPoint 가 파일대로 읽는지 본다. `gates.md` 참고.
+- `scripts/pptx-com.ps1` 이 하위 프로세스에서 PowerPoint 를 열고, 끝나면 자기가 연 PowerPoint 만 닫는다. 시간 제한(기본 600초, `--anim` 은 900초)을 넘으면 그 PowerPoint 만 끝낸다.
+
+## 개발용: PowerPoint 실측(단계 0)
+
+- `node "<S>/scripts/pptx-anim-probe.mjs" <폴더>` 는 후보 인코딩 13가지를 한 파일에 하나씩(P01..P13, P12 는 두 벌) 쓰고, 볼 것을 `probe.json` 에 적는다.
+- PowerPoint 가 있는 Windows 에서 `node "<S>/scripts/pptx-anim-probe.mjs" --com <폴더>` 가 파일마다 `com --anim` 을 돌린다. 캡처와 영상은 `<폴더>/com/<P..>/` 에 남는다.
+- 결과로 정할 것: 부분 투명도 방식(`PARTIAL`), 움직임만 있는 효과의 프리셋(`MOTION`), Wipe 방향 문자열(`pptx-anim-xml.mjs` 의 `WIPE`), `r` 의 단위, 크기 애니메이션에서 글자도 커지는지.
+
