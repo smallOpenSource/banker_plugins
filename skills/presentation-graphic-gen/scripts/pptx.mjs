@@ -21,6 +21,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deckData, parseScript, readText } from './build.mjs';
 import { findBrowser, launch, scratchDir } from './cdp.mjs';
+import { animGates } from './pptx-anim-gates.mjs';
 import { KR, LATIN, mp4Info, notesText, paragraphs, sectionNotes, sectionTitle, slideTitle, xmlText } from './pptx-common.mjs';
 import { decodePng } from './png.mjs';
 import { exitOf, pptxgen } from './vendor.mjs';
@@ -99,7 +100,7 @@ window.compare = async (a, b, fps, save) => {
 };
 </script>`;
 
-export async function verify(file, { script, media = null, frames = null, force = false, log = (l) => process.stdout.write(l + '\n'), browser = findBrowser() } = {}) {
+export async function verify(file, { script, media = null, frames = null, html = null, force = false, log = (l) => process.stdout.write(l + '\n'), browser = findBrowser() } = {}) {
   if (frames && !force && notEmpty(frames)) throw Object.assign(new Error(`${frames} is not empty; not overwriting (use --force or another --frames)`), { exit: 2 });
   const results = [];
   const gate = (name, state, detail, lines = []) => {
@@ -251,9 +252,24 @@ export async function verify(file, { script, media = null, frames = null, force 
     const theme = (await read('ppt/theme/theme1.xml')) || '';
     const fontsOk = theme.includes(`<a:latin typeface="${LATIN}"`) && theme.includes(`<a:ea typeface="${KR}"`);
     gate('edit-slides', !bad.length && fontsOk, `${slides.length - bad.length}/${slides.length} slides have native text boxes; theme fonts ${fontsOk ? `${LATIN} / ${KR}` : 'NOT set'}`, bad);
+    await animGates(await withMedia(zip, slides), data, { gate, html, browser, log });
   }
   const ok = results.every((r) => r.ok);
   return { ok, kind, results };
+}
+
+// each slide's pictures as data URLs by relationship id (anim-render draws them)
+async function withMedia(zip, slides) {
+  const out = [];
+  for (const s of slides) {
+    const urls = {};
+    for (const m of s.xml.matchAll(/r:embed="(rId\d+)"/g)) {
+      const part = s.rid(m[1]);
+      if (part && zip.file(part) && /\.png$/i.test(part)) urls[m[1]] = `data:image/png;base64,${Buffer.from(await zip.file(part).async('uint8array')).toString('base64')}`;
+    }
+    out.push({ k: s.k, xml: s.xml, media: (rid) => urls[rid] || null });
+  }
+  return out;
 }
 
 // A path that is there but is not a folder that can be read (a file given as the PNG or frames folder) is a usage
@@ -348,18 +364,19 @@ if (process.argv[1] && ranAs(process.argv[1]) === fileURLToPath(import.meta.url)
     process.exit(fail ? 1 : 0);
   }
   if (argv[0] !== 'verify') { process.stderr.write('usage: node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>] [--frames <dir>] [--force]\n       node scripts/pptx.mjs com <file.pptx> <png dir> [--force]   (optional, Windows + PowerPoint)\n'); process.exit(2); }
-  let file = null, script = null, media = null, frames = null, force = false;
+  let file = null, script = null, media = null, frames = null, html = null, force = false;
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '--script') script = resolve(argv[++i] || '');
     else if (argv[i] === '--media') media = resolve(argv[++i] || '');
     else if (argv[i] === '--frames') frames = resolve(argv[++i] || '');
+    else if (argv[i] === '--html') html = resolve(argv[++i] || '');
     else if (argv[i] === '--force') force = true;
     else if (!argv[i].startsWith('--') && !file) file = resolve(argv[i]);
     else { process.stderr.write(`pptx: unknown argument ${argv[i]}\n`); process.exit(2); }
   }
   if (!file || !script) { process.stderr.write('usage: node scripts/pptx.mjs verify <file.pptx> --script <script.md> [--media <record dir>]\n'); process.exit(2); }
   try {
-    const r = await verify(file, { script, media, frames, force });
+    const r = await verify(file, { script, media, frames, html, force });
     process.stdout.write(summaryLine(r, file) + '\n');
     process.exit(r.ok ? 0 : 1);
   } catch (e) {

@@ -101,7 +101,8 @@ function seriesOf(S, k) {
   o.frac = o.T.map((_, i) => Math.max(0, o.cr[i] - o.cl[i]) * Math.max(0, o.cb[i] - o.ct[i]));
   return o;
 }
-const shows = (s, it, i) => s.sx[i] * it.w > 0.5 && s.sy[i] * it.h > 0.5 && s.frac[i] > 0;
+// drawn at all: some width, some height, some part not clipped away
+const shows = (s, it, i) => s.sx[i] * it.w > 1e-3 && s.sy[i] * it.h > 1e-3 && s.frac[i] > 0;
 
 // the shape's center offset from rest (px): the item center now, less the rotated, scaled offset of the item in its shape
 function shapeSeries(s, it) {

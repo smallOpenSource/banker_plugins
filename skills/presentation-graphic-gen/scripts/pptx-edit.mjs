@@ -2,7 +2,7 @@
 // pptx-edit.mjs: an editable PowerPoint deck with PowerPoint's own animation: one slide per section, one click per
 // step (the section's first step plays by itself after a 0.25 s Fade transition). Everything the section shows is a
 // native shape at its rest place, read from the page (pptx-anim-extract.mjs): text boxes (one per rendered line,
-// runs keep size, weight, color), filled or bordered shapes (rounded corners, the focus outline's glow as a:glow),
+// runs keep size, weight, color, letter spacing), filled or bordered shapes (rounded corners, the focus outline's glow as a:glow),
 // and pictures where a shape cannot be native (images, SVG, gradients and hatches, rotated elements; listed).
 // The motion is planned from the page's measured time series (pptx-anim-plan.mjs: Fade, Appear, Wipe, sampled
 // keyframes for position, size and rotation, crossfaded copies for partial opacity) and written as slide timing
@@ -39,7 +39,7 @@ function addItem(p, s, S, it, level, name) {
   const R = shapeRect(it);
   if (it.kind === 'box') return addBox(p, s, it, level, name);
   if (it.kind === 'text') {
-    const runs = it.runs.map((r) => ({ text: r.t, options: { fontSize: PT(r.size), bold: r.bold, color: r.hex, transparency: alpha(r.a * level), lang: 'ko-KR' } }));
+    const runs = it.runs.map((r) => ({ text: r.t, options: { fontSize: PT(r.size), bold: r.bold, color: r.hex, transparency: alpha(r.a * level), lang: 'ko-KR', charSpacing: r.ls ? PT(r.ls) : undefined } }));
     return s.addText(runs, { x: IN(R.x), y: IN(R.y), w: IN(R.w), h: IN(R.h), margin: 0, valign: 'middle', align: it.align, wrap: false, fit: 'none', objectName: name });
   }
   const o = { data: `image/png;base64,${S.pics[it.id].toString('base64')}`, x: IN(R.x), y: IN(R.y), w: IN(R.w), h: IN(R.h), altText: `${it.what} (${it.why})`, objectName: name };

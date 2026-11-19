@@ -1,5 +1,5 @@
 // pptx-anim.test.mjs: the editable deck's animation pieces that need no browser: the plan from measured series,
-// the timing XML and the structure checker (negative cases too).
+// the timing XML and the structure checker (negative cases too), the independent simulator and the anim gates.
 // Run: node --test scripts/pptx-anim.test.mjs
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
@@ -8,6 +8,8 @@ import { PARTIAL, easeAD, fitEase, fitProgress, monoRuns, planSection, reduceKey
 import { formula, timingXml, transitionXml, glowXml } from './pptx-anim-xml.mjs';
 import { checkSlide, parseXml } from './pptx-xmlcheck.mjs';
 import { sectionNotes, sectionTitle, shapeRect } from './pptx-common.mjs';
+import { evalFormula, itemsAt, readSlide, smilProgress, stateAt, wipeVisible } from './pptx-anim-sim.mjs';
+import { animGates } from './pptx-anim-gates.mjs';
 
 // ---------- a synthetic section: items with a state function of time ----------
 const out = (u) => 1 - (1 - u) * (1 - u) * (1 - u);
@@ -226,4 +228,93 @@ test('parseXml: well-formed checks (mismatched end tag, a duplicate attribute, t
   assert.throws(() => parseXml('<a/><b/>'), /exactly one root/);
   const t = parseXml('<?xml version="1.0"?><a k=\'v\'><b>hi</b><c/></a>');
   assert.deepEqual([t.name, t.attrs.k, t.kids.map((k) => k.name), t.kids[0].text], ['a', 'v', ['b', 'c'], 'hi']);
+});
+
+// ---------- the simulator (hand-written timing, known answers) ----------
+const EMU = 6350;
+const SH = (id, name, x, y, w, h) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x * EMU}" y="${y * EMU}"/><a:ext cx="${w * EMU}" cy="${h * EMU}"/></a:xfrm></p:spPr></p:sp>`;
+const C = (id, extra, delay, body) => `<p:par><p:cTn id="${id}"${extra} fill="hold" grpId="0">${delay != null ? `<p:stCondLst><p:cond delay="${delay}"/></p:stCondLst>` : ''}<p:childTnLst>${body}</p:childTnLst></p:cTn></p:par>`;
+const BT = (id, dur, delay, spid, extra = '') => `<p:cBhvr><p:cTn id="${id}" dur="${dur}"${extra} fill="hold"><p:stCondLst><p:cond delay="${delay}"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl>`;
+const VIS = (id, spid, v, delay) => `<p:set>${BT(id, 1, delay, spid)}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="${v}"/></p:to></p:set>`;
+const FADE = (id, spid, dir, delay, dur, extra) => `<p:animEffect transition="${dir}" filter="fade">${BT(id, dur, delay, spid, extra)}</p:cBhvr></p:animEffect>`;
+const TAV = (id, spid, attr, delay, dur, keys) => `<p:anim calcmode="lin" valueType="num">${BT(id, dur, delay, spid)}<p:attrNameLst><p:attrName>${attr}</p:attrName></p:attrNameLst></p:cBhvr><p:tavLst>${keys.map(([tm, v]) => `<p:tav tm="${tm}"><p:val><p:strVal val="${v}"/></p:val></p:tav>`).join('')}</p:tavLst></p:anim>`;
+const GROUP = (id, auto, inner) => `<p:par><p:cTn id="${id}" fill="hold"><p:stCondLst><p:cond delay="indefinite"/>${auto ? '<p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond>' : ''}</p:stCondLst><p:childTnLst>${inner}</p:childTnLst></p:cTn></p:par>`;
+const TIMING = (groups) => `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${groups}</p:childTnLst></p:cTn></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>`;
+// shape 2 (#1) fades in 100..500 ms with the auto group; click 1: it moves 192 px right over 1000 ms while shape 3
+// (#1@35, a copy) fades in from 200 ms; click 2: an inner group after the first: shape 2 fades out (accel 100%)
+const SIMXML = SLIDE(SH(2, 'shape div.a #1', 100, 100, 200, 100) + SH(3, 'shape div.a #1@35', 100, 100, 200, 100), TIMING(
+  GROUP(10, true, C(11, '', 0, C(12, ' presetID="10" presetClass="entr" nodeType="afterEffect"', 100, VIS(13, 2, 'visible', 0) + FADE(14, 2, 'in', 0, 400))))
+  + GROUP(20, false, C(21, '', 0, C(22, ' presetID="0" presetClass="emph" nodeType="clickEffect"', 0, TAV(23, 2, 'ppt_x', 0, 1000, [[0, '#ppt_x'], [50000, '#ppt_x+0.075'], [100000, '#ppt_x+0.1']]))
+    + C(24, ' presetID="10" presetClass="entr" nodeType="withEffect"', 200, VIS(25, 3, 'visible', 0) + FADE(26, 3, 'in', 0, 200))))
+  + GROUP(30, false, C(31, '', 0, C(32, ' presetID="0" presetClass="emph" nodeType="clickEffect"', 0, TAV(33, 3, 'ppt_y', 0, 300, [[0, '#ppt_y'], [100000, '#ppt_y']]))) + C(34, '', 50, C(35, ' presetID="10" presetClass="exit" nodeType="afterEffect"', 0, FADE(36, 2, 'out', 0, 400, ' accel="100000"') + VIS(37, 2, 'hidden', 399))))));
+
+test('simulator: formulas, SMIL accel / decel, and the wipe fraction', () => {
+  const v = { ppt_x: 0.5, ppt_y: 0.25, ppt_w: 0.1, ppt_h: 0.2 };
+  assert.equal(evalFormula('#ppt_x+0.1', v), 0.6);
+  assert.ok(Math.abs(evalFormula('0-#ppt_w/2', v) + 0.05) < 1e-12);
+  assert.ok(Math.abs(evalFormula('(#ppt_y+0.25)*2', v) - 1) < 1e-12);
+  assert.equal(evalFormula('-1.5e-1', v), -0.15);
+  assert.throws(() => evalFormula('#ppt_q', v), /unknown formula variable/);
+  assert.equal(smilProgress(0.5, 0, 0), 0.5);
+  assert.ok(Math.abs(smilProgress(0.5, 0, 1) - 0.75) < 1e-12 && Math.abs(smilProgress(0.5, 1, 0) - 0.25) < 1e-12);
+  assert.ok(Math.abs(smilProgress(0.25, 0.5, 0.5) - 0.125) < 1e-12);
+  assert.equal(wipeVisible(null), 1);
+  assert.equal(wipeVisible({ out: false, p: 0.3 }), 0.3);
+  assert.equal(wipeVisible({ out: true, p: 0.3 }), 0.7);
+});
+
+test('simulator: an entrance hides the shape before it, fades linearly; click groups count from their own start; inner groups run after each other', () => {
+  const sl = readSlide(SIMXML);
+  assert.deepEqual(sl.groups.map((g) => [g.auto, g.effects.length]), [[true, 1], [false, 2], [false, 2]]);
+  const at = (k, t, id) => stateAt(sl, k, t).get(id);
+  assert.deepEqual([at(0, 0, '2').vis, at(0, 0, '2').op], [false, 0], 'hidden before its entrance');
+  assert.ok(Math.abs(at(0, 300, '2').op - 0.5) < 1e-9);
+  assert.equal(at(0, Infinity, '2').op, 1);
+  assert.equal(at(1, 0, '2').cx, 200, 'click 1 starts at rest');
+  assert.ok(Math.abs(at(1, 250, '2').cx - (200 + 0.0375 * 1920)) < 1e-6, 'halfway to the 50% key');
+  assert.ok(Math.abs(at(1, Infinity, '2').cx - (200 + 192)) < 1e-6);
+  assert.deepEqual([at(1, 100, '3').vis, at(1, 300, '3').op], [false, 0.5], 'the copy enters 200 ms into click 1');
+  // click 2: the exit is in an inner group after a 300 ms one (+ 50 ms): it starts at 350 ms, accel 100%
+  assert.equal(at(2, 349, '2').op, 1);
+  assert.ok(Math.abs(at(2, 550, '2').op - 0.75) < 1e-9, String(at(2, 550, '2').op));
+  assert.deepEqual([at(2, Infinity, '2').vis, at(2, Infinity, '2').op], [false, 0]);
+  assert.ok(Math.abs(at(2, Infinity, '2').cx - 392) < 1e-6, 'the move holds (fill hold) through later clicks');
+  // the item #1 is the two shapes over each other: 1 - (1 - 1)(1 - 0.35) at the end of click 1
+  const it = itemsAt(stateAt(sl, 1, Infinity)).get(1);
+  assert.ok(Math.abs(it.op - 1) < 1e-9);
+  assert.ok(Math.abs(itemsAt(stateAt(sl, 2, Infinity)).get(1).op - 0.35) < 1e-9);
+});
+
+// ---------- gates without the page ----------
+async function gatesOf(xmls, sections) {
+  const lines = [];
+  const data = { sections: sections.map((ids, k) => ({ n: k + 1, ids })), steps: sections.flatMap((ids) => ids.map((id) => ({ id }))) };
+  const gate = (name, state, detail, rows = []) => lines.push([name, state, detail, rows]);
+  await animGates(xmls.map((xml, k) => ({ k, xml, media: () => null })), data, { gate });
+  return Object.fromEntries(lines.map((l) => [l[0], l]));
+}
+
+test('anim gates without a page: xml, steps and targets are checked; match and render SKIP; anim-powerpoint is always SKIP', async () => {
+  const g = await gatesOf([SIMXML], [['s1-1', 's1-2', 's1-3']]);
+  assert.deepEqual(Object.keys(g), ['anim-xml', 'anim-steps', 'anim-targets', 'anim-match', 'anim-render', 'anim-powerpoint']);
+  assert.equal(g['anim-steps'][1], true, g['anim-steps'][2]);
+  assert.equal(g['anim-targets'][1], true, g['anim-targets'][3].join('; '));
+  assert.match(g['anim-targets'][2], /no --html: names not compared with the page/);
+  assert.deepEqual([g['anim-match'][1], g['anim-render'][1], g['anim-powerpoint'][1]], [null, null, null]);
+  assert.match(g['anim-powerpoint'][2], /pptx\.mjs com --anim/);
+});
+
+test('anim gates fail a missing click group, a second automatic group, a target that is the hidden title or has no element name', async () => {
+  const short = await gatesOf([SIMXML], [['s1-1', 's1-2', 's1-3', 's1-4']]);
+  assert.equal(short['anim-steps'][1], false);
+  assert.match(short['anim-steps'][3][0], /1 automatic and 2 click groups, want 1 and 3 \(4 steps\)/);
+  const twoAuto = await gatesOf([SIMXML.replace('<p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="21"', '<p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:par><p:cTn id="21"')], [['s1-1', 's1-2', 's1-3']]);
+  assert.equal(twoAuto['anim-steps'][1], false);
+  const title = await gatesOf([SIMXML.replace('<p:cNvPr id="3" name="shape div.a #1@35"/>', '<p:cNvPr id="3" name="Title 1" hidden="1"/>')], [['s1-1', 's1-2', 's1-3']]);
+  assert.equal(title['anim-targets'][1], false);
+  assert.match(title['anim-targets'][3].join('\n'), /target 3 is the hidden title/);
+  const noname = await gatesOf([SIMXML.replace('name="shape div.a #1"', 'name="Rectangle 2"')], [['s1-1', 's1-2', 's1-3']]);
+  assert.match(noname['anim-targets'][3].join('\n'), /target 2 has no element name \(Rectangle 2\)/);
+  const broken = await gatesOf([SIMXML.replace('<p:cTn id="14"', '<p:cTn id="13"')], [['s1-1', 's1-2', 's1-3']]);
+  assert.equal(broken['anim-xml'][1], false);
 });

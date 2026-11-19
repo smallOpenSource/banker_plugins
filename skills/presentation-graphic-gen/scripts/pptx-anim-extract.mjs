@@ -143,7 +143,7 @@ export function pageLib() {
       var b = box(r);
       if (!line || b.y > line.y + line.h * 0.5) { line = { t: '', x: b.x, y: b.y, r: b.x + b.w, b: b.y + b.h, h: b.h, blk: blk, own: own, ord: cur.items.length }; cur.lines.push(line); }
       line.t += ch; line.x = Math.min(line.x, b.x); line.r = Math.max(line.r, b.x + b.w); line.b = Math.max(line.b, b.y + b.h);
-      line.run = { size: parseFloat(s.fontSize) * scale, bold: parseInt(s.fontWeight, 10) >= 600, hex: col.hex, a: col.a };
+      line.run = { size: parseFloat(s.fontSize) * scale, bold: parseInt(s.fontWeight, 10) >= 600, hex: col.hex, a: col.a, ls: (parseFloat(s.letterSpacing) || 0) * scale };
     }
   }
   function textNode(n) {
