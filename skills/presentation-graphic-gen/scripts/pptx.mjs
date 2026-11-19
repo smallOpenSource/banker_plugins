@@ -21,7 +21,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deckData, parseScript, readText } from './build.mjs';
 import { findBrowser, launch, scratchDir } from './cdp.mjs';
-import { KR, LATIN, mp4Info, notesText, paragraphs, slideTitle, xmlText } from './pptx-common.mjs';
+import { KR, LATIN, mp4Info, notesText, paragraphs, sectionNotes, sectionTitle, slideTitle, xmlText } from './pptx-common.mjs';
 import { decodePng } from './png.mjs';
 import { exitOf, pptxgen } from './vendor.mjs';
 
@@ -126,8 +126,6 @@ export async function verify(file, { script, media = null, frames = null, force 
   const ratio = sz ? +sz[1] / +sz[2] : 0;
   gate('zip', !missing.length && Math.abs(ratio - 16 / 9) < 0.001, missing.length ? `missing ${missing.join(', ')}` : `parts present, slide size ${sz[1]}x${sz[2]} (16:9)`);
   const slideNames = names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/\d+/)[0] - +b.match(/\d+/)[0]);
-  gate('slide-count', slideNames.length === data.steps.length, `${slideNames.length} slides, ${data.steps.length} steps in the script`);
-
   const ct = (await read('[Content_Types].xml')) || '';
   const slides = [];
   for (let k = 0; k < slideNames.length; k++) {
@@ -141,20 +139,24 @@ export async function verify(file, { script, media = null, frames = null, force 
     slides.push({ k, xml, rels, notes: paragraphs(body).join('\n'), target, rid });
   }
   const kind = slides.some((s) => /<p14:media /.test(s.xml)) ? 'video' : 'edit';
-  log(`  kind: ${kind === 'video' ? 'video deck (one video per slide)' : 'editable deck (native shapes)'}`);
+  log(`  kind: ${kind === 'video' ? 'video deck (one video per slide)' : 'editable deck (one slide per section, animated)'}`);
+  // a video deck has one slide per step, an editable deck one per section (its steps are clicks)
+  const units = kind === 'video' ? data.steps.map((st) => ({ notes: notesText(st), title: slideTitle(st) }))
+    : data.sections.map((sec) => ({ notes: sectionNotes(data.steps.filter((st) => st.section === sec.n)), title: sectionTitle(sec) }));
+  gate('slide-count', slideNames.length === units.length, kind === 'video' ? `${slideNames.length} slides, ${data.steps.length} steps in the script` : `${slideNames.length} slides, ${data.sections.length} sections in the script`);
 
   // notes and titles
   const badNotes = [], badTitle = [], titles = new Set();
   slides.forEach((s, k) => {
-    const st = data.steps[k];
-    if (!st) return;
-    if (s.notes !== notesText(st)) badNotes.push(`slide ${k + 1}: notes ${JSON.stringify(s.notes.slice(0, 40))}`);
+    const u = units[k];
+    if (!u) return;
+    if (s.notes !== u.notes) badNotes.push(`slide ${k + 1}: notes ${JSON.stringify(s.notes.slice(0, 40))}`);
     const ph = /<p:sp>(?:(?!<\/p:sp>)[\s\S])*?<p:cNvPr id="\d+" name="[^"]*"( hidden="1")?[^>]*>(?:(?!<\/p:sp>)[\s\S])*?<p:ph[^>]*\btype="title"[\s\S]*?<\/p:sp>/.exec(s.xml);
     const text = ph ? paragraphs(ph[0]).join(' ') : '';
-    if (!ph || !ph[1] || text !== slideTitle(st) || titles.has(text)) badTitle.push(`slide ${k + 1}: title ${JSON.stringify(text)}${ph && !ph[1] ? ' (not hidden)' : ''}`);
+    if (!ph || !ph[1] || text !== u.title || titles.has(text)) badTitle.push(`slide ${k + 1}: title ${JSON.stringify(text)}${ph && !ph[1] ? ' (not hidden)' : ''}`);
     titles.add(text);
   });
-  gate('notes', !badNotes.length && slides.length > 0, `${slides.length - badNotes.length}/${slides.length} slides: spoken lines, then stage directions apart`, badNotes);
+  gate('notes', !badNotes.length && slides.length > 0, `${slides.length - badNotes.length}/${slides.length} slides: ${kind === 'video' ? 'spoken lines, then stage directions apart' : 'each step as [key], its spoken lines and stage directions'}`, badNotes);
   gate('titles', !badTitle.length && slides.length > 0, `${slides.length - badTitle.length}/${slides.length} slides have a unique hidden title`, badTitle);
 
   if (kind === 'video') {
@@ -243,7 +245,8 @@ export async function verify(file, { script, media = null, frames = null, force 
     const bad = [];
     for (const s of slides) {
       const texts = [...s.xml.matchAll(/<p:sp>(?:(?!<\/p:sp>)[\s\S])*?<p:txBody>[\s\S]*?<\/p:sp>/g)].filter((m) => !/<p:ph[^>]*type="title"/.test(m[0]) && /<a:t>[^<]+<\/a:t>/.test(m[0]));
-      if (!texts.length && data.steps[s.k] && data.steps[s.k].lines.length) bad.push(`slide ${s.k + 1}: no native text box`);
+      const sec = data.sections[s.k];
+      if (!texts.length && sec && data.steps.some((st) => st.section === sec.n && st.lines.length)) bad.push(`slide ${s.k + 1}: no native text box`);
     }
     const theme = (await read('ppt/theme/theme1.xml')) || '';
     const fontsOk = theme.includes(`<a:latin typeface="${LATIN}"`) && theme.includes(`<a:ea typeface="${KR}"`);

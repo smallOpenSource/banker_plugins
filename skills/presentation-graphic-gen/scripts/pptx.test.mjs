@@ -127,20 +127,30 @@ describe('PowerPoint pipeline in a browser', { skip: SKIP }, () => {
     assert.match(made.stdout, /PASS continuity: decoded MP4: last frame of slide n vs first frame of slide n\+1, 2\/2 pairs/);
     assert.match(made.stdout, /PASS continuity-raw: recorded frames: .* worst channel difference 0/);
     assert.match(made.stdout, /PASS h264: 3 MP4 files are H\.264/);
-    assert.match(made.stdout, /PASS edit-slides: 3\/3 slides have native text boxes; theme fonts Noto Sans \/ Noto Sans KR/);
+    assert.match(made.stdout, /PASS edit-slides: 2\/2 slides have native text boxes; theme fonts Noto Sans \/ Noto Sans KR/);
+    assert.match(made.stdout, /PASS slide-count: 2 slides, 2 sections in the script/);
+    assert.match(made.stdout, /^pptx-edit .* 2 slides \(3 steps\) .*\n {2}motion: \d+ exact, \d+ approx, 0 not possible$/m);
     assert.equal((made.stdout.match(/^FAIL /gm) || []).length, 0);
   });
 
-  test('editable deck: the focus outline is a native rounded rectangle outline (no fill, one shape)', async () => {
+  test('editable deck: one slide per section; the focus outline is a native rounded rectangle outline (no fill, one shape, a glow)', async () => {
     const { JSZip } = pptxgen();
     const zip = await JSZip.loadAsync(readFileSync(join(out, `mini-edit-${STAMP}.pptx`)));
-    const xml = await zip.file('ppt/slides/slide3.xml').async('string');
-    const shapes = [...xml.matchAll(/<p:sp><p:nvSpPr><p:cNvPr id="\d+" name="shape i\.fx-focus"[\s\S]*?<\/p:sp>/g)].map((m) => m[0]);
+    assert.deepEqual(Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort(), ['ppt/slides/slide1.xml', 'ppt/slides/slide2.xml']);
+    const xml = await zip.file('ppt/slides/slide2.xml').async('string');
+    const shapes = [...xml.matchAll(/<p:sp><p:nvSpPr><p:cNvPr id="\d+" name="shape i\.fx-focus #\d+"[\s\S]*?<\/p:sp>/g)].map((m) => m[0]);
     assert.equal(shapes.length, 1, 'one outline shape for the one marked chip');
     assert.match(shapes[0], /<a:prstGeom prst="roundRect">/);
     assert.match(shapes[0], /<a:noFill\/>/);
     assert.match(shapes[0], /<a:ln w="\d+"><a:solidFill><a:srgbClr val="E0263F"\/>/);
     assert.doesNotMatch(xml, /ring-e/, 'no edge pieces');
+    assert.match(shapes[0], /<a:effectLst><a:glow rad="\d+"><a:srgbClr val="E0263[EF]"><a:alpha val="\d+"\/>/, 'the box-shadow color (color-mix rounds the accent by one level)');
+    // slide 1: the first step starts by itself, the second is one click; slide 2 has its one step only
+    const one = await zip.file('ppt/slides/slide1.xml').async('string');
+    assert.equal((one.match(/evt="onBegin"/g) || []).length, 1);
+    assert.equal((one.match(/nodeType="clickEffect"/g) || []).length, 1);
+    assert.equal((xml.match(/nodeType="clickEffect"/g) || []).length, 0);
+    assert.match(one, /<p:transition spd="fast" p14:dur="250"><p:fade\/>/);
   });
 
   test('verify with no browser (CHROME names no file): continuity SKIP, the summary says PASS with SKIP, never ALL PASS, exit 0', () => {
