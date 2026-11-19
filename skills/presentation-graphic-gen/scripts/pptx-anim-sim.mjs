@@ -65,13 +65,25 @@ export function smilProgress(x, a, d) {
 
 // ---------- reading ----------
 const int = (v, dflt = 0) => (v == null || v === 'indefinite' ? dflt : +v);
-// a shape's name, place and size (stage px); #n is the page element, @35 the opacity level of a copy
+const alphaVal = (c) => { const a = c && kid(c, 'a:alpha'); return a ? +a.attrs.val / 100000 : 1; };
+const srgb = (node) => (node ? walk(node).find((x) => x.name === 'a:srgbClr') || null : null);
+// the shape's own transparency as drawn: its fill's alpha, else its outline's, else its first text run's, else a
+// picture's alphaModFix (PowerPoint multiplies style.opacity into it: X6). Read from the XML, not from the name.
+function shapeAlpha(n) {
+  const pr = kid(n, 'p:spPr'), fill = pr && kid(pr, 'a:solidFill'), ln = pr && kid(pr, 'a:ln');
+  const run = walk(n).find((x) => x.name === 'a:rPr' && kid(x, 'a:solidFill'));
+  const c = srgb(fill) || srgb(ln && kid(ln, 'a:solidFill')) || srgb(run && kid(run, 'a:solidFill'));
+  if (c) return alphaVal(c);
+  const mod = walk(n).find((x) => x.name === 'a:alphaModFix');
+  return mod ? +mod.attrs.amt / 100000 : 1;
+}
+// a shape's name, place, size (stage px) and transparency; #n is the page element
 function shapeOf(n) {
   const find = (name) => walk(n).find((x) => x.name === name);
   const pr = find('p:cNvPr'), off = find('a:off'), ext = find('a:ext');
   if (!pr || !off || !ext) return null;
   const name = pr.attrs.name || '', m = /#(\d+)(?:@(\d+))?$/.exec(name) || [];
-  return { spid: pr.attrs.id, name, tag: n.name, hidden: pr.attrs.hidden === '1', key: m[1] ? +m[1] : null, level: m[2] ? +m[2] / 100 : 1,
+  return { spid: pr.attrs.id, name, tag: n.name, hidden: pr.attrs.hidden === '1', key: m[1] ? +m[1] : null, alpha: shapeAlpha(n),
     x: +off.attrs.x / EMU_PX, y: +off.attrs.y / EMU_PX, w: +ext.attrs.cx / EMU_PX, h: +ext.attrs.cy / EMU_PX };
 }
 function shapesOf(root) {
@@ -178,7 +190,7 @@ function apply(s, b, t, sh) { if (t >= b.start && BEHAVE[b.type]) BEHAVE[b.type]
 
 /**
  * State of every shape at click k (0: the automatic group, or the first click when there is none), tau ms into that
- * group (Infinity: the group has ended): Map spid -> { vis, op, clip, cx, cy, w, h, rot, level, key }.
+ * group (Infinity: the group has ended): Map spid -> { vis, op, clip, cx, cy, w, h, rot, alpha, key }.
  */
 // a shape whose first visibility change in the whole timeline makes it visible starts hidden
 function startsHidden(slide, spid) {
@@ -190,7 +202,7 @@ function shapeState(slide, sh, mine) {
   if (startsHidden(slide, sh.spid)) s.vis = false;
   for (const x of mine) apply(s, x.b, x.t, sh);
   const vis = s.vis && !sh.hidden;
-  return { vis, op: vis ? s.fade * s.opac : 0, clip: s.clip, cx: s.cx, cy: s.cy, w: s.w, h: s.h, rot: s.rot, level: sh.level, key: sh.key, shape: sh };
+  return { vis, op: vis ? s.fade * s.opac : 0, clip: s.clip, cx: s.cx, cy: s.cy, w: s.w, h: s.h, rot: s.rot, alpha: sh.alpha, key: sh.key, shape: sh };
 }
 export function stateAt(slide, k, tau) {
   const all = [];
@@ -204,13 +216,14 @@ export function stateAt(slide, k, tau) {
 /** Fraction of a shape's area a wipe leaves visible (1 without a wipe). */
 export const wipeVisible = (clip) => (!clip ? 1 : clip.out ? 1 - clip.p : clip.p);
 
-/** The item a page element is drawn as (shapes with the same #n): composite opacity of its copies, the drawn geometry. */
+/** The item a page element is drawn as (shapes with the same #n): the composite alpha of its shapes as drawn (their own
+ * transparency times what plays), the drawn geometry. */
 export function itemsAt(states) {
   const by = new Map();
   for (const st of states.values()) {
     if (st.key == null) continue;
     const it = by.get(st.key) || { key: st.key, keep: 1, geo: null, frac: 0 };
-    const a = st.op * st.level;
+    const a = st.op * st.alpha;
     it.keep *= 1 - a;
     if (!it.geo || (st.vis && a > 0)) it.geo = st;
     if (st.vis && a > 0) it.frac = Math.max(it.frac, wipeVisible(st.clip));

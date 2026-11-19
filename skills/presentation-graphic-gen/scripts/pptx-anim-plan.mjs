@@ -173,7 +173,7 @@ function mergeClips(evs, clips, notes) {
 
 // ---------- shapes and their effects ----------
 // the opacity a shape is drawn at: the item's highest (style.opacity keyframes are relative to it)
-const baseOf = (s) => lvl(Math.max(0, ...s.op));
+const baseOf = (s) => { const m = Math.max(0, ...s.op); return m < ZERO ? 0 : m; };
 const pct = (v) => `${Math.round(v * 100)}%`;
 const how = (q) => `${q.s || q.e < 1 ? `${pct(q.s)}-${pct(q.e)} of the time, ` : ''}accel ${pct(q.a)} decel ${pct(q.d)}`;
 // the fitted part of a wipe: { t0, t1 } in page seconds
@@ -240,15 +240,18 @@ const stepOf = (W, t) => { let k = 0; for (let i = 0; i < W.length; i++) if (t >
 
 // the shapes an item is drawn as: one at its highest opacity. An item shown from the start at a lower opacity than
 // its highest is two shapes, because PowerPoint multiplies a shape's own transparency by style.opacity and clamps that
-// at 1 (measured X6), and keyframes only start after the transition: one at the starting opacity shown from the start,
-// and one at the highest that comes in over it (over each other: 1 - (1 - low)(1 - high) = the page's opacity)
+// at 1 (measured X6), and keyframes only start after the transition: one at the starting opacity op0 shown from the
+// start (factor min(o, op0) / op0), and one that comes in over it (factor (o - op0) / (base - op0)). alphaOf(a) is the
+// alpha a color of alpha a gets in that shape: a x op0 below, a (base - op0) / (1 - a op0) above, so that over each
+// other 1 - (1 - a min(o, op0))(1 - above x factor) = a x o for every color of the item, opaque or not.
+// The same op0 (not rounded) is used everywhere.
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
 function copiesOf(s, it, k) {
-  const base = baseOf(s), vis0 = s.op[0] > ZERO && shows(s, it, 0), op0 = lvl(s.op[0]);
+  const base = baseOf(s), vis0 = s.op[0] > ZERO && shows(s, it, 0), op0 = s.op[0];
   if (!base) return [];
-  if (!vis0 || op0 >= base - 0.005) return [{ item: k, level: base, vis0, coef: s.op.map((v) => v / base) }];
-  const clamp = (v) => Math.max(0, Math.min(1, v));
-  return [{ item: k, level: op0, vis0: true, coef: s.op.map((o) => clamp(o / op0)) },
-    { item: k, level: base, vis0: false, coef: s.op.map((o) => (o <= op0 ? 0 : clamp((1 - (1 - o) / (1 - op0)) / base))) }];
+  if (!vis0 || op0 >= base - 0.005) return [{ item: k, level: base, vis0, coef: s.op.map((v) => clamp01(v / base)), alphaOf: (a) => a * base }];
+  return [{ item: k, level: op0, vis0: true, coef: s.op.map((o) => clamp01(o / op0)), alphaOf: (a) => a * op0 },
+    { item: k, level: base, vis0: false, coef: s.op.map((o) => (o <= op0 ? 0 : clamp01((o - op0) / (base - op0)))), alphaOf: (a) => (a * (base - op0)) / (1 - a * op0) }];
 }
 // a shape's own series (opacity = its level x its keyframe factor) and its events
 function copySeries(s, it, c, clips) {
@@ -302,7 +305,7 @@ function sectionNotes(S, W, plans) {
 }
 export const label = (it) => `${it.kind === 'pic' ? 'picture' : it.kind === 'box' ? 'shape' : 'text'} ${it.what} #${it.n}`;
 // PptxGenJS escapes an object name twice, so the characters XML escapes are left out of shape names
-export const shapeName = (it, level) => `${label(it).replace(/[&<>"']/g, '_')}${level === 1 ? '' : `@${Math.round(level * 100)}`}`;
+export const shapeName = (it, level) => `${label(it).replace(/[&<>"']/g, '_')}${Math.round(level * 100) === 100 ? '' : `@${Math.round(level * 100)}`}`;
 
 // motions counted the page's way: each opacity change and each item's geometry in a step
 function motions(plans, W) {

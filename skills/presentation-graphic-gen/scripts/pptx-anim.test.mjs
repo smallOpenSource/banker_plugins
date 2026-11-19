@@ -242,7 +242,8 @@ test('parseXml: well-formed checks (mismatched end tag, a duplicate attribute, t
 
 // ---------- the simulator (hand-written timing, known answers) ----------
 const EMU = 6350;
-const SH = (id, name, x, y, w, h) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x * EMU}" y="${y * EMU}"/><a:ext cx="${w * EMU}" cy="${h * EMU}"/></a:xfrm></p:spPr></p:sp>`;
+// a shape; alpha: its fill's transparency as written (the simulator reads it from the XML)
+const SH = (id, name, x, y, w, h, alpha = null) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x * EMU}" y="${y * EMU}"/><a:ext cx="${w * EMU}" cy="${h * EMU}"/></a:xfrm>${alpha == null ? '' : `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FFFFFF"><a:alpha val="${Math.round(alpha * 100000)}"/></a:srgbClr></a:solidFill>`}</p:spPr></p:sp>`;
 const C = (id, extra, delay, body) => `<p:par><p:cTn id="${id}"${extra} fill="hold" grpId="0">${delay != null ? `<p:stCondLst><p:cond delay="${delay}"/></p:stCondLst>` : ''}<p:childTnLst>${body}</p:childTnLst></p:cTn></p:par>`;
 const BT = (id, dur, delay, spid, extra = '') => `<p:cBhvr><p:cTn id="${id}" dur="${dur}"${extra} fill="hold"><p:stCondLst><p:cond delay="${delay}"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${spid}"/></p:tgtEl>`;
 const VIS = (id, spid, v, delay) => `<p:set>${BT(id, 1, delay, spid)}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="${v}"/></p:to></p:set>`;
@@ -252,7 +253,7 @@ const GROUP = (id, auto, inner) => `<p:par><p:cTn id="${id}" fill="hold"><p:stCo
 const TIMING = (groups) => `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${groups}</p:childTnLst></p:cTn></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>`;
 // shape 2 (#1) fades in 100..500 ms with the auto group; click 1: it moves 192 px right over 1000 ms while shape 3
 // (#1@35, a copy) fades in from 200 ms; click 2: an inner group after the first: shape 2 fades out (accel 100%)
-const SIMXML = SLIDE(SH(2, 'shape div.a #1', 100, 100, 200, 100) + SH(3, 'shape div.a #1@35', 100, 100, 200, 100), TIMING(
+const SIMXML = SLIDE(SH(2, 'shape div.a #1', 100, 100, 200, 100) + SH(3, 'shape div.a #1@35', 100, 100, 200, 100, 0.35), TIMING(
   GROUP(10, true, C(11, '', 0, C(12, ' presetID="10" presetClass="entr" nodeType="afterEffect"', 100, VIS(13, 2, 'visible', 0) + FADE(14, 2, 'in', 0, 400))))
   + GROUP(20, false, C(21, '', 0, C(22, ' presetID="0" presetClass="emph" nodeType="clickEffect"', 0, TAV(23, 2, 'ppt_x', 0, 1000, [[0, '#ppt_x'], [50000, '#ppt_x+0.075'], [100000, '#ppt_x+0.1']]))
     + C(24, ' presetID="10" presetClass="entr" nodeType="withEffect"', 200, VIS(25, 3, 'visible', 0) + FADE(26, 3, 'in', 0, 200))))
@@ -411,12 +412,31 @@ test('plan (R1): an item shown from the start at 0.35 that brightens to 1 is two
   const S = section([BOX(1)], [['s1-1', 0, 0.5], ['s1-2', 0.5, 1.2]], [(t) => ({ op: 0.35 + 0.65 * ramp(t, 0.6, 1.0) })], [0.6, 1.0]);
   const plan = planSection(S);
   assert.deepEqual(plan.shapes.map((c) => [c.name, c.level, c.vis0]), [['shape div.b1 #1@35', 0.35, true], ['shape div.b1 #1', 1, false]]);
-  const xml = SLIDE(SH(2, 'shape div.b1 #1@35', 400, 300, 200, 100) + SH(3, 'shape div.b1 #1', 400, 300, 200, 100), transitionXml() + timingXml(plan, [2, 3]));
+  const [lo, hi] = plan.shapes;
+  assert.ok(Math.abs(lo.alphaOf(1) - 0.35) < 1e-9 && Math.abs(hi.alphaOf(1) - 1) < 1e-9 && Math.abs(hi.alphaOf(0.5) - 0.5 * 0.65 / (1 - 0.175)) < 1e-9, 'a 50% color: 0.394 above so that 0.175 under it makes 0.5');
+  const xml = SLIDE(SH(2, 'shape div.b1 #1@35', 400, 300, 200, 100, lo.alphaOf(1)) + SH(3, 'shape div.b1 #1', 400, 300, 200, 100, hi.alphaOf(1)), transitionXml() + timingXml(plan, [2, 3]));
   assert.deepEqual(checkSlide(xml), []);
   const sl = readSlide(xml), op = (k, t) => itemsAt(stateAt(sl, k, t)).get(1).op;
   assert.ok(Math.abs(op(0, -Infinity) - 0.35) < 1e-9, `slide start ${op(0, -Infinity)}`);
   assert.ok(Math.abs(op(1, 300) - (0.35 + 0.65 * 0.5)) < 0.005, `halfway ${op(1, 300)}`);
   assert.ok(Math.abs(op(1, Infinity) - 1) < 1e-9);
-  const over = SLIDE(SH(2, 'shape a #1@35', 0, 0, 100, 100), TIMING(GROUP(10, true, C(11, '', 0, C(12, ' presetID="0" presetClass="emph" nodeType="afterEffect"', 0, TAV(13, 2, 'style.opacity', 0, 100, [[0, '1'], [100000, '2']]))))));
+  const over = SLIDE(SH(2, 'shape a #1@35', 0, 0, 100, 100, 0.35), TIMING(GROUP(10, true, C(11, '', 0, C(12, ' presetID="0" presetClass="emph" nodeType="afterEffect"', 0, TAV(13, 2, 'style.opacity', 0, 100, [[0, '1'], [100000, '2']]))))));
   assert.equal(itemsAt(stateAt(readSlide(over), 0, Infinity)).get(1).op, 0.35, 'style.opacity above 1 does not brighten past the shape\'s own 35%');
+});
+
+test('plan and simulator (R2, R3): a start opacity off the 0.01 grid (0.334, 0.85 x 0.85) still gives the upper shape an entrance; a half-transparent color over each other is the page\'s 0.5, and the simulator reads the alphas from the XML', () => {
+  for (const op0 of [0.334, 0.7225]) {
+    const S = section([BOX(1)], [['s1-1', 0, 0.5], ['s1-2', 0.5, 1.2]], [(t) => ({ op: op0 + (1 - op0) * ramp(t, 0.6, 1.0) })], [0.6, 1.0]);
+    const plan = planSection(S), hi = plan.shapes[1];
+    assert.equal(hi.vis0, false);
+    assert.ok(plan.steps[1].effects.some((f) => plan.shapes[f.shape] === hi && f.cls === 'entr'), `op0 ${op0}: the upper shape enters on the click`);
+    assert.ok(!plan.steps[0].effects.some((f) => plan.shapes[f.shape] === hi), `op0 ${op0}: nothing of the upper shape before`);
+  }
+  const S = section([BOX(1, { fill: { hex: 'FFFFFF', a: 0.5 } })], [['s1-1', 0, 0.5], ['s1-2', 0.5, 1.2]], [(t) => ({ op: 0.35 + 0.65 * ramp(t, 0.6, 1.0) })], [0.6, 1.0]);
+  const plan = planSection(S), [lo, hi] = plan.shapes;
+  const xml = SLIDE(SH(2, 'shape div.b1 #1@35', 400, 300, 200, 100, lo.alphaOf(0.5)) + SH(3, 'shape div.b1 #1', 400, 300, 200, 100, hi.alphaOf(0.5)), transitionXml() + timingXml(plan, [2, 3]));
+  const sl = readSlide(xml), op = (k, t) => itemsAt(stateAt(sl, k, t)).get(1).op;
+  assert.ok(Math.abs(op(0, -Infinity) - 0.175) < 1e-6 && Math.abs(op(1, Infinity) - 0.5) < 1e-6, `${op(0, -Infinity)} ${op(1, Infinity)}`);
+  const naive = SLIDE(SH(2, 'shape div.b1 #1@35', 400, 300, 200, 100, 0.175) + SH(3, 'shape div.b1 #1', 400, 300, 200, 100, 0.5), transitionXml() + timingXml(plan, [2, 3]));
+  assert.ok(Math.abs(itemsAt(stateAt(readSlide(naive), 1, Infinity)).get(1).op - 0.5875) < 1e-6, 'the alphas as the old writer wrote them make 0.5875');
 });

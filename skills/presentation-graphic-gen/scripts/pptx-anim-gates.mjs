@@ -74,11 +74,13 @@ function simItem(it, sh, st) {
 // its opacity by (its size is still compared)
 const DRAWN = 1, TINY = 4;
 const shown = (op, w, h, frac) => (w * h >= DRAWN && frac > 0 ? op : 0);
-// errors between the page state row and the simulated item: { op, pos, size, rot, clip } (geometry only when both are seen)
+// the page item's color alpha the slide XML's shape alpha is read from (fill, else outline, else first text run)
+const colorAlpha = (it) => (it.kind === 'box' ? (it.fill || it.line || { a: 1 }).a : it.kind === 'text' ? it.runs[0].a : 1);
+// errors between the page state row and the simulated item (opacity as drawn: the chain opacity times the color alpha): { op, pos, size, rot, clip } (geometry only when both are seen)
 function itemErr(it, row, sim) {
   const [cx, cy, sx, sy, rot, op, cl, ct, cr, cb] = row;
   const pf = Math.max(0, cr - cl) * Math.max(0, cb - ct);
-  const pOp = shown(op, it.w * sx, it.h * sy, pf);
+  const pOp = shown(op * colorAlpha(it), it.w * sx, it.h * sy, pf);
   if (!sim || !sim.geo) return { op: pOp, pos: 0, size: 0, rot: 0, clip: 0, page: pOp, ppt: 0 };
   const g = simItem(it, sim.geo.shape, sim.geo);
   const sOp = shown(sim.op, it.w * g.sx, it.h * g.sy, sim.frac);

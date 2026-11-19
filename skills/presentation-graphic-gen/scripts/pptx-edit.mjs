@@ -26,24 +26,25 @@ const IN = (px) => px * PX;
 const PT = (px) => px / 2; // 1920 px = 13.333 in = 960 pt
 const alpha = (a) => Math.round((1 - Math.max(0, Math.min(1, a))) * 100);
 
-function addBox(p, s, it, level, name) {
+function addBox(p, s, it, c, name) {
   const R = shapeRect(it);
   const o = { x: IN(R.x), y: IN(R.y), w: IN(R.w), h: IN(R.h), objectName: name,
-    fill: it.fill ? { color: it.fill.hex, transparency: alpha(it.fill.a * level) } : undefined, // undefined: PptxGenJS writes <a:noFill/>
-    line: it.line ? { color: it.line.hex, width: PT(it.line.w), transparency: alpha(it.line.a * level) } : undefined };
+    fill: it.fill ? { color: it.fill.hex, transparency: alpha(c.alphaOf(it.fill.a)) } : undefined, // undefined: PptxGenJS writes <a:noFill/>
+    line: it.line ? { color: it.line.hex, width: PT(it.line.w), transparency: alpha(c.alphaOf(it.line.a)) } : undefined };
   const rad = it.rad - (it.line ? it.line.w / 2 : 0);
   if (rad > 0.5) { o.rectRadius = IN(Math.min(rad, Math.min(it.w, it.h) / 2)); s.addShape(p.ShapeType.roundRect, o); } else s.addShape(p.ShapeType.rect, o);
 }
 
-function addItem(p, s, S, it, level, name) {
+// c: the plan's shape (alphaOf: the alpha a color of the item gets in this shape)
+function addItem(p, s, S, it, c, name) {
   const R = shapeRect(it);
-  if (it.kind === 'box') return addBox(p, s, it, level, name);
+  if (it.kind === 'box') return addBox(p, s, it, c, name);
   if (it.kind === 'text') {
-    const runs = it.runs.map((r) => ({ text: r.t, options: { fontSize: PT(r.size), bold: r.bold, color: r.hex, transparency: alpha(r.a * level), lang: 'ko-KR', charSpacing: r.ls ? PT(r.ls) : undefined } }));
+    const runs = it.runs.map((r) => ({ text: r.t, options: { fontSize: PT(r.size), bold: r.bold, color: r.hex, transparency: alpha(c.alphaOf(r.a)), lang: 'ko-KR', charSpacing: r.ls ? PT(r.ls) : undefined } }));
     return s.addText(runs, { x: IN(R.x), y: IN(R.y), w: IN(R.w), h: IN(R.h), margin: 0, valign: 'middle', align: it.align, wrap: false, fit: 'none', objectName: name });
   }
   const o = { data: `image/png;base64,${S.pics[it.id].toString('base64')}`, x: IN(R.x), y: IN(R.y), w: IN(R.w), h: IN(R.h), altText: `${it.what} (${it.why})`, objectName: name };
-  if (level < 1) o.transparency = alpha(level);
+  if (c.alphaOf(1) < 0.995) o.transparency = alpha(c.alphaOf(1));
   s.addImage(o);
 }
 
@@ -61,7 +62,7 @@ function addSection(p, S, plan, steps) {
   const fallbacks = [];
   plan.shapes.forEach((c, k) => {
     const it = S.items[c.item];
-    addItem(p, s, S, it, c.level, c.name);
+    addItem(p, s, S, it, c, c.name);
     if (it.kind === 'pic' && c.level === Math.max(...plan.shapes.filter((x) => x.item === c.item).map((x) => x.level))) fallbacks.push({ step: firstStep(plan, k), what: it.what, why: it.why });
   });
   s.addNotes(sectionNotes(steps));
@@ -79,7 +80,7 @@ function slideXml(xml, S, plan) {
     const it = S.items[c.item];
     if (it.kind !== 'box' || !it.glow) return;
     const at = out.indexOf(`<p:cNvPr id="${spids[k]}" `), end = out.indexOf('</p:spPr>', at);
-    if (at >= 0 && end > at) out = out.slice(0, end) + glowXml(it.glow.blur / 2, it.glow.hex, it.glow.a * c.level) + out.slice(end);
+    if (at >= 0 && end > at) out = out.slice(0, end) + glowXml(it.glow.blur / 2, it.glow.hex, c.alphaOf(it.glow.a)) + out.slice(end);
   });
   if (!out.includes('</p:clrMapOvr>')) throw new Error(`section ${S.n}: no p:clrMapOvr to put the timing after`);
   return out.replace('</p:clrMapOvr>', () => '</p:clrMapOvr>' + transitionXml() + timingXml(plan, spids));
