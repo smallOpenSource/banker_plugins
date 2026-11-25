@@ -431,14 +431,14 @@ test('밀도: init 기록이 있으면 빈 항목과 프로젝트, 결정별 하
   const ctx = project({ initd: true });
   const { lines } = check(ctx);
   assert.ok(lines.includes('WARN density adr 빈 항목 8/9: decisions[1].scaling'), lines.join('\n'));
-  assert.deepEqual(lines.slice(-7), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', 'density wbs low', 'adr 근거 없음 1칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
+  assert.deepEqual(lines.slice(-7), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', 'density wbs ok', 'adr 근거 없음 1칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
   assert.match(lines[lines.length - 8], /^check: FAIL 0, WARN \d+$/);
   const a = readFix('adr.json');
   a.decisions[1].scaling = { argument: '바인드 주소는 설정 하나라 규모와 무관', refs: [{ kind: 'file', path: 'src/app.mjs' }] };
   fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), JSON.stringify(a));
   const ok = check(ctx).lines;
   assert.equal(ok.filter((l) => l.startsWith('WARN density adr ')).length, 0, ok.join('\n'));
-  assert.deepEqual(ok.slice(-3), ['density adr ok', 'density wbs low', 'adr 근거 없음 0칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
+  assert.deepEqual(ok.slice(-3), ['density adr ok', 'density wbs ok', 'adr 근거 없음 0칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
   const none = project({ adr: null, initd: true });
   const l2 = check(none).lines;
   for (const w of ['WARN density adr 빈 항목 0/3: project.verification, project.flow, project.proof', 'WARN density adr 검증 0/1', 'WARN density adr 흐름 0/3: 입력, 처리, 출력', 'WARN density adr 증거 0/1', 'WARN density adr 결정 0/1']) assert.ok(l2.includes(w), `${w}\n${l2.join('\n')}`);

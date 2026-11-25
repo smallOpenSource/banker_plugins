@@ -170,11 +170,12 @@ test('SKILL.md: init 절차의 WBS 단계(ADR 단계 뒤, 날짜 출처 순서, 
 
 test('SKILL.md: 인자 없는 호출 표의 WBS 없음 행과 기존 프로젝트의 WBS 단계(한 번 묻기, --auto, init 다시 실행, 9~12)', T, () => {
   const s = section('인자 없는 호출');
-  assert.match(s, /^ {3}\| 자료 폴더가 있고 `탭 자료:` 줄이 `WBS 없음` \| .*기존 프로젝트의 WBS 단계/m);
+  assert.match(s, /^ {3}\| 자료 폴더가 있고 `탭 자료:` 줄이 `WBS 없음` 으로 끝남 \| .*기존 프로젝트의 WBS 단계.*`WBS 없음\(묻지 않음\)` 이면 하지 않는다/m);
   assert.match(s, /`WBS 깨짐` 이면 하지 않고/);
   const step = s.slice(s.indexOf('### 기존 프로젝트의 WBS 단계'));
   for (const w of ['AskUserQuestion', 'request_user_input', '`--auto`', '`init` 을 다시 실행', '`규칙 줄 교체(백업 <경로>): <파일>`', '9(WBS 단계), 10~12']) assert.ok(step.includes(w), w);
-  assert.ok(fs.readFileSync(path.join(HERE, 'pm-server.mjs'), 'utf8').includes("WBS ${has('wbs.json')}"));
+  const server = fs.readFileSync(path.join(HERE, 'pm-server.mjs'), 'utf8');
+  assert.ok(server.includes("const wbs = has('wbs.json');") && server.includes('WBS ${wbs}${quiet}') && server.includes("'(묻지 않음)'"));
   const table = section('하위 명령');
   assert.match(table, /`FAIL wbs\.json <json 경로> <이유>`/);
 });
@@ -183,4 +184,20 @@ test('references/wbs.md: 스키마는 wbs-gen 계획, 시간 단위 규칙, 날�
   const doc = fs.readFileSync(path.join(SKILL_DIR, 'references', 'wbs.md'), 'utf8');
   for (const w of ['wbs-gen', '`plan.json`', '`YYYY-MM-DD HH:MM`', '`M/D HH:MM`', '2일 이내', '48', '`11:00`', '`items.json`', '`events.jsonl`', '`git log`', '`공휴일 미확인`', '`pending`']) assert.ok(doc.includes(w), w);
   assert.ok(!doc.includes('\r'), 'LF');
+});
+
+test('SKILL.md, references: 시각은 현지 시간대(Z, 시차 환산 예), 주말과 공휴일은 걸친 영업일과 notes, 지우지 않음, wbsAsk 로 묻지 않음', T, () => {
+  const init = section('init 절차');
+  const wbs = init.slice(init.indexOf('9. WBS 단계'), init.indexOf('\n10. '));
+  for (const w of ['프로젝트 현지 시간대', '`2026-11-25T01:00:00Z` 는 `2026-11-25 10:00`', '떼기만 하지 않는다', '다음 영업일', '앞 영업일', '`[가정·변경]`', '`"wbsAsk": false`']) assert.ok(wbs.includes(w), w);
+  assert.match(init, /`wbs\.json` 의 `주말이나 공휴일` FAIL 은 지우지 않는다/);
+  assert.match(init, /`WARN density wbs` 줄은 근거가 있는 것만 보충한다[\s\S]*날짜를 만들어 넣지 않는다/);
+  const step = section('인자 없는 호출');
+  for (const w of ['다시 묻지 않음', '`WBS 없음(묻지 않음)`', '`"wbsAsk": false`', '`wbs.json` 줄만 고친다']) assert.ok(step.includes(w), w);
+  const doc = fs.readFileSync(path.join(SKILL_DIR, 'references', 'wbs.md'), 'utf8');
+  for (const w of ['## 시간대', '`2026-11-25T01:00:00Z` | KST(+09:00) | `2026-11-25 10:00`', '## 주말과 공휴일', '`[주말·공휴일 작업]`', '세 파일', '`24:00`', '그날 첫 칸']) assert.ok(doc.includes(w), w);
+  assert.ok(!doc.includes('두 파일'));
+  const cfg = fs.readFileSync(path.join(SKILL_DIR, 'references', 'config.md'), 'utf8');
+  assert.match(cfg, /^\| `wbsAsk` \| 참, 거짓 \|/m);
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("take('wbsAsk',"));
 });

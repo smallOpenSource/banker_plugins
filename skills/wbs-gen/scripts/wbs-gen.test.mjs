@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { businessDays, parseHolidays, resolveDate, splitTime, weeks } from "./wg-dates.mjs";
+import { businessDays, parseHolidays, resolveDate, splitTime, weeks, zoned } from "./wg-dates.mjs";
 import { parseIcs, publicHolidays } from "./wg-holidays.mjs";
 import { SCOPED_CSS, toFragment, toHtml } from "./wg-html.mjs";
 import { layout } from "./wg-plan.mjs";
@@ -329,7 +329,11 @@ test("a time of day splits off 'YYYY-MM-DD HH:MM', 'YYYY-MM-DDTHH:MM' and 'M/D H
   assert.deepEqual(splitTime("2026-11-25T09:05"), { date: "2026-11-25", min: 545, bad: false });
   assert.deepEqual(splitTime("11/25 7:00"), { date: "11/25", min: 420, bad: false });
   assert.deepEqual(splitTime("11/25"), { date: "11/25", min: null });
-  assert.equal(splitTime("11/25 24:00").bad, true);
+  assert.deepEqual(splitTime("11/25 24:00"), { date: "11/25", min: 1440, bad: false }, "24:00 is the end of that day");
+  assert.equal(splitTime("11/25 24:30").bad, true);
+  assert.equal(splitTime("11/25 23:60").bad, true);
+  for (const t of ["2026-11-25T01:00:00Z", "2026-11-25T10:00:00+09:00", "2026-11-25 10:00+0900", "11/25 10:00:00"]) assert.ok(zoned(t), t);
+  for (const t of ["2026-11-25 10:00", "11/25", "2026-11-25T10:00"]) assert.ok(!zoned(t), t);
 });
 
 test("two calendar days at most is the hour unit: every hour from start to end, grouped by day", () => {
@@ -445,8 +449,52 @@ test("the CLI reports the hour unit: 시간 and 날 in the summary", () => {
     writeFileSync(join(dir, "plan.json"), JSON.stringify(hourPlan([{ kind: "task", wbs: "1", start: "11/25 11:00", end: "11/25 13:00" }])));
     const r = run(["build", "--plan", "plan.json", "--out", "h.xlsx", "--out", "h.html"], dir);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /^OK 시간 33 \(2026-11-25T09:00 ~ 2026-11-26T17:00\), 날 2, 행 1, 작업 1, ◆ 0, 게이트 0$/m);
+    assert.match(r.stdout, /^OK 시간 33 \(2026-11-25T09:00 ~ 2026-11-26T18:00\), 날 2, 행 1, 작업 1, ◆ 0, 게이트 0$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("hour unit: a date-only constraint is a point in the day's first slot inside the period, like a milestone", () => {
+  const plan = { title: "t", start: "2026-11-25 22:00", end: "2026-11-26 03:00", rows: [
+    { kind: "constraint", wbs: "C", date: "11/26" },
+    { kind: "milestone", wbs: "M", date: "11/26" },
+    { kind: "constraint", wbs: "C2", date: "11/25" },
+    { kind: "constraint", wbs: "C3", date: "11/26 01:30" },
+  ], gates: [{ date: "11/26" }] };
+  const { errors, model } = layout(plan);
+  assert.deepEqual(errors, []);
+  const [c, m, c2, c3] = model.rows;
+  assert.deepEqual([c.diamonds, c.cells.slice(5)], [[2], ["11/26 00:00", "11/26 00:00", 1]]);
+  assert.deepEqual(m.diamonds, [2]);
+  assert.equal(model.gates[0].col, 2);
+  assert.deepEqual([c2.diamonds, c2.cells.slice(5)], [[0], ["11/25 22:00", "11/25 22:00", 1]], "the first day starts at the period start");
+  assert.deepEqual([c3.diamonds, c3.cells.slice(5)], [[3], ["11/26 01:30", "11/26 01:30", 1]]);
+});
+
+test("hour unit: a point at the period end, 24:00 as an input, end null, and cells that show the plan's times", () => {
+  const { errors, model } = layout(hourPlan([
+    { kind: "milestone", wbs: "M", date: "11/26 18:00" },
+    { kind: "task", wbs: "a", start: "11/25 13:00", end: "11/25 15:30" },
+    { kind: "task", wbs: "b", start: "11/25 20:00", end: "11/25 24:00" },
+    { kind: "task", wbs: "c", start: "11/25 10:30", end: null },
+  ], { gates: [{ date: "2026-11-26 18:00", label: "끝" }] }));
+  assert.deepEqual(errors, []);
+  const [m, a, b, c] = model.rows;
+  assert.deepEqual(m.diamonds, [32], "the period end goes in the last slot");
+  assert.equal(model.gates[0].col, 32);
+  assert.ok(model.legend.some((l) => l.label === "끝(빨간 수직선 = 11/26 18:00)"));
+  assert.deepEqual([a.from, a.to, a.cells.slice(5)], [4, 6, ["11/25 13:00", "11/25 15:30", 3]], "15:30 is shown, the bar fills 13, 14 and 15");
+  assert.deepEqual([b.from, b.to, b.cells.slice(5)], [11, 14, ["11/25 20:00", "11/25 24:00", 4]]);
+  assert.deepEqual([c.from, c.to, c.cells.slice(5)], [1, 1, ["11/25 10:30", "11/25 11:00", 1]], "end null is like no end");
+});
+
+test("a time copied with a zone or seconds is refused with a hint to write local time", () => {
+  const bad = layout(hourPlan([{ kind: "task", wbs: "z", start: "2026-11-25T01:00:00Z", end: "2026-11-25T10:00:00+09:00" }]));
+  const all = bad.errors.join("\n");
+  assert.match(all, /rows\[0\] z 시작: 날짜로 읽지 못함 \(2026-11-25T01:00:00Z\)\. 시간대\(Z, \+09:00\)와 초는 쓰지 않음\. 프로젝트 현지 시각 YYYY-MM-DD HH:MM/);
+  assert.match(all, /rows\[0\] z 종료: 날짜로 읽지 못함 \(2026-11-25T10:00:00\+09:00\)\. 시간대/);
+  const range = layout({ title: "t", start: "2026-11-25T00:00:00Z", end: "2026-11-25", rows: [{ start: "11/25" }] });
+  assert.match(range.errors[0], /^start, end 는 YYYY-MM-DD 나 YYYY-MM-DD HH:MM 이어야 함\. 시간대/);
+  assert.equal(layout({ title: "t", start: "x", end: "y", rows: [{}] }).errors[0], "start, end 는 YYYY-MM-DD 나 YYYY-MM-DD HH:MM 이어야 함");
 });

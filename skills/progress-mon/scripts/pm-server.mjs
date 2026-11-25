@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { privateIPv4, dataLabel, loadConfig, writeAtomic, writeNew, readRegular, UsageError } from './pm-config.mjs';
+import { privateIPv4, dataLabel, loadConfig, noBom, writeAtomic, writeNew, readRegular, UsageError } from './pm-config.mjs';
 import { workflowRoots } from './pm-sources.mjs';
 import { memoryWarnings } from './pm-memory.mjs';
 
@@ -770,17 +770,21 @@ export async function stop(ctx, io) {
   return 1;
 }
 
-// 탭 자료 유무 줄. 읽지 못하거나 JSON 이 아닌 파일은 깨짐(check 로 확인).
-function tabData(dataDir) {
+// 탭 자료 유무 줄. 읽지 못하거나 JSON 이 아닌 파일은 깨짐(check 로 확인). BOM 은 check, 화면과 같이 뗀다.
+// config.json 의 wbsAsk 가 false 이면 WBS 없음 뒤에 (묻지 않음): 인자 없는 호출이 WBS 단계를 건너뜀.
+function tabData(ctx) {
+  const dataDir = ctx.dataDir;
   const has = (f) => {
     try {
-      JSON.parse(readRegular(path.join(dataDir, f)));
+      JSON.parse(noBom(readRegular(path.join(dataDir, f))));
       return '있음';
     } catch (e) {
       return e.code === 'ENOENT' ? '없음' : '깨짐';
     }
   };
-  return `진척도 ${has('items.json')}, 구현요건 ${has('req-spec.json')}, workflow ${has('flow.json')}, 구성도 ${has('arch.json')}, ADR ${has('adr.json')}, WBS ${has('wbs.json')}`;
+  const wbs = has('wbs.json');
+  const quiet = wbs === '없음' && loadConfig(ctx).config.wbsAsk === false ? '(묻지 않음)' : '';
+  return `진척도 ${has('items.json')}, 구현요건 ${has('req-spec.json')}, workflow ${has('flow.json')}, 구성도 ${has('arch.json')}, ADR ${has('adr.json')}, WBS ${wbs}${quiet}`;
 }
 
 // 서버를 띄운 뒤 config.json 의 port, portStrict, hosts 가 바뀌었으면 경고 한 줄(그 값은 다시 띄워야 적용).
@@ -815,7 +819,7 @@ export async function status(ctx, io) {
   const run = await runningServer(ctx.dataDir);
   if (!run) {
     io.out(`꺼짐(자료 폴더: ${label})`);
-    io.out(`탭 자료: ${tabData(ctx.dataDir)}`);
+    io.out(`탭 자료: ${tabData(ctx)}`);
     statusWarnings(ctx, io);
     return 3;
   }
@@ -823,7 +827,7 @@ export async function status(ctx, io) {
   io.out(`실행 중: ${urlOf(LOOPBACK, st.port)} (PID ${st.pid})`);
   io.out(`주소: ${(st.hosts || [LOOPBACK]).join(', ')}`);
   io.out(`자료 폴더: ${label}`);
-  io.out(`탭 자료: ${tabData(ctx.dataDir)}`);
+  io.out(`탭 자료: ${tabData(ctx)}`);
   io.out(`시작: ${info.startedAt || st.startedAt || '알 수 없음'}`);
   io.out(`요청: ${info.requests ?? 0}, 마지막 요청: ${info.lastRequestAt || '없음'}, 마지막 오류: ${info.lastErrorAt || '없음'}`);
   if (typeof info.logWarning === 'string') io.err(`경고: ${info.logWarning.replace(/[\u0000-\u001f\u007f]/g, '')}`);

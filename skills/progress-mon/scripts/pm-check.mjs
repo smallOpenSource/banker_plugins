@@ -447,6 +447,9 @@ export function wbsLine(e) {
   return { at: other ? other[0] : '$', msg: e };
 }
 
+// 영업일 단위에서 실제 날짜가 주말, 공휴일인 FAIL 에 붙이는 안내. 날짜를 몰래 옮기거나 wbs.json 을 지우지 않게.
+const WEEKEND_HINT = '실제 날짜면 걸친 영업일로 적고 실제 날짜는 notes 의 [가정·변경] 에(references/wbs.md 의 "주말과 공휴일"). wbs.json 을 지우지 않음';
+
 // 돌려줌: 배치 모델(오류가 없을 때) 또는 null. 없는 파일은 검사하지 않는다.
 function checkWbs(dir, r) {
   const F = 'wbs.json';
@@ -456,7 +459,7 @@ function checkWbs(dir, r) {
   const res = wbsLayout(got.value);
   for (const e of res.errors) {
     const x = wbsLine(e);
-    r.fail(F, x.at, x.msg);
+    r.fail(F, x.at, x.msg.includes('주말이나 공휴일') ? `${x.msg}. ${WEEKEND_HINT}` : x.msg);
   }
   for (const w of res.warnings) r.warn(F, '$', w);
   return res.model;
@@ -531,8 +534,10 @@ function reqRows({ add, each }, req, items, storyCount) {
 }
 
 // WBS 탭 줄: 작업(막대) 1개 이상, 작업마다 담당. add, each: density 의 줄 추가 함수.
+// wbs.json 이 없거나 FAIL 이면 줄을 내지 않는다. 날짜 근거가 없어 쓰지 않은 계획을 밀도가 채우라고 하지 않게(날짜를 지어내지 않음).
 function wbsRows({ add, each }, wbs) {
-  const tasks = wbs ? wbs.rows.filter((x) => x.kind === 'task') : [];
+  if (!wbs) return;
+  const tasks = wbs.rows.filter((x) => x.kind === 'task');
   add('wbs', '작업', tasks.length, 1);
   each('wbs', '담당', tasks, (x) => str(x.cells[2]), (x, i) => x.cells[0] || x.cells[1] || `작업 ${i + 1}`);
 }

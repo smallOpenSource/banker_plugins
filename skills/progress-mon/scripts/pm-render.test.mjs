@@ -816,7 +816,7 @@ test('WBS 탭: 시간 단위 변형(기간 2일 이내)은 시간 열, 날짜 �
   assert.ok(h.includes('<th>09:00</th><th>10:00</th><th>11:00</th><th>12:00</th><th class="gate">13:00</th>'));
   assert.ok(h.includes('<th class="w" colspan="15">11/25(수)</th><th class="w" colspan="18">11/26(목)</th>'));
   assert.ok(h.includes('>시간</th>') && !h.includes('(영업일)</th>'));
-  assert.ok(h.includes('<div class="c">11/25 13:00</div></td><td class="fix" style="left:728px"><div class="c">11/25 16:00</div></td><td class="fix" style="left:784px"><div class="c">3</div>'), '13:00~15:30 은 3칸');
+  assert.ok(h.includes('<div class="c">11/25 13:00</div></td><td class="fix" style="left:728px"><div class="c">11/25 15:30</div></td><td class="fix" style="left:784px"><div class="c">3</div>'), '13:00~15:30 은 계획 값 그대로, 칸은 3');
 });
 
 test('WBS 탭: 없음은 안내와 스키마 문서, JSON 아님과 계획 오류는 깨짐 배지와 오류 줄', T, () => {

@@ -91,7 +91,7 @@ test('check: 깨진 wbs.json 은 FAIL 과 종료 1, 시간 단위의 공휴일�
   // adr.json 의 참조는 임시 프로젝트에 없는 파일이라 이 시험에서는 뺀다(pm-adr 시험이 맡음)
   const bad = cli(['check'], project({ 'wbs.json': plan, 'adr.json': null }).dir);
   assert.equal(bad.code, 1);
-  assert.match(bad.out, /^FAIL wbs\.json rows\[1\] 1\.1 시작: 주말이나 공휴일 \(2026-10-24 토\)$/m);
+  assert.match(bad.out, /^FAIL wbs\.json rows\[1\] 1\.1 시작: 주말이나 공휴일 \(2026-10-24 토\)\. 실제 날짜면 걸친 영업일로 적고 실제 날짜는 notes 의 \[가정·변경\] 에\(references\/wbs\.md 의 "주말과 공휴일"\)\. wbs\.json 을 지우지 않음$/m);
   const hour = JSON.parse(fs.readFileSync(path.join(FIX, 'variants', 'wbs-hour', 'wbs.json'), 'utf8'));
   hour.holidays = '11/25';
   const warn = cli(['check'], project({ 'wbs.json': hour, 'adr.json': null }).dir);
@@ -158,4 +158,25 @@ test('기존 프로젝트의 WBS 단계: ADR 판 규칙 줄(CLAUDE.md, 자동 �
   const rc = cli(['init', '--runtime', 'codex', '--memory', 'agents-md'], c.dir);
   assert.equal(rc.code, 0, rc.err);
   assert.equal(fs.readFileSync(agents, 'utf8'), `# 지시\n<!-- USER:OMX:POLICY:START -->\n${ruleLine('codex')}\n<!-- USER:OMX:POLICY:END -->\n`);
+});
+
+test('config.json 의 wbsAsk false: status 가 WBS 없음(묻지 않음), wbs.json 이 있으면 그대로 있음, 틀린 값은 check FAIL', T, () => {
+  const p = project({ 'wbs.json': null });
+  const cfg = JSON.parse(fs.readFileSync(path.join(p.data, 'config.json'), 'utf8'));
+  fs.writeFileSync(path.join(p.data, 'config.json'), JSON.stringify({ ...cfg, wbsAsk: false }));
+  assert.match(cli(['status'], p.dir).out, /, ADR 있음, WBS 없음\(묻지 않음\)$/m);
+  fs.copyFileSync(path.join(FIX, 'wbs.json'), path.join(p.data, 'wbs.json'));
+  assert.match(cli(['status'], p.dir).out, /, ADR 있음, WBS 있음$/m, '자료가 생기면 그 설정과 무관');
+  fs.rmSync(path.join(p.data, 'wbs.json'));
+  fs.writeFileSync(path.join(p.data, 'config.json'), JSON.stringify({ ...cfg, wbsAsk: true }));
+  assert.match(cli(['status'], p.dir).out, /, ADR 있음, WBS 없음$/m, 'true 나 없음은 물음');
+  fs.writeFileSync(path.join(p.data, 'config.json'), JSON.stringify({ ...cfg, wbsAsk: 'no' }));
+  fs.rmSync(path.join(p.data, 'adr.json'));
+  const c = cli(['check'], p.dir);
+  assert.match(c.out, /^FAIL config\.json wbsAsk 참 또는 거짓$/m, c.out);
+});
+
+test('status: BOM 이 붙은 wbs.json 은 check, 화면과 같이 있음(깨짐 아님)', T, () => {
+  const p = project({ 'wbs.json': `\uFEFF${fs.readFileSync(path.join(FIX, 'wbs.json'), 'utf8')}` });
+  assert.match(cli(['status'], p.dir).out, /, ADR 있음, WBS 있음$/m);
 });

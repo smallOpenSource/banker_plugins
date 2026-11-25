@@ -294,7 +294,11 @@ test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코�
   assert.equal(only(lines, /^WARN density wbs /).length, 0, '고정 자료 wbs.json 은 작업 4개 모두 담당이 있음');
   assert.match(lines[lines.length - 8], /^check: FAIL 0, WARN \d+$/);
   const none = check(initd({ 'wbs.json': null }));
-  assert.ok(none.includes('WARN density wbs 작업 0/1') && none.includes('density wbs low'), 'wbs.json 이 없으면 WBS 밀도 미달');
+  assert.equal(only(none, /density wbs /).length, 1, 'wbs.json 이 없으면 WBS 밀도 줄을 내지 않음(날짜를 채우라고 하지 않음)');
+  assert.ok(none.includes('density wbs ok'));
+  const owners = read('wbs.json');
+  delete owners.rows[2].owner;
+  assert.ok(check(initd({ 'wbs.json': owners })).includes('WARN density wbs 담당 3/4: 1.2'));
 });
 
 test('밀도: inventory.json 으로 하한을 낮춤, 없는 경로는 FAIL, inventory 만 있어도 밀도 검사', T, () => {
@@ -410,7 +414,7 @@ test('wbs.json: JSON 아님, 계획 오류(행, 게이트, 색)는 FAIL <경로>
   for (const w of [
     'FAIL wbs.json rows[1] 1.1 종료: 기간 밖 (2026-10-10)',
     'FAIL wbs.json rows[2] 1.2: kind 는 group, task, constraint, milestone 중 하나여야 함 (bar)',
-    'FAIL wbs.json gates[0] 주말이나 공휴일 (2026-10-24 토)',
+    'FAIL wbs.json gates[0] 주말이나 공휴일 (2026-10-24 토). 실제 날짜면 걸친 영업일로 적고 실제 날짜는 notes 의 [가정·변경] 에(references/wbs.md 의 "주말과 공휴일"). wbs.json 을 지우지 않음',
     'FAIL wbs.json parts.app.dark parts.app.dark 색이 6자리 16진수가 아님: red',
   ]) assert.ok(lines.includes(w), `${w}\n${lines.join('\n')}`);
   assert.equal(runCheck(data({ 'wbs.json': plan }), ENV).fails, 4, 'FAIL 이 있으면 check 종료 1');

@@ -3,8 +3,9 @@
 // Two units. A plan longer than two calendar days has a column per working day. A plan of at most two calendar days
 // (start and end at most one day apart) has a column per hour, every hour of the period (weekends, holidays and nights
 // are not left out), so 48 columns at most. A date may carry a time ('YYYY-MM-DD HH:MM', 'YYYY-MM-DDTHH:MM',
-// 'M/D HH:MM'); the day unit reads the date part only, so one plan file works in both units.
-import { addDays, businessDays, daysBetween, dowName, keyMs, mmdd, parseHolidays, resolveDate, splitTime, weeks } from "./wg-dates.mjs";
+// 'M/D HH:MM'); the day unit reads the date part only, so one plan file works in both units. Times are local wall-clock
+// time with no zone: a UTC record ('...Z') or an offset ('+09:00') is converted to local time by whoever writes the plan.
+import { addDays, businessDays, daysBetween, dowName, keyMs, mmdd, parseHolidays, resolveDate, splitTime, weeks, zoned } from "./wg-dates.mjs";
 
 export const HEAD = ["WBS", "작업", "담당", "우선순위", "선행·미확정", "시작", "종료", "일수\n(영업일)"];
 export const HEAD_HOUR = [...HEAD.slice(0, 7), "시간"];
@@ -21,6 +22,7 @@ export const hex = (c) => String(c).replace(/^#/, "").toUpperCase();
 const str = (v) => (v === undefined || v === null ? "" : String(v));
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 const pad = (n) => String(n).padStart(2, "0");
+const ZONE_HINT = ". 시간대(Z, +09:00)와 초는 쓰지 않음. 프로젝트 현지 시각 YYYY-MM-DD HH:MM 으로 바꿔 적으십시오(UTC 는 현지로 환산)";
 // Lookups by a plan string go through own keys only, so "constructor" or "__proto__" is just a missing name.
 const own = (o, k) => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
 
@@ -39,7 +41,7 @@ function readRange(plan, errors) {
   const e = splitTime(plan.end);
   const range = { start: s.date, end: e.date, startMin: s.min, endMin: e.min };
   if (s.bad || e.bad || keyMs(range.start) === null || keyMs(range.end) === null) {
-    errors.push("start, end 는 YYYY-MM-DD 나 YYYY-MM-DD HH:MM 이어야 함");
+    errors.push(`start, end 는 YYYY-MM-DD 나 YYYY-MM-DD HH:MM 이어야 함${zoned(plan.start) || zoned(plan.end) ? ZONE_HINT : ""}`);
     return null;
   }
   if (range.end < range.start) {
@@ -106,7 +108,7 @@ function readParts(parts, errors) {
 function dateOf(text, what, ctx) {
   const t = splitTime(text);
   const r = t.bad ? null : resolveDate(t.date, ctx.range);
-  if (!r) ctx.errors.push(`${what}: 날짜로 읽지 못함 (${str(text)})`);
+  if (!r) ctx.errors.push(`${what}: 날짜로 읽지 못함 (${str(text)})${zoned(text) ? ZONE_HINT : ""}`);
   else if (r.ambiguous) ctx.errors.push(`${what}: ${str(text)} 가 기간 안 두 해에 걸림. YYYY-MM-DD 로 적으십시오`);
   else if (!r.inRange) ctx.errors.push(`${what}: 기간 밖 (${r.key})`);
   else return { key: r.key, min: t.min };
@@ -183,27 +185,38 @@ function slotOf(min, edge, text, what, ctx) {
   return null;
 }
 
+/** A milestone or gate: the slot its time falls in. A point at the very end of the period goes in the last slot. */
 function hourPoint(text, what, ctx) {
   const min = minuteOf(text, what, "start", ctx);
-  const col = min === null ? null : slotOf(min, "start", text, what, ctx);
-  return col === null ? null : { key: ctx.unit.days[col].key, col, at: ctx.unit.slotText(col) };
+  const end = (ctx.unit.first + ctx.unit.n) * 60;
+  const col = min === null ? null : slotOf(min === end ? min - 1 : min, "start", text, what, ctx);
+  return col === null ? null : { key: ctx.unit.days[col].key, col, at: ctx.unit.clock(min, false) };
 }
 
+/** A constraint with a date and no start or end is a point like a milestone (a date alone: the day's first slot). */
+function constraintPoint(row, what, ctx) {
+  const p = hourPoint(row.date, `${what} 시작`, ctx);
+  return p && { from: p.col, to: p.col, first: p.at, last: p.at };
+}
+
+// Start and end cells show the plan's own times (a date alone: 00:00 or 24:00, kept inside the period); the hours cell
+// counts the slots the bar fills.
 function hourSpan(row, what, ctx) {
+  if (str(row.kind) === "constraint" && row.start == null && row.end == null) return constraintPoint(row, what, ctx);
   const sText = row.start ?? row.date;
   const eText = row.end ?? sText;
   const s = minuteOf(sText, `${what} 시작`, "start", ctx);
   const e0 = minuteOf(eText, `${what} 종료`, "end", ctx);
   if (s === null || e0 === null) return null;
-  // One time and no end (a constraint's date, a one-hour task) covers the hour it falls in.
-  const e = row.end === undefined && e0 === s ? s + 1 : e0;
+  // A start time and no end (a one-hour task) runs to the end of the hour it falls in.
+  const e = row.end == null && e0 === s ? (Math.floor(s / 60) + 1) * 60 : e0;
   if (e <= s) {
     ctx.errors.push(`${what}: 종료가 시작보다 앞서거나 같음`);
     return null;
   }
   const from = slotOf(s, "start", sText, `${what} 시작`, ctx);
   const to = slotOf(e, "end", eText, `${what} 종료`, ctx);
-  return from === null || to === null ? null : { from, to, first: ctx.unit.slotText(from), last: ctx.unit.edgeText(to) };
+  return from === null || to === null ? null : { from, to, first: ctx.unit.clock(s, false), last: ctx.unit.clock(e, true) };
 }
 
 /** Hour slots grouped by calendar day: [{ n, label: 'MM/DD(요일)', first, count }]. */
@@ -237,7 +250,12 @@ function hourUnit(range) {
     return { key: addDays(range.start, d), hh: h - d * 24 };
   };
   const dayText = (k) => (multiYear ? `${k.slice(2, 4)}/${mmdd(k)}` : mmdd(k));
-  const text = (h, edge) => `${dayText(at(h, edge).key)} ${pad(at(h, edge).hh)}:00`;
+  // A minute from 00:00 of the first day as 'MM/DD HH:MM'; an end (edge) at midnight reads 24:00 of the day before.
+  const clock = (min, edge) => {
+    const d = Math.floor((edge ? min - 1 : min) / 1440);
+    const m = min - d * 1440;
+    return `${dayText(addDays(range.start, d))} ${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+  };
   const slots = Array.from({ length: n }, (_, i) => at(first + i, false));
   const last = at(first + n, true);
   const endDay = multiYear ? last.key : mmdd(last.key);
@@ -250,8 +268,7 @@ function hourUnit(range) {
     weeks: dayGroups(slots),
     title: `${range.start}(${dowName(range.start)}) ${pad(first)}:00 ~ ${endDay}(${dowName(last.key)}) ${pad(last.hh)}:00`,
     count: `${n} 시간`,
-    slotText: (col) => text(first + col, false),
-    edgeText: (col) => text(first + col + 1, true),
+    clock,
     point: hourPoint,
     span: hourSpan,
   };
