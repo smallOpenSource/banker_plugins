@@ -574,7 +574,7 @@ test("a name that runs or is read on its own is written with .restored after it;
     assert.equal(basename(r.file), `${name}.restored`, why);
     assert.equal(r.res.risky, "1", name);
     assert.equal(r.res.renamed, "1", name);
-    assert.ok(r.out.includes(`원래 이름: ${name}\n`), `${name}: ${r.out}`);
+    assert.ok(r.out.split(/\r?\n/).includes(`원래 이름: ${name}`), `${name}: ${r.out}`); // Windows ends lines with \r\n
     assert.ok(r.out.includes(`뒤에 .restored 를 붙여 썼습니다`) && r.out.includes(`원래 이름(${name})으로 바꾸십시오`), r.out);
     assert.match(r.out, /--keep-name/);
     assert.ok(readFileSync(r.file).equals(Buffer.from("x\n")));
