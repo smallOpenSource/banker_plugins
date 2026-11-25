@@ -71,4 +71,9 @@ test('favicon 은 외부 자원 없는 data URI', T, () => {
   assert.ok(FAVICON.startsWith('data:image/svg+xml,'));
   assert.ok(decodeURIComponent(FAVICON.slice(19)).startsWith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'));
   assert.ok(!/[<>"\s]/.test(FAVICON.slice(19)));
+  // 진척(할 일 2/3 완료)으로 읽히는 체크리스트: 체크 표시 둘과 빈 칸 하나. 신호 세기처럼 보이던 막대 3개가 아님
+  const svg = decodeURIComponent(FAVICON.slice(19));
+  assert.match(svg, /<path d="M5 8\.5l2\.2 2\.2 4-4\.2M5 16\.5l2\.2 2\.2 4-4\.2"/);
+  assert.equal((svg.match(/<rect /g) || []).length, 5);
+  assert.ok(!svg.includes('x="22" y="6" width="5" height="21"'));
 });

@@ -1,5 +1,5 @@
 // pm-html.mjs: 화면 조각 공통. escape, 색과 수 검사, 글 폭 추정, 줄 나눔, 공통 CSS, 탭 머리, favicon.
-// CSS, favicon, 탭 머리는 옛 진척도 서버와 같은 바이트(같은 모양 원칙).
+// CSS, 탭 머리는 옛 진척도 서버와 같은 바이트(같은 모양 원칙). favicon 만은 진척으로 읽히는 체크리스트 모양으로 바꿈.
 
 // 본문과 속성 모두 & < > " ' 를 바꾼다.
 export const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -31,7 +31,8 @@ export function wrap(t, px) {
 }
 
 // 진척 막대 모양 아이콘. 외부 파일 없이 data URI 로 넣는다.
-export const FAVICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1b5e20"/><rect x="5" y="20" width="5" height="7" fill="#a5d6a7"/><rect x="13.5" y="13" width="5" height="14" fill="#c8e6c9"/><rect x="22" y="6" width="5" height="21" fill="#fff"/></svg>');
+// 체크리스트 3줄 중 2줄 완료: 진척(할 일이 얼마나 끝났나)으로 읽히는 모양. 예전 막대 3개는 신호 세기처럼 보였다.
+export const FAVICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1b5e20"/><path d="M5 8.5l2.2 2.2 4-4.2M5 16.5l2.2 2.2 4-4.2" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><rect x="5.2" y="21.8" width="5.6" height="5.6" rx="1" fill="none" stroke="#a5d6a7" stroke-width="1.8"/><rect x="14" y="7" width="13" height="3" rx="1.5" fill="#fff"/><rect x="14" y="15" width="13" height="3" rx="1.5" fill="#fff"/><rect x="14" y="23" width="13" height="3" rx="1.5" fill="#a5d6a7"/></svg>');
 
 // 공통 CSS. 쓰는 쪽은 `<style>\n${CSS}\n</style>` 꼴로 넣는다.
 export const CSS = `body{font:14px/1.5 "Malgun Gothic",system-ui,sans-serif;margin:16px;color:#222;background:#f6f7f9}
