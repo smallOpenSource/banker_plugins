@@ -172,6 +172,7 @@ test('SKILL.md: 인자 없는 호출 표의 WBS 없음 행과 기존 프로젝�
   const s = section('인자 없는 호출');
   assert.match(s, /^ {3}\| 자료 폴더가 있고 `탭 자료:` 줄이 `WBS 없음` 으로 끝남 \| .*기존 프로젝트의 WBS 단계.*`WBS 없음\(묻지 않음\)` 이면 하지 않는다/m);
   assert.match(s, /`WBS 깨짐` 이면 하지 않고/);
+  assert.match(s, /`WBS 없음\(wbsAsk 값 오류\)` 이면 WBS 단계를 묻지 않고, `config\.json` 의 `wbsAsk` 를 `true` 나 `false`\(따옴표 없는 JSON 참거짓\)로 고치거나 지우라고 보고/);
   const step = s.slice(s.indexOf('### 기존 프로젝트의 WBS 단계'));
   for (const w of ['AskUserQuestion', 'request_user_input', '`--auto`', '`init` 을 다시 실행', '`규칙 줄 교체(백업 <경로>): <파일>`', '9(WBS 단계), 10~12']) assert.ok(step.includes(w), w);
   const server = fs.readFileSync(path.join(HERE, 'pm-server.mjs'), 'utf8');
