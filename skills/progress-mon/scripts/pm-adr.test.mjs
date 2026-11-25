@@ -569,6 +569,40 @@ test('화면 e2e: export 한 HTML 을 Chromium 으로 열어 #adr 전환 뒤 ADR
   }
 });
 
+// WBS 탭(ADR 뒤): 영업일 단위 고정 자료와 시간 단위 변형을 export 해 Chromium 으로 연다. 격자가 보이고 막대 칸이 칠해지고,
+// 진척도 탭의 표 스타일이 격자 칸에 새지 않으며(격자 CSS 는 .wbsg 아래로만), favicon 은 체크리스트 SVG data URI.
+test('화면 e2e: export 한 HTML 의 #wbs 에 WBS 격자가 보임(영업일 단위와 시간 단위), favicon 은 data URI', { timeout: 120000 }, async (t) => {
+  const got = await chromium();
+  if (got.skip) return t.skip(got.skip);
+  try {
+    for (const [name, wbs, cols] of [['영업일', path.join(FIX, 'wbs.json'), /^\d{2}\/\d{2}/], ['시간', path.join(FIX, 'variants', 'wbs-hour', 'wbs.json'), /^\d{2}:00$/]]) {
+      const ctx = project();
+      fs.copyFileSync(wbs, path.join(ctx.dataDir, 'wbs.json'));
+      const out = path.join(ROOT, `e2e-${++n}.html`);
+      await renderCommand('export', ctx, { _: ['export', out], now: '2026-10-29T03:00:00Z' }, { out() {}, err() {} });
+      const page = await got.browser.newPage();
+      await page.goto(`${pathToFileURL(out).href}#wbs`);
+      assert.equal(await page.isVisible('#tab-wbs'), true, `${name}: WBS 절이 보임`);
+      assert.equal(await page.isVisible('#tab-adr'), false, `${name}: ADR 절은 숨김`);
+      assert.equal(await page.getAttribute('.tabs a[data-tab="wbs"]', 'class'), 'on');
+      const tabs = await page.$$eval('.tabs a', (as) => as.map((a) => a.textContent));
+      assert.deepEqual(tabs.slice(-2), ['ADR', 'WBS'], `${name}: ADR 다음이 WBS`);
+      const heads = await page.$$eval('#tab-wbs .wbsg tr.d th', (ths) => ths.map((h) => h.textContent.trim()));
+      assert.ok(heads.length > 0 && heads.every((h) => cols.test(h)), `${name}: 날짜 칸 머리 ${heads.slice(0, 4).join(', ')}`);
+      const filled = await page.$$eval('#tab-wbs .wbsg tbody td', (tds) => tds.filter((td) => td.style.background).length);
+      assert.ok(filled > 0, `${name}: 막대 칸이 칠해짐`);
+      const border = await page.$eval('#tab-wbs .wbsg tbody td', (td) => getComputedStyle(td).borderRightStyle);
+      assert.equal(border, 'solid', `${name}: 격자 칸의 선이 wbs-gen 과 같음`);
+      const icon = await page.getAttribute('link[rel="icon"]', 'href');
+      assert.ok(icon.startsWith('data:image/svg+xml,') && decodeURIComponent(icon).includes('M5 8.5l2.2 2.2'), `${name}: 체크리스트 favicon`);
+      if (process.env.PM_WBS_SHOT) fs.writeFileSync(`${process.env.PM_WBS_SHOT}-${name === '시간' ? 'hour' : 'day'}.png`, await page.screenshot({ fullPage: true }));
+      await page.close();
+    }
+  } finally {
+    await got.browser.close();
+  }
+});
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const s = net.createServer();
