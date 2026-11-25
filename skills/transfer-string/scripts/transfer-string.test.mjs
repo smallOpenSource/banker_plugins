@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
-import { fileKind, findPython, probe, pythons, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
+import { fileKind, findPython, probe, pythons, quietEnv, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
@@ -461,6 +461,28 @@ test("launcher: Python killed by a signal is exit 4 E_SIGNAL, not 1 (which reads
   assert.equal(r.code, "E_SIGNAL");
 });
 
+test("quietEnv: PyManager's automatic install is off, any other spelling of the key is dropped, the rest kept, the input untouched", () => {
+  const env = { PATH: "/x", python_manager_automatic_install: "true", Python_Manager_Automatic_Install: "1", OTHER: "y" };
+  const q = quietEnv(env);
+  assert.deepEqual(q, { PATH: "/x", OTHER: "y", PYTHON_MANAGER_AUTOMATIC_INSTALL: "false" });
+  assert.equal(env.python_manager_automatic_install, "true");
+  assert.deepEqual(quietEnv({ PYTHON_MANAGER_AUTOMATIC_INSTALL: "true" }), { PYTHON_MANAGER_AUTOMATIC_INSTALL: "false" });
+});
+
+test("launcher: the Python that runs the script gets PyManager's automatic install off too, not only the probe", { skip: POSIX_ONLY }, () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  const fake = join(d, "py-env");
+  const seen = join(d, "seen.txt");
+  // the probe gets this script's own path as sys.executable; the real run writes the value it was given and exits 0
+  writeFileSync(fake, `#!/bin/sh\nif [ "$2" = "-c" ]; then echo "${fake}"; exit 0; fi\nprintf '%s' "$PYTHON_MANAGER_AUTOMATIC_INSTALL" > "${seen}"\n`);
+  chmodSync(fake, 0o755);
+  const r = ts(["compress", "a.md", "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: fake, PYTHON_MANAGER_AUTOMATIC_INSTALL: "true" });
+  assert.equal(r.exit, 0, r.err);
+  assert.equal(readFileSync(seen, "utf8"), "false");
+});
+
 /** The bin commands in a new folder laid out like the package, with launcher (module text, or none) under skills/. */
 function binLayout(launcher) {
   const d = fresh();
@@ -568,6 +590,7 @@ test("a name that runs or is read on its own is written with .restored after it;
     ["Setup.EXE", "program, any case"], ["conftest.py", "RISKY_NAME"], ["Makefile", "RISKY_NAME, any case"],
     ["package.json", "RISKY_NAME"], ["desktop.ini", "RISKY_NAME"],
     ["CLAUDE.md", "an agent reads it from the folder"], ["AGENTS.md", "an agent reads it"], ["gemini.md", "an agent reads it, any case"],
+    ["CLAUDE.local.md", "Claude Code reads it"], ["AGENTS.override.md", "Codex reads it"],
     ["Autorun.inf", "RISKY_NAME, any case"], ["tool.psm1", "PowerShell module"], ["hook.mjs", "Node module"],
     ["app.msix", "installer package"], ["fix.msp", "installer patch"], ["addin.xlam", "Excel add-in"],
     ["letter.dotm", "Word macro template"], ["run.desktop", "Linux launcher"], ["x.SettingContent-ms", "settings shortcut"],
@@ -839,8 +862,10 @@ test("launcher: findPython picks the real Python behind an App Installer stub in
   needPython();
   const { real, opts, env } = aliasFirstPath();
   const mark = planted(real, "python3.exe");
-  // /usr/bin and /bin after them so the planted script finds touch (no python3.exe there)
-  const py = findPython({ ...process.env, PATH: [env.PATH, "/usr/bin", "/bin"].join(delimiter) }, opts);
+  // /usr/bin and /bin after them so the planted script finds touch (no python3.exe there); without
+  // TRANSFER_STRING_PYTHON, which a box run sets and which would make that one Python the only candidate
+  const { TRANSFER_STRING_PYTHON: _named, ...rest } = process.env;
+  const py = findPython({ ...rest, PATH: [env.PATH, "/usr/bin", "/bin"].join(delimiter) }, opts);
   assert.ok(py && py.exe === PY.exe, `the real one: ${JSON.stringify(py)}`);
   assert.ok(existsSync(mark), "the real python3 behind the stub was probed");
 });

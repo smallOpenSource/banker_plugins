@@ -159,11 +159,21 @@ export function pythons(env = process.env, { darwin = process.platform === "darw
 // PYTHON_MANAGER_AUTOMATIC_INSTALL=false makes that an error at once ("No runtimes are installed", about 0.1 s).
 const PROBE_ENV = { PYTHON_MANAGER_AUTOMATIC_INSTALL: "false" };
 
+/** env with PROBE_ENV's keys set, any spelling of them removed first (Windows names are case-insensitive, so a
+ * python_manager_automatic_install=true left in would make two keys, and either could win). Used for the probe and
+ * the run alike, so the Python that runs the script never installs anything either. */
+export function quietEnv(env = process.env) {
+  const drop = new Set(Object.keys(PROBE_ENV).map((k) => k.toUpperCase()));
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (!drop.has(k.toUpperCase())) out[k] = v;
+  return { ...out, ...PROBE_ENV };
+}
+
 /** What one Python is: { exe } (absolute, 3.7 or later) or null. */
 export function probe([cmd, ...pre], env = process.env) {
   if (!isAbsolute(cmd) || !runnable(cmd)) return null;
   const r = spawnSync(cmd, [...pre, "-I", "-c", PROBE], {
-    cwd: runDir(), encoding: "utf8", env: { ...env, ...PROBE_ENV }, timeout: PROBE_MS, windowsHide: true,
+    cwd: runDir(), encoding: "utf8", env: quietEnv(env), timeout: PROBE_MS, windowsHide: true,
   });
   if (r.error || r.status !== 0) return null;
   const exe = (r.stdout || "").trim().split(/\r?\n/).pop();
@@ -194,7 +204,7 @@ function noPython(env) {
 export function run(op, args, env = process.env) {
   const py = findPython(env);
   if (!py) return noPython(env);
-  const r = spawnSync(py.exe, ["-I", SCRIPT, op, ...args], { stdio: "inherit", env, windowsHide: true });
+  const r = spawnSync(py.exe, ["-I", SCRIPT, op, ...args], { stdio: "inherit", env: quietEnv(env), windowsHide: true });
   if (r.error) {
     process.stderr.write(`[transfer-string] 오류: ${py.exe} 를 실행하지 못했습니다 (${r.error.code || r.error.message}).\nTSTR_ERROR code=E_PYTHON\n`);
     return EXIT_NO_PYTHON;

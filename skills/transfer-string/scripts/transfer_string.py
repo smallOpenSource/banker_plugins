@@ -156,7 +156,9 @@ RISKY_NAME = {
     "desktop.ini",
     "autorun.inf",
     "claude.md",
+    "claude.local.md",
     "agents.md",
+    "agents.override.md",
     "gemini.md",
 }
 ALPHA_KO = {"base64": "Base64", "hangul13": "한글 음절"}
