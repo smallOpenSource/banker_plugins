@@ -1,0 +1,623 @@
+// transfer-string: does a file go to one line and back byte for byte, is a damaged string refused with nothing
+// written, is no file overwritten, are the result files Notepad-safe, does the launcher find a Python 3.7+ (and
+// fail with exit 9 when there is none), and do the compress-string / decompress-string commands run the same script?
+// The clipboard is redirected to files (TRANSFER_STRING_CLIPBOARD_IN / _OUT) everywhere but the last test, which
+// tries the real one and accepts "failed" where there is none (an SSH session).
+// Needs a Python 3.7 or later: on PATH, in the usual install folders, or named by TRANSFER_STRING_PYTHON.
+// Run: node --test skills/transfer-string/scripts/transfer-string.test.mjs
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { deflateRawSync } from "node:zlib";
+import { findPython, pythons, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(HERE, "..", "..", "..");
+const LAUNCHER = join(HERE, "transfer-string.mjs");
+const BIN = { compress: join(ROOT, "bin", "compress-string.js"), decompress: join(ROOT, "bin", "decompress-string.js") };
+const TMP = realpathSync(mkdtempSync(join(tmpdir(), "tstr-"))); // macOS: /var is a link to /private/var, and getcwd gives the real one
+const CLIP_OUT = join(TMP, "clip-out.md");
+const DRM = [".pdf", ".hwp", ".hwpx", ".doc", ".docx", ".ppt", ".pptx", ".txt"];
+const PY = findPython();
+const outputs = [];
+let dirN = 0;
+after(() => rmSync(TMP, { recursive: true, force: true }));
+
+const fresh = () => {
+  const d = join(TMP, `d${++dirN}`);
+  mkdirSync(d);
+  return d;
+};
+const needPython = () => assert.ok(PY, "no Python 3.7 or later found: install one or set TRANSFER_STRING_PYTHON to its absolute path");
+
+function parse(r) {
+  const out = r.stdout ?? "";
+  const res = {};
+  let file = "";
+  const m = out.match(/^TSTR_RESULT (.*?) file=(.*?)\r?$/m);
+  if (m) {
+    for (const kv of m[1].split(" ")) {
+      const i = kv.indexOf("=");
+      if (i > 0) res[kv.slice(0, i)] = kv.slice(i + 1);
+    }
+    file = m[2];
+    outputs.push(file);
+  }
+  const c = (r.stderr ?? "").match(/TSTR_ERROR code=(\w+)/);
+  return { exit: r.status, out, err: r.stderr ?? "", res, file, code: c ? c[1] : "" };
+}
+
+/** Runs the launcher (or a bin command) in cwd; the clipboard always goes to files. */
+function ts(args, cwd, envAdd = {}, entry = LAUNCHER) {
+  const env = { ...process.env, TRANSFER_STRING_CLIPBOARD_OUT: CLIP_OUT, ...envAdd };
+  for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
+  return parse(spawnSync(process.execPath, [entry, ...args], { cwd, env, encoding: "utf8", timeout: 600000 }));
+}
+
+/** The count the script should print: code points of strict UTF-8 (a BOM is one), else bytes. */
+function count(buf) {
+  try {
+    return { unit: "char", n: [...new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buf)].length };
+  } catch {
+    return { unit: "byte", n: buf.length };
+  }
+}
+
+/** The Notepad rule for one result file; returns the string inside. */
+function notepad(file, alphabet) {
+  const b = readFileSync(file);
+  if (alphabet === "base64") {
+    assert.ok(b.every((x) => x >= 0x21 && x <= 0x7e), `${basename(file)}: bytes 0x21-0x7E only`);
+    const s = b.toString("ascii");
+    assert.ok(s.startsWith("TSTR"), `${basename(file)} starts with TSTR`);
+    assert.match(s, /^[A-Za-z0-9+/]+={0,2}$/, `${basename(file)} is one line of standard Base64`);
+    assert.deepEqual([...Buffer.from(s, "base64").subarray(0, 3)], [0x4d, 0x24, 0xd1]);
+    return s;
+  }
+  assert.deepEqual([...b.subarray(0, 3)], [0xef, 0xbb, 0xbf], `${basename(file)} opens with a UTF-8 BOM`);
+  const s = new TextDecoder("utf-8", { fatal: true }).decode(b.subarray(3));
+  assert.ok([...s].every((ch) => ch.codePointAt(0) >= 0xac00 && ch.codePointAt(0) <= 0xcbff), `${basename(file)}: syllables U+AC00..U+CBFF only`);
+  return s;
+}
+
+/** Decompresses a string file copied into a new folder; returns the restored bytes and the result. */
+function restoreFrom(file, name = basename(file), data = readFileSync(file)) {
+  const d = fresh();
+  writeFileSync(join(d, name), data);
+  const r = ts(["decompress", join(d, name)], d);
+  return { r, bytes: r.exit === 0 ? readFileSync(r.file) : null };
+}
+
+const CASES = [
+  ["ascii.md", Buffer.from("The quick brown fox jumps over the lazy dog.\n".repeat(40))],
+  ["korean.md", Buffer.from("긴 글을 짧은 한 줄 문자열로 압축합니다. 원래 글로 복원합니다.\n".repeat(60))],
+  ["emoji.md", Buffer.from("\u{1F600}\u{1F389} 한글 mix \u{1F680}\n".repeat(30))],
+  ["newlines.md", Buffer.from("line one\r\nline two\nline three\rend\r\n")],
+  ["empty.md", Buffer.alloc(0)],
+  ["bom.md", Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("BOM 으로 시작하는 글\n")])],
+  ["보고 서 v1.md", Buffer.from("이름에 한글과 공백이 있는 파일\n")],
+  ["repo.md", Buffer.concat(["README.md", "CHANGELOG.md", "LIST.md"].map((f) => readFileSync(join(ROOT, f))))],
+  ["bytes.bin", Buffer.concat([randomBytes(4096), Buffer.from([0xff, 0xfe, 0xc3])])],
+];
+
+for (const alphabet of ["base64", "hangul13"]) {
+  for (const [name, data] of CASES) {
+    test(`round trip ${alphabet}: ${name} (${data.length} bytes)`, () => {
+      needPython();
+      const d = fresh();
+      writeFileSync(join(d, name), data);
+      const r = ts(["compress", join(d, name), ...(alphabet === "hangul13" ? ["--hangul"] : [])], d);
+      assert.equal(r.exit, 0, r.err);
+      assert.equal(r.file, join(d, name + (alphabet === "base64" ? ".b64" : ".hangul")));
+      assert.equal(r.res.alphabet, alphabet);
+      const s = notepad(r.file, alphabet);
+      const want = count(data);
+      assert.equal(r.res.unit, want.unit);
+      assert.equal(Number(r.res.in), want.n);
+      assert.equal(Number(r.res.out), [...s].length);
+      assert.equal(r.res.clipboard, "copied");
+      assert.equal(readFileSync(CLIP_OUT, "utf8"), s, "the clipboard gets the same string");
+      const back = restoreFrom(r.file);
+      assert.equal(back.r.exit, 0, back.r.err);
+      assert.equal(basename(back.r.file), name);
+      assert.ok(back.bytes.equals(data), "decompress gives the same bytes");
+    });
+  }
+}
+
+test("a long Markdown text comes out shorter, and Hangul at most 0.47 times Base64", () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "long.md"), CASES[7][1]);
+  const b = ts(["compress", join(d, "long.md"), "--no-clipboard"], d);
+  const h = ts(["compress", join(d, "long.md"), "--hangul", "--no-clipboard"], d);
+  assert.equal(b.exit, 0, b.err);
+  assert.ok(Number(b.res.out) < Number(b.res.in), `Base64 ${b.res.out} of ${b.res.in}`);
+  assert.ok(Number(h.res.out) <= Number(b.res.out) * 0.47, `Hangul ${h.res.out} against Base64 ${b.res.out}`);
+});
+
+function compressed(text = "감싼 문자열도 풀립니다.\n".repeat(20), hangul = false) {
+  const d = fresh();
+  const data = Buffer.from(text);
+  writeFileSync(join(d, "w.md"), data);
+  const r = ts(["compress", join(d, "w.md"), "--no-clipboard", ...(hangul ? ["--hangul"] : [])], d);
+  assert.equal(r.exit, 0, r.err);
+  return { data, s: notepad(r.file, hangul ? "hangul13" : "base64") };
+}
+
+test("wrapped strings decompress: line breaks, spaces, text around, glued letters, BOM, UTF-16LE, cp949 re-save", () => {
+  needPython();
+  const { data, s } = compressed();
+  const wraps = {
+    "breaks.b64": s.match(/.{1,76}/g).join("\r\n"),
+    "spaces.b64": s.match(/.{1,10}/g).join(" "),
+    "around.md": `받은 글입니다:\n\n${s}\n\n끝.`,
+    "glued.md": `${s}xyz`,
+    "bom.b64": `\uFEFF${s}`,
+  };
+  for (const [name, text] of Object.entries(wraps)) {
+    const b = restoreFrom(null, name, Buffer.from(text, "utf8"));
+    assert.equal(b.r.exit, 0, `${name}: ${b.r.err}`);
+    assert.ok(b.bytes.equals(data), name);
+  }
+  const u16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`앞 ${s} 뒤`, "utf16le")]);
+  const b = restoreFrom(null, "unicode.b64", u16);
+  assert.equal(b.r.exit, 0, b.r.err);
+  assert.ok(b.bytes.equals(data), "UTF-16LE re-save");
+  const ansi = restoreFrom(null, "ansi.b64", Buffer.concat([Buffer.from([0xbe, 0xd5, 0x20]), Buffer.from(s, "ascii")]));
+  assert.equal(ansi.r.exit, 0, ansi.r.err);
+  assert.ok(ansi.bytes.equals(data), "cp949 (ANSI) re-save with a Korean word in front");
+});
+
+test("a wrapped Hangul string decompresses, also from a UTF-16LE re-save", () => {
+  needPython();
+  const { data, s } = compressed(undefined, true);
+  const broken = [...s].reduce((a, ch, i) => a + (i && i % 30 === 0 ? "\n" : "") + ch, "");
+  for (const [name, buf] of [["h.hangul", Buffer.from(`\uFEFF${broken}`)], ["h16.hangul", Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(broken, "utf16le")])]]) {
+    const b = restoreFrom(null, name, buf);
+    assert.equal(b.r.exit, 0, `${name}: ${b.r.err}`);
+    assert.ok(b.bytes.equals(data), name);
+  }
+});
+
+/** Decompresses text in a new folder and checks that it failed with exit 1 and code, writing nothing. */
+function refused(text, code, why) {
+  const d = fresh();
+  writeFileSync(join(d, "in.b64"), text);
+  const r = ts(["decompress", join(d, "in.b64")], d);
+  assert.equal(r.exit, 1, `${why}: exit ${r.exit} ${r.err}`);
+  assert.equal(r.code, code, `${why}: ${r.err}`);
+  assert.deepEqual(readdirSync(d), ["in.b64"], `${why}: nothing written`);
+}
+
+test("damage is refused with nothing written: a changed character, a cut string, no string, a stray TSTR", () => {
+  needPython();
+  const { s } = compressed();
+  const i = Math.floor(s.length / 2);
+  const changed = s.slice(0, i) + (s[i] === "A" ? "B" : "A") + s.slice(i + 1);
+  refused(changed, "E_DAMAGED", "one changed character");
+  refused(s.slice(0, s.length - 12), "E_CUT", "a cut string");
+  refused("이 글에는 문자열이 없습니다.", "E_NOTFOUND", "no string");
+  refused(`TSTR 앞의 낱말 ${changed}`, "E_DAMAGED", "a stray TSTR before a damaged string");
+});
+
+const CRC = new Int32Array(256).map((_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c;
+});
+const crc32 = (buf) => {
+  let c = -1;
+  for (const b of buf) c = CRC[(c ^ b) & 255] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+};
+const leb = (n) => {
+  const out = [];
+  do {
+    let x = n % 128;
+    n = Math.floor(n / 128);
+    if (n) x |= 128;
+    out.push(x);
+  } while (n);
+  return Buffer.from(out);
+};
+const u32 = (n) => {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(n >>> 0);
+  return b;
+};
+
+/** A blob with a valid crc32, built field by field as transfer_string.py lays it out. */
+function blob({ method = 1, flags = 1, param = Buffer.alloc(0), orig, name = "x.md", sha8, data, version = 1 }) {
+  const nb = Buffer.from(name);
+  const body = Buffer.concat([Buffer.from([(method << 4) | flags]), param, leb(orig), Buffer.from([nb.length]), nb, sha8, data]);
+  const head = Buffer.concat([Buffer.from([0x4d, 0x24, 0xd1, version]), u32(8 + body.length + 4), body]);
+  return Buffer.concat([head, u32(crc32(head))]);
+}
+const sha8 = (b) => createHash("sha256").update(b).digest().subarray(0, 8);
+
+test("crafted blobs with a valid crc32 are refused: a bomb, a length over 64 MiB, an unknown method, a big dictionary, a wrong sha256, version 2", () => {
+  needPython();
+  const hello = Buffer.from("hello hello hello");
+  const good = blob({ orig: hello.length, sha8: sha8(hello), data: deflateRawSync(hello) });
+  const back = restoreFrom(null, "good.b64", Buffer.from(good.toString("base64")));
+  assert.equal(back.r.exit, 0, `the test's own blob decodes: ${back.r.err}`);
+  assert.ok(back.bytes.equals(hello));
+  const zeros = Buffer.alloc(8 * 1024 * 1024);
+  const crafted = {
+    "an inflation bomb": blob({ orig: 100, sha8: sha8(zeros.subarray(0, 100)), data: deflateRawSync(zeros) }),
+    "a declared length over 64 MiB": blob({ orig: 64 * 1024 * 1024 + 1, sha8: sha8(hello), data: deflateRawSync(hello) }),
+    "an unknown method": blob({ method: 7, orig: hello.length, sha8: sha8(hello), data: hello }),
+    "an LZMA2 dictionary over 64 MiB": blob({ method: 3, param: Buffer.from([27]), orig: hello.length, sha8: sha8(hello), data: hello }),
+    "a wrong sha256": blob({ orig: hello.length, sha8: Buffer.alloc(8), data: deflateRawSync(hello) }),
+    "version 2": blob({ version: 2, orig: hello.length, sha8: sha8(hello), data: deflateRawSync(hello) }),
+  };
+  for (const [why, b] of Object.entries(crafted)) refused(b.toString("base64"), "E_DAMAGED", why);
+  const renamed = Buffer.from(good);
+  renamed[8 + 1 + 1 + 1] ^= 1; // the first byte of the name, under the old crc32
+  refused(renamed.toString("base64"), "E_DAMAGED", "a changed name byte");
+});
+
+test("nothing is overwritten: report.md-1.b64, report-1.md, the first files unchanged; no DRM extension", () => {
+  needPython();
+  const d = fresh();
+  const data = Buffer.from("덮어쓰지 않습니다.\n");
+  writeFileSync(join(d, "report.md"), data);
+  const a = ts(["compress", join(d, "report.md"), "--no-clipboard"], d);
+  const first = readFileSync(a.file);
+  const b = ts(["compress", join(d, "report.md"), "--no-clipboard"], d);
+  assert.equal(basename(a.file), "report.md.b64");
+  assert.equal(basename(b.file), "report.md-1.b64");
+  assert.ok(readFileSync(a.file).equals(first));
+  const c = ts(["decompress", a.file], d);
+  assert.equal(c.exit, 0, c.err);
+  assert.equal(basename(c.file), "report-1.md");
+  assert.ok(readFileSync(join(d, "report.md")).equals(data), "the original stays");
+  assert.ok(readFileSync(c.file).equals(data));
+  const drm = outputs.filter((f) => DRM.some((x) => f.toLowerCase().endsWith(x)));
+  assert.deepEqual(drm, [], "no output name ends with a DRM extension");
+});
+
+test("clipboard through the injected reader and writer: compress, decompress, empty, --no-clipboard", () => {
+  needPython();
+  const d = fresh();
+  const clipIn = join(TMP, "clip-in.md");
+  const text = "클립보드의 긴 글입니다.\n".repeat(25);
+  writeFileSync(clipIn, text);
+  const c = ts(["compress", "--clipboard"], d, { TRANSFER_STRING_CLIPBOARD_IN: clipIn });
+  assert.equal(c.exit, 0, c.err);
+  assert.equal(c.file, join(d, "clipboard.b64"));
+  assert.equal(readFileSync(CLIP_OUT, "utf8"), readFileSync(c.file, "ascii"));
+  writeFileSync(clipIn, `메신저로 받은 글 ${readFileSync(c.file, "ascii")}`);
+  const d2 = fresh();
+  const r = ts(["decompress", "--clipboard"], d2, { TRANSFER_STRING_CLIPBOARD_IN: clipIn });
+  assert.equal(r.exit, 0, r.err);
+  assert.equal(r.file, join(d2, "clipboard.md"));
+  assert.equal(readFileSync(r.file, "utf8"), text);
+  for (const [op, empty] of [["compress", ""], ["compress", "\uFEFF"], ["decompress", " \r\n"]]) {
+    writeFileSync(clipIn, empty);
+    const e = ts([op, "--clipboard"], fresh(), { TRANSFER_STRING_CLIPBOARD_IN: clipIn });
+    assert.equal(e.exit, 2, `${op} of an empty clipboard: ${e.err}`);
+    assert.equal(e.code, "E_CLIPBOARD");
+  }
+  rmSync(CLIP_OUT, { force: true });
+  writeFileSync(join(d, "n.md"), "x");
+  const n = ts(["compress", join(d, "n.md"), "--no-clipboard"], d);
+  assert.equal(n.res.clipboard, "off");
+  assert.ok(!existsSync(CLIP_OUT), "--no-clipboard leaves the clipboard alone");
+});
+
+test("usage errors exit 2 and name the commands", () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  writeFileSync(join(d, "b.md"), "b");
+  const cases = [
+    [[], "E_USAGE"],
+    [["pack", "a.md"], "E_USAGE"],
+    [["compress"], "E_USAGE"],
+    [["compress", "a.md", "--bogus"], "E_USAGE"],
+    [["compress", "a.md", "b.md"], "E_USAGE"],
+    [["compress", "a.md", "--clipboard"], "E_USAGE"],
+    [["decompress", "a.md.b64", "--hangul"], "E_USAGE"],
+    [["compress", "missing.md"], "E_INPUT"],
+    [["compress", d], "E_INPUT"],
+  ];
+  for (const [args, code] of cases) {
+    const r = ts(args, d);
+    assert.equal(r.exit, 2, `${args.join(" ")}: ${r.err}`);
+    assert.equal(r.code, code, args.join(" "));
+  }
+  const u = ts([], d);
+  assert.match(u.err, /compress-string <파일>/);
+  assert.match(u.err, /decompress-string <파일>/);
+});
+
+test("launcher: TRANSFER_STRING_PYTHON is the only one tried; a missing or non-Python one exits 9", () => {
+  assert.deepEqual(pythons({ TRANSFER_STRING_PYTHON: join(TMP, "py") }), [[join(TMP, "py")]]);
+  assert.deepEqual(pythons({ TRANSFER_STRING_PYTHON: "python3" }), [], "a bare name is not tried");
+  for (const bad of [join(TMP, "no-such-python"), process.execPath]) {
+    const r = ts(["compress", "--clipboard"], fresh(), { TRANSFER_STRING_PYTHON: bad });
+    assert.equal(r.exit, EXIT_NO_PYTHON, `${bad}: ${r.err}`);
+    assert.equal(r.code, "E_PYTHON");
+    assert.match(r.err, /TRANSFER_STRING_PYTHON/);
+  }
+});
+
+test("launcher: the Python found is absolute and 3.7 or later", () => {
+  needPython();
+  const v = spawnSync(PY.exe, ["-I", "-c", "import sys;print('%d.%d' % sys.version_info[:2])"], { encoding: "utf8", cwd: TMP });
+  const [maj, min] = v.stdout.trim().split(".").map(Number);
+  assert.ok(maj === 3 && min >= 7, `${PY.exe} is ${v.stdout.trim()}`);
+  const d = fresh();
+  writeFileSync(join(d, "named.md"), "named");
+  const named = ts(["compress", join(d, "named.md"), "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: PY.exe });
+  assert.equal(named.exit, 0, `a TRANSFER_STRING_PYTHON that works is used: ${named.err}`);
+});
+
+test("compress-string and decompress-string run the same script", () => {
+  needPython();
+  const d = fresh();
+  const data = Buffer.from("터미널 명령으로 압축합니다.\n".repeat(10));
+  writeFileSync(join(d, "cli.md"), data);
+  const c = ts([join(d, "cli.md"), "--no-clipboard"], d, {}, BIN.compress);
+  assert.equal(c.exit, 0, c.err);
+  assert.equal(c.res.op, "compress");
+  const d2 = fresh();
+  writeFileSync(join(d2, "cli.md.b64"), readFileSync(c.file));
+  const r = ts([join(d2, "cli.md.b64")], d2, {}, BIN.decompress);
+  assert.equal(r.exit, 0, r.err);
+  assert.ok(readFileSync(r.file).equals(data));
+  for (const entry of Object.values(BIN)) {
+    const u = ts([], d, {}, entry);
+    assert.equal(u.exit, 2, u.err);
+    assert.match(u.err, /compress-string/);
+  }
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  assert.equal(pkg.bin["compress-string"], "bin/compress-string.js");
+  assert.equal(pkg.bin["decompress-string"], "bin/decompress-string.js");
+  assert.ok(!("compress" in pkg.bin) && !("decompress" in pkg.bin), "no bare compress or decompress command");
+});
+
+test("Linux clipboard: xclip from PATH by its absolute path; a copier that stays behind holding pipes does not hang", { skip: process.platform !== "linux" && "Linux only (macOS uses /usr/bin/pbcopy, Windows PowerShell)" }, () => {
+  needPython();
+  const fake = fresh();
+  const store = join(TMP, "fake-clip.md");
+  writeFileSync(join(fake, "xclip"), `#!/bin/sh\nif [ "$3" = "-i" ]; then cat > "${store}"; (sleep 30 &); else cat "${store}"; fi\n`);
+  chmodSync(join(fake, "xclip"), 0o755);
+  const env = { TRANSFER_STRING_PYTHON: PY.exe, TRANSFER_STRING_CLIPBOARD_OUT: undefined, DISPLAY: ":99", WAYLAND_DISPLAY: undefined, PATH: `${fake}:/usr/bin:/bin` };
+  const d = fresh();
+  const data = Buffer.from("가짜 xclip 으로 복사합니다.\n".repeat(10));
+  writeFileSync(join(d, "x.md"), data);
+  const t0 = Date.now();
+  const c = ts(["compress", join(d, "x.md")], d, env);
+  assert.equal(c.exit, 0, c.err);
+  assert.equal(c.res.clipboard, "copied", c.out);
+  assert.ok(Date.now() - t0 < 15000, "the copy returns while xclip's child still runs");
+  assert.equal(readFileSync(store, "ascii"), readFileSync(c.file, "ascii"));
+  const d2 = fresh();
+  const r = ts(["decompress", "--clipboard"], d2, env);
+  assert.equal(r.exit, 0, r.err);
+  assert.ok(readFileSync(r.file).equals(data));
+  const none = ts(["compress", join(d, "x.md")], fresh(), { ...env, DISPLAY: undefined });
+  assert.equal(none.exit, 0, none.err);
+  assert.equal(none.res.clipboard, "failed");
+  assert.match(none.out, /화면 세션이 없습니다/);
+});
+
+const WIN = process.platform === "win32";
+const POSIX_ONLY = WIN && "POSIX only: a planted program here is a shell script";
+
+/** A shell script at dir/name that leaves a mark file when it runs, then runs the real Python. */
+function planted(dir, name) {
+  const mark = join(dir, `${name}.ran`);
+  writeFileSync(join(dir, name), `#!/bin/sh\ntouch "${mark}"\nexec "${PY ? PY.exe : "/nonexistent"}" "$@"\n`);
+  chmodSync(join(dir, name), 0o755);
+  return mark;
+}
+
+test("launcher: a relative TRANSFER_STRING_PYTHON is refused (exit 9) and the working folder's python is not run", () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  const mark = WIN ? null : planted(d, "python3");
+  if (WIN) copyFileSync(process.execPath, join(d, "python3.exe"));
+  for (const named of ["python3", `.${WIN ? "\\" : "/"}python3`]) {
+    const r = ts(["compress", "a.md", "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: named });
+    assert.equal(r.exit, EXIT_NO_PYTHON, `${named}: ${r.err}`);
+    assert.equal(r.code, "E_PYTHON");
+    assert.match(r.err, /절대경로가 아닙니다/);
+  }
+  if (mark) assert.ok(!existsSync(mark), "the planted python3 never ran");
+});
+
+test("launcher: PATH's relative and empty entries are skipped, so a planted python3 there is not run", { skip: POSIX_ONLY }, () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  const mark = planted(d, "python3");
+  const path = [".", "", dirname(PY.exe), "/usr/bin", "/bin"].join(delimiter);
+  assert.equal(which("python3", { PATH: path }) === join(d, "python3"), false);
+  const r = ts(["compress", "a.md", "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: undefined, PATH: path });
+  assert.ok([0, EXIT_NO_PYTHON].includes(r.exit), r.err);
+  assert.ok(!existsSync(mark), "the planted python3 never ran");
+});
+
+test("launcher: Python killed by a signal is exit 4 E_SIGNAL, not 1 (which reads as a damaged string)", { skip: POSIX_ONLY }, () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  const fake = join(d, "py-killed");
+  // the probe gets this script's own path as sys.executable, so the real run starts it again and it dies
+  writeFileSync(fake, `#!/bin/sh\nif [ "$2" = "-c" ]; then echo "${fake}"; exit 0; fi\nkill -9 $$\n`);
+  chmodSync(fake, 0o755);
+  const r = ts(["compress", "a.md", "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: fake });
+  assert.equal(r.exit, EXIT_INTERNAL, r.err);
+  assert.equal(r.code, "E_SIGNAL");
+});
+
+test("a broken install (the launcher missing) is exit 9 E_INSTALL, not a missing Python", () => {
+  const d = fresh();
+  mkdirSync(join(d, "bin"));
+  copyFileSync(BIN.compress, join(d, "bin", "compress-string.js"));
+  const r = ts(["x.md"], d, {}, join(d, "bin", "compress-string.js"));
+  assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
+  assert.equal(r.code, "E_INSTALL");
+});
+
+test("a text of 400,000 decoy TSTR marks is refused within seconds", () => {
+  needPython();
+  const t0 = Date.now();
+  refused("TSTR".repeat(400000), "E_DAMAGED", "decoy marks");
+  assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
+});
+
+/** Hangul encoding as transfer_string.py writes it: 13 bits per syllable from U+AC00, 13 bytes to 8 syllables. */
+function encodeHangul(buf) {
+  let out = "";
+  for (let i = 0; i < buf.length; i += 13) {
+    const chunk = Buffer.alloc(13);
+    buf.copy(chunk, 0, i, Math.min(i + 13, buf.length));
+    const v = BigInt(`0x${chunk.toString("hex")}`);
+    const k = Math.floor((8 * Math.min(13, buf.length - i) + 12) / 13);
+    for (let j = 0; j < k; j++) out += String.fromCharCode(0xac00 + Number((v >> BigInt(91 - 13 * j)) & 0x1fffn));
+  }
+  return out;
+}
+
+test("256 decoy heads that each claim one long body are refused within seconds (each character decoded once)", () => {
+  needPython();
+  const n = 1024 * 1024;
+  for (const hangul of [true, false]) {
+    const head = Buffer.concat([Buffer.from([0x4d, 0x24, 0xd1, 1]), u32(n), Buffer.alloc(5)]);
+    const mark = hangul ? encodeHangul(head).slice(0, 5) : head.subarray(0, 9).toString("base64");
+    const need = hangul ? Math.floor((8 * n + 12) / 13) : Math.floor((4 * n + 2) / 3);
+    const body = hangul ? "\uac00".repeat(need) : "A".repeat(need);
+    const t0 = Date.now();
+    refused(mark.repeat(256) + body, "E_DAMAGED", `${hangul ? "Hangul" : "Base64"} decoy heads`);
+    assert.ok(Date.now() - t0 < 15000, `${hangul ? "Hangul" : "Base64"}: took ${Date.now() - t0} ms`);
+  }
+});
+
+/** A good blob of data under the given name, as a Base64 string. */
+const named = (name, data = Buffer.from("x\n")) =>
+  blob({ orig: data.length, sha8: sha8(data), data: deflateRawSync(data), name }).toString("base64");
+
+test("restored names: device names get _, control, bidi and zero-width characters become _, no folder part", () => {
+  needPython();
+  const cases = [
+    ["nul .md", "_nul .md"],
+    ["CON", "_CON"],
+    ["conin$", "_conin$"],
+    ["COM\u00b9.md", "_COM\u00b9.md"],
+    ["report\u202egpj.md", "report_gpj.md"],
+    ["a\u200bb\u009bc.md", "a_b_c.md"],
+    ["../../up.md", ".._.._up.md", "1"],
+    ["ok.md", "ok.md"],
+  ];
+  for (const [inName, want, risky = "0"] of cases) {
+    const d = fresh();
+    writeFileSync(join(d, "in.b64"), named(inName));
+    const r = ts(["decompress", join(d, "in.b64")], d);
+    assert.equal(r.exit, 0, `${inName}: ${r.err}`);
+    assert.equal(r.file, join(d, want), JSON.stringify(inName));
+    assert.equal(r.res.risky, risky, `${want} is a dot file`);
+  }
+});
+
+test("a name that runs or is read on its own is restored as it is, with a warning (risky=1)", () => {
+  needPython();
+  for (const name of [".npmrc", "conftest.py", "setup.exe", "invoice.docm", "run.sh"]) {
+    const d = fresh();
+    writeFileSync(join(d, "in.b64"), named(name));
+    const r = ts(["decompress", join(d, "in.b64")], d);
+    assert.equal(r.exit, 0, `${name}: ${r.err}`);
+    assert.equal(basename(r.file), name);
+    assert.equal(r.res.risky, "1", name);
+    assert.match(r.out, /주의: 실행되거나 자동으로 읽힐 수 있는 이름입니다/);
+  }
+});
+
+test("the restored file carries the download mark: Zone.Identifier on Windows, com.apple.quarantine on macOS", () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "in.b64"), named("marked.md"));
+  const r = ts(["decompress", join(d, "in.b64")], d);
+  assert.equal(r.exit, 0, r.err);
+  if (WIN) {
+    assert.equal(r.res.mark, "zone");
+    assert.match(readFileSync(`${r.file}:Zone.Identifier`, "latin1"), /ZoneId=3/);
+    writeFileSync(`${join(d, "in.b64")}:Zone.Identifier`, "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=about:internet\r\n");
+    const c = ts(["decompress", join(d, "in.b64")], d);
+    assert.match(readFileSync(`${c.file}:Zone.Identifier`, "latin1"), /HostUrl=about:internet/, "the input's mark is copied");
+  } else if (process.platform === "darwin") {
+    assert.equal(r.res.mark, "quarantine");
+    const x = spawnSync("/usr/bin/xattr", ["-p", "com.apple.quarantine", r.file], { encoding: "utf8" });
+    assert.equal(x.status, 0, x.stderr);
+    assert.match(x.stdout, /transfer-string/);
+  } else {
+    assert.equal(r.res.mark, "none");
+    assert.match(r.out, /다운로드 표시: 이 OS 에는 없음/);
+  }
+});
+
+/** Fake clipboard programs in a new folder: name -> shell body. */
+function fakeTools(tools) {
+  const dir = fresh();
+  for (const [name, body] of Object.entries(tools)) {
+    writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(dir, name), 0o755);
+  }
+  return dir;
+}
+
+test("Wayland: wl-paste is asked for text (an image is an error, not a damaged text); a dead wl-copy falls through to xclip", { skip: process.platform !== "linux" && "Linux only" }, () => {
+  needPython();
+  const store = join(TMP, "wl-clip.md");
+  const xstore = join(TMP, "x-clip.md");
+  const wl = fakeTools({
+    "wl-copy": `cat > "${store}"; (sleep 30 &)`,
+    "wl-paste": `case "$*" in *"--type text"*) cat "${store}" ;; *) printf '\\211PNG' ;; esac`,
+  });
+  const env = { TRANSFER_STRING_PYTHON: PY.exe, TRANSFER_STRING_CLIPBOARD_OUT: undefined, WAYLAND_DISPLAY: "wayland-9", DISPLAY: undefined, PATH: `${wl}:/usr/bin:/bin` };
+  const d = fresh();
+  const data = Buffer.from("Wayland 클립보드\n".repeat(5));
+  writeFileSync(join(d, "w.md"), data);
+  const c = ts(["compress", join(d, "w.md")], d, env);
+  assert.equal(c.res.clipboard, "copied", c.out);
+  assert.equal(readFileSync(store, "ascii"), readFileSync(c.file, "ascii"));
+  const r = ts(["decompress", "--clipboard"], fresh(), env);
+  assert.equal(r.exit, 0, r.err);
+  assert.ok(readFileSync(r.file).equals(data));
+  const img = fakeTools({ "wl-copy": "exit 0", "wl-paste": `case "$*" in *"--type text"*) exit 1 ;; *) printf '\\211PNG' ;; esac` });
+  const e = ts(["compress", "--clipboard"], fresh(), { ...env, PATH: `${img}:/usr/bin:/bin` });
+  assert.equal(e.exit, 2, `an image on the clipboard: ${e.out}${e.err}`);
+  assert.equal(e.code, "E_CLIPBOARD");
+  const both = fakeTools({
+    "wl-copy": "exit 1",
+    "wl-paste": "exit 1",
+    xclip: `if [ "$3" = "-i" ]; then cat > "${xstore}"; else cat "${xstore}"; fi`,
+  });
+  const f = ts(["compress", join(d, "w.md")], d, { ...env, DISPLAY: ":99", PATH: `${both}:/usr/bin:/bin` });
+  assert.equal(f.res.clipboard, "copied", f.out);
+  assert.equal(readFileSync(xstore, "ascii"), readFileSync(f.file, "ascii"));
+});
+
+const REAL = process.env.TRANSFER_STRING_REAL_CLIPBOARD === "1";
+test("the real clipboard (TRANSFER_STRING_REAL_CLIPBOARD=1, where a desktop session has one): copied and read back", { skip: !REAL && "set TRANSFER_STRING_REAL_CLIPBOARD=1 where there is a clipboard; it overwrites the clipboard" }, () => {
+  needPython();
+  const d = fresh();
+  const data = Buffer.from(`실제 클립보드 ${randomBytes(8).toString("hex")}\n`);
+  writeFileSync(join(d, "real.md"), data);
+  const c = ts(["compress", join(d, "real.md")], d, { TRANSFER_STRING_CLIPBOARD_OUT: undefined });
+  assert.equal(c.exit, 0, c.err);
+  assert.equal(c.res.clipboard, "copied", c.out);
+  const r = ts(["decompress", "--clipboard"], fresh(), { TRANSFER_STRING_CLIPBOARD_OUT: undefined });
+  assert.equal(r.exit, 0, r.err);
+  assert.ok(readFileSync(r.file).equals(data), "the clipboard held the string");
+});
