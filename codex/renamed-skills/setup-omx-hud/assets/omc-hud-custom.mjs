@@ -29,7 +29,8 @@
  *     colour steps: "[!] payload ~23.1 MB / 32 MB - consider /compact soon"
  *     from 70% of 32 MiB (yellow), "[!!] ... - compact may fail; consider new
  *     session" from 85% (pink); below 70% neither line shows. Without PL,
- *     OMC's line is kept as it is.
+ *     OMC's line is kept as it is. With the width known, a warning wider than
+ *     it is split at " - ", then at spaces, every row in the same colour.
  *   - cwd group split on "|"; branch shown without "branch:" after the account.
  *   - OMC#X.Y.Z label no longer shown, nor OMC's update hint lines
  *     ("[!] omc X - paste: ! ...", "[!] claude X - paste: ! claude update").
@@ -381,6 +382,8 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 // Terminal columns of a string: ANSI is free, CJK and emoji take two columns,
 // variation selectors and ZWJ take none.
 const WRAP_MARGIN = 4;
+// The widest row the wrapper writes, or 0 when the width is not known (or too narrow to wrap): no wrapping then.
+const WRAP_MAX = TERM_COLS > WRAP_MARGIN + 20 ? TERM_COLS - WRAP_MARGIN : 0;
 // BMP emoji drawn two columns wide (East Asian Width W), e.g. ⚡ in OMC's call counts.
 const WIDE_BMP_EMOJI = [
   [0x231a, 0x231b], [0x23e9, 0x23ec], [0x23f0, 0x23f0], [0x23f3, 0x23f3],
@@ -449,16 +452,39 @@ const shortModelPct = (seg) => {
 // consider new session") measures the transcript file, about 2.5 to 3 times the request. With PL's bytes the line
 // is taken out and, from 70% of the 32 MiB limit on, the same warning is put in its place from PL (85%: [!!]).
 const OMC_PAYLOAD_WARNING = /^\[!!?\] payload est ~/;
-function payloadWarning(below, bytes, limit) {
+// A warning wider than max (0: the width is not known, one line) is split where " - " is, then a row still
+// too wide at its spaces; a single word wider than max stays whole.
+function fitRows(text, max) {
+  if (!max || visibleWidth(text) <= max) return [text];
+  const cut = text.indexOf(" - ");
+  const parts = cut > 0 ? [text.slice(0, cut), text.slice(cut + 3)] : [text];
+  const rows = [];
+  for (const part of parts) {
+    let row = "";
+    for (const word of part.split(" ")) {
+      if (row && visibleWidth(row) + 1 + visibleWidth(word) > max) {
+        rows.push(row);
+        row = word;
+      } else {
+        row = row ? `${row} ${word}` : word;
+      }
+    }
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
+function payloadWarning(below, bytes, limit, max) {
   const at = below.findIndex((l) => OMC_PAYLOAD_WARNING.test(l.trim()));
   const kept = below.filter((l) => !OMC_PAYLOAD_WARNING.test(l.trim()));
   const pct = Math.floor((bytes / limit) * 100); // the same pct as PL's colour
   if (pct < 70) return kept;
   const mb = (bytes / (1024 * 1024)).toFixed(1);
-  const line = pct >= 85
-    ? A(`1;${PINK}`, `[!!] payload ~${mb} MB / 32 MB - compact may fail; consider new session`)
-    : A("1;33", `[!] payload ~${mb} MB / 32 MB - consider /compact soon`);
-  kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, line);
+  const [color, text] = pct >= 85
+    ? [`1;${PINK}`, `[!!] payload ~${mb} MB / 32 MB - compact may fail; consider new session`]
+    : ["1;33", `[!] payload ~${mb} MB / 32 MB - consider /compact soon`];
+  const rows = fitRows(text, max).map((r) => A(color, r)); // every row in the warning's colour
+  kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, ...rows);
   return kept;
 }
 
@@ -619,8 +645,8 @@ try {
   let result = colored.join(SEP);
   // Wrap at segment boundaries instead of letting Claude Code truncate the tail.
   // WRAP_MARGIN leaves room for the indent Claude Code puts before the line.
-  if (TERM_COLS > WRAP_MARGIN + 20) {
-    const max = TERM_COLS - WRAP_MARGIN;
+  if (WRAP_MAX) {
+    const max = WRAP_MAX;
     const rows = [];
     let row = "";
     for (const seg of colored) {
@@ -634,7 +660,7 @@ try {
     if (row) rows.push(row);
     result = rows.join("\n");
   }
-  const shownBelow = Number.isFinite(plBytes) && plLimit > 0 ? payloadWarning(below, plBytes, plLimit) : below;
+  const shownBelow = Number.isFinite(plBytes) && plLimit > 0 ? payloadWarning(below, plBytes, plLimit, WRAP_MAX) : below;
   if (shownBelow.length) result += "\n" + shownBelow.join("\n");
   emit(result + "\n");
 } catch {
