@@ -1,0 +1,24 @@
+{
+  "title": "예시 앱 WBS",
+  "subtitle": "스토리 A1~A5, 알림(A5)은 범위 밖으로 미룸",
+  "start": "2026-10-19",
+  "end": "2026-11-06",
+  "holidays": "없음",
+  "gates": [{ "date": "10/26", "label": "설정 형식 확정" }],
+  "parts": {
+    "app": { "name": "앱", "light": "D6EAF8", "dark": "5DADE2" },
+    "ops": { "name": "공통", "light": "D6DBDF", "dark": "34495E", "legend": false }
+  },
+  "rows": [
+    { "kind": "group", "wbs": "1", "task": "앱", "owner": "앱팀", "part": "app" },
+    { "kind": "task", "wbs": "1.1", "task": "기본 화면(A1)", "owner": "홍길동", "priority": "필수", "pending": "-", "start": "10/19", "end": "10/23", "part": "app" },
+    { "kind": "task", "wbs": "1.2", "task": "설정 읽기(A2)", "owner": "홍길동", "priority": "필수", "pending": "설정 형식 확정", "start": "10/26", "end": "10/28", "part": "app" },
+    { "kind": "task", "wbs": "1.3", "task": "자료 검사(A3)", "owner": "김철수", "priority": "필수", "pending": "-", "start": "10/29", "end": "11/03", "part": "app" },
+    { "kind": "task", "wbs": "1.4", "task": "내보내기(A4)", "owner": "김철수", "priority": "권장", "pending": "-", "start": "11/04", "end": "11/06", "part": "app" },
+    { "kind": "constraint", "wbs": "C-1", "task": "설정 형식 확정", "owner": "기획", "priority": "선행", "pending": "미확정 시 A2 지연", "date": "10/26" },
+    { "kind": "group", "wbs": "M", "task": "마일스톤", "part": "ops" },
+    { "kind": "milestone", "wbs": "M1", "task": "착수", "date": "10/19" },
+    { "kind": "milestone", "wbs": "M2", "task": "내보내기 완료", "date": "11/06" }
+  ],
+  "notes": [{ "heading": "[미확정]", "lines": ["알림(A5)은 일정 없음. 범위가 정해지면 행을 더함"] }]
+}

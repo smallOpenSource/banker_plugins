@@ -96,11 +96,19 @@ function report(res) {
   for (const e of res.errors) process.stderr.write(`오류: ${e}\n`);
 }
 
+// The hour unit's period end: the end of the last slot ('2026-11-26T18:00', '2026-11-26T24:00' at midnight).
+function hourEnd(key) {
+  const h = +key.slice(11, 13) + 1;
+  return `${key.slice(0, 11)}${String(h).padStart(2, "0")}:00`;
+}
+
 function summary(m) {
   const tasks = m.rows.filter((r) => r.kind === "task").length;
   const marks = m.rows.reduce((n, r) => n + r.diamonds.length, 0);
-  const span = `${m.days[0].key} ~ ${m.days[m.days.length - 1].key}`;
-  return `영업일 ${m.days.length} (${span}), 주 ${m.weeks.length}, 행 ${m.rows.length}, 작업 ${tasks}, ◆ ${marks}, 게이트 ${m.gates.length}`;
+  const last = m.days[m.days.length - 1].key;
+  const span = `${m.days[0].key} ~ ${m.unit === "hour" ? hourEnd(last) : last}`;
+  const [unit, group] = m.unit === "hour" ? ["시간", "날"] : ["영업일", "주"];
+  return `${unit} ${m.days.length} (${span}), ${group} ${m.weeks.length}, 행 ${m.rows.length}, 작업 ${tasks}, ◆ ${marks}, 게이트 ${m.gates.length}`;
 }
 
 function cmdCheck(args) {

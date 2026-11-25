@@ -464,7 +464,7 @@ try {
   const pmonDir = path.join(instDir, 'banker-progress-mon');
   const pmonFiles = mfAllSkills.find((s) => s.name === 'progress-mon').supportingFiles;
   const pmonSkill = fs.readFileSync(path.join(pmonDir, 'SKILL.md'), 'utf8');
-  ok(pmonFiles.length === 45 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
+  ok(pmonFiles.length === 53 && pmonFiles.every((f) => fs.existsSync(path.join(pmonDir, ...f.split('/'))))
      && !fs.readdirSync(path.join(pmonDir, 'scripts')).some((f) => f.endsWith('.test.mjs')),
      `banker-progress-mon carries its ${pmonFiles.length} supporting files and no tests into the Codex install`);
   ok(/^---\nname: banker-progress-mon\n/.test(pmonSkill) && pmonSkill.includes('\nprogress-mon skill body marker v1\n'),
@@ -742,7 +742,7 @@ try {
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
     path.join('skills', 'anti-drm', 'scripts', 'anti-drm.test.mjs'),
     path.join('skills', 'theme-selection', 'scripts', 'themes.test.mjs'),
-    ...['pm-check', 'pm-config', 'pm-data', 'pm-html', 'pm-memory', 'pm-render', 'pm-server', 'pm-skill', 'pm-sources', 'progress-mon']
+    ...['pm-check', 'pm-config', 'pm-data', 'pm-html', 'pm-memory', 'pm-render', 'pm-server', 'pm-skill', 'pm-sources', 'pm-wbs', 'progress-mon']
       .map((n) => path.join('skills', 'progress-mon', 'scripts', `${n}.test.mjs`)),
     ...['init-dir', 'marker-block', 'service-template', 'templates']
       .map((n) => path.join('skills', 'init-dir', 'scripts', `${n}.test.mjs`)),

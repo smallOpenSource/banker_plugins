@@ -55,18 +55,25 @@ test('공통 CSS 는 옛 화면의 주요 선택자를 담음', T, () => {
   assert.equal(CSS.split('\n').length, 30);
 });
 
-test('탭 머리는 다섯 탭과 켜진 탭 하나, 다섯째는 ADR', T, () => {
-  assert.deepEqual(TABS.map((t) => t[0]), ['history', 'req', 'workflow', 'arch', 'adr']);
+test('탭 머리는 여섯 탭과 켜진 탭 하나, 다섯째는 ADR, 여섯째(ADR 뒤)는 WBS', T, () => {
+  assert.deepEqual(TABS.map((t) => t[0]), ['history', 'req', 'workflow', 'arch', 'adr', 'wbs']);
   assert.deepEqual(TABS[4], ['adr', 'ADR']);
+  assert.deepEqual(TABS[5], ['wbs', 'WBS']);
   const h = tabsHtml('req');
-  assert.equal(h, '<div class="tabs"><a href="/?tab=history">진척도</a><a href="/?tab=req" class="on">구현요건</a><a href="/?tab=workflow">workflow</a><a href="/?tab=arch">구성도</a><a href="/?tab=adr">ADR</a></div>');
+  assert.equal(h, '<div class="tabs"><a href="/?tab=history">진척도</a><a href="/?tab=req" class="on">구현요건</a><a href="/?tab=workflow">workflow</a><a href="/?tab=arch">구성도</a><a href="/?tab=adr">ADR</a><a href="/?tab=wbs">WBS</a></div>');
   assert.equal((tabsHtml('arch').match(/class="on"/g) || []).length, 1);
   assert.equal((tabsHtml('adr').match(/class="on"/g) || []).length, 1);
   assert.ok(tabsHtml('adr').includes('<a href="/?tab=adr" class="on">ADR</a>'));
+  assert.ok(tabsHtml('wbs').includes('<a href="/?tab=adr">ADR</a><a href="/?tab=wbs" class="on">WBS</a>'));
 });
 
 test('favicon 은 외부 자원 없는 data URI', T, () => {
   assert.ok(FAVICON.startsWith('data:image/svg+xml,'));
   assert.ok(decodeURIComponent(FAVICON.slice(19)).startsWith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'));
   assert.ok(!/[<>"\s]/.test(FAVICON.slice(19)));
+  // 진척(할 일 2/3 완료)으로 읽히는 체크리스트: 체크 표시 둘과 빈 칸 하나. 신호 세기처럼 보이던 막대 3개가 아님
+  const svg = decodeURIComponent(FAVICON.slice(19));
+  assert.match(svg, /<path d="M5 8\.5l2\.2 2\.2 4-4\.2M5 16\.5l2\.2 2\.2 4-4\.2"/);
+  assert.equal((svg.match(/<rect /g) || []).length, 5);
+  assert.ok(!svg.includes('x="22" y="6" width="5" height="21"'));
 });

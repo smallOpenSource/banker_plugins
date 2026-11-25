@@ -1,6 +1,7 @@
 // wg-xlsx.mjs: draws the wbs-gen model as one XLSX sheet. Bars are plain cell fills (no conditional formatting), so
 // the file looks the same in any viewer; the parts follow the layout Excel itself writes (shared strings, frozen
-// panes, print titles, A3 landscape fit to one page wide).
+// panes, print titles, A3 landscape fit to one page wide). In the hour unit row 2 groups the hours by day and row 3
+// names each hour.
 import { zip } from "./wg-zip.mjs";
 
 const NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -211,8 +212,9 @@ function drawHead(sh, m, last) {
     }
     if (w.count > 1) sh.merge(2, 8 + w.first, 2, 8 + w.first + w.count - 1);
   }
+  // The hour unit has no weekday under each hour ('11:00' alone).
   m.days.forEach((d, i) => {
-    sh.put(3, 8 + i, `${d.label}\n${d.dow}`, { font: "day", fill: "EBEDEF", border: grid(gateCols.has(i)), h: "center", wrap: true });
+    sh.put(3, 8 + i, d.dow ? `${d.label}\n${d.dow}` : d.label, { font: "day", fill: "EBEDEF", border: grid(gateCols.has(i)), h: "center", wrap: true });
   });
 }
 

@@ -11,7 +11,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.dirname(HERE);
 const SKILL = fs.readFileSync(path.join(SKILL_DIR, 'SKILL.md'), 'utf8');
 const MARKER = 'progress-mon skill body marker v1';
-const REFS = ['config.md', 'items.md', 'req-spec.md', 'reqs.md', 'flow.md', 'arch.md', 'authoring.md', 'inventory.md', 'adr.md'];
+const REFS = ['config.md', 'items.md', 'req-spec.md', 'reqs.md', 'flow.md', 'arch.md', 'authoring.md', 'inventory.md', 'adr.md', 'wbs.md'];
 
 // frontmatter: 첫 줄 --- 부터 다음 --- 까지. 돌려줌: { keys: {이름: 값}, body }
 function frontmatter(text) {
@@ -110,7 +110,7 @@ test('SKILL.md: 규칙 줄 안내(stage, story, item, Codex --runtime codex)와 
   assert.match(init, /`--note`[\s\S]*`--issue`/);
 });
 
-test('SKILL.md, README.md 가 가리키는 파일이 모두 있음. references 9개', T, () => {
+test('SKILL.md, README.md 가 가리키는 파일이 모두 있음. references 10개', T, () => {
   assert.deepEqual(fs.readdirSync(path.join(SKILL_DIR, 'references')).sort(), [...REFS].sort());
   for (const r of REFS) assert.ok(SKILL.includes(r), `SKILL.md 가 ${r} 를 안내하지 않음`);
   const readme = fs.readFileSync(path.join(SKILL_DIR, 'README.md'), 'utf8');
@@ -127,9 +127,9 @@ test('SKILL.md: init 절차의 ADR 단계와 근거 출처 순서, 정리 단계
   const order = ['`docs/adr/`', '`.omc/plans/*.md`', 'ultra-chain 실행 기록', '`git log`'].map((w) => init.indexOf(w));
   assert.ok(order.every((i) => i > 0) && order.every((i, k) => !k || i > order[k - 1]), `근거 출처 순서 ${order}`);
   assert.match(init, /실제로 돌린 명령의 출력만 참조/);
-  assert.match(init, /^11\. 정리 단계/m);
+  assert.match(init, /^12\. 정리 단계/m);
   assert.match(init, /`check --adr-cleanup`[\s\S]*스키마 FAIL 이 남으면 지우지 않고 `adr\.json\.rejected-<YYYYMMDD-HHMMSS>` 로 옮겨[\s\S]*참조 FAIL[\s\S]*\{ "gap": "참조 확인 실패: <이유>" \}/);
-  assert.match(init, /^14\. `start` 를 실행하고 URL 을 보고한다$/m);
+  assert.match(init, /^15\. `start` 를 실행하고 URL 을 보고한다$/m);
   const rule = section('갱신 규칙(init 뒤 세션)');
   assert.match(rule, /^ {2}\| 결정이 생기거나 스토리가 끝남 \| `<data>\/adr\.json` 을 고치고/m);
 });
@@ -144,13 +144,60 @@ test('SKILL.md: 인자 없는 호출 표의 ADR 없음 행, 진행 전 확인(As
   assert.ok(fs.readFileSync(path.join(HERE, 'pm-memory.mjs'), 'utf8').includes('`규칙 줄 교체(백업 ${bak}): ${s.name}`'));
 });
 
-test('옛 탭 수 문구(ADR 이전)가 대상 파일(SKILL.md, README.md, references, scripts, banker 등록 지점)에 0건, description 에 ADR', T, () => {
+test('옛 탭 수 문구(ADR 이전과 WBS 이전)가 대상 파일(SKILL.md, README.md, references, scripts, banker 등록 지점)에 0건, description 에 ADR', T, () => {
   const files = ['SKILL.md', 'README.md', ...REFS.map((r) => `references/${r}`), ...fs.readdirSync(HERE).filter((f) => /\.(mjs|js)$/.test(f)).map((f) => `scripts/${f}`)].map((f) => path.join(SKILL_DIR, f));
   // banker 저장소 안에서 돌 때만 있는 등록 지점(스킬 폴더만 옮긴 원본에는 없음)
   const repo = path.resolve(SKILL_DIR, '..', '..');
   for (const f of ['codex/manifest.json', 'codex/transform-matrix.md', 'README.md']) if (fs.existsSync(path.join(repo, 'codex', 'manifest.json'))) files.push(path.join(repo, f));
-  const bad = new RegExp(['4' + '탭', '네 ' + '탭', 'four ' + 'tabs'].join('|'));
+  const bad = new RegExp(['4' + '탭', '네 ' + '탭', 'four ' + 'tabs', '5' + '탭', '다섯 ' + '탭', 'five ' + 'tabs'].join('|'));
   const hits = files.filter((f) => bad.test(fs.readFileSync(f, 'utf8')));
   assert.deepEqual(hits, []);
-  assert.match(frontmatter(SKILL).keys.description, /5탭 웹 화면\(진척도, 구현요건, workflow, 구성도, ADR\)/);
+  assert.match(frontmatter(SKILL).keys.description, /6탭 웹 화면\(진척도, 구현요건, workflow, 구성도, ADR, WBS\)/);
+});
+
+test('SKILL.md: init 절차의 WBS 단계(ADR 단계 뒤, 날짜 출처 순서, 지어내지 않음, 공휴일 오프라인), 정리 단계의 wbs.json, 갱신 규칙 표의 WBS 행', T, () => {
+  const init = section('init 절차');
+  assert.match(init, /^9\. WBS 단계: `<data>\/wbs\.json` 을 쓴다\(`references\/wbs\.md`\)/m);
+  assert.ok(init.indexOf('8. ADR 단계') < init.indexOf('9. WBS 단계'));
+  const wbs = init.slice(init.indexOf('9. WBS 단계'), init.indexOf('\n10. '));
+  const order = ['`stories`', '`.omc/plans/*.md`', '`events.jsonl`', '`git log`'].map((w) => wbs.indexOf(w));
+  assert.ok(order.every((i) => i > 0) && order.every((i, k) => !k || i > order[k - 1]), `날짜 출처 순서 ${order}`);
+  for (const w of ['날짜를 지어내지 않는다', '`pending`', '`[가정·변경]`', '공휴일은 내려받지 않는다', '`"없음"`', '`공휴일 미확인`', '2일 이내']) assert.ok(wbs.includes(w), w);
+  assert.match(init, /^12\. 정리 단계[\s\S]*`arch\.json`, `wbs\.json`\)은 FAIL 이 난 그 파일만 지워/m);
+  const rule = section('갱신 규칙(init 뒤 세션)');
+  assert.match(rule, /^ {2}\| 일정이 바뀌거나 단계, 스토리가 시작하거나 끝남 \| `<data>\/wbs\.json` 을 고치고/m);
+});
+
+test('SKILL.md: 인자 없는 호출 표의 WBS 없음 행과 기존 프로젝트의 WBS 단계(한 번 묻기, --auto, init 다시 실행, 9~12)', T, () => {
+  const s = section('인자 없는 호출');
+  assert.match(s, /^ {3}\| 자료 폴더가 있고 `탭 자료:` 줄이 `WBS 없음` 으로 끝남 \| .*기존 프로젝트의 WBS 단계.*`WBS 없음\(묻지 않음\)` 이면 하지 않는다/m);
+  assert.match(s, /`WBS 깨짐` 이면 하지 않고/);
+  const step = s.slice(s.indexOf('### 기존 프로젝트의 WBS 단계'));
+  for (const w of ['AskUserQuestion', 'request_user_input', '`--auto`', '`init` 을 다시 실행', '`규칙 줄 교체(백업 <경로>): <파일>`', '9(WBS 단계), 10~12']) assert.ok(step.includes(w), w);
+  const server = fs.readFileSync(path.join(HERE, 'pm-server.mjs'), 'utf8');
+  assert.ok(server.includes("const wbs = has('wbs.json');") && server.includes('WBS ${wbs}${quiet}') && server.includes("'(묻지 않음)'"));
+  const table = section('하위 명령');
+  assert.match(table, /`FAIL wbs\.json <json 경로> <이유>`/);
+});
+
+test('references/wbs.md: 스키마는 wbs-gen 계획, 시간 단위 규칙, 날짜 출처, 공휴일 오프라인', T, () => {
+  const doc = fs.readFileSync(path.join(SKILL_DIR, 'references', 'wbs.md'), 'utf8');
+  for (const w of ['wbs-gen', '`plan.json`', '`YYYY-MM-DD HH:MM`', '`M/D HH:MM`', '2일 이내', '48', '`11:00`', '`items.json`', '`events.jsonl`', '`git log`', '`공휴일 미확인`', '`pending`']) assert.ok(doc.includes(w), w);
+  assert.ok(!doc.includes('\r'), 'LF');
+});
+
+test('SKILL.md, references: 시각은 현지 시간대(Z, 시차 환산 예), 주말과 공휴일은 걸친 영업일과 notes, 지우지 않음, wbsAsk 로 묻지 않음', T, () => {
+  const init = section('init 절차');
+  const wbs = init.slice(init.indexOf('9. WBS 단계'), init.indexOf('\n10. '));
+  for (const w of ['프로젝트 현지 시간대', '`2026-11-25T01:00:00Z` 는 `2026-11-25 10:00`', '떼기만 하지 않는다', '다음 영업일', '앞 영업일', '`[가정·변경]`', '`"wbsAsk": false`']) assert.ok(wbs.includes(w), w);
+  assert.match(init, /`wbs\.json` 의 `주말이나 공휴일` FAIL 은 지우지 않는다/);
+  assert.match(init, /`WARN density wbs` 줄은 근거가 있는 것만 보충한다[\s\S]*날짜를 만들어 넣지 않는다/);
+  const step = section('인자 없는 호출');
+  for (const w of ['다시 묻지 않음', '`WBS 없음(묻지 않음)`', '`"wbsAsk": false`', '`wbs.json` 줄만 고친다']) assert.ok(step.includes(w), w);
+  const doc = fs.readFileSync(path.join(SKILL_DIR, 'references', 'wbs.md'), 'utf8');
+  for (const w of ['## 시간대', '`2026-11-25T01:00:00Z` | KST(+09:00) | `2026-11-25 10:00`', '## 주말과 공휴일', '`[주말·공휴일 작업]`', '세 파일', '`24:00`', '그날 첫 칸']) assert.ok(doc.includes(w), w);
+  assert.ok(!doc.includes('두 파일'));
+  const cfg = fs.readFileSync(path.join(SKILL_DIR, 'references', 'config.md'), 'utf8');
+  assert.match(cfg, /^\| `wbsAsk` \| 참, 거짓 \|/m);
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("take('wbsAsk',"));
 });

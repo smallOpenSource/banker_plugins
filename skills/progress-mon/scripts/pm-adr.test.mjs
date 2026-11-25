@@ -427,18 +427,18 @@ test('정리: 참조 FAIL 만 있으면 파일을 남기고 그 참조를 gap �
   assert.match(r.out, /\ncheck: FAIL 0, WARN 2\nadr 근거 없음 2칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0\n$/);
 });
 
-test('밀도: init 기록이 있으면 빈 항목과 프로젝트, 결정별 하한 미달이 WARN density adr, 요약 끝 5줄. 채우면 density adr ok', T, () => {
+test('밀도: init 기록이 있으면 빈 항목과 프로젝트, 결정별 하한 미달이 WARN density adr, 요약 끝 6줄. 채우면 density adr ok', T, () => {
   const ctx = project({ initd: true });
   const { lines } = check(ctx);
   assert.ok(lines.includes('WARN density adr 빈 항목 8/9: decisions[1].scaling'), lines.join('\n'));
-  assert.deepEqual(lines.slice(-6), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', 'adr 근거 없음 1칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
-  assert.match(lines[lines.length - 7], /^check: FAIL 0, WARN \d+$/);
+  assert.deepEqual(lines.slice(-7), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', 'density wbs ok', 'adr 근거 없음 1칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
+  assert.match(lines[lines.length - 8], /^check: FAIL 0, WARN \d+$/);
   const a = readFix('adr.json');
   a.decisions[1].scaling = { argument: '바인드 주소는 설정 하나라 규모와 무관', refs: [{ kind: 'file', path: 'src/app.mjs' }] };
   fs.writeFileSync(path.join(ctx.dataDir, 'adr.json'), JSON.stringify(a));
   const ok = check(ctx).lines;
   assert.equal(ok.filter((l) => l.startsWith('WARN density adr ')).length, 0, ok.join('\n'));
-  assert.deepEqual(ok.slice(-2), ['density adr ok', 'adr 근거 없음 0칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
+  assert.deepEqual(ok.slice(-3), ['density adr ok', 'density wbs ok', 'adr 근거 없음 0칸, 미검증 0, 구현 못 함 1, 참조 없는 서술 0']);
   const none = project({ adr: null, initd: true });
   const l2 = check(none).lines;
   for (const w of ['WARN density adr 빈 항목 0/3: project.verification, project.flow, project.proof', 'WARN density adr 검증 0/1', 'WARN density adr 흐름 0/3: 입력, 처리, 출력', 'WARN density adr 증거 0/1', 'WARN density adr 결정 0/1']) assert.ok(l2.includes(w), `${w}\n${l2.join('\n')}`);
@@ -521,7 +521,7 @@ test('export: tab-adr 절과 #adr 전환, 외부 자원 0', T, async () => {
   const html = fs.readFileSync(out, 'utf8');
   assert.ok(html.includes('<section id="tab-adr" class="tab"><h2 class="tt">ADR</h2>'));
   assert.ok(html.includes('<a href="#adr" data-tab="adr">ADR</a>'));
-  assert.ok(html.includes('"adr"]'), '전환 스크립트의 탭 목록');
+  assert.ok(html.includes('"adr","wbs"]'), '전환 스크립트의 탭 목록(ADR 뒤 WBS)');
   assert.ok(!/(?:src|href)\s*=\s*["']?(?:https?:)?\/\//i.test(html));
 });
 
@@ -564,6 +564,40 @@ test('화면 e2e: export 한 HTML 을 Chromium 으로 열어 #adr 전환 뒤 ADR
     const shot = await page.screenshot({ fullPage: true });
     assert.deepEqual([...shot.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'PNG 스크린숏');
     if (process.env.PM_ADR_SHOT) fs.writeFileSync(process.env.PM_ADR_SHOT, shot);
+  } finally {
+    await got.browser.close();
+  }
+});
+
+// WBS 탭(ADR 뒤): 영업일 단위 고정 자료와 시간 단위 변형을 export 해 Chromium 으로 연다. 격자가 보이고 막대 칸이 칠해지고,
+// 진척도 탭의 표 스타일이 격자 칸에 새지 않으며(격자 CSS 는 .wbsg 아래로만), favicon 은 체크리스트 SVG data URI.
+test('화면 e2e: export 한 HTML 의 #wbs 에 WBS 격자가 보임(영업일 단위와 시간 단위), favicon 은 data URI', { timeout: 120000 }, async (t) => {
+  const got = await chromium();
+  if (got.skip) return t.skip(got.skip);
+  try {
+    for (const [name, wbs, cols] of [['영업일', path.join(FIX, 'wbs.json'), /^\d{2}\/\d{2}/], ['시간', path.join(FIX, 'variants', 'wbs-hour', 'wbs.json'), /^\d{2}:00$/]]) {
+      const ctx = project();
+      fs.copyFileSync(wbs, path.join(ctx.dataDir, 'wbs.json'));
+      const out = path.join(ROOT, `e2e-${++n}.html`);
+      await renderCommand('export', ctx, { _: ['export', out], now: '2026-10-29T03:00:00Z' }, { out() {}, err() {} });
+      const page = await got.browser.newPage();
+      await page.goto(`${pathToFileURL(out).href}#wbs`);
+      assert.equal(await page.isVisible('#tab-wbs'), true, `${name}: WBS 절이 보임`);
+      assert.equal(await page.isVisible('#tab-adr'), false, `${name}: ADR 절은 숨김`);
+      assert.equal(await page.getAttribute('.tabs a[data-tab="wbs"]', 'class'), 'on');
+      const tabs = await page.$$eval('.tabs a', (as) => as.map((a) => a.textContent));
+      assert.deepEqual(tabs.slice(-2), ['ADR', 'WBS'], `${name}: ADR 다음이 WBS`);
+      const heads = await page.$$eval('#tab-wbs .wbsg tr.d th', (ths) => ths.map((h) => h.textContent.trim()));
+      assert.ok(heads.length > 0 && heads.every((h) => cols.test(h)), `${name}: 날짜 칸 머리 ${heads.slice(0, 4).join(', ')}`);
+      const filled = await page.$$eval('#tab-wbs .wbsg tbody td', (tds) => tds.filter((td) => td.style.background).length);
+      assert.ok(filled > 0, `${name}: 막대 칸이 칠해짐`);
+      const border = await page.$eval('#tab-wbs .wbsg tbody td', (td) => getComputedStyle(td).borderRightStyle);
+      assert.equal(border, 'solid', `${name}: 격자 칸의 선이 wbs-gen 과 같음`);
+      const icon = await page.getAttribute('link[rel="icon"]', 'href');
+      assert.ok(icon.startsWith('data:image/svg+xml,') && decodeURIComponent(icon).includes('M5 8.5l2.2 2.2'), `${name}: 체크리스트 favicon`);
+      if (process.env.PM_WBS_SHOT) fs.writeFileSync(`${process.env.PM_WBS_SHOT}-${name === '시간' ? 'hour' : 'day'}.png`, await page.screenshot({ fullPage: true }));
+      await page.close();
+    }
   } finally {
     await got.browser.close();
   }
@@ -624,7 +658,7 @@ test('기존 프로젝트 ADR 단계: status 가 ADR 없음, state.json 의 memo
   const { ctx, mem } = legacy();
   const s = cli(['status'], ctx.project);
   assert.equal(s.code, 3);
-  assert.match(s.out, /^탭 자료: 진척도 있음, 구현요건 있음, workflow 있음, 구성도 있음, ADR 없음$/m);
+  assert.match(s.out, /^탭 자료: 진척도 있음, 구현요건 있음, workflow 있음, 구성도 있음, ADR 없음, WBS 없음$/m);
   const before = Object.fromEntries(['config.json', 'items.json', 'req-spec.json'].map((f) => [f, fs.readFileSync(path.join(ctx.dataDir, f))]));
   const memory = JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'state.json'), 'utf8')).memory;
   assert.equal(memory.kind, 'auto-memory');
@@ -638,5 +672,5 @@ test('기존 프로젝트 ADR 단계: status 가 ADR 없음, state.json 의 memo
   const c = cli(['check'], ctx.project);
   assert.match(c.out, /^check: FAIL 0, WARN \d+$/m, c.out);
   assert.equal(c.code, 0);
-  assert.match(cli(['status'], ctx.project).out, /, ADR 있음$/m);
+  assert.match(cli(['status'], ctx.project).out, /, ADR 있음, WBS 없음$/m);
 });
