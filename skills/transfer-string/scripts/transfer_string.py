@@ -14,12 +14,13 @@ compress writes <name>.b64 (--hangul: <name>.hangul) next to the input, or clipb
 clipboard.hangul in the current folder for --clipboard, and puts the string on the clipboard when
 it can. decompress finds the string by its content, in a file of any extension or on the clipboard
 (text around it and every space, line break and byte order mark inside it are ignored), checks it
-and writes the original file under its original name next to the input (the current folder for
---clipboard). A file that exists is never overwritten: -1, -2 ... goes before the extension
-(report.md-1.b64, report-1.md). Both result files open in Notepad: .b64 holds bytes 0x21-0x7E
-only (no BOM, no line break); .hangul is UTF-8 with a BOM, then syllables U+AC00..U+CBFF only.
-A restored name that runs or is read on its own (a program, a script, a macro file, a dot file, a
-name a tool picks up from the folder) is written with .restored after it (setup.exe.restored,
+and writes the original file under its original name (a name that runs gets .restored, see below)
+next to the input (the current folder for --clipboard). A file that exists is never overwritten:
+-1, -2 ... goes before the extension (report.md-1.b64, report-1.md). Both result files open in
+Notepad: .b64 holds bytes 0x21-0x7E only (no BOM, no line break); .hangul is UTF-8 with a BOM,
+then syllables U+AC00..U+CBFF only.
+A restored name that runs or is read on its own (a program, a script, an installer package, a macro
+file, a dot file, a name a tool or an agent picks up from the folder) is written with .restored after it (setup.exe.restored,
 .npmrc.restored), and the summary names the original to rename it to once it is checked;
 --keep-name writes the original name and only warns.
 
@@ -130,6 +131,21 @@ RISKY_EXT = {
     ".xll",
     ".xlsm",
     ".pptm",
+    ".psm1",
+    ".ps1xml",
+    ".mjs",
+    ".cjs",
+    ".ws",
+    ".wsh",
+    ".msp",
+    ".appx",
+    ".msix",
+    ".appxbundle",
+    ".msixbundle",
+    ".settingcontent-ms",
+    ".xlam",
+    ".dotm",
+    ".desktop",
 }
 RISKY_NAME = {
     "conftest.py",
@@ -138,6 +154,10 @@ RISKY_NAME = {
     "makefile",
     "package.json",
     "desktop.ini",
+    "autorun.inf",
+    "claude.md",
+    "agents.md",
+    "gemini.md",
 }
 ALPHA_KO = {"base64": "Base64", "hangul13": "한글 음절"}
 

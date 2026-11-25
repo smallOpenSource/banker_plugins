@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
-import { findPython, probe, pythons, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
+import { fileKind, findPython, probe, pythons, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
@@ -567,6 +567,10 @@ test("a name that runs or is read on its own is written with .restored after it;
     [".npmrc", "dot file"], ["setup.exe", "program"], ["invoice.docm", "macro file"], ["run.sh", "script"],
     ["Setup.EXE", "program, any case"], ["conftest.py", "RISKY_NAME"], ["Makefile", "RISKY_NAME, any case"],
     ["package.json", "RISKY_NAME"], ["desktop.ini", "RISKY_NAME"],
+    ["CLAUDE.md", "an agent reads it from the folder"], ["AGENTS.md", "an agent reads it"], ["gemini.md", "an agent reads it, any case"],
+    ["Autorun.inf", "RISKY_NAME, any case"], ["tool.psm1", "PowerShell module"], ["hook.mjs", "Node module"],
+    ["app.msix", "installer package"], ["fix.msp", "installer patch"], ["addin.xlam", "Excel add-in"],
+    ["letter.dotm", "Word macro template"], ["run.desktop", "Linux launcher"], ["x.SettingContent-ms", "settings shortcut"],
   ];
   for (const [name, why] of names) {
     const r = restoreNamed(name);
@@ -692,8 +696,10 @@ test("Wayland: wl-paste is asked for text (an image is an error, not a damaged t
 });
 
 /** A stat or lstat stand-in: returns a stat-like object of kind, or throws an error with code. */
+const KINDS = { file: [1, 0, 0], dir: [0, 1, 0], link: [0, 0, 1], other: [0, 0, 0] }; // isFile, isDirectory, isSymbolicLink
 const fakeStat = (kind) => () => {
-  if (kind === "file" || kind === "dir" || kind === "link") return { isFile: () => kind === "file", isDirectory: () => kind === "dir" };
+  const k = KINDS[kind];
+  if (k) return { isFile: () => !!k[0], isDirectory: () => !!k[1], isSymbolicLink: () => !!k[2] };
   throw Object.assign(new Error(kind), { code: kind });
 };
 
@@ -712,9 +718,14 @@ test("runnable: a regular file; on Windows also an App Execution Alias (stat EAC
     ["EACCES", "EACCES", true, false, "lstat fails too"],
     ["EACCES", "dir", true, false, "an unreadable folder"],
     ["ELOOP", "link", true, false, "a link loop"],
+    ["EACCES", "file", true, true, "an alias that lstat shows as a file"],
+    ["EACCES", "other", true, false, "lstat neither a file nor a link (a device, a pipe)"],
+    ["dir", "link", true, false, "a junction or folder link to a folder (stat shows the folder)"],
   ];
   for (const [stat, lstat, win, want, why] of cases) {
-    assert.equal(runnable("C:\\x\\python3.exe", { stat: fakeStat(stat), lstat: fakeStat(lstat), win }), want, why);
+    const opts = { stat: fakeStat(stat), lstat: fakeStat(lstat), win };
+    assert.equal(runnable("C:\\x\\python3.exe", opts), want, why);
+    assert.equal(fileKind("C:\\x\\python3.exe", opts), want ? (stat === "file" ? "file" : "alias") : null, why);
   }
   assert.equal(runnable(join(TMP, "no-such-file")), false, "the real fs: nothing there");
   assert.equal(runnable(TMP), false, "the real fs: a folder");
@@ -741,10 +752,11 @@ test("Windows Store Python (TRANSFER_STRING_STORE_PYTHON=1): its WindowsApps ali
   assert.throws(() => statSync(alias), /EACCES|EPERM|UNKNOWN/, "stat cannot open the alias");
   assert.ok(runnable(alias), "the alias is taken");
   const all = pythons(full);
-  assert.ok(all.length && all[0][0].toLowerCase() === alias.toLowerCase(), JSON.stringify(all));
-  // in this process the install folders come from the real home (os.homedir), so the probe is asked directly; the
-  // commands below run with the empty home, where the alias is the only Python
-  const py = probe(all[0], full);
+  const at = all.findIndex((c) => c[0].toLowerCase() === alias.toLowerCase());
+  assert.ok(at >= 0, JSON.stringify(all));
+  // in this process the install folders come from the real home (os.homedir) and come before every alias, so the
+  // probe is asked directly; the commands below run with the empty home, where the alias is the only Python
+  const py = probe(all[at], full);
   assert.ok(py && py.exe.toLowerCase().includes("\\windowsapps\\"), `the alias is a Python 3.7+: ${JSON.stringify(py)}`);
   const d = fresh();
   const data = Buffer.from("Store 판 Python 으로 압축합니다.\n".repeat(20));
@@ -768,6 +780,69 @@ test("Windows without the Store Python (TRANSFER_STRING_STORE_PYTHON=stub): the 
   assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
   assert.equal(r.code, "E_PYTHON");
   assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
+});
+
+test("Windows Python install manager with no runtime (TRANSFER_STRING_STORE_PYTHON=pymanager): its aliases fail the probe at once and download nothing", { skip: !(WIN && STORE === "pymanager") && "set TRANSFER_STRING_STORE_PYTHON=pymanager on Windows with PyManager installed and no runtime" }, () => {
+  const { apps, env, full } = storeEnv();
+  // PyManager keeps its runtimes under the real LOCALAPPDATA: give it that one, so an automatic install would show
+  const local = process.env.LOCALAPPDATA;
+  const runtimes = () => {
+    try {
+      return readdirSync(join(local, "Python")).filter((d) => /^pythoncore-/i.test(d));
+    } catch {
+      return [];
+    }
+  };
+  assert.deepEqual(runtimes(), [], "no PyManager runtime before the test");
+  const e = { ...env, LOCALAPPDATA: local };
+  const f = { ...full, LOCALAPPDATA: local };
+  const aliases = ["py", "python3", "python"].map((n) => which(n, f)).filter(Boolean);
+  assert.ok(aliases.length, `PyManager's aliases are in ${apps}`);
+  for (const a of aliases) {
+    const t0 = Date.now();
+    assert.equal(probe([a, ...(a.toLowerCase().endsWith("py.exe") ? ["-3"] : [])], f), null, `${a} is no Python yet`);
+    assert.ok(Date.now() - t0 < 5000, `${a}: took ${Date.now() - t0} ms`);
+  }
+  const r = ts(["compress", "--clipboard"], fresh(), e);
+  assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
+  assert.deepEqual(runtimes(), [], "nothing was installed");
+});
+
+// A Windows PATH as an App Installer stub early in it and a real Python later in it, with fake stats (win: true on
+// any OS): the stub is an alias in apps/, the real one a regular file in real/.
+function aliasFirstPath() {
+  const apps = join(TMP, "sim-apps");
+  const real = fresh();
+  const stat = (p) => {
+    if (p.startsWith(apps)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    return statSync(p);
+  };
+  const lstat = (p) => (p.startsWith(apps) ? fakeStat("link")() : statSync(p));
+  return { apps, real, opts: { win: true, darwin: false, stat, lstat }, env: { PATH: [apps, real].join(delimiter) } };
+}
+
+test("launcher: an App Installer stub early in PATH does not hide a real Python later in it; regular files come before every alias", () => {
+  const { apps, real, opts, env } = aliasFirstPath();
+  for (const n of ["python3.exe", "python.exe"]) writeFileSync(join(real, n), "");
+  const all = pythons(env, opts).map((c) => c[0]);
+  const first = all.indexOf(join(real, "python3.exe"));
+  const alias = all.indexOf(join(apps, "python3.exe"));
+  assert.ok(first === 0 && all[1] === join(real, "python.exe"), `PATH's regular files first: ${JSON.stringify(all)}`);
+  assert.deepEqual(all.slice(-2), [join(apps, "python3.exe"), join(apps, "python.exe")], "the aliases last, after the install folders");
+  assert.ok(alias > first);
+  assert.equal(which("python3", env, opts), join(real, "python3.exe"), "which prefers the regular file");
+  const only = pythons({ PATH: apps }, opts).map((c) => c[0]);
+  assert.deepEqual(only.slice(-2), [join(apps, "python3.exe"), join(apps, "python.exe")], "with aliases only, they are still tried");
+});
+
+test("launcher: findPython picks the real Python behind an App Installer stub in PATH", { skip: POSIX_ONLY }, () => {
+  needPython();
+  const { real, opts, env } = aliasFirstPath();
+  const mark = planted(real, "python3.exe");
+  // /usr/bin and /bin after them so the planted script finds touch (no python3.exe there)
+  const py = findPython({ ...process.env, PATH: [env.PATH, "/usr/bin", "/bin"].join(delimiter) }, opts);
+  assert.ok(py && py.exe === PY.exe, `the real one: ${JSON.stringify(py)}`);
+  assert.ok(existsSync(mark), "the real python3 behind the stub was probed");
 });
 
 const REAL = process.env.TRANSFER_STRING_REAL_CLIPBOARD === "1";

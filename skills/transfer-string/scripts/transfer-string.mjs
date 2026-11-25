@@ -14,8 +14,10 @@
  * PATH (python.org, uv, Miniconda, Anaconda, Homebrew). Every candidate is an absolute path before it runs, so a
  * python planted in the working folder is never started (Windows looks there first for a bare name). On macOS a
  * /usr/bin python is tried only when the Command Line Tools are there: without them it opens an install dialog.
- * On Windows the Microsoft Store Python's python3.exe in WindowsApps is an App Execution Alias that stat cannot
- * open (lstat can): it is taken, and the App Installer stub of the same name fails the probe (exit 9009).
+ * Every match in PATH is a candidate, not only the first. On Windows the Microsoft Store Python's python3.exe in
+ * WindowsApps is an App Execution Alias that stat cannot open (lstat can): aliases are taken, but after every regular
+ * file (PATH's and the install folders'), so with a real install no alias runs; the App Installer stub of the same
+ * name fails the probe (exit 9009), and the probe turns off Python install manager's automatic install.
  * Each is asked for its version and sys.executable from the home folder; the script then runs on that absolute
  * sys.executable with -I, which keeps the user site, PYTHON* variables and the script's and working folder off the
  * import path.
@@ -80,30 +82,46 @@ function installDirs(env) {
 // reparse point stat cannot open while lstat can. ENOENT (not there, or a broken link) is not one of them.
 const ALIAS_ERRORS = new Set(["EACCES", "EPERM", "UNKNOWN"]);
 
-/** Whether p is a file to run: a regular file, or on Windows an App Execution Alias (stat fails with an access error,
- * lstat works and it is no folder). The probe then tells a real Python from the App Installer stub, which exits 9009. */
-export function runnable(p, { stat = statSync, lstat = lstatSync, win = WIN } = {}) {
+/** What p is to run: "file" (a regular file), "alias" (on Windows an App Execution Alias: stat fails with an access
+ * error and lstat shows a file or a link, never a folder) or null. A junction or folder link to a folder that can be
+ * reached stats as a folder, so it is null too. */
+export function fileKind(p, { stat = statSync, lstat = lstatSync, win = WIN } = {}) {
   try {
-    return stat(p).isFile();
+    return stat(p).isFile() ? "file" : null;
   } catch (e) {
-    if (!win || !ALIAS_ERRORS.has(e && e.code)) return false;
+    if (!win || !ALIAS_ERRORS.has(e && e.code)) return null;
     try {
-      return !lstat(p).isDirectory();
+      const l = lstat(p);
+      return !l.isDirectory() && (l.isFile() || l.isSymbolicLink()) ? "alias" : null;
     } catch {
-      return false;
+      return null;
     }
   }
 }
 
-/** name in PATH's absolute folders (with .exe on Windows), or null. A relative or empty entry is skipped. */
-export function which(name, env = process.env) {
+/** Whether p is a file to run (fileKind is not null). The probe then tells a real Python from the App Installer stub,
+ * which exits 9009. */
+export const runnable = (p, opts) => fileKind(p, opts) !== null;
+
+/** Every match of name in PATH's absolute folders (with .exe on Windows): [{ path, kind }]. A relative or empty entry
+ * is skipped. opts: fileKind's (stat, lstat, win), for tests. */
+export function whichAll(name, env = process.env, opts = {}) {
+  const win = opts.win ?? WIN;
   const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const out = [];
   for (const d of String(env[key] ?? "").split(delimiter)) {
     if (!d || !isAbsolute(d)) continue;
-    const p = join(d, WIN ? `${name}.exe` : name);
-    if (runnable(p)) return p;
+    const p = join(d, win ? `${name}.exe` : name);
+    const kind = fileKind(p, opts);
+    if (kind) out.push({ path: p, kind });
   }
-  return null;
+  return out;
+}
+
+/** name in PATH: the first regular file, else the first alias, or null. */
+export function which(name, env = process.env, opts = {}) {
+  const all = whichAll(name, env, opts);
+  return (all.find((m) => m.kind === "file") ?? all[0])?.path ?? null;
 }
 
 /** macOS: whether /usr/bin/python3 is a real Python (Command Line Tools) and not the stub that opens a dialog. */
@@ -112,39 +130,49 @@ function appleToolsReady() {
   return !r.error && r.status === 0;
 }
 
-/** The Pythons to try, in order: [absolute command, ...leading arguments]. */
-export function pythons(env = process.env, { darwin = process.platform === "darwin" } = {}) {
+/** The Pythons to try, in order: [absolute command, ...leading arguments]. Every match in PATH counts (an App Installer
+ * stub early in PATH must not hide a real Python later in it). Regular files come first (PATH's, then the install
+ * folders), Windows aliases last: with a real install there, no alias is run at all. opts: darwin, and fileKind's. */
+export function pythons(env = process.env, { darwin = process.platform === "darwin", ...opts } = {}) {
   const named = env.TRANSFER_STRING_PYTHON;
   if (named) return isAbsolute(named) ? [[named]] : [];
-  const names = WIN
+  const win = opts.win ?? WIN;
+  const names = win
     ? [["py", "-3"], ["python3"], ["python"]]
     : [["python3"], ...[14, 13, 12, 11, 10, 9, 8, 7].map((v) => [`python3.${v}`]), ["python"]];
   let apple;
-  const list = [];
+  const files = [];
+  const aliases = [];
   for (const [name, ...pre] of names) {
-    const p = which(name, env);
-    if (!p) continue;
-    if (darwin && p.startsWith("/usr/bin/") && !(apple ??= appleToolsReady())) continue;
-    list.push([p, ...pre]);
+    for (const { path: p, kind } of whichAll(name, env, opts)) {
+      if (darwin && p.startsWith("/usr/bin/") && !(apple ??= appleToolsReady())) continue;
+      (kind === "alias" ? aliases : files).push([p, ...pre]);
+    }
   }
-  const seen = new Set(list.map((c) => c.join("\0")));
-  return [...list, ...installDirs(env).filter((p) => !seen.has(p)).map((p) => [p])];
+  const seen = new Set();
+  const key = (c) => (win ? c.join("\0").toLowerCase() : c.join("\0"));
+  return [...files, ...installDirs(env).map((p) => [p]), ...aliases].filter((c) => !seen.has(key(c)) && seen.add(key(c)));
 }
+
+// Python install manager (PyManager) installs the latest Python from the network when a python, python3 or py alias
+// runs with no runtime yet (measured: about 8.5 s, then Python 3.15 in %LOCALAPPDATA%\Python). Its documented switch
+// PYTHON_MANAGER_AUTOMATIC_INSTALL=false makes that an error at once ("No runtimes are installed", about 0.1 s).
+const PROBE_ENV = { PYTHON_MANAGER_AUTOMATIC_INSTALL: "false" };
 
 /** What one Python is: { exe } (absolute, 3.7 or later) or null. */
 export function probe([cmd, ...pre], env = process.env) {
   if (!isAbsolute(cmd) || !runnable(cmd)) return null;
   const r = spawnSync(cmd, [...pre, "-I", "-c", PROBE], {
-    cwd: runDir(), encoding: "utf8", env, timeout: PROBE_MS, windowsHide: true,
+    cwd: runDir(), encoding: "utf8", env: { ...env, ...PROBE_ENV }, timeout: PROBE_MS, windowsHide: true,
   });
   if (r.error || r.status !== 0) return null;
   const exe = (r.stdout || "").trim().split(/\r?\n/).pop();
   return exe && isAbsolute(exe) && runnable(exe) ? { exe } : null; // the Store Python's sys.executable is an alias too
 }
 
-/** The first Python 3.7 or later, or null. */
-export function findPython(env = process.env) {
-  for (const p of pythons(env)) {
+/** The first Python 3.7 or later, or null. opts: pythons'. */
+export function findPython(env = process.env, opts = {}) {
+  for (const p of pythons(env, opts)) {
     const found = probe(p, env);
     if (found) return found;
   }
