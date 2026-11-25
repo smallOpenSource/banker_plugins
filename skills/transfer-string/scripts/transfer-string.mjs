@@ -14,6 +14,8 @@
  * PATH (python.org, uv, Miniconda, Anaconda, Homebrew). Every candidate is an absolute path before it runs, so a
  * python planted in the working folder is never started (Windows looks there first for a bare name). On macOS a
  * /usr/bin python is tried only when the Command Line Tools are there: without them it opens an install dialog.
+ * On Windows the Microsoft Store Python's python3.exe in WindowsApps is an App Execution Alias that stat cannot
+ * open (lstat can): it is taken, and the App Installer stub of the same name fails the probe (exit 9009).
  * Each is asked for its version and sys.executable from the home folder; the script then runs on that absolute
  * sys.executable with -I, which keeps the user site, PYTHON* variables and the script's and working folder off the
  * import path.
@@ -23,7 +25,7 @@
  * (E_PYTHON). Errors are "[transfer-string] 오류: ..." and "TSTR_ERROR code=..." on stderr. Node standard modules only.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -74,17 +76,32 @@ function installDirs(env) {
   ];
 }
 
+// The stat errors of a Windows App Execution Alias (the Microsoft Store Python's python3.exe in WindowsApps): a
+// reparse point stat cannot open while lstat can. ENOENT (not there, or a broken link) is not one of them.
+const ALIAS_ERRORS = new Set(["EACCES", "EPERM", "UNKNOWN"]);
+
+/** Whether p is a file to run: a regular file, or on Windows an App Execution Alias (stat fails with an access error,
+ * lstat works and it is no folder). The probe then tells a real Python from the App Installer stub, which exits 9009. */
+export function runnable(p, { stat = statSync, lstat = lstatSync, win = WIN } = {}) {
+  try {
+    return stat(p).isFile();
+  } catch (e) {
+    if (!win || !ALIAS_ERRORS.has(e && e.code)) return false;
+    try {
+      return !lstat(p).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+}
+
 /** name in PATH's absolute folders (with .exe on Windows), or null. A relative or empty entry is skipped. */
 export function which(name, env = process.env) {
   const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
   for (const d of String(env[key] ?? "").split(delimiter)) {
     if (!d || !isAbsolute(d)) continue;
     const p = join(d, WIN ? `${name}.exe` : name);
-    try {
-      if (statSync(p).isFile()) return p;
-    } catch {
-      // not here (a Microsoft Store alias cannot be stat-ed either; py or an install folder finds the real one)
-    }
+    if (runnable(p)) return p;
   }
   return null;
 }
@@ -116,13 +133,13 @@ export function pythons(env = process.env, { darwin = process.platform === "darw
 
 /** What one Python is: { exe } (absolute, 3.7 or later) or null. */
 export function probe([cmd, ...pre], env = process.env) {
-  if (!isAbsolute(cmd) || !existsSync(cmd)) return null;
+  if (!isAbsolute(cmd) || !runnable(cmd)) return null;
   const r = spawnSync(cmd, [...pre, "-I", "-c", PROBE], {
     cwd: runDir(), encoding: "utf8", env, timeout: PROBE_MS, windowsHide: true,
   });
   if (r.error || r.status !== 0) return null;
   const exe = (r.stdout || "").trim().split(/\r?\n/).pop();
-  return exe && isAbsolute(exe) && existsSync(exe) ? { exe } : null;
+  return exe && isAbsolute(exe) && runnable(exe) ? { exe } : null; // the Store Python's sys.executable is an alias too
 }
 
 /** The first Python 3.7 or later, or null. */
@@ -140,7 +157,7 @@ function noPython(env) {
     ? `TRANSFER_STRING_PYTHON 의 ${named} 는 절대경로가 아닙니다. 지금 폴더의 파일을 실행하지 않도록 python 실행 파일의 절대경로만 받습니다.`
     : named
     ? `TRANSFER_STRING_PYTHON 에 지정한 ${named} 가 Python 3.7 이상으로 실행되지 않습니다. 경로를 고친 뒤 다시 실행하십시오.`
-    : "Python 3.7 이상을 찾지 못했습니다(PATH 의 python3, python, Windows 의 py). PATH 밖에 설치했으면 환경 변수 TRANSFER_STRING_PYTHON 에 그 python 실행 파일의 절대 경로를 지정한 뒤 다시 실행하십시오.";
+    : "Python 3.7 이상을 찾지 못했습니다(PATH 의 python3, python, Windows 의 py 와 Microsoft Store 판). PATH 밖에 설치했으면 환경 변수 TRANSFER_STRING_PYTHON 에 그 python 실행 파일의 절대 경로를 지정한 뒤 다시 실행하십시오.";
   process.stderr.write(`[transfer-string] 오류: ${why}\nTSTR_ERROR code=E_PYTHON\n`);
   return EXIT_NO_PYTHON;
 }

@@ -9,12 +9,12 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
-import { findPython, pythons, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
+import { findPython, probe, pythons, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
@@ -689,6 +689,85 @@ test("Wayland: wl-paste is asked for text (an image is an error, not a damaged t
   const f = ts(["compress", join(d, "w.md")], d, { ...env, DISPLAY: ":99", PATH: `${both}:/usr/bin:/bin` });
   assert.equal(f.res.clipboard, "copied", f.out);
   assert.equal(readFileSync(xstore, "ascii"), readFileSync(f.file, "ascii"));
+});
+
+/** A stat or lstat stand-in: returns a stat-like object of kind, or throws an error with code. */
+const fakeStat = (kind) => () => {
+  if (kind === "file" || kind === "dir" || kind === "link") return { isFile: () => kind === "file", isDirectory: () => kind === "dir" };
+  throw Object.assign(new Error(kind), { code: kind });
+};
+
+test("runnable: a regular file; on Windows also an App Execution Alias (stat EACCES, EPERM or UNKNOWN, lstat works); never a broken link or a folder", () => {
+  const cases = [
+    // [stat, lstat, win, want, why]
+    ["file", "file", false, true, "a regular file"],
+    ["file", "file", true, true, "a regular file on Windows"],
+    ["dir", "dir", true, false, "a folder"],
+    ["EACCES", "link", true, true, "the Store alias: stat EACCES, lstat a link"],
+    ["EPERM", "link", true, true, "an alias with EPERM"],
+    ["UNKNOWN", "link", true, true, "an alias with UNKNOWN"],
+    ["EACCES", "link", false, false, "not Windows: an unreadable file is not taken"],
+    ["ENOENT", "link", true, false, "a broken link (stat ENOENT, lstat works)"],
+    ["ENOENT", "ENOENT", true, false, "nothing there"],
+    ["EACCES", "EACCES", true, false, "lstat fails too"],
+    ["EACCES", "dir", true, false, "an unreadable folder"],
+    ["ELOOP", "link", true, false, "a link loop"],
+  ];
+  for (const [stat, lstat, win, want, why] of cases) {
+    assert.equal(runnable("C:\\x\\python3.exe", { stat: fakeStat(stat), lstat: fakeStat(lstat), win }), want, why);
+  }
+  assert.equal(runnable(join(TMP, "no-such-file")), false, "the real fs: nothing there");
+  assert.equal(runnable(TMP), false, "the real fs: a folder");
+  assert.equal(runnable(process.execPath), true, "the real fs: node itself");
+});
+
+// Opt-in, on a Windows box: TRANSFER_STRING_STORE_PYTHON=1 where the Microsoft Store Python is installed (only its
+// aliases in WindowsApps are left on PATH, the home folder is an empty one so no install folder is found), =stub
+// where it is not (WindowsApps holds only the App Installer stubs, which must fail the probe at once and open nothing).
+const STORE = process.env.TRANSFER_STRING_STORE_PYTHON;
+const storeEnv = () => {
+  const home = fresh();
+  const apps = join(process.env.LOCALAPPDATA || "", "Microsoft", "WindowsApps");
+  const set = { TRANSFER_STRING_PYTHON: undefined, USERPROFILE: home, HOME: home, LOCALAPPDATA: home, PATH: [apps, dirname(process.execPath)].join(delimiter) };
+  // Windows names are case-blind: drop process.env's own spellings (Path) so the child gets only these
+  const env = { ...Object.fromEntries(Object.keys(process.env).filter((k) => k.toUpperCase() in set && !(k in set)).map((k) => [k, undefined])), ...set };
+  const full = Object.fromEntries(Object.entries({ ...process.env, ...env }).filter(([, v]) => v !== undefined));
+  return { apps, env, full };
+};
+
+test("Windows Store Python (TRANSFER_STRING_STORE_PYTHON=1): its WindowsApps alias is found, probed and runs a round trip", { skip: !(WIN && STORE === "1") && "set TRANSFER_STRING_STORE_PYTHON=1 on Windows with the Microsoft Store Python installed" }, () => {
+  const { apps, env, full } = storeEnv();
+  const alias = join(apps, "python3.exe");
+  assert.throws(() => statSync(alias), /EACCES|EPERM|UNKNOWN/, "stat cannot open the alias");
+  assert.ok(runnable(alias), "the alias is taken");
+  const all = pythons(full);
+  assert.ok(all.length && all[0][0].toLowerCase() === alias.toLowerCase(), JSON.stringify(all));
+  // in this process the install folders come from the real home (os.homedir), so the probe is asked directly; the
+  // commands below run with the empty home, where the alias is the only Python
+  const py = probe(all[0], full);
+  assert.ok(py && py.exe.toLowerCase().includes("\\windowsapps\\"), `the alias is a Python 3.7+: ${JSON.stringify(py)}`);
+  const d = fresh();
+  const data = Buffer.from("Store 판 Python 으로 압축합니다.\n".repeat(20));
+  writeFileSync(join(d, "store.md"), data);
+  const c = ts(["compress", join(d, "store.md"), "--no-clipboard"], d, env);
+  assert.equal(c.exit, 0, c.err);
+  const d2 = fresh();
+  writeFileSync(join(d2, "store.md.b64"), readFileSync(c.file));
+  const r = ts(["decompress", join(d2, "store.md.b64")], d2, env);
+  assert.equal(r.exit, 0, r.err);
+  assert.ok(readFileSync(r.file).equals(data), "round trip on the Store Python");
+});
+
+test("Windows without the Store Python (TRANSFER_STRING_STORE_PYTHON=stub): the App Installer stubs fail the probe at once, exit 9", { skip: !(WIN && STORE === "stub") && "set TRANSFER_STRING_STORE_PYTHON=stub on Windows with the Microsoft Store Python removed" }, () => {
+  const { apps, env, full } = storeEnv();
+  const stubs = ["python3", "python"].map((n) => which(n, full)).filter(Boolean);
+  assert.ok(stubs.length, `an App Installer stub is in ${apps}`);
+  const t0 = Date.now();
+  for (const s of stubs) assert.equal(probe([s], full), null, `${s} is no Python`);
+  const r = ts(["compress", "--clipboard"], fresh(), env); // the empty home: no install folder either
+  assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
+  assert.equal(r.code, "E_PYTHON");
+  assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
 });
 
 const REAL = process.env.TRANSFER_STRING_REAL_CLIPBOARD === "1";

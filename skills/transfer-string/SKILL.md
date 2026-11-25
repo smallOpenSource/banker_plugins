@@ -74,7 +74,7 @@ argument-hint: "{compress|decompress} {파일 경로 | --clipboard} [--hangul] [
    | 2 | 사용법 오류, 입력을 못 읽음, 클립보드 비었거나 못 읽음 | 사용법 오류면 명령을 한 번 고쳐 실행. 그 밖은 사용자에게 알림 |
    | 3 | 결과 파일을 못 씀 | 폴더 권한을 알림 |
    | 4 | 도우미 내부 오류(`E_INTERNAL`), Python 이 신호로 끝남(`E_SIGNAL`, 메모리 부족 등) | 문자열 문제가 아님. 오류 줄을 그대로 보여 주고 다시 받아 달라고 하지 않음 |
-   | 9 | Python 3.7 이상 없음(`E_PYTHON`), 설치 손상(`E_INSTALL`) | 오류 줄을 그대로 보여 줌. PATH 밖의 Python 은 `TRANSFER_STRING_PYTHON` 에 절대경로를 지정. 손상이면 banker 재설치 |
+   | 9 | Python 3.7 이상 없음(`E_PYTHON`. PATH 의 python3, python 과 Windows 의 py, Microsoft Store 판, 흔한 설치 폴더를 찾아본 뒤), 설치 손상(`E_INSTALL`) | 오류 줄을 그대로 보여 줌. PATH 밖의 Python 은 `TRANSFER_STRING_PYTHON` 에 절대경로를 지정. 손상이면 banker 재설치 |
 
 ## 문자열 형식
 
