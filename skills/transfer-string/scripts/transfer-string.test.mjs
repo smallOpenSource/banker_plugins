@@ -540,7 +540,7 @@ test("restored names: device names get _, control, bidi and zero-width character
     ["COM\u00b9.md", "_COM\u00b9.md"],
     ["report\u202egpj.md", "report_gpj.md"],
     ["a\u200bb\u009bc.md", "a_b_c.md"],
-    ["../../up.md", ".._.._up.md", "1"],
+    ["../../up.md", ".._.._up.md.restored", "1"],
     ["ok.md", "ok.md"],
   ];
   for (const [inName, want, risky = "0"] of cases) {
@@ -550,20 +550,80 @@ test("restored names: device names get _, control, bidi and zero-width character
     assert.equal(r.exit, 0, `${inName}: ${r.err}`);
     assert.equal(r.file, join(d, want), JSON.stringify(inName));
     assert.equal(r.res.risky, risky, `${want} is a dot file`);
+    assert.equal(r.res.renamed, risky, `${want}: renamed only when risky`);
   }
 });
 
-test("a name that runs or is read on its own is restored as it is, with a warning (risky=1)", () => {
+/** Decompresses a string of data under name in folder d (a new one by default); returns the result. */
+function restoreNamed(name, args = [], d = fresh(), data = Buffer.from("x\n")) {
+  const src = join(d, `in-${randomBytes(4).toString("hex")}.b64`);
+  writeFileSync(src, named(name, data));
+  return ts(["decompress", src, ...args], d);
+}
+
+test("a name that runs or is read on its own is written with .restored after it; the summary names the original and how to rename", () => {
   needPython();
-  for (const name of [".npmrc", "conftest.py", "setup.exe", "invoice.docm", "run.sh"]) {
-    const d = fresh();
-    writeFileSync(join(d, "in.b64"), named(name));
-    const r = ts(["decompress", join(d, "in.b64")], d);
+  const names = [
+    [".npmrc", "dot file"], ["setup.exe", "program"], ["invoice.docm", "macro file"], ["run.sh", "script"],
+    ["Setup.EXE", "program, any case"], ["conftest.py", "RISKY_NAME"], ["Makefile", "RISKY_NAME, any case"],
+    ["package.json", "RISKY_NAME"], ["desktop.ini", "RISKY_NAME"],
+  ];
+  for (const [name, why] of names) {
+    const r = restoreNamed(name);
+    assert.equal(r.exit, 0, `${name}: ${r.err}`);
+    assert.equal(basename(r.file), `${name}.restored`, why);
+    assert.equal(r.res.risky, "1", name);
+    assert.equal(r.res.renamed, "1", name);
+    assert.ok(r.out.includes(`원래 이름: ${name}\n`), `${name}: ${r.out}`);
+    assert.ok(r.out.includes(`뒤에 .restored 를 붙여 썼습니다`) && r.out.includes(`원래 이름(${name})으로 바꾸십시오`), r.out);
+    assert.match(r.out, /--keep-name/);
+    assert.ok(readFileSync(r.file).equals(Buffer.from("x\n")));
+  }
+  for (const name of ["notes.md", "data.json", "photo.png", "readme"]) {
+    const r = restoreNamed(name);
+    assert.equal(basename(r.file), name, `${name} is not risky`);
+    assert.equal(r.res.renamed, "0");
+    assert.doesNotMatch(r.out, /주의:/);
+  }
+});
+
+test("--keep-name writes a risky name as it is, with the warning only; it is a decompress option only", () => {
+  needPython();
+  for (const name of [".npmrc", "setup.exe", "conftest.py"]) {
+    const r = restoreNamed(name, ["--keep-name"]);
     assert.equal(r.exit, 0, `${name}: ${r.err}`);
     assert.equal(basename(r.file), name);
-    assert.equal(r.res.risky, "1", name);
-    assert.match(r.out, /주의: 실행되거나 자동으로 읽힐 수 있는 이름입니다/);
+    assert.equal(r.res.risky, "1");
+    assert.equal(r.res.renamed, "0");
+    assert.match(r.out, /주의: 실행되거나 자동으로 읽힐 수 있는 이름입니다\. 보낸 사람과 내용을 확인한 뒤 여십시오\./);
+    assert.doesNotMatch(r.out, /원래 이름:/);
   }
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  const c = ts(["compress", join(d, "a.md"), "--keep-name"], d);
+  assert.equal(c.exit, 2, c.err);
+  assert.equal(c.code, "E_USAGE");
+  const u = ts([], d);
+  assert.match(u.err, /--keep-name/);
+});
+
+test("a .restored name that is taken gets a number as any other (nothing overwritten), and so does a kept name", () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "setup.exe.restored"), "first");
+  const a = restoreNamed("setup.exe", [], d, Buffer.from("second"));
+  assert.equal(basename(a.file), "setup.exe-1.restored");
+  const b = restoreNamed("setup.exe", [], d, Buffer.from("third"));
+  assert.equal(basename(b.file), "setup.exe-2.restored");
+  assert.equal(readFileSync(join(d, "setup.exe.restored"), "utf8"), "first", "the first file stays");
+  assert.equal(readFileSync(a.file, "utf8"), "second");
+  const dot = restoreNamed(".npmrc", [], d);
+  const dot2 = restoreNamed(".npmrc", [], d);
+  assert.deepEqual([basename(dot.file), basename(dot2.file)], [".npmrc.restored", ".npmrc-1.restored"]);
+  writeFileSync(join(d, "run.sh"), "mine");
+  const kept = restoreNamed("run.sh", ["--keep-name"], d);
+  assert.equal(basename(kept.file), "run-1.sh");
+  assert.equal(readFileSync(join(d, "run.sh"), "utf8"), "mine");
 });
 
 test("the restored file carries the download mark: Zone.Identifier on Windows, com.apple.quarantine on macOS", () => {

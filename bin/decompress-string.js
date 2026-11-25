@@ -4,7 +4,8 @@
  * decompress-string - the decompress command of banker's transfer-string (the /banker:transfer-string skill runs the same
  * script): see skills/transfer-string/SKILL.md. Named decompress-string, not decompress, so it never shadows a system command
  * of that name. Runs skills/transfer-string/scripts/transfer-string.mjs, which finds a Python 3.7 or later and runs
- * transfer_string.py with -I. Exit: 0 done; 1 no string, damaged or cut; 2 usage or input; 3 write; 4 internal
+ * transfer_string.py with -I. A restored name that runs or is read on its own is written as <name>.restored
+ * (--keep-name: as it is). Exit: 0 done; 1 no string, damaged or cut; 2 usage or input; 3 write; 4 internal
  * error (also an exception in the launcher once it is loaded: E_INTERNAL); 9 no Python, or the install is broken
  * (the launcher cannot be loaded or has no run: E_INSTALL).
  */

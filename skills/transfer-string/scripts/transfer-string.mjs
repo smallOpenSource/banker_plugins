@@ -6,7 +6,7 @@
  *
  *   node transfer-string.mjs compress   <file> [--hangul] [--no-clipboard]
  *   node transfer-string.mjs compress   --clipboard [--hangul] [--no-clipboard]
- *   node transfer-string.mjs decompress <file> | --clipboard
+ *   node transfer-string.mjs decompress <file> | --clipboard [--keep-name]
  *
  * Which Python: TRANSFER_STRING_PYTHON when it is set (only that one, and only an absolute path: a bare name or a
  * relative path would be the working folder's file), else the names found in PATH's absolute folders (POSIX:

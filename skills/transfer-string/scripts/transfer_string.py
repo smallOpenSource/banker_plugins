@@ -7,8 +7,8 @@ string is the one airgap-harness's transfer-string writes and reads (same blob, 
 Usage
   python -I transfer_string.py compress   <file> [--hangul] [--no-clipboard]
   python -I transfer_string.py compress   --clipboard [--hangul] [--no-clipboard]
-  python -I transfer_string.py decompress <file>
-  python -I transfer_string.py decompress --clipboard
+  python -I transfer_string.py decompress <file> [--keep-name]
+  python -I transfer_string.py decompress --clipboard [--keep-name]
 
 compress writes <name>.b64 (--hangul: <name>.hangul) next to the input, or clipboard.b64 /
 clipboard.hangul in the current folder for --clipboard, and puts the string on the clipboard when
@@ -18,6 +18,10 @@ and writes the original file under its original name next to the input (the curr
 --clipboard). A file that exists is never overwritten: -1, -2 ... goes before the extension
 (report.md-1.b64, report-1.md). Both result files open in Notepad: .b64 holds bytes 0x21-0x7E
 only (no BOM, no line break); .hangul is UTF-8 with a BOM, then syllables U+AC00..U+CBFF only.
+A restored name that runs or is read on its own (a program, a script, a macro file, a dot file, a
+name a tool picks up from the folder) is written with .restored after it (setup.exe.restored,
+.npmrc.restored), and the summary names the original to rename it to once it is checked;
+--keep-name writes the original name and only warns.
 
 THE STRING
   .b64     standard Base64 (RFC 4648 section 4, with = padding) of the blob, one line. The whole
@@ -229,7 +233,7 @@ def safe_name(name):
 
 def risky(name):
     """Whether a restored name runs or is read on its own (a program, a script, a macro file, a dot
-    file, a name a tool picks up from the folder): the summary warns, the name stays."""
+    file, a name a tool picks up from the folder): it is written as <name>.restored unless --keep-name."""
     low = name.lower()
     return (
         name.startswith(".")
@@ -775,6 +779,30 @@ def do_compress(o):
     )
 
 
+RESTORED = ".restored"
+
+
+def restore_name(name, keep):
+    """(name to write, risky, renamed): a risky name gets .restored after it unless keep."""
+    warn = risky(name)
+    renamed = warn and not keep
+    return (name + RESTORED if renamed else name), warn, renamed
+
+
+def say_risky(name, renamed):
+    if renamed:
+        say("원래 이름: " + name)
+        say(
+            "주의: 실행되거나 자동으로 읽힐 수 있는 이름이라 뒤에 %s 를 붙여 썼습니다. "
+            "보낸 사람과 내용을 확인한 뒤 파일 이름을 원래 이름(%s)으로 바꾸십시오. "
+            "처음부터 원래 이름으로 쓰려면 --keep-name 을 주십시오." % (RESTORED, name)
+        )
+    else:
+        say(
+            "주의: 실행되거나 자동으로 읽힐 수 있는 이름입니다. 보낸 사람과 내용을 확인한 뒤 여십시오."
+        )
+
+
 def do_decompress(o):
     full = None
     if o["clipboard"]:
@@ -787,10 +815,10 @@ def do_decompress(o):
     frame = read_string(text)
     data = restore(frame)
     name = safe_name(frame["name"])
-    stem, ext = os.path.splitext(name)
-    out = write_free(folder, stem or name, ext if stem else "", data)
+    put, warn, renamed = restore_name(name, o["keep"])
+    stem, ext = os.path.splitext(put)
+    out = write_free(folder, stem or put, ext if stem else "", data)
     mark = mark_untrusted(full, out)
-    warn = risky(name)
     text_out = frame["text"] and is_utf8(data)
     n_out = code_points(data) if text_out else len(data)
     say(
@@ -806,11 +834,9 @@ def do_decompress(o):
     say("복원 파일: " + out)
     say("다운로드 표시: " + MARK_KO[mark])
     if warn:
-        say(
-            "주의: 실행되거나 자동으로 읽힐 수 있는 이름입니다. 보낸 사람과 내용을 확인한 뒤 여십시오."
-        )
+        say_risky(name, renamed)
     say(
-        "TSTR_RESULT op=decompress in=%d unit=%s out=%d method=%s alphabet=%s mark=%s risky=%d file=%s"
+        "TSTR_RESULT op=decompress in=%d unit=%s out=%d method=%s alphabet=%s mark=%s risky=%d renamed=%d file=%s"
         % (
             frame["chars"],
             "char" if text_out else "byte",
@@ -819,6 +845,7 @@ def do_decompress(o):
             frame["alphabet"],
             mark,
             1 if warn else 0,
+            1 if renamed else 0,
             out,
         )
     )
@@ -829,11 +856,36 @@ USAGE = "\n".join(
         "사용법:",
         "  compress-string <파일> [--hangul] [--no-clipboard]   긴 글을 한 줄 문자열로 (<파일>.b64, --hangul 이면 <파일>.hangul)",
         "  compress-string --clipboard [--hangul]              클립보드의 글을 압축 (clipboard.b64)",
-        "  decompress-string <파일>                            문자열이 든 파일(확장자 무관)을 원래 파일로",
-        "  decompress-string --clipboard                       클립보드의 문자열을 원래 파일로",
+        "  decompress-string <파일> [--keep-name]              문자열이 든 파일(확장자 무관)을 원래 파일로",
+        "  decompress-string --clipboard [--keep-name]         클립보드의 문자열을 원래 파일로",
         "  --hangul: 한글 음절 문자 집합(Base64 의 약 0.46배 글자 수, 글자당 3바이트). 기본은 Base64.",
+        "  --keep-name: 실행되거나 자동으로 읽힐 이름도 .restored 를 붙이지 않고 원래 이름으로 씀.",
     ]
 )
+
+
+def parse_options(op, args):
+    o = {"file": "", "clipboard": False, "hangul": False, "copy": True, "keep": False}
+    for a in args:
+        if a == "--clipboard":
+            o["clipboard"] = True
+        elif a == "--hangul" and op == "compress":
+            o["hangul"] = True
+        elif a == "--no-clipboard" and op == "compress":
+            o["copy"] = False
+        elif a == "--keep-name" and op == "decompress":
+            o["keep"] = True
+        elif a.startswith("--"):
+            raise TsError("E_USAGE", 2, "알 수 없는 옵션: " + a)
+        elif not o["file"]:
+            o["file"] = a
+        else:
+            raise TsError("E_USAGE", 2, "파일은 하나만 줍니다: " + a)
+    if o["clipboard"] and o["file"]:
+        raise TsError("E_USAGE", 2, "파일과 --clipboard 를 함께 줄 수 없습니다.")
+    if not o["clipboard"] and not o["file"]:
+        raise TsError("E_USAGE", 2, "파일이나 --clipboard 를 주십시오.")
+    return o
 
 
 def main(argv):
@@ -842,30 +894,13 @@ def main(argv):
             s.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
-    o = {"file": "", "clipboard": False, "hangul": False, "copy": True}
     op = argv[0] if argv else ""
     try:
         if op not in ("compress", "decompress"):
             raise TsError(
                 "E_USAGE", 2, ("알 수 없는 명령: " + op) if op else "명령이 없습니다."
             )
-        for a in argv[1:]:
-            if a == "--clipboard":
-                o["clipboard"] = True
-            elif a == "--hangul" and op == "compress":
-                o["hangul"] = True
-            elif a == "--no-clipboard" and op == "compress":
-                o["copy"] = False
-            elif a.startswith("--"):
-                raise TsError("E_USAGE", 2, "알 수 없는 옵션: " + a)
-            elif not o["file"]:
-                o["file"] = a
-            else:
-                raise TsError("E_USAGE", 2, "파일은 하나만 줍니다: " + a)
-        if o["clipboard"] and o["file"]:
-            raise TsError("E_USAGE", 2, "파일과 --clipboard 를 함께 줄 수 없습니다.")
-        if not o["clipboard"] and not o["file"]:
-            raise TsError("E_USAGE", 2, "파일이나 --clipboard 를 주십시오.")
+        o = parse_options(op, argv[1:])
         if op == "compress":
             do_compress(o)
         else:
