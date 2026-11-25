@@ -76,6 +76,7 @@ const CASES = {
   "skills/smart-compact/scripts/codex-gate.mjs": {},
   "skills/theme-selection/scripts/themes.mjs": {},
   "skills/tone-compact/scripts/tone-compact.mjs": {},
+  "skills/transfer-string/scripts/transfer-string.mjs": {},
   "skills/tune-tmux/scripts/tune-tmux.mjs": {},
   "skills/ultra-chain/references/capture.mjs": {},
   "skills/ultra-chain/references/chain-ledger.mjs": {},

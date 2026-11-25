@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (75 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (76 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -65,6 +65,21 @@ try {
     path.join(prefix, 'lib', 'node_modules', '@kaydash9999', 'banker-plugins', 'bin', 'banker.js'),
   ].find((p) => fs.existsSync(p));
   ok(Boolean(bankerJs), 'installed banker bin JS is present to run through Node');
+  // transfer-string's two commands: a shim each (named -string so no system compress is shadowed), the installed JS
+  // runs (no arguments: usage, exit 2; with no Python 3.7+: exit 9), the script ships and its test does not.
+  const pkgDir = path.dirname(path.dirname(bankerJs));
+  for (const name of ['compress-string', 'decompress-string']) {
+    const shimPath = process.platform === 'win32' ? path.join(prefix, `${name}.cmd`) : path.join(prefix, 'bin', name);
+    ok(fs.existsSync(shimPath), `installed ${name} bin (${path.relative(tmp, shimPath)})`);
+    const r = cp.spawnSync(process.execPath, [path.join(pkgDir, 'bin', `${name}.js`)], { encoding: 'utf8', cwd: tmp });
+    ok((r.status === 2 && /TSTR_ERROR code=E_USAGE/.test(r.stderr)) || (r.status === 9 && /TSTR_ERROR code=E_PYTHON/.test(r.stderr)),
+       `installed ${name} runs transfer_string.py: usage exit 2, or 9 with no Python 3.7+ (status ${r.status}, ${(r.stderr || '').split('\n')[0]})`);
+  }
+  ok(['compress', 'decompress'].every((n) => !fs.existsSync(path.join(prefix, 'bin', n)) && !fs.existsSync(path.join(prefix, `${n}.cmd`))),
+     'no bare compress or decompress command is installed');
+  ok(fs.existsSync(path.join(pkgDir, 'skills', 'transfer-string', 'scripts', 'transfer_string.py'))
+     && !fs.existsSync(path.join(pkgDir, 'skills', 'transfer-string', 'scripts', 'transfer-string.test.mjs')),
+     'transfer_string.py ships with the package and transfer-string.test.mjs does not');
   const bankerRun = (args, opts) => run(process.execPath, [bankerJs, ...args], opts);
   const bankerSpawn = (args, opts) => cp.spawnSync(process.execPath, [bankerJs, ...args], opts);
   // the shim itself still runs once where it can without a shell (POSIX): a broken shim would pass the JS runs alone
@@ -80,7 +95,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 75, `codex dry-run plans 75 skill copies (got ${copies})`);
+  ok(copies === 76, `codex dry-run plans 76 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -332,8 +347,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 75 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 75 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 76 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 76 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
