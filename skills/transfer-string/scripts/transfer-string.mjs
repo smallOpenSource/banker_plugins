@@ -17,7 +17,7 @@
  * Every match in PATH is a candidate, not only the first. On Windows the Microsoft Store Python's python3.exe in
  * WindowsApps is an App Execution Alias that stat cannot open (lstat can): aliases are taken, but after every regular
  * file (PATH's and the install folders'), so with a real install no alias runs; the App Installer stub of the same
- * name fails the probe (exit 9009), and the probe turns off Python install manager's automatic install.
+ * name fails the probe (exit 9009), and the probe and the run both turn off Python install manager's automatic install.
  * Each is asked for its version and sys.executable from the home folder; the script then runs on that absolute
  * sys.executable with -I, which keeps the user site, PYTHON* variables and the script's and working folder off the
  * import path.
