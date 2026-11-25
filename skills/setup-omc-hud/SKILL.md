@@ -76,6 +76,12 @@ node "<이 스킬 디렉터리 절대경로>/assets/codex-status-line.mjs" statu
   - `%` 는 70% 미만 초록, 85% 미만 노랑, 그 이상 분홍(256색 213)
   - `<mb>` 는 32MB 대비 같은 기준
 - OMC 는 ctx 가 80% 를 넘으면 뒤에 `COMPRESS?`, `CRITICAL` 을 붙인다. 래퍼는 이 글자를 빼고 색으로만 보인다.
+- OMC 5.8.x 의 payload 경고 줄(`[!] payload est ~28 MB / 32 MB - ...`)은 세션 기록 파일의 바이트를 센다. 줄 메타데이터, 도구 결과 원본 사본, 훅 기록까지 세므로 실제 요청보다 2.5~3배 크다. `PL:` 이 있으면 래퍼가 그 줄을 빼고, PL 이 32MB 의 70% 이상일 때만 같은 자리에 PL 기준 경고를 낸다.
+  - 70% 이상: 노랑 `[!] payload ~23.1 MB / 32 MB - consider /compact soon`
+  - 85% 이상: 분홍 `[!!] payload ~28.0 MB / 32 MB - compact may fail; consider new session`
+  - OMC 가 그 줄을 내지 않았으면(설정으로 뺐거나 줄 수 한도로 잘림) PL 기준 경고는 상세 줄 맨 끝에 붙는다.
+  - 크기는 PL 과 같은 MiB 값이다(OMC 의 줄은 10진 MB).
+  - `PL:` 이 없으면(payload-mon 꺼짐, 기록 경로가 없거나 읽지 못함) OMC 의 줄을 그대로 둔다.
 - ralph, autopilot, `agents:<n>`(실행 중인 에이전트) 같은 OMC 상태 칸은 활성일 때만 `⚡<skills>` 와 `<cwd>` 사이에 흐리게 나온다.
 - 화면 폭을 넘으면 칸 사이에서 다음 줄로 넘어간다.
 - 둘째 줄부터는 OMC 의 상세 줄(에이전트 목록, todo, 경고)이다. OMC 와 Claude Code 의 갱신 안내 줄은 뺀다.

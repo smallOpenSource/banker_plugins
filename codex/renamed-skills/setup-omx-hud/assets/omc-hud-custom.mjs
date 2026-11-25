@@ -22,6 +22,14 @@
  *     holds it as a regular file: this file's (the one a statusLine link points
  *     at), the link's, the config folder's hud/, then the folder import.meta.url
  *     names (the link's under --preserve-symlinks); without it PL is left out.
+ *   - OMC's own payload warning line ("[!] payload est ~28 MB / 32 MB - ...")
+ *     counts the transcript file's bytes (row metadata, the toolUseResult copy
+ *     of every tool output, hook records), about 2.5 to 3 times what is sent.
+ *     When PL is known, that line is replaced by one from PL's bytes at PL's
+ *     colour steps: "[!] payload ~23.1 MB / 32 MB - consider /compact soon"
+ *     from 70% of 32 MiB (yellow), "[!!] ... - compact may fail; consider new
+ *     session" from 85% (pink); below 70% neither line shows. Without PL,
+ *     OMC's line is kept as it is.
  *   - cwd group split on "|"; branch shown without "branch:" after the account.
  *   - OMC#X.Y.Z label no longer shown, nor OMC's update hint lines
  *     ("[!] omc X - paste: ! ...", "[!] claude X - paste: ! claude update").
@@ -437,6 +445,23 @@ const shortModelPct = (seg) => {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1, 2).toLowerCase()}:${m[2]}` : seg;
 };
 
+// OMC's payload warning ("[!] payload est ~28 MB / 32 MB - consider /compact soon", "[!!] ... - compact may fail;
+// consider new session") measures the transcript file, about 2.5 to 3 times the request. With PL's bytes the line
+// is taken out and, from 70% of the 32 MiB limit on, the same warning is put in its place from PL (85%: [!!]).
+const OMC_PAYLOAD_WARNING = /^\[!!?\] payload est ~/;
+function payloadWarning(below, bytes, limit) {
+  const at = below.findIndex((l) => OMC_PAYLOAD_WARNING.test(l.trim()));
+  const kept = below.filter((l) => !OMC_PAYLOAD_WARNING.test(l.trim()));
+  const pct = Math.floor((bytes / limit) * 100); // the same pct as PL's colour
+  if (pct < 70) return kept;
+  const mb = (bytes / (1024 * 1024)).toFixed(1);
+  const line = pct >= 85
+    ? A(`1;${PINK}`, `[!!] payload ~${mb} MB / 32 MB - compact may fail; consider new session`)
+    : A("1;33", `[!] payload ~${mb} MB / 32 MB - consider /compact soon`);
+  kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, line);
+  return kept;
+}
+
 try {
   const lines = raw.split("\n").map(stripAnsi).filter((l) => l.length);
   const mainIdx = lines.findIndex((l) => l.includes("OMC#"));
@@ -450,6 +475,8 @@ try {
   // Code update already shows as claude<cur>→<new> on the main line.
   const UPDATE_HINT = /^\[!\] (?:omc|claude) \S+ - paste: /;
   const below = lines.slice(mainIdx + 1).filter((l) => !UPDATE_HINT.test(l.trim()));
+  let plBytes = NaN; // PL's estimate; when known it also decides the payload warning line (payloadWarning)
+  let plLimit = NaN;
 
   // Collapse " | " -> "|", then split into segments.
   const rawSegs = main
@@ -555,6 +582,8 @@ try {
         for (let i = colored.length - 1; i >= 0; i--) if (/^payload:/.test(stripAnsi(colored[i]))) colored.splice(i, 1);
         const pct = Math.floor((bytes / REQUEST_LIMIT_BYTES) * 100);
         colored.push(`PL:${A(pc(pct), (bytes / (1024 * 1024)).toFixed(1) + "M")}`);
+        plBytes = bytes;
+        plLimit = REQUEST_LIMIT_BYTES;
       }
     }
   } catch {
@@ -605,7 +634,8 @@ try {
     if (row) rows.push(row);
     result = rows.join("\n");
   }
-  if (below.length) result += "\n" + below.join("\n");
+  const shownBelow = Number.isFinite(plBytes) && plLimit > 0 ? payloadWarning(below, plBytes, plLimit) : below;
+  if (shownBelow.length) result += "\n" + shownBelow.join("\n");
   emit(result + "\n");
 } catch {
   emit(raw.endsWith("\n") ? raw : raw + "\n"); // safe passthrough

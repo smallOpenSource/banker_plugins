@@ -147,6 +147,48 @@ test("상세 줄은 남기고 OMC 갱신 안내 두 줄은 뺌", () => {
   assert.deepEqual(lines.slice(1), [AGENT_LINE]);
 });
 
+// OMC 5.8.x's payload warning measures the transcript file (about 2.5 to 3 times the request); with PL known the
+// wrapper swaps it for one from PL's bytes at PL's colour steps (70%, 85% of 32 MiB).
+const OMC_WARN = "[!] payload est ~28 MB / 32 MB - consider /compact soon";
+const OMC_CRIT = "\x1b[31m\x1b[1m[!!] payload est ~30 MB / 32 MB - compact may fail; consider new session\x1b[0m";
+const MiB = 1024 * 1024;
+const belowOf = (out) => plain(out).split("\n").filter(Boolean).slice(1);
+
+test("PL 이 있으면 OMC 의 payload 경고 줄을 빼고, 70% 아래면 경고 줄이 없음", () => {
+  for (const omcLine of [OMC_WARN, OMC_CRIT]) {
+    const out = renderWith({ omc: omcOut({}, [AGENT_LINE, omcLine, ...HINTS]), payloadBytes: 9.5 * MiB });
+    assert.deepEqual(belowOf(out), [AGENT_LINE], omcLine);
+  }
+});
+
+test("PL 이 70% 이상이면 그 자리에 PL 기준 [!] 경고, 85% 이상이면 [!!]", () => {
+  const warn = renderWith({ omc: omcOut({}, [AGENT_LINE, OMC_CRIT, ...HINTS]), payloadBytes: 23.1 * MiB });
+  assert.deepEqual(belowOf(warn), [AGENT_LINE, "[!] payload ~23.1 MB / 32 MB - consider /compact soon"]);
+  assert.match(warn, /\x1b\[1;33m\[!\] payload ~23\.1 MB/, "노랑");
+  const crit = renderWith({ omc: omcOut({}, [OMC_WARN, AGENT_LINE]), payloadBytes: 28 * MiB });
+  assert.deepEqual(belowOf(crit), ["[!!] payload ~28.0 MB / 32 MB - compact may fail; consider new session", AGENT_LINE], "OMC 줄이 있던 자리");
+  assert.match(crit, /\x1b\[1;38;5;213m\[!!\]/, "분홍");
+  const noOmc = renderWith({ omc: omcOut({}, [AGENT_LINE]), payloadBytes: 27.5 * MiB });
+  assert.deepEqual(belowOf(noOmc), [AGENT_LINE, "[!!] payload ~27.5 MB / 32 MB - compact may fail; consider new session"], "OMC 줄이 없어도 PL 이 85% 를 넘으면 경고");
+});
+
+test("경고 단계는 PL 색과 같은 경계: 69% 없음, 70% [!], 84% [!], 85% [!!]; 상세 줄 가운데 자리에 다시 넣음", () => {
+  const at = (pct) => Math.ceil((pct / 100) * 32 * MiB);
+  const two = [AGENT_LINE, OMC_WARN, "└─ R review  later  (t2)"];
+  const kinds = [69, 70, 84, 85].map((p) => belowOf(renderWith({ omc: omcOut({}, two), payloadBytes: at(p) })));
+  assert.deepEqual(kinds[0], [AGENT_LINE, "└─ R review  later  (t2)"]);
+  assert.match(kinds[1][1], /^\[!\] payload ~22\.4 MB/);
+  assert.match(kinds[2][1], /^\[!\] payload ~26\.9 MB/);
+  assert.match(kinds[3][1], /^\[!!\] payload ~27\.2 MB/);
+  for (const k of kinds.slice(1)) assert.equal(k.length, 3, "가운데 자리, 줄 수 그대로");
+});
+
+test("PL 이 없으면(payload-mon 꺼짐) OMC 의 payload 경고 줄을 그대로 둠", () => {
+  const out = renderWith({ omc: omcOut({}, [AGENT_LINE, OMC_WARN, ...HINTS]) });
+  assert.deepEqual(belowOf(out), [AGENT_LINE, OMC_WARN]);
+  assert.doesNotMatch(firstLine(out), /PL:/);
+});
+
 test("OMC 출력이 없으면 [OMC HUD] no output 한 줄", () => {
   assert.equal(renderWith({ omc: "\n" }), "[OMC HUD] no output\n");
 });
