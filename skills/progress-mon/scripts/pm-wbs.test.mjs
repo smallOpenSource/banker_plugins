@@ -176,6 +176,24 @@ test('config.json 의 wbsAsk false: status 가 WBS 없음(묻지 않음), wbs.js
   assert.match(c.out, /^FAIL config\.json wbsAsk 참 또는 거짓$/m, c.out);
 });
 
+test('config.json 의 wbsAsk 가 참거짓이 아니면(문자열 "false", 0, null) status 가 WBS 없음(wbsAsk 값 오류), wbs.json 이 있으면 있음, check 는 FAIL', T, () => {
+  const p = project({ 'wbs.json': null });
+  const cfg = JSON.parse(fs.readFileSync(path.join(p.data, 'config.json'), 'utf8'));
+  const setAsk = (v) => fs.writeFileSync(path.join(p.data, 'config.json'), JSON.stringify({ ...cfg, wbsAsk: v }));
+  for (const bad of ['false', 0, null]) {
+    setAsk(bad);
+    const s = cli(['status'], p.dir);
+    assert.match(s.out, /, ADR 있음, WBS 없음\(wbsAsk 값 오류\)$/m, `${JSON.stringify(bad)}: ${s.out}`);
+    const c = cli(['check'], p.dir);
+    assert.match(c.out, /^FAIL config\.json wbsAsk 참 또는 거짓$/m, `${JSON.stringify(bad)}: ${c.out}`);
+  }
+  setAsk(false);
+  assert.match(cli(['status'], p.dir).out, /, ADR 있음, WBS 없음\(묻지 않음\)$/m, '정상 false 는 그대로');
+  setAsk('false');
+  fs.copyFileSync(path.join(FIX, 'wbs.json'), path.join(p.data, 'wbs.json'));
+  assert.match(cli(['status'], p.dir).out, /, ADR 있음, WBS 있음$/m, 'wbs.json 이 있으면 그 값과 무관');
+});
+
 test('status: BOM 이 붙은 wbs.json 은 check, 화면과 같이 있음(깨짐 아님)', T, () => {
   const p = project({ 'wbs.json': `\uFEFF${fs.readFileSync(path.join(FIX, 'wbs.json'), 'utf8')}` });
   assert.match(cli(['status'], p.dir).out, /, ADR 있음, WBS 있음$/m);

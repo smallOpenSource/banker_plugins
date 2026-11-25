@@ -9,12 +9,12 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
-import { findPython, pythons, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
+import { fileKind, findPython, probe, pythons, quietEnv, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
@@ -461,13 +461,58 @@ test("launcher: Python killed by a signal is exit 4 E_SIGNAL, not 1 (which reads
   assert.equal(r.code, "E_SIGNAL");
 });
 
-test("a broken install (the launcher missing) is exit 9 E_INSTALL, not a missing Python", () => {
+test("quietEnv: PyManager's automatic install is off, any other spelling of the key is dropped, the rest kept, the input untouched", () => {
+  const env = { PATH: "/x", python_manager_automatic_install: "true", Python_Manager_Automatic_Install: "1", OTHER: "y" };
+  const q = quietEnv(env);
+  assert.deepEqual(q, { PATH: "/x", OTHER: "y", PYTHON_MANAGER_AUTOMATIC_INSTALL: "false" });
+  assert.equal(env.python_manager_automatic_install, "true");
+  assert.deepEqual(quietEnv({ PYTHON_MANAGER_AUTOMATIC_INSTALL: "true" }), { PYTHON_MANAGER_AUTOMATIC_INSTALL: "false" });
+});
+
+test("launcher: the Python that runs the script gets PyManager's automatic install off too, not only the probe", { skip: POSIX_ONLY }, () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  const fake = join(d, "py-env");
+  const seen = join(d, "seen.txt");
+  // the probe gets this script's own path as sys.executable; the real run writes the value it was given and exits 0
+  writeFileSync(fake, `#!/bin/sh\nif [ "$2" = "-c" ]; then echo "${fake}"; exit 0; fi\nprintf '%s' "$PYTHON_MANAGER_AUTOMATIC_INSTALL" > "${seen}"\n`);
+  chmodSync(fake, 0o755);
+  const r = ts(["compress", "a.md", "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: fake, PYTHON_MANAGER_AUTOMATIC_INSTALL: "true" });
+  assert.equal(r.exit, 0, r.err);
+  assert.equal(readFileSync(seen, "utf8"), "false");
+});
+
+/** The bin commands in a new folder laid out like the package, with launcher (module text, or none) under skills/. */
+function binLayout(launcher) {
   const d = fresh();
   mkdirSync(join(d, "bin"));
-  copyFileSync(BIN.compress, join(d, "bin", "compress-string.js"));
-  const r = ts(["x.md"], d, {}, join(d, "bin", "compress-string.js"));
-  assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
-  assert.equal(r.code, "E_INSTALL");
+  for (const f of Object.values(BIN)) copyFileSync(f, join(d, "bin", basename(f)));
+  if (launcher !== null) {
+    mkdirSync(join(d, "skills", "transfer-string", "scripts"), { recursive: true });
+    writeFileSync(join(d, "skills", "transfer-string", "scripts", "transfer-string.mjs"), launcher);
+  }
+  return d;
+}
+
+test("bin: only a launcher that cannot be loaded (or has no run) is exit 9 E_INSTALL; an exception in run is 4 E_INTERNAL; run's code passes through", () => {
+  const cases = [
+    [null, EXIT_NO_PYTHON, "E_INSTALL", "the launcher missing"],
+    ["export const x = 1;\n", EXIT_NO_PYTHON, "E_INSTALL", "no run"],
+    ["export function run() { throw new TypeError('boom'); }\n", EXIT_INTERNAL, "E_INTERNAL", "run throws"],
+    ["export function run(op) { process.stdout.write(`ran ${op}\\n`); return 7; }\n", 7, "", "run returns 7"],
+  ];
+  for (const [launcher, exit, code, why] of cases) {
+    const d = binLayout(launcher);
+    for (const name of ["compress-string.js", "decompress-string.js"]) {
+      const r = ts(["x.md"], d, {}, join(d, "bin", name));
+      assert.equal(r.exit, exit, `${why}, ${name}: ${r.err}`);
+      assert.equal(r.code, code, `${why}, ${name}: ${r.err}`);
+      if (code === "E_INSTALL") assert.match(r.err, /불러오지 못했습니다/);
+      if (code === "E_INTERNAL") assert.match(r.err, /^\[transfer-string\] 오류: 내부 오류 \(TypeError: boom\)/m);
+      if (exit === 7) assert.equal(r.out, `ran ${name.split("-")[0]}\n`);
+    }
+  }
 });
 
 test("a text of 400,000 decoy TSTR marks is refused within seconds", () => {
@@ -517,7 +562,7 @@ test("restored names: device names get _, control, bidi and zero-width character
     ["COM\u00b9.md", "_COM\u00b9.md"],
     ["report\u202egpj.md", "report_gpj.md"],
     ["a\u200bb\u009bc.md", "a_b_c.md"],
-    ["../../up.md", ".._.._up.md", "1"],
+    ["../../up.md", ".._.._up.md.restored", "1"],
     ["ok.md", "ok.md"],
   ];
   for (const [inName, want, risky = "0"] of cases) {
@@ -527,20 +572,85 @@ test("restored names: device names get _, control, bidi and zero-width character
     assert.equal(r.exit, 0, `${inName}: ${r.err}`);
     assert.equal(r.file, join(d, want), JSON.stringify(inName));
     assert.equal(r.res.risky, risky, `${want} is a dot file`);
+    assert.equal(r.res.renamed, risky, `${want}: renamed only when risky`);
   }
 });
 
-test("a name that runs or is read on its own is restored as it is, with a warning (risky=1)", () => {
+/** Decompresses a string of data under name in folder d (a new one by default); returns the result. */
+function restoreNamed(name, args = [], d = fresh(), data = Buffer.from("x\n")) {
+  const src = join(d, `in-${randomBytes(4).toString("hex")}.b64`);
+  writeFileSync(src, named(name, data));
+  return ts(["decompress", src, ...args], d);
+}
+
+test("a name that runs or is read on its own is written with .restored after it; the summary names the original and how to rename", () => {
   needPython();
-  for (const name of [".npmrc", "conftest.py", "setup.exe", "invoice.docm", "run.sh"]) {
-    const d = fresh();
-    writeFileSync(join(d, "in.b64"), named(name));
-    const r = ts(["decompress", join(d, "in.b64")], d);
+  const names = [
+    [".npmrc", "dot file"], ["setup.exe", "program"], ["invoice.docm", "macro file"], ["run.sh", "script"],
+    ["Setup.EXE", "program, any case"], ["conftest.py", "RISKY_NAME"], ["Makefile", "RISKY_NAME, any case"],
+    ["package.json", "RISKY_NAME"], ["desktop.ini", "RISKY_NAME"],
+    ["CLAUDE.md", "an agent reads it from the folder"], ["AGENTS.md", "an agent reads it"], ["gemini.md", "an agent reads it, any case"],
+    ["CLAUDE.local.md", "Claude Code reads it"], ["AGENTS.override.md", "Codex reads it"],
+    ["Autorun.inf", "RISKY_NAME, any case"], ["tool.psm1", "PowerShell module"], ["hook.mjs", "Node module"],
+    ["app.msix", "installer package"], ["fix.msp", "installer patch"], ["addin.xlam", "Excel add-in"],
+    ["letter.dotm", "Word macro template"], ["run.desktop", "Linux launcher"], ["x.SettingContent-ms", "settings shortcut"],
+  ];
+  for (const [name, why] of names) {
+    const r = restoreNamed(name);
+    assert.equal(r.exit, 0, `${name}: ${r.err}`);
+    assert.equal(basename(r.file), `${name}.restored`, why);
+    assert.equal(r.res.risky, "1", name);
+    assert.equal(r.res.renamed, "1", name);
+    assert.ok(r.out.split(/\r?\n/).includes(`원래 이름: ${name}`), `${name}: ${r.out}`); // Windows ends lines with \r\n
+    assert.ok(r.out.includes(`뒤에 .restored 를 붙여 썼습니다`) && r.out.includes(`원래 이름(${name})으로 바꾸십시오`), r.out);
+    assert.match(r.out, /--keep-name/);
+    assert.ok(readFileSync(r.file).equals(Buffer.from("x\n")));
+  }
+  for (const name of ["notes.md", "data.json", "photo.png", "readme"]) {
+    const r = restoreNamed(name);
+    assert.equal(basename(r.file), name, `${name} is not risky`);
+    assert.equal(r.res.renamed, "0");
+    assert.doesNotMatch(r.out, /주의:/);
+  }
+});
+
+test("--keep-name writes a risky name as it is, with the warning only; it is a decompress option only", () => {
+  needPython();
+  for (const name of [".npmrc", "setup.exe", "conftest.py"]) {
+    const r = restoreNamed(name, ["--keep-name"]);
     assert.equal(r.exit, 0, `${name}: ${r.err}`);
     assert.equal(basename(r.file), name);
-    assert.equal(r.res.risky, "1", name);
-    assert.match(r.out, /주의: 실행되거나 자동으로 읽힐 수 있는 이름입니다/);
+    assert.equal(r.res.risky, "1");
+    assert.equal(r.res.renamed, "0");
+    assert.match(r.out, /주의: 실행되거나 자동으로 읽힐 수 있는 이름입니다\. 보낸 사람과 내용을 확인한 뒤 여십시오\./);
+    assert.doesNotMatch(r.out, /원래 이름:/);
   }
+  const d = fresh();
+  writeFileSync(join(d, "a.md"), "a");
+  const c = ts(["compress", join(d, "a.md"), "--keep-name"], d);
+  assert.equal(c.exit, 2, c.err);
+  assert.equal(c.code, "E_USAGE");
+  const u = ts([], d);
+  assert.match(u.err, /--keep-name/);
+});
+
+test("a .restored name that is taken gets a number as any other (nothing overwritten), and so does a kept name", () => {
+  needPython();
+  const d = fresh();
+  writeFileSync(join(d, "setup.exe.restored"), "first");
+  const a = restoreNamed("setup.exe", [], d, Buffer.from("second"));
+  assert.equal(basename(a.file), "setup.exe-1.restored");
+  const b = restoreNamed("setup.exe", [], d, Buffer.from("third"));
+  assert.equal(basename(b.file), "setup.exe-2.restored");
+  assert.equal(readFileSync(join(d, "setup.exe.restored"), "utf8"), "first", "the first file stays");
+  assert.equal(readFileSync(a.file, "utf8"), "second");
+  const dot = restoreNamed(".npmrc", [], d);
+  const dot2 = restoreNamed(".npmrc", [], d);
+  assert.deepEqual([basename(dot.file), basename(dot2.file)], [".npmrc.restored", ".npmrc-1.restored"]);
+  writeFileSync(join(d, "run.sh"), "mine");
+  const kept = restoreNamed("run.sh", ["--keep-name"], d);
+  assert.equal(basename(kept.file), "run-1.sh");
+  assert.equal(readFileSync(join(d, "run.sh"), "utf8"), "mine");
 });
 
 test("the restored file carries the download mark: Zone.Identifier on Windows, com.apple.quarantine on macOS", () => {
@@ -606,6 +716,158 @@ test("Wayland: wl-paste is asked for text (an image is an error, not a damaged t
   const f = ts(["compress", join(d, "w.md")], d, { ...env, DISPLAY: ":99", PATH: `${both}:/usr/bin:/bin` });
   assert.equal(f.res.clipboard, "copied", f.out);
   assert.equal(readFileSync(xstore, "ascii"), readFileSync(f.file, "ascii"));
+});
+
+/** A stat or lstat stand-in: returns a stat-like object of kind, or throws an error with code. */
+const KINDS = { file: [1, 0, 0], dir: [0, 1, 0], link: [0, 0, 1], other: [0, 0, 0] }; // isFile, isDirectory, isSymbolicLink
+const fakeStat = (kind) => () => {
+  const k = KINDS[kind];
+  if (k) return { isFile: () => !!k[0], isDirectory: () => !!k[1], isSymbolicLink: () => !!k[2] };
+  throw Object.assign(new Error(kind), { code: kind });
+};
+
+test("runnable: a regular file; on Windows also an App Execution Alias (stat EACCES, EPERM or UNKNOWN, lstat works); never a broken link or a folder", () => {
+  const cases = [
+    // [stat, lstat, win, want, why]
+    ["file", "file", false, true, "a regular file"],
+    ["file", "file", true, true, "a regular file on Windows"],
+    ["dir", "dir", true, false, "a folder"],
+    ["EACCES", "link", true, true, "the Store alias: stat EACCES, lstat a link"],
+    ["EPERM", "link", true, true, "an alias with EPERM"],
+    ["UNKNOWN", "link", true, true, "an alias with UNKNOWN"],
+    ["EACCES", "link", false, false, "not Windows: an unreadable file is not taken"],
+    ["ENOENT", "link", true, false, "a broken link (stat ENOENT, lstat works)"],
+    ["ENOENT", "ENOENT", true, false, "nothing there"],
+    ["EACCES", "EACCES", true, false, "lstat fails too"],
+    ["EACCES", "dir", true, false, "an unreadable folder"],
+    ["ELOOP", "link", true, false, "a link loop"],
+    ["EACCES", "file", true, true, "an alias that lstat shows as a file"],
+    ["EACCES", "other", true, false, "lstat neither a file nor a link (a device, a pipe)"],
+    ["dir", "link", true, false, "a junction or folder link to a folder (stat shows the folder)"],
+  ];
+  for (const [stat, lstat, win, want, why] of cases) {
+    const opts = { stat: fakeStat(stat), lstat: fakeStat(lstat), win };
+    assert.equal(runnable("C:\\x\\python3.exe", opts), want, why);
+    assert.equal(fileKind("C:\\x\\python3.exe", opts), want ? (stat === "file" ? "file" : "alias") : null, why);
+  }
+  assert.equal(runnable(join(TMP, "no-such-file")), false, "the real fs: nothing there");
+  assert.equal(runnable(TMP), false, "the real fs: a folder");
+  assert.equal(runnable(process.execPath), true, "the real fs: node itself");
+});
+
+// Opt-in, on a Windows box: TRANSFER_STRING_STORE_PYTHON=1 where the Microsoft Store Python is installed (only its
+// aliases in WindowsApps are left on PATH, the home folder is an empty one so no install folder is found), =stub
+// where it is not (WindowsApps holds only the App Installer stubs, which must fail the probe at once and open nothing).
+const STORE = process.env.TRANSFER_STRING_STORE_PYTHON;
+const storeEnv = () => {
+  const home = fresh();
+  const apps = join(process.env.LOCALAPPDATA || "", "Microsoft", "WindowsApps");
+  const set = { TRANSFER_STRING_PYTHON: undefined, USERPROFILE: home, HOME: home, LOCALAPPDATA: home, PATH: [apps, dirname(process.execPath)].join(delimiter) };
+  // Windows names are case-blind: drop process.env's own spellings (Path) so the child gets only these
+  const env = { ...Object.fromEntries(Object.keys(process.env).filter((k) => k.toUpperCase() in set && !(k in set)).map((k) => [k, undefined])), ...set };
+  const full = Object.fromEntries(Object.entries({ ...process.env, ...env }).filter(([, v]) => v !== undefined));
+  return { apps, env, full };
+};
+
+test("Windows Store Python (TRANSFER_STRING_STORE_PYTHON=1): its WindowsApps alias is found, probed and runs a round trip", { skip: !(WIN && STORE === "1") && "set TRANSFER_STRING_STORE_PYTHON=1 on Windows with the Microsoft Store Python installed" }, () => {
+  const { apps, env, full } = storeEnv();
+  const alias = join(apps, "python3.exe");
+  assert.throws(() => statSync(alias), /EACCES|EPERM|UNKNOWN/, "stat cannot open the alias");
+  assert.ok(runnable(alias), "the alias is taken");
+  const all = pythons(full);
+  const at = all.findIndex((c) => c[0].toLowerCase() === alias.toLowerCase());
+  assert.ok(at >= 0, JSON.stringify(all));
+  // in this process the install folders come from the real home (os.homedir) and come before every alias, so the
+  // probe is asked directly; the commands below run with the empty home, where the alias is the only Python
+  const py = probe(all[at], full);
+  assert.ok(py && py.exe.toLowerCase().includes("\\windowsapps\\"), `the alias is a Python 3.7+: ${JSON.stringify(py)}`);
+  const d = fresh();
+  const data = Buffer.from("Store 판 Python 으로 압축합니다.\n".repeat(20));
+  writeFileSync(join(d, "store.md"), data);
+  const c = ts(["compress", join(d, "store.md"), "--no-clipboard"], d, env);
+  assert.equal(c.exit, 0, c.err);
+  const d2 = fresh();
+  writeFileSync(join(d2, "store.md.b64"), readFileSync(c.file));
+  const r = ts(["decompress", join(d2, "store.md.b64")], d2, env);
+  assert.equal(r.exit, 0, r.err);
+  assert.ok(readFileSync(r.file).equals(data), "round trip on the Store Python");
+});
+
+test("Windows without the Store Python (TRANSFER_STRING_STORE_PYTHON=stub): the App Installer stubs fail the probe at once, exit 9", { skip: !(WIN && STORE === "stub") && "set TRANSFER_STRING_STORE_PYTHON=stub on Windows with the Microsoft Store Python removed" }, () => {
+  const { apps, env, full } = storeEnv();
+  const stubs = ["python3", "python"].map((n) => which(n, full)).filter(Boolean);
+  assert.ok(stubs.length, `an App Installer stub is in ${apps}`);
+  const t0 = Date.now();
+  for (const s of stubs) assert.equal(probe([s], full), null, `${s} is no Python`);
+  const r = ts(["compress", "--clipboard"], fresh(), env); // the empty home: no install folder either
+  assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
+  assert.equal(r.code, "E_PYTHON");
+  assert.ok(Date.now() - t0 < 15000, `took ${Date.now() - t0} ms`);
+});
+
+test("Windows Python install manager with no runtime (TRANSFER_STRING_STORE_PYTHON=pymanager): its aliases fail the probe at once and download nothing", { skip: !(WIN && STORE === "pymanager") && "set TRANSFER_STRING_STORE_PYTHON=pymanager on Windows with PyManager installed and no runtime" }, () => {
+  const { apps, env, full } = storeEnv();
+  // PyManager keeps its runtimes under the real LOCALAPPDATA: give it that one, so an automatic install would show
+  const local = process.env.LOCALAPPDATA;
+  const runtimes = () => {
+    try {
+      return readdirSync(join(local, "Python")).filter((d) => /^pythoncore-/i.test(d));
+    } catch {
+      return [];
+    }
+  };
+  assert.deepEqual(runtimes(), [], "no PyManager runtime before the test");
+  const e = { ...env, LOCALAPPDATA: local };
+  const f = { ...full, LOCALAPPDATA: local };
+  const aliases = ["py", "python3", "python"].map((n) => which(n, f)).filter(Boolean);
+  assert.ok(aliases.length, `PyManager's aliases are in ${apps}`);
+  for (const a of aliases) {
+    const t0 = Date.now();
+    assert.equal(probe([a, ...(a.toLowerCase().endsWith("py.exe") ? ["-3"] : [])], f), null, `${a} is no Python yet`);
+    assert.ok(Date.now() - t0 < 5000, `${a}: took ${Date.now() - t0} ms`);
+  }
+  const r = ts(["compress", "--clipboard"], fresh(), e);
+  assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
+  assert.deepEqual(runtimes(), [], "nothing was installed");
+});
+
+// A Windows PATH as an App Installer stub early in it and a real Python later in it, with fake stats (win: true on
+// any OS): the stub is an alias in apps/, the real one a regular file in real/.
+function aliasFirstPath() {
+  const apps = join(TMP, "sim-apps");
+  const real = fresh();
+  const stat = (p) => {
+    if (p.startsWith(apps)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    return statSync(p);
+  };
+  const lstat = (p) => (p.startsWith(apps) ? fakeStat("link")() : statSync(p));
+  return { apps, real, opts: { win: true, darwin: false, stat, lstat }, env: { PATH: [apps, real].join(delimiter) } };
+}
+
+test("launcher: an App Installer stub early in PATH does not hide a real Python later in it; regular files come before every alias", () => {
+  const { apps, real, opts, env } = aliasFirstPath();
+  for (const n of ["python3.exe", "python.exe"]) writeFileSync(join(real, n), "");
+  const all = pythons(env, opts).map((c) => c[0]);
+  const first = all.indexOf(join(real, "python3.exe"));
+  const alias = all.indexOf(join(apps, "python3.exe"));
+  assert.ok(first === 0 && all[1] === join(real, "python.exe"), `PATH's regular files first: ${JSON.stringify(all)}`);
+  assert.deepEqual(all.slice(-2), [join(apps, "python3.exe"), join(apps, "python.exe")], "the aliases last, after the install folders");
+  assert.ok(alias > first);
+  assert.equal(which("python3", env, opts), join(real, "python3.exe"), "which prefers the regular file");
+  const only = pythons({ PATH: apps }, opts).map((c) => c[0]);
+  assert.deepEqual(only.slice(-2), [join(apps, "python3.exe"), join(apps, "python.exe")], "with aliases only, they are still tried");
+});
+
+test("launcher: findPython picks the real Python behind an App Installer stub in PATH", { skip: POSIX_ONLY }, () => {
+  needPython();
+  const { real, opts, env } = aliasFirstPath();
+  const mark = planted(real, "python3.exe");
+  // /usr/bin and /bin after them so the planted script finds touch (no python3.exe there); without
+  // TRANSFER_STRING_PYTHON, which a box run sets and which would make that one Python the only candidate
+  const { TRANSFER_STRING_PYTHON: _named, ...rest } = process.env;
+  const py = findPython({ ...rest, PATH: [env.PATH, "/usr/bin", "/bin"].join(delimiter) }, opts);
+  assert.ok(py && py.exe === PY.exe, `the real one: ${JSON.stringify(py)}`);
+  assert.ok(existsSync(mark), "the real python3 behind the stub was probed");
 });
 
 const REAL = process.env.TRANSFER_STRING_REAL_CLIPBOARD === "1";

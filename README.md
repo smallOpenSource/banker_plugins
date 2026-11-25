@@ -178,7 +178,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `progress-mon` | 프로젝트 진척도를 6탭 웹 화면(진척도, 구현요건, workflow, 구성도, ADR, WBS)으로 로컬 서버(기본 127.0.0.1)에 띄움. WBS 탭은 wbs-gen 과 같은 간트 차트(기간 2일 이내면 시간 열). ADR 탭은 결정마다 최적화 로직, 확장 대응, 포기와 얻은 것과 프로젝트의 검증, 흐름, 증거를 `check` 가 확인한 참조와 함께 보임. `init` 이 코드를 읽어 탭 자료를 쓰고 프로젝트 메모리에 갱신 규칙 한 줄을 등록, `export` 는 서버 없는 단일 HTML. 세션 작업 목록 패널은 `/progress` |
 | `init-dir` | 프로젝트에 관리 폴더 7개(logs, scripts, work, mockup, tests, docs, KB)를 만들고 폴더 목적을 지금 세션에 전달하며, `AGENTS.md` 와 `CLAUDE.md` 중 있는 것에 표지 블록으로 기록. 새로 만든 폴더에만 틀 파일(서비스 시작, 정지 스크립트와 로그 로테이션, 시험 실행기, README)을 넣고, 이미 있는 폴더는 목적만 전달 |
 | `git-init` | 저장소가 아닌 폴더에 첫 커밋 `init` 을 만들어 worktree 같은 병렬 작업을 준비. 비밀값과 로컬 상태를 빼는 `.gitignore` 를 쓰고, 추적될 파일을 이름과 내용으로 스캔(위치와 종류만 보이고 값은 안 보임)한 뒤 `git init`, `git add .`, `git commit` 실행. 걸림이 있으면 `.git` 을 만들지 않음. `check` 는 계획만, 원격 연결과 push 는 안 함 |
-| `transfer-string` | 긴 글(또는 아무 파일)을 짧은 한 줄 문자열로 압축하고 그 문자열을 원래 글로 복원. 네 압축 방식(deflate, bzip2, LZMA2, 무압축) 중 가장 짧은 결과를 Base64(기본) 또는 한글 음절(`--hangul`)로 적어 메모장으로 열리는 `.b64`, `.hangul` 파일과 클립보드에 둠. 복원은 검사합과 sha256 이 맞을 때만 원래 이름으로 쓰고 있는 파일을 덮어쓰지 않음. 모델이 문자열을 옮겨 적지 않아 토큰을 쓰지 않고, Python 표준 라이브러리만 써서 오프라인에서 동작. airgap-harness 의 transfer-string 과 문자열 형식이 같음. 터미널 명령 `compress-string`, `decompress-string` 도 같은 일을 함 |
+| `transfer-string` | 긴 글(또는 아무 파일)을 짧은 한 줄 문자열로 압축하고 그 문자열을 원래 글로 복원. 네 압축 방식(deflate, bzip2, LZMA2, 무압축) 중 가장 짧은 결과를 Base64(기본) 또는 한글 음절(`--hangul`)로 적어 메모장으로 열리는 `.b64`, `.hangul` 파일과 클립보드에 둠. 복원은 검사합과 sha256 이 맞을 때만 원래 이름으로 쓰고 있는 파일을 덮어쓰지 않음. 실행되거나 자동으로 읽힐 이름은 뒤에 .restored 를 붙임. 모델이 문자열을 옮겨 적지 않아 토큰을 쓰지 않고, Python 표준 라이브러리만 써서 오프라인에서 동작. airgap-harness 의 transfer-string 과 문자열 형식이 같음. 터미널 명령 `compress-string`, `decompress-string` 도 같은 일을 함 |
 
 ### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
 

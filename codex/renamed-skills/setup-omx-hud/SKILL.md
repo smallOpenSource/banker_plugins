@@ -81,6 +81,7 @@ node "<이 스킬 디렉터리 절대경로>/assets/codex-status-line.mjs" statu
   - 85% 이상: 분홍 `[!!] payload ~28.0 MB / 32 MB - compact may fail; consider new session`
   - OMC 가 그 줄을 내지 않았으면(설정으로 뺐거나 줄 수 한도로 잘림) PL 기준 경고는 상세 줄 맨 끝에 붙는다.
   - 크기는 PL 과 같은 MiB 값이다(OMC 의 줄은 10진 MB).
+  - 래퍼가 화면 폭을 알고 경고 줄이 그 폭을 넘으면 ` - ` 자리에서 두 줄로 나눈다(두 줄 모두 같은 색). 그래도 넘는 줄은 단어 사이에서 더 나눈다. 폭을 모르면 한 줄이다.
   - `PL:` 이 없으면(payload-mon 꺼짐, 기록 경로가 없거나 읽지 못함) OMC 의 줄을 그대로 둔다.
 - ralph, autopilot, `agents:<n>`(실행 중인 에이전트) 같은 OMC 상태 칸은 활성일 때만 `⚡<skills>` 와 `<cwd>` 사이에 흐리게 나온다.
 - 화면 폭을 넘으면 칸 사이에서 다음 줄로 넘어간다.

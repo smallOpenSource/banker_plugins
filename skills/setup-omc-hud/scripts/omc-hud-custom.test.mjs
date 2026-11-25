@@ -183,6 +183,40 @@ test("경고 단계는 PL 색과 같은 경계: 69% 없음, 70% [!], 84% [!], 85
   for (const k of kinds.slice(1)) assert.equal(k.length, 3, "가운데 자리, 줄 수 그대로");
 });
 
+// The rows after the agent line (the main line above it may itself be wrapped), with and without colour.
+const warningRows = (out) => {
+  const rows = out.split("\n").filter(Boolean);
+  return rows.slice(rows.map(plain).indexOf(AGENT_LINE) + 1);
+};
+const WARN_TEXT = "[!] payload ~23.1 MB / 32 MB - consider /compact soon";
+const CRIT_TEXT = "[!!] payload ~28.0 MB / 32 MB - compact may fail; consider new session";
+const warnAt = (bytes, env) => warningRows(renderWith({ omc: omcOut({}, [AGENT_LINE, OMC_WARN]), payloadBytes: bytes, env }));
+
+test("payload 경고 줄: 넓은 터미널(120)과 폭을 모를 때는 한 줄", () => {
+  for (const env of [{ COLUMNS: "120" }, {}]) {
+    assert.deepEqual(warnAt(23.1 * MiB, env).map(plain), [WARN_TEXT], JSON.stringify(env));
+    assert.deepEqual(warnAt(28 * MiB, env).map(plain), [CRIT_TEXT], JSON.stringify(env));
+  }
+});
+
+test("payload 경고 줄: 폭을 넘으면 ' - ' 자리에서 나누고, 그래도 넘으면 단어 경계에서 나눔(각 줄 같은 색)", () => {
+  const cases = [
+    ["60", 28 * MiB, ["[!!] payload ~28.0 MB / 32 MB", "compact may fail; consider new session"], `1;38;5;213`],
+    ["60", 23.1 * MiB, [WARN_TEXT], "1;33"],
+    ["40", 23.1 * MiB, ["[!] payload ~23.1 MB / 32 MB", "consider /compact soon"], "1;33"],
+    ["40", 28 * MiB, ["[!!] payload ~28.0 MB / 32 MB", "compact may fail; consider new", "session"], `1;38;5;213`],
+  ];
+  for (const [cols, bytes, want, color] of cases) {
+    const rows = warnAt(bytes, { COLUMNS: cols });
+    assert.deepEqual(rows.map(plain), want, `COLUMNS ${cols}`);
+    const max = Number(cols) - 4;
+    for (const r of rows) {
+      assert.ok(width(r) <= max, `${width(r)} > ${max}: ${plain(r)}`);
+      assert.ok(r.startsWith(`\x1b[${color}m`) && r.endsWith("\x1b[0m"), `COLUMNS ${cols} colour: ${JSON.stringify(r)}`);
+    }
+  }
+});
+
 test("PL 이 없으면(payload-mon 꺼짐) OMC 의 payload 경고 줄을 그대로 둠", () => {
   const out = renderWith({ omc: omcOut({}, [AGENT_LINE, OMC_WARN, ...HINTS]) });
   assert.deepEqual(belowOf(out), [AGENT_LINE, OMC_WARN]);

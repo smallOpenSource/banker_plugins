@@ -772,6 +772,7 @@ export async function stop(ctx, io) {
 
 // 탭 자료 유무 줄. 읽지 못하거나 JSON 이 아닌 파일은 깨짐(check 로 확인). BOM 은 check, 화면과 같이 뗀다.
 // config.json 의 wbsAsk 가 false 이면 WBS 없음 뒤에 (묻지 않음): 인자 없는 호출이 WBS 단계를 건너뜀.
+// wbsAsk 가 참거짓이 아니면(문자열 "false", 0, null) (wbsAsk 값 오류): 묻지 않고 값 고침을 안내.
 function tabData(ctx) {
   const dataDir = ctx.dataDir;
   const has = (f) => {
@@ -783,7 +784,12 @@ function tabData(ctx) {
     }
   };
   const wbs = has('wbs.json');
-  const quiet = wbs === '없음' && loadConfig(ctx).config.wbsAsk === false ? '(묻지 않음)' : '';
+  let quiet = '';
+  if (wbs === '없음') {
+    const { config, errors } = loadConfig(ctx);
+    if (errors.some((e) => e.path === '$.wbsAsk')) quiet = '(wbsAsk 값 오류)';
+    else if (config.wbsAsk === false) quiet = '(묻지 않음)';
+  }
   return `진척도 ${has('items.json')}, 구현요건 ${has('req-spec.json')}, workflow ${has('flow.json')}, 구성도 ${has('arch.json')}, ADR ${has('adr.json')}, WBS ${wbs}${quiet}`;
 }
 
