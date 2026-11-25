@@ -461,13 +461,36 @@ test("launcher: Python killed by a signal is exit 4 E_SIGNAL, not 1 (which reads
   assert.equal(r.code, "E_SIGNAL");
 });
 
-test("a broken install (the launcher missing) is exit 9 E_INSTALL, not a missing Python", () => {
+/** The bin commands in a new folder laid out like the package, with launcher (module text, or none) under skills/. */
+function binLayout(launcher) {
   const d = fresh();
   mkdirSync(join(d, "bin"));
-  copyFileSync(BIN.compress, join(d, "bin", "compress-string.js"));
-  const r = ts(["x.md"], d, {}, join(d, "bin", "compress-string.js"));
-  assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
-  assert.equal(r.code, "E_INSTALL");
+  for (const f of Object.values(BIN)) copyFileSync(f, join(d, "bin", basename(f)));
+  if (launcher !== null) {
+    mkdirSync(join(d, "skills", "transfer-string", "scripts"), { recursive: true });
+    writeFileSync(join(d, "skills", "transfer-string", "scripts", "transfer-string.mjs"), launcher);
+  }
+  return d;
+}
+
+test("bin: only a launcher that cannot be loaded (or has no run) is exit 9 E_INSTALL; an exception in run is 4 E_INTERNAL; run's code passes through", () => {
+  const cases = [
+    [null, EXIT_NO_PYTHON, "E_INSTALL", "the launcher missing"],
+    ["export const x = 1;\n", EXIT_NO_PYTHON, "E_INSTALL", "no run"],
+    ["export function run() { throw new TypeError('boom'); }\n", EXIT_INTERNAL, "E_INTERNAL", "run throws"],
+    ["export function run(op) { process.stdout.write(`ran ${op}\\n`); return 7; }\n", 7, "", "run returns 7"],
+  ];
+  for (const [launcher, exit, code, why] of cases) {
+    const d = binLayout(launcher);
+    for (const name of ["compress-string.js", "decompress-string.js"]) {
+      const r = ts(["x.md"], d, {}, join(d, "bin", name));
+      assert.equal(r.exit, exit, `${why}, ${name}: ${r.err}`);
+      assert.equal(r.code, code, `${why}, ${name}: ${r.err}`);
+      if (code === "E_INSTALL") assert.match(r.err, /불러오지 못했습니다/);
+      if (code === "E_INTERNAL") assert.match(r.err, /^\[transfer-string\] 오류: 내부 오류 \(TypeError: boom\)/m);
+      if (exit === 7) assert.equal(r.out, `ran ${name.split("-")[0]}\n`);
+    }
+  }
 });
 
 test("a text of 400,000 decoy TSTR marks is refused within seconds", () => {
