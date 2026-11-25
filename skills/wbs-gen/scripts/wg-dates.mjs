@@ -1,6 +1,7 @@
 // wg-dates.mjs: dates for wbs-gen. A date is a 'YYYY-MM-DD' key read as a calendar day (UTC math, no time zone).
 // Input dates may be 'YYYY-MM-DD' or 'M/D' ('MM/DD'); a month/day takes the year that puts it inside the project,
-// and is refused when two years would (a project longer than a year).
+// and is refused when two years would (a project longer than a year). Either may carry a time of day (splitTime);
+// the hour unit of wg-plan.mjs reads it and the day unit drops it.
 
 const DOW = ["일", "월", "화", "수", "목", "금", "토"];
 const DAY = 86400000;
@@ -26,6 +27,18 @@ export const dowName = (key) => DOW[dow(key)];
 export const mmdd = (key) => `${key.slice(5, 7)}/${key.slice(8, 10)}`;
 /** Whole days from a to b (keys). */
 export const daysBetween = (a, b) => Math.round((keyMs(b) - keyMs(a)) / DAY);
+
+/**
+ * Splits a time of day off a plan date: 'YYYY-MM-DDTHH:MM', 'YYYY-MM-DD HH:MM' or 'M/D HH:MM'. Returns { date, min }
+ * with min the minutes from 00:00, or null when the text has no time; bad is true for a time past 23:59.
+ */
+export function splitTime(text) {
+  const s = String(text ?? "").trim();
+  const m = /^(.+?)(?:T|\s+)(\d{1,2}):(\d{2})$/.exec(s);
+  if (!m) return { date: s, min: null };
+  const bad = +m[2] > 23 || +m[3] > 59;
+  return { date: m[1].trim(), min: bad ? null : +m[2] * 60 + +m[3], bad };
+}
 
 /** One month/day in a year, or null when that day does not exist (2/30, 2/29 of a common year). */
 function monthDay(y, m, d) {

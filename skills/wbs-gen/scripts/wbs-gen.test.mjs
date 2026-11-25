@@ -7,9 +7,9 @@ import { dirname, join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { businessDays, parseHolidays, resolveDate, weeks } from "./wg-dates.mjs";
+import { businessDays, parseHolidays, resolveDate, splitTime, weeks } from "./wg-dates.mjs";
 import { parseIcs, publicHolidays } from "./wg-holidays.mjs";
-import { toHtml } from "./wg-html.mjs";
+import { SCOPED_CSS, toFragment, toHtml } from "./wg-html.mjs";
 import { layout } from "./wg-plan.mjs";
 import { colName, scriptRuns, sheetName, toXlsx } from "./wg-xlsx.mjs";
 import { crc32 } from "./wg-zip.mjs";
@@ -315,6 +315,137 @@ test("a plan or calendar that is not UTF-8 stops with one line naming the file; 
     const bom = run(["build", "--plan", "bom.json", "--out", "b.html"], dir);
     assert.equal(bom.status, 0, bom.stderr);
     assert.ok(!readFileSync(join(dir, "b.html"), "utf8").includes("\uFFFD"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------- hour unit (a plan of at most two calendar days) ----------
+
+const hourPlan = (rows, extra = {}) => ({ title: "배포 당일", start: "2026-11-25 09:00", end: "2026-11-26 18:00", rows, ...extra });
+
+test("a time of day splits off 'YYYY-MM-DD HH:MM', 'YYYY-MM-DDTHH:MM' and 'M/D HH:MM'", () => {
+  assert.deepEqual(splitTime("2026-11-25 11:30"), { date: "2026-11-25", min: 690, bad: false });
+  assert.deepEqual(splitTime("2026-11-25T09:05"), { date: "2026-11-25", min: 545, bad: false });
+  assert.deepEqual(splitTime("11/25 7:00"), { date: "11/25", min: 420, bad: false });
+  assert.deepEqual(splitTime("11/25"), { date: "11/25", min: null });
+  assert.equal(splitTime("11/25 24:00").bad, true);
+});
+
+test("two calendar days at most is the hour unit: every hour from start to end, grouped by day", () => {
+  const { errors, warnings, model } = layout(hourPlan([{ kind: "task", wbs: "1", start: "11/25 11:00", end: "11/25 13:00" }], { holidays: "11/25" }));
+  assert.deepEqual(errors, []);
+  assert.equal(model.unit, "hour");
+  assert.equal(model.days.length, 33, "09:00 on the first day to 18:00 on the second, nights included");
+  assert.deepEqual(model.days.slice(0, 3).map((d) => d.label), ["09:00", "10:00", "11:00"]);
+  assert.deepEqual(model.days[0], { key: "2026-11-25T09:00", label: "09:00", dow: "" });
+  assert.deepEqual(model.weeks, [{ n: 1, label: "11/25(수)", first: 0, count: 15 }, { n: 2, label: "11/26(목)", first: 15, count: 18 }]);
+  assert.equal(model.head[7], "시간");
+  assert.match(model.title, /2026-11-25\(수\) 09:00 ~ 11\/26\(목\) 18:00 {4}\| {4}33 시간/);
+  assert.deepEqual(warnings, ["시간 단위(기간 2일 이내)는 모든 시간을 보여 공휴일을 쓰지 않음: 2026-11-25"], "holidays are not used, one warning");
+  const t = model.rows[0];
+  assert.deepEqual([t.from, t.to], [2, 3], "11:00-13:00 fills the 11:00 and 12:00 slots");
+  assert.deepEqual(t.cells.slice(5), ["11/25 11:00", "11/25 13:00", 2]);
+});
+
+test("hour unit: a start floors to its hour, an end rises to the next; a date alone is the whole day inside the period", () => {
+  const { errors, model } = layout(hourPlan([
+    { kind: "task", wbs: "a", start: "11/25 11:30", end: "11/25 12:10" },
+    { kind: "task", wbs: "b", start: "2026-11-26" },
+    { kind: "task", wbs: "c", start: "11/25", end: "11/25" },
+    { kind: "task", wbs: "d", start: "2026-11-26T10:00" },
+  ]));
+  assert.deepEqual(errors, []);
+  const [a, b, c, d] = model.rows;
+  assert.deepEqual([a.from, a.to], [2, 3], "11:30-12:10 takes 11:00 and 12:00");
+  assert.deepEqual([b.from, b.to, b.cells[7]], [15, 32, 18], "a date-only day runs from 00:00 to the plan end");
+  assert.deepEqual([c.from, c.to, c.cells[5], c.cells[6]], [0, 14, "11/25 09:00", "11/25 24:00"], "the first day from the plan start to 24:00");
+  assert.deepEqual([d.from, d.to], [25, 25], "a start time and no end is that one hour");
+});
+
+test("hour unit: a milestone, a constraint and a gate with a time sit in that hour; end <= start is a row error", () => {
+  const plan = hourPlan([
+    { kind: "milestone", wbs: "M1", date: "11/26 10:30" },
+    { kind: "milestone", wbs: "M2", date: "11/26" },
+    { kind: "constraint", wbs: "C1", date: "11/25 15:00" },
+  ], { gates: [{ date: "11/25 13:00", label: "승인" }] });
+  const { errors, model } = layout(plan);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(model.rows.map((r) => r.diamonds), [[25], [15], [6]]);
+  assert.deepEqual(model.gates.map((g) => [g.col, g.key]), [[4, "2026-11-25T13:00"]]);
+  assert.ok(model.legend.some((l) => l.label === "승인(빨간 수직선 = 11/25 13:00)"));
+  const bad = layout(hourPlan([
+    { kind: "task", wbs: "x", start: "11/25 13:00", end: "11/25 13:00" },
+    { kind: "task", wbs: "y", start: "11/25 14:00", end: "11/25 10:00" },
+    { kind: "task", wbs: "z", start: "11/25 07:00", end: "11/25 10:00" },
+    { kind: "milestone", wbs: "w", date: "11/25 25:00" },
+  ]));
+  assert.equal(bad.model, null);
+  assert.ok(bad.errors.includes("rows[0] x: 종료가 시작보다 앞서거나 같음"), bad.errors.join("\n"));
+  assert.ok(bad.errors.includes("rows[1] y: 종료가 시작보다 앞서거나 같음"), bad.errors.join("\n"));
+  assert.ok(bad.errors.includes("rows[2] z 시작: 기간 밖 (11/25 07:00)"), bad.errors.join("\n"));
+  assert.ok(bad.errors.includes("rows[3] w: 날짜로 읽지 못함 (11/25 25:00)"), bad.errors.join("\n"));
+  const backwards = { title: "t", start: "2026-11-25 13:00", end: "2026-11-25 12:00", rows: [{ start: "11/25" }] };
+  assert.deepEqual(layout(backwards).errors, ["end 가 start 보다 앞서거나 같음"]);
+});
+
+test("exactly two calendar days is the hour unit; three days is the day unit, which drops time parts", () => {
+  const two = layout({ title: "t", start: "2026-11-25", end: "2026-11-26", rows: [{ start: "11/25", end: "11/26" }] }).model;
+  assert.equal(two.unit, "hour");
+  assert.equal(two.days.length, 48, "two whole days, 48 slots at most");
+  assert.equal(two.rows[0].cells[7], 48);
+  const one = layout({ title: "t", start: "2026-11-28", end: "2026-11-28", rows: [{ start: "11/28 22:00", end: "11/28 23:59" }] }).model;
+  assert.deepEqual([one.days.length, one.rows[0].from, one.rows[0].to], [24, 22, 23], "a Saturday is shown in the hour unit");
+  const three = layout({ title: "t", start: "2026-11-25 09:00", end: "2026-11-27 18:00", rows: [{ start: "11/25 11:00", end: "11/27 13:00" }], gates: [{ date: "11/26 15:00" }] });
+  assert.deepEqual(three.errors, []);
+  assert.equal(three.model.unit, "day");
+  assert.deepEqual(three.model.days.map((d) => d.label), ["11/25", "11/26", "11/27"]);
+  assert.deepEqual(three.model.rows[0].cells.slice(5), ["11/25", "11/27", 3]);
+  assert.equal(three.model.gates[0].col, 1);
+  assert.match(three.model.title, /3 영업일/);
+  assert.equal(three.model.head[7], "일수\n(영업일)");
+  const timed = { ...example(), start: "2026-07-22 09:00", end: "2026-08-28T18:00" };
+  assert.deepEqual(layout(timed).model, layout(example()).model, "times on a day plan change nothing");
+});
+
+test("hour unit HTML: hour labels without a weekday, day groups, and the grid scoped under .wbsg", () => {
+  const m = layout(hourPlan([{ kind: "task", wbs: "1", start: "11/25 11:00", end: "11/25 13:00" }], { gates: [{ date: "11/25 13:00" }] })).model;
+  const html = toHtml(m);
+  assert.ok(html.includes('<th>09:00</th><th>10:00</th><th>11:00</th><th>12:00</th><th class="gate">13:00</th>'), "no weekday line under an hour");
+  assert.ok(html.includes('<th class="w" colspan="4">11/25(수)</th>') === false);
+  assert.ok(html.includes('<th class="w" colspan="15">11/25(수)</th><th class="w" colspan="18">11/26(목)</th>'));
+  assert.ok(html.includes(">시간</th>"));
+  const frag = toFragment(m);
+  assert.ok(frag.startsWith('<div class="wbsg"><div class="wrap"><table') && frag.endsWith("</section></div>"));
+  assert.ok(!/<style|<script|<html|<body/.test(frag));
+  // Every rule of the embeddable CSS is under .wbsg: no rule for the host page's body, table, th or td.
+  const selectors = SCOPED_CSS.replace(/@media print\{/, "").split("}").map((r) => r.split("{")[0].trim()).filter(Boolean);
+  assert.ok(selectors.length > 20);
+  for (const sel of selectors.flatMap((x) => x.split(","))) assert.match(sel.trim(), /^\.wbsg\b/, sel);
+  assert.ok(!SCOPED_CSS.includes("@page"));
+  assert.ok(html.includes(`<style>body{margin:16px}\n@page{size:A3 landscape;margin:10mm}\n@media print{body{margin:0}}${SCOPED_CSS}</style>`));
+});
+
+test("hour unit XLSX: row 2 groups hours by day, row 3 names each hour, the 시간 head, and it still unzips", () => {
+  const m = layout(hourPlan([{ kind: "task", wbs: "1", start: "11/25 11:00", end: "11/25 13:00" }])).model;
+  const files = unzip(toXlsx(m));
+  const sheet = files["xl/worksheets/sheet1.xml"];
+  const sst = files["xl/sharedStrings.xml"];
+  const strings = [...sst.matchAll(/<si>([\s\S]*?)<\/si>/g)].map((x) => [...x[1].matchAll(/<t xml:space="preserve">([^<]*)<\/t>/g)].map((t) => t[1]).join(""));
+  for (const want of ["09:00", "23:00", "00:00", "17:00", "11/25(수)", "11/26(목)", "시간"]) assert.ok(strings.includes(want), want);
+  assert.ok(!strings.some((t) => /^\d{2}:00\n/.test(t)), "no weekday line under an hour");
+  assert.match(sheet, /<mergeCell ref="I2:W2"\/><mergeCell ref="X2:AO2"\/>/, "15 hours on 11/25 and 18 on 11/26");
+  assert.match(sheet, /<dimension ref="A1:AO\d+"\/>/, "8 fixed columns and 33 hours");
+  assert.match(sheet, /<pane xSplit="8" ySplit="3" topLeftCell="I4" activePane="bottomRight" state="frozen"\/>/);
+});
+
+test("the CLI reports the hour unit: 시간 and 날 in the summary", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wbs-gen-"));
+  try {
+    writeFileSync(join(dir, "plan.json"), JSON.stringify(hourPlan([{ kind: "task", wbs: "1", start: "11/25 11:00", end: "11/25 13:00" }])));
+    const r = run(["build", "--plan", "plan.json", "--out", "h.xlsx", "--out", "h.html"], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^OK 시간 33 \(2026-11-25T09:00 ~ 2026-11-26T17:00\), 날 2, 행 1, 작업 1, ◆ 0, 게이트 0$/m);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

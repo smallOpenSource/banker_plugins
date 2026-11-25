@@ -1,4 +1,4 @@
-// pm-render.mjs 시험. 5탭 고정 입력 사실, 구현요건 판정 4행, workflow 간격 확장과 이름 줄바꿈, 구성도 좌표와 자동 배치,
+// pm-render.mjs 시험. 6탭 고정 입력 사실, 구현요건 판정 4행, workflow 간격 확장과 이름 줄바꿈, 구성도 좌표와 자동 배치,
 // 자료 없음 안내, 위험 문자열, 스토리 0, events 없음, 시각은 now 인자만, export 명령, 저장소 고유 문자열 0.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -96,6 +96,7 @@ function model(over = {}) {
     flow: { missing: true },
     arch: { missing: true },
     adr: { missing: true },
+    wbs: { missing: true },
     ...over,
   };
 }
@@ -295,8 +296,9 @@ test('구현요건: 스토리가 없는 프로젝트는 담당 스토리 칸과 
 test('자료 없음: 진척도 밖의 탭은 모두 안내와 스키마 문서 경로, 진척도는 빈 표', T, () => {
   const cfg = cfgOf();
   const s = snapshotFrom(model(), cfg, NOW);
-  assert.equal(count(s, /<div class="meta empty">/g), 4);
+  assert.equal(count(s, /<div class="meta empty">/g), 5);
   assert.ok(s.includes('<code>references/adr.md</code>'));
+  assert.ok(s.includes('<code>references/wbs.md</code>'));
   assert.ok(s.includes('<code>references/req-spec.md</code>, <code>references/reqs.md</code>'));
   assert.ok(s.includes('<code>references/flow.md</code>'));
   assert.ok(s.includes('<code>references/arch.md</code>'));
@@ -677,27 +679,27 @@ test('위험 문자열과 색: 모든 글 escape, 색은 #rrggbb 만', T, () => 
   assert.ok(!s.includes('url(x)') && !s.includes('#fff" x') && !s.includes('#a1b2c3"'));
   assert.ok(s.includes('stroke="#555555" stroke-width="1.5"'), '틀린 영역 색은 기본 색');
   assert.ok(s.includes('r="10" fill="#455a64"/>'), '틀린 흐름 색은 기본 색');
-  for (const k of ['history', 'req', 'workflow', 'arch', 'adr']) assert.ok(!pageFrom(m, cfg, k, NOW).includes('<script>'), k);
+  for (const k of ['history', 'req', 'workflow', 'arch', 'adr', 'wbs']) assert.ok(!pageFrom(m, cfg, k, NOW).includes('<script>'), k);
 });
 
-test('단일 HTML 스냅숏: 절 5, 인라인 스크립트 1, 외부 참조 0, 자동 갱신 없음, 탭은 # 링크', T, () => {
+test('단일 HTML 스냅숏: 절 6, 인라인 스크립트 1, 외부 참조 0, 자동 갱신 없음, 탭은 # 링크', T, () => {
   const cfg = cfgOf({ title: '예시', shortName: 'ex' });
   const m = model({ flow: { value: readFix('flow.json') }, arch: { value: readFix('arch.json') }, reqSpec: { value: readFix('req-spec.json') }, reqs: { value: readFix('reqs.json') } });
   const s = snapshotFrom(m, cfg, NOW);
-  assert.equal(count(s, /<section id="tab-/g), 5);
+  assert.equal(count(s, /<section id="tab-/g), 6);
   assert.equal(count(s, /<script\b/g), 1);
   assert.ok(!/http-equiv="refresh"/.test(s));
   assert.ok(!/(?:src|href)\s*=\s*["']?(?:https?:)?\/\//i.test(s));
   assert.ok(s.includes('<title>ex 진척도 스냅숏</title>'));
-  assert.ok(s.includes('<div class="tabs"><a href="#history" data-tab="history">진척도</a><a href="#req" data-tab="req">구현요건</a><a href="#workflow" data-tab="workflow">workflow</a><a href="#arch" data-tab="arch">구성도</a><a href="#adr" data-tab="adr">ADR</a></div>'));
-  assert.ok(s.includes('var ks=["history","req","workflow","arch","adr"]'), '#adr 로 전환');
+  assert.ok(s.includes('<div class="tabs"><a href="#history" data-tab="history">진척도</a><a href="#req" data-tab="req">구현요건</a><a href="#workflow" data-tab="workflow">workflow</a><a href="#arch" data-tab="arch">구성도</a><a href="#adr" data-tab="adr">ADR</a><a href="#wbs" data-tab="wbs">WBS</a></div>'));
+  assert.ok(s.includes('var ks=["history","req","workflow","arch","adr","wbs"]'), '#adr, #wbs 로 전환');
   assert.ok(s.includes('<section id="tab-req" class="tab"><h2 class="tt">구현요건</h2>\n\n<div>요구 2건'));
   assert.ok(!s.includes('/?tab='), '서버 주소 링크 없음');
 });
 
-test('고정 자료 프로젝트로 renderTab: 출처를 읽어 5탭(git 없음, events 자동 탐색)', T, () => {
+test('고정 자료 프로젝트로 renderTab: 출처를 읽어 6탭(git 없음, events 자동 탐색)', T, () => {
   const files = {};
-  for (const f of ['config.json', 'items.json', 'req-spec.json', 'reqs.json', 'flow.json', 'arch.json']) files[f] = fs.readFileSync(path.join(FIX, f), 'utf8');
+  for (const f of ['config.json', 'items.json', 'req-spec.json', 'reqs.json', 'flow.json', 'arch.json', 'wbs.json']) files[f] = fs.readFileSync(path.join(FIX, f), 'utf8');
   const ctx = project(files);
   const ev = path.join(ctx.project, '.omc', 'ultra-chain', 'example-run', 'events.jsonl');
   fs.mkdirSync(path.dirname(ev), { recursive: true });
@@ -710,6 +712,7 @@ test('고정 자료 프로젝트로 renderTab: 출처를 읽어 5탭(git 없음,
   assert.equal(count(renderTab(ctx, config, 'req', NOW), /<tr><td class="q">\d+\.\d+<\/td>/g), 7);
   assert.equal(count(renderTab(ctx, config, 'flow', NOW), /<svg class="flow"/g), 2);
   assert.equal(count(renderTab(ctx, config, 'arch', NOW), /<g class="nd"/g), 6);
+  assert.equal(count(renderTab(ctx, config, 'wbs', NOW), /<tr class="task">/g), 4);
   const m = collect(ctx, config, NOW);
   assert.equal(m.stages.length, 10);
 });
@@ -723,7 +726,7 @@ test('export 명령: 파일을 쓰고 경로 한 줄, --now 형식, 파일 인�
   assert.deepEqual(lines, [`내보냄: ${out}`]);
   const html = fs.readFileSync(out, 'utf8');
   assert.ok(html.includes(`스냅숏 ${new Date(NOW).toLocaleString('ko-KR', { hour12: false })} |`));
-  assert.equal(count(html, /<section id="tab-/g), 5);
+  assert.equal(count(html, /<section id="tab-/g), 6);
   await assert.rejects(command('export', ctx, { _: ['export', out], now: 'yesterday' }, io), (e) => e instanceof UsageError && /--now/.test(e.message));
   await assert.rejects(command('export', ctx, { _: ['export'] }, io), UsageError);
   await assert.rejects(command('export', ctx, { _: ['export', path.join(ROOT, 'no-such-dir', 'x.html')] }, io), /쓰기 실패/);
@@ -784,4 +787,49 @@ test('agentLabelPattern 시간 상한은 요청마다 하나: 에이전트가 �
   const ok = validate({ stories: [{ id: 'S1', name: '하나' }], agentLabelPattern: 'S\\d+', sources: { git: false, workflowDirs: ['wf'] } }, proj).config;
   fs.writeFileSync(path.join(run, 'journal.jsonl'), JSON.stringify({ type: 'started', key: 'k', agentId: 'a0', label: 'impl-S1-r1' }) + '\n');
   assert.match(renderTab(ctx, ok, 'history', Date.now()), /진행 중/);
+});
+
+// ---------- WBS 탭 ----------
+
+test('WBS 탭: 고정 자료(영업일 단위)는 wbs-gen 과 같은 격자를 .wbsg 아래 CSS 와 함께, 자동 갱신 없음', T, () => {
+  const cfg = cfgOf({ title: '예시', shortName: 'ex' });
+  const h = pageFrom(model({ wbs: { value: readFix('wbs.json') } }), cfg, 'wbs', NOW);
+  assert.ok(h.includes('<a href="/?tab=wbs" class="on">WBS</a>'));
+  assert.ok(!/http-equiv="refresh"/.test(h), 'WBS 는 자동 갱신하지 않음');
+  assert.ok(h.includes('<div class="wbsg"><div class="wrap"><table'));
+  assert.ok(h.includes('<style>\n.wbsg{font-family:'), '격자 CSS 는 본문 안 style');
+  assert.ok(h.includes('영업일 단위: 영업일 15칸, 주 3'));
+  assert.equal(count(h, /<tr class="task">/g), 4);
+  assert.equal(count(h, /◆<\/td>/g), 3, '제약 1, 마일스톤 2');
+  assert.ok(h.includes('<th class="w" colspan="5">W1</th>'));
+  assert.ok(h.includes('>10/19<br>월</th>'));
+  // 격자 CSS 는 이 화면의 body, table, th, td 규칙을 새로 걸지 않음(모든 선택자가 .wbsg 아래)
+  const css = /<style>\n(\.wbsg[\s\S]*?)<\/style>/.exec(h)[1];
+  const sels = css.replace(/@media print\{/, '').split('}').map((r) => r.split('{')[0].trim()).filter(Boolean).flatMap((x) => x.split(','));
+  for (const x of sels) assert.match(x.trim(), /^\.wbsg\b/, x);
+});
+
+test('WBS 탭: 시간 단위 변형(기간 2일 이내)은 시간 열, 날짜 머리글, 시간 칸 수', T, () => {
+  const cfg = cfgOf();
+  const h = pageFrom(model({ wbs: { value: readFix('variants', 'wbs-hour', 'wbs.json') } }), cfg, 'wbs', NOW);
+  assert.ok(h.includes('시간 단위(기간 2일 이내): 모든 시간 33칸'));
+  assert.ok(h.includes('<th>09:00</th><th>10:00</th><th>11:00</th><th>12:00</th><th class="gate">13:00</th>'));
+  assert.ok(h.includes('<th class="w" colspan="15">11/25(수)</th><th class="w" colspan="18">11/26(목)</th>'));
+  assert.ok(h.includes('>시간</th>') && !h.includes('(영업일)</th>'));
+  assert.ok(h.includes('<div class="c">11/25 13:00</div></td><td class="fix" style="left:728px"><div class="c">11/25 16:00</div></td><td class="fix" style="left:784px"><div class="c">3</div>'), '13:00~15:30 은 3칸');
+});
+
+test('WBS 탭: 없음은 안내와 스키마 문서, JSON 아님과 계획 오류는 깨짐 배지와 오류 줄', T, () => {
+  const cfg = cfgOf();
+  assert.ok(pageFrom(model(), cfg, 'wbs', NOW).includes('<div class="meta empty">자료 없음. 만드는 법: <code>references/wbs.md</code></div>'));
+  const broken = pageFrom(model({ wbs: { error: 'JSON 아님' } }), cfg, 'wbs', NOW);
+  assert.ok(broken.includes('<span class="b miss">wbs.json 을 읽지 못함(JSON 아님)</span>'));
+  const plan = readFix('wbs.json');
+  plan.rows[1].end = '10/10';
+  plan.rows[2].start = '10/24';
+  const bad = pageFrom(model({ wbs: { value: plan } }), cfg, 'wbs', NOW);
+  assert.ok(bad.includes('<span class="b miss">wbs.json 오류 2건</span>'));
+  assert.ok(bad.includes('<li>rows[1] 1.1 종료: 기간 밖 (2026-10-10)</li>'));
+  assert.ok(bad.includes('<li>rows[2] 1.2 시작: 주말이나 공휴일 (2026-10-24 토)</li>'));
+  assert.ok(!bad.includes('class="wbsg"'));
 });

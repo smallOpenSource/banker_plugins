@@ -100,7 +100,8 @@ function summary(m) {
   const tasks = m.rows.filter((r) => r.kind === "task").length;
   const marks = m.rows.reduce((n, r) => n + r.diamonds.length, 0);
   const span = `${m.days[0].key} ~ ${m.days[m.days.length - 1].key}`;
-  return `영업일 ${m.days.length} (${span}), 주 ${m.weeks.length}, 행 ${m.rows.length}, 작업 ${tasks}, ◆ ${marks}, 게이트 ${m.gates.length}`;
+  const [unit, group] = m.unit === "hour" ? ["시간", "날"] : ["영업일", "주"];
+  return `${unit} ${m.days.length} (${span}), ${group} ${m.weeks.length}, 행 ${m.rows.length}, 작업 ${tasks}, ◆ ${marks}, 게이트 ${m.gates.length}`;
 }
 
 function cmdCheck(args) {

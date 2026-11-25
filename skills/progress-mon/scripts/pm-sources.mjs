@@ -508,5 +508,6 @@ export function collect(ctx, config, now, inject = {}) {
     arch: tab('arch.json'),
     adr: readAdrFile(path.join(ctx.dataDir, 'adr.json')),
     adrCheck: tab('adr-check.json'),
+    wbs: tab('wbs.json'),
   };
 }

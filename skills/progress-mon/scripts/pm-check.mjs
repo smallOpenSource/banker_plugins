@@ -4,7 +4,8 @@
 // 밀도(4.9절)는 init 이 만든 자료 폴더(state.json 의 memory)나 inventory.json 이 있을 때만 재고, 미달은 WARN(종료 코드 영향 없음).
 // 항목마다 재는 밀도 미달 줄은 끝에 못 채운 대상 이름을 붙인다(`: a, b 외 n`).
 // ADR(adr.json)의 스키마, 참조, docs/adr 갈라짐은 pm-adr.mjs 가 검사한다.
-// 끝에 `density <탭> ok|low` 5줄(init 기록이 있을 때)과 늘 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n, 참조 없는 서술 n` 한 줄. ADR 밀도는 adr.json 이 있으면 늘 잰다.
+// WBS(wbs.json)는 wbs-gen 과 같은 배치 계산(wg-plan.mjs layout)으로 검사한다. 오류는 FAIL, 경고는 WARN.
+// 끝에 `density <탭> ok|low` 6줄(init 기록이 있을 때)과 늘 `adr 근거 없음 n칸, 미검증 n, 구현 못 함 n, 참조 없는 서술 n` 한 줄. ADR 밀도는 adr.json 이 있으면 늘 잰다.
 // 형식 시험 자료와 옮긴 자료(둘 다 init 기록 없음)는 밀도를 재지 않는다.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +16,7 @@ import { archLayout, archFlaws, flowLayout, nameFits, FLOW } from './pm-render.m
 import { color, finite, textW, wrap, TABS } from './pm-html.mjs';
 import { memoryWarnings } from './pm-memory.mjs';
 import { checkAdr, adrRows, cleanAdr, adrTally, writeAdrCheck } from './pm-adr.mjs';
+import { layout as wbsLayout } from './wg-plan.mjs';
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
@@ -434,6 +436,32 @@ function checkInventory(ctx, r) {
   return { components: arr(v.components).length, flows: arr(v.flows).map((x) => (obj(x) && Number.isInteger(x.steps) ? x.steps : 0)) };
 }
 
+// ---------- wbs.json ----------
+
+// wg-plan.mjs 오류 글 앞의 위치를 json 경로로. rows[i], gates[i] 는 떼어 내고, 그 밖(legend[i], notes[i].lines, parts.<id>.<색>,
+// bars.<이름>)은 경로로 쓰되 글은 그대로 둔다(뒤에 조사가 붙어 떼면 문장이 깨짐).
+export function wbsLine(e) {
+  const row = /^((?:rows|gates)\[\d+\]):?\s+/.exec(e);
+  if (row) return { at: row[1], msg: e.slice(row[0].length) };
+  const other = /^(?:(?:legend|notes)\[\d+\](?:\.lines)?|parts\.\S+|bars\.\S+)/.exec(e);
+  return { at: other ? other[0] : '$', msg: e };
+}
+
+// 돌려줌: 배치 모델(오류가 없을 때) 또는 null. 없는 파일은 검사하지 않는다.
+function checkWbs(dir, r) {
+  const F = 'wbs.json';
+  const got = readJson(path.join(dir, F));
+  if (got.missing) return null;
+  if (got.error) return r.fail(F, '$', got.error), null;
+  const res = wbsLayout(got.value);
+  for (const e of res.errors) {
+    const x = wbsLine(e);
+    r.fail(F, x.at, x.msg);
+  }
+  for (const w of res.warnings) r.warn(F, '$', w);
+  return res.model;
+}
+
 // ---------- 밀도(4.9절) ----------
 
 const sentences = (t) => String(t || '').split(/\.\s+/).filter((x) => x.trim()).length;
@@ -441,8 +469,8 @@ const lines23 = (n) => n >= 2 && n <= 3;
 
 // 돌려줌: { rows: [{tab, item, value, min, miss}], low: Set(탭) }. value < min 이면 미달.
 // miss 는 항목마다 재는 줄(상자, 단계, 흐름, 명세, 기타 항목)에서 기준을 못 채운 대상 이름. 수만 재는 줄은 빈 배열.
-// adr: adr.json 값, adrBare: check 가 참조 확인으로 잰 참조 없는 서술 칸(없으면 적힌 참조로 잼).
-export function density({ arch, flow, req, items, inv, storyCount, adr, adrBare }) {
+// adr: adr.json 값, adrBare: check 가 참조 확인으로 잰 참조 없는 서술 칸(없으면 적힌 참조로 잼). wbs: wbs.json 배치 모델(없거나 오류면 null).
+export function density({ arch, flow, req, items, inv, storyCount, adr, adrBare, wbs }) {
   const rows = [];
   const add = (tab, item, value, min, miss = []) => rows.push({ tab, item, value, min, miss });
   // 대상마다 ok 를 재어 값, 하한(대상 수), 못 채운 대상 이름을 한 줄로.
@@ -485,6 +513,7 @@ export function density({ arch, flow, req, items, inv, storyCount, adr, adrBare 
   each('workflow', '흐름설명', lanes, (l) => sentences(l.note) >= 3, (l) => `${l.id}(${sentences(l.note)}문장)`);
   reqRows({ add, each }, req, items, storyCount);
   rows.push(...adrRows(adr, adrBare));
+  wbsRows({ add, each }, wbs);
   return { rows, low: new Set(rows.filter((x) => x.value < x.min).map((x) => x.tab)) };
 }
 
@@ -499,6 +528,13 @@ function reqRows({ add, each }, req, items, storyCount) {
   const stated = req.specs.filter((x) => x.state !== undefined);
   each('req', '비고', stated, (x) => str(x.note), (x) => at(x, `specs[${req.specs.indexOf(x)}]`));
   each('history', '비고', items, (x) => str(x.note), (x, i) => (str(x.key) ? x.key : `items[${i}]`));
+}
+
+// WBS 탭 줄: 작업(막대) 1개 이상, 작업마다 담당. add, each: density 의 줄 추가 함수.
+function wbsRows({ add, each }, wbs) {
+  const tasks = wbs ? wbs.rows.filter((x) => x.kind === 'task') : [];
+  add('wbs', '작업', tasks.length, 1);
+  each('wbs', '담당', tasks, (x) => str(x.cells[2]), (x, i) => x.cells[0] || x.cells[1] || `작업 ${i + 1}`);
 }
 
 // 밀도 미달 줄. 못 채운 대상이 있으면 `: ` 뒤에 앞 10개, 넘으면 `외 n`.
@@ -545,13 +581,14 @@ export function runCheck(ctx, env = process.env) {
   const got = checkAdr(ctx, config, r);
   const adr = got.value;
   const adrBare = got.bare;
+  const wbs = checkWbs(ctx.dataDir, r);
   const inv = checkInventory(ctx, r);
   const memory = memoryOf(ctx);
   memoryInto(r, memory, ctx.project, env);
   const out = r.lines.map((x) => `${x.level} ${x.file} ${x.path} ${x.msg}`);
   if (config.sources.workflowDirs === 'auto' && !workflowRoots(config, ctx, env).length) out.push('WARN workflowDirs auto: 찾은 폴더 0');
   // 밀도는 init 기록이나 inventory.json 이 있을 때만. 다만 ADR 밀도는 adr.json 이 있으면 늘 낸다
-  const dens = inv || memory ? density({ arch, flow, req, items: items.items, inv, storyCount: ids.length, adr, adrBare }) : null;
+  const dens = inv || memory ? density({ arch, flow, req, items: items.items, inv, storyCount: ids.length, adr, adrBare, wbs }) : null;
   const rows = dens ? dens.rows : adr ? adrRows(adr, adrBare) : [];
   const tally = adrTally(adr, adrBare).text;
   return { ...finish(out, rows, dens, tally), adr: got.sha ? { sha: got.sha, tally } : null };

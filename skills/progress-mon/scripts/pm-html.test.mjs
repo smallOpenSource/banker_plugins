@@ -55,14 +55,16 @@ test('공통 CSS 는 옛 화면의 주요 선택자를 담음', T, () => {
   assert.equal(CSS.split('\n').length, 30);
 });
 
-test('탭 머리는 다섯 탭과 켜진 탭 하나, 다섯째는 ADR', T, () => {
-  assert.deepEqual(TABS.map((t) => t[0]), ['history', 'req', 'workflow', 'arch', 'adr']);
+test('탭 머리는 여섯 탭과 켜진 탭 하나, 다섯째는 ADR, 여섯째(ADR 뒤)는 WBS', T, () => {
+  assert.deepEqual(TABS.map((t) => t[0]), ['history', 'req', 'workflow', 'arch', 'adr', 'wbs']);
   assert.deepEqual(TABS[4], ['adr', 'ADR']);
+  assert.deepEqual(TABS[5], ['wbs', 'WBS']);
   const h = tabsHtml('req');
-  assert.equal(h, '<div class="tabs"><a href="/?tab=history">진척도</a><a href="/?tab=req" class="on">구현요건</a><a href="/?tab=workflow">workflow</a><a href="/?tab=arch">구성도</a><a href="/?tab=adr">ADR</a></div>');
+  assert.equal(h, '<div class="tabs"><a href="/?tab=history">진척도</a><a href="/?tab=req" class="on">구현요건</a><a href="/?tab=workflow">workflow</a><a href="/?tab=arch">구성도</a><a href="/?tab=adr">ADR</a><a href="/?tab=wbs">WBS</a></div>');
   assert.equal((tabsHtml('arch').match(/class="on"/g) || []).length, 1);
   assert.equal((tabsHtml('adr').match(/class="on"/g) || []).length, 1);
   assert.ok(tabsHtml('adr').includes('<a href="/?tab=adr" class="on">ADR</a>'));
+  assert.ok(tabsHtml('wbs').includes('<a href="/?tab=adr">ADR</a><a href="/?tab=wbs" class="on">WBS</a>'));
 });
 
 test('favicon 은 외부 자원 없는 data URI', T, () => {

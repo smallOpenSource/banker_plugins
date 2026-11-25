@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runCheck, density, densityLine } from './pm-check.mjs';
+import { runCheck, density, densityLine, wbsLine } from './pm-check.mjs';
+import { layout as wbsLayout } from './wg-plan.mjs';
 
 const T = { timeout: 60000 };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ const ENV = (() => {
 })();
 process.env.GIT_CEILING_DIRECTORIES = ROOT;
 const read = (f) => JSON.parse(fs.readFileSync(path.join(FIXTURE, f), 'utf8'));
-const FILES = ['config.json', 'items.json', 'req-spec.json', 'reqs.json', 'flow.json', 'arch.json'];
+const FILES = ['config.json', 'items.json', 'req-spec.json', 'reqs.json', 'flow.json', 'arch.json', 'wbs.json'];
 
 let n = 0;
 // 고정 자료를 복사한 자료 폴더. over: {파일: 값 | null(지움)}. 돌려줌: ctx
@@ -274,7 +275,7 @@ function initd(over = {}) {
   return ctx;
 }
 
-test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코드 영향 없음), 요약 5줄', T, () => {
+test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코드 영향 없음), 요약 6줄', T, () => {
   const ctx = initd();
   const { lines, fails } = runCheck(ctx, ENV);
   assert.equal(fails, 0);
@@ -288,9 +289,12 @@ test('밀도: init 기록이 있으면 4.9절 하한 미달을 WARN(종료 코�
   ]) assert.ok(lines.includes(w), `${w}\n${lines.join('\n')}`);
   assert.ok(lines.some((l) => l.startsWith('WARN density workflow 단계설명 1/10: main/p1(1줄), ')), lines.join('\n'));
   assert.equal(only(lines, /^WARN density (workflow 단계:main|req 비고) /).length, 0, '하한을 채운 항목은 WARN 없음');
-  assert.deepEqual(lines.slice(-6), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', NO_GAP]);
+  assert.deepEqual(lines.slice(-7), ['density history low', 'density req low', 'density workflow low', 'density arch low', 'density adr low', 'density wbs ok', NO_GAP]);
   assert.ok(lines.includes('WARN density adr 결정 0/1'), 'adr.json 이 없으면 ADR 밀도 미달');
-  assert.match(lines[lines.length - 7], /^check: FAIL 0, WARN \d+$/);
+  assert.equal(only(lines, /^WARN density wbs /).length, 0, '고정 자료 wbs.json 은 작업 4개 모두 담당이 있음');
+  assert.match(lines[lines.length - 8], /^check: FAIL 0, WARN \d+$/);
+  const none = check(initd({ 'wbs.json': null }));
+  assert.ok(none.includes('WARN density wbs 작업 0/1') && none.includes('density wbs low'), 'wbs.json 이 없으면 WBS 밀도 미달');
 });
 
 test('밀도: inventory.json 으로 하한을 낮춤, 없는 경로는 FAIL, inventory 만 있어도 밀도 검사', T, () => {
@@ -319,7 +323,7 @@ test('밀도: inventory.json 으로 하한을 낮춤, 없는 경로는 FAIL, inv
   assert.ok(l2.includes('FAIL inventory.json flows[1].evidence 경로 없음: gone/x.mjs:3'));
 });
 
-test('밀도: 하한을 채우면 5탭 ok, 함수 직접', T, () => {
+test('밀도: 하한을 채우면 6탭 ok, 함수 직접', T, () => {
   const zones = Array.from({ length: 5 }, (_, i) => ({ id: `z${i}` }));
   const det = '두 줄이 되도록 충분히 긴 설명 문장을 여기에 적어 둠';
   const nodes = Array.from({ length: 20 }, (_, i) => ({ id: `n${i}`, zone: 'z0', detail: det }));
@@ -332,13 +336,15 @@ test('밀도: 하한을 채우면 5탭 ok, 함수 직접', T, () => {
   const req = { users: [{ text: 't', source: 's' }], specs: [{ acs: ['AC-1'], state: 'done', note: '근거' }], acStories: new Map([['AC-1', ['A1']]]) };
   const adr = read('adr.json');
   adr.decisions[1].scaling = { argument: '규모와 무관', refs: [{ kind: 'file', path: 'src/app.mjs' }] };
-  const d = density({ arch, flow, req, items: [{ note: 'n' }], inv: null, storyCount: 1, adr });
+  const wbs = wbsLayout(read('wbs.json')).model;
+  const d = density({ arch, flow, req, items: [{ note: 'n' }], inv: null, storyCount: 1, adr, wbs });
   assert.deepEqual(d.rows.filter((x) => x.value < x.min), []);
+  assert.deepEqual(d.rows.filter((x) => x.tab === 'wbs').map((x) => [x.item, x.value, x.min]), [['작업', 4, 1], ['담당', 4, 4]]);
   assert.ok(d.rows.some((x) => x.tab === 'adr'));
   assert.equal(d.low.size, 0);
   // 서술 칸 refs 가 비면 adr 서술참조 미달(규칙은 WARN)
   adr.decisions[1].scaling.refs = [];
-  const bare = density({ arch, flow, req, items: [{ note: 'n' }], inv: null, storyCount: 1, adr });
+  const bare = density({ arch, flow, req, items: [{ note: 'n' }], inv: null, storyCount: 1, adr, wbs });
   assert.deepEqual(bare.rows.filter((x) => x.value < x.min).map(densityLine), ['WARN density adr 서술참조 3/4: decisions[1].scaling']);
   assert.deepEqual([...bare.low], ['adr']);
 });
@@ -390,4 +396,30 @@ test('CLI: FAIL 이 있으면 종료 1, 자료 폴더가 없어도 만들지 않
   const e = spawnSync(process.execPath, [CLI, 'check'], { cwd: empty, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 30000 });
   assert.equal(e.status, 0);
   assert.equal(fs.existsSync(path.join(empty, '.omc')), false);
+});
+
+test('wbs.json: JSON 아님, 계획 오류(행, 게이트, 색)는 FAIL <경로>, 시간 단위의 공휴일은 WARN, 시간 단위 변형은 FAIL 0', T, () => {
+  const bad = check(data({ 'wbs.json': '{bad' }));
+  assert.equal(only(bad, /^FAIL wbs\.json \$ JSON 아님: /).length, 1, bad.join('\n'));
+  const plan = read('wbs.json');
+  plan.rows[1].end = '10/10';
+  plan.rows[2].kind = 'bar';
+  plan.gates[0].date = '10/24';
+  plan.parts.app.dark = 'red';
+  const lines = check(data({ 'wbs.json': plan }));
+  for (const w of [
+    'FAIL wbs.json rows[1] 1.1 종료: 기간 밖 (2026-10-10)',
+    'FAIL wbs.json rows[2] 1.2: kind 는 group, task, constraint, milestone 중 하나여야 함 (bar)',
+    'FAIL wbs.json gates[0] 주말이나 공휴일 (2026-10-24 토)',
+    'FAIL wbs.json parts.app.dark parts.app.dark 색이 6자리 16진수가 아님: red',
+  ]) assert.ok(lines.includes(w), `${w}\n${lines.join('\n')}`);
+  assert.equal(runCheck(data({ 'wbs.json': plan }), ENV).fails, 4, 'FAIL 이 있으면 check 종료 1');
+  const hour = read('variants/wbs-hour/wbs.json');
+  assert.deepEqual(problems(check(data({ 'wbs.json': hour }))), []);
+  hour.holidays = '11/25';
+  hour.rows[1].end = '11/25 11:00';
+  const hl = check(data({ 'wbs.json': hour }));
+  assert.ok(hl.includes('WARN wbs.json $ 시간 단위(기간 2일 이내)는 모든 시간을 보여 공휴일을 쓰지 않음: 2026-11-25'), hl.join('\n'));
+  assert.ok(hl.includes('FAIL wbs.json rows[1] 2: 종료가 시작보다 앞서거나 같음'), hl.join('\n'));
+  assert.deepEqual(wbsLine('title 이 없음'), { at: '$', msg: 'title 이 없음' });
 });
