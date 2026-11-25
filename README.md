@@ -9,7 +9,7 @@
 [빠른 시작](#빠른-시작) · [워크플로 예시](#워크플로-사용-예시) · [구성](#구성) · [설치 상세](#설치-상세-npm--codex) · [설정 변경 지점](#설정-변경-지점-claude-code--codex) · [요구사항](#요구사항) · [업데이트 / 제거](#업데이트--제거) · [업데이트 확인](#업데이트-확인-및-사용량-카운팅) · [오프라인](#오프라인에서-쓰기) · [라이선스 / 서드파티](#라이선스--서드파티)
 
 □ banker는 다음을 포함하는 Claude Code 및 Codex CLI 플러그인입니다.
-- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 76개 + 커맨드 2개**(총 78개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 75개와 Codex 전용 스킬 4개)
+- QA·보안 감사·문서·아키텍처·위키·미디어 작업과 의존성·개발환경(OS별) 설치를 아우르는 **스킬 77개 + 커맨드 2개**(총 79개 구성요소. Codex 는 Claude Code 전용 `ultraqa` 를 뺀 스킬 76개와 Codex 전용 스킬 4개)
 - Claude Code 즉시 명령 `/graceful-pause`, `/progress`
 
 □ 설치하면 스킬과 커맨드가 `/banker:<이름>` 네임스페이스로 노출됩니다.
@@ -178,6 +178,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `progress-mon` | 프로젝트 진척도를 6탭 웹 화면(진척도, 구현요건, workflow, 구성도, ADR, WBS)으로 로컬 서버(기본 127.0.0.1)에 띄움. WBS 탭은 wbs-gen 과 같은 간트 차트(기간 2일 이내면 시간 열). ADR 탭은 결정마다 최적화 로직, 확장 대응, 포기와 얻은 것과 프로젝트의 검증, 흐름, 증거를 `check` 가 확인한 참조와 함께 보임. `init` 이 코드를 읽어 탭 자료를 쓰고 프로젝트 메모리에 갱신 규칙 한 줄을 등록, `export` 는 서버 없는 단일 HTML. 세션 작업 목록 패널은 `/progress` |
 | `init-dir` | 프로젝트에 관리 폴더 7개(logs, scripts, work, mockup, tests, docs, KB)를 만들고 폴더 목적을 지금 세션에 전달하며, `AGENTS.md` 와 `CLAUDE.md` 중 있는 것에 표지 블록으로 기록. 새로 만든 폴더에만 틀 파일(서비스 시작, 정지 스크립트와 로그 로테이션, 시험 실행기, README)을 넣고, 이미 있는 폴더는 목적만 전달 |
 | `git-init` | 저장소가 아닌 폴더에 첫 커밋 `init` 을 만들어 worktree 같은 병렬 작업을 준비. 비밀값과 로컬 상태를 빼는 `.gitignore` 를 쓰고, 추적될 파일을 이름과 내용으로 스캔(위치와 종류만 보이고 값은 안 보임)한 뒤 `git init`, `git add .`, `git commit` 실행. 걸림이 있으면 `.git` 을 만들지 않음. `check` 는 계획만, 원격 연결과 push 는 안 함 |
+| `transfer-string` | 긴 글(또는 아무 파일)을 짧은 한 줄 문자열로 압축하고 그 문자열을 원래 글로 복원. 네 압축 방식(deflate, bzip2, LZMA2, 무압축) 중 가장 짧은 결과를 Base64(기본) 또는 한글 음절(`--hangul`)로 적어 메모장으로 열리는 `.b64`, `.hangul` 파일과 클립보드에 둠. 복원은 검사합과 sha256 이 맞을 때만 원래 이름으로 쓰고 있는 파일을 덮어쓰지 않음. 모델이 문자열을 옮겨 적지 않아 토큰을 쓰지 않고, Python 표준 라이브러리만 써서 오프라인에서 동작. airgap-harness 의 transfer-string 과 문자열 형식이 같음. 터미널 명령 `compress-string`, `decompress-string` 도 같은 일을 함 |
 
 ### 스킬: 미디어 (모션 그래픽 · 3D 인트로)
 
@@ -238,14 +239,15 @@ banker uninstall        # 제거
 
 - `--scope project` 로 프로젝트 로컬(`./.codex`)에 설치하고, `--dry-run` 으로 미리 볼 수 있습니다.
 - non-root 전용입니다(전역 sudo 설치 시 root 소유 파일을 방지). postinstall이 없으므로 `banker setup` 을 직접 실행합니다.
-- Codex에는 스킬 75개와 Codex 전용 스킬 4개(`graceful-pause`, `progress`, `ralph`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
+- npm 전역 설치는 `banker` 와 함께 터미널 명령 `compress-string`, `decompress-string` 을 PATH 에 둡니다. `transfer-string` 스킬과 같은 일(긴 글을 한 줄 문자열로 압축, 원래 글로 복원)을 하고, `banker setup` 없이 바로 씁니다.
+- Codex에는 스킬 76개와 Codex 전용 스킬 4개(`graceful-pause`, `progress`, `ralph`, `teamwork`)가 `~/.codex/skills/banker-<name>/` 에, 커맨드 2개가 `~/.codex/prompts/banker-<name>.md` 에 설치됩니다(`codex/manifest.json`). \
   `CODEX_HOME` 을 설정했으면 `~/.codex` 대신 그 폴더에 설치합니다(Codex 가 읽는 곳). \
   `lineage`, `progress`, 사용량 카운팅은 Codex 의 대화 기록(rollout)을 읽습니다. Codex 는 이 형식을 공개 약속으로 내놓지 않아 업데이트로 바뀔 수 있습니다. \
   Codex 를 업데이트한 뒤에는 `banker doctor` 로 형식을 점검합니다. 읽지 못하면 lineage 는 빈 페이지 대신 오류로 멈추고, progress 는 경고 줄을 보이며, 카운팅은 다음 세션 시작 때 경고를 한 번 보입니다. \
   Codex 0.144 이상에는 사용자 프롬프트가 없으므로 커맨드 2개는 스킬로도 설치되어 `$banker-front-qa`, `$banker-setup` 으로 부릅니다. \
   디렉터리명과 일치하도록 프론트매터 `name:` 이 `banker-<name>` 으로 재작성되어 Codex가 `banker-<name>` 으로 인식합니다.
 - Codex 플러그인 설치(`codex plugin add banker@banker-plugins`)는 저장소를 `~/.codex/plugins/cache/banker-plugins/banker/<판>/` 에 두고 `.codex-plugin/plugin.json` 을 읽습니다. \
-  스킬 75개, Codex 전용 스킬 4개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림, 사용량 카운팅, banker `ralph` 계속 훅은 `codex/hooks.json` 에서 옵니다. \
+  스킬 76개, Codex 전용 스킬 4개, 커맨드 2개(스킬로)가 `$banker:<name>` 으로 보이고, 업데이트 알림, 사용량 카운팅, banker `ralph` 계속 훅은 `codex/hooks.json` 에서 옵니다. \
   훅의 시간 제한은 10초입니다. Codex 는 플러그인 훅을 돌릴 때마다 플러그인 폴더 전체의 해시를 먼저 구하고 그 시간도 제한에 넣으므로, Stop 일(ralph 계속, 사용량 카운팅)은 훅 하나로 합쳤습니다. \
   Codex 는 세션을 시작할 때 마켓플레이스를 스스로 올려 새 판을 설치합니다. 훅 명령 앞에는 훅이 실행하는 파일의 해시가 붙어 있어, 훅 코드가 바뀐 판에서는 `/hooks` 가 다시 신뢰를 묻고 신뢰하기 전에는 훅이 돌지 않습니다. 훅 코드가 그대로인 판은 신뢰도 그대로입니다. 스킬 파일은 신뢰 확인 없이 새 판으로 바뀝니다. \
   obsidizer 훅은 npm 설치와 같이 `obsidizer --enable` 할 때만 사용자 범위에 설치됩니다(셸 호출마다 node 를 띄우므로). \
@@ -350,6 +352,7 @@ banker uninstall        # 제거
     승인 규칙은 래퍼의 `peers`, `role`, `send`, `reply`, `status`, `version` 만 허용하고 `on`, `off`, `uninstall` 은 승인을 받습니다. 래퍼와 훅은 샌드박스 밖에서 돌므로 `node`, `codex`, `ps`, `sh` 는 `on` 때 찾은 절대 경로만 쓰고, 임시 폴더, 작업 폴더와 그 git 저장소, `writable_roots` 아래의 프로그램과 Codex 홈은 거부합니다. `hooks.json` 은 banker 훅 설치와 같은 잠금과 같은 규칙(링크이거나 꼴이 다르면 바꾸지 않음)으로 고칩니다. 기록한 프로그램은 훅과 `send` 때마다 그 세션 기준으로 다시 봅니다. 피어 목록의 폴더는 훅이 기록한 세션 폴더만 제어 문자를 바꿔 보여 주고, `send --file` 은 그 세션 폴더와 임시 폴더 안의 파일만 읽습니다. `codex queue` 는 15초 시간 제한이 있습니다. \
     남은 위험: 샌드박스 안 세션이 저장소 파일의 지시를 받으면 `send` 로 같은 기기의 더 넓은 권한 세션에 사용자 턴을 넣을 수 있습니다. 받는 쪽 방어는 훅이 넣는 규칙(피어 본문은 데이터, 위험 동작은 그 세션 사용자 확인)과 피어 턴의 `send` 금지뿐입니다. 래퍼를 거치지 않은 `codex queue` 직접 호출로 머리말을 위조할 수 있는지는 재지 않았습니다. Codex 0.165.0 은 TUI 를 `/quit` 으로 닫아도 대화를 상주 서버에서 이어 가므로, 닫은 세션도 피어 목록에 남아 받은 요청을 화면 없이 처리합니다(목록에서 빠지는 것은 24시간 활동이 없을 때). \
     `banker uninstall --codex` 는 다른 banker 설치 길(사용자 범위 npm 스킬, Codex 플러그인)이 남아 있지 않을 때만 teamwork 도 지웁니다. 두 길이 모두 없어지면 훅은 멈추고 정리 명령을 한 번 안내합니다.
+  - `transfer-string`(`compress-string`, `decompress-string` 명령 포함): Python 3.7 이상(표준 라이브러리만 사용). PATH 밖의 Python 은 `TRANSFER_STRING_PYTHON` 에 절대경로를 지정합니다. 클립보드는 Windows PowerShell, macOS `pbcopy`, Linux `wl-copy`, `xclip`, `xsel` 중 있는 것을 쓰고, 없으면 결과 파일만 씁니다.
   - `lineage`: Python 3.7+ (표준 라이브러리만 사용). RHEL8/Rocky8은 기본 `python3` 가 3.6이라 `setup-python` 등으로 3.11을 설치해 지정해야 합니다.
 
 ## 업데이트 / 제거
@@ -468,7 +471,7 @@ banker setup
   - `build-testbox`: `run` 은 내려받지 않고, 없는 이미지, 브라우저, 엔진의 칸은 `unverified` 와 setup 할 항목으로 끝납니다. `setup` 은 `--yes` 확인 뒤에만 받고, 원천에 닿지 못하면 받지 않고 "네트워크 필요" 로 끝납니다.
   - `wbs-gen` 의 공휴일 조회(Google 공개 캘린더): 닿지 못하면 기다리지 않고 종료 코드 3 으로 끝나고, 스킬이 사용자에게 공휴일을 `월/일, 월/일` 로 받습니다. 공휴일 표를 지어내지 않습니다.
   - `vertical-pptx`, `pdf-vision-extract` 가 빠진 도구를 설치하라고 안내할 때, `nothing-design` 의 글꼴(Google Fonts. 받지 못하면 대체 글꼴로 보임)
-- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`, `init-dir`, `git-init`, `tune-tmux`, `wide-pptx`, `video-gen`, `presentation-graphic-gen`)은 네트워크 없이 그대로 씁니다.
+- 네트워크를 쓰지 않는 스킬(예: `lineage`, `setup-omc-hud`, `tone-compact`, `anti-drm`, `payload-mon`, `init-dir`, `git-init`, `tune-tmux`, `wide-pptx`, `video-gen`, `presentation-graphic-gen`, `transfer-string`)은 네트워크 없이 그대로 씁니다.
 
 ## 라이선스 / 서드파티
 

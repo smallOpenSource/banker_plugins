@@ -409,5 +409,11 @@
   "0.29.1": [
     "banker:omc-patch",
     "banker:presentation-graphic-gen"
+  ],
+  "0.30.0": [
+    "banker:progress-mon",
+    "banker:setup-omc-hud",
+    "banker:transfer-string",
+    "banker:wbs-gen"
   ]
 }

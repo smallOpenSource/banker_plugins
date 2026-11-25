@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.30.0] - 2026-11-25
+
+### Added
+- 새 스킬 `transfer-string`: 긴 글(또는 아무 파일)을 짧은 한 줄 문자열로 압축하고, 그 문자열을 원래 글로 복원한다. 메신저나 입력 칸처럼 글자 수가 제한된 통로로 글을 옮길 때 쓴다.
+  - 네 압축 방식(무압축, deflate, bzip2, LZMA2)을 모두 해 보고 가장 짧은 것을 Base64(기본) 또는 한글 음절(`--hangul`, 한 글자에 13비트)로 적는다. 결과는 메모장으로 열리는 `.b64`, `.hangul` 파일과 클립보드에 둔다.
+  - 복원은 문자열을 내용으로 찾는다(앞뒤 글, 공백, 줄바꿈, BOM 무시). crc32, 원본 길이, sha256 이 맞을 때만 원래 이름으로 쓰고, 있는 파일을 덮어쓰지 않는다(`-1`, `-2`).
+  - airgap-harness 의 transfer-string 과 문자열 형식이 같다. 한쪽에서 만든 문자열을 다른 쪽에서 풀 수 있다(양방향 확인).
+  - 모델은 문자열을 답변에 적거나 명령줄에 넣지 않는다. 문자열은 파일이나 클립보드로만 오가 토큰을 쓰지 않는다.
+  - Python 3.7 이상의 표준 라이브러리만 쓰고 네트워크를 쓰지 않는다. Node 실행기(`transfer-string.mjs`)가 PATH 의 절대 폴더와 설치 폴더에서 Python 을 찾아 `-I` 로 실행한다. `TRANSFER_STRING_PYTHON` 은 절대경로만 받는다.
+  - 클립보드: Windows 는 System32 의 Windows PowerShell, macOS 는 `pbcopy`, `pbpaste`, Linux 는 `wl-copy`, `xclip`, `xsel` 차례. 없으면 복사를 건너뛰고 알린다.
+  - 복원 파일에 인터넷에서 받은 파일 표시(Windows `Zone.Identifier`, macOS `com.apple.quarantine`)를 붙인다. 복원 이름의 폴더 부분, 숨은 문자, Windows 장치 이름은 정화하고, 실행되거나 자동으로 읽힐 수 있는 이름은 경고한다.
+  - 종료 코드: 1 문자열 없음, 손상, 잘림. 2 사용법과 입력. 3 쓰기. 4 내부 오류(`E_INTERNAL`, `E_SIGNAL`). 9 Python 없음(`E_PYTHON`), 설치 손상(`E_INSTALL`).
+- npm 터미널 명령 `compress-string`, `decompress-string`(`package.json` 의 `bin`). `transfer-string` 스킬과 같은 실행기를 부른다. Linux 의 `compress` 명령과 겹치지 않게 `-string` 을 붙였다.
+- `progress-mon`: WBS 탭. ADR 뒤 여섯째 탭이다(주소 `?tab=wbs`, `export` 파일의 `#wbs`).
+  - 자료는 자료 폴더(Claude Code `.omc/progress-mon/`, Codex `.omx/progress-mon/`)의 `wbs.json` 이고 `wbs-gen` 의 계획 파일과 같은 형식이다. 같은 파일을 `wbs-gen` 에 넘기면 같은 격자의 XLSX 와 HTML 이 나온다.
+  - 날짜, 검사, 격자는 `wbs-gen` 의 `wg-dates.mjs`, `wg-plan.mjs`, `wg-html.mjs` 를 같은 바이트로 복사해 쓴다(`sync-adapter.js` 짝).
+  - `status` 에 `WBS 있음|없음|깨짐`, `check` 에 `FAIL wbs.json <경로>` 와 WARN, 밀도 줄에 wbs. 프로젝트 메모리의 규칙 줄에 WBS 안내를 넣는다(ADR 판 줄은 제자리에서 바꿈). 기존 프로젝트에도 WBS 단계를 묻는다.
+  - `config.json` 의 `wbsAsk: false` 면 WBS 단계를 다시 묻지 않는다(`status` 는 `WBS 없음(묻지 않음)`).
+  - 에이전트는 날짜를 지어내지 않는다. 계획, 기록, 커밋에서 옮기고 현지 시간대로 환산한다. 날짜 근거가 하나도 없으면 `wbs.json` 을 쓰지 않고 `wbsAsk: false` 를 적는다.
+  - 영업일 단위에서 실제 날짜가 주말이나 공휴일이면 그 작업이 걸친 영업일로 적고 실제 날짜를 `notes` 의 `[가정·변경]` 에 적는다. 그 FAIL 은 안내를 붙이고, 정리 단계가 `wbs.json` 을 지우지 않는다.
+- `wbs-gen`: 기간이 2일 이내(달력 날짜 2일 이하)면 시간 단위로 그린다. HTML 과 XLSX 모두.
+  - 기간의 모든 시간이 열이다(주말, 공휴일, 밤 포함, 최대 48열). 둘째 머리글은 주 대신 날짜다. 공휴일은 쓰지 않고 계획에 있으면 경고만 낸다.
+  - 날짜 칸은 시각을 붙여도 된다(`YYYY-MM-DDTHH:MM`, `YYYY-MM-DD HH:MM`, `M/D HH:MM`, `24:00`). 시작은 그 시간으로 내리고 끝은 다음 시간으로 올린다. 날짜만 쓴 시작은 00:00, 끝은 24:00 이다.
+  - 시각은 프로젝트 현지 시간대의 벽시계 값이다. `Z` 나 시차가 붙은 기록은 현지로 환산해 적는다(예: KST 에서 `2026-11-25T01:00:00Z` 는 `2026-11-25 10:00`). 시간대나 초가 붙은 값은 까닭을 붙인 오류다.
+  - 영업일 단위는 시각을 버린다. 영업일 단위의 XLSX 바이트는 전과 같다.
+
+### Changed
+- `progress-mon`: favicon 을 체크리스트(3줄 중 2줄 체크) 모양으로 바꿨다. 예전 막대 3개는 신호 세기나 데이터 통신처럼 보였다.
+- `wbs-gen`: HTML 의 CSS 를 `.wbsg` 아래로만 걸고 조각 렌더를 내보낸다(`progress-mon` 이 같은 격자를 넣으려고). 제약 마름모의 점선 테두리 클래스는 `.dot` 에서 `.cdot` 으로 바뀌었다.
+- `setup-omc-hud`: 래퍼가 OMC 5.8.x 의 payload 경고 줄(`[!] payload est ~N MB / 32 MB`)을 PL 기준 경고로 바꾼다. OMC 의 줄은 세션 기록 파일의 바이트(줄 메타데이터, 도구 결과 원본 사본, 훅 기록)를 세어 실제 요청의 2.5~3배로 나온다.
+  - `PL:` 이 있으면 OMC 의 줄을 빼고, PL 이 32 MiB 의 70% 이상이면 같은 자리에 노랑 `[!] payload ~N MB / 32 MB - consider /compact soon`, 85% 이상이면 분홍 `[!!] ... compact may fail; consider new session` 을 낸다. 경계는 PL 색과 같다.
+  - OMC 가 그 줄을 내지 않았으면 PL 기준 경고는 상세 줄 맨 끝에 붙는다. `PL:` 이 없으면(payload-mon 꺼짐, 기록을 읽지 못함) OMC 의 줄을 그대로 둔다.
+  - Codex 사본(`setup-omx-hud`)도 같이 바뀌었다.
+
+### Notes
+- 훅 코드는 바뀌지 않아 Codex 플러그인 사용자에게 `/hooks` 신뢰를 다시 묻지 않는다. `banker-hooks-rev` 는 `cc0b4f7d4e17` 그대로다.
+- 크기: git 추적 파일 합계는 613개, 약 28.9MB(28,884,577 바이트)다. 0.29.1 은 598개, 약 28.7MB 였다. npm 묶음은 430개 파일, 압축 18.3MB, 푼 크기 23.5MB 다.
+
 ## [0.29.1] - 2026-11-20
 
 ### Fixed
