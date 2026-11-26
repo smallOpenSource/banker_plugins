@@ -60,7 +60,8 @@ const readCache = (tmp) => JSON.parse(readFileSync(cachePath(tmp), 'utf8'));
 // input 으로 SessionStart payload 를 흘려 stdin EOF 를 보장(비TTY 안전·드레인 검증).
 // timeout 은 FIFO 에서 멈추는지 보는 시험용(지나면 죽인다). pre 는 훅보다 먼저 --import 로 불러올 모듈 경로.
 function runNotify(tmp, { input = '{}', env: overrides = {}, timeout, pre, argv = [] } = {}) {
-  const env = { ...process.env, XDG_CONFIG_HOME: tmp };
+  // CLAUDE_CONFIG_DIR: the hook reads installed_plugins.json there (retired plugins), never the developer's ~/.claude.
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, CLAUDE_CONFIG_DIR: join(tmp, 'claude-config') };
   delete env.BANKER_NO_UPDATE_CHECK;
   delete env.BANKER_NO_TELEMETRY;
   delete env.BANKER_TELEMETRY_ENDPOINT;
@@ -657,4 +658,42 @@ test('Codex: a hook under a sandbox writable root does nothing but say why', () 
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// A plugin whose skills banker retired (humanize-korean@im-not-ai) is told once in Claude Code, with its uninstall
+// command, also with the update check off. The hook never runs claude. Codex has none of those skills.
+function installRetired(tmp) {
+  mkdirSync(join(tmp, 'claude-config', 'plugins'), { recursive: true });
+  writeFileSync(join(tmp, 'claude-config', 'plugins', 'installed_plugins.json'),
+    JSON.stringify({ version: 2, plugins: { 'humanize-korean@im-not-ai': [{ scope: 'user', installPath: '/x', version: '2.3.2' }] } }));
+}
+
+test('retired plugin: told once with its uninstall command, also with the update check off; Codex is not told', () => {
+  const tmp = mkTmp();
+  installRetired(tmp);
+  const off = { env: { BANKER_NO_UPDATE_CHECK: '1' } };
+  const codex = runNotify(tmp, { ...off, argv: ['--codex'] });
+  assert.equal(codex.status, 0);
+  assert.doesNotMatch(codex.stdout, /humanize-korean/);
+  const first = runNotify(tmp, off);
+  assert.equal(first.status, 0, first.stderr);
+  const msg = JSON.parse(first.stdout).systemMessage;
+  assert.match(msg, /humanize-korean@im-not-ai 의 humanize, humanize-redo, humanize-scan 은 효과가 없어/);
+  assert.match(msg, /claude plugin uninstall humanize-korean@im-not-ai --scope user/);
+  assert.deepEqual(JSON.parse(readFileSync(join(bankerDir(tmp), 'retired-notified.json'), 'utf8')), ['humanize-korean@im-not-ai']);
+  const second = runNotify(tmp, off);
+  assert.equal(second.status, 0);
+  assert.equal(second.stdout, '', 'told once');
+});
+
+test('retired plugin: the notice and an update notice come together in one systemMessage', () => {
+  const tmp = mkTmp();
+  installRetired(tmp);
+  writeCache(tmp, { latest: '99.0.0', checkedAt: NOW() });
+  const r = runNotify(tmp, LOOPBACK);
+  assert.equal(r.status, 0, r.stderr);
+  const lines = JSON.parse(r.stdout).systemMessage.split('\n');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^banker 99\.0\.0 사용 가능/);
+  assert.match(lines[1], /^banker: 설치된 humanize-korean@im-not-ai/);
 });

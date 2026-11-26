@@ -133,7 +133,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `nothing-design` | Nothing 스타일 UI 디자인 적용 |
 | `theme-selection` | 테마 74종을 라이트와 다크 CSS 변수로 입힘(대비 보정 포함). 테마 고르개와 대비 감사도 냄. 명령(`list`, `css` 등) 없이 부르면 색 값에서 계산한 설명과 색 미리보기를 붙인 선택지로 고름 |
 | `rfp-author` | 외주 제안요청서(RFP) 저작 (범용 프레임워크) |
-| `humanizer` | AI 글 흔적 제거(자연스러운 문체로 윤문) |
+| `humanizer` | 어색한 문장 때문에 생기는 AI 티를 없애는 윤문. 작은 모델(sonnet, haiku, Codex 는 luna)과 낮은 노력(medium, low, none)의 독립 좌석 3개 이상이 고칠 곳을 내고 다른 좌석 3개 이상의 다수결로 합의한 수정만 적용, 새 합의가 0건인 회차까지 반복. 글의 언어를 판정해 그 언어 기준으로 검토(한국어는 번역투와 피동 등, 영어는 영문 패턴 목록, 그 밖은 원어민 편집자 기준). 내용은 더하거나 빼지 않고 코드, 경로, 숫자, 인용은 그대로 |
 | `lineage` | 세션 대화를 카카오톡 스타일 단일 HTML로 export. 세션 모델이 턴마다 1줄 요약을 쓰고 남길 턴을 고름(`--rulebase` 는 규칙만), 마크다운 렌더, 다중 세션 병합 |
 | `append_wiki` | 프로젝트 위키 문서 추가/보강 |
 | `compact-wiki` | 위키 중복 제거·supersede·병합 (무손실) |
@@ -374,6 +374,10 @@ banker uninstall                        # 제거
 ```
 
 Codex는 재설치할 때마다 기존 `banker-*` 를 먼저 정리하므로 옛 버전이 중복으로 남지 않습니다.
+
+> 다른 플러그인 `humanize-korean@im-not-ai` 의 `humanize`, `humanize-redo`, `humanize-scan` 은 효과가 없어 banker 가 지웁니다(윤문은 `humanizer`).\
+> `banker setup --claude` 와 `/banker:update-banker` 가 그 플러그인을 `claude plugin uninstall humanize-korean@im-not-ai --scope <범위>` 로 지우고(user, local 범위. project 범위는 공유 설정이라 명령만 안내), 마켓플레이스 등록은 그대로 둡니다.\
+> 자동 업데이트로 새 판을 받았다면 세션 시작 때 한 번, 지우는 명령을 알립니다. 훅은 지우지 않습니다.
 
 **Codex 플러그인:**
 

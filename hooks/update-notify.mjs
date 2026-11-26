@@ -27,6 +27,7 @@ import {
 import { CODEX_NAMES } from '../bin/lib/codex-names.mjs';
 import { codexCliVersion, codexHomeOf, DEFAULT_MARKETPLACE, dualInstallNote, homeInSession, hookPlaces, pluginRootInfo, pluginVersionNote, writableRootsNote } from '../bin/lib/codex-routes.mjs';
 import { codexVersionOf } from './telemetry-count-codex.mjs';
+import { retiredNoticeOnce } from '../bin/lib/retired-plugins.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // 업데이트 안내에 쓰는 npm 패키지 이름(고지 문구·이모지/em-dash 없음).
@@ -291,7 +292,9 @@ async function main() {
   const unsafe = CODEX ? writableNotice(payload) : '';
   if (unsafe) { process.stdout.write(JSON.stringify({ systemMessage: unsafe })); return; } // 그 밖의 일은 하지 않는다
   if (CODEX && !claimSession(payload)) return; // 같은 세션의 다른 길 훅이 이미 알렸다
-  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload), sessionHomeNotice(payload), pluginVersionNotice(payload)] : [];
+  // Claude Code: a plugin whose skills banker retired is told once, with the command that uninstalls it (the hook never
+  // uninstalls). Codex has none of those skills. Told also when the update check is off: it is local and once.
+  const notes = CODEX ? [shapeMissNotice(), dualNotice(payload), sessionHomeNotice(payload), pluginVersionNotice(payload)] : [retiredNoticeOnce()];
   if (!noUpdateCheck()) { // opt-out 이면 업데이트 확인만 무동작.
     const cached = readCache(); // 포그라운드는 캐시 읽기만(네트워크 없음).
     notes.unshift(maybeNotify(cached));

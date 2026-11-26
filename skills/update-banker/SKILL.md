@@ -84,7 +84,7 @@ command -v codex  >/dev/null && in15 codex plugin list 2>/dev/null | grep -E '^b
 [ "$P" = 0 ] && (cd ~ && npm view @kaydash9999/banker-plugins version --fetch-retries=0 --fetch-timeout=10000)
 ```
 
-레지스트리에 닿지 못하면(`npm ping` 의 종료 코드가 0 이 아님) "레지스트리에 닿지 못함. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고, 어느 채널도 바꾸지 않고 멈춘다. `--check` 도 드리프트를 판정하지 않고 같은 보고로 끝낸다.
+레지스트리에 닿지 못하면(`npm ping` 의 종료 코드가 0 이 아님) "레지스트리에 닿지 못함. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고, 어느 채널도 바꾸지 않고 멈춘다. 단 2b(효과 없는 다른 플러그인 지우기)는 로컬 파일만 보므로 멈추기 전에 한다. `--check` 도 드리프트를 판정하지 않고 같은 보고로 끝낸다.
 
 - `npm` 이 없으면(명령 없음, 종료 코드 127) 레지스트리 문제가 아니다. "npm 없음. 최신 판을 알 수 없어 어느 채널도 바꾸지 않음" 으로 보고하고 같은 이유로 멈춘다.
 - `npm ping` 과 `npm view` 는 홈 폴더에서 부른다. 지금 폴더에 있는 프로젝트의 `.npmrc` 가 정한 레지스트리와 토큰을 따르지 않게 하려는 것이다. Windows PowerShell 에서는 `Push-Location ~` 뒤에 부르고 `Pop-Location` 으로 돌아온다.
@@ -143,6 +143,30 @@ claude plugin update banker@banker-plugins
 - `<plugin>` 은 bare name(`banker`) 또는 `plugin@marketplace`(`banker@banker-plugins`) 둘 다 받는다. 마켓플레이스가 여럿이면 후자로 특정한다.
 - **반영에는 재시작이 필요하다**(help 가 명시). 재시작 전 관측이 옛 값인 것은 실패가 아니다.
 - **DISPUTED:** `claude plugin marketplace update banker-plugins` 를 먼저 돌려야 하는지는 **미결이다.** 확정된 것은 "마켓플레이스 갱신 단독으로는 설치본이 교체되지 않는다"(카탈로그·리스팅만 갱신)까지다. "항상 2단계"는 확정이 아니다. git-source 통제 실험에서 `claude plugin update <p>@<mkt>` 단독으로 마켓플레이스 clone 의 git HEAD 가 전진한 사례가 있다. 2단계를 기정사실로 쓰지 말고, 4단계 프로브가 전진을 보이지 않을 때에 한해 `marketplace update` 를 추가로 돌린 뒤 그 사실을 보고하라.
+
+### 2b. 효과 없는 다른 플러그인 지우기 (Claude Code)
+banker 는 다른 플러그인 `humanize-korean@im-not-ai`(마켓플레이스 `epoko77-ai/im-not-ai`)의 스킬 `humanize`, `humanize-redo`, `humanize-scan` 을 효과가 없어 지우기로 했다(윤문은 banker 의 `humanizer`). 플러그인에서 스킬만 골라 지울 수 없으므로 플러그인째 지운다. `claude` 가 없거나 그 플러그인이 없으면 아무것도 하지 않는다. 로컬 파일과 `claude plugin uninstall` 만 쓰므로 네트워크가 없어도 된다(0단계가 레지스트리 때문에 멈출 때도 이 단계는 한다).
+
+```bash
+node -e "const f=(process.env.CLAUDE_CONFIG_DIR||require('os').homedir()+'/.claude')+'/plugins/installed_plugins.json';
+let j;try{j=JSON.parse(require('fs').readFileSync(f,'utf8'))}catch{console.log('absent');process.exit(0)}
+const e=(j&&j.plugins&&j.plugins['humanize-korean@im-not-ai'])||[];
+console.log(e.length?e.map(x=>x.scope+(x.projectPath?' '+x.projectPath:'')).join('\n'):'absent')"
+```
+
+나온 줄마다 그 범위(scope)를 확인하고 처리한다.
+
+| 범위 | 처리 |
+|---|---|
+| `user` | 홈 폴더에서 `claude plugin uninstall humanize-korean@im-not-ai --scope user` |
+| `local` | 그 줄의 프로젝트 폴더에서 `claude plugin uninstall humanize-korean@im-not-ai --scope local`(폴더가 없으면 명령만 보고) |
+| `project` | 지우지 않는다. 그 프로젝트의 공유 설정(`.claude/settings.json`, 대개 git 에 있음)을 바꾸기 때문이다. 명령(`<폴더> 에서 ... --scope project`)만 보고한다 |
+| `managed` | 지우지 않는다. 관리자 설정이다. 그 사실만 보고한다 |
+
+- `claude plugin marketplace remove im-not-ai` 는 하지 않는다. 마켓플레이스 등록은 그대로 둔다.
+- 지운 뒤 위 명령을 다시 돌려 그 범위가 사라졌는지 본다(관측으로 판정). 종료 코드로 판정하지 않는다.
+- `banker setup --claude` 도 같은 일을 하고, 이 단계 없이 자동 업데이트로 새 판을 받은 사용자에게는 SessionStart 훅이 이 플러그인이 있을 때 한 번 지우는 명령을 알린다(훅은 지우지 않는다).
+- Codex 에는 해당이 없다. 그 저장소의 Codex 설치(`install.sh --codex-only`)는 `~/.codex/skills/humanize-korean` 하나뿐이고 세 스킬이 없다.
 
 ### 3. Codex 채널
 `codex` 가 없으면 스킵이다. 에러가 아니다. **1단계 게이트를 통과하지 않았다면 이 단계에 진입하지 마라.**
@@ -231,6 +255,7 @@ npm 전역 CLI    : 0.2.0 -> 0.7.0             전진
 Codex skills    : 41 -> 48 (매니페스트 48)   전진
 Codex prompts   : 2 -> 2   (매니페스트 2)    유지
 Codex 플러그인  : 0.6.0 -> 0.7.0             전진
+humanize-korean : user, local -> 없음        지움 (project 1곳은 명령만 안내)
 ```
 
 - **Codex 는 skills 와 prompts 를 반드시 두 줄로 적는다.** 한 줄로 뭉개면 프롬프트 소실이 보고에서 사라진다.
@@ -238,6 +263,7 @@ Codex 플러그인  : 0.6.0 -> 0.7.0             전진
 - 전진하지 않은 채널이 있으면 그대로 적는다. 가짜 성공 금지.
 - Claude 채널이 재시작 전이면 "재시작 대기" 로 적는다.
 - 캐시에서 구버전을 봤으면 관측 사실로만 적는다(조치하지 않는다).
+- `humanize-korean` 줄은 2b 의 전후 범위를 적는다. 설치돼 있지 않았으면 "없음(할 일 없음)", 남긴 범위는 그 까닭과 명령을 적는다.
 
 ## 복구 (갱신이 아니다)
 여기는 **깨진 설치를 되살리는** 영역이다. 갱신이 목적이면 오지 마라. 갱신 절차가 복구 절차로 미끄러지는 것이 이 스킬의 대표적 사고 경로다.
@@ -272,6 +298,7 @@ Codex 플러그인  : 0.6.0 -> 0.7.0             전진
 - 갱신 의미론 밖(캐시 삭제·마켓플레이스 제거·재설치)은 하지 않는다. 필요하면 "복구" 로 분리해 확인을 받는다.
 
 ARGUMENTS: [--check] [--claude|--npm|--codex] (없으면 3채널 전부: 관측 → npm 게이트 → 나머지 채널 → 3-프로브 검증)
-- `--check`: 아무것도 변경하지 않는다. 0단계 관측 + 4단계 프로브만 돌려 채널별 드리프트를 보고한다.
+- `--check`: 아무것도 변경하지 않는다. 0단계 관측 + 4단계 프로브만 돌려 채널별 드리프트를 보고한다. 2b 는 확인 명령만 돌려 설치 여부를 보고하고 지우지 않는다.
+- `--claude` 는 2b 를 함께 한다. `--npm`, `--codex` 만이면 2b 를 하지 않는다.
 - `--claude` / `--npm` / `--codex`: 해당 채널만 갱신한다. `--codex` 는 Codex 의 두 길 중 설치된 것을 모두 갱신한다.
 - 단 `--codex` 단독이어도 npm 길을 갱신하기 전에는 1단계 게이트(`banker --version` == `npm view ...`)를 **반드시** 확인한다. 불일치면 npm 갱신을 먼저 제안하고 확인받는다. 게이트 없는 npm 길 갱신은 없다. 플러그인 길만 설치돼 있으면 게이트 없이 3b 만 한다.

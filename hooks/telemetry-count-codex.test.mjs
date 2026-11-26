@@ -180,7 +180,7 @@ test('a Codex version whose record has no turn start is noted once for the next 
   assert.deepEqual(JSON.parse(readFileSync(miss, 'utf8')), { version: '9.9.9', notified: false });
   assert.equal(read(tmp).length, 0);
   const notify = join(dirname(HOOK), 'update-notify.mjs');
-  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp, BANKER_NO_UPDATE_CHECK: '1' };
+  const env = { ...process.env, XDG_CONFIG_HOME: tmp, APPDATA: tmp, CLAUDE_CONFIG_DIR: join(tmp, 'claude-config'), BANKER_NO_UPDATE_CHECK: '1' };
   assert.equal(spawnSync(process.execPath, [notify], { input: '{}', encoding: 'utf8', env }).stdout, '', 'Claude Code never shows it');
   const first = spawnSync(process.execPath, [notify, '--codex'], { input: '{}', encoding: 'utf8', env });
   assert.match(JSON.parse(first.stdout).systemMessage, /Codex 9\.9\.9 의 기록 형식을 읽지 못함/);

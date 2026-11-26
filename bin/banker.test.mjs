@@ -27,7 +27,8 @@ function withXdg(fn) {
   try { return fn(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 function run(args, dir, extraEnv = {}) {
-  const env = { ...process.env, XDG_CONFIG_HOME: dir };
+  // CLAUDE_CONFIG_DIR: setup --claude reads installed_plugins.json there (retired plugins), never the developer's.
+  const env = { ...process.env, XDG_CONFIG_HOME: dir, CLAUDE_CONFIG_DIR: path.join(dir, 'claude-config') };
   // The developer's own opt-outs would turn the default-state tests red; each test passes the ones it wants.
   for (const k of ['BANKER_NO_TELEMETRY', 'BANKER_NO_UPDATE_CHECK', 'BANKER_TELEMETRY_ENDPOINT']) delete env[k];
   Object.assign(env, extraEnv);
@@ -368,3 +369,75 @@ test('starRepo: gh runs from the home folder with NoDefaultCurrentDirectoryInExe
     assert.equal(o.env.NoDefaultCurrentDirectoryInExePath, '1');
   }
 });
+
+// setup --claude uninstalls humanize-korean@im-not-ai (user and local scope) with `claude plugin uninstall`, reports a
+// project scope one with its command, and reads each result back. claude is a stand-in: on POSIX a shell script, on
+// Windows a copy of node.exe named claude.exe that runs the file `plugin` of its working folder (execFile runs no .cmd).
+const RETIRED_ID = 'humanize-korean@im-not-ai';
+const FAKE_CLAUDE = `const fs = require('fs'), path = require('path');
+const args = process.argv.slice(2);
+const argv = path.basename(process.argv[1]) === 'plugin' ? ['plugin', ...args] : args;
+fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ argv, cwd: process.cwd() }) + '\\n');
+if (argv[1] === 'uninstall' && process.env.FAKE_CLAUDE_KEEP !== '1') {
+  const f = path.join(process.env.CLAUDE_CONFIG_DIR, 'plugins', 'installed_plugins.json');
+  const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+  const scope = argv[argv.indexOf('--scope') + 1];
+  j.plugins[argv[2]] = j.plugins[argv[2]].filter((e) => e.scope !== scope);
+  fs.writeFileSync(f, JSON.stringify(j));
+}
+`;
+function fakeClaude(dir, folders) {
+  const bin = path.join(dir, 'fakebin');
+  fs.mkdirSync(bin, { recursive: true });
+  const js = path.join(bin, 'fake-claude.cjs');
+  fs.writeFileSync(js, FAKE_CLAUDE);
+  if (process.platform === 'win32') {
+    fs.copyFileSync(process.execPath, path.join(bin, 'claude.exe'));
+    for (const f of folders) fs.writeFileSync(path.join(f, 'plugin'), `require(${JSON.stringify(js)});`);
+  } else {
+    fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(js)} "$@"\n`, { mode: 0o755 });
+  }
+  return bin;
+}
+
+test('setup --claude: uninstalls the retired plugin in user and local scope, leaves project scope with its command', () => withXdg((dir) => {
+  const home = path.join(dir, 'home');
+  const proj = path.join(dir, 'proj');
+  const cfg = path.join(dir, 'claude-config');
+  for (const d of [home, proj, path.join(cfg, 'plugins')]) fs.mkdirSync(d, { recursive: true });
+  const installed = path.join(cfg, 'plugins', 'installed_plugins.json');
+  fs.writeFileSync(installed, JSON.stringify({ version: 2, plugins: { [RETIRED_ID]: [{ scope: 'user' }, { scope: 'local', projectPath: proj }, { scope: 'project', projectPath: proj }] } }));
+  const log = path.join(dir, 'claude.log');
+  const bin = fakeClaude(dir, [home, proj]);
+  const env = { HOME: home, USERPROFILE: home, PATH: `${bin}${path.delimiter}${process.env.PATH}`, FAKE_CLAUDE_LOG: log };
+  const { out, code } = run(['setup', '--claude'], dir, env);
+  assert.strictEqual(code, 0, out);
+  const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const uninstalls = calls.filter((c) => c.argv[1] === 'uninstall');
+  assert.deepEqual(uninstalls.map((c) => [c.argv.join(' '), fs.realpathSync(c.cwd)]), [
+    [`plugin uninstall ${RETIRED_ID} --scope user`, fs.realpathSync(home)],
+    [`plugin uninstall ${RETIRED_ID} --scope local`, fs.realpathSync(proj)],
+  ]);
+  assert.ok(!calls.some((c) => c.argv.includes('marketplace') && c.argv.includes('remove')), 'its marketplace stays');
+  assert.match(out, /uninstalled: humanize-korean@im-not-ai \(scope user\)/);
+  assert.match(out, /uninstalled: humanize-korean@im-not-ai \(scope local\)/);
+  assert.match(out, new RegExp(`left as it is: humanize-korean@im-not-ai \\(scope project\\): the project shares it in \\.claude/settings\\.json\\. To remove it: .* claude plugin uninstall ${RETIRED_ID} --scope project`));
+  assert.deepEqual(JSON.parse(fs.readFileSync(installed, 'utf8')).plugins[RETIRED_ID].map((e) => e.scope), ['project']);
+}));
+
+test('setup --claude: an uninstall that leaves the plugin in place is reported as still installed; --dry-run runs none', () => withXdg((dir) => {
+  const home = path.join(dir, 'home');
+  const cfg = path.join(dir, 'claude-config');
+  for (const d of [home, path.join(cfg, 'plugins')]) fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(cfg, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { [RETIRED_ID]: [{ scope: 'user' }] } }));
+  const log = path.join(dir, 'claude.log');
+  const env = { HOME: home, USERPROFILE: home, PATH: `${fakeClaude(dir, [home])}${path.delimiter}${process.env.PATH}`, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_KEEP: '1' };
+  let { out, code } = run(['setup', '--claude'], dir, env);
+  assert.strictEqual(code, 0, out);
+  assert.match(out, /still installed: humanize-korean@im-not-ai \(scope user\)\. To remove it: claude plugin uninstall humanize-korean@im-not-ai --scope user/);
+  fs.rmSync(log);
+  ({ out, code } = run(['setup', '--claude', '--dry-run'], dir, env));
+  assert.strictEqual(code, 0, out);
+  assert.match(out, /\[dry-run\] claude plugin uninstall humanize-korean@im-not-ai --scope user/);
+  assert.ok(!fs.existsSync(log), 'a dry run starts no claude');
+}));
