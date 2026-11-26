@@ -1,0 +1,4 @@
+{
+  "#": "transfer-string.mjs points PYTHON_MANAGER_CONFIG here for what it starts, so Python install manager (PyManager) never installs a Python on its own.",
+  "automatic_install": false
+}

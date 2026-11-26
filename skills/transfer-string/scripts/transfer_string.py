@@ -16,7 +16,9 @@ it can. decompress finds the string by its content, in a file of any extension o
 (text around it and every space, line break and byte order mark inside it are ignored), checks it
 and writes the original file under its original name (a name that runs gets .restored, see below)
 next to the input (the current folder for --clipboard). A file that exists is never overwritten:
--1, -2 ... goes before the extension (report.md-1.b64, report-1.md). Both result files open in
+-1, -2 ... goes before the extension (report.md-1.b64, report-1.md); a link at the name (a broken
+one too) is not followed but skipped the same way. On Windows the files are opened by their
+extended path (\\\\?\\, \\\\?\\UNC\\), so a deep folder past MAX_PATH works. Both result files open in
 Notepad: .b64 holds bytes 0x21-0x7E only (no BOM, no line break); .hangul is UTF-8 with a BOM,
 then syllables U+AC00..U+CBFF only.
 A restored name that runs or is read on its own (a program, a script, an installer package, a macro
@@ -58,6 +60,7 @@ cut; 2 usage, or the input cannot be read; 3 the output cannot be written.
 import base64
 import binascii
 import bz2
+import functools
 import hashlib
 import heapq
 import lzma
@@ -507,11 +510,76 @@ def restore(frame):
 
 
 # ---------------------------------------------------------------- files, clipboard
+EXTENDED = ("\\\\?\\", "\\\\.\\")
+
+
+def long_path(p, nt=os.name == "nt", path=os.path):
+    """On Windows the extended form of p (\\\\?\\C:\\..., \\\\?\\UNC\\server\\share\\...), which opens past
+    MAX_PATH (260 characters) without the LongPathsEnabled setting; elsewhere p as it is. A path that is
+    extended already (\\\\?\\, \\\\.\\, also written with /) stays as it is. nt, path: for tests (ntpath)."""
+    if not nt:
+        return p
+    q = p.replace("/", "\\")
+    if q.startswith(EXTENDED):
+        return q
+    # abspath also resolves . and .., which an extended path would take literally
+    q = path.abspath(q)
+    if q.startswith(EXTENDED):
+        return q
+    return "\\\\?\\UNC\\" + q[2:] if q.startswith("\\\\") else "\\\\?\\" + q
+
+
+@functools.lru_cache(maxsize=None)
+def kernel32():
+    """kernel32's CreateFileW and CloseHandle with their types, set once (Windows only)."""
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    k32.CreateFileW.argtypes += [wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD]
+    k32.CreateFileW.argtypes += [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return k32
+
+
+def open_new(p):
+    """A new file p opened to write, never one that is there (FileExistsError) and never through a link at p, a
+    broken one included. POSIX: open's x mode (O_EXCL does not follow a link). Windows: x mode there follows a
+    broken link and makes its target (measured), so CreateFileW with CREATE_NEW and FILE_FLAG_OPEN_REPARSE_POINT,
+    on the extended path."""
+    if os.name != "nt":
+        return open(p, "xb")
+    import ctypes
+    import msvcrt
+
+    k32 = kernel32()
+    # GENERIC_WRITE, no sharing, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT
+    h = k32.CreateFileW(long_path(p), 0x40000000, 0, None, 1, 0x00200080, None)
+    if h is None or h == ctypes.c_void_p(-1).value:
+        err = ctypes.get_last_error()
+        if err in (80, 183):  # ERROR_FILE_EXISTS, ERROR_ALREADY_EXISTS
+            raise FileExistsError(p)
+        raise ctypes.WinError(err)
+    try:
+        fd = msvcrt.open_osfhandle(h, os.O_WRONLY | os.O_BINARY)
+    except BaseException:
+        k32.CloseHandle(h)
+        raise
+    try:
+        return os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)  # closes the handle too
+        raise
+
+
 def write_free(folder, stem, ext, data):
     for i in range(10000):
         p = os.path.join(folder, stem + ("-%d" % i if i else "") + ext)
         try:
-            with open(p, "xb") as f:
+            with open_new(p) as f:
                 f.write(data)
             return p
         except FileExistsError:
@@ -669,14 +737,14 @@ def mark_untrusted(src, dst):
         zone = b"[ZoneTransfer]\r\nZoneId=3\r\n"
         if src:
             try:
-                with open(src + ":Zone.Identifier", "rb") as h:
+                with open(long_path(src) + ":Zone.Identifier", "rb") as h:
                     got = h.read(4096)
                 if b"ZoneId=" in got:
                     zone = got
             except OSError:
                 pass
         try:
-            with open(dst + ":Zone.Identifier", "wb") as h:
+            with open(long_path(dst) + ":Zone.Identifier", "wb") as h:
                 h.write(zone)
             return "zone"
         except OSError:
@@ -717,14 +785,15 @@ MARK_KO = {
 
 def read_input(name):
     full = os.path.abspath(name)
-    if not os.path.exists(full):
+    at = long_path(full)
+    if not os.path.exists(at):
         raise TsError("E_INPUT", 2, "파일이 없습니다: " + full)
-    if not os.path.isfile(full):
+    if not os.path.isfile(at):
         raise TsError("E_INPUT", 2, "파일이 아닙니다: " + full)
-    if os.path.getsize(full) > CAP:
+    if os.path.getsize(at) > CAP:
         raise TsError("E_INPUT", 2, "입력이 64 MiB 를 넘습니다: " + full)
     try:
-        with open(full, "rb") as h:
+        with open(at, "rb") as h:
             return full, h.read()
     except OSError as e:
         raise TsError(
