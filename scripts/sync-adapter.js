@@ -15,6 +15,8 @@
  *   ralph-qa/references: payload-scan.mjs                             -> git-init/scripts    (secret scan before the first commit; tests at the source)
  *   init-dir/scripts: marker-block.mjs                                -> tune-tmux/scripts   (marked-block editor for tmux and psmux config files)
  *   wbs-gen/scripts: wg-dates.mjs, wg-plan.mjs, wg-html.mjs           -> progress-mon/scripts (WBS plan layout and Gantt grid for the WBS tab)
+ *   setup-bypass-permissions/scripts: codex-config.mjs                -> never-public/scripts (Codex config.toml line edits)
+ *   never-public/scripts: settings-json.mjs                           -> in-korean/scripts   (JSON settings read, atomic write, backup)
  * A pair without a root is under skills/; one with `root: true` names repo-root paths.
  * Usage:
  *   node scripts/sync-adapter.js          # copy canonical -> mirror (byte-identical)
@@ -37,6 +39,8 @@ const MIRRORS = [
   { from: 'ralph-qa/references', to: 'git-init/scripts', files: ['payload-scan.mjs'] },
   { from: 'init-dir/scripts', to: 'tune-tmux/scripts', files: ['marker-block.mjs'] },
   { from: 'wbs-gen/scripts', to: 'progress-mon/scripts', files: ['wg-dates.mjs', 'wg-plan.mjs', 'wg-html.mjs'] },
+  { from: 'setup-bypass-permissions/scripts', to: 'never-public/scripts', files: ['codex-config.mjs'] },
+  { from: 'never-public/scripts', to: 'in-korean/scripts', files: ['settings-json.mjs'] },
 ];
 const check = process.argv.includes('--check');
 

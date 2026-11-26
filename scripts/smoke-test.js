@@ -3,7 +3,7 @@
 /*
  * S6 verification harness (no network). Run: `node scripts/smoke-test.js`.
  * npm pack -> install the tarball into a TEMP prefix + TEMP HOME (npm's cache and logs in the TEMP folder too) -> dry-run setup for both
- * targets -> assert planned actions match the manifest (76 skills + 2 command prompts, AGENTS.md
+ * targets -> assert planned actions match the manifest (78 skills + 2 command prompts, AGENTS.md
  * untouched, no writes). Exits non-zero on any failed assertion.
  */
 const fs = require('fs');
@@ -95,7 +95,7 @@ try {
   // the dry-run prints the package-relative source with the OS separator (skills\x on Windows): match on /
   const codexOut = bankerRun(['setup', '--codex', '--scope', 'project', '--dry-run'], { cwd: home, env }).replace(/\\/g, '/');
   const copies = (codexOut.match(/\[dry-run\] copy skills\//g) || []).length;
-  ok(copies === 76, `codex dry-run plans 76 skill copies (got ${copies})`);
+  ok(copies === 78, `codex dry-run plans 78 skill copies (got ${copies})`);
   const codexOnlyNames = JSON.parse(fs.readFileSync(path.join(root, 'codex', 'manifest.json'), 'utf8'))
     .surfaces.filter((s) => s.target === 'codex-only').map((s) => s.name);
   const coCopies = (codexOut.match(/\[dry-run\] copy codex\/skills\//g) || []).length;
@@ -347,8 +347,8 @@ try {
   bankerRun(['setup', '--codex', '--scope', 'user'], { cwd: home2, env: env2 });
   const instDir = path.join(home2, '.codex', 'skills');
   const installed = fs.readdirSync(instDir).filter((d) => d.startsWith('banker-'));
-  const wantSkills = 76 + 2 + codexOnlyNames.length;
-  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 76 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
+  const wantSkills = 78 + 2 + codexOnlyNames.length;
+  ok(installed.length === wantSkills, `real codex install has ${wantSkills} banker-* skills: 78 skills, 2 commands, ${codexOnlyNames.length} codex-only (got ${installed.length})`);
   ok(['banker-setup', 'banker-front-qa', 'banker-graceful-pause'].every((d) => installed.includes(d)),
      'the commands and the codex-only skills are installed as Codex skills');
   ok(!installed.includes('banker-ultraqa'), 'the real codex install has no banker-ultraqa (claude-only; Codex keeps OMX $ultraqa)');
@@ -512,6 +512,20 @@ try {
   const idirRun = cp.spawnSync(process.execPath, [path.join(idirDir, 'scripts', 'init-dir.mjs'), '--help'], { encoding: 'utf8' });
   ok(idirRun.status === 0 && idirRun.stdout.split(/\r?\n/)[0].startsWith('init-dir: '),
      `the Codex copy of init-dir runs (status ${idirRun.status}, stderr ${JSON.stringify(idirRun.stderr)})`);
+  // never-public and in-korean run their script from the skill's own folder with the shared modules beside it
+  // (codex-config.mjs and settings-json.mjs, byte-identical copies kept by scripts/sync-adapter.js); the Codex copies keep
+  // those files and none of the tests, and status runs there on the temp home (it only reads).
+  const statusEnv = { ...env2, CODEX_HOME: path.join(home2, '.codex'), XDG_CONFIG_HOME: path.join(home2, '.config'), APPDATA: path.join(home2, 'AppData') };
+  delete statusEnv.CLAUDE_CONFIG_DIR;
+  for (const [skill, first] of [['never-public', 'never-public 상태'], ['in-korean', 'in-korean 상태']]) {
+    ok(installed.includes(`banker-${skill}`), `new ${skill} installed as banker-${skill}`);
+    const sDir = path.join(instDir, `banker-${skill}`);
+    const sFiles = mfAllSkills.find((s) => s.name === skill).supportingFiles;
+    ok(sFiles.every((f) => fs.existsSync(path.join(sDir, ...f.split('/')))) && !fs.existsSync(path.join(sDir, 'scripts', `${skill}.test.mjs`)),
+       `banker-${skill} carries ${sFiles.join(', ')} and no tests into the Codex install`);
+    const sRun = cp.spawnSync(process.execPath, [path.join(sDir, 'scripts', `${skill}.mjs`), 'status'], { encoding: 'utf8', env: statusEnv });
+    ok(sRun.status === 0 && sRun.stdout.startsWith(first), `the Codex copy of ${skill} runs status (status ${sRun.status}, stderr ${JSON.stringify(sRun.stderr)})`);
+  }
   // git-init runs scripts/git-init.mjs with copies of init-dir's marker-block.mjs and ralph-qa's payload-scan.mjs beside
   // it (scripts/sync-adapter.js keeps them byte-identical); the Codex copy keeps those three files and none of the tests.
   ok(installed.includes('banker-git-init'), 'new git-init installed as banker-git-init');
@@ -741,6 +755,8 @@ try {
     path.join('skills', 'smart-compact', 'scripts', 'codex-gate.test.mjs'),
     path.join('skills', 'tone-compact', 'scripts', 'tone-compact.test.mjs'),
     path.join('skills', 'anti-drm', 'scripts', 'anti-drm.test.mjs'),
+    path.join('skills', 'never-public', 'scripts', 'never-public.test.mjs'),
+    path.join('skills', 'in-korean', 'scripts', 'in-korean.test.mjs'),
     path.join('skills', 'theme-selection', 'scripts', 'themes.test.mjs'),
     ...['pm-check', 'pm-config', 'pm-data', 'pm-html', 'pm-memory', 'pm-render', 'pm-server', 'pm-skill', 'pm-sources', 'pm-wbs', 'progress-mon']
       .map((n) => path.join('skills', 'progress-mon', 'scripts', `${n}.test.mjs`)),
