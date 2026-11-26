@@ -420,5 +420,17 @@
     "banker:progress-mon",
     "banker:setup-omc-hud",
     "banker:transfer-string"
+  ],
+  "0.32.0": [
+    "banker:humanizer",
+    "banker:in-korean",
+    "banker:never-public",
+    "banker:presentation-graphic-gen",
+    "banker:progress-mon",
+    "banker:refresh-readme",
+    "banker:setup-bypass-permissions",
+    "banker:setup-omc-hud",
+    "banker:transfer-string",
+    "banker:update-banker"
   ]
 }

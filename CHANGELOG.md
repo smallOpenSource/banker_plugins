@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.32.0] - 2026-11-26
+
+### Added
+- 새 스킬 `never-public`: 로컬 PC 밖으로 나가는 부가 통신을 끄는 설정을 한 번에 켜고 끈다. 하위 명령 `on`, `off`, `status`(인자가 없으면 `status`).
+  - Claude Code `settings.json`: `disableRemoteControl: true`, `autoUploadSessions: false`, `remoteControlAtStartup: false`, `attribution: {commit: "", pr: "", sessionUrl: false}`, `feedbackSurveyRate: 0`, `feedbackDrafts: "off"`, `enableArtifact: false`, `env.DISABLE_TELEMETRY`, `env.DISABLE_ERROR_REPORTING`(`env` 의 다른 키는 그대로).
+  - claude.ai 동기화(`syncClaudeAiSkills`, `syncClaudeAiPlugins`)도 끈다. 다만 끄면 claude.ai 에서 받은 스킬과 플러그인이 다음 시작 때 `<설정 폴더>/{skills,plugins}/.trash` 로 옮겨지고 `cleanupPeriodDays` 뒤 지워진다. 받은 것이 있으면 목록과 경고를 보이고, 사람이 고른 확인(`--yes`) 뒤에만 이 두 키를 바꾼다. 되돌리면 되살리지 않고 다시 받는다(네트워크 필요).
+  - banker `config.json`: `telemetry: false`, `updateCheck: false`, `promptedStarV1: true`.
+  - Codex `config.toml`: `check_for_update_on_startup = false`, `[analytics] enabled = false`, `[feedback] enabled = false`, `[otel]` 의 `exporter`, `trace_exporter`, `metrics_exporter` 를 `"none"`. 바꾸는 키의 줄만 고치고 주석과 다른 키는 그대로 둔다.
+  - 끄지 않는 통신은 `on` 출력 끝 줄이 늘 알린다: 모델 API 호출, 자동 업데이트(`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 은 자동 업데이트와 banker 업데이트까지 막아 넣지 않음), Codex 의 마켓플레이스 동기화, 웹 검색과 MCP, 사용자가 부르는 스킬의 통신.
+  - 켜기 전 값은 `<파일>.never-public.json`, 처음 원래 바이트는 `<파일>.never-public.bak` 에 둔다. `off` 는 지금 값이 `on` 이 둔 값인 키만 되돌린다(원래 없던 키는 지움, `on` 뒤에 사용자가 바꾼 키는 그대로).
+  - 모든 대상을 먼저 읽고, 하나라도 거부할 파일(깨진 JSON, 깨진 TOML, 링크인 `config.toml` 등)이면 아무것도 바꾸지 않는다. Codex 에서는 설정 폴더가 작업 폴더 밖이라 그 명령 하나만 승인을 요청한다.
+- 새 스킬 `in-korean`: 답변 언어를 한국어로 고정하는 사용자 범위 훅을 켜고 끈다(인자가 없으면 `on`). 설정의 `language` 를 `korean` 으로 해도 영어로 답하는 모델을 막는다.
+  - Claude Code `settings.json` 과 Codex `hooks.json` 의 `SessionStart`, `UserPromptSubmit` 맨 뒤에 `# banker:in-korean` 표지 훅 묶음을 하나씩 더한다. 훅은 node 를 띄우지 않고 고정 JSON 한 줄(`additionalContext`)을 찍는다.
+  - Claude Code 는 `language` 가 없으면 `"korean"` 도 넣는다. `off` 는 그 훅과 넣은 `language` 만 뺀다.
+  - Codex 는 다시 열 때 Hooks need review 창이나 `/hooks` 에서 신뢰해야 돈다. 플러그인 훅이 아니라 `banker-hooks-rev` 는 바뀌지 않는다.
+- `banker uninstall` 이 `never-public` 으로 바꾼 값이나 `in-korean` 훅이 남아 있으면 한 줄로 알린다. 둘은 플러그인을 지워도 설정 파일에 남는다.
+
+### Changed
+- `humanizer`: 영문 패턴 목록으로 하던 윤문을 독립 좌석의 합의 루프로 바꿨다. 어색한 문장 때문에 생기는 AI 티만 고친다.
+  - 작은 모델과 낮은 노력의 제안 좌석 3개 이상이 고칠 곳을 내고, 다른 투표 좌석 3개 이상의 과반(3표 중 2표)이 받아들인 수정만 적용한다. 새 합의가 0건인 회차까지 반복한다(기본 상한 5, `--max-rounds`). 좌석 수는 `--seats <N>`(3 이상).
+  - 좌석: Claude Code 는 `sonnet`, `haiku` 에 노력 `medium`, `low`. Codex 는 `spawn_agent` 가 받는 luna 모델에 `medium`, `low`, `none`. Codex 의 좌석은 부모 모델 이름을 밝혀 `seats.json` 에 `"modelCheck": "none"` 을 쓴다.
+  - 글의 언어를 판정해(`lang.mjs`) 그 언어 기준으로 본다. 한국어는 `criteria-ko.md`(번역투, 피동, 명사 나열 등), 영어는 `patterns-en.md`(blader/humanizer 의 영문 패턴 목록), 그 밖의 언어는 그 언어의 원어민 편집자 기준이다. 섞인 글은 문장마다 그 언어 기준이다.
+  - 내용은 더하거나 빼지 않는다. 코드, 명령, URL, 경로, 숫자, 인용은 `consensus.mjs merge` 가 그것을 건드리는 제안을 버린다. 코드와 설정 파일은 받지 않는다.
+  - 사본을 다듬고, 원본 파일에 쓸지는 끝에 묻는다.
+- `presentation-graphic-gen`: 다듬기 루프의 `consensus.mjs`, `apply-fix.mjs` 가 `humanizer` 의 정본 사본이 됐다(`sync-adapter.js` 짝). Codex 좌석은 `seats.json` 에 `"modelCheck": "none"` 을 쓰고 `spawn_agent` 인자(luna 모델, `reasoning_effort`, `fork_turns: "none"`)를 적었다. 예전 판의 Codex 다듬기 루프는 좌석이 밝힌 부모 모델 이름 때문에 멈췄다.
+- `refresh-readme`: `humanizer` 로 넘기는 기준과 마커 목록 자리를 새 humanizer 에 맞췄다.
+
+### Removed
+- 다른 플러그인 `humanize-korean@im-not-ai` 의 `humanize`, `humanize-redo`, `humanize-scan` 은 효과가 없어 banker 가 그 플러그인을 지운다(윤문은 `humanizer`). 플러그인에서 스킬만 골라 지울 수 없어 플러그인째 지운다. 마켓플레이스 등록은 그대로 둔다.
+  - `banker setup --claude` 와 `update-banker` 가 user, local 범위 설치를 `claude plugin uninstall humanize-korean@im-not-ai --scope <범위>` 로 지운다. project 범위는 공유 설정이라 명령만 안내한다.
+  - 자동 업데이트로 새 판을 받은 사용자에게는 Claude Code 의 SessionStart 훅(`hooks/retired-notify.mjs`)이 그 플러그인이 있을 때 한 번 지우는 명령을 알린다. 훅은 지우지 않는다. Codex 에는 그 세 스킬이 없어 해당이 없다.
+
+### Fixed
+- `transfer-string`: Python install manager(PyManager)가 관리자 정책 레지스트리 키로 자동 설치를 켜 두면 0.31.0 의 `PYTHON_MANAGER_AUTOMATIC_INSTALL=false` 를 이겨 Python 을 내려받아 설치하던 것. 이제 PyManager 의 실행 파일(`python`, `python3`, `py` 별칭)은 실행하지 않는다.
+  - 대신 `pymanager list -f=exe -q`(내려받지 않음)와 `%LOCALAPPDATA%\Python\pythoncore-*` 의 설치된 런타임만 후보로 쓴다. 런타임이 없으면 아무것도 설치하지 않고 종료 9 다.
+  - 두 번째 방어로 `PYTHON_MANAGER_CONFIG` 를 묶음 안의 `pymanager-no-install.json`(`automatic_install: false`)으로 준다.
+  - Store 판 Python 별칭과 App Installer 스텁은 그대로 후보다. 스텁은 화면 세션에서도 창을 열지 않음을 확인했다.
+- `transfer-string`: 한글 사용자 폴더의 Windows 에서 Python 을 찾지 못하고 종료 9 였던 것. probe 출력이 cp949 로 깨졌다. probe 에 `-X utf8` 을 준다.
+- `transfer-string`: Windows 의 260자 넘는 경로(깊은 폴더, 뒤에 붙는 `.restored`)에 복원 파일을 쓰지 못하던 것. `\\?\`, `\\?\UNC\` 경로로 쓰고, 이름이 링크(끊어진 링크 포함)면 따라가지 않는다.
+- `progress-mon`: 폴더를 본 뒤 쓰기 전에 그 폴더를 링크로 바꿔치면 자료 폴더 밖에 쓸 수 있던 틈. `static` 기본 자리(`snapshots/`), `static <파일>`, `export <파일>`, `adr.json.rejected-<시각>` 옮기기가 모두 같은 쓰기 함수를 지난다.
+  - POSIX 는 그 폴더로 `chdir` 해 이름만으로 열고, 열기 전과 쓰기 전에 폴더 정체(dev, ino)와 실제 경로를 대조한다. Windows 는 열린 파일이 든 폴더를 옮길 수 없는 성질로 고정한 뒤 대조한다.
+  - 어긋나면 내용을 쓰지 않고 `폴더가 바뀌어 쓰지 않음(링크 바꿔치기로 보임)` 으로 종료 1 이다.
+  - Windows 네트워크 경로(SMB 공유, 매핑 드라이브)는 그 고정이 듣지 않아, 쓰기 전과 직후에 파일과 경로의 정체, 링크 수를 대조하고 어긋나면 0 바이트로 자른다. 파일 ID 를 주지 않는 서버는 실제 경로와 링크 수만 본다(SKILL.md 에 약한 보장으로 적음).
+- `progress-mon`: Codex 샌드박스에서 `init` 이 승인 없이 돌아 git 제외 줄이 빠지고, 작업 폴더가 프로젝트의 하위 폴더면 자료 폴더 쓰기가 `EROFS` 로 막히던 것. SKILL.md 의 런타임 표가 `init` 은 처음부터, 작업 폴더 밖 쓰기는 그때 승인을 요청하게 한다. 막힌 쓰기 뒤에는 `알림: 쓰기가 막힘` 줄이 런타임별 안내(Codex 는 승인 요청과 `!` 명령, Claude Code 는 권한 확인)를 낸다.
+- `progress-mon`: `init` 의 자료 폴더와 첫 파일 쓰기가 읽기 전용으로 막히면 예기치 못한 오류(종료 2)로 끝나던 것. 이제 `만들지 못함(<코드>)` 과 종료 1, 막힘 안내 줄이다.
+
+### Notes
+- 훅 코드: `hooks/retired-notify.mjs` 는 Claude Code 전용 훅(`hooks/hooks.json`)이라 Codex 플러그인 사용자에게 `/hooks` 신뢰를 다시 묻지 않는다. `banker-hooks-rev` 는 `cc0b4f7d4e17` 그대로다.
+- 크기: git 추적 파일 합계는 639개, 약 29.3MB(29,349,492 바이트)다. 0.31.0 은 614개, 약 29.0MB 였다. npm 묶음은 448개 파일, 압축 18.3MB, 푼 크기 23.8MB 다.
+
 ## [0.31.0] - 2026-11-26
 
 ### Added
