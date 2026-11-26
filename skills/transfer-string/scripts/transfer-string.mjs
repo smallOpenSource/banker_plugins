@@ -30,7 +30,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const WIN = process.platform === "win32";
@@ -59,6 +59,13 @@ function byVersion(base, re) {
   }
 }
 
+/** The Python of a PyManager runtime folder d: python.exe, and for a free-threaded one (pythoncore-3.14t-64) its own
+ * name first, python3.14t.exe (the "executable" of PyManager's index for those, src tests/data/index-windows-*.json). */
+function coreExes(d) {
+  const m = basename(d).match(/^pythoncore-(3\.\d+)t-/i);
+  return m ? [join(d, `python${m[1]}t.exe`), join(d, "python.exe")] : [join(d, "python.exe")];
+}
+
 /** Python install folders off PATH: python(.exe) itself, the newest version first. On Windows that includes the
  * runtimes Python install manager put in its default folder (%LOCALAPPDATA%\Python\pythoncore-3.14-64 ...), found
  * without running PyManager at all. */
@@ -68,7 +75,7 @@ function installDirs(env, win = WIN) {
     const local = env.LOCALAPPDATA || join(home, "AppData", "Local");
     return [
       ...byVersion(join(local, "Programs", "Python"), /^Python3\d+$/i).map((d) => join(d, "python.exe")),
-      ...byVersion(join(local, "Python"), /^pythoncore-3\.\d+t?-(64|32|arm64)$/i).map((d) => join(d, "python.exe")),
+      ...byVersion(join(local, "Python"), /^pythoncore-3\.\d+t?-(64|32|arm64)$/i).flatMap(coreExes),
       ...byVersion(join(home, ".local", "bin"), /^python3\.\d+\.exe$/i),
       ...["miniconda3", "anaconda3", "Miniconda3", "Anaconda3"].map((d) => join(home, d, "python.exe")),
     ];
@@ -169,22 +176,26 @@ function listEnv(env) {
 }
 
 /** The runtimes PyManager p lists, as regular python.exe files: [] with none (or when its pymanager.exe beside it is
- * not PyManager's too). The list is UTF-8 (measured with a Korean user folder). opts: spawn, and isPyManager's. */
+ * not PyManager's too). The list is UTF-8 (measured with a Korean user folder). Why there are none goes in opts.notes
+ * for the error line: "pymanager-unlisted" (no list: pymanager.exe is not there, say its alias is turned off, or the
+ * list failed) or "pymanager-empty" (the list names no runtime). opts: spawn, notes, and isPyManager's. */
 export function pyManagerRuntimes(p, env = process.env, { spawn = spawnSync, ...opts } = {}) {
   const mgr = join(dirname(p), "pymanager.exe");
-  if (!isPyManager(mgr, fileKind(mgr, opts), opts)) return [];
+  const unlisted = () => (opts.notes?.add("pymanager-unlisted"), []);
+  if (!isPyManager(mgr, fileKind(mgr, opts), opts)) return unlisted();
   const r = spawn(mgr, PYMANAGER_LIST, { cwd: runDir(), encoding: "utf8", env: listEnv(env), timeout: PROBE_MS, windowsHide: true });
-  if (r.error || r.status !== 0) return [];
-  return String(r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter((l) => isAbsolute(l) && fileKind(l, opts) === "file");
+  if (r.error || r.status !== 0) return unlisted();
+  const found = String(r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter((l) => isAbsolute(l) && fileKind(l, opts) === "file");
+  if (!found.length) opts.notes?.add("pymanager-empty");
+  return found;
 }
 
-/** One PATH match as candidates: a PyManager launcher becomes its runtimes, anything else itself. A PyManager whose
- * list is empty is noted in opts.notes ("pymanager-empty", for the error line). */
+/** One PATH match as candidates: a PyManager launcher becomes its runtimes (asked once per pymanager.exe), anything
+ * else itself. */
 function expand(p, kind, pre, env, opts, lists) {
   if (!(opts.win ?? WIN) || !isPyManager(p, kind, opts)) return [[p, ...pre]];
   const mgr = join(dirname(p), "pymanager.exe").toLowerCase();
   if (!lists.has(mgr)) lists.set(mgr, pyManagerRuntimes(p, env, opts));
-  if (!lists.get(mgr).length) opts.notes?.add("pymanager-empty");
   return lists.get(mgr).map((x) => [x]);
 }
 
@@ -246,9 +257,13 @@ export function findPython(env = process.env, opts = {}) {
   return null;
 }
 
-const PYMANAGER_EMPTY = " Python install manager(PyManager)는 있지만 설치된 런타임이 없습니다. 이 도우미는 PyManager 가 Python 을 내려받게 하지 않습니다. 런타임을 설치하거나(py install default, 인터넷 필요) 다른 Python 의 절대 경로를 TRANSFER_STRING_PYTHON 에 지정하십시오.";
+const PYMANAGER_NOTES = {
+  "pymanager-empty": " Python install manager(PyManager)는 있지만 설치된 런타임이 없습니다. 이 도우미는 PyManager 가 Python 을 내려받게 하지 않습니다. 런타임을 설치하거나(py install default, 인터넷 필요) 다른 Python 의 절대 경로를 TRANSFER_STRING_PYTHON 에 지정하십시오.",
+  "pymanager-unlisted": " Python install manager(PyManager)의 실행 파일은 있지만 그 목록(pymanager.exe list)을 읽지 못해 설치된 런타임을 확인하지 못했습니다(pymanager.exe 실행 별칭이 꺼져 있을 수 있음). 이 도우미는 PyManager 의 python, py 를 실행하지 않습니다. 설정의 앱 실행 별칭에서 pymanager.exe 를 켜거나 런타임 python.exe 의 절대 경로를 TRANSFER_STRING_PYTHON 에 지정하십시오.",
+};
 
-/** The E_PYTHON line: why no Python was taken. notes: pythons' (a PyManager with no runtime adds a sentence). */
+/** The E_PYTHON line: why no Python was taken. notes: pythons' (a PyManager without a runtime it could list adds a
+ * sentence on why). */
 export function noPythonText(env, notes = new Set()) {
   const named = env.TRANSFER_STRING_PYTHON;
   const why = named && !isAbsolute(named)
@@ -256,7 +271,8 @@ export function noPythonText(env, notes = new Set()) {
     : named
     ? `TRANSFER_STRING_PYTHON 에 지정한 ${named} 가 Python 3.7 이상으로 실행되지 않습니다. 경로를 고친 뒤 다시 실행하십시오.`
     : "Python 3.7 이상을 찾지 못했습니다(PATH 의 python3, python, Windows 의 py 와 Microsoft Store 판, PyManager 가 설치한 런타임). PATH 밖에 설치했으면 환경 변수 TRANSFER_STRING_PYTHON 에 그 python 실행 파일의 절대 경로를 지정한 뒤 다시 실행하십시오.";
-  return `[transfer-string] 오류: ${why}${notes.has("pymanager-empty") ? PYMANAGER_EMPTY : ""}\nTSTR_ERROR code=E_PYTHON\n`;
+  const pm = Object.keys(PYMANAGER_NOTES).filter((n) => notes.has(n)).map((n) => PYMANAGER_NOTES[n]).join("");
+  return `[transfer-string] 오류: ${why}${pm}\nTSTR_ERROR code=E_PYTHON\n`;
 }
 
 /** Runs transfer_string.py with op and args in the caller's folder; returns the exit code. */

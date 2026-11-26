@@ -1000,15 +1000,26 @@ test("E_PYTHON: a PyManager with no runtime is noted and named in the error line
   writeFileSync(rt, "");
   pythons(pmSim(pmTargets(PM_PKG), [rt]).env, { ...pmSim(pmTargets(PM_PKG), [rt]).opts, notes: withRuntime });
   assert.equal(withRuntime.size, 0, "a PyManager with a runtime is not noted");
+  // no list to read (pymanager.exe's alias turned off, or the list fails): said so, not "no runtime installed"
+  const { "pymanager.exe": _off, ...noMgr } = pmTargets(PM_PKG);
+  for (const [sim, why] of [[pmSim(noMgr, []), "pymanager.exe's alias is off"], [pmSim(pmTargets(PM_PKG), [], 1), "the list fails"]]) {
+    const n = new Set();
+    assert.equal(findPython(sim.env, { ...sim.opts, notes: n }), null);
+    assert.deepEqual([...n], ["pymanager-unlisted"], why);
+    const t = noPythonText({}, n);
+    assert.match(t, /그 목록\(pymanager\.exe list\)을 읽지 못해 설치된 런타임을 확인하지 못했습니다/, why);
+    assert.doesNotMatch(t, /있지만 설치된 런타임이 없습니다/, why);
+    assert.match(t, /TSTR_ERROR code=E_PYTHON\n$/);
+  }
 });
 
-test("launcher: PyManager's default runtime folder (%LOCALAPPDATA%\\Python\\pythoncore-*) is a candidate without running PyManager, the newest first", () => {
+test("launcher: PyManager's default runtime folder (%LOCALAPPDATA%\\Python\\pythoncore-*) is a candidate without running PyManager, the newest first; a free-threaded one by its own python3.<n>t.exe first", () => {
   const local = fresh();
   for (const n of ["pythoncore-3.13-64", "pythoncore-3.15-64", "pythoncore-3.14t-64", "pythoncore-3.12", "_cache", "bin"]) mkdirSync(join(local, "Python", n), { recursive: true });
   const sim = pmSim({});
   const got = pythons({ PATH: "", LOCALAPPDATA: local }, sim.opts).map((c) => c[0]).filter((p) => p.startsWith(local));
-  const at = (n) => join(local, "Python", n, "python.exe");
-  assert.deepEqual(got, [at("pythoncore-3.15-64"), at("pythoncore-3.14t-64"), at("pythoncore-3.13-64")]);
+  const at = (n, exe = "python.exe") => join(local, "Python", n, exe);
+  assert.deepEqual(got, [at("pythoncore-3.15-64"), at("pythoncore-3.14t-64", "python3.14t.exe"), at("pythoncore-3.14t-64"), at("pythoncore-3.13-64")]);
   assert.equal(sim.calls.length, 0, "PyManager is not run");
 });
 
