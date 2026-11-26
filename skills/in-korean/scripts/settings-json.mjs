@@ -99,8 +99,9 @@ export function writeJson(file, data, { bom = '', style = DEFAULT_STYLE, raw = n
   writeFresh(real, serialize(data, bom, style), mode);
 }
 
-// on 이 원본을 백업할지: 이번이 첫 on(기록 없음)이거나 백업이 없을 때만. 두 번째 on 이 그때 바이트로 덮지 않게 한다.
-export const backupFor = (backup, recordFile) => (!existsSync(recordFile) || !existsSync(backup) ? backup : null);
+// on 이 원본을 백업할지: 기록이 없을 때(첫 on)만. 두 번째 on 이 on 뒤 바이트로 백업을 쓰지 않게 한다. 원래 파일이 없던 첫 on 은
+// 백업이 없는 것이 맞다(기록의 existed: false 가 되돌릴 근거).
+export const backupFor = (backup, recordFile) => (existsSync(recordFile) ? null : backup);
 
 // 경로의 값. { has, value }.
 export function getPath(obj, keys) {

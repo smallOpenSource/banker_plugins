@@ -22,7 +22,7 @@
  * 종료: 0 완료 또는 이미 그 상태, 1 거부나 사용법 오류(바꾼 것 없음), 2 예기치 못한 오류(메시지의 바꾼 파일 확인),
  * 3 이 계정이 쓸 수 없음(샌드박스 등).
  */
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -356,26 +356,84 @@ function onlyHint(list, failed) {
 
 // on 뒤에 늘 알리는 남는 통신.
 export const REMAINING = '- 남는 통신(이 스킬이 끄지 않음): 모델 API 호출, Claude Code 와 Codex 의 자동 업데이트(CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC 은 자동 업데이트와 banker 업데이트 경로까지 막아 넣지 않음), '
-  + 'Claude Code 의 기능 플래그 조회, Codex 의 플러그인 마켓플레이스 동기화, 웹 검색, MCP 서버, 사용자가 부르는 banker 스킬의 통신(update-banker, setup-*, deep-research, wbs-gen 공휴일, 3d-intro 의 Azure 등)';
+  + 'Codex 의 플러그인 마켓플레이스 동기화, 웹 검색, MCP 서버, 사용자가 부르는 banker 스킬의 통신(update-banker, setup-*, deep-research, wbs-gen 공휴일, 3d-intro 의 Azure 등)';
 
+// 대상 하나의 결과 줄. 바뀐 것이 없으면 한 줄.
 function reportChange(lines, t, r, action) {
-  if (!r.changed.length && !r.kept?.length) {
+  const kept = r.kept ?? [];
+  if (!r.changed.length && !kept.length) {
     lines.push(`- ${LABEL[t.name]}: ${r.noRecord ? 'on 기록이 없어 바꾸지 않음' : `이미 ${action === 'on' ? '켜짐' : '꺼짐'}`} (${t.file})`);
     return;
   }
-  lines.push(`- ${LABEL[t.name]} (${t.file})`);
-  for (const c of r.changed) lines.push(`  - ${c}`);
-  for (const k of r.kept ?? []) lines.push(`  - ${k}`);
+  lines.push(`- ${LABEL[t.name]} (${t.file})`, ...[...r.changed, ...kept].map((x) => `  - ${x}`));
   if (r.changed.length) lines.push(`  - ${RESTART[t.name]}`);
+  if (action === 'off' && r.changed.some((c) => c.startsWith('syncClaudeAi'))) lines.push(`  ${RESYNC}`);
 }
 
+/* ---------- claude.ai 동기화 두 키의 확인 ---------- */
+
+// 동기화 키와 그 항목이 사는 폴더(<설정 폴더>/<폴더>/synced/<조직>_<계정>/<이름>). 2.1.332: 키를 false 로 두면 다음 시작 때
+// 그 항목이 숨겨지고 <설정 폴더>/<폴더>/.trash 로 옮겨지며, cleanupPeriodDays 뒤 지워진다. 다시 켜면 되살리지 않고 새로 받는다.
+export const SYNC = [
+  { key: 'syncClaudeAiSkills', dir: 'skills', label: '스킬' },
+  { key: 'syncClaudeAiPlugins', dir: 'plugins', label: '플러그인' },
+];
+
+// 동기화로 받은 항목 이름. 버킷(<조직>_<계정>) 안의 점으로 시작하지 않는 폴더. 읽지 못하면 빈 목록.
+export function syncedNames(claudeDir, dir) {
+  const root = join(claudeDir, dir, 'synced');
+  const names = new Set();
+  for (const bucket of listDirs(root)) {
+    if (/^[0-9a-f-]{36}_([0-9a-f-]{36}|unbound)$/i.test(bucket)) for (const n of listDirs(join(root, bucket))) names.add(n);
+  }
+  return [...names].sort();
+}
+
+function listDirs(dir) {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+// on 에서 동기화 키를 끄면 사라질 항목. 이미 false 인 키는 뺀다. [{ key, label, names, dir }].
+function syncLosses(t, o) {
+  const r = readJson(t.file);
+  if (r.why) return [];
+  return SYNC.filter((s) => r.data[s.key] !== false)
+    .map((s) => ({ ...s, names: syncedNames(o.claudeDir, s.dir), trash: join(o.claudeDir, s.dir, '.trash') }))
+    .filter((s) => s.names.length);
+}
+
+function lossLines(losses, yes) {
+  const lines = [`- ${yes ? '적용함' : '확인 필요'}: claude.ai 동기화를 끄면 아래 항목은 다음 시작 때 숨겨지고 .trash 로 옮겨짐`];
+  for (const s of losses) lines.push(`  - ${s.label}(${s.trash} 로): ${s.names.join(', ')}`);
+  lines.push('  - .trash 는 cleanupPeriodDays 뒤 지워짐. off 로 되돌리면 되살리지 않고 Claude 계정으로 새로 받으므로 네트워크가 필요함');
+  if (!yes) lines.push(`- 남은 일: 목록을 확인한 뒤 never-public on --yes 로 ${losses.map((s) => s.key).join(', ')} 도 끔(이번에는 건너뜀)`);
+  return lines;
+}
+
+// on 의 Claude Code 대상에서, 확인(--yes) 없이는 사라질 항목이 있는 동기화 키를 뺀다. { list, lines }.
+function syncGate(list, o, yes) {
+  const t = list.find((x) => x.name === 'claude' && !x.absent);
+  const losses = t ? syncLosses(t, o) : [];
+  if (!losses.length) return { list, lines: [] };
+  const skip = yes ? [] : losses.map((s) => s.key);
+  const gated = list.map((x) => (x === t ? { ...x, want: x.want.filter(([keys]) => !skip.includes(keys[0])) } : x));
+  return { list: gated, lines: lossLines(losses, yes) };
+}
+
+export const RESYNC = '- claude.ai 스킬과 플러그인은 되살리지 않음. 다음 시작 때 Claude 계정으로 새로 받음(네트워크 필요). .trash 의 사본은 cleanupPeriodDays 뒤 지워짐';
+
 // on 이나 off. { code, message }. 쓰기 도중 오류는 앞서 바꾼 파일을 함께 알린다.
-export function apply(action, o, only = null) {
-  const list = targets(o, only);
+export function apply(action, o, only = null, yes = false) {
+  const gate = action === 'on' ? syncGate(targets(o, only), o, yes) : { list: targets(o, only), lines: [] };
+  const list = gate.list;
   if (!list.length) return { code: 1, message: '바꿀 대상이 없음(설정 폴더가 없음)' };
   const { loaded, why, failed } = loadAll(list);
   if (why) return { code: 1, message: `거부: ${why}. 아무것도 바꾸지 않음${onlyHint(list, failed)}` };
-  const lines = [`never-public ${action}`];
+  const lines = [`never-public ${action}`, ...gate.lines];
   const done = [];
   for (const [t, r] of loaded) {
     try {
@@ -413,7 +471,7 @@ export function status(o, only = null) {
 
 /* ---------- 명령줄 ---------- */
 
-const USAGE = '사용법: never-public on | off | status [--only claude,codex,banker]';
+const USAGE = '사용법: never-public on [--yes] | off | status [--only claude,codex,banker]';
 const NAMES = ['claude', 'codex', 'banker'];
 
 // argv 에서 --<name> x 나 --<name>=x 를 뺀다. { value(없으면 null), rest }.
@@ -429,11 +487,14 @@ function takeFlag(argv, name) {
 }
 
 export function parseArgs(argv) {
-  const { value, rest } = takeFlag(argv, 'only');
+  const { value, rest: all } = takeFlag(argv, 'only');
+  const yes = all.includes('--yes'); // on 만: 사라질 claude.ai 항목을 확인했음
+  const rest = all.filter((x) => x !== '--yes');
   const only = value === null ? null : value.split(',');
   const command = (rest[0] ?? 'status').toLowerCase();
   const badOnly = only !== null && only.some((x) => !NAMES.includes(x)); // '' 는 [''] 라 여기서 걸림
-  return rest.length > 1 || !['on', 'off', 'status'].includes(command) || badOnly ? { error: USAGE } : { command, only };
+  const bad = rest.length > 1 || !['on', 'off', 'status'].includes(command) || badOnly || (yes && command !== 'on');
+  return bad ? { error: USAGE } : { command, only, yes };
 }
 
 function failure(e) {
@@ -446,7 +507,7 @@ export function main(argv, o = defaults()) {
   const args = parseArgs(argv);
   if (args.error) return { code: 1, message: args.error };
   try {
-    return args.command === 'status' ? status(o, args.only) : apply(args.command, o, args.only);
+    return args.command === 'status' ? status(o, args.only) : apply(args.command, o, args.only, args.yes);
   } catch (e) {
     return failure(e);
   }

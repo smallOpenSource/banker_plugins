@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 
 import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
-import { BANKER_WANT, CLAUDE_WANT, CODEX_WANT, defaults, main, parseArgs, REMAINING } from './never-public.mjs';
+import { BANKER_WANT, CLAUDE_WANT, CODEX_WANT, defaults, main, parseArgs, REMAINING, RESYNC, syncedNames } from './never-public.mjs';
 import { deletePath, readJson, serialize } from './settings-json.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -225,7 +225,7 @@ test('status names each key and its value; usage errors exit 1', () => {
   assert.match(s, /Claude Code: 켜짐/);
   assert.match(s, /Codex: 꺼짐[\s\S]*\[ \] analytics\.enabled = \(없음\)/);
   for (const argv of [['bogus'], ['on', 'off'], ['on', '--only', 'x'], ['on', '--only', '']]) assert.equal(main(argv, o).code, 1, argv.join(' '));
-  assert.deepEqual(parseArgs(['OFF', '--only=codex,banker']), { command: 'off', only: ['codex', 'banker'] });
+  assert.deepEqual(parseArgs(['OFF', '--only=codex,banker']), { command: 'off', only: ['codex', 'banker'], yes: false });
 });
 
 test('banker config folder follows telemetry-config: XDG_CONFIG_HOME, then %APPDATA% on Windows, then ~/.config', () => {
@@ -400,4 +400,63 @@ test('a TOML value left open to the end of the file is refused', () => {
 
 test('a relative CLAUDE_CONFIG_DIR is resolved like CODEX_HOME', () => {
   assert.equal(defaults({ CLAUDE_CONFIG_DIR: 'rel-claude' }).claudeDir, join(process.cwd(), 'rel-claude'));
+});
+
+// A synced bucket as Claude Code 2.1.332 keeps it: <config>/<skills|plugins>/synced/<org uuid>_<account uuid>/<name>/.
+const BUCKET = 'a721cd85-c2a5-4821-9b39-66f2edd79961_9f0e0dcf-e01a-4b3e-a4d4-a6eaf0702b93';
+function synced(claudeDir, dir, names) {
+  for (const n of names) mkdirSync(join(claudeDir, dir, 'synced', BUCKET, n), { recursive: true });
+  mkdirSync(join(claudeDir, dir, 'synced', BUCKET, '.staging'), { recursive: true });
+  writeFileSync(join(claudeDir, dir, 'synced', BUCKET, 'manifest.json'), '{}');
+}
+
+test('claude.ai sync: with synced skills, on names them and leaves that key until --yes; the rest still goes on', () => {
+  const { o, settings } = place({ codex: false });
+  writeFileSync(settings, SETTINGS);
+  synced(o.claudeDir, 'skills', ['pdf', 'docx']);
+  const r = main(['on'], o);
+  assert.equal(r.code, 0, r.message);
+  assert.match(r.message, /확인 필요: claude\.ai 동기화를 끄면/);
+  assert.ok(r.message.includes(`스킬(${join(o.claudeDir, 'skills', '.trash')} 로): docx, pdf`), r.message);
+  assert.match(r.message, /cleanupPeriodDays 뒤 지워짐/);
+  assert.match(r.message, /네트워크가 필요함/);
+  assert.match(r.message, /남은 일: 목록을 확인한 뒤 never-public on --yes 로 syncClaudeAiSkills 도 끔/);
+  assert.doesNotMatch(r.message, /플러그인\(/, 'no synced plugins: no plugin line, and that key goes on');
+  let s = json(settings);
+  assert.equal(s.syncClaudeAiSkills, undefined);
+  assert.equal(s.syncClaudeAiPlugins, false);
+  assert.equal(s.disableRemoteControl, true);
+  const yes = main(['on', '--yes'], o);
+  assert.match(yes.message, /적용함: claude\.ai 동기화를 끄면/);
+  assert.doesNotMatch(yes.message, /남은 일/);
+  s = json(settings);
+  assert.equal(s.syncClaudeAiSkills, false);
+  assert.ok(existsSync(join(o.claudeDir, 'skills', 'synced', BUCKET, 'pdf')), 'never-public moves nothing itself');
+  const off = main(['off'], o);
+  assert.ok(off.message.includes(RESYNC.trim()), off.message);
+  assert.equal(read(settings), SETTINGS);
+});
+
+test('claude.ai sync: nothing synced or the key already false means no question', () => {
+  const { o, settings } = place({ codex: false });
+  writeFileSync(settings, serialize({ syncClaudeAiSkills: false }));
+  synced(o.claudeDir, 'skills', ['pdf']);
+  synced(o.claudeDir, 'plugins', []);
+  const r = main(['on'], o);
+  assert.doesNotMatch(r.message, /확인 필요/);
+  assert.equal(json(settings).syncClaudeAiPlugins, false);
+  assert.deepEqual(syncedNames(o.claudeDir, 'plugins'), []);
+  assert.deepEqual(syncedNames(o.claudeDir, 'skills'), ['pdf']);
+  assert.ok(parseArgs(['off', '--yes']).error, '--yes is for on only');
+  assert.deepEqual(parseArgs(['on', '--yes']), { command: 'on', only: null, yes: true });
+});
+
+test('a second on after a first on that made the file writes no backup of the on bytes', () => {
+  const { o, settings } = place({ codex: false });
+  main(['on'], o);
+  writeFileSync(settings, serialize({ ...json(settings), enableArtifact: true }));
+  main(['on'], o);
+  assert.ok(!existsSync(`${settings}.never-public.bak`));
+  main(['off'], o);
+  assert.ok(!existsSync(settings), 'the file on made is gone again');
 });

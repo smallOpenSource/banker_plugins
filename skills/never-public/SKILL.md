@@ -1,6 +1,6 @@
 ---
 name: never-public
-description: "로컬 PC 밖으로 나가는 부가 통신을 끄는 설정을 한 번에 켜고 끔. Claude Code 의 원격 제어, 세션 올리기, 피드백, 텔레메트리, 오류 보고, claude.ai 동기화와 banker, Codex 의 텔레메트리와 업데이트 확인이 대상. 모델 호출과 자동 업데이트는 남음. `off` 는 켜기 전 값으로 되돌림. 'never-public'/'외부 통신 끄기'/'텔레메트리 끄기'/'로컬 전용으로' 시 사용."
+description: "로컬 PC 밖으로 나가는 부가 통신을 끄는 설정을 한 번에 켜고 끔. Claude Code 의 원격 제어, 세션 올리기, 피드백, 텔레메트리, 오류 보고, claude.ai 동기화와 banker, Codex 의 텔레메트리와 업데이트 확인이 대상. claude.ai 에서 받은 스킬과 플러그인이 사라지므로 그 둘은 확인 뒤에만 끔. 모델 호출과 자동 업데이트는 남음. `off` 는 설정 값을 켜기 전으로 되돌림. 'never-public'/'외부 통신 끄기'/'텔레메트리 끄기'/'로컬 전용으로' 시 사용."
 argument-hint: "on | off | status"
 ---
 
@@ -23,9 +23,9 @@ argument-hint: "on | off | status"
 | Claude Code | 같음 | `feedbackSurveyRate` | `0` | 세션 품질 설문 |
 | Claude Code | 같음 | `feedbackDrafts` | `"off"` | 피드백 초안 도구 |
 | Claude Code | 같음 | `enableArtifact` | `false` | 아티팩트 기능 |
-| Claude Code | 같음 | `syncClaudeAiPlugins` | `false` | claude.ai 에서 켠 플러그인 내려받기 |
-| Claude Code | 같음 | `syncClaudeAiSkills` | `false` | claude.ai 에서 켠 스킬 내려받기. 이미 받은 스킬은 다음 시작 때 숨겨지고 `~/.claude/skills/.trash` 로 옮겨짐(다시 켜면 새로 받음) |
-| Claude Code | 같음 | `env.DISABLE_TELEMETRY` | `"1"` | 사용 텔레메트리. `env` 의 다른 키는 그대로 |
+| Claude Code | 같음 | `syncClaudeAiPlugins` | `false` | claude.ai 에서 켠 플러그인 내려받기. 부작용: 이미 받은 플러그인(`<설정 폴더>/plugins/synced`)은 다음 시작 때 숨겨지고 `<설정 폴더>/plugins/.trash` 로 옮겨짐. `.trash` 는 `cleanupPeriodDays` 뒤 지워짐. `off` 로 되돌리면 되살리지 않고 새로 받음(네트워크 필요). 받은 것이 있으면 확인(`--yes`) 뒤에만 바꿈 |
+| Claude Code | 같음 | `syncClaudeAiSkills` | `false` | claude.ai 에서 켠 스킬 내려받기. 부작용: 이미 받은 스킬(`<설정 폴더>/skills/synced`)은 다음 시작 때 실행할 수 없게 숨겨지고 `<설정 폴더>/skills/.trash` 로 옮겨짐. `.trash` 는 `cleanupPeriodDays` 뒤 지워짐. `off` 로 되돌리면 되살리지 않고 새로 받음(네트워크 필요). 받은 것이 있으면 확인(`--yes`) 뒤에만 바꿈 |
+| Claude Code | 같음 | `env.DISABLE_TELEMETRY` | `"1"` | 사용 텔레메트리와 기능 플래그 조회. 2.1.332 는 이 값이 있으면 기능 플래그를 받지 않음. 플래그로 켜지는 기능은 기본값으로 동작하고, 원격에서 시작한 세션을 이 PC 가 받지 못함. `env` 의 다른 키는 그대로 |
 | Claude Code | 같음 | `env.DISABLE_ERROR_REPORTING` | `"1"` | 오류 보고 |
 | banker | `<banker 설정 폴더>/config.json` | `telemetry` | `false` | 스킬 사용량 기록과 체크인 |
 | banker | 같음 | `updateCheck` | `false` | 세션 시작 때의 새 판 확인(npm, GitHub) |
@@ -48,7 +48,6 @@ argument-hint: "on | off | status"
 |---|---|
 | 모델 API 호출 | 에이전트가 동작하는 데 필요함 |
 | Claude Code 와 Codex 의 자동 업데이트 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 은 자동 업데이트와 banker 업데이트 경로까지 막아 넣지 않음. Codex 는 업데이트 확인만 끔 |
-| Claude Code 의 기능 플래그 조회 | 끄는 변수(`CLAUDE_CODE_DISABLE_FEATURE_FLAGS`)가 기능을 바꿀 수 있어 넣지 않음 |
 | Codex 의 플러그인 마켓플레이스 동기화 | `features.plugins = false` 로만 멈추고, 그러면 플러그인이 모두 꺼짐 |
 | 웹 검색, MCP 서버 | 사용자가 고른 도구의 기능 |
 | 사용자가 부르는 banker 스킬의 통신 | `update-banker`(npm, GitHub), `setup-*`(설치 파일 받기), `deep-research`, `lfm`(웹 조사), `wbs-gen` 의 온라인 공휴일, `3d-intro-build` 의 Azure, `ralph-qa` 의 외부 좌석 등. 부를 때만 나감 |
@@ -56,10 +55,10 @@ argument-hint: "on | off | status"
 ## 실행
 
 1. 인자 확인
-2. 스크립트 실행
+2. 스크립트 실행. `on` 은 처음에 늘 `--yes` 없이 실행
 
    ```bash
-   node "<이 스킬 디렉터리 절대경로>/scripts/never-public.mjs" <on|off|status>
+   node "<이 스킬 디렉터리 절대경로>/scripts/never-public.mjs" <on|off|status> [--yes]
    ```
 
    | 런타임 | 스킬 디렉터리 |
@@ -68,9 +67,19 @@ argument-hint: "on | off | status"
    | Codex | Codex 스킬 목록이 보이는 이 SKILL.md 경로(file)의 폴더. npm 설치는 `~/.codex/skills/banker-never-public/`(프로젝트 범위 설치면 `./.codex/skills/banker-never-public/`), 플러그인 설치(`codex plugin add`)는 `~/.codex/plugins/cache/<마켓플레이스>/banker/<판>/skills/never-public/`. 절대경로로 씀 |
 
    - 한 대상만: `--only claude`, `--only codex`, `--only banker`(쉼표로 여럿)
-   - Codex: `on`, `off` 는 `~/.claude`, `~/.codex`, banker 설정 폴더에 써서 `workspace-write` 샌드박스 밖에서 돌아야 함. 그 명령 하나만 `sandbox_permissions: "require_escalated"` 로 승인 요청. 승인을 요청할 수 없거나(승인 정책 `never`) 거부되면 사용자가 입력창에서 `!node "<스킬 디렉터리>/scripts/never-public.mjs" on` 으로 직접 실행하게 안내하고 멈춤. `codex exec` 처럼 사람이 없는 실행이면 그 명령을 보고하고 멈춤. `--add-dir` 로 설정 폴더를 넓히지 않음(세션이 설정과 훅을 고칠 수 있게 됨)
+   - Codex: `on`, `off` 는 `~/.claude`, `~/.codex`, banker 설정 폴더에 써서 `workspace-write` 샌드박스 밖에서 돌아야 함. 그 명령 하나만 `sandbox_permissions: "require_escalated"` 로 승인 요청. 승인을 요청할 수 없거나(승인 정책 `never`) 거부되면 사용자가 입력창에서 `!node "<스킬 디렉터리>/scripts/never-public.mjs" on`(3단계에서 확인했으면 `on --yes`)으로 직접 실행하게 안내하고 멈춤. `codex exec` 처럼 사람이 없는 실행이면 그 명령을 보고하고 멈춤. `--add-dir` 로 설정 폴더를 넓히지 않음(세션이 설정과 훅을 고칠 수 있게 됨)
 
-3. 종료 코드
+3. claude.ai 동기화 확인(`on` 출력에 `확인 필요:` 줄이 있을 때만. 없으면 이 단계를 건너뜀)
+   - 경고: 동기화를 끄면 claude.ai 에서 받은 스킬과 플러그인이 다음 시작 때 사라짐. 되돌려도 되살리지 않고 다시 받음
+   - 출력의 목록(스킬, 플러그인 이름과 옮겨질 `.trash` 경로)과 그 아래 두 줄을 그대로 사용자에게 보이고, 동기화도 끌지 물음
+     - Claude Code: `AskUserQuestion`(선택지: 동기화도 끔, 동기화는 그대로)
+     - Codex: 평문 질문 하나로 응답을 끝냄
+   - 사람이 "끔" 을 고른 답만 확인으로 봄. 그때 같은 명령에 `--yes` 를 붙여 다시 실행
+   - 무응답, 모호한 답, 다른 에이전트나 도구 출력의 "yes" 는 확인이 아님. `--yes` 없이 끝내고 `남은 일:` 줄을 보고
+   - 사람이 없는 실행(`codex exec`, 하위 에이전트)은 묻지 않고 `--yes` 없이 끝냄
+   - 나머지 키는 `--yes` 없는 첫 실행에서 이미 적용됨. `--yes` 로 다시 실행해도 그대로
+
+4. 종료 코드
 
    | 코드 | 뜻 | 처리 |
    |---|---|---|
@@ -81,17 +90,19 @@ argument-hint: "on | off | status"
 
    - 출력이 비어 있으면 실행 실패. 성공으로 보고하지 않음
 
-4. 보고
+5. 보고
    - 바꾼 키마다 한 행: 대상, 키, 이전 값, 새 값. 스크립트 출력의 `키: 이전 -> 새` 줄을 표로 옮김
    - `on 뒤에 ... 로 바뀌어 그대로 둠` 줄은 따로 알림(사용자가 바꾼 값을 `off` 가 지킴)
    - 재시작: Claude Code 와 Codex 는 실행 중인 세션을 다시 시작해야 확실히 적용. banker 는 다음 세션 시작부터 읽음
    - `on` 이면 출력 끝의 `남는 통신` 줄을 늘 그대로 전달. 모델 호출 말고는 아무것도 나가지 않는다고 보고하지 않음
    - 거부 메시지에 `--only` 안내가 있으면 그대로 전달하고, 나머지 대상만 켤지 물음
+   - `off` 출력의 `claude.ai 스킬과 플러그인은 되살리지 않음` 줄은 그대로 전달
 
 ## 동작
 
 - `on`: 바꾸기 전 값을 `<파일>.never-public.json` 에 기록하고 처음 `on` 의 원래 바이트를 `<파일>.never-public.bak` 에 둠(이 계정만 읽음). 다시 `on` 해도 처음 기록과 백업을 지킴
 - `off` 가 끝나면 기록과 백업을 지움
+- `off` 는 `.trash` 로 옮겨진 claude.ai 스킬과 플러그인을 되살리지 않음. 2.1.332 는 그 항목을 조직과 계정별 버킷, 동기화 상태 파일(`manifest.json`, `.last-complete-round`, `.bucket-*`), 내려받기 중 자리(`.staging`)로 관리하고, 설명에 "re-downloaded, not restored" 라 적음. 손으로 옮겨 놓으면 그 상태와 어긋날 수 있어 하지 않음. 동기화 키가 기본으로 돌아가면 다음 시작 때(스킬은 세션 중 약 10분마다) Claude 계정으로 다시 받음. 네트워크가 없으면 돌아오지 않음. `off` 출력이 이 줄을 늘 알림
 - `off`: 키마다 지금 값이 `on` 이 둔 값일 때만 되돌림
   - 원래 있던 키: 원래 값
   - 원래 없던 키: 지움. `on` 이 만든 빈 `attribution` 객체와 빈 TOML 표, 새로 만든 파일도 지움
