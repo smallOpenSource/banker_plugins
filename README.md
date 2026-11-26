@@ -86,7 +86,7 @@ Claude Code는 `/banker:<이름>`, Codex는 `$banker-<이름>`(플러그인 설�
 | `/progress` | 지금 작업이 어디까지 왔는지 보고 싶을 때 | 진행 상황 패널을 켜고 끔. 세션이 쓰거나 읽은 계획 파일 전체가 위에 접고 펴는 목록으로, 할 일 목록(없으면 요청)과 그 도구 호출이 아래에 보임. 화살표나 제목을 누르면 펼쳐짐 (Claude Code) |
 | `tone-compact` | 답변을 짧은 한글 개조식으로 받고 싶을 때 | 문체 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
 | `anti-drm` | 망분리 PC 의 DRM 이 `.txt`, `.csv` 같은 파일을 암호화해 에이전트가 읽지 못할 때 | 금지 확장자 대신 `.md`, `.html`, `.tsv` 로 만들게 하는 규칙을 켜 두면 끌 때까지 모든 세션에 적용 |
-| `never-public` | 모델 호출 말고는 PC 밖으로 보내지 않게 하고 싶을 때 | Claude Code 의 원격 제어, 세션 올리기, 피드백, banker 의 업데이트 확인과 사용량 체크인, Codex 의 분석, 피드백, 지표 내보내기, 업데이트 확인을 한 번에 끔. `off` 는 켜기 전 값으로 되돌림 |
+| `never-public` | 원격 제어, 세션 올리기, 피드백, 텔레메트리 같은 부가 통신을 끄고 싶을 때 | Claude Code 의 원격 제어, 세션 올리기, 피드백, 텔레메트리, 오류 보고, claude.ai 플러그인과 스킬 동기화, banker 의 업데이트 확인과 사용량 체크인, Codex 의 분석, 피드백, 지표 내보내기, 업데이트 확인을 한 번에 끔. 모델 호출, 자동 업데이트, 사용자가 부르는 스킬의 통신은 남음(`on` 이 늘 알림). `off` 는 켜기 전 값으로 되돌림 |
 | `in-korean` | `language` 를 korean 으로 해도 영어로 답할 때 | 매 프롬프트와 세션 시작, compaction 뒤에 한국어로 답하라는 짧은 지시를 훅으로 넣음 |
 | `omc-patch` | OMC 자동 업데이트 뒤 훅이 느려지거나 훅 프로세스가 쌓일 때, project-memory 가 안 될 때 | 사라진 훅 패치를 다시 적용하고 OMC 자동 업데이트를 고정 |
 | `remains` | 작업 뒤에 남은 버그, 하자, 미검증 항목을 한눈에 보고 싶을 때 | 남은 항목을 표로 정리하고, 등록한 테스트박스에서 시험까지 돌림 |
@@ -173,7 +173,7 @@ Claude Code 2.1.296 은 Claude 5 모델(Opus 5.5 등)에 작업 목록 도구(Ta
 | `payload-mon` | 상태표시줄에 요청 payload 추정치(32MB 한도 대비) 표시 켜기·끄기. 래퍼 v4 는 `PL:` 칸에 늘, 옛 래퍼는 8MB부터 ctx 옆에 |
 | `tone-compact` | 답변과 새 문서를 ASD-STE100 기반 한글 개조식(표·목록·원어 발음 표기·장식 기호 금지)으로 쓰는 문체 규칙 켜기·끄기(on 기본, 끌 때까지 유지) |
 | `anti-drm` | DRM 이 암호화하는 확장자(기본 11개: 텍스트·오피스·한글·PDF·CSV) 대신 대체 확장자(`.md`·`.html`·`.tsv`)로 파일을 만들게 하는 규칙 켜기·끄기(on 기본, 처음 켤 때 금지 확장자와 대체 확장자를 물음, `config` 로 변경, 끌 때까지 유지) |
-| `never-public` | 로컬 PC 밖 통신을 끄는 설정 켜기·끄기. Claude Code `settings.json` 키 7개(`disableRemoteControl`, `autoUploadSessions`, `remoteControlAtStartup`, `attribution`, `feedbackSurveyRate`, `feedbackDrafts`, `enableArtifact`), banker 설정(`telemetry`, `updateCheck`, `promptedStarV1`), Codex `config.toml`(`check_for_update_on_startup`, `analytics`, `feedback`, `otel` 내보내기 셋). 켜기 전 값을 기록해 `off` 가 그대로 되돌림(원래 없던 키는 지움) |
+| `never-public` | 로컬 PC 밖 부가 통신을 끄는 설정 켜기·끄기. Claude Code `settings.json` 의 `disableRemoteControl`, `autoUploadSessions`, `remoteControlAtStartup`, `attribution`, `feedbackSurveyRate`, `feedbackDrafts`, `enableArtifact`, `syncClaudeAiPlugins`, `syncClaudeAiSkills`, `env.DISABLE_TELEMETRY`, `env.DISABLE_ERROR_REPORTING`, banker 설정(`telemetry`, `updateCheck`, `promptedStarV1`), Codex `config.toml`(`check_for_update_on_startup`, `analytics`, `feedback`, `otel` 내보내기 셋). 켜기 전 값을 기록해 `off` 가 그대로 되돌림(원래 없던 키는 지움). 모델 API, 자동 업데이트(`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 은 업데이트 경로까지 막아 넣지 않음), 기능 플래그, Codex 마켓플레이스 동기화, 웹 검색, MCP, 사용자가 부르는 banker 스킬(update-banker, setup-*, deep-research, wbs-gen 공휴일, 3d-intro Azure 등)의 통신은 남음 |
 | `in-korean` | 답변 언어를 한국어로 고정하는 사용자 범위 훅(SessionStart, UserPromptSubmit) 켜기·끄기(on 기본). node 없이 고정 JSON 한 줄을 찍고, Claude Code 에는 `language` 가 없으면 `"korean"` 도 넣음. Codex 는 `/hooks` 신뢰 뒤 돎 |
 | `omc-patch` | OMC 자동 업데이트 뒤 사라진 훅 패치를 재적용하고 OMC 마켓플레이스 자동 업데이트를 고정(진단·확인·적용·검증·되돌리기). 옛 킷이 블록 안에 넣은 헬퍼(project-memory 꺼짐)를 찾아 고치고, project-memory 훅이 실제로 일하는지 임시 폴더에서 확인 |
 | `remains` | 남은 버그, 하자, 미검증 항목을 찾아 표로 보여 줌. 테스트박스(`~/.config/banker/test-boxes.json`)가 등록돼 있으면 각 OS 에서 시험을 돌려 확인(읽기와 시험만, 고치지 않음) |
@@ -325,7 +325,7 @@ banker uninstall        # 제거
 | `payload-mon` | `hud/omc-hud-custom.mjs` 에 표시 블록 1개 삽입(`.payload-mon.bak` 백업·멱등·`node --check` 검증) + 래퍼 옆 `hud/payload-mon/` 에 모듈 사본 (`off` 로 원복) | — (Codex에서 실행해도 Claude Code HUD 만 다룸) |
 | `tone-compact` | `rules/banker-tone-compact.md` 생성 (`off` 로 삭제) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.tone-compact.bak` 백업·멱등, `off` 로 원복) |
 | `anti-drm` | `rules/banker-anti-drm.md` 생성 (`off` 로 삭제) + 설정 `~/.config/banker/anti-drm.json`(두 런타임 공용, `off` 뒤에도 남음, anti-drm 이 쓰지 않은 파일이 있었으면 `.bak`) | `AGENTS.md`(내용이 있는 `AGENTS.override.md` 우선) 끝에 `USER:OMX:POLICY` 로 감싼 블록 1개(`.anti-drm.bak` 백업·멱등, `off` 로 원복) |
-| `never-public` | `settings.json` 키 7개(원격 제어, 세션 올리기, 커밋과 PR 표기, 피드백 설문과 초안, 아티팩트) + banker 설정 `config.json` 의 `telemetry`, `updateCheck`, `promptedStarV1`. 켜기 전 값은 `<파일>.never-public.json`, 원래 바이트는 `<파일>.never-public.bak`, `off` 로 원복(원래 없던 키는 지움, `on` 뒤에 사용자가 바꾼 키는 그대로) | `config.toml` 의 `check_for_update_on_startup`, `[analytics] enabled`, `[feedback] enabled`, `[otel]` 의 `exporter`, `trace_exporter`, `metrics_exporter` 줄만 고침(주석과 다른 키 보존, `config.toml.never-public.bak` 백업, `off` 로 원복). Codex 에서 실행해도 Claude Code 와 banker 설정을 함께 바꿈 |
+| `never-public` | `settings.json` 값 13개(원격 제어, 세션 올리기, 커밋과 PR 표기, 피드백 설문과 초안, 아티팩트, claude.ai 플러그인과 스킬 동기화, `env` 의 `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`. `env` 의 다른 키는 그대로) + banker 설정 `config.json` 의 `telemetry`, `updateCheck`, `promptedStarV1`. 켜기 전 값은 `<파일>.never-public.json`, 처음 `on` 의 원래 바이트는 `<파일>.never-public.bak`, `off` 로 원복하고 둘 다 지움(원래 없던 키는 지움, `on` 뒤에 사용자가 바꾼 키는 그대로) | `config.toml` 의 `check_for_update_on_startup`, `[analytics] enabled`, `[feedback] enabled`, `[otel]` 의 `exporter`, `trace_exporter`, `metrics_exporter` 줄만 고침(주석과 다른 키 보존, `config.toml.never-public.bak` 백업, `off` 로 원복). Codex 에서 실행해도 Claude Code 와 banker 설정을 함께 바꿈 |
 | `in-korean` | `hooks.SessionStart`, `hooks.UserPromptSubmit` 맨 뒤에 `# banker:in-korean` 표지 훅 묶음 1개씩 + `language` 가 없으면 `"korean"`(`.in-korean.bak` 백업, 기록 `.in-korean.json`, `off` 로 그 훅과 넣은 `language` 만 뺌) | `hooks.json` 의 같은 두 이벤트 맨 뒤에 훅 묶음 1개씩(`command` 와 `commandWindows`, `hooks.json.in-korean.bak` 백업, `off` 로 뺌). 새 훅은 `/hooks` 에서 신뢰해야 돎 |
 | `omc-patch` | 활성 OMC 버전의 `scripts/*.mjs` 와 `hooks/hooks.json` 수정(`.omcbak` 백업, `PostToolUse` 훅 제거) + OMC 마켓플레이스 `origin` 을 `omc-pinned://` 로 고정(기록 `~/.claude/omc-local-patches/PINNED`, `revert` 로 원복). 헬퍼 자리 결함은 활성 폴더만 되돌린 뒤 다시 패치. project-memory 확인은 임시 폴더에서만 하고 끝나면 지움 | — (Codex에서 실행해도 Claude Code 의 OMC 캐시만 다룸) |
 | `remains` | 설정 파일 미변경. `~/.config/banker/test-boxes.json` 은 읽기만 함(사용자가 만들거나, 사용자가 준 정보로 확인받고 만듦). 처음 접속하는 박스의 호스트 키가 `~/.ssh/known_hosts` 에 더해짐. 테스트박스에는 임시 폴더를 만들고 끝나면 지움(시간 초과나 중단 때는 시작한 프로세스를 먼저 끝냄, 못 지우면 결과에 표시) | 동일 |
@@ -416,7 +416,7 @@ codex plugin remove banker@banker-plugins         # 제거
 > 훅은 플러그인 밖(`~/.claude/settings.json`, `~/.codex/hooks.json`)에 있어서, 플러그인을 지워도 남아 계속 한국어 지시를 넣습니다.\
 > 이미 지웠다면 두 파일의 `SessionStart`, `UserPromptSubmit` 에서 명령이 `# banker:in-korean` 으로 끝나는 항목을 지우면 됩니다. `settings.json` 의 `language` 는 in-korean 이 넣었다면 `"korean"` 이니 원하면 지우세요.
 
-> `never-public` 으로 바꾼 값은 플러그인을 지워도 설정 파일에 남습니다. 되돌리려면 제거 전에 `off` 를 실행하세요. 이미 지웠다면 `<파일>.never-public.bak` 에 켜기 전 원본이 있습니다.
+> `never-public` 으로 바꾼 값과 `in-korean` 훅은 `banker uninstall` 과 플러그인 제거 뒤에도 설정 파일에 남습니다(`banker uninstall` 이 남은 파일을 한 줄로 알림). 되돌리려면 제거 전에 `off` 를 실행하세요. 이미 지웠다면 `<파일>.never-public.bak` 에 켜기 전 원본이 있습니다.
 
 > `omc-patch` 를 적용했다면 제거 전에 `/banker:omc-patch revert`(Codex는 `banker-omc-patch` 에 `revert`)를 실행하세요.\
 > 훅 패치와 마켓플레이스 고정은 플러그인 밖(`~/.claude/plugins/`)에 있어서, 플러그인을 지워도 남고 OMC 도 계속 자동 업데이트되지 않습니다.\

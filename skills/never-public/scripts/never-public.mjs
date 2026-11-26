@@ -8,12 +8,13 @@
  *   node never-public.mjs status [--only ...]                   대상마다 키와 지금 값
  *
  * 대상(--only 가 없으면 설정 폴더가 있는 대상 모두. banker 는 늘)
- * - claude: <CLAUDE_CONFIG_DIR 또는 ~/.claude>/settings.json 의 키 9개(경로 키 attribution.* 포함)
+ * - claude: <CLAUDE_CONFIG_DIR 또는 ~/.claude>/settings.json 의 값 13개(경로 키 attribution.*, env.DISABLE_TELEMETRY,
+ *   env.DISABLE_ERROR_REPORTING 포함. 다른 env 키는 그대로)
  * - codex: <CODEX_HOME 또는 ~/.codex>/config.toml 의 키(줄 단위로 고쳐 주석과 다른 키를 지킴, codex-config.mjs)
  * - banker: banker 설정 config.json(XDG_CONFIG_HOME/banker, Windows %APPDATA%\banker, 그 밖 ~/.config/banker)의
  *   telemetry, updateCheck(업데이트 확인과 사용량 체크인을 끔), promptedStarV1(설치 때 GitHub 별 질문을 건너뜀)
  *
- * 되돌리기: on 이 바꾸기 전 값을 <파일>.never-public.json 에 기록하고, 원래 바이트를 <파일>.never-public.bak 에 둔다.
+ * 되돌리기: on 이 바꾸기 전 값을 <파일>.never-public.json 에 기록하고, 처음 on 의 원래 바이트를 <파일>.never-public.bak 에 둔다(off 뒤 지움).
  * off 는 키마다 지금 값이 on 이 둔 값일 때만 되돌린다(원래 없던 키는 지우고, on 이 만든 빈 부모 객체와 TOML 표도 지움).
  * on 뒤에 사용자가 바꾼 키는 그대로 두고 알린다. 다시 on 해도 처음 기록은 지킨다.
  *
@@ -26,8 +27,8 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { codexConfigFile, definedInline, dropEmptyTable, eolOf, findKey, nameParts, readToml, Refused, removeKey, scan, setKey, writeToml } from './codex-config.mjs';
-import { blockedParent, deletePath, denied, getPath, readJson, readRecord, sameValue, setPath, writeFresh, writeJson } from './settings-json.mjs';
+import { codexConfigFile, definedInline, dropEmptyTable, eolOf, findKey, nameParts, readToml, Refused, removeKey, scan, setKey, unclosedKey, writeToml } from './codex-config.mjs';
+import { backupFor, blockedParent, deletePath, denied, getPath, readJson, readRecord, sameValue, setPath, writeFresh, writeJson } from './settings-json.mjs';
 
 const SLUG = 'never-public';
 
@@ -42,6 +43,14 @@ export const CLAUDE_WANT = [
   [['feedbackSurveyRate'], 0],
   [['feedbackDrafts'], 'off'],
   [['enableArtifact'], false],
+  // claude.ai 에서 켠 플러그인과 스킬을 내려받는 동기화. false 만 받는다. 끄면 이미 받은 스킬은 다음 시작 때 숨겨지고
+  // ~/.claude/skills/.trash 로 옮겨진다(2.1.332 설명). 다시 켜면 새로 받는다.
+  [['syncClaudeAiPlugins'], false],
+  [['syncClaudeAiSkills'], false],
+  // 사용 텔레메트리와 오류 보고(환경 변수라 settings 의 env 에 둠). CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC 은 자동 업데이트까지
+  // 막아 넣지 않는다(남는 통신 목록에 적음).
+  [['env', 'DISABLE_TELEMETRY'], '1'],
+  [['env', 'DISABLE_ERROR_REPORTING'], '1'],
 ];
 
 // banker config.json(bin/lib/telemetry-config.mjs 가 읽는 값).
@@ -69,7 +78,7 @@ export function defaults(env = process.env, platform = process.platform) {
   const appData = env.APPDATA || join(homedir(), 'AppData', 'Roaming');
   const bankerDir = xdg ? join(xdg, 'banker') : platform === 'win32' ? join(appData, 'banker') : join(homedir(), '.config', 'banker');
   return {
-    claudeDir: env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'),
+    claudeDir: env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'),
     codexFile: codexConfigFile(env),
     bankerDir,
   };
@@ -85,11 +94,18 @@ function jsonTarget(name, file, want, needDir) {
   return { name, file, kind: 'json', want, needDir };
 }
 
+// 이미 그 값인지. attribution 이 false 면 Claude Code 가 {commit: "", pr: "", sessionUrl: false} 와 같게 본다(2.1.332 스키마).
+function isSet(data, keys, value) {
+  if (keys[0] === 'attribution' && data.attribution === false) return true;
+  const cur = getPath(data, keys);
+  return cur.has && sameValue(cur.value, value);
+}
+
 // 쓰기 전 확인: 파일을 읽고, 값을 둘 수 없는 자리가 있으면 까닭.
 function loadJson(t) {
   const r = readJson(t.file);
   if (r.why) return { why: r.why };
-  const bad = t.want.map(([keys]) => blockedParent(r.data, keys)).find(Boolean);
+  const bad = t.want.filter(([keys, value]) => !isSet(r.data, keys, value)).map(([keys]) => blockedParent(r.data, keys)).find(Boolean);
   return bad ? { why: `${t.file} 의 ${bad} 가 객체가 아니라 그 아래 키를 둘 수 없음` } : { doc: r };
 }
 
@@ -111,17 +127,18 @@ function onJson(t, { doc }) {
   const data = JSON.parse(JSON.stringify(doc.data));
   const changed = [];
   for (const [keys, value] of t.want) {
+    if (isSet(data, keys, value)) continue;
     const cur = getPath(data, keys);
-    if (cur.has && sameValue(cur.value, value)) continue;
     firstSeen(record, doc.data, keys);
     changed.push(`${keys.join('.')}: ${show(cur.value)} -> ${show(value)}`);
     setPath(data, keys, value);
   }
   if (!changed.length) return { changed };
   if (t.needDir === false) mkdirSync(join(t.file, '..'), { recursive: true });
+  const backup = backupFor(backupOf(t.file), recordOf(t.file)); // 두 번째 on 은 첫 원본 백업을 덮지 않음
   // 기록을 먼저 쓴다: 설정 쓰기 뒤에 멈춰도 off 가 되돌릴 값을 안다. 남은 기록은 무해하다(지금 값이 on 의 값일 때만 되돌림).
   writeFresh(recordOf(t.file), `${JSON.stringify(record)}\n`, 0o600);
-  writeJson(t.file, data, { bom: doc.bom, raw: doc.raw, backup: backupOf(t.file) });
+  writeJson(t.file, data, { bom: doc.bom, style: doc.style, raw: doc.raw, backup });
   return { changed };
 }
 
@@ -163,15 +180,17 @@ function offJson(t, { doc }) {
   const { changed, kept } = restoreAll(t, data, record);
   // on 이 새로 만든 파일이 다시 비면 지운다.
   if (changed.length && record.existed === false && !Object.keys(data).length) rmSync(t.file, { force: true });
-  else if (changed.length) writeJson(t.file, data, { bom: doc.bom });
+  else if (changed.length) writeJson(t.file, data, { bom: doc.bom, style: doc.style });
+  // 되돌렸으니 기록과 켜기 전 백업을 지운다(백업에는 설정의 비밀 값이 있을 수 있음).
   rmSync(recordOf(t.file), { force: true });
+  rmSync(backupOf(t.file), { force: true });
   return { changed, kept };
 }
 
 function statusJson(t, { doc }) {
   return t.want.map(([keys, value]) => {
     const cur = getPath(doc.data, keys);
-    return { id: keys.join('.'), now: show(cur.value), on: cur.has && sameValue(cur.value, value) };
+    return { id: keys.join('.'), now: show(cur.value), on: isSet(doc.data, keys, value) };
   });
 }
 
@@ -217,6 +236,8 @@ function loadToml(t) {
     if (e instanceof Refused) return { why: e.message };
     throw e;
   }
+  const open = unclosedKey(toml.text);
+  if (open) return { why: `${t.file} 의 ${open} 값이 파일 끝까지 닫히지 않음(깨진 TOML). 고치지 않고 그대로 둠` };
   const places = t.want.map(([table, key]) => placeOf(toml.text, table, key));
   const bad = places.find((p) => p.why);
   return bad ? { why: bad.why } : { doc: { ...toml, places } };
@@ -244,8 +265,9 @@ function onToml(t, { doc }) {
   });
   if (!changed.length) return { changed };
   const nl = eolOf(doc.text);
+  const backup = doc.exists ? backupFor(backupOf(t.file), recordOf(t.file)) : null;
   writeFresh(recordOf(t.file), `${JSON.stringify(record)}\n`, 0o600);
-  writeToml(t.file, text.endsWith(nl) ? text : `${text}${nl}`, { mode: doc.mode, backup: doc.exists ? backupOf(t.file) : null });
+  writeToml(t.file, text.endsWith(nl) ? text : `${text}${nl}`, { mode: doc.mode, backup });
   return { changed };
 }
 
@@ -257,8 +279,8 @@ function restoreToml(text, p, w, was) {
   return { text: removeKey(text, p.table, p.key), changed: `${id}: ${w[2]} -> (없음)` };
 }
 
-function offToml(t, { doc }) {
-  const record = readRecord(recordOf(t.file));
+// 기록대로 되돌린 글과 바뀐 줄, 그대로 둔 줄. on 이 만든 빈 표도 뺀다.
+function restoreAllToml(t, doc, record) {
   let text = doc.text;
   const changed = [];
   const kept = [];
@@ -271,9 +293,16 @@ function offToml(t, { doc }) {
     if (r.kept) kept.push(r.kept);
   });
   for (const table of record?.created ?? []) text = dropEmptyTable(text, table);
+  return { text, changed, kept };
+}
+
+function offToml(t, { doc }) {
+  const record = readRecord(recordOf(t.file));
+  const { text, changed, kept } = restoreAllToml(t, doc, record);
   if (text !== doc.text && record?.existed === false && !text.trim()) rmSync(t.file, { force: true });
   else if (text !== doc.text) writeToml(t.file, text, { mode: doc.mode });
   rmSync(recordOf(t.file), { force: true });
+  if (record) rmSync(backupOf(t.file), { force: true }); // 되돌렸으니 켜기 전 백업도 지운다
   return { changed, kept, noRecord: !record?.keys };
 }
 
@@ -313,11 +342,21 @@ function loadAll(list) {
   for (const t of list) {
     if (t.absent) return { why: `${LABEL[t.name]} 설정 폴더가 없음(${t.needDir})` };
     const r = OPS[t.kind].load(t);
-    if (r.why) return { why: r.why };
+    if (r.why) return { why: r.why, failed: t.name };
     loaded.push([t, r]);
   }
   return { loaded };
 }
+
+// 한 대상이 거부되면 나머지만 켜는 방법. 남는 대상이 없으면 ''.
+function onlyHint(list, failed) {
+  const rest = list.map((t) => t.name).filter((n) => n !== failed);
+  return failed && rest.length ? `\n${LABEL[failed]} 를 빼고 나머지만 하려면 --only ${rest.join(',')}` : '';
+}
+
+// on 뒤에 늘 알리는 남는 통신.
+export const REMAINING = '- 남는 통신(이 스킬이 끄지 않음): 모델 API 호출, Claude Code 와 Codex 의 자동 업데이트(CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC 은 자동 업데이트와 banker 업데이트 경로까지 막아 넣지 않음), '
+  + 'Claude Code 의 기능 플래그 조회, Codex 의 플러그인 마켓플레이스 동기화, 웹 검색, MCP 서버, 사용자가 부르는 banker 스킬의 통신(update-banker, setup-*, deep-research, wbs-gen 공휴일, 3d-intro 의 Azure 등)';
 
 function reportChange(lines, t, r, action) {
   if (!r.changed.length && !r.kept?.length) {
@@ -334,8 +373,8 @@ function reportChange(lines, t, r, action) {
 export function apply(action, o, only = null) {
   const list = targets(o, only);
   if (!list.length) return { code: 1, message: '바꿀 대상이 없음(설정 폴더가 없음)' };
-  const { loaded, why } = loadAll(list);
-  if (why) return { code: 1, message: `거부: ${why}. 아무것도 바꾸지 않음` };
+  const { loaded, why, failed } = loadAll(list);
+  if (why) return { code: 1, message: `거부: ${why}. 아무것도 바꾸지 않음${onlyHint(list, failed)}` };
   const lines = [`never-public ${action}`];
   const done = [];
   for (const [t, r] of loaded) {
@@ -348,6 +387,7 @@ export function apply(action, o, only = null) {
       throw e;
     }
   }
+  if (action === 'on') lines.push(REMAINING);
   return { code: 0, message: lines.join('\n') };
 }
 

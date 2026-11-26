@@ -2,7 +2,7 @@
 // Every case works in its own temp Claude Code and Codex folders: the real ~/.claude and ~/.codex are never touched.
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,7 @@ import { after, test } from 'node:test';
 
 import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
 import { pwshEnv } from '../../../scripts/test-fixtures/pwsh-env.mjs';
-import { EVENTS, hookEntry, hookJson, hookState, main, MARK, parseArgs, shellCommand, TEXT, withHooks } from './in-korean.mjs';
+import { defaults, EVENTS, hookEntry, hookJson, hookState, main, MARK, parseArgs, shellCommand, TEXT, withHooks } from './in-korean.mjs';
 import { serialize } from './settings-json.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'in-korean.mjs');
@@ -216,4 +216,56 @@ test('command line: on is the default, a runtime is needed outside Claude Code, 
 test('SKILL.md quotes the instruction the hooks add, word for word', () => {
   const doc = readFileSync(join(dirname(SCRIPT), '..', 'SKILL.md'), 'utf8');
   assert.ok(doc.includes(`> ${TEXT}\n`), 'the quoted instruction in SKILL.md matches TEXT');
+});
+
+test('the first backup survives a second on, and off removes the backup and the record', () => {
+  const { o, settings } = place({ codex: false, platform: 'linux' });
+  const before = serialize({ model: 'opus' });
+  writeFileSync(settings, before);
+  main(['on', '--runtime', 'claude'], o);
+  writeFileSync(settings, serialize({ ...json(settings), hooks: { ...json(settings).hooks, SessionStart: [] } }));
+  main(['on', '--runtime', 'claude'], o);
+  assert.equal(read(`${settings}.in-korean.bak`), before);
+  main(['off', '--runtime', 'claude'], o);
+  assert.ok(!existsSync(`${settings}.in-korean.bak`));
+  assert.ok(!existsSync(`${settings}.in-korean.json`));
+});
+
+test('CRLF and four-space settings come back byte for byte', () => {
+  const { o, settings } = place({ codex: false, platform: 'linux' });
+  const before = '{\r\n    "model": "opus",\r\n    "language": "korean"\r\n}\r\n';
+  writeFileSync(settings, before);
+  main(['on', '--runtime', 'claude'], o);
+  assert.ok(read(settings).includes('\r\n    "hooks": {'));
+  main(['off', '--runtime', 'claude'], o);
+  assert.equal(read(settings), before);
+});
+
+test('Codex off warns about re-trusting only when other groups came after ours', () => {
+  const { o, hooks } = place({ claude: false });
+  writeFileSync(hooks, serialize({ hooks: { Stop: [{ hooks: [OTHER] }] } }));
+  main(['on', '--runtime', 'codex'], o);
+  assert.doesNotMatch(main(['off', '--runtime', 'codex'], o).message, /다시 신뢰/);
+  main(['on', '--runtime', 'codex'], o);
+  const doc = json(hooks);
+  doc.hooks.UserPromptSubmit.push({ hooks: [OTHER] });
+  writeFileSync(hooks, serialize(doc));
+  assert.match(main(['off', '--runtime', 'codex'], o).message, /다시 신뢰/);
+});
+
+test('a failed off write keeps the record, so the next off still takes out the language on added', { skip: (process.platform === 'win32' && 'Windows ignores folder modes') || (process.getuid?.() === 0 && 'root writes anyway') }, () => {
+  const { o, settings } = place({ codex: false, platform: 'linux' });
+  main(['on', '--runtime', 'claude'], o);
+  chmodSync(o.claudeDir, 0o555);
+  try {
+    assert.equal(main(['off', '--runtime', 'claude'], o).code, 3);
+  } finally {
+    chmodSync(o.claudeDir, 0o755);
+  }
+  assert.ok(existsSync(`${settings}.in-korean.json`));
+  assert.match(main(['off', '--runtime', 'claude'], o).message, /language 도 뺌/);
+});
+
+test('a relative CLAUDE_CONFIG_DIR is resolved like CODEX_HOME', () => {
+  assert.equal(defaults({ CLAUDE_CONFIG_DIR: 'rel-claude' }).claudeDir, join(process.cwd(), 'rel-claude'));
 });

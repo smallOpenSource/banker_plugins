@@ -1,6 +1,6 @@
 ---
 name: never-public
-description: "로컬 PC 밖으로 나가는 통신을 끄는 설정을 한 번에 켜고 끔. Claude Code 의 원격 제어와 세션 올리기와 피드백, banker 의 업데이트 확인과 사용량 체크인, Codex 의 분석과 피드백과 지표 내보내기와 업데이트 확인이 대상. `off` 는 켜기 전 값으로 되돌림. 'never-public'/'외부 통신 끄기'/'텔레메트리 끄기'/'로컬 전용으로' 시 사용."
+description: "로컬 PC 밖으로 나가는 부가 통신을 끄는 설정을 한 번에 켜고 끔. Claude Code 의 원격 제어, 세션 올리기, 피드백, 텔레메트리, 오류 보고, claude.ai 동기화와 banker, Codex 의 텔레메트리와 업데이트 확인이 대상. 모델 호출과 자동 업데이트는 남음. `off` 는 켜기 전 값으로 되돌림. 'never-public'/'외부 통신 끄기'/'텔레메트리 끄기'/'로컬 전용으로' 시 사용."
 argument-hint: "on | off | status"
 ---
 
@@ -23,6 +23,10 @@ argument-hint: "on | off | status"
 | Claude Code | 같음 | `feedbackSurveyRate` | `0` | 세션 품질 설문 |
 | Claude Code | 같음 | `feedbackDrafts` | `"off"` | 피드백 초안 도구 |
 | Claude Code | 같음 | `enableArtifact` | `false` | 아티팩트 기능 |
+| Claude Code | 같음 | `syncClaudeAiPlugins` | `false` | claude.ai 에서 켠 플러그인 내려받기 |
+| Claude Code | 같음 | `syncClaudeAiSkills` | `false` | claude.ai 에서 켠 스킬 내려받기. 이미 받은 스킬은 다음 시작 때 숨겨지고 `~/.claude/skills/.trash` 로 옮겨짐(다시 켜면 새로 받음) |
+| Claude Code | 같음 | `env.DISABLE_TELEMETRY` | `"1"` | 사용 텔레메트리. `env` 의 다른 키는 그대로 |
+| Claude Code | 같음 | `env.DISABLE_ERROR_REPORTING` | `"1"` | 오류 보고 |
 | banker | `<banker 설정 폴더>/config.json` | `telemetry` | `false` | 스킬 사용량 기록과 체크인 |
 | banker | 같음 | `updateCheck` | `false` | 세션 시작 때의 새 판 확인(npm, GitHub) |
 | banker | 같음 | `promptedStarV1` | `true` | `banker setup` 의 GitHub 별 질문(답하면 `gh` 로 요청) |
@@ -36,7 +40,18 @@ argument-hint: "on | off | status"
   - Codex: `$CODEX_HOME`, 없으면 `~/.codex`
   - banker: `$XDG_CONFIG_HOME/banker`, 없으면 Windows `%APPDATA%\banker`, 그 밖 `~/.config/banker`
 - 설정 폴더가 없는 런타임은 건너뜀. banker 설정은 늘 다룸
-- 끄지 않는 통신: 모델 API 호출 자체, Claude Code 의 자동 업데이트와 기능 플래그 조회, Codex 의 플러그인 마켓플레이스 동기화, MCP 서버, 웹 검색. 필요하면 보고에 이 목록을 그대로 알림
+- `attribution` 이 `false` 면 이미 표기가 없는 상태라 그대로 둠(Claude Code 가 세 값을 모두 끈 것과 같게 봄)
+
+끄지 않는 통신(`on` 출력 끝 줄이 늘 알림)
+
+| 통신 | 까닭 |
+|---|---|
+| 모델 API 호출 | 에이전트가 동작하는 데 필요함 |
+| Claude Code 와 Codex 의 자동 업데이트 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 은 자동 업데이트와 banker 업데이트 경로까지 막아 넣지 않음. Codex 는 업데이트 확인만 끔 |
+| Claude Code 의 기능 플래그 조회 | 끄는 변수(`CLAUDE_CODE_DISABLE_FEATURE_FLAGS`)가 기능을 바꿀 수 있어 넣지 않음 |
+| Codex 의 플러그인 마켓플레이스 동기화 | `features.plugins = false` 로만 멈추고, 그러면 플러그인이 모두 꺼짐 |
+| 웹 검색, MCP 서버 | 사용자가 고른 도구의 기능 |
+| 사용자가 부르는 banker 스킬의 통신 | `update-banker`(npm, GitHub), `setup-*`(설치 파일 받기), `deep-research`, `lfm`(웹 조사), `wbs-gen` 의 온라인 공휴일, `3d-intro-build` 의 Azure, `ralph-qa` 의 외부 좌석 등. 부를 때만 나감 |
 
 ## 실행
 
@@ -70,17 +85,20 @@ argument-hint: "on | off | status"
    - 바꾼 키마다 한 행: 대상, 키, 이전 값, 새 값. 스크립트 출력의 `키: 이전 -> 새` 줄을 표로 옮김
    - `on 뒤에 ... 로 바뀌어 그대로 둠` 줄은 따로 알림(사용자가 바꾼 값을 `off` 가 지킴)
    - 재시작: Claude Code 와 Codex 는 실행 중인 세션을 다시 시작해야 확실히 적용. banker 는 다음 세션 시작부터 읽음
+   - `on` 이면 출력 끝의 `남는 통신` 줄을 늘 그대로 전달. 모델 호출 말고는 아무것도 나가지 않는다고 보고하지 않음
+   - 거부 메시지에 `--only` 안내가 있으면 그대로 전달하고, 나머지 대상만 켤지 물음
 
 ## 동작
 
-- `on`: 바꾸기 전 값을 `<파일>.never-public.json` 에 기록하고 원래 바이트를 `<파일>.never-public.bak` 에 둠(이 계정만 읽음). 다시 `on` 해도 처음 기록을 지킴
+- `on`: 바꾸기 전 값을 `<파일>.never-public.json` 에 기록하고 처음 `on` 의 원래 바이트를 `<파일>.never-public.bak` 에 둠(이 계정만 읽음). 다시 `on` 해도 처음 기록과 백업을 지킴
+- `off` 가 끝나면 기록과 백업을 지움
 - `off`: 키마다 지금 값이 `on` 이 둔 값일 때만 되돌림
   - 원래 있던 키: 원래 값
   - 원래 없던 키: 지움. `on` 이 만든 빈 `attribution` 객체와 빈 TOML 표, 새로 만든 파일도 지움
   - `on` 뒤에 사용자가 바꾼 키: 그대로 둠
 - 쓰기 전에 모든 대상을 먼저 읽음. 하나라도 거부할 파일이면 아무것도 바꾸지 않음
-- JSON: 새 임시 파일에 쓴 뒤 이름 바꾸기로 교체. 빈 파일은 `{}` 로 읽음. BOM, 파일 모드, 링크(그 너머 파일을 바꿈)를 지킴. 들여쓰기는 2칸으로 정리될 수 있음(원본은 `.bak`)
-- TOML: 바꾸는 키의 줄만 고침. 주석, 순서, 다른 키와 표, 줄바꿈(CRLF)을 그대로 둠. 최상위 점 키(`analytics.enabled = true`)는 그 자리에서 고침
+- JSON: 새 임시 파일에 쓴 뒤 이름 바꾸기로 교체. 빈 파일은 `{}` 로 읽음. BOM, 파일 모드, 링크(그 너머 파일을 바꿈), 들여쓰기(공백 수나 탭, 한 줄 JSON), 줄바꿈(CRLF), 끝 줄바꿈을 지킴
+- TOML: 바꾸는 키의 줄만 고침. 주석, 순서, 다른 키와 표, 줄바꿈(CRLF)을 그대로 둠. 최상위 점 키(`analytics.enabled = true`)는 그 자리에서 고침. 값이 파일 끝까지 닫히지 않은 깨진 파일은 거부
 - Claude Code 는 `settings.json` 에 잘못된 값이 하나라도 있으면 파일 전체를 무시함. 이 스킬이 쓰는 값은 2.1.332 의 설정 스키마로 확인한 값만
 
 ## 문제 해결
@@ -90,8 +108,9 @@ argument-hint: "on | off | status"
 | 올바른 JSON 이 아님 | `settings.json` 이나 `config.json` 이 깨졌음. 고치지 않음. 오류 위치를 보이고 사용자가 고친 뒤 다시 실행 |
 | UTF-8 이 아님 | 인코딩을 보이고, 백업 뒤 UTF-8 로 바꿀지 물은 뒤 다시 실행 |
 | 일반 파일이 아님, 끊어진 링크임 | 그 자리의 폴더나 특수 파일, 링크를 지우지 않음. `ls -l` 로 보이고 어떻게 할지 물음 |
-| `attribution` 가 객체가 아니라 | `settings.json` 의 `attribution` 이 `true`, `false` 같은 값. 객체 꼴(`{"commit": "...", "pr": "..."}`)로 바꿀지 물은 뒤 다시 실행 |
-| 인라인 표라, 표로 정해져 있어 | `config.toml` 의 `otel = { ... }` 나 `[otel.exporter.otlp-http]` 같은 내보내기 설정. 그 표를 사용자가 직접 지우거나 `"none"` 으로 바꾼 뒤 다시 실행 |
+| `attribution` 가 객체가 아니라, `env` 가 객체가 아니라 | `settings.json` 의 `attribution` 이 `true` 나 문자열, 또는 `env` 가 객체가 아닌 값. 고치지 않음. 객체 꼴(`{"commit": "", "pr": ""}`, `{"이름": "값"}`)로 바꿀지 물은 뒤 다시 실행 |
+| 인라인 표라, 표로 정해져 있어 | `config.toml` 의 `otel = { ... }` 나 `[otel.exporter.otlp-http]` 같은 내보내기 설정. 그 표를 사용자가 직접 지우거나 `"none"` 으로 바꾼 뒤 다시 실행. 그대로 두려면 메시지의 `--only claude,banker` 로 나머지만 켬 |
+| 닫히지 않음(깨진 TOML) | `config.toml` 의 여러 줄 문자열이나 배열이 끝나지 않음. 고치지 않음. 그 키를 보이고 사용자가 고친 뒤 다시 실행 |
 | 일반 파일이 아님(링크이거나 다른 종류) | `config.toml` 이 링크. 고치지 않음. 링크 대상을 보이고 물음 |
 | 설정 폴더가 없음 | `--only` 로 고른 런타임이 이 PC 에 없음. 또는 설정 폴더 환경 변수 값 확인 |
 | 쓸 권한이 없음 | Codex 면 승인 요청이나 `!` 명령. 그 밖은 파일과 폴더 권한 확인 |

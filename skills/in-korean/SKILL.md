@@ -73,7 +73,10 @@ argument-hint: "on | off | status"
 - 명령 끝의 `# banker:in-korean` 이 표지. 다른 훅은 건드리지 않음. 맨 뒤에 더하므로 Codex 의 다른 훅 신뢰가 그대로 남음
 - SessionStart 에 matcher 가 없어 시작, 이어가기, `/clear`, compaction 뒤 모두 돎
 - `language` 가 한국어가 아닌 값이면 바꾸지 않고 알림. 훅의 지시가 한국어로 고정함
-- 바꾸기 전 원래 바이트는 `<파일>.in-korean.bak`, 원래 파일과 `hooks`, `language` 유무는 `<파일>.in-korean.json`. `off` 는 그 기록대로 되돌리고, `on` 이 새로 만든 파일이 비면 지움
+- 처음 `on` 이 바꾸기 전 원래 바이트는 `<파일>.in-korean.bak`, 원래 파일과 `hooks`, `language` 유무는 `<파일>.in-korean.json`. 다시 `on` 해도 둘 다 처음 것을 지킴. `off` 는 그 기록대로 되돌리고, `on` 이 새로 만든 파일이 비면 지우고, 끝나면 기록과 백업을 지움
+- 다시 쓸 때 원래 들여쓰기(공백 수나 탭), 줄바꿈(CRLF), BOM, 끝 줄바꿈을 지킴
+- Codex `off` 는 우리 묶음 뒤에 다른 묶음이 있었을 때만 그 훅의 재신뢰를 알림
+- `banker uninstall` 은 이 훅이 남아 있으면 한 줄로 알림
 - 플러그인을 지워도 사용자 설정의 이 훅은 남음. 지우기 전에 런타임마다 `off`
 - 이미 켜져 있으면 변경 없음. banker 업데이트로 지시 글이 바뀌었으면 `status` 가 `이 판과 다름` 을 보이고 `on` 이 같은 자리에서 고침
 

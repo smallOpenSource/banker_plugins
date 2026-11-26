@@ -47,14 +47,25 @@ export function readJson(file) {
   }
   const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
   const body = text.slice(bom.length);
-  if (!body.trim()) return { exists: true, raw, data: {}, bom };
+  if (!body.trim()) return { exists: true, raw, data: {}, bom, style: DEFAULT_STYLE };
   let data;
   try {
     data = JSON.parse(body);
   } catch (e) {
     return { why: `${file} 이 올바른 JSON 이 아님(${e.message}). 고치지 않고 그대로 둠` };
   }
-  return isObject(data) ? { exists: true, raw, data, bom } : { why: `${file} 의 최상위가 JSON 객체가 아님` };
+  return isObject(data) ? { exists: true, raw, data, bom, style: styleOf(body) } : { why: `${file} 의 최상위가 JSON 객체가 아님` };
+}
+
+// 다시 쓸 때 지킬 꼴: 들여쓰기(첫 들여쓴 줄의 공백이나 탭, 한 줄짜리 JSON 은 ''), 줄바꿈(CRLF 가 있으면 CRLF), 끝 줄바꿈.
+// `{}` 한 줄과 빈 파일은 2칸으로 쓴다(값이 늘면 사람이 읽을 꼴).
+export const DEFAULT_STYLE = { indent: 2, eol: '\n', final: true };
+export function styleOf(body) {
+  const eol = body.includes('\r\n') ? '\r\n' : '\n';
+  const trimmed = body.trim();
+  const oneLine = trimmed !== '{}' && !trimmed.includes('\n');
+  const indent = oneLine ? '' : /\n([ \t]+)\S/.exec(body)?.[1] ?? 2;
+  return { indent, eol, final: body.endsWith('\n') };
 }
 
 // 난수 이름 새 파일에 쓴 뒤 file 자리로 바꿔 넣는다. 그 자리의 폴더는 거부한다(Windows 는 EPERM 으로 답해 권한 문제로 보임).
@@ -73,15 +84,23 @@ export function writeFresh(file, data, mode = 0o600) {
   }
 }
 
-export const serialize = (data, bom = '') => `${bom}${JSON.stringify(data, null, 2)}\n`;
+// JSON 글. 문자열 안의 줄바꿈은 JSON.stringify 가 \n 으로 적으므로, 날 줄바꿈만 원래 꼴로 바꾼다.
+export function serialize(data, bom = '', style = DEFAULT_STYLE) {
+  const body = JSON.stringify(data, null, style.indent).replace(/\n/g, style.eol);
+  return `${bom}${body}${style.final ? style.eol : ''}`;
+}
 
-// data 를 file 에 쓴다. 링크면 그 너머 파일을 바꾸고, 원래 모드를 지킨다. backup 이 있고 원래 바이트가 있으면 먼저 백업.
-export function writeJson(file, data, { bom = '', raw = null, backup = null } = {}) {
+// data 를 file 에 쓴다. 링크면 그 너머 파일을 바꾸고, 원래 모드와 꼴(BOM, 들여쓰기, 줄바꿈)을 지킨다. backup 이 있고 원래
+// 바이트가 있으면 먼저 백업.
+export function writeJson(file, data, { bom = '', style = DEFAULT_STYLE, raw = null, backup = null } = {}) {
   if (backup && raw) writeFresh(backup, raw, 0o600);
   const real = existsSync(file) ? realpathSync(file) : file;
   const mode = existsSync(real) ? statSync(real).mode & 0o777 : 0o600;
-  writeFresh(real, serialize(data, bom), mode);
+  writeFresh(real, serialize(data, bom, style), mode);
 }
+
+// on 이 원본을 백업할지: 이번이 첫 on(기록 없음)이거나 백업이 없을 때만. 두 번째 on 이 그때 바이트로 덮지 않게 한다.
+export const backupFor = (backup, recordFile) => (!existsSync(recordFile) || !existsSync(backup) ? backup : null);
 
 // 경로의 값. { has, value }.
 export function getPath(obj, keys) {

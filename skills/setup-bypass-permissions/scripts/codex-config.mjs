@@ -115,6 +115,27 @@ export function scan(text) {
   return out;
 }
 
+// 값이 파일 끝까지 닫히지 않은 키 이름(닫히지 않은 여러 줄 문자열, 배열, 인라인 표), 없으면 ''. 그런 파일은 깨진 TOML 이라
+// 줄 단위로 고치면 새 키가 그 값 안에 들어갈 수 있다.
+export function unclosedKey(text) {
+  const ls = lines(text);
+  for (let i = 0; i < ls.length; i++) {
+    if (HEADER_RE.test(ls[i])) continue;
+    const key = KEY_RE.exec(ls[i]);
+    if (!key) continue;
+    let { d, multi } = scanLine(key[2]);
+    let j = i + 1;
+    for (; (d > 0 || multi) && j < ls.length; j++) {
+      const r = scanLine(ls[j], multi);
+      d += r.d;
+      multi = r.multi;
+    }
+    if (d > 0 || multi) return nameParts(key[1]).join('.');
+    i = j - 1;
+  }
+  return '';
+}
+
 // 표의 줄 범위 [from, to). table '' 은 최상위. 표가 없으면 null.
 function tableRange(info, table) {
   table = table.includes('\u0000') || !table ? table : plainName(table);

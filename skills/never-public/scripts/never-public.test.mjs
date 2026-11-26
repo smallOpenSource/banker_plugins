@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { after, test } from 'node:test';
 
 import { symlinkSkip } from '../../../scripts/test-fixtures/can-symlink.mjs';
-import { BANKER_WANT, CLAUDE_WANT, CODEX_WANT, defaults, main, parseArgs } from './never-public.mjs';
+import { BANKER_WANT, CLAUDE_WANT, CODEX_WANT, defaults, main, parseArgs, REMAINING } from './never-public.mjs';
 import { deletePath, readJson, serialize } from './settings-json.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -57,7 +57,10 @@ test('on puts every value in place, off restores the files byte for byte and rem
   assert.equal(read(settings), SETTINGS);
   assert.equal(read(o.codexFile), TOML);
   assert.ok(!existsSync(join(o.bankerDir, 'config.json')), 'a config.json that on created is gone again');
-  for (const f of [settings, o.codexFile, join(o.bankerDir, 'config.json')]) assert.ok(!existsSync(`${f}.never-public.json`), f);
+  for (const f of [settings, o.codexFile, join(o.bankerDir, 'config.json')]) {
+    assert.ok(!existsSync(`${f}.never-public.json`), f);
+    assert.ok(!existsSync(`${f}.never-public.bak`), `${f}: off removes the backup too`);
+  }
 });
 
 test('keys that were not there before are removed by off, with the parent object on created', () => {
@@ -206,7 +209,7 @@ test('targets: absent config folders are skipped, but --only names them as missi
   const { o } = place({ claude: false, codex: false });
   const r = main(['on'], o);
   assert.equal(r.code, 0);
-  assert.doesNotMatch(r.message, /Claude Code|Codex/);
+  assert.doesNotMatch(r.message, /^- (Claude Code|Codex)[ :(]/m);
   assert.ok(existsSync(join(o.bankerDir, 'config.json')));
   const only = main(['on', '--only', 'claude'], o);
   assert.equal(only.code, 1);
@@ -300,4 +303,101 @@ test('deletePath removes only the parents it was told to prune, and only when th
   deletePath(o, ['a', 'c'], ['a']);
   assert.equal(o.a, undefined);
   assert.equal(CODEX_WANT.length, 6);
+});
+
+test('telemetry and error reporting go in env beside the user env keys, and off puts env back as it was', () => {
+  const { o, settings } = place({ codex: false });
+  writeFileSync(settings, serialize({ env: { MY_VAR: 'x', DISABLE_TELEMETRY: '0' } }));
+  main(['on'], o);
+  const s = json(settings);
+  assert.deepEqual(s.env, { MY_VAR: 'x', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1' });
+  assert.equal(s.syncClaudeAiPlugins, false);
+  assert.equal(s.syncClaudeAiSkills, false);
+  main(['off'], o);
+  assert.deepEqual(json(settings), { env: { MY_VAR: 'x', DISABLE_TELEMETRY: '0' } });
+  const fresh = place({ codex: false });
+  writeFileSync(fresh.settings, serialize({ model: 'x' }));
+  main(['on'], fresh.o);
+  main(['off'], fresh.o);
+  assert.deepEqual(json(fresh.settings), { model: 'x' }, 'an env object on made is removed again');
+});
+
+test('on always ends with the traffic it leaves on', () => {
+  const { o } = place({ codex: false });
+  for (let i = 0; i < 2; i++) {
+    const r = main(['on'], o);
+    assert.equal(r.message.split('\n').pop(), REMAINING);
+  }
+  for (const word of ['모델 API', '자동 업데이트', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'update-banker', 'deep-research', 'wbs-gen', '3d-intro']) assert.ok(REMAINING.includes(word), word);
+  assert.ok(!main(['off'], o).message.includes(REMAINING));
+});
+
+test('attribution false already means no attribution: on leaves it and the other keys still go on', () => {
+  const { o, settings } = place({ codex: false });
+  writeFileSync(settings, serialize({ attribution: false }));
+  const r = main(['on'], o);
+  assert.equal(r.code, 0, r.message);
+  const s = json(settings);
+  assert.equal(s.attribution, false);
+  assert.equal(s.disableRemoteControl, true);
+  assert.match(main(['status'], o).message, /Claude Code: 켜짐/);
+  main(['off'], o);
+  assert.deepEqual(json(settings), { attribution: false });
+});
+
+test('a second on with changed values keeps the first backup', () => {
+  const { o, settings } = place({ codex: false });
+  writeFileSync(settings, SETTINGS);
+  main(['on'], o);
+  writeFileSync(settings, serialize({ ...json(settings), enableArtifact: true }));
+  main(['on'], o);
+  assert.equal(read(`${settings}.never-public.bak`), SETTINGS);
+  const toml = place({ claude: false });
+  writeFileSync(toml.o.codexFile, TOML);
+  main(['on', '--only', 'codex'], toml.o);
+  writeFileSync(toml.o.codexFile, read(toml.o.codexFile).replace('enabled = false', 'enabled = true'));
+  main(['on', '--only', 'codex'], toml.o);
+  assert.equal(read(`${toml.o.codexFile}.never-public.bak`), TOML);
+});
+
+test('the JSON layout stays: CRLF, four-space or tab indents, one-line files, no final newline', () => {
+  const bodies = [
+    '{\r\n    "model": "opus",\r\n    "env": {\r\n        "A": "1"\r\n    }\r\n}\r\n',
+    '{\n\t"model": "opus"\n}',
+    '{"model":"opus"}\n',
+  ];
+  for (const body of bodies) {
+    const { o, settings } = place({ codex: false });
+    writeFileSync(settings, body);
+    main(['on'], o);
+    const on = read(settings);
+    assert.equal(on.includes('\r\n'), body.includes('\r\n'), JSON.stringify(body));
+    main(['off'], o);
+    assert.equal(read(settings), body, JSON.stringify(body));
+  }
+});
+
+test('a refused Codex file names the --only that turns on the rest', () => {
+  const { o, settings } = place();
+  writeFileSync(settings, SETTINGS);
+  writeFileSync(o.codexFile, '[otel.exporter.otlp-http]\nendpoint = "http://x"\n');
+  const r = main(['on'], o);
+  assert.equal(r.code, 1);
+  assert.match(r.message, /Codex 를 빼고 나머지만 하려면 --only claude,banker/);
+  assert.equal(main(['on', '--only', 'claude,banker'], o).code, 0);
+});
+
+test('a TOML value left open to the end of the file is refused', () => {
+  for (const text of ['model = "m"\ninstructions = """\nnever closed\n', 'list = [\n  "a",\n']) {
+    const { o } = place({ claude: false });
+    writeFileSync(o.codexFile, text);
+    const r = main(['on', '--only', 'codex'], o);
+    assert.equal(r.code, 1, text);
+    assert.match(r.message, /닫히지 않음/);
+    assert.equal(read(o.codexFile), text);
+  }
+});
+
+test('a relative CLAUDE_CONFIG_DIR is resolved like CODEX_HOME', () => {
+  assert.equal(defaults({ CLAUDE_CONFIG_DIR: 'rel-claude' }).claudeDir, join(process.cwd(), 'rel-claude'));
 });

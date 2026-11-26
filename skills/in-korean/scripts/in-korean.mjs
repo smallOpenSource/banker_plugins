@@ -14,7 +14,7 @@
  *   그대로). banker 의 bin/lib/codex-hooks.mjs 와 같은 잠금(hooks.json.lock)을 쓴다. 신뢰해야 돈다(/hooks).
  * 훅 명령은 node 를 띄우지 않고 고정 JSON 한 줄을 찍는다(printf, echo, Write-Output. shellCommand 참고). JSON 의 한글은
  * \uXXXX 로 적어 명령 글이 ASCII 뿐이라 셸과 코드 페이지가 글자를 깨지 않는다. 명령 끝 주석 `# banker:in-korean` 이 표지다.
- * on 이 바꾸기 전 원래 바이트는 <파일>.in-korean.bak, 원래 파일과 hooks 와 language 의 유무는 <파일>.in-korean.json.
+ * 처음 on 이 바꾸기 전 원래 바이트는 <파일>.in-korean.bak, 원래 파일과 hooks 와 language 의 유무는 <파일>.in-korean.json(off 뒤 둘 다 지움).
  *
  * 종료: 0 완료 또는 이미 그 상태, 1 거부나 사용법 오류(바꾼 것 없음), 2 예기치 못한 오류, 3 쓸 권한 없음(샌드박스 등).
  */
@@ -23,7 +23,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { denied, isObject, readJson, readRecord, writeFresh, writeJson } from './settings-json.mjs';
+import { backupFor, denied, isObject, readJson, readRecord, writeFresh, writeJson } from './settings-json.mjs';
 
 export const MARK = 'banker:in-korean';
 export const TEXT = '답변, 보고, 요약, 사용자에게 보이는 생각은 한국어로 씀. 서브에이전트나 도구의 영어 결과를 옮길 때도 한국어로 바꿔 씀. 코드, 명령, 경로, 식별자, 오류 메시지는 원문 그대로. 사용자가 다른 언어를 직접 요청한 글만 예외. (banker in-korean)';
@@ -34,7 +34,7 @@ const KOREAN = /^(korean|ko|ko-kr|한국어)$/i;
 
 export function defaults(env = process.env) {
   return {
-    claudeDir: env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'),
+    claudeDir: env.CLAUDE_CONFIG_DIR ? resolve(env.CLAUDE_CONFIG_DIR) : join(homedir(), '.claude'),
     codexDir: env.CODEX_HOME ? resolve(env.CODEX_HOME) : join(homedir(), '.codex'),
     platform: process.platform,
   };
@@ -161,10 +161,26 @@ function onIn(rt, o) {
   if (JSON.stringify(next) === JSON.stringify(doc.data)) return { code: 0, message: `이미 켜져 있음 (${file})${note}\n- ${AFTER_ON[rt]}` };
   // 처음 on 의 기록을 지킨다: 다시 on 해도 원래 파일 유무, hooks 유무, language 가 남는다.
   const record = readRecord(recordOf(file)) ?? { existed: doc.exists, hadHooks: doc.data.hooks !== undefined, addedLanguage: addLang };
+  const backup = backupFor(backupOf(file), recordOf(file)); // 두 번째 on 은 첫 원본 백업을 덮지 않음
   writeFresh(recordOf(file), `${JSON.stringify(record)}\n`, 0o600);
-  writeJson(file, next, { bom: doc.bom, raw: doc.raw, backup: backupOf(file) });
+  writeJson(file, next, { bom: doc.bom, style: doc.style, raw: doc.raw, backup });
   const lang = addLang ? '\n- language 가 없어 "korean" 을 넣음(off 가 뺌)' : note;
   return { code: 0, message: `켬: ${PLACES[rt].name} 훅 SessionStart, UserPromptSubmit (${file})${lang}\n- ${AFTER_ON[rt]}` };
+}
+
+// off 의 쓰기. on 이 새로 만든 파일이 다시 비면 지운다.
+function writeOff(file, doc, next, record) {
+  if (record?.existed === false && !Object.keys(next).length) rmSync(file, { force: true });
+  else writeJson(file, next, { bom: doc.bom, style: doc.style });
+}
+
+// 우리 묶음 뒤에 다른 묶음이 있는지(빼면 그 묶음의 번호가 밀려 Codex 가 신뢰를 다시 물음).
+function shiftsOthers(data) {
+  return EVENTS.some((ev) => {
+    const groups = data.hooks?.[ev] || [];
+    const at = groups.findIndex((g) => isObject(g) && Array.isArray(g.hooks) && g.hooks.some(isOurs));
+    return at >= 0 && at < groups.length - 1;
+  });
 }
 
 // off 가 쓸 새 문서. 기록이 없으면 hooks 유무는 지금 파일을 따른다(비어도 hooks 를 남김).
@@ -181,12 +197,13 @@ function offIn(rt, o) {
   if (why) return refuse(why);
   const record = readRecord(recordOf(file));
   const { next, dropLang } = offDoc(rt, o, doc.data, record);
+  const same = JSON.stringify(next) === JSON.stringify(doc.data);
+  if (!same) writeOff(file, doc, next, record);
+  // 기록과 백업은 쓴 뒤에 지운다: 쓰기가 실패하면 다음 off 가 기록으로 language 를 뺄 수 있다.
   rmSync(recordOf(file), { force: true });
-  if (JSON.stringify(next) === JSON.stringify(doc.data)) return { code: 0, message: `이미 꺼져 있음 (${file})` };
-  // on 이 새로 만든 파일이 다시 비면 지운다.
-  if (record?.existed === false && !Object.keys(next).length) rmSync(file, { force: true });
-  else writeJson(file, next, { bom: doc.bom });
-  const shifted = rt === 'codex' ? '\n- 뒤에 더해진 다른 훅은 /hooks 에서 다시 신뢰해야 할 수 있음' : '';
+  if (record) rmSync(backupOf(file), { force: true });
+  if (same) return { code: 0, message: `이미 꺼져 있음 (${file})` };
+  const shifted = rt === 'codex' && shiftsOthers(doc.data) ? '\n- 뒤에 더해진 다른 훅은 /hooks 에서 다시 신뢰해야 할 수 있음' : '';
   return { code: 0, message: `끔: ${PLACES[rt].name} 훅을 뺌${dropLang ? ', on 이 넣은 language 도 뺌' : ''} (${file})${shifted}` };
 }
 
