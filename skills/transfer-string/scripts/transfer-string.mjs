@@ -17,7 +17,8 @@
  * Every match in PATH is a candidate, not only the first. On Windows the Microsoft Store Python's python3.exe in
  * WindowsApps is an App Execution Alias that stat cannot open (lstat can): aliases are taken, but after every regular
  * file (PATH's and the install folders'), so with a real install no alias runs; the App Installer stub of the same
- * name fails the probe (exit 9009), and the probe and the run both turn off Python install manager's automatic install.
+ * name fails the probe (exit 9009). Python install manager's (PyManager's) py, python and python3 are never run, since
+ * with no runtime they download and install one: the runtimes its local list names take their place.
  * Each is asked for its version and sys.executable from the home folder; the script then runs on that absolute
  * sys.executable with -I, which keeps the user site, PYTHON* variables and the script's and working folder off the
  * import path.
@@ -27,9 +28,9 @@
  * (E_PYTHON). Errors are "[transfer-string] 오류: ..." and "TSTR_ERROR code=..." on stderr. Node standard modules only.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const WIN = process.platform === "win32";
@@ -130,12 +131,59 @@ function appleToolsReady() {
   return !r.error && r.status === 0;
 }
 
+// Python install manager (PyManager): its py, python and python3 launchers install the latest Python from the network
+// when they run with no runtime yet (measured: about 3 to 9 s, then Python 3.15 in %LOCALAPPDATA%\Python). So a
+// launcher is never run here: its runtimes (regular python.exe files) take its place, from its own local list, and
+// with no runtime it is left out. Its settings, last one wins (PyManager src/manage/config.py, measured on 26.4): the
+// variable PYTHON_MANAGER_AUTOMATIC_INSTALL, the user file %AppData%\Python\PyManager.json, the file that
+// PYTHON_MANAGER_CONFIG names, then the policy key HKLM\Software\Policies\Python\PyManager; so the variables below
+// beat the user file, not the policy. They stay as a second guard for a launcher not recognised as PyManager's.
+const PYMANAGER_PKG = /^PythonSoftwareFoundation\.PythonManager_/i;
+const PYMANAGER_LIST = ["list", "-f=exe", "-q"]; // local: list never installs or downloads, whatever the settings
+const PROBE_ENV = {
+  PYTHON_MANAGER_AUTOMATIC_INSTALL: "false",
+  PYTHON_MANAGER_CONFIG: join(HERE, "pymanager-no-install.json"),
+};
+
+/** Whether p (of kind) is PyManager's: an App Execution Alias that points into its package, or (its MSI install) a
+ * regular file with a regular pymanager.exe beside it. opts: readlink, and fileKind's. */
+export function isPyManager(p, kind, { readlink = readlinkSync, ...opts } = {}) {
+  if (kind === "alias") {
+    try {
+      return PYMANAGER_PKG.test(win32.basename(win32.dirname(readlink(p)))); // a Windows path on any OS (tests)
+    } catch {
+      return false;
+    }
+  }
+  return kind === "file" && fileKind(join(dirname(p), "pymanager.exe"), opts) === "file";
+}
+
+/** The runtimes PyManager p lists, as regular python.exe files: [] with none (or when its pymanager.exe beside it is
+ * not PyManager's too). opts: spawn, and isPyManager's. */
+export function pyManagerRuntimes(p, env = process.env, { spawn = spawnSync, ...opts } = {}) {
+  const mgr = join(dirname(p), "pymanager.exe");
+  if (!isPyManager(mgr, fileKind(mgr, opts), opts)) return [];
+  const r = spawn(mgr, PYMANAGER_LIST, { cwd: runDir(), encoding: "utf8", env: quietEnv(env), timeout: PROBE_MS, windowsHide: true });
+  if (r.error || r.status !== 0) return [];
+  return String(r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter((l) => isAbsolute(l) && fileKind(l, opts) === "file");
+}
+
+/** One PATH match as candidates: a PyManager launcher becomes its runtimes, anything else itself. */
+function expand(p, kind, pre, env, opts, lists) {
+  if (!(opts.win ?? WIN) || !isPyManager(p, kind, opts)) return [[p, ...pre]];
+  const mgr = join(dirname(p), "pymanager.exe").toLowerCase();
+  if (!lists.has(mgr)) lists.set(mgr, pyManagerRuntimes(p, env, opts));
+  return lists.get(mgr).map((x) => [x]);
+}
+
 /** The Pythons to try, in order: [absolute command, ...leading arguments]. Every match in PATH counts (an App Installer
  * stub early in PATH must not hide a real Python later in it). Regular files come first (PATH's, then the install
- * folders), Windows aliases last: with a real install there, no alias is run at all. opts: darwin, and fileKind's. */
+ * folders), Windows aliases last: with a real install there, no alias is run at all. A PyManager launcher is replaced
+ * by its runtimes (see above), TRANSFER_STRING_PYTHON too. opts: darwin, and expand's (fileKind's, readlink, spawn). */
 export function pythons(env = process.env, { darwin = process.platform === "darwin", ...opts } = {}) {
+  const lists = new Map();
   const named = env.TRANSFER_STRING_PYTHON;
-  if (named) return isAbsolute(named) ? [[named]] : [];
+  if (named) return isAbsolute(named) ? expand(named, fileKind(named, opts), [], env, opts, lists) : [];
   const win = opts.win ?? WIN;
   const names = win
     ? [["py", "-3"], ["python3"], ["python"]]
@@ -146,7 +194,7 @@ export function pythons(env = process.env, { darwin = process.platform === "darw
   for (const [name, ...pre] of names) {
     for (const { path: p, kind } of whichAll(name, env, opts)) {
       if (darwin && p.startsWith("/usr/bin/") && !(apple ??= appleToolsReady())) continue;
-      (kind === "alias" ? aliases : files).push([p, ...pre]);
+      (kind === "alias" ? aliases : files).push(...expand(p, kind, pre, env, opts, lists));
     }
   }
   const seen = new Set();
@@ -154,14 +202,9 @@ export function pythons(env = process.env, { darwin = process.platform === "darw
   return [...files, ...installDirs(env).map((p) => [p]), ...aliases].filter((c) => !seen.has(key(c)) && seen.add(key(c)));
 }
 
-// Python install manager (PyManager) installs the latest Python from the network when a python, python3 or py alias
-// runs with no runtime yet (measured: about 8.5 s, then Python 3.15 in %LOCALAPPDATA%\Python). Its documented switch
-// PYTHON_MANAGER_AUTOMATIC_INSTALL=false makes that an error at once ("No runtimes are installed", about 0.1 s).
-const PROBE_ENV = { PYTHON_MANAGER_AUTOMATIC_INSTALL: "false" };
-
 /** env with PROBE_ENV's keys set, any spelling of them removed first (Windows names are case-insensitive, so a
- * python_manager_automatic_install=true left in would make two keys, and either could win). Used for the probe and
- * the run alike, so the Python that runs the script never installs anything either. */
+ * python_manager_automatic_install=true left in would make two keys, and either could win). Used for the probe, the
+ * run and PyManager's list alike, so nothing started here installs anything. */
 export function quietEnv(env = process.env) {
   const drop = new Set(Object.keys(PROBE_ENV).map((k) => k.toUpperCase()));
   const out = {};
