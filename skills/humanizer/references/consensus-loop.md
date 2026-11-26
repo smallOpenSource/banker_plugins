@@ -16,7 +16,7 @@
 | p3, v3 | `sonnet`, `low` | luna, `low` |
 
 - Claude Code 의 노력에는 `none` 이 없다(`low` 가 가장 낮다).
-- Codex 의 luna 는 `codex debug models` 에 있는 id 를 쓴다. `gpt-5.6-luna` 가 있으면 그것, 없을 때만 `gpt-6-luna`. 그 모델의 노력 목록에 `none` 이 있을 때만 `none` 을 쓸 수 있다.
+- Codex 의 luna 는 `spawn_agent` 가 받는 모델 목록에 있는 id 를 쓴다. `gpt-5.6-luna` 가 있으면 그것, 없으면 `gpt-6-luna`(0.165.0 실측: `gpt-5.6-luna` 는 `codex debug models` 에는 있고 `spawn_agent` 목록에는 없음). `codex exec` 좌석은 `codex debug models` 의 id 를 쓴다. 그 모델의 노력 목록에 `none` 이 있을 때만 `none` 을 쓸 수 있다.
 
 ### 띄우는 방법
 
