@@ -1,6 +1,6 @@
 ---
 name: progress-mon
-description: "프로젝트 진척도를 6탭 웹 화면(진척도, 구현요건, workflow, 구성도, ADR, WBS)으로 로컬 서버(기본 127.0.0.1:30000)에 띄움. ADR 탭은 결정마다 최적화 로직, 확장 대응, 포기와 얻은 것과 프로젝트의 검증, 흐름, 증거를 확인 가능한 참조와 함께 보임. WBS 탭은 wbs-gen 과 같은 간트 차트(기간 2일 이내면 시간 열). 인자 없이 부르면 자료 폴더가 없을 때 init(코드를 읽어 6탭 자료를 쓰고 갱신 규칙 등록), 서버가 꺼져 있으면 start, 켜져 있으면 URL 보고. ADR, WBS 자료가 없는 옛 자료 폴더는 확인 뒤 그 단계를 먼저 함. 하위 명령 init, start, stop, status, export, item, note, stage, story, check. 'progress-mon'/'진척도 화면'/'진척도 서버'/'진행 현황 웹 화면' 시 사용. 세션 작업 목록 패널은 이 스킬 대신 progress(Claude Code `/banker:progress`, Codex `$banker-progress`)."
+description: "프로젝트 진척도를 6탭 웹 화면(진척도, 구현요건, workflow, 구성도, ADR, WBS)으로 로컬 서버(기본 127.0.0.1:30000)에 띄움. ADR 탭은 결정마다 최적화 로직, 확장 대응, 포기와 얻은 것과 프로젝트의 검증, 흐름, 증거를 확인 가능한 참조와 함께 보임. WBS 탭은 wbs-gen 과 같은 간트 차트(기간 2일 이내면 시간 열). 인자 없이 부르면 자료 폴더가 없을 때 init(코드를 읽어 6탭 자료를 쓰고 갱신 규칙 등록), 서버가 꺼져 있으면 start, 켜져 있으면 URL 보고. ADR, WBS 자료가 없는 옛 자료 폴더는 확인 뒤 그 단계를 먼저 함. `--static [<파일>]` 은 서버 대신 요청 시각 기준 스냅샷을 오프라인 단일 HTML(기본 자료 폴더의 `snapshots/`)로 만듦. 하위 명령 init, start, stop, status, export, static, item, note, stage, story, check. 'progress-mon'/'진척도 화면'/'진척도 서버'/'진행 현황 웹 화면' 시 사용. 세션 작업 목록 패널은 이 스킬 대신 progress(Claude Code `/banker:progress`, Codex `$banker-progress`)."
 ---
 
 # progress-mon: 프로젝트 진척도 웹 화면
@@ -21,6 +21,7 @@ progress-mon skill body marker v1
 
 - 없는 출처는 건너뛴다. 자료가 없는 탭은 "자료 없음" 과 스키마 문서 경로를 보인다
 - 진척도, 구현요건 탭은 30초마다 자동 갱신(meta refresh). 다른 갱신 연결은 없다
+- 스냅샷(`--static`, `export`)은 자동 갱신, 서버 요청, 외부 자원이 없는 단일 HTML 이다. 윗부분에 `스냅샷 <시각> 기준`
 - ADR 탭은 서버가 `adr.json` 만 읽는다. 프로젝트의 `docs/adr/`, `docs/evidence/` 는 에이전트가 init 과 갱신 때 근거 출처로 읽고 참조로 가리킨다
 - WBS 탭은 서버가 `wbs.json` 만 읽는다. 날짜는 에이전트가 계획, 기록, 커밋에서 옮겨 적는다(`references/wbs.md`). 자동 갱신하지 않는다
 
@@ -30,7 +31,7 @@ progress-mon skill body marker v1
 - 결정의 근거와 검증 증거를 타인이 확인할 수 있게 한 화면에 모으고 싶을 때(ADR 탭)
 - 일정과 진척을 한 화면에서 간트 차트로 함께 보고 싶을 때(WBS 탭). XLSX 파일이 필요하면 wbs-gen 을 쓴다
 - 단계, 스토리, 그 밖 작업의 진행을 에이전트가 세션마다 기록하게 하고 싶을 때
-- 화면을 서버 없이 한 파일로 넘겨야 할 때(`export`)
+- 화면을 서버 없이 한 파일로 넘기거나 그 시점의 상태를 남겨야 할 때(`--static`)
 
 ## 쓰지 않을 때
 
@@ -60,11 +61,21 @@ progress-mon skill body marker v1
 | `--memory` | 자동 메모리 폴더를 알면 `auto-memory`, 아니면 `claude-md` | `agents-md` |
 | `start`, `stop`, `status` | 바로 실행 | 명령 하나씩 `sandbox_permissions: "require_escalated"` 로 승인 요청 |
 | `init` | 바로 실행 | git 제외 목록 쓰기 때문에 승인 요청 |
+| `static` | 바로 실행 | 자료 폴더 안(기본 자리)은 바로 실행. 작업 폴더 밖 `<파일>` 은 `sandbox_permissions: "require_escalated"` 로 승인 요청 |
 | 서버 수명 | 세션과 무관하게 분리 실행 | 세션을 닫으면 서버가 꺼질 수 있음. 사용자 터미널 명령 안내(banker `ultra-chain` SKILL.md 의 "런타임 대응" 절 방식) |
 
 - 사용자 터미널 안내 견본: `node "<스킬 디렉터리>/scripts/progress-mon.mjs" serve --runtime codex --project "<프로젝트>"`
 - Codex 는 승인을 명령 하나씩 요청한다. `&&` 로 묶지 않는다
 - Claude Code 의 자동 메모리 폴더: 세션 맥락에 자동 메모리 `MEMORY.md` 경로가 보이면 그 폴더. 보이지 않으면 모르는 것으로 보고 `claude-md` 를 쓴다
+
+## 인자
+
+| 인자 | 할 일 |
+|---|---|
+| 없음 | 아래 "인자 없는 호출" |
+| `--static [<파일>]` | 아래 "스냅샷(`--static`)". 서버를 띄우지 않는다 |
+| `--auto` | 인자 없는 호출과 같고 묻는 단계를 건너뜀(각 단계의 `--auto` 규칙). 스크립트에는 넘기지 않음 |
+| 하위 명령 이름(`status` 등) | 그 하위 명령을 `--runtime <rt>` 와 함께 그대로 실행하고 출력을 보고. `init` 만은 아래 "init 절차" |
 
 ## 인자 없는 호출
 
@@ -78,6 +89,7 @@ progress-mon skill body marker v1
    | 종료 0, `실행 중: <URL> (PID n)` | URL 과 `탭 자료:` 줄을 보고 |
    | 자료 폴더가 있고 `탭 자료:` 줄이 `ADR 없음` | 위 행의 일을 하기 전에 아래 "기존 프로젝트의 ADR 단계" 를 한다. `ADR 깨짐` 이면 하지 않고 깨짐을 보고(`check` 로 위치 확인) |
    | 자료 폴더가 있고 `탭 자료:` 줄이 `WBS 없음` 으로 끝남 | 위 행의 일을 하기 전에 아래 "기존 프로젝트의 WBS 단계" 를 한다. `WBS 없음(묻지 않음)` 이면 하지 않는다(`config.json` 의 `wbsAsk` 가 `false`). `WBS 없음(wbsAsk 값 오류)` 이면 WBS 단계를 묻지 않고, `config.json` 의 `wbsAsk` 를 `true` 나 `false`(따옴표 없는 JSON 참거짓)로 고치거나 지우라고 보고. `WBS 깨짐` 이면 하지 않고 깨짐을 보고(`check` 로 위치 확인) |
+   | 자료 폴더가 있고 `갱신 규칙: 미등록(묻기)` 줄이 있음 | 위 행의 일을 하기 전에 아래 "스냅샷으로 만든 자료 폴더의 규칙 등록" 을 한다. `미등록(묻지 않음)` 이면 하지 않는다(`config.json` 의 `ruleAsk` 가 `false`). `미등록(ruleAsk 값 오류)` 이면 묻지 않고, `ruleAsk` 를 `true` 나 `false` 로 고치거나 지우라고 보고 |
    | 종료 1 또는 2 | 오류 줄을 그대로 보고하고 멈춤 |
 
 3. `status` 의 표준 오류에 경고 줄(규칙 로드 한도, override 가려짐, `workflowDirs`)이 있으면 그대로 전한다
@@ -93,13 +105,13 @@ ADR 탭이 생기기 전 판으로 init 한 프로젝트는 `adr.json` 이 없�
    - 건너뜀이면 원래 표의 일만 한다
 2. `<data>/state.json` 의 `memory`(`{kind, path}`)를 읽어 `init` 을 다시 실행한다. 다른 자료 파일은 이미 있으면 그대로 둔다
    - `auto-memory`: `init --runtime <rt> --memory auto-memory --memory-dir "<path 의 폴더>"`(`--memory-dir` 필수. `path` 는 `MEMORY.md` 경로라 그 폴더를 넘긴다)
-   - `claude-md`, `agents-md`, `none`: `init --runtime <rt> --memory <kind>`
+   - `claude-md`, `agents-md`, `none`, `later`: `init --runtime <rt> --memory <kind>`
    - Codex 는 init 처럼 `sandbox_permissions: "require_escalated"` 로 승인 요청
 3. 출력의 `규칙 줄 교체(백업 <경로>): <파일>` 줄을 사용자에게 알린다. 표식 줄(우리가 쓴 규칙 줄과 색인 줄)만 새 판으로 바꾸고 첫 원본을 그 백업에 남긴다. 사용자가 손으로 고친 표식 줄도 덮으므로 백업 경로를 함께 알린다
 4. 아래 "init 절차" 의 8(ADR 단계), 10~12(check 반복과 정리 단계)만 한다
 5. 원래 표의 일(`start` 와 URL 보고, 또는 URL 과 `탭 자료:` 보고)로 돌아간다
 
-- `--memory none` 으로 init 한 프로젝트는 바꿀 규칙 줄이 없어 1, 4, 5 만 한다
+- `--memory none`, `--memory later` 로 init 한 프로젝트는 바꿀 규칙 줄이 없어 1, 4, 5 만 한다
 
 ### 기존 프로젝트의 WBS 단계
 
@@ -115,22 +127,59 @@ WBS 탭이 생기기 전 판으로 init 한 프로젝트는 `wbs.json` 이 없�
 3. 아래 "init 절차" 의 9(WBS 단계), 10~12(check 반복과 정리 단계)만 한다. 이 단계에서는 `wbs.json` 줄만 고친다. 다른 탭의 FAIL 은 보고만 한다
 4. 원래 표의 일로 돌아간다
 
-- `--memory none` 으로 init 한 프로젝트는 2 를 하지 않는다
+- `--memory none`, `--memory later` 로 init 한 프로젝트는 2 를 하지 않는다
 - 근거가 되는 날짜가 하나도 없으면 `wbs.json` 을 쓰지 않는다. 묻지 않고 `config.json` 에 `"wbsAsk": false` 를 적어 다음 호출부터 이 단계를 건너뛰게 하고, 화면은 "자료 없음" 으로 두며 그 까닭과 다시 켜는 법을 보고한다
+
+### 스냅샷으로 만든 자료 폴더의 규칙 등록
+
+`--static` 이 처음 만든 자료 폴더는 계속 갱신하지 않으므로 `init --memory later` 로 만들어 갱신 규칙이 없다. `status` 가 `갱신 규칙: 미등록(묻기)` 줄을 낸다. 다음 인자 없는 호출에서 한 번 묻는다.
+
+1. 묻는다: "진척도 화면 자료는 스냅샷용으로 만들어져 갱신 규칙이 없습니다. 메모리에 progress-mon 갱신 규칙을 등록하고 계속 갱신할까요?"
+   - Claude Code 는 AskUserQuestion, Codex 는 request_user_input 으로 묻는다(선택지: 등록, 등록하지 않음(다시 묻지 않음))
+   - `--auto` 로 불렀거나 다른 스킬이 자동 진행으로 불렀으면 묻지 않고 등록하지 않는다. 다음 인자 없는 호출에서 다시 묻는다
+2. 등록이면 `init --runtime <rt> --memory <종류> [--memory-dir <자동 메모리 폴더>]` 를 실행한다(종류는 런타임 표의 `--memory`, Codex 는 승인 요청). 자료 파일은 그대로 두고 규칙만 등록하며 `state.json` 의 `memory` 가 그 종류로 바뀌어 갱신 규칙 줄이 사라진다. 출력은 "init 절차" 3 처럼 알린다. 출력 끝 `다음 할 일` 은 따르지 않는다
+3. 등록하지 않음이면 `<data>/config.json` 에 `"ruleAsk": false` 를 적는다(`references/config.md`). 그 뒤 줄은 `갱신 규칙: 미등록(묻지 않음)` 이다. 다시 켜려면 그 키를 지우거나 `true`
+4. 원래 표의 일로 돌아간다
+
+- `ADR 없음` 이나 `WBS 없음` 행도 함께 해당하면 그 단계의 질문에 규칙 등록을 묶어 한 번에 묻는다. `init` 다시 실행은 한 번만: 등록이면 고른 종류(`--memory <종류>`)로, 등록하지 않음이면 `--memory later` 로 실행하고 `"ruleAsk": false` 를 적는다
+- 이 줄은 `init --memory later` 로 만든 자료 폴더에만 나온다. 다른 종류(`claude-md`, `agents-md`, `auto-memory`, `none`)로 init 한 자료 폴더는 줄이 없고 묻지 않는다
+
+## 스냅샷(`--static`)
+
+`/progress-mon --static [<파일>]` 은 서버를 띄워 계속 갱신하는 대신 요청 시각 기준 스냅샷을 오프라인 단일 HTML 로 만든다. 사용자가 `--static` 을 준 것이 `static` 하위 명령을 만들라는 지시다.
+
+1. `status` 를 실행한다. 서버 상태는 보기만 한다. 종료 1 또는 2 면 오류 줄을 그대로 보고하고 멈춤
+2. 종료 3 과 `꺼짐(자료 폴더 없음: ...)`(자료 폴더 없음)
+   1. `init --runtime <rt> --memory later [--title "<제목>"]` 를 실행하고 쓴 파일을 알린다(Codex 는 승인 요청). 계속 갱신하지 않으므로 메모리 규칙을 등록하지 않는다. 나중에 인자 없이 부르면 그때 묻는다(위 "스냅샷으로 만든 자료 폴더의 규칙 등록")
+   2. 아래 "init 절차" 의 4~14 를 한다(6탭 자료, check 반복과 정리, 진척도 기록). 15(`start`)는 하지 않는다
+3. 자료 폴더가 있음(종료 0 이나 종료 3 과 `꺼짐(자료 폴더: ...)`)
+   1. `check` 를 실행한다. FAIL 이 있으면 "init 절차" 10 처럼 FAIL 줄이 가리키는 자료 파일 칸만 고친다(최대 3회). 그래도 남으면 12 의 정리 단계를 한다
+   2. 코드를 다시 읽어 자료를 갱신하지 않는다. git 기록, 세션 기록 같은 실시간 자료는 `static` 이 요청 시각에 새로 읽는다
+   3. ADR, WBS 단계와 규칙 등록은 묻지 않는다. 자료가 없는 탭은 스냅샷에서 "자료 없음" 이다
+4. `node "<S>/scripts/progress-mon.mjs" static --runtime <rt> [<파일>]` 을 실행한다
+   - 기본 자리: `<data>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html`. 시각은 프로젝트 현지 시간대(화면이 시각을 보이는 시간대)의 벽시계. 같은 분에 또 만들면 덮어쓰지 않고 `-2`, `-3` 을 붙인다. `snapshots/` 는 없으면 만든다
+   - 사용자가 `<파일>` 을 주면 그 파일에 쓴다. 이름은 `.html` 이나 `.htm` 으로 끝나야 한다. 이미 있으면 덮어쓰지 않고 확장자 앞에 `-2`, `-3` 을 붙인 새 이름에 쓴다. 링크(끊어진 것 포함)는 따라가지 않는다
+   - 자료 폴더가 없으면 종료 1(`init 먼저`). 2 를 먼저 한다
+   - 종료 1 또는 2(예: `config.json 형식 오류`, `파일 이름은 .html 이나 .htm 으로 끝나야 함`, `snapshots 자리에 폴더가 아닌 것`)면 오류 줄을 그대로 보고하고 멈춤. 이름 오류면 `.html` 로 끝나는 다른 이름을 묻는다
+5. 보고: 출력의 `스냅샷: <절대 경로>`(번호가 붙었으면 그 실제 경로), `기준 시각: <시각>` 과 서버 없이 여는 오프라인 단일 파일(외부 자원, 자동 갱신 없음)이라는 것. 경로만 알리고 브라우저를 대신 열지 않는다
+
+- `--static` 은 서버를 띄우지도 끄지도 않는다. 서버가 떠 있으면 그대로 두고, 화면 URL 은 보고하지 않는다
+- `check` 의 남은 FAIL, WARN 과 정리 결과(`정리:` 줄)는 스냅샷 경로와 함께 보고한다
 
 - `start` 출력: `시작함: <URL>`, 이미 떠 있으면 `이미 실행 중(재사용): <URL>`. 포트가 차 있으면 다음 빈 포트를 쓰고 알림 줄을 낸다
 - `--port 0`(OS 선택)은 받지 않는다. 특정 포트를 피해야 하면 OS 가 고른 빈 포트를 먼저 얻어 `--port` 로 넘긴다(`references/config.md` 의 "포트와 주소")
-- 인자가 있는 호출(`/progress-mon status` 등)은 그 하위 명령을 `--runtime <rt>` 와 함께 그대로 실행하고 출력을 보고한다. `init` 만은 아래 절차를 따른다
+- 인자가 있는 호출(`/progress-mon status` 등)은 그 하위 명령을 `--runtime <rt>` 와 함께 그대로 실행하고 출력을 보고한다. `init` 만은 아래 절차를, `--static` 은 위 "스냅샷(`--static`)" 을 따른다
 
 ## 하위 명령
 
 | 명령 | 인자 | 동작 |
 |---|---|---|
-| `init` | `--memory claude-md\|agents-md\|auto-memory\|none` `[--memory-dir <dir>] [--title <t>]` | 자료 폴더, `config.json`(있으면 그대로), 빈 `items.json`, `state.json` 생성. git 제외 목록에 자료 폴더 한 줄. 메모리 규칙 등록. `auto-memory` 는 `--memory-dir` 필수 |
+| `init` | `--memory claude-md\|agents-md\|auto-memory\|none\|later` `[--memory-dir <dir>] [--title <t>]` | 자료 폴더, `config.json`(있으면 그대로), 빈 `items.json`, `state.json` 생성. git 제외 목록에 자료 폴더 한 줄. 메모리 규칙 등록. `auto-memory` 는 `--memory-dir` 필수. `later` 는 등록하지 않고 `state.json` 에 남겨 다음 인자 없는 호출이 묻게 함(`--static` 의 첫 자료 폴더) |
 | `start` | `[--port <n>] [--port-strict] [--host <사설 IPv4>]` | 서버를 분리 실행하고 URL 출력. 같은 프로젝트 서버가 떠 있으면 재사용. 동시에 부른 start 는 차례로 돌아 서버 하나를 같이 씀. `<n>` 은 1024~65535 |
 | `stop` | 없음 | 상태 파일 PID 가 이 서버일 때만 끔 |
-| `status` | 없음 | 실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무(`탭 자료:` 줄, 꺼져 있어도 자료 폴더가 있으면 보임. 깨진 JSON 은 깨짐), 시작 시각, 요청 수, 마지막 오류 시각. 서버를 띄운 뒤 `config.json` 의 `port`, `portStrict`, `hosts` 가 바뀌었으면 경고(그 셋만 `stop` 뒤 `start` 해야 적용, 나머지는 다음 응답에 반영) |
-| `export` | `<file> [--now <ISO>]` | 6탭을 한 HTML 파일로. 외부 자원 없음, `file://` 에서 탭 전환. 사용자가 지시할 때만 만든다 |
+| `status` | 없음 | 실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무(`탭 자료:` 줄, 꺼져 있어도 자료 폴더가 있으면 보임. 깨진 JSON 은 깨짐), `init --memory later` 자료 폴더면 다음 줄 `갱신 규칙: 미등록(묻기\|묻지 않음\|ruleAsk 값 오류)`, 시작 시각, 요청 수, 마지막 오류 시각. 서버를 띄운 뒤 `config.json` 의 `port`, `portStrict`, `hosts` 가 바뀌었으면 경고(그 셋만 `stop` 뒤 `start` 해야 적용, 나머지는 다음 응답에 반영) |
+| `export` | `<file> [--now <ISO>]` | 6탭을 한 HTML 파일로. 외부 자원, 자동 갱신 없음, `file://` 에서 탭 전환. 윗부분에 `스냅샷 <시각> 기준`. `<file>` 은 `.html` 이나 `.htm` 으로 끝나야 함(아니면 종료 1). 있는 파일은 덮어쓰지 않고 확장자 앞에 `-2`, `-3`(상한 999)을 붙인 새 이름에 쓰며 링크(끊어진 것 포함)는 따라가지 않음. 예전 판은 덮어썼다. 출력 `내보냄: <실제 경로>`. 사용자가 지시할 때만 만든다 |
+| `static` | `[<file>] [--now <ISO>]` | `export` 와 같은 단일 HTML 을 `<data>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html`(현지 시각, 같은 분이면 `-2`, `-3`, 덮어쓰지 않음)에. `<file>` 을 주면 그 파일(`export` 와 같은 규칙: `.html`, `.htm` 만, 있으면 번호, 링크 안 따라감). 번호는 999 까지(넘으면 종료 1). 출력 `스냅샷: <실제 절대 경로>`, `기준 시각: <시각>`. 서버는 건드리지 않음. 사용자가 지시할 때만 만든다(`--static` 이 그 지시) |
 | `item` | `--key <k> --status todo\|doing\|done --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]` | 기타 항목. 같은 key 는 대체하고 시작 시각 유지(시작 시각은 `doing` 으로 기록할 때만). `--at` 은 지금 대신 그 시각으로 기록(시간대 필수). `--commit` 은 4~40자 16진 해시(commit Hash 칸에 앞 7자리). 빼면 있던 해시 유지 |
 | `note` | `--key <k> [--note <t>] [--issue <t>]` | 단계(`stage:<id>`)나 스토리 행의 비고, 문제점. 빈 값은 그 칸을 지움 |
 | `stage` | `--id <id> --status started\|done\|skipped\|failed\|stopped [--label <t>]` | 단계 상태 기록. 설정에 없는 id 는 새 단계 행 |
@@ -139,7 +188,7 @@ WBS 탭이 생기기 전 판으로 init 한 프로젝트는 `wbs.json` 이 없�
 
 - 공통 인자: `--runtime claude|codex`, `--project <dir>`, `--data <dir>`(자료 폴더 직접 지정)
 - 종료 코드: 0 성공(이미 그 상태 포함), 1 거부나 사용법 오류나 `check` FAIL, 2 예기치 못한 오류, 3 `status` 꺼짐
-- 자료 폴더가 없으면 `start`, `item`, `note`, `stage`, `story` 는 종료 1("init 먼저"). `status`, `check`, `export` 는 폴더를 만들지 않는다
+- 자료 폴더가 없으면 `start`, `item`, `note`, `stage`, `story`, `static` 은 종료 1("init 먼저"). `status`, `check`, `export` 는 폴더를 만들지 않는다
 - 내부용 `serve`: `start` 와 같은 인자로 서버를 앞에서 실행. Codex 사용자 터미널 안내와 디버그에만 쓴다
 - 스키마와 규칙: `references/config.md`, `references/items.md`, `references/adr.md`, `references/wbs.md`
 

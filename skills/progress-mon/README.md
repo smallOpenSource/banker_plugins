@@ -13,7 +13,7 @@
 | `scripts/pm-config.mjs` | 프로젝트 루트와 자료 폴더 결정, `config.json` 읽기, 기본값, 형식 검사, 원자적 쓰기(임시 파일과 rename, Windows 재시도) |
 | `scripts/pm-sources.mjs` | events.jsonl, git log, 워크플로 journal, `items.json` 읽기. 스토리와 라벨 판정 함수, 시각 해석, 읽기 캐시 |
 | `scripts/pm-html.mjs` | escape, 색 검사, 유한 수 검사, 글 폭 추정, 줄바꿈, 공통 CSS, 탭 머리 |
-| `scripts/pm-render.mjs` | 6탭, 단일 HTML 스냅숏(`export`), workflow 배치, 구성도 자동 배치 |
+| `scripts/pm-render.mjs` | 6탭, 단일 HTML 스냅숏(`export`, `static` 과 그 기본 자리 `snapshots/`. 있는 파일은 덮어쓰지 않고 번호를 붙인 새 이름, 링크는 따라가지 않음), workflow 배치, 구성도 자동 배치 |
 | `scripts/pm-adr.mjs` | ADR 탭 검사: `adr.json` 두 층 스키마 검사, 참조 확인과 정리(`check --adr-cleanup`), `docs/adr/` 갈라짐 경고, 밀도, 집계, check 대조 기록(`adr-check.json`) |
 | `scripts/pm-adr-view.mjs` | ADR 탭 렌더: 화면 본문과 check 대조 배지 |
 | `scripts/pm-wbs-view.mjs` | WBS 탭 렌더: `wbs.json` 을 wbs-gen 과 같은 간트 격자로(오류면 오류 줄) |
@@ -45,6 +45,7 @@
 - 시험은 PATH 의 `git` 으로 임시 저장소를 만든다. git 이 없는 PC 에서는 그 시험 10개가 실패한다(2026-10-30, PATH 에 node 와 mkfifo 만 두고 실측). 스킬 자체는 git 이 없으면 커밋 기록 없이 동작
 - FIFO 와 `/dev/zero` 시험은 POSIX 만. Windows 에서는 이유를 밝히고 건너뛴다
 - ADR 화면 e2e 는 Playwright Chromium 으로 `export` 한 HTML 을 연다. Playwright 는 `BUILD_TESTBOX_PLAYWRIGHT_DIR`(테스트박스 도구 폴더, `node_modules` 를 담은 폴더)이 있으면 그곳, 없으면 `npm root -g` 에서 찾는다. Playwright 가 없거나 Chromium 을 띄우지 못하면 사유를 밝히고 건너뛴다. `PM_ADR_SHOT=<png 경로>` 를 주면 스크린숏을 그 경로에 남긴다
+- `static` 화면 e2e(`pm-static.test.mjs`)는 같은 Playwright 로 네트워크를 끈 브라우저 맥락에서 `file://` 로 열어 6탭 전환, 기준 시각, 문서 밖 요청 0 을 본다. `PM_STATIC_SHOT=<png 경로>` 는 스크린숏
 
 ## 개발
 

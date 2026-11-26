@@ -15,14 +15,16 @@ export const HELP = `progress-mon: 프로젝트 진척도 웹 화면
 사용: node progress-mon.mjs <명령> [인자]
 
 명령
-  init      --memory claude-md|agents-md|auto-memory|none [--memory-dir <dir>] [--title <t>]
-            자료 폴더와 config.json, items.json 을 만들고 갱신 규칙 등록
+  init      --memory claude-md|agents-md|auto-memory|none|later [--memory-dir <dir>] [--title <t>]
+            자료 폴더와 config.json, items.json 을 만들고 갱신 규칙 등록. later 는 등록을 미루고 다음 인자 없는 호출에서 묻게 함
   start     [--port <n>] [--port-strict] [--host <사설 IPv4>]
             서버를 분리 실행하고 URL 출력. 같은 프로젝트 서버가 떠 있으면 재사용
   stop      서버 정지. 상태 파일의 PID 가 이 서버일 때만
   status    실행 여부, URL, PID, 자료 폴더, 탭별 자료 유무
   export    <file> [--now <ISO>]
             외부 자원 없는 단일 HTML
+  static    [<file>] [--now <ISO>]
+            요청 시각 기준 스냅샷 단일 HTML. 기본 자리 <자료 폴더>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html(같은 분이면 -2, -3). 서버는 건드리지 않음
   item      --key <k> --status todo|doing|done --text <t> [--note <t>] [--issue <t>] [--at <ISO>] [--commit <hash>]
   note      --key <k> [--note <t>] [--issue <t>]
   stage     --id <id> --status started|done|skipped|failed|stopped [--label <t>]
@@ -50,11 +52,12 @@ const MODS = {
   stage: 'pm-data.mjs',
   story: 'pm-data.mjs',
   export: 'pm-render.mjs',
+  static: 'pm-render.mjs',
   check: 'pm-check.mjs',
 };
 const SERVER_CMDS = new Set(['serve', 'start', 'stop', 'status']);
 // 자료 폴더가 없으면 init 먼저(폴더를 만들지 않음).
-const NEED_DATA = new Set(['serve', 'start', 'item', 'note', 'stage', 'story']);
+const NEED_DATA = new Set(['serve', 'start', 'item', 'note', 'stage', 'story', 'static']);
 
 export function parseArgs(argv) {
   const o = { _: [] };

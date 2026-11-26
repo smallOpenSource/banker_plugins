@@ -11,7 +11,7 @@ import { git, readRegular, realNative, UsageError, writeNew } from './pm-config.
 export const MARKER = '<!-- progress-mon:rule -->';
 export const OMX_OPEN = '<!-- USER:OMX:POLICY:START -->';
 export const OMX_CLOSE = '<!-- USER:OMX:POLICY:END -->';
-const KINDS = ['claude-md', 'agents-md', 'auto-memory', 'none'];
+const KINDS = ['claude-md', 'agents-md', 'auto-memory', 'none', 'later'];
 
 // 규칙 줄. 경로는 자료 폴더 기준 상대 표기뿐(스킬 폴더 절대 경로는 state.json 의 skillDir).
 export function ruleLine(runtime) {
@@ -298,9 +298,10 @@ function append(file, info, lines) {
 // 등록 계획. 쓰기 전에 대상을 모두 검사한다(거부면 아무것도 바꾸지 않음).
 // o: { kind, memoryDir, project, runtime }. 돌려줌: { kind, runtime, steps, memory: {kind, path} }
 export function planMemory({ kind, memoryDir, project, runtime }) {
-  if (kind === undefined) throw new UsageError('init 에는 --memory claude-md|agents-md|auto-memory|none 가 필요함');
+  if (kind === undefined) throw new UsageError('init 에는 --memory claude-md|agents-md|auto-memory|none|later 가 필요함');
   if (!KINDS.includes(kind)) throw new UsageError(`--memory 는 ${KINDS.join(', ')} 가운데 하나(받은 값 ${kind})`);
-  if (kind === 'none') return { kind, runtime, steps: [], memory: { kind, path: null } };
+  // later: 스냅샷(--static)만 만든 자료 폴더. 지금은 등록하지 않고 state.json 에 남겨 다음 인자 없는 호출이 묻게 한다
+  if (kind === 'none' || kind === 'later') return { kind, runtime, steps: [], memory: { kind, path: null } };
   if (kind === 'auto-memory') {
     if (!memoryDir) throw new UsageError('--memory auto-memory 에는 --memory-dir <dir> 가 필요함');
     const dir = path.resolve(memoryDir);
@@ -429,6 +430,7 @@ function addStep(s, runtime) {
 // 계획대로 쓴다. 돌려줌: 출력 줄 목록(규칙 줄, 경고 줄).
 export function applyMemory(plan, project, env = process.env) {
   if (plan.kind === 'none') return ['규칙 등록 안 함(--memory none)'];
+  if (plan.kind === 'later') return ['규칙 등록 미룸(--memory later). 다음 인자 없는 호출에서 묻는다'];
   if (plan.dir) fs.mkdirSync(plan.dir, { recursive: true });
   const out = plan.steps.map((s) => (s.info.text.includes(MARKER) ? refreshStep(s) : addStep(s, plan.runtime)));
   return [...out, ...memoryWarnings(plan.memory, project, env)];

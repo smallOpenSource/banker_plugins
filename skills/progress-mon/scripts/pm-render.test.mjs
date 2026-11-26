@@ -690,7 +690,7 @@ test('단일 HTML 스냅숏: 절 6, 인라인 스크립트 1, 외부 참조 0, �
   assert.equal(count(s, /<script\b/g), 1);
   assert.ok(!/http-equiv="refresh"/.test(s));
   assert.ok(!/(?:src|href)\s*=\s*["']?(?:https?:)?\/\//i.test(s));
-  assert.ok(s.includes('<title>ex 진척도 스냅숏</title>'));
+  assert.ok(s.includes('<title>ex 진척도 스냅샷</title>'));
   assert.ok(s.includes('<div class="tabs"><a href="#history" data-tab="history">진척도</a><a href="#req" data-tab="req">구현요건</a><a href="#workflow" data-tab="workflow">workflow</a><a href="#arch" data-tab="arch">구성도</a><a href="#adr" data-tab="adr">ADR</a><a href="#wbs" data-tab="wbs">WBS</a></div>'));
   assert.ok(s.includes('var ks=["history","req","workflow","arch","adr","wbs"]'), '#adr, #wbs 로 전환');
   assert.ok(s.includes('<section id="tab-req" class="tab"><h2 class="tt">구현요건</h2>\n\n<div>요구 2건'));
@@ -725,7 +725,7 @@ test('export 명령: 파일을 쓰고 경로 한 줄, --now 형식, 파일 인�
   assert.equal(await command('export', ctx, { _: ['export', out], now: '2026-10-29T03:00:00Z' }, io), 0);
   assert.deepEqual(lines, [`내보냄: ${out}`]);
   const html = fs.readFileSync(out, 'utf8');
-  assert.ok(html.includes(`스냅숏 ${new Date(NOW).toLocaleString('ko-KR', { hour12: false })} |`));
+  assert.ok(html.includes(`스냅샷 ${new Date(NOW).toLocaleString('ko-KR', { hour12: false })} 기준 |`));
   assert.equal(count(html, /<section id="tab-/g), 6);
   await assert.rejects(command('export', ctx, { _: ['export', out], now: 'yesterday' }, io), (e) => e instanceof UsageError && /--now/.test(e.message));
   await assert.rejects(command('export', ctx, { _: ['export'] }, io), UsageError);

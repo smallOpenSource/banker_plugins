@@ -1,7 +1,7 @@
 # config.json
 
 자료 폴더(`.omc/progress-mon/`, Codex `.omx/progress-mon/`)의 설정 파일. `init` 이 기본값으로 만들고, 있으면 그대로 둔다.
-형식이 틀린 칸은 기본값으로 읽고 `check` 가 `FAIL config.json <경로> <이유>` 로 알린다. `start`, `export` 는 형식 오류가 있으면 종료 1.
+형식이 틀린 칸은 기본값으로 읽고 `check` 가 `FAIL config.json <경로> <이유>` 로 알린다. `start`, `export`, `static` 은 형식 오류가 있으면 종료 1.
 
 실행 중 서버는 요청마다 `config.json` 을 보고, 바뀌었으면 다시 읽는다. 그래서 `stories`, `commitRegex`, `title` 같은 값은 다음 응답에 반영된다. 형식 오류가 생기면 화면은 오류 목록을 보이고, 고치면 돌아온다.
 `port`, `portStrict`, `hosts` 만은 서버를 다시 띄워야 적용된다(`stop` 뒤 `start`). 바뀐 채로 서버가 떠 있으면 `status` 가 경고 줄을 낸다.
@@ -18,6 +18,7 @@
 | `hosts` | 사설 IPv4 목록 | `[]` | 127.0.0.1 에 더해 바인드할 주소. `start --host <ip>` 가 저장 |
 | `refreshSec` | 5~3600 정수 | 30 | 진척도, 구현요건 탭 자동 갱신 간격(초) |
 | `wbsAsk` | 참, 거짓 | 없음(참과 같음) | `false` 면 `wbs.json` 이 없어도 인자 없는 호출이 WBS 단계를 묻지 않는다. `status` 의 `탭 자료:` 줄이 `WBS 없음(묻지 않음)`. 사용자가 "다시 묻지 않음" 을 골랐거나 날짜 근거가 없을 때 에이전트가 적는다. 참거짓이 아닌 값(`"false"` 같은 문자열, `0`, `null`)이면 `탭 자료:` 줄이 `WBS 없음(wbsAsk 값 오류)` 이고, 인자 없는 호출은 묻지 않고 값을 `true` 나 `false`(따옴표 없음)로 고치거나 지우라고 알린다. `check` 는 `FAIL config.json wbsAsk 참 또는 거짓`. `wbs.json` 이 있으면 쓰지 않는 값 |
+| `ruleAsk` | 참, 거짓 | 없음(참과 같음) | `init --memory later`(`--static` 이 처음 만든 자료 폴더)에서만 쓴다. `false` 면 인자 없는 호출이 갱신 규칙 등록을 묻지 않는다. `status` 의 줄이 `갱신 규칙: 미등록(묻지 않음)`. 사용자가 "등록하지 않음" 을 골랐을 때 에이전트가 적는다. 참거짓이 아닌 값이면 `갱신 규칙: 미등록(ruleAsk 값 오류)` 이고 인자 없는 호출은 묻지 않고 값을 고치거나 지우라고 알린다. `check` 는 `FAIL config.json ruleAsk 참 또는 거짓`. 규칙을 등록한 자료 폴더에서는 쓰지 않는 값 |
 | `stages` | `"auto"` 또는 `[{id, label}]` | `"auto"` | 단계 목록. `"auto"` 는 events 출처가 있으면 ultra-chain 10단계, 없으면 빈 목록 |
 | `stories` | `[{id, name}]` | `[]` | 스토리 목록(순서대로 표시). 비면 스토리 판정, 스토리 표, 진척률을 생략 |
 | `commitRegex` | 정규식 문자열, 이름 그룹 `id` | 없음 | 커밋 제목의 스토리 판정을 바꿈 |

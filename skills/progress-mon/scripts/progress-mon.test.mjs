@@ -107,12 +107,12 @@ function guardData(p) {
   if (REPO_DATA && dataOf(p).toLowerCase().startsWith(REPO_DATA)) throw new Error('이 저장소 운영 자료 폴더');
 }
 
-test('--help 는 하위 명령 10개를 보이고 serve 는 숨김, 종료 0', T, () => {
+test('--help 는 하위 명령 11개를 보이고 serve 는 숨김, 종료 0', T, () => {
   const r = cli(['--help'], ROOT);
   assert.equal(r.code, 0);
   assert.equal(r.out, HELP);
   assert.equal(r.err, '');
-  for (const c of ['init', 'start', 'stop', 'status', 'export', 'item', 'note', 'stage', 'story', 'check']) assert.match(r.out, new RegExp(`^  ${c} `, 'm'), c);
+  for (const c of ['init', 'start', 'stop', 'status', 'export', 'static', 'item', 'note', 'stage', 'story', 'check']) assert.match(r.out, new RegExp(`^  ${c} `, 'm'), c);
   assert.doesNotMatch(r.out, /serve/);
   assert.equal(cli([], ROOT).out, HELP, '인자 없음도 도움말');
 });
