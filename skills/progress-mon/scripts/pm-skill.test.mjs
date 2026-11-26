@@ -236,6 +236,8 @@ test('SKILL.md: <파일> 과 export 는 덮어쓰지 않음(번호, 링크 안 �
   const render = fs.readFileSync(path.join(HERE, 'pm-render.mjs'), 'utf8');
   for (const w of ['파일 이름은 .html 이나 .htm 으로 끝나야 함: ', 'snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부', 'export const NUMBER_MAX = 999;', 'snapshots 의 실제 경로가 자료 폴더 밖이라 거부']) assert.ok(render.includes(w), w);
   assert.ok(s.includes('그 사이 폴더나 위 폴더가 링크로 바뀌면 내용을 쓰지 않고 종료 1(`폴더가 바뀌어 쓰지 않음`)'));
+  assert.ok(s.includes('Windows 네트워크 경로(SMB 공유, 매핑 드라이브)는 폴더 고정을 확인할 수 없어 쓴 직후 대조로 대신한다'));
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("const isNetwork = (real) => real.startsWith('\\\\\\\\');"));
   assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes('`폴더가 바뀌어 쓰지 않음(링크 바꿔치기로 보임): '));
 });
 

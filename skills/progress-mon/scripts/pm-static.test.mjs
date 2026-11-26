@@ -433,20 +433,96 @@ test('static: 서버를 띄우지도 끄지도 않음(꺼져 있으면 그대로
 
 // 읽기 전용 쓰기 막힘 흉내(chmod). Windows 는 chmod 로 폴더 쓰기를 막지 못하고, root 는 권한을 넘으므로 그 둘은 건너뜀(OS 조건).
 const readOnlySkip = process.platform === 'win32' ? 'chmod cannot make a folder read-only on Windows' : process.getuid && process.getuid() === 0 ? 'root ignores file modes' : false;
-const HINT = '알림: 쓰기가 막힘. Codex 샌드박스면 같은 명령 하나를 sandbox_permissions: "require_escalated" 로 다시 실행(승인 요청). 승인을 못 받으면 사용자가 Codex 입력란에서 ! 를 붙여 같은 명령을 직접 실행';
+const HINT = {
+  codex: '알림: 쓰기가 막힘. Codex 샌드박스면 같은 명령 하나를 sandbox_permissions: "require_escalated" 로 다시 실행(승인 요청). 승인을 못 받으면 사용자가 Codex 입력란에서 ! 를 붙여 같은 명령을 직접 실행',
+  claude: '알림: 쓰기가 막힘. 그 폴더의 쓰기 권한과 읽기 전용 여부를 확인',
+};
 
-test('쓰기가 읽기 전용으로 막히면(Codex 샌드박스 흉내) static 은 종료 1 과 승인 안내 줄', { ...T, skip: readOnlySkip }, () => {
+test('쓰기가 읽기 전용으로 막히면(Codex 샌드박스 흉내) static 은 종료 1 과 런타임에 맞는 막힘 안내 줄', { ...T, skip: readOnlySkip }, () => {
+  for (const rt of ['claude', 'codex']) {
+    const p = project();
+    let snaps = p.snaps;
+    if (rt === 'codex') {
+      fs.mkdirSync(path.join(p.dir, '.omx'));
+      fs.renameSync(p.data, path.join(p.dir, '.omx', 'progress-mon'));
+      snaps = path.join(p.dir, '.omx', 'progress-mon', 'snapshots');
+    }
+    fs.mkdirSync(snaps);
+    fs.chmodSync(snaps, 0o555);
+    try {
+      const r = cli(['static', '--runtime', rt, '--now', NOW], p.dir);
+      assert.equal(r.code, 1);
+      assert.equal(r.err, `오류: 쓰기 실패(EACCES): ${snaps}\n${HINT[rt]}\n`);
+      assert.deepEqual(fs.readdirSync(snaps), []);
+    } finally {
+      fs.chmodSync(snaps, 0o755);
+    }
+  }
+});
+
+test('init: 자료 폴더를 만들 수 없으면(위 폴더 읽기 전용) 종료 1 과 막힘 안내 줄(예기치 못한 오류 종료 2 아님)', { ...T, skip: readOnlySkip }, () => {
+  const p = project(false);
+  const omc = path.join(p.dir, '.omc');
+  fs.mkdirSync(omc);
+  fs.chmodSync(omc, 0o555);
+  try {
+    const r = cli(['init', '--memory', 'later'], p.dir);
+    assert.equal(r.code, 1, r.err);
+    assert.equal(r.err, `오류: 자료 폴더 .omc/progress-mon/ 만들지 못함(EACCES)\n${HINT.claude}\n`);
+  } finally {
+    fs.chmodSync(omc, 0o755);
+  }
+  assert.equal(fs.existsSync(p.data), false);
+});
+
+test('쓰는 중 폴더가 지워지면 원시 오류 대신 같은 거부(UsageError). Windows 는 열린 파일이 든 폴더를 못 지워 안에 씀', T, () => {
   const p = project();
   fs.mkdirSync(p.snaps);
-  fs.chmodSync(p.snaps, 0o555);
+  const ctx = { project: p.dir, runtime: 'claude', dataDir: p.data, exists: true };
+  let removed = null;
+  const hook = (s) => {
+    if (s !== 'opened' || removed !== null) return;
+    try {
+      fs.rmSync(p.snaps, { recursive: true });
+      removed = true;
+    } catch (e) {
+      if (process.platform !== 'win32' || !PINNED.has(e.code)) throw e;
+      removed = false;
+    }
+  };
+  let out = null;
+  let err = null;
   try {
-    const r = cli(['static', '--now', NOW], p.dir);
-    assert.equal(r.code, 1);
-    assert.equal(r.err, `오류: 쓰기 실패(EACCES): ${p.snaps}\n${HINT}\n`);
-    assert.deepEqual(fs.readdirSync(p.snaps), []);
-  } finally {
-    fs.chmodSync(p.snaps, 0o755);
+    out = writeSnapshot(ctx, 'SNAP', Date.parse(NOW), { hook });
+  } catch (e) {
+    err = e;
   }
+  if (removed) assert.ok(err instanceof UsageError && err.message.startsWith('폴더가 바뀌어 쓰지 않음'), String(err));
+  else assert.equal(fs.readFileSync(out, 'utf8'), 'SNAP');
+});
+
+// 네트워크 경로(SMB) 길: rename 고정 확인 대신 쓴 직후 fd 와 경로 대조. 로컬 NTFS 에서 network: true 로 그 길을 돌린다.
+const winOnly = process.platform === 'win32' ? false : 'Windows-only write path (network shares)';
+test('Windows 네트워크 경로 길: 보통은 씀, 열기 전 바꿔치기는 거부, 쓴 직후 다른 이름이 생기면 0 바이트로 자르고 거부', { ...T, skip: winOnly }, () => {
+  const p = project();
+  const dir = path.join(p.dir, 'net');
+  fs.mkdirSync(dir);
+  assert.equal(fs.readFileSync(writeNumbered(path.join(dir, 'ok'), '.html', 'OK', 999, { network: true }), 'utf8'), 'OK');
+  const outside = path.join(ROOT, `out-${n}-net`);
+  fs.mkdirSync(outside);
+  const t = swapAt('pinned', dir, outside, 'move');
+  assert.throws(() => writeNumbered(path.join(dir, 'page'), '.html', 'PAGE', 999, { network: true, hook: t.hook }), (e) => e instanceof UsageError);
+  assert.equal(t.swapped(), true);
+  assert.deepEqual(written(outside, /^page/), []);
+  const q = project();
+  const dir2 = path.join(q.dir, 'net');
+  fs.mkdirSync(dir2);
+  const copy = path.join(outside, 'copy.html');
+  const link = (s) => {
+    if (s === 'written') fs.linkSync(path.join(dir2, 'late.html'), copy);
+  };
+  assert.throws(() => writeNumbered(path.join(dir2, 'late'), '.html', 'LATE', 999, { network: true, hook: link }), (e) => e instanceof UsageError);
+  assert.equal(fs.statSync(copy).size, 0, '밖 이름의 내용은 0 바이트로 잘림');
 });
 
 // git 제외 목록 파일만 읽기 전용(Windows 는 읽기 전용 속성으로 EPERM, POSIX 는 EACCES). root 는 파일 권한을 넘으므로 건너뜀.

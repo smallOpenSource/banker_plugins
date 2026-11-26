@@ -1652,7 +1652,7 @@ export function writeNumbered(stem, ext, data, limit = NUMBER_MAX, opts = {}) {
   for (let i = 1; i <= limit; i++) {
     const name = i === 1 ? `${base}${ext}` : `${base}-${i}${ext}`;
     try {
-      return writeNewIn(id, name, data, { hook: opts.hook });
+      return writeNewIn(id, name, data, { hook: opts.hook, network: opts.network });
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
