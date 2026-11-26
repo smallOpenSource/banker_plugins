@@ -984,10 +984,15 @@ test("launcher: PyManager's launchers are replaced by the runtimes its local lis
   assert.equal(quietEnv({ python_manager_config: "C:\\mine.json" }).PYTHON_MANAGER_CONFIG, NO_INSTALL);
 });
 
+// The candidates that are PyManager's own launchers in the simulated WindowsApps folder.
+const fromPm = (cands, apps) => cands.filter(([c]) => dirname(c) === apps);
+
 test("E_PYTHON: a PyManager with no runtime is noted and named in the error line; otherwise the line is as before", () => {
   const notes = new Set();
   const s = pmSim(pmTargets(PM_PKG), []);
-  assert.deepEqual(findPython(s.env, { ...s.opts, notes }), null);
+  // nothing of PyManager's is a candidate (a real install folder of the test machine may still be: the Windows box's
+  // %USERPROFILE%\miniconda3\python.exe from installDirs, which findPython would then take)
+  assert.deepEqual(fromPm(pythons(s.env, { ...s.opts, notes }), s.apps), []);
   assert.deepEqual([...notes], ["pymanager-empty"]);
   const text = noPythonText({}, notes);
   assert.match(text, /PyManager 가 설치한 런타임/);
@@ -1004,7 +1009,7 @@ test("E_PYTHON: a PyManager with no runtime is noted and named in the error line
   const { "pymanager.exe": _off, ...noMgr } = pmTargets(PM_PKG);
   for (const [sim, why] of [[pmSim(noMgr, []), "pymanager.exe's alias is off"], [pmSim(pmTargets(PM_PKG), [], 1), "the list fails"]]) {
     const n = new Set();
-    assert.equal(findPython(sim.env, { ...sim.opts, notes: n }), null);
+    assert.deepEqual(fromPm(pythons(sim.env, { ...sim.opts, notes: n }), sim.apps), [], why);
     assert.deepEqual([...n], ["pymanager-unlisted"], why);
     const t = noPythonText({}, n);
     assert.match(t, /그 목록\(pymanager\.exe list\)을 읽지 못해 설치된 런타임을 확인하지 못했습니다/, why);
