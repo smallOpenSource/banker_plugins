@@ -18,7 +18,7 @@
  * WindowsApps is an App Execution Alias that stat cannot open (lstat can): aliases are taken, but after every regular
  * file (PATH's and the install folders'), so with a real install no alias runs; the App Installer stub of the same
  * name fails the probe (exit 9009). Python install manager's (PyManager's) py, python and python3 are never run, since
- * with no runtime they download and install one: the runtimes its local list names take their place.
+ * with no runtime they download and install one: the runtimes in its default folder and its local list take their place.
  * Each is asked for its version and sys.executable from the home folder; the script then runs on that absolute
  * sys.executable with -I, which keeps the user site, PYTHON* variables and the script's and working folder off the
  * import path.
@@ -30,7 +30,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const WIN = process.platform === "win32";
@@ -59,13 +59,16 @@ function byVersion(base, re) {
   }
 }
 
-/** Python install folders off PATH: python(.exe) itself, the newest version first. */
-function installDirs(env) {
+/** Python install folders off PATH: python(.exe) itself, the newest version first. On Windows that includes the
+ * runtimes Python install manager put in its default folder (%LOCALAPPDATA%\Python\pythoncore-3.14-64 ...), found
+ * without running PyManager at all. */
+function installDirs(env, win = WIN) {
   const home = homedir();
-  if (WIN) {
+  if (win) {
     const local = env.LOCALAPPDATA || join(home, "AppData", "Local");
     return [
       ...byVersion(join(local, "Programs", "Python"), /^Python3\d+$/i).map((d) => join(d, "python.exe")),
+      ...byVersion(join(local, "Python"), /^pythoncore-3\.\d+t?-(64|32|arm64)$/i).map((d) => join(d, "python.exe")),
       ...byVersion(join(home, ".local", "bin"), /^python3\.\d+\.exe$/i),
       ...["miniconda3", "anaconda3", "Miniconda3", "Anaconda3"].map((d) => join(home, d, "python.exe")),
     ];
@@ -150,7 +153,7 @@ const PROBE_ENV = {
 export function isPyManager(p, kind, { readlink = readlinkSync, ...opts } = {}) {
   if (kind === "alias") {
     try {
-      return PYMANAGER_PKG.test(win32.basename(win32.dirname(readlink(p)))); // a Windows path on any OS (tests)
+      return readlink(p).split(/[\\/]/).some((part) => PYMANAGER_PKG.test(part)); // any part, a subfolder too
     } catch {
       return false;
     }
@@ -158,28 +161,38 @@ export function isPyManager(p, kind, { readlink = readlinkSync, ...opts } = {}) 
   return kind === "file" && fileKind(join(dirname(p), "pymanager.exe"), opts) === "file";
 }
 
+/** env for PyManager's list: quietEnv's, but the user's own PYTHON_MANAGER_CONFIG stays (it may move install_dir,
+ * and the list installs nothing whatever the settings). */
+function listEnv(env) {
+  const own = Object.keys(env).find((k) => k.toUpperCase() === "PYTHON_MANAGER_CONFIG" && env[k]);
+  return own ? { ...quietEnv(env), PYTHON_MANAGER_CONFIG: env[own] } : quietEnv(env);
+}
+
 /** The runtimes PyManager p lists, as regular python.exe files: [] with none (or when its pymanager.exe beside it is
- * not PyManager's too). opts: spawn, and isPyManager's. */
+ * not PyManager's too). The list is UTF-8 (measured with a Korean user folder). opts: spawn, and isPyManager's. */
 export function pyManagerRuntimes(p, env = process.env, { spawn = spawnSync, ...opts } = {}) {
   const mgr = join(dirname(p), "pymanager.exe");
   if (!isPyManager(mgr, fileKind(mgr, opts), opts)) return [];
-  const r = spawn(mgr, PYMANAGER_LIST, { cwd: runDir(), encoding: "utf8", env: quietEnv(env), timeout: PROBE_MS, windowsHide: true });
+  const r = spawn(mgr, PYMANAGER_LIST, { cwd: runDir(), encoding: "utf8", env: listEnv(env), timeout: PROBE_MS, windowsHide: true });
   if (r.error || r.status !== 0) return [];
   return String(r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter((l) => isAbsolute(l) && fileKind(l, opts) === "file");
 }
 
-/** One PATH match as candidates: a PyManager launcher becomes its runtimes, anything else itself. */
+/** One PATH match as candidates: a PyManager launcher becomes its runtimes, anything else itself. A PyManager whose
+ * list is empty is noted in opts.notes ("pymanager-empty", for the error line). */
 function expand(p, kind, pre, env, opts, lists) {
   if (!(opts.win ?? WIN) || !isPyManager(p, kind, opts)) return [[p, ...pre]];
   const mgr = join(dirname(p), "pymanager.exe").toLowerCase();
   if (!lists.has(mgr)) lists.set(mgr, pyManagerRuntimes(p, env, opts));
+  if (!lists.get(mgr).length) opts.notes?.add("pymanager-empty");
   return lists.get(mgr).map((x) => [x]);
 }
 
 /** The Pythons to try, in order: [absolute command, ...leading arguments]. Every match in PATH counts (an App Installer
  * stub early in PATH must not hide a real Python later in it). Regular files come first (PATH's, then the install
  * folders), Windows aliases last: with a real install there, no alias is run at all. A PyManager launcher is replaced
- * by its runtimes (see above), TRANSFER_STRING_PYTHON too. opts: darwin, and expand's (fileKind's, readlink, spawn). */
+ * by its runtimes (see above), TRANSFER_STRING_PYTHON too. opts: darwin, notes (a Set), and expand's (fileKind's,
+ * readlink, spawn). */
 export function pythons(env = process.env, { darwin = process.platform === "darwin", ...opts } = {}) {
   const lists = new Map();
   const named = env.TRANSFER_STRING_PYTHON;
@@ -199,7 +212,7 @@ export function pythons(env = process.env, { darwin = process.platform === "darw
   }
   const seen = new Set();
   const key = (c) => (win ? c.join("\0").toLowerCase() : c.join("\0"));
-  return [...files, ...installDirs(env).map((p) => [p]), ...aliases].filter((c) => !seen.has(key(c)) && seen.add(key(c)));
+  return [...files, ...installDirs(env, win).map((p) => [p]), ...aliases].filter((c) => !seen.has(key(c)) && seen.add(key(c)));
 }
 
 /** env with PROBE_ENV's keys set, any spelling of them removed first (Windows names are case-insensitive, so a
@@ -212,10 +225,11 @@ export function quietEnv(env = process.env) {
   return { ...out, ...PROBE_ENV };
 }
 
-/** What one Python is: { exe } (absolute, 3.7 or later) or null. */
+/** What one Python is: { exe } (absolute, 3.7 or later) or null. -X utf8: without it a Windows Python prints
+ * sys.executable in the ANSI code page (measured: cp949 for a Korean user folder), which would not read back. */
 export function probe([cmd, ...pre], env = process.env) {
   if (!isAbsolute(cmd) || !runnable(cmd)) return null;
-  const r = spawnSync(cmd, [...pre, "-I", "-c", PROBE], {
+  const r = spawnSync(cmd, [...pre, "-X", "utf8", "-I", "-c", PROBE], {
     cwd: runDir(), encoding: "utf8", env: quietEnv(env), timeout: PROBE_MS, windowsHide: true,
   });
   if (r.error || r.status !== 0) return null;
@@ -232,21 +246,27 @@ export function findPython(env = process.env, opts = {}) {
   return null;
 }
 
-function noPython(env) {
+const PYMANAGER_EMPTY = " Python install manager(PyManager)는 있지만 설치된 런타임이 없습니다. 이 도우미는 PyManager 가 Python 을 내려받게 하지 않습니다. 런타임을 설치하거나(py install default, 인터넷 필요) 다른 Python 의 절대 경로를 TRANSFER_STRING_PYTHON 에 지정하십시오.";
+
+/** The E_PYTHON line: why no Python was taken. notes: pythons' (a PyManager with no runtime adds a sentence). */
+export function noPythonText(env, notes = new Set()) {
   const named = env.TRANSFER_STRING_PYTHON;
   const why = named && !isAbsolute(named)
     ? `TRANSFER_STRING_PYTHON 의 ${named} 는 절대경로가 아닙니다. 지금 폴더의 파일을 실행하지 않도록 python 실행 파일의 절대경로만 받습니다.`
     : named
     ? `TRANSFER_STRING_PYTHON 에 지정한 ${named} 가 Python 3.7 이상으로 실행되지 않습니다. 경로를 고친 뒤 다시 실행하십시오.`
-    : "Python 3.7 이상을 찾지 못했습니다(PATH 의 python3, python, Windows 의 py 와 Microsoft Store 판). PATH 밖에 설치했으면 환경 변수 TRANSFER_STRING_PYTHON 에 그 python 실행 파일의 절대 경로를 지정한 뒤 다시 실행하십시오.";
-  process.stderr.write(`[transfer-string] 오류: ${why}\nTSTR_ERROR code=E_PYTHON\n`);
-  return EXIT_NO_PYTHON;
+    : "Python 3.7 이상을 찾지 못했습니다(PATH 의 python3, python, Windows 의 py 와 Microsoft Store 판, PyManager 가 설치한 런타임). PATH 밖에 설치했으면 환경 변수 TRANSFER_STRING_PYTHON 에 그 python 실행 파일의 절대 경로를 지정한 뒤 다시 실행하십시오.";
+  return `[transfer-string] 오류: ${why}${notes.has("pymanager-empty") ? PYMANAGER_EMPTY : ""}\nTSTR_ERROR code=E_PYTHON\n`;
 }
 
 /** Runs transfer_string.py with op and args in the caller's folder; returns the exit code. */
 export function run(op, args, env = process.env) {
-  const py = findPython(env);
-  if (!py) return noPython(env);
+  const notes = new Set();
+  const py = findPython(env, { notes });
+  if (!py) {
+    process.stderr.write(noPythonText(env, notes));
+    return EXIT_NO_PYTHON;
+  }
   const r = spawnSync(py.exe, ["-I", SCRIPT, op, ...args], { stdio: "inherit", env: quietEnv(env), windowsHide: true });
   if (r.error) {
     process.stderr.write(`[transfer-string] 오류: ${py.exe} 를 실행하지 못했습니다 (${r.error.code || r.error.message}).\nTSTR_ERROR code=E_PYTHON\n`);

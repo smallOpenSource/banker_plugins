@@ -11,10 +11,10 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
-import { fileKind, findPython, isPyManager, probe, pyManagerRuntimes, pythons, quietEnv, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
+import { fileKind, findPython, isPyManager, noPythonText, probe, pyManagerRuntimes, pythons, quietEnv, runnable, which, EXIT_INTERNAL, EXIT_NO_PYTHON } from "./transfer-string.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
@@ -454,7 +454,7 @@ test("launcher: Python killed by a signal is exit 4 E_SIGNAL, not 1 (which reads
   writeFileSync(join(d, "a.md"), "a");
   const fake = join(d, "py-killed");
   // the probe gets this script's own path as sys.executable, so the real run starts it again and it dies
-  writeFileSync(fake, `#!/bin/sh\nif [ "$2" = "-c" ]; then echo "${fake}"; exit 0; fi\nkill -9 $$\n`);
+  writeFileSync(fake, `#!/bin/sh\nif [ "$1" = "-X" ]; then echo "${fake}"; exit 0; fi\nkill -9 $$\n`);
   chmodSync(fake, 0o755);
   const r = ts(["compress", "a.md", "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: fake });
   assert.equal(r.exit, EXIT_INTERNAL, r.err);
@@ -481,12 +481,15 @@ test("launcher: the Python that runs the script gets PyManager's automatic insta
   writeFileSync(join(d, "a.md"), "a");
   const fake = join(d, "py-env");
   const seen = join(d, "seen.txt");
-  // the probe gets this script's own path as sys.executable; the real run writes the value it was given and exits 0
-  writeFileSync(fake, `#!/bin/sh\nif [ "$2" = "-c" ]; then echo "${fake}"; exit 0; fi\nprintf '%s %s' "$PYTHON_MANAGER_AUTOMATIC_INSTALL" "$PYTHON_MANAGER_CONFIG" > "${seen}"\n`);
+  // the probe gets this script's own path as sys.executable (and leaves its arguments); the real run writes the value
+  // it was given and exits 0
+  const probed = join(d, "probe-args.txt");
+  writeFileSync(fake, `#!/bin/sh\nif [ "$1" = "-X" ]; then printf '%s ' "$1" "$2" "$3" "$4" > "${probed}"; echo "${fake}"; exit 0; fi\nprintf '%s %s' "$PYTHON_MANAGER_AUTOMATIC_INSTALL" "$PYTHON_MANAGER_CONFIG" > "${seen}"\n`);
   chmodSync(fake, 0o755);
   const r = ts(["compress", "a.md", "--no-clipboard"], d, { TRANSFER_STRING_PYTHON: fake, PYTHON_MANAGER_AUTOMATIC_INSTALL: "true", PYTHON_MANAGER_CONFIG: "/mine.json" });
   assert.equal(r.exit, 0, r.err);
   assert.equal(readFileSync(seen, "utf8"), `false ${NO_INSTALL}`);
+  assert.equal(readFileSync(probed, "utf8"), "-X utf8 -I -c ", "the probe prints sys.executable in UTF-8 (-X utf8)");
 });
 
 /** The bin commands in a new folder laid out like the package, with launcher (module text, or none) under skills/. */
@@ -837,6 +840,7 @@ test("Windows Python install manager with no runtime (TRANSFER_STRING_STORE_PYTH
   assert.ok(Date.now() - t0 < 5000, `took ${Date.now() - t0} ms`);
   const r = ts(["compress", "--clipboard"], fresh(), e);
   assert.equal(r.exit, EXIT_NO_PYTHON, r.err);
+  assert.match(r.err, /PyManager\)는 있지만 설치된 런타임이 없습니다/, "the error line says why");
   assert.deepEqual(pmRuntimes(), [], "nothing was installed");
   const policy = spawnSync("reg", ["query", "HKLM\\Software\\Policies\\Python\\PyManager"], { encoding: "utf8" });
   t.diagnostic(`policy key: ${policy.status === 0 ? policy.stdout.replace(/\s+/g, " ").trim() : "none"}`);
@@ -928,9 +932,11 @@ function pmSim(targets, listed = [], status = 0) {
 }
 
 test("isPyManager: an alias into PyManager's package, or a regular file with a regular pymanager.exe beside it; not the Store Python, the App Installer stub or a plain Python", () => {
-  const { apps, opts } = pmSim({ ...pmTargets(PM_PKG), "python3.12.exe": `${STORE_PKG}\\python3.12.exe`, "stub.exe": `${STUB_PKG}\\AppInstallerPythonRedirector.exe` });
+  const { apps, opts } = pmSim({ ...pmTargets(PM_PKG), "python3.12.exe": `${STORE_PKG}\\python3.12.exe`, "stub.exe": `${STUB_PKG}\\AppInstallerPythonRedirector.exe`, "sub.exe": `${PM_PKG}\\launchers\\python.exe`, "fwd.exe": `${PM_PKG.replace(/\\/g, "/")}/python.exe` });
   assert.equal(isPyManager(join(apps, "python.exe"), "alias", opts), true, "PyManager's python.exe alias");
   assert.equal(isPyManager(join(apps, "py.exe"), "alias", opts), true, "PyManager's py.exe alias");
+  assert.equal(isPyManager(join(apps, "sub.exe"), "alias", opts), true, "a launcher in a subfolder of PyManager's package");
+  assert.equal(isPyManager(join(apps, "fwd.exe"), "alias", opts), true, "a target written with /");
   assert.equal(isPyManager(join(apps, "python3.12.exe"), "alias", opts), false, "the Store Python's alias");
   assert.equal(isPyManager(join(apps, "stub.exe"), "alias", opts), false, "the App Installer stub");
   assert.equal(isPyManager(join(apps, "none.exe"), "alias", opts), false, "readlink fails");
@@ -969,6 +975,72 @@ test("launcher: PyManager's launchers are replaced by the runtimes its local lis
   assert.deepEqual(pythons({ TRANSFER_STRING_PYTHON: join(named.apps, "python.exe") }, named.opts), [[a]], "TRANSFER_STRING_PYTHON is replaced too");
   const none = pmSim(pmTargets(PM_PKG), []);
   assert.deepEqual(pythons({ TRANSFER_STRING_PYTHON: join(none.apps, "python.exe") }, none.opts), [], "and left out with no runtime");
+  // the user's own PYTHON_MANAGER_CONFIG (it may move install_dir) stays for the list; probe and run still get ours
+  const own = pmSim(pmTargets(PM_PKG), [a]);
+  pythons({ ...own.env, python_manager_config: "C:\\mine.json" }, own.opts);
+  assert.equal(own.calls[0].env.PYTHON_MANAGER_CONFIG, "C:\\mine.json");
+  assert.equal(own.calls[0].env.PYTHON_MANAGER_AUTOMATIC_INSTALL, "false");
+  assert.ok(!("python_manager_config" in own.calls[0].env), "one spelling of the key only");
+  assert.equal(quietEnv({ python_manager_config: "C:\\mine.json" }).PYTHON_MANAGER_CONFIG, NO_INSTALL);
+});
+
+test("E_PYTHON: a PyManager with no runtime is noted and named in the error line; otherwise the line is as before", () => {
+  const notes = new Set();
+  const s = pmSim(pmTargets(PM_PKG), []);
+  assert.deepEqual(findPython(s.env, { ...s.opts, notes }), null);
+  assert.deepEqual([...notes], ["pymanager-empty"]);
+  const text = noPythonText({}, notes);
+  assert.match(text, /PyManager 가 설치한 런타임/);
+  assert.match(text, /Python install manager\(PyManager\)는 있지만 설치된 런타임이 없습니다/);
+  assert.match(text, /TSTR_ERROR code=E_PYTHON\n$/);
+  const plain = noPythonText({});
+  assert.doesNotMatch(plain, /있지만 설치된 런타임이 없습니다/);
+  const withRuntime = new Set();
+  const rt = join(fresh(), "python.exe");
+  writeFileSync(rt, "");
+  pythons(pmSim(pmTargets(PM_PKG), [rt]).env, { ...pmSim(pmTargets(PM_PKG), [rt]).opts, notes: withRuntime });
+  assert.equal(withRuntime.size, 0, "a PyManager with a runtime is not noted");
+});
+
+test("launcher: PyManager's default runtime folder (%LOCALAPPDATA%\\Python\\pythoncore-*) is a candidate without running PyManager, the newest first", () => {
+  const local = fresh();
+  for (const n of ["pythoncore-3.13-64", "pythoncore-3.15-64", "pythoncore-3.14t-64", "pythoncore-3.12", "_cache", "bin"]) mkdirSync(join(local, "Python", n), { recursive: true });
+  const sim = pmSim({});
+  const got = pythons({ PATH: "", LOCALAPPDATA: local }, sim.opts).map((c) => c[0]).filter((p) => p.startsWith(local));
+  const at = (n) => join(local, "Python", n, "python.exe");
+  assert.deepEqual(got, [at("pythoncore-3.15-64"), at("pythoncore-3.14t-64"), at("pythoncore-3.13-64")]);
+  assert.equal(sim.calls.length, 0, "PyManager is not run");
+});
+
+test("long_path (ntpath on any OS): absolute, relative, .., UNC, // and the extended forms", () => {
+  needPython();
+  const cases = [
+    ["C:\\a\\b.md", "\\\\?\\C:\\a\\b.md"],
+    ["sub\\x.md", "\\\\?\\C:\\work\\cur\\sub\\x.md"],
+    ["..\\up\\x.md", "\\\\?\\C:\\work\\up\\x.md"],
+    ["C:\\a\\..\\b\\.\\x.md", "\\\\?\\C:\\b\\x.md"],
+    ["C:/a/b.md", "\\\\?\\C:\\a\\b.md"],
+    ["\\\\srv\\share\\d\\x.md", "\\\\?\\UNC\\srv\\share\\d\\x.md"],
+    ["//srv/share/d/x.md", "\\\\?\\UNC\\srv\\share\\d\\x.md"],
+    ["\\\\?\\C:\\x\\y.md", "\\\\?\\C:\\x\\y.md"],
+    ["//?/C:/x/y.md", "\\\\?\\C:\\x\\y.md"],
+    ["\\\\?\\UNC\\srv\\share\\x.md", "\\\\?\\UNC\\srv\\share\\x.md"],
+    ["\\\\.\\pipe\\x", "\\\\.\\pipe\\x"],
+  ];
+  // abspath as on Windows with C:\work\cur as the working folder
+  const code = [
+    "import json, ntpath, sys, types",
+    "sys.path.insert(0, sys.argv[1])",
+    "import transfer_string as t",
+    "p = types.SimpleNamespace(abspath=lambda q: ntpath.normpath(ntpath.join('C:\\\\work\\\\cur', q)))",
+    "cases = json.loads(sys.argv[2])",
+    "print(json.dumps([t.long_path(c, True, p) for c in cases] + [t.long_path(cases[0], False, p)]))",
+  ].join("\n");
+  const r = spawnSync(PY.exe, ["-I", "-c", code, HERE, JSON.stringify(cases.map((c) => c[0]))], { encoding: "utf8", cwd: TMP });
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout);
+  cases.forEach(([inp, want], i) => assert.equal(got[i], want, inp));
+  assert.equal(got.at(-1), cases[0][0], "not Windows: as it is");
 });
 
 test("launcher: the Store Python's alias and the App Installer stub stay candidates and PyManager's list is not asked; a pymanager.exe that is not PyManager's is not run", () => {
@@ -1019,7 +1091,17 @@ test("a deep folder (a 250-character path): .restored, the number, --keep-name, 
   assert.equal(k.file, join(d, "run-the-script.sh"), "--keep-name");
   const p = put("notes-of-the-week.md");
   assert.equal(p.file, join(d, "notes-of-the-week.md"), "a name that is not risky");
-  for (const r of [a, b, k, p]) {
+  // a relative input with .. in it, from a working folder beside the deep one
+  const side = join(dirname(d), "side");
+  mkdirSync(side);
+  const src = join(d, "rel.b64");
+  writeFileSync(src, named("relative-input.md", Buffer.from("rel\n")));
+  const rel = ts(["decompress", relative(side, src)], side);
+  assert.ok(relative(side, src).startsWith(".."), relative(side, src));
+  assert.equal(rel.exit, 0, rel.err);
+  assert.equal(rel.file, join(d, "relative-input.md"), "the relative path, .. and all, comes out next to the input");
+  assert.equal(readFileSync(rel.file, "utf8"), "rel\n");
+  for (const r of [a, b, k, p, rel]) {
     assert.ok(r.file.length > 260);
     if (WIN) assert.match(readFileSync(`${r.file}:Zone.Identifier`, "latin1"), /ZoneId=3/, `${basename(r.file)} is marked`);
   }

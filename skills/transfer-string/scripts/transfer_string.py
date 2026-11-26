@@ -60,6 +60,7 @@ cut; 2 usage, or the input cannot be read; 3 the output cannot be written.
 import base64
 import binascii
 import bz2
+import functools
 import hashlib
 import heapq
 import lzma
@@ -509,13 +510,39 @@ def restore(frame):
 
 
 # ---------------------------------------------------------------- files, clipboard
-def long_path(p):
+EXTENDED = ("\\\\?\\", "\\\\.\\")
+
+
+def long_path(p, nt=os.name == "nt", path=os.path):
     """On Windows the extended form of p (\\\\?\\C:\\..., \\\\?\\UNC\\server\\share\\...), which opens past
-    MAX_PATH (260 characters) without the LongPathsEnabled setting; elsewhere p as it is."""
-    if os.name != "nt" or p.startswith(("\\\\?\\", "\\\\.\\")):
+    MAX_PATH (260 characters) without the LongPathsEnabled setting; elsewhere p as it is. A path that is
+    extended already (\\\\?\\, \\\\.\\, also written with /) stays as it is. nt, path: for tests (ntpath)."""
+    if not nt:
         return p
-    p = os.path.abspath(p)
-    return "\\\\?\\UNC\\" + p[2:] if p.startswith("\\\\") else "\\\\?\\" + p
+    q = p.replace("/", "\\")
+    if q.startswith(EXTENDED):
+        return q
+    # abspath also resolves . and .., which an extended path would take literally
+    q = path.abspath(q)
+    if q.startswith(EXTENDED):
+        return q
+    return "\\\\?\\UNC\\" + q[2:] if q.startswith("\\\\") else "\\\\?\\" + q
+
+
+@functools.lru_cache(maxsize=None)
+def kernel32():
+    """kernel32's CreateFileW and CloseHandle with their types, set once (Windows only)."""
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    k32.CreateFileW.argtypes += [wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD]
+    k32.CreateFileW.argtypes += [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return k32
 
 
 def open_new(p):
@@ -527,21 +554,25 @@ def open_new(p):
         return open(p, "xb")
     import ctypes
     import msvcrt
-    from ctypes import wintypes
 
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateFileW.restype = wintypes.HANDLE
-    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
-    k32.CreateFileW.argtypes += [wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD]
-    k32.CreateFileW.argtypes += [wintypes.HANDLE]
+    k32 = kernel32()
     # GENERIC_WRITE, no sharing, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT
     h = k32.CreateFileW(long_path(p), 0x40000000, 0, None, 1, 0x00200080, None)
-    if h is None or h == wintypes.HANDLE(-1).value:
+    if h is None or h == ctypes.c_void_p(-1).value:
         err = ctypes.get_last_error()
         if err in (80, 183):  # ERROR_FILE_EXISTS, ERROR_ALREADY_EXISTS
             raise FileExistsError(p)
         raise ctypes.WinError(err)
-    return os.fdopen(msvcrt.open_osfhandle(h, os.O_WRONLY | os.O_BINARY), "wb")
+    try:
+        fd = msvcrt.open_osfhandle(h, os.O_WRONLY | os.O_BINARY)
+    except BaseException:
+        k32.CloseHandle(h)
+        raise
+    try:
+        return os.fdopen(fd, "wb")
+    except BaseException:
+        os.close(fd)  # closes the handle too
+        raise
 
 
 def write_free(folder, stem, ext, data):
