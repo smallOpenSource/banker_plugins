@@ -365,6 +365,7 @@ export function validate(raw, project, runtime = 'claude') {
   take('hosts', (v) => Array.isArray(v) && v.every(privateIPv4), '사설 IPv4(10/8, 172.16/12, 192.168/16) 목록');
   take('refreshSec', (v) => isInt(v) && v >= 5 && v <= 3600, '5~3600 정수');
   take('wbsAsk', (v) => typeof v === 'boolean', '참 또는 거짓');
+  take('ruleAsk', (v) => typeof v === 'boolean', '참 또는 거짓');
   const idList = (v, nameKey) => Array.isArray(v) && v.every((x) => x && isStr(x.id) && (x[nameKey] === undefined || typeof x[nameKey] === 'string')) && new Set(v.map((x) => x.id)).size === v.length;
   take('stages', (v) => v === 'auto' || idList(v, 'label'), '"auto" 또는 [{id, label}](id 겹침 없음)');
   take('stories', (v) => idList(v, 'name'), '[{id, name}](id 겹침 없음)');

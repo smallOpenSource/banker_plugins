@@ -1,10 +1,10 @@
 // pm-render.mjs: 6탭(진척도, 구현요건, workflow, 구성도, ADR, WBS)과 단일 HTML 스냅숏, workflow 배치와 구성도 자동 배치.
 // 옛 진척도 서버의 클래스 이름과 DOM 구조를 그대로 둔다. 저장소 고유 값은 config.json 에서 읽는다.
-// 시각은 now 인자로만 받는다. CLI 하위 명령 export 도 여기서 맡는다.
+// 시각은 now 인자로만 받는다. CLI 하위 명령 export, static 도 여기서 맡는다.
 import fs from 'node:fs';
 import path from 'node:path';
 import { esc, color, finite, textW, wrap, FAVICON, CSS, TABS, tabsHtml } from './pm-html.mjs';
-import { configOrFail, loadConfig, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
+import { configOrFail, loadConfig, writeNew, UsageError, DEFAULT_REQ_RULE, STORYLESS_REQ_RULE } from './pm-config.mjs';
 import { collect, parseTime, agentJudge } from './pm-sources.mjs';
 import { adrBody } from './pm-adr-view.mjs';
 import { wbsBody } from './pm-wbs-view.mjs';
@@ -1570,12 +1570,12 @@ export function snapshotFrom(m, config, now) {
   const tabs = TABS.map(([k, name]) => `<a href="#${k}" data-tab="${k}">${esc(name)}</a>`).join('');
   const secs = TABS.map(([k, name]) => `<section id="tab-${k}" class="tab"><h2 class="tt">${esc(name)}</h2>\n\n${tabBody(m, config, k, now)}</section>`).join('\n');
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<title>${esc(config.shortName)} 진척도 스냅숏</title><link rel="icon" href="${FAVICON}"><style>
+<title>${esc(config.shortName)} 진척도 스냅샷</title><link rel="icon" href="${FAVICON}"><style>
 ${CSS}
 </style>
 <style>.js .tab{display:none}.js .tab.cur{display:block}.js h2.tt{display:none}h2.tt{border-top:2px solid #ccc;padding-top:10px}</style></head><body>
 <h1>${esc(config.title)}</h1>
-<div class="meta">스냅숏 ${esc(nowText(now))} | 서버 없이 여는 단일 파일(자동 갱신 없음) | HEAD <code>${esc(m.head)}</code></div>
+<div class="meta">스냅샷 ${esc(nowText(now))} 기준 | 서버 없이 여는 단일 파일(자동 갱신 없음) | HEAD <code>${esc(m.head)}</code></div>
 <div class="tabs">${tabs}</div>
 ${secs}
 <script>(function(){var d=document.documentElement;d.className+=' js';var ks=${JSON.stringify(TABS.map((t) => t[0]))};
@@ -1626,23 +1626,62 @@ export function liveRender(ctx, initial) {
   };
 }
 
-// CLI: export <file> [--now <ISO>]. 자료 폴더를 만들지 않는다.
+const nowArg = (o) => {
+  if (o.now === undefined) return Date.now();
+  const now = Date.parse(o.now);
+  if (!Number.isFinite(now)) throw new UsageError(`--now 는 ISO 8601 시각: ${o.now}`);
+  return now;
+};
+
+// 현지 벽시계 YYYYMMDD-HHmm(화면이 시각을 보이는 시간대와 같음).
+const minuteStamp = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}`;
+};
+
+// static 의 기본 자리 <자료 폴더>/snapshots/progress-mon-<YYYYMMDD-HHmm>.html. 같은 이름이 있으면 -2, -3 ...
+// 새 이름은 writeNew 로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않는다. 동시에 부른 두 static 도 이름이 겹치지 않는다.
+// snapshots 가 폴더가 아니거나 링크면 거부. 돌려줌: 쓴 경로.
+function writeSnapshot(dataDir, html, now) {
+  const dir = path.join(dataDir, 'snapshots');
+  fs.mkdirSync(dir, { recursive: true });
+  if (!fs.lstatSync(dir).isDirectory()) throw new UsageError('snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부');
+  const base = path.join(dir, `progress-mon-${minuteStamp(now)}`);
+  for (let i = 1; ; i++) {
+    const file = i === 1 ? `${base}.html` : `${base}-${i}.html`;
+    try {
+      writeNew(file, html);
+      return file;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+  }
+}
+
+// CLI: export <file> [--now <ISO>], static [<file>] [--now <ISO>]. export 는 자료 폴더를 만들지 않는다.
+// static 은 자료 폴더가 있을 때만 불린다(진입에서 init 먼저). <file> 이 없으면 위 기본 자리, 있으면 export 처럼 그 파일.
+// 둘 다 서버를 띄우거나 끄지 않는다.
 export async function command(cmd, ctx, o, io) {
-  if (cmd !== 'export') throw new UsageError(`${cmd} 는 pm-render.mjs 가 맡지 않음`);
+  if (cmd !== 'export' && cmd !== 'static') throw new UsageError(`${cmd} 는 pm-render.mjs 가 맡지 않음`);
   const file = o._[1];
-  if (!file || o._.length > 2) throw new UsageError('사용: export <file> [--now <ISO>]');
-  let now = Date.now();
-  if (o.now !== undefined) {
-    now = Date.parse(o.now);
-    if (!Number.isFinite(now)) throw new UsageError(`--now 는 ISO 8601 시각: ${o.now}`);
-  }
+  if (o._.length > 2 || (cmd === 'export' && !file)) throw new UsageError(cmd === 'export' ? '사용: export <file> [--now <ISO>]' : '사용: static [<file>] [--now <ISO>]');
+  const now = nowArg(o);
   const config = configOrFail(ctx);
-  const out = path.resolve(file);
+  const html = snapshotFrom(collect(ctx, config, now), config, now);
+  let out = file ? path.resolve(file) : null;
   try {
-    fs.writeFileSync(out, snapshotFrom(collect(ctx, config, now), config, now));
+    if (out) fs.writeFileSync(out, html);
+    else out = writeSnapshot(ctx.dataDir, html, now);
   } catch (e) {
-    throw new UsageError(`쓰기 실패(${e.code || e.message}): ${file}`);
+    if (e instanceof UsageError) throw e;
+    throw new UsageError(`쓰기 실패(${e.code || e.message}): ${file || path.join(ctx.dataDir, 'snapshots')}`);
   }
-  io.out(`내보냄: ${out}`);
+  if (cmd === 'export') {
+    io.out(`내보냄: ${out}`);
+    return 0;
+  }
+  io.out(`스냅샷: ${out}`);
+  io.out(`기준 시각: ${nowText(now)}`);
+  io.out('서버 없이 여는 단일 파일(자동 갱신 없음, 외부 자원 없음). 서버는 그대로 둠');
   return 0;
 }

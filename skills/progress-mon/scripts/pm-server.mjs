@@ -793,6 +793,27 @@ function tabData(ctx) {
   return `진척도 ${has('items.json')}, 구현요건 ${has('req-spec.json')}, workflow ${has('flow.json')}, 구성도 ${has('arch.json')}, ADR ${has('adr.json')}, WBS ${wbs}${quiet}`;
 }
 
+// 갱신 규칙 줄의 값. state.json 의 memory.kind 가 later(init --memory later, 스냅샷만 만든 자료 폴더)일 때만 있고, 규칙을
+// 등록했거나 none 이면 null(그 자료 폴더의 status 출력은 그대로). config.json 의 ruleAsk 가 false 이면 (묻지 않음),
+// 참거짓이 아니면 (ruleAsk 값 오류), 그 밖은 (묻기): 인자 없는 호출이 규칙 등록을 한 번 묻는다.
+function ruleData(ctx) {
+  let memory;
+  try {
+    memory = JSON.parse(noBom(readRegular(path.join(ctx.dataDir, 'state.json')))).memory;
+  } catch {
+    return null;
+  }
+  if (!memory || memory.kind !== 'later') return null;
+  const { config, errors } = loadConfig(ctx);
+  if (errors.some((e) => e.path === '$.ruleAsk')) return '미등록(ruleAsk 값 오류)';
+  return config.ruleAsk === false ? '미등록(묻지 않음)' : '미등록(묻기)';
+}
+
+const ruleLineOut = (ctx, io) => {
+  const r = ruleData(ctx);
+  if (r) io.out(`갱신 규칙: ${r}`);
+};
+
 // 서버를 띄운 뒤 config.json 의 port, portStrict, hosts 가 바뀌었으면 경고 한 줄(그 값은 다시 띄워야 적용).
 function restartWarning(ctx, st, io) {
   const { config, errors } = loadConfig(ctx);
@@ -826,6 +847,7 @@ export async function status(ctx, io) {
   if (!run) {
     io.out(`꺼짐(자료 폴더: ${label})`);
     io.out(`탭 자료: ${tabData(ctx)}`);
+    ruleLineOut(ctx, io);
     statusWarnings(ctx, io);
     return 3;
   }
@@ -834,6 +856,7 @@ export async function status(ctx, io) {
   io.out(`주소: ${(st.hosts || [LOOPBACK]).join(', ')}`);
   io.out(`자료 폴더: ${label}`);
   io.out(`탭 자료: ${tabData(ctx)}`);
+  ruleLineOut(ctx, io);
   io.out(`시작: ${info.startedAt || st.startedAt || '알 수 없음'}`);
   io.out(`요청: ${info.requests ?? 0}, 마지막 요청: ${info.lastRequestAt || '없음'}, 마지막 오류: ${info.lastErrorAt || '없음'}`);
   if (typeof info.logWarning === 'string') io.err(`경고: ${info.logWarning.replace(/[\u0000-\u001f\u007f]/g, '')}`);
