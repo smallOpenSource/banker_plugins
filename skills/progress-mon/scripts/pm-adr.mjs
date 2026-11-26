@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, noBom, readRegular, writeAtomic, writeNew, UsageError } from './pm-config.mjs';
+import { dataReal, dirIdentity, git, noBom, readRegular, samePath, writeAtomic, writeNewIn, UsageError } from './pm-config.mjs';
 
 const ADR_FILE = 'adr.json';
 const ADR_CHECK_FILE = 'adr-check.json';
@@ -404,24 +404,29 @@ const stamp = (ms) => {
 };
 
 // 스키마 FAIL 이 남은 adr.json 을 같은 폴더의 adr.json.rejected-<시각>(있으면 -2, -3 ...)으로 옮긴다. 결정 기록을 잃지 않게
-// 지우지 않는다. 새 이름은 writeNew 로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않고, 사본을 만든 뒤에만 원본을
-// 지운다. 번호는 limit 까지(넘으면 원본을 두고 오류 줄). 돌려줌: 옮긴 경로.
-export function reject(file, now, limit = 999) {
-  const base = `${file}.rejected-${stamp(now)}`;
+// 지우지 않는다. 새 이름은 writeNewIn 으로 만들어 있는 것(끊어진 링크 포함)을 덮거나 따라가지 않고, 처음 본 폴더를 고정한 채
+// 사본을 쓰고 그 고정 안에서 원본(처음 읽은 그 파일일 때만)을 지운다. 폴더가 링크이거나 실제 경로가 opts.want(자료 폴더의
+// 실제 경로)와 다르면 옮기지 않는다. 번호는 limit 까지(넘으면 원본을 두고 오류 줄). opts.hook 은 writeNewIn 에. 돌려줌: 옮긴 경로.
+export function reject(file, now, limit = 999, opts = {}) {
+  const base = `${path.basename(file)}.rejected-${stamp(now)}`;
+  const src = fs.lstatSync(file, { bigint: true });
   const bytes = fs.readFileSync(file);
-  const mode = fs.statSync(file).mode & 0o777; // as COPYFILE_EXCL kept it
+  const mode = Number(src.mode) & 0o777; // as COPYFILE_EXCL kept it
+  const id = dirIdentity(path.dirname(file), { noLink: true });
+  if (!id || (opts.want !== undefined && !samePath(id.real, opts.want))) throw new UsageError(`자료 폴더가 링크라 옮기지 않음: ${path.dirname(file)}. ${path.basename(file)} 그대로`);
+  const after = (at) => {
+    const cur = fs.lstatSync(at(path.basename(file)), { bigint: true, throwIfNoEntry: false });
+    if (cur?.isFile() && cur.dev === src.dev && cur.ino === src.ino) fs.rmSync(at(path.basename(file)), { force: true });
+  };
   for (let i = 1; i <= limit; i++) {
-    const dest = i === 1 ? base : `${base}-${i}`;
+    const name = i === 1 ? base : `${base}-${i}`;
     try {
-      writeNew(dest, bytes, { mode });
+      return writeNewIn(id, name, bytes, { mode, after, hook: opts.hook });
     } catch (e) {
-      if (e.code === 'EEXIST') continue;
-      throw e;
+      if (e.code !== 'EEXIST') throw e;
     }
-    fs.rmSync(file, { force: true });
-    return dest;
   }
-  throw new UsageError(`옮길 새 이름을 찾지 못함: ${base} 부터 -${limit} 까지 모두 있음. ${path.basename(file)} 그대로`);
+  throw new UsageError(`옮길 새 이름을 찾지 못함: ${file}.rejected-${stamp(now)} 부터 -${limit} 까지 모두 있음. ${path.basename(file)} 그대로`);
 }
 
 // init 정리 단계(결정 I). 스키마 위반이 남으면 adr.json 을 adr.json.rejected-<시각> 으로 옮겨 자료 없음으로, 참조 FAIL 만
@@ -431,7 +436,7 @@ export async function cleanAdr(ctx, config, now = Date.now()) {
   const got = inspectAdr(ctx, config);
   if (got.missing) return ['정리: adr.json 없음'];
   const schema = got.error ? 1 : got.S.schema.length;
-  if (schema) return [`정리: adr.json 을 ${reject(file, now)} 로 옮김(스키마 FAIL ${schema}건이 남아 자료 없음으로 둠)`];
+  if (schema) return [`정리: adr.json 을 ${reject(file, now, undefined, { want: dataReal(ctx) })} 로 옮김(스키마 FAIL ${schema}건이 남아 자료 없음으로 둠)`];
   const fails = got.S.refFail;
   if (!fails.length) return ['정리: adr.json 참조 FAIL 0, 바꾼 것 없음'];
   for (const f of fails) setAt(got.value, f.parts, { gap: `참조 확인 실패: ${f.msg}` });

@@ -10,9 +10,9 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { writeNumbered } from './pm-render.mjs';
+import { writeNumbered, writeSnapshot } from './pm-render.mjs';
 import { reject } from './pm-adr.mjs';
-import { UsageError } from './pm-config.mjs';
+import { UsageError, dataReal } from './pm-config.mjs';
 
 const T = { timeout: 60000 };
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -268,6 +268,125 @@ test('번호 고리 상한: writeNumbered, adr.json 옮기기 모두 상한을 �
   assert.throws(() => reject(adr, at, 1), (e) => e instanceof UsageError && /옮길 새 이름을 찾지 못함: .*-1 까지 모두 있음\. adr\.json 그대로$/.test(e.message));
   assert.deepEqual(fs.readFileSync(adr), bytes, 'adr.json 그대로');
   assert.equal(reject(adr, at, 2), `${first}-2`);
+});
+
+// 바꿔치기 흉내. 쓰는 함수가 폴더를 본 뒤 단계마다(checked: 본 직후, pinned: 열기 직전, opened: 연 뒤 내용 쓰기 전) 부르는
+// 훅에서 그 폴더를 바꾼다. move: 진짜 폴더를 밖으로 옮기고 그 자리에 밖을 가리키는 링크(정체 dev, ino 가 같음). other: 진짜 폴더를
+// 옆 이름으로 옮기고 밖의 빈 폴더를 가리키는 링크. 링크는 junction(Windows 는 권한 없이 됨, POSIX 는 폴더 링크).
+// Windows 는 열린 파일이 있는 폴더를 옮길 수 없어(EPERM) 옮기기가 실패할 수 있다. 그때는 바꿔치기가 없었으므로 안에 써야 한다.
+const PINNED = new Set(['EPERM', 'EBUSY', 'EACCES']);
+function swapDir(dir, outside, mode) {
+  try {
+    if (mode === 'move') {
+      fs.renameSync(dir, path.join(outside, 'moved'));
+      fs.symlinkSync(path.join(outside, 'moved'), dir, 'junction');
+    } else {
+      fs.renameSync(dir, `${dir}-old`);
+      fs.mkdirSync(path.join(outside, 'other'));
+      fs.symlinkSync(path.join(outside, 'other'), dir, 'junction');
+    }
+    return true;
+  } catch (e) {
+    if (process.platform === 'win32' && PINNED.has(e.code)) return false;
+    throw e;
+  }
+}
+// 밖 폴더 아래에서 이름이 맞는 파일(이번 쓰기가 만들 수 있는 것) 목록. 링크는 따라가지 않는다(Node 18 은 recursive 없음).
+function written(dir, re) {
+  const out = [];
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const f = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...written(f, re));
+    else if (re.test(e.name)) out.push(f);
+  }
+  return out;
+}
+// 훅: 고른 단계에서 한 번 바꿔치기. 돌려줌: { hook, swapped() }
+function swapAt(stage, dir, outside, mode) {
+  let did = null;
+  return {
+    hook: (s) => {
+      if (s === stage && did === null) did = swapDir(dir, outside, mode);
+    },
+    swapped: () => did,
+  };
+}
+// 바꿔치기가 됐으면 쓰기는 거부(UsageError)이고 밖에 쓴 파일 0. 막혔으면(Windows) 안에 내용이 온전히 있음.
+function expectSafe(t, fn, inside, outside, re, data) {
+  let out = null;
+  let err = null;
+  try {
+    out = fn();
+  } catch (e) {
+    err = e;
+  }
+  assert.deepEqual(written(outside, re), [], '밖에 쓴 파일 0');
+  if (t.swapped()) {
+    assert.ok(err instanceof UsageError, `바꿔치기 뒤 거부: ${err && err.message}, out=${out}`);
+    assert.match(err.message, /폴더가 바뀌어 쓰지 않음|거부/);
+    return;
+  }
+  assert.equal(t.swapped(), false, '훅이 불림');
+  assert.equal(err, null, err && err.message);
+  assert.equal(path.dirname(out), inside);
+  assert.equal(fs.readFileSync(out, 'utf8'), data);
+}
+
+const STAGES = ['checked', 'pinned', 'opened'];
+for (const mode of ['move', 'other']) {
+  test(`바꿔치기(${mode}): static 기본 자리. snapshots 를 본 뒤 단계마다 링크로 바꿔도 밖에 한 바이트도 쓰지 않음`, T, () => {
+    for (const stage of STAGES) {
+      const p = project();
+      fs.mkdirSync(p.snaps);
+      const outside = path.join(ROOT, `out-${n}-${stage}`);
+      fs.mkdirSync(outside);
+      const ctx = { project: p.dir, runtime: 'claude', dataDir: p.data, exists: true };
+      const t = swapAt(stage, p.snaps, outside, mode);
+      expectSafe(t, () => writeSnapshot(ctx, 'SNAP', Date.parse(NOW), { hook: t.hook }), p.snaps, outside, /^progress-mon-/, 'SNAP');
+      if (process.platform !== 'win32' || stage !== 'opened') assert.equal(t.swapped(), true, `${stage}: 열린 파일이 없을 때는 바꿔치기가 됨`);
+    }
+  });
+
+  test(`바꿔치기(${mode}): static, export <파일>. 그 파일의 폴더를 열기 직전이나 연 뒤 링크로 바꿔도 밖에 쓰지 않음`, T, () => {
+    for (const stage of ['pinned', 'opened']) {
+      const p = project();
+      const dir = path.join(p.dir, 'out-dir');
+      fs.mkdirSync(dir);
+      const outside = path.join(ROOT, `out-${n}-${stage}`);
+      fs.mkdirSync(outside);
+      const t = swapAt(stage, dir, outside, mode);
+      expectSafe(t, () => writeNumbered(path.join(dir, 'page'), '.html', 'PAGE', 999, { hook: t.hook }), dir, outside, /^page/, 'PAGE');
+    }
+  });
+
+  test(`바꿔치기(${mode}): adr.json.rejected 옮기기. 자료 폴더를 바꿔도 밖에 사본을 쓰지 않고 adr.json 을 잃지 않음`, T, () => {
+    for (const stage of ['pinned', 'opened']) {
+      const p = project();
+      const ctx = { project: p.dir, runtime: 'claude', dataDir: p.data, exists: true };
+      const want = dataReal(ctx);
+      const adr = path.join(p.data, 'adr.json');
+      const bytes = fs.readFileSync(adr);
+      const outside = path.join(ROOT, `out-${n}-${stage}`);
+      fs.mkdirSync(outside);
+      const t = swapAt(stage, p.data, outside, mode);
+      expectSafe(t, () => reject(adr, Date.parse(NOW), 999, { want, hook: t.hook }), p.data, outside, /rejected/, bytes.toString('utf8'));
+      if (t.swapped()) {
+        const real = mode === 'move' ? path.join(outside, 'moved', 'adr.json') : `${p.data}-old${path.sep}adr.json`;
+        assert.deepEqual(fs.readFileSync(real), bytes, 'adr.json 을 잃지 않음');
+      } else assert.equal(fs.existsSync(path.join(p.data, 'adr.json')), false, '옮겼으면 원본은 지움');
+    }
+  });
+}
+
+test('static: 자료 폴더의 위 폴더(.omc)가 링크면 snapshots 의 실제 경로가 밖이라 거부, 밖에 쓰지 않음', T, () => {
+  const p = project();
+  const outside = path.join(ROOT, `out-${n}-up`);
+  fs.mkdirSync(outside);
+  fs.renameSync(path.join(p.dir, '.omc'), path.join(outside, '.omc'));
+  fs.symlinkSync(path.join(outside, '.omc'), path.join(p.dir, '.omc'), 'junction');
+  const ctx = { project: p.dir, runtime: 'claude', dataDir: p.data, exists: true };
+  assert.throws(() => writeSnapshot(ctx, 'SNAP', Date.parse(NOW)), (e) => e instanceof UsageError && e.message.startsWith('snapshots 의 실제 경로가 자료 폴더 밖이라 거부(위 폴더가 링크): '));
+  assert.deepEqual(written(outside, /^progress-mon-/), []);
 });
 
 test('static HTML: meta refresh, fetch, 주기 갱신 스크립트, 서버 주소 0. 윗부분에 스냅샷 <시각> 기준, 6탭', T, () => {

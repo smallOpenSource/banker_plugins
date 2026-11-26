@@ -184,6 +184,8 @@ export class UsageError extends Error {}
 // 않고 EEXIST(링크를 따라 만든 빈 파일은 지움). 볼 수 없으면(ESTALE, EPERM 등) 보통의 wx 처럼 그대로 쓴다. 쓰기가
 // 실패하면 이름이 아직 그 파일일 때 지운다(빈 잠금이나 빈 백업이 남지 않게). 처음 lstat 의 EPERM 등(Windows 에서 지우는
 // 중인 파일)은 그대로 던진다. 부른 쪽은 wx 의 같은 코드처럼 기다린다.
+// opts.verify(연 파일의 fstat) 는 내용을 쓰기 전에 부른다. 던지면 쓰기 실패와 같이 빈 파일을 지우고 다시 던진다.
+// opts.after() 는 내용을 쓴 뒤 파일을 닫기 전에 부른다(writeNewIn 이 폴더를 고정한 채 할 일).
 export function writeNew(file, data, opts = {}, fsx = fs) {
   if (fsx.lstatSync(file, { throwIfNoEntry: false }) !== undefined) throw eexist(file);
   const fd = fsx.openSync(file, 'wx', opts.mode);
@@ -191,11 +193,13 @@ export function writeNew(file, data, opts = {}, fsx = fs) {
     const made = fstatOr(fd, fsx);
     if (namesOpened(file, made, fsx) === false) throw eexist(file);
     try {
+      opts.verify?.(made);
       fsx.writeFileSync(fd, data);
     } catch (e) {
       if (namesOpened(file, made, fsx) === true) fsx.rmSync(file, { force: true });
       throw e;
     }
+    opts.after?.();
   } finally {
     fsx.closeSync(fd);
   }
@@ -238,6 +242,109 @@ function dropFollowed(file, made, fsx) {
 }
 
 const eexist = (file) => Object.assign(new Error(`EEXIST: file already exists, open '${file}'`), { code: 'EEXIST', syscall: 'open', path: file });
+
+// 실제 경로 두 개가 같은지(Windows, macOS 는 대소문자를 접어서).
+export const samePath = (a, b) => (process.platform === 'win32' || process.platform === 'darwin' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+// 자료 폴더를 링크 없이 적은 실제 경로: 프로젝트 안이면 프로젝트의 실제 경로에 상대 경로를, 밖(--data)이면 부모의 실제
+// 경로에 이름을 붙인다. 커널이 푼 실제 경로가 이것과 다르면 그 사이 어딘가가 링크다.
+export function dataReal(ctx) {
+  const rel = path.relative(ctx.project, ctx.dataDir);
+  if (!rel.startsWith('..') && !path.isAbsolute(rel)) return path.join(realNative(ctx.project), rel);
+  return path.join(realNative(path.dirname(ctx.dataDir)), path.basename(ctx.dataDir));
+}
+
+// 폴더의 정체: dev, ino(bigint)와 실제 경로. noLink 면 dir 자체가 링크(끊어진 것 포함)이거나 폴더가 아닐 때 null.
+// noLink 가 아니면 링크를 따라간 폴더(사용자가 고른 <file> 의 폴더)이고, 없거나 폴더가 아니면 예외.
+export function dirIdentity(dir, { noLink = false } = {}) {
+  const st = noLink ? fs.lstatSync(dir, { bigint: true, throwIfNoEntry: false }) : fs.statSync(dir, { bigint: true });
+  if (!st || !st.isDirectory()) {
+    if (noLink) return null;
+    throw Object.assign(new Error(`ENOTDIR: not a directory, '${dir}'`), { code: 'ENOTDIR', path: dir });
+  }
+  return { dir, dev: st.dev, ino: st.ino, real: fs.realpathSync.native(dir) };
+}
+
+const moved = (id) => new UsageError(`폴더가 바뀌어 쓰지 않음(링크 바꿔치기로 보임): ${id.dir}`);
+const PINNED_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+// id 폴더(dirIdentity) 안에 새 파일 name 을 writeNew 로 만든다. 내용을 쓰기 전에 연 파일이 처음 본 그 폴더 안에 있는지
+// 대조하고, 아니면 내용 없이 빈 파일을 지우고 UsageError. 까닭: 폴더를 본 뒤 쓰기 전에 그 폴더나 위 폴더를 링크로 바꿔치기하면
+// 밖에 쓰게 된다. Node 에 openat 이 없어 OS 마다 다르게 고정한다(pinPosix, pinnedWin).
+// opts: mode, hook(단계 이름: 'pinned' 는 열기 직전, 'opened' 는 연 뒤 대조 직전. 시험이 바꿔치기를 끼우는 자리),
+// after(at): 내용을 쓴 뒤 폴더를 고정한 채 부름. at(이름) 은 그 폴더 안의 이름을 가리키는 경로. 돌려줌: path.join(id.dir, name).
+export function writeNewIn(id, name, data, opts = {}) {
+  const hook = opts.hook || (() => {});
+  if (process.platform === 'win32') {
+    const at = (n) => path.join(id.real, n);
+    const file = at(name);
+    hook('pinned');
+    const verify = (made) => {
+      hook('opened');
+      pinnedWin(id, file, made);
+    };
+    writeNew(file, data, { mode: opts.mode, verify, after: opts.after && (() => opts.after(at)) });
+  } else {
+    pinPosix(id, () => {
+      hook('pinned');
+      cwdIs(id);
+      const verify = () => {
+        hook('opened');
+        cwdIs(id);
+      };
+      writeNew(name, data, { mode: opts.mode, verify, after: opts.after && (() => opts.after((n) => n)) });
+    });
+  }
+  return path.join(id.dir, name);
+}
+
+// POSIX: 그 폴더로 chdir 하고 fn 안에서는 이름만 쓴다. 상대 경로는 cwd 의 inode 에서 풀리므로(openat 과 같음) 폴더 이름을
+// 바꿔치기해도 연 파일은 그 폴더 안에 생긴다. 끝나면 처음 폴더로 돌아간다.
+function pinPosix(id, fn) {
+  const prev = process.cwd();
+  process.chdir(id.real);
+  try {
+    fn();
+  } finally {
+    try {
+      process.chdir(prev);
+    } catch {
+      // 처음 폴더가 사라짐. CLI 의 경로는 모두 절대 경로라 영향 없음
+    }
+  }
+}
+
+// POSIX: cwd 가 처음 본 폴더(dev, ino)이고, 커널이 아는 그 폴더의 실제 경로(getcwd)가 처음과 같은지. 아니면 그 폴더가
+// 옮겨졌거나 chdir 이 링크를 따라갔다.
+function cwdIs(id) {
+  const st = fs.lstatSync('.', { bigint: true });
+  if (st.dev !== id.dev || st.ino !== id.ino || fs.realpathSync.native('.') !== id.real) throw moved(id);
+}
+
+// Windows: 상대 경로도 cwd 문자열로 풀려 chdir 이 소용없다. 대신 열린 파일이 있는 폴더와 그 위 폴더는 이름을 바꿀 수 없다
+// (EPERM). 그래서 그 폴더를 제 이름으로 rename 해 본다. 막히면 고정된 것이고, 되면(아무것도 바뀌지 않음) 연 파일이 그 안에
+// 없다는 뜻이라 거부한다. 고정된 다음에 그 이름이 링크가 아닌 처음 폴더이고, 실제 경로가 같고, 파일 이름이 연 파일이며
+// 링크 수가 1(다른 곳에 하드 링크 없음)인지 본다.
+function pinnedWin(id, file, made) {
+  if (!renameBlocked(id.real)) throw moved(id);
+  const dir = fs.lstatSync(id.real, { bigint: true, throwIfNoEntry: false });
+  const at = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+  const checks = [dir?.isDirectory(), sameNode(dir, id), samePath(fs.realpathSync.native(id.real), id.real), at?.isFile(), sameNode(at, made), made?.nlink === 1n];
+  if (!checks.every(Boolean)) throw moved(id);
+}
+
+const sameNode = (a, b) => Boolean(a && b) && a.dev === b.dev && a.ino === b.ino;
+
+// 폴더를 제 이름으로 rename 해 보아 막히는지. 드라이브 루트는 늘 막힌 것으로 본다.
+function renameBlocked(dir) {
+  if (path.dirname(dir) === dir) return true;
+  try {
+    fs.renameSync(dir, dir);
+    return false;
+  } catch (e) {
+    return PINNED_CODES.has(e.code);
+  }
+}
 
 // 그 자리에 일반 파일이 아닌 것(링크, 폴더 등)이 있는지. 없거나 볼 수 없으면 거짓.
 export function notPlainFile(file, fsx = fs) {

@@ -234,5 +234,7 @@ test('SKILL.md: <파일> 과 export 는 덮어쓰지 않음(번호, 링크 안 �
   const step = section('인자 없는 호출');
   assert.ok(step.includes('그 단계의 질문에 규칙 등록을 묶어 한 번에 묻는다. `init` 다시 실행은 한 번만'));
   const render = fs.readFileSync(path.join(HERE, 'pm-render.mjs'), 'utf8');
-  for (const w of ['파일 이름은 .html 이나 .htm 으로 끝나야 함: ', 'snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부', 'export const NUMBER_MAX = 999;']) assert.ok(render.includes(w), w);
+  for (const w of ['파일 이름은 .html 이나 .htm 으로 끝나야 함: ', 'snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부', 'export const NUMBER_MAX = 999;', 'snapshots 의 실제 경로가 자료 폴더 밖이라 거부']) assert.ok(render.includes(w), w);
+  assert.ok(s.includes('그 사이 폴더나 위 폴더가 링크로 바뀌면 내용을 쓰지 않고 종료 1(`폴더가 바뀌어 쓰지 않음`)'));
+  assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes('`폴더가 바뀌어 쓰지 않음(링크 바꿔치기로 보임): '));
 });
