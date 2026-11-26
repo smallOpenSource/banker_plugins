@@ -13,7 +13,7 @@
 | `scripts/pm-config.mjs` | 프로젝트 루트와 자료 폴더 결정, `config.json` 읽기, 기본값, 형식 검사, 원자적 쓰기(임시 파일과 rename, Windows 재시도) |
 | `scripts/pm-sources.mjs` | events.jsonl, git log, 워크플로 journal, `items.json` 읽기. 스토리와 라벨 판정 함수, 시각 해석, 읽기 캐시 |
 | `scripts/pm-html.mjs` | escape, 색 검사, 유한 수 검사, 글 폭 추정, 줄바꿈, 공통 CSS, 탭 머리 |
-| `scripts/pm-render.mjs` | 6탭, 단일 HTML 스냅숏(`export`, `static` 과 그 기본 자리 `snapshots/` 의 겹침 없는 이름), workflow 배치, 구성도 자동 배치 |
+| `scripts/pm-render.mjs` | 6탭, 단일 HTML 스냅숏(`export`, `static` 과 그 기본 자리 `snapshots/`. 있는 파일은 덮어쓰지 않고 번호를 붙인 새 이름, 링크는 따라가지 않음), workflow 배치, 구성도 자동 배치 |
 | `scripts/pm-adr.mjs` | ADR 탭 검사: `adr.json` 두 층 스키마 검사, 참조 확인과 정리(`check --adr-cleanup`), `docs/adr/` 갈라짐 경고, 밀도, 집계, check 대조 기록(`adr-check.json`) |
 | `scripts/pm-adr-view.mjs` | ADR 탭 렌더: 화면 본문과 check 대조 배지 |
 | `scripts/pm-wbs-view.mjs` | WBS 탭 렌더: `wbs.json` 을 wbs-gen 과 같은 간트 격자로(오류면 오류 줄) |

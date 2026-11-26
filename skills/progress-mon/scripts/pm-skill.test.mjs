@@ -224,3 +224,15 @@ test('SKILL.md: 인자 표의 --static 행, 스냅샷 절차(자료 없음은 in
   assert.ok(fs.readFileSync(path.join(HERE, 'pm-config.mjs'), 'utf8').includes("take('ruleAsk',"));
   assert.match(frontmatter(SKILL).keys.description, /`--static \[<파일>\]`/);
 });
+
+test('SKILL.md: <파일> 과 export 는 덮어쓰지 않음(번호, 링크 안 따라감, .html, .htm), 스냅샷 절의 오류 행, 규칙 등록과 ADR, WBS 단계는 한 질문', T, () => {
+  const s = section('스냅샷(`--static`)');
+  assert.ok(!SKILL.includes('있으면 덮어씀'), '덮어쓰기 문구 없음');
+  for (const w of ['`.html` 이나 `.htm` 으로 끝나야 한다', '덮어쓰지 않고 확장자 앞에 `-2`, `-3`', '링크(끊어진 것 포함)는 따라가지 않는다', '`status` 를 실행한다. 서버 상태는 보기만 한다. 종료 1 또는 2 면 오류 줄을 그대로 보고하고 멈춤', '종료 1 또는 2(예: `config.json 형식 오류`, `파일 이름은 .html 이나 .htm 으로 끝나야 함`']) assert.ok(s.includes(w), w);
+  const table = section('하위 명령');
+  assert.match(table, /^\| `export` \| .*`\.html` 이나 `\.htm` 으로 끝나야 함\(아니면 종료 1\)\. 있는 파일은 덮어쓰지 않고.*예전 판은 덮어썼다/m);
+  const step = section('인자 없는 호출');
+  assert.ok(step.includes('그 단계의 질문에 규칙 등록을 묶어 한 번에 묻는다. `init` 다시 실행은 한 번만'));
+  const render = fs.readFileSync(path.join(HERE, 'pm-render.mjs'), 'utf8');
+  for (const w of ['파일 이름은 .html 이나 .htm 으로 끝나야 함: ', 'snapshots 자리에 폴더가 아닌 것(링크 포함)이 있어 거부', 'export const NUMBER_MAX = 999;']) assert.ok(render.includes(w), w);
+});
